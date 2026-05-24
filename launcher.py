@@ -79,16 +79,28 @@ def _wait_server_ready(url: str, timeout: float = 15.0) -> bool:
     return False
 
 
+_server_error: str = ""
+
+
 def _start_server(port: int, debug: bool) -> None:
-    """uvicorn 子线程入口。listen 全 loopback：localhost 解析可能走 IPv6 ::1。"""
-    import uvicorn
-    from web_app import app
-    uvicorn.run(
-        app,
-        host="127.0.0.1",
-        port=port,
-        log_level="info",  # 强制 info 确保看到 GET 行
-    )
+    """uvicorn 子线程入口。listen 全 loopback：localhost 解析可能走 IPv6 ::1。
+    子线程内崩溃会被 daemon 吞掉，主线程只见超时——故全程兜异常写日志，
+    并把错误存 _server_error 供主线程展示。"""
+    global _server_error
+    try:
+        import uvicorn
+        from web_app import app
+        _log("web_app 导入成功，uvicorn.run 启动中...")
+        uvicorn.run(
+            app,
+            host="127.0.0.1",
+            port=port,
+            log_level="info",  # 强制 info 确保看到 GET 行
+        )
+    except Exception as e:
+        import traceback
+        _server_error = f"{e!r}\n{traceback.format_exc()}"
+        _log(f"uvicorn 子线程崩溃：{_server_error}")
 
 
 def _open_browser_fallback(url: str) -> None:
@@ -124,7 +136,10 @@ def main() -> None:
     _log("uvicorn 子线程已启动，等待就绪...")
 
     if not _wait_server_ready(url):
-        _log("服务启动超时（>15s）。")
+        if _server_error:
+            _log(f"服务启动超时（>15s）——子线程已崩，根因：\n{_server_error}")
+        else:
+            _log("服务启动超时（>15s）——子线程未崩但 15s 内未 listen（可能首次冷启过慢/被防火墙拦）。")
         sys.exit(1)
     _log(f"服务已就绪：{url}")
 
