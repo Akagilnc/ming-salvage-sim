@@ -969,10 +969,19 @@ class GameDB:
         valid = {"active", "offstage", "dismissed", "imprisoned", "exiled", "retired", "dead"}
         if status not in valid:
             raise ValueError(f"character status 非法：{status}")
-        self.conn.execute(
-            "UPDATE characters SET status=?, status_reason=?, status_changed_turn=? WHERE name=?",
-            (status, reason[:200], state.turn, name),
-        )
+        # 去职（下狱/革职/流放/致仕/死）即削职：清空 characters.office，
+        # 原职仍留在 character_offices 备档可追溯。复职（active/offstage）不动 office。
+        ousted = status in {"dismissed", "imprisoned", "exiled", "retired", "dead"}
+        if ousted:
+            self.conn.execute(
+                "UPDATE characters SET status=?, status_reason=?, status_changed_turn=?, office='' WHERE name=?",
+                (status, reason[:200], state.turn, name),
+            )
+        else:
+            self.conn.execute(
+                "UPDATE characters SET status=?, status_reason=?, status_changed_turn=? WHERE name=?",
+                (status, reason[:200], state.turn, name),
+            )
         self.conn.commit()
 
     def get_character_status(self, name: str) -> Tuple[str, str]:
@@ -982,6 +991,44 @@ class GameDB:
         if row is None:
             return ("active", "")
         return (row["status"], row["status_reason"] or "")
+
+    def set_character_office(
+        self,
+        name: str,
+        office: str,
+        office_type: str = "",
+        source: str = "诏书调任",
+    ) -> None:
+        """既有官员调任/升迁：改 characters.office（office_type 给空则不动），
+        同步 character_offices 备档。状态不变（仍 active）。"""
+        if office_type:
+            self.conn.execute(
+                "UPDATE characters SET office=?, office_type=? WHERE name=?",
+                (office, office_type, name),
+            )
+        else:
+            self.conn.execute(
+                "UPDATE characters SET office=? WHERE name=?",
+                (office, name),
+            )
+        eff_type = office_type or (
+            self.conn.execute(
+                "SELECT office_type FROM characters WHERE name=?", (name,)
+            ).fetchone() or {"office_type": ""}
+        )["office_type"]
+        self.conn.execute(
+            """
+            INSERT INTO character_offices (character_name, office_title, office_type, source)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(character_name) DO UPDATE SET
+                office_title = excluded.office_title,
+                office_type = excluded.office_type,
+                source = excluded.source,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (name, office, eff_type, source),
+        )
+        self.conn.commit()
 
     def apply_historical_deaths(self, state: GameState) -> List[Dict[str, str]]:
         """月初 tick：只有仍 active 的人到点自然死。被玩家提前罢/狱/流/杀的不走此分支。

@@ -249,7 +249,7 @@ def create_season_simulator_agent(
         id="season-simulator",
         session_id="season-simulator",
         db=agno_db,
-        model=create_chat_model(llm_config, temperature=0.9, top_p=0.95, max_tokens=4500, enable_thinking=True),
+        model=create_chat_model(llm_config, temperature=0.9, top_p=0.95, max_tokens=8000, enable_thinking=True),
         instructions=[_ctx().game_world_prompt, _ctx().season_simulator_prompt],
         add_history_to_context=False,
         markdown=False,

@@ -17,13 +17,15 @@
 4. **新立与结案**：
    - `new_issues` 只两个合法来源（见「局势立项规则」），邸报现象禁立。
    - 逐条对照 active_issues 的 resolve_condition / fail_condition 与邸报，判 `close_issues`（见「局势推进规则」）。
-5. **最后扫 economy_moves / fiscal_changes / appointments / character_status_changes**——这些字段通常来自人事章与财政章，但任何章节涉及到都要补。
+5. **最后扫 economy_moves / fiscal_changes / office_changes / character_status_changes**（朝臣人事）+ `appointments`（仅后宫纳妃）——通常来自人事章与财政章，任何章节涉及都要补。
+   - **朝臣人事只两类**：官职变更（任何人当某官——新进朝堂、调任、升迁，全是 `office_changes`，不必判此人在不在册）；去职（罢/狱/流/仕/卒 → `character_status_changes`）。以末章「人事除目」节为准，逐行对抽。
+   - `appointments` **只用于后宫纳妃**，朝臣一律不进。
 
 ## 章节 → 字段速查表
 
 | 邸报章节典型主题 | 抽到哪些字段 |
 |---|---|
-| 人事任免（擢/拜/起/迁/补 + 革职/下狱/赐死/致仕/卒）| `appointments`、`character_status_changes`、配套 `faction_delta`、`metric_delta` |
+| 人事任免（擢/拜/起/迁/补/调/升 任某官 + 革职/下狱/赐死/致仕/卒）| `office_changes`（任某官——含新进朝堂与在朝调任升迁）、`character_status_changes`（去职）、配套 `faction_delta`、`metric_delta`；后宫纳妃才用 `appointments` |
 | 地方动静（清丈/抗税/民变/灾荒/赈济）| `region_delta`（含 `corruption`，见下注）、`class_delta`、`economy_moves`（赈灾银）、配套 `issue_advances` |
 | 军事战事（欠饷/哗变/调度/战报）| `army_delta`、配套 `external_power_updates`、`economy_moves`（军饷追拨）|
 | 局势推进（既有 issue 的具体进展/结案/失败）| `issue_advances`、`close_issues`、`cancels`、配套 `metric_delta`/`faction_delta` |
@@ -59,7 +61,7 @@
 - 写 `region_delta` 前先在 payload `regions` 表查当前行（按 region_id），按当前值算 delta 是否会越过 0~100 边界；越界则截到边界。
 - 写 `army_delta` 前先在 payload `armies` 表查当前行（按 army_id），同样核边界。
 - 写 `external_power_updates` 前先在 payload `external_powers` 表查当前数值（leverage / satisfaction / military_strength / cohesion / supply）。
-- 写 `appointments` 前先在 payload `active_ministers` / `offstage_ministers` 名册查此人是否已在册（已在册的不立 appointments，改任仅归 narrative）。
+- 朝臣任某官（无论新进朝堂还是在朝调任升迁）一律写 `office_changes`，**不必判此人在不在名册**——代码会自己查在册改职、不在册建档。`appointments` 只留给后宫纳妃。
 - 写 `character_status_changes` 前先在 `active_ministers` 查此人当前是否 active（已 dismissed/dead 的不重复立项）。
 
 **⚠ corruption 强制核查**：凡邸报或诏书中出现以下任一动作，**必须**在对应省份 `region_delta` 输出 `corruption` 负值：
@@ -86,7 +88,7 @@
 
 ## 输出字段总表（每个字段的含义与约束，先看清这张表）
 
-顶层 15 个字段都**必须出现**；无内容的填空 `{}` 或 `[]`。严格 JSON，无 Markdown 无解释。
+顶层 16 个字段都**必须出现**；无内容的填空 `{}` 或 `[]`。严格 JSON，无 Markdown 无解释。
 
 | 字段 | 含义 | 约束 |
 |---|---|---|
@@ -103,8 +105,9 @@
 | `cancels` | 皇帝撤销的局势 | 每项 `issue_id`+`applied_cost`+`narrative`。详见「局势推进规则·撤销」。 |
 | `close_issues` | 本{{TURN_UNIT}}结案/失败的局势 | 每项 `issue_id`+`reason`(`resolved`/`failed`)+`narrative`。详见「局势推进规则·结案」。 |
 | `fiscal_changes` | 制度性财政系数变化 | 仅奏章明确提到开征新税/削减禄米/盐政改革等才写。`delta` 是增量（±5~±30 常规，±50 极端）。`key` 必须从下方「财政系数表」选，不在表内一律不写。 |
-| `appointments` | 诏书明文起用某员入朝堂，或纳妃入宫 | 仅 `decree_text` 写明「擢/拜/起/迁/补 某某 为 某官」或「纳/册封 某某 为 贵妃/嫔/才人/昭仪/婕妤」时立项。朝臣任命每项 `{"name","office","faction","reason","approved"}`；后宫纳妃每项 `{"name","office","office_type":"后宫","reason","approved"}`，详见「人事任命规则」及「后宫纳妃规则」。 |
+| `appointments` | **仅后宫纳妃** | 仅 `decree_text` 写明「纳/册封/封/选 某某 为 贵妃/嫔/才人/昭仪/婕妤/淑女」时立项。每项 `{"name","office","office_type":"后宫","reason","approved"}`，详见「后宫纳妃规则」。**朝臣任命不进此字段，一律走 `office_changes`。** |
 | `character_status_changes` | 既有大臣状态变更（罢黜/下狱/流放/致仕/死亡） | 邸报明文写「某某革职/拿问/下诏狱/赐死/缢死/流放/致仕/卒」时立项。每项 `{"name","status","reason"}`，status ∈ `dismissed`/`imprisoned`/`exiled`/`retired`/`dead`/`offstage`。详见「人物状态变更规则」。 |
+| `office_changes` | 朝臣官职变更——某人任某官，含新进朝堂、调任、升迁，**不分新任旧任** | 邸报或 `decree_text` 写明「擢/拜/起/迁/补/调/升 某某 为 某官」时立项。每项 `{"name","new_office","reason"}`，可选 `faction`（新进朝堂者填派系）、`new_office_type`（官署类别如「督抚」「司礼监」）。`new_office` 写明制官名。**不必判此人在不在册**——代码自处理：在册改职、不在册建新档。去职走 `character_status_changes`。 |
 
 new_issue 内部字段：`kind`(`initiative`/`situation`)、`title`、`origin_kind`、`bar_value`(0-100 初始进度)、`expected_months`、`stage_text`、`resolve_condition`、`fail_condition`、`ongoing_effects`、`effect_on_resolve`、`effect_on_fail`、`cancellable`(`decree`=须下诏方能罢/`never`=不可撤/`by_progress`=随进度自然结案，严禁臆造其它值)。各字段取值见「局势立项规则」。
 
@@ -158,30 +161,23 @@ decree new_issue 必填字段：
 
 **撤销**（`cancels`）：奏章说「罢/止/撤/停办」+ 列了沉没成本才转，否则空 list。
 
-## 人事任命规则
+## 官职变更规则（office_changes）
 
-**仅当 `decree_text` 明文写「擢/拜/起/迁/补/起用/召 某某 为 某官」时**，在 `appointments` 立一项。邸报叙事里出现「某某接任」「某某到任」**不要**立——那是局势衍生现象，归 narrative。
+**朝臣任某官，一律走 `office_changes`，不分新任旧任**：`decree_text`/邸报写「擢/拜/起/迁/补/调/升 某某 为 某官」——无论此人是新进朝堂的生面孔，还是已在朝的官员调任/升迁，都立一条。**不必查名册、不必判在不在册**——代码自己处理：在册者改官职、不在册者建新档入朝，本回合即可召见。
 
-**两道闸**——任一不过 `approved:false` 且 `reason` 写明拒因：
+判据只看「是不是任某官」。邸报叙事里「某某接任」「某某到任」这类局势衍生现象**不要**立，归 narrative。
 
-1. **资历相称**：白身直拜内阁首辅、童生直授尚书、远超合理升阶 → `approved:false`，reason="资历悬殊"。史有其人按其史实资历判；查无此人按诏书自陈/常识推定的资历判（皇帝在诏书里说「某地举人某某」，那就按举人资历判能否拜巡抚）。
-2. **官职合法**：office 写明朝实际官名（巡抚/总督/尚书/侍郎/巡按/兵备道/总兵 等），不能是「军师」「军长」等非明制词。不合 → `approved:false`，reason="非明制官名"。
+**顶缺连带**：邸报「原任X 去职/改调，Y 接任 某独缺实职（总督/巡抚/总兵/某部尚书）」时，Y 进 `office_changes`、X 同时进 `character_status_changes`（dismissed 或对应去向）——两条都要抽，漏抽 X 会出现两个同缺官。
 
-**不再拦「查无此员」**——杜撰名也允许，只要资历/官职说得通。崇祯本就大量拔擢中下级官员，名册外史实小官与未载史册的杜撰之人，对游戏推演无本质差异（都走中庸默认属性+后续推演）。你可在 `reason` 注明「史有其人」或「名册外，按诏书所述资历准任」，但不据此拒。
+唯一拦截：`new_office` 必须是明制实官名（巡抚/总督/尚书/侍郎/巡按/兵备道/总兵/秉笔太监 等），不能是「军师」「军长」等非明制词——非明制词则不立此项。杜撰人名、名册外史实小官都允许（崇祯本就大量拔擢中下级官员），按中庸默认属性入册。
 
-当前游戏年月见输入 `turn.year`/`turn.period`（本游戏从 1627.10 崇祯即位开局，年份随回合推进——已到崇祯七年就按 1634 算），用于资历对照参考。
-
-两道闸过 → `approved:true`，落地 = 把此人补入朝臣名册，本回合即可召见。属性走中庸默认（loyalty/ability/integrity/courage≈55-60），后续奏对推演决定表现。
-
-**已在名册者**（含 offstage）：不立 appointments。改任既有官员是 office 调整，目前不入此字段（暂留 narrative）。
-
-字段（朝臣任命）：
-- `name`：拟任者姓名。
-- `office`：拟授官职（明制官名）。
-- `faction`：派系，取值须从（东林/阉党/皇党/军队/宗室/中立/西学）选，拿不准填「中立」。
-- `reason`：一句话写此人资历与任命依据，或拒因。
-- `approved`：bool。`true` 入册，`false` 拒收。
-- `replaces`（可选）：若此任命是个独缺实职（某省巡抚/某镇总兵/某部尚书），且 `decree_text` 明文写到新任者顶替某现任在册大臣腾出该缺，填被腾缺者姓名（须是 `active_ministers` 名册内的人），代码端把其罢黜（dismissed）。泛称多员可并存的职（如「内阁大学士」）或无人占缺则留空，不要乱填。
+字段：
+- `name`：受任者姓名。
+- `new_office`：所授官职，按诏书写明制官名，可含兼衔加衔（如「巡抚陕西等处地方兼理军务粮饷」「兵部尚书兼东阁大学士」），照诏书原貌即可。
+- `faction`（可选）：新进朝堂者填派系（东林/阉党/皇党/军队/宗室/中立/西学），拿不准填「中立」；在朝调任者可省。
+- `new_office_type`（可选）：官署类别变了才填（如「督抚」「司礼监」「内阁」）。
+- `reason`：一句话写任命/调任依据。
+例：孙传庭、王承恩已在册，纵大幅升迁也走此字段。
 
 ## 后宫纳妃规则
 
@@ -216,7 +212,7 @@ decree new_issue 必填字段：
 
 **判据：**
 1. 必须**邸报明文写到此人此事**，叙事衍生猜测不算。
-2. 必须是**既有 active 大臣**（朝臣名册内的人）。新立人物走 `appointments` 不走此字段。
+2. 必须是**既有 active 大臣**（朝臣名册内的人）。任某官走 `office_changes` 不走此字段。
 3. 一人一回合至多一次状态变更（先下狱后赐死分两月走，依邸报为准；同月既下狱又赐死取最终态 `dead`）。
 4. 一锤子事：本字段就是落地槌。不要又写 `metric_delta`/`faction_delta` 又靠 issue 表达——后两者写**清党波及面**（阉党 sat 跌、皇威涨），人物本身的下场归此字段。
 5. **皇帝罢自己亲信也算**——只要邸报明文写到。系统不替皇帝判合理性，extractor 只忠实抄录。
@@ -246,8 +242,11 @@ decree new_issue 必填字段：
   "cancels": [{"issue_id": 25, "applied_cost": {"economy": [], "metrics": {}, "factions": {}}, "narrative": "..."}],
   "close_issues": [{"issue_id": 9, "reason": "resolved", "narrative": "..."}, {"issue_id": 17, "reason": "failed", "narrative": "..."}],
   "fiscal_changes": [{"key": "商税_base", "delta": 30, "reason": "..."}],
+  "office_changes": [
+    {"name": "孙传庭", "new_office": "陕西总督", "new_office_type": "督抚", "reason": "永城知县擢用，陕西事急"},
+    {"name": "陈奇瑜", "new_office": "陕西巡按", "faction": "中立", "reason": "名册外起用，新进朝堂"}
+  ],
   "appointments": [
-    {"name": "陈奇瑜", "office": "陕西巡按", "faction": "中立", "reason": "...", "approved": true},
     {"name": "田氏", "office": "贵妃", "office_type": "后宫", "reason": "诏书明文册封", "approved": true}
   ],
   "character_status_changes": [{"name": "魏忠贤", "status": "exiled", "reason": "发配凤阳"}]

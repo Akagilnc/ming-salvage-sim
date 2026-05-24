@@ -109,10 +109,13 @@ type MapNode = {
 type Minister = {
   id?: string;
   name: string;
-  office: string;
+  office: string;  // 去职者已清空，可能为空串
   office_type: string;
   faction: string;
   style: string;
+  status: string;  // active/dismissed/imprisoned/exiled/retired/dead/offstage
+  status_reason?: string;
+  status_label: string;  // 中文：在朝/已罢黜/下狱/流放/致仕…
   summary: string;
   favorite: boolean;
   portrait_id?: string;  // 空/undefined=无专属，前端 fallback 到池
@@ -627,6 +630,10 @@ function App() {
   const mapIntelStyle = selectedNode ? getMapIntelStyle(selectedNode) : undefined;
 
   const openChat = (minister: Minister) => {
+    if (minister.status && minister.status !== "active") {
+      setError(`${minister.name}已${minister.status_label}${minister.status_reason ? "（" + minister.status_reason + "）" : ""}，无法召见。`);
+      return;
+    }
     const switchingMinister = selectedMinister !== minister.name;
     if (switchingMinister) {
       setChat([]);
@@ -1138,10 +1145,11 @@ function MinisterCardList({
         const poolFallback = !isCustom && minister.portrait_id
           ? `/portraits/${minister.portrait_id}.png`
           : undefined;
+        const ousted = minister.status !== "active";
         return (
           <button
             key={minister.name}
-            className={`minister-card ${selectedMinister === minister.name ? "selected" : ""}`}
+            className={`minister-card ${selectedMinister === minister.name ? "selected" : ""} ${ousted ? "ousted" : ""}`}
             onClick={() => onOpenChat(minister)}
           >
             <div className="minister-card-portrait-wrap">
@@ -1156,7 +1164,8 @@ function MinisterCardList({
             <div className="minister-card-info">
               <div className="minister-card-top">
                 <span className="minister-name">{minister.name}</span>
-                <span className="minister-office">{minister.office}</span>
+                {ousted && <span className={`minister-status status-${minister.status}`}>{minister.status_label}</span>}
+                {minister.office && <span className="minister-office">{minister.office}</span>}
               </div>
               <span className="minister-bio">{minister.summary}</span>
             </div>
@@ -2281,6 +2290,15 @@ function ExtractionView({ data, loading, error }: { data: ExtractionData | null;
       <ExtractionSection title="派系变化（faction_delta）">
         <FactionBlock data={out.faction_delta} />
       </ExtractionSection>
+      <ExtractionSection title="官职任免（office_changes）">
+        <OfficeChangesBlock data={out.office_changes} />
+      </ExtractionSection>
+      <ExtractionSection title="去职变更（character_status_changes）">
+        <StatusChangesBlock data={out.character_status_changes} />
+      </ExtractionSection>
+      <ExtractionSection title="后宫纳妃（appointments）">
+        <AppointmentsBlock data={out.appointments} />
+      </ExtractionSection>
       <ExtractionSection title="局势推进（issue_advances）">
         <IssueAdvancesBlock data={out.issue_advances} />
       </ExtractionSection>
@@ -2430,6 +2448,59 @@ function CancelsBlock({ data }: { data: any }) {
         <li key={i}>
           <b>#{it?.issue_id} 撤旨</b>
           {it?.narrative ? <span>{it.narrative}</span> : null}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function OfficeChangesBlock({ data }: { data: any }) {
+  if (isEmptyData(data) || !Array.isArray(data)) return <p className="extraction-empty">无</p>;
+  return (
+    <ul className="extraction-list">
+      {data.map((it: any, i: number) => (
+        <li key={i}>
+          <b className={it?.rejected ? "bad" : "good"}>
+            {it?.name} → {it?.new_office}{it?.rejected ? "（未落地）" : it?.kind === "appoint" ? "（新进朝堂）" : ""}
+          </b>
+          {it?.displaced ? <span>顶替 {it.displaced} 去职</span> : null}
+          {it?.reason ? <span>{it.reason}</span> : null}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function StatusChangesBlock({ data }: { data: any }) {
+  if (isEmptyData(data) || !Array.isArray(data)) return <p className="extraction-empty">无</p>;
+  const label: Record<string, string> = {
+    dismissed: "罢黜", imprisoned: "下狱", exiled: "流放",
+    retired: "致仕", dead: "身故", offstage: "去位",
+  };
+  return (
+    <ul className="extraction-list">
+      {data.map((it: any, i: number) => (
+        <li key={i}>
+          <b className={it?.rejected ? "bad" : ""}>
+            {it?.name} {label[it?.status] || it?.status}{it?.rejected ? "（未落地）" : ""}
+          </b>
+          {it?.reason ? <span>{it.reason}</span> : null}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function AppointmentsBlock({ data }: { data: any }) {
+  if (isEmptyData(data) || !Array.isArray(data)) return <p className="extraction-empty">无</p>;
+  return (
+    <ul className="extraction-list">
+      {data.map((it: any, i: number) => (
+        <li key={i}>
+          <b className={it?.rejected ? "bad" : "good"}>
+            {it?.name} 册封 {it?.office}{it?.rejected ? "（未落地）" : ""}
+          </b>
+          {it?.reason ? <span>{it.reason}</span> : null}
         </li>
       ))}
     </ul>
@@ -2706,7 +2777,12 @@ function ChatModal({
         <div className="minister-profile">
           <div>
             <h2>{minister.name}</h2>
-            <p>{minister.office}</p>
+            <p>
+              {minister.status !== "active" && (
+                <span className={`minister-status status-${minister.status}`}>{minister.status_label}</span>
+              )}
+              {minister.office && <span className="profile-office">{minister.office}</span>}
+            </p>
           </div>
           <button className="icon-button" aria-label="收藏大臣" onClick={onFavorite}>
             <Star size={16} fill={minister.favorite ? "currentColor" : "none"} />

@@ -250,13 +250,21 @@ class WebGame:
 
     # ── 序列化 ────────────────────────────────────────────────────────────
     def public_character(self, character: Character) -> Dict[str, Any]:
+        status, status_reason = self.db.get_character_status(character.name)
+        status_label = _STATUS_LABEL_WEB.get(status, "在朝" if status == "active" else status)
+        office = character.office  # 去职者已被清空，可能为空串
+        # summary 不含官职（卡片/详情已单独显 office），避免重复
+        summary = f"{character.faction}一系，行事{character.style}。"
         return {
             "name": character.name,
-            "office": character.office,
+            "office": office,
             "office_type": character.office_type,
             "faction": character.faction,
             "style": character.style,
-            "summary": f"{character.office}，{character.faction}一系，行事{character.style}。",
+            "status": status,
+            "status_reason": status_reason,
+            "status_label": status_label,
+            "summary": summary,
             "portrait_id": character.portrait_id,  # 空串=无专属头像，前端 fallback 到池
             "skills": [
                 {
@@ -893,11 +901,14 @@ async def api_buildings(region_id: str = "") -> Dict[str, Any]:
 @app.get("/api/ministers")
 async def api_ministers(group: str = "全部", kind: str = "court") -> Dict[str, Any]:
     is_harem = kind == "harem"
+    # 朝堂列表：在朝 + 本朝去职（罢/狱/流/仕）；不含未登场(offstage)与已殁(dead)，免列表被历史死人刷爆。
+    # 后宫维持仅 active。
+    visible = {"active"} if is_harem else {"active", "dismissed", "imprisoned", "exiled", "retired"}
     ministers = [
         get_game().public_character(c)
         for c in get_game().content.characters.values()
         if (c.office_type == "后宫") == is_harem
-        and get_game().db.get_character_status(c.name)[0] == "active"
+        and get_game().db.get_character_status(c.name)[0] in visible
     ]
     if not is_harem:
         if group == "内阁":
@@ -924,7 +935,7 @@ async def api_remove_favorite(minister_name: str) -> Dict[str, Any]:
 
 
 _STATUS_LABEL_WEB = {
-    "offstage": "尚未登场", "dead": "已殁", "dismissed": "已罢黜",
+    "active": "在朝", "offstage": "尚未登场", "dead": "已殁", "dismissed": "已罢黜",
     "imprisoned": "下狱", "exiled": "流放", "retired": "致仕",
 }
 

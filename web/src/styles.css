@@ -896,6 +896,35 @@ select:focus-visible {
   white-space: nowrap;
 }
 
+/* 状态徽标：去职/罢黜/下狱等。卡片里推到右侧成组，office 跟其后。 */
+.minister-status {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 9px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  white-space: nowrap;
+  color: #fff;
+  background: rgba(120, 90, 60, 0.85);
+}
+.minister-status.status-imprisoned,
+.minister-status.status-dead { background: rgba(120, 30, 24, 0.9); }
+.minister-status.status-dismissed,
+.minister-status.status-exiled { background: rgba(150, 70, 30, 0.9); }
+.minister-status.status-retired { background: rgba(90, 90, 100, 0.85); }
+/* 状态徽标在前时，紧随的 office 不再独占右端 */
+.minister-status + .minister-office { margin-left: 6px; }
+
+/* 去职大臣卡片：灰化提示不可召见 */
+.minister-card.ousted {
+  opacity: 0.62;
+  filter: grayscale(0.35);
+}
+
+/* 详情卡副标题里的官职，与状态徽标并排 */
+.profile-office { margin-left: 6px; }
+
 .minister-bio {
   flex: 1 1 auto;
   min-height: 0;

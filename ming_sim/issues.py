@@ -762,12 +762,23 @@ def apply_score_extraction(
             "reason": str(change.get("reason") or ""),
         })
 
-    # 8) appointments：诏书明文起用的官员（档房三道闸 approved=true 才落）
+    # 8) appointments：仅收「后宫纳妃」（office_type=后宫）。朝臣的新任/调任已统一
+    #    并入 office_changes（section 10），LLM 误把朝臣塞这里的项一律转去 office_changes 处理。
     applied_appointments: List[Dict[str, object]] = []
+    spillover_office_changes: List[Dict[str, object]] = []
     if content is not None:
         from ming_sim.session import apply_appointment  # 延迟导入避循环
         for item in extracted.get("appointments") or []:
             if not isinstance(item, dict):
+                continue
+            if str(item.get("office_type") or "").strip() != "后宫":
+                # 朝臣项转交 office_changes：name + new_office 形态
+                spillover_office_changes.append({
+                    "name": str(item.get("name") or ""),
+                    "new_office": str(item.get("office") or ""),
+                    "faction": str(item.get("faction") or "中立"),
+                    "reason": str(item.get("reason") or ""),
+                })
                 continue
             name, displaced = apply_appointment(db, state, content, registry, item)
             if name:
@@ -824,9 +835,82 @@ def apply_score_extraction(
                 "name": name, "status": status, "rejected": True, "reason": f"落库失败：{exc}",
             })
             continue
+        # 同步 content 内存对象：去职即削职，与 db 清空 office 保持一致
+        if content is not None and name in content.characters:
+            ch = content.characters[name]
+            ch.status = status
+            if status in {"dismissed", "imprisoned", "exiled", "retired", "dead"}:
+                ch.office = ""
         applied_status_changes.append({
             "name": name, "status": status, "reason": reason,
         })
+
+    # 10) office_changes：朝臣官职变更——统一吃「新任（建档）」与「调任（改职）」。
+    #     extractor 不再分新任/调任，代码按 name 在不在册自判：
+    #       在册 active → 改 office；不在册/非 active → 建新档（复用 apply_appointment）。
+    #     后宫纳妃仍走 appointments（语义不同，见 section 8）。
+    applied_office_changes: List[Dict[str, object]] = []
+    if content is not None:
+        from ming_sim.session import apply_appointment  # 延迟导入避循环
+    # office_changes 本体 + 从 appointments 转来的朝臣项（spillover）
+    office_change_items = list(extracted.get("office_changes") or []) + spillover_office_changes
+    for item in office_change_items:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        new_office = str(item.get("new_office") or "").strip()
+        reason = str(item.get("reason") or "").strip()
+        if not name or not new_office:
+            applied_office_changes.append({
+                "name": name, "new_office": new_office, "rejected": True,
+                "reason": "name 或 new_office 空",
+            })
+            continue
+        in_roster = content is not None and name in content.characters
+        cur_status = db.get_character_status(name)[0] if in_roster else ""
+        if in_roster and cur_status == "active":
+            # ── 调任：改 office ──
+            new_type = str(item.get("new_office_type") or "").strip()
+            old_office = content.characters[name].office
+            try:
+                db.set_character_office(name, new_office, new_type, source=reason[:60] or "诏书调任")
+            except Exception as exc:
+                applied_office_changes.append({
+                    "name": name, "new_office": new_office, "rejected": True,
+                    "reason": f"落库失败：{exc}",
+                })
+                continue
+            ch = content.characters[name]
+            ch.office = new_office
+            if new_type:
+                ch.office_type = new_type
+            if registry is not None:
+                registry.refresh(name)
+            applied_office_changes.append({
+                "name": name, "old_office": old_office, "new_office": new_office,
+                "kind": "transfer", "reason": reason,
+            })
+            continue
+        # ── 新任：建新档（apply_appointment 对在册者会拒，故仅不在册/非 active 走到这）──
+        if content is None:
+            continue
+        appt = {
+            "name": name, "office": new_office,
+            "faction": str(item.get("faction") or "中立"),
+            "reason": reason, "approved": True,
+        }
+        appointed, displaced = apply_appointment(db, state, content, registry, appt)
+        if appointed:
+            applied_office_changes.append({
+                "name": appointed, "new_office": new_office,
+                "kind": "appoint", "displaced": displaced, "reason": reason,
+            })
+        else:
+            applied_office_changes.append({
+                "name": name, "new_office": new_office, "rejected": True,
+                "kind": "appoint",
+                "reason": f"建档失败（查重/字段不合）；原 status={cur_status or '不在册'}",
+            })
 
     state.clamp()
     return {
@@ -842,6 +926,7 @@ def apply_score_extraction(
         "fiscal_changes": applied_fiscal,
         "appointments": applied_appointments,
         "character_status_changes": applied_status_changes,
+        "office_changes": applied_office_changes,
         "victory_status": victory_status(db, state),
     }
 
