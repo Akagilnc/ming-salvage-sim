@@ -19,6 +19,28 @@ import time
 import urllib.request
 import webbrowser
 
+# Windows windowed (--noconsole) 下 sys.stdout/stderr = None。uvicorn 的
+# DefaultFormatter.__init__ 调 sys.stdout.isatty() 判颜色 → AttributeError 崩。
+# 先给 None 的标准流兜一个假写流（带 isatty()→False），再 reconfigure。
+import io
+
+
+class _NullStream(io.TextIOBase):
+    def isatty(self) -> bool:
+        return False
+
+    def write(self, s: str) -> int:
+        return len(s)
+
+    def flush(self) -> None:
+        pass
+
+
+if sys.stdout is None:
+    sys.stdout = _NullStream()  # type: ignore[assignment]
+if sys.stderr is None:
+    sys.stderr = _NullStream()  # type: ignore[assignment]
+
 # 强制 unbuffered，PyInstaller 包内 print 否则可能丢
 try:
     sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
