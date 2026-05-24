@@ -895,6 +895,8 @@ function App() {
         state={state}
         onOpenState={() => setActiveModal("state")}
         onOpenMenu={() => setActiveModal("menu")}
+        onToggleCourt={() => { setDrawerOpen((current) => !current); }}
+        onToggleHarem={() => { setHaremDrawerOpen((current) => !current); }}
       />
       <BottomCommandBar
         eventsCount={state.events.length}
@@ -912,7 +914,6 @@ function App() {
         selectedMinister={selectedMinister}
         open={drawerOpen}
         onGroupChange={setMinisterGroup}
-        onToggle={() => { setDrawerOpen((current) => !current); }}
         onClose={guardClose(() => setDrawerOpen(false))}
         onOpenChat={openChat}
       />
@@ -923,7 +924,6 @@ function App() {
         selectedMinister={selectedMinister}
         open={haremDrawerOpen}
         onGroupChange={setHaremGroup}
-        onToggle={() => { setHaremDrawerOpen((current) => !current); }}
         onClose={guardClose(() => setHaremDrawerOpen(false))}
         onOpenChat={openChat}
         onUploadPortrait={uploadPortrait}
@@ -1232,7 +1232,6 @@ function CourtDrawer({
   selectedMinister,
   open,
   onGroupChange,
-  onToggle,
   onClose,
   onOpenChat,
 }: {
@@ -1242,7 +1241,6 @@ function CourtDrawer({
   selectedMinister: string;
   open: boolean;
   onGroupChange: (group: string) => void;
-  onToggle: () => void;
   onClose: () => void;
   onOpenChat: (minister: Minister) => void;
 }) {
@@ -1255,11 +1253,6 @@ function CourtDrawer({
 
   return (
     <>
-      <div className="court-toggle-group">
-        <button className="court-toggle-btn" onClick={onToggle} aria-label="打开朝堂">
-          <Landmark size={16} /><span>朝堂</span>
-        </button>
-      </div>
       {open && <button className="drawer-scrim" aria-label="收起" onClick={onClose} />}
       <aside className={`court-drawer overlay-panel ${open ? "open" : ""}`}>
         <div className="drawer-brand">
@@ -1298,7 +1291,6 @@ function HaremDrawer({
   selectedMinister,
   open,
   onGroupChange,
-  onToggle,
   onClose,
   onOpenChat,
   onUploadPortrait,
@@ -1308,7 +1300,6 @@ function HaremDrawer({
   selectedMinister: string;
   open: boolean;
   onGroupChange: (group: string) => void;
-  onToggle: () => void;
   onClose: () => void;
   onOpenChat: (minister: Minister) => void;
   onUploadPortrait: (ministerName: string, file: File) => Promise<void>;
@@ -1322,11 +1313,6 @@ function HaremDrawer({
 
   return (
     <>
-      <div className="harem-toggle-group">
-        <button className="court-toggle-btn harem-btn" onClick={onToggle} aria-label="打开后宫">
-          <Crown size={16} /><span>后宫</span>
-        </button>
-      </div>
       {open && <button className="drawer-scrim" aria-label="收起" onClick={onClose} />}
       <aside className={`court-drawer harem-drawer overlay-panel ${open ? "open" : ""}`}>
         <div className="drawer-brand">
@@ -1364,10 +1350,14 @@ function TopStatusBar({
   state,
   onOpenState,
   onOpenMenu,
+  onToggleCourt,
+  onToggleHarem,
 }: {
   state: GameState;
   onOpenState: () => void;
   onOpenMenu: () => void;
+  onToggleCourt: () => void;
+  onToggleHarem: () => void;
 }) {
   const scoreKeys = ["民心", "皇威"];
   return (
@@ -1384,6 +1374,14 @@ function TopStatusBar({
             {key} <b>{state.metrics[key]}</b>
           </span>
         ))}
+        <button className="status-menu court-toggle-btn" onClick={onToggleCourt} aria-label="打开朝堂">
+          <Landmark size={16} />
+          <span>朝堂</span>
+        </button>
+        <button className="status-menu court-toggle-btn harem-btn" onClick={onToggleHarem} aria-label="打开后宫">
+          <Crown size={16} />
+          <span>后宫</span>
+        </button>
         <button className="status-menu" onClick={onOpenMenu} aria-label="游戏菜单">
           <Menu size={16} />
           <span>菜单</span>

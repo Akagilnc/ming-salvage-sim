@@ -1,9 +1,9 @@
 :root {
   color-scheme: light;
   font-family:
-    "ZCOOL XiaoWei", "Noto Serif SC", "Songti SC", "STSong", serif;
+    "Songti SC", "STSong", "SimSun", "Noto Serif SC", "ZCOOL XiaoWei", serif;
   --font-brush: "Ma Shan Zheng", "ZCOOL XiaoWei", "Songti SC", serif;
-  font-size: 15px;
+  font-size: 19px;
   line-height: 1.5;
   color: #1a1410;
   background: #1c211d;
@@ -289,9 +289,9 @@ select:focus-visible {
   gap: 4px;
   width: max-content;
   max-width: calc(100vw - 16px);
-  padding: 4px 6px;
+  padding: 7px 10px;
   border: 1px solid rgba(0, 0, 0, 0.2);
-  border-radius: 5px;
+  border-radius: 6px;
   background: rgba(248, 244, 234, 0.96);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
   backdrop-filter: blur(6px);
@@ -305,26 +305,26 @@ select:focus-visible {
 .status-emblem {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  min-height: 22px;
+  gap: 5px;
+  min-height: 28px;
   flex: 0 0 auto;
-  padding: 2px 6px;
+  padding: 3px 8px;
   border: 0;
   border-radius: 3px;
   color: #1a1410;
   background: transparent;
   font-weight: 900;
-  font-size: 0.78rem;
+  font-size: 0.92rem;
 }
 
 .status-emblem svg {
-  width: 13px;
-  height: 13px;
+  width: 16px;
+  height: 16px;
 }
 
 .emblem-art {
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   object-fit: contain;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
 }
@@ -341,23 +341,23 @@ select:focus-visible {
 .status-pill {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  min-height: 22px;
-  padding: 2px 5px;
+  gap: 4px;
+  min-height: 28px;
+  padding: 3px 7px;
   border: 0;
   border-radius: 3px;
   color: #1a1410;
   background: transparent;
   white-space: nowrap;
-  font-size: 0.74rem;
+  font-size: 0.88rem;
 }
 
 .budget-trigger {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  min-height: 22px;
-  padding: 2px 5px;
+  min-height: 28px;
+  padding: 3px 7px;
 }
 
 .budget-trigger > span {
@@ -406,7 +406,7 @@ select:focus-visible {
     linear-gradient(180deg, rgba(247, 229, 181, 0.98), rgba(215, 184, 124, 0.98)),
     #ead3a3;
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.3);
-  font-size: 12px;
+  font-size: 16px;
   opacity: 0;
   pointer-events: none;
   transition:
@@ -431,7 +431,7 @@ select:focus-visible {
 
 .budget-popover-head b {
   color: #57361e;
-  font-size: 13px;
+  font-size: 17px;
   line-height: 1.05;
 }
 
@@ -453,12 +453,12 @@ select:focus-visible {
 
 .budget-summary small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 14px;
   line-height: 1;
 }
 
 .budget-summary strong {
-  font-size: 14px;
+  font-size: 18px;
   line-height: 1.05;
   white-space: nowrap;
 }
@@ -470,7 +470,7 @@ select:focus-visible {
 
 .budget-list-title {
   color: #704c1e;
-  font-size: 11px;
+  font-size: 15px;
   font-weight: 800;
   line-height: 1.1;
 }
@@ -495,18 +495,18 @@ select:focus-visible {
 
 .budget-row b {
   color: var(--paper);
-  font-size: 12px;
+  font-size: 16px;
   line-height: 1.05;
 }
 
 .budget-row small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 14px;
   line-height: 1.05;
 }
 
 .budget-row strong {
-  font-size: 12px;
+  font-size: 16px;
   line-height: 1.05;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -573,8 +573,8 @@ select:focus-visible {
 }
 
 .command-art {
-  width: 56px;
-  height: 56px;
+  width: 66px;
+  height: 66px;
   object-fit: contain;
   filter: drop-shadow(0 6px 10px rgba(15, 8, 4, 0.6));
 }
@@ -636,49 +636,31 @@ select:focus-visible {
   backdrop-filter: blur(8px);
 }
 
-.court-toggle-group {
-  position: fixed;
-  top: 56px;
-  left: 8px;
-  z-index: 16;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  transition: opacity 150ms ease;
-}
-
-.harem-toggle-group {
-  position: fixed;
-  top: 96px;
-  left: 8px;
-  z-index: 16;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  transition: opacity 150ms ease;
-}
-
-.court-toggle-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 30px;
-  padding: 5px 10px;
+.status-menu.court-toggle-btn {
   border: 1px solid rgba(226, 180, 86, 0.38);
-  border-radius: 4px;
   color: #ffe2ad;
   background:
     linear-gradient(90deg, rgba(255, 225, 143, 0.18), transparent 36%),
     linear-gradient(180deg, #9d392b, #551f19);
-  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.38);
   font-weight: 900;
-  font-size: 0.82rem;
 }
 
-.court-toggle-btn.harem-btn {
+.status-menu.court-toggle-btn:hover {
+  background:
+    linear-gradient(90deg, rgba(255, 225, 143, 0.26), transparent 36%),
+    linear-gradient(180deg, #b04234, #5f231b);
+}
+
+.status-menu.court-toggle-btn.harem-btn {
   background:
     linear-gradient(90deg, rgba(255, 180, 200, 0.18), transparent 36%),
     linear-gradient(180deg, #8b3060, #4a1535);
+}
+
+.status-menu.court-toggle-btn.harem-btn:hover {
+  background:
+    linear-gradient(90deg, rgba(255, 180, 200, 0.26), transparent 36%),
+    linear-gradient(180deg, #a13a72, #571940);
 }
 
 .drawer-scrim {
@@ -1900,7 +1882,7 @@ button:disabled {
 
 .pending-directives h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: 18px;
   color: #b03a28;
 }
 
@@ -2054,8 +2036,8 @@ button:disabled {
 .icon-button {
   display: inline-grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  width: 40px;
+  height: 40px;
   flex: 0 0 auto;
   border: 1px solid rgba(111, 83, 46, 0.2);
   border-radius: 6px;
@@ -2196,8 +2178,8 @@ button:disabled {
 .modal-bg-state .modal-header .icon-button svg,
 .modal-bg-chat .modal-header .icon-button svg,
 .modal-bg-edict .modal-header .icon-button svg {
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
 }
 
 /* 例外：必须保留底色的交互元素 —— 输入框、徽章、进度条 */
@@ -2404,7 +2386,7 @@ button:disabled {
 /* 主页局势进度面板（右上角浮层） */
 .situation-panel {
   position: fixed;
-  top: 145px;
+  top: 72px;
   left: 8px;
   right: auto;
   z-index: 10;
@@ -2431,8 +2413,8 @@ button:disabled {
 }
 
 .situation-toggle {
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   border: 1px solid rgba(0, 0, 0, 0.2);
   border-radius: 4px;
@@ -2709,11 +2691,6 @@ button:disabled {
     transform: translateY(0);
   }
 
-  .court-toggle-group {
-    top: 68px;
-    left: 12px;
-  }
-
   .bottom-command-bar {
     bottom: 10px;
     gap: 16px;
@@ -2815,7 +2792,7 @@ button:disabled {
 }
 
 .settlement-stream-label {
-  font-size: 12px;
+  font-size: 14px;
   letter-spacing: 1px;
   color: #d6af59;
   margin-bottom: 4px;
@@ -2828,7 +2805,7 @@ button:disabled {
   border: 1px solid rgba(214, 175, 89, 0.28);
   border-radius: 6px;
   background: rgba(0, 0, 0, 0.32);
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1.7;
   white-space: pre-wrap;
   word-break: break-word;
@@ -2852,7 +2829,7 @@ button:disabled {
 .settlement-lock-card p {
   margin: 0 0 14px;
   color: #d8c79a;
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .settlement-lock-stages {
@@ -2860,7 +2837,7 @@ button:disabled {
   padding-left: 22px;
   text-align: left;
   color: #c8b78a;
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1.7;
 }
 
@@ -3239,13 +3216,14 @@ button:disabled {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 8px;
+  min-height: 28px;
+  padding: 4px 10px;
   margin-left: 6px;
   border: 1px solid rgba(120, 80, 30, 0.4);
   background: rgba(255, 248, 224, 0.6);
   color: #4a3014;
   border-radius: 4px;
-  font-size: 0.75rem;
+  font-size: 0.88rem;
   cursor: pointer;
 }
 .status-menu:hover {
