@@ -2908,8 +2908,8 @@ class GameDB:
                 return json.loads(text)
             except Exception:
                 pass
-            # LLM 偶尔多一个 }，顶层 JSON 提前关闭，后续字段成 trailing。
-            # 修法：找到截止位置，去掉多余 }，接回 trailing。
+            # LLM 多输出一个 }，顶层提前关闭，trailing 是被截出的字段。
+            # 去掉多余 }，接回 trailing（trailing 本身以顶层 } 结尾）。
             try:
                 dec = json.JSONDecoder()
                 obj, end = dec.raw_decode(text)
@@ -2923,14 +2923,6 @@ class GameDB:
                         except Exception:
                             pass
                 return obj
-            except Exception:
-                pass
-            # 最后兜底：json_repair（能处理未闭合括号、截断等更复杂错误）
-            try:
-                from json_repair import repair_json
-                result = repair_json(text, return_objects=True)
-                if isinstance(result, dict):
-                    return result
             except Exception:
                 pass
             return text
