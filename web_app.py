@@ -552,9 +552,10 @@ class WebGame:
         appointed_minister: str = "",
         displaced_minister: str = "",
     ) -> Dict[str, Any]:
-        character = self.content.characters[minister_name]
+        character = self.session._character(minister_name)
         self.chat_history[minister_name].append({"role": "minister", "content": answer})
-        self.db.append_chat_message(minister_name, self.state.turn, "minister", answer)
+        if minister_name not in self.session.temporary_characters:
+            self.db.append_chat_message(minister_name, self.state.turn, "minister", answer)
         return {
             "minister": minister_name,
             "answer": answer,
@@ -569,13 +570,14 @@ class WebGame:
         }
 
     def chat(self, minister_name: str, message: str) -> Dict[str, Any]:
-        if minister_name not in self.content.characters:
+        if minister_name not in self.content.characters and minister_name not in self.session.temporary_characters:
             raise HTTPException(status_code=404, detail=f"未找到大臣：{minister_name}")
         text = message.strip()
         if not text:
             raise HTTPException(status_code=400, detail="问话不能为空。")
         self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
-        self.db.append_chat_message(minister_name, self.state.turn, "user", text)
+        if minister_name not in self.session.temporary_characters:
+            self.db.append_chat_message(minister_name, self.state.turn, "user", text)
         result = self.session.chat(minister_name, text)
         proposed = None
         if result.proposed_directive is not None:
@@ -589,7 +591,7 @@ class WebGame:
         )
 
     def chat_stream(self, minister_name: str, message: str) -> Iterator[Dict[str, Any]]:
-        if minister_name not in self.content.characters:
+        if minister_name not in self.content.characters and minister_name not in self.session.temporary_characters:
             yield {"type": "error", "message": f"未找到大臣：{minister_name}"}
             return
         text = message.strip()
@@ -597,8 +599,9 @@ class WebGame:
             yield {"type": "error", "message": "问话不能为空。"}
             return
         self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
-        self.db.append_chat_message(minister_name, self.state.turn, "user", text)
-        character = self.content.characters[minister_name]
+        if minister_name not in self.session.temporary_characters:
+            self.db.append_chat_message(minister_name, self.state.turn, "user", text)
+        character = self.session._character(minister_name)
         chunks: List[str] = []
         try:
             agent = self.session.registry.get(character)
@@ -622,14 +625,17 @@ class WebGame:
             # 截 propose_directive：入 pending；截 propose_appointment：吏部铨选建档
             proposed = None
             appointed = ""
+            court_action = ""
+            next_minister = ""
             displaced = ""
             if run_output is not None:
                 for tool_exec in getattr(run_output, "tools", None) or []:
                     res = str(getattr(tool_exec, "result", "") or "")
-                    if res.startswith("__pending_directive__"):
+                    tool_name = getattr(tool_exec, "tool_name", "")
+                    if tool_name == "propose_directive" or res.startswith("__pending_directive__"):
                         draft_text = res.removeprefix("__pending_directive__").strip()
                         if not draft_text:
-                            args = getattr(tool_exec, "tool_args", {}) or {}
+                            args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                             draft_text = (args.get("decree_text") or "").strip()
                         if draft_text:
                             did = self.db.add_directive(
@@ -638,12 +644,29 @@ class WebGame:
                             )
                             proposed = {"id": did, "text": draft_text, "status": "pending",
                                         "notes": f"由{character.name}拟旨入档"}
-                    elif res.startswith("__pending_appointment__"):
+                    elif tool_name == "propose_appointment" or res.startswith("__pending_appointment__"):
                         payload_json = res.removeprefix("__pending_appointment__").strip()
+                        if not payload_json:
+                            args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
+                            payload_json = json.dumps(args, ensure_ascii=False)
                         appointed, displaced = self.session._apply_appointment(payload_json, character)
+                    elif tool_name == "summon_minister" or res.startswith("__summon__"):
+                        target_name = res.removeprefix("__summon__").strip()
+                        if not target_name:
+                            args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
+                            target_name = args.get("name", "")
+                        if target_name:
+                            target, _is_temporary = self.session.summon_character(target_name, character)
+                            ok, _reason = self.session.can_summon(target)
+                            if ok:
+                                court_action = "summon"
+                                next_minister = target.name
+                    elif tool_name == "dismiss_minister" or res == "__dismiss__":
+                        court_action = "dismiss"
             payload = self._chat_payload(
-                minister_name, answer, proposed_directive=proposed,
-                appointed_minister=appointed, displaced_minister=displaced,
+                minister_name, answer, court_action=court_action, next_minister=next_minister,
+                proposed_directive=proposed, appointed_minister=appointed,
+                displaced_minister=displaced,
             )
             yield {"type": "done", "payload": payload}
         except Exception as error:
@@ -941,6 +964,8 @@ _STATUS_LABEL_WEB = {
 
 
 def _require_active_minister(minister_name: str) -> None:
+    if minister_name in get_game().session.temporary_characters:
+        return
     if minister_name not in get_game().content.characters:
         raise HTTPException(status_code=404, detail=f"未找到人物：{minister_name}")
     status, reason = get_game().db.get_character_status(minister_name)
@@ -953,7 +978,7 @@ def _require_active_minister(minister_name: str) -> None:
 @app.get("/api/ministers/{minister_name}/chat")
 async def api_chat_history(minister_name: str) -> Dict[str, Any]:
     _require_active_minister(minister_name)
-    character = get_game().content.characters[minister_name]
+    character = get_game().session._character(minister_name)
     return {
         "minister": get_game().public_character(character),
         "history": get_game().chat_history.get(minister_name, []),

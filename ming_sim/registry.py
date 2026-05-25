@@ -360,3 +360,11 @@ class MinisterRegistry:
         )
         self.agents[character.name] = self._create(character)
         self.briefed.add(character.name)
+
+    def register_runtime(self, character: Character) -> None:
+        """注册不入正式名册的临时召见人物。"""
+        self.session_ids[character.name] = (
+            f"temporary-{character.name}-turn-{self.context.state.turn}"
+        )
+        self.agents[character.name] = self._create(character)
+        self.briefed.add(character.name)

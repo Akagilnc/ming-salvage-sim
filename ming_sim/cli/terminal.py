@@ -84,13 +84,20 @@ def choose_minister(session: GameSession) -> Optional[Character]:
                 print("这句话能对应多位大臣，请再说具体一点，或直接输编号。")
                 continue
         if candidate is None:
-            print("请输入有效编号或姓名。")
-            continue
-        status, reason = session.db.get_character_status(candidate.name)
-        if status != "active":
-            tag = _STATUS_LABEL.get(status, status)
-            print(f"{candidate.name}已{tag}，无法召见。{reason}")
-            continue
+            try:
+                candidate, is_temporary = session.summon_character(raw, None)
+            except ValueError:
+                print("请输入有效编号或姓名。")
+                continue
+            if is_temporary:
+                print(f"临时传{candidate.name}入殿。\n")
+                return candidate
+        if candidate.name not in session.temporary_characters:
+            status, reason = session.db.get_character_status(candidate.name)
+            if status != "active":
+                tag = _STATUS_LABEL.get(status, status)
+                print(f"{candidate.name}已{tag}，无法召见。{reason}")
+                continue
         return candidate
 
 
@@ -155,12 +162,20 @@ def _handle_court_command(
         return "dismiss"
 
     # 召见（传/召/宣/叫 开头）
-    summon_m = re.match(r"^[传召宣叫](.{1,8?})[来到]$|^[传召宣叫](.{1,8?})(?:入殿|上殿|面圣)", raw)
+    summon_m = re.match(
+        r"^(?:传召|传|召|宣|叫|带)(.{1,12?})(?:来|到|入殿|上殿|面圣|见我)$",
+        raw,
+    )
     if summon_m:
-        name_fragment = summon_m.group(1) or summon_m.group(2)
-        target = match_minister_from_text(name_fragment, current)
-        if target is not None:
-            return f"summon:{target.name}"
+        name_fragment = summon_m.group(1)
+        target, is_temporary = session.summon_character(name_fragment, current)
+        ok, reason = session.can_summon(target)
+        if not ok:
+            print(reason + "\n")
+            return "handled"
+        if is_temporary:
+            return f"summon-temp:{target.name}"
+        return f"summon:{target.name}"
 
     # 授予授权
     if any(w in raw for w in ("授权", "交给", "授予")):
@@ -239,8 +254,9 @@ def minister_chat(session: GameSession, character: Character) -> str:
             print(f"{character.name}退下。\n")
             return "dismiss"
         if result.court_action == "summon" and result.next_minister:
-            print(f"{character.name}退下。\n传{result.next_minister}入殿。\n")
-            return f"summon:{result.next_minister}"
+            is_temporary = result.next_minister in session.temporary_characters
+            print(f"{character.name}退下。\n{'临时传' if is_temporary else '传'}{result.next_minister}入殿。\n")
+            return f"{'summon-temp' if is_temporary else 'summon'}:{result.next_minister}"
 
 
 def review_directives(session: GameSession) -> str:
@@ -373,6 +389,9 @@ def play_turn(session: GameSession) -> None:
                     continue
                 if chat_action.startswith("summon:"):
                     pending_character = session.content.characters[chat_action.split(":", 1)[1]]
+                    continue
+                if chat_action.startswith("summon-temp:"):
+                    pending_character = session.temporary_characters[chat_action.split(":", 1)[1]]
                     continue
                 # court_break 或对话结束 → 审阅
                 action = review_directives(session)

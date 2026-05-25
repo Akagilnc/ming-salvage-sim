@@ -201,8 +201,11 @@ def build_minister_tools(character: Character, context: CourtContext):
         return skill_template("allocate_payroll", target=target)
 
     def propose_directive(decree_text: str) -> str:
-        """当皇帝示意采纳（"准奏"、"善"、"就这么办"、"卿且去办" 等）时，把方才所议处置方案
-        拟成一道圣旨草稿呈给皇帝审阅。皇帝确认后才正式入档。
+        """当皇帝态度强硬、已经定夺并命你拟旨/草诏/下旨/写旨时，调用此工具，
+        把已定处置方案拟成一道圣旨草稿呈给皇帝审阅。皇帝确认后才正式入档。
+
+        重要：普通文本回复不会入草案。皇帝只是询问、试探或方案未定时，不要调用；可先奏明利害。
+        若皇帝已强命拟旨，必须调用此工具，不能只在回复中写圣旨正文。
 
         参数：
         - decree_text：完整圣旨正文，明确执行者、关键动作、期限、回奏要求。不带 Markdown。

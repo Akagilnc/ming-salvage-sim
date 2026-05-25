@@ -315,6 +315,9 @@ def run(
     step = 0
     ministers_this_turn = 0  # 本月已召见大臣数
     MAX_MINISTERS_PER_TURN = 4  # 每月最多召见大臣数
+    prev_hint = ""            # 上一步命中的 prompt，用于检测卡同界面
+    stuck_count = 0           # 同一界面连续重复次数
+    STUCK_LIMIT = 6           # 连续卡同界面上限，超则升级退出路径
 
     try:
         while completed_periods < turns:
@@ -354,6 +357,24 @@ def run(
 
             log(f"\n--- step {step} | prompt: {prompt_hint.strip()[:40]} ---")
 
+            # 卡死检测：只盯「无效输入被拒」类界面（正常多轮对话的『朕问：』『诏书草案>』『确认入档』不算卡）。
+            # 真卡死特征：CLI 反复回「请输入有效编号或姓名」，皇帝怎么输都不被接受。
+            STUCK_PROMPTS = ("请输入有效编号或姓名",)
+            is_stuck_prompt = any(p in prompt_hint for p in STUCK_PROMPTS)
+            if is_stuck_prompt and prompt_hint == prev_hint:
+                stuck_count += 1
+            else:
+                stuck_count = 0
+            prev_hint = prompt_hint
+            if stuck_count >= STUCK_LIMIT:
+                if not child.isalive():
+                    log(f"[卡死 step {step}：连续 {stuck_count} 次被拒且 CLI 已退出，结束]")
+                    break
+                log(f"[卡死保护 step {step}：连续 {stuck_count} 次『输入被拒』，发送 quit 退朝]")
+                child.sendline("quit")
+                stuck_count = 0
+                continue
+
             # 月内召见超限且已有草案 → 强制退朝
             if "召见谁" in prompt_hint and ministers_this_turn >= MAX_MINISTERS_PER_TURN:
                 has_drafts = "暂无指令" not in cli_chunk and "暂无草案" not in cli_chunk
@@ -373,7 +394,15 @@ def run(
             log(f"[崇祯] input: {action!r}")
             state.history.append({"step": step, "prompt": prompt_hint.strip(), "reasoning": reasoning, "input": action})
 
-            child.sendline(action)
+            # CLI 可能在上一步已自行退出（如连续无效输入后），写已关闭的 pty 会 OSError Errno 5
+            if not child.isalive():
+                log(f"[CLI 已退出，停止发送 step {step}]")
+                break
+            try:
+                child.sendline(action)
+            except OSError as exc:
+                log(f"[sendline I/O 错误 step {step}: {exc}，CLI 已断，结束]")
+                break
             # 召见大臣计数（输入不是 quit/back 才算一次召见）
             if "召见谁" in prompt_hint and action.lower() not in {"quit", "q", "exit", "back", ""}:
                 ministers_this_turn += 1

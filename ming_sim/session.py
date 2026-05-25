@@ -268,6 +268,7 @@ class GameSession:
         self.debuts_this_turn: List[Dict[str, str]] = []
         self.previous_summary = ""
         self.registry: Optional[MinisterRegistry] = None
+        self.temporary_characters: Dict[str, Character] = {}
         self.last_decree = ""
         self.last_report = ""
         self._begun = False
@@ -330,7 +331,62 @@ class GameSession:
         return views
 
     def _character(self, name: str) -> Character:
+        if name in self.temporary_characters:
+            return self.temporary_characters[name]
         return character_from_name(name)
+
+    def _temporary_character(self, name: str) -> Character:
+        clean_name = str(name or "").strip()
+        if not clean_name:
+            raise ValueError("临时召见姓名不能为空。")
+        existing = self.temporary_characters.get(clean_name)
+        if existing is not None:
+            return existing
+        character = Character(
+            name=clean_name,
+            office="御前临时召见",
+            office_type="临时召见",
+            faction="未定",
+            aliases=[clean_name],
+            personal_skills=[],
+            loyalty=50,
+            ability=50,
+            integrity=50,
+            courage=50,
+            style="身份未详，奉旨临时入殿",
+            status="active",
+            summary="此人未入正式朝臣名册，只是奉旨临时入殿奏对；不得自称已有正式官职。",
+        )
+        self.temporary_characters[clean_name] = character
+        if self.registry is not None:
+            self.registry.register_runtime(character)
+        return character
+
+    def summon_character(self, name_or_text: str, current: Optional[Character] = None) -> Tuple[Character, bool]:
+        """召见人物：优先匹配正式名册；匹配不到则创建运行时临时人物。返回 (人物, 是否临时)。"""
+        target = match_minister_from_text(name_or_text, current)
+        if target is not None:
+            return (target, False)
+        clean_name = str(name_or_text or "").strip()
+        if clean_name in self.content.characters:
+            return (self.content.characters[clean_name], False)
+        return (self._temporary_character(clean_name), True)
+
+    def can_summon(self, character: Character) -> Tuple[bool, str]:
+        if character.name in self.temporary_characters:
+            return (True, "")
+        status, reason = self.db.get_character_status(character.name)
+        if status == "active":
+            return (True, "")
+        label = {
+            "offstage": "尚未登场",
+            "dismissed": "已罢黜",
+            "imprisoned": "下狱",
+            "exiled": "流放",
+            "retired": "致仕",
+            "dead": "已故",
+        }.get(status, status)
+        return (False, f"{character.name}{label}，无法召见。" + (reason or ""))
 
     def chat(self, minister_name: str, message: str) -> ChatTurnResult:
         """与大臣对话一轮，统一处理 court tool 截获。
@@ -355,10 +411,12 @@ class GameSession:
                 if next_name not in self.content.characters:
                     args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                     next_name = args.get("name", "")
-                target = match_minister_from_text(next_name, character) if next_name else None
-                if target is not None:
-                    result.court_action = "summon"
-                    result.next_minister = target.name
+                if next_name:
+                    target, _is_temporary = self.summon_character(next_name, character)
+                    ok, _reason = self.can_summon(target)
+                    if ok:
+                        result.court_action = "summon"
+                        result.next_minister = target.name
             elif tool_name == "propose_directive" or tool_result.startswith("__pending_directive__"):
                 draft_text = tool_result.removeprefix("__pending_directive__").strip()
                 if not draft_text:

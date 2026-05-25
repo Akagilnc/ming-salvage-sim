@@ -661,6 +661,32 @@
       "historical_death_month": 0
     },
     {
+      "name": "方正化",
+      "office": "司礼监太监",
+      "office_type": "司礼监",
+      "faction": "皇党",
+      "aliases": [
+        "方正化",
+        "方太监",
+        "方公公",
+        "司礼监方正化"
+      ],
+      "personal_skills": [
+        "内廷传旨",
+        "监军守城",
+        "忠谨任事"
+      ],
+      "loyalty": 86,
+      "ability": 58,
+      "integrity": 70,
+      "courage": 78,
+      "style": "忠谨果决",
+      "birth_year": 0,
+      "historical_death_year": 1643,
+      "historical_death_month": 0,
+      "summary": "崇祯时司礼监太监，后曾总监保定军务，城陷殉国。"
+    },
+    {
       "name": "魏忠贤",
       "office": "司礼监秉笔太监兼东厂提督",
       "office_type": "东厂",
@@ -737,6 +763,35 @@
       "birth_year": 1572,
       "historical_death_year": 0,
       "historical_death_month": 0
+    },
+    {
+      "name": "李若琏",
+      "office": "锦衣卫指挥同知",
+      "office_type": "锦衣卫",
+      "faction": "皇党",
+      "aliases": [
+        "李若琏",
+        "李若璉",
+        "李若链",
+        "李若莲",
+        "李指挥",
+        "锦衣卫李若琏",
+        "锦衣卫"
+      ],
+      "personal_skills": [
+        "缇骑密查",
+        "锦衣卫整肃",
+        "守城死节"
+      ],
+      "loyalty": 82,
+      "ability": 64,
+      "integrity": 74,
+      "courage": 86,
+      "style": "刚直忠勇",
+      "birth_year": 0,
+      "historical_death_year": 1644,
+      "historical_death_month": 3,
+      "summary": "明末锦衣卫武臣，后守崇文门，甲申国变时死节。"
     },
     {
       "name": "客氏",

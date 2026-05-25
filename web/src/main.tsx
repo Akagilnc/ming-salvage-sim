@@ -464,6 +464,7 @@ function App() {
   const [ministerGroup, setMinisterGroup] = React.useState("内阁");
   const [haremGroup, setHaremGroup] = React.useState("全部");
   const [selectedMinister, setSelectedMinister] = React.useState<string>("");
+  const [temporaryActiveMinister, setTemporaryActiveMinister] = React.useState<Minister | null>(null);
   const [activeModal, setActiveModal] = React.useState<ModalName>("none");
   const [chat, setChat] = React.useState<ChatMessage[]>([]);
   const [suggestions, setSuggestions] = React.useState<Suggestion[]>([]);
@@ -499,10 +500,15 @@ function App() {
   }, [selectedMinister]);
 
   const loadMinisterChat = React.useCallback(async (ministerName: string) => {
-    const data = await api<{ history: ChatMessage[]; suggestions: Suggestion[] }>(`/api/ministers/${encodeURIComponent(ministerName)}/chat`);
+    const data = await api<{ minister: Minister; history: ChatMessage[]; suggestions: Suggestion[] }>(`/api/ministers/${encodeURIComponent(ministerName)}/chat`);
+    const allKnown = [
+      ...(state?.ministers || []),
+      ...(state?.consorts || []),
+    ];
+    setTemporaryActiveMinister(allKnown.some((m) => m.name === data.minister.name) ? null : data.minister);
     setChat(data.history);
     setSuggestions(data.suggestions);
-  }, []);
+  }, [state]);
 
   const uploadPortrait = React.useCallback(async (ministerName: string, file: File) => {
     const form = new FormData();
@@ -626,7 +632,9 @@ function App() {
   const ministers = filterMinisters(state.ministers, ministerGroup);
   const consorts = filterConsorts(state.consorts || [], haremGroup);
   const allCharacters = [...state.ministers, ...(state.consorts || [])];
-  const activeMinister = selectedMinister ? allCharacters.find((m) => m.name === selectedMinister) || null : null;
+  const activeMinister = selectedMinister
+    ? allCharacters.find((m) => m.name === selectedMinister) || temporaryActiveMinister
+    : null;
   const mapIntelStyle = selectedNode ? getMapIntelStyle(selectedNode) : undefined;
 
   const openChat = (minister: Minister) => {
@@ -638,6 +646,7 @@ function App() {
     if (switchingMinister) {
       setChat([]);
       setSuggestions([]);
+      setTemporaryActiveMinister(null);
     }
     setSelectedMinister(minister.name);
     setActiveModal("chat");
@@ -693,6 +702,7 @@ function App() {
         setSelectedMinister(data.next_minister);
         setActiveModal("chat");
         setChatNotice(`已传${data.next_minister}入殿。`);
+        loadMinisterChat(data.next_minister).catch((err) => setError(err.message));
       }
       if (data.court_action === "dismiss") {
         setPendingUserMessage("");
