@@ -464,7 +464,7 @@ function App() {
   const [mapIntelOpen, setMapIntelOpen] = React.useState(false);
   const [drawerOpen, setDrawerOpen] = React.useState(false);
   const [haremDrawerOpen, setHaremDrawerOpen] = React.useState(false);
-  const [ministerGroup, setMinisterGroup] = React.useState("内阁");
+  const [ministerGroup, setMinisterGroup] = React.useState("内阁+六部");
   const [haremGroup, setHaremGroup] = React.useState("全部");
   const [selectedMinister, setSelectedMinister] = React.useState<string>("");
   const [temporaryActiveMinister, setTemporaryActiveMinister] = React.useState<Minister | null>(null);
@@ -1529,7 +1529,7 @@ function CourtDrawer({
           <button className="icon-button" aria-label="收起" onClick={onClose}><X size={16} /></button>
         </div>
         <div className="segmented">
-          {["内阁", "收藏", "全部"].map((group) => (
+          {["内阁+六部", "收藏", "全部"].map((group) => (
             <button
               className={ministerGroup === group ? "active" : ""}
               key={group}
@@ -3250,7 +3250,7 @@ function officeRank(office: string): number {
 }
 
 function filterMinisters(ministers: Minister[], group: string) {
-  if (group === "内阁" || group === "六部") {
+  if (group === "内阁+六部" || group === "内阁" || group === "六部") {
     return ministers
       .filter((m) =>
         (m.office_type === "内阁" || ["吏部", "户部", "礼部", "兵部", "刑部", "工部"].includes(m.office_type))
