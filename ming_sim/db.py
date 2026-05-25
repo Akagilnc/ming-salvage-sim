@@ -643,7 +643,7 @@ class GameDB:
             )
         for character in self.content.characters.values():
             existing = self.conn.execute(
-                "SELECT status, status_reason, status_changed_turn, portrait_id, office, office_type FROM characters WHERE name=?",
+                "SELECT status, status_reason, status_changed_turn, portrait_id, office, office_type, court_role FROM characters WHERE name=?",
                 (character.name,)
             ).fetchone()
             keep_status = existing["status"] if existing else character.status
@@ -654,6 +654,8 @@ class GameDB:
             # 已落库的 office 优先保留（任命/调任后重启不被 JSON 原始值覆盖）；否则取设定。
             keep_office = existing["office"] if existing and existing["office"] else character.office
             keep_office_type = existing["office_type"] if existing and existing["office_type"] else character.office_type
+            # court_role 同样保留（extractor 写入的朝班固定席位不被 seed 抹掉）。
+            keep_court_role = existing["court_role"] if existing else ""
             # 同步回内存，让 terminal 展示与 DB 一致
             if keep_office != character.office:
                 character.office = keep_office
@@ -664,8 +666,8 @@ class GameDB:
                 INSERT OR REPLACE INTO characters
                 (name, office, office_type, faction, personal_skills, loyalty, ability, integrity, courage, style,
                  birth_year, historical_death_year, historical_death_month, debut_year, debut_month,
-                 status, status_reason, status_changed_turn, portrait_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 status, status_reason, status_changed_turn, portrait_id, court_role)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     character.name,
@@ -687,6 +689,7 @@ class GameDB:
                     keep_reason,
                     keep_turn,
                     keep_portrait,
+                    keep_court_role,
                 ),
             )
             self.conn.execute(

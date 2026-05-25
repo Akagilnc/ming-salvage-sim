@@ -976,7 +976,6 @@ async def api_ministers(group: str = "全部", kind: str = "court") -> Dict[str,
         if (c.office_type == "后宫") == is_harem
         and get_game().db.get_character_status(c.name)[0] in visible
     ]
-    if not is_harem:
     if group == "收藏":
         ministers = [m for m in ministers if m["name"] in get_game().favorites]
     return {"group": group, "ministers": ministers}

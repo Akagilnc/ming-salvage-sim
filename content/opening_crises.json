@@ -72,8 +72,6 @@
     "effect_on_resolve": {
       "metrics": {"民心": 8}
     },
-    "effect_on_fail": {
-      "metrics": {"民心": -15, "皇威": -8}
-    }
+    "effect_on_fail": {}
   }
 ]

@@ -236,6 +236,22 @@ def apply_appointment(
     return (name, displaced)
 
 
+def _sync_offices_from_db_impl(content: GameContent, db: "GameDB") -> None:
+    """启动时把 DB 里的 office/office_type/status 同步回内存 content.characters。
+    DB 是持久化真相，JSON 只是初始值。"""
+    rows = db.conn.execute(
+        "SELECT name, office, office_type, status FROM characters"
+    ).fetchall()
+    for row in rows:
+        name = row["name"]
+        if name in content.characters:
+            ch = content.characters[name]
+            ch.office = row["office"]
+            if row["office_type"]:
+                ch.office_type = row["office_type"]
+            ch.status = row["status"]
+
+
 def _bind_all_content(content: GameContent) -> None:
     """把 GameContent 注入所有 bind_content 模块。GameSession 启动时调一次。"""
     _bind_skills(content)
@@ -263,6 +279,7 @@ class GameSession:
             verify_llm_available(llm_config)
         self.db = GameDB(db_path, content=self.content)
         self.db.seed_static_data()
+        _sync_offices_from_db_impl(self.content, self.db)
         self.agno_db = create_agno_db(db_path)
         self.state = self.db.load_state(start_ym)
         self.deaths_this_turn: List[Dict[str, str]] = []
@@ -281,6 +298,7 @@ class GameSession:
         self.state = self.db.load_state()
         self.deaths_this_turn = self.db.apply_historical_deaths(self.state)
         self.debuts_this_turn = self.db.apply_historical_debuts(self.state)
+        _sync_offices_from_db_impl(self.content, self.db)
         self.previous_summary = self.db.previous_turn_summary(self.state) or ""
         context = CourtContext(state=self.state, db=self.db, previous_summary=self.previous_summary)
         self.registry = MinisterRegistry(self.llm_config, self.agno_db, context)

@@ -984,7 +984,7 @@ def apply_issue_inertia_and_ongoing(
             new_bar = max(0, min(100, bar + inertia))
             actual = new_bar - bar
             if actual != 0:
-                db.advance_issue(
+                new_row = db.advance_issue(
                     state, issue_id,
                     trigger_kind="inertia",
                     delta_bar=actual,
@@ -992,8 +992,22 @@ def apply_issue_inertia_and_ongoing(
                     narrative="局势自有其势，本月按其本然推移。",
                     metric_delta={},
                 )
+                if new_row is None:
+                    continue
+                if new_row["status"] == "resolved":
+                    effect = json.loads(new_row["effect_on_resolve"] or "{}")
+                    _apply_metric_dict(state, effect.get("metrics") or {})
+                    _apply_economy_list(db, state, effect.get("economy") or [])
+                    _apply_faction_dict(db, effect.get("factions") or {})
+                    continue
+                elif new_row["status"] == "failed":
+                    effect = json.loads(new_row["effect_on_fail"] or "{}")
+                    _apply_metric_dict(state, effect.get("metrics") or {})
+                    _apply_economy_list(db, state, effect.get("economy") or [])
+                    _apply_faction_dict(db, effect.get("factions") or {})
+                    continue
                 row = db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
-                if row is None or row["status"] != "active":
+                if row is None:
                     continue
                 bar = int(row["bar_value"])
 

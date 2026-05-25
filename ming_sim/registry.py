@@ -343,16 +343,28 @@ class MinisterRegistry:
             session_id=self.session_ids[character.name],
         )
 
+    def _build_draft_line(self) -> str:
+        """实时查本回合已核定草案，供 brief 注入。"""
+        draft_rows = self.context.db.list_directives(self.context.state, statuses=("draft",))
+        if not draft_rows:
+            return "无"
+        return "；".join(
+            f"#{r['id']} {r['text'][:40]}{'…' if len(r['text']) > 40 else ''}"
+            for r in draft_rows
+        )
+
     def _brief_if_needed(self, character: Character) -> None:
         """首次召见时把本月动态上下文作为 user message 喂给大臣（不进 system prompt → 不破前缀缓存）。"""
         if character.name in self.briefed:
             return
         agent = self.agents[character.name]
+        draft_line = self._build_draft_line()
         prompt = (
             f"本{TURN_UNIT}朝会初始化上下文（钱粮、奏报、地区、军队、派系等，进殿前请知会，不需详细回奏）：\n"
-            f"{self._court_brief}\n\n"
+            f"{self._court_brief}\n"
+            f"当前诏书草稿（已核定、待颁诏）：{draft_line}。\n\n"
             f"{build_memory_brief(character, self.context)}\n\n"
-            "请简短回一句“臣已知会”，然后等皇帝问话。"
+            '请简短回一句"臣已知会"，然后等皇帝问话。'
         )
         try:
             agent.run(prompt)
