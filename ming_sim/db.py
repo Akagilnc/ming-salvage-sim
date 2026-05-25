@@ -2908,16 +2908,13 @@ class GameDB:
                 return json.loads(text)
             except Exception:
                 pass
-            # LLM 偶尔多一个 }，导致某个嵌套 dict 多余关闭，后续字段变 trailing。
-            # 修法：找到 raw_decode 截止位置，把多余的 } 删掉再接 trailing。
+            # LLM 偶尔多一个 }，顶层 JSON 提前关闭，后续字段成 trailing。
+            # 修法：找到截止位置，去掉多余 }，接回 trailing。
             try:
-                import re as _re
                 dec = json.JSONDecoder()
                 obj, end = dec.raw_decode(text)
                 trailing = text[end:].strip()
                 if trailing.startswith(","):
-                    # text[:end] 是提前关闭的 JSON（末尾多余一个 }）
-                    # trailing 本身以顶层 } 结尾，去掉 prefix 末尾多余的 } 再直接拼
                     prefix = text[:end].rstrip()
                     if prefix.endswith("}"):
                         fixed = prefix[:-1] + trailing
@@ -2927,7 +2924,16 @@ class GameDB:
                             pass
                 return obj
             except Exception:
-                return text
+                pass
+            # 最后兜底：json_repair（能处理未闭合括号、截断等更复杂错误）
+            try:
+                from json_repair import repair_json
+                result = repair_json(text, return_objects=True)
+                if isinstance(result, dict):
+                    return result
+            except Exception:
+                pass
+            return text
         return {
             "turn": int(row["turn"]),
             "year": int(row["year"]),
