@@ -1235,19 +1235,45 @@ function MinisterCardList({
   const dragging = React.useRef<{ name: string; startMX: number; startMY: number; startPX: number; startPY: number } | null>(null);
   const didDrag = React.useRef(false);
 
-  // 从 db 加载坐标，再补新大臣默认位置
+  // 从 db 加载手动拖动覆盖坐标，其余按槽位顺序自动排
   React.useEffect(() => {
     loadCourtPos().then((saved) => {
-      setPositions((prev) => {
-        const next = { ...saved, ...prev };  // prev 可能有拖动中的实时值，保留
-        let changed = false;
-        list.forEach((m, i) => {
-          if (!next[m.name]) {
-            next[m.name] = defaultCourtPct(i, list.length);
-            changed = true;
+      setPositions(() => {
+        const allSlots = courtSlots();
+        // 按 list 顺序（已按 officeRank 排好）依次分配槽位
+        const next: Record<string, { px: number; py: number }> = {};
+        const usedSlots = new Set<string>();
+        list.forEach((m) => {
+          if (saved[m.name]) {
+            // 手动拖动过：保留，但吸附到最近可用槽（避免槽冲突）
+            const cur = saved[m.name];
+            const free = allSlots.find((s) => {
+              const key = `${s.side}:${s.slot}`;
+              if (usedSlots.has(key)) return false;
+              return true;
+            });
+            // 找最近未占槽
+            let best = free ?? allSlots[0];
+            let bestD = Infinity;
+            for (const s of allSlots) {
+              const key = `${s.side}:${s.slot}`;
+              if (usedSlots.has(key)) continue;
+              const d = Math.hypot(s.px - cur.px, s.py - cur.py);
+              if (d < bestD) { bestD = d; best = s; }
+            }
+            usedSlots.add(`${best.side}:${best.slot}`);
+            next[m.name] = { px: best.px, py: best.py };
+          } else {
+            // 未拖动：按顺序取下一个空槽
+            const slot = allSlots.find((s) => !usedSlots.has(`${s.side}:${s.slot}`));
+            if (slot) {
+              usedSlots.add(`${slot.side}:${slot.slot}`);
+              next[m.name] = { px: slot.px, py: slot.py };
+            } else {
+              next[m.name] = { px: 0.5, py: 0.532 };  // 槽满兜底：站近处中间
+            }
           }
         });
-        if (changed) saveCourtPos(next);
         return next;
       });
     });

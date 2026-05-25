@@ -112,7 +112,7 @@
 | `region_delta` | 各地区数值变化，key=region_id | key **必须**从 `region_ids` 选。合法字段仅：量表 `public_support`/`unrest`/`grain_security`/`gentry_resistance`/`military_pressure`（±10、极端 ±20）、腐败度 `corruption`（0-100，整治贪腐/巡按/抄家→负值 ±5~±20，放任失控→正值；只在有明确整治或失控动作时才填）、数量 `population`/`registered_land`/`hidden_land`/`tax_per_turn`、文字 `natural_disaster`/`human_disaster`/`status`。**减人口写 `population`，不是 `manpower`（`manpower` 是军队字段，严禁写入地区）。** 无变化填 `{}`。 |
 | `army_delta` | 各军数值变化，key=army_id | key **必须**从 `army_ids` 选。合法字段仅：量表 `supply`/`morale`/`training`/`equipment`/`arrears`/`mobility`/`loyalty`、数量 `manpower`/`maintenance_quarter`、文字 `station`/`commander`/`controller`/`troop_type`/`status`。**`cohesion` 是外部势力字段，严禁写入。** |
 | `external_power_updates` | 外部势力数值/状态变化，key=external_power_id | key **必须**从 `external_power_ids` 选。数值字段填**增量**（「兵势72→68」→-4）：`leverage`/`satisfaction`/`military_strength`/`cohesion`/`supply`；文字填**新值**：`leader`/`stance`/`agenda`/`status`/`last_action`。 |
-| `world_advance` | 后金/蒙古/朝鲜/流寇四方动向综述 | 四方都必须有，无动作也写「无新动」。 |
+| `world_advance` | 后金/蒙古/朝鲜/流寇四方动向综述 | 四方都必须有，无动作也写「无新动」。每方 value 是 `{"stance":"...","action":"...","impact":"...","intent":"..."}`，**不要加 `summary` 等额外子字段**，避免括号层级出错。 |
 | `issue_advances` | 既有局势本{{TURN_UNIT}}推进 | 每项 `issue_id`(必须是 active_issues 里的 integer id)+`delta_bar`+`stage_text`+`narrative`，可选 `inertia_delta`。`delta_bar` 是皇帝本{{TURN_UNIT}}实旨推动的额外量，与 issue 每{{TURN_UNIT}}自然漂移 inertia 叠加。详见「局势推进规则」。 |
 | `new_issues` | 本{{TURN_UNIT}}新立局势 | 仅两来源：`decree`（带全字段）/`event_pool`（只带 `origin_kind`+`id`）。详见「局势立项规则」。 |
 | `cancels` | 皇帝撤销的局势 | 每项 `issue_id`+`applied_cost`+`narrative`。详见「局势推进规则·撤销」。 |
@@ -246,7 +246,7 @@ decree new_issue 必填字段：
   "region_delta": {"shaanxi": {"unrest": 5, "grain_security": -3}, "nanzhili": {"gentry_resistance": 8, "corruption": -12}},
   "army_delta": {"guanning": {"morale": -3, "arrears": 5}},
   "external_power_updates": {"houjin": {"leverage": -4, "stance": "敌对", "last_action": "退屯整兵"}},
-  "world_advance": {"后金": {"stance": "敌对", "action": "...", "impact": "...", "intent": "..."}, "蒙古": {...}, "朝鲜": {...}, "流寇": {...}, "summary": "..."},
+  "world_advance": {"后金": {"stance": "敌对", "action": "...", "impact": "...", "intent": "..."}, "蒙古": {"stance": "摇摆", "action": "...", "impact": "...", "intent": "..."}, "朝鲜": {"stance": "倾明", "action": "...", "impact": "...", "intent": "..."}, "流寇": {"stance": "潜伏", "action": "...", "impact": "...", "intent": "..."}},
   "issue_advances": [{"issue_id": 12, "delta_bar": 15, "stage_text": "户部主事至苏州", "narrative": "..."}],
   "new_issues": [
     {"kind": "initiative", "title": "火器营试设", "origin_kind": "decree", "bar_value": 20, "expected_months": 10, "stage_text": "...", "resolve_condition": "...", "fail_condition": "...", "ongoing_effects": {}, "effect_on_resolve": {"metrics": {"皇威": 3}}, "effect_on_fail": {"metrics": {"皇威": -4}}, "cancellable": "by_progress"},
