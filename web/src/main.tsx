@@ -2693,7 +2693,7 @@ function OfficeChangesBlock({ data }: { data: any }) {
       {data.map((it: any, i: number) => (
         <li key={i}>
           <b className={it?.rejected ? "bad" : "good"}>
-            {it?.name} → {it?.new_office}{it?.rejected ? "（未落地）" : it?.kind === "appoint" ? "（新进朝堂）" : ""}
+            {it?.name} → {it?.new_office}{it?.new_office_type ? `（${it.new_office_type}）` : ""}{it?.rejected ? "（未落地）" : it?.kind === "appoint" ? "（新进朝堂）" : ""}
           </b>
           {it?.displaced ? <span>顶替 {it.displaced} 去职</span> : null}
           {it?.reason ? <span>{it.reason}</span> : null}
