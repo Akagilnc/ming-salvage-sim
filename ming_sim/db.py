@@ -2318,15 +2318,29 @@ class GameDB:
             f"{row['status']}"
         )
 
-    def adjust_factions(self, deltas: Dict[str, int]) -> None:
-        for faction, delta in deltas.items():
-            if not delta:
+    def adjust_factions(self, deltas: Dict[str, object]) -> None:
+        for faction, val in deltas.items():
+            if isinstance(val, dict):
+                sat_d = int(val.get("satisfaction") or 0)
+                lev_d = int(val.get("leverage") or 0)
+            else:
+                try:
+                    sat_d = int(val)  # type: ignore[arg-type]
+                except (TypeError, ValueError):
+                    continue
+                lev_d = 0
+            if sat_d == 0 and lev_d == 0:
                 continue
-            current = self.faction_satisfaction(faction)
-            value = max(0, min(100, current + delta))
+            row = self.conn.execute(
+                "SELECT satisfaction, leverage FROM factions WHERE name = ?", (faction,)
+            ).fetchone()
+            if not row:
+                continue
+            new_sat = max(0, min(100, int(row["satisfaction"]) + sat_d))
+            new_lev = max(0, min(100, int(row["leverage"]) + lev_d))
             self.conn.execute(
-                "UPDATE factions SET satisfaction = ? WHERE name = ?",
-                (value, faction),
+                "UPDATE factions SET satisfaction = ?, leverage = ? WHERE name = ?",
+                (new_sat, new_lev, faction),
             )
         self.conn.commit()
 

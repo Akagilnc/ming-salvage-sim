@@ -107,7 +107,7 @@
 |---|---|---|
 | `metric_delta` | 两量表本{{TURN_UNIT}}增量（民心/皇威）| 增量非新值。按上方「档位判定标准」自判档位。 |
 | `economy_moves` | 浮动收支（旨意执行/事件/赏罚/查抄/赈灾追加） | 每项 `account`(国库/内库)+`delta`+`category`+`reason`。单位万两（「国库263万两(-15)」→delta=-15）。**`account` 按钱出自哪个库定，不按用途定，不按经办衙门定**：凡「内帑/内库/宫中/皇帝私帑」拨出的支出，`account`=内库（即便用于补军饷/赈灾/解关外等外朝用途，即便由兵部/户部/太仓经手调度，也只记内库扣减一笔，不得同时或改记国库流出）；户部/太仓/外朝财政拨出的记国库。查抄入帑分内外同理（抄家充内帑→内库正项，充太仓→国库正项）。**反例（禁止）**：内帑出三万两由兵部解关外，写成 `{"account":"国库","delta":-3,...}` 或同时写国库与内库两笔——错。正解：只写 `{"account":"内库","delta":-3,...}` 一笔；经办衙门写进 `reason`，不影响 `account`。`fixed_flows` 已落账的固定项（田赋/辽饷/盐税/商税/宗室禄米/百官俸禄/工部/赈灾/九边补给/各军军饷/皇庄/织造/矿税/宫廷/内廷俸/妃嫔）**不进这里**。 |
-| `faction_delta` | 派系满意度增量（阉党/皇党/军队/东林/宗室/中立/西学） | 增量非新值。按上方「档位判定标准」选档。 |
+| `faction_delta` | 派系满意度+影响力增量（阉党/皇党/军队/东林/宗室/中立/西学） | 增量非新值。两种格式均可：① 只改满意度：`{"阉党": -10}`（数字=satisfaction增量）；② 同时改满意度+影响力：`{"阉党": {"satisfaction": -10, "leverage": -15}}`。**清党/大规模罢黜/抄家必须同时降 leverage**（势力瓦解）；小摩擦只降 satisfaction；招安/重用某派必须同时升 leverage。 |
 | `class_delta` | 阶级满意度/影响力增量。key 形如 `农民` 表全国汇总；`农民@shaanxi` 表省级切片（region_id 从 `region_ids` 选） | value 形如 `{"satisfaction": -5, "leverage": +2}`，增量非新值。两字段都可写、可只写一个。**联动靠你自觉判**：①党派强推损某阶级利益 → 该阶级 sat 跌，且该党派 sat 也跟着跌（代言失职）；②东林 ↔ 江南士绅唇齿，抄江南/苏松士绅 → 东林 lev 同向掉，杀东林台谏 → 江南士绅 sat 同向掉；③阉党 ↔ 内廷宦官+地方税监同体，极端清算阉党时其代表阶级 sat+lev 双降；④军队 ↔ 军户/将门基本盘，欠饷军户 sat 长低 → 军队党 sat 也跌；⑤宗室党 ↔ 宗藩阶级同向（削宗禄/抄藩田同时损二者）；⑥极端手段（抄家屠戮）单次 ±20~40。阶级 sat≤30 且 lev≥60 易触发该省该阶级骚乱事件，由季末推演判定。 |
 | `region_delta` | 各地区数值变化，key=region_id | key **必须**从 `region_ids` 选。合法字段仅：量表 `public_support`/`unrest`/`grain_security`/`gentry_resistance`/`military_pressure`（±10、极端 ±20）、腐败度 `corruption`（0-100，整治贪腐/巡按/抄家→负值 ±5~±20，放任失控→正值；只在有明确整治或失控动作时才填）、数量 `population`/`registered_land`/`hidden_land`/`tax_per_turn`、文字 `natural_disaster`/`human_disaster`/`status`。**减人口写 `population`，不是 `manpower`（`manpower` 是军队字段，严禁写入地区）。** 无变化填 `{}`。 |
 | `army_delta` | 各军数值变化，key=army_id | key **必须**从 `army_ids` 选。合法字段仅：量表 `supply`/`morale`/`training`/`equipment`/`arrears`/`mobility`/`loyalty`、数量 `manpower`/`maintenance_quarter`、文字 `station`/`commander`/`controller`/`troop_type`/`status`。**`cohesion` 是外部势力字段，严禁写入。** |
@@ -241,7 +241,7 @@ decree new_issue 必填字段：
 {
   "metric_delta": {"民心": -3, "皇威": 2},
   "economy_moves": [{"account": "国库", "delta": -15, "category": "赈灾", "reason": "陕西赈粮"}],
-  "faction_delta": {"阉党": -5, "东林": 4},
+  "faction_delta": {"阉党": {"satisfaction": -15, "leverage": -20}, "东林": {"satisfaction": 8, "leverage": 5}},
   "class_delta": {"农民@shaanxi": {"satisfaction": -6, "leverage": 5}},
   "region_delta": {"shaanxi": {"unrest": 5, "grain_security": -3}, "nanzhili": {"gentry_resistance": 8, "corruption": -12}},
   "army_delta": {"guanning": {"morale": -3, "arrears": 5}},

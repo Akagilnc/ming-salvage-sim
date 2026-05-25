@@ -313,16 +313,34 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     return flows
 
 
-def _apply_faction_dict(db: GameDB, faction_delta: Dict[str, object]) -> Dict[str, int]:
-    cleaned: Dict[str, int] = {}
+def _apply_faction_dict(db: GameDB, faction_delta: Dict[str, object]) -> Dict[str, object]:
+    """支持两种格式：
+    - 旧格式：{"阉党": -10}  → 仅 satisfaction 增量
+    - 新格式：{"阉党": {"satisfaction": -10, "leverage": -15}}
+    """
+    cleaned: Dict[str, object] = {}
     for key, val in (faction_delta or {}).items():
-        try:
-            d = int(val)
-        except (TypeError, ValueError):
-            continue
-        if d == 0:
-            continue
-        cleaned[key] = d
+        if isinstance(val, dict):
+            entry: Dict[str, int] = {}
+            for fname in ("satisfaction", "leverage"):
+                raw = val.get(fname)
+                if raw is None:
+                    continue
+                try:
+                    d = int(raw)
+                except (TypeError, ValueError):
+                    continue
+                if d != 0:
+                    entry[fname] = d
+            if entry:
+                cleaned[str(key)] = entry
+        else:
+            try:
+                d = int(val)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                continue
+            if d != 0:
+                cleaned[str(key)] = d
     if cleaned:
         db.adjust_factions(cleaned)
     return cleaned
