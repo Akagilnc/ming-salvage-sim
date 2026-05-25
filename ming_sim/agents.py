@@ -236,6 +236,45 @@ def create_decree_writer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agen
     )
 
 
+_MEMORY_RETRIEVAL_PROMPT = (
+    "你是记忆检索助手。从给定的诏书与事项摘要中提取关键实体、操作词与时间信息，用于检索历史记忆。\n"
+    "输出严格 JSON，不加任何解释：\n"
+    "{\n"
+    '  "characters": ["人名", ...],\n'
+    '  "regions": ["地名/省份", ...],\n'
+    '  "armies": ["军队名", ...],\n'
+    '  "powers": ["外部势力名", ...],\n'
+    '  "keywords": ["核心动词或操作名词", ...],\n'
+    '  "year": 1628,\n'
+    '  "period": 3\n'
+    "}\n"
+    "规则：只提取文本中实际出现的词；keywords 限 5 个以内最核心的；所有列表可为空数组。\n"
+    "year/period：仅当诏书明确提及具体年份或月份时填写（如「崇祯元年三月」→ year=1628, period=3）；"
+    "无明确时间则两字段均不输出或填 null。"
+)
+
+
+def create_memory_retrieval_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
+    """从诏书提取实体词用于记忆检索；低温、无 tool、输出纯 JSON。"""
+    return Agent(
+        name="记忆检索员",
+        id="memory-retrieval",
+        session_id="memory-retrieval",
+        db=agno_db,
+        model=create_chat_model(
+            llm_config,
+            temperature=0.0,
+            top_p=0.7,
+            max_tokens=300,
+            enable_thinking=False,
+            force_json_output=True,
+        ),
+        instructions=[_MEMORY_RETRIEVAL_PROMPT],
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
 def create_season_simulator_agent(
     llm_config: LLMConfig,
     agno_db: SqliteDb,

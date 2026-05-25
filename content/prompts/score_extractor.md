@@ -95,6 +95,7 @@
 - `class_names`：合法阶级名表（如 `农民`/`士绅`/`官僚`/`军户`/`商人`/`匠户`/`宗藩`）
 - `candidate_events`：本{{TURN_UNIT}}候选情势清单（id/title）
 - `fiscal_config`：当前各财政系数
+- `relevant_memories`：与本{{TURN_UNIT}}诏书相关的历史事件记忆。每条字段：`year`/`period`（事发年月）、`subject_type`（character/court/external_power/region）、`subject_id`（当事人名或地区/势力名）、`title`（事件标题）、`cause`（起因摘要）、`outcome`（结果摘要）、`importance`（1–5重要度）、`tags`（关联人名/地名/事项编号等）。对盘面查不到某人/地区当前值时，可参照记忆里的 outcome 判断趋势方向；定 delta 档位时若记忆显示此事已多回合累积，可适当上调重度。记忆是辅助参考，**不强制引用**。
 
 **表格格式约定**：`regions` / `armies` / `buildings` / `external_powers` / `active_ministers` / `offstage_ministers` 均为 `{"cols":[列名...], "rows":[[值...]...]}` 形式——`cols` 是列名数组，`rows` 是二维数组每行一条记录，按 `cols` 顺序对位。查某行某字段时按 `cols.index("字段名")` 找列下标，再到该 `rows[i]` 取值。这是为压缩 token 改的格式，语义与 dict-of-rows 完全等价。
 

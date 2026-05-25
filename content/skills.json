@@ -1,5 +1,5 @@
 {
-  "common_skills": ["view_state", "list_memorials", "inspect_memorial", "list_regions", "inspect_region", "list_armies", "inspect_army", "estimate_resistance", "draft_directive", "draft_edict"],
+  "common_skills": ["view_state", "list_memorials", "inspect_memorial", "list_regions", "inspect_region", "list_armies", "inspect_army", "list_personnel", "inspect_minister", "inspect_personnel_changes", "estimate_resistance", "draft_directive", "draft_edict"],
   "skill_catalog": {
     "view_state": {"name": "查看国势", "kind": "通用", "tools": true},
     "list_memorials": {"name": "查看奏报", "kind": "通用", "tools": true},
@@ -8,6 +8,9 @@
     "inspect_region": {"name": "查看地区详情", "kind": "通用", "tools": true},
     "list_armies": {"name": "查看军队警讯", "kind": "通用", "tools": true},
     "inspect_army": {"name": "查看军队详情", "kind": "通用", "tools": true},
+    "list_personnel": {"name": "查看人事总表", "kind": "通用", "tools": true},
+    "inspect_minister": {"name": "查看官员现况", "kind": "通用", "tools": true},
+    "inspect_personnel_changes": {"name": "查看人事变动", "kind": "通用", "tools": true},
     "estimate_resistance": {"name": "估算阻力", "kind": "通用", "tools": true},
     "draft_directive": {"name": "草拟指令", "kind": "通用", "tools": true},
     "draft_edict": {"name": "草拟圣旨", "kind": "通用", "tools": true},
@@ -39,6 +42,9 @@
     "inspect_region": "查看某一地区的人口、民心、动乱、天灾、人祸、田亩和税收。",
     "list_armies": "查看大明主要军队、驻扎地、维护费、补给、士气和欠饷警讯。",
     "inspect_army": "查看某支军队的驻扎地、兵种、人数、维护费、补给、士气、训练、装备和欠饷。",
+    "list_personnel": "查看当前朝臣人事总表：现职、状态与任事处。",
+    "inspect_minister": "查看某位官员当前现职、状态、任事处和近来牵涉诏令。",
+    "inspect_personnel_changes": "查看某人或全朝最近任命、调任、罢黜、下狱、致仕、死亡等人事变动。",
     "estimate_resistance": "估算一道旨意会被谁拖、谁反弹。",
     "draft_directive": "把皇帝口谕登记为本月诏书草案，不立刻结算。",
     "draft_edict": "按奏报和政策方向拟一段可批准的圣旨文本。",

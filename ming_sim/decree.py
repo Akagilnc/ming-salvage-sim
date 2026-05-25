@@ -14,8 +14,11 @@ from agno.db.sqlite import SqliteDb
 from ming_sim.agents import (
     create_decree_writer_agent,
     create_json_sanitizer_agent,
+    create_memory_retrieval_agent,
     create_score_extractor_agent,
     create_season_simulator_agent,
+    parse_agent_json,
+    run_agent_text,
 )
 from ming_sim.constants import TURN_UNIT
 from ming_sim.context import victory_status
@@ -108,6 +111,48 @@ def resolve_directives(
     _emit("stage", "固定月度财政入账")
     fixed_flows = apply_fixed_period_flows(db, state)
 
+    # 1.8) 记忆检索：从诏书提取实体词，召回相关历史记忆注入推演
+    relevant_memories: List[Dict] = []
+    try:
+        _emit("stage", "检索相关历史记忆")
+        retrieval_agent = create_memory_retrieval_agent(llm_config, agno_db)
+        retrieval_input = json.dumps({
+            "decree_text": decree_text,
+            "directives": [d["directive_text"] for d in directives_brief],
+            "active_issues": [{"id": r["id"], "title": r["title"]} for r in db.list_active_issues()],
+        }, ensure_ascii=False)
+        raw_keywords = run_agent_text(retrieval_agent, retrieval_input, tag="memory-retrieval")
+        kw_data = parse_agent_json(raw_keywords, "记忆检索")
+        keywords: List[str] = []
+        for field in ("characters", "regions", "armies", "powers", "keywords"):
+            keywords.extend(str(k) for k in (kw_data.get(field) or []) if k)
+
+        # tags查（普通，带expiry过滤）
+        tag_memories = db.get_memories_by_keywords(keywords, turn=state.turn, limit=10)
+
+        # 时间查（有year/period时，ignore_expiry查历史记忆）
+        time_memories: List[Dict] = []
+        ref_year = kw_data.get("year")
+        ref_period = kw_data.get("period")
+        if ref_year and ref_period:
+            ref_turn = (int(ref_year) - 1627) * 12 + (int(ref_period) - 10) + 1
+            time_memories = db.get_memories_by_keywords(
+                keywords, turn=ref_turn, limit=5, ignore_expiry=True
+            )
+            tlog(f"[memory/retrieval] 时间查 {ref_year}年{ref_period}月=turn{ref_turn} hit={len(time_memories)}")
+
+        # 合并去重，time_memories优先（在前）
+        seen_ids: set = set()
+        relevant_memories = []
+        for m in time_memories + tag_memories:
+            if m["id"] not in seen_ids:
+                seen_ids.add(m["id"])
+                relevant_memories.append(m)
+        relevant_memories = relevant_memories[:12]
+        tlog(f"[memory/retrieval] keywords={keywords} total={len(relevant_memories)}")
+    except Exception as exc:
+        tlog(f"[memory/retrieval] 失败，跳过：{exc}")
+
     # 2) 推演 agent: 写邸报
     tlog("结算 2/4 推演 agent（月末邸报）")
     _emit("stage", "推演月末邸报")
@@ -119,6 +164,7 @@ def resolve_directives(
             fixed_flows=fixed_flows,
             deaths_this_turn=deaths_this_turn,
             debuts_this_turn=debuts_this_turn,
+            relevant_memories=relevant_memories,
             on_thinking=lambda c: _emit("thinking", c),
             on_text=lambda c: _emit("text", c),
         )
@@ -151,7 +197,8 @@ def resolve_directives(
     extractor_output = ""
     try:
         extracted, extractor_output, extractor_input = extract_scores_with_agno(
-            extractor, db, state, narrative, decree_text=decree_text, sanitizer=sanitizer
+            extractor, db, state, narrative, decree_text=decree_text, sanitizer=sanitizer,
+            relevant_memories=relevant_memories
         )
     except Exception as exc:
         print(f"[WARN] 结算抽取失败：{exc}；本{TURN_UNIT}数值不变。")

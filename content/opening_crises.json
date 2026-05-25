@@ -7,7 +7,7 @@
     "bar_value": 28,
     "bar_good_meaning": "财用渐丰",
     "bar_bad_meaning": "太仓见底",
-    "inertia": -7,
+    "inertia": 0,
     "stage_text": "毕自严具题：太仓存银不足三百万，辽饷京营官俸赈济四项轮番告急。",
     "tags": ["财政", "户部"],
     "faction_hint": "户部,东林清流",
@@ -21,10 +21,6 @@
     "effect_on_resolve": {
       "metrics": {"皇威": 5, "民心": 3},
       "economy": [{"account": "国库", "delta": 80, "category": "新财源落账", "reason": "财政整顿成形"}]
-    },
-    "effect_on_fail": {
-      "metrics": {"皇威": -10, "民心": -10},
-      "economy": [{"account": "国库", "delta": -50, "category": "信用崩坏", "reason": "官俸军饷违约引发的连锁亏空"}]
     }
   },
   {
@@ -35,7 +31,7 @@
     "bar_value": 25,
     "bar_good_meaning": "宁锦稳固",
     "bar_bad_meaning": "关宁哗溃",
-    "inertia": -8,
+    "inertia": 0,
     "stage_text": "袁崇焕、孙承宗连章告急：关宁军欠饷三月，宁锦防线缺粮，士卒鼓噪。",
     "tags": ["军事", "边防"],
     "faction_hint": "边镇,军队",
@@ -62,7 +58,7 @@
     "bar_value": 30,
     "bar_good_meaning": "饥民就抚",
     "bar_bad_meaning": "成股破州县",
-    "inertia": -6,
+    "inertia": 0,
     "stage_text": "陕西巡按报：连岁亢旱，逃户成群，驿卒、饥民与盗匪渐混。王嘉胤、王二之徒已起。",
     "tags": ["地方", "流寇", "饥荒"],
     "faction_hint": "百姓,地方官,边军",

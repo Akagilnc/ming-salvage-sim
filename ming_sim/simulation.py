@@ -46,6 +46,7 @@ def simulate_season_with_agno(
     debuts_this_turn: Optional[List[Dict[str, str]]] = None,
     on_thinking: Optional[Callable[[str], None]] = None,
     on_text: Optional[Callable[[str], None]] = None,
+    relevant_memories: Optional[List[Dict[str, object]]] = None,
 ) -> str:
     """推演 agent: 全量盘面塞 user payload，无 tool。"""
     active = db.list_active_issues()
@@ -109,6 +110,7 @@ def simulate_season_with_agno(
         "fixed_flows": fixed_flows or [],
         "deaths_this_turn": deaths_this_turn or [],
         "debuts_this_turn": debuts_this_turn or [],
+        "relevant_memories": relevant_memories or [],
         "data_note": "regions/armies/buildings 均为 header+二维数组（cols 列名 + rows 数据）。",
     }
     raw = run_agent_stream_text(
@@ -128,6 +130,7 @@ def extract_scores_with_agno(
     narrative: str,
     decree_text: str = "",
     sanitizer: Optional[Agent] = None,
+    relevant_memories: Optional[List[Dict[str, object]]] = None,
 ) -> tuple[Dict[str, object], str, str]:
     """结算 agent: 读邸报抽 JSON。"""
     active = db.list_active_issues()
@@ -196,6 +199,7 @@ def extract_scores_with_agno(
         "class_names": [r["name"] for r in db.conn.execute("SELECT DISTINCT name FROM classes ORDER BY name").fetchall()],
         "external_power_ids": [str(r["id"]) for r in db.conn.execute("SELECT id FROM external_powers").fetchall()],
         "fiscal_config": db.get_fiscal_config(),
+        "relevant_memories": relevant_memories or [],
         "_format_note": "regions/armies/buildings/external_powers/active_ministers/offstage_ministers 均为 header+二维数组（cols 列名 + rows 数据）",
     }
     payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=False)

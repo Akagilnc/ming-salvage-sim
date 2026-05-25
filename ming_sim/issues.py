@@ -135,7 +135,25 @@ def _spawned_event_refs(db: GameDB) -> set:
     for r in db.conn.execute("SELECT origin_ref FROM issues WHERE origin_kind='event_pool'").fetchall():
         if r["origin_ref"]:
             refs.add(r["origin_ref"])
+    for r in db.conn.execute("SELECT event_id FROM event_triggers").fetchall():
+        if r["event_id"]:
+            refs.add(r["event_id"])
     return refs
+
+
+def _event_window_open(ev: Event, state: GameState) -> bool:
+    """Return True when the current date is inside an event's optional trigger window."""
+    if ev.trigger_year > 0:
+        if state.year < ev.trigger_year:
+            return False
+        if state.year == ev.trigger_year and ev.trigger_month > 0 and state.period < ev.trigger_month:
+            return False
+    if ev.trigger_end_year > 0:
+        if state.year > ev.trigger_end_year:
+            return False
+        if state.year == ev.trigger_end_year and ev.trigger_end_month > 0 and state.period > ev.trigger_end_month:
+            return False
+    return True
 
 
 _GATE_AGG_FUNCS = {
@@ -257,14 +275,14 @@ def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
     for ev in c.events:
         if ev.id in spawned or ev.trigger_year <= 0:
             continue
-        if state.year < ev.trigger_year:
-            continue
-        if state.year == ev.trigger_year and ev.trigger_month > 0 and state.period < ev.trigger_month:
+        if not _event_window_open(ev, state):
             continue
         candidates.append(ev)
     # seed 情势：trigger_gate 阈值达标即进候选
     for ev in c.seed_events:
         if ev.id in spawned:
+            continue
+        if not _event_window_open(ev, state):
             continue
         if _gate_passed(ev.trigger_gate, state.metrics, db):
             candidates.append(ev)
@@ -542,8 +560,9 @@ def apply_issue_tracker_output(
                 applied_new.append({"title": title or event_id, "rejected": True, "reason": "event_pool id 非预设事件"})
                 continue
             if ev.event_type != "situation":
+                db.mark_event_triggered(state, ev.id)
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 为 {ev.event_type}，不转 issue。")
-                applied_new.append({"title": ev.title, "rejected": True, "reason": f"event_type={ev.event_type} 不立 issue"})
+                applied_new.append({"title": ev.title, "rejected": False, "reason": f"event_type={ev.event_type} 已记为触发"})
                 continue
             issue_id = event_to_issue(db, state, ev)
             if issue_id is None:

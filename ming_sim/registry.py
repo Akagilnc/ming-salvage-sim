@@ -10,15 +10,19 @@ from typing import Dict, List, Optional
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
+from agno.skills import Skills
+from agno.skills.loaders.local import LocalSkills
 
 from ming_sim.constants import TURN_UNIT
 from ming_sim.content import GameContent
 from ming_sim.context import character_context_with_db
 from ming_sim.models import Character, CourtContext, LLMConfig
 from ming_sim.llm_model import create_chat_model
+from ming_sim.token_stats import tlog
 from ming_sim.tools import build_minister_tools
 
 _content: Optional[GameContent] = None
+_agent_skills: Optional[Skills] = None
 
 
 def bind_content(content: GameContent) -> None:
@@ -30,6 +34,13 @@ def _ctx() -> GameContent:
     if _content is None:
         raise RuntimeError("registry.bind_content() 未调用：GameContent 未注入。")
     return _content
+
+
+def _skills() -> Skills:
+    global _agent_skills
+    if _agent_skills is None:
+        _agent_skills = Skills([LocalSkills(".agno_skills", validate=False)])
+    return _agent_skills
 
 
 def build_court_brief(context: CourtContext) -> str:
@@ -64,6 +75,27 @@ def build_court_brief(context: CourtContext) -> str:
         f"外部势力：{context.db.external_power_report()}。"
         f"详情请按需调工具查（list_regions/list_armies/inspect_memorial/check_treasury 等）。"
     )
+
+
+def build_memory_brief(character: Character, context: CourtContext) -> str:
+    memories = context.db.get_relevant_event_memories(
+        character_name=character.name,
+        faction=character.faction,
+        office_type=character.office_type,
+        turn=context.state.turn,
+        limit=5,
+    )
+    if not memories:
+        tlog(f"[memory/brief] {character.name} no memories")
+        return ""
+    tlog(f"[memory/brief] {character.name} inject={len(memories)} ids={','.join(str(m['id']) for m in memories)}")
+    lines = ["【旧事记忆】"]
+    for memory in memories:
+        lines.append(
+            f"- #{memory['id']} {memory['year']}年{memory['period']}月：{memory['title']}。"
+            f"起因：{memory['cause']}。经过：{memory['process']}。结果：{memory['outcome']}。"
+        )
+    return "\n".join(lines)
 
 
 def _make_cultivate_tool(character: Character, context: CourtContext):
@@ -127,21 +159,14 @@ def _make_select_consort_tool(context: CourtContext):
         return used
 
     def present_consort_candidates(consorts_json: str = "") -> str:
-        """【司礼监/礼部专属】皇帝下旨选妃/采选秀女时，由内官会同礼部物色佳丽，恭呈御览。
+        """呈上待选秀女名单。
 
-        **必须按预设立绘配人**：每名秀女选定一个未占用的立绘编号 portrait（见下表身份），
-        并据该立绘的身份气质拟人设（name/style/skills/summary 要与立绘身份吻合，不可张冠李戴）。
-
-        立绘池身份（portrait 编号→身份；已被占用的编号不要再选，先以空参调用可查当前可用编号）：
+        可用立绘身份（portrait 编号→身份；已被占用的编号不要再选，先以空参调用可查当前可用编号）：
         {POOL_TABLE}
 
-        参数 consorts_json：JSON 数组字符串，3-5 人。每名秀女对象：
+        consorts_json：JSON 数组字符串，3-5 人。每名秀女对象：
           {{"portrait": 4, "name": "柳如烟", "style": "才情风流",
             "skills": ["诗词","琵琶"], "summary": "秦淮名妓，色艺双绝", "faction": "中宫"}}
-          portrait 必填且取自可用编号；name 须新颖不与在朝人物重名。
-
-        仅当皇帝明确表达「选妃」「采选秀女」「为朕物色后宫」等意图时调此 tool。
-        现编的秀女即刻立为待选采女，皇帝降诏册封后方升为在宫妃嫔。
         """
         content = _ctx()
         try:
@@ -262,20 +287,11 @@ def create_minister_agent(
             f"你与皇帝的多轮对话会持续到本{TURN_UNIT}退朝；同一{TURN_UNIT}复召时要接续此前奏对，不要重置记忆。",
             f"进殿前，皇帝会先把本{TURN_UNIT}奏报、钱粮、地区、军队和派系态势作为一段 JSON 上下文喂给你；"
             "你只需简短回一句臣已知会，然后等皇帝问话。所有动态数据均可随时通过工具复查。",
-            "【退殿规则】只有皇帝的输入中明确出现退下指令（如：退下、好去办吧、朕知道了卿退下等），"
-            "才可调 dismiss_minister() 结束本次对话；皇帝要召见别人（如：传袁崇焕来）才可调 summon_minister(name)。"
-            "禁止因自己的角色扮演台词（如写了退场动作）而主动调这两个 tool。等皇帝指令，不要自行判断。",
         ]
         tools = build_minister_tools(character, context)
         # 司礼监（内官管后宫）与礼部（议礼册封）可奉旨选妃：现场拟就秀女名单呈御览。
         if character.office_type in ("司礼监", "礼部"):
             tools.append(_make_select_consort_tool(context))
-            instructions.append(
-                "【选妃职责】皇帝若下旨选妃、采选秀女、为后宫物色佳丽，"
-                "你须现场拟就 3-5 名秀女（各起新颖闺名，配性情、才艺、出身简介），"
-                "以 JSON 数组传入 present_consort_candidates(consorts_json) 呈御览。"
-                "现编的秀女即刻立为待选采女，皇帝看中者会另降册封诏书，不必你拟旨。"
-            )
     return Agent(
         name=character.name,
         id=f"minister-{character.name}",
@@ -284,6 +300,7 @@ def create_minister_agent(
         model=model,
         instructions=instructions,
         tools=tools,
+        skills=_skills() if not is_consort else None,
         add_history_to_context=True,
         num_history_runs=6,
         tool_call_limit=5,
@@ -333,6 +350,7 @@ class MinisterRegistry:
         prompt = (
             f"本{TURN_UNIT}朝会初始化上下文（钱粮、奏报、地区、军队、派系等，进殿前请知会，不需详细回奏）：\n"
             f"{self._court_brief}\n\n"
+            f"{build_memory_brief(character, self.context)}\n\n"
             "请简短回一句“臣已知会”，然后等皇帝问话。"
         )
         try:

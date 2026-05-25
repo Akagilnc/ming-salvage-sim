@@ -117,6 +117,8 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
                 fail_condition=str(item.get("fail_condition") or ""),
                 trigger_year=int(item.get("trigger_year") or 0),
                 trigger_month=int(item.get("trigger_month") or 0),
+                trigger_end_year=int(item.get("trigger_end_year") or 0),
+                trigger_end_month=int(item.get("trigger_end_month") or 0),
                 precondition=str(item.get("precondition") or ""),
                 event_type=event_type,
                 trigger_gate=trigger_gate,
@@ -395,6 +397,7 @@ class GameContent:
     decree_writer_prompt: str = ""
     season_simulator_prompt: str = ""
     score_extractor_prompt: str = ""
+    memory_extractor_prompt: str = ""
 
     @classmethod
     def load(cls) -> "GameContent":
@@ -447,4 +450,5 @@ class GameContent:
             decree_writer_prompt=load_text_asset("prompts/decree_writer.md"),
             season_simulator_prompt=load_text_asset("prompts/season_simulator.md"),
             score_extractor_prompt=load_text_asset("prompts/score_extractor.md"),
+            memory_extractor_prompt=load_text_asset("prompts/memory_extractor.md"),
         )

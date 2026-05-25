@@ -23,6 +23,7 @@ from ming_sim.constants import (
 from ming_sim.content import GameContent
 from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
 from ming_sim.models import Event, GameState, monthly_amount, period_label
+from ming_sim.token_stats import tlog
 
 class GameDB:
     def __init__(self, path: str, content: Optional[GameContent] = None):
@@ -281,6 +282,16 @@ class GameDB:
                 audiences TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS event_triggers (
+                event_id TEXT PRIMARY KEY,
+                turn INTEGER NOT NULL,
+                year INTEGER NOT NULL,
+                period INTEGER NOT NULL,
+                source TEXT NOT NULL DEFAULT 'simulation',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(event_id) REFERENCES events(id)
+            );
+
             CREATE TABLE IF NOT EXISTS turn_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 turn INTEGER NOT NULL,
@@ -444,6 +455,55 @@ class GameDB:
 
             CREATE INDEX IF NOT EXISTS idx_classes_region
             ON classes(region_id, name);
+
+            CREATE TABLE IF NOT EXISTS event_memories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject_type TEXT NOT NULL,
+                subject_id TEXT NOT NULL,
+                turn INTEGER NOT NULL,
+                year INTEGER NOT NULL,
+                period INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                cause TEXT NOT NULL DEFAULT '',
+                process TEXT NOT NULL DEFAULT '',
+                outcome TEXT NOT NULL DEFAULT '',
+                sentiment TEXT NOT NULL DEFAULT 'neutral',
+                importance INTEGER NOT NULL DEFAULT 3,
+                tags TEXT NOT NULL DEFAULT '[]',
+                source_kind TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                expires_turn INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(subject_type, subject_id, event_type, source_kind, source_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_event_memories_subject
+            ON event_memories(subject_type, subject_id, turn);
+
+            CREATE INDEX IF NOT EXISTS idx_event_memories_turn
+            ON event_memories(turn, importance);
+
+            CREATE INDEX IF NOT EXISTS idx_event_memories_expiry
+            ON event_memories(expires_turn, turn);
+
+
+            CREATE TABLE IF NOT EXISTS event_memory_sources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                memory_id INTEGER NOT NULL,
+                source_kind TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                excerpt TEXT NOT NULL DEFAULT '',
+                locator TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(memory_id) REFERENCES event_memories(id) ON DELETE CASCADE,
+                UNIQUE(memory_id, source_kind, source_id, locator)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_event_memory_sources_memory
+            ON event_memory_sources(memory_id);
             """
         )
         for column, definition in {
@@ -576,7 +636,7 @@ class GameDB:
             )
         for character in self.content.characters.values():
             existing = self.conn.execute(
-                "SELECT status, status_reason, status_changed_turn, portrait_id FROM characters WHERE name=?",
+                "SELECT status, status_reason, status_changed_turn, portrait_id, office, office_type FROM characters WHERE name=?",
                 (character.name,)
             ).fetchone()
             keep_status = existing["status"] if existing else character.status
@@ -584,6 +644,14 @@ class GameDB:
             keep_turn = existing["status_changed_turn"] if existing else 0
             # 已落库的 portrait_id 优先保留（运行时分配的池图不被重 seed 抹掉）；否则取设定。
             keep_portrait = (existing["portrait_id"] if existing and existing["portrait_id"] else character.portrait_id)
+            # 已落库的 office 优先保留（任命/调任后重启不被 JSON 原始值覆盖）；否则取设定。
+            keep_office = existing["office"] if existing and existing["office"] else character.office
+            keep_office_type = existing["office_type"] if existing and existing["office_type"] else character.office_type
+            # 同步回内存，让 terminal 展示与 DB 一致
+            if keep_office != character.office:
+                character.office = keep_office
+            if keep_office_type != character.office_type:
+                character.office_type = keep_office_type
             self.conn.execute(
                 """
                 INSERT OR REPLACE INTO characters
@@ -594,8 +662,8 @@ class GameDB:
                 """,
                 (
                     character.name,
-                    character.office,
-                    character.office_type,
+                    keep_office,
+                    keep_office_type,
                     character.faction,
                     json.dumps(character.personal_skills + character.aliases, ensure_ascii=False),
                     character.loyalty,
@@ -616,15 +684,10 @@ class GameDB:
             )
             self.conn.execute(
                 """
-                INSERT INTO character_offices (character_name, office_title, office_type, source)
+                INSERT OR IGNORE INTO character_offices (character_name, office_title, office_type, source)
                 VALUES (?, ?, ?, ?)
-                ON CONFLICT(character_name) DO UPDATE SET
-                    office_title = excluded.office_title,
-                    office_type = excluded.office_type,
-                    source = excluded.source,
-                    updated_at = CURRENT_TIMESTAMP
                 """,
-                (character.name, character.office, character.office_type, "初始设定"),
+                (character.name, keep_office, keep_office_type, "初始设定"),
             )
         for faction in self.content.factions.values():
             self.conn.execute(
@@ -1029,6 +1092,10 @@ class GameDB:
             (name, office, eff_type, source),
         )
         self.conn.commit()
+        if name in self.content.characters:
+            self.content.characters[name].office = office
+            if office_type:
+                self.content.characters[name].office_type = office_type
 
     def apply_historical_deaths(self, state: GameState) -> List[Dict[str, str]]:
         """月初 tick：只有仍 active 的人到点自然死。被玩家提前罢/狱/流/杀的不走此分支。
@@ -2337,6 +2404,351 @@ class GameDB:
             )
         return history
 
+    # ----- event memories（渐进式记忆：摘要卡 + 来源摘录） -----
+
+    def upsert_event_memory(
+        self,
+        state: GameState,
+        subject_type: str,
+        subject_id: str,
+        event_type: str,
+        title: str,
+        cause: str = "",
+        process: str = "",
+        outcome: str = "",
+        sentiment: str = "neutral",
+        importance: int = 3,
+        tags: Optional[List[str]] = None,
+        source_kind: str = "system",
+        source_id: str = "",
+        expires_turn: Optional[int] = None,
+    ) -> int:
+        """写入/更新一张事件记忆摘要卡，按主体+类型+来源去重。"""
+        subject_type = (subject_type or "").strip()
+        subject_id = (subject_id or "").strip()
+        event_type = (event_type or "").strip()
+        source_kind = (source_kind or "system").strip()
+        source_id = str(source_id or "").strip()
+        if not subject_type or not subject_id or not event_type or not source_id:
+            return 0
+        importance = max(1, min(5, int(importance or 3)))
+        if expires_turn is None:
+            # 按重要度自动衰减；importance=5 永久保留（None）
+            _ttl = {1: 6, 2: 12, 3: 24, 4: 48}
+            ttl = _ttl.get(importance)
+            if ttl is not None:
+                expires_turn = int(state.turn) + ttl
+        clean_tags = []
+        for tag in tags or []:
+            t = str(tag).strip()
+            if t and t not in clean_tags:
+                clean_tags.append(t[:40])
+        existed = self.conn.execute(
+            """
+            SELECT id FROM event_memories
+            WHERE subject_type=? AND subject_id=? AND event_type=? AND source_kind=? AND source_id=?
+            """,
+            (subject_type, subject_id, event_type, source_kind, source_id),
+        ).fetchone()
+        self.conn.execute(
+            """
+            INSERT INTO event_memories
+                (subject_type, subject_id, turn, year, period, event_type, title,
+                 cause, process, outcome, sentiment, importance, tags,
+                 source_kind, source_id, expires_turn)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(subject_type, subject_id, event_type, source_kind, source_id)
+            DO UPDATE SET
+                turn = excluded.turn,
+                year = excluded.year,
+                period = excluded.period,
+                title = excluded.title,
+                cause = excluded.cause,
+                process = excluded.process,
+                outcome = excluded.outcome,
+                sentiment = excluded.sentiment,
+                importance = excluded.importance,
+                tags = excluded.tags,
+                expires_turn = excluded.expires_turn,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                subject_type, subject_id, state.turn, state.year, state.period,
+                event_type, str(title or "")[:40], str(cause or "")[:80],
+                str(process or "")[:80], str(outcome or "")[:80],
+                sentiment if sentiment in {"positive", "neutral", "negative", "mixed"} else "neutral",
+                importance, json.dumps(clean_tags, ensure_ascii=False),
+                source_kind, source_id, expires_turn,
+            ),
+        )
+        row = self.conn.execute(
+            """
+            SELECT id FROM event_memories
+            WHERE subject_type=? AND subject_id=? AND event_type=? AND source_kind=? AND source_id=?
+            """,
+            (subject_type, subject_id, event_type, source_kind, source_id),
+        ).fetchone()
+        self.conn.commit()
+        action = "更新" if existed else "保存"
+        tlog(
+            f"[memory/{action}] #{int(row['id']) if row else '?'} "
+            f"{subject_type}:{subject_id} {event_type}《{str(title or '')[:24]}》"
+            f" imp={importance} src={source_kind}:{source_id}"
+        )
+        return int(row["id"]) if row else 0
+
+    def add_event_memory_source(
+        self,
+        memory_id: int,
+        source_kind: str,
+        source_id: str,
+        excerpt: str = "",
+        locator: Optional[Dict[str, object]] = None,
+    ) -> None:
+        if not memory_id:
+            return
+        locator_json = json.dumps(locator or {}, ensure_ascii=False, sort_keys=True)
+        self.conn.execute(
+            """
+            INSERT INTO event_memory_sources
+                (memory_id, source_kind, source_id, excerpt, locator)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(memory_id, source_kind, source_id, locator)
+            DO UPDATE SET
+                excerpt = excluded.excerpt,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                int(memory_id), str(source_kind or "system"), str(source_id or ""),
+                str(excerpt or "")[:200], locator_json,
+            ),
+        )
+        self.conn.commit()
+        tlog(
+            f"[memory/source] memory=#{int(memory_id)} {source_kind}:{source_id} "
+            f"excerpt={str(excerpt or '')[:48]}"
+        )
+
+    def prune_event_memories_for_turn(self, turn: int, per_subject: int = 3) -> None:
+        """同一主体同回合只保留若干高价值摘要卡，避免记忆膨胀。"""
+        rows = self.conn.execute(
+            """
+            SELECT id, subject_type, subject_id, importance, updated_at
+            FROM event_memories
+            WHERE turn = ?
+            ORDER BY subject_type, subject_id, importance DESC, id DESC
+            """,
+            (int(turn),),
+        ).fetchall()
+        seen: Dict[Tuple[str, str], int] = {}
+        delete_ids: List[int] = []
+        for row in rows:
+            key = (row["subject_type"], row["subject_id"])
+            seen[key] = seen.get(key, 0) + 1
+            if seen[key] > per_subject:
+                delete_ids.append(int(row["id"]))
+        if delete_ids:
+            placeholders = ",".join("?" for _ in delete_ids)
+            self.conn.execute(f"DELETE FROM event_memory_sources WHERE memory_id IN ({placeholders})", delete_ids)
+            self.conn.execute(f"DELETE FROM event_memories WHERE id IN ({placeholders})", delete_ids)
+            self.conn.commit()
+            tlog(f"[memory/prune] turn={turn} deleted={delete_ids}")
+
+    def get_relevant_event_memories(
+        self,
+        character_name: str,
+        faction: str,
+        office_type: str,
+        turn: int,
+        limit: int = 5,
+        ignore_expiry: bool = False,
+    ) -> List[Dict[str, object]]:
+        """召见前取少量相关旧事摘要；纯结构化检索，不走向量库。
+        ignore_expiry=True 时按历史时点查，不受 expires_turn 过滤。
+        """
+        active_issues = self.list_active_issues()
+        active_issue_tags: List[str] = []
+        for issue in active_issues[:12]:
+            active_issue_tags.append(f"#{int(issue['id'])}")
+            if issue["title"]:
+                active_issue_tags.append(str(issue["title"])[:20])
+        tag_needles = [character_name, faction, office_type] + active_issue_tags
+        expiry_clause = "" if ignore_expiry else "AND (expires_turn IS NULL OR expires_turn >= ?)"
+        params: list = [int(turn)]
+        if not ignore_expiry:
+            params.append(int(turn))
+        params += [character_name, faction, f"%{character_name}%", f"%{faction}%", f"%{office_type}%"]
+        rows = self.conn.execute(
+            f"""
+            SELECT *
+            FROM event_memories
+            WHERE turn <= ?
+              {expiry_clause}
+              AND (
+                (subject_type='character' AND subject_id=?)
+                OR (subject_type='faction' AND subject_id=?)
+                OR (subject_type='court' AND importance>=4)
+                OR tags LIKE ?
+                OR tags LIKE ?
+                OR tags LIKE ?
+              )
+            """,
+            params,
+        ).fetchall()
+        scored: List[Tuple[int, sqlite3.Row, List[str]]] = []
+        for row in rows:
+            age = max(0, int(turn) - int(row["turn"]))
+            if int(row["importance"]) <= 1 and not (
+                row["subject_type"] == "character" and row["subject_id"] == character_name and age <= 3
+            ):
+                continue
+            try:
+                tags = json.loads(row["tags"] or "[]")
+            except Exception:
+                tags = []
+            tag_matches = [t for t in tag_needles if t and any(str(t) in str(tag) or str(tag) in str(t) for tag in tags)]
+            exact = row["subject_type"] == "character" and row["subject_id"] == character_name
+            active_hit = any(str(t).startswith("#") or t in active_issue_tags for t in tag_matches)
+            score = (
+                int(row["importance"]) * 10
+                + (20 if exact else 0)
+                + len(tag_matches) * 4
+                + max(0, 10 - age)
+                + (12 if active_hit else 0)
+            )
+            scored.append((score, row, tag_matches))
+        scored.sort(key=lambda item: (item[0], int(item[1]["turn"]), int(item[1]["id"])), reverse=True)
+        result: List[Dict[str, object]] = []
+        for _score, row, _matches in scored[:limit]:
+            result.append({
+                "id": int(row["id"]),
+                "subject_type": row["subject_type"],
+                "subject_id": row["subject_id"],
+                "turn": int(row["turn"]),
+                "year": int(row["year"]),
+                "period": int(row["period"]),
+                "event_type": row["event_type"],
+                "title": row["title"],
+                "cause": row["cause"],
+                "process": row["process"],
+                "outcome": row["outcome"],
+                "sentiment": row["sentiment"],
+                "importance": int(row["importance"]),
+                "tags": json.loads(row["tags"] or "[]"),
+            })
+        if result:
+            ids = ",".join(str(item["id"]) for item in result)
+            tlog(f"[memory/recall] {character_name} hit={len(result)} ids={ids}")
+        else:
+            tlog(f"[memory/recall] {character_name} hit=0")
+        return result
+
+    def get_memories_by_keywords(
+        self,
+        keywords: List[str],
+        turn: int,
+        limit: int = 10,
+        ignore_expiry: bool = False,
+    ) -> List[Dict[str, object]]:
+        """推演前按关键词集合检索相关记忆，供 simulator/extractor 注入。
+
+        keywords 来自 memory_retrieval agent 抽取的人名/地区/军队/势力/操作词。
+        每个词对 tags JSON 做 LIKE 匹配，命中任一词即入候选，按 importance+时效评分。
+        ignore_expiry=True 时按历史时点查，不受 expires_turn 过滤。
+        """
+        if not keywords:
+            return []
+        active_issue_tags = [
+            f"#{int(r['id'])}"
+            for r in self.conn.execute(
+                "SELECT id FROM issues WHERE status='active'"
+            ).fetchall()
+        ]
+        needles = list(dict.fromkeys([k for k in keywords if k] + active_issue_tags))
+        like_clauses = " OR ".join(["tags LIKE ?" for _ in needles])
+        like_params = [f"%{n}%" for n in needles]
+        expiry_clause = "" if ignore_expiry else "AND (expires_turn IS NULL OR expires_turn >= ?)"
+        base_params: list = [int(turn)]
+        if not ignore_expiry:
+            base_params.append(int(turn))
+
+        rows = self.conn.execute(
+            f"""
+            SELECT * FROM event_memories
+            WHERE turn <= ?
+              {expiry_clause}
+              AND ({like_clauses})
+            ORDER BY importance DESC, turn DESC
+            LIMIT ?
+            """,
+            base_params + like_params + [limit * 3],
+        ).fetchall()
+
+        scored: List[tuple] = []
+        for row in rows:
+            age = max(0, int(turn) - int(row["turn"]))
+            try:
+                tags = json.loads(row["tags"] or "[]")
+            except Exception:
+                tags = []
+            hit_count = sum(
+                1 for n in needles
+                if any(n in str(t) or str(t) in n for t in tags)
+            )
+            score = int(row["importance"]) * 10 + hit_count * 5 + max(0, 8 - age)
+            scored.append((score, row))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        result = []
+        for _score, row in scored[:limit]:
+            result.append({
+                "id": int(row["id"]),
+                "subject_type": row["subject_type"],
+                "subject_id": row["subject_id"],
+                "turn": int(row["turn"]),
+                "year": int(row["year"]),
+                "period": int(row["period"]),
+                "title": row["title"],
+                "cause": row["cause"],
+                "outcome": row["outcome"],
+                "importance": int(row["importance"]),
+                "tags": json.loads(row["tags"] or "[]"),
+            })
+        tlog(f"[memory/keywords] needles={len(needles)} hit={len(result)}")
+        return result
+
+    def event_memory_detail(self, memory_id: int) -> str:
+        tlog(f"[memory/detail] request=#{int(memory_id)}")
+        memory = self.conn.execute(
+            "SELECT * FROM event_memories WHERE id = ?",
+            (int(memory_id),),
+        ).fetchone()
+        if memory is None:
+            return f"未找到旧事记忆 #{memory_id}。"
+        sources = self.conn.execute(
+            """
+            SELECT source_kind, source_id, excerpt, locator
+            FROM event_memory_sources
+            WHERE memory_id = ?
+            ORDER BY id
+            """,
+            (int(memory_id),),
+        ).fetchall()
+        header = (
+            f"旧事 #{memory['id']}：{memory['year']}年{memory['period']}月，{memory['title']}。"
+            f"起因：{memory['cause']}。经过：{memory['process']}。结果：{memory['outcome']}。"
+        )
+        if not sources:
+            return header + "\n未存原始摘录。"
+        lines = [header, "来源摘录："]
+        for idx, row in enumerate(sources, 1):
+            locator = row["locator"] or "{}"
+            lines.append(
+                f"{idx}. [{row['source_kind']}:{row['source_id']}] {row['excerpt']}"
+                + (f"（定位 {locator}）" if locator and locator != "{}" else "")
+            )
+        return "\n".join(lines)
+
     def save_turn_report(self, state: GameState, report: str) -> None:
         """每回合月末奏报单独存档（turn_reports），与 turn_logs 日志解耦。"""
         self.conn.execute(
@@ -2704,6 +3116,23 @@ class GameDB:
             "SELECT * FROM issues WHERE origin_kind=? AND origin_ref=? LIMIT 1",
             (origin_kind, origin_ref),
         ).fetchone()
+
+    def has_event_triggered(self, event_id: str) -> bool:
+        row = self.conn.execute(
+            "SELECT 1 FROM event_triggers WHERE event_id=? LIMIT 1",
+            (event_id,),
+        ).fetchone()
+        return row is not None
+
+    def mark_event_triggered(self, state: GameState, event_id: str, source: str = "simulation") -> None:
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO event_triggers (event_id, turn, year, period, source)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (event_id, state.turn, state.year, state.period, source),
+        )
+        self.conn.commit()
 
     def insert_issue(
         self,

@@ -425,7 +425,7 @@ class GameSession:
                 if draft_text:
                     directive_id = self.db.add_directive(
                         self.state, None, draft_text, "大臣拟旨",
-                        notes=f"由{character.name}拟旨入档", status="pending",
+                        actor=character.name, notes=f"由{character.name}拟旨入档", status="pending",
                     )
                     result.proposed_directive = DirectiveView(
                         id=directive_id, text=draft_text, status="pending",
