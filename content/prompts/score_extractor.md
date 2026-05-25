@@ -257,7 +257,8 @@ decree new_issue 必填字段：
   "fiscal_changes": [{"key": "商税_base", "delta": 30, "reason": "..."}],
   "office_changes": [
     {"name": "孙传庭", "new_office": "陕西总督", "new_office_type": "督抚", "reason": "永城知县擢用，陕西事急"},
-    {"name": "陈奇瑜", "new_office": "陕西巡按", "faction": "中立", "reason": "名册外起用，新进朝堂"}
+    {"name": "陈奇瑜", "new_office": "陕西巡按", "faction": "中立", "reason": "名册外起用，新进朝堂"},
+    {"name": "钱龙锡", "new_office": "内阁大学士", "new_office_type": "内阁", "faction": "东林", "reason": "诏书擢入阁，补阁臣之缺"}
   ],
   "appointments": [
     {"name": "田氏", "office": "贵妃", "office_type": "后宫", "reason": "诏书明文册封", "approved": true}
