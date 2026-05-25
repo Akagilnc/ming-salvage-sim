@@ -73,6 +73,7 @@ def build_court_brief(context: CourtContext) -> str:
         f"钱粮：{money_line}国势：{score_line}。"
         f"在办事项：{issues_brief}。"
         f"外部势力：{context.db.external_power_report()}。"
+        f"朝堂派系（满意度/影响力均为当前实值，据此判断各派当前强弱，不要凭印象推断）：{context.db.faction_report()}。"
         f"详情请按需调工具查（list_regions/list_armies/inspect_memorial/check_treasury 等）。"
     )
 
