@@ -276,9 +276,11 @@ class WebGame:
             "status_label": status_label,
             "summary": summary,
             "portrait_id": character.portrait_id,
-            "court_role": (self.db.conn.execute(
-                "SELECT court_role FROM characters WHERE name=?", (character.name,)
-            ).fetchone() or {}).get("court_role", ""),
+            "court_role": (lambda r: r["court_role"] if r else "")(
+                self.db.conn.execute(
+                    "SELECT court_role FROM characters WHERE name=?", (character.name,)
+                ).fetchone()
+            ),
             "skills": [
                 {
                     "id": skill_id,
