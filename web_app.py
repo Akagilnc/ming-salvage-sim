@@ -106,7 +106,11 @@ class WebGame:
         }
         for name, msgs in self.db.load_all_chat_history().items():
             self.chat_history.setdefault(name, []).extend(msgs)
-        self.favorites: set = set()
+        _DEFAULT_FAVORITES = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
+        _fav_raw = self.db.kv_get("favorites")
+        self.favorites: set = json.loads(_fav_raw) if _fav_raw else _DEFAULT_FAVORITES
+        if not _fav_raw:
+            self.db.kv_set("favorites", json.dumps(sorted(self.favorites)))
 
     # ── 存档管理 ─────────────────────────────────────────────────────────
     def saves_dir(self) -> str:
@@ -195,7 +199,11 @@ class WebGame:
         self.chat_history = {name: [] for name in self.session.content.characters}
         for name, msgs in self.db.load_all_chat_history().items():
             self.chat_history.setdefault(name, []).extend(msgs)
-        self.favorites = set()
+        _DEFAULT_FAVORITES = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
+        _fav_raw = self.db.kv_get("favorites")
+        self.favorites = json.loads(_fav_raw) if _fav_raw else _DEFAULT_FAVORITES
+        if not _fav_raw:
+            self.db.kv_set("favorites", json.dumps(sorted(self.favorites)))
 
     def apply_llm_config(self, base_url: str, model: str, api_key: str) -> LLMConfig:
         base = normalize_openai_base_url(base_url.strip() or self.session.llm_config.base_url)
@@ -968,12 +976,14 @@ async def api_add_favorite(minister_name: str) -> Dict[str, Any]:
     if minister_name not in get_game().content.characters:
         raise HTTPException(status_code=404, detail=f"未找到：{minister_name}")
     get_game().favorites.add(minister_name)
+    get_game().db.kv_set("favorites", json.dumps(sorted(get_game().favorites)))
     return {"favorites": sorted(get_game().favorites)}
 
 
 @app.delete("/api/favorites/{minister_name}")
 async def api_remove_favorite(minister_name: str) -> Dict[str, Any]:
     get_game().favorites.discard(minister_name)
+    get_game().db.kv_set("favorites", json.dumps(sorted(get_game().favorites)))
     return {"favorites": sorted(get_game().favorites)}
 
 

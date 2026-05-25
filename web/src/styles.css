@@ -929,6 +929,9 @@ select:focus-visible {
   flex: 0 0 auto;
   font-size: 0.68rem;
   white-space: nowrap;
+  max-width: 10em;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: rgba(255,220,140,0.85);
   text-shadow: 0 1px 3px rgba(0,0,0,0.8);
   letter-spacing: 0.04em;
