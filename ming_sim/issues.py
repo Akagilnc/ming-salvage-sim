@@ -890,6 +890,7 @@ def apply_score_extraction(
         if in_roster and cur_status == "active":
             # ── 调任：改 office ──
             new_type = str(item.get("new_office_type") or "").strip()
+            court_role = str(item.get("court_role") or "").strip()
             old_office = content.characters[name].office
             try:
                 db.set_character_office(name, new_office, new_type, source=reason[:60] or "诏书调任")
@@ -899,6 +900,17 @@ def apply_score_extraction(
                     "reason": f"落库失败：{exc}",
                 })
                 continue
+            if court_role:
+                # 先清掉同角色旧任者
+                db.conn.execute(
+                    "UPDATE characters SET court_role='' WHERE court_role=? AND name!=?",
+                    (court_role, name),
+                )
+                db.conn.execute(
+                    "UPDATE characters SET court_role=? WHERE name=?",
+                    (court_role, name),
+                )
+                db.conn.commit()
             ch = content.characters[name]
             ch.office = new_office
             if new_type:

@@ -530,6 +530,7 @@ class GameDB:
         self.ensure_column("characters", "status_reason", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "status_changed_turn", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "portrait_id", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("characters", "court_role", "TEXT NOT NULL DEFAULT ''")
         # 步骤7：回合阶段（旧库迁移，schema 升级非 fallback）
         self.ensure_column("game_state", "turn_phase", "TEXT NOT NULL DEFAULT 'summoning'")
         # 后宫调教记录

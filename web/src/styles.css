@@ -27,6 +27,15 @@
 
 * {
   box-sizing: border-box;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.grand-map,
+.map-strip,
+button,
+[role="button"] {
+  user-select: none;
 }
 
 html,

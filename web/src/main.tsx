@@ -119,6 +119,7 @@ type Minister = {
   summary: string;
   favorite: boolean;
   portrait_id?: string;  // 空/undefined=无专属，前端 fallback 到池
+  court_role?: string;   // 首辅/次辅/吏部尚书/…，由 extractor 写入
   skills: Array<{ id: string; name: string; sources: string[]; description: string }>;
 };
 
@@ -1235,42 +1236,66 @@ function MinisterCardList({
   const dragging = React.useRef<{ name: string; startMX: number; startMY: number; startPX: number; startPY: number } | null>(null);
   const didDrag = React.useRef(false);
 
+  // 固定职位 → 固定槽位（court_role 字段由 extractor 写入）
+  const FIXED_SLOTS: { role: string; side: "left" | "right"; slot: number }[] = [
+    { role: "首辅",    side: "left",  slot: 0 },
+    { role: "次辅",    side: "right", slot: 0 },
+    { role: "吏部尚书", side: "left",  slot: 1 },
+    { role: "户部尚书", side: "right", slot: 1 },
+    { role: "礼部尚书", side: "left",  slot: 2 },
+    { role: "兵部尚书", side: "right", slot: 2 },
+    { role: "刑部尚书", side: "left",  slot: 3 },
+    { role: "工部尚书", side: "right", slot: 3 },
+  ];
+
+  function fixedSlotFor(courtRole: string): { px: number; py: number } | null {
+    if (!courtRole) return null;
+    const allSlots = courtSlots();
+    const fs = FIXED_SLOTS.find((f) => f.role === courtRole);
+    if (!fs) return null;
+    const s = allSlots.find((sl) => sl.side === fs.side && sl.slot === fs.slot);
+    return s ? { px: s.px, py: s.py } : null;
+  }
+
   // 从 db 加载手动拖动覆盖坐标，其余按槽位顺序自动排
   React.useEffect(() => {
     loadCourtPos().then((saved) => {
       setPositions(() => {
         const allSlots = courtSlots();
-        // 按 list 顺序（已按 officeRank 排好）依次分配槽位
         const next: Record<string, { px: number; py: number }> = {};
         const usedSlots = new Set<string>();
+
+        // 第一遍：有 court_role 的先占固定槽
         list.forEach((m) => {
+          const fixed = fixedSlotFor(m.court_role || "");
+          if (fixed) {
+            next[m.name] = fixed;
+            const fs = FIXED_SLOTS.find((f) => f.role === m.court_role);
+            if (fs) usedSlots.add(`${fs.side}:${fs.slot}`);
+          }
+        });
+
+        // 第二遍：其余按顺序取空槽（手动拖动优先吸附）
+        list.forEach((m) => {
+          if (next[m.name]) return; // 固定职位已处理
           if (saved[m.name]) {
-            // 手动拖动过：保留，但吸附到最近可用槽（避免槽冲突）
             const cur = saved[m.name];
-            const free = allSlots.find((s) => {
-              const key = `${s.side}:${s.slot}`;
-              if (usedSlots.has(key)) return false;
-              return true;
-            });
-            // 找最近未占槽
-            let best = free ?? allSlots[0];
+            let best = allSlots.find((s) => !usedSlots.has(`${s.side}:${s.slot}`)) ?? allSlots[0];
             let bestD = Infinity;
             for (const s of allSlots) {
-              const key = `${s.side}:${s.slot}`;
-              if (usedSlots.has(key)) continue;
+              if (usedSlots.has(`${s.side}:${s.slot}`)) continue;
               const d = Math.hypot(s.px - cur.px, s.py - cur.py);
               if (d < bestD) { bestD = d; best = s; }
             }
             usedSlots.add(`${best.side}:${best.slot}`);
             next[m.name] = { px: best.px, py: best.py };
           } else {
-            // 未拖动：按顺序取下一个空槽
             const slot = allSlots.find((s) => !usedSlots.has(`${s.side}:${s.slot}`));
             if (slot) {
               usedSlots.add(`${slot.side}:${slot.slot}`);
               next[m.name] = { px: slot.px, py: slot.py };
             } else {
-              next[m.name] = { px: 0.5, py: 0.532 };  // 槽满兜底：站近处中间
+              next[m.name] = { px: 0.5, py: 0.532 };
             }
           }
         });

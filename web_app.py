@@ -275,7 +275,10 @@ class WebGame:
             "status_reason": status_reason,
             "status_label": status_label,
             "summary": summary,
-            "portrait_id": character.portrait_id,  # 空串=无专属头像，前端 fallback 到池
+            "portrait_id": character.portrait_id,
+            "court_role": (self.db.conn.execute(
+                "SELECT court_role FROM characters WHERE name=?", (character.name,)
+            ).fetchone() or {}).get("court_role", ""),
             "skills": [
                 {
                     "id": skill_id,
