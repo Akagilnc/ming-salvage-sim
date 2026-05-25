@@ -504,6 +504,12 @@ class GameDB:
 
             CREATE INDEX IF NOT EXISTS idx_event_memory_sources_memory
             ON event_memory_sources(memory_id);
+
+            CREATE TABLE IF NOT EXISTS kv_store (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
             """
         )
         for column, definition in {
@@ -1233,7 +1239,7 @@ class GameDB:
         )
         self.conn.commit()
 
-    def add_character(self, state: GameState, character: "Character") -> None:
+    def add_character(self, state: GameState, character: "Character", source: str = "") -> None:
         """运行时新建人物（吏部任命/皇帝点名）。已存在同名则不动，避免覆盖既有状态。"""
         existing = self.conn.execute(
             "SELECT name FROM characters WHERE name=?", (character.name,)
@@ -1245,6 +1251,8 @@ class GameDB:
         if not portrait_id:
             prefix = "consort_pool_" if character.office_type == "后宫" else "minister_pool_"
             portrait_id = self.next_pool_portrait_id(prefix)
+        source_label = source or ("吏部铨选任命" if character.office_type != "后宫" else "诏书纳妃")
+        office_source = source or ("吏部任命" if character.office_type != "后宫" else "诏书纳妃")
         self.conn.execute(
             """
             INSERT INTO characters
@@ -1270,7 +1278,7 @@ class GameDB:
                 character.debut_year,
                 character.debut_month,
                 character.status,
-                "吏部铨选任命" if character.office_type != "后宫" else "诏书纳妃",
+                source_label,
                 state.turn,
                 portrait_id,
             ),
@@ -1285,7 +1293,7 @@ class GameDB:
                 source = excluded.source,
                 updated_at = CURRENT_TIMESTAMP
             """,
-            (character.name, character.office, character.office_type, "吏部任命"),
+            (character.name, character.office, character.office_type, office_source),
         )
         self.conn.commit()
 
@@ -3373,6 +3381,18 @@ class GameDB:
         self.sync_economy_accounts(state)
         self.conn.commit()
         return actual
+
+    def kv_get(self, key: str) -> str | None:
+        row = self.conn.execute("SELECT value FROM kv_store WHERE key=?", (key,)).fetchone()
+        return row["value"] if row else None
+
+    def kv_set(self, key: str, value: str) -> None:
+        self.conn.execute(
+            "INSERT INTO kv_store(key,value,updated_at) VALUES(?,?,CURRENT_TIMESTAMP) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP",
+            (key, value),
+        )
+        self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()

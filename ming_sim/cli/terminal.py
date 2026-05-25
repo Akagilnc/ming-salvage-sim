@@ -248,6 +248,8 @@ def minister_chat(session: GameSession, character: Character) -> str:
             _confirm_pending_directive(session, result.proposed_directive, character.name)
         if result.appointed_minister:
             print(f"【吏部铨选】{result.appointed_minister}已补入朝堂名册，本回合起可召见。\n")
+        if result.registered_minister:
+            print(f"【人物补档】{result.registered_minister}已补入人物档，本回合起可召见。\n")
         if result.displaced_minister:
             print(f"【腾缺去职】{result.displaced_minister}原任官缺由新任接掌，已罢黜出朝堂名册。\n")
         if result.court_action == "dismiss":

@@ -79,6 +79,11 @@ Tian Ergeng, Ming dynasty Jinyiwei commander, military bearing, black armor-trim
 Xu Xianchun, Ming dynasty Jinyiwei interrogation officer, lean sinister face, dark black robe, sharp predatory eyes, thin cruel smile, holding a folded document, unsettling stillness. Ming dynasty official full-body portrait, standing pose, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes, high detail
 ```
 
+#### 李若琏 `minister_li_ruolian.png`
+```
+Li Ruolian, Ming dynasty Jinyiwei commander garrison officer, mid-thirties, resolute loyal face, dark military robe with Jinyiwei emblem, hand resting on sword hilt, upright unyielding stance of a man who will die at his post rather than surrender, weathered soldier's bearing. Ming dynasty official full-body portrait, standing pose, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed military robes and officer cap, dignified expression, high detail
+```
+
 #### 王体乾 `minister_wang_tiqian.png`
 ```
 Wang Tiqian, Ming dynasty chief eunuch Directorate of Ceremonial, elderly eunuch, sunken aged face, heavy ceremonial robe with gold trim, hands hidden in sleeves, blank expressionless gaze, ceremonial staff. Ming dynasty official full-body portrait, standing pose, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes, high detail

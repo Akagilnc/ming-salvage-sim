@@ -250,6 +250,7 @@ type ChatResponse = {
   directives: Directive[];
   court_action?: string;
   next_minister?: string;
+  registered_minister?: string;
   proposed_directive?: ProposedDirective | null;
 };
 
@@ -596,14 +597,24 @@ function App() {
     loadMinisterChat(selectedMinister).catch((err) => setError(err.message));
   }, [selectedMinister, loadMinisterChat]);
 
+  // 全局 ESC：按 z-index 优先级，最前面的弹窗先关
   React.useEffect(() => {
-    if (!mapIntelOpen) return;
     const handler = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMapIntelOpen(false);
+      if (event.key !== "Escape") return;
+      if (activeModal === "chat" || activeModal === "edict" || activeModal === "state" || activeModal === "history" || activeModal === "report") {
+        // 召对/诏书等全屏弹窗最优先
+        setActiveModal("none");
+      } else if (drawerOpen) {
+        setDrawerOpen(false);
+      } else if (haremDrawerOpen) {
+        setHaremDrawerOpen(false);
+      } else if (mapIntelOpen) {
+        setMapIntelOpen(false);
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [mapIntelOpen]);
+  }, [activeModal, drawerOpen, haremDrawerOpen, mapIntelOpen]);
 
   if (appView === "menu") {
     return (
@@ -650,7 +661,6 @@ function App() {
     }
     setSelectedMinister(minister.name);
     setActiveModal("chat");
-    setDrawerOpen(false);
     setError("");
     setComposerHint("");
     setChatNotice("");
@@ -1129,6 +1139,79 @@ function MinisterPortrait({ primary, fallback, name }: { primary: string; fallba
   );
 }
 
+// 朝班两条透视线（百分比锚点，由用户拖定）
+// 左列：韩爌(外) → 黄立极(内)；右列：张瑞图(外) → 施凤来(内)
+const LEFT_ANCHOR  = { near: { px: 0.077, py: 0.532 }, far: { px: 0.377, py: 0.066 } };
+const RIGHT_ANCHOR = { near: { px: 0.862, py: 0.532 }, far: { px: 0.558, py: 0.045 } };
+
+// 每列槽位数
+const COURT_SLOTS_PER_ROW = 10;
+
+// 生成两列所有槽位坐标（百分比）
+function courtSlots(): { px: number; py: number; side: "left" | "right"; slot: number }[] {
+  const slots = [];
+  for (let i = 0; i < COURT_SLOTS_PER_ROW; i++) {
+    const t = i / (COURT_SLOTS_PER_ROW - 1);
+    slots.push({
+      px: LEFT_ANCHOR.near.px + t * (LEFT_ANCHOR.far.px - LEFT_ANCHOR.near.px),
+      py: LEFT_ANCHOR.near.py + t * (LEFT_ANCHOR.far.py - LEFT_ANCHOR.near.py),
+      side: "left" as const, slot: i,
+    });
+    slots.push({
+      px: RIGHT_ANCHOR.near.px + t * (RIGHT_ANCHOR.far.px - RIGHT_ANCHOR.near.px),
+      py: RIGHT_ANCHOR.near.py + t * (RIGHT_ANCHOR.far.py - RIGHT_ANCHOR.near.py),
+      side: "right" as const, slot: i,
+    });
+  }
+  return slots;
+}
+
+// 找最近槽位（已被占用的跳过，但允许同名覆盖）
+function snapToSlot(px: number, py: number, occupied: Set<string>, selfKey: string): { px: number; py: number } {
+  const slots = courtSlots();
+  let best = null as { px: number; py: number } | null;
+  let bestDist = Infinity;
+  for (const s of slots) {
+    const key = `${s.side}:${s.slot}`;
+    if (occupied.has(key) && key !== selfKey) continue;
+    const d = Math.hypot(s.px - px, s.py - py);
+    if (d < bestDist) { bestDist = d; best = s; }
+  }
+  return best ?? { px, py };
+}
+
+// 默认坐标：从 near 开始，每人占一格，紧挨着排不留空
+const COURT_SLOT_STEP = 1 / (COURT_SLOTS_PER_ROW - 1);  // 相邻槽间距（百分比t）
+
+function defaultCourtPct(index: number, total: number): { px: number; py: number } {
+  const leftCount = Math.ceil(total / 2);
+  const isLeft = index < leftCount;
+  const posInRow = isLeft ? index : index - leftCount;
+  const anchor = isLeft ? LEFT_ANCHOR : RIGHT_ANCHOR;
+  const t = posInRow * COURT_SLOT_STEP;  // 从槽0开始连续，不跳格
+  return {
+    px: anchor.near.px + t * (anchor.far.px - anchor.near.px),
+    py: anchor.near.py + t * (anchor.far.py - anchor.near.py),
+  };
+}
+
+// 坐标存百分比（0-1），持久化到服务端 db（按存档隔离）
+async function loadCourtPos(): Promise<Record<string, { px: number; py: number }>> {
+  try {
+    const r = await fetch("/api/court_layout");
+    if (!r.ok) return {};
+    const d = await r.json();
+    return JSON.parse(d.layout || "{}");
+  } catch { return {}; }
+}
+function saveCourtPos(pos: Record<string, { px: number; py: number }>) {
+  fetch("/api/court_layout", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ layout: JSON.stringify(pos) }),
+  }).catch(() => {});
+}
+
 function MinisterCardList({
   list,
   portraitPrefix,
@@ -1136,6 +1219,7 @@ function MinisterCardList({
   emptyNote,
   onOpenChat,
   onUploadPortrait,
+  courtMode = false,
 }: {
   list: Minister[];
   portraitPrefix: string;
@@ -1143,11 +1227,119 @@ function MinisterCardList({
   emptyNote: string;
   onOpenChat: (minister: Minister) => void;
   onUploadPortrait?: (ministerName: string, file: File) => Promise<void>;
+  courtMode?: boolean;
 }) {
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const [positions, setPositions] = React.useState<Record<string, { px: number; py: number }>>({});
+  const dragging = React.useRef<{ name: string; startMX: number; startMY: number; startPX: number; startPY: number } | null>(null);
+  const didDrag = React.useRef(false);
+
+  // 从 db 加载坐标，再补新大臣默认位置
+  React.useEffect(() => {
+    loadCourtPos().then((saved) => {
+      setPositions((prev) => {
+        const next = { ...saved, ...prev };  // prev 可能有拖动中的实时值，保留
+        let changed = false;
+        list.forEach((m, i) => {
+          if (!next[m.name]) {
+            next[m.name] = defaultCourtPct(i, list.length);
+            changed = true;
+          }
+        });
+        if (changed) saveCourtPos(next);
+        return next;
+      });
+    });
+  }, [list]);
+
+  const onMouseDown = (e: React.MouseEvent, name: string) => {
+    if ((e.target as HTMLElement).closest(".portrait-upload-btn")) return;
+    e.preventDefault();
+    const pos = positions[name] || { px: 0.5, py: 0.8 };
+    dragging.current = { name, startMX: e.clientX, startMY: e.clientY, startPX: pos.px, startPY: pos.py };
+    didDrag.current = false;
+
+    const onMove = (ev: MouseEvent) => {
+      if (!dragging.current) return;
+      const dx = ev.clientX - dragging.current.startMX;
+      const dy = ev.clientY - dragging.current.startMY;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) didDrag.current = true;
+      const el = containerRef.current;
+      if (!el) return;
+      const { width, height } = el.getBoundingClientRect();
+      // 拖动增量转百分比
+      const npx = Math.max(0, Math.min(1, dragging.current.startPX + dx / width));
+      const npy = Math.max(0, Math.min(1, dragging.current.startPY + dy / height));
+      setPositions((prev) => {
+        const next = { ...prev, [dragging.current!.name]: { px: npx, py: npy } };
+        saveCourtPos(next);
+        return next;
+      });
+    };
+    const onUp = () => {
+      if (dragging.current && didDrag.current) {
+        // 松手时吸附到最近槽位
+        const dragName = dragging.current.name;
+        setPositions((prev) => {
+          const cur = prev[dragName];
+          if (!cur) return prev;
+          // 已占槽位（其他大臣）
+          const occupied = new Set<string>();
+          // 找吸附目标
+          const snapped = snapToSlot(cur.px, cur.py, occupied, "");
+          const next = { ...prev, [dragName]: snapped };
+          saveCourtPos(next);
+          return next;
+        });
+      }
+      dragging.current = null;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  if (!list.length) return <div className={courtMode ? "minister-list minister-list-court" : "minister-list"}><div className="empty-note">{emptyNote}</div></div>;
+
+  // 非朝班模式（全部tab）：普通网格
+  if (!courtMode) {
+    return (
+      <div className="minister-list">
+        {list.map((minister) => {
+          const isCustom = minister.portrait_id?.startsWith("custom:");
+          const dedicated = isCustom
+            ? `/portraits/custom/${encodeURIComponent(minister.name)}?t=${cacheBust(minister.portrait_id!)}`
+            : `/portraits/${portraitPrefix}${minister.id ?? minister.name}.png`;
+          const poolFallback = !isCustom && minister.portrait_id ? `/portraits/${minister.portrait_id}.png` : undefined;
+          const ousted = minister.status !== "active";
+          return (
+            <button key={minister.name}
+              className={`minister-card ${selectedMinister === minister.name ? "selected" : ""} ${ousted ? "ousted" : ""}`}
+              onClick={() => onOpenChat(minister)}>
+              <div className="minister-card-portrait-wrap">
+                <MinisterPortrait primary={dedicated} fallback={poolFallback} name={minister.name} />
+                {onUploadPortrait && <PortraitUploadButton ministerName={minister.name} onUpload={onUploadPortrait} />}
+              </div>
+              <div className="minister-card-info">
+                <div className="minister-card-top">
+                  <span className="minister-name">{minister.name}</span>
+                  {ousted && <span className={`minister-status status-${minister.status}`}>{minister.status_label}</span>}
+                  {minister.office && <span className="minister-office">{minister.office}</span>}
+                </div>
+                <span className="minister-bio">{minister.summary}</span>
+              </div>
+              {minister.favorite && <Star className="favorite-mark" size={13} />}
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
   return (
-    <div className="minister-list">
+    <div className="minister-list minister-list-court" ref={containerRef}>
       {list.map((minister) => {
-        // custom:<name> = 皇帝上传的自定义立绘，最优先；其次专属图（姓名/id）；再次 portrait_id 池图；最后占位符。
         const isCustom = minister.portrait_id?.startsWith("custom:");
         const dedicated = isCustom
           ? `/portraits/custom/${encodeURIComponent(minister.name)}?t=${cacheBust(minister.portrait_id!)}`
@@ -1156,19 +1348,30 @@ function MinisterCardList({
           ? `/portraits/${minister.portrait_id}.png`
           : undefined;
         const ousted = minister.status !== "active";
+        const pct = positions[minister.name];
+        // 透视缩放：py=0最远最小，py=1最近最大
+        const perspScale = pct ? 0.38 + 0.62 * pct.py : 1;
+        // 卡片宽用 vh 单位（CSS），这里只控制 scale
         return (
           <button
             key={minister.name}
             className={`minister-card ${selectedMinister === minister.name ? "selected" : ""} ${ousted ? "ousted" : ""}`}
-            onClick={() => onOpenChat(minister)}
+            style={pct ? {
+              position: "absolute",
+              left: `${pct.px * 100}%`,
+              top: `${pct.py * 100}%`,
+              cursor: "grab",
+              transform: `scale(${perspScale.toFixed(3)})`,
+              transformOrigin: "bottom center",
+              zIndex: Math.round(pct.py * 1000),
+            } : { visibility: "hidden" }}
+            onMouseDown={(e) => onMouseDown(e, minister.name)}
+            onClick={(e) => { if (didDrag.current) { e.preventDefault(); return; } onOpenChat(minister); }}
           >
             <div className="minister-card-portrait-wrap">
               <MinisterPortrait primary={dedicated} fallback={poolFallback} name={minister.name} />
               {onUploadPortrait && (
-                <PortraitUploadButton
-                  ministerName={minister.name}
-                  onUpload={onUploadPortrait}
-                />
+                <PortraitUploadButton ministerName={minister.name} onUpload={onUploadPortrait} />
               )}
             </div>
             <div className="minister-card-info">
@@ -1183,7 +1386,6 @@ function MinisterCardList({
           </button>
         );
       })}
-      {!list.length && <div className="empty-note">{emptyNote}</div>}
     </div>
   );
 }
@@ -1263,17 +1465,10 @@ function CourtDrawer({
   onClose: () => void;
   onOpenChat: (minister: Minister) => void;
 }) {
-  React.useEffect(() => {
-    if (!open) return;
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
-
   return (
     <>
       {open && <button className="drawer-scrim" aria-label="收起" onClick={onClose} />}
-      <aside className={`court-drawer overlay-panel ${open ? "open" : ""}`}>
+      <aside className={`court-drawer ${open ? "open" : ""}`}>
         <div className="drawer-brand">
           <div className="panel-title">
             <Landmark size={17} />
@@ -1282,7 +1477,7 @@ function CourtDrawer({
           <button className="icon-button" aria-label="收起" onClick={onClose}><X size={16} /></button>
         </div>
         <div className="segmented">
-          {["内阁", "六部", "收藏", "全部"].map((group) => (
+          {["内阁", "收藏", "全部"].map((group) => (
             <button
               className={ministerGroup === group ? "active" : ""}
               key={group}
@@ -1298,6 +1493,7 @@ function CourtDrawer({
           selectedMinister={selectedMinister}
           emptyNote="此栏暂无可召见大臣。"
           onOpenChat={onOpenChat}
+          courtMode={ministerGroup !== "全部"}
         />
       </aside>
     </>
@@ -1323,13 +1519,6 @@ function HaremDrawer({
   onOpenChat: (minister: Minister) => void;
   onUploadPortrait: (ministerName: string, file: File) => Promise<void>;
 }) {
-  React.useEffect(() => {
-    if (!open) return;
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
-
   return (
     <>
       {open && <button className="drawer-scrim" aria-label="收起" onClick={onClose} />}
@@ -1549,14 +1738,6 @@ function FullscreenModal({
   children: React.ReactNode;
   headerExtra?: React.ReactNode;
 }) {
-  React.useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
   return (
     <section className="fullscreen-layer" role="dialog" aria-modal="true" aria-label={title}>
       <div className="fullscreen-scrim" onClick={onClose} />
@@ -2990,9 +3171,28 @@ function EdictModal({
   );
 }
 
+// 官职品级权重，数字越小品级越高（排越前）
+function officeRank(office: string): number {
+  if (/首辅/.test(office)) return 1;
+  if (/次辅/.test(office)) return 2;
+  if (/大学士/.test(office)) return 3;
+  if (/尚书/.test(office)) return 4;
+  if (/侍郎/.test(office)) return 5;
+  if (/都御史|巡抚|总督/.test(office)) return 6;
+  if (/郎中/.test(office)) return 8;
+  return 9;
+}
+
 function filterMinisters(ministers: Minister[], group: string) {
-  if (group === "内阁") return ministers.filter((minister) => minister.office_type === "内阁");
-  if (group === "六部") return ministers.filter((minister) => ["吏部", "户部", "礼部", "兵部", "刑部", "工部"].includes(minister.office_type));
+  if (group === "内阁" || group === "六部") {
+    return ministers
+      .filter((m) =>
+        (m.office_type === "内阁" || ["吏部", "户部", "礼部", "兵部", "刑部", "工部"].includes(m.office_type))
+        && m.status === "active"
+        && !/前|罢|致仕/.test(m.office || "")  // 无实职不排朝班
+      )
+      .sort((a, b) => officeRank(a.office || "") - officeRank(b.office || ""));
+  }
   if (group === "收藏") return ministers.filter((minister) => minister.favorite);
   return ministers;
 }

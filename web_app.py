@@ -550,6 +550,7 @@ class WebGame:
         next_minister: str = "",
         proposed_directive: Optional[Dict[str, Any]] = None,
         appointed_minister: str = "",
+        registered_minister: str = "",
         displaced_minister: str = "",
     ) -> Dict[str, Any]:
         character = self.session._character(minister_name)
@@ -564,6 +565,7 @@ class WebGame:
             "next_minister": next_minister,
             "proposed_directive": proposed_directive,
             "appointed_minister": appointed_minister,
+            "registered_minister": registered_minister,
             "displaced_minister": displaced_minister,
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "suggestions": self.suggestions_for(character),
@@ -587,6 +589,7 @@ class WebGame:
             minister_name, result.answer,
             court_action=result.court_action, next_minister=result.next_minister,
             proposed_directive=proposed, appointed_minister=result.appointed_minister,
+            registered_minister=result.registered_minister,
             displaced_minister=result.displaced_minister,
         )
 
@@ -625,6 +628,7 @@ class WebGame:
             # 截 propose_directive：入 pending；截 propose_appointment：吏部铨选建档
             proposed = None
             appointed = ""
+            registered = ""
             court_action = ""
             next_minister = ""
             displaced = ""
@@ -650,22 +654,38 @@ class WebGame:
                             args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                             payload_json = json.dumps(args, ensure_ascii=False)
                         appointed, displaced = self.session._apply_appointment(payload_json, character)
+                    elif tool_name == "register_unlisted_person" or res.startswith("__pending_unlisted_person__"):
+                        payload_json = res.removeprefix("__pending_unlisted_person__").strip()
+                        if not payload_json:
+                            args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
+                            payload_json = json.dumps(args, ensure_ascii=False)
+                        registered, summon_after = self.session._apply_unlisted_person_registration(payload_json)
+                        if registered and summon_after:
+                            court_action = "summon"
+                            next_minister = registered
                     elif tool_name == "summon_minister" or res.startswith("__summon__"):
                         target_name = res.removeprefix("__summon__").strip()
                         if not target_name:
                             args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                             target_name = args.get("name", "")
                         if target_name:
-                            target, _is_temporary = self.session.summon_character(target_name, character)
-                            ok, _reason = self.session.can_summon(target)
-                            if ok:
-                                court_action = "summon"
-                                next_minister = target.name
+                            try:
+                                target, _is_temporary = self.session.summon_character(
+                                    target_name, character, allow_temporary=False
+                                )
+                            except ValueError:
+                                target = None
+                            if target is not None:
+                                ok, _reason = self.session.can_summon(target)
+                                if ok:
+                                    court_action = "summon"
+                                    next_minister = target.name
                     elif tool_name == "dismiss_minister" or res == "__dismiss__":
                         court_action = "dismiss"
             payload = self._chat_payload(
                 minister_name, answer, court_action=court_action, next_minister=next_minister,
                 proposed_directive=proposed, appointed_minister=appointed,
+                registered_minister=registered,
                 displaced_minister=displaced,
             )
             yield {"type": "done", "payload": payload}
@@ -1272,6 +1292,18 @@ async def api_delete_portrait(name: str) -> Dict[str, Any]:
     # 复位 portrait_id：清空 → 前端回落到池图（add/seed 时会按 office_type 再分配）。
     get_game().set_custom_portrait(name, "")
     return {"name": name, "portrait_id": ""}
+
+
+@app.get("/api/court_layout")
+async def api_get_court_layout() -> Dict[str, Any]:
+    val = get_game().db.kv_get("court_layout")
+    return {"layout": val or "{}"}
+
+
+@app.post("/api/court_layout")
+async def api_set_court_layout(body: Dict[str, Any]) -> Dict[str, Any]:
+    get_game().db.kv_set("court_layout", body.get("layout", "{}"))
+    return {"ok": True}
 
 
 @app.get("/portraits/custom/{name}")

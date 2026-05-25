@@ -65,6 +65,7 @@ class ChatTurnResult:
     next_minister: str = ""
     proposed_directive: Optional[DirectiveView] = None
     appointed_minister: str = ""   # 吏部本轮铨选新任的人物姓名（已可召见）
+    registered_minister: str = ""  # 名册外史实/用户确认人物建档后可召见
     displaced_minister: str = ""   # 因新任腾缺被罢黜（dismissed）的原任者姓名
     refresh_ministers: List[str] = field(default_factory=list)
 
@@ -362,7 +363,12 @@ class GameSession:
             self.registry.register_runtime(character)
         return character
 
-    def summon_character(self, name_or_text: str, current: Optional[Character] = None) -> Tuple[Character, bool]:
+    def summon_character(
+        self,
+        name_or_text: str,
+        current: Optional[Character] = None,
+        allow_temporary: bool = True,
+    ) -> Tuple[Character, bool]:
         """召见人物：优先匹配正式名册；匹配不到则创建运行时临时人物。返回 (人物, 是否临时)。"""
         target = match_minister_from_text(name_or_text, current)
         if target is not None:
@@ -370,6 +376,8 @@ class GameSession:
         clean_name = str(name_or_text or "").strip()
         if clean_name in self.content.characters:
             return (self.content.characters[clean_name], False)
+        if not allow_temporary:
+            raise ValueError(f"人物未建档：{clean_name}")
         return (self._temporary_character(clean_name), True)
 
     def can_summon(self, character: Character) -> Tuple[bool, str]:
@@ -412,11 +420,15 @@ class GameSession:
                     args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                     next_name = args.get("name", "")
                 if next_name:
-                    target, _is_temporary = self.summon_character(next_name, character)
-                    ok, _reason = self.can_summon(target)
-                    if ok:
-                        result.court_action = "summon"
-                        result.next_minister = target.name
+                    try:
+                        target, _is_temporary = self.summon_character(next_name, character, allow_temporary=False)
+                    except ValueError:
+                        target = None
+                    if target is not None:
+                        ok, _reason = self.can_summon(target)
+                        if ok:
+                            result.court_action = "summon"
+                            result.next_minister = target.name
             elif tool_name == "propose_directive" or tool_result.startswith("__pending_directive__"):
                 draft_text = tool_result.removeprefix("__pending_directive__").strip()
                 if not draft_text:
@@ -440,6 +452,15 @@ class GameSession:
                 if displaced:
                     result.displaced_minister = displaced
                     result.refresh_ministers.append(displaced)
+            elif tool_name == "register_unlisted_person" or tool_result.startswith("__pending_unlisted_person__"):
+                payload = tool_result.removeprefix("__pending_unlisted_person__").strip()
+                registered, summon_after = self._apply_unlisted_person_registration(payload)
+                if registered:
+                    result.registered_minister = registered
+                    result.refresh_ministers.append(registered)
+                    if summon_after:
+                        result.court_action = "summon"
+                        result.next_minister = registered
         return result
 
     def _apply_appointment(self, payload: str, appointer: Character) -> Tuple[str, str]:
@@ -452,6 +473,70 @@ class GameSession:
         except (ValueError, TypeError):
             return ("", "")
         return apply_appointment(self.db, self.state, self.content, self.registry, data)
+
+    def _apply_unlisted_person_registration(self, payload: str) -> Tuple[str, bool]:
+        """登记史实未预设/用户确认背景的人物，进入本局正式可召见人物池。"""
+        import json as _json
+        try:
+            data = _json.loads(payload) if payload else {}
+        except (ValueError, TypeError):
+            return ("", False)
+        if not isinstance(data, dict):
+            return ("", False)
+        name = str(data.get("name") or "").strip()
+        office = str(data.get("office") or "").strip()
+        office_type = str(data.get("office_type") or "").strip()
+        if not name or not office or not office_type:
+            return ("", False)
+        aliases_raw = data.get("aliases") or []
+        aliases = [str(alias).strip() for alias in aliases_raw if str(alias).strip()] if isinstance(aliases_raw, list) else []
+        if _find_existing_minister(self.content, name) is not None:
+            return ("", False)
+        for alias in aliases:
+            if _find_existing_minister(self.content, alias) is not None:
+                return ("", False)
+        faction = str(data.get("faction") or "中立").strip()
+        if faction not in self.content.factions:
+            faction = "中立"
+        source_kind = str(data.get("source") or "historical").strip()
+        if source_kind == "historical":
+            source_label = "史实人物补档"
+            style = "史实补档，待召对细察"
+            loyalty = 62
+        elif source_kind == "user_confirmed":
+            source_label = "皇帝确认背景补档"
+            style = "陛下点名，底细待察"
+            loyalty = 60
+        else:
+            source_label = "名册外人物补档"
+            style = "名册外补档，待召对细察"
+            loyalty = 60
+        character = Character(
+            name=name,
+            office=office,
+            office_type=office_type,
+            faction=faction,
+            aliases=aliases,
+            personal_skills=[],
+            loyalty=loyalty,
+            ability=55,
+            integrity=60,
+            courage=55,
+            style=style,
+            status="active",
+            summary=str(data.get("summary") or "").strip(),
+        )
+        self.content.characters[name] = character
+        self.db.add_character(self.state, character, source=source_label)
+        row = self.db.conn.execute(
+            "SELECT portrait_id FROM characters WHERE name=?", (name,)
+        ).fetchone()
+        if row:
+            character.portrait_id = str(row["portrait_id"])
+        if self.registry is not None:
+            self.registry.register(character)
+        self.temporary_characters.pop(name, None)
+        return (name, bool(data.get("summon_after", True)))
 
     # ── 拟旨 / 草案阶段 ───────────────────────────────────────────────────
 

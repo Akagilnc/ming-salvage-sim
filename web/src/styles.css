@@ -674,24 +674,25 @@ select:focus-visible {
 
 .court-drawer {
   position: fixed;
-  top: 50%;
-  left: 50%;
+  inset: 0;
   z-index: 18;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
-  width: min(960px, calc(100vw - 32px));
-  height: min(88vh, 720px);
-  padding: 18px 20px;
+  grid-template-rows: auto auto 1fr;
+  padding: 0 28px 0;
   opacity: 0;
   pointer-events: none;
-  transform: translate(-50%, -50%) scale(0.96);
+  transform: scale(0.98);
   transition: opacity 180ms ease, transform 180ms ease;
+  border: none;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
 }
 
 .court-drawer.open {
   opacity: 1;
   pointer-events: auto;
-  transform: translate(-50%, -50%) scale(1);
+  transform: scale(1);
 }
 
 .drawer-brand {
@@ -700,8 +701,10 @@ select:focus-visible {
   justify-content: space-between;
   gap: 10px;
   min-width: 0;
-  margin-bottom: 4px;
-  color: #8f2f25;
+  padding: 12px 4px 6px;
+  margin-bottom: 0;
+  color: #ffe8a0;
+  text-shadow: 0 1px 6px rgba(0,0,0,0.8);
 }
 
 .drawer-brand div {
@@ -791,40 +794,70 @@ select:focus-visible {
   align-content: start;
 }
 
+/* 朝堂全屏可拖拽容器 */
+.minister-list-court {
+  display: block;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  overflow: hidden;
+}
+
+.minister-list-court .minister-card {
+  width: 11vh;
+}
+
+.minister-list-court .minister-card-portrait-wrap {
+  height: 20vh;
+}
+
+.court-empty-note {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: rgba(255,220,140,0.7);
+  text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+  font-size: 1rem;
+}
+
 .minister-card {
   position: relative;
   display: flex;
   flex-direction: column;
+  align-items: center;
   flex: 0 0 auto;
   gap: 0;
   width: 160px;
-  height: 300px;
-  overflow: hidden;
+  overflow: visible;
   white-space: normal;
   padding: 0;
-  border: 1px solid rgba(77, 48, 20, 0.22);
-  border-radius: 8px;
-  color: var(--muted);
-  text-align: left;
-  background: rgba(255, 242, 203, 0.46);
-  transition: border-color 150ms ease, background 150ms ease, color 150ms ease;
+  border: none;
+  border-radius: 0;
+  color: #fff;
+  text-align: center;
+  background: none;
+  transition: transform 150ms ease, filter 150ms ease;
+  cursor: pointer;
+  filter: drop-shadow(0 4px 12px rgba(0,0,0,0.55));
 }
 
 .minister-card-portrait-wrap {
   position: relative;
-  flex: 0 0 213px;
-  width: 160px;
-  height: 213px;
+  flex: 0 0 auto;
+  width: 100%;
+  height: 20vh;
 }
 
 .minister-card-portrait {
-  width: 160px;
-  height: 213px;
-  flex: 0 0 213px;
+  width: 100%;
+  height: 100%;
   object-fit: cover;
   object-position: top center;
   display: block;
-  border-radius: 7px 7px 0 0;
+  border-radius: 4px 4px 0 0;
   background: rgba(155, 120, 80, 0.18);
 }
 
@@ -861,39 +894,44 @@ select:focus-visible {
 }
 
 .minister-card-portrait-placeholder {
-  width: 160px;
-  height: 213px;
-  flex: 0 0 213px;
+  width: 100%;
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 7px 7px 0 0;
-  background: linear-gradient(180deg, rgba(155, 95, 55, 0.22), rgba(80, 50, 25, 0.08));
-  color: rgba(100, 70, 35, 0.4);
-  font-size: 2.4rem;
+  border-radius: 4px 4px 0 0;
+  background: linear-gradient(180deg, rgba(100, 65, 30, 0.72), rgba(60, 35, 12, 0.55));
+  color: rgba(255, 220, 150, 0.7);
+  font-size: 2.8rem;
+  text-shadow: 0 2px 8px rgba(0,0,0,0.6);
 }
 
 .minister-card-info {
-  flex: 1 1 0;
-  min-height: 0;
-  overflow: hidden;
-  padding: 6px 24px 6px 8px;
+  width: 100%;
+  padding: 5px 4px 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  align-items: center;
+  gap: 1px;
+  background: linear-gradient(180deg, rgba(20,10,0,0.72), rgba(20,10,0,0.55));
+  border-radius: 0 0 4px 4px;
 }
 
 .minister-card-top {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  width: 100%;
 }
 
 .minister-office {
   flex: 0 0 auto;
-  font-size: 0.78rem;
+  font-size: 0.68rem;
   white-space: nowrap;
+  color: rgba(255,220,140,0.85);
+  text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+  letter-spacing: 0.04em;
 }
 
 /* 状态徽标：去职/罢黜/下狱等。卡片里推到右侧成组，office 跟其后。 */
@@ -926,30 +964,21 @@ select:focus-visible {
 .profile-office { margin-left: 6px; }
 
 .minister-bio {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: hidden;
-  font-size: 0.72rem;
-  line-height: 1.4;
-  white-space: normal;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  word-break: break-word;
+  display: none;
 }
 
 .minister-card:hover,
 .minister-card.selected {
-  border-color: rgba(143, 47, 37, 0.54);
-  color: #5a361c;
-  background:
-    linear-gradient(90deg, rgba(143, 47, 37, 0.16), transparent 30%),
-    rgba(255, 235, 190, 0.92);
+  transform: translateY(-8px) scale(1.04);
+  filter: drop-shadow(0 8px 20px rgba(0,0,0,0.75)) brightness(1.08);
 }
 
 .minister-name {
-  color: var(--paper);
-  font-weight: 700;
+  color: #ffe8a0;
+  font-weight: 900;
+  font-size: 0.95rem;
+  letter-spacing: 0.08em;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.8);
 }
 
 .favorite-mark {
@@ -2110,7 +2139,7 @@ button:disabled {
 }
 
 .modal-bg-chat {
-  background-image: url("/bg_chat.png");
+  background-image: url("/bg_chat.webp");
 }
 
 .modal-bg-edict {
@@ -2338,7 +2367,7 @@ button:disabled {
 
 /* 朝堂抽屉背景 */
 .court-drawer {
-  background-image: url("/bg_chat.png");
+  background-image: url("/bg_chat.webp");
   background-size: cover;
   background-position: center;
 }
@@ -2374,27 +2403,33 @@ button:disabled {
   color: #f9e0aa !important;
 }
 
-/* 朝堂抽屉文字：黑色加粗 */
-.court-drawer,
-.court-drawer * {
-  color: #1a1410 !important;
-  font-weight: 700 !important;
-}
-
+/* 朝堂全屏沉浸模式文字 */
 .court-drawer .panel-title,
-.court-drawer .minister-name {
-  color: #0e0a06 !important;
-  font-weight: 900 !important;
+.court-drawer .drawer-brand span {
+  color: #ffe8a0 !important;
+  text-shadow: 0 1px 6px rgba(0,0,0,0.8);
 }
 
-.court-drawer .minister-bio {
-  font-weight: 400 !important;
-  color: #3a3026 !important;
+.court-drawer .icon-button {
+  color: #ffe8a0 !important;
+  background: rgba(0,0,0,0.35) !important;
+  border-radius: 50%;
+}
+
+.court-drawer .segmented {
+  background: rgba(20,10,0,0.55) !important;
+  border-color: rgba(255,200,80,0.3) !important;
+  backdrop-filter: blur(4px);
+}
+
+.court-drawer .segmented button {
+  color: rgba(255,220,140,0.75) !important;
 }
 
 .court-drawer .segmented button.active,
 .court-drawer .segmented button:hover {
-  color: #f9e0aa !important;
+  color: #ffe8a0 !important;
+  background: rgba(143,47,37,0.75) !important;
 }
 
 /* 地图详情小面板背景 */

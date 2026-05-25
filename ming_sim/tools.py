@@ -445,6 +445,51 @@ def build_minister_tools(character: Character, context: CourtContext):
         )
         return f"__pending_appointment__{payload}"
 
+    def register_unlisted_person(
+        name: str,
+        office: str,
+        office_type: str,
+        faction: str = "中立",
+        aliases_json: str = "[]",
+        summary: str = "",
+        source: str = "historical",
+        summon_after: bool = True,
+    ) -> str:
+        """登记名册外人物，使其进入本局可召见人物池。
+
+        仅在两种情况下调用：
+        1. source="historical"：名册无此人，但你高置信确认其为史实人物（含异体字、误写、近音、别名归一）。
+        2. source="user_confirmed"：名册无此人且非明确史实，但皇帝已经说明其身份背景。
+
+        不可用于正式升迁、外放或替换现任官缺；正式任官仍走吏部铨选或圣旨。
+        aliases_json 填 JSON 数组字符串，如 ["李若璉","李若链","李若莲"]。
+        """
+        nm = (name or "").strip()
+        off = (office or "").strip()
+        kind = (office_type or "").strip()
+        if not nm or not off or not kind:
+            return "登记失败：姓名、职衔、官署类型不能为空。"
+        try:
+            aliases = json.loads(aliases_json or "[]")
+        except (ValueError, TypeError):
+            aliases = []
+        if not isinstance(aliases, list):
+            aliases = []
+        payload = json.dumps(
+            {
+                "name": nm,
+                "office": off,
+                "office_type": kind,
+                "faction": (faction or "中立").strip(),
+                "aliases": [str(alias).strip() for alias in aliases if str(alias).strip()],
+                "summary": (summary or "").strip(),
+                "source": (source or "historical").strip(),
+                "summon_after": bool(summon_after),
+            },
+            ensure_ascii=False,
+        )
+        return f"__pending_unlisted_person__{payload}"
+
     def dismiss_minister() -> str:
         """结束本次召见。"""
         return "__dismiss__"
@@ -475,6 +520,7 @@ def build_minister_tools(character: Character, context: CourtContext):
         propose_directive,
         dismiss_minister,
         summon_minister,
+        register_unlisted_person,
     ]
     # 吏部尚书专属：铨选任命，可把名册外的史实官员补入朝堂。
     if character.office_type == "吏部":
