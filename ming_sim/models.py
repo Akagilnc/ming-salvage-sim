@@ -23,6 +23,7 @@ class LLMConfig:
     api_key: str
     base_url: str
     model: str
+    max_tokens: int = 8000
 
 
 @dataclass

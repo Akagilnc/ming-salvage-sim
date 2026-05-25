@@ -239,8 +239,9 @@ type SaveEntry = { name: string; size: number; mtime: number };
 type LLMConfigInfo = {
   base_url: string;
   model: string;
+  max_tokens: number;
   has_api_key: boolean;
-  persisted: { base_url: string; model: string; has_api_key: boolean };
+  persisted: { base_url: string; model: string; has_api_key: boolean; max_tokens: number };
 };
 type ProposedDirective = { id: number; text: string; status: string; notes: string };
 type ChatResponse = {
@@ -451,7 +452,7 @@ type MenuStatus = {
   has_running_game: boolean;
   has_main_db: boolean;
   saves: Array<{ name: string; size: number; mtime: number }>;
-  llm: { base_url: string; model: string; has_api_key: boolean };
+  llm: { base_url: string; model: string; has_api_key: boolean; max_tokens: number };
 };
 
 function App() {
@@ -2311,6 +2312,7 @@ function LLMConfigTab() {
   const [baseUrl, setBaseUrl] = React.useState("");
   const [model, setModel] = React.useState("");
   const [apiKey, setApiKey] = React.useState("");
+  const [maxTokens, setMaxTokens] = React.useState("8000");
   const [show, setShow] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [msg, setMsg] = React.useState("");
@@ -2322,6 +2324,7 @@ function LLMConfigTab() {
         setInfo(data);
         setBaseUrl(data.base_url);
         setModel(data.model);
+        setMaxTokens(String(data.max_tokens || 8000));
       })
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
   }, []);
@@ -2333,7 +2336,7 @@ function LLMConfigTab() {
     try {
       const data = await api<LLMConfigInfo>("/api/llm/config", {
         method: "POST",
-        body: JSON.stringify({ base_url: baseUrl, model, api_key: apiKey }),
+        body: JSON.stringify({ base_url: baseUrl, model, api_key: apiKey, max_tokens: parseInt(maxTokens) || 8000 }),
       });
       setInfo((cur) => (cur ? { ...cur, ...data } : null));
       setApiKey("");
@@ -2367,6 +2370,18 @@ function LLMConfigTab() {
           value={model}
           onChange={(e) => setModel(e.target.value)}
           placeholder="gpt-4o-mini"
+        />
+      </label>
+      <label className="menu-field">
+        <span>Max Tokens</span>
+        <input
+          className="menu-input"
+          type="number"
+          min={256}
+          max={65536}
+          value={maxTokens}
+          onChange={(e) => setMaxTokens(e.target.value)}
+          placeholder="8000"
         />
       </label>
       <label className="menu-field">
@@ -3548,13 +3563,14 @@ function ApiSettingsModal({
   onClose,
   onSaved,
 }: {
-  initial?: { base_url: string; model: string; has_api_key: boolean };
+  initial?: { base_url: string; model: string; has_api_key: boolean; max_tokens?: number };
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
   const [baseUrl, setBaseUrl] = React.useState(initial?.base_url || "https://api.deepseek.com");
   const [model, setModel] = React.useState(initial?.model || "deepseek-chat");
   const [apiKey, setApiKey] = React.useState("");
+  const [maxTokens, setMaxTokens] = React.useState(String(initial?.max_tokens || 8000));
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState("");
 
@@ -3564,7 +3580,7 @@ function ApiSettingsModal({
     try {
       await api("/api/menu/llm", {
         method: "POST",
-        body: JSON.stringify({ base_url: baseUrl.trim(), model: model.trim(), api_key: apiKey.trim() }),
+        body: JSON.stringify({ base_url: baseUrl.trim(), model: model.trim(), api_key: apiKey.trim(), max_tokens: parseInt(maxTokens) || 8000 }),
       });
       await onSaved();
     } catch (e: any) {
@@ -3588,13 +3604,17 @@ function ApiSettingsModal({
           <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="deepseek-chat" />
         </label>
         <label>
+          Max Tokens
+          <input type="number" min={256} max={65536} value={maxTokens} onChange={(e) => setMaxTokens(e.target.value)} placeholder="8000" />
+        </label>
+        <label>
           API Key
           <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={initial?.has_api_key ? "(已配置；如需更换请重新填写)" : "sk-..."} />
         </label>
         {err && <div className="menu-error">{err}</div>}
         <div className="menu-modal-actions">
           <button onClick={onClose} disabled={busy}>取消</button>
-          <button className="primary" onClick={onSave} disabled={busy || !baseUrl.trim() || !model.trim() || !apiKey.trim()}>
+          <button className="primary" onClick={onSave} disabled={busy || !baseUrl.trim() || !model.trim() || (!apiKey.trim() && !initial?.has_api_key)}>
             {busy ? "保存中..." : "保存"}
           </button>
         </div>

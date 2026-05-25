@@ -61,16 +61,20 @@ def load_runtime_llm() -> Dict[str, str]:
         return {}
     if not isinstance(data, dict):
         return {}
-    return {k: str(data.get(k, "") or "") for k in ("base_url", "model", "api_key")}
+    out = {k: str(data.get(k, "") or "") for k in ("base_url", "model", "api_key")}
+    if "max_tokens" in data:
+        out["max_tokens"] = str(data["max_tokens"])
+    return out
 
 
-def save_runtime_llm(base_url: str, model: str, api_key: str) -> None:
+def save_runtime_llm(base_url: str, model: str, api_key: str, max_tokens: int = 8000) -> None:
     """写 data/runtime_llm.json。明文存盘——按用户选择。"""
     os.makedirs(os.path.dirname(RUNTIME_LLM_PATH), exist_ok=True)
     payload = {
         "base_url": (base_url or "").strip(),
         "model": (model or "").strip(),
         "api_key": (api_key or "").strip(),
+        "max_tokens": max_tokens,
     }
     with open(RUNTIME_LLM_PATH, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, ensure_ascii=False, indent=2)

@@ -84,6 +84,7 @@ class WebGame:
         base_url = runtime.get("base_url") or base_url
         model = runtime.get("model") or model
         api_key = runtime.get("api_key") or api_key
+        max_tokens = int(runtime.get("max_tokens") or 8000)
         if not api_key:
             raise LLMUnavailable("未配 API key，请先到设置页填写。")
         random.seed(int(os.environ.get("MING_SIM_SEED", "7")))
@@ -97,7 +98,7 @@ class WebGame:
                         os.remove(target)
                     except OSError:
                         pass
-        llm_config = LLMConfig(api_key=api_key, base_url=normalize_openai_base_url(base_url), model=model)
+        llm_config = LLMConfig(api_key=api_key, base_url=normalize_openai_base_url(base_url), model=model, max_tokens=max_tokens)
         self.session = GameSession(db_path, llm_config)
         self.session.begin_turn()
         # 召对记录持久化在 chat_messages 表，启动时恢复进内存缓存。
@@ -205,13 +206,14 @@ class WebGame:
         if not _fav_raw:
             self.db.kv_set("favorites", json.dumps(sorted(self.favorites)))
 
-    def apply_llm_config(self, base_url: str, model: str, api_key: str) -> LLMConfig:
+    def apply_llm_config(self, base_url: str, model: str, api_key: str, max_tokens: int = 0) -> LLMConfig:
         base = normalize_openai_base_url(base_url.strip() or self.session.llm_config.base_url)
         new_model = model.strip() or self.session.llm_config.model
         new_key = api_key.strip() or self.session.llm_config.api_key
-        new_config = LLMConfig(api_key=new_key, base_url=base, model=new_model)
+        new_max = max_tokens if max_tokens > 0 else self.session.llm_config.max_tokens
+        new_config = LLMConfig(api_key=new_key, base_url=base, model=new_model, max_tokens=new_max)
         verify_llm_available(new_config)
-        save_runtime_llm(new_config.base_url, new_config.model, new_config.api_key)
+        save_runtime_llm(new_config.base_url, new_config.model, new_config.api_key, new_config.max_tokens)
         self.session.llm_config = new_config
         # 重建 registry 让大臣 Agent 用新配置
         self.session.begin_turn()
@@ -780,6 +782,7 @@ async def api_menu_status() -> Dict[str, Any]:
             "base_url": runtime.get("base_url") or os.environ.get("OPENAI_BASE_URL", ""),
             "model": runtime.get("model") or os.environ.get("OPENAI_MODEL", ""),
             "has_api_key": has_api_key,
+            "max_tokens": int(runtime.get("max_tokens") or 8000),
         },
     }
 
@@ -870,6 +873,7 @@ class LlmSetupRequest(BaseModel):
     base_url: str
     model: str
     api_key: str
+    max_tokens: int = 8000
 
 
 @app.post("/api/menu/llm")
@@ -878,10 +882,16 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     base_url = (request.base_url or "").strip()
     model = (request.model or "").strip()
     api_key = (request.api_key or "").strip()
-    if not (base_url and model and api_key):
-        raise HTTPException(status_code=400, detail="base_url / model / api_key 不能为空。")
-    save_runtime_llm(normalize_openai_base_url(base_url), model, api_key)
-    return {"ok": True, "llm": {"base_url": normalize_openai_base_url(base_url), "model": model, "has_api_key": True}}
+    max_tokens = request.max_tokens if request.max_tokens > 0 else 8000
+    if not (base_url and model):
+        raise HTTPException(status_code=400, detail="base_url / model 不能为空。")
+    if not api_key:
+        existing = load_runtime_llm()
+        api_key = existing.get("api_key") or os.environ.get("OPENAI_API_KEY", "")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="api_key 未配置，请填写。")
+    save_runtime_llm(normalize_openai_base_url(base_url), model, api_key, max_tokens)
+    return {"ok": True, "llm": {"base_url": normalize_openai_base_url(base_url), "model": model, "has_api_key": True, "max_tokens": max_tokens}}
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -1164,6 +1174,7 @@ class LLMConfigRequest(BaseModel):
     base_url: str = ""
     model: str = ""
     api_key: str = ""
+    max_tokens: int = 0
 
 
 @app.get("/api/consorts/candidates")
@@ -1232,11 +1243,13 @@ async def api_get_llm_config() -> Dict[str, Any]:
     return {
         "base_url": cfg.base_url,
         "model": cfg.model,
+        "max_tokens": cfg.max_tokens,
         "has_api_key": bool(cfg.api_key),
         "persisted": {
             "base_url": saved.get("base_url", ""),
             "model": saved.get("model", ""),
             "has_api_key": bool(saved.get("api_key", "")),
+            "max_tokens": int(saved.get("max_tokens") or 8000),
         },
     }
 
@@ -1244,12 +1257,12 @@ async def api_get_llm_config() -> Dict[str, Any]:
 @app.post("/api/llm/config")
 async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
     try:
-        cfg = get_game().apply_llm_config(request.base_url, request.model, request.api_key)
+        cfg = get_game().apply_llm_config(request.base_url, request.model, request.api_key, request.max_tokens)
     except LLMUnavailable as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(e)) from None
-    return {"base_url": cfg.base_url, "model": cfg.model, "has_api_key": bool(cfg.api_key)}
+    return {"base_url": cfg.base_url, "model": cfg.model, "max_tokens": cfg.max_tokens, "has_api_key": bool(cfg.api_key)}
 
 
 # ── 自定义立绘上传/读取 ──────────────────────────────────────────────────────
