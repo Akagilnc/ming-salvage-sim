@@ -84,7 +84,7 @@ def simulate_season_with_agno(
     ]
     court_roster = [
         dict(r) for r in db.conn.execute(
-            "SELECT name,office,office_type,faction,status FROM characters "
+            "SELECT name,office,office_type,court_role,faction,status FROM characters "
             "WHERE status!='offstage' AND office_type!='后宫' ORDER BY rowid"
         ).fetchall()
     ]
@@ -170,7 +170,7 @@ def extract_scores_with_agno(
     ]
     active_ministers = [
         dict(r) for r in db.conn.execute(
-            "SELECT name,office,faction FROM characters WHERE status='active' ORDER BY rowid"
+            "SELECT name,office,office_type,court_role,faction FROM characters WHERE status='active' ORDER BY rowid"
         ).fetchall()
     ]
     offstage_ministers = [

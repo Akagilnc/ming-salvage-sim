@@ -901,11 +901,20 @@ def apply_score_extraction(
                 })
                 continue
             if court_role:
-                # 先清掉同角色旧任者
-                db.conn.execute(
-                    "UPDATE characters SET court_role='' WHERE court_role=? AND name!=?",
+                # 清旧任者 court_role，同时把旧任者 office 里与 court_role 同名的分项移除
+                old_holders = db.conn.execute(
+                    "SELECT name, office FROM characters WHERE court_role=? AND name!=?",
                     (court_role, name),
-                )
+                ).fetchall()
+                for holder in old_holders:
+                    parts = [p.strip() for p in str(holder["office"]).split(",") if p.strip() and p.strip() != court_role]
+                    new_holder_office = ",".join(parts)
+                    db.conn.execute(
+                        "UPDATE characters SET court_role='', office=? WHERE name=?",
+                        (new_holder_office, holder["name"]),
+                    )
+                    if content is not None and holder["name"] in content.characters:
+                        content.characters[holder["name"]].office = new_holder_office
                 db.conn.execute(
                     "UPDATE characters SET court_role=? WHERE name=?",
                     (court_role, name),

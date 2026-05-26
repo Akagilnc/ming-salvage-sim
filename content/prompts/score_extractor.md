@@ -97,7 +97,7 @@
 - `fiscal_config`：当前各财政系数
 - `relevant_memories`：与本{{TURN_UNIT}}诏书相关的历史事件记忆。每条字段：`year`/`period`（事发年月）、`subject_type`（character/court/external_power/region）、`subject_id`（当事人名或地区/势力名）、`title`（事件标题）、`cause`（起因摘要）、`outcome`（结果摘要）、`importance`（1–5重要度）、`tags`（关联人名/地名/事项编号等）。对盘面查不到某人/地区当前值时，可参照记忆里的 outcome 判断趋势方向；定 delta 档位时若记忆显示此事已多回合累积，可适当上调重度。记忆是辅助参考，**不强制引用**。
 
-**表格格式约定**：`regions` / `armies` / `buildings` / `external_powers` / `active_ministers` / `offstage_ministers` 均为 `{"cols":[列名...], "rows":[[值...]...]}` 形式——`cols` 是列名数组，`rows` 是二维数组每行一条记录，按 `cols` 顺序对位。查某行某字段时按 `cols.index("字段名")` 找列下标，再到该 `rows[i]` 取值。这是为压缩 token 改的格式，语义与 dict-of-rows 完全等价。
+**表格格式约定**：`regions` / `armies` / `buildings` / `external_powers` / `active_ministers` / `offstage_ministers` 均为 `{"cols":[列名...], "rows":[[值...]...]}` 形式——`cols` 是列名数组，`rows` 是二维数组每行一条记录，按 `cols` 顺序对位。查某行某字段时按 `cols.index("字段名")` 找列下标，再到该 `rows[i]` 取值。这是为压缩 token 改的格式，语义与 dict-of-rows 完全等价。`active_ministers` 含列：`name`/`office`/`office_type`/`court_role`/`faction`——`office` 字段可能含逗号分隔多职；`court_role` 非空表示该人占据某固定席位（首辅/次辅/六部尚书），判顶缺时以此为准。
 
 ## 输出字段总表（每个字段的含义与约束，先看清这张表）
 
@@ -120,7 +120,7 @@
 | `fiscal_changes` | 制度性财政系数变化 | 仅奏章明确提到开征新税/削减禄米/盐政改革等才写。`delta` 是增量（±5~±30 常规，±50 极端）。`key` 必须从下方「财政系数表」选，不在表内一律不写。 |
 | `appointments` | **仅后宫纳妃** | 仅 `decree_text` 写明「纳/册封/封/选 某某 为 贵妃/嫔/才人/昭仪/婕妤/淑女」时立项。每项 `{"name","office","office_type":"后宫","reason","approved"}`，详见「后宫纳妃规则」。**朝臣任命不进此字段，一律走 `office_changes`。** |
 | `character_status_changes` | 既有大臣状态变更（罢黜/下狱/流放/致仕/死亡） | 邸报明文写「某某革职/拿问/下诏狱/赐死/缢死/流放/致仕/卒」时立项。每项 `{"name","status","reason"}`，status ∈ `dismissed`/`imprisoned`/`exiled`/`retired`/`dead`/`offstage`。详见「人物状态变更规则」。 |
-| `office_changes` | 朝臣官职变更——某人任某官，含新进朝堂、调任、升迁，**不分新任旧任** | 邸报或 `decree_text` 写明「擢/拜/起/迁/补/调/升 某某 为 某官」时立项。每项 `{"name","new_office","reason"}`，可选 `faction`（新进朝堂者填派系）、`new_office_type`（官署类别如「督抚」「司礼监」）。`new_office` 写明制官名。**不必判此人在不在册**——代码自处理：在册改职、不在册建新档。去职走 `character_status_changes`。 |
+| `office_changes` | 朝臣官职变更——某人任某官，含新进朝堂、调任、升迁，**不分新任旧任** | 邸报或 `decree_text` 写明「擢/拜/起/迁/补/调/升 某某 为 某官」时立项。每项 `{"name","new_office","reason"}`，可选 `faction`（新进朝堂者填派系）、`new_office_type`（官署类别如「督抚」「司礼监」）、`court_role`（固定席位，见官职变更规则）。`new_office` 多职用逗号隔开，**不用「兼」字**（如 `兵部尚书,东阁大学士`）；单职直接写。**不必判此人在不在册**——代码自处理：在册改职、不在册建新档。去职走 `character_status_changes`。 |
 
 new_issue 内部字段：`kind`(`initiative`/`situation`)、`title`、`origin_kind`、`bar_value`(0-100 初始进度)、`expected_months`、`stage_text`、`resolve_condition`、`fail_condition`、`ongoing_effects`、`effect_on_resolve`、`effect_on_fail`、`cancellable`(`decree`=须下诏方能罢/`never`=不可撤/`by_progress`=随进度自然结案，严禁臆造其它值)。各字段取值见「局势立项规则」。
 
@@ -180,15 +180,15 @@ decree new_issue 必填字段：
 
 判据只看「是不是任某官」。邸报叙事里「某某接任」「某某到任」这类局势衍生现象**不要**立，归 narrative。
 
-**顶缺连带**：邸报「原任X 去职/改调，Y 接任 某独缺实职（总督/巡抚/总兵/某部尚书）」时，Y 进 `office_changes`、X 同时进 `character_status_changes`（dismissed 或对应去向）——两条都要抽，漏抽 X 会出现两个同缺官。
+**顶缺连带**：邸报「原任X 去职/改调，Y 接任 某独缺实职（总督/巡抚/总兵/某部尚书/首辅/次辅）」时，Y 进 `office_changes`、X 同时进 `character_status_changes`（dismissed 或对应去向）或 `office_changes`（改任他职）——两条都要抽，漏抽 X 会出现两个同缺官。判断现任者：`court_role` 非空的席位（首辅/次辅/六部尚书）以 court_role 为准；地方独缺以 `active_ministers` 表 office 字段匹配（office 可能含逗号多值，分项命中即算现任）。
 
-**首辅/次辅唯一性**：诏书任命新首辅时，旧首辅必须同时出现在 `office_changes`（改为普通大学士，如「内阁大学士」）或 `character_status_changes`（若同时去职）；任命新次辅同理。朝班同一时刻只能有一位首辅、一位次辅，漏抽旧任者会出现两人同占一席。
+**固定席位唯一性**：`court_role` 对应的八个席位（首辅/次辅/吏部尚书/户部尚书/礼部尚书/兵部尚书/刑部尚书/工部尚书）全局唯一。任命新人占某席时，查 `active_ministers` 或 payload 中 court_role 非空者，旧任者必须同时出现在 `office_changes`（改为普通大学士等）或 `character_status_changes`（去职），漏抽旧任者会出现两人同占一席。
 
-唯一拦截：`new_office` 必须是明制实官名（巡抚/总督/尚书/侍郎/巡按/兵备道/总兵/秉笔太监 等），不能是「军师」「军长」等非明制词——非明制词则不立此项。杜撰人名、名册外史实小官都允许（崇祯本就大量拔擢中下级官员），按中庸默认属性入册。
+唯一拦截：`new_office` 每个分项必须是明制实官名（巡抚/总督/尚书/侍郎/巡按/兵备道/总兵/秉笔太监 等），不能含「军师」「军长」等非明制词——含非明制词则不立此项。杜撰人名、名册外史实小官都允许（崇祯本就大量拔擢中下级官员），按中庸默认属性入册。
 
 字段：
 - `name`：受任者姓名。
-- `new_office`：所授官职，按诏书写明制官名，可含兼衔加衔（如「巡抚陕西等处地方兼理军务粮饷」「兵部尚书兼东阁大学士」），照诏书原貌即可。
+- `new_office`：所授官职，用逗号隔开多个官职（如 `兵部尚书,东阁大学士`、`巡抚陕西等处地方,兼理军务粮饷`）。**不用「兼」字**，直接逗号并列。单职直接写（如 `陕西总督`）。
 - `faction`（可选）：新进朝堂者填派系（东林/阉党/皇党/军队/宗室/中立/西学），拿不准填「中立」；在朝调任者可省。
 - `new_office_type`（可选）：**衙门类别跨界才填**，同部内升迁不填。规则：
   - 地方→京官（任六部郎中/员外郎/主事）：填对应部名（`吏部`/`户部`/`礼部`/`兵部`/`刑部`/`工部`）
