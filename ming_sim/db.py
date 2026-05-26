@@ -2669,6 +2669,46 @@ class GameDB:
             tlog(f"[memory/recall] {character_name} hit=0")
         return result
 
+    def get_recent_event_memories(
+        self,
+        turn: int,
+        window: int = 5,
+        limit: int = 100,
+    ) -> List[Dict[str, object]]:
+        """取近 window 回合内所有 event_memories，按 turn/id 升序，上限 limit 条。"""
+        since = max(1, turn - window + 1)
+        rows = self.conn.execute(
+            """
+            SELECT id, subject_type, subject_id, turn, year, period,
+                   event_type, title, cause, process, outcome, sentiment, importance, tags
+            FROM event_memories
+            WHERE turn >= ? AND turn <= ?
+            ORDER BY turn ASC, id ASC
+            LIMIT ?
+            """,
+            (since, turn, limit),
+        ).fetchall()
+        result = []
+        for row in rows:
+            result.append({
+                "id": int(row["id"]),
+                "subject_type": row["subject_type"],
+                "subject_id": row["subject_id"],
+                "turn": int(row["turn"]),
+                "year": int(row["year"]),
+                "period": int(row["period"]),
+                "event_type": row["event_type"],
+                "title": row["title"],
+                "cause": row["cause"],
+                "process": row["process"],
+                "outcome": row["outcome"],
+                "sentiment": row["sentiment"],
+                "importance": int(row["importance"]),
+                "tags": json.loads(row["tags"] or "[]"),
+            })
+        tlog(f"[memory/recent] turn={turn} window={window} hit={len(result)}")
+        return result
+
     def get_memories_by_keywords(
         self,
         keywords: List[str],
