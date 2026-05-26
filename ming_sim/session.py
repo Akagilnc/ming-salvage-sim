@@ -7,6 +7,7 @@ CLI 和 Web 各自只做 I/O 包装。
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
@@ -20,7 +21,7 @@ from ming_sim.context import (
     match_minister_from_text,
     victory_status,
 )
-from ming_sim.db import GameDB
+from ming_sim.db import GameDB, infer_office_type_from_office, normalize_office
 from ming_sim.decree import advance_without_edict, resolve_directives, write_decree_with_agno
 from ming_sim.issues import bind_content as _bind_issues
 from ming_sim.llm_model import create_agno_db, extract_agent_text, verify_llm_available
@@ -31,7 +32,44 @@ from ming_sim.skills import bind_content as _bind_skills
 
 
 AUTO_SAVE_PREFIX = "auto_"
-AUTO_SAVE_KEEP_TURNS = 3  # 保留最近 N 个 turn 的全部自动存档（每 turn 含 begin + preresolve）
+AUTO_SAVE_KEEP_TURNS = 3  # 每个 campaign 保留最近 N 个 turn 的全部自动存档（每 turn 含 begin + preresolve）
+
+
+def prune_auto_saves(saves_dir: str, campaign_id: str, keep_turns: int = AUTO_SAVE_KEEP_TURNS) -> None:
+    """清理自动存档：只清同一个 campaign_id，按 turn 分组，绝不碰手动存档。"""
+    import os as _os
+    import re as _re
+
+    if not _os.path.isdir(saves_dir):
+        return
+    legacy_auto = _re.compile(rf"^{_re.escape(AUTO_SAVE_PREFIX)}\d{{4}}_\d{{2}}_t\d{{4}}_.+\.db$")
+    for f in _os.listdir(saves_dir):
+        if legacy_auto.match(f):
+            try:
+                _os.remove(_os.path.join(saves_dir, f))
+            except OSError:
+                pass
+    campaign_id = (campaign_id or "").strip()
+    if not campaign_id:
+        return
+    buckets: Dict[int, List[str]] = {}
+    for f in _os.listdir(saves_dir):
+        if not (f.startswith(f"{AUTO_SAVE_PREFIX}{campaign_id}_") and f.endswith(".db")):
+            continue
+        m = _re.search(r"_t(\d+)_", f)
+        if not m:
+            continue
+        buckets.setdefault(int(m.group(1)), []).append(f)
+    keep = max(1, int(keep_turns or 1))
+    keep_turn_nums = set(sorted(buckets.keys(), reverse=True)[:keep])
+    for turn_num, files in buckets.items():
+        if turn_num in keep_turn_nums:
+            continue
+        for stale in files:
+            try:
+                _os.remove(_os.path.join(saves_dir, stale))
+            except OSError:
+                pass
 
 
 class TurnPhase(str, Enum):
@@ -152,6 +190,10 @@ def apply_appointment(
     if not name or not office:
         return ("", "")
     is_consort = str(data.get("office_type") or "").strip() == "后宫"
+    # 朝臣多职统一逗号分隔（后宫记称号，不动）；与 db 层 normalize_office 同源。
+    if not is_consort:
+        office = normalize_office(office)
+    office_type = "后宫" if is_consort else infer_office_type_from_office(office, str(data.get("office_type") or "待铨").strip())
 
     # ── 后宫 candidate 升格路径 ──────────────────────────────────────
     if is_consort:
@@ -217,7 +259,7 @@ def apply_appointment(
     character = Character(
         name=name,
         office=office,
-        office_type="后宫" if is_consort else "待铨",
+        office_type=office_type,
         faction=faction,
         aliases=[],
         personal_skills=[],
@@ -250,7 +292,7 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB") -> None:
             ch = content.characters[name]
             ch.office = row["office"]
             if row["office_type"]:
-                ch.office_type = row["office_type"]
+                ch.office_type = infer_office_type_from_office(row["office"], row["office_type"])
             ch.status = row["status"]
 
 
@@ -523,9 +565,8 @@ class GameSession:
                     order_id = self._apply_secret_order(payload, character.name)
                 if order_id:
                     result.secret_order_id = order_id
-            elif tool_name == "report_secret_order_result" or tool_result.startswith("__close_secret_order__"):
-                payload = tool_result.removeprefix("__close_secret_order__").strip()
-                self._apply_close_secret_order(payload)
+            # report_secret_order_progress / submit_secret_order_for_review 工具内部直接落库，session 无需拦截
+            # 密令结案 done/failed 由月末推演 + extractor 写入，不再走大臣工具
         return result
 
     def _apply_appointment(self, payload: str, appointer: Character) -> Tuple[str, str]:
@@ -619,8 +660,12 @@ class GameSession:
         tags_raw = data.get("tags") or []
         tags = [str(k).strip() for k in tags_raw if str(k).strip()] if isinstance(tags_raw, list) else []
         assignee = str(data.get("assignee") or "").strip() or minister_name
+        try:
+            deadline = max(0, min(int(data.get("deadline_months") or 0), 36))
+        except (TypeError, ValueError):
+            deadline = 0
         print(f"[secret_order] 截获密令 minister={minister_name} assignee={assignee} title={title!r} tags={tags}")
-        return self.db.create_secret_order(self.state, assignee, title, content, tags)
+        return self.db.create_secret_order(self.state, assignee, title, content, tags, deadline_months=deadline)
 
     def _apply_close_secret_order(self, payload: str) -> None:
         """report_secret_order_result 哨兵落库。"""
@@ -687,7 +732,7 @@ class GameSession:
         directives = self.db.list_directives(self.state, statuses=("draft",))
         if not directives:
             raise ValueError("无草案不能拟诏。")
-        decree = write_decree_with_agno(self.llm_config, self.agno_db, self.state, directives)
+        decree = write_decree_with_agno(self.llm_config, self.agno_db, self.state, directives, db=self.db)
         self.last_decree = decree
         return decree
 
@@ -704,7 +749,7 @@ class GameSession:
         # 结算前先存一份：LLM 推演有可能崩，留个回滚锚点
         self.auto_save("preresolve")
         decree_text = decree or self.last_decree or write_decree_with_agno(
-            self.llm_config, self.agno_db, self.state, directives
+            self.llm_config, self.agno_db, self.state, directives, db=self.db
         )
         report = resolve_directives(
             self.state, self.db, self.agno_db, self.llm_config,
@@ -723,44 +768,31 @@ class GameSession:
     def advance_without_decree(self) -> None:
         """CLI 退朝无草案：仅财政 tick + 推进。"""
         advance_without_edict(self.state, self.db)
+        self.state.turn_phase = TurnPhase.SUMMONING.value
+        self.db.save_state(self.state)
 
     def victory(self) -> Dict[str, object]:
         return victory_status(self.db, self.state)
 
     def auto_save(self, tag: str) -> Optional[str]:
-        """每回合 begin/end 自动热备一份。保留最近 AUTO_SAVE_KEEP 份，旧的删。
-        文件名 auto_<year>_<period>_<turn>_<tag>.db；prune 只动 AUTO_SAVE_PREFIX 前缀，
+        """每回合 begin/end 自动热备一份。每个 campaign 保留最近 AUTO_SAVE_KEEP_TURNS 个回合，旧的删。
+        文件名 auto_<campaign_id>_<year>_<period>_<turn>_<tag>.db；prune 只动同 campaign 的自动档，
         不碰用户手动存档。失败静默（自动存档不应阻断游戏）。"""
         try:
             import os as _os
             saves_dir = user_data_path("saves", "_keep")  # 确保父目录建好
             saves_dir = _os.path.dirname(saves_dir)
+            campaign_id = (self.db.kv_get("campaign_id") or "").strip()
+            if not campaign_id:
+                campaign_id = uuid.uuid4().hex[:12]
+                self.db.kv_set("campaign_id", campaign_id)
             fname = (
-                f"{AUTO_SAVE_PREFIX}{self.state.year:04d}_"
+                f"{AUTO_SAVE_PREFIX}{campaign_id}_{self.state.year:04d}_"
                 f"{self.state.period:02d}_t{self.state.turn:04d}_{tag}.db"
             )
             target = _os.path.join(saves_dir, fname)
             self.db.backup_to(target)
-            # prune：按 turn 分组，留最近 AUTO_SAVE_KEEP_TURNS 个 turn 的所有 auto 存档。
-            # 文件名 auto_<year>_<period>_t<turn>_<tag>.db；按 _t<turn>_ 段解 turn 号。
-            import re as _re
-            buckets: Dict[int, List[str]] = {}
-            for f in _os.listdir(saves_dir):
-                if not (f.startswith(AUTO_SAVE_PREFIX) and f.endswith(".db")):
-                    continue
-                m = _re.search(r"_t(\d+)_", f)
-                if not m:
-                    continue
-                buckets.setdefault(int(m.group(1)), []).append(f)
-            keep_turns = set(sorted(buckets.keys(), reverse=True)[:AUTO_SAVE_KEEP_TURNS])
-            for turn_num, files in buckets.items():
-                if turn_num in keep_turns:
-                    continue
-                for stale in files:
-                    try:
-                        _os.remove(_os.path.join(saves_dir, stale))
-                    except OSError:
-                        pass
+            prune_auto_saves(saves_dir, campaign_id)
             return target
         except Exception:
             return None

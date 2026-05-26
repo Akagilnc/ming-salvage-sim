@@ -121,7 +121,6 @@ type Minister = {
   summary: string;
   favorite: boolean;
   portrait_id?: string;  // 空/undefined=无专属，前端 fallback 到池
-  court_role?: string;   // 首辅/次辅/吏部尚书/…，由 extractor 写入
   skills: Array<{ id: string; name: string; sources: string[]; description: string }>;
 };
 
@@ -243,12 +242,14 @@ type LLMConfigInfo = {
   base_url: string;
   model: string;
   max_tokens: number;
+  advanced_model: string;
   has_api_key: boolean;
-  persisted: { base_url: string; model: string; has_api_key: boolean; max_tokens: number };
+  persisted: { base_url: string; model: string; has_api_key: boolean; max_tokens: number; advanced_model: string };
 };
 type SecretOrder = {
   id: number;
   turn_issued: number;
+  due_turn: number;
   year_issued: number;
   period_issued: number;
   minister_name: string;
@@ -256,8 +257,9 @@ type SecretOrder = {
   content: string;
   tags: string[];
   importance: number;
-  status: "active" | "done" | "failed" | "cancelled";
+  status: "active" | "pending_review" | "done" | "failed" | "cancelled";
   result: string;
+  sim_note: string;
   turn_closed: number | null;
 };
 
@@ -459,7 +461,7 @@ type MenuStatus = {
   has_running_game: boolean;
   has_main_db: boolean;
   saves: Array<{ name: string; size: number; mtime: number }>;
-  llm: { base_url: string; model: string; has_api_key: boolean; max_tokens: number };
+  llm: { base_url: string; model: string; has_api_key: boolean; max_tokens: number; advanced_model: string };
 };
 
 function App() {
@@ -583,7 +585,7 @@ function App() {
     api<{ orders: SecretOrder[] }>("/api/secret_orders")
       .then(({ orders }) => {
         setSecretOrders(orders);
-        if (orders.some(o => o.status === "active")) {
+        if (orders.some(o => o.status === "active" || o.status === "pending_review")) {
           // 延迟 400ms，避免与邸报弹窗争抢
           setTimeout(() => setActiveModal("secret_orders"), 400);
         }
@@ -963,7 +965,7 @@ function App() {
       <BottomCommandBar
         eventsCount={state.events.length}
         directivesCount={state.directives.length}
-        secretOrdersCount={secretOrders.filter((o) => o.status === "active").length}
+        secretOrdersCount={secretOrders.filter((o) => o.status === "active" || o.status === "pending_review").length}
         onOpenMemorials={() => setActiveModal("state")}
         onOpenEdict={() => setActiveModal("edict")}
         onOpenExtraction={() => setActiveModal("extraction")}
@@ -1024,7 +1026,7 @@ function App() {
             input={input}
             busy={busy}
             error={error}
-            secretOrders={secretOrders.filter((o) => o.minister_name === activeMinister.name && o.status === "active")}
+            secretOrders={secretOrders.filter((o) => o.minister_name === activeMinister.name && (o.status === "active" || o.status === "pending_review"))}
             onInput={setInput}
             onSend={sendChat}
             onHint={setComposerHint}
@@ -1283,7 +1285,7 @@ function MinisterCardList({
   const dragging = React.useRef<{ name: string; startMX: number; startMY: number; startPX: number; startPY: number } | null>(null);
   const didDrag = React.useRef(false);
 
-  // 固定职位 → 固定槽位（court_role 字段由 extractor 写入）
+  // 固定职位 → 固定槽位（由 office 文字推导：office 逗号分项里命中即占该槽）
   const FIXED_SLOTS: { role: string; side: "left" | "right"; slot: number }[] = [
     { role: "首辅",    side: "left",  slot: 0 },
     { role: "次辅",    side: "right", slot: 0 },
@@ -1295,10 +1297,18 @@ function MinisterCardList({
     { role: "工部尚书", side: "right", slot: 3 },
   ];
 
-  function fixedSlotFor(courtRole: string): { px: number; py: number } | null {
-    if (!courtRole) return null;
+  // 从 office 字符串推导固定席位：逗号切分，任一分项精确等于某固定职名即占该槽。
+  // 南京XX尚书是留都缺，不占京职槽——精确匹配自然排除（分项是「南京兵部尚书」≠「兵部尚书」）。
+  function roleFromOffice(office: string): string {
+    const parts = (office || "").split(",").map((s) => s.trim());
+    const fs = FIXED_SLOTS.find((f) => parts.includes(f.role));
+    return fs ? fs.role : "";
+  }
+
+  function fixedSlotFor(role: string): { px: number; py: number } | null {
+    if (!role) return null;
     const allSlots = courtSlots();
-    const fs = FIXED_SLOTS.find((f) => f.role === courtRole);
+    const fs = FIXED_SLOTS.find((f) => f.role === role);
     if (!fs) return null;
     const s = allSlots.find((sl) => sl.side === fs.side && sl.slot === fs.slot);
     return s ? { px: s.px, py: s.py } : null;
@@ -1312,12 +1322,13 @@ function MinisterCardList({
         const next: Record<string, { px: number; py: number }> = {};
         const usedSlots = new Set<string>();
 
-        // 第一遍：有 court_role 的先占固定槽
+        // 第一遍：office 命中固定职名的先占固定槽
         list.forEach((m) => {
-          const fixed = fixedSlotFor(m.court_role || "");
+          const role = roleFromOffice(m.office || "");
+          const fixed = fixedSlotFor(role);
           if (fixed) {
             next[m.name] = fixed;
-            const fs = FIXED_SLOTS.find((f) => f.role === m.court_role);
+            const fs = FIXED_SLOTS.find((f) => f.role === role);
             if (fs) usedSlots.add(`${fs.side}:${fs.slot}`);
           }
         });
@@ -1899,24 +1910,28 @@ function SecretOrdersModal({
   onClose: () => void;
   onOpenMinister: (name: string) => void;
 }) {
-  const [tab, setTab] = React.useState<"active" | "done" | "failed" | "all">("active");
+  const [tab, setTab] = React.useState<"active" | "pending_review" | "done" | "failed" | "all">("active");
+  const [selectedOrder, setSelectedOrder] = React.useState<SecretOrder | null>(null);
   const statusLabel: Record<string, string> = {
     active: "进行中",
+    pending_review: "待核议",
     done: "已完成",
     failed: "已失败",
     cancelled: "已撤销",
   };
   const statusCls: Record<string, string> = {
     active: "so-active",
+    pending_review: "so-pending",
     done: "so-done",
     failed: "so-failed",
     cancelled: "so-cancelled",
   };
   const tabs: { key: typeof tab; label: string }[] = [
-    { key: "active", label: `进行中 (${orders.filter(o => o.status === "active").length})` },
-    { key: "done",   label: `已完成 (${orders.filter(o => o.status === "done").length})` },
-    { key: "failed", label: `已失败 (${orders.filter(o => o.status === "failed").length})` },
-    { key: "all",    label: `全部 (${orders.length})` },
+    { key: "active",         label: `进行中 (${orders.filter(o => o.status === "active").length})` },
+    { key: "pending_review", label: `待核议 (${orders.filter(o => o.status === "pending_review").length})` },
+    { key: "done",           label: `已完成 (${orders.filter(o => o.status === "done").length})` },
+    { key: "failed",         label: `已失败 (${orders.filter(o => o.status === "failed").length})` },
+    { key: "all",            label: `全部 (${orders.length})` },
   ];
   const visible = tab === "all" ? orders : orders.filter(o => o.status === tab);
   return (
@@ -1932,33 +1947,124 @@ function SecretOrdersModal({
         <div className="secret-orders-list">
           {visible.length === 0 && <p className="so-empty">暂无此类密令。</p>}
           {visible.map((o) => (
-            <div key={o.id} className={`secret-order-card ${statusCls[o.status] || ""}`}>
+            <button
+              key={o.id}
+              type="button"
+              className={`secret-order-card secret-order-card-button ${statusCls[o.status] || ""}`}
+              onClick={() => setSelectedOrder(o)}
+            >
               <div className="so-header">
                 <span className="so-title"><Lock size={13} />{o.title}</span>
                 <span className={`so-status ${statusCls[o.status] || ""}`}>{statusLabel[o.status] || o.status}</span>
               </div>
               <div className="so-meta">第 {o.year_issued} 年 {o.period_issued} 月下令 · 承办：{o.minister_name}</div>
-              {o.content && <div className="so-content">{o.content}</div>}
-              {o.result && (
-                <div className="so-result">
-                  <span className="so-result-label">执行结果</span>
-                  {o.result}
-                </div>
-              )}
+              <div className="so-open-hint">点击查看密令详情</div>
               {o.status === "active" && (
                 <button
                   className="secondary-action so-goto"
-                  onClick={() => { onClose(); onOpenMinister(o.minister_name); }}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onClose();
+                    onOpenMinister(o.minister_name);
+                  }}
                 >
                   <MessageSquare size={13} />
                   召见 {o.minister_name}
                 </button>
               )}
-            </div>
+            </button>
           ))}
         </div>
       </article>
+      {selectedOrder ? (
+        <SecretOrderDetailDialog
+          order={selectedOrder}
+          statusLabel={statusLabel}
+          statusCls={statusCls}
+          onClose={() => setSelectedOrder(null)}
+          onOpenMinister={(name) => {
+            setSelectedOrder(null);
+            onClose();
+            onOpenMinister(name);
+          }}
+        />
+      ) : null}
     </FullscreenModal>
+  );
+}
+
+function SecretOrderDetailDialog({
+  order,
+  statusLabel,
+  statusCls,
+  onClose,
+  onOpenMinister,
+}: {
+  order: SecretOrder;
+  statusLabel: Record<string, string>;
+  statusCls: Record<string, string>;
+  onClose: () => void;
+  onOpenMinister: (name: string) => void;
+}) {
+  const deadlineText = order.due_turn
+    ? `第 ${order.due_turn} 回合核议${order.due_turn <= order.turn_issued ? "" : `（限 ${order.due_turn - order.turn_issued} 个月）`}`
+    : "无硬期限";
+  const detailRows = [
+    ["编号", `#${order.id}`],
+    ["承办", order.minister_name],
+    ["下令", `第 ${order.year_issued} 年 ${order.period_issued} 月 · 回合 ${order.turn_issued}`],
+    ["期限", deadlineText],
+    ["重要", String(order.importance || 0)],
+    ["标签", order.tags?.length ? order.tags.join("、") : "无"],
+  ];
+  return (
+    <div className="so-detail-layer" role="dialog" aria-modal="true" aria-label={`密令详情：${order.title}`}>
+      <div className="so-detail-scrim" onClick={onClose} />
+      <section className="so-detail-dialog">
+        <header className="so-detail-header">
+          <div>
+            <span className={`so-status ${statusCls[order.status] || ""}`}>{statusLabel[order.status] || order.status}</span>
+            <h2>{order.title}</h2>
+          </div>
+          <button className="icon-button" aria-label="关闭密令详情" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </header>
+        <div className="so-detail-body">
+          <dl className="so-detail-grid">
+            {detailRows.map(([label, value]) => (
+              <div key={label}>
+                <dt>{label}</dt>
+                <dd>{value}</dd>
+              </div>
+            ))}
+          </dl>
+          <SecretOrderDetailBlock title="密令正文" text={order.content || "未记正文。"} />
+          {order.sim_note ? <SecretOrderDetailBlock title="月度动向" text={order.sim_note} tone="green" /> : null}
+          {order.result ? (
+            <SecretOrderDetailBlock title={order.status === "active" ? "承办回报" : "执行结果"} text={order.result} tone="green" />
+          ) : null}
+        </div>
+        <footer className="so-detail-actions">
+          {order.status === "active" ? (
+            <button className="secondary-action" onClick={() => onOpenMinister(order.minister_name)}>
+              <MessageSquare size={15} />
+              召见 {order.minister_name}
+            </button>
+          ) : null}
+          <button className="secondary-action" onClick={onClose}>返回列表</button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function SecretOrderDetailBlock({ title, text, tone = "default" }: { title: string; text: string; tone?: "default" | "green" }) {
+  return (
+    <section className={`so-detail-block so-detail-block-${tone}`}>
+      <h3>{title}</h3>
+      <p>{text}</p>
+    </section>
   );
 }
 
@@ -2490,6 +2596,7 @@ function LLMConfigTab() {
   const [info, setInfo] = React.useState<LLMConfigInfo | null>(null);
   const [baseUrl, setBaseUrl] = React.useState("");
   const [model, setModel] = React.useState("");
+  const [advancedModel, setAdvancedModel] = React.useState("");
   const [apiKey, setApiKey] = React.useState("");
   const [maxTokens, setMaxTokens] = React.useState("8000");
   const [show, setShow] = React.useState(false);
@@ -2503,6 +2610,7 @@ function LLMConfigTab() {
         setInfo(data);
         setBaseUrl(data.base_url);
         setModel(data.model);
+        setAdvancedModel(data.advanced_model || "");
         setMaxTokens(String(data.max_tokens || 8000));
       })
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
@@ -2515,7 +2623,13 @@ function LLMConfigTab() {
     try {
       const data = await api<LLMConfigInfo>("/api/llm/config", {
         method: "POST",
-        body: JSON.stringify({ base_url: baseUrl, model, api_key: apiKey, max_tokens: parseInt(maxTokens) || 8000 }),
+        body: JSON.stringify({
+          base_url: baseUrl,
+          model,
+          api_key: apiKey,
+          max_tokens: parseInt(maxTokens) || 8000,
+          advanced_model: advancedModel,
+        }),
       });
       setInfo((cur) => (cur ? { ...cur, ...data } : null));
       setApiKey("");
@@ -2549,6 +2663,15 @@ function LLMConfigTab() {
           value={model}
           onChange={(e) => setModel(e.target.value)}
           placeholder="gpt-4o-mini"
+        />
+      </label>
+      <label className="menu-field">
+        <span>Advanced Model <small className="menu-hint">（推演 + 打分专用，空=与 Model 一致）</small></span>
+        <input
+          className="menu-input"
+          value={advancedModel}
+          onChange={(e) => setAdvancedModel(e.target.value)}
+          placeholder="deepseek-reasoner / gpt-5（留空 fallback）"
         />
       </label>
       <label className="menu-field">
@@ -2660,10 +2783,11 @@ function ExtractionView({ data, loading, error }: { data: ExtractionData | null;
   if (loading) return <div className="document-section"><p className="long-copy">加载中…</p></div>;
   if (error) return <div className="document-section"><p className="long-copy">加载失败：{error}</p></div>;
   if (!data || !data.exists) return <div className="document-section"><p className="long-copy">该回合无 extractor 数据。</p></div>;
-  const out = data.extractor_output;
-  if (!out || typeof out !== "object") {
-    return <div className="document-section"><pre className="memorial-text">{String(out ?? "")}</pre></div>;
+  const rawOut = data.extractor_output;
+  if (!rawOut || typeof rawOut !== "object") {
+    return <div className="document-section"><pre className="memorial-text">{String(rawOut ?? "")}</pre></div>;
   }
+  const out = rawOut.mode === "modular" && rawOut.merged && typeof rawOut.merged === "object" ? rawOut.merged : rawOut;
   return (
     <div className="document-section extraction-view">
       <ExtractionSection title="国势变化（metric_delta）">
@@ -3197,6 +3321,8 @@ function ChatModal({
                 <div className="secret-order-title">{o.title}</div>
                 <div className="secret-order-meta">第 {o.year_issued} 年 {o.period_issued} 月下令</div>
                 {o.content && <div className="secret-order-content">{o.content}</div>}
+                {o.sim_note && <div className="secret-order-content"><b>月度动向：</b>{o.sim_note}</div>}
+                {o.result && <div className="secret-order-content"><b>承办回报：</b>{o.result}</div>}
               </div>
             ))}
           </div>
@@ -3409,6 +3535,7 @@ function filterMinisters(ministers: Minister[], group: string) {
       .filter((m) =>
         (m.office_type === "内阁" || ["吏部", "户部", "礼部", "兵部", "刑部", "工部"].includes(m.office_type))
         && m.status === "active"
+        && !!(m.office || "").trim()
         && !/前|罢|致仕/.test(m.office || "")  // 无实职不排朝班
       )
       .sort((a, b) => officeRank(a.office || "") - officeRank(b.office || ""));
@@ -3768,12 +3895,13 @@ function ApiSettingsModal({
   onClose,
   onSaved,
 }: {
-  initial?: { base_url: string; model: string; has_api_key: boolean; max_tokens?: number };
+  initial?: { base_url: string; model: string; has_api_key: boolean; max_tokens?: number; advanced_model?: string };
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
   const [baseUrl, setBaseUrl] = React.useState(initial?.base_url || "https://api.deepseek.com");
   const [model, setModel] = React.useState(initial?.model || "deepseek-chat");
+  const [advancedModel, setAdvancedModel] = React.useState(initial?.advanced_model || "");
   const [apiKey, setApiKey] = React.useState("");
   const [maxTokens, setMaxTokens] = React.useState(String(initial?.max_tokens || 8000));
   const [busy, setBusy] = React.useState(false);
@@ -3785,7 +3913,13 @@ function ApiSettingsModal({
     try {
       await api("/api/menu/llm", {
         method: "POST",
-        body: JSON.stringify({ base_url: baseUrl.trim(), model: model.trim(), api_key: apiKey.trim(), max_tokens: parseInt(maxTokens) || 8000 }),
+        body: JSON.stringify({
+          base_url: baseUrl.trim(),
+          model: model.trim(),
+          api_key: apiKey.trim(),
+          max_tokens: parseInt(maxTokens) || 8000,
+          advanced_model: advancedModel.trim(),
+        }),
       });
       await onSaved();
     } catch (e: any) {
@@ -3807,6 +3941,10 @@ function ApiSettingsModal({
         <label>
           Model
           <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="deepseek-chat" />
+        </label>
+        <label>
+          Advanced Model <small className="menu-hint">（推演 + 打分专用；留空 fallback）</small>
+          <input value={advancedModel} onChange={(e) => setAdvancedModel(e.target.value)} placeholder="deepseek-reasoner / gpt-5" />
         </label>
         <label>
           Max Tokens

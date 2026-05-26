@@ -17,6 +17,7 @@ from agno.db.sqlite import SqliteDb
 from ming_sim.assets import strip_json_fence
 from ming_sim.content import GameContent
 from ming_sim.exceptions import LLMContractError, LLMUnavailable
+from ming_sim.llm_config import for_role as _llm_for_role
 from ming_sim.llm_contract import abort_llm_contract, fail_if_llm_error
 from ming_sim.llm_model import create_chat_model, extract_agent_text
 from ming_sim.models import GameState, LLMConfig
@@ -285,14 +286,17 @@ def create_season_simulator_agent(
     state: Optional[GameState] = None,
     db: Optional[object] = None,
 ) -> Agent:
-    """月末推演日讲官。全量盘面走 user payload，无 tool。"""
+    """月末推演日讲官。全量盘面走 user payload，无 tool。
+    走 advanced 角色派生：若 advanced_model 已配，用更强模型；否则 fallback 主 model。"""
     del state, db
+    cfg = _llm_for_role(llm_config, "simulator")
+    tlog(f"[simulator] 使用模型 {cfg.model}")
     return Agent(
         name="月末推演日讲官",
         id="season-simulator",
         session_id="season-simulator",
         db=agno_db,
-        model=create_chat_model(llm_config, temperature=0.9, top_p=0.95, max_tokens=llm_config.max_tokens, enable_thinking=True),
+        model=create_chat_model(cfg, temperature=0.9, top_p=0.95, max_tokens=cfg.max_tokens, enable_thinking=True),
         instructions=[_ctx().game_world_prompt, _ctx().season_simulator_prompt],
         add_history_to_context=False,
         markdown=False,
@@ -300,20 +304,54 @@ def create_season_simulator_agent(
 
 
 def create_score_extractor_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
+    """打分提取员。走 advanced 角色派生：若 advanced_model 已配，用更强模型。"""
+    cfg = _llm_for_role(llm_config, "extractor")
+    tlog(f"[extractor] 使用模型 {cfg.model}")
     return Agent(
         name="档房书办",
         id="score-extractor",
         session_id="score-extractor",
         db=agno_db,
         model=create_chat_model(
-            llm_config,
+            cfg,
             temperature=0.1,
             top_p=0.7,
-            max_tokens=llm_config.max_tokens,
+            max_tokens=cfg.max_tokens,
             enable_thinking=False,
             force_json_output=True,
         ),
         instructions=[_ctx().game_world_prompt, _ctx().score_extractor_prompt],
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
+def create_score_extractor_module_agent(
+    llm_config: LLMConfig,
+    agno_db: SqliteDb,
+    module: str,
+) -> Agent:
+    """模块化打分提取员。module 对应 GameContent.score_extractor_module_prompts。"""
+    ctx = _ctx()
+    prompt = ctx.score_extractor_module_prompts.get(module)
+    if not prompt:
+        raise RuntimeError(f"未知结算提取模块：{module}")
+    cfg = _llm_for_role(llm_config, "extractor")
+    tlog(f"[extractor/{module}] 使用模型 {cfg.model}")
+    return Agent(
+        name=f"档房书办-{module}",
+        id=f"score-extractor-{module}",
+        session_id=f"score-extractor-{module}",
+        db=agno_db,
+        model=create_chat_model(
+            cfg,
+            temperature=0.1,
+            top_p=0.7,
+            max_tokens=cfg.max_tokens,
+            enable_thinking=False,
+            force_json_output=True,
+        ),
+        instructions=[ctx.game_world_prompt, prompt],
         add_history_to_context=False,
         markdown=False,
     )

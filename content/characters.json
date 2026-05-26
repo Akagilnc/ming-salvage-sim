@@ -96,7 +96,7 @@
     },
     {
       "name": "来宗道",
-      "office": "礼部尚书兼东阁大学士",
+      "office": "礼部尚书,东阁大学士",
       "office_type": "内阁",
       "faction": "阉党",
       "aliases": [
@@ -392,7 +392,7 @@
     },
     {
       "name": "崔呈秀",
-      "office": "兵部尚书兼左都御史",
+      "office": "兵部尚书,左都御史",
       "office_type": "兵部",
       "faction": "阉党",
       "aliases": [
@@ -515,7 +515,7 @@
     },
     {
       "name": "周延儒",
-      "office": "少詹事兼掌南京翰林院",
+      "office": "少詹事,掌南京翰林院",
       "office_type": "翰林院",
       "faction": "皇党",
       "aliases": [
@@ -662,7 +662,7 @@
     },
     {
       "name": "魏忠贤",
-      "office": "司礼监秉笔太监兼东厂提督",
+      "office": "司礼监秉笔太监,东厂提督",
       "office_type": "东厂",
       "faction": "阉党",
       "aliases": [

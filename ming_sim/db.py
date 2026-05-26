@@ -25,6 +25,62 @@ from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
 from ming_sim.models import Event, GameState, monthly_amount, period_label
 from ming_sim.token_stats import tlog
 
+
+def normalize_office(office: str) -> str:
+    """官职多职统一为半角逗号分隔：旧「兼/兼掌/兼署」与全角「，」「、」一律归一逗号，
+    去空分项、去重、保序。是 office 字段落库的唯一规范化入口——所有写 characters.office
+    的路径都过它，保证去重/顶缺时能按逗号分项匹配。"""
+    s = (office or "").strip()
+    if not s:
+        return ""
+    s = s.replace("兼掌", ",").replace("兼署", ",").replace("兼", ",")
+    s = s.replace("，", ",").replace("、", ",")
+    seen: set = set()
+    parts: List[str] = []
+    for p in (x.strip() for x in s.split(",")):
+        if p and p not in seen:
+            seen.add(p)
+            parts.append(p)
+    return ",".join(parts)
+
+
+COURT_OFFICE_TYPES = {"内阁", "吏部", "户部", "礼部", "兵部", "刑部", "工部"}
+MINISTRY_OFFICE_TYPES = {"吏部", "户部", "礼部", "兵部", "刑部", "工部"}
+
+
+def infer_office_type_from_office(office: str, current_type: str = "") -> str:
+    """用 office 文本校正 office_type，避免旧标签把无实职人物塞进内阁/六部。"""
+    kind = (current_type or "").strip()
+    if kind == "后宫":
+        return kind
+    text = normalize_office(office)
+    if not text:
+        return "待铨" if kind in COURT_OFFICE_TYPES or not kind else kind
+
+    if re.search(r"内阁|大学士|首辅|次辅", text):
+        return "内阁"
+    for ministry in MINISTRY_OFFICE_TYPES:
+        if ministry in text and re.search(r"尚书|侍郎|郎中|员外郎|主事|给事中", text):
+            return ministry
+
+    if re.search(r"司礼监|秉笔太监|掌印太监|随堂太监", text):
+        return "司礼监"
+    if re.search(r"东厂|提督东厂", text):
+        return "东厂"
+    if re.search(r"锦衣卫|北镇抚司|镇抚司|都指挥使|千户", text):
+        return "锦衣卫"
+    if re.search(r"都察院|都御史|御史|巡按", text):
+        return "都察院"
+    if re.search(r"翰林院|翰林|编修|检讨|庶吉士|詹事", text):
+        return "翰林院"
+    if re.search(r"总督|巡抚|布政使|按察使|参政|知府|知县|兵备道|督粮", text):
+        return "地方"
+    if re.search(r"督师|经略|总兵|副总兵|游击|参将|守备|山海关|辽东|蓟辽|东江|大同|宣大", text):
+        return "边镇"
+
+    return "待铨" if kind in COURT_OFFICE_TYPES or not kind else kind
+
+
 class GameDB:
     def __init__(self, path: str, content: Optional[GameContent] = None):
         self.path = path
@@ -338,6 +394,7 @@ class GameDB:
             CREATE TABLE IF NOT EXISTS secret_orders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 turn_issued INTEGER NOT NULL,
+                due_turn INTEGER NOT NULL DEFAULT 0,
                 year_issued INTEGER NOT NULL,
                 period_issued INTEGER NOT NULL,
                 minister_name TEXT NOT NULL,
@@ -347,6 +404,7 @@ class GameDB:
                 importance INTEGER NOT NULL DEFAULT 4,
                 status TEXT NOT NULL DEFAULT 'active',
                 result TEXT NOT NULL DEFAULT '',
+                sim_note TEXT NOT NULL DEFAULT '',
                 turn_closed INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -558,6 +616,10 @@ class GameDB:
         self.ensure_column("characters", "court_role", "TEXT NOT NULL DEFAULT ''")
         # 步骤7：回合阶段（旧库迁移，schema 升级非 fallback）
         self.ensure_column("game_state", "turn_phase", "TEXT NOT NULL DEFAULT 'summoning'")
+        # 密令推演副作用列（result 留给承办人进展，sim_note 给推演写泄漏/反弹，互不覆盖）
+        self.ensure_column("secret_orders", "sim_note", "TEXT NOT NULL DEFAULT ''")
+        # 密令期限：0=无硬期限；到 due_turn 时自动转入待核议，由推演当月判 done/failed。
+        self.ensure_column("secret_orders", "due_turn", "INTEGER NOT NULL DEFAULT 0")
         # 后宫调教记录
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS consort_traits (
@@ -648,240 +710,216 @@ class GameDB:
         if column not in columns:
             self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
+    def table_has_rows(self, table: str) -> bool:
+        row = self.conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
+        return row is not None
+
     def seed_static_data(self) -> None:
-        for office_type, definition in self.content.office_definitions.items():
-            self.conn.execute(
-                """
-                INSERT OR REPLACE INTO offices
-                (office_type, skills, tools, authority_scope, power, responsibility, corruption_risk)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    office_type,
-                    json.dumps(definition["skills"], ensure_ascii=False),
-                    json.dumps(definition["tools"], ensure_ascii=False),
-                    str(definition["authority_scope"]),
-                    int(definition["power"]),
-                    int(definition["responsibility"]),
-                    int(definition["corruption_risk"]),
-                ),
-            )
-        for character in self.content.characters.values():
-            existing = self.conn.execute(
-                "SELECT status, status_reason, status_changed_turn, portrait_id, office, office_type, court_role FROM characters WHERE name=?",
-                (character.name,)
-            ).fetchone()
-            keep_status = existing["status"] if existing else character.status
-            keep_reason = existing["status_reason"] if existing else ""
-            keep_turn = existing["status_changed_turn"] if existing else 0
-            # 已落库的 portrait_id 优先保留（运行时分配的池图不被重 seed 抹掉）；否则取设定。
-            keep_portrait = (existing["portrait_id"] if existing and existing["portrait_id"] else character.portrait_id)
-            # 已落库的 office 优先保留（任命/调任后重启不被 JSON 原始值覆盖）；否则取设定。
-            keep_office = existing["office"] if existing and existing["office"] else character.office
-            keep_office_type = existing["office_type"] if existing and existing["office_type"] else character.office_type
-            # court_role 同样保留（extractor 写入的朝班固定席位不被 seed 抹掉）。
-            keep_court_role = existing["court_role"] if existing else ""
-            # 同步回内存，让 terminal 展示与 DB 一致
-            if keep_office != character.office:
-                character.office = keep_office
-            if keep_office_type != character.office_type:
-                character.office_type = keep_office_type
-            self.conn.execute(
-                """
-                INSERT OR REPLACE INTO characters
-                (name, office, office_type, faction, personal_skills, loyalty, ability, integrity, courage, style,
-                 birth_year, historical_death_year, historical_death_month, debut_year, debut_month,
-                 status, status_reason, status_changed_turn, portrait_id, court_role)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    character.name,
-                    keep_office,
-                    keep_office_type,
-                    character.faction,
-                    json.dumps(character.personal_skills + character.aliases, ensure_ascii=False),
-                    character.loyalty,
-                    character.ability,
-                    character.integrity,
-                    character.courage,
-                    character.style,
-                    character.birth_year,
-                    character.historical_death_year,
-                    character.historical_death_month,
-                    character.debut_year,
-                    character.debut_month,
-                    keep_status,
-                    keep_reason,
-                    keep_turn,
-                    keep_portrait,
-                    keep_court_role,
-                ),
-            )
-            self.conn.execute(
-                """
-                INSERT OR IGNORE INTO character_offices (character_name, office_title, office_type, source)
-                VALUES (?, ?, ?, ?)
-                """,
-                (character.name, keep_office, keep_office_type, "初始设定"),
-            )
-        for faction in self.content.factions.values():
-            self.conn.execute(
-                """
-                INSERT OR IGNORE INTO factions (name, satisfaction, leverage, agenda)
-                VALUES (?, ?, ?, ?)
-                """,
-                (faction.name, faction.satisfaction, faction.leverage, faction.agenda),
-            )
-        for cls in self.content.classes.values():
-            self.conn.execute(
-                """
-                INSERT OR IGNORE INTO classes (name, region_id, population, satisfaction, leverage, agenda)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (cls.name, cls.region_id, cls.population, cls.satisfaction, cls.leverage, cls.agenda),
-            )
-        for power in self.content.external_powers.values():
-            self.conn.execute(
-                """
-                INSERT INTO external_powers
-                (id, name, leader, stance, leverage, satisfaction, military_strength,
-                 cohesion, supply, agenda, status, last_action)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    name = excluded.name,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (
-                    power.id,
-                    power.name,
-                    power.leader,
-                    power.stance,
-                    power.leverage,
-                    power.satisfaction,
-                    power.military_strength,
-                    power.cohesion,
-                    power.supply,
-                    power.agenda,
-                    power.status,
-                    power.last_action,
-                ),
-            )
-        for region in self.content.regions.values():
-            self.conn.execute(
-                """
-                INSERT INTO regions
-                (id, name, kind, population, public_support, unrest, natural_disaster, human_disaster,
-                 registered_land, hidden_land, tax_per_turn, grain_security, gentry_resistance,
-                 military_pressure, status, fiscal)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    name = excluded.name,
-                    kind = excluded.kind,
-                    fiscal = excluded.fiscal,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (
-                    region.id,
-                    region.name,
-                    region.kind,
-                    region.population,
-                    region.public_support,
-                    region.unrest,
-                    region.natural_disaster,
-                    region.human_disaster,
-                    region.registered_land,
-                    region.hidden_land,
-                    region.tax_per_turn,
-                    region.grain_security,
-                    region.gentry_resistance,
-                    region.military_pressure,
-                    region.status,
-                    json.dumps(region.fiscal, ensure_ascii=False),
-                ),
-            )
-        for army in self.content.armies.values():
-            self.conn.execute(
-                """
-                INSERT INTO armies
-                (id, name, station, theater, commander, controller, troop_type, manpower,
-                 maintenance_per_turn, supply, morale, training, equipment, arrears,
-                 mobility, loyalty, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    name = excluded.name,
-                    station = excluded.station,
-                    theater = excluded.theater,
-                    commander = excluded.commander,
-                    controller = excluded.controller,
-                    troop_type = excluded.troop_type,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (
-                    army.id,
-                    army.name,
-                    army.station,
-                    army.theater,
-                    army.commander,
-                    army.controller,
-                    army.troop_type,
-                    army.manpower,
-                    army.maintenance_per_turn,
-                    army.supply,
-                    army.morale,
-                    army.training,
-                    army.equipment,
-                    army.arrears,
-                    army.mobility,
-                    army.loyalty,
-                    army.status,
-                ),
-            )
-        for building in self.content.buildings.values():
-            self.conn.execute(
-                """
-                INSERT INTO buildings
-                (id, region_id, name, category, level, condition, maintenance, risk,
-                 output_metric, output_amount, status, origin, created_turn)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'preset', 0)
-                ON CONFLICT(id) DO UPDATE SET
-                    region_id = excluded.region_id,
-                    name = excluded.name,
-                    category = excluded.category,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (
-                    building.id,
-                    building.region_id,
-                    building.name,
-                    building.category,
-                    building.level,
-                    building.condition,
-                    building.maintenance,
-                    building.risk,
-                    building.output_metric,
-                    building.output_amount,
-                    building.status,
-                ),
-            )
-        for event in (*self.content.events, *self.content.seed_events):
-            self.conn.execute(
-                """
-                INSERT OR REPLACE INTO events
-                (id, title, kind, summary, urgency, severity, credibility, interests, audiences)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    event.id,
-                    event.title,
-                    event.kind,
-                    event.summary,
-                    event.urgency,
-                    event.severity,
-                    event.credibility,
-                    json.dumps(event.interests, ensure_ascii=False),
-                    json.dumps(event.audiences, ensure_ascii=False),
-                ),
-            )
+        if not self.table_has_rows("offices"):
+            for office_type, definition in self.content.office_definitions.items():
+                self.conn.execute(
+                    """
+                    INSERT INTO offices
+                    (office_type, skills, tools, authority_scope, power, responsibility, corruption_risk)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        office_type,
+                        json.dumps(definition["skills"], ensure_ascii=False),
+                        json.dumps(definition["tools"], ensure_ascii=False),
+                        str(definition["authority_scope"]),
+                        int(definition["power"]),
+                        int(definition["responsibility"]),
+                        int(definition["corruption_risk"]),
+                    ),
+                )
+
+        if not self.table_has_rows("characters"):
+            for character in self.content.characters.values():
+                self.conn.execute(
+                    """
+                    INSERT INTO characters
+                    (name, office, office_type, faction, personal_skills, loyalty, ability, integrity, courage, style,
+                     birth_year, historical_death_year, historical_death_month, debut_year, debut_month,
+                     status, status_reason, status_changed_turn, portrait_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        character.name,
+                        normalize_office(character.office),
+                        character.office_type,
+                        character.faction,
+                        json.dumps(character.personal_skills + character.aliases, ensure_ascii=False),
+                        character.loyalty,
+                        character.ability,
+                        character.integrity,
+                        character.courage,
+                        character.style,
+                        character.birth_year,
+                        character.historical_death_year,
+                        character.historical_death_month,
+                        character.debut_year,
+                        character.debut_month,
+                        character.status,
+                        "",
+                        0,
+                        character.portrait_id,
+                    ),
+                )
+        if not self.table_has_rows("character_offices"):
+            for row in self.conn.execute("SELECT name, office, office_type FROM characters").fetchall():
+                self.conn.execute(
+                    """
+                    INSERT INTO character_offices (character_name, office_title, office_type, source)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (row["name"], row["office"], row["office_type"], "存档迁移"),
+                )
+
+        if not self.table_has_rows("factions"):
+            for faction in self.content.factions.values():
+                self.conn.execute(
+                    """
+                    INSERT INTO factions (name, satisfaction, leverage, agenda)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (faction.name, faction.satisfaction, faction.leverage, faction.agenda),
+                )
+        if not self.table_has_rows("classes"):
+            for cls in self.content.classes.values():
+                self.conn.execute(
+                    """
+                    INSERT INTO classes (name, region_id, population, satisfaction, leverage, agenda)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (cls.name, cls.region_id, cls.population, cls.satisfaction, cls.leverage, cls.agenda),
+                )
+        if not self.table_has_rows("external_powers"):
+            for power in self.content.external_powers.values():
+                self.conn.execute(
+                    """
+                    INSERT INTO external_powers
+                    (id, name, leader, stance, leverage, satisfaction, military_strength,
+                     cohesion, supply, agenda, status, last_action)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        power.id,
+                        power.name,
+                        power.leader,
+                        power.stance,
+                        power.leverage,
+                        power.satisfaction,
+                        power.military_strength,
+                        power.cohesion,
+                        power.supply,
+                        power.agenda,
+                        power.status,
+                        power.last_action,
+                    ),
+                )
+        if not self.table_has_rows("regions"):
+            for region in self.content.regions.values():
+                self.conn.execute(
+                    """
+                    INSERT INTO regions
+                    (id, name, kind, population, public_support, unrest, natural_disaster, human_disaster,
+                     registered_land, hidden_land, tax_per_turn, grain_security, gentry_resistance,
+                     military_pressure, status, fiscal)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        region.id,
+                        region.name,
+                        region.kind,
+                        region.population,
+                        region.public_support,
+                        region.unrest,
+                        region.natural_disaster,
+                        region.human_disaster,
+                        region.registered_land,
+                        region.hidden_land,
+                        region.tax_per_turn,
+                        region.grain_security,
+                        region.gentry_resistance,
+                        region.military_pressure,
+                        region.status,
+                        json.dumps(region.fiscal, ensure_ascii=False),
+                    ),
+                )
+        if not self.table_has_rows("armies"):
+            for army in self.content.armies.values():
+                self.conn.execute(
+                    """
+                    INSERT INTO armies
+                    (id, name, station, theater, commander, controller, troop_type, manpower,
+                     maintenance_per_turn, supply, morale, training, equipment, arrears,
+                     mobility, loyalty, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        army.id,
+                        army.name,
+                        army.station,
+                        army.theater,
+                        army.commander,
+                        army.controller,
+                        army.troop_type,
+                        army.manpower,
+                        army.maintenance_per_turn,
+                        army.supply,
+                        army.morale,
+                        army.training,
+                        army.equipment,
+                        army.arrears,
+                        army.mobility,
+                        army.loyalty,
+                        army.status,
+                    ),
+                )
+        if not self.table_has_rows("buildings"):
+            for building in self.content.buildings.values():
+                self.conn.execute(
+                    """
+                    INSERT INTO buildings
+                    (id, region_id, name, category, level, condition, maintenance, risk,
+                     output_metric, output_amount, status, origin, created_turn)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'preset', 0)
+                    """,
+                    (
+                        building.id,
+                        building.region_id,
+                        building.name,
+                        building.category,
+                        building.level,
+                        building.condition,
+                        building.maintenance,
+                        building.risk,
+                        building.output_metric,
+                        building.output_amount,
+                        building.status,
+                    ),
+                )
+        if not self.table_has_rows("events"):
+            for event in (*self.content.events, *self.content.seed_events):
+                self.conn.execute(
+                    """
+                    INSERT INTO events
+                    (id, title, kind, summary, urgency, severity, credibility, interests, audiences)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event.id,
+                        event.title,
+                        event.kind,
+                        event.summary,
+                        event.urgency,
+                        event.severity,
+                        event.credibility,
+                        json.dumps(event.interests, ensure_ascii=False),
+                        json.dumps(event.audiences, ensure_ascii=False),
+                    ),
+                )
         self.conn.commit()
 
     def has_state(self) -> bool:
@@ -1099,21 +1137,23 @@ class GameDB:
     ) -> None:
         """既有官员调任/升迁：改 characters.office（office_type 给空则不动），
         同步 character_offices 备档。状态不变（仍 active）。"""
-        if office_type:
+        office = normalize_office(office)
+        current_type = (
+            self.conn.execute(
+                "SELECT office_type FROM characters WHERE name=?", (name,)
+            ).fetchone() or {"office_type": ""}
+        )["office_type"]
+        eff_type = infer_office_type_from_office(office, office_type or current_type)
+        if office_type or eff_type != current_type:
             self.conn.execute(
                 "UPDATE characters SET office=?, office_type=? WHERE name=?",
-                (office, office_type, name),
+                (office, eff_type, name),
             )
         else:
             self.conn.execute(
                 "UPDATE characters SET office=? WHERE name=?",
                 (office, name),
             )
-        eff_type = office_type or (
-            self.conn.execute(
-                "SELECT office_type FROM characters WHERE name=?", (name,)
-            ).fetchone() or {"office_type": ""}
-        )["office_type"]
         self.conn.execute(
             """
             INSERT INTO character_offices (character_name, office_title, office_type, source)
@@ -1129,8 +1169,7 @@ class GameDB:
         self.conn.commit()
         if name in self.content.characters:
             self.content.characters[name].office = office
-            if office_type:
-                self.content.characters[name].office_type = office_type
+            self.content.characters[name].office_type = eff_type
 
     def apply_historical_deaths(self, state: GameState) -> List[Dict[str, str]]:
         """月初 tick：只有仍 active 的人到点自然死。被玩家提前罢/狱/流/杀的不走此分支。
@@ -1275,6 +1314,8 @@ class GameDB:
         ).fetchone()
         if existing is not None:
             return
+        character.office = normalize_office(character.office)
+        character.office_type = infer_office_type_from_office(character.office, character.office_type)
         # 若没有专属 portrait_id，按 office_type 分配预设池头像
         portrait_id = character.portrait_id
         if not portrait_id:
@@ -3531,6 +3572,7 @@ class GameDB:
         content: str,
         tags: List[str],
         importance: int = 4,
+        deadline_months: int = 0,
     ) -> int:
         active_count = self.conn.execute(
             "SELECT COUNT(*) FROM secret_orders WHERE status='active'"
@@ -3538,13 +3580,15 @@ class GameDB:
         if active_count >= 20:
             raise ValueError(f"进行中密令已达上限（20条），请先结案部分密令再下新令。当前：{active_count} 条。")
         tags_json = json.dumps(tags, ensure_ascii=False)
+        deadline = max(0, min(int(deadline_months or 0), 36))
+        due_turn = int(state.turn) + deadline if deadline else 0
         cur = self.conn.execute(
             """
             INSERT INTO secret_orders
-                (turn_issued, year_issued, period_issued, minister_name, title, content, tags, importance, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')
+                (turn_issued, due_turn, year_issued, period_issued, minister_name, title, content, tags, importance, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
             """,
-            (state.turn, state.year, state.period, minister_name, title[:20], content, tags_json, importance),
+            (state.turn, due_turn, state.year, state.period, minister_name, title[:20], content, tags_json, importance),
         )
         self.conn.commit()
         tlog(f"[secret_order] create id={cur.lastrowid} minister={minister_name} title={title[:20]}")
@@ -3571,6 +3615,7 @@ class GameDB:
             {
                 "id": int(r["id"]),
                 "turn_issued": int(r["turn_issued"]),
+                "due_turn": int(r["due_turn"] if "due_turn" in r.keys() else 0),
                 "year_issued": int(r["year_issued"]),
                 "period_issued": int(r["period_issued"]),
                 "minister_name": r["minister_name"],
@@ -3580,13 +3625,17 @@ class GameDB:
                 "importance": int(r["importance"]),
                 "status": r["status"],
                 "result": r["result"] or "",
+                "sim_note": (r["sim_note"] if "sim_note" in r.keys() else "") or "",
                 "turn_closed": r["turn_closed"],
             }
             for r in rows
         ]
 
     def get_active_secret_orders_for_minister(self, minister_name: str) -> List[Dict[str, object]]:
-        return self.list_secret_orders(status="active", minister_name=minister_name)
+        """返回该大臣名下未结案密令（active + pending_review）。done/failed 已结案不再返回。"""
+        active = self.list_secret_orders(status="active", minister_name=minister_name)
+        pending = self.list_secret_orders(status="pending_review", minister_name=minister_name)
+        return active + pending
 
     def close_secret_order(self, order_id: int, status: str, result: str, turn_closed: int) -> None:
         self.conn.execute(
@@ -3600,14 +3649,198 @@ class GameDB:
         self.conn.commit()
         tlog(f"[secret_order] close id={order_id} status={status}")
 
-    def update_secret_order_progress(self, order_id: int, progress_note: str) -> None:
-        """更新进行中密令的进展描述，不改变 status。"""
+    def submit_secret_order_for_review(self, order_id: int, claim: str, year: int, period: int) -> bool:
+        """大臣提交密令待推演核议：active → pending_review。
+        claim 按月戳追加进 result 时间线（与 progress 同列，但带 "[提交核议]" 标记），
+        让推演看时同时知道大臣自述。仅 active 状态可提交。"""
+        row = self.conn.execute(
+            "SELECT status FROM secret_orders WHERE id = ?", (int(order_id),)
+        ).fetchone()
+        if not row or row["status"] != "active":
+            return False
+        stamp = f"〔{period_label(year, period)}〕[提交核议] "
+        note = (claim or "").strip()
+        prev = self.conn.execute(
+            "SELECT result FROM secret_orders WHERE id = ?", (int(order_id),)
+        ).fetchone()["result"] or ""
+        lines = [ln for ln in prev.split("\n") if ln.strip()]
+        lines.append(f"{stamp}{note[:300]}")
         self.conn.execute(
-            "UPDATE secret_orders SET result = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'active'",
-            (progress_note, int(order_id)),
+            """
+            UPDATE secret_orders
+            SET status = 'pending_review', result = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            ("\n".join(lines), int(order_id)),
         )
         self.conn.commit()
-        tlog(f"[secret_order] progress id={order_id} note={progress_note[:40]!r}")
+        tlog(f"[secret_order] submit_for_review id={order_id} claim={note[:60]!r}")
+        return True
+
+    def _has_secret_order_period_line(self, order_id: int, column: str, year: int, period: int) -> bool:
+        """本年月该列是否已有一行（用于一回合一步闸门）。"""
+        stamp = f"〔{period_label(year, period)}〕"
+        row = self.conn.execute(
+            f"SELECT {column} AS v FROM secret_orders WHERE id = ?", (int(order_id),)
+        ).fetchone()
+        if row is None:
+            return False
+        return any(ln.startswith(stamp) for ln in str(row["v"] or "").split("\n"))
+
+    def _append_secret_order_line(
+        self, order_id: int, column: str, note: str, year: int, period: int,
+        reject_if_same_period: bool = False,
+    ) -> bool:
+        """把一条带年月戳的进展/副作用追加进密令的 result/sim_note，存成历史时间线。
+        reject_if_same_period=True 时，本年月已有行则拒写（返回 False，用于一回合一步）；
+        否则同年月再写替换当月行。不同年月一律新增。返回是否实际写入。"""
+        assert column in ("result", "sim_note")
+        stamp = f"〔{period_label(year, period)}〕"
+        row = self.conn.execute(
+            f"SELECT {column} AS v FROM secret_orders WHERE id = ? AND status = 'active'",
+            (int(order_id),),
+        ).fetchone()
+        if row is None:
+            return False  # 已结案或不存在，不追加
+        lines = [ln for ln in str(row["v"] or "").split("\n") if ln.strip()]
+        if reject_if_same_period and any(ln.startswith(stamp) for ln in lines):
+            return False  # 本回合已推过一步，拒
+        lines = [ln for ln in lines if not ln.startswith(stamp)]  # 去掉当月旧行
+        lines.append(f"{stamp}{note.strip()}")
+        # 按〔年月〕戳排序，保证时间线顺序（同月替换后不致错位）
+        def _stamp_key(ln: str):
+            import re as _re
+            m = _re.match(r"〔(\d+)年(\d+)月〕", ln)
+            return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+        lines.sort(key=_stamp_key)
+        self.conn.execute(
+            f"UPDATE secret_orders SET {column} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            ("\n".join(lines), int(order_id)),
+        )
+        self.conn.commit()
+        return True
+
+    def update_secret_order_progress(
+        self, order_id: int, progress_note: str, year: int = 0, period: int = 0
+    ) -> bool:
+        """承办人推进一步：按年月追加进 result 历史时间线，不改 status。
+        一回合只能推一步——本回合已有进展行则拒（返回 False），不覆盖、不叠加。"""
+        ok = self._append_secret_order_line(
+            order_id, "result", progress_note, year, period, reject_if_same_period=True
+        )
+        tlog(f"[secret_order] progress id={order_id} ok={ok} note={progress_note[:40]!r}")
+        return ok
+
+    def update_secret_order_sim_note(
+        self, order_id: int, sim_note: str, year: int = 0, period: int = 0
+    ) -> None:
+        """推演写密令副作用（泄漏/反弹等），按年月追加进 sim_note 历史时间线，
+        不动 result/status。同月再写替换（推演每月一次）。与承办人进展分列。"""
+        self._append_secret_order_line(order_id, "sim_note", sim_note, year, period)
+        tlog(f"[secret_order] sim_note id={order_id} note={sim_note[:40]!r}")
+
+    def rush_secret_order(
+        self,
+        order_id: int,
+        state: GameState,
+        deadline_months: int = 1,
+        reason: str = "",
+    ) -> Dict[str, object]:
+        """缩短 active 密令期限。deadline_months<=0 表示本月立即送核议。"""
+        row = self.conn.execute(
+            "SELECT id, title, status, result, due_turn FROM secret_orders WHERE id = ?",
+            (int(order_id),),
+        ).fetchone()
+        if row is None:
+            raise ValueError("密令不存在")
+        if row["status"] != "active":
+            raise ValueError(f"当前状态 {row['status']}，不能催办")
+        try:
+            months = max(0, min(int(deadline_months or 0), 36))
+        except (TypeError, ValueError):
+            months = 1
+        target_turn = int(state.turn) + months
+        old_due = int(row["due_turn"] or 0)
+        stamp = f"〔{period_label(state.year, state.period)}〕"
+        why = (reason or "").strip()[:120] or "奉旨加急"
+        prev = row["result"] or ""
+        lines = [ln for ln in prev.split("\n") if ln.strip()]
+        if months <= 0:
+            lines.append(f"{stamp}[奉旨即核] {why}；本月即移交密旨核议。")
+            self.conn.execute(
+                """
+                UPDATE secret_orders
+                SET status = 'pending_review', due_turn = ?, result = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (int(state.turn), "\n".join(lines), int(order_id)),
+            )
+            status = "pending_review"
+            due_turn = int(state.turn)
+        else:
+            due_turn = target_turn if old_due <= 0 else min(old_due, target_turn)
+            lines.append(f"{stamp}[奉旨加急] {why}；御限改为 {months} 个月内核议。")
+            self.conn.execute(
+                """
+                UPDATE secret_orders
+                SET due_turn = ?, result = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (due_turn, "\n".join(lines), int(order_id)),
+            )
+            status = "active"
+        self.conn.commit()
+        tlog(f"[secret_order] rush id={order_id} old_due={old_due} due={due_turn} status={status}")
+        return {"id": int(order_id), "title": row["title"], "status": status, "due_turn": due_turn}
+
+    def get_secret_order(self, order_id: int) -> Optional[Dict[str, object]]:
+        """单查一条密令（任意状态），给承办人查进度工具用。不存在返回 None。"""
+        r = self.conn.execute(
+            "SELECT * FROM secret_orders WHERE id = ?", (int(order_id),)
+        ).fetchone()
+        if not r:
+            return None
+        return {
+            "id": int(r["id"]), "minister_name": r["minister_name"],
+            "title": r["title"], "content": r["content"],
+            "status": r["status"], "result": r["result"] or "",
+            "sim_note": (r["sim_note"] if "sim_note" in r.keys() else "") or "",
+            "turn_issued": int(r["turn_issued"]),
+            "due_turn": int(r["due_turn"] if "due_turn" in r.keys() else 0),
+            "turn_closed": r["turn_closed"],
+        }
+
+    def auto_submit_due_secret_orders(self, state: GameState) -> List[Dict[str, object]]:
+        """把到期 active 密令自动转入 pending_review，保证当月推演必须给终判。"""
+        rows = self.conn.execute(
+            """
+            SELECT id, title, result FROM secret_orders
+            WHERE status = 'active' AND due_turn > 0 AND due_turn <= ?
+            ORDER BY id
+            """,
+            (int(state.turn),),
+        ).fetchall()
+        submitted: List[Dict[str, object]] = []
+        for row in rows:
+            stamp = f"〔{period_label(state.year, state.period)}〕[期限届满] "
+            note = "御限已至，移交月末密旨核议；据既有查办、风声与盘面定成败。"
+            prev = row["result"] or ""
+            lines = [ln for ln in prev.split("\n") if ln.strip()]
+            if not any("[期限届满]" in ln for ln in lines):
+                lines.append(f"{stamp}{note}")
+            self.conn.execute(
+                """
+                UPDATE secret_orders
+                SET status = 'pending_review', result = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                ("\n".join(lines), int(row["id"])),
+            )
+            submitted.append({"id": int(row["id"]), "title": row["title"]})
+        if rows:
+            self.conn.commit()
+            tlog(f"[secret_order] auto_submit_due count={len(submitted)} ids={[x['id'] for x in submitted]}")
+        return submitted
 
     def get_secret_orders_by_keywords(
         self, keywords: List[str], limit: int = 5, current_turn: int = 0

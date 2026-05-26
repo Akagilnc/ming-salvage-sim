@@ -17,7 +17,7 @@
 4. **新立与结案**：
    - `new_issues` 只两个合法来源（见「局势立项规则」），邸报现象禁立。
    - 逐条对照 active_issues 的 resolve_condition / fail_condition 与邸报，判 `close_issues`（见「局势推进规则」）。
-5. **最后扫 economy_moves / fiscal_changes / office_changes / character_status_changes**（朝臣人事）+ `appointments`（仅后宫纳妃）+ `secret_order_updates`（密令进展）——通常来自人事章与财政章，任何章节涉及都要补。密令进展：**专门扫邸报「密旨动向」章**，逐条对照 `secret_orders` 列表，凡「密旨动向」章提及进展（进行中/完成/失败）的密令，抽入 `secret_order_updates`。
+5. **最后扫 economy_moves / fiscal_changes / office_changes / character_status_changes**（朝臣人事）+ `appointments`（仅后宫纳妃）+ `secret_order_updates`（密令副作用）——通常来自人事章与财政章，任何章节涉及都要补。密令副作用：**专门扫邸报「密旨动向」章**，逐条对照 `secret_orders` 列表，凡该章写到某进行中密令引发的副作用（风声走漏/被查者反扑/牵连旁人等），抽入 `secret_order_updates`。**只抽副作用，绝不抽结案**——密令的 done/failed 由承办人回奏决定，推演无权了结。
    - **朝臣人事只两类**：官职变更（任何人当某官——新进朝堂、调任、升迁，全是 `office_changes`，不必判此人在不在册）；去职（罢/狱/流/仕/卒 → `character_status_changes`）。以末章「人事除目」节为准，逐行对抽。
    - `appointments` **只用于后宫纳妃**，朝臣一律不进。
 
@@ -96,13 +96,13 @@
 - `candidate_events`：本{{TURN_UNIT}}候选情势清单（id/title）
 - `fiscal_config`：当前各财政系数
 - `relevant_memories`：与本{{TURN_UNIT}}诏书相关的历史记忆，每条含 `source_kind` 字段：`chat_message`（大臣记忆，召对承诺/建议/情报流水）vs 其它值（演算记忆，月末推演事件结果）。参照用，不强制引用。
-- `secret_orders`：皇帝密令列表（独立于 relevant_memories）。每条字段：`id`（整数）、`minister_name`（承办人）、`title`（密令标题）、`content`（任务详情）、`status`（`active`=进行中 / `done`=已完成 / `failed`=已失败）、`result`（结案结果文字，status=active 时为空）。**这是密令的权威状态与结果**——抽 `secret_order_updates` 时，以本字段的 `id` 为准（正整数，直接填入，不用负数），`result` 字段即已核实的结果依据，可信度最高。若邸报叙事呈现密令效果（如查出贪腐），可同步在 `economy_moves` / `region_delta` 等字段体现。
+- `secret_orders`：皇帝密令列表（独立于 relevant_memories）。每条字段：`id`（整数）、`minister_name`（承办人）、`title`（密令标题）、`content`（任务详情）、`status`（`active`=进行中 / `pending_review`=承办人提交待核议或期限届满强制核议 / `done`=已结案 / `failed`=已失败）、`progress`（承办人自报当前进展时间线，含「[提交核议]」行表示该月承办人自认办到，含「[期限届满]」表示御限已到）、`sim_note`（过往推演写的副作用）。抽 `secret_order_updates` 时以本字段 `id` 为准（正整数，直接填）。**对 `status=active` 抽副作用，对 `status=pending_review` 必须抽结案判定（见 `secret_order_closes`）**。若邸报叙事呈现密令效果（如查出贪腐），可同步在 `economy_moves` / `region_delta` 等字段体现。
 
-**表格格式约定**：`regions` / `armies` / `buildings` / `external_powers` / `active_ministers` / `offstage_ministers` 均为 `{"cols":[列名...], "rows":[[值...]...]}` 形式——`cols` 是列名数组，`rows` 是二维数组每行一条记录，按 `cols` 顺序对位。查某行某字段时按 `cols.index("字段名")` 找列下标，再到该 `rows[i]` 取值。这是为压缩 token 改的格式，语义与 dict-of-rows 完全等价。`active_ministers` 含列：`name`/`office`/`office_type`/`court_role`/`faction`——`office` 字段可能含逗号分隔多职；`court_role` 非空表示该人占据某固定席位（首辅/次辅/六部尚书），判顶缺时以此为准。
+**表格格式约定**：`regions` / `armies` / `buildings` / `external_powers` / `active_ministers` / `offstage_ministers` 均为 `{"cols":[列名...], "rows":[[值...]...]}` 形式——`cols` 是列名数组，`rows` 是二维数组每行一条记录，按 `cols` 顺序对位。查某行某字段时按 `cols.index("字段名")` 找列下标，再到该 `rows[i]` 取值。这是为压缩 token 改的格式，语义与 dict-of-rows 完全等价。`active_ministers` 含列：`name`/`office`/`office_type`/`faction`——`office` 字段可能含逗号分隔多职；判顶缺一律按 `office` 分项匹配（逗号切开每段即一职），不另设固定席位字段。
 
 ## 输出字段总表（每个字段的含义与约束，先看清这张表）
 
-顶层 17 个字段都**必须出现**；无内容的填空 `{}` 或 `[]`。严格 JSON，无 Markdown 无解释。
+顶层 18 个字段都**必须出现**；无内容的填空 `{}` 或 `[]`。严格 JSON，无 Markdown 无解释。
 
 | 字段 | 含义 | 约束 |
 |---|---|---|
@@ -121,8 +121,9 @@
 | `fiscal_changes` | 制度性财政系数变化 | 仅奏章明确提到开征新税/削减禄米/盐政改革等才写。`delta` 是增量（±5~±30 常规，±50 极端）。`key` 必须从下方「财政系数表」选，不在表内一律不写。 |
 | `appointments` | **仅后宫纳妃** | 仅 `decree_text` 写明「纳/册封/封/选 某某 为 贵妃/嫔/才人/昭仪/婕妤/淑女」时立项。每项 `{"name","office","office_type":"后宫","reason","approved"}`，详见「后宫纳妃规则」。**朝臣任命不进此字段，一律走 `office_changes`。** |
 | `character_status_changes` | 既有大臣状态变更（罢黜/下狱/流放/致仕/死亡） | 邸报明文写「某某革职/拿问/下诏狱/赐死/缢死/流放/致仕/卒」时立项。每项 `{"name","status","reason"}`，status ∈ `dismissed`/`imprisoned`/`exiled`/`retired`/`dead`/`offstage`。详见「人物状态变更规则」。 |
-| `office_changes` | 朝臣官职变更——某人任某官，含新进朝堂、调任、升迁，**不分新任旧任** | 邸报或 `decree_text` 写明「擢/拜/起/迁/补/调/升 某某 为 某官」时立项。每项 `{"name","new_office","reason"}`，可选 `faction`（新进朝堂者填派系）、`new_office_type`（官署类别如「督抚」「司礼监」）、`court_role`（固定席位，见官职变更规则）。`new_office` 多职用逗号隔开，**不用「兼」字**（如 `兵部尚书,东阁大学士`）；单职直接写。**不必判此人在不在册**——代码自处理：在册改职、不在册建新档。去职走 `character_status_changes`。 |
-| `secret_order_updates` | 皇帝密令进展与结案 | **专扫邸报「密旨动向」章**，逐条对照 `secret_orders` 列表（以 `id` 匹配承办人+标题）。凡该章提及的密令，必须抽一条：`status` 写 `"done"`（完成）/ `"failed"`（失败）/ `"active"`（仍在进行中）；`result` 写该章对应句的核心事实（50字内，进行中可写当前进展描述）。`order_id` 取 `secret_orders[].id`（正整数）。「密旨动向」章无内容或无此字段则留空数组。 |
+| `office_changes` | 朝臣官职变更——某人任某官，含新进朝堂、调任、升迁，**不分新任旧任** | 邸报或 `decree_text` 写明「擢/拜/起/迁/补/调/升 某某 为 某官」时立项。每项 `{"name","new_office","reason"}`，可选 `faction`（新进朝堂者填派系）、`new_office_type`（官署类别如「督抚」「司礼监」）。`new_office` 多职用逗号隔开，**不用「兼」字**（如 `兵部尚书,东阁大学士`）；单职直接写。**不必判此人在不在册**——代码自处理：在册改职、不在册建新档。去职走 `character_status_changes`。 |
+| `secret_order_updates` | 进行中密令的副作用 | **专扫邸报「密旨动向」章**，逐条对照 `secret_orders` 列表（以 `id` 匹配承办人+标题）。凡该章写到某 `active` 密令引发的副作用，抽一条：`order_id` 取 `secret_orders[].id`（正整数）、`sim_note` 写该副作用核心事实（50字内，如「风声走漏，魏党已有警觉」「牵连扬州盐商，士绅不安」）。**只抽 `active` 密令的副作用——`pending_review` 走 `secret_order_closes`，`done/failed` 不再动**。「密旨动向」章无内容则留空数组。 |
+| `secret_order_closes` | 待核议密令的结案判定 | **专扫邸报「密旨核议」小节**，逐条对照 `secret_orders` 中 `status=pending_review` 的密令。每条 pending_review 密令邸报必给一判，抽一条：`order_id` 取 `secret_orders[].id`（正整数）、`status` ∈ `done`/`failed`（**二选一，不存在续办**）、`result` 写推演判定的核实结论（100字内，将作为日后下诏拿人定罪的实据）。`done`：实据齐全 + 承办人如实呈交；`failed`：任务不可行/虚报/反扑/事泄/证据残缺。若邸报「密旨核议」小节无内容（无 pending_review 密令）则留空数组。 |
 
 new_issue 内部字段：`kind`(`initiative`/`situation`)、`title`、`origin_kind`、`bar_value`(0-100 初始进度)、`expected_months`、`stage_text`、`resolve_condition`、`fail_condition`、`ongoing_effects`、`effect_on_resolve`、`effect_on_fail`、`cancellable`(`decree`=须下诏方能罢/`never`=不可撤/`by_progress`=随进度自然结案，严禁臆造其它值)。各字段取值见「局势立项规则」。
 
@@ -182,9 +183,9 @@ decree new_issue 必填字段：
 
 判据只看「是不是任某官」。邸报叙事里「某某接任」「某某到任」这类局势衍生现象**不要**立，归 narrative。
 
-**顶缺连带**：邸报「原任X 去职/改调，Y 接任 某独缺实职（总督/巡抚/总兵/某部尚书/首辅/次辅）」时，Y 进 `office_changes`、X 同时进 `character_status_changes`（dismissed 或对应去向）或 `office_changes`（改任他职）——两条都要抽，漏抽 X 会出现两个同缺官。判断现任者：`court_role` 非空的席位（首辅/次辅/六部尚书）以 court_role 为准；地方独缺以 `active_ministers` 表 office 字段匹配（office 可能含逗号多值，分项命中即算现任）。
+**顶缺连带**：邸报「原任X 去职/改调，Y 接任 某独缺实职（总督/巡抚/总兵/某部尚书/首辅/次辅）」时，Y 进 `office_changes`、X 同时进 `character_status_changes`（dismissed 或对应去向）或 `office_changes`（改任他职）——两条都要抽，漏抽 X 会出现两个同缺官。判断现任者：在 `active_ministers` 表 `office` 字段里匹配该职名（office 可能含逗号多值，任一分项命中即算现任，如查「兵部尚书」要把 `兵部尚书,左都御史` 也算上）。
 
-**固定席位唯一性**：`court_role` 对应的八个席位（首辅/次辅/吏部尚书/户部尚书/礼部尚书/兵部尚书/刑部尚书/工部尚书）全局唯一。任命新人占某席时，查 `active_ministers` 或 payload 中 court_role 非空者，旧任者必须同时出现在 `office_changes`（改为普通大学士等）或 `character_status_changes`（去职），漏抽旧任者会出现两人同占一席。
+**独缺唯一性**：首辅/次辅/吏部尚书/户部尚书/礼部尚书/兵部尚书/刑部尚书/工部尚书 及 总督/巡抚/总兵/督师/经略 等一人一缺实职全局唯一。任命新人占某缺时，先在 `active_ministers` 各人 `office` 分项里查现任者，旧任者必须同时出现在 `office_changes`（改授他职、降为普通大学士等）或 `character_status_changes`（去职），漏抽旧任者会出现两人同占一缺。（南京XX为留都缺，与京职互不冲突，各算一缺。）
 
 唯一拦截：`new_office` 每个分项必须是明制实官名（巡抚/总督/尚书/侍郎/巡按/兵备道/总兵/秉笔太监 等），不能含「军师」「军长」等非明制词——含非明制词则不立此项。杜撰人名、名册外史实小官都允许（崇祯本就大量拔擢中下级官员），按中庸默认属性入册。
 
@@ -199,7 +200,6 @@ decree new_issue 必填字段：
   - 任何人→司礼监/内廷：填 `司礼监`
   - 已是六部官员在同部升迁（主事→郎中→侍郎→尚书）：**不填**，office_type 不变
   - 已是某衙门官员平调同类衙门：视情况，跨部才填新部名
-- `court_role`（可选）：朝班固定席位。仅填以下八值之一：`首辅`/`次辅`/`吏部尚书`/`户部尚书`/`礼部尚书`/`兵部尚书`/`刑部尚书`/`工部尚书`。诏书明确任命某人为首辅/次辅/某部尚书时必填；兼衔或群辅大学士不填。
 - `reason`：一句话写任命/调任依据。
 例：孙传庭、王承恩已在册，纵大幅升迁也走此字段。
 
@@ -246,7 +246,7 @@ decree new_issue 必填字段：
 - `status`：上述白名单之一。
 - `reason`：一句话写邸报里的处置缘由 / 触发事件，供 db `status_reason` 留痕。
 
-## 输出 JSON 骨架（15 字段必须出现，无内容填 `{}` 或 `[]`）
+## 输出 JSON 骨架（18 字段必须出现，无内容填 `{}` 或 `[]`）
 
 ```json
 {
@@ -276,8 +276,11 @@ decree new_issue 必填字段：
   ],
   "character_status_changes": [{"name": "魏忠贤", "status": "exiled", "reason": "发配凤阳"}],
   "secret_order_updates": [
-    {"order_id": 3, "status": "done", "result": "毕自严赴苏松核查辽饷账目，查明户部主事王某挪用八万两，已具文参奏，账册封存候审。"},
-    {"order_id": 5, "status": "active", "result": "锦衣卫密差已出京，暗访山西商路，尚无回报。"}
+    {"order_id": 5, "sim_note": "锦衣卫暗访山西商路风声渐起，当地豪商已暗中转移账册，恐难再查。"}
+  ],
+  "secret_order_closes": [
+    {"order_id": 2, "status": "done", "result": "曹化淳查得魏党在京蓄银三百万两，私契、家奴口供俱在司礼监档房，可据此拿人定罪。"},
+    {"order_id": 7, "status": "failed", "result": "跨境擒拿不可行，承办人未出关即被边将拦阻，反招后金警觉，密旨弃置。"}
   ]
 }
 ```

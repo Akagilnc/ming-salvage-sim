@@ -24,6 +24,7 @@ class LLMConfig:
     base_url: str
     model: str
     max_tokens: int = 8000
+    advanced_model: str = ""  # 空=fallback model；非空=推演/打分专用更强模型（如 deepseek-reasoner / gpt-5）
 
 
 @dataclass

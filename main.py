@@ -28,6 +28,11 @@ def main() -> None:
         help="OpenAI-compatible model name（读 OPENAI_MODEL）",
     )
     parser.add_argument(
+        "--advanced-model",
+        default=os.environ.get("OPENAI_ADVANCED_MODEL", ""),
+        help="推演/打分专用更强模型（读 OPENAI_ADVANCED_MODEL），空=与 --model 一致",
+    )
+    parser.add_argument(
         "--db",
         default=os.environ.get("MING_SIM_DB", "data/ming_sim.db"),
         help="SQLite database path",
@@ -49,6 +54,7 @@ def main() -> None:
         db_path=args.db,
         api_key=cli_api_key,
         start_ym=args.start_ym,
+        advanced_model=args.advanced_model,
     )
 
 

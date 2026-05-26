@@ -397,6 +397,7 @@ class GameContent:
     decree_writer_prompt: str = ""
     season_simulator_prompt: str = ""
     score_extractor_prompt: str = ""
+    score_extractor_module_prompts: Dict[str, str] = field(default_factory=dict)
     memory_extractor_prompt: str = ""
     chat_memory_extractor_prompt: str = ""
 
@@ -451,6 +452,12 @@ class GameContent:
             decree_writer_prompt=load_text_asset("prompts/decree_writer.md"),
             season_simulator_prompt=load_text_asset("prompts/season_simulator.md"),
             score_extractor_prompt=load_text_asset("prompts/score_extractor.md"),
+            score_extractor_module_prompts={
+                "internal": load_text_asset("prompts/score_extractor_internal.md"),
+                "military_external": load_text_asset("prompts/score_extractor_military_external.md"),
+                "issues": load_text_asset("prompts/score_extractor_issues.md"),
+                "personnel_secret": load_text_asset("prompts/score_extractor_personnel_secret.md"),
+            },
             memory_extractor_prompt=load_text_asset("prompts/memory_extractor.md"),
             chat_memory_extractor_prompt=load_text_asset("prompts/chat_memory_extractor.md"),
         )

@@ -13,7 +13,7 @@ from typing import Dict, List, Optional
 from ming_sim.constants import TURN_UNIT
 from ming_sim.content import GameContent
 from ming_sim.context import victory_status
-from ming_sim.db import GameDB
+from ming_sim.db import GameDB, infer_office_type_from_office, normalize_office
 from ming_sim.flows import (
     ISSUE_METRIC_KEYS,
     ISSUE_METRIC_LOCK_CAPS,
@@ -695,6 +695,50 @@ def apply_issue_tracker_output(
     }
 
 
+# 独占实职关键词：office 分项以此结尾者视为「一人一缺」，须顶替去重。
+# 群体职（大学士/侍郎/郎中/主事/御史/翰林等）不在内，可多员并存。
+_EXCLUSIVE_OFFICE_SUFFIXES = (
+    "首辅", "次辅", "尚书", "总督", "巡抚", "总兵", "督师", "经略", "提督",
+)
+
+
+def _is_exclusive_office(part: str) -> bool:
+    """office 单个分项是否独占实职。南京XX为留都缺，与京职互不冲突，单独算一缺。"""
+    return any(part.endswith(suf) for suf in _EXCLUSIVE_OFFICE_SUFFIXES)
+
+
+def _displace_duplicate_offices(
+    db: GameDB, content: Optional[GameContent], new_holder: str, new_office: str
+) -> List[str]:
+    """新任者 new_holder 拿到 new_office 后，把其中每个独占实职分项从其他 active 官员
+    office 里剔除，避免双缺官。返回被腾出的 (旧任者:职) 描述列表。
+    纯按 office 文字匹配——不依赖 court_role，对存量档同样生效。"""
+    new_parts = [p for p in normalize_office(new_office).split(",") if _is_exclusive_office(p)]
+    if not new_parts:
+        return []
+    displaced: List[str] = []
+    rows = db.conn.execute(
+        "SELECT name, office FROM characters WHERE status='active' AND name!=?",
+        (new_holder,),
+    ).fetchall()
+    for row in rows:
+        holder_parts = [p.strip() for p in str(row["office"]).split(",") if p.strip()]
+        kept = [p for p in holder_parts if p not in new_parts]
+        if len(kept) == len(holder_parts):
+            continue  # 此人不占同名独缺
+        for lost in (p for p in holder_parts if p in new_parts):
+            displaced.append(f"{row['name']}:{lost}")
+        new_holder_office = ",".join(kept)
+        db.conn.execute(
+            "UPDATE characters SET office=? WHERE name=?",
+            (new_holder_office, row["name"]),
+        )
+        if content is not None and row["name"] in content.characters:
+            content.characters[row["name"]].office = new_holder_office
+    db.conn.commit()
+    return displaced
+
+
 def apply_score_extraction(
     db: GameDB,
     state: GameState,
@@ -890,7 +934,6 @@ def apply_score_extraction(
         if in_roster and cur_status == "active":
             # ── 调任：改 office ──
             new_type = str(item.get("new_office_type") or "").strip()
-            court_role = str(item.get("court_role") or "").strip()
             old_office = content.characters[name].office
             try:
                 db.set_character_office(name, new_office, new_type, source=reason[:60] or "诏书调任")
@@ -900,35 +943,18 @@ def apply_score_extraction(
                     "reason": f"落库失败：{exc}",
                 })
                 continue
-            if court_role:
-                # 清旧任者 court_role，同时把旧任者 office 里与 court_role 同名的分项移除
-                old_holders = db.conn.execute(
-                    "SELECT name, office FROM characters WHERE court_role=? AND name!=?",
-                    (court_role, name),
-                ).fetchall()
-                for holder in old_holders:
-                    parts = [p.strip() for p in str(holder["office"]).split(",") if p.strip() and p.strip() != court_role]
-                    new_holder_office = ",".join(parts)
-                    db.conn.execute(
-                        "UPDATE characters SET court_role='', office=? WHERE name=?",
-                        (new_holder_office, holder["name"]),
-                    )
-                    if content is not None and holder["name"] in content.characters:
-                        content.characters[holder["name"]].office = new_holder_office
-                db.conn.execute(
-                    "UPDATE characters SET court_role=? WHERE name=?",
-                    (court_role, name),
-                )
-                db.conn.commit()
+            # 独缺顶替兜底：按 office 文字去重。新任者拿到的每个独占实职分项，
+            # 从其他 active 官员 office 里剔除同名分项（LLM 已判去重，此处仅防漏抽旧任者出现双缺官）。
+            displaced_parts = _displace_duplicate_offices(db, content, name, new_office)
             ch = content.characters[name]
-            ch.office = new_office
-            if new_type:
-                ch.office_type = new_type
+            ch.office = normalize_office(new_office)
+            ch.office_type = infer_office_type_from_office(ch.office, new_type or ch.office_type)
             if registry is not None:
                 registry.refresh(name)
             applied_office_changes.append({
                 "name": name, "old_office": old_office, "new_office": new_office,
                 "kind": "transfer", "reason": reason,
+                **({"displaced": displaced_parts} if displaced_parts else {}),
             })
             continue
         # ── 新任：建新档（apply_appointment 对在册者会拒，故仅不在册/非 active 走到这）──
@@ -952,17 +978,16 @@ def apply_score_extraction(
                 "reason": f"建档失败（查重/字段不合）；原 status={cur_status or '不在册'}",
             })
 
-    # 11) secret_order_updates：推演判定密令结案，结果文字入库
+    # 11) secret_order_updates：推演写 active 密令副作用（泄漏/反弹）到 sim_note。结案不走这里。
     applied_secret_orders: List[Dict[str, object]] = []
     for item in extracted.get("secret_order_updates") or []:
         if not isinstance(item, dict):
             continue
         raw_id = item.get("order_id")
-        status = str(item.get("status") or "").strip().lower()
-        result_text = str(item.get("result") or "").strip()
-        if raw_id is None or status not in ("done", "failed", "active") or not result_text:
+        sim_note = str(item.get("sim_note") or item.get("result") or "").strip()
+        if raw_id is None or not sim_note:
             applied_secret_orders.append({"order_id": raw_id, "rejected": True,
-                                          "reason": "order_id/status/result 缺失或非法"})
+                                          "reason": "order_id 或 sim_note 缺失"})
             continue
         try:
             real_id = int(raw_id)
@@ -970,15 +995,50 @@ def apply_score_extraction(
             applied_secret_orders.append({"order_id": raw_id, "rejected": True, "reason": "order_id 非整数"})
             continue
         try:
-            if status == "active":
-                db.update_secret_order_progress(real_id, result_text)
-                print(f"[secret_order] 推演进展 id={real_id} note={result_text[:60]!r}")
-            else:
-                db.close_secret_order(real_id, status, result_text, state.turn)
-                print(f"[secret_order] 推演结案 id={real_id} status={status} result={result_text[:60]!r}")
-            applied_secret_orders.append({"order_id": real_id, "status": status, "result": result_text})
+            db.update_secret_order_sim_note(
+                real_id, sim_note, year=state.year, period=state.period
+            )
+            print(f"[secret_order] 推演副作用 id={real_id} note={sim_note[:60]!r}")
+            applied_secret_orders.append({"order_id": real_id, "sim_note": sim_note})
         except Exception as exc:
             applied_secret_orders.append({"order_id": real_id, "rejected": True, "reason": str(exc)})
+
+    # 12) secret_order_closes：推演给 pending_review 密令最终判定（done/failed），落库结案。
+    applied_secret_closes: List[Dict[str, object]] = []
+    for item in extracted.get("secret_order_closes") or []:
+        if not isinstance(item, dict):
+            continue
+        raw_id = item.get("order_id")
+        status = str(item.get("status") or "").strip().lower()
+        result_text = str(item.get("result") or "").strip()
+        if status not in {"done", "failed"}:
+            applied_secret_closes.append({"order_id": raw_id, "rejected": True,
+                                          "reason": f"status 必须 done/failed，得到 {status!r}"})
+            continue
+        if raw_id is None or not result_text:
+            applied_secret_closes.append({"order_id": raw_id, "rejected": True,
+                                          "reason": "order_id 或 result 缺失"})
+            continue
+        try:
+            real_id = int(raw_id)
+        except (TypeError, ValueError):
+            applied_secret_closes.append({"order_id": raw_id, "rejected": True, "reason": "order_id 非整数"})
+            continue
+        # 仅 pending_review 状态才允许结案；active 不能跳级，done/failed 已结案不重复
+        order = db.get_secret_order(real_id)
+        if order is None:
+            applied_secret_closes.append({"order_id": real_id, "rejected": True, "reason": "密令不存在"})
+            continue
+        if order["status"] != "pending_review":
+            applied_secret_closes.append({"order_id": real_id, "rejected": True,
+                                          "reason": f"当前状态 {order['status']}，非 pending_review，不予结案"})
+            continue
+        try:
+            db.close_secret_order(real_id, status, result_text, state.turn)
+            print(f"[secret_order] 推演结案 id={real_id} status={status} result={result_text[:60]!r}")
+            applied_secret_closes.append({"order_id": real_id, "status": status, "result": result_text})
+        except Exception as exc:
+            applied_secret_closes.append({"order_id": real_id, "rejected": True, "reason": str(exc)})
 
     state.clamp()
     return {
@@ -996,6 +1056,7 @@ def apply_score_extraction(
         "character_status_changes": applied_status_changes,
         "office_changes": applied_office_changes,
         "secret_order_updates": applied_secret_orders,
+        "secret_order_closes": applied_secret_closes,
         "victory_status": victory_status(db, state),
     }
 

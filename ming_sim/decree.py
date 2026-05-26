@@ -16,7 +16,7 @@ from ming_sim.agents import (
     create_decree_writer_agent,
     create_json_sanitizer_agent,
     create_memory_retrieval_agent,
-    create_score_extractor_agent,
+    create_score_extractor_module_agent,
     create_season_simulator_agent,
     parse_agent_json,
     run_agent_text,
@@ -34,7 +34,7 @@ from ming_sim.memories import (
     extract_event_memories_with_agent,
     record_event_memories_from_resolution,
 )
-from ming_sim.simulation import extract_scores_with_agno, simulate_season_with_agno
+from ming_sim.simulation import EXTRACTION_MODULES, extract_scores_by_modules_with_agno, simulate_season_with_agno
 from ming_sim.token_stats import tlog
 
 
@@ -43,9 +43,22 @@ def write_decree_with_agno(
     agno_db: SqliteDb,
     state: GameState,
     directives: List[sqlite3.Row],
+    db: Optional[GameDB] = None,
 ) -> str:
     if not directives:
         raise LLMContractError("无草案不能拟诏。")
+    # 已办结密令的 result 作为实质证据清单注入——皇帝下旨拿人/定罪时可引为依据。
+    closed_evidence: List[Dict[str, object]] = []
+    if db is not None:
+        try:
+            for o in db.list_secret_orders(status="done"):
+                if o.get("result"):
+                    closed_evidence.append({
+                        "id": int(o["id"]), "title": o["title"],
+                        "assignee": o["minister_name"], "evidence": o["result"],
+                    })
+        except Exception:
+            closed_evidence = []
     payload = {
         "turn": {"year": state.year, "period": state.period, "turn": state.turn},
         "directives": [
@@ -54,7 +67,9 @@ def write_decree_with_agno(
             }
             for row in directives
         ],
-        "instruction": "合并成一份正式诏书正文。",
+        "closed_secret_orders": closed_evidence,
+        "instruction": "合并成一份正式诏书正文。closed_secret_orders 是已办结密令查得的实证，"
+                       "若草案据某密令查办之事拿人定罪，可在诏书里引该实证为据，使罪名落到实处。",
     }
     try:
         agent = create_decree_writer_agent(llm_config, agno_db)
@@ -119,6 +134,7 @@ def resolve_directives(
 
     # 1.8) 记忆检索：从诏书提取实体词，召回相关历史记忆注入推演
     relevant_memories: List[Dict] = []
+    secret_orders_for_sim: list = []  # try 外初始化：检索失败也不能让后续 NameError
     try:
         _emit("stage", "检索相关历史记忆")
         retrieval_agent = create_memory_retrieval_agent(llm_config, agno_db)
@@ -155,30 +171,45 @@ def resolve_directives(
                 seen_ids.add(m["id"])
                 relevant_memories.append(m)
 
-        # 密令全量拉进行中（最多20条），独立字段注入推演
-        secret_orders_for_sim: list = []
-        try:
-            active_orders = db.list_secret_orders(status="active")[:20]
-            for o in active_orders:
-                secret_orders_for_sim.append({
-                    "id": int(o["id"]),
-                    "minister_name": o["minister_name"],
-                    "title": o["title"],
-                    "content": o["content"][:120],
-                    "status": o["status"],
-                    "result": o.get("result") or "",
-                })
-            tlog(f"[secret_order] 注入推演 active={len(active_orders)}"
-                 + (f" titles={[o['title'] for o in active_orders]}" if active_orders else ""))
-        except Exception as exc:
-            tlog(f"[secret_order] 注入失败，跳过：{exc}")
-
         relevant_memories = relevant_memories[:12]
         mem_summary = [(m.get("subject_id","?"), m.get("title","?")) for m in relevant_memories]
         tlog(f"[memory/retrieval] keywords={keywords}")
         tlog(f"[memory/retrieval] total={len(relevant_memories)} items={mem_summary}")
     except Exception as exc:
         tlog(f"[memory/retrieval] 失败，跳过：{exc}")
+
+    # 密令期限：到期 active 自动转 pending_review，保证本月核议一锤定音。
+    try:
+        due_orders = db.auto_submit_due_secret_orders(state)
+        if due_orders:
+            tlog(f"[secret_order] 到期送核议 {due_orders}")
+    except Exception as exc:
+        tlog(f"[secret_order] 到期送核议失败，跳过：{exc}")
+
+    # 密令注入推演：active + pending_review 都要进（pending_review 需推演本月核议判 done/failed）
+    try:
+        active_orders = (
+            db.list_secret_orders(status="active")
+            + db.list_secret_orders(status="pending_review")
+        )[:20]
+        for o in active_orders:
+            secret_orders_for_sim.append({
+                "id": int(o["id"]),
+                "minister_name": o["minister_name"],
+                "title": o["title"],
+                "content": o["content"][:120],
+                "status": o["status"],
+                "turn_issued": o.get("turn_issued") or 0,
+                "due_turn": o.get("due_turn") or 0,
+                "progress": o.get("result") or "",      # 承办人聊天里存的当前进展
+                "sim_note": o.get("sim_note") or "",     # 上轮推演写的副作用
+            })
+        n_active = sum(1 for o in active_orders if o["status"] == "active")
+        n_pending = sum(1 for o in active_orders if o["status"] == "pending_review")
+        tlog(f"[secret_order] 注入推演 active={n_active} pending_review={n_pending}"
+             + (f" titles={[o['title'] for o in active_orders]}" if active_orders else ""))
+    except Exception as exc:
+        tlog(f"[secret_order] 注入失败，跳过：{exc}")
 
     # 2) 推演 agent: 写邸报
     tlog("结算 2/4 推演 agent（月末邸报）")
@@ -219,13 +250,16 @@ def resolve_directives(
     # 3) 结算 agent: 读邸报抽 JSON
     tlog("结算 3/4 结算 agent（抽 JSON）")
     _emit("stage", "数值推演结算")
-    extractor = create_score_extractor_agent(llm_config, agno_db)
+    extractors = {
+        module: create_score_extractor_module_agent(llm_config, agno_db, module)
+        for module in EXTRACTION_MODULES
+    }
     sanitizer = create_json_sanitizer_agent(llm_config, agno_db)
     extractor_input = ""
     extractor_output = ""
     try:
-        extracted, extractor_output, extractor_input = extract_scores_with_agno(
-            extractor, db, state, narrative, decree_text=decree_text, sanitizer=sanitizer,
+        extracted, extractor_output, extractor_input = extract_scores_by_modules_with_agno(
+            extractors, db, state, narrative, decree_text=decree_text, sanitizer=sanitizer,
             relevant_memories=relevant_memories,
             secret_orders=secret_orders_for_sim,
         )
