@@ -398,6 +398,7 @@ class GameContent:
     season_simulator_prompt: str = ""
     score_extractor_prompt: str = ""
     memory_extractor_prompt: str = ""
+    chat_memory_extractor_prompt: str = ""
 
     @classmethod
     def load(cls) -> "GameContent":
@@ -451,4 +452,5 @@ class GameContent:
             season_simulator_prompt=load_text_asset("prompts/season_simulator.md"),
             score_extractor_prompt=load_text_asset("prompts/score_extractor.md"),
             memory_extractor_prompt=load_text_asset("prompts/memory_extractor.md"),
+            chat_memory_extractor_prompt=load_text_asset("prompts/chat_memory_extractor.md"),
         )

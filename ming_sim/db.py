@@ -332,6 +332,31 @@ class GameDB:
             );
             CREATE INDEX IF NOT EXISTS idx_chat_messages_minister
                 ON chat_messages(minister_name, id);
+            CREATE INDEX IF NOT EXISTS idx_chat_messages_turn
+                ON chat_messages(turn);
+
+            CREATE TABLE IF NOT EXISTS secret_orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                turn_issued INTEGER NOT NULL,
+                year_issued INTEGER NOT NULL,
+                period_issued INTEGER NOT NULL,
+                minister_name TEXT NOT NULL,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL DEFAULT '',
+                tags TEXT NOT NULL DEFAULT '[]',
+                importance INTEGER NOT NULL DEFAULT 4,
+                status TEXT NOT NULL DEFAULT 'active',
+                result TEXT NOT NULL DEFAULT '',
+                turn_closed INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_secret_orders_minister
+                ON secret_orders(minister_name, status);
+            CREATE INDEX IF NOT EXISTS idx_secret_orders_turn
+                ON secret_orders(turn_issued, status);
+            CREATE INDEX IF NOT EXISTS idx_secret_orders_status
+                ON secret_orders(status);
 
             CREATE TABLE IF NOT EXISTS skill_grants (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2374,6 +2399,31 @@ class GameDB:
             )
         return "；".join(parts) + "。"
 
+    def treasury_ledger(self, account: str, turns: int = 6) -> str:
+        """查国库或内库最近 N 回合流水明细。"""
+        rows = self.conn.execute(
+            """
+            SELECT turn, year, period, delta, balance_after, category, reason, actor
+            FROM economy_ledger
+            WHERE account = ? AND category <> '期初'
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (account, turns * 20),
+        ).fetchall()
+        if not rows:
+            return f"{account}无流水记录。"
+        lines = [f"【{account}近{turns}回合流水（最新在前）】"]
+        for r in rows:
+            sign = "+" if int(r["delta"]) > 0 else ""
+            lines.append(
+                f"{r['year']}年{r['period']}月（turn{r['turn']}）"
+                f" {sign}{format_money_delta(int(r['delta']))} → 余{format_money(int(r['balance_after']))} "
+                f"[{r['category']}] {r['reason']}"
+                + (f"（{r['actor']}）" if r["actor"] else "")
+            )
+        return "\n".join(lines)
+
     def previous_turn_summary(self, state: GameState) -> str:
         previous_turn = state.turn - 1
         # turn=0 是开局即位邸报（seed_opening_gazette 落库）；turn<0 才算未登基前。
@@ -2779,6 +2829,7 @@ class GameDB:
                 "outcome": row["outcome"],
                 "importance": int(row["importance"]),
                 "tags": json.loads(row["tags"] or "[]"),
+                "source_kind": row["source_kind"],  # 演算记忆 vs 大臣记忆
             })
         tlog(f"[memory/keywords] needles={len(needles)} hit={len(result)}")
         return result
@@ -3469,6 +3520,146 @@ class GameDB:
             (key, value),
         )
         self.conn.commit()
+
+    # ----- secret_orders（密令系统）-----
+
+    def create_secret_order(
+        self,
+        state: GameState,
+        minister_name: str,
+        title: str,
+        content: str,
+        tags: List[str],
+        importance: int = 4,
+    ) -> int:
+        active_count = self.conn.execute(
+            "SELECT COUNT(*) FROM secret_orders WHERE status='active'"
+        ).fetchone()[0]
+        if active_count >= 20:
+            raise ValueError(f"进行中密令已达上限（20条），请先结案部分密令再下新令。当前：{active_count} 条。")
+        tags_json = json.dumps(tags, ensure_ascii=False)
+        cur = self.conn.execute(
+            """
+            INSERT INTO secret_orders
+                (turn_issued, year_issued, period_issued, minister_name, title, content, tags, importance, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')
+            """,
+            (state.turn, state.year, state.period, minister_name, title[:20], content, tags_json, importance),
+        )
+        self.conn.commit()
+        tlog(f"[secret_order] create id={cur.lastrowid} minister={minister_name} title={title[:20]}")
+        return cur.lastrowid  # type: ignore[return-value]
+
+    def list_secret_orders(
+        self,
+        status: Optional[str] = None,
+        minister_name: Optional[str] = None,
+    ) -> List[Dict[str, object]]:
+        clauses, params = [], []
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if minister_name:
+            clauses.append("minister_name = ?")
+            params.append(minister_name)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = self.conn.execute(
+            f"SELECT * FROM secret_orders {where} ORDER BY id DESC",
+            params,
+        ).fetchall()
+        return [
+            {
+                "id": int(r["id"]),
+                "turn_issued": int(r["turn_issued"]),
+                "year_issued": int(r["year_issued"]),
+                "period_issued": int(r["period_issued"]),
+                "minister_name": r["minister_name"],
+                "title": r["title"],
+                "content": r["content"],
+                "tags": json.loads(r["tags"] or "[]"),
+                "importance": int(r["importance"]),
+                "status": r["status"],
+                "result": r["result"] or "",
+                "turn_closed": r["turn_closed"],
+            }
+            for r in rows
+        ]
+
+    def get_active_secret_orders_for_minister(self, minister_name: str) -> List[Dict[str, object]]:
+        return self.list_secret_orders(status="active", minister_name=minister_name)
+
+    def close_secret_order(self, order_id: int, status: str, result: str, turn_closed: int) -> None:
+        self.conn.execute(
+            """
+            UPDATE secret_orders
+            SET status = ?, result = ?, turn_closed = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (status, result, turn_closed, int(order_id)),
+        )
+        self.conn.commit()
+        tlog(f"[secret_order] close id={order_id} status={status}")
+
+    def update_secret_order_progress(self, order_id: int, progress_note: str) -> None:
+        """更新进行中密令的进展描述，不改变 status。"""
+        self.conn.execute(
+            "UPDATE secret_orders SET result = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'active'",
+            (progress_note, int(order_id)),
+        )
+        self.conn.commit()
+        tlog(f"[secret_order] progress id={order_id} note={progress_note[:40]!r}")
+
+    def get_secret_orders_by_keywords(
+        self, keywords: List[str], limit: int = 5, current_turn: int = 0
+    ) -> List[Dict[str, object]]:
+        """检索进行中（active）密令，tags LIKE 匹配，供推演 secret_orders 字段注入。
+        完结/失败密令靠 event_memory（chat_message 来源）进入 relevant_memories，不在此返回。"""
+        if not keywords:
+            return self.list_secret_orders(status="active")[:limit]
+        like_clauses = " OR ".join(["tags LIKE ?" for _ in keywords])
+        like_params = [f"%{k}%" for k in keywords]
+        rows = self.conn.execute(
+            f"""
+            SELECT * FROM secret_orders
+            WHERE status = 'active' AND ({like_clauses})
+            ORDER BY importance DESC, id DESC
+            LIMIT ?
+            """,
+            like_params + [limit],
+        ).fetchall()
+        if not rows:
+            return self.list_secret_orders(status="active")[:limit]
+        return [
+            {
+                "id": int(r["id"]),
+                "turn_issued": int(r["turn_issued"]),
+                "year_issued": int(r["year_issued"]),
+                "period_issued": int(r["period_issued"]),
+                "minister_name": r["minister_name"],
+                "title": r["title"],
+                "content": r["content"],
+                "tags": json.loads(r["tags"] or "[]") if isinstance(r["tags"], str) else (r["tags"] or []),
+                "importance": int(r["importance"]),
+                "status": r["status"],
+                "result": r["result"] or "",
+            }
+            for r in rows
+        ]
+
+    # ----- chat_messages 补充查询 -----
+
+    def get_chat_messages_for_turn(self, turn: int) -> Dict[str, List[Dict[str, str]]]:
+        """查当月所有召对，按大臣分组，供 chat_memory agent 按人提取。"""
+        rows = self.conn.execute(
+            "SELECT minister_name, role, content FROM chat_messages WHERE turn = ? ORDER BY id",
+            (int(turn),),
+        ).fetchall()
+        result: Dict[str, List[Dict[str, str]]] = {}
+        for row in rows:
+            result.setdefault(row["minister_name"], []).append(
+                {"role": row["role"], "content": row["content"]}
+            )
+        return result
 
     def close(self) -> None:
         self.conn.close()

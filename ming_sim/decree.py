@@ -12,6 +12,7 @@ from typing import Callable, Dict, List, Optional
 from agno.db.sqlite import SqliteDb
 
 from ming_sim.agents import (
+    create_chat_memory_agent,
     create_decree_writer_agent,
     create_json_sanitizer_agent,
     create_memory_retrieval_agent,
@@ -28,6 +29,11 @@ from ming_sim.flows import apply_fixed_period_flows
 from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction
 from ming_sim.llm_model import extract_agent_text
 from ming_sim.models import GameState, LLMConfig
+from ming_sim.memories import (
+    extract_all_chat_memories,
+    extract_event_memories_with_agent,
+    record_event_memories_from_resolution,
+)
 from ming_sim.simulation import extract_scores_with_agno, simulate_season_with_agno
 from ming_sim.token_stats import tlog
 
@@ -148,8 +154,29 @@ def resolve_directives(
             if m["id"] not in seen_ids:
                 seen_ids.add(m["id"])
                 relevant_memories.append(m)
+
+        # 密令全量拉进行中（最多20条），独立字段注入推演
+        secret_orders_for_sim: list = []
+        try:
+            active_orders = db.list_secret_orders(status="active")[:20]
+            for o in active_orders:
+                secret_orders_for_sim.append({
+                    "id": int(o["id"]),
+                    "minister_name": o["minister_name"],
+                    "title": o["title"],
+                    "content": o["content"][:120],
+                    "status": o["status"],
+                    "result": o.get("result") or "",
+                })
+            tlog(f"[secret_order] 注入推演 active={len(active_orders)}"
+                 + (f" titles={[o['title'] for o in active_orders]}" if active_orders else ""))
+        except Exception as exc:
+            tlog(f"[secret_order] 注入失败，跳过：{exc}")
+
         relevant_memories = relevant_memories[:12]
-        tlog(f"[memory/retrieval] keywords={keywords} total={len(relevant_memories)}")
+        mem_summary = [(m.get("subject_id","?"), m.get("title","?")) for m in relevant_memories]
+        tlog(f"[memory/retrieval] keywords={keywords}")
+        tlog(f"[memory/retrieval] total={len(relevant_memories)} items={mem_summary}")
     except Exception as exc:
         tlog(f"[memory/retrieval] 失败，跳过：{exc}")
 
@@ -165,6 +192,7 @@ def resolve_directives(
             deaths_this_turn=deaths_this_turn,
             debuts_this_turn=debuts_this_turn,
             relevant_memories=relevant_memories,
+            secret_orders=secret_orders_for_sim,
             on_thinking=lambda c: _emit("thinking", c),
             on_text=lambda c: _emit("text", c),
         )
@@ -198,7 +226,8 @@ def resolve_directives(
     try:
         extracted, extractor_output, extractor_input = extract_scores_with_agno(
             extractor, db, state, narrative, decree_text=decree_text, sanitizer=sanitizer,
-            relevant_memories=relevant_memories
+            relevant_memories=relevant_memories,
+            secret_orders=secret_orders_for_sim,
         )
     except Exception as exc:
         print(f"[WARN] 结算抽取失败：{exc}；本{TURN_UNIT}数值不变。")
@@ -221,7 +250,15 @@ def resolve_directives(
         extractor_output=extractor_output,
     )
 
-    # 5) 落 inertia + ongoing (未被本月 issue_advances 触动的)
+    # 5) 对话记忆提取（event_memory，chat_message 来源）
+    _emit("stage", "提取对话记忆")
+    try:
+        chat_mem_agent = create_chat_memory_agent(llm_config, agno_db)
+        extract_all_chat_memories(chat_mem_agent, db, state)
+    except Exception as exc:
+        tlog(f"[chat-memory] 跳过：{exc}")
+
+    # 6) 落 inertia + ongoing (未被本月 issue_advances 触动的)
     touched_ids = set()
     for adv in applied.get("issue_summary", {}).get("advances", []) or []:
         touched_ids.add(int(adv.get("issue_id") or 0))

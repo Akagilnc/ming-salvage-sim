@@ -1822,6 +1822,19 @@ select:focus-visible {
   background: rgba(255, 241, 207, 0.82);
 }
 
+/* 填前缀型快捷按钮（拟旨/密令）—— 深色边框 + 图标感 */
+.hitl-bar button.hitl-prefix {
+  border-color: rgba(120, 50, 20, 0.45);
+  background: rgba(200, 140, 60, 0.15);
+  color: #5a2a05;
+  font-weight: 600;
+}
+
+.hitl-bar button.hitl-prefix:hover {
+  background: rgba(200, 140, 60, 0.28);
+  border-color: rgba(140, 60, 20, 0.6);
+}
+
 .chat-input,
 .edict-controls label {
   display: grid;
@@ -3772,3 +3785,223 @@ button:disabled {
 
 .menu-save-list .save-name { font-weight: 600; }
 .menu-save-list .save-meta { font-size: 0.78rem; color: #b8a878; }
+
+/* ── 密令系统 ── */
+
+/* ChatModal 左侧密令区块 */
+.chat-secret-orders {
+  margin-top: 12px;
+  border-top: 1px solid rgba(226, 180, 86, 0.2);
+  padding-top: 10px;
+}
+
+.secret-orders-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #c8a84b;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.secret-order-item {
+  background: rgba(180, 30, 30, 0.12);
+  border: 1px solid rgba(200, 60, 60, 0.3);
+  border-radius: 5px;
+  padding: 7px 9px;
+  margin-bottom: 5px;
+}
+
+.secret-order-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #f3c4c4;
+  margin-bottom: 2px;
+}
+
+.secret-order-meta {
+  font-size: 0.72rem;
+  color: #b89898;
+  margin-bottom: 3px;
+}
+
+.secret-order-content {
+  font-size: 0.76rem;
+  color: #e0c0c0;
+  line-height: 1.4;
+}
+
+/* SecretOrdersModal 弹窗 */
+.secret-orders-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.secret-order-card {
+  background: rgba(255, 245, 215, 0.04);
+  border: 1px solid rgba(226, 180, 86, 0.2);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.secret-order-card.so-active {
+  border-color: rgba(200, 168, 75, 0.4);
+  background: rgba(200, 168, 75, 0.06);
+}
+
+.secret-order-card.so-done {
+  border-color: rgba(80, 160, 80, 0.4);
+  background: rgba(80, 160, 80, 0.06);
+  opacity: 0.8;
+}
+
+.secret-order-card.so-failed {
+  border-color: rgba(200, 60, 60, 0.4);
+  background: rgba(200, 60, 60, 0.06);
+  opacity: 0.8;
+}
+
+.so-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.so-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: #f3e6c4;
+}
+
+.so-status {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: rgba(226, 180, 86, 0.15);
+  color: #c8a84b;
+}
+
+.so-status.so-done { background: rgba(80, 160, 80, 0.2); color: #80c880; }
+.so-status.so-failed { background: rgba(200, 60, 60, 0.2); color: #e08080; }
+
+.so-meta {
+  font-size: 0.74rem;
+  color: #b8a878;
+  margin-bottom: 5px;
+}
+
+.so-content {
+  font-size: 0.82rem;
+  color: #d8ccaa;
+  line-height: 1.5;
+  margin-bottom: 6px;
+}
+
+.so-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.so-tab {
+  padding: 4px 12px;
+  border-radius: 4px;
+  border: 1px solid rgba(180,140,60,0.35);
+  background: transparent;
+  color: #b8a060;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.so-tab:hover { background: rgba(180,140,60,0.12); }
+.so-tab.so-tab-active {
+  background: rgba(180,140,60,0.22);
+  border-color: rgba(180,140,60,0.7);
+  color: #e8c870;
+  font-weight: 600;
+}
+.modal-bg-edict .so-tab { color: #5a3a10; border-color: rgba(120,60,20,0.35); }
+.modal-bg-edict .so-tab:hover { background: rgba(120,60,20,0.1); }
+.modal-bg-edict .so-tab.so-tab-active { background: rgba(120,60,20,0.18); border-color: rgba(120,60,20,0.7); color: #3a1a05; }
+
+.so-empty {
+  color: #888;
+  font-size: 0.85rem;
+  text-align: center;
+  padding: 24px 0;
+}
+.modal-bg-edict .so-empty { color: #9a7a50; }
+
+.so-result {
+  font-size: 0.80rem;
+  color: #a8c8a8;
+  font-style: italic;
+  margin-bottom: 6px;
+  border-left: 2px solid rgba(100,180,100,0.4);
+  padding-left: 8px;
+}
+.so-result-label {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #70a870;
+  margin-bottom: 3px;
+  font-style: normal;
+}
+.modal-bg-edict .so-result-label { color: #3a6a2a !important; }
+
+.so-goto {
+  margin-top: 4px;
+  font-size: 0.80rem !important;
+  padding: 5px 10px !important;
+}
+
+/* 密令弹窗用诏书背景时，覆盖卡片颜色为适配卷轴纸的深墨色系 */
+.modal-bg-edict .secret-order-card {
+  border-color: rgba(120, 60, 20, 0.35) !important;
+}
+
+.modal-bg-edict .so-title { color: #3a1a05 !important; }
+.modal-bg-edict .so-meta  { color: #6b4a20 !important; }
+.modal-bg-edict .so-content { color: #3a2a10 !important; }
+.modal-bg-edict .so-result { color: #3a5a2a !important; }
+
+.modal-bg-edict .so-status {
+  background: rgba(120, 80, 20, 0.15) !important;
+  color: #7a4a10 !important;
+}
+.modal-bg-edict .so-status.so-done  { background: rgba(40, 100, 40, 0.15) !important; color: #2a6a2a !important; }
+.modal-bg-edict .so-status.so-failed { background: rgba(140, 30, 30, 0.15) !important; color: #8a2020 !important; }
+
+.modal-bg-edict .secret-orders-label { color: #7a4a10 !important; }
+
+.modal-bg-edict .so-goto {
+  border-color: rgba(120, 60, 20, 0.4) !important;
+  color: #5a2a05 !important;
+}
+.modal-bg-edict .so-goto:hover {
+  background: rgba(120, 60, 20, 0.12) !important;
+}
+
+/* 密令按钮——诏书图作背景裁切图标 */
+.command-art-secret {
+  object-fit: cover;
+  object-position: center 30%;
+  border-radius: 4px;
+  border: 1px solid rgba(180, 120, 40, 0.5);
+}
+
+.command-badge-secret {
+  background: #8a2020 !important;
+}

@@ -6,9 +6,11 @@ import {
   Edit3,
   Landmark,
   Loader2,
+  Lock,
   LogOut,
   MapPinned,
   Menu,
+  MessageSquare,
   Power,
   RotateCcw,
   Save,
@@ -234,8 +236,8 @@ type GameState = {
 
 type ChatMessage = { role: "user" | "minister"; content: string };
 type ChatDisplayMessage = ChatMessage & { pending?: boolean };
-type Suggestion = { label: string; text: string };
-type ModalName = "none" | "state" | "chat" | "edict" | "report" | "extraction" | "history" | "menu";
+type Suggestion = { label: string; text: string; prefix?: boolean };
+type ModalName = "none" | "state" | "chat" | "edict" | "report" | "extraction" | "history" | "menu" | "secret_orders";
 type SaveEntry = { name: string; size: number; mtime: number };
 type LLMConfigInfo = {
   base_url: string;
@@ -244,6 +246,21 @@ type LLMConfigInfo = {
   has_api_key: boolean;
   persisted: { base_url: string; model: string; has_api_key: boolean; max_tokens: number };
 };
+type SecretOrder = {
+  id: number;
+  turn_issued: number;
+  year_issued: number;
+  period_issued: number;
+  minister_name: string;
+  title: string;
+  content: string;
+  tags: string[];
+  importance: number;
+  status: "active" | "done" | "failed" | "cancelled";
+  result: string;
+  turn_closed: number | null;
+};
+
 type ProposedDirective = { id: number; text: string; status: string; notes: string };
 type ChatResponse = {
   answer: string;
@@ -254,6 +271,7 @@ type ChatResponse = {
   next_minister?: string;
   registered_minister?: string;
   proposed_directive?: ProposedDirective | null;
+  secret_order_id?: number;
 };
 
 const api = async <T,>(path: string, options?: RequestInit): Promise<T> => {
@@ -415,18 +433,6 @@ const briefArmyWarnings = (text: string) => {
   return [...items.slice(0, 3), tail].filter(Boolean);
 };
 
-const shortSuggestionLabel = (suggestion: Suggestion) => {
-  const text = `${suggestion.label} ${suggestion.text}`;
-  if (text.includes("辽") || text.includes("关宁") || text.includes("边") || text.includes("驻军")) return "问军务";
-  if (text.includes("钱") || text.includes("库") || text.includes("太仓") || text.includes("饷")) return "问钱粮";
-  if (text.includes("拟旨") || text.includes("旨")) return "命其拟旨";
-  if (text.includes("阻力")) return "问阻力";
-  if (text.includes("密查") || text.includes("账册")) return "命其密查";
-  if (text.includes("举荐") || text.includes("人物")) return "让其举荐";
-  if (text.includes("奏报")) return "问奏报";
-  if (text.includes("登记") || text.includes("承办")) return "命其承办";
-  return suggestion.label.replace(/^请/, "").slice(0, 6);
-};
 
 const getMapIntelStyle = (node: MapNode): React.CSSProperties => {
   const left = Math.min(82, Math.max(18, node.x));
@@ -493,6 +499,8 @@ function App() {
   });
   const [closedModal, setClosedModal] = React.useState<ClosedIssue[]>([]);
   const [gazetteShown, setGazetteShown] = React.useState<number>(-1);
+  const [secretOrders, setSecretOrders] = React.useState<SecretOrder[]>([]);
+  const [secretOrderShown, setSecretOrderShown] = React.useState<number>(-1);
 
   const loadState = React.useCallback(async () => {
     const data = await api<GameState>("/api/game/state");
@@ -567,6 +575,23 @@ function App() {
     }
   }, [state, closedShown]);
 
+  // 新回合进入时拉取全部密令，有 active 密令则弹密令进度弹窗（邸报关闭后显示）
+  React.useEffect(() => {
+    if (!state) return;
+    const currentTurn = state.turn.turn;
+    if (currentTurn === secretOrderShown) return;
+    api<{ orders: SecretOrder[] }>("/api/secret_orders")
+      .then(({ orders }) => {
+        setSecretOrders(orders);
+        if (orders.some(o => o.status === "active")) {
+          // 延迟 400ms，避免与邸报弹窗争抢
+          setTimeout(() => setActiveModal("secret_orders"), 400);
+        }
+        setSecretOrderShown(currentTurn);
+      })
+      .catch(() => {/* 失败静默 */});
+  }, [state?.turn.turn]);
+
   // 每次进入页面/换回合都弹上回合邸报。不持久化记录——刷新即重新弹。
   // 同一加载周期内同一回合不重复弹（gazetteShown 用 React state，刷新后回到 -1）。
   React.useEffect(() => {
@@ -603,7 +628,7 @@ function App() {
   React.useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (activeModal === "chat" || activeModal === "edict" || activeModal === "state" || activeModal === "history" || activeModal === "report") {
+      if (activeModal === "chat" || activeModal === "edict" || activeModal === "state" || activeModal === "history" || activeModal === "report" || activeModal === "secret_orders") {
         // 召对/诏书等全屏弹窗最优先
         setActiveModal("none");
       } else if (drawerOpen) {
@@ -684,6 +709,7 @@ function App() {
       setComposerHint("请先问话或点一个奏对题目");
       return;
     }
+
     const fromComposer = text === input;
     setPendingUserMessage(message);
     setStreamingMinisterMessage("");
@@ -704,6 +730,13 @@ function App() {
       setSuggestions(data.suggestions);
       setState((current) => (current ? { ...current, directives: data.directives } : current));
       await loadState();
+      // 刷新密令列表（含历史，大臣可能调了 issue_secret_order tool）
+      api<{ orders: SecretOrder[] }>("/api/secret_orders")
+        .then(({ orders }) => setSecretOrders(orders))
+        .catch(() => {});
+      if (data.secret_order_id) {
+        setChatNotice(`密令已秘密交付${activeMinister.name}，编号 #${data.secret_order_id}。`);
+      }
       if (data.proposed_directive) {
         setChatNotice(`${activeMinister.name}已拟旨一道，待陛下在「诏书草案」核定（准/驳）。`);
       }
@@ -930,10 +963,12 @@ function App() {
       <BottomCommandBar
         eventsCount={state.events.length}
         directivesCount={state.directives.length}
+        secretOrdersCount={secretOrders.filter((o) => o.status === "active").length}
         onOpenMemorials={() => setActiveModal("state")}
         onOpenEdict={() => setActiveModal("edict")}
         onOpenExtraction={() => setActiveModal("extraction")}
         onOpenHistory={() => setActiveModal("history")}
+        onOpenSecretOrders={() => setActiveModal("secret_orders")}
       />
 
       <CourtDrawer
@@ -989,6 +1024,7 @@ function App() {
             input={input}
             busy={busy}
             error={error}
+            secretOrders={secretOrders.filter((o) => o.minister_name === activeMinister.name && o.status === "active")}
             onInput={setInput}
             onSend={sendChat}
             onHint={setComposerHint}
@@ -1053,6 +1089,17 @@ function App() {
 
       {closedModal.length ? (
         <ClosedIssuesModal items={closedModal} onClose={() => setClosedModal([])} />
+      ) : null}
+
+      {activeModal === "secret_orders" ? (
+        <SecretOrdersModal
+          orders={secretOrders}
+          onClose={() => setActiveModal("none")}
+          onOpenMinister={(name) => {
+            setActiveModal("chat");
+            setSelectedMinister(name);
+          }}
+        />
       ) : null}
 
       {settling ? (
@@ -1739,17 +1786,21 @@ function BudgetList({ title, items, expense = false }: { title: string; items: B
 function BottomCommandBar({
   eventsCount,
   directivesCount,
+  secretOrdersCount,
   onOpenMemorials,
   onOpenEdict,
   onOpenExtraction,
   onOpenHistory,
+  onOpenSecretOrders,
 }: {
   eventsCount: number;
   directivesCount: number;
+  secretOrdersCount: number;
   onOpenMemorials: () => void;
   onOpenEdict: () => void;
   onOpenExtraction: () => void;
   onOpenHistory: () => void;
+  onOpenSecretOrders: () => void;
 }) {
   return (
     <nav className="bottom-command-bar" aria-label="朝政主操作">
@@ -1766,6 +1817,11 @@ function BottomCommandBar({
         <img src="/icon_scroll.png" alt="" className="command-art" />
         {directivesCount ? <span className="command-badge">{directivesCount}</span> : null}
         <span className="command-caption"><b>诏书草案</b><small>{directivesCount ? `${directivesCount} 道待发` : "本月未下旨"}</small></span>
+      </button>
+      <button className="command-icon" onClick={onOpenSecretOrders} aria-label={`密令 ${secretOrdersCount} 条进行中`}>
+        <img src="/bg_edict.png" alt="" className="command-art command-art-secret" />
+        {secretOrdersCount ? <span className="command-badge command-badge-secret">{secretOrdersCount}</span> : null}
+        <span className="command-caption"><b>密令</b><small>{secretOrdersCount ? `${secretOrdersCount} 条进行中` : "暂无密令"}</small></span>
       </button>
       <button className="command-icon" onClick={onOpenHistory} aria-label="历代奏报">
         <img src="/icon_scroll.png" alt="" className="command-art" />
@@ -1828,6 +1884,78 @@ function ReportModal({ report, onClose }: { report: string; onClose: () => void 
       <article className="state-document modal-scroll">
         <div className="document-section">
           <pre className="memorial-text">{report}</pre>
+        </div>
+      </article>
+    </FullscreenModal>
+  );
+}
+
+function SecretOrdersModal({
+  orders,
+  onClose,
+  onOpenMinister,
+}: {
+  orders: SecretOrder[];
+  onClose: () => void;
+  onOpenMinister: (name: string) => void;
+}) {
+  const [tab, setTab] = React.useState<"active" | "done" | "failed" | "all">("active");
+  const statusLabel: Record<string, string> = {
+    active: "进行中",
+    done: "已完成",
+    failed: "已失败",
+    cancelled: "已撤销",
+  };
+  const statusCls: Record<string, string> = {
+    active: "so-active",
+    done: "so-done",
+    failed: "so-failed",
+    cancelled: "so-cancelled",
+  };
+  const tabs: { key: typeof tab; label: string }[] = [
+    { key: "active", label: `进行中 (${orders.filter(o => o.status === "active").length})` },
+    { key: "done",   label: `已完成 (${orders.filter(o => o.status === "done").length})` },
+    { key: "failed", label: `已失败 (${orders.filter(o => o.status === "failed").length})` },
+    { key: "all",    label: `全部 (${orders.length})` },
+  ];
+  const visible = tab === "all" ? orders : orders.filter(o => o.status === tab);
+  return (
+    <FullscreenModal title="密令进度" subtitle={`共 ${orders.length} 条密令记录`} bgClass="modal-bg-edict" onClose={onClose}>
+      <article className="state-document modal-scroll">
+        <div className="so-tabs">
+          {tabs.map(t => (
+            <button key={t.key} className={`so-tab${tab === t.key ? " so-tab-active" : ""}`} onClick={() => setTab(t.key)}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <div className="secret-orders-list">
+          {visible.length === 0 && <p className="so-empty">暂无此类密令。</p>}
+          {visible.map((o) => (
+            <div key={o.id} className={`secret-order-card ${statusCls[o.status] || ""}`}>
+              <div className="so-header">
+                <span className="so-title"><Lock size={13} />{o.title}</span>
+                <span className={`so-status ${statusCls[o.status] || ""}`}>{statusLabel[o.status] || o.status}</span>
+              </div>
+              <div className="so-meta">第 {o.year_issued} 年 {o.period_issued} 月下令 · 承办：{o.minister_name}</div>
+              {o.content && <div className="so-content">{o.content}</div>}
+              {o.result && (
+                <div className="so-result">
+                  <span className="so-result-label">执行结果</span>
+                  {o.result}
+                </div>
+              )}
+              {o.status === "active" && (
+                <button
+                  className="secondary-action so-goto"
+                  onClick={() => { onClose(); onOpenMinister(o.minister_name); }}
+                >
+                  <MessageSquare size={13} />
+                  召见 {o.minister_name}
+                </button>
+              )}
+            </div>
+          ))}
         </div>
       </article>
     </FullscreenModal>
@@ -2960,6 +3088,7 @@ function ChatModal({
   input,
   busy,
   error,
+  secretOrders,
   onInput,
   onSend,
   onHint,
@@ -2978,6 +3107,7 @@ function ChatModal({
   input: string;
   busy: string;
   error: string;
+  secretOrders: SecretOrder[];
   onInput: (value: string) => void;
   onSend: (text?: string) => void;
   onHint: (value: string) => void;
@@ -3025,7 +3155,13 @@ function ChatModal({
   };
 
   const sendSuggestion = (suggestion: Suggestion) => {
-    onSend(suggestion.text);
+    if (suggestion.prefix) {
+      // 填前缀到输入框，不直接发送，光标跟到末尾
+      onInput(suggestion.text);
+      setTimeout(() => inputRef.current?.focus(), 0);
+    } else {
+      onSend(suggestion.text);
+    }
   };
 
   return (
@@ -3053,6 +3189,18 @@ function ChatModal({
         <div className="chat-portrait-wrap">
           <MinisterPortrait primary={portraitPrimary} fallback={portraitFallback} name={minister.name} />
         </div>
+        {secretOrders.length > 0 && (
+          <div className="chat-secret-orders">
+            <div className="secret-orders-label"><Lock size={12} />密令</div>
+            {secretOrders.map((o) => (
+              <div key={o.id} className="secret-order-item">
+                <div className="secret-order-title">{o.title}</div>
+                <div className="secret-order-meta">第 {o.year_issued} 年 {o.period_issued} 月下令</div>
+                {o.content && <div className="secret-order-content">{o.content}</div>}
+              </div>
+            ))}
+          </div>
+        )}
       </aside>
 
       <section className="modal-pane chat-main">
@@ -3075,8 +3223,14 @@ function ChatModal({
         <div className="chat-composer">
           <div className="hitl-bar">
             {suggestions.map((suggestion) => (
-              <button key={`${suggestion.label}-${suggestion.text}`} onClick={() => sendSuggestion(suggestion)} disabled={!!busy} title={suggestion.text}>
-                {shortSuggestionLabel(suggestion)}
+              <button
+                key={`${suggestion.label}-${suggestion.text}`}
+                onClick={() => sendSuggestion(suggestion)}
+                disabled={!!busy}
+                title={suggestion.prefix ? `填入前缀：${suggestion.text}` : suggestion.text}
+                className={suggestion.prefix ? "hitl-prefix" : ""}
+              >
+                {suggestion.label}
               </button>
             ))}
           </div>

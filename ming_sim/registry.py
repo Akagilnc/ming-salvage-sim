@@ -81,14 +81,14 @@ def build_court_brief(context: CourtContext) -> str:
 def build_memory_brief(character: Character, context: CourtContext) -> str:
     memories = context.db.get_recent_event_memories(
         turn=context.state.turn,
-        window=5,
-        limit=100,
+        window=1,
+        limit=30,
     )
     if not memories:
         tlog(f"[memory/brief] {character.name} no memories")
         return ""
     tlog(f"[memory/brief] {character.name} inject={len(memories)} ids={','.join(str(m['id']) for m in memories)}")
-    lines = ["【近五回合旧事记忆】"]
+    lines = ["【上回合旧事记忆】"]
     for memory in memories:
         lines.append(
             f"- #{memory['id']} {memory['year']}年{memory['period']}月：{memory['title']}。"

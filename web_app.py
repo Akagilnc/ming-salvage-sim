@@ -59,6 +59,12 @@ class DirectiveRequest(BaseModel):
     notes: str = ""
 
 
+class SecretOrderRequest(BaseModel):
+    title: str
+    content: str
+    tags: List[str] = []
+
+
 class DirectivePatch(BaseModel):
     text: Optional[str] = None
     notes: Optional[str] = None
@@ -567,6 +573,7 @@ class WebGame:
         appointed_minister: str = "",
         registered_minister: str = "",
         displaced_minister: str = "",
+        secret_order_id: int = 0,
     ) -> Dict[str, Any]:
         character = self.session._character(minister_name)
         self.chat_history[minister_name].append({"role": "minister", "content": answer})
@@ -582,6 +589,7 @@ class WebGame:
             "appointed_minister": appointed_minister,
             "registered_minister": registered_minister,
             "displaced_minister": displaced_minister,
+            "secret_order_id": secret_order_id or 0,
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "suggestions": self.suggestions_for(character),
         }
@@ -606,6 +614,7 @@ class WebGame:
             proposed_directive=proposed, appointed_minister=result.appointed_minister,
             registered_minister=result.registered_minister,
             displaced_minister=result.displaced_minister,
+            secret_order_id=result.secret_order_id,
         )
 
     def chat_stream(self, minister_name: str, message: str) -> Iterator[Dict[str, Any]]:
@@ -647,6 +656,7 @@ class WebGame:
             court_action = ""
             next_minister = ""
             displaced = ""
+            secret_order_id = 0
             if run_output is not None:
                 for tool_exec in getattr(run_output, "tools", None) or []:
                     res = str(getattr(tool_exec, "result", "") or "")
@@ -697,11 +707,30 @@ class WebGame:
                                     next_minister = target.name
                     elif tool_name == "dismiss_minister" or res == "__dismiss__":
                         court_action = "dismiss"
+                    elif tool_name == "issue_secret_order" or res.startswith("__secret_order_registered__") or res.startswith("__secret_order__"):
+                        if res.startswith("__secret_order_registered__"):
+                            try:
+                                secret_order_id = int(res.split("__")[3])
+                            except Exception:
+                                secret_order_id = 0
+                        else:
+                            payload_json = res.removeprefix("__secret_order__").strip()
+                            if not payload_json:
+                                args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
+                                payload_json = json.dumps(args, ensure_ascii=False)
+                            secret_order_id = self.session._apply_secret_order(payload_json, minister_name)
+                    elif tool_name == "report_secret_order_result" or res.startswith("__close_secret_order__"):
+                        payload_json = res.removeprefix("__close_secret_order__").strip()
+                        if not payload_json:
+                            args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
+                            payload_json = json.dumps(args, ensure_ascii=False)
+                        self.session._apply_close_secret_order(payload_json)
             payload = self._chat_payload(
                 minister_name, answer, court_action=court_action, next_minister=next_minister,
                 proposed_directive=proposed, appointed_minister=appointed,
                 registered_minister=registered,
                 displaced_minister=displaced,
+                secret_order_id=secret_order_id,
             )
             yield {"type": "done", "payload": payload}
         except Exception as error:
@@ -711,7 +740,8 @@ class WebGame:
         suggestions = [
             {"label": "问在办事项", "text": "当前在办的事项里，哪几件轻重缓急最该先理？"},
             {"label": "问阻力", "text": "眼下推进朝政，最大的阻力来自哪一方？"},
-            {"label": "请拟旨", "text": "替朕拟一道处理当务之急的旨。"},
+            {"label": "拟旨", "text": "拟旨如下：", "prefix": True},
+            {"label": "下密令", "text": "密令如下：", "prefix": True},
         ]
         skill_ids = set(available_skill_ids(character, self.db))
         if "check_treasury" in skill_ids:
@@ -720,10 +750,6 @@ class WebGame:
             suggestions.insert(1, {"label": "查驻军", "text": "查一下关宁军、京营和陕西边军的士气、欠饷与补给。"})
         if "secret_investigation" in skill_ids:
             suggestions.insert(1, {"label": "密查", "text": "哪些账册和人物最该先密查？"})
-        if "mobilize_troops" in skill_ids:
-            suggestions.append({"label": "登记军令", "text": f"命{character.name}整军守备，限本月以实数回奏。"})
-        else:
-            suggestions.append({"label": "登记指令", "text": f"命{character.name}查明当前要务实情并具实回奏。"})
         return suggestions[:6]
 
 
@@ -911,6 +937,13 @@ async def api_state() -> Dict[str, Any]:
     return get_game().state_payload()
 
 
+@app.get("/api/secret_orders")
+async def api_secret_orders(status: str = "") -> Dict[str, Any]:
+    """列出密令。status 为空返回全部，否则按 active/done/failed 过滤。"""
+    orders = get_game().db.list_secret_orders(status=status or None)
+    return {"orders": orders}
+
+
 @app.get("/api/turn_extraction")
 async def api_turn_extraction(turn: int = -1) -> Dict[str, Any]:
     """读 turn_extractions：默认上一回合（state.turn-1，因 resolve 已 next_period）。"""
@@ -1024,6 +1057,26 @@ async def api_chat_history(minister_name: str) -> Dict[str, Any]:
         "history": get_game().chat_history.get(minister_name, []),
         "suggestions": get_game().suggestions_for(character),
     }
+
+
+@app.post("/api/ministers/{minister_name}/secret_order")
+async def api_create_secret_order(minister_name: str, request: SecretOrderRequest) -> Dict[str, Any]:
+    """皇帝直接下达密令，不经 LLM，直接落库。"""
+    game = get_game()
+    character = game.session.content.characters.get(minister_name)
+    if not character:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=f"未找到大臣：{minister_name}")
+    title = request.title.strip()[:20]
+    content = request.content.strip()
+    if not title or not content:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="title 和 content 不能为空")
+    order_id = game.db.create_secret_order(
+        game.session.state, minister_name, title, content, request.tags
+    )
+    print(f"[secret_order/api] 直接落库 minister={minister_name} title={title!r} id={order_id}")
+    return {"order_id": order_id, "minister_name": minister_name, "title": title, "status": "active"}
 
 
 @app.post("/api/ministers/{minister_name}/chat")

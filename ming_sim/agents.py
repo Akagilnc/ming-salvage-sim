@@ -91,6 +91,10 @@ def run_agent_stream_text(
                 on_thinking(f"\n〔查阅 {tname} {targs}〕\n")
             continue
         if ev_type == "ToolCallCompletedEvent":
+            tool_res = getattr(event, "tool", None)
+            tres = str(getattr(tool_res, "result", "") or "")[:200] if tool_res else ""
+            if tres:
+                tlog(f"[{tag}/工具结果] {tres!r}")
             continue
         rdelta = getattr(event, "reasoning_content", None)
         if isinstance(rdelta, str) and rdelta:
@@ -229,7 +233,7 @@ def create_decree_writer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agen
         id="decree-writer",
         session_id="decree-writer",
         db=agno_db,
-        model=create_chat_model(llm_config, temperature=0.3, top_p=0.9, max_tokens=min(1200, llm_config.max_tokens)),
+        model=create_chat_model(llm_config, temperature=0.3, top_p=0.9, max_tokens=max(1200, llm_config.max_tokens)),
         instructions=[_ctx().game_world_prompt, _ctx().decree_writer_prompt],
         add_history_to_context=False,
         markdown=False,
@@ -237,19 +241,19 @@ def create_decree_writer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agen
 
 
 _MEMORY_RETRIEVAL_PROMPT = (
-    "你是记忆检索助手。从给定的诏书与事项摘要中提取关键实体、操作词与时间信息，用于检索历史记忆。\n"
+    "你是记忆检索助手。从给定文本（诏书、对话、奏报均可）中提取关键实体、操作词与时间信息，用于检索历史记忆。\n"
     "输出严格 JSON，不加任何解释：\n"
     "{\n"
     '  "characters": ["人名", ...],\n'
     '  "regions": ["地名/省份", ...],\n'
     '  "armies": ["军队名", ...],\n'
     '  "powers": ["外部势力名", ...],\n'
-    '  "keywords": ["核心动词或操作名词", ...],\n'
+    '  "keywords": ["核心动词或操作名词或钱粮科目", ...],\n'
     '  "year": 1628,\n'
     '  "period": 3\n'
     "}\n"
     "规则：只提取文本中实际出现的词；keywords 限 5 个以内最核心的；所有列表可为空数组。\n"
-    "year/period：仅当诏书明确提及具体年份或月份时填写（如「崇祯元年三月」→ year=1628, period=3）；"
+    "year/period：仅当文本明确提及具体年份或月份时填写（如「崇祯元年三月」→ year=1628, period=3）；"
     "无明确时间则两字段均不输出或填 null。"
 )
 
@@ -265,7 +269,7 @@ def create_memory_retrieval_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> A
             llm_config,
             temperature=0.0,
             top_p=0.7,
-            max_tokens=min(400, llm_config.max_tokens),
+            max_tokens=max(400, llm_config.max_tokens),
             enable_thinking=False,
             force_json_output=True,
         ),
@@ -334,11 +338,33 @@ def create_json_sanitizer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Age
             llm_config,
             temperature=0.0,
             top_p=0.7,
-            max_tokens=min(4000, llm_config.max_tokens),
+            max_tokens=max(4000, llm_config.max_tokens),
             enable_thinking=False,
             force_json_output=True,
         ),
         instructions=[JSON_SANITIZER_PROMPT],
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
+def create_chat_memory_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
+    """从当月召对聊天提取承诺/建议/情报摘要，写入 event_memory（source_kind=chat_message）。"""
+    ctx = _ctx()
+    return Agent(
+        name="对话记忆档房",
+        id="chat-memory-extractor",
+        session_id="chat-memory-extractor",
+        db=agno_db,
+        model=create_chat_model(
+            llm_config,
+            temperature=0.1,
+            top_p=0.7,
+            max_tokens=max(1500, llm_config.max_tokens),
+            enable_thinking=False,
+            force_json_output=True,
+        ),
+        instructions=[ctx.game_world_prompt, ctx.chat_memory_extractor_prompt],
         add_history_to_context=False,
         markdown=False,
     )

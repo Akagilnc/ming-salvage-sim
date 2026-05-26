@@ -284,6 +284,8 @@ def _write_llm_memories(db: GameDB, state: GameState, data: Dict[str, object]) -
         )
         if not memory_id:
             continue
+        tlog(f"[memory/write] id={memory_id} subject={item['subject_id']} event={item['event_type']} "
+             f"title={item['title']!r} importance={item['importance']} source={item['source_kind']}:{item['source_id']}")
         for src in item["sources"]:  # type: ignore[index]
             if not isinstance(src, dict):
                 continue
@@ -324,6 +326,51 @@ def extract_event_memories_with_agent(
     raw = run_agent_text(agent, json.dumps(payload, ensure_ascii=False, sort_keys=False), tag="memory-extractor")
     data = parse_agent_json(raw, "记忆抽取")
     return _write_llm_memories(db, state, data)
+
+
+def extract_chat_memories_for_minister(
+    agent: Agent,
+    db: GameDB,
+    state: GameState,
+    minister_name: str,
+    chat_history: List[Dict[str, str]],
+) -> int:
+    """用 LLM 从单个大臣当月召对提取承诺/建议/情报记忆，写入 event_memory。"""
+    if not chat_history:
+        return 0
+    tlog(f"[chat-memory] minister={minister_name} msgs={len(chat_history)} turn={state.turn}")
+    payload = {
+        "turn": {"year": state.year, "period": state.period, "turn": state.turn},
+        "minister_name": minister_name,
+        "chat_history": chat_history,
+        "instruction": "提取本次召对的结构化记忆卡，只写有实质内容的承诺/建议/情报，闲聊跳过。",
+    }
+    raw = run_agent_text(agent, json.dumps(payload, ensure_ascii=False, sort_keys=False), tag="chat-memory")
+    tlog(f"[chat-memory] raw_output({len(raw)}字): {raw[:300]}")
+    data = parse_agent_json(raw, "对话记忆抽取")
+    mem_list = data.get("memories") or []
+    tlog(f"[chat-memory] parsed memories={len(mem_list)}: "
+         + str([(m.get("event_type"), m.get("title")) for m in mem_list if isinstance(m, dict)]))
+    # source_kind 强制为 chat_message，source_id 强制为 minister_name:turn
+    for item in mem_list:
+        if isinstance(item, dict):
+            item["source_kind"] = "chat_message"
+            item["source_id"] = f"{minister_name}:{state.turn}"
+    return _write_llm_memories(db, state, data)
+
+
+def extract_all_chat_memories(agent: Agent, db: GameDB, state: GameState) -> int:
+    """对当月所有有过召对的大臣各跑一次记忆提取，单个失败不阻断。"""
+    chat_by_minister = db.get_chat_messages_for_turn(state.turn)
+    total = 0
+    for minister_name, history in chat_by_minister.items():
+        try:
+            n = extract_chat_memories_for_minister(agent, db, state, minister_name, history)
+            total += n
+        except Exception as exc:
+            tlog(f"[chat-memory] minister={minister_name} 失败，跳过：{exc}")
+    tlog(f"[chat-memory] total_written={total}")
+    return total
 
 
 def record_event_memories_from_resolution(

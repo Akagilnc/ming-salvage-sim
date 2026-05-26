@@ -952,6 +952,34 @@ def apply_score_extraction(
                 "reason": f"建档失败（查重/字段不合）；原 status={cur_status or '不在册'}",
             })
 
+    # 11) secret_order_updates：推演判定密令结案，结果文字入库
+    applied_secret_orders: List[Dict[str, object]] = []
+    for item in extracted.get("secret_order_updates") or []:
+        if not isinstance(item, dict):
+            continue
+        raw_id = item.get("order_id")
+        status = str(item.get("status") or "").strip().lower()
+        result_text = str(item.get("result") or "").strip()
+        if raw_id is None or status not in ("done", "failed", "active") or not result_text:
+            applied_secret_orders.append({"order_id": raw_id, "rejected": True,
+                                          "reason": "order_id/status/result 缺失或非法"})
+            continue
+        try:
+            real_id = int(raw_id)
+        except (TypeError, ValueError):
+            applied_secret_orders.append({"order_id": raw_id, "rejected": True, "reason": "order_id 非整数"})
+            continue
+        try:
+            if status == "active":
+                db.update_secret_order_progress(real_id, result_text)
+                print(f"[secret_order] 推演进展 id={real_id} note={result_text[:60]!r}")
+            else:
+                db.close_secret_order(real_id, status, result_text, state.turn)
+                print(f"[secret_order] 推演结案 id={real_id} status={status} result={result_text[:60]!r}")
+            applied_secret_orders.append({"order_id": real_id, "status": status, "result": result_text})
+        except Exception as exc:
+            applied_secret_orders.append({"order_id": real_id, "rejected": True, "reason": str(exc)})
+
     state.clamp()
     return {
         "metric_delta": applied_metric,
@@ -967,6 +995,7 @@ def apply_score_extraction(
         "appointments": applied_appointments,
         "character_status_changes": applied_status_changes,
         "office_changes": applied_office_changes,
+        "secret_order_updates": applied_secret_orders,
         "victory_status": victory_status(db, state),
     }
 

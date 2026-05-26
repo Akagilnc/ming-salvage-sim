@@ -407,9 +407,48 @@ def build_minister_tools(character: Character, context: CourtContext):
             )
         return "\n".join(lines)
 
+    def search_memories(keywords: str) -> str:
+        """检索相关旧事记忆摘要。两种场景必须调用：
+        1. 皇帝问及某人/某地/某事时，先查有无相关历史记录再作答；
+        2. 拟旨前涉及任何人事处置（任命/罢黜/下狱/赦免），先查该人旧事确认现状，避免重复处置。
+        keywords: 逗号分隔的人名/地名/军队名/势力名/事项关键词，如 "魏忠贤,下狱" 或 "山东,民变"。
+        返回命中的旧事摘要（含 #id）；无命中返回空提示。
+        """
+        kw_list = [k.strip() for k in str(keywords or "").split(",") if k.strip()]
+        if not kw_list:
+            return "请提供关键词（逗号分隔）。"
+        memories = context.db.get_memories_by_keywords(
+            kw_list, turn=context.state.turn, limit=8
+        )
+        if not memories:
+            return f"未找到与「{'、'.join(kw_list)}」相关的旧事记忆。"
+        from ming_sim.token_stats import tlog
+        tlog(f"[search_memories] keywords={kw_list} hit={len(memories)}")
+        lines = [f"【旧事检索：{' '.join(kw_list)}】"]
+        for m in memories:
+            lines.append(
+                f"- #{m['id']} {m['year']}年{m['period']}月 {m['subject_id']}："
+                f"{m['title']}。起因：{m['cause']}。结果：{m['outcome']}。"
+            )
+        return "\n".join(lines)
+
     def check_treasury() -> str:
         """查国库、内库、收支和欠账。"""
         return skill_template("check_treasury_prefix") + context.db.treasury_report(context.state)
+
+    def inspect_treasury_ledger(account: str = "内库", turns: int = 6) -> str:
+        """查国库或内库的历史流水明细（每笔收支原因、金额、余额）。
+        涉及内库/国库调动来源、历史拨款、查抄收益、赏赐开销时调用。
+        account: "国库" 或 "内库"；turns: 查最近几回合（默认6）。
+        """
+        acc = (account or "内库").strip()
+        if acc not in {"国库", "内库"}:
+            return "account 须为「国库」或「内库」。"
+        try:
+            t = max(1, min(24, int(turns)))
+        except (TypeError, ValueError):
+            t = 6
+        return context.db.treasury_ledger(acc, t)
 
     def audit_tax_arrears(target: str = "各省积欠") -> str:
         """清查积欠、估算可追收入库。"""
@@ -490,6 +529,52 @@ def build_minister_tools(character: Character, context: CourtContext):
         )
         return f"__pending_unlisted_person__{payload}"
 
+    def issue_secret_order(title: str, content: str, tags_json: str = "[]", assignee: str = "") -> str:
+        """皇帝下达密令，直接登记入档并返回密令编号。
+
+        title：密令标题（20字内）。
+        content：密令详情，交代任务目标、保密要求、期限等。
+        tags_json：JSON 数组，填相关人名/地区/事项关键词，用于日后检索，如 '["辽饷","兵部","密查"]'。
+        assignee：实际承办人姓名。留空则默认为当前召见的大臣；若皇帝指名他人承办（如"命毕自严去查"），填该人全名。
+        """
+        t = (title or "").strip()[:20]
+        c = (content or "").strip()
+        if not t or not c:
+            return "密令下达失败：标题或内容为空。"
+        try:
+            tags = json.loads(tags_json or "[]")
+            if not isinstance(tags, list):
+                tags = []
+        except (ValueError, TypeError):
+            tags = []
+        tags_clean = [str(k).strip() for k in tags if str(k).strip()]
+        real_assignee = (assignee or "").strip() or character.name
+        try:
+            order_id = context.db.create_secret_order(
+                context.state, real_assignee, t, c, tags_clean
+            )
+        except ValueError as e:
+            return f"密令下达失败：{e}"
+        except Exception as e:
+            return f"__secret_order__{json.dumps({'title': t, 'content': c, 'tags': tags_clean, 'assignee': real_assignee}, ensure_ascii=False)}"
+        print(f"[secret_order/tool] 直接落库 id={order_id} assignee={real_assignee} title={t!r}")
+        return f"__secret_order_registered__{order_id}__密令已登记入档，编号 #{order_id}，承办：{real_assignee}，标题：{t}。"
+
+    def report_secret_order_result(order_id: int, status: str, result: str) -> str:
+        """汇报密令执行结果。
+
+        order_id：密令编号（用 view_state 或对话上下文获得）。
+        status：'done'（完成）或 'failed'（失败）。
+        result：简要说明结果经过（100字内）。
+        """
+        oid = int(order_id) if str(order_id).isdigit() else 0
+        s = (status or "").strip()
+        r = (result or "").strip()
+        if not oid or s not in {"done", "failed"}:
+            return "汇报失败：order_id 或 status 无效（status 须为 done/failed）。"
+        payload = json.dumps({"order_id": oid, "status": s, "result": r}, ensure_ascii=False)
+        return f"__close_secret_order__{payload}"
+
     def dismiss_minister() -> str:
         """结束本次召见。"""
         return "__dismiss__"
@@ -515,9 +600,13 @@ def build_minister_tools(character: Character, context: CourtContext):
         inspect_personnel_changes,
         estimate_resistance,
         read_past_report,
+        search_memories,
         recall_memory_detail,
         recall_memories_by_time,
+        inspect_treasury_ledger,
         propose_directive,
+        issue_secret_order,
+        report_secret_order_result,
         dismiss_minister,
         summon_minister,
         register_unlisted_person,

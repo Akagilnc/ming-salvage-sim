@@ -11,7 +11,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
 
-from ming_sim.agents import bind_content as _bind_agents
+from ming_sim.agents import bind_content as _bind_agents, create_memory_retrieval_agent
+from ming_sim.agents import parse_agent_json, run_agent_text
 from ming_sim.content import GameContent
 from ming_sim.context import (
     bind_content as _bind_context,
@@ -68,6 +69,7 @@ class ChatTurnResult:
     registered_minister: str = ""  # 名册外史实/用户确认人物建档后可召见
     displaced_minister: str = ""   # 因新任腾缺被罢黜（dismissed）的原任者姓名
     refresh_ministers: List[str] = field(default_factory=list)
+    secret_order_id: int = 0       # 本轮新建密令 id（0=未下密令）
 
 
 @dataclass
@@ -354,6 +356,35 @@ class GameSession:
             return self.temporary_characters[name]
         return character_from_name(name)
 
+    def _retrieve_memories_for_message(self, message: str) -> str:
+        """用轻量 retrieval agent 从皇帝输入提关键词，检索相关旧事注入message头部。"""
+        try:
+            import json
+            retrieval_agent = create_memory_retrieval_agent(self.llm_config, self.agno_db)
+            raw = run_agent_text(retrieval_agent, message, tag="chat-memory-retrieval")
+            kw_data = parse_agent_json(raw, "对话记忆检索")
+            keywords: list = []
+            for field in ("characters", "regions", "armies", "powers", "keywords"):
+                keywords.extend(str(k) for k in (kw_data.get(field) or []) if k)
+            if not keywords:
+                return message
+            memories = self.db.get_memories_by_keywords(keywords, turn=self.state.turn, limit=6)
+            if not memories:
+                return message
+            from ming_sim.token_stats import tlog
+            tlog(f"[chat/memory-retrieval] keywords={keywords} hit={len(memories)}")
+            lines = ["【相关旧事】"]
+            for m in memories:
+                lines.append(
+                    f"- #{m['id']} {m['year']}年{m['period']}月 {m['subject_id']}："
+                    f"{m['title']}。起因：{m['cause']}。结果：{m['outcome']}。"
+                )
+            return "\n".join(lines) + "\n\n" + message
+        except Exception as exc:
+            from ming_sim.token_stats import tlog
+            tlog(f"[chat/memory-retrieval] 失败跳过：{exc}")
+            return message
+
     def _temporary_character(self, name: str) -> Character:
         clean_name = str(name or "").strip()
         if not clean_name:
@@ -424,7 +455,8 @@ class GameSession:
         # 控制指令（退下/换人/技能）由 CLI 层 parse_court_command 处理；
         # GameSession.chat 只负责与 agent 对话与 tool 截获。
         agent = self.registry.get(character)
-        run_output = agent.run(message)
+        augmented = self._retrieve_memories_for_message(message)
+        run_output = agent.run(augmented)
         answer = extract_agent_text(run_output)
         result = ChatTurnResult(answer=answer)
         for tool_exec in getattr(run_output, "tools", None) or []:
@@ -479,6 +511,21 @@ class GameSession:
                     if summon_after:
                         result.court_action = "summon"
                         result.next_minister = registered
+            elif tool_name == "issue_secret_order" or tool_result.startswith("__secret_order_registered__") or tool_result.startswith("__secret_order__"):
+                if tool_result.startswith("__secret_order_registered__"):
+                    # 工具已直接落库，提取 order_id
+                    try:
+                        order_id = int(tool_result.split("__")[3])
+                    except Exception:
+                        order_id = 0
+                else:
+                    payload = tool_result.removeprefix("__secret_order__").strip()
+                    order_id = self._apply_secret_order(payload, character.name)
+                if order_id:
+                    result.secret_order_id = order_id
+            elif tool_name == "report_secret_order_result" or tool_result.startswith("__close_secret_order__"):
+                payload = tool_result.removeprefix("__close_secret_order__").strip()
+                self._apply_close_secret_order(payload)
         return result
 
     def _apply_appointment(self, payload: str, appointer: Character) -> Tuple[str, str]:
@@ -555,6 +602,41 @@ class GameSession:
             self.registry.register(character)
         self.temporary_characters.pop(name, None)
         return (name, bool(data.get("summon_after", True)))
+
+    def _apply_secret_order(self, payload: str, minister_name: str) -> int:
+        """issue_secret_order 哨兵落库，返回新建密令 id（失败返回 0）。"""
+        import json as _json
+        try:
+            data = _json.loads(payload) if payload else {}
+        except (ValueError, TypeError):
+            return 0
+        if not isinstance(data, dict):
+            return 0
+        title = str(data.get("title") or "").strip()[:20]
+        content = str(data.get("content") or "").strip()
+        if not title or not content:
+            return 0
+        tags_raw = data.get("tags") or []
+        tags = [str(k).strip() for k in tags_raw if str(k).strip()] if isinstance(tags_raw, list) else []
+        assignee = str(data.get("assignee") or "").strip() or minister_name
+        print(f"[secret_order] 截获密令 minister={minister_name} assignee={assignee} title={title!r} tags={tags}")
+        return self.db.create_secret_order(self.state, assignee, title, content, tags)
+
+    def _apply_close_secret_order(self, payload: str) -> None:
+        """report_secret_order_result 哨兵落库。"""
+        import json as _json
+        try:
+            data = _json.loads(payload) if payload else {}
+        except (ValueError, TypeError):
+            return
+        if not isinstance(data, dict):
+            return
+        order_id = int(data.get("order_id") or 0)
+        status = str(data.get("status") or "")
+        result = str(data.get("result") or "")
+        if order_id and status in {"done", "failed"}:
+            print(f"[secret_order] 结案 id={order_id} status={status} result={result!r}")
+            self.db.close_secret_order(order_id, status, result, self.state.turn)
 
     # ── 拟旨 / 草案阶段 ───────────────────────────────────────────────────
 

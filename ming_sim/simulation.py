@@ -47,6 +47,7 @@ def simulate_season_with_agno(
     on_thinking: Optional[Callable[[str], None]] = None,
     on_text: Optional[Callable[[str], None]] = None,
     relevant_memories: Optional[List[Dict[str, object]]] = None,
+    secret_orders: Optional[List[Dict[str, object]]] = None,
 ) -> str:
     """推演 agent: 全量盘面塞 user payload，无 tool。"""
     active = db.list_active_issues()
@@ -64,6 +65,7 @@ def simulate_season_with_agno(
             "is_historical": ev.trigger_year > 0,
             "resolve_condition": ev.resolve_condition,
             "fail_condition": ev.fail_condition,
+            "precondition": ev.precondition,
         }
         for ev in gather_candidate_events(state, db)
     ]
@@ -111,7 +113,8 @@ def simulate_season_with_agno(
         "deaths_this_turn": deaths_this_turn or [],
         "debuts_this_turn": debuts_this_turn or [],
         "relevant_memories": relevant_memories or [],
-        "data_note": "regions/armies/buildings 均为 header+二维数组（cols 列名 + rows 数据）。",
+        "secret_orders": secret_orders or [],
+        "data_note": "regions/armies/buildings 均为 header+二维数组（cols 列名 + rows 数据）。secret_orders 为皇帝密令列表，独立于 relevant_memories，每条含 id/minister_name/title/content/status/result 字段。",
     }
     raw = run_agent_stream_text(
         agent,
@@ -131,6 +134,7 @@ def extract_scores_with_agno(
     decree_text: str = "",
     sanitizer: Optional[Agent] = None,
     relevant_memories: Optional[List[Dict[str, object]]] = None,
+    secret_orders: Optional[List[Dict[str, object]]] = None,
 ) -> tuple[Dict[str, object], str, str]:
     """结算 agent: 读邸报抽 JSON。"""
     active = db.list_active_issues()
@@ -200,7 +204,8 @@ def extract_scores_with_agno(
         "external_power_ids": [str(r["id"]) for r in db.conn.execute("SELECT id FROM external_powers").fetchall()],
         "fiscal_config": db.get_fiscal_config(),
         "relevant_memories": relevant_memories or [],
-        "_format_note": "regions/armies/buildings/external_powers/active_ministers/offstage_ministers 均为 header+二维数组（cols 列名 + rows 数据）",
+        "secret_orders": secret_orders or [],
+        "_format_note": "regions/armies/buildings/external_powers/active_ministers/offstage_ministers 均为 header+二维数组（cols 列名 + rows 数据）。secret_orders 独立字段，含 id/minister_name/title/content/status/result。",
     }
     payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=False)
     tlog(f"[extractor] user payload total={len(payload_json)} chars (~{len(payload_json)//1.5:.0f} tok)")
