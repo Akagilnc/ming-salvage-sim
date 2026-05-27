@@ -268,7 +268,7 @@ select:focus-visible {
   color: #8a5a16;
 }
 
-/* 外部势力地标：纯标签，不可点 */
+/* 势力地标：纯标签，不可点 */
 .map-node.external {
   z-index: 1;
   color: #5a4a30;

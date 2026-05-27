@@ -553,7 +553,7 @@ def record_event_memories_from_resolution(
                 narrative, decree_text,
             )
 
-    # 4) 地区、军队、外部势力显著变化。
+    # 4) 地区、军队、势力显著变化。
     for faction, delta in (applied.get("faction_delta") or {}).items():
         try:
             d = int(delta)

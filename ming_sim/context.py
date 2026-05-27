@@ -50,7 +50,7 @@ def historical_anchor_for_month(year: int, month: int) -> Dict[str, object]:
     note = anchors.get((year, month), "")
     return {
         "date": f"{year}年{month}月",
-        "note": note or f"本{TURN_UNIT}无硬性历史锚点，但外部势力仍需按其利益自行推进。",
+        "note": note or f"本{TURN_UNIT}无硬性历史锚点，但势力仍需按其利益自行推进。",
         "must_respect": bool(note),
     }
 

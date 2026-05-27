@@ -149,10 +149,10 @@ def _find_existing_minister(content: GameContent, name: str) -> Optional[str]:
     后宫人物不在此查（走 _find_candidate_by_name）。返回在册原始 key，无则 None。"""
     if name in content.characters:
         c = content.characters[name]
-        if c.office_type != "后宫" and c.status != "candidate":
+        if c.office_type != "后宫" and c.status != "candidate" and c.power_id == "ming":
             return name
     for key, c in content.characters.items():
-        if c.office_type == "后宫" or c.status == "candidate":
+        if c.office_type == "后宫" or c.status == "candidate" or c.power_id != "ming":
             continue
         if name in (c.aliases or []):
             return key
@@ -265,6 +265,7 @@ def apply_appointment(
         personal_skills=[],
         loyalty=60, ability=55, integrity=60, courage=50,
         style="新入宫闱" if is_consort else "新任未详",
+        power_id="ming",
         status="active",
     )
     content.characters[name] = character
@@ -342,6 +343,7 @@ class GameSession:
         self.state = self.db.load_state(start_ym)
         self.deaths_this_turn: List[Dict[str, str]] = []
         self.debuts_this_turn: List[Dict[str, str]] = []
+        self.power_renames_this_turn: List[Dict[str, object]] = []
         self.previous_summary = ""
         self.registry: Optional[MinisterRegistry] = None
         self.temporary_characters: Dict[str, Character] = {}
@@ -356,6 +358,7 @@ class GameSession:
         self.state = self.db.load_state()
         self.deaths_this_turn = self.db.apply_historical_deaths(self.state)
         self.debuts_this_turn = self.db.apply_historical_debuts(self.state)
+        self.power_renames_this_turn = self.db.apply_historical_power_renames(self.state)
         _sync_offices_from_db_impl(self.content, self.db)
         self.previous_summary = self.db.previous_turn_summary(self.state) or ""
         context = CourtContext(state=self.state, db=self.db, previous_summary=self.previous_summary)
@@ -398,6 +401,8 @@ class GameSession:
         # 状态以 DB 为准（历史卒/登场/罢黜均落 DB）；offstage 未登场者不进名单。
         views: List[MinisterView] = []
         for c in self.content.characters.values():
+            if getattr(c, "power_id", "ming") != "ming":
+                continue
             status, _ = self.db.get_character_status(c.name)
             if status == "offstage":
                 continue

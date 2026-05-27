@@ -273,6 +273,7 @@ def load_powers() -> Dict[str, Power]:
             agenda=str_field(entry, "agenda", "powers.json::powers[item].agenda"),
             status=str_field(entry, "status", "powers.json::powers[item].status"),
             last_action=str(entry.get("last_action") or "尚无新动").strip() or "尚无新动",
+            aliases="，".join(string_list(entry.get("aliases", []), "powers.json::powers[item].aliases")),
         )
     return powers
 

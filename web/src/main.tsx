@@ -3633,8 +3633,9 @@ function officeRank(office: string): number {
 }
 
 function filterMinisters(ministers: Minister[], group: string) {
+  const courtMinisters = ministers.filter((m) => (m.power_id || "ming") === "ming");
   if (group === "内阁+六部" || group === "内阁" || group === "六部") {
-    return ministers
+    return courtMinisters
       .filter((m) =>
         (m.office_type === "内阁" || ["吏部", "户部", "礼部", "兵部", "刑部", "工部"].includes(m.office_type))
         && m.status === "active"
@@ -3643,13 +3644,14 @@ function filterMinisters(ministers: Minister[], group: string) {
       )
       .sort((a, b) => officeRank(a.office || "") - officeRank(b.office || ""));
   }
-  if (group === "收藏") return ministers.filter((minister) => minister.favorite);
-  return ministers;
+  if (group === "收藏") return courtMinisters.filter((minister) => minister.favorite);
+  return courtMinisters;
 }
 
 function filterConsorts(consorts: Minister[], group: string) {
-  if (group === "收藏") return consorts.filter((c) => c.favorite);
-  return consorts;
+  const mingConsorts = consorts.filter((c) => (c.power_id || "ming") === "ming");
+  if (group === "收藏") return mingConsorts.filter((c) => c.favorite);
+  return mingConsorts;
 }
 
 function GrandMap({ nodes, selectedId, onSelect }: { nodes: MapNode[]; selectedId: string; onSelect: (id: string) => void }) {

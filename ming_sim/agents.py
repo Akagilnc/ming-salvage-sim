@@ -248,7 +248,7 @@ _MEMORY_RETRIEVAL_PROMPT = (
     '  "characters": ["人名", ...],\n'
     '  "regions": ["地名/省份", ...],\n'
     '  "armies": ["军队名", ...],\n'
-    '  "powers": ["外部势力名", ...],\n'
+    '  "powers": ["势力名", ...],\n'
     '  "keywords": ["核心动词或操作名词或钱粮科目", ...],\n'
     '  "year": 1628,\n'
     '  "period": 3\n'

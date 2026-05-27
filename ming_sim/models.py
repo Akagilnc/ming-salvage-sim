@@ -179,6 +179,7 @@ class Power:
     agenda: str
     status: str
     last_action: str = "尚无新动"
+    aliases: str = ""
 
 
 @dataclass

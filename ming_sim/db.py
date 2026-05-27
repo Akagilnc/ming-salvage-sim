@@ -173,6 +173,7 @@ class GameDB:
                 agenda TEXT NOT NULL,
                 status TEXT NOT NULL,
                 last_action TEXT NOT NULL DEFAULT '',
+                aliases TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -186,6 +187,21 @@ class GameDB:
                 old_value TEXT NOT NULL,
                 new_value TEXT NOT NULL,
                 delta INTEGER,
+                reason TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(power_id) REFERENCES powers(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS power_name_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                turn INTEGER NOT NULL,
+                year INTEGER NOT NULL,
+                period INTEGER NOT NULL,
+                power_id TEXT NOT NULL,
+                old_name TEXT NOT NULL,
+                new_name TEXT NOT NULL,
+                old_aliases TEXT NOT NULL DEFAULT '',
+                new_aliases TEXT NOT NULL DEFAULT '',
                 reason TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(power_id) REFERENCES powers(id)
@@ -608,6 +624,7 @@ class GameDB:
             "supply": "INTEGER NOT NULL DEFAULT 50",
             "last_action": "TEXT NOT NULL DEFAULT ''",
             "kind": "TEXT NOT NULL DEFAULT '敌国'",
+            "aliases": "TEXT NOT NULL DEFAULT ''",
         }.items():
             self.ensure_column("powers", column, definition)
         self.ensure_column("armies", "owner_power", "TEXT NOT NULL DEFAULT 'ming'")
@@ -816,8 +833,8 @@ class GameDB:
                     """
                     INSERT INTO powers
                     (id, name, kind, leader, stance, leverage, satisfaction, military_strength,
-                     cohesion, supply, agenda, status, last_action)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     cohesion, supply, agenda, status, last_action, aliases)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         power.id,
@@ -833,6 +850,7 @@ class GameDB:
                         power.agenda,
                         power.status,
                         power.last_action,
+                        power.aliases,
                     ),
                 )
         if not self.table_has_rows("regions"):
@@ -1197,9 +1215,11 @@ class GameDB:
         office = normalize_office(office)
         current_type = (
             self.conn.execute(
-                "SELECT office_type FROM characters WHERE name=?", (name,)
+                "SELECT office_type FROM characters WHERE name=? AND power_id='ming'", (name,)
             ).fetchone() or {"office_type": ""}
         )["office_type"]
+        if not current_type:
+            raise ValueError(f"{name}不属大明朝廷，不能授予大明官职")
         eff_type = infer_office_type_from_office(office, office_type or current_type)
         if office_type or eff_type != current_type:
             self.conn.execute(
@@ -1283,6 +1303,23 @@ class GameDB:
                 "faction": r["faction"] or "",
             })
         return debuted
+
+    def apply_historical_power_renames(self, state: GameState) -> List[Dict[str, object]]:
+        """月初 tick：历史国号/称谓变化。稳定 id 不变，只改展示名与别名。"""
+        changes: List[Dict[str, object]] = []
+        if state.year > 1636 or (state.year == 1636 and state.period >= 4):
+            changed = self.apply_power_rename(
+                state,
+                "houjin",
+                "大清",
+                aliases="后金，清，大清",
+                reason="皇太极称帝，改国号大清",
+                status="皇太极称帝改国号大清，建元崇德，整合满蒙汉诸部南向争明",
+                last_action="皇太极称帝改国号大清",
+            )
+            if changed:
+                changes.append(changed)
+        return changes
 
     # ── 后宫调教 ──────────────────────────────────────────────────────────
 
@@ -1663,11 +1700,10 @@ class GameDB:
             ORDER BY CASE id
                 WHEN 'ming' THEN 0
                 WHEN 'houjin' THEN 1
-                WHEN 'manchu_banners' THEN 2
-                WHEN 'han_banners' THEN 3
-                WHEN 'mongol' THEN 4
-                WHEN 'korea' THEN 5
-                WHEN 'bandits' THEN 6
+                WHEN 'mongol' THEN 2
+                WHEN 'korea' THEN 3
+                WHEN 'japan' THEN 4
+                WHEN 'bandits' THEN 5
                 ELSE 9
             END, name
             """
@@ -1689,6 +1725,7 @@ class GameDB:
                 "agenda": row["agenda"],
                 "status": row["status"],
                 "last_action": row["last_action"],
+                "aliases": row["aliases"],
             }
             for row in self.power_rows(exclude_self=exclude_self)
         ]
@@ -1775,6 +1812,66 @@ class GameDB:
         self.conn.commit()
         return changes
 
+    def apply_power_rename(
+        self,
+        state: GameState,
+        power_id: str,
+        new_name: str,
+        *,
+        reason: str,
+        aliases: str = "",
+        status: str = "",
+        last_action: str = "",
+    ) -> Dict[str, object] | None:
+        """Rename a power while keeping its stable id for references.
+
+        Used for dynastic/name changes such as houjin 后金 -> 大清.
+        """
+        power_id = str(power_id or "").strip()
+        new_name = str(new_name or "").strip()
+        if not power_id or not new_name:
+            return None
+        row = self.conn.execute("SELECT * FROM powers WHERE id = ?", (power_id,)).fetchone()
+        if row is None:
+            print(f"[WARN] power_rename 引用未入库势力 '{power_id}' → 跳过")
+            return None
+        old_name = str(row["name"] or "")
+        old_aliases = str(row["aliases"] or "")
+        merged_aliases = [x.strip() for x in (aliases or old_aliases).replace("，", ",").split(",") if x.strip()]
+        for alias in (old_name, new_name):
+            if alias and alias not in merged_aliases:
+                merged_aliases.append(alias)
+        new_aliases = "，".join(merged_aliases)
+        new_status = str(status or row["status"] or "")[:200]
+        new_last_action = str(last_action or reason or row["last_action"] or "")[:200]
+        if old_name == new_name and old_aliases == new_aliases and row["status"] == new_status and row["last_action"] == new_last_action:
+            return None
+        self.conn.execute(
+            """
+            UPDATE powers
+            SET name=?, aliases=?, status=?, last_action=?, updated_at=CURRENT_TIMESTAMP
+            WHERE id=?
+            """,
+            (new_name, new_aliases, new_status, new_last_action, power_id),
+        )
+        self.conn.execute(
+            """
+            INSERT INTO power_name_logs
+            (turn, year, period, power_id, old_name, new_name, old_aliases, new_aliases, reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (state.turn, state.year, state.period, power_id, old_name, new_name, old_aliases, new_aliases, reason[:200]),
+        )
+        self.conn.commit()
+        return {
+            "power_id": power_id,
+            "old_name": old_name,
+            "new_name": new_name,
+            "old_aliases": old_aliases,
+            "new_aliases": new_aliases,
+            "reason": reason,
+        }
+
     def turn_power_summary(self, turn: int, limit: int = 10) -> str:
         rows = self.conn.execute(
             """
@@ -1802,7 +1899,7 @@ class GameDB:
 
     def region_rows(self, limit: int | None = None, danger_order: bool = False) -> List[sqlite3.Row]:
         order = (
-            "(unrest + military_pressure + gentry_resistance + (100 - public_support) + (100 - grain_security)) DESC, name"
+            "(unrest + military_pressure + gentry_resistance + (100 - public_support)) DESC, name"
             if danger_order
             else "kind DESC, name"
         )
@@ -1852,7 +1949,7 @@ class GameDB:
         for row in rows:
             parts.append(
                 f"{row['name']}：民心{row['public_support']}、动乱{row['unrest']}、"
-                f"粮食{row['grain_security']}、税{format_money(monthly_amount(int(row['tax_per_turn'])))}/{TURN_UNIT}，{row['status']}"
+                f"粮食{row['grain_security']}万石、税{format_money(monthly_amount(int(row['tax_per_turn'])))}/{TURN_UNIT}，{row['status']}"
             )
         return f"地区警讯：{'；'.join(parts)}。两京十三省账面{TURN_UNIT}税合计{format_money(monthly_amount(total_tax_value))}。"
 
@@ -1865,7 +1962,7 @@ class GameDB:
             raise ValueError(f"地区未入库：{raw_name}")
         return (
             f"{row['name']}（{row['kind']}）：人口{row['population']}万人，"
-            f"民心{row['public_support']}，动乱{row['unrest']}，粮食{row['grain_security']}，"
+            f"民心{row['public_support']}，动乱{row['unrest']}，粮食{row['grain_security']}万石，"
             f"田亩{row['registered_land']}万亩，隐田{row['hidden_land']}万亩，"
             f"账面税收{format_money(monthly_amount(int(row['tax_per_turn'])))}/{TURN_UNIT}，"
             f"士绅阻力{row['gentry_resistance']}，军事压力{row['military_pressure']}。"
@@ -2077,8 +2174,8 @@ class GameDB:
         if row is None:
             raise ValueError(f"军队未入库：{raw_name}")
         return (
-            f"{row['name']}：驻扎地{row['station']}，战区{row['theater']}，统将{row['commander']}，"
-            f"主管{row['controller']}，兵种{row['troop_type']}，人数{row['manpower']}人，"
+            f"{row['name']}：驻扎地{row['station']}，统帅{row['commander']}，"
+            f"兵种{row['troop_type']}，人数{row['manpower']}人，"
             f"维护费{format_money(monthly_amount(int(row['maintenance_per_turn'])))} /{TURN_UNIT}，补给{row['supply']}，"
             f"士气{row['morale']}，训练{row['training']}，装备{row['equipment']}，"
             f"欠饷{row['arrears']}，机动{row['mobility']}，忠诚{row['loyalty']}。"
@@ -2271,13 +2368,14 @@ class GameDB:
                     return max(0, min(100, int(item.get(field, default))))
                 except (TypeError, ValueError):
                     return default
+            commander = str(item.get("commander") or "")
             row = (
                 aid,
                 name,
                 str(item.get("station") or ""),
                 str(item.get("theater") or ""),
-                str(item.get("commander") or ""),
-                str(item.get("controller") or ""),
+                commander,
+                str(item.get("controller") or commander),
                 str(item.get("troop_type") or ""),
                 max(0, manpower),
                 max(0, maintenance),
@@ -2677,7 +2775,7 @@ class GameDB:
             f"钱粮：{self.turn_economy_summary(previous_turn)}",
             f"地区：{self.turn_region_summary(previous_turn)}",
             f"军队：{self.turn_army_summary(previous_turn)}",
-            f"外部势力：{self.turn_power_summary(previous_turn)}",
+            f"势力：{self.turn_power_summary(previous_turn)}",
         ]
         return "\n".join(lines)
 

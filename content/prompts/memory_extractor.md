@@ -73,7 +73,7 @@
 1. 大臣拟旨被采纳：`directives.source="大臣拟旨"` 且 `actor` 不空，给该 `actor` 写 `edict_result`。
 2. 诏书推动事项新立、推进、结案或失败：读 `applied.issue_summary`，给明确相关大臣写 character 记忆；无法归因时写 `court`。
 3. 任免与惩处：读 `applied.office_changes` / `applied.character_status_changes`，给本人写 `appointment` / `punishment`。
-4. 地区、军队、派系、外部势力显著变化：只写明显变化，给对应主体写记忆；若有明确 actor，可给 actor 写一条压缩的责任/旁观记忆。
+4. 地区、军队、派系、势力显著变化：只写明显变化，给对应主体写记忆；若有明确 actor，可给 actor 写一条压缩的责任/旁观记忆。
 
 ## 控制膨胀
 

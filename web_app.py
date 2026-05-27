@@ -357,6 +357,12 @@ class WebGame:
             "favorite": character.name in self.favorites,
         }
 
+    def character_power_id(self, character: Character) -> str:
+        row = self.db.conn.execute(
+            "SELECT power_id FROM characters WHERE name=?", (character.name,)
+        ).fetchone()
+        return (row["power_id"] if row else None) or getattr(character, "power_id", "ming") or "ming"
+
     def directive_payload(self, row) -> Dict[str, Any]:
         return {
             "id": int(row["id"]),
@@ -400,7 +406,7 @@ class WebGame:
             stationed = [a for a in armies if self._army_belongs_to_theater(a, node_id)]
             if stationed:
                 nodes.append({"id": node_id, "kind": "theater", "x": x, "y": y, "label": self._theater_label(node_id), "armies": stationed, "risk": 120})
-        # 外部势力地标：纯标签，无 region/army 数据，不可点开 intel。
+        # 势力地标：纯标签，无 region/army 数据，不可点开 intel。
         external_labels = {
             "ext_jianzhou": ("建州", 82, 8), "ext_chosen": ("朝鲜", 81, 31),
             "ext_taiwan": ("台湾", 76, 70), "ext_japan": ("日本", 92, 42),
@@ -612,8 +618,16 @@ class WebGame:
             "regions": self.db.region_payload(),
             "armies": self.db.army_payload(),
             "map_nodes": self.map_nodes(),
-            "ministers": [self.public_character(c) for c in self.content.characters.values() if c.office_type != "后宫"],
-            "consorts": [self.public_character(c) for c in self.content.characters.values() if c.office_type == "后宫" and c.status == "active"],
+            "ministers": [
+                self.public_character(c)
+                for c in self.content.characters.values()
+                if c.office_type != "后宫" and self.character_power_id(c) == "ming"
+            ],
+            "consorts": [
+                self.public_character(c)
+                for c in self.content.characters.values()
+                if c.office_type == "后宫" and c.status == "active" and self.character_power_id(c) == "ming"
+            ],
             "directives": directives,
             "pending_count": self.session.pending_count(),
             "last_decree": self.last_decree,
@@ -1112,6 +1126,8 @@ def _require_active_minister(minister_name: str) -> None:
         return
     if minister_name not in get_game().content.characters:
         raise HTTPException(status_code=404, detail=f"未找到人物：{minister_name}")
+    if get_game().character_power_id(get_game().content.characters[minister_name]) != "ming":
+        raise HTTPException(status_code=409, detail=f"{minister_name}不属大明朝廷，无法召见。")
     status, reason = get_game().db.get_character_status(minister_name)
     if status != "active":
         label = _STATUS_LABEL_WEB.get(status, status)
@@ -1138,6 +1154,9 @@ async def api_create_secret_order(minister_name: str, request: SecretOrderReques
     if not character:
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail=f"未找到大臣：{minister_name}")
+    if game.character_power_id(character) != "ming":
+        from fastapi import HTTPException
+        raise HTTPException(status_code=409, detail=f"{minister_name}不属大明朝廷，无法下达密令。")
     title = request.title.strip()[:20]
     content = request.content.strip()
     if not title or not content:
@@ -1311,7 +1330,7 @@ async def api_consort_candidates() -> Dict[str, Any]:
     candidates = [
         get_game().public_character(c)
         for c in get_game().content.characters.values()
-        if c.office_type == "后宫" and c.status == "candidate"
+        if c.office_type == "后宫" and c.status == "candidate" and get_game().character_power_id(c) == "ming"
     ]
     return {"candidates": candidates}
 

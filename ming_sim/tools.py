@@ -90,7 +90,7 @@ def build_minister_tools(character: Character, context: CourtContext):
     skill_ids = set(available_skill_ids(character, context.db))
 
     def view_state() -> str:
-        """查看当前大明核心国势数值（含派系/阶级/外部势力）。"""
+        """查看当前大明核心国势数值（含派系/阶级/势力）。"""
         return (
             state_context(context.state)
             + "。派系：" + context.db.faction_report()
@@ -150,8 +150,8 @@ def build_minister_tools(character: Character, context: CourtContext):
         except ValueError as e:
             return f"未找到军队 '{army_name}'。可先调 list_armies 看军队 id/名称列表。错误：{e}"
 
-    def list_external_powers() -> str:
-        """查看后金、蒙古、朝鲜、流寇等外部势力状态。"""
+    def list_powers() -> str:
+        """查看后金、蒙古、朝鲜、日本、流寇等势力状态。"""
         return context.db.power_report(exclude_self=True)
 
     def list_buildings() -> str:
@@ -171,6 +171,8 @@ def build_minister_tools(character: Character, context: CourtContext):
         for c in _content_ctx().characters.values():
             if c.office_type == "后宫":
                 continue
+            if getattr(c, "power_id", "ming") != "ming":
+                continue
             status, _ = context.db.get_character_status(c.name)
             if status == "offstage":
                 continue  # 未登场者不泄露，防剧透
@@ -184,6 +186,8 @@ def build_minister_tools(character: Character, context: CourtContext):
         lines = []
         for c in _content_ctx().characters.values():
             if c.office_type == "后宫":
+                continue
+            if getattr(c, "power_id", "ming") != "ming":
                 continue
             status, reason = context.db.get_character_status(c.name)
             if status == "offstage":
@@ -200,10 +204,12 @@ def build_minister_tools(character: Character, context: CourtContext):
         if target is None:
             return f"名册中无『{name}』。可先调 list_personnel/list_court 看在朝官员名单。"
         status, reason = context.db.get_character_status(target.name)
-        if status == "offstage":
-            return f"『{target.name}』尚未起用入朝。"
         tag = _STATUS_CN.get(status, status)
         location = _duty_location(target.office, target.office_type, status)
+        power_row = context.db.conn.execute(
+            "SELECT name FROM powers WHERE id=?", (getattr(target, "power_id", "ming") or "ming",)
+        ).fetchone()
+        power_name = power_row["name"] if power_row else (getattr(target, "power_id", "ming") or "ming")
         office_row = context.db.conn.execute(
             "SELECT office_title, office_type, source, updated_at FROM character_offices WHERE character_name=?",
             (target.name,),
@@ -223,7 +229,7 @@ def build_minister_tools(character: Character, context: CourtContext):
         ).fetchall()
         out = (
             f"当前时点：{context.state.year}年{context.state.period}月。"
-            f"{target.name}：现职{target.office}，职位类型{target.office_type}，派系{target.faction}，状态{tag}。"
+            f"{target.name}：归属{power_name}，现职{target.office}，职位类型{target.office_type}，派系{target.faction}，状态{tag}。"
             f"任事处：{location}"
         )
         if reason:
@@ -682,7 +688,7 @@ def build_minister_tools(character: Character, context: CourtContext):
         inspect_region,
         list_armies,
         inspect_army,
-        list_external_powers,
+        list_powers,
         list_buildings,
         inspect_building,
         list_court,
@@ -732,12 +738,12 @@ def build_board_query_tools(context: CourtContext):
     无 court tool，无 skill 闸，纯只读。
     """
     def view_state() -> str:
-        """查看当前大明核心国势数值（国库/内库/民心/皇威）及派系、阶级、外部势力总览。"""
+        """查看当前大明核心国势数值（国库/内库/民心/皇威）及派系、阶级、势力总览。"""
         return (
             state_context(context.state)
             + "\n派系：" + context.db.faction_report()
             + "\n" + context.db.class_report()
-            + "\n外部势力：" + context.db.power_report(exclude_self=True)
+            + "\n势力：" + context.db.power_report(exclude_self=True)
         )
 
     def check_treasury() -> str:
@@ -785,19 +791,19 @@ def build_board_query_tools(context: CourtContext):
                 return f"未找到军队 {army!r}。可先调 list_armies 查名称/id 列表。"
             return str(dict(row))
 
-    def list_external_powers() -> str:
-        """查看后金、蒙古、朝鲜、流寇等外部势力当前态势（leverage/military_strength/stance/last_action）。"""
+    def list_powers() -> str:
+        """查看后金、蒙古、朝鲜、日本、流寇等势力当前态势（leverage/military_strength/stance/last_action）。"""
         return context.db.power_report(exclude_self=True)
 
-    def inspect_external_power(power: str) -> str:
-        """查某外部势力完整数值：leverage/satisfaction/military_strength/cohesion/supply/
+    def inspect_power(power: str) -> str:
+        """查某势力完整数值：leverage/satisfaction/military_strength/cohesion/supply/
         leader/stance/agenda/status/last_action。
         power 可传势力名（如"后金"）或 power_id（如"houjin"），两者均支持。"""
         row = context.db.conn.execute(
             "SELECT * FROM powers WHERE id=? OR name=?", (power, power)
         ).fetchone()
         if row is None:
-            return f"未找到外部势力 {power!r}。可先调 list_external_powers 查名称/id 列表。"
+            return f"未找到势力 {power!r}。可先调 list_powers 查名称/id 列表。"
         return str(dict(row))
 
     def list_issues() -> str:
@@ -837,7 +843,7 @@ def build_board_query_tools(context: CourtContext):
         """查当前在朝（active）官员名单：姓名、官职、派系。
         写 office_changes / character_status_changes 前必查，核实人物是否确实在朝。"""
         rows = context.db.conn.execute(
-            "SELECT name,office,faction FROM characters WHERE status='active' ORDER BY rowid"
+            "SELECT name,office,faction FROM characters WHERE status='active' AND power_id='ming' ORDER BY rowid"
         ).fetchall()
         return "\n".join(f"{r['name']}：{r['office']}，{r['faction']}" for r in rows)
 
@@ -853,8 +859,8 @@ def build_board_query_tools(context: CourtContext):
         inspect_region,
         list_armies,
         inspect_army,
-        list_external_powers,
-        inspect_external_power,
+        list_powers,
+        inspect_power,
         list_issues,
         inspect_issue,
         get_active_ministers,

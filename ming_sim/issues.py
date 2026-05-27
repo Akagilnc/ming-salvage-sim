@@ -720,7 +720,7 @@ def _displace_duplicate_offices(
         return []
     displaced: List[str] = []
     rows = db.conn.execute(
-        "SELECT name, office FROM characters WHERE status='active' AND name!=?",
+        "SELECT name, office FROM characters WHERE status='active' AND power_id='ming' AND name!=?",
         (new_holder,),
     ).fetchall()
     for row in rows:
@@ -763,6 +763,7 @@ def apply_score_extraction(
     region_deltas_raw = extracted.get("region_delta") or {}
     army_deltas_raw = extracted.get("army_delta") or {}
     new_armies_raw = extracted.get("new_armies") or []
+
     pseudo_event = Event(
         id="season",
         title="月末整体推演",

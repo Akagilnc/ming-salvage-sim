@@ -102,7 +102,7 @@ ITEM_FIELD_ALIASES = {
     "new_power": "new_power", "新势力": "new_power",
     "station": "station", "驻扎地": "station", "驻地": "station",
     "theater": "theater", "战区": "theater",
-    "commander": "commander", "统将": "commander", "主将": "commander",
+    "commander": "commander", "统帅": "commander", "统将": "commander", "主将": "commander",
     "controller": "controller", "主管": "controller",
     "troop_type": "troop_type", "兵种": "troop_type",
     "manpower": "manpower", "人数": "manpower", "兵力": "manpower",

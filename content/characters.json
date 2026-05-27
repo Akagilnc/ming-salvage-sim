@@ -769,7 +769,7 @@
     {
       "name": "客氏",
       "office": "奉圣夫人（先帝乳母）",
-      "office_type": "内廷",
+      "office_type": "后宫",
       "faction": "阉党",
       "aliases": [
         "客印月",
@@ -1293,7 +1293,7 @@
       "summary": "后金大贝勒，努尔哈赤次子，旧部威望重，是皇太极必须安抚的八旗贵族。",
       "debut_year": 0,
       "debut_month": 0,
-      "power_id": "manchu_banners",
+      "power_id": "houjin",
       "location": "jianzhou"
     },
     {
@@ -1322,7 +1322,7 @@
       "summary": "后金贝勒，勇悍而多疑，与皇太极之间有权力张力。",
       "debut_year": 0,
       "debut_month": 0,
-      "power_id": "manchu_banners",
+      "power_id": "houjin",
       "location": "jianzhou"
     },
     {
@@ -1350,7 +1350,7 @@
       "summary": "后金贝勒，善征掠但自主性强，可能成为明廷离间八旗的缝隙。",
       "debut_year": 0,
       "debut_month": 0,
-      "power_id": "manchu_banners",
+      "power_id": "houjin",
       "location": "jianzhou"
     },
     {
@@ -1380,7 +1380,7 @@
       "summary": "辽东降附文臣，熟悉明制，为后金通译、文书、招降和制度建设出谋。",
       "debut_year": 0,
       "debut_month": 0,
-      "power_id": "han_banners",
+      "power_id": "houjin",
       "location": "shenyang_liaoyang"
     },
     {
@@ -1408,7 +1408,7 @@
       "summary": "辽东降附将领，协助后金修炮、组织辽人降兵与工匠。",
       "debut_year": 0,
       "debut_month": 0,
-      "power_id": "han_banners",
+      "power_id": "houjin",
       "location": "shenyang_liaoyang"
     },
     {

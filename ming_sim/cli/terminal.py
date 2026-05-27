@@ -46,6 +46,7 @@ def choose_minister(session: GameSession) -> Optional[Character]:
         name for name in characters
         if session.db.get_character_status(name)[0] not in ("offstage", "candidate")
         and getattr(characters[name], "status", "active") != "candidate"
+        and getattr(characters[name], "power_id", "ming") == "ming"
     ]
     print("\n可召见大臣：")
     for idx, name in enumerate(names, 1):

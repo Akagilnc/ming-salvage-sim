@@ -21,9 +21,9 @@ SCORE_METRICS = ("民心", "皇威")
 # prompts 用占位符 {{TURN_UNIT}}，代码渲染用 TURN_UNIT 变量。
 TURN_UNIT = "月"
 
-REGION_SCORE_FIELDS = ("public_support", "unrest", "grain_security", "gentry_resistance", "military_pressure")
-REGION_QUANTITY_FIELDS = ("population", "registered_land", "hidden_land", "tax_per_turn")
-REGION_TEXT_FIELDS = ("natural_disaster", "human_disaster", "status")
+REGION_SCORE_FIELDS = ("public_support", "unrest", "gentry_resistance", "military_pressure")
+REGION_QUANTITY_FIELDS = ("population", "registered_land", "hidden_land", "tax_per_turn", "grain_security")
+REGION_TEXT_FIELDS = ("natural_disaster", "human_disaster", "status", "controlled_by")
 # fiscal JSON 子字段白名单（0-100量表，存在 regions.fiscal 列里）
 FISCAL_SCORE_FIELDS = ("corruption",)
 ARMY_SCORE_FIELDS = ("supply", "morale", "training", "equipment", "arrears", "mobility", "loyalty")
@@ -115,11 +115,12 @@ REGION_FIELD_LABELS = {
     "gentry_resistance": "士绅阻力",
     "military_pressure": "军事压力",
     "status": "状态",
+    "controlled_by": "控制",
     "corruption": "腐败度",
 }
 ARMY_FIELD_LABELS = {
     "station": "驻扎地",
-    "commander": "统将",
+    "commander": "统帅",
     "controller": "主管",
     "troop_type": "兵种",
     "manpower": "人数",
@@ -155,6 +156,11 @@ REGION_FIELD_ALIASES = {
     "天灾": "natural_disaster",
     "人祸": "human_disaster",
     "状态": "status",
+    "控制": "controlled_by",
+    "控制权": "controlled_by",
+    "归属": "controlled_by",
+    "所属": "controlled_by",
+    "势力": "controlled_by",
     "原因": "reason",
     "reason": "reason",
 }
@@ -162,6 +168,7 @@ ARMY_FIELD_ALIASES = {
     **{field: field for field in ARMY_SCORE_FIELDS + ARMY_QUANTITY_FIELDS + ARMY_TEXT_FIELDS},
     "驻扎地": "station",
     "驻地": "station",
+    "统帅": "commander",
     "统将": "commander",
     "主将": "commander",
     "将领": "commander",

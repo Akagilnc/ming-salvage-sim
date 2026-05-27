@@ -539,7 +539,7 @@
     "外臣": {
       "skills_ref": "外臣",
       "tools": [],
-      "authority_scope": "外部势力君主、贵族、谋臣、藩属国臣等人物的身份归类；用于世界盘面，不授予大明朝堂工具。",
+      "authority_scope": "势力君主、贵族、谋臣、藩属国臣等人物的身份归类；用于世界盘面，不授予大明朝堂工具。",
       "power": 55,
       "responsibility": 55,
       "corruption_risk": 40
