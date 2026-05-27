@@ -3774,7 +3774,7 @@ function GrandMap({ nodes, selectedId, onSelect }: { nodes: MapNode[]; selectedI
                     style={{ left: `${node.x}%`, top: `${node.y}%` }}
                     aria-hidden="true"
                   >
-                    <span>{node.label}</span>
+                    <span>{node.region?.name.split(" / ")[0] || node.label}</span>
                   </div>
                 );
               }
@@ -3821,6 +3821,7 @@ function NodeIntel({ node }: { node: MapNode }) {
             <tr><th>人口</th><td>{region.population}万</td><th>田亩</th><td>{region.registered_land}万亩</td></tr>
             <tr><th>民心</th><td>{region.public_support}</td><th>动乱</th><td>{region.unrest}</td></tr>
             <tr><th>粮食</th><td>{region.grain_security}</td><th>月税</th><td>{monthlyAmount(region.tax_per_turn)}万/月</td></tr>
+            <tr><th>归属</th><td>{region.controlled_by || "ming"}</td><th>类型</th><td>{region.kind}</td></tr>
             <tr><th>天灾</th><td colSpan={3}>{region.natural_disaster}</td></tr>
             <tr><th>人祸</th><td colSpan={3}>{region.human_disaster}</td></tr>
             <tr><th>状况</th><td colSpan={3}>{region.status}</td></tr>

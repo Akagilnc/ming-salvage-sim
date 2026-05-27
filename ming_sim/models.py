@@ -117,6 +117,7 @@ class Region:
     status: str
     controlled_by: str
     fiscal: dict = field(default_factory=dict)
+    on_restore: dict = field(default_factory=dict)
     # fiscal JSON 字段说明（万亩/万两/0-100）：
     # huang_tian    皇庄（万亩），产出→内库，仅北直隶有
     # wang_tian     藩王庄田（万亩），免税，禄米→国库支出
@@ -125,6 +126,7 @@ class Region:
     # salt_tax      盐税月基数（万两），产盐省才>0
     # commerce_tax  商税月基数（万两）
     # corruption    腐败度 0-100，影响解运比
+    # on_restore    收复时（controlled_by 非 ming → ming）覆盖到主字段的预置盘面
 
 
 @dataclass

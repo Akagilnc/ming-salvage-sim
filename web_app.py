@@ -389,6 +389,10 @@ class WebGame:
             "zhejiang": (73.7, 57.9), "jiangxi": (67, 55), "huguang": (59, 59),
             "sichuan": (57, 52), "fujian": (73.2, 65.1), "guangdong": (62.5, 73.6),
             "guangxi": (53.9, 69.6), "yunnan": (47, 69), "guizhou": (52, 56),
+            "liaodong": (72.8, 25.5), "dongjiang_area": (78, 31),
+            "shenyang_liaoyang": (75.4, 24.2), "jianzhou": (82, 8),
+            "korea": (84, 31), "mongol_chahar": (63, 17), "nurgan": (74, 1.8),
+            "taiwan": (78, 67),
         }
         theater_positions = {
             "liaodong": (72.8, 25.5), "dongjiang": (78, 31),
@@ -401,20 +405,12 @@ class WebGame:
             stationed = [a for a in armies if self._army_belongs_to_region(a, region)]
             buildings = self.db.building_payload(str(region["id"]))
             risk = int(region["unrest"]) + int(region["military_pressure"]) + (100 - int(region["public_support"]))
-            nodes.append({"id": region["id"], "kind": "region", "x": x, "y": y, "region": region, "armies": stationed, "buildings": buildings, "risk": risk})
+            node_kind = "region" if str(region.get("controlled_by") or "ming") == "ming" else "external"
+            nodes.append({"id": region["id"], "kind": node_kind, "x": x, "y": y, "region": region, "armies": stationed, "buildings": buildings, "risk": risk})
         for node_id, (x, y) in theater_positions.items():
             stationed = [a for a in armies if self._army_belongs_to_theater(a, node_id)]
             if stationed:
                 nodes.append({"id": node_id, "kind": "theater", "x": x, "y": y, "label": self._theater_label(node_id), "armies": stationed, "risk": 120})
-        # 势力地标：纯标签，无 region/army 数据，不可点开 intel。
-        external_labels = {
-            "ext_jianzhou": ("建州", 82, 8), "ext_chosen": ("朝鲜", 81, 31),
-            "ext_taiwan": ("台湾", 76, 70), "ext_japan": ("日本", 92, 42),
-            "ext_mongol": ("蒙古", 63, 17), "ext_tibet": ("乌斯藏", 30, 52),
-            "ext_jiaozhi": ("交趾", 55, 79),
-        }
-        for node_id, (label, x, y) in external_labels.items():
-            nodes.append({"id": node_id, "kind": "external", "x": x, "y": y, "label": label, "armies": [], "risk": 0})
         return nodes
 
     def _army_belongs_to_region(self, army: Dict[str, Any], region: Dict[str, Any]) -> bool:

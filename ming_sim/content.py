@@ -159,6 +159,7 @@ def load_region_content() -> Dict[str, Region]:
             status=str_field(item, "status", ctx),
             controlled_by=str_field(item, "controlled_by", ctx),
             fiscal=dict(fiscal_raw),
+            on_restore=dict(item.get("on_restore") or {}),
         )
     if not regions:
         raise SystemExit("regions.json 必须至少定义一个地区。")

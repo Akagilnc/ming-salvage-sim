@@ -492,7 +492,32 @@
         "commerce_tax": 0,
         "corruption": 35
       },
-      "controlled_by": "houjin"
+      "controlled_by": "houjin",
+      "on_restore": {
+        "name": "建州 / 赫图阿拉",
+        "kind": "外域",
+        "population": 90,
+        "public_support": 45,
+        "unrest": 45,
+        "natural_disaster": "山林寒瘠",
+        "human_disaster": "女真余部未平、屯田未复",
+        "registered_land": 30,
+        "hidden_land": 25,
+        "tax_per_turn": 0,
+        "grain_security": 80,
+        "gentry_resistance": 18,
+        "military_pressure": 60,
+        "status": "复设建州卫，羁縻女真余部，明军驻守新堡，屯田未复、辽饷负担更重。",
+        "fiscal": {
+          "huang_tian": 0,
+          "wang_tian": 0,
+          "guan_min_tian": 30,
+          "liao_xiang": 0,
+          "salt_tax": 0,
+          "commerce_tax": 0,
+          "corruption": 35
+        }
+      }
     },
     {
       "id": "shenyang_liaoyang",
@@ -519,7 +544,32 @@
         "commerce_tax": 1,
         "corruption": 42
       },
-      "controlled_by": "houjin"
+      "controlled_by": "houjin",
+      "on_restore": {
+        "name": "沈阳 / 辽阳",
+        "kind": "边镇",
+        "population": 160,
+        "public_support": 52,
+        "unrest": 38,
+        "natural_disaster": "兵燹后田土待复",
+        "human_disaster": "辽民流亡复业、屯田与辽饷并重",
+        "registered_land": 180,
+        "hidden_land": 30,
+        "tax_per_turn": 6,
+        "grain_security": 240,
+        "gentry_resistance": 30,
+        "military_pressure": 55,
+        "status": "复设辽东都司，招抚辽人流民复业，屯田渐起，兵燹疮痍未平，辽饷压力仍重。",
+        "fiscal": {
+          "huang_tian": 0,
+          "wang_tian": 0,
+          "guan_min_tian": 180,
+          "liao_xiang": 6,
+          "salt_tax": 0,
+          "commerce_tax": 4,
+          "corruption": 40
+        }
+      }
     },
     {
       "id": "mongol_chahar",
@@ -546,7 +596,32 @@
         "commerce_tax": 0,
         "corruption": 38
       },
-      "controlled_by": "mongol"
+      "controlled_by": "mongol",
+      "on_restore": {
+        "name": "察哈尔 / 漠南草原",
+        "kind": "草原",
+        "population": 95,
+        "public_support": 52,
+        "unrest": 38,
+        "natural_disaster": "草场寒旱",
+        "human_disaster": "诸部内附、岁赐市赏银压国库",
+        "registered_land": 0,
+        "hidden_land": 0,
+        "tax_per_turn": 0,
+        "grain_security": 80,
+        "gentry_resistance": 12,
+        "military_pressure": 50,
+        "status": "察哈尔诸部内附，照俺答故事开互市、岁赐市赏银，羁縻不直辖。",
+        "fiscal": {
+          "huang_tian": 0,
+          "wang_tian": 0,
+          "guan_min_tian": 0,
+          "liao_xiang": 0,
+          "salt_tax": 0,
+          "commerce_tax": 3,
+          "corruption": 30
+        }
+      }
     },
     {
       "id": "korea",
@@ -573,7 +648,32 @@
         "commerce_tax": 1,
         "corruption": 45
       },
-      "controlled_by": "korea"
+      "controlled_by": "korea",
+      "on_restore": {
+        "name": "朝鲜",
+        "kind": "外域",
+        "population": 500,
+        "public_support": 38,
+        "unrest": 55,
+        "natural_disaster": "兵燹后民力未复",
+        "human_disaster": "李朝旧臣未平、改郡县抵抗",
+        "registered_land": 80,
+        "hidden_land": 200,
+        "tax_per_turn": 2,
+        "grain_security": 500,
+        "gentry_resistance": 70,
+        "military_pressure": 55,
+        "status": "废李氏，比照辽东设朝鲜都司或承宣司，编户征贡，李朝旧臣未平、士族抗征。",
+        "fiscal": {
+          "huang_tian": 0,
+          "wang_tian": 0,
+          "guan_min_tian": 80,
+          "liao_xiang": 0,
+          "salt_tax": 0,
+          "commerce_tax": 2,
+          "corruption": 50
+        }
+      }
     },
     {
       "id": "nurgan",
@@ -600,7 +700,84 @@
         "commerce_tax": 0,
         "corruption": 35
       },
-      "controlled_by": "houjin"
+      "controlled_by": "houjin",
+      "on_restore": {
+        "name": "奴儿干 / 黑龙江诸部",
+        "kind": "外域",
+        "population": 45,
+        "public_support": 42,
+        "unrest": 50,
+        "natural_disaster": "极寒山林",
+        "human_disaster": "女真索伦诸部羁縻不稳",
+        "registered_land": 5,
+        "hidden_land": 0,
+        "tax_per_turn": 0,
+        "grain_security": 40,
+        "gentry_resistance": 5,
+        "military_pressure": 45,
+        "status": "复奴儿干都司羁縻旧制，女真索伦诸部纳贡通互市。",
+        "fiscal": {
+          "huang_tian": 0,
+          "wang_tian": 0,
+          "guan_min_tian": 5,
+          "liao_xiang": 0,
+          "salt_tax": 0,
+          "commerce_tax": 0,
+          "corruption": 30
+        }
+      }
+    },
+    {
+      "id": "taiwan",
+      "name": "台湾",
+      "kind": "外域",
+      "population": 18,
+      "public_support": 35,
+      "unrest": 45,
+      "natural_disaster": "瘴疠台风",
+      "human_disaster": "荷兰红毛据大员，西班牙据鸡笼淡水；汉人渔民海商杂处",
+      "registered_land": 0,
+      "hidden_land": 12,
+      "tax_per_turn": 0,
+      "grain_security": 40,
+      "gentry_resistance": 10,
+      "military_pressure": 50,
+      "status": "荷兰东印度公司 1624 据大员筑热兰遮城，1626 西班牙占鸡笼淡水。原住民部落散处，颜思齐、郑芝龙旧据笨港，海商走私不绝。明廷视为化外，水师止于澎湖。",
+      "fiscal": {
+        "huang_tian": 0,
+        "wang_tian": 0,
+        "guan_min_tian": 0,
+        "liao_xiang": 0,
+        "salt_tax": 0,
+        "commerce_tax": 0,
+        "corruption": 0
+      },
+      "controlled_by": "dutch",
+      "on_restore": {
+        "name": "台湾",
+        "kind": "外域",
+        "population": 30,
+        "public_support": 45,
+        "unrest": 40,
+        "natural_disaster": "瘴疠台风",
+        "human_disaster": "驱红毛新平、汉人海商杂处",
+        "registered_land": 35,
+        "hidden_land": 20,
+        "tax_per_turn": 2,
+        "grain_security": 60,
+        "gentry_resistance": 15,
+        "military_pressure": 45,
+        "status": "驱红毛、纳郑氏，设澎湖巡检司、台员道，初编户齐民，南洋互市归大明。",
+        "fiscal": {
+          "huang_tian": 0,
+          "wang_tian": 0,
+          "guan_min_tian": 35,
+          "liao_xiang": 0,
+          "salt_tax": 2,
+          "commerce_tax": 4,
+          "corruption": 30
+        }
+      }
     }
   ]
 }

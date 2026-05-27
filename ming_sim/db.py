@@ -1703,7 +1703,8 @@ class GameDB:
                 WHEN 'mongol' THEN 2
                 WHEN 'korea' THEN 3
                 WHEN 'japan' THEN 4
-                WHEN 'bandits' THEN 5
+                WHEN 'dutch' THEN 5
+                WHEN 'bandits' THEN 6
                 ELSE 9
             END, name
             """
@@ -2101,8 +2102,98 @@ class GameDB:
                         "delta": log_delta, "reason": reason,
                     }
                 )
+
+                # ── 收复触发：controlled_by 由非 ming → ming，覆盖 on_restore 预置 ──
+                if (
+                    field == "controlled_by"
+                    and str(stored_new) == "ming"
+                    and str(old_value) != "ming"
+                ):
+                    extra = self._apply_on_restore(state, region_id, event, edict_id, actor, reason)
+                    changes.extend(extra)
         self.conn.commit()
         return changes
+
+    def _apply_on_restore(
+        self,
+        state: GameState,
+        region_id: str,
+        event: Event,
+        edict_id: int | None,
+        actor: str,
+        reason: str,
+    ) -> List[Dict[str, object]]:
+        """收复瞬间用 region.on_restore 覆盖主字段，记 region_logs。"""
+        region_def = self.content.regions.get(region_id)
+        if region_def is None or not region_def.on_restore:
+            return []
+        preset = region_def.on_restore
+        row = self.conn.execute("SELECT * FROM regions WHERE id = ?", (region_id,)).fetchone()
+        if row is None:
+            return []
+        all_direct = REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + REGION_TEXT_FIELDS
+        out: List[Dict[str, object]] = []
+        for raw_field, value in preset.items():
+            if raw_field == "fiscal":
+                if not isinstance(value, dict):
+                    continue
+                fiscal = json.loads(str(row["fiscal"] or "{}"))
+                for sub_field, sub_val in value.items():
+                    if sub_field not in FISCAL_SCORE_FIELDS:
+                        continue
+                    old_sub = fiscal.get(sub_field, 0)
+                    new_sub = int(sub_val)
+                    if int(old_sub) == new_sub:
+                        continue
+                    fiscal[sub_field] = new_sub
+                    self.conn.execute(
+                        "INSERT INTO region_logs (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (state.turn, state.year, state.period, region_id,
+                         sub_field, str(old_sub), str(new_sub), new_sub - int(old_sub),
+                         f"收复重置：{reason}", event.id, edict_id, actor),
+                    )
+                    out.append({
+                        "region": row["name"], "field": sub_field,
+                        "label": REGION_FIELD_LABELS.get(sub_field, sub_field),
+                        "old": old_sub, "new": new_sub,
+                        "delta": new_sub - int(old_sub), "reason": f"收复重置：{reason}",
+                    })
+                self.conn.execute(
+                    "UPDATE regions SET fiscal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (json.dumps(fiscal, ensure_ascii=False), region_id),
+                )
+                continue
+            if raw_field == "controlled_by":
+                continue  # 控制权已写完，跳过
+            if raw_field not in all_direct:
+                continue
+            old_val = row[raw_field]
+            if raw_field in (REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS):
+                new_val: object = int(value)
+            else:
+                new_val = str(value)
+            if str(old_val) == str(new_val):
+                continue
+            self.conn.execute(
+                f"UPDATE regions SET {raw_field} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (new_val, region_id),
+            )
+            log_delta = (int(new_val) - int(old_val)) if raw_field in (REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS) else None
+            self.conn.execute(
+                "INSERT INTO region_logs (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (state.turn, state.year, state.period, region_id,
+                 raw_field, str(old_val), str(new_val), log_delta,
+                 f"收复重置：{reason}", event.id, edict_id, actor),
+            )
+            out.append({
+                "region": row["name"], "field": raw_field,
+                "label": REGION_FIELD_LABELS.get(raw_field, raw_field),
+                "old": old_val, "new": new_val,
+                "delta": log_delta, "reason": f"收复重置：{reason}",
+            })
+        return out
 
     def army_rows(self, limit: int | None = None, danger_order: bool = False) -> List[sqlite3.Row]:
         order = (
