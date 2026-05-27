@@ -930,7 +930,7 @@ def apply_score_extraction(
 
     # 10) office_changes：朝臣官职变更——统一吃「新任（建档）」与「调任（改职）」。
     #     extractor 不再分新任/调任，代码按 name 在不在册自判：
-    #       在册 active → 改 office；不在册/非 active → 建新档（复用 apply_appointment）。
+    #       在册且未死 → 任命/调任；不在册 → 建新档。
     #     后宫纳妃仍走 appointments（语义不同，见 section 8）。
     applied_office_changes: List[Dict[str, object]] = []
     if content is not None:
@@ -951,11 +951,19 @@ def apply_score_extraction(
             continue
         in_roster = content is not None and name in content.characters
         cur_status = db.get_character_status(name)[0] if in_roster else ""
-        if in_roster and cur_status == "active":
-            # ── 调任：改 office ──
+        if in_roster:
+            if cur_status == "dead":
+                applied_office_changes.append({
+                    "name": name, "new_office": new_office, "rejected": True,
+                    "reason": "人物已故，不能重新启用",
+                })
+                continue
+            # ── 在册任命/调任：改回 active 并授官 ──
             new_type = str(item.get("new_office_type") or "").strip()
             old_office = content.characters[name].office
             try:
+                if cur_status != "active":
+                    db.set_character_status(state, name, "active", reason[:200] or "诏书任命")
                 db.set_character_office(name, new_office, new_type, source=reason[:60] or "诏书调任")
             except Exception as exc:
                 applied_office_changes.append({
@@ -967,17 +975,18 @@ def apply_score_extraction(
             # 从其他 active 官员 office 里剔除同名分项（LLM 已判去重，此处仅防漏抽旧任者出现双缺官）。
             displaced_parts = _displace_duplicate_offices(db, content, name, new_office)
             ch = content.characters[name]
+            ch.status = "active"
             ch.office = normalize_office(new_office)
             ch.office_type = infer_office_type_from_office(ch.office, new_type or ch.office_type)
             if registry is not None:
                 registry.refresh(name)
             applied_office_changes.append({
-                "name": name, "old_office": old_office, "new_office": new_office,
+                "name": name, "old_status": cur_status, "old_office": old_office, "new_office": new_office,
                 "kind": "transfer", "reason": reason,
                 **({"displaced": displaced_parts} if displaced_parts else {}),
             })
             continue
-        # ── 新任：建新档（apply_appointment 对在册者会拒，故仅不在册/非 active 走到这）──
+        # ── 新任：建新档（apply_appointment 对在册者会拒，故仅不在册走到这）──
         if content is None:
             continue
         appt = {
