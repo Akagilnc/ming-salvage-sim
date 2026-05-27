@@ -126,7 +126,7 @@
     "resolve_condition": "朝鲜定期向皮岛输送米豆硫磺过半年，明朝默认协防义不外泄",
     "fail_condition": "密线为后金所探破，朝鲜被迫转投后金，皮岛失援",
     "trigger_gate": {
-      "external.houjin.leverage": ">=75"
+      "power.houjin.leverage": ">=75"
     }
   },
   {
@@ -180,7 +180,7 @@
     "resolve_condition": "派密线策反一旗主或贝勒，后金内乱半年以上不能合力南犯",
     "fail_condition": "皇太极清洗对手后内部更紧，反借机东征朝鲜或西讨蒙古以转移矛盾",
     "trigger_gate": {
-      "external.houjin.cohesion": "<=55"
+      "power.houjin.cohesion": "<=55"
     }
   },
   {

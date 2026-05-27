@@ -202,7 +202,6 @@ def _normalize_locator(locator: object, source_kind: str, source_id: str, state:
             "region_changes",
             "army_changes",
             "faction_delta",
-            "external_changes",
         },
         "issue": {"issue", "issue_summary", "advances", "new_issues", "closes"},
         "turn_report": {"report"},
@@ -586,7 +585,6 @@ def record_event_memories_from_resolution(
     for subject_type, key, changes, label in (
         ("region", "region", applied.get("region_changes") or [], "地区变化"),
         ("army", "army", applied.get("army_changes") or [], "军队变化"),
-        ("external_power", "power", applied.get("external_changes") or [], "外势变化"),
     ):
         for change in changes:
             if not isinstance(change, dict) or not _significant_change(change):

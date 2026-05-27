@@ -221,10 +221,7 @@ Cao Wenzhao, Ming dynasty Liaodong guerrilla general, fierce battle-hardened war
 
 ### 中立
 
-#### 王永光 `minister_wang_yongguang.png`
-```
-Wang Yongguang, Ming dynasty Minister of War neutral faction, solid dependable middle-aged official, standard dark official robe, measured composed expression, practical no-nonsense bearing, carefully neutral gaze. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
-```
+
 
 #### 王在晋 `minister_wang_zaijin.png`
 ```

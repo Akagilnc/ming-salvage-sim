@@ -171,7 +171,7 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
       - 'region.<id1>|<id2>|.<field>.<agg>'     → 多省聚合 (max/min/avg/sum)
       - 'army.<id>.<field>' / 多军 + agg
       - 'building.<id>.<field>' / 多建筑 + agg
-      - 'external.<id>.<field>' / 多 + agg
+      - 'power.<id>.<field>' / 多 + agg
       - 'class.<name>.<field>'                  → classes 表全国汇总 (region_id='')
       - 'class.<name>@<region>.<field>'         → classes 表省级
       - 'class.<name>@<r1>|<r2>|.<field>.<agg>' → 多省同阶级聚合
@@ -183,7 +183,7 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
         return None
     parts = key.split(".")
     table = parts[0]
-    if table not in ("region", "army", "building", "external", "class"):
+    if table not in ("region", "army", "building", "power", "class"):
         return None
     # 末段可能是 agg，先抽出
     agg = None
@@ -213,8 +213,8 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
             row = db.conn.execute(f"SELECT {field} FROM armies WHERE id = ?", (cid,)).fetchone()
         elif table == "building":
             row = db.conn.execute(f"SELECT {field} FROM buildings WHERE id = ?", (cid,)).fetchone()
-        elif table == "external":
-            row = db.conn.execute(f"SELECT {field} FROM external_powers WHERE id = ?", (cid,)).fetchone()
+        elif table == "power":
+            row = db.conn.execute(f"SELECT {field} FROM powers WHERE id = ?", (cid,)).fetchone()
         elif table == "class":
             if "@" in cid:
                 cname, rid = cid.split("@", 1)
@@ -522,17 +522,19 @@ def apply_issue_tracker_output(
         if new_row is None:
             continue
         touched_ids.add(issue_id)
-        # 终结结算
+        # 终结结算：bar 自然推到 100/0 触发的 resolved/failed，与 close_issues 一样落终结效果（含建筑）
         if new_row["status"] == "resolved":
             effect = json.loads(new_row["effect_on_resolve"] or "{}")
             _apply_metric_dict(state, effect.get("metrics") or {})
             _apply_economy_list(db, state, effect.get("economy") or [])
             _apply_faction_dict(db, effect.get("factions") or {})
+            _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}结案")
         elif new_row["status"] == "failed":
             effect = json.loads(new_row["effect_on_fail"] or "{}")
             _apply_metric_dict(state, effect.get("metrics") or {})
             _apply_economy_list(db, state, effect.get("economy") or [])
             _apply_faction_dict(db, effect.get("factions") or {})
+            _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}失败")
         applied_advances.append({
             "issue_id": issue_id,
             "title": new_row["title"],
@@ -757,9 +759,10 @@ def apply_score_extraction(
     # 3) faction_delta + class_delta（朝堂派系 + 社会阶级；联动靠 LLM，不在代码做）
     applied_factions = _apply_faction_dict(db, extracted.get("faction_delta") or {})
     applied_classes = _apply_class_dict(db, extracted.get("class_delta") or {})
-    # 4) region_delta / army_delta (复用旧 db 方法)
+    # 4) new_armies → region_delta / army_delta (复用旧 db 方法)
     region_deltas_raw = extracted.get("region_delta") or {}
     army_deltas_raw = extracted.get("army_delta") or {}
+    new_armies_raw = extracted.get("new_armies") or []
     pseudo_event = Event(
         id="season",
         title="月末整体推演",
@@ -773,6 +776,13 @@ def apply_score_extraction(
     )
     region_changes: List[Dict[str, object]] = []
     army_changes: List[Dict[str, object]] = []
+    created_armies: List[Dict[str, object]] = []
+    # 先建军：避免同回合 army_delta 引用新军被跳过
+    if isinstance(new_armies_raw, list) and new_armies_raw:
+        try:
+            created_armies = db.create_armies_from_extraction(state, new_armies_raw, actor="档房")
+        except Exception as exc:
+            print(f"[WARN] new_armies 落库失败：{exc}")
     if isinstance(region_deltas_raw, dict) and region_deltas_raw:
         try:
             region_changes = db.apply_region_deltas(state, pseudo_event, None, "档房", region_deltas_raw)
@@ -787,14 +797,14 @@ def apply_score_extraction(
     # 注：建筑的新建/变更/废止不走顶层字段，全由 issue 的 effect_on_resolve /
     #     effect_on_fail 里的 `buildings` 段在局势结案时落地（见 _apply_issue_buildings）。
 
-    # 5) external_power_updates：后金/蒙古/朝鲜/流寇等外部势力落库
-    external_updates_raw = extracted.get("external_power_updates") or {}
-    external_changes: List[Dict[str, object]] = []
-    if isinstance(external_updates_raw, dict) and external_updates_raw:
+    # 5) power_updates：非明势力三项简表（威望/实力/经济）落库
+    power_updates_raw = extracted.get("power_updates") or {}
+    power_changes: List[Dict[str, object]] = []
+    if isinstance(power_updates_raw, dict) and power_updates_raw:
         try:
-            external_changes = db.apply_external_power_deltas(state, external_updates_raw)
+            power_changes = db.apply_power_deltas(state, power_updates_raw)
         except Exception as exc:
-            print(f"[WARN] external_power_updates 落库失败：{exc}")
+            print(f"[WARN] power_updates 落库失败：{exc}")
 
     # 6) issue_advances / new_issues / close_issues / cancels (复用旧 tracker 落地)
     issue_summary = apply_issue_tracker_output(db, state, {
@@ -907,6 +917,15 @@ def apply_score_extraction(
         applied_status_changes.append({
             "name": name, "status": status, "reason": reason,
         })
+
+    # 9b) character_power_changes：人物易主（降将/叛臣/归正）
+    applied_power_changes: List[Dict[str, object]] = []
+    try:
+        applied_power_changes = db.apply_character_power_changes(
+            extracted.get("character_power_changes") or []
+        )
+    except Exception as exc:
+        print(f"[WARN] character_power_changes 落库失败：{exc}")
 
     # 10) office_changes：朝臣官职变更——统一吃「新任（建档）」与「调任（改职）」。
     #     extractor 不再分新任/调任，代码按 name 在不在册自判：
@@ -1048,12 +1067,14 @@ def apply_score_extraction(
         "class_delta": applied_classes,
         "region_changes": region_changes,
         "army_changes": army_changes,
-        "external_changes": external_changes,
+        "created_armies": created_armies,
+        "power_changes": power_changes,
         "issue_summary": issue_summary,
         "world_advance": extracted.get("world_advance") or {},
         "fiscal_changes": applied_fiscal,
         "appointments": applied_appointments,
         "character_status_changes": applied_status_changes,
+        "character_power_changes": applied_power_changes,
         "office_changes": applied_office_changes,
         "secret_order_updates": applied_secret_orders,
         "secret_order_closes": applied_secret_closes,
@@ -1098,12 +1119,14 @@ def apply_issue_inertia_and_ongoing(
                     _apply_metric_dict(state, effect.get("metrics") or {})
                     _apply_economy_list(db, state, effect.get("economy") or [])
                     _apply_faction_dict(db, effect.get("factions") or {})
+                    _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}结案")
                     continue
                 elif new_row["status"] == "failed":
                     effect = json.loads(new_row["effect_on_fail"] or "{}")
                     _apply_metric_dict(state, effect.get("metrics") or {})
                     _apply_economy_list(db, state, effect.get("economy") or [])
                     _apply_faction_dict(db, effect.get("factions") or {})
+                    _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}失败")
                     continue
                 row = db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
                 if row is None:

@@ -16,6 +16,160 @@ from ming_sim.models import GameState
 from ming_sim.token_stats import tlog
 
 
+TOP_LEVEL_ALIASES = {
+    "国势变化": "metric_delta",
+    "钱粮收支": "economy_moves",
+    "财政制度变化": "fiscal_changes",
+    "派系变化": "faction_delta",
+    "阶级变化": "class_delta",
+    "地区变化": "region_delta",
+    "军队变化": "army_delta",
+    "势力变化": "power_updates",
+    "建军": "new_armies",
+    "新建军队": "new_armies",
+    "外交态度": "world_advance",
+    "四方动向": "world_advance",
+    "局势推进": "issue_advances",
+    "新立局势": "new_issues",
+    "撤销局势": "cancels",
+    "结案局势": "close_issues",
+    "人事变更": "office_changes",
+    "人物状态变化": "character_status_changes",
+    "人物易主": "character_power_changes",
+    "后宫册封": "appointments",
+    "密令副作用": "secret_order_updates",
+    "密令结案": "secret_order_closes",
+}
+TOP_LEVEL_LABELS = {value: key for key, value in TOP_LEVEL_ALIASES.items()}
+
+ITEM_FIELD_ALIASES = {
+    "account": "account", "账户": "account",
+    "delta": "delta", "增量": "delta",
+    "category": "category", "分类": "category",
+    "reason": "reason", "原因": "reason",
+    "key": "key", "键": "key",
+    "issue_id": "issue_id", "局势编号": "issue_id",
+    "delta_bar": "delta_bar", "进度增量": "delta_bar",
+    "stage_text": "stage_text", "阶段": "stage_text",
+    "narrative": "narrative", "叙述": "narrative",
+    "inertia_delta": "inertia_delta", "惯性增量": "inertia_delta",
+    "origin_kind": "origin_kind", "来源类型": "origin_kind",
+    "id": "id", "编号": "id",
+    "kind": "kind", "类型": "kind",
+    "title": "title", "标题": "title",
+    "bar_value": "bar_value", "当前进度": "bar_value",
+    "expected_months": "expected_months", "预计月数": "expected_months",
+    "resolve_condition": "resolve_condition", "解决条件": "resolve_condition",
+    "fail_condition": "fail_condition", "失败条件": "fail_condition",
+    "ongoing_effects": "ongoing_effects", "持续效果": "ongoing_effects",
+    "effect_on_resolve": "effect_on_resolve", "解决效果": "effect_on_resolve",
+    "effect_on_fail": "effect_on_fail", "失败效果": "effect_on_fail",
+    "cancellable": "cancellable", "可撤销": "cancellable",
+    "metrics": "metrics", "国势": "metrics",
+    "economy": "economy", "钱粮": "economy",
+    "factions": "factions", "派系": "factions",
+    "buildings": "buildings", "建筑": "buildings",
+    "action": "action", "动作": "action",
+    "region_id": "region_id", "地区编号": "region_id",
+    "category": "category", "类别": "category",
+    "level": "level", "等级": "level",
+    "condition": "condition", "完好": "condition",
+    "maintenance": "maintenance", "维护费": "maintenance",
+    "risk": "risk", "风险": "risk",
+    "output_metric": "output_metric", "产出去向": "output_metric",
+    "output_amount": "output_amount", "产出量": "output_amount",
+    "applied_cost": "applied_cost", "已付代价": "applied_cost",
+    "name": "name", "姓名": "name", "名称": "name",
+    "new_office": "new_office", "新官职": "new_office",
+    "new_office_type": "new_office_type", "新官署类别": "new_office_type",
+    "faction": "faction", "派系": "faction",
+    "status": "status", "状态": "status",
+    "office": "office", "位号": "office", "官职": "office",
+    "office_type": "office_type", "官署类别": "office_type",
+    "approved": "approved", "准许": "approved",
+    "order_id": "order_id", "密令编号": "order_id",
+    "sim_note": "sim_note", "推演备注": "sim_note",
+    "result": "result", "结果": "result",
+    "stance": "stance", "立场": "stance",
+    "action": "action", "行动": "action",
+    "impact": "impact", "影响": "impact",
+    "intent": "intent", "意图": "intent",
+    "satisfaction": "satisfaction", "满意": "satisfaction",
+    "leverage": "leverage", "影响力": "leverage", "势力": "leverage",
+    # new_armies 子字段（建军）
+    "owner_power": "owner_power", "归属": "owner_power", "所属": "owner_power",
+    # character_power_changes 子字段（人物易主）
+    "new_power": "new_power", "新势力": "new_power",
+    "station": "station", "驻扎地": "station", "驻地": "station",
+    "theater": "theater", "战区": "theater",
+    "commander": "commander", "统将": "commander", "主将": "commander",
+    "controller": "controller", "主管": "controller",
+    "troop_type": "troop_type", "兵种": "troop_type",
+    "manpower": "manpower", "人数": "manpower", "兵力": "manpower",
+    "maintenance_per_turn": "maintenance_per_turn", "维护费": "maintenance_per_turn", "军费": "maintenance_per_turn",
+    "supply": "supply", "补给": "supply", "粮饷": "supply",
+    "morale": "morale", "士气": "morale",
+    "training": "training", "训练": "training",
+    "equipment": "equipment", "装备": "equipment",
+    "arrears": "arrears", "欠饷": "arrears",
+    "mobility": "mobility", "机动": "mobility",
+    "loyalty": "loyalty", "忠诚": "loyalty",
+}
+ITEM_FIELD_LABELS = {
+    "account": "账户",
+    "delta": "增量",
+    "category": "分类",
+    "reason": "原因",
+    "key": "键",
+    "issue_id": "局势编号",
+    "delta_bar": "进度增量",
+    "stage_text": "阶段",
+    "narrative": "叙述",
+    "inertia_delta": "惯性增量",
+    "origin_kind": "来源类型",
+    "id": "编号",
+    "kind": "类型",
+    "title": "标题",
+    "bar_value": "当前进度",
+    "expected_months": "预计月数",
+    "resolve_condition": "解决条件",
+    "fail_condition": "失败条件",
+    "ongoing_effects": "持续效果",
+    "effect_on_resolve": "解决效果",
+    "effect_on_fail": "失败效果",
+    "cancellable": "可撤销",
+    "metrics": "国势",
+    "economy": "钱粮",
+    "factions": "派系",
+    "buildings": "建筑",
+    "action": "动作",
+    "region_id": "地区编号",
+    "level": "等级",
+    "condition": "完好",
+    "maintenance": "维护费",
+    "risk": "风险",
+    "output_metric": "产出去向",
+    "output_amount": "产出量",
+    "applied_cost": "已付代价",
+    "name": "姓名",
+    "new_office": "新官职",
+    "new_office_type": "新官署类别",
+    "faction": "派系",
+    "status": "状态",
+    "office": "位号",
+    "office_type": "官署类别",
+    "approved": "准许",
+    "order_id": "密令编号",
+    "sim_note": "推演备注",
+    "result": "结果",
+    "stance": "立场",
+    "impact": "影响",
+    "intent": "意图",
+    "satisfaction": "满意",
+    "leverage": "影响力",
+}
+
+
 def _table(rows: List[Dict[str, object]], cols: List[str]) -> Dict[str, object]:
     """array-of-dicts → header + 二维数组。省掉每行重复的 key，体积约为 dict 形式的 1/3。"""
     return {
@@ -34,8 +188,7 @@ def _auto_table(rows: List[Dict[str, object]]) -> Dict[str, object]:
 
 
 
-def simulate_season_with_agno(
-    agent: Agent,
+def build_simulator_payload(
     state: GameState,
     db: GameDB,
     decree_text: str,
@@ -44,12 +197,9 @@ def simulate_season_with_agno(
     fixed_flows: Optional[List[Dict[str, object]]] = None,
     deaths_this_turn: Optional[List[Dict[str, str]]] = None,
     debuts_this_turn: Optional[List[Dict[str, str]]] = None,
-    on_thinking: Optional[Callable[[str], None]] = None,
-    on_text: Optional[Callable[[str], None]] = None,
     relevant_memories: Optional[List[Dict[str, object]]] = None,
     secret_orders: Optional[List[Dict[str, object]]] = None,
-) -> str:
-    """推演 agent: 全量盘面塞 user payload，无 tool。"""
+) -> Dict[str, object]:
     active = db.list_active_issues()
     issues_payload = [
         issue_to_payload(row, db.list_recent_issue_advances(int(row["id"]), 1))
@@ -81,16 +231,16 @@ def simulate_season_with_agno(
         dict(r) for r in db.conn.execute(
             "SELECT name,station,theater,commander,controller,troop_type,manpower,"
             "maintenance_per_turn,supply,morale,training,equipment,arrears,mobility,"
-            "loyalty,status FROM armies ORDER BY id"
+            "loyalty,status,owner_power FROM armies ORDER BY id"
         ).fetchall()
     ]
     court_roster = [
         dict(r) for r in db.conn.execute(
-            "SELECT name,office,office_type,faction,status FROM characters "
+            "SELECT name,office,office_type,faction,status,power_id,location FROM characters "
             "WHERE status!='offstage' AND office_type!='后宫' ORDER BY rowid"
         ).fetchall()
     ]
-    payload = {
+    return {
         "year": state.year,
         "period": state.period,
         "decree_text": decree_text,
@@ -99,7 +249,7 @@ def simulate_season_with_agno(
         "treasury_brief": db.treasury_report(state),
         "factions_brief": db.faction_report(),
         "classes_brief": db.class_report(),
-        "external_powers_brief": db.external_power_report(),
+        "powers_brief": db.power_report(exclude_self=True),
         "active_issues": issues_payload,
         "candidate_events": candidate_events,
         "previous_narrative_tail": previous_narrative[-1500:] if previous_narrative else "",
@@ -116,14 +266,75 @@ def simulate_season_with_agno(
         "secret_orders": secret_orders or [],
         "data_note": "regions/armies/buildings 均为 header+二维数组（cols 列名 + rows 数据）。secret_orders 为皇帝密令列表，独立于 relevant_memories，每条含 id/minister_name/title/content/status/result 字段。",
     }
+
+
+def simulate_season_with_agno(
+    agent: Agent,
+    state: GameState,
+    db: GameDB,
+    decree_text: str,
+    directives_brief: List[Dict[str, object]],
+    previous_narrative: str,
+    fixed_flows: Optional[List[Dict[str, object]]] = None,
+    deaths_this_turn: Optional[List[Dict[str, str]]] = None,
+    debuts_this_turn: Optional[List[Dict[str, str]]] = None,
+    on_thinking: Optional[Callable[[str], None]] = None,
+    on_text: Optional[Callable[[str], None]] = None,
+    relevant_memories: Optional[List[Dict[str, object]]] = None,
+    secret_orders: Optional[List[Dict[str, object]]] = None,
+) -> str:
+    """推演 agent: 全量盘面塞 user payload，无 tool。"""
+    narrative, _payload = simulate_season_with_payload(
+        agent,
+        state,
+        db,
+        decree_text,
+        directives_brief,
+        previous_narrative,
+        fixed_flows=fixed_flows,
+        deaths_this_turn=deaths_this_turn,
+        debuts_this_turn=debuts_this_turn,
+        on_thinking=on_thinking,
+        on_text=on_text,
+        relevant_memories=relevant_memories,
+        secret_orders=secret_orders,
+    )
+    return narrative
+
+
+def simulate_season_with_payload(
+    agent: Agent,
+    state: GameState,
+    db: GameDB,
+    decree_text: str,
+    directives_brief: List[Dict[str, object]],
+    previous_narrative: str,
+    fixed_flows: Optional[List[Dict[str, object]]] = None,
+    deaths_this_turn: Optional[List[Dict[str, str]]] = None,
+    debuts_this_turn: Optional[List[Dict[str, str]]] = None,
+    on_thinking: Optional[Callable[[str], None]] = None,
+    on_text: Optional[Callable[[str], None]] = None,
+    relevant_memories: Optional[List[Dict[str, object]]] = None,
+    secret_orders: Optional[List[Dict[str, object]]] = None,
+    simulator_payload: Optional[Dict[str, object]] = None,
+) -> tuple[str, Dict[str, object]]:
+    """推演 agent，同时返回本次推演 user payload，供 extractor 复用缓存前缀。"""
+    payload = simulator_payload or build_simulator_payload(
+        state, db, decree_text, directives_brief, previous_narrative,
+        fixed_flows=fixed_flows,
+        deaths_this_turn=deaths_this_turn,
+        debuts_this_turn=debuts_this_turn,
+        relevant_memories=relevant_memories,
+        secret_orders=secret_orders,
+    )
     raw = run_agent_stream_text(
         agent,
-        json.dumps(payload, ensure_ascii=False, sort_keys=False),
+        json.dumps({"instruction": "请根据 system 中的 simulator_payload 写本月月末奏章。"}, ensure_ascii=False),
         tag="simulator",
         on_thinking=on_thinking,
         on_text=on_text,
     )
-    return raw.strip()
+    return raw.strip(), payload
 
 
 def extract_scores_with_agno(
@@ -174,12 +385,12 @@ def extract_scores_with_agno(
     ]
     active_ministers = [
         dict(r) for r in db.conn.execute(
-            "SELECT name,office,office_type,faction FROM characters WHERE status='active' ORDER BY rowid"
+            "SELECT name,office,office_type,faction,power_id,location FROM characters WHERE status='active' ORDER BY rowid"
         ).fetchall()
     ]
     offstage_ministers = [
         dict(r) for r in db.conn.execute(
-            "SELECT name,office,faction,debut_year,debut_month "
+            "SELECT name,office,faction,power_id,location,debut_year,debut_month "
             "FROM characters WHERE status='offstage' ORDER BY name"
         ).fetchall()
     ]
@@ -192,7 +403,7 @@ def extract_scores_with_agno(
         "current_state": dict(state.metrics),
         "factions": db.faction_report(),
         "classes": db.class_report(),
-        "external_powers": _auto_table(db.external_power_payload()),
+        "powers": _auto_table(db.power_payload()),
         "regions": _auto_table(region_rows),
         "armies": _auto_table(army_rows),
         "buildings": _auto_table(db.building_payload()),
@@ -201,11 +412,11 @@ def extract_scores_with_agno(
         "region_ids": region_ids,
         "army_ids": army_ids,
         "class_names": [r["name"] for r in db.conn.execute("SELECT DISTINCT name FROM classes ORDER BY name").fetchall()],
-        "external_power_ids": [str(r["id"]) for r in db.conn.execute("SELECT id FROM external_powers").fetchall()],
+        "power_ids": [str(r["id"]) for r in db.conn.execute("SELECT id FROM powers").fetchall()],
         "fiscal_config": db.get_fiscal_config(),
         "relevant_memories": relevant_memories or [],
         "secret_orders": secret_orders or [],
-        "_format_note": "regions/armies/buildings/external_powers/active_ministers/offstage_ministers 均为 header+二维数组（cols 列名 + rows 数据）。secret_orders 独立字段，含 id/minister_name/title/content/status/result。",
+        "_format_note": "regions/armies/buildings/powers/active_ministers/offstage_ministers 均为 header+二维数组（cols 列名 + rows 数据）。secret_orders 独立字段，含 id/minister_name/title/content/status/result。",
     }
     payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=False)
     tlog(f"[extractor] user payload total={len(payload_json)} chars (~{len(payload_json)//1.5:.0f} tok)")
@@ -230,7 +441,8 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "class_delta": {},
     "region_delta": {},
     "army_delta": {},
-    "external_power_updates": {},
+    "new_armies": [],
+    "power_updates": {},
     "world_advance": {},
     "issue_advances": [],
     "new_issues": [],
@@ -240,16 +452,17 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "office_changes": [],
     "appointments": [],
     "character_status_changes": [],
+    "character_power_changes": [],
     "secret_order_updates": [],
     "secret_order_closes": [],
 }
 
 MODULE_FIELDS: Dict[str, set[str]] = {
     "internal": {"metric_delta", "economy_moves", "faction_delta", "class_delta", "region_delta", "fiscal_changes"},
-    "military_external": {"army_delta", "external_power_updates", "world_advance"},
+    "military_external": {"army_delta", "new_armies", "power_updates", "world_advance"},
     "issues": {"issue_advances", "new_issues", "cancels", "close_issues"},
     "personnel_secret": {
-        "office_changes", "character_status_changes", "appointments",
+        "office_changes", "character_status_changes", "character_power_changes", "appointments",
         "secret_order_updates", "secret_order_closes",
     },
 }
@@ -294,12 +507,12 @@ def _extractor_context_payload(
     ]
     active_ministers = [
         dict(r) for r in db.conn.execute(
-            "SELECT name,office,office_type,faction FROM characters WHERE status='active' ORDER BY rowid"
+            "SELECT name,office,office_type,faction,power_id,location FROM characters WHERE status='active' ORDER BY rowid"
         ).fetchall()
     ]
     offstage_ministers = [
         dict(r) for r in db.conn.execute(
-            "SELECT name,office,faction,debut_year,debut_month "
+            "SELECT name,office,faction,power_id,location,debut_year,debut_month "
             "FROM characters WHERE status='offstage' ORDER BY name"
         ).fetchall()
     ]
@@ -312,7 +525,7 @@ def _extractor_context_payload(
         "current_state": dict(state.metrics),
         "factions": db.faction_report(),
         "classes": db.class_report(),
-        "external_powers": _auto_table(db.external_power_payload()),
+        "powers": _auto_table(db.power_payload()),
         "regions": _auto_table(region_rows),
         "armies": _auto_table(army_rows),
         "buildings": _auto_table(db.building_payload()),
@@ -321,69 +534,112 @@ def _extractor_context_payload(
         "region_ids": [r["id"] for r in db.conn.execute("SELECT id FROM regions").fetchall()],
         "army_ids": [r["id"] for r in db.conn.execute("SELECT id FROM armies").fetchall()],
         "class_names": [r["name"] for r in db.conn.execute("SELECT DISTINCT name FROM classes ORDER BY name").fetchall()],
-        "external_power_ids": [str(r["id"]) for r in db.conn.execute("SELECT id FROM external_powers").fetchall()],
+        "power_ids": [str(r["id"]) for r in db.conn.execute("SELECT id FROM powers").fetchall()],
         "fiscal_config": db.get_fiscal_config(),
         "relevant_memories": relevant_memories or [],
         "secret_orders": secret_orders or [],
-        "_format_note": "regions/armies/buildings/external_powers/active_ministers/offstage_ministers 均为 header+二维数组（cols 列名 + rows 数据）。",
+        "_format_note": "regions/armies/buildings/powers/active_ministers/offstage_ministers 均为 header+二维数组（cols 列名 + rows 数据）。",
     }
 
 
-def _payload_for_module(base: Dict[str, object], module: str) -> Dict[str, object]:
-    common = {
+def _extractor_compat_payload(base: Dict[str, object]) -> Dict[str, object]:
+    return {
         "turn": base["turn"],
         "narrative": base["narrative"],
         "decree_text": base["decree_text"],
+        "active_issues": base["active_issues"],
+        "candidate_events": base["candidate_events"],
+        "current_state": base["current_state"],
+        "factions": base["factions"],
+        "classes": base["classes"],
+        "powers": base["powers"],
+        "regions": base["regions"],
+        "armies": base["armies"],
+        "buildings": base["buildings"],
+        "active_ministers": base["active_ministers"],
+        "offstage_ministers": base["offstage_ministers"],
+        "region_ids": base["region_ids"],
+        "army_ids": base["army_ids"],
+        "class_names": base["class_names"],
+        "power_ids": base["power_ids"],
+        "fiscal_config": base["fiscal_config"],
+        "relevant_memories": base["relevant_memories"],
+        "secret_orders": base["secret_orders"],
         "_format_note": base["_format_note"],
     }
-    if module == "internal":
-        return {
-            **common,
-            "current_state": base["current_state"],
-            "factions": base["factions"],
-            "classes": base["classes"],
-            "regions": base["regions"],
-            "buildings": base["buildings"],
-            "active_issues": base["active_issues"],
-            "region_ids": base["region_ids"],
-            "class_names": base["class_names"],
-            "fiscal_config": base["fiscal_config"],
-            "relevant_memories": base["relevant_memories"],
-        }
-    if module == "military_external":
-        return {
-            **common,
-            "armies": base["armies"],
-            "external_powers": base["external_powers"],
-            "army_ids": base["army_ids"],
-            "external_power_ids": base["external_power_ids"],
-            "active_issues": base["active_issues"],
-        }
-    if module == "issues":
-        return {
-            **common,
-            "current_state": base["current_state"],
-            "active_issues": base["active_issues"],
-            "candidate_events": base["candidate_events"],
-            "factions": base["factions"],
-            "classes": base["classes"],
-            "regions": base["regions"],
-            "armies": base["armies"],
-            "buildings": base["buildings"],
-            "region_ids": base["region_ids"],
-            "army_ids": base["army_ids"],
-            "external_power_ids": base["external_power_ids"],
-            "fiscal_config": base["fiscal_config"],
-            "secret_orders": base["secret_orders"],
-        }
-    if module == "personnel_secret":
-        return {
-            **common,
-            "active_ministers": base["active_ministers"],
-            "offstage_ministers": base["offstage_ministers"],
-            "secret_orders": base["secret_orders"],
-        }
-    raise ValueError(f"未知 extractor module: {module}")
+
+
+def build_extractor_shared_context(
+    db: GameDB,
+    state: GameState,
+    narrative: str,
+    decree_text: str,
+    relevant_memories: Optional[List[Dict[str, object]]] = None,
+    secret_orders: Optional[List[Dict[str, object]]] = None,
+) -> Dict[str, object]:
+    """供模块 extractor 放入 system 前缀的共同结算补充上下文。"""
+    base = _extractor_context_payload(
+        db, state, narrative, decree_text,
+        relevant_memories=relevant_memories,
+        secret_orders=secret_orders,
+    )
+    return _extractor_compat_payload(base)
+
+
+def _payload_for_module(
+    base: Dict[str, object],
+    module: str,
+) -> Dict[str, object]:
+    _ = base
+    if module not in MODULE_FIELDS:
+        raise ValueError(f"未知 extractor module: {module}")
+    return {
+        "module": module,
+        "module_allowed_fields": sorted(MODULE_FIELDS[module]),
+        "instruction": "simulator_payload 与 extractor_context 已在 system 中给出。只输出当前模块允许的中文顶层字段 JSON object。",
+    }
+
+
+def _canonical_item_fields(value: object) -> object:
+    if isinstance(value, list):
+        return [_canonical_item_fields(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    return {
+        ITEM_FIELD_ALIASES.get(str(key).strip(), str(key).strip()): _canonical_item_fields(val)
+        for key, val in value.items()
+    }
+
+
+def _canonicalize_extraction(data: Dict[str, object]) -> Dict[str, object]:
+    canonical: Dict[str, object] = {}
+    for raw_key, value in data.items():
+        key = TOP_LEVEL_ALIASES.get(str(raw_key).strip(), str(raw_key).strip())
+        canonical[key] = _canonical_item_fields(value)
+    return canonical
+
+
+def _localized_item_fields(value: object, parent_key: str = "") -> object:
+    if isinstance(value, list):
+        return [_localized_item_fields(item, parent_key) for item in value]
+    if not isinstance(value, dict):
+        return value
+    localized: Dict[str, object] = {}
+    for key, val in value.items():
+        key_str = str(key)
+        if parent_key in {"world_advance", "后金", "蒙古", "朝鲜", "流寇"} and key_str == "action":
+            label = "行动"
+        else:
+            label = ITEM_FIELD_LABELS.get(key_str, key_str)
+        localized[label] = _localized_item_fields(val, key_str)
+    return localized
+
+
+def _localized_extraction(data: Dict[str, object]) -> Dict[str, object]:
+    return {
+        TOP_LEVEL_LABELS.get(str(key), str(key)): _localized_item_fields(value, str(key))
+        for key, value in data.items()
+    }
 
 
 def _sanitize_module_output(module: str, data: Dict[str, object]) -> Dict[str, object]:
@@ -391,6 +647,7 @@ def _sanitize_module_output(module: str, data: Dict[str, object]) -> Dict[str, o
     empty = {k: v for k, v in EMPTY_EXTRACTION.items() if k in allowed}
     if not isinstance(data, dict):
         return empty
+    data = _canonicalize_extraction(data)
     cleaned = dict(empty)
     for key in allowed:
         if key in data:
@@ -398,6 +655,34 @@ def _sanitize_module_output(module: str, data: Dict[str, object]) -> Dict[str, o
     if module == "internal":
         cleaned["economy_moves"] = _clean_economy_moves(cleaned.get("economy_moves"))
         cleaned["fiscal_changes"] = _clean_fiscal_changes(cleaned.get("fiscal_changes"))
+    if module == "military_external":
+        cleaned["world_advance"] = _clean_world_advance(cleaned.get("world_advance"))
+    return cleaned
+
+
+def _clean_world_advance(raw: object) -> Dict[str, str]:
+    """Keep diplomacy as a compact power -> stance KV, tolerating the old verbose shape."""
+    cleaned: Dict[str, str] = {}
+    if not isinstance(raw, dict):
+        return cleaned
+    for raw_key, raw_value in raw.items():
+        key = str(raw_key).strip()
+        if not key or key == "summary":
+            continue
+        if isinstance(raw_value, dict):
+            value = (
+                raw_value.get("stance")
+                or raw_value.get("立场")
+                or raw_value.get("attitude")
+                or raw_value.get("态度")
+                or ""
+            )
+        else:
+            value = raw_value
+        text = str(value).strip()
+        if not text or text == "无新动":
+            continue
+        cleaned[key] = text[:40]
     return cleaned
 
 
@@ -406,6 +691,9 @@ def _clean_economy_moves(raw: object) -> List[Dict[str, object]]:
     if not isinstance(raw, list):
         return cleaned
     for item in raw:
+        if not isinstance(item, dict):
+            continue
+        item = _canonical_item_fields(item)
         if not isinstance(item, dict):
             continue
         account = str(item.get("account") or "").strip()
@@ -433,6 +721,9 @@ def _clean_fiscal_changes(raw: object) -> List[Dict[str, object]]:
     if not isinstance(raw, list):
         return cleaned
     for item in raw:
+        if not isinstance(item, dict):
+            continue
+        item = _canonical_item_fields(item)
         if not isinstance(item, dict):
             continue
         key = str(item.get("key") or "").strip()
@@ -497,18 +788,15 @@ def extract_scores_by_modules_with_agno(
             parsed = parse_agent_json(cleaned, f"结算抽取-{module}（sanitizer）")
         module_outputs[module] = _sanitize_module_output(module, parsed)
     merged = _merge_module_outputs(module_outputs)
-    trace_output = {
-        "mode": "modular",
-        "modules": module_outputs,
-        "merged": merged,
-        "raw": module_raw,
-    }
+    localized_merged = _localized_extraction(merged)
     trace_input = {
         "mode": "modular",
+        "system_context_note": "模块 agent 的 system instructions 先注入稳定 game_world，再注入 simulator_payload 以复用推演缓存，随后是 extractor 公共契约、extractor_context 与模块提示词；module payload 只含模块名和允许字段。",
+        "extractor_context": _extractor_compat_payload(base_payload),
         "modules": module_inputs,
     }
     return (
         merged,
-        json.dumps(trace_output, ensure_ascii=False, sort_keys=False),
+        json.dumps(localized_merged, ensure_ascii=False, sort_keys=False),
         json.dumps(trace_input, ensure_ascii=False, sort_keys=False),
     )

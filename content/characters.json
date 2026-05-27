@@ -67,7 +67,8 @@
       "style": "持重守法",
       "birth_year": 1559,
       "historical_death_year": 1637,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "张瑞图",
@@ -92,7 +93,8 @@
       "style": "文名附阉",
       "birth_year": 1570,
       "historical_death_year": 1641,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "来宗道",
@@ -116,7 +118,8 @@
       "style": "明哲守位",
       "birth_year": 1560,
       "historical_death_year": 1632,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "施凤来",
@@ -141,7 +144,8 @@
       "style": "依违苟且",
       "birth_year": 1563,
       "historical_death_year": 1642,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "黄立极",
@@ -166,7 +170,8 @@
       "style": "畏葸附阉",
       "birth_year": 1568,
       "historical_death_year": 1637,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "王绍徽",
@@ -191,7 +196,8 @@
       "style": "党锢酷烈",
       "birth_year": 1564,
       "historical_death_year": 0,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "毕自严",
@@ -217,7 +223,8 @@
       "style": "务实算账",
       "birth_year": 1569,
       "historical_death_year": 1638,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "杨嗣昌",
@@ -241,7 +248,8 @@
       "style": "筹谋深远",
       "birth_year": 1588,
       "historical_death_year": 0,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "温体仁",
@@ -266,7 +274,8 @@
       "style": "阴柔工心",
       "birth_year": 1573,
       "historical_death_year": 1638,
-      "historical_death_month": 7
+      "historical_death_month": 7,
+      "power_id": "ming"
     },
     {
       "name": "钱龙锡",
@@ -290,7 +299,8 @@
       "style": "缜密任事",
       "birth_year": 1579,
       "historical_death_year": 1645,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "刘鸿训",
@@ -314,7 +324,8 @@
       "style": "果敢负气",
       "birth_year": 1565,
       "historical_death_year": 1634,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "钱谦益",
@@ -338,7 +349,8 @@
       "style": "文采虚矫",
       "birth_year": 1582,
       "historical_death_year": 1664,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "李标",
@@ -362,7 +374,8 @@
       "style": "公正谨饬",
       "birth_year": 1571,
       "historical_death_year": 1642,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "孙承宗",
@@ -388,7 +401,8 @@
       "style": "老成持重",
       "birth_year": 1563,
       "historical_death_year": 0,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "崔呈秀",
@@ -414,7 +428,8 @@
       "style": "阴狠贪鄙",
       "birth_year": 1584,
       "historical_death_year": 0,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "王在晋",
@@ -438,31 +453,8 @@
       "style": "持重多虑",
       "birth_year": 1567,
       "historical_death_year": 1643,
-      "historical_death_month": 0
-    },
-    {
-      "name": "王永光",
-      "office": "兵部尚书",
-      "office_type": "兵部",
-      "faction": "中立",
-      "aliases": [
-        "王永光",
-        "王尚书",
-        "王本兵"
-      ],
-      "personal_skills": [
-        "兵部综核",
-        "铨选注官",
-        "通晓掌故"
-      ],
-      "loyalty": 55,
-      "ability": 70,
-      "integrity": 50,
-      "courage": 50,
-      "style": "圆熟趋避",
-      "birth_year": 1559,
-      "historical_death_year": 1638,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "徐光启",
@@ -487,7 +479,8 @@
       "style": "稳健试办",
       "birth_year": 1562,
       "historical_death_year": 1633,
-      "historical_death_month": 10
+      "historical_death_month": 10,
+      "power_id": "ming"
     },
     {
       "name": "袁可立",
@@ -511,7 +504,8 @@
       "style": "刚方老练",
       "birth_year": 1562,
       "historical_death_year": 1633,
-      "historical_death_month": 10
+      "historical_death_month": 10,
+      "power_id": "ming"
     },
     {
       "name": "周延儒",
@@ -535,7 +529,8 @@
       "style": "机巧善谀",
       "birth_year": 1593,
       "historical_death_year": 0,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "倪元璐",
@@ -559,7 +554,8 @@
       "style": "清正敢任",
       "birth_year": 1593,
       "historical_death_year": 0,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "黄道周",
@@ -584,7 +580,8 @@
       "style": "孤介刚介",
       "birth_year": 1585,
       "historical_death_year": 0,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "曹化淳",
@@ -609,7 +606,8 @@
       "style": "圆融周到",
       "birth_year": 1589,
       "historical_death_year": 1659,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "王体乾",
@@ -633,7 +631,8 @@
       "style": "圆滑附势",
       "birth_year": 1571,
       "historical_death_year": 0,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "王承恩",
@@ -658,7 +657,8 @@
       "style": "谨慎忠诚",
       "birth_year": 1610,
       "historical_death_year": 0,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "魏忠贤",
@@ -685,7 +685,8 @@
       "style": "狠辣专权",
       "birth_year": 1568,
       "historical_death_year": 0,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "田尔耕",
@@ -712,7 +713,8 @@
       "style": "酷烈狠辣",
       "birth_year": 1565,
       "historical_death_year": 0,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "许显纯",
@@ -736,7 +738,8 @@
       "style": "凶残刻毒",
       "birth_year": 1572,
       "historical_death_year": 0,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "李若琏",
@@ -760,7 +763,8 @@
       "style": "忠烈刚直",
       "birth_year": 1598,
       "historical_death_year": 1644,
-      "historical_death_month": 3
+      "historical_death_month": 3,
+      "power_id": "ming"
     },
     {
       "name": "客氏",
@@ -784,7 +788,8 @@
       "style": "骄横阴毒",
       "birth_year": 1588,
       "historical_death_year": 0,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "袁崇焕",
@@ -809,7 +814,8 @@
       "style": "敢任事",
       "birth_year": 1584,
       "historical_death_year": 0,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "曹文诏",
@@ -833,7 +839,8 @@
       "style": "勇冠诸将",
       "birth_year": 1590,
       "historical_death_year": 0,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "祖大寿",
@@ -858,7 +865,8 @@
       "style": "护军自重",
       "birth_year": 1579,
       "historical_death_year": 1656,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "满桂",
@@ -882,7 +890,8 @@
       "style": "粗豪敢战",
       "birth_year": 1594,
       "historical_death_year": 0,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "赵率教",
@@ -906,7 +915,8 @@
       "style": "忠勇任战",
       "birth_year": 1569,
       "historical_death_year": 0,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "王之臣",
@@ -930,7 +940,8 @@
       "style": "持重少功",
       "birth_year": 1570,
       "historical_death_year": 1631,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "毛文龙",
@@ -955,7 +966,8 @@
       "style": "跋扈难制",
       "birth_year": 1576,
       "historical_death_year": 0,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "阎鸣泰",
@@ -979,7 +991,8 @@
       "style": "附阉守边",
       "birth_year": 1568,
       "historical_death_year": 0,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "洪承畴",
@@ -1003,7 +1016,8 @@
       "style": "深沉权变",
       "birth_year": 1593,
       "historical_death_year": 1665,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "孙传庭",
@@ -1027,7 +1041,8 @@
       "style": "刚毅自负",
       "birth_year": 1593,
       "historical_death_year": 0,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "卢象升",
@@ -1051,7 +1066,8 @@
       "style": "刚烈忠勇",
       "birth_year": 1600,
       "historical_death_year": 0,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "史可法",
@@ -1074,7 +1090,8 @@
       "style": "忠贞砥砺",
       "birth_year": 1601,
       "historical_death_year": 0,
-      "historical_death_month": 0
+      "historical_death_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "周皇后",
@@ -1103,7 +1120,8 @@
       "status": "active",
       "summary": "皇后，端庄贤德，母仪天下，时常规谏圣上。",
       "debut_year": 0,
-      "debut_month": 0
+      "debut_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "周贵人",
@@ -1130,7 +1148,8 @@
       "status": "active",
       "summary": "贵人，精明干练，善于周旋，有时为娘家打探消息。",
       "debut_year": 0,
-      "debut_month": 0
+      "debut_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "田贵妃",
@@ -1158,7 +1177,8 @@
       "status": "active",
       "summary": "贵妃，娇媚善宠，专擅圣心，善歌舞，偶为外戚进言。",
       "debut_year": 0,
-      "debut_month": 0
+      "debut_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "袁贵妃",
@@ -1185,7 +1205,8 @@
       "status": "active",
       "summary": "贵妃，沉静内敛，守分安命，不争宠，深得崇祯敬重。",
       "debut_year": 0,
-      "debut_month": 0
+      "debut_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "慧妃",
@@ -1212,7 +1233,357 @@
       "status": "active",
       "summary": "妃，年轻纯真，侍奉温柔，无争宠之心。",
       "debut_year": 0,
-      "debut_month": 0
+      "debut_month": 0,
+      "power_id": "ming"
+    },
+    {
+      "name": "皇太极",
+      "office": "后金汗",
+      "office_type": "外臣",
+      "faction": "后金",
+      "aliases": [
+        "皇太极",
+        "天聪汗",
+        "黄台吉"
+      ],
+      "personal_skills": [
+        "统合八旗",
+        "战略离间",
+        "辽东经营",
+        "外交压迫"
+      ],
+      "loyalty": 88,
+      "ability": 88,
+      "integrity": 70,
+      "courage": 82,
+      "style": "沉鸷强断",
+      "birth_year": 1592,
+      "historical_death_year": 1643,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "后金汗，努尔哈赤第八子，善统合诸贝勒、经营辽沈、离间明边。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "houjin",
+      "location": "jianzhou"
+    },
+    {
+      "name": "代善",
+      "office": "和硕贝勒",
+      "office_type": "外臣",
+      "faction": "后金",
+      "aliases": [
+        "代善",
+        "大贝勒"
+      ],
+      "personal_skills": [
+        "八旗贵族",
+        "骑兵统率",
+        "汗廷共议"
+      ],
+      "loyalty": 70,
+      "ability": 76,
+      "integrity": 55,
+      "courage": 78,
+      "style": "老成持重",
+      "birth_year": 1583,
+      "historical_death_year": 1648,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "后金大贝勒，努尔哈赤次子，旧部威望重，是皇太极必须安抚的八旗贵族。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "manchu_banners",
+      "location": "jianzhou"
+    },
+    {
+      "name": "莽古尔泰",
+      "office": "贝勒",
+      "office_type": "外臣",
+      "faction": "后金",
+      "aliases": [
+        "莽古尔泰",
+        "三贝勒"
+      ],
+      "personal_skills": [
+        "勇悍骑战",
+        "八旗贵族",
+        "汗廷掣肘"
+      ],
+      "loyalty": 58,
+      "ability": 70,
+      "integrity": 42,
+      "courage": 86,
+      "style": "悍勇粗暴",
+      "birth_year": 1587,
+      "historical_death_year": 1633,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "后金贝勒，勇悍而多疑，与皇太极之间有权力张力。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "manchu_banners",
+      "location": "jianzhou"
+    },
+    {
+      "name": "阿敏",
+      "office": "贝勒",
+      "office_type": "外臣",
+      "faction": "后金",
+      "aliases": [
+        "阿敏"
+      ],
+      "personal_skills": [
+        "边外征掠",
+        "贵族自专",
+        "骑兵统率"
+      ],
+      "loyalty": 52,
+      "ability": 72,
+      "integrity": 38,
+      "courage": 78,
+      "style": "骄横自专",
+      "birth_year": 1586,
+      "historical_death_year": 1640,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "后金贝勒，善征掠但自主性强，可能成为明廷离间八旗的缝隙。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "manchu_banners",
+      "location": "jianzhou"
+    },
+    {
+      "name": "范文程",
+      "office": "后金文馆谋臣",
+      "office_type": "外臣",
+      "faction": "后金",
+      "aliases": [
+        "范文程",
+        "范章京"
+      ],
+      "personal_skills": [
+        "文书谋划",
+        "招降辽人",
+        "明制情报",
+        "外交辞令"
+      ],
+      "loyalty": 72,
+      "ability": 84,
+      "integrity": 50,
+      "courage": 55,
+      "style": "冷静务实",
+      "birth_year": 1597,
+      "historical_death_year": 1666,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "辽东降附文臣，熟悉明制，为后金通译、文书、招降和制度建设出谋。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "han_banners",
+      "location": "shenyang_liaoyang"
+    },
+    {
+      "name": "佟养性",
+      "office": "后金汉军将领",
+      "office_type": "外臣",
+      "faction": "后金",
+      "aliases": [
+        "佟养性"
+      ],
+      "personal_skills": [
+        "铸炮火器",
+        "辽人降军",
+        "工匠组织"
+      ],
+      "loyalty": 68,
+      "ability": 74,
+      "integrity": 45,
+      "courage": 62,
+      "style": "务实求进",
+      "birth_year": 1577,
+      "historical_death_year": 1632,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "辽东降附将领，协助后金修炮、组织辽人降兵与工匠。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "han_banners",
+      "location": "shenyang_liaoyang"
+    },
+    {
+      "name": "林丹汗",
+      "office": "察哈尔汗",
+      "office_type": "外臣",
+      "faction": "蒙古",
+      "aliases": [
+        "林丹汗",
+        "林丹巴图尔"
+      ],
+      "personal_skills": [
+        "草原统合",
+        "骑兵机动",
+        "汗权名分"
+      ],
+      "loyalty": 64,
+      "ability": 78,
+      "integrity": 52,
+      "courage": 80,
+      "style": "骄矜求统",
+      "birth_year": 1592,
+      "historical_death_year": 1634,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "察哈尔汗，试图重振蒙古大汗权威，在明朝赏市与后金压迫间寻找生路。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "mongol",
+      "location": "mongol_chahar"
+    },
+    {
+      "name": "仁祖",
+      "office": "朝鲜国王",
+      "office_type": "外臣",
+      "faction": "朝鲜",
+      "aliases": [
+        "仁祖",
+        "李倧",
+        "朝鲜王"
+      ],
+      "personal_skills": [
+        "藩属权衡",
+        "朝贡礼制",
+        "避战自保"
+      ],
+      "loyalty": 62,
+      "ability": 65,
+      "integrity": 58,
+      "courage": 42,
+      "style": "谨慎多疑",
+      "birth_year": 1595,
+      "historical_death_year": 1649,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "朝鲜国王，丁卯之役后被迫与后金缔盟，仍暗中倾明以保宗社。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "korea",
+      "location": "korea"
+    },
+    {
+      "name": "张维",
+      "office": "朝鲜朝臣",
+      "office_type": "外臣",
+      "faction": "朝鲜",
+      "aliases": [
+        "张维",
+        "朝鲜张维"
+      ],
+      "personal_skills": [
+        "亲明士论",
+        "文书外交",
+        "朝鲜朝议"
+      ],
+      "loyalty": 70,
+      "ability": 72,
+      "integrity": 68,
+      "courage": 45,
+      "style": "持论亲明",
+      "birth_year": 1587,
+      "historical_death_year": 1638,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "朝鲜文臣，代表亲明士论与朝贡名分，对援明和避战皆有影响。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "korea",
+      "location": "korea"
+    },
+    {
+      "name": "王嘉胤",
+      "office": "陕北流寇首领",
+      "office_type": "外臣",
+      "faction": "流寇",
+      "aliases": [
+        "王嘉胤"
+      ],
+      "personal_skills": [
+        "啸聚饥民",
+        "山地流窜",
+        "裹挟逃卒"
+      ],
+      "loyalty": 50,
+      "ability": 58,
+      "integrity": 30,
+      "courage": 72,
+      "style": "悍黠求活",
+      "birth_year": 0,
+      "historical_death_year": 1631,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "陕北早期流寇首领，饥民、逃卒、驿卒裁汰者多依附其部。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "bandits",
+      "location": "shaanxi"
+    },
+    {
+      "name": "李自成",
+      "office": "驿卒，潜在流寇首领",
+      "office_type": "外臣",
+      "faction": "流寇",
+      "aliases": [
+        "李自成",
+        "闯将"
+      ],
+      "personal_skills": [
+        "坚忍聚众",
+        "骑兵机动",
+        "流民号召"
+      ],
+      "loyalty": 45,
+      "ability": 76,
+      "integrity": 38,
+      "courage": 82,
+      "style": "坚忍寡言",
+      "birth_year": 1606,
+      "historical_death_year": 1645,
+      "historical_death_month": 0,
+      "status": "offstage",
+      "summary": "陕北驿卒出身，若裁驿、饥荒和官军失控共振，可能成为后期流寇核心。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "bandits",
+      "location": "shaanxi"
+    },
+    {
+      "name": "张献忠",
+      "office": "边兵，潜在流寇首领",
+      "office_type": "外臣",
+      "faction": "流寇",
+      "aliases": [
+        "张献忠",
+        "八大王"
+      ],
+      "personal_skills": [
+        "凶悍流窜",
+        "奇袭破城",
+        "裹挟胁从"
+      ],
+      "loyalty": 42,
+      "ability": 74,
+      "integrity": 25,
+      "courage": 88,
+      "style": "凶悍多疑",
+      "birth_year": 1606,
+      "historical_death_year": 1647,
+      "historical_death_month": 0,
+      "status": "offstage",
+      "summary": "陕西边地人物，若乱局扩大，可能成为高机动、高破坏的流寇首领。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "bandits",
+      "location": "shaanxi"
     }
   ]
 }

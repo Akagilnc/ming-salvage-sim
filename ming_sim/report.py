@@ -66,9 +66,9 @@ def format_army_changes(changes: List[Dict[str, object]]) -> str:
     return "；".join(parts) + "。"
 
 
-def format_external_power_changes(changes: List[Dict[str, object]]) -> str:
+def format_power_changes(changes: List[Dict[str, object]]) -> str:
     if not changes:
-        return f"本{TURN_UNIT}未见明确外部势力盘面变化。"
+        return f"本{TURN_UNIT}未见明确势力盘面变化。"
     parts = []
     for change in changes:
         delta = change["delta"]

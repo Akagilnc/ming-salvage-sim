@@ -419,6 +419,8 @@ def run_cli(
     api_key: str = "",
     start_ym: str = "",
     advanced_model: str = "",
+    advanced_base_url: str = "",
+    advanced_api_key: str = "",
 ) -> None:
     """CLI 主循环：建 GameSession，逐回合 play_turn。"""
     from ming_sim.llm_config import load_llm_config
@@ -427,14 +429,25 @@ def run_cli(
 
     session: Optional[GameSession] = None
     try:
-        llm_config = load_llm_config(base_url, model, api_key=api_key, advanced_model=advanced_model)
+        llm_config = load_llm_config(
+            base_url,
+            model,
+            api_key=api_key,
+            advanced_model=advanced_model,
+            advanced_base_url=advanced_base_url,
+            advanced_api_key=advanced_api_key,
+        )
         import os
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
         session = GameSession(db_path, llm_config, start_ym=start_ym)
         print("《明末力挽狂澜》文字 MVP")
         print(f"你是刚刚登基的崇祯。每回合一个{TURN_UNIT}：看奏报、召见大臣、下圣旨、听回奏。")
         print(f"手动玩法：quit/退朝 = 结束本{TURN_UNIT}进入下一{TURN_UNIT}；exit/退出游戏 = 退出程序。")
-        adv_hint = f"（推演/打分用 {llm_config.advanced_model}）" if (llm_config.advanced_model or "").strip() else ""
+        if (llm_config.advanced_model or "").strip():
+            adv_url = (llm_config.advanced_base_url or "").strip() or base_url
+            adv_hint = f"（推演/打分用 {llm_config.advanced_model} @ {adv_url}）"
+        else:
+            adv_hint = ""
         print(f"当前 LLM：{model} @ {base_url}{adv_hint}")
         print(f"数据库：{db_path}\n")
         while True:

@@ -26,19 +26,7 @@ import pexpect
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-# 自动加载项目根 .env，让脚本无需手动 source .env 也能读到 API key
-_env_file = ROOT / ".env"
-if _env_file.exists():
-    with _env_file.open(encoding="utf-8") as _f:
-        for _line in _f:
-            _line = _line.strip()
-            if not _line or _line.startswith("#") or "=" not in _line:
-                continue
-            _k, _, _v = _line.partition("=")
-            _k = _k.strip()
-            _v = _v.strip().strip('"').strip("'")
-            if _k:  # .env 强制覆盖 shell 环境，避免旧值干扰
-                os.environ[_k] = _v
+# 只用系统/shell 环境变量，不再读项目 .env（先 export 或 set -a; source .env; set +a）
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
@@ -267,6 +255,7 @@ def run(
     db_path: str,
     agno_db_path: str,
     timeout: int = 600,
+    resume: bool = False,
 ) -> int:
     log_file = open(log_path, "w", encoding="utf-8")
 
@@ -280,12 +269,19 @@ def run(
     log(f"性格：{persona}")
     log(f"月数：{turns}")
     log(f"DB：{db_path}")
-    log(f"模型：{model} @ {base_url}\n")
+    log(f"模型：{model} @ {base_url}")
+    log(f"模式：{'续跑既有存档' if resume else '清库重开'}\n")
 
-    # 清旧 DB
-    for path in [db_path, agno_db_path]:
-        if os.path.exists(path):
-            os.remove(path)
+    # 清旧 DB（--resume 时保留，从上次回合接着跑；main.py 读既有 game_state 自动续）
+    if resume:
+        missing = [p for p in (db_path, agno_db_path) if not os.path.exists(p)]
+        if missing:
+            sys.exit(f"--resume 指定续跑，但存档不存在：{missing}。去掉 --resume 开新局，或核对 --db/--agno-db 路径。")
+        log("[续跑] 保留既有存档，从上次回合接着跑。")
+    else:
+        for path in [db_path, agno_db_path, agno_db_path + ".emperor.db"]:
+            if os.path.exists(path):
+                os.remove(path)
 
     emperor = create_emperor_agent(api_key, base_url, model, goal, persona, agno_db_path + ".emperor.db")
 
@@ -453,12 +449,17 @@ def main() -> None:
         help="LLM model（优先 PLAYTEST_MODEL → OPENAI_MODEL）",
     )
     parser.add_argument("--timeout", type=int, default=300, help="单步 CLI 超时（秒）")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="续跑既有存档：不删 --db/--agno-db，从上次回合接着跑 --turns 个月。默认（不带此flag）清库重开。",
+    )
     args = parser.parse_args()
 
     api_key = (os.environ.get("PLAYTEST_API_KEY")
                or os.environ.get("OPENAI_API_KEY", "")).strip()
     if not api_key:
-        sys.exit("PLAYTEST_API_KEY / OPENAI_API_KEY 均未设置，请先配置 .env。")
+        sys.exit("PLAYTEST_API_KEY / OPENAI_API_KEY 均未设置，请先 export 或 set -a; source .env; set +a。")
 
     os.makedirs(os.path.dirname(args.log) or ".", exist_ok=True)
     os.makedirs(os.path.dirname(args.db) or ".", exist_ok=True)
@@ -475,6 +476,7 @@ def main() -> None:
             db_path=args.db,
             agno_db_path=args.agno_db,
             timeout=args.timeout,
+            resume=args.resume,
         )
     )
 

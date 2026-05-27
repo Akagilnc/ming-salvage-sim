@@ -1,8 +1,24 @@
 {
   "powers": [
     {
+      "id": "ming",
+      "name": "大明",
+      "kind": "自身",
+      "leader": "崇祯帝",
+      "stance": "自身",
+      "leverage": 60,
+      "satisfaction": 50,
+      "military_strength": 55,
+      "cohesion": 45,
+      "supply": 50,
+      "agenda": "中兴大明、平辽剿寇、整顿财政与边防",
+      "status": "崇祯元年新立，诛阉党，内有民变外有建虏",
+      "last_action": "诛魏忠贤、起复部分东林"
+    },
+    {
       "id": "houjin",
       "name": "后金",
+      "kind": "敌国",
       "leader": "皇太极",
       "stance": "敌对",
       "leverage": 78,
@@ -17,6 +33,7 @@
     {
       "id": "manchu_banners",
       "name": "满洲八旗",
+      "kind": "敌国",
       "leader": "皇太极、代善、莽古尔泰、阿敏",
       "stance": "敌对",
       "leverage": 82,
@@ -31,6 +48,7 @@
     {
       "id": "han_banners",
       "name": "汉军与辽人降兵",
+      "kind": "敌国",
       "leader": "佟养性、范文程等降附文武",
       "stance": "敌对",
       "leverage": 46,
@@ -45,6 +63,7 @@
     {
       "id": "mongol",
       "name": "蒙古",
+      "kind": "部族",
       "leader": "林丹汗（察哈尔）",
       "stance": "摇摆",
       "leverage": 45,
@@ -59,6 +78,7 @@
     {
       "id": "korea",
       "name": "朝鲜",
+      "kind": "藩属",
       "leader": "仁祖（李倧）",
       "stance": "倾明",
       "leverage": 30,
@@ -73,6 +93,7 @@
     {
       "id": "bandits",
       "name": "流寇",
+      "kind": "内乱",
       "leader": "王嘉胤等",
       "stance": "潜伏",
       "leverage": 25,

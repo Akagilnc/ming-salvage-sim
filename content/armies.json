@@ -23,7 +23,8 @@
       "arrears": 45,
       "mobility": 35,
       "loyalty": 48,
-      "status": "拱卫京师但空额、克扣和操练废弛严重。"
+      "status": "拱卫京师但空额、克扣和操练废弛严重。",
+      "owner_power": "ming"
     },
     {
       "id": "guanning",
@@ -42,7 +43,8 @@
       "arrears": 70,
       "mobility": 48,
       "loyalty": 55,
-      "status": "宁锦守线尚可，欠饷严重，主动大举出击风险极高。"
+      "status": "宁锦守线尚可，欠饷严重，主动大举出击风险极高。",
+      "owner_power": "ming"
     },
     {
       "id": "shanhaiguan",
@@ -61,7 +63,8 @@
       "arrears": 35,
       "mobility": 28,
       "loyalty": 58,
-      "status": "京师门户，守强攻弱，需与宁锦军饷联动。"
+      "status": "京师门户，守强攻弱，需与宁锦军饷联动。",
+      "owner_power": "ming"
     },
     {
       "id": "xuan_da",
@@ -80,7 +83,8 @@
       "arrears": 58,
       "mobility": 54,
       "loyalty": 50,
-      "status": "边饷紧、旱灾重，防蒙古与后金绕袭压力并存。"
+      "status": "边饷紧、旱灾重，防蒙古与后金绕袭压力并存。",
+      "owner_power": "ming"
     },
     {
       "id": "jizhen",
@@ -99,7 +103,8 @@
       "arrears": 52,
       "mobility": 50,
       "loyalty": 49,
-      "status": "京师屏障，欠饷和军纪问题会直接牵动京畿。"
+      "status": "京师屏障，欠饷和军纪问题会直接牵动京畿。",
+      "owner_power": "ming"
     },
     {
       "id": "denglai",
@@ -118,7 +123,8 @@
       "arrears": 42,
       "mobility": 62,
       "loyalty": 46,
-      "status": "可支援辽东和海运，但虚实难辨，兵变风险需防。"
+      "status": "可支援辽东和海运，但虚实难辨，兵变风险需防。",
+      "owner_power": "ming"
     },
     {
       "id": "dongjiang",
@@ -137,7 +143,8 @@
       "arrears": 66,
       "mobility": 72,
       "loyalty": 38,
-      "status": "牵制后金有用，但自主性强、报功报饷虚实难辨。"
+      "status": "牵制后金有用，但自主性强、报功报饷虚实难辨。",
+      "owner_power": "ming"
     },
     {
       "id": "shaanxi_army",
@@ -156,7 +163,8 @@
       "arrears": 75,
       "mobility": 50,
       "loyalty": 34,
-      "status": "饥荒、裁驿和欠饷交叠，易与地方民变互相点燃。"
+      "status": "饥荒、裁驿和欠饷交叠，易与地方民变互相点燃。",
+      "owner_power": "ming"
     },
     {
       "id": "nanjing_garrison",
@@ -175,7 +183,8 @@
       "arrears": 30,
       "mobility": 45,
       "loyalty": 52,
-      "status": "江南财赋重地，军力可守不可远征，士绅牵制明显。"
+      "status": "江南财赋重地，军力可守不可远征，士绅牵制明显。",
+      "owner_power": "ming"
     },
     {
       "id": "fujian_navy",
@@ -194,7 +203,8 @@
       "arrears": 40,
       "mobility": 70,
       "loyalty": 45,
-      "status": "海防与海贸灰区纠缠，能巡海但难离本省太久。"
+      "status": "海防与海贸灰区纠缠，能巡海但难离本省太久。",
+      "owner_power": "ming"
     },
     {
       "id": "guangdong_navy",
@@ -213,7 +223,8 @@
       "arrears": 35,
       "mobility": 68,
       "loyalty": 47,
-      "status": "可守海口与护商，远离本地会受地方掣肘。"
+      "status": "可守海口与护商，远离本地会受地方掣肘。",
+      "owner_power": "ming"
     },
     {
       "id": "southwest_tusi",
@@ -232,7 +243,108 @@
       "arrears": 28,
       "mobility": 60,
       "loyalty": 32,
-      "status": "山地作战有用，听调取决于土司关系和赏赐名分。"
+      "status": "山地作战有用，听调取决于土司关系和赏赐名分。",
+      "owner_power": "ming"
+    },
+    {
+      "id": "manchu_banners_main",
+      "name": "满洲八旗主力",
+      "station": "建州 / 赫图阿拉",
+      "theater": "辽东外线",
+      "commander": "皇太极、代善、莽古尔泰",
+      "controller": "后金汗廷",
+      "troop_type": "八旗骑步、披甲、巴牙喇",
+      "manpower": 62000,
+      "maintenance_per_turn": 0,
+      "supply": 58,
+      "morale": 76,
+      "training": 78,
+      "equipment": 68,
+      "arrears": 0,
+      "mobility": 82,
+      "loyalty": 72,
+      "status": "努尔哈赤旧部仍强，皇太极新立，诸贝勒共议牵制汗权。",
+      "owner_power": "houjin"
+    },
+    {
+      "id": "han_liaoren_corps",
+      "name": "汉军与辽人降兵",
+      "station": "沈阳 / 辽阳",
+      "theater": "辽东外线",
+      "commander": "佟养性、范文程等",
+      "controller": "后金汗廷",
+      "troop_type": "降军、炮匠、步卒、通译文吏",
+      "manpower": 18000,
+      "maintenance_per_turn": 0,
+      "supply": 48,
+      "morale": 52,
+      "training": 44,
+      "equipment": 50,
+      "arrears": 0,
+      "mobility": 42,
+      "loyalty": 46,
+      "status": "尚未成后世汉八旗规模，但铸炮、通译、招降明边价值渐增。",
+      "owner_power": "han_banners"
+    },
+    {
+      "id": "mongol_chahar_host",
+      "name": "察哈尔诸部骑兵",
+      "station": "察哈尔 / 漠南草原",
+      "theater": "漠南草原",
+      "commander": "林丹汗",
+      "controller": "察哈尔汗廷",
+      "troop_type": "草原骑兵、部族兵",
+      "manpower": 36000,
+      "maintenance_per_turn": 0,
+      "supply": 42,
+      "morale": 58,
+      "training": 60,
+      "equipment": 46,
+      "arrears": 0,
+      "mobility": 86,
+      "loyalty": 38,
+      "status": "诸部离心，仍有机动优势；若后金压迫过甚，可能西走或倒向一方。",
+      "owner_power": "mongol"
+    },
+    {
+      "id": "korean_border_army",
+      "name": "朝鲜边军",
+      "station": "朝鲜 / 义州平壤",
+      "theater": "朝鲜",
+      "commander": "朝鲜备边司诸将",
+      "controller": "朝鲜朝廷",
+      "troop_type": "边军、弓手、火器兵、水军",
+      "manpower": 28000,
+      "maintenance_per_turn": 0,
+      "supply": 46,
+      "morale": 44,
+      "training": 42,
+      "equipment": 40,
+      "arrears": 0,
+      "mobility": 45,
+      "loyalty": 55,
+      "status": "丁卯之役后谨慎自保，明后金之间左右支应。",
+      "owner_power": "korea"
+    },
+    {
+      "id": "bandit_wangjiayin",
+      "name": "王嘉胤部",
+      "station": "陕西 / 清涧绥德山谷",
+      "theater": "陕北",
+      "commander": "王嘉胤",
+      "controller": "自立",
+      "troop_type": "饥民、逃卒、驿卒裹挟",
+      "manpower": 3500,
+      "maintenance_per_turn": 0,
+      "supply": 22,
+      "morale": 58,
+      "training": 20,
+      "equipment": 18,
+      "arrears": 0,
+      "mobility": 66,
+      "loyalty": 42,
+      "status": "小股啸聚初成气候，若陕西赈抚失措，极易滚成大股流寇。",
+      "owner_power": "bandits"
     }
   ]
 }

@@ -88,12 +88,16 @@ class WebGame:
         model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
         api_key = os.environ.get("OPENAI_API_KEY", "")
         advanced_model = os.environ.get("OPENAI_ADVANCED_MODEL", "")
+        advanced_base_url = os.environ.get("OPENAI_ADVANCED_BASE_URL", "")
+        advanced_api_key = os.environ.get("OPENAI_ADVANCED_API_KEY", "")
         # 菜单写的 runtime_llm.json 优先于 env，让"在网页里改的配置"重启后仍生效。
         runtime = load_runtime_llm()
         base_url = runtime.get("base_url") or base_url
         model = runtime.get("model") or model
         api_key = runtime.get("api_key") or api_key
         advanced_model = runtime.get("advanced_model") or advanced_model
+        advanced_base_url = runtime.get("advanced_base_url") or advanced_base_url
+        advanced_api_key = runtime.get("advanced_api_key") or advanced_api_key
         max_tokens = int(runtime.get("max_tokens") or 8000)
         if not api_key:
             raise LLMUnavailable("未配 API key，请先到设置页填写。")
@@ -108,12 +112,15 @@ class WebGame:
                         os.remove(target)
                     except OSError:
                         pass
+        adv_base = (advanced_base_url or "").strip()
         llm_config = LLMConfig(
             api_key=api_key,
             base_url=normalize_openai_base_url(base_url),
             model=model,
             max_tokens=max_tokens,
             advanced_model=(advanced_model or "").strip(),
+            advanced_base_url=normalize_openai_base_url(adv_base) if adv_base else "",
+            advanced_api_key=(advanced_api_key or "").strip(),
         )
         self.session = GameSession(db_path, llm_config)
         self.session.begin_turn()
@@ -231,22 +238,35 @@ class WebGame:
         api_key: str,
         max_tokens: int = 0,
         advanced_model: Optional[str] = None,
+        advanced_base_url: Optional[str] = None,
+        advanced_api_key: Optional[str] = None,
     ) -> LLMConfig:
         base = normalize_openai_base_url(base_url.strip() or self.session.llm_config.base_url)
         new_model = model.strip() or self.session.llm_config.model
         new_key = api_key.strip() or self.session.llm_config.api_key
         new_max = max_tokens if max_tokens > 0 else self.session.llm_config.max_tokens
-        # advanced_model=None 表示不动；传空串表示显式清空。
+        # advanced_* = None 表示不动；传空串表示显式清空。
         if advanced_model is None:
             new_advanced = self.session.llm_config.advanced_model
         else:
             new_advanced = advanced_model.strip()
+        if advanced_base_url is None:
+            new_adv_base = self.session.llm_config.advanced_base_url
+        else:
+            adv_base_in = advanced_base_url.strip()
+            new_adv_base = normalize_openai_base_url(adv_base_in) if adv_base_in else ""
+        if advanced_api_key is None:
+            new_adv_key = self.session.llm_config.advanced_api_key
+        else:
+            new_adv_key = advanced_api_key.strip()
         new_config = LLMConfig(
             api_key=new_key,
             base_url=base,
             model=new_model,
             max_tokens=new_max,
             advanced_model=new_advanced,
+            advanced_base_url=new_adv_base,
+            advanced_api_key=new_adv_key,
         )
         verify_llm_available(new_config)
         save_runtime_llm(
@@ -255,6 +275,8 @@ class WebGame:
             new_config.api_key,
             new_config.max_tokens,
             new_config.advanced_model,
+            new_config.advanced_base_url,
+            new_config.advanced_api_key,
         )
         self.session.llm_config = new_config
         # 重建 registry 让大臣 Agent 用新配置
@@ -307,6 +329,10 @@ class WebGame:
         office = character.office  # 去职者已被清空，可能为空串
         # summary 不含官职（卡片/详情已单独显 office），避免重复
         summary = f"{character.faction}一系，行事{character.style}。"
+        power_row = self.db.conn.execute(
+            "SELECT power_id FROM characters WHERE name=?", (character.name,)
+        ).fetchone()
+        power_id = (power_row["power_id"] if power_row else None) or getattr(character, "power_id", "ming") or "ming"
         return {
             "name": character.name,
             "office": office,
@@ -318,6 +344,7 @@ class WebGame:
             "status_label": status_label,
             "summary": summary,
             "portrait_id": character.portrait_id,
+            "power_id": power_id,
             "skills": [
                 {
                     "id": skill_id,
@@ -578,8 +605,8 @@ class WebGame:
             "budget": self.budget_payload(),
             "region_warning": self.db.region_report(limit=5),
             "army_warning": self.db.army_report(limit=5),
-            "external_power_warning": self.db.external_power_report(),
-            "external_powers": self.db.external_power_payload(),
+            "power_warning": self.db.power_report(exclude_self=True),
+            "powers": self.db.power_payload(),
             "victory_status": self.session.victory(),
             "events": [],
             "regions": self.db.region_payload(),
@@ -843,6 +870,8 @@ async def api_menu_status() -> Dict[str, Any]:
             "has_api_key": has_api_key,
             "max_tokens": int(runtime.get("max_tokens") or 8000),
             "advanced_model": runtime.get("advanced_model") or os.environ.get("OPENAI_ADVANCED_MODEL", ""),
+            "advanced_base_url": runtime.get("advanced_base_url") or os.environ.get("OPENAI_ADVANCED_BASE_URL", ""),
+            "has_advanced_api_key": bool(runtime.get("advanced_api_key") or os.environ.get("OPENAI_ADVANCED_API_KEY")),
         },
     }
 
@@ -935,6 +964,8 @@ class LlmSetupRequest(BaseModel):
     api_key: str
     max_tokens: int = 8000
     advanced_model: str = ""
+    advanced_base_url: str = ""
+    advanced_api_key: str = ""
 
 
 @app.post("/api/menu/llm")
@@ -944,6 +975,9 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     model = (request.model or "").strip()
     api_key = (request.api_key or "").strip()
     advanced_model = (request.advanced_model or "").strip()
+    adv_base_in = (request.advanced_base_url or "").strip()
+    advanced_base_url = normalize_openai_base_url(adv_base_in) if adv_base_in else ""
+    advanced_api_key = (request.advanced_api_key or "").strip()
     max_tokens = request.max_tokens if request.max_tokens > 0 else 8000
     if not (base_url and model):
         raise HTTPException(status_code=400, detail="base_url / model 不能为空。")
@@ -952,7 +986,19 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         api_key = existing.get("api_key") or os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
         raise HTTPException(status_code=400, detail="api_key 未配置，请填写。")
-    save_runtime_llm(normalize_openai_base_url(base_url), model, api_key, max_tokens, advanced_model)
+    # advanced_api_key 留空：复用已存的（避免覆盖成空）。
+    if advanced_model and not advanced_api_key:
+        existing = load_runtime_llm()
+        advanced_api_key = existing.get("advanced_api_key") or os.environ.get("OPENAI_ADVANCED_API_KEY", "")
+    save_runtime_llm(
+        normalize_openai_base_url(base_url),
+        model,
+        api_key,
+        max_tokens,
+        advanced_model,
+        advanced_base_url,
+        advanced_api_key,
+    )
     return {
         "ok": True,
         "llm": {
@@ -961,6 +1007,8 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
             "has_api_key": True,
             "max_tokens": max_tokens,
             "advanced_model": advanced_model,
+            "advanced_base_url": advanced_base_url,
+            "has_advanced_api_key": bool(advanced_api_key),
         },
     }
 app.add_middleware(
@@ -1035,23 +1083,6 @@ async def api_map() -> Dict[str, Any]:
 @app.get("/api/buildings")
 async def api_buildings(region_id: str = "") -> Dict[str, Any]:
     return {"buildings": get_game().db.building_payload(region_id)}
-
-
-@app.get("/api/ministers")
-async def api_ministers(group: str = "全部", kind: str = "court") -> Dict[str, Any]:
-    is_harem = kind == "harem"
-    # 朝堂列表：在朝 + 本朝去职（罢/狱/流/仕）；不含未登场(offstage)与已殁(dead)，免列表被历史死人刷爆。
-    # 后宫维持仅 active。
-    visible = {"active"} if is_harem else {"active", "dismissed", "imprisoned", "exiled", "retired"}
-    ministers = [
-        get_game().public_character(c)
-        for c in get_game().content.characters.values()
-        if (c.office_type == "后宫") == is_harem
-        and get_game().db.get_character_status(c.name)[0] in visible
-    ]
-    if group == "收藏":
-        ministers = [m for m in ministers if m["name"] in get_game().favorites]
-    return {"group": group, "ministers": ministers}
 
 
 @app.post("/api/favorites/{minister_name}")
@@ -1270,6 +1301,8 @@ class LLMConfigRequest(BaseModel):
     max_tokens: int = 0
     # None=不动，""=显式清空，其他=覆写。pydantic v1 默认 None 走不进来；用 sentinel "__keep__"
     advanced_model: str = "__keep__"
+    advanced_base_url: str = "__keep__"
+    advanced_api_key: str = "__keep__"
 
 
 @app.get("/api/consorts/candidates")
@@ -1340,6 +1373,8 @@ async def api_get_llm_config() -> Dict[str, Any]:
         "model": cfg.model,
         "max_tokens": cfg.max_tokens,
         "advanced_model": cfg.advanced_model,
+        "advanced_base_url": cfg.advanced_base_url,
+        "has_advanced_api_key": bool(cfg.advanced_api_key),
         "has_api_key": bool(cfg.api_key),
         "persisted": {
             "base_url": saved.get("base_url", ""),
@@ -1347,6 +1382,8 @@ async def api_get_llm_config() -> Dict[str, Any]:
             "has_api_key": bool(saved.get("api_key", "")),
             "max_tokens": int(saved.get("max_tokens") or 8000),
             "advanced_model": saved.get("advanced_model", ""),
+            "advanced_base_url": saved.get("advanced_base_url", ""),
+            "has_advanced_api_key": bool(saved.get("advanced_api_key", "")),
         },
     }
 
@@ -1354,6 +1391,8 @@ async def api_get_llm_config() -> Dict[str, Any]:
 @app.post("/api/llm/config")
 async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
     advanced = None if request.advanced_model == "__keep__" else request.advanced_model
+    adv_base = None if request.advanced_base_url == "__keep__" else request.advanced_base_url
+    adv_key = None if request.advanced_api_key == "__keep__" else request.advanced_api_key
     try:
         cfg = get_game().apply_llm_config(
             request.base_url,
@@ -1361,6 +1400,8 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
             request.api_key,
             request.max_tokens,
             advanced_model=advanced,
+            advanced_base_url=adv_base,
+            advanced_api_key=adv_key,
         )
     except LLMUnavailable as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
@@ -1371,6 +1412,8 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
         "model": cfg.model,
         "max_tokens": cfg.max_tokens,
         "advanced_model": cfg.advanced_model,
+        "advanced_base_url": cfg.advanced_base_url,
+        "has_advanced_api_key": bool(cfg.advanced_api_key),
         "has_api_key": bool(cfg.api_key),
     }
 

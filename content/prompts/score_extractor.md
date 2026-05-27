@@ -7,7 +7,7 @@
 1. **拆章节**：把邸报 narrative 按章节切开（识别「一、xxx」「二、xxx」「三、xxx」直到「陛下未知者」「待办未解」）。每章有一个主题。
 2. **逐章扫**：对每一章按下面流程走完，再进下一章。
    - **判主题**：人事任免 / 地方动静 / 军事战事 / 局势推进 / 财政诏令 / 外族动向 / 候选事件浮现 / 陛下未知者，对照下方「章节 → 字段」速查表。
-   - **对盘面**：写数值前先在 input 的 `regions` / `armies` / `external_powers` / `active_ministers` 表里查当前行，按当前值算 delta，不凭印象。
+   - **对盘面**：写数值前先在 input 的 `regions` / `armies` / `powers` / `active_ministers` 表里查当前行，按当前值算 delta，不凭印象。
    - **定档位**：基于章节里的事件烈度（手段、规模、波及面、对手反扑），按下方「档位判定标准」选档，落到对应字段。
    - **落字段**：把本章涉及的字段（可多个）增量累加到工作区。
 3. **整理合并**：扫完所有章节后：
@@ -17,8 +17,9 @@
 4. **新立与结案**：
    - `new_issues` 只两个合法来源（见「局势立项规则」），邸报现象禁立。
    - 逐条对照 active_issues 的 resolve_condition / fail_condition 与邸报，判 `close_issues`（见「局势推进规则」）。
-5. **最后扫 economy_moves / fiscal_changes / office_changes / character_status_changes**（朝臣人事）+ `appointments`（仅后宫纳妃）+ `secret_order_updates`（密令副作用）——通常来自人事章与财政章，任何章节涉及都要补。密令副作用：**专门扫邸报「密旨动向」章**，逐条对照 `secret_orders` 列表，凡该章写到某进行中密令引发的副作用（风声走漏/被查者反扑/牵连旁人等），抽入 `secret_order_updates`。**只抽副作用，绝不抽结案**——密令的 done/failed 由承办人回奏决定，推演无权了结。
+5. **最后扫 economy_moves / fiscal_changes / office_changes / character_status_changes / character_power_changes**（朝臣人事）+ `appointments`（仅后宫纳妃）+ `secret_order_updates` / `secret_order_closes`（密令副作用与核议）——通常来自人事章、财政章、军事外势章，任何章节涉及都要补。
    - **朝臣人事只两类**：官职变更（任何人当某官——新进朝堂、调任、升迁，全是 `office_changes`，不必判此人在不在册）；去职（罢/狱/流/仕/卒 → `character_status_changes`）。以末章「人事除目」节为准，逐行对抽。
+   - **人物易主另算一类**：明将/朝臣降敌、叛臣归正、人物归属势力改变 → `character_power_changes`，不要写成官职变更或状态变化。
    - `appointments` **只用于后宫纳妃**，朝臣一律不进。
 
 ## 章节 → 字段速查表
@@ -27,10 +28,10 @@
 |---|---|
 | 人事任免（擢/拜/起/迁/补/调/升 任某官 + 革职/下狱/赐死/致仕/卒）| `office_changes`（任某官——含新进朝堂与在朝调任升迁）、`character_status_changes`（去职）、配套 `faction_delta`、`metric_delta`；后宫纳妃才用 `appointments` |
 | 地方动静（清丈/抗税/民变/灾荒/赈济）| `region_delta`（含 `corruption`，见下注）、`class_delta`、`economy_moves`（赈灾银）、配套 `issue_advances` |
-| 军事战事（欠饷/哗变/调度/战报）| `army_delta`、配套 `external_power_updates`、`economy_moves`（军饷追拨）|
+| 军事战事（欠饷/哗变/调度/战报）| `army_delta`、`new_armies`、`power_updates`（别的势力三项）、`economy_moves`（军饷追拨）|
 | 局势推进（既有 issue 的具体进展/结案/失败）| `issue_advances`、`close_issues`、`cancels`、配套 `metric_delta`/`faction_delta` |
 | 财政诏令（开征/削减/盐政/工程）| `fiscal_changes`、`economy_moves`、配套 `class_delta` |
-| 外族动向（后金/蒙古/朝鲜/流寇）| `external_power_updates`、`world_advance` |
+| 外族动向（后金/蒙古/朝鲜/流寇）| `region_delta`、`army_delta`、`new_armies`、`character_power_changes`、`power_updates`（别的势力三项）、`world_advance` |
 | 候选事件浮现 | `new_issues`（`origin_kind:"event_pool"` + `id`）|
 | 诏书明文长期工程/改革 | `new_issues`（`origin_kind:"decree"` + 全字段）|
 | 「陛下未知者」段 | 参考用以判 `metric_delta.皇威`/`民心` 的隐瞒拖累（皇威 -2~-5、民心 -1~-3），不映射独立字段 |
@@ -72,7 +73,6 @@
 
 - 写 `region_delta` 前先在 payload `regions` 表查当前行（按 region_id），按当前值算 delta 是否会越过 0~100 边界；越界则截到边界。
 - 写 `army_delta` 前先在 payload `armies` 表查当前行（按 army_id），同样核边界。
-- 写 `external_power_updates` 前先在 payload `external_powers` 表查当前数值（leverage / satisfaction / military_strength / cohesion / supply）。
 - 朝臣任某官（无论新进朝堂还是在朝调任升迁）一律写 `office_changes`，**不必判此人在不在名册**——代码会自己查在册改职、不在册建档。`appointments` 只留给后宫纳妃。
 - 写 `character_status_changes` 前先在 `active_ministers` 查此人当前是否 active（已 dismissed/dead 的不重复立项）。
 
@@ -91,18 +91,18 @@
 - `decree_text`：皇帝本{{TURN_UNIT}}颁布的诏书全文
 - 当前 active issues 列表（id/title/bar_value/stage_text/cancellable/resolve_condition/fail_condition）
 - 当前盘面 metrics 与 economy、派系满意度、阶级满意度（全国汇总 + 各省切片）
-- `region_ids` / `army_ids` / `external_power_ids` / `building_ids`：合法 id 表
+- `region_ids` / `army_ids` / `power_ids` / `building_ids`：合法 id 表
 - `class_names`：合法阶级名表（如 `农民`/`士绅`/`官僚`/`军户`/`商人`/`匠户`/`宗藩`）
 - `candidate_events`：本{{TURN_UNIT}}候选情势清单（id/title）
 - `fiscal_config`：当前各财政系数
 - `relevant_memories`：与本{{TURN_UNIT}}诏书相关的历史记忆，每条含 `source_kind` 字段：`chat_message`（大臣记忆，召对承诺/建议/情报流水）vs 其它值（演算记忆，月末推演事件结果）。参照用，不强制引用。
 - `secret_orders`：皇帝密令列表（独立于 relevant_memories）。每条字段：`id`（整数）、`minister_name`（承办人）、`title`（密令标题）、`content`（任务详情）、`status`（`active`=进行中 / `pending_review`=承办人提交待核议或期限届满强制核议 / `done`=已结案 / `failed`=已失败）、`progress`（承办人自报当前进展时间线，含「[提交核议]」行表示该月承办人自认办到，含「[期限届满]」表示御限已到）、`sim_note`（过往推演写的副作用）。抽 `secret_order_updates` 时以本字段 `id` 为准（正整数，直接填）。**对 `status=active` 抽副作用，对 `status=pending_review` 必须抽结案判定（见 `secret_order_closes`）**。若邸报叙事呈现密令效果（如查出贪腐），可同步在 `economy_moves` / `region_delta` 等字段体现。
 
-**表格格式约定**：`regions` / `armies` / `buildings` / `external_powers` / `active_ministers` / `offstage_ministers` 均为 `{"cols":[列名...], "rows":[[值...]...]}` 形式——`cols` 是列名数组，`rows` 是二维数组每行一条记录，按 `cols` 顺序对位。查某行某字段时按 `cols.index("字段名")` 找列下标，再到该 `rows[i]` 取值。这是为压缩 token 改的格式，语义与 dict-of-rows 完全等价。`active_ministers` 含列：`name`/`office`/`office_type`/`faction`——`office` 字段可能含逗号分隔多职；判顶缺一律按 `office` 分项匹配（逗号切开每段即一职），不另设固定席位字段。
+**表格格式约定**：`regions` / `armies` / `buildings` / `powers` / `active_ministers` / `offstage_ministers` 均为 `{"cols":[列名...], "rows":[[值...]...]}` 形式——`cols` 是列名数组，`rows` 是二维数组每行一条记录，按 `cols` 顺序对位。查某行某字段时按 `cols.index("字段名")` 找列下标，再到该 `rows[i]` 取值。这是为压缩 token 改的格式，语义与 dict-of-rows 完全等价。`active_ministers` 含列：`name`/`office`/`office_type`/`faction`——`office` 字段可能含逗号分隔多职；判顶缺一律按 `office` 分项匹配（逗号切开每段即一职），不另设固定席位字段。
 
 ## 输出字段总表（每个字段的含义与约束，先看清这张表）
 
-顶层 18 个字段都**必须出现**；无内容的填空 `{}` 或 `[]`。严格 JSON，无 Markdown 无解释。
+顶层 20 个字段都**必须出现**；无内容的填空 `{}` 或 `[]`。严格 JSON，无 Markdown 无解释。
 
 | 字段 | 含义 | 约束 |
 |---|---|---|
@@ -111,9 +111,10 @@
 | `faction_delta` | 派系满意度+影响力增量（阉党/皇党/军队/东林/宗室/中立/西学） | 增量非新值。两种格式均可：① 只改满意度：`{"阉党": -10}`（数字=satisfaction增量）；② 同时改满意度+影响力：`{"阉党": {"satisfaction": -10, "leverage": -15}}`。**清党/大规模罢黜/抄家必须同时降 leverage**（势力瓦解）；小摩擦只降 satisfaction；招安/重用某派必须同时升 leverage。 |
 | `class_delta` | 阶级满意度/影响力增量。key 形如 `农民` 表全国汇总；`农民@shaanxi` 表省级切片（region_id 从 `region_ids` 选） | value 形如 `{"satisfaction": -5, "leverage": +2}`，增量非新值。两字段都可写、可只写一个。**联动靠你自觉判**：①党派强推损某阶级利益 → 该阶级 sat 跌，且该党派 sat 也跟着跌（代言失职）；②东林 ↔ 江南士绅唇齿，抄江南/苏松士绅 → 东林 lev 同向掉，杀东林台谏 → 江南士绅 sat 同向掉；③阉党 ↔ 内廷宦官+地方税监同体，极端清算阉党时其代表阶级 sat+lev 双降；④军队 ↔ 军户/将门基本盘，欠饷军户 sat 长低 → 军队党 sat 也跌；⑤宗室党 ↔ 宗藩阶级同向（削宗禄/抄藩田同时损二者）；⑥极端手段（抄家屠戮）单次 ±20~40。阶级 sat≤30 且 lev≥60 易触发该省该阶级骚乱事件，由季末推演判定。 |
 | `region_delta` | 各地区数值变化，key=region_id | key **必须**从 `region_ids` 选。合法字段仅：量表 `public_support`/`unrest`/`grain_security`/`gentry_resistance`/`military_pressure`（±10、极端 ±20）、腐败度 `corruption`（0-100，整治贪腐/巡按/抄家→负值 ±5~±20，放任失控→正值；只在有明确整治或失控动作时才填）、数量 `population`/`registered_land`/`hidden_land`/`tax_per_turn`、文字 `natural_disaster`/`human_disaster`/`status`。**减人口写 `population`，不是 `manpower`（`manpower` 是军队字段，严禁写入地区）。** 无变化填 `{}`。 |
-| `army_delta` | 各军数值变化，key=army_id | key **必须**从 `army_ids` 选。合法字段仅：量表 `supply`/`morale`/`training`/`equipment`/`arrears`/`mobility`/`loyalty`、数量 `manpower`/`maintenance_quarter`、文字 `station`/`commander`/`controller`/`troop_type`/`status`。**`cohesion` 是外部势力字段，严禁写入。** |
-| `external_power_updates` | 外部势力数值/状态变化，key=external_power_id | key **必须**从 `external_power_ids` 选。数值字段填**增量**（「兵势72→68」→-4）：`leverage`/`satisfaction`/`military_strength`/`cohesion`/`supply`；文字填**新值**：`leader`/`stance`/`agenda`/`status`/`last_action`。 |
-| `world_advance` | 后金/蒙古/朝鲜/流寇四方动向综述 | 四方都必须有，无动作也写「无新动」。每方 value 是 `{"stance":"...","action":"...","impact":"...","intent":"..."}`，**不要加 `summary` 等额外子字段**，避免括号层级出错。 |
+| `army_delta` | 各军数值变化，key=army_id | key **必须**从 `army_ids` 选。合法字段仅：量表 `supply`/`morale`/`training`/`equipment`/`arrears`/`mobility`/`loyalty`、数量 `manpower`/`maintenance_quarter`、文字 `station`/`commander`/`controller`/`troop_type`/`status`。**`cohesion` 是势力字段，严禁写入军队。** |
+| `new_armies` | 新建军队/叛军 | 朝廷募新兵、设新军镇、建客军，或流寇/外族成建制新军时写。每项需 `id`/`name`/`owner_power`/`station`/`theater`/`commander`/`controller`/`troop_type`/`manpower`/`maintenance_per_turn`/`supply`/`morale`/`training`/`equipment`/`arrears`/`mobility`/`loyalty`/`status`。已有军队补兵扩编不走这里，用 `army_delta.manpower`。 |
+| `power_updates` | 别的势力三项简单属性，key=非大明 power_id | 只允许字段 `威望`/`实力`/`经济`（或英文 `leverage`/`military_strength`/`supply`），值为整数增量；禁止写 `ming`，禁止写立场/近动/状态等文字字段。 |
+| `world_advance` | 外交态度 KV | key 为势力名或 power_id，value 为简短态度字符串，如 `{"后金":"敌对","蒙古":"摇摆","朝鲜":"倾明"}`。只在态度有意义或发生变化时填写；无内容填 `{}`。不要写行动/影响/意图。 |
 | `issue_advances` | 既有局势本{{TURN_UNIT}}推进 | 每项 `issue_id`(必须是 active_issues 里的 integer id)+`delta_bar`+`stage_text`+`narrative`，可选 `inertia_delta`。`delta_bar` 是皇帝本{{TURN_UNIT}}实旨推动的额外量，与 issue 每{{TURN_UNIT}}自然漂移 inertia 叠加。详见「局势推进规则」。 |
 | `new_issues` | 本{{TURN_UNIT}}新立局势 | 仅两来源：`decree`（带全字段）/`event_pool`（只带 `origin_kind`+`id`）。详见「局势立项规则」。 |
 | `cancels` | 皇帝撤销的局势 | 每项 `issue_id`+`applied_cost`+`narrative`。详见「局势推进规则·撤销」。 |
@@ -121,11 +122,12 @@
 | `fiscal_changes` | 制度性财政系数变化 | 仅奏章明确提到开征新税/削减禄米/盐政改革等才写。`delta` 是增量（±5~±30 常规，±50 极端）。`key` 必须从下方「财政系数表」选，不在表内一律不写。 |
 | `appointments` | **仅后宫纳妃** | 仅 `decree_text` 写明「纳/册封/封/选 某某 为 贵妃/嫔/才人/昭仪/婕妤/淑女」时立项。每项 `{"name","office","office_type":"后宫","reason","approved"}`，详见「后宫纳妃规则」。**朝臣任命不进此字段，一律走 `office_changes`。** |
 | `character_status_changes` | 既有大臣状态变更（罢黜/下狱/流放/致仕/死亡） | 邸报明文写「某某革职/拿问/下诏狱/赐死/缢死/流放/致仕/卒」时立项。每项 `{"name","status","reason"}`，status ∈ `dismissed`/`imprisoned`/`exiled`/`retired`/`dead`/`offstage`。详见「人物状态变更规则」。 |
+| `character_power_changes` | 人物归属势力变更 | 只在邸报明文写某人降敌、投寇、反正、归明时写。每项 `{"name","new_power","reason"}`；`new_power` 必须来自 `power_ids`，如 `ming`/`houjin`/`bandits`。 |
 | `office_changes` | 朝臣官职变更——某人任某官，含新进朝堂、调任、升迁，**不分新任旧任** | 邸报或 `decree_text` 写明「擢/拜/起/迁/补/调/升 某某 为 某官」时立项。每项 `{"name","new_office","reason"}`，可选 `faction`（新进朝堂者填派系）、`new_office_type`（官署类别如「督抚」「司礼监」）。`new_office` 多职用逗号隔开，**不用「兼」字**（如 `兵部尚书,东阁大学士`）；单职直接写。**不必判此人在不在册**——代码自处理：在册改职、不在册建新档。去职走 `character_status_changes`。 |
 | `secret_order_updates` | 进行中密令的副作用 | **专扫邸报「密旨动向」章**，逐条对照 `secret_orders` 列表（以 `id` 匹配承办人+标题）。凡该章写到某 `active` 密令引发的副作用，抽一条：`order_id` 取 `secret_orders[].id`（正整数）、`sim_note` 写该副作用核心事实（50字内，如「风声走漏，魏党已有警觉」「牵连扬州盐商，士绅不安」）。**只抽 `active` 密令的副作用——`pending_review` 走 `secret_order_closes`，`done/failed` 不再动**。「密旨动向」章无内容则留空数组。 |
 | `secret_order_closes` | 待核议密令的结案判定 | **专扫邸报「密旨核议」小节**，逐条对照 `secret_orders` 中 `status=pending_review` 的密令。每条 pending_review 密令邸报必给一判，抽一条：`order_id` 取 `secret_orders[].id`（正整数）、`status` ∈ `done`/`failed`（**二选一，不存在续办**）、`result` 写推演判定的核实结论（100字内，将作为日后下诏拿人定罪的实据）。`done`：实据齐全 + 承办人如实呈交；`failed`：任务不可行/虚报/反扑/事泄/证据残缺。若邸报「密旨核议」小节无内容（无 pending_review 密令）则留空数组。 |
 
-new_issue 内部字段：`kind`(`initiative`/`situation`)、`title`、`origin_kind`、`bar_value`(0-100 初始进度)、`expected_months`、`stage_text`、`resolve_condition`、`fail_condition`、`ongoing_effects`、`effect_on_resolve`、`effect_on_fail`、`cancellable`(`decree`=须下诏方能罢/`never`=不可撤/`by_progress`=随进度自然结案，严禁臆造其它值)。各字段取值见「局势立项规则」。
+new_issue 内部字段：`kind`(`initiative`/`situation`)、`title`、`origin_kind`、`bar_value`(0-100 初始进度)、`expected_months`、`stage_text`、`resolve_condition`、`fail_condition`、`ongoing_effects`、`effect_on_resolve`、`effect_on_fail`、`cancellable`(`decree`=须下诏方能罢/`never`=不可撤/`by_progress`=随进度自然结案，严禁臆造其它值)。`kind` 只能填 `initiative` 或 `situation`，严禁填 `军事`/`财政`/`工程`/`科技`/`查案` 等题材词。各字段取值见「局势立项规则」。
 
 **财政系数表**（`fiscal_changes.key` 只能从这里选）：
 ```
@@ -136,14 +138,18 @@ new_issue 内部字段：`kind`(`initiative`/`situation`)、`title`、`origin_ki
       内廷俸_base 内廷俸_rate  妃嫔_base 妃嫔_rate
 ```
 
-**ID 常见映射**（region/army/external 的 key 拿不准时参考，最终以 input 的 id 表为准，不在表内宁缺勿编）：
+**ID 常见映射**（region/army/power 的 key 拿不准时参考，最终以 input 的 id 表为准，不在表内宁缺勿编）：
 陕西→`shaanxi`，关宁军/宁锦→`guanning`，宣大军→`xuan_da`，东江镇→`dongjiang`；后金/大清/皇太极→`houjin`，满洲八旗→`manchu_banners`，汉军/汉八旗→`han_banners`，蒙古/林丹汗→`mongol`，朝鲜→`korea`，流寇→`bandits`。
 
 ## 局势立项规则
 
 **局势**（系统字段名 issue）是需要**逐{{TURN_UNIT}}追踪、多回合拉锯**的大事。**只两个来源**，其它（邸报冒出的现象、讣闻、地方动静）一律不立成局势、系统也会拒收：
 
-**(a) 诏书强推 `origin_kind:"decree"`**：读 `decree_text`，皇帝明文启动的**长期工程/改革/案**（办厂、科研、清丈赋税、清算某派、整军、招抚外族、长查逆案等需多回合推进、有阻力的事）各转一条 decree new_issue。判断只看 `decree_text`，与邸报写没写无关。
+**(a) 诏书强推 `origin_kind:"decree"`**：读 `decree_text`，皇帝明文启动的**长期工程/改革/案**（办厂、科研、清丈赋税、清算某派、招抚外族、长查逆案等需多回合推进、有阻力的事）各转一条 decree new_issue。判断只看 `decree_text`，与邸报写没写无关。
+
+> **募兵建军不立 issue**：诏书若是募新兵、设新军、练客军、立营镇、另置统将饷械，落点是 `new_armies` / `新建军队`，不是 `new_issues`。未真正成军、只在筹兵筹饷筹器械时，也不预立“练新军” issue；只有不产生新军队实体的兵制改革、训练制度、火器新法、军务清查，才可作为改革 issue。
+
+> **实体营建强制单立**：诏书明文**新建/设立/营建实体机构或工事**（设局/办厂/开矿/筑堡/设仓/建坞/立学堂等会产出一座建筑的），**一律单立一条 decree new_issue，且 `effect_on_resolve` 必带 `buildings:create`**——哪怕它与某条情势 active_issue 同地区、同人物、同大背景（如「陕西设格致局」与「陕西流寇」同在陕），也**不许并入那条情势 issue 当 advance**。营建线的矛盾是「这座建筑办不办得成」，与情势线（剿抚/赈济/平乱）是两回事，必须各自一条 bar。
 
 **不立局势**——以下三种不进 new_issues：
 - 诏书里顺带一句的次要措施，非独立工程（主诏「设火器营」，其「工部拨料」不单列）。
@@ -172,6 +178,8 @@ decree new_issue 必填字段：
 - 可选 `inertia_delta`：本{{TURN_UNIT}}行动彻底改变这件事本质难度（杀到不敢反抗 / 设常驻机构 / 获叛降文书）→ 五档间跳一格（-5→0），特殊两格，改局势 inertia 永久值。
 
 **归并**：邸报冒出的新现象**不许立成新局势**——能并入既有局势就推 `issue_advances`；重大但不能并入 → 留 narrative；鸡毛蒜皮（揭帖、抗议、地方小骚动、单次贪墨）→ 留 narrative。命中任一即并入：① 是某既有局势触发的政策/查办在地方的具体表现？② 是其反弹/抗议/科道交章/士绅联名？③ 是同一矛盾的不同侧面？④ 换地区换人物对手诉求是否仍相同？（例：既有 #4「江南清丈案」，邸报「南都科道交参/苏松士绅联名」全并入 #4。）
+
+> **归并不吞营建**：归并只处理「邸报现象」，**不适用于 `decree_text` 里的实体营建**。诏书新设的局/厂/坞/仓/堡/学堂一律走立项规则 (a) 单立带 `buildings:create` 的工程 issue，**禁止借「同地区/同背景」把它并进某条情势 issue 当 advance**（如把「陕西设格致局」并入「陕西流寇」就是错的）。营建的进度叙事只能挂在它自己那条工程 issue 上。
 
 **结案**（`close_issues`）：对照 resolve_condition / fail_condition——邸报满足 resolve 或明说「已结案/已平/已罢」→ reason=`resolved`；满足 fail 或明说「已失控/已溃决/彻底失败」→ reason=`failed`。**不论 bar 是否到 100/0**，条件命中就上报；皇帝一道硬旨办死（下令拿人、强令结案）也直接 close。**例外：不可崩坏局势（`effect_on_fail` 为空——天灾/大旱/水患/瘟疫/饥荒本身等不可控天象）禁止 reason=`failed`**，它们没有「失败终结」态，只能 resolved（赈济平息）或不结案继续流血；硬报系统会拒。已 close 的局势当{{TURN_UNIT}}不再放 issue_advances。
 
@@ -246,7 +254,7 @@ decree new_issue 必填字段：
 - `status`：上述白名单之一。
 - `reason`：一句话写邸报里的处置缘由 / 触发事件，供 db `status_reason` 留痕。
 
-## 输出 JSON 骨架（18 字段必须出现，无内容填 `{}` 或 `[]`）
+## 输出 JSON 骨架（20 字段必须出现，无内容填 `{}` 或 `[]`）
 
 ```json
 {
@@ -256,8 +264,11 @@ decree new_issue 必填字段：
   "class_delta": {"农民@shaanxi": {"satisfaction": -6, "leverage": 5}},
   "region_delta": {"shaanxi": {"unrest": 5, "grain_security": -3}, "nanzhili": {"gentry_resistance": 8, "corruption": -12}},
   "army_delta": {"guanning": {"morale": -3, "arrears": 5}},
-  "external_power_updates": {"houjin": {"leverage": -4, "stance": "敌对", "last_action": "退屯整兵"}},
-  "world_advance": {"后金": {"stance": "敌对", "action": "...", "impact": "...", "intent": "..."}, "蒙古": {"stance": "摇摆", "action": "...", "impact": "...", "intent": "..."}, "朝鲜": {"stance": "倾明", "action": "...", "impact": "...", "intent": "..."}, "流寇": {"stance": "潜伏", "action": "...", "impact": "...", "intent": "..."}},
+  "new_armies": [
+    {"id": "qin_army", "name": "秦军新营", "owner_power": "ming", "station": "陕西/西安", "theater": "陕西", "commander": "孙传庭", "controller": "陕西巡抚", "troop_type": "募兵步骑", "manpower": 8000, "maintenance_per_turn": 2, "supply": 55, "morale": 60, "training": 35, "equipment": 50, "arrears": 0, "mobility": 50, "loyalty": 65, "status": "新募，亟待操练"}
+  ],
+  "power_updates": {"houjin": {"威望": -4, "实力": -3, "经济": -2}},
+  "world_advance": {"后金": "敌对", "蒙古": "摇摆", "朝鲜": "倾明", "流寇": "潜伏"},
   "issue_advances": [{"issue_id": 12, "delta_bar": 15, "stage_text": "户部主事至苏州", "narrative": "..."}],
   "new_issues": [
     {"kind": "initiative", "title": "火器营试设", "origin_kind": "decree", "bar_value": 20, "expected_months": 10, "stage_text": "...", "resolve_condition": "...", "fail_condition": "...", "ongoing_effects": {}, "effect_on_resolve": {"metrics": {"皇威": 3}}, "effect_on_fail": {"metrics": {"皇威": -4}}, "cancellable": "by_progress"},
@@ -275,6 +286,7 @@ decree new_issue 必填字段：
     {"name": "田氏", "office": "贵妃", "office_type": "后宫", "reason": "诏书明文册封", "approved": true}
   ],
   "character_status_changes": [{"name": "魏忠贤", "status": "exiled", "reason": "发配凤阳"}],
+  "character_power_changes": [{"name": "祖大寿", "new_power": "houjin", "reason": "大凌河降清"}],
   "secret_order_updates": [
     {"order_id": 5, "sim_note": "锦衣卫暗访山西商路风声渐起，当地豪商已暗中转移账册，恐难再查。"}
   ],

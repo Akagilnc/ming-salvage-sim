@@ -95,7 +95,7 @@ def build_minister_tools(character: Character, context: CourtContext):
             state_context(context.state)
             + "。派系：" + context.db.faction_report()
             + "。" + context.db.class_report()
-            + "。外部：" + context.db.external_power_report()
+            + "。外部：" + context.db.power_report(exclude_self=True)
         )
 
     def list_memorials() -> str:
@@ -152,7 +152,7 @@ def build_minister_tools(character: Character, context: CourtContext):
 
     def list_external_powers() -> str:
         """查看后金、蒙古、朝鲜、流寇等外部势力状态。"""
-        return context.db.external_power_report()
+        return context.db.power_report(exclude_self=True)
 
     def list_buildings() -> str:
         """查看全国在册建筑（火炮厂、矿厂、常平仓、边堡、织造局等）的等级、完好、维护费与产出。"""
@@ -737,7 +737,7 @@ def build_board_query_tools(context: CourtContext):
             state_context(context.state)
             + "\n派系：" + context.db.faction_report()
             + "\n" + context.db.class_report()
-            + "\n外部势力：" + context.db.external_power_report()
+            + "\n外部势力：" + context.db.power_report(exclude_self=True)
         )
 
     def check_treasury() -> str:
@@ -787,14 +787,14 @@ def build_board_query_tools(context: CourtContext):
 
     def list_external_powers() -> str:
         """查看后金、蒙古、朝鲜、流寇等外部势力当前态势（leverage/military_strength/stance/last_action）。"""
-        return context.db.external_power_report()
+        return context.db.power_report(exclude_self=True)
 
     def inspect_external_power(power: str) -> str:
         """查某外部势力完整数值：leverage/satisfaction/military_strength/cohesion/supply/
         leader/stance/agenda/status/last_action。
         power 可传势力名（如"后金"）或 power_id（如"houjin"），两者均支持。"""
         row = context.db.conn.execute(
-            "SELECT * FROM external_powers WHERE id=? OR name=?", (power, power)
+            "SELECT * FROM powers WHERE id=? OR name=?", (power, power)
         ).fetchone()
         if row is None:
             return f"未找到外部势力 {power!r}。可先调 list_external_powers 查名称/id 列表。"
@@ -966,12 +966,11 @@ def build_extractor_tools(context: CourtContext):
         army_delta          军队数值变化 {army_id: {字段:增量}}
                             合法字段：supply/morale/training/equipment/arrears/mobility/loyalty/
                             manpower/maintenance_quarter/station/commander/controller/troop_type/status
-                            禁止写cohesion（外部势力字段）
-        external_power_updates  外部势力变化 {power_id: {字段}}
-                            数值字段填增量：leverage/satisfaction/military_strength/cohesion/supply
-                            文字字段填新值：leader/stance/agenda/status/last_action
-        world_advance       四方动向综述，后金/蒙古/朝鲜/流寇都必须有（无动作写"无新动"）
-                            {"后金":{stance,action,impact,intent},"蒙古":{...},"朝鲜":{...},"流寇":{...},"summary":"..."}
+                            禁止写cohesion（势力字段）
+        power_updates       别的势力三项简单属性 {power_id: {"威望":N,"实力":N,"经济":N}}
+                            只写非大明势力；三项均为整数增量；不写立场/近动/状态
+        world_advance       外交态度 KV；key 为势力名或 power_id，value 为简短态度字符串
+                            如 {"后金":"敌对","蒙古":"摇摆","朝鲜":"倾明"}；无内容填 {}
         issue_advances      既有局势推进列表
                             每项：{issue_id(integer),delta_bar,stage_text,narrative,可选inertia_delta}
                             delta_bar=皇帝实旨推动量（不含自然漂移inertia，系统自动算）
@@ -1024,8 +1023,8 @@ def build_extractor_tools(context: CourtContext):
           "class_delta": {"农民@shaanxi": {"satisfaction": -6, "leverage": 5}},
           "region_delta": {"shaanxi": {"unrest": 5, "grain_security": -3}},
           "army_delta": {"guanning": {"morale": -3, "arrears": 5}},
-          "external_power_updates": {"houjin": {"leverage": -4, "last_action": "退屯整兵"}},
-          "world_advance": {"后金": {"stance":"敌对","action":"...","impact":"...","intent":"..."},"蒙古":{},"朝鲜":{},"流寇":{},"summary":"..."},
+          "power_updates": {"houjin": {"威望": -4, "实力": -3, "经济": -2}},
+          "world_advance": {"后金": "敌对", "蒙古": "摇摆", "朝鲜": "倾明"},
           "issue_advances": [{"issue_id":12,"delta_bar":15,"stage_text":"户部主事至苏州","narrative":"..."}],
           "new_issues": [{"kind":"initiative","title":"火器营试设","origin_kind":"decree","bar_value":20,"expected_months":10,"stage_text":"...","resolve_condition":"...","fail_condition":"...","ongoing_effects":{},"effect_on_resolve":{"metrics":{"皇威":3}},"effect_on_fail":{"metrics":{"皇威":-4}},"cancellable":"by_progress"}],
           "cancels": [],

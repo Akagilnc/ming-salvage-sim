@@ -25,8 +25,8 @@ from ming_sim.models import (
     Building,
     Character,
     Event,
-    ExternalPower,
     Faction,
+    Power,
     Region,
     SocialClass,
 )
@@ -63,6 +63,8 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             integrity=int_field(item, "integrity", f"characters.json.characters[{idx}]"),
             courage=int_field(item, "courage", f"characters.json.characters[{idx}]"),
             style=str_field(item, "style", f"characters.json.characters[{idx}]"),
+            power_id=str_field(item, "power_id", f"characters.json.characters[{idx}]"),
+            location=str(item.get("location") or "").strip(),
             birth_year=int(item.get("birth_year") or 0),
             historical_death_year=int(item.get("historical_death_year") or 0),
             historical_death_month=int(item.get("historical_death_month") or 0),
@@ -155,6 +157,7 @@ def load_region_content() -> Dict[str, Region]:
             gentry_resistance=int_field(item, "gentry_resistance", ctx),
             military_pressure=int_field(item, "military_pressure", ctx),
             status=str_field(item, "status", ctx),
+            controlled_by=str_field(item, "controlled_by", ctx),
             fiscal=dict(fiscal_raw),
         )
     if not regions:
@@ -186,6 +189,7 @@ def load_army_content() -> Dict[str, Army]:
             mobility=int_field(item, "mobility", f"armies.json.armies[{idx}]"),
             loyalty=int_field(item, "loyalty", f"armies.json.armies[{idx}]"),
             status=str_field(item, "status", f"armies.json.armies[{idx}]"),
+            owner_power=str_field(item, "owner_power", f"armies.json.armies[{idx}]"),
         )
     if not armies:
         raise SystemExit("armies.json 必须至少定义一支军队。")
@@ -247,26 +251,27 @@ def load_class_content() -> Dict[str, SocialClass]:
     return classes
 
 
-def load_external_powers() -> Dict[str, ExternalPower]:
-    data = load_json_asset("external_powers.json")
-    raw = require_dict(data, "external_powers.json")
-    powers_raw = require_list(raw.get("powers"), "external_powers.json::powers")
-    powers: Dict[str, ExternalPower] = {}
+def load_powers() -> Dict[str, Power]:
+    data = load_json_asset("powers.json")
+    raw = require_dict(data, "powers.json")
+    powers_raw = require_list(raw.get("powers"), "powers.json::powers")
+    powers: Dict[str, Power] = {}
     for item in powers_raw:
-        entry = require_dict(item, "external_powers.json::powers[item]")
-        pid = str_field(entry, "id", "external_powers.json::powers[item].id")
-        powers[pid] = ExternalPower(
+        entry = require_dict(item, "powers.json::powers[item]")
+        pid = str_field(entry, "id", "powers.json::powers[item].id")
+        powers[pid] = Power(
             id=pid,
-            name=str_field(entry, "name", "external_powers.json::powers[item].name"),
-            leader=str_field(entry, "leader", "external_powers.json::powers[item].leader"),
-            stance=str_field(entry, "stance", "external_powers.json::powers[item].stance"),
-            leverage=int_field(entry, "leverage", "external_powers.json::powers[item].leverage"),
-            satisfaction=int_field(entry, "satisfaction", "external_powers.json::powers[item].satisfaction"),
-            military_strength=int(entry.get("military_strength", entry.get("strength", 55))),
-            cohesion=int(entry.get("cohesion", 55)),
-            supply=int(entry.get("supply", 55)),
-            agenda=str_field(entry, "agenda", "external_powers.json::powers[item].agenda"),
-            status=str_field(entry, "status", "external_powers.json::powers[item].status"),
+            name=str_field(entry, "name", "powers.json::powers[item].name"),
+            kind=str_field(entry, "kind", "powers.json::powers[item].kind"),
+            leader=str_field(entry, "leader", "powers.json::powers[item].leader"),
+            stance=str_field(entry, "stance", "powers.json::powers[item].stance"),
+            leverage=int_field(entry, "leverage", "powers.json::powers[item].leverage"),
+            satisfaction=int_field(entry, "satisfaction", "powers.json::powers[item].satisfaction"),
+            military_strength=int_field(entry, "military_strength", "powers.json::powers[item].military_strength"),
+            cohesion=int_field(entry, "cohesion", "powers.json::powers[item].cohesion"),
+            supply=int_field(entry, "supply", "powers.json::powers[item].supply"),
+            agenda=str_field(entry, "agenda", "powers.json::powers[item].agenda"),
+            status=str_field(entry, "status", "powers.json::powers[item].status"),
             last_action=str(entry.get("last_action") or "尚无新动").strip() or "尚无新动",
         )
     return powers
@@ -373,7 +378,7 @@ class GameContent:
     armies: Dict[str, Army] = field(default_factory=dict)
     buildings: Dict[str, Building] = field(default_factory=dict)
     faction_metrics: Tuple[str, ...] = ()
-    external_powers: Dict[str, ExternalPower] = field(default_factory=dict)
+    powers: Dict[str, Power] = field(default_factory=dict)
     classes: Dict[str, SocialClass] = field(default_factory=dict)
 
     # skill 体系（load_skill_content 十元组）
@@ -397,6 +402,7 @@ class GameContent:
     decree_writer_prompt: str = ""
     season_simulator_prompt: str = ""
     score_extractor_prompt: str = ""
+    score_extractor_shared_prompt: str = ""
     score_extractor_module_prompts: Dict[str, str] = field(default_factory=dict)
     memory_extractor_prompt: str = ""
     chat_memory_extractor_prompt: str = ""
@@ -409,7 +415,7 @@ class GameContent:
         regions = load_region_content()
         armies = load_army_content()
         buildings = load_building_content()
-        external_powers = load_external_powers()
+        powers = load_powers()
         classes = load_class_content()
         (
             office_skills_data,
@@ -433,7 +439,7 @@ class GameContent:
             armies=armies,
             buildings=buildings,
             faction_metrics=tuple(factions.keys()),
-            external_powers=external_powers,
+            powers=powers,
             classes=classes,
             office_skills=office_skills_data,
             skill_catalog=skill_catalog,
@@ -452,6 +458,7 @@ class GameContent:
             decree_writer_prompt=load_text_asset("prompts/decree_writer.md"),
             season_simulator_prompt=load_text_asset("prompts/season_simulator.md"),
             score_extractor_prompt=load_text_asset("prompts/score_extractor.md"),
+            score_extractor_shared_prompt=load_text_asset("prompts/score_extractor_shared.md"),
             score_extractor_module_prompts={
                 "internal": load_text_asset("prompts/score_extractor_internal.md"),
                 "military_external": load_text_asset("prompts/score_extractor_military_external.md"),

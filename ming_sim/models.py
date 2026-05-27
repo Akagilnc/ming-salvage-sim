@@ -25,6 +25,8 @@ class LLMConfig:
     model: str
     max_tokens: int = 8000
     advanced_model: str = ""  # 空=fallback model；非空=推演/打分专用更强模型（如 deepseek-reasoner / gpt-5）
+    advanced_base_url: str = ""  # 空=复用主 base_url；非空=advanced 角色专用网关
+    advanced_api_key: str = ""  # 空=复用主 api_key；非空=advanced 角色专用 key
 
 
 @dataclass
@@ -40,6 +42,8 @@ class Character:
     integrity: int
     courage: int
     style: str
+    power_id: str
+    location: str = ""
     birth_year: int = 0  # 历史生年（公历，0=未填）
     historical_death_year: int = 0  # 历史卒年（公历，0=未填）
     historical_death_month: int = 0  # 1-12，0=未指定
@@ -111,6 +115,7 @@ class Region:
     gentry_resistance: int
     military_pressure: int
     status: str
+    controlled_by: str
     fiscal: dict = field(default_factory=dict)
     # fiscal JSON 字段说明（万亩/万两/0-100）：
     # huang_tian    皇庄（万亩），产出→内库，仅北直隶有
@@ -141,6 +146,7 @@ class Army:
     mobility: int
     loyalty: int
     status: str
+    owner_power: str
 
 
 @dataclass
@@ -159,9 +165,10 @@ class Building:
 
 
 @dataclass
-class ExternalPower:
+class Power:
     id: str
     name: str
+    kind: str
     leader: str
     stance: str
     leverage: int

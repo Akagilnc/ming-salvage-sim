@@ -28,7 +28,7 @@ REGION_TEXT_FIELDS = ("natural_disaster", "human_disaster", "status")
 FISCAL_SCORE_FIELDS = ("corruption",)
 ARMY_SCORE_FIELDS = ("supply", "morale", "training", "equipment", "arrears", "mobility", "loyalty")
 ARMY_QUANTITY_FIELDS = ("manpower", "maintenance_per_turn")
-ARMY_TEXT_FIELDS = ("station", "commander", "controller", "troop_type", "status")
+ARMY_TEXT_FIELDS = ("station", "commander", "controller", "troop_type", "status", "owner_power")
 BUILDING_CATEGORIES = ("财政", "军事", "民生", "科技", "交通", "内廷")
 BUILDING_OUTPUT_METRICS = ("国库", "内库", "民心", "皇威", "")
 BUILDING_SCORE_FIELDS = ("condition", "risk")
@@ -61,19 +61,46 @@ BUILDING_FIELD_ALIASES = {
     "原因": "reason",
     "reason": "reason",
 }
-EXTERNAL_POWER_SCORE_FIELDS = ("leverage", "satisfaction", "military_strength", "cohesion", "supply")
-EXTERNAL_POWER_TEXT_FIELDS = ("leader", "stance", "agenda", "status", "last_action")
-EXTERNAL_POWER_FIELD_LABELS = {
+POWER_SCORE_FIELDS = ("leverage", "satisfaction", "military_strength", "cohesion", "supply")
+POWER_TEXT_FIELDS = ("leader", "stance", "agenda", "status", "last_action")
+POWER_FIELD_LABELS = {
     "leader": "首领",
     "stance": "立场",
-    "leverage": "威胁",
+    "leverage": "威望",
     "satisfaction": "顺遂",
-    "military_strength": "兵势",
+    "military_strength": "实力",
     "cohesion": "内聚",
-    "supply": "粮饷",
+    "supply": "经济",
     "agenda": "所图",
     "status": "状态",
     "last_action": "近动",
+}
+POWER_FIELD_ALIASES = {
+    **{field: field for field in POWER_SCORE_FIELDS + POWER_TEXT_FIELDS},
+    "首领": "leader",
+    "立场": "stance",
+    "威胁": "leverage",
+    "威望": "leverage",
+    "影响力": "leverage",
+    "顺遂": "satisfaction",
+    "满意": "satisfaction",
+    "兵势": "military_strength",
+    "实力": "military_strength",
+    "军势": "military_strength",
+    "军事力量": "military_strength",
+    "内聚": "cohesion",
+    "凝聚": "cohesion",
+    "粮饷": "supply",
+    "经济": "supply",
+    "补给": "supply",
+    "所图": "agenda",
+    "意图": "agenda",
+    "状态": "status",
+    "近动": "last_action",
+    "近况": "last_action",
+    "最近行动": "last_action",
+    "原因": "reason",
+    "reason": "reason",
 }
 REGION_FIELD_LABELS = {
     "population": "人口",
@@ -105,6 +132,7 @@ ARMY_FIELD_LABELS = {
     "mobility": "机动",
     "loyalty": "忠诚",
     "status": "状态",
+    "owner_power": "归属",
 }
 REGION_FIELD_ALIASES = {
     **{field: field for field in REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + REGION_TEXT_FIELDS},
@@ -116,6 +144,8 @@ REGION_FIELD_ALIASES = {
     "士绅阻力": "gentry_resistance",
     "军事": "military_pressure",
     "军事压力": "military_pressure",
+    "腐败": "corruption",
+    "腐败度": "corruption",
     "人口": "population",
     "田亩": "registered_land",
     "登记田亩": "registered_land",
@@ -155,6 +185,9 @@ ARMY_FIELD_ALIASES = {
     "忠诚": "loyalty",
     "听命": "loyalty",
     "状态": "status",
+    "归属": "owner_power",
+    "所属": "owner_power",
+    "势力": "owner_power",
     "原因": "reason",
     "reason": "reason",
 }

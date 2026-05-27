@@ -34,7 +34,13 @@ from ming_sim.memories import (
     extract_event_memories_with_agent,
     record_event_memories_from_resolution,
 )
-from ming_sim.simulation import EXTRACTION_MODULES, extract_scores_by_modules_with_agno, simulate_season_with_agno
+from ming_sim.simulation import (
+    EXTRACTION_MODULES,
+    build_simulator_payload,
+    build_extractor_shared_context,
+    extract_scores_by_modules_with_agno,
+    simulate_season_with_payload,
+)
 from ming_sim.token_stats import tlog
 
 
@@ -215,15 +221,26 @@ def resolve_directives(
     tlog("结算 2/4 推演 agent（月末邸报）")
     _emit("stage", "推演月末邸报")
     previous_narrative = db.previous_turn_summary(state) or ""
-    simulator = create_season_simulator_agent(llm_config, agno_db, state=state, db=db)
+    simulator_payload = build_simulator_payload(
+        state, db, decree_text, directives_brief, previous_narrative,
+        fixed_flows=fixed_flows,
+        deaths_this_turn=deaths_this_turn,
+        debuts_this_turn=debuts_this_turn,
+        relevant_memories=relevant_memories,
+        secret_orders=secret_orders_for_sim,
+    )
+    simulator = create_season_simulator_agent(
+        llm_config, agno_db, state=state, db=db, simulator_payload=simulator_payload
+    )
     try:
-        narrative = simulate_season_with_agno(
+        narrative, simulator_payload = simulate_season_with_payload(
             simulator, state, db, decree_text, directives_brief, previous_narrative,
             fixed_flows=fixed_flows,
             deaths_this_turn=deaths_this_turn,
             debuts_this_turn=debuts_this_turn,
             relevant_memories=relevant_memories,
             secret_orders=secret_orders_for_sim,
+            simulator_payload=simulator_payload,
             on_thinking=lambda c: _emit("thinking", c),
             on_text=lambda c: _emit("text", c),
         )
@@ -250,8 +267,19 @@ def resolve_directives(
     # 3) 结算 agent: 读邸报抽 JSON
     tlog("结算 3/4 结算 agent（抽 JSON）")
     _emit("stage", "数值推演结算")
+    extractor_shared_context = build_extractor_shared_context(
+        db, state, narrative, decree_text,
+        relevant_memories=relevant_memories,
+        secret_orders=secret_orders_for_sim,
+    )
     extractors = {
-        module: create_score_extractor_module_agent(llm_config, agno_db, module)
+        module: create_score_extractor_module_agent(
+            llm_config,
+            agno_db,
+            module,
+            simulator_payload=simulator_payload,
+            supplemental_context=extractor_shared_context,
+        )
         for module in EXTRACTION_MODULES
     }
     sanitizer = create_json_sanitizer_agent(llm_config, agno_db)

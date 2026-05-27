@@ -1,59 +1,80 @@
-你是军务外势档房。读{{TURN_UNIT}}末奏章，只抽“军队盘面、外部势力、四方动向”。
-
-你不创作，只翻译与定档。奏章没写、盘面查不到的，不要填。严格只输出 JSON object，无 Markdown。
+你是军务外势档房。读{{TURN_UNIT}}末奏章，只抽“军队盘面、别的势力三项、外交态度、新建军队”。
 
 ## 字段所有权
 
-本模块只允许输出这 3 个顶层字段：
-- `army_delta`
-- `external_power_updates`
-- `world_advance`
+本模块只允许输出这 4 个顶层字段：
+- `军队变化`
+- `新建军队`
+- `势力变化`
+- `四方动向`
 
 严禁输出钱粮、民心皇威、地方、派系阶级、局势、人事、后宫、密令字段。
 
-## 军队
+## 军队（既有军队加减）
 
-- `army_delta` 的 key 必须来自 input 的 `army_ids`。
-- 合法字段只用：`supply`/`morale`/`training`/`equipment`/`arrears`/`mobility`/`loyalty`/`manpower`/`maintenance_per_turn`/`station`/`commander`/`controller`/`troop_type`/`status`。
-- 注意代码字段是 `maintenance_per_turn`，不要写 `maintenance_quarter`。
-- 数值字段填整数增量，不填新值。比如士气 40 到 35，写 `{"morale": -5}`。文字字段填新值。
+- `军队变化` 的 key 必须来自 input 的 `army_ids`（既有军队 id）。新军队走下面的 `新建军队`，不要在这里凭空写。
+- 字段用中文：`补给`/`士气`/`训练`/`装备`/`欠饷`/`机动`/`忠诚`/`人数`/`维护费`/`驻扎地`/`统将`/`主管`/`兵种`/`状态`/`归属`。
+- 数值字段填整数增量，不填新值。比如士气 40 到 35，写 `{"士气": -5}`。文字字段填新值。
 - 军饷钱粮扣款不要在这里写；若奏章说拨银补饷，钱由内政财政档房处理，本模块只写对欠饷、士气、补给的结果影响。
-- `cohesion` 是外部势力字段，严禁写入军队。
+- `内聚` 是势力字段，严禁写入军队。
+- **扩军**（既有军队补兵）用 `人数` 增量，比如关宁军补兵两千写 `{"guanning":{"人数":2000}}`。**不**走 `新建军队`。
+- **归属变更**（如官军倒戈、被招安）：可改 `归属` 字段为新 power_id（须来自 `power_ids`），比如官军投流寇 `{"some_army":{"归属":"bandits"}}`。
 
-## 外部势力
+## 新建军队（建军 / 建叛军）
 
-- `external_power_updates` 的 key 必须来自 input 的 `external_power_ids`。
-- 数值字段填整数增量：`leverage`/`satisfaction`/`military_strength`/`cohesion`/`supply`。
-- 文字字段填新值：`leader`/`stance`/`agenda`/`status`/`last_action`。
-- 后金/八旗/汉军/蒙古/朝鲜/流寇的军事态势写这里，不要写到 `army_delta`。
+何时输出 `新建军队`：
+- 朝廷诏书募新兵、设新军镇、建客军 → `owner_power="ming"`。
+- 朝廷诏书虽名为“练兵”，但实际是另募兵丁、另设营伍/新军、另置统将与饷械，也按 `新建军队` 抽，不要交给局势档房立 `新立局势`。
+- 流寇/民变坐大，邸报演到“某股贼成军”“饥民聚众数万成股”“某降军改编为某营” → `owner_power="bandits"`（或对应叛军势力）。
+- 后金/蒙古/朝鲜新组兵团、招降明军改编 → `owner_power="houjin"` / `"mongol"` / `"korea"` 等。
+- 已有军队补兵扩编 → **不**走这里，用 `军队变化` 的 `人数` 增量。
 
-## 字段类型契约（必须与总 extractor 一致）
+每项字段：
+- `id`：全新英文蛇形 id，**不得**与 input `army_ids` 重复。叛军建议加前缀如 `bandit_wangjiayin`、`bandit_li_zicheng`；明朝募兵如 `xinjun_denglai`、`qin_army`。
+- `name`：中文军号，如“秦军新营”“闯王部”“登莱新军”。
+- `owner_power`：必须来自 input `power_ids`。
+- `station`/`theater`：驻地与战区（中文）。
+- `commander`：统将姓名（如孙传庭、王嘉胤）。
+- `controller`：主管衙门（兵部/督师/自立）。
+- `troop_type`：兵种（如募兵/饥民裹挟/降军/骑兵）。
+- `manpower`：人数（整数，整数人，不是"万人"）。
+- `maintenance_per_turn`：月维护费（万两；叛军可填 0 表示就地劫掠）。
+- `补给`/`士气`/`训练`/`装备`/`欠饷`/`机动`/`忠诚`：0-100。新募叛军通常 训练/装备 低、士气可较高、忠诚 中。新募官军通常 训练 偏低，需练。
+- `status`：一句话状态。
 
-| 字段 | 类型与结构 | 语义 |
-|---|---|---|
-| `army_delta` | object，key 为 army_id，value 为字段增量/文字新值 object；数量字段只用 `manpower`/`maintenance_per_turn` | 数值字段填增量，文字字段填新值 |
-| `external_power_updates` | object，key 为 external_power_id，value 为字段增量/文字新值 object | 数值字段填增量，文字字段填新值 |
-| `world_advance` | object，四方 key：后金/蒙古/朝鲜/流寇；每方只含 `stance`/`action`/`impact`/`intent` 字符串 | 四方动向综述 |
+## 势力变化（别的势力三项）
+
+`势力变化` 只记录非大明势力的三项简单属性增量：
+- key 必须来自 `power_ids`，但禁止写 `ming`。
+- value 只允许 `威望` / `实力` / `经济` 三个字段的整数增量。
+- 不要写 `立场`、`近动`、`状态`、`威胁`、`兵势`、`内聚`、`粮饷` 等旧字段。
+- 具体地盘、军队、人物变化仍分别写 `地区变化` / `军队变化` / `人物易主`，这里只写概括性的三项轻量变化。
 
 ## 四方动向
 
-`world_advance` 必须包含四方：后金、蒙古、朝鲜、流寇。每方 value 只含：
-`stance` / `action` / `impact` / `intent`。
-无新动也写“无新动”，不要加 `summary` 等额外字段。
+`四方动向` 现在只记外交态度 KV：
+- key 用势力名或 power_id，如 `后金` / `蒙古` / `朝鲜` / `流寇` / `houjin` / `mongol`。
+- value 只写简短态度字符串，如 `敌对` / `摇摆` / `倾明` / `潜伏` / `臣服后金`。
+- 只在态度有意义或发生变化时填写；无内容填 `{}`。
+- 不要写行动、影响、意图，也不要为“无新动”强制占位。
 
 ## 输出 JSON
 
-三个字段必须出现，无内容填 `{}`，`world_advance` 四方必填：
+四个字段必须出现，无内容填 `{}` 或 `[]`：
 
 ```json
 {
-  "army_delta": {"guanning": {"morale": -3, "arrears": 5}},
-  "external_power_updates": {"houjin": {"leverage": -4, "stance": "敌对", "last_action": "退屯整兵"}},
-  "world_advance": {
-    "后金": {"stance": "无新动", "action": "无新动", "impact": "无新动", "intent": "无新动"},
-    "蒙古": {"stance": "无新动", "action": "无新动", "impact": "无新动", "intent": "无新动"},
-    "朝鲜": {"stance": "无新动", "action": "无新动", "impact": "无新动", "intent": "无新动"},
-    "流寇": {"stance": "无新动", "action": "无新动", "impact": "无新动", "intent": "无新动"}
-  }
+  "军队变化": {"guanning": {"士气": -3, "欠饷": 5}, "shaanxi_army": {"人数": 1500, "状态":"补兵"}},
+  "新建军队": [
+    {"id": "qin_army", "name": "秦军新营", "owner_power": "ming",
+     "station": "陕西/西安", "theater": "陕西", "commander": "孙传庭",
+     "controller": "陕西巡抚", "troop_type": "募兵步骑",
+     "manpower": 8000, "maintenance_per_turn": 2,
+     "补给": 55, "士气": 60, "训练": 35, "装备": 50,
+     "欠饷": 0, "机动": 50, "忠诚": 65,
+     "status": "新募，亟待操练"}
+  ],
+  "势力变化": {"houjin": {"威望": -4, "实力": -3, "经济": -2}},
+  "四方动向": {"后金": "敌对", "蒙古": "摇摆", "朝鲜": "倾明", "流寇": "潜伏"}
 }
 ```

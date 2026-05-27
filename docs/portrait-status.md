@@ -42,7 +42,6 @@
 | 毛文龙 | `minister_毛文龙.png` | 待生成 |
 | 袁崇焕 | `minister_袁崇焕.png` | 待生成 |
 | 曹文诏 | `minister_曹文诏.png` | 待生成 |
-| 王永光 | `minister_王永光.png` | 待生成 |
 | 王在晋 | `minister_王在晋.png` | 待生成 |
 | 洪承畴 | `minister_洪承畴.png` | 待生成 |
 | 杨嗣昌 | `minister_杨嗣昌.png` | 待生成 |

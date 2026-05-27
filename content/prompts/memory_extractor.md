@@ -53,7 +53,7 @@
 
 ## 字段白名单
 
-- `subject_type`：`character` / `faction` / `region` / `army` / `external_power` / `court`
+- `subject_type`：`character` / `faction` / `region` / `army` / `power` / `court`
 - `event_type`：`edict_result` / `issue_progress` / `issue_success` / `issue_failure` / `appointment` / `punishment` / `battle` / `disaster` / `promise` / `private_audience`
 - `sentiment`：`positive` / `neutral` / `negative` / `mixed`
 - `source_kind`：`directive` / `decree` / `simulation_narrative` / `extractor_output` / `issue` / `chat_message` / `turn_report` / `system`

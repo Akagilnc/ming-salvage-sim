@@ -41,17 +41,27 @@ def supports_openai_reasoning_effort(model: str) -> bool:
     return model_id.startswith(("o1", "o3", "o4", "gpt-5"))
 
 
-def load_llm_config(base_url: str, model: str, api_key: str = "", advanced_model: str = "") -> LLMConfig:
+def load_llm_config(
+    base_url: str,
+    model: str,
+    api_key: str = "",
+    advanced_model: str = "",
+    advanced_base_url: str = "",
+    advanced_api_key: str = "",
+) -> LLMConfig:
     api_key = (api_key or os.environ.get("OPENAI_API_KEY", "")).strip()
     if not api_key:
         api_key = getpass.getpass("请输入 API key（不会保存，回车取消）：").strip()
     if not api_key:
         raise SystemExit("未提供 API key，无法使用 LLM。")
+    adv_base = (advanced_base_url or "").strip()
     return LLMConfig(
         api_key=api_key,
         base_url=normalize_openai_base_url(base_url),
         model=model,
         advanced_model=(advanced_model or "").strip(),
+        advanced_base_url=normalize_openai_base_url(adv_base) if adv_base else "",
+        advanced_api_key=(advanced_api_key or "").strip(),
     )
 
 
@@ -65,12 +75,16 @@ def for_role(cfg: LLMConfig, role: str) -> LLMConfig:
     """按 agent 角色派生 LLMConfig：advanced 角色用 advanced_model（若已配），其余用 main model。
     advanced_model 为空时返回原 cfg（无任何替换）。"""
     if role in _ADVANCED_ROLES and (cfg.advanced_model or "").strip():
+        adv_base = (cfg.advanced_base_url or "").strip() or cfg.base_url
+        adv_key = (cfg.advanced_api_key or "").strip() or cfg.api_key
         return LLMConfig(
-            api_key=cfg.api_key,
-            base_url=cfg.base_url,
+            api_key=adv_key,
+            base_url=adv_base,
             model=cfg.advanced_model.strip(),
             max_tokens=cfg.max_tokens,
             advanced_model=cfg.advanced_model,
+            advanced_base_url=cfg.advanced_base_url,
+            advanced_api_key=cfg.advanced_api_key,
         )
     return cfg
 
@@ -86,13 +100,24 @@ def load_runtime_llm() -> Dict[str, str]:
         return {}
     if not isinstance(data, dict):
         return {}
-    out = {k: str(data.get(k, "") or "") for k in ("base_url", "model", "api_key", "advanced_model")}
+    out = {
+        k: str(data.get(k, "") or "")
+        for k in ("base_url", "model", "api_key", "advanced_model", "advanced_base_url", "advanced_api_key")
+    }
     if "max_tokens" in data:
         out["max_tokens"] = str(data["max_tokens"])
     return out
 
 
-def save_runtime_llm(base_url: str, model: str, api_key: str, max_tokens: int = 8000, advanced_model: str = "") -> None:
+def save_runtime_llm(
+    base_url: str,
+    model: str,
+    api_key: str,
+    max_tokens: int = 8000,
+    advanced_model: str = "",
+    advanced_base_url: str = "",
+    advanced_api_key: str = "",
+) -> None:
     """写 data/runtime_llm.json。明文存盘——按用户选择。"""
     os.makedirs(os.path.dirname(RUNTIME_LLM_PATH), exist_ok=True)
     payload = {
@@ -101,6 +126,8 @@ def save_runtime_llm(base_url: str, model: str, api_key: str, max_tokens: int = 
         "api_key": (api_key or "").strip(),
         "max_tokens": max_tokens,
         "advanced_model": (advanced_model or "").strip(),
+        "advanced_base_url": (advanced_base_url or "").strip(),
+        "advanced_api_key": (advanced_api_key or "").strip(),
     }
     with open(RUNTIME_LLM_PATH, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, ensure_ascii=False, indent=2)

@@ -56,25 +56,22 @@ def historical_anchor_for_month(year: int, month: int) -> Dict[str, object]:
 
 
 def victory_status(db: GameDB, state: GameState) -> Dict[str, object]:
-    """胜负判定：原依赖 边防/民变 metric，已删；改用 external_powers / armies / regions / classes
-    直接数据。
+    """胜负判定：用 powers / armies / regions / classes 直接数据。
     - 后金综合 = leverage + military_strength + cohesion + supply
-    - 明辽东防线综合 = 关宁(morale+supply+training+equipment-arrears) + 山海关同式 + (100 - beizhili.military_pressure)
+    - 明辽东防线综合 = 按 owner_power='ming' AND theater='辽东' 聚合所有官军(morale+supply+training+equipment-arrears) + (100 - beizhili.military_pressure)
     - 北方民变综合 = 陕晋豫三省 unrest 平均；农民阶级三省 sat 平均（低=惨）
     """
-    houjin = db.conn.execute("SELECT * FROM external_powers WHERE id = 'houjin'").fetchone()
+    houjin = db.conn.execute("SELECT * FROM powers WHERE id = 'houjin'").fetchone()
     if houjin is None:
         return {"status": "ongoing", "summary": "后金未建档。"}
     treasury = int(state.metrics.get("国库", 0))
-    guanning = db.conn.execute("SELECT * FROM armies WHERE id = 'guanning'").fetchone()
-    shanhaiguan = db.conn.execute("SELECT * FROM armies WHERE id = 'shanhaiguan'").fetchone()
     beizhili = db.conn.execute("SELECT * FROM regions WHERE id = 'beizhili'").fetchone()
     houjin_power = int(houjin["leverage"]) + int(houjin["military_strength"]) + int(houjin["cohesion"]) + int(houjin["supply"])
-    ming_front = 0
-    if guanning:
-        ming_front += int(guanning["morale"]) + int(guanning["supply"]) + int(guanning["training"]) + int(guanning["equipment"]) - int(guanning["arrears"])
-    if shanhaiguan:
-        ming_front += int(shanhaiguan["morale"]) + int(shanhaiguan["supply"]) + int(shanhaiguan["training"]) + int(shanhaiguan["equipment"]) - int(shanhaiguan["arrears"])
+    front_row = db.conn.execute(
+        "SELECT COALESCE(SUM(morale + supply + training + equipment - arrears), 0) AS s "
+        "FROM armies WHERE owner_power = 'ming' AND theater = '辽东'"
+    ).fetchone()
+    ming_front = int(front_row["s"]) if front_row else 0
     if beizhili:
         ming_front += max(0, 100 - int(beizhili["military_pressure"]))
     # 京畿压力 = beizhili.military_pressure（高=后金兵临城下）

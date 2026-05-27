@@ -44,6 +44,7 @@ type Region = {
   gentry_resistance: number;
   military_pressure: number;
   status: string;
+  controlled_by?: string;
 };
 
 type Army = {
@@ -66,9 +67,10 @@ type Army = {
   status: string;
 };
 
-type ExternalPower = {
+type Power = {
   id: string;
   name: string;
+  kind: string;
   leader: string;
   stance: string;
   leverage: number;
@@ -121,6 +123,7 @@ type Minister = {
   summary: string;
   favorite: boolean;
   portrait_id?: string;  // 空/undefined=无专属，前端 fallback 到池
+  power_id?: string;     // 大明=ming, 后金=houjin, 流寇=bandits 等
   skills: Array<{ id: string; name: string; sources: string[]; description: string }>;
 };
 
@@ -218,8 +221,8 @@ type GameState = {
   budget: Budget;
   region_warning: string;
   army_warning: string;
-  external_power_warning: string;
-  external_powers: ExternalPower[];
+  power_warning: string;
+  powers: Power[];
   victory_status: { status: string; summary: string };
   events: EventItem[];
   regions: Region[];
@@ -243,8 +246,18 @@ type LLMConfigInfo = {
   model: string;
   max_tokens: number;
   advanced_model: string;
+  advanced_base_url: string;
+  has_advanced_api_key: boolean;
   has_api_key: boolean;
-  persisted: { base_url: string; model: string; has_api_key: boolean; max_tokens: number; advanced_model: string };
+  persisted: {
+    base_url: string;
+    model: string;
+    has_api_key: boolean;
+    max_tokens: number;
+    advanced_model: string;
+    advanced_base_url: string;
+    has_advanced_api_key: boolean;
+  };
 };
 type SecretOrder = {
   id: number;
@@ -461,7 +474,15 @@ type MenuStatus = {
   has_running_game: boolean;
   has_main_db: boolean;
   saves: Array<{ name: string; size: number; mtime: number }>;
-  llm: { base_url: string; model: string; has_api_key: boolean; max_tokens: number; advanced_model: string };
+  llm: {
+    base_url: string;
+    model: string;
+    has_api_key: boolean;
+    max_tokens: number;
+    advanced_model: string;
+    advanced_base_url: string;
+    has_advanced_api_key: boolean;
+  };
 };
 
 function App() {
@@ -2597,6 +2618,8 @@ function LLMConfigTab() {
   const [baseUrl, setBaseUrl] = React.useState("");
   const [model, setModel] = React.useState("");
   const [advancedModel, setAdvancedModel] = React.useState("");
+  const [advancedBaseUrl, setAdvancedBaseUrl] = React.useState("");
+  const [advancedApiKey, setAdvancedApiKey] = React.useState("");
   const [apiKey, setApiKey] = React.useState("");
   const [maxTokens, setMaxTokens] = React.useState("8000");
   const [show, setShow] = React.useState(false);
@@ -2611,6 +2634,7 @@ function LLMConfigTab() {
         setBaseUrl(data.base_url);
         setModel(data.model);
         setAdvancedModel(data.advanced_model || "");
+        setAdvancedBaseUrl(data.advanced_base_url || "");
         setMaxTokens(String(data.max_tokens || 8000));
       })
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
@@ -2629,10 +2653,13 @@ function LLMConfigTab() {
           api_key: apiKey,
           max_tokens: parseInt(maxTokens) || 8000,
           advanced_model: advancedModel,
+          advanced_base_url: advancedBaseUrl,
+          advanced_api_key: advancedApiKey.trim() ? advancedApiKey : "__keep__",
         }),
       });
       setInfo((cur) => (cur ? { ...cur, ...data } : null));
       setApiKey("");
+      setAdvancedApiKey("");
       setMsg("已生效并写入 data/runtime_llm.json。");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -2672,6 +2699,32 @@ function LLMConfigTab() {
           value={advancedModel}
           onChange={(e) => setAdvancedModel(e.target.value)}
           placeholder="deepseek-reasoner / gpt-5（留空 fallback）"
+        />
+      </label>
+      <label className="menu-field">
+        <span>Advanced Base URL <small className="menu-hint">（advanced 专用网关，空=与 Base URL 一致）</small></span>
+        <input
+          className="menu-input"
+          value={advancedBaseUrl}
+          onChange={(e) => setAdvancedBaseUrl(e.target.value)}
+          placeholder="https://other-gateway/v1（留空复用主 Base URL）"
+        />
+      </label>
+      <label className="menu-field">
+        <span>
+          Advanced API Key{" "}
+          {info?.has_advanced_api_key ? (
+            <small className="ok">（当前已设置）</small>
+          ) : (
+            <small className="menu-hint">（空=复用主 API Key）</small>
+          )}
+        </span>
+        <input
+          className="menu-input"
+          type={show ? "text" : "password"}
+          value={advancedApiKey}
+          onChange={(e) => setAdvancedApiKey(e.target.value)}
+          placeholder="留空=复用主 API Key / 保留当前"
         />
       </label>
       <label className="menu-field">
@@ -2787,56 +2840,72 @@ function ExtractionView({ data, loading, error }: { data: ExtractionData | null;
   if (!rawOut || typeof rawOut !== "object") {
     return <div className="document-section"><pre className="memorial-text">{String(rawOut ?? "")}</pre></div>;
   }
-  const out = rawOut.mode === "modular" && rawOut.merged && typeof rawOut.merged === "object" ? rawOut.merged : rawOut;
+  // modular 结构：数据在 merged（已合并扁平），顶层只有 mode/modules/merged/raw。老存档是扁平对象，直接用。
+  const out = (rawOut as any).mode === "modular" && (rawOut as any).merged && typeof (rawOut as any).merged === "object"
+    ? (rawOut as any).merged
+    : rawOut;
   return (
     <div className="document-section extraction-view">
-      <ExtractionSection title="国势变化（metric_delta）">
-        <MetricDeltaBlock data={out.metric_delta} />
+      <ExtractionSection title="国势变化">
+        <MetricDeltaBlock data={pickField(out, "国势变化", "metric_delta")} />
       </ExtractionSection>
-      <ExtractionSection title="钱粮收支（economy_moves）">
-        <EconomyBlock data={out.economy_moves} />
+      <ExtractionSection title="钱粮收支">
+        <EconomyBlock data={pickField(out, "钱粮收支", "economy_moves")} />
       </ExtractionSection>
-      <ExtractionSection title="派系变化（faction_delta）">
-        <FactionBlock data={out.faction_delta} />
+      <ExtractionSection title="派系变化">
+        <FactionBlock data={pickField(out, "派系变化", "faction_delta")} />
       </ExtractionSection>
-      <ExtractionSection title="官职任免（office_changes）">
-        <OfficeChangesBlock data={out.office_changes} />
+      <ExtractionSection title="官职任免">
+        <OfficeChangesBlock data={pickField(out, "人事变更", "office_changes")} />
       </ExtractionSection>
-      <ExtractionSection title="去职变更（character_status_changes）">
-        <StatusChangesBlock data={out.character_status_changes} />
+      <ExtractionSection title="去职变更">
+        <StatusChangesBlock data={pickField(out, "人物状态变化", "character_status_changes")} />
       </ExtractionSection>
-      <ExtractionSection title="后宫纳妃（appointments）">
-        <AppointmentsBlock data={out.appointments} />
+      <ExtractionSection title="后宫纳妃">
+        <AppointmentsBlock data={pickField(out, "后宫册封", "appointments")} />
       </ExtractionSection>
-      <ExtractionSection title="局势推进（issue_advances）">
-        <IssueAdvancesBlock data={out.issue_advances} />
+      <ExtractionSection title="局势推进">
+        <IssueAdvancesBlock data={pickField(out, "局势推进", "issue_advances")} />
       </ExtractionSection>
-      <ExtractionSection title="新立局势（new_issues）">
-        <NewIssuesBlock data={out.new_issues} />
+      <ExtractionSection title="新立局势">
+        <NewIssuesBlock data={pickField(out, "新立局势", "new_issues")} />
       </ExtractionSection>
-      <ExtractionSection title="结案 / 失败（close_issues）">
-        <CloseIssuesBlock data={out.close_issues} />
+      <ExtractionSection title="结案 / 失败">
+        <CloseIssuesBlock data={pickField(out, "结案局势", "close_issues")} />
       </ExtractionSection>
-      <ExtractionSection title="撤旨（cancels）">
-        <CancelsBlock data={out.cancels} />
+      <ExtractionSection title="撤旨">
+        <CancelsBlock data={pickField(out, "撤销局势", "cancels")} />
       </ExtractionSection>
-      <ExtractionSection title="地区变化（region_delta）">
-        <GenericKVBlock data={out.region_delta} />
+      <ExtractionSection title="地区变化">
+        <GenericKVBlock data={pickField(out, "地区变化", "region_delta")} />
       </ExtractionSection>
-      <ExtractionSection title="军队变化（army_delta）">
-        <GenericKVBlock data={out.army_delta} />
+      <ExtractionSection title="军队变化">
+        <GenericKVBlock data={pickField(out, "军队变化", "army_delta")} />
       </ExtractionSection>
-      <ExtractionSection title="外部势力（external_power_updates）">
-        <GenericKVBlock data={out.external_power_updates} />
+      <ExtractionSection title="新建军队">
+        <NewArmiesBlock data={pickField(out, "新建军队", "new_armies")} />
       </ExtractionSection>
-      <ExtractionSection title="财政系数（fiscal_changes）">
-        <FiscalBlock data={out.fiscal_changes} />
+      <ExtractionSection title="势力变化">
+        <GenericKVBlock data={pickField(out, "势力变化", "power_updates")} />
       </ExtractionSection>
-      <ExtractionSection title="世界推进（world_advance）">
-        <GenericKVBlock data={out.world_advance} />
+      <ExtractionSection title="财政系数">
+        <FiscalBlock data={pickField(out, "财政制度变化", "fiscal_changes")} />
+      </ExtractionSection>
+      <ExtractionSection title="外交关系">
+        <GenericKVBlock data={pickField(out, "外交关系", "world_advance") ?? pickField(out, "外交", "world_advance") ?? pickField(out, "外交态度", "world_advance") ?? pickField(out, "四方动向", "world_advance")} />
       </ExtractionSection>
     </div>
   );
+}
+
+function pickField(obj: any, cn: string, en: string): any {
+  if (!obj || typeof obj !== "object") return undefined;
+  return obj[cn] ?? obj[en];
+}
+
+function pickItem(obj: any, cn: string, en: string): any {
+  if (!obj || typeof obj !== "object") return undefined;
+  return obj[cn] ?? obj[en];
 }
 
 function ExtractionSection({ title, children }: { title: string; children: React.ReactNode }) {
@@ -2879,8 +2948,10 @@ function EconomyBlock({ data }: { data: any }) {
     <ul className="extraction-list">
       {data.map((item: any, i: number) => (
         <li key={i}>
-          <b className={Number(item?.delta) >= 0 ? "good" : "bad"}>{item?.account || "?"} {fmtDelta(item?.delta)} 万</b>
-          <span>{item?.category || ""}{item?.reason ? ` — ${item.reason}` : ""}</span>
+          <b className={Number(pickItem(item, "增量", "delta")) >= 0 ? "good" : "bad"}>
+            {pickItem(item, "账户", "account") || "?"} {fmtDelta(pickItem(item, "增量", "delta"))} 万
+          </b>
+          <span>{pickItem(item, "分类", "category") || ""}{pickItem(item, "原因", "reason") ? ` — ${pickItem(item, "原因", "reason")}` : ""}</span>
         </li>
       ))}
     </ul>
@@ -2912,9 +2983,12 @@ function IssueAdvancesBlock({ data }: { data: any }) {
     <ul className="extraction-list">
       {data.map((it: any, i: number) => (
         <li key={i}>
-          <b className={Number(it?.delta_bar) >= 0 ? "good" : "bad"}>#{it?.issue_id} bar {fmtDelta(it?.delta_bar)}{it?.inertia_delta ? `，惯性 ${fmtDelta(it.inertia_delta)}` : ""}</b>
-          {it?.stage_text ? <span>{it.stage_text}</span> : null}
-          {it?.narrative ? <span className="extraction-narr">{it.narrative}</span> : null}
+          <b className={Number(pickItem(it, "进度增量", "delta_bar")) >= 0 ? "good" : "bad"}>
+            #{pickItem(it, "局势编号", "issue_id")} 进度 {fmtDelta(pickItem(it, "进度增量", "delta_bar"))}
+            {pickItem(it, "惯性增量", "inertia_delta") ? `，惯性 ${fmtDelta(pickItem(it, "惯性增量", "inertia_delta"))}` : ""}
+          </b>
+          {pickItem(it, "阶段", "stage_text") ? <span>{pickItem(it, "阶段", "stage_text")}</span> : null}
+          {pickItem(it, "叙述", "narrative") ? <span className="extraction-narr">{pickItem(it, "叙述", "narrative")}</span> : null}
         </li>
       ))}
     </ul>
@@ -2927,8 +3001,8 @@ function NewIssuesBlock({ data }: { data: any }) {
     <ul className="extraction-list">
       {data.map((it: any, i: number) => (
         <li key={i}>
-          <b>{it?.title || it?.id || "新事项"}（{it?.kind || it?.origin_kind || ""}）</b>
-          {it?.stage_text ? <span>{it.stage_text}</span> : null}
+          <b>{pickItem(it, "标题", "title") || pickItem(it, "编号", "id") || "新事项"}（{pickItem(it, "类型", "kind") || pickItem(it, "来源类型", "origin_kind") || ""}）</b>
+          {pickItem(it, "阶段", "stage_text") ? <span>{pickItem(it, "阶段", "stage_text")}</span> : null}
         </li>
       ))}
     </ul>
@@ -2941,8 +3015,10 @@ function CloseIssuesBlock({ data }: { data: any }) {
     <ul className="extraction-list">
       {data.map((it: any, i: number) => (
         <li key={i}>
-          <b className={it?.reason === "resolved" ? "good" : "bad"}>#{it?.issue_id} {it?.reason === "resolved" ? "结案" : "失败"}</b>
-          {it?.narrative ? <span>{it.narrative}</span> : null}
+          <b className={pickItem(it, "原因", "reason") === "resolved" ? "good" : "bad"}>
+            #{pickItem(it, "局势编号", "issue_id")} {pickItem(it, "原因", "reason") === "resolved" ? "结案" : "失败"}
+          </b>
+          {pickItem(it, "叙述", "narrative") ? <span>{pickItem(it, "叙述", "narrative")}</span> : null}
         </li>
       ))}
     </ul>
@@ -2955,8 +3031,8 @@ function CancelsBlock({ data }: { data: any }) {
     <ul className="extraction-list">
       {data.map((it: any, i: number) => (
         <li key={i}>
-          <b>#{it?.issue_id} 撤旨</b>
-          {it?.narrative ? <span>{it.narrative}</span> : null}
+          <b>#{pickItem(it, "局势编号", "issue_id")} 撤旨</b>
+          {pickItem(it, "叙述", "narrative") ? <span>{pickItem(it, "叙述", "narrative")}</span> : null}
         </li>
       ))}
     </ul>
@@ -2969,11 +3045,13 @@ function OfficeChangesBlock({ data }: { data: any }) {
     <ul className="extraction-list">
       {data.map((it: any, i: number) => (
         <li key={i}>
-          <b className={it?.rejected ? "bad" : "good"}>
-            {it?.name} → {it?.new_office}{it?.new_office_type ? `（${it.new_office_type}）` : ""}{it?.rejected ? "（未落地）" : it?.kind === "appoint" ? "（新进朝堂）" : ""}
+          <b className={pickItem(it, "rejected", "rejected") ? "bad" : "good"}>
+            {pickItem(it, "姓名", "name")} → {pickItem(it, "新官职", "new_office")}
+            {pickItem(it, "新官署类别", "new_office_type") ? `（${pickItem(it, "新官署类别", "new_office_type")}）` : ""}
+            {pickItem(it, "rejected", "rejected") ? "（未落地）" : pickItem(it, "kind", "kind") === "appoint" ? "（新进朝堂）" : ""}
           </b>
-          {it?.displaced ? <span>顶替 {it.displaced} 去职</span> : null}
-          {it?.reason ? <span>{it.reason}</span> : null}
+          {pickItem(it, "displaced", "displaced") ? <span>顶替 {pickItem(it, "displaced", "displaced")} 去职</span> : null}
+          {pickItem(it, "原因", "reason") ? <span>{pickItem(it, "原因", "reason")}</span> : null}
         </li>
       ))}
     </ul>
@@ -2990,10 +3068,11 @@ function StatusChangesBlock({ data }: { data: any }) {
     <ul className="extraction-list">
       {data.map((it: any, i: number) => (
         <li key={i}>
-          <b className={it?.rejected ? "bad" : ""}>
-            {it?.name} {label[it?.status] || it?.status}{it?.rejected ? "（未落地）" : ""}
+          <b className={pickItem(it, "rejected", "rejected") ? "bad" : ""}>
+            {pickItem(it, "姓名", "name")} {label[pickItem(it, "状态", "status")] || pickItem(it, "状态", "status")}
+            {pickItem(it, "rejected", "rejected") ? "（未落地）" : ""}
           </b>
-          {it?.reason ? <span>{it.reason}</span> : null}
+          {pickItem(it, "原因", "reason") ? <span>{pickItem(it, "原因", "reason")}</span> : null}
         </li>
       ))}
     </ul>
@@ -3006,10 +3085,11 @@ function AppointmentsBlock({ data }: { data: any }) {
     <ul className="extraction-list">
       {data.map((it: any, i: number) => (
         <li key={i}>
-          <b className={it?.rejected ? "bad" : "good"}>
-            {it?.name} 册封 {it?.office}{it?.rejected ? "（未落地）" : ""}
+          <b className={pickItem(it, "rejected", "rejected") ? "bad" : "good"}>
+            {pickItem(it, "姓名", "name")} 册封 {pickItem(it, "位号", "office")}
+            {pickItem(it, "rejected", "rejected") ? "（未落地）" : ""}
           </b>
-          {it?.reason ? <span>{it.reason}</span> : null}
+          {pickItem(it, "原因", "reason") ? <span>{pickItem(it, "原因", "reason")}</span> : null}
         </li>
       ))}
     </ul>
@@ -3022,8 +3102,10 @@ function FiscalBlock({ data }: { data: any }) {
     <ul className="extraction-list">
       {data.map((it: any, i: number) => (
         <li key={i}>
-          <b className={Number(it?.delta) >= 0 ? "good" : "bad"}>{it?.key} {fmtDelta(it?.delta)}</b>
-          {it?.reason ? <span>{it.reason}</span> : null}
+          <b className={Number(pickItem(it, "增量", "delta")) >= 0 ? "good" : "bad"}>
+            {pickItem(it, "键", "key")} {fmtDelta(pickItem(it, "增量", "delta"))}
+          </b>
+          {pickItem(it, "原因", "reason") ? <span>{pickItem(it, "原因", "reason")}</span> : null}
         </li>
       ))}
     </ul>
@@ -3033,6 +3115,27 @@ function FiscalBlock({ data }: { data: any }) {
 function GenericKVBlock({ data }: { data: any }) {
   if (isEmptyData(data)) return <p className="extraction-empty">无</p>;
   return <pre className="extraction-json">{JSON.stringify(data, null, 2)}</pre>;
+}
+
+function NewArmiesBlock({ data }: { data: any }) {
+  if (isEmptyData(data) || !Array.isArray(data)) return <p className="extraction-empty">无</p>;
+  return (
+    <ul className="extraction-list">
+      {data.map((item: any, i: number) => {
+        const name = pickItem(item, "名称", "name") || pickItem(item, "编号", "id") || "?";
+        const owner = pickItem(item, "归属", "owner_power") || "?";
+        const manpower = pickItem(item, "人数", "manpower");
+        const station = pickItem(item, "驻扎地", "station") || "";
+        const commander = pickItem(item, "统将", "commander") || "";
+        return (
+          <li key={i}>
+            <b>{name}</b>（归属：{owner}）{manpower ? ` · ${manpower}人` : ""}
+            <span>{station}{commander ? ` · ${commander}` : ""}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
 }
 
 function PreviousSummary({ summary }: { summary: string }) {
@@ -3895,13 +3998,23 @@ function ApiSettingsModal({
   onClose,
   onSaved,
 }: {
-  initial?: { base_url: string; model: string; has_api_key: boolean; max_tokens?: number; advanced_model?: string };
+  initial?: {
+    base_url: string;
+    model: string;
+    has_api_key: boolean;
+    max_tokens?: number;
+    advanced_model?: string;
+    advanced_base_url?: string;
+    has_advanced_api_key?: boolean;
+  };
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
   const [baseUrl, setBaseUrl] = React.useState(initial?.base_url || "https://api.deepseek.com");
   const [model, setModel] = React.useState(initial?.model || "deepseek-chat");
   const [advancedModel, setAdvancedModel] = React.useState(initial?.advanced_model || "");
+  const [advancedBaseUrl, setAdvancedBaseUrl] = React.useState(initial?.advanced_base_url || "");
+  const [advancedApiKey, setAdvancedApiKey] = React.useState("");
   const [apiKey, setApiKey] = React.useState("");
   const [maxTokens, setMaxTokens] = React.useState(String(initial?.max_tokens || 8000));
   const [busy, setBusy] = React.useState(false);
@@ -3919,6 +4032,8 @@ function ApiSettingsModal({
           api_key: apiKey.trim(),
           max_tokens: parseInt(maxTokens) || 8000,
           advanced_model: advancedModel.trim(),
+          advanced_base_url: advancedBaseUrl.trim(),
+          advanced_api_key: advancedApiKey.trim(),
         }),
       });
       await onSaved();
@@ -3945,6 +4060,15 @@ function ApiSettingsModal({
         <label>
           Advanced Model <small className="menu-hint">（推演 + 打分专用；留空 fallback）</small>
           <input value={advancedModel} onChange={(e) => setAdvancedModel(e.target.value)} placeholder="deepseek-reasoner / gpt-5" />
+        </label>
+        <label>
+          Advanced Base URL <small className="menu-hint">（advanced 专用网关；留空复用主 Base URL）</small>
+          <input value={advancedBaseUrl} onChange={(e) => setAdvancedBaseUrl(e.target.value)} placeholder="https://other-gateway/v1" />
+        </label>
+        <label>
+          Advanced API Key{" "}
+          <small className="menu-hint">{initial?.has_advanced_api_key ? "(已配置；留空保留)" : "(留空=复用主 API Key)"}</small>
+          <input type="password" value={advancedApiKey} onChange={(e) => setAdvancedApiKey(e.target.value)} placeholder={initial?.has_advanced_api_key ? "(已配置；如需更换请重新填写)" : "留空=复用主 Key"} />
         </label>
         <label>
           Max Tokens

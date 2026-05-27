@@ -33,6 +33,16 @@ def main() -> None:
         help="推演/打分专用更强模型（读 OPENAI_ADVANCED_MODEL），空=与 --model 一致",
     )
     parser.add_argument(
+        "--advanced-base-url",
+        default=os.environ.get("OPENAI_ADVANCED_BASE_URL", ""),
+        help="推演/打分专用 base URL（读 OPENAI_ADVANCED_BASE_URL），空=与 --base-url 一致",
+    )
+    parser.add_argument(
+        "--advanced-api-key",
+        default=os.environ.get("OPENAI_ADVANCED_API_KEY", ""),
+        help="推演/打分专用 API key（读 OPENAI_ADVANCED_API_KEY），空=与主 key 一致",
+    )
+    parser.add_argument(
         "--db",
         default=os.environ.get("MING_SIM_DB", "data/ming_sim.db"),
         help="SQLite database path",
@@ -55,6 +65,8 @@ def main() -> None:
         api_key=cli_api_key,
         start_ym=args.start_ym,
         advanced_model=args.advanced_model,
+        advanced_base_url=args.advanced_base_url,
+        advanced_api_key=args.advanced_api_key,
     )
 
 

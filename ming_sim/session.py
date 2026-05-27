@@ -288,12 +288,26 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB") -> None:
     ).fetchall()
     for row in rows:
         name = row["name"]
+        office_type = infer_office_type_from_office(row["office"], row["office_type"])
+        if office_type != (row["office_type"] or ""):
+            db.conn.execute(
+                "UPDATE characters SET office_type=? WHERE name=?",
+                (office_type, name),
+            )
+            db.conn.execute(
+                """
+                UPDATE character_offices
+                SET office_type=?, updated_at=CURRENT_TIMESTAMP
+                WHERE character_name=?
+                """,
+                (office_type, name),
+            )
         if name in content.characters:
             ch = content.characters[name]
             ch.office = row["office"]
-            if row["office_type"]:
-                ch.office_type = infer_office_type_from_office(row["office"], row["office_type"])
+            ch.office_type = office_type
             ch.status = row["status"]
+    db.conn.commit()
 
 
 def _bind_all_content(content: GameContent) -> None:

@@ -13,12 +13,12 @@ from typing import Dict, List, Optional, Tuple
 
 from ming_sim.assets import format_money, format_money_delta
 from ming_sim.constants import (
-    ARMY_FIELD_LABELS, ARMY_QUANTITY_FIELDS, ARMY_SCORE_FIELDS, ARMY_TEXT_FIELDS,
+    ARMY_FIELD_ALIASES, ARMY_FIELD_LABELS, ARMY_QUANTITY_FIELDS, ARMY_SCORE_FIELDS, ARMY_TEXT_FIELDS,
     BUILDING_CATEGORIES, BUILDING_FIELD_LABELS, BUILDING_OUTPUT_METRICS,
     BUILDING_QUANTITY_FIELDS, BUILDING_SCORE_FIELDS, BUILDING_TEXT_FIELDS,
-    ECONOMY_ACCOUNTS, EXTERNAL_POWER_FIELD_LABELS, EXTERNAL_POWER_SCORE_FIELDS,
-    EXTERNAL_POWER_TEXT_FIELDS, MONEY_UNIT, REGION_FIELD_LABELS, REGION_QUANTITY_FIELDS,
-    FISCAL_SCORE_FIELDS, REGION_SCORE_FIELDS, REGION_TEXT_FIELDS, TURN_UNIT,
+    ECONOMY_ACCOUNTS, POWER_FIELD_LABELS, POWER_SCORE_FIELDS,
+    POWER_FIELD_ALIASES, POWER_TEXT_FIELDS, MONEY_UNIT, REGION_FIELD_LABELS, REGION_QUANTITY_FIELDS,
+    FISCAL_SCORE_FIELDS, REGION_FIELD_ALIASES, REGION_SCORE_FIELDS, REGION_TEXT_FIELDS, TURN_UNIT,
 )
 from ming_sim.content import GameContent
 from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
@@ -137,7 +137,9 @@ class GameDB:
                 debut_month INTEGER NOT NULL DEFAULT 0,
                 status TEXT NOT NULL DEFAULT 'active',
                 status_reason TEXT NOT NULL DEFAULT '',
-                status_changed_turn INTEGER NOT NULL DEFAULT 0
+                status_changed_turn INTEGER NOT NULL DEFAULT 0,
+                power_id TEXT NOT NULL DEFAULT 'ming',
+                location TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS character_offices (
@@ -157,9 +159,10 @@ class GameDB:
                 agenda TEXT NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS external_powers (
+            CREATE TABLE IF NOT EXISTS powers (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL UNIQUE,
+                kind TEXT NOT NULL,
                 leader TEXT NOT NULL,
                 stance TEXT NOT NULL,
                 leverage INTEGER NOT NULL,
@@ -173,7 +176,7 @@ class GameDB:
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
-            CREATE TABLE IF NOT EXISTS external_power_logs (
+            CREATE TABLE IF NOT EXISTS power_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 turn INTEGER NOT NULL,
                 year INTEGER NOT NULL,
@@ -185,7 +188,7 @@ class GameDB:
                 delta INTEGER,
                 reason TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(power_id) REFERENCES external_powers(id)
+                FOREIGN KEY(power_id) REFERENCES powers(id)
             );
 
             CREATE TABLE IF NOT EXISTS regions (
@@ -204,8 +207,10 @@ class GameDB:
                 gentry_resistance INTEGER NOT NULL,
                 military_pressure INTEGER NOT NULL,
                 status TEXT NOT NULL,
+                controlled_by TEXT NOT NULL DEFAULT 'ming',
                 fiscal TEXT NOT NULL DEFAULT '{}',
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(controlled_by) REFERENCES powers(id)
             );
 
             CREATE TABLE IF NOT EXISTS region_logs (
@@ -244,7 +249,9 @@ class GameDB:
                 mobility INTEGER NOT NULL,
                 loyalty INTEGER NOT NULL,
                 status TEXT NOT NULL,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                owner_power TEXT NOT NULL DEFAULT 'ming',
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(owner_power) REFERENCES powers(id)
             );
 
             CREATE TABLE IF NOT EXISTS army_logs (
@@ -467,8 +474,8 @@ class GameDB:
             CREATE INDEX IF NOT EXISTS idx_building_logs_turn
             ON building_logs(turn, building_id);
 
-            CREATE INDEX IF NOT EXISTS idx_external_power_logs_turn
-            ON external_power_logs(turn, power_id);
+            CREATE INDEX IF NOT EXISTS idx_power_logs_turn
+            ON power_logs(turn, power_id);
 
             CREATE TABLE IF NOT EXISTS issues (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -600,8 +607,13 @@ class GameDB:
             "cohesion": "INTEGER NOT NULL DEFAULT 50",
             "supply": "INTEGER NOT NULL DEFAULT 50",
             "last_action": "TEXT NOT NULL DEFAULT ''",
+            "kind": "TEXT NOT NULL DEFAULT '敌国'",
         }.items():
-            self.ensure_column("external_powers", column, definition)
+            self.ensure_column("powers", column, definition)
+        self.ensure_column("armies", "owner_power", "TEXT NOT NULL DEFAULT 'ming'")
+        self.ensure_column("regions", "controlled_by", "TEXT NOT NULL DEFAULT 'ming'")
+        self.ensure_column("characters", "power_id", "TEXT NOT NULL DEFAULT 'ming'")
+        self.ensure_column("characters", "location", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "resolve_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "fail_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "birth_year", "INTEGER NOT NULL DEFAULT 0")
@@ -736,18 +748,20 @@ class GameDB:
 
         if not self.table_has_rows("characters"):
             for character in self.content.characters.values():
+                office = normalize_office(character.office)
+                office_type = infer_office_type_from_office(office, character.office_type)
                 self.conn.execute(
                     """
                     INSERT INTO characters
                     (name, office, office_type, faction, personal_skills, loyalty, ability, integrity, courage, style,
                      birth_year, historical_death_year, historical_death_month, debut_year, debut_month,
-                     status, status_reason, status_changed_turn, portrait_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     status, status_reason, status_changed_turn, portrait_id, power_id, location)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         character.name,
-                        normalize_office(character.office),
-                        character.office_type,
+                        office,
+                        office_type,
                         character.faction,
                         json.dumps(character.personal_skills + character.aliases, ensure_ascii=False),
                         character.loyalty,
@@ -764,6 +778,8 @@ class GameDB:
                         "",
                         0,
                         character.portrait_id,
+                        character.power_id,
+                        character.location,
                     ),
                 )
         if not self.table_has_rows("character_offices"):
@@ -794,18 +810,19 @@ class GameDB:
                     """,
                     (cls.name, cls.region_id, cls.population, cls.satisfaction, cls.leverage, cls.agenda),
                 )
-        if not self.table_has_rows("external_powers"):
-            for power in self.content.external_powers.values():
+        if not self.table_has_rows("powers"):
+            for power in self.content.powers.values():
                 self.conn.execute(
                     """
-                    INSERT INTO external_powers
-                    (id, name, leader, stance, leverage, satisfaction, military_strength,
+                    INSERT INTO powers
+                    (id, name, kind, leader, stance, leverage, satisfaction, military_strength,
                      cohesion, supply, agenda, status, last_action)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         power.id,
                         power.name,
+                        power.kind,
                         power.leader,
                         power.stance,
                         power.leverage,
@@ -825,8 +842,8 @@ class GameDB:
                     INSERT INTO regions
                     (id, name, kind, population, public_support, unrest, natural_disaster, human_disaster,
                      registered_land, hidden_land, tax_per_turn, grain_security, gentry_resistance,
-                     military_pressure, status, fiscal)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     military_pressure, status, controlled_by, fiscal)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         region.id,
@@ -844,6 +861,7 @@ class GameDB:
                         region.gentry_resistance,
                         region.military_pressure,
                         region.status,
+                        region.controlled_by,
                         json.dumps(region.fiscal, ensure_ascii=False),
                     ),
                 )
@@ -854,8 +872,8 @@ class GameDB:
                     INSERT INTO armies
                     (id, name, station, theater, commander, controller, troop_type, manpower,
                      maintenance_per_turn, supply, morale, training, equipment, arrears,
-                     mobility, loyalty, status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     mobility, loyalty, status, owner_power)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         army.id,
@@ -875,6 +893,7 @@ class GameDB:
                         army.mobility,
                         army.loyalty,
                         army.status,
+                        army.owner_power,
                     ),
                 )
         if not self.table_has_rows("buildings"):
@@ -1128,6 +1147,44 @@ class GameDB:
             return ("active", "")
         return (row["status"], row["status_reason"] or "")
 
+    def apply_character_power_changes(
+        self,
+        changes: List[Dict[str, object]],
+    ) -> List[Dict[str, object]]:
+        """据 extractor 输出改人物 power_id（降将/叛臣/归正）。new_power 须为合法 power id。"""
+        applied: List[Dict[str, object]] = []
+        if not isinstance(changes, list):
+            return applied
+        valid_powers = {r["id"] for r in self.conn.execute("SELECT id FROM powers").fetchall()}
+        for raw in changes:
+            if not isinstance(raw, dict):
+                continue
+            name = str(raw.get("name") or raw.get("姓名") or "").strip()
+            new_power = str(raw.get("new_power") or raw.get("新势力") or "").strip()
+            reason = str(raw.get("reason") or raw.get("原因") or "")[:120]
+            if not name or not new_power:
+                print(f"[WARN] character_power_changes 缺 name/new_power → 跳过: {raw}")
+                continue
+            if new_power not in valid_powers:
+                print(f"[WARN] character_power_changes new_power '{new_power}' 未在 powers → 跳过 {name}")
+                continue
+            row = self.conn.execute(
+                "SELECT power_id FROM characters WHERE name=?", (name,)
+            ).fetchone()
+            if row is None:
+                print(f"[WARN] character_power_changes 人物 '{name}' 未入库 → 跳过")
+                continue
+            old_power = row["power_id"] or "ming"
+            if old_power == new_power:
+                continue
+            self.conn.execute(
+                "UPDATE characters SET power_id = ? WHERE name = ?",
+                (new_power, name),
+            )
+            applied.append({"name": name, "old_power": old_power, "new_power": new_power, "reason": reason})
+        self.conn.commit()
+        return applied
+
     def set_character_office(
         self,
         name: str,
@@ -1328,8 +1385,8 @@ class GameDB:
             INSERT INTO characters
             (name, office, office_type, faction, personal_skills, loyalty, ability, integrity, courage, style,
              birth_year, historical_death_year, historical_death_month, debut_year, debut_month,
-             status, status_reason, status_changed_turn, portrait_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             status, status_reason, status_changed_turn, portrait_id, power_id, location)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 character.name,
@@ -1351,6 +1408,8 @@ class GameDB:
                 source_label,
                 state.turn,
                 portrait_id,
+                getattr(character, "power_id", "ming") or "ming",
+                getattr(character, "location", "") or "",
             ),
         )
         self.conn.execute(
@@ -1594,26 +1653,32 @@ class GameDB:
             )
         self.conn.commit()
 
-    def external_power_rows(self) -> List[sqlite3.Row]:
+    def power_rows(self, exclude_self: bool = False) -> List[sqlite3.Row]:
+        where = "WHERE id != 'ming'" if exclude_self else ""
         return self.conn.execute(
-            """
+            f"""
             SELECT *
-            FROM external_powers
+            FROM powers
+            {where}
             ORDER BY CASE id
+                WHEN 'ming' THEN 0
                 WHEN 'houjin' THEN 1
-                WHEN 'mongol' THEN 2
-                WHEN 'korea' THEN 3
-                WHEN 'bandits' THEN 4
+                WHEN 'manchu_banners' THEN 2
+                WHEN 'han_banners' THEN 3
+                WHEN 'mongol' THEN 4
+                WHEN 'korea' THEN 5
+                WHEN 'bandits' THEN 6
                 ELSE 9
             END, name
             """
         ).fetchall()
 
-    def external_power_payload(self) -> List[Dict[str, object]]:
+    def power_payload(self, exclude_self: bool = False) -> List[Dict[str, object]]:
         return [
             {
                 "id": row["id"],
                 "name": row["name"],
+                "kind": row["kind"],
                 "leader": row["leader"],
                 "stance": row["stance"],
                 "leverage": int(row["leverage"]),
@@ -1625,60 +1690,64 @@ class GameDB:
                 "status": row["status"],
                 "last_action": row["last_action"],
             }
-            for row in self.external_power_rows()
+            for row in self.power_rows(exclude_self=exclude_self)
         ]
 
-    def external_power_report(self) -> str:
-        rows = self.external_power_rows()
+    def power_report(self, exclude_self: bool = True) -> str:
+        rows = self.power_rows(exclude_self=exclude_self)
         if not rows:
-            return "外部势力未建档。"
+            return "势力未建档。"
         return "；".join(
-            f"{row['name']}（{row['leader']}）：{row['stance']}，威胁{row['leverage']}、"
-            f"兵势{row['military_strength']}、内聚{row['cohesion']}、粮饷{row['supply']}，"
+            f"{row['name']}（{row['leader']}）：{row['stance']}，威望{row['leverage']}、"
+            f"实力{row['military_strength']}、经济{row['supply']}，"
             f"{row['status']}；近动：{row['last_action'] or '尚无新动'}"
             for row in rows
         )
 
-    def apply_external_power_deltas(
+    def apply_power_deltas(
         self,
         state: GameState,
         updates: Dict[str, Dict[str, object]],
     ) -> List[Dict[str, object]]:
+        allowed_fields = {"leverage", "military_strength", "supply"}
         changes: List[Dict[str, object]] = []
         for power_id, raw_changes in updates.items():
-            row = self.conn.execute("SELECT * FROM external_powers WHERE id = ?", (power_id,)).fetchone()
-            if row is None:
-                print(f"[WARN] external_power_updates 引用未入库势力 '{power_id}' → 跳过")
+            if power_id == "ming":
+                print("[WARN] power_updates 不再处理大明自身 → 跳过")
                 continue
-            reason = str(raw_changes.get("reason") or raw_changes.get("last_action") or "外部势力推演").strip()[:120]
-            for field, value in raw_changes.items():
+            row = self.conn.execute("SELECT * FROM powers WHERE id = ?", (power_id,)).fetchone()
+            if row is None:
+                print(f"[WARN] power_updates 引用未入库势力 '{power_id}' → 跳过")
+                continue
+            reason = str(
+                raw_changes.get("reason")
+                or raw_changes.get("原因")
+                or raw_changes.get("last_action")
+                or raw_changes.get("近动")
+                or "势力推演"
+            ).strip()[:120]
+            for raw_field, value in raw_changes.items():
+                field = POWER_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
                 if field == "reason":
                     continue
-                if field not in set(EXTERNAL_POWER_SCORE_FIELDS + EXTERNAL_POWER_TEXT_FIELDS):
-                    print(f"[WARN] external_power_updates 引用非法字段 '{field}' → 跳过")
+                if field not in allowed_fields:
+                    print(f"[WARN] power_updates 只允许 威望/实力/经济，'{raw_field}' → 跳过")
                     continue
                 old_value = row[field]
-                if field in EXTERNAL_POWER_SCORE_FIELDS:
-                    delta = int(value)
-                    new_value = max(0, min(100, int(old_value) + delta))
-                    actual_delta = new_value - int(old_value)
-                    if actual_delta == 0:
-                        continue
-                    stored_new: object = new_value
-                    log_delta: int | None = actual_delta
-                else:
-                    text_value = str(value).strip()[:220]
-                    if not text_value or text_value == str(old_value):
-                        continue
-                    stored_new = text_value
-                    log_delta = None
+                delta = int(value)
+                new_value = max(0, min(100, int(old_value) + delta))
+                actual_delta = new_value - int(old_value)
+                if actual_delta == 0:
+                    continue
+                stored_new: object = new_value
+                log_delta: int | None = actual_delta
                 self.conn.execute(
-                    f"UPDATE external_powers SET {field} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    f"UPDATE powers SET {field} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     (stored_new, power_id),
                 )
                 self.conn.execute(
                     """
-                    INSERT INTO external_power_logs
+                    INSERT INTO power_logs
                     (turn, year, period, power_id, field, old_value, new_value, delta, reason)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
@@ -1697,7 +1766,7 @@ class GameDB:
                 changes.append({
                     "power": row["name"],
                     "field": field,
-                    "label": EXTERNAL_POWER_FIELD_LABELS.get(field, field),
+                    "label": POWER_FIELD_LABELS.get(field, field),
                     "old": old_value,
                     "new": stored_new,
                     "delta": log_delta,
@@ -1706,23 +1775,23 @@ class GameDB:
         self.conn.commit()
         return changes
 
-    def turn_external_power_summary(self, turn: int, limit: int = 10) -> str:
+    def turn_power_summary(self, turn: int, limit: int = 10) -> str:
         rows = self.conn.execute(
             """
-            SELECT epl.*, ep.name AS power_name
-            FROM external_power_logs epl
-            JOIN external_powers ep ON ep.id = epl.power_id
-            WHERE epl.turn = ?
-            ORDER BY epl.id
+            SELECT pl.*, p.name AS power_name
+            FROM power_logs pl
+            JOIN powers p ON p.id = pl.power_id
+            WHERE pl.turn = ?
+            ORDER BY pl.id
             LIMIT ?
             """,
             (turn, limit),
         ).fetchall()
         if not rows:
-            return f"本{TURN_UNIT}外部势力无明确变化。"
+            return f"本{TURN_UNIT}势力无明确变化。"
         parts = []
         for row in rows:
-            label = EXTERNAL_POWER_FIELD_LABELS.get(str(row["field"]), str(row["field"]))
+            label = POWER_FIELD_LABELS.get(str(row["field"]), str(row["field"]))
             delta = row["delta"]
             if delta is None:
                 parts.append(f"{row['power_name']}{label}改为{row['new_value']}（{row['reason']}）")
@@ -1768,6 +1837,7 @@ class GameDB:
                     "gentry_resistance": int(row["gentry_resistance"]),
                     "military_pressure": int(row["military_pressure"]),
                     "status": row["status"],
+                    "controlled_by": row["controlled_by"],
                 }
             )
         return payload
@@ -1841,15 +1911,16 @@ class GameDB:
             if row is None:
                 print(f"[WARN] region_delta 引用未入库地区 '{region_id}' → 跳过")
                 continue
-            reason = str(raw_changes.get("reason") or event.title).strip()[:80]
-            for field, value in raw_changes.items():
+            reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()[:80]
+            for raw_field, value in raw_changes.items():
+                field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
                 if field == "reason":
                     continue
                 # 先判字段合法，再取值：非法字段直接报清楚。
                 all_direct = REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + REGION_TEXT_FIELDS
                 if field not in all_direct and field not in FISCAL_SCORE_FIELDS:
                     raise LLMContractError(
-                        f"{TURN_UNIT}末执行评估引用了非法地区字段：'{field}'（地区 '{region_id}'）。"
+                        f"{TURN_UNIT}末执行评估引用了非法地区字段：'{raw_field}'（地区 '{region_id}'）。"
                         f"合法字段：{all_direct + FISCAL_SCORE_FIELDS}"
                     )
 
@@ -1975,6 +2046,7 @@ class GameDB:
                     "mobility": int(row["mobility"]),
                     "loyalty": int(row["loyalty"]),
                     "status": row["status"],
+                    "owner_power": row["owner_power"],
                 }
             )
         return payload
@@ -2057,13 +2129,14 @@ class GameDB:
             if row is None:
                 print(f"[WARN] army_delta 引用未入库军队 '{army_id}' → 跳过")
                 continue
-            reason = str(raw_changes.get("reason") or event.title).strip()[:80]
+            reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()[:80]
             _valid_army_fields = set(ARMY_SCORE_FIELDS + ARMY_QUANTITY_FIELDS + ARMY_TEXT_FIELDS)
-            for field, value in raw_changes.items():
+            for raw_field, value in raw_changes.items():
+                field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
                 if field == "reason":
                     continue
                 if field not in _valid_army_fields:
-                    print(f"[WARN] army_delta 引用非法字段 '{field}' → 跳过")
+                    print(f"[WARN] army_delta 引用非法字段 '{raw_field}' → 跳过")
                     continue
                 old_value = row[field]
                 if field in ARMY_SCORE_FIELDS:
@@ -2137,6 +2210,120 @@ class GameDB:
                 )
         self.conn.commit()
         return changes
+
+    def create_armies_from_extraction(
+        self,
+        state: GameState,
+        new_armies: List[Dict[str, object]],
+        actor: str = "档房",
+    ) -> List[Dict[str, object]]:
+        """据 extractor 输出建新军队。同 id/name 已存在 → 把 manpower 当扩军增量。owner_power 必须是已知 power。"""
+        valid_powers = {r["id"] for r in self.conn.execute("SELECT id FROM powers").fetchall()}
+        created: List[Dict[str, object]] = []
+        for raw in new_armies:
+            if not isinstance(raw, dict):
+                continue
+            item = {POWER_FIELD_ALIASES.get(k, k) if False else k: v for k, v in raw.items()}
+            # 规范键：复用 ARMY_FIELD_ALIASES（兼容中文）
+            from ming_sim.constants import ARMY_FIELD_ALIASES as _AA
+            item = {_AA.get(str(k).strip(), str(k).strip()): v for k, v in raw.items()}
+            aid = str(item.get("id") or "").strip()
+            if not aid:
+                print(f"[WARN] new_armies 缺 id → 跳过: {raw}")
+                continue
+            owner = str(item.get("owner_power") or "ming").strip() or "ming"
+            if owner not in valid_powers:
+                print(f"[WARN] new_armies owner_power '{owner}' 未在 powers → 跳过 {aid}")
+                continue
+            name = str(item.get("name") or aid).strip()
+            # 查重：同 id 或 同 name → 转 manpower 扩军增量
+            existing = self.conn.execute(
+                "SELECT id, name FROM armies WHERE id = ? OR name = ?", (aid, name)
+            ).fetchone()
+            if existing is not None:
+                manpower = item.get("manpower")
+                if manpower is None:
+                    print(f"[WARN] new_armies 重复 id/name '{aid}' 且无 manpower → 跳过")
+                    continue
+                try:
+                    delta = int(manpower)
+                except (TypeError, ValueError):
+                    print(f"[WARN] new_armies '{aid}' manpower 非整数 → 跳过")
+                    continue
+                if delta == 0:
+                    continue
+                reason = str(item.get("reason") or item.get("status") or "扩军")[:80]
+                pseudo_event = type("E", (), {"id": "season", "title": reason})()
+                self.apply_army_deltas(
+                    state, pseudo_event, None, actor, {existing["id"]: {"manpower": delta, "reason": reason}}
+                )
+                created.append({"army": existing["name"], "manpower_added": delta, "merged_into_existing": True})
+                continue
+            # 必填字段
+            try:
+                manpower = int(item["manpower"])
+                maintenance = int(item["maintenance_per_turn"])
+            except (KeyError, TypeError, ValueError):
+                print(f"[WARN] new_armies '{aid}' 缺 manpower/maintenance_per_turn → 跳过")
+                continue
+            def _score(field: str, default: int = 50) -> int:
+                try:
+                    return max(0, min(100, int(item.get(field, default))))
+                except (TypeError, ValueError):
+                    return default
+            row = (
+                aid,
+                name,
+                str(item.get("station") or ""),
+                str(item.get("theater") or ""),
+                str(item.get("commander") or ""),
+                str(item.get("controller") or ""),
+                str(item.get("troop_type") or ""),
+                max(0, manpower),
+                max(0, maintenance),
+                _score("supply"),
+                _score("morale"),
+                _score("training"),
+                _score("equipment"),
+                _score("arrears", 0),
+                _score("mobility"),
+                _score("loyalty"),
+                str(item.get("status") or "新立"),
+                owner,
+            )
+            try:
+                self.conn.execute(
+                    """
+                    INSERT INTO armies
+                    (id, name, station, theater, commander, controller, troop_type, manpower,
+                     maintenance_per_turn, supply, morale, training, equipment, arrears,
+                     mobility, loyalty, status, owner_power)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    row,
+                )
+            except sqlite3.IntegrityError as exc:
+                print(f"[WARN] new_armies INSERT 失败 '{aid}': {exc}")
+                continue
+            reason = str(item.get("reason") or item.get("status") or "新立军队")[:80]
+            self.conn.execute(
+                """
+                INSERT INTO army_logs
+                (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
+                VALUES (?, ?, ?, ?, 'created', '', ?, ?, ?, 'season', NULL, ?)
+                """,
+                (state.turn, state.year, state.period, aid, str(manpower), manpower, reason, actor),
+            )
+            created.append({
+                "army": name,
+                "id": aid,
+                "owner_power": owner,
+                "manpower": manpower,
+                "created": True,
+                "reason": reason,
+            })
+        self.conn.commit()
+        return created
 
     # ── 建筑 ──────────────────────────────────────────────────────────────────
 
@@ -2490,7 +2677,7 @@ class GameDB:
             f"钱粮：{self.turn_economy_summary(previous_turn)}",
             f"地区：{self.turn_region_summary(previous_turn)}",
             f"军队：{self.turn_army_summary(previous_turn)}",
-            f"外部势力：{self.turn_external_power_summary(previous_turn)}",
+            f"外部势力：{self.turn_power_summary(previous_turn)}",
         ]
         return "\n".join(lines)
 

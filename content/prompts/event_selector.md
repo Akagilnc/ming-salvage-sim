@@ -6,7 +6,7 @@ input 是一个 JSON，含：
 - `period`：当前年月与回合数
 - `metrics`：当前盘面四量表（国库、内库、民心、皇威）
 - `active_issues`：已在追踪的事项（id/title/bar/stage）
-- `external_powers`：外部势力态势（后金/清、蒙古、朝鲜、流寇等）
+- `powers`：势力态势（大明 + 后金/清、蒙古、朝鲜、流寇等）
 - `regions_hot`：当前最危险的若干地区（动乱、灾情、粮食、士绅阻力）
 - `candidates`：**候选情势清单**——每条含 `id`/`title`/`kind`/`summary`/`interests`。这些是尚未触发过的备选情势。
 

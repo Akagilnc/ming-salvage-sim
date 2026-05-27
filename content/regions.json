@@ -4,7 +4,7 @@
     "land_unit": "万亩",
     "tax_unit": "万两/月",
     "score_unit": "0-100",
-    "note": "MVP 只记录两京十三省核心盘面；辽东、东江、宣大、漕运线后续可作为战区扩展。",
+    "note": "世界盘面：大明省份、边镇、外域、草原与藩属使用同一 regions 结构；controlled_by 表示当前控制势力。",
     "fiscal_schema": "fiscal JSON列：huang_tian=皇庄万亩(仅北直隶)→内库, wang_tian=藩王庄田万亩(免税), guan_min_tian=官民田万亩→国库田赋, liao_xiang=辽饷月摊万两, salt_tax=盐税月基数万两, commerce_tax=商税月基数万两, corruption=腐败度0-100"
   },
   "regions": [
@@ -32,7 +32,8 @@
         "salt_tax": 5,
         "commerce_tax": 8,
         "corruption": 62
-      }
+      },
+      "controlled_by": "ming"
     },
     {
       "id": "nanzhili",
@@ -58,7 +59,8 @@
         "salt_tax": 20,
         "commerce_tax": 15,
         "corruption": 44
-      }
+      },
+      "controlled_by": "ming"
     },
     {
       "id": "shandong",
@@ -84,7 +86,8 @@
         "salt_tax": 8,
         "commerce_tax": 5,
         "corruption": 52
-      }
+      },
+      "controlled_by": "ming"
     },
     {
       "id": "shanxi",
@@ -110,7 +113,8 @@
         "salt_tax": 3,
         "commerce_tax": 4,
         "corruption": 58
-      }
+      },
+      "controlled_by": "ming"
     },
     {
       "id": "henan",
@@ -136,7 +140,8 @@
         "salt_tax": 0,
         "commerce_tax": 3,
         "corruption": 55
-      }
+      },
+      "controlled_by": "ming"
     },
     {
       "id": "shaanxi",
@@ -162,7 +167,8 @@
         "salt_tax": 0,
         "commerce_tax": 2,
         "corruption": 72
-      }
+      },
+      "controlled_by": "ming"
     },
     {
       "id": "zhejiang",
@@ -188,7 +194,8 @@
         "salt_tax": 15,
         "commerce_tax": 8,
         "corruption": 38
-      }
+      },
+      "controlled_by": "ming"
     },
     {
       "id": "jiangxi",
@@ -214,7 +221,8 @@
         "salt_tax": 5,
         "commerce_tax": 5,
         "corruption": 48
-      }
+      },
+      "controlled_by": "ming"
     },
     {
       "id": "huguang",
@@ -240,7 +248,8 @@
         "salt_tax": 0,
         "commerce_tax": 4,
         "corruption": 50
-      }
+      },
+      "controlled_by": "ming"
     },
     {
       "id": "sichuan",
@@ -266,7 +275,8 @@
         "salt_tax": 0,
         "commerce_tax": 3,
         "corruption": 60
-      }
+      },
+      "controlled_by": "ming"
     },
     {
       "id": "fujian",
@@ -292,7 +302,8 @@
         "salt_tax": 8,
         "commerce_tax": 6,
         "corruption": 45
-      }
+      },
+      "controlled_by": "ming"
     },
     {
       "id": "guangdong",
@@ -318,7 +329,8 @@
         "salt_tax": 10,
         "commerce_tax": 8,
         "corruption": 55
-      }
+      },
+      "controlled_by": "ming"
     },
     {
       "id": "guangxi",
@@ -344,7 +356,8 @@
         "salt_tax": 0,
         "commerce_tax": 1,
         "corruption": 65
-      }
+      },
+      "controlled_by": "ming"
     },
     {
       "id": "yunnan",
@@ -370,7 +383,8 @@
         "salt_tax": 0,
         "commerce_tax": 2,
         "corruption": 68
-      }
+      },
+      "controlled_by": "ming"
     },
     {
       "id": "guizhou",
@@ -396,7 +410,197 @@
         "salt_tax": 0,
         "commerce_tax": 1,
         "corruption": 70
-      }
+      },
+      "controlled_by": "ming"
+    },
+    {
+      "id": "liaodong",
+      "name": "辽东 / 宁锦",
+      "kind": "边镇",
+      "population": 95,
+      "public_support": 28,
+      "unrest": 45,
+      "natural_disaster": "战区荒芜",
+      "human_disaster": "堡寨残破、辽民流离",
+      "registered_land": 55,
+      "hidden_land": 15,
+      "tax_per_turn": 1,
+      "grain_security": 28,
+      "gentry_resistance": 20,
+      "military_pressure": 90,
+      "status": "宁远、锦州一线为明军前沿，堡寨、军屯、辽民与关宁军命运相连。",
+      "fiscal": {
+        "huang_tian": 0,
+        "wang_tian": 0,
+        "guan_min_tian": 55,
+        "liao_xiang": 0,
+        "salt_tax": 0,
+        "commerce_tax": 0,
+        "corruption": 50
+      },
+      "controlled_by": "ming"
+    },
+    {
+      "id": "dongjiang_area",
+      "name": "东江 / 皮岛",
+      "kind": "海岛战区",
+      "population": 18,
+      "public_support": 35,
+      "unrest": 55,
+      "natural_disaster": "海岛缺粮",
+      "human_disaster": "虚报军功与海上割据",
+      "registered_land": 5,
+      "hidden_land": 0,
+      "tax_per_turn": 0,
+      "grain_security": 20,
+      "gentry_resistance": 5,
+      "military_pressure": 80,
+      "status": "皮岛孤悬海上，牵制后金侧翼，也依赖朝鲜与登莱接济。",
+      "fiscal": {
+        "huang_tian": 0,
+        "wang_tian": 0,
+        "guan_min_tian": 5,
+        "liao_xiang": 0,
+        "salt_tax": 0,
+        "commerce_tax": 0,
+        "corruption": 62
+      },
+      "controlled_by": "ming"
+    },
+    {
+      "id": "jianzhou",
+      "name": "建州 / 赫图阿拉",
+      "kind": "外域",
+      "population": 120,
+      "public_support": 62,
+      "unrest": 18,
+      "natural_disaster": "山林寒瘠",
+      "human_disaster": "八旗征发严苛",
+      "registered_land": 65,
+      "hidden_land": 20,
+      "tax_per_turn": 0,
+      "grain_security": 48,
+      "gentry_resistance": 15,
+      "military_pressure": 88,
+      "status": "后金根本地，八旗贵族、包衣、辽人降户与工匠聚集。",
+      "fiscal": {
+        "huang_tian": 0,
+        "wang_tian": 0,
+        "guan_min_tian": 65,
+        "liao_xiang": 0,
+        "salt_tax": 0,
+        "commerce_tax": 0,
+        "corruption": 35
+      },
+      "controlled_by": "houjin"
+    },
+    {
+      "id": "shenyang_liaoyang",
+      "name": "沈阳 / 辽阳",
+      "kind": "外域",
+      "population": 150,
+      "public_support": 42,
+      "unrest": 35,
+      "natural_disaster": "兵燹后田土未复",
+      "human_disaster": "降附辽民、逃人和八旗驻防交错",
+      "registered_land": 90,
+      "hidden_land": 25,
+      "tax_per_turn": 1,
+      "grain_security": 42,
+      "gentry_resistance": 22,
+      "military_pressure": 82,
+      "status": "后金经营辽沈的汉民与匠户核心区，也是铸炮、通译、招降明边的节点。",
+      "fiscal": {
+        "huang_tian": 0,
+        "wang_tian": 0,
+        "guan_min_tian": 90,
+        "liao_xiang": 0,
+        "salt_tax": 0,
+        "commerce_tax": 1,
+        "corruption": 42
+      },
+      "controlled_by": "houjin"
+    },
+    {
+      "id": "mongol_chahar",
+      "name": "察哈尔 / 漠南草原",
+      "kind": "草原",
+      "population": 90,
+      "public_support": 46,
+      "unrest": 42,
+      "natural_disaster": "草场寒旱",
+      "human_disaster": "诸部离心、后金压迫",
+      "registered_land": 0,
+      "hidden_land": 0,
+      "tax_per_turn": 0,
+      "grain_security": 38,
+      "gentry_resistance": 10,
+      "military_pressure": 60,
+      "status": "林丹汗试图维系统合，诸部在明朝赏市与后金兵锋之间摇摆。",
+      "fiscal": {
+        "huang_tian": 0,
+        "wang_tian": 0,
+        "guan_min_tian": 0,
+        "liao_xiang": 0,
+        "salt_tax": 0,
+        "commerce_tax": 0,
+        "corruption": 38
+      },
+      "controlled_by": "mongol"
+    },
+    {
+      "id": "korea",
+      "name": "朝鲜",
+      "kind": "藩属",
+      "population": 520,
+      "public_support": 58,
+      "unrest": 30,
+      "natural_disaster": "丁卯之役后民力未复",
+      "human_disaster": "夹在明与后金之间",
+      "registered_land": 360,
+      "hidden_land": 50,
+      "tax_per_turn": 0,
+      "grain_security": 52,
+      "gentry_resistance": 45,
+      "military_pressure": 62,
+      "status": "丁卯之役后被迫与后金缔盟，朝廷仍暗中倾明，登莱与皮岛补给仰赖其态度。",
+      "fiscal": {
+        "huang_tian": 0,
+        "wang_tian": 0,
+        "guan_min_tian": 360,
+        "liao_xiang": 0,
+        "salt_tax": 0,
+        "commerce_tax": 1,
+        "corruption": 45
+      },
+      "controlled_by": "korea"
+    },
+    {
+      "id": "nurgan",
+      "name": "奴儿干 / 黑龙江诸部",
+      "kind": "外域",
+      "population": 45,
+      "public_support": 40,
+      "unrest": 50,
+      "natural_disaster": "极寒山林",
+      "human_disaster": "诸部受后金征发与明朝羁縻旧名牵扯",
+      "registered_land": 5,
+      "hidden_land": 0,
+      "tax_per_turn": 0,
+      "grain_security": 32,
+      "gentry_resistance": 5,
+      "military_pressure": 55,
+      "status": "女真、索伦、野人诸部散处，后金影响上升但控制不稳。",
+      "fiscal": {
+        "huang_tian": 0,
+        "wang_tian": 0,
+        "guan_min_tian": 5,
+        "liao_xiang": 0,
+        "salt_tax": 0,
+        "commerce_tax": 0,
+        "corruption": 35
+      },
+      "controlled_by": "houjin"
     }
   ]
 }

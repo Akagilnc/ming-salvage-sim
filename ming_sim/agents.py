@@ -285,19 +285,24 @@ def create_season_simulator_agent(
     agno_db: SqliteDb,
     state: Optional[GameState] = None,
     db: Optional[object] = None,
+    simulator_payload: Optional[Dict[str, object]] = None,
 ) -> Agent:
     """月末推演日讲官。全量盘面走 user payload，无 tool。
     走 advanced 角色派生：若 advanced_model 已配，用更强模型；否则 fallback 主 model。"""
     del state, db
     cfg = _llm_for_role(llm_config, "simulator")
     tlog(f"[simulator] 使用模型 {cfg.model}")
+    simulator_context = (
+        "【本回合推演输入 simulator_payload】\n"
+        + json.dumps(simulator_payload or {}, ensure_ascii=False, sort_keys=False)
+    )
     return Agent(
         name="月末推演日讲官",
         id="season-simulator",
         session_id="season-simulator",
         db=agno_db,
         model=create_chat_model(cfg, temperature=0.9, top_p=0.95, max_tokens=cfg.max_tokens, enable_thinking=True),
-        instructions=[_ctx().game_world_prompt, _ctx().season_simulator_prompt],
+        instructions=[_ctx().game_world_prompt, simulator_context, _ctx().season_simulator_prompt],
         add_history_to_context=False,
         markdown=False,
     )
@@ -330,6 +335,8 @@ def create_score_extractor_module_agent(
     llm_config: LLMConfig,
     agno_db: SqliteDb,
     module: str,
+    simulator_payload: Optional[Dict[str, object]] = None,
+    supplemental_context: Optional[Dict[str, object]] = None,
 ) -> Agent:
     """模块化打分提取员。module 对应 GameContent.score_extractor_module_prompts。"""
     ctx = _ctx()
@@ -338,6 +345,14 @@ def create_score_extractor_module_agent(
         raise RuntimeError(f"未知结算提取模块：{module}")
     cfg = _llm_for_role(llm_config, "extractor")
     tlog(f"[extractor/{module}] 使用模型 {cfg.model}")
+    simulator_context = (
+        "【本回合推演输入 simulator_payload】\n"
+        + json.dumps(simulator_payload or {}, ensure_ascii=False, sort_keys=False)
+    )
+    supplemental = (
+        "【结算补充上下文 extractor_context】\n"
+        + json.dumps(supplemental_context or {}, ensure_ascii=False, sort_keys=False)
+    )
     return Agent(
         name=f"档房书办-{module}",
         id=f"score-extractor-{module}",
@@ -351,7 +366,7 @@ def create_score_extractor_module_agent(
             enable_thinking=False,
             force_json_output=True,
         ),
-        instructions=[ctx.game_world_prompt, prompt],
+        instructions=[ctx.game_world_prompt, simulator_context, ctx.score_extractor_shared_prompt, supplemental, prompt],
         add_history_to_context=False,
         markdown=False,
     )
