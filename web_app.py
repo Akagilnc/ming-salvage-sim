@@ -51,6 +51,77 @@ ALLOWED_PORTRAIT_TYPES = {"image/png", "image/jpeg", "image/webp"}
 MAX_PORTRAIT_BYTES = 8 * 1024 * 1024  # 8MB 上限
 
 
+def _delete_sqlite_db_files_or_raise(db_path: str) -> None:
+    """删除 SQLite 主库及 WAL/SHM；失败时阻断重开，避免误读旧档。"""
+    for suffix in ("", "-wal", "-shm"):
+        target = db_path + suffix
+        if not os.path.exists(target):
+            continue
+        if not os.path.isfile(target):
+            raise HTTPException(
+                status_code=500,
+                detail=f"重开失败：无法清理主库文件 {target}，它不是普通文件。请检查该路径后再重试。",
+            )
+        try:
+            os.remove(target)
+        except PermissionError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"重开失败：权限不足，无法删除主库文件 {target}。"
+                    "请关闭占用该文件的程序，或用管理员权限运行游戏后重试。"
+                ),
+            ) from exc
+        except OSError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"重开失败：无法删除主库文件 {target}。系统返回：{exc}。"
+                    "请确认没有其他游戏进程占用该文件；若是权限问题，请用管理员权限运行游戏后重试。"
+                ),
+            ) from exc
+
+
+def _verify_llm_configs_or_raise(config: LLMConfig) -> None:
+    """校验主模型；若配置了 advanced_model，也用其实际 base/key 单独校验。"""
+    try:
+        verify_llm_available(config)
+    except LLMUnavailable as e:
+        raise HTTPException(status_code=400, detail=_llm_error_detail(e, "主模型连通性检查失败：")) from None
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=_llm_error_detail(e, "主模型连通性检查失败：")) from None
+
+    advanced_model = (config.advanced_model or "").strip()
+    if not advanced_model:
+        return
+    advanced_config = LLMConfig(
+        api_key=(config.advanced_api_key or "").strip() or config.api_key,
+        base_url=(config.advanced_base_url or "").strip() or config.base_url,
+        model=advanced_model,
+        max_tokens=config.max_tokens,
+        timeout_seconds=config.timeout_seconds,
+        advanced_model=config.advanced_model,
+        advanced_base_url=config.advanced_base_url,
+        advanced_api_key=config.advanced_api_key,
+    )
+    try:
+        verify_llm_available(advanced_config)
+    except LLMUnavailable as e:
+        raise HTTPException(status_code=400, detail=_llm_error_detail(e, "高级模型连通性检查失败：")) from None
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=_llm_error_detail(e, "高级模型连通性检查失败：")) from None
+
+
+def _llm_error_detail(exc: Exception, prefix: str = "") -> Dict[str, Any]:
+    message = f"{prefix}{exc.message if hasattr(exc, 'message') else str(exc)}"
+    return {
+        "code": getattr(exc, "code", "llm_error"),
+        "message": message,
+        "provider_message": getattr(exc, "provider_message", str(exc)),
+        "status_code": getattr(exc, "status_code", None),
+    }
+
+
 class ChatRequest(BaseModel):
     message: str
 
@@ -107,13 +178,7 @@ class WebGame:
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
         self.db_path = db_path
         if fresh:
-            for suffix in ("", "-wal", "-shm"):
-                target = db_path + suffix
-                if os.path.isfile(target):
-                    try:
-                        os.remove(target)
-                    except OSError:
-                        pass
+            _delete_sqlite_db_files_or_raise(db_path)
         adv_base = (advanced_base_url or "").strip()
         llm_config = LLMConfig(
             api_key=api_key,
@@ -190,13 +255,7 @@ class WebGame:
             self.session.close()
         except Exception:
             pass
-        for suffix in ("", "-wal", "-shm"):
-            target = self.db_path + suffix
-            if os.path.isfile(target):
-                try:
-                    os.remove(target)
-                except OSError:
-                    pass
+        _delete_sqlite_db_files_or_raise(self.db_path)
         self._rebuild_session(self.session.llm_config)
 
     def load_save(self, name: str) -> None:
@@ -275,7 +334,7 @@ class WebGame:
             advanced_base_url=new_adv_base,
             advanced_api_key=new_adv_key,
         )
-        verify_llm_available(new_config)
+        _verify_llm_configs_or_raise(new_config)
         save_runtime_llm(
             new_config.base_url,
             new_config.model,
@@ -805,7 +864,10 @@ class WebGame:
             )
             yield {"type": "done", "payload": payload}
         except Exception as error:
-            yield {"type": "error", "message": str(error)}
+            if isinstance(error, LLMUnavailable):
+                yield {"type": "error", "detail": _llm_error_detail(error)}
+            else:
+                yield {"type": "error", "message": str(error)}
 
     def suggestions_for(self, character: Character) -> List[Dict[str, str]]:
         suggestions = [
@@ -934,7 +996,7 @@ async def api_menu_new_game() -> Dict[str, Any]:
     try:
         web_game = WebGame(fresh=True)
     except LLMUnavailable as exc:
-        raise HTTPException(status_code=412, detail=str(exc))
+        raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
     return {"state": web_game.state_payload()}
 
 
@@ -947,7 +1009,7 @@ async def api_menu_continue() -> Dict[str, Any]:
     try:
         web_game = WebGame(fresh=False)
     except LLMUnavailable as exc:
-        raise HTTPException(status_code=412, detail=str(exc))
+        raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
     return {"state": web_game.state_payload()}
 
 
@@ -958,7 +1020,7 @@ async def api_menu_load_save(name: str) -> Dict[str, Any]:
     try:
         web_game = WebGame(fresh=False)  # 先有 session 才能 load_save
     except LLMUnavailable as exc:
-        raise HTTPException(status_code=412, detail=str(exc))
+        raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
     web_game.load_save(name)
     return {"state": web_game.state_payload()}
 
@@ -1016,7 +1078,7 @@ class LlmSetupRequest(BaseModel):
 
 @app.post("/api/menu/llm")
 async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
-    """菜单页保存 LLM 配置：仅落盘 runtime_llm.json，不建 session（轻校验：非空即可）。"""
+    """菜单页保存 LLM 配置：先发起轻量聊天校验，通过后才落盘。"""
     base_url = (request.base_url or "").strip()
     model = (request.model or "").strip()
     api_key = (request.api_key or "").strip()
@@ -1037,8 +1099,27 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     if advanced_model and not advanced_api_key:
         existing = load_runtime_llm()
         advanced_api_key = existing.get("advanced_api_key") or os.environ.get("OPENAI_ADVANCED_API_KEY", "")
+    normalized_base_url = normalize_openai_base_url(base_url)
+    config = LLMConfig(
+        api_key=api_key,
+        base_url=normalized_base_url,
+        model=model,
+        max_tokens=max_tokens,
+        timeout_seconds=timeout_seconds,
+        advanced_model=advanced_model,
+        advanced_base_url=advanced_base_url,
+        advanced_api_key=advanced_api_key,
+    )
+    try:
+        _verify_llm_configs_or_raise(config)
+    except HTTPException:
+        raise
+    except LLMUnavailable as exc:
+        raise HTTPException(status_code=400, detail=_llm_error_detail(exc)) from None
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail={"code": "llm_validation_failed", "message": str(exc)}) from None
     save_runtime_llm(
-        normalize_openai_base_url(base_url),
+        normalized_base_url,
         model,
         api_key,
         max_tokens,
@@ -1050,7 +1131,7 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     return {
         "ok": True,
         "llm": {
-            "base_url": normalize_openai_base_url(base_url),
+            "base_url": normalized_base_url,
             "model": model,
             "has_api_key": True,
             "max_tokens": max_tokens,
@@ -1221,7 +1302,7 @@ async def api_chat_stream(minister_name: str, request: ChatRequest) -> Streaming
             elif item_type == "done":
                 yield sse_event("done", item.get("payload", {}))
             elif item_type == "error":
-                yield sse_event("error", {"message": item.get("message", "流式回复失败。")})
+                yield sse_event("error", item.get("detail") or {"message": item.get("message", "流式回复失败。")})
             await asyncio.sleep(0)
 
     return StreamingResponse(generate(), media_type="text/event-stream")
@@ -1324,7 +1405,7 @@ async def api_issue_decree_stream() -> StreamingResponse:
         except ValueError as e:
             ev_queue.put(("__error__", str(e)))
         except Exception as e:  # noqa: BLE001
-            ev_queue.put(("__error__", str(e)))
+            ev_queue.put(("__error__", _llm_error_detail(e) if isinstance(e, LLMUnavailable) else str(e)))
 
     async def generate() -> AsyncIterator[str]:
         thread = threading.Thread(target=worker, daemon=True)
@@ -1336,7 +1417,7 @@ async def api_issue_decree_stream() -> StreamingResponse:
                 yield sse_event("done", data)
                 break
             if kind == "__error__":
-                yield sse_event("error", {"message": data})
+                yield sse_event("error", data if isinstance(data, dict) else {"message": data})
                 break
             # stage / thinking / text
             yield sse_event(kind, {"content": data})
@@ -1374,18 +1455,21 @@ async def api_consort_candidates() -> Dict[str, Any]:
 @app.post("/api/consorts/{name}/select")
 async def api_select_consort(name: str) -> Dict[str, Any]:
     """皇帝选中某秀女，转 active 并赋予初始位份。"""
-    consort = get_game().content.characters.get(name)
+    game = get_game()
+    consort = game.content.characters.get(name)
     if consort is None or consort.office_type != "后宫":
         raise HTTPException(status_code=404, detail=f"未找到候选秀女：{name}")
     if consort.status != "candidate":
         raise HTTPException(status_code=409, detail=f"{name} 当前状态为 {consort.status}，不可再选。")
-    # 转 active
+    game.db.set_character_office(name, "嫔", "后宫", source="皇帝选妃")
+    game.db.set_character_status(game.state, name, "active", "皇帝选中入宫")
+    consort.office = "嫔"
+    consort.office_type = "后宫"
     consort.status = "active"
-    consort.office = "嫔"  # 初始位份：嫔
     # 同步进 registry（新增 agent）
-    get_game().session.registry.register(consort)
-    get_game().chat_history.setdefault(name, [])
-    return {"selected": get_game().public_character(consort)}
+    game.session.registry.register(consort)
+    game.chat_history.setdefault(name, [])
+    return {"selected": game.public_character(consort)}
 
 
 @app.get("/api/saves")
@@ -1462,9 +1546,9 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
             advanced_api_key=adv_key,
         )
     except LLMUnavailable as e:
-        raise HTTPException(status_code=400, detail=str(e)) from None
+        raise HTTPException(status_code=400, detail=_llm_error_detail(e)) from None
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=str(e)) from None
+        raise HTTPException(status_code=400, detail=_llm_error_detail(e)) from None
     return {
         "base_url": cfg.base_url,
         "model": cfg.model,

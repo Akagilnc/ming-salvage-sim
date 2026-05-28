@@ -115,7 +115,11 @@ def run_agent_stream_text(
             or ev_type in ("RunOutput", "RunCompletedEvent")
         )
         if ev_type == "RunErrorEvent":
-            raise LLMUnavailable(f"{tag} 流式调用失败：{getattr(event, 'content', None)}")
+            raise LLMUnavailable(
+                f"{tag} 流式调用失败：{getattr(event, 'content', None)}",
+                code="llm_stream_error",
+                provider_message=str(getattr(event, "content", None) or ""),
+            )
         if is_terminal:
             final_output = event
             continue

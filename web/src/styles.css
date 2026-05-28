@@ -1,8 +1,8 @@
 :root {
   color-scheme: light;
   font-family:
-    "Songti SC", "STSong", "SimSun", "Noto Serif SC", "ZCOOL XiaoWei", serif;
-  --font-brush: "Ma Shan Zheng", "ZCOOL XiaoWei", "Songti SC", serif;
+    "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
+  --font-brush: "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
   font-size: 19px;
   line-height: 1.5;
   color: #1a1410;
@@ -1653,9 +1653,7 @@ select:focus-visible {
   gap: 12px;
   min-height: 0;
   padding: 14px;
-  background:
-    linear-gradient(90deg, rgba(0, 0, 0, 0.18), transparent 32%),
-    rgba(232, 206, 150, 0.08);
+  background: rgba(255, 255, 255, 0.8);
 }
 
 .minister-side {
@@ -2164,11 +2162,11 @@ button:disabled {
 }
 
 .modal-bg-chat {
-  background-image: url("/bg_chat.webp");
+  background: rgba(255, 255, 255, 0.8) !important;
 }
 
 .modal-bg-edict {
-  background-image: url("/bg_edict.png");
+  background: rgba(255, 255, 255, 0.8) !important;
 }
 
 /* 弹窗内所有元素背景一律透明（通配），文字直贴背景图 */
@@ -2182,13 +2180,18 @@ button:disabled {
 
 /* 文字承载块加半透明白底，背景图太花时字看得清 */
 .modal-bg-state .document-hero,
-.modal-bg-state .document-section,
+.modal-bg-state .document-section {
+  background: rgba(252, 249, 240, 0.5) !important;
+  border-radius: 6px;
+}
+
+/* 大臣奏对 + 奏疏：白底 80% */
 .modal-bg-chat .chat-message,
 .modal-bg-chat .chat-system-note,
 .modal-bg-chat .modal-pane,
 .modal-bg-edict .modal-pane,
 .modal-bg-edict .directive-item {
-  background: rgba(252, 249, 240, 0.5) !important;
+  background: rgba(255, 255, 255, 0.8) !important;
   border-radius: 6px;
 }
 
@@ -2292,13 +2295,17 @@ button:disabled {
 
 /* 透明后保留极淡分隔边 */
 .modal-bg-state .modal-pane,
-.modal-bg-chat .modal-pane,
 .modal-bg-edict .modal-pane,
 .modal-bg-state .info-cell,
 .modal-bg-state .army-card,
-.modal-bg-edict .directive-item,
-.modal-bg-chat .chat-message {
+.modal-bg-edict .directive-item {
   border-color: rgba(255, 232, 170, 0.22) !important;
+}
+
+/* 大臣奏对白底：边线用浅灰，看得见 */
+.modal-bg-chat .modal-pane,
+.modal-bg-chat .chat-message {
+  border-color: rgba(74, 45, 20, 0.18) !important;
 }
 
 /* 浅色背景图上文字一律黑色 */
@@ -3638,6 +3645,7 @@ button:disabled {
   border-radius: 6px;
   margin-bottom: 12px;
   font-size: 0.88rem;
+  white-space: pre-wrap;
 }
 
 .menu-buttons {

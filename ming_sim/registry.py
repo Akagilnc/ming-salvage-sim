@@ -263,12 +263,12 @@ def _make_select_consort_tool(context: CourtContext):
 
         lines = ["臣等已为陛下物色数名待选采女，恭呈御览："]
         for idx, (c, _pid) in enumerate(chosen, 1):
-            skills = "、".join(c.personal_skills) if c.personal_skills else "—"
+            tags = "、".join(c.personal_skills) if c.personal_skills else "—"
             summary = (c.summary or "").strip()
             if len(summary) > 50:
                 summary = summary[:50] + "…"
             lines.append(
-                f"{idx}. {c.name}　性情：{c.style or '—'}　才艺：{skills}"
+                f"{idx}. {c.name}　性情：{c.style or '—'}　特质：{tags}"
                 + (f"　{summary}" if summary else "")
             )
         lines.append("陛下若有中意者，可降诏册封其位份，即可入宫。")
@@ -309,7 +309,7 @@ def create_minister_agent(
             c.game_world_prompt,
             c.consort_agent_prompt,
             f"你当前扮演：{character.name}，{character.office}，性格{character.style}，"
-            f"擅长：{'、'.join(character.personal_skills)}。个人简介：{character.summary}"
+            f"人物特质：{'、'.join(character.personal_skills)}。个人简介：{character.summary}"
             + (f"\n{cultivate_desc}" if cultivate_desc else ""),
             f"你与皇帝的对话在后宫寝殿；同一回合复召时接续此前对话，不要重置记忆。",
         ]

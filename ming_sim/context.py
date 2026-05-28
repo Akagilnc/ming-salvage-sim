@@ -164,8 +164,9 @@ def format_metric_delta(delta: Dict[str, int]) -> str:
 def character_context(character: Character) -> str:
     return (
         f"{character.name}，{character.office}，职位类型：{character.office_type}，派系：{character.faction}，"
-        f"个人skills：{', '.join(character.personal_skills)}，"
-        f"职位skills：{', '.join(office_skills(character.office_type))}，"
+        f"别名：{', '.join(character.aliases) or '无'}，"
+        f"人物标签：{', '.join(character.personal_skills)}，"
+        f"职位技能：{', '.join(office_skills(character.office_type))}，"
         f"忠诚{character.loyalty}，能力{character.ability}，清廉{character.integrity}，"
         f"胆略{character.courage}，风格：{character.style}"
     )
@@ -216,7 +217,6 @@ def match_minister_from_text(text: str, current: Optional[Character] = None) -> 
             or character.office_type in cleaned
             or character.faction in cleaned
             or any(alias in cleaned for alias in character.aliases)
-            or any(skill in cleaned for skill in character.personal_skills)
         ):
             matches.append(character)
     if len(matches) == 1:

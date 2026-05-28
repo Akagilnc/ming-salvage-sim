@@ -291,6 +291,42 @@ type ChatResponse = {
   secret_order_id?: number;
 };
 
+type ApiErrorDetail = {
+  code?: string;
+  message?: string;
+  provider_message?: string;
+  status_code?: number | null;
+};
+
+class ApiRequestError extends Error {
+  detail: ApiErrorDetail;
+
+  constructor(detail: ApiErrorDetail, fallback: string) {
+    const message = detail.message || fallback;
+    super(detail.code ? `[${detail.code}] ${message}` : message);
+    this.name = "ApiRequestError";
+    this.detail = detail;
+  }
+}
+
+const normalizeApiError = (error: any, fallback: string): ApiErrorDetail => {
+  const detail = error?.detail ?? error;
+  if (detail && typeof detail === "object") {
+    return {
+      code: detail.code,
+      message: detail.message || detail.detail || fallback,
+      provider_message: detail.provider_message,
+      status_code: detail.status_code,
+    };
+  }
+  return { message: String(detail || fallback) };
+};
+
+const formatApiError = (error: any, fallback: string) => {
+  const detail = error instanceof ApiRequestError ? error.detail : normalizeApiError(error, fallback);
+  return detail.code ? `[${detail.code}] ${detail.message || fallback}` : detail.message || fallback;
+};
+
 const api = async <T,>(path: string, options?: RequestInit): Promise<T> => {
   const response = await fetch(path, {
     headers: { "Content-Type": "application/json", ...(options?.headers || {}) },
@@ -298,7 +334,7 @@ const api = async <T,>(path: string, options?: RequestInit): Promise<T> => {
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: response.statusText }));
-    throw new Error(error.detail || response.statusText);
+    throw new ApiRequestError(normalizeApiError(error, response.statusText), response.statusText);
   }
   return response.json();
 };
@@ -330,7 +366,7 @@ const streamChat = async (
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: response.statusText }));
-    throw new Error(error.detail || response.statusText);
+    throw new ApiRequestError(normalizeApiError(error, response.statusText), response.statusText);
   }
   if (!response.body) {
     throw new Error("浏览器不支持流式回复。");
@@ -355,7 +391,7 @@ const streamChat = async (
       } else if (parsed.event === "done") {
         return payload as ChatResponse;
       } else if (parsed.event === "error") {
-        throw new Error(payload.message || "流式回复失败。");
+        throw new ApiRequestError(normalizeApiError(payload, "流式回复失败。"), "流式回复失败。");
       }
     }
 
@@ -2388,7 +2424,8 @@ function SaveTab() {
       setName("");
       await refresh();
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      const detail = e instanceof ApiRequestError ? e.detail : null;
+      setErr(detail ? `code: ${detail.code || "unknown"}\nmessage: ${detail.message || (e instanceof Error ? e.message : String(e))}` : e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -2668,7 +2705,8 @@ function LLMConfigTab() {
       setAdvancedApiKey("");
       setMsg("已生效并写入 data/runtime_llm.json。");
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      const detail = e instanceof ApiRequestError ? e.detail : null;
+      setErr(detail ? `code: ${detail.code || "unknown"}\nmessage: ${detail.message || (e instanceof Error ? e.message : String(e))}` : e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -4047,8 +4085,9 @@ function ApiSettingsModal({
     setBusy(true);
     setErr("");
     try {
-      await api("/api/menu/llm", {
+      const response = await fetch("/api/menu/llm", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           base_url: baseUrl.trim(),
           model: model.trim(),
@@ -4060,9 +4099,15 @@ function ApiSettingsModal({
           advanced_api_key: advancedApiKey.trim(),
         }),
       });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({ detail: response.statusText }));
+        const detail = normalizeApiError(payload, response.statusText);
+        setErr(`code: ${detail.code || "unknown"}\nmessage: ${detail.message || response.statusText}`);
+        return;
+      }
       await onSaved();
     } catch (e: any) {
-      setErr(e?.message || String(e));
+      setErr(`code: request_failed\nmessage: ${e?.message || String(e)}`);
     } finally {
       setBusy(false);
     }

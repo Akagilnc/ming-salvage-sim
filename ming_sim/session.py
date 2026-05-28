@@ -286,10 +286,11 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB") -> None:
     DB 是持久化真相；不要在这里修写 DB。"""
     rows = db.conn.execute(
         """
-        SELECT name, office, office_type, faction, personal_skills,
+        SELECT name, office, office_type, faction, aliases, personal_skills,
                loyalty, ability, integrity, courage, style,
                birth_year, historical_death_year, historical_death_month,
-               debut_year, debut_month, status, portrait_id, power_id, location
+               debut_year, debut_month, status, portrait_id, power_id, location,
+               summary
         FROM characters
         """
     ).fetchall()
@@ -299,6 +300,12 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB") -> None:
         office_type = infer_office_type_from_office(row["office"], row["office_type"])
         import json as _json
 
+        try:
+            aliases = _json.loads(row["aliases"] or "[]")
+        except (TypeError, ValueError):
+            aliases = []
+        if not isinstance(aliases, list):
+            aliases = []
         try:
             personal_skills = _json.loads(row["personal_skills"] or "[]")
         except (TypeError, ValueError):
@@ -310,7 +317,7 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB") -> None:
             office=row["office"],
             office_type=office_type,
             faction=row["faction"],
-            aliases=[],
+            aliases=[str(item) for item in aliases if str(item).strip()],
             personal_skills=[str(item) for item in personal_skills if str(item).strip()],
             loyalty=int(row["loyalty"]),
             ability=int(row["ability"]),
@@ -326,6 +333,7 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB") -> None:
             power_id=row["power_id"],
             location=row["location"],
             portrait_id=row["portrait_id"],
+            summary=row["summary"],
         )
     content.characters = characters
 

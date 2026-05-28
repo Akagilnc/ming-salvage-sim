@@ -77,7 +77,6 @@ def choose_minister(session: GameSession) -> Optional[Character]:
                 c for c in characters.values()
                 if raw in c.name or raw in c.office or raw in c.office_type
                 or raw in c.faction or raw in c.aliases
-                or any(raw in skill for skill in c.personal_skills)
             ]
             if len(matches) == 1:
                 candidate = matches[0]

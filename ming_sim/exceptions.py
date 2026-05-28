@@ -8,7 +8,19 @@ class ExitGame(Exception):
 
 
 class LLMUnavailable(Exception):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "llm_unavailable",
+        provider_message: str = "",
+        status_code: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.provider_message = provider_message or message
+        self.status_code = status_code
 
 
 class LLMContractError(Exception):

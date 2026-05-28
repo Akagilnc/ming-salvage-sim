@@ -27,7 +27,7 @@ from ming_sim.db import GameDB
 from ming_sim.exceptions import LLMContractError, LLMUnavailable
 from ming_sim.flows import apply_fixed_period_flows
 from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction
-from ming_sim.llm_model import extract_agent_text
+from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import GameState, LLMConfig
 from ming_sim.memories import (
     extract_all_chat_memories,
@@ -83,7 +83,7 @@ def write_decree_with_agno(
     except LLMUnavailable:
         raise
     except Exception as error:
-        raise LLMUnavailable(f"拟诏失败：{error}") from error
+        raise llm_unavailable_from_error(error, "拟诏") from error
     if not text.strip():
         raise LLMContractError("拟诏输出为空。")
     return text.strip()

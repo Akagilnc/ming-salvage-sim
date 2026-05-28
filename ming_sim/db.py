@@ -643,6 +643,8 @@ class GameDB:
         self.ensure_column("characters", "status_changed_turn", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "portrait_id", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "court_role", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("characters", "summary", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("characters", "aliases", "TEXT NOT NULL DEFAULT '[]'")
         # 步骤7：回合阶段（旧库迁移，schema 升级非 fallback）
         self.ensure_column("game_state", "turn_phase", "TEXT NOT NULL DEFAULT 'summoning'")
         # 密令推演副作用列（result 留给承办人进展，sim_note 给推演写泄漏/反弹，互不覆盖）
@@ -770,17 +772,18 @@ class GameDB:
                 self.conn.execute(
                     """
                     INSERT INTO characters
-                    (name, office, office_type, faction, personal_skills, loyalty, ability, integrity, courage, style,
+                    (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style,
                      birth_year, historical_death_year, historical_death_month, debut_year, debut_month,
-                     status, status_reason, status_changed_turn, portrait_id, power_id, location)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     status, status_reason, status_changed_turn, portrait_id, power_id, location, summary)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         character.name,
                         office,
                         office_type,
                         character.faction,
-                        json.dumps(character.personal_skills + character.aliases, ensure_ascii=False),
+                        json.dumps(character.aliases, ensure_ascii=False),
+                        json.dumps(character.personal_skills, ensure_ascii=False),
                         character.loyalty,
                         character.ability,
                         character.integrity,
@@ -797,6 +800,7 @@ class GameDB:
                         character.portrait_id,
                         character.power_id,
                         character.location,
+                        character.summary,
                     ),
                 )
         if not self.table_has_rows("character_offices"):
@@ -1420,17 +1424,18 @@ class GameDB:
         self.conn.execute(
             """
             INSERT INTO characters
-            (name, office, office_type, faction, personal_skills, loyalty, ability, integrity, courage, style,
+            (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style,
              birth_year, historical_death_year, historical_death_month, debut_year, debut_month,
-             status, status_reason, status_changed_turn, portrait_id, power_id, location)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             status, status_reason, status_changed_turn, portrait_id, power_id, location, summary)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 character.name,
                 character.office,
                 character.office_type,
                 character.faction,
-                json.dumps(character.personal_skills + character.aliases, ensure_ascii=False),
+                json.dumps(character.aliases, ensure_ascii=False),
+                json.dumps(character.personal_skills, ensure_ascii=False),
                 character.loyalty,
                 character.ability,
                 character.integrity,
@@ -1447,6 +1452,7 @@ class GameDB:
                 portrait_id,
                 getattr(character, "power_id", "ming") or "ming",
                 getattr(character, "location", "") or "",
+                getattr(character, "summary", "") or "",
             ),
         )
         self.conn.execute(

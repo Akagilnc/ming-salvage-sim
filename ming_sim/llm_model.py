@@ -7,6 +7,7 @@ from typing import Dict, Optional
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
+from openai import APIConnectionError, APIStatusError, APITimeoutError
 
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_config import (
@@ -18,6 +19,45 @@ from ming_sim.llm_config import (
 from ming_sim.llm_contract import fail_if_llm_error
 from ming_sim.models import LLMConfig
 from ming_sim.token_stats import install_token_stats_patch
+
+
+def _extract_provider_error(error: Exception) -> tuple[str, str, int | None]:
+    code = getattr(error, "code", None) or type(error).__name__
+    message = str(error)
+    status_code = getattr(error, "status_code", None)
+    response = getattr(error, "response", None)
+    if response is not None:
+        try:
+            payload = response.json()
+        except Exception:
+            payload = None
+        if isinstance(payload, dict):
+            inner = payload.get("error")
+            if isinstance(inner, dict):
+                code = inner.get("code") or inner.get("type") or code
+                message = inner.get("message") or message
+            else:
+                code = payload.get("code") or payload.get("type") or code
+                message = payload.get("message") or payload.get("detail") or message
+    return str(code), str(message), int(status_code) if status_code is not None else None
+
+
+def llm_unavailable_from_error(error: Exception, stage: str = "LLM 连通性检查") -> LLMUnavailable:
+    provider_code, provider_message, status_code = _extract_provider_error(error)
+    if isinstance(error, APITimeoutError):
+        code = "llm_timeout"
+    elif isinstance(error, APIConnectionError):
+        code = "llm_connection_error"
+    elif isinstance(error, APIStatusError):
+        code = f"llm_http_{status_code or 'error'}"
+    else:
+        code = "llm_error"
+    return LLMUnavailable(
+        f"{stage}失败：{provider_message}",
+        code=code,
+        provider_message=provider_message,
+        status_code=status_code,
+    )
 
 
 def create_chat_model(
@@ -82,7 +122,7 @@ def extract_agent_text(run_output: object) -> str:
 
 
 def verify_llm_available(llm_config: LLMConfig) -> None:
-    """检查 LLM 是否可用（修改版：只要求调用不抛异常）"""
+    """检查 LLM 是否可用：必须真实返回 ok，错误文本不能被当成成功。"""
     agent = Agent(
         name="LLM连通性检查",
         id="llm-smoke-test",
@@ -92,8 +132,14 @@ def verify_llm_available(llm_config: LLMConfig) -> None:
         markdown=False,
     )
     try:
-        # 只尝试运行，不检查返回内容
-        agent.run("输出 ok")
+        text = extract_agent_text(agent.run("输出 ok"))
+    except LLMUnavailable:
+        raise
     except Exception as error:
-        raise LLMUnavailable(f"LLM 连通性检查失败：{error}") from error
-    # 没抛异常就算通过
+        raise llm_unavailable_from_error(error) from error
+    if text.strip().lower() != "ok":
+        raise LLMUnavailable(
+            f"LLM 连通性检查失败：期望返回 ok，实际返回：{text[:300]}",
+            code="llm_validation_failed",
+            provider_message=text[:300],
+        )
