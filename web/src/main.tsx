@@ -245,6 +245,7 @@ type LLMConfigInfo = {
   base_url: string;
   model: string;
   max_tokens: number;
+  timeout_seconds: number;
   advanced_model: string;
   advanced_base_url: string;
   has_advanced_api_key: boolean;
@@ -254,6 +255,7 @@ type LLMConfigInfo = {
     model: string;
     has_api_key: boolean;
     max_tokens: number;
+    timeout_seconds: number;
     advanced_model: string;
     advanced_base_url: string;
     has_advanced_api_key: boolean;
@@ -479,6 +481,7 @@ type MenuStatus = {
     model: string;
     has_api_key: boolean;
     max_tokens: number;
+    timeout_seconds: number;
     advanced_model: string;
     advanced_base_url: string;
     has_advanced_api_key: boolean;
@@ -2622,6 +2625,7 @@ function LLMConfigTab() {
   const [advancedApiKey, setAdvancedApiKey] = React.useState("");
   const [apiKey, setApiKey] = React.useState("");
   const [maxTokens, setMaxTokens] = React.useState("8000");
+  const [timeoutSeconds, setTimeoutSeconds] = React.useState("180");
   const [show, setShow] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [msg, setMsg] = React.useState("");
@@ -2636,6 +2640,7 @@ function LLMConfigTab() {
         setAdvancedModel(data.advanced_model || "");
         setAdvancedBaseUrl(data.advanced_base_url || "");
         setMaxTokens(String(data.max_tokens || 8000));
+        setTimeoutSeconds(String(data.timeout_seconds || 180));
       })
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
   }, []);
@@ -2652,6 +2657,7 @@ function LLMConfigTab() {
           model,
           api_key: apiKey,
           max_tokens: parseInt(maxTokens) || 8000,
+          timeout_seconds: parseFloat(timeoutSeconds) || 180,
           advanced_model: advancedModel,
           advanced_base_url: advancedBaseUrl,
           advanced_api_key: advancedApiKey.trim() ? advancedApiKey : "__keep__",
@@ -2737,6 +2743,18 @@ function LLMConfigTab() {
           value={maxTokens}
           onChange={(e) => setMaxTokens(e.target.value)}
           placeholder="8000"
+        />
+      </label>
+      <label className="menu-field">
+        <span>Timeout Seconds</span>
+        <input
+          className="menu-input"
+          type="number"
+          min={10}
+          max={900}
+          value={timeoutSeconds}
+          onChange={(e) => setTimeoutSeconds(e.target.value)}
+          placeholder="180"
         />
       </label>
       <label className="menu-field">
@@ -4006,6 +4024,7 @@ function ApiSettingsModal({
     model: string;
     has_api_key: boolean;
     max_tokens?: number;
+    timeout_seconds?: number;
     advanced_model?: string;
     advanced_base_url?: string;
     has_advanced_api_key?: boolean;
@@ -4020,6 +4039,7 @@ function ApiSettingsModal({
   const [advancedApiKey, setAdvancedApiKey] = React.useState("");
   const [apiKey, setApiKey] = React.useState("");
   const [maxTokens, setMaxTokens] = React.useState(String(initial?.max_tokens || 8000));
+  const [timeoutSeconds, setTimeoutSeconds] = React.useState(String(initial?.timeout_seconds || 180));
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState("");
 
@@ -4034,6 +4054,7 @@ function ApiSettingsModal({
           model: model.trim(),
           api_key: apiKey.trim(),
           max_tokens: parseInt(maxTokens) || 8000,
+          timeout_seconds: parseFloat(timeoutSeconds) || 180,
           advanced_model: advancedModel.trim(),
           advanced_base_url: advancedBaseUrl.trim(),
           advanced_api_key: advancedApiKey.trim(),
@@ -4076,6 +4097,10 @@ function ApiSettingsModal({
         <label>
           Max Tokens
           <input type="number" min={256} max={65536} value={maxTokens} onChange={(e) => setMaxTokens(e.target.value)} placeholder="8000" />
+        </label>
+        <label>
+          Timeout Seconds
+          <input type="number" min={10} max={900} value={timeoutSeconds} onChange={(e) => setTimeoutSeconds(e.target.value)} placeholder="180" />
         </label>
         <label>
           API Key

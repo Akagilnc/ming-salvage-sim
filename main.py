@@ -43,6 +43,12 @@ def main() -> None:
         help="推演/打分专用 API key（读 OPENAI_ADVANCED_API_KEY），空=与主 key 一致",
     )
     parser.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=float(os.environ.get("OPENAI_TIMEOUT_SECONDS", "180") or 180),
+        help="LLM request timeout seconds（读 OPENAI_TIMEOUT_SECONDS）",
+    )
+    parser.add_argument(
         "--db",
         default=os.environ.get("MING_SIM_DB", "data/ming_sim.db"),
         help="SQLite database path",
@@ -67,6 +73,7 @@ def main() -> None:
         advanced_model=args.advanced_model,
         advanced_base_url=args.advanced_base_url,
         advanced_api_key=args.advanced_api_key,
+        timeout_seconds=args.timeout_seconds,
     )
 
 

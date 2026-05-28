@@ -90,6 +90,7 @@ class WebGame:
         advanced_model = os.environ.get("OPENAI_ADVANCED_MODEL", "")
         advanced_base_url = os.environ.get("OPENAI_ADVANCED_BASE_URL", "")
         advanced_api_key = os.environ.get("OPENAI_ADVANCED_API_KEY", "")
+        timeout_seconds = float(os.environ.get("OPENAI_TIMEOUT_SECONDS", "180") or 180)
         # 菜单写的 runtime_llm.json 优先于 env，让"在网页里改的配置"重启后仍生效。
         runtime = load_runtime_llm()
         base_url = runtime.get("base_url") or base_url
@@ -99,6 +100,7 @@ class WebGame:
         advanced_base_url = runtime.get("advanced_base_url") or advanced_base_url
         advanced_api_key = runtime.get("advanced_api_key") or advanced_api_key
         max_tokens = int(runtime.get("max_tokens") or 8000)
+        timeout_seconds = float(runtime.get("timeout_seconds") or timeout_seconds)
         if not api_key:
             raise LLMUnavailable("未配 API key，请先到设置页填写。")
         random.seed(int(os.environ.get("MING_SIM_SEED", "7")))
@@ -118,6 +120,7 @@ class WebGame:
             base_url=normalize_openai_base_url(base_url),
             model=model,
             max_tokens=max_tokens,
+            timeout_seconds=timeout_seconds,
             advanced_model=(advanced_model or "").strip(),
             advanced_base_url=normalize_openai_base_url(adv_base) if adv_base else "",
             advanced_api_key=(advanced_api_key or "").strip(),
@@ -142,10 +145,11 @@ class WebGame:
 
     def list_saves(self) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
+        campaign_id = (self.db.kv_get("campaign_id") or "").strip()
         for fname in sorted(os.listdir(self.saves_dir())):
             if not fname.endswith(".db"):
                 continue
-            if fname.startswith(AUTO_SAVE_PREFIX):
+            if not _save_visible_for_campaign(fname, campaign_id):
                 continue
             full = os.path.join(self.saves_dir(), fname)
             try:
@@ -237,6 +241,7 @@ class WebGame:
         model: str,
         api_key: str,
         max_tokens: int = 0,
+        timeout_seconds: float = 0,
         advanced_model: Optional[str] = None,
         advanced_base_url: Optional[str] = None,
         advanced_api_key: Optional[str] = None,
@@ -245,6 +250,7 @@ class WebGame:
         new_model = model.strip() or self.session.llm_config.model
         new_key = api_key.strip() or self.session.llm_config.api_key
         new_max = max_tokens if max_tokens > 0 else self.session.llm_config.max_tokens
+        new_timeout = timeout_seconds if timeout_seconds > 0 else self.session.llm_config.timeout_seconds
         # advanced_* = None 表示不动；传空串表示显式清空。
         if advanced_model is None:
             new_advanced = self.session.llm_config.advanced_model
@@ -264,6 +270,7 @@ class WebGame:
             base_url=base,
             model=new_model,
             max_tokens=new_max,
+            timeout_seconds=new_timeout,
             advanced_model=new_advanced,
             advanced_base_url=new_adv_base,
             advanced_api_key=new_adv_key,
@@ -274,6 +281,7 @@ class WebGame:
             new_config.model,
             new_config.api_key,
             new_config.max_tokens,
+            new_config.timeout_seconds,
             new_config.advanced_model,
             new_config.advanced_base_url,
             new_config.advanced_api_key,
@@ -831,16 +839,43 @@ def get_game() -> WebGame:
     return web_game
 
 
+def _save_visible_for_campaign(fname: str, campaign_id: str) -> bool:
+    if not fname.startswith(AUTO_SAVE_PREFIX):
+        return True
+    campaign_id = (campaign_id or "").strip()
+    return bool(campaign_id and fname.startswith(f"{AUTO_SAVE_PREFIX}{campaign_id}_"))
+
+
+def _main_db_campaign_id() -> str:
+    db_path = os.environ.get("MING_SIM_DB", "") or user_data_path("ming_sim.db")
+    if not os.path.isabs(db_path):
+        db_path = str(user_data_dir() / db_path)
+    if not os.path.isfile(db_path):
+        return ""
+    try:
+        import sqlite3 as _sqlite3
+
+        conn = _sqlite3.connect(db_path)
+        try:
+            row = conn.execute("SELECT value FROM kv_store WHERE key='campaign_id'").fetchone()
+            return str(row[0]).strip() if row and row[0] else ""
+        finally:
+            conn.close()
+    except Exception:
+        return ""
+
+
 def _scan_saves() -> List[Dict[str, Any]]:
     """扫存档目录，独立于 WebGame 实例（菜单页无 game 也要能列）。"""
     saves_dir = user_data_path("saves")
     out: List[Dict[str, Any]] = []
     if not os.path.isdir(saves_dir):
         return out
+    campaign_id = _main_db_campaign_id()
     for fname in sorted(os.listdir(saves_dir)):
         if not fname.endswith(".db"):
             continue
-        if fname.startswith(AUTO_SAVE_PREFIX):
+        if not _save_visible_for_campaign(fname, campaign_id):
             continue
         full = os.path.join(saves_dir, fname)
         try:
@@ -973,6 +1008,7 @@ class LlmSetupRequest(BaseModel):
     model: str
     api_key: str
     max_tokens: int = 8000
+    timeout_seconds: float = 180
     advanced_model: str = ""
     advanced_base_url: str = ""
     advanced_api_key: str = ""
@@ -989,6 +1025,7 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     advanced_base_url = normalize_openai_base_url(adv_base_in) if adv_base_in else ""
     advanced_api_key = (request.advanced_api_key or "").strip()
     max_tokens = request.max_tokens if request.max_tokens > 0 else 8000
+    timeout_seconds = request.timeout_seconds if request.timeout_seconds > 0 else 180
     if not (base_url and model):
         raise HTTPException(status_code=400, detail="base_url / model 不能为空。")
     if not api_key:
@@ -1005,6 +1042,7 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         model,
         api_key,
         max_tokens,
+        timeout_seconds,
         advanced_model,
         advanced_base_url,
         advanced_api_key,
@@ -1016,6 +1054,7 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
             "model": model,
             "has_api_key": True,
             "max_tokens": max_tokens,
+            "timeout_seconds": timeout_seconds,
             "advanced_model": advanced_model,
             "advanced_base_url": advanced_base_url,
             "has_advanced_api_key": bool(advanced_api_key),
@@ -1314,6 +1353,7 @@ class LLMConfigRequest(BaseModel):
     model: str = ""
     api_key: str = ""
     max_tokens: int = 0
+    timeout_seconds: float = 0
     # None=不动，""=显式清空，其他=覆写。pydantic v1 默认 None 走不进来；用 sentinel "__keep__"
     advanced_model: str = "__keep__"
     advanced_base_url: str = "__keep__"
@@ -1387,6 +1427,7 @@ async def api_get_llm_config() -> Dict[str, Any]:
         "base_url": cfg.base_url,
         "model": cfg.model,
         "max_tokens": cfg.max_tokens,
+        "timeout_seconds": cfg.timeout_seconds,
         "advanced_model": cfg.advanced_model,
         "advanced_base_url": cfg.advanced_base_url,
         "has_advanced_api_key": bool(cfg.advanced_api_key),
@@ -1396,6 +1437,7 @@ async def api_get_llm_config() -> Dict[str, Any]:
             "model": saved.get("model", ""),
             "has_api_key": bool(saved.get("api_key", "")),
             "max_tokens": int(saved.get("max_tokens") or 8000),
+            "timeout_seconds": float(saved.get("timeout_seconds") or 180),
             "advanced_model": saved.get("advanced_model", ""),
             "advanced_base_url": saved.get("advanced_base_url", ""),
             "has_advanced_api_key": bool(saved.get("advanced_api_key", "")),
@@ -1414,6 +1456,7 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
             request.model,
             request.api_key,
             request.max_tokens,
+            request.timeout_seconds,
             advanced_model=advanced,
             advanced_base_url=adv_base,
             advanced_api_key=adv_key,
@@ -1426,6 +1469,7 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
         "base_url": cfg.base_url,
         "model": cfg.model,
         "max_tokens": cfg.max_tokens,
+        "timeout_seconds": cfg.timeout_seconds,
         "advanced_model": cfg.advanced_model,
         "advanced_base_url": cfg.advanced_base_url,
         "has_advanced_api_key": bool(cfg.advanced_api_key),

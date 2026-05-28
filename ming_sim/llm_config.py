@@ -45,6 +45,7 @@ def load_llm_config(
     base_url: str,
     model: str,
     api_key: str = "",
+    timeout_seconds: float = 180.0,
     advanced_model: str = "",
     advanced_base_url: str = "",
     advanced_api_key: str = "",
@@ -59,6 +60,7 @@ def load_llm_config(
         api_key=api_key,
         base_url=normalize_openai_base_url(base_url),
         model=model,
+        timeout_seconds=timeout_seconds,
         advanced_model=(advanced_model or "").strip(),
         advanced_base_url=normalize_openai_base_url(adv_base) if adv_base else "",
         advanced_api_key=(advanced_api_key or "").strip(),
@@ -82,6 +84,7 @@ def for_role(cfg: LLMConfig, role: str) -> LLMConfig:
             base_url=adv_base,
             model=cfg.advanced_model.strip(),
             max_tokens=cfg.max_tokens,
+            timeout_seconds=cfg.timeout_seconds,
             advanced_model=cfg.advanced_model,
             advanced_base_url=cfg.advanced_base_url,
             advanced_api_key=cfg.advanced_api_key,
@@ -106,6 +109,8 @@ def load_runtime_llm() -> Dict[str, str]:
     }
     if "max_tokens" in data:
         out["max_tokens"] = str(data["max_tokens"])
+    if "timeout_seconds" in data:
+        out["timeout_seconds"] = str(data["timeout_seconds"])
     return out
 
 
@@ -114,6 +119,7 @@ def save_runtime_llm(
     model: str,
     api_key: str,
     max_tokens: int = 8000,
+    timeout_seconds: float = 180.0,
     advanced_model: str = "",
     advanced_base_url: str = "",
     advanced_api_key: str = "",
@@ -125,6 +131,7 @@ def save_runtime_llm(
         "model": (model or "").strip(),
         "api_key": (api_key or "").strip(),
         "max_tokens": max_tokens,
+        "timeout_seconds": timeout_seconds,
         "advanced_model": (advanced_model or "").strip(),
         "advanced_base_url": (advanced_base_url or "").strip(),
         "advanced_api_key": (advanced_api_key or "").strip(),

@@ -44,6 +44,8 @@ def create_chat_model(
         "base_url": llm_config.base_url,
         "temperature": temperature,
         "max_tokens": max_tokens,
+        "timeout": llm_config.timeout_seconds,
+        "max_retries": 1,
         "role_map": {"system": "system", "user": "user", "assistant": "assistant", "tool": "tool"},
         "extra_body": extra_body,
     }

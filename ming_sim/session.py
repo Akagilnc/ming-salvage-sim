@@ -282,33 +282,52 @@ def apply_appointment(
 
 
 def _sync_offices_from_db_impl(content: GameContent, db: "GameDB") -> None:
-    """启动时把 DB 里的 office/office_type/status 同步回内存 content.characters。
-    DB 是持久化真相，JSON 只是初始值。"""
+    """启动/读档时以 DB characters 表重建内存人物表。
+    DB 是持久化真相；不要在这里修写 DB。"""
     rows = db.conn.execute(
-        "SELECT name, office, office_type, status FROM characters"
+        """
+        SELECT name, office, office_type, faction, personal_skills,
+               loyalty, ability, integrity, courage, style,
+               birth_year, historical_death_year, historical_death_month,
+               debut_year, debut_month, status, portrait_id, power_id, location
+        FROM characters
+        """
     ).fetchall()
+    characters: Dict[str, Character] = {}
     for row in rows:
         name = row["name"]
         office_type = infer_office_type_from_office(row["office"], row["office_type"])
-        if office_type != (row["office_type"] or ""):
-            db.conn.execute(
-                "UPDATE characters SET office_type=? WHERE name=?",
-                (office_type, name),
-            )
-            db.conn.execute(
-                """
-                UPDATE character_offices
-                SET office_type=?, updated_at=CURRENT_TIMESTAMP
-                WHERE character_name=?
-                """,
-                (office_type, name),
-            )
-        if name in content.characters:
-            ch = content.characters[name]
-            ch.office = row["office"]
-            ch.office_type = office_type
-            ch.status = row["status"]
-    db.conn.commit()
+        import json as _json
+
+        try:
+            personal_skills = _json.loads(row["personal_skills"] or "[]")
+        except (TypeError, ValueError):
+            personal_skills = []
+        if not isinstance(personal_skills, list):
+            personal_skills = []
+        characters[name] = Character(
+            name=name,
+            office=row["office"],
+            office_type=office_type,
+            faction=row["faction"],
+            aliases=[],
+            personal_skills=[str(item) for item in personal_skills if str(item).strip()],
+            loyalty=int(row["loyalty"]),
+            ability=int(row["ability"]),
+            integrity=int(row["integrity"]),
+            courage=int(row["courage"]),
+            style=row["style"],
+            birth_year=int(row["birth_year"]),
+            historical_death_year=int(row["historical_death_year"]),
+            historical_death_month=int(row["historical_death_month"]),
+            debut_year=int(row["debut_year"]),
+            debut_month=int(row["debut_month"]),
+            status=row["status"],
+            power_id=row["power_id"],
+            location=row["location"],
+            portrait_id=row["portrait_id"],
+        )
+    content.characters = characters
 
 
 def _bind_all_content(content: GameContent) -> None:
