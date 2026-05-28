@@ -79,9 +79,10 @@ def build_court_brief(context: CourtContext) -> str:
 
 
 def build_memory_brief(character: Character, context: CourtContext) -> str:
+    tlog(f"[MEM-IO/memory-brief/INPUT] minister={character.name} turn={context.state.turn} window=3 limit=30")
     memories = context.db.get_recent_event_memories(
         turn=context.state.turn,
-        window=1,
+        window=3,
         limit=30,
     )
     if not memories:
@@ -91,10 +92,12 @@ def build_memory_brief(character: Character, context: CourtContext) -> str:
     lines = ["【上回合旧事记忆】"]
     for memory in memories:
         lines.append(
-            f"- #{memory['id']} {memory['year']}年{memory['period']}月：{memory['title']}。"
+            f"- #{memory['id']} {memory['year']}年{memory['period']}月:{memory['title']}。"
             f"起因：{memory['cause']}。经过：{memory['process']}。结果：{memory['outcome']}。"
         )
-    return "\n".join(lines)
+    brief = "\n".join(lines)
+    tlog(f"[MEM-IO/memory-brief/OUTPUT] minister={character.name} ({len(brief)}字):\n{brief}")
+    return brief
 
 
 def build_secret_order_brief(character: Character, context: CourtContext) -> str:
@@ -246,6 +249,7 @@ def _make_select_consort_tool(context: CourtContext):
                 integrity=int(item.get("integrity") or 60),
                 courage=int(item.get("courage") or 50),
                 style=str(item.get("style") or "温婉"),
+                power_id="ming",
                 status="candidate",
                 summary=str(item.get("summary") or "").strip(),
                 portrait_id=f"consort_pool_{pid}",  # 显式指定，add_character 不再自动分配
@@ -312,16 +316,31 @@ def create_minister_agent(
             f"人物特质：{'、'.join(character.personal_skills)}。个人简介：{character.summary}"
             + (f"\n{cultivate_desc}" if cultivate_desc else ""),
             f"你与皇帝的对话在后宫寝殿；同一回合复召时接续此前对话，不要重置记忆。",
+            f"当前为 {context.state.year} 年 {context.state.period} 月。",
         ]
         tools = [_make_cultivate_tool(character, context)]
     else:
+        # 月度动态上下文全挂 system 末尾——每月变一次破尾段缓存，但前面 game_world /
+        # minister_agent / character 静态段仍命中前缀缓存，且大臣全程不会因 history 滚窗
+        # 而忘掉年月、钱粮、在办事项、上回合旧事、自己名下密令。
+        court_brief = build_court_brief(context)
+        memory_brief = build_memory_brief(character, context)
+        secret_brief = build_secret_order_brief(character, context)
+        monthly_block_parts = [
+            f"当前为 {context.state.year} 年 {context.state.period} 月（第 {context.state.turn} 回合）。"
+            "作答涉及时序（某事多久前、某人是否已亡、某限期是否到）时以此为准。",
+            f"本{TURN_UNIT}朝会盘面：{court_brief}",
+        ]
+        if memory_brief:
+            monthly_block_parts.append(memory_brief)
+        if secret_brief:
+            monthly_block_parts.append(secret_brief)
         instructions = [
             c.game_world_prompt,
             c.minister_agent_prompt,
             f"你当前扮演：{character_context_with_db(character, context.db)}。",
             f"你与皇帝的多轮对话会持续到本{TURN_UNIT}退朝；同一{TURN_UNIT}复召时要接续此前奏对，不要重置记忆。",
-            f"进殿前，皇帝会先把本{TURN_UNIT}奏报、钱粮、地区、军队和派系态势作为一段 JSON 上下文喂给你；"
-            "你只需简短回一句臣已知会，然后等皇帝问话。所有动态数据均可随时通过工具复查。",
+            "\n\n".join(monthly_block_parts),
         ]
         tools = build_minister_tools(character, context)
         # 司礼监（内官管后宫）与礼部（议礼册封）可奉旨选妃：现场拟就秀女名单呈御览。
@@ -354,19 +373,13 @@ class MinisterRegistry:
         self.agno_db = agno_db
         self.context = context
         self.agents: Dict[str, Agent] = {}
-        self.briefed: set = set()  # 已喂过本月 court_brief 的大臣
         characters = _ctx().characters
         self.session_ids: Dict[str, str] = {
             name: f"minister-{name}-turn-{context.state.turn}"
             for name in characters
         }
-        self._court_brief: str = build_court_brief(context)
         for character in characters.values():
             self.agents[character.name] = self._create(character)
-        # 后宫（office_type="后宫"）跳过月初 brief
-        for character in characters.values():
-            if character.office_type == "后宫":
-                self.briefed.add(character.name)
 
     def _create(self, character: Character) -> Agent:
         return create_minister_agent(
@@ -377,8 +390,8 @@ class MinisterRegistry:
             session_id=self.session_ids[character.name],
         )
 
-    def _build_draft_line(self) -> str:
-        """实时查本回合已核定草案，供 brief 注入。"""
+    def build_draft_line(self) -> str:
+        """实时查本回合已核定草案。供 GameSession.chat 每轮前置进 user message。"""
         draft_rows = self.context.db.list_directives(self.context.state, statuses=("draft",))
         if not draft_rows:
             return "无"
@@ -387,46 +400,21 @@ class MinisterRegistry:
             for r in draft_rows
         )
 
-    def _brief_if_needed(self, character: Character) -> None:
-        """首次召见时把本月动态上下文作为 user message 喂给大臣（不进 system prompt → 不破前缀缓存）。"""
-        if character.name in self.briefed:
-            return
-        agent = self.agents[character.name]
-        draft_line = self._build_draft_line()
-        secret_brief = build_secret_order_brief(character, self.context)
-        prompt = (
-            f"本{TURN_UNIT}朝会初始化上下文（钱粮、奏报、地区、军队、派系等，进殿前请知会，不需详细回奏）：\n"
-            f"{self._court_brief}\n"
-            f"当前诏书草稿（已核定、待颁诏）：{draft_line}。\n\n"
-            f"{build_memory_brief(character, self.context)}\n\n"
-            f"{secret_brief}\n\n"
-            '请简短回一句"臣已知会"，然后等皇帝问话。'
-        )
-        try:
-            agent.run(prompt)
-        except Exception:
-            pass
-        self.briefed.add(character.name)
-
     def get(self, character: Character) -> Agent:
-        self._brief_if_needed(character)
         return self.agents[character.name]
 
     def refresh(self, character_name: str) -> None:
         character = _ctx().characters.get(character_name)
         if character is None:
             return
-        self.briefed.discard(character_name)
         self.agents[character.name] = self._create(character)
 
     def register(self, character: Character) -> None:
-        """运行时新建人物（吏部铨选任命）后注册其 Agent，使本回合即可召见。
-        本回合刚登场，无需补喂月初 court_brief（标记为已 briefed）。"""
+        """运行时新建人物（吏部铨选任命）后注册其 Agent，使本回合即可召见。"""
         self.session_ids[character.name] = (
             f"minister-{character.name}-turn-{self.context.state.turn}"
         )
         self.agents[character.name] = self._create(character)
-        self.briefed.add(character.name)
 
     def register_runtime(self, character: Character) -> None:
         """注册不入正式名册的临时召见人物。"""
@@ -434,4 +422,3 @@ class MinisterRegistry:
             f"temporary-{character.name}-turn-{self.context.state.turn}"
         )
         self.agents[character.name] = self._create(character)
-        self.briefed.add(character.name)

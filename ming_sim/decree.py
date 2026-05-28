@@ -15,6 +15,7 @@ from ming_sim.agents import (
     create_chat_memory_agent,
     create_decree_writer_agent,
     create_json_sanitizer_agent,
+    create_memory_extractor_agent,
     create_memory_retrieval_agent,
     create_score_extractor_module_agent,
     create_season_simulator_agent,
@@ -149,7 +150,9 @@ def resolve_directives(
             "directives": [d["directive_text"] for d in directives_brief],
             "active_issues": [{"id": r["id"], "title": r["title"]} for r in db.list_active_issues()],
         }, ensure_ascii=False)
+        tlog(f"[MEM-IO/memory-retrieval/INPUT] ({len(retrieval_input)}字):\n{retrieval_input}")
         raw_keywords = run_agent_text(retrieval_agent, retrieval_input, tag="memory-retrieval")
+        tlog(f"[MEM-IO/memory-retrieval/OUTPUT] ({len(raw_keywords)}字):\n{raw_keywords}")
         kw_data = parse_agent_json(raw_keywords, "记忆检索")
         keywords: List[str] = []
         for field in ("characters", "regions", "armies", "powers", "keywords"):
@@ -181,6 +184,7 @@ def resolve_directives(
         mem_summary = [(m.get("subject_id","?"), m.get("title","?")) for m in relevant_memories]
         tlog(f"[memory/retrieval] keywords={keywords}")
         tlog(f"[memory/retrieval] total={len(relevant_memories)} items={mem_summary}")
+        tlog(f"[MEM-IO/memory-retrieval/INJECT] full={json.dumps(relevant_memories, ensure_ascii=False)}")
     except Exception as exc:
         tlog(f"[memory/retrieval] 失败，跳过：{exc}")
 
@@ -312,7 +316,27 @@ def resolve_directives(
         extractor_output=extractor_output,
     )
 
-    # 5) 对话记忆提取（event_memory，chat_message 来源）
+    # 5a) 规则版事件记忆：从已落库 applied 直接写（任免/issue/region/army/faction）
+    _emit("stage", "规则记忆落库")
+    try:
+        record_event_memories_from_resolution(
+            db, state, directives, decree_text, narrative, extractor_output, applied,
+        )
+    except Exception as exc:
+        tlog(f"[memory/fallback] 跳过：{exc}")
+
+    # 5b) LLM 版事件记忆：从诏书+邸报+applied 提取细节人物动向
+    _emit("stage", "LLM 抽取事件记忆")
+    try:
+        mem_agent = create_memory_extractor_agent(llm_config, agno_db)
+        extract_event_memories_with_agent(
+            mem_agent, db, state, directives,
+            decree_text, narrative, extractor_output, applied,
+        )
+    except Exception as exc:
+        tlog(f"[memory-extractor] 跳过：{exc}")
+
+    # 5c) 对话记忆提取（event_memory，chat_message 来源）
     _emit("stage", "提取对话记忆")
     try:
         chat_mem_agent = create_chat_memory_agent(llm_config, agno_db)

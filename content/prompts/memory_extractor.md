@@ -69,7 +69,7 @@
 ## 提取规则
 
 优先写这些记忆：
-
+0. 上回合出现的： 人物 事件 地点 事件详情 可以提取为记忆，能成为一个独立完整的叙事都能成为一个事件记忆
 1. 大臣拟旨被采纳：`directives.source="大臣拟旨"` 且 `actor` 不空，给该 `actor` 写 `edict_result`。
 2. 诏书推动事项新立、推进、结案或失败：读 `applied.issue_summary`，给明确相关大臣写 character 记忆；无法归因时写 `court`。
 3. 任免与惩处：读 `applied.office_changes` / `applied.character_status_changes`，给本人写 `appointment` / `punishment`。

@@ -1342,6 +1342,7 @@ function MinisterCardList({
 }) {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [positions, setPositions] = React.useState<Record<string, { px: number; py: number }>>({});
+  const savedPosRef = React.useRef<Record<string, { px: number; py: number }> | null>(null);
   const dragging = React.useRef<{ name: string; startMX: number; startMY: number; startPX: number; startPY: number } | null>(null);
   const didDrag = React.useRef(false);
 
@@ -1374,53 +1375,62 @@ function MinisterCardList({
     return s ? { px: s.px, py: s.py } : null;
   }
 
-  // 从 db 加载手动拖动覆盖坐标，其余按槽位顺序自动排
+  // 拖动覆盖坐标只加载一次。list 变化只重排，不重 fetch。
+  const listKey = list.map((m) => m.name).join("|");
   React.useEffect(() => {
-    loadCourtPos().then((saved) => {
-      setPositions(() => {
-        const allSlots = courtSlots();
-        const next: Record<string, { px: number; py: number }> = {};
-        const usedSlots = new Set<string>();
+    let cancelled = false;
+    const arrange = (saved: Record<string, { px: number; py: number }>) => {
+      if (cancelled) return;
+      const allSlots = courtSlots();
+      const next: Record<string, { px: number; py: number }> = {};
+      const usedSlots = new Set<string>();
 
-        // 第一遍：office 命中固定职名的先占固定槽
-        list.forEach((m) => {
-          const role = roleFromOffice(m.office || "");
-          const fixed = fixedSlotFor(role);
-          if (fixed) {
-            next[m.name] = fixed;
-            const fs = FIXED_SLOTS.find((f) => f.role === role);
-            if (fs) usedSlots.add(`${fs.side}:${fs.slot}`);
-          }
-        });
-
-        // 第二遍：其余按顺序取空槽（手动拖动优先吸附）
-        list.forEach((m) => {
-          if (next[m.name]) return; // 固定职位已处理
-          if (saved[m.name]) {
-            const cur = saved[m.name];
-            let best = allSlots.find((s) => !usedSlots.has(`${s.side}:${s.slot}`)) ?? allSlots[0];
-            let bestD = Infinity;
-            for (const s of allSlots) {
-              if (usedSlots.has(`${s.side}:${s.slot}`)) continue;
-              const d = Math.hypot(s.px - cur.px, s.py - cur.py);
-              if (d < bestD) { bestD = d; best = s; }
-            }
-            usedSlots.add(`${best.side}:${best.slot}`);
-            next[m.name] = { px: best.px, py: best.py };
-          } else {
-            const slot = allSlots.find((s) => !usedSlots.has(`${s.side}:${s.slot}`));
-            if (slot) {
-              usedSlots.add(`${slot.side}:${slot.slot}`);
-              next[m.name] = { px: slot.px, py: slot.py };
-            } else {
-              next[m.name] = { px: 0.5, py: 0.532 };
-            }
-          }
-        });
-        return next;
+      list.forEach((m) => {
+        const role = roleFromOffice(m.office || "");
+        const fixed = fixedSlotFor(role);
+        if (fixed) {
+          next[m.name] = fixed;
+          const fs = FIXED_SLOTS.find((f) => f.role === role);
+          if (fs) usedSlots.add(`${fs.side}:${fs.slot}`);
+        }
       });
-    });
-  }, [list]);
+
+      list.forEach((m) => {
+        if (next[m.name]) return;
+        if (saved[m.name]) {
+          const cur = saved[m.name];
+          let best = allSlots.find((s) => !usedSlots.has(`${s.side}:${s.slot}`)) ?? allSlots[0];
+          let bestD = Infinity;
+          for (const s of allSlots) {
+            if (usedSlots.has(`${s.side}:${s.slot}`)) continue;
+            const d = Math.hypot(s.px - cur.px, s.py - cur.py);
+            if (d < bestD) { bestD = d; best = s; }
+          }
+          usedSlots.add(`${best.side}:${best.slot}`);
+          next[m.name] = { px: best.px, py: best.py };
+        } else {
+          const slot = allSlots.find((s) => !usedSlots.has(`${s.side}:${s.slot}`));
+          if (slot) {
+            usedSlots.add(`${slot.side}:${slot.slot}`);
+            next[m.name] = { px: slot.px, py: slot.py };
+          } else {
+            next[m.name] = { px: 0.5, py: 0.532 };
+          }
+        }
+      });
+      setPositions(next);
+    };
+
+    if (savedPosRef.current !== null) {
+      arrange(savedPosRef.current);
+    } else {
+      loadCourtPos().then((saved) => {
+        savedPosRef.current = saved;
+        arrange(saved);
+      });
+    }
+    return () => { cancelled = true; };
+  }, [listKey]);
 
   const onMouseDown = (e: React.MouseEvent, name: string) => {
     if ((e.target as HTMLElement).closest(".portrait-upload-btn")) return;
@@ -1442,6 +1452,7 @@ function MinisterCardList({
       const npy = Math.max(0, Math.min(1, dragging.current.startPY + dy / height));
       setPositions((prev) => {
         const next = { ...prev, [dragging.current!.name]: { px: npx, py: npy } };
+        savedPosRef.current = next;
         saveCourtPos(next);
         return next;
       });
@@ -1458,6 +1469,7 @@ function MinisterCardList({
           // 找吸附目标
           const snapped = snapToSlot(cur.px, cur.py, occupied, "");
           const next = { ...prev, [dragName]: snapped };
+          savedPosRef.current = next;
           saveCourtPos(next);
           return next;
         });

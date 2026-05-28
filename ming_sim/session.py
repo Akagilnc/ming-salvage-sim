@@ -14,6 +14,7 @@ from typing import Dict, List, Optional, Tuple
 
 from ming_sim.agents import bind_content as _bind_agents, create_memory_retrieval_agent
 from ming_sim.agents import parse_agent_json, run_agent_text
+from ming_sim.constants import TURN_UNIT
 from ming_sim.content import GameContent
 from ming_sim.context import (
     bind_content as _bind_context,
@@ -446,30 +447,36 @@ class GameSession:
 
     def _retrieve_memories_for_message(self, message: str) -> str:
         """用轻量 retrieval agent 从皇帝输入提关键词，检索相关旧事注入message头部。"""
+        from ming_sim.token_stats import tlog
         try:
             import json
+            tlog(f"[MEM-IO/chat-memory-retrieval/INPUT] ({len(message)}字): {message!r}")
             retrieval_agent = create_memory_retrieval_agent(self.llm_config, self.agno_db)
             raw = run_agent_text(retrieval_agent, message, tag="chat-memory-retrieval")
+            tlog(f"[MEM-IO/chat-memory-retrieval/OUTPUT] ({len(raw)}字):\n{raw}")
             kw_data = parse_agent_json(raw, "对话记忆检索")
             keywords: list = []
             for field in ("characters", "regions", "armies", "powers", "keywords"):
                 keywords.extend(str(k) for k in (kw_data.get(field) or []) if k)
             if not keywords:
+                tlog("[MEM-IO/chat-memory-retrieval/INJECT] keywords=[] 跳过注入")
                 return message
             memories = self.db.get_memories_by_keywords(keywords, turn=self.state.turn, limit=6)
             if not memories:
+                tlog(f"[MEM-IO/chat-memory-retrieval/INJECT] keywords={keywords} 无命中")
                 return message
-            from ming_sim.token_stats import tlog
             tlog(f"[chat/memory-retrieval] keywords={keywords} hit={len(memories)}")
+            tlog(f"[MEM-IO/chat-memory-retrieval/INJECT] full={json.dumps(memories, ensure_ascii=False)}")
             lines = ["【相关旧事】"]
             for m in memories:
                 lines.append(
                     f"- #{m['id']} {m['year']}年{m['period']}月 {m['subject_id']}："
                     f"{m['title']}。起因：{m['cause']}。结果：{m['outcome']}。"
                 )
-            return "\n".join(lines) + "\n\n" + message
+            new_msg = "\n".join(lines) + "\n\n" + message
+            tlog(f"[MEM-IO/chat-memory-retrieval/FINAL-MSG] ({len(new_msg)}字):\n{new_msg}")
+            return new_msg
         except Exception as exc:
-            from ming_sim.token_stats import tlog
             tlog(f"[chat/memory-retrieval] 失败跳过：{exc}")
             return message
 
@@ -492,8 +499,9 @@ class GameSession:
             integrity=50,
             courage=50,
             style="身份未详，奉旨临时入殿",
+            power_id="ming",
             status="active",
-            summary="此人未入正式朝臣名册，只是奉旨临时入殿奏对；不得自称已有正式官职。",
+            summary="此人未入本局人物档，奉旨临时召对。若史实有官职/身份，照实奏对；若无，亦不得编造。所属势力、现任差遣以本人据实交代为准。",
         )
         self.temporary_characters[clean_name] = character
         if self.registry is not None:
@@ -544,6 +552,11 @@ class GameSession:
         # GameSession.chat 只负责与 agent 对话与 tool 截获。
         agent = self.registry.get(character)
         augmented = self._retrieve_memories_for_message(message)
+        # 本回合已核定草案随大臣议事滚动累加，agent system 在月初冻结拿不到——
+        # 每次 chat 前置实时 draft_line 到 user message 头，确保大臣看得到兄弟大臣最新动作。
+        draft_line = self.registry.build_draft_line()
+        if draft_line and draft_line != "无":
+            augmented = f"【本{TURN_UNIT}已核定草案】{draft_line}\n\n{augmented}"
         run_output = agent.run(augmented)
         answer = extract_agent_text(run_output)
         result = ChatTurnResult(answer=answer)
@@ -675,6 +688,7 @@ class GameSession:
             integrity=60,
             courage=55,
             style=style,
+            power_id="ming",
             status="active",
             summary=str(data.get("summary") or "").strip(),
         )

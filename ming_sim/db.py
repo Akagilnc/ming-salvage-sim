@@ -3075,6 +3075,12 @@ class GameDB:
             f"{subject_type}:{subject_id} {event_type}《{str(title or '')[:24]}》"
             f" imp={importance} src={source_kind}:{source_id}"
         )
+        tlog(
+            f"[MEM-IO/db.upsert/BODY] #{int(row['id']) if row else '?'} "
+            f"title={str(title or '')!r} cause={str(cause or '')!r} "
+            f"process={str(process or '')!r} outcome={str(outcome or '')!r} "
+            f"sentiment={sentiment} tags={clean_tags} expires_turn={expires_turn}"
+        )
         return int(row["id"]) if row else 0
 
     def add_event_memory_source(
@@ -3219,6 +3225,7 @@ class GameDB:
         if result:
             ids = ",".join(str(item["id"]) for item in result)
             tlog(f"[memory/recall] {character_name} hit={len(result)} ids={ids}")
+            tlog(f"[MEM-IO/db.recall/OUTPUT] {character_name} full={json.dumps(result, ensure_ascii=False)}")
         else:
             tlog(f"[memory/recall] {character_name} hit=0")
         return result
@@ -3261,6 +3268,8 @@ class GameDB:
                 "tags": json.loads(row["tags"] or "[]"),
             })
         tlog(f"[memory/recent] turn={turn} window={window} hit={len(result)}")
+        if result:
+            tlog(f"[MEM-IO/db.recent/OUTPUT] turn={turn} window={window} full={json.dumps(result, ensure_ascii=False)}")
         return result
 
     def get_memories_by_keywords(
@@ -3336,6 +3345,9 @@ class GameDB:
                 "source_kind": row["source_kind"],  # 演算记忆 vs 大臣记忆
             })
         tlog(f"[memory/keywords] needles={len(needles)} hit={len(result)}")
+        tlog(f"[MEM-IO/db.keywords/INPUT] keywords={keywords} turn={turn} ignore_expiry={ignore_expiry} needles={needles}")
+        if result:
+            tlog(f"[MEM-IO/db.keywords/OUTPUT] full={json.dumps(result, ensure_ascii=False)}")
         return result
 
     def event_memory_detail(self, memory_id: int) -> str:
@@ -3368,7 +3380,9 @@ class GameDB:
                 f"{idx}. [{row['source_kind']}:{row['source_id']}] {row['excerpt']}"
                 + (f"（定位 {locator}）" if locator and locator != "{}" else "")
             )
-        return "\n".join(lines)
+        out = "\n".join(lines)
+        tlog(f"[MEM-IO/db.detail/OUTPUT] #{memory_id} ({len(out)}字):\n{out}")
+        return out
 
     def save_turn_report(self, state: GameState, report: str) -> None:
         """每回合月末奏报单独存档（turn_reports），与 turn_logs 日志解耦。"""

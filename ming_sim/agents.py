@@ -293,13 +293,29 @@ def create_season_simulator_agent(
 ) -> Agent:
     """月末推演日讲官。全量盘面走 user payload，无 tool。
     走 advanced 角色派生：若 advanced_model 已配，用更强模型；否则 fallback 主 model。"""
-    del state, db
+    del db
     cfg = _llm_for_role(llm_config, "simulator")
     tlog(f"[simulator] 使用模型 {cfg.model}")
+    # 显式年月单挑出来——别让 LLM 在大 JSON payload 里翻 turn 子节，邸报抬头才不会写错。
+    turn_header = ""
+    if state is not None:
+        turn_header = (
+            f"【本回合年月】{state.year} 年 {state.period} 月（第 {state.turn} 回合）。"
+            f"邸报抬头与正文涉及年月时以此为准。\n"
+        )
+    elif simulator_payload and isinstance(simulator_payload.get("turn"), dict):
+        t = simulator_payload["turn"]
+        turn_header = (
+            f"【本回合年月】{t.get('year')} 年 {t.get('period')} 月（第 {t.get('turn')} 回合）。"
+            f"邸报抬头与正文涉及年月时以此为准。\n"
+        )
     simulator_context = (
-        "【本回合推演输入 simulator_payload】\n"
+        turn_header
+        + "【本回合推演输入 simulator_payload】\n"
         + json.dumps(simulator_payload or {}, ensure_ascii=False, sort_keys=False)
     )
+    del state
+
     return Agent(
         name="月末推演日讲官",
         id="season-simulator",
@@ -349,8 +365,16 @@ def create_score_extractor_module_agent(
         raise RuntimeError(f"未知结算提取模块：{module}")
     cfg = _llm_for_role(llm_config, "extractor")
     tlog(f"[extractor/{module}] 使用模型 {cfg.model}")
+    turn_header = ""
+    if simulator_payload and isinstance(simulator_payload.get("turn"), dict):
+        t = simulator_payload["turn"]
+        turn_header = (
+            f"【本回合年月】{t.get('year')} 年 {t.get('period')} 月（第 {t.get('turn')} 回合）。"
+            f"抽取涉及年月时以此为准。\n"
+        )
     simulator_context = (
-        "【本回合推演输入 simulator_payload】\n"
+        turn_header
+        + "【本回合推演输入 simulator_payload】\n"
         + json.dumps(simulator_payload or {}, ensure_ascii=False, sort_keys=False)
     )
     supplemental = (
@@ -422,6 +446,28 @@ def create_chat_memory_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
             force_json_output=True,
         ),
         instructions=[ctx.game_world_prompt, ctx.chat_memory_extractor_prompt],
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
+def create_memory_extractor_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
+    """从本月诏书+邸报+落库结果提取人物/势力/地区/军队事件记忆。"""
+    ctx = _ctx()
+    return Agent(
+        name="事件记忆档房",
+        id="memory-extractor",
+        session_id="memory-extractor",
+        db=agno_db,
+        model=create_chat_model(
+            llm_config,
+            temperature=0.1,
+            top_p=0.7,
+            max_tokens=max(2000, llm_config.max_tokens),
+            enable_thinking=False,
+            force_json_output=True,
+        ),
+        instructions=[ctx.game_world_prompt, ctx.memory_extractor_prompt],
         add_history_to_context=False,
         markdown=False,
     )
