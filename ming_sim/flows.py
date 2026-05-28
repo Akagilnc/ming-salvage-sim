@@ -152,9 +152,71 @@ def _apply_metric_dict(
     return applied
 
 
+def _auto_pay_arrears_by_priority(
+    db: GameDB, state: GameState, account: str, budget: int, category: str, reason: str,
+) -> int:
+    """LLM 补饷 economy_move 没指定 target 时的兜底：按 ARMY_SALARY_PRIORITY 顺序
+    分配 budget 给有 arrears 的明军，每军按 arrears 上限扣，扣完 budget 为止。
+    返回实际花出去的总额（万两）。"""
+    if budget <= 0:
+        return 0
+    rows = db.conn.execute(
+        "SELECT id, name, arrears FROM armies "
+        "WHERE owner_power='ming' AND maintenance_per_turn>0 AND arrears>0"
+    ).fetchall()
+    army_map = {str(r["id"]): r for r in rows}
+    ordered = [army_map[k] for k in ARMY_SALARY_PRIORITY if k in army_map]
+    ordered += [r for r in rows if str(r["id"]) not in ARMY_SALARY_PRIORITY]
+    spent = 0
+    remaining = budget
+    for row in ordered:
+        if remaining <= 0:
+            break
+        army_id = str(row["id"])
+        name = str(row["name"])
+        current_arrears = int(row["arrears"])
+        if current_arrears <= 0:
+            continue
+        pay = min(current_arrears, remaining)
+        actual = db.record_issue_economy_move(
+            state, account, -pay, category,
+            f"{reason}（按优先级分给{name}{pay}万两）",
+            purpose="补饷", target_kind="army", target_id=army_id,
+        )
+        if not actual:
+            continue
+        new_arrears = max(0, current_arrears + actual)
+        db.conn.execute(
+            "UPDATE armies SET arrears = ? WHERE id = ?", (new_arrears, army_id)
+        )
+        db.conn.execute(
+            """INSERT INTO army_logs
+               (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '诏拨补饷')""",
+            (state.turn, state.year, state.period, army_id, "arrears",
+             str(current_arrears), str(new_arrears), new_arrears - current_arrears,
+             f"诏拨补饷{abs(actual)}万两（按优先级）"),
+        )
+        db.conn.commit()
+        spent += abs(actual)
+        remaining -= abs(actual)
+    return spent
+
+
 def _apply_economy_list(
     db: GameDB, state: GameState, economy: List[Dict[str, object]]
 ) -> List[Dict[str, object]]:
+    """落 extractor 抽出的 economy_moves 到 economy_ledger。
+
+    支持结构化字段：
+    - purpose='补饷' + target_kind='army' + target_id=army_id
+      → 走"按 arrears 上限扣"路径：实际扣 = min(|delta|, 该军 arrears 万两)；
+        同步把 armies.arrears 减掉 actual_pay；多余的钱留在 account 不扣。
+    - 其它（purpose='其它' 或 NULL）：按常规扣账（现状）。
+
+    LLM 写非法 purpose / 找不到 target_id → 退化为'其它'常规扣账。
+    """
+    from ming_sim.constants import ECONOMY_PURPOSES, ECONOMY_TARGET_KINDS, TURN_UNIT as _TU
     applied: List[Dict[str, object]] = []
     for move in economy or []:
         account = str(move.get("account") or "")
@@ -166,7 +228,68 @@ def _apply_economy_list(
             continue
         category = str(move.get("category") or move.get("reason") or "事项")[:40]
         reason = str(move.get("reason") or "")[:80]
-        actual = db.record_issue_economy_move(state, account, delta, category, reason)
+        raw_purpose = str(move.get("purpose") or "").strip()
+        raw_target_kind = str(move.get("target_kind") or "").strip()
+        raw_target_id = str(move.get("target_id") or "").strip()
+        # 校验枚举；非法值退化为"其它"常规扣账
+        purpose = raw_purpose if raw_purpose in ECONOMY_PURPOSES else None
+        target_kind = raw_target_kind if raw_target_kind in ECONOMY_TARGET_KINDS else None
+
+        # ── 补饷分发：按 arrears 上限扣 + 同步减 armies.arrears ───────────────
+        # purpose=补饷 但缺 target_kind/target_id → 按 ARMY_SALARY_PRIORITY 优先级
+        # 自动散到各军（每军按 arrears 上限扣，扣完 budget 为止）。
+        if purpose == "补饷" and delta < 0 and (target_kind != "army" or not raw_target_id):
+            budget = abs(delta)
+            spent = _auto_pay_arrears_by_priority(db, state, account, budget, category, reason)
+            applied.append({"account": account, "delta": -spent, "reason": reason})
+            continue
+        if purpose == "补饷" and target_kind == "army" and delta < 0 and raw_target_id:
+            row = db.conn.execute(
+                "SELECT id, name, arrears FROM armies WHERE id = ?", (raw_target_id,)
+            ).fetchone()
+            if row is None:
+                # army_id 拼错 → 退化为按优先级散
+                budget = abs(delta)
+                spent = _auto_pay_arrears_by_priority(db, state, account, budget, category, reason)
+                applied.append({"account": account, "delta": -spent, "reason": reason})
+                continue
+            current_arrears = int(row["arrears"])
+            if current_arrears <= 0:
+                # 该军已无欠饷，不扣
+                applied.append({
+                    "account": account, "delta": 0,
+                    "reason": f"{row['name']}已无欠饷，{abs(delta)}万两未拨"
+                })
+                continue
+            actual_pay = min(abs(delta), current_arrears)
+            actual = db.record_issue_economy_move(
+                state, account, -actual_pay, category, reason,
+                purpose="补饷", target_kind="army", target_id=str(row["id"]),
+            )
+            if actual:
+                # 同步减 arrears
+                new_arrears = max(0, current_arrears + actual)  # actual<0, 加=减
+                db.conn.execute(
+                    "UPDATE armies SET arrears = ? WHERE id = ?", (new_arrears, row["id"])
+                )
+                db.conn.execute(
+                    """INSERT INTO army_logs
+                       (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '诏拨补饷')""",
+                    (state.turn, state.year, state.period, row["id"], "arrears",
+                     str(current_arrears), str(new_arrears), new_arrears - current_arrears,
+                     f"诏拨补饷{abs(actual)}万两"),
+                )
+                db.conn.commit()
+                applied.append({"account": account, "delta": actual, "reason": reason})
+            continue
+
+        # ── 常规扣账（其它/无 purpose）─────────────────────────────────────────
+        actual = db.record_issue_economy_move(
+            state, account, delta, category, reason,
+            purpose=purpose or "其它" if delta < 0 else None,
+            target_kind=None, target_id=None,
+        )
         if actual:
             applied.append({"account": account, "delta": actual, "reason": reason})
     return applied
@@ -212,7 +335,10 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     _expense("内库", monthly_amount(round(cfg["内廷俸_base"] * cfg["内廷俸_rate"] / 100)), "内廷俸禄", f"太监宫女{TURN_UNIT}俸禄")
     _expense("内库", monthly_amount(round(cfg["妃嫔_base"]   * cfg["妃嫔_rate"]   / 100)), "妃嫔供奉", f"后宫妃嫔{TURN_UNIT}供奉")
 
-    # ── 各军军饷（按优先级，能发多少发多少，不足挂 arrears）─────────────────
+    # ── 各军军饷（按优先级，先发当月、余额抵旧欠；不足挂 arrears 累计万两）──
+    # arrears 字段语义=累计欠饷万两（整数，无上限）。flows 是唯一变更点：
+    #   缺口 → arrears += 缺口；当月足额且仍有国库余 → arrears -= 抵欠（不下穿 0）。
+    # 拨饷诏书走 economy_moves 加钱进国库，下月自动抵旧欠。extractor 禁写 arrears。
     army_rows_raw = db.conn.execute(
         "SELECT id, name, maintenance_per_turn, arrears, morale FROM armies"
     ).fetchall()
@@ -229,28 +355,35 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         if needed <= 0:
             continue
         available = max(0, int(state.metrics["国库"]))
-        pay = min(needed, available)
-        shortfall = needed - pay
-
-        if pay > 0:
-            db.record_issue_economy_move(state, "国库", -pay, "各军军饷", f"{name}{TURN_UNIT}军饷")
-
-        if shortfall > 0:
-            arrears_delta = max(1, round(15 * shortfall / needed))
-            morale_delta = -max(1, round(8 * shortfall / needed))
-        else:
-            arrears_delta = -2
-            morale_delta = 0
+        pay_current = min(needed, available)
+        shortfall = needed - pay_current
 
         old_arrears = int(row["arrears"])
         old_morale = int(row["morale"])
-        new_arrears = max(0, min(100, old_arrears + arrears_delta))
+
+        # 月固定军饷只发当月，不主动还旧欠。旧欠累积拖着，等玩家下旨拨饷才清。
+        if pay_current > 0:
+            db.record_issue_economy_move(
+                state, "国库", -pay_current, "各军军饷", f"{name}{TURN_UNIT}军饷"
+            )
+
+        new_arrears = max(0, old_arrears + shortfall)
+        if shortfall > 0:
+            morale_delta = -max(1, round(8 * shortfall / needed))
+        elif old_arrears == 0:
+            morale_delta = +2     # 长期足额且无旧欠：缓慢恢复
+        else:
+            morale_delta = 0      # 当月发足但仍有旧欠：不奖励也不惩罚
         new_morale = max(0, min(100, old_morale + morale_delta))
 
         db.conn.execute(
             "UPDATE armies SET arrears = ?, morale = ? WHERE id = ?",
             (new_arrears, new_morale, army_id),
         )
+        if shortfall > 0:
+            reason_tag = f"{TURN_UNIT}军饷欠发{shortfall}万两"
+        else:
+            reason_tag = f"{TURN_UNIT}军饷足额"
         db.conn.executemany(
             """INSERT INTO army_logs
                (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
@@ -258,17 +391,18 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             [
                 (state.turn, state.year, state.period, army_id,
                  "arrears", str(old_arrears), str(new_arrears), new_arrears - old_arrears,
-                 f"{TURN_UNIT}军饷{'欠发' if shortfall > 0 else '足额'}"),
+                 reason_tag),
                 (state.turn, state.year, state.period, army_id,
                  "morale", str(old_morale), str(new_morale), new_morale - old_morale,
-                 f"{TURN_UNIT}军饷{'欠发' if shortfall > 0 else '足额'}"),
+                 reason_tag),
             ],
         )
         db.conn.commit()
 
         flows.append({
             "dir": "expense", "account": "国库", "category": "各军军饷",
-            "army": name, "needed": needed, "paid": pay, "shortfall": shortfall,
+            "army": name, "needed": needed, "paid": pay_current,
+            "shortfall": shortfall,
             "arrears_delta": new_arrears - old_arrears,
             "morale_delta": new_morale - old_morale,
         })

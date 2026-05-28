@@ -201,3 +201,15 @@ ARMY_FIELD_ALIASES = {
 EXIT_COMMANDS = {"exit", "退出游戏", "退出", "exit game"}
 COURT_BREAK_COMMANDS = {"q", "quit", "退朝", "下朝"}
 MINISTER_DISMISS_COMMANDS = {"done", "退下", "跪安", "退了", "下去"}
+
+# 经济流水（economy_ledger）支出条目的结构化标签。
+# 仅对支出（delta<0）有效；收入条目（税收/抄家入帑/纳贡）三项一律 NULL。
+# flows 月固定支出（宗禄/官俸/工部/各军军饷/宫廷/建筑维护等）也一律 NULL，
+# 只有 extractor 从诏书叙事抽出的 economy_moves 才填这三列。
+ECONOMY_PURPOSES = {
+    "补饷",   # 给军清欠饷；必须配 target_kind='army'+target_id=army_id；扣账上限 = 该军 arrears
+    "其它",   # 其它一切支出（赏赐/赈灾/工程/犒赏/转账等），靠 reason 自由文本说明
+}
+ECONOMY_TARGET_KINDS = {
+    "army",   # 给某支军（仅补饷场景必填，target_id = army_id）
+}

@@ -58,7 +58,8 @@ def historical_anchor_for_month(year: int, month: int) -> Dict[str, object]:
 def victory_status(db: GameDB, state: GameState) -> Dict[str, object]:
     """胜负判定：用 powers / armies / regions / classes 直接数据。
     - 后金综合 = leverage + military_strength + cohesion + supply
-    - 明辽东防线综合 = 按 owner_power='ming' AND theater='辽东' 聚合所有官军(morale+supply+training+equipment-arrears) + (100 - beizhili.military_pressure)
+    - 明辽东防线综合 = 按 owner_power='ming' AND theater='辽东' 聚合所有官军(morale+supply+training+equipment-arrears_norm) + (100 - beizhili.military_pressure)
+      其中 arrears_norm = min(100, arrears * 10 / maintenance_per_turn)，把累计欠饷万两归一到 0-100 量级（10 月军饷欠 ≈ 100）。
     - 北方民变综合 = 陕晋豫三省 unrest 平均；农民阶级三省 sat 平均（低=惨）
     """
     houjin = db.conn.execute("SELECT * FROM powers WHERE id = 'houjin'").fetchone()
@@ -67,8 +68,16 @@ def victory_status(db: GameDB, state: GameState) -> Dict[str, object]:
     treasury = int(state.metrics.get("国库", 0))
     beizhili = db.conn.execute("SELECT * FROM regions WHERE id = 'beizhili'").fetchone()
     houjin_power = int(houjin["leverage"]) + int(houjin["military_strength"]) + int(houjin["cohesion"]) + int(houjin["supply"])
+    # arrears 是累计欠饷万两，须按 maintenance 归一成 0-100 量级再扣
     front_row = db.conn.execute(
-        "SELECT COALESCE(SUM(morale + supply + training + equipment - arrears), 0) AS s "
+        "SELECT COALESCE(SUM("
+        "  morale + supply + training + equipment"
+        "  - (CASE "
+        "       WHEN maintenance_per_turn IS NULL OR maintenance_per_turn = 0 THEN 0 "
+        "       WHEN arrears * 10 / maintenance_per_turn > 100 THEN 100 "
+        "       ELSE arrears * 10 / maintenance_per_turn "
+        "     END)"
+        "), 0) AS s "
         "FROM armies WHERE owner_power = 'ming' AND theater = '辽东'"
     ).fetchone()
     ming_front = int(front_row["s"]) if front_row else 0

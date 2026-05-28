@@ -345,6 +345,9 @@ class GameDB:
                 event_id TEXT,
                 edict_id INTEGER,
                 actor TEXT,
+                purpose TEXT,
+                target_kind TEXT,
+                target_id TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(account) REFERENCES economy_accounts(account)
             );
@@ -651,6 +654,11 @@ class GameDB:
         self.ensure_column("secret_orders", "sim_note", "TEXT NOT NULL DEFAULT ''")
         # 密令期限：0=无硬期限；到 due_turn 时自动转入待核议，由推演当月判 done/failed。
         self.ensure_column("secret_orders", "due_turn", "INTEGER NOT NULL DEFAULT 0")
+        # economy_ledger 支出结构化标签：仅 extractor 抽出的 economy_moves 填这三列；
+        # flows 月固定支出与所有收入留 NULL。purpose 受控枚举见 constants.ECONOMY_PURPOSES。
+        self.ensure_column("economy_ledger", "purpose", "TEXT")
+        self.ensure_column("economy_ledger", "target_kind", "TEXT")
+        self.ensure_column("economy_ledger", "target_id", "TEXT")
         # 后宫调教记录
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS consort_traits (
@@ -887,7 +895,8 @@ class GameDB:
                         json.dumps(region.fiscal, ensure_ascii=False),
                     ),
                 )
-        if not self.table_has_rows("armies"):
+        is_fresh_armies_seed = not self.table_has_rows("armies")
+        if is_fresh_armies_seed:
             for army in self.content.armies.values():
                 self.conn.execute(
                     """
@@ -961,7 +970,39 @@ class GameDB:
                         json.dumps(event.audiences, ensure_ascii=False),
                     ),
                 )
+        self._migrate_arrears_unit_to_silver(is_fresh_armies_seed)
         self.conn.commit()
+
+    def _migrate_arrears_unit_to_silver(self, is_fresh_armies_seed: bool) -> None:
+        """一次性迁移：armies.arrears 从 0-100 抽象分换成累计欠饷万两。
+        旧档按 arrears * maintenance_per_turn / 25 估算（粗略：旧分数 ≈ 4 倍欠饷月数）。
+
+        区分新老档：
+        - 新档（is_fresh_armies_seed=True）：armies 由本版 seed_armies 刚刚写入，arrears
+          已经是万两。直接打 version=1，跳过换算。
+        - 老档（is_fresh_armies_seed=False）：armies 表早已存在数据；若 fiscal_config 中
+          无 __arrears_unit_version 标记，说明从未跑过本迁移 → 走换算逻辑。
+        """
+        ARREARS_UNIT_VERSION = 1
+        row = self.conn.execute(
+            "SELECT value FROM fiscal_config WHERE key = '__arrears_unit_version'"
+        ).fetchone()
+        cur = int(row["value"]) if row else 0
+        if cur >= ARREARS_UNIT_VERSION:
+            return
+        if not is_fresh_armies_seed:
+            # 真老档：换算分数 → 万两
+            self.conn.execute(
+                "UPDATE armies SET arrears = CAST(arrears * maintenance_per_turn / 25.0 AS INTEGER) "
+                "WHERE maintenance_per_turn > 0"
+            )
+        # 无论新老档，都把 version 打上，下次启动直接跳过
+        self.conn.execute(
+            "INSERT INTO fiscal_config (key, value, kind, note) VALUES "
+            "('__arrears_unit_version', ?, 'meta', 'arrears 单位由 0-100 分迁至累计欠饷万两的版本号') "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note",
+            (ARREARS_UNIT_VERSION,),
+        )
 
     def has_state(self) -> bool:
         row = self.conn.execute("SELECT 1 FROM game_state WHERE id = 1").fetchone()
@@ -2202,8 +2243,17 @@ class GameDB:
         return out
 
     def army_rows(self, limit: int | None = None, danger_order: bool = False) -> List[sqlite3.Row]:
+        # arrears 是累计欠饷万两，须按 maintenance 归一成"欠饷月数*10"再加权（0-100 量级）
+        # CASE 兼容 SQLite（无标量 MIN/LEAST）：maintenance=0 视为 0；归一后截至 100。
+        arrears_norm = (
+            "CASE "
+            "WHEN maintenance_per_turn IS NULL OR maintenance_per_turn = 0 THEN 0 "
+            "WHEN arrears * 10 / maintenance_per_turn > 100 THEN 100 "
+            "ELSE arrears * 10 / maintenance_per_turn "
+            "END"
+        )
         order = (
-            "(arrears + (100 - supply) + (100 - morale) + (100 - loyalty) + (100 - training)) DESC, name"
+            f"({arrears_norm} + (100 - supply) + (100 - morale) + (100 - loyalty) + (100 - training)) DESC, name"
             if danger_order
             else "theater, name"
         )
@@ -2253,10 +2303,17 @@ class GameDB:
         total_maintenance = self.conn.execute("SELECT SUM(maintenance_per_turn) AS total FROM armies").fetchone()
         parts = []
         for row in rows:
+            maint = int(row["maintenance_per_turn"]) or 0
+            arr = int(row["arrears"]) or 0
+            if maint > 0 and arr > 0:
+                months = arr / maint
+                arr_text = f"欠饷{arr}万两（约{months:.1f}月军饷）"
+            else:
+                arr_text = f"欠饷{arr}万两"
             parts.append(
                 f"{row['name']}：驻{row['station']}，兵{row['manpower']}，"
-                f"饷{format_money(monthly_amount(int(row['maintenance_per_turn'])))} /{TURN_UNIT}，补给{row['supply']}、"
-                f"士气{row['morale']}、欠饷{row['arrears']}，{row['status']}"
+                f"饷{format_money(monthly_amount(maint))} /{TURN_UNIT}，补给{row['supply']}、"
+                f"士气{row['morale']}、{arr_text}，{row['status']}"
             )
         return (
             f"军队警讯：{'；'.join(parts)}。"
@@ -2270,12 +2327,19 @@ class GameDB:
         row = self.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
         if row is None:
             raise ValueError(f"军队未入库：{raw_name}")
+        maint = int(row["maintenance_per_turn"]) or 0
+        arr = int(row["arrears"]) or 0
+        if maint > 0 and arr > 0:
+            months = arr / maint
+            arr_text = f"欠饷{arr}万两（约{months:.1f}月军饷）"
+        else:
+            arr_text = f"欠饷{arr}万两"
         return (
             f"{row['name']}：驻扎地{row['station']}，统帅{row['commander']}，"
             f"兵种{row['troop_type']}，人数{row['manpower']}人，"
-            f"维护费{format_money(monthly_amount(int(row['maintenance_per_turn'])))} /{TURN_UNIT}，补给{row['supply']}，"
+            f"维护费{format_money(monthly_amount(maint))} /{TURN_UNIT}，补给{row['supply']}，"
             f"士气{row['morale']}，训练{row['training']}，装备{row['equipment']}，"
-            f"欠饷{row['arrears']}，机动{row['mobility']}，忠诚{row['loyalty']}。"
+            f"{arr_text}，机动{row['mobility']}，忠诚{row['loyalty']}。"
             f"状态：{row['status']}"
         )
 
@@ -2333,14 +2397,25 @@ class GameDB:
                     print(f"[WARN] army_delta 引用非法字段 '{raw_field}' → 跳过")
                     continue
                 old_value = row[field]
-                if field in ARMY_SCORE_FIELDS:
+                if field == "arrears":
+                    # arrears 单位=累计欠饷万两，无上限，按需累加。
+                    # 正常情况由 flows 唯一变更；此处兜底允许 extractor 在战损/裁军等
+                    # 非现金原因下写入（提示词已禁，但保留兜底以防 LLM 越界不至于截断）。
                     delta = int(value)
-                    new_value = max(0, min(100, int(old_value) + delta))
+                    new_value = max(0, int(old_value) + delta)
                     actual_delta = new_value - int(old_value)
                     if actual_delta == 0:
                         continue
                     stored_new: object = new_value
                     log_delta: int | None = actual_delta
+                elif field in ARMY_SCORE_FIELDS:
+                    delta = int(value)
+                    new_value = max(0, min(100, int(old_value) + delta))
+                    actual_delta = new_value - int(old_value)
+                    if actual_delta == 0:
+                        continue
+                    stored_new = new_value
+                    log_delta = actual_delta
                 elif field == "manpower":
                     delta = int(value)
                     new_value = max(0, int(old_value) + delta)
@@ -2465,6 +2540,12 @@ class GameDB:
                     return max(0, min(100, int(item.get(field, default))))
                 except (TypeError, ValueError):
                     return default
+            def _arrears_init() -> int:
+                # arrears 单位=累计欠饷万两，无上限；新军默认 0
+                try:
+                    return max(0, int(item.get("arrears", 0)))
+                except (TypeError, ValueError):
+                    return 0
             commander = str(item.get("commander") or "")
             row = (
                 aid,
@@ -2480,7 +2561,7 @@ class GameDB:
                 _score("morale"),
                 _score("training"),
                 _score("equipment"),
-                _score("arrears", 0),
+                _arrears_init(),
                 _score("mobility"),
                 _score("loyalty"),
                 str(item.get("status") or "新立"),
@@ -3913,7 +3994,15 @@ class GameDB:
         delta: int,
         category: str,
         reason: str,
+        purpose: str | None = None,
+        target_kind: str | None = None,
+        target_id: str | None = None,
     ) -> int:
+        """记一笔经济流水到 economy_ledger，同步更新 metrics[account]。
+
+        purpose/target_kind/target_id 仅对 extractor 抽出的 economy_moves（自由拨款）填，
+        flows 月固定支出与所有收入一律 None。受控枚举见 constants.ECONOMY_PURPOSES。
+        """
         before = int(state.metrics[account])
         after = max(0, before + int(delta))
         actual = after - before
@@ -3923,10 +4012,12 @@ class GameDB:
         self.conn.execute(
             """
             INSERT INTO economy_ledger
-            (turn, year, period, account, delta, balance_after, category, reason, event_id, edict_id, actor)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '事项推演')
+            (turn, year, period, account, delta, balance_after, category, reason,
+             event_id, edict_id, actor, purpose, target_kind, target_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '事项推演', ?, ?, ?)
             """,
-            (state.turn, state.year, state.period, account, actual, after, category, reason),
+            (state.turn, state.year, state.period, account, actual, after,
+             category, reason, purpose, target_kind, target_id),
         )
         self.sync_economy_accounts(state)
         self.conn.commit()

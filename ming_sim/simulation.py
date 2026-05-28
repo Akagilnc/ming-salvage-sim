@@ -47,6 +47,9 @@ ITEM_FIELD_ALIASES = {
     "delta": "delta", "增量": "delta",
     "category": "category", "分类": "category",
     "reason": "reason", "原因": "reason",
+    "purpose": "purpose", "用途": "purpose",
+    "target_kind": "target_kind", "目标类型": "target_kind",
+    "target_id": "target_id", "目标编号": "target_id", "目标id": "target_id",
     "key": "key", "键": "key",
     "issue_id": "issue_id", "局势编号": "issue_id",
     "delta_bar": "delta_bar", "进度增量": "delta_bar",
@@ -707,12 +710,22 @@ def _clean_economy_moves(raw: object) -> List[Dict[str, object]]:
             continue
         if delta == 0:
             continue
-        cleaned.append({
+        entry: Dict[str, object] = {
             "account": account,
             "delta": delta,
             "category": str(item.get("category") or item.get("reason") or "事项")[:40],
             "reason": str(item.get("reason") or "")[:80],
-        })
+        }
+        purpose = str(item.get("purpose") or "").strip()
+        if purpose:
+            entry["purpose"] = purpose
+        target_kind = str(item.get("target_kind") or "").strip()
+        if target_kind:
+            entry["target_kind"] = target_kind
+        target_id = str(item.get("target_id") or "").strip()
+        if target_id:
+            entry["target_id"] = target_id
+        cleaned.append(entry)
     return cleaned
 
 

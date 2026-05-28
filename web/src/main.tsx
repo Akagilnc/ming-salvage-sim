@@ -3891,16 +3891,24 @@ function NodeIntel({ node }: { node: MapNode }) {
             <tr><th>番号</th><th>兵种</th><th>兵</th><th>饷</th><th>士气</th><th>欠饷</th></tr>
           </thead>
           <tbody>
-            {node.armies.map((army) => (
-              <tr key={army.id}>
-                <td>{army.name}</td>
-                <td>{army.troop_type}</td>
-                <td>{army.manpower}</td>
-                <td>{monthlyAmount(army.maintenance_per_turn)}</td>
-                <td>{army.morale}</td>
-                <td>{army.arrears}</td>
-              </tr>
-            ))}
+            {node.armies.map((army) => {
+              const maint = army.maintenance_per_turn || 0;
+              const arr = army.arrears || 0;
+              const months = maint > 0 && arr > 0 ? (arr / maint) : 0;
+              const arrText = arr > 0
+                ? (months > 0 ? `${arr}万两（≈${months.toFixed(1)}月）` : `${arr}万两`)
+                : '—';
+              return (
+                <tr key={army.id}>
+                  <td>{army.name}</td>
+                  <td>{army.troop_type}</td>
+                  <td>{army.manpower}</td>
+                  <td>{monthlyAmount(maint)}</td>
+                  <td>{army.morale}</td>
+                  <td>{arrText}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       ) : <div className="empty-note">本地未记录常驻军。</div>}

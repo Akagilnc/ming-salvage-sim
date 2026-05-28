@@ -316,8 +316,13 @@ def build_minister_tools(character: Character, context: CourtContext):
         resistance = int(row["severity"]) // 4 + int(faction_lev_avg) // 6
         tags = row["faction_hint"] or ""
         if any(t in tags for t in ("边", "军")):
-            arrears_avg = db.conn.execute("SELECT AVG(arrears) AS v FROM armies").fetchone()["v"] or 0
-            resistance += int(arrears_avg) // 12
+            # arrears 是累计欠饷万两，按 maintenance 归一成"平均欠饷月数"再加权
+            row_av = db.conn.execute(
+                "SELECT AVG(arrears * 1.0 / NULLIF(maintenance_per_turn, 0)) AS months "
+                "FROM armies WHERE maintenance_per_turn > 0"
+            ).fetchone()
+            months = float(row_av["months"] or 0)
+            resistance += int(months * 2)
         if any(t in tags for t in ("百姓", "地方", "士绅")):
             unrest_avg = db.conn.execute("SELECT AVG(unrest) AS v FROM regions").fetchone()["v"] or 0
             resistance += int(unrest_avg) // 12

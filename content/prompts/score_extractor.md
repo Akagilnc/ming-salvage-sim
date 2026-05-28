@@ -13,7 +13,7 @@
 3. **整理合并**：扫完所有章节后：
    - 同一 `issue_id` 跨章节多次推进 → 合并成一条 `issue_advances`（delta_bar 相加）。
    - 同一 `region_id` 多处小波动 → 合并成一条 `region_delta`（量表字段累加）。
-   - **一致性校验**：屠豪强 → 阉党 sat-、东林 sat+、士绅阶级 sat-、对应省份 unrest+；抓阁臣下狱 → 派系动荡 + 皇威+ + 民心轻动；军镇欠饷哗变 → army morale-、loyalty-、unrest+。漏配套字段是常见 bug。
+   - **一致性校验**：屠豪强 → 阉党 sat-、东林 sat+、士绅阶级 sat-、对应省份 unrest+；抓阁臣下狱 → 派系动荡 + 皇威+ + 民心轻动；军镇欠饷哗变 → army morale-、loyalty-、unrest+（**不写 arrears**，欠饷数额由 flows 唯一变更）。漏配套字段是常见 bug。
 4. **新立与结案**：
    - `new_issues` 只两个合法来源（见「局势立项规则」），邸报现象禁立。
    - 逐条对照 active_issues 的 resolve_condition / fail_condition 与邸报，判 `close_issues`（见「局势推进规则」）。
@@ -28,7 +28,7 @@
 |---|---|
 | 人事任免（擢/拜/起/迁/补/调/升 任某官 + 革职/下狱/赐死/致仕/卒）| `office_changes`（任某官——含新进朝堂与在朝调任升迁）、`character_status_changes`（去职）、配套 `faction_delta`、`metric_delta`；后宫纳妃才用 `appointments` |
 | 地方动静（清丈/抗税/民变/灾荒/赈济）| `region_delta`（含 `corruption`，见下注）、`class_delta`、`economy_moves`（赈灾银）、配套 `issue_advances` |
-| 军事战事（欠饷/哗变/调度/战报）| `army_delta`、`new_armies`、`power_updates`（别的势力三项）、`economy_moves`（军饷追拨）|
+| 军事战事（欠饷/哗变/调度/战报）| `army_delta`（不含 arrears）、`new_armies`（arrears 必为 0）、`power_updates`（别的势力三项）、`economy_moves`（军饷追拨走国库 -X）|
 | 局势推进（既有 issue 的具体进展/结案/失败）| `issue_advances`、`close_issues`、`cancels`、配套 `metric_delta`/`faction_delta` |
 | 财政诏令（开征/削减/盐政/工程）| `fiscal_changes`、`economy_moves`、配套 `class_delta` |
 | 外族动向（后金/蒙古/朝鲜/流寇）| `region_delta`、`army_delta`、`new_armies`、`character_power_changes`、`power_updates`（别的势力三项）、`world_advance` |
@@ -113,12 +113,12 @@
 | 字段 | 含义 | 约束 |
 |---|---|---|
 | `metric_delta` | 两量表本{{TURN_UNIT}}增量（民心/皇威）| 增量非新值。按上方「档位判定标准」自判档位。 |
-| `economy_moves` | 浮动收支（旨意执行/事件/赏罚/查抄/赈灾追加） | 每项 `account`(国库/内库)+`delta`+`category`+`reason`。单位万两（「国库263万两(-15)」→delta=-15）。**`account` 按钱出自哪个库定，不按用途定，不按经办衙门定**：凡「内帑/内库/宫中/皇帝私帑」拨出的支出，`account`=内库（即便用于补军饷/赈灾/解关外等外朝用途，即便由兵部/户部/太仓经手调度，也只记内库扣减一笔，不得同时或改记国库流出）；户部/太仓/外朝财政拨出的记国库。查抄入帑分内外同理（抄家充内帑→内库正项，充太仓→国库正项）。**反例（禁止）**：内帑出三万两由兵部解关外，写成 `{"account":"国库","delta":-3,...}` 或同时写国库与内库两笔——错。正解：只写 `{"account":"内库","delta":-3,...}` 一笔；经办衙门写进 `reason`，不影响 `account`。`fixed_flows` 已落账的固定项（田赋/辽饷/盐税/商税/宗室禄米/百官俸禄/工部/赈灾/九边补给/各军军饷/皇庄/织造/矿税/宫廷/内廷俸/妃嫔）**不进这里**。 |
+| `economy_moves` | 一次性支出（仅本月诏书执行/事件触发的非常规支出） | 字段：`account`(国库/内库)、`delta`(万两，负数)、`purpose`(`补饷` 或 `其它`)、`target_kind`(`army`，仅 `purpose=补饷` 填)、`target_id`(army_id，仅 `purpose=补饷` 填)、`category`、`reason`。<br>**补饷必拆条**：诏书"拨内库千万补全军" → 每军一条 `{"account":"内库","delta":-X,"purpose":"补饷","target_kind":"army","target_id":"guanning",...}`，不写 `target_id="all"`。 |
 | `faction_delta` | 派系满意度+影响力增量（阉党/皇党/军队/东林/宗室/中立/西学） | 增量非新值。两种格式均可：① 只改满意度：`{"阉党": -10}`（数字=satisfaction增量）；② 同时改满意度+影响力：`{"阉党": {"satisfaction": -10, "leverage": -15}}`。**清党/大规模罢黜/抄家必须同时降 leverage**（势力瓦解）；小摩擦只降 satisfaction；招安/重用某派必须同时升 leverage。 |
 | `class_delta` | 阶级满意度/影响力增量。key 形如 `农民` 表全国汇总；`农民@shaanxi` 表省级切片（region_id 从 `region_ids` 选） | value 形如 `{"satisfaction": -5, "leverage": +2}`，增量非新值。两字段都可写、可只写一个。**联动靠你自觉判**：①党派强推损某阶级利益 → 该阶级 sat 跌，且该党派 sat 也跟着跌（代言失职）；②东林 ↔ 江南士绅唇齿，抄江南/苏松士绅 → 东林 lev 同向掉，杀东林台谏 → 江南士绅 sat 同向掉；③阉党 ↔ 内廷宦官+地方税监同体，极端清算阉党时其代表阶级 sat+lev 双降；④军队 ↔ 军户/将门基本盘，欠饷军户 sat 长低 → 军队党 sat 也跌；⑤宗室党 ↔ 宗藩阶级同向（削宗禄/抄藩田同时损二者）；⑥极端手段（抄家屠戮）单次 ±20~40。阶级 sat≤30 且 lev≥60 易触发该省该阶级骚乱事件，由季末推演判定。 |
 | `region_delta` | 各地区数值变化，key=region_id | key **必须**从 `region_ids` 选。合法字段仅：量表 `public_support`/`unrest`/`grain_security`/`gentry_resistance`/`military_pressure`（±10、极端 ±20）、腐败度 `corruption`（0-100，整治贪腐/巡按/抄家→负值 ±5~±20，放任失控→正值；只在有明确整治或失控动作时才填）、数量 `population`/`registered_land`/`hidden_land`/`tax_per_turn`、文字 `natural_disaster`/`human_disaster`/`status`/`controlled_by`。收复/陷落/易帜/割让导致控制者改变时写 `controlled_by` 或中文 `控制`，值必须来自 `power_ids`。**减人口写 `population`，不是 `manpower`（`manpower` 是军队字段，严禁写入地区）。** 无变化填 `{}`。 |
-| `army_delta` | 各军数值变化，key=army_id | key **必须**从 `army_ids` 选。合法字段仅：量表 `supply`/`morale`/`training`/`equipment`/`arrears`/`mobility`/`loyalty`、数量 `manpower`/`maintenance_quarter`、文字 `station`/`commander`(统帅)/`troop_type`/`status`。**`cohesion` 是势力字段，严禁写入军队。** |
-| `new_armies` | 新建军队/叛军 | 朝廷募新兵、设新军镇、建客军，或流寇/外族成建制新军时写。每项需 `id`/`name`/`owner_power`/`station`/`commander`(统帅)/`troop_type`/`manpower`/`maintenance_per_turn`/`supply`/`morale`/`training`/`equipment`/`arrears`/`mobility`/`loyalty`/`status`。已有军队补兵扩编不走这里，用 `army_delta.manpower`。 |
+| `army_delta` | 各军数值变化，key=army_id | key **必须**从 `army_ids` 选。合法字段仅：量表 `supply`/`morale`/`training`/`equipment`/`mobility`/`loyalty`、数量 `manpower`/`maintenance_quarter`、文字 `station`/`commander`(统帅)/`troop_type`/`status`。**严禁写 `arrears`**：欠饷=累计欠饷万两，由月末户部 flows 唯一变更（缺口自动累加、有余自动抵欠），任何叙事下都不要在此 patch；拨饷只走 `economy_moves`。**`cohesion` 是势力字段，严禁写入军队。** |
+| `new_armies` | 新建军队/叛军 | 朝廷募新兵、设新军镇、建客军，或流寇/外族成建制新军时写。每项需 `id`/`name`/`owner_power`/`station`/`commander`(统帅)/`troop_type`/`manpower`/`maintenance_per_turn`/`supply`/`morale`/`training`/`equipment`/`mobility`/`loyalty`/`status`。**新军 `arrears` 初值固定 0，不要在这里写**。已有军队补兵扩编不走这里，用 `army_delta.manpower`。 |
 | `power_updates` | 别的势力三项简单属性，key=非大明 power_id | 只允许字段 `威望`/`实力`/`经济`（或英文 `leverage`/`military_strength`/`supply`），值为整数增量；禁止写 `ming`，禁止写立场/近动/状态等文字字段。 |
 | `world_advance` | 外交态度 KV | key 为势力名或 power_id，value 为简短态度字符串，如 `{"后金":"敌对","蒙古":"摇摆","朝鲜":"倾明"}`。只在态度有意义或发生变化时填写；无内容填 `{}`。不要写行动/影响/意图。 |
 | `issue_advances` | 既有局势本{{TURN_UNIT}}推进 | 每项 `issue_id`(必须是 active_issues 里的 integer id)+`delta_bar`+`stage_text`+`narrative`，可选 `inertia_delta`。`delta_bar` 是皇帝本{{TURN_UNIT}}实旨推动的额外量，与 issue 每{{TURN_UNIT}}自然漂移 inertia 叠加。详见「局势推进规则」。 |
@@ -267,13 +267,17 @@ decree new_issue 必填字段：
 ```json
 {
   "metric_delta": {"民心": -3, "皇威": 2},
-  "economy_moves": [{"account": "国库", "delta": -15, "category": "赈灾", "reason": "陕西赈粮"}],
+  "economy_moves": [
+    {"account": "国库", "delta": -15, "purpose": "其它", "category": "赈灾", "reason": "陕西赈粮"},
+    {"account": "内库", "delta": -60, "purpose": "补饷", "target_kind": "army", "target_id": "guanning", "category": "补饷", "reason": "内帑拨关宁补辽饷"},
+    {"account": "内库", "delta": -30, "purpose": "补饷", "target_kind": "army", "target_id": "xuan_da", "category": "补饷", "reason": "内帑拨宣大补饷"}
+  ],
   "faction_delta": {"阉党": {"satisfaction": -15, "leverage": -20}, "东林": {"satisfaction": 8, "leverage": 5}},
   "class_delta": {"农民@shaanxi": {"satisfaction": -6, "leverage": 5}},
   "region_delta": {"shaanxi": {"unrest": 5, "grain_security": -3}, "nanzhili": {"gentry_resistance": 8, "corruption": -12}},
-  "army_delta": {"guanning": {"morale": -3, "arrears": 5}},
+  "army_delta": {"guanning": {"morale": -3, "loyalty": -2}},
   "new_armies": [
-    {"id": "qin_army", "name": "秦军新营", "owner_power": "ming", "station": "陕西/西安", "commander": "孙传庭", "troop_type": "募兵步骑", "manpower": 8000, "maintenance_per_turn": 2, "supply": 55, "morale": 60, "training": 35, "equipment": 50, "arrears": 0, "mobility": 50, "loyalty": 65, "status": "新募，亟待操练"}
+    {"id": "qin_army", "name": "秦军新营", "owner_power": "ming", "station": "陕西/西安", "commander": "孙传庭", "troop_type": "募兵步骑", "manpower": 8000, "maintenance_per_turn": 2, "supply": 55, "morale": 60, "training": 35, "equipment": 50, "mobility": 50, "loyalty": 65, "status": "新募，亟待操练"}
   ],
   "power_updates": {"houjin": {"威望": -4, "实力": -3, "经济": -2}},
   "world_advance": {"后金": "敌对", "蒙古": "摇摆", "朝鲜": "倾明", "流寇": "潜伏"},

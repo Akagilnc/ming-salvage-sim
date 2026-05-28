@@ -89,6 +89,7 @@ def _significant_change(change: Dict[str, object]) -> bool:
     if isinstance(delta, int) and abs(delta) >= 8:
         return True
     field = str(change.get("field") or "")
+    # arrears 单位=累计欠饷万两；任何 delta（哪怕 ±1 万两）都视为人物关键记忆事件
     if field in {"arrears", "unrest", "military_pressure", "stance", "last_action", "status"}:
         return True
     return delta is None and field in {"natural_disaster", "human_disaster", "status", "last_action"}
