@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Tuple
 
 from ming_sim.constants import TURN_UNIT
 from ming_sim.db import GameDB
-from ming_sim.models import GameState, monthly_amount
+from ming_sim.models import GameState
 
 
 # ── 省级财政计算 ──────────────────────────────────────────────────────────────
@@ -116,6 +116,74 @@ def calc_province_fiscal(
         })
 
     return guo_ku_total, nei_ku_total, details
+
+
+# 固定月度收支项定义：(account, dir, name, base_key, rate_key, note)。
+# 税收/皇庄走 calc_province_fiscal（动态），军饷走 SUM(maint)，其余按 fiscal_config base×rate。
+# 全月度：base 皆月值，不再 /3。这是「定额预算」唯一定义，flows 落账 / UI budget_payload /
+# db.treasury_budget_summary 三处共用 compute_budget_lines，禁止再各自重算。
+_FIXED_BUDGET_ITEMS = [
+    ("国库", "expense", "宗室禄米", "宗室禄米_base", "宗室禄米_rate", "诸藩宗室月禄米"),
+    ("国库", "expense", "百官俸禄", "官俸_base", "官俸_rate", "在京百官月俸禄"),
+    ("国库", "expense", "工部", "工程_base", "工程_rate", "工部月维护支出"),
+    ("国库", "expense", "赈灾备用", "赈灾_base", "赈灾_rate", "制度性赈灾预留"),
+    ("内库", "income", "织造", "织造_base", "织造_rate", "苏杭织造局月上缴"),
+    ("内库", "income", "矿税", "矿税_base", "矿税_rate", "矿税残余"),
+    ("内库", "expense", "宫廷开支", "宫廷_base", "宫廷_rate", "皇室日常用度"),
+    ("内库", "expense", "内廷俸禄", "内廷俸_base", "内廷俸_rate", "太监宫女月俸禄"),
+    ("内库", "expense", "妃嫔供奉", "妃嫔_base", "妃嫔_rate", "后宫妃嫔月供奉"),
+]
+
+
+def compute_budget_lines(db: GameDB, state: GameState) -> Dict[str, Dict[str, list]]:
+    """唯一定额预算源。返回 {"国库":{"income":[{name,amount,note}],"expense":[...]},"内库":{...}}。
+    税收/皇庄＝calc_province_fiscal 动态值；军饷＝SUM(明军 maint)；建筑＝按 condition 折产/维护；
+    其余＝fiscal_config base×rate（全月值）。三处调用方据此各取所需，不重算。"""
+    cfg = db.get_fiscal_config()
+    gk_tax, nk_huang, _ = calc_province_fiscal(state, db)
+    army_total = db.conn.execute(
+        "SELECT SUM(maintenance_per_turn) FROM armies WHERE owner_power='ming'"
+    ).fetchone()[0] or 0
+
+    budget: Dict[str, Dict[str, list]] = {
+        "国库": {"income": [], "expense": []},
+        "内库": {"income": [], "expense": []},
+    }
+    budget["国库"]["income"].append(
+        {"name": "田赋辽饷盐商", "amount": int(gk_tax),
+         "note": "各省田赋+辽饷+盐税+商税（按腐败度/士绅阻力/民变动态折算）"}
+    )
+    budget["国库"]["expense"].append(
+        {"name": "各军军饷", "amount": int(army_total), "note": "各军月度维护/军饷合计"}
+    )
+    # 皇庄＝fiscal_config 基准（开局校准月额）＋ calc_province_fiscal 的没收藩田增量（开局 0）。
+    huang_base = round(int(cfg.get("皇庄_base", 20)) * cfg.get("皇庄_rate", 100) / 100)
+    budget["内库"]["income"].append(
+        {"name": "皇庄", "amount": int(huang_base + nk_huang), "note": "皇庄月地租（基准+没收藩田增量）"}
+    )
+    for account, direction, name, base_key, rate_key, note in _FIXED_BUDGET_ITEMS:
+        amount = round(int(cfg.get(base_key, 0)) * cfg.get(rate_key, 100) / 100)
+        budget[account][direction].append({"name": name, "amount": int(amount), "note": note})
+
+    # 建筑：按当前 condition 折算月产出/维护。内廷类维护扣内库，余扣国库；产出按 output_metric。
+    bld_in = {"国库": 0, "内库": 0}
+    bld_out = {"国库": 0, "内库": 0}
+    for r in db.conn.execute(
+        "SELECT category, condition, maintenance, output_metric, output_amount FROM buildings"
+    ).fetchall():
+        cond = max(0, min(100, int(r["condition"])))
+        metric = str(r["output_metric"] or "")
+        if metric in ("国库", "内库") and r["output_amount"]:
+            bld_in[metric] += round(int(r["output_amount"]) * cond / 100)
+        maint_acc = "内库" if str(r["category"] or "") == "内廷" else "国库"
+        bld_out[maint_acc] += max(0, int(r["maintenance"]))
+    for acc in ("国库", "内库"):
+        if bld_in[acc] > 0:
+            budget[acc]["income"].append({"name": "建筑产出", "amount": bld_in[acc], "note": "建筑月产出"})
+        if bld_out[acc] > 0:
+            budget[acc]["expense"].append({"name": "建筑维护", "amount": bld_out[acc], "note": "建筑月维护"})
+    return budget
+
 
 ISSUE_METRIC_KEYS = {"民心", "皇威"}
 ISSUE_METRIC_LOCK_CAPS = {
@@ -296,8 +364,7 @@ def _apply_economy_list(
 
 
 def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, object]]:
-    """月度财政 tick：把原月度固定收支按月切分，在 LLM 推演前落账。"""
-    cfg = db.get_fiscal_config()
+    """月度财政 tick：固定收支（compute_budget_lines 定额）+ 军饷逐军 + 建筑逐项落账，LLM 推演前完成。"""
     flows: List[Dict[str, object]] = []
 
     def _income(account: str, amount: int, category: str, reason: str) -> None:
@@ -314,26 +381,19 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         flows.append({"dir": "expense", "account": account, "amount": abs(actual),
                       "category": category, "reason": reason})
 
-    # ── 国库/内库收入（省级动态计算）─────────────────────────────────────────
-    guo_income, nei_income, _province_details = calc_province_fiscal(state, db)
-    _income("国库", guo_income, "田赋辽饷盐商", f"两京十三省{TURN_UNIT}综合税收实入")
-    _income("内库", nei_income, "皇庄",         f"北直隶皇庄{TURN_UNIT}地租")
-
-    # ── 国库支出（非军饷）────────────────────────────────────────────────────
-    _expense("国库", monthly_amount(round(cfg["宗室禄米_base"] * cfg["宗室禄米_rate"] / 100)), "宗室禄米", f"诸藩宗室{TURN_UNIT}禄米")
-    _expense("国库", monthly_amount(round(cfg["官俸_base"]     * cfg["官俸_rate"]     / 100)), "百官俸禄", f"在京百官{TURN_UNIT}俸禄")
-    _expense("国库", monthly_amount(round(cfg["工程_base"]     * cfg["工程_rate"]     / 100)), "工部",     f"工部{TURN_UNIT}维护支出")
-    _expense("国库", monthly_amount(round(cfg["赈灾_base"]     * cfg["赈灾_rate"]     / 100)), "赈灾备用", f"制度性{TURN_UNIT}赈灾预留")
-
-    # ── 内库收入 ──────────────────────────────────────────────────────────────
-    _income("内库", monthly_amount(round(cfg["皇庄_base"]  * cfg["皇庄_rate"]  / 100)), "皇庄",   f"皇庄地租{TURN_UNIT}上缴")
-    _income("内库", monthly_amount(round(cfg["织造_base"]  * cfg["织造_rate"]  / 100)), "织造",   f"苏杭织造局{TURN_UNIT}上缴")
-    _income("内库", monthly_amount(round(cfg["矿税_base"]  * cfg["矿税_rate"]  / 100)), "矿税",   "矿税残余")
-
-    # ── 内库支出 ──────────────────────────────────────────────────────────────
-    _expense("内库", monthly_amount(round(cfg["宫廷_base"]   * cfg["宫廷_rate"]   / 100)), "宫廷开支", f"皇室{TURN_UNIT}用度")
-    _expense("内库", monthly_amount(round(cfg["内廷俸_base"] * cfg["内廷俸_rate"] / 100)), "内廷俸禄", f"太监宫女{TURN_UNIT}俸禄")
-    _expense("内库", monthly_amount(round(cfg["妃嫔_base"]   * cfg["妃嫔_rate"]   / 100)), "妃嫔供奉", f"后宫妃嫔{TURN_UNIT}供奉")
+    # ── 固定收支落账（税/皇庄/宗室/官俸/织造…全走唯一定额源 compute_budget_lines）──
+    # 军饷与建筑另有逐项落账逻辑（arrears/condition），故下面跳过这两类，仅落其余定额项。
+    budget = compute_budget_lines(db, state)
+    _SKIP = {"各军军饷", "建筑产出", "建筑维护"}
+    for account in ("国库", "内库"):
+        for it in budget[account]["income"]:
+            if it["name"] in _SKIP:
+                continue
+            _income(account, int(it["amount"]), it["name"], f"{it['name']}{TURN_UNIT}入")
+        for it in budget[account]["expense"]:
+            if it["name"] in _SKIP:
+                continue
+            _expense(account, int(it["amount"]), it["name"], f"{it['name']}{TURN_UNIT}支")
 
     # ── 各军军饷（按优先级，先发当月、余额抵旧欠；不足挂 arrears 累计万两）──
     # arrears 字段语义=累计欠饷万两（整数，无上限）。flows 是唯一变更点：

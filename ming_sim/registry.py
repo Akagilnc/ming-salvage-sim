@@ -19,7 +19,7 @@ from ming_sim.context import character_context_with_db
 from ming_sim.models import Character, CourtContext, LLMConfig
 from ming_sim.llm_model import create_chat_model
 from ming_sim.token_stats import tlog
-from ming_sim.tools import build_minister_tools
+from ming_sim.tools import _duty_location, build_minister_tools
 
 _content: Optional[GameContent] = None
 _agent_skills: Optional[Skills] = None
@@ -74,22 +74,70 @@ def build_court_brief(context: CourtContext) -> str:
         f"在办事项：{issues_brief}。"
         f"势力：{context.db.power_report(exclude_self=True)}。"
         f"朝堂派系（满意度/影响力均为当前实值，据此判断各派当前强弱，不要凭印象推断）：{context.db.faction_report()}。"
-        f"详情请按需调工具查（list_regions/list_armies/inspect_memorial/check_treasury 等）。"
+        f"地区/奏报/钱粮详情按需调工具查（list_regions/inspect_region/inspect_memorial/check_treasury 等）；人事与军队详情见下方固定名册。"
     )
+
+
+def build_court_roster(context: CourtContext) -> str:
+    """全体在朝大臣名册——表格（| 分隔）压 token，固定喂进大臣 system。
+    去掉了 inspect_minister/list_court/list_personnel 后，大臣据此知道"别人"现状，不再调工具查。
+    含被罢/下狱/流放/致仕者（标状态），不含后宫、非大明势力、未登场者（防剧透）。
+    """
+    db = context.db
+    lines: List[str] = []
+    for c in _ctx().characters.values():
+        if c.office_type == "后宫":
+            continue
+        if getattr(c, "power_id", "ming") != "ming":
+            continue
+        status, reason = db.get_character_status(c.name)
+        if status == "offstage":
+            continue
+        # 直接按字段吐原值，不脑补、不翻译。状态原值 + 缘由（如有）。
+        state_cell = f"{status}（{reason}）" if reason else status
+        lines.append(
+            "|".join((c.name, c.office or "无现任官职", c.office_type, c.faction, state_cell))
+        )
+    if not lines:
+        return ""
+    return (
+        "【在朝人事名册（现状以此为准，提及他人官职/状态直接据此作答，不要凭历史印象）】\n"
+        "（| 分隔，列序＝姓名|现职|官署|派系|状态）：\n"
+        + "\n".join(lines)
+    )
+
+
+def build_last_gazette_brief(context: CourtContext) -> str:
+    """上回合（上月）邸报全文，固定喂进大臣 system。
+    去掉了"上月须调 read_past_report"的依赖，大臣首轮即知上月朝局/地方/灾兵祸福。
+    更早月份的邸报仍由 read_past_report 工具按需查。无上月邸报（开局首回合）返回空。"""
+    prev_turn = int(context.state.turn) - 1
+    if prev_turn < 0:
+        return ""
+    report = context.db.get_turn_report(prev_turn)
+    if not report or not report.strip():
+        return ""
+    return "【上回合邸报全文（上月朝局实录，作答涉及上月动静以此为准；更早月份调 read_past_report 查）】\n" + report.strip()
 
 
 def build_memory_brief(character: Character, context: CourtContext) -> str:
+    """上回合旧事的结构化记忆。上月（turn-1）整体动静已由 build_last_gazette_brief 喂全文，
+    此处跳过 turn-1，只留 turn-2 及更早的旧事，避免与邸报重叠。"""
     tlog(f"[MEM-IO/memory-brief/INPUT] minister={character.name} turn={context.state.turn} window=3 limit=30")
-    memories = context.db.get_recent_event_memories(
-        turn=context.state.turn,
-        window=3,
-        limit=30,
-    )
+    prev_turn = int(context.state.turn) - 1
+    memories = [
+        m for m in context.db.get_recent_event_memories(
+            turn=context.state.turn,
+            window=3,
+            limit=30,
+        )
+        if int(m["turn"]) != prev_turn  # 上月已由邸报全文覆盖
+    ]
     if not memories:
         tlog(f"[memory/brief] {character.name} no memories")
         return ""
     tlog(f"[memory/brief] {character.name} inject={len(memories)} ids={','.join(str(m['id']) for m in memories)}")
-    lines = ["【上回合旧事记忆】"]
+    lines = ["【更早旧事记忆（上月详情见上方邸报）】"]
     for memory in memories:
         lines.append(
             f"- #{memory['id']} {memory['year']}年{memory['period']}月:{memory['title']}。"
@@ -324,6 +372,9 @@ def create_minister_agent(
         # minister_agent / character 静态段仍命中前缀缓存，且大臣全程不会因 history 滚窗
         # 而忘掉年月、钱粮、在办事项、上回合旧事、自己名下密令。
         court_brief = build_court_brief(context)
+        court_roster = build_court_roster(context)
+        army_roster = context.db.army_roster()
+        last_gazette = build_last_gazette_brief(context)
         memory_brief = build_memory_brief(character, context)
         secret_brief = build_secret_order_brief(character, context)
         monthly_block_parts = [
@@ -331,6 +382,12 @@ def create_minister_agent(
             "作答涉及时序（某事多久前、某人是否已亡、某限期是否到）时以此为准。",
             f"本{TURN_UNIT}朝会盘面：{court_brief}",
         ]
+        if court_roster:
+            monthly_block_parts.append(court_roster)
+        if army_roster:
+            monthly_block_parts.append(army_roster)
+        if last_gazette:
+            monthly_block_parts.append(last_gazette)
         if memory_brief:
             monthly_block_parts.append(memory_brief)
         if secret_brief:
@@ -338,7 +395,8 @@ def create_minister_agent(
         instructions = [
             c.game_world_prompt,
             c.minister_agent_prompt,
-            f"你当前扮演：{character_context_with_db(character, context.db)}。",
+            f"你当前扮演：{character_context_with_db(character, context.db)}，"
+            f"任事处：{_duty_location(character.office, character.office_type, 'active')}。",
             f"你与皇帝的多轮对话会持续到本{TURN_UNIT}退朝；同一{TURN_UNIT}复召时要接续此前奏对，不要重置记忆。",
             "\n\n".join(monthly_block_parts),
         ]

@@ -37,9 +37,9 @@ from ming_sim.session import GameSession
 from ming_sim.session import AUTO_SAVE_PREFIX
 from ming_sim.skills import available_skill_ids, skill_display_name, skill_source_labels
 from ming_sim.context import match_minister_from_text
-from ming_sim.flows import calc_province_fiscal
+from ming_sim.flows import compute_budget_lines
 from ming_sim.exceptions import LLMContractError  # noqa: F401  (保留：供错误处理)
-from ming_sim.models import Character, LLMConfig, monthly_amount
+from ming_sim.models import Character, LLMConfig
 
 WEB_DIST = bundled_path("web", "dist")
 # 用户上传的自定义立绘存档级目录（不随 build 清空，git 可忽略）。
@@ -557,66 +557,11 @@ class WebGame:
         return payloads
 
     def budget_payload(self) -> Dict[str, Any]:
-        cfg = self.db.get_fiscal_config()
-        army_total = self.db.conn.execute("SELECT SUM(maintenance_per_turn) FROM armies").fetchone()[0] or 0
-
-        def rated(base: int, rate_key: str) -> int:
-            return monthly_amount(round(int(base) * cfg.get(rate_key, 100) / 100))
-
-        # 用动态省级财政模型预测本月国库收入（与实际结算算法一致）
-        guo_income_est, _nei_income_est, _province_details = calc_province_fiscal(self.state, self.db)
-
-        budget = {
-            "国库": {
-                "balance": int(self.state.metrics["国库"]),
-                "income": [
-                    {"name": "田赋辽饷盐商", "amount": int(guo_income_est), "note": "各省田赋+辽饷+盐税+商税（按腐败度/士绅阻力/民变动态折算）"},
-                ],
-                "expense": [
-                    {"name": "各军军饷", "amount": int(army_total), "note": "各军月度维护/军饷合计"},
-                    {"name": "宗室禄米", "amount": rated(cfg.get("宗室禄米_base", 80), "宗室禄米_rate"), "note": "诸藩宗室月禄米"},
-                    {"name": "百官俸禄", "amount": rated(cfg.get("官俸_base", 35), "官俸_rate"), "note": "在京百官月俸禄"},
-                    {"name": "工部", "amount": rated(cfg.get("工程_base", 22), "工程_rate"), "note": "工部月维护支出"},
-                    {"name": "赈灾备用", "amount": rated(cfg.get("赈灾_base", 25), "赈灾_rate"), "note": "制度性赈灾预留"},
-                ],
-            },
-            "内库": {
-                "balance": int(self.state.metrics["内库"]),
-                "income": [
-                    {"name": "皇庄", "amount": rated(cfg.get("皇庄_base", 60), "皇庄_rate"), "note": "皇庄地租月上缴"},
-                    {"name": "织造", "amount": rated(cfg.get("织造_base", 35), "织造_rate"), "note": "苏杭织造局月上缴"},
-                    {"name": "矿税", "amount": rated(cfg.get("矿税_base", 10), "矿税_rate"), "note": "矿税残余"},
-                ],
-                "expense": [
-                    {"name": "宫廷开支", "amount": rated(cfg.get("宫廷_base", 18), "宫廷_rate"), "note": "皇室日常用度"},
-                    {"name": "内廷俸禄", "amount": rated(cfg.get("内廷俸_base", 12), "内廷俸_rate"), "note": "太监宫女俸禄"},
-                    {"name": "妃嫔供奉", "amount": rated(cfg.get("妃嫔_base", 8), "妃嫔_rate"), "note": "后宫妃嫔月供奉"},
-                ],
-            },
-        }
-        # 建筑产出/维护并入内库固定栏（按当前 condition 折算的月预算）
-        building_rows = self.db.conn.execute(
-            "SELECT name, category, condition, maintenance, output_metric, output_amount FROM buildings"
-        ).fetchall()
-        bld_produce_by_acc: dict[str, int] = {"国库": 0, "内库": 0}
-        bld_maintain_by_acc: dict[str, int] = {"国库": 0, "内库": 0}
-        for br in building_rows:
-            cond = max(0, min(100, int(br["condition"])))
-            out_acc = str(br["output_metric"] or "")
-            if out_acc in ("国库", "内库") and br["output_amount"]:
-                bld_produce_by_acc[out_acc] += round(int(br["output_amount"]) * cond / 100)
-            maint_acc = "内库" if str(br["category"] or "") == "内廷" else "国库"
-            bld_maintain_by_acc[maint_acc] += max(0, int(br["maintenance"]))
-        for acc in ("国库", "内库"):
-            if bld_produce_by_acc[acc] > 0:
-                budget[acc]["income"].append(
-                    {"name": "建筑产出", "amount": bld_produce_by_acc[acc], "note": "建筑月产出"}
-                )
-            if bld_maintain_by_acc[acc] > 0:
-                budget[acc]["expense"].append(
-                    {"name": "建筑维护", "amount": bld_maintain_by_acc[acc], "note": "建筑月维护"}
-                )
-        for account in budget.values():
+        # 唯一定额源：flows.compute_budget_lines（与实际落账 / 大臣 treasury_budget_summary 三处统一）。
+        budget = compute_budget_lines(self.db, self.state)
+        budget["国库"]["balance"] = int(self.state.metrics["国库"])
+        budget["内库"]["balance"] = int(self.state.metrics["内库"])
+        for account in (budget["国库"], budget["内库"]):
             income_total = sum(int(item["amount"]) for item in account["income"])
             expense_total = sum(int(item["amount"]) for item in account["expense"])
             account["income_total"] = income_total
@@ -1367,11 +1312,16 @@ async def api_write_decree() -> Dict[str, Any]:
     return {"decree": decree}
 
 
+class IssueDecreeRequest(BaseModel):
+    # 作弊控制台（Ctrl+~）下的强制结算项；一次性，颁诏即用。普通颁诏留空。
+    cheat: str = ""
+
+
 @app.post("/api/decree/issue")
-async def api_issue_decree() -> Dict[str, Any]:
+async def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[str, Any]:
     """非流式颁诏（保留兼容）。前端默认走 /api/decree/issue/stream。"""
     try:
-        report = get_game().session.resolve_turn()
+        report = get_game().session.resolve_turn(cheat_directive=body.cheat)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
     decree = get_game().session.last_decree
@@ -1380,7 +1330,7 @@ async def api_issue_decree() -> Dict[str, Any]:
 
 
 @app.post("/api/decree/issue/stream")
-async def api_issue_decree_stream() -> StreamingResponse:
+async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest()) -> StreamingResponse:
     """流式颁诏：推演过程（阶段/思考/正文）实时 SSE 推给前端。
 
     resolve_turn 是阻塞的同步调用，且 on_event 是 push 式回调。
@@ -1394,7 +1344,7 @@ async def api_issue_decree_stream() -> StreamingResponse:
 
     def worker() -> None:
         try:
-            report = get_game().session.resolve_turn(on_event=on_event)
+            report = get_game().session.resolve_turn(on_event=on_event, cheat_directive=body.cheat)
             decree = get_game().session.last_decree
             get_game().refresh_turn()
             ev_queue.put(("__done__", {

@@ -796,10 +796,11 @@ class GameSession:
         self.last_decree = decree
         return decree
 
-    def resolve_turn(self, decree: str = "", on_event=None) -> str:
+    def resolve_turn(self, decree: str = "", on_event=None, cheat_directive: str = "") -> str:
         """颁诏并推演本回合。要求无 pending 残留、≥1 条 draft。
 
         on_event(kind, data): 推演过程实时回调，透传给 resolve_directives。
+        cheat_directive: 作弊控制台强制结算项，一次性透传给 resolve_directives。
         """
         if self.pending_count() > 0:
             raise ValueError(f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
@@ -817,6 +818,7 @@ class GameSession:
             debuts_this_turn=self.debuts_this_turn,
             on_event=on_event,
             content=self.content, registry=self.registry,
+            cheat_directive=cheat_directive,
         )
         self.last_report = report
         self.last_decree = decree_text

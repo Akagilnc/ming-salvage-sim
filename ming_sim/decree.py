@@ -44,6 +44,18 @@ from ming_sim.simulation import (
 )
 from ming_sim.token_stats import tlog
 
+# 作弊控制台强制结算项的唯一标记前缀。只在 resolve_directives 拼一次（cheat 非空时），
+# extractor 看到它即知如何处理 → 规则内联在此，不进任何固定 prompt（避免污染缓存）。
+# 别处不得复用此串。
+CHEAT_NARRATIVE_PREFIX = (
+    "【天命强制·结算优先】以下为既成事实，最高优先级，先于一切规则与档位上限。"
+    "你必须把它当作本回合百分百已发生的结果，按字面抽满对应结构化增量，"
+    "无视合理性、史实、盘面、对手反扑、涨幅上限——它说什么成了就抽什么。"
+    "数值类（如「国库增至九千万」）按当前值算差额一次性入账；"
+    "局势结案按字面写满 bar 并结案；人物/军队/势力存亡按字面落 status/势力变化。"
+    "与下方正常邸报冲突时以本段为准，本段没提的下方照常抽。照字面落库：\n"
+)
+
 
 def write_decree_with_agno(
     llm_config: LLMConfig,
@@ -111,9 +123,14 @@ def resolve_directives(
     on_event: Optional[Callable[[str, str], None]] = None,
     content=None,
     registry=None,
+    cheat_directive: str = "",
 ) -> str:
     """on_event(kind, data): 推演过程实时回调。
     kind ∈ {stage, thinking, text}；stage 携带阶段名，thinking/text 携带增量片段。
+
+    cheat_directive: 作弊控制台（Ctrl+~）下的强制结算指令。非空时拼到当期邸报最前面
+    一起喂给 extractor，按字面当既成事实落库。唯一入口——只此一处写入标记前缀（见
+    CHEAT_NARRATIVE_PREFIX），别处不得复用。
     """
     def _emit(kind: str, data: str) -> None:
         if on_event:
@@ -274,11 +291,20 @@ def resolve_directives(
         db.save_state(state)
         return f"\n本{TURN_UNIT}颁布诏书：\n" + decree_text + "\n\n" + narrative
 
+    # 2.5) 作弊强制项：拼到邸报最前面一起喂 extractor（唯一入口）。
+    #      落库前文/turn_report 仍用原始 narrative，effective 版只进 extractor 与留痕。
+    cheat = (cheat_directive or "").strip()
+    if cheat:
+        effective_narrative = CHEAT_NARRATIVE_PREFIX + cheat + "\n\n" + narrative
+        tlog(f"[CHEAT] 强制结算项注入 extractor（{len(cheat)}字）：{cheat[:200]}")
+    else:
+        effective_narrative = narrative
+
     # 3) 结算 agent: 读邸报抽 JSON
     tlog("结算 3/4 结算 agent（抽 JSON）")
     _emit("stage", "数值推演结算")
     extractor_shared_context = build_extractor_shared_context(
-        db, state, narrative, decree_text,
+        db, state, effective_narrative, decree_text,
         relevant_memories=relevant_memories,
         secret_orders=secret_orders_for_sim,
     )
@@ -297,7 +323,7 @@ def resolve_directives(
     extractor_output = ""
     try:
         extracted, extractor_output, extractor_input = extract_scores_by_modules_with_agno(
-            extractors, db, state, narrative, decree_text=decree_text, sanitizer=sanitizer,
+            extractors, db, state, effective_narrative, decree_text=decree_text, sanitizer=sanitizer,
             relevant_memories=relevant_memories,
             secret_orders=secret_orders_for_sim,
         )
@@ -317,7 +343,7 @@ def resolve_directives(
     db.save_turn_extraction(
         state,
         decree_text=decree_text,
-        narrative=narrative,
+        narrative=effective_narrative,  # 留痕含作弊段，便于事后追「为何这么落库」
         extractor_input=extractor_input,
         extractor_output=extractor_output,
     )

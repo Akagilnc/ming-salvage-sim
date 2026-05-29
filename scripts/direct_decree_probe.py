@@ -32,6 +32,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--directive", action="append", required=True,
                    help="一条诏书草案文本，可多次传入")
     p.add_argument("--decree", default="", help="最终诏书文本；空=由 LLM 写诏")
+    p.add_argument("--cheat", default="", help="作弊强制结算项，拼到邸报最前喂 extractor 当既成事实")
     p.add_argument("--resume", action="store_true",
                    help="续跑既有 DB，不清库；默认不清库（脚本本身不删 DB）")
     p.add_argument("--reset", action="store_true",
@@ -128,7 +129,7 @@ def main() -> int:
         print(f"[evt] {kind}: {str(data)[:200]}")
 
     print("[resolve] 开始结算 ...")
-    report = session.resolve_turn(decree=args.decree, on_event=on_event)
+    report = session.resolve_turn(decree=args.decree, on_event=on_event, cheat_directive=args.cheat)
     print(f"[resolve] 完成。Report 字符数={len(report)}")
     print("---- REPORT 头 300 ----")
     print(report[:300])

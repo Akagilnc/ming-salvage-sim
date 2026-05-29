@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import difflib
 import json
-import re
 
 from ming_sim.constants import TURN_UNIT
 from ming_sim.context import _ctx as _content_ctx, state_context
@@ -21,28 +19,6 @@ _STATUS_CN = {
 }
 
 
-def _normalize_person_name(text: str) -> str:
-    return re.sub(r"\s+", "", str(text or "").strip())
-
-
-def _match_character_by_name(name: str) -> Character | None:
-    key = _normalize_person_name(name)
-    if not key:
-        return None
-    characters = [c for c in _content_ctx().characters.values() if c.office_type != "后宫"]
-    for c in characters:
-        names = [c.name, *(c.aliases or [])]
-        if any(_normalize_person_name(n) == key for n in names):
-            return c
-    for c in characters:
-        names = [c.name, *(c.aliases or [])]
-        if any(key in _normalize_person_name(n) or _normalize_person_name(n) in key for n in names):
-            return c
-    choices = {c.name: c for c in characters}
-    match = difflib.get_close_matches(key, list(choices.keys()), n=1, cutoff=0.6)
-    return choices[match[0]] if match else None
-
-
 def _duty_location(office: str, office_type: str, status: str) -> str:
     if status == "dead":
         return "已故，不在任事。"
@@ -53,6 +29,9 @@ def _duty_location(office: str, office_type: str, status: str) -> str:
     text = office or office_type
     if not text:
         return "在朝但现职未明。"
+    # 现职文本已写明在野（罢居/致仕/养病/丁忧某地）的，按文本说，不再脑补"在京师衙署任事"。
+    if any(w in text for w in ("罢居", "罢闲", "赋闲", "养病", "丁忧", "致仕", "归籍", "在野")):
+        return "现非实任，" + text + "。"
     region_markers = [
         "陕西", "辽东", "宁远", "关宁", "山西", "河南", "山东", "湖广", "四川", "福建",
         "广东", "广西", "浙江", "江西", "南直隶", "北直隶", "南京", "登莱", "宣大", "延绥",
@@ -67,23 +46,6 @@ def _duty_location(office: str, office_type: str, status: str) -> str:
     if office_type == "地方":
         return "按现职在地方任事。"
     return "按现职任事，具体地点需看官衔所辖。"
-
-
-def _assignment_hint(text: str) -> str:
-    if not text:
-        return ""
-    places = [
-        "山海关", "宁远", "辽东", "陕西", "延绥", "宣大", "登莱", "山东", "河南",
-        "南直隶", "南京", "江南", "苏州", "松江", "湖广", "四川", "福建", "浙江",
-        "广东", "广西", "京师",
-    ]
-    verbs = ("赴", "往", "至", "驻", "巡", "督押", "赍旨赴", "差往", "前往")
-    if not any(v in text for v in verbs):
-        return ""
-    hits = [p for p in places if p in text]
-    if not hits:
-        return ""
-    return "近来差遣：" + "、".join(hits[:4]) + "。"
 
 
 def build_minister_tools(character: Character, context: CourtContext):
@@ -139,17 +101,6 @@ def build_minister_tools(character: Character, context: CourtContext):
         except ValueError as e:
             return f"未找到地区 '{region_name}'。可先调 list_regions 看地区 id/名称列表。错误：{e}"
 
-    def list_armies() -> str:
-        """查看大明主要军队的驻扎、维护费、补给、士气和欠饷警讯。"""
-        return context.db.army_report(limit=6)
-
-    def inspect_army(army_name: str) -> str:
-        """查看某支军队驻扎地、兵种、人数、维护费、补给、士气、训练和欠饷。"""
-        try:
-            return context.db.army_detail(army_name)
-        except ValueError as e:
-            return f"未找到军队 '{army_name}'。可先调 list_armies 看军队 id/名称列表。错误：{e}"
-
     def list_powers() -> str:
         """查看后金、蒙古、朝鲜、日本、流寇等势力状态。"""
         return context.db.power_report(exclude_self=True)
@@ -164,142 +115,6 @@ def build_minister_tools(character: Character, context: CourtContext):
             return context.db.building_detail(building_name)
         except ValueError as e:
             return f"未找到建筑 '{building_name}'。可先调 list_buildings 看建筑列表。错误：{e}"
-
-    def list_court() -> str:
-        """查在朝（及被罢/下狱/流放/致仕）官员名册：姓名、现职、派系、状态。"""
-        lines = []
-        for c in _content_ctx().characters.values():
-            if c.office_type == "后宫":
-                continue
-            if getattr(c, "power_id", "ming") != "ming":
-                continue
-            status, _ = context.db.get_character_status(c.name)
-            if status == "offstage":
-                continue  # 未登场者不泄露，防剧透
-            tag = _STATUS_CN.get(status, status)
-            suffix = "" if status == "active" else f"（{tag}）"
-            lines.append(f"{c.name}：{c.office}，{c.faction}{suffix}")
-        return "在朝官员名册：\n" + "\n".join(lines)
-
-    def list_personnel() -> str:
-        """查看当前人事总表：姓名、现职、派系、状态与任事处。"""
-        lines = []
-        for c in _content_ctx().characters.values():
-            if c.office_type == "后宫":
-                continue
-            if getattr(c, "power_id", "ming") != "ming":
-                continue
-            status, reason = context.db.get_character_status(c.name)
-            if status == "offstage":
-                continue
-            tag = _STATUS_CN.get(status, status)
-            location = _duty_location(c.office, c.office_type, status)
-            suffix = f"；{reason}" if reason else ""
-            lines.append(f"{c.name}：{c.office or '无现任官职'}，{c.faction}，{tag}，{location}{suffix}")
-        return f"当前时点：{context.state.year}年{context.state.period}月。\n人事总表：\n" + "\n".join(lines)
-
-    def inspect_minister(name: str) -> str:
-        """查某位官员的现任官职、派系、当前状态、任事处和近来差遣。"""
-        target = _match_character_by_name(name)
-        if target is None:
-            return f"名册中无『{name}』。可先调 list_personnel/list_court 看在朝官员名单。"
-        status, reason = context.db.get_character_status(target.name)
-        tag = _STATUS_CN.get(status, status)
-        location = _duty_location(target.office, target.office_type, status)
-        power_row = context.db.conn.execute(
-            "SELECT name FROM powers WHERE id=?", (getattr(target, "power_id", "ming") or "ming",)
-        ).fetchone()
-        power_name = power_row["name"] if power_row else (getattr(target, "power_id", "ming") or "ming")
-        office_row = context.db.conn.execute(
-            "SELECT office_title, office_type, source, updated_at FROM character_offices WHERE character_name=?",
-            (target.name,),
-        ).fetchone()
-        office_source = ""
-        if office_row:
-            office_source = f"任职记录：{office_row['office_title']}（{office_row['office_type']}，来源：{office_row['source']}，更新时间：{office_row['updated_at']}）。"
-        recent_directives = context.db.conn.execute(
-            """
-            SELECT turn, year, period, text, source, status, notes
-            FROM turn_directives
-            WHERE actor = ? OR text LIKE ?
-            ORDER BY turn DESC, id DESC
-            LIMIT 3
-            """,
-            (target.name, f"%{target.name}%"),
-        ).fetchall()
-        out = (
-            f"当前时点：{context.state.year}年{context.state.period}月。"
-            f"{target.name}：归属{power_name}，现职{target.office}，职位类型{target.office_type}，派系{target.faction}，状态{tag}。"
-            f"任事处：{location}"
-        )
-        if reason:
-            out += f"（{reason}）"
-        if target.summary:
-            out += f"简介：{target.summary}"
-        if office_source:
-            out += "\n" + office_source
-        if recent_directives:
-            lines = [
-                f"{r['year']}年{r['period']}月：{r['source']}（{r['status']}）{str(r['text'])[:80]}"
-                + (f"；{r['notes']}" if r["notes"] else "")
-                for r in recent_directives
-            ]
-            assignment = next((_assignment_hint(str(r["text"] or "")) for r in recent_directives if _assignment_hint(str(r["text"] or ""))), "")
-            if assignment:
-                out += "\n" + assignment
-            out += "\n近来牵涉诏令/草案：\n" + "\n".join(lines)
-        return out
-
-    def inspect_personnel_changes(name: str = "") -> str:
-        """查某人或全朝最近人事变动（任命、调任、罢黜、下狱、致仕、死亡）。"""
-        target = _match_character_by_name(name) if name else None
-        where = ""
-        params: list[object] = []
-        if target is not None:
-            where = "WHERE character_name = ?"
-            params.append(target.name)
-        office_rows = context.db.conn.execute(
-            f"""
-            SELECT character_name, office_title, office_type, source, updated_at
-            FROM character_offices
-            {where}
-            ORDER BY updated_at DESC
-            LIMIT 10
-            """,
-            params,
-        ).fetchall()
-        status_rows = []
-        if target is not None:
-            status_rows = context.db.conn.execute(
-                """
-                SELECT name, status, status_reason, status_changed_turn
-                FROM characters
-                WHERE name = ? AND status_reason != ''
-                """,
-                (target.name,),
-            ).fetchall()
-        else:
-            status_rows = context.db.conn.execute(
-                """
-                SELECT name, status, status_reason, status_changed_turn
-                FROM characters
-                WHERE status_reason != ''
-                ORDER BY status_changed_turn DESC
-                LIMIT 10
-                """
-            ).fetchall()
-        if not office_rows and not status_rows:
-            return "暂无可查的人事变动记录。"
-        lines = [f"当前时点：{context.state.year}年{context.state.period}月。"]
-        if office_rows:
-            lines.append("任职记录：")
-            for r in office_rows:
-                lines.append(f"- {r['character_name']}：{r['office_title']}（{r['office_type']}），来源：{r['source']}，更新时间：{r['updated_at']}")
-        if status_rows:
-            lines.append("状态变更：")
-            for r in status_rows:
-                lines.append(f"- {r['name']}：{_STATUS_CN.get(r['status'], r['status'])}，第{r['status_changed_turn']}回合，{r['status_reason']}")
-        return "\n".join(lines)
 
     def estimate_resistance(slot: int) -> str:
         """估算某条在办事项若下旨推动的主要阻力。slot 是事项编号（由 list_memorials 给出）。"""
@@ -338,16 +153,18 @@ def build_minister_tools(character: Character, context: CourtContext):
 
     def read_past_report(year: int = 0, month: int = 0) -> str:
         """读某年某月邸报全文，了解此前朝局走向、地方动静、灾兵祸福，避免接旨时凭空臆议。
+        **上月邸报已固定注入上下文（见 system 末尾【上回合邸报全文】），无须再调本工具查上月**；
+        本工具用于查更早月份。
         参数：
-        - year：年份（如 1628）。缺省（0）默认查上月。
-        - month：月份（1-12）。缺省（0）配 year 缺省即上月；若给了 year 而 month=0，按 1 月算。
+        - year：年份（如 1628）。缺省（0）默认查上上月（上月已在上下文，故缺省往前再退一月）。
+        - month：月份（1-12）。缺省（0）配 year 缺省即上上月；若给了 year 而 month=0，按 1 月算。
         所求年月未到、无邸报存档或在登基之前 → 提示『未见正式记录』。"""
-        # 缺省：查上月（state.year/period - 1）
+        # 缺省：查上上月（state.year/period - 2）——上月邸报已固定在上下文，缺省再往前退一月。
         if not year:
             target_year = context.state.year
-            target_month = context.state.period - 1
-            if target_month < 1:
-                target_month = 12
+            target_month = context.state.period - 2
+            while target_month < 1:
+                target_month += 12
                 target_year -= 1
         else:
             target_year = int(year)
@@ -691,15 +508,9 @@ def build_minister_tools(character: Character, context: CourtContext):
         inspect_memorial,
         list_regions,
         inspect_region,
-        list_armies,
-        inspect_army,
         list_powers,
         list_buildings,
         inspect_building,
-        list_court,
-        list_personnel,
-        inspect_minister,
-        inspect_personnel_changes,
         estimate_resistance,
         read_past_report,
         search_memories,

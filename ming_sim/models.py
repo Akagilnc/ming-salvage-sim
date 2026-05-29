@@ -241,4 +241,5 @@ def period_label(year: int, month: int) -> str:
 
 
 def monthly_amount(amount: int) -> int:
-    return max(0, round(int(amount) / 3))
+    # 全盘已按月度：base/maint/tax 都是月值，不再除 3。保留函数仅为兼容旧调用点（恒等）。
+    return max(0, int(amount))
