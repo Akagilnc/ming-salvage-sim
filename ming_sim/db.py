@@ -556,7 +556,9 @@ class GameDB:
                 narrative_hint TEXT NOT NULL DEFAULT '',    -- 一句话说明（仅展示用，不喂 simulator）
                 start_month INTEGER NOT NULL,               -- 绝对月 = year*12+period
                 duration_months INTEGER NOT NULL DEFAULT 24,-- 时长；-1=永久
-                status TEXT NOT NULL DEFAULT 'active',      -- active / expired
+                status TEXT NOT NULL DEFAULT 'active',      -- active / expired / cleared
+                clear_gate TEXT NOT NULL DEFAULT '{}',      -- 机器消除条件（同 _gate_passed 语法）；非空=靠程序判定消除而非时长
+                legacy_key TEXT NOT NULL DEFAULT '',        -- 开局负面修正对应 opening_legacies.key，去重用
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -677,6 +679,9 @@ class GameDB:
         self.ensure_column("economy_ledger", "purpose", "TEXT")
         self.ensure_column("economy_ledger", "target_kind", "TEXT")
         self.ensure_column("economy_ledger", "target_id", "TEXT")
+        # 开局负面帝国修正：clear_gate(机器消除条件)、legacy_key(对应 opening_legacies.key，开局修正去重用)
+        self.ensure_column("legacies", "clear_gate", "TEXT NOT NULL DEFAULT '{}'")
+        self.ensure_column("legacies", "legacy_key", "TEXT NOT NULL DEFAULT ''")
         # 后宫调教记录
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS consort_traits (
@@ -4022,19 +4027,24 @@ class GameDB:
         narrative_hint: str = "",
         duration_months: int = 24,
         source_issue_id: int | None = None,
+        clear_gate: Dict[str, str] | None = None,
+        legacy_key: str = "",
     ) -> int:
-        """结案产生持续修正符。start_month=当前绝对月，duration_months=-1 为永久。"""
+        """结案产生持续修正符。start_month=当前绝对月，duration_months=-1 为永久。
+        clear_gate 非空时：靠程序按 _gate_passed 判定消除（见 issues.clear_gated_legacies），与时长无关。"""
         start_month = int(state.year) * 12 + int(state.period)
         cur = self.conn.execute(
             """INSERT INTO legacies
                (name, source_issue_id, modifiers, narrative_hint,
-                start_month, duration_months, status)
-               VALUES (?, ?, ?, ?, ?, ?, 'active')""",
+                start_month, duration_months, status, clear_gate, legacy_key)
+               VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)""",
             (
                 str(name)[:60], source_issue_id,
                 json.dumps(modifiers, ensure_ascii=False),
                 str(narrative_hint)[:200],
                 start_month, int(duration_months),
+                json.dumps(clear_gate or {}, ensure_ascii=False),
+                str(legacy_key)[:60],
             ),
         )
         self.conn.commit()

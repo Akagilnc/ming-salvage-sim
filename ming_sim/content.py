@@ -26,6 +26,7 @@ from ming_sim.models import (
     Character,
     Event,
     Faction,
+    OpeningLegacy,
     Power,
     Region,
     SocialClass,
@@ -290,6 +291,31 @@ def load_powers() -> Dict[str, Power]:
     return powers
 
 
+def load_opening_legacies() -> List[OpeningLegacy]:
+    """开局负面帝国修正：content/opening_legacies.json。无 fallback，缺字段直接 SystemExit。"""
+    raw = require_dict(load_json_asset("opening_legacies.json"), "opening_legacies.json")
+    items = require_list(raw.get("legacies"), "opening_legacies.json::legacies")
+    out: List[OpeningLegacy] = []
+    for idx, item in enumerate(items, 1):
+        path = f"opening_legacies.json::legacies[{idx}]"
+        entry = require_dict(item, path)
+        modifiers = require_dict(entry.get("modifiers"), f"{path}.modifiers")
+        clear_gate = require_dict(entry.get("clear_gate"), f"{path}.clear_gate")
+        if not clear_gate:
+            raise SystemExit(f"{path}.clear_gate 不能为空（开局负面修正必须有程序判定的消除条件）。")
+        out.append(OpeningLegacy(
+            key=str_field(entry, "key", path),
+            name=str_field(entry, "name", path),
+            modifiers=modifiers,
+            narrative_hint=str_field(entry, "narrative_hint", path),
+            clear_gate={str(k): str(v) for k, v in clear_gate.items()},
+            clear_narrative=str(entry.get("clear_narrative") or "").strip(),
+        ))
+    if not out:
+        raise SystemExit("opening_legacies.json 必须至少定义一条开局负面修正。")
+    return out
+
+
 def dict_of_string_lists(value: object, path: str) -> Dict[str, List[str]]:
     data = require_dict(value, path)
     return {str(key): string_list(item, f"{path}.{key}") for key, item in data.items()}
@@ -386,6 +412,7 @@ class GameContent:
     characters: Dict[str, Character] = field(default_factory=dict)
     events: List[Event] = field(default_factory=list)
     seed_events: List[Event] = field(default_factory=list)
+    opening_legacies: List[OpeningLegacy] = field(default_factory=list)
     event_by_id: Dict[str, Event] = field(default_factory=dict)
     regions: Dict[str, Region] = field(default_factory=dict)
     armies: Dict[str, Army] = field(default_factory=dict)
@@ -425,6 +452,7 @@ class GameContent:
         factions, characters = load_character_content()
         events = load_event_content("events.json")
         seed_events = load_event_content("seed_events.json")
+        opening_legacies = load_opening_legacies()
         regions = load_region_content()
         armies = load_army_content()
         buildings = load_building_content()
@@ -447,6 +475,7 @@ class GameContent:
             characters=characters,
             events=events,
             seed_events=seed_events,
+            opening_legacies=opening_legacies,
             event_by_id={ev.id: ev for ev in (*events, *seed_events)},
             regions=regions,
             armies=armies,

@@ -186,7 +186,7 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
         return None
     parts = key.split(".")
     table = parts[0]
-    if table not in ("region", "army", "building", "power", "class"):
+    if table not in ("region", "army", "building", "power", "class", "faction"):
         return None
     # 末段可能是 agg，先抽出
     agg = None
@@ -218,6 +218,9 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
             row = db.conn.execute(f"SELECT {field} FROM buildings WHERE id = ?", (cid,)).fetchone()
         elif table == "power":
             row = db.conn.execute(f"SELECT {field} FROM powers WHERE id = ?", (cid,)).fetchone()
+        elif table == "faction":
+            # factions 表主键是 name（中文，如 阉党），field 取 leverage/satisfaction
+            row = db.conn.execute(f"SELECT {field} FROM factions WHERE name = ?", (cid,)).fetchone()
         elif table == "class":
             if "@" in cid:
                 cname, rid = cid.split("@", 1)
@@ -243,12 +246,46 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
     return _GATE_AGG_FUNCS[agg](values)
 
 
+def _eval_gate_key_str(key: str, db: GameDB) -> Optional[str]:
+    """取一个文本型字段值（如 region.<id>.controlled_by → 'ming'/'houjin'）。
+    仅支持单 id 的 region/army/power 文本字段；解析失败返回 None。
+    """
+    parts = key.split(".")
+    if len(parts) != 3:
+        return None
+    table, cid, field = parts
+    sql = {
+        "region": f"SELECT {field} FROM regions WHERE id = ?",
+        "army": f"SELECT {field} FROM armies WHERE id = ?",
+        "power": f"SELECT {field} FROM powers WHERE id = ?",
+    }.get(table)
+    if sql is None:
+        return None
+    row = db.conn.execute(sql, (cid,)).fetchone()
+    if row is None:
+        return None
+    return str(row[0])
+
+
 def _gate_passed(gate: Dict[str, str], metrics: Dict[str, int], db: GameDB) -> bool:
-    """trigger_gate 全部条件满足才返回 True。条件形如 '<=240'。
+    """trigger_gate 全部条件满足才返回 True。条件形如 '<=240'（数值）或 '==ming'（文本相等）。
     key 形式见 _eval_gate_key。
     """
     for key, cond in gate.items():
-        m = re.match(r"^(>=|<=|>|<|==)\s*(-?\d+)$", cond.strip())
+        cond = cond.strip()
+        # 文本相等：==<word> / !=<word>（RHS 非纯数字）
+        sm = re.match(r"^(==|!=)\s*(.+)$", cond)
+        if sm and not re.match(r"^-?\d+$", sm.group(2).strip()):
+            sop, sval = sm.group(1), sm.group(2).strip()
+            cur = _eval_gate_key_str(key, db)
+            if cur is None:
+                return False
+            if sop == "==" and cur != sval:
+                return False
+            if sop == "!=" and cur == sval:
+                return False
+            continue
+        m = re.match(r"^(>=|<=|>|<|==)\s*(-?\d+)$", cond)
         if not m:
             return False
         op, num = m.group(1), int(m.group(2))
@@ -1371,3 +1408,62 @@ def apply_issue_inertia_and_ongoing(
             db.conn.commit()
 
     state.clamp()
+
+
+# ── 开局负面帝国修正：不立 issue、不进推演，靠 clear_gate 程序判定消除 ──────────────
+
+def clear_gated_legacies(db: GameDB, state: GameState) -> List[str]:
+    """每月调一次：取所有 active 且带 clear_gate 的 legacy，gate 达标即置 'cleared'。
+    返回被消除的 legacy 名称列表（供叙事/提示用，不强制使用）。"""
+    rows = db.conn.execute(
+        "SELECT id, name, clear_gate, narrative_hint FROM legacies "
+        "WHERE status='active' AND clear_gate != '' AND clear_gate != '{}'"
+    ).fetchall()
+    cleared: List[str] = []
+    for row in rows:
+        try:
+            gate = json.loads(str(row["clear_gate"] or "{}"))
+        except (ValueError, TypeError):
+            gate = {}
+        if not gate:
+            continue
+        if _gate_passed(gate, state.metrics, db):
+            db.conn.execute("UPDATE legacies SET status='cleared' WHERE id=?", (int(row["id"]),))
+            cleared.append(str(row["name"]))
+    if cleared:
+        db.conn.commit()
+        db._legacy_mod_cache = None  # active 集变了，修正符缓存失效
+    return cleared
+
+
+def sync_opening_legacies(db: GameDB, state: GameState) -> None:
+    """开局负面帝国修正落库/校准。新档与读档都调（在 session.__init__ load_state 之后）：
+    - 已达 clear_gate：不补；若残留 active 则置 cleared。
+    - 未达标：该 legacy_key 不存在 active 行则 insert（永久 duration=-1，仅靠 gate 消除）。
+    一个函数覆盖新档（全补）/旧档（补缺）/达标档（不补/清残）。"""
+    for leg in _ctx().opening_legacies:
+        passed = _gate_passed(leg.clear_gate, state.metrics, db)
+        existing = db.conn.execute(
+            "SELECT id FROM legacies WHERE legacy_key=? AND status='active'",
+            (leg.key,),
+        ).fetchone()
+        if passed:
+            if existing is not None:
+                db.conn.execute(
+                    "UPDATE legacies SET status='cleared' WHERE legacy_key=? AND status='active'",
+                    (leg.key,),
+                )
+                db.conn.commit()
+                db._legacy_mod_cache = None
+            continue
+        # 未达标且无 active 行 → 补上
+        if existing is None:
+            db.insert_legacy(
+                state,
+                name=leg.name,
+                modifiers=leg.modifiers,
+                narrative_hint=leg.narrative_hint,
+                duration_months=-1,
+                clear_gate=leg.clear_gate,
+                legacy_key=leg.key,
+            )

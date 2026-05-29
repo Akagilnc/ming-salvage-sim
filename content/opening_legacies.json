@@ -1,0 +1,75 @@
+{
+  "meta": {
+    "note": "开局即存在的负面帝国修正（长期百分比修正符）。不立 issue、不进推演、不喂 simulator。每月由程序按 clear_gate 判定，达标即失活；未达标则在新档/读档时补上。modifiers 为带符号百分比（负=削减相关增量）。clear_gate 语法同 issues._gate_passed。"
+  },
+  "legacies": [
+    {
+      "key": "yandang_zhuanquan",
+      "name": "阉党专权·朝纲败坏",
+      "modifiers": {
+        "皇威": -3,
+        "国库": -2
+      },
+      "narrative_hint": "魏忠贤把持司礼监厂卫，崔呈秀据兵部，党羽塞满台省，吏治中饱，朝纲不振",
+      "clear_gate": {
+        "faction.阉党.leverage": "<=10"
+      },
+      "clear_narrative": "阉党尽除、逆案布告天下，朝纲一肃"
+    },
+    {
+      "key": "gentry_resist",
+      "name": "缙绅坐大·钱粮日蹙",
+      "modifiers": {
+        "国库": -3,
+        "regions": {
+          "nanzhili": {
+            "tax_per_turn": -3
+          },
+          "zhejiang": {
+            "tax_per_turn": -3
+          }
+        }
+      },
+      "narrative_hint": "江南缙绅优免诡寄成风、抗粮罢市，南直浙省钱粮难输京",
+      "clear_gate": {
+        "region.nanzhili|zhejiang.gentry_resistance.max": "<=20"
+      },
+      "clear_narrative": "缙绅既伏，江南钱粮岁岁足额，抗粮之风敛"
+    },
+    {
+      "key": "land_unsurveyed",
+      "name": "隐田蔽课·税基日蹙",
+      "modifiers": {
+        "国库": -4
+      },
+      "narrative_hint": "天下田亩飞洒诡寄、隐占成风，鱼鳞册久不更，税基日蹙",
+      "clear_gate": {
+        "region.beizhili|nanzhili|shandong|shanxi|henan|shaanxi|zhejiang|jiangxi|huguang|sichuan|fujian|guangdong|guangxi|yunnan|guizhou.hidden_land.sum": "<=1400"
+      },
+      "clear_narrative": "清丈新法推行，隐田尽入鱼鳞册，田赋岁课大增"
+    },
+    {
+      "key": "liaodong_lost",
+      "name": "辽东未复·边患浩繁",
+      "modifiers": {
+        "皇威": -4,
+        "国库": -3,
+        "regions": {
+          "liaodong": {
+            "military_pressure": 4
+          }
+        },
+        "armies": {
+          "guanning": {
+            "morale": -2
+          }
+        }
+      },
+      "narrative_hint": "后金据沈阳辽阳，铁骑屡犯，关宁锦防线虽固而进取无力，辽饷浩繁",
+      "clear_gate": {
+        "region.shenyang_liaoyang.controlled_by": "==ming"
+      },
+      "clear_narrative": "关宁大破后金、收复辽沈，建奴退缩，边防趋安"
+    }
+  ]
+}

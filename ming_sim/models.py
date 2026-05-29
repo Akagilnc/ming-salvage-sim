@@ -199,6 +199,18 @@ class Power:
 
 
 @dataclass
+class OpeningLegacy:
+    """开局即存在的负面帝国修正：永久 legacy（duration=-1），靠 clear_gate 程序判定消除。
+    不立 issue、不进推演。见 content/opening_legacies.json 与 db.sync_opening_legacies。"""
+    key: str
+    name: str
+    modifiers: Dict[str, object]
+    narrative_hint: str
+    clear_gate: Dict[str, str]
+    clear_narrative: str = ""
+
+
+@dataclass
 class GameState:
     year: int = 1627
     period: int = 10

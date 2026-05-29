@@ -27,7 +27,7 @@ from ming_sim.context import victory_status
 from ming_sim.db import GameDB
 from ming_sim.exceptions import LLMContractError, LLMUnavailable
 from ming_sim.flows import apply_fixed_period_flows
-from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction, auto_trigger_seed_issues
+from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction, auto_trigger_seed_issues, clear_gated_legacies
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import GameState, LLMConfig
 from ming_sim.memories import (
@@ -286,6 +286,8 @@ def resolve_directives(
             extractor_output=f"[推演 agent 失败] {exc}；本回合跳过 extractor。",
         )
         apply_issue_inertia_and_ongoing(db, state, touched_ids=set())
+        for name in clear_gated_legacies(db, state):
+            db.record_log(state, f"帝国修正消除：{name}")
         db.mark_directives_issued(state)
         state.next_period()
         db.save_state(state)
@@ -381,6 +383,11 @@ def resolve_directives(
     for adv in applied.get("issue_summary", {}).get("advances", []) or []:
         touched_ids.add(int(adv.get("issue_id") or 0))
     apply_issue_inertia_and_ongoing(db, state, touched_ids=touched_ids)
+
+    # 7) 开局负面帝国修正：本月若达成消除条件即清除（程序判定，不靠 LLM/时长）
+    cleared = clear_gated_legacies(db, state)
+    for name in cleared:
+        db.record_log(state, f"帝国修正消除：{name}")
 
     outcome = applied.get("victory_status") or victory_status(db, state)
     if isinstance(outcome, dict) and outcome.get("status") != "ongoing":
