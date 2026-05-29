@@ -91,6 +91,9 @@ class GameDB:
         # 复用同一 GameDB 连接。游戏单写者、无并发写，跨线程安全。
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
+        # 遗产修正符缓存：legacy_modifiers 在落账热路径被频繁调用，缓存聚合结果，
+        # 仅在 active 遗产集变化（insert_legacy / expire_legacies）时失效。
+        self._legacy_mod_cache: Optional[Dict[str, object]] = None
         self.init_schema()
 
     def init_schema(self) -> None:
@@ -544,6 +547,21 @@ class GameDB:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(issue_id) REFERENCES issues(id)
             );
+
+            CREATE TABLE IF NOT EXISTS legacies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                source_issue_id INTEGER,                    -- 产生它的 issue（可空）
+                modifiers TEXT NOT NULL DEFAULT '{}',  -- 各维度带符号百分比修正符 {"国库":10,"regions":{...},"armies":{...}}
+                narrative_hint TEXT NOT NULL DEFAULT '',    -- 一句话说明（仅展示用，不喂 simulator）
+                start_month INTEGER NOT NULL,               -- 绝对月 = year*12+period
+                duration_months INTEGER NOT NULL DEFAULT 24,-- 时长；-1=永久
+                status TEXT NOT NULL DEFAULT 'active',      -- active / expired
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_legacies_active
+            ON legacies(status);
 
             CREATE INDEX IF NOT EXISTS idx_issues_active
             ON issues(kind, status, severity DESC);
@@ -1155,7 +1173,7 @@ class GameDB:
                 continue
             # 推导默认 bar / inertia / ongoing / effect，与 event_to_issue 同口径；精调字段优先
             bar = ev.bar_value or max(20, min(60, 50 - int(ev.severity / 5)))
-            inertia = ev.issue_inertia if ev.issue_inertia else -5
+            inertia = ev.issue_inertia  # 默认 0=不漂；要月漂在 seed 里显式填
             try:
                 self.insert_issue(
                     state,
@@ -2046,6 +2064,11 @@ class GameDB:
                     fiscal: dict = json.loads(str(row["fiscal"] or "{}"))
                     old_value = fiscal.get(field, 50)
                     delta = int(value)
+                    # 帝国修正：该地区该字段若有 active 修正符，先放大/缩小 delta
+                    net_pct = int(((self.legacy_modifiers(state).get("regions") or {})
+                                   .get(region_id) or {}).get(field, 0) or 0)
+                    if net_pct:
+                        delta = self.apply_legacy_pct(delta, net_pct)
                     new_value = max(0, min(100, int(old_value) + delta))
                     actual_delta = new_value - int(old_value)
                     if actual_delta == 0:
@@ -2077,6 +2100,11 @@ class GameDB:
                 old_value = row[field]
                 if field in REGION_SCORE_FIELDS:
                     delta = int(value)
+                    # 遗产百分比修正：该地区该字段若有 active 遗产修正符，先放大/缩小 delta
+                    net_pct = int(((self.legacy_modifiers(state).get("regions") or {})
+                                   .get(region_id) or {}).get(field, 0) or 0)
+                    if net_pct:
+                        delta = self.apply_legacy_pct(delta, net_pct)
                     new_value = max(0, min(100, int(old_value) + delta))
                     actual_delta = new_value - int(old_value)
                     if actual_delta == 0:
@@ -2426,6 +2454,11 @@ class GameDB:
                     log_delta: int | None = actual_delta
                 elif field in ARMY_SCORE_FIELDS:
                     delta = int(value)
+                    # 遗产百分比修正：该军该字段若有 active 遗产修正符，先放大/缩小 delta
+                    net_pct = int(((self.legacy_modifiers(state).get("armies") or {})
+                                   .get(army_id) or {}).get(field, 0) or 0)
+                    if net_pct:
+                        delta = self.apply_legacy_pct(delta, net_pct)
                     new_value = max(0, min(100, int(old_value) + delta))
                     actual_delta = new_value - int(old_value)
                     if actual_delta == 0:
@@ -3979,6 +4012,121 @@ class GameDB:
         self.conn.commit()
         return self.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
 
+    # ── 帝国修正（legacies 表）：结案留下的长期百分比修正符，落账层放大/缩小增量 ────
+    def insert_legacy(
+        self,
+        state: GameState,
+        *,
+        name: str,
+        modifiers: Dict[str, object],
+        narrative_hint: str = "",
+        duration_months: int = 24,
+        source_issue_id: int | None = None,
+    ) -> int:
+        """结案产生持续修正符。start_month=当前绝对月，duration_months=-1 为永久。"""
+        start_month = int(state.year) * 12 + int(state.period)
+        cur = self.conn.execute(
+            """INSERT INTO legacies
+               (name, source_issue_id, modifiers, narrative_hint,
+                start_month, duration_months, status)
+               VALUES (?, ?, ?, ?, ?, ?, 'active')""",
+            (
+                str(name)[:60], source_issue_id,
+                json.dumps(modifiers, ensure_ascii=False),
+                str(narrative_hint)[:200],
+                start_month, int(duration_months),
+            ),
+        )
+        self.conn.commit()
+        self._legacy_mod_cache = None  # active 集变了，修正符缓存失效
+        return int(cur.lastrowid)
+
+    def list_active_legacies(self, state: GameState) -> List[sqlite3.Row]:
+        """当前仍生效的帝国修正，顺手把已到期的失活。"""
+        self.expire_legacies(state)
+        return self.conn.execute(
+            "SELECT * FROM legacies WHERE status='active' ORDER BY id"
+        ).fetchall()
+
+    def expire_legacies(self, state: GameState) -> List[int]:
+        """到期失活：当前月 >= start_month + duration_months（永久 -1 永不到期）。"""
+        now = int(state.year) * 12 + int(state.period)
+        rows = self.conn.execute(
+            "SELECT id, start_month, duration_months FROM legacies WHERE status='active'"
+        ).fetchall()
+        expired: List[int] = []
+        for r in rows:
+            dur = int(r["duration_months"])
+            if dur < 0:
+                continue
+            if now >= int(r["start_month"]) + dur:
+                expired.append(int(r["id"]))
+        if expired:
+            self.conn.executemany(
+                "UPDATE legacies SET status='expired' WHERE id=?",
+                [(i,) for i in expired],
+            )
+            self.conn.commit()
+            self._legacy_mod_cache = None  # active 集变了，修正符缓存失效
+        return expired
+
+    def legacy_remaining_months(self, row: sqlite3.Row, state: GameState) -> int:
+        """剩余月数；-1=永久。"""
+        dur = int(row["duration_months"])
+        if dur < 0:
+            return -1
+        now = int(state.year) * 12 + int(state.period)
+        return max(0, int(row["start_month"]) + dur - now)
+
+    def legacy_modifiers(self, state: GameState) -> Dict[str, object]:
+        """聚合所有 active 遗产的百分比修正符，同维度累加（A 方案）。返回：
+        {
+          "国库": net_pct, "内库": net_pct, "民心": net_pct, "皇威": net_pct,
+          "regions": {region_id: {field: net_pct, ...}, ...},
+          "armies":  {army_id:  {field: net_pct, ...}, ...},
+        }
+        net_pct 为带符号整数百分比；落账时 base>=0 用 ×(1+net/100)，base<0 用 ×(1-net/100)。
+        结果缓存，active 遗产集变化时由 insert_legacy/expire_legacies 清空。
+        """
+        # expire 可能改变 active 集 → 先跑（其内部会在有变动时清缓存）
+        self.expire_legacies(state)
+        if self._legacy_mod_cache is not None:
+            return self._legacy_mod_cache
+        agg: Dict[str, object] = {"国库": 0, "内库": 0, "民心": 0, "皇威": 0, "regions": {}, "armies": {}}
+        for lg in self.conn.execute(
+            "SELECT modifiers FROM legacies WHERE status='active' ORDER BY id"
+        ).fetchall():
+            try:
+                eff = json.loads(str(lg["modifiers"] or "{}"))
+            except Exception:
+                continue
+            for acc in ("国库", "内库", "民心", "皇威"):
+                v = eff.get(acc)
+                if isinstance(v, (int, float)):
+                    agg[acc] = int(agg[acc]) + int(v)
+            for scope in ("regions", "armies"):
+                block = eff.get(scope)
+                if not isinstance(block, dict):
+                    continue
+                dst = agg[scope]  # type: ignore[assignment]
+                for entity_id, fields in block.items():
+                    if not isinstance(fields, dict):
+                        continue
+                    bucket = dst.setdefault(str(entity_id), {})  # type: ignore[union-attr]
+                    for field, pct in fields.items():
+                        if isinstance(pct, (int, float)):
+                            bucket[str(field)] = int(bucket.get(str(field), 0)) + int(pct)
+        self._legacy_mod_cache = agg
+        return agg
+
+    @staticmethod
+    def apply_legacy_pct(base: int, net_pct: int) -> int:
+        """遗产百分比修正：base>=0 → base×(1+net/100)；base<0 → base×(1-net/100)。net=0 原样。"""
+        if net_pct == 0 or base == 0:
+            return int(base)
+        factor = (1 + net_pct / 100.0) if base >= 0 else (1 - net_pct / 100.0)
+        return int(round(base * factor))
+
     def cancel_issue(
         self,
         state: GameState,
@@ -4032,7 +4180,15 @@ class GameDB:
 
         purpose/target_kind/target_id 仅对 extractor 抽出的 economy_moves（自由拨款）填，
         flows 月固定支出与所有收入一律 None。受控枚举见 constants.ECONOMY_PURPOSES。
+
+        遗产修正：account 上若有 active 遗产百分比修正符，先按 apply_legacy_pct 放大/缩小 delta
+        再落账（base>=0 ×(1+net/100)，base<0 ×(1-net/100)）。修正折进本笔流水，不另立账行。
+        category=='局势遗产' 时不再二次修正（避免自乘，且当前已无该类调用）。
         """
+        if category != "局势遗产":
+            net_pct = int(self.legacy_modifiers(state).get(account, 0) or 0)  # type: ignore[arg-type]
+            if net_pct:
+                delta = self.apply_legacy_pct(int(delta), net_pct)
         before = int(state.metrics[account])
         after = max(0, before + int(delta))
         actual = after - before

@@ -172,6 +172,21 @@ type Issue = {
   effect_on_fail: Record<string, number>;
 };
 
+type LegacyEffect = {
+  国库?: number;
+  内库?: number;
+  regions?: Record<string, Record<string, number>>;
+  armies?: Record<string, Record<string, number>>;
+};
+
+type Legacy = {
+  id: number;
+  name: string;
+  narrative_hint: string;
+  modifiers: LegacyEffect;
+  remaining_months: number;  // -1 = 永久
+};
+
 type ClosedIssue = {
   id: number;
   kind: "situation" | "initiative";
@@ -217,6 +232,7 @@ type GameState = {
   previous_summary: string;
   treasury: string;
   issues: Issue[];
+  legacies: Legacy[];
   closed_this_turn: ClosedIssue[];
   budget: Budget;
   region_warning: string;
@@ -509,6 +525,28 @@ const EN_VALUE_CN: Record<string, string> = {
   done: "办结", pending: "在办", active: "进行中",
 };
 const cnValue = (v: any) => (v == null ? "" : (EN_VALUE_CN[String(v)] || String(v)));
+
+// extractor 吐的是英文字段名（region/army/class/power 的列名），这里统一翻中文。
+// 查不到的回退原值，至少不空。
+const EN_FIELD_CN: Record<string, string> = {
+  // 地区
+  public_support: "民心", unrest: "动乱", grain_security: "粮食安全",
+  gentry_resistance: "士绅阻力", military_pressure: "边防压力", corruption: "腐败度",
+  population: "人口", registered_land: "在册田亩", hidden_land: "隐田",
+  tax_per_turn: "月税", natural_disaster: "天灾", human_disaster: "人祸",
+  status: "状态", controlled_by: "控制者", 控制: "控制者",
+  // 军队
+  supply: "补给", morale: "士气", training: "操练", equipment: "军械",
+  mobility: "机动", loyalty: "忠诚", manpower: "兵力",
+  maintenance_quarter: "月饷", maintenance_per_turn: "月饷",
+  station: "驻地", commander: "统帅", troop_type: "兵种",
+  // 势力
+  cohesion: "凝聚", 威望: "威望", leverage: "威望", 实力: "实力",
+  military_strength: "实力", 经济: "经济",
+  // 阶级
+  satisfaction: "满意度",
+};
+const cnField = (k: string) => EN_FIELD_CN[k] || k;
 
 const briefTreasury = (state: GameState) => [
   `固定预算：国库月净${formatSignedMoney(state.budget["国库"].net)}，内库月净${formatSignedMoney(state.budget["内库"].net)}。`,
@@ -1910,6 +1948,7 @@ function TopStatusBar({
 }) {
   const scoreKeys = ["民心", "皇威"];
   return (
+    <>
     <header className="status-bar" aria-label="国势状态栏">
       <button className="status-emblem" onClick={onOpenState}>
         <img src="/icon_ming_emblem.png" alt="大明" className="emblem-art" />
@@ -1937,6 +1976,78 @@ function TopStatusBar({
         </button>
       </div>
     </header>
+    <LegacyBar legacies={state.legacies} />
+    </>
+  );
+}
+
+const LEGACY_FIELD_LABELS: Record<string, string> = {
+  public_support: "民心", unrest: "动乱", gentry_resistance: "士绅阻力", military_pressure: "边防压力",
+  morale: "士气", training: "训练", loyalty: "忠诚", supply: "补给", equipment: "装备",
+};
+
+function pctStr(v: number): string {
+  return `${v > 0 ? "+" : ""}${v}%`;
+}
+
+// modifiers = {国库?:pct, 内库?:pct, regions?:{rid:{field:pct}}, armies?:{aid:{field:pct}}}
+function formatLegacyEffect(eff: LegacyEffect): string {
+  const parts: string[] = [];
+  for (const acc of ["国库", "内库"] as const) {
+    const v = eff[acc];
+    if (typeof v === "number") parts.push(`${acc}${pctStr(v)}`);
+  }
+  for (const scope of ["regions", "armies"] as const) {
+    const block = eff[scope];
+    if (!block || typeof block !== "object") continue;
+    for (const [entity, fields] of Object.entries(block)) {
+      for (const [field, pct] of Object.entries(fields)) {
+        const label = LEGACY_FIELD_LABELS[field] || field;
+        parts.push(`${entity}·${label}${pctStr(pct as number)}`);
+      }
+    }
+  }
+  return parts.join("、");
+}
+
+function LegacyBar({ legacies }: { legacies: Legacy[] }) {
+  const [open, setOpen] = React.useState(false);
+  if (!legacies || legacies.length === 0) return null;
+  return (
+    <>
+      <button
+        className="legacy-bar"
+        aria-label="现行帝国修正"
+        onClick={() => setOpen(true)}
+      >
+        <span className="legacy-bar-label">帝国修正</span>
+        <span className="legacy-bar-count">{legacies.length}</span>
+      </button>
+      {open && (
+        <div className="legacy-modal-backdrop" onClick={() => setOpen(false)}>
+          <div className="legacy-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="legacy-modal-head">
+              <h3>现行帝国修正</h3>
+              <button className="legacy-modal-close" onClick={() => setOpen(false)} aria-label="关闭">×</button>
+            </div>
+            <ul className="legacy-list">
+              {legacies.map((lg) => (
+                <li key={lg.id} className="legacy-item">
+                  <div className="legacy-item-top">
+                    <b>{lg.name}</b>
+                    <span className="legacy-item-meta">
+                      <span className="legacy-item-dur">{lg.remaining_months < 0 ? "永久" : `余 ${lg.remaining_months} 月`}</span>
+                    </span>
+                  </div>
+                  <p className="legacy-item-eff">{formatLegacyEffect(lg.modifiers)}</p>
+                  {lg.narrative_hint && <p className="legacy-item-hint">{lg.narrative_hint}</p>}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -3373,7 +3484,7 @@ function EntityDeltaBlock({ data, labelFn }: { data: any; labelFn: (id: any) => 
             <span className="extraction-fieldline">
               {Object.entries(fields).map(([fk, fv]) => {
                 const { text, tone } = fmtFieldVal(fv);
-                return <em key={fk} className={tone}>{fk} {text}</em>;
+                return <em key={fk} className={tone}>{cnField(fk)} {text}</em>;
               })}
             </span>
           ) : (

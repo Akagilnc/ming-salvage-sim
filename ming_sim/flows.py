@@ -197,8 +197,11 @@ ARMY_SALARY_PRIORITY = [
 
 
 def _apply_metric_dict(
-    state: GameState, metric_delta: Dict[str, object], caps: Optional[Dict[str, int]] = None
+    state: GameState, metric_delta: Dict[str, object], caps: Optional[Dict[str, int]] = None,
+    db: Optional[GameDB] = None,
 ) -> Dict[str, int]:
+    # 传 db 时，民心/皇威 增量先过帝国修正 %（base>=0 ×(1+net/100)，base<0 ×(1-net/100)），再夹 cap。
+    mods = db.legacy_modifiers(state) if db is not None else {}
     applied: Dict[str, int] = {}
     for key, val in (metric_delta or {}).items():
         if key not in ISSUE_METRIC_KEYS:
@@ -207,6 +210,9 @@ def _apply_metric_dict(
             d = int(val)
         except (TypeError, ValueError):
             continue
+        net_pct = int(mods.get(key, 0) or 0)
+        if net_pct and db is not None:
+            d = db.apply_legacy_pct(d, net_pct)
         if caps and key in caps:
             cap = caps[key]
             if d > cap:
@@ -504,6 +510,9 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                           "building": name, "needed": maintenance, "paid": abs(paid),
                           "shortfall": maintenance - abs(paid)})
 
+    # 帝国修正（旧称遗产）不在此自我落账：它作为百分比修正符，由 record_issue_economy_move /
+    # apply_region_deltas / apply_army_deltas 在每笔增量落账时按维度净 pct 放大/缩小。
+    # 因此上面的固定收支（田赋/军饷/建筑产出）已自动被修正，无需独立 tick，否则会重复计。
     return flows
 
 

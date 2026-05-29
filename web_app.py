@@ -50,6 +50,39 @@ CUSTOM_PORTRAIT_PREFIX = "custom:"
 ALLOWED_PORTRAIT_TYPES = {"image/png", "image/jpeg", "image/webp"}
 MAX_PORTRAIT_BYTES = 8 * 1024 * 1024  # 8MB 上限
 
+# resolve/fail_condition 同时喂 extractor（需 input.factions/leverage 等技术 key）与展示给玩家。
+# 展示前把技术词替换成中文，原文不动（LLM 仍读原文判定）。按长键先替，避免子串误伤。
+_CONDITION_DISPLAY_REPLACEMENTS = [
+    ("input.factions", "派系盘面"),
+    ("input.classes", "阶级盘面"),
+    ("input.regions", "地区盘面"),
+    ("input.armies", "军队盘面"),
+    ("input.current_state", "国势盘面"),
+    ("registered_land", "已册田亩"),
+    ("hidden_land", "隐田"),
+    ("public_support", "民心"),
+    ("gentry_resistance", "士绅阻力"),
+    ("military_pressure", "边防压力"),
+    ("controlled_by", "归属"),
+    ("leverage", "影响力"),
+    ("satisfaction", "满意度"),
+    ("resolved", "达成"),
+    ("failed", "失败"),
+    ("region ", "地区 "),
+    ("shenyang_liaoyang", "沈阳辽阳"),
+    ("houjin", "后金"),
+    ("ming", "大明"),
+]
+
+
+def _humanize_condition(text: str) -> str:
+    """把结案/失败条件里的技术 key 替换成玩家可读中文（仅用于展示）。"""
+    if not text:
+        return text
+    for src, dst in _CONDITION_DISPLAY_REPLACEMENTS:
+        text = text.replace(src, dst)
+    return text
+
 
 def _delete_sqlite_db_files_or_raise(db_path: str) -> None:
     """删除 SQLite 主库及 WAL/SHM；失败时阻断重开，避免误读旧档。"""
@@ -548,13 +581,30 @@ class WebGame:
                 "severity": int(row["severity"]),
                 "tags": list(json.loads(str(row["tags"] or "[]"))),
                 "inertia": int(row["inertia"] or 0),
-                "resolve_condition": row["resolve_condition"] or "",
-                "fail_condition": row["fail_condition"] or "",
+                "resolve_condition": _humanize_condition(row["resolve_condition"] or ""),
+                "fail_condition": _humanize_condition(row["fail_condition"] or ""),
                 "ongoing_text": _format_issue_ongoing(str(row["ongoing_effects"] or "{}")),
                 "effect_on_resolve": dict(json.loads(str(row["effect_on_resolve"] or "{}"))),
                 "effect_on_fail": dict(json.loads(str(row["effect_on_fail"] or "{}"))),
             })
         return payloads
+
+    def legacies_payload(self) -> List[Dict[str, Any]]:
+        """现行帝国修正（长期百分比修正符），给状态栏小条用。"""
+        out: List[Dict[str, Any]] = []
+        for row in self.db.list_active_legacies(self.state):
+            try:
+                eff = json.loads(str(row["modifiers"] or "{}"))
+            except Exception:
+                eff = {}
+            out.append({
+                "id": int(row["id"]),
+                "name": row["name"],
+                "narrative_hint": row["narrative_hint"],
+                "modifiers": eff,
+                "remaining_months": self.db.legacy_remaining_months(row, self.state),
+            })
+        return out
 
     def budget_payload(self) -> Dict[str, Any]:
         # 唯一定额源：flows.compute_budget_lines（与实际落账 / 大臣 treasury_budget_summary 三处统一）。
@@ -615,6 +665,7 @@ class WebGame:
             "previous_summary": self.previous_summary,
             "treasury": self.db.treasury_report(self.state),
             "issues": self.issue_payloads(),
+            "legacies": self.legacies_payload(),
             "closed_this_turn": self.closed_this_turn_payloads(),
             "budget": self.budget_payload(),
             "region_warning": self.db.region_report(limit=5),

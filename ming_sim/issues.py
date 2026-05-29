@@ -10,7 +10,10 @@ import re
 import sqlite3
 from typing import Dict, List, Optional
 
-from ming_sim.constants import TURN_UNIT
+from ming_sim.constants import (
+    TURN_UNIT, REGION_SCORE_FIELDS, ARMY_SCORE_FIELDS, FISCAL_SCORE_FIELDS,
+    REGION_FIELD_ALIASES, ARMY_FIELD_ALIASES,
+)
 from ming_sim.content import GameContent
 from ming_sim.context import victory_status
 from ming_sim.db import GameDB, infer_office_type_from_office, normalize_office
@@ -303,6 +306,10 @@ def auto_trigger_seed_issues(state: GameState, db: GameDB) -> List[Dict[str, obj
     for ev in c.seed_events:
         if not ev.auto_trigger:
             continue
+        # trigger_gate 为空 = 开局即立的局势，只由 seed_opening_crises 立一次，绝不在此重立。
+        # （空 gate 会被 _gate_passed 判为恒真，必须显式排除，否则每回合都试图重立。）
+        if not ev.trigger_gate:
+            continue
         if not _event_window_open(ev, state):
             continue
         if not _gate_passed(ev.trigger_gate, state.metrics, db):
@@ -382,10 +389,18 @@ def show_active_issues(db: GameDB) -> None:
 
 
 def event_to_issue(db: GameDB, state: GameState, ev: Event) -> Optional[int]:
-    """把一个预设 event（EVENTS / SEED_EVENTS）落成一条 situation issue。
-    供推演判定触发后调用。已触发过（origin_ref 命中）则跳过返回 None。"""
-    if db.find_any_issue_by_origin("event_pool", ev.id) is not None:
-        return None
+    """把一个预设 event（EVENTS / SEED_EVENTS）落成一条 situation issue。供推演判定触发后调用。
+
+    去重分两类：
+    - 无 trigger_gate（开局局势）：查任意状态同源 issue，立过则永不重立。
+    - 有 trigger_gate（条件触发危机）：只查 active 同源 issue，结案/撤销后 gate 再达标可重新触发。
+    """
+    if ev.trigger_gate:
+        if db.find_active_issue_by_origin("event_pool", ev.id) is not None:
+            return None
+    else:
+        if db.find_any_issue_by_origin("event_pool", ev.id) is not None:
+            return None
     # 初值由 severity 推一个偏中性的 bar
     bar = max(20, min(60, 50 - int(ev.severity / 5)))
     # 默认 ongoing + inertia 五档（+10/+5/0/-5/-10），按 kind 取
@@ -530,6 +545,102 @@ def _compute_inertia(ni: Dict[str, object]) -> int:
     return max(-10, min(10, int(ni.get("inertia") or 0)))
 
 
+# 离散时长档：LLM 只能给这几档（防乱填）；映射到月。
+_LEGACY_DURATION_MONTHS = {"1年": 12, "2年": 24, "永久": -1}
+_LEGACY_ACCOUNT_KEYS = ("国库", "内库", "民心", "皇威")  # 全局可被 % 修正的四项
+_LEGACY_PCT_CAP = 5  # 单条帝国修正对某维度的百分比上限，防幅度过大
+
+
+def _clamp_pct(v: object) -> Optional[int]:
+    try:
+        pct = int(v)
+    except (TypeError, ValueError):
+        return None
+    if pct == 0:
+        return None
+    return max(-_LEGACY_PCT_CAP, min(_LEGACY_PCT_CAP, pct))
+
+
+def _spawn_legacy_from_effect(
+    db: GameDB,
+    state: GameState,
+    effect: Dict[str, object],
+    issue_id: int,
+    issue_title: str,
+) -> Optional[Dict[str, object]]:
+    """结案 effect 里若带 legacy（帝国修正）段，落 legacies 表。返回落地摘要供日志。
+    legacy schema:
+      {"name": str,
+       "duration": "1年"|"2年"|"永久",
+       "modifiers": {                         # 各维度带符号百分比修正符
+         "国库": +10, "内库": -5,                    # 账户增量
+         "regions": {"shaanxi": {"unrest": -20}},   # 地区分数字段（仅 REGION_SCORE_FIELDS）
+         "armies":  {"jizhou": {"morale": 15}}      # 军队分数字段（仅 ARMY_SCORE_FIELDS）
+       },
+       "narrative_hint": str}
+    各 pct 带符号整数；落账时同维度累加，base>=0 ×(1+net/100)、base<0 ×(1-net/100)。
+    缺字段/非法档/空 effect 一律跳过（不抛断）；地区/军队非法字段或不存在 id 由落账层忽略。
+    """
+    legacy = effect.get("legacy")
+    if not isinstance(legacy, dict):
+        return None
+    name = str(legacy.get("name") or "").strip() or f"{issue_title}遗留"
+    dur_key = str(legacy.get("duration") or "2年").strip()
+    duration = _LEGACY_DURATION_MONTHS.get(dur_key)
+    if duration is None:
+        print(f"[WARN] legacy 时长档非法 '{dur_key}'，按 2年 处理。")
+        duration = 24
+    raw_eff = legacy.get("modifiers") or {}
+    modifiers: Dict[str, object] = {}
+    if isinstance(raw_eff, dict):
+        for k in _LEGACY_ACCOUNT_KEYS:
+            pct = _clamp_pct(raw_eff.get(k))
+            if pct is not None:
+                modifiers[k] = pct
+        for scope, allowed, aliases in (
+            ("regions", REGION_SCORE_FIELDS + FISCAL_SCORE_FIELDS, REGION_FIELD_ALIASES),
+            ("armies", ARMY_SCORE_FIELDS, ARMY_FIELD_ALIASES),
+        ):
+            block = raw_eff.get(scope)
+            if not isinstance(block, dict):
+                continue
+            scope_out: Dict[str, Dict[str, int]] = {}
+            for entity_id, fields in block.items():
+                if not isinstance(fields, dict):
+                    continue
+                fields_out: Dict[str, int] = {}
+                for raw_field, v in fields.items():
+                    field = aliases.get(str(raw_field).strip(), str(raw_field).strip())
+                    if field not in allowed:
+                        print(f"[INFO] legacy '{name}' {scope} 字段 '{raw_field}' 非法/不可修正，跳过。")
+                        continue
+                    pct = _clamp_pct(v)
+                    if pct is not None:
+                        fields_out[field] = pct
+                if fields_out:
+                    scope_out[str(entity_id)] = fields_out
+            if scope_out:
+                modifiers[scope] = scope_out
+    if not modifiers:
+        print(f"[INFO] legacy '{name}' 无有效 modifiers，跳过。")
+        return None
+    new_id = db.insert_legacy(
+        state,
+        name=name,
+        modifiers=modifiers,
+        narrative_hint=str(legacy.get("narrative_hint") or "")[:200],
+        duration_months=duration,
+        source_issue_id=issue_id,
+    )
+    summary = {
+        "legacy_id": new_id, "name": name,
+        "duration_months": duration, "modifiers": modifiers,
+    }
+    dur_label = "永久" if duration < 0 else f"{duration}月"
+    print(f"[帝国修正] 局势#{issue_id}「{issue_title}」落「{name}」({dur_label}) {modifiers}")
+    return summary
+
+
 def apply_issue_tracker_output(
     db: GameDB,
     state: GameState,
@@ -552,7 +663,7 @@ def apply_issue_tracker_output(
         stage_text = str(adv.get("stage_text") or "")[:120]
         narrative = str(adv.get("narrative") or "")[:400]
         metric_delta_raw = adv.get("metric_delta") or {}
-        applied_metrics = _apply_metric_dict(state, metric_delta_raw if isinstance(metric_delta_raw, dict) else {})
+        applied_metrics = _apply_metric_dict(state, metric_delta_raw if isinstance(metric_delta_raw, dict) else {}, db=db)
         new_row = db.advance_issue(
             state, issue_id,
             trigger_kind="decree",
@@ -568,16 +679,18 @@ def apply_issue_tracker_output(
         # 终结结算：bar 自然推到 100/0 触发的 resolved/failed，与 close_issues 一样落终结效果（含建筑）
         if new_row["status"] == "resolved":
             effect = json.loads(new_row["effect_on_resolve"] or "{}")
-            _apply_metric_dict(state, effect.get("metrics") or {})
+            _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
             _apply_economy_list(db, state, effect.get("economy") or [])
             _apply_faction_dict(db, effect.get("factions") or {})
             _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}结案")
+            _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
         elif new_row["status"] == "failed":
             effect = json.loads(new_row["effect_on_fail"] or "{}")
-            _apply_metric_dict(state, effect.get("metrics") or {})
+            _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
             _apply_economy_list(db, state, effect.get("economy") or [])
             _apply_faction_dict(db, effect.get("factions") or {})
             _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}失败")
+            _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
         applied_advances.append({
             "issue_id": issue_id,
             "title": new_row["title"],
@@ -678,18 +791,25 @@ def apply_issue_tracker_output(
         if new_row is None:
             continue
         touched_ids.add(issue_id)
-        # 终结效果
+        # 终结效果：以 issue 立项时预设的 effect 为底，叠加 LLM 在本次结案项 cl 里现给的 effect。
+        # 现给优先——event_pool 预设 issue（如阉党之祸）立项时 effect 多为空，帝国修正只能结案当下给。
         if reason == "resolved":
             effect = json.loads(new_row["effect_on_resolve"] or "{}")
+            cl_effect = cl.get("effect_on_resolve")
         else:
             effect = json.loads(new_row["effect_on_fail"] or "{}")
-        _apply_metric_dict(state, effect.get("metrics") or {})
+            cl_effect = cl.get("effect_on_fail")
+        if isinstance(cl_effect, dict):
+            # 浅合并：metrics/economy/factions/buildings/legacy 等顶层段，现给覆盖预设
+            effect = {**effect, **cl_effect}
+        _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
         _apply_economy_list(db, state, effect.get("economy") or [])
         _apply_faction_dict(db, effect.get("factions") or {})
         building_ops = _apply_issue_buildings(
             db, state, effect.get("buildings"),
             _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}{'结案' if reason == 'resolved' else '失败'}",
         )
+        _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
         applied_closes.append({
             "issue_id": issue_id,
             "title": new_row["title"],
@@ -724,7 +844,7 @@ def apply_issue_tracker_output(
         # 可撤：应用 applied_cost
         cost = cn.get("applied_cost") or {}
         if isinstance(cost, dict):
-            _apply_metric_dict(state, cost.get("metrics") or {})
+            _apply_metric_dict(state, cost.get("metrics") or {}, db=db)
             _apply_economy_list(db, state, cost.get("economy") or [])
             _apply_faction_dict(db, cost.get("factions") or {})
         db.cancel_issue(
@@ -801,7 +921,7 @@ def apply_score_extraction(
     content/registry：若传入则处理 `appointments`——把诏书任命的新人建档入朝。
     缺省则跳过（向后兼容老调用）。"""
     # 1) metric_delta
-    applied_metric = _apply_metric_dict(state, extracted.get("metric_delta") or {})
+    applied_metric = _apply_metric_dict(state, extracted.get("metric_delta") or {}, db=db)
     # 2) economy_moves
     applied_economy = _apply_economy_list(db, state, extracted.get("economy_moves") or [])
     # 3) faction_delta + class_delta（朝堂派系 + 社会阶级；联动靠 LLM，不在代码做）
@@ -1174,14 +1294,14 @@ def apply_issue_inertia_and_ongoing(
                     continue
                 if new_row["status"] == "resolved":
                     effect = json.loads(new_row["effect_on_resolve"] or "{}")
-                    _apply_metric_dict(state, effect.get("metrics") or {})
+                    _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
                     _apply_economy_list(db, state, effect.get("economy") or [])
                     _apply_faction_dict(db, effect.get("factions") or {})
                     _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}结案")
                     continue
                 elif new_row["status"] == "failed":
                     effect = json.loads(new_row["effect_on_fail"] or "{}")
-                    _apply_metric_dict(state, effect.get("metrics") or {})
+                    _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
                     _apply_economy_list(db, state, effect.get("economy") or [])
                     _apply_faction_dict(db, effect.get("factions") or {})
                     _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}失败")

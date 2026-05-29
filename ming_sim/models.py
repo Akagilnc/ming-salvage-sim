@@ -81,7 +81,7 @@ class Event:
     bar_value: int = 0                                            # 0=自动推导
     bar_good_meaning: str = ""
     bar_bad_meaning: str = ""
-    issue_inertia: int = 0                                        # 立项时的初始 inertia（0=按 kind 推导）
+    issue_inertia: int = 0                                        # 立项时初始 inertia（默认 0=不漂；要每月漂移就在 seed/event 里显式填）
     stage_text: str = ""                                          # issue 阶段文案（空=用 summary）
     region_hint: str = ""
     issue_tags: List[str] = field(default_factory=list)           # 空=用 [kind]

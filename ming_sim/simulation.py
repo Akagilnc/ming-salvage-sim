@@ -72,6 +72,14 @@ ITEM_FIELD_ALIASES = {
     "economy": "economy", "钱粮": "economy",
     "factions": "factions", "派系": "factions",
     "buildings": "buildings", "建筑": "buildings",
+    # 帝国修正（旧称遗产）子字段
+    "legacy": "legacy", "帝国修正": "legacy", "遗产": "legacy",
+    "duration": "duration", "时长": "duration",
+    "modifiers": "modifiers", "修正": "modifiers",
+    "narrative_hint": "narrative_hint", "叙事提示": "narrative_hint",
+    # 帝国修正的 regions/armies 维度块（值是 {entity_id: {field: pct}}，原样透传）
+    "regions": "regions", "地区": "regions",
+    "armies": "armies", "军队": "armies",
     "action": "action", "动作": "action",
     "region_id": "region_id", "地区编号": "region_id",
     "category": "category", "类别": "category",
@@ -145,6 +153,10 @@ ITEM_FIELD_LABELS = {
     "economy": "钱粮",
     "factions": "派系",
     "buildings": "建筑",
+    "legacy": "帝国修正",
+    "duration": "时长",
+    "modifiers": "修正",
+    "narrative_hint": "叙事提示",
     "action": "动作",
     "region_id": "地区编号",
     "level": "等级",
@@ -208,6 +220,7 @@ def build_simulator_payload(
         issue_to_payload(row, db.list_recent_issue_advances(int(row["id"]), 1))
         for row in active
     ]
+    # 帝国修正不进 simulator payload：它是纯机械的百分比修正符，由落账层自动放大/缩小增量，不进叙事。
     candidate_events = [
         {
             "id": ev.id,
@@ -226,7 +239,7 @@ def build_simulator_payload(
         dict(r) for r in db.conn.execute(
             "SELECT name,kind,population,public_support,unrest,natural_disaster,"
             "human_disaster,registered_land,hidden_land,tax_per_turn,grain_security,"
-            "gentry_resistance,military_pressure,status,"
+            "gentry_resistance,military_pressure,status,controlled_by,"
             "json_extract(fiscal,'$.corruption') as corruption FROM regions ORDER BY id"
         ).fetchall()
     ]
@@ -375,7 +388,7 @@ def extract_scores_with_agno(
         dict(r) for r in db.conn.execute(
             "SELECT id,name,kind,population,public_support,unrest,natural_disaster,"
             "human_disaster,registered_land,hidden_land,tax_per_turn,grain_security,"
-            "gentry_resistance,military_pressure,status,"
+            "gentry_resistance,military_pressure,status,controlled_by,"
             "json_extract(fiscal,'$.corruption') as corruption FROM regions ORDER BY id"
         ).fetchall()
     ]
@@ -497,7 +510,7 @@ def _extractor_context_payload(
         dict(r) for r in db.conn.execute(
             "SELECT id,name,kind,population,public_support,unrest,natural_disaster,"
             "human_disaster,registered_land,hidden_land,tax_per_turn,grain_security,"
-            "gentry_resistance,military_pressure,status,"
+            "gentry_resistance,military_pressure,status,controlled_by,"
             "json_extract(fiscal,'$.corruption') as corruption FROM regions ORDER BY id"
         ).fetchall()
     ]
