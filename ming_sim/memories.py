@@ -412,7 +412,7 @@ def record_event_memories_from_resolution(
             "拟旨被采纳",
             cause=_directive_summary(str(row["text"] or "")),
             process="皇帝采纳并写入本月诏书",
-            outcome="已颁行，待后续见效",
+            outcome=f"该诏已于{state.year}年{state.period}月颁行执行（已成往事，勿据此记忆重复执行）",
             sentiment="positive",
             importance=3,
             tags=_tags("诏书", "拟旨", row_actor, row["event_id"], row["event_title"]),

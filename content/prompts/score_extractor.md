@@ -81,6 +81,7 @@
 - 写 `army_delta` 前先在 payload `armies` 表查当前行（按 army_id），同样核边界。
 - 朝臣任某官（无论新进朝堂还是在朝调任升迁）一律写 `office_changes`，**不必判此人在不在名册**——代码会自己查在册改职、不在册建档。`appointments` 只留给后宫纳妃。
 - 写 `character_status_changes` 前先在 `active_ministers` 查此人当前是否 active（已 dismissed/dead 的不重复立项）。
+- **旧案重提不重复落库**：邸报写明「旧案重提／查无新赃／前已查抄／已执行完毕」等既成往事口吻时，**不得**再抽 `character_status_changes` 重复处分该人，也**不得**抽抄没相关的 `economy_moves`/`fiscal_changes` 财政增量——这是历史回顾，非本月新动作。
 
 **⚠ corruption 强制核查**：凡邸报或诏书中出现以下任一动作，**必须**在对应省份 `region_delta` 输出 `corruption` 负值：
 - 锦衣卫/东厂南下彻查、抄家、逮捕贪官胥吏
