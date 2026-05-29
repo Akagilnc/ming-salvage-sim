@@ -3057,6 +3057,19 @@ button:disabled {
 .extraction-list li span   { color: #4a3a26; }
 .extraction-list li .extraction-narr { color: #6a5a42; font-size: 0.82rem; }
 
+.extraction-fieldline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 0.85rem;
+}
+.extraction-fieldline em {
+  font-style: normal;
+  color: #4a3a26;
+}
+.extraction-fieldline em.good { color: #1f6b3b; }
+.extraction-fieldline em.bad  { color: #9c2a1c; }
+
 .extraction-json {
   margin: 0;
   padding: 8px;

@@ -1138,42 +1138,47 @@ class GameDB:
         self.conn.commit()
 
     def seed_opening_crises(self, state: GameState) -> None:
-        """新档首次进入时塞 1627 即位三大危机为 active situation issue。"""
-        from ming_sim.assets import load_json_asset
-        raw = load_json_asset("opening_crises.json")
-        if not isinstance(raw, list):
+        """新档首次进入时塞 1627 即位即面对的危机为 active situation issue。
+        数据源已并入 seed_events.json：取标了 auto_trigger 且 trigger_gate 为空（开局盘面无条件
+        即达标）的 situation 事件，开局直接立项，使玩家召见前就看到三大危机。
+        其余带 gate 的 seed 事件靠 auto_trigger_seed_issues 在 gate 达标的回合再硬立。"""
+        if not getattr(self, "content", None):
             return
-        for item in raw:
-            if not isinstance(item, dict):
+        for ev in self.content.seed_events:
+            if not ev.auto_trigger or ev.trigger_gate:
                 continue
-            origin_ref = str(item.get("id") or "")
-            if origin_ref and self.find_any_issue_by_origin("opening", origin_ref) is not None:
+            if ev.event_type != "situation":
                 continue
+            if self.find_any_issue_by_origin("event_pool", ev.id) is not None:
+                continue
+            # 推导默认 bar / inertia / ongoing / effect，与 event_to_issue 同口径；精调字段优先
+            bar = ev.bar_value or max(20, min(60, 50 - int(ev.severity / 5)))
+            inertia = ev.issue_inertia if ev.issue_inertia else -5
             try:
                 self.insert_issue(
                     state,
-                    kind=str(item.get("kind") or "situation"),
-                    title=str(item.get("title") or ""),
-                    origin_kind="opening",
-                    origin_ref=origin_ref,
-                    bar_value=int(item.get("bar_value", 25)),
-                    bar_good_meaning=str(item.get("bar_good_meaning") or "已平"),
-                    bar_bad_meaning=str(item.get("bar_bad_meaning") or "失控"),
-                    inertia=int(item.get("inertia") or 0),
-                    stage_text=str(item.get("stage_text") or ""),
-                    severity=int(item.get("severity") or 60),
-                    region_hint=str(item.get("region_hint") or ""),
-                    faction_hint=str(item.get("faction_hint") or ""),
-                    tags=list(item.get("tags") or []),
-                    ongoing_effects=dict(item.get("ongoing_effects") or {}),
+                    kind="situation",
+                    title=ev.title,
+                    origin_kind="event_pool",
+                    origin_ref=ev.id,
+                    bar_value=bar,
+                    bar_good_meaning=ev.bar_good_meaning or "已平",
+                    bar_bad_meaning=ev.bar_bad_meaning or "失控",
+                    inertia=inertia,
+                    stage_text=ev.stage_text or ev.summary[:80],
+                    severity=int(ev.severity),
+                    region_hint=ev.region_hint,
+                    faction_hint=",".join(ev.interests[:2]),
+                    tags=ev.issue_tags or [ev.kind],
+                    ongoing_effects=ev.ongoing_effects,
                     cancellable="never",
-                    effect_on_resolve=dict(item.get("effect_on_resolve") or {}),
-                    effect_on_fail=dict(item.get("effect_on_fail") or {}),
-                    resolve_condition=str(item.get("resolve_condition") or ""),
-                    fail_condition=str(item.get("fail_condition") or ""),
+                    effect_on_resolve=ev.effect_on_resolve,
+                    effect_on_fail=ev.effect_on_fail,
+                    resolve_condition=ev.resolve_condition,
+                    fail_condition=ev.fail_condition,
                 )
             except Exception as exc:
-                print(f"[WARN] opening crisis 落库失败：{exc}；跳过 {item.get('title')}")
+                print(f"[WARN] 开局危机落库失败：{exc}；跳过 {ev.title}")
 
     def set_character_status(
         self,

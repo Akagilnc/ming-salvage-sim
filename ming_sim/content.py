@@ -124,6 +124,17 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
                 precondition=str(item.get("precondition") or ""),
                 event_type=event_type,
                 trigger_gate=trigger_gate,
+                auto_trigger=bool(item.get("auto_trigger") or False),
+                bar_value=int(item.get("bar_value") or 0),
+                bar_good_meaning=str(item.get("bar_good_meaning") or ""),
+                bar_bad_meaning=str(item.get("bar_bad_meaning") or ""),
+                issue_inertia=int(item.get("inertia") or 0),
+                stage_text=str(item.get("stage_text") or ""),
+                region_hint=str(item.get("region_hint") or ""),
+                issue_tags=string_list(item.get("tags"), f"{filename}[{idx}].tags") if item.get("tags") else [],
+                ongoing_effects=dict(item.get("ongoing_effects") or {}),
+                effect_on_resolve=dict(item.get("effect_on_resolve") or {}),
+                effect_on_fail=dict(item.get("effect_on_fail") or {}),
             )
         )
     if not events:

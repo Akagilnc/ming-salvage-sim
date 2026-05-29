@@ -282,11 +282,42 @@ def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
     for ev in c.seed_events:
         if ev.id in spawned:
             continue
+        # auto_trigger 事件只能由程序硬触发，绝不进 LLM 候选池
+        if ev.auto_trigger:
+            continue
         if not _event_window_open(ev, state):
             continue
         if _gate_passed(ev.trigger_gate, state.metrics, db):
             candidates.append(ev)
     return candidates
+
+
+def auto_trigger_seed_issues(state: GameState, db: GameDB) -> List[Dict[str, object]]:
+    """程序硬触发：seed_events 中标了 auto_trigger 的，trigger_gate 达标即由程序直接
+    立 issue，绕过 LLM 因果判定（不进候选池等 extractor 决定）。event_to_issue 自带去重，
+    已触发过返回 None 自动跳过。返回本回合硬触发的清单（供日志/邸报告知）。
+
+    放在结算链 simulator 之前调用，使硬立的 issue 当回合即进盘面、被邸报叙述。"""
+    c = _ctx()
+    triggered: List[Dict[str, object]] = []
+    for ev in c.seed_events:
+        if not ev.auto_trigger:
+            continue
+        if not _event_window_open(ev, state):
+            continue
+        if not _gate_passed(ev.trigger_gate, state.metrics, db):
+            continue
+        if ev.event_type != "situation":
+            # 非 situation（node/ending）不转 issue，仅记触发避免重复
+            if db.find_any_issue_by_origin("event_pool", ev.id) is None:
+                db.mark_event_triggered(state, ev.id)
+                triggered.append({"id": ev.id, "title": ev.title, "kind": ev.event_type})
+            continue
+        issue_id = event_to_issue(db, state, ev)
+        if issue_id is not None:
+            triggered.append({"id": ev.id, "title": ev.title, "issue_id": issue_id})
+            print(f"[AUTO-TRIGGER] gate 达标硬立项 #{issue_id} {ev.title}（{ev.trigger_gate}）")
+    return triggered
 
 
 def _bar_ascii(value: int, width: int = 20) -> str:
@@ -393,6 +424,18 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event) -> Optional[int]:
         inertia = +10
         polarity = "pos"
     effect_resolve, effect_fail = _situation_terminal_effects(ev.kind, int(ev.severity), polarity)
+    # 精调字段优先：合并自 opening_crises 的手调危机带 bar/ongoing/effect/meaning，直接用其值；
+    # 缺省（0/空）则用上面按 severity/kind 推导的默认。
+    if ev.bar_value:
+        bar = ev.bar_value
+    if ev.ongoing_effects:
+        ongoing = ev.ongoing_effects
+    if ev.issue_inertia:
+        inertia = ev.issue_inertia
+    if ev.effect_on_resolve:
+        effect_resolve = ev.effect_on_resolve
+    if ev.effect_on_fail:
+        effect_fail = ev.effect_on_fail
     try:
         return db.insert_issue(
             state,
@@ -401,14 +444,14 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event) -> Optional[int]:
             origin_kind="event_pool",
             origin_ref=ev.id,
             bar_value=bar,
-            bar_good_meaning="已平",
-            bar_bad_meaning="失控",
+            bar_good_meaning=ev.bar_good_meaning or "已平",
+            bar_bad_meaning=ev.bar_bad_meaning or "失控",
             inertia=inertia,
-            stage_text=ev.summary[:80],
+            stage_text=ev.stage_text or ev.summary[:80],
             severity=int(ev.severity),
-            region_hint="",
+            region_hint=ev.region_hint,
             faction_hint=",".join(ev.interests[:2]),
-            tags=[ev.kind],
+            tags=ev.issue_tags or [ev.kind],
             ongoing_effects=ongoing,
             cancellable="never",
             effect_on_resolve=effect_resolve,
@@ -560,6 +603,11 @@ def apply_issue_tracker_output(
             if ev is None:
                 print(f"[INFO] new_issue 已拒：event_pool id={event_id!r} 非预设事件，疑似臆造。")
                 applied_new.append({"title": title or event_id, "rejected": True, "reason": "event_pool id 非预设事件"})
+                continue
+            if getattr(ev, "auto_trigger", False):
+                # auto_trigger 事件只能程序硬触发，LLM 不准从候选池立项
+                print(f"[INFO] new_issue 已拒：event {event_id} 标了 auto_trigger，只能程序硬触发。")
+                applied_new.append({"title": ev.title, "rejected": True, "reason": "auto_trigger 事件仅程序可触发"})
                 continue
             if ev.event_type != "situation":
                 db.mark_event_triggered(state, ev.id)

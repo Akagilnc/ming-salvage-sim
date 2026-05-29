@@ -27,7 +27,7 @@ from ming_sim.context import victory_status
 from ming_sim.db import GameDB
 from ming_sim.exceptions import LLMContractError, LLMUnavailable
 from ming_sim.flows import apply_fixed_period_flows
-from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction
+from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction, auto_trigger_seed_issues
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import GameState, LLMConfig
 from ming_sim.memories import (
@@ -138,6 +138,12 @@ def resolve_directives(
     tlog("结算 1/4 固定月度财政 tick")
     _emit("stage", "固定月度财政入账")
     fixed_flows = apply_fixed_period_flows(db, state)
+
+    # 1.6) 程序硬触发：标了 auto_trigger 的 seed 情势，gate 达标即由程序直接立项，
+    #      绕过 LLM 因果判定。放在 simulator 前，使硬立的 issue 当回合即进盘面被邸报叙述。
+    auto_triggered = auto_trigger_seed_issues(state, db)
+    if auto_triggered:
+        tlog(f"[AUTO-TRIGGER] 本回合程序硬立项 {len(auto_triggered)} 条：{[t.get('title') for t in auto_triggered]}")
 
     # 1.8) 记忆检索：从诏书提取实体词，召回相关历史记忆注入推演
     relevant_memories: List[Dict] = []

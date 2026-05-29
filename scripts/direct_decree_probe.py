@@ -40,6 +40,9 @@ def parse_args() -> argparse.Namespace:
                    help="开局后直接把回合跳到年.月，如 1631.07。会覆写 game_state.year/period。turn 同步推进。")
     p.add_argument("--sql", action="append", default=[],
                    help="结算前执行的任意 SQL，可多次。用于直接改 DB 状态（人物/军队/数值等）。")
+    p.add_argument("--set-metric", action="append", default=[], metavar="KEY=VAL",
+                   help="结算前直接改核心指标内存值，如 国库=99999。metrics 是内存态，"
+                        "必须走这条而非 --sql（--sql 改 DB 行会被结算回写覆盖）。可多次。")
     return p.parse_args()
 
 
@@ -92,6 +95,17 @@ def main() -> int:
 
     snap = session.begin_turn()
     print(f"[turn] year={snap.year} period={snap.period} turn={snap.turn} phase={snap.phase}")
+
+    for spec in args.set_metric:
+        try:
+            key, val = spec.split("=", 1)
+            key = key.strip()
+            session.state.metrics[key] = int(val)
+            session.db.save_state(session.state)
+            print(f"[set-metric] OK: {key}={int(val)}")
+        except Exception as e:
+            print(f"[set-metric] FAIL: {spec} → {e}", file=sys.stderr)
+            return 2
 
     for sql in args.sql:
         try:

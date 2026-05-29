@@ -471,6 +471,45 @@ const splitReportItems = (text: string, prefix: string) => {
   };
 };
 
+// 邸报详明里 extractor 常输出英文 id（region_id/army_id/power_id）或编号。
+// 这里建一份 id→中文名 的全局映射，每次拉 state 时刷新，供 ExtractionView 各 block 翻译。
+const labelMaps = {
+  region: new Map<string, string>(),
+  army: new Map<string, string>(),
+  power: new Map<string, string>(),
+  issue: new Map<number, string>(),
+};
+
+function refreshLabelMaps(state: GameState) {
+  labelMaps.region.clear();
+  labelMaps.army.clear();
+  labelMaps.power.clear();
+  labelMaps.issue.clear();
+  for (const r of state.regions || []) labelMaps.region.set(r.id, r.name);
+  for (const a of state.armies || []) labelMaps.army.set(a.id, a.name);
+  for (const p of state.powers || []) labelMaps.power.set(p.id, p.name);
+  for (const it of state.issues || []) labelMaps.issue.set(it.id, it.title);
+  for (const it of state.closed_this_turn || []) labelMaps.issue.set(it.id, it.title);
+}
+
+// 把 id 翻成中文名；查不到（如本月新增/已离场）就回退原值，至少不空。
+const labelRegion = (id: any) => labelMaps.region.get(String(id)) || String(id ?? "");
+const labelArmy = (id: any) => labelMaps.army.get(String(id)) || String(id ?? "");
+const labelPower = (id: any) => labelMaps.power.get(String(id)) || String(id ?? "");
+const labelIssue = (id: any) => {
+  const t = labelMaps.issue.get(Number(id));
+  return t ? `#${id} ${t}` : `#${id}`;
+};
+
+// extractor 偶尔吐出的英文枚举值，统一翻中文。
+const EN_VALUE_CN: Record<string, string> = {
+  appoint: "新进朝堂", promote: "升迁", transfer: "调任", demote: "贬", reinstate: "起复",
+  resolved: "已了", failed: "崩坏", dropped: "撤销",
+  situation: "时局", initiative: "举措", crisis: "危机", reform: "改革", decree: "诏令",
+  done: "办结", pending: "在办", active: "进行中",
+};
+const cnValue = (v: any) => (v == null ? "" : (EN_VALUE_CN[String(v)] || String(v)));
+
 const briefTreasury = (state: GameState) => [
   `固定预算：国库月净${formatSignedMoney(state.budget["国库"].net)}，内库月净${formatSignedMoney(state.budget["内库"].net)}。`,
   `账面余银：国库${formatMoney(state.budget["国库"].balance)}，内库${formatMoney(state.budget["内库"].balance)}。`,
@@ -566,6 +605,7 @@ function App() {
 
   const loadState = React.useCallback(async () => {
     const data = await api<GameState>("/api/game/state");
+    refreshLabelMaps(data);
     setState(data);
     setSelectedNodeId((current) => current || data.map_nodes[0]?.id || "");
     setDecree(data.last_decree || "");
@@ -2923,11 +2963,17 @@ function ExtractionView({ data, loading, error }: { data: ExtractionData | null;
       <ExtractionSection title="派系变化">
         <FactionBlock data={pickField(out, "派系变化", "faction_delta")} />
       </ExtractionSection>
+      <ExtractionSection title="阶级变化">
+        <ClassDeltaBlock data={pickField(out, "阶级变化", "class_delta")} />
+      </ExtractionSection>
       <ExtractionSection title="官职任免">
         <OfficeChangesBlock data={pickField(out, "人事变更", "office_changes")} />
       </ExtractionSection>
       <ExtractionSection title="去职变更">
         <StatusChangesBlock data={pickField(out, "人物状态变化", "character_status_changes")} />
+      </ExtractionSection>
+      <ExtractionSection title="人物易主">
+        <PowerChangesBlock data={pickField(out, "人物易主", "character_power_changes")} />
       </ExtractionSection>
       <ExtractionSection title="后宫纳妃">
         <AppointmentsBlock data={pickField(out, "后宫册封", "appointments")} />
@@ -2945,22 +2991,28 @@ function ExtractionView({ data, loading, error }: { data: ExtractionData | null;
         <CancelsBlock data={pickField(out, "撤销局势", "cancels")} />
       </ExtractionSection>
       <ExtractionSection title="地区变化">
-        <GenericKVBlock data={pickField(out, "地区变化", "region_delta")} />
+        <EntityDeltaBlock data={pickField(out, "地区变化", "region_delta")} labelFn={labelRegion} />
       </ExtractionSection>
       <ExtractionSection title="军队变化">
-        <GenericKVBlock data={pickField(out, "军队变化", "army_delta")} />
+        <EntityDeltaBlock data={pickField(out, "军队变化", "army_delta")} labelFn={labelArmy} />
       </ExtractionSection>
       <ExtractionSection title="新建军队">
         <NewArmiesBlock data={pickField(out, "新建军队", "new_armies")} />
       </ExtractionSection>
       <ExtractionSection title="势力变化">
-        <GenericKVBlock data={pickField(out, "势力变化", "power_updates")} />
+        <EntityDeltaBlock data={pickField(out, "势力变化", "power_updates")} labelFn={labelPower} />
       </ExtractionSection>
       <ExtractionSection title="财政系数">
         <FiscalBlock data={pickField(out, "财政制度变化", "fiscal_changes")} />
       </ExtractionSection>
       <ExtractionSection title="外交关系">
-        <GenericKVBlock data={pickField(out, "外交关系", "world_advance") ?? pickField(out, "外交", "world_advance") ?? pickField(out, "外交态度", "world_advance") ?? pickField(out, "四方动向", "world_advance")} />
+        <DiplomacyBlock data={pickField(out, "外交关系", "world_advance") ?? pickField(out, "外交", "world_advance") ?? pickField(out, "外交态度", "world_advance") ?? pickField(out, "四方动向", "world_advance")} />
+      </ExtractionSection>
+      <ExtractionSection title="密令副作用">
+        <SecretSideBlock data={pickField(out, "密令副作用", "secret_order_updates")} />
+      </ExtractionSection>
+      <ExtractionSection title="密令核议">
+        <SecretCloseBlock data={pickField(out, "密令结案", "secret_order_closes")} />
       </ExtractionSection>
     </div>
   );
@@ -3035,7 +3087,7 @@ function FactionBlock({ data }: { data: any }) {
           return (
             <li key={k}>
               <span>{k}</span>
-              <b>{Object.entries(v).map(([kk, vv]) => `${kk}${fmtDelta(vv)}`).join("  ")}</b>
+              <b>{Object.entries(v).map(([kk, vv]) => `${SAT_LEV_CN[kk] || kk}${fmtDelta(vv)}`).join("  ")}</b>
             </li>
           );
         }
@@ -3052,7 +3104,7 @@ function IssueAdvancesBlock({ data }: { data: any }) {
       {data.map((it: any, i: number) => (
         <li key={i}>
           <b className={Number(pickItem(it, "进度增量", "delta_bar")) >= 0 ? "good" : "bad"}>
-            #{pickItem(it, "局势编号", "issue_id")} 进度 {fmtDelta(pickItem(it, "进度增量", "delta_bar"))}
+            {labelIssue(pickItem(it, "局势编号", "issue_id"))} 进度 {fmtDelta(pickItem(it, "进度增量", "delta_bar"))}
             {pickItem(it, "惯性增量", "inertia_delta") ? `，惯性 ${fmtDelta(pickItem(it, "惯性增量", "inertia_delta"))}` : ""}
           </b>
           {pickItem(it, "阶段", "stage_text") ? <span>{pickItem(it, "阶段", "stage_text")}</span> : null}
@@ -3069,7 +3121,7 @@ function NewIssuesBlock({ data }: { data: any }) {
     <ul className="extraction-list">
       {data.map((it: any, i: number) => (
         <li key={i}>
-          <b>{pickItem(it, "标题", "title") || pickItem(it, "编号", "id") || "新事项"}（{pickItem(it, "类型", "kind") || pickItem(it, "来源类型", "origin_kind") || ""}）</b>
+          <b>{pickItem(it, "标题", "title") || pickItem(it, "编号", "id") || "新事项"}（{cnValue(pickItem(it, "类型", "kind") || pickItem(it, "来源类型", "origin_kind") || "")}）</b>
           {pickItem(it, "阶段", "stage_text") ? <span>{pickItem(it, "阶段", "stage_text")}</span> : null}
         </li>
       ))}
@@ -3084,7 +3136,7 @@ function CloseIssuesBlock({ data }: { data: any }) {
       {data.map((it: any, i: number) => (
         <li key={i}>
           <b className={pickItem(it, "原因", "reason") === "resolved" ? "good" : "bad"}>
-            #{pickItem(it, "局势编号", "issue_id")} {pickItem(it, "原因", "reason") === "resolved" ? "结案" : "失败"}
+            {labelIssue(pickItem(it, "局势编号", "issue_id"))} {pickItem(it, "原因", "reason") === "resolved" ? "结案" : "失败"}
           </b>
           {pickItem(it, "叙述", "narrative") ? <span>{pickItem(it, "叙述", "narrative")}</span> : null}
         </li>
@@ -3099,7 +3151,7 @@ function CancelsBlock({ data }: { data: any }) {
     <ul className="extraction-list">
       {data.map((it: any, i: number) => (
         <li key={i}>
-          <b>#{pickItem(it, "局势编号", "issue_id")} 撤旨</b>
+          <b>{labelIssue(pickItem(it, "局势编号", "issue_id"))} 撤旨</b>
           {pickItem(it, "叙述", "narrative") ? <span>{pickItem(it, "叙述", "narrative")}</span> : null}
         </li>
       ))}
@@ -3180,9 +3232,126 @@ function FiscalBlock({ data }: { data: any }) {
   );
 }
 
-function GenericKVBlock({ data }: { data: any }) {
-  if (isEmptyData(data)) return <p className="extraction-empty">无</p>;
-  return <pre className="extraction-json">{JSON.stringify(data, null, 2)}</pre>;
+// 一个字段值渲染成可读串：数字带正负号，文字直接显示（英文枚举翻中文）。
+function fmtFieldVal(v: any): { text: string; tone: string } {
+  if (typeof v === "number") return { text: fmtDelta(v), tone: v >= 0 ? "good" : "bad" };
+  const n = Number(v);
+  if (v !== "" && v != null && Number.isFinite(n) && String(v).trim() !== "" && !isNaN(n) && /^-?\d+$/.test(String(v).trim())) {
+    return { text: fmtDelta(n), tone: n >= 0 ? "good" : "bad" };
+  }
+  return { text: cnValue(v), tone: "" };
+}
+
+// 地区/军队/势力变化：外层 key=实体 id（翻中文名），内层=字段→增量/新值。
+function EntityDeltaBlock({ data, labelFn }: { data: any; labelFn: (id: any) => string }) {
+  if (isEmptyData(data) || typeof data !== "object" || Array.isArray(data)) return <p className="extraction-empty">无</p>;
+  return (
+    <ul className="extraction-list">
+      {Object.entries(data).map(([id, fields]: [string, any]) => (
+        <li key={id}>
+          <b>{labelFn(id)}</b>
+          {fields && typeof fields === "object" && !Array.isArray(fields) ? (
+            <span className="extraction-fieldline">
+              {Object.entries(fields).map(([fk, fv]) => {
+                const { text, tone } = fmtFieldVal(fv);
+                return <em key={fk} className={tone}>{fk} {text}</em>;
+              })}
+            </span>
+          ) : (
+            <span>{cnValue(fields)}</span>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// 外交关系：key=势力 id（翻中文名），value=态度字符串。
+function DiplomacyBlock({ data }: { data: any }) {
+  if (isEmptyData(data) || typeof data !== "object" || Array.isArray(data)) return <p className="extraction-empty">无</p>;
+  return (
+    <ul className="extraction-kv">
+      {Object.entries(data).map(([id, stance]: [string, any]) => (
+        <li key={id}><span>{labelPower(id)}</span><b>{cnValue(stance)}</b></li>
+      ))}
+    </ul>
+  );
+}
+
+// 阶级变化：key=阶级名 或 阶级@region_id；region 后缀翻中文名。value={满意,影响力} 增量。
+const SAT_LEV_CN: Record<string, string> = { satisfaction: "满意", leverage: "影响力", 满意: "满意", 影响力: "影响力" };
+function labelClass(key: string): string {
+  const at = key.indexOf("@");
+  if (at < 0) return key;
+  return `${key.slice(0, at)}（${labelRegion(key.slice(at + 1))}）`;
+}
+function ClassDeltaBlock({ data }: { data: any }) {
+  if (isEmptyData(data) || typeof data !== "object" || Array.isArray(data)) return <p className="extraction-empty">无</p>;
+  return (
+    <ul className="extraction-kv">
+      {Object.entries(data).map(([k, v]: [string, any]) => {
+        if (v && typeof v === "object") {
+          return (
+            <li key={k}>
+              <span>{labelClass(k)}</span>
+              <b>{Object.entries(v).map(([kk, vv]) => `${SAT_LEV_CN[kk] || kk}${fmtDelta(vv)}`).join("  ")}</b>
+            </li>
+          );
+        }
+        return <li key={k}><span>{labelClass(k)}</span><b className={Number(v) >= 0 ? "good" : "bad"}>{fmtDelta(v)}</b></li>;
+      })}
+    </ul>
+  );
+}
+
+// 人物易主：姓名 → 新势力（翻中文名）。
+function PowerChangesBlock({ data }: { data: any }) {
+  if (isEmptyData(data) || !Array.isArray(data)) return <p className="extraction-empty">无</p>;
+  return (
+    <ul className="extraction-list">
+      {data.map((it: any, i: number) => (
+        <li key={i}>
+          <b>{pickItem(it, "姓名", "name")} → {labelPower(pickItem(it, "new_power", "new_power"))}</b>
+          {pickItem(it, "reason", "reason") || pickItem(it, "原因", "reason") ? <span>{pickItem(it, "reason", "reason") || pickItem(it, "原因", "reason")}</span> : null}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// 密令副作用：active 密令的推演副作用。
+function SecretSideBlock({ data }: { data: any }) {
+  if (isEmptyData(data) || !Array.isArray(data)) return <p className="extraction-empty">无</p>;
+  return (
+    <ul className="extraction-list">
+      {data.map((it: any, i: number) => (
+        <li key={i}>
+          <b>密令 #{pickItem(it, "密令编号", "order_id")}</b>
+          <span>{pickItem(it, "推演备注", "sim_note") || ""}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// 密令核议：pending_review 密令结案判定。
+function SecretCloseBlock({ data }: { data: any }) {
+  if (isEmptyData(data) || !Array.isArray(data)) return <p className="extraction-empty">无</p>;
+  return (
+    <ul className="extraction-list">
+      {data.map((it: any, i: number) => {
+        const st = pickItem(it, "状态", "status");
+        return (
+          <li key={i}>
+            <b className={st === "done" ? "good" : "bad"}>
+              密令 #{pickItem(it, "密令编号", "order_id")} {st === "done" ? "办结" : "失败"}
+            </b>
+            <span>{pickItem(it, "结果", "result") || ""}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
 }
 
 function NewArmiesBlock({ data }: { data: any }) {
@@ -3191,7 +3360,7 @@ function NewArmiesBlock({ data }: { data: any }) {
     <ul className="extraction-list">
       {data.map((item: any, i: number) => {
         const name = pickItem(item, "名称", "name") || pickItem(item, "编号", "id") || "?";
-        const owner = pickItem(item, "归属", "owner_power") || "?";
+        const owner = labelPower(pickItem(item, "归属", "owner_power")) || "?";
         const manpower = pickItem(item, "人数", "manpower");
         const station = pickItem(item, "驻扎地", "station") || "";
         const commander = pickItem(item, "统将", "commander") || "";
