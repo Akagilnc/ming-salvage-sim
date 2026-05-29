@@ -2662,6 +2662,19 @@ button:disabled {
   font-weight: 700;
 }
 
+.situation-group + .situation-group {
+  margin-top: 12px;
+}
+
+.situation-group-title {
+  font-size: 12px;
+  letter-spacing: 2px;
+  color: rgba(214, 191, 142, 0.78);
+  margin: 0 0 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(214, 191, 142, 0.18);
+}
+
 .situation-list {
   display: flex;
   flex-direction: column;

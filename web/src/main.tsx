@@ -3664,10 +3664,14 @@ function SituationPanel({ issues, closedIssues }: { issues: Issue[]; closedIssue
   const active = issues.filter((issue) => issue.kind === "situation" || issue.kind === "initiative");
   const [collapsed, setCollapsed] = React.useState(false);
   if (!active.length && !closedIssues.length) return null;
-  active.sort((a, b) => {
+  const bySeq = (a: Issue, b: Issue) => {
     if (a.kind !== b.kind) return a.kind === "initiative" ? -1 : 1;
     return a.id - b.id;
-  });
+  };
+  // 长期局势＝贯穿一朝的大计（甲申国亡前不结案），靠 fail_condition 文案判定，纯前端分组。
+  const isLongTerm = (issue: Issue) => /甲申|贯穿一朝|倾国之大计/.test(issue.fail_condition || "");
+  const longTerm = active.filter(isLongTerm).sort(bySeq);
+  const nearTerm = active.filter((i) => !isLongTerm(i)).sort(bySeq);
   return (
     <aside className={`situation-panel ${collapsed ? "collapsed" : ""}`} aria-label="局势进度">
       <div className="situation-panel-title">
@@ -3692,49 +3696,66 @@ function SituationPanel({ issues, closedIssues }: { issues: Issue[]; closedIssue
           ))}
         </div>
       ) : null}
-      {!collapsed && <div className="situation-list">
-        {active.map((issue) => (
-          <div className={`situation-row ${issueTone(issue.bar_value)}`} key={issue.id} tabIndex={0}>
-            <div className="situation-row-head">
-              <span className="situation-name">{issue.title}</span>
-              <b>{issue.bar_value}</b>
-            </div>
-            <div className="situation-bar">
-              <i style={{ width: `${Math.max(0, Math.min(100, issue.bar_value))}%` }} />
-            </div>
-            <div className="situation-tip" role="tooltip">
-              <div className="situation-tip-head">#{issue.id} {issue.title}</div>
-              <div className="situation-tip-row"><span>阶段</span><b>{issue.phase}</b></div>
-              <div className="situation-tip-row"><span>进度</span><b>{issue.bar_value} / 100</b></div>
-              <div className="situation-tip-row">
-                <span>月度推进</span>
-                <b>{issue.inertia > 0 ? `+${issue.inertia}` : issue.inertia}/月</b>
-              </div>
-              <div className="situation-tip-row">
-                <span>当前影响</span>
-                <b>{issue.ongoing_text || "无"}</b>
-              </div>
-              <p className="situation-tip-stage">{issue.stage_text}</p>
-              <div className="situation-tip-outcome good">
-                <div className="situation-tip-outcome-head">达成（{issue.bar_good_meaning}）</div>
-                {issue.resolve_condition && <p>{issue.resolve_condition}</p>}
-                <div className="situation-tip-effect">{formatIssueEffect(issue.effect_on_resolve)}</div>
-              </div>
-              <div className="situation-tip-outcome bad">
-                <div className="situation-tip-outcome-head">失败（{issue.bar_bad_meaning}）</div>
-                {issue.fail_condition && <p>{issue.fail_condition}</p>}
-                <div className="situation-tip-effect">{formatIssueEffect(issue.effect_on_fail)}</div>
-              </div>
-              {issue.tags.length ? (
-                <div className="situation-tip-tags">
-                  {issue.tags.map((tag) => <small key={tag}>{tag}</small>)}
-                </div>
-              ) : null}
-            </div>
+      {!collapsed && (longTerm.length ? (
+        <div className="situation-group">
+          <div className="situation-group-title">长期局势</div>
+          <div className="situation-list">
+            {longTerm.map((issue) => <SituationRow key={issue.id} issue={issue} />)}
           </div>
-        ))}
-      </div>}
+        </div>
+      ) : null)}
+      {!collapsed && (nearTerm.length ? (
+        <div className="situation-group">
+          <div className="situation-group-title">近期局势</div>
+          <div className="situation-list">
+            {nearTerm.map((issue) => <SituationRow key={issue.id} issue={issue} />)}
+          </div>
+        </div>
+      ) : null)}
     </aside>
+  );
+}
+
+function SituationRow({ issue }: { issue: Issue }) {
+  return (
+    <div className={`situation-row ${issueTone(issue.bar_value)}`} tabIndex={0}>
+      <div className="situation-row-head">
+        <span className="situation-name">{issue.title}</span>
+        <b>{issue.bar_value}</b>
+      </div>
+      <div className="situation-bar">
+        <i style={{ width: `${Math.max(0, Math.min(100, issue.bar_value))}%` }} />
+      </div>
+      <div className="situation-tip" role="tooltip">
+        <div className="situation-tip-head">#{issue.id} {issue.title}</div>
+        <div className="situation-tip-row"><span>阶段</span><b>{issue.phase}</b></div>
+        <div className="situation-tip-row"><span>进度</span><b>{issue.bar_value} / 100</b></div>
+        <div className="situation-tip-row">
+          <span>月度推进</span>
+          <b>{issue.inertia > 0 ? `+${issue.inertia}` : issue.inertia}/月</b>
+        </div>
+        <div className="situation-tip-row">
+          <span>当前影响</span>
+          <b>{issue.ongoing_text || "无"}</b>
+        </div>
+        <p className="situation-tip-stage">{issue.stage_text}</p>
+        <div className="situation-tip-outcome good">
+          <div className="situation-tip-outcome-head">达成（{issue.bar_good_meaning}）</div>
+          {issue.resolve_condition && <p>{issue.resolve_condition}</p>}
+          <div className="situation-tip-effect">{formatIssueEffect(issue.effect_on_resolve)}</div>
+        </div>
+        <div className="situation-tip-outcome bad">
+          <div className="situation-tip-outcome-head">失败（{issue.bar_bad_meaning}）</div>
+          {issue.fail_condition && <p>{issue.fail_condition}</p>}
+          <div className="situation-tip-effect">{formatIssueEffect(issue.effect_on_fail)}</div>
+        </div>
+        {issue.tags.length ? (
+          <div className="situation-tip-tags">
+            {issue.tags.map((tag) => <small key={tag}>{tag}</small>)}
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
