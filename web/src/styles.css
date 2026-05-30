@@ -1574,6 +1574,66 @@ select:focus-visible {
   color: #1a1410;
 }
 
+.ending-verdict-title {
+  font-family: var(--font-brush), "ZCOOL XiaoWei", serif;
+  font-size: 1.18rem;
+  color: #6f1f18;
+  margin: 0 0 14px;
+  border-bottom: 1px solid rgba(111, 31, 24, 0.3);
+  padding-bottom: 8px;
+}
+
+.ending-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ending-timeline-item {
+  display: flex;
+  gap: 16px;
+  padding: 10px 0;
+  border-bottom: 1px dashed rgba(111, 83, 46, 0.25);
+}
+
+.ending-timeline-item:last-child {
+  border-bottom: none;
+}
+
+.ending-timeline-date {
+  flex: 0 0 84px;
+  font-family: var(--font-brush), "ZCOOL XiaoWei", serif;
+  font-size: 1rem;
+  color: #6f1f18;
+  white-space: nowrap;
+}
+
+.ending-timeline-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ending-timeline-body p {
+  margin: 0 0 4px;
+  line-height: 1.7;
+  word-break: break-word;
+}
+
+.ending-timeline-chapter {
+  color: #1a1410;
+  font-size: 1rem;
+}
+
+.ending-timeline-decree {
+  color: #4a3a26;
+  font-size: 0.9rem;
+}
+
+.ending-timeline-effect {
+  color: #315d47;
+  font-size: 0.9rem;
+}
+
 .summary-table {
   width: 100%;
   border-collapse: collapse;

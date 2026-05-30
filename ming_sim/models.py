@@ -216,6 +216,8 @@ class GameState:
     period: int = 10
     turn: int = 1
     turn_phase: str = "summoning"  # summoning | reviewing | issued —— 见 session.TurnPhase
+    ended: bool = False  # 结局已触发：游戏终结，拒绝继续召见/结算
+    ending_status: str = ""  # 结局类型（context.ENDING_*），ended=True 时有值
     metrics: Dict[str, int] = field(
         default_factory=lambda: {
             "国库": 320,

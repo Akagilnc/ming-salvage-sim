@@ -454,6 +454,16 @@ def run_cli(
         print(f"数据库：{db_path}\n")
         while True:
             play_turn(session)
+            if session.state.ended:
+                from ming_sim.context import ENDING_LABELS
+                label = ENDING_LABELS.get(session.state.ending_status, "结局")
+                print(f"\n══════════ 结局·{label} ══════════")
+                ending = session.db.get_ending_summary()
+                if ending and ending.get("summary"):
+                    print(ending["summary"])
+                print("\n（本局已终结。）")
+                input("\n按回车退出游戏：")
+                break
             raw = input(f"\n按回车继续下一{TURN_UNIT}，或输入 exit 退出游戏：").strip()
             if raw.lower() in EXIT_COMMANDS:
                 break

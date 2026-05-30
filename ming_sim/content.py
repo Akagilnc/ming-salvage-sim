@@ -444,8 +444,8 @@ class GameContent:
     score_extractor_prompt: str = ""
     score_extractor_shared_prompt: str = ""
     score_extractor_module_prompts: Dict[str, str] = field(default_factory=dict)
-    memory_extractor_prompt: str = ""
-    chat_memory_extractor_prompt: str = ""
+    chapter_memory_prompt: str = ""
+    ending_summary_prompt: str = ""
 
     @classmethod
     def load(cls) -> "GameContent":
@@ -507,6 +507,6 @@ class GameContent:
                 "issues": load_text_asset("prompts/score_extractor_issues.md"),
                 "personnel_secret": load_text_asset("prompts/score_extractor_personnel_secret.md"),
             },
-            memory_extractor_prompt=load_text_asset("prompts/memory_extractor.md"),
-            chat_memory_extractor_prompt=load_text_asset("prompts/chat_memory_extractor.md"),
+            chapter_memory_prompt=load_text_asset("prompts/chapter_memory.md"),
+            ending_summary_prompt=load_text_asset("prompts/ending_summary.md"),
         )

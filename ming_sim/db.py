@@ -670,6 +670,9 @@ class GameDB:
         self.ensure_column("characters", "aliases", "TEXT NOT NULL DEFAULT '[]'")
         # 步骤7：回合阶段（旧库迁移，schema 升级非 fallback）
         self.ensure_column("game_state", "turn_phase", "TEXT NOT NULL DEFAULT 'summoning'")
+        # 结局：ended=1 时游戏终结；ending_status 为 context.ENDING_* 类型。
+        self.ensure_column("game_state", "ended", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column("game_state", "ending_status", "TEXT NOT NULL DEFAULT ''")
         # 密令推演副作用列（result 留给承办人进展，sim_note 给推演写泄漏/反弹，互不覆盖）
         self.ensure_column("secret_orders", "sim_note", "TEXT NOT NULL DEFAULT ''")
         # 密令期限：0=无硬期限；到 due_turn 时自动转入待核议，由推演当月判 done/failed。
@@ -682,6 +685,8 @@ class GameDB:
         # 开局负面帝国修正：clear_gate(机器消除条件)、legacy_key(对应 opening_legacies.key，开局修正去重用)
         self.ensure_column("legacies", "clear_gate", "TEXT NOT NULL DEFAULT '{}'")
         self.ensure_column("legacies", "legacy_key", "TEXT NOT NULL DEFAULT ''")
+        # 章节记忆正文：event_type='chapter_summary' 用，存整段叙事章节（不受 outcome 80 字限）。
+        self.ensure_column("event_memories", "body", "TEXT NOT NULL DEFAULT ''")
         # 后宫调教记录
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS consort_traits (
@@ -690,6 +695,18 @@ class GameDB:
                 extra_traits TEXT NOT NULL DEFAULT '',
                 updated_turn INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        # 结局总结：每局结局触发时落一条（单 campaign 一库，turn 为主键，对齐 turn_reports）。
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS ending_summary (
+                turn INTEGER PRIMARY KEY,
+                year INTEGER NOT NULL,
+                period INTEGER NOT NULL,
+                ending_status TEXT NOT NULL,
+                summary TEXT NOT NULL DEFAULT '',
+                timeline TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
         self.conn.commit()
@@ -1036,12 +1053,16 @@ class GameDB:
     def save_state(self, state: GameState) -> None:
         self.conn.execute(
             """
-            INSERT INTO game_state (id, year, period, turn, turn_phase)
-            VALUES (1, ?, ?, ?, ?)
+            INSERT INTO game_state (id, year, period, turn, turn_phase, ended, ending_status)
+            VALUES (1, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET year = excluded.year, period = excluded.period,
-                turn = excluded.turn, turn_phase = excluded.turn_phase
+                turn = excluded.turn, turn_phase = excluded.turn_phase,
+                ended = excluded.ended, ending_status = excluded.ending_status
             """,
-            (state.year, state.period, state.turn, state.turn_phase),
+            (
+                state.year, state.period, state.turn, state.turn_phase,
+                1 if state.ended else 0, state.ending_status,
+            ),
         )
         for key, value in state.metrics.items():
             self.conn.execute(
@@ -1056,7 +1077,9 @@ class GameDB:
         self.conn.commit()
 
     def load_state(self, start_ym: str = "") -> GameState:
-        row = self.conn.execute("SELECT year, period, turn, turn_phase FROM game_state WHERE id = 1").fetchone()
+        row = self.conn.execute(
+            "SELECT year, period, turn, turn_phase, ended, ending_status FROM game_state WHERE id = 1"
+        ).fetchone()
         if row is None:
             state = GameState()
             if start_ym:
@@ -1082,6 +1105,8 @@ class GameDB:
         state = GameState(
             year=int(row["year"]), period=int(row["period"]), turn=int(row["turn"]),
             turn_phase=str(row["turn_phase"] or "summoning"),
+            ended=bool(row["ended"]) if "ended" in row.keys() else False,
+            ending_status=str(row["ending_status"] or "") if "ending_status" in row.keys() else "",
         )
         if metrics:
             # 只接当前 GameState 默认 dict 里有的 key，避免旧 DB 残留废弃 metric 灌入。
@@ -3459,6 +3484,104 @@ class GameDB:
             (turn,),
         ).fetchone()
         return (row["report"] if row else "") or ""
+
+    # ── 章节记忆（event_memories 的 chapter_summary 类，每回合一条，importance=5 永久）──
+
+    def save_chapter_memory(self, state: GameState, title: str, body: str) -> int:
+        """落本回合章节记忆。subject 固定 court/chapter，event_type=chapter_summary，
+        source_id=turn 保证每回合唯一。body 存整段叙事章节（不受 outcome 80 字限）。"""
+        memory_id = self.upsert_event_memory(
+            state,
+            subject_type="court",
+            subject_id="chapter",
+            event_type="chapter_summary",
+            title=str(title or f"崇祯{state.year}年{state.period}月")[:40],
+            outcome=str(title or "")[:80],
+            sentiment="neutral",
+            importance=5,
+            tags=["章节", f"turn{state.turn}"],
+            source_kind="turn_report",
+            source_id=str(state.turn),
+            expires_turn=None,
+        )
+        if memory_id:
+            self.conn.execute(
+                "UPDATE event_memories SET body = ? WHERE id = ?",
+                (str(body or ""), memory_id),
+            )
+            self.conn.commit()
+        return memory_id
+
+    def list_chapter_memories(
+        self, upto_turn: Optional[int] = None, recent: Optional[int] = None
+    ) -> List[Dict[str, object]]:
+        """取章节记忆，按 turn 升序。upto_turn 限上界；recent 只取最近 N 回合（喂大臣/推演用）。"""
+        clauses = ["event_type = 'chapter_summary'"]
+        params: list = []
+        if upto_turn is not None:
+            clauses.append("turn <= ?")
+            params.append(int(upto_turn))
+        if recent is not None and upto_turn is not None:
+            clauses.append("turn >= ?")
+            params.append(max(1, int(upto_turn) - int(recent) + 1))
+        where = " AND ".join(clauses)
+        rows = self.conn.execute(
+            f"SELECT turn, year, period, title, body FROM event_memories "
+            f"WHERE {where} ORDER BY turn ASC",
+            params,
+        ).fetchall()
+        return [
+            {
+                "turn": int(r["turn"]),
+                "year": int(r["year"]),
+                "period": int(r["period"]),
+                "title": r["title"] or "",
+                "body": r["body"] or "",
+            }
+            for r in rows
+        ]
+
+    # ── 结局总结 ──
+
+    def save_ending_summary(
+        self, state: GameState, ending_status: str, summary: str, timeline: List[Dict[str, object]]
+    ) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO ending_summary (turn, year, period, ending_status, summary, timeline)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(turn) DO UPDATE SET
+                year = excluded.year, period = excluded.period,
+                ending_status = excluded.ending_status,
+                summary = excluded.summary, timeline = excluded.timeline
+            """,
+            (
+                state.turn, state.year, state.period, str(ending_status or ""),
+                str(summary or ""), json.dumps(timeline or [], ensure_ascii=False),
+            ),
+        )
+        self.conn.commit()
+
+    def get_ending_summary(self) -> Optional[Dict[str, object]]:
+        """取最近一条结局总结（单库一局，按 turn 取最大）。无则 None。"""
+        row = self.conn.execute(
+            "SELECT turn, year, period, ending_status, summary, timeline "
+            "FROM ending_summary ORDER BY turn DESC LIMIT 1"
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            timeline = json.loads(row["timeline"] or "[]")
+        except Exception:
+            timeline = []
+        return {
+            "turn": int(row["turn"]),
+            "year": int(row["year"]),
+            "period": int(row["period"]),
+            "ending_status": row["ending_status"],
+            "summary": row["summary"] or "",
+            "timeline": timeline,
+        }
 
     def list_archived_turns(self) -> List[Dict[str, object]]:
         """所有已存档回合（turn_reports/turn_extractions/turn_directives 任一有数据）。

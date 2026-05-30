@@ -245,45 +245,6 @@ def create_decree_writer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agen
     )
 
 
-_MEMORY_RETRIEVAL_PROMPT = (
-    "你是记忆检索助手。从给定文本（诏书、对话、奏报均可）中提取关键实体、操作词与时间信息，用于检索历史记忆。\n"
-    "输出严格 JSON，不加任何解释：\n"
-    "{\n"
-    '  "characters": ["人名", ...],\n'
-    '  "regions": ["地名/省份", ...],\n'
-    '  "armies": ["军队名", ...],\n'
-    '  "powers": ["势力名", ...],\n'
-    '  "keywords": ["核心动词或操作名词或钱粮科目", ...],\n'
-    '  "year": 1628,\n'
-    '  "period": 3\n'
-    "}\n"
-    "规则：只提取文本中实际出现的词；keywords 限 5 个以内最核心的；所有列表可为空数组。\n"
-    "year/period：仅当文本明确提及具体年份或月份时填写（如「崇祯元年三月」→ year=1628, period=3）；"
-    "无明确时间则两字段均不输出或填 null。"
-)
-
-
-def create_memory_retrieval_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
-    """从诏书提取实体词用于记忆检索；低温、无 tool、输出纯 JSON。"""
-    return Agent(
-        name="记忆检索员",
-        id="memory-retrieval",
-        session_id="memory-retrieval",
-        db=agno_db,
-        model=create_chat_model(
-            llm_config,
-            temperature=0.0,
-            top_p=0.7,
-            max_tokens=max(400, llm_config.max_tokens),
-            enable_thinking=False,
-            force_json_output=True,
-        ),
-        instructions=[_MEMORY_RETRIEVAL_PROMPT],
-        add_history_to_context=False,
-        markdown=False,
-    )
-
-
 def build_simulator_context(simulator_payload: Optional[Dict[str, object]]) -> str:
     """拼 simulator/extractor 共用的盘面前缀段（turn_header + payload JSON）。
 
@@ -428,45 +389,43 @@ def create_json_sanitizer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Age
     )
 
 
-def create_chat_memory_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
-    """从当月召对聊天提取承诺/建议/情报摘要，写入 event_memory（source_kind=chat_message）。"""
+def create_chapter_memory_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
+    """章节记忆：把本回合诏书+邸报+落库效果浓缩成一段叙事章节（纯文本，非 JSON）。"""
     ctx = _ctx()
     return Agent(
-        name="对话记忆档房",
-        id="chat-memory-extractor",
-        session_id="chat-memory-extractor",
+        name="起居注史官",
+        id="chapter-memory",
+        session_id="chapter-memory",
         db=agno_db,
         model=create_chat_model(
             llm_config,
-            temperature=0.1,
-            top_p=0.7,
-            max_tokens=max(1500, llm_config.max_tokens),
+            temperature=0.5,
+            top_p=0.85,
+            max_tokens=max(1200, llm_config.max_tokens),
             enable_thinking=False,
-            force_json_output=True,
         ),
-        instructions=[ctx.game_world_prompt, ctx.chat_memory_extractor_prompt],
+        instructions=[ctx.game_world_prompt, ctx.chapter_memory_prompt],
         add_history_to_context=False,
         markdown=False,
     )
 
 
-def create_memory_extractor_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
-    """从本月诏书+邸报+落库结果提取人物/势力/地区/军队事件记忆。"""
+def create_ending_summary_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
+    """国史编纂官：读全程章节记忆 + 结局类型，生成史评式结局总结（纯文本流式）。"""
     ctx = _ctx()
     return Agent(
-        name="事件记忆档房",
-        id="memory-extractor",
-        session_id="memory-extractor",
+        name="国史编纂官",
+        id="ending-summary",
+        session_id="ending-summary",
         db=agno_db,
         model=create_chat_model(
             llm_config,
-            temperature=0.1,
-            top_p=0.7,
-            max_tokens=max(2000, llm_config.max_tokens),
-            enable_thinking=False,
-            force_json_output=True,
+            temperature=0.6,
+            top_p=0.9,
+            max_tokens=max(2400, llm_config.max_tokens),
+            enable_thinking=True,
         ),
-        instructions=[ctx.game_world_prompt, ctx.memory_extractor_prompt],
+        instructions=[ctx.game_world_prompt, ctx.ending_summary_prompt],
         add_history_to_context=False,
         markdown=False,
     )

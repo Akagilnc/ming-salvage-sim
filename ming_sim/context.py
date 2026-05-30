@@ -55,66 +55,46 @@ def historical_anchor_for_month(year: int, month: int) -> Dict[str, object]:
     }
 
 
-def victory_status(db: GameDB, state: GameState) -> Dict[str, object]:
-    """胜负判定：用 powers / armies / regions / classes 直接数据。
-    - 后金综合 = leverage + military_strength + cohesion + supply
-    - 明辽东防线综合 = 按 owner_power='ming' AND theater='辽东' 聚合所有官军(morale+supply+training+equipment-arrears_norm) + (100 - beizhili.military_pressure)
-      其中 arrears_norm = min(100, arrears * 10 / maintenance_per_turn)，把累计欠饷万两归一到 0-100 量级（10 月军饷欠 ≈ 100）。
-    - 北方民变综合 = 陕晋豫三省 unrest 平均；农民阶级三省 sat 平均（低=惨）
-    """
-    houjin = db.conn.execute("SELECT * FROM powers WHERE id = 'houjin'").fetchone()
-    if houjin is None:
-        return {"status": "ongoing", "summary": "后金未建档。"}
-    treasury = int(state.metrics.get("国库", 0))
-    beizhili = db.conn.execute("SELECT * FROM regions WHERE id = 'beizhili'").fetchone()
-    houjin_power = int(houjin["leverage"]) + int(houjin["military_strength"]) + int(houjin["cohesion"]) + int(houjin["supply"])
-    # arrears 是累计欠饷万两，须按 maintenance 归一成 0-100 量级再扣
-    front_row = db.conn.execute(
-        "SELECT COALESCE(SUM("
-        "  morale + supply + training + equipment"
-        "  - (CASE "
-        "       WHEN maintenance_per_turn IS NULL OR maintenance_per_turn = 0 THEN 0 "
-        "       WHEN arrears * 10 / maintenance_per_turn > 100 THEN 100 "
-        "       ELSE arrears * 10 / maintenance_per_turn "
-        "     END)"
-        "), 0) AS s "
-        "FROM armies WHERE owner_power = 'ming' AND theater = '辽东'"
-    ).fetchone()
-    ming_front = int(front_row["s"]) if front_row else 0
-    if beizhili:
-        ming_front += max(0, 100 - int(beizhili["military_pressure"]))
-    # 京畿压力 = beizhili.military_pressure（高=后金兵临城下）
-    beizhili_pressure = int(beizhili["military_pressure"]) if beizhili else 0
-    # 北方三省民变综合
-    north_rows = db.conn.execute(
-        "SELECT unrest FROM regions WHERE id IN ('shaanxi','shanxi','henan')"
-    ).fetchall()
-    north_unrest_avg = sum(int(r["unrest"]) for r in north_rows) // max(1, len(north_rows)) if north_rows else 0
-    # 北方三省农民阶级 sat
-    peasant_rows = db.conn.execute(
-        "SELECT satisfaction FROM classes WHERE name='农民' AND region_id IN ('shaanxi','shanxi','henan')"
-    ).fetchall()
-    peasant_sat_avg = sum(int(r["satisfaction"]) for r in peasant_rows) // max(1, len(peasant_rows)) if peasant_rows else 50
+# 结局类型枚举（CLI/Web/总结 agent 共用）。
+# - ongoing：未决
+# - capital_fallen：京师失守（beizhili 易主非 ming）——数值型，本函数判
+# - emperor_abdicate / emperor_suicide：崇祯退位/自尽——叙事型，由 extractor 抽 emperor_fate 后
+#   写入 applied["victory_status"]，不在本函数判
+# - timeout：20 年到期（turn>=240）强制收尾——由 decree 结局收口判，不在本函数判
+ENDING_ONGOING = "ongoing"
+ENDING_CAPITAL_FALLEN = "capital_fallen"
+ENDING_EMPEROR_ABDICATE = "emperor_abdicate"
+ENDING_EMPEROR_SUICIDE = "emperor_suicide"
+ENDING_TIMEOUT = "timeout"
 
-    if (houjin_power <= 120 and ming_front >= 300 and beizhili_pressure <= 35) or (houjin_power <= 80 and ming_front >= 340):
+# 五态结局的定调文案（前端弹窗标题/CLI 打印用）。ongoing 不入此表。
+ENDING_LABELS: Dict[str, str] = {
+    ENDING_CAPITAL_FALLEN: "京师陷落",
+    ENDING_EMPEROR_ABDICATE: "崇祯逊位",
+    ENDING_EMPEROR_SUICIDE: "崇祯殉国",
+    ENDING_TIMEOUT: "二十载尘埃落定",
+}
+
+
+def victory_status(db: GameDB, state: GameState) -> Dict[str, object]:
+    """结局判定（数值型部分）：本函数只判「京师失守」。
+
+    退位/自尽走 extractor 的 emperor_fate（叙事型，见 issues.apply_score_extraction），
+    20 年到期走 decree 结局收口（turn>=240），均不在此判。其余一律 ongoing。
+    京畿 = beizhili，控制权字段 controlled_by（FK powers）；非 'ming' 即京师失守。
+    """
+    beizhili = db.conn.execute("SELECT * FROM regions WHERE id = 'beizhili'").fetchone()
+    if beizhili is not None and str(beizhili["controlled_by"]) != "ming":
+        holder_id = str(beizhili["controlled_by"])
+        holder = db.conn.execute(
+            "SELECT name FROM powers WHERE id = ?", (holder_id,)
+        ).fetchone()
+        holder_name = str(holder["name"]) if holder else holder_id
         return {
-            "status": "ming_victory",
-            "summary": "后金兵势、内聚与粮饷已被压到低位，关宁与山海关形成稳定优势，辽东威胁被解除。",
+            "status": ENDING_CAPITAL_FALLEN,
+            "summary": f"京师失守，{holder_name}入主北京，社稷倾覆，大明失其神器。",
         }
-    if int(houjin["leverage"]) >= 92 and int(houjin["military_strength"]) >= 82 and beizhili_pressure >= 85:
-        return {
-            "status": "qing_victory",
-            "summary": "后金/清兵势压倒辽东与京畿，京畿告急，大明已失去扭转清势的窗口。",
-        }
-    if treasury <= 0 and north_unrest_avg >= 85 and peasant_sat_avg <= 12 and beizhili_pressure >= 70:
-        return {
-            "status": "qing_victory",
-            "summary": "国库断绝、陕晋豫三省民变与辽东边患同涨，大明无力同时支撑内剿与辽东防线。",
-        }
-    return {
-        "status": "ongoing",
-        "summary": f"对清战局未决：后金综合{houjin_power}，明辽东防线综合{ming_front}，京畿压力{beizhili_pressure}，北方民变{north_unrest_avg}。",
-    }
+    return {"status": ENDING_ONGOING, "summary": "局势未决，社稷尚在崇祯一念之间。"}
 
 
 # 地区/军队名称匹配实现在 matching.py；此处提供绑定 GameContent 的便捷封装。

@@ -12,8 +12,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
 
-from ming_sim.agents import bind_content as _bind_agents, create_memory_retrieval_agent
-from ming_sim.agents import parse_agent_json, run_agent_text
+from ming_sim.agents import bind_content as _bind_agents
 from ming_sim.constants import TURN_UNIT
 from ming_sim.content import GameContent
 from ming_sim.context import (
@@ -449,38 +448,26 @@ class GameSession:
         return character_from_name(name)
 
     def _retrieve_memories_for_message(self, message: str) -> str:
-        """用轻量 retrieval agent 从皇帝输入提关键词，检索相关旧事注入message头部。"""
+        """注入近几回合章节记忆，让大臣知道近来朝局大事。章节记忆是回合粒度全局摘要，
+        直接取最近 N 回合，不再按关键词检索（旧原子记忆已废）。"""
         from ming_sim.token_stats import tlog
         try:
-            import json
-            tlog(f"[MEM-IO/chat-memory-retrieval/INPUT] ({len(message)}字): {message!r}")
-            retrieval_agent = create_memory_retrieval_agent(self.llm_config, self.agno_db)
-            raw = run_agent_text(retrieval_agent, message, tag="chat-memory-retrieval")
-            tlog(f"[MEM-IO/chat-memory-retrieval/OUTPUT] ({len(raw)}字):\n{raw}")
-            kw_data = parse_agent_json(raw, "对话记忆检索")
-            keywords: list = []
-            for field in ("characters", "regions", "armies", "powers", "keywords"):
-                keywords.extend(str(k) for k in (kw_data.get(field) or []) if k)
-            if not keywords:
-                tlog("[MEM-IO/chat-memory-retrieval/INJECT] keywords=[] 跳过注入")
+            chapters = self.db.list_chapter_memories(upto_turn=self.state.turn, recent=4)
+            if not chapters:
                 return message
-            memories = self.db.get_memories_by_keywords(keywords, turn=self.state.turn, limit=6)
-            if not memories:
-                tlog(f"[MEM-IO/chat-memory-retrieval/INJECT] keywords={keywords} 无命中")
+            lines = ["【近来朝局（近几月章节）】"]
+            for c in chapters:
+                body = (c.get("body") or "").strip()
+                if not body:
+                    continue
+                lines.append(f"- {c['year']}年{c['period']}月：{body}")
+            if len(lines) == 1:
                 return message
-            tlog(f"[chat/memory-retrieval] keywords={keywords} hit={len(memories)}")
-            tlog(f"[MEM-IO/chat-memory-retrieval/INJECT] full={json.dumps(memories, ensure_ascii=False)}")
-            lines = ["【相关旧事】"]
-            for m in memories:
-                lines.append(
-                    f"- #{m['id']} {m['year']}年{m['period']}月 {m['subject_id']}："
-                    f"{m['title']}。起因：{m['cause']}。结果：{m['outcome']}。"
-                )
             new_msg = "\n".join(lines) + "\n\n" + message
-            tlog(f"[MEM-IO/chat-memory-retrieval/FINAL-MSG] ({len(new_msg)}字):\n{new_msg}")
+            tlog(f"[chat/chapter-recall] hit={len(chapters)} ({len(new_msg)}字)")
             return new_msg
         except Exception as exc:
-            tlog(f"[chat/memory-retrieval] 失败跳过：{exc}")
+            tlog(f"[chat/chapter-recall] 失败跳过：{exc}")
             return message
 
     def _temporary_character(self, name: str) -> Character:

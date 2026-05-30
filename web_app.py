@@ -656,6 +656,19 @@ class WebGame:
             account["movements_total"] = sum(m["delta"] for m in movements)
         return budget
 
+    def ending_payload(self) -> Optional[Dict[str, Any]]:
+        """结局已触发时返回 {status,label,summary,timeline}，否则 None。"""
+        if not self.state.ended:
+            return None
+        from ming_sim.context import ENDING_LABELS
+        row = self.db.get_ending_summary() or {}
+        return {
+            "status": self.state.ending_status,
+            "label": ENDING_LABELS.get(self.state.ending_status, "结局"),
+            "summary": row.get("summary", ""),
+            "timeline": row.get("timeline", []),
+        }
+
     def state_payload(self) -> Dict[str, Any]:
         directives = [self.directive_payload(row) for row in self.directive_rows()]
         return {
@@ -673,6 +686,7 @@ class WebGame:
             "power_warning": self.db.power_report(exclude_self=True),
             "powers": self.db.power_payload(),
             "victory_status": self.session.victory(),
+            "ending": self.ending_payload(),
             "events": [],
             "regions": self.db.region_payload(),
             "armies": self.db.army_payload(),

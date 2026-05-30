@@ -121,30 +121,24 @@ def build_last_gazette_brief(context: CourtContext) -> str:
 
 
 def build_memory_brief(character: Character, context: CourtContext) -> str:
-    """上回合旧事的结构化记忆。上月（turn-1）整体动静已由 build_last_gazette_brief 喂全文，
-    此处跳过 turn-1，只留 turn-2 及更早的旧事，避免与邸报重叠。"""
-    tlog(f"[MEM-IO/memory-brief/INPUT] minister={character.name} turn={context.state.turn} window=3 limit=30")
+    """更早朝局的章节记忆。上月（turn-1）整体动静已由 build_last_gazette_brief 喂全文，
+    此处跳过 turn-1，只留 turn-2 及更早数月的章节，避免与邸报重叠。"""
     prev_turn = int(context.state.turn) - 1
-    memories = [
-        m for m in context.db.get_recent_event_memories(
-            turn=context.state.turn,
-            window=3,
-            limit=30,
-        )
-        if int(m["turn"]) != prev_turn  # 上月已由邸报全文覆盖
+    chapters = [
+        c for c in context.db.list_chapter_memories(upto_turn=context.state.turn, recent=4)
+        if int(c["turn"]) != prev_turn  # 上月已由邸报全文覆盖
     ]
-    if not memories:
-        tlog(f"[memory/brief] {character.name} no memories")
+    if not chapters:
         return ""
-    tlog(f"[memory/brief] {character.name} inject={len(memories)} ids={','.join(str(m['id']) for m in memories)}")
-    lines = ["【更早旧事记忆（上月详情见上方邸报）】"]
-    for memory in memories:
-        lines.append(
-            f"- #{memory['id']} {memory['year']}年{memory['period']}月:{memory['title']}。"
-            f"起因：{memory['cause']}。经过：{memory['process']}。结果：{memory['outcome']}。"
-        )
+    lines = ["【更早朝局（起居注章节，上月详情见上方邸报）】"]
+    for c in chapters:
+        body = (c.get("body") or c.get("title") or "").strip()
+        if body:
+            lines.append(f"- {c['year']}年{c['period']}月：{body}")
+    if len(lines) == 1:
+        return ""
     brief = "\n".join(lines)
-    tlog(f"[MEM-IO/memory-brief/OUTPUT] minister={character.name} ({len(brief)}字):\n{brief}")
+    tlog(f"[memory/brief] {character.name} chapters={len(chapters)} ({len(brief)}字)")
     return brief
 
 

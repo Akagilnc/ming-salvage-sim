@@ -178,14 +178,6 @@ def build_minister_tools(character: Character, context: CourtContext):
             return f"{target_year}年{target_month}月未见正式邸报记录。"
         return f"【{target_year}年{target_month}月邸报】\n{row['report']}"
 
-    def recall_memory_detail(memory_id: int) -> str:
-        """查某条旧事记忆的原始来源摘录。只有需要引用旧事细节、被皇帝追问经过、或准备据旧事拟旨时调用。"""
-        try:
-            mid = int(memory_id)
-        except (TypeError, ValueError):
-            return "memory_id 必须是旧事记忆编号。"
-        return context.db.event_memory_detail(mid)
-
     def recall_memories_by_time(
         year: int,
         period: int,
@@ -197,67 +189,41 @@ def build_minister_tools(character: Character, context: CourtContext):
         时间查询绕过记忆衰减，能追溯已过期的历史记忆。
         """
         ref_turn = (int(year) - 1627) * 12 + (int(period) - 10) + 1
-        kw_list = [k.strip() for k in str(keywords).split(",") if k.strip()] if keywords else []
-
-        # 时间查：精确该月，ignore_expiry（历史档案，无视衰减）
-        time_rows = context.db.conn.execute(
-            """
-            SELECT id, year, period, subject_id, title, cause, outcome, importance
-            FROM event_memories
-            WHERE turn = ?
-            ORDER BY importance DESC
-            LIMIT 10
-            """,
-            (ref_turn,),
-        ).fetchall()
-
-        # 关键词查：tags匹配，正常衰减过滤
-        kw_rows = context.db.get_memories_by_keywords(
-            kw_list, turn=context.state.turn, limit=10, ignore_expiry=False
-        ) if kw_list else []
-
-        # 合并去重，时间查优先
-        seen: set = set()
-        merged = []
-        for r in list(time_rows) + list(kw_rows):
-            rid = r["id"] if hasattr(r, "keys") else r[0]
-            if rid not in seen:
-                seen.add(rid)
-                merged.append(r)
-
-        if not merged:
-            return f"{year}年{period}月前后未见相关旧事记忆。"
-        lines = [f"【{year}年{period}月旧事】"]
-        for r in merged:
-            lines.append(
-                f"- #{r['id']} {r['year']}年{r['period']}月 {r['subject_id']}："
-                f"{r['title']}。起因：{r['cause']}。结果：{r['outcome']}。"
-            )
+        # 章节记忆是回合粒度的全局朝局摘要；取 ref_turn 前后各 2 月窗口。
+        all_ch = context.db.list_chapter_memories(upto_turn=context.state.turn)
+        window = [c for c in all_ch if abs(int(c["turn"]) - ref_turn) <= 2]
+        if not window:
+            return f"{year}年{period}月前后未见起居注记载。"
+        lines = [f"【{year}年{period}月前后起居注】"]
+        for c in window:
+            body = (c.get("body") or c.get("title") or "").strip()
+            lines.append(f"- {c['year']}年{c['period']}月：{body}")
         return "\n".join(lines)
 
     def search_memories(keywords: str) -> str:
-        """检索相关旧事记忆摘要。两种场景必须调用：
+        """检索相关朝局旧事（起居注章节）。两种场景必须调用：
         1. 皇帝问及某人/某地/某事时，先查有无相关历史记录再作答；
-        2. 拟旨前涉及任何人事处置（任命/罢黜/下狱/赦免），先查该人旧事确认现状，避免重复处置。
+        2. 拟旨前涉及任何人事处置（任命/罢黜/下狱/赦免），先查该事旧况确认现状，避免重复处置。
         keywords: 逗号分隔的人名/地名/军队名/势力名/事项关键词，如 "魏忠贤,下狱" 或 "山东,民变"。
-        返回命中的旧事摘要（含 #id）；无命中返回空提示。
+        返回命中的章节摘要；无命中返回空提示。
         """
         kw_list = [k.strip() for k in str(keywords or "").split(",") if k.strip()]
         if not kw_list:
             return "请提供关键词（逗号分隔）。"
-        memories = context.db.get_memories_by_keywords(
-            kw_list, turn=context.state.turn, limit=8
-        )
-        if not memories:
-            return f"未找到与「{'、'.join(kw_list)}」相关的旧事记忆。"
+        # 章节正文是叙事文本，对 body 做子串命中（任一关键词出现即收）。
+        all_ch = context.db.list_chapter_memories(upto_turn=context.state.turn)
+        hits = [
+            c for c in all_ch
+            if any(kw in (c.get("body") or "") or kw in (c.get("title") or "") for kw in kw_list)
+        ]
+        if not hits:
+            return f"未找到与「{'、'.join(kw_list)}」相关的起居注记载。"
         from ming_sim.token_stats import tlog
-        tlog(f"[search_memories] keywords={kw_list} hit={len(memories)}")
-        lines = [f"【旧事检索：{' '.join(kw_list)}】"]
-        for m in memories:
-            lines.append(
-                f"- #{m['id']} {m['year']}年{m['period']}月 {m['subject_id']}："
-                f"{m['title']}。起因：{m['cause']}。结果：{m['outcome']}。"
-            )
+        tlog(f"[search_memories] keywords={kw_list} hit={len(hits)}")
+        lines = [f"【起居注检索：{' '.join(kw_list)}】"]
+        for c in hits[-8:]:
+            body = (c.get("body") or c.get("title") or "").strip()
+            lines.append(f"- {c['year']}年{c['period']}月：{body}")
         return "\n".join(lines)
 
     def check_treasury() -> str:
@@ -514,7 +480,6 @@ def build_minister_tools(character: Character, context: CourtContext):
         estimate_resistance,
         read_past_report,
         search_memories,
-        recall_memory_detail,
         recall_memories_by_time,
         inspect_treasury_ledger,
         propose_directive,

@@ -240,6 +240,7 @@ type GameState = {
   power_warning: string;
   powers: Power[];
   victory_status: { status: string; summary: string };
+  ending: EndingPayload | null;
   events: EventItem[];
   regions: Region[];
   armies: Army[];
@@ -252,10 +253,17 @@ type GameState = {
   last_report: string;
 };
 
+type EndingTimelineItem = {
+  turn: number; year: number; period: number;
+  decree_brief: string; effect_brief: string; chapter: string;
+};
+type EndingPayload = {
+  status: string; label: string; summary: string; timeline: EndingTimelineItem[];
+};
 type ChatMessage = { role: "user" | "minister"; content: string };
 type ChatDisplayMessage = ChatMessage & { pending?: boolean };
 type Suggestion = { label: string; text: string; prefix?: boolean };
-type ModalName = "none" | "state" | "chat" | "edict" | "report" | "extraction" | "history" | "menu" | "secret_orders";
+type ModalName = "none" | "state" | "chat" | "edict" | "report" | "extraction" | "history" | "menu" | "secret_orders" | "ending";
 type SaveEntry = { name: string; size: number; mtime: number };
 type LLMConfigInfo = {
   base_url: string;
@@ -735,10 +743,17 @@ function App() {
       .catch(() => {/* 失败静默 */});
   }, [state?.turn.turn]);
 
+  // 结局已触发：弹结局结算页，优先于一切其它弹窗。刷新即重新弹。
+  React.useEffect(() => {
+    if (!state || !state.ending) return;
+    setActiveModal("ending");
+  }, [state]);
+
   // 每次进入页面/换回合都弹上回合邸报。不持久化记录——刷新即重新弹。
   // 同一加载周期内同一回合不重复弹（gazetteShown 用 React state，刷新后回到 -1）。
   React.useEffect(() => {
     if (!state) return;
+    if (state.ending) return;  // 结局已触发，不再弹邸报，让位结局页
     const currentTurn = state.turn.turn;
     const summary = (state.previous_summary || "").trim();
     if (!summary) return;
@@ -1228,6 +1243,10 @@ function App() {
 
       {activeModal === "report" && (gazetteReport || report) ? (
         <ReportModal report={gazetteReport || report} onClose={guardClose(() => setActiveModal("none"))} />
+      ) : null}
+
+      {activeModal === "ending" && state.ending ? (
+        <EndingModal ending={state.ending} onClose={() => setActiveModal("none")} />
       ) : null}
 
       {activeModal === "extraction" ? (
@@ -2242,6 +2261,47 @@ function ReportModal({ report, onClose }: { report: string; onClose: () => void 
         <div className="document-section">
           <pre className="memorial-text">{report}</pre>
         </div>
+      </article>
+    </FullscreenModal>
+  );
+}
+
+function EndingModal({ ending, onClose }: { ending: EndingPayload; onClose: () => void }) {
+  return (
+    <FullscreenModal
+      title={`结局 · ${ending.label}`}
+      subtitle="崇祯一朝，盖棺论定"
+      bgClass="modal-bg-state"
+      onClose={onClose}
+    >
+      <article className="state-document modal-scroll">
+        <div className="document-section">
+          <h2 className="ending-verdict-title">国史编纂官 · 结局总评</h2>
+          <pre className="memorial-text">{ending.summary || "（无总评）"}</pre>
+        </div>
+        {ending.timeline && ending.timeline.length > 0 && (
+          <div className="document-section">
+            <h2 className="ending-verdict-title">崇祯一朝 · 逐月历程</h2>
+            <ol className="ending-timeline">
+              {ending.timeline.map((it) => (
+                <li key={it.turn} className="ending-timeline-item">
+                  <div className="ending-timeline-date">{it.year}年{it.period}月</div>
+                  <div className="ending-timeline-body">
+                    {it.chapter ? (
+                      <p className="ending-timeline-chapter">{it.chapter}</p>
+                    ) : null}
+                    {it.decree_brief ? (
+                      <p className="ending-timeline-decree">诏：{it.decree_brief}</p>
+                    ) : null}
+                    {it.effect_brief ? (
+                      <p className="ending-timeline-effect">效：{it.effect_brief}</p>
+                    ) : null}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
       </article>
     </FullscreenModal>
   );
