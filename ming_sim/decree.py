@@ -332,25 +332,29 @@ def resolve_directives(
 
     # 8) 结局判定：叙事型（退位/自尽，applied 已带）→ 数值型（京畿失守）→ 到期型（20 年/240 回合）。
     #    state.turn 此刻仍是刚结算完的本回合（next_period 之前）。
-    outcome = applied.get("victory_status") or victory_status(db, state)
-    if (
-        isinstance(outcome, dict)
-        and outcome.get("status") == ENDING_ONGOING
-        and state.turn >= TIMEOUT_TURN
-    ):
-        outcome = {
-            "status": ENDING_TIMEOUT,
-            "summary": "崇祯在位二十载，朝局至此尘埃落定，是中兴、是苟延、还是衰亡，自有史评。",
-        }
-
-    ended = isinstance(outcome, dict) and outcome.get("status") != ENDING_ONGOING
+    #    结局只触发一次：已 ended 的存档继续推进时不重判、不重生总评（省 token、不反复弹页）。
+    outcome = None
+    ended = False
     ending_text = ""
-    if ended:
-        db.record_log(state, f"结局判定：{outcome.get('summary', '')}")
-        # 章节记忆（含本回合）已落库，国史编纂官读全程生成结局总评。
-        ending_text = _generate_ending_summary(db, state, llm_config, agno_db, outcome, _emit)
-        state.ended = True
-        state.ending_status = str(outcome.get("status") or "")
+    if not state.ended:
+        outcome = applied.get("victory_status") or victory_status(db, state)
+        if (
+            isinstance(outcome, dict)
+            and outcome.get("status") == ENDING_ONGOING
+            and state.turn >= TIMEOUT_TURN
+        ):
+            outcome = {
+                "status": ENDING_TIMEOUT,
+                "summary": "崇祯在位二十载，朝局至此尘埃落定，是中兴、是苟延、还是衰亡，自有史评。",
+            }
+
+        ended = isinstance(outcome, dict) and outcome.get("status") != ENDING_ONGOING
+        if ended:
+            db.record_log(state, f"结局判定：{outcome.get('summary', '')}")
+            # 章节记忆（含本回合）已落库，国史编纂官读全程生成结局总评。
+            ending_text = _generate_ending_summary(db, state, llm_config, agno_db, outcome, _emit)
+            state.ended = True
+            state.ending_status = str(outcome.get("status") or "")
 
     db.mark_directives_issued(state)
     state.next_period()

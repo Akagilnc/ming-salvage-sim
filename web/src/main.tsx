@@ -743,9 +743,13 @@ function App() {
       .catch(() => {/* 失败静默 */});
   }, [state?.turn.turn]);
 
-  // 结局已触发：弹结局结算页，优先于一切其它弹窗。刷新即重新弹。
+  // 结局已触发：自动弹结局结算页一次（按 sessionStorage 去重，关掉后同会话不再自动弹，
+  // 以便玩家关页继续游玩；重开浏览器会再弹一次）。
   React.useEffect(() => {
     if (!state || !state.ending) return;
+    const key = `endingShown_${state.ending.status}`;
+    if (sessionStorage.getItem(key)) return;
+    sessionStorage.setItem(key, "1");
     setActiveModal("ending");
   }, [state]);
 
@@ -753,7 +757,8 @@ function App() {
   // 同一加载周期内同一回合不重复弹（gazetteShown 用 React state，刷新后回到 -1）。
   React.useEffect(() => {
     if (!state) return;
-    if (state.ending) return;  // 结局已触发，不再弹邸报，让位结局页
+    // 结局页本会话还没弹过时让位给它；已弹过（玩家关掉继续玩）则邸报照常。
+    if (state.ending && !sessionStorage.getItem(`endingShown_${state.ending.status}`)) return;
     const currentTurn = state.turn.turn;
     const summary = (state.previous_summary || "").trim();
     if (!summary) return;
