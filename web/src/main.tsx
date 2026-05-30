@@ -1144,6 +1144,7 @@ function App() {
         onGroupChange={setMinisterGroup}
         onClose={guardClose(() => setDrawerOpen(false))}
         onOpenChat={openChat}
+        onUploadPortrait={uploadPortrait}
       />
 
       <HaremDrawer
@@ -1834,6 +1835,7 @@ function CourtDrawer({
   onGroupChange,
   onClose,
   onOpenChat,
+  onUploadPortrait,
 }: {
   state: GameState;
   ministers: Minister[];
@@ -1843,6 +1845,7 @@ function CourtDrawer({
   onGroupChange: (group: string) => void;
   onClose: () => void;
   onOpenChat: (minister: Minister) => void;
+  onUploadPortrait: (ministerName: string, file: File) => Promise<void>;
 }) {
   return (
     <>
@@ -1873,6 +1876,7 @@ function CourtDrawer({
           emptyNote="此栏暂无可召见大臣。"
           onOpenChat={onOpenChat}
           courtMode={ministerGroup !== "全部"}
+          onUploadPortrait={onUploadPortrait}
         />
       </aside>
     </>

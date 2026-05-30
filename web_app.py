@@ -233,7 +233,7 @@ class WebGame:
             self.chat_history.setdefault(name, []).extend(msgs)
         _DEFAULT_FAVORITES = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
         _fav_raw = self.db.kv_get("favorites")
-        self.favorites: set = json.loads(_fav_raw) if _fav_raw else _DEFAULT_FAVORITES
+        self.favorites: set = set(json.loads(_fav_raw)) if _fav_raw else set(_DEFAULT_FAVORITES)
         if not _fav_raw:
             self.db.kv_set("favorites", json.dumps(sorted(self.favorites)))
 
@@ -323,7 +323,7 @@ class WebGame:
             self.chat_history.setdefault(name, []).extend(msgs)
         _DEFAULT_FAVORITES = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
         _fav_raw = self.db.kv_get("favorites")
-        self.favorites = json.loads(_fav_raw) if _fav_raw else _DEFAULT_FAVORITES
+        self.favorites = set(json.loads(_fav_raw)) if _fav_raw else set(_DEFAULT_FAVORITES)
         if not _fav_raw:
             self.db.kv_set("favorites", json.dumps(sorted(self.favorites)))
 

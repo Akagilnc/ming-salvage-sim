@@ -38,14 +38,19 @@ def _guess_caller_tag(kwargs: Dict[str, object]) -> str:
             for item in c:
                 if isinstance(item, dict):
                     sys_text += str(item.get("text", ""))
-    if "档房书办" in sys_text or "score_extractor" in sys_text.lower():
+    # minister 必须先判：大臣 system 末尾注入上月邸报全文(simulator 产出，含『日讲官』
+    # 『档房书办』等词)，若先判 extractor/simulator 会把大臣对话误标成结算 agent。
+    # 大臣自身开场白『扮演被皇帝召见』只在大臣 prompt 出现，且在邸报之前 → 用它先认。
+    if "扮演被皇帝召见" in sys_text or "大臣扮演" in sys_text:
+        return "minister"
+    # 结算/写诏 agent 的 system = game_world_prompt(很长) + 自身 prompt，关键锚点在中后段，
+    # 不能只看开头窗口。这几个 agent 不注入邸报，故全文搜各自唯一开场白即可。
+    if "档房书办" in sys_text:
         return "extractor"
-    if "月末推演" in sys_text or "日讲官" in sys_text:
+    if "日讲官兼推演官" in sys_text or "月末推演" in sys_text:
         return "simulator"
     if "诏书润色" in sys_text or "正式诏书" in sys_text:
         return "decree-writer"
-    if "扮演被皇帝召见" in sys_text or "大臣扮演" in sys_text:
-        return "minister"
     return "?"
 
 

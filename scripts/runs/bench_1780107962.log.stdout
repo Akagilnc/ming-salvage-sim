@@ -1,0 +1,273 @@
+=== 崇祯 Agent 自动玩家 ===
+目标：token压测：本月深入问政30轮再退朝颁诏，议题轮换财政/边防/民变/党争/内廷
+性格：你是少年新君，心里急，但表面仍收着。你会权衡派系、钱粮与名分，不轻易把话说死。
+月数：1
+DB：data/bench.db
+模型：qwen3.6-plus @ https://dashscope.aliyuncs.com/compatible-mode/v1
+模式：清库重开
+
+
+--- step 1 | prompt: 召见谁？输入编号或姓名 ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=5142 cached=0 cache_creation=2341 completion=43 reasoning=0 total=5185
+[崇祯] reasoning: 开局首问，先抓内廷耳目王承恩，摸清魏忠贤底细与朝局虚实，为后续雷霆手段做准备。
+[崇祯] input: '24'
+
+--- step 2 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=5317 cached=0 cache_creation=2341 completion=71 reasoning=0 total=5388
+[崇祯] reasoning: 先问内廷虚实，摸清魏忠贤动向与朝臣反应，为后续清洗做准备。
+[崇祯] input: '承恩，朕初登大宝，外廷阉党势大，魏忠贤近日可有异动？朝中诸臣，谁人敢言，谁人噤声？'
+
+--- step 3 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=6539 cached=0 cache_creation=2341 completion=46 reasoning=0 total=6585
+[崇祯] reasoning: 内廷已明，魏党势大，需外朝呼应。先召杨嗣昌问财政与人事，为后续布局做准备。
+[崇祯] input: '传杨嗣昌来'
+
+--- step 4 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=7196 cached=0 cache_creation=2341 completion=80 reasoning=0 total=7276
+[崇祯] reasoning: 杨嗣昌精明干练，先问户部真底，再探其整顿盐课、清丈隐田之策，为开源做准备。
+[崇祯] input: '杨卿，户部账面三百二十万两，实则能调拨者几何？若欲开源，盐课、商税、隐田，三者何者可为急务？'
+
+--- step 5 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=8497 cached=0 cache_creation=2341 completion=85 reasoning=0 total=8582
+[崇祯] reasoning: 杨嗣昌指出盐课为急务，需换人手。追问具体人选与阻力，评估可行性，为后续拟旨做准备。
+[崇祯] input: '卿言盐课为先，然两淮巡盐御史多为阉党耳目。若欲清厘纲法，卿意中何人可担此重任？又当如何避开魏忠贤阻挠？'
+
+--- step 6 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=9861 cached=0 cache_creation=2341 completion=98 reasoning=0 total=9959
+[崇祯] reasoning: 杨嗣昌方案可行，借毕自严查盐课避阉党锋芒。先确认人选细节与阻力，再令其拟旨。
+[崇祯] input: '毕自严谨重老成，确是合适人选。然魏忠贤若以“祖制”或“非其职权”为由阻挠，卿可有后手应对？此外，毕自严赴两淮，需带多少随行人员以防不测？'
+
+--- step 7 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=11236 cached=0 cache_creation=2341 completion=92 reasoning=0 total=11328
+[崇祯] reasoning: 杨嗣昌方案周全，借曹化淳同行分阉党之权，以辽饷为名压异议。确认此策，令其拟旨。
+[崇祯] input: '准奏。命毕自严兼理两淮盐法，曹化淳随行监查。即刻拟旨，以辽东急饷为由，不经过内阁，直接由司礼监发往南京。'
+
+--- step 8 | prompt: 陛下：确认入档 ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=12687 cached=0 cache_creation=2341 completion=33 reasoning=0 total=12720
+[崇祯] reasoning: 杨嗣昌拟旨完整，切中要害。确认入档，完成第一条财政诏书。
+[崇祯] input: '可'
+
+--- step 9 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=12785 cached=0 cache_creation=2341 completion=48 reasoning=0 total=12833
+[崇祯] reasoning: 财政已布子，转问边防。召孙承宗，借重其威望与经验，问辽东实情与袁崇焕去留。
+[崇祯] input: '传孙承宗来'
+
+--- step 10 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=10600 cached=0 cache_creation=2341 completion=87 reasoning=0 total=10687
+[崇祯] reasoning: 孙承宗老成持重，先问辽东大局与袁崇焕之策，探其虚实与隐患。
+[崇祯] input: '孙卿久镇辽东，朕心甚慰。今袁崇焕督师关宁，言“五年平辽”，卿以为此言可信否？辽东局势，究竟可守可战，还是仅能苟安？'
+
+--- step 11 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=11470 cached=0 cache_creation=2341 completion=112 reasoning=0 total=11582
+[崇祯] reasoning: 孙承宗直言袁崇焕'五年平辽'乃虚言，需深究其兵源、粮饷与毛文龙牵制之实，评估辽东真实战力。
+[崇祯] input: '卿言辽东当以十年计，朕心甚慰。然袁崇焕既言五年，必有所恃。卿以为关宁军现有人马几何？火器、车营可堪一战否？毛文龙在东江，是真牵制还是拥兵自重？'
+
+--- step 12 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=11571 cached=0 cache_creation=2341 completion=104 reasoning=0 total=11675
+[崇祯] reasoning: 孙承宗点出毛文龙拥兵自重、虚报兵额之弊。需定计整顿东江，既保牵制之效，又防尾大不掉。
+[崇祯] input: '毛文龙跋扈，确是隐患。若遣监军核饷，恐激起兵变。卿以为，是暂且安抚、徐图裁抑，还是趁此时机，明升暗调，另择将领分其权？'
+
+--- step 13 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=12108 cached=0 cache_creation=2341 completion=113 reasoning=0 total=12221
+[崇祯] reasoning: 孙承宗先安关宁后图东江，策略稳健。需确认补饷具体数额与来源，并追问如何防止袁崇焕挪用或虚报，确保钱粮落到实处。
+[崇祯] input: '卿言关宁欠饷为急。内库虽空，朕可挪银二十万两应急。然户部那四十万两，从何而出？若再增辽饷，百姓恐不堪重负。卿可有不用加派而筹得此银之法？'
+
+--- step 14 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=12159 cached=0 cache_creation=2341 completion=125 reasoning=0 total=12284
+[崇祯] reasoning: 孙承宗三策虽狠，但直指要害。盐课已派毕自严，积逋与织造需另派人。先问谁去清积逋最稳妥，再定夺。
+[崇祯] input: '卿所言三策，皆得罪权贵。盐课已命毕自严去办。那清缴各省积逋一事，倪元璐虽有直声，然初登朝堂，恐难压服江南士绅。卿以为，除了倪元璐，还有谁能担此重任而不致激起民变？'
+
+--- step 15 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=12068 cached=0 cache_creation=2341 completion=120 reasoning=0 total=12188
+[崇祯] reasoning: 孙承宗以辽东为重，不宜远调。李标主柔、刘鸿训主刚，搭配得当。需确认具体权责与应对科道弹劾之策，确保执行有力。
+[崇祯] input: '卿乃国之柱石，辽东赖卿运筹，岂可轻离？李标、刘鸿训二人搭配，甚好。然若科道群起攻讦，谓其苛扰士绅，朕当如何处置？是留中不发，还是明旨申饬言官？'
+
+--- step 16 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=12033 cached=0 cache_creation=2341 completion=120 reasoning=0 total=12153
+[崇祯] reasoning: 孙承宗点破内阁掣肘之弊，需确立皇权独断。确认清查积逋方案，令其拟旨，以巩固财政根基。
+[崇祯] input: '卿言透彻。朕意已决，清查积逋不经过内阁，由司礼监直发中旨。李标主事，刘鸿训协理，许以专折奏事。若科道阻挠，朕自当留中申饬。此事关乎国本，卿可据此拟一道密旨草稿？'
+
+--- step 17 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=11933 cached=0 cache_creation=2341 completion=39 reasoning=0 total=11972
+[崇祯] reasoning: 孙承宗拟旨详尽，切中要害。确认采纳，令其正式入档，确立财政整顿之基。
+[崇祯] input: '准奏'
+
+--- step 18 | prompt: 陛下：确认入档 ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=13008 cached=0 cache_creation=2341 completion=47 reasoning=0 total=13055
+[崇祯] reasoning: 确认孙承宗拟定的清查积逋密旨入档。随后需处理关宁军饷银拨付问题，继续与孙承宗深入对话。
+[崇祯] input: '可'
+
+--- step 19 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=12425 cached=0 cache_creation=2341 completion=84 reasoning=0 total=12509
+[崇祯] reasoning: 积逋密旨已入档。孙承宗提及关宁二十万两内库银拨付，需确立拨款流程与押运人选，确保军心稳定。
+[崇祯] input: '积逋事既定。那关宁二十万两内库银，卿建议何时拨付？由谁督运出关，方能确保安全且不被层层克扣？'
+
+--- step 20 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=12497 cached=0 cache_creation=2341 completion=142 reasoning=0 total=12639
+[崇祯] reasoning: 孙承宗提议曹化淳押运、杨嗣昌核账，且主张径发士卒以防克扣。此策甚佳，需确认并令其拟旨，同时询问对毛文龙处置的后续安排。
+[崇祯] input: '曹化淳忠诚，杨嗣昌精干，此二人搭配甚好。径发士卒之策，可杜将领克扣之弊。卿即刻拟旨，命内库拨银二十万两，由曹、杨二人押运宁远。另，毛文龙之事，待积逋有眉目后，再行第二步分权之计，卿以为如何？'
+
+--- step 21 | prompt: 陛下：确认入档 ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=12707 cached=0 cache_creation=2341 completion=53 reasoning=0 total=12760
+[崇祯] reasoning: 孙承宗拟旨完备，关宁拨银事定。确认入档后，需继续追问以凑足30轮问政目标，可转向党争或内廷清理。
+[崇祯] input: '可'
+
+--- step 22 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=11588 cached=0 cache_creation=2341 completion=139 reasoning=0 total=11727
+[崇祯] reasoning: 已入档三条（积逋、拨银）。需继续问政以达30轮。孙承宗提及毛文龙牵制后金，但东江镇虚冒兵额严重。需问如何在不激变前提下核实兵额，为日后分权做准备。
+[崇祯] input: '卿言东江镇核兵额之事，登莱巡抚暗中核查，甚好。然毛文龙耳目众多，若察觉朝廷 intent，恐生异心。卿以为，是以“犒赏”为名派员点验，还是借“海运粮草”之机顺道清点，更为稳妥？'
+
+--- step 23 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=11499 cached=0 cache_creation=2341 completion=98 reasoning=0 total=11597
+[崇祯] reasoning: 孙承宗提议以海运粮草为名核兵额，策略稳妥。需确认执行细节，特别是人选与后续应对，为日后处置毛文龙铺路。
+[崇祯] input: '借海运核粮，确是良策。登莱巡抚袁可立老成持重，可托付此事。但派去的具体官员，卿可有推荐？需胆大心细，能应付毛文龙周旋者。'
+
+--- step 24 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=11271 cached=0 cache_creation=2341 completion=122 reasoning=0 total=11393
+[崇祯] reasoning: 宋统殷稳重，陈新甲干练，一老一少搭配甚佳。命孙承宗拟密谕给袁可立，部署东江核兵之事，继续积累问政轮次。
+[崇祯] input: '宋统殷沉稳，陈新甲干练，此二人搭配甚好。卿即刻拟一道密谕给登莱巡抚袁可立，令其密遣宋、陈二人借海运核粮之机，暗查东江兵额虚实，只记数不声张，事毕密奏。'
+
+--- step 25 | prompt: 陛下：确认入档 ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=11271 cached=0 cache_creation=2341 completion=65 reasoning=0 total=11336
+[崇祯] reasoning: 东江核兵密谕已拟妥，确认入档。孙承宗梳理了四事，但盐课整顿尚未定策，需继续深入问政以达30轮目标，可转向党争或内廷清理话题。
+[崇祯] input: '可'
+
+--- step 26 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=10190 cached=0 cache_creation=2341 completion=58 reasoning=0 total=10248
+[崇祯] reasoning: 孙承宗已退，需继续召见其他大臣以凑足30轮。转向内廷与党争，召见王承恩，试探魏忠贤动向及内廷耳目布置。
+[崇祯] input: '传王承恩'
+
+--- step 27 | prompt: 召见谁？输入编号或姓名 ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=10469 cached=0 cache_creation=2341 completion=61 reasoning=0 total=10530
+[崇祯] reasoning: 孙承宗退下，需继续召见以凑足30轮。王承恩是心腹内臣，适合探听内廷虚实及魏忠贤动向，为后续清理阉党做铺垫。
+[崇祯] input: '王承恩'
+
+--- step 28 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=10513 cached=0 cache_creation=2341 completion=111 reasoning=0 total=10624
+[崇祯] reasoning: 王承恩入殿，需探查内廷尤其是魏忠贤动向。先问其近日观察，为后续清理阉党做铺垫，同时积累问政轮次。
+[崇祯] input: '朕初登大宝，宫闱之内，耳目众多。卿随侍多年，且是信邸旧人，最知底细。近日大伴（魏忠贤）与客氏在宫中行事，可有何异状？朝臣往来厂卫者，可有特别频繁之人？'
+
+--- step 29 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=10368 cached=0 cache_creation=2341 completion=103 reasoning=0 total=10471
+[崇祯] reasoning: 王承恩情报确凿，魏忠贤仍控局。需问如何在不惊动魏的前提下，逐步置换身边耳目，特别是乾清宫近侍，为后续行动清障。
+[崇祯] input: '卿言极是。朕身边耳目未清，行事确实掣肘。乾清宫近侍、司礼监当值太监，哪些人是魏忠贤安插的死党？哪些尚可信、可拉拢？卿可有一份名单？'
+
+--- step 30 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=10150 cached=0 cache_creation=2341 completion=119 reasoning=0 total=10269
+[崇祯] reasoning: 王承恩列出内廷死党与可拉拢者。需追问如何安全获取完整名单而不惊动魏忠贤，同时试探曹化淳等信邸旧人的可用性，为清洗内廷做准备。
+[崇祯] input: '名单之事，不可操切，以免打草惊蛇。卿且暗中留意，不必急于呈上。曹化淳既随朕入宫，忠诚可嘉。朕欲让他逐步接手乾清宫部分差事，替换掉王朝辅等人，卿以为如何操作才不露痕迹？'
+
+--- step 31 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=11050 cached=0 cache_creation=2341 completion=122 reasoning=0 total=11172
+[崇祯] reasoning: 王承恩提出借整理先帝遗物之名调入曹化淳，并寻错调离魏党。此计稳妥，可逐步置换乾清宫耳目。需确认具体执行细节，尤其是如何制造‘错处’而不引怀疑。
+[崇祯] input: '借整理先帝遗物之名调入曹化淳，甚好。至于寻错调离王朝辅，此事需做得自然。卿以为，是抓他当值疏漏，还是借宫规整肃之机？若由朕亲自过问，是否太显刻意？'
+
+--- step 32 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=10825 cached=0 cache_creation=2341 completion=116 reasoning=0 total=10941
+[崇祯] reasoning: 王承恩之计周密，借整肃宫规之名行调离魏党之实，不露痕迹。此事可行，但需确认曹化淳接手后的具体职责，确保乾清宫耳目彻底清洗。
+[崇祯] input: '此计甚妙，不显山露水。就依卿所言，先传口谕整肃门禁。曹化淳调入后，乾清宫的起居注、奏疏传递，皆由他亲手经呈，旁人不得擅动。卿去办吧，切记隐秘。'
+
+--- step 33 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=10562 cached=0 cache_creation=2341 completion=68 reasoning=0 total=10630
+[崇祯] reasoning: 王承恩领命去办，内廷清理第一步已迈出。需继续凑轮次，转向财政话题。毕自严是户部尚书，虽在南京，但可问钱粮大局及南京储备，为后续调饷做准备。
+[崇祯] input: '传毕自严'
+
+--- step 34 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=9843 cached=0 cache_creation=2341 completion=94 reasoning=0 total=9937
+[崇祯] reasoning: 毕自严入殿。他是理财能臣，需先问清两京国库虚实及辽饷欠发情况，为后续调拨军饷做准备。
+[崇祯] input: '毕卿平身。朕初登大宝，最忧者钱粮也。南京户部库储现银几何？若调拨北上，最快几日可抵京？辽东军饷欠发多久了？'
+
+--- step 35 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=10789 cached=0 cache_creation=2341 completion=107 reasoning=0 total=10896
+[崇祯] reasoning: 毕自严指出辽饷欠发五月，边军危在旦夕，且太仓仅够八月。需追问其开源节流之策，特别是如何在不激怒阉党情况下筹措急需军饷。
+[崇祯] input: '辽东欠饷五月，边军哗变只在旦夕，此乃心腹大患。卿所言开源节流之策，究竟为何？若不动内库，能否于旬日之内凑出二十万两应急？'
+
+--- step 36 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=10538 cached=0 cache_creation=2341 completion=152 reasoning=0 total=10690
+[崇祯] reasoning: 毕自严提出截留漕银和向商号借贷两策，可解燃眉之急。需确认执行细节及风险，特别是如何确保钱粮直达辽东而不被层层克扣，同时询问长策中清丈田亩的可行性，为后续改革铺垫。
+[崇祯] input: '截留漕银与商号借贷，虽属权宜，但救急如救火。卿即刻去办。然朕所虑者，非仅凑数，而在钱粮能否足额抵达军士手中。若途中被层层盘剥，或主将冒领，岂不白费？卿有何法确保这二十万两尽入兵丁之腹？'
+
+--- step 37 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=11454 cached=0 cache_creation=2341 completion=165 reasoning=0 total=11619
+[崇祯] reasoning: 毕自严提出直解、采买、监放三策，确能防弊。需选定监放人选，既要可信又要能震慑边将。内臣虽亲信但易招致非议，锦衣卫则较中立。且需确认此举是否会引起袁崇焕或魏忠贤的猜忌。
+[崇祯] input: '三策并用，甚妥。监放之人，若派内臣，恐惹朝议纷扰，亦令边将生疑；若派锦衣卫，又恐其不通钱粮账目。卿以为，是选一名精算的户部主事随同锦衣卫千户前往，还是另有更稳妥的人选？此人须得既懂账目，又能压得住场面。'
+
+--- step 38 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=11427 cached=0 cache_creation=2341 completion=137 reasoning=0 total=11564
+[崇祯] reasoning: 毕自严荐杨嗣昌监放军饷，此人精算且能压场，确是合适人选。需确认其行程及与边将协调细节，确保银两直达兵丁。随后需转向边防话题，询问袁崇焕对辽东局势的看法。
+[崇祯] input: '杨嗣昌既精于算账，又能压得住场面，便依卿所奏。着杨嗣昌即刻启程，带两名锦衣卫校尉同行，直赴山海关监放军饷。务必当面点清，按名册发放，不得经手将领。卿去拟旨吧。'
+
+--- step 39 | prompt: 陛下：确认入档 ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=11436 cached=0 cache_creation=2341 completion=56 reasoning=0 total=11492
+[崇祯] reasoning: 毕自严拟旨内容详尽，涵盖监放、授权及多部门协同，符合预期。确认入档以推进流程，随后需继续召见其他大臣以完成30轮问政目标。
+[崇祯] input: '可'
+
+--- step 40 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=10450 cached=0 cache_creation=2341 completion=65 reasoning=0 total=10515
+[崇祯] reasoning: 军饷草案已入档。毕自严任务完成，需退下。为凑足30轮并覆盖边防议题，接下来召见袁崇焕，询问辽东防务及与后金议和之虚实。
+[崇祯] input: '传袁崇焕'
+
+--- step 41 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=10005 cached=0 cache_creation=2341 completion=125 reasoning=0 total=10130
+[崇祯] reasoning: 袁崇焕入殿。需先试探其对辽东局势的真实判断，特别是‘五年平辽’的底牌及与后金议和的实情，避免被其豪言壮语误导。
+[崇祯] input: '袁卿平身。朕闻卿有‘五年平辽’之志，气魄可嘉。然辽东糜烂至此，非一日之寒。卿且直言，这五年之计，究竟依仗何者？是守城、是练兵、还是抚夷？若后金大举来犯，卿凭何御之？'
+
+--- step 42 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=10492 cached=0 cache_creation=2341 completion=142 reasoning=0 total=10634
+[崇祯] reasoning: 袁崇焕索要每月十五万两饷银，这是无底洞。需试探其底线，并追问毛文龙问题。毛文龙在皮岛拥兵自重，且与后金有私下贸易嫌疑，是辽东一大隐患，必须提前布局处理。
+[崇祯] input: '每月十五万两，国库艰难，朕不敢轻许。卿且说说，若饷银不能足额，宁锦防线可守多久？另，皮岛毛文龙拥兵数万，耗费巨大却战功寥寥，且传闻其与后金暗通款曲。卿督师辽东，打算如何处置毛文龙？'
+
+--- step 43 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=11309 cached=0 cache_creation=2341 completion=143 reasoning=0 total=11452
+[崇祯] reasoning: 袁崇焕欲杀毛文龙以统一事权，此举风险极大且易致东江溃散。需追问其具体手段及备用方案，防止毛文龙狗急跳墙投敌或引发兵变。同时需确认若毛文龙被除，皮岛防务由谁接手。
+[崇祯] input: '半年之内收归节制，卿有把握？若毛文龙拒不受命，甚至煽动兵变、投向后金，卿如何应对？皮岛孤悬海外，若无毛文龙，何人可代领其众？卿需给朕一个万全之策，不可仅凭一时意气。'
+
+--- step 44 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=11703 cached=0 cache_creation=2341 completion=148 reasoning=0 total=11851
+[崇祯] reasoning: 袁崇焕已表态愿立军令状处理毛文龙。此事风险极大，虽知历史走向，但需确认其具体执行时的授权边界，防止其擅权过大或激起兵变后无法收拾。随后需转向党争或内廷话题，以完成轮换。
+[崇祯] input: '卿既有此决心，朕便信卿一次。然皮岛远在海外，朝廷耳目难及。卿赴任后，若遇紧急情形，可否先斩后奏？还是需事事请旨？此外，陈继盛是否真能压住东江旧部？若毛文龙死后，东江军心浮动，卿有何备选之人？'
+
+--- step 45 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=11796 cached=0 cache_creation=2341 completion=150 reasoning=0 total=11946
+[崇祯] reasoning: 袁崇焕请求密敕先斩后奏，此权极重。需明确授权边界，防止其滥用。同时确认其对登莱巡抚袁可立的调度权，确保东江后勤可控。此话题已深入，可考虑让袁拟旨或转召他人。
+[崇祯] input: '密敕之事，朕可斟酌。但‘通敌’须有铁证，‘抗命’须有明诏。卿不可因私愤而擅杀大将，此举若激起兵变，卿亦难辞其咎。至于登莱巡抚袁可立，卿可知其性情？他能否与卿同心协力，共制东江？'
+
+--- step 46 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=11936 cached=0 cache_creation=2341 completion=119 reasoning=0 total=12055
+[崇祯] reasoning: 袁崇焕对东江布局已详，加衔建议合理。需确认其拟旨意向，随后退下以召见下一位大臣，推进党争或内廷议题，确保30轮问政目标。
+[崇祯] input: '卿所言甚细，朕心稍安。袁可立老成，加衔之事，朕记下了。卿且去拟一道关于辽东军务及东江整顿的条陈草案，重点在饷银调度与人事节制。拟好后，朕再斟酌。'
+
+--- step 47 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=12087 cached=0 cache_creation=2341 completion=176 reasoning=0 total=12263
+[崇祯] reasoning: 袁崇焕条陈已出，关键在饷银定额与授权。十万两底线需确认户部能否承受，临机处置权需明确边界。此轮问答已达深度，可令其拟旨入档，或暂且记下，转召他人以平衡派系。先令其拟旨，完成边防板块。
+[崇祯] input: '条陈朕已阅。饷银十万两，朕着毕自严去筹措，卿勿多虑。加衔与节制之权，朕准了。但‘临机处置’四字，须有度。卿且将此条陈细化为一道奏疏草案，重点明确东江归属登莱、饷银由登莱转发、以及卿之督师权限。拟好后，朕便批红入档。'
+
+--- step 48 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=12379 cached=0 cache_creation=2341 completion=80 reasoning=0 total=12459
+[崇祯] reasoning: 袁崇焕奏疏已拟，内容涵盖边防核心。需确认入档，完成此轮对话。随后退下，转召韩爌或王承恩处理党争/内廷议题，以凑足30轮问政目标。
+[崇祯] input: '准奏。此疏甚合朕意，着即入档。'
+
+--- step 49 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=12991 cached=0 cache_creation=2341 completion=66 reasoning=0 total=13057
+[崇祯] reasoning: 袁崇焕已退，需转召内阁首辅韩爌。目标是处理党争与朝政协调，确保袁崇焕的辽东策略在朝廷内部得到支持，同时平衡东林与其他派系，避免内耗。
+[崇祯] input: '传韩爌'
+
+--- step 50 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=13033 cached=0 cache_creation=2341 completion=179 reasoning=0 total=13212
+[崇祯] reasoning: 韩爌是东林元老，刚被起复。需先安抚其心，再试探其对当前朝局（特别是魏忠贤余党及袁崇焕新策）的看法，借其威望稳定内阁，平衡党争。
+[崇祯] input: '韩卿平身。朕知卿久居蒲州，清望素著。今朝局初定，百废待兴，朕特召卿入阁，非为虚名，实赖卿之老成持重。卿虽不在朝，想必对近日辽东之事、朝堂之风，亦有耳闻。朕欲问卿，如今阉党势衰，东林复起，然朝中议论纷纭，各执一词。卿以为，当如何调和诸党，使朝廷政令畅通，不致内耗？'
+
+--- step 51 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=13210 cached=0 cache_creation=2341 completion=187 reasoning=0 total=13397
+[崇祯] reasoning: 韩爌提出定国是、分而治之、内阁枢纽三策，切中时弊。需追问具体如何操作‘定国是’诏书，以及如何界定阉党首恶与胁从，防止扩大化或漏网。同时试探其对魏忠贤的态度，为后续处理内廷做铺垫。
+[崇祯] input: '卿言‘以公义压私怨’，深得朕心。然‘定国是’诏书，措辞须慎。若只提辽东钱粮，恐难服众口。卿以为，诏书中是否应明示‘暂停清算前朝旧案’？若如此，东林诸君必哗然。卿打算如何安抚他们？又，阉党之中，何为‘首恶’，何为‘胁从’，界限何在？卿可有具体名单或标准？'
+
+--- step 52 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=13659 cached=0 cache_creation=2341 completion=163 reasoning=0 total=13822
+[崇祯] reasoning: 韩爌所提‘定国是’诏书措辞巧妙，既稳住东林又威慑阉党。需确认其拟旨意向，将‘暂停清算、共济时艰’之意入档。随后转召毕自严处理财政，或王承恩处理内廷，以轮换议题。
+[崇祯] input: '卿之策甚善。‘待边事稍定、库藏稍充，再行秉公核议’，此语极有分寸。朕准此意。卿且拟一道明诏草案，申明此意，并着礼部、都察院先行录档冤案，以示公正。至于阉党名单，卿可私下整理，暂不公开，免生变故。'
+
+--- step 53 | prompt: 朕问： ---
+[TOKEN] caller=? model=qwen3.6-plus prompt=13494 cached=0 cache_creation=2341 completion=94 reasoning=0 total=13588
+[崇祯] reasoning: 韩爌拟诏已毕，需确认入档。此诏书确立了‘暂停党争、专注实务’的基调，是本月政治核心。入档后，应转召户部尚书毕自严，落实‘库藏稍充’的具体财政措施，完成从党争到财政的议题轮换。
+[崇祯] input: '准奏。此诏甚合朕意，着即入档。'

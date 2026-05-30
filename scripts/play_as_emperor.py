@@ -309,6 +309,8 @@ def run(
     last_seen_turn = 1
     step = 0
     ministers_this_turn = 0  # 本月已召见大臣数
+    chat_rounds_this_turn = 0  # 本月已问话轮数（『朕问：』界面输入一次算一轮）
+    MAX_CHAT_ROUNDS_PER_TURN = 30  # token 压测：问够 30 轮且有草案就强制退朝结算
     MAX_MINISTERS_PER_TURN = 30  # 每月最多召见大臣数（token 测试临时调大）
     prev_hint = ""            # 上一步命中的 prompt，用于检测卡同界面
     stuck_count = 0           # 同一界面连续重复次数
@@ -343,6 +345,7 @@ def run(
             if "按回车继续下一月" in prompt_hint:
                 completed_periods += 1
                 ministers_this_turn = 0  # 重置月内召见计数
+                chat_rounds_this_turn = 0  # 重置月内问话轮计数
                 log(f"\n>>> 已完成 {completed_periods}/{turns} 月 <<<\n")
                 if completed_periods >= turns:
                     child.sendline("exit")
@@ -378,6 +381,15 @@ def run(
                     child.sendline("quit")
                     continue
 
+            # token 压测：问够 30 轮就退朝（在『召见谁』界面切，避免打断对话中途）。
+            # 草案可由本月末最后一位大臣拟；若到点还没草案，让 agent 再问一轮促其拟旨。
+            if "召见谁" in prompt_hint and chat_rounds_this_turn >= MAX_CHAT_ROUNDS_PER_TURN:
+                has_drafts = "暂无指令" not in cli_chunk and "暂无草案" not in cli_chunk
+                if has_drafts:
+                    log(f"[压测] 本月已问 {chat_rounds_this_turn} 轮，强制退朝颁诏")
+                    child.sendline("quit")
+                    continue
+
             try:
                 reasoning, action = ask_emperor(emperor, cli_chunk, prompt_hint.strip())
             except Exception as exc:
@@ -401,6 +413,9 @@ def run(
             # 召见大臣计数（输入不是 quit/back 才算一次召见）
             if "召见谁" in prompt_hint and action.lower() not in {"quit", "q", "exit", "back", ""}:
                 ministers_this_turn += 1
+            # 问话轮计数（『朕问：』界面发一次自然语言即一轮，quit/退下不算）
+            if "朕问" in prompt_hint and action.lower() not in {"quit", "q", "exit", "back", "退下", ""}:
+                chat_rounds_this_turn += 1
 
             # 防 deadlock：连续无响应步数上限
             if step > 500:
@@ -419,10 +434,17 @@ def run(
         log_file.close()
 
     print(f"\n=== 结束。完成 {completed_periods}/{turns} 月。Log: {log_path} ===")
+    print("\n### 玩家(qwen) 侧 token：")
+    from ming_sim.token_stats import print_token_summary
+    print_token_summary()
     return 0 if completed_periods >= turns else 1
 
 
 def main() -> None:
+    # 抓玩家(qwen) agent 的 token 用量。子进程 main.py(deepseek) 的 [TOKEN] 走它自己的 patch → log。
+    from ming_sim.token_stats import install_token_stats_patch
+    install_token_stats_patch()
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--goal", required=True, help="本局目标（写入崇祯 agent system prompt）")
     parser.add_argument(

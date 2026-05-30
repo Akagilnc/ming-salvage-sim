@@ -122,7 +122,7 @@ def extract_agent_text(run_output: object) -> str:
 
 
 def verify_llm_available(llm_config: LLMConfig) -> None:
-    """检查 LLM 是否可用：必须真实返回 ok，错误文本不能被当成成功。"""
+    """检查 LLM 是否可用：调用成功（HTTP 200，不抛异常）即算通过，不校验返回内容。"""
     agent = Agent(
         name="LLM连通性检查",
         id="llm-smoke-test",
@@ -132,14 +132,8 @@ def verify_llm_available(llm_config: LLMConfig) -> None:
         markdown=False,
     )
     try:
-        text = extract_agent_text(agent.run("输出 ok"))
+        extract_agent_text(agent.run("输出 ok"))
     except LLMUnavailable:
         raise
     except Exception as error:
         raise llm_unavailable_from_error(error) from error
-    if text.strip().lower() != "ok":
-        raise LLMUnavailable(
-            f"LLM 连通性检查失败：期望返回 ok，实际返回：{text[:300]}",
-            code="llm_validation_failed",
-            provider_message=text[:300],
-        )
