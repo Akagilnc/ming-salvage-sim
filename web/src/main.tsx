@@ -3268,8 +3268,9 @@ function ExtractionSection({ title, children }: { title: string; children: React
 }
 
 function fmtDelta(n: any): string {
+  // 缺失/非数（extractor 偶尔不带 delta_bar）按 0 处理，避免渲染出字面 "undefined"
   const num = Number(n);
-  if (!Number.isFinite(num)) return String(n);
+  if (!Number.isFinite(num)) return "0";
   if (num > 0) return `+${num}`;
   return String(num);
 }
