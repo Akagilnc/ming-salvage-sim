@@ -21,31 +21,31 @@
 
 ---
 
-## 大臣立绘（41位史实 + 19位虚构，共60位）
+## 人物专属立绘（`characters.json` 人员 + 虚构补位）
 
 ### 皇党
 
-#### 王承恩 `minister_wang_chengen.png`
+#### 王承恩 `minister_王承恩.png`
 ```
 Wang Chengen, Ming dynasty loyal eunuch official, round kind face, slightly plump, deep purple palace eunuch robes, hands folded submissively, gentle warm eyes, loyal devoted expression. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
 ```
 
-#### 曹化淳 `minister_cao_huachun.png`
+#### 曹化淳 `minister_曹化淳.png`
 ```
 Cao Huachun, Ming dynasty eunuch official candidate for chief eunuch, middle-aged, broad face, calm measured expression, dark grey-purple eunuch court robe, hands clasped at waist, watchful intelligent eyes. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
 ```
 
-#### 温体仁 `minister_wen_tiren.png`
+#### 温体仁 `minister_温体仁.png`
 ```
 Wen Tiren, Ming dynasty Minister of Rites opportunist, middle-aged, smooth ingratiating smile, red senior official robe, well-groomed thin beard, slightly obsequious posture, calculating eyes. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
 ```
 
-#### 周延儒 `minister_zhou_yanru.png`
+#### 周延儒 `minister_周延儒.png`
 ```
 Zhou Yanru, Ming dynasty young rising official, handsome middle-aged face, elegant bearing, medium blue official robe, confident slight smile, polished scholarly appearance, ambitious bright eyes. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
 ```
 
-#### 毕自严 `minister_bi_ziyan.png`
+#### 毕自严 `minister_毕自严.png`
 ```
 Bi Ziyan, Ming dynasty Minister of Revenue, lean middle-aged scholar, wire-rimmed official cap, worried furrowed brow, blue-grey robe, holding a ledger scroll, careful meticulous expression. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
 ```
@@ -54,67 +54,67 @@ Bi Ziyan, Ming dynasty Minister of Revenue, lean middle-aged scholar, wire-rimme
 
 ### 阉党
 
-#### 魏忠贤 `minister_wei_zhongxian.png`
+#### 魏忠贤 `minister_魏忠贤.png`
 ```
 Wei Zhongxian, Ming dynasty powerful chief eunuch, portly imposing figure, opulent embroidered eunuch robe with dragon motifs, domineering arrogant expression, heavy jowls, small cruel eyes, one hand on hip. Ming dynasty official full-body portrait, standing pose, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes, high detail
 ```
 
-#### 客氏 `minister_ke_shi.png`
+#### 客氏 `minister_客氏.png`
 ```
 Ke Shi, Ming dynasty imperial wet nurse noblewoman, middle-aged woman, elaborate headdress, rich dark-embroidered noblewoman robe, proud haughty expression, hands holding a fan, heavy makeup. Ming dynasty official full-body portrait, standing pose, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, high detail
 ```
 
-#### 崔呈秀 `minister_cui_chengxiu.png`
+#### 崔呈秀 `minister_崔呈秀.png`
 ```
 Cui Chengxiu, Ming dynasty Minister of War under eunuch faction, stocky middle-aged man, aggressive confident stance, dark red official robe, short beard, intimidating expression, one hand on sword pommel. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
 ```
 
-#### 田尔耕 `minister_tian_ergeng.png`
+#### 田尔耕 `minister_田尔耕.png`
 ```
 Tian Ergeng, Ming dynasty Jinyiwei commander, military bearing, black armor-trimmed official robe, Jinyiwei flying fish emblem, sharp hawk-like eyes, hand resting on decorated sword hilt, cold expression. Ming dynasty official full-body portrait, standing pose, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes, high detail
 ```
 
-#### 许显纯 `minister_xu_xianchun.png`
+#### 许显纯 `minister_许显纯.png`
 ```
 Xu Xianchun, Ming dynasty Jinyiwei interrogation officer, lean sinister face, dark black robe, sharp predatory eyes, thin cruel smile, holding a folded document, unsettling stillness. Ming dynasty official full-body portrait, standing pose, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes, high detail
 ```
 
-#### 李若琏 `minister_li_ruolian.png`
+#### 李若琏 `minister_李若琏.png`
 ```
 Li Ruolian, Ming dynasty Jinyiwei commander garrison officer, mid-thirties, resolute loyal face, dark military robe with Jinyiwei emblem, hand resting on sword hilt, upright unyielding stance of a man who will die at his post rather than surrender, weathered soldier's bearing. Ming dynasty official full-body portrait, standing pose, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed military robes and officer cap, dignified expression, high detail
 ```
 
-#### 王体乾 `minister_wang_tiqian.png`
+#### 王体乾 `minister_王体乾.png`
 ```
 Wang Tiqian, Ming dynasty chief eunuch Directorate of Ceremonial, elderly eunuch, sunken aged face, heavy ceremonial robe with gold trim, hands hidden in sleeves, blank expressionless gaze, ceremonial staff. Ming dynasty official full-body portrait, standing pose, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes, high detail
 ```
 
-#### 黄立极 `minister_huang_liji.png`
+#### 黄立极 `minister_黄立极.png`
 ```
 Huang Liji, Ming dynasty Grand Secretary serving eunuch faction, middle-aged, cautious hunched posture, dark maroon senior robe, thin mustache, downcast avoiding gaze, nervous servile manner. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
 ```
 
-#### 施凤来 `minister_shi_fenglai.png`
+#### 施凤来 `minister_施凤来.png`
 ```
 Shi Fenglai, Ming dynasty Vice Grand Secretary, pudgy soft-faced middle-aged official, pale blue senior robe, bland forgettable features, weak smile, hands meekly clasped, lacking presence. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
 ```
 
-#### 张瑞图 `minister_zhang_ruitu.png`
+#### 张瑞图 `minister_张瑞图.png`
 ```
 Zhang Ruitu, Ming dynasty Grand Secretary calligrapher-official, scholarly thin-faced middle-aged man, ink-stained fingers, elegant dark blue robe, holding a calligraphy brush, conflicted uneasy expression, artistic refined bearing. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
 ```
 
-#### 来宗道 `minister_lai_zongdao.png`
+#### 来宗道 `minister_来宗道.png`
 ```
 Lai Zongdao, Ming dynasty Minister of Rites eunuch-faction, elderly rotund official, ceremonial red robe with rank badge, round jovial face masking cunning, hands folded in formal greeting. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
 ```
 
-#### 王绍徽 `minister_wang_shaohui.png`
+#### 王绍徽 `minister_王绍徽.png`
 ```
 Wang Shaohui, Ming dynasty Minister of Personnel eunuch-faction, sharp angular face, dark official robe, piercing assessing eyes, slight sneer, posture projecting bureaucratic authority. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
 ```
 
-#### 阎鸣泰 `minister_yan_mingtai.png`
+#### 阎鸣泰 `minister_阎鸣泰.png`
 ```
 Yan Mingtai, Ming dynasty Ji-Liao Governor-General, heavyset northern official, practical travel-worn robe, thick beard, weathered face, map scroll tucked under arm, harried expression. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
 ```
@@ -123,57 +123,57 @@ Yan Mingtai, Ming dynasty Ji-Liao Governor-General, heavyset northern official, 
 
 ### 东林
 
-#### 韩爌 `minister_han_kuang.png`
+#### 韩爌 `minister_韩爌.png`
 ```
 Han Kuang, Ming dynasty former Grand Secretary Donglin elder, elderly distinguished man, long white flowing beard, deep blue senior robe, upright dignified posture despite age, wise steady eyes, gravitas of a retired statesman. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
 ```
 
-#### 李标 `minister_li_biao.png`
+#### 李标 `minister_李标.png`
 ```
 Li Biao, Ming dynasty Right Deputy Minister of Rites Donglin, upright middle-aged scholar, clean honest face, medium blue robe, hands clasped respectfully, frank direct gaze, moral integrity evident in bearing. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
 ```
 
-#### 黄道周 `minister_huang_daozhou.png`
+#### 黄道周 `minister_黄道周.png`
 ```
 Huang Daozhou, Ming dynasty Hanlin Academy compiler Donglin firebrand, sharp-featured intense young scholar, plain dark robe, passionate fierce eyes, holding a memorial document, righteous indignant expression. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
 ```
 
-#### 倪元璐 `minister_ni_yuanlu.png`
+#### 倪元璐 `minister_倪元璐.png`
 ```
 Ni Yuanlu, Ming dynasty Hanlin Academy compiler, refined literary young official, thin elegant face, scholar's robe, ink-brush tucked in belt, calm thoughtful expression, artist-statesman bearing. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
 ```
 
-#### 孙承宗 `minister_sun_chengzong.png`
+#### 孙承宗 `minister_孙承宗.png`
 ```
 Sun Chengzong, Ming dynasty former supreme commander elder statesman, white-haired elderly general-scholar, wearing official robe over partial campaign armor, white long beard, serene commanding presence, battle-experienced steady gaze. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
 ```
 
-#### 袁可立 `minister_yuan_keli.png`
+#### 袁可立 `minister_袁可立.png`
 ```
 Yuan Keli, Ming dynasty former Dengzhou governor Donglin, elderly retired official, simple dignified robe, kind weathered face, honest open expression, hands resting on walking staff. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
 ```
 
-#### 钱龙锡 `minister_qian_longxi.png`
+#### 钱龙锡 `minister_钱龙锡.png`
 ```
 Qian Longxi, Ming dynasty former Minister of Rites Donglin, refined elderly scholar, high jade-topped cap, formal ceremonial robe with rank badge, serene composed expression, cultured literary bearing. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
 ```
 
-#### 钱谦益 `minister_qian_qianyi.png`
+#### 钱谦益 `minister_钱谦益.png`
 ```
 Qian Qianyi, Ming dynasty celebrated literary official Donglin, portly distinguished elder, elaborate formal robe, full beard, self-satisfied scholarly expression, holding a poetry collection, renowned and vain bearing. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
 ```
 
-#### 刘鸿训 `minister_liu_hongxun.png`
+#### 刘鸿训 `minister_刘鸿训.png`
 ```
 Liu Hongxun, Ming dynasty diplomatic envoy returning from Korea, travel-worn middle-aged official, slightly dusty formal robe, road-weary but eager face, carrying diplomatic correspondence, alert pragmatic expression. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
 ```
 
-#### 卢象升 `minister_lu_xiansheng.png`
+#### 卢象升 `minister_卢象升.png`
 ```
 Lu Xiansheng, Ming dynasty Daming prefecture magistrate future general, young vigorous official, athletic build visible under robe, strong jaw, determined patriotic eyes, local administrative robe but military bearing. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
 ```
 
-#### 史可法 `minister_shi_kefa.png`
+#### 史可法 `minister_史可法.png`
 ```
 Shi Kefa, Ming dynasty young student scholar Donglin, youthful earnest face, plain student robes, bright idealistic eyes, holding study scrolls, upright morally resolute bearing despite youth. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
 ```
@@ -182,37 +182,37 @@ Shi Kefa, Ming dynasty young student scholar Donglin, youthful earnest face, pla
 
 ### 军队
 
-#### 王之臣 `minister_wang_zhichen.png`
+#### 王之臣 `minister_王之臣.png`
 ```
 Wang Zhichen, Ming dynasty Ji-Liao supreme commander, senior military official, imposing build, campaign-worn armor under official robe, battle-scarred weathered face, commanding presence, hand on sword. Ming dynasty official full-body portrait, standing pose, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed armor and official hat, dignified expression, high detail
 ```
 
-#### 满桂 `minister_man_gui.png`
+#### 满桂 `minister_满桂.png`
 ```
 Man Gui, Ming dynasty Datong garrison general, Mongolian-Han descent, broad powerful physique, full battle armor, fierce warrior face, thick black beard, battle-hardened fearless eyes. Ming dynasty official full-body portrait, standing pose, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed armor, dignified expression, high detail
 ```
 
-#### 赵率教 `minister_zhao_sujiao.png`
+#### 赵率教 `minister_赵率教.png`
 ```
 Zhao Sujiao, Ming dynasty Shanhai Pass garrison general, lean veteran soldier, practical campaign armor, scarred resolute face, experienced tactical eyes, holding a battle map. Ming dynasty official full-body portrait, standing pose, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed armor, dignified expression, high detail
 ```
 
-#### 祖大寿 `minister_zu_dashou.png`
+#### 祖大寿 `minister_祖大寿.png`
 ```
 Zu Dashou, Ming dynasty Jinzhou deputy garrison general, rugged northern warrior, heavy armor, broad shoulders, pragmatic calculating eyes, thick beard, imposing frontier military bearing. Ming dynasty official full-body portrait, standing pose, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed armor, dignified expression, high detail
 ```
 
-#### 毛文龙 `minister_mao_wenlong.png`
+#### 毛文龙 `minister_毛文龙.png`
 ```
 Mao Wenlong, Ming dynasty Dongjiang garrison general island commander, flamboyant military figure, ornate decorated armor, confident arrogant posture, dramatic facial hair, self-styled heroic expression. Ming dynasty official full-body portrait, standing pose, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed armor, dignified expression, high detail
 ```
 
-#### 袁崇焕 `minister_yuan_chonghuan.png`
+#### 袁崇焕 `minister_袁崇焕.png`
 ```
 Yuan Chonghuan, Ming dynasty former Liaodong governor brilliant general, tall broad-shouldered military man, partial armor over official robe, stern determined face, strong jaw, fearless strategic eyes, natural commander's bearing. Ming dynasty official full-body portrait, standing pose, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed armor and robes, dignified expression, high detail
 ```
 
-#### 曹文诏 `minister_cao_wenzhao.png`
+#### 曹文诏 `minister_曹文诏.png`
 ```
 Cao Wenzhao, Ming dynasty Liaodong guerrilla general, fierce battle-hardened warrior, full campaign armor, aggressive combat-ready stance, scarred tough face, wild loyal eyes, sword at side. Ming dynasty official full-body portrait, standing pose, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed armor, dignified expression, high detail
 ```
@@ -223,22 +223,22 @@ Cao Wenzhao, Ming dynasty Liaodong guerrilla general, fierce battle-hardened war
 
 
 
-#### 王在晋 `minister_wang_zaijin.png`
+#### 王在晋 `minister_王在晋.png`
 ```
 Wang Zaijin, Ming dynasty Nanjing Minister of War, stocky blunt-spoken middle-aged official, practical dark robe, gruff skeptical expression, arms crossed, no-nonsense pragmatist bearing. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
 ```
 
-#### 洪承畴 `minister_hong_chengchou.png`
+#### 洪承畴 `minister_洪承畴.png`
 ```
 Hong Chengchou, Ming dynasty Shaanxi grain transport official future general, ambitious middle-aged official, sharp calculating face, neat dark robe, cold intelligent eyes, composed ambition barely concealed, polished capable bearing. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
 ```
 
-#### 杨嗣昌 `minister_yang_sichang.png`
+#### 杨嗣昌 `minister_杨嗣昌.png`
 ```
 Yang Sichang, Ming dynasty Ministry of Revenue official, earnest young official, refined scholarly face, medium blue robe, diligent hardworking expression, ink-stained hands, administrator's careful bearing. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
 ```
 
-#### 孙传庭 `minister_sun_chuanting.png`
+#### 孙传庭 `minister_孙传庭.png`
 ```
 Sun Chuanting, Ming dynasty county magistrate future crusading general, young resolute county official, plain local magistrate robe, strong determined jaw, piercing eyes full of suppressed ambition, upright incorruptible bearing. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
 ```
@@ -247,7 +247,7 @@ Sun Chuanting, Ming dynasty county magistrate future crusading general, young re
 
 ### 西学
 
-#### 徐光启 `minister_xu_guangqi.png`
+#### 徐光启 `minister_徐光启.png`
 ```
 Xu Guangqi, Ming dynasty former official scientist Catholic convert, elderly distinguished scholar, Western-influenced subtle details in robe trim, holding a telescope or astronomical instrument, keen observant eyes, open-minded intellectual expression. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
 ```
@@ -354,6 +354,70 @@ Shen Yongmao, fictional Ming dynasty cabinet secretary eunuch-faction, thin serv
 #### 邓玉函 `minister_deng_yuhan.png` — 钦天监洋官·西学（耶稣会士）
 ```
 Deng Yuhan Johann Schreck, Jesuit missionary in Ming imperial service, European man in Chinese official robes, round Western face framed by Chinese official hat, holding astronomical globe, blend of East and West in appearance, scholarly curious expression. Ming dynasty official full-body portrait, standing pose, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed Jesuit-Chinese robes, high detail
+```
+
+---
+
+### 外部势力与流寇（`characters.json` 补充）
+
+#### 皇太极 `minister_皇太极.png` — 后金汗·后金
+```
+Hong Taiji, Later Jin khan in the early 17th century, powerful Manchu ruler, broad commanding face, trimmed moustache and beard, fur-trimmed dark imperial robe over lamellar armor, Eight Banners authority, calm predatory strategic eyes, one hand resting on a war bow, imposing frontier court presence. Ming dynasty official full-body portrait, standing pose, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and armor, dignified expression, high detail
+```
+
+#### 代善 `minister_代善.png` — 和硕贝勒·后金
+```
+Daišan, Later Jin senior beile, mature Manchu noble warrior, weathered broad face, heavy fur collar, dark blue riding robe over scale armor, experienced cavalry commander's bearing, cautious steady eyes, hand holding riding crop, old-banner aristocratic dignity. Ming dynasty official full-body portrait, standing pose, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and armor, dignified expression, high detail
+```
+
+#### 莽古尔泰 `minister_莽古尔泰.png` — 贝勒·后金
+```
+Manggūltai, Later Jin beile, fierce rough Manchu warrior prince, muscular build, scarred face, thick beard, dark red and black armor with fur-trimmed shoulders, aggressive stance, sword at side, violent suspicious eyes, untamed battlefield arrogance. Ming dynasty official full-body portrait, standing pose, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed armor, dignified expression, high detail
+```
+
+#### 阿敏 `minister_阿敏.png` — 贝勒·后金
+```
+Amin, Later Jin beile, proud self-willed Manchu noble, lean hard face, ornate riding robe layered over armor, fur hat, calculating arrogant expression, gloved hand on saber hilt, frontier raider's confident posture, noble yet dangerous presence. Ming dynasty official full-body portrait, standing pose, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and armor, dignified expression, high detail
+```
+
+#### 范文程 `minister_范文程.png` — 后金文馆谋臣·后金
+```
+Fan Wencheng, Han Chinese scholar-strategist serving Later Jin, composed middle-aged adviser, plain dark scholar robe with subtle Manchu court details, thin moustache, holding diplomatic documents, cool pragmatic eyes, quiet intelligence and restrained ambition. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed robes and official hat, dignified expression, high detail
+```
+
+#### 佟养性 `minister_佟养性.png` — 后金汉军将领·后金
+```
+Tong Yangxing, Han military engineer-general serving Later Jin, practical Liaodong officer, sturdy build, work-worn armor and dark robe, soot marks near sleeves, holding a small cannon model or artillery plan, focused technical expression, pragmatic surrendered frontier commander's bearing. Ming dynasty official full-body portrait, standing pose, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed armor and robes, dignified expression, high detail
+```
+
+#### 林丹汗 `minister_林丹汗.png` — 察哈尔汗·蒙古
+```
+Ligdan Khan, Chahar Mongol khan, proud steppe ruler, tall mounted-warrior bearing though standing, ornate Mongol deel with gold trim, fur hat, long moustache, hawk-like eyes, hand on curved saber, restless ambition to restore great khan authority, wind-swept grassland charisma. Ming dynasty official full-body portrait, standing pose, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed Mongol robes and armor, dignified expression, high detail
+```
+
+#### 仁祖 `minister_仁祖.png` — 朝鲜国王·朝鲜
+```
+King Injo of Joseon, cautious Korean monarch in early 17th century court dress, pale composed face, black gat-style royal headwear, deep red ceremonial robe with embroidered rank insignia, hands folded formally, anxious calculating eyes balancing Ming loyalty and Later Jin pressure, restrained royal dignity. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed Korean court robes, dignified expression, high detail
+```
+
+#### 张维 `minister_张维.png` — 朝鲜朝臣·朝鲜
+```
+Jang Yu, Joseon Korean scholar-official and pro-Ming court minister, refined middle-aged Confucian statesman, black official hat, pale blue-grey Korean court robe, holding diplomatic memorial scroll, thoughtful loyal eyes, solemn literati bearing, cautious but principled expression. Ming dynasty official full-body portrait, standing pose, hands folded in sleeve, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed Korean official robes, dignified expression, high detail
+```
+
+#### 王嘉胤 `minister_王嘉胤.png` — 陕北流寇首领·流寇
+```
+Wang Jiayin, early Shaanxi rebel bandit leader in late Ming, gaunt rugged northern face, patched leather armor over rough homespun clothes, dust-stained boots, fierce hungry eyes, carrying a crude saber, desperate charisma of famine refugees and deserting soldiers gathering around him. Ming dynasty full-body portrait, standing pose, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed rough clothing and weapon, high detail
+```
+
+#### 李自成 `minister_李自成.png` — 驿卒，潜在流寇首领·流寇
+```
+Li Zicheng, young late Ming postal courier turned potential rebel leader, lean tough Shaanxi man, plain travel-worn courier clothes with patched armor pieces, quiet hardened face, intense resilient eyes, holding reins and a short saber, restrained endurance and future insurgent charisma. Ming dynasty full-body portrait, standing pose, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed rugged clothing, dignified expression, high detail
+```
+
+#### 张献忠 `minister_张献忠.png` — 边兵，潜在流寇首领·流寇
+```
+Zhang Xianzhong, young late Ming frontier soldier turned potential rebel leader, fierce stocky warrior, rough armor over dark red cloth, suspicious wolfish eyes, scarred cheek, heavy saber in hand, violent restless energy, dangerous charisma of a raiding warlord before his rise. Ming dynasty full-body portrait, standing pose, traditional Chinese court painting style, ink wash with light color, white background, vertical composition 3:4, detailed rough armor and weapon, high detail
 ```
 
 ---

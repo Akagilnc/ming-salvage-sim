@@ -1,59 +1,62 @@
 #!/usr/bin/env python3
-"""扫 web/public/portraits/ + docs/portrait-prompts.md，生成立绘进度表 docs/portrait-status.md。
+"""扫 content/characters.json + web/public/portraits/，生成立绘进度表 docs/portrait-status.md。
 
 可反复跑：生图进度变了重跑刷新表。
 状态判定：
-  已生成      —— 存在 clean 文件名 minister_X.png / consort_X.png
-  jimeng待整理 —— 仅有即梦导出的乱名文件（名内嵌 `X.png`），需重命名才可用
+  已生成      —— 存在 clean 文件名 minister_<姓名>.png / consort_<姓名>.png
   待生成      —— 两者皆无
 """
 from __future__ import annotations
 
-import re
-import sys
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "scripts"))
-from gen_portraits import parse_entries  # noqa: E402
 
 OUT = ROOT / "web" / "public" / "portraits"
 DOC = ROOT / "docs" / "portrait-status.md"
-MD = ROOT / "docs" / "portrait-prompts.md"
+CHARACTERS = ROOT / "content" / "characters.json"
 
-HDR = re.compile(r"^#{2,4}\s+(.+?)\s+`((?:minister|consort)_[a-z0-9_]+\.png)`", re.M)
+MING_POWER_ID = "ming"
+CONSORT_RANKS = {"皇后", "贵人", "贵妃", "妃", "嫔"}
+POOL_N = 20
 
 
 def main() -> None:
-    name_of = {m.group(2): m.group(1).strip() for m in HDR.finditer(MD.read_text("utf-8"))}
-    entries = parse_entries()
+    characters = json.loads(CHARACTERS.read_text("utf-8"))["characters"]
 
     clean = {p.name for p in OUT.glob("*.png")} if OUT.exists() else set()
 
-    # 前端按中文名取 minister 专属图：minister_<人名>.png。
-    # md 标题给出 中文名 + pinyin 文件名；人名取 · 前、去括号注。
-    def cn_name(raw: str) -> str:
-        import re as _re
-        nm = raw.split("·")[0]
-        return _re.sub(r"[（(].*?[)）]", "", nm).strip()
+    ministers = [
+        (c["name"], c.get("office", ""), c.get("faction", ""), f"minister_{c['name']}.png")
+        for c in characters
+        if "rank" not in c
+    ]
+    consorts = [
+        (c["name"], c.get("office", ""), c.get("faction", ""), f"consort_{c['name']}.png")
+        for c in characters
+        if c.get("power_id") == MING_POWER_ID and c.get("rank") in CONSORT_RANKS
+    ]
 
-    ministers = []  # (中文名, 中文文件名)
-    for f, _ in entries:
-        if f.startswith("minister_"):
-            cn = cn_name(name_of.get(f, ""))
-            ministers.append((cn, f"minister_{cn}.png"))
-
-    m_rows = ["| 人物 | 文件 | 状态 |", "|---|---|---|"]
+    m_rows = ["| 人物 | 势力/派系 | 职位 | 文件 | 状态 |", "|---|---|---|---|---|"]
     m_done = 0
-    for cn, fn in ministers:
+    for cn, office, faction, fn in ministers:
         st = "已生成" if fn in clean else "待生成"
         if st == "已生成":
             m_done += 1
-        m_rows.append(f"| {cn} | `{fn}` | {st} |")
+        m_rows.append(f"| {cn} | {faction} | {office} | `{fn}` | {st} |")
     m_n = len(ministers)
 
+    c_rows = ["| 人物 | 派系 | 位分/职位 | 文件 | 状态 |", "|---|---|---|---|---|"]
+    c_person_done = 0
+    for cn, office, faction, fn in consorts:
+        st = "已生成" if fn in clean else "待生成"
+        if st == "已生成":
+            c_person_done += 1
+        c_rows.append(f"| {cn} | {faction} | {office} | `{fn}` | {st} |")
+    c_person_n = len(consorts)
+
     # 后宫预设图池：consort_pool_1..20
-    POOL_N = 20
     pool_have = sorted(
         int(p.name[len("consort_pool_"):-4])
         for p in OUT.glob("consort_pool_*.png")
@@ -65,11 +68,15 @@ def main() -> None:
         "# 立绘生成进度",
         "",
         "> 自动生成：`.venv/bin/python scripts/portrait_status.py`。改图后重跑刷新。",
-        "> 大臣 = 专属图 `minister_<中文名>.png`；后宫 = 预设图池 `consort_pool_<N>.png`（不绑人）。",
+        "> 人员名单来源：`content/characters.json`。臣僚/外臣/流寇 = `minister_<中文名>.png`；开局后宫 = `consort_<中文名>.png`；后宫池 = `consort_pool_<N>.png`（不绑人）。",
         "",
-        f"## 大臣专属图（{m_done}/{m_n} 已生成）",
+        f"## 人物专属图（{m_done}/{m_n} 已生成）",
         "",
         "\n".join(m_rows),
+        "",
+        f"## 开局后宫专属图（{c_person_done}/{c_person_n} 已生成）",
+        "",
+        "\n".join(c_rows),
         "",
         f"## 后宫预设图池（{c_done}/{POOL_N} 槽已出图）",
         "",

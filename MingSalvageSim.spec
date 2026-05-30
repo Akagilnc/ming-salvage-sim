@@ -14,6 +14,7 @@
 """
 
 from PyInstaller.utils.hooks import collect_all, collect_submodules
+from pathlib import Path
 
 # agno / openai / agno-sqlite 大量动态导入，全收集。
 _agno_data, _agno_bin, _agno_hidden = collect_all("agno")
@@ -21,6 +22,21 @@ _openai_data, _openai_bin, _openai_hidden = collect_all("openai")
 _tiktoken_data, _tiktoken_bin, _tiktoken_hidden = collect_all("tiktoken")
 # pywebview + Mac WKWebView (pyobjc)
 _webview_data, _webview_bin, _webview_hidden = collect_all("webview")
+
+
+def tree_datas(root: str, dest: str, exclude_parts=()):
+    """Collect files under root while excluding dev-only backup/cache folders."""
+    root_path = Path(root)
+    rows = []
+    for path in root_path.rglob("*"):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(root_path)
+        parts = set(rel.parts)
+        if path.name == ".DS_Store" or any(part in parts for part in exclude_parts):
+            continue
+        rows.append((str(path), str(Path(dest) / rel.parent)))
+    return rows
 
 # FastAPI/uvicorn 系列
 hiddenimports = (
@@ -53,10 +69,10 @@ datas = (
     + _openai_data
     + _tiktoken_data
     + _webview_data
+    + tree_datas("web/dist", "web/dist", exclude_parts={"_backup_rgb", "_original_before_cutout"})
+    + tree_datas("web/public", "web/public", exclude_parts={"_backup_rgb", "_original_before_cutout"})
     + [
         ("content", "content"),
-        ("web/dist", "web/dist"),
-        ("web/public", "web/public"),
     ]
 )
 

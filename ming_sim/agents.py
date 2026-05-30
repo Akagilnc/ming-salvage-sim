@@ -284,6 +284,32 @@ def create_memory_retrieval_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> A
     )
 
 
+def build_simulator_context(simulator_payload: Optional[Dict[str, object]]) -> str:
+    """拼 simulator/extractor 共用的盘面前缀段（turn_header + payload JSON）。
+
+    缓存关键：simulator 与 extractor 的 system instructions 前缀都是
+    `[game_world, simulator_context, ...]`。本函数对二者吐出**字节级一致**的 simulator_context，
+    simulator 先跑就把 `game_world + simulator_context` 写进 DeepSeek 前缀缓存，extractor
+    再命中。turn_header 文案、取值路径(统一从 payload['turn'])、json.dumps 参数三者两边同源。
+
+    BUG 修复：历史上 simulator 用 state 路径+文案「邸报抬头与正文涉及年月」，extractor 用
+    payload['turn']+文案「抽取涉及年月」→ 第一个字节就分叉 → extractor 整段 payload 全 miss。
+    实测统一后结算 token -14.7%。
+    """
+    turn_header = ""
+    if simulator_payload and isinstance(simulator_payload.get("turn"), dict):
+        t = simulator_payload["turn"]
+        turn_header = (
+            f"【本回合年月】{t.get('year')} 年 {t.get('period')} 月（第 {t.get('turn')} 回合）。"
+            f"涉及年月时以此为准。\n"
+        )
+    return (
+        turn_header
+        + "【本回合推演输入 simulator_payload】\n"
+        + json.dumps(simulator_payload or {}, ensure_ascii=False, sort_keys=False)
+    )
+
+
 def create_season_simulator_agent(
     llm_config: LLMConfig,
     agno_db: SqliteDb,
@@ -293,28 +319,11 @@ def create_season_simulator_agent(
 ) -> Agent:
     """月末推演日讲官。全量盘面走 user payload，无 tool。
     走 advanced 角色派生：若 advanced_model 已配，用更强模型；否则 fallback 主 model。"""
-    del db
+    del db, state
     cfg = _llm_for_role(llm_config, "simulator")
     tlog(f"[simulator] 使用模型 {cfg.model}")
-    # 显式年月单挑出来——别让 LLM 在大 JSON payload 里翻 turn 子节，邸报抬头才不会写错。
-    turn_header = ""
-    if state is not None:
-        turn_header = (
-            f"【本回合年月】{state.year} 年 {state.period} 月（第 {state.turn} 回合）。"
-            f"邸报抬头与正文涉及年月时以此为准。\n"
-        )
-    elif simulator_payload and isinstance(simulator_payload.get("turn"), dict):
-        t = simulator_payload["turn"]
-        turn_header = (
-            f"【本回合年月】{t.get('year')} 年 {t.get('period')} 月（第 {t.get('turn')} 回合）。"
-            f"邸报抬头与正文涉及年月时以此为准。\n"
-        )
-    simulator_context = (
-        turn_header
-        + "【本回合推演输入 simulator_payload】\n"
-        + json.dumps(simulator_payload or {}, ensure_ascii=False, sort_keys=False)
-    )
-    del state
+    # simulator_context 与 extractor 共用 build_simulator_context → 字节一致 → 暖好 extractor 前缀缓存。
+    simulator_context = build_simulator_context(simulator_payload)
 
     return Agent(
         name="月末推演日讲官",
@@ -365,18 +374,8 @@ def create_score_extractor_module_agent(
         raise RuntimeError(f"未知结算提取模块：{module}")
     cfg = _llm_for_role(llm_config, "extractor")
     tlog(f"[extractor/{module}] 使用模型 {cfg.model}")
-    turn_header = ""
-    if simulator_payload and isinstance(simulator_payload.get("turn"), dict):
-        t = simulator_payload["turn"]
-        turn_header = (
-            f"【本回合年月】{t.get('year')} 年 {t.get('period')} 月（第 {t.get('turn')} 回合）。"
-            f"抽取涉及年月时以此为准。\n"
-        )
-    simulator_context = (
-        turn_header
-        + "【本回合推演输入 simulator_payload】\n"
-        + json.dumps(simulator_payload or {}, ensure_ascii=False, sort_keys=False)
-    )
+    # 与 simulator 共用同一函数 → simulator_context 字节级一致 → 命中 simulator 暖好的前缀缓存。
+    simulator_context = build_simulator_context(simulator_payload)
     supplemental = (
         "【结算补充上下文 extractor_context】\n"
         + json.dumps(supplemental_context or {}, ensure_ascii=False, sort_keys=False)

@@ -33,8 +33,9 @@ SIZE = "1024x1024"
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
-# 标题行：#### 名字 `minister_xxx.png`，下一段围栏代码块是 prompt
-HEADER_RE = re.compile(r"^#{2,4}\s+\S.*`((?:minister|consort)_[a-z0-9_]+\.png)`")
+# 标题行：#### 名字 `minister_xxx.png`，下一段围栏代码块是 prompt。
+# 文件名可能是中文名（如 consort_周皇后.png），所以不能只认 ASCII。
+HEADER_RE = re.compile(r"^#{2,4}\s+\S.*`((?:minister|consort)_[^`/<>]+\.png)`")
 
 
 def parse_entries() -> list[tuple[str, str]]:
