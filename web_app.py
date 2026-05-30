@@ -28,6 +28,7 @@ from ming_sim.llm_config import (
     load_llm_config,
     load_runtime_llm,
     normalize_openai_base_url,
+    normalize_thinking_level,
     save_runtime_llm,
 )
 from ming_sim.llm_model import extract_agent_text, verify_llm_available
@@ -133,9 +134,11 @@ def _verify_llm_configs_or_raise(config: LLMConfig) -> None:
         model=advanced_model,
         max_tokens=config.max_tokens,
         timeout_seconds=config.timeout_seconds,
+        thinking_level=config.advanced_thinking_level,
         advanced_model=config.advanced_model,
         advanced_base_url=config.advanced_base_url,
         advanced_api_key=config.advanced_api_key,
+        advanced_thinking_level=config.advanced_thinking_level,
     )
     try:
         verify_llm_available(advanced_config)
@@ -194,15 +197,19 @@ class WebGame:
         advanced_model = os.environ.get("OPENAI_ADVANCED_MODEL", "")
         advanced_base_url = os.environ.get("OPENAI_ADVANCED_BASE_URL", "")
         advanced_api_key = os.environ.get("OPENAI_ADVANCED_API_KEY", "")
+        thinking_level = os.environ.get("OPENAI_THINKING_LEVEL", "")
+        advanced_thinking_level = os.environ.get("OPENAI_ADVANCED_THINKING_LEVEL", "")
         timeout_seconds = float(os.environ.get("OPENAI_TIMEOUT_SECONDS", "180") or 180)
         # 菜单写的 runtime_llm.json 优先于 env，让"在网页里改的配置"重启后仍生效。
         runtime = load_runtime_llm()
         base_url = runtime.get("base_url") or base_url
         model = runtime.get("model") or model
         api_key = runtime.get("api_key") or api_key
+        thinking_level = runtime.get("thinking_level") or thinking_level
         advanced_model = runtime.get("advanced_model") or advanced_model
         advanced_base_url = runtime.get("advanced_base_url") or advanced_base_url
         advanced_api_key = runtime.get("advanced_api_key") or advanced_api_key
+        advanced_thinking_level = runtime.get("advanced_thinking_level") or advanced_thinking_level
         max_tokens = int(runtime.get("max_tokens") or 8000)
         timeout_seconds = float(runtime.get("timeout_seconds") or timeout_seconds)
         if not api_key:
@@ -219,9 +226,11 @@ class WebGame:
             model=model,
             max_tokens=max_tokens,
             timeout_seconds=timeout_seconds,
+            thinking_level=normalize_thinking_level(thinking_level),
             advanced_model=(advanced_model or "").strip(),
             advanced_base_url=normalize_openai_base_url(adv_base) if adv_base else "",
             advanced_api_key=(advanced_api_key or "").strip(),
+            advanced_thinking_level=normalize_thinking_level(advanced_thinking_level),
         )
         self.session = GameSession(db_path, llm_config)
         self.session.begin_turn()
@@ -334,15 +343,21 @@ class WebGame:
         api_key: str,
         max_tokens: int = 0,
         timeout_seconds: float = 0,
+        thinking_level: Optional[str] = None,
         advanced_model: Optional[str] = None,
         advanced_base_url: Optional[str] = None,
         advanced_api_key: Optional[str] = None,
+        advanced_thinking_level: Optional[str] = None,
     ) -> LLMConfig:
         base = normalize_openai_base_url(base_url.strip() or self.session.llm_config.base_url)
         new_model = model.strip() or self.session.llm_config.model
         new_key = api_key.strip() or self.session.llm_config.api_key
         new_max = max_tokens if max_tokens > 0 else self.session.llm_config.max_tokens
         new_timeout = timeout_seconds if timeout_seconds > 0 else self.session.llm_config.timeout_seconds
+        if thinking_level is None:
+            new_thinking_level = self.session.llm_config.thinking_level
+        else:
+            new_thinking_level = normalize_thinking_level(thinking_level)
         # advanced_* = None 表示不动；传空串表示显式清空。
         if advanced_model is None:
             new_advanced = self.session.llm_config.advanced_model
@@ -357,15 +372,21 @@ class WebGame:
             new_adv_key = self.session.llm_config.advanced_api_key
         else:
             new_adv_key = advanced_api_key.strip()
+        if advanced_thinking_level is None:
+            new_adv_thinking_level = self.session.llm_config.advanced_thinking_level
+        else:
+            new_adv_thinking_level = normalize_thinking_level(advanced_thinking_level)
         new_config = LLMConfig(
             api_key=new_key,
             base_url=base,
             model=new_model,
             max_tokens=new_max,
             timeout_seconds=new_timeout,
+            thinking_level=new_thinking_level,
             advanced_model=new_advanced,
             advanced_base_url=new_adv_base,
             advanced_api_key=new_adv_key,
+            advanced_thinking_level=new_adv_thinking_level,
         )
         _verify_llm_configs_or_raise(new_config)
         save_runtime_llm(
@@ -374,9 +395,11 @@ class WebGame:
             new_config.api_key,
             new_config.max_tokens,
             new_config.timeout_seconds,
+            new_config.thinking_level,
             new_config.advanced_model,
             new_config.advanced_base_url,
             new_config.advanced_api_key,
+            new_config.advanced_thinking_level,
         )
         self.session.llm_config = new_config
         # 重建 registry 让大臣 Agent 用新配置
@@ -972,9 +995,12 @@ async def api_menu_status() -> Dict[str, Any]:
             "model": runtime.get("model") or os.environ.get("OPENAI_MODEL", ""),
             "has_api_key": has_api_key,
             "max_tokens": int(runtime.get("max_tokens") or 8000),
+            "timeout_seconds": float(runtime.get("timeout_seconds") or os.environ.get("OPENAI_TIMEOUT_SECONDS", "180") or 180),
+            "thinking_level": runtime.get("thinking_level") or os.environ.get("OPENAI_THINKING_LEVEL", ""),
             "advanced_model": runtime.get("advanced_model") or os.environ.get("OPENAI_ADVANCED_MODEL", ""),
             "advanced_base_url": runtime.get("advanced_base_url") or os.environ.get("OPENAI_ADVANCED_BASE_URL", ""),
             "has_advanced_api_key": bool(runtime.get("advanced_api_key") or os.environ.get("OPENAI_ADVANCED_API_KEY")),
+            "advanced_thinking_level": runtime.get("advanced_thinking_level") or os.environ.get("OPENAI_ADVANCED_THINKING_LEVEL", ""),
         },
     }
 
@@ -1067,9 +1093,11 @@ class LlmSetupRequest(BaseModel):
     api_key: str
     max_tokens: int = 8000
     timeout_seconds: float = 180
+    thinking_level: str = ""
     advanced_model: str = ""
     advanced_base_url: str = ""
     advanced_api_key: str = ""
+    advanced_thinking_level: str = ""
 
 
 @app.post("/api/menu/llm")
@@ -1084,6 +1112,8 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     advanced_api_key = (request.advanced_api_key or "").strip()
     max_tokens = request.max_tokens if request.max_tokens > 0 else 8000
     timeout_seconds = request.timeout_seconds if request.timeout_seconds > 0 else 180
+    thinking_level = normalize_thinking_level(request.thinking_level)
+    advanced_thinking_level = normalize_thinking_level(request.advanced_thinking_level)
     if not (base_url and model):
         raise HTTPException(status_code=400, detail="base_url / model 不能为空。")
     if not api_key:
@@ -1102,9 +1132,11 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         model=model,
         max_tokens=max_tokens,
         timeout_seconds=timeout_seconds,
+        thinking_level=thinking_level,
         advanced_model=advanced_model,
         advanced_base_url=advanced_base_url,
         advanced_api_key=advanced_api_key,
+        advanced_thinking_level=advanced_thinking_level,
     )
     try:
         _verify_llm_configs_or_raise(config)
@@ -1120,9 +1152,11 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         api_key,
         max_tokens,
         timeout_seconds,
+        thinking_level,
         advanced_model,
         advanced_base_url,
         advanced_api_key,
+        advanced_thinking_level,
     )
     return {
         "ok": True,
@@ -1132,9 +1166,11 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
             "has_api_key": True,
             "max_tokens": max_tokens,
             "timeout_seconds": timeout_seconds,
+            "thinking_level": thinking_level,
             "advanced_model": advanced_model,
             "advanced_base_url": advanced_base_url,
             "has_advanced_api_key": bool(advanced_api_key),
+            "advanced_thinking_level": advanced_thinking_level,
         },
     }
 app.add_middleware(
@@ -1436,10 +1472,12 @@ class LLMConfigRequest(BaseModel):
     api_key: str = ""
     max_tokens: int = 0
     timeout_seconds: float = 0
+    thinking_level: str = "__keep__"
     # None=不动，""=显式清空，其他=覆写。pydantic v1 默认 None 走不进来；用 sentinel "__keep__"
     advanced_model: str = "__keep__"
     advanced_base_url: str = "__keep__"
     advanced_api_key: str = "__keep__"
+    advanced_thinking_level: str = "__keep__"
 
 
 @app.get("/api/consorts/candidates")
@@ -1513,9 +1551,11 @@ async def api_get_llm_config() -> Dict[str, Any]:
         "model": cfg.model,
         "max_tokens": cfg.max_tokens,
         "timeout_seconds": cfg.timeout_seconds,
+        "thinking_level": cfg.thinking_level,
         "advanced_model": cfg.advanced_model,
         "advanced_base_url": cfg.advanced_base_url,
         "has_advanced_api_key": bool(cfg.advanced_api_key),
+        "advanced_thinking_level": cfg.advanced_thinking_level,
         "has_api_key": bool(cfg.api_key),
         "persisted": {
             "base_url": saved.get("base_url", ""),
@@ -1523,18 +1563,22 @@ async def api_get_llm_config() -> Dict[str, Any]:
             "has_api_key": bool(saved.get("api_key", "")),
             "max_tokens": int(saved.get("max_tokens") or 8000),
             "timeout_seconds": float(saved.get("timeout_seconds") or 180),
+            "thinking_level": saved.get("thinking_level", ""),
             "advanced_model": saved.get("advanced_model", ""),
             "advanced_base_url": saved.get("advanced_base_url", ""),
             "has_advanced_api_key": bool(saved.get("advanced_api_key", "")),
+            "advanced_thinking_level": saved.get("advanced_thinking_level", ""),
         },
     }
 
 
 @app.post("/api/llm/config")
 async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
+    thinking_level = None if request.thinking_level == "__keep__" else request.thinking_level
     advanced = None if request.advanced_model == "__keep__" else request.advanced_model
     adv_base = None if request.advanced_base_url == "__keep__" else request.advanced_base_url
     adv_key = None if request.advanced_api_key == "__keep__" else request.advanced_api_key
+    adv_thinking = None if request.advanced_thinking_level == "__keep__" else request.advanced_thinking_level
     try:
         cfg = get_game().apply_llm_config(
             request.base_url,
@@ -1542,9 +1586,11 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
             request.api_key,
             request.max_tokens,
             request.timeout_seconds,
+            thinking_level=thinking_level,
             advanced_model=advanced,
             advanced_base_url=adv_base,
             advanced_api_key=adv_key,
+            advanced_thinking_level=adv_thinking,
         )
     except LLMUnavailable as e:
         raise HTTPException(status_code=400, detail=_llm_error_detail(e)) from None
@@ -1555,9 +1601,11 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
         "model": cfg.model,
         "max_tokens": cfg.max_tokens,
         "timeout_seconds": cfg.timeout_seconds,
+        "thinking_level": cfg.thinking_level,
         "advanced_model": cfg.advanced_model,
         "advanced_base_url": cfg.advanced_base_url,
         "has_advanced_api_key": bool(cfg.advanced_api_key),
+        "advanced_thinking_level": cfg.advanced_thinking_level,
         "has_api_key": bool(cfg.api_key),
     }
 

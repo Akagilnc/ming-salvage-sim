@@ -99,7 +99,7 @@ def create_chat_model(
         extra_body["response_format"] = {"type": "json_object"}
         kwargs["extra_body"] = extra_body
     if supports_openai_reasoning_effort(llm_config.model):
-        kwargs["reasoning_effort"] = "medium" if enable_thinking else "minimal"
+        kwargs["reasoning_effort"] = llm_config.thinking_level or ("medium" if enable_thinking else "minimal")
     return OpenAIChat(**kwargs)
 
 
