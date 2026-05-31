@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from typing import Any, Callable, Dict, List, Optional
@@ -37,12 +38,54 @@ def _ctx() -> GameContent:
     return _content
 
 
+# 调试开关：MING_SIM_DUMP_LLM=1 时把每次 agno 调用真实送进 LLM 的 system/user/assistant
+# 全文落盘到 scripts/runs/llm_dump_<pid>.log。从 RunOutput.messages 取（=实际 payload，非重建）。
+_DUMP_LLM = os.environ.get("MING_SIM_DUMP_LLM", "").strip() in ("1", "true", "yes")
+_DUMP_PATH = f"scripts/runs/llm_dump_{os.getpid()}.log"
+
+
+def _dump_llm_messages(output: Any, tag: str, agent: Optional[Agent] = None) -> None:
+    """把这次 run 的完整 messages（含 system prompt）追加写盘。仅 _DUMP_LLM 开时生效。
+
+    非流式：output 即 RunOutput，带 .messages。
+    流式：终结事件 RunCompletedEvent 无 .messages，改从 agent.get_last_run_output() 取。"""
+    if not _DUMP_LLM:
+        return
+    msgs = getattr(output, "messages", None)
+    if not msgs and agent is not None:
+        try:
+            last = agent.get_last_run_output()
+            msgs = getattr(last, "messages", None)
+        except Exception:  # noqa: BLE001 — dump 是调试旁路，任何异常都不该断结算
+            msgs = None
+    if not msgs:
+        return
+    lines = [f"\n{'='*80}\n[DUMP] tag={tag}  共 {len(msgs)} 条 message\n{'='*80}"]
+    for i, m in enumerate(msgs):
+        role = getattr(m, "role", "?")
+        content = getattr(m, "content", "")
+        if content is None:
+            content = ""
+        lines.append(f"\n----- #{i} role={role} ({len(str(content))} 字) -----\n{content}")
+        # 工具调用也带上
+        tcalls = getattr(m, "tool_calls", None)
+        if tcalls:
+            lines.append(f"\n  [tool_calls] {tcalls}")
+    try:
+        with open(_DUMP_PATH, "a", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        tlog(f"[{tag}] LLM messages 已 dump → {_DUMP_PATH}")
+    except OSError as e:
+        tlog(f"[{tag}] dump 写盘失败：{e}")
+
+
 def run_agent_text(agent: Agent, prompt: str, tag: str) -> str:
     """非流式跑 agent，返回最终完整文本。
     extractor/sanitizer 这类要严格 JSON 的场合用——避免流式 buffer 把 LLM 偶发重发段累加成畸形。"""
     tlog(f"[{tag}] 开始非流式推演（等待完整响应）")
     t0 = time.monotonic()
     output = agent.run(prompt)
+    _dump_llm_messages(output, tag)
     text = extract_agent_text(output)
     tlog(f"[{tag}] 完成，{len(text)} 字，用时 {time.monotonic() - t0:.1f}s")
     return text
@@ -157,6 +200,7 @@ def run_agent_stream_text(
         abort_llm_contract(tag, "流式无内容且无终结事件", "")
     tlog(f"[{tag}] 完成，{len(text)} 字，工具调用 {tool_calls} 次")
     # 流式 openai response 无 .usage，monkeypatch 抓不到；从终结事件 metrics 补记 token。
+    _dump_llm_messages(final_output, tag, agent=agent)
     if final_output is not None:
         metrics = getattr(final_output, "metrics", None)
         model_id = getattr(getattr(agent, "model", None), "id", None) or "stream"

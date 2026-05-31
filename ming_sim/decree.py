@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from typing import Callable, Dict, List, Optional
 
@@ -16,6 +17,7 @@ from ming_sim.agents import (
     create_decree_writer_agent,
     create_ending_summary_agent,
     create_json_sanitizer_agent,
+    create_score_extractor_agent,
     create_score_extractor_module_agent,
     create_season_simulator_agent,
     run_agent_text,
@@ -34,9 +36,14 @@ from ming_sim.simulation import (
     build_simulator_payload,
     build_extractor_shared_context,
     extract_scores_by_modules_with_agno,
+    extract_scores_with_agno,
     simulate_season_with_payload,
 )
 from ming_sim.token_stats import tlog
+
+# 结算抽取模式开关：`mono`（默认，单体 score_extractor.md 一把抽）/ `module`（4 模块拆分抽，缓存友好）。
+# 环境变量 MING_SIM_EXTRACTOR 控制；两套字段语言均经 TOP_LEVEL_ALIASES 兼容落库。
+EXTRACTOR_MODE = os.environ.get("MING_SIM_EXTRACTOR", "mono").strip().lower()
 
 # 20 年自动结算：开局 1627.10（turn=1），每回合 +1 月。到 1647.10 = (1647-1627)*12 + 1 = 241 回合。
 # 满 240 回合（即第 240 个回合结算完，1647.09）仍未分胜负则强制 timeout 收尾。
@@ -270,25 +277,35 @@ def resolve_directives(
         relevant_memories=relevant_memories,
         secret_orders=secret_orders_for_sim,
     )
-    extractors = {
-        module: create_score_extractor_module_agent(
-            llm_config,
-            agno_db,
-            module,
-            simulator_payload=simulator_payload,
-            supplemental_context=extractor_shared_context,
-        )
-        for module in EXTRACTION_MODULES
-    }
     sanitizer = create_json_sanitizer_agent(llm_config, agno_db)
     extractor_input = ""
     extractor_output = ""
     try:
-        extracted, extractor_output, extractor_input = extract_scores_by_modules_with_agno(
-            extractors, db, state, effective_narrative, decree_text=decree_text, sanitizer=sanitizer,
-            relevant_memories=relevant_memories,
-            secret_orders=secret_orders_for_sim,
-        )
+        if EXTRACTOR_MODE == "mono":
+            tlog("结算 3/4 抽取（单体 mono）")
+            mono_extractor = create_score_extractor_agent(llm_config, agno_db)
+            extracted, extractor_output, extractor_input = extract_scores_with_agno(
+                mono_extractor, db, state, effective_narrative, decree_text=decree_text, sanitizer=sanitizer,
+                relevant_memories=relevant_memories,
+                secret_orders=secret_orders_for_sim,
+            )
+        else:
+            tlog("结算 3/4 抽取（模块 module）")
+            extractors = {
+                module: create_score_extractor_module_agent(
+                    llm_config,
+                    agno_db,
+                    module,
+                    simulator_payload=simulator_payload,
+                    supplemental_context=extractor_shared_context,
+                )
+                for module in EXTRACTION_MODULES
+            }
+            extracted, extractor_output, extractor_input = extract_scores_by_modules_with_agno(
+                extractors, db, state, effective_narrative, decree_text=decree_text, sanitizer=sanitizer,
+                relevant_memories=relevant_memories,
+                secret_orders=secret_orders_for_sim,
+            )
     except Exception as exc:
         print(f"[WARN] 结算抽取失败：{exc}；本{TURN_UNIT}数值不变。")
         extracted = {}

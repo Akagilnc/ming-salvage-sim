@@ -138,7 +138,12 @@ def build_memory_brief(character: Character, context: CourtContext) -> str:
     if len(lines) == 1:
         return ""
     brief = "\n".join(lines)
-    tlog(f"[memory/brief] {character.name} chapters={len(chapters)} ({len(brief)}字)")
+    chap_list = "、".join(f"{c['year']}年{c['period']}月" for c in chapters)
+    tlog(
+        f"[装填大臣记忆] 建「{character.name}」对话Agent时，把更早朝局的起居注章节"
+        f"（每月一段朝局叙事，取 turn-2 及更早4月内）塞进其system上下文，"
+        f"让他作答能记得这几月发生过什么。本次装 {len(chapters)} 章：{chap_list}，共 {len(brief)} 字"
+    )
     return brief
 
 
@@ -430,8 +435,8 @@ class MinisterRegistry:
             name: f"minister-{name}-turn-{context.state.turn}"
             for name in characters
         }
-        for character in characters.values():
-            self.agents[character.name] = self._create(character)
+        # 懒加载：不在构造时预建全人物 agent（一整月通常只召见两三人，预建 50+ 个
+        # 都要查 DB 拼 memory_brief，纯浪费）。改由 get() 首次取用时按需建并缓存。
 
     def _create(self, character: Character) -> Agent:
         return create_minister_agent(
@@ -453,7 +458,12 @@ class MinisterRegistry:
         )
 
     def get(self, character: Character) -> Agent:
-        return self.agents[character.name]
+        """懒加载：首次召见某大臣才建其 Agent（含查 DB 拼 memory_brief），之后本回合复用缓存。"""
+        agent = self.agents.get(character.name)
+        if agent is None:
+            agent = self._create(character)
+            self.agents[character.name] = agent
+        return agent
 
     def refresh(self, character_name: str) -> None:
         character = _ctx().characters.get(character_name)
