@@ -781,7 +781,7 @@ def build_extractor_tools(context: CourtContext):
                             key只从财政系数表选：田赋_rate/辽饷_base/辽饷_rate/盐税_base/盐税_rate/
                             商税_base/商税_rate/皇庄_base/皇庄_rate/织造_base/织造_rate/矿税_base/矿税_rate/
                             宗室禄米_base/宗室禄米_rate/官俸_base/官俸_rate/工程_base/工程_rate/
-                            赈灾_base/赈灾_rate/九边补给_base/九边补给_rate/宫廷_base/宫廷_rate/
+                            赈灾_base/赈灾_rate/宫廷_base/宫廷_rate/
                             内廷俸_base/内廷俸_rate/妃嫔_base/妃嫔_rate
         appointments        仅后宫纳妃 [{name,office,office_type:"后宫",reason,approved}]
                             decree_text明文"纳/册封/封/选 某某 为 位号"才立；朝臣一律不进此字段

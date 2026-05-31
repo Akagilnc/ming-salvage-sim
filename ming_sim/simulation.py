@@ -20,6 +20,8 @@ TOP_LEVEL_ALIASES = {
     "国势变化": "metric_delta",
     "钱粮收支": "economy_moves",
     "财政制度变化": "fiscal_changes",
+    "新立月度收支": "fiscal_creates",
+    "裁撤月度收支": "fiscal_removes",
     "派系变化": "faction_delta",
     "阶级变化": "class_delta",
     "地区变化": "region_delta",
@@ -45,6 +47,9 @@ TOP_LEVEL_LABELS = {value: key for key, value in TOP_LEVEL_ALIASES.items()}
 
 ITEM_FIELD_ALIASES = {
     "account": "account", "账户": "account",
+    "direction": "direction", "方向": "direction",
+    "display": "display", "显示名": "display", "名称": "display",
+    "init_value": "init_value", "初值": "init_value", "初始值": "init_value",
     "delta": "delta", "增量": "delta",
     "category": "category", "分类": "category",
     "reason": "reason", "原因": "reason",
@@ -354,101 +359,6 @@ def simulate_season_with_payload(
     return raw.strip(), payload
 
 
-def extract_scores_with_agno(
-    agent: Agent,
-    db: GameDB,
-    state: GameState,
-    narrative: str,
-    decree_text: str = "",
-    sanitizer: Optional[Agent] = None,
-    relevant_memories: Optional[List[Dict[str, object]]] = None,
-    secret_orders: Optional[List[Dict[str, object]]] = None,
-) -> tuple[Dict[str, object], str, str]:
-    """结算 agent: 读邸报抽 JSON。"""
-    active = db.list_active_issues()
-    issues_brief = [
-        {
-            "issue_id": int(r["id"]),
-            "title": r["title"],
-            "bar_value": int(r["bar_value"]),
-            "inertia": int(r["inertia"]),
-            "stage_text": r["stage_text"],
-            "cancellable": r["cancellable"],
-            "resolve_condition": (r["resolve_condition"] if "resolve_condition" in r.keys() else "") or "(未填)",
-            "fail_condition": (r["fail_condition"] if "fail_condition" in r.keys() else "") or "(未填)",
-        }
-        for r in active
-    ]
-    region_ids = [r["id"] for r in db.conn.execute("SELECT id FROM regions").fetchall()]
-    army_ids = [r["id"] for r in db.conn.execute("SELECT id FROM armies").fetchall()]
-    candidate_events = [
-        {"id": ev.id, "title": ev.title}
-        for ev in gather_candidate_events(state, db)
-    ]
-    region_rows = [
-        dict(r) for r in db.conn.execute(
-            "SELECT id,name,kind,population,public_support,unrest,natural_disaster,"
-            "human_disaster,registered_land,hidden_land,tax_per_turn,grain_security,"
-            "gentry_resistance,military_pressure,status,controlled_by,"
-            "json_extract(fiscal,'$.corruption') as corruption FROM regions ORDER BY id"
-        ).fetchall()
-    ]
-    army_rows = [
-        dict(r) for r in db.conn.execute(
-            "SELECT id,name,station,theater,commander,controller,troop_type,manpower,"
-            "maintenance_per_turn,supply,morale,training,equipment,arrears,mobility,"
-            "loyalty,status FROM armies ORDER BY id"
-        ).fetchall()
-    ]
-    active_ministers = [
-        dict(r) for r in db.conn.execute(
-            "SELECT name,office,office_type,faction,power_id,location FROM characters WHERE status='active' ORDER BY rowid"
-        ).fetchall()
-    ]
-    offstage_ministers = [
-        dict(r) for r in db.conn.execute(
-            "SELECT name,office,faction,power_id,location,debut_year,debut_month "
-            "FROM characters WHERE status='offstage' ORDER BY name"
-        ).fetchall()
-    ]
-    payload = {
-        "turn": {"year": state.year, "period": state.period, "turn": state.turn},
-        "narrative": narrative,
-        "decree_text": decree_text,
-        "active_issues": issues_brief,
-        "candidate_events": candidate_events,
-        "current_state": dict(state.metrics),
-        "factions": db.faction_report(),
-        "classes": db.class_report(),
-        "powers": _auto_table(db.power_payload()),
-        "regions": _auto_table(region_rows),
-        "armies": _auto_table(army_rows),
-        "buildings": _auto_table(db.building_payload()),
-        "active_ministers": _auto_table(active_ministers),
-        "offstage_ministers": _auto_table(offstage_ministers),
-        "region_ids": region_ids,
-        "army_ids": army_ids,
-        "class_names": [r["name"] for r in db.conn.execute("SELECT DISTINCT name FROM classes ORDER BY name").fetchall()],
-        "power_ids": [str(r["id"]) for r in db.conn.execute("SELECT id FROM powers").fetchall()],
-        "fiscal_config": db.get_fiscal_config(),
-        "relevant_memories": relevant_memories or [],
-        "secret_orders": secret_orders or [],
-        "_format_note": "regions/armies/buildings/powers/active_ministers/offstage_ministers 均为 header+二维数组（cols 列名 + rows 数据）。secret_orders 独立字段，含 id/minister_name/title/content/status/result。",
-    }
-    payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=False)
-    tlog(f"[extractor] user payload total={len(payload_json)} chars (~{len(payload_json)//1.5:.0f} tok)")
-    raw = run_agent_text(agent, payload_json, tag="extractor")
-    try:
-        return parse_agent_json(raw, "结算抽取"), raw, payload_json
-    except Exception as parse_err:
-        if sanitizer is None:
-            raise
-        tlog(f"[extractor] 主输出解析失败：{parse_err}；调 sanitizer 重整")
-        cleaned = run_agent_text(sanitizer, raw, tag="sanitizer")
-        # 留痕用原始 raw（sanitizer 前），追查时能看到 extractor 真实吐了什么。
-        return parse_agent_json(cleaned, "结算抽取（sanitizer）"), raw, payload_json
-
-
 EXTRACTION_MODULES = ("internal", "military_external", "issues", "personnel_secret")
 
 EMPTY_EXTRACTION: Dict[str, object] = {
@@ -466,6 +376,8 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "cancels": [],
     "close_issues": [],
     "fiscal_changes": [],
+    "fiscal_creates": [],
+    "fiscal_removes": [],
     "office_changes": [],
     "appointments": [],
     "character_status_changes": [],
@@ -476,7 +388,7 @@ EMPTY_EXTRACTION: Dict[str, object] = {
 }
 
 MODULE_FIELDS: Dict[str, set[str]] = {
-    "internal": {"metric_delta", "economy_moves", "faction_delta", "class_delta", "region_delta", "fiscal_changes"},
+    "internal": {"metric_delta", "economy_moves", "faction_delta", "class_delta", "region_delta", "fiscal_changes", "fiscal_creates", "fiscal_removes"},
     "military_external": {"army_delta", "new_armies", "power_updates", "world_advance"},
     "issues": {"issue_advances", "new_issues", "cancels", "close_issues"},
     "personnel_secret": {
@@ -695,6 +607,8 @@ def _sanitize_module_output(module: str, data: Dict[str, object]) -> Dict[str, o
     if module == "internal":
         cleaned["economy_moves"] = _clean_economy_moves(cleaned.get("economy_moves"))
         cleaned["fiscal_changes"] = _clean_fiscal_changes(cleaned.get("fiscal_changes"))
+        cleaned["fiscal_creates"] = _clean_fiscal_creates(cleaned.get("fiscal_creates"))
+        cleaned["fiscal_removes"] = _clean_fiscal_removes(cleaned.get("fiscal_removes"))
     if module == "military_external":
         cleaned["world_advance"] = _clean_world_advance(cleaned.get("world_advance"))
     return cleaned
@@ -788,6 +702,74 @@ def _clean_fiscal_changes(raw: object) -> List[Dict[str, object]]:
         cleaned.append({
             "key": key,
             "delta": delta,
+            "reason": str(item.get("reason") or "")[:120],
+        })
+    return cleaned
+
+
+_DIRECTION_NORMALIZE = {
+    "income": "income", "收": "income", "收入": "income", "进账": "income",
+    "expense": "expense", "支": "expense", "支出": "expense", "出账": "expense",
+}
+
+
+def _clean_fiscal_creates(raw: object) -> List[Dict[str, object]]:
+    """LLM 推演中凭空新立的月固定收支项（税是其一种）。完全放开——
+    只做枚举校验：account∈{国库,内库}、direction∈{income,expense}、key 非空。
+    税种／数值由 LLM 全权裁夺，代码不预设白名单。
+    """
+    cleaned: List[Dict[str, object]] = []
+    if not isinstance(raw, list):
+        return cleaned
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        item = _canonical_item_fields(item)
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("key") or "").strip()
+        if not key:
+            continue
+        account = str(item.get("account") or "").strip()
+        if account not in ("国库", "内库"):
+            continue
+        direction = _DIRECTION_NORMALIZE.get(str(item.get("direction") or "").strip())
+        if direction is None:
+            continue
+        try:
+            init_value = int(item.get("init_value") or 0)
+        except (TypeError, ValueError):
+            init_value = 0
+        display = str(item.get("display") or "").strip() or key.replace("_base", "")
+        cleaned.append({
+            "key": key,
+            "account": account,
+            "direction": direction,
+            "display": display,
+            "init_value": max(0, init_value),
+            "reason": str(item.get("reason") or "")[:120],
+        })
+    return cleaned
+
+
+def _clean_fiscal_removes(raw: object) -> List[Dict[str, object]]:
+    """LLM 推演中彻底裁撤一个月固定收支项（罢税/裁俸）。删项只需 key。
+    完全放开——含 dynamic（田赋/辽饷/盐税/商税/皇庄），后果玩家自负。落库阶段删 base+rate 两行。
+    """
+    cleaned: List[Dict[str, object]] = []
+    if not isinstance(raw, list):
+        return cleaned
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        item = _canonical_item_fields(item)
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("key") or "").strip()
+        if not key:
+            continue
+        cleaned.append({
+            "key": key,
             "reason": str(item.get("reason") or "")[:120],
         })
     return cleaned

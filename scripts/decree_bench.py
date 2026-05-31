@@ -115,8 +115,7 @@ def main() -> int:
     llm_config = load_llm_config(base_url, model, api_key=api_key)
     os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
 
-    print(f"[bench] EXTRACTOR_MODE={os.environ.get('MING_SIM_EXTRACTOR', 'module')} "
-          f"model={model} chats={args.chats} decrees={args.decrees}")
+    print(f"[bench] extractor=module model={model} chats={args.chats} decrees={args.decrees}")
     session = GameSession(db_path, llm_config, start_ym=args.start_ym or None)
     snap = session.begin_turn()
     print(f"[turn] year={snap.year} period={snap.period} turn={snap.turn}")

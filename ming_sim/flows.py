@@ -118,21 +118,10 @@ def calc_province_fiscal(
     return guo_ku_total, nei_ku_total, details
 
 
-# 固定月度收支项定义：(account, dir, name, base_key, rate_key, note)。
-# 税收/皇庄走 calc_province_fiscal（动态），军饷走 SUM(maint)，其余按 fiscal_config base×rate。
-# 全月度：base 皆月值，不再 /3。这是「定额预算」唯一定义，flows 落账 / UI budget_payload /
-# db.treasury_budget_summary 三处共用 compute_budget_lines，禁止再各自重算。
-_FIXED_BUDGET_ITEMS = [
-    ("国库", "expense", "宗室禄米", "宗室禄米_base", "宗室禄米_rate", "诸藩宗室月禄米"),
-    ("国库", "expense", "百官俸禄", "官俸_base", "官俸_rate", "在京百官月俸禄"),
-    ("国库", "expense", "工部", "工程_base", "工程_rate", "工部月维护支出"),
-    ("国库", "expense", "赈灾备用", "赈灾_base", "赈灾_rate", "制度性赈灾预留"),
-    ("内库", "income", "织造", "织造_base", "织造_rate", "苏杭织造局月上缴"),
-    ("内库", "income", "矿税", "矿税_base", "矿税_rate", "矿税残余"),
-    ("内库", "expense", "宫廷开支", "宫廷_base", "宫廷_rate", "皇室日常用度"),
-    ("内库", "expense", "内廷俸禄", "内廷俸_base", "内廷俸_rate", "太监宫女月俸禄"),
-    ("内库", "expense", "妃嫔供奉", "妃嫔_base", "妃嫔_rate", "后宫妃嫔月供奉"),
-]
+# 固定月度收支科目目录现走数据驱动：db.iter_budget_items() 从 fiscal_config 读
+# budget_role=fixed 的 base 项（account/direction/display）。加新税源只改 content/fiscal_config.json。
+# 税收/皇庄走 calc_province_fiscal（动态），军饷走 SUM(maint)。这是「定额预算」唯一定义，
+# flows 落账 / UI budget_payload / db.treasury_budget_summary 三处共用 compute_budget_lines，禁止各自重算。
 
 
 def compute_budget_lines(db: GameDB, state: GameState) -> Dict[str, Dict[str, list]]:
@@ -161,9 +150,13 @@ def compute_budget_lines(db: GameDB, state: GameState) -> Dict[str, Dict[str, li
     budget["内库"]["income"].append(
         {"name": "皇庄", "amount": int(huang_base + nk_huang), "note": "皇庄月地租（基准+没收藩田增量）"}
     )
-    for account, direction, name, base_key, rate_key, note in _FIXED_BUDGET_ITEMS:
+    for item in db.iter_budget_items():
+        base_key = str(item["key"])
+        rate_key = base_key[:-5] + "_rate"  # 去 _base 换 _rate
         amount = round(int(cfg.get(base_key, 0)) * cfg.get(rate_key, 100) / 100)
-        budget[account][direction].append({"name": name, "amount": int(amount), "note": note})
+        budget[str(item["account"])][str(item["direction"])].append(
+            {"name": str(item["display"]), "amount": int(amount), "note": str(item.get("note") or "")}
+        )
 
     # 建筑：按当前 condition 折算月产出/维护。内廷类维护扣内库，余扣国库；产出按 output_metric。
     bld_in = {"国库": 0, "内库": 0}

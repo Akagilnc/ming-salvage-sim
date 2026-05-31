@@ -382,29 +382,6 @@ def create_season_simulator_agent(
     )
 
 
-def create_score_extractor_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
-    """打分提取员。走 advanced 角色派生：若 advanced_model 已配，用更强模型。"""
-    cfg = _llm_for_role(llm_config, "extractor")
-    tlog(f"[extractor] 使用模型 {cfg.model}")
-    return Agent(
-        name="档房书办",
-        id="score-extractor",
-        session_id="score-extractor",
-        db=agno_db,
-        model=create_chat_model(
-            cfg,
-            temperature=0.1,
-            top_p=0.7,
-            max_tokens=cfg.max_tokens,
-            enable_thinking=False,
-            force_json_output=True,
-        ),
-        instructions=[_ctx().game_world_prompt, _ctx().score_extractor_prompt],
-        add_history_to_context=False,
-        markdown=False,
-    )
-
-
 def create_score_extractor_module_agent(
     llm_config: LLMConfig,
     agno_db: SqliteDb,

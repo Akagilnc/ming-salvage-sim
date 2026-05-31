@@ -36,10 +36,6 @@ fi
 #     不想要就在 .env 里设 MING_SIM_DUMP_LLM=0 覆盖。
 export MING_SIM_DUMP_LLM="${MING_SIM_DUMP_LLM:-1}"
 
-# 1c. 网页版默认走 module 结算抽取（4 模块拆抽，缓存友好、单次输出短、解析更稳）。
-#     想用单体一把抽就在 .env 里设 MING_SIM_EXTRACTOR=mono 覆盖。
-export MING_SIM_EXTRACTOR="${MING_SIM_EXTRACTOR:-module}"
-
 # 2. 选 python：优先 .venv
 if [[ -x ".venv/bin/python" ]]; then
   PY=".venv/bin/python"

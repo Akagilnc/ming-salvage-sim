@@ -129,33 +129,52 @@ select:focus-visible {
   position: fixed;
   inset: 0;
   z-index: 0;
-  overflow: hidden;
-  background-color: #2a2418;
-  touch-action: pan-y;
-  cursor: grab;
+  overflow: auto;
+  background:
+    radial-gradient(circle at 58% 46%, rgba(231, 202, 126, 0.2), transparent 32%),
+    linear-gradient(135deg, #1f261f 0%, #11130f 100%);
+  touch-action: pan-x pan-y;
+  cursor: default;
   user-select: none;
+  scrollbar-color: rgba(191, 151, 73, 0.72) rgba(24, 20, 14, 0.46);
+  scrollbar-width: thin;
 }
 
-.grand-map.dragging {
-  cursor: grabbing;
+.grand-map::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+.grand-map::-webkit-scrollbar-track {
+  background: rgba(24, 20, 14, 0.46);
+}
+
+.grand-map::-webkit-scrollbar-thumb {
+  border: 2px solid rgba(24, 20, 14, 0.46);
+  border-radius: 8px;
+  background: rgba(191, 151, 73, 0.72);
 }
 
 .map-strip {
-  position: absolute;
-  top: 0;
-  left: 0;
-  height: 100%;
-  display: flex;
-  will-change: transform;
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  min-width: 100%;
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 0;
 }
 
 .map-tile {
   position: relative;
-  flex: 0 0 auto;
-  height: 100%;
-  background-image: url("/地图.webp");
-  background-size: 100% 100%;
-  background-repeat: no-repeat;
+  width: max(100vw, calc(100vh * 276 / 206));
+  aspect-ratio: 276 / 206;
+  height: auto;
+  background:
+    radial-gradient(circle at 50% 48%, rgba(245, 225, 165, 0.28), transparent 40%),
+    linear-gradient(135deg, #efe1b8 0%, #d8bf84 52%, #53695f 100%);
+  overflow: visible;
 }
 
 .map-tile::before {
@@ -163,8 +182,6 @@ select:focus-visible {
   position: absolute;
   inset: 0;
   background:
-    linear-gradient(18deg, transparent 0 42%, rgba(51, 78, 61, 0.22) 43%, transparent 48%),
-    linear-gradient(150deg, transparent 0 52%, rgba(44, 62, 54, 0.2) 53%, transparent 59%),
     repeating-linear-gradient(
       7deg,
       rgba(32, 25, 15, 0.06) 0,
@@ -172,8 +189,8 @@ select:focus-visible {
       transparent 1px,
       transparent 18px
     ),
-    radial-gradient(circle at 60% 30%, rgba(255, 239, 185, 0.34), transparent 34%);
-  opacity: 0.92;
+    radial-gradient(circle at 50% 50%, rgba(255, 244, 203, 0.46), transparent 44%);
+  opacity: 0.78;
   pointer-events: none;
 }
 
@@ -185,6 +202,133 @@ select:focus-visible {
     linear-gradient(90deg, rgba(20, 15, 9, 0.34), transparent 18%, transparent 72%, rgba(20, 15, 9, 0.28)),
     linear-gradient(0deg, rgba(64, 42, 21, 0.22), transparent 20%, transparent 78%, rgba(255, 239, 181, 0.24));
   pointer-events: none;
+}
+
+.province-map-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  filter:
+    drop-shadow(0 24px 34px rgba(24, 14, 8, 0.42))
+    drop-shadow(0 1px 0 rgba(255, 238, 187, 0.42));
+}
+
+.map-terrain-image {
+  opacity: 0.72;
+  pointer-events: none;
+}
+
+.map-terrain-image.draggable {
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+}
+
+.map-terrain-image.draggable:active {
+  cursor: grabbing;
+}
+
+.province-map-layer path {
+  vector-effect: non-scaling-stroke;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.province-map-layer path:focus,
+.province-map-layer path:focus-visible {
+  outline: none;
+}
+
+.province-external path {
+  fill: var(--province-fill, #5f6366);
+  fill-opacity: 0.3;
+  stroke: rgba(27, 22, 16, 0.48);
+  stroke-width: 0.46;
+  cursor: pointer;
+  transition:
+    fill-opacity 140ms ease,
+    stroke 140ms ease,
+    stroke-width 140ms ease,
+    filter 140ms ease;
+}
+
+.province-region path {
+  fill: var(--province-fill, #8c725d);
+  fill-opacity: 0.2;
+  stroke: rgba(38, 21, 11, 0.92);
+  stroke-width: 0.82;
+  cursor: pointer;
+  transition:
+    fill-opacity 140ms ease,
+    stroke 140ms ease,
+    stroke-width 140ms ease,
+    filter 140ms ease;
+}
+
+.province-external:hover path,
+.province-region:hover path {
+  fill-opacity: 0.82;
+  stroke: rgba(255, 236, 169, 0.95);
+  stroke-width: 1.35;
+  filter: drop-shadow(0 0 5px rgba(255, 222, 132, 0.78));
+}
+
+.province-external.selected path,
+.province-region.selected path {
+  fill-opacity: 0.9;
+  stroke: #ffe6a3;
+  stroke-width: 1.85;
+  filter:
+    drop-shadow(0 0 5px rgba(255, 226, 132, 0.9))
+    drop-shadow(0 0 12px rgba(128, 36, 22, 0.48));
+}
+
+.province-region.danger path {
+  stroke-dasharray: 2.5 1.7;
+}
+
+.province-region.power-ming_frontier path {
+  fill: var(--province-fill, #5f6366);
+  fill-opacity: 0.3;
+  stroke: rgba(255, 232, 168, 0.92);
+  stroke-width: 1.08;
+  stroke-dasharray: 2.6 1.5;
+}
+
+.coord-pencil-line {
+  fill: none;
+  stroke: #15110c;
+  stroke-width: 0.36;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+  filter: none;
+}
+
+.map-label-layer {
+  pointer-events: none;
+}
+
+.map-region-label {
+  font-family: "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
+  font-size: 3.2px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-anchor: middle;
+  dominant-baseline: central;
+  fill: rgba(38, 23, 12, 0.92);
+  paint-order: stroke;
+  stroke: rgba(248, 235, 188, 0.78);
+  stroke-width: 1.05px;
+  stroke-linejoin: round;
+}
+
+.map-region-label.external {
+  fill: rgba(42, 38, 30, 0.88);
+  stroke: rgba(235, 221, 175, 0.72);
+  font-size: 3px;
 }
 
 .grand-map > svg {
@@ -217,7 +361,7 @@ select:focus-visible {
 
 .map-node {
   position: absolute;
-  z-index: 2;
+  z-index: 3;
   display: inline-flex;
   flex-direction: row;
   align-items: center;
@@ -228,7 +372,7 @@ select:focus-visible {
   border: 0;
   background: none;
   box-shadow: none;
-  color: #2a1c0c;
+  color: rgba(38, 27, 14, 0.82);
   cursor: pointer;
   white-space: nowrap;
   -webkit-appearance: none;
@@ -244,22 +388,35 @@ select:focus-visible {
 }
 
 .map-node span {
-  max-width: 96px;
+  max-width: 108px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.02em;
   line-height: 1;
   text-shadow:
-    0 0 3px rgba(247, 238, 210, 0.95),
-    0 0 6px rgba(247, 238, 210, 0.8),
+    0 0 3px rgba(247, 238, 210, 0.78),
+    0 0 6px rgba(247, 238, 210, 0.58),
     0 1px 2px rgba(18, 12, 7, 0.6);
 }
 
 .map-node.theater {
   color: #8a221a;
+}
+
+.map-node.theater.draggable {
+  cursor: grab;
+  touch-action: none;
+}
+
+.map-node.theater.draggable:active {
+  cursor: grabbing;
+}
+
+.map-strip.pencil-mode {
+  cursor: crosshair;
 }
 
 .map-node.danger {
@@ -3805,6 +3962,67 @@ button:disabled {
   border: 1px solid rgba(226, 180, 86, 0.5);
   border-radius: 4px;
   pointer-events: none;
+}
+
+.coord-toolbox {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 26;
+  display: flex;
+  gap: 6px;
+  padding: 5px;
+  border: 1px solid rgba(226, 180, 86, 0.52);
+  border-radius: 6px;
+  background: rgba(20, 16, 10, 0.82);
+}
+
+.coord-tool-button {
+  min-width: 32px;
+  height: 32px;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: max-content;
+  place-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1px solid rgba(226, 180, 86, 0.35);
+  border-radius: 5px;
+  color: #f6e3a8;
+  background: rgba(255, 244, 203, 0.08);
+  cursor: pointer;
+}
+
+.coord-tool-button.icon-only {
+  padding: 0;
+}
+
+.coord-zoom-readout {
+  min-width: 42px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  padding: 0 7px;
+  border: 1px solid rgba(226, 180, 86, 0.22);
+  border-radius: 5px;
+  color: #f6e3a8;
+  font-size: 0.76rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  background: rgba(255, 244, 203, 0.06);
+  pointer-events: none;
+}
+
+.coord-tool-button span {
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.coord-tool-button:hover,
+.coord-tool-button.active {
+  color: #2a1b0e;
+  background: #f0d58a;
 }
 
 /* ===== 启动菜单页 ===== */

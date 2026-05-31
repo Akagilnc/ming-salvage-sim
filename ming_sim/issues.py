@@ -1020,6 +1020,48 @@ def apply_score_extraction(
         "cancels": extracted.get("cancels") or [],
     })
 
+    # 6.4) fiscal_removes：推演彻底裁撤月固定收支项（罢税/裁俸），优先级最高，先于 creates/changes。
+    #      含 dynamic（田赋/辽饷/盐税/商税/皇庄），后果玩家自负。删 base+rate 两行。
+    applied_fiscal_removes: List[Dict[str, object]] = []
+    for remove in extracted.get("fiscal_removes") or []:
+        key = str(remove.get("key") or "")
+        if not key:
+            continue
+        removed_key = db.remove_fiscal_item(key)
+        if removed_key is None:
+            print(f"[WARN] fiscal_removes: '{key}' 不存在，跳过裁撤。")
+            continue
+        applied_fiscal_removes.append({
+            "key": removed_key, "reason": str(remove.get("reason") or ""),
+        })
+
+    # 6.5) fiscal_creates：推演凭空新立月固定收支项（税是其一种）。先于 fiscal_changes，
+    #      使同{月}「新立关税 + 立即调率」可一气落地。
+    applied_fiscal_creates: List[Dict[str, object]] = []
+    for create in extracted.get("fiscal_creates") or []:
+        key = str(create.get("key") or "")
+        account = str(create.get("account") or "")
+        direction = str(create.get("direction") or "")
+        if not key or account not in ("国库", "内库") or direction not in ("income", "expense"):
+            continue
+        try:
+            init_value = int(create.get("init_value") or 0)
+        except (TypeError, ValueError):
+            init_value = 0
+        display = str(create.get("display") or "")
+        new_key = db.create_fiscal_item(
+            key, account, direction, display, init_value,
+            note=str(create.get("reason") or "")[:120],
+        )
+        if new_key is None:
+            print(f"[WARN] fiscal_creates: '{key}' 已存在或非法，跳过新立。")
+            continue
+        applied_fiscal_creates.append({
+            "key": new_key, "account": account, "direction": direction,
+            "display": display, "init_value": max(0, init_value),
+            "reason": str(create.get("reason") or ""),
+        })
+
     # 7) fiscal_changes：调整月度固定收支系数
     applied_fiscal: List[Dict[str, object]] = []
     for change in extracted.get("fiscal_changes") or []:
@@ -1036,6 +1078,15 @@ def apply_score_extraction(
             continue
         new_val = max(0, current + delta)
         db.set_fiscal_config(key, new_val)
+        # dynamic 税（辽饷/盐税/商税/田赋）实收走 region.fiscal，改 fiscal_config 不生效；
+        # 按 new/old 比例同步缩放各省实收字段，使调额当真改变下月入账。皇庄读 config，无需联动。
+        stem = db._stem_of(key)
+        if stem in db._DYNAMIC_REGION_FIELD or stem == "田赋":
+            ratio = (new_val / current) if current > 0 else (1.0 if new_val == 0 else 0.0)
+            if stem == "田赋":
+                db.scale_tian_fu(ratio)
+            else:
+                db.apply_dynamic_fiscal_scale(stem, ratio)
         applied_fiscal.append({
             "key": key, "old": current, "new": new_val, "delta": delta,
             "reason": str(change.get("reason") or ""),
@@ -1287,6 +1338,8 @@ def apply_score_extraction(
         "issue_summary": issue_summary,
         "world_advance": extracted.get("world_advance") or {},
         "fiscal_changes": applied_fiscal,
+        "fiscal_creates": applied_fiscal_creates,
+        "fiscal_removes": applied_fiscal_removes,
         "appointments": applied_appointments,
         "character_status_changes": applied_status_changes,
         "character_power_changes": applied_power_changes,
