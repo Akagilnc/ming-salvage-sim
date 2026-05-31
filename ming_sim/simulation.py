@@ -587,6 +587,15 @@ def _extractor_compat_payload(base: Dict[str, object]) -> Dict[str, object]:
     }
 
 
+# module 模式专用：simulator_payload 已在同一 system 前缀给出全量盘面，这些字段同名同格式
+# 重复，从补充上下文里剔除，省掉约一半 extractor system 体积。
+_MODULE_DROP_FIELDS = (
+    "regions", "armies", "buildings", "current_state",
+    "active_issues", "candidate_events", "decree_text",
+    "relevant_memories", "secret_orders",
+)
+
+
 def build_extractor_shared_context(
     db: GameDB,
     state: GameState,
@@ -595,13 +604,26 @@ def build_extractor_shared_context(
     relevant_memories: Optional[List[Dict[str, object]]] = None,
     secret_orders: Optional[List[Dict[str, object]]] = None,
 ) -> Dict[str, object]:
-    """供模块 extractor 放入 system 前缀的共同结算补充上下文。"""
+    """供模块 extractor 放入 system 前缀的共同结算补充上下文。
+
+    盘面（regions/armies/buildings/current_state/active_issues/candidate_events…）
+    已由同 system 前缀的 simulator_payload 全量给出，这里剔除重复，只留 extractor 独有的
+    校验集（region_ids/army_ids/class_names/power_ids/fiscal_config）与人事元数据
+    （active/offstage_ministers/factions/classes/powers）+ turn/narrative。"""
     base = _extractor_context_payload(
         db, state, narrative, decree_text,
         relevant_memories=relevant_memories,
         secret_orders=secret_orders,
     )
-    return _extractor_compat_payload(base)
+    compat = _extractor_compat_payload(base)
+    slim = {k: v for k, v in compat.items() if k not in _MODULE_DROP_FIELDS}
+    slim["_dedup_note"] = (
+        "盘面与诏书已在 system 的 simulator_payload 中给出（regions/armies/buildings/"
+        "current_state/active_issues/candidate_events/decree_text/relevant_memories/"
+        "secret_orders），抽取时直接读 simulator_payload，本 extractor_context 只补"
+        "校验用 id 集、fiscal_config 与人事/派系/阶级/势力元数据。"
+    )
+    return slim
 
 
 def _payload_for_module(
@@ -614,7 +636,7 @@ def _payload_for_module(
     return {
         "module": module,
         "module_allowed_fields": sorted(MODULE_FIELDS[module]),
-        "instruction": "simulator_payload 与 extractor_context 已在 system 中给出。只输出当前模块允许的中文顶层字段 JSON object。",
+        "instruction": "盘面（regions/armies/buildings/current_state/active_issues/candidate_events 等）看 system 的 simulator_payload；extractor_context 只补 id 校验集与人事/派系元数据。只输出当前模块允许的中文顶层字段 JSON object。",
     }
 
 
