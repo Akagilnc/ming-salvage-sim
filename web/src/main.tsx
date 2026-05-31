@@ -175,6 +175,8 @@ type Issue = {
 type LegacyEffect = {
   国库?: number;
   内库?: number;
+  民心?: number;
+  皇威?: number;
   regions?: Record<string, Record<string, number>>;
   armies?: Record<string, Record<string, number>>;
 };
@@ -437,28 +439,48 @@ const issueTone = (value: number) => {
   return "good";
 };
 
-const formatIssueEffect = (effect: Record<string, number>) => {
-  const parts = Object.entries(effect || {})
-    .filter(([, value]) => typeof value === "number" && value !== 0)
-    .map(([key, value]) => `${key} ${value > 0 ? "+" : ""}${value}`);
-  return parts.length ? parts.join("、") : "无直接数值影响";
+const signedNumber = (value: number) => `${value > 0 ? "+" : ""}${value}`;
+
+const numericEffectValue = (value: any): number | null => {
+  if (typeof value === "number") return value;
+  if (typeof value === "string" && /^-?\d+$/.test(value.trim())) return Number(value);
+  return null;
 };
 
-const formatClosedEffect = (effect: any) => {
+const appendScopedEffect = (
+  parts: string[],
+  block: any,
+  labelEntity: (id: any) => string,
+) => {
+  if (!block || typeof block !== "object" || Array.isArray(block)) return;
+  for (const [entity, fields] of Object.entries(block)) {
+    if (!fields || typeof fields !== "object" || Array.isArray(fields)) continue;
+    for (const [field, raw] of Object.entries(fields)) {
+      const n = numericEffectValue(raw);
+      if (!n) continue;
+      parts.push(`${labelEntity(entity)}·${cnField(field)}${signedNumber(n)}`);
+    }
+  }
+};
+
+const formatEffectSummary = (effect: any) => {
   if (!effect || typeof effect !== "object") return "无直接数值影响";
   const parts: string[] = [];
+
   const metrics = effect.metrics || {};
   for (const [k, v] of Object.entries(metrics)) {
     const n = Number(v);
     if (!n) continue;
-    parts.push(`${k}${n > 0 ? "+" : ""}${n}`);
+    parts.push(`${k}${signedNumber(n)}`);
   }
+
   const econ = Array.isArray(effect.economy) ? effect.economy : [];
   for (const e of econ) {
     const n = Number(e?.delta);
     if (!n) continue;
-    parts.push(`${e.account || "钱粮"}${n > 0 ? "+" : ""}${n}万`);
+    parts.push(`${e.account || "钱粮"}${signedNumber(n)}万`);
   }
+
   const factions = effect.factions || {};
   for (const [k, v] of Object.entries(factions)) {
     if (v && typeof v === "object") {
@@ -466,16 +488,38 @@ const formatClosedEffect = (effect: any) => {
       for (const [kk, vv] of Object.entries(v as any)) {
         const n = Number(vv);
         if (!n) continue;
-        sub.push(`${kk}${n > 0 ? "+" : ""}${n}`);
+        sub.push(`${SAT_LEV_CN[kk] || cnField(kk)}${signedNumber(n)}`);
       }
       if (sub.length) parts.push(`${k}（${sub.join("、")}）`);
     } else {
       const n = Number(v);
-      if (n) parts.push(`${k}${n > 0 ? "+" : ""}${n}`);
+      if (n) parts.push(`${k}${signedNumber(n)}`);
     }
   }
+
+  appendScopedEffect(parts, effect.classes, labelClass);
+  appendScopedEffect(parts, effect.regions, labelRegion);
+  appendScopedEffect(parts, effect.armies, labelArmy);
+  appendScopedEffect(parts, effect.powers, labelPower);
+
+  if (effect.legacy && typeof effect.legacy === "object") {
+    const legacyName = String(effect.legacy.name || "帝国修正");
+    const duration = effect.legacy.duration ? `，${effect.legacy.duration}` : "";
+    const modifiers = formatLegacyEffect(effect.legacy.modifiers || {});
+    parts.push(`帝国修正：${legacyName}${duration}${modifiers ? `（${modifiers}）` : ""}`);
+  }
+
+  for (const [key, value] of Object.entries(effect)) {
+    if (["metrics", "economy", "factions", "classes", "regions", "armies", "powers", "legacy", "buildings"].includes(key)) continue;
+    const n = numericEffectValue(value);
+    if (n) parts.push(`${cnField(key)}${signedNumber(n)}`);
+  }
+
   return parts.length ? parts.join("、") : "无直接数值影响";
 };
+
+const formatIssueEffect = formatEffectSummary;
+const formatClosedEffect = formatEffectSummary;
 
 const splitReportItems = (text: string, prefix: string) => {
   const cleaned = text.replace(prefix, "").trim();
@@ -496,6 +540,16 @@ const labelMaps = {
   issue: new Map<number, string>(),
 };
 
+const POWER_ID_CN: Record<string, string> = {
+  ming: "大明",
+  houjin: "后金",
+  mongol: "蒙古",
+  korea: "朝鲜",
+  bandits: "流寇",
+  dutch: "荷兰东印度公司",
+  japan: "日本",
+};
+
 function refreshLabelMaps(state: GameState) {
   labelMaps.region.clear();
   labelMaps.army.clear();
@@ -511,7 +565,7 @@ function refreshLabelMaps(state: GameState) {
 // 把 id 翻成中文名；查不到（如本月新增/已离场）就回退原值，至少不空。
 const labelRegion = (id: any) => labelMaps.region.get(String(id)) || String(id ?? "");
 const labelArmy = (id: any) => labelMaps.army.get(String(id)) || String(id ?? "");
-const labelPower = (id: any) => labelMaps.power.get(String(id)) || String(id ?? "");
+const labelPower = (id: any) => labelMaps.power.get(String(id)) || POWER_ID_CN[String(id)] || String(id ?? "");
 const labelIssue = (id: any) => {
   const t = labelMaps.issue.get(Number(id));
   return t ? `#${id} ${t}` : `#${id}`;
@@ -519,10 +573,12 @@ const labelIssue = (id: any) => {
 
 // extractor 偶尔吐出的英文枚举值，统一翻中文。
 const EN_VALUE_CN: Record<string, string> = {
+  ...POWER_ID_CN,
   appoint: "新进朝堂", promote: "升迁", transfer: "调任", demote: "贬", reinstate: "起复",
   resolved: "已了", failed: "崩坏", dropped: "撤销",
   situation: "时局", initiative: "举措", crisis: "危机", reform: "改革", decree: "诏令",
-  done: "办结", pending: "在办", active: "进行中",
+  done: "办结", pending: "在办", pending_review: "待核议", active: "进行中",
+  draft: "草案", rejected: "已驳回", cancelled: "已取消",
 };
 const cnValue = (v: any) => (v == null ? "" : (EN_VALUE_CN[String(v)] || String(v)));
 
@@ -534,12 +590,12 @@ const EN_FIELD_CN: Record<string, string> = {
   gentry_resistance: "士绅阻力", military_pressure: "边防压力", corruption: "腐败度",
   population: "人口", registered_land: "在册田亩", hidden_land: "隐田",
   tax_per_turn: "月税", natural_disaster: "天灾", human_disaster: "人祸",
-  status: "状态", controlled_by: "控制者", 控制: "控制者",
+  status: "状态", controlled_by: "控制者", 控制: "控制者", kind: "类型",
   // 军队
   supply: "补给", morale: "士气", training: "操练", equipment: "军械",
-  mobility: "机动", loyalty: "忠诚", manpower: "兵力",
+  arrears: "欠饷", mobility: "机动", loyalty: "忠诚", manpower: "兵力",
   maintenance_quarter: "月饷", maintenance_per_turn: "月饷",
-  station: "驻地", commander: "统帅", troop_type: "兵种",
+  station: "驻地", commander: "统帅", controller: "主管", troop_type: "兵种", owner_power: "归属",
   // 势力
   cohesion: "凝聚", 威望: "威望", leverage: "威望", 实力: "实力",
   military_strength: "实力", 经济: "经济",
@@ -547,6 +603,13 @@ const EN_FIELD_CN: Record<string, string> = {
   satisfaction: "满意度",
 };
 const cnField = (k: string) => EN_FIELD_CN[k] || k;
+
+const fiscalKeyLabel = (key: any): string => {
+  const raw = String(key ?? "");
+  const match = raw.match(/^(.+)_(base|rate)$/);
+  if (!match) return cnField(raw);
+  return `${match[1]}${match[2] === "base" ? "基数" : "系数"}`;
+};
 
 const briefTreasury = (state: GameState) => [
   `固定预算：国库月净${formatSignedMoney(state.budget["国库"].net)}，内库月净${formatSignedMoney(state.budget["内库"].net)}。`,
@@ -1987,7 +2050,9 @@ function TopStatusBar({
 
 const LEGACY_FIELD_LABELS: Record<string, string> = {
   public_support: "民心", unrest: "动乱", gentry_resistance: "士绅阻力", military_pressure: "边防压力",
+  tax_per_turn: "月税", grain_security: "粮食", corruption: "腐败度",
   morale: "士气", training: "训练", loyalty: "忠诚", supply: "补给", equipment: "装备",
+  arrears: "欠饷", mobility: "机动",
 };
 
 function pctStr(v: number): string {
@@ -1997,7 +2062,7 @@ function pctStr(v: number): string {
 // modifiers = {国库?:pct, 内库?:pct, regions?:{rid:{field:pct}}, armies?:{aid:{field:pct}}}
 function formatLegacyEffect(eff: LegacyEffect): string {
   const parts: string[] = [];
-  for (const acc of ["国库", "内库"] as const) {
+  for (const acc of ["国库", "内库", "民心", "皇威"] as const) {
     const v = eff[acc];
     if (typeof v === "number") parts.push(`${acc}${pctStr(v)}`);
   }
@@ -2006,8 +2071,9 @@ function formatLegacyEffect(eff: LegacyEffect): string {
     if (!block || typeof block !== "object") continue;
     for (const [entity, fields] of Object.entries(block)) {
       for (const [field, pct] of Object.entries(fields)) {
-        const label = LEGACY_FIELD_LABELS[field] || field;
-        parts.push(`${entity}·${label}${pctStr(pct as number)}`);
+        const entityLabel = scope === "regions" ? labelRegion(entity) : labelArmy(entity);
+        const label = LEGACY_FIELD_LABELS[field] || cnField(field);
+        parts.push(`${entityLabel}·${label}${pctStr(pct as number)}`);
       }
     }
   }
@@ -3322,7 +3388,7 @@ function FactionBlock({ data }: { data: any }) {
           return (
             <li key={k}>
               <span>{k}</span>
-              <b>{Object.entries(v).map(([kk, vv]) => `${SAT_LEV_CN[kk] || kk}${fmtDelta(vv)}`).join("  ")}</b>
+              <b>{Object.entries(v).map(([kk, vv]) => `${SAT_LEV_CN[kk] || cnField(kk)}${fmtDelta(vv)}`).join("  ")}</b>
             </li>
           );
         }
@@ -3424,7 +3490,7 @@ function StatusChangesBlock({ data }: { data: any }) {
       {data.map((it: any, i: number) => (
         <li key={i}>
           <b className={pickItem(it, "rejected", "rejected") ? "bad" : ""}>
-            {pickItem(it, "姓名", "name")} {label[pickItem(it, "状态", "status")] || pickItem(it, "状态", "status")}
+            {pickItem(it, "姓名", "name")} {label[pickItem(it, "状态", "status")] || cnValue(pickItem(it, "状态", "status"))}
             {pickItem(it, "rejected", "rejected") ? "（未落地）" : ""}
           </b>
           {pickItem(it, "原因", "reason") ? <span>{pickItem(it, "原因", "reason")}</span> : null}
@@ -3458,7 +3524,7 @@ function FiscalBlock({ data }: { data: any }) {
       {data.map((it: any, i: number) => (
         <li key={i}>
           <b className={Number(pickItem(it, "增量", "delta")) >= 0 ? "good" : "bad"}>
-            {pickItem(it, "键", "key")} {fmtDelta(pickItem(it, "增量", "delta"))}
+            {fiscalKeyLabel(pickItem(it, "键", "key"))} {fmtDelta(pickItem(it, "增量", "delta"))}
           </b>
           {pickItem(it, "原因", "reason") ? <span>{pickItem(it, "原因", "reason")}</span> : null}
         </li>
@@ -3529,7 +3595,7 @@ function ClassDeltaBlock({ data }: { data: any }) {
           return (
             <li key={k}>
               <span>{labelClass(k)}</span>
-              <b>{Object.entries(v).map(([kk, vv]) => `${SAT_LEV_CN[kk] || kk}${fmtDelta(vv)}`).join("  ")}</b>
+              <b>{Object.entries(v).map(([kk, vv]) => `${SAT_LEV_CN[kk] || cnField(kk)}${fmtDelta(vv)}`).join("  ")}</b>
             </li>
           );
         }
@@ -4314,7 +4380,7 @@ function NodeIntel({ node }: { node: MapNode }) {
             <tr><th>人口</th><td>{region.population}万</td><th>田亩</th><td>{region.registered_land}万亩</td></tr>
             <tr><th>民心</th><td>{region.public_support}</td><th>动乱</th><td>{region.unrest}</td></tr>
             <tr><th>粮食</th><td>{region.grain_security}</td><th>月税</th><td>{monthlyAmount(region.tax_per_turn)}万/月</td></tr>
-            <tr><th>归属</th><td>{region.controlled_by || "ming"}</td><th>类型</th><td>{region.kind}</td></tr>
+            <tr><th>归属</th><td>{labelPower(region.controlled_by || "ming")}</td><th>类型</th><td>{region.kind}</td></tr>
             <tr><th>天灾</th><td colSpan={3}>{region.natural_disaster}</td></tr>
             <tr><th>人祸</th><td colSpan={3}>{region.human_disaster}</td></tr>
             <tr><th>状况</th><td colSpan={3}>{region.status}</td></tr>
