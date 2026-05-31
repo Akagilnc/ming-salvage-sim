@@ -13,6 +13,7 @@ from enum import Enum
 from typing import Dict, List, Optional, Tuple
 
 from ming_sim.agents import bind_content as _bind_agents
+from ming_sim.agents import _dump_llm_messages
 from ming_sim.constants import TURN_UNIT
 from ming_sim.content import GameContent
 from ming_sim.context import (
@@ -548,6 +549,7 @@ class GameSession:
         if draft_line and draft_line != "无":
             augmented = f"【本{TURN_UNIT}已核定草案】{draft_line}\n\n{augmented}"
         run_output = agent.run(augmented)
+        _dump_llm_messages(run_output, f"大臣对话/{minister_name}")
         answer = extract_agent_text(run_output)
         result = ChatTurnResult(answer=answer)
         for tool_exec in getattr(run_output, "tools", None) or []:
