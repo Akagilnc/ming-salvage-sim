@@ -41,9 +41,9 @@ from ming_sim.simulation import (
 )
 from ming_sim.token_stats import tlog
 
-# 结算抽取模式开关：`mono`（默认，单体 score_extractor.md 一把抽）/ `module`（4 模块拆分抽，缓存友好）。
+# 结算抽取模式开关：`module`（默认，4 模块拆分抽，缓存友好）/ `mono`（单体 score_extractor.md 一把抽）。
 # 环境变量 MING_SIM_EXTRACTOR 控制；两套字段语言均经 TOP_LEVEL_ALIASES 兼容落库。
-EXTRACTOR_MODE = os.environ.get("MING_SIM_EXTRACTOR", "mono").strip().lower()
+EXTRACTOR_MODE = os.environ.get("MING_SIM_EXTRACTOR", "module").strip().lower()
 
 # 20 年自动结算：开局 1627.10（turn=1），每回合 +1 月。到 1647.10 = (1647-1627)*12 + 1 = 241 回合。
 # 满 240 回合（即第 240 个回合结算完，1647.09）仍未分胜负则强制 timeout 收尾。
