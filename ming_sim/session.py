@@ -426,6 +426,18 @@ class GameSession:
         self.state.turn_phase = TurnPhase.SUMMONING.value
         self.db.save_state(self.state)
 
+    def refresh_runtime_after_chat_rollback(self) -> None:
+        """撤回召对副作用后，用 DB 真相刷新内存人物表和本回合 Agent registry。"""
+        self.state = self.db.load_state()
+        _sync_offices_from_db_impl(self.content, self.db)
+        if self.registry is not None:
+            context = CourtContext(
+                state=self.state,
+                db=self.db,
+                previous_summary=self.previous_summary,
+            )
+            self.registry = MinisterRegistry(self.llm_config, self.agno_db, context)
+
     # ── 召见阶段 ──────────────────────────────────────────────────────────
 
     def list_ministers(self) -> List[MinisterView]:

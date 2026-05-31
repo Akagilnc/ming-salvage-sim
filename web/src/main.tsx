@@ -300,11 +300,22 @@ type ChatResponse = {
   history: ChatMessage[];
   suggestions: Suggestion[];
   directives: Directive[];
+  pending_count?: number;
+  can_undo_last_chat?: boolean;
   court_action?: string;
   next_minister?: string;
   registered_minister?: string;
   proposed_directive?: ProposedDirective | null;
   secret_order_id?: number;
+};
+
+type ChatUndoResponse = {
+  history: ChatMessage[];
+  suggestions: Suggestion[];
+  directives: Directive[];
+  pending_count: number;
+  secret_orders: SecretOrder[];
+  can_undo_last_chat: boolean;
 };
 
 type ApiErrorDetail = {
@@ -619,6 +630,7 @@ function App() {
   const [pendingUserMessage, setPendingUserMessage] = React.useState("");
   const [streamingMinisterMessage, setStreamingMinisterMessage] = React.useState("");
   const [chatNotice, setChatNotice] = React.useState("");
+  const [canUndoLastChat, setCanUndoLastChat] = React.useState(false);
   const [composerHint, setComposerHint] = React.useState("");
   const [input, setInput] = React.useState("");
   const [directiveText, setDirectiveText] = React.useState("");
@@ -654,7 +666,7 @@ function App() {
   }, [selectedMinister]);
 
   const loadMinisterChat = React.useCallback(async (ministerName: string) => {
-    const data = await api<{ minister: Minister; history: ChatMessage[]; suggestions: Suggestion[] }>(`/api/ministers/${encodeURIComponent(ministerName)}/chat`);
+    const data = await api<{ minister: Minister; history: ChatMessage[]; suggestions: Suggestion[]; can_undo_last_chat: boolean }>(`/api/ministers/${encodeURIComponent(ministerName)}/chat`);
     const allKnown = [
       ...(state?.ministers || []),
       ...(state?.consorts || []),
@@ -662,6 +674,7 @@ function App() {
     setTemporaryActiveMinister(allKnown.some((m) => m.name === data.minister.name) ? null : data.minister);
     setChat(data.history);
     setSuggestions(data.suggestions);
+    setCanUndoLastChat(!!data.can_undo_last_chat);
   }, [state]);
 
   const uploadPortrait = React.useCallback(async (ministerName: string, file: File) => {
@@ -756,6 +769,7 @@ function App() {
       setPendingUserMessage("");
       setStreamingMinisterMessage("");
       setChatNotice("");
+      setCanUndoLastChat(false);
       setComposerHint("");
       return;
     }
@@ -763,6 +777,7 @@ function App() {
     setSuggestions([]);
     setPendingUserMessage("");
     setStreamingMinisterMessage("");
+    setCanUndoLastChat(false);
     setComposerHint("");
     loadMinisterChat(selectedMinister).catch((err) => setError(err.message));
   }, [selectedMinister, loadMinisterChat]);
@@ -840,12 +855,14 @@ function App() {
       setChat([]);
       setSuggestions([]);
       setTemporaryActiveMinister(null);
+      setCanUndoLastChat(false);
     }
     setSelectedMinister(minister.name);
     setActiveModal("chat");
     setError("");
     setComposerHint("");
     setChatNotice("");
+    setCanUndoLastChat(false);
     setPendingUserMessage("");
     setStreamingMinisterMessage("");
     loadMinisterChat(minister.name).catch((err) => setError(err.message));
@@ -883,7 +900,8 @@ function App() {
       setStreamingMinisterMessage("");
       setChat(data.history);
       setSuggestions(data.suggestions);
-      setState((current) => (current ? { ...current, directives: data.directives } : current));
+      setCanUndoLastChat(!!data.can_undo_last_chat);
+      setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count ?? current.pending_count } : current));
       await loadState();
       // 刷新密令列表（含历史，大臣可能调了 issue_secret_order tool）
       api<{ orders: SecretOrder[] }>("/api/secret_orders")
@@ -899,6 +917,7 @@ function App() {
         setChat([]);
         setSuggestions([]);
         setStreamingMinisterMessage("");
+        setCanUndoLastChat(false);
         setSelectedMinister(data.next_minister);
         setActiveModal("chat");
         setChatNotice(`已传${data.next_minister}入殿。`);
@@ -914,6 +933,34 @@ function App() {
       }
       setPendingUserMessage("");
       setStreamingMinisterMessage("");
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const undoLastChat = async () => {
+    if (busy || !activeMinister || !canUndoLastChat) return;
+    const ok = window.confirm("将撤回最近一轮召对及其政务影响，是否继续？");
+    if (!ok) return;
+    setBusy("撤回召对");
+    setError("");
+    setChatNotice("");
+    setComposerHint("");
+    setPendingUserMessage("");
+    setStreamingMinisterMessage("");
+    try {
+      const data = await api<ChatUndoResponse>(`/api/ministers/${encodeURIComponent(activeMinister.name)}/chat/undo`, {
+        method: "POST",
+      });
+      setChat(data.history);
+      setSuggestions(data.suggestions);
+      setCanUndoLastChat(!!data.can_undo_last_chat);
+      setSecretOrders(data.secret_orders || []);
+      setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count } : current));
+      await loadState();
+      setChatNotice("已撤回最近一轮召对。");
+    } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy("");
@@ -1185,6 +1232,7 @@ function App() {
             pendingUserMessage={pendingUserMessage}
             streamingMinisterMessage={streamingMinisterMessage}
             chatNotice={chatNotice}
+            canUndoLastChat={canUndoLastChat}
             composerHint={composerHint}
             input={input}
             busy={busy}
@@ -1192,6 +1240,7 @@ function App() {
             secretOrders={secretOrders.filter((o) => o.minister_name === activeMinister.name && (o.status === "active" || o.status === "pending_review"))}
             onInput={setInput}
             onSend={sendChat}
+            onUndo={undoLastChat}
             onHint={setComposerHint}
             onFavorite={() => toggleFavorite(activeMinister)}
             onOpenEdict={() => setActiveModal("edict")}
@@ -3804,6 +3853,7 @@ function ChatModal({
   pendingUserMessage,
   streamingMinisterMessage,
   chatNotice,
+  canUndoLastChat,
   composerHint,
   input,
   busy,
@@ -3811,6 +3861,7 @@ function ChatModal({
   secretOrders,
   onInput,
   onSend,
+  onUndo,
   onHint,
   onFavorite,
   onOpenEdict,
@@ -3823,6 +3874,7 @@ function ChatModal({
   pendingUserMessage: string;
   streamingMinisterMessage: string;
   chatNotice: string;
+  canUndoLastChat: boolean;
   composerHint: string;
   input: string;
   busy: string;
@@ -3830,6 +3882,7 @@ function ChatModal({
   secretOrders: SecretOrder[];
   onInput: (value: string) => void;
   onSend: (text?: string) => void;
+  onUndo: () => void;
   onHint: (value: string) => void;
   onFavorite: () => void;
   onOpenEdict: () => void;
@@ -3973,6 +4026,10 @@ function ChatModal({
             <button className={`primary-action ${!input.trim() ? "is-empty" : ""}`} onClick={handleSend} disabled={!!busy}>
               <Send size={15} />
               发送
+            </button>
+            <button className="secondary-action composer-undo" onClick={onUndo} disabled={!!busy || !canUndoLastChat}>
+              <RotateCcw size={15} />
+              撤回本轮
             </button>
             <button className="secondary-action composer-exit" onClick={onClose}>
               <X size={15} />
