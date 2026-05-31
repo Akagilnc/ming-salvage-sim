@@ -4941,6 +4941,14 @@ function GrandMap({ nodes, selectedId, onSelect }: { nodes: MapNode[]; selectedI
 function NodeIntel({ node }: { node: MapNode }) {
   const region = node.region;
   const power = node.power;
+  if (node.kind === "external") {
+    return (
+      <div className="panel-title">
+        <MapPinned size={14} />
+        <span>{region?.name || node.label}</span>
+      </div>
+    );
+  }
   return (
     <>
       <div className="panel-title">
