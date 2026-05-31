@@ -289,30 +289,70 @@ def create_decree_writer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agen
     )
 
 
+def _is_cols_rows_table(v: object) -> bool:
+    """判断某字段是否 {cols,rows} 二维表（可转 TSV）。"""
+    return isinstance(v, dict) and set(v.keys()) == {"cols", "rows"}
+
+
+def _table_to_tsv(name: str, table: Dict[str, object]) -> str:
+    """{cols,rows} → 真 TSV 文本块（tab 分隔、换行分行）。
+
+    放在 json.dumps 之外，避免 \\t/\\n 被 JSON 转义吃掉压缩收益（实测比 dict-of-rows -25%、
+    比转义后塞进 JSON 再 -10%）。空表只吐表头行（空）。None → 空串。
+    """
+    cols = [str(c) for c in (table.get("cols") or [])]
+    rows = table.get("rows") or []
+    lines = ["\t".join(cols)]
+    for r in rows:  # type: ignore[assignment]
+        lines.append("\t".join("" if v is None else str(v) for v in r))
+    return f"## {name}（TSV，首行列名，tab 分隔）\n" + "\n".join(lines)
+
+
 def build_simulator_context(simulator_payload: Optional[Dict[str, object]]) -> str:
-    """拼 simulator/extractor 共用的盘面前缀段（turn_header + payload JSON）。
+    """拼 simulator/extractor 共用的盘面前缀段（turn_header + 盘面 TSV 块 + 其余 JSON）。
 
     缓存关键：simulator 与 extractor 的 system instructions 前缀都是
     `[game_world, simulator_context, ...]`。本函数对二者吐出**字节级一致**的 simulator_context，
     simulator 先跑就把 `game_world + simulator_context` 写进 DeepSeek 前缀缓存，extractor
-    再命中。turn_header 文案、取值路径(统一从 payload['turn'])、json.dumps 参数三者两边同源。
+    再命中。turn_header 文案、取值路径(统一从 payload['turn'])、序列化参数三者两边同源。
 
     BUG 修复：历史上 simulator 用 state 路径+文案「邸报抬头与正文涉及年月」，extractor 用
     payload['turn']+文案「抽取涉及年月」→ 第一个字节就分叉 → extractor 整段 payload 全 miss。
     实测统一后结算 token -14.7%。
+
+    TSV 优化：`{cols,rows}` 二维表（regions/armies/buildings/court_roster/powers_brief）转**真
+    TSV 文本块**（json.dumps 之外，免转义），按「变化最小→最易变」排序——建筑/人物在前，军队/
+    地区其次，诏书/记忆/issue 等高频变化字段连同非表字段走尾部 JSON。其余字段（含 factions_brief/
+    classes_brief 叙述串、issues/memories 等）维持 JSON。实测表类 -25% token。
     """
+    payload = simulator_payload or {}
     turn_header = ""
-    if simulator_payload and isinstance(simulator_payload.get("turn"), dict):
-        t = simulator_payload["turn"]
+    if isinstance(payload.get("turn"), dict):
+        t = payload["turn"]
         turn_header = (
             f"【本回合年月】{t.get('year')} 年 {t.get('period')} 月（第 {t.get('turn')} 回合）。"
             f"涉及年月时以此为准。\n"
         )
-    return (
-        turn_header
-        + "【本回合推演输入 simulator_payload】\n"
-        + json.dumps(simulator_payload or {}, ensure_ascii=False, sort_keys=False)
-    )
+
+    # 盘面表（{cols,rows}）转 TSV，按「稳→变」排序置前；缺失/非表的跳过。
+    table_order = ("buildings", "court_roster", "armies", "regions")
+    tsv_blocks: List[str] = []
+    consumed: set[str] = set()
+    for name in table_order:
+        v = payload.get(name)
+        if _is_cols_rows_table(v):
+            tsv_blocks.append(_table_to_tsv(name, v))  # type: ignore[arg-type]
+            consumed.add(name)
+    # table_order 未列到、但仍是 {cols,rows} 的表也转 TSV（防新增表字段漏压缩），稳定排序。
+    for name in sorted(k for k in payload if k not in consumed and _is_cols_rows_table(payload.get(k))):
+        tsv_blocks.append(_table_to_tsv(name, payload[name]))  # type: ignore[arg-type]
+        consumed.add(name)
+
+    rest = {k: v for k, v in payload.items() if k not in consumed}
+    parts = [turn_header + "【本回合推演输入 simulator_payload】"]
+    parts.extend(tsv_blocks)
+    parts.append("## 其余字段（JSON）\n" + json.dumps(rest, ensure_ascii=False, sort_keys=False))
+    return "\n".join(parts)
 
 
 def create_season_simulator_agent(

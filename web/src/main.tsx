@@ -592,11 +592,34 @@ const getMapIntelStyle = (node: MapNode): React.CSSProperties => {
 
 type AppView = "menu" | "game";
 
+type MenuSave = {
+  name: string;
+  size: number;
+  mtime: number;
+  campaign_id?: string;
+  kind?: "auto" | "manual";
+  label?: string;
+  year?: number;
+  period?: number;
+  turn?: number;
+  tag?: string;
+};
+
+type MenuCampaign = {
+  campaign_id: string;
+  kind: "auto" | "manual";
+  current: boolean;
+  saves: MenuSave[];
+  latest_mtime: number;
+};
+
 type MenuStatus = {
   has_api_key: boolean;
   has_running_game: boolean;
   has_main_db: boolean;
-  saves: Array<{ name: string; size: number; mtime: number }>;
+  saves: MenuSave[];
+  campaigns?: MenuCampaign[];
+  current_campaign?: string;
   llm: {
     base_url: string;
     model: string;
@@ -4502,6 +4525,7 @@ function MenuPage({
   const hasKey = !!status?.has_api_key;
   const hasMainDb = !!status?.has_main_db;
   const saves = status?.saves || [];
+  const campaigns = status?.campaigns || [];
 
   return (
     <div className="menu-screen">
@@ -4550,7 +4574,7 @@ function MenuPage({
 
       {showSaveList && (
         <SaveListModal
-          saves={saves}
+          campaigns={campaigns}
           onClose={() => setShowSaveList(false)}
           onLoad={async (name) => {
             setShowSaveList(false);
@@ -4674,28 +4698,43 @@ function ApiSettingsModal({
 }
 
 function SaveListModal({
-  saves,
+  campaigns,
   onClose,
   onLoad,
 }: {
-  saves: Array<{ name: string; size: number; mtime: number }>;
+  campaigns: MenuCampaign[];
   onClose: () => void;
   onLoad: (name: string) => Promise<void>;
 }) {
+  const hasAny = campaigns.some((c) => c.saves.length);
   return (
     <div className="menu-modal-bg" onClick={onClose}>
       <div className="menu-modal" onClick={(e) => e.stopPropagation()}>
         <h2>加载存档</h2>
-        <ul className="menu-save-list">
-          {saves.map((s) => (
-            <li key={s.name}>
-              <button onClick={() => onLoad(s.name)}>
-                <span className="save-name">{s.name}</span>
-                <span className="save-meta">{new Date(s.mtime * 1000).toLocaleString("zh-CN")}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
+        {hasAny ? (
+          <div className="menu-campaign-list">
+            {campaigns.map((c) => (
+              <div key={c.campaign_id || "__manual__"} className="menu-campaign">
+                <div className="menu-campaign-head">
+                  <span>{c.kind === "manual" ? "手动存档" : `战局 ${c.campaign_id.slice(0, 6)}`}</span>
+                  {c.current ? <span className="menu-campaign-badge">本局</span> : null}
+                </div>
+                <ul className="menu-save-list">
+                  {c.saves.map((s) => (
+                    <li key={s.name}>
+                      <button onClick={() => onLoad(s.name)}>
+                        <span className="save-name">{s.label || s.name}</span>
+                        <span className="save-meta">{new Date(s.mtime * 1000).toLocaleString("zh-CN")}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="menu-empty">暂无存档。</p>
+        )}
         <div className="menu-modal-actions">
           <button onClick={onClose}>关闭</button>
         </div>

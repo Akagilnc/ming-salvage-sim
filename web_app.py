@@ -12,6 +12,7 @@ import json
 import os
 import queue
 import random
+import re
 import threading
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional
 
@@ -30,6 +31,7 @@ from ming_sim.llm_config import (
     normalize_openai_base_url,
     save_runtime_llm,
 )
+from ming_sim.agents import _dump_llm_messages
 from ming_sim.llm_model import extract_agent_text, verify_llm_available
 from ming_sim.llm_contract import fail_if_llm_error
 from ming_sim.issues import _format_issue_ongoing
@@ -788,6 +790,9 @@ class WebGame:
                     yield {"type": "delta", "content": delta}
                 if type(event).__name__ in ("RunOutput", "RunCompletedEvent"):
                     run_output = event
+            # 流式跑完补 dump：流式 run_output(RunCompletedEvent)常无 .messages，
+            # 传 agent= 让 _dump_llm_messages 走 agent.get_last_run_output() fallback 取 system/user。
+            _dump_llm_messages(run_output, f"大臣对话/{minister_name}", agent=agent)
             answer = "".join(chunks).strip()
             fail_if_llm_error(answer, "LLM 调用")
             if not answer and run_output is not None:
@@ -918,6 +923,36 @@ def _save_visible_for_campaign(fname: str, campaign_id: str) -> bool:
     return bool(campaign_id and fname.startswith(f"{AUTO_SAVE_PREFIX}{campaign_id}_"))
 
 
+# 自动存档文件名：auto_<campaign_id>_<year>_<period>_t<turn>_<tag>.db
+_AUTO_SAVE_RE = re.compile(
+    rf"^{re.escape(AUTO_SAVE_PREFIX)}(?P<cid>[0-9a-f]+)_"
+    r"(?P<year>\d{4})_(?P<period>\d{2})_t(?P<turn>\d{4})_(?P<tag>\w+)$"
+)
+
+_AUTO_TAG_LABEL = {"begin": "月初", "preresolve": "结算前"}
+
+
+def _parse_save_name(name: str) -> Dict[str, Any]:
+    """把存档名解析成元信息。自动档归到对应 campaign，手动档 campaign_id 留空。"""
+    m = _AUTO_SAVE_RE.match(name)
+    if not m:
+        return {"campaign_id": "", "kind": "manual", "label": name}
+    year = int(m.group("year"))
+    period = int(m.group("period"))
+    turn = int(m.group("turn"))
+    tag = m.group("tag")
+    tag_label = _AUTO_TAG_LABEL.get(tag, tag)
+    return {
+        "campaign_id": m.group("cid"),
+        "kind": "auto",
+        "year": year,
+        "period": period,
+        "turn": turn,
+        "tag": tag,
+        "label": f"{year}年{period}月 · 第{turn}回合 · {tag_label}",
+    }
+
+
 def _main_db_campaign_id() -> str:
     db_path = os.environ.get("MING_SIM_DB", "") or user_data_path("ming_sim.db")
     if not os.path.isabs(db_path):
@@ -938,28 +973,59 @@ def _main_db_campaign_id() -> str:
 
 
 def _scan_saves() -> List[Dict[str, Any]]:
-    """扫存档目录，独立于 WebGame 实例（菜单页无 game 也要能列）。"""
+    """扫存档目录，独立于 WebGame 实例（菜单页无 game 也要能列）。
+    不再按 campaign 过滤——所有局的存档都列出，由前端按局分组。"""
     saves_dir = user_data_path("saves")
     out: List[Dict[str, Any]] = []
     if not os.path.isdir(saves_dir):
         return out
-    campaign_id = _main_db_campaign_id()
     for fname in sorted(os.listdir(saves_dir)):
         if not fname.endswith(".db"):
             continue
-        if not _save_visible_for_campaign(fname, campaign_id):
-            continue
+        name = fname[:-3]
         full = os.path.join(saves_dir, fname)
         try:
             st = os.stat(full)
         except OSError:
             continue
+        meta = _parse_save_name(name)
         out.append({
-            "name": fname[:-3],
+            "name": name,
             "size": st.st_size,
             "mtime": int(st.st_mtime),
+            **meta,
         })
     out.sort(key=lambda x: x["mtime"], reverse=True)
+    return out
+
+
+def _scan_campaigns() -> List[Dict[str, Any]]:
+    """把存档按局（campaign_id）分组，当前主 DB 的局标 current=True。
+    手动存档（无 campaign_id）归到一个 manual 组。每组按 mtime 倒序，组也按最新档倒序。"""
+    saves = _scan_saves()
+    cur_campaign = _main_db_campaign_id()
+    groups: Dict[str, Dict[str, Any]] = {}
+    for s in saves:
+        cid = s.get("campaign_id") or ""
+        key = cid or "__manual__"
+        group = groups.get(key)
+        if group is None:
+            group = {
+                "campaign_id": cid,
+                "kind": "manual" if not cid else "auto",
+                "current": bool(cid) and cid == cur_campaign,
+                "saves": [],
+                "latest_mtime": 0,
+            }
+            groups[key] = group
+        group["saves"].append(s)
+        group["latest_mtime"] = max(group["latest_mtime"], s["mtime"])
+    out = list(groups.values())
+    # 当前局置顶，其余按最新档时间倒序；手动组排最后。
+    out.sort(key=lambda g: (
+        0 if g["current"] else (2 if g["kind"] == "manual" else 1),
+        -g["latest_mtime"],
+    ))
     return out
 
 
@@ -981,6 +1047,8 @@ async def api_menu_status() -> Dict[str, Any]:
         "has_running_game": web_game is not None,
         "has_main_db": _has_main_db(),
         "saves": _scan_saves(),
+        "campaigns": _scan_campaigns(),
+        "current_campaign": _main_db_campaign_id(),
         "llm": {
             "base_url": runtime.get("base_url") or os.environ.get("OPENAI_BASE_URL", ""),
             "model": runtime.get("model") or os.environ.get("OPENAI_MODEL", ""),

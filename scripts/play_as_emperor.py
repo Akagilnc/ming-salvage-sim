@@ -229,8 +229,12 @@ def parse_emperor_output(raw: str) -> tuple[str, str]:
     return reasoning, input_text
 
 
-def ask_emperor(agent: Agent, cli_chunk: str, prompt_hint: str) -> tuple[str, str]:
+def ask_emperor(agent: Agent, cli_chunk: str, prompt_hint: str, progress: str = "") -> tuple[str, str]:
+    # progress：本月进度提示（已问几轮/已下旨几条/还差啥）。num_history_runs 只留近 8 轮，
+    # agent 看不到完整本月动作易盲凑、重复召见，故每步显式喂进度，让它知道走到哪、该收尾还是继续。
     payload = (
+        f"{progress}\n\n" if progress else ""
+    ) + (
         f"CLI 当前输出（最新一段）：\n```\n{cli_chunk[-3500:]}\n```\n\n"
         f"当前等待输入的 prompt 是：{prompt_hint}\n\n"
         f"请输出下一条键盘输入（严格 JSON）。"
@@ -310,6 +314,9 @@ def run(
     step = 0
     ministers_this_turn = 0  # 本月已召见大臣数
     chat_rounds_this_turn = 0  # 本月已问话轮数（『朕问：』界面输入一次算一轮）
+    force_issue_count = 0  # 本月强制 issue 颁布次数（防草案界面死循环）
+    drafts_this_turn = 0  # 本月已入档草案数（每次『确认入档』+1）
+    timeout_count = 0  # 连续 CLI TIMEOUT 次数（偶发卡试探回车，连 3 次才退）
     MAX_CHAT_ROUNDS_PER_TURN = 30  # token 压测：问够 30 轮且有草案就强制退朝结算
     MAX_MINISTERS_PER_TURN = 30  # 每月最多召见大臣数（token 测试临时调大）
     prev_hint = ""            # 上一步命中的 prompt，用于检测卡同界面
@@ -325,20 +332,35 @@ def run(
                 log("\n[CLI EOF — 游戏结束]")
                 break
             except pexpect.TIMEOUT:
-                log(f"\n[CLI TIMEOUT at step {step}]")
+                timeout_count += 1
+                log(f"\n[CLI TIMEOUT at step {step} (第 {timeout_count} 次)]")
                 log(f"--- last buffer ---\n{child.before[-2000:]}\n---")
-                break
+                if timeout_count >= 3:
+                    log("[连续 3 次 TIMEOUT，CLI 真卡死，退出]")
+                    break
+                # 偶发卡(如超长 add 输入、LLM 慢)：发回车试探推进，不直接退
+                if child.isalive():
+                    child.sendline("")
+                continue
 
+            timeout_count = 0  # expect 成功，清零超时计数
             prompt_hint = PROMPT_PATTERNS[idx]
             cli_chunk = strip_ansi(child.before + prompt_hint)
 
             # 拟旨草稿确认（皇帝审阅后输入）
             if "陛下：确认入档" in prompt_hint:
                 log(f"\n--- step {step} | prompt: 陛下：确认入档 ---")
-                reasoning, action = ask_emperor(emperor, cli_chunk, prompt_hint.strip())
+                progress = (
+                    f"【本月进度】第 {completed_periods + 1}/{turns} 月｜已问 {chat_rounds_this_turn}/"
+                    f"{MAX_CHAT_ROUNDS_PER_TURN} 轮｜已入档草案 {drafts_this_turn} 条。"
+                    f"这是大臣拟好的诏书草案，准其入档（回车/可/准）即 +1 条草案。"
+                )
+                reasoning, action = ask_emperor(emperor, cli_chunk, prompt_hint.strip(), progress)
                 log(f"[崇祯] reasoning: {reasoning}")
                 log(f"[崇祯] input: {action!r}")
                 child.sendline(action)
+                if action.strip() in {"", "可", "准", "是", "yes"}:
+                    drafts_this_turn += 1
                 continue
 
             # 检测月末（推进一月）
@@ -346,6 +368,8 @@ def run(
                 completed_periods += 1
                 ministers_this_turn = 0  # 重置月内召见计数
                 chat_rounds_this_turn = 0  # 重置月内问话轮计数
+                force_issue_count = 0  # 重置月内强制颁布计数
+                drafts_this_turn = 0  # 重置月内草案计数
                 log(f"\n>>> 已完成 {completed_periods}/{turns} 月 <<<\n")
                 if completed_periods >= turns:
                     child.sendline("exit")
@@ -381,21 +405,75 @@ def run(
                     child.sendline("quit")
                     continue
 
-            # token 压测：问够 30 轮就退朝（在『召见谁』界面切，避免打断对话中途）。
-            # 草案可由本月末最后一位大臣拟；若到点还没草案，让 agent 再问一轮促其拟旨。
-            if "召见谁" in prompt_hint and chat_rounds_this_turn >= MAX_CHAT_ROUNDS_PER_TURN:
-                has_drafts = "暂无指令" not in cli_chunk and "暂无草案" not in cli_chunk
-                if has_drafts:
-                    log(f"[压测] 本月已问 {chat_rounds_this_turn} 轮，强制退朝颁诏")
-                    child.sendline("quit")
+            # token 压测：问够 30 轮就退朝。
+            # 注意：agent 常在『朕问：』界面用「传XX」直接换人，从不回『召见谁』主菜单，
+            # 故退朝判断必须同时覆盖『召见谁』与『朕问：』两个界面，否则永不触发、卡死本月。
+            # 『朕问：』界面 quit 同样能退朝审阅（CLI 接受）。has_drafts 在『朕问：』界面 chunk
+            # 里判不准，故此处只看轮数到点就退；草案有无交给后面『诏书草案>』兜底处理。
+            at_quit_prompt = ("召见谁" in prompt_hint) or ("朕问" in prompt_hint)
+            if at_quit_prompt and chat_rounds_this_turn >= MAX_CHAT_ROUNDS_PER_TURN:
+                log(f"[压测] 本月已问 {chat_rounds_this_turn} 轮，强制退朝颁诏（界面：{prompt_hint.strip()[:8]}）")
+                child.sendline("quit")
+                continue
+
+            # 强制颁布兜底：退朝后『诏书草案>』界面弱模型(qwen)常反复输 back 回召见 → 死循环。
+            # 这里不交 agent 决定，按 CLI 状态自动收尾颁布：
+            #   ① 有 pending(大臣拟旨『待核定』) → 必须先 confirm，否则 issue 被拒(terminal.py:302)
+            #   ② pending 清完 → issue 颁布 → CLI 出『确认颁布？』
+            #   ③ 『确认颁布？』→ sendline yes，进结算
+            if "确认颁布？" in prompt_hint:
+                log(f"[强制颁布 step {step}：确认颁布 → yes]")
+                child.sendline("yes")
+                continue
+            if "诏书草案>" in prompt_hint:
+                has_drafts = "暂无草案" not in cli_chunk and "暂无指令" not in cli_chunk
+                # confirm/reject 的 N 是 directive **id**，不是序号。从 CLI 文本里抓「[待核定] #N」。
+                pending_ids = re.findall(r"\[待核定\]\s*#(\d+)", cli_chunk)
+                if has_drafts or pending_ids:
+                    force_issue_count += 1
+                    if force_issue_count > 12:
+                        log(f"[强制颁布失败 step {step}：连发 {force_issue_count} 次仍卡草案界面，退出]")
+                        child.sendline("exit")
+                        break
+                    if pending_ids:
+                        # 逐条按真实 id confirm（CLI 重列直到 pending 清空）
+                        cid = pending_ids[0]
+                        log(f"[强制颁布 step {step}：核定待核定拟旨 #{cid} → confirm {cid}]")
+                        child.sendline(f"confirm {cid}")
+                    else:
+                        log(f"[强制颁布 step {step}：草案就绪 → issue 颁布]")
+                        child.sendline("issue")
+                    continue
+                else:
+                    # 草案为空：别让 agent 自己 add 超长诏书(会卡死 CLI)，发 back 回召见逼大臣拟旨
+                    force_issue_count += 1
+                    if force_issue_count > 12:
+                        log(f"[强制颁布失败 step {step}：草案空且反复 back，退出]")
+                        child.sendline("exit")
+                        break
+                    log(f"[强制颁布 step {step}：草案空 → back 回召见逼大臣拟旨]")
+                    child.sendline("back")
                     continue
 
+            rounds_left = MAX_CHAT_ROUNDS_PER_TURN - chat_rounds_this_turn
+            progress = (
+                f"【本月进度】第 {completed_periods + 1}/{turns} 月｜已问 {chat_rounds_this_turn}/"
+                f"{MAX_CHAT_ROUNDS_PER_TURN} 轮（还剩约 {max(rounds_left, 0)} 轮就强制退朝结算）｜"
+                f"已入档草案 {drafts_this_turn} 条｜本月已召见 {ministers_this_turn} 位大臣。"
+                f"轮数将尽而草案仍为 0 时，务必让当前大臣拟旨入档，勿空过本月。"
+            )
             try:
-                reasoning, action = ask_emperor(emperor, cli_chunk, prompt_hint.strip())
+                reasoning, action = ask_emperor(emperor, cli_chunk, prompt_hint.strip(), progress)
             except Exception as exc:
                 log(f"[崇祯 agent 出错: {exc}]")
                 child.sendline("exit")
                 break
+
+            # 超长单行输入(尤其『指令内容：』界面 agent 整篇诏书)会卡死 CLI/pexpect → 截断。
+            # 诏书细节由 LLM 拟诏/结算补全，这里只需一句能立项的指令文本。
+            if len(action) > 200:
+                log(f"[输入截断 step {step}：{len(action)} 字 → 200 字，防 CLI 卡]")
+                action = action[:200]
 
             log(f"[崇祯] reasoning: {reasoning}")
             log(f"[崇祯] input: {action!r}")
@@ -417,9 +495,12 @@ def run(
             if "朕问" in prompt_hint and action.lower() not in {"quit", "q", "exit", "back", "退下", ""}:
                 chat_rounds_this_turn += 1
 
-            # 防 deadlock：连续无响应步数上限
-            if step > 500:
-                log("[step 上限 500 — 强制结束]")
+            # 防 deadlock：总步数上限。真 deadlock 由 stuck_count/timeout_count/force_issue 专管，
+            # 这里只是兜底防失控。按回合数动态算：每月约 30 轮问政+换人+草案≈50 步，留余量。
+            # 旧硬编码 500 只够 ~12 月，跑 100 月必被腰斩 → 改 turns×60+300。
+            step_cap = turns * 60 + 300
+            if step > step_cap:
+                log(f"[step 上限 {step_cap} — 强制结束]")
                 child.sendline("exit")
                 break
 

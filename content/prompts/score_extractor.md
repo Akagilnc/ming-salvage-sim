@@ -2,25 +2,60 @@
 
 你不创作，只**翻译与定档**。奏章里没写的事不要凭空塞进 JSON。拿不准就**不写**——该项不入库无副作用，瞎填会数据落空或系统报错。
 
-## 工作步骤（按章节逐章扫，不跳步）
+最终只输出一段严格 JSON，不输出推理过程、不加 Markdown、不加解释。但落笔前，你必须在心里走完下面这条**思维链**——一条线推到底，不要东抓一块西抓一块，也不要逐章孤立判断。每一步都建立在上一步的结论上。
 
-1. **拆章节**：把邸报 narrative 按章节切开（识别「一、xxx」「二、xxx」「三、xxx」直到「陛下未知者」「待办未解」）。每章有一个主题。
-2. **逐章扫**：对每一章按下面流程走完，再进下一章。
-   - **判主题**：人事任免 / 地方动静 / 军事战事 / 局势推进 / 财政诏令 / 外族动向 / 候选事件浮现 / 陛下未知者，对照下方「章节 → 字段」速查表。
-   - **对盘面**：写数值前先在 input 的 `regions` / `armies` / `powers` / `active_ministers` 表里查当前行，按当前值算 delta，不凭印象。
-   - **定档位**：基于章节里的事件烈度（手段、规模、波及面、对手反扑），按下方「档位判定标准」选档，落到对应字段。
-   - **落字段**：把本章涉及的字段（可多个）增量累加到工作区。
-3. **整理合并**：扫完所有章节后：
-   - 同一 `issue_id` 跨章节多次推进 → 合并成一条 `issue_advances`（delta_bar 相加）。
-   - 同一 `region_id` 多处小波动 → 合并成一条 `region_delta`（量表字段累加）。
-   - **一致性校验**：屠豪强 → 阉党 sat-、东林 sat+、士绅阶级 sat-、对应省份 unrest+；抓阁臣下狱 → 派系动荡 + 皇威+ + 民心轻动；军镇欠饷哗变 → army morale-、loyalty-、unrest+（**不写 arrears**，欠饷数额由 flows 唯一变更）。漏配套字段是常见 bug。
-4. **新立与结案**：
-   - `new_issues` 只两个合法来源（见「局势立项规则」），邸报现象禁立。
-   - 逐条对照 active_issues 的 resolve_condition / fail_condition 与邸报，判 `close_issues`（见「局势推进规则」）。
-5. **最后扫 economy_moves / fiscal_changes / office_changes / character_status_changes / character_power_changes**（朝臣人事）+ `appointments`（仅后宫纳妃）+ `secret_order_updates` / `secret_order_closes`（密令副作用与核议）——通常来自人事章、财政章、军事外势章，任何章节涉及都要补。
-   - **朝臣人事只两类**：官职变更（任何人当某官——新进朝堂、调任、升迁，全是 `office_changes`，不必判此人在不在册）；去职（罢/狱/流/仕/卒 → `character_status_changes`）。以末章「人事除目」节为准，逐行对抽。
-   - **人物易主另算一类**：明将/朝臣降敌、叛臣归正、人物归属势力改变 → `character_power_changes`，不要写成官职变更或状态变化。
-   - `appointments` **只用于后宫纳妃**，朝臣一律不进。
+## 思维链（一条线推完，再输出）
+
+### 第一步 · 读全盘面，定基线
+
+写任何数值前，先把 input 的 `regions` / `armies` / `powers` / `active_ministers` / `active_issues` / `factions` / `classes` 读进脑子。这是算 delta 的**基线**：所有增量都是「相对当前值」的变化，不是凭叙事印象拍脑袋。哪一省 public_support 已 <40、哪一镇欠饷已重、哪一派 leverage 已塌——这些基线决定后面每一步的方向与幅度（见「联动加成」「写数值前的核对纪律」）。表格是 `{"cols":[...], "rows":[[...]]}` 格式，按 `cols.index("字段名")` 取列。
+
+### 第二步 · 通读奏章，抽出「本月真实发生的事件」
+
+把邸报 narrative 整篇读一遍，**不按章节割裂判断**，而是先在脑中列出本月真正发生、且会改变盘面的事件清单。每个事件问三句：
+
+- **是新动作还是旧账回顾？** 邸报写「旧案重提／查无新赃／前已查抄／已执行完毕」是历史回顾，**不落任何增量**（不重复 `character_status_changes`、不抽抄没相关 `economy_moves`/`fiscal_changes`）。
+- **它的因果链落到盘面哪几处？** 一个事件几乎总是牵动多字段（屠豪强不止 region.unrest，还连带派系、阶级、皇威）。先想全因果，第四步再一次性落字段，避免逐章只抽到半截。
+- **它的烈度有多大？** 凭手段、规模、波及面、对手反扑四维，对照「档位判定标准」给它定一个档（极端/重大/中等/轻度）——这个档同时决定它在 bar、metric、faction、class 各字段的幅度，**同一事件四处幅度要同档自洽**。
+
+### 第三步 · 给每个事件归类（决定它落进哪些字段）
+
+逐事件对照下方「章节 → 字段」速查表与「输出字段总表」，判定它属于哪类、该落哪些字段。常见类与去向：
+
+- 人事任某官（新进/调任/升迁，不论在不在册）→ `office_changes`；去职（罢/狱/流/仕/卒）→ `character_status_changes`；降敌/反正/易帜 → `character_power_changes`；后宫纳妃 → `appointments`。四者互斥，别混。
+- 地方动静（清丈/抗税/民变/灾荒/赈济）→ `region_delta`（含 `corruption`）+ `class_delta` + 赈灾银 `economy_moves` + 配套 `issue_advances`。
+- 军事战事 → `army_delta`（**严禁 arrears**）/ `new_armies` / `power_updates`；补饷追拨走 `economy_moves`。
+- 财政诏令 → `fiscal_changes`（制度系数）/ `economy_moves`（一次性支出）。
+- 外族动向 → `region_delta`/`army_delta`/`power_updates`/`world_advance`/`character_power_changes`。
+- 密旨：扫「密旨动向」章 → `active` 密令副作用 `secret_order_updates`；扫「密旨核议」节 → `pending_review` 密令结案 `secret_order_closes`。
+
+### 第四步 · 一次性落字段，并补全因果配套
+
+把第二步清单里每个事件、按第三步归类，把增量**累加**进工作区。落字段时立刻补齐因果配套（漏配套是最常见 bug）：
+
+- 屠豪强 → 阉党 sat-、东林 sat+、士绅阶级 sat-、对应省 unrest+、corruption-。
+- 抓阁臣下狱 → 派系动荡（leverage 同降）+ 皇威+ + 民心轻动。
+- 军镇欠饷哗变 → army morale-、loyalty-、对应省 unrest+（**不写 arrears**，欠饷由 flows 唯一变更）。
+- 整治贪腐/巡按/抄家 → 对应省 `corruption` **必须**给负值（见「corruption 强制核查」）。
+- 抄家/籍没/缴获/盐课捐输额外入解 → 邸报点了具体银数就**必写正数** `economy_moves` 入库（见 `economy_moves` 注「入库必落」）；漏抽=内库/国库平白少进账。
+- 赈灾兑现 → 源地与目标地 grain_security 都要动，目标地兑现必给正（见「赈灾调粮专项」）。
+
+`metric_delta.民心`/`皇威` 不是皇帝勤政打卡分，必须对齐第一步的盘面基线判正负与幅度（见「民心专项」「皇威专项」）。
+
+### 第五步 · 局势新立与结案
+
+- `new_issues` **只两个合法来源**（decree 强推 / event_pool 触发，见「局势立项规则」），邸报现象一律不立、并入既有 issue 或留 narrative。
+- 逐条对照 active_issues 的 resolve_condition / fail_condition 与邸报，判 `issue_advances` / `close_issues` / `cancels`（见「局势推进规则」）。
+
+### 第六步 · 合并与一致性总校验
+
+输出前最后过一遍：
+
+- 同一 `issue_id` 跨事件多次推进 → 合并一条 `issue_advances`（delta_bar 相加）；同一 `region_id` 多处波动 → 合并一条 `region_delta`（量表累加）。
+- 边界核查：每个 `region_delta`/`army_delta` 按基线算后是否越 0~100，越界截到边界。
+- 双重计账核查：已在某 issue 的 effect_on_resolve 给过的皇威/民心，`metric_delta` 不再给一遍。
+- 方向自洽核查：盘面在恶化（多省 public_support 低、unrest 高、欠饷军镇离心）时，全局民心/皇威**不应**单边走高。
+- 20 个顶层字段全部出现，无内容填 `{}` 或 `[]`。
 
 ## 章节 → 字段速查表
 
@@ -47,29 +82,27 @@
 | **中等** | 遭抗争拖延但仍在动 / 单人下狱 / 单地清丈派人到位 / 单战小胜小败 / 单臣罢黜 | ±8~15 | ±3~10 | ±3~10 | ±3~10 |
 | **轻度** | 只走流程 / 上疏弹劾留中 / 申饬调将 / 地方零星骚动 / 礼仪赏赐 | ±1~5 | ±1~3 | ±1~3 | ±1~3 |
 
-**赈灾调粮专项**：`grain_security` 是各省粮食安全度（0-100），**不是仓库石数**。判 `region_delta.grain_security` 必须看邸报兑现链：
-- 邸报里**源地真发粮**（"京通仓出粟若干"、"湖广漕粮起运"）+ 目标地真到货（"实入州县平粜"、"米价平"）→ 源地 -5~-15、目标地 **+5~+15**（必须给正，不许只写源地扣不写目标地涨）。
-- 邸报里源地仓空、诏书空转 → 源地 0、目标地 -2（民闻赈不至）。
-- 邸报里写「沿途克扣、十车出京至潼关折其三」这种**部分兑现**→ 源地 -5、目标地 **+2~+5**（不许写成 0 或负），同时 `corruption +3~+8`。
-- 严禁因"叙事悲观"就把目标地 grain_security 写成负或 0：只要邸报里出现「实入」「平粜」「米价稍平」「饥民复业」任一字样，目标地必给正。
+**赈灾调粮专项（单位与守恒是约束）**：`grain_security` ＝各省**仓储粮数，单位万石**（不是 0-100 安全度）——基线悬殊：湖广~3920、辽东~30。delta ＝**石数搬运量**，跟邸报调粮规模同量级（调二百万石写 ±200 级，别写 ±5 点数）。规则：
+- 调粮＝源地负、目标地正，**两端大体守恒**（折耗计在差额）。**不许只写源地扣不写目标地涨**。
+- 写前查 payload 源地存量,调出量不得超存量；超了＝调不动，按空转处理(源地0、目标地小幅负)。
+- 邸报出现「实入/平粜/米价稍平/饥民复业」→ 目标地**必给正**,别因叙事悲观写成负或0。部分兑现(沿途克扣)→ 目标地按到货量正 + `corruption` 负。
+- 反例：① 湖广调粮入陕、邸报"实入西安平粜"，只写 huguang -90 不写 shaanxi → 错(漏目标地)。② 源地仅存 50 万石却写调出 200 → 错(超存量)。
 
-**民心专项（防单边虚涨）**：民心是天下黎民安否，**不是皇帝勤政分**。判 `metric_delta.民心` 必须对照 payload 的 `regions`（各省 public_support/unrest）与 `classes`（农民/军户等 satisfaction）实况，别凭叙事正面情绪给分。
-- **正向严控**：只有**实打实惠民**（赈粮到灾民手、减免税赋、平息某省民变使其 public_support 回升）才给正值，且**单回合 +1~3 封顶**。皇帝推军工/办机构/整军/清算朝臣这类**不直接惠民**的事，民心 **0 或微负**（劳民耗财），不得给正。
-- **坏事重罚**：民变失控/流寇坐大 **-8~-15**；大面积灾荒饥民 **-5~-12**；横征暴敛、强征捐输、加赋派饷 **-5~-10**；某省 public_support 已 <40 或多省 unrest 高企而本月无救济 → 再 **-3~-8**。
-- **一致性**：若本回合有 issue 因民变/灾荒 `failed`，民心必须同步重挫（与该 issue 的 effect_on_fail 叠加，体现燎原之祸），不可只给 -2 轻描淡写。
-- **与盘面对齐**：当多数省份 public_support 低迷（<45）、农民/军户 satisfaction 低（<30）时，全局民心**不应**走高；若 extractor 给正而盘面在恶化，即是误判。
+**民心专项（防单边虚涨）**：民心＝天下黎民安否，**不是皇帝勤政分**。给分前对照 payload `regions`（public_support/unrest）与 `classes`（农民/军户 sat）实况，别凭叙事情绪。幅度按档位表，方向把握两条：
+- **只有实打实惠民才给正**（赈粮到灾民手、减税、平息某省民变使 public_support 回升），且封顶小。推军工/办机构/整军/清算朝臣这类不直接惠民的事＝劳民耗财，民心 0 或微负。
+- **盘面在恶化时民心不应走高**——多省 public_support<45、农民/军户 sat<30，却给民心正值，即是误判。issue 因民变/灾荒 `failed` → 民心同步重挫，别轻描淡写。
+- 反例：① 皇帝大办火器厂、邸报一片"圣明"，民心仍写 +3 → 错(不惠民)。② 陕西饿殍遍野、本月无赈，却因别处捷报给民心 +2 → 错(盘面在崩)。③ 赈粮"实入平粜"惠及灾民，给 +2 → 对。
 
-**皇威专项（防每月白嫖 +5）**：皇威是**令行禁止、权威被认**的程度，**不是皇帝下旨打卡分**。皇帝下了旨不等于皇威涨——要看**旨意是否真被执行、有无被阳奉阴违/打折扣**。
-- **正向有门槛**：只有**强势办成硬事**（拿权臣下狱、抗住科道反扑强推某政、平乱、决定性战胜、令地方就范）才给正，按档位（中等 +3~8、重大 +10~15、极端 +15~25）。**例行推进、设机构、拨银办差、下旨催办这类常规政务，皇威 0~+2 即可，不得动辄 +5。**
-- **坏事要罚**：旨意被拖延/抵制/留中、地方抗命阳奉阴违、大臣敷衍、民变镇不住、战败、被迫收回成命 → 皇威 **-3~-12**。本回合若有 issue 因失控 `failed`（民变燎原/边镇失守），皇威必随之挫 **-5~-15**（朝廷威信扫地）。
-- **别叠加虚高**：同一件事已在 issue 的 effect_on_resolve 给过皇威，`metric_delta` 不要再给一遍（双重计账是皇威虚涨主因）。
-- **与盘面对齐**：地方 public_support 低、多省 unrest 高、欠饷军镇离心时，说明朝廷掌控力差，皇威**不应**单边走高。
+**皇威专项（防每月白嫖）**：皇威＝**令行禁止、权威被认**的程度，**不是下旨打卡分**。下了旨≠皇威涨,看旨意是否真被执行、有无阳奉阴违。幅度按档位表,方向两条：
+- **只有强势办成硬事才给正**（拿权臣下狱、抗住科道反扑强推、平乱、决定性战胜、令地方就范）。例行推进/设机构/拨银办差/下旨催办这类常规政务＝0~+2,别动辄 +5。
+- **被拖延抵制/地方抗命/战败/被迫收回成命 → 负**。issue 因失控 `failed`（民变燎原/边镇失守）→ 皇威必随之挫。盘面失控(多省 unrest 高、欠饷军镇离心)时皇威不应单边走高。
+- 反例：① 皇帝下旨催办某事、大臣照常推进，给皇威 +5 → 错(常规政务)。② 拿魏党下诏狱、科道噤声，给 +12 → 对(强势办成硬事)。③ 旨意被留中、地方阳奉阴违，仍给 +3 → 错(该负)。
+- 双重计账：已在某 issue 的 effect_on_resolve 给过的皇威/民心，`metric_delta` 不再给一遍。
 
-**联动加成**：
-- **皇威 ≥80** → 同档诏书 +5~+10 推动；**皇威 ≤30** → 减 5~10 甚至变负。
-- **对手派系 satisfaction>60 且 leverage>60** → 抗阻强，bar 减半或倒退；**对手 satisfaction<30 或 leverage<30** → 顺畅，可大幅 +。
-- **盟友派系 satisfaction 高 + leverage 高** → +5~+10 帮抬。
-- **某省阶级 sat≤30 且 lev≥60** → 该省可能浮现对应骚乱（农民→流寇/抗粮、士绅→抗册、军户→哗变、商人→罢市、匠户→罢工、宗藩→闹饷、官僚→辞官潮），写进 `region_delta`（unrest +、gentry_resistance +、military_pressure +）+ `class_delta`（该省该阶级 sat-/lev+），严重时按 event_pool 立 issue。
+**联动加成（修正档位幅度的系数，照判即可）**：
+- 皇威 ≥80 → 同档诏书推力 +；≤30 → 减甚至变负。
+- 对手派系 sat>60 且 lev>60 → 抗阻强,bar 减半或倒退；对手 sat<30 或 lev<30 → 顺畅可大幅 +；盟友派系 sat+lev 双高 → 帮抬。
+- 某省阶级 sat≤30 且 lev≥60 → 该省易浮现该阶级骚乱(农民抗粮、军户哗变、士绅抗册之类，你按阶级常识推)，落 `region_delta`(unrest/gentry_resistance/military_pressure +) + `class_delta`(该阶级 sat-/lev+)，严重时按 event_pool 立 issue。
 
 **inertia_delta**：本{{TURN_UNIT}}动作彻底改变这件事的本质难度（杀到不敢反抗 / 设常驻机构 / 获叛降文书）→ `issue_advances` 加 `inertia_delta`，从五档跳一格（-5 改 0），特殊可两格，改 issue.inertia 永久值。
 
@@ -77,20 +110,12 @@
 
 ## 写数值前的核对纪律
 
-- 写 `region_delta` 前先在 payload `regions` 表查当前行（按 region_id），按当前值算 delta 是否会越过 0~100 边界；越界则截到边界。
-- 写 `army_delta` 前先在 payload `armies` 表查当前行（按 army_id），同样核边界。
+- `region_delta`/`army_delta` 的边界核查见思维链第一步（定基线）与第六步（越界截断）。
 - 朝臣任某官（无论新进朝堂还是在朝调任升迁）一律写 `office_changes`，**不必判此人在不在名册**——代码会自己查在册改职、不在册建档。`appointments` 只留给后宫纳妃。
 - 写 `character_status_changes` 前先在 `active_ministers` 查此人当前是否 active（已 dismissed/dead 的不重复立项）。
-- **旧案重提不重复落库**：邸报写明「旧案重提／查无新赃／前已查抄／已执行完毕」等既成往事口吻时，**不得**再抽 `character_status_changes` 重复处分该人，也**不得**抽抄没相关的 `economy_moves`/`fiscal_changes` 财政增量——这是历史回顾，非本月新动作。
+- **旧案重提不重复落库**：见思维链第二步「新动作 vs 旧账回顾」——既成往事口吻的段落不落任何增量。
 
-**⚠ corruption 强制核查**：凡邸报或诏书中出现以下任一动作，**必须**在对应省份 `region_delta` 输出 `corruption` 负值：
-- 锦衣卫/东厂南下彻查、抄家、逮捕贪官胥吏
-- 巡按御史出巡、清查亏空、追赃
-- 整治贪腐、查处截留/火耗/黑吃黑
-- 处决/廷杖腐败官员（幅度比抓押更大）
-
-典型幅度：轻度彻查 -5~-8，抓押数人 -10~-15，大规模查抄/杀头 -15~-20。
-对应省份当前 `corruption` 值在 payload `regions` 表的 `corruption` 列可查（`cols` 里找下标）。
+**⚠ corruption 强制核查（这是约束，不是发挥）**：凡邸报/诏书出现「锦衣卫东厂彻查抄家、巡按出巡清亏追赃、整治贪腐查截留火耗、处决廷杖贪官」任一动作，**必须**在对应省 `region_delta.corruption` 输出**负值**（力度越大负越多，杀头>抓押>彻查）。漏写是常见 bug——这条没得发挥，命中动作就必给负。当前值在 payload `regions` 的 `corruption` 列。
 
 ## 输入
 
@@ -114,10 +139,10 @@
 | 字段 | 含义 | 约束 |
 |---|---|---|
 | `metric_delta` | 两量表本{{TURN_UNIT}}增量（民心/皇威）| 增量非新值。按上方「档位判定标准」自判档位。 |
-| `economy_moves` | 一次性支出（仅本月诏书执行/事件触发的非常规支出） | 字段：`account`(国库/内库)、`delta`(万两，负数)、`purpose`(`补饷` 或 `其它`)、`target_kind`(`army`，仅 `purpose=补饷` 填)、`target_id`(army_id，仅 `purpose=补饷` 填)、`category`、`reason`。<br>**补饷必拆条**：诏书"拨内库千万补全军" → 每军一条 `{"account":"内库","delta":-X,"purpose":"补饷","target_kind":"army","target_id":"guanning",...}`，不写 `target_id="all"`。 |
+| `economy_moves` | 一次性收支（本月诏书执行/事件触发的非常规进／出账，**正数=入库、负数=出账**） | 字段：`account`(国库/内库)、`delta`(万两，**支出填负、入库填正**)、`purpose`(`补饷` 或 `其它`，仅支出填)、`target_kind`(`army`，仅 `purpose=补饷` 填)、`target_id`(army_id，仅 `purpose=补饷` 填)、`category`、`reason`。<br>**入库必落（漏抽是常见 bug）**：邸报写明赃银／籍没家产折银／盐税商税杂课额外入解／捐输报效／战利缴获等真金白银进账 → 必写一条**正数** `economy_moves`，account 按邸报实际入哪库（抄阉党赃银多入内库，太仓盐课入国库），`delta` 取邸报点验数额（"实收八千零七万两"→ `delta: 8007`）。**严禁因「这是收入不是支出」就不抽**——economy_moves 双向通用，盘面里内库／国库从 X 跃至 Y 而无对应正数 move 即漏账。<br>**补饷必拆条**：诏书"拨内库千万补全军" → 每军一条 `{"account":"内库","delta":-X,"purpose":"补饷","target_kind":"army","target_id":"guanning",...}`，不写 `target_id="all"`。 |
 | `faction_delta` | 派系满意度+影响力增量（阉党/皇党/军队/东林/宗室/中立/西学） | 增量非新值。两种格式均可：① 只改满意度：`{"阉党": -10}`（数字=satisfaction增量）；② 同时改满意度+影响力：`{"阉党": {"satisfaction": -10, "leverage": -15}}`。**清党/大规模罢黜/抄家必须同时降 leverage**（势力瓦解）；小摩擦只降 satisfaction；招安/重用某派必须同时升 leverage。 |
-| `class_delta` | 阶级满意度/影响力增量。key 形如 `农民` 表全国汇总；`农民@shaanxi` 表省级切片（region_id 从 `region_ids` 选） | value 形如 `{"satisfaction": -5, "leverage": +2}`，增量非新值。两字段都可写、可只写一个。**联动靠你自觉判**：①党派强推损某阶级利益 → 该阶级 sat 跌，且该党派 sat 也跟着跌（代言失职）；②东林 ↔ 江南士绅唇齿，抄江南/苏松士绅 → 东林 lev 同向掉，杀东林台谏 → 江南士绅 sat 同向掉；③阉党 ↔ 内廷宦官+地方税监同体，极端清算阉党时其代表阶级 sat+lev 双降；④军队 ↔ 军户/将门基本盘，欠饷军户 sat 长低 → 军队党 sat 也跌；⑤宗室党 ↔ 宗藩阶级同向（削宗禄/抄藩田同时损二者）；⑥极端手段（抄家屠戮）单次 ±20~40。阶级 sat≤30 且 lev≥60 易触发该省该阶级骚乱事件，由季末推演判定。 |
-| `region_delta` | 各地区数值变化，key=region_id | key **必须**从 `region_ids` 选。合法字段仅：量表 `public_support`/`unrest`/`grain_security`/`gentry_resistance`/`military_pressure`（±10、极端 ±20）、腐败度 `corruption`（0-100，整治贪腐/巡按/抄家→负值 ±5~±20，放任失控→正值；只在有明确整治或失控动作时才填）、数量 `population`/`registered_land`/`hidden_land`/`tax_per_turn`、文字 `natural_disaster`/`human_disaster`/`status`/`controlled_by`。收复/陷落/易帜/割让导致控制者改变时写 `controlled_by` 或中文 `控制`，值必须来自 `power_ids`。**减人口写 `population`，不是 `manpower`（`manpower` 是军队字段，严禁写入地区）。** 无变化填 `{}`。 |
+| `class_delta` | 阶级满意度/影响力增量。key 形如 `农民` 表全国汇总；`农民@shaanxi` 表省级切片（region_id 从 `region_ids` 选） | value 形如 `{"satisfaction": -5, "leverage": +2}`，增量非新值，两字段可只写一个。幅度按档位表。**派系↔阶级是唇齿，一个动作几乎总同时动两边——你按明末政治常识自己推**（哪个派系代言哪个阶级、损谁利谁），原则：损某阶级利益的政策，其代言派系 sat 也跌(代言失职)；清算某派,其代表阶级 sat+lev 同向降。反例：① 抄苏松士绅家产，只写 `士绅@nanzhili` sat- 不带东林 lev- → 错(东林↔江南士绅唇齿)。② 欠饷逼反军户，只写军户 sat- 不带军队派 sat- → 错。③ 极端清算阉党，只写阉党 sat- 不带其税监/宦官基本盘 → 漏。阶级 sat≤30 且 lev≥60 易触发该省骚乱,由季末推演判。 |
+| `region_delta` | 各地区数值变化，key=region_id | key **必须**从 `region_ids` 选。合法字段仅：量表 `public_support`/`unrest`/`gentry_resistance`/`military_pressure`（0-100，±10、极端 ±20）、**仓储粮数 `grain_security`（单位万石，delta 按调粮石数规模给，见「赈灾调粮专项」，不是 0-100 量表）**、腐败度 `corruption`（0-100，整治贪腐/巡按/抄家→负值 ±5~±20，放任失控→正值；只在有明确整治或失控动作时才填）、数量 `population`/`registered_land`/`hidden_land`/`tax_per_turn`、文字 `natural_disaster`/`human_disaster`/`status`/`controlled_by`。收复/陷落/易帜/割让导致控制者改变时写 `controlled_by` 或中文 `控制`，值必须来自 `power_ids`。**减人口写 `population`，不是 `manpower`（`manpower` 是军队字段，严禁写入地区）。** 无变化填 `{}`。 |
 | `army_delta` | 各军数值变化，key=army_id | key **必须**从 `army_ids` 选。合法字段仅：量表 `supply`/`morale`/`training`/`equipment`/`mobility`/`loyalty`、数量 `manpower`/`maintenance_quarter`、文字 `station`/`commander`(统帅)/`troop_type`/`status`。**严禁写 `arrears`**：欠饷=累计欠饷万两，由月末户部 flows 唯一变更（缺口自动累加、有余自动抵欠），任何叙事下都不要在此 patch；拨饷只走 `economy_moves`。**`cohesion` 是势力字段，严禁写入军队。** |
 | `new_armies` | 新建军队/叛军 | 朝廷募新兵、设新军镇、建客军，或流寇/外族成建制新军时写。每项需 `id`/`name`/`owner_power`/`station`/`commander`(统帅)/`troop_type`/`manpower`/`maintenance_per_turn`/`supply`/`morale`/`training`/`equipment`/`mobility`/`loyalty`/`status`。**新军 `arrears` 初值固定 0，不要在这里写**。已有军队补兵扩编不走这里，用 `army_delta.manpower`。 |
 | `power_updates` | 别的势力三项简单属性，key=非大明 power_id | 只允许字段 `威望`/`实力`/`经济`（或英文 `leverage`/`military_strength`/`supply`），值为整数增量；禁止写 `ming`，禁止写立场/近动/状态等文字字段。 |
@@ -275,7 +300,7 @@ decree new_issue 必填字段：
   ],
   "faction_delta": {"阉党": {"satisfaction": -15, "leverage": -20}, "东林": {"satisfaction": 8, "leverage": 5}},
   "class_delta": {"农民@shaanxi": {"satisfaction": -6, "leverage": 5}},
-  "region_delta": {"shaanxi": {"unrest": 5, "grain_security": -3}, "nanzhili": {"gentry_resistance": 8, "corruption": -12}},
+  "region_delta": {"shaanxi": {"unrest": 5, "grain_security": 80}, "huguang": {"grain_security": -90}, "nanzhili": {"gentry_resistance": 8, "corruption": -12}},
   "army_delta": {"guanning": {"morale": -3, "loyalty": -2}},
   "new_armies": [
     {"id": "qin_army", "name": "秦军新营", "owner_power": "ming", "station": "陕西/西安", "commander": "孙传庭", "troop_type": "募兵步骑", "manpower": 8000, "maintenance_per_turn": 2, "supply": 55, "morale": 60, "training": 35, "equipment": 50, "mobility": 50, "loyalty": 65, "status": "新募，亟待操练"}

@@ -13,6 +13,7 @@ from typing import Callable, Dict, List, Optional
 from agno.db.sqlite import SqliteDb
 
 from ming_sim.agents import (
+    _dump_llm_messages,
     create_chapter_memory_agent,
     create_decree_writer_agent,
     create_ending_summary_agent,
@@ -97,7 +98,9 @@ def write_decree_with_agno(
     }
     try:
         agent = create_decree_writer_agent(llm_config, agno_db)
-        text = extract_agent_text(agent.run(json.dumps(payload, ensure_ascii=False, sort_keys=True)))
+        run_output = agent.run(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        _dump_llm_messages(run_output, "拟诏", agent=agent)
+        text = extract_agent_text(run_output)
     except LLMUnavailable:
         raise
     except Exception as error:

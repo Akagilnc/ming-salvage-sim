@@ -36,9 +36,9 @@ fi
 #     不想要就在 .env 里设 MING_SIM_DUMP_LLM=0 覆盖。
 export MING_SIM_DUMP_LLM="${MING_SIM_DUMP_LLM:-1}"
 
-# 1c. 网页版默认走 mono 结算抽取（单体 score_extractor，token 约为 module 四模块的 1/5）。
-#     想用 4 模块就在 .env 里设 MING_SIM_EXTRACTOR=module 覆盖。
-export MING_SIM_EXTRACTOR="${MING_SIM_EXTRACTOR:-mono}"
+# 1c. 网页版默认走 module 结算抽取（4 模块拆抽，缓存友好、单次输出短、解析更稳）。
+#     想用单体一把抽就在 .env 里设 MING_SIM_EXTRACTOR=mono 覆盖。
+export MING_SIM_EXTRACTOR="${MING_SIM_EXTRACTOR:-module}"
 
 # 2. 选 python：优先 .venv
 if [[ -x ".venv/bin/python" ]]; then

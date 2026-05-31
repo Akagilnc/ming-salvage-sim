@@ -251,12 +251,12 @@ def build_simulator_payload(
             "loyalty,status,owner_power FROM armies ORDER BY id"
         ).fetchall()
     ]
-    court_roster = [
+    court_roster = _auto_table([
         dict(r) for r in db.conn.execute(
             "SELECT name,office,office_type,faction,status,power_id,location FROM characters "
             "WHERE status!='offstage' AND office_type!='后宫' ORDER BY rowid"
         ).fetchall()
-    ]
+    ])
     return {
         "year": state.year,
         "period": state.period,
@@ -281,7 +281,7 @@ def build_simulator_payload(
         "debuts_this_turn": debuts_this_turn or [],
         "relevant_memories": relevant_memories or [],
         "secret_orders": secret_orders or [],
-        "data_note": "regions/armies/buildings 均为 header+二维数组（cols 列名 + rows 数据）。secret_orders 为皇帝密令列表，独立于 relevant_memories，每条含 id/minister_name/title/content/status/result 字段。",
+        "data_note": "盘面表（buildings/court_roster/armies/regions）在本输入的开头以 TSV 文本块给出（首行列名、tab 分隔、每行一条记录），不在本 JSON 内；本 JSON 只含其余字段（含 powers_brief/factions_brief/classes_brief 叙述串、active_issues 等）。secret_orders 为皇帝密令列表，独立于 relevant_memories，每条含 id/minister_name/title/content/status/result 字段。",
     }
 
 

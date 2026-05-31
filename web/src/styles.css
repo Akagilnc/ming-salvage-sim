@@ -4001,6 +4001,9 @@ button:disabled {
 
 .menu-modal-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
 
+.menu-campaign-list { display: flex; flex-direction: column; gap: 16px; }
+.menu-campaign-head { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; font-weight: 700; color: #d8c39a; margin-bottom: 6px; letter-spacing: 0.04em; }
+.menu-campaign-badge { font-size: 0.7rem; font-weight: 700; padding: 1px 8px; border-radius: 999px; background: rgba(180, 140, 70, 0.32); color: #f3e1b4; border: 1px solid rgba(200, 160, 90, 0.5); }
 .menu-save-list {
   list-style: none;
   padding: 0;
