@@ -41,14 +41,20 @@ def supports_openai_reasoning_effort(model: str) -> bool:
     return model_id.startswith(("o1", "o3", "o4", "gpt-5"))
 
 
+def normalize_thinking_level(level: str) -> str:
+    return (level or "").strip()
+
+
 def load_llm_config(
     base_url: str,
     model: str,
     api_key: str = "",
     timeout_seconds: float = 180.0,
+    thinking_level: str = "",
     advanced_model: str = "",
     advanced_base_url: str = "",
     advanced_api_key: str = "",
+    advanced_thinking_level: str = "",
 ) -> LLMConfig:
     api_key = (api_key or os.environ.get("OPENAI_API_KEY", "")).strip()
     if not api_key:
@@ -61,9 +67,13 @@ def load_llm_config(
         base_url=normalize_openai_base_url(base_url),
         model=model,
         timeout_seconds=timeout_seconds,
+        thinking_level=normalize_thinking_level(thinking_level or os.environ.get("OPENAI_THINKING_LEVEL", "")),
         advanced_model=(advanced_model or "").strip(),
         advanced_base_url=normalize_openai_base_url(adv_base) if adv_base else "",
         advanced_api_key=(advanced_api_key or "").strip(),
+        advanced_thinking_level=normalize_thinking_level(
+            advanced_thinking_level or os.environ.get("OPENAI_ADVANCED_THINKING_LEVEL", "")
+        ),
     )
 
 
@@ -85,9 +95,11 @@ def for_role(cfg: LLMConfig, role: str) -> LLMConfig:
             model=cfg.advanced_model.strip(),
             max_tokens=cfg.max_tokens,
             timeout_seconds=cfg.timeout_seconds,
+            thinking_level=cfg.advanced_thinking_level,
             advanced_model=cfg.advanced_model,
             advanced_base_url=cfg.advanced_base_url,
             advanced_api_key=cfg.advanced_api_key,
+            advanced_thinking_level=cfg.advanced_thinking_level,
         )
     return cfg
 
@@ -105,7 +117,16 @@ def load_runtime_llm() -> Dict[str, str]:
         return {}
     out = {
         k: str(data.get(k, "") or "")
-        for k in ("base_url", "model", "api_key", "advanced_model", "advanced_base_url", "advanced_api_key")
+        for k in (
+            "base_url",
+            "model",
+            "api_key",
+            "thinking_level",
+            "advanced_model",
+            "advanced_base_url",
+            "advanced_api_key",
+            "advanced_thinking_level",
+        )
     }
     if "max_tokens" in data:
         out["max_tokens"] = str(data["max_tokens"])
@@ -120,9 +141,11 @@ def save_runtime_llm(
     api_key: str,
     max_tokens: int = 8000,
     timeout_seconds: float = 180.0,
+    thinking_level: str = "",
     advanced_model: str = "",
     advanced_base_url: str = "",
     advanced_api_key: str = "",
+    advanced_thinking_level: str = "",
 ) -> None:
     """写 data/runtime_llm.json。明文存盘——按用户选择。"""
     os.makedirs(os.path.dirname(RUNTIME_LLM_PATH), exist_ok=True)
@@ -132,9 +155,11 @@ def save_runtime_llm(
         "api_key": (api_key or "").strip(),
         "max_tokens": max_tokens,
         "timeout_seconds": timeout_seconds,
+        "thinking_level": normalize_thinking_level(thinking_level),
         "advanced_model": (advanced_model or "").strip(),
         "advanced_base_url": (advanced_base_url or "").strip(),
         "advanced_api_key": (advanced_api_key or "").strip(),
+        "advanced_thinking_level": normalize_thinking_level(advanced_thinking_level),
     }
     with open(RUNTIME_LLM_PATH, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, ensure_ascii=False, indent=2)

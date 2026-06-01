@@ -309,9 +309,11 @@ type LLMConfigInfo = {
   model: string;
   max_tokens: number;
   timeout_seconds: number;
+  thinking_level: string;
   advanced_model: string;
   advanced_base_url: string;
   has_advanced_api_key: boolean;
+  advanced_thinking_level: string;
   has_api_key: boolean;
   persisted: {
     base_url: string;
@@ -319,9 +321,11 @@ type LLMConfigInfo = {
     has_api_key: boolean;
     max_tokens: number;
     timeout_seconds: number;
+    thinking_level: string;
     advanced_model: string;
     advanced_base_url: string;
     has_advanced_api_key: boolean;
+    advanced_thinking_level: string;
   };
 };
 type SecretOrder = {
@@ -737,9 +741,11 @@ type MenuStatus = {
     has_api_key: boolean;
     max_tokens: number;
     timeout_seconds: number;
+    thinking_level: string;
     advanced_model: string;
     advanced_base_url: string;
     has_advanced_api_key: boolean;
+    advanced_thinking_level: string;
   };
 };
 
@@ -3268,9 +3274,11 @@ function LLMConfigTab() {
   const [advancedModel, setAdvancedModel] = React.useState("");
   const [advancedBaseUrl, setAdvancedBaseUrl] = React.useState("");
   const [advancedApiKey, setAdvancedApiKey] = React.useState("");
+  const [advancedThinkingLevel, setAdvancedThinkingLevel] = React.useState("");
   const [apiKey, setApiKey] = React.useState("");
   const [maxTokens, setMaxTokens] = React.useState("8000");
   const [timeoutSeconds, setTimeoutSeconds] = React.useState("180");
+  const [thinkingLevel, setThinkingLevel] = React.useState("");
   const [show, setShow] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [msg, setMsg] = React.useState("");
@@ -3284,8 +3292,10 @@ function LLMConfigTab() {
         setModel(data.model);
         setAdvancedModel(data.advanced_model || "");
         setAdvancedBaseUrl(data.advanced_base_url || "");
+        setAdvancedThinkingLevel(data.advanced_thinking_level || "");
         setMaxTokens(String(data.max_tokens || 8000));
         setTimeoutSeconds(String(data.timeout_seconds || 180));
+        setThinkingLevel(data.thinking_level || "");
       })
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
   }, []);
@@ -3303,9 +3313,11 @@ function LLMConfigTab() {
           api_key: apiKey,
           max_tokens: parseInt(maxTokens) || 8000,
           timeout_seconds: parseFloat(timeoutSeconds) || 180,
+          thinking_level: thinkingLevel.trim(),
           advanced_model: advancedModel,
           advanced_base_url: advancedBaseUrl,
           advanced_api_key: advancedApiKey.trim() ? advancedApiKey : "__keep__",
+          advanced_thinking_level: advancedThinkingLevel.trim(),
         }),
       });
       setInfo((cur) => (cur ? { ...cur, ...data } : null));
@@ -3345,6 +3357,15 @@ function LLMConfigTab() {
         />
       </label>
       <label className="menu-field">
+        <span>Thinking Level <small className="menu-hint">（空=默认，请填写你的模型支持的值。）</small></span>
+        <input
+          className="menu-input"
+          value={thinkingLevel}
+          onChange={(e) => setThinkingLevel(e.target.value)}
+          placeholder="默认"
+        />
+      </label>
+      <label className="menu-field">
         <span>Advanced Model <small className="menu-hint">（推演 + 打分专用，空=与 Model 一致）</small></span>
         <input
           className="menu-input"
@@ -3377,6 +3398,15 @@ function LLMConfigTab() {
           value={advancedApiKey}
           onChange={(e) => setAdvancedApiKey(e.target.value)}
           placeholder="留空=复用主 API Key / 保留当前"
+        />
+      </label>
+      <label className="menu-field">
+        <span>Advanced Thinking Level <small className="menu-hint">（空=默认，请填写你的模型支持的值。）</small></span>
+        <input
+          className="menu-input"
+          value={advancedThinkingLevel}
+          onChange={(e) => setAdvancedThinkingLevel(e.target.value)}
+          placeholder="默认"
         />
       </label>
       <label className="menu-field">
@@ -5384,9 +5414,11 @@ function ApiSettingsModal({
     has_api_key: boolean;
     max_tokens?: number;
     timeout_seconds?: number;
+    thinking_level?: string;
     advanced_model?: string;
     advanced_base_url?: string;
     has_advanced_api_key?: boolean;
+    advanced_thinking_level?: string;
   };
   onClose: () => void;
   onSaved: () => Promise<void>;
@@ -5396,9 +5428,11 @@ function ApiSettingsModal({
   const [advancedModel, setAdvancedModel] = React.useState(initial?.advanced_model || "");
   const [advancedBaseUrl, setAdvancedBaseUrl] = React.useState(initial?.advanced_base_url || "");
   const [advancedApiKey, setAdvancedApiKey] = React.useState("");
+  const [advancedThinkingLevel, setAdvancedThinkingLevel] = React.useState(initial?.advanced_thinking_level || "");
   const [apiKey, setApiKey] = React.useState("");
   const [maxTokens, setMaxTokens] = React.useState(String(initial?.max_tokens || 8000));
   const [timeoutSeconds, setTimeoutSeconds] = React.useState(String(initial?.timeout_seconds || 180));
+  const [thinkingLevel, setThinkingLevel] = React.useState(initial?.thinking_level || "");
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState("");
 
@@ -5415,9 +5449,11 @@ function ApiSettingsModal({
           api_key: apiKey.trim(),
           max_tokens: parseInt(maxTokens) || 8000,
           timeout_seconds: parseFloat(timeoutSeconds) || 180,
+          thinking_level: thinkingLevel.trim(),
           advanced_model: advancedModel.trim(),
           advanced_base_url: advancedBaseUrl.trim(),
           advanced_api_key: advancedApiKey.trim(),
+          advanced_thinking_level: advancedThinkingLevel.trim(),
         }),
       });
       if (!response.ok) {
@@ -5448,6 +5484,10 @@ function ApiSettingsModal({
           <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="deepseek-chat" />
         </label>
         <label>
+          Thinking Level <small className="menu-hint">（空=默认，请填写你的模型支持的值。）</small>
+          <input value={thinkingLevel} onChange={(e) => setThinkingLevel(e.target.value)} placeholder="默认" />
+        </label>
+        <label>
           Advanced Model <small className="menu-hint">（推演 + 打分专用；留空 fallback）</small>
           <input value={advancedModel} onChange={(e) => setAdvancedModel(e.target.value)} placeholder="deepseek-reasoner / gpt-5" />
         </label>
@@ -5459,6 +5499,10 @@ function ApiSettingsModal({
           Advanced API Key{" "}
           <small className="menu-hint">{initial?.has_advanced_api_key ? "(已配置；留空保留)" : "(留空=复用主 API Key)"}</small>
           <input type="password" value={advancedApiKey} onChange={(e) => setAdvancedApiKey(e.target.value)} placeholder={initial?.has_advanced_api_key ? "(已配置；如需更换请重新填写)" : "留空=复用主 Key"} />
+        </label>
+        <label>
+          Advanced Thinking Level <small className="menu-hint">（空=默认，请填写你的模型支持的值。）</small>
+          <input value={advancedThinkingLevel} onChange={(e) => setAdvancedThinkingLevel(e.target.value)} placeholder="默认" />
         </label>
         <label>
           Max Tokens
