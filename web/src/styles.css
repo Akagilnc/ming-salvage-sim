@@ -1772,6 +1772,64 @@ select:focus-visible {
   background: rgba(158, 42, 43, 0.94);
 }
 
+.long-goal-nav {
+  position: fixed;
+  top: 50%;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 54px;
+  height: 74px;
+  border: 1px solid rgba(255, 238, 190, 0.32);
+  border-radius: 8px;
+  color: #ffe8b8;
+  background: rgba(24, 14, 8, 0.58);
+  transform: translateY(-50%);
+  cursor: pointer;
+}
+
+.long-goal-nav:hover {
+  color: #fff5d8;
+  background: rgba(105, 38, 24, 0.78);
+}
+
+.long-goal-nav-prev {
+  left: clamp(10px, 2vw, 22px);
+}
+
+.long-goal-nav-next {
+  right: clamp(10px, 2vw, 22px);
+}
+
+.long-goal-dots {
+  position: fixed;
+  left: 50%;
+  bottom: clamp(10px, 2vw, 22px);
+  z-index: 2;
+  display: inline-flex;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: rgba(17, 10, 6, 0.48);
+  transform: translateX(-50%);
+}
+
+.long-goal-dots button {
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  border: 1px solid rgba(255, 232, 170, 0.58);
+  border-radius: 999px;
+  background: rgba(255, 232, 170, 0.28);
+  cursor: pointer;
+}
+
+.long-goal-dots button.active {
+  width: 26px;
+  background: #f4cf7a;
+}
+
 .document-hero {
   display: flex;
   align-items: flex-end;
