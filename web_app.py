@@ -86,6 +86,117 @@ def _humanize_condition(text: str) -> str:
     return text
 
 
+_LEGACY_GATE_FIELD_LABELS = {
+    "leverage": "影响力",
+    "satisfaction": "满意度",
+    "controlled_by": "归属",
+    "hidden_land": "隐田",
+    "gentry_resistance": "士绅阻力",
+    "public_support": "民心",
+    "unrest": "动乱",
+    "military_pressure": "边防压力",
+    "tax_per_turn": "税收",
+    "morale": "士气",
+    "training": "训练",
+    "loyalty": "忠诚",
+    "supply": "补给",
+    "equipment": "装备",
+}
+
+_LEGACY_GATE_AGG_LABELS = {
+    "max": "最高",
+    "min": "最低",
+    "sum": "合计",
+    "avg": "平均",
+}
+
+_LEGACY_GATE_VALUE_LABELS = {
+    "ming": "大明",
+    "houjin": "后金",
+    "bandits": "流寇",
+}
+
+
+def _legacy_gate_subject(raw_key: str, content: Any) -> str:
+    parts = raw_key.split(".")
+    if len(parts) < 3:
+        return _humanize_condition(raw_key)
+    scope, raw_ids, field = parts[0], parts[1], parts[2]
+    agg = parts[3] if len(parts) > 3 else ""
+    ids = [item for item in raw_ids.split("|") if item]
+    if scope == "region":
+        names = [getattr(content.regions.get(item), "name", item) for item in ids]
+    elif scope == "faction":
+        names = ids
+    elif scope == "army":
+        names = [getattr(content.armies.get(item), "name", item) for item in ids]
+    else:
+        names = ids
+    entity = "、".join(str(name) for name in names)
+    field_label = _LEGACY_GATE_FIELD_LABELS.get(field, _humanize_condition(field))
+    agg_label = _LEGACY_GATE_AGG_LABELS.get(agg, "")
+    return f"{entity}{field_label}{agg_label}"
+
+
+def _humanize_legacy_gate(gate: Dict[str, str], content: Any) -> str:
+    """把开局帝国修正的 clear_gate 转为中文展示文案。"""
+    clauses: List[str] = []
+    for raw_key, raw_expr in gate.items():
+        subject = _legacy_gate_subject(str(raw_key), content)
+        expr = str(raw_expr).strip()
+        match = re.match(r"^(<=|>=|==|!=|<|>)\s*(.+)$", expr)
+        if not match:
+            clauses.append(f"{subject}达到 {expr}")
+            continue
+        op, value = match.groups()
+        value = _LEGACY_GATE_VALUE_LABELS.get(value.strip(), value.strip())
+        op_label = {
+            "<=": "≤",
+            ">=": "≥",
+            "==": "为",
+            "!=": "不为",
+            "<": "<",
+            ">": ">",
+        }.get(op, op)
+        clauses.append(f"{subject}{op_label}{value}")
+    return "；".join(clauses)
+
+
+def _legacy_effect_entity_name(scope: str, entity_id: str, content: Any) -> str:
+    if scope == "regions":
+        return str(getattr(content.regions.get(entity_id), "name", entity_id))
+    if scope == "armies":
+        return str(getattr(content.armies.get(entity_id), "name", entity_id))
+    return entity_id
+
+
+def _legacy_pct(value: int) -> str:
+    return f"{'+' if value > 0 else ''}{value}%"
+
+
+def _humanize_legacy_effect(modifiers: Dict[str, Any], content: Any) -> str:
+    """把 legacy modifiers 转为中文展示，避免前端露出 nanzhili/guanning 等内部 id。"""
+    parts: List[str] = []
+    for account in ("国库", "内库", "民心", "皇威"):
+        value = modifiers.get(account)
+        if isinstance(value, (int, float)):
+            parts.append(f"{account}{_legacy_pct(int(value))}")
+    for scope in ("regions", "armies"):
+        block = modifiers.get(scope)
+        if not isinstance(block, dict):
+            continue
+        for entity_id, fields in block.items():
+            if not isinstance(fields, dict):
+                continue
+            entity_name = _legacy_effect_entity_name(scope, str(entity_id), content)
+            for field, value in fields.items():
+                if not isinstance(value, (int, float)):
+                    continue
+                field_label = _LEGACY_GATE_FIELD_LABELS.get(str(field), _humanize_condition(str(field)))
+                parts.append(f"{entity_name}{field_label}{_legacy_pct(int(value))}")
+    return "、".join(parts)
+
+
 def _delete_sqlite_db_files_or_raise(db_path: str) -> None:
     """删除 SQLite 主库及 WAL/SHM；失败时阻断重开，避免误读旧档。"""
     for suffix in ("", "-wal", "-shm"):
@@ -597,17 +708,36 @@ class WebGame:
     def legacies_payload(self) -> List[Dict[str, Any]]:
         """现行帝国修正（长期百分比修正符），给状态栏小条用。"""
         out: List[Dict[str, Any]] = []
+        opening_clear_text = {
+            leg.key: leg.clear_narrative
+            for leg in self.content.opening_legacies
+            if leg.clear_narrative
+        }
         for row in self.db.list_active_legacies(self.state):
             try:
                 eff = json.loads(str(row["modifiers"] or "{}"))
             except Exception:
                 eff = {}
+            try:
+                clear_gate = json.loads(str(row["clear_gate"] or "{}"))
+            except Exception:
+                clear_gate = {}
+            remaining_months = self.db.legacy_remaining_months(row, self.state)
+            clear_condition = opening_clear_text.get(str(row["legacy_key"] or ""), "")
+            if not clear_condition and clear_gate:
+                clear_condition = _humanize_legacy_gate(clear_gate, self.content)
+            elif clear_condition and clear_gate:
+                clear_condition = f"{clear_condition}（{_humanize_legacy_gate(clear_gate, self.content)}）"
+            if not clear_condition:
+                clear_condition = "无固定消除条件" if remaining_months < 0 else f"再过 {remaining_months} 月自然消退"
             out.append({
                 "id": int(row["id"]),
                 "name": row["name"],
                 "narrative_hint": row["narrative_hint"],
                 "modifiers": eff,
-                "remaining_months": self.db.legacy_remaining_months(row, self.state),
+                "effect_text": _humanize_legacy_effect(eff, self.content),
+                "remaining_months": remaining_months,
+                "clear_condition": clear_condition,
             })
         return out
 

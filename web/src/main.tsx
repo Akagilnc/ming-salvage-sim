@@ -19,6 +19,7 @@ import {
   ScrollText,
   Shield,
   Star,
+  Target,
   Trash2,
   Swords,
   Upload,
@@ -216,7 +217,9 @@ type Legacy = {
   name: string;
   narrative_hint: string;
   modifiers: LegacyEffect;
+  effect_text: string;
   remaining_months: number;  // -1 = 永久
+  clear_condition: string;
 };
 
 type ClosedIssue = {
@@ -295,7 +298,7 @@ type EndingPayload = {
 type ChatMessage = { role: "user" | "minister"; content: string };
 type ChatDisplayMessage = ChatMessage & { pending?: boolean };
 type Suggestion = { label: string; text: string; prefix?: boolean };
-type ModalName = "none" | "state" | "chat" | "edict" | "report" | "extraction" | "history" | "menu" | "secret_orders" | "ending";
+type ModalName = "none" | "state" | "chat" | "edict" | "report" | "extraction" | "history" | "menu" | "secret_orders" | "ending" | "long_goals";
 type SaveEntry = { name: string; size: number; mtime: number };
 type LLMConfigInfo = {
   base_url: string;
@@ -846,7 +849,7 @@ function App() {
   React.useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (activeModal === "chat" || activeModal === "edict" || activeModal === "state" || activeModal === "history" || activeModal === "report" || activeModal === "secret_orders") {
+      if (activeModal === "chat" || activeModal === "edict" || activeModal === "state" || activeModal === "history" || activeModal === "report" || activeModal === "secret_orders" || activeModal === "long_goals") {
         // 召对/诏书等全屏弹窗最优先
         setActiveModal("none");
       } else if (drawerOpen) {
@@ -1201,6 +1204,7 @@ function App() {
         state={state}
         onOpenState={() => setActiveModal("state")}
         onOpenMenu={() => setActiveModal("menu")}
+        onOpenLongGoals={() => setActiveModal("long_goals")}
         onToggleCourt={() => { setDrawerOpen((current) => !current); }}
         onToggleHarem={() => { setHaremDrawerOpen((current) => !current); }}
       />
@@ -1238,7 +1242,11 @@ function App() {
         onUploadPortrait={uploadPortrait}
       />
 
-      <SituationPanel issues={state.issues} closedIssues={state.closed_this_turn || []} />
+      <SituationPanel
+        issues={state.issues}
+        closedIssues={state.closed_this_turn || []}
+        hasLegacies={(state.legacies || []).length > 0}
+      />
 
       {mapIntelOpen && selectedNode ? (
         <section className="map-intel-panel overlay-panel" style={mapIntelStyle}>
@@ -1253,6 +1261,10 @@ function App() {
         <FullscreenModal title="国势与奏报" subtitle={`${state.turn.year} 年 ${state.turn.period} 月`} bgClass="modal-bg-state" onClose={guardClose(() => setActiveModal("none"))}>
           <StateModal state={state} />
         </FullscreenModal>
+      ) : null}
+
+      {activeModal === "long_goals" ? (
+        <LongGoalsModal onClose={guardClose(() => setActiveModal("none"))} />
       ) : null}
 
       {activeModal === "chat" && activeMinister ? (
@@ -2025,12 +2037,14 @@ function TopStatusBar({
   state,
   onOpenState,
   onOpenMenu,
+  onOpenLongGoals,
   onToggleCourt,
   onToggleHarem,
 }: {
   state: GameState;
   onOpenState: () => void;
   onOpenMenu: () => void;
+  onOpenLongGoals: () => void;
   onToggleCourt: () => void;
   onToggleHarem: () => void;
 }) {
@@ -2058,6 +2072,10 @@ function TopStatusBar({
           <Crown size={16} />
           <span>后宫</span>
         </button>
+        <button className="status-menu long-goal-bar" onClick={onOpenLongGoals} aria-label="打开大明长期目标">
+          <Target size={16} />
+          <span>长期目标</span>
+        </button>
         <button className="status-menu" onClick={onOpenMenu} aria-label="游戏菜单">
           <Menu size={16} />
           <span>菜单</span>
@@ -2066,6 +2084,20 @@ function TopStatusBar({
     </header>
     <LegacyBar legacies={state.legacies} />
     </>
+  );
+}
+
+function LongGoalsModal({ onClose }: { onClose: () => void }) {
+  return (
+    <section className="long-goal-layer" role="dialog" aria-modal="true" aria-label="大明长期目标">
+      <div className="long-goal-scrim" onClick={onClose} />
+      <button className="long-goal-close" aria-label="关闭弹窗" onClick={onClose}>
+        <X size={30} />
+      </button>
+      <figure className="long-goal-poster">
+        <img src="/long_goal_ming.jpg" alt="长期目标：让大明再续二百年" />
+      </figure>
+    </section>
   );
 }
 
@@ -2127,7 +2159,8 @@ function LegacyBar({ legacies }: { legacies: Legacy[] }) {
                       <span className="legacy-item-dur">{lg.remaining_months < 0 ? "永久" : `余 ${lg.remaining_months} 月`}</span>
                     </span>
                   </div>
-                  <p className="legacy-item-eff">{formatLegacyEffect(lg.modifiers)}</p>
+                  <p className="legacy-item-eff">{lg.effect_text || formatLegacyEffect(lg.modifiers)}</p>
+                  {lg.clear_condition && <p className="legacy-item-clear">消除条件：{lg.clear_condition}</p>}
                   {lg.narrative_hint && <p className="legacy-item-hint">{lg.narrative_hint}</p>}
                 </li>
               ))}
@@ -2244,31 +2277,38 @@ function BottomCommandBar({
   onOpenSecretOrders: () => void;
 }) {
   return (
-    <nav className="bottom-command-bar" aria-label="朝政主操作">
-      <button className="command-icon" onClick={onOpenMemorials} aria-label={`奏疏 ${eventsCount} 件待览`}>
-        <img src="/icon_seal.png" alt="" className="command-art" />
-        {eventsCount ? <span className="command-badge">{eventsCount}</span> : null}
-        <span className="command-caption"><b>奏疏</b><small>{eventsCount} 件待览</small></span>
+    <>
+      <nav className="bottom-command-bar" aria-label="朝政辅助操作">
+        <button className="command-icon" onClick={onOpenMemorials} aria-label={`奏疏 ${eventsCount} 件待览`}>
+          <img src="/icon_seal.png" alt="" className="command-art" />
+          {eventsCount ? <span className="command-badge">{eventsCount}</span> : null}
+          <span className="command-caption"><b>奏疏</b><small>{eventsCount} 件待览</small></span>
+        </button>
+        <button className="command-icon" onClick={onOpenExtraction} aria-label="邸报详明">
+          <img src="/icon_scroll.png" alt="" className="command-art" />
+          <span className="command-caption"><b>邸报详明</b><small>数项加减/账目明细</small></span>
+        </button>
+        <button className="command-icon" onClick={onOpenSecretOrders} aria-label={`密令 ${secretOrdersCount} 条进行中`}>
+          <img src="/bg_edict.png" alt="" className="command-art command-art-secret" />
+          {secretOrdersCount ? <span className="command-badge command-badge-secret">{secretOrdersCount}</span> : null}
+          <span className="command-caption"><b>密令</b><small>{secretOrdersCount ? `${secretOrdersCount} 条进行中` : "暂无密令"}</small></span>
+        </button>
+        <button className="command-icon" onClick={onOpenHistory} aria-label="历代奏报">
+          <img src="/icon_scroll.png" alt="" className="command-art" />
+          <span className="command-caption"><b>史册</b><small>历代奏报/诏书</small></span>
+        </button>
+      </nav>
+      <button className="edict-turn-button" onClick={onOpenEdict} aria-label={`诏书草案 ${directivesCount} 道待发`}>
+        <span className="edict-turn-art">
+          <img src="/icon_edict_turn_cut.webp" alt="" />
+          {directivesCount ? <span className="command-badge edict-turn-badge">{directivesCount}</span> : null}
+          <span className="edict-turn-copy">
+            <b>拟诏</b>
+            <small>{directivesCount ? `${directivesCount} 道` : "本回合"}</small>
+          </span>
+        </span>
       </button>
-      <button className="command-icon" onClick={onOpenExtraction} aria-label="邸报详明">
-        <img src="/icon_scroll.png" alt="" className="command-art" />
-        <span className="command-caption"><b>邸报详明</b><small>数项加减/账目明细</small></span>
-      </button>
-      <button className="command-icon" onClick={onOpenEdict} aria-label={`诏书草案 ${directivesCount} 道待发`}>
-        <img src="/icon_scroll.png" alt="" className="command-art" />
-        {directivesCount ? <span className="command-badge">{directivesCount}</span> : null}
-        <span className="command-caption"><b>诏书草案</b><small>{directivesCount ? `${directivesCount} 道待发` : "本月未下旨"}</small></span>
-      </button>
-      <button className="command-icon" onClick={onOpenSecretOrders} aria-label={`密令 ${secretOrdersCount} 条进行中`}>
-        <img src="/bg_edict.png" alt="" className="command-art command-art-secret" />
-        {secretOrdersCount ? <span className="command-badge command-badge-secret">{secretOrdersCount}</span> : null}
-        <span className="command-caption"><b>密令</b><small>{secretOrdersCount ? `${secretOrdersCount} 条进行中` : "暂无密令"}</small></span>
-      </button>
-      <button className="command-icon" onClick={onOpenHistory} aria-label="历代奏报">
-        <img src="/icon_scroll.png" alt="" className="command-art" />
-        <span className="command-caption"><b>史册</b><small>历代奏报/诏书</small></span>
-      </button>
-    </nav>
+    </>
   );
 }
 
@@ -3790,7 +3830,15 @@ function BriefReport({ title, items }: { title: string; items: string[] }) {
   );
 }
 
-function SituationPanel({ issues, closedIssues }: { issues: Issue[]; closedIssues: ClosedIssue[] }) {
+function SituationPanel({
+  issues,
+  closedIssues,
+  hasLegacies,
+}: {
+  issues: Issue[];
+  closedIssues: ClosedIssue[];
+  hasLegacies: boolean;
+}) {
   const active = issues.filter((issue) => issue.kind === "situation" || issue.kind === "initiative");
   const [collapsed, setCollapsed] = React.useState(false);
   if (!active.length && !closedIssues.length) return null;
@@ -3803,7 +3851,7 @@ function SituationPanel({ issues, closedIssues }: { issues: Issue[]; closedIssue
   const longTerm = active.filter(isLongTerm).sort(bySeq);
   const nearTerm = active.filter((i) => !isLongTerm(i)).sort(bySeq);
   return (
-    <aside className={`situation-panel ${collapsed ? "collapsed" : ""}`} aria-label="局势进度">
+    <aside className={`situation-panel ${collapsed ? "collapsed" : ""} ${hasLegacies ? "with-legacies" : ""}`} aria-label="局势进度">
       <div className="situation-panel-title">
         <span>局势进度</span>
         <button

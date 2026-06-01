@@ -1511,6 +1511,21 @@ def sync_opening_legacies(db: GameDB, state: GameState) -> None:
             "SELECT id FROM legacies WHERE legacy_key=? AND status='active'",
             (leg.key,),
         ).fetchone()
+        if existing is not None:
+            db.conn.execute(
+                """UPDATE legacies
+                   SET name=?, modifiers=?, narrative_hint=?, clear_gate=?
+                   WHERE legacy_key=? AND status='active'""",
+                (
+                    leg.name,
+                    json.dumps(leg.modifiers, ensure_ascii=False),
+                    leg.narrative_hint,
+                    json.dumps(leg.clear_gate, ensure_ascii=False),
+                    leg.key,
+                ),
+            )
+            db.conn.commit()
+            db._legacy_mod_cache = None
         if passed:
             if existing is not None:
                 db.conn.execute(

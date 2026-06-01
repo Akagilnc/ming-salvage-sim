@@ -245,7 +245,7 @@ select:focus-visible {
   fill: var(--province-fill, #5f6366);
   fill-opacity: 0.3;
   stroke: rgba(27, 22, 16, 0.48);
-  stroke-width: 0.46;
+  stroke-width: 0.28;
   cursor: pointer;
   transition:
     fill-opacity 140ms ease,
@@ -258,7 +258,7 @@ select:focus-visible {
   fill: var(--province-fill, #8c725d);
   fill-opacity: 0.2;
   stroke: rgba(38, 21, 11, 0.92);
-  stroke-width: 0.82;
+  stroke-width: 0.42;
   cursor: pointer;
   transition:
     fill-opacity 140ms ease,
@@ -271,7 +271,7 @@ select:focus-visible {
 .province-region:hover path {
   fill-opacity: 0.82;
   stroke: rgba(255, 236, 169, 0.95);
-  stroke-width: 1.35;
+  stroke-width: 0.96;
   filter: drop-shadow(0 0 5px rgba(255, 222, 132, 0.78));
 }
 
@@ -279,7 +279,7 @@ select:focus-visible {
 .province-region.selected path {
   fill-opacity: 0.9;
   stroke: #ffe6a3;
-  stroke-width: 1.85;
+  stroke-width: 1.28;
   filter:
     drop-shadow(0 0 5px rgba(255, 226, 132, 0.9))
     drop-shadow(0 0 12px rgba(128, 36, 22, 0.48));
@@ -293,7 +293,7 @@ select:focus-visible {
   fill: var(--province-fill, #5f6366);
   fill-opacity: 0.3;
   stroke: rgba(255, 232, 168, 0.92);
-  stroke-width: 1.08;
+  stroke-width: 0.58;
   stroke-dasharray: 2.6 1.5;
 }
 
@@ -474,7 +474,7 @@ select:focus-visible {
 
 .legacy-bar {
   position: fixed;
-  top: 56px;
+  top: 70px;
   left: 8px;
   z-index: 11;
   display: inline-flex;
@@ -487,6 +487,23 @@ select:focus-visible {
   box-shadow: 0 3px 10px rgba(0, 0, 0, 0.22);
   backdrop-filter: blur(5px);
   cursor: pointer;
+}
+
+.situation-panel.with-legacies {
+  top: 106px;
+}
+
+.long-goal-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(72, 26, 21, 0.24);
+  background: rgba(238, 228, 203, 0.95);
+  color: #421c13;
+}
+
+.long-goal-bar:hover {
+  background: rgba(247, 237, 212, 1);
 }
 
 .legacy-bar:hover {
@@ -588,6 +605,13 @@ select:focus-visible {
   line-height: 1.4;
 }
 .legacy-item-dur { color: #777; }
+
+.legacy-item-clear {
+  margin: 5px 0 0;
+  font-size: 0.78rem;
+  color: #6b2f24;
+  line-height: 1.4;
+}
 
 .legacy-item-hint {
   margin: 4px 0 0;
@@ -914,6 +938,89 @@ select:focus-visible {
 .command-caption small {
   color: rgba(245, 215, 158, 0.72);
   font-size: 0.7rem;
+}
+
+.edict-turn-button {
+  position: fixed;
+  right: 28px;
+  bottom: 26px;
+  z-index: 14;
+  display: grid;
+  place-items: center;
+  width: 144px;
+  height: 144px;
+  padding: 14px;
+  border: 1px solid rgba(255, 228, 160, 0.72);
+  border-radius: 50%;
+  color: #fff0c4;
+  background:
+    radial-gradient(circle at 48% 42%, rgba(255, 234, 170, 0.3) 0 22%, transparent 23%),
+    radial-gradient(circle at center, rgba(127, 31, 24, 0.98) 0 52%, rgba(68, 25, 17, 0.98) 53% 68%, transparent 69%),
+    conic-gradient(from 22deg, #6b3a13, #f1cd7b, #9c6421, #f6dfa1, #6b3a13);
+  box-shadow:
+    0 16px 38px rgba(0, 0, 0, 0.52),
+    0 0 0 3px rgba(41, 23, 12, 0.72),
+    0 0 24px rgba(218, 156, 56, 0.26),
+    inset 0 2px 0 rgba(255, 239, 184, 0.28);
+  cursor: pointer;
+  transition: transform 150ms ease, filter 150ms ease, box-shadow 150ms ease;
+}
+
+.edict-turn-button:hover {
+  transform: translateY(-6px) scale(1.03);
+  filter: brightness(1.08);
+  box-shadow:
+    0 20px 46px rgba(0, 0, 0, 0.58),
+    0 0 0 3px rgba(41, 23, 12, 0.72),
+    0 0 34px rgba(244, 189, 82, 0.44),
+    inset 0 2px 0 rgba(255, 239, 184, 0.34);
+}
+
+.edict-turn-art {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 93px;
+  height: 93px;
+  filter: drop-shadow(0 4px 6px rgba(18, 7, 2, 0.58));
+}
+
+.edict-turn-art img {
+  width: 93px;
+  height: 93px;
+  object-fit: contain;
+}
+
+.edict-turn-badge {
+  top: -20px;
+  right: -36px;
+}
+
+.edict-turn-copy {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 0;
+  min-width: 0;
+  text-align: center;
+  pointer-events: none;
+}
+
+.edict-turn-copy b {
+  color: #fff1c9;
+  font-size: 1.2rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-shadow: 0 2px 4px rgba(25, 9, 3, 0.62);
+}
+
+.edict-turn-copy small {
+  color: rgba(255, 231, 181, 0.78);
+  font-size: 0.78rem;
+  letter-spacing: 0;
 }
 
 
@@ -1608,6 +1715,61 @@ select:focus-visible {
   background:
     linear-gradient(90deg, rgba(111, 83, 46, 0.075) 1px, transparent 1px) 0 0 / 44px 44px,
     linear-gradient(180deg, rgba(246, 231, 190, 0.96), rgba(218, 195, 139, 0.96));
+}
+
+.long-goal-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.long-goal-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(7, 5, 3, 0.72);
+}
+
+.long-goal-poster {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+  width: min(100vw, calc(100vh * 1.7778));
+  max-width: 100vw;
+  max-height: 100vh;
+}
+
+.long-goal-poster img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 100vh;
+  object-fit: contain;
+}
+
+.long-goal-close {
+  position: fixed;
+  top: clamp(10px, 2vw, 22px);
+  right: clamp(10px, 2vw, 22px);
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border: 1px solid rgba(0, 0, 0, 0.28);
+  border-radius: 8px;
+  color: #1a1410;
+  background: rgba(255, 250, 235, 0.92);
+  cursor: pointer;
+}
+
+.long-goal-close:hover {
+  color: #ffe4b0;
+  background: rgba(158, 42, 43, 0.94);
 }
 
 .document-hero {
@@ -2495,7 +2657,8 @@ button:disabled {
 /* 弹窗背景：背景图铺满，去掉 .fullscreen-modal 的深色渐变 */
 .modal-bg-state,
 .modal-bg-chat,
-.modal-bg-edict {
+.modal-bg-edict,
+.modal-bg-long-goal {
   background-color: #f4ecd8;
   background-size: cover;
   background-position: center;
@@ -2514,10 +2677,17 @@ button:disabled {
   background: rgba(255, 255, 255, 0.8) !important;
 }
 
+.modal-bg-long-goal {
+  background:
+    linear-gradient(180deg, rgba(42, 26, 16, 0.08), rgba(83, 38, 22, 0.16)),
+    url("/bg_state.png") center / cover no-repeat;
+}
+
 /* 弹窗内所有元素背景一律透明（通配），文字直贴背景图 */
 .modal-bg-state *,
 .modal-bg-chat *,
-.modal-bg-edict * {
+.modal-bg-edict *,
+.modal-bg-long-goal * {
   background: transparent !important;
   backdrop-filter: none !important;
   box-shadow: none !important;
@@ -2547,7 +2717,8 @@ button:disabled {
 /* 弹窗标题栏：透明、大字居中、无深色底 */
 .modal-bg-state .modal-header,
 .modal-bg-chat .modal-header,
-.modal-bg-edict .modal-header {
+.modal-bg-edict .modal-header,
+.modal-bg-long-goal .modal-header {
   justify-content: center;
   min-height: 78px;
   border-bottom: 1px solid rgba(255, 232, 170, 0.18);
@@ -2555,13 +2726,15 @@ button:disabled {
 
 .modal-bg-state .modal-title,
 .modal-bg-chat .modal-title,
-.modal-bg-edict .modal-title {
+.modal-bg-edict .modal-title,
+.modal-bg-long-goal .modal-title {
   text-align: center;
 }
 
 .modal-bg-state .modal-title > div,
 .modal-bg-chat .modal-title > div,
-.modal-bg-edict .modal-title > div {
+.modal-bg-edict .modal-title > div,
+.modal-bg-long-goal .modal-title > div {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -2569,7 +2742,8 @@ button:disabled {
 
 .modal-bg-state .modal-title h1,
 .modal-bg-chat .modal-title h1,
-.modal-bg-edict .modal-title h1 {
+.modal-bg-edict .modal-title h1,
+.modal-bg-long-goal .modal-title h1 {
   color: #ffffff !important;
   font-size: 1.7rem !important;
   font-weight: 700 !important;
@@ -2578,7 +2752,8 @@ button:disabled {
 
 .modal-bg-state .modal-title span,
 .modal-bg-chat .modal-title span,
-.modal-bg-edict .modal-title span {
+.modal-bg-edict .modal-title span,
+.modal-bg-long-goal .modal-title span {
   color: rgba(255, 255, 255, 0.92) !important;
   font-size: 0.92rem !important;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
@@ -2586,7 +2761,8 @@ button:disabled {
 
 .modal-bg-state .modal-header .icon-button,
 .modal-bg-chat .modal-header .icon-button,
-.modal-bg-edict .modal-header .icon-button {
+.modal-bg-edict .modal-header .icon-button,
+.modal-bg-long-goal .modal-header .icon-button {
   position: absolute;
   top: 50%;
   right: 18px;
@@ -2601,14 +2777,16 @@ button:disabled {
 
 .modal-bg-state .modal-header .icon-button:hover,
 .modal-bg-chat .modal-header .icon-button:hover,
-.modal-bg-edict .modal-header .icon-button:hover {
+.modal-bg-edict .modal-header .icon-button:hover,
+.modal-bg-long-goal .modal-header .icon-button:hover {
   background: rgba(158, 42, 43, 0.92) !important;
   color: #ffe4b0 !important;
 }
 
 .modal-bg-state .modal-header .icon-button svg,
 .modal-bg-chat .modal-header .icon-button svg,
-.modal-bg-edict .modal-header .icon-button svg {
+.modal-bg-edict .modal-header .icon-button svg,
+.modal-bg-long-goal .modal-header .icon-button svg {
   width: 28px;
   height: 28px;
 }
@@ -2657,9 +2835,11 @@ button:disabled {
 .modal-bg-state,
 .modal-bg-chat,
 .modal-bg-edict,
+.modal-bg-long-goal,
 .modal-bg-state *,
 .modal-bg-chat *,
-.modal-bg-edict * {
+.modal-bg-edict *,
+.modal-bg-long-goal * {
   color: #1a1410 !important;
 }
 
@@ -2670,7 +2850,10 @@ button:disabled {
 .modal-bg-chat h1,
 .modal-bg-chat h2,
 .modal-bg-edict h1,
-.modal-bg-edict h2 {
+.modal-bg-edict h2,
+.modal-bg-long-goal h1,
+.modal-bg-long-goal h2,
+.modal-bg-long-goal h3 {
   color: #0e0a06 !important;
 }
 
@@ -3147,8 +3330,55 @@ button:disabled {
   }
 
   .bottom-command-bar {
+    left: 10px;
     bottom: 10px;
-    gap: 16px;
+    gap: 10px;
+    transform: none;
+  }
+
+  .command-art {
+    width: 50px;
+    height: 50px;
+  }
+
+  .command-caption b {
+    font-size: 0.72rem;
+  }
+
+  .command-caption small {
+    display: none;
+  }
+
+  .edict-turn-button {
+    right: 12px;
+    bottom: 12px;
+    width: 117px;
+    height: 117px;
+    padding: 11px;
+  }
+
+  .edict-turn-art {
+    width: 72px;
+    height: 72px;
+  }
+
+  .edict-turn-art img {
+    width: 72px;
+    height: 72px;
+  }
+
+  .edict-turn-copy {
+    align-content: center;
+    justify-items: center;
+    text-align: center;
+  }
+
+  .edict-turn-copy b {
+    font-size: 0.95rem;
+  }
+
+  .edict-turn-copy small {
+    font-size: 0.68rem;
   }
 
   .map-node span {
@@ -3168,6 +3398,14 @@ button:disabled {
 
   .fullscreen-modal {
     inset: 8px;
+  }
+
+  .legacy-bar {
+    top: 196px;
+  }
+
+  .situation-panel.with-legacies {
+    top: 232px;
   }
 
   .so-detail-layer {

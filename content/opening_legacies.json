@@ -12,7 +12,7 @@
       },
       "narrative_hint": "魏忠贤把持司礼监厂卫，崔呈秀据兵部，党羽塞满台省，吏治中饱，朝纲不振",
       "clear_gate": {
-        "faction.阉党.leverage": "<=10"
+        "faction.阉党.leverage": "<30"
       },
       "clear_narrative": "阉党尽除、逆案布告天下，朝纲一肃"
     },
