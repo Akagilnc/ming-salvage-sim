@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from ming_sim.assets import format_money, format_money_delta
 from ming_sim.constants import (
@@ -419,6 +419,40 @@ class GameDB:
                 ON chat_messages(minister_name, id);
             CREATE INDEX IF NOT EXISTS idx_chat_messages_turn
                 ON chat_messages(turn);
+
+            CREATE TABLE IF NOT EXISTS chat_turns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                minister_name TEXT NOT NULL,
+                turn INTEGER NOT NULL,
+                year INTEGER NOT NULL,
+                period INTEGER NOT NULL,
+                user_message_id INTEGER,
+                minister_message_id INTEGER,
+                agno_session_id TEXT NOT NULL DEFAULT '',
+                agno_runs_before INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                undone_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_chat_turns_minister_turn
+                ON chat_turns(minister_name, turn, status, id);
+            CREATE INDEX IF NOT EXISTS idx_chat_turns_status_id
+                ON chat_turns(status, id);
+
+            CREATE TABLE IF NOT EXISTS chat_turn_rollback_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_turn_id INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                target_table TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                before_json TEXT NOT NULL DEFAULT '',
+                after_json TEXT NOT NULL DEFAULT '',
+                rollback_strategy TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(chat_turn_id) REFERENCES chat_turns(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_chat_turn_rollback_items_turn
+                ON chat_turn_rollback_items(chat_turn_id, id);
 
             CREATE TABLE IF NOT EXISTS secret_orders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3205,13 +3239,14 @@ class GameDB:
         )
         self.conn.commit()
 
-    def append_chat_message(self, minister_name: str, turn: int, role: str, content: str) -> None:
+    def append_chat_message(self, minister_name: str, turn: int, role: str, content: str) -> int:
         """召对聊天单条消息落库（chat_messages）。"""
-        self.conn.execute(
+        cur = self.conn.execute(
             "INSERT INTO chat_messages (minister_name, turn, role, content) VALUES (?, ?, ?, ?)",
             (minister_name, turn, role, content),
         )
         self.conn.commit()
+        return int(cur.lastrowid)
 
     def load_all_chat_history(self) -> Dict[str, List[Dict[str, str]]]:
         """读出全部召对记录，按大臣分组，供进程启动时恢复内存缓存。"""
@@ -3224,6 +3259,292 @@ class GameDB:
                 {"role": row["role"], "content": row["content"]}
             )
         return history
+
+    # ----- chat_turns（本回合召对撤回）-----
+
+    _ROLLBACK_TABLE_PK = {
+        "turn_directives": "id",
+        "secret_orders": "id",
+        "characters": "name",
+        "character_offices": "character_name",
+        "consort_traits": "name",
+    }
+
+    def _row_dict(self, row: sqlite3.Row) -> Dict[str, Any]:
+        return {key: row[key] for key in row.keys()}
+
+    def _json_dump_row(self, row: Dict[str, Any]) -> str:
+        return json.dumps(row, ensure_ascii=False, sort_keys=True)
+
+    def _json_load_row(self, raw: str) -> Dict[str, Any]:
+        if not raw:
+            return {}
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
+
+    def _table_exists(self, table: str) -> bool:
+        row = self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (table,),
+        ).fetchone()
+        return row is not None
+
+    def _snapshot_table(self, table: str, pk: str) -> Dict[str, Dict[str, Any]]:
+        rows = self.conn.execute(f"SELECT * FROM {table}").fetchall()
+        return {str(row[pk]): self._row_dict(row) for row in rows}
+
+    def capture_chat_rollback_snapshot(self) -> Dict[str, Dict[str, Dict[str, Any]]]:
+        """截取召对前后的可回滚业务表状态，用于撤回时做差异还原。"""
+        return {
+            table: self._snapshot_table(table, pk)
+            for table, pk in self._ROLLBACK_TABLE_PK.items()
+        }
+
+    def create_chat_turn(
+        self,
+        state: GameState,
+        minister_name: str,
+        agno_session_id: str,
+        agno_runs_before: int,
+    ) -> int:
+        cur = self.conn.execute(
+            """
+            INSERT INTO chat_turns
+                (minister_name, turn, year, period, agno_session_id, agno_runs_before)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                minister_name,
+                int(state.turn),
+                int(state.year),
+                int(state.period),
+                agno_session_id,
+                max(0, int(agno_runs_before)),
+            ),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def update_chat_turn_messages(
+        self,
+        chat_turn_id: int,
+        user_message_id: Optional[int] = None,
+        minister_message_id: Optional[int] = None,
+    ) -> None:
+        assignments: List[str] = []
+        params: List[Any] = []
+        if user_message_id is not None:
+            assignments.append("user_message_id = ?")
+            params.append(int(user_message_id))
+        if minister_message_id is not None:
+            assignments.append("minister_message_id = ?")
+            params.append(int(minister_message_id))
+        if not assignments:
+            return
+        params.append(int(chat_turn_id))
+        self.conn.execute(
+            f"UPDATE chat_turns SET {', '.join(assignments)} WHERE id = ?",
+            params,
+        )
+        self.conn.commit()
+
+    def mark_chat_turn_failed(self, chat_turn_id: int) -> None:
+        self.conn.execute(
+            "UPDATE chat_turns SET status = 'failed' WHERE id = ? AND status = 'active'",
+            (int(chat_turn_id),),
+        )
+        self.conn.commit()
+
+    def record_chat_turn_rollback_diffs(
+        self,
+        chat_turn_id: int,
+        before: Dict[str, Dict[str, Dict[str, Any]]],
+        after: Dict[str, Dict[str, Dict[str, Any]]],
+    ) -> None:
+        rows: List[Tuple[int, str, str, str, str, str, str]] = []
+        for table, before_rows in before.items():
+            after_rows = after.get(table, {})
+            all_ids = set(before_rows) | set(after_rows)
+            for target_id in sorted(all_ids):
+                before_row = before_rows.get(target_id)
+                after_row = after_rows.get(target_id)
+                if before_row == after_row:
+                    continue
+                if before_row is None and after_row is not None:
+                    strategy = "delete_inserted_row"
+                elif before_row is not None and after_row is None:
+                    strategy = "restore_deleted_row"
+                else:
+                    strategy = "restore_row"
+                rows.append(
+                    (
+                        int(chat_turn_id),
+                        table,
+                        table,
+                        str(target_id),
+                        self._json_dump_row(before_row or {}),
+                        self._json_dump_row(after_row or {}),
+                        strategy,
+                    )
+                )
+        if not rows:
+            return
+        self.conn.executemany(
+            """
+            INSERT INTO chat_turn_rollback_items
+                (chat_turn_id, kind, target_table, target_id, before_json, after_json, rollback_strategy)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+        self.conn.commit()
+
+    def agno_runs_length(self, session_id: str) -> int:
+        if not session_id or not self._table_exists("agno_sessions"):
+            return 0
+        row = self.conn.execute(
+            "SELECT runs FROM agno_sessions WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        if row is None:
+            return 0
+        runs, _encoded_as_string = self._decode_agno_runs(row["runs"])
+        return len(runs)
+
+    def _decode_agno_runs(self, raw: Any) -> Tuple[List[Any], bool]:
+        if raw in (None, ""):
+            return [], False
+        try:
+            decoded = json.loads(raw)
+            encoded_as_string = isinstance(decoded, str)
+            if encoded_as_string:
+                decoded = json.loads(decoded or "[]")
+            return (decoded if isinstance(decoded, list) else []), encoded_as_string
+        except (TypeError, ValueError):
+            return [], False
+
+    def _encode_agno_runs(self, runs: List[Any], encoded_as_string: bool) -> str:
+        if encoded_as_string:
+            return json.dumps(json.dumps(runs, ensure_ascii=False), ensure_ascii=False)
+        return json.dumps(runs, ensure_ascii=False)
+
+    def _truncate_agno_runs_in_tx(self, session_id: str, keep_count: int) -> None:
+        if not session_id or not self._table_exists("agno_sessions"):
+            return
+        row = self.conn.execute(
+            "SELECT runs FROM agno_sessions WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        if row is None:
+            return
+        runs, encoded_as_string = self._decode_agno_runs(row["runs"])
+        kept = runs[: max(0, int(keep_count))]
+        self.conn.execute(
+            "UPDATE agno_sessions SET runs = ?, updated_at = strftime('%s','now') WHERE session_id = ?",
+            (self._encode_agno_runs(kept, encoded_as_string), session_id),
+        )
+
+    def get_last_active_chat_turn(self, minister_name: str, turn: int) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute(
+            """
+            SELECT * FROM chat_turns
+            WHERE minister_name = ? AND turn = ? AND status = 'active'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (minister_name, int(turn)),
+        ).fetchone()
+        return self._row_dict(row) if row is not None else None
+
+    def is_global_last_active_chat_turn(self, chat_turn_id: int) -> bool:
+        row = self.conn.execute(
+            "SELECT id FROM chat_turns WHERE status = 'active' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        return bool(row and int(row["id"]) == int(chat_turn_id))
+
+    def can_undo_last_chat_turn(self, minister_name: str, turn: int) -> bool:
+        row = self.get_last_active_chat_turn(minister_name, turn)
+        if row is None:
+            return False
+        if not row.get("user_message_id") or not row.get("minister_message_id"):
+            return False
+        return self.is_global_last_active_chat_turn(int(row["id"]))
+
+    def _restore_row_in_tx(self, table: str, row: Dict[str, Any]) -> None:
+        if not row:
+            return
+        if table not in self._ROLLBACK_TABLE_PK:
+            raise ValueError(f"不支持回滚表：{table}")
+        columns = list(row.keys())
+        placeholders = ",".join("?" for _ in columns)
+        column_sql = ",".join(columns)
+        self.conn.execute(
+            f"INSERT OR REPLACE INTO {table} ({column_sql}) VALUES ({placeholders})",
+            [row[column] for column in columns],
+        )
+
+    def _delete_row_in_tx(self, table: str, target_id: str) -> None:
+        pk = self._ROLLBACK_TABLE_PK.get(table)
+        if not pk:
+            raise ValueError(f"不支持回滚表：{table}")
+        self.conn.execute(f"DELETE FROM {table} WHERE {pk} = ?", (target_id,))
+
+    def undo_chat_turn(self, chat_turn_id: int) -> Dict[str, Any]:
+        row = self.conn.execute(
+            "SELECT * FROM chat_turns WHERE id = ?",
+            (int(chat_turn_id),),
+        ).fetchone()
+        if row is None:
+            raise ValueError("召对轮次不存在。")
+        turn_row = self._row_dict(row)
+        if turn_row["status"] != "active":
+            raise ValueError("该召对已经撤回或不可撤回。")
+        if not self.is_global_last_active_chat_turn(int(chat_turn_id)):
+            raise ValueError("只能撤回全局最后一轮召对。")
+        items = self.conn.execute(
+            """
+            SELECT * FROM chat_turn_rollback_items
+            WHERE chat_turn_id = ?
+            ORDER BY id DESC
+            """,
+            (int(chat_turn_id),),
+        ).fetchall()
+        message_ids = [
+            int(mid)
+            for mid in (turn_row.get("user_message_id"), turn_row.get("minister_message_id"))
+            if mid
+        ]
+        with self.conn:
+            for item in items:
+                table = str(item["target_table"])
+                strategy = str(item["rollback_strategy"])
+                target_id = str(item["target_id"])
+                if strategy == "delete_inserted_row":
+                    self._delete_row_in_tx(table, target_id)
+                elif strategy in {"restore_row", "restore_deleted_row"}:
+                    before_row = self._json_load_row(item["before_json"])
+                    self._restore_row_in_tx(table, before_row)
+                else:
+                    raise ValueError(f"不支持的回滚策略：{strategy}")
+            if message_ids:
+                placeholders = ",".join("?" for _ in message_ids)
+                self.conn.execute(
+                    f"DELETE FROM chat_messages WHERE id IN ({placeholders})",
+                    message_ids,
+                )
+            self.conn.execute(
+                """
+                UPDATE chat_turns
+                SET status = 'undone', undone_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (int(chat_turn_id),),
+            )
+            self._truncate_agno_runs_in_tx(
+                str(turn_row.get("agno_session_id") or ""),
+                int(turn_row.get("agno_runs_before") or 0),
+            )
+        return turn_row
 
     # ----- event memories（渐进式记忆：摘要卡 + 来源摘录） -----
 

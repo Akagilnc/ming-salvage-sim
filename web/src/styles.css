@@ -2369,7 +2369,7 @@ textarea {
 
 .composer-actions {
   display: grid;
-  grid-template-columns: minmax(120px, auto) minmax(120px, auto) minmax(0, 1fr);
+  grid-template-columns: minmax(120px, auto) minmax(120px, auto) minmax(120px, auto) minmax(0, 1fr);
   align-items: center;
   gap: 10px;
 }
@@ -2896,6 +2896,7 @@ button:disabled {
 
 /* 召对发送 / 退出按钮：黑字白底 */
 .modal-bg-chat .composer-actions .primary-action,
+.modal-bg-chat .composer-actions .composer-undo,
 .modal-bg-chat .composer-actions .composer-exit {
   color: #1a1410 !important;
   background: rgba(252, 249, 240, 0.92) !important;
@@ -2905,6 +2906,15 @@ button:disabled {
 
 .modal-bg-chat .composer-actions .primary-action:hover {
   background: rgba(255, 235, 190, 0.96) !important;
+}
+
+.modal-bg-chat .composer-actions .composer-undo:hover:not(:disabled) {
+  background: rgba(255, 235, 190, 0.96) !important;
+}
+
+.modal-bg-chat .composer-actions .composer-undo:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
 }
 
 .modal-bg-chat .composer-actions .composer-exit:hover {
@@ -3443,6 +3453,7 @@ button:disabled {
 
   .edict-controls,
   .edict-actions,
+  .composer-actions,
   .intel-grid,
   .issue-progress,
   .document-row,
