@@ -1405,6 +1405,20 @@ async def api_menu_load_save(name: str) -> Dict[str, Any]:
     return {"state": web_game.state_payload()}
 
 
+@app.delete("/api/menu/saves/{name}")
+async def api_menu_delete_save(name: str) -> Dict[str, Any]:
+    """菜单页删存档：不依赖 WebGame 实例，直接删文件系统里的 <name>.db。
+    与 WebGame.delete_save 同名校验，返回刷新后的 campaigns。"""
+    cleaned = "".join(c for c in name.strip() if c.isalnum() or c in "._-")
+    if not cleaned or cleaned.startswith("."):
+        raise HTTPException(status_code=400, detail="存档名非法。仅允许字母/数字/._- ")
+    target = os.path.join(user_data_path("saves"), f"{cleaned}.db")
+    if not os.path.isfile(target):
+        raise HTTPException(status_code=404, detail="存档不存在。")
+    os.remove(target)
+    return {"saves": _scan_saves(), "campaigns": _scan_campaigns()}
+
+
 @app.post("/api/menu/exit_to_menu")
 async def api_menu_exit() -> Dict[str, Any]:
     """退回菜单：关 session 但不删 DB。"""
@@ -1758,6 +1772,20 @@ async def api_reject_directive(directive_id: int) -> Dict[str, Any]:
 async def api_write_decree() -> Dict[str, Any]:
     try:
         decree = get_game().session.write_decree()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    return {"decree": decree}
+
+
+class EditDecreeRequest(BaseModel):
+    decree: str
+
+
+@app.patch("/api/decree")
+async def api_edit_decree(body: EditDecreeRequest) -> Dict[str, Any]:
+    """皇帝手动改定诏书正文（拟诏后、颁诏前）。"""
+    try:
+        decree = get_game().session.set_decree(body.decree)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
     return {"decree": decree}

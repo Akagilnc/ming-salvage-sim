@@ -277,11 +277,12 @@ def parse_agent_json(raw: str, stage: str) -> Dict[str, Any]:
 
 
 def create_decree_writer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
+    # 一次性 agent：add_history_to_context=False，无需持久化 → 不传 db，免得每次往
+    # <db>.emperor.db 的 agno_sessions 累积 runs 撑爆存档。agno_db 仅保留以兼容调用方。
+    del agno_db
     return Agent(
         name="诏书润色官",
         id="decree-writer",
-        session_id="decree-writer",
-        db=agno_db,
         model=create_chat_model(llm_config, temperature=0.3, top_p=0.9, max_tokens=max(1200, llm_config.max_tokens)),
         instructions=[_ctx().game_world_prompt, _ctx().decree_writer_prompt],
         add_history_to_context=False,
@@ -363,8 +364,9 @@ def create_season_simulator_agent(
     simulator_payload: Optional[Dict[str, object]] = None,
 ) -> Agent:
     """月末推演日讲官。全量盘面走 user payload，无 tool。
-    走 advanced 角色派生：若 advanced_model 已配，用更强模型；否则 fallback 主 model。"""
-    del db, state
+    走 advanced 角色派生：若 advanced_model 已配，用更强模型；否则 fallback 主 model。
+    一次性 agent：不传 db，免得 runs 累积撑爆 <db>.emperor.db。"""
+    del db, state, agno_db
     cfg = _llm_for_role(llm_config, "simulator")
     tlog(f"[simulator] 使用模型 {cfg.model}")
     # simulator_context 与 extractor 共用 build_simulator_context → 字节一致 → 暖好 extractor 前缀缓存。
@@ -373,8 +375,6 @@ def create_season_simulator_agent(
     return Agent(
         name="月末推演日讲官",
         id="season-simulator",
-        session_id="season-simulator",
-        db=agno_db,
         model=create_chat_model(cfg, temperature=0.9, top_p=0.95, max_tokens=cfg.max_tokens, enable_thinking=True),
         instructions=[_ctx().game_world_prompt, simulator_context, _ctx().season_simulator_prompt],
         add_history_to_context=False,
@@ -390,6 +390,7 @@ def create_score_extractor_module_agent(
     supplemental_context: Optional[Dict[str, object]] = None,
 ) -> Agent:
     """模块化打分提取员。module 对应 GameContent.score_extractor_module_prompts。"""
+    del agno_db  # 一次性 agent，不持久化，免撑爆 .emperor.db
     ctx = _ctx()
     prompt = ctx.score_extractor_module_prompts.get(module)
     if not prompt:
@@ -405,8 +406,6 @@ def create_score_extractor_module_agent(
     return Agent(
         name=f"档房书办-{module}",
         id=f"score-extractor-{module}",
-        session_id=f"score-extractor-{module}",
-        db=agno_db,
         model=create_chat_model(
             cfg,
             temperature=0.1,
@@ -430,12 +429,11 @@ JSON_SANITIZER_PROMPT = (
 
 
 def create_json_sanitizer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
-    """非思考 + response_format=json_object 的 fallback 整理器。"""
+    """非思考 + response_format=json_object 的 fallback 整理器。一次性，不持久化。"""
+    del agno_db
     return Agent(
         name="JSON 修复匠",
         id="json-sanitizer",
-        session_id="json-sanitizer",
-        db=agno_db,
         model=create_chat_model(
             llm_config,
             temperature=0.0,
@@ -451,19 +449,20 @@ def create_json_sanitizer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Age
 
 
 def create_chapter_memory_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
-    """章节记忆：把本回合诏书+邸报+落库效果浓缩成一段叙事章节（纯文本，非 JSON）。"""
+    """章节记忆：把本回合诏书+邸报+落库效果浓缩成 {body, tags} JSON（body 叙事，tags 召回标签）。
+    一次性，不持久化。"""
+    del agno_db
     ctx = _ctx()
     return Agent(
         name="起居注史官",
         id="chapter-memory",
-        session_id="chapter-memory",
-        db=agno_db,
         model=create_chat_model(
             llm_config,
             temperature=0.5,
             top_p=0.85,
             max_tokens=max(1200, llm_config.max_tokens),
             enable_thinking=False,
+            force_json_output=True,
         ),
         instructions=[ctx.game_world_prompt, ctx.chapter_memory_prompt],
         add_history_to_context=False,
@@ -472,13 +471,12 @@ def create_chapter_memory_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Age
 
 
 def create_ending_summary_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
-    """国史编纂官：读全程章节记忆 + 结局类型，生成史评式结局总结（纯文本流式）。"""
+    """国史编纂官：读全程章节记忆 + 结局类型，生成史评式结局总结（纯文本流式）。一次性，不持久化。"""
+    del agno_db
     ctx = _ctx()
     return Agent(
         name="国史编纂官",
         id="ending-summary",
-        session_id="ending-summary",
-        db=agno_db,
         model=create_chat_model(
             llm_config,
             temperature=0.6,

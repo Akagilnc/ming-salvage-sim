@@ -16,6 +16,7 @@ from typing import Dict, List, Optional
 from agno.agent import Agent
 
 from ming_sim.agents import run_agent_text
+from ming_sim.assets import strip_json_fence
 from ming_sim.constants import TURN_UNIT
 from ming_sim.db import GameDB
 from ming_sim.models import GameState
@@ -27,6 +28,36 @@ def _short(text: object, limit: int = 80) -> str:
     if len(s) <= limit:
         return s
     return s[: limit - 1] + "…"
+
+
+def _parse_chapter_output(raw: str) -> tuple[str, List[str]]:
+    """解析章节 agent 的 {body, tags} JSON。
+
+    铁律不抛断：解析失败就把整段原文当 body、tags 空。tags 去重、限长、限 16 个。
+    """
+    text = strip_json_fence(raw).strip()
+    data: object = None
+    try:
+        data = json.loads(text)
+    except Exception:
+        start, end = text.find("{"), text.rfind("}")
+        if 0 <= start < end:
+            try:
+                data = json.loads(text[start : end + 1])
+            except Exception:
+                data = None
+    if not isinstance(data, dict):
+        # 非 JSON：原样当正文
+        return text, []
+    body = str(data.get("body") or "").strip()
+    tags: List[str] = []
+    raw_tags = data.get("tags")
+    if isinstance(raw_tags, list):
+        for t in raw_tags:
+            s = str(t).strip()[:40]
+            if s and s not in tags:
+                tags.append(s)
+    return body, tags[:16]
 
 
 def _directive_summary(text: str) -> str:
@@ -64,6 +95,34 @@ def effect_brief(applied: Dict[str, object]) -> str:
     if advances:
         names = "、".join(_short(a.get("title"), 16) for a in advances[:3])
         parts.append(f"推进局势：{names}")
+
+    # 建筑成就：局势结案落地的建筑新建/扩建/废止（埋在 closes[].building_ops）。
+    built: List[str] = []
+    upgraded: List[str] = []
+    razed: List[str] = []
+    for c in closes:
+        for op in c.get("building_ops") or []:
+            if not isinstance(op, dict):
+                continue
+            action = str(op.get("action") or "")
+            if action == "create":
+                built.append(_short(op.get("name"), 12))
+            elif action == "modify":
+                ch_names = [
+                    str(x.get("label") or x.get("field"))
+                    for x in (op.get("changes") or []) if isinstance(x, dict)
+                ]
+                name = _short(c.get("title"), 12)
+                if any(lbl == "等级" for lbl in ch_names):
+                    upgraded.append(name)
+            elif action == "remove" and op.get("removed"):
+                razed.append(_short(op.get("building_id"), 16))
+    if built:
+        parts.append(f"建成：{'、'.join(b for b in built if b)[:60]}")
+    if upgraded:
+        parts.append(f"扩建提级：{'、'.join(u for u in upgraded if u)[:60]}")
+    if razed:
+        parts.append(f"废止：{'、'.join(r for r in razed if r)[:60]}")
 
     offices = [o for o in (applied.get("office_changes") or []) if isinstance(o, dict) and not o.get("rejected")]
     if offices:
@@ -145,6 +204,7 @@ def record_chapter_memory(
     title = f"崇祯{state.year}年{state.period}{TURN_UNIT}"
     effect = effect_brief(applied)
     body = ""
+    tags: list[str] = []
     try:
         payload = {
             "turn": {"year": state.year, "period": state.period, "turn": state.turn},
@@ -154,14 +214,16 @@ def record_chapter_memory(
             "effect_brief": effect,
             "instruction": (
                 "把本月朝局浓缩成一段连贯叙事章节（150 字内），"
-                "点明本月皇帝做了什么、引出什么效果、留下什么暗流，史笔笔法，不分点不列数值表。"
-                "只输出章节正文，不要标题、不要 JSON。"
+                "点明本月皇帝做了什么、引出什么效果、留下什么暗流，史笔笔法，不分点不列数值表；"
+                "再抽出本月涉及的人物/地点/派系/事件动作召回标签。"
+                "只输出 {\"body\":..., \"tags\":[...]} JSON。"
             ),
         }
         payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=False)
         tlog(f"[chapter-memory/INPUT] turn={state.turn} ({len(payload_json)}字)")
-        body = run_agent_text(agent, payload_json, tag="chapter-memory").strip()
-        tlog(f"[chapter-memory/OUTPUT] turn={state.turn} ({len(body)}字):\n{body}")
+        raw = run_agent_text(agent, payload_json, tag="chapter-memory").strip()
+        tlog(f"[chapter-memory/OUTPUT] turn={state.turn} ({len(raw)}字):\n{raw}")
+        body, tags = _parse_chapter_output(raw)
     except Exception as exc:
         tlog(f"[chapter-memory] LLM 失败，走保底：{exc}")
 
@@ -169,6 +231,6 @@ def record_chapter_memory(
         head = _short(narrative, 100)
         body = f"本月：{effect}。{head}".strip("。") + "。"
 
-    memory_id = db.save_chapter_memory(state, title=title, body=body)
+    memory_id = db.save_chapter_memory(state, title=title, body=body, tags=tags)
     tlog(f"[chapter-memory] saved id={memory_id} turn={state.turn}")
     return memory_id

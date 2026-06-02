@@ -2203,6 +2203,13 @@ class GameDB:
             )
         return payload
 
+    def power_display_name(self, power_id: str) -> str:
+        """power_id → 显示名（如 houjin→后金）。缺则回退 id。"""
+        row = self.conn.execute(
+            "SELECT name FROM powers WHERE id = ?", (str(power_id),)
+        ).fetchone()
+        return str(row["name"]) if row else str(power_id)
+
     def region_report(self, limit: int = 5) -> str:
         rows = self.region_rows(limit=limit, danger_order=True)
         if not rows:
@@ -2211,8 +2218,11 @@ class GameDB:
         total_tax_value = int(total_tax["total"] or 0)
         parts = []
         for row in rows:
+            held = ""
+            if str(row["controlled_by"]) != "ming":
+                held = f"【已为{self.power_display_name(row['controlled_by'])}所据】"
             parts.append(
-                f"{row['name']}：民心{row['public_support']}、动乱{row['unrest']}、"
+                f"{row['name']}{held}：民心{row['public_support']}、动乱{row['unrest']}、"
                 f"粮食{row['grain_security']}万石、税{format_money(monthly_amount(int(row['tax_per_turn'])))}/{TURN_UNIT}，{row['status']}"
             )
         return f"地区警讯：{'；'.join(parts)}。两京十三省账面{TURN_UNIT}税合计{format_money(monthly_amount(total_tax_value))}。"
@@ -2224,8 +2234,11 @@ class GameDB:
         row = self.conn.execute("SELECT * FROM regions WHERE id = ?", (region_id,)).fetchone()
         if row is None:
             raise ValueError(f"地区未入库：{raw_name}")
+        held = ""
+        if str(row["controlled_by"]) != "ming":
+            held = f"，控制权：已为{self.power_display_name(row['controlled_by'])}所据（非大明辖治）"
         return (
-            f"{row['name']}（{row['kind']}）：人口{row['population']}万人，"
+            f"{row['name']}（{row['kind']}）{held}：人口{row['population']}万人，"
             f"民心{row['public_support']}，动乱{row['unrest']}，粮食{row['grain_security']}万石，"
             f"田亩{row['registered_land']}万亩，隐田{row['hidden_land']}万亩，"
             f"账面税收{format_money(monthly_amount(int(row['tax_per_turn'])))}/{TURN_UNIT}，"
@@ -3970,9 +3983,19 @@ class GameDB:
 
     # ── 章节记忆（event_memories 的 chapter_summary 类，每回合一条，importance=5 永久）──
 
-    def save_chapter_memory(self, state: GameState, title: str, body: str) -> int:
+    def save_chapter_memory(
+        self, state: GameState, title: str, body: str, tags: Optional[List[str]] = None
+    ) -> int:
         """落本回合章节记忆。subject 固定 court/chapter，event_type=chapter_summary，
-        source_id=turn 保证每回合唯一。body 存整段叙事章节（不受 outcome 80 字限）。"""
+        source_id=turn 保证每回合唯一。body 存整段叙事章节（不受 outcome 80 字限）。
+
+        tags：除固定的 `章节`/`turnN` 外，并入 LLM 抽出的人物/地点/派系/事件召回标签，
+        供 recall_memories 按人名/派系命中本章。"""
+        base_tags = ["章节", f"turn{state.turn}"]
+        for t in tags or []:
+            t = str(t).strip()
+            if t and t not in base_tags:
+                base_tags.append(t)
         memory_id = self.upsert_event_memory(
             state,
             subject_type="court",
@@ -3982,7 +4005,7 @@ class GameDB:
             outcome=str(title or "")[:80],
             sentiment="neutral",
             importance=5,
-            tags=["章节", f"turn{state.turn}"],
+            tags=base_tags,
             source_kind="turn_report",
             source_id=str(state.turn),
             expires_turn=None,

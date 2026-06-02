@@ -787,6 +787,8 @@ function App() {
   });
   const [closedModal, setClosedModal] = React.useState<ClosedIssue[]>([]);
   const [gazetteShown, setGazetteShown] = React.useState<number>(-1);
+  // 结局页本次加载是否已被玩家关掉（关掉后让位邸报，刷新复位重弹）。
+  const [endingDismissed, setEndingDismissed] = React.useState(false);
   const [secretOrders, setSecretOrders] = React.useState<SecretOrder[]>([]);
   const [secretOrderShown, setSecretOrderShown] = React.useState<number>(-1);
   // 作弊控制台（Ctrl+~）：cheatDirective 暂存强制结算项，下次颁诏随结算一次性穿入。
@@ -885,22 +887,20 @@ function App() {
       .catch(() => {/* 失败静默 */});
   }, [state?.turn.turn]);
 
-  // 结局已触发：自动弹结局结算页一次（按 sessionStorage 去重，关掉后同会话不再自动弹，
-  // 以便玩家关页继续游玩；重开浏览器会再弹一次）。
+  // 结局已触发：每次进页面/刷新都自动弹结局结算页。玩家点关闭后（endingDismissed）
+  // 本次加载让位给盘面/邸报，可继续看局；刷新即复位重弹。
   React.useEffect(() => {
     if (!state || !state.ending) return;
-    const key = `endingShown_${state.ending.status}`;
-    if (sessionStorage.getItem(key)) return;
-    sessionStorage.setItem(key, "1");
+    if (endingDismissed) return;
     setActiveModal("ending");
-  }, [state]);
+  }, [state, endingDismissed]);
 
   // 每次进入页面/换回合都弹上回合邸报。不持久化记录——刷新即重新弹。
   // 同一加载周期内同一回合不重复弹（gazetteShown 用 React state，刷新后回到 -1）。
   React.useEffect(() => {
     if (!state) return;
-    // 结局页本会话还没弹过时让位给它；已弹过（玩家关掉继续玩）则邸报照常。
-    if (state.ending && !sessionStorage.getItem(`endingShown_${state.ending.status}`)) return;
+    // 结局页未关掉时让位给它；玩家关掉后（endingDismissed）邸报照常。
+    if (state.ending && !endingDismissed) return;
     const currentTurn = state.turn.turn;
     const summary = (state.previous_summary || "").trim();
     if (!summary) return;
@@ -909,7 +909,7 @@ function App() {
     setGazetteReport(summary);
     setActiveModal("report");
     setGazetteShown(currentTurn);
-  }, [state, gazetteShown]);
+  }, [state, gazetteShown, endingDismissed]);
 
   React.useEffect(() => {
     if (!selectedMinister) {
@@ -1239,6 +1239,22 @@ function App() {
     }
   };
 
+  const saveDecree = async (text: string) => {
+    setBusy("存改诏书");
+    setError("");
+    try {
+      const data = await api<{ decree: string }>("/api/decree", {
+        method: "PATCH",
+        body: JSON.stringify({ decree: text }),
+      });
+      setDecree(data.decree);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy("");
+    }
+  };
+
   const issueDecree = async () => {
     setBusy("月末结算");
     setSettleStage("");
@@ -1431,6 +1447,7 @@ function App() {
             onSaveDirective={saveDirective}
             onDeleteDirective={deleteDirective}
             onWriteDecree={writeDecree}
+            onSaveDecree={saveDecree}
             onIssueDecree={issueDecree}
             onConfirmDirective={confirmDirective}
             onRejectDirective={rejectDirective}
@@ -1443,7 +1460,7 @@ function App() {
       ) : null}
 
       {activeModal === "ending" && state.ending ? (
-        <EndingModal ending={state.ending} onClose={() => setActiveModal("none")} />
+        <EndingModal ending={state.ending} onClose={() => { setEndingDismissed(true); setActiveModal("none"); }} />
       ) : null}
 
       {activeModal === "extraction" ? (
@@ -2535,25 +2552,50 @@ function ReportModal({ report, onClose }: { report: string; onClose: () => void 
 }
 
 function EndingModal({ ending, onClose }: { ending: EndingPayload; onClose: () => void }) {
+  const lastTimeline = ending.timeline?.[ending.timeline.length - 1];
+  const endingDate = lastTimeline ? `${lastTimeline.year}年${lastTimeline.period}月` : "终局";
+  const timelineCount = ending.timeline?.length ?? 0;
+
   return (
     <FullscreenModal
-      title={`结局 · ${ending.label}`}
+      title="终章定论"
       subtitle="崇祯一朝，盖棺论定"
-      bgClass="modal-bg-state"
+      bgClass="modal-bg-state modal-bg-ending"
       onClose={onClose}
     >
-      <article className="state-document modal-scroll">
-        <div className="document-section">
-          <h2 className="ending-verdict-title">国史编纂官 · 结局总评</h2>
-          <pre className="memorial-text">{ending.summary || "（无总评）"}</pre>
+      <article className="state-document ending-document modal-scroll">
+        <div className="ending-hero">
+          <div className="ending-seal" aria-hidden="true">
+            <Crown size={34} />
+          </div>
+          <div className="ending-hero-copy">
+            <p>大明国史馆录</p>
+            <h2>{ending.label}</h2>
+            <span>{endingDate} · 第 {timelineCount || 1} 卷</span>
+          </div>
         </div>
+
+        <section className="ending-verdict-card" aria-label="结局总评">
+          <div className="ending-section-kicker">
+            <ScrollText size={17} />
+            <span>国史编纂官总评</span>
+          </div>
+          <pre className="ending-summary-text">{ending.summary || "（无总评）"}</pre>
+        </section>
+
         {ending.timeline && ending.timeline.length > 0 && (
-          <div className="document-section">
-            <h2 className="ending-verdict-title">崇祯一朝 · 逐月历程</h2>
+          <section className="ending-chronicle" aria-label="逐月历程">
+            <div className="ending-section-kicker">
+              <Landmark size={17} />
+              <span>崇祯一朝逐月历程</span>
+            </div>
             <ol className="ending-timeline">
               {ending.timeline.map((it) => (
                 <li key={it.turn} className="ending-timeline-item">
-                  <div className="ending-timeline-date">{it.year}年{it.period}月</div>
+                  <div className="ending-timeline-date">
+                    <b>{it.year}</b>
+                    <span>{it.period}月</span>
+                  </div>
                   <div className="ending-timeline-body">
                     {it.chapter ? (
                       <p className="ending-timeline-chapter">{it.chapter}</p>
@@ -2568,7 +2610,7 @@ function EndingModal({ ending, onClose }: { ending: EndingPayload; onClose: () =
                 </li>
               ))}
             </ol>
-          </div>
+          </section>
         )}
       </article>
     </FullscreenModal>
@@ -4371,6 +4413,7 @@ function EdictModal({
   onSaveDirective,
   onDeleteDirective,
   onWriteDecree,
+  onSaveDecree,
   onIssueDecree,
   onConfirmDirective,
   onRejectDirective,
@@ -4391,6 +4434,7 @@ function EdictModal({
   onSaveDirective: (directive: Directive) => void;
   onDeleteDirective: (directiveId: number) => void;
   onWriteDecree: () => void;
+  onSaveDecree: (text: string) => void;
   onIssueDecree: () => void;
   onConfirmDirective: (directiveId: number) => void;
   onRejectDirective: (directiveId: number) => void;
@@ -4398,6 +4442,10 @@ function EdictModal({
   const pendingDirectives = state.directives.filter((d) => d.status === "pending");
   const draftDirectives = state.directives.filter((d) => d.status !== "pending");
   const hasPending = pendingDirectives.length > 0;
+  const [decreeDraft, setDecreeDraft] = React.useState(decree);
+  React.useEffect(() => {
+    setDecreeDraft(decree);
+  }, [decree]);
   return (
     <div className="edict-full-grid">
       <section className="modal-pane directive-pane">
@@ -4471,10 +4519,32 @@ function EdictModal({
         <h2>诏书与奏章</h2>
         {busy && <div className="busy-line"><Loader2 size={15} />{busy}...</div>}
         {error && <div className="error-line" role="alert">{error}</div>}
-        {decree || report ? (
+        {decree && !report ? (
+          <div className="decree-edit">
+            <label>诏书正文（可改，颁布前以此为准）</label>
+            <textarea
+              value={decreeDraft}
+              onChange={(event) => setDecreeDraft(event.target.value)}
+            />
+            <div className="decree-edit-tools">
+              <button
+                onClick={() => onSaveDecree(decreeDraft)}
+                disabled={!!busy || !decreeDraft.trim() || decreeDraft === decree}
+              >
+                <Check size={14} />存改
+              </button>
+              <button
+                onClick={() => setDecreeDraft(decree)}
+                disabled={!!busy || decreeDraft === decree}
+              >
+                <X size={14} />还原
+              </button>
+            </div>
+          </div>
+        ) : decree || report ? (
           <pre>{`${decree || ""}${report ? `\n\n${report}` : ""}`}</pre>
         ) : (
-          <div className="empty-note">生成诏书后，正式诏文会在此显示；颁布后会显示月末总结奏章。</div>
+          <div className="empty-note">生成诏书后，正式诏文会在此显示；可手动改定，颁布后会显示月末总结奏章。</div>
         )}
       </section>
     </div>
@@ -5186,10 +5256,18 @@ function NodeIntel({ node }: { node: MapNode }) {
   const power = node.power;
   if (node.kind === "external") {
     return (
-      <div className="panel-title">
-        <MapPinned size={14} />
-        <span>{region?.name || node.label}</span>
-      </div>
+      <>
+        <div className="panel-title">
+          <MapPinned size={14} />
+          <span>{region?.name || node.label}</span>
+        </div>
+        <table className="intel-table">
+          <tbody>
+            <tr><th>归属</th><td colSpan={3}>{labelPower(region?.controlled_by || power?.id || "")}</td></tr>
+          </tbody>
+        </table>
+        <div className="empty-note">非大明辖治，详情不可见。</div>
+      </>
     );
   }
   return (
@@ -5397,6 +5475,10 @@ function MenuPage({
             setShowSaveList(false);
             await onLoadSave(name);
           }}
+          onDelete={async (name) => {
+            await api(`/api/menu/saves/${encodeURIComponent(name)}`, { method: "DELETE" });
+            await onRefresh();
+          }}
         />
       )}
     </div>
@@ -5532,16 +5614,33 @@ function SaveListModal({
   campaigns,
   onClose,
   onLoad,
+  onDelete,
 }: {
   campaigns: MenuCampaign[];
   onClose: () => void;
   onLoad: (name: string) => Promise<void>;
+  onDelete: (name: string) => Promise<void>;
 }) {
   const hasAny = campaigns.some((c) => c.saves.length);
+  const [delBusy, setDelBusy] = React.useState("");
+  const [delErr, setDelErr] = React.useState("");
+  const handleDelete = async (name: string, label?: string) => {
+    if (!window.confirm(`删除存档「${label || name}」？此操作不可撤销。`)) return;
+    setDelBusy(name);
+    setDelErr("");
+    try {
+      await onDelete(name);
+    } catch (e) {
+      setDelErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDelBusy("");
+    }
+  };
   return (
     <div className="menu-modal-bg" onClick={onClose}>
       <div className="menu-modal" onClick={(e) => e.stopPropagation()}>
         <h2>加载存档</h2>
+        {delErr ? <div className="menu-error">{delErr}</div> : null}
         {hasAny ? (
           <div className="menu-campaign-list">
             {campaigns.map((c) => (
@@ -5552,10 +5651,18 @@ function SaveListModal({
                 </div>
                 <ul className="menu-save-list">
                   {c.saves.map((s) => (
-                    <li key={s.name}>
-                      <button onClick={() => onLoad(s.name)}>
+                    <li key={s.name} className="menu-save-row">
+                      <button className="menu-save-load" onClick={() => onLoad(s.name)}>
                         <span className="save-name">{s.label || s.name}</span>
                         <span className="save-meta">{new Date(s.mtime * 1000).toLocaleString("zh-CN")}</span>
+                      </button>
+                      <button
+                        className="menu-save-del"
+                        title="删除存档"
+                        disabled={delBusy === s.name}
+                        onClick={() => handleDelete(s.name, s.label)}
+                      >
+                        {delBusy === s.name ? <Loader2 size={14} className="spin" /> : <Trash2 size={14} />}
                       </button>
                     </li>
                   ))}

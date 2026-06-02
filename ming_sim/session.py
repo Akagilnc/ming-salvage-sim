@@ -800,6 +800,14 @@ class GameSession:
         self.last_decree = decree
         return decree
 
+    def set_decree(self, text: str) -> str:
+        """皇帝手动改定诏书正文（拟诏后、颁诏前）。颁诏时 resolve_turn 用此 last_decree。"""
+        text = (text or "").strip()
+        if not text:
+            raise ValueError("诏书正文不能为空。")
+        self.last_decree = text
+        return self.last_decree
+
     def resolve_turn(self, decree: str = "", on_event=None, cheat_directive: str = "") -> str:
         """颁诏并推演本回合。要求无 pending 残留、≥1 条 draft。
 

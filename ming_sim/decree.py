@@ -143,16 +143,9 @@ def resolve_directives(
 
     before_turn = state.turn
 
-    # 1) 收集草案精简信息(不调 LLM,只保留正文与可选来源备注)
-    directives_brief: List[Dict[str, object]] = []
-    for row in directives:
-        item: Dict[str, object] = {"directive_text": str(row["text"])}
-        notes = str(row["notes"] or "").strip()
-        if notes:
-            item["source_note"] = notes
-        directives_brief.append(item)
+    # 草案内容已由拟诏合并进 decree_text，simulator 只读 decree_text，不再单传逐条草案。
 
-    # 1.5) 固定月度财政 tick（田赋/辽饷/军饷等，在 LLM 推演前落账）
+    # 1) 固定月度财政 tick（田赋/辽饷/军饷等，在 LLM 推演前落账）
     tlog("结算 1/4 固定月度财政 tick")
     _emit("stage", "固定月度财政入账")
     fixed_flows = apply_fixed_period_flows(db, state)
@@ -212,7 +205,7 @@ def resolve_directives(
     _emit("stage", "推演月末邸报")
     previous_narrative = db.previous_turn_summary(state) or ""
     simulator_payload = build_simulator_payload(
-        state, db, decree_text, directives_brief, previous_narrative,
+        state, db, decree_text, previous_narrative,
         fixed_flows=fixed_flows,
         deaths_this_turn=deaths_this_turn,
         debuts_this_turn=debuts_this_turn,
@@ -224,7 +217,7 @@ def resolve_directives(
     )
     try:
         narrative, simulator_payload = simulate_season_with_payload(
-            simulator, state, db, decree_text, directives_brief, previous_narrative,
+            simulator, state, db, decree_text, previous_narrative,
             fixed_flows=fixed_flows,
             deaths_this_turn=deaths_this_turn,
             debuts_this_turn=debuts_this_turn,
