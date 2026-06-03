@@ -170,6 +170,8 @@ def create_emperor_agent(api_key: str, base_url: str, model: str, goal: str, per
         extra_body = {"thinking": {"type": "disabled"}}
     elif "dashscope" in base_url.lower() or "aliyuncs" in base_url.lower():
         extra_body = {"enable_thinking": False}
+    elif "minimaxi.com" in base_url.lower() or "minimax.io" in base_url.lower():
+        extra_body = {"thinking": {"type": "disabled"}}
     model_obj = OpenAIChat(
         id=model,
         api_key=api_key,

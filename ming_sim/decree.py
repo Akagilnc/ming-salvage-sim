@@ -148,7 +148,7 @@ def resolve_directives(
     # 1) 固定月度财政 tick（田赋/辽饷/军饷等，在 LLM 推演前落账）
     tlog("结算 1/4 固定月度财政 tick")
     _emit("stage", "固定月度财政入账")
-    fixed_flows = apply_fixed_period_flows(db, state)
+    apply_fixed_period_flows(db, state)  # 落账副作用；明细不再进 simulator payload（欠饷哗变走前置事件/issue）
 
     # 1.6) 程序硬触发：标了 auto_trigger 的 seed 情势，gate 达标即由程序直接立项，
     #      绕过 LLM 因果判定。放在 simulator 前，使硬立的 issue 当回合即进盘面被邸报叙述。
@@ -206,7 +206,6 @@ def resolve_directives(
     previous_narrative = db.previous_turn_summary(state) or ""
     simulator_payload = build_simulator_payload(
         state, db, decree_text, previous_narrative,
-        fixed_flows=fixed_flows,
         deaths_this_turn=deaths_this_turn,
         debuts_this_turn=debuts_this_turn,
         relevant_memories=relevant_memories,
@@ -218,7 +217,6 @@ def resolve_directives(
     try:
         narrative, simulator_payload = simulate_season_with_payload(
             simulator, state, db, decree_text, previous_narrative,
-            fixed_flows=fixed_flows,
             deaths_this_turn=deaths_this_turn,
             debuts_this_turn=debuts_this_turn,
             relevant_memories=relevant_memories,

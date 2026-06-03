@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+from typing import List
 
 from ming_sim.constants import TURN_UNIT
 from ming_sim.context import _ctx as _content_ctx, state_context
 from ming_sim.models import Character, CourtContext
-from ming_sim.skills import available_skill_ids, skill_template
+from ming_sim.skills import skill_template
 
 _STATUS_CN = {
     "active": "在朝",
@@ -48,17 +49,35 @@ def _duty_location(office: str, office_type: str, status: str) -> str:
     return "按现职任事，具体地点需看官衔所辖。"
 
 
-def build_minister_tools(character: Character, context: CourtContext):
-    skill_ids = set(available_skill_ids(character, context.db))
+def build_minister_tools(character: Character, context: CourtContext,
+                         use_roster_tool: bool = False, use_army_tool: bool = False):
+    def query_court_roster(names: List[str] = []) -> str:
+        """查在朝人事名册。names 为空返回全部姓名+状态索引；传姓名列表返回指定人物详情（现职/官署/派系/状态）。"""
+        db = context.db
+        results = []
+        for c in _ctx().characters.values():
+            if c.office_type == "后宫":
+                continue
+            if getattr(c, "power_id", "ming") != "ming":
+                continue
+            status, reason = db.get_character_status(c.name)
+            if status == "offstage":
+                continue
+            if names and c.name not in names:
+                continue
+            if names:
+                state_cell = f"{status}（{reason}）" if reason else status
+                results.append("|".join((c.name, c.office or "无现任官职", c.office_type, c.faction, state_cell)))
+            else:
+                state_cell = f"{status}（{reason}）" if reason else status
+                results.append(f"{c.name}：{state_cell}")
+        if not results:
+            return "未找到指定人物。" if names else "当前无在朝人物。"
+        return "\n".join(results)
 
-    def view_state() -> str:
-        """查看当前大明核心国势数值（含派系/阶级/势力）。"""
-        return (
-            state_context(context.state)
-            + "。派系：" + context.db.faction_report()
-            + "。" + context.db.class_report()
-            + "。外部：" + context.db.power_report(exclude_self=True)
-        )
+    def query_army_roster(names: List[str] = []) -> str:
+        """查全军名册。names 为空返回军名+欠饷+状态索引；传军名列表返回指定军队完整信息。"""
+        return context.db.army_roster(filter_names=names if names else None, index_only=not names)
 
     def list_memorials() -> str:
         """查看当前在办的所有事项（issue）。"""
@@ -100,10 +119,6 @@ def build_minister_tools(character: Character, context: CourtContext):
             return context.db.region_detail(region_name)
         except ValueError as e:
             return f"未找到地区 '{region_name}'。可先调 list_regions 看地区 id/名称列表。错误：{e}"
-
-    def list_powers() -> str:
-        """查看后金、蒙古、朝鲜、日本、流寇等势力状态。"""
-        return context.db.power_report(exclude_self=True)
 
     def list_buildings() -> str:
         """查看全国在册建筑（火炮厂、矿厂、常平仓、边堡、织造局等）的等级、完好、维护费与产出。"""
@@ -178,49 +193,31 @@ def build_minister_tools(character: Character, context: CourtContext):
             return f"{target_year}年{target_month}月未见正式邸报记录。"
         return f"【{target_year}年{target_month}月邸报】\n{row['report']}"
 
-    def recall_memories_by_time(
-        year: int,
-        period: int,
-        keywords: str = "",
-    ) -> str:
-        """按年月回忆历史旧事，可附加关键词辅助检索。
-        皇帝问及某年某月旧事、或需追溯特定时期事件时调用。
-        year: 年份（如1628）；period: 月份1-12；keywords: 逗号分隔的人名/地名/势力名（可为空）。
-        时间查询绕过记忆衰减，能追溯已过期的历史记忆。
+    def search_memories(keywords: str = "", year: int = 0, period: int = 0) -> str:
+        """检索起居注章节旧事。支持两种方式（可同时用）：
+        - keywords: 逗号分隔关键词，如 "魏忠贤,下狱" 或 "山东,民变"；
+        - year+period: 按年月检索，取前后2月窗口，如 year=1628, period=3。
+        两种场景必须调用：1.皇帝问及某人/某地/某事；2.拟旨前涉及人事处置，先查旧况避免重复。
         """
-        ref_turn = (int(year) - 1627) * 12 + (int(period) - 10) + 1
-        # 章节记忆是回合粒度的全局朝局摘要；取 ref_turn 前后各 2 月窗口。
         all_ch = context.db.list_chapter_memories(upto_turn=context.state.turn)
-        window = [c for c in all_ch if abs(int(c["turn"]) - ref_turn) <= 2]
-        if not window:
-            return f"{year}年{period}月前后未见起居注记载。"
-        lines = [f"【{year}年{period}月前后起居注】"]
-        for c in window:
-            body = (c.get("body") or c.get("title") or "").strip()
-            lines.append(f"- {c['year']}年{c['period']}月：{body}")
-        return "\n".join(lines)
-
-    def search_memories(keywords: str) -> str:
-        """检索相关朝局旧事（起居注章节）。两种场景必须调用：
-        1. 皇帝问及某人/某地/某事时，先查有无相关历史记录再作答；
-        2. 拟旨前涉及任何人事处置（任命/罢黜/下狱/赦免），先查该事旧况确认现状，避免重复处置。
-        keywords: 逗号分隔的人名/地名/军队名/势力名/事项关键词，如 "魏忠贤,下狱" 或 "山东,民变"。
-        返回命中的章节摘要；无命中返回空提示。
-        """
+        hits = []
+        if year:
+            ref_turn = (int(year) - 1627) * 12 + (int(period or 1) - 10) + 1
+            hits = [c for c in all_ch if abs(int(c["turn"]) - ref_turn) <= 2]
         kw_list = [k.strip() for k in str(keywords or "").split(",") if k.strip()]
-        if not kw_list:
-            return "请提供关键词（逗号分隔）。"
-        # 章节正文是叙事文本，对 body 做子串命中（任一关键词出现即收）。
-        all_ch = context.db.list_chapter_memories(upto_turn=context.state.turn)
-        hits = [
-            c for c in all_ch
-            if any(kw in (c.get("body") or "") or kw in (c.get("title") or "") for kw in kw_list)
-        ]
+        if kw_list:
+            kw_hits = [
+                c for c in all_ch
+                if any(kw in (c.get("body") or "") or kw in (c.get("title") or "") for kw in kw_list)
+            ]
+            seen = {c["turn"] for c in hits}
+            hits += [c for c in kw_hits if c["turn"] not in seen]
         if not hits:
-            return f"未找到与「{'、'.join(kw_list)}」相关的起居注记载。"
-        from ming_sim.token_stats import tlog
-        tlog(f"[search_memories] keywords={kw_list} hit={len(hits)}")
-        lines = [f"【起居注检索：{' '.join(kw_list)}】"]
+            desc = f"「{'、'.join(kw_list)}」" if kw_list else f"{year}年{period}月前后"
+            return f"未找到与{desc}相关的起居注记载。"
+        tlog(f"[search_memories] kw={kw_list} year={year} period={period} hit={len(hits)}")
+        label = " ".join(kw_list) or f"{year}年{period}月"
+        lines = [f"【起居注检索：{label}】"]
         for c in hits[-8:]:
             body = (c.get("body") or c.get("title") or "").strip()
             lines.append(f"- {c['year']}年{c['period']}月：{body}")
@@ -323,7 +320,36 @@ def build_minister_tools(character: Character, context: CourtContext):
         )
         return f"__pending_unlisted_person__{payload}"
 
-    def issue_secret_order(title: str, content: str, tags_json: str = "[]", assignee: str = "", deadline_months: int = 0) -> str:
+    def secret_order(
+        action: str,
+        title: str = "",
+        content: str = "",
+        tags_json: str = "[]",
+        assignee: str = "",
+        deadline_months: int = 0,
+        order_id: int = 0,
+        progress: str = "",
+        claim: str = "",
+        reason: str = "",
+    ) -> str:
+        """密令统一入口。action 取值：
+        - "issue"：下达新密令。需填 title、content；assignee 留空默认当前大臣；deadline_months=0 无硬限。
+        - "progress"：汇报进展（兼查历史）。填 order_id；progress 非空且本月未推进则落档。
+        - "submit"：提交结案。填 order_id、claim（办结陈词200字内）。
+        - "rush"：催办加急。填 order_id；deadline_months=1 下月核议，0=本月即核。
+        """
+        act = (action or "").strip().lower()
+        if act == "issue":
+            return _secret_order_issue(title, content, tags_json, assignee, deadline_months)
+        if act == "progress":
+            return _secret_order_progress(order_id, progress)
+        if act == "submit":
+            return _secret_order_submit(order_id, claim)
+        if act == "rush":
+            return _secret_order_rush(order_id, deadline_months, reason)
+        return f"未知 action={action!r}，可选：issue / progress / submit / rush。"
+
+    def _secret_order_issue(title: str, content: str, tags_json: str = "[]", assignee: str = "", deadline_months: int = 0) -> str:
         """皇帝下达密令，直接登记入档并返回密令编号。
 
         title：密令标题（20字内）。
@@ -372,16 +398,7 @@ def build_minister_tools(character: Character, context: CourtContext):
             return None, f"密令 #{oid} 由{order['minister_name']}承办，非你职掌，无从查问。"
         return order, ""
 
-    def report_secret_order_progress(order_id: int, progress: str = "") -> str:
-        """皇帝问密令进度时调本工具——一步完成"查历史 + 落本月新进展"。
-        - progress 非空且本月尚未推进且非建档当月 → 直接把本月这一步落档；
-        - progress 为空、本月已推进、或本月即建档当月 → 只回历史不落档；
-        **建档当月不能立刻推进**（领旨待办，下月起查）。
-        **一个月最多落一步**。结案另用 report_secret_order_result。
-
-        order_id：密令编号。
-        progress：本月新查到的一步进展（100字内，顺着已有线索往下推一步）。仅查无需写时可省略。
-        """
+    def _secret_order_progress(order_id: int, progress: str = "") -> str:
         order, err = _own_secret_order(order_id)
         if order is None:
             return err
@@ -393,35 +410,27 @@ def build_minister_tools(character: Character, context: CourtContext):
         is_issuing_turn = int(order.get("turn_issued") or 0) == int(context.state.turn)
         note = (progress or "").strip()[:200]
         saved = False
-        if note and not already_advanced and not is_issuing_turn:
+        if note and not is_issuing_turn:
+            # 同月再报 = 替换当月进度行（修改最新进度），非建档当月即可
             saved = context.db.update_secret_order_progress(
                 order["id"], note, year=context.state.year, period=context.state.period
             )
-        # 落档后重读，让返回里的"查办经过"包含本月这一行
         order = context.db.get_secret_order(order["id"]) or order
         parts = [f"密令 #{order['id']}「{order['title']}」状态：{order['status']}。"]
         parts.append(f"查办经过（按月，末行最新）：\n{order['result'] or '尚无进展记录。'}")
         if order.get("sim_note"):
             parts.append(f"外间动静（按月，末行最新）：\n{order['sim_note']}")
-        if saved:
+        if saved and already_advanced:
+            parts.append(f"✅ 本月进度已更新（替换当月旧记）：{note}")
+        elif saved:
             parts.append(f"✅ 本月新进展已落档：{note}")
         elif is_issuing_turn:
-            parts.append("⚠️ 本月即建档当月，密令刚刚下达，眼下只能领旨筹备、布置人手，须待下月起才可查得头绪——本次未落档。回奏陛下时坦言「才接旨、尚未动身查访」即可。")
-        elif already_advanced:
-            parts.append("⚠️ 本月已查进一步，欲再进须待下月——本次未再落档。")
+            parts.append("⚠️ 本月即建档当月，须待下月起才可查得头绪——本次未落档。")
         elif not note:
-            parts.append("ℹ️ 未提供 progress 参数，本月仍未推进；下次调用请填 progress 把本月新一步落档。")
+            parts.append("ℹ️ 未提供 progress，本月仍未推进。")
         return "\n".join(parts)
 
-    def submit_secret_order_for_review(order_id: int, claim: str) -> str:
-        """承办人自认任务办到位（或无法再推）时调本工具，把密令转入"待核议"，等推演据全盘面判最终成败。
-        **大臣无权直接定 done/failed**——结案权归推演（season simulator），它会看承办人能力、目标实力、风声、派系反扑、可行性等因素，
-        在月末邸报「密旨核议」章给出真实判定（实据齐 → done；不可行/虚报/反扑 → failed；仍需继续 → 退回 active）。
-
-        order_id：密令编号。
-        claim：你自述的办结陈词（200字内）。要写：声称已查得/办到的事实、关键证据、附带情况（如风声暴露程度、有无反扑迹象）。
-              不要写"已处决/已抄家"等执行类动作——那些不是密令承办人能做的。
-        """
+    def _secret_order_submit(order_id: int, claim: str) -> str:
         order, err = _own_secret_order(order_id)
         if order is None:
             return err
@@ -429,21 +438,15 @@ def build_minister_tools(character: Character, context: CourtContext):
             return f"密令 #{order['id']} 当前状态 {order['status']}，不可重复提交核议。"
         text = (claim or "").strip()
         if not text:
-            return "提交失败：claim 为空，须写明你声称办到了什么。"
+            return "提交失败：claim 为空。"
         ok = context.db.submit_secret_order_for_review(
             order["id"], text, year=context.state.year, period=context.state.period
         )
         if not ok:
-            return f"密令 #{order['id']} 提交失败（当前状态非 active）。"
-        return f"密令 #{order['id']}「{order['title']}」已提交待推演核议，本月不再可推进。陛下可静候月末邸报「密旨核议」章定夺。"
+            return f"密令 #{order['id']} 提交失败。"
+        return f"密令 #{order['id']}「{order['title']}」已提交待推演核议，本月不再可推进。"
 
-    def rush_secret_order(order_id: int, deadline_months: int = 1, reason: str = "") -> str:
-        """皇帝催办/加急某条密令时调用，缩短硬期限。
-
-        order_id：密令编号。
-        deadline_months：从本月起还给几个月。1=下月/一个月内必须核议；0=本月立即送月末核议。
-        reason：皇帝催办缘由或新限令，100字内。
-        """
+    def _secret_order_rush(order_id: int, deadline_months: int = 1, reason: str = "") -> str:
         order, err = _own_secret_order(order_id)
         if order is None:
             return err
@@ -456,50 +459,43 @@ def build_minister_tools(character: Character, context: CourtContext):
         except Exception as exc:
             return f"密令 #{order['id']} 催办失败：{exc}"
         if rushed["status"] == "pending_review":
-            return f"密令 #{order['id']}「{order['title']}」已奉旨即核，转入待核议；本月月末推演必须判 done/failed。"
+            return f"密令 #{order['id']}「{order['title']}」已奉旨即核，转入待核议。"
         remain = max(0, int(rushed["due_turn"]) - int(context.state.turn))
         return f"密令 #{order['id']}「{order['title']}」已奉旨加急，限 {remain} 个月内核议。"
 
     def dismiss_minister() -> str:
-        """结束本次召见。"""
+        """结束本次召见，退朝。"""
         return "__dismiss__"
 
     def summon_minister(name: str) -> str:
-        """传召另一位大臣。name 填大臣姓名。"""
+        """传召另一位大臣入殿。name 填大臣姓名。"""
         return f"__summon__{name}"
 
     tools = [
-        view_state,
         list_memorials,
         inspect_memorial,
         list_regions,
         inspect_region,
-        list_powers,
         list_buildings,
         inspect_building,
         estimate_resistance,
         read_past_report,
         search_memories,
-        recall_memories_by_time,
         inspect_treasury_ledger,
         propose_directive,
-        issue_secret_order,
-        report_secret_order_progress,
-        submit_secret_order_for_review,
-        rush_secret_order,
+        secret_order,
         dismiss_minister,
         summon_minister,
         register_unlisted_person,
     ]
-    # 吏部尚书专属：铨选任命，可把名册外的史实官员补入朝堂。
+    if use_roster_tool:
+        tools.append(query_court_roster)
+    if use_army_tool:
+        tools.append(query_army_roster)
     if character.office_type == "吏部":
         tools.append(propose_appointment)
-    if "check_treasury" in skill_ids:
-        tools.append(check_treasury)
-    if "allocate_payroll" in skill_ids:
-        tools.extend([check_treasury, allocate_payroll])
-    if "audit_tax_arrears" in skill_ids:
-        tools.append(audit_tax_arrears)
+    if character.office_type in ("户部", "内阁", "司礼监"):
+        tools.extend([check_treasury, allocate_payroll, audit_tax_arrears])
     unique_tools = []
     seen_tool_names: set = set()
     for tool in tools:
@@ -739,7 +735,7 @@ def build_extractor_tools(context: CourtContext):
 
         metric_delta        两量表增量 {"民心":N,"皇威":N}（增量非新值）
         economy_moves       浮动收支列表，每项 {account(国库/内库),delta,category,reason}
-                            单位万两；fixed_flows已落账的固定项不重复写
+                            单位万两；程序已落账的月度固定收支（税/军饷/建筑维护等）不重复写
                             account按钱出自哪个库定：内帑/内库拨出=内库，户部/太仓=国库
         faction_delta       派系满意度增量 {阉党/皇党/军队/东林/宗室/中立/西学: N}
         class_delta         阶级满意度/影响力增量

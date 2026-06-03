@@ -28,11 +28,18 @@ def is_dashscope_base_url(base_url: str) -> bool:
     return "dashscope" in base_url.lower() or "aliyuncs" in base_url.lower()
 
 
+def is_minimax_base_url(base_url: str) -> bool:
+    lowered = base_url.lower()
+    return "minimaxi.com" in lowered or "minimax.io" in lowered
+
+
 def provider_extra_body(base_url: str) -> Optional[Dict[str, object]]:
     if is_deepseek_base_url(base_url):
         return {"thinking": {"type": "disabled"}}
     if is_dashscope_base_url(base_url):
         return {"enable_thinking": False}
+    if is_minimax_base_url(base_url):
+        return {"thinking": {"type": "disabled"}}
     return None
 
 

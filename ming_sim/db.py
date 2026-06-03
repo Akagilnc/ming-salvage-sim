@@ -2582,13 +2582,24 @@ class GameDB:
             f"状态：{row['status']}"
         )
 
-    def army_roster(self) -> str:
-        """全军名册——表格（| 分隔）压 token。大明各军给全字段，敌对/外藩军只给可见情报。
-        固定喂进大臣 system；去掉 list_armies/inspect_army 后大臣据此作答。
-        欠饷万两=精确累计欠饷（整数无上限，非 0-100 抽象分）；欠饷月数=欠饷/月饷，便于直接奏对。"""
+    def army_roster(self, filter_names: Optional[List[str]] = None, index_only: bool = False) -> str:
+        """全军名册。filter_names 非空则只返回指定军队；index_only=True 只返回军名+欠饷+状态索引。"""
         rows = self.conn.execute(
             "SELECT * FROM armies ORDER BY owner_power='ming' DESC, theater, name"
         ).fetchall()
+        if filter_names:
+            rows = [r for r in rows if r["name"] in filter_names or r["id"] in filter_names]
+        if index_only:
+            # 军队超 30 时用索引：仅显示军名+欠饷+状态，完整信息由 query_army_roster tool 提供
+            lines = []
+            for row in rows:
+                if str(row["owner_power"]) == "ming":
+                    arr = int(row["arrears"]) or 0
+                    lines.append(f"{row['name']}：欠饷{arr}万两，{row['status']}")
+            return (
+                "【全军名册索引（涉及军队欠饷/补给/士气时先调 query_army_roster 查完整信息）】\n"
+                + "\n".join(lines)
+            ) if lines else ""
         if not rows:
             return ""
         own: List[str] = []
@@ -5022,9 +5033,9 @@ class GameDB:
         self, order_id: int, progress_note: str, year: int = 0, period: int = 0
     ) -> bool:
         """承办人推进一步：按年月追加进 result 历史时间线，不改 status。
-        一回合只能推一步——本回合已有进展行则拒（返回 False），不覆盖、不叠加。"""
+        同月再报则替换当月行（修改最新进度，不叠加多条）。"""
         ok = self._append_secret_order_line(
-            order_id, "result", progress_note, year, period, reject_if_same_period=True
+            order_id, "result", progress_note, year, period, reject_if_same_period=False
         )
         tlog(f"[secret_order] progress id={order_id} ok={ok} note={progress_note[:40]!r}")
         return ok

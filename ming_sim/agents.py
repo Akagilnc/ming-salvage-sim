@@ -18,13 +18,20 @@ from agno.db.sqlite import SqliteDb
 from ming_sim.assets import strip_json_fence
 from ming_sim.content import GameContent
 from ming_sim.exceptions import LLMContractError, LLMUnavailable
-from ming_sim.llm_config import for_role as _llm_for_role
+from ming_sim.llm_config import for_role as _llm_for_role, is_minimax_base_url
 from ming_sim.llm_contract import abort_llm_contract, fail_if_llm_error
 from ming_sim.llm_model import create_chat_model, extract_agent_text
 from ming_sim.models import GameState, LLMConfig
 from ming_sim.token_stats import record_stream_metrics, tlog
 
 _content: Optional[GameContent] = None
+_THINKING_STREAM_CHAR_LIMIT = max(0, int(os.environ.get("MING_SIM_THINKING_STREAM_LIMIT", "600") or "0"))
+_MINIMAX_SHORT_THINKING_PROMPT = (
+    "【MiniMax 推演思考约束】\n"
+    "若启用 thinking/reasoning，请极短思考：只列必要因果链，不复述题目、盘面、系统规则或历史常识；"
+    "不要写英文分析；不要自我解释“我将如何回答”；思考控制在约 200 个中文字内。"
+    "最终正文仍须完整遵守月末奏疏格式与内容要求。"
+)
 
 
 def bind_content(content: GameContent) -> None:
@@ -121,6 +128,7 @@ def run_agent_stream_text(
     reasoning_buf: List[str] = []
     reasoning_chars_since_flush = 0
     reasoning_last_print = time.monotonic()
+    reasoning_streamed_chars = 0
     tool_calls = 0
     for event in stream:
         ev_type = type(event).__name__
@@ -148,8 +156,14 @@ def run_agent_stream_text(
             if reasoning_chars_since_flush >= 120 or (now - reasoning_last_print) >= 1.5:
                 merged = "".join(reasoning_buf)
                 tlog(f"[{tag}/思考] {merged.replace(chr(10), ' ⏎ ')[-200:]}")
-                if on_thinking:
-                    on_thinking(merged)
+                if on_thinking and reasoning_streamed_chars < _THINKING_STREAM_CHAR_LIMIT:
+                    remaining = _THINKING_STREAM_CHAR_LIMIT - reasoning_streamed_chars
+                    chunk = merged[:remaining]
+                    if chunk:
+                        on_thinking(chunk)
+                        reasoning_streamed_chars += len(chunk)
+                    if reasoning_streamed_chars >= _THINKING_STREAM_CHAR_LIMIT:
+                        on_thinking("\n〔思考已截断，继续推演中〕\n")
                 reasoning_buf.clear()
                 reasoning_chars_since_flush = 0
                 reasoning_last_print = now
@@ -184,8 +198,14 @@ def run_agent_stream_text(
     if reasoning_buf:
         merged = "".join(reasoning_buf)
         tlog(f"[{tag}/思考] {merged.replace(chr(10), ' ⏎ ')[-200:]}")
-        if on_thinking:
-            on_thinking(merged)
+        if on_thinking and reasoning_streamed_chars < _THINKING_STREAM_CHAR_LIMIT:
+            remaining = _THINKING_STREAM_CHAR_LIMIT - reasoning_streamed_chars
+            chunk = merged[:remaining]
+            if chunk:
+                on_thinking(chunk)
+                reasoning_streamed_chars += len(chunk)
+            if reasoning_streamed_chars >= _THINKING_STREAM_CHAR_LIMIT:
+                on_thinking("\n〔思考已截断，继续推演中〕\n")
     if chunk_buf:
         merged = "".join(chunk_buf).replace("\n", " ⏎ ")
         tlog(f"[{tag}] …{merged[-160:]}")
@@ -196,6 +216,8 @@ def run_agent_stream_text(
         fail_if_llm_error(text, "LLM 调用")
     elif final_output is not None:
         text = extract_agent_text(final_output)
+        if not text:
+            abort_llm_contract(tag, "流式终结事件没有正文 content", "")
     else:
         abort_llm_contract(tag, "流式无内容且无终结事件", "")
     tlog(f"[{tag}] 完成，{len(text)} 字，工具调用 {tool_calls} 次")
@@ -371,12 +393,15 @@ def create_season_simulator_agent(
     tlog(f"[simulator] 使用模型 {cfg.model}")
     # simulator_context 与 extractor 共用 build_simulator_context → 字节一致 → 暖好 extractor 前缀缓存。
     simulator_context = build_simulator_context(simulator_payload)
+    instructions = [_ctx().game_world_prompt, simulator_context, _ctx().season_simulator_prompt]
+    if is_minimax_base_url(cfg.base_url):
+        instructions.insert(0, _MINIMAX_SHORT_THINKING_PROMPT)
 
     return Agent(
         name="月末推演日讲官",
         id="season-simulator",
         model=create_chat_model(cfg, temperature=0.9, top_p=0.95, max_tokens=cfg.max_tokens, enable_thinking=True),
-        instructions=[_ctx().game_world_prompt, simulator_context, _ctx().season_simulator_prompt],
+        instructions=instructions,
         add_history_to_context=False,
         markdown=False,
     )

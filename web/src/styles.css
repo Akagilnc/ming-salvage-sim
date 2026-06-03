@@ -456,15 +456,33 @@ select:focus-visible {
   display: flex;
   flex-direction: row;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   width: max-content;
   max-width: calc(100vw - 16px);
-  padding: 7px 10px;
-  border: 1px solid rgba(0, 0, 0, 0.2);
-  border-radius: 6px;
-  background: rgba(234, 226, 207, 0.95);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
-  backdrop-filter: blur(6px);
+  padding: 5px 7px;
+  border: 1px solid rgba(74, 45, 20, 0.55);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(247, 239, 219, 0.97) 0%, rgba(228, 217, 191, 0.96) 100%);
+  box-shadow:
+    0 4px 16px rgba(24, 18, 11, 0.34),
+    inset 0 1px 0 rgba(255, 250, 235, 0.85),
+    inset 0 0 0 1px rgba(210, 163, 74, 0.35);
+  backdrop-filter: blur(7px);
+}
+
+/* 组间细金竖线分隔 */
+.status-bar .hud-divider {
+  align-self: stretch;
+  width: 1px;
+  margin: 4px 3px;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    rgba(138, 100, 36, 0.5) 22%,
+    rgba(138, 100, 36, 0.5) 78%,
+    transparent
+  );
 }
 
 .status-bar,
@@ -626,13 +644,21 @@ select:focus-visible {
   gap: 5px;
   min-height: 28px;
   flex: 0 0 auto;
-  padding: 3px 8px;
+  padding: 3px 9px;
   border: 0;
-  border-radius: 3px;
+  border-radius: 5px;
   color: #1a1410;
-  background: transparent;
+  background: linear-gradient(180deg, rgba(210, 163, 74, 0.16), rgba(210, 163, 74, 0.06));
+  box-shadow: inset 0 0 0 1px rgba(210, 163, 74, 0.3);
   font-weight: 700;
   font-size: 0.92rem;
+  letter-spacing: 0.02em;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.status-emblem:hover {
+  background: linear-gradient(180deg, rgba(210, 163, 74, 0.28), rgba(210, 163, 74, 0.12));
+  box-shadow: inset 0 0 0 1px rgba(210, 163, 74, 0.5);
 }
 
 .status-emblem svg {
@@ -661,9 +687,9 @@ select:focus-visible {
   align-items: center;
   gap: 4px;
   min-height: 28px;
-  padding: 3px 7px;
+  padding: 3px 8px;
   border: 0;
-  border-radius: 3px;
+  border-radius: 5px;
   color: #1a1410;
   background: transparent;
   white-space: nowrap;
@@ -863,10 +889,31 @@ select:focus-visible {
   color: #a64036;
 }
 
+.status-pill b {
+  font-size: 1.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 民心/皇威 按好坏淡染底色，扫一眼可辨 */
+.status-pill.good {
+  background: rgba(49, 93, 71, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(49, 93, 71, 0.22);
+}
+
+.status-pill.warn {
+  background: rgba(160, 109, 24, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(160, 109, 24, 0.26);
+}
+
+.status-pill.danger {
+  background: rgba(158, 52, 41, 0.13);
+  box-shadow: inset 0 0 0 1px rgba(158, 52, 41, 0.26);
+}
+
 .bottom-command-bar {
   position: absolute;
   left: 15%;
-  bottom: 35%;
+  bottom: 58%;
   width: 70%;
   height: 1px;
   display: flex;
@@ -892,10 +939,10 @@ select:focus-visible {
 .bottom-caption-bar {
   position: absolute;
   left: 15%;
-  top: 70%;
+  bottom: 7vh;
   width: 70%;
   display: flex;
-  align-items: flex-start;
+  align-items: flex-end;
   justify-content: space-around;
   overflow: visible;
   z-index: 2;
@@ -1091,22 +1138,23 @@ select:focus-visible {
 .edict-turn-art {
   position: relative;
   display: grid;
-  place-items: center;
-  width: 180px;
-  height: 180px;
+  place-items: end center;
+  width: auto;
+  height: auto;
+  transform: translateY(3vh);
   filter: drop-shadow(0 4px 6px rgba(18, 7, 2, 0.58));
 }
 
 .edict-turn-art img {
   width: auto;
-  height: 14vh;
-  max-width: 18vw;
+  height: 24vh;
+  max-width: 28vw;
   object-fit: contain;
 }
 
 .edict-turn-badge {
-  top: -20px;
-  right: -36px;
+  top: 2px;
+  right: 6px;
 }
 
 .edict-turn-copy {
@@ -2772,6 +2820,9 @@ select {
 
 .primary-action,
 .edict-actions button,
+.desk-add-btn,
+.seal-btn-ghost,
+.seal-btn-save,
 .directive-tools button {
   display: inline-flex;
   align-items: center;
@@ -2827,90 +2878,98 @@ button:disabled {
   opacity: 0.48;
 }
 
-.edict-full-grid {
-  display: grid;
-  grid-template-columns: minmax(260px, 0.9fr) minmax(320px, 1fr) minmax(320px, 1.05fr);
-  gap: 12px;
+/* ===== 诏书台·分幕（御案理政 / 诏书御览 / 颁诏奏章） ===== */
+
+.edict-stage {
+  display: flex;
+  flex-direction: column;
   min-height: 0;
-  padding: 14px;
-  background: rgba(232, 206, 150, 0.08);
+  height: 100%;
+  padding: 16px clamp(16px, 4vw, 56px) 18px;
+  overflow: hidden;
 }
 
-.directive-pane,
-.edict-compose,
-.settlement-box {
+/* ── 幕一 御案理政 ── */
+.edict-stage-desk {
+  gap: 12px;
+}
+
+.desk-columns {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
+  gap: clamp(14px, 2.5vw, 32px);
+  min-height: 0;
+  flex: 1;
 }
 
-.directive-pane:has(.pending-directives) {
-  grid-template-rows: auto auto minmax(0, 1fr);
+.desk-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.desk-pane h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  letter-spacing: 0.06em;
+  font-family: "Noto Serif SC", "Songti SC", serif;
+}
+
+.desk-memorials {
+  min-height: 0;
 }
 
 .pending-directives {
   display: grid;
   gap: 8px;
-  padding: 10px 12px;
-  border: 1px solid rgba(180, 60, 40, 0.55);
-  border-radius: 4px;
-  background: rgba(180, 60, 40, 0.12);
-  max-height: 40vh;
+  padding: 12px 14px;
+  border: 1px solid rgba(170, 50, 36, 0.55);
+  border-left: 4px solid rgba(170, 50, 36, 0.85);
+  border-radius: 3px;
+  background:
+    linear-gradient(180deg, rgba(176, 58, 40, 0.10), rgba(176, 58, 40, 0.04));
+  max-height: 38vh;
   overflow-y: auto;
 }
 
 .pending-directives h3 {
   margin: 0;
-  font-size: 18px;
-  color: #b03a28;
+  font-size: 1rem;
+  letter-spacing: 0.08em;
+  color: #a8321f;
+  font-family: "Noto Serif SC", "Songti SC", serif;
 }
 
 .directive-item.pending {
-  border-color: rgba(180, 60, 40, 0.5);
+  border-color: rgba(170, 50, 36, 0.42);
+  border-left: 3px solid rgba(170, 50, 36, 0.7);
   background:
-    linear-gradient(90deg, rgba(180, 60, 40, 0.16), transparent 40%),
-    rgba(255, 238, 198, 0.7);
-}
-
-.edict-compose {
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
-}
-
-.edict-controls {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.edict-compose textarea {
-  min-height: 220px;
-}
-
-.edict-actions {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
+    linear-gradient(95deg, rgba(176, 58, 40, 0.10), transparent 55%),
+    rgba(252, 244, 222, 0.82);
 }
 
 .directive-list {
   display: grid;
   align-content: start;
-  gap: 8px;
+  gap: 9px;
   min-height: 0;
   overflow-y: auto;
   padding-right: 4px;
 }
 
+/* 笺纸卡：淡黄、左侧装订暗纹 */
 .directive-item {
   position: relative;
   display: grid;
   gap: 6px;
-  padding: 10px;
-  border: 1px solid rgba(80, 52, 24, 0.16);
-  border-radius: 4px;
+  padding: 11px 12px 11px 14px;
+  border: 1px solid rgba(120, 86, 42, 0.22);
+  border-radius: 3px;
   background:
-    linear-gradient(90deg, rgba(143, 47, 37, 0.06), transparent 30%),
-    rgba(255, 238, 198, 0.54);
+    linear-gradient(90deg, rgba(120, 86, 42, 0.10), transparent 22px),
+    rgba(250, 242, 219, 0.78);
+  box-shadow: 0 1px 3px rgba(60, 40, 16, 0.10);
 }
 
 .directive-head {
@@ -2929,12 +2988,19 @@ button:disabled {
 }
 
 .directive-head b {
-  color: #704c1e;
+  color: #8a5a1e;
+  font-family: "Noto Serif SC", "Songti SC", serif;
 }
 
 .directive-head span,
 .directive-item small {
   color: var(--muted);
+}
+
+.directive-item p {
+  margin: 0;
+  line-height: 1.55;
+  font-family: "Noto Serif SC", "Songti SC", serif;
 }
 
 .directive-tools {
@@ -2943,10 +3009,21 @@ button:disabled {
 }
 
 .directive-tools button {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   min-height: 28px;
-  padding: 3px 7px;
-  font-size: 0.8rem;
-  background: linear-gradient(180deg, #695642, #3a3329);
+  padding: 3px 10px;
+  font-size: 0.82rem;
+  border-radius: 3px;
+}
+
+/* 朱批准驳：朱砂红，仪式感 */
+.directive-tools .vermilion-yes,
+.directive-tools .vermilion-no {
+  font-weight: 700;
+  font-family: "Noto Serif SC", "Songti SC", serif;
+  letter-spacing: 0.05em;
 }
 
 .directive-edit {
@@ -2965,49 +3042,192 @@ button:disabled {
   gap: 6px;
 }
 
-.decree-edit {
-  display: grid;
-  gap: 7px;
-  align-content: start;
+.desk-compose textarea {
+  flex: 1;
+  min-height: 200px;
+  line-height: 1.6;
+  font-family: "Noto Serif SC", "Songti SC", serif;
 }
 
-.decree-edit label {
-  font-size: 13px;
-  color: #6d5a3e;
+.desk-add-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  align-self: flex-start;
+  padding: 7px 18px;
+  border-radius: 3px;
+  font-family: "Noto Serif SC", "Songti SC", serif;
 }
 
-.decree-edit textarea {
-  min-height: 220px;
-  white-space: pre-wrap;
-  color: #352618;
-}
-
-.decree-edit-tools {
+.desk-footer {
   display: flex;
-  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(120, 86, 42, 0.18);
 }
 
-.settlement-box {
-  align-content: start;
+.pending-hint {
+  margin-right: auto;
+  color: #a8321f !important;
+}
+
+/* 拟诏大钮 */
+.seal-btn-compose {
+  padding: 11px 36px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  border-radius: 4px;
+  font-family: "Noto Serif SC", "Songti SC", serif;
+}
+
+/* ── 幕二/三 诏书卷轴 ── */
+.edict-stage-review,
+.edict-stage-issued {
+  align-items: center;
+  gap: 14px;
+}
+
+.decree-scroll {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: min(620px, 92%);
+  flex: 1;
+  min-height: 0;
+  margin: 0 auto;
+}
+
+.decree-scroll-knob {
+  height: 16px;
+  flex: 0 0 auto;
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, #6e4a22, #3f2a12);
+  box-shadow: 0 2px 6px rgba(40, 24, 8, 0.4);
+}
+
+.decree-scroll-knob.top { margin-bottom: -4px; }
+.decree-scroll-knob.bottom { margin-top: -4px; }
+
+/* 明黄绢纸 */
+.decree-scroll-paper {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 28px 26px;
+  border-left: 2px solid rgba(150, 36, 28, 0.30);
+  border-right: 2px solid rgba(150, 36, 28, 0.30);
+  background:
+    repeating-linear-gradient(90deg, rgba(150, 36, 28, 0.05) 0 1px, transparent 1px 34px),
+    linear-gradient(180deg, #f6e6b0, #f0d894);
+  box-shadow: inset 0 0 40px rgba(150, 90, 20, 0.18);
+}
+
+/* 竖排右起 */
+.decree-scroll-body,
+.decree-scroll-edit {
+  writing-mode: vertical-rl;
+  text-orientation: upright;
+  height: 100%;
+  line-height: 2;
+  letter-spacing: 0.12em;
+  font-size: 1.02rem;
+  font-family: "Noto Serif SC", "Songti SC", serif;
+  color: #3a2410 !important;
+  white-space: pre-wrap;
+}
+
+.decree-scroll-body {
+  cursor: text;
+}
+
+.decree-scroll[class*="sealed"] .decree-scroll-body {
+  cursor: default;
+}
+
+.decree-scroll-edit {
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent !important;
+}
+
+/* 朱印 */
+.decree-seal-mark {
+  position: absolute;
+  left: 24px;
+  bottom: 22px;
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border: 2px solid rgba(150, 36, 28, 0.85);
+  border-radius: 4px;
+  color: rgba(150, 36, 28, 0.9) !important;
+  font-size: 1.6rem;
+  font-weight: 700;
+  font-family: "Noto Serif SC", "Songti SC", serif;
+  transform: rotate(-6deg);
+  opacity: 0.88;
+}
+
+.edict-review-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  flex: 0 0 auto;
+  padding-top: 4px;
+}
+
+.seal-btn-ghost,
+.seal-btn-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 9px 20px;
+  border-radius: 4px;
+  font-family: "Noto Serif SC", "Songti SC", serif;
+}
+
+/* 盖玺颁布：玉玺红大钮，回合终点 */
+.seal-btn-issue {
+  padding: 12px 44px;
+  font-size: 1.15rem;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  border-radius: 4px;
+  font-family: "Noto Serif SC", "Songti SC", serif;
+}
+
+/* ── 幕三 颁诏奏章 ── */
+.edict-gazette {
+  width: min(680px, 94%);
+  flex: 0 0 auto;
+  max-height: 32vh;
   overflow-y: auto;
 }
 
-.settlement-box ol {
-  display: grid;
-  gap: 4px;
-  margin: 0;
-  padding-left: 24px;
-  color: #6d5a3e;
+.edict-gazette h2 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+  letter-spacing: 0.06em;
+  font-family: "Noto Serif SC", "Songti SC", serif;
 }
 
-.settlement-box pre {
-  min-height: 0;
+.edict-gazette pre {
   margin: 0;
-  overflow: auto;
   white-space: pre-wrap;
+  line-height: 1.7;
   color: #352618;
   font-family: "Noto Serif SC", "Songti SC", serif;
-  font-size: 0.86rem;
+  font-size: 0.9rem;
 }
 
 .busy-line,
@@ -3117,10 +3337,36 @@ button:disabled {
 .modal-bg-chat .chat-message,
 .modal-bg-chat .chat-system-note,
 .modal-bg-chat .modal-pane,
-.modal-bg-edict .modal-pane,
-.modal-bg-edict .directive-item {
+.modal-bg-edict .modal-pane {
   background: rgba(255, 255, 255, 0.8) !important;
   border-radius: 6px;
+}
+
+/* 诏书台：恢复笺纸卡 / 朱批待定框 / 明黄卷轴质感（通配透明的例外） */
+.modal-bg-edict .directive-item {
+  background:
+    linear-gradient(90deg, rgba(120, 86, 42, 0.10), transparent 22px),
+    rgba(250, 242, 219, 0.82) !important;
+  border-radius: 3px;
+}
+.modal-bg-edict .directive-item.pending {
+  background:
+    linear-gradient(95deg, rgba(176, 58, 40, 0.12), transparent 55%),
+    rgba(252, 244, 222, 0.86) !important;
+}
+.modal-bg-edict .pending-directives {
+  background:
+    linear-gradient(180deg, rgba(176, 58, 40, 0.10), rgba(176, 58, 40, 0.04)) !important;
+}
+.modal-bg-edict .decree-scroll-paper {
+  background:
+    repeating-linear-gradient(90deg, rgba(150, 36, 28, 0.05) 0 1px, transparent 1px 34px),
+    linear-gradient(180deg, #f6e6b0, #f0d894) !important;
+  box-shadow: inset 0 0 40px rgba(150, 90, 20, 0.18) !important;
+}
+.modal-bg-edict .decree-scroll-knob {
+  background: linear-gradient(180deg, #6e4a22, #3f2a12) !important;
+  box-shadow: 0 2px 6px rgba(40, 24, 8, 0.4) !important;
 }
 
 .modal-bg-state .summary-table th {
@@ -3278,32 +3524,63 @@ button:disabled {
   color: #ffe4b0 !important;
 }
 
-/* 诏书草案三按钮 + 草案工具按钮：黑字白底 */
-.modal-bg-edict .edict-actions button,
-.modal-bg-edict .directive-tools button {
-  color: #1a1410 !important;
-  background: rgba(252, 249, 240, 0.92) !important;
-  border: 1px solid rgba(0, 0, 0, 0.28) !important;
+/* 改/删/新增/存改/返工：墨字宣纸底 */
+.modal-bg-edict .directive-tools button,
+.modal-bg-edict .desk-add-btn,
+.modal-bg-edict .seal-btn-ghost,
+.modal-bg-edict .seal-btn-save {
+  color: #2a1c0e !important;
+  background: rgba(252, 247, 232, 0.92) !important;
+  border: 1px solid rgba(120, 86, 42, 0.4) !important;
   font-weight: 700 !important;
 }
 
-.modal-bg-edict .edict-actions .primary-action {
+.modal-bg-edict .directive-tools button:hover,
+.modal-bg-edict .desk-add-btn:hover,
+.modal-bg-edict .seal-btn-ghost:hover,
+.modal-bg-edict .seal-btn-save:hover {
+  background: rgba(255, 240, 210, 0.96) !important;
+}
+
+/* 朱批·准：朱砂红实底 */
+.modal-bg-edict .directive-tools .vermilion-yes {
+  background: linear-gradient(180deg, #c0432f, #8a261b) !important;
+  color: #ffe9d8 !important;
+  border-color: rgba(150, 36, 28, 0.6) !important;
+}
+.modal-bg-edict .directive-tools .vermilion-yes:hover {
+  background: linear-gradient(180deg, #d24c36, #9a2c1f) !important;
+}
+
+/* 朱批·驳：朱砂红描边 */
+.modal-bg-edict .directive-tools .vermilion-no {
+  background: rgba(252, 244, 236, 0.9) !important;
+  color: #9a2c1f !important;
+  border: 1px solid rgba(150, 36, 28, 0.7) !important;
+}
+.modal-bg-edict .directive-tools .vermilion-no:hover {
+  background: rgba(176, 58, 40, 0.14) !important;
+}
+
+/* 拟诏 / 盖玺颁布：玉玺红大钮 */
+.modal-bg-edict .seal-btn-compose,
+.modal-bg-edict .seal-btn-issue {
   background: linear-gradient(180deg, #9c392c, #561f19) !important;
   color: #ffe4b0 !important;
-  border-color: rgba(226, 180, 86, 0.5) !important;
+  border: 1px solid rgba(226, 180, 86, 0.5) !important;
+  box-shadow: 0 3px 10px rgba(86, 31, 25, 0.35) !important;
 }
-
-.modal-bg-edict .edict-actions button:hover,
-.modal-bg-edict .directive-tools button:hover {
-  background: rgba(255, 235, 190, 0.96) !important;
-}
-
-.modal-bg-edict .edict-actions .primary-action:hover {
+.modal-bg-edict .seal-btn-compose:hover,
+.modal-bg-edict .seal-btn-issue:hover {
   background: linear-gradient(180deg, #b2402f, #6a261d) !important;
 }
 
-.modal-bg-edict .edict-actions button:disabled,
-.modal-bg-edict .directive-tools button:disabled {
+.modal-bg-edict .directive-tools button:disabled,
+.modal-bg-edict .desk-add-btn:disabled,
+.modal-bg-edict .seal-btn-ghost:disabled,
+.modal-bg-edict .seal-btn-save:disabled,
+.modal-bg-edict .seal-btn-compose:disabled,
+.modal-bg-edict .seal-btn-issue:disabled {
   opacity: 0.5;
 }
 
@@ -3738,13 +4015,12 @@ button:disabled {
 }
 
 @media (max-width: 1100px) {
-  .edict-full-grid {
+  .desk-columns {
     grid-template-columns: 1fr;
     overflow-y: auto;
   }
-
-  .edict-full-grid {
-    align-content: start;
+  .decree-scroll {
+    width: 100%;
   }
 }
 
@@ -3760,6 +4036,10 @@ button:disabled {
     width: calc(100vw - 6px);
     min-height: 40px;
     padding: 4px;
+  }
+
+  .status-bar .hud-divider {
+    display: none;
   }
 
   .status-metrics {
@@ -3823,13 +4103,13 @@ button:disabled {
   }
 
   .edict-turn-art {
-    width: 72px;
-    height: 72px;
+    width: 144px;
+    height: 144px;
   }
 
   .edict-turn-art img {
-    width: 72px;
-    height: 72px;
+    width: 144px;
+    height: 144px;
   }
 
   .edict-turn-copy {
@@ -3906,14 +4186,18 @@ button:disabled {
     min-height: 520px;
   }
 
-  .edict-controls,
-  .edict-actions,
   .composer-actions,
   .intel-grid,
   .issue-progress,
   .document-row,
   .report-ledger article {
     grid-template-columns: 1fr;
+  }
+
+  .desk-footer,
+  .edict-review-bar {
+    flex-wrap: wrap;
+    justify-content: center;
   }
 
   .document-hero {
@@ -4796,37 +5080,71 @@ button:disabled {
 
 /* ===== 启动菜单页 ===== */
 .menu-screen {
+  position: relative;
   min-height: 100vh;
+  overflow: hidden;
+  background: #14100a;
+}
+
+/* 居中大海报，铺满背景 */
+.menu-poster {
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: url("/bg_loading.png") center/cover no-repeat, #1a140d;
-  padding: 24px;
 }
 
-.menu-panel {
-  width: min(480px, 92vw);
-  background: rgba(28, 22, 14, 0.85);
-  border: 1px solid rgba(226, 180, 86, 0.35);
-  border-radius: 12px;
-  padding: 36px 32px;
-  color: #f3e6c4;
-  backdrop-filter: blur(8px);
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
-  text-align: center;
+.menu-poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
 }
 
+/* 海报上压一层暗角，保证文字可读 */
+.menu-poster::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(to right, rgba(10, 8, 5, 0.78) 0%, rgba(10, 8, 5, 0.35) 38%, rgba(10, 8, 5, 0) 62%),
+    linear-gradient(to top, rgba(10, 8, 5, 0.65) 0%, rgba(10, 8, 5, 0) 45%);
+}
+
+/* 顶部居中大标题 */
 .menu-title {
-  margin: 0 0 8px;
-  font-size: 2rem;
-  color: #f3d88b;
-  letter-spacing: 0.1em;
+  position: absolute;
+  top: clamp(28px, 7vh, 72px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  margin: 0;
+  font-size: clamp(2.4rem, 6vw, 4.2rem);
+  font-weight: 800;
+  color: #f7e3a0;
+  letter-spacing: 0.18em;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.85), 0 0 30px rgba(180, 120, 40, 0.4);
+  white-space: nowrap;
+}
+
+/* 菜单：左侧偏下，无面板框，裸文字列表 */
+.menu-panel {
+  position: absolute;
+  left: clamp(28px, 6vw, 110px);
+  bottom: clamp(56px, 13vh, 150px);
+  z-index: 2;
+  width: min(320px, 80vw);
+  color: #f3e6c4;
+  text-align: left;
 }
 
 .menu-subtitle {
-  margin: 0 0 28px;
-  color: #c9b888;
-  font-size: 0.92rem;
+  margin: 0 0 24px;
+  color: #d6c590;
+  font-size: 0.95rem;
+  letter-spacing: 0.05em;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.9);
 }
 
 .menu-notice {
@@ -4892,17 +5210,102 @@ button:disabled {
   background: rgba(220, 160, 60, 0.55);
 }
 
+/* 主菜单页：白色质感按钮（覆盖通用 .menu-btn，仅限主菜单面板内） */
+.menu-panel .menu-buttons {
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.menu-panel .menu-btn {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 13px 22px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(238, 234, 226, 0.92) 48%, rgba(216, 210, 198, 0.9) 100%);
+  color: #3a2e1c;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-align: center;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.7);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    inset 0 -2px 6px rgba(120, 100, 70, 0.18),
+    0 4px 14px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  overflow: hidden;
+  transition: transform 120ms ease, box-shadow 150ms ease, filter 150ms ease;
+}
+
+/* 顶部高光条，增加质感 */
+.menu-panel .menu-btn::after {
+  content: "";
+  position: absolute;
+  inset: 1px 1px 50% 1px;
+  border-radius: 9px 9px 0 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0));
+  pointer-events: none;
+}
+
+.menu-panel .menu-btn:hover:not(:disabled) {
+  filter: brightness(1.04);
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 1),
+    inset 0 -2px 6px rgba(120, 100, 70, 0.2),
+    0 6px 20px rgba(0, 0, 0, 0.5);
+}
+
+.menu-panel .menu-btn:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow:
+    inset 0 2px 6px rgba(120, 100, 70, 0.35),
+    0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+/* 主按钮：暖金描边 + 微金调白 */
+.menu-panel .menu-btn.primary {
+  border-color: rgba(214, 168, 78, 0.85);
+  background:
+    linear-gradient(180deg, #fffdf6 0%, #fbf3df 48%, #f1e3c2 100%);
+  color: #5a3d12;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 1),
+    inset 0 -2px 6px rgba(180, 140, 70, 0.22),
+    0 4px 16px rgba(120, 80, 20, 0.45);
+}
+
+.menu-panel .menu-btn.primary:hover:not(:disabled) {
+  filter: brightness(1.03);
+}
+
+.menu-panel .menu-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  filter: grayscale(0.3);
+}
+
 .menu-busy {
   color: #f3d88b;
   font-size: 0.88rem;
   margin-top: 8px;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.9);
 }
 
 .menu-llm-info {
-  margin-top: 12px;
-  font-size: 0.78rem;
+  margin-top: 16px;
+  font-size: 0.74rem;
   color: #b8a878;
   word-break: break-all;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.9);
+}
+
+.menu-notice,
+.menu-error {
+  text-shadow: none;
 }
 
 .menu-modal-bg {
@@ -5568,12 +5971,12 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 48px;
+  height: 48px;
   border: none;
   background: transparent;
   color: rgba(226, 200, 150, 0.82);
-  font-size: 1.05rem;
+  font-size: 1.4rem;
   font-weight: 700;
   letter-spacing: 0.02em;
   cursor: pointer;

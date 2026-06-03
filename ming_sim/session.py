@@ -616,20 +616,14 @@ class GameSession:
                     if summon_after:
                         result.court_action = "summon"
                         result.next_minister = registered
-            elif tool_name == "issue_secret_order" or tool_result.startswith("__secret_order_registered__") or tool_result.startswith("__secret_order__"):
+            elif tool_name == "secret_order" or tool_result.startswith("__secret_order_registered__"):
                 if tool_result.startswith("__secret_order_registered__"):
-                    # 工具已直接落库，提取 order_id
                     try:
                         order_id = int(tool_result.split("__")[3])
                     except Exception:
                         order_id = 0
-                else:
-                    payload = tool_result.removeprefix("__secret_order__").strip()
-                    order_id = self._apply_secret_order(payload, character.name)
-                if order_id:
-                    result.secret_order_id = order_id
-            # report_secret_order_progress / submit_secret_order_for_review 工具内部直接落库，session 无需拦截
-            # 密令结案 done/failed 由月末推演 + extractor 写入，不再走大臣工具
+                    if order_id:
+                        result.secret_order_id = order_id
         return result
 
     def _apply_appointment(self, payload: str, appointer: Character) -> Tuple[str, str]:

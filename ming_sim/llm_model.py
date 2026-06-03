@@ -13,6 +13,7 @@ from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_config import (
     is_dashscope_base_url,
     is_deepseek_base_url,
+    is_minimax_base_url,
     provider_extra_body,
     supports_openai_reasoning_effort,
 )
@@ -78,6 +79,11 @@ def create_chat_model(
             extra_body["thinking_budget"] = int(thinking_budget)
     elif enable_thinking and is_deepseek_base_url(llm_config.base_url):
         extra_body = {}  # deepseek-v4 默认深思,清掉 disabled
+    elif enable_thinking and is_minimax_base_url(llm_config.base_url):
+        thinking_type = (llm_config.thinking_level or "adaptive").strip().lower()
+        if thinking_type not in {"adaptive", "disabled"}:
+            thinking_type = "adaptive"
+        extra_body = {"thinking": {"type": thinking_type}, "reasoning_split": True}
     kwargs: Dict[str, object] = {
         "id": llm_config.model,
         "api_key": llm_config.api_key,
@@ -112,11 +118,14 @@ def create_agno_db(sqlite_path: str) -> SqliteDb:
 
 
 def extract_agent_text(run_output: object) -> str:
-    content = getattr(run_output, "content", None)
-    if content is not None:
-        text = str(content).strip()
-    else:
+    missing = object()
+    content = getattr(run_output, "content", missing)
+    if content is missing:
         text = str(run_output).strip()
+    elif content is None:
+        text = ""
+    else:
+        text = str(content).strip()
     fail_if_llm_error(text, "LLM 调用")
     return text
 

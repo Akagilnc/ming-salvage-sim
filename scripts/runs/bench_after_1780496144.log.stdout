@@ -1,0 +1,2445 @@
+[bench] extractor=module model=deepseek-v4-flash chats=20 decrees=5
+[TOKEN] caller=? model=deepseek-v4-flash prompt=10 cached=0 completion=1 reasoning=0 total=11
+[turn] year=1627 period=10 turn=1
+[chat] 召见大臣池: ['韩爌', '张瑞图', '来宗道', '施凤来', '黄立极', '王绍徽', '毕自严', '杨嗣昌']
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=8039 cached=384 completion=94 reasoning=0 total=8133
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=8312 cached=7936 completion=381 reasoning=0 total=8693
+[chat 1/20] 韩爌: 老臣韩爌，前内阁首辅，罢居蒲州，叩见陛下。  陛下初登大宝，便问及钱粮根本，实乃社稷之幸。老臣虽罢居数年，不敢忘国事。容臣先查太仓实数，再为陛下细陈。陛下，老臣
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=8031 cached=384 completion=104 reasoning=0 total=8135
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=8428 cached=7936 completion=58 reasoning=0 total=8486
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=8673 cached=8448 completion=396 reasoning=0 total=9069
+[chat 2/20] 张瑞图: 陛下问及辽东边务，容臣详查后再奏。  先查关宁军详情与辽东盘面。再查后金动向与关宁军详细军情。臣张瑞图谨奏：  陛下问辽东虚实，臣据所闻所知，据实以对。  **
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=8029 cached=768 completion=301 reasoning=0 total=8330
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=8427 cached=7936 completion=234 reasoning=0 total=8661
+[chat 3/20] 来宗道: （来宗道躬身一礼，面色恭谨，语速不疾不徐）  陛下圣明，垂问陕事，此乃当务之急。臣阅陕西巡抚上月奏报——延安、庆阳、平凉诸府亢旱如故，地方请赈银三十万两，户部以
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=8032 cached=768 completion=376 reasoning=0 total=8408
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=8572 cached=7936 completion=321 reasoning=0 total=8893
+[chat 4/20] 施凤来: （施凤来躬身趋前，袍袖微颤，语速徐缓，似在字字斟酌）  陛下圣明，此问实系社稷安危。臣蒙先帝拔擢，备位内阁，岂敢不据实以对。  目下朝局……臣斗胆直言，非独东林
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=8029 cached=768 completion=374 reasoning=0 total=8403
+[chat 5/20] 黄立极: 陛下问及内廷用度、织造、皇庄与厂卫司礼监之事，臣黄立极谨奏。  内廷用度向由司礼监与内官监掌理，臣在阁中仅见户部拨付之数，具体支销例不经过内阁。织造方面，苏杭织
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=7988 cached=768 completion=385 reasoning=0 total=8373
+[chat 6/20] 王绍徽: 陛下初登大宝，即问及九边军务，足见圣心忧劳。臣忝掌吏部，铨选之事略知一二，然边镇兵政实属兵部职掌，臣不敢越俎妄议。不过——既蒙陛下垂问，臣姑且就铨选所见，略陈一
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=8042 cached=768 completion=536 reasoning=0 total=8578
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=8757 cached=7936 completion=270 reasoning=0 total=9027
+[chat 7/20] 毕自严: 臣毕自严，叩见陛下。  陛下初登大宝，便问及钱粮根本，此社稷之幸。臣斗胆直言——太仓现银三百二十万两，内库四百四十万两，看似尚有存余，实则危如累卵。  臣请为陛
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=8027 cached=768 completion=95 reasoning=0 total=8122
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=8484 cached=7936 completion=58 reasoning=0 total=8542
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=8653 cached=8448 completion=418 reasoning=0 total=9071
+[chat 8/20] 杨嗣昌: 陛下问及辽东、关宁与建虏三事，臣先逐一据实奏对。  容臣先调阅国库与辽东相关卷宗。再查辽东宁锦一线详情与关宁军现状。陛下，臣据户部档册与边报所记，谨奏如下：  
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=8727 cached=8576 completion=70 reasoning=0 total=8797
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=8894 cached=8704 completion=451 reasoning=0 total=9345
+[chat 9/20] 韩爌: 陛下问及陕西，实乃切中要害。容臣调阅陕西详情，再为陛下细奏。陛下，陕西情形比老臣预想更危：  **民心动荡**：民心仅三十二，动乱值高达七十八——已近燃点。延安
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=9104 cached=8960 completion=597 reasoning=0 total=9701
+[chat 10/20] 张瑞图: （微微欠身，沉吟片刻）  陛下此问，正中今日朝局之肯綮。臣不敢讳言——臣本闽南寒士，以词臣入阁，票拟附魏珰者，非臣本愿，实天启末年大势所迫，满朝皆然，臣一人不能
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=8692 cached=8576 completion=380 reasoning=0 total=9072
+[chat 11/20] 来宗道: （来宗道闻言，面色微微一紧，躬身拱手，语速略缓）  陛下问及内廷用度与厂卫司礼监……臣忝在阁臣，职在票拟，内廷账目例由司礼监管辖，臣实未得与闻细目。至于织造、皇
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=8927 cached=8832 completion=511 reasoning=0 total=9438
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=9624 cached=9344 completion=323 reasoning=0 total=9947
+[chat 12/20] 施凤来: （施凤来略一沉吟，拱手低声道）  陛下问及边备，此乃百年积弊，非一日可解。臣不敢空言塞责，请就所知，分陈数端：  **一曰兵额虚冒。** 九边各镇，名册与实兵相
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=8438 cached=7936 completion=554 reasoning=0 total=8992
+[chat 13/20] 黄立极: 陛下问及太仓存银与各项支缺，容臣据户部近日所报，逐一奏对。  （略整袍袖，正色）  太仓现银——据户部上月盘库实报，库银三百二十万两有奇。然此数看似尚存，实则支
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=8403 cached=7936 completion=106 reasoning=0 total=8509
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=8802 cached=8320 completion=66 reasoning=0 total=8868
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=8884 cached=8832 completion=514 reasoning=0 total=9398
+[chat 14/20] 王绍徽: 陛下问得切中要害。容臣先调阅辽东近日奏报与全军名册，再据实回奏。陛下，臣据所掌情形，据实以奏：  **一曰宁锦虚实。** 宁远、锦州二城城防尚固，红夷大炮布置得
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=9061 cached=8960 completion=64 reasoning=0 total=9125
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=9222 cached=8960 completion=576 reasoning=0 total=9798
+[chat 15/20] 毕自严: 陛下问及陕西，臣先调阅当地详情，再据实奏对。陛下，陕西情形比臣预想的更险——  **人口五百二十万，民心仅三十二**，已是离心离德之兆。**动乱指数七十八**，
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=9106 cached=8960 completion=526 reasoning=0 total=9632
+[chat 16/20] 杨嗣昌: 陛下此问，实乃社稷根本。臣不敢以空言对，请先据户部所见，再陈管见。  臣在户部郎中任上，经手钱粮簿册，见到的不是党争文字，而是**账目上的窟窿**。东林与阉党谁
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=9376 cached=9344 completion=116 reasoning=0 total=9492
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=11192 cached=9472 completion=593 reasoning=0 total=11785
+[chat 17/20] 韩爌: 陛下问及内廷，此事干系重大，老臣不敢妄言。容臣先查内库流水与相关建筑，再据实回奏。陛下，老臣据所见账册与建筑册，据实回奏：  **一、内廷用度与皇庄岁入**  
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=9735 cached=9600 completion=580 reasoning=0 total=10315
+[chat 18/20] 张瑞图: （略整衣冠，神色凝重）  陛下问及九边，此乃本朝二百六十余年之痼疾，非一剂猛药可愈。然陛下既问，臣敢不竭诚以对？  **九边之弊，臣概括为三句话：兵额虚、马政废
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=9108 cached=8960 completion=64 reasoning=0 total=9172
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=9352 cached=9088 completion=428 reasoning=0 total=9780
+[chat 19/20] 来宗道: （来宗道躬身，略作沉吟，面色凝重）  陛下问及钱粮细目，臣请先调户部近日册籍，据实以对。（来宗道看毕，面色愈沉，拱手道）  陛下，臣据户部账册所告：太仓现存银三
+[TOKEN] caller=minister model=deepseek-v4-flash prompt=9978 cached=9600 completion=513 reasoning=0 total=10491
+[chat 20/20] 施凤来: （施凤来神色一凛，压低声音）  陛下问及宁锦虚实，臣不敢隐瞒，亦不敢妄言。据兵部近日塘报及蓟辽督师王之臣密揭所陈：  **关宁军欠饷确已五月有余。** 士卒每月
+[directive 1/5] id=1 着户部毕自严核两京十三省积欠钱粮，造册具奏，凡侵欺挪移者依律追比。
+[directive 2/5] id=2 特从内库拨银三十万两专补关宁军欠饷，余镇由户部统筹分摊，限一月议定。
+[directive 3/5] id=3 陕西大旱，着该省巡抚开仓平粜、蠲免本年田赋三成，发赈银十万两活饥民。
+[directive 4/5] id=4 着工部于京营增筑火器局一所，命徐光启提督，督造红夷炮与火铳装备京军。
+[directive 5/5] id=5 整饬九边马政屯田，着各镇督抚核实兵额、清查虚冒，岁终考成具奏。
+[resolve] 开始结算（拟诏 + simulator + extractor）...
+[TOKEN] caller=decree-writer model=deepseek-v4-flash prompt=931 cached=384 completion=316 reasoning=0 total=1247
+[22:19:26.586] 结算 1/4 固定月度财政 tick
+[evt] stage: 固定月度财政入账
+[22:19:26.611] [AUTO-TRIGGER] 本回合程序硬立项 1 条：['朝鲜密使来朝']
+[evt] stage: 回顾近来朝局
+[22:19:26.611] [memory/chapters] inject=0 upto_turn=1
+[22:19:26.611] [secret_order] 注入推演 active=0 pending_review=0
+[22:19:26.611] 结算 2/4 推演 agent（月末邸报）
+[evt] stage: 推演月末邸报
+[22:19:26.612] [simulator] 使用模型 deepseek-v4-flash
+[22:19:26.612] [simulator] 开始流式推演（首字到达前可能等几秒）
+[22:19:28.857] [simulator/思考] 好的
+[evt] thinking: 好的
+[22:19:29.764] [simulator/思考] ，用户要求我根据提供的模拟器数据来写这个月（1627年10月）的月末奏章。这是一个很具体的任务，需要我扮演大明末代讲官兼推演官的角色。 ⏎  ⏎ 首先，我需要仔细分析这个模拟器数据。用户提供了很多表格和数据，包括各种建筑的TSV、朝廷官员名单、军队
+[evt] thinking: ，用户要求我根据提供的模拟器数据来写这个月（1627年10月）的月末奏章。这是一个很具体的任务，需要我扮演大明末代讲官兼推演官的角色。
+
+首先，我需要仔细分析这个模拟器数据。用户提供了很多表格和数据，包括各种建筑的TSV、朝廷官员名单、军队
+[22:19:30.627] [simulator/思考] 情况、地区状态，还有一堆JSON格式的字段。这些数据构成了这个月的游戏世界状态。 ⏎  ⏎ 关键是要理解这个月的核心事件。从数据看，这是崇祯皇帝即位后的第一个月。新皇帝刚登基，发布了“即位诏”和“新政诏”。这个诏书内容很丰富，涉及追查阉党、整顿财政
+[evt] thinking: 情况、地区状态，还有一堆JSON格式的字段。这些数据构成了这个月的游戏世界状态。
+
+关键是要理解这个月的核心事件。从数据看，这是崇祯皇帝即位后的第一个月。新皇帝刚登基，发布了“即位诏”和“新政诏”。这个诏书内容很丰富，涉及追查阉党、整顿财政
+[22:19:31.585] [simulator/思考] 、安抚边镇、赈济陕西、推行新政等多个方面。 ⏎  ⏎ 我需要按照系统要求的判案流程来组织奏章。先看看这个月的具体动作。诏书里明确提到要“严核积年拖欠钱粮”，要拨银补关宁军欠饷，还要赈济陕西灾民，同时整顿吏治、推行新政。这些都要在奏章里体现，而且每条
+[evt] thinking: 、安抚边镇、赈济陕西、推行新政等多个方面。
+
+我需要按照系统要求的判案流程来组织奏章。先看看这个月的具体动作。诏书里明确提到要“严核积年拖欠钱粮”，要拨银补关宁军欠饷，还要赈济陕西灾民，同时整顿吏治、推行新政。这些都要在奏章里体现，而且每条
+[22:19:32.446] [simulator/思考] 旨意都要有明确的下落。 ⏎  ⏎ 现在看看数据中的实际情况。国库只有249万两，内库有462万两，但国库月亏36万两。民心只有58，皇威才20，这显示出帝国财政非常紧张，民情不稳。阉党势力还很强，影响力和满意度都很高，但东林等派系都在观望，等待皇帝
+[evt] thinking: 旨意都要有明确的下落。
+
+现在看看数据中的实际情况。国库只有249万两，内库有462万两，但国库月亏36万两。民心只有58，皇威才20，这显示出帝国财政非常紧张，民情不稳。阉党势力还很强，影响力和满意度都很高，但东林等派系都在观望，等待皇帝
+[22:19:33.388] [simulator/思考] 的实际行动。 ⏎  ⏎ 军队方面，关宁军欠饷60万两，士气只有52，装备62；京营空额腐败严重；陕西边军欠饷25万两，士气低迷。这些都需要在奏章中如实反映。 ⏎  ⏎ 地区上，陕西情况最紧急，民心只有32，动乱高达78，自然灾害严重。王嘉胤的流寇已经开始活动
+[evt] thinking: 的实际行动。
+
+军队方面，关宁军欠饷60万两，士气只有52，装备62；京营空额腐败严重；陕西边军欠饷25万两，士气低迷。这些都需要在奏章中如实反映。
+
+地区上，陕西情况最紧急，民心只有32，动乱高达78，自然灾害严重。王嘉胤的流寇已经开始活
+[22:19:34.384] [simulator/思考] 。其他地区也有不同程度的问题，比如河南的动乱值65，山西的旱灾等。 ⏎  ⏎ 考虑到这些数据，我觉得这个月的奏章应该如实呈现新皇登基后的初始挑战。要突出“难”字——国库空虚、边镇危急、陕西饥荒、阉党盘踞，每条旨意都面临重重阻碍。 ⏎  ⏎ 在具体写作时，我
+[evt] thinking: 。其他地区也有不同程度的问题，比如河南的动乱值65，山西的旱灾等。
+
+考虑到这些数据，我觉得这个月的奏章应该如实呈现新皇登基后的初始挑战。要突出“难”字——国库空虚、边镇危急、陕西饥荒、阉党盘踞，每条旨意都面临重重阻碍。
+
+在具体写作时，我
+[22:19:35.382] [simulator/思考] 打算按以下结构组织奏章：先写整体局势的艰难，然后按事件重要性排序，比如陕西流寇最紧急放第一，追查阉党放核心位置，财政整顿和辽东索饷也很关键。最后要有诏书核销，逐条列出本月旨意的执行情况。 ⏎  ⏎ 叙事风格要符合奏章特点，用邸报体，语言要庄重但不过
+[evt] thinking: 打算按以下结构组织奏章：先写整体局势的艰难，然后按事件重要性排序，比如陕西流寇最紧急放第一，追查阉党放核心位置，财政整顿和辽东索饷也很关键。最后要有诏书核销，逐条列出本月旨意的执行情况。
+
+叙事风格要符合奏章特点，用邸报体，语言要庄重但不过
+[22:19:36.491] [simulator/思考] 分华丽，重点展现执行过程中的阻力与损耗。比如拨银补饷会遇到截留，赈灾会遇到胥吏侵蚀，追查阉党会遇到反扑等。 ⏎  ⏎ 数据中的具体数字，如缴获32万两、实拨30万两补饷、陕西赈灾15万两等，都要在叙事中准确体现。军队变化、人事除目等也要如实记录。 ⏎  ⏎ 
+[evt] thinking: 分华丽，重点展现执行过程中的阻力与损耗。比如拨银补饷会遇到截留，赈灾会遇到胥吏侵蚀，追查阉党会遇到反扑等。
+
+数据中的具体数字，如缴获32万两、实拨30万两补饷、陕西赈灾15万两等，都要在叙事中准确体现。军队变化、人事除目等也要如实记录。
+
+[evt] text: 《
+[22:19:36.850] [simulator] …《
+[evt] text: 国
+[evt] text: 步
+[evt] text: 艰难
+[evt] text: 谁
+[evt] text: 与
+[evt] text: 谋
+[evt] text: 》
+
+[evt] text: 天
+[evt] text: 启
+[evt] text: 七年
+[evt] text: 十月
+[evt] text:  
+[evt] text: 月末
+[evt] text: 奏
+[evt] text: 章
+[evt] text: 
+
+
+[evt] text: 一
+[evt] text: 、
+[evt] text: 即位
+[evt] text: 新政
+[evt] text: 颁
+[evt] text: 行
+[evt] text: ，
+[evt] text: 朝
+[evt] text: 野
+[evt] text: 观望
+[evt] text: 
+
+
+[evt] text: 本月
+[evt] text: 乙
+[evt] text: 亥
+[evt] text: ，
+[evt] text: 新
+[evt] text: 天子
+[evt] text: 御
+[evt] text: 奉
+[evt] text: 天门
+[evt] text: ，
+[evt] text: 颁
+[evt] text: 即位
+[evt] text: 诏
+[evt] text: 并
+[evt] text: 新政
+[evt] text: 诏
+[evt] text: 书
+[evt] text: 。
+[evt] text: 诏
+[evt] text: 书
+[evt] text: 明
+[evt] text: 发
+[evt] text: 天下
+[evt] text: ，
+[evt] text: 大
+[evt] text: 旨
+[evt] text: 有五
+[evt] text: ：
+[evt] text: 一
+[evt] text: 曰
+[evt] text: 严
+[evt] text: 核
+[evt] text: 钱
+[evt] text: 粮
+[22:19:37.866] [simulator] …国步艰难谁与谋》 ⏎ 天启七年十月 月末奏章 ⏎  ⏎ 一、即位新政颁行，朝野观望 ⏎  ⏎ 本月乙亥，新天子御奉天门，颁即位诏并新政诏书。诏书明发天下，大旨有五：一曰严核钱粮
+[evt] text: 积
+[evt] text: 欠
+[evt] text: ，
+[evt] text: 命
+[evt] text: 户
+[evt] text: 部尚书
+[evt] text: 毕
+[evt] text: 自
+[evt] text: 严
+[evt] text: 通行
+[evt] text: 两
+[evt] text: 京
+[evt] text: 十三
+[evt] text: 省
+[evt] text: 造
+[evt] text: 册
+[evt] text: 追
+[evt] text: 比
+[evt] text: ；
+[evt] text: 二
+[evt] text: 曰
+[evt] text: 发
+[evt] text: 内
+[evt] text: 库
+[evt] text: 银
+[evt] text: 三十
+[evt] text: 万
+[evt] text: 两
+[evt] text: 专
+[evt] text: 补
+[evt] text: 关
+[evt] text: 宁
+[evt] text: 军
+[evt] text: 欠
+[evt] text: 饷
+[evt] text: ；
+[evt] text: 三
+[evt] text: 曰
+[evt] text: 蠲
+[evt] text: 陕西
+[evt] text: 本年
+[evt] text: 田
+[evt] text: 赋
+[evt] text: 三
+[evt] text: 成
+[evt] text: ，
+[evt] text: 发
+[evt] text: 内
+[evt] text: 帑
+[evt] text: 十万
+[evt] text: 两
+[evt] text: 赈
+[evt] text: 饥
+[evt] text: ；
+[evt] text: 四
+[evt] text: 曰
+[evt] text: 于
+[evt] text: 京
+[evt] text: 营
+[evt] text: 增
+[evt] text: 筑
+[evt] text: 火
+[evt] text: 器
+[evt] text: 局
+[evt] text: ，
+[evt] text: 命
+[evt] text: 徐
+[evt] text: 光
+[evt] text: 启
+[evt] text: 提
+[evt] text: 督
+[evt] text: 造
+[22:19:38.494] [simulator] …积欠，命户部尚书毕自严通行两京十三省造册追比；二曰发内库银三十万两专补关宁军欠饷；三曰蠲陕西本年田赋三成，发内帑十万两赈饥；四曰于京营增筑火器局，命徐光启提督造
+[evt] text: 炮
+[evt] text: ；
+[evt] text: 五
+[evt] text: 曰
+[evt] text: 九
+[evt] text: 边
+[evt] text: 整
+[evt] text: 饬
+[evt] text: 马
+[evt] text: 政
+[evt] text: 屯
+[evt] text: 田
+[evt] text: ，
+[evt] text: 责
+[evt] text: 各
+[evt] text: 督
+[evt] text: 抚
+[evt] text: 岁
+[evt] text: 终
+[evt] text: 考
+[evt] text: 成
+[evt] text: 。
+[evt] text: 此
+[evt] text: 诏
+[evt] text: 一下
+[evt] text: ，
+[evt] text: 朝
+[evt] text: 野
+[evt] text: 耸
+[evt] text: 动
+[evt] text: 。
+[evt] text: 阉
+[evt] text: 党
+[evt] text: 人物
+[evt] text: 以
+[evt] text: 魏
+[evt] text: 忠
+[evt] text: 贤
+[evt] text: 为首
+[evt] text: ，
+[evt] text: 密
+[evt] text: 召
+[evt] text: 门下
+[evt] text: 计
+[evt] text: 议
+[evt] text: ，
+[evt] text: 以为
+[evt] text: “
+[evt] text: 新
+[evt] text: 君
+[evt] text: 初
+[evt] text: 立
+[evt] text: ，
+[evt] text: 未
+[evt] text: 可
+[evt] text: 遽
+[evt] text: 逆
+[evt] text: ，
+[evt] text: 且
+[evt] text: 看
+[evt] text: 其
+[evt] text: 行事
+[evt] text: 再
+[evt] text: 定
+[evt] text: ”。
+[evt] text: 东
+[22:19:39.525] [simulator] …炮；五曰九边整饬马政屯田，责各督抚岁终考成。此诏一下，朝野耸动。阉党人物以魏忠贤为首，密召门下计议，以为“新君初立，未可遽逆，且看其行事再定”。东
+[evt] text: 林
+[evt] text: 旧
+[evt] text: 臣
+[evt] text: 在家
+[evt] text: 闻
+[evt] text: 诏
+[evt] text: ，
+[evt] text: 多
+[evt] text: 感
+[evt] text: 奋
+[evt] text: 流
+[evt] text: 涕
+[evt] text: ，
+[evt] text: 然
+[evt] text: 朝
+[evt] text: 中
+[evt] text: 无人
+[evt] text: 呼应
+[evt] text: 。
+[evt] text: 堂
+[evt] text: 官
+[evt] text: 各有
+[evt] text: 心思
+[evt] text: ，
+[evt] text: 莫
+[evt] text: 敢
+[evt] text: 先
+[evt] text: 发
+[evt] text: 。
+[evt] text: 京师
+[evt] text: 商
+[evt] text: 民
+[evt] text: 窃
+[evt] text: 议
+[evt] text: ，
+[evt] text: 谓
+[evt] text: “
+[evt] text: 新
+[evt] text: 君
+[evt] text: 欲
+[evt] text: 有
+[evt] text: 作为
+[evt] text: ，
+[evt] text: 然
+[evt] text: 库
+[evt] text: 空
+[evt] text: 饷
+[evt] text: 缺
+[evt] text: ，
+[evt] text: 恐
+[evt] text: 难
+[evt] text: 持久
+[22:19:40.532] [simulator] …林旧臣在家闻诏，多感奋流涕，然朝中无人呼应。堂官各有心思，莫敢先发。京师商民窃议，谓“新君欲有作为，然库空饷缺，恐难持久
+[evt] text: ”。
+
+
+[evt] text: 二
+[evt] text: 、
+[evt] text: 陕西
+[evt] text: 饥
+[evt] text: 火
+[evt] text: 焚
+[evt] text: 原
+[evt] text: ，
+[evt] text: 流
+[evt] text: 寇
+[evt] text: 再
+[evt] text: 添
+[evt] text: 羽
+[evt] text: 翼
+[evt] text: 
+
+
+[evt] text: 陕西
+[evt] text: 本月
+[evt] text: 旱
+[evt] text: 灾
+[evt] text: 愈
+[evt] text: 烈
+[evt] text: 。
+[evt] text: 延安
+[evt] text: 、
+[evt] text: 庆
+[evt] text: 阳
+[evt] text: 诸
+[evt] text: 府
+[evt] text: 米
+[evt] text: 价
+[evt] text: 腾
+[evt] text: 贵
+[evt] text: ，
+[evt] text: 斗
+[evt] text: 米
+[evt] text: 三钱
+[evt] text: ，
+[evt] text: 饥
+[evt] text: 民
+[evt] text: 剥
+[evt] text: 树
+[evt] text: 皮
+[evt] text: 、
+[evt] text: 掘
+[evt] text: 草
+[evt] text: 根
+[evt] text: ，
+[evt] text: 死者
+[evt] text: 相
+[evt] text: 枕
+[evt] text: 。
+[evt] text: 王
+[evt] text: 嘉
+[evt] text: 胤
+[evt] text: 、
+[evt] text: 王
+[evt] text: 二
+[evt] text: 所
+[evt] text: 部
+[evt] text: 自
+[evt] text: 清
+[evt] text: 涧
+[evt] text: 绥
+[evt] text: 德
+[evt] text: 山谷
+[evt] text: 中
+[22:19:41.546] [simulator] …”。 ⏎  ⏎ 二、陕西饥火焚原，流寇再添羽翼 ⏎  ⏎ 陕西本月旱灾愈烈。延安、庆阳诸府米价腾贵，斗米三钱，饥民剥树皮、掘草根，死者相枕。王嘉胤、王二所部自清涧绥德山谷中
+[evt] text: 啸
+[evt] text: 聚
+[evt] text: ，
+[evt] text: 连
+[evt] text: 破
+[evt] text: 数
+[evt] text: 堡
+[evt] text: ，
+[evt] text: 饥
+[evt] text: 民
+[evt] text: 响应
+[evt] text: 如
+[evt] text: 潮
+[evt] text: ，
+[evt] text: 旬
+[evt] text: 日
+[evt] text: 间
+[evt] text: 裹
+[evt] text: 挟
+[evt] text: 至
+[evt] text: 五千
+[evt] text: 余人
+[evt] text: 。
+[evt] text: 陕西
+[evt] text: 巡抚
+[evt] text: 遣
+[evt] text: 兵
+[evt] text: 进
+[evt] text: 剿
+[evt] text: ，
+[evt] text: 边
+[evt] text: 军
+[evt] text: 欠
+[evt] text: 饷
+[evt] text: 已
+[evt] text: 二十五
+[evt] text: 万
+[evt] text: 两
+[evt] text: ，
+[evt] text: 士卒
+[evt] text: 怨
+[evt] text: 恚
+[evt] text: ，
+[evt] text: 兵
+[evt] text: 将
+[evt] text: 相
+[evt] text: 疑
+[evt] text: ，
+[evt] text: 阵
+[evt] text: 前
+[evt] text: 反
+[evt] text: 戈
+[evt] text: 者
+[evt] text: 时有
+[evt] text: 之
+[evt] text: 。
+[evt] text: 诏
+[evt] text: 书
+[evt] text: 所
+[evt] text: 拨
+[evt] text: 内
+[evt] text: 帑
+[evt] text: 十万
+[evt] text: 两
+[22:19:42.570] [simulator] …啸聚，连破数堡，饥民响应如潮，旬日间裹挟至五千余人。陕西巡抚遣兵进剿，边军欠饷已二十五万两，士卒怨恚，兵将相疑，阵前反戈者时有之。诏书所拨内帑十万两
+[evt] text: 赈
+[evt] text: 粮
+[evt] text: ，
+[evt] text: 尚未
+[evt] text: 出
+[evt] text: 京
+[evt] text: 。
+[evt] text: 蠲
+[evt] text: 免
+[evt] text: 田
+[evt] text: 赋
+[evt] text: 之
+[evt] text: 令
+[evt] text: 虽
+[evt] text: 下
+[evt] text: ，
+[evt] text: 然
+[evt] text: 田
+[evt] text: 册
+[evt] text: 多为
+[evt] text: 缙
+[evt] text: 绅
+[evt] text: 隐
+[evt] text: 占
+[evt] text: ，
+[evt] text: 实
+[evt] text: 利
+[evt] text: 难
+[evt] text: 及
+[evt] text: 小
+[evt] text: 民
+[evt] text: 。
+[evt] text: 米
+[evt] text: 粮
+[evt] text: 自
+[evt] text: 晋
+[evt] text: 豫
+[evt] text: 转运
+[evt] text: 亦
+[evt] text: 因
+[evt] text: 驿站
+[evt] text: 裁
+[evt] text: 撤
+[evt] text: 、
+[evt] text: 道路
+[evt] text: 梗阻
+[evt] text: 而
+[evt] text: 迟迟
+[evt] text: 未
+[evt] text: 至
+[evt] text: 。
+[evt] text: 陕西
+[evt] text: 布
+[evt] text: 政
+[evt] text: 司
+[evt] text: 急
+[evt] text: 递
+[evt] text: 至
+[evt] text: 京师
+[evt] text: ：“
+[evt] text: 若
+[evt] text: 春
+[evt] text: 前
+[evt] text: 无
+[22:19:43.581] [simulator] …赈粮，尚未出京。蠲免田赋之令虽下，然田册多为缙绅隐占，实利难及小民。米粮自晋豫转运亦因驿站裁撤、道路梗阻而迟迟未至。陕西布政司急递至京师：“若春前无
+[evt] text: 粮
+[evt] text: ，
+[evt] text: 陕
+[evt] text: 必
+[evt] text: 大
+[evt] text: 乱
+[evt] text: 。”
+
+
+[evt] text: 三
+[evt] text: 、
+[evt] text: 追
+[evt] text: 查
+[evt] text: 阉
+[evt] text: 党
+[evt] text: ，
+[evt] text: 内
+[evt] text: 廷
+[evt] text: 震动
+[evt] text: 
+
+
+[evt] text: 皇帝
+[evt] text: 登
+[evt] text: 极
+[evt] text: 未
+[evt] text: 及
+[evt] text: 旬
+[evt] text: 日
+[evt] text: ，
+[evt] text: 密
+[evt] text: 旨
+[evt] text: 令
+[evt] text: 锦衣
+[evt] text: 卫
+[evt] text: 千
+[evt] text: 户
+[evt] text: 李
+[evt] text: 若
+[evt] text: 琏
+[evt] text: 暗中
+[evt] text: 侦
+[evt] text: 伺
+[evt] text: 魏
+[evt] text: 忠
+[evt] text: 贤
+[evt] text: 、
+[evt] text: 崔
+[evt] text: 呈
+[evt] text: 秀
+[evt] text: 等
+[evt] text: 阉
+[evt] text: 党
+[evt] text: 魁
+[evt] text: 首
+[evt] text: 动静
+[evt] text: 。
+[evt] text: 李
+[evt] text: 若
+[evt] text: 琏
+[evt] text: 素
+[evt] text: 忠
+[evt] text: 谨
+[evt] text: ，
+[evt] text: 选
+[evt] text: 忠
+[evt] text: 勇
+[evt] text: 缇
+[evt] text: 骑
+[evt] text: 二十
+[evt] text: 余人
+[evt] text: ，
+[evt] text: 化
+[22:19:44.545] [simulator] …粮，陕必大乱。” ⏎  ⏎ 三、追查阉党，内廷震动 ⏎  ⏎ 皇帝登极未及旬日，密旨令锦衣卫千户李若琏暗中侦伺魏忠贤、崔呈秀等阉党魁首动静。李若琏素忠谨，选忠勇缇骑二十余人，化
+[evt] text: 装
+[evt] text: 为
+[evt] text: 市
+[evt] text: 贾
+[evt] text: 、
+[evt] text: 脚
+[evt] text: 夫
+[evt] text: ，
+[evt] text: 分
+[evt] text: 伏
+[evt] text: 东
+[evt] text: 厂
+[evt] text: 、
+[evt] text: 司
+[evt] text: 礼
+[evt] text: 监
+[evt] text: 及
+[evt] text: 魏
+[evt] text: 阉
+[evt] text: 私
+[evt] text: 宅
+[evt] text: 左右
+[evt] text: 。
+[evt] text: 本
+[evt] text: 月中
+[evt] text: ，
+[evt] text: 获
+[evt] text: 知
+[evt] text: 魏
+[evt] text: 忠
+[evt] text: 贤
+[evt] text: 私
+[evt] text: 党
+[evt] text: 张
+[evt] text: 瑞
+[evt] text: 图
+[evt] text: 、
+[evt] text: 来
+[evt] text: 宗
+[evt] text: 道
+[evt] text: 、
+[evt] text: 施
+[evt] text: 凤
+[evt] text: 来
+[evt] text: 、
+[evt] text: 黄
+[evt] text: 立
+[evt] text: 极
+[evt] text: 连夜
+[evt] text: 密
+[evt] text: 会
+[evt] text: ，
+[evt] text: 商议
+[evt] text: “
+[evt] text: 保
+[evt] text: 位
+[evt] text: 自
+[evt] text: 全
+[evt] text: 之
+[evt] text: 策
+[evt] text: ”，
+[evt] text: 田
+[evt] text: 尔
+[22:19:45.552] [simulator] …装为市贾、脚夫，分伏东厂、司礼监及魏阉私宅左右。本月中，获知魏忠贤私党张瑞图、来宗道、施凤来、黄立极连夜密会，商议“保位自全之策”，田尔
+[evt] text: 耕
+[evt] text: 、
+[evt] text: 许
+[evt] text: 显
+[evt] text: 纯
+[evt] text: 以
+[evt] text: 五
+[evt] text: 彪
+[evt] text: 之势
+[evt] text: 从中
+[evt] text: 联络
+[evt] text: ，
+[evt] text: 锦衣
+[evt] text: 卫
+[evt] text: 与
+[evt] text: 东
+[evt] text: 厂
+[evt] text: 皆
+[evt] text: 在
+[evt] text: 阉
+[evt] text: 党
+[evt] text: 手中
+[evt] text: ，
+[evt] text: 消息
+[evt] text: 时有
+[evt] text: 泄漏
+[evt] text: 。
+[evt] text: 李
+[evt] text: 若
+[evt] text: 琏
+[evt] text: 恐
+[evt] text: 夜
+[evt] text: 长
+[evt] text: 梦
+[evt] text: 多
+[evt] text: ，
+[evt] text: 急
+[evt] text: 奏
+[evt] text: 报
+[evt] text: 内
+[evt] text: 廷
+[evt] text: 。
+[evt] text: 皇帝
+[evt] text: 闻
+[evt] text: 奏
+[evt] text: 默
+[evt] text: 然
+[evt] text: 良久
+[evt] text: ，
+[evt] text: 命
+[evt] text: 其
+[evt] text: 继续
+[evt] text: 密
+[evt] text: 查
+[evt] text: ，
+[evt] text: 不得
+[evt] text: 打
+[evt] text: 草
+[evt] text: 惊
+[evt] text: 蛇
+[evt] text: 。
+[evt] text: 外
+[evt] text: 廷
+[evt] text: 尚无
+[evt] text: 风
+[evt] text: 闻
+[evt] text: ，
+[22:19:46.492] [simulator] …耕、许显纯以五彪之势从中联络，锦衣卫与东厂皆在阉党手中，消息时有泄漏。李若琏恐夜长梦多，急奏报内廷。皇帝闻奏默然良久，命其继续密查，不得打草惊蛇。外廷尚无风闻，
+[evt] text: 但
+[evt] text: 朝
+[evt] text: 中
+[evt] text: 稍
+[evt] text: 敏锐
+[evt] text: 者
+[evt] text: 已
+[evt] text: 嗅
+[evt] text: 到
+[evt] text: 异
+[evt] text: 动
+[evt] text: 。
+
+
+[evt] text: 四
+[evt] text: 、
+[evt] text: 辽东
+[evt] text: 索
+[evt] text: 饷
+[evt] text: 情
+[evt] text: 急
+[evt] text: ，
+[evt] text: 关
+[evt] text: 宁
+[evt] text: 危
+[evt] text: 在
+[evt] text: 旦
+[evt] text: 夕
+[evt] text: 
+
+
+[evt] text: 辽东
+[evt] text: 十二月
+[evt] text: 寒风
+[evt] text: 刺
+[evt] text: 骨
+[evt] text: ，
+[evt] text: 关
+[evt] text: 宁
+[evt] text: 军
+[evt] text: 欠
+[evt] text: 饷
+[evt] text: 积
+[evt] text: 至
+[evt] text: 六十
+[evt] text: 万
+[evt] text: 两
+[evt] text: 。
+[evt] text: 宁
+[evt] text: 远
+[evt] text: 、
+[evt] text: 锦
+[evt] text: 州
+[evt] text: 各
+[evt] text: 营
+[evt] text: 士卒
+[evt] text: 饥
+[evt] text: 寒
+[evt] text: 交
+[evt] text: 迫
+[evt] text: ，
+[evt] text: 已有
+[evt] text: 夜
+[evt] text: 聚
+[evt] text: 私
+[evt] text: 语
+[evt] text: 者
+[evt] text: 。
+[evt] text: 祖
+[evt] text: 大
+[evt] text: 寿
+[evt] text: 、
+[22:19:47.349] [simulator] …但朝中稍敏锐者已嗅到异动。 ⏎  ⏎ 四、辽东索饷情急，关宁危在旦夕 ⏎  ⏎ 辽东十二月寒风刺骨，关宁军欠饷积至六十万两。宁远、锦州各营士卒饥寒交迫，已有夜聚私语者。祖大寿、
+[evt] text: 何
+[evt] text: 可
+[evt] text: 纲
+[evt] text: 飞
+[evt] text: 檄
+[evt] text: 告
+[evt] text: 急
+[evt] text: ，
+[evt] text: 谓
+[evt] text: “
+[evt] text: 若
+[evt] text: 饷
+[evt] text: 再
+[evt] text: 不到
+[evt] text: ，
+[evt] text: 恐
+[evt] text: 变
+[evt] text: 生
+[evt] text: 腋
+[evt] text: 下
+[evt] text: ”。
+[evt] text: 户
+[evt] text: 部尚书
+[evt] text: 毕
+[evt] text: 自
+[evt] text: 严
+[evt] text: 以
+[evt] text: 库
+[evt] text: 空
+[evt] text: 无
+[evt] text: 策
+[evt] text: ，
+[evt] text: 只得
+[evt] text: 将
+[evt] text: 诏
+[evt] text: 令
+[evt] text: 所
+[evt] text: 拨
+[evt] text: 内
+[evt] text: 库
+[evt] text: 三十
+[evt] text: 万
+[evt] text: 两
+[evt] text: 先行
+[evt] text: 解
+[evt] text: 发
+[evt] text: 。
+[evt] text: 然
+[evt] text: 饷
+[evt] text: 银
+[evt] text: 由
+[evt] text: 京
+[evt] text: 至
+[evt] text: 辽
+[evt] text: ，
+[evt] text: 沿途
+[evt] text: 驿站
+[evt] text: 、
+[evt] text: 关卡
+[evt] text: 、
+[evt] text: 兵
+[evt] text: 站
+[evt] text: 层层
+[evt] text: 拔
+[evt] text: 毛
+[evt] text: ，
+[evt] text: 户
+[evt] text: 部
+[22:19:48.384] [simulator] …何可纲飞檄告急，谓“若饷再不到，恐变生腋下”。户部尚书毕自严以库空无策，只得将诏令所拨内库三十万两先行解发。然饷银由京至辽，沿途驿站、关卡、兵站层层拔毛，户部
+[evt] text: 估算
+[evt] text: 实
+[evt] text: 到
+[evt] text: 宁
+[evt] text: 远
+[evt] text: 不过
+[evt] text: 二十
+[evt] text: 万
+[evt] text: 两
+[evt] text: 。
+[evt] text: 且
+[evt] text: 此
+[evt] text: 款
+[evt] text: 仅
+[evt] text: 补
+[evt] text: 欠
+[evt] text: 饷
+[evt] text: 零
+[evt] text: 头
+[evt] text: ，
+[evt] text: 士卒
+[evt] text: 望
+[evt] text: 梅
+[evt] text: 止
+[evt] text: 渴
+[evt] text: 。
+[evt] text: 后
+[evt] text: 金
+[evt] text: 皇
+[evt] text: 太极
+[evt] text: 得
+[evt] text: 细
+[evt] text: 作
+[evt] text: 报
+[evt] text: ，
+[evt] text: 谓
+[evt] text: “
+[evt] text: 明
+[evt] text: 师
+[evt] text: 饷
+[evt] text: 匮
+[evt] text: ，
+[evt] text: 可以
+[evt] text: 扰
+[evt] text: 之
+[evt] text: ”，
+[evt] text: 八
+[evt] text: 旗
+[evt] text: 小
+[evt] text: 股
+[evt] text: 骑兵
+[evt] text: 本月
+[evt] text: 两
+[evt] text: 度
+[evt] text: 突
+[evt] text: 入
+[evt] text: 蓟
+[evt] text: 镇
+[evt] text: 边境
+[22:19:49.411] [simulator] …估算实到宁远不过二十万两。且此款仅补欠饷零头，士卒望梅止渴。后金皇太极得细作报，谓“明师饷匮，可以扰之”，八旗小股骑兵本月两度突入蓟镇边境
+[evt] text: 剽
+[evt] text: 掠
+[evt] text: ，
+[evt] text: 探
+[evt] text: 我
+[evt] text: 虚实
+[evt] text: 。
+[evt] text: 蓟
+[evt] text: 督
+[evt] text: 王之
+[evt] text: 臣
+[evt] text: 飞
+[evt] text: 章
+[evt] text: 请
+[evt] text: 援
+[evt] text: 。
+
+
+[evt] text: 五
+[evt] text: 、
+[evt] text: 京
+[evt] text: 营
+[evt] text: 火
+[evt] text: 器
+[evt] text: 局
+[evt] text: 初创
+[evt] text: ，
+[evt] text: 徐
+[evt] text: 光
+[evt] text: 启
+[evt] text: 艰难
+[evt] text: 开局
+[evt] text: 
+
+
+[evt] text: 诏
+[evt] text: 命
+[evt] text: 徐
+[evt] text: 光
+[evt] text: 启
+[evt] text: 提
+[evt] text: 督
+[evt] text: 京
+[evt] text: 营
+[evt] text: 火
+[evt] text: 器
+[evt] text: 局
+[evt] text: ，
+[evt] text: 拨
+[evt] text: 内
+[evt] text: 库
+[evt] text: 银
+[evt] text: 十万
+[evt] text: 两
+[evt] text: 为
+[evt] text: 开办
+[evt] text: 之
+[evt] text: 资
+[evt] text: 。
+[evt] text: 徐
+[evt] text: 光
+[evt] text: 启
+[evt] text: 以大
+[evt] text: 匠
+[evt] text: 之
+[evt] text: 身
+[evt] text: 衔
+[evt] text: 命
+[evt] text: ，
+[evt] text: 于
+[evt] text: 京
+[evt] text: 营
+[22:19:50.472] [simulator] …剽掠，探我虚实。蓟督王之臣飞章请援。 ⏎  ⏎ 五、京营火器局初创，徐光启艰难开局 ⏎  ⏎ 诏命徐光启提督京营火器局，拨内库银十万两为开办之资。徐光启以大匠之身衔命，于京营
+[evt] text: 旧
+[evt] text: 棚
+[evt] text: 之
+[evt] text: 侧
+[evt] text: 择
+[evt] text: 地
+[evt] text: 设
+[evt] text: 局
+[evt] text: ，
+[evt] text: 招
+[evt] text: 工匠
+[evt] text: 、
+[evt] text: 购
+[evt] text: 铜
+[evt] text: 铁
+[evt] text: 、
+[evt] text: 调
+[evt] text: 沙
+[evt] text: 模
+[evt] text: ，
+[evt] text: 日夜
+[evt] text: 督
+[evt] text: 造
+[evt] text: 。
+[evt] text: 然
+[evt] text: 京
+[evt] text: 营
+[evt] text: 积
+[evt] text: 弊
+[evt] text: 深
+[evt] text: 重
+[evt] text: ，
+[evt] text: 工匠
+[evt] text: 多
+[evt] text: 逃亡
+[evt] text: ，
+[evt] text: 现存
+[evt] text: 者
+[evt] text: 技艺
+[evt] text: 荒
+[evt] text: 疏
+[evt] text: ；
+[evt] text: 料
+[evt] text: 银
+[evt] text: 多
+[evt] text: 被
+[evt] text: 管
+[evt] text: 库
+[evt] text: 内
+[evt] text: 监
+[evt] text: 侵
+[evt] text: 吞
+[evt] text: ，
+[evt] text: 真正
+[evt] text: 到
+[22:19:51.619] [simulator] …旧棚之侧择地设局，招工匠、购铜铁、调沙模，日夜督造。然京营积弊深重，工匠多逃亡，现存者技艺荒疏；料银多被管库内监侵吞，真正到
+[evt] text: 局
+[evt] text: 者
+[evt] text: 不过
+[evt] text: 六
+[evt] text: 万
+[evt] text: 两
+[evt] text: 。
+[evt] text: 徐
+[evt] text: 光
+[evt] text: 启
+[evt] text: 面
+[evt] text: 奏
+[evt] text: 请
+[evt] text: 严
+[evt] text: 核
+[evt] text: 料
+[evt] text: 银
+[evt] text: ，
+[evt] text: 司
+[evt] text: 礼
+[evt] text: 监
+[evt] text: 王
+[evt] text: 体
+[evt] text: 乾
+[evt] text: 以
+[evt] text: “
+[evt] text: 内
+[evt] text: 库
+[evt] text: 支
+[evt] text: 用
+[evt] text: 有
+[evt] text: 例
+[evt] text: ”
+[evt] text: 婉
+[evt] text: 拒
+[evt] text: 。
+[evt] text: 光
+[evt] text: 启
+[evt] text: 退
+[evt] text: 而
+[evt] text: 叹
+[evt] text: 曰
+[evt] text: ：“
+[evt] text: 如此
+[evt] text: 造
+[evt] text: 炮
+[evt] text: ，
+[evt] text: 十
+[evt] text: 门
+[evt] text: 中有
+[evt] text: 五
+[evt] text: 门
+[evt] text: 炸
+[evt] text: 膛
+[evt] text: ，
+[evt] text: 反
+[evt] text: 伤
+[evt] text: 我
+[evt] text: 兵
+[evt] text: 。”
+[evt] text: 然
+[evt] text: 朝廷
+[evt] text: 催
+[evt] text: 造
+[evt] text: 急
+[evt] text: 迫
+[evt] text: ，
+[evt] text: 光
+[evt] text: 启
+[evt] text: 只得
+[evt] text: 先
+[evt] text: 汰
+[evt] text: 庸
+[22:19:52.359] [simulator] …局者不过六万两。徐光启面奏请严核料银，司礼监王体乾以“内库支用有例”婉拒。光启退而叹曰：“如此造炮，十门中有五门炸膛，反伤我兵。”然朝廷催造急迫，光启只得先汰庸
+[evt] text: 工
+[evt] text: 、
+[evt] text: 试
+[evt] text: 新
+[evt] text: 法
+[evt] text: ，
+[evt] text: 以
+[evt] text: 有限
+[evt] text: 之
+[evt] text: 料
+[evt] text: 铸
+[evt] text: 红
+[evt] text: 夷
+[evt] text: 小
+[evt] text: 炮
+[evt] text: 三门
+[evt] text: 以为
+[evt] text: 样
+[evt] text: 炮
+[evt] text: ，
+[evt] text: 其余
+[evt] text: 待
+[evt] text: 来
+[evt] text: 年
+[evt] text: 再
+[evt] text: 举
+[evt] text: 。
+
+
+[evt] text: 六
+[evt] text: 、
+[evt] text: 户
+[evt] text: 部
+[evt] text: 会计
+[evt] text: 清
+[evt] text: 账
+[evt] text: ，
+[evt] text: 太
+[evt] text: 仓
+[evt] text: 岌
+[evt] text: 岌
+[evt] text: 可
+[evt] text: 危
+[evt] text: 
+
+
+[evt] text: 户
+[evt] text: 部尚书
+[evt] text: 毕
+[evt] text: 自
+[evt] text: 严
+[evt] text: 奉
+[evt] text: 严
+[evt] text: 核
+[evt] text: 积
+[evt] text: 欠
+[evt] text: 之
+[evt] text: 旨
+[evt] text: ，
+[evt] text: 调
+[evt] text: 取
+[evt] text: 两
+[evt] text: 京
+[evt] text: 十三
+[evt] text: 省
+[evt] text: 钱
+[evt] text: 粮
+[evt] text: 册
+[evt] text: 籍
+[22:19:53.373] [simulator] …工、试新法，以有限之料铸红夷小炮三门以为样炮，其余待来年再举。 ⏎  ⏎ 六、户部会计清账，太仓岌岌可危 ⏎  ⏎ 户部尚书毕自严奉严核积欠之旨，调取两京十三省钱粮册籍
+[evt] text: ，
+[evt] text: 会同
+[evt] text: 户
+[evt] text: 部
+[evt] text: 郎中
+[evt] text: 杨
+[evt] text: 嗣
+[evt] text: 昌
+[evt] text: 、
+[evt] text: 主
+[evt] text: 事
+[evt] text: 何
+[evt] text: 楷
+[evt] text: 等
+[evt] text: 昼夜
+[evt] text: 核算
+[evt] text: 。
+[evt] text: 本月
+[evt] text: 查
+[evt] text: 得太
+[evt] text: 仓
+[evt] text: 实在
+[evt] text: 存
+[evt] text: 银
+[evt] text: 仅
+[evt] text: 二百
+[evt] text: 四
+[evt] text: 十九
+[evt] text: 万
+[evt] text: 两
+[evt] text: ，
+[evt] text: 而
+[evt] text: 月
+[evt] text: 出
+[evt] text: 常
+[evt] text: 例
+[evt] text: 逾
+[evt] text: 二百
+[evt] text: 一
+[evt] text: 十万
+[evt] text: 两
+[evt] text: ，
+[evt] text: 入
+[evt] text: 不
+[evt] text: 敷
+[evt] text: 出
+[evt] text: 近
+[evt] text: 四十
+[evt] text: 万
+[evt] text: 两
+[evt] text: 。
+[evt] text: 毕
+[evt] text: 自
+[evt] text: 严
+[evt] text: 具
+[evt] text: 疏
+[evt] text: 陈
+[evt] text: 情
+[evt] text: ：“
+[evt] text: 今
+[evt] text: 幸
+[evt] text: 有
+[evt] text: 内
+[evt] text: 库
+[evt] text: 月
+[evt] text: 拨
+[evt] text: 补
+[22:19:54.313] [simulator] …，会同户部郎中杨嗣昌、主事何楷等昼夜核算。本月查得太仓实在存银仅二百四十九万两，而月出常例逾二百一十万两，入不敷出近四十万两。毕自严具疏陈情：“今幸有内库月拨补
+[evt] text: ，
+[evt] text: 否则
+[evt] text: 国
+[evt] text: 用
+[evt] text: 已
+[evt] text: 绝
+[evt] text: 。
+[evt] text: 然
+[evt] text: 积
+[evt] text: 欠
+[evt] text: 追
+[evt] text: 比
+[evt] text: 非
+[evt] text: 一月
+[evt] text: 可
+[evt] text: 办
+[evt] text: ，
+[evt] text: 新
+[evt] text: 税
+[evt] text: 未
+[evt] text: 立
+[evt] text: ，
+[evt] text: 开
+[evt] text: 裁
+[evt] text: 末
+[evt] text: 行
+[evt] text: ，
+[evt] text: 太
+[evt] text: 仓
+[evt] text: 之
+[evt] text: 竭
+[evt] text: 在
+[evt] text: 明年
+[evt] text: 春夏
+[evt] text: 之间
+[evt] text: 。”
+[evt] text: 皇帝
+[evt] text: 览
+[evt] text: 奏
+[evt] text: 默
+[evt] text: 然
+[evt] text: ，
+[evt] text: 命
+[evt] text: 其
+[evt] text: 一个月
+[evt] text: 内
+[evt] text: 议
+[evt] text: 定
+[evt] text: 分摊
+[evt] text: 之
+[evt] text: 策
+[evt] text: 。
+[evt] text: 毕
+[evt] text: 自
+[evt] text: 严
+[evt] text: 遂
+[evt] text: 密
+[evt] text: 召
+[22:19:55.377] [simulator] …，否则国用已绝。然积欠追比非一月可办，新税未立，开裁末行，太仓之竭在明年春夏之间。”皇帝览奏默然，命其一个月内议定分摊之策。毕自严遂密召
+[evt] text: 杨
+[evt] text: 嗣
+[evt] text: 昌
+[evt] text: 、
+[evt] text: 温
+[evt] text: 体
+[evt] text: 仁
+[evt] text: 等
+[evt] text: 筹
+[evt] text: 商
+[evt] text: ，
+[evt] text: 拟
+[evt] text: 以
+[evt] text: 整顿
+[evt] text: 盐
+[evt] text: 课
+[evt] text: 、
+[evt] text: 重
+[evt] text: 开
+[evt] text: 钞
+[evt] text: 关
+[evt] text: 首
+[evt] text: 税
+[evt] text: 、
+[evt] text: 裁
+[evt] text: 酌
+[evt] text: 宗
+[evt] text: 室
+[evt] text: 冗
+[evt] text: 禄
+[evt] text: 为
+[evt] text: 开源
+[evt] text: 节
+[evt] text: 流
+[evt] text: 之
+[evt] text: 策
+[evt] text: ，
+[evt] text: 然
+[evt] text: 皆
+[evt] text: 触动
+[evt] text: 士
+[evt] text: 绅
+[evt] text: 、
+[evt] text: 宗
+[evt] text: 藩
+[evt] text: 利益
+[evt] text: ，
+[evt] text: 朝
+[evt] text: 议
+[evt] text: 必
+[evt] text: 起
+[evt] text: 巨
+[evt] text: 浪
+[evt] text: 。
+
+
+[evt] text: 七
+[evt] text: 、
+[evt] text: 密
+[evt] text: 旨
+[evt] text: 动向
+[evt] text: 
+
+
+[evt] text: 本
+[evt] text: 月初
+[evt] text: ，
+[22:19:56.455] [simulator] …杨嗣昌、温体仁等筹商，拟以整顿盐课、重开钞关首税、裁酌宗室冗禄为开源节流之策，然皆触动士绅、宗藩利益，朝议必起巨浪。 ⏎  ⏎ 七、密旨动向 ⏎  ⏎ 本月初，
+[evt] text: 密
+[evt] text: 旨
+[evt] text: 命
+[evt] text: 锦衣
+[evt] text: 卫
+[evt] text: 千
+[evt] text: 户
+[evt] text: 李
+[evt] text: 若
+[evt] text: 琏
+[evt] text: 侦
+[evt] text: 缉
+[evt] text: 魏
+[evt] text: 忠
+[evt] text: 贤
+[evt] text: 、
+[evt] text: 崔
+[evt] text: 呈
+[evt] text: 秀
+[evt] text: 行
+[evt] text: 止
+[evt] text: 。
+[evt] text: 李
+[evt] text: 若
+[evt] text: 琏
+[evt] text: 已
+[evt] text: 安
+[evt] text: 插
+[evt] text: 眼
+[evt] text: 线
+[evt] text: 于
+[evt] text: 东
+[evt] text: 厂
+[evt] text: 及
+[evt] text: 司
+[evt] text: 礼
+[evt] text: 监
+[evt] text: ，
+[evt] text: 截
+[evt] text: 获
+[evt] text: 阉
+[evt] text: 党
+[evt] text: 密
+[evt] text: 会
+[evt] text: 情报
+[evt] text: 若干
+[evt] text: ，
+[evt] text: 但
+[evt] text: 锦衣
+[evt] text: 卫
+[evt] text: 指挥
+[evt] text: 使
+[evt] text: 田
+[evt] text: 尔
+[evt] text: 耕
+[evt] text: 察觉
+[evt] text: 动静
+[evt] text: ，
+[evt] text: 已
+[evt] text: 着
+[evt] text: 心
+[evt] text: 腹
+[evt] text: 盯
+[evt] text: 防
+[evt] text: 。
+[evt] text: 密
+[evt] text: 旨
+[evt] text: 进展
+[evt] text: ：
+[evt] text: 侦
+[evt] text: 缉
+[evt] text: 初
+[22:19:57.396] [simulator] …密旨命锦衣卫千户李若琏侦缉魏忠贤、崔呈秀行止。李若琏已安插眼线于东厂及司礼监，截获阉党密会情报若干，但锦衣卫指挥使田尔耕察觉动静，已着心腹盯防。密旨进展：侦缉初
+[evt] text: 成
+[evt] text: ，
+[evt] text: 线索
+[evt] text: 渐
+[evt] text: 明
+[evt] text: ，
+[evt] text: 但
+[evt] text: 暴露
+[evt] text: 风险
+[evt] text: 日
+[evt] text: 增
+[evt] text: ，
+[evt] text: 须
+[evt] text: 防
+[evt] text: 阉
+[evt] text: 党
+[evt] text: 反
+[evt] text: 扑
+[evt] text: 。
+[evt] text: 另
+[evt] text: 有一
+[evt] text: 道
+[evt] text: 密
+[evt] text: 旨
+[evt] text: 命
+[evt] text: 司
+[evt] text: 礼
+[evt] text: 监
+[evt] text: 随
+[evt] text: 堂
+[evt] text: 太监
+[evt] text: 王
+[evt] text: 承
+[evt] text: 恩
+[evt] text: 核查
+[evt] text: 内
+[evt] text: 承运
+[evt] text: 库
+[evt] text: 账
+[evt] text: 目
+[evt] text: ，
+[evt] text: 王
+[evt] text: 承
+[evt] text: 恩
+[evt] text: 回报
+[evt] text: ：“
+[evt] text: 内
+[evt] text: 库
+[evt] text: 账
+[evt] text: 头
+[evt] text: 清晰
+[evt] text: ，
+[evt] text: 然
+[evt] text: 阳
+[evt] text: 为
+[evt] text: 清楚
+[evt] text: ，
+[evt] text: 阴
+[evt] text: 有
+[22:19:58.479] [simulator] …成，线索渐明，但暴露风险日增，须防阉党反扑。另有一道密旨命司礼监随堂太监王承恩核查内承运库账目，王承恩回报：“内库账头清晰，然阳为清楚，阴有
+[evt] text: 细
+[evt] text: 数
+[evt] text: 不符
+[evt] text: ，
+[evt] text: 恐
+[evt] text: 有
+[evt] text: 年
+[evt] text: 久
+[evt] text: 侵
+[evt] text: 挪
+[evt] text: 之
+[evt] text: 弊
+[evt] text: 。
+[evt] text: 若
+[evt] text: 深
+[evt] text: 查
+[evt] text: ，
+[evt] text: 必
+[evt] text: 涉
+[evt] text: 司
+[evt] text: 礼
+[evt] text: 监
+[evt] text: 旧
+[evt] text: 掌
+[evt] text: 印
+[evt] text: 王
+[evt] text: 体
+[evt] text: 乾
+[evt] text: 及
+[evt] text: 魏
+[evt] text: 忠
+[evt] text: 贤
+[evt] text: 干
+[evt] text: 儿
+[evt] text: 辈
+[evt] text: 。”
+[evt] text: 此
+[evt] text: 密
+[evt] text: 旨
+[evt] text: 待
+[evt] text: 下
+[evt] text: 月
+[evt] text: 核
+[evt] text: 议
+[evt] text: 。
+
+
+[evt] text: 八
+[evt] text: 、
+[evt] text: 人事
+[evt] text: 除
+[evt] text: 目
+[evt] text: 
+
+
+[evt] text: 任
+[evt] text: 官
+[evt] text: ：
+[evt] text: 无
+[evt] text: 。
+
+[evt] text: 去
+[evt] text: 职
+[evt] text: ：
+[evt] text: 无
+[evt] text: 。
+
+[evt] text: （
+[evt] text: 本月
+[evt] text: 无
+[evt] text: 新
+[evt] text: 人事
+[evt] text: 变化
+[evt] text: ，
+[evt] text: 惟
+[22:19:59.286] [simulator] …细数不符，恐有年久侵挪之弊。若深查，必涉司礼监旧掌印王体乾及魏忠贤干儿辈。”此密旨待下月核议。 ⏎  ⏎ 八、人事除目 ⏎  ⏎ 任官：无。 ⏎ 去职：无。 ⏎ （本月无新人事变化，惟
+[evt] text: 前任
+[evt] text: 辽东
+[evt] text: 巡抚
+[evt] text: 袁
+[evt] text: 崇
+[evt] text: 焕
+[evt] text: 在
+[evt] text: 籍
+[evt] text: 东莞
+[evt] text: ，
+[evt] text: 闻
+[evt] text: 新
+[evt] text: 君
+[evt] text: 诏
+[evt] text: 书
+[evt] text: ，
+[evt] text: 有
+[evt] text: 怀
+[evt] text: 书
+[evt] text: 自
+[evt] text: 陈
+[evt] text: 之意
+[evt] text: ，
+[evt] text: 尚未
+[evt] text: 至
+[evt] text: 京
+[evt] text: 。）
+
+
+[evt] text: 九
+[evt] text: 、
+[evt] text: 陛下
+[evt] text: 未知
+[evt] text: 者
+[evt] text: 
+
+
+[evt] text: 一
+[evt] text: 、
+[evt] text: 魏
+[evt] text: 忠
+[evt] text: 贤
+[evt] text: 已
+[evt] text: 令
+[evt] text: 田
+[evt] text: 尔
+[evt] text: 耕
+[evt] text: 、
+[evt] text: 许
+[evt] text: 显
+[evt] text: 纯
+[evt] text: 布
+[evt] text: 控
+[evt] text: 锦衣
+[evt] text: 卫
+[evt] text: 各
+[evt] text: 所
+[evt] text: ，
+[evt] text: 凡
+[evt] text: 东
+[evt] text: 厂
+[evt] text: 缇
+[evt] text: 骑
+[evt] text: 及
+[evt] text: 皇
+[evt] text: 城
+[22:20:00.287] [simulator] …前任辽东巡抚袁崇焕在籍东莞，闻新君诏书，有怀书自陈之意，尚未至京。） ⏎  ⏎ 九、陛下未知者 ⏎  ⏎ 一、魏忠贤已令田尔耕、许显纯布控锦衣卫各所，凡东厂缇骑及皇城
+[evt] text: 巡
+[evt] text: 捕
+[evt] text: ，
+[evt] text: 皆
+[evt] text: 令
+[evt] text: 留心
+[evt] text: “
+[evt] text: 宫
+[evt] text: 中有
+[evt] text: 无
+[evt] text: 异常
+[evt] text: 动静
+[evt] text: ”，
+[evt] text: 实
+[evt] text: 为
+[evt] text: 侦探
+[evt] text: 皇帝
+[evt] text: 身边
+[evt] text: 近
+[evt] text: 侍
+[evt] text: 及
+[evt] text: 新
+[evt] text: 晋
+[evt] text: 用
+[evt] text: 事
+[evt] text: 之人
+[evt] text: 。
+[evt] text: 李
+[evt] text: 若
+[evt] text: 琏
+[evt] text: 虽
+[evt] text: 密
+[evt] text: 侦
+[evt] text: ，
+[evt] text: 然
+[evt] text: 其
+[evt] text: 手下
+[evt] text: 已
+[evt] text: 有一
+[evt] text: 人被
+[evt] text: 田
+[evt] text: 尔
+[evt] text: 耕
+[evt] text: 识
+[evt] text: 破
+[evt] text: ，
+[evt] text: 今
+[evt] text: 正
+[evt] text: 设法
+[evt] text: 自
+[evt] text: 全
+[evt] text: 。
+
+[evt] text: 二
+[evt] text: 、
+[evt] text: 后
+[evt] text: 金
+[evt] text: 皇
+[evt] text: 太极
+[evt] text: 遣
+[evt] text: 蒙古
+[evt] text: 降
+[evt] text: 人
+[evt] text: 扮
+[evt] text: 作
+[22:20:01.296] [simulator] …巡捕，皆令留心“宫中有无异常动静”，实为侦探皇帝身边近侍及新晋用事之人。李若琏虽密侦，然其手下已有一人被田尔耕识破，今正设法自全。 ⏎ 二、后金皇太极遣蒙古降人扮作
+[evt] text: 边
+[evt] text: 民
+[evt] text: ，
+[evt] text: 深入
+[evt] text: 蓟
+[evt] text: 镇
+[evt] text: 、
+[evt] text: 宣
+[evt] text: 大
+[evt] text: 一带
+[evt] text: 市
+[evt] text: 买
+[evt] text: 铁
+[evt] text: 器
+[evt] text: 、
+[evt] text: 硝
+[evt] text: 磺
+[evt] text: ，
+[evt] text: 其
+[evt] text: 意
+[evt] text: 不在
+[evt] text: 小
+[evt] text: 贩
+[evt] text: ，
+[evt] text: 而在
+[evt] text: 续
+[evt] text: 造
+[evt] text: 军
+[evt] text: 器
+[evt] text: 、
+[evt] text: 蓄
+[evt] text: 力
+[evt] text: 待
+[evt] text: 举
+[evt] text: 。
+[evt] text: 蓟
+[evt] text: 辽
+[evt] text: 督
+[evt] text: 师
+[evt] text: 王之
+[evt] text: 臣
+[evt] text: 不甚
+[evt] text: 觉察
+[evt] text: 。
+
+[evt] text: 三
+[evt] text: 、
+[evt] text: 南京
+[evt] text: 国
+[evt] text: 子
+[evt] text: 监
+[evt] text: 诸
+[evt] text: 生
+[22:20:02.856] [simulator] …边民，深入蓟镇、宣大一带市买铁器、硝磺，其意不在小贩，而在续造军器、蓄力待举。蓟辽督师王之臣不甚觉察。 ⏎ 三、南京国子监诸生
+[evt] text: 及
+[evt] text: 复
+[evt] text: 社
+[evt] text: 士
+[evt] text: 子
+[evt] text: 闻
+[evt] text: 新政
+[evt] text: ，
+[evt] text: 各有
+[evt] text: 书信
+[evt] text: 往来
+[evt] text: ，
+[evt] text: 拟
+[evt] text: 明年
+[evt] text: 春
+[evt] text: 联
+[evt] text: 名
+[evt] text: 上书
+[evt] text: ，
+[evt] text: 请
+[evt] text: 罢
+[evt] text: 阉
+[evt] text: 党
+[evt] text: 起
+[evt] text: 用
+[evt] text: 东
+[evt] text: 林
+[evt] text: ，
+[evt] text: 然
+[evt] text: 朝
+[evt] text: 中
+[evt] text: 无人
+[evt] text: 接
+[evt] text: 应
+[evt] text: ，
+[evt] text: 此
+[evt] text: 信
+[evt] text: 已在
+[evt] text: 途中
+[evt] text: 。
+
+
+[evt] text: 十
+[evt] text: 、
+[evt] text: 待
+[evt] text: 办
+[evt] text: 未
+[evt] text: 解
+[evt] text: 
+
+
+[evt] text: 1
+[evt] text: .
+[evt] text:  #
+[evt] text: 1
+[evt] text:  
+[evt] text: 户
+[evt] text: 部
+[evt] text: 亏
+[evt] text: 空
+[evt] text:  —
+[evt] text:  
+[evt] text: 太
+[evt] text: 仓
+[evt] text: 存
+[evt] text: 银
+[evt] text: 二百
+[evt] text: 四
+[evt] text: 十九
+[22:20:03.114] [simulator] …及复社士子闻新政，各有书信往来，拟明年春联名上书，请罢阉党起用东林，然朝中无人接应，此信已在途中。 ⏎  ⏎ 十、待办未解 ⏎  ⏎ 1. #1 户部亏空 — 太仓存银二百四十九
+[evt] text: 万
+[evt] text: 两
+[evt] text: ，
+[evt] text: 月
+[evt] text: 亏
+[evt] text: 四十
+[evt] text: 万
+[evt] text: 两
+[evt] text: ，
+[evt] text: 毕
+[evt] text: 自
+[evt] text: 严
+[evt] text: 拟
+[evt] text: 以
+[evt] text: 盐
+[evt] text: 课
+[evt] text: 、
+[evt] text: 关税
+[evt] text: 、
+[evt] text: 裁
+[evt] text: 冗
+[evt] text: 之
+[evt] text: 策
+[evt] text: 救
+[evt] text: 急
+[evt] text: ，
+[evt] text: 月
+[evt] text: 内
+[evt] text: 议
+[evt] text: 而未
+[evt] text: 决
+[evt] text: 。
+
+[evt] text: 2
+[evt] text: .
+[evt] text:  #
+[evt] text: 2
+[evt] text:  
+[evt] text: 辽东
+[evt] text: 索
+[evt] text: 饷
+[evt] text:  —
+[evt] text:  
+[evt] text: 内
+[evt] text: 库
+[evt] text: 三十
+[evt] text: 万
+[evt] text: 两
+[evt] text: 已
+[evt] text: 拨
+[evt] text: ，
+[evt] text: 实
+[evt] text: 到
+[evt] text: 宁
+[evt] text: 远
+[evt] text: 约
+[evt] text: 二十
+[evt] text: 万
+[evt] text: 两
+[evt] text: ，
+[evt] text: 欠
+[evt] text: 饷
+[evt] text: 仍
+[evt] text: 积
+[evt] text: 四十
+[evt] text: 万
+[evt] text: 两
+[evt] text: ，
+[evt] text: 军
+[evt] text: 心
+[evt] text: 未
+[22:20:03.788] [simulator] …万两，月亏四十万两，毕自严拟以盐课、关税、裁冗之策救急，月内议而未决。 ⏎ 2. #2 辽东索饷 — 内库三十万两已拨，实到宁远约二十万两，欠饷仍积四十万两，军心未
+[evt] text: 稳
+[evt] text: ，
+[evt] text: 后
+[evt] text: 金
+[evt] text: 小
+[evt] text: 股
+[evt] text: 骚扰
+[evt] text: 。
+
+[evt] text: 3
+[evt] text: .
+[evt] text:  #
+[evt] text: 3
+[evt] text:  
+[evt] text: 陕西
+[evt] text: 流
+[evt] text: 寇
+[evt] text: 起
+[evt] text:  —
+[evt] text:  
+[evt] text: 王
+[evt] text: 嘉
+[evt] text: 胤
+[evt] text: 部
+[evt] text: 已
+[evt] text: 至
+[evt] text: 五千
+[evt] text: 余人
+[evt] text: ，
+[evt] text: 赈
+[evt] text: 粮
+[evt] text: 未
+[evt] text: 发
+[evt] text: ，
+[evt] text: 蠲
+[evt] text: 免
+[evt] text: 空
+[evt] text: 文
+[evt] text: ，
+[evt] text: 延安
+[evt] text: 府
+[evt] text: 告
+[evt] text: 急
+[evt] text: 。
+
+
+[evt] text: 十一
+[evt] text: 、
+[evt] text: 诏
+[evt] text: 书
+[evt] text: 核
+[evt] text: 销
+[evt] text: 
+
+
+[evt] text: 一
+[evt] text: 、
+[evt] text: 严
+[evt] text: 核
+[evt] text: 积
+[evt] text: 年
+[evt] text: 拖欠
+[evt] text: 钱
+[evt] text: 粮
+[evt] text: 、
+[evt] text: 通行
+[evt] text: 两
+[evt] text: 京
+[evt] text: 十三
+[evt] text: 省
+[22:20:04.521] [simulator] …稳，后金小股骚扰。 ⏎ 3. #3 陕西流寇起 — 王嘉胤部已至五千余人，赈粮未发，蠲免空文，延安府告急。 ⏎  ⏎ 十一、诏书核销 ⏎  ⏎ 一、严核积年拖欠钱粮、通行两京十三省
+[evt] text: 造
+[evt] text: 册
+[evt] text: 追
+[evt] text: 比
+[evt] text:  →
+[evt] text:  
+[evt] text: 搁
+[evt] text: 置
+[evt] text: 不行
+[evt] text: 。
+[evt] text: 户
+[evt] text: 部尚书
+[evt] text: 毕
+[evt] text: 自
+[evt] text: 严
+[evt] text: 已
+[evt] text: 调
+[evt] text: 册
+[evt] text: 清查
+[evt] text: ，
+[evt] text: 但
+[evt] text: 地方
+[evt] text: 册
+[evt] text: 籍
+[evt] text: 隐
+[evt] text: 漏
+[evt] text: 严重
+[evt] text: ，
+[evt] text: 士
+[evt] text: 绅
+[evt] text: 阻力
+[evt] text: 极大
+[evt] text: ，
+[evt] text: 且
+[evt] text: 追
+[evt] text: 比
+[evt] text: 非
+[evt] text: 一月
+[evt] text: 可
+[evt] text: 成
+[evt] text: ，
+[evt] text: 仅
+[evt] text: 令
+[evt] text: 行
+[evt] text: 文
+[evt] text: 各
+[evt] text: 督
+[evt] text: 抚
+[evt] text: 造
+[evt] text: 册
+[evt] text: ，
+[evt] text: 未
+[evt] text: 实际
+[evt] text: 追
+[evt] text: 比
+[evt] text: 。
+
+[evt] text: 二
+[evt] text: 、
+[evt] text: 发
+[evt] text: 内
+[evt] text: 库
+[evt] text: 银
+[evt] text: 三十
+[evt] text: 万
+[evt] text: 两
+[evt] text: 专
+[evt] text: 补
+[22:20:05.423] [simulator] …造册追比 → 搁置不行。户部尚书毕自严已调册清查，但地方册籍隐漏严重，士绅阻力极大，且追比非一月可成，仅令行文各督抚造册，未实际追比。 ⏎ 二、发内库银三十万两专补
+[evt] text: 关
+[evt] text: 宁
+[evt] text: 军
+[evt] text: 欠
+[evt] text: 饷
+[evt] text:  →
+[evt] text:  
+[evt] text: 受阻
+[evt] text: 折
+[evt] text: 损
+[evt] text: 。
+[evt] text: 银
+[evt] text: 已
+[evt] text: 出
+[evt] text: 京
+[evt] text: ，
+[evt] text: 沿途
+[evt] text: 盘
+[evt] text: 剥
+[evt] text: 、
+[evt] text: 驿站
+[evt] text: 截
+[evt] text: 留
+[evt] text: ，
+[evt] text: 户
+[evt] text: 部
+[evt] text: 估
+[evt] text: 实
+[evt] text: 到
+[evt] text: 宁
+[evt] text: 远
+[evt] text: 约
+[evt] text: 二十
+[evt] text: 万
+[evt] text: 两
+[evt] text: ，
+[evt] text: 仅
+[evt] text: 补
+[evt] text: 欠
+[evt] text: 饷
+[evt] text: 三分之一
+[evt] text: 。
+
+[evt] text: 三
+[evt] text: 、
+[evt] text: 蠲
+[evt] text: 陕西
+[evt] text: 本年
+[evt] text: 田
+[evt] text: 赋
+[evt] text: 三
+[evt] text: 成
+[evt] text: ，
+[evt] text: 发
+[evt] text: 内
+[evt] text: 帑
+[evt] text: 十万
+[evt] text: 两
+[evt] text: 赈
+[evt] text: 饥
+[evt] text:  →
+[evt] text:  
+[evt] text: 搁
+[evt] text: 置
+[evt] text: 不行
+[evt] text: 且
+[evt] text: 受阻
+[22:20:06.173] [simulator] …关宁军欠饷 → 受阻折损。银已出京，沿途盘剥、驿站截留，户部估实到宁远约二十万两，仅补欠饷三分之一。 ⏎ 三、蠲陕西本年田赋三成，发内帑十万两赈饥 → 搁置不行且受阻
+[evt] text: 折
+[evt] text: 损
+[evt] text: 。
+[evt] text: 蠲
+[evt] text: 免
+[evt] text: 诏
+[evt] text: 令
+[evt] text: 已
+[evt] text: 下
+[evt] text: ，
+[evt] text: 但
+[evt] text: 田
+[evt] text: 册
+[evt] text: 为
+[evt] text: 缙
+[evt] text: 绅
+[evt] text: 隐
+[evt] text: 占
+[evt] text: ，
+[evt] text: 小
+[evt] text: 民
+[evt] text: 未
+[evt] text: 得其
+[evt] text: 利
+[evt] text: ；
+[evt] text: 内
+[evt] text: 帑
+[evt] text: 十万
+[evt] text: 两
+[evt] text: 尚未
+[evt] text: 出
+[evt] text: 京
+[evt] text: ，
+[evt] text: 因
+[evt] text: 户
+[evt] text: 部
+[evt] text: 与
+[evt] text: 内
+[evt] text: 府
+[evt] text: 在
+[evt] text: 拨
+[evt] text: 付
+[evt] text: 细则
+[evt] text: 上
+[evt] text: 扯
+[evt] text: 皮
+[evt] text: ，
+[evt] text: 陕西
+[evt] text: 至今
+[evt] text: 未
+[evt] text: 得
+[evt] text: 分
+[evt] text: 文
+[evt] text: 。
+
+[evt] text: 四
+[evt] text: 、
+[evt] text: 京
+[evt] text: 营
+[evt] text: 增
+[evt] text: 筑
+[evt] text: 火
+[evt] text: 器
+[evt] text: 局
+[evt] text: ，
+[evt] text: 命
+[evt] text: 徐
+[evt] text: 光
+[evt] text: 启
+[evt] text: 提
+[evt] text: 督
+[evt] text: 造
+[evt] text: 炮
+[evt] text:  →
+[22:20:06.751] [simulator] …折损。蠲免诏令已下，但田册为缙绅隐占，小民未得其利；内帑十万两尚未出京，因户部与内府在拨付细则上扯皮，陕西至今未得分文。 ⏎ 四、京营增筑火器局，命徐光启提督造炮 →
+[evt] text:  
+[evt] text: 已
+[evt] text: 办
+[evt] text: 成
+[evt] text: 。
+[evt] text: 徐
+[evt] text: 光
+[evt] text: 启
+[evt] text: 开局
+[evt] text: ，
+[evt] text: 汰
+[evt] text: 庸
+[evt] text: 工
+[evt] text: 、
+[evt] text: 铸
+[evt] text: 样
+[evt] text: 炮
+[evt] text: 三门
+[evt] text: ，
+[evt] text: 然
+[evt] text: 料
+[evt] text: 银
+[evt] text: 被
+[evt] text: 侵
+[evt] text: ，
+[evt] text: 实
+[evt] text: 到
+[evt] text: 六
+[evt] text: 万
+[evt] text: 两
+[evt] text: ，
+[evt] text: 规模
+[evt] text: 较
+[evt] text: 原
+[evt] text: 议
+[evt] text: 大为
+[evt] text: 缩减
+[evt] text: 。
+
+[evt] text: 五
+[evt] text: 、
+[evt] text: 九
+[evt] text: 边
+[evt] text: 整
+[evt] text: 饬
+[evt] text: 马
+[evt] text: 政
+[evt] text: 屯
+[evt] text: 田
+[evt] text: ，
+[evt] text: 责
+[evt] text: 各
+[evt] text: 督
+[evt] text: 抚
+[evt] text: 岁
+[evt] text: 终
+[evt] text: 考
+[evt] text: 成
+[evt] text:  →
+[evt] text:  
+[evt] text: 搁
+[evt] text: 置
+[evt] text: 不行
+[evt] text: 。
+[evt] text: 诏
+[evt] text: 书
+[evt] text: 下达
+[evt] text: ，
+[evt] text: 各
+[evt] text: 镇
+[evt] text: 督
+[evt] text: 抚
+[22:20:07.508] [simulator] … 已办成。徐光启开局，汰庸工、铸样炮三门，然料银被侵，实到六万两，规模较原议大为缩减。 ⏎ 五、九边整饬马政屯田，责各督抚岁终考成 → 搁置不行。诏书下达，各镇督抚
+[evt] text: 唯
+[evt] text: 唯
+[evt] text: 应付
+[evt] text: ，
+[evt] text: 无
+[evt] text: 实际
+[evt] text: 举措
+[evt] text: ，
+[evt] text: 且
+[evt] text: 马
+[evt] text: 政
+[evt] text: 、
+[evt] text: 屯
+[evt] text: 田
+[evt] text: 皆
+[evt] text: 需
+[evt] text: 钱
+[evt] text: 粮
+[evt] text: 人力
+[evt] text: ，
+[evt] text: 户
+[evt] text: 部
+[evt] text: 无
+[evt] text: 余
+[evt] text: 力
+[evt] text: 支持
+[evt] text: ，
+[evt] text: 岁
+[evt] text: 终
+[evt] text: 考
+[evt] text: 成
+[evt] text: 恐
+[evt] text: 成
+[evt] text: 空
+[evt] text: 文
+[evt] text: 。
+[22:20:08.073] [simulator/思考]  叙事风格要符合奏章特点，用邸报体，语言要庄重但不过分华丽，重点展现执行过程中的阻力与损耗。比如拨银补饷会遇到截留，赈灾会遇到胥吏侵蚀，追查阉党会遇到反扑等。 ⏎  ⏎ 数据中的具体数字，如缴获32万两、实拨30万两补饷、陕西赈灾15万两等，都要在叙事中准确体现。军队变化、人事除目等也要如实记录。 ⏎  ⏎ 最终，奏章要传递出帝国面临的多重危机，让皇帝了解当前真实局面，避免唱赞歌，要诚实展示困难。
+[evt] thinking: 最终，奏章要传递出帝国面临的多重危机，让皇帝了解当前真实局面，避免唱赞歌，要诚实展示困难。好的，用户要求我根据提供的模拟器数据来写这个月（1627年10月）的月末奏章。这是一个很具体的任务，需要我扮演大明末代讲官兼推演官的角色。
+
+首先，我
+[22:20:08.883] [simulator] …唯唯应付，无实际举措，且马政、屯田皆需钱粮人力，户部无余力支持，岁终考成恐成空文。
+[22:20:08.883] [simulator] 完成，2541 字，工具调用 0 次
+[TOKEN] caller=simulator model=deepseek-v4-flash prompt=15268 cached=896 completion=2879 reasoning=660 total=18147
+[22:20:08.883] 结算 3/4 结算 agent（抽 JSON）
+[evt] stage: 数值推演结算
+[22:20:08.887] 结算 3/4 抽取（模块 module）
+[22:20:08.887] [extractor/internal] 使用模型 deepseek-v4-flash
+[22:20:08.888] [extractor/military_external] 使用模型 deepseek-v4-flash
+[22:20:08.888] [extractor/issues] 使用模型 deepseek-v4-flash
+[22:20:08.889] [extractor/personnel_secret] 使用模型 deepseek-v4-flash
+[22:20:08.890] [extractor/internal] user payload total=373 chars (~248 tok)
+[22:20:08.890] [extractor/internal] 开始非流式推演（等待完整响应）
+[TOKEN] caller=extractor model=deepseek-v4-flash prompt=19985 cached=6656 completion=413 reasoning=0 total=20398
+[22:20:13.991] [extractor/internal] 完成，738 字，用时 5.1s
+[22:20:13.992] [extractor/military_external] user payload total=309 chars (~206 tok)
+[22:20:13.992] [extractor/military_external] 开始非流式推演（等待完整响应）
+[TOKEN] caller=extractor model=deepseek-v4-flash prompt=17852 cached=10368 completion=296 reasoning=0 total=18148
+[22:20:18.226] [extractor/military_external] 完成，589 字，用时 4.2s
+[22:20:18.226] [extractor/issues] user payload total=295 chars (~196 tok)
+[22:20:18.226] [extractor/issues] 开始非流式推演（等待完整响应）
+[TOKEN] caller=extractor model=deepseek-v4-flash prompt=20501 cached=15616 completion=589 reasoning=0 total=21090
+[22:20:23.969] [extractor/issues] 完成，1100 字，用时 5.7s
+[22:20:23.969] [extractor/personnel_secret] user payload total=398 chars (~265 tok)
+[22:20:23.969] [extractor/personnel_secret] 开始非流式推演（等待完整响应）
+[TOKEN] caller=extractor model=deepseek-v4-flash prompt=17778 cached=15616 completion=126 reasoning=0 total=17904
+[22:20:26.385] [extractor/personnel_secret] 完成，215 字，用时 2.4s
+[22:20:26.385] 结算 4/4 落库 + inertia/ongoing
+[evt] stage: 落库与事项推进
+[22:20:26.397] [secret_order] sim_note id=1 note='李若琏手下已有一人被田尔耕识破，暴露风险增加。'
+[secret_order] 推演副作用 id=1 note='李若琏手下已有一人被田尔耕识破，暴露风险增加。'
+[22:20:26.397] [secret_order] sim_note id=2 note='内承运库账目有细数不符，可能涉及王体乾及魏忠贤干儿辈。'
+[secret_order] 推演副作用 id=2 note='内承运库账目有细数不符，可能涉及王体乾及魏忠贤干儿辈。'
+[evt] stage: 记起居注
+[22:20:26.400] [chapter-memory/INPUT] turn=1 (2986字)
+[22:20:26.400] [chapter-memory] 开始非流式推演（等待完整响应）
+[TOKEN] caller=simulator model=deepseek-v4-flash prompt=3637 cached=384 completion=279 reasoning=0 total=3916
+[22:20:31.724] [chapter-memory] 完成，334 字，用时 5.3s
+[22:20:31.724] [chapter-memory/OUTPUT] turn=1 (334字):
+{
+  "body": "天启七年十月，上即位，颁新政诏五事：严核钱粮、发内帑补辽饷、蠲陕赋赈饥、增火器局、整饬九边。然诏令多阻：户部太仓仅存银二百四十九万两，月亏四十万，毕自严议盐课关税裁冗，未决；内库三十万两解辽，沿途折损，实到宁远二十万，欠饷仍积四十万，军心不稳；陕西旱饥，王嘉胤聚众五千，赈粮未发，蠲免空文；徐光启督造火器，料银被侵，仅铸样炮三门。暗流：魏忠贤令田尔耕布控侦皇帝近侍，李若琏密查阉党已露破绽；后金遣谍入边市买硝磺，蓟督不察。",
+  "tags": ["毕自严", "徐光启", "魏忠贤", "田尔耕", "李若琏", "王嘉胤", "陕西", "辽东", "宁远", "阉党", "户部亏空", "辽饷", "陕西流寇", "火器局"]
+}
+[22:20:31.726] [memory/保存] #1 court:chapter chapter_summary《崇祯1627年10月》 imp=5 src=turn_report:1
+[22:20:31.726] [MEM-IO/db.upsert/BODY] #1 title='崇祯1627年10月' cause='' process='' outcome='崇祯1627年10月' sentiment=neutral tags=['章节', 'turn1', '毕自严', '徐光启', '魏忠贤', '田尔耕', '李若琏', '王嘉胤', '陕西', '辽东', '宁远', '阉党', '户部亏空', '辽饷', '陕西流寇', '火器局'] expires_turn=None
+[22:20:31.727] [chapter-memory] saved id=1 turn=1
+[resolve] 完成。邸报 2900 字。
+
+[bench] 全部 LLM 调用完成，下面是 token 汇总：
+
+========== TOKEN USAGE SUMMARY ==========
+  deepseek-v4-flash: calls=43 prompt=403110 cached=288768 (71.6%) completion=16332 reasoning=660 total=419442
+  TOTAL: calls=43 prompt=403110 cached=288768 (71.6%) completion=16332 reasoning=660 total=419442
+=========================================
+
+[bench] 细分按 caller： .venv/bin/python scripts/sum_token_log.py --by-caller scripts/runs/bench_after_1780496144.log
+[done] DB=data/bench_after.db

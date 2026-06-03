@@ -215,7 +215,6 @@ def build_simulator_payload(
     db: GameDB,
     decree_text: str,
     previous_narrative: str,
-    fixed_flows: Optional[List[Dict[str, object]]] = None,
     deaths_this_turn: Optional[List[Dict[str, str]]] = None,
     debuts_this_turn: Optional[List[Dict[str, str]]] = None,
     relevant_memories: Optional[List[Dict[str, object]]] = None,
@@ -280,7 +279,6 @@ def build_simulator_payload(
         "armies": _auto_table(army_rows),
         "buildings": _auto_table(db.building_payload()),
         "court_roster": court_roster,
-        "fixed_flows": fixed_flows or [],
         "deaths_this_turn": deaths_this_turn or [],
         "debuts_this_turn": debuts_this_turn or [],
         "relevant_memories": relevant_memories or [],
@@ -295,7 +293,6 @@ def simulate_season_with_agno(
     db: GameDB,
     decree_text: str,
     previous_narrative: str,
-    fixed_flows: Optional[List[Dict[str, object]]] = None,
     deaths_this_turn: Optional[List[Dict[str, str]]] = None,
     debuts_this_turn: Optional[List[Dict[str, str]]] = None,
     on_thinking: Optional[Callable[[str], None]] = None,
@@ -310,7 +307,6 @@ def simulate_season_with_agno(
         db,
         decree_text,
         previous_narrative,
-        fixed_flows=fixed_flows,
         deaths_this_turn=deaths_this_turn,
         debuts_this_turn=debuts_this_turn,
         on_thinking=on_thinking,
@@ -327,7 +323,6 @@ def simulate_season_with_payload(
     db: GameDB,
     decree_text: str,
     previous_narrative: str,
-    fixed_flows: Optional[List[Dict[str, object]]] = None,
     deaths_this_turn: Optional[List[Dict[str, str]]] = None,
     debuts_this_turn: Optional[List[Dict[str, str]]] = None,
     on_thinking: Optional[Callable[[str], None]] = None,
@@ -339,7 +334,6 @@ def simulate_season_with_payload(
     """推演 agent，同时返回本次推演 user payload，供 extractor 复用缓存前缀。"""
     payload = simulator_payload or build_simulator_payload(
         state, db, decree_text, previous_narrative,
-        fixed_flows=fixed_flows,
         deaths_this_turn=deaths_this_turn,
         debuts_this_turn=debuts_this_turn,
         relevant_memories=relevant_memories,
@@ -464,7 +458,7 @@ def _extractor_context_payload(
         "fiscal_config": db.get_fiscal_config(),
         "relevant_memories": relevant_memories or [],
         "secret_orders": secret_orders or [],
-        "_format_note": "regions/armies/buildings/powers/active_ministers/offstage_ministers 均为 header+二维数组（cols 列名 + rows 数据）。",
+        "_format_note": "offstage_ministers（及未剔除时的盘面表）为 header+二维数组（cols 列名 + rows 数据）。",
     }
 
 
@@ -498,9 +492,17 @@ def _extractor_compat_payload(base: Dict[str, object]) -> Dict[str, object]:
 # module 模式专用：simulator_payload 已在同一 system 前缀给出全量盘面，这些字段同名同格式
 # 重复，从补充上下文里剔除，省掉约一半 extractor system 体积。
 _MODULE_DROP_FIELDS = (
+    # 同名同格式，simulator_payload 已全量给出
     "regions", "armies", "buildings", "current_state",
     "active_issues", "candidate_events", "decree_text",
     "relevant_memories", "secret_orders",
+    # 异名但同源：simulator_payload 已有等价视图，extractor prompt（score_extractor_shared.md:17、
+    # personnel_secret.md:5）明确指向从 simulator_payload 读，这里的副本是死字段。
+    #   active_ministers → court_roster TSV（在朝大臣）
+    #   powers → powers_brief（势力态势叙述）；new_power 合法集另有 power_ids
+    #   factions → factions_brief；faction_delta key 是 7 个固定枚举，写死在 prompt
+    #   classes → classes_brief；class_delta key 取 class_names + region_ids 校验集
+    "active_ministers", "powers", "factions", "classes",
 )
 
 
@@ -516,8 +518,10 @@ def build_extractor_shared_context(
 
     盘面（regions/armies/buildings/current_state/active_issues/candidate_events…）
     已由同 system 前缀的 simulator_payload 全量给出，这里剔除重复，只留 extractor 独有的
-    校验集（region_ids/army_ids/class_names/power_ids/fiscal_config）与人事元数据
-    （active/offstage_ministers/factions/classes/powers）+ turn/narrative。"""
+    校验集（region_ids/army_ids/class_names/power_ids/fiscal_config）+ offstage_ministers
+    （court_roster 不含离场，任命查重需要）+ turn/narrative。在朝大臣/势力/派系/阶级
+    （active_ministers/powers/factions/classes）也剔除——simulator_payload 已有等价视图，
+    extractor prompt 指向从那读。"""
     base = _extractor_context_payload(
         db, state, narrative, decree_text,
         relevant_memories=relevant_memories,
@@ -526,10 +530,11 @@ def build_extractor_shared_context(
     compat = _extractor_compat_payload(base)
     slim = {k: v for k, v in compat.items() if k not in _MODULE_DROP_FIELDS}
     slim["_dedup_note"] = (
-        "盘面与诏书已在 system 的 simulator_payload 中给出（regions/armies/buildings/"
-        "current_state/active_issues/candidate_events/decree_text/relevant_memories/"
-        "secret_orders），抽取时直接读 simulator_payload，本 extractor_context 只补"
-        "校验用 id 集、fiscal_config 与人事/派系/阶级/势力元数据。"
+        "盘面、诏书、在朝大臣、势力/派系/阶级态势已在 system 的 simulator_payload 中给出"
+        "（盘面表 regions/armies/buildings 走 TSV；court_roster 即在朝大臣；"
+        "powers_brief/factions_brief/classes_brief 即势力/派系/阶级），抽取时直接读 simulator_payload。"
+        "本 extractor_context 只补：校验用 id 集（region_ids/army_ids/class_names/power_ids）、"
+        "fiscal_config、offstage_ministers（离场名册，court_roster 不含，任命查重用）。"
     )
     return slim
 

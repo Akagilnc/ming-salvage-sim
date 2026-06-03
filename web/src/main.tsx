@@ -1273,6 +1273,12 @@ function App() {
     }
   };
 
+  const resetDecree = () => {
+    // 返工：丢弃当前诏文回到御案理政幕。后端旧诏文留着无妨，重新生成即覆盖。
+    setDecree("");
+    setError("");
+  };
+
   const issueDecree = async () => {
     setBusy("月末结算");
     setSettleStage("");
@@ -1518,6 +1524,7 @@ function App() {
             onDeleteDirective={deleteDirective}
             onWriteDecree={writeDecree}
             onSaveDecree={saveDecree}
+            onResetDecree={resetDecree}
             onIssueDecree={issueDecree}
             onConfirmDirective={confirmDirective}
             onRejectDirective={rejectDirective}
@@ -2669,14 +2676,17 @@ function TopStatusBar({
         <img src="/icon_ming_emblem.png" alt="大明" className="emblem-art" />
         <span>{state.turn.year} 年 {state.turn.period} 月</span>
       </button>
+      <i className="hud-divider" aria-hidden="true" />
       <div className="status-metrics">
         <BudgetHover accountName="国库" budget={state.budget["国库"]} />
         <BudgetHover accountName="内库" budget={state.budget["内库"]} />
+        <i className="hud-divider" aria-hidden="true" />
         {scoreKeys.map((key) => (
           <span className={`status-pill ${scoreTone(state.metrics[key], false)}`} key={key}>
             {key} <b>{state.metrics[key]}</b>
           </span>
         ))}
+        <i className="hud-divider" aria-hidden="true" />
         <button className="status-menu" onClick={onOpenMenu} aria-label="游戏菜单">
           <Menu size={16} />
           <span>菜单</span>
@@ -2953,7 +2963,7 @@ function BottomCommandBar({
           <span className="command-caption"><b>邸报详明</b><small>数项加减/账目明细</small></span>
           <span className="command-caption"><b>密令</b><small>{secretOrdersCount ? `${secretOrdersCount} 条进行中` : "暂无密令"}</small></span>
           <span className="command-caption"><b>史册</b><small>历代奏报/诏书</small></span>
-          <span className="command-caption"><b>拟诏</b><small>{directivesCount ? `${directivesCount} 道` : "本回合"}</small></span>
+          <span className="command-caption"><b>拟诏/结束回合</b><small>{directivesCount ? `${directivesCount} 道` : "本回合"}</small></span>
         </div>
       </div>
     </div>
@@ -4882,6 +4892,7 @@ function EdictModal({
   onDeleteDirective,
   onWriteDecree,
   onSaveDecree,
+  onResetDecree,
   onIssueDecree,
   onConfirmDirective,
   onRejectDirective,
@@ -4903,6 +4914,7 @@ function EdictModal({
   onDeleteDirective: (directiveId: number) => void;
   onWriteDecree: () => void;
   onSaveDecree: (text: string) => void;
+  onResetDecree: () => void;
   onIssueDecree: () => void;
   onConfirmDirective: (directiveId: number) => void;
   onRejectDirective: (directiveId: number) => void;
@@ -4914,107 +4926,183 @@ function EdictModal({
   React.useEffect(() => {
     setDecreeDraft(decree);
   }, [decree]);
+
+  // 分幕：随 decree/report 态切。无诏文=御案理政；有诏文未结算=诏书御览；已结算=颁诏奏章。
+  const phase: "desk" | "review" | "issued" = report ? "issued" : decree ? "review" : "desk";
+
+  if (phase === "issued") {
+    return (
+      <div className="edict-stage edict-stage-issued">
+        {error && <div className="error-line" role="alert">{error}</div>}
+        <DecreeScroll text={decree} sealed />
+        {report ? (
+          <section className="edict-gazette">
+            <h2>月末奏章</h2>
+            <pre>{report}</pre>
+          </section>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (phase === "review") {
+    return (
+      <div className="edict-stage edict-stage-review">
+        {busy && <div className="busy-line"><Loader2 size={15} />{busy}...</div>}
+        {error && <div className="error-line" role="alert">{error}</div>}
+        <DecreeScroll text={decreeDraft} editable onChange={setDecreeDraft} />
+        <div className="edict-review-bar">
+          <button
+            className="seal-btn-ghost"
+            onClick={onResetDecree}
+            disabled={!!busy}
+          >
+            <Edit3 size={15} />返工改稿
+          </button>
+          {decreeDraft !== decree && (
+            <button
+              className="seal-btn-save"
+              onClick={() => onSaveDecree(decreeDraft)}
+              disabled={!!busy || !decreeDraft.trim()}
+            >
+              <Check size={15} />存改
+            </button>
+          )}
+          <button
+            className="seal-btn-issue"
+            onClick={onIssueDecree}
+            disabled={!!busy || decreeDraft !== decree}
+            title={decreeDraft !== decree ? "请先存改诏文" : "盖玉玺，诏告天下"}
+          >
+            盖玺颁布
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // phase === "desk"：御案理政
   return (
-    <div className="edict-full-grid">
-      <section className="modal-pane directive-pane">
-        <h2>本月指令</h2>
-        {hasPending && (
-          <div className="pending-directives" role="region" aria-label="待核定大臣拟旨">
-            <h3>⚠ 大臣拟旨待核定（{pendingDirectives.length}）</h3>
-            {pendingDirectives.map((directive) => (
-              <div className="directive-item pending" key={directive.id}>
+    <div className="edict-stage edict-stage-desk">
+      <div className="desk-columns">
+        <section className="desk-pane desk-memorials">
+          {hasPending && (
+            <div className="pending-directives" role="region" aria-label="待核定大臣拟旨">
+              <h3>朱批待定 · 大臣拟旨（{pendingDirectives.length}）</h3>
+              {pendingDirectives.map((directive) => (
+                <div className="directive-item pending" key={directive.id}>
+                  <div className="directive-head">
+                    <b>#{directive.id}</b>
+                    <span>{directive.source}</span>
+                  </div>
+                  <p>{directive.text}</p>
+                  {directive.notes ? <small>{directive.notes}</small> : null}
+                  <div className="directive-tools">
+                    <button className="vermilion-yes" onClick={() => onConfirmDirective(directive.id)} disabled={!!busy}><Check size={14} />准</button>
+                    <button className="vermilion-no" onClick={() => onRejectDirective(directive.id)} disabled={!!busy}><X size={14} />驳</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <h2>本月指令{draftDirectives.length ? ` · ${draftDirectives.length} 道` : ""}</h2>
+          <div className="directive-list">
+            {draftDirectives.map((directive) => (
+              <div className="directive-item" key={directive.id}>
                 <div className="directive-head">
                   <b>#{directive.id}</b>
                   <span>{directive.source}</span>
                 </div>
-                <p>{directive.text}</p>
-                {directive.notes ? <small>{directive.notes}</small> : null}
-                <div className="directive-tools">
-                  <button onClick={() => onConfirmDirective(directive.id)} disabled={!!busy}><Check size={14} />准</button>
-                  <button onClick={() => onRejectDirective(directive.id)} disabled={!!busy}><X size={14} />驳</button>
-                </div>
+                {editingDirectiveId === directive.id ? (
+                  <div className="directive-edit">
+                    <textarea value={editingDirectiveText} onChange={(event) => onEditingTextChange(event.target.value)} />
+                    <div>
+                      <button className="icon-button" onClick={() => onSaveDirective(directive)} aria-label="保存草案"><Check size={15} /></button>
+                      <button className="icon-button" onClick={onCancelEdit} aria-label="取消修改"><X size={15} /></button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <p>{directive.text}</p>
+                    {directive.notes ? <small>{directive.notes}</small> : null}
+                    <div className="directive-tools">
+                      <button onClick={() => onStartEdit(directive)}><Edit3 size={14} />改</button>
+                      <button onClick={() => onDeleteDirective(directive.id)}><Trash2 size={14} />删</button>
+                    </div>
+                  </>
+                )}
               </div>
             ))}
+            {!draftDirectives.length && !hasPending && <div className="empty-note">本月不可空过。请先召见大臣，或在右侧御笔自拟一道指令。</div>}
           </div>
-        )}
-        <div className="directive-list">
-          {draftDirectives.map((directive) => (
-            <div className="directive-item" key={directive.id}>
-              <div className="directive-head">
-                <b>#{directive.id}</b>
-                <span>{directive.source}</span>
-              </div>
-              {editingDirectiveId === directive.id ? (
-                <div className="directive-edit">
-                  <textarea value={editingDirectiveText} onChange={(event) => onEditingTextChange(event.target.value)} />
-                  <div>
-                    <button className="icon-button" onClick={() => onSaveDirective(directive)} aria-label="保存草案"><Check size={15} /></button>
-                    <button className="icon-button" onClick={onCancelEdit} aria-label="取消修改"><X size={15} /></button>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <p>{directive.text}</p>
-                  {directive.notes ? <small>{directive.notes}</small> : null}
-                  <div className="directive-tools">
-                    <button onClick={() => onStartEdit(directive)}><Edit3 size={14} />改</button>
-                    <button onClick={() => onDeleteDirective(directive.id)}><Trash2 size={14} />删</button>
-                  </div>
-                </>
-              )}
-            </div>
-          ))}
-          {!draftDirectives.length && !hasPending && <div className="empty-note">本月不可空过。请先召见大臣，或在右侧新增一道指令。</div>}
-        </div>
-      </section>
+        </section>
 
-      <section className="modal-pane edict-compose">
-        <h2>新增指令</h2>
-        <textarea
-          value={directiveText}
-          onChange={(event) => onDirectiveTextChange(event.target.value)}
-          placeholder="例如：命毕自严核拨关宁、山海关、蓟镇辽饷一百五十二万两..."
-        />
-        <div className="edict-actions">
-          <button onClick={onCreateDirective} disabled={!!busy || !directiveText.trim()}>新增草案</button>
-          <button onClick={onWriteDecree} disabled={!!busy || !draftDirectives.length || hasPending}>生成诏书</button>
-          <button className="primary-action" onClick={onIssueDecree} disabled={!!busy || !draftDirectives.length || hasPending}>颁布诏书</button>
-        </div>
-        {hasPending && <small className="pending-hint">尚有 {pendingDirectives.length} 道大臣拟旨待核定（准/驳），核定后方可颁诏。</small>}
-      </section>
+        <section className="desk-pane desk-compose">
+          <h2>御笔自拟</h2>
+          <textarea
+            value={directiveText}
+            onChange={(event) => onDirectiveTextChange(event.target.value)}
+            placeholder="例如：命毕自严核拨关宁、山海关、蓟镇辽饷一百五十二万两..."
+          />
+          <button className="desk-add-btn" onClick={onCreateDirective} disabled={!!busy || !directiveText.trim()}>
+            <Edit3 size={14} />新增草案
+          </button>
+          {busy && <div className="busy-line"><Loader2 size={15} />{busy}...</div>}
+          {error && <div className="error-line" role="alert">{error}</div>}
+        </section>
+      </div>
 
-      <section className="modal-pane settlement-box">
-        <h2>诏书与奏章</h2>
-        {busy && <div className="busy-line"><Loader2 size={15} />{busy}...</div>}
-        {error && <div className="error-line" role="alert">{error}</div>}
-        {decree && !report ? (
-          <div className="decree-edit">
-            <label>诏书正文（可改，颁布前以此为准）</label>
-            <textarea
-              value={decreeDraft}
-              onChange={(event) => setDecreeDraft(event.target.value)}
-            />
-            <div className="decree-edit-tools">
-              <button
-                onClick={() => onSaveDecree(decreeDraft)}
-                disabled={!!busy || !decreeDraft.trim() || decreeDraft === decree}
-              >
-                <Check size={14} />存改
-              </button>
-              <button
-                onClick={() => setDecreeDraft(decree)}
-                disabled={!!busy || decreeDraft === decree}
-              >
-                <X size={14} />还原
-              </button>
-            </div>
-          </div>
-        ) : decree || report ? (
-          <pre>{`${decree || ""}${report ? `\n\n${report}` : ""}`}</pre>
+      <div className="desk-footer">
+        {hasPending && <small className="pending-hint">尚有 {pendingDirectives.length} 道大臣拟旨待朱批（准/驳），核定后方可拟诏。</small>}
+        <button
+          className="seal-btn-compose"
+          onClick={onWriteDecree}
+          disabled={!!busy || !draftDirectives.length || hasPending}
+        >
+          拟诏 →
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// 明黄诏书卷轴：竖排右起，古制体例。editable 时点开变 textarea 改稿。
+function DecreeScroll({
+  text,
+  editable,
+  sealed,
+  onChange,
+}: {
+  text: string;
+  editable?: boolean;
+  sealed?: boolean;
+  onChange?: (value: string) => void;
+}) {
+  const [editing, setEditing] = React.useState(false);
+  return (
+    <div className={`decree-scroll${sealed ? " sealed" : ""}`}>
+      <div className="decree-scroll-knob top" aria-hidden="true" />
+      <div className="decree-scroll-paper">
+        {editable && editing ? (
+          <textarea
+            className="decree-scroll-edit"
+            value={text}
+            autoFocus
+            onChange={(event) => onChange?.(event.target.value)}
+            onBlur={() => setEditing(false)}
+          />
         ) : (
-          <div className="empty-note">生成诏书后，正式诏文会在此显示；可手动改定，颁布后会显示月末总结奏章。</div>
+          <div
+            className="decree-scroll-body"
+            onClick={editable ? () => setEditing(true) : undefined}
+            title={editable ? "点此朱笔改稿" : undefined}
+          >
+            {text || "（诏文待拟）"}
+          </div>
         )}
-      </section>
+        {sealed ? <div className="decree-seal-mark" aria-hidden="true">勅</div> : null}
+      </div>
+      <div className="decree-scroll-knob bottom" aria-hidden="true" />
     </div>
   );
 }
@@ -5893,8 +5981,13 @@ function MenuPage({
 
   return (
     <div className="menu-screen">
+      <div className="menu-poster">
+        <img src="/steam_assets/主宣传图.jpg" alt="明末：力挽狂澜" />
+      </div>
+
+      <h1 className="menu-title">明末：力挽狂澜</h1>
+
       <div className="menu-panel">
-        <h1 className="menu-title">明末力挽狂澜</h1>
         <p className="menu-subtitle">崇祯元年正月 · 召大臣议天下事</p>
 
         {!hasKey && (
