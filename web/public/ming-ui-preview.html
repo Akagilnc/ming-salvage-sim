@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>明末 UI 预览图贴合</title>
+  <style>
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #16120c;
+    }
+
+    body {
+      display: grid;
+      place-items: center;
+    }
+
+    .preview {
+      position: relative;
+      width: min(100vw, calc(100vh * 16 / 9));
+      aspect-ratio: 16 / 9;
+      overflow: hidden;
+      background:
+        url("/ui-reference-11236.jpg") center / 100% 100% no-repeat,
+        #d8c6a0;
+      box-shadow: 0 18px 60px rgba(0, 0, 0, .42);
+    }
+
+    .overlay {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    .asset {
+      position: absolute;
+      display: block;
+      object-fit: contain;
+      opacity: 1;
+      filter: drop-shadow(0 0 0 rgba(0, 0, 0, 0));
+    }
+
+    .top-hud { left: 0; top: 0; width: 100%; height: 9.1667%; object-fit: fill; }
+    .hud-court { left: 53.5156%; top: 1.9444%; width: 6.9531%; height: 4.4444%; object-fit: fill; }
+    .hud-harem { left: 61.7188%; top: 1.9444%; width: 6.7188%; height: 4.4444%; object-fit: fill; }
+    .hud-goal { left: 70.7031%; top: 1.3889%; width: 8.9063%; height: 5.8333%; object-fit: fill; }
+    .hud-menu { left: 80.8594%; top: 1.3889%; width: 8.9844%; height: 5.8333%; object-fit: fill; }
+
+    .side-panel { left: 0; top: 8.0556%; width: 20.3125%; height: 50.4167%; object-fit: fill; }
+
+    .desk { left: 10.5469%; top: 84.7222%; width: 74.9219%; height: 15.2778%; object-fit: fill; }
+    .memorial { left: 17.5781%; top: 75%; width: 15.625%; height: 25%; object-fit: fill; }
+    .report { left: 30.8594%; top: 75%; width: 16.4063%; height: 25%; object-fit: fill; }
+    .secret { left: 48.8281%; top: 76.3889%; width: 11.3281%; height: 23.6111%; object-fit: fill; }
+    .history { left: 64.4531%; top: 75.6944%; width: 12.6953%; height: 24.3056%; object-fit: fill; }
+    .edict { left: 80.8594%; top: 67.3611%; width: 19.1406%; height: 32.6389%; object-fit: fill; }
+
+  </style>
+</head>
+<body>
+  <main class="preview" aria-label="明末游戏 UI 目标预览图">
+    <div class="overlay" aria-hidden="true">
+      <img class="asset top-hud" src="/ui/exact/top-hud.png" alt="" />
+      <img class="asset hud-court" src="/ui/exact/hud-court.png" alt="" />
+      <img class="asset hud-harem" src="/ui/exact/hud-harem.png" alt="" />
+      <img class="asset hud-goal" src="/ui/exact/hud-goal.png" alt="" />
+      <img class="asset hud-menu" src="/ui/exact/hud-menu.png" alt="" />
+      <img class="asset side-panel" src="/ui/exact/side-panel.png" alt="" />
+      <img class="asset desk" src="/ui/exact/bottom-desk.png" alt="" />
+      <img class="asset memorial" src="/ui/exact/memorial.png" alt="" />
+      <img class="asset report" src="/ui/exact/report.png" alt="" />
+      <img class="asset secret" src="/ui/exact/secret.png" alt="" />
+      <img class="asset history" src="/ui/exact/history.png" alt="" />
+      <img class="asset edict" src="/ui/exact/edict.png" alt="" />
+    </div>
+  </main>
+</body>
+</html>

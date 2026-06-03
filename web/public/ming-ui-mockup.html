@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>明末 UI 贴合编辑器</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #15120d;
+      font-family: "Songti SC","Noto Serif SC",serif; }
+    .stage {
+      position: absolute; left: 50%; top: 50%;
+      width: 2560px; height: 1440px;
+      transform: translate(-50%, -50%) scale(var(--s, 1));
+      transform-origin: center center;
+      overflow: visible;
+    }
+    .reference { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+
+    .ov { position: absolute; cursor: move; }
+    .ov img { width: 100%; height: 100%; display: block; object-fit: contain;
+      pointer-events: none; -webkit-user-drag: none; user-select: none; }
+
+    /* 编辑态：边框 + 角柄 + 名牌 */
+    .ov::before {
+      content: attr(data-name);
+      position: absolute; left: 0; top: -34px;
+      padding: 3px 9px; font-size: 20px; font-weight: 700;
+      color: #fff3d6; background: rgba(140,30,22,.92); white-space: nowrap;
+      opacity: 0; transition: opacity .1s;
+    }
+    .editing .ov { outline: 3px dashed rgba(255,210,60,.95); }
+    .editing .ov::before { opacity: 1; }
+    .editing .ov.sel { outline: 3px solid #ff3b2f; z-index: 50; }
+    .editing .ov .h {
+      position: absolute; width: 26px; height: 26px; right: -13px; bottom: -13px;
+      background: #ff3b2f; border: 3px solid #fff; border-radius: 50%;
+      cursor: nwse-resize; display: none;
+    }
+    .editing .ov.sel .h { display: block; }
+    .ov .h { display: none; }
+
+    /* 初始坐标（%） */
+    .hud      { left: 0%;     top: 0%;     width: 100%;   height: 14.03%; }
+    .side     { left: 0%;     top: 6.67%;  width: 20.39%; height: 50.56%; }
+    .desk     { left: 14.06%; top: 86.46%; width: 66.41%; height: 10.42%; }
+    .memorial { left: 18.36%; top: 81.60%; width: 11.72%; height: 14.58%; }
+    .report   { left: 31.25%; top: 81.25%; width: 13.67%; height: 15.62%; }
+    .secret   { left: 48.24%; top: 82.64%; width: 8.20%;  height: 13.89%; }
+    .history  { left: 60.74%; top: 82.29%; width: 10.94%; height: 14.58%; }
+    .seal     { left: 82.23%; top: 76.39%; width: 15.62%; height: 22.92%; }
+
+    /* 控制面板 */
+    .panel { position: fixed; right: 12px; top: 12px; z-index: 100;
+      width: 320px; background: rgba(28,18,8,.92); color: #f1e2bd;
+      border: 1px solid rgba(180,120,60,.5); border-radius: 6px; padding: 12px;
+      font: 13px/1.5 ui-monospace, Menlo, monospace; }
+    .panel h3 { font: 700 15px serif; margin-bottom: 8px; color: #ffd98a; }
+    .panel button { font: 700 13px serif; cursor: pointer; margin: 2px 4px 2px 0;
+      padding: 5px 10px; border: 1px solid #8a5a2a; border-radius: 4px;
+      background: #d9c08a; color: #2a1c0d; }
+    .panel button.on { background: #b4231a; color: #fff; }
+    .panel .cur { margin: 8px 0; padding: 6px; background: rgba(0,0,0,.35); border-radius: 4px; }
+    .panel .cur b { color: #ffd98a; }
+    .panel textarea { width: 100%; height: 150px; margin-top: 6px;
+      background: #120c06; color: #b9e2a0; border: 1px solid #5a3a18; border-radius: 4px;
+      font: 12px/1.4 ui-monospace, monospace; padding: 6px; }
+    .panel .hint { font-size: 11px; color: #b59a6a; margin-top: 6px; }
+    .panel .op { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+    .panel input[type=range] { flex: 1; }
+  </style>
+</head>
+<body>
+  <div class="panel">
+    <h3>UI 贴合编辑器</h3>
+    <div>
+      <button id="editBtn" class="on">编辑：开</button>
+      <button id="resetBtn">复位</button>
+      <button id="saveBtn">保存坐标</button>
+    </div>
+    <div class="hint" id="status">自动存浏览器 · 调好点「保存坐标」下载 coords.json</div>
+    <div class="op">透明度 <input id="opa" type="range" min="20" max="100" value="100"></div>
+    <div class="op">微调步长 <select id="step"><option value="1">1px</option><option value="2" selected>2px</option><option value="5">5px</option></select></div>
+    <div class="cur" id="cur">选中：<b>无</b></div>
+    <textarea id="out" readonly placeholder="点「导出 CSS」生成全部坐标，贴回 ming-ui-mockup.html"></textarea>
+    <div class="hint">拖动整块移动 · 拖右下红点缩放 · 选中后方向键移动(Shift=改大小) · 坐标为 %，可直接贴回源码</div>
+  </div>
+
+  <main class="stage editing" id="stage">
+    <img class="reference" src="ui-reference-11236.jpg" alt="参考底图" />
+    <div class="ov hud"      data-name="顶部HUD"><img src="ui/rembg/top-resource-plaque.png"><span class="h"></span></div>
+    <div class="ov side"     data-name="局势面板"><img src="ui/rembg/side-situation-panel.png"><span class="h"></span></div>
+    <div class="ov desk"     data-name="御案"><img src="ui/rembg/bottom-desk.png"><span class="h"></span></div>
+    <div class="ov memorial" data-name="奏疏"><img src="ui/rembg/memorial-seal-docs.png"><span class="h"></span></div>
+    <div class="ov report"   data-name="邸报"><img src="ui/rembg/report-scroll-doc.png"><span class="h"></span></div>
+    <div class="ov secret"   data-name="密令"><img src="ui/rembg/secret-document.png"><span class="h"></span></div>
+    <div class="ov history"  data-name="史册"><img src="ui/rembg/history-book.png"><span class="h"></span></div>
+    <div class="ov seal"     data-name="拟诏"><img src="ui/rembg/edict-seal-large.png"><span class="h"></span></div>
+  </main>
+
+  <script>
+    const W = 2560, H = 1440;
+    const stage = document.getElementById('stage');
+    const ovs = [...document.querySelectorAll('.ov')];
+    let scale = 1, sel = null;
+
+    function fit() {
+      scale = Math.min(innerWidth / W, innerHeight / H);
+      stage.style.setProperty('--s', scale);
+    }
+    addEventListener('resize', fit); fit();
+
+    // 记录初始（复位用）
+    const initial = {};
+    ovs.forEach(o => initial[o.classList[1]] = o.getAttribute('style') || '');
+
+    // 当前几何（px，相对 stage 2560×1440）→ 从 computed % 解析
+    function geom(o) {
+      const cs = getComputedStyle(o);
+      return { x: parseFloat(cs.left), y: parseFloat(cs.top),
+               w: parseFloat(cs.width), h: parseFloat(cs.height) };
+    }
+    function setGeom(o, g) {
+      o.style.left = (g.x / W * 100).toFixed(2) + '%';
+      o.style.top  = (g.y / H * 100).toFixed(2) + '%';
+      o.style.width  = (g.w / W * 100).toFixed(2) + '%';
+      o.style.height = (g.h / H * 100).toFixed(2) + '%';
+      if (o === sel) showCur();
+      persist();
+    }
+
+    const LS = 'ming-ui-coords';
+    function snapshot() {
+      const out = {};
+      ovs.forEach(o => {
+        const cls = o.classList[1], cs = getComputedStyle(o);
+        out[cls] = {
+          left:  +(parseFloat(cs.left)/W*100).toFixed(2),
+          top:   +(parseFloat(cs.top)/H*100).toFixed(2),
+          width: +(parseFloat(cs.width)/W*100).toFixed(2),
+          height:+(parseFloat(cs.height)/H*100).toFixed(2),
+        };
+      });
+      return out;
+    }
+    let saveTimer;
+    function persist() {
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => {
+        localStorage.setItem(LS, JSON.stringify(snapshot()));
+        document.getElementById('status').textContent =
+          '已自动保存 ' + new Date().toLocaleTimeString() + ' · 点「保存坐标」下载 coords.json';
+      }, 200);
+    }
+    function restore() {
+      let raw; try { raw = JSON.parse(localStorage.getItem(LS) || 'null'); } catch { return; }
+      if (!raw) return;
+      ovs.forEach(o => {
+        const g = raw[o.classList[1]]; if (!g) return;
+        o.style.left = g.left + '%'; o.style.top = g.top + '%';
+        o.style.width = g.width + '%'; o.style.height = g.height + '%';
+      });
+    }
+    function showCur() {
+      const c = document.getElementById('cur');
+      if (!sel) { c.innerHTML = '选中：<b>无</b>'; return; }
+      const cs = getComputedStyle(sel);
+      c.innerHTML = `选中：<b>${sel.dataset.name}</b><br>`
+        + `left:${(parseFloat(cs.left)/W*100).toFixed(2)}% top:${(parseFloat(cs.top)/H*100).toFixed(2)}%<br>`
+        + `width:${(parseFloat(cs.width)/W*100).toFixed(2)}% height:${(parseFloat(cs.height)/H*100).toFixed(2)}%`;
+    }
+    function select(o) {
+      if (sel) sel.classList.remove('sel');
+      sel = o; if (o) o.classList.add('sel');
+      showCur();
+    }
+
+    // 拖拽 / 缩放
+    let drag = null;
+    function down(e, o, mode) {
+      if (!stage.classList.contains('editing')) return;
+      e.preventDefault(); select(o);
+      const g = geom(o);
+      drag = { o, mode, sx: e.clientX, sy: e.clientY, g };
+      addEventListener('mousemove', move);
+      addEventListener('mouseup', up);
+    }
+    function move(e) {
+      if (!drag) return;
+      const dx = (e.clientX - drag.sx) / scale;
+      const dy = (e.clientY - drag.sy) / scale;
+      const g = { ...drag.g };
+      if (drag.mode === 'move') { g.x += dx; g.y += dy; }
+      else { g.w = Math.max(20, drag.g.w + dx); g.h = Math.max(20, drag.g.h + dy); }
+      setGeom(drag.o, g);
+    }
+    function up() { drag = null; removeEventListener('mousemove', move); removeEventListener('mouseup', up); }
+
+    ovs.forEach(o => {
+      o.addEventListener('mousedown', e => {
+        if (e.target.classList.contains('h')) down(e, o, 'resize');
+        else down(e, o, 'move');
+      });
+    });
+
+    // 方向键微调
+    addEventListener('keydown', e => {
+      if (!sel || !stage.classList.contains('editing')) return;
+      const k = e.key;
+      if (!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(k)) return;
+      e.preventDefault();
+      const d = +document.getElementById('step').value;
+      const g = geom(sel);
+      const big = e.shiftKey;
+      if (k === 'ArrowLeft')  big ? g.w -= d : g.x -= d;
+      if (k === 'ArrowRight') big ? g.w += d : g.x += d;
+      if (k === 'ArrowUp')    big ? g.h -= d : g.y -= d;
+      if (k === 'ArrowDown')  big ? g.h += d : g.y += d;
+      setGeom(sel, g);
+    });
+
+    // 控制按钮
+    const editBtn = document.getElementById('editBtn');
+    editBtn.onclick = () => {
+      const on = stage.classList.toggle('editing');
+      editBtn.textContent = '编辑：' + (on ? '开' : '关');
+      editBtn.classList.toggle('on', on);
+    };
+    document.getElementById('resetBtn').onclick = () => {
+      ovs.forEach(o => o.setAttribute('style', initial[o.classList[1]]));
+      localStorage.removeItem(LS); showCur();
+      document.getElementById('status').textContent = '已复位';
+    };
+    document.getElementById('opa').oninput = e => {
+      document.querySelectorAll('.ov img').forEach(i => i.style.opacity = e.target.value/100);
+    };
+    document.getElementById('saveBtn').onclick = () => {
+      const data = snapshot();
+      // 同时给出 CSS 文本，方便核对
+      const css = ovs.map(o => {
+        const cls = o.classList[1], g = data[cls];
+        return `    .${cls.padEnd(8)} { left: ${g.left}%; top: ${g.top}%; width: ${g.width}%; height: ${g.height}%; }`;
+      }).join('\n');
+      document.getElementById('out').value = css;
+      const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = 'coords.json'; a.click();
+      document.getElementById('status').textContent = '已下载 coords.json → 发我或告诉我「好了」';
+    };
+
+    restore();
+  </script>
+</body>
+</html>
