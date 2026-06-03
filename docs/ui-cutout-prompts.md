@@ -151,14 +151,24 @@ A semi-transparent parchment-style UI panel for a Ming dynasty strategy game. Ag
 地图, 地形, 彩色背景, 渐变背景, 桌案, 道具, 模糊, 水印
 ```
 
-### 底部御案（含道具）`bottom-desk-new.png`
-裁切参考：底部横条 y约1100–1440，全宽
+### 底部案板（空，不含道具）`bottom-desk-new.png`
+裁切参考：底部横条 y约1100–1440，全宽；只要案板本身，道具全移除
 ```
-A wooden imperial desk surface UI element for a Ming dynasty strategy game, slight overhead angle. Warm dark hardwood grain with lacquer sheen. On the desk surface sit four prop items in a row from left to right: a rolled paper scroll labeled "奏疏", a folded map document labeled "邸报", an official edict document with red seal labeled "密令", a thick bound history book labeled "史策". Each item in painterly illustration style, aged paper and silk, soft drop shadows on desk. Wide landscape crop. Pure white background, no map above.
+A single empty imperial desk surface, wide horizontal strip, slight overhead angle. Deep dark huanghuali rosewood grain with glossy lacquer sheen, two rounded ends. No objects on the surface — completely bare. Slight specular highlight along top edge. Pure white background above and below the desk strip. Wide landscape crop 4:1 ratio. Ming dynasty imperial furniture, painterly illustration style, high detail.
 ```
 负向：
 ```
-地图, 地形, 玉玺, 印章单独出现, 彩色背景, 渐变背景, 上方地图, 模糊, 水印
+卷轴, 书册, 折册, 玉玺, 印章, 道具, 地图, 地形, 彩色背景, 渐变背景, 模糊, 水印
+```
+
+### 底部案头四道具（不含案板）`desk-items-new.png`
+裁切参考：底部横条 y约1100–1440，全宽；只要道具，不要案板木条
+```
+Four individual prop items floating on pure white background, no desk surface, no table, no wood beneath them. From left to right: (1) a rolled paper scroll "奏疏" — aged rice paper partially unrolled, ink brushwork text, bronze end caps; (2) a folded map document "邸报" — worn parchment folded in quarters, red cord tie, faded ink; (3) an official edict document "密令" — cream paper booklet with red wax seal and red ribbon wrap; (4) a thick bound history book "史策" — dark blue cloth cover, ivory title label, stitched binding. Each item rendered in painterly Ming dynasty illustration style, aged paper and silk textures, soft drop shadow beneath each item. Items evenly spaced in a horizontal row. Pure white background, isolated props only.
+```
+负向：
+```
+桌面, 案板, 木纹桌板, 地图, 地形, 玉玺, 彩色背景, 渐变背景, 阴影投在桌上, 模糊, 水印
 ```
 
 ### 玉玺按钮 `edict-seal-new.png`

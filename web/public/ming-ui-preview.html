@@ -3,80 +3,318 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>明末 UI 预览图贴合</title>
+  <title>明末 UI 编辑器</title>
   <style>
-    html,
-    body {
-      width: 100%;
-      height: 100%;
-      margin: 0;
-      overflow: hidden;
-      background: #16120c;
-    }
+    html, body { width:100%;height:100%;margin:0;overflow:hidden;background:#16120c;font-family:"PingFang SC",sans-serif; }
+    body { display:grid;place-items:center; }
 
-    body {
-      display: grid;
-      place-items: center;
+    #toolbar {
+      position:fixed;top:0;left:0;right:0;height:32px;z-index:999;
+      display:flex;align-items:center;gap:8px;padding:0 10px;
+      background:rgba(6,4,2,0.95);border-bottom:1px solid rgba(200,160,50,0.3);
+      font-size:12px;color:#c8a840;
     }
+    #toolbar button { padding:2px 9px;cursor:pointer;font-size:12px;border:1px solid rgba(200,160,50,0.4);background:rgba(40,28,8,0.9);color:#e0c060;border-radius:3px; }
+    #toolbar button:hover { background:rgba(70,50,12,0.95); }
+    #toolbar .red { color:#f08060;border-color:rgba(200,80,50,0.4); }
+    #toolbar #st { margin-left:auto;font-size:11px;color:#60b060; }
+    #toolbar #sel-name { color:#f0d040;font-weight:700;min-width:80px; }
 
     .preview {
-      position: relative;
-      width: min(100vw, calc(100vh * 16 / 9));
-      aspect-ratio: 16 / 9;
-      overflow: hidden;
-      background:
-        url("/ui-reference-11236.jpg") center / 100% 100% no-repeat,
-        #d8c6a0;
-      box-shadow: 0 18px 60px rgba(0, 0, 0, .42);
-    }
-
-    .overlay {
-      position: absolute;
-      inset: 0;
-      pointer-events: none;
+      position:relative;
+      width:min(100vw, calc((100vh - 32px) * 16 / 9));
+      aspect-ratio:16/9;
+      overflow:hidden;
+      background:url('/ming-1627-terrain-map.png') center/cover no-repeat, #1a1810;
+      box-shadow:0 18px 60px rgba(0,0,0,.5);
+      margin-top:32px;
     }
 
     .asset {
-      position: absolute;
-      display: block;
-      object-fit: contain;
-      opacity: 1;
-      filter: drop-shadow(0 0 0 rgba(0, 0, 0, 0));
+      position:absolute;
+      display:block;
+      object-fit:contain;
+      cursor:grab;
+      user-select:none;
+      filter:drop-shadow(0 4px 8px rgba(0,0,0,0.5));
     }
+    .asset:hover { outline:1.5px dashed rgba(255,210,60,0.5); }
+    .asset.sel { outline:2px solid rgba(255,210,60,0.95)!important;z-index:500!important; }
 
-    .top-hud { left: 0; top: 0; width: 100%; height: 9.1667%; object-fit: fill; }
-    .hud-court { left: 53.5156%; top: 1.9444%; width: 6.9531%; height: 4.4444%; object-fit: fill; }
-    .hud-harem { left: 61.7188%; top: 1.9444%; width: 6.7188%; height: 4.4444%; object-fit: fill; }
-    .hud-goal { left: 70.7031%; top: 1.3889%; width: 8.9063%; height: 5.8333%; object-fit: fill; }
-    .hud-menu { left: 80.8594%; top: 1.3889%; width: 8.9844%; height: 5.8333%; object-fit: fill; }
+    /* 文字标签元素 */
+    .text-asset {
+      position:absolute;
+      cursor:grab;
+      user-select:none;
+      text-align:center;
+    }
+    .text-asset:hover { outline:1.5px dashed rgba(255,210,60,0.5); }
+    .text-asset.sel { outline:2px solid rgba(255,210,60,0.95)!important;z-index:500!important; }
 
-    .side-panel { left: 0; top: 8.0556%; width: 20.3125%; height: 50.4167%; object-fit: fill; }
+    /* resize handle */
+    .rh {
+      position:absolute;right:-5px;bottom:-5px;
+      width:12px;height:12px;
+      background:rgba(255,210,60,0.9);border:1px solid rgba(100,70,0,0.6);
+      border-radius:2px;cursor:nwse-resize;display:none;z-index:501;
+    }
+    .sel .rh { display:block; }
+    /* img 不能有子元素，用伪wrap */
+    .img-wrap {
+      position:absolute;cursor:grab;user-select:none;
+      filter:drop-shadow(0 4px 8px rgba(0,0,0,0.5));
+    }
+    .img-wrap:hover { outline:1.5px dashed rgba(255,210,60,0.5); }
+    .img-wrap.sel { outline:2px solid rgba(255,210,60,0.95)!important;z-index:500!important; }
+    .img-wrap img { width:100%;height:100%;object-fit:contain;display:block;pointer-events:none; }
+    .text-asset b { display:block;color:#ffe7b5;font-weight:700; }
+    .text-asset small { display:block;color:rgba(245,215,158,0.72); }
 
-    .desk { left: 10.5469%; top: 84.7222%; width: 74.9219%; height: 15.2778%; object-fit: fill; }
-    .memorial { left: 17.5781%; top: 75%; width: 15.625%; height: 25%; object-fit: fill; }
-    .report { left: 30.8594%; top: 75%; width: 16.4063%; height: 25%; object-fit: fill; }
-    .secret { left: 48.8281%; top: 76.3889%; width: 11.3281%; height: 23.6111%; object-fit: fill; }
-    .history { left: 64.4531%; top: 75.6944%; width: 12.6953%; height: 24.3056%; object-fit: fill; }
-    .edict { left: 80.8594%; top: 67.3611%; width: 19.1406%; height: 32.6389%; object-fit: fill; }
-
+    /* inspector bar */
+    #insp {
+      position:fixed;bottom:0;left:0;right:0;height:32px;z-index:999;
+      display:flex;align-items:center;gap:5px;padding:0 10px;
+      background:rgba(6,4,2,0.95);border-top:1px solid rgba(200,160,50,0.2);
+      font-size:12px;color:#c8a840;
+    }
+    #insp label { color:#806830;font-size:11px; }
+    #insp input { width:60px;padding:2px 4px;background:rgba(20,14,4,0.9);border:1px solid rgba(180,130,40,0.35);color:#e8d080;border-radius:3px;font-size:12px; }
+    #insp input:focus { outline:none;border-color:rgba(220,170,50,0.7); }
   </style>
 </head>
 <body>
-  <main class="preview" aria-label="明末游戏 UI 目标预览图">
-    <div class="overlay" aria-hidden="true">
-      <img class="asset top-hud" src="/ui/exact/top-hud.png" alt="" />
-      <img class="asset hud-court" src="/ui/exact/hud-court.png" alt="" />
-      <img class="asset hud-harem" src="/ui/exact/hud-harem.png" alt="" />
-      <img class="asset hud-goal" src="/ui/exact/hud-goal.png" alt="" />
-      <img class="asset hud-menu" src="/ui/exact/hud-menu.png" alt="" />
-      <img class="asset side-panel" src="/ui/exact/side-panel.png" alt="" />
-      <img class="asset desk" src="/ui/exact/bottom-desk.png" alt="" />
-      <img class="asset memorial" src="/ui/exact/memorial.png" alt="" />
-      <img class="asset report" src="/ui/exact/report.png" alt="" />
-      <img class="asset secret" src="/ui/exact/secret.png" alt="" />
-      <img class="asset history" src="/ui/exact/history.png" alt="" />
-      <img class="asset edict" src="/ui/exact/edict.png" alt="" />
-    </div>
-  </main>
+
+<div id="toolbar">
+  <b style="color:#c8a030;">🎨 UI编辑器</b>
+  <span style="color:#605030;font-size:11px;">拖拽移动 · 方向键微调(Shift=1%)</span>
+  <span id="sel-name">— 未选中 —</span>
+  <div style="width:1px;height:18px;background:rgba(200,160,50,0.2);"></div>
+  <button onclick="saveAll()">💾 保存</button>
+  <button onclick="resetAll()" class="red">重置</button>
+  <button onclick="exportCSS()">📋 导出</button>
+  <span id="st"></span>
+</div>
+
+<main class="preview" id="preview">
+
+  <!-- 案板底座 -->
+  <div class="img-wrap" id="a-anban" data-label="案板"><img src="/ui/exact/案板.png" alt=""/><div class="rh"></div></div>
+
+  <!-- 底部图标（独立，各自可拖） -->
+  <div class="img-wrap" id="a-zoushu"  data-label="奏疏"    ><img src="/ui/exact/zoushu.png"  alt=""/><div class="rh"></div></div>
+  <div class="img-wrap" id="a-mingxi"  data-label="邸报详明"><img src="/ui/exact/mingxi.png"  alt=""/><div class="rh"></div></div>
+  <div class="img-wrap" id="a-miling"  data-label="密令"    ><img src="/ui/exact/miling.png"  alt=""/><div class="rh"></div></div>
+  <div class="img-wrap" id="a-lishi"   data-label="史册"    ><img src="/ui/exact/lishi.png"   alt=""/><div class="rh"></div></div>
+  <div class="img-wrap" id="a-nizhao"  data-label="拟诏玉玺"><img src="/ui/exact/nizhao.png"  alt=""/><div class="rh"></div></div>
+
+  <!-- 文字标签（独立） -->
+  <div class="text-asset" id="t-zoushu"  data-label="奏疏文字"   ><b>奏疏</b><small>3 件待览</small><div class="rh"></div></div>
+  <div class="text-asset" id="t-mingxi"  data-label="邸报文字"   ><b>邸报详明</b><small>数项加减/账目明细</small><div class="rh"></div></div>
+  <div class="text-asset" id="t-miling"  data-label="密令文字"   ><b>密令</b><small>暂无密令</small><div class="rh"></div></div>
+  <div class="text-asset" id="t-lishi"   data-label="史册文字"   ><b>史册</b><small>历代奏报/诏书</small><div class="rh"></div></div>
+  <div class="text-asset" id="t-nizhao"  data-label="拟诏文字"   ><b>拟诏</b><small>2 道</small><div class="rh"></div></div>
+
+</main>
+
+<div id="insp">
+  <span id="iname" style="font-weight:700;color:#f0d040;min-width:80px;">— —</span>
+  <div style="width:1px;height:18px;background:rgba(200,160,50,0.2);"></div>
+  <label>left%</label><input id="i-l" type="number" step="0.1" oninput="setPct('left',+this.value)">
+  <label>top%</label><input  id="i-t" type="number" step="0.1" oninput="setPct('top',+this.value)">
+  <label>width%</label><input id="i-w" type="number" step="0.1" oninput="setPct('width',+this.value)">
+  <label>height%</label><input id="i-h" type="number" step="0.1" oninput="setPct('height',+this.value)">
+  <label>font%</label><input id="i-f" type="number" step="0.1" oninput="setPct('fontSize',+this.value,'cqw')">
+</div>
+
+<script>
+const SKEY = "ming-ui-prev-v1";
+let ov = {};
+try { ov = JSON.parse(localStorage.getItem(SKEY)||"{}"); } catch{}
+
+const preview = document.getElementById("preview");
+
+// 默认百分比坐标
+const DEFAULTS = {
+  "a-anban":   { left:0,   top:80,   width:100, height:12, zIndex:2 },
+  "a-zoushu":  { left:17,  top:66,   width:12, height:18, zIndex:10 },
+  "a-mingxi":  { left:30,  top:64,   width:14, height:20, zIndex:10 },
+  "a-miling":  { left:46,  top:65,   width:10, height:17, zIndex:10 },
+  "a-lishi":   { left:58,  top:65,   width:11, height:18, zIndex:10 },
+  "a-nizhao":  { left:82,  top:58,   width:14, height:25, zIndex:10 },
+  "t-zoushu":  { left:18,  top:85,   width:10, height:7, fontSize:1.4 },
+  "t-mingxi":  { left:31,  top:85,   width:12, height:7, fontSize:1.4 },
+  "t-miling":  { left:46,  top:83,   width:10, height:7, fontSize:1.4 },
+  "t-lishi":   { left:58,  top:83,   width:11, height:7, fontSize:1.4 },
+  "t-nizhao":  { left:82,  top:83,   width:14, height:8, fontSize:1.8 },
+};
+
+function applyEl(el, styles){
+  if(styles.left    != null) el.style.left    = styles.left    + "%";
+  if(styles.top     != null) el.style.top     = styles.top     + "%";
+  if(styles.width   != null) el.style.width   = styles.width   + "%";
+  if(styles.height  != null) el.style.height  = styles.height  + "%";
+  if(styles.zIndex  != null) el.style.zIndex  = styles.zIndex;
+  if(styles.fontSize != null) el.style.fontSize = styles.fontSize + "cqw";
+}
+
+function applyAll(){
+  for(const [id, def] of Object.entries(DEFAULTS)){
+    const el = document.getElementById(id);
+    if(!el) continue;
+    applyEl(el, def);              // defaults first
+  }
+  for(const [id, styles] of Object.entries(ov)){
+    const el = document.getElementById(id);
+    if(!el) continue;
+    applyEl(el, styles);           // overrides on top
+  }
+}
+
+// ── selection ──
+let sel = null;
+function selectEl(el){
+  if(sel) sel.classList.remove("sel");
+  sel = el;
+  if(sel){
+    sel.classList.add("sel");
+    document.getElementById("iname").textContent = sel.dataset.label||sel.id;
+    document.getElementById("sel-name").textContent = sel.dataset.label||sel.id;
+    syncInsp();
+  } else {
+    document.getElementById("iname").textContent = "— —";
+    document.getElementById("sel-name").textContent = "— 未选中 —";
+  }
+}
+preview.addEventListener("click", ()=>selectEl(null));
+
+function getPct(el, prop){
+  const v = parseFloat(el.style[prop]);
+  return isNaN(v) ? 0 : v;
+}
+
+function syncInsp(){
+  if(!sel) return;
+  document.getElementById("i-l").value = getPct(sel,"left");
+  document.getElementById("i-t").value = getPct(sel,"top");
+  document.getElementById("i-w").value = getPct(sel,"width");
+  document.getElementById("i-h").value = getPct(sel,"height");
+  document.getElementById("i-f").value = parseFloat(sel.style.fontSize)||"";
+}
+
+function setPct(prop, val, unit="%"){
+  if(!sel) return;
+  sel.style[prop] = val + unit;
+  saveOv(sel.id, prop, val);
+  syncInsp();
+}
+
+function saveOv(id, prop, val){
+  if(!ov[id]) ov[id]={};
+  ov[id][prop] = val;
+  localStorage.setItem(SKEY, JSON.stringify(ov));
+  flash();
+}
+
+// ── drag + resize (百分比，零 reflow) ──
+function initDrag(el){
+  el.addEventListener("click", e=>{ e.stopPropagation(); selectEl(el); });
+
+  // drag
+  el.addEventListener("mousedown", e=>{
+    if(e.button!==0) return;
+    if(e.target.classList.contains("rh")) return;
+    e.preventDefault(); e.stopPropagation();
+    selectEl(el);
+    const pw=preview.offsetWidth, ph=preview.offsetHeight;
+    const sl=getPct(el,"left"), st=getPct(el,"top");
+    const sx=e.clientX, sy=e.clientY;
+    function onMove(ev){
+      el.style.left=(sl+(ev.clientX-sx)/pw*100).toFixed(2)+"%";
+      el.style.top =(st+(ev.clientY-sy)/ph*100).toFixed(2)+"%";
+    }
+    function onUp(){
+      window.removeEventListener("mousemove",onMove);
+      window.removeEventListener("mouseup",onUp);
+      const id=el.id; if(!ov[id]) ov[id]={};
+      ov[id].left=parseFloat(el.style.left);
+      ov[id].top =parseFloat(el.style.top);
+      localStorage.setItem(SKEY,JSON.stringify(ov));
+      syncInsp(); flash();
+    }
+    window.addEventListener("mousemove",onMove);
+    window.addEventListener("mouseup",onUp);
+  });
+
+  // resize
+  const rh=el.querySelector(".rh");
+  if(!rh) return;
+  rh.addEventListener("mousedown", e=>{
+    e.stopPropagation(); e.preventDefault();
+    const pw=preview.offsetWidth, ph=preview.offsetHeight;
+    const sw=getPct(el,"width"), sh=getPct(el,"height");
+    const sx=e.clientX, sy=e.clientY;
+    function onMove(ev){
+      el.style.width =Math.max(1,(sw+(ev.clientX-sx)/pw*100)).toFixed(2)+"%";
+      el.style.height=Math.max(0.5,(sh+(ev.clientY-sy)/ph*100)).toFixed(2)+"%";
+    }
+    function onUp(){
+      window.removeEventListener("mousemove",onMove);
+      window.removeEventListener("mouseup",onUp);
+      const id=el.id; if(!ov[id]) ov[id]={};
+      ov[id].width =parseFloat(el.style.width);
+      ov[id].height=parseFloat(el.style.height);
+      localStorage.setItem(SKEY,JSON.stringify(ov));
+      syncInsp(); flash();
+    }
+    window.addEventListener("mousemove",onMove);
+    window.addEventListener("mouseup",onUp);
+  });
+}
+
+// arrow keys
+window.addEventListener("keydown", e=>{
+  if(!sel || e.target.tagName==="INPUT") return;
+  const step = e.shiftKey ? 1 : 0.2;
+  const pw=preview.offsetWidth, ph=preview.offsetHeight;
+  let l=getPct(sel,"left"), t=getPct(sel,"top");
+  if(e.key==="ArrowLeft") { l-=step; e.preventDefault(); }
+  if(e.key==="ArrowRight"){ l+=step; e.preventDefault(); }
+  if(e.key==="ArrowUp")   { t-=step; e.preventDefault(); }
+  if(e.key==="ArrowDown") { t+=step; e.preventDefault(); }
+  sel.style.left=l.toFixed(2)+"%"; sel.style.top=t.toFixed(2)+"%";
+  const id=sel.id; if(!ov[id]) ov[id]={};
+  ov[id].left=l; ov[id].top=t;
+  localStorage.setItem(SKEY,JSON.stringify(ov));
+  syncInsp();
+});
+
+function flash(msg="✓"){
+  const el=document.getElementById("st");
+  el.textContent=msg;
+  clearTimeout(el._t);
+  el._t=setTimeout(()=>el.textContent="",1200);
+}
+function saveAll(){ localStorage.setItem(SKEY,JSON.stringify(ov)); flash("✓ 已保存"); }
+function resetAll(){ if(!confirm("清除所有调整？")) return; localStorage.removeItem(SKEY); location.reload(); }
+function exportCSS(){
+  const lines=[];
+  for(const [id,s] of Object.entries(ov)){
+    const parts=Object.entries(s).map(([p,v])=>`${p.replace(/([A-Z])/g,"-$1").toLowerCase()}:${v}%`).join(";");
+    if(parts) lines.push(`#${id}{${parts}}`);
+  }
+  const text=lines.join("\n")||"/* 无覆盖 */";
+  try{navigator.clipboard.writeText(text);}catch{}
+  const ta=Object.assign(document.createElement("textarea"),{value:text});
+  ta.style.cssText="position:fixed;top:40px;left:20px;width:80vw;height:40vh;z-index:9999;font-size:12px;font-family:monospace;";
+  document.body.appendChild(ta);ta.select();
+  try{document.execCommand("copy");}catch{}
+  setTimeout(()=>ta.remove(),8000);
+  flash("✓ 已复制");
+}
+
+// init
+document.querySelectorAll(".img-wrap,.text-asset").forEach(initDrag);
+applyAll();
+</script>
 </body>
 </html>

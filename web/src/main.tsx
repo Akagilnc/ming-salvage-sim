@@ -74,6 +74,7 @@ type Army = {
   mobility: number;
   loyalty: number;
   status: string;
+  owner_power?: string;
 };
 
 type Power = {
@@ -757,6 +758,13 @@ function App() {
   const [mapIntelOpen, setMapIntelOpen] = React.useState(false);
   const [drawerOpen, setDrawerOpen] = React.useState(false);
   const [haremDrawerOpen, setHaremDrawerOpen] = React.useState(false);
+  const [armyDrawerOpen, setArmyDrawerOpen] = React.useState(false);
+  const [regionDrawerOpen, setRegionDrawerOpen] = React.useState(false);
+  const [buildingDrawerOpen, setBuildingDrawerOpen] = React.useState(false);
+  const [economyDrawerOpen, setEconomyDrawerOpen] = React.useState(false);
+  const [appointmentDrawerOpen, setAppointmentDrawerOpen] = React.useState(false);
+  const [selectedRegionId, setSelectedRegionId] = React.useState<string>("");
+  const [selectedArmyId, setSelectedArmyId] = React.useState<string>("");
   const [ministerGroup, setMinisterGroup] = React.useState("内阁+六部");
   const [haremGroup, setHaremGroup] = React.useState("全部");
   const [selectedMinister, setSelectedMinister] = React.useState<string>("");
@@ -942,6 +950,16 @@ function App() {
         setDrawerOpen(false);
       } else if (haremDrawerOpen) {
         setHaremDrawerOpen(false);
+      } else if (armyDrawerOpen) {
+        setArmyDrawerOpen(false);
+      } else if (regionDrawerOpen) {
+        setRegionDrawerOpen(false);
+      } else if (buildingDrawerOpen) {
+        setBuildingDrawerOpen(false);
+      } else if (economyDrawerOpen) {
+        setEconomyDrawerOpen(false);
+      } else if (appointmentDrawerOpen) {
+        setAppointmentDrawerOpen(false);
       } else if (mapIntelOpen) {
         setMapIntelOpen(false);
       }
@@ -1338,9 +1356,25 @@ function App() {
         state={state}
         onOpenState={() => setActiveModal("state")}
         onOpenMenu={() => setActiveModal("menu")}
+      />
+      <RightNavBar
+        onToggleCourt={() => { setDrawerOpen((v) => !v); }}
+        onToggleHarem={() => { setHaremDrawerOpen((v) => !v); }}
+        onToggleArmy={() => { setArmyDrawerOpen((v) => !v); }}
+        onToggleRegion={() => { setRegionDrawerOpen((v) => !v); }}
+        onToggleBuilding={() => { setBuildingDrawerOpen((v) => !v); }}
+        onToggleEconomy={() => { setEconomyDrawerOpen((v) => !v); }}
+        onToggleAppointment={() => { setAppointmentDrawerOpen((v) => !v); }}
         onOpenLongGoals={() => setActiveModal("long_goals")}
-        onToggleCourt={() => { setDrawerOpen((current) => !current); }}
-        onToggleHarem={() => { setHaremDrawerOpen((current) => !current); }}
+        activeDrawer={
+          drawerOpen ? "court" :
+          haremDrawerOpen ? "harem" :
+          armyDrawerOpen ? "army" :
+          regionDrawerOpen ? "region" :
+          buildingDrawerOpen ? "building" :
+          economyDrawerOpen ? "economy" :
+          appointmentDrawerOpen ? "appointment" : ""
+        }
       />
       <BottomCommandBar
         eventsCount={state.events.length}
@@ -1374,6 +1408,42 @@ function App() {
         onClose={guardClose(() => setHaremDrawerOpen(false))}
         onOpenChat={openChat}
         onUploadPortrait={uploadPortrait}
+      />
+
+      <ArmyDrawer
+        armies={state.armies}
+        open={armyDrawerOpen}
+        selectedArmyId={selectedArmyId}
+        onSelectArmy={setSelectedArmyId}
+        onClose={guardClose(() => setArmyDrawerOpen(false))}
+      />
+
+      <RegionDrawer
+        regions={state.regions}
+        open={regionDrawerOpen}
+        selectedRegionId={selectedRegionId}
+        onSelectRegion={setSelectedRegionId}
+        onClose={guardClose(() => setRegionDrawerOpen(false))}
+      />
+
+      <BuildingDrawer
+        regions={state.regions}
+        mapNodes={mapNodes}
+        open={buildingDrawerOpen}
+        onClose={guardClose(() => setBuildingDrawerOpen(false))}
+      />
+
+      <EconomyDrawer
+        state={state}
+        open={economyDrawerOpen}
+        onClose={guardClose(() => setEconomyDrawerOpen(false))}
+      />
+
+      <AppointmentDrawer
+        ministers={state.ministers}
+        open={appointmentDrawerOpen}
+        onOpenChat={openChat}
+        onClose={guardClose(() => setAppointmentDrawerOpen(false))}
       />
 
       <SituationPanel
@@ -2059,6 +2129,408 @@ function PortraitUploadButton({
   );
 }
 
+function RightNavBar({
+  onToggleCourt,
+  onToggleHarem,
+  onToggleArmy,
+  onToggleRegion,
+  onToggleBuilding,
+  onToggleEconomy,
+  onToggleAppointment,
+  onOpenLongGoals,
+  activeDrawer,
+}: {
+  onToggleCourt: () => void;
+  onToggleHarem: () => void;
+  onToggleArmy: () => void;
+  onToggleRegion: () => void;
+  onToggleBuilding: () => void;
+  onToggleEconomy: () => void;
+  onToggleAppointment: () => void;
+  onOpenLongGoals: () => void;
+  activeDrawer: string;
+}) {
+  const items = [
+    { key: "court", label: "政", title: "朝堂·召见大臣", onClick: onToggleCourt },
+    { key: "harem", label: "内", title: "后宫", onClick: onToggleHarem },
+    { key: "army", label: "兵", title: "军队列表", onClick: onToggleArmy },
+    { key: "region", label: "省", title: "省份列表", onClick: onToggleRegion },
+    { key: "building", label: "工", title: "建筑列表", onClick: onToggleBuilding },
+    { key: "economy", label: "户", title: "经济面板", onClick: onToggleEconomy },
+    { key: "appointment", label: "吏", title: "官员任免", onClick: onToggleAppointment },
+  ];
+  return (
+    <nav className="right-nav-bar" aria-label="六部入口">
+      {items.map((item) => (
+        <button
+          key={item.key}
+          className={`right-nav-btn${activeDrawer === item.key ? " active" : ""}`}
+          title={item.title}
+          aria-label={item.title}
+          onClick={item.onClick}
+        >
+          {item.label}
+        </button>
+      ))}
+      <button
+        className="right-nav-btn right-nav-btn-goal"
+        title="长期目标"
+        aria-label="大明长期目标"
+        onClick={onOpenLongGoals}
+      >
+        目
+      </button>
+    </nav>
+  );
+}
+
+function RightDrawer({
+  open,
+  onClose,
+  title,
+  icon,
+  children,
+  extraClass,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+  extraClass?: string;
+}) {
+  return (
+    <>
+      {open && <button className="drawer-scrim" aria-label="收起" onClick={onClose} />}
+      <aside className={`right-drawer ${extraClass || ""} ${open ? "open" : ""}`}>
+        <div className="right-drawer-brand">
+          <div className="panel-title">
+            {icon}
+            <span>{title}</span>
+          </div>
+          <button className="icon-button" aria-label="收起" onClick={onClose}><X size={16} /></button>
+        </div>
+        <div className="right-drawer-body">
+          {children}
+        </div>
+      </aside>
+    </>
+  );
+}
+
+function ArmyDrawer({
+  armies,
+  open,
+  selectedArmyId,
+  onSelectArmy,
+  onClose,
+}: {
+  armies: Army[];
+  open: boolean;
+  selectedArmyId: string;
+  onSelectArmy: (id: string) => void;
+  onClose: () => void;
+}) {
+  const [q, setQ] = React.useState("");
+  const mingArmies = armies.filter((a) => (a.owner_power || "ming") === "ming");
+  const filtered = q ? mingArmies.filter((a) => a.name.includes(q) || a.station.includes(q) || a.commander.includes(q)) : mingArmies;
+  const selected = mingArmies.find((a) => a.id === selectedArmyId) || null;
+  const arrearsTone = (army: Army) => {
+    const maint = army.maintenance_per_turn || 1;
+    const months = army.arrears / maint;
+    if (months >= 3) return "danger";
+    if (months >= 1) return "warn";
+    return "";
+  };
+  return (
+    <RightDrawer open={open} onClose={onClose} title="军队" icon={<Swords size={17} />} extraClass="right-drawer-army">
+      <div className="right-drawer-search">
+        <input className="right-drawer-search-input" placeholder="搜索番号/驻地/统帅…" value={q} onChange={(e) => setQ(e.target.value)} />
+      </div>
+      <div className="right-drawer-list">
+        {filtered.map((army) => (
+          <button
+            key={army.id}
+            className={`right-drawer-row${selectedArmyId === army.id ? " selected" : ""} ${arrearsTone(army)}`}
+            onClick={() => onSelectArmy(army.id === selectedArmyId ? "" : army.id)}
+          >
+            <span className="right-drawer-row-name">{army.name}</span>
+            <span className="right-drawer-row-meta">
+              {army.manpower}兵 · {army.station}
+            </span>
+          </button>
+        ))}
+        {!filtered.length && <div className="empty-note">{q ? "无匹配结果。" : "暂无大明军队记录。"}</div>}
+      </div>
+      {selected && (
+        <div className="right-drawer-detail">
+          <div className="right-drawer-detail-title">
+            {selected.name}
+            <button className="right-drawer-detail-close" onClick={() => onSelectArmy("")} aria-label="关闭详情"><X size={14} /></button>
+          </div>
+          <table className="intel-table">
+            <tbody>
+              <tr><th>驻地</th><td>{selected.station}</td><th>战区</th><td>{selected.theater}</td></tr>
+              <tr><th>统帅</th><td>{selected.commander || "—"}</td><th>兵种</th><td>{selected.troop_type}</td></tr>
+              <tr><th>兵力</th><td>{selected.manpower}</td><th>月饷</th><td>{selected.maintenance_per_turn}万</td></tr>
+              <tr><th>士气</th><td>{selected.morale}</td><th>操练</th><td>{selected.training}</td></tr>
+              <tr><th>军械</th><td>{selected.equipment}</td><th>补给</th><td>{selected.supply}</td></tr>
+              <tr><th>机动</th><td>{selected.mobility}</td><th>忠诚</th><td>{selected.loyalty}</td></tr>
+              <tr><th>欠饷</th><td colSpan={3}>
+                {selected.arrears > 0
+                  ? `${selected.arrears}万两（≈${(selected.arrears / (selected.maintenance_per_turn || 1)).toFixed(1)}月）`
+                  : "无欠饷"}
+              </td></tr>
+              <tr><th>状态</th><td colSpan={3}>{selected.status}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+    </RightDrawer>
+  );
+}
+
+function RegionDrawer({
+  regions,
+  open,
+  selectedRegionId,
+  onSelectRegion,
+  onClose,
+}: {
+  regions: Region[];
+  open: boolean;
+  selectedRegionId: string;
+  onSelectRegion: (id: string) => void;
+  onClose: () => void;
+}) {
+  const [q, setQ] = React.useState("");
+  const mingRegions = regions.filter((r) => (r.controlled_by || "ming") === "ming");
+  const filtered = q ? mingRegions.filter((r) => r.name.includes(q)) : mingRegions;
+  const selected = mingRegions.find((r) => r.id === selectedRegionId) || null;
+  const regionTone = (r: Region) => {
+    if (r.unrest >= 70) return "danger";
+    if (r.unrest >= 45) return "warn";
+    return "";
+  };
+  return (
+    <RightDrawer open={open} onClose={onClose} title="省份" icon={<MapPinned size={17} />} extraClass="right-drawer-region">
+      <div className="right-drawer-search">
+        <input className="right-drawer-search-input" placeholder="搜索省份名…" value={q} onChange={(e) => setQ(e.target.value)} />
+      </div>
+      <div className="right-drawer-list">
+        {filtered.map((r) => (
+          <button
+            key={r.id}
+            className={`right-drawer-row${selectedRegionId === r.id ? " selected" : ""} ${regionTone(r)}`}
+            onClick={() => onSelectRegion(r.id === selectedRegionId ? "" : r.id)}
+          >
+            <span className="right-drawer-row-name">{r.name}</span>
+            <span className="right-drawer-row-meta">
+              动乱{r.unrest} · 月税{r.tax_per_turn}万
+            </span>
+          </button>
+        ))}
+        {!filtered.length && <div className="empty-note">{q ? "无匹配结果。" : "暂无大明省份记录。"}</div>}
+      </div>
+      {selected && (
+        <div className="right-drawer-detail">
+          <div className="right-drawer-detail-title">
+            {selected.name}
+            <button className="right-drawer-detail-close" onClick={() => onSelectRegion("")} aria-label="关闭详情"><X size={14} /></button>
+          </div>
+          <table className="intel-table">
+            <tbody>
+              <tr><th>人口</th><td>{selected.population}万</td><th>田亩</th><td>{selected.registered_land}万亩</td></tr>
+              <tr><th>民心</th><td>{selected.public_support}</td><th>动乱</th><td>{selected.unrest}</td></tr>
+              <tr><th>粮食</th><td>{selected.grain_security}</td><th>月税</th><td>{selected.tax_per_turn}万</td></tr>
+              <tr><th>士绅阻力</th><td>{selected.gentry_resistance}</td><th>边防压力</th><td>{selected.military_pressure}</td></tr>
+              <tr><th>天灾</th><td colSpan={3}>{selected.natural_disaster}</td></tr>
+              <tr><th>人祸</th><td colSpan={3}>{selected.human_disaster}</td></tr>
+              <tr><th>状况</th><td colSpan={3}>{selected.status}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+    </RightDrawer>
+  );
+}
+
+function BuildingDrawer({
+  regions,
+  mapNodes,
+  open,
+  onClose,
+}: {
+  regions: Region[];
+  mapNodes: MapNode[];
+  open: boolean;
+  onClose: () => void;
+}) {
+  const allBuildings: (Building & { regionName: string })[] = [];
+  for (const node of mapNodes) {
+    if (!node.buildings) continue;
+    const regionName = node.region?.name || node.label || node.id;
+    for (const b of node.buildings) {
+      allBuildings.push({ ...b, regionName });
+    }
+  }
+  const [filterRegion, setFilterRegion] = React.useState("");
+  const [q, setQ] = React.useState("");
+  const regionNames = Array.from(new Set(allBuildings.map((b) => b.regionName)));
+  const filtered = allBuildings
+    .filter((b) => !filterRegion || b.regionName === filterRegion)
+    .filter((b) => !q || b.name.includes(q) || b.category.includes(q));
+  return (
+    <RightDrawer open={open} onClose={onClose} title="建筑" icon={<Landmark size={17} />} extraClass="right-drawer-building">
+      <div className="right-drawer-search">
+        <input className="right-drawer-search-input" placeholder="搜索建筑名/类别…" value={q} onChange={(e) => setQ(e.target.value)} />
+      </div>
+      <div className="right-drawer-filter">
+        <select
+          value={filterRegion}
+          onChange={(e) => setFilterRegion(e.target.value)}
+          className="right-drawer-select"
+        >
+          <option value="">全部省份</option>
+          {regionNames.map((n) => <option key={n} value={n}>{n}</option>)}
+        </select>
+      </div>
+      <div className="right-drawer-list">
+        {filtered.map((b) => (
+          <div key={b.id} className="right-drawer-row right-drawer-row-building">
+            <span className="right-drawer-row-name">{b.name}</span>
+            <span className="right-drawer-row-meta">{b.regionName} · {b.category} Lv{b.level}</span>
+            <span className="right-drawer-row-sub">
+              完好{b.condition} · 维护{b.maintenance}万/月
+              {b.output_metric ? ` · ${b.output_metric}+${b.output_amount}` : ""}
+            </span>
+          </div>
+        ))}
+        {!filtered.length && <div className="empty-note">{q || filterRegion ? "无匹配结果。" : "暂无建筑记录。"}</div>}
+      </div>
+    </RightDrawer>
+  );
+}
+
+function EconomyDrawer({
+  state,
+  open,
+  onClose,
+}: {
+  state: GameState;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const [tab, setTab] = React.useState<"国库" | "内库">("国库");
+  const [q, setQ] = React.useState("");
+  const budget = state.budget[tab];
+  const matchItem = (name: string) => !q || name.includes(q);
+  return (
+    <RightDrawer open={open} onClose={onClose} title="经济" icon={<ScrollText size={17} />} extraClass="right-drawer-economy">
+      <div className="segmented right-drawer-segmented">
+        {(["国库", "内库"] as const).map((t) => (
+          <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>{t}</button>
+        ))}
+      </div>
+      <div className="right-drawer-search">
+        <input className="right-drawer-search-input" placeholder="搜索收支项…" value={q} onChange={(e) => setQ(e.target.value)} />
+      </div>
+      <div className="right-drawer-economy-summary">
+        <span>余额 <b>{formatMoney(budget.balance)}</b></span>
+        <span className={budget.net >= 0 ? "income" : "expense"}>
+          月净 <b>{formatSignedMoney(budget.net)}</b>
+        </span>
+      </div>
+      <div className="right-drawer-list">
+        <div className="right-drawer-section-title">固定收入</div>
+        {budget.income.filter((item) => matchItem(item.name)).map((item) => (
+          <div key={`in-${item.name}`} className="right-drawer-budget-row">
+            <span>{item.name}</span>
+            <b className="income">+{formatMoney(item.amount)}</b>
+          </div>
+        ))}
+        <div className="right-drawer-section-title">固定支出</div>
+        {budget.expense.filter((item) => matchItem(item.name)).map((item) => (
+          <div key={`ex-${item.name}`} className="right-drawer-budget-row">
+            <span>{item.name}</span>
+            <b className="expense">-{formatMoney(item.amount)}</b>
+          </div>
+        ))}
+        {budget.movements.filter((m) => matchItem(m.category || m.reason)).length > 0 && (
+          <>
+            <div className="right-drawer-section-title">本月一次性入账</div>
+            {budget.movements.filter((m) => matchItem(m.category || m.reason)).map((m, i) => (
+              <div key={`mv-${i}`} className="right-drawer-budget-row">
+                <span>{m.category || m.reason}</span>
+                <b className={m.delta >= 0 ? "income" : "expense"}>{formatSignedMoney(m.delta)}</b>
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+    </RightDrawer>
+  );
+}
+
+function AppointmentDrawer({
+  ministers,
+  open,
+  onOpenChat,
+  onClose,
+}: {
+  ministers: Minister[];
+  open: boolean;
+  onOpenChat: (minister: Minister) => void;
+  onClose: () => void;
+}) {
+  const [q, setQ] = React.useState("");
+  const offices = ["内阁", "吏部", "户部", "礼部", "兵部", "刑部", "工部"];
+  const byOffice = new Map<string, Minister[]>();
+  for (const office of offices) byOffice.set(office, []);
+  byOffice.set("其他", []);
+  for (const m of ministers) {
+    if ((m.power_id || "ming") !== "ming") continue;
+    if (m.status !== "active") continue;
+    if (q && !m.name.includes(q) && !(m.office || "").includes(q) && !(m.office_type || "").includes(q)) continue;
+    const matched = offices.find((o) => (m.office_type || "").includes(o));
+    const key = matched || "其他";
+    byOffice.get(key)!.push(m);
+  }
+  return (
+    <RightDrawer open={open} onClose={onClose} title="官员任免" icon={<Star size={17} />} extraClass="right-drawer-appointment">
+      <div className="right-drawer-search">
+        <input className="right-drawer-search-input" placeholder="搜索姓名/职位…" value={q} onChange={(e) => setQ(e.target.value)} />
+      </div>
+      <div className="right-drawer-list">
+        {[...offices, "其他"].map((office) => {
+          const group = byOffice.get(office) || [];
+          if (!group.length) return null;
+          return (
+            <div key={office}>
+              <div className="right-drawer-section-title">{office}</div>
+              {group.map((m) => (
+                <button
+                  key={m.name}
+                  className="right-drawer-row right-drawer-row-minister"
+                  onClick={() => onOpenChat(m)}
+                >
+                  <div className="right-drawer-minister-row">
+                    <span className="right-drawer-row-name">{m.name}</span>
+                    <span className="right-drawer-minister-office">{m.office || m.office_type}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          );
+        })}
+        {[...offices, "其他"].every((o) => !(byOffice.get(o) || []).length) && (
+          <div className="empty-note">{q ? "无匹配结果。" : "暂无在职官员。"}</div>
+        )}
+      </div>
+    </RightDrawer>
+  );
+}
+
 function CourtDrawer({
   state: _state,
   ministers,
@@ -2080,6 +2552,8 @@ function CourtDrawer({
   onOpenChat: (minister: Minister) => void;
   onUploadPortrait: (ministerName: string, file: File) => Promise<void>;
 }) {
+  const [q, setQ] = React.useState("");
+  const filtered = q ? ministers.filter((m) => m.name.includes(q) || (m.office || "").includes(q)) : ministers;
   return (
     <>
       {open && <button className="drawer-scrim" aria-label="收起" onClick={onClose} />}
@@ -2092,7 +2566,7 @@ function CourtDrawer({
           <button className="icon-button" aria-label="收起" onClick={onClose}><X size={16} /></button>
         </div>
         <div className="segmented">
-          {["内阁+六部", "收藏", "全部"].map((group) => (
+          {["内阁+六部", "收藏", "在职", "全部"].map((group) => (
             <button
               className={ministerGroup === group ? "active" : ""}
               key={group}
@@ -2102,13 +2576,16 @@ function CourtDrawer({
             </button>
           ))}
         </div>
+        <div className="right-drawer-search court-search">
+          <input className="right-drawer-search-input" placeholder="搜索姓名/职位…" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
         <MinisterCardList
-          list={ministers}
+          list={filtered}
           portraitPrefix="minister_"
           selectedMinister={selectedMinister}
-          emptyNote="此栏暂无可召见大臣。"
+          emptyNote={q ? "无匹配大臣。" : "此栏暂无可召见大臣。"}
           onOpenChat={onOpenChat}
-          courtMode={ministerGroup !== "全部"}
+          courtMode={ministerGroup === "内阁+六部" || ministerGroup === "收藏"}
           onUploadPortrait={onUploadPortrait}
         />
       </aside>
@@ -2135,6 +2612,8 @@ function HaremDrawer({
   onOpenChat: (minister: Minister) => void;
   onUploadPortrait: (ministerName: string, file: File) => Promise<void>;
 }) {
+  const [q, setQ] = React.useState("");
+  const filtered = q ? consorts.filter((c) => c.name.includes(q)) : consorts;
   return (
     <>
       {open && <button className="drawer-scrim" aria-label="收起" onClick={onClose} />}
@@ -2157,11 +2636,14 @@ function HaremDrawer({
             </button>
           ))}
         </div>
+        <div className="right-drawer-search court-search">
+          <input className="right-drawer-search-input" placeholder="搜索姓名…" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
         <MinisterCardList
-          list={consorts}
+          list={filtered}
           portraitPrefix="consort_"
           selectedMinister={selectedMinister}
-          emptyNote="后宫暂无可召见之人。"
+          emptyNote={q ? "无匹配结果。" : "后宫暂无可召见之人。"}
           onOpenChat={onOpenChat}
           onUploadPortrait={onUploadPortrait}
         />
@@ -2174,16 +2656,10 @@ function TopStatusBar({
   state,
   onOpenState,
   onOpenMenu,
-  onOpenLongGoals,
-  onToggleCourt,
-  onToggleHarem,
 }: {
   state: GameState;
   onOpenState: () => void;
   onOpenMenu: () => void;
-  onOpenLongGoals: () => void;
-  onToggleCourt: () => void;
-  onToggleHarem: () => void;
 }) {
   const scoreKeys = ["民心", "皇威"];
   return (
@@ -2201,18 +2677,6 @@ function TopStatusBar({
             {key} <b>{state.metrics[key]}</b>
           </span>
         ))}
-        <button className="status-menu court-toggle-btn" onClick={onToggleCourt} aria-label="打开朝堂">
-          <Landmark size={16} />
-          <span>朝堂</span>
-        </button>
-        <button className="status-menu court-toggle-btn harem-btn" onClick={onToggleHarem} aria-label="打开后宫">
-          <Crown size={16} />
-          <span>后宫</span>
-        </button>
-        <button className="status-menu long-goal-bar" onClick={onOpenLongGoals} aria-label="打开大明长期目标">
-          <Target size={16} />
-          <span>长期目标</span>
-        </button>
         <button className="status-menu" onClick={onOpenMenu} aria-label="游戏菜单">
           <Menu size={16} />
           <span>菜单</span>
@@ -2457,38 +2921,42 @@ function BottomCommandBar({
   onOpenSecretOrders: () => void;
 }) {
   return (
-    <>
-      <nav className="bottom-command-bar" aria-label="朝政辅助操作">
-        <button className="command-icon" onClick={onOpenMemorials} aria-label={`奏疏 ${eventsCount} 件待览`}>
-          <img src="/icon_seal.png" alt="" className="command-art" />
-          {eventsCount ? <span className="command-badge">{eventsCount}</span> : null}
+    <div className="ui-stage">
+      {/* 案板 + 图标 + 玉玺一体 */}
+      <div className="anban-wrap">
+        {/* 图标行：底部贴基准线向上生长 */}
+        <nav className="bottom-command-bar" aria-label="朝政辅助操作">
+          <button className="command-icon" onClick={onOpenMemorials} aria-label={`奏疏 ${eventsCount} 件待览`}>
+            <img src="/ui/exact/zoushu.png" alt="" className="command-art" />
+            {eventsCount ? <span className="command-badge">{eventsCount}</span> : null}
+          </button>
+          <button className="command-icon" onClick={onOpenExtraction} aria-label="邸报详明">
+            <img src="/ui/exact/mingxi.png" alt="" className="command-art" />
+          </button>
+          <button className="command-icon" onClick={onOpenSecretOrders} aria-label={`密令 ${secretOrdersCount} 条进行中`}>
+            <img src="/ui/exact/miling.png" alt="" className="command-art command-art-secret" />
+            {secretOrdersCount ? <span className="command-badge command-badge-secret">{secretOrdersCount}</span> : null}
+          </button>
+          <button className="command-icon" onClick={onOpenHistory} aria-label="历代奏报">
+            <img src="/ui/exact/lishi.png" alt="" className="command-art" />
+          </button>
+          <button className="edict-turn-button" onClick={onOpenEdict} aria-label={`诏书草案 ${directivesCount} 道待发`}>
+            <span className="edict-turn-art">
+              <img src="/ui/exact/nizhao.png" alt="" />
+              {directivesCount ? <span className="command-badge edict-turn-badge">{directivesCount}</span> : null}
+            </span>
+          </button>
+        </nav>
+        {/* 文字行：贴在 bar 下方 */}
+        <div className="bottom-caption-bar">
           <span className="command-caption"><b>奏疏</b><small>{eventsCount} 件待览</small></span>
-        </button>
-        <button className="command-icon" onClick={onOpenExtraction} aria-label="邸报详明">
-          <img src="/icon_scroll.png" alt="" className="command-art" />
           <span className="command-caption"><b>邸报详明</b><small>数项加减/账目明细</small></span>
-        </button>
-        <button className="command-icon" onClick={onOpenSecretOrders} aria-label={`密令 ${secretOrdersCount} 条进行中`}>
-          <img src="/bg_edict.png" alt="" className="command-art command-art-secret" />
-          {secretOrdersCount ? <span className="command-badge command-badge-secret">{secretOrdersCount}</span> : null}
           <span className="command-caption"><b>密令</b><small>{secretOrdersCount ? `${secretOrdersCount} 条进行中` : "暂无密令"}</small></span>
-        </button>
-        <button className="command-icon" onClick={onOpenHistory} aria-label="历代奏报">
-          <img src="/icon_scroll.png" alt="" className="command-art" />
           <span className="command-caption"><b>史册</b><small>历代奏报/诏书</small></span>
-        </button>
-      </nav>
-      <button className="edict-turn-button" onClick={onOpenEdict} aria-label={`诏书草案 ${directivesCount} 道待发`}>
-        <span className="edict-turn-art">
-          <img src="/icon_edict_turn_cut.webp" alt="" />
-          {directivesCount ? <span className="command-badge edict-turn-badge">{directivesCount}</span> : null}
-          <span className="edict-turn-copy">
-            <b>拟诏</b>
-            <small>{directivesCount ? `${directivesCount} 道` : "本回合"}</small>
-          </span>
-        </span>
-      </button>
-    </>
+          <span className="command-caption"><b>拟诏</b><small>{directivesCount ? `${directivesCount} 道` : "本回合"}</small></span>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -4575,6 +5043,7 @@ function filterMinisters(ministers: Minister[], group: string) {
       )
       .sort((a, b) => officeRank(a.office || "") - officeRank(b.office || ""));
   }
+  if (group === "在职") return courtMinisters.filter((m) => m.status === "active");
   if (group === "收藏") return courtMinisters.filter((minister) => minister.favorite);
   return courtMinisters;
 }
