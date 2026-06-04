@@ -2118,56 +2118,58 @@ select:focus-visible {
   color: #1a1410;
 }
 
+/* ===== 终章定论：国史馆夜阅风（深墨实底 + 金描边 + 朱红字）===== */
 .ending-document {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 22px;
   height: 100%;
   min-height: 0;
-  padding: 28px clamp(24px, 6vw, 92px) 42px;
+  padding: 26px clamp(28px, 8vw, 140px) 44px;
+  color: #f1dcb5;
   background:
-    linear-gradient(180deg, rgba(16, 12, 9, 0.16), rgba(16, 12, 9, 0.34)),
+    radial-gradient(130% 100% at 50% -8%, rgba(150, 44, 32, 0.30), transparent 56%),
+    radial-gradient(100% 80% at 50% 110%, rgba(80, 22, 16, 0.22), transparent 60%),
+    linear-gradient(180deg, rgba(21, 13, 9, 0.92), rgba(13, 9, 7, 0.96)),
     url("/bg_ending.webp") center / cover no-repeat;
 }
 
+/* hero：印玺 + 庙号大字 */
 .ending-hero {
   position: relative;
+  flex: 0 0 auto;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  gap: 16px;
-  min-height: 128px;
-  padding: 22px 26px;
-  border: 1px solid rgba(112, 42, 28, 0.26);
-  border-radius: 8px;
-  background:
-    linear-gradient(90deg, rgba(116, 35, 27, 0.15), rgba(255, 247, 222, 0.7) 44%, rgba(193, 145, 56, 0.14)),
-    rgba(255, 252, 244, 0.74);
-  overflow: hidden;
+  gap: 24px;
+  padding: 28px 36px;
+  border: 1px solid rgba(214, 168, 96, 0.4);
+  border-radius: 12px;
+  background: linear-gradient(135deg, #3a2117, #221410);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 232, 190, 0.12);
 }
 
 .ending-hero::after {
   content: "";
   position: absolute;
-  top: 18px;
-  right: 22px;
-  width: 108px;
-  height: 108px;
-  border: 2px solid rgba(120, 24, 18, 0.14);
-  border-radius: 50%;
-  transform: rotate(-12deg);
+  inset: 7px;
+  border: 1px solid rgba(214, 168, 96, 0.16);
+  border-radius: 8px;
+  pointer-events: none;
 }
 
 .ending-seal {
+  flex: 0 0 auto;
   display: grid;
   place-items: center;
-  width: 76px;
-  height: 76px;
-  border: 2px solid rgba(122, 27, 20, 0.62);
+  width: 96px;
+  height: 96px;
+  min-width: 96px;
+  border: 2px solid #c23a2a;
   border-radius: 50%;
-  color: #7a1b14;
-  background:
-    radial-gradient(circle, rgba(255, 230, 184, 0.72), rgba(150, 36, 26, 0.08));
+  color: #f0c98a;
+  background: radial-gradient(circle, rgba(170, 44, 32, 0.7), rgba(50, 22, 16, 0.4));
+  box-shadow: 0 0 26px rgba(190, 60, 40, 0.4), inset 0 0 16px rgba(0, 0, 0, 0.5);
 }
 
 .ending-hero-copy {
@@ -2177,223 +2179,203 @@ select:focus-visible {
 .ending-hero-copy p,
 .ending-section-kicker {
   margin: 0;
-  color: #7a1b14;
-  font-size: 0.8rem;
+  color: #d6a85c;
+  font-size: 0.82rem;
   font-weight: 800;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.2em;
 }
 
 .ending-hero-copy h2 {
-  margin: 2px 0 4px;
-  color: #1a1410;
-  font-size: clamp(2rem, 4.4vw, 4.35rem);
-  line-height: 1.08;
-  letter-spacing: 0;
+  margin: 6px 0;
+  color: #f0c98a;
+  font-family: var(--font-brush), "ZCOOL XiaoWei", serif;
+  font-size: clamp(2.4rem, 4.6vw, 4rem);
+  line-height: 1.06;
+  letter-spacing: 0.04em;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.55);
 }
 
 .ending-hero-copy span {
-  color: #5d4630;
-  font-size: 0.92rem;
+  color: #b98f63;
+  font-size: 0.94rem;
+  letter-spacing: 0.08em;
 }
 
 .ending-verdict-card,
 .ending-chronicle {
-  padding: 22px 26px;
-  border: 1px solid rgba(111, 83, 46, 0.22);
-  border-radius: 8px;
-  background: rgba(255, 252, 244, 0.72);
+  flex: 0 0 auto;
+  padding: 26px 30px;
+  border: 1px solid rgba(214, 168, 96, 0.3);
+  border-radius: 12px;
+  background: linear-gradient(135deg, #2a1c14, #1a120d);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 232, 190, 0.08);
 }
 
 .ending-chronicle {
-  position: relative;
   flex: 1 1 auto;
-  min-height: 360px;
-  overflow: hidden;
-  padding: clamp(26px, 4vw, 46px) clamp(34px, 7vw, 108px);
-  background:
-    url("/ending_timeline_scroll.webp") center / contain no-repeat;
-  border-color: rgba(99, 66, 31, 0.18);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .ending-section-kicker {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid rgba(122, 27, 20, 0.24);
+  gap: 9px;
+  padding-bottom: 12px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid rgba(214, 168, 96, 0.24);
+  font-size: 0.84rem;
+  letter-spacing: 0.16em;
 }
 
 .ending-section-kicker svg {
-  color: #8f2f25;
+  color: #d6a85c;
 }
 
 .ending-summary-text {
-  margin: 16px 0 0;
+  margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
   font-family: var(--font-brush), "ZCOOL XiaoWei", serif;
-  font-size: clamp(1.04rem, 1.4vw, 1.26rem);
+  font-size: clamp(1.04rem, 1.4vw, 1.22rem);
   line-height: 2.05;
-  color: #1a1410;
+  color: #e8a07f;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.4);
 }
 
+/* 竖向时间轴：date | 轴道 | body 三列，纵向滚动 */
 .ending-timeline {
   list-style: none;
   margin: 0;
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(230px, 300px);
-  gap: 28px;
-  height: calc(100% - 36px);
-  min-height: 280px;
-  padding: 28px 4px 12px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scroll-snap-type: x proximity;
-  scrollbar-color: rgba(122, 27, 20, 0.42) rgba(128, 91, 44, 0.14);
+  padding: 4px 6px 4px 4px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   scrollbar-width: thin;
+  scrollbar-color: rgba(214, 168, 96, 0.5) rgba(214, 168, 96, 0.10);
 }
 
 .ending-timeline::-webkit-scrollbar {
-  height: 10px;
+  width: 9px;
 }
 
 .ending-timeline::-webkit-scrollbar-track {
   border-radius: 999px;
-  background: rgba(128, 91, 44, 0.14);
+  background: rgba(214, 168, 96, 0.10);
 }
 
 .ending-timeline::-webkit-scrollbar-thumb {
-  border: 2px solid rgba(255, 244, 218, 0.62);
   border-radius: 999px;
-  background: rgba(122, 27, 20, 0.42);
+  background: rgba(214, 168, 96, 0.42);
 }
 
 .ending-timeline-item {
   position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-width: 0;
-  padding: 0;
-  scroll-snap-align: start;
+  display: grid;
+  grid-template-columns: 84px 26px minmax(0, 1fr);
+  gap: 0;
+  padding: 0 0 26px 0;
 }
 
+/* 竖轴线（钉中间轴道列正中）*/
 .ending-timeline-item::before {
   content: "";
   position: absolute;
-  left: calc(50% + 8px);
-  right: calc(-50% + 8px);
-  top: 22px;
-  height: 1px;
-  background: linear-gradient(90deg, rgba(122, 27, 20, 0.44), rgba(111, 83, 46, 0.12));
+  left: calc(84px + 13px);
+  top: 10px;
+  bottom: -10px;
+  width: 2px;
+  transform: translateX(-50%);
+  background: linear-gradient(180deg, #c23a2a, rgba(214, 168, 96, 0.25));
 }
 
+/* 节点 */
 .ending-timeline-item::after {
   content: "";
   position: absolute;
-  left: 50%;
-  top: 15px;
-  width: 15px;
-  height: 15px;
-  border: 2px solid rgba(122, 27, 20, 0.5);
+  left: calc(84px + 13px);
+  top: 7px;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #f0c98a;
   border-radius: 50%;
-  background: #f8ecd0;
+  background: #c23a2a;
   transform: translateX(-50%);
+  box-shadow: 0 0 12px rgba(190, 60, 40, 0.6);
+  z-index: 1;
 }
 
 .ending-timeline-item:last-child {
-  padding-bottom: 0;
+  padding-bottom: 4px;
 }
 
 .ending-timeline-item:last-child::before {
-  display: none;
+  bottom: auto;
+  height: 16px;
 }
 
 .ending-timeline-date {
+  grid-column: 1;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 44px;
-  padding-top: 0;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: flex-start;
+  gap: 2px;
+  padding-right: 6px;
   font-family: var(--font-brush), "ZCOOL XiaoWei", serif;
-  color: #6f1f18;
+  color: #f0c98a;
   white-space: nowrap;
+  text-align: right;
 }
 
 .ending-timeline-date b {
-  font-size: 1.08rem;
-  line-height: 1;
+  font-size: 1.12rem;
+  line-height: 1.1;
 }
 
 .ending-timeline-date span {
-  margin-top: 0;
-  color: #71553a;
-  font-size: 0.78rem;
+  color: #a98c69;
+  font-size: 0.82rem;
 }
 
 .ending-timeline-body {
+  grid-column: 3;
   min-width: 0;
-  height: calc(100% - 56px);
-  min-height: 220px;
-  max-height: 300px;
-  padding: 12px 8px;
+  padding-left: 10px;
   border: 0;
   border-radius: 0;
   background: transparent;
   display: flex;
-  flex-direction: row-reverse;
-  justify-content: flex-start;
-  gap: 14px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(122, 27, 20, 0.3) transparent;
-}
-
-.ending-timeline-body::-webkit-scrollbar {
-  height: 8px;
-}
-
-.ending-timeline-body::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.ending-timeline-body::-webkit-scrollbar-thumb {
-  border-radius: 999px;
-  background: rgba(122, 27, 20, 0.3);
+  flex-direction: column;
+  gap: 5px;
 }
 
 .ending-timeline-body p {
   margin: 0;
-  line-height: 1.55;
+  line-height: 1.62;
   word-break: break-word;
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
 }
 
 .ending-timeline-body p + p {
-  margin-top: 0;
+  margin-top: 2px;
 }
 
 .ending-timeline-chapter {
-  color: #1a1410;
-  font-size: 0.98rem;
-  font-weight: 800;
-  max-height: 100%;
+  color: #e0563f;
+  font-size: 1.0rem;
+  font-weight: 700;
 }
 
 .ending-timeline-decree {
-  color: #4a3a26;
-  font-size: 0.88rem;
-  max-height: 100%;
+  color: #c9a572;
+  font-size: 0.9rem;
 }
 
 .ending-timeline-effect {
-  color: #315d47;
-  font-size: 0.88rem;
-  max-height: 100%;
+  color: #9ec7aa;
+  font-size: 0.9rem;
 }
 
 .summary-table {
@@ -3629,37 +3611,71 @@ button:disabled {
   border-color: rgba(122, 180, 150, 0.4);
 }
 
+/* 终章弹窗：整层盖掉 bg_state.png 黄底，统一深墨色（含顶栏）*/
+.fullscreen-modal.modal-bg-ending {
+  background:
+    linear-gradient(180deg, rgba(22, 14, 10, 0.96), rgba(16, 11, 8, 0.98)),
+    url("/bg_ending.webp") center / cover no-repeat !important;
+}
+
+/* 顶栏标题改浅金，配深底 */
+.modal-bg-ending .modal-title h1 {
+  color: #f0c98a !important;
+  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.6) !important;
+}
+
+.modal-bg-ending .modal-title span {
+  color: #c9a86f !important;
+}
+
+.modal-bg-ending .modal-header {
+  border-bottom-color: rgba(201, 162, 92, 0.2) !important;
+}
+
+/* 覆盖 .modal-bg-state * 的「文字一律深墨」通配 —— 深底必须浅色字 */
+.modal-bg-ending .ending-document,
+.modal-bg-ending .ending-hero-copy p,
+.modal-bg-ending .ending-section-kicker {
+  color: #d6a85c !important;
+}
+.modal-bg-ending .ending-hero-copy h2 { color: #f0c98a !important; }
+.modal-bg-ending .ending-hero-copy span { color: #b98f63 !important; }
+.modal-bg-ending .ending-summary-text { color: #e8a07f !important; }
+.modal-bg-ending .ending-timeline-date { color: #f0c98a !important; }
+.modal-bg-ending .ending-timeline-date span { color: #a98c69 !important; }
+.modal-bg-ending .ending-timeline-chapter { color: #e0563f !important; }
+.modal-bg-ending .ending-timeline-decree { color: #c9a572 !important; }
+.modal-bg-ending .ending-timeline-effect { color: #9ec7aa !important; }
+
+/* 终章弹窗：覆盖 .modal-bg-state * 的透明通配，恢复深色国史馆样式 */
 .modal-bg-ending .ending-document {
   background:
-    linear-gradient(180deg, rgba(16, 12, 9, 0.16), rgba(16, 12, 9, 0.34)),
+    radial-gradient(130% 100% at 50% -8%, rgba(150, 44, 32, 0.30), transparent 56%),
+    radial-gradient(100% 80% at 50% 110%, rgba(80, 22, 16, 0.22), transparent 60%),
+    linear-gradient(180deg, rgba(21, 13, 9, 0.92), rgba(13, 9, 7, 0.96)),
     url("/bg_ending.webp") center / cover no-repeat !important;
 }
 
 .modal-bg-ending .ending-hero {
-  background:
-    linear-gradient(90deg, rgba(116, 35, 27, 0.15), rgba(255, 247, 222, 0.7) 44%, rgba(193, 145, 56, 0.14)),
-    rgba(255, 252, 244, 0.74) !important;
-  border-color: rgba(112, 42, 28, 0.26) !important;
+  background: linear-gradient(135deg, #3a2117, #241410) !important;
+  border-color: rgba(201, 162, 92, 0.4) !important;
+  box-shadow:
+    0 14px 40px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 232, 190, 0.12) !important;
 }
 
 .modal-bg-ending .ending-seal {
-  background:
-    radial-gradient(circle, rgba(255, 230, 184, 0.72), rgba(150, 36, 26, 0.08)) !important;
-  border-color: rgba(122, 27, 20, 0.62) !important;
-  color: #7a1b14 !important;
+  background: radial-gradient(circle, rgba(170, 44, 32, 0.7), rgba(50, 22, 16, 0.4)) !important;
+  border-color: #c23a2a !important;
+  color: #f0c98a !important;
+  box-shadow: 0 0 26px rgba(190, 60, 40, 0.4), inset 0 0 16px rgba(0, 0, 0, 0.5) !important;
 }
 
 .modal-bg-ending .ending-verdict-card,
 .modal-bg-ending .ending-chronicle {
-  border-color: rgba(111, 83, 46, 0.22) !important;
-}
-
-.modal-bg-ending .ending-verdict-card {
-  background: rgba(255, 252, 244, 0.72) !important;
-}
-
-.modal-bg-ending .ending-chronicle {
-  background: url("/ending_timeline_scroll.webp") center / contain no-repeat !important;
+  background: linear-gradient(135deg, #2a1c14, #1a120d) !important;
+  border-color: rgba(214, 168, 96, 0.3) !important;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 232, 190, 0.08) !important;
 }
 
 .modal-bg-ending .ending-timeline-body {
@@ -3668,7 +3684,7 @@ button:disabled {
 }
 
 .modal-bg-ending .ending-timeline-item::after {
-  background: #f8ecd0 !important;
+  background: #c23a2a !important;
 }
 
 /* 朝堂抽屉背景 */
@@ -4362,14 +4378,15 @@ button:disabled {
   }
 
   .ending-hero {
-    grid-template-columns: 1fr;
-    min-height: 0;
-    padding: 18px;
+    grid-template-columns: auto 1fr;
+    padding: 18px 20px;
+    gap: 16px;
   }
 
   .ending-seal {
-    width: 58px;
-    height: 58px;
+    width: 64px;
+    height: 64px;
+    min-width: 64px;
   }
 
   .ending-hero-copy h2 {
@@ -4378,47 +4395,24 @@ button:disabled {
 
   .ending-verdict-card,
   .ending-chronicle {
-    padding: 16px;
-  }
-
-  .ending-chronicle {
-    min-height: 330px;
-    padding: 26px 28px;
+    padding: 18px;
   }
 
   .ending-timeline-item {
-    gap: 10px;
-    padding-left: 0;
+    grid-template-columns: 58px 24px minmax(0, 1fr);
+    padding-bottom: 20px;
   }
 
   .ending-timeline-item::before {
-    left: calc(50% + 8px);
-    right: calc(-50% + 8px);
-    top: 22px;
+    left: calc(58px + 12px);
   }
 
   .ending-timeline-item::after {
-    left: 50%;
-    top: 15px;
+    left: calc(58px + 12px);
   }
 
-  .ending-timeline-date {
-    align-items: center;
-  }
-
-  .ending-timeline {
-    grid-auto-columns: minmax(260px, 82vw);
-    min-height: 260px;
-    padding-top: 28px;
-  }
-
-  .ending-timeline-body {
-    min-height: 220px;
-    max-height: 270px;
-  }
-
-  .ending-timeline-date span {
-    margin-top: 0;
+  .ending-timeline-date b {
+    font-size: 1.02rem;
   }
 
   .document-resources {
