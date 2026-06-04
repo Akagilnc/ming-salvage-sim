@@ -119,8 +119,9 @@
       <div class="slot" data-id="年月"   style="left:9.6%;  top:6.31%;"><span class="lab">大明</span><span class="val">崇祯元年 三月</span></div>
       <div class="slot" data-id="国库"   style="left:25.83%; top:6.32%;"><span class="lab">国库</span><span class="val">1280 万两 <small class="neg">-54</small></span></div>
       <div class="slot" data-id="内库"   style="left:42.33%; top:6.35%;"><span class="lab">内库</span><span class="val">96 万两 <small class="neg">-22</small></span></div>
-      <div class="slot" data-id="民心"   style="left:58.63%; top:6.06%;"><span class="lab">民心</span><span class="val">53</span></div>
-      <div class="slot" data-id="皇威"   style="left:78.07%; top:6.56%;"><span class="lab">皇威</span><span class="val">40</span></div>
+      <div class="slot" data-id="民心"   style="left:58.63%; top:6.06%;"><span class="val" style="display:flex;gap:1cqw"><span><span class="lab">民心</span> 53</span><span><span class="lab">皇威</span> 40</span></span></div>
+      <div class="slot" data-id="皇威"   style="left:76%; top:4.4%;"><span class="val">帝国修正 <small>4</small></span></div>
+      <div class="slot" data-id="菜单"   style="left:90%; top:4.4%;"><span class="val">☰</span></div>
 
       <!-- 左上 局势进度卡：标题烤死，内容区填 -->
       <div class="slot" data-id="局势标题" style="left:8.38%; top:26.22%;"><span class="val" style="font-size:1.0cqw">辽东索饷 · <span class="neg">已崩坏</span></span></div>
@@ -139,12 +140,19 @@
       <div class="slot btn" data-id="后宫" style="left:94.36%; top:68.81%; font-size:1.1cqw">后</div>
       <div class="slot btn" data-id="菜单" style="left:94.56%; top:76.32%; font-size:1.1cqw">目</div>
 
-      <!-- 底部 5 书册按钮区：每个独立矩形框，将来扣图填进 div -->
-      <div class="cmdbox" data-id="奏疏" style="left:7.53%; top:71.89%; width:16.78%; height:15.79%;"><img class="cmd-img" src="ui/exact/cmd/奏疏.png" /><span class="rectbox-tag">奏疏</span><span class="rectbox-handle tl" data-h="tl"></span><span class="rectbox-handle br" data-h="br"></span></div>
-      <div class="cmdbox" data-id="邸报" style="left:25.78%; top:70.85%; width:16.19%; height:15.78%;"><img class="cmd-img" src="ui/exact/cmd/邸报.png" /><span class="rectbox-tag">邸报</span><span class="rectbox-handle tl" data-h="tl"></span><span class="rectbox-handle br" data-h="br"></span></div>
-      <div class="cmdbox" data-id="密令" style="left:45.75%; top:70.02%; width:12.32%; height:16.13%;"><img class="cmd-img" src="ui/exact/cmd/密令.png" /><span class="rectbox-tag">密令</span><span class="rectbox-handle tl" data-h="tl"></span><span class="rectbox-handle br" data-h="br"></span></div>
-      <div class="cmdbox" data-id="史册" style="left:62.51%; top:69.99%; width:11.96%; height:16.43%;"><img class="cmd-img" src="ui/exact/cmd/史册.png" /><span class="rectbox-tag">史册</span><span class="rectbox-handle tl" data-h="tl"></span><span class="rectbox-handle br" data-h="br"></span></div>
-      <div class="cmdbox" data-id="拟诏" style="left:76.57%; top:62.97%; width:16.29%; height:27.88%;"><img class="cmd-img" src="ui/exact/cmd/拟诏.png" /><span class="rectbox-tag">拟诏</span><span class="rectbox-handle tl" data-h="tl"></span><span class="rectbox-handle br" data-h="br"></span></div>
+      <!-- 底部 5 书册按钮区：每个独立矩形框，扣图填进 div -->
+      <div class="cmdbox" data-id="奏疏" style="left:12.02%; top:75.57%; width:11.8%; height:11.13%;"><img class="cmd-img" src="ui/exact/cmd/奏疏.png" /><span class="rectbox-tag">奏疏</span><span class="rectbox-handle tl" data-h="tl"></span><span class="rectbox-handle br" data-h="br"></span></div>
+      <div class="cmdbox" data-id="邸报" style="left:28.34%; top:75.45%; width:11.61%; height:12.46%;"><img class="cmd-img" src="ui/exact/cmd/邸报.png" /><span class="rectbox-tag">邸报</span><span class="rectbox-handle tl" data-h="tl"></span><span class="rectbox-handle br" data-h="br"></span></div>
+      <div class="cmdbox" data-id="密令" style="left:46.91%; top:73.38%; width:9.76%; height:13.11%;"><img class="cmd-img" src="ui/exact/cmd/密令.png" /><span class="rectbox-tag">密令</span><span class="rectbox-handle tl" data-h="tl"></span><span class="rectbox-handle br" data-h="br"></span></div>
+      <div class="cmdbox" data-id="史册" style="left:63.92%; top:73.4%; width:9.4%; height:13.21%;"><img class="cmd-img" src="ui/exact/cmd/史册.png" /><span class="rectbox-tag">史册</span><span class="rectbox-handle tl" data-h="tl"></span><span class="rectbox-handle br" data-h="br"></span></div>
+      <div class="cmdbox" data-id="拟诏" style="left:77.29%; top:67.15%; width:14.08%; height:21.67%;"><img class="cmd-img" src="ui/exact/cmd/拟诏.png" /><span class="rectbox-tag">拟诏</span><span class="rectbox-handle tl" data-h="tl"></span><span class="rectbox-handle br" data-h="br"></span></div>
+
+      <!-- 底部 5 命令文字标签（标题+副标），各自独立点 slot 拖准 -->
+      <div class="slot" data-id="奏疏文字" style="left:5.8%;  top:90%;"><span class="lab">奏疏</span><span class="val" style="font-size:0.8cqw">0 件待览</span></div>
+      <div class="slot" data-id="邸报文字" style="left:24.5%; top:91%;"><span class="lab">邸报详明</span><span class="val" style="font-size:0.8cqw">数项加减/账目明细</span></div>
+      <div class="slot" data-id="密令文字" style="left:46%;  top:91%;"><span class="lab">密令</span><span class="val" style="font-size:0.8cqw">进行中密令</span></div>
+      <div class="slot" data-id="史册文字" style="left:67%;  top:91%;"><span class="lab">史册</span><span class="val" style="font-size:0.8cqw">历代奏报/诏书</span></div>
+      <div class="slot" data-id="拟诏文字" style="left:88%;  top:91%;"><span class="lab">拟诏/结束回合</span><span class="val" style="font-size:0.8cqw">本回合</span></div>
     </div>
   </div>
 

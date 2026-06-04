@@ -1,5 +1,6 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
+import { createPortal } from "react-dom";
 import {
   Check,
   Crown,
@@ -1437,12 +1438,21 @@ function App() {
         <div className="hud2-slot" style={HUD_SLOTS.顶栏.内库}>
           <BudgetHover accountName="内库" budget={state.budget["内库"]} />
         </div>
-        <div className={`hud2-slot hud2-metric ${scoreTone(state.metrics["民心"], false)}`} style={HUD_SLOTS.顶栏.民心}>
-          <span className="hud2-lab">民心</span><span className="hud2-val">{state.metrics["民心"]}</span>
+        <div className="hud2-slot hud2-metric-pair" style={HUD_SLOTS.顶栏.民心}>
+          <span className={`hud2-metric-one ${scoreTone(state.metrics["民心"], false)}`}>
+            <span className="hud2-lab">民心</span><span className="hud2-val">{state.metrics["民心"]}</span>
+          </span>
+          <span className={`hud2-metric-one ${scoreTone(state.metrics["皇威"], false)}`}>
+            <span className="hud2-lab">皇威</span><span className="hud2-val">{state.metrics["皇威"]}</span>
+          </span>
         </div>
-        <div className={`hud2-slot hud2-metric ${scoreTone(state.metrics["皇威"], false)}`} style={HUD_SLOTS.顶栏.皇威}>
-          <span className="hud2-lab">皇威</span><span className="hud2-val">{state.metrics["皇威"]}</span>
+        <div className="hud2-slot hud2-legacy-slot" style={HUD_SLOTS.顶栏.皇威}>
+          <LegacyBar legacies={state.legacies} />
         </div>
+        <button className="hud2-menu-btn"
+          title="游戏菜单" aria-label="游戏菜单" onClick={() => setActiveModal("menu")}>
+          <span className="hud2-val">菜单</span>
+        </button>
 
         {/* 右侧竖排部院导航 */}
         {([
@@ -1456,7 +1466,7 @@ function App() {
           ["后", "harem", "后宫"],
           ["目", "goal", "长期目标"],
         ] as const).map(([label, key, title], idx) => {
-          const slotKey = (["政","吏部","省份","兵部","户部","工部","礼部","后宫","菜单"] as const)[idx];
+          const slotKey = (["政","吏部","省份","兵部","户部","工部","礼部","后宫","目标"] as const)[idx];
           return (
             <button key={slotKey} className={`hud2-slot hud2-nav${activeDrawerKey === key ? " active" : ""}`}
               style={HUD_SLOTS.导航[slotKey]} title={title} aria-label={title}
@@ -2749,7 +2759,8 @@ const HUD_SLOTS = {
     国库: { left: "25.83%", top: "6.32%" },
     内库: { left: "42.33%", top: "6.35%" },
     民心: { left: "58.63%", top: "6.06%" },
-    皇威: { left: "78.07%", top: "6.56%" },
+    皇威: { left: "76.09%", top: "6.15%" },
+    菜单: { left: "85.8%", top: "4.6%" },
   },
   导航: {
     政: { left: "93.36%", top: "19.46%" },
@@ -2760,14 +2771,21 @@ const HUD_SLOTS = {
     工部: { left: "94.13%", top: "51.64%" },
     礼部: { left: "94.22%", top: "60.33%" },
     后宫: { left: "94.36%", top: "68.81%" },
-    菜单: { left: "94.56%", top: "76.32%" },
+    目标: { left: "94.56%", top: "76.32%" },
   },
   命令: {
-    奏疏: { left: "7.53%", top: "71.89%", width: "16.78%", height: "15.79%" },
-    邸报: { left: "25.78%", top: "70.85%", width: "16.19%", height: "15.78%" },
-    密令: { left: "45.75%", top: "70.02%", width: "12.32%", height: "16.13%" },
-    史册: { left: "62.51%", top: "69.99%", width: "11.96%", height: "16.43%" },
-    拟诏: { left: "76.57%", top: "62.97%", width: "16.29%", height: "27.88%" },
+    奏疏: { left: "12.02%", top: "75.57%", width: "11.8%", height: "11.13%" },
+    邸报: { left: "28.34%", top: "75.45%", width: "11.61%", height: "12.46%" },
+    密令: { left: "46.91%", top: "73.38%", width: "9.76%", height: "13.11%" },
+    史册: { left: "63.92%", top: "73.4%", width: "9.4%", height: "13.21%" },
+    拟诏: { left: "77.29%", top: "67.15%", width: "14.08%", height: "21.67%" },
+  },
+  命令文字: {
+    奏疏: { left: "16.78%", top: "89.93%" },
+    邸报: { left: "32.81%", top: "89.66%" },
+    密令: { left: "51.02%", top: "88.99%" },
+    史册: { left: "67.86%", top: "89.68%" },
+    拟诏: { left: "83.9%", top: "89.76%" },
   },
   地图四角: { tl: [17.89, 14.9], tr: [86.95, 14.9], br: [92.13, 76.61], bl: [13.9, 76.61] },
   局势四角: { tl: [3.14, 24.09], tr: [15.06, 24.09], br: [14.36, 47.95], bl: [1.6, 47.95] },
@@ -2985,7 +3003,7 @@ function LegacyBar({ legacies }: { legacies: Legacy[] }) {
         <span className="legacy-bar-label">帝国修正</span>
         <span className="legacy-bar-count">{legacies.length}</span>
       </button>
-      {open && (
+      {open && createPortal(
         <div className="legacy-modal-backdrop" onClick={() => setOpen(false)}>
           <div className="legacy-modal" onClick={(e) => e.stopPropagation()}>
             <div className="legacy-modal-head">
@@ -3008,7 +3026,8 @@ function LegacyBar({ legacies }: { legacies: Legacy[] }) {
               ))}
             </ul>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );
@@ -3016,36 +3035,49 @@ function LegacyBar({ legacies }: { legacies: Legacy[] }) {
 
 function BudgetHover({ accountName, budget }: { accountName: "国库" | "内库"; budget: BudgetAccount }) {
   const [open, setOpen] = React.useState(false);
+  const triggerRef = React.useRef<HTMLButtonElement>(null);
+  const [pos, setPos] = React.useState<{ left: number; top: number } | null>(null);
+  const show = () => {
+    const r = triggerRef.current?.getBoundingClientRect();
+    if (r) setPos({ left: r.left, top: r.bottom + 6 });
+    setOpen(true);
+  };
+  const hide = () => setOpen(false);
   return (
     <span
       className={`budget-hover ${open ? "open" : ""}`}
-      onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => setOpen(false)}
-      onFocus={() => setOpen(true)}
-      onBlur={() => setOpen(false)}
+      onMouseEnter={show}
+      onMouseLeave={hide}
+      onFocus={show}
+      onBlur={hide}
     >
       <button
+        ref={triggerRef}
         className="status-money budget-trigger"
         type="button"
         aria-label={`查看${accountName}固定收支`}
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => (open ? hide() : show())}
       >
         <span>{accountName} <b>{formatMoney(budget.balance)}</b></span>
         <small className={budget.net >= 0 ? "income" : "expense"}>月 {formatSignedMoney(budget.net)}</small>
       </button>
-      <span className="budget-popover" role="tooltip">
-        <span className="budget-popover-head">
-          <b>{accountName}月度定额</b>
-          <span className="budget-summary">
-            <span><small>入</small><strong className="income">{formatMoney(budget.income_total)}</strong></span>
-            <span><small>出</small><strong className="expense">{formatMoney(budget.expense_total)}</strong></span>
-            <span><small>净</small><strong className={budget.net >= 0 ? "income" : "expense"}>{formatSignedMoney(budget.net)}</strong></span>
+      {open && pos && createPortal(
+        <span className="budget-popover budget-popover-portal" role="tooltip"
+          style={{ left: pos.left, top: pos.top }}>
+          <span className="budget-popover-head">
+            <b>{accountName}月度定额</b>
+            <span className="budget-summary">
+              <span><small>入</small><strong className="income">{formatMoney(budget.income_total)}</strong></span>
+              <span><small>出</small><strong className="expense">{formatMoney(budget.expense_total)}</strong></span>
+              <span><small>净</small><strong className={budget.net >= 0 ? "income" : "expense"}>{formatSignedMoney(budget.net)}</strong></span>
+            </span>
           </span>
-        </span>
-        <BudgetList title="固定收入" items={budget.income} />
-        <BudgetList title="固定支出" items={budget.expense} expense />
-        <BudgetMovementsList movements={budget.movements} total={budget.movements_total} />
-      </span>
+          <BudgetList title="固定收入" items={budget.income} />
+          <BudgetList title="固定支出" items={budget.expense} expense />
+          <BudgetMovementsList movements={budget.movements} total={budget.movements_total} />
+        </span>,
+        document.body
+      )}
     </span>
   );
 }
@@ -3099,7 +3131,7 @@ function BudgetList({ title, items, expense = false }: { title: string; items: B
   );
 }
 
-// 底部命令物件：透明扣图叠在木牌坑位上，带角标+说明
+// 底部命令物件：扣图按木牌坑定位，文字标签按独立文字坑定位（两者分离，各自调位）
 function CommandSlot({
   slotKey, img, badge, caption, sub, onClick,
 }: {
@@ -3107,12 +3139,17 @@ function CommandSlot({
   img: string; badge?: number; caption: string; sub: string; onClick: () => void;
 }) {
   return (
-    <button className="hud2-cmd" style={HUD_SLOTS.命令[slotKey]} onClick={onClick}
-      aria-label={`${caption}：${sub}`}>
-      <img className="hud2-cmd-img" src={`/ui/exact/cmd/${img}.png`} alt="" />
-      {badge ? <span className="hud2-cmd-badge">{badge}</span> : null}
-      <span className="hud2-cmd-caption"><b>{caption}</b><small>{sub}</small></span>
-    </button>
+    <>
+      <button className="hud2-cmd" style={HUD_SLOTS.命令[slotKey]} onClick={onClick}
+        aria-label={`${caption}：${sub}`}>
+        <img className="hud2-cmd-img" src={`/ui/exact/cmd/${img}.png`} alt="" />
+        {badge ? <span className="hud2-cmd-badge">{badge}</span> : null}
+      </button>
+      <button className="hud2-slot hud2-cmd-caption" style={HUD_SLOTS.命令文字[slotKey]}
+        onClick={onClick} aria-label={`${caption}：${sub}`}>
+        <b>{caption}</b><small>{sub}</small>
+      </button>
+    </>
   );
 }
 
@@ -4742,38 +4779,31 @@ function BriefReport({ title, items }: { title: string; items: string[] }) {
   );
 }
 
-function SituationPanel({
-  issues,
-  closedIssues,
-  hasLegacies,
-}: {
-  issues: Issue[];
-  closedIssues: ClosedIssue[];
-  hasLegacies: boolean;
-}) {
-  const active = issues.filter((issue) => issue.kind === "situation" || issue.kind === "initiative");
-  const [collapsed, setCollapsed] = React.useState(false);
-  if (!active.length && !closedIssues.length) return null;
+// 局势分组：长期(贯穿一朝大计) vs 近期。纯前端按 fail_condition 文案判定。
+function groupIssues(issues: Issue[]) {
+  const active = issues.filter((i) => i.kind === "situation" || i.kind === "initiative");
   const bySeq = (a: Issue, b: Issue) => {
     if (a.kind !== b.kind) return a.kind === "initiative" ? -1 : 1;
     return a.id - b.id;
   };
-  // 长期局势＝贯穿一朝的大计（甲申国亡前不结案），靠 fail_condition 文案判定，纯前端分组。
-  const isLongTerm = (issue: Issue) => /甲申|贯穿一朝|倾国之大计/.test(issue.fail_condition || "");
-  const longTerm = active.filter(isLongTerm).sort(bySeq);
-  const nearTerm = active.filter((i) => !isLongTerm(i)).sort(bySeq);
+  const isLongTerm = (i: Issue) => /甲申|贯穿一朝|倾国之大计/.test(i.fail_condition || "");
+  return {
+    active,
+    longTerm: active.filter(isLongTerm).sort(bySeq),
+    nearTerm: active.filter((i) => !isLongTerm(i)).sort(bySeq),
+  };
+}
+
+function SituationPanel({ issues, closedIssues, hasLegacies }: {
+  issues: Issue[];
+  closedIssues: ClosedIssue[];
+  hasLegacies: boolean;
+}) {
+  const { active, longTerm, nearTerm } = groupIssues(issues);
+  if (!active.length && !closedIssues.length) return null;
   return (
-    <aside className={`situation-panel ${collapsed ? "collapsed" : ""} ${hasLegacies ? "with-legacies" : ""}`} aria-label="局势进度">
-      <div className="situation-panel-title">
-        <span>局势进度</span>
-        <button
-          type="button"
-          className="situation-toggle"
-          aria-label={collapsed ? "展开局势" : "收起局势"}
-          onClick={() => setCollapsed((c) => !c)}
-        >{collapsed ? "+" : "−"}</button>
-      </div>
-      {!collapsed && closedIssues.length ? (
+    <aside className={`situation-panel ${hasLegacies ? "with-legacies" : ""}`} aria-label="局势进度">
+      {closedIssues.length ? (
         <div className="situation-closed-list">
           {closedIssues.map((ci) => (
             <div className={`situation-closed-row ${ci.status}`} key={`closed-${ci.id}`} tabIndex={0}>
@@ -4786,29 +4816,46 @@ function SituationPanel({
           ))}
         </div>
       ) : null}
-      {!collapsed && (longTerm.length ? (
+      {longTerm.length ? (
         <div className="situation-group">
           <div className="situation-group-title">长期局势</div>
           <div className="situation-list">
             {longTerm.map((issue) => <SituationRow key={issue.id} issue={issue} />)}
           </div>
         </div>
-      ) : null)}
-      {!collapsed && (nearTerm.length ? (
+      ) : null}
+      {nearTerm.length ? (
         <div className="situation-group">
           <div className="situation-group-title">近期局势</div>
           <div className="situation-list">
             {nearTerm.map((issue) => <SituationRow key={issue.id} issue={issue} />)}
           </div>
         </div>
-      ) : null)}
+      ) : null}
     </aside>
   );
 }
 
 function SituationRow({ issue }: { issue: Issue }) {
+  const ref = React.useRef<HTMLDivElement>(null);
+  const [tipPos, setTipPos] = React.useState<{ x: number; y: number } | null>(null);
+  const [detail, setDetail] = React.useState(false);
+  const suppressRef = React.useRef(false);  // 关弹窗后抑制 tip，直到鼠标移出再进
+  const showTip = () => {
+    if (detail || suppressRef.current) return;
+    const r = ref.current?.getBoundingClientRect();
+    if (r) setTipPos({ x: r.right + 12, y: r.top });
+  };
+  const hideTip = () => { setTipPos(null); suppressRef.current = false; };  // 鼠标移出，解抑制
+  const closeDetail = () => {
+    setDetail(false);
+    setTipPos(null);
+    suppressRef.current = true;  // 关弹窗时鼠标多半还在行上，抑制到下次移出
+  };
   return (
-    <div className={`situation-row ${issueTone(issue.bar_value)}`} tabIndex={0}>
+    <div ref={ref} className={`situation-row ${issueTone(issue.bar_value)}`} tabIndex={0}
+      onClick={() => { setDetail(true); setTipPos(null); }} role="button"
+      onMouseEnter={showTip} onMouseLeave={hideTip} onFocus={showTip} onBlur={hideTip}>
       <div className="situation-row-head">
         <span className="situation-name">{issue.title}</span>
         <b>{issue.bar_value}</b>
@@ -4816,8 +4863,49 @@ function SituationRow({ issue }: { issue: Issue }) {
       <div className="situation-bar">
         <i style={{ width: `${Math.max(0, Math.min(100, issue.bar_value))}%` }} />
       </div>
-      <div className="situation-tip" role="tooltip">
-        <div className="situation-tip-head">#{issue.id} {issue.title}</div>
+      {tipPos && !detail ? <SituationTip issue={issue} pos={tipPos} /> : null}
+      {detail ? <SituationDetailModal issue={issue} onClose={closeDetail} /> : null}
+    </div>
+  );
+}
+
+// 局势悬浮框（精简）：只显数值，hover 触发。详细达成/失败点击弹窗看
+function SituationTip({ issue, pos }: { issue: Issue; pos: { x: number; y: number } }) {
+  const W = 280, vw = window.innerWidth, vh = window.innerHeight;
+  const left = pos.x + W > vw ? Math.max(8, pos.x - W - 24) : pos.x;
+  const top = Math.min(pos.y, vh - 200);
+  return createPortal(
+    <div className="situation-tip-float" style={{ left, top: Math.max(8, top) }}>
+        <div className="situation-tip-float-head">#{issue.id} {issue.title}</div>
+        <div className="situation-tip-inner">
+        <div className="situation-tip-row"><span>阶段</span><b>{issue.phase}</b></div>
+        <div className="situation-tip-row"><span>进度</span><b>{issue.bar_value} / 100</b></div>
+        <div className="situation-tip-row">
+          <span>月度推进</span>
+          <b>{issue.inertia > 0 ? `+${issue.inertia}` : issue.inertia}/月</b>
+        </div>
+        <div className="situation-tip-row">
+          <span>当前影响</span>
+          <b>{issue.ongoing_text || "无"}</b>
+        </div>
+        <p className="situation-tip-stage">{issue.stage_text}</p>
+        <div className="situation-tip-more">点击查看达成 / 失败条件</div>
+        </div>
+    </div>,
+    document.body
+  );
+}
+
+// 局势详情弹窗（点击）：完整达成/失败条件 + 标签。居中模态，Portal 脱离梯形
+function SituationDetailModal({ issue, onClose }: { issue: Issue; onClose: () => void }) {
+  return createPortal(
+    <div className="situation-detail-backdrop" onClick={onClose}>
+      <div className="situation-detail" onClick={(e) => e.stopPropagation()}>
+        <div className="situation-detail-head">
+          <span>#{issue.id} {issue.title}</span>
+          <button className="situation-detail-close" onClick={onClose} aria-label="关闭">×</button>
+        </div>
+        <div className="situation-tip-inner">
         <div className="situation-tip-row"><span>阶段</span><b>{issue.phase}</b></div>
         <div className="situation-tip-row"><span>进度</span><b>{issue.bar_value} / 100</b></div>
         <div className="situation-tip-row">
@@ -4844,8 +4932,10 @@ function SituationRow({ issue }: { issue: Issue }) {
             {issue.tags.map((tag) => <small key={tag}>{tag}</small>)}
           </div>
         ) : null}
+        </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

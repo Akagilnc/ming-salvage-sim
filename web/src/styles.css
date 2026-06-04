@@ -735,7 +735,7 @@ select:focus-visible {
   position: absolute;
   top: calc(100% + 6px);
   left: 0;
-  z-index: 40;
+  z-index: 9000;
   display: grid;
   gap: 6px;
   width: min(309px, calc(100vw - 24px));
@@ -743,13 +743,11 @@ select:focus-visible {
   overflow-y: auto;
   padding: 8px;
   transform: translateY(-2px);
-  border: 1px solid rgba(226, 180, 86, 0.34);
+  border: 1px solid rgba(120, 80, 30, 0.6);
   border-radius: 4px;
-  color: var(--paper);
-  background:
-    linear-gradient(180deg, rgba(247, 229, 181, 0.98), rgba(215, 184, 124, 0.98)),
-    #ead3a3;
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.3);
+  color: #2a1c0c;
+  background: #f2e2b4;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
   font-size: 16px;
   opacity: 0;
   pointer-events: none;
@@ -764,6 +762,16 @@ select:focus-visible {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0);
+}
+
+/* Portal 到 body 的预算浮框：fixed 定位脱离 hud2-stage transform，文字清晰、z 顶、盖一切 */
+.budget-popover-portal {
+  position: fixed !important;
+  z-index: 9999 !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  transform: none !important;
+  background: #f2e2b4 !important;
 }
 
 .budget-popover-head {
@@ -3751,6 +3759,7 @@ button:disabled {
 }
 
 /* 主页局势进度面板（右上角浮层） */
+/* 旧浮层定位，已被 hud2 透视梯形接管（下方 .hud2-issue-quad .situation-panel 覆盖）*/
 .situation-panel {
   position: fixed;
   top: 72px;
@@ -3766,6 +3775,176 @@ button:disabled {
   backdrop-filter: blur(6px);
   overflow: visible;
 }
+
+/* hud2：局势区填满透视梯形 + 内部滚动（局势多时不溢出框）*/
+.hud2-issue-quad .situation-panel {
+  position: absolute !important;
+  inset: 0 !important;
+  width: auto !important;
+  top: 0 !important;
+  left: 0 !important;
+  display: flex;
+  flex-direction: column;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  overflow: hidden;
+  padding: 4% 6%;
+}
+.hud2-issue-quad .situation-panel-title { flex: 0 0 auto; }
+.hud2-issue-quad .situation-closed-list,
+.hud2-issue-quad .situation-group {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 0;
+}
+/* 局势行改 button，去默认样式 */
+.situation-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 4px;
+  background: rgba(255, 252, 244, 0.5);
+  padding: 5px 7px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.situation-row:hover { background: rgba(255, 252, 244, 0.85); }
+
+/* 局势悬浮框：Portal 到 body，fixed 按行坐标定位，z-index 顶，白底黑字，不受梯形限制 */
+.situation-tip-float {
+  position: fixed;
+  z-index: 9999;
+  width: 300px;
+  max-height: 88vh;
+  overflow-y: auto;
+  background: #fff;
+  color: #1a1a1a;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  border-radius: 6px;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.45);
+  padding: 9px 11px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  pointer-events: none;
+}
+.situation-tip-float-head {
+  font-weight: 700;
+  font-size: 0.85rem;
+  margin-bottom: 6px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+}
+.situation-tip-float .situation-tip-row span,
+.situation-tip-float .situation-tip-stage { color: #555; }
+.situation-tip-float .situation-tip-row b { color: #1a1a1a; }
+.situation-tip-inner { display: flex; flex-direction: column; gap: 8px; }
+.situation-tip-more {
+  margin-top: 2px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(0,0,0,0.15);
+  color: #8a5a18;
+  font-size: 0.7rem;
+  text-align: center;
+}
+
+/* 局势详情点击弹窗：居中模态，白底黑字，Portal 脱离梯形 */
+.situation-detail-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(3px);
+}
+.situation-detail {
+  width: min(420px, 92vw);
+  max-height: 86vh;
+  overflow-y: auto;
+  background: #fff;
+  color: #1a1a1a;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  border-radius: 8px;
+  box-shadow: 0 14px 44px rgba(0, 0, 0, 0.55);
+  padding: 0 16px 16px;
+  font-size: 13px;
+}
+.situation-detail-head {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  margin-bottom: 4px;
+  background: #fff;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+  font-size: 1rem;
+  font-weight: 700;
+}
+.situation-detail .situation-tip-row span,
+.situation-detail .situation-tip-stage { color: #555; }
+.situation-detail .situation-tip-row b { color: #1a1a1a; }
+.situation-detail-close {
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.04);
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* 顶栏：民心+皇威双值并排 */
+.hud2-metric-pair { display: flex; gap: 8%; align-items: center; }
+.hud2-metric-one { display: inline-flex; gap: 0.25em; align-items: baseline; white-space: nowrap; }
+/* 帝国修正：木牌本身就是框，纯白大字无边框 */
+.hud2-legacy-slot .legacy-bar {
+  position: static !important;
+  top: auto !important;
+  left: auto !important;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  padding: 0 !important;
+  background: none !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  color: #f8efd6;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.9), 0 0 2px rgba(0,0,0,0.7);
+}
+.hud2-legacy-slot .legacy-bar-label { font-size: 2.4cqh; font-weight: 700; color: #f8efd6; }
+.hud2-legacy-slot .legacy-bar-count { font-size: 2.6cqh; font-weight: 800; color: #f8efd6; }
+
+/* 游戏菜单：左下角灰色按钮（脱离顶栏木牌）*/
+.hud2-menu-btn {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 18px;
+  background: rgba(60, 60, 64, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  color: #e8e8e8;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.4);
+  transform: none;
+}
+.hud2-menu-btn:hover { background: rgba(80, 80, 86, 0.92); }
+.hud2-menu-btn .hud2-val { font-size: 15px; font-weight: 600; letter-spacing: 2px; }
 
 .situation-panel.collapsed {
   max-height: none;
@@ -3901,31 +4080,7 @@ button:disabled {
   position: relative;
 }
 
-.situation-tip {
-  position: absolute;
-  top: 0;
-  left: calc(100% + 12px);
-  z-index: 20;
-  width: 260px;
-  padding: 10px 12px;
-  border: 1px solid rgba(0, 0, 0, 0.28);
-  border-radius: 6px;
-  background: rgba(250, 246, 236, 0.99);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-  opacity: 0;
-  visibility: hidden;
-  transform: translateX(-6px);
-  transition: opacity 120ms ease, transform 120ms ease;
-  pointer-events: none;
-}
-
-.situation-row:hover .situation-tip,
-.situation-row:focus-within .situation-tip {
-  opacity: 1;
-  visibility: visible;
-  transform: translateX(0);
-}
-
+/* 旧 hover 悬浮框已废，详情走 SituationDetailModal（fixed 居中白底弹窗）*/
 .situation-tip-head {
   margin-bottom: 6px;
   color: #5a2018;
@@ -3937,8 +4092,8 @@ button:disabled {
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  font-size: 0.8rem;
-  line-height: 1.7;
+  font-size: 0.72rem;
+  line-height: 1.4;
 }
 
 .situation-tip-row span {
@@ -6320,6 +6475,19 @@ button:disabled {
   margin: 0; max-height: none; overflow: auto;
   background: transparent; border: none; box-shadow: none; backdrop-filter: none;
 }
+/* 底图局势区：行背景透明、字体缩小（底图已有标题/纹理）*/
+.hud2-issue-quad .situation-row {
+  background: transparent !important;
+  border-color: rgba(60, 30, 10, 0.25);
+  padding: 3px 4px;
+}
+.hud2-issue-quad .situation-row:hover { background: rgba(255, 250, 235, 0.25) !important; }
+.hud2-issue-quad .situation-name { font-size: 1.6cqh; color: #3a2410; }
+.hud2-issue-quad .situation-row-head b { font-size: 1.6cqh; color: #3a2410; }
+.hud2-issue-quad .situation-group-title { font-size: 1.4cqh; }
+.hud2-issue-quad .situation-list { gap: 4px; }
+.hud2-issue-quad .situation-closed-name,
+.hud2-issue-quad .situation-closed-effect { font-size: 1.4cqh; }
 
 /* 通用文字坑位：百分比定位 + 居中 */
 .hud2-slot {
@@ -6408,18 +6576,15 @@ button:disabled {
   justify-content: center;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
 }
+/* 命令文字标签：独立坑位 slot（hud2-slot 提供 absolute+translate居中定位）*/
 .hud2-cmd-caption {
-  position: absolute;
-  left: 50%;
-  bottom: -2.6cqh;
-  transform: translateX(-50%);
   display: flex;
   flex-direction: column;
   align-items: center;
   white-space: nowrap;
   color: #f0e2c0;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
-  pointer-events: none;
+  cursor: pointer;
 }
-.hud2-cmd-caption b { font-size: 1.4cqh; }
-.hud2-cmd-caption small { font-size: 1.1cqh; color: #c9b48a; }
+.hud2-cmd-caption b { font-size: 1.8cqh; }
+.hud2-cmd-caption small { font-size: 1.3cqh; color: #c9b48a; margin-top: 0.2em; }
