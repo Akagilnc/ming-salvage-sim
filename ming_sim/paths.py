@@ -41,7 +41,10 @@ def user_data_dir() -> Path:
     """用户可写数据目录。
     frozen：~/.ming_sim/（首次自动建）。
     源码：<repo>/data/（沿用旧布局，便于开发期切换存档）。"""
-    if is_frozen():
+    override = os.environ.get("MING_SIM_USER_DATA_DIR", "").strip()
+    if override:
+        d = Path(override).expanduser()
+    elif is_frozen():
         d = Path.home() / ".ming_sim"
     else:
         d = Path(__file__).resolve().parent.parent / "data"

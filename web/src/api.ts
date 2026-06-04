@@ -1,4 +1,5 @@
 import React from "react";
+import { forwardSteamEvents } from "./steamEvents";
 import type { ApiErrorDetail, ChatResponse } from "./types";
 
 export class ApiRequestError extends Error {
@@ -39,7 +40,9 @@ export const api = async <T,>(path: string, options?: RequestInit): Promise<T> =
     const error = await response.json().catch(() => ({ detail: response.statusText }));
     throw new ApiRequestError(normalizeApiError(error, response.statusText), response.statusText);
   }
-  return response.json();
+  const payload = await response.json();
+  void forwardSteamEvents(payload);
+  return payload;
 };
 
 export const parseSseMessage = (raw: string): { event: string; data: string } | null => {

@@ -43,6 +43,7 @@ from ming_sim.context import match_minister_from_text
 from ming_sim.flows import compute_budget_lines
 from ming_sim.exceptions import LLMContractError  # noqa: F401  (保留：供错误处理)
 from ming_sim.models import Character, LLMConfig
+from ming_sim import steam_events
 
 WEB_DIST = bundled_path("web", "dist")
 # 用户上传的自定义立绘存档级目录（不随 build 清空，git 可忽略）。
@@ -1377,7 +1378,10 @@ async def api_menu_new_game() -> Dict[str, Any]:
         web_game = WebGame(fresh=True)
     except LLMUnavailable as exc:
         raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
-    return {"state": web_game.state_payload()}
+    return steam_events.with_events(
+        {"state": web_game.state_payload()},
+        [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
+    )
 
 
 @app.post("/api/menu/continue")
@@ -1799,13 +1803,22 @@ class IssueDecreeRequest(BaseModel):
 @app.post("/api/decree/issue")
 async def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[str, Any]:
     """非流式颁诏（保留兼容）。前端默认走 /api/decree/issue/stream。"""
+    game = get_game()
+    was_ended = bool(game.state.ended)
     try:
-        report = get_game().session.resolve_turn(cheat_directive=body.cheat)
+        report = game.session.resolve_turn(cheat_directive=body.cheat)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
-    decree = get_game().session.last_decree
-    get_game().refresh_turn()
-    return {"decree": decree, "report": report, "state": get_game().state_payload()}
+    decree = game.session.last_decree
+    game.refresh_turn()
+    events = [
+        steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
+        steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
+        steam_events.set_stat(steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn)),
+    ]
+    if not was_ended and game.state.ended:
+        events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
+    return steam_events.with_events({"decree": decree, "report": report, "state": game.state_payload()}, events)
 
 
 @app.post("/api/decree/issue/stream")
@@ -1823,13 +1836,23 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
 
     def worker() -> None:
         try:
-            report = get_game().session.resolve_turn(on_event=on_event, cheat_directive=body.cheat)
-            decree = get_game().session.last_decree
-            get_game().refresh_turn()
+            game = get_game()
+            was_ended = bool(game.state.ended)
+            report = game.session.resolve_turn(on_event=on_event, cheat_directive=body.cheat)
+            decree = game.session.last_decree
+            game.refresh_turn()
+            events = [
+                steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
+                steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
+                steam_events.set_stat(steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn)),
+            ]
+            if not was_ended and game.state.ended:
+                events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
             ev_queue.put(("__done__", {
                 "decree": decree,
                 "report": report,
-                "state": get_game().state_payload(),
+                "state": game.state_payload(),
+                "steam_events": events,
             }))
         except ValueError as e:
             ev_queue.put(("__error__", str(e)))
@@ -1911,7 +1934,10 @@ async def api_list_saves() -> Dict[str, Any]:
 @app.post("/api/saves")
 async def api_create_save(request: SaveCreateRequest) -> Dict[str, Any]:
     info = get_game().save_to(request.name)
-    return {"save": info, "saves": get_game().list_saves()}
+    return steam_events.with_events(
+        {"save": info, "saves": get_game().list_saves()},
+        [steam_events.add_stat(steam_events.STAT_SAVES_CREATED)],
+    )
 
 
 @app.delete("/api/saves/{name}")
@@ -1930,7 +1956,10 @@ async def api_load_save(name: str) -> Dict[str, Any]:
 async def api_reset_game() -> Dict[str, Any]:
     """清空主 DB 重开新局。存档目录保留。"""
     get_game().reset_game()
-    return {"state": get_game().state_payload()}
+    return steam_events.with_events(
+        {"state": get_game().state_payload()},
+        [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
+    )
 
 
 @app.get("/api/llm/config")

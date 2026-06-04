@@ -11,6 +11,7 @@ import { MenuPage } from "./components/menuPage";
 import { ChatModal, ClosedIssuesModal, EdictModal, EndingModal, HistoryModal, ReportModal, SecretOrdersModal, StateModal, filterConsorts, filterMinisters } from "./components/modals";
 import { SituationPanel } from "./components/situation";
 import { getMapIntelStyle, refreshLabelMaps, scoreTone } from "./format";
+import { forwardSteamEvents, type SteamEvent } from "./steamEvents";
 import type { AppView, ChatMessage, ChatUndoResponse, ClosedIssue, Directive, GameState, MenuStatus, Minister, ModalName, SecretOrder, Suggestion } from "./types";
 import "./styles.css";
 
@@ -608,6 +609,7 @@ function App() {
             failed = data.message || "颁诏失败。";
             done = true;
           } else if (evName === "done") {
+            await forwardSteamEvents(data);
             done = true;
           }
         }
