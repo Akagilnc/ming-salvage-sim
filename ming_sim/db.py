@@ -760,9 +760,17 @@ class GameDB:
         base/rate 单位为【月度】万两/%。科目目录与元数据全走 JSON 设定（铁律：设定走 JSON）；
         加新税源只改 JSON 加两行（base+rate）并升 schema_version，零 Python。
 
-        schema 版本来自 JSON 的 schema_version。旧 DB 用 INSERT OR IGNORE 保留玩家中途的
-        set_fiscal_config 改动；JSON 升 schema_version 即整体重置玩家未改动的默认值（走
-        ON CONFLICT UPDATE 全量覆盖 value/元数据列）。
+        ── 版本迁移策略（铁律：fiscal_config 只在建库时整体 seed 一次）──
+        每个库带 `__schema_version`。本函数按它与 JSON schema_version 比对，分三种走法：
+
+        - `cur == 0`（全新库，无版本行）：整体 seed JSON 全表 → 版本号置 JSON 版。仅此一次。
+        - `cur < json`（老档升版）：逐版跑 `_FISCAL_MIGRATIONS[cur+1 .. json]` 的差量动作，
+          每版只动那版真正变的 key，**未声明的 key 一律不碰**（玩家削减/裁撤全保留），
+          跑完把版本号推到该版。默认迁移＝只 INSERT 老档缺的 key（不覆盖既有值、不复活已删项）。
+        - `cur >= json`：**啥都不做**。已是最新，玩家状态神圣。
+
+        ⇒ 玩家裁撤的科目读档后保持删除（不再被旧 INSERT OR IGNORE 复活）。
+           JSON 加新税种【必须】同步升 schema_version，否则老档拿不到（CLAUDE.md 已要求）。
         """
         items = list(self.content.fiscal_items)
         if not items or "__schema_version" not in items[0]:
@@ -779,30 +787,46 @@ class GameDB:
             )
 
         cols = "(key, value, kind, note, budget_role, account, direction, display, sort_order)"
-        cur_ver_row = self.conn.execute(
-            "SELECT value FROM fiscal_config WHERE key = '__schema_version'"
-        ).fetchone()
-        cur_ver = int(cur_ver_row["value"]) if cur_ver_row else 0
-        if cur_ver < schema_version:
-            for rec in rows:
-                self.conn.execute(
-                    f"INSERT INTO fiscal_config {cols} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value, kind=excluded.kind, "
-                    "note=excluded.note, budget_role=excluded.budget_role, account=excluded.account, "
-                    "direction=excluded.direction, display=excluded.display, sort_order=excluded.sort_order",
-                    _meta(rec),
-                )
-            self.conn.execute(
-                "INSERT INTO fiscal_config (key, value, kind, note) VALUES "
-                "('__schema_version', ?, 'meta', '财政默认值大版本号，升即重置玩家未改动的默认值') "
-                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (schema_version,),
-            )
-        else:
+
+        def _seed_missing() -> None:
+            """老档升版的默认迁移：只补 JSON 有、库里没有的 key（不覆盖既有值、不复活已删项）。"""
             self.conn.executemany(
                 f"INSERT OR IGNORE INTO fiscal_config {cols} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [_meta(rec) for rec in rows],
             )
+
+        # 每版迁移：从 N-1 → N，只动那版真正变的东西。键＝目标版本号 N。
+        # 不在表里的版本步走默认 _seed_missing（只补缺 key）。将来要改某 key 默认 / 删某 key /
+        # 加新 key，就在这里登记一条 lambda，只动那一项，别动其它——这样玩家改过的全保住。
+        _FISCAL_MIGRATIONS: "Dict[int, Any]" = {
+            # 8: lambda: self._add_fiscal_key("关税_base", ...),   # 例：将来加新税
+        }
+
+        cur_ver_row = self.conn.execute(
+            "SELECT value FROM fiscal_config WHERE key = '__schema_version'"
+        ).fetchone()
+        cur_ver = int(cur_ver_row["value"]) if cur_ver_row else 0
+
+        if cur_ver >= schema_version:
+            return  # 已最新，玩家状态神圣，碰都不碰
+
+        if cur_ver == 0:
+            # 全新库：整体 seed 一次。
+            self.conn.executemany(
+                f"INSERT INTO fiscal_config {cols} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [_meta(rec) for rec in rows],
+            )
+        else:
+            # 老档升版：逐版跑差量；未登记的版本步只补缺 key。
+            for v in range(cur_ver + 1, schema_version + 1):
+                (_FISCAL_MIGRATIONS.get(v) or _seed_missing)()
+
+        self.conn.execute(
+            "INSERT INTO fiscal_config (key, value, kind, note) VALUES "
+            "('__schema_version', ?, 'meta', '财政默认值大版本号；老档升版逐版迁移，只动差量') "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (schema_version,),
+        )
         self.conn.commit()
 
     def iter_budget_items(self) -> "List[Dict[str, object]]":
