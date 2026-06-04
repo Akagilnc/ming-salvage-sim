@@ -6263,3 +6263,163 @@ button:disabled {
   flex-shrink: 0;
   text-align: right;
 }
+
+/* ───────────────── 新 HUD：整图底图 + 坐标坑位 ───────────────── */
+/* stage 锁死 2560×1440 比例，内部一切按百分比定位，缩放不漂 */
+.hud2-stage {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(100vw, calc(100vh * 2560 / 1440));
+  height: min(100vh, calc(100vw * 1440 / 2560));
+  z-index: 2;
+  container-type: size;
+  overflow: hidden;
+}
+.hud2-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* 透视梯形容器：内容正放，被 matrix3d 压斜 */
+.hud2-map-quad { z-index: 3; overflow: hidden; }
+.hud2-map-quad .grand-map {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100%;
+  height: 100%;
+  z-index: auto;
+  overflow: hidden;          /* pan 改 transform，不用滚动 */
+  /* 海色铺满整个地图框：地图小于框时露的是海，不是底图 */
+  background:
+    radial-gradient(circle at 50% 45%, rgba(170, 190, 180, 0.22), transparent 60%),
+    linear-gradient(160deg, #aeb9b0 0%, #9fb0ad 45%, #8ea7a8 100%) !important;
+  cursor: grab;
+}
+.hud2-map-quad .grand-map:active { cursor: grabbing; }
+/* map-tile 原 width:100vw 会爆出梯形框；改相对地图框、保持地图比例、放大留 pan 余量 */
+.hud2-map-quad .map-tile {
+  will-change: transform;
+  width: 90% !important;           /* 地图略小于框，四周留海域（海色背景兜底）*/
+  height: auto !important;
+  aspect-ratio: 276 / 206 !important;
+  /* 背景改海色+旧纸纹理：地形图外围露的是「海」，不是底图接缝 */
+  background:
+    radial-gradient(circle at 50% 45%, rgba(170, 190, 180, 0.25), transparent 55%),
+    linear-gradient(160deg, #aeb9b0 0%, #9fb0ad 40%, #8ea7a8 100%) !important;
+}
+.hud2-issue-quad { z-index: 5; }
+.hud2-issue-quad .situation-panel {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  margin: 0; max-height: none; overflow: auto;
+  background: transparent; border: none; box-shadow: none; backdrop-filter: none;
+}
+
+/* 通用文字坑位：百分比定位 + 居中 */
+.hud2-slot {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  z-index: 6;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  line-height: 1.05;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #f6eccf;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85), 0 0 2px rgba(0, 0, 0, 0.7);
+}
+.hud2-lab { font-size: 1.3cqh; color: #c9b48a; letter-spacing: 0.04em; }
+.hud2-val { font-size: 2.3cqh; font-weight: 700; color: #f6eccf; }
+.hud2-metric.warn .hud2-val { color: #f2c66a; }
+.hud2-metric.danger .hud2-val { color: #e07a55; }
+.hud2-metric.good .hud2-val { color: #8fd08a; }
+
+/* 顶栏国库/内库复用 BudgetHover，去掉旧浮层底色 */
+.hud2-slot .budget-hover { overflow: visible; }
+.hud2-slot .status-money {
+  background: none; border: none; box-shadow: none; padding: 0;
+  display: inline-flex; flex-direction: column; align-items: center;
+  color: #f6eccf; cursor: pointer; font: inherit;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+}
+.hud2-slot .status-money > span { font-size: 2.0cqh; font-weight: 700; }
+.hud2-slot .status-money small { font-size: 1.3cqh; }
+
+/* 右侧竖排导航单字 */
+.hud2-nav {
+  font-size: 2.2cqh;
+  font-weight: 700;
+  color: #ecd9a8;
+  width: 3cqh;
+  height: 3cqh;
+}
+.hud2-nav.active { color: #fff0c0; text-shadow: 0 0 6px rgba(255, 210, 120, 0.8); }
+.hud2-nav:hover { color: #fff0c0; }
+
+/* 底部命令物件：扣图填进木牌坑位 */
+.hud2-cmd {
+  position: absolute;
+  z-index: 6;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+.hud2-cmd-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center bottom;
+  pointer-events: none;
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55));
+  transition: transform 0.12s ease, filter 0.12s ease;
+}
+.hud2-cmd:hover .hud2-cmd-img {
+  transform: translateY(-4%) scale(1.04);
+  filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.6));
+}
+.hud2-cmd-badge {
+  position: absolute;
+  top: 4%;
+  right: 8%;
+  z-index: 2;
+  min-width: 2.4cqh;
+  height: 2.4cqh;
+  padding: 0 0.6cqh;
+  border-radius: 1.2cqh;
+  background: #b5402f;
+  color: #fff;
+  font-size: 1.5cqh;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+.hud2-cmd-caption {
+  position: absolute;
+  left: 50%;
+  bottom: -2.6cqh;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  white-space: nowrap;
+  color: #f0e2c0;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+  pointer-events: none;
+}
+.hud2-cmd-caption b { font-size: 1.4cqh; }
+.hud2-cmd-caption small { font-size: 1.1cqh; color: #c9b48a; }

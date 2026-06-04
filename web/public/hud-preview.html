@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HUD 坑位预览</title>
+<style>
+  :root { --img-w: 2560; --img-h: 1440; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: #1a1410; font-family: "Songti SC","STSong",serif; color: #f2e4c4; }
+
+  /* 工具条 */
+  .toolbar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
+    padding: 8px 14px; background: rgba(20,16,10,.92); font-size: 13px;
+    border-bottom: 1px solid #4a3a22;
+  }
+  .toolbar label { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
+  .toolbar .readout { font-family: ui-monospace,monospace; color: #ffd; min-width: 220px; }
+  .toolbar button { background:#3a2c18; color:#f2e4c4; border:1px solid #6a5230; border-radius:4px; padding:3px 9px; cursor:pointer; }
+
+  /* 舞台：锁死底图比例，整体随窗口缩放，文字层挂在图上不挂窗口 */
+  .stage-wrap { position: fixed; inset: 44px 0 0 0; display: grid; place-items: center; overflow: auto; }
+  .stage {
+    position: relative;
+    width: min(100%, calc((100vh - 44px) * var(--img-w) / var(--img-h)));
+    aspect-ratio: var(--img-w) / var(--img-h);
+    background: #000;
+  }
+  .stage > img.bg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+  /* 网格标尺：每 5% 一条 */
+  .grid { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .15s; }
+  .grid.show { opacity: 1; }
+  .grid .v, .grid .h { position: absolute; background: rgba(0,200,255,.25); }
+  .grid .v { top: 0; bottom: 0; width: 1px; }
+  .grid .h { left: 0; right: 0; height: 1px; }
+  .grid .v.major, .grid .h.major { background: rgba(0,200,255,.55); }
+  .grid .lbl { position: absolute; font: 10px ui-monospace,monospace; color: #6ff; background: rgba(0,0,0,.5); padding: 0 2px; }
+
+  /* 坑位文字块：百分比定位，相对 .stage（即相对底图），缩放永不漂 */
+  .slot {
+    position: absolute; transform: translate(-50%, -50%);
+    display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
+    white-space: nowrap; line-height: 1.05; cursor: grab; user-select: none;
+    text-shadow: 0 1px 2px rgba(0,0,0,.85), 0 0 1px rgba(0,0,0,.9);
+  }
+  .slot.dragging { cursor: grabbing; outline: 1px dashed #6ff; }
+  .slot .lab { font-size: .82cqw; color: #c9b48a; letter-spacing: .04em; }
+  .slot .val { font-size: 1.35cqw; font-weight: 700; color: #f6eccf; }
+  .slot .val small { font-size: .9cqw; font-weight: 400; }
+  .slot.btn { color:#f0dca8; font-size: 1.0cqw; font-weight:700; }
+  .stage { container-type: inline-size; }
+
+  /* 颜色调子 */
+  .neg { color: #e07a55 !important; }
+  .pos { color: #7fc77a !important; }
+
+  /* 矩形内容区框（局势列表）*/
+  .rectbox { position: absolute; border: 2px dashed #fc6; background: rgba(255,200,80,.10); cursor: move; z-index: 19; }
+  .rectbox-tag { position: absolute; top: 3px; left: 5px; font: 11px ui-monospace,monospace; color:#fc6; background:rgba(0,0,0,.6); padding:1px 5px; border-radius:3px; }
+  .rectbox-handle { position: absolute; width: 14px; height: 14px; background:#fc6; border:2px solid #420; border-radius:3px; z-index: 21; }
+  .rectbox-handle.tl { left: -7px; top: -7px; cursor: nwse-resize; }
+  .rectbox-handle.br { right: -7px; bottom: -7px; cursor: nwse-resize; }
+
+  /* 底部命令按钮框（绿）*/
+  .cmdbox { position: absolute; border: 2px dashed #8f8; background: rgba(120,255,120,.10); cursor: move; z-index: 19; }
+  .cmdbox .rectbox-tag { color:#8f8; }
+  .cmdbox .rectbox-handle { background:#8f8; border-color:#042; }
+  .cmd-img { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; object-position:center bottom; pointer-events:none; filter: drop-shadow(0 3px 5px rgba(0,0,0,.5)); }
+
+  /* 地图区四角梯形 */
+  .mapquad { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 18; }
+  .mapquad polygon { fill: rgba(0,200,255,.10); stroke: #6ff; stroke-width: 2; stroke-dasharray: 8 5; vector-effect: non-scaling-stroke; }
+  .qcorner {
+    position: absolute; width: 16px; height: 16px; transform: translate(-50%,-50%);
+    background: #6ff; border: 2px solid #034; border-radius: 50%; cursor: grab; z-index: 22;
+  }
+  .qcorner.issue-corner { background: #fc6; }
+  #issuequad-poly { fill: rgba(255,200,80,.10) !important; stroke: #fc6 !important; }
+  .qcorner.dragging { cursor: grabbing; background: #ff6; }
+  .qcorner::after { content: attr(data-corner); position:absolute; top:-16px; left:50%; transform:translateX(-50%); font:9px ui-monospace,monospace; color:#6ff; }
+
+  /* 拖动时显示坐标气泡 */
+  .slot .coord { position:absolute; top:-14px; left:50%; transform:translateX(-50%); font:9px ui-monospace,monospace; color:#6ff; background:rgba(0,0,0,.7); padding:0 3px; border-radius:2px; display:none; }
+  .slot.dragging .coord { display:block; }
+</style>
+</head>
+<body>
+  <div class="toolbar">
+    <strong>HUD 坑位预览</strong>
+    <label><input type="checkbox" id="grid-toggle" /> 网格标尺</label>
+    <span class="readout" id="readout">拖动文字块对位 · 松手出坐标</span>
+    <button id="dump">导出全部坐标</button>
+    <span style="color:#a98">底图 2560×1440 · 文字层挂在图上，缩放不漂</span>
+  </div>
+
+  <div class="stage-wrap">
+    <div class="stage" id="stage">
+      <img class="bg" src="ui/exact/auto-code-image-11685.png" alt="HUD 底图" />
+      <div class="grid" id="grid"></div>
+
+      <!-- 局势进度内容区：透视梯形，拖4角贴局势卡边。装动态 issue 列表 -->
+      <svg class="mapquad" id="issuequad-svg"><polygon id="issuequad-poly" /></svg>
+      <span class="qcorner issue-corner" data-quad="issue" data-corner="tl" style="left:3.14%; top:24.09%;"></span>
+      <span class="qcorner issue-corner" data-quad="issue" data-corner="tr" style="left:15.06%; top:24.09%;"></span>
+      <span class="qcorner issue-corner" data-quad="issue" data-corner="br" style="left:14.36%; top:47.95%;"></span>
+      <span class="qcorner issue-corner" data-quad="issue" data-corner="bl" style="left:1.6%; top:47.95%;"></span>
+
+      <!-- 地图区四角梯形：拖4个角贴透视地图边。导出 4 角坐标 -->
+      <svg class="mapquad" id="mapquad-svg"><polygon id="mapquad-poly" /></svg>
+      <span class="qcorner" data-corner="tl" style="left:17.89%; top:14.9%;"></span>
+      <span class="qcorner" data-corner="tr" style="left:86.95%; top:14.9%;"></span>
+      <span class="qcorner" data-corner="br" style="left:92.13%; top:76.61%;"></span>
+      <span class="qcorner" data-corner="bl" style="left:13.9%; top:76.61%;"></span>
+      <!-- 文字坑位：left/top 是相对底图的百分比，假数据填充 -->
+      <!-- 顶栏 -->
+      <div class="slot" data-id="年月"   style="left:9.6%;  top:6.31%;"><span class="lab">大明</span><span class="val">崇祯元年 三月</span></div>
+      <div class="slot" data-id="国库"   style="left:25.83%; top:6.32%;"><span class="lab">国库</span><span class="val">1280 万两 <small class="neg">-54</small></span></div>
+      <div class="slot" data-id="内库"   style="left:42.33%; top:6.35%;"><span class="lab">内库</span><span class="val">96 万两 <small class="neg">-22</small></span></div>
+      <div class="slot" data-id="民心"   style="left:58.63%; top:6.06%;"><span class="lab">民心</span><span class="val">53</span></div>
+      <div class="slot" data-id="皇威"   style="left:78.07%; top:6.56%;"><span class="lab">皇威</span><span class="val">40</span></div>
+
+      <!-- 左上 局势进度卡：标题烤死，内容区填 -->
+      <div class="slot" data-id="局势标题" style="left:8.38%; top:26.22%;"><span class="val" style="font-size:1.0cqw">辽东索饷 · <span class="neg">已崩坏</span></span></div>
+      <div class="slot" data-id="局势增量" style="left:7.87%; top:40.87%;"><span class="lab">皇威-12 民心-3 国库-40万</span></div>
+      <div class="slot" data-id="局势条1" style="left:5.57%; top:31.63%;"><span class="lab">户部亏空</span><span class="val" style="font-size:1.0cqw">28</span></div>
+      <div class="slot" data-id="局势条2" style="left:5.62%; top:36.85%;"><span class="lab">陕西流寇起</span><span class="val" style="font-size:1.0cqw">40</span></div>
+
+      <!-- 右侧竖排部院导航：政/吏/省/兵/户/工/礼/后宫/菜单 (自上而下) -->
+      <div class="slot btn" data-id="政"   style="left:93.36%; top:19.46%; font-size:1.1cqw">政</div>
+      <div class="slot btn" data-id="吏部" style="left:93.38%; top:23.85%; font-size:1.1cqw">吏</div>
+      <div class="slot btn" data-id="省份" style="left:93.55%; top:33.86%; font-size:1.1cqw">省</div>
+      <div class="slot btn" data-id="兵部" style="left:93.71%; top:38.14%; font-size:1.1cqw">兵</div>
+      <div class="slot btn" data-id="户部" style="left:94.12%; top:48.09%; font-size:1.1cqw">户</div>
+      <div class="slot btn" data-id="工部" style="left:94.13%; top:51.64%; font-size:1.1cqw">工</div>
+      <div class="slot btn" data-id="礼部" style="left:94.22%; top:60.33%; font-size:1.1cqw">礼</div>
+      <div class="slot btn" data-id="后宫" style="left:94.36%; top:68.81%; font-size:1.1cqw">后</div>
+      <div class="slot btn" data-id="菜单" style="left:94.56%; top:76.32%; font-size:1.1cqw">目</div>
+
+      <!-- 底部 5 书册按钮区：每个独立矩形框，将来扣图填进 div -->
+      <div class="cmdbox" data-id="奏疏" style="left:7.53%; top:71.89%; width:16.78%; height:15.79%;"><img class="cmd-img" src="ui/exact/cmd/奏疏.png" /><span class="rectbox-tag">奏疏</span><span class="rectbox-handle tl" data-h="tl"></span><span class="rectbox-handle br" data-h="br"></span></div>
+      <div class="cmdbox" data-id="邸报" style="left:25.78%; top:70.85%; width:16.19%; height:15.78%;"><img class="cmd-img" src="ui/exact/cmd/邸报.png" /><span class="rectbox-tag">邸报</span><span class="rectbox-handle tl" data-h="tl"></span><span class="rectbox-handle br" data-h="br"></span></div>
+      <div class="cmdbox" data-id="密令" style="left:45.75%; top:70.02%; width:12.32%; height:16.13%;"><img class="cmd-img" src="ui/exact/cmd/密令.png" /><span class="rectbox-tag">密令</span><span class="rectbox-handle tl" data-h="tl"></span><span class="rectbox-handle br" data-h="br"></span></div>
+      <div class="cmdbox" data-id="史册" style="left:62.51%; top:69.99%; width:11.96%; height:16.43%;"><img class="cmd-img" src="ui/exact/cmd/史册.png" /><span class="rectbox-tag">史册</span><span class="rectbox-handle tl" data-h="tl"></span><span class="rectbox-handle br" data-h="br"></span></div>
+      <div class="cmdbox" data-id="拟诏" style="left:76.57%; top:62.97%; width:16.29%; height:27.88%;"><img class="cmd-img" src="ui/exact/cmd/拟诏.png" /><span class="rectbox-tag">拟诏</span><span class="rectbox-handle tl" data-h="tl"></span><span class="rectbox-handle br" data-h="br"></span></div>
+    </div>
+  </div>
+
+<script>
+  const stage = document.getElementById('stage');
+  const grid = document.getElementById('grid');
+  const readout = document.getElementById('readout');
+
+  // 建网格：每5%细线，每25%粗线+标签
+  for (let p = 0; p <= 100; p += 5) {
+    const v = document.createElement('div');
+    v.className = 'v' + (p % 25 === 0 ? ' major' : '');
+    v.style.left = p + '%';
+    grid.appendChild(v);
+    const h = document.createElement('div');
+    h.className = 'h' + (p % 25 === 0 ? ' major' : '');
+    h.style.top = p + '%';
+    grid.appendChild(h);
+    if (p % 25 === 0) {
+      const lx = document.createElement('div');
+      lx.className = 'lbl'; lx.style.left = p + '%'; lx.style.top = '0';
+      lx.textContent = p + '%'; grid.appendChild(lx);
+      const ly = document.createElement('div');
+      ly.className = 'lbl'; ly.style.top = p + '%'; ly.style.left = '0';
+      ly.textContent = p + '%'; grid.appendChild(ly);
+    }
+  }
+  document.getElementById('grid-toggle').addEventListener('change', e => {
+    grid.classList.toggle('show', e.target.checked);
+  });
+
+  // 给每个 slot 加坐标气泡 + 拖拽
+  let drag = null;
+  document.querySelectorAll('.slot').forEach(slot => {
+    const coord = document.createElement('span');
+    coord.className = 'coord';
+    slot.appendChild(coord);
+    slot.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      drag = { slot, coord };
+      slot.classList.add('dragging');
+      slot.setPointerCapture(e.pointerId);
+    });
+  });
+  window.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const r = stage.getBoundingClientRect();
+    let x = (e.clientX - r.left) / r.width * 100;
+    let y = (e.clientY - r.top) / r.height * 100;
+    x = Math.max(0, Math.min(100, x));
+    y = Math.max(0, Math.min(100, y));
+    drag.slot.style.left = x.toFixed(2) + '%';
+    drag.slot.style.top = y.toFixed(2) + '%';
+    const txt = `${drag.slot.dataset.id}: left:${x.toFixed(1)}% top:${y.toFixed(1)}%`;
+    drag.coord.textContent = txt;
+    readout.textContent = txt;
+  });
+  window.addEventListener('pointerup', () => {
+    if (drag) drag.slot.classList.remove('dragging');
+    drag = null;
+  });
+
+  // 通用矩形框：拖框体移动 / 拖 tl,br 角缩放。用于局势区 + 5 命令框
+  const stagePct = e => { const r = stage.getBoundingClientRect(); return { x:(e.clientX-r.left)/r.width*100, y:(e.clientY-r.top)/r.height*100 }; };
+  let idrag = null;
+  function makeRectDraggable(box, label) {
+    box.addEventListener('pointerdown', e => {
+      e.preventDefault(); e.stopPropagation();
+      const h = e.target.dataset.h, p = stagePct(e);
+      const l=parseFloat(box.style.left),t=parseFloat(box.style.top),w=parseFloat(box.style.width),hh=parseFloat(box.style.height);
+      idrag = { box, label, mode: h||'move', sx:p.x, sy:p.y, l,t,w,h:hh };
+      box.setPointerCapture(e.pointerId);
+    });
+  }
+  window.addEventListener('pointermove', e => {
+    if (!idrag) return;
+    const box = idrag.box, p = stagePct(e), dx=p.x-idrag.sx, dy=p.y-idrag.sy;
+    if (idrag.mode==='move') { box.style.left=(idrag.l+dx).toFixed(2)+'%'; box.style.top=(idrag.t+dy).toFixed(2)+'%'; }
+    else if (idrag.mode==='br') { box.style.width=Math.max(3,idrag.w+dx).toFixed(2)+'%'; box.style.height=Math.max(3,idrag.h+dy).toFixed(2)+'%'; }
+    else if (idrag.mode==='tl') { box.style.left=(idrag.l+dx).toFixed(2)+'%'; box.style.top=(idrag.t+dy).toFixed(2)+'%'; box.style.width=Math.max(3,idrag.w-dx).toFixed(2)+'%'; box.style.height=Math.max(3,idrag.h-dy).toFixed(2)+'%'; }
+    readout.textContent = `${idrag.label} left:${box.style.left} top:${box.style.top} width:${box.style.width} height:${box.style.height}`;
+  });
+  window.addEventListener('pointerup', () => { idrag = null; });
+
+  document.querySelectorAll('.cmdbox').forEach(b => makeRectDraggable(b, b.dataset.id));
+
+  // 两组四角梯形：map=地图(蓝), issue=局势卡(橙)。各自 polygon
+  const quads = {
+    map:   { poly: document.getElementById('mapquad-poly'),   svg: document.getElementById('mapquad-svg') },
+    issue: { poly: document.getElementById('issuequad-poly'), svg: document.getElementById('issuequad-svg') },
+  };
+  const cornersOf = q => [...document.querySelectorAll(`.qcorner[data-quad="${q}"]`)];
+  const cornerPct = q => cornersOf(q).map(c => ({ id: c.dataset.corner, x: parseFloat(c.style.left), y: parseFloat(c.style.top) }));
+  function drawQuad(q) {
+    const order = ['tl','tr','br','bl'], map = {};
+    cornersOf(q).forEach(c => map[c.dataset.corner] = c);
+    quads[q].poly.setAttribute('points', order.map(k => `${parseFloat(map[k].style.left)},${parseFloat(map[k].style.top)}`).join(' '));
+  }
+  Object.values(quads).forEach(({svg}) => { svg.setAttribute('viewBox','0 0 100 100'); svg.setAttribute('preserveAspectRatio','none'); });
+  // 默认 quad 标记：未标 data-quad 的旧地图角点补成 map
+  document.querySelectorAll('.qcorner:not([data-quad])').forEach(c => c.dataset.quad = 'map');
+  drawQuad('map'); drawQuad('issue');
+  let cdrag = null;
+  document.querySelectorAll('.qcorner').forEach(c => {
+    c.addEventListener('pointerdown', e => {
+      e.preventDefault(); cdrag = c; c.classList.add('dragging'); c.setPointerCapture(e.pointerId);
+    });
+  });
+  window.addEventListener('pointermove', e => {
+    if (!cdrag) return;
+    const r = stage.getBoundingClientRect();
+    let x = Math.max(0, Math.min(100, (e.clientX - r.left) / r.width * 100));
+    let y = Math.max(0, Math.min(100, (e.clientY - r.top) / r.height * 100));
+    cdrag.style.left = x.toFixed(2) + '%'; cdrag.style.top = y.toFixed(2) + '%';
+    drawQuad(cdrag.dataset.quad);
+    readout.textContent = `${cdrag.dataset.quad}.${cdrag.dataset.corner}: (${x.toFixed(1)}%, ${y.toFixed(1)}%)`;
+  });
+  window.addEventListener('pointerup', () => { if (cdrag) cdrag.classList.remove('dragging'); cdrag = null; });
+
+  document.getElementById('dump').addEventListener('click', () => {
+    const slots = [...document.querySelectorAll('.slot')].map(s =>
+      `${s.dataset.id}: { left: "${s.style.left}", top: "${s.style.top}" }`).join('\n');
+    const toQuad = q => JSON.stringify(cornerPct(q).reduce((a,c)=>(a[c.id]=[c.x,c.y],a),{}));
+    const mapbox = `地图区四角: ${toQuad('map')}`;
+    const issuebox = `局势区四角: ${toQuad('issue')}`;
+    const cmds = [...document.querySelectorAll('.cmdbox')].map(b =>
+      `${b.dataset.id}: { left: "${b.style.left}", top: "${b.style.top}", width: "${b.style.width}", height: "${b.style.height}" }`).join('\n');
+    const out = slots + '\n' + issuebox + '\n' + cmds + '\n' + mapbox;
+    navigator.clipboard?.writeText(out);
+    readout.textContent = '已复制全部坐标到剪贴板';
+    console.log(out);
+  });
+</script>
+</body>
+</html>

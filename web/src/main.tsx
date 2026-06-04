@@ -753,6 +753,19 @@ type MenuStatus = {
 function App() {
   const [appView, setAppView] = React.useState<AppView>("menu");
   const [menuStatus, setMenuStatus] = React.useState<MenuStatus | null>(null);
+  // 新 HUD stage 实际像素尺寸（matrix3d 透视需要 px 基准）
+  const hudStageRef = React.useRef<HTMLDivElement | null>(null);
+  const [hudStageSize, setHudStageSize] = React.useState({ w: 0, h: 0 });
+  // 用 callback ref：stage 一挂载就接 ResizeObserver，避免 effect 时机竞态导致尺寸永远 0
+  const hudStageCbRef = React.useCallback((el: HTMLDivElement | null) => {
+    hudStageRef.current = el;
+    if (!el) return;
+    const measure = () => setHudStageSize({ w: el.clientWidth, h: el.clientHeight });
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    (el as any).__ro = ro;
+  }, []);
   const [state, setState] = React.useState<GameState | null>(null);
   const [selectedNodeId, setSelectedNodeId] = React.useState<string>("");
   const [mapIntelOpen, setMapIntelOpen] = React.useState(false);
@@ -1355,43 +1368,118 @@ function App() {
     fn();
   };
 
+  const activeDrawerKey =
+    drawerOpen ? "court" :
+    haremDrawerOpen ? "harem" :
+    armyDrawerOpen ? "army" :
+    regionDrawerOpen ? "region" :
+    buildingDrawerOpen ? "building" :
+    economyDrawerOpen ? "economy" :
+    appointmentDrawerOpen ? "appointment" : "";
+  const navHandlers = {
+    court: () => setDrawerOpen((v) => !v),
+    harem: () => setHaremDrawerOpen((v) => !v),
+    army: () => setArmyDrawerOpen((v) => !v),
+    region: () => setRegionDrawerOpen((v) => !v),
+    building: () => setBuildingDrawerOpen((v) => !v),
+    economy: () => setEconomyDrawerOpen((v) => !v),
+    appointment: () => setAppointmentDrawerOpen((v) => !v),
+    goal: () => setActiveModal("long_goals"),
+  };
+  const sz = hudStageSize;
+  const ready = sz.w > 0 && sz.h > 0;
+
   return (
     <main className="game-shell">
-      <GrandMap nodes={mapNodes} selectedId={mapIntelOpen ? selectedNode?.id || "" : ""} onSelect={selectMapNode} />
-      <TopStatusBar
-        state={state}
-        onOpenState={() => setActiveModal("state")}
-        onOpenMenu={() => setActiveModal("menu")}
-      />
-      <RightNavBar
-        onToggleCourt={() => { setDrawerOpen((v) => !v); }}
-        onToggleHarem={() => { setHaremDrawerOpen((v) => !v); }}
-        onToggleArmy={() => { setArmyDrawerOpen((v) => !v); }}
-        onToggleRegion={() => { setRegionDrawerOpen((v) => !v); }}
-        onToggleBuilding={() => { setBuildingDrawerOpen((v) => !v); }}
-        onToggleEconomy={() => { setEconomyDrawerOpen((v) => !v); }}
-        onToggleAppointment={() => { setAppointmentDrawerOpen((v) => !v); }}
-        onOpenLongGoals={() => setActiveModal("long_goals")}
-        activeDrawer={
-          drawerOpen ? "court" :
-          haremDrawerOpen ? "harem" :
-          armyDrawerOpen ? "army" :
-          regionDrawerOpen ? "region" :
-          buildingDrawerOpen ? "building" :
-          economyDrawerOpen ? "economy" :
-          appointmentDrawerOpen ? "appointment" : ""
-        }
-      />
-      <BottomCommandBar
-        eventsCount={state.events.length}
-        directivesCount={state.directives.length}
-        secretOrdersCount={secretOrders.filter((o) => o.status === "active" || o.status === "pending_review").length}
-        onOpenMemorials={() => setActiveModal("state")}
-        onOpenEdict={() => setActiveModal("edict")}
-        onOpenExtraction={() => setActiveModal("extraction")}
-        onOpenHistory={() => setActiveModal("history")}
-        onOpenSecretOrders={() => setActiveModal("secret_orders")}
-      />
+      <div className="hud2-stage" ref={hudStageCbRef}>
+        <img className="hud2-bg" src={HUD_BG} alt="" />
+
+        {/* 地图：透视梯形（GrandMap 已改 transform pan，兼容 matrix3d）。?flat=1 关透视调试 */}
+        {ready ? (
+          (typeof window !== "undefined" && new URLSearchParams(window.location.search).has("flat")) ? (
+            <div className="hud2-map-quad" style={{
+              position: "absolute",
+              left: `${HUD_SLOTS.地图四角.tl[0]}%`, top: `${HUD_SLOTS.地图四角.tl[1]}%`,
+              width: `${HUD_SLOTS.地图四角.tr[0] - HUD_SLOTS.地图四角.tl[0]}%`,
+              height: `${HUD_SLOTS.地图四角.bl[1] - HUD_SLOTS.地图四角.tl[1]}%`,
+            }}>
+              <GrandMap nodes={mapNodes} selectedId={mapIntelOpen ? selectedNode?.id || "" : ""} onSelect={selectMapNode} />
+            </div>
+          ) : (
+            <QuadFrame className="hud2-map-quad" quad={HUD_SLOTS.地图四角}
+              stageW={sz.w} stageH={sz.h} baseW={2560} baseH={1440}>
+              <GrandMap nodes={mapNodes} selectedId={mapIntelOpen ? selectedNode?.id || "" : ""} onSelect={selectMapNode} />
+            </QuadFrame>
+          )
+        ) : null}
+
+        {/* 局势进度：塞进左卡透视梯形 */}
+        {ready ? (
+          <QuadFrame className="hud2-issue-quad" quad={HUD_SLOTS.局势四角}
+            stageW={sz.w} stageH={sz.h} baseW={2560} baseH={1440}>
+            <SituationPanel
+              issues={state.issues}
+              closedIssues={state.closed_this_turn || []}
+              hasLegacies={(state.legacies || []).length > 0}
+            />
+          </QuadFrame>
+        ) : null}
+
+        {/* 顶栏：年月 + 国库/内库 + 民心/皇威，各按坑位绝对定位 */}
+        <button className="hud2-slot hud2-year" style={HUD_SLOTS.顶栏.年月}
+          onClick={() => setActiveModal("state")}>
+          <span className="hud2-lab">大明</span>
+          <span className="hud2-val">{state.turn.year} 年 {state.turn.period} 月</span>
+        </button>
+        <div className="hud2-slot" style={HUD_SLOTS.顶栏.国库}>
+          <BudgetHover accountName="国库" budget={state.budget["国库"]} />
+        </div>
+        <div className="hud2-slot" style={HUD_SLOTS.顶栏.内库}>
+          <BudgetHover accountName="内库" budget={state.budget["内库"]} />
+        </div>
+        <div className={`hud2-slot hud2-metric ${scoreTone(state.metrics["民心"], false)}`} style={HUD_SLOTS.顶栏.民心}>
+          <span className="hud2-lab">民心</span><span className="hud2-val">{state.metrics["民心"]}</span>
+        </div>
+        <div className={`hud2-slot hud2-metric ${scoreTone(state.metrics["皇威"], false)}`} style={HUD_SLOTS.顶栏.皇威}>
+          <span className="hud2-lab">皇威</span><span className="hud2-val">{state.metrics["皇威"]}</span>
+        </div>
+
+        {/* 右侧竖排部院导航 */}
+        {([
+          ["政", "court", "朝堂·召见大臣"],
+          ["吏", "appointment", "官员任免"],
+          ["省", "region", "省份列表"],
+          ["兵", "army", "军队列表"],
+          ["户", "economy", "经济面板"],
+          ["工", "building", "建筑列表"],
+          ["礼", "court", "礼部"],
+          ["后", "harem", "后宫"],
+          ["目", "goal", "长期目标"],
+        ] as const).map(([label, key, title], idx) => {
+          const slotKey = (["政","吏部","省份","兵部","户部","工部","礼部","后宫","菜单"] as const)[idx];
+          return (
+            <button key={slotKey} className={`hud2-slot hud2-nav${activeDrawerKey === key ? " active" : ""}`}
+              style={HUD_SLOTS.导航[slotKey]} title={title} aria-label={title}
+              onClick={(navHandlers as any)[key]}>
+              {label}
+            </button>
+          );
+        })}
+
+        {/* 底部 5 命令物件（扣图填进木牌） */}
+        <CommandSlot slotKey="奏疏" img="奏疏" badge={state.events.length}
+          caption="奏疏" sub={`${state.events.length} 件待览`} onClick={() => setActiveModal("state")} />
+        <CommandSlot slotKey="邸报" img="邸报"
+          caption="邸报详明" sub="数项加减/账目明细" onClick={() => setActiveModal("extraction")} />
+        <CommandSlot slotKey="密令" img="密令"
+          badge={secretOrders.filter((o) => o.status === "active" || o.status === "pending_review").length}
+          caption="密令" sub="进行中密令" onClick={() => setActiveModal("secret_orders")} />
+        <CommandSlot slotKey="史册" img="史册"
+          caption="史册" sub="历代奏报/诏书" onClick={() => setActiveModal("history")} />
+        <CommandSlot slotKey="拟诏" img="拟诏" badge={state.directives.length}
+          caption="拟诏/结束回合" sub={state.directives.length ? `${state.directives.length} 道` : "本回合"}
+          onClick={() => setActiveModal("edict")} />
+      </div>
 
       <CourtDrawer
         state={state}
@@ -1450,12 +1538,6 @@ function App() {
         open={appointmentDrawerOpen}
         onOpenChat={openChat}
         onClose={guardClose(() => setAppointmentDrawerOpen(false))}
-      />
-
-      <SituationPanel
-        issues={state.issues}
-        closedIssues={state.closed_this_turn || []}
-        hasLegacies={(state.legacies || []).length > 0}
       />
 
       {mapIntelOpen && selectedNode ? (
@@ -2659,6 +2741,112 @@ function HaremDrawer({
   );
 }
 
+// ── 新 HUD 底图坑位坐标（相对底图百分比，见 web/public/ui/exact/hud-slots.json）──
+const HUD_BG = "/ui/exact/auto-code-image-11685.png";
+const HUD_SLOTS = {
+  顶栏: {
+    年月: { left: "9.6%", top: "6.31%" },
+    国库: { left: "25.83%", top: "6.32%" },
+    内库: { left: "42.33%", top: "6.35%" },
+    民心: { left: "58.63%", top: "6.06%" },
+    皇威: { left: "78.07%", top: "6.56%" },
+  },
+  导航: {
+    政: { left: "93.36%", top: "19.46%" },
+    吏部: { left: "93.38%", top: "23.85%" },
+    省份: { left: "93.55%", top: "33.86%" },
+    兵部: { left: "93.71%", top: "38.14%" },
+    户部: { left: "94.12%", top: "48.09%" },
+    工部: { left: "94.13%", top: "51.64%" },
+    礼部: { left: "94.22%", top: "60.33%" },
+    后宫: { left: "94.36%", top: "68.81%" },
+    菜单: { left: "94.56%", top: "76.32%" },
+  },
+  命令: {
+    奏疏: { left: "7.53%", top: "71.89%", width: "16.78%", height: "15.79%" },
+    邸报: { left: "25.78%", top: "70.85%", width: "16.19%", height: "15.78%" },
+    密令: { left: "45.75%", top: "70.02%", width: "12.32%", height: "16.13%" },
+    史册: { left: "62.51%", top: "69.99%", width: "11.96%", height: "16.43%" },
+    拟诏: { left: "76.57%", top: "62.97%", width: "16.29%", height: "27.88%" },
+  },
+  地图四角: { tl: [17.89, 14.9], tr: [86.95, 14.9], br: [92.13, 76.61], bl: [13.9, 76.61] },
+  局势四角: { tl: [3.14, 24.09], tr: [15.06, 24.09], br: [14.36, 47.95], bl: [1.6, 47.95] },
+} as const;
+
+// 四角 [x%,y%] → matrix3d，把单位正方形(0..1)映射到任意四边形（透视）
+function quadToMatrix3d(
+  w: number, h: number,
+  tl: readonly number[], tr: readonly number[], br: readonly number[], bl: readonly number[]
+): string {
+  // 目标点用像素（相对容器 w×h）
+  const px = (p: readonly number[]) => [(p[0] / 100) * w, (p[1] / 100) * h];
+  const [x0, y0] = px(tl), [x1, y1] = px(tr), [x2, y2] = px(br), [x3, y3] = px(bl);
+  // 源单位矩形角: (0,0)(w,0)(w,h)(0,h) → 解 8 参数透视变换
+  const src = [[0, 0], [w, 0], [w, h], [0, h]];
+  const dst = [[x0, y0], [x1, y1], [x2, y2], [x3, y3]];
+  const A: number[][] = [], b: number[] = [];
+  for (let i = 0; i < 4; i++) {
+    const [sx, sy] = src[i], [dx, dy] = dst[i];
+    A.push([sx, sy, 1, 0, 0, 0, -sx * dx, -sy * dx]); b.push(dx);
+    A.push([0, 0, 0, sx, sy, 1, -sx * dy, -sy * dy]); b.push(dy);
+  }
+  const h8 = solve8(A, b);
+  const [a, bb, c, d, e, f, g, i] = h8;
+  // CSS matrix3d 列主序
+  return `matrix3d(${a},${d},0,${g}, ${bb},${e},0,${i}, 0,0,1,0, ${c},${f},0,1)`;
+}
+function solve8(A: number[][], b: number[]): number[] {
+  // 高斯消元 8×8
+  const n = 8, M = A.map((row, k) => [...row, b[k]]);
+  for (let col = 0; col < n; col++) {
+    let piv = col;
+    for (let r = col + 1; r < n; r++) if (Math.abs(M[r][col]) > Math.abs(M[piv][col])) piv = r;
+    [M[col], M[piv]] = [M[piv], M[col]];
+    const pv = M[col][col] || 1e-9;
+    for (let c = col; c <= n; c++) M[col][c] /= pv;
+    for (let r = 0; r < n; r++) {
+      if (r === col) continue;
+      const factor = M[r][col];
+      for (let c = col; c <= n; c++) M[r][c] -= factor * M[col][c];
+    }
+  }
+  return M.map((row) => row[n]);
+}
+
+// 透视梯形容器：内部 stageW×stageH 的正放内容被 matrix3d 压成梯形
+function QuadFrame({
+  quad, stageW, stageH, baseW, baseH, children, className, style,
+}: {
+  quad: { tl: readonly number[]; tr: readonly number[]; br: readonly number[]; bl: readonly number[] };
+  stageW: number; stageH: number; baseW: number; baseH: number;
+  children: React.ReactNode; className?: string; style?: React.CSSProperties;
+}) {
+  // 正放内容的逻辑尺寸＝四角包围盒像素
+  const xs = [quad.tl[0], quad.tr[0], quad.br[0], quad.bl[0]];
+  const ys = [quad.tl[1], quad.tr[1], quad.br[1], quad.bl[1]];
+  const left = (Math.min(...xs) / 100) * stageW;
+  const top = (Math.min(...ys) / 100) * stageH;
+  const w = ((Math.max(...xs) - Math.min(...xs)) / 100) * stageW;
+  const h = ((Math.max(...ys) - Math.min(...ys)) / 100) * stageH;
+  // 四角相对包围盒左上的局部坐标（百分比，喂 matrix3d）
+  const rel = (p: readonly number[]) => [
+    ((p[0] / 100) * stageW - left) / w * 100,
+    ((p[1] / 100) * stageH - top) / h * 100,
+  ];
+  const m = quadToMatrix3d(w, h, rel(quad.tl), rel(quad.tr), rel(quad.br), rel(quad.bl));
+  return (
+    <div
+      className={className}
+      style={{
+        position: "absolute", left, top, width: w, height: h,
+        transform: m, transformOrigin: "0 0", ...style,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
 function TopStatusBar({
   state,
   onOpenState,
@@ -2908,6 +3096,23 @@ function BudgetList({ title, items, expense = false }: { title: string; items: B
         </span>
       ))}
     </span>
+  );
+}
+
+// 底部命令物件：透明扣图叠在木牌坑位上，带角标+说明
+function CommandSlot({
+  slotKey, img, badge, caption, sub, onClick,
+}: {
+  slotKey: keyof typeof HUD_SLOTS.命令;
+  img: string; badge?: number; caption: string; sub: string; onClick: () => void;
+}) {
+  return (
+    <button className="hud2-cmd" style={HUD_SLOTS.命令[slotKey]} onClick={onClick}
+      aria-label={`${caption}：${sub}`}>
+      <img className="hud2-cmd-img" src={`/ui/exact/cmd/${img}.png`} alt="" />
+      {badge ? <span className="hud2-cmd-badge">{badge}</span> : null}
+      <span className="hud2-cmd-caption"><b>{caption}</b><small>{sub}</small></span>
+    </button>
   );
 }
 
@@ -5237,6 +5442,75 @@ function GrandMap({ nodes, selectedId, onSelect }: { nodes: MapNode[]; selectedI
   const [mapZoom, setMapZoom] = React.useState(1);
   const [svgLabelPositions, setSvgLabelPositions] = React.useState<Record<string, SvgLabelPosition>>({});
   const dragRef = React.useRef<{ id: string; pointerId: number; moved: boolean } | null>(null);
+  // 地图 pan：translate 平移代替 overflow:auto 滚动（兼容 matrix3d 透视外框）
+  const [pan, setPan] = React.useState({ x: 0, y: 0 });
+  const panDragRef = React.useRef<{ pointerId: number; startX: number; startY: number; startPanX: number; startPanY: number; moved: boolean } | null>(null);
+  const onMapPanDown = React.useCallback((e: React.PointerEvent) => {
+    if (coordPick) return;  // 调试模式不抢拖动
+    // 不立即 capture：等 move 超阈值才算拖动，否则点击（省份/节点）能正常穿透
+    panDragRef.current = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, startPanX: pan.x, startPanY: pan.y, moved: false };
+  }, [coordPick, pan.x, pan.y]);
+  const onMapPanMove = React.useCallback((e: React.PointerEvent) => {
+    const d = panDragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    const dx = e.clientX - d.startX, dy = e.clientY - d.startY;
+    if (!d.moved && Math.abs(dx) + Math.abs(dy) > 4) {
+      d.moved = true;
+      // 真拖动了才 capture，独占后续 pointer
+      try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch {}
+    }
+    if (!d.moved) return;  // 未达拖动阈值，不动地图，让 click 穿透
+    // 钳制：地图始终盖满地图框，不露底图（按当前 zoom 算超出量）
+    setPan(clampPanRef.current(d.startPanX + dx, d.startPanY + dy));
+  }, []);
+  const onMapPanUp = React.useCallback((e: React.PointerEvent) => {
+    const d = panDragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch {}
+    panDragRef.current = null;
+  }, []);
+  // 玩家缩放（滚轮，以光标为中心）。map-tile transform = translate(pan) scale(userZoom)
+  const [userZoom, setUserZoom] = React.useState(1);
+  const ZOOM_MIN = 1, ZOOM_MAX = 3;
+  const clampPan = React.useCallback((nx: number, ny: number, zoom: number) => {
+    const board = mapTileRef.current, vp = viewportRef.current;
+    if (!board || !vp) return { x: nx, y: ny };
+    const mw = board.offsetWidth * zoom, mh = board.offsetHeight * zoom;
+    // 地图比框大：钳制在 [-(超出量), 0]；地图比框小：锁定居中
+    const clampAxis = (v: number, mapSize: number, frameSize: number) => {
+      if (mapSize >= frameSize) return Math.min(0, Math.max(-(mapSize - frameSize), v));
+      return (frameSize - mapSize) / 2;  // 居中
+    };
+    return {
+      x: clampAxis(nx, mw, vp.clientWidth),
+      y: clampAxis(ny, mh, vp.clientHeight),
+    };
+  }, []);
+  // ref 持最新 clampPan(带当前zoom)，给 deps=[] 的 pan move 用
+  const clampPanRef = React.useRef((nx: number, ny: number) => ({ x: nx, y: ny }));
+  React.useEffect(() => {
+    clampPanRef.current = (nx: number, ny: number) => clampPan(nx, ny, userZoom);
+  }, [clampPan, userZoom]);
+  const onMapWheel = React.useCallback((e: React.WheelEvent) => {
+    if (coordPick) return;
+    e.preventDefault();
+    const vp = viewportRef.current;
+    if (!vp) return;
+    const rect = vp.getBoundingClientRect();
+    const cx = e.clientX - rect.left, cy = e.clientY - rect.top;  // 光标在 viewport 内坐标
+    setUserZoom((z) => {
+      const nz = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+      if (nz === z) return z;
+      // 保持光标下的地图点不动：pan' = cursor - (cursor - pan) * nz/z
+      setPan((p) => {
+        const k = nz / z;
+        const nx = cx - (cx - p.x) * k;
+        const ny = cy - (cy - p.y) * k;
+        return clampPan(nx, ny, nz);
+      });
+      return nz;
+    });
+  }, [coordPick, clampPan]);
   const pencilDragRef = React.useRef<{ pointerId: number } | null>(null);
   const terrainDragRef = React.useRef<{ pointerId: number; startSvgX: number; startSvgY: number; start: TerrainTransform } | null>(null);
   const svgCoordFromPct = React.useCallback((x: number, y: number) => ({
@@ -5494,17 +5768,21 @@ function GrandMap({ nodes, selectedId, onSelect }: { nodes: MapNode[]; selectedI
     const board = viewport.querySelector<HTMLElement>(".map-tile");
     if (!board) return;
     didCenterRef.current = true;
-    const mingCenterX = 0.58;
-    const mingCenterY = 0.42;
-    viewport.scrollLeft = Math.max(0, board.offsetLeft + board.clientWidth * mingCenterX - viewport.clientWidth / 2);
-    viewport.scrollTop = Math.max(0, board.offsetTop + board.clientHeight * mingCenterY - viewport.clientHeight / 2);
-  }, []);
+    // 初始定位：河南居中（手动拖出的最佳位置，按地图尺寸比例，窗口无关）
+    const INIT_FX = -0.1308, INIT_FY = -0.2895;
+    setPan(clampPan(board.offsetWidth * INIT_FX, board.offsetHeight * INIT_FY, 1));
+  }, [clampPan]);
 
   return (
     <section
       ref={viewportRef}
       className="grand-map"
       aria-label="大明地图"
+      onPointerDown={onMapPanDown}
+      onPointerMove={onMapPanMove}
+      onPointerUp={onMapPanUp}
+      onPointerCancel={onMapPanUp}
+      onWheel={onMapWheel}
     >
       {coordPick ? (
         <div className="coord-toolbox">
@@ -5636,7 +5914,9 @@ function GrandMap({ nodes, selectedId, onSelect }: { nodes: MapNode[]; selectedI
         <div
           className="map-tile"
           ref={mapTileRef}
-          style={coordPick ? { width: `${1900 * mapZoom}px` } : undefined}
+          style={coordPick
+            ? { width: `${1900 * mapZoom}px` }
+            : { transform: `translate(${pan.x}px, ${pan.y}px) scale(${userZoom})`, transformOrigin: "0 0" }}
         >
             <svg
               ref={svgRef}
@@ -5780,7 +6060,10 @@ function GrandMap({ nodes, selectedId, onSelect }: { nodes: MapNode[]; selectedI
                   className={`map-node ${node.kind} ${coordPick ? "draggable" : ""} ${selected ? "selected" : ""} ${danger ? "danger" : ""}`}
                   style={{ left: `${nodeX}%`, top: `${nodeY}%` }}
                   data-node-id={node.id}
-                  onPointerDown={onTheaterPointerDown(node)}
+                  onPointerDown={(ev) => {
+                    if (!coordPick) ev.stopPropagation();  // 防止触发地图 pan
+                    onTheaterPointerDown(node)(ev);
+                  }}
                   onPointerMove={onTheaterPointerMove(node)}
                   onPointerUp={onTheaterPointerUp(node)}
                   onPointerCancel={onTheaterPointerUp(node)}
