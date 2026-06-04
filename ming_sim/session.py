@@ -23,7 +23,13 @@ from ming_sim.context import (
     victory_status,
 )
 from ming_sim.db import GameDB, infer_office_type_from_office, normalize_office
-from ming_sim.decree import advance_without_edict, resolve_directives, write_decree_with_agno
+from ming_sim.decree import (
+    ResolveResult,
+    advance_without_edict,
+    resolve_decisions_phase2,
+    resolve_directives,
+    write_decree_with_agno,
+)
 from ming_sim.issues import bind_content as _bind_issues
 from ming_sim.issues import sync_opening_legacies
 from ming_sim.llm_model import create_agno_db, extract_agent_text, verify_llm_available
@@ -77,6 +83,7 @@ def prune_auto_saves(saves_dir: str, campaign_id: str, keep_turns: int = AUTO_SA
 class TurnPhase(str, Enum):
     SUMMONING = "summoning"   # 召见中：召见、对话、大臣拟旨产 pending
     REVIEWING = "reviewing"   # 核定草案：增删改、确认/驳回 pending、写诏书
+    AWAITING_DECISION = "awaiting_decision"  # HITL：simulator 出决策点，暂停等皇帝亲裁
     ISSUED = "issued"         # 已颁诏：resolve 完成，待 end_turn
 
 
@@ -396,7 +403,10 @@ class GameSession:
         self.registry = MinisterRegistry(self.llm_config, self.agno_db, context)
         self.last_decree = ""
         self.last_report = ""
-        if self.state.turn_phase not in (TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value):
+        # awaiting_decision 必须保活：刷新页时仍要弹决策点续跑结算，不可重置成 summoning。
+        if self.state.turn_phase not in (
+            TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value, TurnPhase.AWAITING_DECISION.value,
+        ):
             self.state.turn_phase = TurnPhase.SUMMONING.value
             self.db.save_state(self.state)
         self._begun = True
@@ -802,11 +812,15 @@ class GameSession:
         self.last_decree = text
         return self.last_decree
 
-    def resolve_turn(self, decree: str = "", on_event=None, cheat_directive: str = "") -> str:
-        """颁诏并推演本回合。要求无 pending 残留、≥1 条 draft。
+    def resolve_turn(self, decree: str = "", on_event=None, cheat_directive: str = "") -> ResolveResult:
+        """颁诏并推演本回合（phase1）。要求无 pending 残留、≥1 条 draft。
 
         on_event(kind, data): 推演过程实时回调，透传给 resolve_directives。
         cheat_directive: 作弊控制台强制结算项，一次性透传给 resolve_directives。
+
+        返回 ResolveResult：含决策点 → awaiting=True，置 awaiting_decision 态，回合未推进，
+        调用方据 result.decisions 弹窗，皇帝裁完调 submit_decisions。无决策点 → awaiting=False，
+        回合已结算推进，置 issued 态。
         """
         if self.pending_count() > 0:
             raise ValueError(f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
@@ -818,7 +832,8 @@ class GameSession:
         decree_text = decree or self.last_decree or write_decree_with_agno(
             self.llm_config, self.agno_db, self.state, directives, db=self.db
         )
-        report = resolve_directives(
+        self.last_decree = decree_text
+        result = resolve_directives(
             self.state, self.db, self.agno_db, self.llm_config,
             directives, decree_text, deaths_this_turn=self.deaths_this_turn,
             debuts_this_turn=self.debuts_this_turn,
@@ -826,9 +841,48 @@ class GameSession:
             content=self.content, registry=self.registry,
             cheat_directive=cheat_directive,
         )
-        self.last_report = report
-        self.last_decree = decree_text
+        if result.awaiting:
+            # 决策点暂停：回合未推进，存 awaiting 态供刷新恢复；待 submit_decisions 续跑。
+            self.state.turn_phase = TurnPhase.AWAITING_DECISION.value
+            self.db.save_state(self.state)
+            return result
+        self.last_report = result.report
         # resolve_directives 已 next_period + save_state；阶段标 issued
+        self.state.turn_phase = TurnPhase.ISSUED.value
+        self.db.save_state(self.state)
+        return result
+
+    def pending_decisions(self) -> List[Dict[str, object]]:
+        """本回合待裁/已裁决策点（awaiting_decision 态下供前端弹窗/刷新恢复）。"""
+        return self.db.list_pending_decisions(self.state.turn)
+
+    def submit_decisions(
+        self, choices: List[Dict[str, object]], on_event=None, cheat_directive: str = ""
+    ) -> str:
+        """皇帝亲裁完决策点，续跑 phase2 结算。choices 按决策点 idx 顺序，每项
+        {label, hint?, note?}；先回写到 pending_decisions.choice，再读回拼进 narrative。
+        要求当前处于 awaiting_decision 态。返回完整结算报告，置 issued。"""
+        if self.current_phase() != TurnPhase.AWAITING_DECISION:
+            raise ValueError("当前不在待裁决策阶段，无法提交亲裁。")
+        # 回写选择
+        stored = self.db.list_pending_decisions(self.state.turn)
+        import json as _json
+        for d in stored:
+            idx = int(d["idx"])
+            choice = choices[idx] if idx < len(choices) else None
+            if not isinstance(choice, dict):
+                choice = {}
+            self.db.conn.execute(
+                "UPDATE pending_decisions SET choice_json=?, status='decided' WHERE turn=? AND idx=?",
+                (_json.dumps(choice, ensure_ascii=False), self.state.turn, idx),
+            )
+        self.db.conn.commit()
+        report = resolve_decisions_phase2(
+            self.state, self.db, self.agno_db, self.llm_config,
+            on_event=on_event, content=self.content, registry=self.registry,
+            cheat_directive=cheat_directive,
+        )
+        self.last_report = report
         self.state.turn_phase = TurnPhase.ISSUED.value
         self.db.save_state(self.state)
         return report

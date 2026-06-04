@@ -406,7 +406,19 @@ def play_turn(session: GameSession) -> None:
             session.advance_without_decree()
             return
         if action == "issue":
-            report = session.resolve_turn()
+            result = session.resolve_turn()
+            if result.awaiting:
+                # CLI 端暂未做交互式决策 UI（本期只接 Web）：每个决策点默认取首个预设选项续跑。
+                print("\n【月末重大抉择】（CLI 暂自动取首选项；交互式裁决见网页版）")
+                choices = []
+                for d in result.decisions:
+                    opts = d.get("options") or []
+                    first = opts[0] if opts else {}
+                    print(f"  · {d.get('title')} → {first.get('label', '（无）')}")
+                    choices.append(dict(first))
+                report = session.submit_decisions(choices)
+            else:
+                report = result.report
             print(report)
             session.end_turn()
             return

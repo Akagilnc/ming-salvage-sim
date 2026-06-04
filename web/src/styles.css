@@ -5493,7 +5493,8 @@ button:disabled {
   margin-bottom: 12px;
 }
 
-.menu-modal label input {
+.menu-modal label input,
+.menu-modal label select {
   display: block;
   width: 100%;
   margin-top: 4px;
@@ -5507,7 +5508,13 @@ button:disabled {
   box-sizing: border-box;
 }
 
-.menu-modal label input:focus {
+.menu-modal label select option {
+  background: #2a1f12;
+  color: #f3e6c4;
+}
+
+.menu-modal label input:focus,
+.menu-modal label select:focus {
   outline: none;
   border-color: rgba(240, 200, 100, 0.8);
   background: rgba(255, 245, 215, 0.14);
@@ -6578,3 +6585,134 @@ button:disabled {
 }
 .hud2-cmd-caption b { font-size: 1.8cqh; }
 .hud2-cmd-caption small { font-size: 1.3cqh; color: #c9b48a; margin-top: 0.2em; }
+
+/* HITL 月末重大抉择弹窗 */
+.decision-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 9200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 6, 3, 0.82);
+  backdrop-filter: blur(5px);
+  padding: 20px;
+}
+
+.decision-window {
+  width: min(640px, 94vw);
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 30px 36px 26px;
+  border: 1px solid rgba(214, 175, 89, 0.55);
+  border-radius: 10px;
+  background: linear-gradient(180deg, #2c2113 0%, #190f06 100%);
+  color: #f4e2b8;
+  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.65);
+}
+
+.decision-head { margin-bottom: 14px; }
+
+.decision-kicker {
+  display: inline-block;
+  font-size: 13px;
+  letter-spacing: 2px;
+  color: #d2a34a;
+  margin-bottom: 8px;
+}
+
+.decision-title {
+  margin: 0;
+  font-size: 23px;
+  color: #ffd98a;
+  letter-spacing: 1px;
+}
+
+.decision-context {
+  margin: 0 0 18px;
+  font-size: 15px;
+  line-height: 1.8;
+  color: #d8c79a;
+  padding: 12px 14px;
+  border-left: 3px solid var(--gold-soft);
+  background: rgba(0, 0, 0, 0.26);
+  border-radius: 4px;
+}
+
+.decision-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.decision-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  text-align: left;
+  padding: 13px 16px;
+  border: 1px solid rgba(214, 175, 89, 0.32);
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.28);
+  color: #f0e0b4;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.decision-option:hover { border-color: rgba(214, 175, 89, 0.7); }
+
+.decision-option.is-picked {
+  border-color: #d2a34a;
+  background: rgba(210, 163, 74, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(210, 163, 74, 0.5);
+}
+
+.decision-option-label { font-size: 16px; font-weight: 600; color: #ffd98a; }
+.decision-option-hint { font-size: 13px; color: #b6a575; line-height: 1.5; }
+
+.decision-note {
+  width: 100%;
+  min-height: 64px;
+  resize: vertical;
+  padding: 10px 12px;
+  border: 1px solid rgba(214, 175, 89, 0.28);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.34);
+  color: #efe0b6;
+  font-size: 14px;
+  line-height: 1.6;
+  box-sizing: border-box;
+}
+
+.decision-note:focus { outline: none; border-color: rgba(214, 175, 89, 0.6); }
+
+.decision-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.decision-hint-line { font-size: 13px; color: #9a8d6a; }
+
+.decision-confirm {
+  padding: 11px 22px;
+  border: 1px solid #d2a34a;
+  border-radius: 7px;
+  background: linear-gradient(180deg, #caa04a 0%, #9a7424 100%);
+  color: #1a1208;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.decision-confirm:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  filter: grayscale(0.5);
+}

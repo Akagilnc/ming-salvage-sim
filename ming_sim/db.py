@@ -406,6 +406,32 @@ class GameDB:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
+            -- HITL 重大决策点：simulator 邸报里产出的待皇帝亲裁抉择。每回合 ≤5 条。
+            -- phase1 存入待选，phase2 读回皇帝选择拼进 narrative 喂 extractor。
+            CREATE TABLE IF NOT EXISTS pending_decisions (
+                turn INTEGER NOT NULL,
+                idx INTEGER NOT NULL,
+                title TEXT NOT NULL DEFAULT '',
+                context TEXT NOT NULL DEFAULT '',
+                options_json TEXT NOT NULL DEFAULT '[]',
+                choice_json TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (turn, idx)
+            );
+
+            -- phase1→phase2 之间暂存推演上下文，避免决策暂停后重算 simulator。
+            -- 每回合至多一行（turn 主键），phase2 跑完即删。
+            CREATE TABLE IF NOT EXISTS pending_resolve_context (
+                turn INTEGER PRIMARY KEY,
+                decree_text TEXT NOT NULL DEFAULT '',
+                narrative TEXT NOT NULL DEFAULT '',
+                simulator_payload_json TEXT NOT NULL DEFAULT '{}',
+                secret_orders_json TEXT NOT NULL DEFAULT '[]',
+                relevant_memories_json TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
             -- 召对聊天记录持久化，每条消息一行，进程重启不丢。
             CREATE TABLE IF NOT EXISTS chat_messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -4220,6 +4246,106 @@ class GameDB:
             (state.turn, state.year, state.period, decree_text, narrative,
              extractor_input, extractor_output),
         )
+        self.conn.commit()
+
+    # ── HITL 决策点 ─────────────────────────────────────────────────────
+    def save_pending_decisions(self, turn: int, decisions: List[Dict[str, object]]) -> None:
+        """覆写本回合待裁决策点（先清后插），idx 按列表顺序。choice 初始空（待皇帝选）。"""
+        self.conn.execute("DELETE FROM pending_decisions WHERE turn = ?", (int(turn),))
+        for idx, d in enumerate(decisions):
+            self.conn.execute(
+                """INSERT INTO pending_decisions
+                   (turn, idx, title, context, options_json, choice_json, status)
+                   VALUES (?, ?, ?, ?, ?, '', 'pending')""",
+                (
+                    int(turn), idx,
+                    str(d.get("title") or ""),
+                    str(d.get("context") or ""),
+                    json.dumps(d.get("options") or [], ensure_ascii=False),
+                ),
+            )
+        self.conn.commit()
+
+    def list_pending_decisions(self, turn: int) -> List[Dict[str, object]]:
+        """读本回合决策点（按 idx）。options 反序列化；choice 为已选则带出。"""
+        rows = self.conn.execute(
+            "SELECT idx, title, context, options_json, choice_json, status "
+            "FROM pending_decisions WHERE turn = ? ORDER BY idx",
+            (int(turn),),
+        ).fetchall()
+        out: List[Dict[str, object]] = []
+        for r in rows:
+            try:
+                options = json.loads(r["options_json"] or "[]")
+            except Exception:
+                options = []
+            choice = (r["choice_json"] or "").strip()
+            out.append({
+                "idx": int(r["idx"]),
+                "title": r["title"],
+                "context": r["context"],
+                "options": options if isinstance(options, list) else [],
+                "choice": json.loads(choice) if choice else None,
+                "status": r["status"],
+            })
+        return out
+
+    def clear_pending_decisions(self, turn: int) -> None:
+        self.conn.execute("DELETE FROM pending_decisions WHERE turn = ?", (int(turn),))
+        self.conn.commit()
+
+    def save_resolve_context(
+        self, turn: int, decree_text: str, narrative: str,
+        simulator_payload: Dict[str, object],
+        secret_orders: Optional[List[Dict[str, object]]] = None,
+        relevant_memories: Optional[List[Dict[str, object]]] = None,
+    ) -> None:
+        """暂存 phase1 推演结果，供 phase2 读回（决策暂停期间不重算 simulator）。"""
+        self.conn.execute(
+            """INSERT INTO pending_resolve_context
+               (turn, decree_text, narrative, simulator_payload_json,
+                secret_orders_json, relevant_memories_json)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(turn) DO UPDATE SET
+                   decree_text = excluded.decree_text,
+                   narrative = excluded.narrative,
+                   simulator_payload_json = excluded.simulator_payload_json,
+                   secret_orders_json = excluded.secret_orders_json,
+                   relevant_memories_json = excluded.relevant_memories_json""",
+            (
+                int(turn), decree_text, narrative,
+                json.dumps(simulator_payload or {}, ensure_ascii=False),
+                json.dumps(secret_orders or [], ensure_ascii=False),
+                json.dumps(relevant_memories or [], ensure_ascii=False),
+            ),
+        )
+        self.conn.commit()
+
+    def get_resolve_context(self, turn: int) -> Optional[Dict[str, object]]:
+        """读回 phase1 暂存的推演上下文。无则 None。"""
+        row = self.conn.execute(
+            "SELECT decree_text, narrative, simulator_payload_json, "
+            "secret_orders_json, relevant_memories_json "
+            "FROM pending_resolve_context WHERE turn = ?",
+            (int(turn),),
+        ).fetchone()
+        if row is None:
+            return None
+        def _load(text: str, default):
+            try:
+                return json.loads(text) if text else default
+            except Exception:
+                return default
+        return {
+            "decree_text": row["decree_text"],
+            "narrative": row["narrative"],
+            "simulator_payload": _load(row["simulator_payload_json"], {}),
+            "secret_orders": _load(row["secret_orders_json"], []),
+            "relevant_memories": _load(row["relevant_memories_json"], []),
+        }
+
+    def clear_resolve_context(self, turn: int) -> None:
+        self.conn.execute("DELETE FROM pending_resolve_context WHERE turn = ?", (int(turn),))
         self.conn.commit()
 
     def get_turn_extraction(self, turn: int) -> Optional[Dict[str, object]]:

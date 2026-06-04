@@ -231,8 +231,22 @@ export type BudgetAccount = {
 
 export type Budget = Record<"国库" | "内库", BudgetAccount>;
 
+export type DecisionOption = {
+  label: string;
+  hint: string;
+};
+
+export type PendingDecision = {
+  idx: number;
+  title: string;
+  context: string;
+  options: DecisionOption[];
+  choice?: { label?: string; hint?: string; note?: string } | null;
+  status?: string;
+};
+
 export type GameState = {
-  turn: { year: number; period: number; turn: number };
+  turn: { year: number; period: number; turn: number; phase?: string };
   metrics: Metrics;
   previous_summary: string;
   treasury: string;
@@ -254,6 +268,7 @@ export type GameState = {
   consorts: Minister[];
   directives: Directive[];
   pending_count: number;
+  pending_decisions?: PendingDecision[];
   last_decree: string;
   last_report: string;
 };
@@ -381,6 +396,7 @@ export type MenuStatus = {
   saves: MenuSave[];
   campaigns?: MenuCampaign[];
   current_campaign?: string;
+  game_settings?: { hitl_min_decisions: number };
   llm: {
     base_url: string;
     model: string;

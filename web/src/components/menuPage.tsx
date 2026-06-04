@@ -19,6 +19,7 @@ export function MenuPage({
   const [busy, setBusy] = React.useState<string>("");
   const [showApiForm, setShowApiForm] = React.useState(false);
   const [showSaveList, setShowSaveList] = React.useState(false);
+  const [showGameSettings, setShowGameSettings] = React.useState(false);
 
   const guard = async (label: string, fn: () => Promise<void>) => {
     setBusy(label);
@@ -85,6 +86,9 @@ export function MenuPage({
           <button className="menu-btn" disabled={!!busy} onClick={() => setShowApiForm(true)}>
             设置 API {hasKey ? "" : "（必需）"}
           </button>
+          <button className="menu-btn" disabled={!!busy} onClick={() => setShowGameSettings(true)}>
+            游戏设置
+          </button>
         </div>
 
         {busy && <div className="menu-busy">{busy}</div>}
@@ -120,6 +124,81 @@ export function MenuPage({
           }}
         />
       )}
+
+      {showGameSettings && (
+        <GameSettingsModal
+          initial={status?.game_settings}
+          onClose={() => setShowGameSettings(false)}
+          onSaved={async () => {
+            setShowGameSettings(false);
+            await onRefresh();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+export function GameSettingsModal({
+  initial,
+  onClose,
+  onSaved,
+}: {
+  initial?: { hitl_min_decisions: number };
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [minDecisions, setMinDecisions] = React.useState<number>(
+    initial?.hitl_min_decisions ?? 1
+  );
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState("");
+
+  const onSave = async () => {
+    setBusy(true);
+    setErr("");
+    try {
+      await api("/api/menu/game_settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hitl_min_decisions: minDecisions }),
+      });
+      await onSaved();
+    } catch (e: any) {
+      setErr(e?.message || String(e));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="menu-modal-bg" onClick={onClose}>
+      <div className="menu-modal" onClick={(e) => e.stopPropagation()}>
+        <h2>游戏设置</h2>
+        {err && <div className="menu-error">{err}</div>}
+        <label>
+          每回合最少重大抉择数{" "}
+          <small className="menu-hint">
+            （月末推演至少弹几个需皇帝亲裁的决策点。0=不强制，盘面有大事才弹；改动下一回合生效。）
+          </small>
+          <select
+            value={minDecisions}
+            onChange={(e) => setMinDecisions(Number(e.target.value))}
+          >
+            <option value={0}>0 · 不强制</option>
+            <option value={1}>1 · 每回合至少 1 个</option>
+            <option value={2}>2 · 每回合至少 2 个</option>
+            <option value={3}>3 · 每回合至少 3 个</option>
+            <option value={4}>4 · 每回合至少 4 个</option>
+            <option value={5}>5 · 每回合至少 5 个</option>
+          </select>
+        </label>
+        <div className="menu-modal-actions">
+          <button onClick={onClose} disabled={busy}>取消</button>
+          <button className="primary" onClick={onSave} disabled={busy}>
+            {busy ? "保存中…" : "保存"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -27,9 +27,11 @@ from ming_sim.paths import bundled_path, user_data_path, user_data_dir
 from ming_sim.exceptions import ExitGame, LLMUnavailable
 from ming_sim.llm_config import (
     load_llm_config,
+    load_runtime_game,
     load_runtime_llm,
     normalize_openai_base_url,
     normalize_thinking_level,
+    save_runtime_game,
     save_runtime_llm,
 )
 from ming_sim.agents import _dump_llm_messages
@@ -907,6 +909,10 @@ class WebGame:
             ],
             "directives": directives,
             "pending_count": self.session.pending_count(),
+            "pending_decisions": (
+                self.session.pending_decisions()
+                if self.state.turn_phase == "awaiting_decision" else []
+            ),
             "last_decree": self.last_decree,
             "last_report": self.last_report,
         }
@@ -1349,6 +1355,7 @@ async def api_menu_status() -> Dict[str, Any]:
         "saves": _scan_saves(),
         "campaigns": _scan_campaigns(),
         "current_campaign": _main_db_campaign_id(),
+        "game_settings": load_runtime_game(),
         "llm": {
             "base_url": runtime.get("base_url") or os.environ.get("OPENAI_BASE_URL", ""),
             "model": runtime.get("model") or os.environ.get("OPENAI_MODEL", ""),
@@ -1549,6 +1556,26 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
             "advanced_thinking_level": advanced_thinking_level,
         },
     }
+
+
+class GameSettingsRequest(BaseModel):
+    # HITL 每回合最少决策点数，0-5。0=不强制（宁缺毋滥）。
+    hitl_min_decisions: int = 1
+
+
+@app.get("/api/menu/game_settings")
+async def api_menu_game_settings() -> Dict[str, Any]:
+    """读全局玩法设置。"""
+    return {"game_settings": load_runtime_game()}
+
+
+@app.post("/api/menu/game_settings")
+async def api_menu_save_game_settings(request: GameSettingsRequest) -> Dict[str, Any]:
+    """保存全局玩法设置（runtime_game.json）。立即对下一回合推演生效。"""
+    saved = save_runtime_game(request.hitl_min_decisions)
+    return {"ok": True, "game_settings": saved}
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -1806,10 +1833,15 @@ async def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> D
     game = get_game()
     was_ended = bool(game.state.ended)
     try:
-        report = game.session.resolve_turn(cheat_directive=body.cheat)
+        result = game.session.resolve_turn(cheat_directive=body.cheat)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
     decree = game.session.last_decree
+    if result.awaiting:
+        # 决策点暂停：回合未结算，返回决策点让前端弹窗；不刷新、不计 steam。
+        return {"decree": decree, "awaiting_decision": True,
+                "decisions": result.decisions, "state": game.state_payload()}
+    report = result.report
     game.refresh_turn()
     events = [
         steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
@@ -1838,7 +1870,79 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
         try:
             game = get_game()
             was_ended = bool(game.state.ended)
-            report = game.session.resolve_turn(on_event=on_event, cheat_directive=body.cheat)
+            result = game.session.resolve_turn(on_event=on_event, cheat_directive=body.cheat)
+            decree = game.session.last_decree
+            if result.awaiting:
+                # 决策点暂停：邸报已流式推完，再推 decisions 让前端弹窗；本回合未结算、不刷新、不计 steam。
+                ev_queue.put(("__decisions__", {
+                    "decree": decree,
+                    "decisions": result.decisions,
+                    "state": game.state_payload(),
+                }))
+                return
+            report = result.report
+            game.refresh_turn()
+            events = [
+                steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
+                steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
+                steam_events.set_stat(steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn)),
+            ]
+            if not was_ended and game.state.ended:
+                events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
+            ev_queue.put(("__done__", {
+                "decree": decree,
+                "report": report,
+                "state": game.state_payload(),
+                "steam_events": events,
+            }))
+        except ValueError as e:
+            ev_queue.put(("__error__", str(e)))
+        except Exception as e:  # noqa: BLE001
+            ev_queue.put(("__error__", _llm_error_detail(e) if isinstance(e, LLMUnavailable) else str(e)))
+
+    async def generate() -> AsyncIterator[str]:
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+        loop = asyncio.get_running_loop()
+        while True:
+            kind, data = await loop.run_in_executor(None, ev_queue.get)
+            if kind == "__done__":
+                yield sse_event("done", data)
+                break
+            if kind == "__decisions__":
+                yield sse_event("decisions", data)
+                break
+            if kind == "__error__":
+                yield sse_event("error", data if isinstance(data, dict) else {"message": data})
+                break
+            # stage / thinking / text
+            yield sse_event(kind, {"content": data})
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+class ResolveDecisionsRequest(BaseModel):
+    # 皇帝亲裁结果：按决策点 idx 顺序，每项 {label, hint?, note?}。
+    choices: List[Dict[str, Any]] = []
+    cheat: str = ""
+
+
+@app.post("/api/decree/resolve_decisions/stream")
+async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> StreamingResponse:
+    """皇帝亲裁完决策点，流式跑 phase2 结算（extractor→落库→结局）。
+    与 issue/stream 同结构：worker 跑 submit_decisions，SSE 推 stage/text + done。"""
+    ev_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
+
+    def on_event(kind: str, data: str) -> None:
+        ev_queue.put((kind, data))
+
+    def worker() -> None:
+        try:
+            game = get_game()
+            was_ended = bool(game.state.ended)
+            report = game.session.submit_decisions(
+                body.choices, on_event=on_event, cheat_directive=body.cheat
+            )
             decree = game.session.last_decree
             game.refresh_turn()
             events = [
@@ -1871,7 +1975,6 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
             if kind == "__error__":
                 yield sse_event("error", data if isinstance(data, dict) else {"message": data})
                 break
-            # stage / thinking / text
             yield sse_event(kind, {"content": data})
 
     return StreamingResponse(generate(), media_type="text/event-stream")

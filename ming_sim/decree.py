@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
+from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
 from agno.db.sqlite import SqliteDb
@@ -54,6 +56,68 @@ CHEAT_NARRATIVE_PREFIX = (
     "局势结案按字面写满 bar 并结案；人物/军队/势力存亡按字面落 status/势力变化。"
     "与下方正常邸报冲突时以本段为准，本段没提的下方照常抽。照字面落库：\n"
 )
+
+# HITL 决策点：皇帝亲裁后，把所选选项+自由批语作为「圣意既定」拼到邸报最前喂 extractor。
+# 与 cheat 同机制（既成事实、最高优先级），但语气是皇帝御断而非天命强制。
+DECISION_NARRATIVE_PREFIX = (
+    "【圣意亲裁·结算优先】以下为本回合月末重大抉择，陛下已御笔亲断，最高优先级。"
+    "你必须把每条裁断当作百分百已发生的结果，按其方向抽对应结构化增量与事项推进，"
+    "与下方正常邸报冲突时以本段为准。各条裁断如下：\n"
+)
+
+# 决策块边界标记。simulator 在邸报末尾按规范输出，本回合解析后从 narrative 剥离。
+_DECISION_RE = re.compile(r"<<DECISION>>\s*(\{.*?\})\s*<<END>>", re.DOTALL)
+MAX_DECISIONS_PER_TURN = 5
+
+
+def parse_decision_blocks(narrative: str) -> tuple[str, List[Dict[str, object]]]:
+    """从邸报抽 <<DECISION>>...<<END>> JSON 块，返回 (剥离后的干净邸报, 决策列表)。
+
+    每块须含 title/context/options（2-3 项，每项 label + 可选 hint）。
+    解析失败的块直接丢弃（连同标记一起剥离），不抛断——无决策块视作普通回合。
+    最多取 MAX_DECISIONS_PER_TURN 条，超出忽略。
+    """
+    decisions: List[Dict[str, object]] = []
+    for m in _DECISION_RE.finditer(narrative or ""):
+        if len(decisions) >= MAX_DECISIONS_PER_TURN:
+            break
+        try:
+            obj = json.loads(m.group(1))
+        except Exception:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        title = str(obj.get("title") or "").strip()
+        raw_opts = obj.get("options")
+        if not title or not isinstance(raw_opts, list):
+            continue
+        options: List[Dict[str, str]] = []
+        for o in raw_opts:
+            if not isinstance(o, dict):
+                continue
+            label = str(o.get("label") or "").strip()
+            if not label:
+                continue
+            options.append({"label": label, "hint": str(o.get("hint") or "").strip()})
+        if len(options) < 2:  # 至少给 2 个选项才算有效抉择
+            continue
+        decisions.append({
+            "title": title,
+            "context": str(obj.get("context") or "").strip(),
+            "options": options[:3],
+        })
+    clean = _DECISION_RE.sub("", narrative or "").strip()
+    return clean, decisions
+
+
+@dataclass
+class ResolveResult:
+    """resolve phase1 的返回。awaiting=True 时表示需皇帝亲裁，已存决策点暂停，
+    report 为空、回合未推进；调用方据此置 awaiting_decision 态弹窗。
+    awaiting=False 时 report 为完整结算报告（含诏书+邸报+结局），回合已推进。"""
+    awaiting: bool
+    report: str = ""
+    decisions: List[Dict[str, object]] = field(default_factory=list)
 
 
 def write_decree_with_agno(
@@ -125,13 +189,18 @@ def resolve_directives(
     content=None,
     registry=None,
     cheat_directive: str = "",
-) -> str:
-    """on_event(kind, data): 推演过程实时回调。
+) -> ResolveResult:
+    """phase1：跑固定财政 + simulator 写邸报，解析 HITL 决策点。
+
+    on_event(kind, data): 推演过程实时回调。
     kind ∈ {stage, thinking, text}；stage 携带阶段名，thinking/text 携带增量片段。
 
     cheat_directive: 作弊控制台（Ctrl+~）下的强制结算指令。非空时拼到当期邸报最前面
     一起喂给 extractor，按字面当既成事实落库。唯一入口——只此一处写入标记前缀（见
     CHEAT_NARRATIVE_PREFIX），别处不得复用。
+
+    返回 ResolveResult：simulator 邸报含决策点 → 存上下文+决策点暂停（awaiting=True，
+    回合未推进）；无决策点 → 直接续跑 extractor 结算，返回完整报告（awaiting=False）。
     """
     def _emit(kind: str, data: str) -> None:
         if on_event:
@@ -139,7 +208,7 @@ def resolve_directives(
 
     if not directives:
         advance_without_edict(state, db)
-        return f"本{TURN_UNIT}未颁正式诏书。"
+        return ResolveResult(awaiting=False, report=f"本{TURN_UNIT}未颁正式诏书。")
 
     before_turn = state.turn
 
@@ -245,16 +314,67 @@ def resolve_directives(
         db.mark_directives_issued(state)
         state.next_period()
         db.save_state(state)
-        return f"\n本{TURN_UNIT}颁布诏书：\n" + decree_text + "\n\n" + narrative
+        return ResolveResult(
+            awaiting=False,
+            report=f"\n本{TURN_UNIT}颁布诏书：\n" + decree_text + "\n\n" + narrative,
+        )
 
-    # 2.5) 作弊强制项：拼到邸报最前面一起喂 extractor（唯一入口）。
+    # 2.4) HITL 决策点：从邸报抽 <<DECISION>> 块。有 → 存上下文+决策点，暂停等皇帝亲裁。
+    #      剥离后的干净邸报落库/展示；决策点选完由 resolve_decisions_phase2 续跑结算。
+    narrative, decisions = parse_decision_blocks(narrative)
+    if decisions:
+        tlog(f"[HITL] 检测到 {len(decisions)} 个决策点，暂停等皇帝亲裁：{[d['title'] for d in decisions]}")
+        db.save_resolve_context(
+            state.turn, decree_text, narrative, simulator_payload,
+            secret_orders=secret_orders_for_sim, relevant_memories=relevant_memories,
+        )
+        db.save_pending_decisions(state.turn, decisions)
+        return ResolveResult(awaiting=True, decisions=db.list_pending_decisions(state.turn))
+
+    # 无决策点：透明续跑结算（cheat 仍可叠加）。
+    report = _settle_after_narrative(
+        state, db, agno_db, llm_config, decree_text, narrative,
+        simulator_payload=simulator_payload,
+        relevant_memories=relevant_memories,
+        secret_orders=secret_orders_for_sim,
+        before_turn=before_turn, _emit=_emit,
+        content=content, registry=registry,
+        cheat_directive=cheat_directive,
+    )
+    return ResolveResult(awaiting=False, report=report)
+
+
+def _settle_after_narrative(
+    state: GameState,
+    db: GameDB,
+    agno_db: SqliteDb,
+    llm_config: LLMConfig,
+    decree_text: str,
+    narrative: str,
+    simulator_payload: Dict[str, object],
+    relevant_memories: List[Dict],
+    secret_orders: list,
+    before_turn: int,
+    _emit: Callable[[str, str], None],
+    content=None,
+    registry=None,
+    cheat_directive: str = "",
+    decision_directive: str = "",
+) -> str:
+    """phase2：邸报已定（已剥离决策块），跑 extractor→落库→章节记忆→结局→推进。
+    cheat_directive / decision_directive 各自拼到 effective_narrative 最前喂 extractor。"""
+    secret_orders_for_sim = secret_orders
+    # 2.5) 作弊强制项 + 圣意亲裁：拼到邸报最前面一起喂 extractor（唯一入口）。
     #      落库前文/turn_report 仍用原始 narrative，effective 版只进 extractor 与留痕。
+    effective_narrative = narrative
+    decision = (decision_directive or "").strip()
+    if decision:
+        effective_narrative = DECISION_NARRATIVE_PREFIX + decision + "\n\n" + effective_narrative
+        tlog(f"[HITL] 圣意亲裁注入 extractor（{len(decision)}字）：{decision[:200]}")
     cheat = (cheat_directive or "").strip()
     if cheat:
-        effective_narrative = CHEAT_NARRATIVE_PREFIX + cheat + "\n\n" + narrative
+        effective_narrative = CHEAT_NARRATIVE_PREFIX + cheat + "\n\n" + effective_narrative
         tlog(f"[CHEAT] 强制结算项注入 extractor（{len(cheat)}字）：{cheat[:200]}")
-    else:
-        effective_narrative = narrative
 
     # 3) 结算 agent: 读邸报抽 JSON
     tlog("结算 3/4 结算 agent（抽 JSON）")
@@ -364,6 +484,69 @@ def resolve_directives(
             ending += "\n\n" + ending_text
     full_report = f"\n本{TURN_UNIT}颁布诏书：\n" + decree_text + "\n\n" + narrative + ending
     return full_report
+
+
+def _format_decision_directive(decisions: List[Dict[str, object]]) -> str:
+    """把皇帝已裁的决策点拼成喂 extractor 的「圣意亲裁」正文。
+    每条：标题 + 所选选项 label/hint + 自由批语。未裁的跳过。"""
+    lines: List[str] = []
+    for i, d in enumerate(decisions, 1):
+        choice = d.get("choice") or {}
+        if not isinstance(choice, dict):
+            continue
+        label = str(choice.get("label") or "").strip()
+        note = str(choice.get("note") or "").strip()
+        if not label and not note:
+            continue
+        title = str(d.get("title") or f"抉择{i}").strip()
+        seg = f"{i}. 【{title}】陛下御断：{label or '（未选预设项）'}"
+        hint = str(choice.get("hint") or "").strip()
+        if hint:
+            seg += f"（倾向：{hint}）"
+        if note:
+            seg += f"。朱批：{note}"
+        lines.append(seg)
+    return "\n".join(lines)
+
+
+def resolve_decisions_phase2(
+    state: GameState,
+    db: GameDB,
+    agno_db: SqliteDb,
+    llm_config: LLMConfig,
+    on_event: Optional[Callable[[str, str], None]] = None,
+    content=None,
+    registry=None,
+    cheat_directive: str = "",
+) -> str:
+    """phase2：皇帝亲裁完，读回 phase1 暂存上下文 + 已存决策点选择，续跑结算。
+    要求本回合处于 awaiting_decision（已有 resolve_context）。返回完整结算报告。"""
+    def _emit(kind: str, data: str) -> None:
+        if on_event:
+            on_event(kind, data)
+
+    ctx = db.get_resolve_context(state.turn)
+    if ctx is None:
+        raise LLMContractError("无待决推演上下文，无法续跑结算（phase1 未暂停或已结算）。")
+    decisions = db.list_pending_decisions(state.turn)
+    decision_directive = _format_decision_directive(decisions)
+    before_turn = state.turn
+    report = _settle_after_narrative(
+        state, db, agno_db, llm_config,
+        decree_text=str(ctx["decree_text"]),
+        narrative=str(ctx["narrative"]),
+        simulator_payload=ctx["simulator_payload"] if isinstance(ctx["simulator_payload"], dict) else {},
+        relevant_memories=ctx["relevant_memories"] if isinstance(ctx["relevant_memories"], list) else [],
+        secret_orders=ctx["secret_orders"] if isinstance(ctx["secret_orders"], list) else [],
+        before_turn=before_turn, _emit=_emit,
+        content=content, registry=registry,
+        cheat_directive=cheat_directive,
+        decision_directive=decision_directive,
+    )
+    # 结算完清掉暂存（next_period 已在 _settle 内执行，故按 before_turn 清理本回合残留）。
+    db.clear_pending_decisions(before_turn)
+    db.clear_resolve_context(before_turn)
+    return report
 
 
 def _generate_ending_summary(

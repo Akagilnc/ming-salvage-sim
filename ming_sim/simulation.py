@@ -16,6 +16,15 @@ from ming_sim.models import GameState
 from ming_sim.token_stats import tlog
 
 
+def _load_hitl_min_decisions() -> int:
+    """全局玩法设置：本回合 simulator 至少应产出的决策点数（0=不强制）。失败回落 1。"""
+    try:
+        from ming_sim.llm_config import load_runtime_game
+        return int(load_runtime_game().get("hitl_min_decisions", 1))
+    except Exception:
+        return 1
+
+
 TOP_LEVEL_ALIASES = {
     "国势变化": "metric_delta",
     "钱粮收支": "economy_moves",
@@ -283,6 +292,8 @@ def build_simulator_payload(
         "debuts_this_turn": debuts_this_turn or [],
         "relevant_memories": relevant_memories or [],
         "secret_orders": secret_orders or [],
+        # HITL：本回合 simulator 至少应产出的重大决策点数（全局玩法设置，0=不强制）。
+        "hitl_min_decisions": _load_hitl_min_decisions(),
         "data_note": "盘面表（buildings/court_roster/armies/regions）在本输入的开头以 TSV 文本块给出（首行列名、tab 分隔、每行一条记录），不在本 JSON 内；本 JSON 只含其余字段（含 powers_brief/factions_brief/classes_brief 叙述串、active_issues 等）。secret_orders 为皇帝密令列表，独立于 relevant_memories，每条含 id/minister_name/title/content/status/result 字段。",
     }
 
@@ -397,6 +408,31 @@ def _extractor_context_payload(
     secret_orders: Optional[List[Dict[str, object]]] = None,
 ) -> Dict[str, object]:
     active = db.list_active_issues()
+
+    def _issue_auto_economy(row) -> List[Dict[str, object]]:
+        """该 issue 每回合 ongoing_effects 里的固定经济支出/收入。
+        这些由 apply_issue_inertia_and_ongoing 程序自动落账（extractor 结算之后），
+        extractor 看到此清单即知「邸报里提到的这笔是局势自动月支，已由程序扣，勿重抽 钱粮收支」。"""
+        try:
+            ongoing = json.loads(row["ongoing_effects"] or "{}")
+        except (ValueError, TypeError):
+            return []
+        out: List[Dict[str, object]] = []
+        for econ in ongoing.get("economy") or []:
+            try:
+                delta = int(econ.get("delta"))
+            except (TypeError, ValueError):
+                continue
+            if delta == 0:
+                continue
+            out.append({
+                "账户": str(econ.get("account") or "国库"),
+                "增量": delta,
+                "分类": str(econ.get("category") or ""),
+                "原因": str(econ.get("reason") or ""),
+            })
+        return out
+
     issues_brief = [
         {
             "issue_id": int(r["id"]),
@@ -410,6 +446,12 @@ def _extractor_context_payload(
         }
         for r in active
     ]
+    # 局势自动月支汇总（独立顶层字段，不随 active_issues 一起被 _MODULE_DROP_FIELDS 剔除）。
+    # extractor 据此判重：邸报提到的局势常态月支若在此清单，是程序自动落账项，勿写 钱粮收支。
+    issue_auto_economy: List[Dict[str, object]] = []
+    for r in active:
+        for econ in _issue_auto_economy(r):
+            issue_auto_economy.append({"issue_id": int(r["id"]), "title": r["title"], **econ})
     region_rows = [
         dict(r) for r in db.conn.execute(
             "SELECT id,name,kind,population,public_support,unrest,natural_disaster,"
@@ -441,6 +483,7 @@ def _extractor_context_payload(
         "narrative": narrative,
         "decree_text": decree_text,
         "active_issues": issues_brief,
+        "issue_auto_economy": issue_auto_economy,
         "candidate_events": [{"id": ev.id, "title": ev.title} for ev in gather_candidate_events(state, db)],
         "current_state": dict(state.metrics),
         "factions": db.faction_report(),
@@ -468,6 +511,7 @@ def _extractor_compat_payload(base: Dict[str, object]) -> Dict[str, object]:
         "narrative": base["narrative"],
         "decree_text": base["decree_text"],
         "active_issues": base["active_issues"],
+        "issue_auto_economy": base["issue_auto_economy"],
         "candidate_events": base["candidate_events"],
         "current_state": base["current_state"],
         "factions": base["factions"],

@@ -12,7 +12,7 @@ import { ChatModal, ClosedIssuesModal, EdictModal, EndingModal, HistoryModal, Re
 import { SituationPanel } from "./components/situation";
 import { getMapIntelStyle, refreshLabelMaps, scoreTone } from "./format";
 import { forwardSteamEvents, type SteamEvent } from "./steamEvents";
-import type { AppView, ChatMessage, ChatUndoResponse, ClosedIssue, Directive, GameState, MenuStatus, Minister, ModalName, SecretOrder, Suggestion } from "./types";
+import type { AppView, ChatMessage, ChatUndoResponse, ClosedIssue, Directive, GameState, MenuStatus, Minister, ModalName, PendingDecision, SecretOrder, Suggestion } from "./types";
 import "./styles.css";
 
 function App() {
@@ -80,6 +80,8 @@ function App() {
   // 作弊控制台（Ctrl+~）：cheatDirective 暂存强制结算项，下次颁诏随结算一次性穿入。
   const [cheatOpen, setCheatOpen] = React.useState(false);
   const [cheatDirective, setCheatDirective] = React.useState("");
+  // HITL 决策点：颁诏推演若出重大抉择，暂停弹窗逐个亲裁，裁完续跑结算。
+  const [pendingDecisions, setPendingDecisions] = React.useState<PendingDecision[]>([]);
 
   const loadState = React.useCallback(async () => {
     const data = await api<GameState>("/api/game/state");
@@ -180,6 +182,15 @@ function App() {
     if (endingDismissed) return;
     setActiveModal("ending");
   }, [state, endingDismissed]);
+
+  // 刷新恢复：若回合停在 awaiting_decision 且有未裁决策点，自动重弹决策弹窗。
+  React.useEffect(() => {
+    if (!state) return;
+    if (state.turn.phase !== "awaiting_decision") return;
+    const decisions = state.pending_decisions || [];
+    if (decisions.length === 0) return;
+    setPendingDecisions((prev) => (prev.length ? prev : decisions));
+  }, [state]);
 
   // 每次进入页面/换回合都弹上回合邸报。不持久化记录——刷新即重新弹。
   // 同一加载周期内同一回合不重复弹（gazetteShown 用 React state，刷新后回到 -1）。
@@ -557,6 +568,44 @@ function App() {
     setError("");
   };
 
+  // 颁诏/续裁共用：消费 SSE 推演流，stage/thinking/text 实时更新进度区，
+  // 返回结束态：done（已结算）/ decisions（暂停待裁）/ error。
+  const consumeSettleStream = async (
+    response: Response
+  ): Promise<{ kind: "done" | "decisions" | "error"; data: any }> => {
+    if (!response.ok || !response.body) {
+      throw new Error(`颁诏失败：HTTP ${response.status}`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { value, done: streamDone } = await reader.read();
+      if (streamDone) break;
+      buffer += decoder.decode(value, { stream: true });
+      const blocks = buffer.split("\n\n");
+      buffer = blocks.pop() || "";
+      for (const block of blocks) {
+        let evName = "";
+        let dataRaw = "";
+        for (const line of block.split("\n")) {
+          if (line.startsWith("event: ")) evName = line.slice(7).trim();
+          else if (line.startsWith("data: ")) dataRaw += line.slice(6);
+        }
+        if (!evName || !dataRaw) continue;
+        let data: any = {};
+        try { data = JSON.parse(dataRaw); } catch { continue; }
+        if (evName === "stage") setSettleStage(data.content || "");
+        else if (evName === "thinking") setSettleThinking((prev) => prev + (data.content || ""));
+        else if (evName === "text") setSettleNarrative((prev) => prev + (data.content || ""));
+        else if (evName === "error") return { kind: "error", data: data.message || "颁诏失败。" };
+        else if (evName === "decisions") return { kind: "decisions", data };
+        else if (evName === "done") return { kind: "done", data };
+      }
+    }
+    return { kind: "error", data: "推演流意外中断。" };
+  };
+
   const issueDecree = async () => {
     setBusy("月末结算");
     setSettleStage("");
@@ -574,52 +623,49 @@ function App() {
       if (cheatPayload) {
         setCheatDirective("");
       }
-      if (!response.ok || !response.body) {
-        throw new Error(`颁诏失败：HTTP ${response.status}`);
-      }
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let done = false;
-      let failed = "";
-      while (!done) {
-        const { value, done: streamDone } = await reader.read();
-        if (streamDone) break;
-        buffer += decoder.decode(value, { stream: true });
-        // SSE 事件以空行分隔
-        const blocks = buffer.split("\n\n");
-        buffer = blocks.pop() || "";
-        for (const block of blocks) {
-          let evName = "";
-          let dataRaw = "";
-          for (const line of block.split("\n")) {
-            if (line.startsWith("event: ")) evName = line.slice(7).trim();
-            else if (line.startsWith("data: ")) dataRaw += line.slice(6);
-          }
-          if (!evName || !dataRaw) continue;
-          let data: { content?: string; message?: string } = {};
-          try { data = JSON.parse(dataRaw); } catch { continue; }
-          if (evName === "stage") {
-            setSettleStage(data.content || "");
-          } else if (evName === "thinking") {
-            setSettleThinking((prev) => prev + (data.content || ""));
-          } else if (evName === "text") {
-            setSettleNarrative((prev) => prev + (data.content || ""));
-          } else if (evName === "error") {
-            failed = data.message || "颁诏失败。";
-            done = true;
-          } else if (evName === "done") {
-            await forwardSteamEvents(data);
-            done = true;
-          }
-        }
-      }
-      if (failed) {
-        setError(failed);
+      const outcome = await consumeSettleStream(response);
+      if (outcome.kind === "error") {
+        setError(typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "颁诏失败。"));
         setBusy("");
         return;
       }
+      if (outcome.kind === "decisions") {
+        // 出重大抉择：暂停弹窗逐个亲裁，裁完调 submitDecisions 续跑结算。
+        setPendingDecisions(outcome.data.decisions || []);
+        setBusy("");
+        return;
+      }
+      await forwardSteamEvents(outcome.data);
       // 结算完成：强制整页刷新，草案/对话/局势/closed 弹窗全部按新 state 重新初始化
+      window.location.reload();
+      return;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setBusy("");
+    }
+  };
+
+  // 皇帝亲裁完所有决策点：续跑 phase2 结算。choices 按决策点 idx 顺序。
+  const submitDecisions = async (choices: { label?: string; hint?: string; note?: string }[]) => {
+    setPendingDecisions([]);
+    setBusy("月末结算");
+    setSettleStage("圣意亲裁，续推时局");
+    setSettleThinking("");
+    setSettleNarrative("");
+    setError("");
+    try {
+      const response = await fetch("/api/decree/resolve_decisions/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ choices }),
+      });
+      const outcome = await consumeSettleStream(response);
+      if (outcome.kind === "error") {
+        setError(typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "结算失败。"));
+        setBusy("");
+        return;
+      }
+      await forwardSteamEvents(outcome.data);
       window.location.reload();
       return;
     } catch (err) {
@@ -949,7 +995,82 @@ function App() {
           onClose={() => setCheatOpen(false)}
         />
       ) : null}
+
+      {pendingDecisions.length > 0 && !settling ? (
+        <DecisionModal decisions={pendingDecisions} onResolve={submitDecisions} />
+      ) : null}
     </main>
+  );
+}
+
+
+// HITL 重大抉择弹窗：逐个亲裁本回合决策点，全部选完一次提交续跑结算。
+// 每个决策：标题 + 背景 + 2-3 预设选项（点选）+ 朱批输入框（可补自由旨意）。
+function DecisionModal({
+  decisions,
+  onResolve,
+}: {
+  decisions: PendingDecision[];
+  onResolve: (choices: { label?: string; hint?: string; note?: string }[]) => void;
+}) {
+  const [cursor, setCursor] = React.useState(0);
+  const [picks, setPicks] = React.useState<{ label?: string; hint?: string; note?: string }[]>(
+    () => decisions.map(() => ({}))
+  );
+  const total = decisions.length;
+  const cur = decisions[cursor];
+  const pick = picks[cursor] || {};
+
+  const setOption = (label: string, hint: string) =>
+    setPicks((p) => p.map((x, i) => (i === cursor ? { ...x, label, hint } : x)));
+  const setNote = (note: string) =>
+    setPicks((p) => p.map((x, i) => (i === cursor ? { ...x, note } : x)));
+
+  const decided = !!(pick.label || (pick.note || "").trim());
+  const last = cursor >= total - 1;
+
+  const next = () => {
+    if (!decided) return;
+    if (last) onResolve(picks);
+    else setCursor((c) => c + 1);
+  };
+
+  return (
+    <div className="decision-modal" role="dialog" aria-modal="true" aria-label="月末重大抉择">
+      <div className="decision-window">
+        <div className="decision-head">
+          <span className="decision-kicker">月末亲裁 · {cursor + 1}/{total}</span>
+          <h2 className="decision-title">{cur.title}</h2>
+        </div>
+        {cur.context ? <p className="decision-context">{cur.context}</p> : null}
+        <div className="decision-options">
+          {cur.options.map((o, i) => (
+            <button
+              key={i}
+              className={"decision-option" + (pick.label === o.label ? " is-picked" : "")}
+              onClick={() => setOption(o.label, o.hint)}
+            >
+              <span className="decision-option-label">{o.label}</span>
+              {o.hint ? <span className="decision-option-hint">{o.hint}</span> : null}
+            </button>
+          ))}
+        </div>
+        <textarea
+          className="decision-note"
+          placeholder="朱批（可选）：另有旨意可亲笔补写，将与所选一并定夺。"
+          value={pick.note || ""}
+          onChange={(e) => setNote(e.target.value)}
+        />
+        <div className="decision-actions">
+          <span className="decision-hint-line">
+            {decided ? "" : "请择一选项或亲笔朱批，方可下一步。"}
+          </span>
+          <button className="decision-confirm" disabled={!decided} onClick={next}>
+            {last ? "御笔亲断，续推时局" : "下一桩抉择"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
