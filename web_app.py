@@ -373,6 +373,10 @@ class WebGame:
         advanced_thinking_level = runtime.get("advanced_thinking_level") or advanced_thinking_level
         max_tokens = int(runtime.get("max_tokens") or 8000)
         timeout_seconds = float(runtime.get("timeout_seconds") or timeout_seconds)
+        # 探针：CLI 后端（MING_SIM_LLM_BACKEND=agy|codex）脱 api key，给占位符放行。
+        from ming_sim.cli_backend import cli_backend_from_env
+        if not api_key and cli_backend_from_env() is not None:
+            api_key = "cli-backend"
         if not api_key:
             raise LLMUnavailable("未配 API key，请先到设置页填写。")
         random.seed(int(os.environ.get("MING_SIM_SEED", "7")))
@@ -1172,6 +1176,23 @@ class WebGame:
                                 payload_json = json.dumps(args, ensure_ascii=False)
                             secret_order_id = self.session._apply_secret_order(payload_json, minister_name)
                     # 密令结案不再走大臣工具，由月末推演 + extractor 写入
+            # CLI 后端（agy/codex）：玩家用拟旨/密令按钮（消息带前缀）时，把大臣这句回话原文入档。
+            from ming_sim.cli_backend import cli_backend_from_env, resolve_minister_actions
+            if cli_backend_from_env() is not None:
+                acts = resolve_minister_actions(answer, text, default_assignee=minister_name)
+                if proposed is None and acts["decree_text"]:
+                    did = self.db.add_directive(
+                        self.state, None, acts["decree_text"], "大臣拟旨",
+                        notes=f"由{character.name}拟旨入档", status="pending",
+                    )
+                    proposed = {"id": did, "text": acts["decree_text"], "status": "pending",
+                                "notes": f"由{character.name}拟旨入档"}
+                if not secret_order_id and acts["secret_order"]:
+                    so = acts["secret_order"]
+                    secret_order_id = self.db.create_secret_order(
+                        self.state, so.get("assignee") or minister_name, so["title"], so["content"],
+                        so.get("tags") or [], deadline_months=so.get("deadline_months", 0),
+                    )
             self._record_chat_rollback_items(chat_turn_id, before_snapshot)
             payload = self._chat_payload(
                 minister_name, answer, court_action=court_action, next_minister=next_minister,

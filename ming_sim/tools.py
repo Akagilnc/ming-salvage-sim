@@ -55,7 +55,7 @@ def build_minister_tools(character: Character, context: CourtContext,
         """查在朝人事名册。names 为空返回全部姓名+状态索引；传姓名列表返回指定人物详情（现职/官署/派系/状态）。"""
         db = context.db
         results = []
-        for c in _ctx().characters.values():
+        for c in _content_ctx().characters.values():
             if c.office_type == "后宫":
                 continue
             if getattr(c, "power_id", "ming") != "ming":

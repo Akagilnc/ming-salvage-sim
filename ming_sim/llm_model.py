@@ -106,6 +106,13 @@ def create_chat_model(
         kwargs["extra_body"] = extra_body
     if supports_openai_reasoning_effort(llm_config.model):
         kwargs["reasoning_effort"] = llm_config.thinking_level or ("medium" if enable_thinking else "minimal")
+    # 探针：MING_SIM_LLM_BACKEND=agy|codex 时改走本地 CLI 后端（脱 api key）。
+    # CliChat 继承 OpenAIChat，吃同一套 kwargs；reasoning_effort 等 agy 无关的字段被忽略。
+    from ming_sim.cli_backend import CliChat, cli_backend_from_env
+    backend = cli_backend_from_env()
+    if backend is not None:
+        kwargs.pop("reasoning_effort", None)  # CLI 后端不需要，且可能干扰父类校验
+        return CliChat(backend=backend, **kwargs)
     return OpenAIChat(**kwargs)
 
 
@@ -132,6 +139,11 @@ def extract_agent_text(run_output: object) -> str:
 
 def verify_llm_available(llm_config: LLMConfig) -> None:
     """检查 LLM 是否可用：调用成功（HTTP 200，不抛异常）即算通过，不校验返回内容。"""
+    # CLI 后端（agy/codex）无 HTTP 端点可探，且烟测会白白起一次 ~12s 自治 agent。
+    # 本机已装并登录 CLI 即视为可用，跳过网络烟测。
+    from ming_sim.cli_backend import cli_backend_from_env
+    if cli_backend_from_env() is not None:
+        return
     agent = Agent(
         name="LLM连通性检查",
         id="llm-smoke-test",

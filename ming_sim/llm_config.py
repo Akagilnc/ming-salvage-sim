@@ -70,6 +70,11 @@ def load_llm_config(
     advanced_thinking_level: str = "",
 ) -> LLMConfig:
     api_key = (api_key or os.environ.get("OPENAI_API_KEY", "")).strip()
+    # 探针：MING_SIM_LLM_BACKEND=agy|codex 时走本地 CLI，无需 api key，
+    # 不索要、不拦截，给个占位符让下游构造照常。
+    from ming_sim.cli_backend import cli_backend_from_env
+    if cli_backend_from_env() is not None:
+        api_key = api_key or "cli-backend"
     if not api_key:
         api_key = getpass.getpass("请输入 API key（不会保存，回车取消）：").strip()
     if not api_key:

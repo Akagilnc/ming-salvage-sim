@@ -634,7 +634,36 @@ class GameSession:
                         order_id = 0
                     if order_id:
                         result.secret_order_id = order_id
+        # CLI 后端（agy/codex）：玩家用拟旨/密令按钮（消息带前缀）时，把大臣这句回话原文入档。
+        self._cli_backend_fallback_actions(result, character, message)
         return result
+
+    def _cli_backend_fallback_actions(
+        self, result: "ChatTurnResult", character: Character, player_message: str = "",
+    ) -> None:
+        """CLI 后端下取大臣本轮拟旨/密令并入档（agno 工具不触发时）。"""
+        from ming_sim.cli_backend import cli_backend_from_env, resolve_minister_actions
+        if cli_backend_from_env() is None:
+            return
+        acts = resolve_minister_actions(result.answer or "", player_message, default_assignee=character.name)
+        if result.proposed_directive is None and acts["decree_text"]:
+            text = acts["decree_text"]
+            directive_id = self.db.add_directive(
+                self.state, None, text, "大臣拟旨",
+                actor=character.name, notes=f"由{character.name}拟旨入档", status="pending",
+            )
+            result.proposed_directive = DirectiveView(
+                id=directive_id, text=text, status="pending",
+                source="大臣拟旨", notes=f"由{character.name}拟旨入档",
+            )
+        if not result.secret_order_id and acts["secret_order"]:
+            so = acts["secret_order"]
+            order_id = self.db.create_secret_order(
+                self.state, so.get("assignee") or character.name, so["title"], so["content"],
+                so.get("tags") or [], deadline_months=so.get("deadline_months", 0),
+            )
+            if order_id:
+                result.secret_order_id = order_id
 
     def _apply_appointment(self, payload: str, appointer: Character) -> Tuple[str, str]:
         """吏部 propose_appointment 落地：建档入库 + 注册 Agent，本回合即可召见。
