@@ -26,7 +26,8 @@ REGION_QUANTITY_FIELDS = ("population", "registered_land", "hidden_land", "tax_p
 REGION_TEXT_FIELDS = ("natural_disaster", "human_disaster", "status", "controlled_by")
 # fiscal JSON 子字段白名单（0-100量表，存在 regions.fiscal 列里）
 FISCAL_SCORE_FIELDS = ("corruption",)
-ARMY_SCORE_FIELDS = ("supply", "morale", "training", "equipment", "arrears", "mobility", "loyalty")
+ARMY_SCORE_FIELDS = ("supply", "morale", "training", "equipment", "arrears", "mobility", "loyalty",
+                     "firearm_equipment", "cannon_equipment")
 ARMY_QUANTITY_FIELDS = ("manpower", "maintenance_per_turn")
 ARMY_TEXT_FIELDS = ("station", "commander", "controller", "troop_type", "status", "owner_power")
 BUILDING_CATEGORIES = ("财政", "军事", "民生", "科技", "交通", "内廷")

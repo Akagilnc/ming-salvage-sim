@@ -678,6 +678,34 @@ def _spawn_legacy_from_effect(
     return summary
 
 
+def _apply_issue_entities(db: GameDB, state: GameState, effect: Dict[str, object], label: str) -> None:
+    """国策结案的实体后果：建军 / 补兵改属性 / 人物状态(死/流放/下狱/罢/致仕)。
+    全局严格、不静默——非法 delta 直接抛错中断当回合，绝不无声丢失。
+    （effect_on_resolve 原本只支持 metrics/economy/buildings/legacy，这里补 army/人事两线。）"""
+    new_armies = effect.get("new_armies")
+    if isinstance(new_armies, list) and new_armies:
+        db.create_armies_from_extraction(state, new_armies, actor=label)
+    army_delta = effect.get("army_delta")
+    if isinstance(army_delta, dict) and army_delta:
+        pseudo = type("E", (), {"id": "issue", "title": label})()
+        db.apply_army_deltas(state, pseudo, None, label, army_delta)
+    csc = effect.get("character_status_changes")
+    if isinstance(csc, list) and csc:
+        valid_status = {"dismissed", "imprisoned", "exiled", "retired", "dead", "offstage"}
+        chars = getattr(_ctx(), "characters", {}) or {}
+        for it in csc:
+            if not isinstance(it, dict):
+                continue
+            name = str(it.get("name") or "").strip()
+            status = str(it.get("status") or "").strip().lower()
+            reason = str(it.get("reason") or "").strip()
+            if not name or status not in valid_status:
+                raise ValueError(f"{label} 人物状态非法：name={name!r} status={status!r}（白名单 {valid_status}）")
+            if name not in chars:
+                raise ValueError(f"{label} 人物状态引用未知人物：{name!r}")
+            db.set_character_status(state, name, status, reason)
+
+
 def apply_issue_tracker_output(
     db: GameDB,
     state: GameState,
@@ -720,6 +748,7 @@ def apply_issue_tracker_output(
             _apply_economy_list(db, state, effect.get("economy") or [])
             _apply_faction_dict(db, effect.get("factions") or {})
             _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}结案")
+            _apply_issue_entities(db, state, effect, f"局势#{issue_id}结案")
             _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
         elif new_row["status"] == "failed":
             effect = json.loads(new_row["effect_on_fail"] or "{}")
@@ -727,6 +756,7 @@ def apply_issue_tracker_output(
             _apply_economy_list(db, state, effect.get("economy") or [])
             _apply_faction_dict(db, effect.get("factions") or {})
             _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}失败")
+            _apply_issue_entities(db, state, effect, f"局势#{issue_id}失败")
             _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
         applied_advances.append({
             "issue_id": issue_id,
@@ -778,6 +808,24 @@ def apply_issue_tracker_output(
         if kind == "initiative" and initiative_active >= 10:
             applied_new.append({"title": title, "rejected": True, "reason": "已有十事在办，朝廷分身乏术，难再添新工。"})
             continue
+        ongoing_eff = dict(ni.get("ongoing_effects") or {})
+        resolve_eff = dict(ni.get("effect_on_resolve") or {})
+        fail_eff = dict(ni.get("effect_on_fail") or {})
+        # 校验：国策必须有「办成回报」。CLI 后端(agy)一贯不填效果字段（实测 0/4），
+        # 空则聚焦补全，保证「国策跑完有实质后果」(A 方案)；floor 兜底，绝不入空壳。
+        if kind == "initiative" and not resolve_eff:
+            try:
+                from ming_sim.cli_backend import cli_backend_from_env, enrich_initiative_effects
+                if cli_backend_from_env() is not None:
+                    enr = enrich_initiative_effects(title, str(ni.get("stage_text") or ""))
+                    resolve_eff = enr.get("effect_on_resolve") or resolve_eff
+                    ongoing_eff = enr.get("ongoing_effects") or ongoing_eff
+                    fail_eff = enr.get("effect_on_fail") or fail_eff
+                    if not resolve_eff:  # 补全也失败 → 最小回报，绝不空
+                        resolve_eff = {"metrics": {"民心": 1}}
+                    print(f"[issue/enrich] 国策「{title[:16]}」补效果 resolve={bool(resolve_eff)} ongoing={bool(ongoing_eff)}")
+            except Exception as exc:
+                print(f"[issue/enrich] 补全失败，沿用空效果：{exc}")
         try:
             issue_id = db.insert_issue(
                 state,
@@ -794,11 +842,11 @@ def apply_issue_tracker_output(
                 region_hint=str(ni.get("region_hint") or ""),
                 faction_hint=str(ni.get("faction_hint") or ""),
                 tags=list(ni.get("tags") or []),
-                ongoing_effects=dict(ni.get("ongoing_effects") or {}),
+                ongoing_effects=ongoing_eff,
                 cancellable=_normalize_cancellable(ni.get("cancellable")),
                 cancel_cost=dict(ni.get("cancel_cost") or {}),
-                effect_on_resolve=dict(ni.get("effect_on_resolve") or {}),
-                effect_on_fail=dict(ni.get("effect_on_fail") or {}),
+                effect_on_resolve=resolve_eff,
+                effect_on_fail=fail_eff,
                 resolve_condition=str(ni.get("resolve_condition") or "")[:300],
                 fail_condition=str(ni.get("fail_condition") or "")[:300],
             )
@@ -846,6 +894,7 @@ def apply_issue_tracker_output(
             db, state, effect.get("buildings"),
             _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}{'结案' if reason == 'resolved' else '失败'}",
         )
+        _apply_issue_entities(db, state, effect, f"局势#{issue_id}{'结案' if reason == 'resolved' else '失败'}")
         _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
         applied_closes.append({
             "issue_id": issue_id,
@@ -983,22 +1032,15 @@ def apply_score_extraction(
     region_changes: List[Dict[str, object]] = []
     army_changes: List[Dict[str, object]] = []
     created_armies: List[Dict[str, object]] = []
-    # 先建军：避免同回合 army_delta 引用新军被跳过
+    # 先建军：避免同回合 army_delta 引用新军被跳过。
+    # 不吞异常（全局严格）：建军/补兵 delta 非法直接抛错中断当回合，不静默丢，
+    # 以免「军没建成、账实不符」无声发生。
     if isinstance(new_armies_raw, list) and new_armies_raw:
-        try:
-            created_armies = db.create_armies_from_extraction(state, new_armies_raw, actor="档房")
-        except Exception as exc:
-            print(f"[WARN] new_armies 落库失败：{exc}")
+        created_armies = db.create_armies_from_extraction(state, new_armies_raw, actor="档房")
     if isinstance(region_deltas_raw, dict) and region_deltas_raw:
-        try:
-            region_changes = db.apply_region_deltas(state, pseudo_event, None, "档房", region_deltas_raw)
-        except Exception as exc:
-            print(f"[WARN] region_delta 落库失败：{exc}")
+        region_changes = db.apply_region_deltas(state, pseudo_event, None, "档房", region_deltas_raw)
     if isinstance(army_deltas_raw, dict) and army_deltas_raw:
-        try:
-            army_changes = db.apply_army_deltas(state, pseudo_event, None, "档房", army_deltas_raw)
-        except Exception as exc:
-            print(f"[WARN] army_delta 落库失败：{exc}")
+        army_changes = db.apply_army_deltas(state, pseudo_event, None, "档房", army_deltas_raw)
 
     # 注：建筑的新建/变更/废止不走顶层字段，全由 issue 的 effect_on_resolve /
     #     effect_on_fail 里的 `buildings` 段在局势结案时落地（见 _apply_issue_buildings）。

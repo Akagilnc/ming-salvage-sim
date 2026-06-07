@@ -255,6 +255,66 @@ def _loads_lenient(raw: str) -> Optional[dict]:
         return None
 
 
+def enrich_initiative_effects(title: str, stage: str = "") -> Dict[str, Any]:
+    """国策(initiative)立项后 agy 一贯不填效果字段（实测 0/4）。这里聚焦补全：
+    按国策标题/现状生成 解决效果(完成回报)/持续效果(月度成本)/失败效果。
+    纯数值设计任务（不扮演），与月末 extractor 同款可靠。返回英文 key 的三个 dict。"""
+    prompt = (
+        "你是历史模拟游戏(明末崇祯)的数值结算设计器，不扮演、不写圣旨。"
+        "给下面这条「国策」设计它**办成时**的实质后果，按国策性质选对的产出类型，"
+        "只输出一个 JSON（英文结构 key），不要代码围栏、不要别的字：\n"
+        "{\n"
+        '  "effect_on_resolve": {\n'
+        '    "metrics": {"民心": int, "皇威": int, "国库": int},   // 抽象国势回报，按需，可省\n'
+        '    "buildings": [{"action":"create","region_id":"省拼音码","name":"","category":"财政/军事/民生/科技/交通/内廷","output_metric":"国库/内库/民心/皇威/","output_amount":int}],\n'
+        '    "new_armies": [{"id":"英文小写id","name":"军名","owner_power":"ming","manpower":兵额(整数,如18000),"maintenance_per_turn":月饷万两(整数),"commander":"主将姓名或空","station":"驻地","troop_type":"步/骑/水/车营"}],\n'
+        '    "army_delta": {"既有军id":{"manpower":增兵整数,"reason":""}},\n'
+        '    "character_status_changes": [{"name":"必须是确切人名","status":"dead/exiled/imprisoned/dismissed/retired","reason":""}]\n'
+        "  },\n"
+        '  "ongoing_effects": {"economy": [{"account":"国库/内库","delta":负数月度开销,"category":"","reason":""}]},\n'
+        '  "effect_on_fail": {"metrics": {"民心": 负int}}\n'
+        "}\n"
+        "【按国策性质选类型，不要全用 metrics 凑数】：\n"
+        "- 营建/办厂/设局/筑堡/设仓/建坞/立学 → buildings.create（科技/军事厂局让推演认军备能力，别只给民心）\n"
+        "- 练兵/募营/建新军 → new_armies（给合理兵额/月饷/主将/驻地）\n"
+        "- 给既有军扩编/补员 → army_delta\n"
+        "- 暗杀/处决/罢黜/流放/下狱某个**确切人物**(含敌酋如皇太极) → character_status_changes(name 必须确切、status 取白名单)\n"
+        "- 整顿提威/安民/财政新政 → metrics / economy\n"
+        "规则：① 数值朴素(个位到一二十/兵额按史实体量)；② 只有确需周期烧钱的实体才给 ongoing_effects.economy(负)，否则 {}；"
+        "③ 不相关的类型留空，别硬塞；④ region_id 拼音码：京师=beizhili 陕西=shaanxi 辽东=liaodong 山东=shandong "
+        "河南=henan 南直隶=nanzhili 浙江=zhejiang 福建=fujian 广东=guangdong 湖广=huguang 四川=sichuan 山西=shanxi 江西=jiangxi 云南=yunnan，不确定 beizhili。\n\n"
+        "【国策】" + (title or "") + "\n【现状】" + (stage or "（无）") + "\n"
+    )
+    raw = ""
+    try:
+        raw, _ = _run_codex(prompt) if cli_backend_from_env() == "codex" else _run_agy(prompt)
+    except Exception as exc:  # 补全失败不阻断结算
+        _log(f"国策效果补全失败：{exc}")
+    _trace({
+        "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "seq": -1, "tag": "issue_enrich", "backend": "agy", "model_id": "enrich",
+        "dur_s": 0, "attempts": 1, "wants_json": True,
+        "prompt_chars": len(prompt), "resp_chars": len(raw),
+        "error": None, "prompt": prompt, "response": raw,
+    })
+    obj = _loads_lenient(raw) or {}
+    try:
+        from ming_sim.simulation import _canonical_item_fields
+        norm = _canonical_item_fields(obj) if obj else {}
+    except Exception:
+        norm = obj
+    resolve = dict(norm.get("effect_on_resolve") or {})
+    # 建筑 create 缺 region_id 兜底，免得静默落不了地
+    for b in (resolve.get("buildings") or []):
+        if isinstance(b, dict) and str(b.get("action") or "").lower() == "create" and not b.get("region_id"):
+            b["region_id"] = "beizhili"
+    return {
+        "effect_on_resolve": resolve,
+        "ongoing_effects": dict(norm.get("ongoing_effects") or {}),
+        "effect_on_fail": dict(norm.get("effect_on_fail") or {}),
+    }
+
+
 def _extract_secret_order(player_command: str, minister_reply: str, default_assignee: str) -> Dict[str, Any]:
     """聚焦提取：把密令交代+大臣回话抽成结构化字段。纯抽取任务（不扮演），
     与月末 extractor 同款可靠。失败则退回合理默认。"""

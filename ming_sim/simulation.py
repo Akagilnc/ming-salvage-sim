@@ -253,7 +253,7 @@ def build_simulator_payload(
         dict(r) for r in db.conn.execute(
             "SELECT name,kind,population,public_support,unrest,natural_disaster,"
             "human_disaster,registered_land,hidden_land,tax_per_turn,grain_security,"
-            "gentry_resistance,military_pressure,status,controlled_by,"
+            "gentry_resistance,military_pressure,status,controlled_by,city_level,cannon,"
             "json_extract(fiscal,'$.corruption') as corruption FROM regions ORDER BY id"
         ).fetchall()
     ]
@@ -261,7 +261,7 @@ def build_simulator_payload(
         dict(r) for r in db.conn.execute(
             "SELECT name,station,theater,commander,controller,troop_type,manpower,"
             "maintenance_per_turn,supply,morale,training,equipment,arrears,mobility,"
-            "loyalty,status,owner_power FROM armies ORDER BY id"
+            "loyalty,firearm_equipment,cannon_equipment,status,owner_power FROM armies ORDER BY id"
         ).fetchall()
     ]
     court_roster = _auto_table([
@@ -456,7 +456,7 @@ def _extractor_context_payload(
         dict(r) for r in db.conn.execute(
             "SELECT id,name,kind,population,public_support,unrest,natural_disaster,"
             "human_disaster,registered_land,hidden_land,tax_per_turn,grain_security,"
-            "gentry_resistance,military_pressure,status,controlled_by,"
+            "gentry_resistance,military_pressure,status,controlled_by,city_level,cannon,"
             "json_extract(fiscal,'$.corruption') as corruption FROM regions ORDER BY id"
         ).fetchall()
     ]

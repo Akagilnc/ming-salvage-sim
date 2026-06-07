@@ -132,6 +132,8 @@ class Region:
     military_pressure: int
     status: str
     controlled_by: str
+    city_level: int = 0   # 城市等级 0-5（静态，史实分级；城防炮上限=×8，将来供经济/内政）
+    cannon: int = 0       # 城防大炮门数（城头红夷炮，上限 city_level×8）
     fiscal: dict = field(default_factory=dict)
     on_restore: dict = field(default_factory=dict)
     # fiscal JSON 字段说明（万亩/万两/0-100）：
@@ -165,6 +167,8 @@ class Army:
     loyalty: int
     status: str
     owner_power: str
+    firearm_equipment: int = 0  # 火器装备 0-100：鸟铳/三眼铳，野战+守城
+    cannon_equipment: int = 0   # 大炮装备 0-100：红夷炮，守城/攻城，不利野战
 
 
 @dataclass
