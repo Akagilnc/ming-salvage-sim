@@ -43,6 +43,14 @@ _AGY_TIMEOUT = int(os.environ.get("MING_SIM_AGY_TIMEOUT", "300"))
 _AGY_BIN = os.environ.get("MING_SIM_AGY_BIN", "agy")
 _CODEX_BIN = os.environ.get("MING_SIM_CODEX_BIN", "codex")
 _CODEX_MODEL = os.environ.get("MING_SIM_CODEX_MODEL", "gpt-5.5")
+# claude -p 独立进程后端：opus/sonnet/haiku。纯文本输出无日志壳。
+# 思考预算不在此强加：claude 走自身默认；要限思考由用户自行 export MAX_THINKING_TOKENS
+# （claude -p 继承父进程 env，会自动读到），后端不替用户决定。
+_CLAUDE_BIN = os.environ.get("MING_SIM_CLAUDE_BIN", "claude")
+_CLAUDE_MODEL = os.environ.get("MING_SIM_CLAUDE_MODEL", "claude-opus-4-8")
+# 纯角色扮演/抽取任务不需要工具；禁掉防 claude 绕去调工具兜圈子。
+_CLAUDE_DISALLOWED = ["Bash", "Read", "Edit", "Write", "Glob", "Grep",
+                      "WebFetch", "WebSearch", "Task", "NotebookEdit"]
 
 _VERBOSE = os.environ.get("MING_SIM_LLM_DEBUG", "") not in ("", "0", "false")
 
@@ -144,16 +152,59 @@ def _run_agy(prompt: str) -> Tuple[str, int]:
 
 
 def _run_codex(prompt: str) -> Tuple[str, int]:
-    """调 codex exec -（stdin pipe，绝不 positional）。返回 (文本, 尝试次数=1)。"""
+    """调 codex exec -（stdin pipe，绝不 positional）。返回 (文本, 尝试次数=1)。
+
+    实测三坑（见 docs/LLM_BACKEND_BENCH.md §9）：
+    - `--skip-git-repo-check`：cwd 是非 git 沙箱目录，不加则秒报 "Not inside a trusted directory"。
+    - `--ephemeral`：不落盘 session，否则并发多调撞共享 session 状态（rollout thread not found）丢空输出。
+    - 干净最终回话在 **stdout**，诊断/日志在 stderr —— 只取 stdout，绝不合并（合并会把
+      "OpenAI Codex v…/tokens used" 等日志混进角色回话）。stdout 空时兜底从合并流剥壳。
+    reasoning：默认不强加，尊重用户 ~/.codex/config.toml；设 MING_SIM_CODEX_REASONING 才传 -c。"""
+    cmd = [_CODEX_BIN, "exec", "--model", _CODEX_MODEL]
+    reasoning = (os.environ.get("MING_SIM_CODEX_REASONING") or "").strip()
+    if reasoning:
+        cmd += ["-c", f'model_reasoning_effort="{reasoning}"']
+    cmd += ["--ephemeral", "--skip-git-repo-check", "-"]
     try:
         proc = subprocess.run(
-            [_CODEX_BIN, "exec", "--model", _CODEX_MODEL, "-"],
-            input=prompt, capture_output=True, text=True, timeout=_AGY_TIMEOUT,
+            cmd, input=prompt, capture_output=True, text=True, timeout=_AGY_TIMEOUT,
             cwd=_AGY_CWD,
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError("codex 调用超时") from exc
-    return ((proc.stdout or "") + (proc.stderr or "")).strip(), 1
+    out = (proc.stdout or "").strip()
+    if not out:  # 兜底：干净段在合并流 "OpenAI Codex v" 之前
+        combined = (proc.stdout or "") + (proc.stderr or "")
+        out = combined.split("OpenAI Codex v")[0].strip()
+    return out, 1
+
+
+def _run_claude(prompt: str) -> Tuple[str, int]:
+    """调 claude -p（独立进程，stdin pipe）。返回 (纯文本, 1)。
+    与 codex 不同：claude -p 干净最终回话在 **stdout**，日志/诊断在 stderr，
+    故只取 stdout、不合并 stderr（合并会把日志混进角色回话）。
+    思考预算不强加：继承父进程 env，用户可自行 export MAX_THINKING_TOKENS。"""
+    cmd = [_CLAUDE_BIN, "-p", "--model", _CLAUDE_MODEL, "--output-format", "text",
+           "--disallowed-tools", *_CLAUDE_DISALLOWED]
+    try:
+        proc = subprocess.run(
+            cmd, input=prompt, capture_output=True, text=True,
+            timeout=_AGY_TIMEOUT, cwd=_AGY_CWD,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("claude 调用超时") from exc
+    return (proc.stdout or "").strip(), 1
+
+
+def _run_backend(prompt: str) -> Tuple[str, int]:
+    """按 MING_SIM_LLM_BACKEND 分派到对应 CLI（enrich/secret 等非 CliChat 路径用）。
+    未设或非法 → agy（沿用原默认）。"""
+    b = cli_backend_from_env()
+    if b == "codex":
+        return _run_codex(prompt)
+    if b == "claude":
+        return _run_claude(prompt)
+    return _run_agy(prompt)
 
 
 def _messages_to_prompt(
@@ -230,6 +281,59 @@ _DRAFT_PREFIXES = ("拟旨如下：", "拟旨如下:", "拟旨：", "拟旨:")
 _SECRET_PREFIXES = ("密令如下：", "密令如下:", "密令：", "密令:")
 
 
+# 密令生命周期意图（CLI 后端无 function-calling，原 submit/rush 工具失效）：
+# 从玩家这句话的明确措辞判意图，配合"该大臣唯一 active 密令"落地。建档当月不记进展。
+_RUSH_KW = ("催办", "催一催", "加急", "速办", "赶紧", "快办", "限期", "几月内", "限你", "限尔")
+_SUBMIT_KW = ("提交核议", "结案", "办成了", "办妥", "复命请核", "报核", "交核", "可结案", "已办妥", "奏报办结")
+_PROGRESS_KW = ("进展", "进度", "办得怎", "办到哪", "在办事项", "怎么样了", "近况", "可有头绪")
+
+
+def classify_secret_lifecycle(player_message: str) -> Optional[str]:
+    """判玩家这句对**已有密令**的生命周期意图：'rush'/'submit'/'progress'/None。
+    submit/rush 比 progress 更具体，优先判。纯字符串逻辑（不碰 db），便于测。"""
+    m = (player_message or "")
+    if any(k in m for k in _SUBMIT_KW):
+        return "submit"
+    if any(k in m for k in _RUSH_KW):
+        return "rush"
+    if any(k in m for k in _PROGRESS_KW):
+        return "progress"
+    return None
+
+
+# 调教妃嫔（CLI 后端无 function-calling，原 cultivate_consort 工具失效）：
+_CULTIVATE_KW = ("调教", "教你", "教她", "赐你", "赐她", "授你", "望你更", "愿你更",
+                 "练就", "栽培", "点拨", "教导", "调理", "训练你")
+
+
+def classify_cultivation_intent(player_message: str) -> bool:
+    """玩家这句是否在调教妃嫔（赐技能/改性格）。纯字符串，便于测。"""
+    return any(k in (player_message or "") for k in _CULTIVATE_KW)
+
+
+def extract_cultivation(player_command: str, consort_reply: str) -> Dict[str, str]:
+    """从皇帝调教话 + 妃嫔回话抽「新增技能/性格」。返回 {skill, trait}（可空）。
+    纯抽取（不扮演），与月末 extractor 同款；失败返回空。"""
+    prompt = (
+        "你是信息抽取器，不扮演、不写圣旨。皇帝在调教一位妃嫔，下面是皇帝的话和妃嫔回话。"
+        "抽出皇帝要赐予/培养她的【新增技能】（如 书法精通/琴艺/理财筹算，无则空字符串）"
+        "与【新增性格】（如 更加温婉/果决坚毅，无则空字符串），只输出一个 JSON 对象，"
+        "不要代码围栏、不要别的字：\n"
+        '{"技能":"", "性格":""}\n\n'
+        "【皇帝】" + (player_command or "（无）") + "\n【妃嫔回话】" + (consort_reply or "（无）") + "\n"
+    )
+    raw = ""
+    try:
+        raw, _ = _run_backend(prompt)
+    except Exception as exc:  # 抽取失败不阻断
+        _log(f"调教抽取失败：{exc}")
+    obj = _loads_lenient(raw) or {}
+    return {
+        "skill": str(obj.get("技能") or "").strip()[:20],
+        "trait": str(obj.get("性格") or "").strip()[:20],
+    }
+
+
 def _matched_prefix(message: str, prefixes) -> Optional[str]:
     """消息命中某前缀则返回前缀后的正文（玩家那句意图），否则 None。"""
     pm = (message or "").strip()
@@ -287,7 +391,7 @@ def enrich_initiative_effects(title: str, stage: str = "") -> Dict[str, Any]:
     )
     raw = ""
     try:
-        raw, _ = _run_codex(prompt) if cli_backend_from_env() == "codex" else _run_agy(prompt)
+        raw, _ = _run_backend(prompt)
     except Exception as exc:  # 补全失败不阻断结算
         _log(f"国策效果补全失败：{exc}")
     _trace({
@@ -335,7 +439,7 @@ def _extract_secret_order(player_command: str, minister_reply: str, default_assi
     )
     raw = ""
     try:
-        raw, _attempts = _run_agy(prompt) if cli_backend_from_env() != "codex" else _run_codex(prompt)
+        raw, _attempts = _run_backend(prompt)
     except Exception as exc:  # 提取失败不阻断：退回默认
         _log(f"密令提取失败：{exc}")
     _trace({
@@ -399,6 +503,8 @@ class CliChat(OpenAIChat):
     def _call_cli(self, prompt: str) -> Tuple[str, int]:
         if self.backend == "codex":
             return _run_codex(prompt)
+        if self.backend == "claude":
+            return _run_claude(prompt)
         return _run_agy(prompt)
 
     def invoke(  # type: ignore[override]
@@ -508,6 +614,6 @@ class CliChat(OpenAIChat):
 
 
 def cli_backend_from_env() -> Optional[str]:
-    """读 MING_SIM_LLM_BACKEND，返回 'agy'/'codex' 或 None（走原 api 路径）。"""
+    """读 MING_SIM_LLM_BACKEND，返回 'agy'/'codex'/'claude' 或 None（走原 api 路径）。"""
     val = (os.environ.get("MING_SIM_LLM_BACKEND") or "").strip().lower()
-    return val if val in ("agy", "codex") else None
+    return val if val in ("agy", "codex", "claude") else None

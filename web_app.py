@@ -1189,10 +1189,48 @@ class WebGame:
                                 "notes": f"由{character.name}拟旨入档"}
                 if not secret_order_id and acts["secret_order"]:
                     so = acts["secret_order"]
-                    secret_order_id = self.db.create_secret_order(
-                        self.state, so.get("assignee") or minister_name, so["title"], so["content"],
+                    assignee = so.get("assignee") or minister_name
+                    # upsert：同承办大臣已有 active 密令则更新要旨，否则新建——
+                    # 补 CLI 后端无 function-calling 下「补充/更新已有密令」的缺口，再次下密令即更新而非建重复。
+                    secret_order_id, _so_updated = self.db.upsert_secret_order(
+                        self.state, assignee, so["title"], so["content"],
                         so.get("tags") or [], deadline_months=so.get("deadline_months", 0),
                     )
+                    # 创建/更新后立即重建承办大臣 agent，使其上下文带上最新密令简报；否则缓存冻结，
+                    # 大臣"不知道自己有这密令"，同对话内补充/追问得不到呼应（registry.get 本回合复用缓存）。
+                    if self.session.registry is not None:
+                        self.session.registry.refresh(assignee)
+                # 密令生命周期（无 function-calling 下补 submit/rush/progress）：本回合没创建/更新密令时，
+                # 若该大臣有唯一 active 密令、且玩家这句有明确生命周期意图，按意图落地（多条 active 则不猜）。
+                if not secret_order_id:
+                    from ming_sim.cli_backend import classify_secret_lifecycle
+                    action = classify_secret_lifecycle(text)
+                    if action:
+                        active = self.db.get_active_secret_orders_for_minister(minister_name)
+                        if len(active) == 1:
+                            oid = int(active[0]["id"])
+                            if action == "rush":
+                                self.db.rush_secret_order(oid, self.state, deadline_months=1, reason=text[:80])
+                            elif action == "submit":
+                                self.db.submit_secret_order_for_review(
+                                    oid, answer[:200], self.state.year, self.state.period)
+                            elif action == "progress" and int(active[0].get("turn_issued") or 0) != int(self.state.turn):
+                                self.db.update_secret_order_progress(
+                                    oid, answer[:200], self.state.year, self.state.period)
+                            secret_order_id = oid
+                            if self.session.registry is not None:
+                                self.session.registry.refresh(minister_name)
+                # 调教妃嫔（CLI 无 function-calling 补 cultivate_consort）：对后宫妃嫔且玩家有调教意图，
+                # 抽出新增技能/性格落库，refresh 使下次召见即体现在人物描述中。
+                if getattr(character, "office_type", "") == "后宫":
+                    from ming_sim.cli_backend import classify_cultivation_intent, extract_cultivation
+                    if classify_cultivation_intent(text):
+                        cult = extract_cultivation(text, answer)
+                        if cult["skill"] or cult["trait"]:
+                            self.db.cultivate_consort(
+                                character.name, self.state.turn, cult["skill"], cult["trait"])
+                            if self.session.registry is not None:
+                                self.session.registry.refresh(character.name)
             self._record_chat_rollback_items(chat_turn_id, before_snapshot)
             payload = self._chat_payload(
                 minister_name, answer, court_action=court_action, next_minister=next_minister,
@@ -1735,10 +1773,12 @@ async def api_create_secret_order(minister_name: str, request: SecretOrderReques
     if not title or not content:
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="title 和 content 不能为空")
-    order_id = game.db.create_secret_order(
+    order_id, _updated = game.db.upsert_secret_order(
         game.session.state, minister_name, title, content, request.tags, deadline_months=request.deadline_months
     )
-    print(f"[secret_order/api] 直接落库 minister={minister_name} title={title!r} id={order_id}")
+    if game.session.registry is not None:
+        game.session.registry.refresh(minister_name)  # 上下文带上最新密令
+    print(f"[secret_order/api] {'更新' if _updated else '新建'} minister={minister_name} title={title!r} id={order_id}")
     return {"order_id": order_id, "minister_name": minister_name, "title": title, "status": "active"}
 
 

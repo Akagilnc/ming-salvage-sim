@@ -2317,9 +2317,10 @@ class GameDB:
             held = ""
             if str(row["controlled_by"]) != "ming":
                 held = f"【已为{self.power_display_name(row['controlled_by'])}所据】"
+            defense = f"、城防炮{int(row['cannon'])}门" if int(row["cannon"] or 0) > 0 else ""
             parts.append(
                 f"{row['name']}{held}：民心{row['public_support']}、动乱{row['unrest']}、"
-                f"粮食{row['grain_security']}万石、税{format_money(monthly_amount(int(row['tax_per_turn'])))}/{TURN_UNIT}，{row['status']}"
+                f"粮食{row['grain_security']}万石、税{format_money(monthly_amount(int(row['tax_per_turn'])))}/{TURN_UNIT}{defense}，{row['status']}"
             )
         return f"地区警讯：{'；'.join(parts)}。两京十三省账面{TURN_UNIT}税合计{format_money(monthly_amount(total_tax_value))}。"
 
@@ -2338,7 +2339,8 @@ class GameDB:
             f"民心{row['public_support']}，动乱{row['unrest']}，粮食{row['grain_security']}万石，"
             f"田亩{row['registered_land']}万亩，隐田{row['hidden_land']}万亩，"
             f"账面税收{format_money(monthly_amount(int(row['tax_per_turn'])))}/{TURN_UNIT}，"
-            f"士绅阻力{row['gentry_resistance']}，军事压力{row['military_pressure']}。"
+            f"士绅阻力{row['gentry_resistance']}，军事压力{row['military_pressure']}，"
+            f"城市等级{int(row['city_level'])}（城防炮上限{int(row['city_level']) * 8}门），城防大炮{int(row['cannon'])}门。"
             f"天灾：{row['natural_disaster']}；人祸：{row['human_disaster']}；状态：{row['status']}"
         )
 
@@ -2714,6 +2716,7 @@ class GameDB:
                         row["manpower"], monthly_pay, row["supply"], row["morale"],
                         row["training"], row["equipment"], row["mobility"], row["loyalty"],
                         arr, months, row["status"],
+                        row["firearm_equipment"], row["cannon_equipment"],
                     ))
                 )
             else:
@@ -2725,7 +2728,7 @@ class GameDB:
                 )
         out = [
             "【全军名册（现状以此为准，谈某军欠饷/补给/士气直接据此；欠饷万两为精确累计值，非抽象分）】",
-            "大明各军（| 分隔，列序＝军名|驻地|统帅|兵种|兵力|月饷万两|补给|士气|训练|装备|机动|忠诚|欠饷万两|欠饷月数|状态；补给…忠诚为0-100）：",
+            "大明各军（| 分隔，列序＝军名|驻地|统帅|兵种|兵力|月饷万两|补给|士气|训练|装备|机动|忠诚|欠饷万两|欠饷月数|状态|火器|随军大炮；补给…忠诚及火器为0-100，随军大炮为门数0-12）：",
             *own,
         ]
         if other:
@@ -5107,6 +5110,49 @@ class GameDB:
         self.conn.commit()
         tlog(f"[secret_order] create id={cur.lastrowid} minister={minister_name} title={title[:20]}")
         return cur.lastrowid  # type: ignore[return-value]
+
+    def upsert_secret_order(
+        self,
+        state: GameState,
+        minister_name: str,
+        title: str,
+        content: str,
+        tags: List[str],
+        importance: int = 4,
+        deadline_months: int = 0,
+    ) -> Tuple[int, bool]:
+        """同一承办大臣已有 active 密令 → 更新其要旨(title/content/tags/限期)并记一条
+        「奉旨更新」进展；否则新建。返回 (order_id, was_update)。
+        补 CLI 后端无 function-calling 的缺口：原靠大臣 function-call 改密令，现失效；
+        再次下密令给同一承办人即更新已有条，而非建重复（限期=0 表示不动原限期）。"""
+        existing = self.conn.execute(
+            "SELECT id FROM secret_orders WHERE minister_name=? AND status='active' ORDER BY id DESC LIMIT 1",
+            (minister_name,),
+        ).fetchone()
+        if existing is None:
+            oid = self.create_secret_order(
+                state, minister_name, title, content, tags, importance, deadline_months
+            )
+            return oid, False
+        oid = int(existing["id"])
+        tags_json = json.dumps(tags, ensure_ascii=False)
+        deadline = max(0, min(int(deadline_months or 0), 36))
+        if deadline:
+            self.conn.execute(
+                "UPDATE secret_orders SET title=?, content=?, tags=?, due_turn=?, "
+                "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (title[:20], content, tags_json, int(state.turn) + deadline, oid),
+            )
+        else:
+            self.conn.execute(
+                "UPDATE secret_orders SET title=?, content=?, tags=?, "
+                "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (title[:20], content, tags_json, oid),
+            )
+        self.conn.commit()
+        tlog(f"[secret_order] update id={oid} minister={minister_name} title={title[:20]}")
+        self.update_secret_order_progress(oid, f"奉旨更新密令要旨：{content[:60]}", state.year, state.period)
+        return oid, True
 
     def list_secret_orders(
         self,

@@ -26,10 +26,17 @@ def test_armies_table_has_firearm_columns(game):
     assert "cannon_equipment" in cols
 
 
-def test_existing_armies_default_zero(game):
-    db, _, _ = game
+def test_new_army_defaults_zero_firearm(game):
+    """新建军未指定火器/大炮时默认 0（列默认值 + 落库兜底）。
+    注：开局存档各军火器/大炮已由玩法设定(全军30%)预填，故不再断言种子全 0，
+    改测真正的不变式——没给值就落 0。"""
+    db, state, _ = game
+    db.create_armies_from_extraction(state, [{
+        "id": "plain_army_test", "name": "白杆兵测试", "owner_power": "ming",
+        "manpower": 3000, "maintenance_per_turn": 1,
+    }], actor="测试")
     row = db.conn.execute(
-        "SELECT firearm_equipment, cannon_equipment FROM armies LIMIT 1"
+        "SELECT firearm_equipment, cannon_equipment FROM armies WHERE id='plain_army_test'"
     ).fetchone()
     assert row["firearm_equipment"] == 0
     assert row["cannon_equipment"] == 0
@@ -100,3 +107,22 @@ def test_simulator_payload_includes_firearm(game):
     cols = armies.get("cols") or []
     assert "firearm_equipment" in cols
     assert "cannon_equipment" in cols
+
+
+def test_army_roster_shows_firearm_cannon(game):
+    """大臣军表(army_roster)必须带火器/大炮——否则大臣（CLI 后端无工具）看不见、答不出。"""
+    db, _, _ = game
+    aid = db.conn.execute("SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"]
+    db.conn.execute(
+        "UPDATE armies SET firearm_equipment=30, cannon_equipment=4 WHERE id=?", (aid,)
+    )
+    db.conn.commit()
+    roster = db.army_roster()
+    # 表头列名出现
+    assert "火器" in roster
+    assert "大炮" in roster
+    # 该军那一行确实带上了 30 / 4 两个值
+    name = db.conn.execute("SELECT name FROM armies WHERE id=?", (aid,)).fetchone()["name"]
+    line = next(l for l in roster.splitlines() if l.startswith(name + "|"))
+    cells = line.split("|")
+    assert "30" in cells and "4" in cells

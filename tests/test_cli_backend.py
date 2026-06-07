@@ -105,3 +105,143 @@ def test_backend_env(monkeypatch):
     assert cb.cli_backend_from_env() is None
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     assert cb.cli_backend_from_env() == "agy"
+
+
+# ── claude 后端（claude -p 独立进程，opus/sonnet/haiku）──
+
+def test_backend_env_claude(monkeypatch):
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "claude")
+    assert cb.cli_backend_from_env() == "claude"
+
+
+def test_run_claude_stdout_only(monkeypatch):
+    """claude -p 输出纯文本无日志壳：只取 stdout，丢 stderr。不强加思考预算。"""
+    captured = {}
+
+    class _P:
+        stdout = "臣叩首。此旨当如此拟。"
+        stderr = "2026-..Z INFO some log noise"
+        returncode = 0
+
+    def fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        captured["env"] = kw.get("env")
+        return _P()
+
+    monkeypatch.setattr(cb.subprocess, "run", fake_run)
+    out, attempts = cb._run_claude("勾陈盘面")
+    assert out == "臣叩首。此旨当如此拟。"      # 只 stdout，不混 stderr 日志
+    assert attempts == 1
+    assert "-p" in captured["cmd"] and "--model" in captured["cmd"]
+    assert "--output-format" in captured["cmd"] and "text" in captured["cmd"]
+    # 不替用户强设 MAX_THINKING_TOKENS：不传 env（继承父进程），由用户自行 export
+    assert captured["env"] is None
+
+
+def test_run_backend_dispatch_claude(monkeypatch):
+    """enrich/secret 用的分派器在 backend=claude 时走 _run_claude。"""
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "claude")
+    monkeypatch.setattr(cb, "_run_claude", lambda p: ("CLAUDE_OUT", 1))
+    assert cb._run_backend("x") == ("CLAUDE_OUT", 1)
+
+
+def test_run_backend_dispatch_default_agy(monkeypatch):
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(cb, "_run_agy", lambda p: ("AGY_OUT", 1))
+    assert cb._run_backend("x") == ("AGY_OUT", 1)
+
+
+# ── codex 后端工程修复（实测撞出来的坑）──
+
+def test_run_codex_flags_and_stdout(monkeypatch):
+    """codex 必须 --skip-git-repo-check(非 git cwd 不秒失败) + --ephemeral(并发不撞 session)；
+    干净最终输出取 stdout，不混 stderr 日志壳；未设 reasoning env 时不强加 -c。"""
+    captured = {}
+
+    class _P:
+        stdout = '{"局势推进": []}'                       # 干净输出在 stdout
+        stderr = "OpenAI Codex v0.125.0\n…logs…\ntokens used\n100"
+        returncode = 0
+
+    def fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        return _P()
+
+    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
+    monkeypatch.setattr(cb.subprocess, "run", fake_run)
+    out, n = cb._run_codex("p")
+    assert out == '{"局势推进": []}'                       # 只 stdout，丢日志壳
+    assert "--skip-git-repo-check" in captured["cmd"]
+    assert "--ephemeral" in captured["cmd"]
+    assert "-c" not in captured["cmd"]                     # 未设 reasoning 不强加默认
+
+
+def test_run_codex_reasoning_env_optional(monkeypatch):
+    """设了 MING_SIM_CODEX_REASONING 才传 -c model_reasoning_effort，否则不碰。"""
+    captured = {}
+
+    class _P:
+        stdout = "x"
+        stderr = ""
+        returncode = 0
+
+    def fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        return _P()
+
+    monkeypatch.setenv("MING_SIM_CODEX_REASONING", "medium")
+    monkeypatch.setattr(cb.subprocess, "run", fake_run)
+    cb._run_codex("p")
+    assert "-c" in captured["cmd"]
+    joined = " ".join(captured["cmd"])
+    assert "model_reasoning_effort" in joined and "medium" in joined
+
+
+def test_run_codex_stdout_empty_fallback(monkeypatch):
+    """stdout 空时兜底：从合并流取 'OpenAI Codex v' 之前的段。"""
+    class _P:
+        stdout = ""
+        stderr = "臣领旨。\nOpenAI Codex v0.125.0\nlogs"
+        returncode = 0
+
+    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
+    monkeypatch.setattr(cb.subprocess, "run", lambda cmd, **kw: _P())
+    out, n = cb._run_codex("p")
+    assert out == "臣领旨。"
+
+
+# ── 密令生命周期意图分类（submit/rush/progress 无按钮触发）──
+
+def test_classify_lifecycle_submit():
+    assert cb.classify_secret_lifecycle("此事办成了，提交核议吧") == "submit"
+    assert cb.classify_secret_lifecycle("可结案了么") == "submit"
+
+def test_classify_lifecycle_rush():
+    assert cb.classify_secret_lifecycle("催办一下，限你三月内办妥") == "submit"  # 含"办妥"→submit 优先
+    assert cb.classify_secret_lifecycle("此事加急，赶紧办") == "rush"
+
+def test_classify_lifecycle_progress():
+    assert cb.classify_secret_lifecycle("那桩密事进展如何") == "progress"
+    assert cb.classify_secret_lifecycle("办到哪一步了") == "progress"
+
+def test_classify_lifecycle_none():
+    assert cb.classify_secret_lifecycle("辽东军饷如何筹措") is None
+    assert cb.classify_secret_lifecycle("") is None
+
+
+# ── 调教妃嫔意图 + 提取（CLI 无 function-calling 补 cultivate_consort）──
+
+def test_classify_cultivation_intent():
+    assert cb.classify_cultivation_intent("朕调教你书法") is True
+    assert cb.classify_cultivation_intent("赐你理财筹算之能") is True
+    assert cb.classify_cultivation_intent("望你更温婉") is True
+    assert cb.classify_cultivation_intent("辽东军饷如何") is False
+
+def test_extract_cultivation(monkeypatch):
+    import json as _j
+    canned = _j.dumps({"技能": "书法精通", "性格": "更加温婉"}, ensure_ascii=False)
+    monkeypatch.setattr(cb, "_run_agy", lambda p: (canned, 1))
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    out = cb.extract_cultivation("朕教你书法，望你更温婉", "妾身领旨")
+    assert out["skill"] == "书法精通"
+    assert out["trait"] == "更加温婉"
