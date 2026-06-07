@@ -1200,35 +1200,46 @@ class WebGame:
                     # 大臣"不知道自己有这密令"，同对话内补充/追问得不到呼应（registry.get 本回合复用缓存）。
                     if self.session.registry is not None:
                         self.session.registry.refresh(assignee)
-                # 密令生命周期（无 function-calling 下补 submit/rush/progress）：本回合没创建/更新密令时，
-                # 若该大臣有唯一 active 密令、且玩家这句有明确生命周期意图，按意图落地（多条 active 则不猜）。
+                # 会话动作（无 function-calling 下，靠 LLM 判意图，不用关键字白名单）：
+                # 本轮没经前缀创建/更新密令时，若该大臣有 active 密令或是妃嫔，让 LLM 读对话判
+                # 皇帝要对密令做什么（更新/提交核议/催办/记进展）+ 是否调教妃嫔，再落地。
                 if not secret_order_id:
-                    from ming_sim.cli_backend import classify_secret_lifecycle
-                    action = classify_secret_lifecycle(text)
-                    if action:
-                        active = self.db.get_active_secret_orders_for_minister(minister_name)
-                        if len(active) == 1:
-                            oid = int(active[0]["id"])
-                            if action == "rush":
+                    is_consort = getattr(character, "office_type", "") == "后宫"
+                    active = self.db.get_active_secret_orders_for_minister(minister_name)
+                    if active or is_consort:
+                        from ming_sim.cli_backend import extract_minister_actions
+                        act = extract_minister_actions(text, answer, active, is_consort)
+                        sa = act["secret_action"]
+                        target = None
+                        if act["order_id"]:
+                            target = next((o for o in active if int(o["id"]) == act["order_id"]), None)
+                        if target is None and len(active) == 1:
+                            target = active[0]
+                        if target is not None and sa and sa != "无":
+                            oid = int(target["id"])
+                            if sa == "更新":
+                                self.db.upsert_secret_order(
+                                    self.state, minister_name,
+                                    act["new_title"] or str(target.get("title") or ""),
+                                    act["new_content"] or str(target.get("content") or ""),
+                                    [], deadline_months=act["deadline_months"])
+                                secret_order_id = oid
+                            elif sa == "催办":
                                 self.db.rush_secret_order(oid, self.state, deadline_months=1, reason=text[:80])
-                            elif action == "submit":
+                                secret_order_id = oid
+                            elif sa == "提交核议":
                                 self.db.submit_secret_order_for_review(
                                     oid, answer[:200], self.state.year, self.state.period)
-                            elif action == "progress" and int(active[0].get("turn_issued") or 0) != int(self.state.turn):
+                                secret_order_id = oid
+                            elif sa == "记进展" and int(target.get("turn_issued") or 0) != int(self.state.turn):
                                 self.db.update_secret_order_progress(
                                     oid, answer[:200], self.state.year, self.state.period)
-                            secret_order_id = oid
-                            if self.session.registry is not None:
+                                secret_order_id = oid
+                            if secret_order_id and self.session.registry is not None:
                                 self.session.registry.refresh(minister_name)
-                # 调教妃嫔（CLI 无 function-calling 补 cultivate_consort）：对后宫妃嫔且玩家有调教意图，
-                # 抽出新增技能/性格落库，refresh 使下次召见即体现在人物描述中。
-                if getattr(character, "office_type", "") == "后宫":
-                    from ming_sim.cli_backend import classify_cultivation_intent, extract_cultivation
-                    if classify_cultivation_intent(text):
-                        cult = extract_cultivation(text, answer)
-                        if cult["skill"] or cult["trait"]:
+                        if is_consort and (act["cultivate_skill"] or act["cultivate_trait"]):
                             self.db.cultivate_consort(
-                                character.name, self.state.turn, cult["skill"], cult["trait"])
+                                character.name, self.state.turn, act["cultivate_skill"], act["cultivate_trait"])
                             if self.session.registry is not None:
                                 self.session.registry.refresh(character.name)
             self._record_chat_rollback_items(chat_turn_id, before_snapshot)

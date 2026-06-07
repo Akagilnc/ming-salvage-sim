@@ -281,56 +281,62 @@ _DRAFT_PREFIXES = ("拟旨如下：", "拟旨如下:", "拟旨：", "拟旨:")
 _SECRET_PREFIXES = ("密令如下：", "密令如下:", "密令：", "密令:")
 
 
-# 密令生命周期意图（CLI 后端无 function-calling，原 submit/rush 工具失效）：
-# 从玩家这句话的明确措辞判意图，配合"该大臣唯一 active 密令"落地。建档当月不记进展。
-_RUSH_KW = ("催办", "催一催", "加急", "速办", "赶紧", "快办", "限期", "几月内", "限你", "限尔")
-_SUBMIT_KW = ("提交核议", "结案", "办成了", "办妥", "复命请核", "报核", "交核", "可结案", "已办妥", "奏报办结")
-_PROGRESS_KW = ("进展", "进度", "办得怎", "办到哪", "在办事项", "怎么样了", "近况", "可有头绪")
-
-
-def classify_secret_lifecycle(player_message: str) -> Optional[str]:
-    """判玩家这句对**已有密令**的生命周期意图：'rush'/'submit'/'progress'/None。
-    submit/rush 比 progress 更具体，优先判。纯字符串逻辑（不碰 db），便于测。"""
-    m = (player_message or "")
-    if any(k in m for k in _SUBMIT_KW):
-        return "submit"
-    if any(k in m for k in _RUSH_KW):
-        return "rush"
-    if any(k in m for k in _PROGRESS_KW):
-        return "progress"
-    return None
-
-
-# 调教妃嫔（CLI 后端无 function-calling，原 cultivate_consort 工具失效）：
-_CULTIVATE_KW = ("调教", "教你", "教她", "赐你", "赐她", "授你", "望你更", "愿你更",
-                 "练就", "栽培", "点拨", "教导", "调理", "训练你")
-
-
-def classify_cultivation_intent(player_message: str) -> bool:
-    """玩家这句是否在调教妃嫔（赐技能/改性格）。纯字符串，便于测。"""
-    return any(k in (player_message or "") for k in _CULTIVATE_KW)
-
-
-def extract_cultivation(player_command: str, consort_reply: str) -> Dict[str, str]:
-    """从皇帝调教话 + 妃嫔回话抽「新增技能/性格」。返回 {skill, trait}（可空）。
-    纯抽取（不扮演），与月末 extractor 同款；失败返回空。"""
+# 大臣会话动作抽取（CLI 后端无 function-calling）：
+# 不靠关键字白名单（脆、永远漏），交给 LLM 读对话判意图——皇帝本轮对该大臣【现有密令】
+# 要做什么（更新内容 / 提交核议 / 催办 / 记进展），以及若是妃嫔有无调教。
+# 只在「大臣有 active 密令 或 是妃嫔」时调（省 token）。
+def extract_minister_actions(
+    player_message: str,
+    minister_reply: str,
+    active_orders: List[Dict[str, Any]],
+    is_consort: bool = False,
+) -> Dict[str, Any]:
+    """LLM 判皇帝本轮对密令/妃嫔的意图，返回结构化动作。失败返回「无」动作。"""
+    orders_brief = "；".join(
+        f"#{o.get('id')}「{o.get('title', '')}」：{str(o.get('content', ''))[:50]}"
+        for o in (active_orders or [])
+    ) or "（无）"
+    consort_line = (
+        '  "调教技能": "", "调教性格": "",   // 仅当此人是妃嫔、且皇帝在调教她(赐技能/改性格)时填，否则空\n'
+        if is_consort else ""
+    )
     prompt = (
-        "你是信息抽取器，不扮演、不写圣旨。皇帝在调教一位妃嫔，下面是皇帝的话和妃嫔回话。"
-        "抽出皇帝要赐予/培养她的【新增技能】（如 书法精通/琴艺/理财筹算，无则空字符串）"
-        "与【新增性格】（如 更加温婉/果决坚毅，无则空字符串），只输出一个 JSON 对象，"
-        "不要代码围栏、不要别的字：\n"
-        '{"技能":"", "性格":""}\n\n'
-        "【皇帝】" + (player_command or "（无）") + "\n【妃嫔回话】" + (consort_reply or "（无）") + "\n"
+        "你是信息抽取器，不扮演、不写圣旨。读皇帝这句话 + 大臣回话 + 该大臣现有密令清单，"
+        "判断皇帝**本轮**对密令"
+        + ("（及调教妃嫔）" if is_consort else "")
+        + "的意图。只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
+        "{\n"
+        '  "密令动作": "无|更新|提交核议|催办|记进展",  // 皇帝补充/改/纠正某现有密令的内容或数额=更新；让其呈报办结待核=提交核议；催/加急/限期=催办；问进度并据回话记录=记进展；都不是=无\n'
+        '  "目标密令编号": 0,                        // 上述动作针对哪条现有密令的 id（清单里的 #数字）；只有一条时填那条\n'
+        '  "新标题": "", "新内容": "", "期限月数": 0,  // 仅"更新"时给：综合皇帝话+大臣回话，写该密令改后的【完整新要旨】\n'
+        + consort_line +
+        "}\n"
+        "判定要点：皇帝口语如「更新/改成/其实是/纠正/补充…」指向某现有密令即「更新」，新内容要把改动并入完整要旨（别只写增量）。语义判断，别拘泥字面措辞。\n\n"
+        "【该大臣现有密令】" + orders_brief + "\n"
+        "【皇帝】" + (player_message or "（无）") + "\n"
+        "【大臣回话】" + (minister_reply or "（无）") + "\n"
     )
     raw = ""
     try:
         raw, _ = _run_backend(prompt)
-    except Exception as exc:  # 抽取失败不阻断
-        _log(f"调教抽取失败：{exc}")
+    except Exception as exc:  # 抽取失败不阻断对话
+        _log(f"大臣动作抽取失败：{exc}")
     obj = _loads_lenient(raw) or {}
+
+    def _int(v, hi=10**9):
+        try:
+            return max(0, min(int(v or 0), hi))
+        except (TypeError, ValueError):
+            return 0
+
     return {
-        "skill": str(obj.get("技能") or "").strip()[:20],
-        "trait": str(obj.get("性格") or "").strip()[:20],
+        "secret_action": str(obj.get("密令动作") or "无").strip(),
+        "order_id": _int(obj.get("目标密令编号")),
+        "new_title": str(obj.get("新标题") or "").strip()[:20],
+        "new_content": str(obj.get("新内容") or "").strip(),
+        "deadline_months": _int(obj.get("期限月数"), 36),
+        "cultivate_skill": str(obj.get("调教技能") or "").strip()[:20],
+        "cultivate_trait": str(obj.get("调教性格") or "").strip()[:20],
     }
 
 

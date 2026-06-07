@@ -210,38 +210,33 @@ def test_run_codex_stdout_empty_fallback(monkeypatch):
     assert out == "臣领旨。"
 
 
-# ── 密令生命周期意图分类（submit/rush/progress 无按钮触发）──
+# ── extract_minister_actions：LLM 判会话动作（取代关键字白名单）──
 
-def test_classify_lifecycle_submit():
-    assert cb.classify_secret_lifecycle("此事办成了，提交核议吧") == "submit"
-    assert cb.classify_secret_lifecycle("可结案了么") == "submit"
-
-def test_classify_lifecycle_rush():
-    assert cb.classify_secret_lifecycle("催办一下，限你三月内办妥") == "submit"  # 含"办妥"→submit 优先
-    assert cb.classify_secret_lifecycle("此事加急，赶紧办") == "rush"
-
-def test_classify_lifecycle_progress():
-    assert cb.classify_secret_lifecycle("那桩密事进展如何") == "progress"
-    assert cb.classify_secret_lifecycle("办到哪一步了") == "progress"
-
-def test_classify_lifecycle_none():
-    assert cb.classify_secret_lifecycle("辽东军饷如何筹措") is None
-    assert cb.classify_secret_lifecycle("") is None
-
-
-# ── 调教妃嫔意图 + 提取（CLI 无 function-calling 补 cultivate_consort）──
-
-def test_classify_cultivation_intent():
-    assert cb.classify_cultivation_intent("朕调教你书法") is True
-    assert cb.classify_cultivation_intent("赐你理财筹算之能") is True
-    assert cb.classify_cultivation_intent("望你更温婉") is True
-    assert cb.classify_cultivation_intent("辽东军饷如何") is False
-
-def test_extract_cultivation(monkeypatch):
+def test_extract_minister_actions_update(monkeypatch):
     import json as _j
-    canned = _j.dumps({"技能": "书法精通", "性格": "更加温婉"}, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_agy", lambda p: (canned, 1))
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    out = cb.extract_cultivation("朕教你书法，望你更温婉", "妾身领旨")
-    assert out["skill"] == "书法精通"
-    assert out["trait"] == "更加温婉"
+    canned = _j.dumps({
+        "密令动作": "更新", "目标密令编号": 6,
+        "新标题": "拨内库补边军欠饷", "新内容": "每月内库百万、半年通计六百万，按月御前领发",
+        "期限月数": 6,
+    }, ensure_ascii=False)
+    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
+    act = cb.extract_minister_actions(
+        "记得更新你的密令。是每月100万内库", "臣已记明，改按月月百万",
+        [{"id": 6, "title": "拨内库百万补边军欠饷", "content": "限期半年"}], is_consort=False,
+    )
+    assert act["secret_action"] == "更新"
+    assert act["order_id"] == 6
+    assert "月月百万" in act["new_content"] or "每月" in act["new_content"]
+
+def test_extract_minister_actions_none(monkeypatch):
+    monkeypatch.setattr(cb, "_run_backend", lambda p: ('{"密令动作":"无","目标密令编号":0}', 1))
+    act = cb.extract_minister_actions("辽东军情如何", "臣以为当固守", [{"id": 6, "title": "x", "content": "y"}])
+    assert act["secret_action"] == "无"
+
+def test_extract_minister_actions_cultivate(monkeypatch):
+    import json as _j
+    canned = _j.dumps({"密令动作": "无", "目标密令编号": 0, "调教技能": "书法精通", "调教性格": "更温婉"}, ensure_ascii=False)
+    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
+    act = cb.extract_minister_actions("教你书法，望你更温婉", "妾领旨", [], is_consort=True)
+    assert act["cultivate_skill"] == "书法精通"
+    assert act["cultivate_trait"] == "更温婉"
