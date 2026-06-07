@@ -4,6 +4,16 @@
 
 ## 🔴 BUG / 待修（影响游戏正确性）
 
+### ~~B6. toolcall 在 CLI 后端的缺口~~ ✅ 全修（2026-06-07）
+- **动作类(全补，前缀/意图触发 + 落库 + refresh)**：拟旨；密令 create/update(upsert)/submit/rush/progress；**调教妃嫔 cultivate_consort**(后宫+调教意图→聚焦提取技能/性格→落库)。
+- **READ 类(注入大臣 system)**：军表(含火器/大炮)、**地区危情(region_report)**、**建筑紧凑表(build_building_brief)**；court/记忆/邸报/钱粮/在办事项原已注入。
+- **核实非缺口(不是替代路径搪塞，是其本身的原生路径)**：dismiss/summon = 纯召对流程(结束召见/换下一位)，CLI 下关对话框/点大臣即原生操作，不改状态；罢免/选妃 = 玩家下旨→extractor 人物状态变化/后宫册封，下旨本就是皇帝的原生手段。
+- 测试：`test_cli_backend.py`(分类+提取)、`test_minister_context.py`(READ brief)、`test_secret_order_*`、`test_army_firearms`(军表火器)。52 passed。
+
+### ~~B5. 公开圣旨混进保密话术~~ ✅ 已修（2026-06-07）
+- 根因=toolcall 修复后「拟旨」抓大臣回话原文整段进草案池，`诏书润色官`无护栏，把密令性保密话术（密旨/密募/严防外泄/防外朝物议）揉进**公开圣旨**。
+- **修复**：`content/prompts/decree_writer.md` 加护栏「公开诏书禁含自指保密话术」，密事要么不入公开诏、要么只写明面事由。单测 `test_decree_writer.py` 验证护栏注入；真实验证（opus 含密语草案产诏）保密话术 **0 命中**。
+
 ### B4. 皇帝推动的国策(initiative)是空壳进度条，跑完无回报 ✅ 已修（2026-06-07，CLI 后端）
 - **现象**：玩家诏书推动的国策(清丈田亩/西学/太学府/经济封锁…)bar 推到 100「已成」后，盘面无任何变化——`ongoing_effects`/`effect_on_resolve`/`effect_on_fail` 全空。「跑完就是跑完了」。
 - **根因（实测定性，非臆断）**：extractor 立国策时**该填的效果字段一贯不填**。schema 支持（DELTA_SCHEMA new_issues 有这三字段）、prompt 也要求（score_extractor_issues.md:46/68 写「必须/必带」）、落库代码也读（issues.py + 别名 simulation.py:82-91 中英全覆盖、`_canonical_item_fields` 全递归）——**唯独 LLM 不产出**。agy 实测 0/4（格致局×1 + 多国策×3 全空）。系统危机(situation)有效果是因为 seed_events.json 预填了。
