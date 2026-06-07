@@ -48,36 +48,79 @@ COURT_OFFICE_TYPES = {"内阁", "吏部", "户部", "礼部", "兵部", "刑部"
 MINISTRY_OFFICE_TYPES = {"吏部", "户部", "礼部", "兵部", "刑部", "工部"}
 
 
+_OFFICES_TABLE: Optional[Dict[str, object]] = None
+_OFFICE_TYPE_LLM_CACHE: Dict[str, str] = {}
+
+
+def _offices_table() -> Dict[str, object]:
+    """加载 content/offices.json（明代职官→office_type 参考表），缓存。失败返回空表。"""
+    global _OFFICES_TABLE
+    if _OFFICES_TABLE is None:
+        try:
+            from ming_sim.assets import load_json_asset
+            data = load_json_asset("offices.json")
+            _OFFICES_TABLE = data if isinstance(data, dict) else {}
+        except Exception:
+            _OFFICES_TABLE = {}
+    return _OFFICES_TABLE
+
+
+def _office_type_from_table(text: str) -> str:
+    """按 offices.json priority 顺序，首个命中词干者胜。无命中返回 ''。"""
+    for entry in _offices_table().get("priority", []) or []:
+        if not isinstance(entry, dict):
+            continue
+        for stem in entry.get("stems", []) or []:
+            if stem and stem in text:
+                return str(entry.get("type") or "")
+    return ""
+
+
+def _office_type_via_llm(text: str) -> str:
+    """表查不中（生造/罕见官名）时，CLI 后端在场则交 LLM 判 office_type（取 allowed_types）。
+    否则返回 ''。结果按官名缓存，避免重复调用。"""
+    if text in _OFFICE_TYPE_LLM_CACHE:
+        return _OFFICE_TYPE_LLM_CACHE[text]
+    try:
+        from ming_sim.cli_backend import cli_backend_from_env, _run_backend
+    except Exception:
+        return ""
+    if cli_backend_from_env() is None:
+        return ""
+    allowed = _offices_table().get("allowed_types") or []
+    allowed_set = set(allowed)
+    prompt = (
+        "你是明代职官分类器，不扮演、不解释。判断下面这个明朝官名/身份属于哪一类，"
+        "只输出一个类型词（不要任何别的字），必须严格取自：" + "、".join(allowed) + "。\n"
+        "官名：" + text + "\n类型："
+    )
+    out = ""
+    try:
+        raw, _ = _run_backend(prompt)
+        cand = (raw or "").strip().splitlines()[0].strip() if raw else ""
+        out = cand if cand in allowed_set else ""
+    except Exception:
+        out = ""
+    _OFFICE_TYPE_LLM_CACHE[text] = out
+    return out
+
+
 def infer_office_type_from_office(office: str, current_type: str = "") -> str:
-    """用 office 文本校正 office_type，避免旧标签把无实职人物塞进内阁/六部。"""
+    """用 office 文本判 office_type：先查 offices.json 参考表（明制权威、确定），
+    表查不中且 CLI 后端在场再交 LLM 判（生造官名），都不中落『待铨』。
+    取代旧版那串临时正则词表（脆、漏）。外藩(后金/蒙古/朝鲜)按 power_id≠ming 另处理，不入此路。"""
     kind = (current_type or "").strip()
     if kind == "后宫":
         return kind
     text = normalize_office(office)
     if not text:
         return "待铨" if kind in COURT_OFFICE_TYPES or not kind else kind
-
-    if re.search(r"内阁|大学士|首辅|次辅", text):
-        return "内阁"
-    for ministry in MINISTRY_OFFICE_TYPES:
-        if ministry in text and re.search(r"尚书|侍郎|郎中|员外郎|主事|给事中", text):
-            return ministry
-
-    if re.search(r"司礼监|秉笔太监|掌印太监|随堂太监", text):
-        return "司礼监"
-    if re.search(r"东厂|提督东厂", text):
-        return "东厂"
-    if re.search(r"锦衣卫|北镇抚司|镇抚司|都指挥使|千户", text):
-        return "锦衣卫"
-    if re.search(r"都察院|都御史|御史|巡按", text):
-        return "都察院"
-    if re.search(r"翰林院|翰林|编修|检讨|庶吉士|詹事", text):
-        return "翰林院"
-    if re.search(r"总督|巡抚|布政使|按察使|参政|知府|知县|兵备道|督粮", text):
-        return "地方"
-    if re.search(r"督师|经略|总兵|副总兵|游击|参将|守备|山海关|辽东|蓟辽|东江|大同|宣大", text):
-        return "边镇"
-
+    t = _office_type_from_table(text)
+    if t:
+        return t
+    t = _office_type_via_llm(text)
+    if t:
+        return t
     return "待铨" if kind in COURT_OFFICE_TYPES or not kind else kind
 
 
