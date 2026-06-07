@@ -4,6 +4,17 @@
 
 ## 🔴 BUG / 待修（影响游戏正确性）
 
+### B4. 皇帝推动的国策(initiative)是空壳进度条，跑完无回报 ✅ 已修（2026-06-07，CLI 后端）
+- **现象**：玩家诏书推动的国策(清丈田亩/西学/太学府/经济封锁…)bar 推到 100「已成」后，盘面无任何变化——`ongoing_effects`/`effect_on_resolve`/`effect_on_fail` 全空。「跑完就是跑完了」。
+- **根因（实测定性，非臆断）**：extractor 立国策时**该填的效果字段一贯不填**。schema 支持（DELTA_SCHEMA new_issues 有这三字段）、prompt 也要求（score_extractor_issues.md:46/68 写「必须/必带」）、落库代码也读（issues.py + 别名 simulation.py:82-91 中英全覆盖、`_canonical_item_fields` 全递归）——**唯独 LLM 不产出**。agy 实测 0/4（格致局×1 + 多国策×3 全空）。系统危机(situation)有效果是因为 seed_events.json 预填了。
+- **修复（A 方案：把回报挂在局势自己身上）**：落库时**校验** decree-initiative 的 `effect_on_resolve`，空则**聚焦补全**：
+  - `cli_backend.enrich_initiative_effects(title, stage)`：纯数值设计调用（不扮演，与月末 extractor 同款可靠），按国策标题/现状生成 解决效果(建筑 create/民心皇威国库增量)+持续效果(月耗)+失败效果，经 `_canonical_item_fields` 规范化成英文 key，建筑缺 region_id 兜底 beizhili。
+  - `issues.py` new_issues 落库前：CLI 后端 + initiative + 空 resolve → 调补全；补全也失败 → floor `{民心:+1}`，**绝不入空壳**。
+  - 引擎结案时(issues.py:717-723)读 stored `effect_on_resolve` 发 metrics/economy/buildings/legacy——已有逻辑，无需改。
+- **实测**：营建国策落库带「建筑 create 京师格致局·科技·产皇威3 + 民心5/皇威15/国库-30 + 月耗-5」；走真实 `apply_issue_tracker_output` 推满结案，**建筑真的建出来**。
+- **代价**：每条新国策月末多一次 ~12s agy 补全（agy 一贯不填→基本每条都触发）。
+- **范围**：仅 CLI 后端 gated。api 后端历史上「大部分有效果」（强模型自觉填），不走此补全。B 方案（国策同步产 fiscal_creates/new_armies 等独立 delta，对治 T3/T4）后续看需要再补。
+
 ### B1. 阉党核心退场，faction leverage 不联动下跌 🔧 已临时修复（见底部修复记录，遗留根因未解）
 - **现象**：崇祯元年十一月，田尔耕（流放）、崔呈秀（乞休）、王体乾（致仕）三个阉党核心都退场了，但 `factions.阉党.leverage` 仍是 **78（全场第一）**，只有 satisfaction 跌到 32。
 - **根因**：我产 delta 时 `faction_delta` **只改 satisfaction，不改 leverage**（见 DELTA_SCHEMA.md：faction_delta 作用于 satisfaction）。而 `character_status_changes`（人物退场）**没有联动扣减所属派系的 leverage**。
@@ -48,6 +59,17 @@
 - **B2、B3 一起改**(用户 2026-06-07 拍板：1+2 都做，玩完这局后)。
 
 ## 🟣 探针铁律 / 结构性发现
+
+### P3. 品味护栏：国策=「当下旨意的具体后果」，不是「通往未来的进度树」（2026-06-07 拍板）
+- 崇祯局是**末世短局求生**(在位仅 17 年)，核心张力=「越努力越发现无解」的悲剧 + 只算代价不分对错。
+- **拒绝科技树/长线文明建造**(EU4/维多利亚那套)——会给「能发展出路」的爽感，稀释悲剧张力，17 年也铺不开树。新版作者加了预设科技树(化肥/火器新法…)，**我们不抄**。
+- 国策落点：建军/人物去向/营建/财政/局势这些**此刻的实体后果**，不做「科技 1→2→3 升级线」。
+- ⚠️ **这条是设计护栏，只写在 docs，绝不写进游戏 prompt**(2026-06-07 曾误把「别写成科技树」写进 season_simulator.md，已删——meta 设计话不进游戏内容)。
+
+### P2. 军备/城防建模（火器·大炮·城市等级，2026-06-07，全 TDD）
+- 军队两轴：`firearm_equipment` 0-100(鸟铳化，野战+守城)、`cannon_equipment` 随军红夷炮门数 cap 12(野战带不动多)。
+- 地区：`city_level` 0-5(静态，史实分级，京师5…游牧0；将来兼供经济内政)、`cannon` 城防红夷炮门数 cap=`city_level×8`(城头炮，守城关键)。
+- 全是**数据轴 + season_simulator 一句角色语义**，判战永远 LLM 软判，代码只 clamp 不算胜负(贴 P3 与「LLM 主导」)。佛郎机等轻炮归 firearm；随军炮利攻、城防炮利守。
 
 ### P1. 「决策当回合全量落库」是探针第一铁律（崇祯二年八月发现）
 - **现象**：续局连发现 3 处"账实不符"——太学府经费(月500)没立 `fiscal_creates`、天雄军没建 `new_armies`、卢象升没 `office_changes` 调任。皆"下旨+邸报+推 issue bar"做了，机械后果没落 DB。
