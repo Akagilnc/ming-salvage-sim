@@ -1440,8 +1440,10 @@ async def api_menu_status() -> Dict[str, Any]:
     cli_runner = str(cli_slot.get("runner") or env_runner or ("agy" if channel == "cli" else "")).strip().lower()
     cli_model = str(cli_slot.get("model") or cli_model_from_env(cli_runner, "")).strip()
     cli_timeout = _runtime_float(cli_slot.get("timeout_seconds"), 300)
-    has_api_key = bool(runtime.get("api_key") or os.environ.get("OPENAI_API_KEY"))
-    llm_ready = has_api_key or (channel == "cli" and is_supported_cli_runner(cli_runner))
+    has_api_key = _has_real_api_key(runtime.get("api_key")) or _has_real_api_key(os.environ.get("OPENAI_API_KEY"))
+    # readiness 按 active channel 判：API 通道看真实 key，CLI 通道看 runner 是否受支持。
+    # 不能因 inactive API 槽（ADR 0001 保留）里有 key 就把不可用的 CLI runner 误报成 ready。
+    llm_ready = has_api_key if channel == "api" else is_supported_cli_runner(cli_runner)
     return {
         "has_api_key": has_api_key,
         "llm_ready": llm_ready,
@@ -2311,7 +2313,7 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
         "advanced_base_url": cfg.advanced_base_url,
         "has_advanced_api_key": bool(cfg.advanced_api_key),
         "advanced_thinking_level": cfg.advanced_thinking_level,
-        "has_api_key": bool(cfg.api_key),
+        "has_api_key": _has_real_api_key(cfg.api_key),
     }
 
 

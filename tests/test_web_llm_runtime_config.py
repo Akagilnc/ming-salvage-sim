@@ -103,6 +103,80 @@ def test_apply_llm_config_saves_api_channel_over_backend_env(monkeypatch):
     assert saved[0][1]["cli_timeout_seconds"] == 240
 
 
+def test_set_llm_config_cli_placeholder_not_real_api_key(monkeypatch):
+    # 游戏内 POST /api/llm/config：CLI 通道的占位符 cli-backend 不应回报为真实 key。
+    cfg = LLMConfig(
+        api_key="cli-backend",
+        base_url="",
+        model="gpt-5.5",
+        channel="cli",
+        cli_runner="codex",
+        cli_model="gpt-5.5",
+    )
+    fake = SimpleNamespace(apply_llm_config=lambda *a, **k: cfg)
+    monkeypatch.setattr(web_app, "get_game", lambda: fake)
+
+    result = asyncio.run(web_app.api_set_llm_config(web_app.LLMConfigRequest(
+        base_url="",
+        model="gpt-5.5",
+        api_key="",
+    )))
+
+    assert result["has_api_key"] is False
+
+
+def test_menu_status_active_cli_unsupported_runner_not_ready_despite_preserved_api_key(monkeypatch):
+    # ADR 0001: 切到 CLI 时 API 槽被保留。readiness 必须按 active channel 判，
+    # 不能因 inactive API 槽里有真实 key 就把不可用的 CLI runner 误报成 ready。
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "_has_main_db", lambda: False)
+    monkeypatch.setattr(web_app, "_scan_saves", lambda: [])
+    monkeypatch.setattr(web_app, "_scan_campaigns", lambda: [])
+    monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: "")
+    monkeypatch.setattr(web_app, "load_runtime_game", lambda: {"hitl_min_decisions": 1})
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
+        "channel": "cli",
+        "api": {"base_url": "https://api.example.com/v1", "model": "gpt-api", "api_key": "sk-real-key"},
+        "cli": {"runner": "bogus", "model": "gpt-5.5", "timeout_seconds": "240"},
+        # 顶层别名暴露 API 槽（_normalize_runtime_llm 行为）。
+        "base_url": "https://api.example.com/v1",
+        "model": "gpt-api",
+        "api_key": "sk-real-key",
+    })
+
+    status = asyncio.run(web_app.api_menu_status())
+
+    assert status["llm"]["channel"] == "cli"
+    assert status["llm"]["cli_runner"] == "bogus"
+    # active channel = cli + 不受支持 runner → 不 ready，哪怕 API 槽留着真实 key。
+    assert status["llm_ready"] is False
+
+
+def test_menu_status_active_cli_placeholder_api_key_not_counted(monkeypatch):
+    # 占位符 cli-backend 不应被当成真实 API key。
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "_has_main_db", lambda: False)
+    monkeypatch.setattr(web_app, "_scan_saves", lambda: [])
+    monkeypatch.setattr(web_app, "_scan_campaigns", lambda: [])
+    monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: "")
+    monkeypatch.setattr(web_app, "load_runtime_game", lambda: {"hitl_min_decisions": 1})
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
+        "channel": "cli",
+        "api": {"base_url": "", "model": "", "api_key": "cli-backend"},
+        "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": "240"},
+        "api_key": "cli-backend",
+    })
+
+    status = asyncio.run(web_app.api_menu_status())
+
+    assert status["has_api_key"] is False
+    assert status["llm"]["has_api_key"] is False
+    # CLI runner 受支持 → ready（靠 runner，不靠占位符）。
+    assert status["llm_ready"] is True
+
+
 def test_menu_save_llm_persists_cli_channel_without_api_key(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
