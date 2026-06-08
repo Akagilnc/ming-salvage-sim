@@ -2697,7 +2697,7 @@ class GameDB:
             parts.append(
                 f"{row['name']}：驻{row['station']}，兵{row['manpower']}，"
                 f"饷{format_money(monthly_amount(maint))} /{TURN_UNIT}，补给{row['supply']}、"
-                f"士气{row['morale']}、火器{row['firearm_equipment']}、{arr_text}，{row['status']}"
+                f"士气{row['morale']}、火器{row['firearm_equipment']}、炮{row['cannon_equipment']}、{arr_text}，{row['status']}"
             )
         return (
             f"军队警讯：{'；'.join(parts)}。"
@@ -2705,12 +2705,18 @@ class GameDB:
         )
 
     def army_detail(self, raw_name: str) -> str:
-        army_id = match_army_id_from_text(raw_name, self.content.armies)
-        if army_id is None:
-            raise ValueError(f"未找到军队：{raw_name}")
-        row = self.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
+        # 先按 DB id/name 直查（含动态 new_armies 建出的、不在静态 content.armies 的军队），
+        # 再退回静态别名模糊匹配（如「关宁军」→ guanning）。SELECT * 渲染含火器/随军大炮，
+        # 故新军详情 read 也闭合（CMR codexB/C：army render 收敛到此单一真源，杀 read 侧 whack-a-mole）。
+        row = self.conn.execute(
+            "SELECT * FROM armies WHERE id = ? OR name = ?", (raw_name, raw_name)
+        ).fetchone()
         if row is None:
-            raise ValueError(f"军队未入库：{raw_name}")
+            army_id = match_army_id_from_text(raw_name, self.content.armies)
+            if army_id is not None:
+                row = self.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
+        if row is None:
+            raise ValueError(f"未找到军队：{raw_name}")
         maint = int(row["maintenance_per_turn"]) or 0
         arr = int(row["arrears"]) or 0
         if maint > 0 and arr > 0:
