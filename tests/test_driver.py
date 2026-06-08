@@ -23,15 +23,51 @@ def test_cli_settle_rejects_non_dict_envelope_delta(game, tmp_path):
     bad.write_text(
         json.dumps({"narrative": "x", "delta": "not-a-dict"}), encoding="utf-8"
     )
-    with pytest.raises(SystemExit):
-        driver.main(["settle", "--delta", str(bad)], game=game)
+    # 库层抛 ValueError,CLI main 转退出码 1(不让 ValueError 透到用户)。
+    assert driver.main(["settle", "--delta", str(bad)], game=game) == 1
+
+
+@pytest.mark.parametrize("bad", [[], "", 0, "foo", 5])
+def test_run_settle_rejects_non_dict_raw_delta(game, bad):
+    """run_settle 边界:非 dict(falsy 的 []/""/0 + 非 falsy 的 str/int)一律响亮报错、不推进(codex-P1a + Sourcery)。"""
+    db, state, content = game
+    before = state.turn
+    with pytest.raises(ValueError):
+        run_settle(db, state, content, bad)
+    assert state.turn == before
+
+
+def test_run_settle_none_delta_is_empty_turn(game):
+    """None = 空回合(本月无变化):不报错、正常推进 turn+1(Sourcery 正向用例)。"""
+    db, state, content = game
+    before = state.turn
+    run_settle(db, state, content, None)
+    assert state.turn == before + 1
+
+
+def test_run_settle_rejects_non_dict_nested_value(game):
+    """实体→{字段}模块(如 地区变化)的二级值非 dict 时结算前响亮报错、不半落库(Gemini R1 G2)。"""
+    db, state, content = game
+    before = state.turn
+    with pytest.raises(ValueError):
+        run_settle(db, state, content, {"地区变化": {"shanxi": "动乱+5"}})
+    assert state.turn == before
+
+
+def test_run_settle_rejects_unknown_toplevel_key(game):
+    """未知顶层 key(拼写错,如 地区变更↔地区变化)响亮报错,不静默无效推进(codex-P1b)。"""
+    db, state, content = game
+    before = state.turn
+    with pytest.raises(ValueError):
+        run_settle(db, state, content, {"地区变更": {"shanxi": {"动乱": 5}}})
+    assert state.turn == before
 
 
 def test_run_settle_rejects_non_dict_module_value(game):
     """畸形模块值(国势变化="foo"→metric_delta 非 dict)在 pre_settle 动 DB 前响亮报错,回合不半推进。"""
     db, state, content = game
     before = state.turn
-    with pytest.raises(SystemExit):
+    with pytest.raises(ValueError):
         run_settle(db, state, content, {"国势变化": "foo"})
     assert state.turn == before  # 崩前拦住,未推进、未半落库
 
