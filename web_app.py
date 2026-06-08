@@ -604,6 +604,10 @@ class WebGame:
             advanced_base_url=new_adv_base,
             advanced_api_key=new_adv_key,
             advanced_thinking_level=new_adv_thinking_level,
+            channel="api",
+            cli_runner=self.session.llm_config.cli_runner,
+            cli_model=self.session.llm_config.cli_model,
+            cli_timeout_seconds=self.session.llm_config.cli_timeout_seconds,
         )
         _verify_llm_configs_or_raise(new_config)
         save_runtime_llm(
@@ -1587,6 +1591,7 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         advanced_base_url=advanced_base_url,
         advanced_api_key=advanced_api_key,
         advanced_thinking_level=advanced_thinking_level,
+        channel="api",
     )
     try:
         _verify_llm_configs_or_raise(config)
