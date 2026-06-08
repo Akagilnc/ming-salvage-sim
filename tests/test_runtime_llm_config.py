@@ -11,6 +11,24 @@ def test_load_runtime_llm_missing_file_keeps_empty_dict_contract(tmp_path, monke
     assert llm_config.load_runtime_llm() == {}
 
 
+def test_load_runtime_llm_malformed_json_returns_empty(tmp_path, monkeypatch):
+    """坏 JSON(语法错)走 json.JSONDecodeError 防御分支 → {}(Sourcery R2)。"""
+    path = tmp_path / "runtime_llm.json"
+    path.write_text("{not valid json,,,", encoding="utf-8")
+    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
+
+    assert llm_config.load_runtime_llm() == {}
+
+
+def test_load_runtime_llm_non_dict_payload_returns_empty(tmp_path, monkeypatch):
+    """合法 JSON 但顶层非 dict(list / 字符串 / 数字)走 isinstance 防御分支 → {}。"""
+    for payload in ("[1, 2, 3]", '"just a string"', "42"):
+        path = tmp_path / "runtime_llm.json"
+        path.write_text(payload, encoding="utf-8")
+        monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
+        assert llm_config.load_runtime_llm() == {}, f"payload={payload!r} 应回落空 dict"
+
+
 def test_load_runtime_llm_migrates_flat_api_config(tmp_path, monkeypatch):
     path = tmp_path / "runtime_llm.json"
     path.write_text(
