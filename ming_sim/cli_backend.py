@@ -125,15 +125,16 @@ def _warm_keychain() -> None:
         pass
 
 
-def _run_agy(prompt: str) -> Tuple[str, int]:
+def _run_agy(prompt: str, timeout: Optional[float] = None) -> Tuple[str, int]:
     """调 agy -p --sandbox，warm + retry。返回 (纯文本, 实际尝试次数)。"""
+    run_timeout = timeout or _AGY_TIMEOUT
     last = ""
     for attempt in range(1, 5):  # 初试 1 + 最多 retry 3 = 4
         _warm_keychain()
         try:
             proc = subprocess.run(
                 [_AGY_BIN, "-p", "--sandbox"],
-                input=prompt, capture_output=True, text=True, timeout=_AGY_TIMEOUT,
+                input=prompt, capture_output=True, text=True, timeout=run_timeout,
                 cwd=_AGY_CWD,
             )
         except subprocess.TimeoutExpired:
@@ -156,7 +157,7 @@ def _run_agy(prompt: str) -> Tuple[str, int]:
     raise RuntimeError(f"agy 调用失败（warm+retry×4 仍不成）：{last[:200]}")
 
 
-def _run_codex(prompt: str) -> Tuple[str, int]:
+def _run_codex(prompt: str, model: Optional[str] = None, timeout: Optional[float] = None) -> Tuple[str, int]:
     """调 codex exec -（stdin pipe，绝不 positional）。返回 (文本, 尝试次数=1)。
 
     实测三坑（见 docs/LLM_BACKEND_BENCH.md §9）：
@@ -165,14 +166,14 @@ def _run_codex(prompt: str) -> Tuple[str, int]:
     - 干净最终回话在 **stdout**，诊断/日志在 stderr —— 只取 stdout，绝不合并（合并会把
       "OpenAI Codex v…/tokens used" 等日志混进角色回话）。stdout 空时兜底从合并流剥壳。
     reasoning：默认不强加，尊重用户 ~/.codex/config.toml；设 MING_SIM_CODEX_REASONING 才传 -c。"""
-    cmd = [_CODEX_BIN, "exec", "--model", _CODEX_MODEL]
+    cmd = [_CODEX_BIN, "exec", "--model", (model or _CODEX_MODEL)]
     reasoning = (os.environ.get("MING_SIM_CODEX_REASONING") or "").strip()
     if reasoning:
         cmd += ["-c", f'model_reasoning_effort="{reasoning}"']
     cmd += ["--ephemeral", "--skip-git-repo-check", "-"]
     try:
         proc = subprocess.run(
-            cmd, input=prompt, capture_output=True, text=True, timeout=_AGY_TIMEOUT,
+            cmd, input=prompt, capture_output=True, text=True, timeout=timeout or _AGY_TIMEOUT,
             cwd=_AGY_CWD,
         )
     except subprocess.TimeoutExpired as exc:
@@ -187,17 +188,17 @@ def _run_codex(prompt: str) -> Tuple[str, int]:
     return out, 1
 
 
-def _run_claude(prompt: str) -> Tuple[str, int]:
+def _run_claude(prompt: str, model: Optional[str] = None, timeout: Optional[float] = None) -> Tuple[str, int]:
     """调 claude -p（独立进程，stdin pipe）。返回 (纯文本, 1)。
     与 codex 不同：claude -p 干净最终回话在 **stdout**，日志/诊断在 stderr，
     故只取 stdout、不合并 stderr（合并会把日志混进角色回话）。
     思考预算不强加：继承父进程 env，用户可自行 export MAX_THINKING_TOKENS。"""
-    cmd = [_CLAUDE_BIN, "-p", "--model", _CLAUDE_MODEL, "--output-format", "text",
+    cmd = [_CLAUDE_BIN, "-p", "--model", (model or _CLAUDE_MODEL), "--output-format", "text",
            "--disallowed-tools", *_CLAUDE_DISALLOWED]
     try:
         proc = subprocess.run(
             cmd, input=prompt, capture_output=True, text=True,
-            timeout=_AGY_TIMEOUT, cwd=_AGY_CWD,
+            timeout=timeout or _AGY_TIMEOUT, cwd=_AGY_CWD,
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError("claude 调用超时") from exc
@@ -537,11 +538,13 @@ class CliChat(OpenAIChat):
     backend: str = "agy"
 
     def _call_cli(self, prompt: str) -> Tuple[str, int]:
+        model_id = str(getattr(self, "id", "") or "")
+        timeout = getattr(self, "timeout", None)
         if self.backend == "codex":
-            return _run_codex(prompt)
+            return _run_codex(prompt, model=model_id, timeout=timeout)
         if self.backend == "claude":
-            return _run_claude(prompt)
-        return _run_agy(prompt)
+            return _run_claude(prompt, model=model_id, timeout=timeout)
+        return _run_agy(prompt, timeout=timeout)
 
     def invoke(  # type: ignore[override]
         self,

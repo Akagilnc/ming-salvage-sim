@@ -143,7 +143,7 @@ def load_llm_config(
         advanced_thinking_level=normalize_thinking_level(
             advanced_thinking_level or os.environ.get("OPENAI_ADVANCED_THINKING_LEVEL", "")
         ),
-        channel="cli" if cli_runner else "",
+        channel="cli" if cli_runner else "api",
         cli_runner=cli_runner or "",
         cli_model=_cli_model_from_env(cli_runner or "", model),
         cli_timeout_seconds=timeout_seconds,
