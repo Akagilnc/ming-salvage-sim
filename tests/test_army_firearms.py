@@ -98,6 +98,17 @@ def test_create_army_cannon_count_clamped(game):
     assert val == 12
 
 
+def test_extractor_prompts_allow_firearm_cannon_fields():
+    """火器/随军大炮 必须进 extractor 军队字段白名单(shared + military prompt)，否则 simulator
+    让 LLM 写、下一段 extractor 按旧闭合白名单自检 → 「配火器」叙事被吞成无 delta（codexB-P1，跨层 coverage）。"""
+    import os
+    base = os.path.join(os.path.dirname(__file__), "..", "content", "prompts")
+    for fn in ("score_extractor_shared.md", "score_extractor_military_external.md"):
+        txt = open(os.path.join(base, fn), encoding="utf-8").read()
+        assert "火器" in txt, f"{fn} 缺 火器 字段"
+        assert "随军大炮" in txt, f"{fn} 缺 随军大炮 字段"
+
+
 def test_apply_army_delta_chinese_keys(game):
     """extractor 按中文词干输出 火器/随军大炮 时也能落库（CMR F9 别名补全）。"""
     db, state, _ = game
