@@ -31,8 +31,6 @@ def test_open_game_loads_board(tmp_path):
     """open_game 按路径打开存档，返回 (db, state, content)，盘面已加载（turn>0）。"""
     src = os.path.join(os.path.dirname(__file__), "..", "data", "probe.db")
     if not os.path.exists(src):
-        import pytest
-
         pytest.skip("缺基底存档 data/probe.db")
     dst = tmp_path / "probe.db"
     shutil.copy(src, dst)
@@ -78,7 +76,9 @@ def test_run_settle_persists_narrative_and_delta_trace(game):
     extr = db.conn.execute(
         "SELECT extractor_output FROM turn_extractions WHERE turn=?", (before,)
     ).fetchone()[0]
-    assert "动乱" in extr  # delta 以 JSON 落痕,replay 可读
+    # canonical delta 以 JSON 落 extractor_output,replay/timeline 可解析重建。
+    # 注:region 字段别名(动乱→unrest)在 apply_region_deltas 做,_canonicalize 不动它,故留中文 key。
+    assert json.loads(extr) == {"region_delta": {"shanxi": {"动乱": 1}}}
 
 
 def test_cli_state_prints_board(game, capsys):
