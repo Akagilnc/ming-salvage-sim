@@ -612,6 +612,15 @@ def test_extract_minister_actions_unknown_action_floored(monkeypatch):
     assert act["secret_action"] == "无"
 
 
+def test_enrich_nondict_subfields_guarded(monkeypatch):
+    """enrich 子段被 LLM 给成非 dict(字符串/数组)时 isinstance 守门归 {}，不抛 ValueError（codexB）。"""
+    monkeypatch.setattr(cb, "_run_backend",
+                        lambda p: ('{"effect_on_resolve": "坏数据", "ongoing_effects": ["x"], "effect_on_fail": 3}', 1))
+    monkeypatch.setattr(cb, "_trace", lambda r: None)
+    out = cb.enrich_initiative_effects("设局", "")
+    assert out == {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}}
+
+
 def test_enrich_trace_records_actual_backend(monkeypatch):
     """trace 的 backend 字段记实际后端，不硬编码 agy（CMR F6）。"""
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
