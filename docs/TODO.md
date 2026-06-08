@@ -4,6 +4,13 @@
 
 ## 🔴 BUG / 待修（影响游戏正确性）
 
+### B8. 游戏聊天框中文输入法不学词（Windows 群员报，待 cmr 完再修）
+- **现象**：Windows 群员在游戏聊天框打「拟诏/密令」等词，输入法**不学习**（不进用户词库、下次不联想）；同样的词在游戏外能学；回游戏又不联想。打字本身正常（字打得出），只是不学。
+- **已排除**：① 回车劫持理论错——用户用**空格**确认候选，`handleKeyDown`(modals.tsx:578) 只拦 Enter，空格没被截；② 编码 UTF-8/GBK（开发者猜）在浏览器版站不住——`web/index.html`+`dist` 都有 `<meta charset="UTF-8">`、服务器返回 `charset=utf-8`，不会回退 GBK，且编码错=乱码非"打得出但不学"。（Electron 打包版未在 mac 验。）
+- **最可能真因（未证实）**：聊天 textarea(`web/src/components/modals.tsx:668`) 是受控组件 `value={input} onChange=...`，**无任何 composition 处理**。输入法合成期 onChange 每次更新就 setState→重渲染→React 重写 value，扰乱合成提交。此 bug 在 **Windows 输入法(搜狗/微软拼音)远比 macOS 严重** → 对上"和 Windows 有关"+"app 侧"。
+- **修法候选**：modals.tsx 聊天 textarea 加 `onCompositionStart/End` 守卫，合成期不 setState/不重写 value，`compositionEnd` 一次性落；`handleKeyDown` 顺手加 `isComposing` 守卫；同样隐患扫全前端其它 textarea(主聊天/作弊台 main.tsx:1148)。
+- **注**：最终须 **Windows + 真实输入法**实测（mac 复现不了 Windows IME），改对方向≠包好。
+
 ### B7. CLI 大臣回话偶夹英文（opus code-switch，待摸清再修）
 - **现象**：opus 后端毕自严回话蹦英文「各衙门account册移交故意拖延」。玩了很久第一次出现 → 疑本 session 改动或换模型带出。
 - **可疑诱因（未定论）**：① 换 opus(可能比旧模型更易 code-switch)；② `build_building_brief` 注入拼音 region_id（beizhili/nanzhili…，本 session fd96d96 加的）把英文塞进 system；③ agno skills/tools 框架英文元数据（active/skill/scripts/description… ~117 token）一直在 system 里（CliChat 忽略 tools、function-calling 本不可能，纯属注入污染）—— 但这是早就存在、之前没触发。
