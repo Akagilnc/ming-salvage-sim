@@ -819,18 +819,19 @@ def apply_issue_tracker_output(
         # 校验：国策必须有「办成回报」。CLI 后端(agy)一贯不填效果字段（实测 0/4），
         # 空则聚焦补全，保证「国策跑完有实质后果」(A 方案)；floor 兜底，绝不入空壳。
         if kind == "initiative" and not resolve_eff:
-            try:
-                from ming_sim.cli_backend import cli_backend_from_env, enrich_initiative_effects
-                if cli_backend_from_env() is not None:
+            from ming_sim.cli_backend import cli_backend_from_env, enrich_initiative_effects
+            if cli_backend_from_env() is not None:
+                try:
                     enr = enrich_initiative_effects(title, str(ni.get("stage_text") or ""))
                     resolve_eff = enr.get("effect_on_resolve") or resolve_eff
                     ongoing_eff = enr.get("ongoing_effects") or ongoing_eff
                     fail_eff = enr.get("effect_on_fail") or fail_eff
-                    if not resolve_eff:  # 补全也失败 → 最小回报，绝不空
-                        resolve_eff = {"metrics": {"民心": 1}}
                     print(f"[issue/enrich] 国策「{title[:16]}」补效果 resolve={bool(resolve_eff)} ongoing={bool(ongoing_eff)}")
-            except Exception as exc:
-                print(f"[issue/enrich] 补全失败，沿用空效果：{exc}")
+                except Exception as exc:
+                    print(f"[issue/enrich] 补全失败，沿用空效果：{exc}")
+                # floor 在 try 外：即便 enrich 抛错或没补上，CLI 后端国策也绝不入空壳（codexB）。
+                if not resolve_eff:
+                    resolve_eff = {"metrics": {"民心": 1}}
         try:
             issue_id = db.insert_issue(
                 state,

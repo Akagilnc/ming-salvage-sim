@@ -135,6 +135,23 @@ def test_new_issue_nondict_effect_fields_do_not_crash(game, monkeypatch):
     assert db.conn.execute("SELECT COUNT(*) FROM issues").fetchone()[0] == before + 1
 
 
+def test_initiative_floor_applies_when_enrich_empty(game, monkeypatch):
+    """CLI 后端国策 enrich 没补出 resolve（或抛错）时，floor 兜最小回报，绝不入空壳（codexB）。"""
+    import ming_sim.cli_backend as _cb
+    db, state, _ = game
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
+    monkeypatch.setattr(_cb, "enrich_initiative_effects",
+                        lambda *a, **k: {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}})
+    I.apply_issue_tracker_output(db, state, {
+        "new_issues": [{"origin_kind": "decree", "title": "空回报国策", "kind": "initiative"}],
+    })
+    row = db.conn.execute(
+        "SELECT effect_on_resolve FROM issues WHERE title='空回报国策'").fetchone()
+    assert row is not None                         # 国策入库了
+    import json as _j
+    assert _j.loads(row["effect_on_resolve"]) == {"metrics": {"民心": 1}}   # floor 生效，非空壳
+
+
 def test_inertia_natural_resolve_applies_entities(game):
     """issue 靠 inertia 自然推到 100 结案 → effect_on_resolve 的实体后果(建军)也要落，
     不能只落 metrics/economy；须与 tracker advance/close 路径一致（codexB-P1）。"""

@@ -438,15 +438,20 @@ def enrich_initiative_effects(title: str, stage: str = "") -> Dict[str, Any]:
         norm = _canonical_item_fields(obj) if obj else {}
     except Exception:
         norm = obj
-    resolve = dict(norm.get("effect_on_resolve") or {})
+    # isinstance 守门：norm 或其子段被 LLM 给成非 dict 时归 {}，不让 dict("乱填") 抛错
+    # 越过上层 floor、把空壳国策放进库（CMR codexB）。
+    def _d(v):
+        return v if isinstance(v, dict) else {}
+    norm = _d(norm)
+    resolve = _d(norm.get("effect_on_resolve"))
     # 建筑 create 缺 region_id 兜底，免得静默落不了地
     for b in (resolve.get("buildings") or []):
         if isinstance(b, dict) and str(b.get("action") or "").lower() == "create" and not b.get("region_id"):
             b["region_id"] = "beizhili"
     return {
         "effect_on_resolve": resolve,
-        "ongoing_effects": dict(norm.get("ongoing_effects") or {}),
-        "effect_on_fail": dict(norm.get("effect_on_fail") or {}),
+        "ongoing_effects": _d(norm.get("ongoing_effects")),
+        "effect_on_fail": _d(norm.get("effect_on_fail")),
     }
 
 
