@@ -113,3 +113,23 @@ def test_non_dict_character_status_item_raises(game):
         I._apply_issue_entities(db, state, {
             "character_status_changes": ["这不是dict"],
         }, "局势#测试")
+
+
+def test_new_issue_nondict_effect_fields_do_not_crash(game, monkeypatch):
+    """LLM 把 effect 字段给成非 dict(字符串/数组) → isinstance 守门归 {}，不让 dict() 抛错
+    越过单条拒绝、崩整月落库（codexB-P1）。"""
+    db, state, _ = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)   # 不触发 enrich
+    before = db.conn.execute("SELECT COUNT(*) FROM issues").fetchone()[0]
+    out = I.apply_issue_tracker_output(db, state, {
+        "new_issues": [{
+            "origin_kind": "decree", "title": "效果字段畸形国策", "kind": "initiative",
+            "effect_on_resolve": "这是字符串不是dict",   # 恶意非 dict（旧码 dict() 会抛 ValueError）
+            "ongoing_effects": ["也不是dict"],
+            "effect_on_fail": None,
+        }],
+    })
+    # 不抛错、整月不崩；该国策被正常处理(创建)
+    new = [e for e in out["new_issues"] if e.get("title") == "效果字段畸形国策"]
+    assert new and not new[0].get("rejected")
+    assert db.conn.execute("SELECT COUNT(*) FROM issues").fetchone()[0] == before + 1

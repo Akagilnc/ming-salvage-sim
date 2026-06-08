@@ -809,9 +809,13 @@ def apply_issue_tracker_output(
         if kind == "initiative" and initiative_active >= 10:
             applied_new.append({"title": title, "rejected": True, "reason": "已有十事在办，朝廷分身乏术，难再添新工。"})
             continue
-        ongoing_eff = dict(ni.get("ongoing_effects") or {})
-        resolve_eff = dict(ni.get("effect_on_resolve") or {})
-        fail_eff = dict(ni.get("effect_on_fail") or {})
+        # LLM 可能把效果字段给成非 dict（字符串/数组）；isinstance 守门归 {}，
+        # 不让 dict("乱填") 抛 ValueError 越过单条拒绝、崩整月落库（codexB-P1）。
+        def _eff_dict(v):
+            return v if isinstance(v, dict) else {}
+        ongoing_eff = _eff_dict(ni.get("ongoing_effects"))
+        resolve_eff = _eff_dict(ni.get("effect_on_resolve"))
+        fail_eff = _eff_dict(ni.get("effect_on_fail"))
         # 校验：国策必须有「办成回报」。CLI 后端(agy)一贯不填效果字段（实测 0/4），
         # 空则聚焦补全，保证「国策跑完有实质后果」(A 方案)；floor 兜底，绝不入空壳。
         if kind == "initiative" and not resolve_eff:
