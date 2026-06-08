@@ -82,3 +82,25 @@ def test_empty_effect_noop(game):
     before = _army_count(db)
     I._apply_issue_entities(db, state, {"metrics": {"民心": 5}}, "局势#测试")
     assert _army_count(db) == before
+
+
+def test_resolve_army_delta_reinforces_existing(game):
+    """国策给既有军扩编：army_delta 累加到该军兵额（不新建）。"""
+    db, state, _ = game
+    before = _army_count(db)
+    old = db.conn.execute("SELECT manpower FROM armies WHERE id='jingying'").fetchone()["manpower"]
+    I._apply_issue_entities(db, state, {
+        "army_delta": {"jingying": {"manpower": 500, "reason": "国策募兵补京营"}},
+    }, "局势#测试结案")
+    new = db.conn.execute("SELECT manpower FROM armies WHERE id='jingying'").fetchone()["manpower"]
+    assert new == old + 500
+    assert _army_count(db) == before          # 扩编不新建军队
+
+
+def test_army_delta_unknown_army_raises(game):
+    """army_delta 引用未入库军队 → 抛错中断（全局严格，绝不静默）。"""
+    db, state, _ = game
+    with pytest.raises(ValueError):
+        I._apply_issue_entities(db, state, {
+            "army_delta": {"查无此军": {"manpower": 100}},
+        }, "局势#测试")
