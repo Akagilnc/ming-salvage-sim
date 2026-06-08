@@ -174,7 +174,10 @@ def for_role(cfg: LLMConfig, role: str) -> LLMConfig:
     advanced_model 为空时返回原 cfg（无任何替换）。"""
     if role in _ADVANCED_ROLES and (cfg.advanced_model or "").strip():
         adv_base = (cfg.advanced_base_url or "").strip() or cfg.base_url
-        adv_key = (cfg.advanced_api_key or "").strip() or cfg.api_key
+        # 主 key 回落时占位符不当真 key（CLI 通道下 cfg.api_key 是 cli-backend）。
+        adv_key = (cfg.advanced_api_key or "").strip() or (
+            cfg.api_key if is_real_api_key(cfg.api_key) else ""
+        )
         return LLMConfig(
             api_key=adv_key,
             base_url=adv_base,
