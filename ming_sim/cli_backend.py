@@ -402,8 +402,8 @@ def enrich_initiative_effects(title: str, stage: str = "") -> Dict[str, Any]:
         '  "effect_on_resolve": {\n'
         '    "metrics": {"民心": int, "皇威": int, "国库": int},   // 抽象国势回报，按需，可省\n'
         '    "buildings": [{"action":"create","region_id":"省拼音码","name":"","category":"财政/军事/民生/科技/交通/内廷","output_metric":"国库/内库/民心/皇威/","output_amount":int}],\n'
-        '    "new_armies": [{"id":"英文小写id","name":"军名","owner_power":"ming","manpower":兵额(整数,如18000),"maintenance_per_turn":月饷万两(整数),"commander":"主将姓名或空","station":"驻地","troop_type":"步/骑/水/车营"}],\n'
-        '    "army_delta": {"既有军id":{"manpower":增兵整数,"reason":""}},\n'
+        '    "new_armies": [{"id":"英文小写id","name":"军名","owner_power":"ming","manpower":兵额(整数,如18000),"maintenance_per_turn":月饷万两(整数),"commander":"主将姓名或空","station":"驻地","troop_type":"步/骑/水/车营","火器":0到100整数(火器局/神机营/火器新军给高),"随军大炮":0到12整数门数(炮营/红夷炮新军给几门)}],\n'
+        '    "army_delta": {"既有军id":{"manpower":增兵整数,"火器":增量,"随军大炮":门数增量,"reason":""}},\n'
         '    "character_status_changes": [{"name":"必须是确切人名","status":"dead/exiled/imprisoned/dismissed/retired","reason":""}]\n'
         "  },\n"
         '  "ongoing_effects": {"economy": [{"account":"国库/内库","delta":负数月度开销,"category":"","reason":""}]},\n'

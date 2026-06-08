@@ -98,15 +98,48 @@ def test_create_army_cannon_count_clamped(game):
     assert val == 12
 
 
-def test_extractor_prompts_allow_firearm_cannon_fields():
-    """火器/随军大炮 必须进 extractor 军队字段白名单(shared + military prompt)，否则 simulator
-    让 LLM 写、下一段 extractor 按旧闭合白名单自检 → 「配火器」叙事被吞成无 delta（codexB-P1，跨层 coverage）。"""
+def test_army_numeric_fields_synced_across_prompts():
+    """治本（CMR codexA/B 火器 coverage-drift）：军队数值字段以 constants 为唯一源，
+    extractor 两 prompt 必须全含其中文标签、enrich prompt 至少含军备两轴。
+    标签从 ARMY_SCORE_FIELDS/ARMY_FIELD_LABELS 派生 —— 将来加字段本测试立挂，
+    不再每轮 cross-model review 揪一处没同步的 prompt（杀 whack-a-mole）。"""
     import os
+    import inspect
+    from ming_sim.constants import ARMY_SCORE_FIELDS, ARMY_FIELD_LABELS
     base = os.path.join(os.path.dirname(__file__), "..", "content", "prompts")
-    for fn in ("score_extractor_shared.md", "score_extractor_military_external.md"):
-        txt = open(os.path.join(base, fn), encoding="utf-8").read()
-        assert "火器" in txt, f"{fn} 缺 火器 字段"
-        assert "随军大炮" in txt, f"{fn} 缺 随军大炮 字段"
+    shared = open(os.path.join(base, "score_extractor_shared.md"), encoding="utf-8").read()
+    military = open(os.path.join(base, "score_extractor_military_external.md"), encoding="utf-8").read()
+    # extractor 可写数值轴 = score 字段去 arrears（欠饷由 flows 唯一变更，prompt 严禁写）
+    full = [ARMY_FIELD_LABELS[f] for f in ARMY_SCORE_FIELDS if f != "arrears"]
+    for label in full:
+        assert label in shared, f"score_extractor_shared.md 缺军队数值字段「{label}」(constants 已定义)"
+        assert label in military, f"score_extractor_military_external.md 缺军队数值字段「{label}」(constants 已定义)"
+    # enrich 内联 prompt（数值结算设计器）至少含军备两轴，新军/扩编可武装
+    import ming_sim.cli_backend as _cb
+    enrich_src = inspect.getsource(_cb.enrich_initiative_effects)
+    for f in ("firearm_equipment", "cannon_equipment"):
+        assert ARMY_FIELD_LABELS[f] in enrich_src, f"enrich prompt 缺军备轴「{ARMY_FIELD_LABELS[f]}」"
+
+
+def test_fresh_seed_wires_firearm_not_all_zero(content):
+    """新档 seed（非 data/probe.db 老档副本）必须贯通火器：armies.json 缺省由 loader 给基线、
+    fresh seed INSERT 写两列。曾全 0 被 probe.db fixture 掩盖（CMR codexB-P1）。"""
+    import os
+    import tempfile
+    from ming_sim.db import GameDB
+    fd, p = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        db = GameDB(p, content)
+        db.seed_static_data()                     # 真实新档路径
+        rows = db.conn.execute("SELECT firearm_equipment FROM armies").fetchall()
+        assert rows                               # 新档有军队
+        assert any(int(r["firearm_equipment"]) > 0 for r in rows)   # 火器非全 0 = 已贯通
+        db.conn.close()
+    finally:
+        for f in (p, f"{p}_agno.db"):
+            if os.path.exists(f):
+                os.remove(f)
 
 
 def test_apply_army_delta_chinese_keys(game):

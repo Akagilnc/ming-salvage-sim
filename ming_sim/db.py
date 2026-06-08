@@ -1279,8 +1279,8 @@ class GameDB:
                     INSERT INTO armies
                     (id, name, station, theater, commander, controller, troop_type, manpower,
                      maintenance_per_turn, supply, morale, training, equipment, arrears,
-                     mobility, loyalty, status, owner_power)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     mobility, loyalty, firearm_equipment, cannon_equipment, status, owner_power)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         army.id,
@@ -1299,6 +1299,8 @@ class GameDB:
                         army.arrears,
                         army.mobility,
                         army.loyalty,
+                        army.firearm_equipment,   # 新档贯通火器/随军大炮（CMR codexB）
+                        army.cannon_equipment,
                         army.status,
                         army.owner_power,
                     ),
