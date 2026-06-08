@@ -56,6 +56,18 @@ def test_load_llm_config_records_backend_env_as_cli_channel(monkeypatch):
     assert cfg.api_key == "cli-backend"
 
 
+def test_loaded_api_config_is_not_rerouted_by_later_backend_env(monkeypatch):
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    cfg = load_llm_config("https://api.example.com", "gpt-test", api_key="sk-test")
+
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
+    model = create_chat_model(cfg)
+
+    assert cfg.channel == "api"
+    assert isinstance(model, OpenAIChat)
+    assert not isinstance(model, CliChat)
+
+
 def test_verify_llm_available_respects_api_channel_over_backend_env(monkeypatch):
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     captured = {}
