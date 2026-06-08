@@ -331,6 +331,11 @@ def _runtime_float(value: object, default: float) -> float:
         return default
 
 
+def _has_real_api_key(value: object) -> bool:
+    key = str(value or "").strip()
+    return bool(key and key != "cli-backend")
+
+
 def _llm_config_from_runtime(
     runtime: Dict[str, Any],
     *,
@@ -1426,7 +1431,7 @@ def _has_main_db() -> bool:
 async def api_menu_status() -> Dict[str, Any]:
     """菜单页状态：API key 是否配好、上次主 DB 是否存在、存档列表。"""
     runtime = load_runtime_llm()
-    from ming_sim.cli_backend import cli_backend_from_env
+    from ming_sim.cli_backend import cli_backend_from_env, is_supported_cli_runner
     env_runner = cli_backend_from_env()
     channel = str(runtime.get("channel") or "").strip().lower()
     if channel not in {"api", "cli"}:
@@ -1436,7 +1441,7 @@ async def api_menu_status() -> Dict[str, Any]:
     cli_model = str(cli_slot.get("model") or cli_model_from_env(cli_runner, "")).strip()
     cli_timeout = _runtime_float(cli_slot.get("timeout_seconds"), 300)
     has_api_key = bool(runtime.get("api_key") or os.environ.get("OPENAI_API_KEY"))
-    llm_ready = has_api_key or (channel == "cli" and bool(cli_runner))
+    llm_ready = has_api_key or (channel == "cli" and is_supported_cli_runner(cli_runner))
     return {
         "has_api_key": has_api_key,
         "llm_ready": llm_ready,
@@ -1575,11 +1580,77 @@ class LlmSetupRequest(BaseModel):
     advanced_base_url: str = ""
     advanced_api_key: str = ""
     advanced_thinking_level: str = ""
+    channel: str = "api"
+    cli_runner: str = ""
+    cli_model: str = ""
+    cli_timeout_seconds: float = 0
+
+
+async def _menu_save_cli_llm(request: LlmSetupRequest) -> Dict[str, Any]:
+    """保存 CLI 通道：选 runner/model，不要求真实 api_key，保留 API 槽。"""
+    cli_runner = (request.cli_runner or "").strip().lower()
+    cli_model = (request.cli_model or "").strip()
+    cli_timeout = request.cli_timeout_seconds if request.cli_timeout_seconds and request.cli_timeout_seconds > 0 else 300
+    max_tokens = request.max_tokens if request.max_tokens > 0 else 8000
+    timeout_seconds = request.timeout_seconds if request.timeout_seconds > 0 else 180
+    if not cli_runner:
+        raise HTTPException(status_code=400, detail="cli_runner 不能为空。")
+    config = LLMConfig(
+        api_key="cli-backend",
+        base_url="",
+        model=cli_model,
+        max_tokens=max_tokens,
+        timeout_seconds=timeout_seconds,
+        channel="cli",
+        cli_runner=cli_runner,
+        cli_model=cli_model,
+        cli_timeout_seconds=cli_timeout,
+    )
+    try:
+        _verify_llm_configs_or_raise(config)
+    except HTTPException:
+        raise
+    except LLMUnavailable as exc:
+        raise HTTPException(status_code=400, detail=_llm_error_detail(exc)) from None
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail={"code": "llm_validation_failed", "message": str(exc)}) from None
+    # 空 API 输入 → save_runtime_llm 保留已存 API 槽（ADR 0001）。
+    save_runtime_llm(
+        "",
+        "",
+        "",
+        max_tokens,
+        timeout_seconds,
+        "",
+        "",
+        "",
+        "",
+        "",
+        channel="cli",
+        cli_runner=cli_runner,
+        cli_model=cli_model,
+        cli_timeout_seconds=cli_timeout,
+    )
+    return {
+        "ok": True,
+        "llm": {
+            "channel": "cli",
+            "cli_runner": cli_runner,
+            "cli_model": cli_model,
+            "cli_timeout_seconds": cli_timeout,
+            "has_api_key": _has_real_api_key(config.api_key),
+        },
+    }
 
 
 @app.post("/api/menu/llm")
 async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     """菜单页保存 LLM 配置：先发起轻量聊天校验，通过后才落盘。"""
+    channel = (request.channel or "api").strip().lower()
+    if channel not in {"api", "cli"}:
+        channel = "api"
+    if channel == "cli":
+        return await _menu_save_cli_llm(request)
     base_url = (request.base_url or "").strip()
     model = (request.model or "").strip()
     api_key = (request.api_key or "").strip()
@@ -2171,7 +2242,9 @@ async def api_get_llm_config() -> Dict[str, Any]:
     """读当前生效的 LLM 配置。api_key 不回传明文，只回是否已设置。"""
     cfg = get_game().session.llm_config
     saved = load_runtime_llm()
+    saved_cli = saved.get("cli") if isinstance(saved.get("cli"), dict) else {}
     return {
+        "channel": cfg.channel,
         "base_url": cfg.base_url,
         "model": cfg.model,
         "max_tokens": cfg.max_tokens,
@@ -2181,11 +2254,15 @@ async def api_get_llm_config() -> Dict[str, Any]:
         "advanced_base_url": cfg.advanced_base_url,
         "has_advanced_api_key": bool(cfg.advanced_api_key),
         "advanced_thinking_level": cfg.advanced_thinking_level,
-        "has_api_key": bool(cfg.api_key),
+        "has_api_key": _has_real_api_key(cfg.api_key),
+        "cli_runner": cfg.cli_runner,
+        "cli_model": cfg.cli_model,
+        "cli_timeout_seconds": cfg.cli_timeout_seconds,
         "persisted": {
+            "channel": saved.get("channel", ""),
             "base_url": saved.get("base_url", ""),
             "model": saved.get("model", ""),
-            "has_api_key": bool(saved.get("api_key", "")),
+            "has_api_key": _has_real_api_key(saved.get("api_key", "")),
             "max_tokens": int(saved.get("max_tokens") or 8000),
             "timeout_seconds": float(saved.get("timeout_seconds") or 180),
             "thinking_level": saved.get("thinking_level", ""),
@@ -2193,6 +2270,9 @@ async def api_get_llm_config() -> Dict[str, Any]:
             "advanced_base_url": saved.get("advanced_base_url", ""),
             "has_advanced_api_key": bool(saved.get("advanced_api_key", "")),
             "advanced_thinking_level": saved.get("advanced_thinking_level", ""),
+            "cli_runner": str(saved_cli.get("runner") or ""),
+            "cli_model": str(saved_cli.get("model") or ""),
+            "cli_timeout_seconds": _runtime_float(saved_cli.get("timeout_seconds"), 300),
         },
     }
 

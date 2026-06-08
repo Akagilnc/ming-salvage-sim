@@ -53,6 +53,11 @@ _CLAUDE_DISALLOWED = ["Bash", "Read", "Edit", "Write", "Glob", "Grep",
                       "WebFetch", "WebSearch", "Task", "NotebookEdit"]
 _CLI_BACKENDS = {"agy", "codex", "claude"}
 
+
+def is_supported_cli_runner(name: object) -> bool:
+    """runner 名是否是受支持的 CLI 后端（agy / codex / claude）。"""
+    return str(name or "").strip().lower() in _CLI_BACKENDS
+
 _VERBOSE = os.environ.get("MING_SIM_LLM_DEBUG", "") not in ("", "0", "false")
 
 # 结构化 trace：默认开，每次调用追加一行 JSONL，玩完整局可复盘。

@@ -103,6 +103,82 @@ def test_apply_llm_config_saves_api_channel_over_backend_env(monkeypatch):
     assert saved[0][1]["cli_timeout_seconds"] == 240
 
 
+def test_menu_save_llm_persists_cli_channel_without_api_key(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    seen = []
+    saved = []
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda cfg: seen.append(cfg))
+    monkeypatch.setattr(web_app, "save_runtime_llm", lambda *args, **kwargs: saved.append((args, kwargs)))
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+
+    result = asyncio.run(web_app.api_menu_save_llm(web_app.LlmSetupRequest(
+        base_url="",
+        model="",
+        api_key="",
+        channel="cli",
+        cli_runner="codex",
+        cli_model="gpt-5.5",
+        cli_timeout_seconds=240,
+    )))
+
+    assert result["ok"] is True
+    assert result["llm"]["channel"] == "cli"
+    assert result["llm"]["cli_runner"] == "codex"
+    assert result["llm"]["cli_model"] == "gpt-5.5"
+    assert result["llm"]["has_api_key"] is False
+    assert seen and seen[0].channel == "cli"
+    assert seen[0].cli_runner == "codex"
+    assert seen[0].cli_model == "gpt-5.5"
+    assert saved and saved[0][1]["channel"] == "cli"
+    assert saved[0][1]["cli_runner"] == "codex"
+    assert saved[0][1]["cli_model"] == "gpt-5.5"
+    assert saved[0][1]["cli_timeout_seconds"] == 240
+
+
+def test_menu_status_unsupported_cli_runner_not_ready(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "_has_main_db", lambda: False)
+    monkeypatch.setattr(web_app, "_scan_saves", lambda: [])
+    monkeypatch.setattr(web_app, "_scan_campaigns", lambda: [])
+    monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: "")
+    monkeypatch.setattr(web_app, "load_runtime_game", lambda: {"hitl_min_decisions": 1})
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
+        "channel": "cli",
+        "api": {"base_url": "", "model": "", "api_key": ""},
+        "cli": {"runner": "bogus", "model": "gpt-5.5", "timeout_seconds": "240"},
+    })
+
+    status = asyncio.run(web_app.api_menu_status())
+
+    assert status["has_api_key"] is False
+    assert status["llm"]["channel"] == "cli"
+    assert status["llm"]["cli_runner"] == "bogus"
+    assert status["llm_ready"] is False
+
+
+def test_menu_save_llm_cli_channel_rejects_empty_runner(monkeypatch):
+    seen = []
+    saved = []
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda cfg: seen.append(cfg))
+    monkeypatch.setattr(web_app, "save_runtime_llm", lambda *args, **kwargs: saved.append((args, kwargs)))
+
+    with pytest.raises(web_app.HTTPException) as exc_info:
+        asyncio.run(web_app.api_menu_save_llm(web_app.LlmSetupRequest(
+            base_url="",
+            model="",
+            api_key="",
+            channel="cli",
+            cli_runner="",
+            cli_model="gpt-5.5",
+        )))
+
+    assert exc_info.value.status_code == 400
+    assert not seen
+    assert not saved
+
+
 def test_menu_save_llm_validates_api_channel_over_backend_env(monkeypatch):
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     seen = []
@@ -155,6 +231,61 @@ def test_menu_status_treats_saved_cli_runtime_as_ready_without_api_key(monkeypat
     assert status["llm_ready"] is True
     assert status["llm"]["channel"] == "cli"
     assert status["llm"]["cli_runner"] == "codex"
+
+
+def test_game_llm_config_reports_active_cli_channel_without_fake_api_key(monkeypatch):
+    cfg = LLMConfig(
+        api_key="cli-backend",
+        base_url="https://api.example.com/v1",
+        model="api-fallback",
+        max_tokens=8000,
+        timeout_seconds=180,
+        channel="cli",
+        cli_runner="codex",
+        cli_model="gpt-5.5",
+        cli_timeout_seconds=240,
+    )
+    monkeypatch.setattr(web_app, "web_game", SimpleNamespace(
+        session=SimpleNamespace(llm_config=cfg),
+    ))
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
+        "channel": "cli",
+        "api": {
+            "base_url": "https://api.example.com/v1",
+            "model": "api-fallback",
+            "api_key": "",
+            "max_tokens": "8000",
+            "timeout_seconds": "180",
+            "thinking_level": "",
+            "advanced_model": "",
+            "advanced_base_url": "",
+            "advanced_api_key": "",
+            "advanced_thinking_level": "",
+        },
+        "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": "240"},
+        "base_url": "https://api.example.com/v1",
+        "model": "api-fallback",
+        "api_key": "",
+        "max_tokens": "8000",
+        "timeout_seconds": "180",
+        "thinking_level": "",
+        "advanced_model": "",
+        "advanced_base_url": "",
+        "advanced_api_key": "",
+        "advanced_thinking_level": "",
+    })
+
+    result = asyncio.run(web_app.api_get_llm_config())
+
+    assert result["channel"] == "cli"
+    assert result["cli_runner"] == "codex"
+    assert result["cli_model"] == "gpt-5.5"
+    assert result["cli_timeout_seconds"] == 240
+    assert result["has_api_key"] is False
+    assert result["persisted"]["channel"] == "cli"
+    assert result["persisted"]["cli_runner"] == "codex"
+    assert result["persisted"]["cli_model"] == "gpt-5.5"
+    assert result["persisted"]["cli_timeout_seconds"] == 240
 
 
 def test_fresh_start_without_llm_keeps_existing_main_db(tmp_path, monkeypatch):
