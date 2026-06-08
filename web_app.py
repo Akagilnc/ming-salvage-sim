@@ -293,7 +293,9 @@ def _verify_llm_configs_or_raise(config: LLMConfig) -> None:
     if not advanced_model:
         return
     advanced_config = LLMConfig(
-        api_key=(config.advanced_api_key or "").strip() or config.api_key,
+        api_key=(config.advanced_api_key or "").strip() or (
+            config.api_key if is_real_api_key(config.api_key) else ""
+        ),
         base_url=(config.advanced_base_url or "").strip() or config.base_url,
         model=advanced_model,
         max_tokens=config.max_tokens,
@@ -432,7 +434,10 @@ class WebGame:
         runtime = load_runtime_llm()
         base_url = runtime.get("base_url") or base_url
         model = runtime.get("model") or model
-        api_key = runtime.get("api_key") or api_key
+        # 占位符不当真 key：stale cli-backend 不该覆盖真实 env key（否则 api 通道
+        # 启动被清空报「未配 API key」，而 menu 用 env key 判 ready，二者矛盾）。
+        _rt_api_key = runtime.get("api_key")
+        api_key = _rt_api_key if is_real_api_key(_rt_api_key) else api_key
         thinking_level = runtime.get("thinking_level") or thinking_level
         advanced_model = runtime.get("advanced_model") or advanced_model
         advanced_base_url = runtime.get("advanced_base_url") or advanced_base_url
@@ -1473,7 +1478,7 @@ async def api_menu_status() -> Dict[str, Any]:
             "thinking_level": runtime.get("thinking_level") or os.environ.get("OPENAI_THINKING_LEVEL", ""),
             "advanced_model": runtime.get("advanced_model") or os.environ.get("OPENAI_ADVANCED_MODEL", ""),
             "advanced_base_url": runtime.get("advanced_base_url") or os.environ.get("OPENAI_ADVANCED_BASE_URL", ""),
-            "has_advanced_api_key": bool(runtime.get("advanced_api_key") or os.environ.get("OPENAI_ADVANCED_API_KEY")),
+            "has_advanced_api_key": _has_real_api_key(runtime.get("advanced_api_key")) or _has_real_api_key(os.environ.get("OPENAI_ADVANCED_API_KEY")),
             "advanced_thinking_level": runtime.get("advanced_thinking_level") or os.environ.get("OPENAI_ADVANCED_THINKING_LEVEL", ""),
         },
     }
@@ -1731,7 +1736,7 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
             "thinking_level": thinking_level,
             "advanced_model": advanced_model,
             "advanced_base_url": advanced_base_url,
-            "has_advanced_api_key": bool(advanced_api_key),
+            "has_advanced_api_key": _has_real_api_key(advanced_api_key),
             "advanced_thinking_level": advanced_thinking_level,
         },
     }
@@ -2264,7 +2269,7 @@ async def api_get_llm_config() -> Dict[str, Any]:
         "thinking_level": cfg.thinking_level,
         "advanced_model": cfg.advanced_model,
         "advanced_base_url": cfg.advanced_base_url,
-        "has_advanced_api_key": bool(cfg.advanced_api_key),
+        "has_advanced_api_key": _has_real_api_key(cfg.advanced_api_key),
         "advanced_thinking_level": cfg.advanced_thinking_level,
         "has_api_key": _has_real_api_key(cfg.api_key),
         "cli_runner": cfg.cli_runner,
@@ -2280,7 +2285,7 @@ async def api_get_llm_config() -> Dict[str, Any]:
             "thinking_level": saved.get("thinking_level", ""),
             "advanced_model": saved.get("advanced_model", ""),
             "advanced_base_url": saved.get("advanced_base_url", ""),
-            "has_advanced_api_key": bool(saved.get("advanced_api_key", "")),
+            "has_advanced_api_key": _has_real_api_key(saved.get("advanced_api_key", "")),
             "advanced_thinking_level": saved.get("advanced_thinking_level", ""),
             "cli_runner": str(saved_cli.get("runner") or ""),
             "cli_model": str(saved_cli.get("model") or ""),
@@ -2321,7 +2326,7 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
         "thinking_level": cfg.thinking_level,
         "advanced_model": cfg.advanced_model,
         "advanced_base_url": cfg.advanced_base_url,
-        "has_advanced_api_key": bool(cfg.advanced_api_key),
+        "has_advanced_api_key": _has_real_api_key(cfg.advanced_api_key),
         "advanced_thinking_level": cfg.advanced_thinking_level,
         "has_api_key": _has_real_api_key(cfg.api_key),
     }
