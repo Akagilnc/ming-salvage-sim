@@ -51,6 +51,7 @@ _CLAUDE_MODEL = os.environ.get("MING_SIM_CLAUDE_MODEL", "claude-opus-4-8")
 # 纯角色扮演/抽取任务不需要工具；禁掉防 claude 绕去调工具兜圈子。
 _CLAUDE_DISALLOWED = ["Bash", "Read", "Edit", "Write", "Glob", "Grep",
                       "WebFetch", "WebSearch", "Task", "NotebookEdit"]
+_CLI_BACKENDS = {"agy", "codex", "claude"}
 
 _VERBOSE = os.environ.get("MING_SIM_LLM_DEBUG", "") not in ("", "0", "false")
 
@@ -229,6 +230,8 @@ def _cli_config_parts(llm_config: Any = None) -> Optional[Tuple[str, str, Option
     if channel != "cli":
         return None
     runner = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "agy").strip().lower()
+    if runner not in _CLI_BACKENDS:
+        raise RuntimeError(f"未知 CLI backend：{runner}")
     model = (getattr(llm_config, "cli_model", "") or "").strip()
     raw_timeout = getattr(llm_config, "cli_timeout_seconds", None)
     try:
@@ -599,7 +602,9 @@ class CliChat(OpenAIChat):
             return _run_codex(prompt, model=model_id, timeout=timeout)
         if self.backend == "claude":
             return _run_claude(prompt, model=model_id, timeout=timeout)
-        return _run_agy(prompt, timeout=timeout)
+        if self.backend == "agy":
+            return _run_agy(prompt, timeout=timeout)
+        raise RuntimeError(f"未知 CLI backend：{self.backend}")
 
     def invoke(  # type: ignore[override]
         self,

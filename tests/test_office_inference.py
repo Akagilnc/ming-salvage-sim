@@ -106,3 +106,37 @@ def test_runtime_cli_unknown_office_uses_configured_runner_without_env(monkeypat
     assert infer("绝无此名的杜撰怪衔庚辛壬", llm_config=cfg) == "边镇"
     assert "官名：绝无此名的杜撰怪衔庚辛壬" in seen["prompt"]
     assert seen["config"] is cfg
+
+
+def test_api_channel_unknown_office_ignores_cli_derived_cache(monkeypatch):
+    office = "绝无此名的杜撰怪衔缓存测试"
+    dbmod._OFFICE_TYPE_LLM_CACHE.clear()
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    def fake_run(prompt, llm_config=None):
+        return "边镇", 1
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", fake_run)
+    cli_cfg = LLMConfig(
+        api_key="cli-backend",
+        base_url="",
+        model="api-fallback",
+        channel="cli",
+        cli_runner="codex",
+        cli_model="gpt-5.5",
+        cli_timeout_seconds=240,
+    )
+    assert infer(office, llm_config=cli_cfg) == "边镇"
+
+    called = []
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
+    monkeypatch.setattr(cb, "_run_backend", lambda prompt: called.append(prompt) or ("边镇", 1))
+    api_cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="gpt-api",
+        channel="api",
+    )
+
+    assert infer(office, llm_config=api_cfg) == "待铨"
+    assert called == []

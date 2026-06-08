@@ -15,6 +15,7 @@ import types
 from types import SimpleNamespace
 
 import ming_sim.cli_backend as cb
+import ming_sim.session as session_mod
 from ming_sim.session import GameSession
 
 
@@ -44,6 +45,66 @@ def _no_conv_action(monkeypatch):
                                          "new_title": "", "new_content": "", "deadline_months": 0,
                                          "cultivate_skill": "", "cultivate_trait": ""})
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
+
+
+def test_begin_turn_syncs_offices_with_runtime_llm_config(monkeypatch):
+    seen = []
+    cfg = SimpleNamespace(channel="api")
+    state = SimpleNamespace(turn_phase="summoning")
+    fake_db = SimpleNamespace(
+        load_state=lambda: state,
+        apply_historical_deaths=lambda state: [],
+        apply_historical_debuts=lambda state: [],
+        apply_historical_power_renames=lambda state: [],
+        previous_turn_summary=lambda state: "",
+        save_state=lambda state: None,
+    )
+    fake = SimpleNamespace(
+        state=state,
+        db=fake_db,
+        content=SimpleNamespace(characters={}),
+        llm_config=cfg,
+        agno_db=SimpleNamespace(),
+        previous_summary="",
+        registry=None,
+        last_decree="",
+        last_report="",
+        _begun=False,
+        auto_save=lambda label: None,
+        turn_snapshot=lambda: SimpleNamespace(ok=True),
+    )
+    monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl",
+                        lambda content, db, llm_config=None: seen.append(llm_config))
+    monkeypatch.setattr(session_mod, "MinisterRegistry",
+                        lambda llm_config, agno_db, context: SimpleNamespace())
+
+    GameSession.begin_turn(fake)
+
+    assert seen == [cfg]
+
+
+def test_chat_rollback_refresh_syncs_offices_with_runtime_llm_config(monkeypatch):
+    seen = []
+    cfg = SimpleNamespace(channel="api")
+    state = SimpleNamespace(turn_phase="summoning")
+    fake_db = SimpleNamespace(load_state=lambda: state)
+    fake = SimpleNamespace(
+        state=state,
+        db=fake_db,
+        content=SimpleNamespace(characters={}),
+        llm_config=cfg,
+        agno_db=SimpleNamespace(),
+        previous_summary="",
+        registry=SimpleNamespace(),
+    )
+    monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl",
+                        lambda content, db, llm_config=None: seen.append(llm_config))
+    monkeypatch.setattr(session_mod, "MinisterRegistry",
+                        lambda llm_config, agno_db, context: SimpleNamespace())
+
+    GameSession.refresh_runtime_after_chat_rollback(fake)
+
+    assert seen == [cfg]
 
 
 def test_no_backend_is_noop(game, monkeypatch):
