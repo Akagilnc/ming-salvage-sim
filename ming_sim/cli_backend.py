@@ -220,8 +220,12 @@ def _run_backend(prompt: str) -> Tuple[str, int]:
     return _run_agy(prompt)
 
 
+def _llm_channel(llm_config: Any = None) -> str:
+    return (getattr(llm_config, "channel", "") or "").strip().lower()
+
+
 def _cli_config_parts(llm_config: Any = None) -> Optional[Tuple[str, str, Optional[float]]]:
-    channel = (getattr(llm_config, "channel", "") or "").strip().lower()
+    channel = _llm_channel(llm_config)
     if channel != "cli":
         return None
     runner = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "agy").strip().lower()
@@ -236,6 +240,8 @@ def _cli_config_parts(llm_config: Any = None) -> Optional[Tuple[str, str, Option
 
 def _run_backend_for_config(prompt: str, llm_config: Any = None) -> Tuple[str, int]:
     """runtime CLI 配置优先；没有显式 CLI channel 时保持旧 env/default 行为。"""
+    if _llm_channel(llm_config) == "api":
+        raise RuntimeError("显式 API channel 未启用本地 CLI backend")
     parts = _cli_config_parts(llm_config)
     if parts is None:
         return _run_backend(prompt)
@@ -248,6 +254,8 @@ def _run_backend_for_config(prompt: str, llm_config: Any = None) -> Tuple[str, i
 
 
 def _backend_label(llm_config: Any = None) -> str:
+    if _llm_channel(llm_config) == "api":
+        return "api"
     parts = _cli_config_parts(llm_config)
     if parts is not None:
         return parts[0] or "agy"
@@ -256,6 +264,8 @@ def _backend_label(llm_config: Any = None) -> str:
 
 def cli_backend_active(llm_config: Any = None) -> bool:
     """是否处于 CLI 后端路径：runtime 槽或旧环境变量任一启用都算。"""
+    if _llm_channel(llm_config) == "api":
+        return False
     return _cli_config_parts(llm_config) is not None or cli_backend_from_env() is not None
 
 

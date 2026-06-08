@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import pytest
 from agno.models.openai import OpenAIChat
 
 from ming_sim import cli_backend
 from ming_sim.cli_backend import CliChat
+from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_config import for_role, load_llm_config
 from ming_sim import llm_model
 from ming_sim.llm_model import create_chat_model, verify_llm_available
@@ -122,6 +124,53 @@ def test_verify_llm_available_respects_api_channel_over_backend_env(monkeypatch)
 
     assert captured["prompt"] == "输出 ok"
     assert not isinstance(captured["model"], CliChat)
+
+
+def test_verify_llm_available_smokes_cli_channel_without_backend_env(monkeypatch):
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    seen = {}
+
+    def fake_run(prompt, llm_config=None):
+        seen["prompt"] = prompt
+        seen["config"] = llm_config
+        return "ok", 1
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", fake_run)
+    cfg = LLMConfig(
+        api_key="cli-backend",
+        base_url="",
+        model="api-fallback",
+        channel="cli",
+        cli_runner="codex",
+        cli_model="gpt-5.5",
+        cli_timeout_seconds=240,
+    )
+
+    verify_llm_available(cfg)
+
+    assert seen["prompt"] == "输出 ok"
+    assert seen["config"] is cfg
+
+
+def test_verify_llm_available_cli_channel_failure_raises(monkeypatch):
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    def boom(prompt, llm_config=None):
+        raise RuntimeError("codex missing")
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", boom)
+    cfg = LLMConfig(
+        api_key="cli-backend",
+        base_url="",
+        model="api-fallback",
+        channel="cli",
+        cli_runner="codex",
+        cli_model="gpt-5.5",
+        cli_timeout_seconds=240,
+    )
+
+    with pytest.raises(LLMUnavailable):
+        verify_llm_available(cfg)
 
 
 def test_for_role_preserves_cli_channel_fields_for_advanced_roles():

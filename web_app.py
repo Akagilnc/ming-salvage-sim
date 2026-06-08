@@ -622,6 +622,10 @@ class WebGame:
             new_config.advanced_base_url,
             new_config.advanced_api_key,
             new_config.advanced_thinking_level,
+            channel=new_config.channel,
+            cli_runner=new_config.cli_runner,
+            cli_model=new_config.cli_model,
+            cli_timeout_seconds=new_config.cli_timeout_seconds,
         )
         self.session.llm_config = new_config
         # 重建 registry 让大臣 Agent 用新配置
@@ -1628,6 +1632,7 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         advanced_base_url,
         advanced_api_key,
         advanced_thinking_level,
+        channel="api",
     )
     return {
         "ok": True,

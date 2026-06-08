@@ -97,6 +97,10 @@ def test_apply_llm_config_saves_api_channel_over_backend_env(monkeypatch):
     assert seen[0].channel == "api"
     assert fake.session.llm_config.channel == "api"
     assert saved
+    assert saved[0][1]["channel"] == "api"
+    assert saved[0][1]["cli_runner"] == "codex"
+    assert saved[0][1]["cli_model"] == "gpt-cli"
+    assert saved[0][1]["cli_timeout_seconds"] == 240
 
 
 def test_menu_save_llm_validates_api_channel_over_backend_env(monkeypatch):
@@ -118,6 +122,7 @@ def test_menu_save_llm_validates_api_channel_over_backend_env(monkeypatch):
     assert result["ok"] is True
     assert seen[0].channel == "api"
     assert saved
+    assert saved[0][1]["channel"] == "api"
 
 
 def test_menu_status_treats_saved_cli_runtime_as_ready_without_api_key(monkeypatch):
@@ -178,6 +183,31 @@ def test_fresh_start_verify_failure_keeps_existing_main_db(tmp_path, monkeypatch
         raise web_app.LLMUnavailable("LLM unavailable")
 
     monkeypatch.setattr(web_app, "verify_llm_available", fail_verify)
+
+    with pytest.raises(web_app.LLMUnavailable):
+        web_app.WebGame(fresh=True)
+
+    assert db_path.read_bytes() == b"existing-progress"
+
+
+def test_fresh_start_cli_verify_failure_keeps_existing_main_db(tmp_path, monkeypatch):
+    import ming_sim.cli_backend as _cb
+
+    db_path = tmp_path / "ming.db"
+    db_path.write_bytes(b"existing-progress")
+    monkeypatch.setenv("MING_SIM_DB", str(db_path))
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
+        "channel": "cli",
+        "api": {"base_url": "", "model": "", "api_key": ""},
+        "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": "240"},
+    })
+
+    def fail_cli_verify(prompt, llm_config=None):
+        raise RuntimeError("codex missing")
+
+    monkeypatch.setattr(_cb, "_run_backend_for_config", fail_cli_verify)
 
     with pytest.raises(web_app.LLMUnavailable):
         web_app.WebGame(fresh=True)

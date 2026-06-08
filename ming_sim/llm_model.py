@@ -152,11 +152,17 @@ def extract_agent_text(run_output: object) -> str:
 
 def verify_llm_available(llm_config: LLMConfig) -> None:
     """检查 LLM 是否可用：调用成功（HTTP 200，不抛异常）即算通过，不校验返回内容。"""
-    # CLI 后端（agy/codex）无 HTTP 端点可探，且烟测会白白起一次 ~12s 自治 agent。
-    # 本机已装并登录 CLI 即视为可用，跳过网络烟测。
-    from ming_sim.cli_backend import cli_backend_from_env
+    # fresh start 会在验证后删除旧主 DB；CLI 通道也必须真实 smoke，避免 runner 缺失/未登录时先删库。
+    from ming_sim.cli_backend import _run_backend_for_config, cli_backend_from_env
     channel = (getattr(llm_config, "channel", "") or "").strip().lower()
     if channel == "cli" or (channel != "api" and cli_backend_from_env() is not None):
+        try:
+            raw, _ = _run_backend_for_config("输出 ok", llm_config)
+            fail_if_llm_error(str(raw), "LLM 连通性检查")
+        except LLMUnavailable:
+            raise
+        except Exception as error:
+            raise llm_unavailable_from_error(error) from error
         return
     agent = Agent(
         name="LLM连通性检查",
