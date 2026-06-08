@@ -22,9 +22,14 @@ def _result():
     return SimpleNamespace(answer="", proposed_directive=None, secret_order_id=None)
 
 
-def _session(db, state, registry=None):
+def _session(db, state, registry=None, llm_config=None):
     """fake self：带 db/state/registry + 绑定共享方法与适配器。"""
-    s = SimpleNamespace(db=db, state=state, registry=registry)
+    s = SimpleNamespace(
+        db=db,
+        state=state,
+        registry=registry,
+        llm_config=llm_config or SimpleNamespace(channel=""),
+    )
     s.apply_cli_conversation_actions = types.MethodType(
         GameSession.apply_cli_conversation_actions, s)
     s._cli_backend_fallback_actions = types.MethodType(
@@ -70,6 +75,25 @@ def test_draft_prefix_registers_directive(game, monkeypatch):
         (result.proposed_directive.id,),
     ).fetchone()
     assert row["text"] == result.answer        # 真落库
+    assert row["status"] == "pending"
+
+
+def test_runtime_cli_channel_without_env_registers_directive(game, monkeypatch):
+    """runtime 选择 CLI 通道时，即使无 MING_SIM_LLM_BACKEND，也要启用会话写动作胶水。"""
+    db, state, _ = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    _no_conv_action(monkeypatch)
+    result = _result()
+    result.answer = "臣领旨。敕谕户部与陕西巡抚发太仓银三万两亲督赈发。钦此。"
+    _session(db, state, llm_config=SimpleNamespace(channel="cli"))._cli_backend_fallback_actions(
+        result, SimpleNamespace(name="毕自严", office_type="户部"), "拟旨如下：发三万两赈陕西")
+
+    assert result.proposed_directive is not None
+    row = db.conn.execute(
+        "SELECT text, status FROM turn_directives WHERE id=?",
+        (result.proposed_directive.id,),
+    ).fetchone()
+    assert row["text"] == result.answer
     assert row["status"] == "pending"
 
 
