@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
+import pytest
+
 import web_app
 from ming_sim.models import LLMConfig
 
@@ -148,3 +150,17 @@ def test_menu_status_treats_saved_cli_runtime_as_ready_without_api_key(monkeypat
     assert status["llm_ready"] is True
     assert status["llm"]["channel"] == "cli"
     assert status["llm"]["cli_runner"] == "codex"
+
+
+def test_fresh_start_without_llm_keeps_existing_main_db(tmp_path, monkeypatch):
+    db_path = tmp_path / "ming.db"
+    db_path.write_bytes(b"existing-progress")
+    monkeypatch.setenv("MING_SIM_DB", str(db_path))
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+
+    with pytest.raises(web_app.LLMUnavailable):
+        web_app.WebGame(fresh=True)
+
+    assert db_path.read_bytes() == b"existing-progress"

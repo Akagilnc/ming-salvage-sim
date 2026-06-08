@@ -432,8 +432,6 @@ class WebGame:
         random.seed(int(os.environ.get("MING_SIM_SEED", "7")))
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
         self.db_path = db_path
-        if fresh:
-            _delete_sqlite_db_files_or_raise(db_path)
         llm_config = _llm_config_from_runtime(
             runtime,
             base_url=base_url,
@@ -449,7 +447,10 @@ class WebGame:
         )
         if not llm_config.api_key:
             raise LLMUnavailable("未配 API key，请先到设置页填写。")
-        self.session = GameSession(db_path, llm_config)
+        if fresh:
+            verify_llm_available(llm_config)
+            _delete_sqlite_db_files_or_raise(db_path)
+        self.session = GameSession(db_path, llm_config, verify_llm=not fresh)
         self.session.begin_turn()
         # 召对记录持久化在 chat_messages 表，启动时恢复进内存缓存。
         self.chat_history: Dict[str, List[Dict[str, str]]] = {

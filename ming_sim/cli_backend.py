@@ -220,6 +220,40 @@ def _run_backend(prompt: str) -> Tuple[str, int]:
     return _run_agy(prompt)
 
 
+def _cli_config_parts(llm_config: Any = None) -> Optional[Tuple[str, str, Optional[float]]]:
+    channel = (getattr(llm_config, "channel", "") or "").strip().lower()
+    if channel != "cli":
+        return None
+    runner = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "agy").strip().lower()
+    model = (getattr(llm_config, "cli_model", "") or "").strip()
+    raw_timeout = getattr(llm_config, "cli_timeout_seconds", None)
+    try:
+        timeout = float(raw_timeout) if raw_timeout else None
+    except (TypeError, ValueError):
+        timeout = None
+    return runner, model, timeout
+
+
+def _run_backend_for_config(prompt: str, llm_config: Any = None) -> Tuple[str, int]:
+    """runtime CLI 配置优先；没有显式 CLI channel 时保持旧 env/default 行为。"""
+    parts = _cli_config_parts(llm_config)
+    if parts is None:
+        return _run_backend(prompt)
+    runner, model, timeout = parts
+    if runner == "codex":
+        return _run_codex(prompt, model=model or None, timeout=timeout)
+    if runner == "claude":
+        return _run_claude(prompt, model=model or None, timeout=timeout)
+    return _run_agy(prompt, timeout=timeout)
+
+
+def _backend_label(llm_config: Any = None) -> str:
+    parts = _cli_config_parts(llm_config)
+    if parts is not None:
+        return parts[0] or "agy"
+    return cli_backend_from_env() or "agy"
+
+
 def _messages_to_prompt(
     messages: List[Message],
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -303,6 +337,7 @@ def extract_minister_actions(
     minister_reply: str,
     active_orders: List[Dict[str, Any]],
     is_consort: bool = False,
+    llm_config: Any = None,
 ) -> Dict[str, Any]:
     """LLM 判皇帝本轮对密令/妃嫔的意图，返回结构化动作。失败返回「无」动作。"""
     orders_brief = "；".join(
@@ -331,7 +366,7 @@ def extract_minister_actions(
     )
     raw = ""
     try:
-        raw, _ = _run_backend(prompt)
+        raw, _ = _run_backend_for_config(prompt, llm_config)
     except Exception as exc:  # 抽取失败不阻断对话
         _log(f"大臣动作抽取失败：{exc}")
     obj = _loads_lenient(raw) or {}
@@ -456,7 +491,12 @@ def enrich_initiative_effects(title: str, stage: str = "") -> Dict[str, Any]:
     }
 
 
-def _extract_secret_order(player_command: str, minister_reply: str, default_assignee: str) -> Dict[str, Any]:
+def _extract_secret_order(
+    player_command: str,
+    minister_reply: str,
+    default_assignee: str,
+    llm_config: Any = None,
+) -> Dict[str, Any]:
     """聚焦提取：把密令交代+大臣回话抽成结构化字段。纯抽取任务（不扮演），
     与月末 extractor 同款可靠。失败则退回合理默认。"""
     prompt = (
@@ -476,12 +516,12 @@ def _extract_secret_order(player_command: str, minister_reply: str, default_assi
     )
     raw = ""
     try:
-        raw, _attempts = _run_backend(prompt)
+        raw, _attempts = _run_backend_for_config(prompt, llm_config)
     except Exception as exc:  # 提取失败不阻断：退回默认
         _log(f"密令提取失败：{exc}")
     _trace({
         "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "seq": -1, "tag": "secret_extract", "backend": cli_backend_from_env() or "agy", "model_id": "extract",
+        "seq": -1, "tag": "secret_extract", "backend": _backend_label(llm_config), "model_id": "extract",
         "dur_s": 0, "attempts": 1, "wants_json": True,
         "prompt_chars": len(prompt), "resp_chars": len(raw),
         "error": None, "prompt": prompt, "response": raw,
@@ -501,7 +541,7 @@ def _extract_secret_order(player_command: str, minister_reply: str, default_assi
 
 
 def resolve_minister_actions(
-    minister_reply: str, player_message: str = "", default_assignee: str = "",
+    minister_reply: str, player_message: str = "", default_assignee: str = "", llm_config: Any = None,
 ) -> Dict[str, Any]:
     """玩家上一句带拟旨/密令前缀时入档。
     - 拟旨：大臣回话原文即圣旨草稿（单一文本字段，够用）。
@@ -516,7 +556,7 @@ def resolve_minister_actions(
 
     secret_intent = _matched_prefix(player_message, _SECRET_PREFIXES)
     if secret_intent is not None and (reply or secret_intent):
-        out["secret_order"] = _extract_secret_order(secret_intent, reply, default_assignee)
+        out["secret_order"] = _extract_secret_order(secret_intent, reply, default_assignee, llm_config)
 
     return out
 
