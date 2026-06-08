@@ -153,6 +153,9 @@ def load_llm_config(
             api_key = ""
         if not api_key:
             api_key = getpass.getpass("请输入 API key（不会保存，回车取消）：").strip()
+        if not is_real_api_key(api_key):
+            # 手敲的也复验：占位符当真 key 同样拒掉。
+            api_key = ""
         if not api_key:
             raise SystemExit("未提供 API key，无法使用 LLM。")
     adv_base = (advanced_base_url or "").strip()
