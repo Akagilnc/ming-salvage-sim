@@ -26,6 +26,7 @@ from ming_sim.constants import ROOT_DIR
 from ming_sim.paths import bundled_path, user_data_path, user_data_dir
 from ming_sim.exceptions import ExitGame, LLMUnavailable
 from ming_sim.llm_config import (
+    cli_model_from_env,
     load_llm_config,
     load_runtime_game,
     load_runtime_llm,
@@ -300,6 +301,10 @@ def _verify_llm_configs_or_raise(config: LLMConfig) -> None:
         advanced_base_url=config.advanced_base_url,
         advanced_api_key=config.advanced_api_key,
         advanced_thinking_level=config.advanced_thinking_level,
+        channel=config.channel,
+        cli_runner=config.cli_runner,
+        cli_model=config.cli_model,
+        cli_timeout_seconds=config.cli_timeout_seconds,
     )
     try:
         verify_llm_available(advanced_config)
@@ -317,6 +322,57 @@ def _llm_error_detail(exc: Exception, prefix: str = "") -> Dict[str, Any]:
         "provider_message": getattr(exc, "provider_message", str(exc)),
         "status_code": getattr(exc, "status_code", None),
     }
+
+
+def _runtime_float(value: object, default: float) -> float:
+    try:
+        return float(value) if value not in (None, "") else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _llm_config_from_runtime(
+    runtime: Dict[str, Any],
+    *,
+    base_url: str,
+    model: str,
+    api_key: str,
+    max_tokens: int,
+    timeout_seconds: float,
+    thinking_level: str,
+    advanced_model: str,
+    advanced_base_url: str,
+    advanced_api_key: str,
+    advanced_thinking_level: str,
+) -> LLMConfig:
+    from ming_sim.cli_backend import cli_backend_from_env
+
+    channel = str(runtime.get("channel") or "").strip().lower()
+    env_runner = cli_backend_from_env()
+    if channel not in {"api", "cli"}:
+        channel = "cli" if env_runner else "api"
+    cli_slot = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
+    cli_runner = str(cli_slot.get("runner") or env_runner or ("agy" if channel == "cli" else "")).strip().lower()
+    cli_model = str(cli_slot.get("model") or cli_model_from_env(cli_runner, model)).strip()
+    cli_timeout = _runtime_float(cli_slot.get("timeout_seconds"), timeout_seconds)
+    if channel == "cli" and not api_key:
+        api_key = "cli-backend"
+    return LLMConfig(
+        api_key=api_key,
+        base_url=normalize_openai_base_url(base_url),
+        model=model,
+        max_tokens=max_tokens,
+        timeout_seconds=timeout_seconds,
+        thinking_level=normalize_thinking_level(thinking_level),
+        advanced_model=(advanced_model or "").strip(),
+        advanced_base_url=normalize_openai_base_url(advanced_base_url) if advanced_base_url else "",
+        advanced_api_key=(advanced_api_key or "").strip(),
+        advanced_thinking_level=normalize_thinking_level(advanced_thinking_level),
+        channel=channel,
+        cli_runner=cli_runner,
+        cli_model=cli_model,
+        cli_timeout_seconds=cli_timeout,
+    )
 
 
 class ChatRequest(BaseModel):
@@ -373,30 +429,26 @@ class WebGame:
         advanced_thinking_level = runtime.get("advanced_thinking_level") or advanced_thinking_level
         max_tokens = int(runtime.get("max_tokens") or 8000)
         timeout_seconds = float(runtime.get("timeout_seconds") or timeout_seconds)
-        # 探针：CLI 后端（MING_SIM_LLM_BACKEND=agy|codex）脱 api key，给占位符放行。
-        from ming_sim.cli_backend import cli_backend_from_env
-        if not api_key and cli_backend_from_env() is not None:
-            api_key = "cli-backend"
-        if not api_key:
-            raise LLMUnavailable("未配 API key，请先到设置页填写。")
         random.seed(int(os.environ.get("MING_SIM_SEED", "7")))
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
         self.db_path = db_path
         if fresh:
             _delete_sqlite_db_files_or_raise(db_path)
-        adv_base = (advanced_base_url or "").strip()
-        llm_config = LLMConfig(
-            api_key=api_key,
-            base_url=normalize_openai_base_url(base_url),
+        llm_config = _llm_config_from_runtime(
+            runtime,
+            base_url=base_url,
             model=model,
+            api_key=api_key,
             max_tokens=max_tokens,
             timeout_seconds=timeout_seconds,
-            thinking_level=normalize_thinking_level(thinking_level),
-            advanced_model=(advanced_model or "").strip(),
-            advanced_base_url=normalize_openai_base_url(adv_base) if adv_base else "",
-            advanced_api_key=(advanced_api_key or "").strip(),
-            advanced_thinking_level=normalize_thinking_level(advanced_thinking_level),
+            thinking_level=thinking_level,
+            advanced_model=advanced_model,
+            advanced_base_url=advanced_base_url,
+            advanced_api_key=advanced_api_key,
+            advanced_thinking_level=advanced_thinking_level,
         )
+        if not llm_config.api_key:
+            raise LLMUnavailable("未配 API key，请先到设置页填写。")
         self.session = GameSession(db_path, llm_config)
         self.session.begin_turn()
         # 召对记录持久化在 chat_messages 表，启动时恢复进内存缓存。
