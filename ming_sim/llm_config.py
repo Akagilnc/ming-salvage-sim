@@ -35,6 +35,10 @@ _CLI_RUNTIME_FIELDS = ("runner", "model", "timeout_seconds")
 # CLI 通道在内存里用这个占位符填 LLMConfig.api_key（脱 key 运行），它绝不是真实 key。
 CLI_BACKEND_PLACEHOLDER = "cli-backend"
 
+# CLI 子进程默认超时（秒）。与 LLMConfig.cli_timeout_seconds 默认对齐；CLI 通道的
+# timeout 单一真源——别拿 API 的 timeout_seconds（默认 180）当 CLI 子进程超时（codex R1）。
+CLI_DEFAULT_TIMEOUT_SECONDS = 300.0
+
 
 def is_real_api_key(value: object) -> bool:
     """真实 API key？空和占位符 cli-backend 都不算。
@@ -174,7 +178,8 @@ def load_llm_config(
         channel="cli" if cli_runner else "api",
         cli_runner=cli_runner or "",
         cli_model=cli_model_from_env(cli_runner or "", model),
-        cli_timeout_seconds=timeout_seconds,
+        # CLI 子进程超时用 CLI 默认，不沿用 API 的 timeout_seconds（codex R1 #2）。
+        cli_timeout_seconds=CLI_DEFAULT_TIMEOUT_SECONDS,
     )
 
 

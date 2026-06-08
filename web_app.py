@@ -26,6 +26,7 @@ from ming_sim.constants import ROOT_DIR
 from ming_sim.paths import bundled_path, user_data_path, user_data_dir
 from ming_sim.exceptions import ExitGame, LLMUnavailable
 from ming_sim.llm_config import (
+    CLI_DEFAULT_TIMEOUT_SECONDS,
     cli_model_from_env,
     is_real_api_key,
     real_api_key_or_empty,
@@ -361,7 +362,8 @@ def _llm_config_from_runtime(
     cli_slot = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
     cli_runner = str(cli_slot.get("runner") or env_runner or ("agy" if channel == "cli" else "")).strip().lower()
     cli_model = str(cli_slot.get("model") or cli_model_from_env(cli_runner, model)).strip()
-    cli_timeout = _runtime_float(cli_slot.get("timeout_seconds"), timeout_seconds)
+    # 无 saved CLI timeout 时回落 CLI 默认（300），不回落 API request timeout（codex R1 #3）。
+    cli_timeout = _runtime_float(cli_slot.get("timeout_seconds"), CLI_DEFAULT_TIMEOUT_SECONDS)
     if channel == "cli":
         api_key = ""  # CLI 通道不要 API key；占位符在 create_chat_model 构造 CliChat 时注入
     elif not is_real_api_key(api_key):
