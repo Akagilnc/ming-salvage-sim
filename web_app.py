@@ -1418,9 +1418,20 @@ def _has_main_db() -> bool:
 async def api_menu_status() -> Dict[str, Any]:
     """菜单页状态：API key 是否配好、上次主 DB 是否存在、存档列表。"""
     runtime = load_runtime_llm()
+    from ming_sim.cli_backend import cli_backend_from_env
+    env_runner = cli_backend_from_env()
+    channel = str(runtime.get("channel") or "").strip().lower()
+    if channel not in {"api", "cli"}:
+        channel = "cli" if env_runner else "api"
+    cli_slot = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
+    cli_runner = str(cli_slot.get("runner") or env_runner or ("agy" if channel == "cli" else "")).strip().lower()
+    cli_model = str(cli_slot.get("model") or cli_model_from_env(cli_runner, "")).strip()
+    cli_timeout = _runtime_float(cli_slot.get("timeout_seconds"), 300)
     has_api_key = bool(runtime.get("api_key") or os.environ.get("OPENAI_API_KEY"))
+    llm_ready = has_api_key or (channel == "cli" and bool(cli_runner))
     return {
         "has_api_key": has_api_key,
+        "llm_ready": llm_ready,
         "has_running_game": web_game is not None,
         "has_main_db": _has_main_db(),
         "saves": _scan_saves(),
@@ -1428,9 +1439,13 @@ async def api_menu_status() -> Dict[str, Any]:
         "current_campaign": _main_db_campaign_id(),
         "game_settings": load_runtime_game(),
         "llm": {
+            "channel": channel,
             "base_url": runtime.get("base_url") or os.environ.get("OPENAI_BASE_URL", ""),
             "model": runtime.get("model") or os.environ.get("OPENAI_MODEL", ""),
             "has_api_key": has_api_key,
+            "cli_runner": cli_runner,
+            "cli_model": cli_model,
+            "cli_timeout_seconds": cli_timeout,
             "max_tokens": int(runtime.get("max_tokens") or 8000),
             "timeout_seconds": float(runtime.get("timeout_seconds") or os.environ.get("OPENAI_TIMEOUT_SECONDS", "180") or 180),
             "thinking_level": runtime.get("thinking_level") or os.environ.get("OPENAI_THINKING_LEVEL", ""),

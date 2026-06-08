@@ -391,6 +391,7 @@ export type MenuCampaign = {
 
 export type MenuStatus = {
   has_api_key: boolean;
+  llm_ready?: boolean;
   has_running_game: boolean;
   has_main_db: boolean;
   saves: MenuSave[];
@@ -398,9 +399,13 @@ export type MenuStatus = {
   current_campaign?: string;
   game_settings?: { hitl_min_decisions: number };
   llm: {
+    channel?: "api" | "cli";
     base_url: string;
     model: string;
     has_api_key: boolean;
+    cli_runner?: string;
+    cli_model?: string;
+    cli_timeout_seconds?: number;
     max_tokens: number;
     timeout_seconds: number;
     thinking_level: string;
