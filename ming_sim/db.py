@@ -3000,6 +3000,12 @@ class GameDB:
                     return max(0, min(100, int(item.get(field, default))))
                 except (TypeError, ValueError):
                     return default
+            def _cannon() -> int:
+                # 随军大炮=门数 clamp 0-12；LLM 给非 int(如"几门")兜底 0，不让 int() 抛崩建军（PR codex）
+                try:
+                    return max(0, min(12, int(item.get("cannon_equipment", 0) or 0)))
+                except (TypeError, ValueError):
+                    return 0
             def _arrears_init() -> int:
                 # arrears 单位=累计欠饷万两，无上限；新军默认 0
                 try:
@@ -3025,7 +3031,7 @@ class GameDB:
                 _score("mobility"),
                 _score("loyalty"),
                 _score("firearm_equipment", 0),
-                max(0, min(12, int(item.get("cannon_equipment", 0) or 0))),  # 随军大炮=门数，clamp 0-12
+                _cannon(),  # 随军大炮=门数，clamp 0-12，非 int 兜底 0
                 str(item.get("status") or "新立"),
                 owner,
             )
