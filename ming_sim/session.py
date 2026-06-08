@@ -638,37 +638,104 @@ class GameSession:
         self._cli_backend_fallback_actions(result, character, message)
         return result
 
-    def _cli_backend_fallback_actions(
-        self, result: "ChatTurnResult", character: Character, player_message: str = "",
-    ) -> None:
-        """CLI 后端下取大臣本轮拟旨/密令并入档（agno 工具不触发时）。"""
-        from ming_sim.cli_backend import cli_backend_from_env, resolve_minister_actions
+    def apply_cli_conversation_actions(
+        self, character: Character, player_message: str, answer: str,
+        has_directive: bool, secret_order_id: Optional[int],
+    ) -> Dict[str, Any]:
+        """CLI 后端（无 function-calling）会话落地的【唯一真源】，session.chat 非流式路径与
+        web streaming 路径共用，杜绝两边逻辑漂移（CMR F3 / codexC-1）。
+
+        做三件事：① 前缀「拟旨」→ add_directive；② 前缀「密令」→ upsert + refresh；
+        ③ 无前缀时让 LLM 判会话动作（更新/催办/提交核议/记进展/调教妃嫔）并落地。
+        入参 has_directive / secret_order_id 表示 agno 工具路径是否已产出（已产则不重复）。
+        返回 {"directive": {id,text,status,notes}|None, "secret_order_id": int|None}。"""
+        from ming_sim.cli_backend import (
+            cli_backend_from_env, resolve_minister_actions, extract_minister_actions,
+        )
+        out: Dict[str, Any] = {"directive": None, "secret_order_id": secret_order_id}
         if cli_backend_from_env() is None:
-            return
-        acts = resolve_minister_actions(result.answer or "", player_message, default_assignee=character.name)
-        if result.proposed_directive is None and acts["decree_text"]:
+            return out
+        minister_name = character.name
+        reply = (answer or "").strip()
+        acts = resolve_minister_actions(reply, player_message, default_assignee=minister_name)
+        if not has_directive and acts["decree_text"]:
             text = acts["decree_text"]
-            directive_id = self.db.add_directive(
+            did = self.db.add_directive(
                 self.state, None, text, "大臣拟旨",
-                actor=character.name, notes=f"由{character.name}拟旨入档", status="pending",
+                actor=minister_name, notes=f"由{minister_name}拟旨入档", status="pending",
             )
-            result.proposed_directive = DirectiveView(
-                id=directive_id, text=text, status="pending",
-                source="大臣拟旨", notes=f"由{character.name}拟旨入档",
-            )
-        if not result.secret_order_id and acts["secret_order"]:
+            out["directive"] = {"id": did, "text": text, "status": "pending",
+                                "notes": f"由{minister_name}拟旨入档"}
+        if not out["secret_order_id"] and acts["secret_order"]:
             so = acts["secret_order"]
-            assignee = so.get("assignee") or character.name
-            # upsert（非 create）：同承办人再下密令=更新同条，不建重复，与 web 流式路径一致（CMR F3）。
-            order_id, _was_update = self.db.upsert_secret_order(
+            assignee = so.get("assignee") or minister_name
+            oid, _ = self.db.upsert_secret_order(
                 self.state, assignee, so["title"], so["content"],
                 so.get("tags") or [], deadline_months=so.get("deadline_months", 0),
             )
-            if order_id:
-                result.secret_order_id = order_id
-                # 建/改后刷新承办大臣 agent 缓存，否则本回合大臣不知有此密令（与 web 一致）。
+            if oid:
+                out["secret_order_id"] = oid
                 if self.registry is not None:
                     self.registry.refresh(assignee)
+        # 会话动作：本轮未经前缀落密令时，LLM 判皇帝对密令/妃嫔的意图再落地。
+        if not out["secret_order_id"]:
+            is_consort = getattr(character, "office_type", "") == "后宫"
+            active = self.db.get_active_secret_orders_for_minister(minister_name)
+            if active or is_consort:
+                act = extract_minister_actions(player_message, reply, active, is_consort)
+                sa = act["secret_action"]
+                target = None
+                if act["order_id"]:
+                    target = next((o for o in active if int(o["id"]) == act["order_id"]), None)
+                if target is None and len(active) == 1:
+                    target = active[0]
+                if target is not None and sa and sa != "无":
+                    oid = int(target["id"])
+                    # target 可能是 pending_review：催办对非 active 抛错、提交核议返 False，按状态分流（CMR F1）。
+                    target_active = str(target.get("status") or "active") == "active"
+                    if sa == "更新":
+                        if self.db.update_secret_order_by_id(
+                            self.state, oid,
+                            act["new_title"] or str(target.get("title") or ""),
+                            act["new_content"] or str(target.get("content") or ""),
+                            tags=None, deadline_months=act["deadline_months"]):
+                            out["secret_order_id"] = oid
+                    elif sa == "催办" and target_active:
+                        self.db.rush_secret_order(oid, self.state, deadline_months=1, reason=player_message[:80])
+                        out["secret_order_id"] = oid
+                    elif sa == "提交核议":
+                        if self.db.submit_secret_order_for_review(
+                                oid, reply[:200], self.state.year, self.state.period):
+                            out["secret_order_id"] = oid
+                    elif sa == "记进展" and int(target.get("turn_issued") or 0) != int(self.state.turn):
+                        self.db.update_secret_order_progress(oid, reply[:200], self.state.year, self.state.period)
+                        out["secret_order_id"] = oid
+                    if out["secret_order_id"] and self.registry is not None:
+                        self.registry.refresh(minister_name)
+                if is_consort and (act["cultivate_skill"] or act["cultivate_trait"]):
+                    self.db.cultivate_consort(
+                        character.name, self.state.turn, act["cultivate_skill"], act["cultivate_trait"])
+                    if self.registry is not None:
+                        self.registry.refresh(character.name)
+        return out
+
+    def _cli_backend_fallback_actions(
+        self, result: "ChatTurnResult", character: Character, player_message: str = "",
+    ) -> None:
+        """session.chat 非流式路径：调共享会话落地，映射回 ChatTurnResult（agno 工具不触发时）。"""
+        res = self.apply_cli_conversation_actions(
+            character, player_message, result.answer or "",
+            has_directive=result.proposed_directive is not None,
+            secret_order_id=result.secret_order_id,
+        )
+        if result.proposed_directive is None and res["directive"]:
+            d = res["directive"]
+            result.proposed_directive = DirectiveView(
+                id=d["id"], text=d["text"], status=d["status"],
+                source="大臣拟旨", notes=d["notes"],
+            )
+        if res["secret_order_id"]:
+            result.secret_order_id = res["secret_order_id"]
 
     def _apply_appointment(self, payload: str, appointer: Character) -> Tuple[str, str]:
         """吏部 propose_appointment 落地：建档入库 + 注册 Agent，本回合即可召见。

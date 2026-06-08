@@ -1177,75 +1177,16 @@ class WebGame:
                             secret_order_id = self.session._apply_secret_order(payload_json, minister_name)
                     # 密令结案不再走大臣工具，由月末推演 + extractor 写入
             # CLI 后端（agy/codex）：玩家用拟旨/密令按钮（消息带前缀）时，把大臣这句回话原文入档。
-            from ming_sim.cli_backend import cli_backend_from_env, resolve_minister_actions
-            if cli_backend_from_env() is not None:
-                acts = resolve_minister_actions(answer, text, default_assignee=minister_name)
-                if proposed is None and acts["decree_text"]:
-                    did = self.db.add_directive(
-                        self.state, None, acts["decree_text"], "大臣拟旨",
-                        notes=f"由{character.name}拟旨入档", status="pending",
-                    )
-                    proposed = {"id": did, "text": acts["decree_text"], "status": "pending",
-                                "notes": f"由{character.name}拟旨入档"}
-                if not secret_order_id and acts["secret_order"]:
-                    so = acts["secret_order"]
-                    assignee = so.get("assignee") or minister_name
-                    # upsert：同承办大臣已有 active 密令则更新要旨，否则新建——
-                    # 补 CLI 后端无 function-calling 下「补充/更新已有密令」的缺口，再次下密令即更新而非建重复。
-                    secret_order_id, _so_updated = self.db.upsert_secret_order(
-                        self.state, assignee, so["title"], so["content"],
-                        so.get("tags") or [], deadline_months=so.get("deadline_months", 0),
-                    )
-                    # 创建/更新后立即重建承办大臣 agent，使其上下文带上最新密令简报；否则缓存冻结，
-                    # 大臣"不知道自己有这密令"，同对话内补充/追问得不到呼应（registry.get 本回合复用缓存）。
-                    if self.session.registry is not None:
-                        self.session.registry.refresh(assignee)
-                # 会话动作（无 function-calling 下，靠 LLM 判意图，不用关键字白名单）：
-                # 本轮没经前缀创建/更新密令时，若该大臣有 active 密令或是妃嫔，让 LLM 读对话判
-                # 皇帝要对密令做什么（更新/提交核议/催办/记进展）+ 是否调教妃嫔，再落地。
-                if not secret_order_id:
-                    is_consort = getattr(character, "office_type", "") == "后宫"
-                    active = self.db.get_active_secret_orders_for_minister(minister_name)
-                    if active or is_consort:
-                        from ming_sim.cli_backend import extract_minister_actions
-                        act = extract_minister_actions(text, answer, active, is_consort)
-                        sa = act["secret_action"]
-                        target = None
-                        if act["order_id"]:
-                            target = next((o for o in active if int(o["id"]) == act["order_id"]), None)
-                        if target is None and len(active) == 1:
-                            target = active[0]
-                        if target is not None and sa and sa != "无":
-                            oid = int(target["id"])
-                            # target 可能是 pending_review(get_active_..._for_minister 含两态)：
-                            # 催办对非 active 会抛错、提交核议对非 active 返回 False，按 target 状态分流(CMR F1)。
-                            target_active = str(target.get("status") or "active") == "active"
-                            if sa == "更新":
-                                # 按精确 oid 改(非 upsert-newest，否则多令时改错条)；tags=None 保留原标签。
-                                if self.db.update_secret_order_by_id(
-                                    self.state, oid,
-                                    act["new_title"] or str(target.get("title") or ""),
-                                    act["new_content"] or str(target.get("content") or ""),
-                                    tags=None, deadline_months=act["deadline_months"]):
-                                    secret_order_id = oid
-                            elif sa == "催办" and target_active:
-                                self.db.rush_secret_order(oid, self.state, deadline_months=1, reason=text[:80])
-                                secret_order_id = oid
-                            elif sa == "提交核议":
-                                if self.db.submit_secret_order_for_review(
-                                        oid, answer[:200], self.state.year, self.state.period):
-                                    secret_order_id = oid
-                            elif sa == "记进展" and int(target.get("turn_issued") or 0) != int(self.state.turn):
-                                self.db.update_secret_order_progress(
-                                    oid, answer[:200], self.state.year, self.state.period)
-                                secret_order_id = oid
-                            if secret_order_id and self.session.registry is not None:
-                                self.session.registry.refresh(minister_name)
-                        if is_consort and (act["cultivate_skill"] or act["cultivate_trait"]):
-                            self.db.cultivate_consort(
-                                character.name, self.state.turn, act["cultivate_skill"], act["cultivate_trait"])
-                            if self.session.registry is not None:
-                                self.session.registry.refresh(character.name)
+            # CLI 后端会话落地走共享真源 session.apply_cli_conversation_actions(同 session.chat 非流式路径)，
+            # 杜绝 web/CLI 两边逻辑漂移（CMR F3 / codexC-1）。
+            res = self.session.apply_cli_conversation_actions(
+                character, text, answer,
+                has_directive=proposed is not None, secret_order_id=secret_order_id,
+            )
+            if proposed is None and res["directive"]:
+                proposed = res["directive"]
+            if res["secret_order_id"]:
+                secret_order_id = res["secret_order_id"]
             self._record_chat_rollback_items(chat_turn_id, before_snapshot)
             payload = self._chat_payload(
                 minister_name, answer, court_action=court_action, next_minister=next_minister,
@@ -1788,12 +1729,15 @@ async def api_create_secret_order(minister_name: str, request: SecretOrderReques
     if not title or not content:
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="title 和 content 不能为空")
-    order_id, _updated = game.db.upsert_secret_order(
+    # 直接下达=显式新建一道密令（create，非 upsert）：皇帝点「下密令」按钮给确切 title+content
+    # 就是要一道新令，同大臣可有多条 active；upsert 会静默覆盖最新 active 那条（codexC-2）。
+    # 「更新已有密令」走会话路径(LLM 判意图 → update_secret_order_by_id 精确改)，不在此端点。
+    order_id = game.db.create_secret_order(
         game.session.state, minister_name, title, content, request.tags, deadline_months=request.deadline_months
     )
     if game.session.registry is not None:
         game.session.registry.refresh(minister_name)  # 上下文带上最新密令
-    print(f"[secret_order/api] {'更新' if _updated else '新建'} minister={minister_name} title={title!r} id={order_id}")
+    print(f"[secret_order/api] 新建 minister={minister_name} title={title!r} id={order_id}")
     return {"order_id": order_id, "minister_name": minister_name, "title": title, "status": "active"}
 
 

@@ -133,6 +133,8 @@ ARMY_FIELD_LABELS = {
     "arrears": "欠饷",
     "mobility": "机动",
     "loyalty": "忠诚",
+    "firearm_equipment": "火器",
+    "cannon_equipment": "随军大炮",
     "status": "状态",
     "owner_power": "归属",
 }
