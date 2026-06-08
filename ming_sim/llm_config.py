@@ -228,10 +228,23 @@ def save_runtime_llm(
     if active_channel not in {"api", "cli"}:
         active_channel = "api"
     existing = load_runtime_llm()
+    existing_api = existing.get("api") if isinstance(existing.get("api"), dict) else {}
     existing_cli = existing.get("cli") if isinstance(existing.get("cli"), dict) else {}
-    payload = {
-        "channel": active_channel,
-        "api": {
+    api_inputs = (
+        base_url,
+        model,
+        api_key,
+        thinking_level,
+        advanced_model,
+        advanced_base_url,
+        advanced_api_key,
+        advanced_thinking_level,
+    )
+    preserve_api = active_channel == "cli" and not any((value or "").strip() for value in api_inputs)
+    api_payload = (
+        _api_runtime_slot(existing_api)
+        if preserve_api
+        else {
             "base_url": (base_url or "").strip(),
             "model": (model or "").strip(),
             "api_key": (api_key or "").strip(),
@@ -242,7 +255,11 @@ def save_runtime_llm(
             "advanced_base_url": (advanced_base_url or "").strip(),
             "advanced_api_key": (advanced_api_key or "").strip(),
             "advanced_thinking_level": normalize_thinking_level(advanced_thinking_level),
-        },
+        }
+    )
+    payload = {
+        "channel": active_channel,
+        "api": api_payload,
         "cli": {
             "runner": (cli_runner if cli_runner is not None else str(existing_cli.get("runner", ""))).strip(),
             "model": (cli_model if cli_model is not None else str(existing_cli.get("model", ""))).strip(),
