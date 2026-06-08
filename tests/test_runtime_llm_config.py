@@ -133,3 +133,50 @@ def test_save_runtime_llm_preserves_existing_cli_slot_when_saving_api(tmp_path, 
         "model": "claude-opus-4-8",
         "timeout_seconds": "300",
     }
+
+
+def test_save_runtime_llm_preserves_existing_api_slot_when_saving_cli(tmp_path, monkeypatch):
+    path = tmp_path / "runtime_llm.json"
+    path.write_text(
+        json.dumps(
+            {
+                "channel": "api",
+                "api": {
+                    "base_url": "https://api.example.com/v1",
+                    "model": "gpt-api",
+                    "api_key": "sk-api",
+                    "max_tokens": 4096,
+                    "timeout_seconds": 150,
+                    "thinking_level": "minimal",
+                },
+                "cli": {"runner": "", "model": "", "timeout_seconds": ""},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
+
+    llm_config.save_runtime_llm(
+        "",
+        "",
+        "",
+        channel="cli",
+        cli_runner="codex",
+        cli_model="gpt-5.5",
+        cli_timeout_seconds=240,
+    )
+
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["channel"] == "cli"
+    assert saved["api"]["base_url"] == "https://api.example.com/v1"
+    assert saved["api"]["model"] == "gpt-api"
+    assert saved["api"]["api_key"] == "sk-api"
+    assert saved["api"]["max_tokens"] == "4096"
+    assert saved["api"]["timeout_seconds"] == "150"
+    assert saved["api"]["thinking_level"] == "minimal"
+    assert saved["cli"] == {
+        "runner": "codex",
+        "model": "gpt-5.5",
+        "timeout_seconds": 240,
+    }
