@@ -134,11 +134,27 @@ def test_army_detail_shows_firearm_cannon(game):
     assert "随军大炮3" in detail
 
 
-def test_army_report_shows_firearm(game):
-    """army_report(list_armies 警讯)也带火器，read 侧闭环。"""
+def test_army_report_shows_firearm_and_cannon(game):
+    """army_report(list_armies 警讯)带火器 + 随军大炮(炮)，read 摘要面闭环（CMR codexC）。"""
     db, _, _ = game
     rpt = db.army_report(limit=8)
     assert "火器" in rpt
+    assert "炮" in rpt
+
+
+def test_army_detail_dynamic_new_army_shows_firearm(game):
+    """动态 new_armies 建的军(不在静态 content.armies)按 id/name 查 army_detail 也能查到 + 显火器/炮。
+    旧码 army_detail 用静态 matcher → 动态军 ValueError;改 DB 直查后 read 闭合（CMR codexB/C 架构 unify）。"""
+    db, state, _ = game
+    db.create_armies_from_extraction(state, [{
+        "id": "probe_fire_new", "name": "火器新营", "owner_power": "ming",
+        "manpower": 4000, "maintenance_per_turn": 1,
+        "firearm_equipment": 77, "cannon_equipment": 5,
+    }], actor="测试")
+    for key in ("probe_fire_new", "火器新营"):     # id 和 name 都能查到
+        detail = db.army_detail(key)
+        assert "火器77" in detail, key
+        assert "随军大炮5" in detail, key
 
 
 def test_game_world_prompt_lists_firearm_cannon():
