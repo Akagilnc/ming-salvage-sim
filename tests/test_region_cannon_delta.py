@@ -10,8 +10,14 @@ from __future__ import annotations
 import pytest
 
 from driver import run_settle
+from ming_sim.constants import REGION_FIELD_LABELS
 from ming_sim.exceptions import LLMContractError
 from ming_sim.issues import apply_score_extraction
+
+
+def test_cannon_has_chinese_display_label():
+    """城防炮在 REGION_FIELD_LABELS 有中文名 → turn 日志显示「城防炮」而非回退英文 cannon。"""
+    assert REGION_FIELD_LABELS.get("cannon") == "城防炮"
 
 
 def test_city_cannon_delta_lands_clamped(game):
