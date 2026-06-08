@@ -27,6 +27,24 @@ def test_cli_settle_rejects_non_dict_envelope_delta(game, tmp_path):
         driver.main(["settle", "--delta", str(bad)], game=game)
 
 
+def test_run_settle_rejects_falsy_non_dict_raw_delta(game):
+    """run_settle 的 public 边界:falsy 非 dict(如 [])不被 `or {}` 吞成空结算照样推进(codex-P1a)。"""
+    db, state, content = game
+    before = state.turn
+    with pytest.raises(SystemExit):
+        run_settle(db, state, content, [])
+    assert state.turn == before
+
+
+def test_run_settle_rejects_unknown_toplevel_key(game):
+    """未知顶层 key(拼写错,如 地区变更↔地区变化)响亮报错,不静默无效推进(codex-P1b)。"""
+    db, state, content = game
+    before = state.turn
+    with pytest.raises(SystemExit):
+        run_settle(db, state, content, {"地区变更": {"shanxi": {"动乱": 5}}})
+    assert state.turn == before
+
+
 def test_run_settle_rejects_non_dict_module_value(game):
     """畸形模块值(国势变化="foo"→metric_delta 非 dict)在 pre_settle 动 DB 前响亮报错,回合不半推进。"""
     db, state, content = game
