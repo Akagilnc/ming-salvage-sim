@@ -264,7 +264,10 @@ def _run_backend_for_config(prompt: str, llm_config: Any = None) -> Tuple[str, i
 def _backend_label(llm_config: Any = None) -> str:
     if _llm_channel(llm_config) == "api":
         return "api"
-    parts = _cli_config_parts(llm_config)
+    try:
+        parts = _cli_config_parts(llm_config)
+    except RuntimeError:
+        parts = None  # 不支持的 runner：trace 标签回落，不让构造崩
     if parts is not None:
         return parts[0] or "agy"
     return cli_backend_from_env() or "agy"
@@ -274,7 +277,13 @@ def cli_backend_active(llm_config: Any = None) -> bool:
     """是否处于 CLI 后端路径：runtime 槽或旧环境变量任一启用都算。"""
     if _llm_channel(llm_config) == "api":
         return False
-    return _cli_config_parts(llm_config) is not None or cli_backend_from_env() is not None
+    try:
+        if _cli_config_parts(llm_config) is not None:
+            return True
+    except RuntimeError:
+        # 不支持的 runner=不是有效 CLI 路径=判 not-active（守卫总函数，不抛）
+        pass
+    return cli_backend_from_env() is not None
 
 
 def _messages_to_prompt(

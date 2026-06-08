@@ -468,3 +468,42 @@ def test_reset_cli_verify_failure_keeps_existing_main_db(tmp_path, monkeypatch):
         web_app.WebGame.reset_game(fake)
 
     assert db_path.read_bytes() == b"existing-progress"
+
+
+def test_menu_save_llm_api_channel_rejects_placeholder_existing_key(monkeypatch):
+    # ship-pre CMR Group A：API 通道存档，空 api_key 时不能把占位符 cli-backend 当真 key 复用。
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    saved = []
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda c: None)
+    monkeypatch.setattr(web_app, "save_runtime_llm", lambda *a, **k: saved.append((a, k)))
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {"api_key": "cli-backend"})
+
+    with pytest.raises(web_app.HTTPException) as exc:
+        asyncio.run(web_app.api_menu_save_llm(web_app.LlmSetupRequest(
+            base_url="https://api.example.com",
+            model="gpt-api",
+            api_key="",
+        )))
+
+    assert exc.value.status_code == 400
+    assert not saved
+
+
+def test_apply_llm_config_does_not_reuse_placeholder_as_api_key(monkeypatch):
+    # ship-pre CMR Group A：CLI session 上提交空 key 的 API 设置，不能把 cli-backend 当 API key 带进去。
+    saved = []
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda c: None)
+    monkeypatch.setattr(web_app, "save_runtime_llm", lambda *a, **k: saved.append((a, k)))
+    current = LLMConfig(
+        api_key="cli-backend",
+        base_url="https://old.example.com/v1",
+        model="old-model",
+        channel="cli",
+        cli_runner="codex",
+        cli_model="gpt-cli",
+    )
+    fake = SimpleNamespace(session=SimpleNamespace(llm_config=current, begin_turn=lambda: None))
+
+    cfg = web_app.WebGame.apply_llm_config(fake, "", "", "", max_tokens=16000)
+
+    assert cfg.api_key != "cli-backend"

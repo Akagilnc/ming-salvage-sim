@@ -577,7 +577,8 @@ class WebGame:
     ) -> LLMConfig:
         base = normalize_openai_base_url(base_url.strip() or self.session.llm_config.base_url)
         new_model = model.strip() or self.session.llm_config.model
-        new_key = api_key.strip() or self.session.llm_config.api_key
+        _cur_key = self.session.llm_config.api_key
+        new_key = api_key.strip() or (_cur_key if _has_real_api_key(_cur_key) else "")
         new_max = max_tokens if max_tokens > 0 else self.session.llm_config.max_tokens
         new_timeout = timeout_seconds if timeout_seconds > 0 else self.session.llm_config.timeout_seconds
         if thinking_level is None:
@@ -1668,7 +1669,10 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="base_url / model 不能为空。")
     if not api_key:
         existing = load_runtime_llm()
-        api_key = existing.get("api_key") or os.environ.get("OPENAI_API_KEY", "")
+        for candidate in (existing.get("api_key"), os.environ.get("OPENAI_API_KEY", "")):
+            if _has_real_api_key(candidate):
+                api_key = str(candidate).strip()
+                break
     if not api_key:
         raise HTTPException(status_code=400, detail="api_key 未配置，请填写。")
     # advanced_api_key 留空：复用已存的（避免覆盖成空）。
@@ -1715,7 +1719,7 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         "llm": {
             "base_url": normalized_base_url,
             "model": model,
-            "has_api_key": True,
+            "has_api_key": _has_real_api_key(api_key),
             "max_tokens": max_tokens,
             "timeout_seconds": timeout_seconds,
             "thinking_level": thinking_level,
