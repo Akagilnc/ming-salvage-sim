@@ -164,3 +164,22 @@ def test_fresh_start_without_llm_keeps_existing_main_db(tmp_path, monkeypatch):
         web_app.WebGame(fresh=True)
 
     assert db_path.read_bytes() == b"existing-progress"
+
+
+def test_fresh_start_verify_failure_keeps_existing_main_db(tmp_path, monkeypatch):
+    db_path = tmp_path / "ming.db"
+    db_path.write_bytes(b"existing-progress")
+    monkeypatch.setenv("MING_SIM_DB", str(db_path))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+
+    def fail_verify(config):
+        raise web_app.LLMUnavailable("LLM unavailable")
+
+    monkeypatch.setattr(web_app, "verify_llm_available", fail_verify)
+
+    with pytest.raises(web_app.LLMUnavailable):
+        web_app.WebGame(fresh=True)
+
+    assert db_path.read_bytes() == b"existing-progress"

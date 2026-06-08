@@ -254,6 +254,11 @@ def _backend_label(llm_config: Any = None) -> str:
     return cli_backend_from_env() or "agy"
 
 
+def cli_backend_active(llm_config: Any = None) -> bool:
+    """是否处于 CLI 后端路径：runtime 槽或旧环境变量任一启用都算。"""
+    return _cli_config_parts(llm_config) is not None or cli_backend_from_env() is not None
+
+
 def _messages_to_prompt(
     messages: List[Message],
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -426,7 +431,7 @@ def _loads_lenient(raw: str) -> Optional[dict]:
     return obj if isinstance(obj, dict) else None
 
 
-def enrich_initiative_effects(title: str, stage: str = "") -> Dict[str, Any]:
+def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = None) -> Dict[str, Any]:
     """国策(initiative)立项后 agy 一贯不填效果字段（实测 0/4）。这里聚焦补全：
     按国策标题/现状生成 解决效果(完成回报)/持续效果(月度成本)/失败效果。
     纯数值设计任务（不扮演），与月末 extractor 同款可靠。返回英文 key 的三个 dict。"""
@@ -458,12 +463,12 @@ def enrich_initiative_effects(title: str, stage: str = "") -> Dict[str, Any]:
     )
     raw = ""
     try:
-        raw, _ = _run_backend(prompt)
+        raw, _ = _run_backend_for_config(prompt, llm_config)
     except Exception as exc:  # 补全失败不阻断结算
         _log(f"国策效果补全失败：{exc}")
     _trace({
         "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "seq": -1, "tag": "issue_enrich", "backend": cli_backend_from_env() or "agy", "model_id": "enrich",
+        "seq": -1, "tag": "issue_enrich", "backend": _backend_label(llm_config), "model_id": "enrich",
         "dur_s": 0, "attempts": 1, "wants_json": True,
         "prompt_chars": len(prompt), "resp_chars": len(raw),
         "error": None, "prompt": prompt, "response": raw,
