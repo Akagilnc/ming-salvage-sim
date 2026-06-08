@@ -175,6 +175,36 @@ def test_verify_llm_available_cli_channel_failure_raises(monkeypatch):
         verify_llm_available(cfg)
 
 
+def test_verify_llm_available_smokes_legacy_env_only_backend(monkeypatch):
+    """legacy env-only 路径（无显式 channel + MING_SIM_LLM_BACKEND 设置）现在也真实 smoke
+    （旧版直接 return 跳过）：触发 _run_backend_for_config，失败抛 LLMUnavailable，
+    避免 fresh-start 在 runner 缺失时先删主库。"""
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
+    seen = {}
+
+    def fake_run(prompt, llm_config=None):
+        seen["prompt"] = prompt
+        return "ok", 1
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", fake_run)
+    cfg = LLMConfig(api_key="cli-backend", base_url="", model="api-fallback", channel="")
+    verify_llm_available(cfg)
+    assert seen["prompt"] == "输出 ok"
+
+
+def test_verify_llm_available_legacy_env_only_failure_raises(monkeypatch):
+    """legacy env-only smoke 失败同样抛 LLMUnavailable（fail-fast，不静默放行）。"""
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
+
+    def boom(prompt, llm_config=None):
+        raise RuntimeError("agy missing")
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", boom)
+    cfg = LLMConfig(api_key="cli-backend", base_url="", model="api-fallback", channel="")
+    with pytest.raises(LLMUnavailable):
+        verify_llm_available(cfg)
+
+
 def test_for_role_preserves_cli_channel_fields_for_advanced_roles():
     cfg = LLMConfig(
         api_key="cli-backend",
@@ -193,3 +223,29 @@ def test_for_role_preserves_cli_channel_fields_for_advanced_roles():
     assert derived.cli_runner == "codex"
     assert derived.cli_model == "gpt-5.5"
     assert derived.cli_timeout_seconds == 240
+
+
+def test_cli_empty_cli_model_does_not_leak_api_model_to_runner(monkeypatch):
+    """RT2(Red Team)：channel=cli + cli_model 空时，不许把 API model 名（llm_config.model）
+    当 --model 漏给 codex/claude——回落到 runner 默认（codex→gpt-5.5、claude→默认、agy 无
+    --model 故非 API 名即可）。覆盖 #52 同类的 for_role/advanced 触发路径。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.delenv("MING_SIM_CODEX_MODEL", raising=False)
+    monkeypatch.delenv("MING_SIM_CLAUDE_MODEL", raising=False)
+
+    def _cli(runner: str) -> CliChat:
+        return create_chat_model(LLMConfig(
+            api_key="cli-backend", base_url="", model="api-fallback-model",
+            channel="cli", cli_runner=runner, cli_model="",
+        ))
+
+    m_codex = _cli("codex")
+    assert m_codex.id == "gpt-5.5"
+    assert m_codex.id != "api-fallback-model"
+
+    m_claude = _cli("claude")
+    assert m_claude.id == "claude-opus-4-8"
+    assert m_claude.id != "api-fallback-model"
+
+    m_agy = _cli("agy")
+    assert m_agy.id != "api-fallback-model"   # agy 无 --model，空 id 即可，关键是不漏 API 名

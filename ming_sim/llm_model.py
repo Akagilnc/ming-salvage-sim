@@ -124,7 +124,12 @@ def create_chat_model(
         cli_model = (getattr(llm_config, "cli_model", "") or "").strip()
         if cli_model:
             kwargs["id"] = cli_model
-        elif channel != "cli":
+        elif channel == "cli":
+            # 空 cli_model 不许把 API model 名（kwargs["id"]=llm_config.model）漏给
+            # codex/claude 的 --model（RT2）：回落 runner 默认（agy 无 --model→空串）。
+            from ming_sim.llm_config import cli_model_from_env
+            kwargs["id"] = cli_model_from_env(backend)
+        else:
             kwargs["id"] = ""
         cli_timeout = getattr(llm_config, "cli_timeout_seconds", None)
         if cli_timeout:

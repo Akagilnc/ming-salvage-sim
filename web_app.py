@@ -1619,7 +1619,11 @@ async def _menu_save_cli_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         cli_timeout_seconds=cli_timeout,
     )
     try:
-        _verify_llm_configs_or_raise(config)
+        # CLI/API smoke 是阻塞子进程/网络调用(CLI 最长 cli_timeout_seconds),不能跑在
+        # asyncio event loop 上卡死并发请求 → offload 到线程池(P1/P2)。verify 只读不改盘面。
+        await asyncio.get_running_loop().run_in_executor(
+            None, _verify_llm_configs_or_raise, config
+        )
     except HTTPException:
         raise
     except LLMUnavailable as exc:
@@ -1703,7 +1707,11 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         channel="api",
     )
     try:
-        _verify_llm_configs_or_raise(config)
+        # CLI/API smoke 是阻塞子进程/网络调用(CLI 最长 cli_timeout_seconds),不能跑在
+        # asyncio event loop 上卡死并发请求 → offload 到线程池(P1/P2)。verify 只读不改盘面。
+        await asyncio.get_running_loop().run_in_executor(
+            None, _verify_llm_configs_or_raise, config
+        )
     except HTTPException:
         raise
     except LLMUnavailable as exc:
