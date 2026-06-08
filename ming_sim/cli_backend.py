@@ -138,6 +138,8 @@ def _run_agy(prompt: str, timeout: Optional[float] = None) -> Tuple[str, int]:
     for attempt in range(1, 5):  # 初试 1 + 最多 retry 3 = 4
         _warm_keychain()
         try:
+            # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
+            # 安全审计(Sourcery):list-form argv、无 shell=True → 不经 shell 解析,无注入面。prompt 走 stdin。
             proc = subprocess.run(
                 [_AGY_BIN, "-p", "--sandbox"],
                 input=prompt, capture_output=True, text=True, timeout=run_timeout,
@@ -178,6 +180,8 @@ def _run_codex(prompt: str, model: Optional[str] = None, timeout: Optional[float
         cmd += ["-c", f'model_reasoning_effort="{reasoning}"']
     cmd += ["--ephemeral", "--skip-git-repo-check", "-"]
     try:
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
+        # 安全审计(Sourcery):list-form argv、无 shell=True;runner 已 allowlist、model 为独立 argv、prompt 走 stdin → 无注入面。
         proc = subprocess.run(
             cmd, input=prompt, capture_output=True, text=True, timeout=timeout or _AGY_TIMEOUT,
             cwd=_AGY_CWD,
@@ -202,6 +206,8 @@ def _run_claude(prompt: str, model: Optional[str] = None, timeout: Optional[floa
     cmd = [_CLAUDE_BIN, "-p", "--model", (model or _CLAUDE_MODEL), "--output-format", "text",
            "--disallowed-tools", *_CLAUDE_DISALLOWED]
     try:
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
+        # 安全审计(Sourcery):list-form argv、无 shell=True;runner 已 allowlist、model 为独立 argv、prompt 走 stdin → 无注入面。
         proc = subprocess.run(
             cmd, input=prompt, capture_output=True, text=True,
             timeout=timeout or _AGY_TIMEOUT, cwd=_AGY_CWD,
