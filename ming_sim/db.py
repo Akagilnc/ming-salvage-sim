@@ -76,16 +76,16 @@ def _office_type_from_table(text: str) -> str:
     return ""
 
 
-def _office_type_via_llm(text: str) -> str:
+def _office_type_via_llm(text: str, llm_config: Any = None) -> str:
     """表查不中（生造/罕见官名）时，CLI 后端在场则交 LLM 判 office_type（取 allowed_types）。
     否则返回 ''。结果按官名缓存，避免重复调用。"""
     if text in _OFFICE_TYPE_LLM_CACHE:
         return _OFFICE_TYPE_LLM_CACHE[text]
     try:
-        from ming_sim.cli_backend import cli_backend_from_env, _run_backend
+        from ming_sim.cli_backend import cli_backend_active, _run_backend_for_config
     except Exception:
         return ""
-    if cli_backend_from_env() is None:
+    if not cli_backend_active(llm_config):
         return ""
     allowed = _offices_table().get("allowed_types") or []
     allowed_set = set(allowed)
@@ -96,7 +96,7 @@ def _office_type_via_llm(text: str) -> str:
     )
     out = ""
     try:
-        raw, _ = _run_backend(prompt)
+        raw, _ = _run_backend_for_config(prompt, llm_config)
         cand = (raw or "").strip().splitlines()[0].strip() if raw else ""
         out = cand if cand in allowed_set else ""
     except Exception:
@@ -105,7 +105,7 @@ def _office_type_via_llm(text: str) -> str:
     return out
 
 
-def infer_office_type_from_office(office: str, current_type: str = "") -> str:
+def infer_office_type_from_office(office: str, current_type: str = "", llm_config: Any = None) -> str:
     """用 office 文本判 office_type：先查 offices.json 参考表（明制权威、确定），
     表查不中且 CLI 后端在场再交 LLM 判（生造官名），都不中落『待铨』。
     取代旧版那串临时正则词表（脆、漏）。外藩(后金/蒙古/朝鲜)按 power_id≠ming 另处理，不入此路。"""
@@ -118,18 +118,19 @@ def infer_office_type_from_office(office: str, current_type: str = "") -> str:
     t = _office_type_from_table(text)
     if t:
         return t
-    t = _office_type_via_llm(text)
+    t = _office_type_via_llm(text, llm_config)
     if t:
         return t
     return "待铨" if kind in COURT_OFFICE_TYPES or not kind else kind
 
 
 class GameDB:
-    def __init__(self, path: str, content: Optional[GameContent] = None):
+    def __init__(self, path: str, content: Optional[GameContent] = None, llm_config: Any = None):
         self.path = path
         # 静态设定来源。过渡期 content 可省略，省略时自行加载；
         # 步骤7 起由 GameSession 统一传入同一份 GameContent。
         self.content = content if content is not None else GameContent.load()
+        self.llm_config = llm_config
         # check_same_thread=False：流式颁诏在 worker 线程跑 resolve_turn，
         # 复用同一 GameDB 连接。游戏单写者、无并发写，跨线程安全。
         self.conn = sqlite3.connect(path, check_same_thread=False)
@@ -1154,7 +1155,7 @@ class GameDB:
         if not self.table_has_rows("characters"):
             for character in self.content.characters.values():
                 office = normalize_office(character.office)
-                office_type = infer_office_type_from_office(office, character.office_type)
+                office_type = infer_office_type_from_office(office, character.office_type, self.llm_config)
                 self.conn.execute(
                     """
                     INSERT INTO characters
@@ -1646,6 +1647,7 @@ class GameDB:
         office: str,
         office_type: str = "",
         source: str = "诏书调任",
+        llm_config: Any = None,
     ) -> None:
         """既有官员调任/升迁：改 characters.office（office_type 给空则不动），
         同步 character_offices 备档。状态不变（仍 active）。"""
@@ -1657,7 +1659,7 @@ class GameDB:
         )["office_type"]
         if not current_type:
             raise ValueError(f"{name}不属大明朝廷，不能授予大明官职")
-        eff_type = infer_office_type_from_office(office, office_type or current_type)
+        eff_type = infer_office_type_from_office(office, office_type or current_type, llm_config or self.llm_config)
         if office_type or eff_type != current_type:
             self.conn.execute(
                 "UPDATE characters SET office=?, office_type=? WHERE name=?",
@@ -1838,7 +1840,13 @@ class GameDB:
         )
         self.conn.commit()
 
-    def add_character(self, state: GameState, character: "Character", source: str = "") -> None:
+    def add_character(
+        self,
+        state: GameState,
+        character: "Character",
+        source: str = "",
+        llm_config: Any = None,
+    ) -> None:
         """运行时新建人物（吏部任命/皇帝点名）。已存在同名则不动，避免覆盖既有状态。"""
         existing = self.conn.execute(
             "SELECT name FROM characters WHERE name=?", (character.name,)
@@ -1846,7 +1854,11 @@ class GameDB:
         if existing is not None:
             return
         character.office = normalize_office(character.office)
-        character.office_type = infer_office_type_from_office(character.office, character.office_type)
+        character.office_type = infer_office_type_from_office(
+            character.office,
+            character.office_type,
+            llm_config or self.llm_config,
+        )
         # 若没有专属 portrait_id，按 office_type 分配预设池头像
         portrait_id = character.portrait_id
         if not portrait_id:

@@ -213,3 +213,32 @@ def test_fresh_start_cli_verify_failure_keeps_existing_main_db(tmp_path, monkeyp
         web_app.WebGame(fresh=True)
 
     assert db_path.read_bytes() == b"existing-progress"
+
+
+def test_reset_cli_verify_failure_keeps_existing_main_db(tmp_path, monkeypatch):
+    db_path = tmp_path / "ming.db"
+    db_path.write_bytes(b"existing-progress")
+    cfg = LLMConfig(
+        api_key="cli-backend",
+        base_url="",
+        model="api-fallback",
+        channel="cli",
+        cli_runner="codex",
+        cli_model="gpt-5.5",
+        cli_timeout_seconds=240,
+    )
+    fake = SimpleNamespace(
+        db_path=str(db_path),
+        session=SimpleNamespace(llm_config=cfg, close=lambda: None),
+        _rebuild_session=lambda llm_config, **kwargs: None,
+    )
+
+    def fail_verify(llm_config):
+        raise web_app.LLMUnavailable("codex missing")
+
+    monkeypatch.setattr(web_app, "verify_llm_available", fail_verify)
+
+    with pytest.raises(web_app.LLMUnavailable):
+        web_app.WebGame.reset_game(fake)
+
+    assert db_path.read_bytes() == b"existing-progress"
