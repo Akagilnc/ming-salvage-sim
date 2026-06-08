@@ -237,3 +237,30 @@ def test_create_chat_model_unsupported_cli_runner_raises_unavailable(monkeypatch
 
     with _pytest.raises(LLMUnavailable):
         create_chat_model(cfg)
+
+
+def test_for_role_advanced_drops_placeholder_key():
+    # ship-pre CMR round-4：advanced_api_key 占位符不该泄漏到 advanced 角色的 OpenAI client。
+    from ming_sim.llm_config import for_role
+    from ming_sim.models import LLMConfig
+
+    cfg = LLMConfig(
+        api_key="sk-main", base_url="https://api.x/v1", model="m",
+        advanced_model="gpt-adv", advanced_api_key="cli-backend", channel="api",
+    )
+    adv = for_role(cfg, "simulator")
+
+    assert adv.api_key == "sk-main"
+    assert adv.api_key != "cli-backend"
+
+
+def test_load_llm_config_api_mode_clears_placeholder(monkeypatch):
+    # ship-pre CMR round-4：API 模式（无 env CLI）下占位符 api_key 不该当真 key，
+    # 应清空走索要/报错，而非拿假 key 探 OpenAI。
+    import pytest as _pytest
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr("getpass.getpass", lambda *a, **k: "")
+
+    with _pytest.raises(SystemExit):
+        llm_config.load_llm_config(base_url="https://api.x/v1", model="m", api_key="cli-backend")

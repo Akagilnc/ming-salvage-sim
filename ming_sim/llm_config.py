@@ -43,6 +43,13 @@ def is_real_api_key(value: object) -> bool:
     return bool(key and key != CLI_BACKEND_PLACEHOLDER)
 
 
+def real_api_key_or_empty(value: object) -> str:
+    """任何会流向 HTTP/OpenAI client 的 key 赋值都过这里：真实 key 原样，
+    占位符/空归一成空串。fallback 链写成 real_api_key_or_empty(adv) or real_api_key_or_empty(main)。"""
+    key = str(value or "").strip()
+    return key if is_real_api_key(key) else ""
+
+
 def _slot_text(data: Dict[str, object], key: str) -> str:
     value = data.get(key, "")
     return "" if value is None else str(value)
@@ -139,6 +146,9 @@ def load_llm_config(
     cli_runner = cli_backend_from_env()
     if cli_runner is not None:
         api_key = api_key or CLI_BACKEND_PLACEHOLDER
+    elif not is_real_api_key(api_key):
+        # API 模式下占位符不当真 key：清空让下方走索要/报错，别拿假 key 探 OpenAI。
+        api_key = ""
     if not api_key:
         api_key = getpass.getpass("请输入 API key（不会保存，回车取消）：").strip()
     if not api_key:
@@ -152,7 +162,7 @@ def load_llm_config(
         thinking_level=normalize_thinking_level(thinking_level or os.environ.get("OPENAI_THINKING_LEVEL", "")),
         advanced_model=(advanced_model or "").strip(),
         advanced_base_url=normalize_openai_base_url(adv_base) if adv_base else "",
-        advanced_api_key=(advanced_api_key or "").strip(),
+        advanced_api_key=real_api_key_or_empty(advanced_api_key),
         advanced_thinking_level=normalize_thinking_level(
             advanced_thinking_level or os.environ.get("OPENAI_ADVANCED_THINKING_LEVEL", "")
         ),
@@ -174,10 +184,8 @@ def for_role(cfg: LLMConfig, role: str) -> LLMConfig:
     advanced_model 为空时返回原 cfg（无任何替换）。"""
     if role in _ADVANCED_ROLES and (cfg.advanced_model or "").strip():
         adv_base = (cfg.advanced_base_url or "").strip() or cfg.base_url
-        # 主 key 回落时占位符不当真 key（CLI 通道下 cfg.api_key 是 cli-backend）。
-        adv_key = (cfg.advanced_api_key or "").strip() or (
-            cfg.api_key if is_real_api_key(cfg.api_key) else ""
-        )
+        # advanced/主 key 回落都过占位符过滤（CLI 通道下 cfg.api_key 是 cli-backend）。
+        adv_key = real_api_key_or_empty(cfg.advanced_api_key) or real_api_key_or_empty(cfg.api_key)
         return LLMConfig(
             api_key=adv_key,
             base_url=adv_base,
