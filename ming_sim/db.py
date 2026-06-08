@@ -2455,7 +2455,7 @@ class GameDB:
                     )
                     changes.append({
                         "region": row["name"], "field": field,
-                        "label": REGION_FIELD_LABELS.get(field, "城防炮"),
+                        "label": REGION_FIELD_LABELS.get(field, field),
                         "old": old_value, "new": new_value,
                         "delta": actual_delta, "reason": reason,
                     })
