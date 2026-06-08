@@ -100,7 +100,7 @@ def normalize_thinking_level(level: str) -> str:
     return (level or "").strip()
 
 
-def _cli_model_from_env(runner: str, fallback: str = "") -> str:
+def cli_model_from_env(runner: str, fallback: str = "") -> str:
     if runner == "codex":
         return (os.environ.get("MING_SIM_CODEX_MODEL") or "gpt-5.5").strip()
     if runner == "claude":
@@ -145,7 +145,7 @@ def load_llm_config(
         ),
         channel="cli" if cli_runner else "api",
         cli_runner=cli_runner or "",
-        cli_model=_cli_model_from_env(cli_runner or "", model),
+        cli_model=cli_model_from_env(cli_runner or "", model),
         cli_timeout_seconds=timeout_seconds,
     )
 

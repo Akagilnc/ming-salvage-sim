@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from agno.models.openai import OpenAIChat
 
+from ming_sim import cli_backend
 from ming_sim.cli_backend import CliChat
 from ming_sim.llm_config import for_role, load_llm_config
 from ming_sim import llm_model
@@ -66,6 +67,34 @@ def test_loaded_api_config_is_not_rerouted_by_later_backend_env(monkeypatch):
     assert cfg.channel == "api"
     assert isinstance(model, OpenAIChat)
     assert not isinstance(model, CliChat)
+
+
+def test_legacy_backend_env_uses_runner_default_model_not_api_model(monkeypatch):
+    captured = {}
+
+    class Proc:
+        stdout = "臣领旨。"
+        stderr = ""
+        returncode = 0
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return Proc()
+
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
+    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
+    monkeypatch.setattr(cli_backend.subprocess, "run", fake_run)
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="deepseek-v4-flash",
+    )
+
+    model = create_chat_model(cfg)
+    model._call_cli("p")
+
+    assert isinstance(model, CliChat)
+    assert captured["cmd"][captured["cmd"].index("--model") + 1] == cli_backend._CODEX_MODEL
 
 
 def test_verify_llm_available_respects_api_channel_over_backend_env(monkeypatch):

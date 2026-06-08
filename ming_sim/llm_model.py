@@ -120,6 +120,8 @@ def create_chat_model(
         cli_model = (getattr(llm_config, "cli_model", "") or "").strip()
         if cli_model:
             kwargs["id"] = cli_model
+        elif channel != "cli":
+            kwargs["id"] = ""
         cli_timeout = getattr(llm_config, "cli_timeout_seconds", None)
         if cli_timeout:
             kwargs["timeout"] = cli_timeout
