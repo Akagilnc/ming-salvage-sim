@@ -29,6 +29,7 @@ from ming_sim.llm_config import (
     CLI_BACKEND_PLACEHOLDER,
     cli_model_from_env,
     is_real_api_key,
+    real_api_key_or_empty,
     load_llm_config,
     load_runtime_game,
     load_runtime_llm,
@@ -293,9 +294,7 @@ def _verify_llm_configs_or_raise(config: LLMConfig) -> None:
     if not advanced_model:
         return
     advanced_config = LLMConfig(
-        api_key=(config.advanced_api_key or "").strip() or (
-            config.api_key if is_real_api_key(config.api_key) else ""
-        ),
+        api_key=real_api_key_or_empty(config.advanced_api_key) or real_api_key_or_empty(config.api_key),
         base_url=(config.advanced_base_url or "").strip() or config.base_url,
         model=advanced_model,
         max_tokens=config.max_tokens,
@@ -379,7 +378,7 @@ def _llm_config_from_runtime(
         thinking_level=normalize_thinking_level(thinking_level),
         advanced_model=(advanced_model or "").strip(),
         advanced_base_url=normalize_openai_base_url(advanced_base_url) if advanced_base_url else "",
-        advanced_api_key=(advanced_api_key or "").strip(),
+        advanced_api_key=real_api_key_or_empty(advanced_api_key),
         advanced_thinking_level=normalize_thinking_level(advanced_thinking_level),
         channel=channel,
         cli_runner=cli_runner,
@@ -441,7 +440,7 @@ class WebGame:
         thinking_level = runtime.get("thinking_level") or thinking_level
         advanced_model = runtime.get("advanced_model") or advanced_model
         advanced_base_url = runtime.get("advanced_base_url") or advanced_base_url
-        advanced_api_key = runtime.get("advanced_api_key") or advanced_api_key
+        advanced_api_key = real_api_key_or_empty(runtime.get("advanced_api_key")) or advanced_api_key
         advanced_thinking_level = runtime.get("advanced_thinking_level") or advanced_thinking_level
         max_tokens = int(runtime.get("max_tokens") or 8000)
         timeout_seconds = float(runtime.get("timeout_seconds") or timeout_seconds)
@@ -1689,7 +1688,7 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     # advanced_api_key 留空：复用已存的（避免覆盖成空）。
     if advanced_model and not advanced_api_key:
         existing = load_runtime_llm()
-        advanced_api_key = existing.get("advanced_api_key") or os.environ.get("OPENAI_ADVANCED_API_KEY", "")
+        advanced_api_key = real_api_key_or_empty(existing.get("advanced_api_key")) or real_api_key_or_empty(os.environ.get("OPENAI_ADVANCED_API_KEY"))
     normalized_base_url = normalize_openai_base_url(base_url)
     config = LLMConfig(
         api_key=api_key,
