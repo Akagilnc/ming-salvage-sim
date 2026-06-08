@@ -225,6 +225,34 @@ def test_for_role_preserves_cli_channel_fields_for_advanced_roles():
     assert derived.cli_timeout_seconds == 240
 
 
+def test_load_llm_config_cli_env_uses_cli_default_timeout_not_api(monkeypatch):
+    """codex R1 #2：legacy env CLI（MING_SIM_LLM_BACKEND 设）时 cli_timeout_seconds 必须用
+    CLI 默认（300），不沿用 API 的 timeout_seconds（180）——后者会被当 CLI 子进程超时上限。"""
+    from ming_sim.llm_config import load_llm_config, CLI_DEFAULT_TIMEOUT_SECONDS
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
+    cfg = load_llm_config(base_url="", model="m", api_key="", timeout_seconds=180.0)
+    assert cfg.channel == "cli"
+    assert cfg.cli_timeout_seconds == CLI_DEFAULT_TIMEOUT_SECONDS == 300.0
+    assert cfg.cli_timeout_seconds != 180.0
+
+
+def test_web_runtime_cli_no_saved_timeout_uses_cli_default(monkeypatch):
+    """codex R1 #3：web env CLI 无 saved cli.timeout_seconds 时回落 CLI 默认（300），
+    不回落 API request timeout（180）。"""
+    import web_app
+    from ming_sim.llm_config import CLI_DEFAULT_TIMEOUT_SECONDS
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
+    cfg = web_app._llm_config_from_runtime(
+        {"channel": "cli", "cli": {"runner": "codex", "model": "gpt-5.5"}},
+        base_url="", model="m", api_key="", max_tokens=8000, timeout_seconds=180.0,
+        thinking_level="", advanced_model="", advanced_base_url="",
+        advanced_api_key="", advanced_thinking_level="",
+    )
+    assert cfg.channel == "cli"
+    assert cfg.cli_timeout_seconds == CLI_DEFAULT_TIMEOUT_SECONDS == 300.0
+    assert cfg.cli_timeout_seconds != 180.0
+
+
 def test_cli_empty_cli_model_does_not_leak_api_model_to_runner(monkeypatch):
     """RT2(Red Team)：channel=cli + cli_model 空时，不许把 API model 名（llm_config.model）
     当 --model 漏给 codex/claude——回落到 runner 默认（codex→gpt-5.5、claude→默认、agy 无
