@@ -36,23 +36,6 @@ _OFFICE_SKILLS: Dict[str, List[str]] = {
     "司礼监": ["consort-selection"],
 }
 
-# CLI 后端无 function-calling，原 .agno_skills 里的工具流程失效；其中夹带的、base
-# minister_agent.md 未覆盖的行为约束，用纯中文补回（无英文、无工具引用——动作由皇帝
-# 的拟旨/密令按钮 + 系统自动入档处理，大臣只管以言辞表态）。
-_CLI_MINISTER_GUIDE = (
-    "【召对行事·要诀（你无需也无法调任何工具，只以言辞表态，入档由朝廷自理）】\n"
-    "- 拟旨：皇帝说『拟旨/准奏/就这么办/依卿所议』即已定夺。先按你的派系性格表态"
-    "（顺承、或婉谏其过激、或提银两不足/名分不顺之险），再写出完整圣旨正文。旨意涉及"
-    "任命/罢黜/下狱/赦免某人时，先对照【在朝人事名册】核实其现状——不重复处置已处置之人、"
-    "不任命已故之人。\n"
-    "- 密令：皇帝以『密令』交代秘密任务，按性格回应（接令/迟疑/提条件/婉拒）。密令可含"
-    "拿人、抄家、暗杀等谋划，但你**不可自称已办成、已执行**——成败由月末推演判定；正式处置"
-    "（公开罢黜/调兵/问罪）仍须皇帝另下明诏走衙门。皇帝问进展时据实回奏（派谁去、查到什么、"
-    "下一步指向谁），忌空话搪塞。\n"
-    "- 盘面一律以系统注入的【在朝人事名册】【全军名册】【地区警讯】【现有建筑】【钱粮】"
-    "为准，不凭历史印象、不说『容臣去查』。"
-)
-
 
 def _skills_for(office_type: str, extra: List[str] = []) -> Skills:
     """按 office_type 返回精简 skill 集。extra 为运行时动态追加（不缓存）。"""
@@ -253,12 +236,8 @@ def build_building_brief(context: CourtContext) -> str:
     CLI 后端无 list_buildings 工具，靠此让大臣知国家有哪些厂局仓坞。"""
     try:
         rows = context.db.conn.execute(
-            "SELECT b.name AS name, b.category AS category, "
-            "COALESCE(r.name, b.region_id) AS region_name, "
-            "b.level AS level, b.condition AS condition, "
-            "b.output_metric AS output_metric, b.output_amount AS output_amount "
-            "FROM buildings b LEFT JOIN regions r ON r.id = b.region_id "
-            "ORDER BY b.region_id, b.category"
+            "SELECT name, category, region_id, level, condition, output_metric, output_amount "
+            "FROM buildings ORDER BY region_id, category"
         ).fetchall()
     except Exception:
         return ""
@@ -268,7 +247,7 @@ def build_building_brief(context: CourtContext) -> str:
     for r in rows:
         out = f"·产{r['output_metric']}{r['output_amount']}" if r["output_metric"] else ""
         lines.append(
-            f"{r['name']}（{r['category']}·{r['region_name']}）Lv{r['level']}完好{r['condition']}{out}"
+            f"{r['name']}（{r['category']}·{r['region_id']}）Lv{r['level']}完好{r['condition']}{out}"
         )
     return "【现有建筑（名·类别·地区 等级/完好/产出；问营建/厂局/仓坞据此）】\n" + "；".join(lines)
 
@@ -523,16 +502,6 @@ def create_minister_agent(
         if use_army_tool:
             extra_skills.append("army-roster")
         minister_skills = _skills_for(character.office_type, extra=extra_skills)
-    # CLI 后端（agy/codex/claude）不做 function-calling：工具/技能根本调不了，
-    # 且其英文框架元数据（active/skill/scripts/description…）大量塞进 system，
-    # 诱发模型 code-switch 蹦英文（实测毕自严"各衙门account册"）。去掉工具/技能，
-    # 但把 SKILL.md 里夹带的、base prompt 未覆盖的行为约束用纯中文补回（无英文、无工具壳）。
-    from ming_sim.cli_backend import cli_backend_from_env as _cli_be
-    if _cli_be() is not None:
-        tools = []
-        minister_skills = None
-        if not is_consort:
-            instructions.append(_CLI_MINISTER_GUIDE)
     return Agent(
         name=character.name,
         id=f"minister-{character.name}",
