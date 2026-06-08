@@ -106,12 +106,23 @@ def create_chat_model(
         kwargs["extra_body"] = extra_body
     if supports_openai_reasoning_effort(llm_config.model):
         kwargs["reasoning_effort"] = llm_config.thinking_level or ("medium" if enable_thinking else "minimal")
-    # 探针：MING_SIM_LLM_BACKEND=agy|codex 时改走本地 CLI 后端（脱 api key）。
-    # CliChat 继承 OpenAIChat，吃同一套 kwargs；reasoning_effort 等 agy 无关的字段被忽略。
+    # 探针：新配置用 channel 显式选择执行通道；未声明 channel 的旧路径暂沿用 env fallback。
+    # CliChat 继承 OpenAIChat，吃同一套 kwargs；reasoning_effort 等 CLI 无关字段被忽略。
     from ming_sim.cli_backend import CliChat, cli_backend_from_env
-    backend = cli_backend_from_env()
+    channel = (getattr(llm_config, "channel", "") or "").strip().lower()
+    backend = None
+    if channel == "cli":
+        backend = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "agy").strip().lower()
+    elif channel != "api":
+        backend = cli_backend_from_env()
     if backend is not None:
         kwargs.pop("reasoning_effort", None)  # CLI 后端不需要，且可能干扰父类校验
+        cli_model = (getattr(llm_config, "cli_model", "") or "").strip()
+        if cli_model:
+            kwargs["id"] = cli_model
+        cli_timeout = getattr(llm_config, "cli_timeout_seconds", None)
+        if cli_timeout:
+            kwargs["timeout"] = cli_timeout
         return CliChat(backend=backend, **kwargs)
     return OpenAIChat(**kwargs)
 
@@ -142,7 +153,8 @@ def verify_llm_available(llm_config: LLMConfig) -> None:
     # CLI 后端（agy/codex）无 HTTP 端点可探，且烟测会白白起一次 ~12s 自治 agent。
     # 本机已装并登录 CLI 即视为可用，跳过网络烟测。
     from ming_sim.cli_backend import cli_backend_from_env
-    if cli_backend_from_env() is not None:
+    channel = (getattr(llm_config, "channel", "") or "").strip().lower()
+    if channel == "cli" or (channel != "api" and cli_backend_from_env() is not None):
         return
     agent = Agent(
         name="LLM连通性检查",

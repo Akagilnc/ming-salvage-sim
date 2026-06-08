@@ -100,6 +100,14 @@ def normalize_thinking_level(level: str) -> str:
     return (level or "").strip()
 
 
+def _cli_model_from_env(runner: str, fallback: str = "") -> str:
+    if runner == "codex":
+        return (os.environ.get("MING_SIM_CODEX_MODEL") or "gpt-5.5").strip()
+    if runner == "claude":
+        return (os.environ.get("MING_SIM_CLAUDE_MODEL") or "claude-opus-4-8").strip()
+    return fallback
+
+
 def load_llm_config(
     base_url: str,
     model: str,
@@ -115,7 +123,8 @@ def load_llm_config(
     # 探针：MING_SIM_LLM_BACKEND=agy|codex 时走本地 CLI，无需 api key，
     # 不索要、不拦截，给个占位符让下游构造照常。
     from ming_sim.cli_backend import cli_backend_from_env
-    if cli_backend_from_env() is not None:
+    cli_runner = cli_backend_from_env()
+    if cli_runner is not None:
         api_key = api_key or "cli-backend"
     if not api_key:
         api_key = getpass.getpass("请输入 API key（不会保存，回车取消）：").strip()
@@ -134,6 +143,10 @@ def load_llm_config(
         advanced_thinking_level=normalize_thinking_level(
             advanced_thinking_level or os.environ.get("OPENAI_ADVANCED_THINKING_LEVEL", "")
         ),
+        channel="cli" if cli_runner else "",
+        cli_runner=cli_runner or "",
+        cli_model=_cli_model_from_env(cli_runner or "", model),
+        cli_timeout_seconds=timeout_seconds,
     )
 
 
@@ -160,6 +173,10 @@ def for_role(cfg: LLMConfig, role: str) -> LLMConfig:
             advanced_base_url=cfg.advanced_base_url,
             advanced_api_key=cfg.advanced_api_key,
             advanced_thinking_level=cfg.advanced_thinking_level,
+            channel=cfg.channel,
+            cli_runner=cfg.cli_runner,
+            cli_model=cfg.cli_model,
+            cli_timeout_seconds=cfg.cli_timeout_seconds,
         )
     return cfg
 
