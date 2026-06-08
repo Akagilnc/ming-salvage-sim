@@ -4,6 +4,12 @@
 
 ## 🔴 BUG / 待修（影响游戏正确性）
 
+### B7. CLI 大臣回话偶夹英文（opus code-switch，待摸清再修）
+- **现象**：opus 后端毕自严回话蹦英文「各衙门account册移交故意拖延」。玩了很久第一次出现 → 疑本 session 改动或换模型带出。
+- **可疑诱因（未定论）**：① 换 opus(可能比旧模型更易 code-switch)；② `build_building_brief` 注入拼音 region_id（beizhili/nanzhili…，本 session fd96d96 加的）把英文塞进 system；③ agno skills/tools 框架英文元数据（active/skill/scripts/description… ~117 token）一直在 system 里（CliChat 忽略 tools、function-calling 本不可能，纯属注入污染）—— 但这是早就存在、之前没触发。
+- **已回滚的过激修法（e0b497e，已 revert d443d9d）**：曾 CLI 后端删大臣 tools/skills + 中文行为约束补回 + 建筑表中文地区名。教训：**没摸清 .agno_skills SKILL.md 里夹带的行为约束(密令不可自称已执行/拟旨前核名册等)就一刀删，删过头**；且"玩很久才首现"更像本 session 引入，不该靠洁癖式删工具救。
+- **下一步（摸清再动）**：先定位主诱因（建议：单独把 building_brief 改中文名试一版、对比；或确认 opus 是否对纯中文 prompt 也偶发夹英文）。修法候选：a) 仅去英文壳(region 名中文化、skills 元数据精简)保留 skill 指引；b) 真要去 skills 须把行为约束完整搬成中文，且确认不影响 api 后端。别再盲删。
+
 ### ~~B6. toolcall 在 CLI 后端的缺口~~ ✅ 全修（2026-06-07）
 - **动作类(全补，前缀/意图触发 + 落库 + refresh)**：拟旨；密令 create/update(upsert)/submit/rush/progress；**调教妃嫔 cultivate_consort**(后宫+调教意图→聚焦提取技能/性格→落库)。
 - **READ 类(注入大臣 system)**：军表(含火器/大炮)、**地区危情(region_report)**、**建筑紧凑表(build_building_brief)**；court/记忆/邸报/钱粮/在办事项原已注入。
