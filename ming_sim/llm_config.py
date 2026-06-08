@@ -18,6 +18,52 @@ GAME_SETTINGS_DEFAULTS = {
     "hitl_min_decisions": 1,  # 每回合 simulator 至少产出的重大决策点数（0=不强制，宁缺毋滥）
 }
 
+_API_RUNTIME_FIELDS = (
+    "base_url",
+    "model",
+    "api_key",
+    "max_tokens",
+    "timeout_seconds",
+    "thinking_level",
+    "advanced_model",
+    "advanced_base_url",
+    "advanced_api_key",
+    "advanced_thinking_level",
+)
+_CLI_RUNTIME_FIELDS = ("runner", "model", "timeout_seconds")
+
+
+def _api_runtime_slot(data: Dict[str, object]) -> Dict[str, str]:
+    return {k: str(data.get(k, "") or "") for k in _API_RUNTIME_FIELDS}
+
+
+def _cli_runtime_slot(data: Dict[str, object]) -> Dict[str, str]:
+    return {k: str(data.get(k, "") or "") for k in _CLI_RUNTIME_FIELDS}
+
+
+def _empty_runtime_llm() -> Dict[str, object]:
+    return {
+        "channel": "",
+        "api": _api_runtime_slot({}),
+        "cli": _cli_runtime_slot({}),
+    }
+
+
+def _normalize_runtime_llm(data: Dict[str, object]) -> Dict[str, object]:
+    channel = str(data.get("channel") or "").strip().lower()
+    if channel not in {"api", "cli"}:
+        channel = "api" if any(data.get(k) for k in _API_RUNTIME_FIELDS) else ""
+    api_raw = data.get("api")
+    cli_raw = data.get("cli")
+    api = _api_runtime_slot(api_raw if isinstance(api_raw, dict) else data)
+    cli = _cli_runtime_slot(cli_raw if isinstance(cli_raw, dict) else {})
+    out = {"channel": channel, "api": api, "cli": cli}
+    # Transitional active API aliases keep existing callers working while the UI/API
+    # slices move to explicit slots.
+    if channel in ("", "api"):
+        out.update(api)
+    return out
+
 
 def normalize_openai_base_url(base_url: str) -> str:
     base = base_url.rstrip("/")
@@ -122,35 +168,18 @@ def for_role(cfg: LLMConfig, role: str) -> LLMConfig:
     return cfg
 
 
-def load_runtime_llm() -> Dict[str, str]:
+def load_runtime_llm() -> Dict[str, object]:
     """读 data/runtime_llm.json。缺/坏返回空 dict。"""
     if not os.path.isfile(RUNTIME_LLM_PATH):
-        return {}
+        return _empty_runtime_llm()
     try:
         with open(RUNTIME_LLM_PATH, "r", encoding="utf-8") as fh:
             data = json.load(fh)
     except (OSError, json.JSONDecodeError):
-        return {}
+        return _empty_runtime_llm()
     if not isinstance(data, dict):
-        return {}
-    out = {
-        k: str(data.get(k, "") or "")
-        for k in (
-            "base_url",
-            "model",
-            "api_key",
-            "thinking_level",
-            "advanced_model",
-            "advanced_base_url",
-            "advanced_api_key",
-            "advanced_thinking_level",
-        )
-    }
-    if "max_tokens" in data:
-        out["max_tokens"] = str(data["max_tokens"])
-    if "timeout_seconds" in data:
-        out["timeout_seconds"] = str(data["timeout_seconds"])
-    return out
+        return _empty_runtime_llm()
+    return _normalize_runtime_llm(data)
 
 
 def load_runtime_game() -> Dict[str, object]:
@@ -192,20 +221,35 @@ def save_runtime_llm(
     advanced_base_url: str = "",
     advanced_api_key: str = "",
     advanced_thinking_level: str = "",
+    channel: str = "api",
+    cli_runner: str = "",
+    cli_model: str = "",
+    cli_timeout_seconds: float = 180.0,
 ) -> None:
     """写 data/runtime_llm.json。明文存盘——按用户选择。"""
     os.makedirs(os.path.dirname(RUNTIME_LLM_PATH), exist_ok=True)
+    active_channel = (channel or "api").strip().lower()
+    if active_channel not in {"api", "cli"}:
+        active_channel = "api"
     payload = {
-        "base_url": (base_url or "").strip(),
-        "model": (model or "").strip(),
-        "api_key": (api_key or "").strip(),
-        "max_tokens": max_tokens,
-        "timeout_seconds": timeout_seconds,
-        "thinking_level": normalize_thinking_level(thinking_level),
-        "advanced_model": (advanced_model or "").strip(),
-        "advanced_base_url": (advanced_base_url or "").strip(),
-        "advanced_api_key": (advanced_api_key or "").strip(),
-        "advanced_thinking_level": normalize_thinking_level(advanced_thinking_level),
+        "channel": active_channel,
+        "api": {
+            "base_url": (base_url or "").strip(),
+            "model": (model or "").strip(),
+            "api_key": (api_key or "").strip(),
+            "max_tokens": max_tokens,
+            "timeout_seconds": timeout_seconds,
+            "thinking_level": normalize_thinking_level(thinking_level),
+            "advanced_model": (advanced_model or "").strip(),
+            "advanced_base_url": (advanced_base_url or "").strip(),
+            "advanced_api_key": (advanced_api_key or "").strip(),
+            "advanced_thinking_level": normalize_thinking_level(advanced_thinking_level),
+        },
+        "cli": {
+            "runner": (cli_runner or "").strip(),
+            "model": (cli_model or "").strip(),
+            "timeout_seconds": cli_timeout_seconds,
+        },
     }
     with open(RUNTIME_LLM_PATH, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, ensure_ascii=False, indent=2)
