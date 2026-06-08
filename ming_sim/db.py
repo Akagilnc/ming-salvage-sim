@@ -21,6 +21,7 @@ from ming_sim.constants import (
     FISCAL_SCORE_FIELDS, REGION_FIELD_ALIASES, REGION_SCORE_FIELDS, REGION_TEXT_FIELDS, TURN_UNIT,
 )
 from ming_sim.content import GameContent
+from ming_sim.exceptions import LLMContractError
 from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
 from ming_sim.models import Event, GameState, monthly_amount, period_label
 from ming_sim.token_stats import tlog
@@ -2445,6 +2446,33 @@ class GameDB:
                 field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
                 if field == "reason":
                     continue
+
+                # ── 城防炮（城头红夷炮）：另挂 region.cannon，走 apply_region_cannon（clamp city_level×8），
+                #    不入通用 SCORE/QUANTITY 路径（通用路径不套城防上限，会破 P2 铁律）。──
+                if field == "cannon":
+                    old_value = int(row["cannon"])
+                    new_value = self.apply_region_cannon(state, region_id, int(value))
+                    actual_delta = new_value - old_value
+                    if actual_delta == 0:
+                        continue
+                    self.conn.execute(
+                        """
+                        INSERT INTO region_logs
+                        (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (state.turn, state.year, state.period, region_id,
+                         field, str(old_value), str(new_value), actual_delta,
+                         reason, event.id, edict_id, actor),
+                    )
+                    changes.append({
+                        "region": row["name"], "field": field,
+                        "label": REGION_FIELD_LABELS.get(field, field),
+                        "old": old_value, "new": new_value,
+                        "delta": actual_delta, "reason": reason,
+                    })
+                    continue
+
                 # 先判字段合法，再取值：非法字段直接报清楚。
                 all_direct = REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + REGION_TEXT_FIELDS
                 if field not in all_direct and field not in FISCAL_SCORE_FIELDS:
