@@ -1446,6 +1446,10 @@ def apply_issue_inertia_and_ongoing(
                     _apply_economy_list(db, state, effect.get("economy") or [])
                     _apply_faction_dict(db, effect.get("factions") or {})
                     _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}结案")
+                    # 与 tracker advance/close 路径一致：自然结案也落实体后果 + 帝国修正，
+                    # 否则靠 inertia 推到 100 的 issue 会丢 new_armies/army_delta/人物状态/legacy（codexB-P1）。
+                    _apply_issue_entities(db, state, effect, f"局势#{issue_id}结案")
+                    _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
                     continue
                 elif new_row["status"] == "failed":
                     effect = json.loads(new_row["effect_on_fail"] or "{}")
@@ -1453,6 +1457,8 @@ def apply_issue_inertia_and_ongoing(
                     _apply_economy_list(db, state, effect.get("economy") or [])
                     _apply_faction_dict(db, effect.get("factions") or {})
                     _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}失败")
+                    _apply_issue_entities(db, state, effect, f"局势#{issue_id}失败")
+                    _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
                     continue
                 row = db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
                 if row is None:
