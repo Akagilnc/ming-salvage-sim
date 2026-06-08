@@ -133,3 +133,36 @@ def test_new_issue_nondict_effect_fields_do_not_crash(game, monkeypatch):
     new = [e for e in out["new_issues"] if e.get("title") == "效果字段畸形国策"]
     assert new and not new[0].get("rejected")
     assert db.conn.execute("SELECT COUNT(*) FROM issues").fetchone()[0] == before + 1
+
+
+def test_inertia_natural_resolve_applies_entities(game):
+    """issue 靠 inertia 自然推到 100 结案 → effect_on_resolve 的实体后果(建军)也要落，
+    不能只落 metrics/economy；须与 tracker advance/close 路径一致（codexB-P1）。"""
+    from ming_sim.issues import apply_issue_inertia_and_ongoing
+    db, state, _ = game
+    db.insert_issue(
+        state, kind="situation", title="自然结案建军测试",
+        bar_value=99, inertia=1,
+        effect_on_resolve={"new_armies": [{
+            "id": "inertia_army_test", "name": "惯性军", "owner_power": "ming",
+            "manpower": 5000, "maintenance_per_turn": 1}]},
+    )
+    apply_issue_inertia_and_ongoing(db, state)   # inertia +1 把 bar 99→100 → resolved
+    cnt = db.conn.execute(
+        "SELECT COUNT(*) FROM armies WHERE id='inertia_army_test'").fetchone()[0]
+    assert cnt == 1                               # 自然结案也建了奖励军
+
+
+def test_inertia_natural_fail_applies_entities(game):
+    """issue 靠 inertia 自然跌到 0 失败 → effect_on_fail 的实体后果(人物状态)也要落。"""
+    from ming_sim.issues import apply_issue_inertia_and_ongoing
+    from tests.conftest import active_ming_character
+    db, state, content = game
+    name = active_ming_character(db, content)
+    db.insert_issue(
+        state, kind="situation", title="自然失败人物测试",
+        bar_value=1, inertia=-1,
+        effect_on_fail={"character_status_changes": [{"name": name, "status": "dismissed", "reason": "局势失控问责"}]},
+    )
+    apply_issue_inertia_and_ongoing(db, state)   # inertia -1 把 bar 1→0 → failed
+    assert db.get_character_status(name)[0] == "dismissed"
