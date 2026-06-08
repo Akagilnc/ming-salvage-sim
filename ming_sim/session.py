@@ -658,12 +658,17 @@ class GameSession:
             )
         if not result.secret_order_id and acts["secret_order"]:
             so = acts["secret_order"]
-            order_id = self.db.create_secret_order(
-                self.state, so.get("assignee") or character.name, so["title"], so["content"],
+            assignee = so.get("assignee") or character.name
+            # upsert（非 create）：同承办人再下密令=更新同条，不建重复，与 web 流式路径一致（CMR F3）。
+            order_id, _was_update = self.db.upsert_secret_order(
+                self.state, assignee, so["title"], so["content"],
                 so.get("tags") or [], deadline_months=so.get("deadline_months", 0),
             )
             if order_id:
                 result.secret_order_id = order_id
+                # 建/改后刷新承办大臣 agent 缓存，否则本回合大臣不知有此密令（与 web 一致）。
+                if self.registry is not None:
+                    self.registry.refresh(assignee)
 
     def _apply_appointment(self, payload: str, appointer: Character) -> Tuple[str, str]:
         """吏部 propose_appointment 落地：建档入库 + 注册 Agent，本回合即可召见。

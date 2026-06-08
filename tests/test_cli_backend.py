@@ -504,6 +504,53 @@ def test_run_claude_timeout_raises(monkeypatch):
         cb._run_claude("p")
 
 
+# ── CLI runner 非零退出 / 空输出 → raise（不静默当空回复/角色文本落库，CMR F2）──
+
+class _RcProc:
+    def __init__(self, stdout="", stderr="", returncode=0):
+        self.stdout, self.stderr, self.returncode = stdout, stderr, returncode
+
+
+def test_run_codex_nonzero_exit_raises(monkeypatch):
+    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
+    monkeypatch.setattr(cb.subprocess, "run",
+                        lambda cmd, **kw: _RcProc(stderr="error: auth failed", returncode=1))
+    with pytest.raises(RuntimeError):
+        cb._run_codex("p")
+
+
+def test_run_codex_empty_output_raises(monkeypatch):
+    """退出码 0 但 stdout/stderr 全空 → 也当失败抛，不返回空字符串。"""
+    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
+    monkeypatch.setattr(cb.subprocess, "run", lambda cmd, **kw: _RcProc(returncode=0))
+    with pytest.raises(RuntimeError):
+        cb._run_codex("p")
+
+
+def test_run_claude_nonzero_exit_raises(monkeypatch):
+    monkeypatch.setattr(cb.subprocess, "run",
+                        lambda cmd, **kw: _RcProc(stderr="auth required", returncode=1))
+    with pytest.raises(RuntimeError):
+        cb._run_claude("p")
+
+
+def test_run_agy_nonzero_exit_retries_then_raises(monkeypatch):
+    """agy 非零退出当失败 attempt，warm+retry×4 仍非零 → raise。"""
+    state = {"agy": 0, "warm": 0}
+
+    def fake(cmd, **kw):
+        if cmd and cmd[0] == "security":
+            state["warm"] += 1
+            return _RcProc()
+        state["agy"] += 1
+        return _RcProc(stderr="agy boom", returncode=1)
+
+    monkeypatch.setattr(cb.subprocess, "run", fake)
+    with pytest.raises(RuntimeError):
+        cb._run_agy("p")
+    assert state["agy"] == 4
+
+
 # ── CliChat.invoke：建 prompt → 调 CLI → 剥 narration → 包 completion → agno 解析 ──
 
 def test_clichat_invoke_strips_narration_before_parse(monkeypatch):
@@ -537,6 +584,42 @@ def test_clichat_invoke_error_traced_and_reraised(monkeypatch):
     with pytest.raises(RuntimeError, match="cli down"):
         cc.invoke([SimpleNamespace(role="user", content="x")], Message(role="assistant"))
     assert traced.get("error") == "cli down"    # finally 段仍记了 error trace
+
+
+# ── F6 trace backend 实值 / F8 JSONC 容错 / F10 action enum 归一 ──
+
+def test_loads_lenient_strips_jsonc_comments_and_trailing_comma():
+    """模型照模板回带 // 注释 + 尾逗号时仍能解析（CMR F8）。"""
+    raw = '{\n  "密令动作": "更新", // 皇帝改了内容\n  "目标密令编号": 6,\n}'
+    assert cb._loads_lenient(raw) == {"密令动作": "更新", "目标密令编号": 6}
+
+
+def test_loads_lenient_keeps_url_double_slash():
+    """字符串内 :// 不被当注释剥掉。"""
+    assert cb._loads_lenient('{"u": "http://x.cn/a"}') == {"u": "http://x.cn/a"}
+
+
+def test_loads_lenient_valid_json_with_comma_brace_in_value_not_mangled():
+    """合法 JSON 串值里含 `,}` 不被尾逗号清洗误伤(先严格解析,失败才清洗)。"""
+    assert cb._loads_lenient('{"a": "末尾是逗号和括号,}"}') == {"a": "末尾是逗号和括号,}"}
+
+
+def test_extract_minister_actions_unknown_action_floored(monkeypatch):
+    """LLM 返回枚举外的动作 → 归一为「无」（CMR F10）。"""
+    canned = json.dumps({"密令动作": "乱填的动作", "目标密令编号": 6}, ensure_ascii=False)
+    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
+    act = cb.extract_minister_actions("x", "y", [{"id": 6, "title": "t", "content": "c"}])
+    assert act["secret_action"] == "无"
+
+
+def test_enrich_trace_records_actual_backend(monkeypatch):
+    """trace 的 backend 字段记实际后端，不硬编码 agy（CMR F6）。"""
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
+    monkeypatch.setattr(cb, "_run_backend", lambda p: ('{"effect_on_resolve":{}}', 1))
+    rec = {}
+    monkeypatch.setattr(cb, "_trace", lambda r: rec.update(r))
+    cb.enrich_initiative_effects("设局", "")
+    assert rec.get("backend") == "codex"
 
 
 def test_clichat_call_cli_dispatch(monkeypatch):

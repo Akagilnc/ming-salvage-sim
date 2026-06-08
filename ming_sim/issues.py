@@ -695,7 +695,8 @@ def _apply_issue_entities(db: GameDB, state: GameState, effect: Dict[str, object
         chars = getattr(_ctx(), "characters", {}) or {}
         for it in csc:
             if not isinstance(it, dict):
-                continue
+                # 全局严格（不静默）：非 dict 项直接抛错，不无声丢（CMR F7）。
+                raise ValueError(f"{label} character_status_changes 含非法非 dict 项：{it!r}")
             name = str(it.get("name") or "").strip()
             status = str(it.get("status") or "").strip().lower()
             reason = str(it.get("reason") or "").strip()
