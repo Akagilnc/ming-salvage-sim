@@ -7,7 +7,7 @@
 ## 📚 工作手册（每回合开始前必查，别凭"我以为"）
 - **[docs/DELTA_SCHEMA.md](docs/DELTA_SCHEMA.md)** — 我产 delta JSON 的格式契约：23 个顶层字段、字段约束、白名单、踩过的坑。**产 delta 前查。**
 - **[docs/SETTLEMENT_FLOW.md](docs/SETTLEMENT_FLOW.md)** — 月末结算管线：driver 调引擎的完整顺序 + 不变式 + 接口层。**写 driver / 结算时查。**
-- **[docs/TODO.md](docs/TODO.md)** — 待修 bug + 探针工程待办。**每回合结算前扫一眼有无"本月要顺手修"的项**（当前：B1 阉党 leverage 不联动）。
+- **[TODOS.md](TODOS.md)** — 待修 bug + 探针工程待办。**每回合结算前扫一眼有无"本月要顺手修"的项**（当前：B1 阉党 leverage 不联动）。
 
 ## 探针架构共识（已 grill 定，别推翻重来）
 - **定位**：探针（先验证好不好玩），不是地基。**不上 MCP**（连改哪层都没定，固化接口=过早工程化）。
