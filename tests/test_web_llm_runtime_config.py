@@ -210,6 +210,30 @@ def test_menu_save_llm_persists_cli_channel_without_api_key(monkeypatch):
     assert saved[0][1]["cli_timeout_seconds"] == 240
 
 
+def test_menu_save_cli_verify_runs_off_event_loop(monkeypatch):
+    """P1/P2:CLI verify smoke(~12s,最长 300s)不许同步跑在 asyncio event loop 上卡住
+    并发请求——api_menu_save_llm 须经 run_in_executor offload。断言 verify 在非主线程跑。"""
+    import threading
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    seen = {}
+
+    def rec_verify(cfg):
+        seen["thread"] = threading.current_thread()
+
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", rec_verify)
+    monkeypatch.setattr(web_app, "save_runtime_llm", lambda *a, **k: None)
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+
+    asyncio.run(web_app.api_menu_save_llm(web_app.LlmSetupRequest(
+        base_url="", model="", api_key="", channel="cli",
+        cli_runner="codex", cli_model="gpt-5.5", cli_timeout_seconds=240,
+    )))
+
+    assert seen.get("thread") is not None
+    assert seen["thread"] is not threading.main_thread()
+
+
 def test_menu_status_unsupported_cli_runner_not_ready(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)

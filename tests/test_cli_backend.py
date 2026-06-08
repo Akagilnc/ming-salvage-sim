@@ -701,3 +701,11 @@ def test_clichat_call_cli_dispatch(monkeypatch):
     assert seen["codex"] == ("m-codex", 111)
     assert seen["claude"] == ("m-claude", 222)
     assert seen["agy"] == 333
+
+
+def test_clichat_call_cli_unknown_backend_raises():
+    """直接构造 CliChat(backend=bogus) 时 _call_cli 兜底响亮抛错（defense-in-depth：
+    create_chat_model 已在构造前用 is_supported_cli_runner 拦截，但直接构造路径仍可达）。"""
+    import pytest
+    with pytest.raises(RuntimeError):
+        cb.CliChat(id="m", backend="bogus")._call_cli("p")
