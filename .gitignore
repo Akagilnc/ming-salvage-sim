@@ -32,7 +32,6 @@ Thumbs.db
 # Local AI assistant workspace
 .claude/
 .codex/
-CLAUDE.md
 web/public/portraits/_original_before_cutout
 
 # Test / tooling caches
