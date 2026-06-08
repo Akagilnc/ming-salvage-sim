@@ -32,6 +32,16 @@ _API_RUNTIME_FIELDS = (
 )
 _CLI_RUNTIME_FIELDS = ("runner", "model", "timeout_seconds")
 
+# CLI 通道在内存里用这个占位符填 LLMConfig.api_key（脱 key 运行），它绝不是真实 key。
+CLI_BACKEND_PLACEHOLDER = "cli-backend"
+
+
+def is_real_api_key(value: object) -> bool:
+    """真实 API key？空和占位符 cli-backend 都不算。
+    所有「该不该按 api 通道推断 / 是否已配 key」的判断统一走这里（单一真源）。"""
+    key = str(value or "").strip()
+    return bool(key and key != CLI_BACKEND_PLACEHOLDER)
+
 
 def _slot_text(data: Dict[str, object], key: str) -> str:
     value = data.get(key, "")
@@ -49,15 +59,10 @@ def _cli_runtime_slot(data: Dict[str, object]) -> Dict[str, str]:
 def _normalize_runtime_llm(data: Dict[str, object]) -> Dict[str, object]:
     channel = str(data.get("channel") or "").strip().lower()
     if channel not in {"api", "cli"}:
-        # 扁平旧配置推断激活通道：占位符 cli-backend 不算 API 信号，
-        # 否则旧 CLI-env 存档被误升成显式 API、env CLI 后端被忽略。
-        def _is_api_signal(key: str) -> bool:
-            value = data.get(key)
-            if key == "api_key" and str(value or "").strip() == "cli-backend":
-                return False
-            return bool(value)
-
-        channel = "api" if any(_is_api_signal(k) for k in _API_RUNTIME_FIELDS) else ""
+        # 扁平旧配置只有「存在真实 API key」才推断 api。占位符 + 默认数值字段
+        # （max_tokens/timeout 等）不算 api 信号，否则旧 CLI-env 存档被误升成显式
+        # API、env CLI 后端被忽略，假 key 还会被送上 API 路径。
+        channel = "api" if is_real_api_key(data.get("api_key")) else ""
     api_raw = data.get("api")
     cli_raw = data.get("cli")
     api = _api_runtime_slot(api_raw if isinstance(api_raw, dict) else data)
@@ -133,7 +138,7 @@ def load_llm_config(
     from ming_sim.cli_backend import cli_backend_from_env
     cli_runner = cli_backend_from_env()
     if cli_runner is not None:
-        api_key = api_key or "cli-backend"
+        api_key = api_key or CLI_BACKEND_PLACEHOLDER
     if not api_key:
         api_key = getpass.getpass("请输入 API key（不会保存，回车取消）：").strip()
     if not api_key:

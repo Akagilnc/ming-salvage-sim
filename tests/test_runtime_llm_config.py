@@ -183,15 +183,33 @@ def test_save_runtime_llm_preserves_existing_api_slot_when_saving_cli(tmp_path, 
 
 
 def test_load_runtime_flat_cli_backend_placeholder_not_api_channel(tmp_path, monkeypatch):
-    # ship-pre CMR Group D：扁平旧配置 api_key=cli-backend（占位符、无真实 API 字段）
-    # 不该被推成 channel=api（否则占位符走 API 路径、env CLI 后端被忽略）。
+    # ship-pre CMR Group A'：真实扁平旧配置（占位符 key + 默认 max_tokens/timeout/
+    # base_url/model）不该被推成 channel=api。只有「存在真实 API key」才推 api。
     path = tmp_path / "runtime_llm.json"
-    path.write_text(json.dumps({"api_key": "cli-backend"}), encoding="utf-8")
+    path.write_text(json.dumps({
+        "api_key": "cli-backend",
+        "base_url": "https://api.deepseek.com/v1",
+        "model": "deepseek-chat",
+        "max_tokens": 8000,
+        "timeout_seconds": 180,
+    }), encoding="utf-8")
     monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
 
     out = llm_config.load_runtime_llm()
 
     assert out["channel"] != "api"
+
+
+def test_cli_backend_active_explicit_cli_bogus_runner_false_despite_env(monkeypatch):
+    # ship-pre CMR Group F'：显式 channel=cli + 不支持 runner，即便 env 有 agy
+    # 也不该误报 active（否则执行期 _run_backend_for_config 仍会崩）。
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
+    from ming_sim import cli_backend
+    from ming_sim.models import LLMConfig
+
+    cfg = LLMConfig(api_key="cli-backend", base_url="", model="", channel="cli", cli_runner="bogus")
+
+    assert cli_backend.cli_backend_active(cfg) is False
 
 
 def test_cli_backend_active_total_on_unsupported_runner(monkeypatch):

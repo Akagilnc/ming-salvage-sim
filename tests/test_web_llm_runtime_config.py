@@ -507,3 +507,26 @@ def test_apply_llm_config_does_not_reuse_placeholder_as_api_key(monkeypatch):
     cfg = web_app.WebGame.apply_llm_config(fake, "", "", "", max_tokens=16000)
 
     assert cfg.api_key != "cli-backend"
+
+
+def test_llm_config_from_runtime_api_channel_drops_placeholder_key(monkeypatch):
+    # ship-pre CMR Group A'（Claude R1）：无 env runner 时空 channel 推成 api，
+    # 但占位符不当真 key（清空让下游报「未配 API key」，而非拿假 key 探 OpenAI）。
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    cfg = web_app._llm_config_from_runtime(
+        {"channel": ""},
+        base_url="https://api.example.com/v1",
+        model="gpt-api",
+        api_key="cli-backend",
+        max_tokens=8000,
+        timeout_seconds=180,
+        thinking_level="",
+        advanced_model="",
+        advanced_base_url="",
+        advanced_api_key="",
+        advanced_thinking_level="",
+    )
+
+    assert cfg.channel == "api"
+    assert cfg.api_key == ""

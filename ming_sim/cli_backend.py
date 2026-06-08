@@ -274,15 +274,17 @@ def _backend_label(llm_config: Any = None) -> str:
 
 
 def cli_backend_active(llm_config: Any = None) -> bool:
-    """是否处于 CLI 后端路径：runtime 槽或旧环境变量任一启用都算。"""
-    if _llm_channel(llm_config) == "api":
+    """是否处于 CLI 后端路径：显式 channel 直接按其 runner 判，无显式 channel 才看旧 env。"""
+    channel = _llm_channel(llm_config)
+    if channel == "api":
         return False
-    try:
-        if _cli_config_parts(llm_config) is not None:
-            return True
-    except RuntimeError:
-        # 不支持的 runner=不是有效 CLI 路径=判 not-active（守卫总函数，不抛）
-        pass
+    if channel == "cli":
+        # 显式 CLI：直接判 runner，不回落 env。否则 bogus runner 误报 active，
+        # 执行期 _run_backend_for_config 再调 _cli_config_parts 仍会崩。
+        try:
+            return _cli_config_parts(llm_config) is not None
+        except RuntimeError:
+            return False
     return cli_backend_from_env() is not None
 
 
