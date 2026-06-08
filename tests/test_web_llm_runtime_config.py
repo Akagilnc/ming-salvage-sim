@@ -215,6 +215,27 @@ def test_fresh_start_cli_verify_failure_keeps_existing_main_db(tmp_path, monkeyp
     assert db_path.read_bytes() == b"existing-progress"
 
 
+def test_fresh_start_invalid_cli_runner_keeps_existing_main_db(tmp_path, monkeypatch):
+    import ming_sim.cli_backend as _cb
+
+    db_path = tmp_path / "ming.db"
+    db_path.write_bytes(b"existing-progress")
+    monkeypatch.setenv("MING_SIM_DB", str(db_path))
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
+        "channel": "cli",
+        "api": {"base_url": "", "model": "", "api_key": ""},
+        "cli": {"runner": "bogus", "model": "gpt-5.5", "timeout_seconds": "240"},
+    })
+    monkeypatch.setattr(_cb, "_run_agy", lambda prompt, timeout=None: ("ok", 1))
+
+    with pytest.raises(web_app.LLMUnavailable):
+        web_app.WebGame(fresh=True)
+
+    assert db_path.read_bytes() == b"existing-progress"
+
+
 def test_reset_cli_verify_failure_keeps_existing_main_db(tmp_path, monkeypatch):
     db_path = tmp_path / "ming.db"
     db_path.write_bytes(b"existing-progress")

@@ -79,14 +79,14 @@ def _office_type_from_table(text: str) -> str:
 def _office_type_via_llm(text: str, llm_config: Any = None) -> str:
     """表查不中（生造/罕见官名）时，CLI 后端在场则交 LLM 判 office_type（取 allowed_types）。
     否则返回 ''。结果按官名缓存，避免重复调用。"""
-    if text in _OFFICE_TYPE_LLM_CACHE:
-        return _OFFICE_TYPE_LLM_CACHE[text]
     try:
         from ming_sim.cli_backend import cli_backend_active, _run_backend_for_config
     except Exception:
         return ""
     if not cli_backend_active(llm_config):
         return ""
+    if text in _OFFICE_TYPE_LLM_CACHE:
+        return _OFFICE_TYPE_LLM_CACHE[text]
     allowed = _offices_table().get("allowed_types") or []
     allowed_set = set(allowed)
     prompt = (

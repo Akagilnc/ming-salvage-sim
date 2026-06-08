@@ -401,7 +401,7 @@ class GameSession:
         self.deaths_this_turn = self.db.apply_historical_deaths(self.state)
         self.debuts_this_turn = self.db.apply_historical_debuts(self.state)
         self.power_renames_this_turn = self.db.apply_historical_power_renames(self.state)
-        _sync_offices_from_db_impl(self.content, self.db)
+        _sync_offices_from_db_impl(self.content, self.db, self.llm_config)
         self.previous_summary = self.db.previous_turn_summary(self.state) or ""
         context = CourtContext(state=self.state, db=self.db, previous_summary=self.previous_summary)
         self.registry = MinisterRegistry(self.llm_config, self.agno_db, context)
@@ -443,7 +443,7 @@ class GameSession:
     def refresh_runtime_after_chat_rollback(self) -> None:
         """撤回召对副作用后，用 DB 真相刷新内存人物表和本回合 Agent registry。"""
         self.state = self.db.load_state()
-        _sync_offices_from_db_impl(self.content, self.db)
+        _sync_offices_from_db_impl(self.content, self.db, self.llm_config)
         if self.registry is not None:
             context = CourtContext(
                 state=self.state,
