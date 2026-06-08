@@ -19,6 +19,12 @@ from ming_sim.simulation import EMPTY_EXTRACTION, _canonicalize_extraction
 
 DEFAULT_DB = "data/probe.db"
 
+# 实体→{字段:值} 结构的 delta 模块(二级值必须是 dict)。metric_delta(键→int)、
+# world_advance(势力→立场字符串)是扁平 dict,不在此列,故不校验二级。
+_NESTED_DICT_FIELDS = frozenset(
+    {"region_delta", "army_delta", "faction_delta", "class_delta", "power_updates"}
+)
+
 
 def _validate_delta_shape(extracted: dict) -> None:
     """canonical delta 各顶层字段的容器类型必须匹配 schema（dict / list），否则**结算前**响亮报错。
@@ -39,6 +45,15 @@ def _validate_delta_shape(extracted: dict) -> None:
             raise SystemExit(f"delta 字段 {key} 必须是 object(dict)，实得 {type(value).__name__}")
         if isinstance(expected, list) and not isinstance(value, list):
             raise SystemExit(f"delta 字段 {key} 必须是 array(list)，实得 {type(value).__name__}")
+        # 实体→{字段}模块的二级值必须是 dict;否则 apply 里 `.items()` 会在结算中途崩=半落库(Gemini R1 G2)。
+        # 注:字段名 typo(如 动乱→动荡)是合法 dict 结构、坏字段名,apply 会响亮抛 LLMContractError,
+        # 但那在 pre_settle 之后 → 半落库,根治需事务边界(issue #3),非 driver 此处能廉价覆盖。
+        if key in _NESTED_DICT_FIELDS:
+            for ent, sub in value.items():
+                if not isinstance(sub, dict):
+                    raise SystemExit(
+                        f"delta 字段 {key}.{ent} 必须是 object(dict)，实得 {type(sub).__name__}"
+                    )
 
 
 def open_game(db_path: str = DEFAULT_DB):
