@@ -2671,6 +2671,8 @@ class GameDB:
                     "arrears": int(row["arrears"]),
                     "mobility": int(row["mobility"]),
                     "loyalty": int(row["loyalty"]),
+                    "firearm_equipment": int(row["firearm_equipment"]),
+                    "cannon_equipment": int(row["cannon_equipment"]),
                     "status": row["status"],
                     "owner_power": row["owner_power"],
                 }
@@ -2695,7 +2697,7 @@ class GameDB:
             parts.append(
                 f"{row['name']}：驻{row['station']}，兵{row['manpower']}，"
                 f"饷{format_money(monthly_amount(maint))} /{TURN_UNIT}，补给{row['supply']}、"
-                f"士气{row['morale']}、{arr_text}，{row['status']}"
+                f"士气{row['morale']}、火器{row['firearm_equipment']}、{arr_text}，{row['status']}"
             )
         return (
             f"军队警讯：{'；'.join(parts)}。"
@@ -2721,6 +2723,7 @@ class GameDB:
             f"兵种{row['troop_type']}，人数{row['manpower']}人，"
             f"维护费{format_money(monthly_amount(maint))} /{TURN_UNIT}，补给{row['supply']}，"
             f"士气{row['morale']}，训练{row['training']}，装备{row['equipment']}，"
+            f"火器{row['firearm_equipment']}，随军大炮{row['cannon_equipment']}门，"
             f"{arr_text}，机动{row['mobility']}，忠诚{row['loyalty']}。"
             f"状态：{row['status']}"
         )
