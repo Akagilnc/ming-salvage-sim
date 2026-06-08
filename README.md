@@ -166,6 +166,9 @@ python3 main.py
 | `CLI_API_KEY` | 否 | 回退 `OPENAI_API_KEY` | CLI 单独 API Key |
 | `CLI_BASE_URL` | 否 | 回退 `OPENAI_BASE_URL` | CLI 单独 API 地址 |
 | `CLI_MODEL` | 否 | 回退 `OPENAI_MODEL` | CLI 单独模型名 |
+| `MING_SIM_LLM_BACKEND` | 否 | 无 | 设 `agy`/`codex`/`claude` 走本地 CLI runner 当 LLM 后端(无需 API Key);留空走 API 通道 |
+
+> **LLM 执行通道(v0.6.0.0 起)**:菜单设置面板支持 **API / CLI 双通道**选择并各自持久化。选 **CLI 通道**(本地 `codex`/`agy`/`claude` runner)即可**脱 API Key** 跑;选 **API 通道**则用上面的 `OPENAI_*` 配置。`MING_SIM_LLM_BACKEND` 是不开 UI 时的 legacy env 入口。
 
 ## 目录
 
