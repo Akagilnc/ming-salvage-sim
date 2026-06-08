@@ -180,3 +180,27 @@ def test_save_runtime_llm_preserves_existing_api_slot_when_saving_cli(tmp_path, 
         "model": "gpt-5.5",
         "timeout_seconds": 240,
     }
+
+
+def test_load_runtime_flat_cli_backend_placeholder_not_api_channel(tmp_path, monkeypatch):
+    # ship-pre CMR Group D：扁平旧配置 api_key=cli-backend（占位符、无真实 API 字段）
+    # 不该被推成 channel=api（否则占位符走 API 路径、env CLI 后端被忽略）。
+    path = tmp_path / "runtime_llm.json"
+    path.write_text(json.dumps({"api_key": "cli-backend"}), encoding="utf-8")
+    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
+
+    out = llm_config.load_runtime_llm()
+
+    assert out["channel"] != "api"
+
+
+def test_cli_backend_active_total_on_unsupported_runner(monkeypatch):
+    # ship-pre CMR Group F：不支持的 runner 不该让守卫崩（应判 not-active，不抛 RuntimeError）。
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    from ming_sim import cli_backend
+    from ming_sim.models import LLMConfig
+
+    cfg = LLMConfig(api_key="cli-backend", base_url="", model="", channel="cli", cli_runner="bogus")
+
+    assert cli_backend.cli_backend_active(cfg) is False
+    assert cli_backend._backend_label(cfg) == "agy"

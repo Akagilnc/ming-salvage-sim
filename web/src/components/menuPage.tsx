@@ -224,10 +224,18 @@ export function ApiSettingsModal({
     advanced_base_url?: string;
     has_advanced_api_key?: boolean;
     advanced_thinking_level?: string;
+    channel?: "api" | "cli";
+    cli_runner?: string;
+    cli_model?: string;
+    cli_timeout_seconds?: number;
   };
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
+  const [channel, setChannel] = React.useState<"api" | "cli">(initial?.channel === "cli" ? "cli" : "api");
+  const [cliRunner, setCliRunner] = React.useState(initial?.cli_runner || "agy");
+  const [cliModel, setCliModel] = React.useState(initial?.cli_model || "");
+  const [cliTimeout, setCliTimeout] = React.useState(String(initial?.cli_timeout_seconds || 300));
   const [baseUrl, setBaseUrl] = React.useState(initial?.base_url || "https://api.deepseek.com");
   const [model, setModel] = React.useState(initial?.model || "deepseek-chat");
   const [advancedModel, setAdvancedModel] = React.useState(initial?.advanced_model || "");
@@ -249,6 +257,10 @@ export function ApiSettingsModal({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          channel,
+          cli_runner: cliRunner.trim(),
+          cli_model: cliModel.trim(),
+          cli_timeout_seconds: parseFloat(cliTimeout) || 300,
           base_url: baseUrl.trim(),
           model: model.trim(),
           api_key: apiKey.trim(),
@@ -278,8 +290,37 @@ export function ApiSettingsModal({
   return (
     <div className="menu-modal-bg" onClick={onClose}>
       <div className="menu-modal" onClick={(e) => e.stopPropagation()}>
-        <h2>设置 API</h2>
-        <p className="menu-hint">推荐 DeepSeek（中文好、价格便宜）。配置写入本地，不上传。</p>
+        <h2>LLM 后端</h2>
+        <p className="menu-hint">API 通道用商业模型；CLI 通道用本机 agent（agy/codex/claude），可脱 key。配置写入本地，不上传。</p>
+        <label>
+          通道
+          <select value={channel} onChange={(e) => setChannel(e.target.value === "cli" ? "cli" : "api")}>
+            <option value="api">API（OpenAI 兼容）</option>
+            <option value="cli">CLI（本机 agent，脱 key）</option>
+          </select>
+        </label>
+        {channel === "cli" && (
+          <>
+            <label>
+              CLI Runner
+              <select value={cliRunner} onChange={(e) => setCliRunner(e.target.value)}>
+                <option value="agy">agy（Gemini）</option>
+                <option value="codex">codex</option>
+                <option value="claude">claude</option>
+              </select>
+            </label>
+            <label>
+              CLI Model <small className="menu-hint">（留空=runner 默认档）</small>
+              <input value={cliModel} onChange={(e) => setCliModel(e.target.value)} placeholder="gpt-5.5 / 默认" />
+            </label>
+            <label>
+              CLI Timeout Seconds
+              <input type="number" min={30} max={1800} value={cliTimeout} onChange={(e) => setCliTimeout(e.target.value)} placeholder="300" />
+            </label>
+          </>
+        )}
+        {channel === "api" && (
+          <>
         <label>
           Base URL
           <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.deepseek.com" />
@@ -321,10 +362,12 @@ export function ApiSettingsModal({
           API Key
           <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={initial?.has_api_key ? "(已配置；如需更换请重新填写)" : "sk-..."} />
         </label>
+          </>
+        )}
         {err && <div className="menu-error">{err}</div>}
         <div className="menu-modal-actions">
           <button onClick={onClose} disabled={busy}>取消</button>
-          <button className="primary" onClick={onSave} disabled={busy || !baseUrl.trim() || !model.trim() || (!apiKey.trim() && !initial?.has_api_key)}>
+          <button className="primary" onClick={onSave} disabled={busy || (channel === "cli" ? !cliRunner.trim() : (!baseUrl.trim() || !model.trim() || (!apiKey.trim() && !initial?.has_api_key)))}>
             {busy ? "保存中..." : "保存"}
           </button>
         </div>

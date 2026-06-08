@@ -49,7 +49,15 @@ def _cli_runtime_slot(data: Dict[str, object]) -> Dict[str, str]:
 def _normalize_runtime_llm(data: Dict[str, object]) -> Dict[str, object]:
     channel = str(data.get("channel") or "").strip().lower()
     if channel not in {"api", "cli"}:
-        channel = "api" if any(data.get(k) for k in _API_RUNTIME_FIELDS) else ""
+        # 扁平旧配置推断激活通道：占位符 cli-backend 不算 API 信号，
+        # 否则旧 CLI-env 存档被误升成显式 API、env CLI 后端被忽略。
+        def _is_api_signal(key: str) -> bool:
+            value = data.get(key)
+            if key == "api_key" and str(value or "").strip() == "cli-backend":
+                return False
+            return bool(value)
+
+        channel = "api" if any(_is_api_signal(k) for k in _API_RUNTIME_FIELDS) else ""
     api_raw = data.get("api")
     cli_raw = data.get("cli")
     api = _api_runtime_slot(api_raw if isinstance(api_raw, dict) else data)
