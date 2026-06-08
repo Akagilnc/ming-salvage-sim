@@ -201,6 +201,11 @@ def load_army_content() -> Dict[str, Army]:
             arrears=int_field(item, "arrears", f"armies.json.armies[{idx}]"),
             mobility=int_field(item, "mobility", f"armies.json.armies[{idx}]"),
             loyalty=int_field(item, "loyalty", f"armies.json.armies[{idx}]"),
+            # 火器/随军大炮：armies.json 缺省时给基线（火器全军约30%、随军炮0门，符开局玩法设定），
+            # json 显式给值则覆盖；clamp 与引擎一致（火器0-100、随军炮0-12）。新档由此贯通——
+            # fresh seed 曾不写两列致新档全 0，被 data/probe.db 老档 fixture 掩盖（CMR codexB）。
+            firearm_equipment=max(0, min(100, int(item.get("firearm_equipment", 30) or 0))),
+            cannon_equipment=max(0, min(12, int(item.get("cannon_equipment", 0) or 0))),
             status=str_field(item, "status", f"armies.json.armies[{idx}]"),
             owner_power=str_field(item, "owner_power", f"armies.json.armies[{idx}]"),
         )

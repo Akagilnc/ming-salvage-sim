@@ -222,6 +222,42 @@ def build_secret_order_brief(character: Character, context: CourtContext) -> str
     return "\n".join(lines)
 
 
+def build_region_brief(context: CourtContext) -> str:
+    """两京十三省危情概览注入大臣 system —— CLI 后端无 list_regions 工具，
+    靠此让大臣知地方民心/动乱/边压，谈政略不抓瞎。"""
+    try:
+        return context.db.region_report(limit=8)
+    except Exception:
+        return ""
+
+
+def build_building_brief(context: CourtContext) -> str:
+    """现有建筑紧凑表（名·类·省 等级/完好/产出）——省去叙述控 token。
+    CLI 后端无 list_buildings 工具，靠此让大臣知国家有哪些厂局仓坞。"""
+    try:
+        # 用中文地区名（LEFT JOIN regions），不漏拼音 region_id（beizhili 等英文进 system
+        # 会诱发模型 code-switch 蹦英文；地区无名时退回 region_id）。
+        rows = context.db.conn.execute(
+            "SELECT b.name AS name, b.category AS category, "
+            "COALESCE(r.name, b.region_id) AS region_name, "
+            "b.level AS level, b.condition AS condition, "
+            "b.output_metric AS output_metric, b.output_amount AS output_amount "
+            "FROM buildings b LEFT JOIN regions r ON r.id = b.region_id "
+            "ORDER BY b.region_id, b.category"
+        ).fetchall()
+    except Exception:
+        return ""
+    if not rows:
+        return ""
+    lines = []
+    for r in rows:
+        out = f"·产{r['output_metric']}{int(r['output_amount'] or 0)}" if r["output_metric"] else ""
+        lines.append(
+            f"{r['name']}（{r['category']}·{r['region_name']}）Lv{r['level']}完好{r['condition']}{out}"
+        )
+    return "【现有建筑（名·类别·地区 等级/完好/产出；问营建/厂局/仓坞据此）】\n" + "；".join(lines)
+
+
 def _make_cultivate_tool(character: Character, context: CourtContext):
     """生成后宫调教 tool，绑定到当前妃嫔。"""
     name = character.name
@@ -431,6 +467,8 @@ def create_minister_agent(
         last_gazette = build_last_gazette_brief(context)
         memory_brief = build_memory_brief(character, context)
         secret_brief = build_secret_order_brief(character, context)
+        region_brief = build_region_brief(context)
+        building_brief = build_building_brief(context)
         monthly_block_parts = [
             f"当前为 {context.state.year} 年 {context.state.period} 月（第 {context.state.turn} 回合）。"
             "作答涉及时序（某事多久前、某人是否已亡、某限期是否到）时以此为准。",
@@ -440,6 +478,10 @@ def create_minister_agent(
             monthly_block_parts.append(court_roster)
         if army_roster:
             monthly_block_parts.append(army_roster)
+        if region_brief:
+            monthly_block_parts.append(region_brief)
+        if building_brief:
+            monthly_block_parts.append(building_brief)
         if last_gazette:
             monthly_block_parts.append(last_gazette)
         if memory_brief:
