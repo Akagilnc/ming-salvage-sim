@@ -121,6 +121,34 @@ def test_army_numeric_fields_synced_across_prompts():
         assert ARMY_FIELD_LABELS[f] in enrich_src, f"enrich prompt 缺军备轴「{ARMY_FIELD_LABELS[f]}」"
 
 
+def test_army_detail_shows_firearm_cannon(game):
+    """army_detail(大臣 inspect_army 走它)必须显示火器/随军大炮数值——否则 tool-call 大臣查军详情
+    看不到军备两轴，火器 read 侧不闭环(CMR codexB read-surface)。"""
+    db, state, _ = game
+    aid = db.conn.execute("SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"]
+    db.conn.execute("UPDATE armies SET firearm_equipment=45, cannon_equipment=3 WHERE id=?", (aid,))
+    db.conn.commit()
+    name = db.conn.execute("SELECT name FROM armies WHERE id=?", (aid,)).fetchone()["name"]
+    detail = db.army_detail(name)
+    assert "火器45" in detail
+    assert "随军大炮3" in detail
+
+
+def test_army_report_shows_firearm(game):
+    """army_report(list_armies 警讯)也带火器，read 侧闭环。"""
+    db, _, _ = game
+    rpt = db.army_report(limit=8)
+    assert "火器" in rpt
+
+
+def test_game_world_prompt_lists_firearm_cannon():
+    """全局 game_world 军队字段表含火器/随军大炮(大臣据此知军备轴，CMR codexB)。"""
+    import os
+    p = os.path.join(os.path.dirname(__file__), "..", "content", "prompts", "game_world.md")
+    txt = open(p, encoding="utf-8").read()
+    assert "火器" in txt and "随军大炮" in txt
+
+
 def test_fresh_seed_wires_firearm_not_all_zero(content):
     """新档 seed（非 data/probe.db 老档副本）必须贯通火器：armies.json 缺省由 loader 给基线、
     fresh seed INSERT 写两列。曾全 0 被 probe.db fixture 掩盖（CMR codexB-P1）。"""

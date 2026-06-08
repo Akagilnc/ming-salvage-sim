@@ -549,12 +549,12 @@ def build_board_query_tools(context: CourtContext):
             return str(dict(row))
 
     def list_armies() -> str:
-        """查看大明主要军队的驻扎、维护费、补给、士气和欠饷警讯。"""
+        """查看大明主要军队的驻扎、维护费、补给、士气、火器和欠饷警讯。"""
         return context.db.army_report(limit=8)
 
     def inspect_army(army: str) -> str:
-        """查某支军队详细数值：supply/morale/training/equipment/arrears/mobility/loyalty/
-        manpower/maintenance_per_turn/station/commander/controller/troop_type/status。
+        """查某支军队详细数值：supply/morale/training/equipment/firearm_equipment/cannon_equipment/
+        arrears/mobility/loyalty/manpower/maintenance_per_turn/station/commander/controller/troop_type/status。
         army 可传军队名（如"关宁军"）或 army_id（如"guanning"），两者均支持。"""
         try:
             return context.db.army_detail(army)
