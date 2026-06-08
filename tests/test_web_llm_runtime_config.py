@@ -116,3 +116,35 @@ def test_menu_save_llm_validates_api_channel_over_backend_env(monkeypatch):
     assert result["ok"] is True
     assert seen[0].channel == "api"
     assert saved
+
+
+def test_menu_status_treats_saved_cli_runtime_as_ready_without_api_key(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "_has_main_db", lambda: False)
+    monkeypatch.setattr(web_app, "_scan_saves", lambda: [])
+    monkeypatch.setattr(web_app, "_scan_campaigns", lambda: [])
+    monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: "")
+    monkeypatch.setattr(web_app, "load_runtime_game", lambda: {"hitl_min_decisions": 1})
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
+        "channel": "cli",
+        "api": {"base_url": "", "model": "", "api_key": ""},
+        "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": "240"},
+        "base_url": "",
+        "model": "",
+        "api_key": "",
+        "max_tokens": "8000",
+        "timeout_seconds": "180",
+        "thinking_level": "",
+        "advanced_model": "",
+        "advanced_base_url": "",
+        "advanced_api_key": "",
+        "advanced_thinking_level": "",
+    })
+
+    status = asyncio.run(web_app.api_menu_status())
+
+    assert status["has_api_key"] is False
+    assert status["llm_ready"] is True
+    assert status["llm"]["channel"] == "cli"
+    assert status["llm"]["cli_runner"] == "codex"

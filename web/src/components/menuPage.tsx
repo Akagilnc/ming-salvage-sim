@@ -53,6 +53,11 @@ export function MenuPage({
     });
 
   const hasKey = !!status?.has_api_key;
+  const llmReady = !!(status?.llm_ready ?? status?.has_api_key);
+  const isCli = status?.llm?.channel === "cli";
+  const currentBackend = isCli
+    ? `CLI · ${status?.llm?.cli_runner || "agy"}${status?.llm?.cli_model ? ` · ${status.llm.cli_model}` : ""}`
+    : `${status?.llm?.base_url || ""} · ${status?.llm?.model || ""}`;
   const hasMainDb = !!status?.has_main_db;
   const saves = status?.saves || [];
   const campaigns = status?.campaigns || [];
@@ -68,23 +73,23 @@ export function MenuPage({
       <div className="menu-panel">
         <p className="menu-subtitle">崇祯元年正月 · 召大臣议天下事</p>
 
-        {!hasKey && (
-          <div className="menu-notice">尚未配置 API 接口。请先「设置 API」。</div>
+        {!llmReady && (
+          <div className="menu-notice">尚未配置 LLM 后端。请先「设置 API」。</div>
         )}
         {error && <div className="menu-error">{error}</div>}
 
         <div className="menu-buttons">
-          <button className="menu-btn primary" disabled={!hasKey || !!busy} onClick={onNewGame}>
+          <button className="menu-btn primary" disabled={!llmReady || !!busy} onClick={onNewGame}>
             开始新游戏
           </button>
-          <button className="menu-btn" disabled={!hasKey || !hasMainDb || !!busy} onClick={onContinue} title={hasMainDb ? "" : "无上次进度"}>
+          <button className="menu-btn" disabled={!llmReady || !hasMainDb || !!busy} onClick={onContinue} title={hasMainDb ? "" : "无上次进度"}>
             继续
           </button>
-          <button className="menu-btn" disabled={!hasKey || !!busy || !saves.length} onClick={() => setShowSaveList(true)} title={saves.length ? "" : "暂无存档"}>
+          <button className="menu-btn" disabled={!llmReady || !!busy || !saves.length} onClick={() => setShowSaveList(true)} title={saves.length ? "" : "暂无存档"}>
             加载存档 {saves.length ? `(${saves.length})` : ""}
           </button>
           <button className="menu-btn" disabled={!!busy} onClick={() => setShowApiForm(true)}>
-            设置 API {hasKey ? "" : "（必需）"}
+            设置 API {hasKey || llmReady ? "" : "（必需）"}
           </button>
           <button className="menu-btn" disabled={!!busy} onClick={() => setShowGameSettings(true)}>
             游戏设置
@@ -92,9 +97,9 @@ export function MenuPage({
         </div>
 
         {busy && <div className="menu-busy">{busy}</div>}
-        {hasKey && status?.llm && (
+        {llmReady && status?.llm && (
           <div className="menu-llm-info">
-            当前接口：{status.llm.base_url} · {status.llm.model}
+            当前后端：{currentBackend}
           </div>
         )}
       </div>
