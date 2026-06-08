@@ -1,17 +1,25 @@
 # TODO / TOFIX — 探针待修与待办
 
 > 上下文会被压缩，记忆不可靠。所有"要改但还没改"的事，一律记这里。每次发现新问题就追加，修完就划掉（`~~划线~~` + 注明修复 commit/日期）。
+>
+> **开放项已建 GitHub issue 跟踪**（2026-06-08）：本文件留叙事上下文，状态/讨论走 issue。
+
+## 🟠 PR #2 CMR Deferred（cross-model review 8 轮 5/5 concur 后 defer 的契约/架构项）
+- D1 settlement 事务半落库 → [issue #3](https://github.com/Akagilnc/ming-salvage-sim/issues/3)
+- D2 城防炮 region.cannon 无 delta 写入路径 → [issue #4](https://github.com/Akagilnc/ming-salvage-sim/issues/4)
+- D3 conftest 依赖 gitignored probe.db → CI 假绿 → [issue #5](https://github.com/Akagilnc/ming-salvage-sim/issues/5)
+- D4 _loads_lenient JSONC 非 quote-aware 病态边界 → [issue #6](https://github.com/Akagilnc/ming-salvage-sim/issues/6)
 
 ## 🔴 BUG / 待修（影响游戏正确性）
 
-### B8. 游戏聊天框中文输入法不学词（Windows 群员报，待 cmr 完再修）
+### B8. 游戏聊天框中文输入法不学词（Windows 群员报，待 cmr 完再修） → [issue #7](https://github.com/Akagilnc/ming-salvage-sim/issues/7)
 - **现象**：Windows 群员在游戏聊天框打「拟诏/密令」等词，输入法**不学习**（不进用户词库、下次不联想）；同样的词在游戏外能学；回游戏又不联想。打字本身正常（字打得出），只是不学。
 - **已排除**：① 回车劫持理论错——用户用**空格**确认候选，`handleKeyDown`(modals.tsx:578) 只拦 Enter，空格没被截；② 编码 UTF-8/GBK（开发者猜）在浏览器版站不住——`web/index.html`+`dist` 都有 `<meta charset="UTF-8">`、服务器返回 `charset=utf-8`，不会回退 GBK，且编码错=乱码非"打得出但不学"。（Electron 打包版未在 mac 验。）
 - **最可能真因（未证实）**：聊天 textarea(`web/src/components/modals.tsx:668`) 是受控组件 `value={input} onChange=...`，**无任何 composition 处理**。输入法合成期 onChange 每次更新就 setState→重渲染→React 重写 value，扰乱合成提交。此 bug 在 **Windows 输入法(搜狗/微软拼音)远比 macOS 严重** → 对上"和 Windows 有关"+"app 侧"。
 - **修法候选**：modals.tsx 聊天 textarea 加 `onCompositionStart/End` 守卫，合成期不 setState/不重写 value，`compositionEnd` 一次性落；`handleKeyDown` 顺手加 `isComposing` 守卫；同样隐患扫全前端其它 textarea(主聊天/作弊台 main.tsx:1148)。
 - **注**：最终须 **Windows + 真实输入法**实测（mac 复现不了 Windows IME），改对方向≠包好。
 
-### B7. CLI 大臣回话偶夹英文（opus code-switch，待摸清再修）
+### B7. CLI 大臣回话偶夹英文（opus code-switch，待摸清再修） → [issue #8](https://github.com/Akagilnc/ming-salvage-sim/issues/8)（0b30d35 已部分治）
 - **现象**：opus 后端毕自严回话蹦英文「各衙门account册移交故意拖延」。玩了很久第一次出现 → 疑本 session 改动或换模型带出。
 - **可疑诱因（未定论）**：① 换 opus(可能比旧模型更易 code-switch)；② `build_building_brief` 注入拼音 region_id（beizhili/nanzhili…，本 session fd96d96 加的）把英文塞进 system；③ agno skills/tools 框架英文元数据（active/skill/scripts/description… ~117 token）一直在 system 里（CliChat 忽略 tools、function-calling 本不可能，纯属注入污染）—— 但这是早就存在、之前没触发。
 - **已回滚的过激修法（e0b497e，已 revert d443d9d）**：曾 CLI 后端删大臣 tools/skills + 中文行为约束补回 + 建筑表中文地区名。教训：**没摸清 .agno_skills SKILL.md 里夹带的行为约束(密令不可自称已执行/拟旨前核名册等)就一刀删，删过头**；且"玩很久才首现"更像本 session 引入，不该靠洁癖式删工具救。
@@ -38,7 +46,7 @@
 - **代价**：每条新国策月末多一次 ~12s agy 补全（agy 一贯不填→基本每条都触发）。
 - **范围**：仅 CLI 后端 gated。api 后端历史上「大部分有效果」（强模型自觉填），不走此补全。B 方案（国策同步产 fiscal_creates/new_armies 等独立 delta，对治 T3/T4）后续看需要再补。
 
-### B1. 阉党核心退场，faction leverage 不联动下跌 🔧 已临时修复（见底部修复记录，遗留根因未解）
+### B1. 阉党核心退场，faction leverage 不联动下跌 🔧 已临时修复（见底部修复记录，遗留根因未解） → [issue #9](https://github.com/Akagilnc/ming-salvage-sim/issues/9)
 - **现象**：崇祯元年十一月，田尔耕（流放）、崔呈秀（乞休）、王体乾（致仕）三个阉党核心都退场了，但 `factions.阉党.leverage` 仍是 **78（全场第一）**，只有 satisfaction 跌到 32。
 - **根因**：我产 delta 时 `faction_delta` **只改 satisfaction，不改 leverage**（见 DELTA_SCHEMA.md：faction_delta 作用于 satisfaction）。而 `character_status_changes`（人物退场）**没有联动扣减所属派系的 leverage**。
 - **应有行为**：一个派系的核心人物（尤其握实权官职者：兵部尚书/司礼监掌印/锦衣卫都督）退场/下狱/致仕时，该派系的 leverage 应按其官职权重相应下跌。阉党核心尽去，leverage 该从 78 跌到 30-40 区间。
@@ -107,7 +115,7 @@
 
 ## 🔵 探针工程待办（step1 → step2）
 
-### T1. driver 还没固化成脚本
+### T1. driver 还没固化成脚本 → [issue #10](https://github.com/Akagilnc/ming-salvage-sim/issues/10)
 - 现在每回合结算都用 `python3 - <<'PY' ... PY` 内联 heredoc 跑，没有持久 driver。
 - 应固化成 `driver.py`，封装：`state`（读盘）/ `settle --delta <json>`（固定tick+apply+惯性+推进）/ `dump`（盘面），复用 DELTA_SCHEMA + SETTLEMENT_FLOW。
 - 好处：可复现、可调试、delta 从文件喂入不易出错。
@@ -129,7 +137,7 @@
 
 ## 🟡 观察 / 待确认（未必是 bug）
 
-### O1. 客氏出宫但 status 仍 active
+### O1. 客氏出宫但 status 仍 active → [issue #11](https://github.com/Akagilnc/ming-salvage-sim/issues/11)
 - 客氏被送出宫颐养，但 `characters.客氏.status` 仍是 active（她还活着、只是不在宫）。游戏没有"出宫/居家"这个状态。
 - 暂不算 bug（active=在世可被提及），但若后续要表达"已离开权力中心"，需考虑用 offstage 或加注。
 
