@@ -12,10 +12,20 @@
 - **DB 索引**：`event_memories` 新增 `idx_event_memories_expiry(expires_turn, turn)` 加速过期过滤；`get_memories_by_keywords` 支持 `ignore_expiry` 参数。
 - 后宫妃嫔卡片支持上传本机图片作专属立绘，存 `data/uploads/`，记入 `portrait_id`，重启后自动复用（`POST/DELETE/GET /api/consorts/{name}/portrait`）。
 - 立绘工具脚本：`gen_portraits.py`（调生图接口出图）、`compress_portraits.py`（缩 512 压体积）、`portrait_status.py`（进度表）；附后宫预设图池与寝宫背景图。
+- **军备两轴 + 城防（玩法机制）**：军队新增 `火器`（火器装备 0-100：鸟铳/三眼铳，野战+守城）与 `随军大炮`（随军红夷炮门数 0-12，攻坚利器但不利野战机动）；地区新增 `城市等级`（0-5 静态史实分级，京师 5）与 `城防炮`（城头红夷炮，上限 = 城市等级×8）。判战永远由 LLM 软判，引擎只 clamp 不算胜负。全层贯通（DB/extractor prompt/军表/大臣 inspect）。
+- **CLI 后端探针（脱 api key）**：游戏可不依赖商业 api key 运行——LLM 后端在单一咽喉点改走本机 `agy`(默认)/`codex`/`claude` CLI（`MING_SIM_LLM_BACKEND=agy|codex|claude`），纯 subprocess，机器本地。补齐无 function-calling 带来的 toolcall 缺口（拟旨/密令入档、会话动作、地区/建筑 context 注入、国策实体后果补全）。详见 `docs/CHANGELOG_cli_backend.md`。
 
 ### 变更
 - **推演 agent（season_simulator）改 skill+tool 模式**：不再把全量盘面静态塞入 payload；挂 10 个只读工具（`view_state`/`check_treasury`/`list_regions`/`inspect_region`/`list_armies`/`inspect_army`/`list_issues`/`inspect_issue`/`list_external_powers` + `submit_report`），按需查盘面，写完邸报调 `submit_report` 提交正文；`submit_report` docstring 承载完整奏章写作规范（结构/笔法/局势/末章/禁忌），`season_simulator.md` 从 141 行精简至 54 行。
 - **结算 agent（score_extractor）改 skill+tool 模式**：payload 去掉 regions/armies/buildings/ministers 五张全表，只保留 narrative + issues摘要 + id列表 + fiscal_config；挂 7 个工具（`get_region`/`get_army`/`get_external_power`/`get_active_ministers`/`get_issue_detail`/`get_faction_class_state` + `submit_extraction`），按章节按需查当前值算 delta；`submit_extraction` docstring 承载完整 JSON schema、16 字段约束、档位标准与骨架示例，`score_extractor.md` 从 266 行精简至 50 行；去掉 `force_json_output`，改由 tool docstring 约束格式。
+- **CLI 后端会话落地收敛单一真源**：`session.apply_cli_conversation_actions` 同时供命令行（`session.chat`）与 web 流式路径调用，杜绝两边逻辑漂移；官职分类改走 `content/offices.json` 参考表（替代旧正则词表），无 CLI 后端时落「待铨」graceful。
+- **国策实体后果三结案路径对齐**：issue 经 tracker advance / close / 自然惯性（inertia）任一方式结案，都落 `effect_on_resolve/fail` 的建军/补兵/人物状态/帝国修正，不再只有部分路径生效。
+
+### 修复
+- 密令「更新」按精确 id 改对应那条（多条 active 时不再改错条），更新不清空原标签；催办对 pending_review 不抛错。
+- CLI runner（agy/codex/claude）检查退出码/空输出即抛错，不把 auth/quota 失败当空回复或角色文本落库。
+- 落库守门：国策效果字段非 dict 不再崩整月结算；`apply_score_extraction` 非法 delta 严格抛错不静默丢；CLI 后端国策保底有回报，绝不入空壳。
+- 火器/随军大炮新档贯通（fresh seed 不再全 0），动态新建军可按 id/名查详情。
 
 ## [2026-05-24]
 
