@@ -12,6 +12,13 @@
 
 ## 🔴 BUG / 待修（影响游戏正确性）
 
+### B9. 历史事件无结构化前提门，袁崇焕斩毛文龙在已安抚前提下误触发 → [issue #12](https://github.com/Akagilnc/ming-salvage-sim/issues/12)
+- **现象**（turn21/1629-06 实测）：玩家 turn20 已安排袁安抚毛、奏对确认"毛饷已足、效顺"，`mao_wenlong` 仍被 simulator 弹出（`event_triggers` turn21 source=simulation）；邸报叙述"列十二罪斩毛文龙于帐前"，但 DB 里 `characters.毛文龙.status=active`（**没死**）、军队 faction satisfaction 仍 100。
+- **根因 B9a（机制）**：`gather_candidate_events`（[issues.py:308](../ming_sim/issues.py)）历史分支（`trigger_year>0`）进候选池只过 `_event_window_open`（纯日历窗口），无代码前提校验；`precondition`（[models.py:77](../ming_sim/models.py)）纯文本喂 simulator 软判。结构化硬门 `trigger_gate`+`_gate_passed`（[issues.py:270](../ming_sim/issues.py)，能查 character/faction/army/region）**只接 seed_events，没接历史 events**——守大事的门已造好但没接上。
+- **根因 B9b（P1 违背）**：安抚决策从没落进结构化 DB（无密令/directive/毛 loyalty 增量），只活在奏对叙事 → 喂 simulator 的结构化盘面无"皇帝已干预防斩帅"信号；连事件结果（毛死）也没落库，DB↔邸报漂移。同类前科见 memory `sim-fabricates-appointments`。
+- **修法**：A) 把 `trigger_gate` 接到历史事件，`gather_candidate_events` 历史分支也跑 `_gate_passed` + 给 `mao_wenlong` 加结构化硬前提（治本）；B) 让"安抚"成可落库状态（和解 flag/抬毛 loyalty），门去读；C) 事件触发时强制落 `character_status_changes`（毛→removed）。**A+B+C 互为前提，需一并修**。
+- **注**：P1 机制坑（影响所有历史锚定事件，非仅毛文龙）。修前与 cmr session 在 issues.py/db.py 的改动核对避免撞车。
+
 ### B8. 游戏聊天框中文输入法不学词（Windows 群员报，待 cmr 完再修） → [issue #7](https://github.com/Akagilnc/ming-salvage-sim/issues/7)
 - **现象**：Windows 群员在游戏聊天框打「拟诏/密令」等词，输入法**不学习**（不进用户词库、下次不联想）；同样的词在游戏外能学；回游戏又不联想。打字本身正常（字打得出），只是不学。
 - **已排除**：① 回车劫持理论错——用户用**空格**确认候选，`handleKeyDown`(modals.tsx:578) 只拦 Enter，空格没被截；② 编码 UTF-8/GBK（开发者猜）在浏览器版站不住——`web/index.html`+`dist` 都有 `<meta charset="UTF-8">`、服务器返回 `charset=utf-8`，不会回退 GBK，且编码错=乱码非"打得出但不学"。（Electron 打包版未在 mac 验。）
