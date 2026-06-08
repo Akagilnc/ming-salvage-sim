@@ -50,6 +50,24 @@ def test_run_settle_normalizes_chinese_delta_and_advances(game):
     assert new_unrest == old_unrest + 5
 
 
+def test_run_settle_persists_narrative_and_delta_trace(game):
+    """driver 传入邸报叙事 → 落 turn_report;delta 以 JSON 落 turn_extractions.extractor_output（供 replay 重建）。"""
+    db, state, content = game
+    before = state.turn
+    narrative = "【邸报·测试】山西动乱微升，余无大事。"
+
+    run_settle(db, state, content, {"地区变化": {"shanxi": {"动乱": 1}}}, narrative=narrative)
+
+    report = db.conn.execute(
+        "SELECT report FROM turn_reports WHERE turn=?", (before,)
+    ).fetchone()[0]
+    assert report == narrative
+    extr = db.conn.execute(
+        "SELECT extractor_output FROM turn_extractions WHERE turn=?", (before,)
+    ).fetchone()[0]
+    assert "动乱" in extr  # delta 以 JSON 落痕,replay 可读
+
+
 def test_cli_state_prints_board(game, capsys):
     """`state` 子命令打印当前盘面（含纪年），返回码 0。"""
     db, state, content = game
@@ -79,6 +97,30 @@ def test_cli_settle_applies_delta_file(game, tmp_path, capsys):
     assert rc == 0
     assert state.turn == before + 1
     assert new_unrest == old_unrest + 3
+
+
+def test_cli_settle_envelope_persists_narrative(game, tmp_path):
+    """`settle --delta` 吃信封 {narrative, delta} 时,邸报落 turn_report;裸 delta 仍兼容。"""
+    db, state, content = game
+    before = state.turn
+    narrative = "【邸报·信封测试】京师城防新增红夷炮数门。"
+    env_file = tmp_path / "turn.json"
+    env_file.write_text(
+        json.dumps({"narrative": narrative, "delta": {"地区变化": {"beizhili": {"城防炮": 3}}}}),
+        encoding="utf-8",
+    )
+
+    rc = driver.main(["settle", "--delta", str(env_file)], game=game)
+
+    assert rc == 0
+    report = db.conn.execute(
+        "SELECT report FROM turn_reports WHERE turn=?", (before,)
+    ).fetchone()[0]
+    assert report == narrative
+    cannon = db.conn.execute(
+        "SELECT cannon FROM regions WHERE id='beizhili'"
+    ).fetchone()[0]
+    assert cannon == 3
 
 
 def test_cli_dump_prints_regions(game, capsys):

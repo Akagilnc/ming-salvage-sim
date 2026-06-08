@@ -48,11 +48,13 @@ def _dump_board(db, state) -> None:
         print(f"  {r['id']}：民心{r['public_support']} 动乱{r['unrest']} 城防炮{r['cannon']}门")
 
 
-def run_settle(db, state, content, raw_delta, registry=None) -> str:
-    """收一份中文 schema 形态的稀疏 delta → 规范化（中文 key→英文 canonical）→
-    pre_settle（财政 tick + auto_trigger）→ settle_with_delta（落库→inertia→结局→推进），
-    推进一回合。返回结算报告文本。
+def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", registry=None) -> str:
+    """收一份中文 schema 形态的稀疏 delta（+ 我产的邸报 narrative / 诏书 decree_text）→
+    规范化（中文 key→英文 canonical）→ pre_settle（财政 tick + auto_trigger）→
+    settle_with_delta（落库→inertia→结局→推进），推进一回合。返回结算报告文本。
 
+    narrative 落 turn_logs/turn_reports 作下月前文 + 玩家邸报;canonical delta 以 JSON 落
+    turn_extractions.extractor_output 作 replay/timeline 重建痕迹（memories 读此字段）。
     章节记忆 / 结局总评不注入（driver 无 llm_config），由对话里的我另行产出。
     """
     extracted = _canonicalize_extraction(raw_delta or {})
@@ -65,6 +67,9 @@ def run_settle(db, state, content, raw_delta, registry=None) -> str:
         before_turn=before_turn,
         content=content,
         registry=registry,
+        narrative=narrative,
+        decree_text=decree_text,
+        extractor_output=json.dumps(extracted, ensure_ascii=False),
     )
 
 
@@ -89,8 +94,17 @@ def main(argv=None, *, game=None) -> int:
         return 0
     if args.cmd == "settle":
         with open(args.delta, encoding="utf-8") as f:
-            raw_delta = json.load(f)
-        report = run_settle(db, state, content, raw_delta)
+            obj = json.load(f)
+        # 信封形态 {narrative, decree_text, delta}（我每回合的完整产出）;否则裸 delta（兼容）。
+        if isinstance(obj, dict) and "delta" in obj:
+            raw_delta = obj.get("delta") or {}
+            narrative = str(obj.get("narrative") or "")
+            decree_text = str(obj.get("decree_text") or "")
+        else:
+            raw_delta, narrative, decree_text = obj, "", ""
+        report = run_settle(
+            db, state, content, raw_delta, narrative=narrative, decree_text=decree_text
+        )
         print(report)
         return 0
     if args.cmd == "dump":
