@@ -10,8 +10,21 @@ import json
 import os
 import shutil
 
+import pytest
+
 import driver
 from driver import run_settle
+
+
+def test_cli_settle_rejects_non_dict_envelope_delta(game, tmp_path):
+    """信封的 delta 不是 object(dict)时,响亮报错(不静默吞成空 delta 照样结算)。"""
+    db, state, content = game
+    bad = tmp_path / "bad.json"
+    bad.write_text(
+        json.dumps({"narrative": "x", "delta": "not-a-dict"}), encoding="utf-8"
+    )
+    with pytest.raises(SystemExit):
+        driver.main(["settle", "--delta", str(bad)], game=game)
 
 
 def test_open_game_loads_board(tmp_path):
