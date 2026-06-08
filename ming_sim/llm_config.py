@@ -33,20 +33,17 @@ _API_RUNTIME_FIELDS = (
 _CLI_RUNTIME_FIELDS = ("runner", "model", "timeout_seconds")
 
 
+def _slot_text(data: Dict[str, object], key: str) -> str:
+    value = data.get(key, "")
+    return "" if value is None else str(value)
+
+
 def _api_runtime_slot(data: Dict[str, object]) -> Dict[str, str]:
-    return {k: str(data.get(k, "") or "") for k in _API_RUNTIME_FIELDS}
+    return {k: _slot_text(data, k) for k in _API_RUNTIME_FIELDS}
 
 
 def _cli_runtime_slot(data: Dict[str, object]) -> Dict[str, str]:
-    return {k: str(data.get(k, "") or "") for k in _CLI_RUNTIME_FIELDS}
-
-
-def _empty_runtime_llm() -> Dict[str, object]:
-    return {
-        "channel": "",
-        "api": _api_runtime_slot({}),
-        "cli": _cli_runtime_slot({}),
-    }
+    return {k: _slot_text(data, k) for k in _CLI_RUNTIME_FIELDS}
 
 
 def _normalize_runtime_llm(data: Dict[str, object]) -> Dict[str, object]:
@@ -58,10 +55,9 @@ def _normalize_runtime_llm(data: Dict[str, object]) -> Dict[str, object]:
     api = _api_runtime_slot(api_raw if isinstance(api_raw, dict) else data)
     cli = _cli_runtime_slot(cli_raw if isinstance(cli_raw, dict) else {})
     out = {"channel": channel, "api": api, "cli": cli}
-    # Transitional active API aliases keep existing callers working while the UI/API
-    # slices move to explicit slots.
-    if channel in ("", "api"):
-        out.update(api)
+    # Transitional API aliases keep existing callers working while the UI/API
+    # slices move to explicit slots. Keep these even when CLI is active.
+    out.update(api)
     return out
 
 
@@ -171,14 +167,14 @@ def for_role(cfg: LLMConfig, role: str) -> LLMConfig:
 def load_runtime_llm() -> Dict[str, object]:
     """读 data/runtime_llm.json。缺/坏返回空 dict。"""
     if not os.path.isfile(RUNTIME_LLM_PATH):
-        return _empty_runtime_llm()
+        return {}
     try:
         with open(RUNTIME_LLM_PATH, "r", encoding="utf-8") as fh:
             data = json.load(fh)
     except (OSError, json.JSONDecodeError):
-        return _empty_runtime_llm()
+        return {}
     if not isinstance(data, dict):
-        return _empty_runtime_llm()
+        return {}
     return _normalize_runtime_llm(data)
 
 
@@ -222,15 +218,17 @@ def save_runtime_llm(
     advanced_api_key: str = "",
     advanced_thinking_level: str = "",
     channel: str = "api",
-    cli_runner: str = "",
-    cli_model: str = "",
-    cli_timeout_seconds: float = 180.0,
+    cli_runner: Optional[str] = None,
+    cli_model: Optional[str] = None,
+    cli_timeout_seconds: Optional[float] = None,
 ) -> None:
     """写 data/runtime_llm.json。明文存盘——按用户选择。"""
     os.makedirs(os.path.dirname(RUNTIME_LLM_PATH), exist_ok=True)
     active_channel = (channel or "api").strip().lower()
     if active_channel not in {"api", "cli"}:
         active_channel = "api"
+    existing = load_runtime_llm()
+    existing_cli = existing.get("cli") if isinstance(existing.get("cli"), dict) else {}
     payload = {
         "channel": active_channel,
         "api": {
@@ -246,9 +244,13 @@ def save_runtime_llm(
             "advanced_thinking_level": normalize_thinking_level(advanced_thinking_level),
         },
         "cli": {
-            "runner": (cli_runner or "").strip(),
-            "model": (cli_model or "").strip(),
-            "timeout_seconds": cli_timeout_seconds,
+            "runner": (cli_runner if cli_runner is not None else str(existing_cli.get("runner", ""))).strip(),
+            "model": (cli_model if cli_model is not None else str(existing_cli.get("model", ""))).strip(),
+            "timeout_seconds": (
+                cli_timeout_seconds
+                if cli_timeout_seconds is not None
+                else existing_cli.get("timeout_seconds", "")
+            ),
         },
     }
     with open(RUNTIME_LLM_PATH, "w", encoding="utf-8") as fh:
