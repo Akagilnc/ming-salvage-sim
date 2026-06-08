@@ -411,7 +411,7 @@ def _settle_after_narrative(
 
     tlog("结算 4/4 落库 + inertia/ongoing")
     _emit("stage", "落库与事项推进")
-    applied = apply_score_extraction(db, state, extracted, content=content, registry=registry)
+    applied = apply_score_extraction(db, state, extracted, content=content, registry=registry, llm_config=llm_config)
 
     # 4) 把 narrative 与诏书写入 turn_logs 作下月前文
     db.record_log(state, narrative[:1200])

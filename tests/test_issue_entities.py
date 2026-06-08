@@ -152,6 +152,36 @@ def test_initiative_floor_applies_when_enrich_empty(game, monkeypatch):
     assert _j.loads(row["effect_on_resolve"]) == {"metrics": {"民心": 1}}   # floor 生效，非空壳
 
 
+def test_runtime_cli_initiative_floor_applies_without_backend_env(game, monkeypatch):
+    """runtime CLI 通道无 env 时，月末国策空回报也要走 CLI floor，不能落空壳。"""
+    import json as _j
+    from ming_sim.models import LLMConfig
+    import ming_sim.cli_backend as _cb
+
+    db, state, _ = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(_cb, "enrich_initiative_effects",
+                        lambda *a, **k: {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}})
+    cfg = LLMConfig(
+        api_key="cli-backend",
+        base_url="",
+        model="api-fallback",
+        channel="cli",
+        cli_runner="codex",
+        cli_model="gpt-5.5",
+        cli_timeout_seconds=240,
+    )
+
+    I.apply_score_extraction(db, state, {
+        "new_issues": [{"origin_kind": "decree", "title": "runtime空回报国策", "kind": "initiative"}],
+    }, llm_config=cfg)
+
+    row = db.conn.execute(
+        "SELECT effect_on_resolve FROM issues WHERE title='runtime空回报国策'").fetchone()
+    assert row is not None
+    assert _j.loads(row["effect_on_resolve"]) == {"metrics": {"民心": 1}}
+
+
 def test_inertia_natural_resolve_applies_entities(game):
     """issue 靠 inertia 自然推到 100 结案 → effect_on_resolve 的实体后果(建军)也要落，
     不能只落 metrics/economy；须与 tracker advance/close 路径一致（codexB-P1）。"""
