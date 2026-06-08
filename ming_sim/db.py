@@ -48,36 +48,79 @@ COURT_OFFICE_TYPES = {"内阁", "吏部", "户部", "礼部", "兵部", "刑部"
 MINISTRY_OFFICE_TYPES = {"吏部", "户部", "礼部", "兵部", "刑部", "工部"}
 
 
+_OFFICES_TABLE: Optional[Dict[str, object]] = None
+_OFFICE_TYPE_LLM_CACHE: Dict[str, str] = {}
+
+
+def _offices_table() -> Dict[str, object]:
+    """加载 content/offices.json（明代职官→office_type 参考表），缓存。失败返回空表。"""
+    global _OFFICES_TABLE
+    if _OFFICES_TABLE is None:
+        try:
+            from ming_sim.assets import load_json_asset
+            data = load_json_asset("offices.json")
+            _OFFICES_TABLE = data if isinstance(data, dict) else {}
+        except Exception:
+            _OFFICES_TABLE = {}
+    return _OFFICES_TABLE
+
+
+def _office_type_from_table(text: str) -> str:
+    """按 offices.json priority 顺序，首个命中词干者胜。无命中返回 ''。"""
+    for entry in _offices_table().get("priority", []) or []:
+        if not isinstance(entry, dict):
+            continue
+        for stem in entry.get("stems", []) or []:
+            if stem and stem in text:
+                return str(entry.get("type") or "")
+    return ""
+
+
+def _office_type_via_llm(text: str) -> str:
+    """表查不中（生造/罕见官名）时，CLI 后端在场则交 LLM 判 office_type（取 allowed_types）。
+    否则返回 ''。结果按官名缓存，避免重复调用。"""
+    if text in _OFFICE_TYPE_LLM_CACHE:
+        return _OFFICE_TYPE_LLM_CACHE[text]
+    try:
+        from ming_sim.cli_backend import cli_backend_from_env, _run_backend
+    except Exception:
+        return ""
+    if cli_backend_from_env() is None:
+        return ""
+    allowed = _offices_table().get("allowed_types") or []
+    allowed_set = set(allowed)
+    prompt = (
+        "你是明代职官分类器，不扮演、不解释。判断下面这个明朝官名/身份属于哪一类，"
+        "只输出一个类型词（不要任何别的字），必须严格取自：" + "、".join(allowed) + "。\n"
+        "官名：" + text + "\n类型："
+    )
+    out = ""
+    try:
+        raw, _ = _run_backend(prompt)
+        cand = (raw or "").strip().splitlines()[0].strip() if raw else ""
+        out = cand if cand in allowed_set else ""
+    except Exception:
+        out = ""
+    _OFFICE_TYPE_LLM_CACHE[text] = out
+    return out
+
+
 def infer_office_type_from_office(office: str, current_type: str = "") -> str:
-    """用 office 文本校正 office_type，避免旧标签把无实职人物塞进内阁/六部。"""
+    """用 office 文本判 office_type：先查 offices.json 参考表（明制权威、确定），
+    表查不中且 CLI 后端在场再交 LLM 判（生造官名），都不中落『待铨』。
+    取代旧版那串临时正则词表（脆、漏）。外藩(后金/蒙古/朝鲜)按 power_id≠ming 另处理，不入此路。"""
     kind = (current_type or "").strip()
     if kind == "后宫":
         return kind
     text = normalize_office(office)
     if not text:
         return "待铨" if kind in COURT_OFFICE_TYPES or not kind else kind
-
-    if re.search(r"内阁|大学士|首辅|次辅", text):
-        return "内阁"
-    for ministry in MINISTRY_OFFICE_TYPES:
-        if ministry in text and re.search(r"尚书|侍郎|郎中|员外郎|主事|给事中", text):
-            return ministry
-
-    if re.search(r"司礼监|秉笔太监|掌印太监|随堂太监", text):
-        return "司礼监"
-    if re.search(r"东厂|提督东厂", text):
-        return "东厂"
-    if re.search(r"锦衣卫|北镇抚司|镇抚司|都指挥使|千户", text):
-        return "锦衣卫"
-    if re.search(r"都察院|都御史|御史|巡按", text):
-        return "都察院"
-    if re.search(r"翰林院|翰林|编修|检讨|庶吉士|詹事", text):
-        return "翰林院"
-    if re.search(r"总督|巡抚|布政使|按察使|参政|知府|知县|兵备道|督粮", text):
-        return "地方"
-    if re.search(r"督师|经略|总兵|副总兵|游击|参将|守备|山海关|辽东|蓟辽|东江|大同|宣大", text):
-        return "边镇"
-
+    t = _office_type_from_table(text)
+    if t:
+        return t
+    t = _office_type_via_llm(text)
+    if t:
+        return t
     return "待铨" if kind in COURT_OFFICE_TYPES or not kind else kind
 
 
@@ -227,6 +270,8 @@ class GameDB:
                 military_pressure INTEGER NOT NULL,
                 status TEXT NOT NULL,
                 controlled_by TEXT NOT NULL DEFAULT 'ming',
+                city_level INTEGER NOT NULL DEFAULT 0,
+                cannon INTEGER NOT NULL DEFAULT 0,
                 fiscal TEXT NOT NULL DEFAULT '{}',
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(controlled_by) REFERENCES powers(id)
@@ -267,6 +312,8 @@ class GameDB:
                 arrears INTEGER NOT NULL,
                 mobility INTEGER NOT NULL,
                 loyalty INTEGER NOT NULL,
+                firearm_equipment INTEGER NOT NULL DEFAULT 0,
+                cannon_equipment INTEGER NOT NULL DEFAULT 0,
                 status TEXT NOT NULL,
                 owner_power TEXT NOT NULL DEFAULT 'ming',
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -711,7 +758,14 @@ class GameDB:
         }.items():
             self.ensure_column("powers", column, definition)
         self.ensure_column("armies", "owner_power", "TEXT NOT NULL DEFAULT 'ming'")
+        # 火器装备(鸟铳,野战+守城)/大炮装备(红夷炮,守城攻城、不利野战)：simulator 软判用的两条军备轴
+        self.ensure_column("armies", "firearm_equipment", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column("armies", "cannon_equipment", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("regions", "controlled_by", "TEXT NOT NULL DEFAULT 'ming'")
+        # 城市等级 0-5(静态,史实分级,将来供经济/内政)+ 城防大炮门数(城头红夷炮,上限 city_level×8)
+        self.ensure_column("regions", "city_level", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column("regions", "cannon", "INTEGER NOT NULL DEFAULT 0")
+        self._apply_region_city_levels()
         self.ensure_column("characters", "power_id", "TEXT NOT NULL DEFAULT 'ming'")
         self.ensure_column("characters", "location", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "resolve_condition", "TEXT NOT NULL DEFAULT ''")
@@ -1039,6 +1093,40 @@ class GameDB:
         if column not in columns:
             self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
+    # 城市等级 0-5（静态，史实分级；未列出的地区默认 0=游牧/孤岛/边荒）。
+    # 用途：城防大炮上限(city_level×8) + 将来经济/内政。1627 实况，非现代省份概念。
+    _CITY_LEVEL_TIERS = {
+        "beizhili": 5,                                          # 京师·四聚之首
+        "nanzhili": 4, "zhejiang": 4,                           # 江南经济心脏/陪都
+        "shenyang_liaoyang": 4, "korea": 4, "japan": 4,         # 后金盛京/朝鲜汉城/日本江户
+        "huguang": 3, "guangdong": 3, "fujian": 3,             # 汉口/佛山(四聚)·月港海贸
+        "shandong": 2, "jiangxi": 2, "henan": 2, "shanxi": 2,  # 中等省
+        "sichuan": 2, "shaanxi": 2, "liaodong": 2,             # 陕西旱灾衰/辽东宁锦设防
+        "guangxi": 1, "guizhou": 1, "yunnan": 1,               # 边远省
+        "jianzhou": 1, "taiwan": 1,                            # 后金兴京小堡/荷据小据点
+    }
+
+    def _apply_region_city_levels(self) -> None:
+        """按史实分级写各 region 的 city_level（静态，故每次加载校准即可；未列出者保持默认 0）。"""
+        for rid, level in self._CITY_LEVEL_TIERS.items():
+            self.conn.execute("UPDATE regions SET city_level=? WHERE id=?", (int(level), rid))
+
+    def apply_region_cannon(self, state: "GameState", region_id: str, delta: int) -> int:
+        """改某地城防大炮门数(城头红夷炮)。上限 = city_level×8；clamp [0, cap]。返回新值。
+        全局严格：引用未入库地区抛错，不静默。"""
+        row = self.conn.execute(
+            "SELECT city_level, cannon FROM regions WHERE id=?", (region_id,)
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"城防炮引用未入库地区 '{region_id}'")
+        cap = int(row["city_level"]) * 8
+        new_value = max(0, min(cap, int(row["cannon"]) + int(delta)))
+        self.conn.execute(
+            "UPDATE regions SET cannon=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (new_value, region_id),
+        )
+        return new_value
+
     def table_has_rows(self, table: str) -> bool:
         row = self.conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
         return row is not None
@@ -1191,8 +1279,8 @@ class GameDB:
                     INSERT INTO armies
                     (id, name, station, theater, commander, controller, troop_type, manpower,
                      maintenance_per_turn, supply, morale, training, equipment, arrears,
-                     mobility, loyalty, status, owner_power)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     mobility, loyalty, firearm_equipment, cannon_equipment, status, owner_power)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         army.id,
@@ -1211,6 +1299,8 @@ class GameDB:
                         army.arrears,
                         army.mobility,
                         army.loyalty,
+                        army.firearm_equipment,   # 新档贯通火器/随军大炮（CMR codexB）
+                        army.cannon_equipment,
                         army.status,
                         army.owner_power,
                     ),
@@ -1259,6 +1349,7 @@ class GameDB:
                     ),
                 )
         self._migrate_arrears_unit_to_silver(is_fresh_armies_seed)
+        self._apply_region_city_levels()  # 新档 region 此时才 INSERT 完，按史实补 city_level
         self.conn.commit()
 
     def _migrate_arrears_unit_to_silver(self, is_fresh_armies_seed: bool) -> None:
@@ -2271,9 +2362,10 @@ class GameDB:
             held = ""
             if str(row["controlled_by"]) != "ming":
                 held = f"【已为{self.power_display_name(row['controlled_by'])}所据】"
+            defense = f"、城防炮{int(row['cannon'])}门" if int(row["cannon"] or 0) > 0 else ""
             parts.append(
                 f"{row['name']}{held}：民心{row['public_support']}、动乱{row['unrest']}、"
-                f"粮食{row['grain_security']}万石、税{format_money(monthly_amount(int(row['tax_per_turn'])))}/{TURN_UNIT}，{row['status']}"
+                f"粮食{row['grain_security']}万石、税{format_money(monthly_amount(int(row['tax_per_turn'])))}/{TURN_UNIT}{defense}，{row['status']}"
             )
         return f"地区警讯：{'；'.join(parts)}。两京十三省账面{TURN_UNIT}税合计{format_money(monthly_amount(total_tax_value))}。"
 
@@ -2292,7 +2384,8 @@ class GameDB:
             f"民心{row['public_support']}，动乱{row['unrest']}，粮食{row['grain_security']}万石，"
             f"田亩{row['registered_land']}万亩，隐田{row['hidden_land']}万亩，"
             f"账面税收{format_money(monthly_amount(int(row['tax_per_turn'])))}/{TURN_UNIT}，"
-            f"士绅阻力{row['gentry_resistance']}，军事压力{row['military_pressure']}。"
+            f"士绅阻力{row['gentry_resistance']}，军事压力{row['military_pressure']}，"
+            f"城市等级{int(row['city_level'])}（城防炮上限{int(row['city_level']) * 8}门），城防大炮{int(row['cannon'])}门。"
             f"天灾：{row['natural_disaster']}；人祸：{row['human_disaster']}；状态：{row['status']}"
         )
 
@@ -2578,6 +2671,8 @@ class GameDB:
                     "arrears": int(row["arrears"]),
                     "mobility": int(row["mobility"]),
                     "loyalty": int(row["loyalty"]),
+                    "firearm_equipment": int(row["firearm_equipment"]),
+                    "cannon_equipment": int(row["cannon_equipment"]),
                     "status": row["status"],
                     "owner_power": row["owner_power"],
                 }
@@ -2602,7 +2697,7 @@ class GameDB:
             parts.append(
                 f"{row['name']}：驻{row['station']}，兵{row['manpower']}，"
                 f"饷{format_money(monthly_amount(maint))} /{TURN_UNIT}，补给{row['supply']}、"
-                f"士气{row['morale']}、{arr_text}，{row['status']}"
+                f"士气{row['morale']}、火器{row['firearm_equipment']}、炮{row['cannon_equipment']}、{arr_text}，{row['status']}"
             )
         return (
             f"军队警讯：{'；'.join(parts)}。"
@@ -2610,12 +2705,18 @@ class GameDB:
         )
 
     def army_detail(self, raw_name: str) -> str:
-        army_id = match_army_id_from_text(raw_name, self.content.armies)
-        if army_id is None:
-            raise ValueError(f"未找到军队：{raw_name}")
-        row = self.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
+        # 先按 DB id/name 直查（含动态 new_armies 建出的、不在静态 content.armies 的军队），
+        # 再退回静态别名模糊匹配（如「关宁军」→ guanning）。SELECT * 渲染含火器/随军大炮，
+        # 故新军详情 read 也闭合（CMR codexB/C：army render 收敛到此单一真源，杀 read 侧 whack-a-mole）。
+        row = self.conn.execute(
+            "SELECT * FROM armies WHERE id = ? OR name = ?", (raw_name, raw_name)
+        ).fetchone()
         if row is None:
-            raise ValueError(f"军队未入库：{raw_name}")
+            army_id = match_army_id_from_text(raw_name, self.content.armies)
+            if army_id is not None:
+                row = self.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
+        if row is None:
+            raise ValueError(f"未找到军队：{raw_name}")
         maint = int(row["maintenance_per_turn"]) or 0
         arr = int(row["arrears"]) or 0
         if maint > 0 and arr > 0:
@@ -2628,6 +2729,7 @@ class GameDB:
             f"兵种{row['troop_type']}，人数{row['manpower']}人，"
             f"维护费{format_money(monthly_amount(maint))} /{TURN_UNIT}，补给{row['supply']}，"
             f"士气{row['morale']}，训练{row['training']}，装备{row['equipment']}，"
+            f"火器{row['firearm_equipment']}，随军大炮{row['cannon_equipment']}门，"
             f"{arr_text}，机动{row['mobility']}，忠诚{row['loyalty']}。"
             f"状态：{row['status']}"
         )
@@ -2668,6 +2770,7 @@ class GameDB:
                         row["manpower"], monthly_pay, row["supply"], row["morale"],
                         row["training"], row["equipment"], row["mobility"], row["loyalty"],
                         arr, months, row["status"],
+                        row["firearm_equipment"], row["cannon_equipment"],
                     ))
                 )
             else:
@@ -2679,7 +2782,7 @@ class GameDB:
                 )
         out = [
             "【全军名册（现状以此为准，谈某军欠饷/补给/士气直接据此；欠饷万两为精确累计值，非抽象分）】",
-            "大明各军（| 分隔，列序＝军名|驻地|统帅|兵种|兵力|月饷万两|补给|士气|训练|装备|机动|忠诚|欠饷万两|欠饷月数|状态；补给…忠诚为0-100）：",
+            "大明各军（| 分隔，列序＝军名|驻地|统帅|兵种|兵力|月饷万两|补给|士气|训练|装备|机动|忠诚|欠饷万两|欠饷月数|状态|火器|随军大炮；补给…忠诚及火器为0-100，随军大炮为门数0-12）：",
             *own,
         ]
         if other:
@@ -2729,8 +2832,7 @@ class GameDB:
         for army_id, raw_changes in army_deltas.items():
             row = self.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
             if row is None:
-                print(f"[WARN] army_delta 引用未入库军队 '{army_id}' → 跳过")
-                continue
+                raise ValueError(f"army_delta 引用未入库军队 '{army_id}'（补兵/改属性落不了，先建军）")
             reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()[:80]
             _valid_army_fields = set(ARMY_SCORE_FIELDS + ARMY_QUANTITY_FIELDS + ARMY_TEXT_FIELDS)
             for raw_field, value in raw_changes.items():
@@ -2752,6 +2854,16 @@ class GameDB:
                         continue
                     stored_new: object = new_value
                     log_delta: int | None = actual_delta
+                elif field == "cannon_equipment":
+                    # 随军大炮=红夷级重炮门数(非 0-100 饱和度)：野战带不动几门，clamp 0-12。
+                    # 城防炮(城头红夷炮)另挂 region.cannon(上限 city_level×8)；佛郎机轻炮归 firearm_equipment。
+                    delta = int(value)
+                    new_value = max(0, min(12, int(old_value) + delta))
+                    actual_delta = new_value - int(old_value)
+                    if actual_delta == 0:
+                        continue
+                    stored_new = new_value
+                    log_delta = actual_delta
                 elif field in ARMY_SCORE_FIELDS:
                     delta = int(value)
                     # 遗产百分比修正：该军该字段若有 active 遗产修正符，先放大/缩小 delta
@@ -2847,12 +2959,10 @@ class GameDB:
             item = {_AA.get(str(k).strip(), str(k).strip()): v for k, v in raw.items()}
             aid = str(item.get("id") or "").strip()
             if not aid:
-                print(f"[WARN] new_armies 缺 id → 跳过: {raw}")
-                continue
+                raise ValueError(f"new_armies 缺 id（无法建军）：{raw}")
             owner = str(item.get("owner_power") or "ming").strip() or "ming"
             if owner not in valid_powers:
-                print(f"[WARN] new_armies owner_power '{owner}' 未在 powers → 跳过 {aid}")
-                continue
+                raise ValueError(f"new_armies owner_power '{owner}' 不在 powers 表（无法建军 {aid}）")
             name = str(item.get("name") or aid).strip()
             # 查重：同 id 或 同 name → 转 manpower 扩军增量
             existing = self.conn.execute(
@@ -2881,14 +2991,21 @@ class GameDB:
             try:
                 manpower = int(item["manpower"])
                 maintenance = int(item["maintenance_per_turn"])
-            except (KeyError, TypeError, ValueError):
-                print(f"[WARN] new_armies '{aid}' 缺 manpower/maintenance_per_turn → 跳过")
-                continue
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"new_armies '{aid}' 缺/非法 manpower 或 maintenance_per_turn（无法建军）：{exc}"
+                ) from exc
             def _score(field: str, default: int = 50) -> int:
                 try:
                     return max(0, min(100, int(item.get(field, default))))
                 except (TypeError, ValueError):
                     return default
+            def _cannon() -> int:
+                # 随军大炮=门数 clamp 0-12；LLM 给非 int(如"几门")兜底 0，不让 int() 抛崩建军（PR codex）
+                try:
+                    return max(0, min(12, int(item.get("cannon_equipment", 0) or 0)))
+                except (TypeError, ValueError):
+                    return 0
             def _arrears_init() -> int:
                 # arrears 单位=累计欠饷万两，无上限；新军默认 0
                 try:
@@ -2913,6 +3030,8 @@ class GameDB:
                 _arrears_init(),
                 _score("mobility"),
                 _score("loyalty"),
+                _score("firearm_equipment", 0),
+                _cannon(),  # 随军大炮=门数，clamp 0-12，非 int 兜底 0
                 str(item.get("status") or "新立"),
                 owner,
             )
@@ -2922,14 +3041,13 @@ class GameDB:
                     INSERT INTO armies
                     (id, name, station, theater, commander, controller, troop_type, manpower,
                      maintenance_per_turn, supply, morale, training, equipment, arrears,
-                     mobility, loyalty, status, owner_power)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     mobility, loyalty, firearm_equipment, cannon_equipment, status, owner_power)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     row,
                 )
             except sqlite3.IntegrityError as exc:
-                print(f"[WARN] new_armies INSERT 失败 '{aid}': {exc}")
-                continue
+                raise ValueError(f"new_armies INSERT 失败 '{aid}'：{exc}") from exc
             reason = str(item.get("reason") or item.get("status") or "新立军队")[:80]
             self.conn.execute(
                 """
@@ -5052,6 +5170,72 @@ class GameDB:
         self.conn.commit()
         tlog(f"[secret_order] create id={cur.lastrowid} minister={minister_name} title={title[:20]}")
         return cur.lastrowid  # type: ignore[return-value]
+
+    def upsert_secret_order(
+        self,
+        state: GameState,
+        minister_name: str,
+        title: str,
+        content: str,
+        tags: List[str],
+        importance: int = 4,
+        deadline_months: int = 0,
+    ) -> Tuple[int, bool]:
+        """同一承办大臣已有 active 密令 → 更新其要旨(title/content/tags/限期)并记一条
+        「奉旨更新」进展；否则新建。返回 (order_id, was_update)。
+        补 CLI 后端无 function-calling 的缺口：原靠大臣 function-call 改密令，现失效；
+        再次下密令给同一承办人即更新已有条，而非建重复（限期=0 表示不动原限期）。"""
+        existing = self.conn.execute(
+            "SELECT id FROM secret_orders WHERE minister_name=? AND status='active' ORDER BY id DESC LIMIT 1",
+            (minister_name,),
+        ).fetchone()
+        if existing is None:
+            oid = self.create_secret_order(
+                state, minister_name, title, content, tags, importance, deadline_months
+            )
+            return oid, False
+        oid = int(existing["id"])
+        self.update_secret_order_by_id(state, oid, title, content, tags, deadline_months)
+        return oid, True
+
+    def update_secret_order_by_id(
+        self,
+        state: GameState,
+        order_id: int,
+        title: str,
+        content: str,
+        tags: Optional[List[str]] = None,
+        deadline_months: int = 0,
+    ) -> bool:
+        """按**精确 id** 更新 active 密令要旨（title/content/tags/限期），记一条「奉旨更新」进展。
+        返回是否更新（id 存在且状态为 active）。
+
+        与 upsert_secret_order 的区别：upsert 按「该大臣最新 active」改，会话动作「更新」已解析出
+        确切 target id 时必须走本方法，否则大臣有多条 active 密令会改错条（CMR F1）。
+        tags=None 保留原标签（会话更新不带 tags 时不清空）；传 list 则覆盖。"""
+        row = self.conn.execute(
+            "SELECT status, tags FROM secret_orders WHERE id=?", (int(order_id),)
+        ).fetchone()
+        if row is None or row["status"] != "active":
+            return False
+        tags_json = json.dumps(tags, ensure_ascii=False) if tags is not None else (row["tags"] or "[]")
+        deadline = max(0, min(int(deadline_months or 0), 36))
+        if deadline:
+            self.conn.execute(
+                "UPDATE secret_orders SET title=?, content=?, tags=?, due_turn=?, "
+                "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (title[:20], content, tags_json, int(state.turn) + deadline, int(order_id)),
+            )
+        else:
+            self.conn.execute(
+                "UPDATE secret_orders SET title=?, content=?, tags=?, "
+                "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (title[:20], content, tags_json, int(order_id)),
+            )
+        self.conn.commit()
+        tlog(f"[secret_order] update id={order_id} title={title[:20]}")
+        self.update_secret_order_progress(int(order_id), f"奉旨更新密令要旨：{content[:60]}", state.year, state.period)
+        return True
 
     def list_secret_orders(
         self,

@@ -32,7 +32,6 @@ Thumbs.db
 # Local AI assistant workspace
 .claude/
 .codex/
-CLAUDE.md
 web/public/portraits/_original_before_cutout
 
 # Test / tooling caches
@@ -54,3 +53,8 @@ output/imagegen/bg_ending.png
 output/imagegen/ending_timeline_scroll.png
 web/public/bg_ending.webp
 web/public/ending_timeline_scroll.webp
+
+# CLI 后端探针运行时产物
+scripts/runs/cli_trace_*.jsonl
+scripts/runs/web_server.log
+.antigravitycli/

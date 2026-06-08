@@ -55,7 +55,7 @@ def build_minister_tools(character: Character, context: CourtContext,
         """查在朝人事名册。names 为空返回全部姓名+状态索引；传姓名列表返回指定人物详情（现职/官署/派系/状态）。"""
         db = context.db
         results = []
-        for c in _ctx().characters.values():
+        for c in _content_ctx().characters.values():
             if c.office_type == "后宫":
                 continue
             if getattr(c, "power_id", "ming") != "ming":
@@ -549,24 +549,19 @@ def build_board_query_tools(context: CourtContext):
             return str(dict(row))
 
     def list_armies() -> str:
-        """查看大明主要军队的驻扎、维护费、补给、士气和欠饷警讯。"""
+        """查看大明主要军队的驻扎、维护费、补给、士气、火器、随军大炮和欠饷警讯。"""
         return context.db.army_report(limit=8)
 
     def inspect_army(army: str) -> str:
-        """查某支军队详细数值：supply/morale/training/equipment/arrears/mobility/loyalty/
-        manpower/maintenance_per_turn/station/commander/controller/troop_type/status。
-        army 可传军队名（如"关宁军"）或 army_id（如"guanning"），两者均支持。"""
+        """查某支军队详细数值：supply/morale/training/equipment/firearm_equipment/cannon_equipment/
+        arrears/mobility/loyalty/manpower/maintenance_per_turn/station/commander/controller/troop_type/status。
+        army 可传军队名（如"关宁军"）或 army_id（如"guanning"），两者均支持；动态新建军同样可查。"""
+        # army_detail 已统一按 DB id/name 直查 + 静态别名兜底 + SELECT* 渲染(含火器/随军大炮)，
+        # 直接复用，不再各写一份窄 SELECT fallback（CMR codexB/C：army render 单一真源）。
         try:
             return context.db.army_detail(army)
         except ValueError:
-            row = context.db.conn.execute(
-                "SELECT id,name,station,commander,controller,troop_type,manpower,"
-                "maintenance_per_turn,supply,morale,training,equipment,arrears,mobility,loyalty,status "
-                "FROM armies WHERE id=?", (army,)
-            ).fetchone()
-            if row is None:
-                return f"未找到军队 {army!r}。可先调 list_armies 查名称/id 列表。"
-            return str(dict(row))
+            return f"未找到军队 {army!r}。可先调 list_armies 查名称/id 列表。"
 
     def list_powers() -> str:
         """查看后金、蒙古、朝鲜、日本、流寇等势力当前态势（leverage/military_strength/stance/last_action）。"""

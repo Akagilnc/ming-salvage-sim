@@ -1,0 +1,622 @@
+[
+ {
+  "role": "simulator",
+  "cat": "narr",
+  "backend": "agy",
+  "run": 0,
+  "dur": 37.961891889572144,
+  "err": "",
+  "chars": 1254
+ },
+ {
+  "role": "simulator",
+  "cat": "narr",
+  "backend": "gpt-5.3-codex-spark",
+  "run": 0,
+  "dur": 39.43846297264099,
+  "err": "",
+  "chars": 0
+ },
+ {
+  "role": "simulator",
+  "cat": "narr",
+  "backend": "gpt-5.5",
+  "run": 0,
+  "dur": 52.08153319358826,
+  "err": "",
+  "chars": 0
+ },
+ {
+  "role": "minister",
+  "cat": "narr",
+  "backend": "gpt-5.5",
+  "run": 0,
+  "dur": 16.774149894714355,
+  "err": "",
+  "chars": 0
+ },
+ {
+  "role": "minister",
+  "cat": "narr",
+  "backend": "gpt-5.4",
+  "run": 0,
+  "dur": 19.935667991638184,
+  "err": "",
+  "chars": 0
+ },
+ {
+  "role": "minister",
+  "cat": "narr",
+  "backend": "gpt-5.3-codex-spark",
+  "run": 0,
+  "dur": 9.590085983276367,
+  "err": "",
+  "chars": 0
+ },
+ {
+  "role": "minister",
+  "cat": "narr",
+  "backend": "gpt-5.4-mini",
+  "run": 0,
+  "dur": 13.140420913696289,
+  "err": "",
+  "chars": 0
+ },
+ {
+  "role": "simulator",
+  "cat": "narr",
+  "backend": "gpt-5.4",
+  "run": 0,
+  "dur": 72.53017616271973,
+  "err": "",
+  "chars": 0
+ },
+ {
+  "role": "minister",
+  "cat": "narr",
+  "backend": "agy",
+  "run": 0,
+  "dur": 13.88091492652893,
+  "err": "",
+  "chars": 158
+ },
+ {
+  "role": "decree",
+  "cat": "narr",
+  "backend": "gpt-5.3-codex-spark",
+  "run": 0,
+  "dur": 9.342613935470581,
+  "err": "",
+  "chars": 0
+ },
+ {
+  "role": "decree",
+  "cat": "narr",
+  "backend": "gpt-5.5",
+  "run": 0,
+  "dur": 18.87855100631714,
+  "err": "",
+  "chars": 0
+ },
+ {
+  "role": "decree",
+  "cat": "narr",
+  "backend": "gpt-5.4-mini",
+  "run": 0,
+  "dur": 11.671736001968384,
+  "err": "",
+  "chars": 0
+ },
+ {
+  "role": "decree",
+  "cat": "narr",
+  "backend": "gpt-5.4",
+  "run": 0,
+  "dur": 20.90056300163269,
+  "err": "",
+  "chars": 0
+ },
+ {
+  "role": "chapter_memory",
+  "cat": "narr",
+  "backend": "gpt-5.4",
+  "run": 0,
+  "dur": 13.320244789123535,
+  "err": "",
+  "chars": 0
+ },
+ {
+  "role": "chapter_memory",
+  "cat": "narr",
+  "backend": "gpt-5.5",
+  "run": 0,
+  "dur": 16.542603731155396,
+  "err": "",
+  "chars": 0
+ },
+ {
+  "role": "chapter_memory",
+  "cat": "narr",
+  "backend": "gpt-5.4-mini",
+  "run": 0,
+  "dur": 14.360382080078125,
+  "err": "",
+  "chars": 0
+ },
+ {
+  "role": "decree",
+  "cat": "narr",
+  "backend": "agy",
+  "run": 0,
+  "dur": 17.998576879501343,
+  "err": "",
+  "chars": 161
+ },
+ {
+  "role": "simulator",
+  "cat": "narr",
+  "backend": "gpt-5.4-mini",
+  "run": 0,
+  "dur": 106.58604311943054,
+  "err": "",
+  "chars": 0
+ },
+ {
+  "role": "chapter_memory",
+  "cat": "narr",
+  "backend": "gpt-5.3-codex-spark",
+  "run": 0,
+  "dur": 11.031324863433838,
+  "err": "",
+  "chars": 0
+ },
+ {
+  "role": "chapter_memory",
+  "cat": "narr",
+  "backend": "agy",
+  "run": 0,
+  "dur": 12.457810163497925,
+  "err": "",
+  "chars": 215
+ },
+ {
+  "role": "ext_internal",
+  "cat": "struct",
+  "backend": "gpt-5.5",
+  "run": 1,
+  "dur": 20.817405939102173,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "ext_internal",
+  "cat": "struct",
+  "backend": "gpt-5.5",
+  "run": 0,
+  "dur": 22.716613054275513,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "ext_internal",
+  "cat": "struct",
+  "backend": "gpt-5.4-mini",
+  "run": 0,
+  "dur": 21.09845209121704,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "ext_internal",
+  "cat": "struct",
+  "backend": "gpt-5.3-codex-spark",
+  "run": 0,
+  "dur": 10.74873685836792,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "ext_internal",
+  "cat": "struct",
+  "backend": "gpt-5.3-codex-spark",
+  "run": 1,
+  "dur": 11.094407081604004,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "ext_internal",
+  "cat": "struct",
+  "backend": "gpt-5.4",
+  "run": 0,
+  "dur": 41.18219709396362,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "ext_internal",
+  "cat": "struct",
+  "backend": "gpt-5.4",
+  "run": 1,
+  "dur": 42.04583191871643,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "ext_internal",
+  "cat": "struct",
+  "backend": "agy",
+  "run": 1,
+  "dur": 18.88559103012085,
+  "err": "",
+  "chars": 213,
+  "parse": 1,
+  "nonempty": 1
+ },
+ {
+  "role": "ext_military",
+  "cat": "struct",
+  "backend": "gpt-5.5",
+  "run": 0,
+  "dur": 20.38046908378601,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "ext_military",
+  "cat": "struct",
+  "backend": "gpt-5.5",
+  "run": 1,
+  "dur": 21.417120218276978,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "ext_military",
+  "cat": "struct",
+  "backend": "gpt-5.4",
+  "run": 1,
+  "dur": 18.17782187461853,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "ext_military",
+  "cat": "struct",
+  "backend": "gpt-5.4",
+  "run": 0,
+  "dur": 25.378517866134644,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "ext_internal",
+  "cat": "struct",
+  "backend": "gpt-5.4-mini",
+  "run": 1,
+  "dur": 72.0946900844574,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "ext_military",
+  "cat": "struct",
+  "backend": "gpt-5.3-codex-spark",
+  "run": 0,
+  "dur": 8.384618997573853,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "ext_military",
+  "cat": "struct",
+  "backend": "gpt-5.3-codex-spark",
+  "run": 1,
+  "dur": 9.994965076446533,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "ext_military",
+  "cat": "struct",
+  "backend": "gpt-5.4-mini",
+  "run": 0,
+  "dur": 35.54121422767639,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "ext_military",
+  "cat": "struct",
+  "backend": "agy",
+  "run": 0,
+  "dur": 14.00656270980835,
+  "err": "",
+  "chars": 48,
+  "parse": 1,
+  "nonempty": 0
+ },
+ {
+  "role": "ext_military",
+  "cat": "struct",
+  "backend": "agy",
+  "run": 1,
+  "dur": 13.386083841323853,
+  "err": "",
+  "chars": 58,
+  "parse": 1,
+  "nonempty": 0
+ },
+ {
+  "role": "ext_military",
+  "cat": "struct",
+  "backend": "gpt-5.4-mini",
+  "run": 1,
+  "dur": 35.548073053359985,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "ext_personnel",
+  "cat": "struct",
+  "backend": "gpt-5.5",
+  "run": 1,
+  "dur": 10.999686241149902,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "ext_personnel",
+  "cat": "struct",
+  "backend": "gpt-5.5",
+  "run": 0,
+  "dur": 16.005857229232788,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "ext_personnel",
+  "cat": "struct",
+  "backend": "gpt-5.4",
+  "run": 0,
+  "dur": 14.309386014938354,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "ext_personnel",
+  "cat": "struct",
+  "backend": "gpt-5.4",
+  "run": 1,
+  "dur": 16.6790611743927,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "ext_personnel",
+  "cat": "struct",
+  "backend": "gpt-5.4-mini",
+  "run": 0,
+  "dur": 18.886749267578125,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "ext_personnel",
+  "cat": "struct",
+  "backend": "gpt-5.3-codex-spark",
+  "run": 0,
+  "dur": 10.59031891822815,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "ext_personnel",
+  "cat": "struct",
+  "backend": "gpt-5.4-mini",
+  "run": 1,
+  "dur": 20.980872869491577,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "ext_personnel",
+  "cat": "struct",
+  "backend": "gpt-5.3-codex-spark",
+  "run": 1,
+  "dur": 8.857388019561768,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "ext_personnel",
+  "cat": "struct",
+  "backend": "agy",
+  "run": 0,
+  "dur": 12.967005968093872,
+  "err": "",
+  "chars": 182,
+  "parse": 1,
+  "nonempty": 1
+ },
+ {
+  "role": "ext_personnel",
+  "cat": "struct",
+  "backend": "agy",
+  "run": 1,
+  "dur": 14.331010818481445,
+  "err": "",
+  "chars": 201,
+  "parse": 1,
+  "nonempty": 1
+ },
+ {
+  "role": "secret_extract",
+  "cat": "struct",
+  "backend": "gpt-5.5",
+  "run": 0,
+  "dur": 13.636354923248291,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "secret_extract",
+  "cat": "struct",
+  "backend": "gpt-5.5",
+  "run": 1,
+  "dur": 15.296345710754395,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "secret_extract",
+  "cat": "struct",
+  "backend": "gpt-5.4",
+  "run": 1,
+  "dur": 12.911708116531372,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "secret_extract",
+  "cat": "struct",
+  "backend": "gpt-5.4",
+  "run": 0,
+  "dur": 15.270572900772095,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "secret_extract",
+  "cat": "struct",
+  "backend": "gpt-5.4-mini",
+  "run": 0,
+  "dur": 19.276862144470215,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "secret_extract",
+  "cat": "struct",
+  "backend": "gpt-5.3-codex-spark",
+  "run": 1,
+  "dur": 11.713052034378052,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "secret_extract",
+  "cat": "struct",
+  "backend": "gpt-5.4-mini",
+  "run": 1,
+  "dur": 20.081254243850708,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "secret_extract",
+  "cat": "struct",
+  "backend": "gpt-5.3-codex-spark",
+  "run": 0,
+  "dur": 13.94277310371399,
+  "err": "",
+  "chars": 0,
+  "parse": 0,
+  "nonempty": 0
+ },
+ {
+  "role": "secret_extract",
+  "cat": "struct",
+  "backend": "agy",
+  "run": 0,
+  "dur": 13.238523006439209,
+  "err": "",
+  "chars": 167,
+  "parse": 1,
+  "nonempty": 5
+ },
+ {
+  "role": "secret_extract",
+  "cat": "struct",
+  "backend": "agy",
+  "run": 1,
+  "dur": 12.754257202148438,
+  "err": "",
+  "chars": 196,
+  "parse": 1,
+  "nonempty": 5
+ },
+ {
+  "role": "ext_internal",
+  "cat": "struct",
+  "backend": "agy",
+  "run": 0,
+  "dur": 171.34948015213013,
+  "err": "",
+  "chars": 459,
+  "parse": 1,
+  "nonempty": 4
+ }
+]

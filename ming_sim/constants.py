@@ -26,7 +26,8 @@ REGION_QUANTITY_FIELDS = ("population", "registered_land", "hidden_land", "tax_p
 REGION_TEXT_FIELDS = ("natural_disaster", "human_disaster", "status", "controlled_by")
 # fiscal JSON 子字段白名单（0-100量表，存在 regions.fiscal 列里）
 FISCAL_SCORE_FIELDS = ("corruption",)
-ARMY_SCORE_FIELDS = ("supply", "morale", "training", "equipment", "arrears", "mobility", "loyalty")
+ARMY_SCORE_FIELDS = ("supply", "morale", "training", "equipment", "arrears", "mobility", "loyalty",
+                     "firearm_equipment", "cannon_equipment")
 ARMY_QUANTITY_FIELDS = ("manpower", "maintenance_per_turn")
 ARMY_TEXT_FIELDS = ("station", "commander", "controller", "troop_type", "status", "owner_power")
 BUILDING_CATEGORIES = ("财政", "军事", "民生", "科技", "交通", "内廷")
@@ -132,6 +133,8 @@ ARMY_FIELD_LABELS = {
     "arrears": "欠饷",
     "mobility": "机动",
     "loyalty": "忠诚",
+    "firearm_equipment": "火器",
+    "cannon_equipment": "随军大炮",
     "status": "状态",
     "owner_power": "归属",
 }
@@ -187,6 +190,11 @@ ARMY_FIELD_ALIASES = {
     "操练": "training",
     "装备": "equipment",
     "器械": "equipment",
+    "火器": "firearm_equipment",
+    "火器装备": "firearm_equipment",
+    "随军大炮": "cannon_equipment",
+    "大炮": "cannon_equipment",
+    "大炮装备": "cannon_equipment",
     "欠饷": "arrears",
     "机动": "mobility",
     "忠诚": "loyalty",

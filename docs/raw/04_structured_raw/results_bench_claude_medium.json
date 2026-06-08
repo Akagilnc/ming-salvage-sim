@@ -1,0 +1,250 @@
+[
+ {
+  "role": "minister",
+  "cat": "narr",
+  "backend": "haiku4.5",
+  "run": 0,
+  "dur": 25.61121702194214,
+  "err": "",
+  "chars": 342
+ },
+ {
+  "role": "minister",
+  "cat": "narr",
+  "backend": "sonnet4.6",
+  "run": 0,
+  "dur": 46.331316232681274,
+  "err": "",
+  "chars": 259
+ },
+ {
+  "role": "decree",
+  "cat": "narr",
+  "backend": "sonnet4.6",
+  "run": 0,
+  "dur": 25.382094860076904,
+  "err": "",
+  "chars": 281
+ },
+ {
+  "role": "decree",
+  "cat": "narr",
+  "backend": "haiku4.5",
+  "run": 0,
+  "dur": 15.679717063903809,
+  "err": "",
+  "chars": 202
+ },
+ {
+  "role": "chapter_memory",
+  "cat": "narr",
+  "backend": "haiku4.5",
+  "run": 0,
+  "dur": 25.150630712509155,
+  "err": "",
+  "chars": 243
+ },
+ {
+  "role": "chapter_memory",
+  "cat": "narr",
+  "backend": "sonnet4.6",
+  "run": 0,
+  "dur": 39.42528796195984,
+  "err": "",
+  "chars": 234
+ },
+ {
+  "role": "ext_internal",
+  "cat": "struct",
+  "backend": "sonnet4.6",
+  "run": 0,
+  "dur": 85.71434688568115,
+  "err": "",
+  "chars": 231,
+  "parse": 1,
+  "nonempty": 3
+ },
+ {
+  "role": "simulator",
+  "cat": "narr",
+  "backend": "haiku4.5",
+  "run": 0,
+  "dur": 184.4227979183197,
+  "err": "",
+  "chars": 2128
+ },
+ {
+  "role": "ext_internal",
+  "cat": "struct",
+  "backend": "sonnet4.6",
+  "run": 1,
+  "dur": 113.728835105896,
+  "err": "",
+  "chars": 220,
+  "parse": 1,
+  "nonempty": 3
+ },
+ {
+  "role": "ext_internal",
+  "cat": "struct",
+  "backend": "haiku4.5",
+  "run": 0,
+  "dur": 35.43771004676819,
+  "err": "",
+  "chars": 207,
+  "parse": 1,
+  "nonempty": 1
+ },
+ {
+  "role": "ext_internal",
+  "cat": "struct",
+  "backend": "haiku4.5",
+  "run": 1,
+  "dur": 35.12759494781494,
+  "err": "",
+  "chars": 255,
+  "parse": 1,
+  "nonempty": 1
+ },
+ {
+  "role": "ext_military",
+  "cat": "struct",
+  "backend": "haiku4.5",
+  "run": 0,
+  "dur": 45.21006917953491,
+  "err": "",
+  "chars": 70,
+  "parse": 1,
+  "nonempty": 0
+ },
+ {
+  "role": "ext_military",
+  "cat": "struct",
+  "backend": "sonnet4.6",
+  "run": 0,
+  "dur": 74.21857690811157,
+  "err": "",
+  "chars": 195,
+  "parse": 1,
+  "nonempty": 1
+ },
+ {
+  "role": "ext_military",
+  "cat": "struct",
+  "backend": "sonnet4.6",
+  "run": 1,
+  "dur": 72.37631392478943,
+  "err": "",
+  "chars": 107,
+  "parse": 1,
+  "nonempty": 1
+ },
+ {
+  "role": "ext_military",
+  "cat": "struct",
+  "backend": "haiku4.5",
+  "run": 1,
+  "dur": 34.124138832092285,
+  "err": "",
+  "chars": 70,
+  "parse": 1,
+  "nonempty": 0
+ },
+ {
+  "role": "ext_personnel",
+  "cat": "struct",
+  "backend": "sonnet4.6",
+  "run": 0,
+  "dur": 38.10397386550903,
+  "err": "",
+  "chars": 291,
+  "parse": 1,
+  "nonempty": 1
+ },
+ {
+  "role": "ext_personnel",
+  "cat": "struct",
+  "backend": "haiku4.5",
+  "run": 0,
+  "dur": 24.30665111541748,
+  "err": "",
+  "chars": 244,
+  "parse": 1,
+  "nonempty": 1
+ },
+ {
+  "role": "simulator",
+  "cat": "narr",
+  "backend": "sonnet4.6",
+  "run": 0,
+  "dur": 327.2461450099945,
+  "err": "",
+  "chars": 1973
+ },
+ {
+  "role": "ext_personnel",
+  "cat": "struct",
+  "backend": "sonnet4.6",
+  "run": 1,
+  "dur": 50.550291299819946,
+  "err": "",
+  "chars": 306,
+  "parse": 1,
+  "nonempty": 1
+ },
+ {
+  "role": "secret_extract",
+  "cat": "struct",
+  "backend": "sonnet4.6",
+  "run": 0,
+  "dur": 13.552046060562134,
+  "err": "",
+  "chars": 178,
+  "parse": 1,
+  "nonempty": 5
+ },
+ {
+  "role": "secret_extract",
+  "cat": "struct",
+  "backend": "sonnet4.6",
+  "run": 1,
+  "dur": 14.800088167190552,
+  "err": "",
+  "chars": 175,
+  "parse": 1,
+  "nonempty": 5
+ },
+ {
+  "role": "secret_extract",
+  "cat": "struct",
+  "backend": "haiku4.5",
+  "run": 0,
+  "dur": 13.388750076293945,
+  "err": "",
+  "chars": 269,
+  "parse": 1,
+  "nonempty": 5
+ },
+ {
+  "role": "ext_personnel",
+  "cat": "struct",
+  "backend": "haiku4.5",
+  "run": 1,
+  "dur": 31.17912983894348,
+  "err": "",
+  "chars": 221,
+  "parse": 1,
+  "nonempty": 1
+ },
+ {
+  "role": "secret_extract",
+  "cat": "struct",
+  "backend": "haiku4.5",
+  "run": 1,
+  "dur": 12.407707929611206,
+  "err": "",
+  "chars": 195,
+  "parse": 1,
+  "nonempty": 5
+ }
+]

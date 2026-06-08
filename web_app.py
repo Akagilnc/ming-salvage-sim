@@ -373,6 +373,10 @@ class WebGame:
         advanced_thinking_level = runtime.get("advanced_thinking_level") or advanced_thinking_level
         max_tokens = int(runtime.get("max_tokens") or 8000)
         timeout_seconds = float(runtime.get("timeout_seconds") or timeout_seconds)
+        # 探针：CLI 后端（MING_SIM_LLM_BACKEND=agy|codex）脱 api key，给占位符放行。
+        from ming_sim.cli_backend import cli_backend_from_env
+        if not api_key and cli_backend_from_env() is not None:
+            api_key = "cli-backend"
         if not api_key:
             raise LLMUnavailable("未配 API key，请先到设置页填写。")
         random.seed(int(os.environ.get("MING_SIM_SEED", "7")))
@@ -1172,6 +1176,17 @@ class WebGame:
                                 payload_json = json.dumps(args, ensure_ascii=False)
                             secret_order_id = self.session._apply_secret_order(payload_json, minister_name)
                     # 密令结案不再走大臣工具，由月末推演 + extractor 写入
+            # CLI 后端（agy/codex）：玩家用拟旨/密令按钮（消息带前缀）时，把大臣这句回话原文入档。
+            # CLI 后端会话落地走共享真源 session.apply_cli_conversation_actions(同 session.chat 非流式路径)，
+            # 杜绝 web/CLI 两边逻辑漂移（CMR F3 / codexC-1）。
+            res = self.session.apply_cli_conversation_actions(
+                character, text, answer,
+                has_directive=proposed is not None, secret_order_id=secret_order_id,
+            )
+            if proposed is None and res["directive"]:
+                proposed = res["directive"]
+            if res["secret_order_id"]:
+                secret_order_id = res["secret_order_id"]
             self._record_chat_rollback_items(chat_turn_id, before_snapshot)
             payload = self._chat_payload(
                 minister_name, answer, court_action=court_action, next_minister=next_minister,
@@ -1714,10 +1729,15 @@ async def api_create_secret_order(minister_name: str, request: SecretOrderReques
     if not title or not content:
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="title 和 content 不能为空")
+    # 直接下达=显式新建一道密令（create，非 upsert）：皇帝点「下密令」按钮给确切 title+content
+    # 就是要一道新令，同大臣可有多条 active；upsert 会静默覆盖最新 active 那条（codexC-2）。
+    # 「更新已有密令」走会话路径(LLM 判意图 → update_secret_order_by_id 精确改)，不在此端点。
     order_id = game.db.create_secret_order(
         game.session.state, minister_name, title, content, request.tags, deadline_months=request.deadline_months
     )
-    print(f"[secret_order/api] 直接落库 minister={minister_name} title={title!r} id={order_id}")
+    if game.session.registry is not None:
+        game.session.registry.refresh(minister_name)  # 上下文带上最新密令
+    print(f"[secret_order/api] 新建 minister={minister_name} title={title!r} id={order_id}")
     return {"order_id": order_id, "minister_name": minister_name, "title": title, "status": "active"}
 
 
