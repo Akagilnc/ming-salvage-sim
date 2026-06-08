@@ -15,9 +15,25 @@ from ming_sim.decree import pre_settle, settle_with_delta
 import ming_sim.issues as issues_mod
 from ming_sim.content import GameContent
 from ming_sim.db import GameDB
-from ming_sim.simulation import _canonicalize_extraction
+from ming_sim.simulation import EMPTY_EXTRACTION, _canonicalize_extraction
 
 DEFAULT_DB = "data/probe.db"
+
+
+def _validate_delta_shape(extracted: dict) -> None:
+    """canonical delta 各顶层字段的容器类型必须匹配 schema（dict / list），否则**结算前**响亮报错。
+
+    driver 只跑 `_canonicalize_extraction`（归一 key），不跑真实流程的 `_sanitize_module_output`
+    白名单/清洗。畸形模块值（如 `国势变化:"foo"` → metric_delta="foo"）若直送 apply 会在结算
+    中途崩 `.items()`，叠加非原子结算 = 半落库（cmr red-team RT-1）。在 pre_settle 动 DB 前校验，
+    崩前拦住、回合不半推进。
+    """
+    for key, value in extracted.items():
+        expected = EMPTY_EXTRACTION.get(key)
+        if isinstance(expected, dict) and not isinstance(value, dict):
+            raise SystemExit(f"delta 字段 {key} 必须是 object(dict)，实得 {type(value).__name__}")
+        if isinstance(expected, list) and not isinstance(value, list):
+            raise SystemExit(f"delta 字段 {key} 必须是 array(list)，实得 {type(value).__name__}")
 
 
 def open_game(db_path: str = DEFAULT_DB):
@@ -58,6 +74,7 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
     章节记忆 / 结局总评不注入（driver 无 llm_config），由对话里的我另行产出。
     """
     extracted = _canonicalize_extraction(raw_delta or {})
+    _validate_delta_shape(extracted)  # 崩前拦畸形模块值,避免 pre_settle 动 DB 后半落库(RT-1)
     before_turn = state.turn
     pre_settle(state, db)
     return settle_with_delta(
