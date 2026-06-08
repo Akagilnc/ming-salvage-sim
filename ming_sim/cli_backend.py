@@ -51,6 +51,12 @@ _CLAUDE_MODEL = os.environ.get("MING_SIM_CLAUDE_MODEL", "claude-opus-4-8")
 # 纯角色扮演/抽取任务不需要工具；禁掉防 claude 绕去调工具兜圈子。
 _CLAUDE_DISALLOWED = ["Bash", "Read", "Edit", "Write", "Glob", "Grep",
                       "WebFetch", "WebSearch", "Task", "NotebookEdit"]
+_CLI_BACKENDS = {"agy", "codex", "claude"}
+
+
+def is_supported_cli_runner(name: object) -> bool:
+    """runner 名是否是受支持的 CLI 后端（agy / codex / claude）。"""
+    return str(name or "").strip().lower() in _CLI_BACKENDS
 
 _VERBOSE = os.environ.get("MING_SIM_LLM_DEBUG", "") not in ("", "0", "false")
 
@@ -125,15 +131,18 @@ def _warm_keychain() -> None:
         pass
 
 
-def _run_agy(prompt: str) -> Tuple[str, int]:
+def _run_agy(prompt: str, timeout: Optional[float] = None) -> Tuple[str, int]:
     """调 agy -p --sandbox，warm + retry。返回 (纯文本, 实际尝试次数)。"""
+    run_timeout = timeout or _AGY_TIMEOUT
     last = ""
     for attempt in range(1, 5):  # 初试 1 + 最多 retry 3 = 4
         _warm_keychain()
         try:
+            # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
+            # 安全审计(Sourcery):list-form argv、无 shell=True → 不经 shell 解析,无注入面。prompt 走 stdin。
             proc = subprocess.run(
                 [_AGY_BIN, "-p", "--sandbox"],
-                input=prompt, capture_output=True, text=True, timeout=_AGY_TIMEOUT,
+                input=prompt, capture_output=True, text=True, timeout=run_timeout,
                 cwd=_AGY_CWD,
             )
         except subprocess.TimeoutExpired:
@@ -156,7 +165,7 @@ def _run_agy(prompt: str) -> Tuple[str, int]:
     raise RuntimeError(f"agy 调用失败（warm+retry×4 仍不成）：{last[:200]}")
 
 
-def _run_codex(prompt: str) -> Tuple[str, int]:
+def _run_codex(prompt: str, model: Optional[str] = None, timeout: Optional[float] = None) -> Tuple[str, int]:
     """调 codex exec -（stdin pipe，绝不 positional）。返回 (文本, 尝试次数=1)。
 
     实测三坑（见 docs/LLM_BACKEND_BENCH.md §9）：
@@ -165,14 +174,16 @@ def _run_codex(prompt: str) -> Tuple[str, int]:
     - 干净最终回话在 **stdout**，诊断/日志在 stderr —— 只取 stdout，绝不合并（合并会把
       "OpenAI Codex v…/tokens used" 等日志混进角色回话）。stdout 空时兜底从合并流剥壳。
     reasoning：默认不强加，尊重用户 ~/.codex/config.toml；设 MING_SIM_CODEX_REASONING 才传 -c。"""
-    cmd = [_CODEX_BIN, "exec", "--model", _CODEX_MODEL]
+    cmd = [_CODEX_BIN, "exec", "--model", (model or _CODEX_MODEL)]
     reasoning = (os.environ.get("MING_SIM_CODEX_REASONING") or "").strip()
     if reasoning:
         cmd += ["-c", f'model_reasoning_effort="{reasoning}"']
     cmd += ["--ephemeral", "--skip-git-repo-check", "-"]
     try:
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
+        # 安全审计(Sourcery):list-form argv、无 shell=True;runner 已 allowlist、model 为独立 argv、prompt 走 stdin → 无注入面。
         proc = subprocess.run(
-            cmd, input=prompt, capture_output=True, text=True, timeout=_AGY_TIMEOUT,
+            cmd, input=prompt, capture_output=True, text=True, timeout=timeout or _AGY_TIMEOUT,
             cwd=_AGY_CWD,
         )
     except subprocess.TimeoutExpired as exc:
@@ -187,17 +198,19 @@ def _run_codex(prompt: str) -> Tuple[str, int]:
     return out, 1
 
 
-def _run_claude(prompt: str) -> Tuple[str, int]:
+def _run_claude(prompt: str, model: Optional[str] = None, timeout: Optional[float] = None) -> Tuple[str, int]:
     """调 claude -p（独立进程，stdin pipe）。返回 (纯文本, 1)。
     与 codex 不同：claude -p 干净最终回话在 **stdout**，日志/诊断在 stderr，
     故只取 stdout、不合并 stderr（合并会把日志混进角色回话）。
     思考预算不强加：继承父进程 env，用户可自行 export MAX_THINKING_TOKENS。"""
-    cmd = [_CLAUDE_BIN, "-p", "--model", _CLAUDE_MODEL, "--output-format", "text",
+    cmd = [_CLAUDE_BIN, "-p", "--model", (model or _CLAUDE_MODEL), "--output-format", "text",
            "--disallowed-tools", *_CLAUDE_DISALLOWED]
     try:
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
+        # 安全审计(Sourcery):list-form argv、无 shell=True;runner 已 allowlist、model 为独立 argv、prompt 走 stdin → 无注入面。
         proc = subprocess.run(
             cmd, input=prompt, capture_output=True, text=True,
-            timeout=_AGY_TIMEOUT, cwd=_AGY_CWD,
+            timeout=timeout or _AGY_TIMEOUT, cwd=_AGY_CWD,
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError("claude 调用超时") from exc
@@ -217,6 +230,68 @@ def _run_backend(prompt: str) -> Tuple[str, int]:
     if b == "claude":
         return _run_claude(prompt)
     return _run_agy(prompt)
+
+
+def _llm_channel(llm_config: Any = None) -> str:
+    return (getattr(llm_config, "channel", "") or "").strip().lower()
+
+
+def _cli_config_parts(llm_config: Any = None) -> Optional[Tuple[str, str, Optional[float]]]:
+    channel = _llm_channel(llm_config)
+    if channel != "cli":
+        return None
+    runner = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "agy").strip().lower()
+    if runner not in _CLI_BACKENDS:
+        raise RuntimeError(f"未知 CLI backend：{runner}")
+    model = (getattr(llm_config, "cli_model", "") or "").strip()
+    raw_timeout = getattr(llm_config, "cli_timeout_seconds", None)
+    try:
+        timeout = float(raw_timeout) if raw_timeout else None
+    except (TypeError, ValueError):
+        timeout = None
+    return runner, model, timeout
+
+
+def _run_backend_for_config(prompt: str, llm_config: Any = None) -> Tuple[str, int]:
+    """runtime CLI 配置优先；没有显式 CLI channel 时保持旧 env/default 行为。"""
+    if _llm_channel(llm_config) == "api":
+        raise RuntimeError("显式 API channel 未启用本地 CLI backend")
+    parts = _cli_config_parts(llm_config)
+    if parts is None:
+        return _run_backend(prompt)
+    runner, model, timeout = parts
+    if runner == "codex":
+        return _run_codex(prompt, model=model or None, timeout=timeout)
+    if runner == "claude":
+        return _run_claude(prompt, model=model or None, timeout=timeout)
+    return _run_agy(prompt, timeout=timeout)
+
+
+def _backend_label(llm_config: Any = None) -> str:
+    if _llm_channel(llm_config) == "api":
+        return "api"
+    try:
+        parts = _cli_config_parts(llm_config)
+    except RuntimeError:
+        parts = None  # 不支持的 runner：trace 标签回落，不让构造崩
+    if parts is not None:
+        return parts[0] or "agy"
+    return cli_backend_from_env() or "agy"
+
+
+def cli_backend_active(llm_config: Any = None) -> bool:
+    """是否处于 CLI 后端路径：显式 channel 直接按其 runner 判，无显式 channel 才看旧 env。"""
+    channel = _llm_channel(llm_config)
+    if channel == "api":
+        return False
+    if channel == "cli":
+        # 显式 CLI：直接判 runner，不回落 env。否则 bogus runner 误报 active，
+        # 执行期 _run_backend_for_config 再调 _cli_config_parts 仍会崩。
+        try:
+            return _cli_config_parts(llm_config) is not None
+        except RuntimeError:
+            return False
+    return cli_backend_from_env() is not None
 
 
 def _messages_to_prompt(
@@ -302,6 +377,7 @@ def extract_minister_actions(
     minister_reply: str,
     active_orders: List[Dict[str, Any]],
     is_consort: bool = False,
+    llm_config: Any = None,
 ) -> Dict[str, Any]:
     """LLM 判皇帝本轮对密令/妃嫔的意图，返回结构化动作。失败返回「无」动作。"""
     orders_brief = "；".join(
@@ -330,7 +406,7 @@ def extract_minister_actions(
     )
     raw = ""
     try:
-        raw, _ = _run_backend(prompt)
+        raw, _ = _run_backend_for_config(prompt, llm_config)
     except Exception as exc:  # 抽取失败不阻断对话
         _log(f"大臣动作抽取失败：{exc}")
     obj = _loads_lenient(raw) or {}
@@ -390,7 +466,7 @@ def _loads_lenient(raw: str) -> Optional[dict]:
     return obj if isinstance(obj, dict) else None
 
 
-def enrich_initiative_effects(title: str, stage: str = "") -> Dict[str, Any]:
+def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = None) -> Dict[str, Any]:
     """国策(initiative)立项后 agy 一贯不填效果字段（实测 0/4）。这里聚焦补全：
     按国策标题/现状生成 解决效果(完成回报)/持续效果(月度成本)/失败效果。
     纯数值设计任务（不扮演），与月末 extractor 同款可靠。返回英文 key 的三个 dict。"""
@@ -422,12 +498,12 @@ def enrich_initiative_effects(title: str, stage: str = "") -> Dict[str, Any]:
     )
     raw = ""
     try:
-        raw, _ = _run_backend(prompt)
+        raw, _ = _run_backend_for_config(prompt, llm_config)
     except Exception as exc:  # 补全失败不阻断结算
         _log(f"国策效果补全失败：{exc}")
     _trace({
         "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "seq": -1, "tag": "issue_enrich", "backend": cli_backend_from_env() or "agy", "model_id": "enrich",
+        "seq": -1, "tag": "issue_enrich", "backend": _backend_label(llm_config), "model_id": "enrich",
         "dur_s": 0, "attempts": 1, "wants_json": True,
         "prompt_chars": len(prompt), "resp_chars": len(raw),
         "error": None, "prompt": prompt, "response": raw,
@@ -455,7 +531,12 @@ def enrich_initiative_effects(title: str, stage: str = "") -> Dict[str, Any]:
     }
 
 
-def _extract_secret_order(player_command: str, minister_reply: str, default_assignee: str) -> Dict[str, Any]:
+def _extract_secret_order(
+    player_command: str,
+    minister_reply: str,
+    default_assignee: str,
+    llm_config: Any = None,
+) -> Dict[str, Any]:
     """聚焦提取：把密令交代+大臣回话抽成结构化字段。纯抽取任务（不扮演），
     与月末 extractor 同款可靠。失败则退回合理默认。"""
     prompt = (
@@ -475,12 +556,12 @@ def _extract_secret_order(player_command: str, minister_reply: str, default_assi
     )
     raw = ""
     try:
-        raw, _attempts = _run_backend(prompt)
+        raw, _attempts = _run_backend_for_config(prompt, llm_config)
     except Exception as exc:  # 提取失败不阻断：退回默认
         _log(f"密令提取失败：{exc}")
     _trace({
         "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "seq": -1, "tag": "secret_extract", "backend": cli_backend_from_env() or "agy", "model_id": "extract",
+        "seq": -1, "tag": "secret_extract", "backend": _backend_label(llm_config), "model_id": "extract",
         "dur_s": 0, "attempts": 1, "wants_json": True,
         "prompt_chars": len(prompt), "resp_chars": len(raw),
         "error": None, "prompt": prompt, "response": raw,
@@ -500,7 +581,7 @@ def _extract_secret_order(player_command: str, minister_reply: str, default_assi
 
 
 def resolve_minister_actions(
-    minister_reply: str, player_message: str = "", default_assignee: str = "",
+    minister_reply: str, player_message: str = "", default_assignee: str = "", llm_config: Any = None,
 ) -> Dict[str, Any]:
     """玩家上一句带拟旨/密令前缀时入档。
     - 拟旨：大臣回话原文即圣旨草稿（单一文本字段，够用）。
@@ -515,7 +596,7 @@ def resolve_minister_actions(
 
     secret_intent = _matched_prefix(player_message, _SECRET_PREFIXES)
     if secret_intent is not None and (reply or secret_intent):
-        out["secret_order"] = _extract_secret_order(secret_intent, reply, default_assignee)
+        out["secret_order"] = _extract_secret_order(secret_intent, reply, default_assignee, llm_config)
 
     return out
 
@@ -537,11 +618,15 @@ class CliChat(OpenAIChat):
     backend: str = "agy"
 
     def _call_cli(self, prompt: str) -> Tuple[str, int]:
+        model_id = str(getattr(self, "id", "") or "")
+        timeout = getattr(self, "timeout", None)
         if self.backend == "codex":
-            return _run_codex(prompt)
+            return _run_codex(prompt, model=model_id, timeout=timeout)
         if self.backend == "claude":
-            return _run_claude(prompt)
-        return _run_agy(prompt)
+            return _run_claude(prompt, model=model_id, timeout=timeout)
+        if self.backend == "agy":
+            return _run_agy(prompt, timeout=timeout)
+        raise RuntimeError(f"未知 CLI backend：{self.backend}")
 
     def invoke(  # type: ignore[override]
         self,

@@ -4,6 +4,21 @@
 
 ## [未发布]
 
+## [0.6.0.0] - 2026-06-09
+
+### 新增
+- **LLM 执行通道：API / CLI 并行、channel-aware**。`runtime_llm.json` 增双通道槽位（api / cli），`LLMConfig` 带 `channel` + `cli_runner`/`cli_model`/`cli_timeout_seconds`；readiness、模型构造、office 推断与落库 enrichment 全按当前 active channel 判定。脱-key 也能从菜单选 CLI 通道跑（`ApiSettingsModal` 加 channel 选择器）。`cli_backend_active(llm_config)` 单一真源门控 issue/office 的通道感知 enrichment。
+- 单一真源 `llm_config.is_real_api_key` + `real_api_key_or_empty` + `CLI_BACKEND_PLACEHOLDER`：占位符只在 `create_chat_model` 构造 CliChat 那一刻注入，`LLMConfig.api_key` 对 CLI 通道永空；手动 key 输入口（getpass / 菜单 request / 局中 request）统一过滤占位符。`web_app._has_real_api_key` 委托同一真源。
+- 架构决策记录：ADR 0001（API/CLI 双通道并行保留）、ADR 0002（用 action candidates 而非 tool-call 作游戏规则）。
+
+### 变更
+- `settle_with_delta` 增 `delta_applier` 注入闭包（与 `chapter_recorder`/`ending_summarizer` 同构）：merge base 的 ADR-0004 结算重构后，真实流经此闭包把 llm_config 送回落库 enrichment，结算核本体仍不依赖 llm_config；driver 默认 None 走确定性 apply（设 `MING_SIM_LLM_BACKEND` 时仍按 legacy env 判定）。
+
+### 修复（pre-landing review）
+- 显式 CLI 通道 `cli_model` 为空时不再把 API model 名（`llm_config.model`）当 `--model` 漏给 codex/claude，改回落 runner 默认（`cli_model_from_env`，agy 无 `--model` 故空）。
+- 菜单 LLM 保存端点（`api_menu_save_llm` / `_menu_save_cli_llm`）的 verify smoke（CLI 子进程最长 `cli_timeout_seconds`）改经 `run_in_executor` offload，不再阻塞 asyncio event loop 卡住并发请求。
+- 补测：`verify_llm_available` legacy env-only smoke 路径、`CliChat._call_cli` 未知 backend 兜底。
+
 ## [0.5.2] - 2026-06-08
 
 ### 修复

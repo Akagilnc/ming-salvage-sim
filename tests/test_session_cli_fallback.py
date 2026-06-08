@@ -15,6 +15,7 @@ import types
 from types import SimpleNamespace
 
 import ming_sim.cli_backend as cb
+import ming_sim.session as session_mod
 from ming_sim.session import GameSession
 
 
@@ -22,9 +23,14 @@ def _result():
     return SimpleNamespace(answer="", proposed_directive=None, secret_order_id=None)
 
 
-def _session(db, state, registry=None):
+def _session(db, state, registry=None, llm_config=None):
     """fake self：带 db/state/registry + 绑定共享方法与适配器。"""
-    s = SimpleNamespace(db=db, state=state, registry=registry)
+    s = SimpleNamespace(
+        db=db,
+        state=state,
+        registry=registry,
+        llm_config=llm_config or SimpleNamespace(channel=""),
+    )
     s.apply_cli_conversation_actions = types.MethodType(
         GameSession.apply_cli_conversation_actions, s)
     s._cli_backend_fallback_actions = types.MethodType(
@@ -39,6 +45,66 @@ def _no_conv_action(monkeypatch):
                                          "new_title": "", "new_content": "", "deadline_months": 0,
                                          "cultivate_skill": "", "cultivate_trait": ""})
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
+
+
+def test_begin_turn_syncs_offices_with_runtime_llm_config(monkeypatch):
+    seen = []
+    cfg = SimpleNamespace(channel="api")
+    state = SimpleNamespace(turn_phase="summoning")
+    fake_db = SimpleNamespace(
+        load_state=lambda: state,
+        apply_historical_deaths=lambda state: [],
+        apply_historical_debuts=lambda state: [],
+        apply_historical_power_renames=lambda state: [],
+        previous_turn_summary=lambda state: "",
+        save_state=lambda state: None,
+    )
+    fake = SimpleNamespace(
+        state=state,
+        db=fake_db,
+        content=SimpleNamespace(characters={}),
+        llm_config=cfg,
+        agno_db=SimpleNamespace(),
+        previous_summary="",
+        registry=None,
+        last_decree="",
+        last_report="",
+        _begun=False,
+        auto_save=lambda label: None,
+        turn_snapshot=lambda: SimpleNamespace(ok=True),
+    )
+    monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl",
+                        lambda content, db, llm_config=None: seen.append(llm_config))
+    monkeypatch.setattr(session_mod, "MinisterRegistry",
+                        lambda llm_config, agno_db, context: SimpleNamespace())
+
+    GameSession.begin_turn(fake)
+
+    assert seen == [cfg]
+
+
+def test_chat_rollback_refresh_syncs_offices_with_runtime_llm_config(monkeypatch):
+    seen = []
+    cfg = SimpleNamespace(channel="api")
+    state = SimpleNamespace(turn_phase="summoning")
+    fake_db = SimpleNamespace(load_state=lambda: state)
+    fake = SimpleNamespace(
+        state=state,
+        db=fake_db,
+        content=SimpleNamespace(characters={}),
+        llm_config=cfg,
+        agno_db=SimpleNamespace(),
+        previous_summary="",
+        registry=SimpleNamespace(),
+    )
+    monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl",
+                        lambda content, db, llm_config=None: seen.append(llm_config))
+    monkeypatch.setattr(session_mod, "MinisterRegistry",
+                        lambda llm_config, agno_db, context: SimpleNamespace())
+
+    GameSession.refresh_runtime_after_chat_rollback(fake)
+
+    assert seen == [cfg]
 
 
 def test_no_backend_is_noop(game, monkeypatch):
@@ -71,6 +137,67 @@ def test_draft_prefix_registers_directive(game, monkeypatch):
     ).fetchone()
     assert row["text"] == result.answer        # 真落库
     assert row["status"] == "pending"
+
+
+def test_runtime_cli_channel_without_env_registers_directive(game, monkeypatch):
+    """runtime 选择 CLI 通道时，即使无 MING_SIM_LLM_BACKEND，也要启用会话写动作胶水。"""
+    db, state, _ = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    _no_conv_action(monkeypatch)
+    result = _result()
+    result.answer = "臣领旨。敕谕户部与陕西巡抚发太仓银三万两亲督赈发。钦此。"
+    _session(db, state, llm_config=SimpleNamespace(channel="cli"))._cli_backend_fallback_actions(
+        result, SimpleNamespace(name="毕自严", office_type="户部"), "拟旨如下：发三万两赈陕西")
+
+    assert result.proposed_directive is not None
+    row = db.conn.execute(
+        "SELECT text, status FROM turn_directives WHERE id=?",
+        (result.proposed_directive.id,),
+    ).fetchone()
+    assert row["text"] == result.answer
+    assert row["status"] == "pending"
+
+
+def test_runtime_cli_secret_extract_uses_configured_runner_without_env(game, monkeypatch):
+    """runtime CLI 通道的二次抽取也必须用 llm_config，不可退回 env/default agy。"""
+    db, state, _ = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    calls = []
+    canned = json.dumps({
+        "标题": "密查辽东军饷", "内容": "暗查关宁兵额有无虚冒",
+        "承办人": "李若琏", "期限月数": 3, "标签": ["辽东", "军饷"],
+    }, ensure_ascii=False)
+
+    def fake_codex(prompt, model=None, timeout=None):
+        calls.append(("codex", model, timeout))
+        return canned, 1
+
+    def fake_agy(prompt, timeout=None):
+        calls.append(("agy", timeout))
+        raise RuntimeError("agy should not be used")
+
+    monkeypatch.setattr(cb, "_run_codex", fake_codex)
+    monkeypatch.setattr(cb, "_run_agy", fake_agy)
+    result = _result()
+    result.answer = "臣领密旨，可授李若琏暗查。"
+    _session(
+        db,
+        state,
+        llm_config=SimpleNamespace(
+            channel="cli", cli_runner="codex", cli_model="gpt-5.5", cli_timeout_seconds=240,
+        ),
+    )._cli_backend_fallback_actions(
+        result, SimpleNamespace(name="王在晋", office_type="兵部"),
+        "密令如下：查辽东军饷有无侵冒，三月内回奏")
+
+    assert calls == [("codex", "gpt-5.5", 240)]
+    row = db.conn.execute(
+        "SELECT title, minister_name FROM secret_orders WHERE id=?",
+        (result.secret_order_id,),
+    ).fetchone()
+    assert row["title"] == "密查辽东军饷"
+    assert row["minister_name"] == "李若琏"
 
 
 def test_secret_prefix_creates_order(game, monkeypatch):
@@ -171,6 +298,54 @@ def test_conversation_update_lands_via_session_path(game, monkeypatch):
     row = db.conn.execute("SELECT content FROM secret_orders WHERE id=?", (oid,)).fetchone()
     assert row["content"] == "改后内容"          # 会话动作真落库（不止出回话）
     assert who in refreshed
+
+
+def test_runtime_cli_conversation_update_uses_configured_runner_without_env(game, monkeypatch):
+    """无前缀会话动作的 LLM 判定也必须按 runtime CLI 配置分派。"""
+    db, state, _ = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    who = "配置通道承办官"
+    oid = db.create_secret_order(state, who, "原标题", "原内容", [], deadline_months=0)
+    calls = []
+    canned = json.dumps({
+        "密令动作": "更新",
+        "目标密令编号": oid,
+        "新标题": "改后标题",
+        "新内容": "改后内容",
+        "期限月数": 0,
+    }, ensure_ascii=False)
+
+    def fake_codex(prompt, model=None, timeout=None):
+        calls.append(("codex", model, timeout))
+        return canned, 1
+
+    def fake_agy(prompt, timeout=None):
+        calls.append(("agy", timeout))
+        raise RuntimeError("agy should not be used")
+
+    monkeypatch.setattr(cb, "_run_codex", fake_codex)
+    monkeypatch.setattr(cb, "_run_agy", fake_agy)
+    s = _session(
+        db,
+        state,
+        llm_config=SimpleNamespace(
+            channel="cli", cli_runner="codex", cli_model="gpt-5.5", cli_timeout_seconds=240,
+        ),
+    )
+
+    res = s.apply_cli_conversation_actions(
+        SimpleNamespace(name=who, office_type="兵部"),
+        "你那道密令改一下，内容换成……",
+        "臣领旨，已记改。",
+        has_directive=False,
+        secret_order_id=None,
+    )
+
+    assert calls == [("codex", "gpt-5.5", 240)]
+    assert res["secret_order_id"] == oid
+    row = db.conn.execute("SELECT content FROM secret_orders WHERE id=?", (oid,)).fetchone()
+    assert row["content"] == "改后内容"
 
 
 def test_conversation_rush_skips_pending_review(game, monkeypatch):

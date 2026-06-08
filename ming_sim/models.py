@@ -30,6 +30,10 @@ class LLMConfig:
     advanced_base_url: str = ""  # 空=复用主 base_url；非空=advanced 角色专用网关
     advanced_api_key: str = ""  # 空=复用主 api_key；非空=advanced 角色专用 key
     advanced_thinking_level: str = ""  # 空=沿用旧逻辑；advanced 角色原样传给 reasoning_effort
+    channel: str = ""  # ""=沿用旧 env 探针；api=OpenAI 兼容 API；cli=本地 CLI runner
+    cli_runner: str = ""  # agy | codex | claude
+    cli_model: str = ""  # CLI runner 的模型名/档位，由具体后端解释
+    cli_timeout_seconds: float = 300.0
 
 
 @dataclass

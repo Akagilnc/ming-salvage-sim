@@ -224,6 +224,29 @@ def test_run_codex_flags_and_stdout(monkeypatch):
     assert "-c" not in captured["cmd"]                     # 未设 reasoning 不强加默认
 
 
+def test_run_codex_accepts_config_model_and_timeout(monkeypatch):
+    captured = {}
+
+    class _P:
+        stdout = "臣领旨。"
+        stderr = ""
+        returncode = 0
+
+    def fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        captured["timeout"] = kw["timeout"]
+        return _P()
+
+    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
+    monkeypatch.setattr(cb.subprocess, "run", fake_run)
+
+    out, n = cb._run_codex("p", model="gpt-configured", timeout=123)
+
+    assert out == "臣领旨。"
+    assert captured["cmd"][captured["cmd"].index("--model") + 1] == "gpt-configured"
+    assert captured["timeout"] == 123
+
+
 def test_run_codex_reasoning_env_optional(monkeypatch):
     """设了 MING_SIM_CODEX_REASONING 才传 -c model_reasoning_effort，否则不碰。"""
     captured = {}
@@ -256,6 +279,28 @@ def test_run_codex_stdout_empty_fallback(monkeypatch):
     monkeypatch.setattr(cb.subprocess, "run", lambda cmd, **kw: _P())
     out, n = cb._run_codex("p")
     assert out == "臣领旨。"
+
+
+def test_run_claude_accepts_config_model_and_timeout(monkeypatch):
+    captured = {}
+
+    class _P:
+        stdout = "臣领旨。"
+        stderr = ""
+        returncode = 0
+
+    def fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        captured["timeout"] = kw["timeout"]
+        return _P()
+
+    monkeypatch.setattr(cb.subprocess, "run", fake_run)
+
+    out, n = cb._run_claude("p", model="claude-configured", timeout=234)
+
+    assert out == "臣领旨。"
+    assert captured["cmd"][captured["cmd"].index("--model") + 1] == "claude-configured"
+    assert captured["timeout"] == 234
 
 
 # ── extract_minister_actions：LLM 判会话动作（取代关键字白名单）──
@@ -633,9 +678,34 @@ def test_enrich_trace_records_actual_backend(monkeypatch):
 
 def test_clichat_call_cli_dispatch(monkeypatch):
     """CliChat._call_cli 按 backend 字段分派（与 _run_backend 的 env 分派独立）。"""
-    monkeypatch.setattr(cb, "_run_codex", lambda p: ("CODEX", 1))
-    monkeypatch.setattr(cb, "_run_claude", lambda p: ("CLAUDE", 1))
-    monkeypatch.setattr(cb, "_run_agy", lambda p: ("AGY", 1))
-    assert cb.CliChat(id="m", backend="codex")._call_cli("p") == ("CODEX", 1)
-    assert cb.CliChat(id="m", backend="claude")._call_cli("p") == ("CLAUDE", 1)
-    assert cb.CliChat(id="m", backend="agy")._call_cli("p") == ("AGY", 1)
+    seen = {}
+
+    def fake_codex(p, model=None, timeout=None):
+        seen["codex"] = (model, timeout)
+        return ("CODEX", 1)
+
+    def fake_claude(p, model=None, timeout=None):
+        seen["claude"] = (model, timeout)
+        return ("CLAUDE", 1)
+
+    def fake_agy(p, timeout=None):
+        seen["agy"] = timeout
+        return ("AGY", 1)
+
+    monkeypatch.setattr(cb, "_run_codex", fake_codex)
+    monkeypatch.setattr(cb, "_run_claude", fake_claude)
+    monkeypatch.setattr(cb, "_run_agy", fake_agy)
+    assert cb.CliChat(id="m-codex", backend="codex", timeout=111)._call_cli("p") == ("CODEX", 1)
+    assert cb.CliChat(id="m-claude", backend="claude", timeout=222)._call_cli("p") == ("CLAUDE", 1)
+    assert cb.CliChat(id="m-agy", backend="agy", timeout=333)._call_cli("p") == ("AGY", 1)
+    assert seen["codex"] == ("m-codex", 111)
+    assert seen["claude"] == ("m-claude", 222)
+    assert seen["agy"] == 333
+
+
+def test_clichat_call_cli_unknown_backend_raises():
+    """直接构造 CliChat(backend=bogus) 时 _call_cli 兜底响亮抛错（defense-in-depth：
+    create_chat_model 已在构造前用 is_supported_cli_runner 拦截，但直接构造路径仍可达）。"""
+    import pytest
+    with pytest.raises(RuntimeError):
+        cb.CliChat(id="m", backend="bogus")._call_cli("p")
