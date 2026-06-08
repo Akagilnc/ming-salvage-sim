@@ -251,7 +251,7 @@ def build_building_brief(context: CourtContext) -> str:
         return ""
     lines = []
     for r in rows:
-        out = f"·产{r['output_metric']}{r['output_amount']}" if r["output_metric"] else ""
+        out = f"·产{r['output_metric']}{int(r['output_amount'] or 0)}" if r["output_metric"] else ""
         lines.append(
             f"{r['name']}（{r['category']}·{r['region_name']}）Lv{r['level']}完好{r['condition']}{out}"
         )

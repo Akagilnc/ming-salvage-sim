@@ -186,6 +186,18 @@ def test_fresh_seed_wires_firearm_not_all_zero(content):
                 os.remove(f)
 
 
+def test_create_army_cannon_nonint_does_not_crash(game):
+    """建军时 cannon_equipment 给非 int(如"几门")→ 兜底 0 不抛崩(PR codex db.py:3028)。"""
+    db, state, _ = game
+    db.create_armies_from_extraction(state, [{
+        "id": "cannon_nonint_test", "name": "炮非数测试", "owner_power": "ming",
+        "manpower": 2000, "maintenance_per_turn": 1, "cannon_equipment": "几门",
+    }], actor="测试")
+    val = db.conn.execute(
+        "SELECT cannon_equipment FROM armies WHERE id='cannon_nonint_test'").fetchone()[0]
+    assert val == 0
+
+
 def test_apply_army_delta_chinese_keys(game):
     """extractor 按中文词干输出 火器/随军大炮 时也能落库（CMR F9 别名补全）。"""
     db, state, _ = game
