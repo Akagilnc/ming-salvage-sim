@@ -27,6 +27,15 @@ def test_cli_settle_rejects_non_dict_envelope_delta(game, tmp_path):
         driver.main(["settle", "--delta", str(bad)], game=game)
 
 
+def test_run_settle_rejects_non_dict_module_value(game):
+    """畸形模块值(国势变化="foo"→metric_delta 非 dict)在 pre_settle 动 DB 前响亮报错,回合不半推进。"""
+    db, state, content = game
+    before = state.turn
+    with pytest.raises(SystemExit):
+        run_settle(db, state, content, {"国势变化": "foo"})
+    assert state.turn == before  # 崩前拦住,未推进、未半落库
+
+
 def test_open_game_loads_board(tmp_path):
     """open_game 按路径打开存档，返回 (db, state, content)，盘面已加载（turn>0）。"""
     src = os.path.join(os.path.dirname(__file__), "..", "data", "probe.db")
