@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 
 from ming_sim.context import bind_content
 from ming_sim.decree import pre_settle, settle_with_delta
@@ -27,31 +28,31 @@ _NESTED_DICT_FIELDS = frozenset(
 
 
 def _validate_delta_shape(extracted: dict) -> None:
-    """canonical delta 各顶层字段的容器类型必须匹配 schema（dict / list），否则**结算前**响亮报错。
+    """canonical delta 各顶层字段的容器类型必须匹配 schema（dict / list），否则**结算前**抛 ValueError。
 
     driver 只跑 `_canonicalize_extraction`（归一 key），不跑真实流程的 `_sanitize_module_output`
     白名单/清洗。畸形模块值（如 `国势变化:"foo"` → metric_delta="foo"）若直送 apply 会在结算
     中途崩 `.items()`，叠加非原子结算 = 半落库（cmr red-team RT-1）。在 pre_settle 动 DB 前校验，
-    崩前拦住、回合不半推进。
+    崩前拦住、回合不半推进。抛 `ValueError`（库语义，可复用/可测）；CLI 边界由 `main()` 转退出码。
     """
     for key, value in extracted.items():
         if key not in EMPTY_EXTRACTION:
-            raise SystemExit(
+            raise ValueError(
                 f"未知 delta 顶层字段「{key}」(canonicalize 后)；疑拼写错(如 地区变更↔地区变化)，"
                 "apply 不会消费它 = 静默无效。请改用合法 key。"
             )
         expected = EMPTY_EXTRACTION[key]
         if isinstance(expected, dict) and not isinstance(value, dict):
-            raise SystemExit(f"delta 字段 {key} 必须是 object(dict)，实得 {type(value).__name__}")
+            raise ValueError(f"delta 字段 {key} 必须是 object(dict)，实得 {type(value).__name__}")
         if isinstance(expected, list) and not isinstance(value, list):
-            raise SystemExit(f"delta 字段 {key} 必须是 array(list)，实得 {type(value).__name__}")
+            raise ValueError(f"delta 字段 {key} 必须是 array(list)，实得 {type(value).__name__}")
         # 实体→{字段}模块的二级值必须是 dict;否则 apply 里 `.items()` 会在结算中途崩=半落库(Gemini R1 G2)。
         # 注:字段名 typo(如 动乱→动荡)是合法 dict 结构、坏字段名,apply 会响亮抛 LLMContractError,
         # 但那在 pre_settle 之后 → 半落库,根治需事务边界(issue #3),非 driver 此处能廉价覆盖。
         if key in _NESTED_DICT_FIELDS:
             for ent, sub in value.items():
                 if not isinstance(sub, dict):
-                    raise SystemExit(
+                    raise ValueError(
                         f"delta 字段 {key}.{ent} 必须是 object(dict)，实得 {type(sub).__name__}"
                     )
 
@@ -92,12 +93,13 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
     narrative 落 turn_logs/turn_reports 作下月前文 + 玩家邸报;canonical delta 以 JSON 落
     turn_extractions.extractor_output 作 replay/timeline 重建痕迹（memories 读此字段）。
     章节记忆 / 结局总评不注入（driver 无 llm_config），由对话里的我另行产出。
+    畸形 delta 抛 `ValueError`（库语义）；CLI 由 `main()` 转退出码。
     """
-    # public 边界:None 当空回合;falsy 非 dict([]/""/0)不静默吞成空结算照样推进(codex-P1a)。
+    # public 边界:None 当空回合;falsy/非 dict([]/""/0/str)不静默吞成空结算照样推进(codex-P1a)。
     if raw_delta is None:
         raw_delta = {}
     if not isinstance(raw_delta, dict):
-        raise SystemExit(f"delta 必须是 object(dict)，实得 {type(raw_delta).__name__}")
+        raise ValueError(f"delta 必须是 object(dict)，实得 {type(raw_delta).__name__}")
     extracted = _canonicalize_extraction(raw_delta)
     _validate_delta_shape(extracted)  # 崩前拦畸形/未知字段,避免 pre_settle 动 DB 后半落库(RT-1/P1b)
     before_turn = state.turn
@@ -119,6 +121,7 @@ def main(argv=None, *, game=None) -> int:
     """CLI 入口：state（打印盘面）/ settle --delta <json>（注入 delta 结算）/ dump（盘面快照）。
 
     game=(db,state,content) 可注入（测试用）；否则按 --db 打开存档。
+    库层校验抛 ValueError，CLI 在此 catch、打到 stderr、返回退出码 1（不让 ValueError 透到用户）。
     """
     parser = argparse.ArgumentParser(prog="driver", description="探针确定性结算 driver")
     parser.add_argument("--db", default=DEFAULT_DB, help="存档路径")
@@ -144,15 +147,14 @@ def main(argv=None, *, game=None) -> int:
             decree_text = str(obj.get("decree_text") or "")
         else:
             raw_delta, narrative, decree_text = obj, "", ""
-        # delta 必须是 object;非 dict 响亮报错,不静默吞成空 delta 照样推进回合(cmr codex-P2b)。
-        if not isinstance(raw_delta, dict):
-            raise SystemExit(
-                f"settle 的 delta 必须是 object(dict),实得 {type(raw_delta).__name__}。"
-                '信封形态 {"narrative":..., "delta":{...}},或直接给裸 delta dict。'
+        # run_settle 抛 ValueError（畸形/未知/非 dict delta，含信封 delta 非 object）→ CLI 转退出码。
+        try:
+            report = run_settle(
+                db, state, content, raw_delta, narrative=narrative, decree_text=decree_text
             )
-        report = run_settle(
-            db, state, content, raw_delta, narrative=narrative, decree_text=decree_text
-        )
+        except ValueError as exc:
+            print(f"settle 失败：{exc}", file=sys.stderr)
+            return 1
         print(report)
         return 0
     if args.cmd == "dump":
