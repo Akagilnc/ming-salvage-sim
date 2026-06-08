@@ -586,8 +586,8 @@ class WebGame:
     ) -> LLMConfig:
         base = normalize_openai_base_url(base_url.strip() or self.session.llm_config.base_url)
         new_model = model.strip() or self.session.llm_config.model
-        _cur_key = self.session.llm_config.api_key
-        new_key = api_key.strip() or (_cur_key if _has_real_api_key(_cur_key) else "")
+        # 请求 key 与已存 key 回落都过占位符过滤（in-game POST 输入边界）。
+        new_key = real_api_key_or_empty(api_key) or real_api_key_or_empty(self.session.llm_config.api_key)
         new_max = max_tokens if max_tokens > 0 else self.session.llm_config.max_tokens
         new_timeout = timeout_seconds if timeout_seconds > 0 else self.session.llm_config.timeout_seconds
         if thinking_level is None:
@@ -1665,7 +1665,7 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         return await _menu_save_cli_llm(request)
     base_url = (request.base_url or "").strip()
     model = (request.model or "").strip()
-    api_key = (request.api_key or "").strip()
+    api_key = real_api_key_or_empty(request.api_key)  # 请求里的占位符不当真 key
     advanced_model = (request.advanced_model or "").strip()
     adv_base_in = (request.advanced_base_url or "").strip()
     advanced_base_url = normalize_openai_base_url(adv_base_in) if adv_base_in else ""
