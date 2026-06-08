@@ -4,6 +4,30 @@
 
 ## [未发布]
 
+## [0.5.2] - 2026-06-08
+
+### 修复
+- 探针 driver `run_settle` 堵两处静默吞(codex 对抗 review）：falsy 非 dict 的 delta（`[]`/`""`/`0`）不再被 `or {}` 吞成空结算照样推进；未知顶层字段（拼写错如 `地区变更`↔`地区变化`）不再静默无效落库——两者结算前响亮报错、回合不半推进。
+
+### 变更
+- `docs/TODO.md` 移到根目录 `TODOS.md`（与 gstack 约定一致），标记城防炮(#4)/driver(#10)完成移入修复记录；CLAUDE.md 工作手册引用同步。
+
+## [0.5.1] - 2026-06-08
+
+### 新增
+- **确定性结算核**：从 `decree.py` 抽出 `pre_settle`（固定财政 tick + auto_trigger）与 `settle_with_delta`（apply→turn_logs→章节记忆→inertia→clear→结局判定→next_period）。真实流程 `_settle_after_narrative`/`resolve_directives` 改调新核，behavior-preserving；章节记忆/结局总评做注入回调，使核不依赖 `llm_config`。真实流程与探针 driver 共用同一结算核（见 ADR 0004）。
+- **探针 driver（`driver.py`）**：`state`（盘面快照）/ `settle --delta <json>`（注入我产的中文 schema delta 跑确定性结算、推进一回合）/ `dump`（地区快照）。`run_settle` 规范化中文 key→英文 canonical 并按 schema 校验各字段容器类型（畸形值结算前响亮报错、不半落库），落 narrative 到 turn_reports + canonical delta JSON 到 turn_extractions（供 replay/timeline 重建）；CLI `settle` 支持信封 `{narrative, decree_text, delta}`（裸 delta 兼容）。
+- **城防炮 `region.cannon` delta 落库路径**：`地区变化` 新增 `城防炮` 字段，`apply_region_deltas` 特判路由到 `apply_region_cannon`（复用 `city_level×8` clamp，在白名单检查前），与军队 `随军大炮`（`cannon_equipment`）分域。
+
+### 变更
+- 城防炮补入 `REGION_FIELD_LABELS`（turn 日志显示「城防炮」而非回退英文 cannon）。
+- CLAUDE.md「结算编排骨架」改述：driver 复用 `pre_settle`/`settle_with_delta`，不再自行复刻结算链（ADR 0004）。
+- 新增架构决策记录：ADR 0003（人物相关 delta 合并为单 key + 显式动作意图，实现 deferred）、ADR 0004（探针 driver 复用引擎结算核）。
+
+### 修复
+- `db.py` 漏 import `LLMContractError` → 任何非法 `region_delta` 字段曾崩 `NameError`，现正确抛契约错（报清楚的合法字段清单）。
+- 探针 driver 对畸形 delta（信封 `delta` 非 object、模块值容器类型不符）一律在动 DB 前响亮报错，不静默吞成空 delta 照样推进回合。
+
 ## [0.5.0] - 2026-06-08
 
 ### 新增

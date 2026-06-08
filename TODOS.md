@@ -6,7 +6,7 @@
 
 ## 🟠 PR #2 CMR Deferred（cross-model review 8 轮 5/5 concur 后 defer 的契约/架构项）
 - D1 settlement 事务半落库 → [issue #3](https://github.com/Akagilnc/ming-salvage-sim/issues/3)
-- D2 城防炮 region.cannon 无 delta 写入路径 → [issue #4](https://github.com/Akagilnc/ming-salvage-sim/issues/4)
+- ~~D2 城防炮 region.cannon 无 delta 写入路径 → [issue #4](https://github.com/Akagilnc/ming-salvage-sim/issues/4)~~ ✅ PR #16 (v0.5.1)
 - D3 conftest 依赖 gitignored probe.db → CI 假绿 → [issue #5](https://github.com/Akagilnc/ming-salvage-sim/issues/5)
 - D4 _loads_lenient JSONC 非 quote-aware 病态边界 → [issue #6](https://github.com/Akagilnc/ming-salvage-sim/issues/6)
 
@@ -109,10 +109,8 @@
 
 ## 🔵 探针工程待办（step1 → step2）
 
-### T1. driver 还没固化成脚本 → [issue #10](https://github.com/Akagilnc/ming-salvage-sim/issues/10)
-- 现在每回合结算都用 `python3 - <<'PY' ... PY` 内联 heredoc 跑，没有持久 driver。
-- 应固化成 `driver.py`，封装：`state`（读盘）/ `settle --delta <json>`（固定tick+apply+惯性+推进）/ `dump`（盘面），复用 DELTA_SCHEMA + SETTLEMENT_FLOW。
-- 好处：可复现、可调试、delta 从文件喂入不易出错。
+### ~~T1. driver 固化成脚本~~ ✅ PR #16 (v0.5.1) → [issue #10](https://github.com/Akagilnc/ming-salvage-sim/issues/10)
+- 已落地 `driver.py`：`state` / `settle --delta <json>`（信封 `{narrative,decree_text,delta}`）/ `dump`，复用从 decree.py 抽出的 `pre_settle`+`settle_with_delta`（ADR 0004，与真实流程同核）。delta 从文件喂入、按 schema 校验容器类型崩前拦。
 
 ### T2. step2 subagent 化（已立 issue）
 - 见 GitHub [issue #1](https://github.com/Akagilnc/ming-salvage-sim/issues/1)。
@@ -140,4 +138,5 @@
 
 ---
 **修复记录**：（修完的移到这里，注明日期）
+- **[PR #16 / v0.5.1, 2026-06-08]** D2 城防炮 region.cannon delta 落库路径(#4)+ T1 driver.py 固化(#10)：抽确定性结算核 `pre_settle`/`settle_with_delta`（ADR 0004，真实流程与 driver 同核）、城防炮路由 `apply_region_cannon`(city_level×8 clamp)、修 db.py 漏 import `LLMContractError`、driver 多处静默吞守卫。两轮 cross-model + ship review-army + 对抗 review 收敛。
 - **[崇祯元年十二月结算]** B1 阉党 leverage：用手动 SQL `UPDATE factions SET leverage=35 WHERE name='阉党'` 临时修复（叙事支撑=核心退场+四十余党羽清出要津），78→35。**遗留根因未解**：长期应让 `db.set_character_status` 在"握实权官职的核心人物"退场时，自动按官职权重联动扣减所属派系 leverage，而非每回合手动 SQL。下次重构结算管线时一并做。
