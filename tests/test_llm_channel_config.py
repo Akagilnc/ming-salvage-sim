@@ -30,7 +30,7 @@ def test_create_chat_model_respects_api_channel_over_backend_env(monkeypatch):
 def test_create_chat_model_uses_cli_channel_without_backend_env(monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     cfg = LLMConfig(
-        api_key="cli-backend",
+        api_key="",  # CLI 通道 LLMConfig.api_key 永空；占位符在此构造时才注入
         base_url="",
         model="api-fallback-model",
         channel="cli",
@@ -45,6 +45,8 @@ def test_create_chat_model_uses_cli_channel_without_backend_env(monkeypatch):
     assert model.backend == "codex"
     assert model.id == "gpt-5.5"
     assert model.timeout == 240
+    # 空 CLI key 也能构造：占位符在构造时注入以满足 OpenAIChat 父类。
+    assert model.api_key == "cli-backend"
 
 
 def test_load_llm_config_records_backend_env_as_cli_channel(monkeypatch):
@@ -56,7 +58,7 @@ def test_load_llm_config_records_backend_env_as_cli_channel(monkeypatch):
     assert cfg.channel == "cli"
     assert cfg.cli_runner == "codex"
     assert cfg.cli_model == "gpt-codex-test"
-    assert cfg.api_key == "cli-backend"
+    assert cfg.api_key == ""
 
 
 def test_loaded_api_config_is_not_rerouted_by_later_backend_env(monkeypatch):

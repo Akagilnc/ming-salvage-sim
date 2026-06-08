@@ -11,6 +11,7 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError
 
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_config import (
+    CLI_BACKEND_PLACEHOLDER,
     is_dashscope_base_url,
     is_deepseek_base_url,
     is_minimax_base_url,
@@ -128,6 +129,10 @@ def create_chat_model(
         cli_timeout = getattr(llm_config, "cli_timeout_seconds", None)
         if cli_timeout:
             kwargs["timeout"] = cli_timeout
+        # 占位符只在这一刻注入：满足 OpenAIChat 父类构造（非空 api_key），
+        # CliChat 走 CLI 从不用它。LLMConfig.api_key 对 CLI 通道永远是空串，
+        # 所以这个 magic-string 不流经任何 key 处理/上报路径。
+        kwargs["api_key"] = (kwargs.get("api_key") or "").strip() or CLI_BACKEND_PLACEHOLDER
         return CliChat(backend=backend, **kwargs)
     return OpenAIChat(**kwargs)
 

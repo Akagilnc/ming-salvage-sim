@@ -35,7 +35,7 @@ def test_runtime_cli_slot_builds_cli_llm_config_without_backend_env(monkeypatch)
     assert cfg.cli_runner == "codex"
     assert cfg.cli_model == "gpt-5.5"
     assert cfg.cli_timeout_seconds == 240
-    assert cfg.api_key == "cli-backend"
+    assert cfg.api_key == ""  # CLI 通道 LLMConfig.api_key 永空（占位符只在构造 CliChat 时注入）
 
 
 def test_advanced_llm_verification_preserves_api_channel_over_backend_env(monkeypatch):
