@@ -140,19 +140,21 @@ def load_llm_config(
     advanced_thinking_level: str = "",
 ) -> LLMConfig:
     api_key = (api_key or os.environ.get("OPENAI_API_KEY", "")).strip()
-    # 探针：MING_SIM_LLM_BACKEND=agy|codex 时走本地 CLI，无需 api key，
-    # 不索要、不拦截，给个占位符让下游构造照常。
+    # 探针：MING_SIM_LLM_BACKEND=agy|codex 时走本地 CLI，无需 api key。
+    # CLI 通道下 api_key 留空——占位符只在 create_chat_model 构造 CliChat 时注入，
+    # 不让 magic-string 进 LLMConfig.api_key、不流经任何 key 路径。
     from ming_sim.cli_backend import cli_backend_from_env
     cli_runner = cli_backend_from_env()
     if cli_runner is not None:
-        api_key = api_key or CLI_BACKEND_PLACEHOLDER
-    elif not is_real_api_key(api_key):
-        # API 模式下占位符不当真 key：清空让下方走索要/报错，别拿假 key 探 OpenAI。
-        api_key = ""
-    if not api_key:
-        api_key = getpass.getpass("请输入 API key（不会保存，回车取消）：").strip()
-    if not api_key:
-        raise SystemExit("未提供 API key，无法使用 LLM。")
+        api_key = ""  # CLI 模式不要 API key
+    else:
+        # API 模式才要真实 key：占位符不算，空则索要/报错，别拿假 key 探 OpenAI。
+        if not is_real_api_key(api_key):
+            api_key = ""
+        if not api_key:
+            api_key = getpass.getpass("请输入 API key（不会保存，回车取消）：").strip()
+        if not api_key:
+            raise SystemExit("未提供 API key，无法使用 LLM。")
     adv_base = (advanced_base_url or "").strip()
     return LLMConfig(
         api_key=api_key,
@@ -184,7 +186,8 @@ def for_role(cfg: LLMConfig, role: str) -> LLMConfig:
     advanced_model 为空时返回原 cfg（无任何替换）。"""
     if role in _ADVANCED_ROLES and (cfg.advanced_model or "").strip():
         adv_base = (cfg.advanced_base_url or "").strip() or cfg.base_url
-        # advanced/主 key 回落都过占位符过滤（CLI 通道下 cfg.api_key 是 cli-backend）。
+        # advanced/主 key 回落都过 real_api_key_or_empty（防御性：CLI 通道下 cfg.api_key
+        # 现已是空串，占位符只活在 create_chat_model 构造 CliChat 那一刻）。
         adv_key = real_api_key_or_empty(cfg.advanced_api_key) or real_api_key_or_empty(cfg.api_key)
         return LLMConfig(
             api_key=adv_key,

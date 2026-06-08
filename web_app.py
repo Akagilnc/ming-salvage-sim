@@ -26,7 +26,6 @@ from ming_sim.constants import ROOT_DIR
 from ming_sim.paths import bundled_path, user_data_path, user_data_dir
 from ming_sim.exceptions import ExitGame, LLMUnavailable
 from ming_sim.llm_config import (
-    CLI_BACKEND_PLACEHOLDER,
     cli_model_from_env,
     is_real_api_key,
     real_api_key_or_empty,
@@ -363,9 +362,9 @@ def _llm_config_from_runtime(
     cli_runner = str(cli_slot.get("runner") or env_runner or ("agy" if channel == "cli" else "")).strip().lower()
     cli_model = str(cli_slot.get("model") or cli_model_from_env(cli_runner, model)).strip()
     cli_timeout = _runtime_float(cli_slot.get("timeout_seconds"), timeout_seconds)
-    if channel == "cli" and not api_key:
-        api_key = CLI_BACKEND_PLACEHOLDER
-    elif channel == "api" and not is_real_api_key(api_key):
+    if channel == "cli":
+        api_key = ""  # CLI 通道不要 API key；占位符在 create_chat_model 构造 CliChat 时注入
+    elif not is_real_api_key(api_key):
         # 占位符不当真 key：清空让下游空检查报「未配 API key」，
         # 而不是拿假 key 去探 OpenAI（误导性 412）。
         api_key = ""
@@ -460,7 +459,7 @@ class WebGame:
             advanced_api_key=advanced_api_key,
             advanced_thinking_level=advanced_thinking_level,
         )
-        if not llm_config.api_key:
+        if llm_config.channel != "cli" and not llm_config.api_key:
             raise LLMUnavailable("未配 API key，请先到设置页填写。")
         if fresh:
             verify_llm_available(llm_config)
@@ -1609,7 +1608,7 @@ async def _menu_save_cli_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     if not cli_runner:
         raise HTTPException(status_code=400, detail="cli_runner 不能为空。")
     config = LLMConfig(
-        api_key=CLI_BACKEND_PLACEHOLDER,
+        api_key="",  # CLI 通道不要 API key；占位符在 create_chat_model 构造 CliChat 时注入
         base_url="",
         model=cli_model,
         max_tokens=max_tokens,
