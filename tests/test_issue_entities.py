@@ -104,3 +104,12 @@ def test_army_delta_unknown_army_raises(game):
         I._apply_issue_entities(db, state, {
             "army_delta": {"查无此军": {"manpower": 100}},
         }, "局势#测试")
+
+
+def test_non_dict_character_status_item_raises(game):
+    """character_status_changes 含非 dict 项 → 抛错，不静默丢（docstring 称全局严格，CMR F7）。"""
+    db, state, _ = game
+    with pytest.raises(ValueError):
+        I._apply_issue_entities(db, state, {
+            "character_status_changes": ["这不是dict"],
+        }, "局势#测试")

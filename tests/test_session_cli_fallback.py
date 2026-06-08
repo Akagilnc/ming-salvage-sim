@@ -67,7 +67,7 @@ def test_secret_prefix_creates_order(game, monkeypatch):
     result = _result()
     result.answer = "臣领密旨，可授李若琏暗查。"
     GameSession._cli_backend_fallback_actions(
-        SimpleNamespace(db=db, state=state), result,
+        SimpleNamespace(db=db, state=state, registry=None), result,
         SimpleNamespace(name="王在晋"), "密令如下：查辽东军饷有无侵冒，三月内回奏",
     )
     assert result.secret_order_id
@@ -78,6 +78,39 @@ def test_secret_prefix_creates_order(game, monkeypatch):
     assert row["title"] == "密查辽东军饷"
     assert row["minister_name"] == "李若琏"      # 点名承办人，非当前应答大臣
     assert row["status"] == "active"
+
+
+def test_secret_prefix_upserts_not_duplicates_and_refreshes(game, monkeypatch):
+    """CMR F3：CLI 胶水须走 upsert（同承办人再下=更新同条，不建重复）+ registry.refresh。"""
+    db, state, _ = game
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    refreshed = []
+    registry = SimpleNamespace(refresh=lambda name: refreshed.append(name))
+    fake_self = SimpleNamespace(db=db, state=state, registry=registry)
+    who = "测试承办官F3"
+
+    canned1 = json.dumps({"标题": "密查一", "内容": "查甲事", "承办人": who,
+                          "期限月数": 0, "标签": []}, ensure_ascii=False)
+    monkeypatch.setattr(cb, "_run_agy", lambda p: (canned1, 1))
+    r1 = _result(); r1.answer = "臣领旨一。"
+    GameSession._cli_backend_fallback_actions(fake_self, r1, SimpleNamespace(name=who), "密令如下：查甲")
+    oid1 = r1.secret_order_id
+    assert oid1
+
+    canned2 = json.dumps({"标题": "密查一·改", "内容": "查甲事·已改", "承办人": who,
+                          "期限月数": 0, "标签": []}, ensure_ascii=False)
+    monkeypatch.setattr(cb, "_run_agy", lambda p: (canned2, 1))
+    r2 = _result(); r2.answer = "臣领旨二。"
+    GameSession._cli_backend_fallback_actions(fake_self, r2, SimpleNamespace(name=who), "密令如下：改查甲")
+    assert r2.secret_order_id == oid1            # 同一条，不建重复
+    cnt = db.conn.execute(
+        "SELECT COUNT(*) FROM secret_orders WHERE minister_name=? AND status='active'", (who,)
+    ).fetchone()[0]
+    assert cnt == 1
+    row = db.conn.execute("SELECT content FROM secret_orders WHERE id=?", (oid1,)).fetchone()
+    assert row["content"] == "查甲事·已改"        # 内容真被更新
+    assert refreshed.count(who) == 2             # 两次都刷新了承办大臣 agent
 
 
 def test_existing_directive_not_overwritten(game, monkeypatch):

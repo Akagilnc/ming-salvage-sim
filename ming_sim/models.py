@@ -168,7 +168,7 @@ class Army:
     status: str
     owner_power: str
     firearm_equipment: int = 0  # 火器装备 0-100：鸟铳/三眼铳，野战+守城
-    cannon_equipment: int = 0   # 大炮装备 0-100：红夷炮，守城/攻城，不利野战
+    cannon_equipment: int = 0   # 随军大炮门数(clamp 0-12)：红夷炮，守城/攻城，不利野战；城防炮另挂 region.cannon
 
 
 @dataclass

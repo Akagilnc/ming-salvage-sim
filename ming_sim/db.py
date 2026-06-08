@@ -5178,24 +5178,47 @@ class GameDB:
             )
             return oid, False
         oid = int(existing["id"])
-        tags_json = json.dumps(tags, ensure_ascii=False)
+        self.update_secret_order_by_id(state, oid, title, content, tags, deadline_months)
+        return oid, True
+
+    def update_secret_order_by_id(
+        self,
+        state: GameState,
+        order_id: int,
+        title: str,
+        content: str,
+        tags: Optional[List[str]] = None,
+        deadline_months: int = 0,
+    ) -> bool:
+        """按**精确 id** 更新 active 密令要旨（title/content/tags/限期），记一条「奉旨更新」进展。
+        返回是否更新（id 存在且状态为 active）。
+
+        与 upsert_secret_order 的区别：upsert 按「该大臣最新 active」改，会话动作「更新」已解析出
+        确切 target id 时必须走本方法，否则大臣有多条 active 密令会改错条（CMR F1）。
+        tags=None 保留原标签（会话更新不带 tags 时不清空）；传 list 则覆盖。"""
+        row = self.conn.execute(
+            "SELECT status, tags FROM secret_orders WHERE id=?", (int(order_id),)
+        ).fetchone()
+        if row is None or row["status"] != "active":
+            return False
+        tags_json = json.dumps(tags, ensure_ascii=False) if tags is not None else (row["tags"] or "[]")
         deadline = max(0, min(int(deadline_months or 0), 36))
         if deadline:
             self.conn.execute(
                 "UPDATE secret_orders SET title=?, content=?, tags=?, due_turn=?, "
                 "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                (title[:20], content, tags_json, int(state.turn) + deadline, oid),
+                (title[:20], content, tags_json, int(state.turn) + deadline, int(order_id)),
             )
         else:
             self.conn.execute(
                 "UPDATE secret_orders SET title=?, content=?, tags=?, "
                 "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                (title[:20], content, tags_json, oid),
+                (title[:20], content, tags_json, int(order_id)),
             )
         self.conn.commit()
-        tlog(f"[secret_order] update id={oid} minister={minister_name} title={title[:20]}")
-        self.update_secret_order_progress(oid, f"奉旨更新密令要旨：{content[:60]}", state.year, state.period)
-        return oid, True
+        tlog(f"[secret_order] update id={order_id} title={title[:20]}")
+        self.update_secret_order_progress(int(order_id), f"奉旨更新密令要旨：{content[:60]}", state.year, state.period)
+        return True
 
     def list_secret_orders(
         self,

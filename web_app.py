@@ -1217,20 +1217,24 @@ class WebGame:
                             target = active[0]
                         if target is not None and sa and sa != "无":
                             oid = int(target["id"])
+                            # target 可能是 pending_review(get_active_..._for_minister 含两态)：
+                            # 催办对非 active 会抛错、提交核议对非 active 返回 False，按 target 状态分流(CMR F1)。
+                            target_active = str(target.get("status") or "active") == "active"
                             if sa == "更新":
-                                self.db.upsert_secret_order(
-                                    self.state, minister_name,
+                                # 按精确 oid 改(非 upsert-newest，否则多令时改错条)；tags=None 保留原标签。
+                                if self.db.update_secret_order_by_id(
+                                    self.state, oid,
                                     act["new_title"] or str(target.get("title") or ""),
                                     act["new_content"] or str(target.get("content") or ""),
-                                    [], deadline_months=act["deadline_months"])
-                                secret_order_id = oid
-                            elif sa == "催办":
+                                    tags=None, deadline_months=act["deadline_months"]):
+                                    secret_order_id = oid
+                            elif sa == "催办" and target_active:
                                 self.db.rush_secret_order(oid, self.state, deadline_months=1, reason=text[:80])
                                 secret_order_id = oid
                             elif sa == "提交核议":
-                                self.db.submit_secret_order_for_review(
-                                    oid, answer[:200], self.state.year, self.state.period)
-                                secret_order_id = oid
+                                if self.db.submit_secret_order_for_review(
+                                        oid, answer[:200], self.state.year, self.state.period):
+                                    secret_order_id = oid
                             elif sa == "记进展" and int(target.get("turn_issued") or 0) != int(self.state.turn):
                                 self.db.update_secret_order_progress(
                                     oid, answer[:200], self.state.year, self.state.period)

@@ -146,6 +146,11 @@ def _run_agy(prompt: str) -> Tuple[str, int]:
             last = out
             _log(f"attempt {attempt}: auth race，重试")
             continue
+        # 非零退出 / 空输出当失败 attempt：不把错误 stderr 当角色回话落库（CMR F2）。
+        if proc.returncode != 0 or not out:
+            last = f"退出码 {proc.returncode}，输出空或异常：{out[:120]}"
+            _log(f"attempt {attempt}: rc={proc.returncode} empty/err，重试")
+            continue
         _log(f"attempt {attempt}: ok（{len(out)} chars）")
         return out, attempt
     raise RuntimeError(f"agy 调用失败（warm+retry×4 仍不成）：{last[:200]}")
@@ -176,6 +181,9 @@ def _run_codex(prompt: str) -> Tuple[str, int]:
     if not out:  # 兜底：干净段在合并流 "OpenAI Codex v" 之前
         combined = (proc.stdout or "") + (proc.stderr or "")
         out = combined.split("OpenAI Codex v")[0].strip()
+    # 非零退出 / 最终空输出 → 抛错，不静默当空回复落库（CMR F2）。
+    if proc.returncode != 0 or not out:
+        raise RuntimeError(f"codex 调用失败（退出码 {proc.returncode}）：{(proc.stderr or '')[:200]}")
     return out, 1
 
 
@@ -193,7 +201,11 @@ def _run_claude(prompt: str) -> Tuple[str, int]:
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError("claude 调用超时") from exc
-    return (proc.stdout or "").strip(), 1
+    out = (proc.stdout or "").strip()
+    # 非零退出 / 空输出 → 抛错，不静默当空回复落库（CMR F2）。
+    if proc.returncode != 0 or not out:
+        raise RuntimeError(f"claude 调用失败（退出码 {proc.returncode}）：{(proc.stderr or '')[:200]}")
+    return out, 1
 
 
 def _run_backend(prompt: str) -> Tuple[str, int]:
@@ -329,8 +341,12 @@ def extract_minister_actions(
         except (TypeError, ValueError):
             return 0
 
+    # 动作归一到固定枚举：LLM 返回枚举外的串 → 「无」，防按未知动作误操作（CMR F10）。
+    # order_id 不在此处强校验 active：消费方（web/session）持 active 清单做范围校验 + 单条兜底。
+    _raw_action = str(obj.get("密令动作") or "无").strip()
+    _action = _raw_action if _raw_action in {"无", "更新", "提交核议", "催办", "记进展"} else "无"
     return {
-        "secret_action": str(obj.get("密令动作") or "无").strip(),
+        "secret_action": _action,
         "order_id": _int(obj.get("目标密令编号")),
         "new_title": str(obj.get("新标题") or "").strip()[:20],
         "new_content": str(obj.get("新内容") or "").strip(),
@@ -358,11 +374,20 @@ def _loads_lenient(raw: str) -> Optional[dict]:
     i, j = t.find("{"), t.rfind("}")
     if i == -1 or j == -1 or j <= i:
         return None
+    body = t[i:j + 1]
     try:
-        obj = json.loads(t[i:j + 1])
-        return obj if isinstance(obj, dict) else None
+        obj = json.loads(body)
     except (ValueError, TypeError):
-        return None
+        # 严格解析失败才做 JSONC 容错（CMR F8）：模型照 prompt 模板回带 // 行注释或尾逗号时救回。
+        # 先严格、失败才清洗 —— 合法 JSON 不经正则，避免误伤串值里的 // 或 ,}（如 "x,}"）。
+        # `(?<!:)` 避开字符串里的 :// （如 http://）；尾逗号 `,}`/`,]` → `}`/`]`。
+        cleaned = re.sub(r"(?<!:)//[^\n]*", "", body)
+        cleaned = re.sub(r",(\s*[}\]])", r"\1", cleaned)
+        try:
+            obj = json.loads(cleaned)
+        except (ValueError, TypeError):
+            return None
+    return obj if isinstance(obj, dict) else None
 
 
 def enrich_initiative_effects(title: str, stage: str = "") -> Dict[str, Any]:
@@ -402,7 +427,7 @@ def enrich_initiative_effects(title: str, stage: str = "") -> Dict[str, Any]:
         _log(f"国策效果补全失败：{exc}")
     _trace({
         "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "seq": -1, "tag": "issue_enrich", "backend": "agy", "model_id": "enrich",
+        "seq": -1, "tag": "issue_enrich", "backend": cli_backend_from_env() or "agy", "model_id": "enrich",
         "dur_s": 0, "attempts": 1, "wants_json": True,
         "prompt_chars": len(prompt), "resp_chars": len(raw),
         "error": None, "prompt": prompt, "response": raw,
@@ -450,7 +475,7 @@ def _extract_secret_order(player_command: str, minister_reply: str, default_assi
         _log(f"密令提取失败：{exc}")
     _trace({
         "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "seq": -1, "tag": "secret_extract", "backend": "agy", "model_id": "extract",
+        "seq": -1, "tag": "secret_extract", "backend": cli_backend_from_env() or "agy", "model_id": "extract",
         "dur_s": 0, "attempts": 1, "wants_json": True,
         "prompt_chars": len(prompt), "resp_chars": len(raw),
         "error": None, "prompt": prompt, "response": raw,
