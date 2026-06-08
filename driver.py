@@ -29,7 +29,12 @@ def _validate_delta_shape(extracted: dict) -> None:
     崩前拦住、回合不半推进。
     """
     for key, value in extracted.items():
-        expected = EMPTY_EXTRACTION.get(key)
+        if key not in EMPTY_EXTRACTION:
+            raise SystemExit(
+                f"未知 delta 顶层字段「{key}」(canonicalize 后)；疑拼写错(如 地区变更↔地区变化)，"
+                "apply 不会消费它 = 静默无效。请改用合法 key。"
+            )
+        expected = EMPTY_EXTRACTION[key]
         if isinstance(expected, dict) and not isinstance(value, dict):
             raise SystemExit(f"delta 字段 {key} 必须是 object(dict)，实得 {type(value).__name__}")
         if isinstance(expected, list) and not isinstance(value, list):
@@ -73,8 +78,13 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
     turn_extractions.extractor_output 作 replay/timeline 重建痕迹（memories 读此字段）。
     章节记忆 / 结局总评不注入（driver 无 llm_config），由对话里的我另行产出。
     """
-    extracted = _canonicalize_extraction(raw_delta or {})
-    _validate_delta_shape(extracted)  # 崩前拦畸形模块值,避免 pre_settle 动 DB 后半落库(RT-1)
+    # public 边界:None 当空回合;falsy 非 dict([]/""/0)不静默吞成空结算照样推进(codex-P1a)。
+    if raw_delta is None:
+        raw_delta = {}
+    if not isinstance(raw_delta, dict):
+        raise SystemExit(f"delta 必须是 object(dict)，实得 {type(raw_delta).__name__}")
+    extracted = _canonicalize_extraction(raw_delta)
+    _validate_delta_shape(extracted)  # 崩前拦畸形/未知字段,避免 pre_settle 动 DB 后半落库(RT-1/P1b)
     before_turn = state.turn
     pre_settle(state, db)
     return settle_with_delta(
