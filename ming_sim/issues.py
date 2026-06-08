@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from ming_sim.constants import (
     TURN_UNIT, REGION_SCORE_FIELDS, ARMY_SCORE_FIELDS, FISCAL_SCORE_FIELDS,
@@ -711,6 +711,7 @@ def apply_issue_tracker_output(
     db: GameDB,
     state: GameState,
     tracker_output: Dict[str, object],
+    llm_config: Any = None,
 ) -> Dict[str, object]:
     touched_ids: set = set()
     applied_advances: List[Dict[str, object]] = []
@@ -819,10 +820,10 @@ def apply_issue_tracker_output(
         # 校验：国策必须有「办成回报」。CLI 后端(agy)一贯不填效果字段（实测 0/4），
         # 空则聚焦补全，保证「国策跑完有实质后果」(A 方案)；floor 兜底，绝不入空壳。
         if kind == "initiative" and not resolve_eff:
-            from ming_sim.cli_backend import cli_backend_from_env, enrich_initiative_effects
-            if cli_backend_from_env() is not None:
+            from ming_sim.cli_backend import cli_backend_active, enrich_initiative_effects
+            if cli_backend_active(llm_config):
                 try:
-                    enr = enrich_initiative_effects(title, str(ni.get("stage_text") or ""))
+                    enr = enrich_initiative_effects(title, str(ni.get("stage_text") or ""), llm_config=llm_config)
                     resolve_eff = enr.get("effect_on_resolve") or resolve_eff
                     ongoing_eff = enr.get("ongoing_effects") or ongoing_eff
                     fail_eff = enr.get("effect_on_fail") or fail_eff
@@ -1007,6 +1008,7 @@ def apply_score_extraction(
     extracted: Dict[str, object],
     content=None,
     registry=None,
+    llm_config: Any = None,
 ) -> Dict[str, object]:
     """落地结算 agent 输出的 JSON 到 state 与 db。
 
@@ -1066,7 +1068,7 @@ def apply_score_extraction(
         "new_issues": extracted.get("new_issues") or [],
         "close_issues": extracted.get("close_issues") or [],
         "cancels": extracted.get("cancels") or [],
-    })
+    }, llm_config=llm_config)
 
     # 6.4) fiscal_removes：推演彻底裁撤月固定收支项（罢税/裁俸），优先级最高，先于 creates/changes。
     #      含 dynamic（田赋/辽饷/盐税/商税/皇庄），后果玩家自负。删 base+rate 两行。
@@ -1158,7 +1160,7 @@ def apply_score_extraction(
                     "reason": str(item.get("reason") or ""),
                 })
                 continue
-            name, displaced = apply_appointment(db, state, content, registry, item)
+            name, displaced = apply_appointment(db, state, content, registry, item, llm_config=llm_config)
             if name:
                 applied_appointments.append({
                     "name": name,
@@ -1268,7 +1270,13 @@ def apply_score_extraction(
             try:
                 if cur_status != "active":
                     db.set_character_status(state, name, "active", reason[:200] or "诏书任命")
-                db.set_character_office(name, new_office, new_type, source=reason[:60] or "诏书调任")
+                db.set_character_office(
+                    name,
+                    new_office,
+                    new_type,
+                    source=reason[:60] or "诏书调任",
+                    llm_config=llm_config,
+                )
             except Exception as exc:
                 applied_office_changes.append({
                     "name": name, "new_office": new_office, "rejected": True,
@@ -1281,7 +1289,7 @@ def apply_score_extraction(
             ch = content.characters[name]
             ch.status = "active"
             ch.office = normalize_office(new_office)
-            ch.office_type = infer_office_type_from_office(ch.office, new_type or ch.office_type)
+            ch.office_type = infer_office_type_from_office(ch.office, new_type or ch.office_type, llm_config)
             if registry is not None:
                 registry.refresh(name)
             applied_office_changes.append({
@@ -1298,7 +1306,7 @@ def apply_score_extraction(
             "faction": str(item.get("faction") or "中立"),
             "reason": reason, "approved": True,
         }
-        appointed, displaced = apply_appointment(db, state, content, registry, appt)
+        appointed, displaced = apply_appointment(db, state, content, registry, appt, llm_config=llm_config)
         if appointed:
             applied_office_changes.append({
                 "name": appointed, "new_office": new_office,

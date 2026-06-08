@@ -422,6 +422,11 @@ def _settle_after_narrative(
         ending_summarizer=lambda d, s, oc: _generate_ending_summary(
             d, s, llm_config, agno_db, oc, _emit
         ),
+        # 落库走捕获 llm_config 的闭包：issue/office 的通道感知 enrichment 才能按 active
+        # channel 选后端（cli_backend_active(llm_config)）；结算核本体仍不见 llm_config。
+        delta_applier=lambda d, s, ex, ct, rg: apply_score_extraction(
+            d, s, ex, content=ct, registry=rg, llm_config=llm_config
+        ),
         on_stage=lambda label: _emit("stage", label),
     )
 
@@ -458,13 +463,23 @@ def settle_with_delta(
     extractor_output: str = "",
     chapter_recorder=None,
     ending_summarizer=None,
+    delta_applier=None,
     on_stage=None,
 ) -> str:
     """确定性结算「后括号」：apply→turn_logs→章节记忆→inertia→clear→结局判定→next_period。
 
     收一份**已规范化**的 extracted（英文 canonical key，见 simulation._canonicalize_extraction）。
-    不依赖 llm_config —— 章节记忆 / 结局总评经 chapter_recorder / ending_summarizer 注入：
-    真实流程传 agent 闭包，探针 driver 传 None 跳过（ADR 0004）。返回 full_report 文本。
+    不依赖 llm_config —— 章节记忆 / 结局总评 / 落库 enrichment 全经注入闭包：
+    章节记忆=chapter_recorder、结局总评=ending_summarizer、落库（含 issue/office 的
+    通道感知 enrichment）=delta_applier。真实流程传捕获 llm_config 的闭包，探针 driver
+    传 None——结算核本体不见 llm_config（ADR 0004）。返回 full_report 文本。
+
+    delta_applier(db, state, extracted, content, registry) -> applied dict；None 时回退到
+    `apply_score_extraction(llm_config=None)`——**不注入运行时通道**。注意这不等于「绝对无
+    LLM」：apply_score_extraction 自身仍按旧 env 后端判定（`cli_backend_active(None)` 会
+    回落 `MING_SIM_LLM_BACKEND`），故 driver 在**未设该 env** 时才是纯确定性；env 设了的
+    legacy enrichment 是否该在 driver 路径屏蔽，属 probe 设计待决（见 deferred / 测试
+    test_driver_path_legacy_env_still_enriches 钉住现状）。
     """
     if trace_narrative is None:
         trace_narrative = narrative
@@ -475,7 +490,10 @@ def settle_with_delta(
 
     tlog("结算 4/4 落库 + inertia/ongoing")
     _stage("落库与事项推进")
-    applied = apply_score_extraction(db, state, extracted, content=content, registry=registry)
+    if delta_applier is not None:
+        applied = delta_applier(db, state, extracted, content, registry)
+    else:
+        applied = apply_score_extraction(db, state, extracted, content=content, registry=registry)
 
     # 把 narrative 与诏书写入 turn_logs 作下月前文
     db.record_log(state, narrative[:1200])

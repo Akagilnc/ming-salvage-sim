@@ -174,6 +174,7 @@ def apply_appointment(
     content: GameContent,
     registry: Optional[MinisterRegistry],
     data: Dict[str, object],
+    llm_config: Optional[LLMConfig] = None,
 ) -> Tuple[str, str]:
     """诏书任命/吏部铨选共用落地：建档入库 + 注册 Agent，本回合即可召见。
     LLM（吏部 propose_appointment 或档房 appointments 三道闸）已判过史实合理性；
@@ -202,7 +203,10 @@ def apply_appointment(
     # 朝臣多职统一逗号分隔（后宫记称号，不动）；与 db 层 normalize_office 同源。
     if not is_consort:
         office = normalize_office(office)
-    office_type = "后宫" if is_consort else infer_office_type_from_office(office, str(data.get("office_type") or "待铨").strip())
+    office_type = (
+        "后宫" if is_consort
+        else infer_office_type_from_office(office, str(data.get("office_type") or "待铨").strip(), llm_config)
+    )
 
     # ── 后宫 candidate 升格路径 ──────────────────────────────────────
     if is_consort:
@@ -278,7 +282,7 @@ def apply_appointment(
         status="active",
     )
     content.characters[name] = character
-    db.add_character(state, character)
+    db.add_character(state, character, llm_config=llm_config)
     # add_character 已写入并分配 portrait_id，回写到内存对象
     row = db.conn.execute(
         "SELECT portrait_id FROM characters WHERE name=?", (name,)
@@ -290,7 +294,7 @@ def apply_appointment(
     return (name, displaced)
 
 
-def _sync_offices_from_db_impl(content: GameContent, db: "GameDB") -> None:
+def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: Optional[LLMConfig] = None) -> None:
     """启动/读档时以 DB characters 表重建内存人物表。
     DB 是持久化真相；不要在这里修写 DB。"""
     rows = db.conn.execute(
@@ -306,7 +310,7 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB") -> None:
     characters: Dict[str, Character] = {}
     for row in rows:
         name = row["name"]
-        office_type = infer_office_type_from_office(row["office"], row["office_type"])
+        office_type = infer_office_type_from_office(row["office"], row["office_type"], llm_config)
         import json as _json
 
         try:
@@ -372,9 +376,9 @@ class GameSession:
         self.llm_config = llm_config
         if verify_llm:
             verify_llm_available(llm_config)
-        self.db = GameDB(db_path, content=self.content)
+        self.db = GameDB(db_path, content=self.content, llm_config=llm_config)
         self.db.seed_static_data()
-        _sync_offices_from_db_impl(self.content, self.db)
+        _sync_offices_from_db_impl(self.content, self.db, llm_config)
         self.agno_db = create_agno_db(db_path)
         self.state = self.db.load_state(start_ym)
         # 开局负面帝国修正：新档补全、旧档补缺、已达消除条件的不补/清残。不立 issue、不进推演。
@@ -397,7 +401,7 @@ class GameSession:
         self.deaths_this_turn = self.db.apply_historical_deaths(self.state)
         self.debuts_this_turn = self.db.apply_historical_debuts(self.state)
         self.power_renames_this_turn = self.db.apply_historical_power_renames(self.state)
-        _sync_offices_from_db_impl(self.content, self.db)
+        _sync_offices_from_db_impl(self.content, self.db, self.llm_config)
         self.previous_summary = self.db.previous_turn_summary(self.state) or ""
         context = CourtContext(state=self.state, db=self.db, previous_summary=self.previous_summary)
         self.registry = MinisterRegistry(self.llm_config, self.agno_db, context)
@@ -439,7 +443,7 @@ class GameSession:
     def refresh_runtime_after_chat_rollback(self) -> None:
         """撤回召对副作用后，用 DB 真相刷新内存人物表和本回合 Agent registry。"""
         self.state = self.db.load_state()
-        _sync_offices_from_db_impl(self.content, self.db)
+        _sync_offices_from_db_impl(self.content, self.db, self.llm_config)
         if self.registry is not None:
             context = CourtContext(
                 state=self.state,
@@ -653,11 +657,14 @@ class GameSession:
             cli_backend_from_env, resolve_minister_actions, extract_minister_actions,
         )
         out: Dict[str, Any] = {"directive": None, "secret_order_id": secret_order_id}
-        if cli_backend_from_env() is None:
+        channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
+        if channel != "cli" and (channel == "api" or cli_backend_from_env() is None):
             return out
         minister_name = character.name
         reply = (answer or "").strip()
-        acts = resolve_minister_actions(reply, player_message, default_assignee=minister_name)
+        llm_config = getattr(self, "llm_config", None)
+        acts = resolve_minister_actions(
+            reply, player_message, default_assignee=minister_name, llm_config=llm_config)
         if not has_directive and acts["decree_text"]:
             text = acts["decree_text"]
             did = self.db.add_directive(
@@ -682,7 +689,8 @@ class GameSession:
             is_consort = getattr(character, "office_type", "") == "后宫"
             active = self.db.get_active_secret_orders_for_minister(minister_name)
             if active or is_consort:
-                act = extract_minister_actions(player_message, reply, active, is_consort)
+                act = extract_minister_actions(
+                    player_message, reply, active, is_consort, llm_config=llm_config)
                 sa = act["secret_action"]
                 target = None
                 if act["order_id"]:
@@ -746,7 +754,7 @@ class GameSession:
             data = _json.loads(payload) if payload else {}
         except (ValueError, TypeError):
             return ("", "")
-        return apply_appointment(self.db, self.state, self.content, self.registry, data)
+        return apply_appointment(self.db, self.state, self.content, self.registry, data, llm_config=self.llm_config)
 
     def _apply_unlisted_person_registration(self, payload: str) -> Tuple[str, bool]:
         """登记史实未预设/用户确认背景的人物，进入本局正式可召见人物池。"""
@@ -802,7 +810,7 @@ class GameSession:
             summary=str(data.get("summary") or "").strip(),
         )
         self.content.characters[name] = character
-        self.db.add_character(self.state, character, source=source_label)
+        self.db.add_character(self.state, character, source=source_label, llm_config=self.llm_config)
         row = self.db.conn.execute(
             "SELECT portrait_id FROM characters WHERE name=?", (name,)
         ).fetchone()
