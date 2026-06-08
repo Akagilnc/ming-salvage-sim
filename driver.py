@@ -97,11 +97,17 @@ def main(argv=None, *, game=None) -> int:
             obj = json.load(f)
         # 信封形态 {narrative, decree_text, delta}（我每回合的完整产出）;否则裸 delta（兼容）。
         if isinstance(obj, dict) and "delta" in obj:
-            raw_delta = obj.get("delta") or {}
+            raw_delta = obj["delta"]
             narrative = str(obj.get("narrative") or "")
             decree_text = str(obj.get("decree_text") or "")
         else:
             raw_delta, narrative, decree_text = obj, "", ""
+        # delta 必须是 object;非 dict 响亮报错,不静默吞成空 delta 照样推进回合(cmr codex-P2b)。
+        if not isinstance(raw_delta, dict):
+            raise SystemExit(
+                f"settle 的 delta 必须是 object(dict),实得 {type(raw_delta).__name__}。"
+                '信封形态 {"narrative":..., "delta":{...}},或直接给裸 delta dict。'
+            )
         report = run_settle(
             db, state, content, raw_delta, narrative=narrative, decree_text=decree_text
         )
