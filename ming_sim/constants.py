@@ -118,6 +118,7 @@ REGION_FIELD_LABELS = {
     "status": "状态",
     "controlled_by": "控制",
     "corruption": "腐败度",
+    "cannon": "城防炮",
 }
 ARMY_FIELD_LABELS = {
     "station": "驻扎地",
