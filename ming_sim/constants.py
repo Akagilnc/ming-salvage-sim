@@ -158,6 +158,10 @@ REGION_FIELD_ALIASES = {
     "月度税收": "tax_per_turn",
     "天灾": "natural_disaster",
     "人祸": "human_disaster",
+    # 城防炮（城头红夷炮，另挂 region.cannon，上限 city_level×8）。与军队随军大炮 cannon_equipment 分域。
+    "cannon": "cannon",
+    "城防炮": "cannon",
+    "城防大炮": "cannon",
     "状态": "status",
     "控制": "controlled_by",
     "控制权": "controlled_by",
