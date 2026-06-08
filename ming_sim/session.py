@@ -658,7 +658,9 @@ class GameSession:
             return out
         minister_name = character.name
         reply = (answer or "").strip()
-        acts = resolve_minister_actions(reply, player_message, default_assignee=minister_name)
+        llm_config = getattr(self, "llm_config", None)
+        acts = resolve_minister_actions(
+            reply, player_message, default_assignee=minister_name, llm_config=llm_config)
         if not has_directive and acts["decree_text"]:
             text = acts["decree_text"]
             did = self.db.add_directive(
@@ -683,7 +685,8 @@ class GameSession:
             is_consort = getattr(character, "office_type", "") == "后宫"
             active = self.db.get_active_secret_orders_for_minister(minister_name)
             if active or is_consort:
-                act = extract_minister_actions(player_message, reply, active, is_consort)
+                act = extract_minister_actions(
+                    player_message, reply, active, is_consort, llm_config=llm_config)
                 sa = act["secret_action"]
                 target = None
                 if act["order_id"]:
