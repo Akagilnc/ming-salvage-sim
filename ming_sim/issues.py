@@ -1160,7 +1160,7 @@ def apply_score_extraction(
                     "reason": str(item.get("reason") or ""),
                 })
                 continue
-            name, displaced = apply_appointment(db, state, content, registry, item)
+            name, displaced = apply_appointment(db, state, content, registry, item, llm_config=llm_config)
             if name:
                 applied_appointments.append({
                     "name": name,
@@ -1270,7 +1270,13 @@ def apply_score_extraction(
             try:
                 if cur_status != "active":
                     db.set_character_status(state, name, "active", reason[:200] or "诏书任命")
-                db.set_character_office(name, new_office, new_type, source=reason[:60] or "诏书调任")
+                db.set_character_office(
+                    name,
+                    new_office,
+                    new_type,
+                    source=reason[:60] or "诏书调任",
+                    llm_config=llm_config,
+                )
             except Exception as exc:
                 applied_office_changes.append({
                     "name": name, "new_office": new_office, "rejected": True,
@@ -1283,7 +1289,7 @@ def apply_score_extraction(
             ch = content.characters[name]
             ch.status = "active"
             ch.office = normalize_office(new_office)
-            ch.office_type = infer_office_type_from_office(ch.office, new_type or ch.office_type)
+            ch.office_type = infer_office_type_from_office(ch.office, new_type or ch.office_type, llm_config)
             if registry is not None:
                 registry.refresh(name)
             applied_office_changes.append({
@@ -1300,7 +1306,7 @@ def apply_score_extraction(
             "faction": str(item.get("faction") or "中立"),
             "reason": reason, "approved": True,
         }
-        appointed, displaced = apply_appointment(db, state, content, registry, appt)
+        appointed, displaced = apply_appointment(db, state, content, registry, appt, llm_config=llm_config)
         if appointed:
             applied_office_changes.append({
                 "name": appointed, "new_office": new_office,

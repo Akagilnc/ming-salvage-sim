@@ -511,12 +511,14 @@ class WebGame:
     def reset_game(self) -> None:
         """全清主 DB：关连接 → 删 sqlite 主/wal/shm → 重建空 session。
         存档目录不动。"""
+        llm_config = self.session.llm_config
+        verify_llm_available(llm_config)
         try:
             self.session.close()
         except Exception:
             pass
         _delete_sqlite_db_files_or_raise(self.db_path)
-        self._rebuild_session(self.session.llm_config)
+        self._rebuild_session(llm_config, verify_llm=False)
 
     def load_save(self, name: str) -> None:
         """从存档热替换主 DB：备份当前 → 拷源到主 DB → 重建 session。"""
@@ -540,10 +542,11 @@ class WebGame:
             dst_conn.close()
         self._rebuild_session(self.session.llm_config)
 
-    def _rebuild_session(self, llm_config: LLMConfig) -> None:
+    def _rebuild_session(self, llm_config: LLMConfig, verify_llm: bool = True) -> None:
         """用新 llm_config（或换完 DB 后）重建 GameSession + 内存缓存。"""
-        verify_llm_available(llm_config)
-        self.session = GameSession(self.db_path, llm_config)
+        if verify_llm:
+            verify_llm_available(llm_config)
+        self.session = GameSession(self.db_path, llm_config, verify_llm=False)
         self.session.begin_turn()
         self.chat_history = {name: [] for name in self.session.content.characters}
         for name, msgs in self.db.load_all_chat_history().items():
