@@ -653,7 +653,8 @@ class GameSession:
             cli_backend_from_env, resolve_minister_actions, extract_minister_actions,
         )
         out: Dict[str, Any] = {"directive": None, "secret_order_id": secret_order_id}
-        if cli_backend_from_env() is None:
+        channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
+        if channel != "cli" and (channel == "api" or cli_backend_from_env() is None):
             return out
         minister_name = character.name
         reply = (answer or "").strip()
