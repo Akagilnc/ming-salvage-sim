@@ -1,0 +1,103 @@
+"""探针 driver —— 确定性结算入口（step1）。
+
+形态(1) 我在对话里直接当 runtime+LLM：自产邸报叙事 + 中文 schema 形态的稀疏 delta，
+driver 负责把 delta 规范化后跑引擎的确定性结算核（pre_settle + settle_with_delta），
+绕过引擎自带的 extractor / 章节记忆 LLM 步。真实流程与本 driver 共用同一结算核（ADR 0004）。
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+
+from ming_sim.context import bind_content
+from ming_sim.decree import pre_settle, settle_with_delta
+import ming_sim.issues as issues_mod
+from ming_sim.content import GameContent
+from ming_sim.db import GameDB
+from ming_sim.simulation import _canonicalize_extraction
+
+DEFAULT_DB = "data/probe.db"
+
+
+def open_game(db_path: str = DEFAULT_DB):
+    """打开存档：load content + bind + GameDB + load_state。返回 (db, state, content)。"""
+    content = GameContent.load()
+    bind_content(content)
+    issues_mod.bind_content(content)
+    db = GameDB(db_path, content)
+    state = db.load_state()
+    return db, state, content
+
+
+def _print_state(state) -> None:
+    print(f"回合 turn={state.turn}  纪年={state.year}年{state.period}月")
+    metrics = getattr(state, "metrics", None) or {}
+    if metrics:
+        print("国势：" + "  ".join(f"{k}={v}" for k, v in metrics.items()))
+
+
+def _dump_board(db, state) -> None:
+    """盘面快照：当前回合 + 各地区民心/动乱/城防炮。"""
+    _print_state(state)
+    print("\n地区：")
+    rows = db.conn.execute(
+        "SELECT id, public_support, unrest, cannon FROM regions ORDER BY id"
+    ).fetchall()
+    for r in rows:
+        print(f"  {r['id']}：民心{r['public_support']} 动乱{r['unrest']} 城防炮{r['cannon']}门")
+
+
+def run_settle(db, state, content, raw_delta, registry=None) -> str:
+    """收一份中文 schema 形态的稀疏 delta → 规范化（中文 key→英文 canonical）→
+    pre_settle（财政 tick + auto_trigger）→ settle_with_delta（落库→inertia→结局→推进），
+    推进一回合。返回结算报告文本。
+
+    章节记忆 / 结局总评不注入（driver 无 llm_config），由对话里的我另行产出。
+    """
+    extracted = _canonicalize_extraction(raw_delta or {})
+    before_turn = state.turn
+    pre_settle(state, db)
+    return settle_with_delta(
+        state,
+        db,
+        extracted,
+        before_turn=before_turn,
+        content=content,
+        registry=registry,
+    )
+
+
+def main(argv=None, *, game=None) -> int:
+    """CLI 入口：state（打印盘面）/ settle --delta <json>（注入 delta 结算）/ dump（盘面快照）。
+
+    game=(db,state,content) 可注入（测试用）；否则按 --db 打开存档。
+    """
+    parser = argparse.ArgumentParser(prog="driver", description="探针确定性结算 driver")
+    parser.add_argument("--db", default=DEFAULT_DB, help="存档路径")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("state", help="打印当前盘面（回合/纪年/国势）")
+    p_settle = sub.add_parser("settle", help="注入 delta JSON 跑确定性结算并推进一回合")
+    p_settle.add_argument("--delta", required=True, help="中文 schema delta 的 JSON 文件路径")
+    sub.add_parser("dump", help="盘面快照（回合 + 各地区民心/动乱/城防炮）")
+    args = parser.parse_args(argv)
+
+    db, state, content = game if game is not None else open_game(args.db)
+
+    if args.cmd == "state":
+        _print_state(state)
+        return 0
+    if args.cmd == "settle":
+        with open(args.delta, encoding="utf-8") as f:
+            raw_delta = json.load(f)
+        report = run_settle(db, state, content, raw_delta)
+        print(report)
+        return 0
+    if args.cmd == "dump":
+        _dump_board(db, state)
+        return 0
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
