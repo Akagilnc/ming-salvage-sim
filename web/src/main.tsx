@@ -662,6 +662,8 @@ function App() {
       }
       if (outcome.kind === "decisions") {
         // 出重大抉择：暂停弹窗逐个亲裁，裁完调 submitDecisions 续跑结算。
+        // 颁诏(pre_settle)此刻已 commit 暂存动作 → 待颁诏列表应清空,刷新免显示陈旧(pr-loop codex P2)。
+        refreshPendingActions();
         setPendingDecisions(outcome.data.decisions || []);
         setBusy("");
         return;
@@ -1014,14 +1016,8 @@ function App() {
       {pendingActions.length > 0 && activeModal === "none" ? (
         <button
           type="button"
+          className="pending-actions-fab"
           onClick={() => setActiveModal("pending_actions")}
-          style={{
-            position: "fixed", top: "12px", left: "50%", transform: "translateX(-50%)",
-            zIndex: 60, padding: "6px 16px", borderRadius: "18px",
-            background: "rgba(58,38,18,0.94)", color: "#f0d9a8",
-            border: "1px solid #b8915a", cursor: "pointer", fontSize: "13px",
-            boxShadow: "0 2px 8px rgba(0,0,0,0.4)",
-          }}
         >
           待颁诏 {pendingActions.length} 项 · 点此复核 / 撤回
         </button>
