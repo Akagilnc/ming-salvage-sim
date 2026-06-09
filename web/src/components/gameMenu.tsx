@@ -369,9 +369,12 @@ export function LLMConfigTab() {
         setTimeoutSeconds(String(data.timeout_seconds || 180));
         setThinkingLevel(data.thinking_level || "");
         setChannel(data.channel === "cli" ? "cli" : "api");
-        setCliRunner(data.cli_runner || "agy");
-        setCliModel(data.cli_model || "");
-        setCliTimeout(String(data.cli_timeout_seconds || CLI_DEFAULT_TIMEOUT));
+        // 从已存 CLI 槽(persisted)初始化优先,而非 active cfg.cli_*——API 会话下 cfg.cli_model 可能被
+        // cli_model_from_env 兜底成 API model 名,直接回填会把它当用户选项 post 回去(CMR R3 codex)。
+        // (存盘响应无 persisted 字段 → 回落 active,channel=cli 时即刚提交值,正确。)
+        setCliRunner(data.persisted?.cli_runner || (data.channel === "cli" ? data.cli_runner || "" : "") || "agy");
+        setCliModel(data.persisted?.cli_model || (data.channel === "cli" ? data.cli_model || "" : ""));
+        setCliTimeout(String(data.persisted?.cli_timeout_seconds || data.cli_timeout_seconds || CLI_DEFAULT_TIMEOUT));
       })
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
   }, []);
