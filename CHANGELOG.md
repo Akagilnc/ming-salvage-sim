@@ -4,6 +4,23 @@
 
 ## [未发布]
 
+## [0.6.1.0] - 2026-06-09
+
+### 新增
+- **游戏内 LLM 执行通道选择**：局中设置面板(gameMenu)新增 API / CLI 通道选择器 + CLI runner/model/超时输入。CLI 局开局后改设置不再被强制降级到 API、不再因空 key 误报；显式选 CLI 即可脱 key 续跑(#51)。
+
+### 修复
+- **真实流落库二级类型校验**：`validate_delta_shape` 抽成单一真源(`ming_sim.issues`),`apply_score_extraction` 落库前先校验容器/实体二级 dict 类型,畸形 delta 不再在 apply 内部「前字段落库、后字段崩」半落库;driver 仍在 pre_settle 前校验(#57)。
+- **探针 driver 纯确定性**：driver 注入 channel=api 确定性配置,即便设了 `MING_SIM_LLM_BACKEND` 也不再 spawn legacy CLI enrichment(ADR-0004:dialogue-Claude 已自产完整 delta)(#54)。
+- **CLI 空 cli_model 不漏 API model 名**:补 for_role/advanced 路径回归覆盖(RT2 已修工厂)(#52)。
+- **runtime_llm.json 数值类型一致**:`_api_runtime_slot` 类型感知,preserve/fresh/load 三路 max_tokens(int)/timeout(float)同型(#53)。
+- **in-game 设置 verify offload**:`api_set_llm_config` 改 build→verify(run_in_executor)→commit,CLI smoke 不再阻塞 event loop(#56)。
+- `is_real_api_key` 拦截 `__keep__` sentinel,不当真 key(Red Team)。
+
+### 变更
+- **单一真源收口**：`VALID_CHANNELS`、`CLI_DEFAULT_TIMEOUT_SECONDS`、`CODEX_DEFAULT_MODEL`/`CLAUDE_DEFAULT_MODEL` 常量化,替换散落字面量(#55)。
+- `apply_llm_config` 拆成 `build_llm_config`(纯派生)/ `commit_llm_config`(落盘+重建)/ `apply_llm_config`(同步组合),支持 verify 与 commit 分离。
+
 ## [0.6.0.0] - 2026-06-09
 
 ### 新增
