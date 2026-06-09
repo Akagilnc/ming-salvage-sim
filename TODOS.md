@@ -10,6 +10,11 @@
 - D3 conftest 依赖 gitignored probe.db → CI 假绿 → [issue #5](https://github.com/Akagilnc/ming-salvage-sim/issues/5)
 - D4 _loads_lenient JSONC 非 quote-aware 病态边界 → [issue #6](https://github.com/Akagilnc/ming-salvage-sim/issues/6)
 
+## 🟠 branch probe/chat-action-pending CMR Deferred（动作闸门确认 UX 重设计，cmr ship-pre 5 轮收敛后 defer，未上 issue）
+- CA1【P3 行为缺口·fail-safe】口头用自然语言把**已在位**的妃嫔升位份（嫔→贵妃）：`_commit_office_action` 任命走 consort 路 → `apply_appointment`（[session.py](ming_sim/session.py)）对在位同名妃 `_find_candidate_by_name` 不中 + 非 candidate → 返 `("","")` → commit 标 failed（不崩、不错落，仅升妃没生效）。要不要支持「口头升妃」属品味题；要支持则在 consort 路加「在位妃→改 office/位份」分支。CMR R2/R4 由 Claude 单独提、判 low。
+- CA2【P3 死代码】前端「待颁诏」面板拆掉后，`web_app.py` 的 `GET /api/pending_actions` + `POST /api/pending_actions/{id}/withdraw` 两端点 + `tests/test_pending_actions.py` 内 `api_pending_actions`/`api_withdraw_pending_action` 用例**没人再调**（确认改对话驱动）。用户「先留着」；要清就连测试一起删。CMR R5 Claude 顺带提（非 review finding）。
+- CA3【验证待办·非缺陷】Slice 4 给 `content/prompts/minister_agent.md` 加的「in-character 领命并补充信息和要点」是 prompt 改、行为=LLM 输出，**无法确定性单测**；需在跑着的 server 上真召对一轮，确认大臣不出戏、不弹系统式「确认?」问句。
+
 ## 🔴 BUG / 待修（影响游戏正确性）
 
 ### B11. 全系统静默吞异常/吞畸形数据（不抛错不告警），该落没落无人知 → [issue #14](https://github.com/Akagilnc/ming-salvage-sim/issues/14)
