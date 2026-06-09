@@ -27,6 +27,7 @@ from ming_sim.paths import bundled_path, user_data_path, user_data_dir
 from ming_sim.exceptions import ExitGame, LLMUnavailable
 from ming_sim.llm_config import (
     CLI_DEFAULT_TIMEOUT_SECONDS,
+    VALID_CHANNELS,
     cli_model_from_env,
     is_real_api_key,
     real_api_key_or_empty,
@@ -357,7 +358,7 @@ def _llm_config_from_runtime(
 
     channel = str(runtime.get("channel") or "").strip().lower()
     env_runner = cli_backend_from_env()
-    if channel not in {"api", "cli"}:
+    if channel not in VALID_CHANNELS:
         channel = "cli" if env_runner else "api"
     cli_slot = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
     cli_runner = str(cli_slot.get("runner") or env_runner or ("agy" if channel == "cli" else "")).strip().lower()
@@ -1446,12 +1447,12 @@ async def api_menu_status() -> Dict[str, Any]:
     from ming_sim.cli_backend import cli_backend_from_env, is_supported_cli_runner
     env_runner = cli_backend_from_env()
     channel = str(runtime.get("channel") or "").strip().lower()
-    if channel not in {"api", "cli"}:
+    if channel not in VALID_CHANNELS:
         channel = "cli" if env_runner else "api"
     cli_slot = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
     cli_runner = str(cli_slot.get("runner") or env_runner or ("agy" if channel == "cli" else "")).strip().lower()
     cli_model = str(cli_slot.get("model") or cli_model_from_env(cli_runner, "")).strip()
-    cli_timeout = _runtime_float(cli_slot.get("timeout_seconds"), 300)
+    cli_timeout = _runtime_float(cli_slot.get("timeout_seconds"), CLI_DEFAULT_TIMEOUT_SECONDS)
     has_api_key = _has_real_api_key(runtime.get("api_key")) or _has_real_api_key(os.environ.get("OPENAI_API_KEY"))
     # readiness 按 active channel 判：API 通道看真实 key，CLI 通道看 runner 是否受支持。
     # 不能因 inactive API 槽（ADR 0001 保留）里有 key 就把不可用的 CLI runner 误报成 ready。
@@ -1604,7 +1605,7 @@ async def _menu_save_cli_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     """保存 CLI 通道：选 runner/model，不要求真实 api_key，保留 API 槽。"""
     cli_runner = (request.cli_runner or "").strip().lower()
     cli_model = (request.cli_model or "").strip()
-    cli_timeout = request.cli_timeout_seconds if request.cli_timeout_seconds and request.cli_timeout_seconds > 0 else 300
+    cli_timeout = request.cli_timeout_seconds if request.cli_timeout_seconds and request.cli_timeout_seconds > 0 else CLI_DEFAULT_TIMEOUT_SECONDS
     max_tokens = request.max_tokens if request.max_tokens > 0 else 8000
     timeout_seconds = request.timeout_seconds if request.timeout_seconds > 0 else 180
     if not cli_runner:
@@ -1665,7 +1666,7 @@ async def _menu_save_cli_llm(request: LlmSetupRequest) -> Dict[str, Any]:
 async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     """菜单页保存 LLM 配置：先发起轻量聊天校验，通过后才落盘。"""
     channel = (request.channel or "api").strip().lower()
-    if channel not in {"api", "cli"}:
+    if channel not in VALID_CHANNELS:
         channel = "api"
     if channel == "cli":
         return await _menu_save_cli_llm(request)
@@ -2297,7 +2298,7 @@ async def api_get_llm_config() -> Dict[str, Any]:
             "advanced_thinking_level": saved.get("advanced_thinking_level", ""),
             "cli_runner": str(saved_cli.get("runner") or ""),
             "cli_model": str(saved_cli.get("model") or ""),
-            "cli_timeout_seconds": _runtime_float(saved_cli.get("timeout_seconds"), 300),
+            "cli_timeout_seconds": _runtime_float(saved_cli.get("timeout_seconds"), CLI_DEFAULT_TIMEOUT_SECONDS),
         },
     }
 
