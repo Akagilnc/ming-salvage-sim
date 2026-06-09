@@ -4,6 +4,16 @@
 
 ## [未发布]
 
+## [0.7.0.0] - 2026-06-09
+
+### 新增
+- **聊天动作闸门(ADR 0006)**：CLI 后端召对里 LLM 从自然语言**推断**出的密令写动作(更新/催办/提交核议/记进展)与后宫调教,不再在召对当场直写真实表,改进 `pending_actions` 暂存表;颁诏时(`pre_settle` 最前 / 退朝 `advance_without_edict`)`commit_pending_actions` 在结算管线前批量落库(不拒绝即允许)。暂存行纳入召对 rollback(撤回召对一并删),落不了的标 `failed` 不留孤儿,commit 抛错被兜住不崩结算。**根治**:闲聊被判「更新密令」当场静默改既有密令 + 续期 + 谎报「已交付」(handoff 计划里 slice 4「action-gate」一直没实现)。
+- **皇帝复核区**：`GET /api/pending_actions` + `POST /api/pending_actions/{id}/withdraw`(不存在 404 / 已落库或非本回合 409);前端「待颁诏」复核面板(列本回合暂存动作 + 逐条撤回)+ 顶部入口浮窗 + 召对暂存反馈提示(取代旧「密令已秘密交付」对更新动作的谎报)。
+
+### 变更
+- 流式与非流式召对路径共用 `apply_cli_conversation_actions` + 同样回传 `pending_action_id`,不漂移。
+- 拟旨与「密令如下/拟旨如下」显式前缀按钮 = 玩家明示,仍直接落库,不入闸门(认可例外)。任命走 agno tool-call(api 通道)不在本片(ADR 0002 更大范围)。
+
 ## [0.6.1.0] - 2026-06-09
 
 ### 新增
