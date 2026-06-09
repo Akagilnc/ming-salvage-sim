@@ -168,6 +168,9 @@ def write_decree_with_agno(
 
 
 def advance_without_edict(state: GameState, db: GameDB) -> None:
+    # 退朝未下正式诏书也是月末:先 commit 本回合暂存的结构化写动作(颁诏前未撤回即通过,
+    # ADR 0006),否则暂存成孤儿、随 next_period 永久丢失(CMR P1)。须在 next_period 前。
+    db.commit_pending_actions(state)
     apply_fixed_period_flows(db, state)
     message = f"本{TURN_UNIT}退朝未下正式圣旨，诸事仍待来{TURN_UNIT}处置。"
     db.record_log(state, message)

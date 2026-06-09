@@ -727,13 +727,15 @@ class GameSession:
                             self.state.turn, kind="secret_order", action="记进展",
                             minister_name=minister_name, target_id=oid,
                             payload={"note": reply[:200]})
-                    if out["secret_order_id"] and self.registry is not None:
-                        self.registry.refresh(minister_name)
+                    # 注:密令会话动作走闸门后只暂存(out["pending_action_id"]),不再当场改真实表,
+                    # 故无 secret_order_id、不在此 refresh registry——落库与 refresh 推到颁诏 commit。
                 if is_consort and (act["cultivate_skill"] or act["cultivate_trait"]):
-                    self.db.cultivate_consort(
-                        character.name, self.state.turn, act["cultivate_skill"], act["cultivate_trait"])
-                    if self.registry is not None:
-                        self.registry.refresh(character.name)
+                    # 后宫调教也是结构化聊天写动作,走动作闸门(ADR 0006):暂存,颁诏批量落库。
+                    out["pending_action_id"] = self.db.stage_pending_action(
+                        self.state.turn, kind="consort", action="调教",
+                        minister_name=character.name, target_id=None,
+                        payload={"name": character.name,
+                                 "skill": act["cultivate_skill"], "trait": act["cultivate_trait"]})
         return out
 
     def _cli_backend_fallback_actions(

@@ -14,7 +14,7 @@ import json
 import types
 
 import ming_sim.cli_backend as cb
-from ming_sim.decree import pre_settle
+from ming_sim.decree import advance_without_edict, pre_settle
 from ming_sim.session import GameSession
 
 
@@ -200,6 +200,94 @@ def test_commit_skips_unapplicable_and_is_idempotent(game, monkeypatch):
     # 幂等:再 commit 不重跑已落库的(返回不含上次那条)
     again = db.commit_pending_actions(state)
     assert all(a["action"] != "更新" or a["target_id"] != oid for a in again)
+
+
+def test_undo_chat_turn_removes_staged_pending_action(game):
+    """CMR P1:撤回召对必须删掉该轮暂存的 pending_actions(否则颁诏仍落库,破坏 undo)。
+    靠把 pending_actions 纳入 rollback 快照表(_ROLLBACK_TABLE_PK)。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+
+    ctid = db.create_chat_turn(state, name, "sess-undo", 0)
+    before = db.capture_chat_rollback_snapshot()
+    assert "pending_actions" in before                       # 暂存表被纳入快照
+    db.stage_pending_action(state.turn, kind="secret_order", action="更新",
+                            minister_name=name, target_id=oid,
+                            payload={"new_title": "改", "new_content": "改", "deadline_months": 0})
+    after = db.capture_chat_rollback_snapshot()
+    db.record_chat_turn_rollback_diffs(ctid, before, after)
+
+    db.undo_chat_turn(ctid)                                  # 撤回召对
+
+    assert db.list_pending_actions(state.turn) == []        # 暂存行被删,不会再颁诏落库
+
+
+def test_advance_without_edict_commits_staged(game):
+    """CMR P1:只暂存、不颁正式诏书也推进月份的路径(advance_without_edict)必须先 commit 暂存,
+    否则暂存动作成孤儿、随回合推进永久丢失。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    db.stage_pending_action(state.turn, kind="secret_order", action="更新",
+                            minister_name=name, target_id=oid,
+                            payload={"new_title": "退朝前改", "new_content": "退朝前内容", "deadline_months": 0})
+    turn_before = state.turn
+
+    advance_without_edict(state, db)   # 退朝未下正式圣旨
+
+    assert state.turn == turn_before + 1                     # 月份推进了
+    row = db.conn.execute("SELECT title FROM secret_orders WHERE id=?", (oid,)).fetchone()
+    assert row["title"] == "退朝前改"                          # 暂存在推进前已落库,没丢
+    assert db.list_pending_actions(turn_before) == []
+
+
+def test_consort_cultivate_stages_and_commits(game, monkeypatch):
+    """CMR P1-c:后宫调教也走闸门(同属 CLI 自然语言结构化写动作)——召对暂存,颁诏才落。"""
+    import pytest
+    consort = next(
+        (c for c in content_consort_candidates(game)), None)
+    if consort is None:
+        pytest.skip("基底无 active 后宫角色")
+    db, state, content = game
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda prompt, llm_config=None: (json.dumps(
+                            {"密令动作": "无", "调教技能": "理财", "调教性格": ""}, ensure_ascii=False), 1))
+    GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), consort, player_message="教她理财之道",
+        answer="嫔妾领旨。", has_directive=False, secret_order_id=None)
+
+    pend = db.list_pending_actions(state.turn)
+    assert len(pend) == 1 and pend[0]["kind"] == "consort" and pend[0]["action"] == "调教"
+    db.commit_pending_actions(state)
+    assert db.list_pending_actions(state.turn) == []        # 颁诏落库
+
+
+def content_consort_candidates(game):
+    db, state, content = game
+    for c in content.characters.values():
+        if getattr(c, "office_type", "") == "后宫" and db.get_character_status(getattr(c, "name", ""))[0] == "active":
+            yield c
+
+
+def test_commit_does_not_crash_when_action_raises(game):
+    """CMR P0:同回合先 提交核议(转 pending_review)再 催办 同一密令,颁诏 commit 时 rush 对
+    非 active 抛 ValueError——commit 不得崩整个结算;抛错的那条留 pending、不标 committed。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=6)
+    # 模拟两召对:先暂存提交核议,再暂存催办(两者召对期都读到 active 真实状态)
+    db.stage_pending_action(state.turn, kind="secret_order", action="提交核议",
+                            minister_name=name, target_id=oid, payload={"claim": "办结"})
+    db.stage_pending_action(state.turn, kind="secret_order", action="催办",
+                            minister_name=name, target_id=oid, payload={"reason": "加急"})
+
+    applied = db.commit_pending_actions(state)   # 不得抛
+
+    # 提交核议落了(状态 pending_review),催办因非 active 落不了→留 pending、未静默吞
+    assert db.conn.execute("SELECT status FROM secret_orders WHERE id=?", (oid,)).fetchone()["status"] == "pending_review"
+    assert {a["action"] for a in applied} == {"提交核议"}
+    assert [p["action"] for p in db.list_pending_actions(state.turn)] == ["催办"]
 
 
 def test_commit_pending_actions_applies_staged_update_at_decree(game, monkeypatch):
