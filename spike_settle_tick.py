@@ -6,8 +6,9 @@
 + eff损耗(transfer 3-way:source减=target增+C_eff损耗;efficiency<1 落 C_eff损耗)
 + run_tick 返回末态(可串多 tick)+ recurring cost(跨 tick 每期扣)
 + 0-cost action 不受 k 缩(spec §6)+ unknown action fail-loud
-golden:G1 基线 / G2 补饷k / G3 清丈 / G4 挪借 / G5 漂没中饱拨付 / G6 超额补饷clamp /
-        G7 清欠 / G8 挪借eff<1(激活C_eff损耗) / G9 三tick链(死亡螺旋+recurring)
+golden:G1–G20(基线/补饷k/清丈/挪借/漂没中饱拨付/超额clamp/清欠/eff损耗/三tick死亡螺旋/
+        追赃/多costed共享k/赈济/拨付追赃/动态税基/双债户偿还序/清丈枯竭土地守恒/赈济饿死unmet/
+        三债户waterfall序/三债户repay序/蠲免);5 层断言+输入校验 fail-loud,~18 mutation 自验全咬
 
 账户:CASH{省库库银,C_地方截留,C_中饱,C_漂没,C_eff损耗} / CLAIM{民欠旧赋,军饷欠,官俸欠,宗禄欠}
 守恒(spike 实测):
@@ -232,6 +233,9 @@ go("G18 三债户waterfall序(官俸>宗禄)", S(省库库银=16,军饷欠=0), d
 # G19 三债户 repay 边界(余银13先还官俸欠10、再还宗禄欠3→7;钉偿还在第2、3债户间切分)
 go("G19 三债户repay序", S(省库库银=70,军饷欠=0,官俸欠=10,宗禄欠=10), dict(base,起运定额=100),
    [], {'C_地方截留':8.4,'民欠旧赋':21,'官俸欠':0,'宗禄欠':7})
+# G20 蠲免(免民欠8,不入现金;钉下游军饷欠=18 区分蠲免vs清欠——清欠会让现金多8→军饷欠掉到10)
+go("G20 蠲免(民欠15免8,不入现金)", S(民欠旧赋=15), base, [dict(type='蠲免',amount=8)],
+   {'C_地方截留':8.4,'民欠旧赋':28,'军饷欠':18})
 
 # G9 三 tick 链:穷省(省库10)+ recurring 募兵(每 tick cost5),看死亡螺旋累积 + 每 tick 守恒 + 硬期望
 print(f"\n{'#'*64}\n# G9 三 tick 链(穷省 recurring 募兵,死亡螺旋)\n{'#'*64}")
