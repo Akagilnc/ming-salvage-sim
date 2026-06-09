@@ -1222,6 +1222,7 @@ class WebGame:
             registered_minister=result.registered_minister,
             displaced_minister=result.displaced_minister,
             secret_order_id=result.secret_order_id,
+            pending_action_id=getattr(result, "pending_action_id", 0),
             chat_turn_id=chat_turn_id,
         )
 
