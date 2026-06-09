@@ -193,6 +193,61 @@ def test_api_set_llm_config_keep_sentinels_pass_none_to_build(monkeypatch):
     assert built["cli_model"] is None
 
 
+def test_commit_cli_seeds_api_slot_from_session_when_slot_empty(monkeypatch):
+    """CMR R2(codex):切到 cli 时 api 槽空但当前 session 有真实 key(可能来自 OPENAI_API_KEY env),
+    commit 须把它写进 api 槽,否则 api→cli→api 往返丢 key。"""
+    saved_args = []
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})   # 无已存 api 槽
+    monkeypatch.setattr(web_app, "save_runtime_llm", lambda *a, **k: saved_args.append((a, k)))
+    prev = LLMConfig(api_key="sk-env", base_url="https://x/v1", model="m", channel="api")
+    new_cli = LLMConfig(api_key="", base_url="https://x/v1", model="m", channel="cli",
+                        cli_runner="codex", cli_model="gpt-5.5", cli_timeout_seconds=240)
+    fake = SimpleNamespace(session=SimpleNamespace(llm_config=prev, begin_turn=lambda: None))
+
+    web_app.WebGame.commit_llm_config(fake, new_cli)
+
+    args, kw = saved_args[0]
+    assert kw["channel"] == "cli"
+    assert args[2] == "sk-env"   # api_key 位参写进 api 槽,不是空
+
+
+def test_commit_cli_preserves_when_slot_already_has_key(monkeypatch):
+    """槽里已有真实 key 时,commit 传空 api 输入走 preserve_api(不重写)。"""
+    saved_args = []
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {"api": {"api_key": "sk-slot"}})
+    monkeypatch.setattr(web_app, "save_runtime_llm", lambda *a, **k: saved_args.append((a, k)))
+    prev = LLMConfig(api_key="", base_url="", model="m", channel="cli", cli_runner="codex", cli_model="gpt-5.5")
+    new_cli = LLMConfig(api_key="", base_url="", model="m", channel="cli",
+                        cli_runner="codex", cli_model="gpt-5.5", cli_timeout_seconds=240)
+    fake = SimpleNamespace(session=SimpleNamespace(llm_config=prev, begin_turn=lambda: None))
+
+    web_app.WebGame.commit_llm_config(fake, new_cli)
+
+    args, kw = saved_args[0]
+    assert args[:3] == ("", "", "")   # 传空 → preserve_api 保留 sk-slot
+    assert kw["channel"] == "cli"
+
+
+def test_api_set_llm_config_commit_runs_off_event_loop(monkeypatch):
+    """Gemini R2:commit(begin_turn 可能 spawn office 推断 CLI 子进程)也 offload 出 event loop。"""
+    import threading
+    cfg = LLMConfig(api_key="", base_url="", model="m", channel="cli",
+                    cli_runner="codex", cli_model="gpt-5.5", cli_timeout_seconds=240)
+    seen = {}
+
+    def rec_commit(c):
+        seen["thread"] = threading.current_thread()
+
+    fake = SimpleNamespace(build_llm_config=lambda *a, **k: cfg, commit_llm_config=rec_commit)
+    monkeypatch.setattr(web_app, "get_game", lambda: fake)
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda c: None)
+
+    asyncio.run(web_app.api_set_llm_config(web_app.LLMConfigRequest(channel="cli", cli_runner="codex")))
+
+    assert seen.get("thread") is not None
+    assert seen["thread"] is not threading.main_thread()
+
+
 def test_api_set_llm_config_verify_runs_off_event_loop(monkeypatch):
     """#56:in-game /api/llm/config 的 verify(CLI smoke ~12s)offload 出 asyncio event loop,
     commit(落盘/重建)留在 loop。断言 verify 在非主线程跑。"""

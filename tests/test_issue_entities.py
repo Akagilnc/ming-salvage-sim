@@ -112,6 +112,15 @@ def test_apply_score_extraction_accepts_flat_faction_scalar(game):
     })
 
 
+def test_apply_score_extraction_rejects_nondict_power_second_level(game):
+    """CMR R2(codex):power_updates 二级非 dict 必须落库前抛——apply_power_deltas 逐 power 写,
+    坏项崩前已写的 power 行会被后续 commit 落库 = 半落库(try/except 接住异常但不回滚)。
+    prompt 里 power_updates 恒嵌套 dict,标量=真畸形。"""
+    db, state, _ = game
+    with pytest.raises(ValueError):
+        I.apply_score_extraction(db, state, {"power_updates": {"houjin": {"leverage": 1}, "mongol": "bad"}})
+
+
 def test_apply_score_extraction_tolerates_null_field(game):
     """Gemini R1:LLM 输出某字段为 null 时,validate 不得比 apply 更严——None 当缺省 no-op,
     不抛 ValueError(apply 本就 `.get(key) or {}` 容忍)。"""

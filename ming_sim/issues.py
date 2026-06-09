@@ -1002,13 +1002,15 @@ def _displace_duplicate_offices(
     return displaced
 
 
-# 仅校验「二级非 dict 会让 apply **无 try/except 地崩在中途** → 半落库」的字段:
-# region_delta / army_delta 的 apply 裸调(issues.py 内 db.apply_region_deltas/apply_army_deltas
-# 不裹 try/except),二级非 dict 即崩。其余**不**列入(否则 validate 比 apply 更严,误拒合法输入,CMR):
-#   - faction_delta:_apply_faction_dict 支持旧扁平 int 格式 {"阉党": -10}(extractor prompt 明确允许);
-#   - class_delta:_apply_class_dict 对非 dict `continue` 静默跳过;
-#   - power_updates:apply_score_extraction 对 apply_power_deltas 裹了 try/except,崩也被接住不半落库。
-_NESTED_DICT_FIELDS = frozenset({"region_delta", "army_delta"})
+# 校验「二级非 dict 会让 apply 在**逐 entity 写 DB 的中途崩**,留下部分已写 + 回合照推 = 半落库」
+# 的字段。这三者 apply 都逐项 UPDATE/INSERT,前面的 entity 先落库、坏的 entity 崩:
+#   - region_delta / army_delta:apply 裸调,崩直接抛穿;
+#   - power_updates:apply_score_extraction 虽裹 try/except,但只接住异常不回滚——前面已写的 power
+#     行仍被后续 record_log/save_turn 提交 = 半落库(CMR R2 codex)。prompt 里 power_updates 恒为
+#     嵌套 dict,无扁平标量形态,故二级非 dict = 真畸形,校验前置拦截正确。
+# **不**列入(apply 各自容忍,validate 不该更严):faction_delta(吃旧扁平 int {"阉党": -10},prompt 允许)、
+# class_delta(对非 dict `continue` 静默跳,不写)。
+_NESTED_DICT_FIELDS = frozenset({"region_delta", "army_delta", "power_updates"})
 
 
 def validate_delta_shape(extracted: dict) -> None:
