@@ -242,6 +242,47 @@ def test_advance_without_edict_commits_staged(game):
     assert db.list_pending_actions(turn_before) == []
 
 
+def test_withdraw_pending_action_removes_before_decree(game):
+    """皇帝复核可撤回暂存动作:withdraw 删 pending 行,颁诏不再落库;二次/不存在撤回返 False。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    pid = db.stage_pending_action(state.turn, kind="secret_order", action="更新",
+                                  minister_name=name, target_id=oid,
+                                  payload={"new_title": "改", "new_content": "改", "deadline_months": 0})
+
+    assert db.withdraw_pending_action(pid, state.turn) is True
+    assert db.list_pending_actions(state.turn) == []
+
+    db.commit_pending_actions(state)   # 撤回后颁诏:真实表不变
+    assert db.conn.execute("SELECT title FROM secret_orders WHERE id=?", (oid,)).fetchone()["title"] == "原标题"
+
+    assert db.withdraw_pending_action(pid, state.turn) is False   # 二次撤回无此 pending
+
+
+def test_pending_actions_endpoints(game, monkeypatch):
+    """皇帝复核区端点:GET 列本回合待确认动作;withdraw 撤回一条;重复撤回 404。"""
+    import asyncio
+    import pytest
+    from fastapi import HTTPException
+    import web_app
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    pid = db.stage_pending_action(state.turn, kind="secret_order", action="更新",
+                                  minister_name=name, target_id=oid, payload={"new_title": "x"})
+    monkeypatch.setattr(web_app, "get_game", lambda: types.SimpleNamespace(db=db, state=state))
+
+    listed = asyncio.run(web_app.api_pending_actions())
+    assert [a["id"] for a in listed["actions"]] == [pid]
+
+    out = asyncio.run(web_app.api_withdraw_pending_action(pid))
+    assert out["withdrawn"] == pid and out["actions"] == []
+
+    with pytest.raises(HTTPException):
+        asyncio.run(web_app.api_withdraw_pending_action(pid))
+
+
 def test_consort_cultivate_stages_and_commits(game, monkeypatch):
     """CMR P1-c:后宫调教也走闸门(同属 CLI 自然语言结构化写动作)——召对暂存,颁诏才落。"""
     import pytest
