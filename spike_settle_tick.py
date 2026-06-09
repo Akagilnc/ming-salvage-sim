@@ -51,7 +51,7 @@ def run_tick(name, st, p, actions, expect=None):
     # ── ⓪ action phase:先收集→算 k→按 k 执行(transfer 此时执行)──
     for a in actions:                                   # 输入校验 fail-loud(codex r16)
         if a['type'] not in KNOWN_ACTIONS: raise ValueError(f"unknown action: {a['type']}")
-        if a.get('cost',0) < 0 or a.get('amount',0) < 0: raise ValueError(f"负 cost/amount: {a}")
+        if a.get('cost',0) < 0 or a.get('amount',0) < 0 or a.get('挖隐田',0) < 0: raise ValueError(f"负 cost/amount/挖隐田: {a}")
         if not (0 <= a.get('eff',1.0) <= 1): raise ValueError(f"eff 越界: {a}")
         if a['type'] == '补饷' and a.get('amount',0) != 0: raise ValueError(f"补饷不接受 amount(cost即支付): {a}")
         if a['type'] in ('清欠','蠲免','追赃','挪借火耗') and a.get('cost',0) != 0:
@@ -199,6 +199,9 @@ def S(**kw): return dict(dict(省库库银=50,C_地方截留=0,C_中饱=0,C_漂�
                               民欠旧赋=0,军饷欠=20,官俸欠=0,宗禄欠=0,官民田=3050,隐田=1600), **kw)
 R = []
 def go(name, st, p, acts, expect=None): ok,_ = run_tick(name, st, p, acts, expect); R.append((name, ok)); return _
+def go_raise(name, st, p, acts):                     # 断言非法输入 fail-loud
+    try: run_tick(name, st, p, acts); R.append((name, False)); print(f"  [应RAISE但没有]{name}")
+    except ValueError as e: R.append((name, True)); print(f"\n{name}: RAISED ✓ ({e})")
 
 go("G1 基线", S(), base, [], {'C_地方截留':8.4,'民欠旧赋':21,'军饷欠':18})
 go("G2 补饷k=.33", S(省库库银=10,军饷欠=50), base, [dict(type='补饷',cost=30)], {'C_地方截留':8.4,'民欠旧赋':21,'军饷欠':76,'官俸欠':8,'宗禄欠':4})
@@ -236,6 +239,9 @@ go("G19 三债户repay序", S(省库库银=70,军饷欠=0,官俸欠=10,宗禄欠
 # G20 蠲免(免民欠8,不入现金;钉下游军饷欠=18 区分蠲免vs清欠——清欠会让现金多8→军饷欠掉到10)
 go("G20 蠲免(民欠15免8,不入现金)", S(民欠旧赋=15), base, [dict(type='蠲免',amount=8)],
    {'C_地方截留':8.4,'民欠旧赋':28,'军饷欠':18})
+# G21 非法输入 fail-loud(负挖隐田=反向清丈缩税基,LLM 可达,五层抓不到只能 input 校验拦)
+go_raise("G21 负挖隐田应RAISE", S(), base, [dict(type='清丈',cost=2,挖隐田=-100)])
+go_raise("G21b unknown action应RAISE", S(), base, [dict(type='发射导弹',cost=5)])
 
 # G9 三 tick 链:穷省(省库10)+ recurring 募兵(每 tick cost5),看死亡螺旋累积 + 每 tick 守恒 + 硬期望
 print(f"\n{'#'*64}\n# G9 三 tick 链(穷省 recurring 募兵,死亡螺旋)\n{'#'*64}")
