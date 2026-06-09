@@ -702,22 +702,31 @@ class GameSession:
                     # target 可能是 pending_review：催办对非 active 抛错、提交核议返 False，按状态分流（CMR F1）。
                     target_active = str(target.get("status") or "active") == "active"
                     if sa == "更新":
-                        if self.db.update_secret_order_by_id(
-                            self.state, oid,
-                            act["new_title"] or str(target.get("title") or ""),
-                            act["new_content"] or str(target.get("content") or ""),
-                            tags=None, deadline_months=act["deadline_months"]):
-                            out["secret_order_id"] = oid
+                        # 动作闸门(ADR 0006)：进暂存，不动真实表；颁诏批量落库。
+                        out["pending_action_id"] = self.db.stage_pending_action(
+                            self.state.turn, kind="secret_order", action="更新",
+                            minister_name=minister_name, target_id=oid,
+                            payload={
+                                "new_title": act["new_title"] or str(target.get("title") or ""),
+                                "new_content": act["new_content"] or str(target.get("content") or ""),
+                                "deadline_months": act["deadline_months"],
+                            },
+                        )
                     elif sa == "催办" and target_active:
-                        self.db.rush_secret_order(oid, self.state, deadline_months=1, reason=player_message[:80])
-                        out["secret_order_id"] = oid
+                        out["pending_action_id"] = self.db.stage_pending_action(
+                            self.state.turn, kind="secret_order", action="催办",
+                            minister_name=minister_name, target_id=oid,
+                            payload={"reason": player_message[:80]})
                     elif sa == "提交核议":
-                        if self.db.submit_secret_order_for_review(
-                                oid, reply[:200], self.state.year, self.state.period):
-                            out["secret_order_id"] = oid
+                        out["pending_action_id"] = self.db.stage_pending_action(
+                            self.state.turn, kind="secret_order", action="提交核议",
+                            minister_name=minister_name, target_id=oid,
+                            payload={"claim": reply[:200]})
                     elif sa == "记进展" and int(target.get("turn_issued") or 0) != int(self.state.turn):
-                        self.db.update_secret_order_progress(oid, reply[:200], self.state.year, self.state.period)
-                        out["secret_order_id"] = oid
+                        out["pending_action_id"] = self.db.stage_pending_action(
+                            self.state.turn, kind="secret_order", action="记进展",
+                            minister_name=minister_name, target_id=oid,
+                            payload={"note": reply[:200]})
                     if out["secret_order_id"] and self.registry is not None:
                         self.registry.refresh(minister_name)
                 if is_consort and (act["cultivate_skill"] or act["cultivate_trait"]):

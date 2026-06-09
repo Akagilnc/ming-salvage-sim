@@ -481,6 +481,21 @@ class GameDB:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
+            -- 动作闸门(ADR 0006)：结构化聊天写动作(密令/任命/后宫)召对期进此暂存表，
+            -- 不动真实表；颁诏时 commit_pending_actions 在结算最前批量落库(不拒绝即允许)。
+            -- 撤回 = 删本表对应行(任意一条、免快照)。restore 仍可无损接续(P1)。
+            CREATE TABLE IF NOT EXISTS pending_actions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                turn INTEGER NOT NULL,
+                kind TEXT NOT NULL,                       -- secret_order | office | consort
+                action TEXT NOT NULL,                     -- 更新 | 催办 | 提交核议 | 记进展 | 创建 …
+                target_id INTEGER,                        -- 操作既有实体时其 id；新建为 NULL
+                minister_name TEXT NOT NULL DEFAULT '',
+                payload_json TEXT NOT NULL DEFAULT '{}',
+                status TEXT NOT NULL DEFAULT 'pending',    -- pending | committed
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
             -- 召对聊天记录持久化，每条消息一行，进程重启不丢。
             CREATE TABLE IF NOT EXISTS chat_messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -4451,6 +4466,94 @@ class GameDB:
     def clear_pending_decisions(self, turn: int) -> None:
         self.conn.execute("DELETE FROM pending_decisions WHERE turn = ?", (int(turn),))
         self.conn.commit()
+
+    # ── 动作闸门：结构化聊天写动作暂存(ADR 0006) ──────────────────────────
+    def stage_pending_action(
+        self, turn: int, kind: str, action: str, minister_name: str,
+        payload: Dict[str, object], target_id: Optional[int] = None,
+    ) -> int:
+        """把一条结构化聊天写动作存进 pending_actions 暂存(status=pending)。返回行 id。
+        颁诏时 commit_pending_actions 批量落库;颁诏前不动真实表。"""
+        cur = self.conn.execute(
+            """INSERT INTO pending_actions
+               (turn, kind, action, target_id, minister_name, payload_json, status)
+               VALUES (?, ?, ?, ?, ?, ?, 'pending')""",
+            (
+                int(turn), str(kind), str(action),
+                None if target_id is None else int(target_id),
+                str(minister_name or ""),
+                json.dumps(payload or {}, ensure_ascii=False),
+            ),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def list_pending_actions(self, turn: int, status: str = "pending") -> List[Dict[str, object]]:
+        """读本回合待确认动作(默认 pending),按 id 序(=操作发生序)。"""
+        rows = self.conn.execute(
+            "SELECT id, turn, kind, action, target_id, minister_name, payload_json, status "
+            "FROM pending_actions WHERE turn = ? AND status = ? ORDER BY id",
+            (int(turn), str(status)),
+        ).fetchall()
+        return [
+            {
+                "id": int(r["id"]),
+                "turn": int(r["turn"]),
+                "kind": r["kind"],
+                "action": r["action"],
+                "target_id": None if r["target_id"] is None else int(r["target_id"]),
+                "minister_name": r["minister_name"],
+                "payload_json": r["payload_json"],
+                "status": r["status"],
+            }
+            for r in rows
+        ]
+
+    def commit_pending_actions(self, state: GameState) -> List[Dict[str, object]]:
+        """颁诏:把本回合 pending 暂存的结构化写动作批量落到真实表(不拒绝即允许),
+        按 id 序(=操作发生序)apply,落一条标一条 committed(幂等:已 committed 不重跑)。
+        在 resolve_turn 最前、跑 LLM 结算管线之前调,使盘面时序与旧"召对期直写"一致。
+        返回已落库动作摘要。"""
+        applied: List[Dict[str, object]] = []
+        for pa in self.list_pending_actions(int(state.turn), status="pending"):
+            try:
+                payload = json.loads(pa["payload_json"] or "{}")
+            except (ValueError, TypeError):
+                payload = {}
+            ok = self._apply_pending_action(state, pa, payload)
+            if ok:
+                self.conn.execute(
+                    "UPDATE pending_actions SET status='committed' WHERE id=?", (int(pa["id"]),))
+                applied.append({"id": pa["id"], "kind": pa["kind"], "action": pa["action"],
+                                "target_id": pa["target_id"]})
+        self.conn.commit()
+        return applied
+
+    def _apply_pending_action(self, state: GameState, pa: Dict[str, object], payload: Dict[str, object]) -> bool:
+        """把单条暂存动作落到真实表。未知 kind/action 不落、返 False(留 pending 不静默丢)。"""
+        if pa["kind"] == "secret_order":
+            oid = pa["target_id"]
+            if oid is None:
+                return False
+            if pa["action"] == "更新":
+                return self.update_secret_order_by_id(
+                    state, int(oid),
+                    str(payload.get("new_title") or ""),
+                    str(payload.get("new_content") or ""),
+                    tags=None, deadline_months=int(payload.get("deadline_months") or 0),
+                )
+            if pa["action"] == "催办":
+                self.rush_secret_order(
+                    int(oid), state, deadline_months=1, reason=str(payload.get("reason") or ""))
+                return True
+            if pa["action"] == "提交核议":
+                return self.submit_secret_order_for_review(
+                    int(oid), str(payload.get("claim") or ""), state.year, state.period)
+            if pa["action"] == "记进展":
+                self.update_secret_order_progress(
+                    int(oid), str(payload.get("note") or ""), state.year, state.period)
+                return True
+        return False
 
     def save_resolve_context(
         self, turn: int, decree_text: str, narrative: str,
