@@ -618,6 +618,12 @@ class WebGame:
             new_key = ""
         else:
             new_key = real_api_key_or_empty(api_key) or real_api_key_or_empty(cur.api_key)
+            if not new_key:
+                # 从 cli 切回 api：cur.api_key 在 cli 模式已归一为空,但真实 key 仍存在
+                # runtime_llm.json 的 api 槽——回收它,免得切回 api 还要重输 key(Gemini R1)。
+                saved = load_runtime_llm()
+                saved_api = saved.get("api") if isinstance(saved.get("api"), dict) else {}
+                new_key = real_api_key_or_empty(saved_api.get("api_key"))
         new_max = max_tokens if max_tokens > 0 else cur.max_tokens
         new_timeout = timeout_seconds if timeout_seconds > 0 else cur.timeout_seconds
         if thinking_level is None:

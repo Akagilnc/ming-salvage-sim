@@ -1022,6 +1022,10 @@ def validate_delta_shape(extracted: dict) -> None:
                 f"未知 delta 顶层字段「{key}」(canonicalize 后)；疑拼写错(如 地区变更↔地区变化)，"
                 "apply 不会消费它 = 静默无效。请改用合法 key。"
             )
+        if value is None:
+            # None = 字段缺省/LLM 输出 null;apply 用 `.get(key) or {}`/`or []` 当空 no-op,
+            # 校验同样放行(别比 apply 更严,否则合法 null 会被误拒,Gemini R1)。
+            continue
         expected = EMPTY_EXTRACTION[key]
         if isinstance(expected, dict) and not isinstance(value, dict):
             raise ValueError(f"delta 字段 {key} 必须是 object(dict)，实得 {type(value).__name__}")

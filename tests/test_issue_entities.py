@@ -100,6 +100,14 @@ def test_apply_score_extraction_validates_before_half_apply(game):
     assert state.metrics.get("国库") == treasury_before
 
 
+def test_apply_score_extraction_tolerates_null_field(game):
+    """Gemini R1:LLM 输出某字段为 null 时,validate 不得比 apply 更严——None 当缺省 no-op,
+    不抛 ValueError(apply 本就 `.get(key) or {}` 容忍)。"""
+    db, state, _ = game
+    # region_delta=None(null)+ army_delta=None,均应被当空 no-op 放行,不抛。
+    I.apply_score_extraction(db, state, {"region_delta": None, "army_delta": None})
+
+
 def test_apply_score_extraction_rejects_unknown_top_level_key(game):
     """#57:落库核拒未知顶层 key(拼写错=静默无效落库)。用 canonicalize 之后仍不在 schema 的
     真·未知 key(非中文别名——别名会被 _canonicalize_extraction 映射成合法 key,Red Team RT-C)。"""
