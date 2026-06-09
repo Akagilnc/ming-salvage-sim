@@ -1,9 +1,9 @@
-# 省级财政基座 · 草表 v13(per-account 对账 · 跨 tick · spike G1–G9)
+# 省级财政基座 · 草表 v14(独立 oracle 对账 · 堵一致 relabel)
 
 > **范围:仅锁单省 spine(陕西);跨省 hub deferred;`拨付net/gross` 为 tick 外部入参(测试默认 0)。**
-> v13(r12 返工):① **C 对账改 per-account**(opus 实锤:只校 ΣC 让贪墨 relabel 进国库隐形)② **eff损耗** 经 transfer 3-way 落 C_eff损耗 ③ **run_tick 返回末态、可串多 tick + recurring cost**(死亡螺旋是跨 tick 现象)④ 0-cost action 不缩 k、⓪ 改「先算 k 再执行」、unknown action fail-loud。
-> spike 实测:**G1–G9 三断言全 PASS,残差 0;自变异实证 per-account 咬住 relabel**([spike_settle_tick.py](../spike_settle_tick.py))。
-> 评审 r1–r12(panel=codex/agy/opus/sonnet)。决策见 [ADR 0007](adr/0007-province-fiscal-substrate-ai-judged.md)。⚠️=待精验。
+> v14(r13 返工):**对账期望值全改「独立 oracle」**——从 tick 输入参数重算,不用落账时同源记的流水(r13/opus 实锤:同源流水式是 tautology,贪墨/军饷欠 一致 relabel 照样过)。C 侧 + 债务侧均上独立 oracle。
+> spike 实测:**G1–G9 全 PASS;自变异实证——中饱→省库、火耗→省库、军饷新债→官俸欠 三种一致 relabel 现金守恒仍 PASS 但独立 oracle 当场 FAIL**([spike_settle_tick.py](../spike_settle_tick.py))。
+> 评审 r1–r13(panel=codex/agy/opus/sonnet)。决策见 [ADR 0007](adr/0007-province-fiscal-substrate-ai-judged.md)。⚠️=待精验。
 
 ## 0. 账户模型(三类 · spike 口径)
 - **CASH(真金,跨账户守恒,万两)**:`省库库银`(A-stock,跨期)· `C_地方截留`(火耗实收)· `C_中饱` · `C_漂没` · `C_eff损耗`。
@@ -21,9 +21,10 @@
   注:挪借火耗 / 追赃(C↔省库)是 CASH 内部转移,ΣCASH 不变,不计边界流。
       拨付以 gross 入(net→省库、中饱→C_中饱,均留 ΣCASH 内)。
 ```
-**债务对账**:`B.负债_new = old + NewDebt_i − Repaid_i − action还_i`;`B.民欠_new = old + 民欠新增 − 清欠 − 蠲免`。
-**C 灰账 per-account 对账(r12/opus:只校 ΣC 会让贪墨 relabel 进国库隐形)**:每个 C_ 子账户单独平 —
-`C_地方截留_new=old+火耗实收−挪借出` · `C_中饱_new=old+中饱−追赃出` · `C_漂没_new=old+漂没` · `C_eff损耗_new=old+Σtransfer损耗`。(spike 自变异实证:把 中饱 relabel 进省库,现金守恒仍 PASS 但 per-account C 当场 FAIL。)
+**断言用「独立 oracle」(r13/opus 关键:期望值必须从 tick 输入参数独立重算,不能用落账时同源记的流水——否则校验项与被校验项穿一条裤子=tautology,一致 relabel 照样过)**:
+**C 灰账 per-account · 独立 oracle**:每个 C_ 子账户期望从 params 重算 —`C_中饱应得≡拨付gross×中饱率`、`C_漂没应得≡起运池×漂没率`、`C_地方截留应得≡火耗应派×(1−逋赋率)−挪借出`、`C_eff损耗应得≡Σ(transfer actual×(1−eff))`;断言 `实际落账==应得`。
+**债务 per-account · 独立 oracle**:从 Due(param)+claim0+action入参 重跑 waterfall/偿还,固定科目映射(军饷→军饷欠…),断言每科目 `claim==重算值`。
+> **自变异实证(spike)**:中饱→省库、火耗实收→省库、军饷新债→官俸欠 三种**一致 relabel**(落账+记账同步搬),现金/总量守恒全 PASS,但独立 oracle 的 per-account C / 债务 **当场 FAIL**。旧的「同源流水」式(v13)放过这些,独立 oracle 堵住。
 **每笔 `transfer_to` 三方平**:`source减 = target增(actual×eff) + C_eff损耗增(actual×(1−eff))`(`actual=min(amount,source)`;BOUNDARY 账户 民间/京/受款方 **无余额 clamp**)。
 > 旧式「三本账总额=拨付−起运」及 v11 漏 拨付net 的式子**均作废**:r11/opus 变异测试实锤 —— 旧式是 tautology(火耗应派≡火耗实收+火耗未收,永真),v11 式漏 拨付net(设 20 跑出残差+20)。现式 spike G1–G7 全 PASS。
 
