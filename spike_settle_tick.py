@@ -58,6 +58,12 @@ def run_tick(name, st, p, actions, expect=None):
             raise ValueError(f"{a['type']} 禁带 cost(征收/转移类按 §9,否则幽灵预算压 k): {a}")
     for rk in ('火耗率','逋赋率','漂没率','中饱率'):
         if not (0 <= p.get(rk,0) <= 1): raise ValueError(f"{rk} 越界")
+    for pk in ('正赋应征','三饷应征','起运定额','拨付gross','正赋亩额'):  # param 量纲负值 fail-loud(r21/opus:负值穿透五层=凭空生钱)
+        if p.get(pk,0) is not None and p.get(pk,0) < 0: raise ValueError(f"param {pk} 为负")
+    for hk,dv in p.get('Due',{}).items():
+        if dv < 0: raise ValueError(f"Due[{hk}] 为负")
+    for sk in ('省库库银','C_地方截留','C_中饱','C_漂没','C_eff损耗','官民田','隐田'):
+        if float(st.get(sk,0)) < 0: raise ValueError(f"开账 stock {sk} 为负")
     Stock_start = cash['省库库银']
     ΣCost = sum(a.get('cost',0) for a in actions if a.get('cost',0) > 0)
     k = 1.0 if (ΣCost == 0 or ΣCost <= Stock_start) else Stock_start/ΣCost
@@ -242,6 +248,10 @@ go("G20 蠲免(民欠15免8,不入现金)", S(民欠旧赋=15), base, [dict(type
 # G21 非法输入 fail-loud(负挖隐田=反向清丈缩税基,LLM 可达,五层抓不到只能 input 校验拦)
 go_raise("G21 负挖隐田应RAISE", S(), base, [dict(type='清丈',cost=2,挖隐田=-100)])
 go_raise("G21b unknown action应RAISE", S(), base, [dict(type='发射导弹',cost=5)])
+go_raise("G21c 负Due应RAISE", S(), dict(base,Due=dict(军饷=-45,官俸=8,宗禄=4,赈济=0)), [])
+go_raise("G21d 负起运定额应RAISE", S(), dict(base,起运定额=-40), [])
+go_raise("G21e 负拨付gross应RAISE", S(), dict(base,拨付gross=-30), [])
+go_raise("G21f 负开账省库应RAISE", S(省库库银=-10), base, [])
 
 # G9 三 tick 链:穷省(省库10)+ recurring 募兵(每 tick cost5),看死亡螺旋累积 + 每 tick 守恒 + 硬期望
 print(f"\n{'#'*64}\n# G9 三 tick 链(穷省 recurring 募兵,死亡螺旋)\n{'#'*64}")
