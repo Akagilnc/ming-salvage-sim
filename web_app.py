@@ -1388,13 +1388,6 @@ def sse_event(event: str, data: Dict[str, Any]) -> str:
 web_game: Optional[WebGame] = None  # 懒加载：菜单页点「新游戏/继续/加载存档」才实例化
 app = FastAPI(title="Ming Salvage MVP Web")
 
-# 全局 game 锁:串行化「改盘面状态」的端点,杜绝并发改态 race。核心场景:in-game 配置 commit
-# (begin_turn 在 worker 线程改 session/DB)与回合结算流(resolve_turn 也在 worker 线程)交错
-# = session/DB 竞态(CMR R3 codex+gemini)。asyncio.Lock 在端点入口持有、跨 await run_in_executor
-# 不放,故线程侧写也被串行。流式端点在 generator 内 `async with` 持锁直到 drain 完/断连。
-# 当前覆盖结算流 + 配置写(真实 race 面);其余轻量改态端点的统一接入见 issue(全量 sweep)。
-_game_lock = asyncio.Lock()
-
 
 def get_game() -> WebGame:
     """游戏路由统一入口。未开局 → 409 让前端跳回菜单页。"""
@@ -2183,30 +2176,22 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
             ev_queue.put(("__error__", _llm_error_detail(e) if isinstance(e, LLMUnavailable) else str(e)))
 
     async def generate() -> AsyncIterator[str]:
-        # 持 game 锁直到本回合结算流 drain 完(或断连)——worker 线程在锁内改 session/DB,
-        # 与并发的配置 commit / 另一结算互斥(CMR R3)。async with 在 generator 关闭时释放。
-        async with _game_lock:
-            loop = asyncio.get_running_loop()
-            thread = threading.Thread(target=worker, daemon=True)
-            thread.start()
-            try:
-                while True:
-                    kind, data = await loop.run_in_executor(None, ev_queue.get)
-                    if kind == "__done__":
-                        yield sse_event("done", data)
-                        break
-                    if kind == "__decisions__":
-                        yield sse_event("decisions", data)
-                        break
-                    if kind == "__error__":
-                        yield sse_event("error", data if isinstance(data, dict) else {"message": data})
-                        break
-                    # stage / thinking / text
-                    yield sse_event(kind, {"content": data})
-            finally:
-                # 断连时 generator 提前退出 → 必须等 worker(仍在改 DB)跑完再释锁,否则
-                # 释锁后 worker 与后续 config/结算 race(CMR R4 codex)。join 不卡 loop:走线程池。
-                await loop.run_in_executor(None, thread.join)
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+        loop = asyncio.get_running_loop()
+        while True:
+            kind, data = await loop.run_in_executor(None, ev_queue.get)
+            if kind == "__done__":
+                yield sse_event("done", data)
+                break
+            if kind == "__decisions__":
+                yield sse_event("decisions", data)
+                break
+            if kind == "__error__":
+                yield sse_event("error", data if isinstance(data, dict) else {"message": data})
+                break
+            # stage / thinking / text
+            yield sse_event(kind, {"content": data})
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
@@ -2254,24 +2239,18 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
             ev_queue.put(("__error__", _llm_error_detail(e) if isinstance(e, LLMUnavailable) else str(e)))
 
     async def generate() -> AsyncIterator[str]:
-        # 持 game 锁直到 phase2 结算流 drain 完——与配置 commit / 颁诏结算互斥(CMR R3)。
-        async with _game_lock:
-            loop = asyncio.get_running_loop()
-            thread = threading.Thread(target=worker, daemon=True)
-            thread.start()
-            try:
-                while True:
-                    kind, data = await loop.run_in_executor(None, ev_queue.get)
-                    if kind == "__done__":
-                        yield sse_event("done", data)
-                        break
-                    if kind == "__error__":
-                        yield sse_event("error", data if isinstance(data, dict) else {"message": data})
-                        break
-                    yield sse_event(kind, {"content": data})
-            finally:
-                # 断连时也等 worker 跑完再释锁,防释锁后 worker 与后续操作 race(CMR R4 codex)。
-                await loop.run_in_executor(None, thread.join)
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+        loop = asyncio.get_running_loop()
+        while True:
+            kind, data = await loop.run_in_executor(None, ev_queue.get)
+            if kind == "__done__":
+                yield sse_event("done", data)
+                break
+            if kind == "__error__":
+                yield sse_event("error", data if isinstance(data, dict) else {"message": data})
+                break
+            yield sse_event(kind, {"content": data})
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
@@ -2418,33 +2397,29 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
     cli_runner = None if request.cli_runner == "__keep__" else request.cli_runner
     cli_model = None if request.cli_model == "__keep__" else request.cli_model
     try:
-        # 通道感知 build（#51）+ verify offload 出 event loop（#56：CLI smoke ~12s 不阻塞并发,
-        # verify 只读;commit 落盘/重建 registry 快,留在 loop 上避免改 session 态的并发竞态）。
-        # 整段 build→verify→commit 用锁串行化,杜绝并发 stale-write(codex CMR R2)。
-        async with _game_lock:
-            game = get_game()
-            cfg = game.build_llm_config(
-                request.base_url,
-                request.model,
-                request.api_key,
-                request.max_tokens,
-                request.timeout_seconds,
-                thinking_level=thinking_level,
-                advanced_model=advanced,
-                advanced_base_url=adv_base,
-                advanced_api_key=adv_key,
-                advanced_thinking_level=adv_thinking,
-                channel=channel,
-                cli_runner=cli_runner,
-                cli_model=cli_model,
-                cli_timeout_seconds=request.cli_timeout_seconds,
-            )
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, _verify_llm_configs_or_raise, cfg)
-            # commit 也 offload:begin_turn 会同步 office 推断,CLI 通道遇生造官名会 spawn CLI
-            # 子进程,留在 loop 上会卡住事件循环(Gemini R2)。_game_lock 已串行化,
-            # 在线程里 commit 不会与另一次 config 写并发改 session 态。
-            await loop.run_in_executor(None, game.commit_llm_config, cfg)
+        # 通道感知 build（#51）。verify(CLI smoke ~12s,只读)offload 出 event loop 不卡 UI;
+        # commit(落盘+begin_turn 改 session 态)**留在 loop 上同步跑**——单人 CLI 串行探针下它原子、
+        # 无并发 race,无需全局锁(CMR R3-R5:把 commit offload 到线程引入 session race / 断连
+        # cancel 下 worker-join 不可靠的一连串并发边缘,对单人场景得不偿失,故回退到 on-loop)。
+        game = get_game()
+        cfg = game.build_llm_config(
+            request.base_url,
+            request.model,
+            request.api_key,
+            request.max_tokens,
+            request.timeout_seconds,
+            thinking_level=thinking_level,
+            advanced_model=advanced,
+            advanced_base_url=adv_base,
+            advanced_api_key=adv_key,
+            advanced_thinking_level=adv_thinking,
+            channel=channel,
+            cli_runner=cli_runner,
+            cli_model=cli_model,
+            cli_timeout_seconds=request.cli_timeout_seconds,
+        )
+        await asyncio.get_running_loop().run_in_executor(None, _verify_llm_configs_or_raise, cfg)
+        game.commit_llm_config(cfg)
     except HTTPException:
         # _verify_llm_configs_or_raise 已把校验失败包成带干净 detail 的 HTTPException;
         # 经 run_in_executor 透传上来后原样抛,别被下面 except Exception 二次包裹 mangle 掉(Gemini R2)。

@@ -228,8 +228,9 @@ def test_commit_cli_preserves_when_slot_already_has_key(monkeypatch):
     assert kw["channel"] == "cli"
 
 
-def test_api_set_llm_config_commit_runs_off_event_loop(monkeypatch):
-    """Gemini R2:commit(begin_turn 可能 spawn office 推断 CLI 子进程)也 offload 出 event loop。"""
+def test_api_set_llm_config_commit_runs_on_event_loop(monkeypatch):
+    """CMR R5 后回退:commit(改 session 态)**留在 event loop 主线程**同步跑——单人 CLI 串行探针
+    下原子无 race,避免 offload-to-thread 引入的并发/断连边缘(见 CMR R3-R5)。verify 仍 offload。"""
     import threading
     cfg = LLMConfig(api_key="", base_url="", model="m", channel="cli",
                     cli_runner="codex", cli_model="gpt-5.5", cli_timeout_seconds=240)
@@ -238,14 +239,17 @@ def test_api_set_llm_config_commit_runs_off_event_loop(monkeypatch):
     def rec_commit(c):
         seen["thread"] = threading.current_thread()
 
+    def rec_verify(c):
+        seen["verify_thread"] = threading.current_thread()
+
     fake = SimpleNamespace(build_llm_config=lambda *a, **k: cfg, commit_llm_config=rec_commit)
     monkeypatch.setattr(web_app, "get_game", lambda: fake)
-    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda c: None)
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", rec_verify)
 
     asyncio.run(web_app.api_set_llm_config(web_app.LLMConfigRequest(channel="cli", cli_runner="codex")))
 
-    assert seen.get("thread") is not None
-    assert seen["thread"] is not threading.main_thread()
+    assert seen["thread"] is threading.main_thread()        # commit 在主线程(on loop)
+    assert seen["verify_thread"] is not threading.main_thread()  # verify 仍 offload 到线程池
 
 
 def test_api_set_llm_config_verify_runs_off_event_loop(monkeypatch):
