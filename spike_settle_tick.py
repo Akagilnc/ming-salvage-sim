@@ -21,7 +21,7 @@ CASH_KEYS = ['省库库银','C_地方截留','C_中饱','C_漂没','C_eff损耗'
 CLAIM_KEYS = ['民欠旧赋','军饷欠','官俸欠','宗禄欠']
 KNOWN_ACTIONS = {'补饷','清丈','挪借火耗','追赃','清欠','蠲免','营建'}
 
-def run_tick(name, st, p, actions):
+def run_tick(name, st, p, actions, expect=None):
     print(f"\n{'='*64}\n{name}\n{'='*64}")
     cash = {k: float(st.get(k,0)) for k in CASH_KEYS}
     claim = {k: float(st.get(k,0)) for k in CLAIM_KEYS}
@@ -47,9 +47,12 @@ def run_tick(name, st, p, actions):
         return actual
 
     # ── ⓪ action phase:先收集→算 k→按 k 执行(transfer 此时执行)──
-    for a in actions:
-        if a['type'] not in KNOWN_ACTIONS:
-            raise ValueError(f"unknown action: {a['type']}")
+    for a in actions:                                   # 输入校验 fail-loud(codex r16)
+        if a['type'] not in KNOWN_ACTIONS: raise ValueError(f"unknown action: {a['type']}")
+        if a.get('cost',0) < 0 or a.get('amount',0) < 0: raise ValueError(f"负 cost/amount: {a}")
+        if not (0 <= a.get('eff',1.0) <= 1): raise ValueError(f"eff 越界: {a}")
+    for rk in ('火耗率','逋赋率','漂没率','中饱率'):
+        if not (0 <= p.get(rk,0) <= 1): raise ValueError(f"{rk} 越界")
     Stock_start = cash['省库库银']
     ΣCost = sum(a.get('cost',0) for a in actions if a.get('cost',0) > 0)
     k = 1.0 if (ΣCost == 0 or ΣCost <= Stock_start) else Stock_start/ΣCost
@@ -165,9 +168,18 @@ def run_tick(name, st, p, actions):
     print(f"[C 分账·独立oracle] {'PASS' if ok_C else 'FAIL'}")
     print(f"[末态] cash={{ {', '.join(f'{k}:{v:.2f}' for k,v in cash.items())} }}")
     print(f"       claim={{ {', '.join(f'{k}:{v:.2f}' for k,v in claim.items())} }} 官民田={官民田:.0f}")
-
+    # 第4类断言:末态 vs 硬编码期望常量(codex r16:真正独立的锚,堵「债清了钱没出」级 bug——
+    # 此类 bug 让 settlement 自己的 cash_in/out 一致少记,前三断言漏过,但末态≠常量必 FAIL)
+    end = {**{k:round(v,4) for k,v in cash.items()}, **{k:round(v,4) for k,v in claim.items()}}
+    ok_exp = True
+    if expect is not None:
+        for kk,vv in expect.items():
+            if abs(end.get(kk,1e99)-vv) > 1e-3: ok_exp=False; print(f"  [末态FAIL]{kk} {end.get(kk)}≠期望{vv}")
+        print(f"[末态硬期望] {'PASS' if ok_exp else 'FAIL'}")
+    else:
+        print(f"[末态硬期望] (无 expect,捕获用)EXPECT={ {k:round(v,2) for k,v in end.items() if abs(v)>1e-9} }")
     new_st = dict(cash); new_st.update(claim); new_st['官民田']=官民田; new_st['隐田']=隐田
-    return (ok_cash and ok_debt and ok_C), new_st
+    return (ok_cash and ok_debt and ok_C and ok_exp), new_st
 
 
 base = dict(正赋应征=60,三饷应征=10,火耗率=0.2,逋赋率=0.3,起运定额=40,漂没率=0.0,拨付gross=0,中饱率=0.0,
@@ -175,30 +187,37 @@ base = dict(正赋应征=60,三饷应征=10,火耗率=0.2,逋赋率=0.3,起运�
 def S(**kw): return dict(dict(省库库银=50,C_地方截留=0,C_中饱=0,C_漂没=0,C_eff损耗=0,
                               民欠旧赋=0,军饷欠=20,官俸欠=0,宗禄欠=0,官民田=3050,隐田=1600), **kw)
 R = []
-def go(name, st, p, acts): ok,_ = run_tick(name, st, p, acts); R.append((name, ok)); return _
+def go(name, st, p, acts, expect=None): ok,_ = run_tick(name, st, p, acts, expect); R.append((name, ok)); return _
 
-go("G1 基线", S(), base, [])
-go("G2 补饷k=.33", S(省库库银=10,军饷欠=50), base, [dict(type='补饷',cost=30)])
-go("G3 清丈(cost2,非现金中性:当tick扣2)", S(), base, [dict(type='清丈',cost=2,挖隐田=300)])
-go("G4 挪借火耗(C20,挪10)", S(C_地方截留=20), base, [dict(type='挪借火耗',amount=10)])
-go("G5 漂没.1中饱.1拨付30", S(), dict(base,漂没率=0.1,中饱率=0.1,拨付gross=30), [])
-go("G6 超额补饷(欠5补30)", S(省库库银=30,军饷欠=5), base, [dict(type='补饷',cost=30)])
-go("G7 清欠(民欠15清10)", S(民欠旧赋=15), base, [dict(type='清欠',amount=10)])
-go("G8 挪借eff=.8(激活C_eff损耗)", S(C_地方截留=20), base, [dict(type='挪借火耗',amount=10,eff=0.8)])
-go("G10 追赃(C_中饱12,追8 eff=.9)", S(C_中饱=12), base, [dict(type='追赃',amount=8,eff=0.9)])
+go("G1 基线", S(), base, [], {'C_地方截留':8.4,'民欠旧赋':21,'军饷欠':18})
+go("G2 补饷k=.33", S(省库库银=10,军饷欠=50), base, [dict(type='补饷',cost=30)], {'C_地方截留':8.4,'民欠旧赋':21,'军饷欠':76,'官俸欠':8,'宗禄欠':4})
+go("G3 清丈(cost2,非现金中性:当tick扣2)", S(), base, [dict(type='清丈',cost=2,挖隐田=300)], {'C_地方截留':8.4,'民欠旧赋':21,'军饷欠':20})
+go("G4 挪借火耗(C20,挪10)", S(C_地方截留=20), base, [dict(type='挪借火耗',amount=10)], {'C_地方截留':18.4,'民欠旧赋':21,'军饷欠':8})
+go("G5 漂没.1中饱.1拨付30", S(), dict(base,漂没率=0.1,中饱率=0.1,拨付gross=30), [], {'省库库银':9,'C_地方截留':8.4,'C_中饱':3,'C_漂没':4,'民欠旧赋':21})
+go("G6 超额补饷(欠5补30)", S(省库库银=30,军饷欠=5), base, [dict(type='补饷',cost=30)], {'C_地方截留':8.4,'民欠旧赋':21,'军饷欠':11,'官俸欠':8,'宗禄欠':4})
+go("G7 清欠(民欠15清10)", S(民欠旧赋=15), base, [dict(type='清欠',amount=10)], {'C_地方截留':8.4,'民欠旧赋':26,'军饷欠':8})
+go("G8 挪借eff=.8(激活C_eff损耗)", S(C_地方截留=20), base, [dict(type='挪借火耗',amount=10,eff=0.8)], {'C_地方截留':18.4,'C_eff损耗':2,'民欠旧赋':21,'军饷欠':10})
+go("G10 追赃(C_中饱12,追8 eff=.9)", S(C_中饱=12), base, [dict(type='追赃',amount=8,eff=0.9)], {'C_地方截留':8.4,'C_中饱':4,'C_eff损耗':0.8,'民欠旧赋':21,'军饷欠':10.8})
 go("G11 多costed(补饷20+营建20,Stock10→k=.25)", S(省库库银=10,军饷欠=50), base,
-   [dict(type='补饷',cost=20), dict(type='营建',cost=20)])
-go("G12 赈济Due>0", S(省库库银=80), dict(base, Due=dict(军饷=45,官俸=8,宗禄=4,赈济=15)), [])
+   [dict(type='补饷',cost=20), dict(type='营建',cost=20)], {'C_地方截留':8.4,'民欠旧赋':21,'军饷欠':81,'官俸欠':8,'宗禄欠':4})
+go("G12 赈济Due>0", S(省库库银=80), dict(base, Due=dict(军饷=45,官俸=8,宗禄=4,赈济=15)), [], {'C_地方截留':8.4,'民欠旧赋':21,'军饷欠':3})
 go("G13 拨付30+追赃(C_中饱10,追6)同tick", S(C_中饱=10), dict(base,拨付gross=30,中饱率=0.1),
-   [dict(type='追赃',amount=6)])
+   [dict(type='追赃',amount=6)], {'省库库银':15,'C_地方截留':8.4,'C_中饱':7,'民欠旧赋':21})
+# G14 动态税基(codex r16:正赋从官民田派生,清丈本 tick 即抬税基;硬期望咬住「清丈effect算错」)
+_p14 = {k:v for k,v in base.items() if k!='正赋应征'}; _p14['正赋亩额']=0.236
+go("G14 动态税基(正赋亩额0.236+清丈+300)", dict(S(), 官民田=3050), _p14,
+   [dict(type='清丈',cost=2,挖隐田=300)], {'C_地方截留':9.2237,'民欠旧赋':22.765,'军饷欠':15.8817})
 
-# G9 三 tick 链:穷省(省库10)+ recurring 募兵(每 tick cost5),看死亡螺旋累积 + 每 tick 守恒
+# G9 三 tick 链:穷省(省库10)+ recurring 募兵(每 tick cost5),看死亡螺旋累积 + 每 tick 守恒 + 硬期望
 print(f"\n{'#'*64}\n# G9 三 tick 链(穷省 recurring 募兵,死亡螺旋)\n{'#'*64}")
 stt = S(省库库银=10, 军饷欠=30)
+g9exp = [{'C_地方截留':8.4,'民欠旧赋':21,'军饷欠':61,'官俸欠':8,'宗禄欠':4},
+         {'C_地方截留':16.8,'民欠旧赋':42,'军饷欠':97,'官俸欠':16,'宗禄欠':8},
+         {'C_地方截留':25.2,'民欠旧赋':63,'军饷欠':133,'官俸欠':24,'宗禄欠':12}]
 allok = True
 for i in range(1,4):
     duep = dict(base, Due=dict(军饷=45,官俸=8,宗禄=4,赈济=0))
-    ok, stt = run_tick(f"G9 tick{i}", stt, duep, [dict(type='营建',cost=5,cost_type='recurring')])
+    ok, stt = run_tick(f"G9 tick{i}", stt, duep, [dict(type='营建',cost=5,cost_type='recurring')], g9exp[i-1])
     allok = allok and ok
 R.append(("G9 三tick链", allok))
 
