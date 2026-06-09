@@ -987,6 +987,7 @@ export function PendingActionsModal({
       const p = JSON.parse(a.payload_json || "{}");
       if (a.action === "更新") return p.new_title ? `改要旨为「${p.new_title}」` : "更新要旨";
       if (a.action === "记进展") return String(p.note || "").slice(0, 40);
+      if (a.action === "提交核议") return String(p.claim || "呈报办结").slice(0, 40);
       if (a.action === "调教") return [p.skill && `授「${p.skill}」`, p.trait && `性情「${p.trait}」`].filter(Boolean).join("、");
       if (a.action === "催办") return String(p.reason || "限期加急");
     } catch { /* 容错:payload 坏不挡显示 */ }

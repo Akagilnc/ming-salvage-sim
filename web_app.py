@@ -1881,11 +1881,15 @@ async def api_pending_actions() -> Dict[str, Any]:
 
 @app.post("/api/pending_actions/{action_id}/withdraw")
 async def api_withdraw_pending_action(action_id: int) -> Dict[str, Any]:
-    """皇帝撤回一条尚未颁诏落库的暂存动作。"""
+    """皇帝撤回一条尚未颁诏落库的暂存动作。不存在→404;存在但已落库/非本回合→409。"""
     game = get_game()
-    ok = game.db.withdraw_pending_action(int(action_id), int(game.state.turn))
-    if not ok:
-        raise HTTPException(status_code=404, detail="该待确认动作不存在或已落库，无法撤回。")
+    row = game.db.conn.execute(
+        "SELECT turn, status FROM pending_actions WHERE id=?", (int(action_id),)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="该待确认动作不存在。")
+    if row["status"] != "pending" or int(row["turn"]) != int(game.state.turn):
+        raise HTTPException(status_code=409, detail="该动作已落库或非本回合，无法撤回。")
+    game.db.withdraw_pending_action(int(action_id), int(game.state.turn))
     return {"withdrawn": action_id, "actions": game.db.list_pending_actions(int(game.state.turn))}
 
 

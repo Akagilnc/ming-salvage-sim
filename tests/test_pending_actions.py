@@ -174,19 +174,16 @@ def test_pre_settle_commits_pending_at_decree_front(game):
     assert db.list_pending_actions(state.turn) == []
 
 
-def test_commit_skips_unapplicable_and_is_idempotent(game, monkeypatch):
-    """branch 覆盖:无 target/未知动作 → _apply 返 False,留 pending 不静默丢、不标 committed;
-    已 committed 的动作再 commit 不重跑(幂等)。"""
+def test_commit_marks_unapplicable_failed_not_orphan(game, monkeypatch):
+    """branch 覆盖:无 target/未知动作 → _apply 返 False → 标 failed(不留 pending 成孤儿、不静默吞);
+    可落的照落;再 commit 不重跑(幂等,failed/committed 都不在 pending)。"""
     db, state, content = game
     name = _active_minister_name(db, content)
     oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
-    # ① 无 target 的更新 → 不可落、留 pending
     db.stage_pending_action(state.turn, kind="secret_order", action="更新",
-                            minister_name=name, target_id=None, payload={"new_title": "x"})
-    # ② 未知动作 → 不可落、留 pending
+                            minister_name=name, target_id=None, payload={"new_title": "x"})   # 无 target
     db.stage_pending_action(state.turn, kind="secret_order", action="自爆",
-                            minister_name=name, target_id=oid, payload={})
-    # ③ 正常更新 → 可落
+                            minister_name=name, target_id=oid, payload={})                    # 未知动作
     db.stage_pending_action(state.turn, kind="secret_order", action="更新",
                             minister_name=name, target_id=oid,
                             payload={"new_title": "新", "new_content": "新内容", "deadline_months": 0})
@@ -194,12 +191,12 @@ def test_commit_skips_unapplicable_and_is_idempotent(game, monkeypatch):
     applied = db.commit_pending_actions(state)
     assert len(applied) == 1                                  # 只落了正常那条
     assert db.conn.execute("SELECT title FROM secret_orders WHERE id=?", (oid,)).fetchone()["title"] == "新"
-    left = db.list_pending_actions(state.turn)
-    assert {p["action"] for p in left} == {"更新", "自爆"}     # 不可落的两条仍 pending,没被吞
+    assert db.list_pending_actions(state.turn) == []         # 不可落的不再留 pending(已标 failed)
+    failed = {p["action"] for p in db.list_pending_actions(state.turn, status="failed")}
+    assert failed == {"更新", "自爆"}                          # 标 failed,没静默删(有审计痕迹)
 
-    # 幂等:再 commit 不重跑已落库的(返回不含上次那条)
-    again = db.commit_pending_actions(state)
-    assert all(a["action"] != "更新" or a["target_id"] != oid for a in again)
+    again = db.commit_pending_actions(state)                  # 幂等:无 pending 可跑
+    assert again == []
 
 
 def test_undo_chat_turn_removes_staged_pending_action(game):
@@ -313,7 +310,7 @@ def content_consort_candidates(game):
 
 def test_commit_does_not_crash_when_action_raises(game):
     """CMR P0:同回合先 提交核议(转 pending_review)再 催办 同一密令,颁诏 commit 时 rush 对
-    非 active 抛 ValueError——commit 不得崩整个结算;抛错的那条留 pending、不标 committed。"""
+    非 active 抛 ValueError——commit 不得崩整个结算;抛错的那条标 failed(不留 pending 成孤儿)。"""
     db, state, content = game
     name = _active_minister_name(db, content)
     oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=6)
@@ -325,10 +322,27 @@ def test_commit_does_not_crash_when_action_raises(game):
 
     applied = db.commit_pending_actions(state)   # 不得抛
 
-    # 提交核议落了(状态 pending_review),催办因非 active 落不了→留 pending、未静默吞
+    # 提交核议落了(状态 pending_review),催办因非 active 抛错→标 failed、不留 pending 孤儿、不崩
     assert db.conn.execute("SELECT status FROM secret_orders WHERE id=?", (oid,)).fetchone()["status"] == "pending_review"
     assert {a["action"] for a in applied} == {"提交核议"}
-    assert [p["action"] for p in db.list_pending_actions(state.turn)] == ["催办"]
+    assert db.list_pending_actions(state.turn) == []
+    assert [p["action"] for p in db.list_pending_actions(state.turn, status="failed")] == ["催办"]
+
+
+def test_no_stage_for_non_active_target(game, monkeypatch):
+    """CMR R2:目标非 active(pending_review)时,会话写动作不 stage(否则只会成孤儿暂存行)。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    db.submit_secret_order_for_review(oid, "已呈", state.year, state.period)   # active → pending_review
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda prompt, llm_config=None: (json.dumps(
+                            {"密令动作": "更新", "目标密令编号": 0, "新标题": "改"}, ensure_ascii=False), 1))
+    GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), ch, player_message="改一下要旨",
+        answer="臣领旨。", has_directive=False, secret_order_id=None)
+    assert db.list_pending_actions(state.turn) == []   # 非 active 目标不 stage
 
 
 def test_commit_pending_actions_applies_staged_update_at_decree(game, monkeypatch):

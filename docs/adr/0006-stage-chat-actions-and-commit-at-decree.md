@@ -14,9 +14,9 @@ Status: accepted
 
 - **闸门只管「LLM 从自然语言推断出的写动作」**：召对里皇帝没点按钮、只是说话，由 LLM 判出的密令更新/催办/提交核议/记进展、后宫调教 —— 这类**推断**动作进暂存、过颁诏闸门才落库（玩家没明示，故须确认）。**显式前缀按钮例外**：玩家点「密令如下：/拟旨如下：」= 已明示意图，按既定例外**直接落库**（密令前缀走 `upsert_secret_order` 直写、拟旨走 pending directive 准/驳），不入 `pending_actions`。判据 = 「是玩家明示的动作，还是 LLM 替玩家推断的动作」。
 - **本片(slice 4)实现范围**：CLI 自然语言路径里的密令 4 动作 + 后宫调教 已入闸。**任命(appointments)走 agno tool-call 路径(api 通道 function-call)**，不在本 CLI 自然语言方法内，其「tool-call 即动作候选」属 ADR 0002 更大范围，**留后续**（不在 slice 4）。
-- **落地机制按数据性质分**：密令/任命/后宫是结构化记录，颁诏时 `commit_pending_actions` **直接 INSERT/UPDATE 真实表**；拟旨是叙事诏书，继续走 simulator→extractor→`apply_score_extraction`。不强求统一（保留口子，见 docs/TODO.md T7：理由不足则后续统一）。
+- **落地机制按数据性质分**：密令/任命/后宫是结构化记录，颁诏时 `commit_pending_actions` **直接 INSERT/UPDATE 真实表**；拟旨是叙事诏书，继续走 simulator→extractor→`apply_score_extraction`。不强求统一（保留口子，见 TODOS.md T7：理由不足则后续统一）。
 - **提交时机**：`commit_pending_actions` 在 `resolve_turn` 最前、跑 LLM 结算管线之前执行——**先提交再结算**，使 simulator/extractor 读到的盘面与旧「召对期直写」时序一致，不破坏邸报连贯；幂等（落库即标 committed，HITL phase2 resume 不重跑）。
-- **可见性**：暂存动作对话之外的大臣**看不到**（皇帝 UI 可见以供复核/撤回，对话中的大臣靠对话记忆）。不依赖、不扩展现有 `build_draft_line` 广播（该广播本身的去留是独立问题，见 docs/TODO.md T6）。
+- **可见性**：暂存动作对话之外的大臣**看不到**（皇帝 UI 可见以供复核/撤回，对话中的大臣靠对话记忆）。不依赖、不扩展现有 `build_draft_line` 广播（该广播本身的去留是独立问题，见 TODOS.md T6）。
 - **暂存内冲突**：新建实体颁诏前编辑 = upsert 同一暂存行（面板一条草稿）；对已落库旧实体的操作（更新/催办/提交核议/记进展）= 各自一行、颁诏时按 id 序 apply（保操作语义）。
 - **决策即落库（CLAUDE.md P1 铁律）仍满足**：暂存表是真实 DB 表，待确认动作落在 `pending_actions`，context 压缩后 restore 仍可无损接续。
-- **颁诏后反悔**不是 undo，是新的游戏内命令（有代价），照局势 `cancellable=decree`+`cancel_cost` 范式，属本 ADR 范围外（见 docs/TODO.md T5）。
+- **颁诏后反悔**不是 undo，是新的游戏内命令（有代价），照局势 `cancellable=decree`+`cancel_cost` 范式，属本 ADR 范围外（见 TODOS.md T5）。

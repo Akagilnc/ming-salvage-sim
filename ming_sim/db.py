@@ -4535,6 +4535,11 @@ class GameDB:
                     "UPDATE pending_actions SET status='committed' WHERE id=?", (int(pa["id"]),))
                 applied.append({"id": pa["id"], "kind": pa["kind"], "action": pa["action"],
                                 "target_id": pa["target_id"]})
+            else:
+                # 落不了的(目标已转 pending_review、未知动作、坏 payload)标 failed,不留 pending——
+                # 否则回合推进后成旧回合不可见死行,永不再处理(ship-pre CMR codex)。
+                self.conn.execute(
+                    "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
         self.conn.commit()
         return applied
 
