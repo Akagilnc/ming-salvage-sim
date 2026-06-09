@@ -3515,6 +3515,9 @@ class GameDB:
         "characters": "name",
         "character_offices": "character_name",
         "consort_traits": "name",
+        # 动作闸门(ADR 0006)：召对暂存的结构化写动作。撤回召对须删本轮暂存,
+        # 否则颁诏仍会落库,破坏 undo 保证(CMR P1)。
+        "pending_actions": "id",
     }
 
     def _row_dict(self, row: sqlite3.Row) -> Dict[str, Any]:
@@ -4520,7 +4523,13 @@ class GameDB:
                 payload = json.loads(pa["payload_json"] or "{}")
             except (ValueError, TypeError):
                 payload = {}
-            ok = self._apply_pending_action(state, pa, payload)
+            # apply 抛错(如 催办 对已转 pending_review 的密令)= 当 False:留 pending、不标 committed、
+            # 不中断本轮其余动作、更不能崩整个结算(CMR P0)。
+            try:
+                ok = self._apply_pending_action(state, pa, payload)
+            except Exception as exc:
+                tlog(f"[pending_actions] 落库失败 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
+                ok = False
             if ok:
                 self.conn.execute(
                     "UPDATE pending_actions SET status='committed' WHERE id=?", (int(pa["id"]),))
@@ -4550,9 +4559,16 @@ class GameDB:
                 return self.submit_secret_order_for_review(
                     int(oid), str(payload.get("claim") or ""), state.year, state.period)
             if pa["action"] == "记进展":
-                self.update_secret_order_progress(
+                return self.update_secret_order_progress(
                     int(oid), str(payload.get("note") or ""), state.year, state.period)
-                return True
+        if pa["kind"] == "consort" and pa["action"] == "调教":
+            skill = str(payload.get("skill") or "")
+            trait = str(payload.get("trait") or "")
+            if not (skill or trait):
+                return False
+            self.cultivate_consort(
+                str(payload.get("name") or pa["minister_name"]), int(state.turn), skill, trait)
+            return True
         return False
 
     def save_resolve_context(
