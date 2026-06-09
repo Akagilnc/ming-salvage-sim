@@ -26,13 +26,14 @@ def run_tick(name, st, p, actions, expect=None):
     cash = {k: float(st.get(k,0)) for k in CASH_KEYS}
     claim = {k: float(st.get(k,0)) for k in CLAIM_KEYS}
     官民田 = float(st.get('官民田',0)); 隐田 = float(st.get('隐田',0))
+    地0 = 官民田 + 隐田                                  # 土地守恒锚:清丈只重分类,总亩数不变
     cash0 = sum(cash.values()); C0 = {k: cash[k] for k in CASH_KEYS if k.startswith('C_')}
     claim0 = dict(claim)
     cash_in = cash_out = 0.0
     # per-account C 流水
     Cin = {k:0.0 for k in C0}; Cout = {k:0.0 for k in C0}
     r = dict(实征=0,火耗实收=0,清欠=0,拨付gross=0,起运到京=0,实付=0,偿旧欠=0,行政补饷=0,
-             漂没=0,中饱=0,民欠新增=0,蠲免=0,
+             漂没=0,中饱=0,民欠新增=0,蠲免=0,unmet_relief=0,
              NewDebt={'军饷欠':0,'官俸欠':0,'宗禄欠':0},Repaid={'军饷欠':0,'官俸欠':0,'宗禄欠':0},
              action还={'军饷欠':0})
 
@@ -51,6 +52,7 @@ def run_tick(name, st, p, actions, expect=None):
         if a['type'] not in KNOWN_ACTIONS: raise ValueError(f"unknown action: {a['type']}")
         if a.get('cost',0) < 0 or a.get('amount',0) < 0: raise ValueError(f"负 cost/amount: {a}")
         if not (0 <= a.get('eff',1.0) <= 1): raise ValueError(f"eff 越界: {a}")
+        if a['type'] == '补饷' and a.get('amount',0) != 0: raise ValueError(f"补饷不接受 amount(cost即支付): {a}")
     for rk in ('火耗率','逋赋率','漂没率','中饱率'):
         if not (0 <= p.get(rk,0) <= 1): raise ValueError(f"{rk} 越界")
     Stock_start = cash['省库库银']
@@ -106,6 +108,7 @@ def run_tick(name, st, p, actions, expect=None):
     for h in ['军饷','官俸','宗禄','赈济']:
         d = p['Due'].get(h,0.0); pay = min(Pool,d); Pool -= pay; cash_out += pay; r['实付'] += pay
         nd = d-pay
+        if h == '赈济': r['unmet_relief'] = nd          # 赈济不积欠,但输出未满足给 LLM(§9)
         if h != '赈济' and nd > 0:
             ck = {'军饷':'军饷欠','官俸':'官俸欠','宗禄':'宗禄欠'}[h]; claim[ck] += nd; r['NewDebt'][ck] += nd
     S = Pool
@@ -166,11 +169,15 @@ def run_tick(name, st, p, actions, expect=None):
         exp = C0[ck] + o_in[ck] - o_out[ck]
         if abs(cash[ck]-exp) > EPS: ok_C=False; print(f"  [C分账FAIL]{ck} {cash[ck]:.2f}≠oracle{exp:.2f}(old{C0[ck]:.2f}+应得in{o_in[ck]:.2f}-out{o_out[ck]:.2f})")
     print(f"[C 分账·独立oracle] {'PASS' if ok_C else 'FAIL'}")
+    # 土地守恒(r17/opus:清丈只把隐田重分类为官民田,总亩数不变;防凭空造地=违铁律P3的「发展爽感」)
+    ok_land = abs((官民田+隐田) - 地0) < 1e-3
+    if not ok_land: print(f"  [土地守恒FAIL] 官民田+隐田 {官民田+隐田:.2f}≠初始{地0:.2f}")
+    print(f"[土地守恒] {'PASS' if ok_land else 'FAIL'}  (unmet_relief={r['unmet_relief']:.2f})")
     print(f"[末态] cash={{ {', '.join(f'{k}:{v:.2f}' for k,v in cash.items())} }}")
     print(f"       claim={{ {', '.join(f'{k}:{v:.2f}' for k,v in claim.items())} }} 官民田={官民田:.0f}")
     # 第4类断言:末态 vs 硬编码期望常量(codex r16:真正独立的锚,堵「债清了钱没出」级 bug——
     # 此类 bug 让 settlement 自己的 cash_in/out 一致少记,前三断言漏过,但末态≠常量必 FAIL)
-    end = {**{k:round(v,4) for k,v in cash.items()}, **{k:round(v,4) for k,v in claim.items()}}
+    end = {**{k:round(v,4) for k,v in cash.items()}, **{k:round(v,4) for k,v in claim.items()}, 'unmet_relief':round(r['unmet_relief'],4)}
     ok_exp = True
     if expect is not None:
         for kk,vv in expect.items():
@@ -179,7 +186,8 @@ def run_tick(name, st, p, actions, expect=None):
     else:
         print(f"[末态硬期望] (无 expect,捕获用)EXPECT={ {k:round(v,2) for k,v in end.items() if abs(v)>1e-9} }")
     new_st = dict(cash); new_st.update(claim); new_st['官民田']=官民田; new_st['隐田']=隐田
-    return (ok_cash and ok_debt and ok_C and ok_exp), new_st
+    new_st['unmet_relief']=r['unmet_relief']            # §9:输出给 LLM 裁判
+    return (ok_cash and ok_debt and ok_C and ok_exp and ok_land), new_st
 
 
 base = dict(正赋应征=60,三饷应征=10,火耗率=0.2,逋赋率=0.3,起运定额=40,漂没率=0.0,拨付gross=0,中饱率=0.0,
@@ -207,6 +215,15 @@ go("G13 拨付30+追赃(C_中饱10,追6)同tick", S(C_中饱=10), dict(base,拨�
 _p14 = {k:v for k,v in base.items() if k!='正赋应征'}; _p14['正赋亩额']=0.236
 go("G14 动态税基(正赋亩额0.236+清丈+300)", dict(S(), 官民田=3050), _p14,
    [dict(type='清丈',cost=2,挖隐田=300)], {'C_地方截留':9.2237,'民欠旧赋':22.765,'军饷欠':15.8817})
+# G15 双债户偿还优先级(军饷欠20+官俸欠20,余银只够还22→军饷先全清、官俸还2;堵偿还顺序 relabel)
+go("G15 双债户偿还序(军饷>官俸)", S(省库库银=70,军饷欠=20,官俸欠=20), base, [],
+   {'C_地方截留':8.4,'民欠旧赋':21,'军饷欠':0,'官俸欠':18,'宗禄欠':0})
+# G16 土地守恒+清丈枯竭(隐田仅200,挖300被 clamp 到200;官民田+隐田 守恒;堵凭空造地=违铁律P3)
+go("G16 清丈枯竭(隐田200挖300)", S(隐田=200), base, [dict(type='清丈',cost=2,挖隐田=300)],
+   {'C_地方截留':8.4,'民欠旧赋':21,'军饷欠':20})
+# G17 赈济饿死(穷省可支9,赈济Due15→实付9、unmet_relief6、不积欠;堵 unmet 不可见)
+go("G17 赈济饿死(unmet_relief)", S(省库库银=0,军饷欠=0), dict(base,Due=dict(军饷=0,官俸=0,宗禄=0,赈济=15)),
+   [], {'C_地方截留':8.4,'民欠旧赋':21,'军饷欠':0,'unmet_relief':6})
 
 # G9 三 tick 链:穷省(省库10)+ recurring 募兵(每 tick cost5),看死亡螺旋累积 + 每 tick 守恒 + 硬期望
 print(f"\n{'#'*64}\n# G9 三 tick 链(穷省 recurring 募兵,死亡螺旋)\n{'#'*64}")

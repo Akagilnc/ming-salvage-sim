@@ -1,8 +1,8 @@
-# 省级财政基座 · 草表 v17(末态硬期望锚 · spike G1–G14 · r16整体评审落字)
+# 省级财政基座 · 草表 v18(5层断言 · spike G1–G17 · 覆盖盲区补齐)
 
 > **范围:仅锁单省 spine(陕西);跨省 hub deferred;`拨付net/gross` 为 tick 外部入参(测试默认 0)。**
 > **对账方法学(r13–r15 逐层返工锤定)**:三类断言(现金守恒/债务 per-account/C per-account)的期望值**全用独立 oracle**——只从 tick 输入(`st` 开账快照 + `p` params + `actions`)重算,**绝不读 settlement 的任何中间量**(火耗应派/起运池/实征/k/省内可支)。否则校验项与被校验项同源=tautology,一致 relabel 照样过(opus 逐层逮到三层:per-account 流水→上游 param→力度系数 k)。
-> spike **G1–G14 全 PASS**(含末态硬期望常量=第4类独立锚,codex「债清钱没出」级 bug 被咬);自变异实证:中饱→省库、火耗→省库、军饷新债→官俸欠、虚增火耗×2、起运去 clamp、k 砍半 —— **现金/总量守恒全 PASS,但独立 oracle 当场 FAIL**。残留仅 `o_pool` 读省内可支(C-oracle 兜底,已注释)。
+> spike **G1–G17 全 PASS**(5层断言:现金/债务/C/末态硬期望/土地守恒;r17 三盲区[偿还序/土地守恒/unmet_relief]已补并自验);自变异实证:中饱→省库、火耗→省库、军饷新债→官俸欠、虚增火耗×2、起运去 clamp、k 砍半 —— **现金/总量守恒全 PASS,但独立 oracle 当场 FAIL**。残留仅 `o_pool` 读省内可支(C-oracle 兜底,已注释)。
 > 评审 r1–r15(panel=codex/agy/opus/sonnet)。决策见 [ADR 0007](adr/0007-province-fiscal-substrate-ai-judged.md)。⚠️=待精验。
 
 ## 0. 账户模型(三类 · spike 口径)
@@ -45,9 +45,10 @@ k=action力度系数(ΣCost仅含action银,Due不入;Cost>0 action其 delta/scal
 - **G1** 基线 · **G2** 补饷 k=0.333(死亡螺旋+无双扣)· **G3** 清丈(官民田3050→3350,当 tick 扣成本2)· **G4** 挪借火耗(C 内部转移)· **G5** 漂没.1+中饱.1+拨付30(漂没→C_漂没/中饱→C_中饱/net→省库)· **G6** 超额补饷 clamp(欠5补30只还5)· **G7** 清欠(民间补缴现金入)。
 - **G8** 挪借 eff=0.8 → 激活 C_eff损耗(2→损耗账户),per-account 对账平。
 - **G9** 三 tick 链(穷省+recurring 营建):死亡螺旋实显——军饷欠 30→97→133、火耗在 C_地方截留 累积 8.4→16.8→25.2(官绅肥/官衙穷),每 tick 三断言均 PASS。
-- **G10** 追赃(C_中饱→省库,eff<1)· **G11** 多 costed action 共享 k(补饷20+营建20,k=0.25)· **G12** 赈济 Due>0 · **G13** 拨付+追赃同 tick。
-- **自变异实证(全被独立 oracle FAIL)**:中饱→省库、火耗→省库、军饷新债→官俸欠、虚增火耗×2、起运去 clamp、settlement k 砍半。
-- 仍待补:recurring cost 在 k=0(穷省)停工的语义需 spec 显式锁;跨 tick「期初==上 tick 期末」显式断言(port 时补)。
+- **G10** 追赃 · **G11** 多 costed 共享 k · **G12** 赈济 Due>0 · **G13** 拨付+追赃同 tick · **G14** 动态税基(清丈抬税基)· **G15** 双债户偿还序(军饷>官俸)· **G16** 清丈枯竭+土地守恒 · **G17** 赈济饿死(unmet_relief)。
+- **5 层断言**:现金守恒 / 债务 per-account oracle / C per-account oracle / **末态硬期望常量(第4类独立锚)** / **土地守恒(Δ(官民田+隐田)=0)**;+ 输入校验 fail-loud(eff/amount/cost/rates 越界、补饷带 amount → raise);+ 输出 `unmet_relief`。
+- **自变异实证(全被某层 FAIL)**:中饱→省库、火耗→省库、军饷新债→官俸欠、虚增火耗×2、起运去 clamp、k 砍半、补饷只减欠不扣省库、清丈×2、偿还序 flip、清丈凭空造地、unmet 漏算。
+- 仍待补(port TODO):recurring k=0 停工语义、跨 tick「期初==上tick期末」断言、arrears_allowed。
 
 ## 6.7 可执行 spike(golden 种子)
 `spike_settle_tick.py` = 纯 dict 复式记账原型(非引擎、throwaway),实现 ⓪–⑪ + §0.1 守恒断言,跑 G1/G2 打印逐步流水 + 守恒 PASS/FAIL。**它就是将来真引擎 golden test 的种子**:port 进 `ming_sim` 时把 G1–Gn 转成 pytest 断言即可。
