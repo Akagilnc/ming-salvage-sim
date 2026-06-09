@@ -14,47 +14,16 @@ import sys
 from ming_sim.context import bind_content
 from ming_sim.decree import pre_settle, settle_with_delta
 import ming_sim.issues as issues_mod
+from ming_sim.issues import validate_delta_shape as _validate_delta_shape
 from ming_sim.content import GameContent
 from ming_sim.db import GameDB
-from ming_sim.simulation import EMPTY_EXTRACTION, _canonicalize_extraction
+from ming_sim.simulation import _canonicalize_extraction
 
 DEFAULT_DB = "data/probe.db"
 
-# 实体→{字段:值} 结构的 delta 模块(二级值必须是 dict)。metric_delta(键→int)、
-# world_advance(势力→立场字符串)是扁平 dict,不在此列,故不校验二级。
-_NESTED_DICT_FIELDS = frozenset(
-    {"region_delta", "army_delta", "faction_delta", "class_delta", "power_updates"}
-)
-
-
-def _validate_delta_shape(extracted: dict) -> None:
-    """canonical delta 各顶层字段的容器类型必须匹配 schema（dict / list），否则**结算前**抛 ValueError。
-
-    driver 只跑 `_canonicalize_extraction`（归一 key），不跑真实流程的 `_sanitize_module_output`
-    白名单/清洗。畸形模块值（如 `国势变化:"foo"` → metric_delta="foo"）若直送 apply 会在结算
-    中途崩 `.items()`，叠加非原子结算 = 半落库（cmr red-team RT-1）。在 pre_settle 动 DB 前校验，
-    崩前拦住、回合不半推进。抛 `ValueError`（库语义，可复用/可测）；CLI 边界由 `main()` 转退出码。
-    """
-    for key, value in extracted.items():
-        if key not in EMPTY_EXTRACTION:
-            raise ValueError(
-                f"未知 delta 顶层字段「{key}」(canonicalize 后)；疑拼写错(如 地区变更↔地区变化)，"
-                "apply 不会消费它 = 静默无效。请改用合法 key。"
-            )
-        expected = EMPTY_EXTRACTION[key]
-        if isinstance(expected, dict) and not isinstance(value, dict):
-            raise ValueError(f"delta 字段 {key} 必须是 object(dict)，实得 {type(value).__name__}")
-        if isinstance(expected, list) and not isinstance(value, list):
-            raise ValueError(f"delta 字段 {key} 必须是 array(list)，实得 {type(value).__name__}")
-        # 实体→{字段}模块的二级值必须是 dict;否则 apply 里 `.items()` 会在结算中途崩=半落库(Gemini R1 G2)。
-        # 注:字段名 typo(如 动乱→动荡)是合法 dict 结构、坏字段名,apply 会响亮抛 LLMContractError,
-        # 但那在 pre_settle 之后 → 半落库,根治需事务边界(issue #3),非 driver 此处能廉价覆盖。
-        if key in _NESTED_DICT_FIELDS:
-            for ent, sub in value.items():
-                if not isinstance(sub, dict):
-                    raise ValueError(
-                        f"delta 字段 {key}.{ent} 必须是 object(dict)，实得 {type(sub).__name__}"
-                    )
+# delta 容器/二级类型校验的单一真源已抽到 ming_sim.issues.validate_delta_shape(#57):
+# driver 在 pre_settle 前调一次防 pre_settle 半改;落库核 apply_score_extraction 自身也调一次
+# 防 apply 内部半落库。两路径共用同一契约,真实流不再缺二级校验。
 
 
 def open_game(db_path: str = DEFAULT_DB):

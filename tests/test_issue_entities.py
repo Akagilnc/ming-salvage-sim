@@ -84,6 +84,29 @@ def test_empty_effect_noop(game):
     assert _army_count(db) == before
 
 
+def test_apply_score_extraction_validates_before_half_apply(game):
+    """#57:apply_score_extraction 在任何 DB 改动前校验 delta 容器/二级类型——畸形二级 dict
+    不让前面的 metric/economy 先落库再在 region apply 崩(half-落库,违反 P1 落库铁律)。
+    真实流此前只有 driver 侧 _validate_delta_shape;现在落库核自身也守。"""
+    db, state, _ = game
+    treasury_before = state.metrics.get("国库")
+    bad = {
+        "metric_delta": {"国库": 50},                 # 合法,排在 region 之前处理
+        "region_delta": {"shanxi": "not-a-dict"},     # 二级非 dict → 落库前应抛 ValueError
+    }
+    with pytest.raises(ValueError):
+        I.apply_score_extraction(db, state, bad)
+    # 校验在 apply 之前 → metric 不该已落库
+    assert state.metrics.get("国库") == treasury_before
+
+
+def test_apply_score_extraction_rejects_unknown_top_level_key(game):
+    """#57:落库核也拒未知顶层 key(拼写错=静默无效落库),与 driver 侧同契约。"""
+    db, state, _ = game
+    with pytest.raises(ValueError):
+        I.apply_score_extraction(db, state, {"地区变更": {"shanxi": {"动乱": 5}}})
+
+
 def test_resolve_army_delta_reinforces_existing(game):
     """国策给既有军扩编：army_delta 累加到该军兵额（不新建）。"""
     db, state, _ = game
