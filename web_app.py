@@ -574,7 +574,7 @@ class WebGame:
         if not _fav_raw:
             self.db.kv_set("favorites", json.dumps(sorted(self.favorites)))
 
-    def apply_llm_config(
+    def build_llm_config(
         self,
         base_url: str,
         model: str,
@@ -586,36 +586,63 @@ class WebGame:
         advanced_base_url: Optional[str] = None,
         advanced_api_key: Optional[str] = None,
         advanced_thinking_level: Optional[str] = None,
+        channel: Optional[str] = None,
+        cli_runner: Optional[str] = None,
+        cli_model: Optional[str] = None,
+        cli_timeout_seconds: float = 0,
     ) -> LLMConfig:
-        base = normalize_openai_base_url(base_url.strip() or self.session.llm_config.base_url)
-        new_model = model.strip() or self.session.llm_config.model
-        # 请求 key 与已存 key 回落都过占位符过滤（in-game POST 输入边界）。
-        new_key = real_api_key_or_empty(api_key) or real_api_key_or_empty(self.session.llm_config.api_key)
-        new_max = max_tokens if max_tokens > 0 else self.session.llm_config.max_tokens
-        new_timeout = timeout_seconds if timeout_seconds > 0 else self.session.llm_config.timeout_seconds
+        """从 in-game 输入派生新 LLMConfig（纯函数,不 verify/不落盘/不改 session）。
+        通道感知（#51）：显式 channel 优先;否则填了真实 API key=切 api;都没有=保留当前通道
+        （CLI 局开 in-game 设置不再被强制降级到 api + 空 key 误报）。"""
+        cur = self.session.llm_config
+        # 通道解析（#51）
+        explicit = (channel or "").strip().lower() if channel is not None else ""
+        if explicit in VALID_CHANNELS:
+            new_channel = explicit
+        elif real_api_key_or_empty(api_key):
+            new_channel = "api"   # 用户填了真实 API key = 显式切到 API
+        else:
+            new_channel = (cur.channel or "api")   # 没填 = 保留当前通道,不强制降级
+        # CLI 槽位：未传则保留当前
+        new_cli_runner = (cli_runner if cli_runner is not None else cur.cli_runner)
+        new_cli_model = (cli_model if cli_model is not None else cur.cli_model)
+        new_cli_timeout = (
+            cli_timeout_seconds if cli_timeout_seconds and cli_timeout_seconds > 0
+            else cur.cli_timeout_seconds
+        )
+        base = normalize_openai_base_url(base_url.strip() or cur.base_url)
+        new_model = model.strip() or cur.model
+        # CLI 通道不要 API key（占位符在 create_chat_model 构造 CliChat 时注入）；
+        # API 通道：请求 key 与已存 key 回落都过占位符过滤。
+        if new_channel == "cli":
+            new_key = ""
+        else:
+            new_key = real_api_key_or_empty(api_key) or real_api_key_or_empty(cur.api_key)
+        new_max = max_tokens if max_tokens > 0 else cur.max_tokens
+        new_timeout = timeout_seconds if timeout_seconds > 0 else cur.timeout_seconds
         if thinking_level is None:
-            new_thinking_level = self.session.llm_config.thinking_level
+            new_thinking_level = cur.thinking_level
         else:
             new_thinking_level = normalize_thinking_level(thinking_level)
         # advanced_* = None 表示不动；传空串表示显式清空。
         if advanced_model is None:
-            new_advanced = self.session.llm_config.advanced_model
+            new_advanced = cur.advanced_model
         else:
             new_advanced = advanced_model.strip()
         if advanced_base_url is None:
-            new_adv_base = self.session.llm_config.advanced_base_url
+            new_adv_base = cur.advanced_base_url
         else:
             adv_base_in = advanced_base_url.strip()
             new_adv_base = normalize_openai_base_url(adv_base_in) if adv_base_in else ""
         if advanced_api_key is None:
-            new_adv_key = self.session.llm_config.advanced_api_key
+            new_adv_key = cur.advanced_api_key
         else:
             new_adv_key = advanced_api_key.strip()
         if advanced_thinking_level is None:
-            new_adv_thinking_level = self.session.llm_config.advanced_thinking_level
+            new_adv_thinking_level = cur.advanced_thinking_level
         else:
             new_adv_thinking_level = normalize_thinking_level(advanced_thinking_level)
-        new_config = LLMConfig(
+        return LLMConfig(
             api_key=new_key,
             base_url=base,
             model=new_model,
@@ -626,12 +653,14 @@ class WebGame:
             advanced_base_url=new_adv_base,
             advanced_api_key=new_adv_key,
             advanced_thinking_level=new_adv_thinking_level,
-            channel="api",
-            cli_runner=self.session.llm_config.cli_runner,
-            cli_model=self.session.llm_config.cli_model,
-            cli_timeout_seconds=self.session.llm_config.cli_timeout_seconds,
+            channel=new_channel,
+            cli_runner=new_cli_runner,
+            cli_model=new_cli_model,
+            cli_timeout_seconds=new_cli_timeout,
         )
-        _verify_llm_configs_or_raise(new_config)
+
+    def commit_llm_config(self, new_config: LLMConfig) -> LLMConfig:
+        """落盘 + 切 session + 重建 registry（快;verify 由调用方先做,可 offload）。"""
         save_runtime_llm(
             new_config.base_url,
             new_config.model,
@@ -652,6 +681,12 @@ class WebGame:
         # 重建 registry 让大臣 Agent 用新配置
         self.session.begin_turn()
         return new_config
+
+    def apply_llm_config(self, *args, **kwargs) -> LLMConfig:
+        """同步:build → verify → commit。异步端点 api_set_llm_config 改为分步以 offload verify。"""
+        new_config = self.build_llm_config(*args, **kwargs)
+        _verify_llm_configs_or_raise(new_config)
+        return self.commit_llm_config(new_config)
 
     # ── 便捷属性 ──────────────────────────────────────────────────────────
     @property
@@ -2194,6 +2229,11 @@ class LLMConfigRequest(BaseModel):
     advanced_base_url: str = "__keep__"
     advanced_api_key: str = "__keep__"
     advanced_thinking_level: str = "__keep__"
+    # 通道感知（#51）：channel/cli_* 用 "__keep__" sentinel 表示「保留当前」。
+    channel: str = "__keep__"
+    cli_runner: str = "__keep__"
+    cli_model: str = "__keep__"
+    cli_timeout_seconds: float = 0
 
 
 @app.get("/api/consorts/candidates")
@@ -2310,8 +2350,14 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
     adv_base = None if request.advanced_base_url == "__keep__" else request.advanced_base_url
     adv_key = None if request.advanced_api_key == "__keep__" else request.advanced_api_key
     adv_thinking = None if request.advanced_thinking_level == "__keep__" else request.advanced_thinking_level
+    channel = None if request.channel == "__keep__" else request.channel
+    cli_runner = None if request.cli_runner == "__keep__" else request.cli_runner
+    cli_model = None if request.cli_model == "__keep__" else request.cli_model
     try:
-        cfg = get_game().apply_llm_config(
+        game = get_game()
+        # 通道感知 build（#51）+ verify offload 出 event loop（#56：CLI smoke ~12s 不阻塞并发,
+        # verify 只读;commit 落盘/重建 registry 快,留在 loop 上避免改 session 态的并发竞态）。
+        cfg = game.build_llm_config(
             request.base_url,
             request.model,
             request.api_key,
@@ -2322,7 +2368,13 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
             advanced_base_url=adv_base,
             advanced_api_key=adv_key,
             advanced_thinking_level=adv_thinking,
+            channel=channel,
+            cli_runner=cli_runner,
+            cli_model=cli_model,
+            cli_timeout_seconds=request.cli_timeout_seconds,
         )
+        await asyncio.get_running_loop().run_in_executor(None, _verify_llm_configs_or_raise, cfg)
+        game.commit_llm_config(cfg)
     except LLMUnavailable as e:
         raise HTTPException(status_code=400, detail=_llm_error_detail(e)) from None
     except Exception as e:  # noqa: BLE001
@@ -2338,6 +2390,10 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
         "has_advanced_api_key": _has_real_api_key(cfg.advanced_api_key),
         "advanced_thinking_level": cfg.advanced_thinking_level,
         "has_api_key": _has_real_api_key(cfg.api_key),
+        "channel": cfg.channel,
+        "cli_runner": cfg.cli_runner,
+        "cli_model": cfg.cli_model,
+        "cli_timeout_seconds": cfg.cli_timeout_seconds,
     }
 
 

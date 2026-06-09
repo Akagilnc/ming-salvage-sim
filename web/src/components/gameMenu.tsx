@@ -343,6 +343,11 @@ export function LLMConfigTab() {
   const [maxTokens, setMaxTokens] = React.useState("8000");
   const [timeoutSeconds, setTimeoutSeconds] = React.useState("180");
   const [thinkingLevel, setThinkingLevel] = React.useState("");
+  // 通道感知（#51）：局中也能切 API / CLI 通道,不再被强制降级到 api。
+  const [channel, setChannel] = React.useState<"api" | "cli">("api");
+  const [cliRunner, setCliRunner] = React.useState("agy");
+  const [cliModel, setCliModel] = React.useState("");
+  const [cliTimeout, setCliTimeout] = React.useState("300");
   const [show, setShow] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [msg, setMsg] = React.useState("");
@@ -360,6 +365,10 @@ export function LLMConfigTab() {
         setMaxTokens(String(data.max_tokens || 8000));
         setTimeoutSeconds(String(data.timeout_seconds || 180));
         setThinkingLevel(data.thinking_level || "");
+        setChannel(data.channel === "cli" ? "cli" : "api");
+        setCliRunner(data.cli_runner || "agy");
+        setCliModel(data.cli_model || "");
+        setCliTimeout(String(data.cli_timeout_seconds || 300));
       })
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
   }, []);
@@ -382,6 +391,10 @@ export function LLMConfigTab() {
           advanced_base_url: advancedBaseUrl,
           advanced_api_key: advancedApiKey.trim() ? advancedApiKey : "__keep__",
           advanced_thinking_level: advancedThinkingLevel.trim(),
+          channel,
+          cli_runner: channel === "cli" ? cliRunner : "__keep__",
+          cli_model: channel === "cli" ? cliModel : "__keep__",
+          cli_timeout_seconds: channel === "cli" ? parseFloat(cliTimeout) || 300 : 0,
         }),
       });
       setInfo((cur) => (cur ? { ...cur, ...data } : null));
@@ -402,6 +415,50 @@ export function LLMConfigTab() {
       <p className="menu-hint">
         立即生效并写入 <code>data/runtime_llm.json</code>，重启进程后自动加载。api_key 留空保留当前。
       </p>
+      <label className="menu-field">
+        <span>执行通道</span>
+        <select
+          className="menu-input"
+          value={channel}
+          onChange={(e) => setChannel(e.target.value === "cli" ? "cli" : "api")}
+        >
+          <option value="api">API（OpenAI 兼容，需 key）</option>
+          <option value="cli">CLI（本地 codex/agy/claude，脱 key）</option>
+        </select>
+      </label>
+      {channel === "cli" ? (
+        <>
+          <label className="menu-field">
+            <span>CLI Runner</span>
+            <select className="menu-input" value={cliRunner} onChange={(e) => setCliRunner(e.target.value)}>
+              <option value="agy">agy（Gemini）</option>
+              <option value="codex">codex</option>
+              <option value="claude">claude</option>
+            </select>
+          </label>
+          <label className="menu-field">
+            <span>CLI Model <small className="menu-hint">（空=runner 默认）</small></span>
+            <input
+              className="menu-input"
+              value={cliModel}
+              onChange={(e) => setCliModel(e.target.value)}
+              placeholder="gpt-5.5 / claude-opus-4-8 / 空"
+            />
+          </label>
+          <label className="menu-field">
+            <span>CLI 超时（秒）</span>
+            <input
+              className="menu-input"
+              type="number"
+              min={30}
+              max={1800}
+              value={cliTimeout}
+              onChange={(e) => setCliTimeout(e.target.value)}
+              placeholder="300"
+            />
+          </label>
+        </>
+      ) : null}
       <label className="menu-field">
         <span>Base URL</span>
         <input
