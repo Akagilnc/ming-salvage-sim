@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import json as _j
 
+import pytest
+
 import ming_sim.decree as decree
 import ming_sim.cli_backend as _cb
 from ming_sim.decree import settle_with_delta
@@ -105,6 +107,20 @@ def test_settle_none_branch_legacy_env_enriches(game, monkeypatch):
         "SELECT effect_on_resolve FROM issues WHERE title='none分支国策'").fetchone()
     assert row is not None
     assert _j.loads(row["effect_on_resolve"]) == {"metrics": {"民心": 1}}
+
+
+def test_driver_run_settle_rejects_malformed_delta_before_write(game):
+    """Sourcery:driver.run_settle 对畸形 delta(region_delta 二级非 dict)在 pre_settle/落库前
+    抛 ValueError,不半写——validate 在 driver 路径跑在 pre_settle 之前。"""
+    import driver
+    db, state, content = game
+    treasury_before = state.metrics.get("国库")
+    with pytest.raises(ValueError):
+        driver.run_settle(db, state, content, {
+            "metric_delta": {"国库": 50},
+            "region_delta": {"shanxi": "not-a-dict"},
+        })
+    assert state.metrics.get("国库") == treasury_before   # 校验在落库前,metric 未落
 
 
 def test_driver_run_settle_deterministic_under_legacy_env(game, monkeypatch):
