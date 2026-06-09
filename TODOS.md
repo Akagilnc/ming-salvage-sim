@@ -127,6 +127,23 @@
 - **铁律**：凡诏书"练某军/募某营/调某将镇某地"的，产 delta 时 **issue（进度）+ `new_armies`（军籍人马）+ `office_changes`（主将调任）必须配齐**。光推 bar 不落实体 = 账实不符。
 - **已补**：崇祯二年八月立天雄军军籍(兵 18000)+ 调卢象升「荡寇将军」督天雄军镇蓟镇东协·喜峰口、受孙承宗节制。
 
+### T5. 密令应支持「撤销/提前结束」（玩家面，留待深挖密令机制时做）
+- **缺口**：当前密令(secret_orders)只有建/列两个端点，status 仅 active/pending_review/done/failed，**无玩家面的「撤回/作废/提前结束」**。能撤的只有「撤回召对」（回话级 undo，仅最后一轮、颁诏前）或结算时 close 为 failed。
+- **范式**：照局势(issue)的 `cancellable=decree`（可撤旨）+ `cancel_cost`（撤销代价）那套——已颁诏的密令可由「圣旨撤回 + 代价」收回（人已派/钱已花的沉没成本）。见 `db.cancel_issue`(db.py:5060) + `_normalize_cancellable`(issues.py:555)。
+- **时机**：属「颁诏后玩法」，**不在 pending_actions(slice 4+5)范围**；留到后续深挖密令机制专项时做。
+
+### T6. 未颁诏草案不该广播给所有大臣（roleplay 硬伤，独立于 pending_actions）
+- **现状**：`build_draft_line`(session.py:573)把「本{月}已核定草案」前置注入**每个**大臣的对话上下文，代码注释当 feature（"确保大臣看得到兄弟大臣最新动作"）。
+- **问题**：未颁旨的东西不该全员全知。对话中的大臣记得=靠对话记忆（正常）；**别的大臣凭什么知道**？密令更应保密。
+- **范围**：改的是**现有拟旨/草案可见性**，与 pending_actions(slice 4+5)的 reroute 可分离；slice 4+5 的新 pending **不广播**（皇帝 UI 看得到、对话大臣靠对话记忆、其他大臣看不到），不依赖也不扩展 `build_draft_line`。本条单独处理该广播本身。
+- **细化待定**：首辅/内阁等是否对**公开政策**草案有合理知情权（密令永远保密）——留作该 issue 内的子决策。
+
+### T7. 拟旨为何走叙事 extractor 而非结构化直写——分析合理性，理由不足则统一
+- **现状不对称**：颁诏落地时，密令/任命/后宫走**结构化直写**(`commit_pending_actions` 直 INSERT/UPDATE)，但拟旨 draft 走 **LLM extractor**（draft 文本→邸报叙事→抽 delta，不直接写表，见 decree.py:414 / mark_directives_issued）。
+- **表面理由**：拟旨是开放式诏书，效果可落在经济/地区/局势/任何模块，故由 LLM 解释成 delta；密令/任命/后宫是闭式结构化记录（确定字段），直写即可。
+- **待分析**：这个理由够不够。若拟旨效果其实也能（部分）结构化、或 extractor 往返带来漂移/有损，**后续应统一**到结构化 staging。没有足够理由保留不对称就别留着。
+- **范围**：拟旨机制不在 pending_actions(slice 4+5) 改动范围（slice 4+5 只动密令/任命/后宫的 reroute+颁诏直写），拟旨保持现状。本条单独找时间分析。
+
 ## 🟡 观察 / 待确认（未必是 bug）
 
 ### O1. 客氏出宫但 status 仍 active → [issue #11](https://github.com/Akagilnc/ming-salvage-sim/issues/11)
