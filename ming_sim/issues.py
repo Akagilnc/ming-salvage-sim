@@ -1002,6 +1002,39 @@ def _displace_duplicate_offices(
     return displaced
 
 
+# 实体→{字段:值} 结构的 delta 模块(二级值必须是 dict)。metric_delta(键→int)、
+# world_advance(势力→立场字符串)是扁平 dict,不在此列,故不校验二级。
+_NESTED_DICT_FIELDS = frozenset(
+    {"region_delta", "army_delta", "faction_delta", "class_delta", "power_updates"}
+)
+
+
+def validate_delta_shape(extracted: dict) -> None:
+    """canonical delta 各顶层字段容器类型必须匹配 schema(dict/list),实体模块二级值必须是 dict,
+    否则**任何 DB 改动前**抛 ValueError——畸形值直送 apply 会在结算中途崩 `.items()`,叠加非
+    原子结算 = 半落库(违反 P1 落库铁律;cmr RT-1 / Gemini PR#50 R2)。driver 在 pre_settle 前
+    调一次防 pre_settle 半改;落库核 apply_score_extraction 自身也调一次防 apply 内部半落库。
+    彻底原子化需事务边界(issue #3),此校验是廉价前置防线。"""
+    from ming_sim.simulation import EMPTY_EXTRACTION  # 懒 import 避 issues↔simulation 循环
+    for key, value in extracted.items():
+        if key not in EMPTY_EXTRACTION:
+            raise ValueError(
+                f"未知 delta 顶层字段「{key}」(canonicalize 后)；疑拼写错(如 地区变更↔地区变化)，"
+                "apply 不会消费它 = 静默无效。请改用合法 key。"
+            )
+        expected = EMPTY_EXTRACTION[key]
+        if isinstance(expected, dict) and not isinstance(value, dict):
+            raise ValueError(f"delta 字段 {key} 必须是 object(dict)，实得 {type(value).__name__}")
+        if isinstance(expected, list) and not isinstance(value, list):
+            raise ValueError(f"delta 字段 {key} 必须是 array(list)，实得 {type(value).__name__}")
+        if key in _NESTED_DICT_FIELDS:
+            for ent, sub in value.items():
+                if not isinstance(sub, dict):
+                    raise ValueError(
+                        f"delta 字段 {key}.{ent} 必须是 object(dict)，实得 {type(sub).__name__}"
+                    )
+
+
 def apply_score_extraction(
     db: GameDB,
     state: GameState,
@@ -1014,6 +1047,8 @@ def apply_score_extraction(
 
     content/registry：若传入则处理 `appointments`——把诏书任命的新人建档入朝。
     缺省则跳过（向后兼容老调用）。"""
+    # 0) 落库前校验容器/二级类型,畸形值崩前拦住,不让前面字段半落库(#57)。
+    validate_delta_shape(extracted)
     # 1) metric_delta
     applied_metric = _apply_metric_dict(state, extracted.get("metric_delta") or {}, db=db)
     # 2) economy_moves
