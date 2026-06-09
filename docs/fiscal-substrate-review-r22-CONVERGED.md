@@ -14,3 +14,8 @@ r1-r10 守恒/oracle 锤打 → r11-r15 逐层堵 tautology(per-account 流水�
 ## 最终状态
 spike `spike_settle_tick.py`:21 value-golden + 6 raise-golden,5 层断言(现金守恒/债务per-account oracle/C per-account oracle/末态硬期望常量/土地守恒)+ 输入校验面完整,~20 mutation 自验全被某层 FAIL。
 唯一残留 o_pool(现金守恒层兜底,已锁注)。port TODO:recurring k=0 语义、跨tick期初断言、arrears_allowed、史实量级重标、定点数。
+
+## 线上追踪(2026-06-10 建)
+- **Milestone #1** 省级财政基座:https://github.com/Akagilnc/ming-salvage-sim/milestone/1
+- **Epic #65**(设计已收敛,port 追踪)+ port 子任务 #66–#71。
+- **状态:设计已并入 main,未 port**(等重构完成后启动 #66)。
