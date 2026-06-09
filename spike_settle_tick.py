@@ -19,7 +19,7 @@ golden:G1 基线 / G2 补饷k / G3 清丈 / G4 挪借 / G5 漂没中饱拨付 / 
 EPS = 1e-6
 CASH_KEYS = ['省库库银','C_地方截留','C_中饱','C_漂没','C_eff损耗']
 CLAIM_KEYS = ['民欠旧赋','军饷欠','官俸欠','宗禄欠']
-KNOWN_ACTIONS = {'补饷','清丈','挪借火耗','清欠','蠲免','营建'}
+KNOWN_ACTIONS = {'补饷','清丈','挪借火耗','追赃','清欠','蠲免','营建'}
 
 def run_tick(name, st, p, actions):
     print(f"\n{'='*64}\n{name}\n{'='*64}")
@@ -72,6 +72,9 @@ def run_tick(name, st, p, actions):
         elif t == '挪借火耗':                     # C_地方截留→省库(CASH 内部,eff<1 入 C_eff损耗)
             mv = xfer_internal('C_地方截留','省库库银', amt, a.get('eff',1.0))
             print(f"  挪借火耗 {mv:.2f}(eff={a.get('eff',1.0)})")
+        elif t == '追赃':                         # 追缴中饱赃银 C_中饱→省库(CASH 内部,eff<1 入 C_eff损耗)
+            mv = xfer_internal('C_中饱','省库库银', amt, a.get('eff',1.0))
+            print(f"  追赃 {mv:.2f}(eff={a.get('eff',1.0)})")
         elif t == '清欠':                         # 收旧民欠:民间现金入
             收 = min(amt, claim['民欠旧赋']); cash['省库库银'] += 收; cash_in += 收
             claim['民欠旧赋'] -= 收; r['清欠'] += 收; print(f"  清欠 {收:.2f}")
@@ -135,8 +138,12 @@ def run_tick(name, st, p, actions):
     o_my += (正赋+三饷)*bf
     if abs(claim['民欠旧赋']-o_my) > EPS: ok_debt=False; print(f"  [债务FAIL]民欠 {claim['民欠旧赋']:.2f}≠oracle{o_my:.2f}")
     print(f"[债务对账·独立oracle] {'PASS' if ok_debt else 'FAIL'}")
-    # per-account C 对账 · 独立 oracle(r13/opus:应得从 params/action 重算,与落账两条独立路径,堵一致 relabel)
-    o_in = {'C_地方截留': 火耗应派*(1-bf), 'C_中饱': g*zb, 'C_漂没': 起运池*pm, 'C_eff损耗': 0.0}
+    # per-account C 对账 · 独立 oracle(r14/opus:下沉到原始 param 重算,不读 settlement 的 火耗应派/起运池 局部变量)
+    正赋_o = p.get('正赋应征', round(官民田*p.get('正赋亩额',0)/12,4))
+    实征_o = (正赋_o + p['三饷应征'])*(1-bf)
+    火耗应派_o = 正赋_o * fh
+    起运池_o = min(实征_o, p['起运定额'])
+    o_in = {'C_地方截留': 火耗应派_o*(1-bf), 'C_中饱': g*zb, 'C_漂没': 起运池_o*pm, 'C_eff损耗': 0.0}
     o_out = {ck: 0.0 for ck in C0}
     bal_dfjl, bal_zb = C0['C_地方截留'], C0['C_中饱']   # ⓪挪借/追赃 时的余额(火耗实收⑦/中饱⑩ 才加)
     for a in actions:
@@ -146,7 +153,7 @@ def run_tick(name, st, p, actions):
             o_out['C_地方截留'] += act; o_in['C_eff损耗'] += act*(1-a.get('eff',1.0))
         elif a['type'] == '追赃':
             act = min(a.get('amount',0)*ak, bal_zb); bal_zb -= act
-            o_out['C_中饱'] += act
+            o_out['C_中饱'] += act; o_in['C_eff损耗'] += act*(1-a.get('eff',1.0))
     ok_C = True
     for ck in C0:
         exp = C0[ck] + o_in[ck] - o_out[ck]
@@ -174,6 +181,9 @@ go("G5 漂没.1中饱.1拨付30", S(), dict(base,漂没率=0.1,中饱率=0.1,拨
 go("G6 超额补饷(欠5补30)", S(省库库银=30,军饷欠=5), base, [dict(type='补饷',cost=30)])
 go("G7 清欠(民欠15清10)", S(民欠旧赋=15), base, [dict(type='清欠',amount=10)])
 go("G8 挪借eff=.8(激活C_eff损耗)", S(C_地方截留=20), base, [dict(type='挪借火耗',amount=10,eff=0.8)])
+go("G10 追赃(C_中饱12,追8 eff=.9)", S(C_中饱=12), base, [dict(type='追赃',amount=8,eff=0.9)])
+go("G11 多costed(补饷20+营建20,Stock10→k=.25)", S(省库库银=10,军饷欠=50), base,
+   [dict(type='补饷',cost=20), dict(type='营建',cost=20)])
 
 # G9 三 tick 链:穷省(省库10)+ recurring 募兵(每 tick cost5),看死亡螺旋累积 + 每 tick 守恒
 print(f"\n{'#'*64}\n# G9 三 tick 链(穷省 recurring 募兵,死亡螺旋)\n{'#'*64}")
