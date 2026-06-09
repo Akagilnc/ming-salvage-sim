@@ -29,8 +29,10 @@ DEFAULT_DB = "data/probe.db"
 _DETERMINISTIC_LLM = LLMConfig(api_key="", base_url="", model="", channel="api")
 
 # delta 容器/二级类型校验的单一真源已抽到 ming_sim.issues.validate_delta_shape(#57):
-# driver 在 pre_settle 前调一次防 pre_settle 半改;落库核 apply_score_extraction 自身也调一次
-# 防 apply 内部半落库。两路径共用同一契约,真实流不再缺二级校验。
+# driver 在 pre_settle 前调(driver 的 delta 是对话里现成的)→ 完全防 pre_settle + apply 半落库;
+# 落库核 apply_score_extraction 自身也调一次,防 apply **内部**字段间半落库(metric 落了 region 才崩)。
+# 注:真实流的 delta 由 extractor 在 pre_settle 之后才产出,故 apply 内的校验拦不住 pre_settle 那段
+# 财政 tick 的半落库——那段的彻底原子化属事务边界(issue #3),非本校验能廉价覆盖。
 
 
 def open_game(db_path: str = DEFAULT_DB):

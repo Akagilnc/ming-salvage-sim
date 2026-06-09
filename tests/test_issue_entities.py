@@ -101,10 +101,11 @@ def test_apply_score_extraction_validates_before_half_apply(game):
 
 
 def test_apply_score_extraction_rejects_unknown_top_level_key(game):
-    """#57:落库核也拒未知顶层 key(拼写错=静默无效落库),与 driver 侧同契约。"""
+    """#57:落库核拒未知顶层 key(拼写错=静默无效落库)。用 canonicalize 之后仍不在 schema 的
+    真·未知 key(非中文别名——别名会被 _canonicalize_extraction 映射成合法 key,Red Team RT-C)。"""
     db, state, _ = game
     with pytest.raises(ValueError):
-        I.apply_score_extraction(db, state, {"地区变更": {"shanxi": {"动乱": 5}}})
+        I.apply_score_extraction(db, state, {"region_delta_typo": {"shanxi": {"unrest": 5}}})
 
 
 def test_resolve_army_delta_reinforces_existing(game):
