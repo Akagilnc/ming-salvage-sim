@@ -27,6 +27,7 @@
 > **自变异实证(spike)**:中饱→省库、火耗实收→省库、军饷新债→官俸欠 三种**一致 relabel**(落账+记账同步搬),现金/总量守恒全 PASS,但独立 oracle 的 per-account C / 债务 **当场 FAIL**。旧的「同源流水」式(v13)放过这些,独立 oracle 堵住。
 **每笔 `transfer_to` 三方平**:`source减 = target增(actual×eff) + C_eff损耗增(actual×(1−eff))`(`actual=min(amount,source)`;BOUNDARY 账户 民间/京/受款方 **无余额 clamp**)。
 > 旧式「三本账总额=拨付−起运」及 v11 漏 拨付net 的式子**均作废**:r11/opus 变异测试实锤 —— 旧式是 tautology(火耗应派≡火耗实收+火耗未收,永真),v11 式漏 拨付net(设 20 跑出残差+20)。现式 spike G1–G7 全 PASS。
+> **port 安全锁(r22/opus 实证)**:债务 oracle 的 `o_pool` 读运行时 `省内可支`(唯一残留同源),故**现金守恒层是债务 oracle 的兜底,绝不可删**——能污染 `o_pool` 的 bug 必然改动现金可支量、从而破现金守恒;「既现金中性又改 `省内可支`」的 bug 自相矛盾不存在。port 写 pytest 时删现金守恒断言会让债务 oracle 单独退化成 tautology。
 
 ## 1. 单位制 + cost_type(同 v10)
 年额÷12·月额万两/月·stock万两·税额两/亩·年(非0-1)·真率0-1。action「银」amount=每tick成本,cost_type=one_time/recurring。
