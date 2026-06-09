@@ -2247,7 +2247,8 @@ class LLMConfigRequest(BaseModel):
     advanced_base_url: str = "__keep__"
     advanced_api_key: str = "__keep__"
     advanced_thinking_level: str = "__keep__"
-    # 通道感知（#51）：channel/cli_* 用 "__keep__" sentinel 表示「保留当前」。
+    # 通道感知（#51）：channel/cli_runner/cli_model 用 "__keep__" sentinel 表示「保留当前」;
+    # cli_timeout_seconds 是数值,沿用数值 sentinel 0（=不改,build 回落当前值），不走 "__keep__"。
     channel: str = "__keep__"
     cli_runner: str = "__keep__"
     cli_model: str = "__keep__"
@@ -2400,6 +2401,10 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
             )
             await asyncio.get_running_loop().run_in_executor(None, _verify_llm_configs_or_raise, cfg)
             game.commit_llm_config(cfg)
+    except HTTPException:
+        # _verify_llm_configs_or_raise 已把校验失败包成带干净 detail 的 HTTPException;
+        # 经 run_in_executor 透传上来后原样抛,别被下面 except Exception 二次包裹 mangle 掉(Gemini R2)。
+        raise
     except LLMUnavailable as e:
         raise HTTPException(status_code=400, detail=_llm_error_detail(e)) from None
     except Exception as e:  # noqa: BLE001

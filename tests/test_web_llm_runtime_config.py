@@ -173,6 +173,26 @@ def test_api_set_llm_config_explicit_cli_channel_switch(monkeypatch):
     assert result["has_api_key"] is False
 
 
+def test_api_set_llm_config_keep_sentinels_pass_none_to_build(monkeypatch):
+    """Sourcery:channel/cli_runner/cli_model 缺省 "__keep__" → 映射 None 传给 build(保留当前),
+    不被当作字面值「__keep__」覆盖通道。"""
+    built = {}
+
+    def fake_build(*a, **k):
+        built.update(k)
+        return LLMConfig(api_key="sk", base_url="https://x/v1", model="m", channel="api")
+
+    fake = SimpleNamespace(build_llm_config=fake_build, commit_llm_config=lambda c: c)
+    monkeypatch.setattr(web_app, "get_game", lambda: fake)
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda c: None)
+
+    asyncio.run(web_app.api_set_llm_config(web_app.LLMConfigRequest()))  # 全默认 = __keep__
+
+    assert built["channel"] is None
+    assert built["cli_runner"] is None
+    assert built["cli_model"] is None
+
+
 def test_api_set_llm_config_verify_runs_off_event_loop(monkeypatch):
     """#56:in-game /api/llm/config 的 verify(CLI smoke ~12s)offload 出 asyncio event loop,
     commit(落盘/重建)留在 loop。断言 verify 在非主线程跑。"""
@@ -194,9 +214,10 @@ def test_api_set_llm_config_verify_runs_off_event_loop(monkeypatch):
     assert seen["thread"] is not threading.main_thread()
 
 
-def test_api_set_llm_config_verify_failure_skips_commit_and_400(monkeypatch):
-    """#56 负路径:verify(offload)抛 LLMUnavailable 时,绝不 commit(不落盘/不改 session),
-    端点映射 HTTP 400。build→verify→commit 的「先验后写」不变式(Testing)。"""
+def test_api_set_llm_config_verify_failure_skips_commit_and_passes_through_httpexception(monkeypatch):
+    """#56 负路径:_verify_llm_configs_or_raise 真实抛的是已包好 detail 的 HTTPException(经
+    run_in_executor 透传)。端点须原样抛(不被 except Exception 二次包裹 mangle,Gemini R2),
+    且绝不 commit(不落盘/不改 session)。"""
     cfg = LLMConfig(api_key="", base_url="", model="m", channel="cli",
                     cli_runner="codex", cli_model="gpt-5.5", cli_timeout_seconds=240)
     commit_calls = []
@@ -206,15 +227,18 @@ def test_api_set_llm_config_verify_failure_skips_commit_and_400(monkeypatch):
     )
     monkeypatch.setattr(web_app, "get_game", lambda: fake)
 
+    sentinel_detail = {"code": "llm_unavailable", "message": "主模型连通性检查失败：runner missing"}
+
     def boom(c):
-        raise web_app.LLMUnavailable("runner missing")
+        raise web_app.HTTPException(status_code=400, detail=sentinel_detail)
 
     monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", boom)
 
     with pytest.raises(web_app.HTTPException) as ei:
         asyncio.run(web_app.api_set_llm_config(web_app.LLMConfigRequest(channel="cli", cli_runner="codex")))
     assert ei.value.status_code == 400
-    assert commit_calls == []   # verify 失败 → commit 从未被调,无半落盘/半改 session
+    assert ei.value.detail == sentinel_detail   # 原样透传,未被二次包裹
+    assert commit_calls == []                    # verify 失败 → commit 从未被调
 
 
 def test_menu_status_active_cli_unsupported_runner_not_ready_despite_preserved_api_key(monkeypatch):
