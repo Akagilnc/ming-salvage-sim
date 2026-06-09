@@ -667,22 +667,34 @@ class WebGame:
 
     def commit_llm_config(self, new_config: LLMConfig) -> LLMConfig:
         """落盘 + 切 session + 重建 registry（快;verify 由调用方先做,可 offload）。"""
-        save_runtime_llm(
-            new_config.base_url,
-            new_config.model,
-            new_config.api_key,
-            new_config.max_tokens,
-            new_config.timeout_seconds,
-            new_config.thinking_level,
-            new_config.advanced_model,
-            new_config.advanced_base_url,
-            new_config.advanced_api_key,
-            new_config.advanced_thinking_level,
-            channel=new_config.channel,
-            cli_runner=new_config.cli_runner,
-            cli_model=new_config.cli_model,
-            cli_timeout_seconds=new_config.cli_timeout_seconds,
-        )
+        if new_config.channel == "cli":
+            # CLI 通道:**不覆盖 api 槽**——传空 api 输入触发 save_runtime_llm 的 preserve_api,
+            # 保留已存真实 api key。否则每次 in-game CLI 存盘都把 api 槽 key 抹空,切回 api 找不回
+            # (codex CMR R1;与菜单 CLI 存盘路径一致)。CLI 槽照常写。
+            save_runtime_llm(
+                "", "", "",
+                channel="cli",
+                cli_runner=new_config.cli_runner,
+                cli_model=new_config.cli_model,
+                cli_timeout_seconds=new_config.cli_timeout_seconds,
+            )
+        else:
+            save_runtime_llm(
+                new_config.base_url,
+                new_config.model,
+                new_config.api_key,
+                new_config.max_tokens,
+                new_config.timeout_seconds,
+                new_config.thinking_level,
+                new_config.advanced_model,
+                new_config.advanced_base_url,
+                new_config.advanced_api_key,
+                new_config.advanced_thinking_level,
+                channel="api",
+                cli_runner=new_config.cli_runner,
+                cli_model=new_config.cli_model,
+                cli_timeout_seconds=new_config.cli_timeout_seconds,
+            )
         self.session.llm_config = new_config
         # 重建 registry 让大臣 Agent 用新配置
         self.session.begin_turn()
@@ -2349,6 +2361,11 @@ async def api_get_llm_config() -> Dict[str, Any]:
     }
 
 
+# 串行化 in-game LLM 配置写:build→verify(offload)→commit 跨 await,无锁则并发的两次
+# /api/llm/config 会交错,后到的 commit 被先到的 stale cfg 覆盖(codex CMR R2)。
+_llm_config_lock = asyncio.Lock()
+
+
 @app.post("/api/llm/config")
 async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
     thinking_level = None if request.thinking_level == "__keep__" else request.thinking_level
@@ -2360,27 +2377,29 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
     cli_runner = None if request.cli_runner == "__keep__" else request.cli_runner
     cli_model = None if request.cli_model == "__keep__" else request.cli_model
     try:
-        game = get_game()
         # 通道感知 build（#51）+ verify offload 出 event loop（#56：CLI smoke ~12s 不阻塞并发,
         # verify 只读;commit 落盘/重建 registry 快,留在 loop 上避免改 session 态的并发竞态）。
-        cfg = game.build_llm_config(
-            request.base_url,
-            request.model,
-            request.api_key,
-            request.max_tokens,
-            request.timeout_seconds,
-            thinking_level=thinking_level,
-            advanced_model=advanced,
-            advanced_base_url=adv_base,
-            advanced_api_key=adv_key,
-            advanced_thinking_level=adv_thinking,
-            channel=channel,
-            cli_runner=cli_runner,
-            cli_model=cli_model,
-            cli_timeout_seconds=request.cli_timeout_seconds,
-        )
-        await asyncio.get_running_loop().run_in_executor(None, _verify_llm_configs_or_raise, cfg)
-        game.commit_llm_config(cfg)
+        # 整段 build→verify→commit 用锁串行化,杜绝并发 stale-write(codex CMR R2)。
+        async with _llm_config_lock:
+            game = get_game()
+            cfg = game.build_llm_config(
+                request.base_url,
+                request.model,
+                request.api_key,
+                request.max_tokens,
+                request.timeout_seconds,
+                thinking_level=thinking_level,
+                advanced_model=advanced,
+                advanced_base_url=adv_base,
+                advanced_api_key=adv_key,
+                advanced_thinking_level=adv_thinking,
+                channel=channel,
+                cli_runner=cli_runner,
+                cli_model=cli_model,
+                cli_timeout_seconds=request.cli_timeout_seconds,
+            )
+            await asyncio.get_running_loop().run_in_executor(None, _verify_llm_configs_or_raise, cfg)
+            game.commit_llm_config(cfg)
     except LLMUnavailable as e:
         raise HTTPException(status_code=400, detail=_llm_error_detail(e)) from None
     except Exception as e:  # noqa: BLE001

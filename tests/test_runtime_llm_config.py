@@ -26,8 +26,9 @@ def test_load_runtime_llm_coerces_stringified_numeric_fields(tmp_path, monkeypat
     path = tmp_path / "runtime_llm.json"
     path.write_text(json.dumps({
         "channel": "api",
+        # max_tokens="4096.0":直接 int("4096.0") 失败 → 走 caster(float(value)) 兜底分支(codex CMR)。
         "api": {"base_url": "https://x/v1", "model": "m", "api_key": "sk-x",
-                "max_tokens": "4096", "timeout_seconds": "120.5"},
+                "max_tokens": "4096.0", "timeout_seconds": "120.5"},
     }, ensure_ascii=False), encoding="utf-8")
     monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
     out = llm_config.load_runtime_llm()

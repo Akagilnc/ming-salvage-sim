@@ -1002,11 +1002,13 @@ def _displace_duplicate_offices(
     return displaced
 
 
-# 实体→{字段:值} 结构的 delta 模块(二级值必须是 dict)。metric_delta(键→int)、
-# world_advance(势力→立场字符串)是扁平 dict,不在此列,故不校验二级。
-_NESTED_DICT_FIELDS = frozenset(
-    {"region_delta", "army_delta", "faction_delta", "class_delta", "power_updates"}
-)
+# 仅校验「二级非 dict 会让 apply **无 try/except 地崩在中途** → 半落库」的字段:
+# region_delta / army_delta 的 apply 裸调(issues.py 内 db.apply_region_deltas/apply_army_deltas
+# 不裹 try/except),二级非 dict 即崩。其余**不**列入(否则 validate 比 apply 更严,误拒合法输入,CMR):
+#   - faction_delta:_apply_faction_dict 支持旧扁平 int 格式 {"阉党": -10}(extractor prompt 明确允许);
+#   - class_delta:_apply_class_dict 对非 dict `continue` 静默跳过;
+#   - power_updates:apply_score_extraction 对 apply_power_deltas 裹了 try/except,崩也被接住不半落库。
+_NESTED_DICT_FIELDS = frozenset({"region_delta", "army_delta"})
 
 
 def validate_delta_shape(extracted: dict) -> None:

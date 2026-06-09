@@ -100,6 +100,18 @@ def test_apply_score_extraction_validates_before_half_apply(game):
     assert state.metrics.get("国库") == treasury_before
 
 
+def test_apply_score_extraction_accepts_flat_faction_scalar(game):
+    """CMR(Claude+codex concur,HIGH):faction_delta 支持旧扁平 int 格式 {"阉党": -10}
+    (extractor prompt 明确允许、_apply_faction_dict 主动消费)。validate 不得把它当二级非 dict
+    误拒,否则合法 extractor 输出会让真实流 settle 整个崩。class 非 dict 同样应被放行(apply 静默跳)。"""
+    db, state, _ = game
+    # 不抛 = 通过;扁平 int faction + 非 dict class 都该被 validate 放行(apply 各自容忍)。
+    I.apply_score_extraction(db, state, {
+        "faction_delta": {"阉党": -10},
+        "class_delta": {"农民": 0},   # 非 dict 二级:_apply_class_dict 静默跳,validate 不该拒
+    })
+
+
 def test_apply_score_extraction_tolerates_null_field(game):
     """Gemini R1:LLM 输出某字段为 null 时,validate 不得比 apply 更严——None 当缺省 no-op,
     不抛 ValueError(apply 本就 `.get(key) or {}` 容忍)。"""
