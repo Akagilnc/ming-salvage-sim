@@ -128,7 +128,7 @@
 - **已补**：崇祯二年八月立天雄军军籍(兵 18000)+ 调卢象升「荡寇将军」督天雄军镇蓟镇东协·喜峰口、受孙承宗节制。
 
 ### T5. 密令应支持「撤销/提前结束」（玩家面，留待深挖密令机制时做）
-- **缺口**：当前密令(secret_orders)只有建/列两个端点，status 仅 active/pending_review/done/failed，**无玩家面的「撤回/作废/提前结束」**。能撤的只有「撤回召对」（回话级 undo，仅最后一轮、颁诏前）或结算时 close 为 failed。
+- **缺口**：当前密令(secret_orders)只有建/列两个端点，status 仅 active/pending_review/done/failed，**无玩家面的「撤回/作废/提前结束」**。能撤的只有「撤回召对」（回合级 undo，仅最后一轮、颁诏前）或结算时 close 为 failed。
 - **范式**：照局势(issue)的 `cancellable=decree`（可撤旨）+ `cancel_cost`（撤销代价）那套——已颁诏的密令可由「圣旨撤回 + 代价」收回（人已派/钱已花的沉没成本）。见 `db.cancel_issue`(db.py:5060) + `_normalize_cancellable`(issues.py:555)。
 - **时机**：属「颁诏后玩法」，**不在 pending_actions(slice 4+5)范围**；留到后续深挖密令机制专项时做。
 

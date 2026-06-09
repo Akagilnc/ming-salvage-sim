@@ -4549,7 +4549,8 @@ class GameDB:
         return applied
 
     def _apply_pending_action(self, state: GameState, pa: Dict[str, object], payload: Dict[str, object]) -> bool:
-        """把单条暂存动作落到真实表。未知 kind/action 不落、返 False(留 pending 不静默丢)。"""
+        """把单条暂存动作落到真实表。未知 kind/action 或目标非 active 不落、返 False(由
+        commit_pending_actions 标 failed,不静默丢——终态失败,不再重试)。"""
         if pa["kind"] == "secret_order":
             oid = pa["target_id"]
             if oid is None:
