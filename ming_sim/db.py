@@ -4491,13 +4491,23 @@ class GameDB:
         self.conn.commit()
         return int(cur.lastrowid)
 
-    def list_pending_actions(self, turn: int, status: str = "pending") -> List[Dict[str, object]]:
-        """读本回合待确认动作(默认 pending),按 id 序(=操作发生序)。"""
-        rows = self.conn.execute(
-            "SELECT id, turn, kind, action, target_id, minister_name, payload_json, status "
-            "FROM pending_actions WHERE turn = ? AND status = ? ORDER BY id",
-            (int(turn), str(status)),
-        ).fetchall()
+    def list_pending_actions(
+        self, turn: int, status: str = "pending", minister_name: Optional[str] = None,
+    ) -> List[Dict[str, object]]:
+        """读本回合待确认动作(默认 pending),按 id 序(=操作发生序)。
+        minister_name 非空时只取该召对对象的暂存(对话确认按当前大臣过滤,不波及他人)。"""
+        if minister_name is None:
+            rows = self.conn.execute(
+                "SELECT id, turn, kind, action, target_id, minister_name, payload_json, status "
+                "FROM pending_actions WHERE turn = ? AND status = ? ORDER BY id",
+                (int(turn), str(status)),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT id, turn, kind, action, target_id, minister_name, payload_json, status "
+                "FROM pending_actions WHERE turn = ? AND status = ? AND minister_name = ? ORDER BY id",
+                (int(turn), str(status), str(minister_name)),
+            ).fetchall()
         return [
             {
                 "id": int(r["id"]),
@@ -4512,14 +4522,20 @@ class GameDB:
             for r in rows
         ]
 
-    def commit_pending_actions(self, state: GameState) -> List[Dict[str, object]]:
+    def commit_pending_actions(
+        self, state: GameState, *, content=None, registry=None, minister_name=None,
+    ) -> List[Dict[str, object]]:
         """颁诏:把本回合 pending 暂存的结构化写动作批量落到真实表(不拒绝即允许),
         按 id 序(=操作发生序)apply。落得了标 committed、落不了标 failed(都不留 pending,
-        故幂等:已 committed/failed 不在 pending 清单、不重跑)。
+        故幂等:已 committed/失败 不在 pending 清单、不重跑)。
         在 resolve_turn 最前、跑 LLM 结算管线之前调,使盘面时序与旧"召对期直写"一致。
-        返回已落库动作摘要。"""
+        content/registry 仅 office(任免)落库需要(注册新臣 Agent);密令/后宫不需,故可选——
+        探针 driver 路径无聊天暂存,传 None 即 no-op。
+        minister_name 非空=对话确认当场 commit:只落该召对对象的暂存(应允即落,不波及他人);
+        默认 None=颁诏批量落全回合。返回已落库动作摘要。"""
         applied: List[Dict[str, object]] = []
-        for pa in self.list_pending_actions(int(state.turn), status="pending"):
+        for pa in self.list_pending_actions(
+                int(state.turn), status="pending", minister_name=minister_name):
             try:
                 payload = json.loads(pa["payload_json"] or "{}")
             except (ValueError, TypeError):
@@ -4529,7 +4545,8 @@ class GameDB:
             # apply 抛错(如 催办 对已转 pending_review 的密令)= 当 False:下面标 failed、
             # 不中断本轮其余动作、更不能崩整个结算(CMR P0)。
             try:
-                ok = self._apply_pending_action(state, pa, payload)
+                ok = self._apply_pending_action(
+                    state, pa, payload, content=content, registry=registry)
             except Exception as exc:
                 tlog(f"[pending_actions] 落库失败 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
                 ok = False
@@ -4548,9 +4565,15 @@ class GameDB:
             self.conn.commit()
         return applied
 
-    def _apply_pending_action(self, state: GameState, pa: Dict[str, object], payload: Dict[str, object]) -> bool:
+    def _apply_pending_action(
+        self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
+        *, content=None, registry=None,
+    ) -> bool:
         """把单条暂存动作落到真实表。未知 kind/action 或目标非 active 不落、返 False(由
-        commit_pending_actions 标 failed,不静默丢——终态失败,不再重试)。"""
+        commit_pending_actions 标 failed,不静默丢——终态失败,不再重试)。
+        office(任免)落库需 content/registry(注册新臣);缺则返 False(标 failed,不静默)。"""
+        if pa["kind"] == "office":
+            return self._commit_office_action(state, pa, payload, content, registry)
         if pa["kind"] == "secret_order":
             oid = pa["target_id"]
             if oid is None:
@@ -4582,6 +4605,54 @@ class GameDB:
             return True
         return False
 
+    def _commit_office_action(
+        self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
+        content, registry,
+    ) -> bool:
+        """任免(office)落库,按被任者是否在册分流(CMR R1 补全):
+        - 任命既有官 → 升迁/调任:set_character_office(改官、仍 active),不当新人(apply_appointment
+          对在册者命中即拒、会标 failed);
+        - 任命朝臣(新任/升迁/调任)→ apply_office_appointment(与 extractor office_changes 共用的【唯一落地核】,
+          自带 dead-reject / 非active→激活 / 顶替去重 / 内存+registry 同步,CMR R2 归一);
+        - 任命纳妃(office 推断为后宫)→ 语义不同,走 apply_appointment 的 consort 路;
+        - 罢免:_find_existing_minister 解 alias + ming-guard(外藩/后宫/不在册不接),dismissed+同步清内存 office。
+        缺 content(无法查重/注册)→ False 标 failed,不静默。跨模块函数运行期 lazy import 避免 db↔session/issues 循环。"""
+        if content is None:
+            return False
+        from ming_sim.session import _find_existing_minister
+        name = str(payload.get("name") or "").strip()
+        if not name:
+            return False
+        office = str(payload.get("office") or "")
+        if pa["action"] == "任命":
+            # 纳妃(后宫)语义不同,不走朝臣落地核:推断为后宫则走 apply_appointment 的 consort 路。
+            if infer_office_type_from_office(office, "", self.llm_config) == "后宫":
+                from ming_sim.session import apply_appointment
+                data = {"name": name, "office": office, "office_type": "后宫", "approved": True}
+                appointed, _displaced = apply_appointment(
+                    self, state, content, registry, data, llm_config=self.llm_config)
+                return bool(appointed)
+            # 朝臣任命/升迁/调任 → 唯一落地核(在册激活授官 / 不在册建档 / dead 拒 / 空 office 拒)。
+            from ming_sim.issues import apply_office_appointment
+            res = apply_office_appointment(
+                self, state, content, registry, name, office,
+                reason="奉旨任免", llm_config=self.llm_config)
+            return not res.get("rejected")
+        if pa["action"] == "罢免":
+            # 仅大明【在职】大臣可罢:_find_existing_minister 已 ming-guard + 解 alias;
+            # 外藩(power_id≠ming)/后宫/不在册不接(无字面 fallback,免误黜皇太极,CMR R2);
+            # 再校 active,免把已故/已黜/致仕者的终态改写成 dismissed(CMR R3 codex R2)。
+            key = _find_existing_minister(content, name)
+            if key is None or self.get_character_status(key)[0] != "active":
+                return False
+            self.set_character_status(state, key, "dismissed", reason="奉旨罢黜")
+            ch = content.characters.get(key)
+            if ch is not None:
+                ch.status = "dismissed"
+                ch.office = ""   # set_character_status 已清 DB office,内存须跟上(roster 读 c.office)
+            return True
+        return False
+
     def withdraw_pending_action(self, action_id: int, turn: int) -> bool:
         """皇帝复核:撤回本回合一条尚未落库的暂存动作(删 pending 行)。返回是否删了。
         已 committed / 非本回合 / 不存在 → False。"""
@@ -4591,6 +4662,16 @@ class GameDB:
         )
         self.conn.commit()
         return cur.rowcount > 0
+
+    def drop_pending_actions_for_minister(self, turn: int, minister_name: str) -> int:
+        """对话确认皇帝拒绝:丢弃该召对对象本回合尚未落库的暂存动作(删 pending 行)。
+        返回删除条数。只动该大臣、只动 pending(已 committed 不动)。"""
+        cur = self.conn.execute(
+            "DELETE FROM pending_actions WHERE turn=? AND minister_name=? AND status='pending'",
+            (int(turn), str(minister_name)),
+        )
+        self.conn.commit()
+        return cur.rowcount
 
     def save_resolve_context(
         self, turn: int, decree_text: str, narrative: str,
