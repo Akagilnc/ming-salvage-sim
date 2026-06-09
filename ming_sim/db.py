@@ -4524,6 +4524,8 @@ class GameDB:
                 payload = json.loads(pa["payload_json"] or "{}")
             except (ValueError, TypeError):
                 payload = {}
+            if not isinstance(payload, dict):   # 坏 payload(JSON 数组/串)→ 当空,apply 必 False 标 failed
+                payload = {}
             # apply 抛错(如 催办 对已转 pending_review 的密令)= 当 False:下面标 failed、
             # 不中断本轮其余动作、更不能崩整个结算(CMR P0)。
             try:
@@ -4541,7 +4543,9 @@ class GameDB:
                 # 否则回合推进后成旧回合不可见死行,永不再处理(ship-pre CMR codex)。
                 self.conn.execute(
                     "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
-        self.conn.commit()
+            # 逐条提交状态:_apply 内部已 commit 真实表改动,状态标记必须同步落库,
+            # 否则崩在循环中途会让"真实表已改但状态未 committed"→重跑重复落库(pr-loop gemini)。
+            self.conn.commit()
         return applied
 
     def _apply_pending_action(self, state: GameState, pa: Dict[str, object], payload: Dict[str, object]) -> bool:
