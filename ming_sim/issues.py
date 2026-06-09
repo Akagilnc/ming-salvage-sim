@@ -1002,6 +1002,56 @@ def _displace_duplicate_offices(
     return displaced
 
 
+# 校验「二级非 dict 会让 apply 在**逐 entity 写 DB 的中途崩**,留下部分已写 + 回合照推 = 半落库」
+# 的字段。这三者 apply 都逐项 UPDATE/INSERT,前面的 entity 先落库、坏的 entity 崩:
+#   - region_delta / army_delta:apply 裸调,崩直接抛穿;
+#   - power_updates:apply_score_extraction 虽裹 try/except,但只接住异常不回滚——前面已写的 power
+#     行仍被后续 record_log/save_turn 提交 = 半落库(CMR R2 codex)。prompt 里 power_updates 恒为
+#     嵌套 dict,无扁平标量形态,故二级非 dict = 真畸形,校验前置拦截正确。
+# **不**列入(apply 各自容忍,validate 不该更严):faction_delta(吃旧扁平 int {"阉党": -10},prompt 允许)、
+# class_delta(对非 dict `continue` 静默跳,不写)。
+_NESTED_DICT_FIELDS = frozenset({"region_delta", "army_delta", "power_updates"})
+
+
+def validate_delta_shape(extracted: dict) -> None:
+    """canonical delta 各顶层字段容器类型必须匹配 schema(dict/list),实体模块二级值必须是 dict,
+    否则**任何 DB 改动前**抛 ValueError——畸形值直送 apply 会在结算中途崩 `.items()`,叠加非
+    原子结算 = 半落库(违反 P1 落库铁律;cmr RT-1 / Gemini PR#50 R2)。driver 在 pre_settle 前
+    调一次防 pre_settle 半改;落库核 apply_score_extraction 自身也调一次防 apply 内部半落库。
+    彻底原子化需事务边界(issue #3),此校验是廉价前置防线。"""
+    from ming_sim.simulation import EMPTY_EXTRACTION  # 懒 import 避 issues↔simulation 循环
+    for key, value in extracted.items():
+        if key not in EMPTY_EXTRACTION:
+            raise ValueError(
+                f"未知 delta 顶层字段「{key}」(canonicalize 后)；疑拼写错(如 地区变更↔地区变化)，"
+                "apply 不会消费它 = 静默无效。请改用合法 key。"
+            )
+        if value is None:
+            # None = 字段缺省/LLM 输出 null;apply 用 `.get(key) or {}`/`or []` 当空 no-op,
+            # 校验同样放行(别比 apply 更严,否则合法 null 会被误拒,Gemini R1)。
+            continue
+        expected = EMPTY_EXTRACTION[key]
+        if isinstance(expected, dict) and not isinstance(value, dict):
+            raise ValueError(f"delta 字段 {key} 必须是 object(dict)，实得 {type(value).__name__}")
+        if isinstance(expected, list):
+            if not isinstance(value, list):
+                raise ValueError(f"delta 字段 {key} 必须是 array(list)，实得 {type(value).__name__}")
+            # schema 里所有 list 字段都是 list-of-dict(economy_moves/new_armies/fiscal_*/issue_*/
+            # appointments/character_*/secret_order_* 等);apply 逐项 item.get() 落库,非 dict 项会
+            # 中途崩 → 部分已写半落库。落库前校验每项是 dict(CMR R3 gemini)。
+            for i, item in enumerate(value):
+                if not isinstance(item, dict):
+                    raise ValueError(
+                        f"delta 字段 {key}[{i}] 必须是 object(dict)，实得 {type(item).__name__}"
+                    )
+        if key in _NESTED_DICT_FIELDS:
+            for ent, sub in value.items():
+                if not isinstance(sub, dict):
+                    raise ValueError(
+                        f"delta 字段 {key}.{ent} 必须是 object(dict)，实得 {type(sub).__name__}"
+                    )
+
+
 def apply_score_extraction(
     db: GameDB,
     state: GameState,
@@ -1014,6 +1064,8 @@ def apply_score_extraction(
 
     content/registry：若传入则处理 `appointments`——把诏书任命的新人建档入朝。
     缺省则跳过（向后兼容老调用）。"""
+    # 0) 落库前校验容器/二级类型,畸形值崩前拦住,不让前面字段半落库(#57)。
+    validate_delta_shape(extracted)
     # 1) metric_delta
     applied_metric = _apply_metric_dict(state, extracted.get("metric_delta") or {}, db=db)
     # 2) economy_moves

@@ -41,13 +41,16 @@ os.makedirs(_AGY_CWD, exist_ok=True)
 # agy 单次调用上限（秒）。extractor payload 大 + 自治 agent 启动慢，给足。
 _AGY_TIMEOUT = int(os.environ.get("MING_SIM_AGY_TIMEOUT", "300"))
 _AGY_BIN = os.environ.get("MING_SIM_AGY_BIN", "agy")
+# CLI runner 默认模型——单一真源(llm_config.cli_model_from_env 复用,别在第二处重写字面量)。
+CODEX_DEFAULT_MODEL = "gpt-5.5"
+CLAUDE_DEFAULT_MODEL = "claude-opus-4-8"
 _CODEX_BIN = os.environ.get("MING_SIM_CODEX_BIN", "codex")
-_CODEX_MODEL = os.environ.get("MING_SIM_CODEX_MODEL", "gpt-5.5")
+_CODEX_MODEL = os.environ.get("MING_SIM_CODEX_MODEL", CODEX_DEFAULT_MODEL)
 # claude -p 独立进程后端：opus/sonnet/haiku。纯文本输出无日志壳。
 # 思考预算不在此强加：claude 走自身默认；要限思考由用户自行 export MAX_THINKING_TOKENS
 # （claude -p 继承父进程 env，会自动读到），后端不替用户决定。
 _CLAUDE_BIN = os.environ.get("MING_SIM_CLAUDE_BIN", "claude")
-_CLAUDE_MODEL = os.environ.get("MING_SIM_CLAUDE_MODEL", "claude-opus-4-8")
+_CLAUDE_MODEL = os.environ.get("MING_SIM_CLAUDE_MODEL", CLAUDE_DEFAULT_MODEL)
 # 纯角色扮演/抽取任务不需要工具；禁掉防 claude 绕去调工具兜圈子。
 _CLAUDE_DISALLOWED = ["Bash", "Read", "Edit", "Write", "Glob", "Grep",
                       "WebFetch", "WebSearch", "Task", "NotebookEdit"]

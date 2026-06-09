@@ -33,7 +33,7 @@ class LLMConfig:
     channel: str = ""  # ""=沿用旧 env 探针；api=OpenAI 兼容 API；cli=本地 CLI runner
     cli_runner: str = ""  # agy | codex | claude
     cli_model: str = ""  # CLI runner 的模型名/档位，由具体后端解释
-    cli_timeout_seconds: float = 300.0
+    cli_timeout_seconds: float = 300.0  # 与 llm_config.CLI_DEFAULT_TIMEOUT_SECONDS 对齐(此处不引入以免循环 import)
 
 
 @dataclass

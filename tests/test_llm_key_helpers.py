@@ -21,6 +21,13 @@ def test_is_real_api_key_rejects_none_empty_placeholder_whitespace():
     assert is_real_api_key(f"  {CLI_BACKEND_PLACEHOLDER}  ") is False
 
 
+def test_is_real_api_key_rejects_keep_sentinel(monkeypatch):
+    """Red Team:'__keep__' 是「保留当前」sentinel,绝不是真实 key——不得被当真 key 存盘/送 OpenAI
+    (此前 is_real_api_key('__keep__')=True 是潜在 footgun)。"""
+    assert is_real_api_key("__keep__") is False
+    assert real_api_key_or_empty("__keep__") == ""
+
+
 def test_is_real_api_key_accepts_real_key_trimmed():
     assert is_real_api_key("sk-abc123") is True
     assert is_real_api_key("  sk-abc123  ") is True
