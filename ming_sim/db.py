@@ -492,7 +492,7 @@ class GameDB:
                 target_id INTEGER,                        -- 操作既有实体时其 id；新建为 NULL
                 minister_name TEXT NOT NULL DEFAULT '',
                 payload_json TEXT NOT NULL DEFAULT '{}',
-                status TEXT NOT NULL DEFAULT 'pending',    -- pending | committed
+                status TEXT NOT NULL DEFAULT 'pending',    -- pending | committed | failed
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -4514,7 +4514,8 @@ class GameDB:
 
     def commit_pending_actions(self, state: GameState) -> List[Dict[str, object]]:
         """颁诏:把本回合 pending 暂存的结构化写动作批量落到真实表(不拒绝即允许),
-        按 id 序(=操作发生序)apply,落一条标一条 committed(幂等:已 committed 不重跑)。
+        按 id 序(=操作发生序)apply。落得了标 committed、落不了标 failed(都不留 pending,
+        故幂等:已 committed/failed 不在 pending 清单、不重跑)。
         在 resolve_turn 最前、跑 LLM 结算管线之前调,使盘面时序与旧"召对期直写"一致。
         返回已落库动作摘要。"""
         applied: List[Dict[str, object]] = []
@@ -4523,7 +4524,7 @@ class GameDB:
                 payload = json.loads(pa["payload_json"] or "{}")
             except (ValueError, TypeError):
                 payload = {}
-            # apply 抛错(如 催办 对已转 pending_review 的密令)= 当 False:留 pending、不标 committed、
+            # apply 抛错(如 催办 对已转 pending_review 的密令)= 当 False:下面标 failed、
             # 不中断本轮其余动作、更不能崩整个结算(CMR P0)。
             try:
                 ok = self._apply_pending_action(state, pa, payload)

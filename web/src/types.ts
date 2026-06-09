@@ -299,7 +299,7 @@ export type PendingAction = {
   target_id: number | null;
   minister_name: string;
   payload_json: string;
-  status: string;        // pending
+  status: string;        // pending | committed | failed
 };
 
 export type SaveEntry = { name: string; size: number; mtime: number };
