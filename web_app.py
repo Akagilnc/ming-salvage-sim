@@ -668,16 +668,40 @@ class WebGame:
     def commit_llm_config(self, new_config: LLMConfig) -> LLMConfig:
         """落盘 + 切 session + 重建 registry（快;verify 由调用方先做,可 offload）。"""
         if new_config.channel == "cli":
-            # CLI 通道:**不覆盖 api 槽**——传空 api 输入触发 save_runtime_llm 的 preserve_api,
-            # 保留已存真实 api key。否则每次 in-game CLI 存盘都把 api 槽 key 抹空,切回 api 找不回
-            # (codex CMR R1;与菜单 CLI 存盘路径一致)。CLI 槽照常写。
-            save_runtime_llm(
-                "", "", "",
-                channel="cli",
-                cli_runner=new_config.cli_runner,
-                cli_model=new_config.cli_model,
-                cli_timeout_seconds=new_config.cli_timeout_seconds,
-            )
+            # CLI 通道:保住 api 槽的真实配置,切回 api 才找得回(CMR R1/R2 codex)。
+            #  1) 已存 api 槽有真实 key → 传空 api 输入触发 save_runtime_llm 的 preserve_api,原样留。
+            #  2) 槽无真实 key,但当前(切换前)session 是带真实 key 的 api 配置(可能来自 OPENAI_API_KEY
+            #     env,尚未落 runtime_llm.json 槽)→ 把它显式写进 api 槽,否则 env-only key 在
+            #     api→cli→api 往返中丢失。
+            #  3) 哪都没有真实 key → 传空(无可丢)。
+            saved = load_runtime_llm()
+            saved_api = saved.get("api") if isinstance(saved.get("api"), dict) else {}
+            prev = self.session.llm_config
+            if real_api_key_or_empty(saved_api.get("api_key")) or not real_api_key_or_empty(prev.api_key):
+                save_runtime_llm(
+                    "", "", "",
+                    channel="cli",
+                    cli_runner=new_config.cli_runner,
+                    cli_model=new_config.cli_model,
+                    cli_timeout_seconds=new_config.cli_timeout_seconds,
+                )
+            else:
+                save_runtime_llm(
+                    prev.base_url,
+                    prev.model,
+                    real_api_key_or_empty(prev.api_key),
+                    prev.max_tokens,
+                    prev.timeout_seconds,
+                    prev.thinking_level,
+                    prev.advanced_model,
+                    prev.advanced_base_url,
+                    prev.advanced_api_key,
+                    prev.advanced_thinking_level,
+                    channel="cli",
+                    cli_runner=new_config.cli_runner,
+                    cli_model=new_config.cli_model,
+                    cli_timeout_seconds=new_config.cli_timeout_seconds,
+                )
         else:
             save_runtime_llm(
                 new_config.base_url,
@@ -2399,8 +2423,12 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
                 cli_model=cli_model,
                 cli_timeout_seconds=request.cli_timeout_seconds,
             )
-            await asyncio.get_running_loop().run_in_executor(None, _verify_llm_configs_or_raise, cfg)
-            game.commit_llm_config(cfg)
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, _verify_llm_configs_or_raise, cfg)
+            # commit 也 offload:begin_turn 会同步 office 推断,CLI 通道遇生造官名会 spawn CLI
+            # 子进程,留在 loop 上会卡住事件循环(Gemini R2)。_llm_config_lock 已串行化,
+            # 在线程里 commit 不会与另一次 config 写并发改 session 态。
+            await loop.run_in_executor(None, game.commit_llm_config, cfg)
     except HTTPException:
         # _verify_llm_configs_or_raise 已把校验失败包成带干净 detail 的 HTTPException;
         # 经 run_in_executor 透传上来后原样抛,别被下面 except Exception 二次包裹 mangle 掉(Gemini R2)。
