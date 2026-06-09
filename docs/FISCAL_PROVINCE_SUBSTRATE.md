@@ -1,4 +1,8 @@
-# 省级财政基座 · 草表 v14(独立 oracle 对账 · 堵一致 relabel)
+# 省级财政基座 · 草表 v15(独立 oracle 下沉到原始 param · G1–G11)
+
+> v15(r14 返工):oracle 再下沉——C-oracle 的 火耗应派/起运池/实征 **从原始 param 重算**(不读 settlement 局部变量),堵住「虚增火耗摊派」「起运额算错」这类同上游 relabel(A2/A3 自变异已验 FAIL);追赃 action 接线(KNOWN+settlement+oracle 对齐,修死代码);加 G10 追赃、G11 多 costed action 共享 k。spike **G1–G11 全 PASS**;残留:债务 oracle 的 o_pool 仍读 省内可支(现金守恒兜底)、赈济 Due>0 / 多补饷 golden 待补。
+> 以下为 v14 正文(仍适用)。
+
 
 > **范围:仅锁单省 spine(陕西);跨省 hub deferred;`拨付net/gross` 为 tick 外部入参(测试默认 0)。**
 > v14(r13 返工):**对账期望值全改「独立 oracle」**——从 tick 输入参数重算,不用落账时同源记的流水(r13/opus 实锤:同源流水式是 tautology,贪墨/军饷欠 一致 relabel 照样过)。C 侧 + 债务侧均上独立 oracle。
