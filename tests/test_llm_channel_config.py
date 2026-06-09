@@ -253,6 +253,25 @@ def test_web_runtime_cli_no_saved_timeout_uses_cli_default(monkeypatch):
     assert cfg.cli_timeout_seconds != 180.0
 
 
+def test_for_role_advanced_empty_cli_model_no_api_model_leak(monkeypatch):
+    """#52 核查:CLI 通道 + advanced 角色(simulator)+ cli_model 空时,for_role 把
+    advanced_model 放进 model,但 create_chat_model(唯一 CliChat 工厂)不得把它当 --model
+    漏给 runner——回落 runner 默认。RT2 已在单一工厂修,此为 for_role/advanced 路径回归钉。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.delenv("MING_SIM_CODEX_MODEL", raising=False)
+    cfg = LLMConfig(
+        api_key="cli-backend", base_url="", model="api-main",
+        channel="cli", cli_runner="codex", cli_model="",
+        advanced_model="api-advanced",
+    )
+    derived = for_role(cfg, "simulator")
+    assert derived.model == "api-advanced"   # for_role 已把 advanced_model 放进 model
+    assert derived.cli_model == ""           # cli_model 仍空
+    chat = create_chat_model(derived)
+    assert chat.id == "gpt-5.5"              # runner 默认,不是 api-advanced
+    assert chat.id != "api-advanced"
+
+
 def test_cli_empty_cli_model_does_not_leak_api_model_to_runner(monkeypatch):
     """RT2(Red Team)：channel=cli + cli_model 空时，不许把 API model 名（llm_config.model）
     当 --model 漏给 codex/claude——回落到 runner 默认（codex→gpt-5.5、claude→默认、agy 无
