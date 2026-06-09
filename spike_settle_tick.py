@@ -53,6 +53,8 @@ def run_tick(name, st, p, actions, expect=None):
         if a.get('cost',0) < 0 or a.get('amount',0) < 0: raise ValueError(f"负 cost/amount: {a}")
         if not (0 <= a.get('eff',1.0) <= 1): raise ValueError(f"eff 越界: {a}")
         if a['type'] == '补饷' and a.get('amount',0) != 0: raise ValueError(f"补饷不接受 amount(cost即支付): {a}")
+        if a['type'] in ('清欠','蠲免','追赃','挪借火耗') and a.get('cost',0) != 0:
+            raise ValueError(f"{a['type']} 禁带 cost(征收/转移类按 §9,否则幽灵预算压 k): {a}")
     for rk in ('火耗率','逋赋率','漂没率','中饱率'):
         if not (0 <= p.get(rk,0) <= 1): raise ValueError(f"{rk} 越界")
     Stock_start = cash['省库库银']
@@ -224,6 +226,12 @@ go("G16 清丈枯竭(隐田200挖300)", S(隐田=200), base, [dict(type='清丈'
 # G17 赈济饿死(穷省可支9,赈济Due15→实付9、unmet_relief6、不积欠;堵 unmet 不可见)
 go("G17 赈济饿死(unmet_relief)", S(省库库银=0,军饷欠=0), dict(base,Due=dict(军饷=0,官俸=0,宗禄=0,赈济=15)),
    [], {'C_地方截留':8.4,'民欠旧赋':21,'军饷欠':0,'unmet_relief':6})
+# G18 三债户 waterfall 边界(可支16,军饷10足额/官俸8部分→欠2/宗禄4→欠4;钉官俸↔宗禄序)
+go("G18 三债户waterfall序(官俸>宗禄)", S(省库库银=16,军饷欠=0), dict(base,起运定额=50,Due=dict(军饷=10,官俸=8,宗禄=4,赈济=0)),
+   [], {'C_地方截留':8.4,'民欠旧赋':21,'官俸欠':2,'宗禄欠':4})
+# G19 三债户 repay 边界(余银13先还官俸欠10、再还宗禄欠3→7;钉偿还在第2、3债户间切分)
+go("G19 三债户repay序", S(省库库银=70,军饷欠=0,官俸欠=10,宗禄欠=10), dict(base,起运定额=100),
+   [], {'C_地方截留':8.4,'民欠旧赋':21,'官俸欠':0,'宗禄欠':7})
 
 # G9 三 tick 链:穷省(省库10)+ recurring 募兵(每 tick cost5),看死亡螺旋累积 + 每 tick 守恒 + 硬期望
 print(f"\n{'#'*64}\n# G9 三 tick 链(穷省 recurring 募兵,死亡螺旋)\n{'#'*64}")

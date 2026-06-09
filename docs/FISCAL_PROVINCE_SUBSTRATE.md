@@ -1,8 +1,8 @@
-# 省级财政基座 · 草表 v18(5层断言 · spike G1–G17 · 覆盖盲区补齐)
+# 省级财政基座 · 草表 v19(spike G1–G19 · 三债户全序钉死 · 征收禁cost)
 
 > **范围:仅锁单省 spine(陕西);跨省 hub deferred;`拨付net/gross` 为 tick 外部入参(测试默认 0)。**
 > **对账方法学(r13–r15 逐层返工锤定)**:三类断言(现金守恒/债务 per-account/C per-account)的期望值**全用独立 oracle**——只从 tick 输入(`st` 开账快照 + `p` params + `actions`)重算,**绝不读 settlement 的任何中间量**(火耗应派/起运池/实征/k/省内可支)。否则校验项与被校验项同源=tautology,一致 relabel 照样过(opus 逐层逮到三层:per-account 流水→上游 param→力度系数 k)。
-> spike **G1–G17 全 PASS**(5层断言:现金/债务/C/末态硬期望/土地守恒;r17 三盲区[偿还序/土地守恒/unmet_relief]已补并自验);自变异实证:中饱→省库、火耗→省库、军饷新债→官俸欠、虚增火耗×2、起运去 clamp、k 砍半 —— **现金/总量守恒全 PASS,但独立 oracle 当场 FAIL**。残留仅 `o_pool` 读省内可支(C-oracle 兜底,已注释)。
+> spike **G1–G19 全 PASS**(5层断言+输入校验;r18 补 G18/G19 钉死官俸↔宗禄全序 + 征收类禁带cost fail-loud,均自验 mutation FAIL);自变异实证:中饱→省库、火耗→省库、军饷新债→官俸欠、虚增火耗×2、起运去 clamp、k 砍半 —— **现金/总量守恒全 PASS,但独立 oracle 当场 FAIL**。残留仅 `o_pool` 读省内可支(C-oracle 兜底,已注释)。
 > 评审 r1–r15(panel=codex/agy/opus/sonnet)。决策见 [ADR 0007](adr/0007-province-fiscal-substrate-ai-judged.md)。⚠️=待精验。
 
 ## 0. 账户模型(三类 · spike 口径)
@@ -64,6 +64,8 @@ k=action力度系数(ΣCost仅含action银,Due不入;Cost>0 action其 delta/scal
 - **C_中饱 vs C_eff损耗 叙事区分**:`C_中饱`=主动贪腐(有人拿走,触发弹劾/民愤)· `C_eff损耗`=行政摩擦/运耗(烧掉,无主),裁判勿混为贪腐。
 - **死亡螺旋的「破局」出口(铁律①:非剧本死局)**:确定性账本里下行=参数+action,**上行通道完全交给 LLM 软判**——招抚流民→逋赋率降、追赃/挪借→现金注入、清丈→税基扩、缓起运/截留京运(改起运定额,代价由 LLM 判:京师缺饷/户部弹劾)。账本读起来「单调恶化」是表象,出口在软判,不是必死。
 - **赈济**:未付不积欠(NewDebt_4≡0),但引擎须输出 `unmet_relief`(=Due_4−实付)给 LLM,否则裁判看不见「灾民没拿到钱」。
+- **挪借/追赃 时序不对称**(r18/sonnet):挪借在 ⓪ 执行,取的是 **tick 开始前的 C 存量**;本 tick 新增的火耗实收(⑦)/中饱(⑩)要下 tick 才能挪。史实:官员当月收的火耗,皇帝当月调不动。
+- **偿还/付款三债户优先级**已 golden 钉死全序:军饷↔官俸(G15)、官俸↔宗禄(G18 waterfall / G19 repay);征收/转移类 action 禁带 cost(spike fail-loud,防幽灵预算压 k)。
 
 **史实校准(spec §1 已标⚠️,port 前必做):**
 - spike base 数值是**游戏校准占位、比率关系对、绝对量级偏史实约 3–10×**(正赋 720万/年 vs 陕西实际约150–250万),`官民田` 单位=万亩;port 时按 Sources[1][2] 重标,勿把占位当史实锚点。
