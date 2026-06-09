@@ -6716,29 +6716,3 @@ button:disabled {
   cursor: not-allowed;
   filter: grayscale(0.5);
 }
-
-/* 待颁诏(动作闸门 ADR 0006)顶部入口浮窗——抽自 main.tsx inline style,补 hover/focus(pr-loop) */
-.pending-actions-fab {
-  position: fixed;
-  top: 12px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 60;
-  padding: 6px 16px;
-  border-radius: 18px;
-  background: rgba(58, 38, 18, 0.94);
-  color: #f0d9a8;
-  border: 1px solid #b8915a;
-  cursor: pointer;
-  font-size: 13px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
-  transition: background 0.15s ease, box-shadow 0.15s ease;
-}
-.pending-actions-fab:hover {
-  background: rgba(78, 52, 24, 0.97);
-  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.5);
-}
-.pending-actions-fab:focus-visible {
-  outline: 2px solid #f0d9a8;
-  outline-offset: 2px;
-}
