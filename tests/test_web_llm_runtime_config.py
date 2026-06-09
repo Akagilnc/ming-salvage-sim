@@ -55,7 +55,7 @@ def test_advanced_llm_verification_preserves_api_channel_over_backend_env(monkey
     assert [item.channel for item in seen] == ["api", "api"]
 
 
-def test_apply_llm_config_saves_api_channel_over_backend_env(monkeypatch):
+def test_build_llm_config_switches_to_api_on_real_key_over_backend_env(monkeypatch):
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     seen = []
     saved = []
@@ -178,6 +178,29 @@ def test_api_set_llm_config_verify_runs_off_event_loop(monkeypatch):
 
     assert seen.get("thread") is not None
     assert seen["thread"] is not threading.main_thread()
+
+
+def test_api_set_llm_config_verify_failure_skips_commit_and_400(monkeypatch):
+    """#56 负路径:verify(offload)抛 LLMUnavailable 时,绝不 commit(不落盘/不改 session),
+    端点映射 HTTP 400。build→verify→commit 的「先验后写」不变式(Testing)。"""
+    cfg = LLMConfig(api_key="", base_url="", model="m", channel="cli",
+                    cli_runner="codex", cli_model="gpt-5.5", cli_timeout_seconds=240)
+    commit_calls = []
+    fake = SimpleNamespace(
+        build_llm_config=lambda *a, **k: cfg,
+        commit_llm_config=lambda c: commit_calls.append(c),
+    )
+    monkeypatch.setattr(web_app, "get_game", lambda: fake)
+
+    def boom(c):
+        raise web_app.LLMUnavailable("runner missing")
+
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", boom)
+
+    with pytest.raises(web_app.HTTPException) as ei:
+        asyncio.run(web_app.api_set_llm_config(web_app.LLMConfigRequest(channel="cli", cli_runner="codex")))
+    assert ei.value.status_code == 400
+    assert commit_calls == []   # verify 失败 → commit 从未被调,无半落盘/半改 session
 
 
 def test_menu_status_active_cli_unsupported_runner_not_ready_despite_preserved_api_key(monkeypatch):
@@ -568,7 +591,7 @@ def test_menu_save_llm_api_channel_rejects_placeholder_existing_key(monkeypatch)
     assert not saved
 
 
-def test_apply_llm_config_does_not_reuse_placeholder_as_api_key(monkeypatch):
+def test_build_llm_config_does_not_reuse_placeholder_as_api_key(monkeypatch):
     # ship-pre CMR Group A：CLI session 上提交空 key 的 API 设置，不能把 cli-backend 当 API key 带进去。
     saved = []
     monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda c: None)

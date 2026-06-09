@@ -331,6 +331,9 @@ export function SavesList({
   );
 }
 
+// CLI 子进程默认超时（秒），与后端 llm_config.CLI_DEFAULT_TIMEOUT_SECONDS 对齐（#55 跨语言）。
+const CLI_DEFAULT_TIMEOUT = 300;
+
 export function LLMConfigTab() {
   const [info, setInfo] = React.useState<LLMConfigInfo | null>(null);
   const [baseUrl, setBaseUrl] = React.useState("");
@@ -347,7 +350,7 @@ export function LLMConfigTab() {
   const [channel, setChannel] = React.useState<"api" | "cli">("api");
   const [cliRunner, setCliRunner] = React.useState("agy");
   const [cliModel, setCliModel] = React.useState("");
-  const [cliTimeout, setCliTimeout] = React.useState("300");
+  const [cliTimeout, setCliTimeout] = React.useState(String(CLI_DEFAULT_TIMEOUT));
   const [show, setShow] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [msg, setMsg] = React.useState("");
@@ -368,7 +371,7 @@ export function LLMConfigTab() {
         setChannel(data.channel === "cli" ? "cli" : "api");
         setCliRunner(data.cli_runner || "agy");
         setCliModel(data.cli_model || "");
-        setCliTimeout(String(data.cli_timeout_seconds || 300));
+        setCliTimeout(String(data.cli_timeout_seconds || CLI_DEFAULT_TIMEOUT));
       })
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
   }, []);
@@ -394,7 +397,7 @@ export function LLMConfigTab() {
           channel,
           cli_runner: channel === "cli" ? cliRunner : "__keep__",
           cli_model: channel === "cli" ? cliModel : "__keep__",
-          cli_timeout_seconds: channel === "cli" ? parseFloat(cliTimeout) || 300 : 0,
+          cli_timeout_seconds: channel === "cli" ? parseFloat(cliTimeout) || CLI_DEFAULT_TIMEOUT : 0,
         }),
       });
       setInfo((cur) => (cur ? { ...cur, ...data } : null));

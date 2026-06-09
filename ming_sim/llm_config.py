@@ -44,10 +44,12 @@ VALID_CHANNELS = frozenset({"api", "cli"})
 
 
 def is_real_api_key(value: object) -> bool:
-    """真实 API key？空和占位符 cli-backend 都不算。
-    所有「该不该按 api 通道推断 / 是否已配 key」的判断统一走这里（单一真源）。"""
+    """真实 API key？空、占位符 cli-backend、保留-sentinel `__keep__` 都不算。
+    所有「该不该按 api 通道推断 / 是否已配 key」的判断统一走这里（单一真源）。
+    `__keep__` 是 web 层「保留当前」sentinel,绝不是真实 key——在此单点拦截,防它被
+    存盘 / 送上 OpenAI client / 误触发 api 通道（Red Team #51-57）。"""
     key = str(value or "").strip()
-    return bool(key and key != CLI_BACKEND_PLACEHOLDER)
+    return bool(key and key != CLI_BACKEND_PLACEHOLDER and key != "__keep__")
 
 
 def real_api_key_or_empty(value: object) -> str:

@@ -475,11 +475,12 @@ def settle_with_delta(
     传 None——结算核本体不见 llm_config（ADR 0004）。返回 full_report 文本。
 
     delta_applier(db, state, extracted, content, registry) -> applied dict；None 时回退到
-    `apply_score_extraction(llm_config=None)`——**不注入运行时通道**。注意这不等于「绝对无
-    LLM」：apply_score_extraction 自身仍按旧 env 后端判定（`cli_backend_active(None)` 会
-    回落 `MING_SIM_LLM_BACKEND`），故 driver 在**未设该 env** 时才是纯确定性；env 设了的
-    legacy enrichment 是否该在 driver 路径屏蔽，属 probe 设计待决（见 deferred / 测试
-    test_driver_path_legacy_env_still_enriches 钉住现状）。
+    `apply_score_extraction(llm_config=None)`——**不注入运行时通道**。注意裸 None 分支不等于
+    「绝对无 LLM」：apply_score_extraction 对 llm_config=None 仍按旧 env 后端判定
+    （`cli_backend_active(None)` 回落 `MING_SIM_LLM_BACKEND`），见
+    test_settle_none_branch_legacy_env_enriches。**探针 driver 已不走此裸 None 分支**——它注入
+    channel=api 的确定性 applier,无论 env 都不触发 legacy enrichment（#54，见
+    test_driver_run_settle_deterministic_under_legacy_env）。
     """
     if trace_narrative is None:
         trace_narrative = narrative

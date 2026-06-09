@@ -20,6 +20,35 @@ def test_load_runtime_llm_malformed_json_returns_empty(tmp_path, monkeypatch):
     assert llm_config.load_runtime_llm() == {}
 
 
+def test_load_runtime_llm_coerces_stringified_numeric_fields(tmp_path, monkeypatch):
+    """#53 _slot_number:旧存档把 max_tokens/timeout_seconds 存成字符串时,load 归一回数值
+    (covers caster(value) / caster(float(value)) 兜底 / garbage→default 三分支,Red Team/Testing)。"""
+    path = tmp_path / "runtime_llm.json"
+    path.write_text(json.dumps({
+        "channel": "api",
+        "api": {"base_url": "https://x/v1", "model": "m", "api_key": "sk-x",
+                "max_tokens": "4096", "timeout_seconds": "120.5"},
+    }, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
+    out = llm_config.load_runtime_llm()
+    assert out["api"]["max_tokens"] == 4096 and isinstance(out["api"]["max_tokens"], int)
+    assert out["api"]["timeout_seconds"] == 120.5 and isinstance(out["api"]["timeout_seconds"], float)
+
+
+def test_load_runtime_llm_garbage_numeric_fields_fall_back_to_default(tmp_path, monkeypatch):
+    """#53 _slot_number:不可解析的数值字段回落默认(max_tokens=8000 / timeout=180.0)。"""
+    path = tmp_path / "runtime_llm.json"
+    path.write_text(json.dumps({
+        "channel": "api",
+        "api": {"base_url": "https://x/v1", "model": "m", "api_key": "sk-x",
+                "max_tokens": "abc", "timeout_seconds": "xyz"},
+    }, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
+    out = llm_config.load_runtime_llm()
+    assert out["api"]["max_tokens"] == 8000
+    assert out["api"]["timeout_seconds"] == 180.0
+
+
 def test_load_runtime_llm_non_dict_payload_returns_empty(tmp_path, monkeypatch):
     """合法 JSON 但顶层非 dict(list / 字符串 / 数字)走 isinstance 防御分支 → {}。"""
     for payload in ("[1, 2, 3]", '"just a string"', "42"):
