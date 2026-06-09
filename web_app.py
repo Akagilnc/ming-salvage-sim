@@ -2186,22 +2186,27 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
         # 持 game 锁直到本回合结算流 drain 完(或断连)——worker 线程在锁内改 session/DB,
         # 与并发的配置 commit / 另一结算互斥(CMR R3)。async with 在 generator 关闭时释放。
         async with _game_lock:
+            loop = asyncio.get_running_loop()
             thread = threading.Thread(target=worker, daemon=True)
             thread.start()
-            loop = asyncio.get_running_loop()
-            while True:
-                kind, data = await loop.run_in_executor(None, ev_queue.get)
-                if kind == "__done__":
-                    yield sse_event("done", data)
-                    break
-                if kind == "__decisions__":
-                    yield sse_event("decisions", data)
-                    break
-                if kind == "__error__":
-                    yield sse_event("error", data if isinstance(data, dict) else {"message": data})
-                    break
-                # stage / thinking / text
-                yield sse_event(kind, {"content": data})
+            try:
+                while True:
+                    kind, data = await loop.run_in_executor(None, ev_queue.get)
+                    if kind == "__done__":
+                        yield sse_event("done", data)
+                        break
+                    if kind == "__decisions__":
+                        yield sse_event("decisions", data)
+                        break
+                    if kind == "__error__":
+                        yield sse_event("error", data if isinstance(data, dict) else {"message": data})
+                        break
+                    # stage / thinking / text
+                    yield sse_event(kind, {"content": data})
+            finally:
+                # 断连时 generator 提前退出 → 必须等 worker(仍在改 DB)跑完再释锁,否则
+                # 释锁后 worker 与后续 config/结算 race(CMR R4 codex)。join 不卡 loop:走线程池。
+                await loop.run_in_executor(None, thread.join)
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
@@ -2251,18 +2256,22 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
     async def generate() -> AsyncIterator[str]:
         # 持 game 锁直到 phase2 结算流 drain 完——与配置 commit / 颁诏结算互斥(CMR R3)。
         async with _game_lock:
+            loop = asyncio.get_running_loop()
             thread = threading.Thread(target=worker, daemon=True)
             thread.start()
-            loop = asyncio.get_running_loop()
-            while True:
-                kind, data = await loop.run_in_executor(None, ev_queue.get)
-                if kind == "__done__":
-                    yield sse_event("done", data)
-                    break
-                if kind == "__error__":
-                    yield sse_event("error", data if isinstance(data, dict) else {"message": data})
-                    break
-                yield sse_event(kind, {"content": data})
+            try:
+                while True:
+                    kind, data = await loop.run_in_executor(None, ev_queue.get)
+                    if kind == "__done__":
+                        yield sse_event("done", data)
+                        break
+                    if kind == "__error__":
+                        yield sse_event("error", data if isinstance(data, dict) else {"message": data})
+                        break
+                    yield sse_event(kind, {"content": data})
+            finally:
+                # 断连时也等 worker 跑完再释锁,防释锁后 worker 与后续操作 race(CMR R4 codex)。
+                await loop.run_in_executor(None, thread.join)
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
