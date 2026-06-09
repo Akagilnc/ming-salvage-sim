@@ -8,11 +8,11 @@ import { GameMenuModal } from "./components/gameMenu";
 import { BudgetHover, CommandSlot, FullscreenModal, HUD_BG, HUD_SLOTS, LegacyBar, LongGoalsModal, QuadFrame } from "./components/hud";
 import { GrandMap, NodeIntel } from "./components/map";
 import { MenuPage } from "./components/menuPage";
-import { ChatModal, ClosedIssuesModal, EdictModal, EndingModal, HistoryModal, PendingActionsModal, ReportModal, SecretOrdersModal, StateModal, filterConsorts, filterMinisters } from "./components/modals";
+import { ChatModal, ClosedIssuesModal, EdictModal, EndingModal, HistoryModal, ReportModal, SecretOrdersModal, StateModal, filterConsorts, filterMinisters } from "./components/modals";
 import { SituationPanel } from "./components/situation";
 import { getMapIntelStyle, refreshLabelMaps, scoreTone } from "./format";
 import { forwardSteamEvents, type SteamEvent } from "./steamEvents";
-import type { AppView, ChatMessage, ChatUndoResponse, ClosedIssue, Directive, GameState, MenuStatus, Minister, ModalName, PendingAction, PendingDecision, SecretOrder, Suggestion } from "./types";
+import type { AppView, ChatMessage, ChatUndoResponse, ClosedIssue, Directive, GameState, MenuStatus, Minister, ModalName, PendingDecision, SecretOrder, Suggestion } from "./types";
 import "./styles.css";
 
 function App() {
@@ -76,7 +76,6 @@ function App() {
   // 结局页本次加载是否已被玩家关掉（关掉后让位邸报，刷新复位重弹）。
   const [endingDismissed, setEndingDismissed] = React.useState(false);
   const [secretOrders, setSecretOrders] = React.useState<SecretOrder[]>([]);
-  const [pendingActions, setPendingActions] = React.useState<PendingAction[]>([]);
   const [secretOrderShown, setSecretOrderShown] = React.useState<number>(-1);
   // 作弊控制台（Ctrl+~）：cheatDirective 暂存强制结算项，下次颁诏随结算一次性穿入。
   const [cheatOpen, setCheatOpen] = React.useState(false);
@@ -176,12 +175,6 @@ function App() {
       .catch(() => {/* 失败静默 */});
   }, [state?.turn.turn]);
 
-  // 动作闸门(ADR 0006)：进入/切回合时拉取本回合待颁诏暂存动作(restore 后也可见可撤)。
-  React.useEffect(() => {
-    if (!state) return;
-    refreshPendingActions();
-  }, [state?.turn.turn]);
-
   // 结局已触发：每次进页面/刷新都自动弹结局结算页。玩家点关闭后（endingDismissed）
   // 本次加载让位给盘面/邸报，可继续看局；刷新即复位重弹。
   React.useEffect(() => {
@@ -189,25 +182,6 @@ function App() {
     if (endingDismissed) return;
     setActiveModal("ending");
   }, [state, endingDismissed]);
-
-  // 动作闸门(ADR 0006)：刷新本回合待颁诏暂存动作(进/切回合、召对后、撤回召对后复用)。
-  function refreshPendingActions() {
-    api<{ actions: PendingAction[] }>("/api/pending_actions")
-      .then(({ actions }) => setPendingActions(actions))
-      .catch(() => {/* 失败静默,下次刷新自纠 */});
-  }
-
-  // 动作闸门(ADR 0006)：皇帝撤回一条待颁诏暂存动作。
-  async function withdrawPendingAction(id: number) {
-    try {
-      const data = await api<{ actions: PendingAction[] }>(`/api/pending_actions/${id}/withdraw`, { method: "POST" });
-      setPendingActions(data.actions);
-    } catch (err) {
-      // 撤回失败(网络/409 已落库/404)要给玩家反馈,别静默(pr-loop gemini)。
-      setError(err instanceof Error ? err.message : "撤回失败,请重试。");
-      refreshPendingActions();
-    }
-  }
 
   // 刷新恢复：若回合停在 awaiting_decision 且有未裁决策点，自动重弹决策弹窗。
   React.useEffect(() => {
@@ -258,7 +232,7 @@ function App() {
   React.useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (activeModal === "chat" || activeModal === "edict" || activeModal === "state" || activeModal === "history" || activeModal === "report" || activeModal === "secret_orders" || activeModal === "pending_actions" || activeModal === "long_goals") {
+      if (activeModal === "chat" || activeModal === "edict" || activeModal === "state" || activeModal === "history" || activeModal === "report" || activeModal === "secret_orders" || activeModal === "long_goals") {
         // 召对/诏书等全屏弹窗最优先
         setActiveModal("none");
       } else if (drawerOpen) {
@@ -394,12 +368,8 @@ function App() {
       api<{ orders: SecretOrder[] }>("/api/secret_orders")
         .then(({ orders }) => setSecretOrders(orders))
         .catch(() => {});
-      refreshPendingActions();   // 动作闸门(ADR 0006)：召对后刷新待颁诏
       if (data.secret_order_id) {
         setChatNotice(`密令已秘密交付${activeMinister.name}，编号 #${data.secret_order_id}。`);
-      }
-      if (data.pending_action_id) {
-        setChatNotice(`已为${activeMinister.name}拟下一道待颁诏动作，待颁诏批准（可在「待颁诏」复核或撤回）。`);
       }
       if (data.proposed_directive) {
         setChatNotice(`${activeMinister.name}已拟旨一道，待陛下在「诏书草案」核定（准/驳）。`);
@@ -450,7 +420,6 @@ function App() {
       setSecretOrders(data.secret_orders || []);
       setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count } : current));
       await loadState();
-      refreshPendingActions();   // 撤回召对会删该轮暂存(rollback),同步刷新免陈旧(ship-pre CMR)
       setChatNotice("已撤回最近一轮召对。");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -662,8 +631,6 @@ function App() {
       }
       if (outcome.kind === "decisions") {
         // 出重大抉择：暂停弹窗逐个亲裁，裁完调 submitDecisions 续跑结算。
-        // 颁诏(pre_settle)此刻已 commit 暂存动作 → 待颁诏列表应清空,刷新免显示陈旧(pr-loop codex P2)。
-        refreshPendingActions();
         setPendingDecisions(outcome.data.decisions || []);
         setBusy("");
         return;
@@ -1010,24 +977,6 @@ function App() {
             setActiveModal("chat");
             setSelectedMinister(name);
           }}
-        />
-      ) : null}
-
-      {pendingActions.length > 0 && activeModal === "none" ? (
-        <button
-          type="button"
-          className="pending-actions-fab"
-          onClick={() => setActiveModal("pending_actions")}
-        >
-          待颁诏 {pendingActions.length} 项 · 点此复核 / 撤回
-        </button>
-      ) : null}
-
-      {activeModal === "pending_actions" ? (
-        <PendingActionsModal
-          actions={pendingActions}
-          onClose={() => setActiveModal("none")}
-          onWithdraw={withdrawPendingAction}
         />
       ) : null}
 

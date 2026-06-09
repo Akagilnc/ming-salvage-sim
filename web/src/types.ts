@@ -288,19 +288,7 @@ export type ChatDisplayMessage = ChatMessage & { pending?: boolean };
 
 export type Suggestion = { label: string; text: string; prefix?: boolean };
 
-export type ModalName = "none" | "state" | "chat" | "edict" | "report" | "extraction" | "history" | "menu" | "secret_orders" | "pending_actions" | "ending" | "long_goals";
-
-// 动作闸门(ADR 0006):召对暂存、待颁诏批量落库的结构化写动作。皇帝可复核/撤回。
-export type PendingAction = {
-  id: number;
-  turn: number;
-  kind: string;          // secret_order | consort
-  action: string;        // 更新 | 催办 | 提交核议 | 记进展 | 调教
-  target_id: number | null;
-  minister_name: string;
-  payload_json: string;
-  status: string;        // pending | committed | failed
-};
+export type ModalName = "none" | "state" | "chat" | "edict" | "report" | "extraction" | "history" | "menu" | "secret_orders" | "ending" | "long_goals";
 
 export type SaveEntry = { name: string; size: number; mtime: number };
 
@@ -368,7 +356,6 @@ export type ChatResponse = {
   registered_minister?: string;
   proposed_directive?: ProposedDirective | null;
   secret_order_id?: number;
-  pending_action_id?: number;
 };
 
 export type ChatUndoResponse = {

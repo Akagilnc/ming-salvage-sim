@@ -4,7 +4,7 @@ import { api } from "../api";
 import { ExtractionView } from "./extraction";
 import { FullscreenModal, MinisterPortrait, cacheBust } from "./hud";
 import { formatClosedEffect } from "../format";
-import type { ChatDisplayMessage, ChatMessage, ClosedIssue, Directive, EndingPayload, GameState, HistoryDetail, HistoryTurnItem, Minister, PendingAction, SecretOrder, Suggestion } from "../types";
+import type { ChatDisplayMessage, ChatMessage, ClosedIssue, Directive, EndingPayload, GameState, HistoryDetail, HistoryTurnItem, Minister, SecretOrder, Suggestion } from "../types";
 
 export function ReportModal({ report, onClose }: { report: string; onClose: () => void }) {
   return (
@@ -965,60 +965,4 @@ export function filterConsorts(consorts: Minister[], group: string) {
   const mingConsorts = consorts.filter((c) => (c.power_id || "ming") === "ming");
   if (group === "收藏") return mingConsorts.filter((c) => c.favorite);
   return mingConsorts;
-}
-
-// 动作闸门(ADR 0006):本回合召对暂存、待颁诏批量落库的结构化写动作。皇帝可逐条复核/撤回。
-const PENDING_ACTION_LABEL: Record<string, string> = {
-  更新: "更新密令要旨", 催办: "催办密令", 提交核议: "呈报核议", 记进展: "记密令进展", 调教: "调教妃嫔",
-};
-const PENDING_KIND_LABEL: Record<string, string> = { secret_order: "密令", consort: "后宫" };
-
-export function PendingActionsModal({
-  actions,
-  onClose,
-  onWithdraw,
-}: {
-  actions: PendingAction[];
-  onClose: () => void;
-  onWithdraw: (id: number) => void;
-}) {
-  function summarize(a: PendingAction): string {
-    try {
-      const p = JSON.parse(a.payload_json || "{}");
-      if (a.action === "更新") return p.new_title ? `改要旨为「${p.new_title}」` : "更新要旨";
-      if (a.action === "记进展") return String(p.note || "").slice(0, 40);
-      if (a.action === "提交核议") return String(p.claim || "呈报办结").slice(0, 40);
-      if (a.action === "调教") return [p.skill && `授「${p.skill}」`, p.trait && `性情「${p.trait}」`].filter(Boolean).join("、");
-      if (a.action === "催办") return String(p.reason || "限期加急").slice(0, 40);
-    } catch { /* 容错:payload 坏不挡显示 */ }
-    return "";
-  }
-  return (
-    <FullscreenModal
-      title="待颁诏复核"
-      subtitle={`本月召对暂存 ${actions.length} 项动作 · 颁诏即批准，撤回即作废`}
-      bgClass="modal-bg-edict"
-      onClose={onClose}
-    >
-      <div className="secret-orders-list">
-        {actions.length === 0 && <p className="so-empty">本月暂无待颁诏的动作。</p>}
-        {actions.map((a) => (
-          <div className="secret-order-card" key={a.id}>
-            <div className="so-header">
-              <span className="so-status so-pending">
-                {PENDING_KIND_LABEL[a.kind] || a.kind}·{PENDING_ACTION_LABEL[a.action] || a.action}
-              </span>
-              <span className="so-meta">承办：{a.minister_name || "—"}</span>
-            </div>
-            <div className="so-content">{summarize(a) || "（无摘要）"}</div>
-            <div className="so-detail-actions">
-              <button className="secondary-action" onClick={() => onWithdraw(a.id)}>
-                <Trash2 size={13} /> 撤回此拟
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-    </FullscreenModal>
-  );
 }
