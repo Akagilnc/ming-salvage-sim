@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import json as _j
 
+import pytest
+
 import ming_sim.decree as decree
 import ming_sim.cli_backend as _cb
 from ming_sim.decree import settle_with_delta
@@ -87,21 +89,60 @@ def test_driver_path_no_env_is_deterministic(game, monkeypatch):
     assert _j.loads(row["effect_on_resolve"]) == {}
 
 
-def test_driver_path_legacy_env_still_enriches(game, monkeypatch):
-    """钉住现状（CMR R1）：delta_applier=None 不等于「绝对无 LLM」——apply_score_extraction
-    对 llm_config=None 仍按旧 env 后端判定，`cli_backend_active(None)` 回落
-    MING_SIM_LLM_BACKEND。故 driver 路径在 env 设置时仍会触发 legacy enrichment（floor）。
-    这是 base 既有行为；是否在 driver 屏蔽 legacy env 属 probe 设计待决（deferred）。"""
+def test_settle_none_branch_legacy_env_enriches(game, monkeypatch):
+    """钉住 settle_with_delta 的**裸 None 分支**语义:delta_applier=None 时
+    apply_score_extraction(llm_config=None),`cli_backend_active(None)` 仍回落
+    MING_SIM_LLM_BACKEND → legacy enrichment(floor)。注:#54 后**探针 driver 已不走此裸
+    None 分支**(driver 注入确定性 applier,见 test_driver_run_settle_deterministic_under_legacy_env);
+    此分支保留为安全默认,行为不变。"""
     db, state, content = game
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     monkeypatch.setattr(_cb, "enrich_initiative_effects",
                         lambda *a, **k: {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}})
-    delta = {"new_issues": [{"origin_kind": "decree", "title": "driver-env国策", "kind": "initiative"}]}
+    delta = {"new_issues": [{"origin_kind": "decree", "title": "none分支国策", "kind": "initiative"}]}
 
     settle_with_delta(state, db, delta, before_turn=state.turn, content=content, registry=None)
 
     row = db.conn.execute(
-        "SELECT effect_on_resolve FROM issues WHERE title='driver-env国策'").fetchone()
+        "SELECT effect_on_resolve FROM issues WHERE title='none分支国策'").fetchone()
     assert row is not None
-    # legacy env 路径触发 floor 兜底，非空壳——证明 None 路径并非绝对确定性。
     assert _j.loads(row["effect_on_resolve"]) == {"metrics": {"民心": 1}}
+
+
+def test_driver_run_settle_rejects_malformed_delta_before_write(game):
+    """Sourcery:driver.run_settle 对畸形 delta(region_delta 二级非 dict)在 pre_settle/落库前
+    抛 ValueError,不半写——validate 在 driver 路径跑在 pre_settle 之前。"""
+    import driver
+    db, state, content = game
+    treasury_before = state.metrics.get("国库")
+    with pytest.raises(ValueError):
+        driver.run_settle(db, state, content, {
+            "metric_delta": {"国库": 50},
+            "region_delta": {"shanxi": "not-a-dict"},
+        })
+    assert state.metrics.get("国库") == treasury_before   # 校验在落库前,metric 未落
+
+
+def test_driver_run_settle_deterministic_under_legacy_env(game, monkeypatch):
+    """#54:探针 driver(run_settle)即便设了 MING_SIM_LLM_BACKEND 也**绝不** spawn CLI
+    enrichment——dialogue-Claude 已自产完整 delta,落库核不得再起第二个 LLM(ADR-0004)。
+    注入确定性 applier 使 cli_backend_active 恒 False,enrich 不被调用、国策效果不落 floor。"""
+    import driver
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
+    called = []
+    monkeypatch.setattr(_cb, "enrich_initiative_effects",
+                        lambda *a, **k: called.append((a, k)) or {
+                            "effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}})
+
+    driver.run_settle(
+        db, state, content,
+        {"new_issues": [{"origin_kind": "decree", "title": "driver确定性国策", "kind": "initiative"}]},
+        narrative="本月邸报。",
+    )
+
+    assert called == []   # driver 确定性:enrich 从未被调用
+    row = db.conn.execute(
+        "SELECT effect_on_resolve FROM issues WHERE title='driver确定性国策'").fetchone()
+    assert row is not None
+    assert _j.loads(row["effect_on_resolve"]) == {}   # 无 enrichment、无 floor

@@ -39,12 +39,17 @@ CLI_BACKEND_PLACEHOLDER = "cli-backend"
 # timeout 单一真源——别拿 API 的 timeout_seconds（默认 180）当 CLI 子进程超时（codex R1）。
 CLI_DEFAULT_TIMEOUT_SECONDS = 300.0
 
+# 合法执行通道集合——单一真源,新增通道只改这里（#55）。
+VALID_CHANNELS = frozenset({"api", "cli"})
+
 
 def is_real_api_key(value: object) -> bool:
-    """真实 API key？空和占位符 cli-backend 都不算。
-    所有「该不该按 api 通道推断 / 是否已配 key」的判断统一走这里（单一真源）。"""
+    """真实 API key？空、占位符 cli-backend、保留-sentinel `__keep__` 都不算。
+    所有「该不该按 api 通道推断 / 是否已配 key」的判断统一走这里（单一真源）。
+    `__keep__` 是 web 层「保留当前」sentinel,绝不是真实 key——在此单点拦截,防它被
+    存盘 / 送上 OpenAI client / 误触发 api 通道（Red Team #51-57）。"""
     key = str(value or "").strip()
-    return bool(key and key != CLI_BACKEND_PLACEHOLDER)
+    return bool(key and key != CLI_BACKEND_PLACEHOLDER and key != "__keep__")
 
 
 def real_api_key_or_empty(value: object) -> str:
@@ -59,8 +64,32 @@ def _slot_text(data: Dict[str, object], key: str) -> str:
     return "" if value is None else str(value)
 
 
-def _api_runtime_slot(data: Dict[str, object]) -> Dict[str, str]:
-    return {k: _slot_text(data, k) for k in _API_RUNTIME_FIELDS}
+# API slot 的数值字段保持 JSON 数值类型（int/float），让 preserve-save 与 fresh-save 产出
+# 同一形态、load 归一也统一类型（#53）。default 与 save_runtime_llm 签名默认对齐。
+_API_NUMERIC_FIELDS = {"max_tokens": (int, 8000), "timeout_seconds": (float, 180.0)}
+
+
+def _slot_number(value: object, caster, default):
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return default
+    try:
+        return caster(value)
+    except (TypeError, ValueError):
+        try:
+            return caster(float(value))  # "4096.0" / 含小数的字符串兜底
+        except (TypeError, ValueError):
+            return default
+
+
+def _api_runtime_slot(data: Dict[str, object]) -> Dict[str, object]:
+    out: Dict[str, object] = {}
+    for k in _API_RUNTIME_FIELDS:
+        if k in _API_NUMERIC_FIELDS:
+            caster, default = _API_NUMERIC_FIELDS[k]
+            out[k] = _slot_number(data.get(k), caster, default)
+        else:
+            out[k] = _slot_text(data, k)
+    return out
 
 
 def _cli_runtime_slot(data: Dict[str, object]) -> Dict[str, str]:
@@ -69,7 +98,7 @@ def _cli_runtime_slot(data: Dict[str, object]) -> Dict[str, str]:
 
 def _normalize_runtime_llm(data: Dict[str, object]) -> Dict[str, object]:
     channel = str(data.get("channel") or "").strip().lower()
-    if channel not in {"api", "cli"}:
+    if channel not in VALID_CHANNELS:
         # 扁平旧配置只有「存在真实 API key」才推断 api。占位符 + 默认数值字段
         # （max_tokens/timeout 等）不算 api 信号，否则旧 CLI-env 存档被误升成显式
         # API、env CLI 后端被忽略，假 key 还会被送上 API 路径。
@@ -125,10 +154,12 @@ def normalize_thinking_level(level: str) -> str:
 
 
 def cli_model_from_env(runner: str, fallback: str = "") -> str:
+    # 默认模型复用 cli_backend 的单一真源常量,不重写字面量（#55）。
+    from ming_sim.cli_backend import CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL
     if runner == "codex":
-        return (os.environ.get("MING_SIM_CODEX_MODEL") or "gpt-5.5").strip()
+        return (os.environ.get("MING_SIM_CODEX_MODEL") or CODEX_DEFAULT_MODEL).strip()
     if runner == "claude":
-        return (os.environ.get("MING_SIM_CLAUDE_MODEL") or "claude-opus-4-8").strip()
+        return (os.environ.get("MING_SIM_CLAUDE_MODEL") or CLAUDE_DEFAULT_MODEL).strip()
     return fallback
 
 
@@ -277,7 +308,7 @@ def save_runtime_llm(
     """写 data/runtime_llm.json。明文存盘——按用户选择。"""
     os.makedirs(os.path.dirname(RUNTIME_LLM_PATH), exist_ok=True)
     active_channel = (channel or "api").strip().lower()
-    if active_channel not in {"api", "cli"}:
+    if active_channel not in VALID_CHANNELS:
         active_channel = "api"
     existing = load_runtime_llm()
     existing_api = existing.get("api") if isinstance(existing.get("api"), dict) else {}

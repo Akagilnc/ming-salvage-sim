@@ -20,6 +20,36 @@ def test_load_runtime_llm_malformed_json_returns_empty(tmp_path, monkeypatch):
     assert llm_config.load_runtime_llm() == {}
 
 
+def test_load_runtime_llm_coerces_stringified_numeric_fields(tmp_path, monkeypatch):
+    """#53 _slot_number:旧存档把 max_tokens/timeout_seconds 存成字符串时,load 归一回数值
+    (covers caster(value) / caster(float(value)) 兜底 / garbage→default 三分支,Red Team/Testing)。"""
+    path = tmp_path / "runtime_llm.json"
+    path.write_text(json.dumps({
+        "channel": "api",
+        # max_tokens="4096.0":直接 int("4096.0") 失败 → 走 caster(float(value)) 兜底分支(codex CMR)。
+        "api": {"base_url": "https://x/v1", "model": "m", "api_key": "sk-x",
+                "max_tokens": "4096.0", "timeout_seconds": "120.5"},
+    }, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
+    out = llm_config.load_runtime_llm()
+    assert out["api"]["max_tokens"] == 4096 and isinstance(out["api"]["max_tokens"], int)
+    assert out["api"]["timeout_seconds"] == 120.5 and isinstance(out["api"]["timeout_seconds"], float)
+
+
+def test_load_runtime_llm_garbage_numeric_fields_fall_back_to_default(tmp_path, monkeypatch):
+    """#53 _slot_number:不可解析的数值字段回落默认(max_tokens=8000 / timeout=180.0)。"""
+    path = tmp_path / "runtime_llm.json"
+    path.write_text(json.dumps({
+        "channel": "api",
+        "api": {"base_url": "https://x/v1", "model": "m", "api_key": "sk-x",
+                "max_tokens": "abc", "timeout_seconds": "xyz"},
+    }, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
+    out = llm_config.load_runtime_llm()
+    assert out["api"]["max_tokens"] == 8000
+    assert out["api"]["timeout_seconds"] == 180.0
+
+
 def test_load_runtime_llm_non_dict_payload_returns_empty(tmp_path, monkeypatch):
     """合法 JSON 但顶层非 dict(list / 字符串 / 数字)走 isinstance 防御分支 → {}。"""
     for payload in ("[1, 2, 3]", '"just a string"', "42"):
@@ -58,8 +88,8 @@ def test_load_runtime_llm_migrates_flat_api_config(tmp_path, monkeypatch):
         "base_url": "https://api.example.com/v1",
         "model": "gpt-test",
         "api_key": "sk-test",
-        "max_tokens": "4096",
-        "timeout_seconds": "120",
+        "max_tokens": 4096,
+        "timeout_seconds": 120,
         "thinking_level": "medium",
         "advanced_model": "gpt-advanced",
         "advanced_base_url": "https://advanced.example.com/v1",
@@ -190,8 +220,12 @@ def test_save_runtime_llm_preserves_existing_api_slot_when_saving_cli(tmp_path, 
     assert saved["api"]["base_url"] == "https://api.example.com/v1"
     assert saved["api"]["model"] == "gpt-api"
     assert saved["api"]["api_key"] == "sk-api"
-    assert saved["api"]["max_tokens"] == "4096"
-    assert saved["api"]["timeout_seconds"] == "150"
+    # #53:preserve 路径与 fresh 路径产出同一 JSON 形态——数值字段保持数值,不被 stringify。
+    assert saved["api"]["max_tokens"] == 4096
+    assert isinstance(saved["api"]["max_tokens"], int)
+    assert saved["api"]["timeout_seconds"] == 150
+    assert isinstance(saved["api"]["timeout_seconds"], (int, float))
+    assert not isinstance(saved["api"]["timeout_seconds"], str)
     assert saved["api"]["thinking_level"] == "minimal"
     assert saved["cli"] == {
         "runner": "codex",
