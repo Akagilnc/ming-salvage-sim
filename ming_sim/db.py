@@ -4571,6 +4571,16 @@ class GameDB:
             return True
         return False
 
+    def withdraw_pending_action(self, action_id: int, turn: int) -> bool:
+        """皇帝复核:撤回本回合一条尚未落库的暂存动作(删 pending 行)。返回是否删了。
+        已 committed / 非本回合 / 不存在 → False。"""
+        cur = self.conn.execute(
+            "DELETE FROM pending_actions WHERE id=? AND turn=? AND status='pending'",
+            (int(action_id), int(turn)),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
     def save_resolve_context(
         self, turn: int, decree_text: str, narrative: str,
         simulator_payload: Dict[str, object],
