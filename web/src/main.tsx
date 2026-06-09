@@ -393,7 +393,7 @@ function App() {
         setChatNotice(`密令已秘密交付${activeMinister.name}，编号 #${data.secret_order_id}。`);
       }
       if (data.pending_action_id) {
-        setChatNotice(`已为${activeMinister.name}拟下一道密令动作，待颁诏批准（可在「待颁诏」复核或撤回）。`);
+        setChatNotice(`已为${activeMinister.name}拟下一道待颁诏动作，待颁诏批准（可在「待颁诏」复核或撤回）。`);
       }
       if (data.proposed_directive) {
         setChatNotice(`${activeMinister.name}已拟旨一道，待陛下在「诏书草案」核定（准/驳）。`);

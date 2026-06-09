@@ -700,9 +700,10 @@ class GameSession:
                     target = active[0]
                 if target is not None and sa and sa != "无":
                     oid = int(target["id"])
-                    # target 可能是 pending_review：催办对非 active 抛错、提交核议返 False，按状态分流（CMR F1）。
+                    # 只对 active 目标 stage:pending_review/已结的密令,更新/催办/提交核议/记进展
+                    # 落库都会失败,stage 了只会成孤儿暂存行(ship-pre CMR codex)。非 active 一律不接。
                     target_active = str(target.get("status") or "active") == "active"
-                    if sa == "更新":
+                    if target_active and sa == "更新":
                         # 动作闸门(ADR 0006)：进暂存，不动真实表；颁诏批量落库。
                         out["pending_action_id"] = self.db.stage_pending_action(
                             self.state.turn, kind="secret_order", action="更新",
@@ -713,17 +714,17 @@ class GameSession:
                                 "deadline_months": act["deadline_months"],
                             },
                         )
-                    elif sa == "催办" and target_active:
+                    elif target_active and sa == "催办":
                         out["pending_action_id"] = self.db.stage_pending_action(
                             self.state.turn, kind="secret_order", action="催办",
                             minister_name=minister_name, target_id=oid,
                             payload={"reason": player_message[:80]})
-                    elif sa == "提交核议":
+                    elif target_active and sa == "提交核议":
                         out["pending_action_id"] = self.db.stage_pending_action(
                             self.state.turn, kind="secret_order", action="提交核议",
                             minister_name=minister_name, target_id=oid,
                             payload={"claim": reply[:200]})
-                    elif sa == "记进展" and int(target.get("turn_issued") or 0) != int(self.state.turn):
+                    elif target_active and sa == "记进展" and int(target.get("turn_issued") or 0) != int(self.state.turn):
                         out["pending_action_id"] = self.db.stage_pending_action(
                             self.state.turn, kind="secret_order", action="记进展",
                             minister_name=minister_name, target_id=oid,
