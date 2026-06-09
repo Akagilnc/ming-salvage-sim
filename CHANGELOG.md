@@ -4,6 +4,22 @@
 
 ## [未发布]
 
+## [0.7.1.0] - 2026-06-10
+
+### 新增
+- **任免纳入聊天动作闸门(ADR 0006 三类全做)**：CLI 召对里口头任免(任命/升迁/调任/罢免/纳妃)走**独立检测** `extract_appointment_action`(与密令的 `extract_minister_actions` 不混)、随召对触发不挂密令 gate、覆盖大臣 + 太监、作用域=当前召对的大臣。暂存为 `kind=office`,颁诏 `commit_pending_actions` 透传 `content/registry` 落库。
+
+### 变更
+- **确认闸门由「颁诏批量同意 + UI 撤回面板」改为「对话确认」**：大臣(太监)in-character 领命复述;皇帝下一句**应允 → 当场 commit**该召对大臣暂存、**拒绝 → 丢**、不回 → 留、颁诏对没回的算同意。新增 `extract_confirmation_intent`,commit/drop 按 `minister_name` 过滤。
+- **任免落地核归一**:抽出 `issues.apply_office_appointment` 作【唯一落地核】(在册且未死→改 active+授官+顶替去重+`office_type` 重算+内存/registry 同步;不在册→建档;dead/空 office 拒),**extractor 的 `office_changes` 与 CLI 任免 commit 共用**,杜绝两份会漂的实现;罢免加 ming-guard + alias + active 校验。
+- minister prompt 加「in-character 领命并补充信息和要点」(后宫走 consort_agent 自有领命)。
+
+### 修复
+- `_displace_duplicate_offices` 剔除官员一个独占分项后,保留官职的 `office_type` 随之重算并同步 DB+内存(原只改 office、留陈旧 type,大臣 agent 按错类型建身份/工具)。
+
+### 移除
+- 拆掉自造的「待颁诏」前端确认 UI:`PendingActionsModal` + 顶部浮窗(`.pending-actions-fab`)+ pending 角标 + 撤回按钮 + 相关 state/type(确认改对话驱动;后端 `pending_actions` 表/暂存基建保留)。
+
 ## [0.7.0.0] - 2026-06-09
 
 ### 新增
