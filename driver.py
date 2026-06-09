@@ -14,12 +14,19 @@ import sys
 from ming_sim.context import bind_content
 from ming_sim.decree import pre_settle, settle_with_delta
 import ming_sim.issues as issues_mod
-from ming_sim.issues import validate_delta_shape as _validate_delta_shape
+from ming_sim.issues import apply_score_extraction, validate_delta_shape as _validate_delta_shape
 from ming_sim.content import GameContent
 from ming_sim.db import GameDB
+from ming_sim.models import LLMConfig
 from ming_sim.simulation import _canonicalize_extraction
 
 DEFAULT_DB = "data/probe.db"
+
+# 探针 driver 显式确定性(#54 / ADR-0004):对话里的我已是 LLM、自产完整 delta,落库核绝不该
+# 再 spawn 第二个 LLM 做 issue/office enrichment。传 channel=api 空配置 → cli_backend_active
+# 恒 False(见其首个分支),屏蔽所有 CLI-gated LLM 调用,**含 legacy MING_SIM_LLM_BACKEND env
+# 回落**;且不触发任何 API 调用(enrichment/office 推断纯 CLI-gated,api 通道直接跳过)。
+_DETERMINISTIC_LLM = LLMConfig(api_key="", base_url="", model="", channel="api")
 
 # delta 容器/二级类型校验的单一真源已抽到 ming_sim.issues.validate_delta_shape(#57):
 # driver 在 pre_settle 前调一次防 pre_settle 半改;落库核 apply_score_extraction 自身也调一次
@@ -83,6 +90,10 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
         narrative=narrative,
         decree_text=decree_text,
         extractor_output=json.dumps(extracted, ensure_ascii=False),
+        # 注入确定性 applier:落库不走 legacy env CLI enrichment,driver 纯确定性(#54)。
+        delta_applier=lambda d, s, ex, ct, rg: apply_score_extraction(
+            d, s, ex, content=ct, registry=rg, llm_config=_DETERMINISTIC_LLM
+        ),
     )
 
 
