@@ -258,7 +258,7 @@ def test_withdraw_pending_action_removes_before_decree(game):
 
 
 def test_pending_actions_endpoints(game, monkeypatch):
-    """皇帝复核区端点:GET 列本回合待确认动作;withdraw 撤回一条;重复撤回 404。"""
+    """皇帝复核区端点:GET 列本回合待确认动作;withdraw 撤回一条;不存在→404,已落库→409(可辨)。"""
     import asyncio
     import pytest
     from fastapi import HTTPException
@@ -276,8 +276,19 @@ def test_pending_actions_endpoints(game, monkeypatch):
     out = asyncio.run(web_app.api_withdraw_pending_action(pid))
     assert out["withdrawn"] == pid and out["actions"] == []
 
-    with pytest.raises(HTTPException):
+    # 不存在 → 404
+    with pytest.raises(HTTPException) as e404:
         asyncio.run(web_app.api_withdraw_pending_action(pid))
+    assert e404.value.status_code == 404
+
+    # 已落库(committed)→ 409(与 404 可辨)
+    pid2 = db.stage_pending_action(state.turn, kind="secret_order", action="更新",
+                                   minister_name=name, target_id=oid,
+                                   payload={"new_title": "已落", "new_content": "已落", "deadline_months": 0})
+    db.commit_pending_actions(state)   # pid2 → committed
+    with pytest.raises(HTTPException) as e409:
+        asyncio.run(web_app.api_withdraw_pending_action(pid2))
+    assert e409.value.status_code == 409
 
 
 def test_consort_cultivate_stages_and_commits(game, monkeypatch):

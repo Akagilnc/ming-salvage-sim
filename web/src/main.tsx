@@ -179,9 +179,7 @@ function App() {
   // 动作闸门(ADR 0006)：进入/切回合时拉取本回合待颁诏暂存动作(restore 后也可见可撤)。
   React.useEffect(() => {
     if (!state) return;
-    api<{ actions: PendingAction[] }>("/api/pending_actions")
-      .then(({ actions }) => setPendingActions(actions))
-      .catch(() => {/* 失败静默 */});
+    refreshPendingActions();
   }, [state?.turn.turn]);
 
   // 结局已触发：每次进页面/刷新都自动弹结局结算页。玩家点关闭后（endingDismissed）
@@ -191,6 +189,13 @@ function App() {
     if (endingDismissed) return;
     setActiveModal("ending");
   }, [state, endingDismissed]);
+
+  // 动作闸门(ADR 0006)：刷新本回合待颁诏暂存动作(进/切回合、召对后、撤回召对后复用)。
+  function refreshPendingActions() {
+    api<{ actions: PendingAction[] }>("/api/pending_actions")
+      .then(({ actions }) => setPendingActions(actions))
+      .catch(() => {/* 失败静默,下次刷新自纠 */});
+  }
 
   // 动作闸门(ADR 0006)：皇帝撤回一条待颁诏暂存动作。
   async function withdrawPendingAction(id: number) {
@@ -385,10 +390,7 @@ function App() {
       api<{ orders: SecretOrder[] }>("/api/secret_orders")
         .then(({ orders }) => setSecretOrders(orders))
         .catch(() => {});
-      // 动作闸门(ADR 0006)：刷新本回合待颁诏暂存动作
-      api<{ actions: PendingAction[] }>("/api/pending_actions")
-        .then(({ actions }) => setPendingActions(actions))
-        .catch(() => {});
+      refreshPendingActions();   // 动作闸门(ADR 0006)：召对后刷新待颁诏
       if (data.secret_order_id) {
         setChatNotice(`密令已秘密交付${activeMinister.name}，编号 #${data.secret_order_id}。`);
       }
@@ -444,10 +446,7 @@ function App() {
       setSecretOrders(data.secret_orders || []);
       setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count } : current));
       await loadState();
-      // 撤回召对会删该轮暂存动作(rollback),同步刷新待颁诏列表免显示陈旧(ship-pre CMR)。
-      api<{ actions: PendingAction[] }>("/api/pending_actions")
-        .then(({ actions }) => setPendingActions(actions))
-        .catch(() => {});
+      refreshPendingActions();   // 撤回召对会删该轮暂存(rollback),同步刷新免陈旧(ship-pre CMR)
       setChatNotice("已撤回最近一轮召对。");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

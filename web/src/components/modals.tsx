@@ -1000,18 +1000,18 @@ export function PendingActionsModal({
       bgClass="modal-bg-edict"
       onClose={onClose}
     >
-      <div className="so-list">
+      <div className="secret-orders-list">
         {actions.length === 0 && <p className="so-empty">本月暂无待颁诏的动作。</p>}
         {actions.map((a) => (
-          <div className="so-card" key={a.id}>
-            <div className="so-card-head">
-              <span className="so-status so-active">
+          <div className="secret-order-card" key={a.id}>
+            <div className="so-header">
+              <span className="so-status so-pending">
                 {PENDING_KIND_LABEL[a.kind] || a.kind}·{PENDING_ACTION_LABEL[a.action] || a.action}
               </span>
               <span className="so-meta">承办：{a.minister_name || "—"}</span>
             </div>
-            <div className="so-card-body">{summarize(a) || "（无摘要）"}</div>
-            <div className="so-card-foot">
+            <div className="so-content">{summarize(a) || "（无摘要）"}</div>
+            <div className="so-detail-actions">
               <button className="secondary-action" onClick={() => onWithdraw(a.id)}>
                 <Trash2 size={13} /> 撤回此拟
               </button>
