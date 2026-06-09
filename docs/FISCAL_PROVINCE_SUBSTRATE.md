@@ -1,4 +1,7 @@
-# 省级财政基座 · 草表 v15(独立 oracle 下沉到原始 param · G1–G11)
+# 省级财政基座 · 草表 v16(独立 oracle 到底:k 也独立重算 · G1–G13)
+
+> v16(r15/opus):oracle 再补最后一刀——**`k` 力度系数也独立重算 `o_k`**(此前三条 oracle 借用 settlement 的 k=同源,k 被污染时 cash/debt 一致偏移漏过;E2 自变异已验 FAIL)。加 G12 赈济Due>0、G13 拨付+追赃同tick。spike **G1–G13 全 PASS**。残留仅 o_pool 读省内可支(C-oracle 兜底,已注释)。
+> 以下为 v15 正文。
 
 > v15(r14 返工):oracle 再下沉——C-oracle 的 火耗应派/起运池/实征 **从原始 param 重算**(不读 settlement 局部变量),堵住「虚增火耗摊派」「起运额算错」这类同上游 relabel(A2/A3 自变异已验 FAIL);追赃 action 接线(KNOWN+settlement+oracle 对齐,修死代码);加 G10 追赃、G11 多 costed action 共享 k。spike **G1–G11 全 PASS**;残留:债务 oracle 的 o_pool 仍读 省内可支(现金守恒兜底)、赈济 Due>0 / 多补饷 golden 待补。
 > 以下为 v14 正文(仍适用)。
