@@ -202,7 +202,11 @@ function App() {
     try {
       const data = await api<{ actions: PendingAction[] }>(`/api/pending_actions/${id}/withdraw`, { method: "POST" });
       setPendingActions(data.actions);
-    } catch {/* 失败静默，下次刷新自纠 */}
+    } catch (err) {
+      // 撤回失败(网络/409 已落库/404)要给玩家反馈,别静默(pr-loop gemini)。
+      setError(err instanceof Error ? err.message : "撤回失败,请重试。");
+      refreshPendingActions();
+    }
   }
 
   // 刷新恢复：若回合停在 awaiting_decision 且有未裁决策点，自动重弹决策弹窗。

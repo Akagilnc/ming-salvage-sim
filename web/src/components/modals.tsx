@@ -989,7 +989,7 @@ export function PendingActionsModal({
       if (a.action === "记进展") return String(p.note || "").slice(0, 40);
       if (a.action === "提交核议") return String(p.claim || "呈报办结").slice(0, 40);
       if (a.action === "调教") return [p.skill && `授「${p.skill}」`, p.trait && `性情「${p.trait}」`].filter(Boolean).join("、");
-      if (a.action === "催办") return String(p.reason || "限期加急");
+      if (a.action === "催办") return String(p.reason || "限期加急").slice(0, 40);
     } catch { /* 容错:payload 坏不挡显示 */ }
     return "";
   }
