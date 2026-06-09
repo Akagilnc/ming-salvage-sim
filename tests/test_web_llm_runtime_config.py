@@ -106,6 +106,20 @@ def test_build_llm_config_switches_to_api_on_real_key_over_backend_env(monkeypat
     assert saved[0][1]["cli_timeout_seconds"] == 240
 
 
+def test_build_llm_config_recovers_preserved_api_key_on_switch_back(monkeypatch):
+    """Gemini R1:从 cli 显式切回 api、表单 key 留空时,从 runtime_llm.json 的 api 槽回收被保留的
+    真实 key(cur.api_key 在 cli 模式已归一为空),免得切回 api 还得重输。"""
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {"api": {"api_key": "sk-preserved"}})
+    current = LLMConfig(api_key="", base_url="https://x/v1", model="m", channel="cli",
+                        cli_runner="codex", cli_model="gpt-5.5")
+    fake = SimpleNamespace(session=SimpleNamespace(llm_config=current, begin_turn=lambda: None))
+
+    cfg = web_app.WebGame.build_llm_config(fake, "", "", "", channel="api")
+
+    assert cfg.channel == "api"
+    assert cfg.api_key == "sk-preserved"
+
+
 def test_set_llm_config_cli_placeholder_not_real_api_key(monkeypatch):
     # 游戏内 POST /api/llm/config：CLI 通道的占位符 cli-backend 不应回报为真实 key。
     cfg = LLMConfig(

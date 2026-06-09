@@ -401,6 +401,11 @@ export function LLMConfigTab() {
         }),
       });
       setInfo((cur) => (cur ? { ...cur, ...data } : null));
+      // 用服务端归一后的响应同步本地通道/CLI 状态,避免与 info 漂移(Sourcery R1)。
+      setChannel(data.channel === "cli" ? "cli" : "api");
+      setCliRunner(data.cli_runner || "agy");
+      setCliModel(data.cli_model || "");
+      setCliTimeout(String(data.cli_timeout_seconds || CLI_DEFAULT_TIMEOUT));
       setApiKey("");
       setAdvancedApiKey("");
       setMsg("已生效并写入 data/runtime_llm.json。");
