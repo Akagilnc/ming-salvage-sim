@@ -117,6 +117,7 @@ class ChatTurnResult:
     displaced_minister: str = ""   # 因新任腾缺被罢黜（dismissed）的原任者姓名
     refresh_ministers: List[str] = field(default_factory=list)
     secret_order_id: int = 0       # 本轮新建密令 id（0=未下密令）
+    pending_action_id: int = 0     # 本轮暂存的待颁诏动作 id（动作闸门 ADR 0006，0=无）
 
 
 @dataclass
@@ -728,7 +729,8 @@ class GameSession:
                             minister_name=minister_name, target_id=oid,
                             payload={"note": reply[:200]})
                     # 注:密令会话动作走闸门后只暂存(out["pending_action_id"]),不再当场改真实表,
-                    # 故无 secret_order_id、不在此 refresh registry——落库与 refresh 推到颁诏 commit。
+                    # 故无 secret_order_id、无需 refresh registry——暂存动作颁诏前对他臣不可见
+                    # (ADR 0006),且 commit 在月末 next_period 前、次回合 agent 本就重建,无须刷新。
                 if is_consort and (act["cultivate_skill"] or act["cultivate_trait"]):
                     # 后宫调教也是结构化聊天写动作,走动作闸门(ADR 0006):暂存,颁诏批量落库。
                     out["pending_action_id"] = self.db.stage_pending_action(
@@ -755,6 +757,9 @@ class GameSession:
             )
         if res["secret_order_id"]:
             result.secret_order_id = res["secret_order_id"]
+        if res.get("pending_action_id"):
+            # 非流式路径与流式同 surface 暂存信号,杜绝两边漂移(ship-pre CMR)。
+            result.pending_action_id = res["pending_action_id"]
 
     def _apply_appointment(self, payload: str, appointer: Character) -> Tuple[str, str]:
         """吏部 propose_appointment 落地：建档入库 + 注册 Agent，本回合即可召见。

@@ -444,6 +444,10 @@ function App() {
       setSecretOrders(data.secret_orders || []);
       setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count } : current));
       await loadState();
+      // 撤回召对会删该轮暂存动作(rollback),同步刷新待颁诏列表免显示陈旧(ship-pre CMR)。
+      api<{ actions: PendingAction[] }>("/api/pending_actions")
+        .then(({ actions }) => setPendingActions(actions))
+        .catch(() => {});
       setChatNotice("已撤回最近一轮召对。");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -819,11 +823,6 @@ function App() {
         <CommandSlot slotKey="密令" img="密令"
           badge={secretOrders.filter((o) => o.status === "active" || o.status === "pending_review").length}
           caption="密令" sub="进行中密令" onClick={() => setActiveModal("secret_orders")} />
-        {pendingActions.length > 0 ? (
-          <CommandSlot slotKey="密令" img="密令"
-            badge={pendingActions.length}
-            caption="待颁诏" sub="复核/撤回暂存" onClick={() => setActiveModal("pending_actions")} />
-        ) : null}
         <CommandSlot slotKey="史册" img="史册"
           caption="史册" sub="历代奏报/诏书" onClick={() => setActiveModal("history")} />
         <CommandSlot slotKey="拟诏" img="拟诏" badge={state.directives.length}
@@ -1007,6 +1006,22 @@ function App() {
             setSelectedMinister(name);
           }}
         />
+      ) : null}
+
+      {pendingActions.length > 0 && activeModal === "none" ? (
+        <button
+          type="button"
+          onClick={() => setActiveModal("pending_actions")}
+          style={{
+            position: "fixed", top: "12px", left: "50%", transform: "translateX(-50%)",
+            zIndex: 60, padding: "6px 16px", borderRadius: "18px",
+            background: "rgba(58,38,18,0.94)", color: "#f0d9a8",
+            border: "1px solid #b8915a", cursor: "pointer", fontSize: "13px",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.4)",
+          }}
+        >
+          待颁诏 {pendingActions.length} 项 · 点此复核 / 撤回
+        </button>
       ) : null}
 
       {activeModal === "pending_actions" ? (

@@ -20,7 +20,26 @@ from ming_sim.session import GameSession
 
 
 def _result():
-    return SimpleNamespace(answer="", proposed_directive=None, secret_order_id=None)
+    return SimpleNamespace(answer="", proposed_directive=None, secret_order_id=None, pending_action_id=0)
+
+
+def test_non_streaming_path_surfaces_pending_action_id(game, monkeypatch):
+    """非流式 session 路径(_cli_backend_fallback_actions)也要 surface pending_action_id,
+    与流式不漂移(ship-pre CMR);暂存不当场落 secret_order_id。"""
+    db, state, _ = game
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    who = "非流式承办官"
+    oid = db.create_secret_order(state, who, "原标题", "原内容", [], deadline_months=0)
+    monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
+        "secret_action": "更新", "order_id": oid, "new_title": "改", "new_content": "改",
+        "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": ""})
+    result = _result()
+    result.answer = "臣领旨，已记改。"
+    _session(db, state)._cli_backend_fallback_actions(
+        result, SimpleNamespace(name=who, office_type="兵部"), "改一下要旨")
+    assert result.pending_action_id        # 非流式也回传 staged 信号
+    assert result.secret_order_id is None  # 暂存不当场落库
 
 
 def _session(db, state, registry=None, llm_config=None):
