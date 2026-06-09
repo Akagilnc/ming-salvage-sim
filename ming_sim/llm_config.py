@@ -39,6 +39,9 @@ CLI_BACKEND_PLACEHOLDER = "cli-backend"
 # timeout 单一真源——别拿 API 的 timeout_seconds（默认 180）当 CLI 子进程超时（codex R1）。
 CLI_DEFAULT_TIMEOUT_SECONDS = 300.0
 
+# 合法执行通道集合——单一真源,新增通道只改这里（#55）。
+VALID_CHANNELS = frozenset({"api", "cli"})
+
 
 def is_real_api_key(value: object) -> bool:
     """真实 API key？空和占位符 cli-backend 都不算。
@@ -69,7 +72,7 @@ def _cli_runtime_slot(data: Dict[str, object]) -> Dict[str, str]:
 
 def _normalize_runtime_llm(data: Dict[str, object]) -> Dict[str, object]:
     channel = str(data.get("channel") or "").strip().lower()
-    if channel not in {"api", "cli"}:
+    if channel not in VALID_CHANNELS:
         # 扁平旧配置只有「存在真实 API key」才推断 api。占位符 + 默认数值字段
         # （max_tokens/timeout 等）不算 api 信号，否则旧 CLI-env 存档被误升成显式
         # API、env CLI 后端被忽略，假 key 还会被送上 API 路径。
@@ -125,10 +128,12 @@ def normalize_thinking_level(level: str) -> str:
 
 
 def cli_model_from_env(runner: str, fallback: str = "") -> str:
+    # 默认模型复用 cli_backend 的单一真源常量,不重写字面量（#55）。
+    from ming_sim.cli_backend import CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL
     if runner == "codex":
-        return (os.environ.get("MING_SIM_CODEX_MODEL") or "gpt-5.5").strip()
+        return (os.environ.get("MING_SIM_CODEX_MODEL") or CODEX_DEFAULT_MODEL).strip()
     if runner == "claude":
-        return (os.environ.get("MING_SIM_CLAUDE_MODEL") or "claude-opus-4-8").strip()
+        return (os.environ.get("MING_SIM_CLAUDE_MODEL") or CLAUDE_DEFAULT_MODEL).strip()
     return fallback
 
 
@@ -277,7 +282,7 @@ def save_runtime_llm(
     """写 data/runtime_llm.json。明文存盘——按用户选择。"""
     os.makedirs(os.path.dirname(RUNTIME_LLM_PATH), exist_ok=True)
     active_channel = (channel or "api").strip().lower()
-    if active_channel not in {"api", "cli"}:
+    if active_channel not in VALID_CHANNELS:
         active_channel = "api"
     existing = load_runtime_llm()
     existing_api = existing.get("api") if isinstance(existing.get("api"), dict) else {}
