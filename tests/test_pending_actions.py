@@ -13,9 +13,29 @@ from __future__ import annotations
 import json
 import types
 
+import pytest
+
 import ming_sim.cli_backend as cb
 from ming_sim.decree import advance_without_edict, pre_settle
 from ming_sim.session import GameSession
+
+
+@pytest.fixture(autouse=True)
+def _restore_content(content):
+    """content 是 session-scope fixture;本文件的任免/罢免用例会改 characters 的
+    office/status（含 _displace_duplicate_offices 连带剔的他人 office），且可能新增人物键。
+    每个用例后统一快照还原,杜绝跨用例污染(CMR R4 codex-docs:个别用例只 pop 新键、漏还原被连带改的在册人)。"""
+    snap = {name: (ch.office, ch.status, ch.office_type, ch.faction)
+            for name, ch in content.characters.items()}
+    original_keys = set(content.characters.keys())
+    yield
+    for k in list(content.characters.keys()):
+        if k not in original_keys:
+            del content.characters[k]          # 移除用例新建的人物
+    for name, (office, status, office_type, faction) in snap.items():
+        ch = content.characters.get(name)
+        if ch is not None:                     # 还原被改/被连带剔的字段
+            ch.office, ch.status, ch.office_type, ch.faction = office, status, office_type, faction
 
 
 def _active_minister_name(db, content) -> str:
@@ -376,3 +396,595 @@ def test_commit_pending_actions_applies_staged_update_at_decree(game, monkeypatc
     assert row["content"] == "颁诏后内容"
     # 暂存行标记 committed,不再在 pending 清单
     assert db.list_pending_actions(state.turn) == []
+
+
+# ── 任免(office)自然语言确认流 ────────────────────────────────────────────
+# 任免与密令无关:独立检测(不进 extract_minister_actions)、随召对触发、ungated
+# (任何召对都可能派官)、覆盖大臣+太监、公开。行为契约:口头(非前缀)任命 → 检测出
+# → stage 成 kind=office 暂存,颁诏前不动 characters 表。
+
+def test_appointment_intent_stages_office_action(game, monkeypatch):
+    """口头任命(非前缀)→ 独立检测出 → stage kind=office;颁诏前 characters 表无此人。
+    走【无 active 密令】的大臣召对,证明任免触发不挂在密令 gate 上(独立路径)。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    new_name = "赵无忌"
+    assert db.conn.execute(
+        "SELECT name FROM characters WHERE name=?", (new_name,)).fetchone() is None
+
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda prompt, llm_config=None: (json.dumps(
+                            {"任免动作": "任命", "姓名": new_name,
+                             "官职": "兵部右侍郎", "顶替": ""}, ensure_ascii=False), 1))
+    GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), ch,
+        player_message="着赵无忌任兵部右侍郎", answer="臣领旨,容臣拟铨。",
+        has_directive=False, secret_order_id=None)
+
+    pend = db.list_pending_actions(state.turn)
+    assert len(pend) == 1
+    pa = pend[0]
+    assert pa["kind"] == "office"
+    assert pa["action"] == "任命"
+    payload = json.loads(pa["payload_json"])
+    assert payload["name"] == new_name
+    assert payload["office"] == "兵部右侍郎"
+    # 颁诏前真实 characters 表一字不动
+    assert db.conn.execute(
+        "SELECT name FROM characters WHERE name=?", (new_name,)).fetchone() is None
+
+
+def test_decree_prefix_appointment_not_double_staged(game, monkeypatch):
+    """显式「拟旨如下：」里的任免随诏书走 extractor(office_changes),不在自然语言路径
+    重复 stage office。判据=显式前缀=皇帝已明示,按既定例外直接走,不入自然语言闸门。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda prompt, llm_config=None: (json.dumps(
+                            {"任免动作": "任命", "姓名": "钱某", "官职": "礼部主事", "顶替": ""},
+                            ensure_ascii=False), 1))
+    GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), ch,
+        player_message="拟旨如下：着钱某任礼部主事",
+        answer="奉天承运皇帝诏曰,着钱某任礼部主事。",
+        has_directive=False, secret_order_id=None)
+    # 拟旨入档为 directive,但【不】另 stage 一条 office —— 任免随诏书走 extractor
+    assert all(pa["kind"] != "office" for pa in db.list_pending_actions(state.turn))
+
+
+def test_commit_appointment_applies_at_decree(game, monkeypatch):
+    """颁诏 commit(带 content/registry):暂存的 office 任命落到 characters 表;
+    颁诏前不在、颁诏后在。content 为 session fixture,用完即清,免污染他例。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    new_name = "测试新抚甲"
+    content.characters.pop(new_name, None)
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda prompt, llm_config=None: (json.dumps(
+                            {"任免动作": "任命", "姓名": new_name,
+                             "官职": "陕西巡抚", "顶替": ""}, ensure_ascii=False), 1))
+    try:
+        GameSession.apply_cli_conversation_actions(
+            _fake_session(db, state), ch,
+            player_message="着测试新抚甲任陕西巡抚", answer="臣领旨,容臣到任。",
+            has_directive=False, secret_order_id=None)
+        # 颁诏前真实 characters 表无此人(只在 pending_actions 暂存)
+        assert db.conn.execute(
+            "SELECT name FROM characters WHERE name=?", (new_name,)).fetchone() is None
+        assert any(pa["kind"] == "office" for pa in db.list_pending_actions(state.turn))
+
+        # 颁诏批量落库(带 content/registry)→ 任命才生效
+        applied = db.commit_pending_actions(state, content=content, registry=None)
+        assert any(a["kind"] == "office" for a in applied)
+        row = db.conn.execute(
+            "SELECT name, office FROM characters WHERE name=?", (new_name,)).fetchone()
+        assert row is not None and row["name"] == new_name
+        # 暂存行标记 committed,不再在 pending 清单
+        assert db.list_pending_actions(state.turn) == []
+    finally:
+        content.characters.pop(new_name, None)
+
+
+# ── 对话驱动 commit/丢弃(确认改回对话,不靠面板撤回)────────────────────────
+# 暂存后:皇帝下一句应允 → 当场 commit(不等颁诏);拒绝 → 丢;不回 → 留;
+# 颁诏对没回的算同意(沿用 commit_pending_actions)。commit/drop 按召对的大臣过滤。
+
+def _stage_secret_update(db, state, ch, monkeypatch, oid):
+    """第一句:口头改密令 → 暂存(不动真实表)。"""
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda prompt, llm_config=None: (json.dumps(
+                            {"密令动作": "更新", "目标密令编号": oid,
+                             "新标题": "改后", "新内容": "改后内容", "期限月数": 0},
+                            ensure_ascii=False), 1))
+    GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), ch, player_message="这道密令改一下要旨",
+        answer="臣领旨,容臣依改后内容办理,陛下可还有示下?",
+        has_directive=False, secret_order_id=None)
+
+
+def test_dialogue_affirm_commits_staged_now(game, monkeypatch):
+    """暂存后皇帝下一句应允 → 当场 commit 该大臣暂存(不等颁诏);真实表此刻即变、暂存清空。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+
+    _stage_secret_update(db, state, ch, monkeypatch, oid)
+    assert db.conn.execute(
+        "SELECT content FROM secret_orders WHERE id=?", (oid,)).fetchone()["content"] == "原内容"
+    assert any(pa["kind"] == "secret_order" for pa in db.list_pending_actions(state.turn))
+
+    # 第二句:皇帝应允 → 当场 commit
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda prompt, llm_config=None: (json.dumps(
+                            {"确认": "应允"}, ensure_ascii=False), 1))
+    GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), ch, player_message="准,就这么办",
+        answer="臣即遵行。", has_directive=False, secret_order_id=None)
+
+    assert db.conn.execute(
+        "SELECT content FROM secret_orders WHERE id=?", (oid,)).fetchone()["content"] == "改后内容"
+    assert db.list_pending_actions(state.turn) == []
+
+
+def test_dialogue_reject_drops_staged(game, monkeypatch):
+    """暂存后皇帝下一句拒绝 → 丢(删暂存行),真实表始终不变。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+
+    _stage_secret_update(db, state, ch, monkeypatch, oid)
+    assert any(pa["kind"] == "secret_order" for pa in db.list_pending_actions(state.turn))
+
+    # 第二句:皇帝拒绝 → 丢
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda prompt, llm_config=None: (json.dumps(
+                            {"确认": "拒绝"}, ensure_ascii=False), 1))
+    GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), ch, player_message="罢了,不必改",
+        answer="臣遵旨,仍依原令。", has_directive=False, secret_order_id=None)
+
+    assert db.list_pending_actions(state.turn) == []     # 暂存被丢
+    assert db.conn.execute(
+        "SELECT content FROM secret_orders WHERE id=?", (oid,)).fetchone()["content"] == "原内容"
+
+
+def test_dialogue_affirm_commits_office_now(game, monkeypatch):
+    """口头任命暂存后,皇帝应允 → 当场建档(office commit 需 content/registry,真实 session 恒有)。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    new_name = "测试新臣乙"
+    content.characters.pop(new_name, None)
+    sess = types.SimpleNamespace(
+        db=db, state=state, llm_config=types.SimpleNamespace(channel="cli"),
+        registry=None, content=content)
+    try:
+        # 第一句:口头任命 → 暂存(不动 characters 表)
+        monkeypatch.setattr(cb, "_run_backend_for_config",
+                            lambda prompt, llm_config=None: (json.dumps(
+                                {"任免动作": "任命", "姓名": new_name,
+                                 "官职": "太常寺卿", "顶替": ""}, ensure_ascii=False), 1))
+        GameSession.apply_cli_conversation_actions(
+            sess, ch, player_message="着测试新臣乙任太常寺卿",
+            answer="臣领旨,容臣引见。", has_directive=False, secret_order_id=None)
+        assert db.conn.execute(
+            "SELECT name FROM characters WHERE name=?", (new_name,)).fetchone() is None
+
+        # 第二句:皇帝应允 → 当场建档
+        monkeypatch.setattr(cb, "_run_backend_for_config",
+                            lambda prompt, llm_config=None: (json.dumps(
+                                {"确认": "应允"}, ensure_ascii=False), 1))
+        GameSession.apply_cli_conversation_actions(
+            sess, ch, player_message="准", answer="臣即拟铨。",
+            has_directive=False, secret_order_id=None)
+        row = db.conn.execute(
+            "SELECT name FROM characters WHERE name=?", (new_name,)).fetchone()
+        assert row is not None and row["name"] == new_name
+        assert db.list_pending_actions(state.turn) == []
+    finally:
+        content.characters.pop(new_name, None)
+
+
+# ── 任免 commit 补全(CMR R1 P1/P2):升迁调任既有官 / 罢免清内存 office / 纳妃带 office_type ──
+
+def test_commit_appointment_promotes_existing_minister(game, monkeypatch):
+    """口头升/调【既有】大臣 → commit 走 set_character_office(改官、仍 active),不当新人被拒。
+    (CMR R1:旧实现无脑 apply_appointment,既有官命中即拒、标 failed。)"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    obj = content.characters[name]
+    saved = (obj.office, obj.status, obj.office_type)
+    old_office = db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (name,)).fetchone()["office"]
+    new_office = "东阁大学士"
+    assert old_office != new_office
+    try:
+        monkeypatch.setattr(cb, "_run_backend_for_config",
+                            lambda prompt, llm_config=None: (json.dumps(
+                                {"任免动作": "任命", "姓名": name,
+                                 "官职": new_office, "顶替": ""}, ensure_ascii=False), 1))
+        GameSession.apply_cli_conversation_actions(
+            _fake_session(db, state), ch, player_message=f"擢{name}为{new_office}",
+            answer="臣领旨谢恩。", has_directive=False, secret_order_id=None)
+        # 颁诏前不动
+        assert db.conn.execute(
+            "SELECT office FROM characters WHERE name=?", (name,)).fetchone()["office"] == old_office
+        applied = db.commit_pending_actions(state, content=content, registry=None)
+        assert any(a["kind"] == "office" for a in applied)   # 落库成功,非 failed
+        row = db.conn.execute(
+            "SELECT office, status FROM characters WHERE name=?", (name,)).fetchone()
+        assert row["office"] != old_office and row["office"]   # 改官生效
+        assert row["status"] == "active"                       # 升/调状态不变
+    finally:
+        obj.office, obj.status, obj.office_type = saved
+
+
+def test_commit_dismiss_clears_db_and_memory_office(game, monkeypatch):
+    """口头罢免既有官 → commit:DB status=dismissed 且 office 清空,**内存 office 同步清空**。
+    (CMR R2:旧实现只设内存 status,留旧 office → 同回合 roster 仍显示旧官。)"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    obj = content.characters[name]
+    saved = (obj.office, obj.status, obj.office_type)
+    try:
+        monkeypatch.setattr(cb, "_run_backend_for_config",
+                            lambda prompt, llm_config=None: (json.dumps(
+                                {"任免动作": "罢免", "姓名": name,
+                                 "官职": "", "顶替": ""}, ensure_ascii=False), 1))
+        GameSession.apply_cli_conversation_actions(
+            _fake_session(db, state), ch, player_message=f"革{name}职拿问",
+            answer="臣无可辩,领罪。", has_directive=False, secret_order_id=None)
+        db.commit_pending_actions(state, content=content, registry=None)
+        row = db.conn.execute(
+            "SELECT status, office FROM characters WHERE name=?", (name,)).fetchone()
+        assert row["status"] == "dismissed"
+        assert row["office"] == ""                       # DB office 清空
+        assert content.characters[name].office == ""     # 内存同步清空(CMR R2)
+    finally:
+        obj.office, obj.status, obj.office_type = saved
+
+
+def test_dialogue_affirm_filters_by_summoned_minister(game, monkeypatch):
+    """应允只 commit【当前召对】大臣的暂存,另一个大臣的暂存原封不动(按 minister_name 过滤)。
+    (CMR codex R2:旧测试只单大臣,没证明过滤。)"""
+    db, state, content = game
+    actives = [c for c in content.characters.values()
+               if getattr(c, "power_id", "ming") == "ming"
+               and getattr(c, "office_type", "") != "后宫"
+               and db.get_character_status(c.name)[0] == "active"]
+    a, b = actives[0], actives[1]
+    oid_a = db.create_secret_order(state, a.name, "甲原", "甲原内容", [], deadline_months=0)
+    oid_b = db.create_secret_order(state, b.name, "乙原", "乙原内容", [], deadline_months=0)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda p, llm_config=None: (json.dumps(
+                            {"密令动作": "更新", "目标密令编号": oid_a,
+                             "新标题": "甲改", "新内容": "甲改内容", "期限月数": 0}, ensure_ascii=False), 1))
+    GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), a, player_message="改甲密令",
+        answer="臣领旨。", has_directive=False, secret_order_id=None)
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda p, llm_config=None: (json.dumps(
+                            {"密令动作": "更新", "目标密令编号": oid_b,
+                             "新标题": "乙改", "新内容": "乙改内容", "期限月数": 0}, ensure_ascii=False), 1))
+    GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), b, player_message="改乙密令",
+        answer="臣领旨。", has_directive=False, secret_order_id=None)
+    assert len(db.list_pending_actions(state.turn)) == 2
+
+    # 只对甲应允 → 只 commit 甲;乙暂存留着、乙真实表不动
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda p, llm_config=None: (json.dumps({"确认": "应允"}, ensure_ascii=False), 1))
+    GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), a, player_message="准",
+        answer="臣即办。", has_directive=False, secret_order_id=None)
+
+    assert db.conn.execute(
+        "SELECT content FROM secret_orders WHERE id=?", (oid_a,)).fetchone()["content"] == "甲改内容"
+    assert db.conn.execute(
+        "SELECT content FROM secret_orders WHERE id=?", (oid_b,)).fetchone()["content"] == "乙原内容"
+    pend = db.list_pending_actions(state.turn)
+    assert len(pend) == 1 and pend[0]["minister_name"] == b.name
+
+
+def test_dialogue_no_response_keeps_staged(game, monkeypatch):
+    """暂存后皇帝下一句没表态(确认=无,聊别的)→ 暂存留着不动、真实表不变(待颁诏兜底)。
+    (CMR codex R2:旧测试没覆盖『不回』。)"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+
+    _stage_secret_update(db, state, ch, monkeypatch, oid)
+    assert any(pa["kind"] == "secret_order" for pa in db.list_pending_actions(state.turn))
+
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda p, llm_config=None: (json.dumps({"确认": "无"}, ensure_ascii=False), 1))
+    GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), ch, player_message="近来天象如何",
+        answer="回陛下,钦天监奏星象无异。", has_directive=False, secret_order_id=None)
+
+    assert any(pa["kind"] == "secret_order" for pa in db.list_pending_actions(state.turn))  # 留着
+    assert db.conn.execute(
+        "SELECT content FROM secret_orders WHERE id=?", (oid,)).fetchone()["content"] == "原内容"
+
+
+def test_commit_appointment_consort_gets_office_type(game, monkeypatch):
+    """口头纳妃(官职=贵妃)→ commit 推断 office_type=后宫、走 consort 路,不当普通朝臣。
+    (CMR gemini R1:data 漏 office_type → is_consort=False → 走错分支、DB/内存不一致。)"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    new_consort = "测试新妃丙"
+    content.characters.pop(new_consort, None)
+    try:
+        monkeypatch.setattr(cb, "_run_backend_for_config",
+                            lambda prompt, llm_config=None: (json.dumps(
+                                {"任免动作": "任命", "姓名": new_consort,
+                                 "官职": "贵妃", "顶替": ""}, ensure_ascii=False), 1))
+        GameSession.apply_cli_conversation_actions(
+            _fake_session(db, state), ch, player_message=f"册{new_consort}为贵妃",
+            answer="臣为陛下贺。", has_directive=False, secret_order_id=None)
+        db.commit_pending_actions(state, content=content, registry=None)
+        row = db.conn.execute(
+            "SELECT office_type, faction FROM characters WHERE name=?", (new_consort,)).fetchone()
+        assert row is not None
+        assert row["office_type"] == "后宫"
+        # faction=后宫 只有 is_consort 路才设;走错分支会留「中立」(gemini R1 真症状)
+        assert row["faction"] == "后宫"
+    finally:
+        content.characters.pop(new_consort, None)
+
+
+# ── 任免 commit 归一(CMR R2 reground:与 extractor 共用 apply_office_appointment)──
+# 既有官 status 生命周期 / dead 拒 / 空 office 拒 / 罢免 ming-guard / 拒绝按召对大臣过滤。
+
+def _two_active_ming(db, content):
+    actives = [c for c in content.characters.values()
+               if getattr(c, "power_id", "ming") == "ming"
+               and getattr(c, "office_type", "") != "后宫"
+               and db.get_character_status(c.name)[0] == "active"]
+    return actives[0], actives[1]
+
+
+class _FakeRegistry:
+    """记录 register/refresh 调用,证明 office commit 真把 content/registry 透传到落地核。"""
+    def __init__(self):
+        self.registered, self.refreshed = [], []
+
+    def register(self, character):
+        self.registered.append(getattr(character, "name", character))
+
+    def refresh(self, name):
+        self.refreshed.append(name)
+
+
+def test_commit_appointment_existing_minister_by_alias(game, monkeypatch):
+    """口头用【别名】任命既有大臣 → 落地核解析到规范名走调任,不误判新人被拒。(CMR R3 gemini R1)"""
+    db, state, content = game
+    a, b = _two_active_ming(db, content)
+    # 找一个有别名的在职大臣当被任者
+    target = next((c for c in content.characters.values()
+                   if getattr(c, "power_id", "ming") == "ming"
+                   and getattr(c, "office_type", "") != "后宫"
+                   and db.get_character_status(c.name)[0] == "active"
+                   and [x for x in (getattr(c, "aliases", None) or []) if x != c.name]), None)
+    assert target is not None
+    alias = next(x for x in target.aliases if x != target.name)
+    obj = content.characters[target.name]
+    saved = (obj.office, obj.status, obj.office_type)
+    summoner = a if a.name != target.name else b
+    try:
+        new_office = "文渊阁大学士"
+        monkeypatch.setattr(cb, "_run_backend_for_config",
+                            lambda p, llm_config=None: (json.dumps(
+                                {"任免动作": "任命", "姓名": alias, "官职": new_office},
+                                ensure_ascii=False), 1))
+        GameSession.apply_cli_conversation_actions(
+            _fake_session(db, state), summoner, player_message=f"擢{alias}为{new_office}",
+            answer="臣领旨。", has_directive=False, secret_order_id=None)
+        applied = db.commit_pending_actions(state, content=content, registry=None)
+        assert any(x["kind"] == "office" for x in applied)   # 解析别名→在册调任,非拒
+        row = db.conn.execute(
+            "SELECT office, status FROM characters WHERE name=?", (target.name,)).fetchone()
+        assert row["office"] and row["office"] != saved[0]   # 规范名被改官
+        assert row["status"] == "active"
+    finally:
+        obj.office, obj.status, obj.office_type = saved
+
+
+def test_commit_reappoint_reactivates_dismissed_minister(game, monkeypatch):
+    """重新任命【已罢黜】大臣 → commit 改回 active 并授官(走唯一落地核)。
+    (CMR codex R2 / gemini F2:旧 fix 只 set_character_office、不改 status,人留 dismissed。)"""
+    db, state, content = game
+    a, b = _two_active_ming(db, content)
+    objb = content.characters[b.name]
+    saved = (objb.office, objb.status, objb.office_type)
+    db.set_character_status(state, b.name, "dismissed", reason="先罢")
+    objb.status = "dismissed"
+    try:
+        new_office = "东阁大学士"
+        monkeypatch.setattr(cb, "_run_backend_for_config",
+                            lambda p, llm_config=None: (json.dumps(
+                                {"任免动作": "任命", "姓名": b.name,
+                                 "官职": new_office, "顶替": ""}, ensure_ascii=False), 1))
+        GameSession.apply_cli_conversation_actions(
+            _fake_session(db, state), a, player_message=f"起复{b.name},授{new_office}",
+            answer="臣领旨。", has_directive=False, secret_order_id=None)
+        reg = _FakeRegistry()
+        applied = db.commit_pending_actions(state, content=content, registry=reg)
+        assert any(x["kind"] == "office" for x in applied)
+        row = db.conn.execute(
+            "SELECT status, office FROM characters WHERE name=?", (b.name,)).fetchone()
+        assert row["status"] == "active"        # 起复:改回 active
+        assert row["office"]                    # 已授新官
+        assert content.characters[b.name].status == "active"   # 内存同步
+        assert b.name in reg.refreshed          # content/registry 真透传到落地核(CMR R3 codex-docs R1)
+    finally:
+        objb.office, objb.status, objb.office_type = saved
+
+
+def test_commit_appointment_rejects_dead_person(game, monkeypatch):
+    """任命一个【已故】人物 → commit 拒(标 failed),不复活、不授官。(CMR codex R2)"""
+    db, state, content = game
+    a, b = _two_active_ming(db, content)
+    objb = content.characters[b.name]
+    saved = (objb.office, objb.status, objb.office_type)
+    db.set_character_status(state, b.name, "dead", reason="先卒")
+    objb.status = "dead"
+    try:
+        monkeypatch.setattr(cb, "_run_backend_for_config",
+                            lambda p, llm_config=None: (json.dumps(
+                                {"任免动作": "任命", "姓名": b.name,
+                                 "官职": "兵部尚书", "顶替": ""}, ensure_ascii=False), 1))
+        GameSession.apply_cli_conversation_actions(
+            _fake_session(db, state), a, player_message=f"起复{b.name}",
+            answer="臣…陛下,此人已殁。", has_directive=False, secret_order_id=None)
+        assert any(p["kind"] == "office" for p in db.list_pending_actions(state.turn))  # 先真暂存了
+        applied = db.commit_pending_actions(state, content=content, registry=None)
+        assert not any(x["kind"] == "office" for x in applied)   # 拒,不在 applied
+        assert any(p["kind"] == "office"                          # 落不了→标 failed(非凭空没暂存)
+                   for p in db.list_pending_actions(state.turn, status="failed"))
+        assert db.conn.execute(
+            "SELECT status FROM characters WHERE name=?", (b.name,)).fetchone()["status"] == "dead"
+    finally:
+        objb.office, objb.status, objb.office_type = saved
+
+
+def test_commit_appointment_empty_office_rejected(game, monkeypatch):
+    """任命既有官但官职为空 → commit 拒,不清掉其现有官职。(CMR codex R1:空 office 会清官。)"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    old_office = db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (name,)).fetchone()["office"]
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda p, llm_config=None: (json.dumps(
+                            {"任免动作": "任命", "姓名": name,
+                             "官职": "", "顶替": ""}, ensure_ascii=False), 1))
+    GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), ch, player_message=f"擢{name}",
+        answer="臣领旨。", has_directive=False, secret_order_id=None)
+    assert any(p["kind"] == "office" for p in db.list_pending_actions(state.turn))   # 先真暂存了
+    applied = db.commit_pending_actions(state, content=content, registry=None)
+    assert not any(x["kind"] == "office" for x in applied)   # 空 office 拒
+    assert any(p["kind"] == "office"                          # 标 failed
+               for p in db.list_pending_actions(state.turn, status="failed"))
+    assert db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (name,)).fetchone()["office"] == old_office
+
+
+def test_commit_dismiss_foreign_actor_noop(game, monkeypatch):
+    """罢免一个【外藩】(power_id≠ming,如皇太极)→ commit 拒,不动其状态。(CMR codex R3。)"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    foreign = "皇太极"
+    assert content.characters[foreign].power_id != "ming"
+    before = db.conn.execute(
+        "SELECT status FROM characters WHERE name=?", (foreign,)).fetchone()["status"]
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda p, llm_config=None: (json.dumps(
+                            {"任免动作": "罢免", "姓名": foreign,
+                             "官职": "", "顶替": ""}, ensure_ascii=False), 1))
+    GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), ch, player_message=f"革{foreign}",
+        answer="陛下,此乃东虏酋长,非我朝臣。", has_directive=False, secret_order_id=None)
+    assert any(p["kind"] == "office" for p in db.list_pending_actions(state.turn))   # 先真暂存了
+    applied = db.commit_pending_actions(state, content=content, registry=None)
+    assert not any(x["kind"] == "office" for x in applied)   # 外藩不接
+    assert any(p["kind"] == "office"                          # 标 failed
+               for p in db.list_pending_actions(state.turn, status="failed"))
+    assert db.conn.execute(
+        "SELECT status FROM characters WHERE name=?", (foreign,)).fetchone()["status"] == before
+
+
+def test_commit_dismiss_nonactive_minister_rejected(game, monkeypatch):
+    """罢免一个【非在职】(已故)大臣 → commit 拒,不把其终态改写成 dismissed。(CMR R3 codex R2)"""
+    db, state, content = game
+    a, b = _two_active_ming(db, content)
+    objb = content.characters[b.name]
+    saved = (objb.office, objb.status, objb.office_type)
+    db.set_character_status(state, b.name, "dead", reason="先卒")
+    objb.status = "dead"
+    try:
+        monkeypatch.setattr(cb, "_run_backend_for_config",
+                            lambda p, llm_config=None: (json.dumps(
+                                {"任免动作": "罢免", "姓名": b.name, "官职": ""}, ensure_ascii=False), 1))
+        GameSession.apply_cli_conversation_actions(
+            _fake_session(db, state), a, player_message=f"革{b.name}职",
+            answer="陛下,此人已殁。", has_directive=False, secret_order_id=None)
+        assert any(p["kind"] == "office" for p in db.list_pending_actions(state.turn))   # 先真暂存了
+        applied = db.commit_pending_actions(state, content=content, registry=None)
+        assert not any(x["kind"] == "office" for x in applied)   # 非在职→拒
+        assert any(p["kind"] == "office"                          # 标 failed
+                   for p in db.list_pending_actions(state.turn, status="failed"))
+        assert db.conn.execute(
+            "SELECT status FROM characters WHERE name=?", (b.name,)).fetchone()["status"] == "dead"
+    finally:
+        objb.office, objb.status, objb.office_type = saved
+
+
+def test_displace_duplicate_offices_recomputes_office_type(game):
+    """剔掉某官员一个独占分项后,其保留官职的 office_type 须随之重算同步(DB+内存)。
+    (CMR R5:_displace_duplicate_offices 只更新 office、漏 office_type → 大臣 agent 用陈旧类型。)"""
+    from ming_sim.issues import _displace_duplicate_offices
+    db, state, content = game
+    a, x = _two_active_ming(db, content)
+    # 让 x 兼「兵部尚书,左都御史」,office_type=兵部(offices.json:兵部排都察院前,故复合衔归兵部)
+    db.conn.execute("UPDATE characters SET office=?, office_type=? WHERE name=?",
+                    ("兵部尚书,左都御史", "兵部", x.name))
+    db.conn.commit()
+    content.characters[x.name].office = "兵部尚书,左都御史"
+    content.characters[x.name].office_type = "兵部"
+
+    # a 新任兵部尚书 → 从 x 剔除「兵部尚书」,x 只剩「左都御史」(=都察院)
+    _displace_duplicate_offices(db, content, a.name, "兵部尚书")
+
+    row = db.conn.execute(
+        "SELECT office, office_type FROM characters WHERE name=?", (x.name,)).fetchone()
+    assert row["office"] == "左都御史"
+    assert row["office_type"] == "都察院"               # DB office_type 随保留官职重算
+    assert content.characters[x.name].office_type == "都察院"   # 内存同步
+
+
+def test_dialogue_reject_filters_by_summoned_minister(game, monkeypatch):
+    """拒绝只丢【当前召对】大臣的暂存,另一个大臣的暂存留着。(CMR codex R3:拒绝路没测过滤。)"""
+    db, state, content = game
+    a, b = _two_active_ming(db, content)
+    oid_a = db.create_secret_order(state, a.name, "甲原", "甲原内容", [], deadline_months=0)
+    oid_b = db.create_secret_order(state, b.name, "乙原", "乙原内容", [], deadline_months=0)
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda p, llm_config=None: (json.dumps(
+                            {"密令动作": "更新", "目标密令编号": oid_a,
+                             "新标题": "甲改", "新内容": "甲改内容", "期限月数": 0}, ensure_ascii=False), 1))
+    GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), a, player_message="改甲", answer="臣领旨。",
+        has_directive=False, secret_order_id=None)
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda p, llm_config=None: (json.dumps(
+                            {"密令动作": "更新", "目标密令编号": oid_b,
+                             "新标题": "乙改", "新内容": "乙改内容", "期限月数": 0}, ensure_ascii=False), 1))
+    GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), b, player_message="改乙", answer="臣领旨。",
+        has_directive=False, secret_order_id=None)
+    assert len(db.list_pending_actions(state.turn)) == 2
+
+    # 只对甲拒绝 → 只丢甲;乙留着
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda p, llm_config=None: (json.dumps({"确认": "拒绝"}, ensure_ascii=False), 1))
+    GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), a, player_message="罢了,不必改",
+        answer="臣遵旨。", has_directive=False, secret_order_id=None)
+    pend = db.list_pending_actions(state.turn)
+    assert len(pend) == 1 and pend[0]["minister_name"] == b.name   # 乙留着
+    db.commit_pending_actions(state)
+    assert db.conn.execute(
+        "SELECT content FROM secret_orders WHERE id=?", (oid_a,)).fetchone()["content"] == "甲原内容"

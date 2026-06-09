@@ -295,6 +295,26 @@ def apply_appointment(
     return (name, displaced)
 
 
+def _pending_action_brief(pa: Dict[str, Any]) -> str:
+    """暂存动作的一句话摘要，供对话确认意图判定时告诉 LLM『有哪些待皇帝定夺』。"""
+    import json as _json
+    kind = pa.get("kind")
+    action = pa.get("action")
+    try:
+        payload = _json.loads(pa.get("payload_json") or "{}")
+    except (ValueError, TypeError):
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    if kind == "office":
+        who = payload.get("name") or ""
+        office = payload.get("office") or ""
+        return f"{action}「{who}」" + (f"为「{office}」" if office else "")
+    if kind == "consort":
+        return f"调教「{payload.get('name') or ''}」"
+    return f"{action}密令"
+
+
 def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: Optional[LLMConfig] = None) -> None:
     """启动/读档时以 DB characters 表重建内存人物表。
     DB 是持久化真相；不要在这里修写 DB。"""
@@ -656,6 +676,7 @@ class GameSession:
         返回 {"directive": {id,text,status,notes}|None, "secret_order_id": int|None}。"""
         from ming_sim.cli_backend import (
             cli_backend_from_env, resolve_minister_actions, extract_minister_actions,
+            extract_appointment_action, extract_confirmation_intent,
         )
         out: Dict[str, Any] = {"directive": None, "secret_order_id": secret_order_id}
         channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
@@ -664,6 +685,22 @@ class GameSession:
         minister_name = character.name
         reply = (answer or "").strip()
         llm_config = getattr(self, "llm_config", None)
+        # 对话确认(ADR 0006 重设计)：本召对的大臣有上一轮经领命确认、尚未落库的暂存动作时，
+        # 皇帝这句应允 → 当场 commit、拒绝 → 丢、未表态 → 留(颁诏对没回的算同意)。
+        # 只在该大臣有 outstanding 暂存时才判(省 token)，commit/drop 按该大臣过滤、不波及他人。
+        pend_for_minister = self.db.list_pending_actions(
+            self.state.turn, minister_name=minister_name)
+        if pend_for_minister:
+            summaries = [_pending_action_brief(p) for p in pend_for_minister]
+            confirm = extract_confirmation_intent(
+                player_message, reply, summaries, llm_config=llm_config)
+            if confirm == "应允":
+                self.db.commit_pending_actions(
+                    self.state, minister_name=minister_name,
+                    content=getattr(self, "content", None),
+                    registry=getattr(self, "registry", None))
+            elif confirm == "拒绝":
+                self.db.drop_pending_actions_for_minister(self.state.turn, minister_name)
         acts = resolve_minister_actions(
             reply, player_message, default_assignee=minister_name, llm_config=llm_config)
         if not has_directive and acts["decree_text"]:
@@ -739,6 +776,23 @@ class GameSession:
                         minister_name=character.name, target_id=None,
                         payload={"name": character.name,
                                  "skill": act["cultivate_skill"], "trait": act["cultivate_trait"]})
+        # 任免(office)独立检测：与密令无关，随召对触发(ungated)，覆盖大臣+太监。
+        # 口头任命/罢免 → 暂存 kind=office；颁诏前不动 characters 表。
+        # 显式前缀(拟旨/密令)是皇帝已明示的动作，按既定例外直接走(拟旨里的任免随诏书
+        # 走 extractor 的 office_changes)，不在此自然语言路径重复 stage。
+        explicit_prefixed = bool(acts["decree_text"] or acts["secret_order"])
+        appt = (
+            {"appoint_action": "无"} if explicit_prefixed
+            else extract_appointment_action(player_message, reply, llm_config=llm_config)
+        )
+        if appt["appoint_action"] in ("任命", "罢免") and appt["name"]:
+            # minister_name = 召对对象(发起这道任免的大臣/太监),非被任者——对话确认按召对的
+            # 大臣过滤暂存,故须以召对对象为键;被任者姓名在 payload["name"]。
+            out["pending_action_id"] = self.db.stage_pending_action(
+                self.state.turn, kind="office", action=appt["appoint_action"],
+                minister_name=minister_name, target_id=None,
+                payload={"name": appt["name"], "office": appt["office"],
+                         "appointer": minister_name})
         return out
 
     def _cli_backend_fallback_actions(
@@ -1015,7 +1069,8 @@ class GameSession:
 
     def advance_without_decree(self) -> None:
         """CLI 退朝无草案：仅财政 tick + 推进。"""
-        advance_without_edict(self.state, self.db)
+        advance_without_edict(
+            self.state, self.db, content=self.content, registry=self.registry)
         self.state.turn_phase = TurnPhase.SUMMONING.value
         self.db.save_state(self.state)
 

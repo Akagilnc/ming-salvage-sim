@@ -365,7 +365,9 @@ def test_runtime_cli_conversation_update_uses_configured_runner_without_env(game
         secret_order_id=None,
     )
 
-    assert calls == [("codex", "gpt-5.5", 240)]   # 会话动作判定按配置 runner 分派
+    # 会话动作判定都按配置 runner 分派(绝不用 agy/env):密令意图 + 任免意图(独立检测)
+    # 各一次,两次都走 codex/gpt-5.5/240。
+    assert calls == [("codex", "gpt-5.5", 240), ("codex", "gpt-5.5", 240)]
     # 动作闸门：暂存,颁诏 commit 才落库(不在召对当场直写)
     assert res["secret_order_id"] is None
     assert res.get("pending_action_id")
