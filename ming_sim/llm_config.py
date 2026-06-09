@@ -62,8 +62,32 @@ def _slot_text(data: Dict[str, object], key: str) -> str:
     return "" if value is None else str(value)
 
 
-def _api_runtime_slot(data: Dict[str, object]) -> Dict[str, str]:
-    return {k: _slot_text(data, k) for k in _API_RUNTIME_FIELDS}
+# API slot 的数值字段保持 JSON 数值类型（int/float），让 preserve-save 与 fresh-save 产出
+# 同一形态、load 归一也统一类型（#53）。default 与 save_runtime_llm 签名默认对齐。
+_API_NUMERIC_FIELDS = {"max_tokens": (int, 8000), "timeout_seconds": (float, 180.0)}
+
+
+def _slot_number(value: object, caster, default):
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return default
+    try:
+        return caster(value)
+    except (TypeError, ValueError):
+        try:
+            return caster(float(value))  # "4096.0" / 含小数的字符串兜底
+        except (TypeError, ValueError):
+            return default
+
+
+def _api_runtime_slot(data: Dict[str, object]) -> Dict[str, object]:
+    out: Dict[str, object] = {}
+    for k in _API_RUNTIME_FIELDS:
+        if k in _API_NUMERIC_FIELDS:
+            caster, default = _API_NUMERIC_FIELDS[k]
+            out[k] = _slot_number(data.get(k), caster, default)
+        else:
+            out[k] = _slot_text(data, k)
+    return out
 
 
 def _cli_runtime_slot(data: Dict[str, object]) -> Dict[str, str]:

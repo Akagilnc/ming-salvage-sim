@@ -58,8 +58,8 @@ def test_load_runtime_llm_migrates_flat_api_config(tmp_path, monkeypatch):
         "base_url": "https://api.example.com/v1",
         "model": "gpt-test",
         "api_key": "sk-test",
-        "max_tokens": "4096",
-        "timeout_seconds": "120",
+        "max_tokens": 4096,
+        "timeout_seconds": 120,
         "thinking_level": "medium",
         "advanced_model": "gpt-advanced",
         "advanced_base_url": "https://advanced.example.com/v1",
@@ -190,8 +190,12 @@ def test_save_runtime_llm_preserves_existing_api_slot_when_saving_cli(tmp_path, 
     assert saved["api"]["base_url"] == "https://api.example.com/v1"
     assert saved["api"]["model"] == "gpt-api"
     assert saved["api"]["api_key"] == "sk-api"
-    assert saved["api"]["max_tokens"] == "4096"
-    assert saved["api"]["timeout_seconds"] == "150"
+    # #53:preserve 路径与 fresh 路径产出同一 JSON 形态——数值字段保持数值,不被 stringify。
+    assert saved["api"]["max_tokens"] == 4096
+    assert isinstance(saved["api"]["max_tokens"], int)
+    assert saved["api"]["timeout_seconds"] == 150
+    assert isinstance(saved["api"]["timeout_seconds"], (int, float))
+    assert not isinstance(saved["api"]["timeout_seconds"], str)
     assert saved["api"]["thinking_level"] == "minimal"
     assert saved["cli"] == {
         "runner": "codex",
