@@ -436,6 +436,12 @@ def pre_settle(state: GameState, db: GameDB, *, on_stage=None) -> List[Dict[str,
 
     返回本回合程序硬触发的清单。真实流程与探针 driver 共用此核（ADR 0004）。
     """
+    # 动作闸门(ADR 0006)：颁诏最前批量落库本回合暂存的结构化聊天写动作（密令更新/催办/…），
+    # 在跑 LLM 结算管线前，使 simulator/extractor 读到的盘面与旧「召对期直写」时序一致。
+    # driver 路径无聊天暂存 → 空 no-op。幂等（committed 行不重跑）。
+    committed = db.commit_pending_actions(state)
+    if committed:
+        tlog(f"[pending_actions] 颁诏批量落库 {len(committed)} 条：{[(c['kind'], c['action']) for c in committed]}")
     tlog("结算 1/4 固定月度财政 tick")
     if on_stage is not None:
         on_stage("固定月度财政入账")

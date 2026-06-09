@@ -275,8 +275,8 @@ def test_existing_directive_not_overwritten(game, monkeypatch):
 # ── codexC-1：会话动作（非前缀）必须经 session 路径落地，不再只在 web 有 ──
 
 def test_conversation_update_lands_via_session_path(game, monkeypatch):
-    """无前缀、口头说『更新密令』→ session 路径(apply_cli_conversation_actions)也落库改对应密令。
-    旧 _cli_backend_fallback_actions 只补前缀、没接会话动作 → terminal CLI 走 session.chat 时丢动作。"""
+    """无前缀、口头说『更新密令』→ session 路径(apply_cli_conversation_actions)把更新进 pending 暂存,
+    颁诏 commit 才落真实表(ADR 0006 动作闸门);召对当场不直写、不丢动作。"""
     db, state, _ = game
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
@@ -287,17 +287,21 @@ def test_conversation_update_lands_via_session_path(game, monkeypatch):
         "secret_action": "更新", "order_id": oid, "new_title": "改后标题",
         "new_content": "改后内容", "deadline_months": 0,
         "cultivate_skill": "", "cultivate_trait": ""})
-    refreshed = []
-    s = _session(db, state, registry=SimpleNamespace(refresh=lambda n: refreshed.append(n)))
+    s = _session(db, state, registry=SimpleNamespace(refresh=lambda n: None))
     res = s.apply_cli_conversation_actions(
         SimpleNamespace(name=who, office_type="兵部"),
         "你那道密令改一下，内容换成……", "臣领旨，已记改。",
         has_directive=False, secret_order_id=None,
     )
-    assert res["secret_order_id"] == oid
-    row = db.conn.execute("SELECT content FROM secret_orders WHERE id=?", (oid,)).fetchone()
-    assert row["content"] == "改后内容"          # 会话动作真落库（不止出回话）
-    assert who in refreshed
+    # 召对当场：进暂存、不报"已交付"、真实表不动
+    assert res["secret_order_id"] is None
+    assert res.get("pending_action_id")
+    assert db.conn.execute(
+        "SELECT content FROM secret_orders WHERE id=?", (oid,)).fetchone()["content"] == "原内容"
+    # 颁诏 commit 才落库
+    db.commit_pending_actions(state)
+    assert db.conn.execute(
+        "SELECT content FROM secret_orders WHERE id=?", (oid,)).fetchone()["content"] == "改后内容"
 
 
 def test_runtime_cli_conversation_update_uses_configured_runner_without_env(game, monkeypatch):
@@ -342,10 +346,15 @@ def test_runtime_cli_conversation_update_uses_configured_runner_without_env(game
         secret_order_id=None,
     )
 
-    assert calls == [("codex", "gpt-5.5", 240)]
-    assert res["secret_order_id"] == oid
-    row = db.conn.execute("SELECT content FROM secret_orders WHERE id=?", (oid,)).fetchone()
-    assert row["content"] == "改后内容"
+    assert calls == [("codex", "gpt-5.5", 240)]   # 会话动作判定按配置 runner 分派
+    # 动作闸门：暂存,颁诏 commit 才落库(不在召对当场直写)
+    assert res["secret_order_id"] is None
+    assert res.get("pending_action_id")
+    assert db.conn.execute(
+        "SELECT content FROM secret_orders WHERE id=?", (oid,)).fetchone()["content"] == "原内容"
+    db.commit_pending_actions(state)
+    assert db.conn.execute(
+        "SELECT content FROM secret_orders WHERE id=?", (oid,)).fetchone()["content"] == "改后内容"
 
 
 def test_conversation_rush_skips_pending_review(game, monkeypatch):
