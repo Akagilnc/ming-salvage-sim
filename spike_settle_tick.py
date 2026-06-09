@@ -112,19 +112,46 @@ def run_tick(name, st, p, actions):
     Δcash = sum(cash.values())-cash0; 净 = cash_in-cash_out
     ok_cash = abs(Δcash-净) < EPS
     print(f"[现金守恒] Δcash={Δcash:+.3f} in−out={净:+.3f}(in{cash_in:.2f}/out{cash_out:.2f}) 残差{Δcash-净:+.5f} {'PASS' if ok_cash else 'FAIL'}")
+    # 债务 per-account · 独立 oracle(r13/opus:同 C,从 params/claim0/action入参 重跑,堵科目 relabel)
+    o_pool = 省内可支; o_paid = {}
+    for h in ['军饷','官俸','宗禄','赈济']:
+        d = p['Due'].get(h,0.0); pay = min(o_pool,d); o_pool -= pay; o_paid[h] = pay
+    o_nd = {'军饷欠':p['Due'].get('军饷',0)-o_paid['军饷'], '官俸欠':p['Due'].get('官俸',0)-o_paid['官俸'], '宗禄欠':p['Due'].get('宗禄',0)-o_paid['宗禄']}
+    o_a还 = {'军饷欠':0.0}                       # 补饷:min(cost×k, 军饷欠@⓪),独立重算
+    for a in actions:
+        if a['type'] == '补饷':
+            o_a还['军饷欠'] += min(a.get('cost',0)*(k if a.get('cost',0)>0 else 1.0), claim0['军饷欠']-o_a还['军饷欠'])
+    o_S = o_pool; o_rep = {}
+    for c in ['军饷欠','官俸欠','宗禄欠']:
+        bal = claim0[c] - o_a还.get(c,0) + o_nd[c]; x = min(o_S, bal); o_rep[c] = x; o_S -= x
     ok_debt = True
     for c in ['军饷欠','官俸欠','宗禄欠']:
-        exp = claim0[c]+r['NewDebt'][c]-r['Repaid'][c]-r['action还'].get(c,0)
-        if abs(claim[c]-exp) > EPS: ok_debt=False; print(f"  [债务FAIL]{c} {claim[c]:.2f}≠{exp:.2f}")
-    exp_my = claim0['民欠旧赋']+r['民欠新增']-r['清欠']-r['蠲免']
-    if abs(claim['民欠旧赋']-exp_my) > EPS: ok_debt=False; print(f"  [债务FAIL]民欠 {claim['民欠旧赋']:.2f}≠{exp_my:.2f}")
-    print(f"[债务对账] {'PASS' if ok_debt else 'FAIL'}")
-    # per-account C 对账(堵 relabel)
+        exp = claim0[c] - o_a还.get(c,0) + o_nd[c] - o_rep[c]
+        if abs(claim[c]-exp) > EPS: ok_debt=False; print(f"  [债务FAIL]{c} {claim[c]:.2f}≠oracle{exp:.2f}")
+    o_my = claim0['民欠旧赋']                    # 民欠:⓪清欠/蠲免(clamp 顺序)→⑦民欠新增(param)
+    for a in actions:
+        if a['type'] in ('清欠','蠲免'):
+            o_my -= min(a.get('amount',0)*(k if a.get('cost',0)>0 else 1.0), o_my)
+    o_my += (正赋+三饷)*bf
+    if abs(claim['民欠旧赋']-o_my) > EPS: ok_debt=False; print(f"  [债务FAIL]民欠 {claim['民欠旧赋']:.2f}≠oracle{o_my:.2f}")
+    print(f"[债务对账·独立oracle] {'PASS' if ok_debt else 'FAIL'}")
+    # per-account C 对账 · 独立 oracle(r13/opus:应得从 params/action 重算,与落账两条独立路径,堵一致 relabel)
+    o_in = {'C_地方截留': 火耗应派*(1-bf), 'C_中饱': g*zb, 'C_漂没': 起运池*pm, 'C_eff损耗': 0.0}
+    o_out = {ck: 0.0 for ck in C0}
+    bal_dfjl, bal_zb = C0['C_地方截留'], C0['C_中饱']   # ⓪挪借/追赃 时的余额(火耗实收⑦/中饱⑩ 才加)
+    for a in actions:
+        ak = k if a.get('cost',0) > 0 else 1.0
+        if a['type'] == '挪借火耗':
+            act = min(a.get('amount',0)*ak, bal_dfjl); bal_dfjl -= act
+            o_out['C_地方截留'] += act; o_in['C_eff损耗'] += act*(1-a.get('eff',1.0))
+        elif a['type'] == '追赃':
+            act = min(a.get('amount',0)*ak, bal_zb); bal_zb -= act
+            o_out['C_中饱'] += act
     ok_C = True
     for ck in C0:
-        exp = C0[ck]+Cin[ck]-Cout[ck]
-        if abs(cash[ck]-exp) > EPS: ok_C=False; print(f"  [C分账FAIL]{ck} {cash[ck]:.2f}≠{exp:.2f}(old{C0[ck]:.2f}+in{Cin[ck]:.2f}-out{Cout[ck]:.2f})")
-    print(f"[C 分账] {'PASS(per-account)' if ok_C else 'FAIL'}")
+        exp = C0[ck] + o_in[ck] - o_out[ck]
+        if abs(cash[ck]-exp) > EPS: ok_C=False; print(f"  [C分账FAIL]{ck} {cash[ck]:.2f}≠oracle{exp:.2f}(old{C0[ck]:.2f}+应得in{o_in[ck]:.2f}-out{o_out[ck]:.2f})")
+    print(f"[C 分账·独立oracle] {'PASS' if ok_C else 'FAIL'}")
     print(f"[末态] cash={{ {', '.join(f'{k}:{v:.2f}' for k,v in cash.items())} }}")
     print(f"       claim={{ {', '.join(f'{k}:{v:.2f}' for k,v in claim.items())} }} 官民田={官民田:.0f}")
 
