@@ -1,81 +1,77 @@
-# 省级财政基座 · 草表 v3(codex r2 返工 · spine 锁死)
+# 省级财政基座 · 草表 v4(codex r3 返工 · 锁 spine)
 
-> v3 目标:打出 codex 说「写引擎前必须先定」的两张 spine 表 —— **① 月度结算顺序(唯一口径)② action/clamp schema 枚举** —— 并闭死:单位制 /12、火耗落账对象、欠账累进/偿还、reason_code 枚举、漂没/中饱拆分。
-> 外部评审:[r1](fiscal-substrate-review-r1-codex.md) · [r2](fiscal-substrate-review-r2-codex.md)。决策见 [ADR 0007](adr/0007-province-fiscal-substrate-ai-judged.md)。⚠️=待精验。样本省=陕西。
+> v4 修 r3 的 4 硬点 + 隐藏 spine:① 三本账 ledger 分层 ② 火耗应派/实收拆 ③ 付款 waterfall 表 ④ 中央拨付 gross/net ⑤ typed action/clamp schema。
+> 评审:[r1](fiscal-substrate-review-r1-codex.md)·[r2](fiscal-substrate-review-r2-codex.md)·[r3](fiscal-substrate-review-r3-codex.md)。决策见 [ADR 0007](adr/0007-province-fiscal-substrate-ai-judged.md)。⚠️=待精验。样本=陕西。
 
-## 0. 单位制(闭账版,codex #2/#19/新坑#1)
-| 类 | 单位 | 例 |
+## 0. 三本账 ledger(r3 隐藏 spine · 引擎绕不开 · 每笔钱落且只落一本)
+- **A 官方月流(flow,万两/月)**:正赋实征 · 三饷实征 · 起运到京 · 省内各支出 · 中央拨付(gross)· 国库入账。
+- **B 欠账 stock(累积,万两)**:军饷欠 · 宗禄欠 · 官俸欠 · 民欠旧赋。
+- **C 灰账/损耗(stock/sink,万两)**:地方截留(火耗实收)· 漂没损失 · 中饱赃银。
+
+**账本不变式(每 tick 必平,作为引擎断言/契约测试)**
+- 征收:`应征 = 实征(A) + 民欠新增(B)`
+- 付款:`应付 = 实付(A) + 欠账新增(B)`
+- 解运:`起运池 = 起运到京(A) + 漂没损失(C)`
+- 拨付:`拨付gross(A出) = 到手net(A入) + 中饱赃银(C)`
+- 火耗:`火耗应派 = 火耗实收(C) + 火耗欠(随逋赋,不单列,计入民侧未收)`
+
+## 1. 单位制(同 v3 + action「银」标生命周期)
+年额量(两/亩·年、万石/年)入月账前 ÷12 / 经`粮价`折银 · 月额量 万两/月 · stock 万两 · 税额(`正赋亩额`/`三饷亩额`,两/亩·年,**非0-1**)· 真率(火耗/逋赋/漂没/中饱率,0-1)。
+action 里「银」必标 `duration_months`:0=一次性 · 1=持续/月 · N=临时N月。
+
+## 2. 月度结算顺序(唯一口径 · 火耗应派/实收拆 · gross/net 修)
+| # | 步骤 | 公式 → 落哪本账 |
 |---|---|---|
-| **年额量**(入月账前 ÷12 / 经粮价折银) | 万两/年、万石/年 | 正赋应征、三饷应征、宗禄账面 |
-| **月额量** | 万两/月 | 所有 budget flow、出血、实征、起运、到账 |
-| **stock**(累积) | 万两 | 军饷欠/宗禄欠/官俸欠/民欠旧赋/地方截留 |
-| **税额**(银额,**不是 0-1**) | 两/亩·年 | `正赋亩额`、`三饷亩额`(原"亩率/三饷率"改名) |
-| **真·率** | 0-1 | 火耗率、逋赋率、漂没率、中饱率 |
+| ① | 年额折月 | 两/亩·年、万石/年 在此 ÷12 / 折银 |
+| ② | 正赋应征 | 官民田×`正赋亩额`÷12 (万两/月) |
+| ③ | 三饷应征 | 官民田×`三饷亩额`÷12 |
+| ④ | **火耗应派** | 正赋应征×`火耗率` → **进民负担(⑤),不进国库** |
+| ⑤ | 民人均负担/负担率 | (正赋+三饷应征+火耗应派)÷民口÷负担标准值 |
+| ⑥ | 逋赋率 | f(灾,负担率,民变,征收能力);灾→下限 |
+| ⑦ | **实征 / 火耗实收 / 民欠** | 实征=(正赋+三饷)×(1−逋赋率) **→A**;火耗实收=火耗应派×(1−逋赋率) **→C.地方截留**;民欠=应征−实征 **→B.民欠旧赋** |
+| ⑧ | **存留/起运分配** | 实征 → 见 §3 付款 waterfall(先留起运定额,余省内按优先级;短缺累 B) |
+| ⑨ | **漂没(解运口)** | 起运到京=起运池×(1−`漂没率`) **→A**;差额 **→C.漂没损失**。只吃起运池 |
+| ⑩ | **中央拨付(gross/net)** | 国库扣 **gross**(A出);地方收 **net=gross×(1−`中饱率`)**(A入);差额 **→C.中饱赃银** |
+| ⑪ | 欠账偿还 | 有拨饷旨意/余款 → 按 §3 偿还优先级:先抵本月缺口,余抵 B 本金 |
+| ⑫ | 国库入账 | Σ起运到京 − Σ拨付gross − 中央定额支出 |
 
-**维度铁律**:税额×万亩 = 万两/年 → ÷12 入月;率×钱 = 钱;率和钱不混。每条公式标左右单位。
+## 3. 付款 waterfall 表(r3 fix 2)
+实征 → 先扣 `起运定额`(中央/边饷 earmark)入起运池;**余额=省内池**,按下表优先级付,短缺即欠:
 
-## 1. 月度结算顺序表(唯一口径 waterfall · codex step 1 · 引擎照此实现)
+| 优先级 | 预算头 | due 公式 | 资金池 | 欠→stock | 偿还优先级 |
+|---|---|---|---|---|---|
+| 0 | 起运定额(中央/边饷) | 国家级定额 | 起运池 | (中央侧另计) | — |
+| 1 | 本省驻军饷 | Σ驻军 maintenance | 省内池 | 军饷欠 | 1(欠饷→兵变) |
+| 2 | 官俸/行政运转 | 官俸法定+行政缺口部分 | 省内池 | 官俸欠 | 3 |
+| 3 | 宗禄 | 宗禄账面×实发率 | 省内池 | 宗禄欠 | 4 |
+| 4 | 赈济/其他 | 旨意额 | 省内池 | (不累欠,直接缩) | 2(民生优先补) |
 
-| # | 步骤 | 公式(单位) |
+## 4. typed action / clamp schema(r3 fix 4)
+```
+action_id     : enum
+inputs        : { 目标省, 力度: low|mid|high, 资源: {银:{amount, duration_months}, 人:吏id|数, 权:bool, 政治槽:国策|密令} }
+effects[]     : { field_path, op: delta|set|scale, amount, unit, duration_months }   ← 一个 action 多条;白名单内
+clamp_return  : { per_effect: [{field_path, requested, applied}], reason_codes[](primary 在前), binding_constraints[], blocking_vars[] }
+```
+生命周期由 `duration_months` 表达:押解(临时N月)/养廉银(持续/月)/赈灾(一次性)三类不再混。
+
+| action_id | effects 白名单(field_path 方向) | reason_codes |
 |---|---|---|
-| ① | **年额折月** | 凡 两/亩·年、万石/年 量在此 ÷12 / 经 `粮价` 折万两 |
-| ② | 正赋应征(月) | 官民田 × `正赋亩额` ÷12 → 万两/月 |
-| ③ | 三饷应征(月) | 官民田 × `三饷亩额`(辽+剿+练) ÷12 → 万两/月 |
-| ④ | **火耗额(月)** | 正赋应征 × `火耗率` → **①进民负担 ②进 `地方截留` stock**(灰色,不入国库可支) |
-| ⑤ | 民人均负担 / 负担率 | (正赋+三饷+火耗额) ÷ 民口 ÷ 负担标准值 |
-| ⑥ | 逋赋率 | f(灾, 负担率, 民变, 征收能力);灾→下限 |
-| ⑦ | **实征(月)** | (正赋+三饷应征) × (1−逋赋率)。民欠=应征−实征 → 累进 `民欠旧赋` |
-| ⑧ | **存留/起运分配(先分后损)** | 实征 → 按优先级分两池:**起运池**(中央/边饷定额)+ **省内池**(驻军饷→官俸行政→宗禄→赈济)。短缺时低优先级欠 → 累进对应 stock |
-| ⑨ | **漂没(解运口)** | 起运到京 = 起运池 × (1−`漂没率`)。**漂没只吃起运池,不吃省内存留** |
-| ⑩ | **中饱(拨付口,独立于漂没)** | 凡中央拨付到地方:到手 = 拨付 × (1−`中饱率`) |
-| ⑪ | **欠账 stock 更新** | 新增欠=应付−实付,累进各 stock;有余款+拨饷旨意→偿还(**先抵本月缺口,余抵本金**) |
-| ⑫ | 国库入账 | Σ各省起运到京 − Σ中央拨付到手 − 中央定额支出 |
+| `qing_zhang` | 隐田↓·官民田↑·士绅阻力↑·民心↓(临)·银-(一次)·逋赋↑(临) | GENTRY_RESISTANCE/LOW_ADMIN_CAPACITY/INSUFFICIENT_FUNDS |
+| `tai_guanfeng` | 官俸法定↑(持续)·行政缺口↓·火耗率↓·官俸欠↓ | INSUFFICIENT_FUNDS/NO_BUDGET_HEADROOM |
+| `zhuanyuan_yajie` | 漂没率↓(临)·银-(一次/持续) | TRANSPORT_BOTTLENECK |
+| `xue_fan` | 宗禄↓(持续)·宗室满意度↓ | CLAN_RESISTANCE |
+| `jia_sanxiang` | 三饷亩额±·(派生:民负担↑→逼反) | AI_DILEMMA |
+| (其余 整肃吏治/清账追赃/裁驿/蠲免 同形,见 v3) | | |
 
-> 火耗(④,征收口·进民负担)/ 漂没(⑨,解运口·吃起运)/ 中饱(⑩,拨付口·吃下发)—— 三口位置/对象/被吃的钱各不同,不可合并。
+## 5. reason_code 枚举(+ r3 补)
+clamp_return.reason_codes[] 取自:`INSUFFICIENT_FUNDS·DISASTER_FLOOR·LOW_ADMIN_CAPACITY·GENTRY_RESISTANCE·TRANSPORT_BOTTLENECK·CLAN_RESISTANCE·MUTINY_RISK·NO_BUDGET_HEADROOM·REBOUND·APPLIED(全额落地)·AI_DILEMMA(无引擎硬约束,后果交 AI 软判)`。多约束同触发→数组,**主因在前**。
 
-## 2. action / clamp schema 枚举(codex step 2 · 引擎照此实现)
-
-**每个 action 的形状**:
-```
-action_id      : enum(见下)
-inputs         : { 目标省, 力度: low|mid|high, 资源: {银:万两, 人:能吏id|数, 权:皇权背书 bool, 政治槽:国策|密令} }
-effect_vector  : [该 action 可触碰的状态字段 + 方向]  ← 白名单,引擎只允许动这些
-clamp_return   : { reason_code, requested_delta, applied_delta, binding_constraints[], blocking_vars[] }
-```
-
-| action_id | 力度/资源 | effect_vector(可触状态白名单) | 可能 reason_code |
-|---|---|---|---|
-| `qing_zhang` 清丈 | 力度+银+能吏+权 | 隐田↓·官民田↑·士绅阻力↑·民心↓(短期)·银-·逋赋↑(短期摩擦) | GENTRY_RESISTANCE / LOW_ADMIN_CAPACITY |
-| `zheng_su_lizhi` 整肃吏治 | 力度+银 | 腐败↓(→三口同降)·银-·征收能力↑ | LOW_ADMIN_CAPACITY |
-| `zhuanyuan_yajie` 专员押解 | 人+银 | 漂没率↓(临时)·银- | TRANSPORT_BOTTLENECK |
-| `qingzhang_zhuizang` 清账追赃 | 力度+人 | 中饱率↓·`地方截留`→可追回·满意度↓ | GENTRY_RESISTANCE |
-| `tai_guanfeng` 抬官俸(养廉银) | 银(持续) | 官俸法定↑(出血↑)·行政运转缺口↓·火耗率↓(派生)·官俸欠↓ | INSUFFICIENT_FUNDS / NO_BUDGET_HEADROOM |
-| `xue_fan` 削藩 | 力度+权 | 宗禄↓·宗室满意度↓ | CLAN_RESISTANCE |
-| `cai_yi` 裁驿 | 力度 | 驿卒↓·出血↓·流寇↑ | — (dilemma,AI判) |
-| `jia_sanxiang` 加/减三饷 | 饷种+厘/亩 | 三饷亩额±·民负担↑(→逼反)·实征↑(短期) | — (AI判逼反) |
-| `juanmian_zhenzai` 蠲免/赈灾 | 银+粮 | 灾影响↓·逋赋↓·民心↑·民欠旧赋↓ | INSUFFICIENT_FUNDS |
-
-## 3. reason_code 枚举(clamp 必返其一,可测可复现)
-`INSUFFICIENT_FUNDS`(银不够) · `DISASTER_FLOOR`(灾→逋赋下限,收不上) · `LOW_ADMIN_CAPACITY`(征收/行政能力低) · `GENTRY_RESISTANCE`(士绅阻力) · `TRANSPORT_BOTTLENECK`(运输能力) · `CLAN_RESISTANCE`(宗藩 leverage) · `MUTINY_RISK`(军饷欠临界) · `NO_BUDGET_HEADROOM`(出血已满) · `REBOUND`(硬压偏离标准值→反弹,如火耗)
-
-## 4. 一级主状态(units 已闭账;加 `地方截留` stock)
-基数:在册田 3500 / 官民田 3050 / 藩王庄田 450 / 皇庄 0 / 隐田 1600(万亩)· `正赋亩额` 0.022(两/亩·年)· 存粮 170(万石)
-人口(万口):民 430 / 宗室 1.5⚠️ / 流寇 0.5 / 官吏胥役~⚠️(驿卒1⚠️)
-软轴(0-100):腐败72 / 士绅阻力42 / 民心32 / 民变78 / 征收能力30⚠️ / 士绅协作25⚠️ / 宗室满意度35⚠️
-出血(万两/月):行政运转缺口6 / 官俸法定1 / 宗禄账面4 / 宗禄实发率18% / 边粮供给4
-**stock(万两,0起累积)**:军饷欠 / 宗禄欠 / 官俸欠 / 民欠旧赋 / **地方截留**(火耗沉淀,可追赃)
-国家级政策态:三饷亩额(辽~0.009 剿0 练0 两/亩·年)/ 国家法定俸率 / 粮价(两/石)/ 运输能力
-标准值:负担标准值(校准使陕西负担率~1.3)
-
-## 5. 二级派生(漂没/中饱已拆开)
-火耗率=f(行政运转缺口,腐败) · 逋赋率=f(灾,负担率,民变,征收能力) · **漂没率=f(腐败,运输能力,押解)** · **中饱率=f(腐败,核账)** · 民人均负担/负担率 · `local_balance`=本省收−出血(负=亏空) · 兵变压力=f(军饷欠,士气) · 流寇压力=f(负担率,灾,裁驿,民欠)
-
-## 6. 死亡螺旋 + 5 铁律(同 v2,不变)
-死亡螺旋=AI 耦合(民负担→民变/人口流失→人均↑)+ 灾→逋赋下限 + 刚性前提(按册/额派不随人口减)。
-铁律 1-5 见 [ADR 0007](adr/0007-province-fiscal-substrate-ai-judged.md)(压力不强制·不防爽·真钱+标准值·clamp带原因·杠杆机械效果不绑名)。
+## 6. 状态 / 派生 / 死亡螺旋 / 铁律(同 v3)
+一级状态(基数/人口分层/软轴/出血/三本账 stock/政策态/标准值)、二级派生(火耗率/逋赋率/漂没率/中饱率/负担率/local_balance/兵变压力/流寇压力)、死亡螺旋(AI耦合+灾→逋赋下限+按册派刚性)、5 铁律 —— 均同 [v3 §4-6](#) 与 [ADR 0007]。陕西 seed 同前(⚠️ 待精验项不变)。
 
 ## 待精验
-火耗/逋赋/漂没/中饱/火耗率 的**具体 f() 形**(可先占位线性/分段,codex 说不必等校准)· 欠账偿还细则 · 征收能力/士绅协作/粮价/运输/宗室口/驿卒 seed ⚠️ · 负担标准值校准。
+各 f() 具体形(可占位线性/分段)· 偿还细则边界 · 征收能力/士绅协作/粮价/运输/宗室口/驿卒 seed · 负担标准值校准。
 
 ## Sources
 [1][西安府田亩](https://zhuanlan.zhihu.com/p/1917691584633369550) [2][三边京运](https://zhuanlan.zhihu.com/p/30177486035) [3][宗禄](https://zhuanlan.zhihu.com/p/508242610) [5][官俸薄](https://news.bjd.com.cn/2022/08/15/10134150.shtml) [6][裁驿](https://zhuanlan.zhihu.com/p/51748875) [7][三饷](https://zh.wikipedia.org/zh-hans/%E4%B8%89%E9%A4%89)
