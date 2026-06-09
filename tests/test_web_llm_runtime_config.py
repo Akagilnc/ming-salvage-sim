@@ -77,7 +77,8 @@ def test_apply_llm_config_saves_api_channel_over_backend_env(monkeypatch):
         )
     )
 
-    cfg = web_app.WebGame.apply_llm_config(
+    # apply = build → verify → commit（#56 拆分后等价分步）。填了真实 key=切 api（#51）。
+    cfg = web_app.WebGame.build_llm_config(
         fake,
         "https://api.example.com",
         "gpt-api",
@@ -90,6 +91,8 @@ def test_apply_llm_config_saves_api_channel_over_backend_env(monkeypatch):
         advanced_api_key="",
         advanced_thinking_level="",
     )
+    web_app._verify_llm_configs_or_raise(cfg)
+    web_app.WebGame.commit_llm_config(fake, cfg)
 
     assert cfg.channel == "api"
     assert cfg.cli_runner == "codex"
@@ -113,8 +116,13 @@ def test_set_llm_config_cli_placeholder_not_real_api_key(monkeypatch):
         cli_runner="codex",
         cli_model="gpt-5.5",
     )
-    fake = SimpleNamespace(apply_llm_config=lambda *a, **k: cfg)
+    # api_set_llm_config 改为 build→verify(offload)→commit 分步（#56）：fake 提供新两法。
+    fake = SimpleNamespace(
+        build_llm_config=lambda *a, **k: cfg,
+        commit_llm_config=lambda c: c,
+    )
     monkeypatch.setattr(web_app, "get_game", lambda: fake)
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda c: None)
 
     result = asyncio.run(web_app.api_set_llm_config(web_app.LLMConfigRequest(
         base_url="",
@@ -123,6 +131,53 @@ def test_set_llm_config_cli_placeholder_not_real_api_key(monkeypatch):
     )))
 
     assert result["has_api_key"] is False
+    assert result["channel"] == "cli"
+
+
+def test_api_set_llm_config_explicit_cli_channel_switch(monkeypatch):
+    """#51:in-game 显式选 CLI 通道(channel=cli + cli_runner)→ build 收到 cli 通道参数,
+    回报 cli 配置(不要求 API key)。"""
+    built = {}
+
+    def fake_build(*a, **k):
+        built.update(k)
+        return LLMConfig(api_key="", base_url="", model="api-fallback",
+                         channel="cli", cli_runner="agy", cli_model="", cli_timeout_seconds=240)
+
+    fake = SimpleNamespace(build_llm_config=fake_build, commit_llm_config=lambda c: c)
+    monkeypatch.setattr(web_app, "get_game", lambda: fake)
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda c: None)
+
+    result = asyncio.run(web_app.api_set_llm_config(web_app.LLMConfigRequest(
+        channel="cli", cli_runner="agy", cli_timeout_seconds=240,
+    )))
+
+    assert built["channel"] == "cli"          # "__keep__"→None 之外的值原样传给 build
+    assert built["cli_runner"] == "agy"
+    assert result["channel"] == "cli"
+    assert result["cli_runner"] == "agy"
+    assert result["has_api_key"] is False
+
+
+def test_api_set_llm_config_verify_runs_off_event_loop(monkeypatch):
+    """#56:in-game /api/llm/config 的 verify(CLI smoke ~12s)offload 出 asyncio event loop,
+    commit(落盘/重建)留在 loop。断言 verify 在非主线程跑。"""
+    import threading
+    cfg = LLMConfig(api_key="", base_url="", model="m", channel="cli",
+                    cli_runner="codex", cli_model="gpt-5.5", cli_timeout_seconds=240)
+    seen = {}
+    fake = SimpleNamespace(build_llm_config=lambda *a, **k: cfg, commit_llm_config=lambda c: c)
+    monkeypatch.setattr(web_app, "get_game", lambda: fake)
+
+    def rec_verify(c):
+        seen["thread"] = threading.current_thread()
+
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", rec_verify)
+
+    asyncio.run(web_app.api_set_llm_config(web_app.LLMConfigRequest(channel="cli", cli_runner="codex")))
+
+    assert seen.get("thread") is not None
+    assert seen["thread"] is not threading.main_thread()
 
 
 def test_menu_status_active_cli_unsupported_runner_not_ready_despite_preserved_api_key(monkeypatch):
@@ -528,9 +583,11 @@ def test_apply_llm_config_does_not_reuse_placeholder_as_api_key(monkeypatch):
     )
     fake = SimpleNamespace(session=SimpleNamespace(llm_config=current, begin_turn=lambda: None))
 
-    cfg = web_app.WebGame.apply_llm_config(fake, "", "", "", max_tokens=16000)
+    # 空表单 + CLI 局：保留 cli 通道（#51）、不把占位符当 API key 带入。
+    cfg = web_app.WebGame.build_llm_config(fake, "", "", "", max_tokens=16000)
 
     assert cfg.api_key != "cli-backend"
+    assert cfg.channel == "cli"
 
 
 def test_llm_config_from_runtime_api_channel_drops_placeholder_key(monkeypatch):
