@@ -471,8 +471,10 @@ def settle_with_delta(
     收一份**已规范化**的 extracted（英文 canonical key，见 simulation._canonicalize_extraction）。
     不依赖 llm_config —— 章节记忆 / 结局总评 / 落库 enrichment 全经注入闭包：
     章节记忆=chapter_recorder、结局总评=ending_summarizer、落库（含 issue/office 的
-    通道感知 enrichment）=delta_applier。真实流程传捕获 llm_config 的闭包，探针 driver
-    传 None——结算核本体不见 llm_config（ADR 0004）。返回 full_report 文本。
+    通道感知 enrichment）=delta_applier。真实流程传捕获 llm_config 的闭包；探针 driver 对
+    chapter_recorder/ending_summarizer 传 None（不产 LLM 叙事），对 delta_applier 传一个
+    **channel=api 确定性配置**的闭包（不走 legacy env enrichment,#54）——无论哪种,结算核
+    本体都不见 llm_config（ADR 0004）。返回 full_report 文本。
 
     delta_applier(db, state, extracted, content, registry) -> applied dict；None 时回退到
     `apply_score_extraction(llm_config=None)`——**不注入运行时通道**。注意裸 None 分支不等于

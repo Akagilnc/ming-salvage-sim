@@ -1033,8 +1033,17 @@ def validate_delta_shape(extracted: dict) -> None:
         expected = EMPTY_EXTRACTION[key]
         if isinstance(expected, dict) and not isinstance(value, dict):
             raise ValueError(f"delta 字段 {key} 必须是 object(dict)，实得 {type(value).__name__}")
-        if isinstance(expected, list) and not isinstance(value, list):
-            raise ValueError(f"delta 字段 {key} 必须是 array(list)，实得 {type(value).__name__}")
+        if isinstance(expected, list):
+            if not isinstance(value, list):
+                raise ValueError(f"delta 字段 {key} 必须是 array(list)，实得 {type(value).__name__}")
+            # schema 里所有 list 字段都是 list-of-dict(economy_moves/new_armies/fiscal_*/issue_*/
+            # appointments/character_*/secret_order_* 等);apply 逐项 item.get() 落库,非 dict 项会
+            # 中途崩 → 部分已写半落库。落库前校验每项是 dict(CMR R3 gemini)。
+            for i, item in enumerate(value):
+                if not isinstance(item, dict):
+                    raise ValueError(
+                        f"delta 字段 {key}[{i}] 必须是 object(dict)，实得 {type(item).__name__}"
+                    )
         if key in _NESTED_DICT_FIELDS:
             for ent, sub in value.items():
                 if not isinstance(sub, dict):

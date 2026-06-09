@@ -121,6 +121,13 @@ def test_apply_score_extraction_rejects_nondict_power_second_level(game):
         I.apply_score_extraction(db, state, {"power_updates": {"houjin": {"leverage": 1}, "mongol": "bad"}})
 
 
+def test_apply_score_extraction_rejects_nondict_list_item(game):
+    """CMR R3(gemini):list 字段含非 dict 项 → 落库前抛,不半写(apply 逐项 item.get() 会中途崩)。"""
+    db, state, _ = game
+    with pytest.raises(ValueError):
+        I.apply_score_extraction(db, state, {"fiscal_creates": [{"key": "x"}, "bad-scalar"]})
+
+
 def test_apply_score_extraction_tolerates_null_field(game):
     """Gemini R1:LLM 输出某字段为 null 时,validate 不得比 apply 更严——None 当缺省 no-op,
     不抛 ValueError(apply 本就 `.get(key) or {}` 容忍)。"""
