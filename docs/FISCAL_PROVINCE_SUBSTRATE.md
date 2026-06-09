@@ -1,9 +1,9 @@
-# 省级财政基座 · 草表 v12(spike 扩到 G1–G7 · 守恒断言 r11 修正)
+# 省级财政基座 · 草表 v13(per-account 对账 · 跨 tick · spike G1–G9)
 
 > **范围:仅锁单省 spine(陕西);跨省 hub deferred;`拨付net/gross` 为 tick 外部入参(测试默认 0)。**
-> v12(r11 返工):① §0.1 守恒断言补 `拨付gross`+`清欠`(opus 变异测试逮到 v11 漏 拨付net),挪借/追赃归 CASH 内部 ② spike 扩到 **G1–G7**(加清丈/挪借/漂没中饱/超额补饷/清欠)+ 三断言(现金/债务/C)③ 还款 clamp(补饷不超还)。
-> spike 实测:**G1–G7 三断言全 PASS,残差 0**([spike_settle_tick.py](../spike_settle_tick.py))。
-> 评审 r1–r11(panel=codex/agy/opus/sonnet)。决策见 [ADR 0007](adr/0007-province-fiscal-substrate-ai-judged.md)。⚠️=待精验。
+> v13(r12 返工):① **C 对账改 per-account**(opus 实锤:只校 ΣC 让贪墨 relabel 进国库隐形)② **eff损耗** 经 transfer 3-way 落 C_eff损耗 ③ **run_tick 返回末态、可串多 tick + recurring cost**(死亡螺旋是跨 tick 现象)④ 0-cost action 不缩 k、⓪ 改「先算 k 再执行」、unknown action fail-loud。
+> spike 实测:**G1–G9 三断言全 PASS,残差 0;自变异实证 per-account 咬住 relabel**([spike_settle_tick.py](../spike_settle_tick.py))。
+> 评审 r1–r12(panel=codex/agy/opus/sonnet)。决策见 [ADR 0007](adr/0007-province-fiscal-substrate-ai-judged.md)。⚠️=待精验。
 
 ## 0. 账户模型(三类 · spike 口径)
 - **CASH(真金,跨账户守恒,万两)**:`省库库银`(A-stock,跨期)· `C_地方截留`(火耗实收)· `C_中饱` · `C_漂没` · `C_eff损耗`。
@@ -17,20 +17,21 @@
 ```
 Δ(Σ CASH) == CASH_in − CASH_out
   CASH_in  = 实征 + 火耗实收 + 清欠 + 拨付gross        (民间补缴 / 京饷注入)
-  CASH_out = 起运到京 + Σ实付(军饷/官俸/宗禄/赈济) + Σ偿旧欠 + Σ补饷支付
+  CASH_out = 起运到京 + Σ实付(军饷/官俸/宗禄/赈济) + Σ偿旧欠 + Σ(补饷/行政 action 现金支付)
   注:挪借火耗 / 追赃(C↔省库)是 CASH 内部转移,ΣCASH 不变,不计边界流。
       拨付以 gross 入(net→省库、中饱→C_中饱,均留 ΣCASH 内)。
 ```
 **债务对账**:`B.负债_new = old + NewDebt_i − Repaid_i − action还_i`;`B.民欠_new = old + 民欠新增 − 清欠 − 蠲免`。
-**C 灰账对账**:`C_new = C_old + 火耗实收 + 漂没 + 中饱 + eff损耗 − (挪借+追赃)`。
-**每笔 `transfer_to` 三方平**:`source减 = target增 + loss_sink增`(`actual=min(amount,source)`;BOUNDARY 账户 民间/京/受款方 **无余额 clamp**)。
+**C 灰账 per-account 对账(r12/opus:只校 ΣC 会让贪墨 relabel 进国库隐形)**:每个 C_ 子账户单独平 —
+`C_地方截留_new=old+火耗实收−挪借出` · `C_中饱_new=old+中饱−追赃出` · `C_漂没_new=old+漂没` · `C_eff损耗_new=old+Σtransfer损耗`。(spike 自变异实证:把 中饱 relabel 进省库,现金守恒仍 PASS 但 per-account C 当场 FAIL。)
+**每笔 `transfer_to` 三方平**:`source减 = target增(actual×eff) + C_eff损耗增(actual×(1−eff))`(`actual=min(amount,source)`;BOUNDARY 账户 民间/京/受款方 **无余额 clamp**)。
 > 旧式「三本账总额=拨付−起运」及 v11 漏 拨付net 的式子**均作废**:r11/opus 变异测试实锤 —— 旧式是 tautology(火耗应派≡火耗实收+火耗未收,永真),v11 式漏 拨付net(设 20 跑出残差+20)。现式 spike G1–G7 全 PASS。
 
 ## 1. 单位制 + cost_type(同 v10)
 年额÷12·月额万两/月·stock万两·税额两/亩·年(非0-1)·真率0-1。action「银」amount=每tick成本,cost_type=one_time/recurring。
 
 ## 2. 月度结算顺序(省级 ⓪–⑪ + 全局 ⑫,同 v10)
-⓪ Flow清零→modifier衰减→resolve新action(transfer_to 立即执行,清欠/追赃/挪借 target 走 Flow 入库)→批量算k→`省库库银_post=Stock_start−Σ(k·银Cost)`(Stock_start=⓪执行前=上月结转)。
+⓪ Flow清零→modifier衰减→**收集本tick action→先算 k(`k=min(1,Stock_start/Σ_{cost>0}银Cost)`,Stock_start=上月结转)→再按 k 执行 action**(transfer 此时执行)。**0-cost action 的 amount 不受 k 缩**(spec §6);clamp 到 0 的成本仍占 ΣCost 分母(=预算承诺语义,守恒不破,非 bug)。`省库库银_post=Stock_start−Σ(k·银Cost)`。
 ①折月 ②③应征 ④火耗应派→民负担(未实收不积欠)⑤⑥负担率/逋赋率(灾→下限)⑦实征→可支、火耗实收→C、民欠→B ⑧`起运池=min(实征,定额)`/`省内池=max(0,实征−起运池)` ⑨漂没→C ⑩拨付gross扣/net→可支/中饱→C ⑪付款+偿还+结转(省库库银_new=S,覆盖写)⑫(全局)国库入账。
 
 ## 3. 付款 waterfall / 4–5. schema / 6. 执行归一化(同 v10)
@@ -38,16 +39,13 @@
 k=action力度系数(ΣCost仅含action银,Due不入;Cost>0 action其 delta/scale/transfer_to.amount 全×k;0-cost不缩)。modifier `V_final=clamp(V_base×∏max(0,1+scale)+Σdelta)`,V_base静态不复利,钱类Stock禁set/scale。transfer_to source/target 类型白名单(CASH/CLAIM/BOUNDARY 或指定 Flow)。
 **现金 action 二选一**(防双扣):支付类(补饷/赈济)= 银 Cost 即该笔支付,不再另记 Due;行政成本类 = Cost 扣省库,另带 effect。(spike G2 已验补饷 k=0.333 无双扣。)
 
-## 6.6 golden-tick(spike 实测 · G1–G7 全 PASS,三断言:现金守恒/债务对账/C 对账)
+## 6.6 golden-tick(spike 实测 · G1–G9 全 PASS,三断言:现金守恒/债务对账/C per-account 对账)
 见 [spike_settle_tick.py](../spike_settle_tick.py),已执行,残差均 0:
-- **G1** 无 action(基线):实征49/火耗实收8.4/民欠+21/起运40/省内池9/可支59/付45·8·4/偿军饷欠2→18/结转0。
-- **G2** 补饷(银30,Stock10→k=0.333):只还军饷欠10,省库耗光→可支9→军饷欠暴涨76+官俸欠8+宗禄欠4(死亡螺旋),无双扣。
-- **G3** 清丈(挖隐田300):官民田3050→3350,本 tick 现金中性(税基效应下 tick 显现)。
-- **G4** 挪借火耗(C_地方截留20,挪10→省库):CASH 内部转移,ΣCASH 不变,C 20→18.4。
-- **G5** 漂没.1+中饱.1+拨付gross30:漂没4→C_漂没、中饱3→C_中饱、net27→省库,守恒平。
-- **G6** 超额补饷(银30 但军饷欠仅5):clamp 只还5、余25不花。
-- **G7** 清欠(民欠15,清欠10):民间补缴现金入,民欠15-10+21新增=26。
-- 仍待补:efficiency<1 入 C_eff损耗(eff损耗账户尚未激活)、multi-action k、recurring cost 跨 tick。
+- **G1** 基线 · **G2** 补饷 k=0.333(死亡螺旋+无双扣)· **G3** 清丈(官民田3050→3350,当 tick 扣成本2)· **G4** 挪借火耗(C 内部转移)· **G5** 漂没.1+中饱.1+拨付30(漂没→C_漂没/中饱→C_中饱/net→省库)· **G6** 超额补饷 clamp(欠5补30只还5)· **G7** 清欠(民间补缴现金入)。
+- **G8** 挪借 eff=0.8 → 激活 C_eff损耗(2→损耗账户),per-account 对账平。
+- **G9** 三 tick 链(穷省+recurring 营建):死亡螺旋实显——军饷欠 30→97→133、火耗在 C_地方截留 累积 8.4→16.8→25.2(官绅肥/官衙穷),每 tick 三断言均 PASS。
+- **自变异实证**:把 中饱 relabel 进省库 → 现金守恒仍 PASS、per-account C **当场 FAIL**(堵住 v12 的 relabel 隐形洞)。
+- 仍待补:multi-action 多 costed action 共享 k 的 golden、recurring cost 的语义边界(当前穷省 k=0 即停)。
 
 ## 6.7 可执行 spike(golden 种子)
 `spike_settle_tick.py` = 纯 dict 复式记账原型(非引擎、throwaway),实现 ⓪–⑪ + §0.1 守恒断言,跑 G1/G2 打印逐步流水 + 守恒 PASS/FAIL。**它就是将来真引擎 golden test 的种子**:port 进 `ming_sim` 时把 G1–Gn 转成 pytest 断言即可。
