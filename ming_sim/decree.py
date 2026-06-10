@@ -357,9 +357,11 @@ def persist_resolve_context(
     """ADR 0008 S2：每回合进入结算后半段前无条件持久化 resolve_context（extractor delta + 叙事）。
 
     重跑真源：跨进程恢复从此重灌，不重跑贵的 simulator/extractor。
-    **持久化前先过 validate_delta_shape**——畸形 delta 绝不入 resolve_context（否则毒 payload
-    钉进重试真源：apply 永崩、而「重跑 extractor」被「context 已存在」挡死=永久 soft-lock）。
-    校验失败响亮抛 ValueError，本轮按 fail-loud 处理（S6 接「重新推演」逃生口），save 不执行。
+    **持久化前先过 validate_delta_shape**——形状畸形的 delta 绝不入 resolve_context
+    （否则钉进重试真源：apply 永崩、而「重跑 extractor」被「context 已存在」挡死=soft-lock）。
+    校验失败响亮抛 ValueError，save 不执行。注意此门只挡形状毒：shape 合法但值级
+    必炸的 payload（如 new_armies 项里非数值兵力）由 ADR 0008 决定 6 的「重新推演」
+    逃生口兜底（清 context 重产 delta），S4 恢复入口不得假设 ready=1 即重放安全。
     """
     validate_delta_shape(extracted)  # 抛 → save 不执行，毒 payload 不钉进真源
     db.save_resolve_context(
