@@ -5,11 +5,12 @@
 包内五件：traceback / delta / resolve_context / 存档副本(SQLite backup API) / manifest。
 
 事务边界铁律：错误包**必须在回滚后、atomic 之外**写——db.backup_to 在 atomic 内会响亮拒绝
-（备份走同连接 pager 会带未提交脏页，applier.py:5920 守卫）。
+（备份走同连接 pager 会带未提交脏页；守卫在 db.backup_to，flag 由 applier.atomic 置）。
 
-attempt 计数**从错误目录已有文件推导**（同 turn 既有包数 +1），不从 DB 取——DB 随回滚重置
-（决定 5）。写包本身要稳：目录创建 / 写文件失败不得吞掉原异常（链式 raise ... from，同
-pre_settle reload 先例）。
+attempt 计数**从错误目录已有文件推导**（同 turn 既有目录数字后缀 max+1），不从 DB 取——DB
+随回滚重置（决定 5）。建包目录 exist_ok=False：错误包是诊断孤本，任何路径都不许静默覆盖
+既有包（非连续目录 / 并发双失败时 len+1 会撞名，cmr S6 r1）。写包本身要稳：目录创建 /
+写文件失败不得吞掉原异常（链式 raise ... from，同 pre_settle reload 先例）。
 """
 
 from __future__ import annotations
@@ -35,19 +36,33 @@ def rejections_jsonl_path() -> str:
     """拒收 jsonl 镜像路径（ADR 0008 决定 7：与错误包集中同一 user-data 目录，一次打包全带走）。
 
     RejectionCollector.mirror_to_jsonl 的目标路径约定 = user-data 错误目录下 `rejections.jsonl`。
+    返回前确保父目录就位——mirror 是纯机械 append（open(path,"a") 不建父），开箱即写。
     本切片只提供 helper；真正接线（mirror 调用）在 PR2 迁 section 契约时。
     """
-    return str(error_packs_root() / "rejections.jsonl")
+    root = error_packs_root()
+    root.mkdir(parents=True, exist_ok=True)
+    return str(root / "rejections.jsonl")
 
 
 def _next_attempt(turn: int) -> int:
-    """同 turn 的下一个 attempt 序号：数已有包目录数 +1（决定 5，不从 DB 取）。"""
+    """同 turn 的下一个 attempt 序号：既有目录数字后缀 max+1（决定 5，不从 DB 取）。
+
+    len+1 在非连续目录（玩家发包后删过早期 attempt）下会撞既有名而静默覆盖诊断孤本；
+    不可解析的后缀忽略。
+    """
     root = error_packs_root()
     if not root.exists():
         return 1
     prefix = f"turn{int(turn)}_attempt"
-    existing = [p for p in root.iterdir() if p.is_dir() and p.name.startswith(prefix)]
-    return len(existing) + 1
+    highest = 0
+    for p in root.iterdir():
+        if not (p.is_dir() and p.name.startswith(prefix)):
+            continue
+        try:
+            highest = max(highest, int(p.name[len(prefix):]))
+        except ValueError:
+            continue
+    return highest + 1
 
 
 def _read_version() -> str:
@@ -91,9 +106,16 @@ def write_error_pack(
     要重跑贵调用，不存 delta 不损失什么（决定 6）。
     """
     turn = int(getattr(state, "turn", 0))
+    # exist_ok=False + 撞名重试：诊断孤本绝不静默覆盖（并发双失败 / 非连续目录撞名时
+    # 升号再试，cmr S6 r1）。
     attempt = _next_attempt(turn)
-    pack_dir = error_packs_root() / f"turn{turn}_attempt{attempt}"
-    pack_dir.mkdir(parents=True, exist_ok=True)
+    while True:
+        pack_dir = error_packs_root() / f"turn{turn}_attempt{attempt}"
+        try:
+            pack_dir.mkdir(parents=True, exist_ok=False)
+            break
+        except FileExistsError:
+            attempt += 1
 
     # traceback.txt
     tb_text = "".join(

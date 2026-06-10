@@ -461,31 +461,29 @@ def _settle_after_narrative(
                 db, state, exc=exc, extracted=None,
                 resolve_ctx=db.get_resolve_context(before_turn),
             )
-        except BaseException as pack_exc:
+        except Exception as pack_exc:
             # 写包自身炸（磁盘满/路径不可写）不得顶替原 extractor 异常（同 pre_settle
             # reload 先例 raise exc from ...）：原异常是真因，写包失败是次生。
+            # 只捕 Exception：写包期间（conn.backup 最慢步）落 Ctrl-C/SystemExit 须原样
+            # 传播，降级成普通结算错误会被上游 except Exception 吞掉继续跑（cmr S6 r1）。
             raise exc from pack_exc
         raise SettlementAbort(
             settlement_abort_message(pack_path),
             turn=before_turn, stage="extract", error_pack_path=pack_path,
         ) from exc
-    else:
-        extractor_ok = True
 
     # ADR 0008 S2：进入结算后半段（settle_with_delta 动 DB）前，持久化 resolve_context
     # （extractor delta + 叙事）作重跑真源——跨进程恢复从它重灌，不重跑贵的 simulator/extractor。
     # 持久化前过 validate_delta_shape：畸形 delta 响亮抛错且绝不入真源（防毒钉死锁，见 persist_resolve_context）。
     # before_turn == state.turn（next_period 尚未执行），与 settle 内 clear 同键。
-    # 仅 extractor 真成功才入真源：失败的 {} 占位若持久化，恢复入口会当真 delta
-    # 重放=整月效果静默丢（cmr S2+S3 F1；响亮中止是 S6 的活，in-process 路径暂照旧）。
-    if extractor_ok:
-        persist_resolve_context(
-            db, before_turn, extracted,
-            decree_text=decree_text, narrative=narrative,
-            simulator_payload=simulator_payload,
-            secret_orders=secret_orders_for_sim,
-            relevant_memories=relevant_memories,
-        )
+    # 走到这里 = extractor 真成功（失败已在上方响亮中止，S6）——失败产物永不入真源。
+    persist_resolve_context(
+        db, before_turn, extracted,
+        decree_text=decree_text, narrative=narrative,
+        simulator_payload=simulator_payload,
+        secret_orders=secret_orders_for_sim,
+        relevant_memories=relevant_memories,
+    )
 
     # 后括号确定性结算核：与探针 driver 共用同一段（ADR 0004）。章节记忆 / 结局总评
     # 作为注入回调传入（真实流程= LLM agent 闭包；driver= None 跳过）。

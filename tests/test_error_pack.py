@@ -200,3 +200,64 @@ def test_rejections_jsonl_path_in_error_dir(monkeypatch, tmp_path):
     jsonl = Path(rejections_jsonl_path())
     assert jsonl.parent == error_packs_root()
     assert jsonl.name == "rejections.jsonl"
+
+
+# ---------------------------------------------------------------------------
+# cmr S6 r1 修复回归（F2 attempt 防覆盖 / F3 mirror 父目录 / F4 中断不降级）
+# ---------------------------------------------------------------------------
+
+def test_attempt_never_overwrites_existing_pack(game, tmp_path, monkeypatch):
+    """非连续 attempt 目录下写包绝不覆盖既有包（cmr S6 r1 F2，claude+codex）。
+
+    len+1 + exist_ok=True 会算出 attempt=2 并静默覆盖既有 turn{N}_attempt2。
+    """
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    from ming_sim.error_pack import error_packs_root, write_error_pack
+    db, state, content = game
+    turn = state.turn
+
+    stale = error_packs_root() / f"turn{turn}_attempt2"
+    stale.mkdir(parents=True)
+    (stale / "manifest.json").write_text('{"sentinel": "keep me"}', encoding="utf-8")
+
+    pack = write_error_pack(db, state, exc=RuntimeError("x"))
+
+    assert pack.endswith("attempt3")  # max+1，不是 len+1=2
+    assert (stale / "manifest.json").read_text(encoding="utf-8") == '{"sentinel": "keep me"}'
+
+
+def test_mirror_writes_to_rejections_jsonl_path(game, tmp_path, monkeypatch):
+    """rejections_jsonl_path 开箱可写：父目录就位，mirror 直接 append（cmr S6 r1 F3）。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
+    from ming_sim.error_pack import rejections_jsonl_path
+    db, state, content = game
+    db.conn.execute("DROP TABLE IF EXISTS rejection_reports")
+    rc = RejectionCollector()
+    rc.record("army_delta", RejectedItem(
+        item={}, reason="r", category="invalid_enum", source=Provenance.unknown), turn=1)
+    rc.flush_to_db(db)
+    db.conn.commit()
+
+    path = rejections_jsonl_path()
+    rc.mirror_to_jsonl(path)
+
+    lines = open(path, encoding="utf-8").readlines()
+    assert len(lines) == 1
+
+
+def test_pack_write_interrupt_propagates_as_interrupt(game, tmp_path, monkeypatch):
+    """写包期间 Ctrl-C 原样传播，不降级成普通结算错误（cmr S6 r1 F4）。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    import ming_sim.decree as decree_mod
+    from tests.test_resolve_context_recovery import _drive_settle_after_narrative
+
+    def _interrupt(*a, **k):
+        raise KeyboardInterrupt()
+    monkeypatch.setattr(decree_mod, "write_error_pack", _interrupt)
+
+    db, state, content = game
+    with pytest.raises(KeyboardInterrupt):
+        _drive_settle_after_narrative(db, state, content, monkeypatch,
+                                      extractor_behavior="fail",
+                                      error_pack_dir=tmp_path)
