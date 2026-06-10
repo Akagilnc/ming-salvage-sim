@@ -701,6 +701,11 @@ class GameSession:
                     registry=getattr(self, "registry", None))
             elif confirm == "拒绝":
                 self.db.drop_pending_actions_for_minister(self.state.turn, minister_name)
+            if confirm in ("应允", "拒绝"):
+                # 本轮是对暂存的确认：大臣回话已【复述】该动作(领命 prompt 所致),若继续走下面的
+                # 抽取,会把刚 commit 的动作从复述里重抽成新暂存→颁诏二次落库,或重建刚拒的动作。
+                # 故确认轮直接返回,不再抽新动作(线上 codex P2)。确认句无前缀,前缀路无损失。
+                return out
         acts = resolve_minister_actions(
             reply, player_message, default_assignee=minister_name, llm_config=llm_config)
         if not has_directive and acts["decree_text"]:
