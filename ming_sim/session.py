@@ -1038,6 +1038,9 @@ class GameSession:
                 if (decree or "").strip() or (cheat_directive or "").strip():
                     from ming_sim.token_stats import tlog
                     tlog("[恢复重放] 本次传入的 decree/cheat_directive 被忽略（重放使用崩溃前真源）。")
+                # 跨进程恢复时内存 last_decree 已被 begin_turn 清空——web 成功响应读它
+                # 作诏书展示，从真源恢复（cmr S7 r7）。
+                self.last_decree = str(ctx.get("decree_text") or "")
                 result = resolve_settling_recovery(
                     self.state, self.db, self.agno_db, self.llm_config, ctx,
                     on_event=on_event, content=self.content, registry=self.registry,
@@ -1102,6 +1105,11 @@ class GameSession:
                 (_json.dumps(choice, ensure_ascii=False), self.state.turn, idx),
             )
         self.db.conn.commit()
+        if not (self.last_decree or "").strip():
+            # 跨进程恢复：phase2 结算后 context 即清，趁前从真源补回诏书展示字段（cmr S7 r7）。
+            ctx0 = self.db.get_resolve_context(self.state.turn)
+            if ctx0 is not None:
+                self.last_decree = str(ctx0.get("decree_text") or "")
         report = resolve_decisions_phase2(
             self.state, self.db, self.agno_db, self.llm_config,
             on_event=on_event, content=self.content, registry=self.registry,
