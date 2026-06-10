@@ -157,7 +157,8 @@ class RejectionCollector:
     def mirror_to_jsonl(self, path: str) -> None:
         """把待镜像快照（已 flush 进 DB 的行）append 到 jsonl，写完清空快照。
 
-        调用契约：仅在事务 commit 成功后调用。同一批行重复调用幂等（只写一次）。
+        调用契约：仅在事务 commit 成功后调用。成功调用后重复调用幂等（只写一次）；
+        写入中途失败（如磁盘满）后重试可能重复 append——jsonl 是可回收镜像，DB 为真源。
         """
         if not self._flushed:
             return
