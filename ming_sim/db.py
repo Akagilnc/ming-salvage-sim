@@ -829,6 +829,9 @@ class GameDB:
         self.ensure_column("legacies", "legacy_key", "TEXT NOT NULL DEFAULT ''")
         # 章节记忆正文：event_type='chapter_summary' 用，存整段叙事章节（不受 outcome 80 字限）。
         self.ensure_column("event_memories", "body", "TEXT NOT NULL DEFAULT ''")
+        # extractor 产出的 canonical delta：resolve_context 无条件持久化的重跑真源（ADR 0008 S2）。
+        # 老存档此列缺省 '{}'（HITL 暂停时 phase1 尚无 delta，亦填 '{}'）。
+        self.ensure_column("pending_resolve_context", "extracted_delta_json", "TEXT NOT NULL DEFAULT '{}'")
         # 后宫调教记录
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS consort_traits (
@@ -4688,24 +4691,31 @@ class GameDB:
         simulator_payload: Dict[str, object],
         secret_orders: Optional[List[Dict[str, object]]] = None,
         relevant_memories: Optional[List[Dict[str, object]]] = None,
+        extracted: Optional[Dict[str, object]] = None,
     ) -> None:
-        """暂存 phase1 推演结果，供 phase2 读回（决策暂停期间不重算 simulator）。"""
+        """暂存 phase1 推演结果，供 phase2 读回（决策暂停期间不重算 simulator）。
+
+        extracted：extractor 产出的 canonical delta（ADR 0008 S2 无条件持久化的重跑真源）。
+        HITL 暂停时 phase1 尚未跑 extractor，传 None → 落 '{}'；后半段无条件持久化时灌入实际 delta。
+        """
         self.conn.execute(
             """INSERT INTO pending_resolve_context
                (turn, decree_text, narrative, simulator_payload_json,
-                secret_orders_json, relevant_memories_json)
-               VALUES (?, ?, ?, ?, ?, ?)
+                secret_orders_json, relevant_memories_json, extracted_delta_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(turn) DO UPDATE SET
                    decree_text = excluded.decree_text,
                    narrative = excluded.narrative,
                    simulator_payload_json = excluded.simulator_payload_json,
                    secret_orders_json = excluded.secret_orders_json,
-                   relevant_memories_json = excluded.relevant_memories_json""",
+                   relevant_memories_json = excluded.relevant_memories_json,
+                   extracted_delta_json = excluded.extracted_delta_json""",
             (
                 int(turn), decree_text, narrative,
                 json.dumps(simulator_payload or {}, ensure_ascii=False),
                 json.dumps(secret_orders or [], ensure_ascii=False),
                 json.dumps(relevant_memories or [], ensure_ascii=False),
+                json.dumps(extracted or {}, ensure_ascii=False),
             ),
         )
         self.conn.commit()
@@ -4714,7 +4724,7 @@ class GameDB:
         """读回 phase1 暂存的推演上下文。无则 None。"""
         row = self.conn.execute(
             "SELECT decree_text, narrative, simulator_payload_json, "
-            "secret_orders_json, relevant_memories_json "
+            "secret_orders_json, relevant_memories_json, extracted_delta_json "
             "FROM pending_resolve_context WHERE turn = ?",
             (int(turn),),
         ).fetchone()
@@ -4731,6 +4741,7 @@ class GameDB:
             "simulator_payload": _load(row["simulator_payload_json"], {}),
             "secret_orders": _load(row["secret_orders_json"], []),
             "relevant_memories": _load(row["relevant_memories_json"], []),
+            "extracted": _load(row["extracted_delta_json"], {}),
         }
 
     def clear_resolve_context(self, turn: int) -> None:
