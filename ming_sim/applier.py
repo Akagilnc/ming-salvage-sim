@@ -8,8 +8,67 @@ from __future__ import annotations
 
 import enum
 import json
+import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, List
+from typing import Any, Iterator, List
+
+
+# ---------------------------------------------------------------------------
+# 决定 2/8：事务边界 —— commit 暂停连接 + atomic 包裹
+# ---------------------------------------------------------------------------
+
+class _SuspendableConnection(sqlite3.Connection):
+    """sqlite3.Connection 子类，可暂停 commit。
+
+    暂停期内 commit() 变 no-op；非暂停期照常。db.py 以 factory= 此类建连，使
+    GameDB 全库 79 处 self.conn.commit() 在 atomic 内自动失效、由最外层统一提交，
+    一字不改。rollback() 不受暂停影响（暂停只拦 commit）。
+
+    _commit_suspended 默认 off：保证 GameDB.__init__ 紧接的 init_schema 建表照常提交。
+    """
+
+    # 类属性兜底：sqlite3 可能在 __init__ 前调用 commit（理论上不会，但稳妥）。
+    _commit_suspended = False
+
+    def commit(self) -> None:
+        if self._commit_suspended:
+            return
+        super().commit()
+
+
+@contextmanager
+def atomic(db: Any) -> Iterator[None]:
+    """把 db.conn 上的一段写序列包成单事务，期内暂停所有 commit。
+
+    进入：置暂停标志，期内全部 self.conn.commit() 变 no-op。
+    正常退出：解除暂停 + 一次真 commit。
+    异常：解除暂停 + rollback + 原样 re-raise（ADR 0005 fail-loud，不吞）。
+
+    嵌套 flat/可重入：内层 atomic 不另起事务、不提前提交，由最外层统一
+    commit/rollback（计数深度，仅深度归 0 时落定）。
+
+    注意 db.backup_to 内部那次 self.conn.commit() 在 atomic 内也被暂停——这是
+    接受的语义（错误包应在回滚后、atomic 外做备份），不特殊放行。
+    """
+    conn = db.conn
+    conn._commit_suspended = True
+    # 进入深度：>1 表示嵌套内层，退出时不落定。
+    depth = getattr(conn, "_atomic_depth", 0) + 1
+    conn._atomic_depth = depth
+    try:
+        yield
+    except BaseException:
+        conn._atomic_depth = depth - 1
+        if depth == 1:
+            conn._commit_suspended = False
+            conn.rollback()
+        raise
+    else:
+        conn._atomic_depth = depth - 1
+        if depth == 1:
+            conn._commit_suspended = False
+            conn.commit()
 
 
 # ---------------------------------------------------------------------------
