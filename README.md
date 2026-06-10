@@ -14,6 +14,14 @@
 
 这里没有开局送神兵、没有天降忠臣、没有科技树一键升级、没有一键中兴。你能依靠的只有局势条、奏报、大臣嘴里的半真半假，以及自己的脑洞：怎么借力打力，怎么拆东墙补西墙，怎么把一句话说成一道能落地的旨。
 
+## 关于本版
+
+《明末力挽狂澜》的 **微硬核** 分支，基于 [wangwei-ying3/ming-salvage-sim](https://github.com/wangwei-ying3/ming-salvage-sim) —— 感谢原作搭好的整套晚明对话式政略框架。本版只较真一件事：**决策真兑现、后果真上账，但审判仍归人心，不变成电子表格。**
+
+- **旨意真上账** —— 决策的后果当回合落进账本，不是“朕已知悉”之后石沉大海：准了的募兵真扣饷，砍了的人真消失，欠的饷真欠着。
+- **财政军事往深做** —— 三饷、火耗、起运存留、宗禄、逋赋这些晚明真维度逐步加深，数字有出处、有代价。*（持续加深中，见 [省级财政基座设计](docs/FISCAL_PROVINCE_SUBSTRATE.md)）*
+- **只算代价，不判对错** —— 账本只让后果真实；胜负、民变、兵变、人心向背，仍交给一个会推诿、会站队的朝廷去演。
+
 ## 为什么值得试
 
 | 优点 | 说明 |
@@ -32,7 +40,7 @@
 - 一个可用于 AI 对话的 API Key
 
 ```bash
-git clone https://github.com/wangwei-ying3/ming-salvage-sim.git
+git clone https://github.com/Akagilnc/ming-salvage-sim.git
 cd ming-salvage-sim
 
 python3 -m venv .venv
