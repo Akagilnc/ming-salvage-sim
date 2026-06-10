@@ -639,3 +639,73 @@ def test_escape_hatch_failure_does_not_mask_abort(game, monkeypatch, tmp_path):
         sess.resolve_turn()
     assert isinstance(ei.value.__cause__, RuntimeError)
     assert "clear boom" in str(ei.value.__cause__)
+
+
+def test_resim_path_does_not_preconsume_pending(game, monkeypatch, tmp_path):
+    """settling 无 ready 重推演路：守门早退不提前消费暂存动作（cmr S7 r5 codex）。
+
+    早退路在事务外 commit 的话，extractor 再炸时动作及真表副作用已提交
+    而回合未推进=跨事务半写。所有权规则：终端写路各自在 atomic 内 commit。
+    """
+    import ming_sim.decree as dm
+    from ming_sim.exceptions import SettlementAbort
+    from tests.test_pending_actions import _active_minister_name
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+    dm.pre_settle(state, db, content=content)  # 落 settling
+    name = _active_minister_name(db, content)
+    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    db.stage_pending_action(
+        turn, kind="secret_order", action="更新", minister_name=name, target_id=oid,
+        payload={"new_title": "重推演期标题", "new_content": "x", "deadline_months": 0})
+
+    monkeypatch.setattr(dm, "create_season_simulator_agent", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "create_score_extractor_module_agent", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "build_extractor_shared_context", lambda *a, **k: "ctx")
+    monkeypatch.setattr(dm, "simulate_season_with_payload",
+                        lambda *a, **k: ("重新推演邸报。", {}))
+
+    def _extract_boom(*a, **k):
+        raise RuntimeError("extractor crash on resim")
+    monkeypatch.setattr(dm, "extract_scores_by_modules_with_agno", _extract_boom)
+
+    sess = _recovery_session(db, state, content, monkeypatch)
+    db.add_directive(state, None, "减赋", source="player", status="draft")
+    with pytest.raises(SettlementAbort):
+        sess.resolve_turn(decree="补颁诏")
+
+    assert state.turn == turn  # 回合未推进
+    row = db.conn.execute(
+        "SELECT status FROM pending_actions WHERE turn=? AND target_id=?",
+        (turn, oid)).fetchone()
+    assert row is not None and row["status"] == "pending"  # 未被提前消费
+    title = db.conn.execute(
+        "SELECT title FROM secret_orders WHERE id=?", (oid,)).fetchone()["title"]
+    assert title == "原标题"  # 真表无半写
+
+
+def test_fallback_path_commits_pending(game, monkeypatch):
+    """fallback 终端路（推进回合）在自己的 atomic 内 commit 暂存动作（cmr S7 r5）。"""
+    import ming_sim.decree as dm
+    from tests.test_pending_actions import _active_minister_name
+
+    db, state, content = game
+    turn = state.turn
+    dm.pre_settle(state, db, content=content)  # settling：守门早退不再消费
+    name = _active_minister_name(db, content)
+    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    db.stage_pending_action(
+        turn, kind="secret_order", action="更新", minister_name=name, target_id=oid,
+        payload={"new_title": "fallback标题", "new_content": "x", "deadline_months": 0})
+
+    res = _drive_fallback(db, state, content, monkeypatch)
+
+    assert res.awaiting is False
+    assert state.turn == turn + 1
+    row = db.conn.execute(
+        "SELECT status FROM pending_actions WHERE turn=? AND target_id=?",
+        (turn, oid)).fetchone()
+    assert row is not None and row["status"] != "pending"  # 终端路落库，不留孤儿

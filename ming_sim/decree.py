@@ -333,6 +333,9 @@ def resolve_directives(
         # 路本就不抛 SettlementAbort）。pre_settle 自有 atomic 在本 except 之前已提交，不嵌套。
         try:
             with atomic(db):
+                # 终端写路所有权：fallback 推进回合，暂存动作在此 atomic 内 commit
+                # （幂等；守门早退已不消费，不补则成孤儿，cmr S7 r5）。
+                db.commit_pending_actions(state, content=content, registry=registry)
                 # 跳过 extractor，避免连锁失败
                 db.record_log(state, narrative[:1200])
                 db.save_turn_report(state, narrative)
@@ -703,12 +706,11 @@ def pre_settle(
     「推演前的确定性写」，崩溃时密令呈递须随财政一并回滚；挪入不改它先于 simulator 的事实。
     """
     # 幂等守门：前半段已提交相位（FRONT_HALF_DONE_PHASES 单一真源）重进不重跑财政
-    # （防二次 tick，cmr S4 r2/r3）。暂存动作 commit 幂等、早退前仍要跑：崩溃重载后
-    # 新 stage 的动作不 commit 会成孤儿死行，违 P1（cmr S4 r3 F4）。
+    # （防二次 tick，cmr S4 r2/r3）。早退**不消费**暂存动作：所有权规则=推进回合的
+    # 终端写路（settle_with_delta / advance_without_edict / fallback）各自在 atomic 内
+    # commit——早退路在事务外 commit 会让重推演路上 extractor 再炸时动作已提交而回合
+    # 未推进=跨事务半写（cmr S7 r5；S4 r3 当时无终端覆盖的权宜已被取代）。
     if state.turn_phase in FRONT_HALF_DONE_PHASES:
-        committed = db.commit_pending_actions(state, content=content, registry=registry)
-        if committed:
-            tlog(f"[pending_actions] 守门早退前落库 {len(committed)} 条")
         return []
     auto_triggered: List[Dict[str, object]] = []
     try:
@@ -1010,6 +1012,9 @@ def resolve_decisions_phase2(
         # 重试新传的 cheat_directive 在重放叉被忽略（重放使用崩溃前真源），留痕（cmr S7 r4）。
         if (cheat_directive or "").strip():
             tlog("[恢复重放] 本次传入的 cheat_directive 被忽略（重放使用崩溃前真源）。")
+        # 走到此叉必有重交的亲裁选择（submit_decisions 已 overwrite choice_json），同样
+        # 被忽略——重放体现的是崩溃前已抽取的旧选择（cmr S7 r5）。
+        tlog("[恢复重放] 本次重交的亲裁选择被忽略（重放使用崩溃前真源）。")
         result = resolve_settling_recovery(
             state, db, agno_db, llm_config, ctx,
             on_event=on_event, content=content, registry=registry,
