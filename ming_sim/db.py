@@ -134,7 +134,10 @@ class GameDB:
         self.llm_config = llm_config
         # check_same_thread=False：流式颁诏在 worker 线程跑 resolve_turn，
         # 复用同一 GameDB 连接。游戏单写者、无并发写，跨线程安全。
-        self.conn = sqlite3.connect(path, check_same_thread=False)
+        # factory=_SuspendableConnection：使 atomic() 能暂停全库 commit（ADR 0008 决定 2/8）。
+        # 暂停标志默认 off，下面 init_schema 建表照常提交。
+        from ming_sim.applier import _SuspendableConnection
+        self.conn = sqlite3.connect(path, check_same_thread=False, factory=_SuspendableConnection)
         self.conn.row_factory = sqlite3.Row
         # 遗产修正符缓存：legacy_modifiers 在落账热路径被频繁调用，缓存聚合结果，
         # 仅在 active 遗产集变化（insert_legacy / expire_legacies）时失效。
@@ -5881,7 +5884,11 @@ class GameDB:
         self.conn.close()
 
     def backup_to(self, target_path: str) -> None:
-        """SQLite backup API 热备到 target_path。不需关闭主连接。"""
+        """SQLite backup API 热备到 target_path。不需关闭主连接。
+
+        在 atomic() 内调用时内部那次 commit 也被暂停（ADR 0008 决定 2）——
+        接受的语义：错误包应在回滚后、atomic 外做备份，不特殊放行。
+        """
         import os as _os
         _os.makedirs(_os.path.dirname(target_path) or ".", exist_ok=True)
         dest = sqlite3.connect(target_path)
