@@ -14,7 +14,8 @@ v23.1(ship 对抗评审加固):param/Due/开账stock 非有限(NaN/inf)入口拦
   st+actions 独立重放(堵清丈两侧同搬税基) · go_raise 验守门消息 · Pool 透支 fail-loud+尘埃清零 ·
   全 golden 钉 省库库银 末态 · G22b 三饷=0 退化边界 · FAIL 退出码 1;r2 再固:清丈 k<1 golden
   (G14c,钉 settlement k缩放+oracle _ak 两侧) · 官民田/隐田 入末态硬期望 · None 语义钉死(G14b/G21p) ·
-  Due 科目白名单(拼错=两侧一致吞付,G21q) · action 缺 type/非数值字段干净 raise(G21r/s)
+  Due 科目白名单(拼错=两侧一致吞付,G21q) · action 缺 type/非数值字段干净 raise(G21r/s) ·
+  线上R2:必填参数 presence 检查(缺失=干净raise非KeyError,不默认0,G21t) · 开账None前置拦(G21u) · oracle 同分量式(R1)
 
 账户:CASH{省库库银,C_地方截留,C_中饱,C_漂没,C_eff损耗} / CLAIM{民欠旧赋,军饷欠,官俸欠,宗禄欠}
 守恒(spike 实测):
@@ -31,6 +32,10 @@ KNOWN_ACTIONS = {'补饷','清丈','挪借火耗','追赃','清欠','蠲免','�
 
 def run_tick(name, st, p, actions, expect=None):
     print(f"\n{'='*64}\n{name}\n{'='*64}")
+    for rq in ('三饷应征','火耗率','逋赋率','起运定额','Due'):   # 必填参数 presence 检查(gemini R2:原缺失走 KeyError;
+        if rq not in p: raise ValueError(f"param {rq} 缺失")      # 不给默认0——火耗率缺省成0=静默改经济学,fail-loud)
+    for sk in (*CASH_KEYS, *CLAIM_KEYS, '官民田', '隐田'):       # 开账显式 None 前置拦(gemini R2:float(None) TypeError 早于守门)
+        if sk in st and st[sk] is None: raise ValueError(f"开账 stock {sk} 为 None")
     cash = {k: float(st.get(k,0)) for k in CASH_KEYS}
     claim = {k: float(st.get(k,0)) for k in CLAIM_KEYS}
     官民田 = float(st.get('官民田',0)); 隐田 = float(st.get('隐田',0))
@@ -315,6 +320,8 @@ go_raise("G21p None 三饷应征应RAISE(仅正赋可None)", S(), dict(base,三�
 go_raise("G21q Due拼错科目应RAISE(静默吞付)", S(), dict(base,Due=dict(军饷x=45,官俸=8,宗禄=4,赈济=0)), [], msg='Due 含未知科目')
 go_raise("G21r action缺type应RAISE", S(), base, [dict(cost=5)], msg='action 缺 type')
 go_raise("G21s 字符串cost应RAISE", S(), base, [dict(type='营建',cost='5')], msg='cost 非数值')
+go_raise("G21t 缺火耗率应RAISE(必填,不默认0)", S(), {k:v for k,v in base.items() if k!='火耗率'}, [], msg='param 火耗率 缺失')
+go_raise("G21u None开账省库应RAISE", S(省库库银=None), base, [], msg='开账 stock 省库库银 为 None')
 
 # G9 三 tick 链:穷省(省库10)+ recurring 募兵(每 tick cost5),看死亡螺旋累积 + 每 tick 守恒 + 硬期望
 print(f"\n{'#'*64}\n# G9 三 tick 链(穷省 recurring 募兵,死亡螺旋)\n{'#'*64}")
