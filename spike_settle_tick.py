@@ -33,8 +33,6 @@ def run_tick(name, st, p, actions, expect=None):
     cash0 = sum(cash.values()); C0 = {k: cash[k] for k in CASH_KEYS if k.startswith('C_')}
     claim0 = dict(claim)
     cash_in = cash_out = 0.0
-    # per-account C 流水
-    Cin = {k:0.0 for k in C0}; Cout = {k:0.0 for k in C0}
     r = dict(实征=0,火耗实收=0,清欠=0,拨付gross=0,起运到京=0,实付=0,偿旧欠=0,行政补饷=0,
              漂没=0,中饱=0,民欠新增=0,蠲免=0,unmet_relief=0,
              NewDebt={'军饷欠':0,'官俸欠':0,'宗禄欠':0},Repaid={'军饷欠':0,'官俸欠':0,'宗禄欠':0},
@@ -45,9 +43,7 @@ def run_tick(name, st, p, actions, expect=None):
         actual = min(amount, cash[frm]); cash[frm] -= actual
         got = actual*eff; loss = actual*(1-eff)
         cash[to] += got
-        if loss > 0: cash['C_eff损耗'] += loss; Cin['C_eff损耗'] += loss
-        if frm in Cout: Cout[frm] += actual
-        if to in Cin: Cin[to] += got
+        if loss > 0: cash['C_eff损耗'] += loss
         return actual
 
     # ── ⓪ action phase:先收集→算 k→按 k 执行(transfer 此时执行)──
@@ -109,16 +105,16 @@ def run_tick(name, st, p, actions, expect=None):
     正赋火耗 = 正赋*fh; 三饷火耗 = 三饷*fh          # 三饷亦银征同有火耗(史实);另立分量(spec §9)
     火耗应派 = 正赋火耗 + 三饷火耗
     r['实征'] = (正赋+三饷)*(1-bf); cash_in += r['实征']
-    r['火耗实收'] = 火耗应派*(1-bf); cash['C_地方截留'] += r['火耗实收']; Cin['C_地方截留'] += r['火耗实收']; cash_in += r['火耗实收']
+    r['火耗实收'] = 火耗应派*(1-bf); cash['C_地方截留'] += r['火耗实收']; cash_in += r['火耗实收']
     r['民欠新增'] = (正赋+三饷)-r['实征']; claim['民欠旧赋'] += r['民欠新增']
     print(f"④⑦ 正赋{正赋:.2f} 火耗应派{火耗应派:.2f}(正赋{正赋火耗:.2f}+三饷{三饷火耗:.2f}) 实征{r['实征']:.2f} 火耗实收{r['火耗实收']:.2f} 民欠+{r['民欠新增']:.2f}")
     # ── ⑧⑨ 分池+漂没 ──
     起运池 = min(r['实征'], p['起运定额']); 省内池 = max(0.0, r['实征']-起运池)
     pm = p.get('漂没率',0.0); r['起运到京'] = 起运池*(1-pm); r['漂没'] = 起运池-r['起运到京']
-    cash['C_漂没'] += r['漂没']; Cin['C_漂没'] += r['漂没']; cash_out += r['起运到京']
+    cash['C_漂没'] += r['漂没']; cash_out += r['起运到京']
     # ── ⑩ 拨付 gross/net+中饱 ──
     g = p.get('拨付gross',0.0); zb = p.get('中饱率',0.0); net = g*(1-zb); r['中饱'] = g-net
-    cash['省库库银'] += net; cash['C_中饱'] += r['中饱']; Cin['C_中饱'] += r['中饱']; cash_in += g; r['拨付gross'] = g
+    cash['省库库银'] += net; cash['C_中饱'] += r['中饱']; cash_in += g; r['拨付gross'] = g
     print(f"⑧⑨⑩ 起运池{起运池:.2f} 省内池{省内池:.2f} 起运到京{r['起运到京']:.2f} 漂没{r['漂没']:.2f} 拨付g{g:.2f}(net{net:.2f}中饱{r['中饱']:.2f})")
     # ── ⑪ 省内可支→付款→偿还→结转 ──
     省内可支 = cash['省库库银'] + 省内池; Pool = 省内可支
