@@ -4,7 +4,7 @@
 一次性 spike v3(非引擎,throwaway)——r12 返工:
 + per-account 对账(每个 C_ 子账户单独 reconcile,堵「贪墨 relabel 进国库」隐形)
 + eff损耗(transfer 3-way:source减=target增+C_eff损耗;efficiency<1 落 C_eff损耗)
-+ run_tick 返回末态(可串多 tick)+ recurring cost(跨 tick 每期扣)
++ run_tick 返回末态(可串多 tick);recurring 目前由 driver 每 tick 重传 action 实现,引擎未读 cost_type(持久化是 port TODO)
 + 0-cost action 不受 k 缩(spec §6)+ unknown action fail-loud
 golden:G1–G20(基线/补饷k/清丈/挪借/漂没中饱拨付/超额clamp/清欠/eff损耗/三tick死亡螺旋/
         追赃/多costed共享k/赈济/拨付追赃/动态税基/双债户偿还序/清丈枯竭土地守恒/赈济饿死unmet/
@@ -17,6 +17,7 @@ golden:G1–G20(基线/补饷k/清丈/挪借/漂没中饱拨付/超额clamp/清�
   债务:负债_new=old+NewDebt−Repaid−action还 ; 民欠_new=old+民欠新增−清欠−蠲免
   C 分账:每个 C_ 子账户 new==old+本账户in−本账户out(per-account,非只 ΣC)
 """
+import math
 EPS = 1e-6
 CASH_KEYS = ['省库库银','C_地方截留','C_中饱','C_漂没','C_eff损耗']
 CLAIM_KEYS = ['民欠旧赋','军饷欠','官俸欠','宗禄欠']
@@ -49,13 +50,18 @@ def run_tick(name, st, p, actions, expect=None):
         return actual
 
     # ── ⓪ action phase:先收集→算 k→按 k 执行(transfer 此时执行)──
-    for a in actions:                                   # 输入校验 fail-loud(codex r16)
+    for a in actions:                                   # 输入校验 fail-loud(codex r16 / Fable:NaN/inf + 0-cost清丈)
+        for nf in ('cost','amount','挖隐田','eff'):      # NaN/inf 入口拦截(nan<0=False 会穿过负值检查)
+            v = a.get(nf)
+            if v is not None and not math.isfinite(float(v)): raise ValueError(f"{nf} 非有限值(NaN/inf): {a}")
         if a['type'] not in KNOWN_ACTIONS: raise ValueError(f"unknown action: {a['type']}")
         if a.get('cost',0) < 0 or a.get('amount',0) < 0 or a.get('挖隐田',0) < 0: raise ValueError(f"负 cost/amount/挖隐田: {a}")
         if not (0 <= a.get('eff',1.0) <= 1): raise ValueError(f"eff 越界: {a}")
         if a['type'] == '补饷' and a.get('amount',0) != 0: raise ValueError(f"补饷不接受 amount(cost即支付): {a}")
         if a['type'] in ('清欠','蠲免','追赃','挪借火耗') and a.get('cost',0) != 0:
             raise ValueError(f"{a['type']} 禁带 cost(征收/转移类按 §9,否则幽灵预算压 k): {a}")
+        if a['type'] in ('清丈','营建') and a.get('cost',0) <= 0:    # 行政成本类必须 cost>0(否则免费抬税基=违P3爽感)
+            raise ValueError(f"{a['type']} 必须 cost>0(行政成本类): {a}")
     for rk in ('火耗率','逋赋率','漂没率','中饱率'):
         if not (0 <= p.get(rk,0) <= 1): raise ValueError(f"{rk} 越界")
     for pk in ('正赋应征','三饷应征','起运定额','拨付gross','正赋亩额'):  # param 量纲负值 fail-loud(r21/opus:负值穿透五层=凭空生钱)
@@ -252,6 +258,8 @@ go_raise("G21c 负Due应RAISE", S(), dict(base,Due=dict(军饷=-45,官俸=8,宗�
 go_raise("G21d 负起运定额应RAISE", S(), dict(base,起运定额=-40), [])
 go_raise("G21e 负拨付gross应RAISE", S(), dict(base,拨付gross=-30), [])
 go_raise("G21f 负开账省库应RAISE", S(省库库银=-10), base, [])
+go_raise("G21g 0-cost清丈应RAISE(免费抬税基)", S(), base, [dict(type='清丈',cost=0,挖隐田=300)])
+go_raise("G21h NaN cost应RAISE", S(), base, [dict(type='营建',cost=float('nan'))])
 
 # G9 三 tick 链:穷省(省库10)+ recurring 募兵(每 tick cost5),看死亡螺旋累积 + 每 tick 守恒 + 硬期望
 print(f"\n{'#'*64}\n# G9 三 tick 链(穷省 recurring 募兵,死亡螺旋)\n{'#'*64}")
