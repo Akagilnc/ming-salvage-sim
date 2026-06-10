@@ -2058,7 +2058,10 @@ async def api_chat_stream(minister_name: str, request: ChatRequest) -> Streaming
 async def api_create_directive(request: DirectiveRequest) -> Dict[str, Any]:
     if not request.text.strip():
         raise HTTPException(status_code=400, detail="指令内容不能为空。")
-    dv = get_game().session.add_directive(request.text.strip(), notes=request.notes)
+    try:
+        dv = get_game().session.add_directive(request.text.strip(), notes=request.notes)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from None  # 恢复窗冻结指引
     return {
         "directive": {"id": dv.id, "text": dv.text, "status": dv.status},
         "directives": [get_game().directive_payload(item) for item in get_game().directive_rows()],
@@ -2074,20 +2077,29 @@ async def api_update_directive(directive_id: int, request: DirectivePatch) -> Di
     text = request.text if request.text is not None else str(row["text"])
     if not text.strip():
         raise HTTPException(status_code=400, detail="指令内容不能为空。")
-    get_game().session.update_directive(directive_id, text.strip())
+    try:
+        get_game().session.update_directive(directive_id, text.strip())
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from None
     return {"directives": [get_game().directive_payload(item) for item in get_game().directive_rows()]}
 
 
 @app.delete("/api/directives/{directive_id}")
 async def api_delete_directive(directive_id: int) -> Dict[str, Any]:
-    get_game().session.delete_directive(directive_id)
+    try:
+        get_game().session.delete_directive(directive_id)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from None
     return {"directives": [get_game().directive_payload(item) for item in get_game().directive_rows()]}
 
 
 @app.post("/api/directives/{directive_id}/confirm")
 async def api_confirm_directive(directive_id: int) -> Dict[str, Any]:
     """大臣拟旨经皇帝核定：pending → draft。"""
-    get_game().session.confirm_directive(directive_id)
+    try:
+        get_game().session.confirm_directive(directive_id)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from None
     return {
         "directives": [get_game().directive_payload(item) for item in get_game().directive_rows()],
         "pending_count": get_game().session.pending_count(),
@@ -2097,7 +2109,10 @@ async def api_confirm_directive(directive_id: int) -> Dict[str, Any]:
 @app.post("/api/directives/{directive_id}/reject")
 async def api_reject_directive(directive_id: int) -> Dict[str, Any]:
     """皇帝驳回大臣拟旨：pending → rejected。"""
-    get_game().session.reject_directive(directive_id)
+    try:
+        get_game().session.reject_directive(directive_id)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from None
     return {
         "directives": [get_game().directive_payload(item) for item in get_game().directive_rows()],
         "pending_count": get_game().session.pending_count(),
