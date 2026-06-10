@@ -1097,6 +1097,11 @@ class GameSession:
         要求当前处于 awaiting_decision 态。返回完整结算报告，置 issued。"""
         if self.current_phase() != TurnPhase.AWAITING_DECISION:
             raise ValueError("当前不在待裁决策阶段，无法提交亲裁。")
+        # 与 resolve_turn 同守门（cmr S7 r8/r9 对称面）：暂停期大臣新拟的 pending 旨
+        # 未核定不得推进——phase2（重放或重抽）随 next_period 会把它孤儿在旧回合。
+        if self.pending_count() > 0:
+            raise ValueError(
+                f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
         # 回写选择
         stored = self.db.list_pending_decisions(self.state.turn)
         import json as _json
