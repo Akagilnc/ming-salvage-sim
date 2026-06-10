@@ -188,3 +188,34 @@ def test_cli_dump_prints_regions(game, capsys):
     out = capsys.readouterr().out
     assert rc == 0
     assert "shanxi" in out
+
+
+def test_run_settle_persists_resolve_context_before_settle(game, monkeypatch):
+    """崩在 settle 内 → resolve_context 已持久化，delta 有 DB 真源可重放（cmr S2+S3 r3）。
+
+    driver 与真实流程同核同语义（ADR 0004/0008）：turn_extractions 在 settle 内部才写，
+    没有 persist 的话 pre_settle 已落账而 delta 只活在调用方易失上下文（违 P1）。
+    """
+    db, state, content = game
+    before_turn = state.turn
+
+    def _boom(*a, **k):
+        raise RuntimeError("simulated apply crash")
+    monkeypatch.setattr(driver, "apply_score_extraction", _boom)
+
+    raw = {"地区变化": {"shanxi": {"动乱": 3}}}
+    with pytest.raises(RuntimeError, match="simulated apply crash"):
+        run_settle(db, state, content, raw, narrative="邸报", decree_text="诏")
+
+    ctx = db.get_resolve_context(before_turn)
+    assert ctx is not None
+    assert ctx["extracted"] == {"region_delta": {"shanxi": {"unrest": 3}}}
+    db.clear_resolve_context(before_turn)
+
+
+def test_run_settle_clears_resolve_context_on_completion(game):
+    """正常完成后 context 已清（settle 内 clear 对 driver 同样生效）。"""
+    db, state, content = game
+    before_turn = state.turn
+    run_settle(db, state, content, {"地区变化": {"shanxi": {"动乱": 1}}})
+    assert db.get_resolve_context(before_turn) is None
