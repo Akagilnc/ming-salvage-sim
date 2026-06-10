@@ -411,3 +411,21 @@ def test_guarded_paths_still_commit_pending_actions(game):
     statuses = [r["status"] for r in db.conn.execute(
         "SELECT status FROM pending_actions WHERE turn=?", (state.turn,)).fetchall()]
     assert statuses and all(s != "pending" for s in statuses)
+
+
+def test_write_decree_raises_at_awaiting_not_resolveresult(game):
+    """write_decree(-> str) 在 awaiting 态响亮拒绝，不返回 ResolveResult（cmr S4 r4，3/3）。
+
+    r3 的全局替换把守门误贴进了 write_decree——web 会把 dataclass 序列化进
+    {"decree": ...}，terminal 把 repr 当诏书正文打印。
+    """
+    from ming_sim.session import GameSession
+    db, state, content = game
+    state.turn_phase = "awaiting_decision"
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+
+    with pytest.raises(ValueError, match="亲裁"):
+        sess.write_decree()
