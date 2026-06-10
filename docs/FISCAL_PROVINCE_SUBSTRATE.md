@@ -46,7 +46,7 @@ k=action力度系数(ΣCost仅含action银,Due不入;Cost>0 action其 delta/scal
 - **G1** 基线 · **G2** 补饷 k=0.333(死亡螺旋+无双扣)· **G3** 清丈(官民田3050→3350,当 tick 扣成本2)· **G4** 挪借火耗(C 内部转移)· **G5** 漂没.1+中饱.1+拨付30(漂没→C_漂没/中饱→C_中饱/net→省库)· **G6** 超额补饷 clamp(欠5补30只还5)· **G7** 清欠(民间补缴现金入)。
 - **G8** 挪借 eff=0.8 → 激活 C_eff损耗(2→损耗账户),per-account 对账平。
 - **G9** 三 tick 链(穷省+recurring 营建):死亡螺旋实显——军饷欠 30→61→97→133(期初→各tick末态)、火耗在 C_地方截留 累积 9.8→19.6→29.4(官绅肥/官衙穷),每 tick 5 层断言均 PASS。
-- **G10** 追赃 · **G11** 多 costed 共享 k · **G12** 赈济 Due>0 · **G13** 拨付+追赃同 tick · **G14** 动态税基(清丈抬税基)· **G15** 双债户偿还序(军饷>官俸)· **G16** 清丈枯竭+土地守恒 · **G17** 赈济饿死(unmet_relief)· **G22** 三饷火耗分量(三饷30→C_地方截留12.6,漏派必 FAIL)· **G22b** 三饷=0 退化边界 · **G21i–o** 负/非有限 开账 CLAIM·Due·param raise(各验守门消息)。v23.1:全部 value golden 钉 `省库库银` 末态(「债清钱没出」类 bug 原仅 2/20 兜底);FAIL 退出码 1。
+- **G10** 追赃 · **G11** 多 costed 共享 k · **G12** 赈济 Due>0 · **G13** 拨付+追赃同 tick · **G14** 动态税基(清丈抬税基)· **G15** 双债户偿还序(军饷>官俸)· **G16** 清丈枯竭+土地守恒 · **G17** 赈济饿死(unmet_relief)· **G22** 三饷火耗分量(三饷30→C_地方截留12.6,漏派必 FAIL)· **G22b** 三饷=0 退化边界 · **G21i–s** 负/非有限/None/拼错科目/畸形 action raise(各验守门消息;G21q=Due 拼错科目两侧一致吞付,codex r2)。v23.1:全部 value golden 钉 `省库库银` 末态(「债清钱没出」类 bug 原仅 2/20 兜底);FAIL 退出码 1;r2 再固:G14b(None≡缺省)/G14c(k<1 清丈,钉 settlement k缩放+oracle _ak 重放两侧)、官民田/隐田 入末态硬期望。
 - **5 层断言**:现金守恒 / 债务 per-account oracle / C per-account oracle / **末态硬期望常量(第4类独立锚)** / **土地守恒(Δ(官民田+隐田)=0)**;+ 输入校验 fail-loud(eff/amount/cost/rates 越界、补饷带 amount → raise);+ 输出 `unmet_relief`。
 - **自变异实证(全被某层 FAIL)**:中饱→省库、火耗→省库、军饷新债→官俸欠、虚增火耗×2、起运去 clamp、k 砍半、补饷只减欠不扣省库、清丈×2、偿还序 flip、清丈凭空造地、unmet 漏算、漏三饷火耗、三饷火耗×2。
 - 仍待补(port TODO):recurring k=0 停工语义、跨 tick「期初==上tick期末」断言、arrears_allowed。
