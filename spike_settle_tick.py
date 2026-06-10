@@ -65,7 +65,7 @@ def run_tick(name, st, p, actions, expect=None):
         if p.get(pk,0) is not None and p.get(pk,0) < 0: raise ValueError(f"param {pk} 为负")
     for hk,dv in p.get('Due',{}).items():
         if dv < 0: raise ValueError(f"Due[{hk}] 为负")
-    for sk in ('省库库银','C_地方截留','C_中饱','C_漂没','C_eff损耗','官民田','隐田'):
+    for sk in (*CASH_KEYS, *CLAIM_KEYS, '官民田', '隐田'):   # CLAIM 也拦(codex r4:负军饷欠→偿还环 rep<0 凭空生钱)
         if float(st.get(sk,0)) < 0: raise ValueError(f"开账 stock {sk} 为负")
     Stock_start = cash['省库库银']
     ΣCost = sum(a.get('cost',0) for a in actions if a.get('cost',0) > 0)
@@ -261,6 +261,11 @@ go_raise("G21e 负拨付gross应RAISE", S(), dict(base,拨付gross=-30), [])
 go_raise("G21f 负开账省库应RAISE", S(省库库银=-10), base, [])
 go_raise("G21g 0-cost清丈应RAISE(免费抬税基)", S(), base, [dict(type='清丈',cost=0,挖隐田=300)])
 go_raise("G21h NaN cost应RAISE", S(), base, [dict(type='营建',cost=float('nan'))])
+# G21i–l 负开账 CLAIM(codex r4:负军饷欠进偿还环 rep=min(S,负)<0 → S 反增=凭空生钱;守恒/oracle 同源负值全漏,只能入口拦)
+go_raise("G21i 负开账军饷欠应RAISE", S(军饷欠=-5), base, [])
+go_raise("G21j 负开账民欠旧赋应RAISE", S(民欠旧赋=-5), base, [])
+go_raise("G21k 负开账官俸欠应RAISE", S(官俸欠=-5), base, [])
+go_raise("G21l 负开账宗禄欠应RAISE", S(宗禄欠=-5), base, [])
 
 # G9 三 tick 链:穷省(省库10)+ recurring 募兵(每 tick cost5),看死亡螺旋累积 + 每 tick 守恒 + 硬期望
 print(f"\n{'#'*64}\n# G9 三 tick 链(穷省 recurring 募兵,死亡螺旋)\n{'#'*64}")
