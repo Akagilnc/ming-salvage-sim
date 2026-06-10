@@ -316,52 +316,58 @@ def review_directives(session: GameSession) -> str:
             if confirm in {"yes", "y", "颁布", "确认"}:
                 return "issue"
             continue
-        if lowered == "add" or raw == "新增":
-            text = input("指令内容：").strip()
-            if text:
-                dv = session.add_directive(text)
-                print(f"已新增草案 #{dv.id}。")
-            else:
-                print("指令为空，已取消。")
-            continue
-        parts = raw.split(maxsplit=1)
-        verb = parts[0].lower()
-        if len(parts) == 2 and parts[1].lstrip("#").isdigit():
-            target_id = int(parts[1].lstrip("#"))
-            if verb in {"confirm", "准"}:
-                if any(d.id == target_id for d in pending):
-                    session.confirm_directive(target_id)
-                    print(f"已核定 #{target_id}，入颁诏候选。")
+        # 变更器统一接 ValueError（FRONT_HALF_DONE 冻结期的指引消息）：打印后留在
+        # 审阅循环，不崩出进程（ship-pre r2，与 write_decree 既有 try 同款）。
+        try:
+            if lowered == "add" or raw == "新增":
+                text = input("指令内容：").strip()
+                if text:
+                    dv = session.add_directive(text)
+                    print(f"已新增草案 #{dv.id}。")
                 else:
-                    print("没有这条待核定拟旨。")
+                    print("指令为空，已取消。")
                 continue
-            if verb in {"reject", "驳"}:
-                if any(d.id == target_id for d in pending):
-                    session.reject_directive(target_id)
-                    print(f"已驳回 #{target_id}。")
-                else:
-                    print("没有这条待核定拟旨。")
-                continue
-            if verb in {"edit", "改", "修改"}:
-                if not any(d.id == target_id for d in drafts):
-                    print("没有这条草案。")
+            parts = raw.split(maxsplit=1)
+            verb = parts[0].lower()
+            if len(parts) == 2 and parts[1].lstrip("#").isdigit():
+                target_id = int(parts[1].lstrip("#"))
+                if verb in {"confirm", "准"}:
+                    if any(d.id == target_id for d in pending):
+                        session.confirm_directive(target_id)
+                        print(f"已核定 #{target_id}，入颁诏候选。")
+                    else:
+                        print("没有这条待核定拟旨。")
                     continue
-                new_text = input("新的指令内容：").strip()
-                if new_text:
-                    session.update_directive(target_id, new_text)
-                    print("已修改。")
-                continue
-            if verb in {"del", "delete", "删", "删除"}:
-                if any(d.id == target_id for d in drafts):
-                    session.delete_directive(target_id)
-                    print("已删除。")
-                elif any(d.id == target_id for d in pending):
-                    # pending 草案删掉 = 驳回大臣拟旨
-                    session.reject_directive(target_id)
-                    print(f"已驳回 #{target_id}（待核定拟旨）。")
-                else:
-                    print("没有这条草案。")
-                continue
+                if verb in {"reject", "驳"}:
+                    if any(d.id == target_id for d in pending):
+                        session.reject_directive(target_id)
+                        print(f"已驳回 #{target_id}。")
+                    else:
+                        print("没有这条待核定拟旨。")
+                    continue
+                if verb in {"edit", "改", "修改"}:
+                    if not any(d.id == target_id for d in drafts):
+                        print("没有这条草案。")
+                        continue
+                    new_text = input("新的指令内容：").strip()
+                    if new_text:
+                        session.update_directive(target_id, new_text)
+                        print("已修改。")
+                    continue
+                if verb in {"del", "delete", "删", "删除"}:
+                    if any(d.id == target_id for d in drafts):
+                        session.delete_directive(target_id)
+                        print("已删除。")
+                    elif any(d.id == target_id for d in pending):
+                        # pending 草案删掉 = 驳回大臣拟旨
+                        session.reject_directive(target_id)
+                        print(f"已驳回 #{target_id}（待核定拟旨）。")
+                    else:
+                        print("没有这条草案。")
+                    continue
+        except ValueError as error:
+            print(f"\n{error}")
+            continue
         print("未识别操作。")
 
 
@@ -403,7 +409,12 @@ def play_turn(session: GameSession) -> None:
         if action == "back":
             continue
         if action == "skip":
-            session.advance_without_decree()
+            try:
+                session.advance_without_decree()
+            except ValueError as error:
+                # FRONT_HALF_DONE 拒绝跳过（ADR 决定 6）：打印指引回会话循环，不崩出进程。
+                print(f"\n{error}")
+                continue
             return
         if action == "issue":
             try:

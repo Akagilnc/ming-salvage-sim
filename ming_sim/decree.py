@@ -173,8 +173,6 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
     # 退朝未下正式诏书也是月末:先 commit 本回合暂存的结构化写动作(颁诏前未撤回即通过,
     # ADR 0006),否则暂存成孤儿、随 next_period 永久丢失(CMR P1)。须在 next_period 前。
     # content/registry 供 office(任免)落库注册新臣;无则任免落不了(标 failed,不静默)。
-    # 暂存动作 commit 幂等（只处理 pending 行），两条分支都跑：守门分支跳过它的话，
-    # 崩溃重载后新 stage 的动作随 next_period 成旧回合孤儿死行，违 P1（cmr S4 r3 F4）。
     #
     # ADR 0008 S7（决定 2）：整条推进尾包进单事务——任何一步崩则全回滚（commit_pending_actions
     # / 财政 / record_log / clear / 推进写序列全有或全无，不许半写）。回滚后内存从 DB 重载
@@ -375,14 +373,25 @@ def resolve_directives(
         # 暂停态三件（上下文+决策点+AWAITING 相位）同事务落库（cmr S4 r2）：相位若靠
         # session 事后另笔写，崩在窗口里 DB 停在 settling 而决策已存——web submit_decisions
         # 只认 AWAITING 相位，恢复死路。session 事后那笔写变为幂等。
-        with atomic(db):
-            db.save_resolve_context(
-                state.turn, decree_text, narrative, simulator_payload,
-                secret_orders=secret_orders_for_sim, relevant_memories=relevant_memories,
-            )
-            db.save_pending_decisions(state.turn, decisions)
-            state.turn_phase = TurnPhase.AWAITING_DECISION.value
-            db.save_state(state)
+        try:
+            with atomic(db):
+                db.save_resolve_context(
+                    state.turn, decree_text, narrative, simulator_payload,
+                    secret_orders=secret_orders_for_sim, relevant_memories=relevant_memories,
+                )
+                db.save_pending_decisions(state.turn, decisions)
+                state.turn_phase = TurnPhase.AWAITING_DECISION.value
+                db.save_state(state)
+        except BaseException as exc:
+            # 五个事务块同款（ADR 决定 3）：回滚后内存与 DB 同源——不 reload 的话内存留
+            # awaiting/DB 回滚回 settling，进程内重试走 awaiting 幂等叉读空决策=死胡同
+            # （ship-pre r2）。嵌套时跳过，最外层拥有者处理。
+            if getattr(db.conn, "_atomic_depth", 0) == 0:
+                try:
+                    reload_state_from_db(db, state, content=content, registry=registry)
+                except BaseException as reload_exc:
+                    raise exc from reload_exc
+            raise
         return ResolveResult(awaiting=True, decisions=db.list_pending_decisions(state.turn))
 
     # 无决策点：透明续跑结算（cheat 仍可叠加）。

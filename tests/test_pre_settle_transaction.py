@@ -435,3 +435,32 @@ def test_write_decree_raises_at_awaiting_not_resolveresult(game):
 
     with pytest.raises(ValueError, match="亲裁"):
         sess.write_decree()
+
+
+def test_hitl_pause_crash_reloads_memory(game, monkeypatch):
+    """HITL 暂停 atomic 崩溃后内存与 DB 同源（ship-pre r2，五事务块唯一漏 reload 的）。
+
+    不 reload 的话内存留 awaiting/DB 回滚回 settling，进程内重试走 awaiting 幂等叉
+    读到空决策=死胡同。
+    """
+    db, state, content = game
+    turn = state.turn
+
+    real_save = type(db).save_state
+    calls = {"n": 0}
+    def _boom_save(self, st):
+        # pre_settle 尾的 save 照常；HITL 暂停块里的 save（phase=awaiting 时）炸
+        if st.turn_phase == "awaiting_decision":
+            raise RuntimeError("save_state crash in HITL pause")
+        return real_save(self, st)
+    monkeypatch.setattr(type(db), "save_state", _boom_save)
+
+    with pytest.raises(RuntimeError, match="HITL pause"):
+        _drive_resolve_directives(db, state, content, monkeypatch,
+                                  simulator_behavior="decision")
+
+    monkeypatch.setattr(type(db), "save_state", real_save)
+    # 内存与 DB 同源：回滚后都应是 settling（pre_settle 已提交的真相）
+    assert state.turn_phase == "settling"
+    assert db.load_state().turn_phase == "settling"
+    assert db.list_pending_decisions(turn) == []  # 决策随回滚消失
