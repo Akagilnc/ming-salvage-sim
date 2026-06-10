@@ -514,7 +514,7 @@ def reload_state_from_db(db: GameDB, state: GameState, *, content=None, registry
 
     走 db.load_state 同路径（与 restore 同源），但 load_state 返回**新对象**；state 被各处
     持引用（session.state、driver 闭包、各调用栈），必须**原地刷新**而非返回新对象——把 DB 值
-    写回同一对象的字段、metrics dict 原地 clear+update，返回同一 state（id 不变）。
+    写回同一对象的字段、metrics dict 原地 update-then-prune（任何时刻非空），返回同一 state（id 不变）。
 
     content 非 None 时以 DB 全量重建 characters（restore 同路径 _sync_offices_from_db_impl）：
     既清幽灵（任免 commit 先挂 content 再写 DB，回滚删行留幽灵——重试被误拒，cmr S5 r1
