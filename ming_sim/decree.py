@@ -176,6 +176,9 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
     message = f"本{TURN_UNIT}退朝未下正式圣旨，诸事仍待来{TURN_UNIT}处置。"
     db.record_log(state, message)
     print("\n" + message)
+    # 推进回合的路都得清本回合 resolve_context：崩溃重试后改走此路时，留下的
+    # ready=1 行会被恢复入口当「未完成回合」重放=double-apply（cmr S2+S3 r4）。
+    db.clear_resolve_context(state.turn)
     state.next_period()
     db.save_state(state)
 
@@ -311,6 +314,8 @@ def resolve_directives(
         for name in clear_gated_legacies(db, state):
             db.record_log(state, f"帝国修正消除：{name}")
         db.mark_directives_issued(state)
+        # 同 advance_without_edict：推进回合前清 stale context（cmr S2+S3 r4）。
+        db.clear_resolve_context(state.turn)
         state.next_period()
         db.save_state(state)
         return ResolveResult(
@@ -618,6 +623,8 @@ def settle_with_delta(
 
     db.mark_directives_issued(state)
     state.next_period()
+    # 不变式先验后再写：assert 排在 clear 之后的话，失败时重试真源已被删（cmr r4 codex）。
+    assert state.turn == before_turn + 1
     db.save_state(state)
     # ADR 0008 S3：清 resolve_context 作 settle 写序列的最后一笔（紧贴 next_period 等推进写）。
     # 按 before_turn 清本回合那一行（next_period 已把 state.turn 推进到下一回合）。
@@ -625,7 +632,6 @@ def settle_with_delta(
     # 窗口尚未闭合——本切片只把位置摆好，S7 把整段包进 atomic 后窗口才真正关掉
     # （cmr S2+S3 codex R2，defer→S7，S7 须加该崩溃点回归测试）。
     db.clear_resolve_context(before_turn)
-    assert state.turn == before_turn + 1
 
     ending = ""
     if ended:
