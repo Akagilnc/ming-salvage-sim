@@ -11,6 +11,22 @@ import sqlite3
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _restore_content(content):
+    """content 是 session-scope 共享 fixture;本文件的回滚/重建用例会全量替换
+    content.characters(_sync_offices_from_db_impl 来自各用例的临时 probe.db 副本,
+    teardown 即删)。每用例后快照还原,杜绝跨用例污染(cmr S5 r3,同 test_pending_actions 先例)。"""
+    snap = dict(content.characters)
+    field_snap = {name: (ch.office, ch.status, ch.office_type, ch.faction)
+                  for name, ch in snap.items()}
+    yield
+    content.characters = snap
+    for name, (office, status, office_type, faction) in field_snap.items():
+        ch = content.characters.get(name)
+        if ch is not None:
+            ch.office, ch.status, ch.office_type, ch.faction = office, status, office_type, faction
+
 import ming_sim.decree as decree_mod
 from ming_sim.decree import pre_settle, reload_state_from_db
 
@@ -53,7 +69,8 @@ def test_reload_scrubs_next_period_advance(game):
 
 
 def test_reload_passthrough_content_registry_no_crash(game):
-    """content/registry 非 None 时本切片只透传不处理（占位待 S7），不报错、state 仍刷新。"""
+    """registry 非 None 时只透传不处理（session 级接线待后续）；content 非 None 时
+    重建 characters（幽灵/属性还原另有专测），本测只断不报错且 state 仍刷新。"""
     db, state, content = game
     db.conn.execute("UPDATE game_state SET turn_phase='reviewing' WHERE id=1")
     db.conn.commit()
@@ -218,9 +235,10 @@ def test_rollback_restores_existing_character_attributes(game, monkeypatch):
     from tests.test_pending_actions import _active_minister_name
     db, state, content = game
     name = _active_minister_name(db, content)
-    ch = content.characters[name]
-    office_before = ch.office
-    status_before = ch.status
+    # 基准取 DB 行（不变式=reload 后 content 与 DB 同源；活存档 DB 值可能已偏离 content JSON 初值）。
+    row = db.conn.execute(
+        "SELECT office, status FROM characters WHERE name=?", (name,)).fetchone()
+    office_before, status_before = row["office"], row["status"]
 
     db.stage_pending_action(
         state.turn, kind="office", action="罢免", minister_name="王承恩",
@@ -237,3 +255,20 @@ def test_rollback_restores_existing_character_attributes(game, monkeypatch):
     refreshed = content.characters[name]
     assert refreshed.status == status_before
     assert refreshed.office == office_before
+
+
+def test_reload_passes_llm_config_to_content_rebuild(game, monkeypatch):
+    """content 重建走 restore 同参：llm_config 必传（cmr S5 r3，缺省会降级「待铨」）。"""
+    import ming_sim.session as session_mod
+    from ming_sim.decree import reload_state_from_db
+    db, state, content = game
+    db.llm_config = object()  # 哨兵
+
+    seen = {}
+    def _spy(content_arg, db_arg, llm_config=None):
+        seen["llm_config"] = llm_config
+    monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl", _spy)
+
+    reload_state_from_db(db, state, content=content)
+
+    assert seen["llm_config"] is db.llm_config
