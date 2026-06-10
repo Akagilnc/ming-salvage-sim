@@ -19,7 +19,7 @@ Status: accepted（实现分波次,见末节;#73 产出问题 1/4 的答案;r1 �
 
 5. **拒收报告,分析优先**:拒收记录落库为结构化行(turn/section/原 item/原因/类别/**source**),**DB 为分析真源**,支撑「哪个 section 最常被喂脏」聚合;镜像到可回收 jsonl 须**内存缓冲、事务 commit 成功后才 append**(事务内写文件回滚不掉=回滚后留脏行);行带 turn+attempt 标记,attempt 计数**不从 DB 取**(随回滚重置),从错误目录已有文件推导。**provenance 进契约**:适配器入参带 `source: player_decree|hitl_decision|secret_order|system_simulation|unknown`(由 extractor/driver 灌注;现 schema 无通用来源字段,仅 issue 有 origin_kind——PR1 扩展)。**玩家可见性按 source 字段 gate**:仅 `player_decree`/`hitl_decision` 来源的拒收,邸报给一句 in-world 提示(如「有司奏:某事窒碍未行」);系统推演来源对玩家安静。
 
-6. **中止与错误包**:代码异常中止时,玩家见「本月结算失败,进度已保存,可重试」;同时自动落错误包到**用户可写目录**(走 paths.py 的 user-data helper——frozen 打包下 `data/` 相对路径不可写),内容=traceback + 当回合 delta JSON + resolve context + **存档副本(SQLite,用 `conn.backup()` API 或 `wal_checkpoint` 后拷贝——WAL 模式直接 copy 文件会得到坏/旧快照)** + manifest(db 路径/turn/版本号/attempt)。重试仍炸 → 引导发错误包 + 冻结该局存档、换开新局;**不提供「跳过本月结算」**(=自愿半落库,污染盘面与试玩反馈)。
+6. **中止与错误包**:代码异常中止时,玩家见「本月结算失败,进度已保存,可重试」;同时自动落错误包到**用户可写目录**(走 paths.py 的 user-data helper——frozen 打包下 `data/` 相对路径不可写),内容=traceback + 当回合 delta JSON + resolve context + **存档副本(SQLite,仅用 `conn.backup()` API——WAL 模式直接 copy 文件得坏/旧快照;`wal_checkpoint` 后拷贝在 checkpoint→拷贝窗口仍可能混入并发写,不采用)** + manifest(db 路径/turn/版本号/attempt)。重试仍炸 → 引导发错误包 + 冻结该局存档、换开新局;**不提供「跳过本月结算」**(=自愿半落库,污染盘面与试玩反馈)。
 
 7. **不建自动回收 telemetry**(探针期过早工程化)。试玩形态=**试玩者本地跑**(不考虑作者托管 web),回收唯一路径=手动发错误目录——中止提示必须自带指引(写明完整路径+「请把它发给作者」),拒收 jsonl 与错误包集中同一目录,一次打包全带走。
 
