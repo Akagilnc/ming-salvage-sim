@@ -175,23 +175,40 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
     # content/registry 供 office(任免)落库注册新臣;无则任免落不了(标 failed,不静默)。
     # 暂存动作 commit 幂等（只处理 pending 行），两条分支都跑：守门分支跳过它的话，
     # 崩溃重载后新 stage 的动作随 next_period 成旧回合孤儿死行，违 P1（cmr S4 r3 F4）。
-    db.commit_pending_actions(state, content=content, registry=registry)
-    if state.turn_phase in FRONT_HALF_DONE_PHASES:
-        # 崩溃重载后走 skip 路：前半段（财政+auto_trigger+密令）已随 pre_settle 事务提交，
-        # 二跑=同回合双财政 tick（cmr S4 r1 F3 / r3 F2）。只走推进尾。
-        pass
-    else:
-        apply_fixed_period_flows(db, state)
-    message = f"本{TURN_UNIT}退朝未下正式圣旨，诸事仍待来{TURN_UNIT}处置。"
-    db.record_log(state, message)
-    print("\n" + message)
-    # 推进回合的路都得清本回合 resolve_context：崩溃重试后改走此路时，留下的
-    # ready=1 行会被恢复入口当「未完成回合」重放=double-apply（cmr S2+S3 r4）。
-    db.clear_resolve_context(state.turn)
-    state.next_period()
-    # settling 随推进复位，同 settle_with_delta（cmr S4 r1 F1）。
-    state.turn_phase = TurnPhase.SUMMONING.value
-    db.save_state(state)
+    #
+    # ADR 0008 S7（决定 2）：整条推进尾包进单事务——任何一步崩则全回滚（commit_pending_actions
+    # / 财政 / record_log / clear / 推进写序列全有或全无，不许半写）。回滚后内存从 DB 重载
+    # （同 pre_settle 先例），链式 re-raise 不吞（fail-loud，ADR 0005）。pre_settle 自己的
+    # atomic 与本路不嵌套（advance 路上 pre_settle 不在调用栈），各包裹层自治。
+    try:
+        with atomic(db):
+            db.commit_pending_actions(state, content=content, registry=registry)
+            if state.turn_phase in FRONT_HALF_DONE_PHASES:
+                # 崩溃重载后走 skip 路：前半段（财政+auto_trigger+密令）已随 pre_settle 事务提交，
+                # 二跑=同回合双财政 tick（cmr S4 r1 F3 / r3 F2）。只走推进尾。
+                pass
+            else:
+                apply_fixed_period_flows(db, state)
+            message = f"本{TURN_UNIT}退朝未下正式圣旨，诸事仍待来{TURN_UNIT}处置。"
+            db.record_log(state, message)
+            print("\n" + message)
+            # 推进回合的路都得清本回合 resolve_context：崩溃重试后改走此路时，留下的
+            # ready=1 行会被恢复入口当「未完成回合」重放=double-apply（cmr S2+S3 r4）。
+            db.clear_resolve_context(state.turn)
+            state.next_period()
+            # settling 随推进复位，同 settle_with_delta（cmr S4 r1 F1）。
+            state.turn_phase = TurnPhase.SUMMONING.value
+            db.save_state(state)
+    except BaseException as exc:
+        # atomic 已回滚 SQLite（仅当本层是最外层）；内存副作用（state.metrics 直加、
+        # next_period 推进、turn_phase）留脏，回滚后从 DB 重载刷净（ADR 0008 决定 3）。
+        # reload 自身再炸时原异常不被顶替（链上抛，同 pre_settle 先例 cmr S5 r2）。
+        if getattr(db.conn, "_atomic_depth", 0) == 0:
+            try:
+                reload_state_from_db(db, state, content=content, registry=registry)
+            except BaseException as reload_exc:
+                raise exc from reload_exc
+        raise
 
 
 def resolve_directives(
@@ -309,23 +326,38 @@ def resolve_directives(
             f"已颁诏书：\n{decree_text}\n"
             f"固定收支已落账，事项 inertia 自然漂移；本{TURN_UNIT}无新立 issue。"
         )
-        # 跳过 extractor，避免连锁失败
-        db.record_log(state, narrative[:1200])
-        db.save_turn_report(state, narrative)
-        db.save_turn_extraction(
-            state, decree_text=decree_text, narrative=narrative,
-            extractor_output=f"[推演 agent 失败] {exc}；本回合跳过 extractor。",
-        )
-        apply_issue_inertia_and_ongoing(db, state, touched_ids=set())
-        for name in clear_gated_legacies(db, state):
-            db.record_log(state, f"帝国修正消除：{name}")
-        db.mark_directives_issued(state)
-        # 同 advance_without_edict：推进回合前清 stale context（cmr S2+S3 r4）。
-        db.clear_resolve_context(state.turn)
-        state.next_period()
-        # 第三条推进尾同样复位 settling（cmr S4 r2）：漏掉的话新回合被守门跳过前半段。
-        state.turn_phase = TurnPhase.SUMMONING.value
-        db.save_state(state)
+        # ADR 0008 S7（决定 2）：fallback 是降级正常路径，其推进写序列同样整体包 atomic
+        # ——崩在其中(只可能是代码异常，simulator 失败已被本 except 接住)则全回滚、内存从 DB
+        # 重载、回合不前进，与正常路/advance 同语义。此路无 LLM 产出、无 resolve_context 入真源
+        # （extractor 被跳过），故不写错误包——裸异常透传（上游 user 边界按普通错误处理；本
+        # 路本就不抛 SettlementAbort）。pre_settle 自有 atomic 在本 except 之前已提交，不嵌套。
+        try:
+            with atomic(db):
+                # 跳过 extractor，避免连锁失败
+                db.record_log(state, narrative[:1200])
+                db.save_turn_report(state, narrative)
+                db.save_turn_extraction(
+                    state, decree_text=decree_text, narrative=narrative,
+                    extractor_output=f"[推演 agent 失败] {exc}；本回合跳过 extractor。",
+                )
+                apply_issue_inertia_and_ongoing(db, state, touched_ids=set())
+                for name in clear_gated_legacies(db, state):
+                    db.record_log(state, f"帝国修正消除：{name}")
+                db.mark_directives_issued(state)
+                # 同 advance_without_edict：推进回合前清 stale context（cmr S2+S3 r4）。
+                db.clear_resolve_context(state.turn)
+                state.next_period()
+                # 第三条推进尾同样复位 settling（cmr S4 r2）：漏掉的话新回合被守门跳过前半段。
+                state.turn_phase = TurnPhase.SUMMONING.value
+                db.save_state(state)
+        except BaseException as write_exc:
+            # 回滚后内存从 DB 重载（同 pre_settle 先例），链式 re-raise 不吞（fail-loud）。
+            if getattr(db.conn, "_atomic_depth", 0) == 0:
+                try:
+                    reload_state_from_db(db, state, content=content, registry=registry)
+                except BaseException as reload_exc:
+                    raise write_exc from reload_exc
+            raise
         return ResolveResult(
             awaiting=False,
             report=f"\n本{TURN_UNIT}颁布诏书：\n" + decree_text + "\n\n" + narrative,
@@ -358,6 +390,63 @@ def resolve_directives(
         before_turn=before_turn, _emit=_emit,
         content=content, registry=registry,
         cheat_directive=cheat_directive,
+    )
+    return ResolveResult(awaiting=False, report=report)
+
+
+def resolve_settling_recovery(
+    state: GameState,
+    db: GameDB,
+    agno_db: SqliteDb,
+    llm_config: LLMConfig,
+    ctx: Dict[str, object],
+    *,
+    on_event: Optional[Callable[[str, str], None]] = None,
+    content=None,
+    registry=None,
+) -> ResolveResult:
+    """ADR 0008 S7（决定 3）：settling 态崩溃恢复的「直入 apply」——ready context 已带
+    extractor delta，不重跑贵的 simulator/extractor，直接调 settle_with_delta 后半段。
+
+    ctx = db.get_resolve_context(before_turn)，要求 ctx["extracted"] is not None（ready）。
+    跨进程恢复无原 extractor_input/raw output（那些在崩溃进程的易失内存里）——extractor_output
+    用一句恢复标记重建（仅 turn_extractions 留痕用，不影响落库）。章节记忆/结局总评是便宜调用，
+    按真实流程同款构造（决定 3/4 明示重调可接受）。pre_settle 的 settling 相位已提交，恢复路
+    不重跑前半段（财政不二跑）。
+    """
+    def _emit(kind: str, data: str) -> None:
+        if on_event:
+            on_event(kind, data)
+
+    extracted = ctx["extracted"]
+    if not isinstance(extracted, dict):
+        # 不应到此（调用方已判 ready）；防御性响亮，免把 None/坏值喂进 settle。
+        raise LLMContractError("恢复直入 apply 要求 ctx 带 ready 的 extractor delta。")
+    before_turn = state.turn
+    decree_text = str(ctx.get("decree_text") or "")
+    narrative = str(ctx.get("narrative") or "")
+    simulator_payload = ctx["simulator_payload"] if isinstance(ctx.get("simulator_payload"), dict) else {}
+
+    report = settle_with_delta(
+        state,
+        db,
+        extracted,
+        before_turn=before_turn,
+        content=content,
+        registry=registry,
+        decree_text=decree_text,
+        narrative=narrative,
+        extractor_output="[恢复重灌] 从 resolve_context 直入 apply（未重跑 extractor）。",
+        chapter_recorder=lambda d, s, dt, nr, ap: record_chapter_memory(
+            create_chapter_memory_agent(llm_config, agno_db), d, s, dt, nr, ap
+        ),
+        ending_summarizer=lambda d, s, oc: _generate_ending_summary(
+            d, s, llm_config, agno_db, oc, _emit
+        ),
+        delta_applier=lambda d, s, ex, ct, rg: apply_score_extraction(
+            d, s, ex, content=ct, registry=rg, llm_config=llm_config
+        ),
+        on_stage=lambda label: _emit("stage", label),
     )
     return ResolveResult(awaiting=False, report=report)
 
@@ -673,6 +762,75 @@ def settle_with_delta(
         if on_stage is not None:
             on_stage(label)
 
+    # ADR 0008 S7（决定 2）：整个后半段写序列包进单事务——apply→turn_logs→章节记忆→inertia
+    # →clear→结局→next_period 全有或全无。崩在中途（含 save_state 之后、clear 之前那个
+    # 「已提交但 context 残留」的崩溃窗口，S2+S3 codex R2 defer 至此）则整体回滚，turn 不推进、
+    # resolve_context 仍在可重试。回滚后内存从 DB 重载（决定 3），再于 atomic 外写错误包并抛
+    # SettlementAbort（决定 6）。事务内 LLM 回调（章节记忆/结局总评）失败沿用降级、内部已自吞
+    # 不触发回滚（决定 4）——故从 settle 冒出的 Exception 即代码异常，一律走错误包。
+    try:
+        with atomic(db):
+            full_report = _settle_after_extract_body(
+                state, db, extracted,
+                before_turn=before_turn, content=content, registry=registry,
+                decree_text=decree_text, narrative=narrative,
+                trace_narrative=trace_narrative,
+                extractor_input=extractor_input, extractor_output=extractor_output,
+                chapter_recorder=chapter_recorder, ending_summarizer=ending_summarizer,
+                delta_applier=delta_applier, _stage=_stage,
+            )
+    except BaseException as exc:
+        # 回滚后内存从 DB 重载（同 pre_settle 先例）；嵌套在外层 atomic 内时回滚未发生，跳过。
+        if getattr(db.conn, "_atomic_depth", 0) == 0:
+            try:
+                reload_state_from_db(db, state, content=content, registry=registry)
+            except BaseException as reload_exc:
+                raise exc from reload_exc
+        # 中断/降级类异常（KeyboardInterrupt/SystemExit/LLMUnavailable）不当代码异常处理：
+        # 不写包、不二次包装，原样传播。SettlementAbort（理论上 settle 内不抛）也不二次包。
+        if isinstance(exc, (KeyboardInterrupt, SystemExit, LLMUnavailable, SettlementAbort)):
+            raise
+        if not isinstance(exc, Exception):
+            raise  # 其余 BaseException 原样传播
+        # 代码异常：错误包（带 extracted + resolve_ctx）在 atomic 外写，抛 SettlementAbort（决定 6）。
+        try:
+            pack_path = write_error_pack(
+                db, state, exc=exc, extracted=extracted,
+                resolve_ctx=db.get_resolve_context(before_turn),
+            )
+        except Exception as pack_exc:
+            # 写包自身炸不得顶替原异常（同 extractor 先例 raise exc from ...）：
+            # 只捕 Exception，写包期间落 Ctrl-C/SystemExit 须原样传播。
+            raise exc from pack_exc
+        raise SettlementAbort(
+            settlement_abort_message(pack_path),
+            turn=before_turn, stage="settle", error_pack_path=pack_path,
+        ) from exc
+    return full_report
+
+
+def _settle_after_extract_body(
+    state: GameState,
+    db: GameDB,
+    extracted: Dict[str, object],
+    *,
+    before_turn: int,
+    content,
+    registry,
+    decree_text: str,
+    narrative: str,
+    trace_narrative,
+    extractor_input: str,
+    extractor_output: str,
+    chapter_recorder,
+    ending_summarizer,
+    delta_applier,
+    _stage: Callable[[str], None],
+) -> str:
+    """settle_with_delta 的后半段写序列正文（被其 atomic 包裹调用）。
+
+    抽成独立函数只为让 settle_with_delta 的 try/atomic/except 块清爽；不单独对外。
+    """
     tlog("结算 4/4 落库 + inertia/ongoing")
     _stage("落库与事项推进")
     if delta_applier is not None:
@@ -747,9 +905,9 @@ def settle_with_delta(
     db.save_state(state)
     # ADR 0008 S3：清 resolve_context 作 settle 写序列的最后一笔（紧贴 next_period 等推进写）。
     # 按 before_turn 清本回合那一行（next_period 已把 state.turn 推进到下一回合）。
-    # 注意：此刻 save_state 与本清仍是两次独立 commit，「已提交但 context 残留」的崩溃
-    # 窗口尚未闭合——本切片只把位置摆好，S7 把整段包进 atomic 后窗口才真正关掉
-    # （cmr S2+S3 codex R2，defer→S7，S7 须加该崩溃点回归测试）。
+    # S7：整段已包进 settle_with_delta 的 atomic——save_state 与本清同事务原子提交，
+    # 「已提交但 context 残留」的崩溃窗口已闭合（cmr S2+S3 codex R2 defer→S7，崩溃点回归见
+    # test_settle_crash_after_savestate_before_clear_rolls_back）。
     db.clear_resolve_context(before_turn)
 
     ending = ""
