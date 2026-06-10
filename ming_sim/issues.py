@@ -1121,13 +1121,15 @@ def apply_office_appointment(
         return {"name": name, "new_office": new_office, "rejected": True, "reason": "无 content，跳过建档"}
     from ming_sim.session import apply_appointment  # 延迟导入避循环
     appt = {"name": name, "office": new_office, "faction": faction, "reason": reason, "approved": True}
-    appointed, displaced = apply_appointment(db, state, content, registry, appt, llm_config=llm_config)
+    appointed, _ = apply_appointment(db, state, content, registry, appt, llm_config=llm_config)
     if appointed:
         # 新任也按 office 文字去重(与 transfer 分支对称):新人占独占实职,从他人剔同名分项,
         # 免占缺旧任者留旧官成双缺官(CMR R4：去 replaces 后新任分支漏了顶替)。
+        # displaced 统一取 _displace_duplicate_offices 的 List[str](apply_appointment 的单名
+        # displaced 在去 replaces 后恒空,留着会让本字段时而 str 时而 list,故弃)(线上 gemini)。
         displaced_parts = _displace_duplicate_offices(db, content, appointed, new_office)
         return {"name": appointed, "new_office": new_office, "kind": "appoint", "reason": reason,
-                **({"displaced": displaced_parts or displaced} if (displaced_parts or displaced) else {})}
+                **({"displaced": displaced_parts} if displaced_parts else {})}
     return {"name": name, "new_office": new_office, "rejected": True, "kind": "appoint",
             "reason": f"建档失败（查重/字段不合）；原 status={cur_status or '不在册'}"}
 
