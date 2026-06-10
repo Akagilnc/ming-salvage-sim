@@ -230,3 +230,16 @@ def test_genuinely_empty_delta_distinguishable_from_placeholder(game):
     assert ctx["extracted"] == {}
     assert ctx["extracted"] is not None
     db.clear_resolve_context(turn)
+
+
+def test_e2e_genuinely_empty_delta_persists_as_ready(game, monkeypatch):
+    """端到端：extractor 成功产出空 delta → 真实流程 persist 为 ready（{} 非 None）。"""
+    db, state, content = game
+    turn, _ = _drive_settle_after_narrative(
+        db, state, content, monkeypatch, extractor_behavior="ok_empty")
+
+    ctx = db.get_resolve_context(turn)
+    assert ctx is not None
+    assert ctx["extracted"] == {}
+    assert ctx["extracted"] is not None
+    db.clear_resolve_context(turn)
