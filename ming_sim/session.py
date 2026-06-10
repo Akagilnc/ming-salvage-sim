@@ -27,6 +27,7 @@ from ming_sim.decree import (
     advance_without_edict,
     resolve_decisions_phase2,
     resolve_directives,
+    resolve_settling_recovery,
     write_decree_with_agno,
 )
 from ming_sim.issues import bind_content as _bind_issues
@@ -1023,6 +1024,25 @@ class GameSession:
             # pending_decisions，或第二次输出无决策块时绕过亲裁直接结算（cmr S4 r3 F3）。
             return ResolveResult(
                 awaiting=True, decisions=self.db.list_pending_decisions(self.state.turn))
+        # ADR 0008 S7（决定 3）：settling 态崩溃恢复分流。settling 只意味着「前半段已完成」，
+        # 不意味着后半段就绪——查 resolve_context 判别：
+        #   有 ready context（extractor 已产出并 persist）→ 直入 apply，不重跑贵的 simulator/
+        #     extractor（验收③的对偶：跨进程恢复从真源重灌）。完成后照常置 ISSUED。
+        #   无 ready context（崩在推演/抽取期间，LLM 产出本就没持久化）→ 落到下方正常流程
+        #     重跑推演（pre_settle 被 settling 守门跳过=前半段不二跑，simulator/extractor 重跑，
+        #     = ADR「重跑是唯一选择」，即验收③）。
+        if self.state.turn_phase == TurnPhase.SETTLING.value:
+            ctx = self.db.get_resolve_context(self.state.turn)
+            if ctx is not None and ctx.get("extracted") is not None:
+                result = resolve_settling_recovery(
+                    self.state, self.db, self.agno_db, self.llm_config, ctx,
+                    on_event=on_event, content=self.content, registry=self.registry,
+                )
+                self.last_report = result.report
+                self.state.turn_phase = TurnPhase.ISSUED.value
+                self.db.save_state(self.state)
+                return result
+            # 无 ready context：fallthrough 到正常流程重跑推演（前半段被守门跳过）。
         if self.pending_count() > 0:
             raise ValueError(f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
         directives = self.db.list_directives(self.state, statuses=("draft",))
