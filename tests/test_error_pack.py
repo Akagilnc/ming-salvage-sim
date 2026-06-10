@@ -168,8 +168,12 @@ def test_pack_write_failure_does_not_mask_original(game, monkeypatch, tmp_path):
         f"原异常被顶替丢失：{[type(c).__name__ for c in chain]}"
 
 
-def test_clear_for_resimulation_clears_context_keeps_settling(game):
-    """重新推演逃生口：清 resolve_context，但 settling 相位不动（前半段已提交不可重跑）。"""
+def test_clear_for_resimulation_downgrades_context_keeps_settling(game):
+    """重新推演逃生口：context 降级非 ready（保 phase1 字段），settling 相位不动。
+
+    整行删除会毁掉 HITL 重抽的数据依赖（phase1 叙事/payload 唯一副本）并造成
+    awaiting 叉新软死锁（cmr S7 r3，2/2）。
+    """
     from ming_sim.error_pack import clear_for_resimulation
     from ming_sim.models import TurnPhase
     db, state, content = game
@@ -185,11 +189,26 @@ def test_clear_for_resimulation_clears_context_keeps_settling(game):
 
     clear_for_resimulation(db, turn)
 
-    # context 已清。
-    assert db.get_resolve_context(turn) is None
+    # 降级：LLM 段产出清除、phase1 字段保留。
+    ctx = db.get_resolve_context(turn)
+    assert ctx is not None
+    assert ctx["extracted"] is None
+    assert ctx["decree_text"] == "d"
+    assert ctx["narrative"] == "n"
+    assert ctx["simulator_payload"] == {"k": "v"}
     # settling 相位不动（DB 与内存都仍为 settling）。
     assert state.turn_phase == TurnPhase.SETTLING.value
     assert db.load_state().turn_phase == TurnPhase.SETTLING.value
+    db.clear_resolve_context(turn)
+
+
+def test_clear_for_resimulation_noop_when_no_context(game):
+    """无 context 行时逃生口 no-op（分支双侧）。"""
+    from ming_sim.error_pack import clear_for_resimulation
+    db, state, content = game
+    db.clear_resolve_context(state.turn)
+    clear_for_resimulation(db, state.turn)
+    assert db.get_resolve_context(state.turn) is None
 
 
 def test_rejections_jsonl_path_in_error_dir(monkeypatch, tmp_path):

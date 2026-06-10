@@ -413,7 +413,8 @@ def test_poison_replay_clears_context_for_resimulation(game, monkeypatch, tmp_pa
     with pytest.raises(SettlementAbort):
         sess.resolve_turn()
 
-    assert db.get_resolve_context(turn) is None  # 逃生口已清，软死锁不可达
+    ctx_after = db.get_resolve_context(turn)
+    assert ctx_after is not None and ctx_after["extracted"] is None  # 降级非 ready：软死锁不可达，phase1 字段保留
 
     # 第二次重试：apply 恢复正常，无 ready context → 走重新推演（fallthrough）。
     monkeypatch.undo()
@@ -471,3 +472,57 @@ def test_hitl_retry_replays_ready_context_without_reextract(game, monkeypatch):
     assert db.load_state().metrics["民心"] == support_before - 3  # ready delta 真重放
     assert db.get_resolve_context(turn) is None
     assert db.list_pending_decisions(turn) == []
+
+
+def test_hitl_poison_replay_downgrades_context_then_reextracts(game, monkeypatch, tmp_path):
+    """HITL 毒重放 → context 降级为非 ready（保 phase1 字段），重试走重抽（cmr S7 r3，2/2）。
+
+    整行删除会造成新软死锁：awaiting+决策在+context 没了 → phase2 永远 LLMContractError，
+    且 phase1 叙事/payload 唯一副本被毁=连重抽都数据不可能。
+    """
+    import ming_sim.decree as dm
+    from ming_sim.exceptions import SettlementAbort
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+    dm.pre_settle(state, db, content=content)
+    dm.persist_resolve_context(
+        db, turn, {"metric_delta": {"民心": -3}},
+        decree_text="HITL诏", narrative="裁断后邸报",
+        simulator_payload={"k": "v"}, secret_orders=[], relevant_memories=[],
+    )
+    db.save_pending_decisions(turn, [{
+        "title": "辽东战和", "context": "c",
+        "options": [{"label": "战", "hint": ""}, {"label": "和", "hint": ""}],
+    }])
+    state.turn_phase = "awaiting_decision"
+    db.save_state(state)
+
+    def _poison(*a, **k):
+        raise RuntimeError("value-level poison")
+    monkeypatch.setattr(dm, "apply_score_extraction", _poison)
+
+    sess = _recovery_session(db, state, content, monkeypatch)
+    with pytest.raises(SettlementAbort):
+        sess.submit_decisions([{"label": "战"}])
+
+    ctx = db.get_resolve_context(turn)
+    assert ctx is not None  # 行没被删（phase1 字段是重抽的数据依赖）
+    assert ctx["extracted"] is None  # 降级非 ready
+    assert ctx["narrative"] == "裁断后邸报"
+
+    # 重试：apply 恢复 + stub 重抽成功 → phase2 走非 ready 分支重抽并完整结算。
+    monkeypatch.undo()
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(dm, "create_season_simulator_agent", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "create_score_extractor_module_agent", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "build_extractor_shared_context", lambda *a, **k: "ctx")
+    monkeypatch.setattr(dm, "extract_scores_by_modules_with_agno",
+                        lambda *a, **k: ({"metric_delta": {"民心": -3}}, "o", "i"))
+    state.turn_phase = "awaiting_decision"  # 回滚已还原；拼装 session 重建
+    sess2 = _recovery_session(db, state, content, monkeypatch)
+    report = sess2.submit_decisions([{"label": "战"}])
+
+    assert state.turn == turn + 1  # 不再 LLMContractError，正常重抽结算
