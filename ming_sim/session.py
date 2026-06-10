@@ -117,6 +117,7 @@ class ChatTurnResult:
     displaced_minister: str = ""   # 因新任腾缺被罢黜（dismissed）的原任者姓名
     refresh_ministers: List[str] = field(default_factory=list)
     secret_order_id: int = 0       # 本轮新建密令 id（0=未下密令）
+    pending_action_id: int = 0     # 本轮暂存的待颁诏动作 id（动作闸门 ADR 0006，0=无）
 
 
 @dataclass
@@ -292,6 +293,26 @@ def apply_appointment(
     if registry is not None:
         registry.register(character)
     return (name, displaced)
+
+
+def _pending_action_brief(pa: Dict[str, Any]) -> str:
+    """暂存动作的一句话摘要，供对话确认意图判定时告诉 LLM『有哪些待皇帝定夺』。"""
+    import json as _json
+    kind = pa.get("kind")
+    action = pa.get("action")
+    try:
+        payload = _json.loads(pa.get("payload_json") or "{}")
+    except (ValueError, TypeError):
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    if kind == "office":
+        who = payload.get("name") or ""
+        office = payload.get("office") or ""
+        return f"{action}「{who}」" + (f"为「{office}」" if office else "")
+    if kind == "consort":
+        return f"调教「{payload.get('name') or ''}」"
+    return f"{action}密令"
 
 
 def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: Optional[LLMConfig] = None) -> None:
@@ -655,6 +676,7 @@ class GameSession:
         返回 {"directive": {id,text,status,notes}|None, "secret_order_id": int|None}。"""
         from ming_sim.cli_backend import (
             cli_backend_from_env, resolve_minister_actions, extract_minister_actions,
+            extract_appointment_action, extract_confirmation_intent,
         )
         out: Dict[str, Any] = {"directive": None, "secret_order_id": secret_order_id}
         channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
@@ -663,6 +685,27 @@ class GameSession:
         minister_name = character.name
         reply = (answer or "").strip()
         llm_config = getattr(self, "llm_config", None)
+        # 对话确认(ADR 0006 重设计)：本召对的大臣有上一轮经领命确认、尚未落库的暂存动作时，
+        # 皇帝这句应允 → 当场 commit、拒绝 → 丢、未表态 → 留(颁诏对没回的算同意)。
+        # 只在该大臣有 outstanding 暂存时才判(省 token)，commit/drop 按该大臣过滤、不波及他人。
+        pend_for_minister = self.db.list_pending_actions(
+            self.state.turn, minister_name=minister_name)
+        if pend_for_minister:
+            summaries = [_pending_action_brief(p) for p in pend_for_minister]
+            confirm = extract_confirmation_intent(
+                player_message, reply, summaries, llm_config=llm_config)
+            if confirm == "应允":
+                self.db.commit_pending_actions(
+                    self.state, minister_name=minister_name,
+                    content=getattr(self, "content", None),
+                    registry=getattr(self, "registry", None))
+            elif confirm == "拒绝":
+                self.db.drop_pending_actions_for_minister(self.state.turn, minister_name)
+            if confirm in ("应允", "拒绝"):
+                # 本轮是对暂存的确认：大臣回话已【复述】该动作(领命 prompt 所致),若继续走下面的
+                # 抽取,会把刚 commit 的动作从复述里重抽成新暂存→颁诏二次落库,或重建刚拒的动作。
+                # 故确认轮直接返回,不再抽新动作(线上 codex P2)。确认句无前缀,前缀路无损失。
+                return out
         acts = resolve_minister_actions(
             reply, player_message, default_assignee=minister_name, llm_config=llm_config)
         if not has_directive and acts["decree_text"]:
@@ -699,32 +742,62 @@ class GameSession:
                     target = active[0]
                 if target is not None and sa and sa != "无":
                     oid = int(target["id"])
-                    # target 可能是 pending_review：催办对非 active 抛错、提交核议返 False，按状态分流（CMR F1）。
+                    # 只对 active 目标 stage:pending_review/已结的密令,更新/催办/提交核议/记进展
+                    # 落库都会失败,stage 了只会成孤儿暂存行(ship-pre CMR codex)。非 active 一律不接。
                     target_active = str(target.get("status") or "active") == "active"
-                    if sa == "更新":
-                        if self.db.update_secret_order_by_id(
-                            self.state, oid,
-                            act["new_title"] or str(target.get("title") or ""),
-                            act["new_content"] or str(target.get("content") or ""),
-                            tags=None, deadline_months=act["deadline_months"]):
-                            out["secret_order_id"] = oid
-                    elif sa == "催办" and target_active:
-                        self.db.rush_secret_order(oid, self.state, deadline_months=1, reason=player_message[:80])
-                        out["secret_order_id"] = oid
-                    elif sa == "提交核议":
-                        if self.db.submit_secret_order_for_review(
-                                oid, reply[:200], self.state.year, self.state.period):
-                            out["secret_order_id"] = oid
-                    elif sa == "记进展" and int(target.get("turn_issued") or 0) != int(self.state.turn):
-                        self.db.update_secret_order_progress(oid, reply[:200], self.state.year, self.state.period)
-                        out["secret_order_id"] = oid
-                    if out["secret_order_id"] and self.registry is not None:
-                        self.registry.refresh(minister_name)
+                    if target_active and sa == "更新":
+                        # 动作闸门(ADR 0006)：进暂存，不动真实表；颁诏批量落库。
+                        out["pending_action_id"] = self.db.stage_pending_action(
+                            self.state.turn, kind="secret_order", action="更新",
+                            minister_name=minister_name, target_id=oid,
+                            payload={
+                                "new_title": act["new_title"] or str(target.get("title") or ""),
+                                "new_content": act["new_content"] or str(target.get("content") or ""),
+                                "deadline_months": act["deadline_months"],
+                            },
+                        )
+                    elif target_active and sa == "催办":
+                        out["pending_action_id"] = self.db.stage_pending_action(
+                            self.state.turn, kind="secret_order", action="催办",
+                            minister_name=minister_name, target_id=oid,
+                            payload={"reason": player_message[:80]})
+                    elif target_active and sa == "提交核议":
+                        out["pending_action_id"] = self.db.stage_pending_action(
+                            self.state.turn, kind="secret_order", action="提交核议",
+                            minister_name=minister_name, target_id=oid,
+                            payload={"claim": reply[:200]})
+                    elif target_active and sa == "记进展" and int(target.get("turn_issued") or 0) != int(self.state.turn):
+                        out["pending_action_id"] = self.db.stage_pending_action(
+                            self.state.turn, kind="secret_order", action="记进展",
+                            minister_name=minister_name, target_id=oid,
+                            payload={"note": reply[:200]})
+                    # 注:密令会话动作走闸门后只暂存(out["pending_action_id"]),不再当场改真实表,
+                    # 故无 secret_order_id、无需 refresh registry——暂存动作颁诏前对他臣不可见
+                    # (ADR 0006),且 commit 在月末 next_period 前、次回合 agent 本就重建,无须刷新。
                 if is_consort and (act["cultivate_skill"] or act["cultivate_trait"]):
-                    self.db.cultivate_consort(
-                        character.name, self.state.turn, act["cultivate_skill"], act["cultivate_trait"])
-                    if self.registry is not None:
-                        self.registry.refresh(character.name)
+                    # 后宫调教也是结构化聊天写动作,走动作闸门(ADR 0006):暂存,颁诏批量落库。
+                    out["pending_action_id"] = self.db.stage_pending_action(
+                        self.state.turn, kind="consort", action="调教",
+                        minister_name=character.name, target_id=None,
+                        payload={"name": character.name,
+                                 "skill": act["cultivate_skill"], "trait": act["cultivate_trait"]})
+        # 任免(office)独立检测：与密令无关，随召对触发(ungated)，覆盖大臣+太监。
+        # 口头任命/罢免 → 暂存 kind=office；颁诏前不动 characters 表。
+        # 显式前缀(拟旨/密令)是皇帝已明示的动作，按既定例外直接走(拟旨里的任免随诏书
+        # 走 extractor 的 office_changes)，不在此自然语言路径重复 stage。
+        explicit_prefixed = bool(acts["decree_text"] or acts["secret_order"])
+        appt = (
+            {"appoint_action": "无"} if explicit_prefixed
+            else extract_appointment_action(player_message, reply, llm_config=llm_config)
+        )
+        if appt["appoint_action"] in ("任命", "罢免") and appt["name"]:
+            # minister_name = 召对对象(发起这道任免的大臣/太监),非被任者——对话确认按召对的
+            # 大臣过滤暂存,故须以召对对象为键;被任者姓名在 payload["name"]。
+            out["pending_action_id"] = self.db.stage_pending_action(
+                self.state.turn, kind="office", action=appt["appoint_action"],
+                minister_name=minister_name, target_id=None,
+                payload={"name": appt["name"], "office": appt["office"],
+                         "appointer": minister_name})
         return out
 
     def _cli_backend_fallback_actions(
@@ -744,6 +817,9 @@ class GameSession:
             )
         if res["secret_order_id"]:
             result.secret_order_id = res["secret_order_id"]
+        if res.get("pending_action_id"):
+            # 非流式路径与流式同 surface 暂存信号,杜绝两边漂移(ship-pre CMR)。
+            result.pending_action_id = res["pending_action_id"]
 
     def _apply_appointment(self, payload: str, appointer: Character) -> Tuple[str, str]:
         """吏部 propose_appointment 落地：建档入库 + 注册 Agent，本回合即可召见。
@@ -998,7 +1074,8 @@ class GameSession:
 
     def advance_without_decree(self) -> None:
         """CLI 退朝无草案：仅财政 tick + 推进。"""
-        advance_without_edict(self.state, self.db)
+        advance_without_edict(
+            self.state, self.db, content=self.content, registry=self.registry)
         self.state.turn_phase = TurnPhase.SUMMONING.value
         self.db.save_state(self.state)
 
