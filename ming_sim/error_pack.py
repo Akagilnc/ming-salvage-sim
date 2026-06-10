@@ -162,10 +162,27 @@ def write_error_pack(
 
 
 def clear_for_resimulation(db: Any, turn: int) -> None:
-    """「重新推演」逃生口（ADR 0008 决定 6）：清 resolve_context 让重试重跑 simulator/extractor。
+    """「重新推演」逃生口（ADR 0008 决定 6）：把 resolve_context 降级为非 ready，
+    让重试重跑 simulator/extractor。
 
-    只清 resolve_context（LLM 段的真源）——**settling 相位不清**：pre_settle 前半段确实提交了
-    （固定财政 + 暂存动作），重推演只重跑 LLM 段，前半段不可重跑（否则二次 tick）。CLI/web
-    接线不在本切片（PR2+），函数先立住供上层调用。
+    **降级而非删行**（cmr S7 r3，2/2）：决定 6 的「清」指清 LLM 段产出（extracted），
+    phase1 字段（叙事/诏书/payload/亲裁上下文）是 HITL 重抽的数据依赖、且是唯一持久副本
+    ——整行删除会把 HITL 叉钉进「awaiting+决策在+context 没了 → phase2 永远拒收」的新
+    软死锁。降级后：settling 叉重试 extracted=None → 恢复分流不命中 → fallthrough 重新
+    推演；HITL 叉重试走 phase2 非 ready 分支用存的叙事+亲裁指令重抽。
+
+    **settling 相位不清**：pre_settle 前半段确实提交了（固定财政 + 暂存动作），重推演
+    只重跑 LLM 段，前半段不可重跑（否则二次 tick）。
     """
-    db.clear_resolve_context(int(turn))
+    ctx = db.get_resolve_context(int(turn))
+    if ctx is None:
+        return
+    db.save_resolve_context(
+        int(turn),
+        str(ctx.get("decree_text") or ""),
+        str(ctx.get("narrative") or ""),
+        ctx.get("simulator_payload") if isinstance(ctx.get("simulator_payload"), dict) else {},
+        secret_orders=ctx.get("secret_orders") if isinstance(ctx.get("secret_orders"), list) else [],
+        relevant_memories=ctx.get("relevant_memories") if isinstance(ctx.get("relevant_memories"), list) else [],
+        # 不传 extracted → upsert ready=0：LLM 段产出清除，phase1 字段保留。
+    )
