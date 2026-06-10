@@ -530,6 +530,31 @@ def test_dialogue_affirm_commits_staged_now(game, monkeypatch):
     assert db.list_pending_actions(state.turn) == []
 
 
+def test_dialogue_affirm_does_not_restage_restated_action(game, monkeypatch):
+    """皇帝应允 + 大臣回话复述该动作 → 只 commit,不把复述内容从抽取里重抽成新暂存
+    (否则颁诏二次落库)。(线上 codex P2:确认轮须跳过新动作抽取。)"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    _stage_secret_update(db, state, ch, monkeypatch, oid)
+    assert len(db.list_pending_actions(state.turn)) == 1
+
+    # 应允;同一 canned 还带 密令动作(模拟大臣复述被 extractor 看见会重抽)
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda p, llm_config=None: (json.dumps(
+                            {"确认": "应允", "密令动作": "更新", "目标密令编号": oid,
+                             "新标题": "改后", "新内容": "改后内容", "期限月数": 0}, ensure_ascii=False), 1))
+    GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), ch, player_message="准",
+        answer="臣领旨,将原内容改为改后内容。", has_directive=False, secret_order_id=None)
+
+    # 已 commit(真实表改)、且没把复述重抽成新暂存
+    assert db.list_pending_actions(state.turn) == []
+    assert db.conn.execute(
+        "SELECT content FROM secret_orders WHERE id=?", (oid,)).fetchone()["content"] == "改后内容"
+
+
 def test_dialogue_reject_drops_staged(game, monkeypatch):
     """暂存后皇帝下一句拒绝 → 丢(删暂存行),真实表始终不变。"""
     db, state, content = game
