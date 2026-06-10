@@ -733,3 +733,28 @@ def test_recovery_restores_last_decree_for_web_display(game, monkeypatch):
     assert sess.last_decree == ""  # 跨进程恢复：内存里没有
     sess.resolve_turn()
     assert sess.last_decree == "崩溃前诏书全文"
+
+
+def test_recovery_replay_blocked_by_pending_directives(game, monkeypatch):
+    """恢复重放与正常路同守门：pending 拟旨未核定不得推进（cmr S7 r8 codex）。
+
+    跳过守门的话恢复期大臣新拟的旨随推进孤儿在旧回合——正常路会拦。
+    """
+    import ming_sim.decree as dm
+
+    db, state, content = game
+    turn = state.turn
+    dm.pre_settle(state, db, content=content)
+    dm.persist_resolve_context(
+        db, turn, {"metric_delta": {"民心": -1}},
+        decree_text="d", narrative="n",
+        simulator_payload={}, secret_orders=[], relevant_memories=[],
+    )
+    # 恢复期大臣拟旨（pending 待准驳）
+    db.add_directive(state, None, "请拨内帑", source="minister", status="pending")
+
+    sess = _recovery_session(db, state, content, monkeypatch)
+    with pytest.raises(ValueError, match="核定"):
+        sess.resolve_turn()
+    assert state.turn == turn  # 未推进，拟旨不孤儿
+    db.clear_resolve_context(turn)
