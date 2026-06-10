@@ -4749,9 +4749,12 @@ class GameDB:
             if not row["extracted_ready"]:
                 return None
             try:
-                return json.loads(row["extracted_delta_json"])
+                parsed = json.loads(row["extracted_delta_json"])
             except Exception:
                 return None
+            # 合法 JSON 非 dict（type-corrupt）同样回 None（重抽）：原样返回会让恢复叉
+            # 抛 LLMContractError 绕过逃生口=corruption 软死锁（ship-pre r1）。
+            return parsed if isinstance(parsed, dict) else None
         return {
             "decree_text": row["decree_text"],
             "narrative": row["narrative"],

@@ -380,9 +380,13 @@ def test_recovery_path_commits_pending_actions(game, monkeypatch):
 
     assert result.awaiting is False
     assert state.turn == turn + 1
-    statuses = [r["status"] for r in db.conn.execute(
-        "SELECT status FROM pending_actions WHERE turn=?", (turn,)).fetchall()]
-    assert statuses and all(st != "pending" for st in statuses)  # 不留孤儿
+    row = db.conn.execute(
+        "SELECT status FROM pending_actions WHERE turn=? AND target_id=?",
+        (turn, oid)).fetchone()
+    assert row is not None and row["status"] == "committed"  # 真 committed 非 failed（ship-pre r1）
+    title = db.conn.execute(
+        "SELECT title FROM secret_orders WHERE id=?", (oid,)).fetchone()["title"]
+    assert title == "恢复期标题"  # 真表生效
 
 
 def test_poison_replay_clears_context_for_resimulation(game, monkeypatch, tmp_path):
@@ -608,7 +612,10 @@ def test_hitl_reextract_branch_commits_pending(game, monkeypatch, tmp_path):
     row = db.conn.execute(
         "SELECT status FROM pending_actions WHERE turn=? AND target_id=?",
         (turn, oid)).fetchone()
-    assert row is not None and row["status"] != "pending"  # 不留孤儿
+    assert row is not None and row["status"] == "committed"  # 真 committed 非 failed（ship-pre r1）
+    title = db.conn.execute(
+        "SELECT title FROM secret_orders WHERE id=?", (oid,)).fetchone()["title"]
+    assert title == "重抽期标题"
 
 
 def test_escape_hatch_failure_does_not_mask_abort(game, monkeypatch, tmp_path):
@@ -708,7 +715,10 @@ def test_fallback_path_commits_pending(game, monkeypatch):
     row = db.conn.execute(
         "SELECT status FROM pending_actions WHERE turn=? AND target_id=?",
         (turn, oid)).fetchone()
-    assert row is not None and row["status"] != "pending"  # 终端路落库，不留孤儿
+    assert row is not None and row["status"] == "committed"  # 真 committed 非 failed（ship-pre r1）
+    title = db.conn.execute(
+        "SELECT title FROM secret_orders WHERE id=?", (oid,)).fetchone()["title"]
+    assert title == "fallback标题"
 
 
 def test_recovery_restores_last_decree_for_web_display(game, monkeypatch):
@@ -785,3 +795,49 @@ def test_hitl_replay_blocked_by_pending_directives(game, monkeypatch):
         sess.submit_decisions([{"label": "战"}])
     assert state.turn == turn
     db.clear_resolve_context(turn)
+
+
+def test_skip_refused_at_front_half_done(game):
+    """ADR 决定 6：不提供「跳过本月结算」——FRONT_HALF_DONE 相位退朝响亮拒绝（ship-pre r1）。
+
+    settling 时 skip=财政已提交而本月 LLM 结算永不落+丢弃已存结算上下文=自愿半落库。
+    """
+    from ming_sim.decree import advance_without_edict, pre_settle
+    db, state, content = game
+    turn = state.turn
+    pre_settle(state, db, content=content)
+    rows_before = _ledger_count(db, turn)
+
+    with pytest.raises(ValueError, match="结算"):
+        advance_without_edict(state, db, content=content)
+    assert state.turn == turn  # 未推进
+    assert _ledger_count(db, turn) == rows_before  # 财政不动
+
+    state.turn_phase = "awaiting_decision"
+    with pytest.raises(ValueError, match="裁决|结算"):
+        advance_without_edict(state, db, content=content)
+    assert state.turn == turn
+
+
+def test_draft_mutators_frozen_at_front_half_done(game, monkeypatch):
+    """FRONT_HALF_DONE 冻结 draft/诏书变更器（ship-pre r1 codex）。
+
+    恢复窗口新增/确认的 draft 会被 mark_directives_issued 连带标 issued，
+    而重放 delta 不含它们=幽灵颁布。
+    """
+    from ming_sim.session import GameSession
+    db, state, content = game
+    state.turn_phase = "settling"
+
+    sess = _recovery_session(db, state, content, monkeypatch)
+    for call in (
+        lambda: sess.add_directive("新草案"),
+        lambda: sess.update_directive(1, "改"),
+        lambda: sess.delete_directive(1),
+        lambda: sess.confirm_directive(1),
+        lambda: sess.reject_directive(1),
+        lambda: sess.set_decree("改诏"),
+        lambda: sess.write_decree(),
+    ):
+        with pytest.raises(ValueError, match="结算|亲裁"):
+            call()

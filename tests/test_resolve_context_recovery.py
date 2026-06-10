@@ -306,3 +306,23 @@ def test_corrupt_extracted_json_returns_none_not_empty(game):
     assert ctx is not None
     assert ctx["extracted"] is None
     db.clear_resolve_context(turn)
+
+
+def test_type_corrupt_extracted_json_returns_none(game):
+    """ready=1 但 JSON 合法非 dict（如 [1,2]）→ extracted=None（重抽），不原样返回（ship-pre r1）。
+
+    原样返回会让恢复叉抛 LLMContractError（非 SettlementAbort）→ 逃生口不触发=corruption 软死锁。
+    """
+    db, state, content = game
+    turn = state.turn
+    db.save_resolve_context(turn, "d", "n", {}, secret_orders=[],
+                            relevant_memories=[], extracted={"metric_delta": {"国库": 1}})
+    db.conn.execute(
+        "UPDATE pending_resolve_context SET extracted_delta_json='[1, 2]' WHERE turn=?",
+        (turn,))
+    db.conn.commit()
+
+    ctx = db.get_resolve_context(turn)
+    assert ctx is not None
+    assert ctx["extracted"] is None
+    db.clear_resolve_context(turn)

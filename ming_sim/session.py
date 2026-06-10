@@ -951,21 +951,32 @@ class GameSession:
             for r in rows
         ]
 
+    def _refuse_if_settling(self) -> None:
+        """FRONT_HALF_DONE 冻结诏稿变更：恢复窗口新增/确认的 draft 会被 settle 的
+        mark_directives_issued 连带标 issued，而重放 delta 不含它们=幽灵颁布（ship-pre r1）。"""
+        if self.state.turn_phase in FRONT_HALF_DONE_PHASES:
+            raise ValueError("月末结算进行中（恢复态），请先完成结算再改诏稿。")
+
     def confirm_directive(self, directive_id: int) -> None:
+        self._refuse_if_settling()
         self.db.confirm_directive(directive_id)
 
     def reject_directive(self, directive_id: int) -> None:
+        self._refuse_if_settling()
         self.db.reject_directive(directive_id)
 
     def add_directive(self, text: str, notes: str = "") -> DirectiveView:
+        self._refuse_if_settling()
         directive_id = self.db.add_directive(self.state, None, text, "手动新增", notes=notes)
         return DirectiveView(id=directive_id, text=text, status="draft",
                              source="手动新增", notes=notes)
 
     def update_directive(self, directive_id: int, text: str) -> None:
+        self._refuse_if_settling()
         self.db.update_directive_text(directive_id, text)
 
     def delete_directive(self, directive_id: int) -> None:
+        self._refuse_if_settling()
         self.db.delete_directive(directive_id)
 
     def pending_count(self) -> int:
@@ -992,6 +1003,7 @@ class GameSession:
             # -> str 契约：亲裁期不能拟诏，响亮拒绝走既有 ValueError 错误路径
             # （web 映射 400 / terminal 打印拟诏失败）。幂等返回决策点的守门在 resolve_turn。
             raise ValueError("当前在月末亲裁阶段，请先裁决已存决策点，不能拟诏。")
+        self._refuse_if_settling()
         if self.pending_count() > 0:
             raise ValueError(f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
         directives = self.db.list_directives(self.state, statuses=("draft",))
@@ -1003,6 +1015,7 @@ class GameSession:
 
     def set_decree(self, text: str) -> str:
         """皇帝手动改定诏书正文（拟诏后、颁诏前）。颁诏时 resolve_turn 用此 last_decree。"""
+        self._refuse_if_settling()
         text = (text or "").strip()
         if not text:
             raise ValueError("诏书正文不能为空。")
