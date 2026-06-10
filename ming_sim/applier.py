@@ -26,6 +26,12 @@ class _SuspendableConnection(sqlite3.Connection):
     一字不改。rollback() 不受暂停影响（暂停只拦 commit）。
 
     _commit_suspended 默认 off：保证 GameDB.__init__ 紧接的 init_schema 建表照常提交。
+
+    原生 `with conn:` 的 __exit__ 在 C 层直接 commit、绕过本 override（cmr S1 F1
+    实证），故重写 __enter__/__exit__ 改走 Python 层 commit/rollback——atomic 内
+    `with conn:` 块的提交被暂停、由最外层统一落定，atomic 外保持原生语义。
+    executescript 在 legacy 模式 C 层先隐式 commit、同样绕过暂停（cmr S1 F4），
+    暂停期直接拒绝。
     """
 
     # 类属性兜底：sqlite3 可能在 __init__ 前调用 commit（理论上不会，但稳妥）。
@@ -35,6 +41,24 @@ class _SuspendableConnection(sqlite3.Connection):
         if self._commit_suspended:
             return
         super().commit()
+
+    def __enter__(self) -> "_SuspendableConnection":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        if exc_type is None:
+            self.commit()
+        else:
+            self.rollback()
+        return False
+
+    def executescript(self, sql_script):
+        if self._commit_suspended:
+            raise RuntimeError(
+                "executescript 在 atomic 事务内禁止：C 层隐式 commit 会绕过暂停、"
+                "提前提交半成品。请改用逐条 execute，或移到 atomic 外。"
+            )
+        return super().executescript(sql_script)
 
 
 @contextmanager
@@ -46,10 +70,12 @@ def atomic(db: Any) -> Iterator[None]:
     异常：解除暂停 + rollback + 原样 re-raise（ADR 0005 fail-loud，不吞）。
 
     嵌套 flat/可重入：内层 atomic 不另起事务、不提前提交，由最外层统一
-    commit/rollback（计数深度，仅深度归 0 时落定）。
+    commit/rollback（计数深度，仅深度归 0 时落定）。内层异常即使被中间层
+    try/except 吞掉，最外层退出也强制回滚并响亮抛错（rollback-only 标志，
+    cmr S1 F2）——flat 语义下「吞内层异常后继续提交」结构上不可达。
 
-    注意 db.backup_to 内部那次 self.conn.commit() 在 atomic 内也被暂停——这是
-    接受的语义（错误包应在回滚后、atomic 外做备份），不特殊放行。
+    备份请在 rollback/commit 之后、atomic 之外做：db.backup_to 在 atomic 内
+    会响亮拒绝（备份走同连接 pager，会带上未提交脏页，cmr S1 F3）。
     """
     conn = db.conn
     conn._commit_suspended = True
@@ -61,13 +87,24 @@ def atomic(db: Any) -> Iterator[None]:
     except BaseException:
         conn._atomic_depth = depth - 1
         if depth == 1:
+            conn._atomic_rollback_only = False
             conn._commit_suspended = False
             conn.rollback()
+        else:
+            # 内层异常：标记 rollback-only，防中间层吞掉后外层照常提交。
+            conn._atomic_rollback_only = True
         raise
     else:
         conn._atomic_depth = depth - 1
         if depth == 1:
             conn._commit_suspended = False
+            if getattr(conn, "_atomic_rollback_only", False):
+                conn._atomic_rollback_only = False
+                conn.rollback()
+                raise RuntimeError(
+                    "atomic: 内层异常被调用方吞掉，事务已整体回滚。"
+                    "flat 语义下内层无独立原子性——请勿在 atomic 之间吞内层异常。"
+                )
             conn.commit()
 
 
