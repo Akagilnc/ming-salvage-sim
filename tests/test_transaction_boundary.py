@@ -377,3 +377,88 @@ def test_atomic_rejects_plain_connection(tmp_path):
     with pytest.raises(TypeError, match="_SuspendableConnection"):
         with atomic(PlainDB()):
             pass
+
+
+# ---------------------------------------------------------------------------
+# cmr S1 r3 修复回归（F1/F2）
+# ---------------------------------------------------------------------------
+
+def _rejection_table_exists(db) -> bool:
+    return db.conn.execute(
+        "SELECT name FROM sqlite_master WHERE name='rejection_reports'"
+    ).fetchone() is not None
+
+
+def test_ddl_after_swallowed_conn_context_does_not_escape(game):
+    """吞掉 with db.conn: 异常后跑 DDL，不得逃逸外层回滚（cmr S1 r3 F1）。
+
+    中途回滚结束了 BEGIN 事务；rollback 在暂停期必须重开事务，
+    维持「atomic 内永远有开着的事务」。
+    """
+    db, state, content = game
+    db.conn.execute("DROP TABLE IF EXISTS rejection_reports")
+    db.conn.commit()
+
+    from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
+    rc = RejectionCollector()
+    ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
+    rc.record("army_delta", ri, turn=1)
+
+    with pytest.raises(RuntimeError, match="回滚"):
+        with atomic(db):
+            try:
+                with db.conn:
+                    raise ValueError("conn-context fails")
+            except ValueError:
+                pass  # 吞
+            rc.flush_to_db(db)  # DDL 打头——不得 autocommit 逃逸
+
+    assert not _rejection_table_exists(db)
+
+
+def test_ddl_after_explicit_midatomic_rollback_does_not_escape(game):
+    """atomic 内显式 rollback 后跑 DDL，同样不得逃逸（cmr S1 r3 F1 变体②）。"""
+    db, state, content = game
+    db.conn.execute("DROP TABLE IF EXISTS rejection_reports")
+    db.conn.commit()
+
+    from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
+    rc = RejectionCollector()
+    ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
+    rc.record("army_delta", ri, turn=1)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        with atomic(db):
+            db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1r3_x','x')")
+            db.conn.rollback()  # 中途显式回滚（暂停期允许）
+            rc.flush_to_db(db)
+            raise RuntimeError("boom")
+
+    assert not _rejection_table_exists(db)
+    assert db.kv_get("s1r3_x") is None
+
+
+def test_begin_failure_at_entry_restores_flags(game, monkeypatch):
+    """入口 BEGIN 抛错不得泄漏暂停标志（cmr S1 r3 F2，泄漏=79 处 commit 全静默失效）。"""
+    db, state, content = game
+    from ming_sim.applier import _SuspendableConnection
+
+    real_execute = _SuspendableConnection.execute
+    def failing_execute(self, sql, *args, **kwargs):
+        if isinstance(sql, str) and sql.strip().upper() == "BEGIN":
+            raise sqlite3.OperationalError("simulated BEGIN failure")
+        return real_execute(self, sql, *args, **kwargs)
+    monkeypatch.setattr(_SuspendableConnection, "execute", failing_execute)
+
+    with pytest.raises(sqlite3.OperationalError, match="BEGIN"):
+        with atomic(db):
+            pass  # 不应到达
+
+    monkeypatch.setattr(_SuspendableConnection, "execute", real_execute)
+    assert db.conn._commit_suspended is False
+    assert db.conn._atomic_depth == 0
+    # 标志未泄漏：后续写照常真提交
+    db.kv_set("s1r3_after_begin_fail", "ok")
+    assert db.kv_get("s1r3_after_begin_fail") == "ok"
+    db.conn.execute("DELETE FROM kv_store WHERE key='s1r3_after_begin_fail'")
+    db.conn.commit()

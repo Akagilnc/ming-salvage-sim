@@ -42,6 +42,14 @@ class _SuspendableConnection(sqlite3.Connection):
             return
         super().commit()
 
+    def rollback(self) -> None:
+        super().rollback()
+        if self._commit_suspended:
+            # 中途回滚（显式或 with conn: 异常）结束了 BEGIN 的事务；立即重开，
+            # 维持「atomic 内永远有开着的事务」——否则后续 DDL 跑 autocommit
+            # 逃逸外层回滚（cmr S1 r3 F1）。atomic 终态退出前已清暂停标志，不误触。
+            self.execute("BEGIN")
+
     def __enter__(self) -> "_SuspendableConnection":
         return self
 
@@ -92,15 +100,18 @@ def atomic(db: Any) -> Iterator[None]:
             "atomic() 要求 db.conn 是 _SuspendableConnection（GameDB 默认 factory）；"
             "普通 sqlite3.Connection 的 commit 拦不住，会静默失去原子性。"
         )
-    conn._commit_suspended = True
     # 进入深度：>1 表示嵌套内层，退出时不落定。
     depth = getattr(conn, "_atomic_depth", 0) + 1
-    conn._atomic_depth = depth
-    if depth == 1 and not conn.in_transaction:
-        # legacy 模式只有 DML 隐式开事务；不显式 BEGIN 的话，DDL 打头的
-        # 序列（如 flush_to_db 建表）跑在 autocommit 里、回滚留表（cmr S1 r2 F2）。
-        conn.execute("BEGIN")
+    # 状态变更全部在 try 内：BEGIN 抛错 / KeyboardInterrupt 落在入口窗口时，
+    # except 分支照常复位，暂停标志不泄漏（泄漏=79 处 commit 永久静默失效，
+    # cmr S1 r3 F2）。
     try:
+        conn._commit_suspended = True
+        conn._atomic_depth = depth
+        if depth == 1 and not conn.in_transaction:
+            # legacy 模式只有 DML 隐式开事务；不显式 BEGIN 的话，DDL 打头的
+            # 序列（如 flush_to_db 建表）跑在 autocommit 里、回滚留表（cmr S1 r2 F2）。
+            conn.execute("BEGIN")
         yield
     except BaseException:
         conn._atomic_depth = depth - 1
