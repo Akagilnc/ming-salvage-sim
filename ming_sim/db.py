@@ -4743,14 +4743,22 @@ class GameDB:
                 return json.loads(text) if text else default
             except Exception:
                 return default
+        def _load_extracted():
+            # ready=0 占位不可见；ready=1 但 JSON 损坏也回 None（逼「重跑 extractor」）——
+            # 吞成 {} 会复活判别位刚消掉的歧义：重放空 delta=整月效果静默丢（cmr r4）。
+            if not row["extracted_ready"]:
+                return None
+            try:
+                return json.loads(row["extracted_delta_json"])
+            except Exception:
+                return None
         return {
             "decree_text": row["decree_text"],
             "narrative": row["narrative"],
             "simulator_payload": _load(row["simulator_payload_json"], {}),
             "secret_orders": _load(row["secret_orders_json"], []),
             "relevant_memories": _load(row["relevant_memories_json"], []),
-            # ready=0 时占位不可见：恢复入口据 None 判「重跑 extractor」，绝不重放占位。
-            "extracted": _load(row["extracted_delta_json"], {}) if row["extracted_ready"] else None,
+            "extracted": _load_extracted(),
         }
 
     def clear_resolve_context(self, turn: int) -> None:

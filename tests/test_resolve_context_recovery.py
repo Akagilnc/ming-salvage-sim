@@ -243,3 +243,47 @@ def test_e2e_genuinely_empty_delta_persists_as_ready(game, monkeypatch):
     assert ctx["extracted"] == {}
     assert ctx["extracted"] is not None
     db.clear_resolve_context(turn)
+
+
+# ---------------------------------------------------------------------------
+# cmr S2+S3 r4 修复回归（F1 stale context / F3 corruption）
+# ---------------------------------------------------------------------------
+
+def test_advance_without_edict_clears_stale_context(game):
+    """退朝无诏推进回合时清掉本回合 stale context（cmr S2+S3 r4 F1）。
+
+    崩溃重试后改走无诏路推进，留下的 ready=1 行会被 S4 恢复入口
+    当「未完成回合」重放=double-apply。推进回合的路都得清。
+    """
+    from ming_sim.decree import advance_without_edict
+    db, state, content = game
+    turn = state.turn
+    db.save_resolve_context(turn, "d", "n", {}, secret_orders=[],
+                            relevant_memories=[], extracted={"metric_delta": {"国库": 1}})
+    assert db.get_resolve_context(turn) is not None
+
+    advance_without_edict(state, db, content=content)
+
+    assert state.turn == turn + 1
+    assert db.get_resolve_context(turn) is None
+
+
+def test_corrupt_extracted_json_returns_none_not_empty(game):
+    """ready=1 但 extracted JSON 损坏 → extracted=None（重跑 extractor），不吞成 {}。
+
+    吞成 {} 会复活判别位刚消掉的歧义：恢复入口重放空 delta=整月效果静默丢（cmr r4 F3）。
+    """
+    db, state, content = game
+    turn = state.turn
+    db.save_resolve_context(turn, "d", "n", {}, secret_orders=[],
+                            relevant_memories=[], extracted={"metric_delta": {"国库": 1}})
+    db.conn.execute(
+        "UPDATE pending_resolve_context SET extracted_delta_json='not json' WHERE turn=?",
+        (turn,),
+    )
+    db.conn.commit()
+
+    ctx = db.get_resolve_context(turn)
+    assert ctx is not None
+    assert ctx["extracted"] is None
+    db.clear_resolve_context(turn)
