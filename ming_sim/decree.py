@@ -501,6 +501,36 @@ def _settle_after_narrative(
     )
 
 
+# 同源恢复刷新的标量字段（与 db.load_state 读盘列对齐）。metrics 单独深刷。
+_RELOAD_SCALAR_FIELDS = ("year", "period", "turn", "turn_phase", "ended", "ending_status")
+
+
+def reload_state_from_db(db: GameDB, state: GameState, *, content=None, registry=None) -> GameState:
+    """回滚后把内存 state 从 DB 原地刷新（ADR 0008 决定 3 第三条）。
+
+    DB 回滚只回 SQLite，Python 对象留脏（state.metrics 直加 flows.py:192、turn_phase、
+    next_period 的 turn/year/period）。事务期内正常写内存——回滚后须把这些副作用按 DB 真相
+    刷掉，否则脏内存会污染重跑（如脏 settling 相位被守门跳过=整月财政丢，cmr S4 r1 F4）。
+
+    走 db.load_state 同路径（与 restore 同源），但 load_state 返回**新对象**；state 被各处
+    持引用（session.state、driver 闭包、各调用栈），必须**原地刷新**而非返回新对象——把 DB 值
+    写回同一对象的字段、metrics dict 原地 clear+update，返回同一 state（id 不变）。
+
+    content/registry：本切片只做 state 刷新（最痛点 = state.metrics/turn_phase 脏读）。
+    registry 重建依赖 GameSession 重型协作者（CourtContext/LLMConfig/agno_db），applier 层
+    与 decree 层都拿不全，留参数占位、传 None 时 no-op；content.characters/registry 的
+    DB 同源重载是 session 级的活（S7/后续接 session.refresh_runtime_after_chat_rollback 同款）。
+    传入非 None 时本切片亦不处理（只透传不报错），待后续接线。
+    """
+    fresh = db.load_state()
+    for field_name in _RELOAD_SCALAR_FIELDS:
+        setattr(state, field_name, getattr(fresh, field_name))
+    # metrics 原地刷：clear+update 保持同一 dict 对象（持引用方继续读同一引用）。
+    state.metrics.clear()
+    state.metrics.update(fresh.metrics)
+    return state
+
+
 def pre_settle(
     state: GameState, db: GameDB, *, on_stage=None, content=None, registry=None,
 ) -> List[Dict[str, object]]:
@@ -528,30 +558,38 @@ def pre_settle(
             tlog(f"[pending_actions] 守门早退前落库 {len(committed)} 条")
         return []
     auto_triggered: List[Dict[str, object]] = []
-    with atomic(db):
-        # 动作闸门(ADR 0006)：颁诏最前批量落库本回合暂存的结构化聊天写动作（密令更新/催办/任免/…），
-        # 在跑 LLM 结算管线前，使 simulator/extractor 读到的盘面与旧「召对期直写」时序一致。
-        # driver 路径无聊天暂存 → 空 no-op。幂等（committed 行不重跑）。
-        committed = db.commit_pending_actions(state, content=content, registry=registry)
-        if committed:
-            tlog(f"[pending_actions] 颁诏批量落库 {len(committed)} 条：{[(c['kind'], c['action']) for c in committed]}")
-        tlog("结算 1/4 固定月度财政 tick")
-        if on_stage is not None:
-            on_stage("固定月度财政入账")
-        # 落账副作用；明细不再进 simulator payload（欠饷哗变走前置事件/issue）
-        apply_fixed_period_flows(db, state)
-        # 程序硬触发：标了 auto_trigger 的 seed 情势，gate 达标即由程序直接立项，绕过 LLM 因果判定。
-        auto_triggered = auto_trigger_seed_issues(state, db)
-        if auto_triggered:
-            tlog(f"[AUTO-TRIGGER] 本回合程序硬立项 {len(auto_triggered)} 条：{[t.get('title') for t in auto_triggered]}")
-        # 密令期限：到期 active 自动转 pending_review，保证本月核议一锤定音。
-        # 推演前的确定性写，挪入前半段事务（原在 resolve_directives，ADR 0008 S4）。
-        due_orders = db.auto_submit_due_secret_orders(state)
-        if due_orders:
-            tlog(f"[secret_order] 到期送核议 {due_orders}")
-        # 完成相位：同事务内落 settling（崩在上面任一步=全回滚=相位未变）。
-        state.turn_phase = TurnPhase.SETTLING.value
-        db.save_state(state)
+    try:
+        with atomic(db):
+            # 动作闸门(ADR 0006)：颁诏最前批量落库本回合暂存的结构化聊天写动作（密令更新/催办/任免/…），
+            # 在跑 LLM 结算管线前，使 simulator/extractor 读到的盘面与旧「召对期直写」时序一致。
+            # driver 路径无聊天暂存 → 空 no-op。幂等（committed 行不重跑）。
+            committed = db.commit_pending_actions(state, content=content, registry=registry)
+            if committed:
+                tlog(f"[pending_actions] 颁诏批量落库 {len(committed)} 条：{[(c['kind'], c['action']) for c in committed]}")
+            tlog("结算 1/4 固定月度财政 tick")
+            if on_stage is not None:
+                on_stage("固定月度财政入账")
+            # 落账副作用；明细不再进 simulator payload（欠饷哗变走前置事件/issue）
+            apply_fixed_period_flows(db, state)
+            # 程序硬触发：标了 auto_trigger 的 seed 情势，gate 达标即由程序直接立项，绕过 LLM 因果判定。
+            auto_triggered = auto_trigger_seed_issues(state, db)
+            if auto_triggered:
+                tlog(f"[AUTO-TRIGGER] 本回合程序硬立项 {len(auto_triggered)} 条：{[t.get('title') for t in auto_triggered]}")
+            # 密令期限：到期 active 自动转 pending_review，保证本月核议一锤定音。
+            # 推演前的确定性写，挪入前半段事务（原在 resolve_directives，ADR 0008 S4）。
+            due_orders = db.auto_submit_due_secret_orders(state)
+            if due_orders:
+                tlog(f"[secret_order] 到期送核议 {due_orders}")
+            # 完成相位：同事务内落 settling（崩在上面任一步=全回滚=相位未变）。
+            state.turn_phase = TurnPhase.SETTLING.value
+            db.save_state(state)
+    except BaseException:
+        # atomic 已回滚 SQLite，但内存副作用留脏（ADR 0008 决定 3 第三条）：
+        # apply_fixed_period_flows 直改了 state.metrics（flows.py:192）、尾部 turn_phase 已被赋 settling。
+        # 回滚后立即把 state 从 DB 重载刷净——否则脏 settling 会被下次 pre_settle 守门跳过=该月财政
+        # 永久丢（cmr S4 r1 F4），脏 metrics 污染重跑读数。reload 后原样 re-raise（fail-loud，不吞，ADR 0005）。
+        reload_state_from_db(db, state, content=content, registry=registry)
+        raise
     return auto_triggered
 
 
