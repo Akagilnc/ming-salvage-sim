@@ -47,12 +47,11 @@ def test_rejected_item_fields():
     assert ri.source is Provenance.system_simulation
 
 
-def test_rejected_item_is_immutable_by_default():
-    """dataclass frozen=True 或至少字段存在——不要求 frozen，只验字段。"""
+def test_rejected_item_constructs_with_fields():
+    """四字段按名构造可读（非 frozen，可变性不在契约内）。"""
     ri = RejectedItem(
         item={}, reason="test", category="invalid_enum", source=Provenance.unknown
     )
-    # 字段可读
     assert ri.category == "invalid_enum"
 
 
@@ -181,13 +180,15 @@ def test_rejection_collector_flush_stores_item_as_json(game):
 # RejectionCollector — mirror_to_jsonl
 # ---------------------------------------------------------------------------
 
-def test_mirror_to_jsonl_writes_lines(tmp_path):
-    """mirror_to_jsonl 在显式调用时把缓冲 append 为 jsonl 行。"""
+def test_mirror_to_jsonl_writes_lines(game, tmp_path):
+    """flush 后 mirror_to_jsonl 把已落库行 append 为 jsonl 行。"""
+    db, state, content = game
     rc = RejectionCollector()
     ri = RejectedItem(
         item={"id": "ghost"}, reason="不存在", category="hallucinated_id", source=Provenance.unknown
     )
     rc.record("army_delta", ri, turn=5)
+    rc.flush_to_db(db)
 
     out = str(tmp_path / "rejections.jsonl")
     rc.mirror_to_jsonl(out)
@@ -201,13 +202,15 @@ def test_mirror_to_jsonl_writes_lines(tmp_path):
     assert json.loads(row["item_json"]) == {"id": "ghost"}
 
 
-def test_mirror_to_jsonl_appends_on_multiple_calls(tmp_path):
-    """多次调用 mirror_to_jsonl 追加而不覆盖（每次调用前 record 新项）。"""
+def test_mirror_to_jsonl_appends_on_multiple_calls(game, tmp_path):
+    """多次「flush→mirror」批次追加而不覆盖。"""
+    db, state, content = game
     out = str(tmp_path / "rejections.jsonl")
     for turn in (1, 2):
         rc = RejectionCollector()
         ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
         rc.record("metric_delta", ri, turn=turn)
+        rc.flush_to_db(db)
         rc.mirror_to_jsonl(out)
 
     lines = open(out, encoding="utf-8").readlines()
@@ -221,3 +224,105 @@ def test_mirror_to_jsonl_empty_buffer_writes_nothing(tmp_path):
     rc.mirror_to_jsonl(out)
     import os
     assert not os.path.exists(out)
+
+
+# ---------------------------------------------------------------------------
+# RejectionCollector — 规定调用序生命周期（cmr S0 r1 F1，3/3 共识）
+# ADR 0008 决定 5：flush 在事务内（随回滚）；mirror 仅在 commit 成功后。
+# ---------------------------------------------------------------------------
+
+def test_flush_then_mirror_writes_jsonl(game, tmp_path):
+    """规定调用序 record → flush(事务内) → commit → mirror：jsonl 必须有行。
+
+    回归 cmr S0 r1 F1：flush 清缓冲导致 commit 后 mirror 静默写零行。
+    """
+    db, state, content = game
+    rc = RejectionCollector()
+    ri = RejectedItem(
+        item={"id": "ghost"}, reason="不存在", category="hallucinated_id",
+        source=Provenance.system_simulation,
+    )
+    rc.record("army_delta", ri, turn=7)
+    rc.flush_to_db(db)
+    db.conn.commit()
+
+    out = str(tmp_path / "rejections.jsonl")
+    rc.mirror_to_jsonl(out)
+
+    lines = open(out, encoding="utf-8").readlines()
+    assert len(lines) == 1
+    row = json.loads(lines[0])
+    assert row["section"] == "army_delta"
+    assert row["turn"] == 7
+
+
+def test_mirror_idempotent_after_flush(game, tmp_path):
+    """同一批行 mirror 两次只写一次（已镜像的行不重复 append）。"""
+    db, state, content = game
+    rc = RejectionCollector()
+    ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
+    rc.record("metric_delta", ri, turn=1)
+    rc.flush_to_db(db)
+
+    out = str(tmp_path / "rejections.jsonl")
+    rc.mirror_to_jsonl(out)
+    rc.mirror_to_jsonl(out)
+
+    lines = open(out, encoding="utf-8").readlines()
+    assert len(lines) == 1
+
+
+def test_unflushed_rows_never_mirrored(tmp_path):
+    """未 flush（未进 DB）的行不进 jsonl——回滚时这些行会消失，镜像它们=孤立行。"""
+    rc = RejectionCollector()
+    ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
+    rc.record("metric_delta", ri, turn=1)
+
+    out = str(tmp_path / "rejections.jsonl")
+    rc.mirror_to_jsonl(out)
+
+    import os
+    assert not os.path.exists(out)
+
+
+def test_reset_discards_pending_and_flushed(game, tmp_path):
+    """reset()（回滚路径）丢弃缓冲与已 flush 快照，之后 flush/mirror 均无输出。"""
+    db, state, content = game
+    rc = RejectionCollector()
+    ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
+    rc.record("metric_delta", ri, turn=1)
+    rc.flush_to_db(db)
+    rc.record("army_delta", ri, turn=1)
+
+    rc.reset()
+
+    rc.flush_to_db(db)  # 缓冲已空，不再写行
+    count = db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0]
+    assert count == 1  # 只有 reset 前那次 flush 的 1 行（DB 回滚由事务层负责，非 reset 职责）
+
+    out = str(tmp_path / "rejections.jsonl")
+    rc.mirror_to_jsonl(out)
+    import os
+    assert not os.path.exists(out)
+
+
+def test_record_accepts_plain_string_source(game):
+    """source 传普通字符串不崩（运行时不查注解），落库归一为枚举值字符串。
+
+    回归 cmr S0 r1 F3：rejected_item.source.value 对 str 抛 AttributeError。
+    """
+    db, state, content = game
+    rc = RejectionCollector()
+    ri = RejectedItem(item={}, reason="r", category="invalid_enum", source="player_decree")
+    rc.record("metric_delta", ri, turn=1)
+    rc.flush_to_db(db)
+    src = db.conn.execute("SELECT source FROM rejection_reports").fetchone()[0]
+    assert src == "player_decree"
+
+
+def test_record_rejects_unknown_source_string(game):
+    """source 传非法字符串响亮报错（fail-loud，不静默落非法值）。"""
+    rc = RejectionCollector()
+    ri = RejectedItem(item={}, reason="r", category="invalid_enum", source="not_a_provenance")
+    with pytest.raises(ValueError):
+        rc.record("metric_delta", ri, turn=1)
