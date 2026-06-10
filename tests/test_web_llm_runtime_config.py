@@ -1,0 +1,733 @@
+from __future__ import annotations
+
+import asyncio
+from types import SimpleNamespace
+
+import pytest
+
+import web_app
+from ming_sim.models import LLMConfig
+
+
+def test_runtime_cli_slot_builds_cli_llm_config_without_backend_env(monkeypatch):
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    runtime = {
+        "channel": "cli",
+        "api": {"base_url": "", "model": "", "api_key": ""},
+        "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": "240"},
+    }
+
+    cfg = web_app._llm_config_from_runtime(
+        runtime,
+        base_url="https://api.example.com/v1",
+        model="gpt-api",
+        api_key="",
+        max_tokens=8000,
+        timeout_seconds=180,
+        thinking_level="",
+        advanced_model="",
+        advanced_base_url="",
+        advanced_api_key="",
+        advanced_thinking_level="",
+    )
+
+    assert cfg.channel == "cli"
+    assert cfg.cli_runner == "codex"
+    assert cfg.cli_model == "gpt-5.5"
+    assert cfg.cli_timeout_seconds == 240
+    assert cfg.api_key == ""  # CLI 通道 LLMConfig.api_key 永空（占位符只在构造 CliChat 时注入）
+
+
+def test_advanced_llm_verification_preserves_api_channel_over_backend_env(monkeypatch):
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
+    seen = []
+    monkeypatch.setattr(web_app, "verify_llm_available", lambda cfg: seen.append(cfg))
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="gpt-main",
+        advanced_model="gpt-advanced",
+        channel="api",
+    )
+
+    web_app._verify_llm_configs_or_raise(cfg)
+
+    assert [item.channel for item in seen] == ["api", "api"]
+
+
+def test_build_llm_config_switches_to_api_on_real_key_over_backend_env(monkeypatch):
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
+    seen = []
+    saved = []
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda cfg: seen.append(cfg))
+    monkeypatch.setattr(web_app, "save_runtime_llm", lambda *args, **kwargs: saved.append((args, kwargs)))
+    current = LLMConfig(
+        api_key="cli-backend",
+        base_url="https://old.example.com/v1",
+        model="old-model",
+        channel="cli",
+        cli_runner="codex",
+        cli_model="gpt-cli",
+        cli_timeout_seconds=240,
+    )
+    fake = SimpleNamespace(
+        session=SimpleNamespace(
+            llm_config=current,
+            begin_turn=lambda: None,
+        )
+    )
+
+    # apply = build → verify → commit（#56 拆分后等价分步）。填了真实 key=切 api（#51）。
+    cfg = web_app.WebGame.build_llm_config(
+        fake,
+        "https://api.example.com",
+        "gpt-api",
+        "sk-test",
+        max_tokens=16000,
+        timeout_seconds=90,
+        thinking_level="medium",
+        advanced_model="",
+        advanced_base_url="",
+        advanced_api_key="",
+        advanced_thinking_level="",
+    )
+    web_app._verify_llm_configs_or_raise(cfg)
+    web_app.WebGame.commit_llm_config(fake, cfg)
+
+    assert cfg.channel == "api"
+    assert cfg.cli_runner == "codex"
+    assert cfg.cli_model == "gpt-cli"
+    assert seen[0].channel == "api"
+    assert fake.session.llm_config.channel == "api"
+    assert saved
+    assert saved[0][1]["channel"] == "api"
+    assert saved[0][1]["cli_runner"] == "codex"
+    assert saved[0][1]["cli_model"] == "gpt-cli"
+    assert saved[0][1]["cli_timeout_seconds"] == 240
+
+
+def test_build_llm_config_recovers_preserved_api_key_on_switch_back(monkeypatch):
+    """Gemini R1:从 cli 显式切回 api、表单 key 留空时,从 runtime_llm.json 的 api 槽回收被保留的
+    真实 key(cur.api_key 在 cli 模式已归一为空),免得切回 api 还得重输。"""
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {"api": {"api_key": "sk-preserved"}})
+    current = LLMConfig(api_key="", base_url="https://x/v1", model="m", channel="cli",
+                        cli_runner="codex", cli_model="gpt-5.5")
+    fake = SimpleNamespace(session=SimpleNamespace(llm_config=current, begin_turn=lambda: None))
+
+    cfg = web_app.WebGame.build_llm_config(fake, "", "", "", channel="api")
+
+    assert cfg.channel == "api"
+    assert cfg.api_key == "sk-preserved"
+
+
+def test_set_llm_config_cli_placeholder_not_real_api_key(monkeypatch):
+    # 游戏内 POST /api/llm/config：CLI 通道的占位符 cli-backend 不应回报为真实 key。
+    cfg = LLMConfig(
+        api_key="cli-backend",
+        base_url="",
+        model="gpt-5.5",
+        channel="cli",
+        cli_runner="codex",
+        cli_model="gpt-5.5",
+    )
+    # api_set_llm_config 改为 build→verify(offload)→commit 分步（#56）：fake 提供新两法。
+    fake = SimpleNamespace(
+        build_llm_config=lambda *a, **k: cfg,
+        commit_llm_config=lambda c: c,
+    )
+    monkeypatch.setattr(web_app, "get_game", lambda: fake)
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda c: None)
+
+    result = asyncio.run(web_app.api_set_llm_config(web_app.LLMConfigRequest(
+        base_url="",
+        model="gpt-5.5",
+        api_key="",
+    )))
+
+    assert result["has_api_key"] is False
+    assert result["channel"] == "cli"
+
+
+def test_api_set_llm_config_explicit_cli_channel_switch(monkeypatch):
+    """#51:in-game 显式选 CLI 通道(channel=cli + cli_runner)→ build 收到 cli 通道参数,
+    回报 cli 配置(不要求 API key)。"""
+    built = {}
+
+    def fake_build(*a, **k):
+        built.update(k)
+        return LLMConfig(api_key="", base_url="", model="api-fallback",
+                         channel="cli", cli_runner="agy", cli_model="", cli_timeout_seconds=240)
+
+    fake = SimpleNamespace(build_llm_config=fake_build, commit_llm_config=lambda c: c)
+    monkeypatch.setattr(web_app, "get_game", lambda: fake)
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda c: None)
+
+    result = asyncio.run(web_app.api_set_llm_config(web_app.LLMConfigRequest(
+        channel="cli", cli_runner="agy", cli_timeout_seconds=240,
+    )))
+
+    assert built["channel"] == "cli"          # "__keep__"→None 之外的值原样传给 build
+    assert built["cli_runner"] == "agy"
+    assert result["channel"] == "cli"
+    assert result["cli_runner"] == "agy"
+    assert result["has_api_key"] is False
+
+
+def test_api_set_llm_config_keep_sentinels_pass_none_to_build(monkeypatch):
+    """Sourcery:channel/cli_runner/cli_model 缺省 "__keep__" → 映射 None 传给 build(保留当前),
+    不被当作字面值「__keep__」覆盖通道。"""
+    built = {}
+
+    def fake_build(*a, **k):
+        built.update(k)
+        return LLMConfig(api_key="sk", base_url="https://x/v1", model="m", channel="api")
+
+    fake = SimpleNamespace(build_llm_config=fake_build, commit_llm_config=lambda c: c)
+    monkeypatch.setattr(web_app, "get_game", lambda: fake)
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda c: None)
+
+    asyncio.run(web_app.api_set_llm_config(web_app.LLMConfigRequest()))  # 全默认 = __keep__
+
+    assert built["channel"] is None
+    assert built["cli_runner"] is None
+    assert built["cli_model"] is None
+
+
+def test_commit_cli_seeds_api_slot_from_session_when_slot_empty(monkeypatch):
+    """CMR R2(codex):切到 cli 时 api 槽空但当前 session 有真实 key(可能来自 OPENAI_API_KEY env),
+    commit 须把它写进 api 槽,否则 api→cli→api 往返丢 key。"""
+    saved_args = []
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})   # 无已存 api 槽
+    monkeypatch.setattr(web_app, "save_runtime_llm", lambda *a, **k: saved_args.append((a, k)))
+    prev = LLMConfig(api_key="sk-env", base_url="https://x/v1", model="m", channel="api")
+    new_cli = LLMConfig(api_key="", base_url="https://x/v1", model="m", channel="cli",
+                        cli_runner="codex", cli_model="gpt-5.5", cli_timeout_seconds=240)
+    fake = SimpleNamespace(session=SimpleNamespace(llm_config=prev, begin_turn=lambda: None))
+
+    web_app.WebGame.commit_llm_config(fake, new_cli)
+
+    args, kw = saved_args[0]
+    assert kw["channel"] == "cli"
+    assert args[2] == "sk-env"   # api_key 位参写进 api 槽,不是空
+
+
+def test_commit_cli_preserves_when_slot_already_has_key(monkeypatch):
+    """槽里已有真实 key 时,commit 传空 api 输入走 preserve_api(不重写)。"""
+    saved_args = []
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {"api": {"api_key": "sk-slot"}})
+    monkeypatch.setattr(web_app, "save_runtime_llm", lambda *a, **k: saved_args.append((a, k)))
+    prev = LLMConfig(api_key="", base_url="", model="m", channel="cli", cli_runner="codex", cli_model="gpt-5.5")
+    new_cli = LLMConfig(api_key="", base_url="", model="m", channel="cli",
+                        cli_runner="codex", cli_model="gpt-5.5", cli_timeout_seconds=240)
+    fake = SimpleNamespace(session=SimpleNamespace(llm_config=prev, begin_turn=lambda: None))
+
+    web_app.WebGame.commit_llm_config(fake, new_cli)
+
+    args, kw = saved_args[0]
+    assert args[:3] == ("", "", "")   # 传空 → preserve_api 保留 sk-slot
+    assert kw["channel"] == "cli"
+
+
+def test_api_set_llm_config_commit_runs_on_event_loop(monkeypatch):
+    """CMR R5 后回退:commit(改 session 态)**留在 event loop 主线程**同步跑——单人 CLI 串行探针
+    下原子无 race,避免 offload-to-thread 引入的并发/断连边缘(见 CMR R3-R5)。verify 仍 offload。"""
+    import threading
+    cfg = LLMConfig(api_key="", base_url="", model="m", channel="cli",
+                    cli_runner="codex", cli_model="gpt-5.5", cli_timeout_seconds=240)
+    seen = {}
+
+    def rec_commit(c):
+        seen["thread"] = threading.current_thread()
+
+    def rec_verify(c):
+        seen["verify_thread"] = threading.current_thread()
+
+    fake = SimpleNamespace(build_llm_config=lambda *a, **k: cfg, commit_llm_config=rec_commit)
+    monkeypatch.setattr(web_app, "get_game", lambda: fake)
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", rec_verify)
+
+    asyncio.run(web_app.api_set_llm_config(web_app.LLMConfigRequest(channel="cli", cli_runner="codex")))
+
+    assert seen["thread"] is threading.main_thread()        # commit 在主线程(on loop)
+    assert seen["verify_thread"] is not threading.main_thread()  # verify 仍 offload 到线程池
+
+
+def test_api_set_llm_config_verify_runs_off_event_loop(monkeypatch):
+    """#56:in-game /api/llm/config 的 verify(CLI smoke ~12s)offload 出 asyncio event loop,
+    commit(落盘/重建)留在 loop。断言 verify 在非主线程跑。"""
+    import threading
+    cfg = LLMConfig(api_key="", base_url="", model="m", channel="cli",
+                    cli_runner="codex", cli_model="gpt-5.5", cli_timeout_seconds=240)
+    seen = {}
+    fake = SimpleNamespace(build_llm_config=lambda *a, **k: cfg, commit_llm_config=lambda c: c)
+    monkeypatch.setattr(web_app, "get_game", lambda: fake)
+
+    def rec_verify(c):
+        seen["thread"] = threading.current_thread()
+
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", rec_verify)
+
+    asyncio.run(web_app.api_set_llm_config(web_app.LLMConfigRequest(channel="cli", cli_runner="codex")))
+
+    assert seen.get("thread") is not None
+    assert seen["thread"] is not threading.main_thread()
+
+
+def test_api_set_llm_config_verify_failure_skips_commit_and_passes_through_httpexception(monkeypatch):
+    """#56 负路径:_verify_llm_configs_or_raise 真实抛的是已包好 detail 的 HTTPException(经
+    run_in_executor 透传)。端点须原样抛(不被 except Exception 二次包裹 mangle,Gemini R2),
+    且绝不 commit(不落盘/不改 session)。"""
+    cfg = LLMConfig(api_key="", base_url="", model="m", channel="cli",
+                    cli_runner="codex", cli_model="gpt-5.5", cli_timeout_seconds=240)
+    commit_calls = []
+    fake = SimpleNamespace(
+        build_llm_config=lambda *a, **k: cfg,
+        commit_llm_config=lambda c: commit_calls.append(c),
+    )
+    monkeypatch.setattr(web_app, "get_game", lambda: fake)
+
+    sentinel_detail = {"code": "llm_unavailable", "message": "主模型连通性检查失败：runner missing"}
+
+    def boom(c):
+        raise web_app.HTTPException(status_code=400, detail=sentinel_detail)
+
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", boom)
+
+    with pytest.raises(web_app.HTTPException) as ei:
+        asyncio.run(web_app.api_set_llm_config(web_app.LLMConfigRequest(channel="cli", cli_runner="codex")))
+    assert ei.value.status_code == 400
+    assert ei.value.detail == sentinel_detail   # 原样透传,未被二次包裹
+    assert commit_calls == []                    # verify 失败 → commit 从未被调
+
+
+def test_menu_status_active_cli_unsupported_runner_not_ready_despite_preserved_api_key(monkeypatch):
+    # ADR 0001: 切到 CLI 时 API 槽被保留。readiness 必须按 active channel 判，
+    # 不能因 inactive API 槽里有真实 key 就把不可用的 CLI runner 误报成 ready。
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "_has_main_db", lambda: False)
+    monkeypatch.setattr(web_app, "_scan_saves", lambda: [])
+    monkeypatch.setattr(web_app, "_scan_campaigns", lambda: [])
+    monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: "")
+    monkeypatch.setattr(web_app, "load_runtime_game", lambda: {"hitl_min_decisions": 1})
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
+        "channel": "cli",
+        "api": {"base_url": "https://api.example.com/v1", "model": "gpt-api", "api_key": "sk-real-key"},
+        "cli": {"runner": "bogus", "model": "gpt-5.5", "timeout_seconds": "240"},
+        # 顶层别名暴露 API 槽（_normalize_runtime_llm 行为）。
+        "base_url": "https://api.example.com/v1",
+        "model": "gpt-api",
+        "api_key": "sk-real-key",
+    })
+
+    status = asyncio.run(web_app.api_menu_status())
+
+    assert status["llm"]["channel"] == "cli"
+    assert status["llm"]["cli_runner"] == "bogus"
+    # active channel = cli + 不受支持 runner → 不 ready，哪怕 API 槽留着真实 key。
+    assert status["llm_ready"] is False
+
+
+def test_menu_status_active_cli_placeholder_api_key_not_counted(monkeypatch):
+    # 占位符 cli-backend 不应被当成真实 API key。
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "_has_main_db", lambda: False)
+    monkeypatch.setattr(web_app, "_scan_saves", lambda: [])
+    monkeypatch.setattr(web_app, "_scan_campaigns", lambda: [])
+    monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: "")
+    monkeypatch.setattr(web_app, "load_runtime_game", lambda: {"hitl_min_decisions": 1})
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
+        "channel": "cli",
+        "api": {"base_url": "", "model": "", "api_key": "cli-backend"},
+        "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": "240"},
+        "api_key": "cli-backend",
+    })
+
+    status = asyncio.run(web_app.api_menu_status())
+
+    assert status["has_api_key"] is False
+    assert status["llm"]["has_api_key"] is False
+    # CLI runner 受支持 → ready（靠 runner，不靠占位符）。
+    assert status["llm_ready"] is True
+
+
+def test_menu_save_llm_persists_cli_channel_without_api_key(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    seen = []
+    saved = []
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda cfg: seen.append(cfg))
+    monkeypatch.setattr(web_app, "save_runtime_llm", lambda *args, **kwargs: saved.append((args, kwargs)))
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+
+    result = asyncio.run(web_app.api_menu_save_llm(web_app.LlmSetupRequest(
+        base_url="",
+        model="",
+        api_key="",
+        channel="cli",
+        cli_runner="codex",
+        cli_model="gpt-5.5",
+        cli_timeout_seconds=240,
+    )))
+
+    assert result["ok"] is True
+    assert result["llm"]["channel"] == "cli"
+    assert result["llm"]["cli_runner"] == "codex"
+    assert result["llm"]["cli_model"] == "gpt-5.5"
+    assert result["llm"]["has_api_key"] is False
+    assert seen and seen[0].channel == "cli"
+    assert seen[0].cli_runner == "codex"
+    assert seen[0].cli_model == "gpt-5.5"
+    assert saved and saved[0][1]["channel"] == "cli"
+    assert saved[0][1]["cli_runner"] == "codex"
+    assert saved[0][1]["cli_model"] == "gpt-5.5"
+    assert saved[0][1]["cli_timeout_seconds"] == 240
+
+
+def test_menu_save_cli_verify_runs_off_event_loop(monkeypatch):
+    """P1/P2:CLI verify smoke(~12s,最长 300s)不许同步跑在 asyncio event loop 上卡住
+    并发请求——api_menu_save_llm 须经 run_in_executor offload。断言 verify 在非主线程跑。"""
+    import threading
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    seen = {}
+
+    def rec_verify(cfg):
+        seen["thread"] = threading.current_thread()
+
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", rec_verify)
+    monkeypatch.setattr(web_app, "save_runtime_llm", lambda *a, **k: None)
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+
+    asyncio.run(web_app.api_menu_save_llm(web_app.LlmSetupRequest(
+        base_url="", model="", api_key="", channel="cli",
+        cli_runner="codex", cli_model="gpt-5.5", cli_timeout_seconds=240,
+    )))
+
+    assert seen.get("thread") is not None
+    assert seen["thread"] is not threading.main_thread()
+
+
+def test_menu_status_unsupported_cli_runner_not_ready(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "_has_main_db", lambda: False)
+    monkeypatch.setattr(web_app, "_scan_saves", lambda: [])
+    monkeypatch.setattr(web_app, "_scan_campaigns", lambda: [])
+    monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: "")
+    monkeypatch.setattr(web_app, "load_runtime_game", lambda: {"hitl_min_decisions": 1})
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
+        "channel": "cli",
+        "api": {"base_url": "", "model": "", "api_key": ""},
+        "cli": {"runner": "bogus", "model": "gpt-5.5", "timeout_seconds": "240"},
+    })
+
+    status = asyncio.run(web_app.api_menu_status())
+
+    assert status["has_api_key"] is False
+    assert status["llm"]["channel"] == "cli"
+    assert status["llm"]["cli_runner"] == "bogus"
+    assert status["llm_ready"] is False
+
+
+def test_menu_save_llm_cli_channel_rejects_empty_runner(monkeypatch):
+    seen = []
+    saved = []
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda cfg: seen.append(cfg))
+    monkeypatch.setattr(web_app, "save_runtime_llm", lambda *args, **kwargs: saved.append((args, kwargs)))
+
+    with pytest.raises(web_app.HTTPException) as exc_info:
+        asyncio.run(web_app.api_menu_save_llm(web_app.LlmSetupRequest(
+            base_url="",
+            model="",
+            api_key="",
+            channel="cli",
+            cli_runner="",
+            cli_model="gpt-5.5",
+        )))
+
+    assert exc_info.value.status_code == 400
+    assert not seen
+    assert not saved
+
+
+def test_menu_save_llm_validates_api_channel_over_backend_env(monkeypatch):
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
+    seen = []
+    saved = []
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda cfg: seen.append(cfg))
+    monkeypatch.setattr(web_app, "save_runtime_llm", lambda *args, **kwargs: saved.append((args, kwargs)))
+
+    result = asyncio.run(web_app.api_menu_save_llm(web_app.LlmSetupRequest(
+        base_url="https://api.example.com",
+        model="gpt-api",
+        api_key="sk-test",
+        max_tokens=16000,
+        timeout_seconds=90,
+        thinking_level="medium",
+    )))
+
+    assert result["ok"] is True
+    assert seen[0].channel == "api"
+    assert saved
+    assert saved[0][1]["channel"] == "api"
+
+
+def test_menu_status_treats_saved_cli_runtime_as_ready_without_api_key(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "_has_main_db", lambda: False)
+    monkeypatch.setattr(web_app, "_scan_saves", lambda: [])
+    monkeypatch.setattr(web_app, "_scan_campaigns", lambda: [])
+    monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: "")
+    monkeypatch.setattr(web_app, "load_runtime_game", lambda: {"hitl_min_decisions": 1})
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
+        "channel": "cli",
+        "api": {"base_url": "", "model": "", "api_key": ""},
+        "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": "240"},
+        "base_url": "",
+        "model": "",
+        "api_key": "",
+        "max_tokens": "8000",
+        "timeout_seconds": "180",
+        "thinking_level": "",
+        "advanced_model": "",
+        "advanced_base_url": "",
+        "advanced_api_key": "",
+        "advanced_thinking_level": "",
+    })
+
+    status = asyncio.run(web_app.api_menu_status())
+
+    assert status["has_api_key"] is False
+    assert status["llm_ready"] is True
+    assert status["llm"]["channel"] == "cli"
+    assert status["llm"]["cli_runner"] == "codex"
+
+
+def test_game_llm_config_reports_active_cli_channel_without_fake_api_key(monkeypatch):
+    cfg = LLMConfig(
+        api_key="cli-backend",
+        base_url="https://api.example.com/v1",
+        model="api-fallback",
+        max_tokens=8000,
+        timeout_seconds=180,
+        channel="cli",
+        cli_runner="codex",
+        cli_model="gpt-5.5",
+        cli_timeout_seconds=240,
+    )
+    monkeypatch.setattr(web_app, "web_game", SimpleNamespace(
+        session=SimpleNamespace(llm_config=cfg),
+    ))
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
+        "channel": "cli",
+        "api": {
+            "base_url": "https://api.example.com/v1",
+            "model": "api-fallback",
+            "api_key": "",
+            "max_tokens": "8000",
+            "timeout_seconds": "180",
+            "thinking_level": "",
+            "advanced_model": "",
+            "advanced_base_url": "",
+            "advanced_api_key": "",
+            "advanced_thinking_level": "",
+        },
+        "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": "240"},
+        "base_url": "https://api.example.com/v1",
+        "model": "api-fallback",
+        "api_key": "",
+        "max_tokens": "8000",
+        "timeout_seconds": "180",
+        "thinking_level": "",
+        "advanced_model": "",
+        "advanced_base_url": "",
+        "advanced_api_key": "",
+        "advanced_thinking_level": "",
+    })
+
+    result = asyncio.run(web_app.api_get_llm_config())
+
+    assert result["channel"] == "cli"
+    assert result["cli_runner"] == "codex"
+    assert result["cli_model"] == "gpt-5.5"
+    assert result["cli_timeout_seconds"] == 240
+    assert result["has_api_key"] is False
+    assert result["persisted"]["channel"] == "cli"
+    assert result["persisted"]["cli_runner"] == "codex"
+    assert result["persisted"]["cli_model"] == "gpt-5.5"
+    assert result["persisted"]["cli_timeout_seconds"] == 240
+
+
+def test_fresh_start_without_llm_keeps_existing_main_db(tmp_path, monkeypatch):
+    db_path = tmp_path / "ming.db"
+    db_path.write_bytes(b"existing-progress")
+    monkeypatch.setenv("MING_SIM_DB", str(db_path))
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+
+    with pytest.raises(web_app.LLMUnavailable):
+        web_app.WebGame(fresh=True)
+
+    assert db_path.read_bytes() == b"existing-progress"
+
+
+def test_fresh_start_verify_failure_keeps_existing_main_db(tmp_path, monkeypatch):
+    db_path = tmp_path / "ming.db"
+    db_path.write_bytes(b"existing-progress")
+    monkeypatch.setenv("MING_SIM_DB", str(db_path))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+
+    def fail_verify(config):
+        raise web_app.LLMUnavailable("LLM unavailable")
+
+    monkeypatch.setattr(web_app, "verify_llm_available", fail_verify)
+
+    with pytest.raises(web_app.LLMUnavailable):
+        web_app.WebGame(fresh=True)
+
+    assert db_path.read_bytes() == b"existing-progress"
+
+
+def test_fresh_start_cli_verify_failure_keeps_existing_main_db(tmp_path, monkeypatch):
+    import ming_sim.cli_backend as _cb
+
+    db_path = tmp_path / "ming.db"
+    db_path.write_bytes(b"existing-progress")
+    monkeypatch.setenv("MING_SIM_DB", str(db_path))
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
+        "channel": "cli",
+        "api": {"base_url": "", "model": "", "api_key": ""},
+        "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": "240"},
+    })
+
+    def fail_cli_verify(prompt, llm_config=None):
+        raise RuntimeError("codex missing")
+
+    monkeypatch.setattr(_cb, "_run_backend_for_config", fail_cli_verify)
+
+    with pytest.raises(web_app.LLMUnavailable):
+        web_app.WebGame(fresh=True)
+
+    assert db_path.read_bytes() == b"existing-progress"
+
+
+def test_fresh_start_invalid_cli_runner_keeps_existing_main_db(tmp_path, monkeypatch):
+    import ming_sim.cli_backend as _cb
+
+    db_path = tmp_path / "ming.db"
+    db_path.write_bytes(b"existing-progress")
+    monkeypatch.setenv("MING_SIM_DB", str(db_path))
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
+        "channel": "cli",
+        "api": {"base_url": "", "model": "", "api_key": ""},
+        "cli": {"runner": "bogus", "model": "gpt-5.5", "timeout_seconds": "240"},
+    })
+    monkeypatch.setattr(_cb, "_run_agy", lambda prompt, timeout=None: ("ok", 1))
+
+    with pytest.raises(web_app.LLMUnavailable):
+        web_app.WebGame(fresh=True)
+
+    assert db_path.read_bytes() == b"existing-progress"
+
+
+def test_reset_cli_verify_failure_keeps_existing_main_db(tmp_path, monkeypatch):
+    db_path = tmp_path / "ming.db"
+    db_path.write_bytes(b"existing-progress")
+    cfg = LLMConfig(
+        api_key="cli-backend",
+        base_url="",
+        model="api-fallback",
+        channel="cli",
+        cli_runner="codex",
+        cli_model="gpt-5.5",
+        cli_timeout_seconds=240,
+    )
+    fake = SimpleNamespace(
+        db_path=str(db_path),
+        session=SimpleNamespace(llm_config=cfg, close=lambda: None),
+        _rebuild_session=lambda llm_config, **kwargs: None,
+    )
+
+    def fail_verify(llm_config):
+        raise web_app.LLMUnavailable("codex missing")
+
+    monkeypatch.setattr(web_app, "verify_llm_available", fail_verify)
+
+    with pytest.raises(web_app.LLMUnavailable):
+        web_app.WebGame.reset_game(fake)
+
+    assert db_path.read_bytes() == b"existing-progress"
+
+
+def test_menu_save_llm_api_channel_rejects_placeholder_existing_key(monkeypatch):
+    # ship-pre CMR Group A：API 通道存档，空 api_key 时不能把占位符 cli-backend 当真 key 复用。
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    saved = []
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda c: None)
+    monkeypatch.setattr(web_app, "save_runtime_llm", lambda *a, **k: saved.append((a, k)))
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {"api_key": "cli-backend"})
+
+    with pytest.raises(web_app.HTTPException) as exc:
+        asyncio.run(web_app.api_menu_save_llm(web_app.LlmSetupRequest(
+            base_url="https://api.example.com",
+            model="gpt-api",
+            api_key="",
+        )))
+
+    assert exc.value.status_code == 400
+    assert not saved
+
+
+def test_build_llm_config_does_not_reuse_placeholder_as_api_key(monkeypatch):
+    # ship-pre CMR Group A：CLI session 上提交空 key 的 API 设置，不能把 cli-backend 当 API key 带进去。
+    saved = []
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda c: None)
+    monkeypatch.setattr(web_app, "save_runtime_llm", lambda *a, **k: saved.append((a, k)))
+    current = LLMConfig(
+        api_key="cli-backend",
+        base_url="https://old.example.com/v1",
+        model="old-model",
+        channel="cli",
+        cli_runner="codex",
+        cli_model="gpt-cli",
+    )
+    fake = SimpleNamespace(session=SimpleNamespace(llm_config=current, begin_turn=lambda: None))
+
+    # 空表单 + CLI 局：保留 cli 通道（#51）、不把占位符当 API key 带入。
+    cfg = web_app.WebGame.build_llm_config(fake, "", "", "", max_tokens=16000)
+
+    assert cfg.api_key != "cli-backend"
+    assert cfg.channel == "cli"
+
+
+def test_llm_config_from_runtime_api_channel_drops_placeholder_key(monkeypatch):
+    # ship-pre CMR Group A'（Claude R1）：无 env runner 时空 channel 推成 api，
+    # 但占位符不当真 key（清空让下游报「未配 API key」，而非拿假 key 探 OpenAI）。
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    cfg = web_app._llm_config_from_runtime(
+        {"channel": ""},
+        base_url="https://api.example.com/v1",
+        model="gpt-api",
+        api_key="cli-backend",
+        max_tokens=8000,
+        timeout_seconds=180,
+        thinking_level="",
+        advanced_model="",
+        advanced_base_url="",
+        advanced_api_key="",
+        advanced_thinking_level="",
+    )
+
+    assert cfg.channel == "api"
+    assert cfg.api_key == ""

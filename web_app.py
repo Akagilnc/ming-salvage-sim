@@ -26,6 +26,11 @@ from ming_sim.constants import ROOT_DIR
 from ming_sim.paths import bundled_path, user_data_path, user_data_dir
 from ming_sim.exceptions import ExitGame, LLMUnavailable
 from ming_sim.llm_config import (
+    CLI_DEFAULT_TIMEOUT_SECONDS,
+    VALID_CHANNELS,
+    cli_model_from_env,
+    is_real_api_key,
+    real_api_key_or_empty,
     load_llm_config,
     load_runtime_game,
     load_runtime_llm,
@@ -290,7 +295,7 @@ def _verify_llm_configs_or_raise(config: LLMConfig) -> None:
     if not advanced_model:
         return
     advanced_config = LLMConfig(
-        api_key=(config.advanced_api_key or "").strip() or config.api_key,
+        api_key=real_api_key_or_empty(config.advanced_api_key) or real_api_key_or_empty(config.api_key),
         base_url=(config.advanced_base_url or "").strip() or config.base_url,
         model=advanced_model,
         max_tokens=config.max_tokens,
@@ -300,6 +305,10 @@ def _verify_llm_configs_or_raise(config: LLMConfig) -> None:
         advanced_base_url=config.advanced_base_url,
         advanced_api_key=config.advanced_api_key,
         advanced_thinking_level=config.advanced_thinking_level,
+        channel=config.channel,
+        cli_runner=config.cli_runner,
+        cli_model=config.cli_model,
+        cli_timeout_seconds=config.cli_timeout_seconds,
     )
     try:
         verify_llm_available(advanced_config)
@@ -317,6 +326,67 @@ def _llm_error_detail(exc: Exception, prefix: str = "") -> Dict[str, Any]:
         "provider_message": getattr(exc, "provider_message", str(exc)),
         "status_code": getattr(exc, "status_code", None),
     }
+
+
+def _runtime_float(value: object, default: float) -> float:
+    try:
+        return float(value) if value not in (None, "") else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _has_real_api_key(value: object) -> bool:
+    # 单一真源在 llm_config.is_real_api_key；此处只做 web 层薄包装。
+    return is_real_api_key(value)
+
+
+def _llm_config_from_runtime(
+    runtime: Dict[str, Any],
+    *,
+    base_url: str,
+    model: str,
+    api_key: str,
+    max_tokens: int,
+    timeout_seconds: float,
+    thinking_level: str,
+    advanced_model: str,
+    advanced_base_url: str,
+    advanced_api_key: str,
+    advanced_thinking_level: str,
+) -> LLMConfig:
+    from ming_sim.cli_backend import cli_backend_from_env
+
+    channel = str(runtime.get("channel") or "").strip().lower()
+    env_runner = cli_backend_from_env()
+    if channel not in VALID_CHANNELS:
+        channel = "cli" if env_runner else "api"
+    cli_slot = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
+    cli_runner = str(cli_slot.get("runner") or env_runner or ("agy" if channel == "cli" else "")).strip().lower()
+    cli_model = str(cli_slot.get("model") or cli_model_from_env(cli_runner, model)).strip()
+    # 无 saved CLI timeout 时回落 CLI 默认（300），不回落 API request timeout（codex R1 #3）。
+    cli_timeout = _runtime_float(cli_slot.get("timeout_seconds"), CLI_DEFAULT_TIMEOUT_SECONDS)
+    if channel == "cli":
+        api_key = ""  # CLI 通道不要 API key；占位符在 create_chat_model 构造 CliChat 时注入
+    elif not is_real_api_key(api_key):
+        # 占位符不当真 key：清空让下游空检查报「未配 API key」，
+        # 而不是拿假 key 去探 OpenAI（误导性 412）。
+        api_key = ""
+    return LLMConfig(
+        api_key=api_key,
+        base_url=normalize_openai_base_url(base_url),
+        model=model,
+        max_tokens=max_tokens,
+        timeout_seconds=timeout_seconds,
+        thinking_level=normalize_thinking_level(thinking_level),
+        advanced_model=(advanced_model or "").strip(),
+        advanced_base_url=normalize_openai_base_url(advanced_base_url) if advanced_base_url else "",
+        advanced_api_key=real_api_key_or_empty(advanced_api_key),
+        advanced_thinking_level=normalize_thinking_level(advanced_thinking_level),
+        channel=channel,
+        cli_runner=cli_runner,
+        cli_model=cli_model,
+        cli_timeout_seconds=cli_timeout,
+    )
 
 
 class ChatRequest(BaseModel):
@@ -365,39 +435,39 @@ class WebGame:
         runtime = load_runtime_llm()
         base_url = runtime.get("base_url") or base_url
         model = runtime.get("model") or model
-        api_key = runtime.get("api_key") or api_key
+        # 占位符不当真 key：stale cli-backend 不该覆盖真实 env key（否则 api 通道
+        # 启动被清空报「未配 API key」，而 menu 用 env key 判 ready，二者矛盾）。
+        _rt_api_key = runtime.get("api_key")
+        api_key = _rt_api_key if is_real_api_key(_rt_api_key) else api_key
         thinking_level = runtime.get("thinking_level") or thinking_level
         advanced_model = runtime.get("advanced_model") or advanced_model
         advanced_base_url = runtime.get("advanced_base_url") or advanced_base_url
-        advanced_api_key = runtime.get("advanced_api_key") or advanced_api_key
+        advanced_api_key = real_api_key_or_empty(runtime.get("advanced_api_key")) or advanced_api_key
         advanced_thinking_level = runtime.get("advanced_thinking_level") or advanced_thinking_level
         max_tokens = int(runtime.get("max_tokens") or 8000)
         timeout_seconds = float(runtime.get("timeout_seconds") or timeout_seconds)
-        # 探针：CLI 后端（MING_SIM_LLM_BACKEND=agy|codex）脱 api key，给占位符放行。
-        from ming_sim.cli_backend import cli_backend_from_env
-        if not api_key and cli_backend_from_env() is not None:
-            api_key = "cli-backend"
-        if not api_key:
-            raise LLMUnavailable("未配 API key，请先到设置页填写。")
         random.seed(int(os.environ.get("MING_SIM_SEED", "7")))
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
         self.db_path = db_path
-        if fresh:
-            _delete_sqlite_db_files_or_raise(db_path)
-        adv_base = (advanced_base_url or "").strip()
-        llm_config = LLMConfig(
-            api_key=api_key,
-            base_url=normalize_openai_base_url(base_url),
+        llm_config = _llm_config_from_runtime(
+            runtime,
+            base_url=base_url,
             model=model,
+            api_key=api_key,
             max_tokens=max_tokens,
             timeout_seconds=timeout_seconds,
-            thinking_level=normalize_thinking_level(thinking_level),
-            advanced_model=(advanced_model or "").strip(),
-            advanced_base_url=normalize_openai_base_url(adv_base) if adv_base else "",
-            advanced_api_key=(advanced_api_key or "").strip(),
-            advanced_thinking_level=normalize_thinking_level(advanced_thinking_level),
+            thinking_level=thinking_level,
+            advanced_model=advanced_model,
+            advanced_base_url=advanced_base_url,
+            advanced_api_key=advanced_api_key,
+            advanced_thinking_level=advanced_thinking_level,
         )
-        self.session = GameSession(db_path, llm_config)
+        if llm_config.channel != "cli" and not llm_config.api_key:
+            raise LLMUnavailable("未配 API key，请先到设置页填写。")
+        if fresh:
+            verify_llm_available(llm_config)
+            _delete_sqlite_db_files_or_raise(db_path)
+        self.session = GameSession(db_path, llm_config, verify_llm=not fresh)
         self.session.begin_turn()
         # 召对记录持久化在 chat_messages 表，启动时恢复进内存缓存。
         self.chat_history: Dict[str, List[Dict[str, str]]] = {
@@ -458,12 +528,14 @@ class WebGame:
     def reset_game(self) -> None:
         """全清主 DB：关连接 → 删 sqlite 主/wal/shm → 重建空 session。
         存档目录不动。"""
+        llm_config = self.session.llm_config
+        verify_llm_available(llm_config)
         try:
             self.session.close()
         except Exception:
             pass
         _delete_sqlite_db_files_or_raise(self.db_path)
-        self._rebuild_session(self.session.llm_config)
+        self._rebuild_session(llm_config, verify_llm=False)
 
     def load_save(self, name: str) -> None:
         """从存档热替换主 DB：备份当前 → 拷源到主 DB → 重建 session。"""
@@ -487,10 +559,11 @@ class WebGame:
             dst_conn.close()
         self._rebuild_session(self.session.llm_config)
 
-    def _rebuild_session(self, llm_config: LLMConfig) -> None:
+    def _rebuild_session(self, llm_config: LLMConfig, verify_llm: bool = True) -> None:
         """用新 llm_config（或换完 DB 后）重建 GameSession + 内存缓存。"""
-        verify_llm_available(llm_config)
-        self.session = GameSession(self.db_path, llm_config)
+        if verify_llm:
+            verify_llm_available(llm_config)
+        self.session = GameSession(self.db_path, llm_config, verify_llm=False)
         self.session.begin_turn()
         self.chat_history = {name: [] for name in self.session.content.characters}
         for name, msgs in self.db.load_all_chat_history().items():
@@ -501,7 +574,7 @@ class WebGame:
         if not _fav_raw:
             self.db.kv_set("favorites", json.dumps(sorted(self.favorites)))
 
-    def apply_llm_config(
+    def build_llm_config(
         self,
         base_url: str,
         model: str,
@@ -513,35 +586,69 @@ class WebGame:
         advanced_base_url: Optional[str] = None,
         advanced_api_key: Optional[str] = None,
         advanced_thinking_level: Optional[str] = None,
+        channel: Optional[str] = None,
+        cli_runner: Optional[str] = None,
+        cli_model: Optional[str] = None,
+        cli_timeout_seconds: float = 0,
     ) -> LLMConfig:
-        base = normalize_openai_base_url(base_url.strip() or self.session.llm_config.base_url)
-        new_model = model.strip() or self.session.llm_config.model
-        new_key = api_key.strip() or self.session.llm_config.api_key
-        new_max = max_tokens if max_tokens > 0 else self.session.llm_config.max_tokens
-        new_timeout = timeout_seconds if timeout_seconds > 0 else self.session.llm_config.timeout_seconds
+        """从 in-game 输入派生新 LLMConfig（纯函数,不 verify/不落盘/不改 session）。
+        通道感知（#51）：显式 channel 优先;否则填了真实 API key=切 api;都没有=保留当前通道
+        （CLI 局开 in-game 设置不再被强制降级到 api + 空 key 误报）。"""
+        cur = self.session.llm_config
+        # 通道解析（#51）
+        explicit = (channel or "").strip().lower() if channel is not None else ""
+        if explicit in VALID_CHANNELS:
+            new_channel = explicit
+        elif real_api_key_or_empty(api_key):
+            new_channel = "api"   # 用户填了真实 API key = 显式切到 API
+        else:
+            new_channel = (cur.channel or "api")   # 没填 = 保留当前通道,不强制降级
+        # CLI 槽位：未传则保留当前
+        new_cli_runner = (cli_runner if cli_runner is not None else cur.cli_runner)
+        new_cli_model = (cli_model if cli_model is not None else cur.cli_model)
+        new_cli_timeout = (
+            cli_timeout_seconds if cli_timeout_seconds and cli_timeout_seconds > 0
+            else cur.cli_timeout_seconds
+        )
+        base = normalize_openai_base_url(base_url.strip() or cur.base_url)
+        new_model = model.strip() or cur.model
+        # CLI 通道不要 API key（占位符在 create_chat_model 构造 CliChat 时注入）；
+        # API 通道：请求 key 与已存 key 回落都过占位符过滤。
+        if new_channel == "cli":
+            new_key = ""
+        else:
+            new_key = real_api_key_or_empty(api_key) or real_api_key_or_empty(cur.api_key)
+            if not new_key:
+                # 从 cli 切回 api：cur.api_key 在 cli 模式已归一为空,但真实 key 仍存在
+                # runtime_llm.json 的 api 槽——回收它,免得切回 api 还要重输 key(Gemini R1)。
+                saved = load_runtime_llm()
+                saved_api = saved.get("api") if isinstance(saved.get("api"), dict) else {}
+                new_key = real_api_key_or_empty(saved_api.get("api_key"))
+        new_max = max_tokens if max_tokens > 0 else cur.max_tokens
+        new_timeout = timeout_seconds if timeout_seconds > 0 else cur.timeout_seconds
         if thinking_level is None:
-            new_thinking_level = self.session.llm_config.thinking_level
+            new_thinking_level = cur.thinking_level
         else:
             new_thinking_level = normalize_thinking_level(thinking_level)
         # advanced_* = None 表示不动；传空串表示显式清空。
         if advanced_model is None:
-            new_advanced = self.session.llm_config.advanced_model
+            new_advanced = cur.advanced_model
         else:
             new_advanced = advanced_model.strip()
         if advanced_base_url is None:
-            new_adv_base = self.session.llm_config.advanced_base_url
+            new_adv_base = cur.advanced_base_url
         else:
             adv_base_in = advanced_base_url.strip()
             new_adv_base = normalize_openai_base_url(adv_base_in) if adv_base_in else ""
         if advanced_api_key is None:
-            new_adv_key = self.session.llm_config.advanced_api_key
+            new_adv_key = cur.advanced_api_key
         else:
             new_adv_key = advanced_api_key.strip()
         if advanced_thinking_level is None:
-            new_adv_thinking_level = self.session.llm_config.advanced_thinking_level
+            new_adv_thinking_level = cur.advanced_thinking_level
         else:
             new_adv_thinking_level = normalize_thinking_level(advanced_thinking_level)
-        new_config = LLMConfig(
+        return LLMConfig(
             api_key=new_key,
             base_url=base,
             model=new_model,
@@ -552,24 +659,76 @@ class WebGame:
             advanced_base_url=new_adv_base,
             advanced_api_key=new_adv_key,
             advanced_thinking_level=new_adv_thinking_level,
+            channel=new_channel,
+            cli_runner=new_cli_runner,
+            cli_model=new_cli_model,
+            cli_timeout_seconds=new_cli_timeout,
         )
-        _verify_llm_configs_or_raise(new_config)
-        save_runtime_llm(
-            new_config.base_url,
-            new_config.model,
-            new_config.api_key,
-            new_config.max_tokens,
-            new_config.timeout_seconds,
-            new_config.thinking_level,
-            new_config.advanced_model,
-            new_config.advanced_base_url,
-            new_config.advanced_api_key,
-            new_config.advanced_thinking_level,
-        )
+
+    def commit_llm_config(self, new_config: LLMConfig) -> LLMConfig:
+        """落盘 + 切 session + 重建 registry（快;verify 由调用方先做,可 offload）。"""
+        if new_config.channel == "cli":
+            # CLI 通道:保住 api 槽的真实配置,切回 api 才找得回(CMR R1/R2 codex)。
+            #  1) 已存 api 槽有真实 key → 传空 api 输入触发 save_runtime_llm 的 preserve_api,原样留。
+            #  2) 槽无真实 key,但当前(切换前)session 是带真实 key 的 api 配置(可能来自 OPENAI_API_KEY
+            #     env,尚未落 runtime_llm.json 槽)→ 把它显式写进 api 槽,否则 env-only key 在
+            #     api→cli→api 往返中丢失。
+            #  3) 哪都没有真实 key → 传空(无可丢)。
+            saved = load_runtime_llm()
+            saved_api = saved.get("api") if isinstance(saved.get("api"), dict) else {}
+            prev = self.session.llm_config
+            if real_api_key_or_empty(saved_api.get("api_key")) or not real_api_key_or_empty(prev.api_key):
+                save_runtime_llm(
+                    "", "", "",
+                    channel="cli",
+                    cli_runner=new_config.cli_runner,
+                    cli_model=new_config.cli_model,
+                    cli_timeout_seconds=new_config.cli_timeout_seconds,
+                )
+            else:
+                save_runtime_llm(
+                    prev.base_url,
+                    prev.model,
+                    real_api_key_or_empty(prev.api_key),
+                    prev.max_tokens,
+                    prev.timeout_seconds,
+                    prev.thinking_level,
+                    prev.advanced_model,
+                    prev.advanced_base_url,
+                    prev.advanced_api_key,
+                    prev.advanced_thinking_level,
+                    channel="cli",
+                    cli_runner=new_config.cli_runner,
+                    cli_model=new_config.cli_model,
+                    cli_timeout_seconds=new_config.cli_timeout_seconds,
+                )
+        else:
+            save_runtime_llm(
+                new_config.base_url,
+                new_config.model,
+                new_config.api_key,
+                new_config.max_tokens,
+                new_config.timeout_seconds,
+                new_config.thinking_level,
+                new_config.advanced_model,
+                new_config.advanced_base_url,
+                new_config.advanced_api_key,
+                new_config.advanced_thinking_level,
+                channel="api",
+                cli_runner=new_config.cli_runner,
+                cli_model=new_config.cli_model,
+                cli_timeout_seconds=new_config.cli_timeout_seconds,
+            )
         self.session.llm_config = new_config
         # 重建 registry 让大臣 Agent 用新配置
         self.session.begin_turn()
         return new_config
+
+    def apply_llm_config(self, *args, **kwargs) -> LLMConfig:
+        """同步:build → verify → commit。异步端点 api_set_llm_config 改为分步以 offload verify。"""
+        new_config = self.build_llm_config(*args, **kwargs)
+        _verify_llm_configs_or_raise(new_config)
+        return self.commit_llm_config(new_config)
 
     # ── 便捷属性 ──────────────────────────────────────────────────────────
     @property
@@ -1003,6 +1162,7 @@ class WebGame:
         registered_minister: str = "",
         displaced_minister: str = "",
         secret_order_id: int = 0,
+        pending_action_id: int = 0,
         chat_turn_id: int = 0,
     ) -> Dict[str, Any]:
         character = self.session._character(minister_name)
@@ -1022,6 +1182,7 @@ class WebGame:
             "registered_minister": registered_minister,
             "displaced_minister": displaced_minister,
             "secret_order_id": secret_order_id or 0,
+            "pending_action_id": pending_action_id or 0,
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
             "suggestions": self.suggestions_for(character),
@@ -1061,6 +1222,7 @@ class WebGame:
             registered_minister=result.registered_minister,
             displaced_minister=result.displaced_minister,
             secret_order_id=result.secret_order_id,
+            pending_action_id=getattr(result, "pending_action_id", 0),
             chat_turn_id=chat_turn_id,
         )
 
@@ -1187,6 +1349,7 @@ class WebGame:
                 proposed = res["directive"]
             if res["secret_order_id"]:
                 secret_order_id = res["secret_order_id"]
+            pending_action_id = int(res.get("pending_action_id") or 0)
             self._record_chat_rollback_items(chat_turn_id, before_snapshot)
             payload = self._chat_payload(
                 minister_name, answer, court_action=court_action, next_minister=next_minister,
@@ -1194,6 +1357,7 @@ class WebGame:
                 registered_minister=registered,
                 displaced_minister=displaced,
                 secret_order_id=secret_order_id,
+                pending_action_id=pending_action_id,
                 chat_turn_id=chat_turn_id,
             )
             yield {"type": "done", "payload": payload}
@@ -1362,9 +1526,22 @@ def _has_main_db() -> bool:
 async def api_menu_status() -> Dict[str, Any]:
     """菜单页状态：API key 是否配好、上次主 DB 是否存在、存档列表。"""
     runtime = load_runtime_llm()
-    has_api_key = bool(runtime.get("api_key") or os.environ.get("OPENAI_API_KEY"))
+    from ming_sim.cli_backend import cli_backend_from_env, is_supported_cli_runner
+    env_runner = cli_backend_from_env()
+    channel = str(runtime.get("channel") or "").strip().lower()
+    if channel not in VALID_CHANNELS:
+        channel = "cli" if env_runner else "api"
+    cli_slot = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
+    cli_runner = str(cli_slot.get("runner") or env_runner or ("agy" if channel == "cli" else "")).strip().lower()
+    cli_model = str(cli_slot.get("model") or cli_model_from_env(cli_runner, "")).strip()
+    cli_timeout = _runtime_float(cli_slot.get("timeout_seconds"), CLI_DEFAULT_TIMEOUT_SECONDS)
+    has_api_key = _has_real_api_key(runtime.get("api_key")) or _has_real_api_key(os.environ.get("OPENAI_API_KEY"))
+    # readiness 按 active channel 判：API 通道看真实 key，CLI 通道看 runner 是否受支持。
+    # 不能因 inactive API 槽（ADR 0001 保留）里有 key 就把不可用的 CLI runner 误报成 ready。
+    llm_ready = has_api_key if channel == "api" else is_supported_cli_runner(cli_runner)
     return {
         "has_api_key": has_api_key,
+        "llm_ready": llm_ready,
         "has_running_game": web_game is not None,
         "has_main_db": _has_main_db(),
         "saves": _scan_saves(),
@@ -1372,15 +1549,19 @@ async def api_menu_status() -> Dict[str, Any]:
         "current_campaign": _main_db_campaign_id(),
         "game_settings": load_runtime_game(),
         "llm": {
+            "channel": channel,
             "base_url": runtime.get("base_url") or os.environ.get("OPENAI_BASE_URL", ""),
             "model": runtime.get("model") or os.environ.get("OPENAI_MODEL", ""),
             "has_api_key": has_api_key,
+            "cli_runner": cli_runner,
+            "cli_model": cli_model,
+            "cli_timeout_seconds": cli_timeout,
             "max_tokens": int(runtime.get("max_tokens") or 8000),
             "timeout_seconds": float(runtime.get("timeout_seconds") or os.environ.get("OPENAI_TIMEOUT_SECONDS", "180") or 180),
             "thinking_level": runtime.get("thinking_level") or os.environ.get("OPENAI_THINKING_LEVEL", ""),
             "advanced_model": runtime.get("advanced_model") or os.environ.get("OPENAI_ADVANCED_MODEL", ""),
             "advanced_base_url": runtime.get("advanced_base_url") or os.environ.get("OPENAI_ADVANCED_BASE_URL", ""),
-            "has_advanced_api_key": bool(runtime.get("advanced_api_key") or os.environ.get("OPENAI_ADVANCED_API_KEY")),
+            "has_advanced_api_key": _has_real_api_key(runtime.get("advanced_api_key")) or _has_real_api_key(os.environ.get("OPENAI_ADVANCED_API_KEY")),
             "advanced_thinking_level": runtime.get("advanced_thinking_level") or os.environ.get("OPENAI_ADVANCED_THINKING_LEVEL", ""),
         },
     }
@@ -1496,14 +1677,84 @@ class LlmSetupRequest(BaseModel):
     advanced_base_url: str = ""
     advanced_api_key: str = ""
     advanced_thinking_level: str = ""
+    channel: str = "api"
+    cli_runner: str = ""
+    cli_model: str = ""
+    cli_timeout_seconds: float = 0
+
+
+async def _menu_save_cli_llm(request: LlmSetupRequest) -> Dict[str, Any]:
+    """保存 CLI 通道：选 runner/model，不要求真实 api_key，保留 API 槽。"""
+    cli_runner = (request.cli_runner or "").strip().lower()
+    cli_model = (request.cli_model or "").strip()
+    cli_timeout = request.cli_timeout_seconds if request.cli_timeout_seconds and request.cli_timeout_seconds > 0 else CLI_DEFAULT_TIMEOUT_SECONDS
+    max_tokens = request.max_tokens if request.max_tokens > 0 else 8000
+    timeout_seconds = request.timeout_seconds if request.timeout_seconds > 0 else 180
+    if not cli_runner:
+        raise HTTPException(status_code=400, detail="cli_runner 不能为空。")
+    config = LLMConfig(
+        api_key="",  # CLI 通道不要 API key；占位符在 create_chat_model 构造 CliChat 时注入
+        base_url="",
+        model=cli_model,
+        max_tokens=max_tokens,
+        timeout_seconds=timeout_seconds,
+        channel="cli",
+        cli_runner=cli_runner,
+        cli_model=cli_model,
+        cli_timeout_seconds=cli_timeout,
+    )
+    try:
+        # CLI/API smoke 是阻塞子进程/网络调用(CLI 最长 cli_timeout_seconds),不能跑在
+        # asyncio event loop 上卡死并发请求 → offload 到线程池(P1/P2)。verify 只读不改盘面。
+        await asyncio.get_running_loop().run_in_executor(
+            None, _verify_llm_configs_or_raise, config
+        )
+    except HTTPException:
+        raise
+    except LLMUnavailable as exc:
+        raise HTTPException(status_code=400, detail=_llm_error_detail(exc)) from None
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail={"code": "llm_validation_failed", "message": str(exc)}) from None
+    # 空 API 输入 → save_runtime_llm 保留已存 API 槽（ADR 0001）。
+    save_runtime_llm(
+        "",
+        "",
+        "",
+        max_tokens,
+        timeout_seconds,
+        "",
+        "",
+        "",
+        "",
+        "",
+        channel="cli",
+        cli_runner=cli_runner,
+        cli_model=cli_model,
+        cli_timeout_seconds=cli_timeout,
+    )
+    return {
+        "ok": True,
+        "llm": {
+            "channel": "cli",
+            "cli_runner": cli_runner,
+            "cli_model": cli_model,
+            "cli_timeout_seconds": cli_timeout,
+            "has_api_key": _has_real_api_key(config.api_key),
+        },
+    }
 
 
 @app.post("/api/menu/llm")
 async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     """菜单页保存 LLM 配置：先发起轻量聊天校验，通过后才落盘。"""
+    channel = (request.channel or "api").strip().lower()
+    if channel not in VALID_CHANNELS:
+        channel = "api"
+    if channel == "cli":
+        return await _menu_save_cli_llm(request)
     base_url = (request.base_url or "").strip()
     model = (request.model or "").strip()
-    api_key = (request.api_key or "").strip()
+    api_key = real_api_key_or_empty(request.api_key)  # 请求里的占位符不当真 key
     advanced_model = (request.advanced_model or "").strip()
     adv_base_in = (request.advanced_base_url or "").strip()
     advanced_base_url = normalize_openai_base_url(adv_base_in) if adv_base_in else ""
@@ -1516,13 +1767,16 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="base_url / model 不能为空。")
     if not api_key:
         existing = load_runtime_llm()
-        api_key = existing.get("api_key") or os.environ.get("OPENAI_API_KEY", "")
+        for candidate in (existing.get("api_key"), os.environ.get("OPENAI_API_KEY", "")):
+            if _has_real_api_key(candidate):
+                api_key = str(candidate).strip()
+                break
     if not api_key:
         raise HTTPException(status_code=400, detail="api_key 未配置，请填写。")
     # advanced_api_key 留空：复用已存的（避免覆盖成空）。
     if advanced_model and not advanced_api_key:
         existing = load_runtime_llm()
-        advanced_api_key = existing.get("advanced_api_key") or os.environ.get("OPENAI_ADVANCED_API_KEY", "")
+        advanced_api_key = real_api_key_or_empty(existing.get("advanced_api_key")) or real_api_key_or_empty(os.environ.get("OPENAI_ADVANCED_API_KEY"))
     normalized_base_url = normalize_openai_base_url(base_url)
     config = LLMConfig(
         api_key=api_key,
@@ -1535,9 +1789,14 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         advanced_base_url=advanced_base_url,
         advanced_api_key=advanced_api_key,
         advanced_thinking_level=advanced_thinking_level,
+        channel="api",
     )
     try:
-        _verify_llm_configs_or_raise(config)
+        # CLI/API smoke 是阻塞子进程/网络调用(CLI 最长 cli_timeout_seconds),不能跑在
+        # asyncio event loop 上卡死并发请求 → offload 到线程池(P1/P2)。verify 只读不改盘面。
+        await asyncio.get_running_loop().run_in_executor(
+            None, _verify_llm_configs_or_raise, config
+        )
     except HTTPException:
         raise
     except LLMUnavailable as exc:
@@ -1555,19 +1814,20 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         advanced_base_url,
         advanced_api_key,
         advanced_thinking_level,
+        channel="api",
     )
     return {
         "ok": True,
         "llm": {
             "base_url": normalized_base_url,
             "model": model,
-            "has_api_key": True,
+            "has_api_key": _has_real_api_key(api_key),
             "max_tokens": max_tokens,
             "timeout_seconds": timeout_seconds,
             "thinking_level": thinking_level,
             "advanced_model": advanced_model,
             "advanced_base_url": advanced_base_url,
-            "has_advanced_api_key": bool(advanced_api_key),
+            "has_advanced_api_key": _has_real_api_key(advanced_api_key),
             "advanced_thinking_level": advanced_thinking_level,
         },
     }
@@ -1610,6 +1870,29 @@ async def api_secret_orders(status: str = "") -> Dict[str, Any]:
     """列出密令。status 为空返回全部，否则按 active/done/failed 过滤。"""
     orders = get_game().db.list_secret_orders(status=status or None)
     return {"orders": orders}
+
+
+@app.get("/api/pending_actions")
+async def api_pending_actions() -> Dict[str, Any]:
+    """列出本回合待确认动作(动作闸门 ADR 0006):皇帝复核区,颁诏批量落库前可见可撤。"""
+    game = get_game()
+    return {"actions": game.db.list_pending_actions(int(game.state.turn))}
+
+
+@app.post("/api/pending_actions/{action_id}/withdraw")
+async def api_withdraw_pending_action(action_id: int) -> Dict[str, Any]:
+    """皇帝撤回一条尚未颁诏落库的暂存动作。不存在→404;存在但已落库/非本回合→409。
+    先原子条件 DELETE(以删成功为真源,免 check-then-act 竞态,pr-loop sourcery),
+    失败再查行分流 404/409。"""
+    game = get_game()
+    if game.db.withdraw_pending_action(int(action_id), int(game.state.turn)):
+        return {"withdrawn": action_id, "actions": game.db.list_pending_actions(int(game.state.turn))}
+    # 删不动:查清是不存在还是已落库/非本回合
+    row = game.db.conn.execute(
+        "SELECT turn, status FROM pending_actions WHERE id=?", (int(action_id),)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="该待确认动作不存在。")
+    raise HTTPException(status_code=409, detail="该动作已落库或非本回合，无法撤回。")
 
 
 @app.get("/api/turn_extraction")
@@ -2016,6 +2299,12 @@ class LLMConfigRequest(BaseModel):
     advanced_base_url: str = "__keep__"
     advanced_api_key: str = "__keep__"
     advanced_thinking_level: str = "__keep__"
+    # 通道感知（#51）：channel/cli_runner/cli_model 用 "__keep__" sentinel 表示「保留当前」;
+    # cli_timeout_seconds 是数值,沿用数值 sentinel 0（=不改,build 回落当前值），不走 "__keep__"。
+    channel: str = "__keep__"
+    cli_runner: str = "__keep__"
+    cli_model: str = "__keep__"
+    cli_timeout_seconds: float = 0
 
 
 @app.get("/api/consorts/candidates")
@@ -2090,7 +2379,9 @@ async def api_get_llm_config() -> Dict[str, Any]:
     """读当前生效的 LLM 配置。api_key 不回传明文，只回是否已设置。"""
     cfg = get_game().session.llm_config
     saved = load_runtime_llm()
+    saved_cli = saved.get("cli") if isinstance(saved.get("cli"), dict) else {}
     return {
+        "channel": cfg.channel,
         "base_url": cfg.base_url,
         "model": cfg.model,
         "max_tokens": cfg.max_tokens,
@@ -2098,20 +2389,27 @@ async def api_get_llm_config() -> Dict[str, Any]:
         "thinking_level": cfg.thinking_level,
         "advanced_model": cfg.advanced_model,
         "advanced_base_url": cfg.advanced_base_url,
-        "has_advanced_api_key": bool(cfg.advanced_api_key),
+        "has_advanced_api_key": _has_real_api_key(cfg.advanced_api_key),
         "advanced_thinking_level": cfg.advanced_thinking_level,
-        "has_api_key": bool(cfg.api_key),
+        "has_api_key": _has_real_api_key(cfg.api_key),
+        "cli_runner": cfg.cli_runner,
+        "cli_model": cfg.cli_model,
+        "cli_timeout_seconds": cfg.cli_timeout_seconds,
         "persisted": {
+            "channel": saved.get("channel", ""),
             "base_url": saved.get("base_url", ""),
             "model": saved.get("model", ""),
-            "has_api_key": bool(saved.get("api_key", "")),
+            "has_api_key": _has_real_api_key(saved.get("api_key", "")),
             "max_tokens": int(saved.get("max_tokens") or 8000),
             "timeout_seconds": float(saved.get("timeout_seconds") or 180),
             "thinking_level": saved.get("thinking_level", ""),
             "advanced_model": saved.get("advanced_model", ""),
             "advanced_base_url": saved.get("advanced_base_url", ""),
-            "has_advanced_api_key": bool(saved.get("advanced_api_key", "")),
+            "has_advanced_api_key": _has_real_api_key(saved.get("advanced_api_key", "")),
             "advanced_thinking_level": saved.get("advanced_thinking_level", ""),
+            "cli_runner": str(saved_cli.get("runner") or ""),
+            "cli_model": str(saved_cli.get("model") or ""),
+            "cli_timeout_seconds": _runtime_float(saved_cli.get("timeout_seconds"), CLI_DEFAULT_TIMEOUT_SECONDS),
         },
     }
 
@@ -2123,8 +2421,16 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
     adv_base = None if request.advanced_base_url == "__keep__" else request.advanced_base_url
     adv_key = None if request.advanced_api_key == "__keep__" else request.advanced_api_key
     adv_thinking = None if request.advanced_thinking_level == "__keep__" else request.advanced_thinking_level
+    channel = None if request.channel == "__keep__" else request.channel
+    cli_runner = None if request.cli_runner == "__keep__" else request.cli_runner
+    cli_model = None if request.cli_model == "__keep__" else request.cli_model
     try:
-        cfg = get_game().apply_llm_config(
+        # 通道感知 build（#51）。verify(CLI smoke ~12s,只读)offload 出 event loop 不卡 UI;
+        # commit(落盘+begin_turn 改 session 态)**留在 loop 上同步跑**——单人 CLI 串行探针下它原子、
+        # 无并发 race,无需全局锁(CMR R3-R5:把 commit offload 到线程引入 session race / 断连
+        # cancel 下 worker-join 不可靠的一连串并发边缘,对单人场景得不偿失,故回退到 on-loop)。
+        game = get_game()
+        cfg = game.build_llm_config(
             request.base_url,
             request.model,
             request.api_key,
@@ -2135,7 +2441,17 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
             advanced_base_url=adv_base,
             advanced_api_key=adv_key,
             advanced_thinking_level=adv_thinking,
+            channel=channel,
+            cli_runner=cli_runner,
+            cli_model=cli_model,
+            cli_timeout_seconds=request.cli_timeout_seconds,
         )
+        await asyncio.get_running_loop().run_in_executor(None, _verify_llm_configs_or_raise, cfg)
+        game.commit_llm_config(cfg)
+    except HTTPException:
+        # _verify_llm_configs_or_raise 已把校验失败包成带干净 detail 的 HTTPException;
+        # 经 run_in_executor 透传上来后原样抛,别被下面 except Exception 二次包裹 mangle 掉(Gemini R2)。
+        raise
     except LLMUnavailable as e:
         raise HTTPException(status_code=400, detail=_llm_error_detail(e)) from None
     except Exception as e:  # noqa: BLE001
@@ -2148,9 +2464,13 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
         "thinking_level": cfg.thinking_level,
         "advanced_model": cfg.advanced_model,
         "advanced_base_url": cfg.advanced_base_url,
-        "has_advanced_api_key": bool(cfg.advanced_api_key),
+        "has_advanced_api_key": _has_real_api_key(cfg.advanced_api_key),
         "advanced_thinking_level": cfg.advanced_thinking_level,
-        "has_api_key": bool(cfg.api_key),
+        "has_api_key": _has_real_api_key(cfg.api_key),
+        "channel": cfg.channel,
+        "cli_runner": cfg.cli_runner,
+        "cli_model": cfg.cli_model,
+        "cli_timeout_seconds": cfg.cli_timeout_seconds,
     }
 
 

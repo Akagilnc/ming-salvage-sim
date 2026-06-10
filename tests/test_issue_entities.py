@@ -84,6 +84,66 @@ def test_empty_effect_noop(game):
     assert _army_count(db) == before
 
 
+def test_apply_score_extraction_validates_before_half_apply(game):
+    """#57:apply_score_extraction 在任何 DB 改动前校验 delta 容器/二级类型——畸形二级 dict
+    不让前面的 metric/economy 先落库再在 region apply 崩(half-落库,违反 P1 落库铁律)。
+    真实流此前只有 driver 侧 _validate_delta_shape;现在落库核自身也守。"""
+    db, state, _ = game
+    treasury_before = state.metrics.get("国库")
+    bad = {
+        "metric_delta": {"国库": 50},                 # 合法,排在 region 之前处理
+        "region_delta": {"shanxi": "not-a-dict"},     # 二级非 dict → 落库前应抛 ValueError
+    }
+    with pytest.raises(ValueError):
+        I.apply_score_extraction(db, state, bad)
+    # 校验在 apply 之前 → metric 不该已落库
+    assert state.metrics.get("国库") == treasury_before
+
+
+def test_apply_score_extraction_accepts_flat_faction_scalar(game):
+    """CMR(Claude+codex concur,HIGH):faction_delta 支持旧扁平 int 格式 {"阉党": -10}
+    (extractor prompt 明确允许、_apply_faction_dict 主动消费)。validate 不得把它当二级非 dict
+    误拒,否则合法 extractor 输出会让真实流 settle 整个崩。class 非 dict 同样应被放行(apply 静默跳)。"""
+    db, state, _ = game
+    # 不抛 = 通过;扁平 int faction + 非 dict class 都该被 validate 放行(apply 各自容忍)。
+    I.apply_score_extraction(db, state, {
+        "faction_delta": {"阉党": -10},
+        "class_delta": {"农民": 0},   # 非 dict 二级:_apply_class_dict 静默跳,validate 不该拒
+    })
+
+
+def test_apply_score_extraction_rejects_nondict_power_second_level(game):
+    """CMR R2(codex):power_updates 二级非 dict 必须落库前抛——apply_power_deltas 逐 power 写,
+    坏项崩前已写的 power 行会被后续 commit 落库 = 半落库(try/except 接住异常但不回滚)。
+    prompt 里 power_updates 恒嵌套 dict,标量=真畸形。"""
+    db, state, _ = game
+    with pytest.raises(ValueError):
+        I.apply_score_extraction(db, state, {"power_updates": {"houjin": {"leverage": 1}, "mongol": "bad"}})
+
+
+def test_apply_score_extraction_rejects_nondict_list_item(game):
+    """CMR R3(gemini):list 字段含非 dict 项 → 落库前抛,不半写(apply 逐项 item.get() 会中途崩)。"""
+    db, state, _ = game
+    with pytest.raises(ValueError):
+        I.apply_score_extraction(db, state, {"fiscal_creates": [{"key": "x"}, "bad-scalar"]})
+
+
+def test_apply_score_extraction_tolerates_null_field(game):
+    """Gemini R1:LLM 输出某字段为 null 时,validate 不得比 apply 更严——None 当缺省 no-op,
+    不抛 ValueError(apply 本就 `.get(key) or {}` 容忍)。"""
+    db, state, _ = game
+    # region_delta=None(null)+ army_delta=None,均应被当空 no-op 放行,不抛。
+    I.apply_score_extraction(db, state, {"region_delta": None, "army_delta": None})
+
+
+def test_apply_score_extraction_rejects_unknown_top_level_key(game):
+    """#57:落库核拒未知顶层 key(拼写错=静默无效落库)。用 canonicalize 之后仍不在 schema 的
+    真·未知 key(非中文别名——别名会被 _canonicalize_extraction 映射成合法 key,Red Team RT-C)。"""
+    db, state, _ = game
+    with pytest.raises(ValueError):
+        I.apply_score_extraction(db, state, {"region_delta_typo": {"shanxi": {"unrest": 5}}})
+
+
 def test_resolve_army_delta_reinforces_existing(game):
     """国策给既有军扩编：army_delta 累加到该军兵额（不新建）。"""
     db, state, _ = game
@@ -150,6 +210,69 @@ def test_initiative_floor_applies_when_enrich_empty(game, monkeypatch):
     assert row is not None                         # 国策入库了
     import json as _j
     assert _j.loads(row["effect_on_resolve"]) == {"metrics": {"民心": 1}}   # floor 生效，非空壳
+
+
+def test_runtime_cli_initiative_floor_applies_without_backend_env(game, monkeypatch):
+    """runtime CLI 通道无 env 时，月末国策空回报也要走 CLI floor，不能落空壳。"""
+    import json as _j
+    from ming_sim.models import LLMConfig
+    import ming_sim.cli_backend as _cb
+
+    db, state, _ = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(_cb, "enrich_initiative_effects",
+                        lambda *a, **k: {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}})
+    cfg = LLMConfig(
+        api_key="cli-backend",
+        base_url="",
+        model="api-fallback",
+        channel="cli",
+        cli_runner="codex",
+        cli_model="gpt-5.5",
+        cli_timeout_seconds=240,
+    )
+
+    I.apply_score_extraction(db, state, {
+        "new_issues": [{"origin_kind": "decree", "title": "runtime空回报国策", "kind": "initiative"}],
+    }, llm_config=cfg)
+
+    row = db.conn.execute(
+        "SELECT effect_on_resolve FROM issues WHERE title='runtime空回报国策'").fetchone()
+    assert row is not None
+    assert _j.loads(row["effect_on_resolve"]) == {"metrics": {"民心": 1}}
+
+
+def test_api_channel_initiative_does_not_use_backend_env_floor(game, monkeypatch):
+    """显式 API 通道下，即便 env 残留 CLI backend，也不能触发 CLI-only 国策补全/floor。"""
+    import json as _j
+    from ming_sim.models import LLMConfig
+    import ming_sim.cli_backend as _cb
+
+    db, state, _ = game
+    called = []
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
+    monkeypatch.setattr(_cb, "enrich_initiative_effects",
+                        lambda *a, **k: called.append((a, k)) or {
+                            "effect_on_resolve": {},
+                            "ongoing_effects": {},
+                            "effect_on_fail": {},
+                        })
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="gpt-api",
+        channel="api",
+    )
+
+    I.apply_score_extraction(db, state, {
+        "new_issues": [{"origin_kind": "decree", "title": "api空回报国策", "kind": "initiative"}],
+    }, llm_config=cfg)
+
+    row = db.conn.execute(
+        "SELECT effect_on_resolve FROM issues WHERE title='api空回报国策'").fetchone()
+    assert row is not None
+    assert called == []
+    assert _j.loads(row["effect_on_resolve"]) == {}
 
 
 def test_inertia_natural_resolve_applies_entities(game):

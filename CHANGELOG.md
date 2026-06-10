@@ -4,6 +4,94 @@
 
 ## [未发布]
 
+## [0.7.1.0] - 2026-06-10
+
+### 新增
+- **任免纳入聊天动作闸门(ADR 0006 三类全做)**：CLI 召对里口头任免(任命/升迁/调任/罢免/纳妃)走**独立检测** `extract_appointment_action`(与密令的 `extract_minister_actions` 不混)、随召对触发不挂密令 gate、覆盖大臣 + 太监、作用域=当前召对的大臣。暂存为 `kind=office`,颁诏 `commit_pending_actions` 透传 `content/registry` 落库。
+
+### 变更
+- **确认闸门由「颁诏批量同意 + UI 撤回面板」改为「对话确认」**：大臣(太监)in-character 领命复述;皇帝下一句**应允 → 当场 commit**该召对大臣暂存、**拒绝 → 丢**、不回 → 留、颁诏对没回的算同意。新增 `extract_confirmation_intent`,commit/drop 按 `minister_name` 过滤。
+- **任免落地核归一**:抽出 `issues.apply_office_appointment` 作【唯一落地核】(在册且未死→改 active+授官+顶替去重+`office_type` 重算+内存/registry 同步;不在册→建档;dead/空 office 拒),**extractor 的 `office_changes` 与 CLI 任免 commit 共用**,杜绝两份会漂的实现;罢免加 ming-guard + alias + active 校验。
+- minister prompt 加「in-character 领命并补充信息和要点」(后宫走 consort_agent 自有领命)。
+
+### 修复
+- `_displace_duplicate_offices` 剔除官员一个独占分项后,保留官职的 `office_type` 随之重算并同步 DB+内存(原只改 office、留陈旧 type,大臣 agent 按错类型建身份/工具)。
+
+### 移除
+- 拆掉自造的「待颁诏」前端确认 UI:`PendingActionsModal` + 顶部浮窗(`.pending-actions-fab`)+ pending 角标 + 撤回按钮 + 相关 state/type(确认改对话驱动;后端 `pending_actions` 表/暂存基建保留)。
+
+## [0.7.0.0] - 2026-06-09
+
+### 新增
+- **聊天动作闸门(ADR 0006)**：CLI 后端召对里 LLM 从自然语言**推断**出的密令写动作(更新/催办/提交核议/记进展)与后宫调教,不再在召对当场直写真实表,改进 `pending_actions` 暂存表;颁诏时(`pre_settle` 最前 / 退朝 `advance_without_edict`)`commit_pending_actions` 在结算管线前批量落库(不拒绝即允许)。暂存行纳入召对 rollback(撤回召对一并删),落不了的标 `failed` 不留孤儿,commit 抛错被兜住不崩结算。**根治**:闲聊被判「更新密令」当场静默改既有密令 + 续期 + 谎报「已交付」(handoff 计划里 slice 4「action-gate」一直没实现)。
+- **皇帝复核区**：`GET /api/pending_actions` + `POST /api/pending_actions/{id}/withdraw`(不存在 404 / 已落库或非本回合 409);前端「待颁诏」复核面板(列本回合暂存动作 + 逐条撤回)+ 顶部入口浮窗 + 召对暂存反馈提示(取代旧「密令已秘密交付」对更新动作的谎报)。
+
+### 变更
+- 流式与非流式召对路径共用 `apply_cli_conversation_actions` + 同样回传 `pending_action_id`,不漂移。
+- 拟旨与「密令如下/拟旨如下」显式前缀按钮 = 玩家明示,仍直接落库,不入闸门(认可例外)。任命走 agno tool-call(api 通道)不在本片(ADR 0002 更大范围)。
+
+## [0.6.1.0] - 2026-06-09
+
+### 新增
+- **游戏内 LLM 执行通道选择**：局中设置面板(gameMenu)新增 API / CLI 通道选择器 + CLI runner/model/超时输入。CLI 局开局后改设置不再被强制降级到 API、不再因空 key 误报；显式选 CLI 即可脱 key 续跑(#51)。
+
+### 修复
+- **真实流落库二级类型校验**：`validate_delta_shape` 抽成单一真源(`ming_sim.issues`),`apply_score_extraction` 落库前先校验容器/实体二级 dict 类型,畸形 delta 不再在 apply 内部「前字段落库、后字段崩」半落库;driver 仍在 pre_settle 前校验(#57)。
+- **探针 driver 纯确定性**：driver 注入 channel=api 确定性配置,即便设了 `MING_SIM_LLM_BACKEND` 也不再 spawn legacy CLI enrichment(ADR-0004:dialogue-Claude 已自产完整 delta)(#54)。
+- **CLI 空 cli_model 不漏 API model 名**:补 for_role/advanced 路径回归覆盖(RT2 已修工厂)(#52)。
+- **runtime_llm.json 数值类型一致**:`_api_runtime_slot` 类型感知,preserve/fresh/load 三路 max_tokens(int)/timeout(float)同型(#53)。
+- **in-game 设置 verify offload**:`api_set_llm_config` 把 LLM 连通性 verify(CLI smoke ~12s,只读)offload 到线程不卡 UI;commit(改 session 态)留在 event loop 同步跑(单人 CLI 串行探针下原子无 race)(#56)。
+- `is_real_api_key` 拦截 `__keep__` sentinel,不当真 key(Red Team)。
+
+### 修复(ship-pre 跨厂 CMR 续轮)
+- **落库二级类型校验补全**:`_NESTED_DICT_FIELDS` 收敛为 `{region_delta, army_delta, power_updates}`(这三者 apply 逐 entity 写、坏项中途崩=部分已落库),faction/class 排除(apply 各自容忍旧扁平 int / 静默跳);所有 list 字段补「项必须是 dict」校验;None 字段容忍(与 apply `or {}` 一致)。
+- **通道切换不丢 key**:`commit_llm_config` 对 CLI 通道 preserve/seed api 槽真实 key——已存槽有 key 则 preserve_api 保留;槽空但当前 session(可能来自 `OPENAI_API_KEY` env)有真实 key 则写进槽。api→cli→api 往返不丢 key。
+- **配置 verify 失败不半写**:`api_set_llm_config` 加 `except HTTPException` 透传,verify 失败的干净 detail 不被二次包裹;失败时绝不 commit。
+- **gameMenu CLI 字段从已存槽初始化**:用 persisted CLI 槽(`??` 容忍显式空)初始化,API 会话下不把 env 兜底的 API model 名当 cli_model 回传。
+
+### 变更
+- **单一真源收口**：`VALID_CHANNELS`、`CLI_DEFAULT_TIMEOUT_SECONDS`、`CODEX_DEFAULT_MODEL`/`CLAUDE_DEFAULT_MODEL` 常量化,替换散落字面量(#55)。
+- `apply_llm_config` 拆成 `build_llm_config`(纯派生)/ `commit_llm_config`(落盘+重建)/ `apply_llm_config`(同步组合),支持 verify 与 commit 分离。
+
+## [0.6.0.0] - 2026-06-09
+
+### 新增
+- **LLM 执行通道：API / CLI 并行、channel-aware**。`runtime_llm.json` 增双通道槽位（api / cli），`LLMConfig` 带 `channel` + `cli_runner`/`cli_model`/`cli_timeout_seconds`；readiness、模型构造、office 推断与落库 enrichment 全按当前 active channel 判定。脱-key 也能从菜单选 CLI 通道跑（`ApiSettingsModal` 加 channel 选择器）。`cli_backend_active(llm_config)` 单一真源门控 issue/office 的通道感知 enrichment。
+- 单一真源 `llm_config.is_real_api_key` + `real_api_key_or_empty` + `CLI_BACKEND_PLACEHOLDER`：占位符只在 `create_chat_model` 构造 CliChat 那一刻注入，`LLMConfig.api_key` 对 CLI 通道永空；手动 key 输入口（getpass / 菜单 request / 局中 request）统一过滤占位符。`web_app._has_real_api_key` 委托同一真源。
+- 架构决策记录：ADR 0001（API/CLI 双通道并行保留）、ADR 0002（用 action candidates 而非 tool-call 作游戏规则）。
+
+### 变更
+- `settle_with_delta` 增 `delta_applier` 注入闭包（与 `chapter_recorder`/`ending_summarizer` 同构）：merge base 的 ADR-0004 结算重构后，真实流经此闭包把 llm_config 送回落库 enrichment，结算核本体仍不依赖 llm_config；driver 默认 None 走确定性 apply（设 `MING_SIM_LLM_BACKEND` 时仍按 legacy env 判定）。
+
+### 修复（pre-landing review）
+- 显式 CLI 通道 `cli_model` 为空时不再把 API model 名（`llm_config.model`）当 `--model` 漏给 codex/claude，改回落 runner 默认（`cli_model_from_env`，agy 无 `--model` 故空）。
+- 菜单 LLM 保存端点（`api_menu_save_llm` / `_menu_save_cli_llm`）的 verify smoke（CLI 子进程最长 `cli_timeout_seconds`）改经 `run_in_executor` offload，不再阻塞 asyncio event loop 卡住并发请求。
+- 补测：`verify_llm_available` legacy env-only smoke 路径、`CliChat._call_cli` 未知 backend 兜底。
+
+## [0.5.2] - 2026-06-08
+
+### 修复
+- 探针 driver `run_settle` 堵两处静默吞(codex 对抗 review）：falsy 非 dict 的 delta（`[]`/`""`/`0`）不再被 `or {}` 吞成空结算照样推进；未知顶层字段（拼写错如 `地区变更`↔`地区变化`）不再静默无效落库——两者结算前响亮报错、回合不半推进。
+
+### 变更
+- `docs/TODO.md` 移到根目录 `TODOS.md`（与 gstack 约定一致），标记城防炮(#4)/driver(#10)完成移入修复记录；CLAUDE.md 工作手册引用同步。
+
+## [0.5.1] - 2026-06-08
+
+### 新增
+- **确定性结算核**：从 `decree.py` 抽出 `pre_settle`（固定财政 tick + auto_trigger）与 `settle_with_delta`（apply→turn_logs→章节记忆→inertia→clear→结局判定→next_period）。真实流程 `_settle_after_narrative`/`resolve_directives` 改调新核，behavior-preserving；章节记忆/结局总评做注入回调，使核不依赖 `llm_config`。真实流程与探针 driver 共用同一结算核（见 ADR 0004）。
+- **探针 driver（`driver.py`）**：`state`（盘面快照）/ `settle --delta <json>`（注入我产的中文 schema delta 跑确定性结算、推进一回合）/ `dump`（地区快照）。`run_settle` 规范化中文 key→英文 canonical 并按 schema 校验各字段容器类型（畸形值结算前响亮报错、不半落库），落 narrative 到 turn_reports + canonical delta JSON 到 turn_extractions（供 replay/timeline 重建）；CLI `settle` 支持信封 `{narrative, decree_text, delta}`（裸 delta 兼容）。
+- **城防炮 `region.cannon` delta 落库路径**：`地区变化` 新增 `城防炮` 字段，`apply_region_deltas` 特判路由到 `apply_region_cannon`（复用 `city_level×8` clamp，在白名单检查前），与军队 `随军大炮`（`cannon_equipment`）分域。
+
+### 变更
+- 城防炮补入 `REGION_FIELD_LABELS`（turn 日志显示「城防炮」而非回退英文 cannon）。
+- CLAUDE.md「结算编排骨架」改述：driver 复用 `pre_settle`/`settle_with_delta`，不再自行复刻结算链（ADR 0004）。
+- 新增架构决策记录：ADR 0003（人物相关 delta 合并为单 key + 显式动作意图，实现 deferred）、ADR 0004（探针 driver 复用引擎结算核）。
+
+### 修复
+- `db.py` 漏 import `LLMContractError` → 任何非法 `region_delta` 字段曾崩 `NameError`，现正确抛契约错（报清楚的合法字段清单）。
+- 探针 driver 对畸形 delta（信封 `delta` 非 object、模块值容器类型不符）一律在动 DB 前响亮报错，不静默吞成空 delta 照样推进回合。
+
 ## [0.5.0] - 2026-06-08
 
 ### 新增
