@@ -6,11 +6,21 @@
 
 ## 🟠 PR #2 CMR Deferred（cross-model review 8 轮 5/5 concur 后 defer 的契约/架构项）
 - D1 settlement 事务半落库 → [issue #3](https://github.com/Akagilnc/ming-salvage-sim/issues/3)
-- D2 城防炮 region.cannon 无 delta 写入路径 → [issue #4](https://github.com/Akagilnc/ming-salvage-sim/issues/4)
+- ~~D2 城防炮 region.cannon 无 delta 写入路径 → [issue #4](https://github.com/Akagilnc/ming-salvage-sim/issues/4)~~ ✅ PR #16 (v0.5.1)
 - D3 conftest 依赖 gitignored probe.db → CI 假绿 → [issue #5](https://github.com/Akagilnc/ming-salvage-sim/issues/5)
 - D4 _loads_lenient JSONC 非 quote-aware 病态边界 → [issue #6](https://github.com/Akagilnc/ming-salvage-sim/issues/6)
 
+## 🟠 branch probe/chat-action-pending CMR Deferred（动作闸门确认 UX 重设计，cmr ship-pre 5 轮收敛后 defer，未上 issue）
+- CA1【P3 行为缺口·fail-safe】口头用自然语言把**已在位**的妃嫔升位份（嫔→贵妃）：`_commit_office_action` 任命走 consort 路 → `apply_appointment`（[session.py](ming_sim/session.py)）对在位同名妃 `_find_candidate_by_name` 不中 + 非 candidate → 返 `("","")` → commit 标 failed（不崩、不错落，仅升妃没生效）。要不要支持「口头升妃」属品味题；要支持则在 consort 路加「在位妃→改 office/位份」分支。CMR R2/R4 由 Claude 单独提、判 low。
+- CA2【P3 死代码】前端「待颁诏」面板拆掉后，`web_app.py` 的 `GET /api/pending_actions` + `POST /api/pending_actions/{id}/withdraw` 两端点 + `tests/test_pending_actions.py` 内 `api_pending_actions`/`api_withdraw_pending_action` 用例**没人再调**（确认改对话驱动）。用户「先留着」；要清就连测试一起删。CMR R5 Claude 顺带提（非 review finding）。
+- CA3【验证待办·非缺陷】Slice 4 给 `content/prompts/minister_agent.md` 加的「in-character 领命并补充信息和要点」是 prompt 改、行为=LLM 输出，**无法确定性单测**；需在跑着的 server 上真召对一轮，确认大臣不出戏、不弹系统式「确认?」问句。
+
 ## 🔴 BUG / 待修（影响游戏正确性）
+
+### B12. 密令状态在游戏画面露英文 enum（active/pending_review/done/failed） → [issue #48](https://github.com/Akagilnc/ming-salvage-sim/issues/48)
+- **现象**：「密旨动向」等展示里密令 status 直接渲染数据库英文 enum「（active）」，明末中文游戏里露英文，出戏。
+- **修法**：在展示层把 status enum 映射成中文（active→在办、pending_review→待核议、done→已结、failed→未成 之类），找密令 status 渲染处（web 前端密令面板 / 邸报或 notes 生成器）统一过一层 label 映射。
+- **注**：与 LLM 通道 PR 无关，是既有展示/i18n bug；非本次 channel 改动引入。
 
 ### B11. 全系统静默吞异常/吞畸形数据（不抛错不告警），该落没落无人知 → [issue #14](https://github.com/Akagilnc/ming-salvage-sim/issues/14)
 - 系统级模式（从 B10 抽象）：delta 畸形项 `continue` 丢弃 / apply 拒收只记 `rejected` 不报 / db.py broad `except` 返默认 / gate 解析失败返 None。后果=静默数据丢失 + DB↔叙事漂移 + 调试盲区，侵蚀 P1 落库铁律。修法待定（结算级 reject 收集器 / except 收窄记日志 / gate 失败区分）。与 #3、#13 同根。
@@ -109,25 +119,40 @@
 
 ## 🔵 探针工程待办（step1 → step2）
 
-### T1. driver 还没固化成脚本 → [issue #10](https://github.com/Akagilnc/ming-salvage-sim/issues/10)
-- 现在每回合结算都用 `python3 - <<'PY' ... PY` 内联 heredoc 跑，没有持久 driver。
-- 应固化成 `driver.py`，封装：`state`（读盘）/ `settle --delta <json>`（固定tick+apply+惯性+推进）/ `dump`（盘面），复用 DELTA_SCHEMA + SETTLEMENT_FLOW。
-- 好处：可复现、可调试、delta 从文件喂入不易出错。
+### ~~T1. driver 固化成脚本~~ ✅ PR #16 (v0.5.1) → [issue #10](https://github.com/Akagilnc/ming-salvage-sim/issues/10)
+- 已落地 `driver.py`：`state` / `settle --delta <json>`（信封 `{narrative,decree_text,delta}`）/ `dump`，复用从 decree.py 抽出的 `pre_settle`+`settle_with_delta`（ADR 0004，与真实流程同核）。delta 从文件喂入、按 schema 校验容器类型崩前拦。
 
 ### T2. step2 subagent 化（已立 issue）
 - 见 GitHub [issue #1](https://github.com/Akagilnc/ming-salvage-sim/issues/1)。
 - 主对话当调度器、subagent 当大臣/裁判，解决 context 污染。
 - 触发条件：step1 跑通、玩法验证 OK（✅ 已验证两个月闭环）。可以开始考虑了。
 
-### T3. 立"带月经费的国策"时必须同产 fiscal_creates（已踩坑）
+### T3. 立"带月经费的国策"时必须同产 fiscal_creates（已踩坑） → [issue #45](https://github.com/Akagilnc/ming-salvage-sim/issues/45)（实例已补，缺引擎级强制配对）
 - **教训**：崇祯二年二月立「大明皇家太学府」(issue 14, 月经费 500 万) 时，**只做了 issue（进度条），漏产对应的 `fiscal_creates` 常设月支**——"月500万"只在邸报叙事里，账上 4 个月（二~五月）一两没扣，崇祯二年六月被陛下当面发现。
 - **铁律**：凡诏书新政带"每月 X 万经费/俸/饷"的，产 delta 时**issue + `fiscal_creates` 必须成对出**（issue 管进度、fiscal_creates 管账）。一次性投入才用 `economy_moves`。
 - **已补**：崇祯二年六月起 `taixuefu_base`(国库 expense 500) + `huoqi_base`(国库 expense 200) 已立账；六月当月用 economy_moves 补扣、常设账自七月固定 tick 起自动走（采甲案：前 4 月不倒补）。
 
-### T4. "练新军/编新营"国策必须同产 new_armies + office_changes（已踩坑）
+### T4. "练新军/编新营"国策必须同产 new_armies + office_changes（已踩坑） → [issue #46](https://github.com/Akagilnc/ming-salvage-sim/issues/46)（实例已补，缺引擎级强制配对）
 - **教训**：「荡寇天雄军」国策(issue 13)崇祯二年六月结案=练成，但**只做了 issue 进度条，漏了 ① `new_armies` 建天雄军军籍记人马 ② `office_changes` 把卢象升从大名知府调任为带兵主将**。结果"卢象升移驻东协"只在邸报，军册上查无天雄军、卢仍是文官知府，崇祯二年八月被陛下"卢象升现有多少人马"一问当场穿帮。
 - **铁律**：凡诏书"练某军/募某营/调某将镇某地"的，产 delta 时 **issue（进度）+ `new_armies`（军籍人马）+ `office_changes`（主将调任）必须配齐**。光推 bar 不落实体 = 账实不符。
 - **已补**：崇祯二年八月立天雄军军籍(兵 18000)+ 调卢象升「荡寇将军」督天雄军镇蓟镇东协·喜峰口、受孙承宗节制。
+
+### T5. 密令应支持「撤销/提前结束」（玩家面，留待深挖密令机制时做）
+- **缺口**：当前密令(secret_orders)只有建/列两个端点，status 仅 active/pending_review/done/failed，**无玩家面的「撤回/作废/提前结束」**。能撤的只有「撤回召对」（回合级 undo，仅最后一轮、颁诏前）或结算时 close 为 failed。
+- **范式**：照局势(issue)的 `cancellable=decree`（可撤旨）+ `cancel_cost`（撤销代价）那套——已颁诏的密令可由「圣旨撤回 + 代价」收回（人已派/钱已花的沉没成本）。见 `db.cancel_issue`(db.py:5060) + `_normalize_cancellable`(issues.py:555)。
+- **时机**：属「颁诏后玩法」，**不在 pending_actions(slice 4+5)范围**；留到后续深挖密令机制专项时做。
+
+### T6. 未颁诏草案不该广播给所有大臣（roleplay 硬伤，独立于 pending_actions）
+- **现状**：`build_draft_line`(session.py:573)把「本{月}已核定草案」前置注入**每个**大臣的对话上下文，代码注释当 feature（"确保大臣看得到兄弟大臣最新动作"）。
+- **问题**：未颁旨的东西不该全员全知。对话中的大臣记得=靠对话记忆（正常）；**别的大臣凭什么知道**？密令更应保密。
+- **范围**：改的是**现有拟旨/草案可见性**，与 pending_actions(slice 4+5)的 reroute 可分离；slice 4+5 的新 pending **不广播**（皇帝 UI 看得到、对话大臣靠对话记忆、其他大臣看不到），不依赖也不扩展 `build_draft_line`。本条单独处理该广播本身。
+- **细化待定**：首辅/内阁等是否对**公开政策**草案有合理知情权（密令永远保密）——留作该 issue 内的子决策。
+
+### T7. 拟旨为何走叙事 extractor 而非结构化直写——分析合理性，理由不足则统一
+- **现状不对称**：颁诏落地时，密令/任命/后宫走**结构化直写**(`commit_pending_actions` 直 INSERT/UPDATE)，但拟旨 draft 走 **LLM extractor**（draft 文本→邸报叙事→抽 delta，不直接写表，见 decree.py:414 / mark_directives_issued）。
+- **表面理由**：拟旨是开放式诏书，效果可落在经济/地区/局势/任何模块，故由 LLM 解释成 delta；密令/任命/后宫是闭式结构化记录（确定字段），直写即可。
+- **待分析**：这个理由够不够。若拟旨效果其实也能（部分）结构化、或 extractor 往返带来漂移/有损，**后续应统一**到结构化 staging。没有足够理由保留不对称就别留着。
+- **范围**：拟旨机制不在 pending_actions(slice 4+5) 改动范围（slice 4+5 只动密令/任命/后宫的 reroute+颁诏直写），拟旨保持现状。本条单独找时间分析。
 
 ## 🟡 观察 / 待确认（未必是 bug）
 
@@ -135,9 +160,10 @@
 - 客氏被送出宫颐养，但 `characters.客氏.status` 仍是 active（她还活着、只是不在宫）。游戏没有"出宫/居家"这个状态。
 - 暂不算 bug（active=在世可被提及），但若后续要表达"已离开权力中心"，需考虑用 offstage 或加注。
 
-### O2. 大额一次性支出 vs 国库节奏
+### O2. 大额一次性支出 vs 国库节奏 → [issue #47](https://github.com/Akagilnc/ming-salvage-sim/issues/47)（金手指副作用，低优先，可能并入 #43）
 - 十一月三镇补饷一次性 -300 万走 economy_moves，国库够（金矿兜底）。但若没有金矿外挂，这种大额会瞬间击穿国库。原版游戏没有金矿，玩家需量入为出——这正是原版的难度来源。我们有金矿，难度被抹平了（金手指的副作用，符合预期）。
 
 ---
 **修复记录**：（修完的移到这里，注明日期）
+- **[PR #16 / v0.5.1, 2026-06-08]** D2 城防炮 region.cannon delta 落库路径(#4)+ T1 driver.py 固化(#10)：抽确定性结算核 `pre_settle`/`settle_with_delta`（ADR 0004，真实流程与 driver 同核）、城防炮路由 `apply_region_cannon`(city_level×8 clamp)、修 db.py 漏 import `LLMContractError`、driver 多处静默吞守卫。两轮 cross-model + ship review-army + 对抗 review 收敛。
 - **[崇祯元年十二月结算]** B1 阉党 leverage：用手动 SQL `UPDATE factions SET leverage=35 WHERE name='阉党'` 临时修复（叙事支撑=核心退场+四十余党羽清出要津），78→35。**遗留根因未解**：长期应让 `db.set_character_status` 在"握实权官职的核心人物"退场时，自动按官职权重联动扣减所属派系 leverage，而非每回合手动 SQL。下次重构结算管线时一并做。

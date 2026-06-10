@@ -293,6 +293,7 @@ export type ModalName = "none" | "state" | "chat" | "edict" | "report" | "extrac
 export type SaveEntry = { name: string; size: number; mtime: number };
 
 export type LLMConfigInfo = {
+  channel?: "api" | "cli";
   base_url: string;
   model: string;
   max_tokens: number;
@@ -303,7 +304,11 @@ export type LLMConfigInfo = {
   has_advanced_api_key: boolean;
   advanced_thinking_level: string;
   has_api_key: boolean;
+  cli_runner?: string;
+  cli_model?: string;
+  cli_timeout_seconds?: number;
   persisted: {
+    channel?: "api" | "cli";
     base_url: string;
     model: string;
     has_api_key: boolean;
@@ -314,6 +319,9 @@ export type LLMConfigInfo = {
     advanced_base_url: string;
     has_advanced_api_key: boolean;
     advanced_thinking_level: string;
+    cli_runner?: string;
+    cli_model?: string;
+    cli_timeout_seconds?: number;
   };
 };
 
@@ -391,6 +399,7 @@ export type MenuCampaign = {
 
 export type MenuStatus = {
   has_api_key: boolean;
+  llm_ready?: boolean;
   has_running_game: boolean;
   has_main_db: boolean;
   saves: MenuSave[];
@@ -398,9 +407,13 @@ export type MenuStatus = {
   current_campaign?: string;
   game_settings?: { hitl_min_decisions: number };
   llm: {
+    channel?: "api" | "cli";
     base_url: string;
     model: string;
     has_api_key: boolean;
+    cli_runner?: string;
+    cli_model?: string;
+    cli_timeout_seconds?: number;
     max_tokens: number;
     timeout_seconds: number;
     thinking_level: string;

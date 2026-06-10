@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from ming_sim.constants import (
     TURN_UNIT, REGION_SCORE_FIELDS, ARMY_SCORE_FIELDS, FISCAL_SCORE_FIELDS,
@@ -711,6 +711,7 @@ def apply_issue_tracker_output(
     db: GameDB,
     state: GameState,
     tracker_output: Dict[str, object],
+    llm_config: Any = None,
 ) -> Dict[str, object]:
     touched_ids: set = set()
     applied_advances: List[Dict[str, object]] = []
@@ -819,10 +820,10 @@ def apply_issue_tracker_output(
         # 校验：国策必须有「办成回报」。CLI 后端(agy)一贯不填效果字段（实测 0/4），
         # 空则聚焦补全，保证「国策跑完有实质后果」(A 方案)；floor 兜底，绝不入空壳。
         if kind == "initiative" and not resolve_eff:
-            from ming_sim.cli_backend import cli_backend_from_env, enrich_initiative_effects
-            if cli_backend_from_env() is not None:
+            from ming_sim.cli_backend import cli_backend_active, enrich_initiative_effects
+            if cli_backend_active(llm_config):
                 try:
-                    enr = enrich_initiative_effects(title, str(ni.get("stage_text") or ""))
+                    enr = enrich_initiative_effects(title, str(ni.get("stage_text") or ""), llm_config=llm_config)
                     resolve_eff = enr.get("effect_on_resolve") or resolve_eff
                     ongoing_eff = enr.get("ongoing_effects") or ongoing_eff
                     fail_eff = enr.get("effect_on_fail") or fail_eff
@@ -991,14 +992,159 @@ def _displace_duplicate_offices(
         for lost in (p for p in holder_parts if p in new_parts):
             displaced.append(f"{row['name']}:{lost}")
         new_holder_office = ",".join(kept)
+        # 剔掉一个分项后,保留官职对应的 office_type 可能变了(如剔「兵部尚书」后只剩「左都御史」=都察院),
+        # 须随之重算并同步,免大臣 agent 按陈旧 office_type 建身份/工具(CMR R5)。
+        old_type_row = db.conn.execute(
+            "SELECT office_type FROM characters WHERE name=?", (row["name"],)).fetchone()
+        old_type = old_type_row["office_type"] if old_type_row else ""
+        new_type = infer_office_type_from_office(new_holder_office, old_type, db.llm_config)
         db.conn.execute(
-            "UPDATE characters SET office=? WHERE name=?",
-            (new_holder_office, row["name"]),
+            "UPDATE characters SET office=?, office_type=? WHERE name=?",
+            (new_holder_office, new_type, row["name"]),
         )
         if content is not None and row["name"] in content.characters:
             content.characters[row["name"]].office = new_holder_office
+            content.characters[row["name"]].office_type = new_type
     db.conn.commit()
     return displaced
+
+
+# 校验「二级非 dict 会让 apply 在**逐 entity 写 DB 的中途崩**,留下部分已写 + 回合照推 = 半落库」
+# 的字段。这三者 apply 都逐项 UPDATE/INSERT,前面的 entity 先落库、坏的 entity 崩:
+#   - region_delta / army_delta:apply 裸调,崩直接抛穿;
+#   - power_updates:apply_score_extraction 虽裹 try/except,但只接住异常不回滚——前面已写的 power
+#     行仍被后续 record_log/save_turn 提交 = 半落库(CMR R2 codex)。prompt 里 power_updates 恒为
+#     嵌套 dict,无扁平标量形态,故二级非 dict = 真畸形,校验前置拦截正确。
+# **不**列入(apply 各自容忍,validate 不该更严):faction_delta(吃旧扁平 int {"阉党": -10},prompt 允许)、
+# class_delta(对非 dict `continue` 静默跳,不写)。
+_NESTED_DICT_FIELDS = frozenset({"region_delta", "army_delta", "power_updates"})
+
+
+def validate_delta_shape(extracted: dict) -> None:
+    """canonical delta 各顶层字段容器类型必须匹配 schema(dict/list),实体模块二级值必须是 dict,
+    否则**任何 DB 改动前**抛 ValueError——畸形值直送 apply 会在结算中途崩 `.items()`,叠加非
+    原子结算 = 半落库(违反 P1 落库铁律;cmr RT-1 / Gemini PR#50 R2)。driver 在 pre_settle 前
+    调一次防 pre_settle 半改;落库核 apply_score_extraction 自身也调一次防 apply 内部半落库。
+    彻底原子化需事务边界(issue #3),此校验是廉价前置防线。"""
+    from ming_sim.simulation import EMPTY_EXTRACTION  # 懒 import 避 issues↔simulation 循环
+    for key, value in extracted.items():
+        if key not in EMPTY_EXTRACTION:
+            raise ValueError(
+                f"未知 delta 顶层字段「{key}」(canonicalize 后)；疑拼写错(如 地区变更↔地区变化)，"
+                "apply 不会消费它 = 静默无效。请改用合法 key。"
+            )
+        if value is None:
+            # None = 字段缺省/LLM 输出 null;apply 用 `.get(key) or {}`/`or []` 当空 no-op,
+            # 校验同样放行(别比 apply 更严,否则合法 null 会被误拒,Gemini R1)。
+            continue
+        expected = EMPTY_EXTRACTION[key]
+        if isinstance(expected, dict) and not isinstance(value, dict):
+            raise ValueError(f"delta 字段 {key} 必须是 object(dict)，实得 {type(value).__name__}")
+        if isinstance(expected, list):
+            if not isinstance(value, list):
+                raise ValueError(f"delta 字段 {key} 必须是 array(list)，实得 {type(value).__name__}")
+            # schema 里所有 list 字段都是 list-of-dict(economy_moves/new_armies/fiscal_*/issue_*/
+            # appointments/character_*/secret_order_* 等);apply 逐项 item.get() 落库,非 dict 项会
+            # 中途崩 → 部分已写半落库。落库前校验每项是 dict(CMR R3 gemini)。
+            for i, item in enumerate(value):
+                if not isinstance(item, dict):
+                    raise ValueError(
+                        f"delta 字段 {key}[{i}] 必须是 object(dict)，实得 {type(item).__name__}"
+                    )
+        if key in _NESTED_DICT_FIELDS:
+            for ent, sub in value.items():
+                if not isinstance(sub, dict):
+                    raise ValueError(
+                        f"delta 字段 {key}.{ent} 必须是 object(dict)，实得 {type(sub).__name__}"
+                    )
+
+
+def apply_office_appointment(
+    db: GameDB,
+    state: GameState,
+    content,
+    registry,
+    name: str,
+    new_office: str,
+    *,
+    reason: str = "",
+    new_office_type: str = "",
+    faction: str = "中立",
+    llm_config: Any = None,
+) -> Dict[str, object]:
+    """朝臣任命/调任的【唯一落地核】：在册且未死 → 改 active + 授官 + 顶替去重 + 同步内存/registry；
+    不在册 → apply_appointment 建新档。extractor 的 office_changes 与 CLI 自然语言任免 commit
+    共用此核，杜绝两份会漂的 copy（CMR R2 reground）。后宫纳妃语义不同，不走此核（见 appointments）。
+    返回结果 dict（rejected / kind=transfer|appoint / displaced 等）。"""
+    name = str(name or "").strip()
+    new_office = str(new_office or "").strip()
+    if not name or not new_office:
+        return {"name": name, "new_office": new_office, "rejected": True, "reason": "name 或 new_office 空"}
+    # 别名归一：自然语言/LLM 可能用别名（韩老、温首辅…），解析到在册大臣的规范 key，
+    # 否则 in_roster 按确切 key 漏判 → 误走新建档被 apply_appointment 拒（CMR R3 gemini）。
+    # _find_existing_minister 仅匹配在册 active 非后宫非 candidate 的大明大臣，命中才改名；
+    # candidate/不在册返 None → name 不变（candidate 仍由 in_roster 确切 key 命中走激活分支）。
+    if content is not None:
+        from ming_sim.session import _find_existing_minister
+        canon = _find_existing_minister(content, name)
+        if canon:
+            name = canon
+    in_roster = content is not None and name in content.characters
+    cur_status = db.get_character_status(name)[0] if in_roster else ""
+    if in_roster:
+        if cur_status == "dead":
+            return {"name": name, "new_office": new_office, "rejected": True, "reason": "人物已故，不能重新启用"}
+        old_office = content.characters[name].office
+        try:
+            if cur_status != "active":
+                db.set_character_status(state, name, "active", reason[:200] or "诏书任命")
+            db.set_character_office(
+                name, new_office, new_office_type,
+                source=reason[:60] or "诏书调任", llm_config=llm_config,
+            )
+        except Exception as exc:
+            return {"name": name, "new_office": new_office, "rejected": True, "reason": f"落库失败：{exc}"}
+        displaced_parts = _displace_duplicate_offices(db, content, name, new_office)
+        ch = content.characters[name]
+        ch.status = "active"
+        ch.office = normalize_office(new_office)
+        ch.office_type = infer_office_type_from_office(ch.office, new_office_type or ch.office_type, llm_config)
+        if registry is not None:
+            registry.refresh(name)
+            # 被顶替者 office/office_type 也变了,一并刷 Agent,免本回合后续用陈旧身份/工具(线上 gemini)。
+            for dp in displaced_parts:
+                registry.refresh(dp.split(":")[0])
+        return {
+            "name": name, "old_status": cur_status, "old_office": old_office, "new_office": new_office,
+            "kind": "transfer", "reason": reason,
+            **({"displaced": displaced_parts} if displaced_parts else {}),
+        }
+    # ── 新任：建新档（apply_appointment 对在册者会拒，故仅不在册走到这）──
+    if content is None:
+        return {"name": name, "new_office": new_office, "rejected": True, "reason": "无 content，跳过建档"}
+    from ming_sim.session import apply_appointment  # 延迟导入避循环
+    appt = {"name": name, "office": new_office, "faction": faction, "reason": reason, "approved": True}
+    # 建档抛错(DB 锁/唯一约束/注册失败)不得上抛崩月末结算致半落库(P1 铁律);
+    # 与 in_roster 分支同样兜成 rejected、把 exc 记进 reason(不静默吞)(线上 gemini high)。
+    try:
+        appointed, _ = apply_appointment(db, state, content, registry, appt, llm_config=llm_config)
+    except Exception as exc:
+        return {"name": name, "new_office": new_office, "rejected": True, "kind": "appoint",
+                "reason": f"建档抛出异常：{exc}；原 status={cur_status or '不在册'}"}
+    if appointed:
+        # 新任也按 office 文字去重(与 transfer 分支对称):新人占独占实职,从他人剔同名分项,
+        # 免占缺旧任者留旧官成双缺官(CMR R4：去 replaces 后新任分支漏了顶替)。
+        # displaced 统一取 _displace_duplicate_offices 的 List[str](apply_appointment 的单名
+        # displaced 在去 replaces 后恒空,留着会让本字段时而 str 时而 list,故弃)(线上 gemini)。
+        displaced_parts = _displace_duplicate_offices(db, content, appointed, new_office)
+        # 被顶替者一并刷 Agent(新任者 apply_appointment 内已注册)(线上 gemini)。
+        if registry is not None:
+            for dp in displaced_parts:
+                registry.refresh(dp.split(":")[0])
+        return {"name": appointed, "new_office": new_office, "kind": "appoint", "reason": reason,
+                **({"displaced": displaced_parts} if displaced_parts else {})}
+    return {"name": name, "new_office": new_office, "rejected": True, "kind": "appoint",
+            "reason": f"建档失败（查重/字段不合）；原 status={cur_status or '不在册'}"}
 
 
 def apply_score_extraction(
@@ -1007,11 +1153,14 @@ def apply_score_extraction(
     extracted: Dict[str, object],
     content=None,
     registry=None,
+    llm_config: Any = None,
 ) -> Dict[str, object]:
     """落地结算 agent 输出的 JSON 到 state 与 db。
 
     content/registry：若传入则处理 `appointments`——把诏书任命的新人建档入朝。
     缺省则跳过（向后兼容老调用）。"""
+    # 0) 落库前校验容器/二级类型,畸形值崩前拦住,不让前面字段半落库(#57)。
+    validate_delta_shape(extracted)
     # 1) metric_delta
     applied_metric = _apply_metric_dict(state, extracted.get("metric_delta") or {}, db=db)
     # 2) economy_moves
@@ -1066,7 +1215,7 @@ def apply_score_extraction(
         "new_issues": extracted.get("new_issues") or [],
         "close_issues": extracted.get("close_issues") or [],
         "cancels": extracted.get("cancels") or [],
-    })
+    }, llm_config=llm_config)
 
     # 6.4) fiscal_removes：推演彻底裁撤月固定收支项（罢税/裁俸），优先级最高，先于 creates/changes。
     #      含 dynamic（田赋/辽饷/盐税/商税/皇庄），后果玩家自负。删 base+rate 两行。
@@ -1158,7 +1307,7 @@ def apply_score_extraction(
                     "reason": str(item.get("reason") or ""),
                 })
                 continue
-            name, displaced = apply_appointment(db, state, content, registry, item)
+            name, displaced = apply_appointment(db, state, content, registry, item, llm_config=llm_config)
             if name:
                 applied_appointments.append({
                     "name": name,
@@ -1236,80 +1385,21 @@ def apply_score_extraction(
     #     extractor 不再分新任/调任，代码按 name 在不在册自判：
     #       在册且未死 → 任命/调任；不在册 → 建新档。
     #     后宫纳妃仍走 appointments（语义不同，见 section 8）。
+    #     落地核统一为 apply_office_appointment（与 CLI 自然语言任免 commit 共用，CMR R2 reground）。
     applied_office_changes: List[Dict[str, object]] = []
-    if content is not None:
-        from ming_sim.session import apply_appointment  # 延迟导入避循环
     # office_changes 本体 + 从 appointments 转来的朝臣项（spillover）
     office_change_items = list(extracted.get("office_changes") or []) + spillover_office_changes
     for item in office_change_items:
         if not isinstance(item, dict):
             continue
-        name = str(item.get("name") or "").strip()
-        new_office = str(item.get("new_office") or "").strip()
-        reason = str(item.get("reason") or "").strip()
-        if not name or not new_office:
-            applied_office_changes.append({
-                "name": name, "new_office": new_office, "rejected": True,
-                "reason": "name 或 new_office 空",
-            })
-            continue
-        in_roster = content is not None and name in content.characters
-        cur_status = db.get_character_status(name)[0] if in_roster else ""
-        if in_roster:
-            if cur_status == "dead":
-                applied_office_changes.append({
-                    "name": name, "new_office": new_office, "rejected": True,
-                    "reason": "人物已故，不能重新启用",
-                })
-                continue
-            # ── 在册任命/调任：改回 active 并授官 ──
-            new_type = str(item.get("new_office_type") or "").strip()
-            old_office = content.characters[name].office
-            try:
-                if cur_status != "active":
-                    db.set_character_status(state, name, "active", reason[:200] or "诏书任命")
-                db.set_character_office(name, new_office, new_type, source=reason[:60] or "诏书调任")
-            except Exception as exc:
-                applied_office_changes.append({
-                    "name": name, "new_office": new_office, "rejected": True,
-                    "reason": f"落库失败：{exc}",
-                })
-                continue
-            # 独缺顶替兜底：按 office 文字去重。新任者拿到的每个独占实职分项，
-            # 从其他 active 官员 office 里剔除同名分项（LLM 已判去重，此处仅防漏抽旧任者出现双缺官）。
-            displaced_parts = _displace_duplicate_offices(db, content, name, new_office)
-            ch = content.characters[name]
-            ch.status = "active"
-            ch.office = normalize_office(new_office)
-            ch.office_type = infer_office_type_from_office(ch.office, new_type or ch.office_type)
-            if registry is not None:
-                registry.refresh(name)
-            applied_office_changes.append({
-                "name": name, "old_status": cur_status, "old_office": old_office, "new_office": new_office,
-                "kind": "transfer", "reason": reason,
-                **({"displaced": displaced_parts} if displaced_parts else {}),
-            })
-            continue
-        # ── 新任：建新档（apply_appointment 对在册者会拒，故仅不在册走到这）──
-        if content is None:
-            continue
-        appt = {
-            "name": name, "office": new_office,
-            "faction": str(item.get("faction") or "中立"),
-            "reason": reason, "approved": True,
-        }
-        appointed, displaced = apply_appointment(db, state, content, registry, appt)
-        if appointed:
-            applied_office_changes.append({
-                "name": appointed, "new_office": new_office,
-                "kind": "appoint", "displaced": displaced, "reason": reason,
-            })
-        else:
-            applied_office_changes.append({
-                "name": name, "new_office": new_office, "rejected": True,
-                "kind": "appoint",
-                "reason": f"建档失败（查重/字段不合）；原 status={cur_status or '不在册'}",
-            })
+        applied_office_changes.append(apply_office_appointment(
+            db, state, content, registry,
+            str(item.get("name") or ""), str(item.get("new_office") or ""),
+            reason=str(item.get("reason") or ""),
+            new_office_type=str(item.get("new_office_type") or ""),
+            faction=str(item.get("faction") or "中立"),
+            llm_config=llm_config,
+        ))
 
     # 11) secret_order_updates：推演写 active 密令副作用（泄漏/反弹）到 sim_note。结案不走这里。
     applied_secret_orders: List[Dict[str, object]] = []

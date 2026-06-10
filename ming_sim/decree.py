@@ -167,7 +167,11 @@ def write_decree_with_agno(
     return text.strip()
 
 
-def advance_without_edict(state: GameState, db: GameDB) -> None:
+def advance_without_edict(state: GameState, db: GameDB, *, content=None, registry=None) -> None:
+    # 退朝未下正式诏书也是月末:先 commit 本回合暂存的结构化写动作(颁诏前未撤回即通过,
+    # ADR 0006),否则暂存成孤儿、随 next_period 永久丢失(CMR P1)。须在 next_period 前。
+    # content/registry 供 office(任免)落库注册新臣;无则任免落不了(标 failed,不静默)。
+    db.commit_pending_actions(state, content=content, registry=registry)
     apply_fixed_period_flows(db, state)
     message = f"本{TURN_UNIT}退朝未下正式圣旨，诸事仍待来{TURN_UNIT}处置。"
     db.record_log(state, message)
@@ -207,23 +211,18 @@ def resolve_directives(
             on_event(kind, data)
 
     if not directives:
-        advance_without_edict(state, db)
+        advance_without_edict(state, db, content=content, registry=registry)
         return ResolveResult(awaiting=False, report=f"本{TURN_UNIT}未颁正式诏书。")
 
     before_turn = state.turn
 
     # 草案内容已由拟诏合并进 decree_text，simulator 只读 decree_text，不再单传逐条草案。
 
-    # 1) 固定月度财政 tick（田赋/辽饷/军饷等，在 LLM 推演前落账）
-    tlog("结算 1/4 固定月度财政 tick")
-    _emit("stage", "固定月度财政入账")
-    apply_fixed_period_flows(db, state)  # 落账副作用；明细不再进 simulator payload（欠饷哗变走前置事件/issue）
-
-    # 1.6) 程序硬触发：标了 auto_trigger 的 seed 情势，gate 达标即由程序直接立项，
-    #      绕过 LLM 因果判定。放在 simulator 前，使硬立的 issue 当回合即进盘面被邸报叙述。
-    auto_triggered = auto_trigger_seed_issues(state, db)
-    if auto_triggered:
-        tlog(f"[AUTO-TRIGGER] 本回合程序硬立项 {len(auto_triggered)} 条：{[t.get('title') for t in auto_triggered]}")
+    # 1) 前括号确定性结算：固定月度财政 tick + auto_trigger 硬立 seed 情势（均在 LLM 推演前）。
+    #    与探针 driver 共用同一段（ADR 0004）。
+    auto_triggered = pre_settle(
+        state, db, on_stage=lambda label: _emit("stage", label),
+        content=content, registry=registry)
 
     # 1.8) 历史脉络：取近几回合章节记忆注入推演（章节记忆取代旧的关键词原子检索）。
     relevant_memories: List[Dict] = []
@@ -409,45 +408,144 @@ def _settle_after_narrative(
         extracted = {}
         extractor_output = f"[抽取失败] {exc}"
 
-    tlog("结算 4/4 落库 + inertia/ongoing")
-    _emit("stage", "落库与事项推进")
-    applied = apply_score_extraction(db, state, extracted, content=content, registry=registry)
+    # 后括号确定性结算核：与探针 driver 共用同一段（ADR 0004）。章节记忆 / 结局总评
+    # 作为注入回调传入（真实流程= LLM agent 闭包；driver= None 跳过）。
+    return settle_with_delta(
+        state,
+        db,
+        extracted,
+        before_turn=before_turn,
+        content=content,
+        registry=registry,
+        decree_text=decree_text,
+        narrative=narrative,
+        trace_narrative=effective_narrative,
+        extractor_input=extractor_input,
+        extractor_output=extractor_output,
+        chapter_recorder=lambda d, s, dt, nr, ap: record_chapter_memory(
+            create_chapter_memory_agent(llm_config, agno_db), d, s, dt, nr, ap
+        ),
+        ending_summarizer=lambda d, s, oc: _generate_ending_summary(
+            d, s, llm_config, agno_db, oc, _emit
+        ),
+        # 落库走捕获 llm_config 的闭包：issue/office 的通道感知 enrichment 才能按 active
+        # channel 选后端（cli_backend_active(llm_config)）；结算核本体仍不见 llm_config。
+        delta_applier=lambda d, s, ex, ct, rg: apply_score_extraction(
+            d, s, ex, content=ct, registry=rg, llm_config=llm_config
+        ),
+        on_stage=lambda label: _emit("stage", label),
+    )
 
-    # 4) 把 narrative 与诏书写入 turn_logs 作下月前文
+
+def pre_settle(
+    state: GameState, db: GameDB, *, on_stage=None, content=None, registry=None,
+) -> List[Dict[str, object]]:
+    """确定性结算「前括号」：固定月度财政 tick + auto_trigger 硬立 seed 情势，均在 LLM 推演前。
+
+    返回本回合程序硬触发的清单。真实流程与探针 driver 共用此核（ADR 0004）。
+    content/registry 供 office(任免)暂存动作落库注册新臣；driver 路径无聊天暂存，传 None 即 no-op。
+    """
+    # 动作闸门(ADR 0006)：颁诏最前批量落库本回合暂存的结构化聊天写动作（密令更新/催办/任免/…），
+    # 在跑 LLM 结算管线前，使 simulator/extractor 读到的盘面与旧「召对期直写」时序一致。
+    # driver 路径无聊天暂存 → 空 no-op。幂等（committed 行不重跑）。
+    committed = db.commit_pending_actions(state, content=content, registry=registry)
+    if committed:
+        tlog(f"[pending_actions] 颁诏批量落库 {len(committed)} 条：{[(c['kind'], c['action']) for c in committed]}")
+    tlog("结算 1/4 固定月度财政 tick")
+    if on_stage is not None:
+        on_stage("固定月度财政入账")
+    # 落账副作用；明细不再进 simulator payload（欠饷哗变走前置事件/issue）
+    apply_fixed_period_flows(db, state)
+    # 程序硬触发：标了 auto_trigger 的 seed 情势，gate 达标即由程序直接立项，绕过 LLM 因果判定。
+    auto_triggered = auto_trigger_seed_issues(state, db)
+    if auto_triggered:
+        tlog(f"[AUTO-TRIGGER] 本回合程序硬立项 {len(auto_triggered)} 条：{[t.get('title') for t in auto_triggered]}")
+    return auto_triggered
+
+
+def settle_with_delta(
+    state: GameState,
+    db: GameDB,
+    extracted: Dict[str, object],
+    *,
+    before_turn: int,
+    content=None,
+    registry=None,
+    decree_text: str = "",
+    narrative: str = "",
+    trace_narrative=None,
+    extractor_input: str = "",
+    extractor_output: str = "",
+    chapter_recorder=None,
+    ending_summarizer=None,
+    delta_applier=None,
+    on_stage=None,
+) -> str:
+    """确定性结算「后括号」：apply→turn_logs→章节记忆→inertia→clear→结局判定→next_period。
+
+    收一份**已规范化**的 extracted（英文 canonical key，见 simulation._canonicalize_extraction）。
+    不依赖 llm_config —— 章节记忆 / 结局总评 / 落库 enrichment 全经注入闭包：
+    章节记忆=chapter_recorder、结局总评=ending_summarizer、落库（含 issue/office 的
+    通道感知 enrichment）=delta_applier。真实流程传捕获 llm_config 的闭包；探针 driver 对
+    chapter_recorder/ending_summarizer 传 None（不产 LLM 叙事），对 delta_applier 传一个
+    **channel=api 确定性配置**的闭包（不走 legacy env enrichment,#54）——无论哪种,结算核
+    本体都不见 llm_config（ADR 0004）。返回 full_report 文本。
+
+    delta_applier(db, state, extracted, content, registry) -> applied dict；None 时回退到
+    `apply_score_extraction(llm_config=None)`——**不注入运行时通道**。注意裸 None 分支不等于
+    「绝对无 LLM」：apply_score_extraction 对 llm_config=None 仍按旧 env 后端判定
+    （`cli_backend_active(None)` 回落 `MING_SIM_LLM_BACKEND`），见
+    test_settle_none_branch_legacy_env_enriches。**探针 driver 已不走此裸 None 分支**——它注入
+    channel=api 的确定性 applier,无论 env 都不触发 legacy enrichment（#54，见
+    test_driver_run_settle_deterministic_under_legacy_env）。
+    """
+    if trace_narrative is None:
+        trace_narrative = narrative
+
+    def _stage(label: str) -> None:
+        if on_stage is not None:
+            on_stage(label)
+
+    tlog("结算 4/4 落库 + inertia/ongoing")
+    _stage("落库与事项推进")
+    if delta_applier is not None:
+        applied = delta_applier(db, state, extracted, content, registry)
+    else:
+        applied = apply_score_extraction(db, state, extracted, content=content, registry=registry)
+
+    # 把 narrative 与诏书写入 turn_logs 作下月前文
     db.record_log(state, narrative[:1200])
     db.save_turn_report(state, narrative)
     # 推演链原始输入/输出留痕，事后可追「该立的 issue 为何没立」。
     db.save_turn_extraction(
         state,
         decree_text=decree_text,
-        narrative=effective_narrative,  # 留痕含作弊段，便于事后追「为何这么落库」
+        narrative=trace_narrative,  # 留痕含作弊段，便于事后追「为何这么落库」
         extractor_input=extractor_input,
         extractor_output=extractor_output,
     )
 
-    # 5) 章节记忆：LLM 把本回合诏书+邸报+落库效果浓缩成一段叙事章节，落 event_memories
-    #    （chapter_summary）。失败有保底拼接，不抛断。
-    _emit("stage", "记起居注")
-    try:
-        chapter_agent = create_chapter_memory_agent(llm_config, agno_db)
-        record_chapter_memory(chapter_agent, db, state, decree_text, narrative, applied)
-    except Exception as exc:
-        tlog(f"[chapter-memory] 跳过：{exc}")
+    # 章节记忆：注入回调（真实流程= LLM 浓缩落 event_memories；driver= None 跳过）。失败不抛断。
+    _stage("记起居注")
+    if chapter_recorder is not None:
+        try:
+            chapter_recorder(db, state, decree_text, narrative, applied)
+        except Exception as exc:
+            tlog(f"[chapter-memory] 跳过：{exc}")
 
-    # 6) 落 inertia + ongoing (未被本月 issue_advances 触动的)
+    # 落 inertia + ongoing (未被本月 issue_advances 触动的)
     touched_ids = set()
     for adv in applied.get("issue_summary", {}).get("advances", []) or []:
         touched_ids.add(int(adv.get("issue_id") or 0))
     apply_issue_inertia_and_ongoing(db, state, touched_ids=touched_ids)
 
-    # 7) 开局负面帝国修正：本月若达成消除条件即清除（程序判定，不靠 LLM/时长）
+    # 开局负面帝国修正：本月若达成消除条件即清除（程序判定，不靠 LLM/时长）
     cleared = clear_gated_legacies(db, state)
     for name in cleared:
         db.record_log(state, f"帝国修正消除：{name}")
 
-    # 8) 结局判定：叙事型（退位/自尽，applied 已带）→ 数值型（京畿失守）→ 到期型（20 年/240 回合）。
-    #    state.turn 此刻仍是刚结算完的本回合（next_period 之前）。
-    #    结局只触发一次：已 ended 的存档继续推进时不重判、不重生总评（省 token、不反复弹页）。
+    # 结局判定：叙事型（退位/自尽，applied 已带）→ 数值型（京畿失守）→ 到期型（20 年/240 回合）。
+    #   state.turn 此刻仍是刚结算完的本回合（next_period 之前）。结局只触发一次。
     outcome = None
     ended = False
     ending_text = ""
@@ -466,8 +564,9 @@ def _settle_after_narrative(
         ended = isinstance(outcome, dict) and outcome.get("status") != ENDING_ONGOING
         if ended:
             db.record_log(state, f"结局判定：{outcome.get('summary', '')}")
-            # 章节记忆（含本回合）已落库，国史编纂官读全程生成结局总评。
-            ending_text = _generate_ending_summary(db, state, llm_config, agno_db, outcome, _emit)
+            # 章节记忆（含本回合）已落库，国史编纂官读全程生成结局总评（注入；driver 跳过）。
+            if ending_summarizer is not None:
+                ending_text = ending_summarizer(db, state, outcome)
             state.ended = True
             state.ending_status = str(outcome.get("status") or "")
 
