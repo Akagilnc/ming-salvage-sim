@@ -391,8 +391,12 @@ def test_resolve_turn_idempotent_at_awaiting(game, monkeypatch):
     db.clear_resolve_context(state.turn)
 
 
-def test_guarded_paths_still_commit_pending_actions(game):
-    """守门路径仍 commit 暂存动作——幂等安全，跳过=孤儿死行违 P1（cmr S4 r3 F4）。"""
+def test_guarded_early_return_does_not_consume_pending(game):
+    """守门早退不消费暂存动作（cmr S7 r5 改约）。
+
+    所有权规则：推进回合的终端写路（settle/advance/fallback）各自在 atomic 内 commit；
+    早退路事务外 commit 会造成跨事务半写。孤儿防线由终端路测试接管
+    （test_advance_paths_atomic 的 settle 回滚/HITL 重抽/fallback/advance 各条）。"""
     from ming_sim.decree import pre_settle
     from tests.test_pending_actions import _active_minister_name
     db, state, content = game
@@ -405,12 +409,12 @@ def test_guarded_paths_still_commit_pending_actions(game):
         state.turn, kind="secret_order", action="更新", minister_name=name, target_id=oid,
         payload={"new_title": "守门后标题", "new_content": "x", "deadline_months": 0})
 
-    out = pre_settle(state, db)  # 守门早退,但暂存不能成孤儿
+    out = pre_settle(state, db)  # 守门早退：不消费，留给终端路在 atomic 内落库
 
     assert out == []
     statuses = [r["status"] for r in db.conn.execute(
         "SELECT status FROM pending_actions WHERE turn=?", (state.turn,)).fetchall()]
-    assert statuses and all(s != "pending" for s in statuses)
+    assert statuses and all(s == "pending" for s in statuses)
 
 
 def test_write_decree_raises_at_awaiting_not_resolveresult(game):
