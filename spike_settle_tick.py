@@ -123,6 +123,7 @@ def run_tick(name, st, p, actions, expect=None):
     fh = p['火耗率']; bf = p['逋赋率']
     正赋火耗 = 正赋*fh; 三饷火耗 = 三饷*fh          # 三饷亦银征同有火耗(史实);另立分量(spec §9)
     火耗应派 = 正赋火耗 + 三饷火耗
+    r['正赋火耗'] = 正赋火耗; r['三饷火耗'] = 三饷火耗   # 分量显式入 r(sourcery R1:下游直接消费,不解析 stdout)
     r['实征'] = (正赋+三饷)*(1-bf); cash_in += r['实征']
     r['火耗实收'] = 火耗应派*(1-bf); cash['C_地方截留'] += r['火耗实收']; cash_in += r['火耗实收']
     r['民欠新增'] = (正赋+三饷)-r['实征']; claim['民欠旧赋'] += r['民欠新增']
@@ -191,7 +192,8 @@ def run_tick(name, st, p, actions, expect=None):
     print(f"[债务对账·独立oracle] {'PASS' if ok_debt else 'FAIL'}")
     # per-account C 对账 · 独立 oracle(r14/opus:下沉到原始 param 重算,不读 settlement 的 火耗应派/起运池 局部变量)
     实征_o = (正赋_o + p['三饷应征'])*(1-bf)
-    火耗应派_o = (正赋_o + p['三饷应征']) * fh      # 正赋火耗+三饷火耗,两分量均从 param 独立重算
+    正赋火耗_o = 正赋_o * fh; 三饷火耗_o = p['三饷应征'] * fh
+    火耗应派_o = 正赋火耗_o + 三饷火耗_o            # 与 settlement 同分量式相加(gemini R1:防浮点序差致极端量级对账漂移)
     起运池_o = min(实征_o, p['起运定额'])
     o_in = {'C_地方截留': 火耗应派_o*(1-bf), 'C_中饱': g*zb, 'C_漂没': 起运池_o*pm, 'C_eff损耗': 0.0}
     o_out = {ck: 0.0 for ck in C0}
