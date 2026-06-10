@@ -92,6 +92,17 @@ def test_section_result_merge_empty():
 # ApplyContext
 # ---------------------------------------------------------------------------
 
+@pytest.fixture
+def clean_rejections(game):
+    """game 基底是活存档 probe.db 副本——真实游玩可能已写入 rejection_reports。
+
+    收集器测试用绝对计数断言，必须从已知空表起步（cmr S0 r2 C-R2）。
+    """
+    db, state, content = game
+    db.conn.execute("DROP TABLE IF EXISTS rejection_reports")
+    return game
+
+
 def test_apply_context_holds_all_fields(game):
     """ApplyContext 持 db/state/content/registry（可 None）+ source。"""
     db, state, content = game
@@ -107,18 +118,18 @@ def test_apply_context_holds_all_fields(game):
 # RejectionCollector — 缓冲与 flush
 # ---------------------------------------------------------------------------
 
-def test_rejection_collector_flush_before_record_leaves_db_empty(game):
+def test_rejection_collector_flush_before_record_leaves_db_empty(clean_rejections):
     """flush 前 DB 中无 rejection_reports 行。"""
-    db, state, content = game
+    db, state, content = clean_rejections
     rc = RejectionCollector()
     rc.flush_to_db(db)
     count = db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0]
     assert count == 0
 
 
-def test_rejection_collector_flush_writes_rows(game):
+def test_rejection_collector_flush_writes_rows(clean_rejections):
     """record 两项后 flush_to_db，DB 落 2 行，字段内容正确。"""
-    db, state, content = game
+    db, state, content = clean_rejections
     rc = RejectionCollector()
 
     ri1 = RejectedItem(
@@ -149,9 +160,9 @@ def test_rejection_collector_flush_writes_rows(game):
     assert rows[1][2] == "invalid_enum"
 
 
-def test_rejection_collector_flush_clears_buffer(game):
+def test_rejection_collector_flush_clears_buffer(clean_rejections):
     """flush 后缓冲清空，再次 flush 不写新行。"""
-    db, state, content = game
+    db, state, content = clean_rejections
     rc = RejectionCollector()
     ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
     rc.record("metric_delta", ri, turn=state.turn)
@@ -161,9 +172,9 @@ def test_rejection_collector_flush_clears_buffer(game):
     assert count == 1  # 只有第一次 flush 的 1 行
 
 
-def test_rejection_collector_flush_stores_item_as_json(game):
+def test_rejection_collector_flush_stores_item_as_json(clean_rejections):
     """原 item dict 以 JSON 字符串存入 DB，可反序列化。"""
-    db, state, content = game
+    db, state, content = clean_rejections
     rc = RejectionCollector()
     raw = {"id": "xyz", "manpower": 999}
     ri = RejectedItem(item=raw, reason="r", category="hallucinated_id", source=Provenance.unknown)
@@ -231,12 +242,12 @@ def test_mirror_to_jsonl_empty_buffer_writes_nothing(tmp_path):
 # ADR 0008 决定 5：flush 在事务内（随回滚）；mirror 仅在 commit 成功后。
 # ---------------------------------------------------------------------------
 
-def test_flush_then_mirror_writes_jsonl(game, tmp_path):
+def test_flush_then_mirror_writes_jsonl(clean_rejections, tmp_path):
     """规定调用序 record → flush(事务内) → commit → mirror：jsonl 必须有行。
 
     回归 cmr S0 r1 F1：flush 清缓冲导致 commit 后 mirror 静默写零行。
     """
-    db, state, content = game
+    db, state, content = clean_rejections
     rc = RejectionCollector()
     ri = RejectedItem(
         item={"id": "ghost"}, reason="不存在", category="hallucinated_id",
@@ -256,9 +267,9 @@ def test_flush_then_mirror_writes_jsonl(game, tmp_path):
     assert row["turn"] == 7
 
 
-def test_mirror_idempotent_after_flush(game, tmp_path):
+def test_mirror_idempotent_after_flush(clean_rejections, tmp_path):
     """同一批行 mirror 两次只写一次（已镜像的行不重复 append）。"""
-    db, state, content = game
+    db, state, content = clean_rejections
     rc = RejectionCollector()
     ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
     rc.record("metric_delta", ri, turn=1)
@@ -285,9 +296,9 @@ def test_unflushed_rows_never_mirrored(tmp_path):
     assert not os.path.exists(out)
 
 
-def test_reset_discards_pending_and_flushed(game, tmp_path):
+def test_reset_discards_pending_and_flushed(clean_rejections, tmp_path):
     """reset()（回滚路径）丢弃缓冲与已 flush 快照，之后 flush/mirror 均无输出。"""
-    db, state, content = game
+    db, state, content = clean_rejections
     rc = RejectionCollector()
     ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
     rc.record("metric_delta", ri, turn=1)
@@ -306,12 +317,12 @@ def test_reset_discards_pending_and_flushed(game, tmp_path):
     assert not os.path.exists(out)
 
 
-def test_record_accepts_plain_string_source(game):
+def test_record_accepts_plain_string_source(clean_rejections):
     """source 传普通字符串不崩（运行时不查注解），落库归一为枚举值字符串。
 
     回归 cmr S0 r1 F3：rejected_item.source.value 对 str 抛 AttributeError。
     """
-    db, state, content = game
+    db, state, content = clean_rejections
     rc = RejectionCollector()
     ri = RejectedItem(item={}, reason="r", category="invalid_enum", source="player_decree")
     rc.record("metric_delta", ri, turn=1)
@@ -320,9 +331,59 @@ def test_record_accepts_plain_string_source(game):
     assert src == "player_decree"
 
 
-def test_record_rejects_unknown_source_string(game):
+def test_record_rejects_unknown_source_string():
     """source 传非法字符串响亮报错（fail-loud，不静默落非法值）。"""
     rc = RejectionCollector()
     ri = RejectedItem(item={}, reason="r", category="invalid_enum", source="not_a_provenance")
     with pytest.raises(ValueError):
         rc.record("metric_delta", ri, turn=1)
+
+
+# ---------------------------------------------------------------------------
+# 环境不变式 pin（cmr S0 r2）
+# ---------------------------------------------------------------------------
+
+def test_collector_counts_deterministic_on_polluted_save(game):
+    """活存档已带 rejection_reports 行时，clean 起步后计数仍确定（cmr S0 r2 C-R2）。
+
+    模拟「真实游玩写入拒收行后的 probe.db」：先污染再清场，断言计数从 0 起。
+    """
+    db, state, content = game
+    rc0 = RejectionCollector()
+    ri = RejectedItem(item={}, reason="既有行", category="invalid_enum", source=Provenance.unknown)
+    rc0.record("army_delta", ri, turn=3)
+    rc0.flush_to_db(db)
+    db.conn.commit()  # 污染已提交，等价于游玩过的存档
+
+    db.conn.execute("DROP TABLE IF EXISTS rejection_reports")  # clean_rejections 同款清场
+
+    rc = RejectionCollector()
+    rc.record("metric_delta", ri, turn=1)
+    rc.flush_to_db(db)
+    count = db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0]
+    assert count == 1
+
+
+def test_ddl_in_open_transaction_rolls_back(game):
+    """CREATE TABLE 在打开的事务内不隐式 commit，且随 rollback 撤销。
+
+    S1 事务包裹依赖此行为（flush_to_db 的建表在事务中段执行）。
+    实证基线 python3.14.5/sqlite3.53.1；环境回归此处先咬。
+    """
+    db, state, content = game
+    db.conn.execute("DROP TABLE IF EXISTS rejection_reports")
+    db.conn.commit()
+
+    db.conn.execute("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('ddl_pin_probe', '1')")
+    assert db.conn.in_transaction
+    rc = RejectionCollector()
+    ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
+    rc.record("metric_delta", ri, turn=1)
+    rc.flush_to_db(db)  # 事务中段建表+写行
+    assert db.conn.in_transaction  # DDL 没有隐式 commit
+
+    db.conn.rollback()
+    tbl = db.conn.execute(
+        "SELECT name FROM sqlite_master WHERE name='rejection_reports'"
+    ).fetchone()
+    assert tbl is None  # 建表本身随事务回滚
