@@ -1,8 +1,8 @@
-# 省级财政基座 · 草表 v22(spike G1–G21f · 输入校验面完整)
+# 省级财政基座 · 草表 v23(spike G1–G22 · 三饷计火耗)
 
 > **范围:仅锁单省 spine(陕西);跨省 hub deferred;`拨付net/gross` 为 tick 外部入参(测试默认 0)。**
 > **对账方法学(r13–r15 逐层返工锤定)**:三类断言(现金守恒/债务 per-account/C per-account)的期望值**全用独立 oracle**——只从 tick 输入(`st` 开账快照 + `p` params + `actions`)重算,**绝不读 settlement 的任何中间量**(火耗应派/起运池/实征/k/省内可支)。否则校验项与被校验项同源=tautology,一致 relabel 照样过(opus 逐层逮到三层:per-account 流水→上游 param→力度系数 k)。
-> spike **G1–G21f 全 PASS**(5层断言+输入校验面完整[action字段/rate/param量纲/开账stock 负值全 fail-loud];r21 补 param/stock 负值校验,防负Due/负起运/负拨付凭空生钱);自变异实证:中饱→省库、火耗→省库、军饷新债→官俸欠、虚增火耗×2、起运去 clamp、k 砍半 —— **现金/总量守恒全 PASS,但独立 oracle 当场 FAIL**。残留仅 `o_pool` 读省内可支(C-oracle 兜底,已注释)。
+> spike **G1–G22 全 PASS**(5层断言+输入校验面完整[action字段/rate/param量纲/开账stock 负值全 fail-loud];r21 补 param/stock 负值校验,防负Due/负起运/负拨付凭空生钱);自变异实证:中饱→省库、火耗→省库、军饷新债→官俸欠、虚增火耗×2、起运去 clamp、k 砍半、漏三饷火耗、三饷火耗×2 —— **现金/总量守恒全 PASS,但独立 oracle 当场 FAIL**。残留仅 `o_pool` 读省内可支(C-oracle 兜底,已注释)。
 > 评审 r1–r15(panel=codex/agy/opus/sonnet)。决策见 [ADR 0007](adr/0007-province-fiscal-substrate-ai-judged.md)。⚠️=待精验。
 
 ## 0. 账户模型(三类 · spike 口径)
@@ -22,7 +22,7 @@
       拨付以 gross 入(net→省库、中饱→C_中饱,均留 ΣCASH 内)。
 ```
 **断言用「独立 oracle」(r13/opus 关键:期望值必须从 tick 输入参数独立重算,不能用落账时同源记的流水——否则校验项与被校验项穿一条裤子=tautology,一致 relabel 照样过)**:
-**C 灰账 per-account · 独立 oracle**:每个 C_ 子账户期望从 params 重算 —`C_中饱应得≡拨付gross×中饱率`、`C_漂没应得≡起运池×漂没率`、`C_地方截留应得≡火耗应派×(1−逋赋率)−挪借出`、`C_eff损耗应得≡Σ(transfer actual×(1−eff))`;断言 `实际落账==应得`。
+**C 灰账 per-account · 独立 oracle**:每个 C_ 子账户期望从 params 重算 —`C_中饱应得≡拨付gross×中饱率`、`C_漂没应得≡起运池×漂没率`、`C_地方截留应得≡火耗应派×(1−逋赋率)−挪借出`(火耗应派=(正赋+三饷)×火耗率,v23)、`C_eff损耗应得≡Σ(transfer actual×(1−eff))`;断言 `实际落账==应得`。
 **债务 per-account · 独立 oracle**:从 Due(param)+claim0+action入参 重跑 waterfall/偿还,固定科目映射(军饷→军饷欠…),断言每科目 `claim==重算值`。
 > **自变异实证(spike)**:中饱→省库、火耗实收→省库、军饷新债→官俸欠 三种**一致 relabel**(落账+记账同步搬),现金/总量守恒全 PASS,但独立 oracle 的 per-account C / 债务 **当场 FAIL**。旧的「同源流水」式(v13)放过这些,独立 oracle 堵住。
 **每笔 `transfer_to` 三方平**:`source减 = target增(actual×eff) + C_eff损耗增(actual×(1−eff))`(`actual=min(amount,source)`;BOUNDARY 账户 民间/京/受款方 **无余额 clamp**)。
@@ -45,10 +45,10 @@ k=action力度系数(ΣCost仅含action银,Due不入;Cost>0 action其 delta/scal
 见 [spike_settle_tick.py](../spike_settle_tick.py),已执行,残差均 0:
 - **G1** 基线 · **G2** 补饷 k=0.333(死亡螺旋+无双扣)· **G3** 清丈(官民田3050→3350,当 tick 扣成本2)· **G4** 挪借火耗(C 内部转移)· **G5** 漂没.1+中饱.1+拨付30(漂没→C_漂没/中饱→C_中饱/net→省库)· **G6** 超额补饷 clamp(欠5补30只还5)· **G7** 清欠(民间补缴现金入)。
 - **G8** 挪借 eff=0.8 → 激活 C_eff损耗(2→损耗账户),per-account 对账平。
-- **G9** 三 tick 链(穷省+recurring 营建):死亡螺旋实显——军饷欠 30→97→133、火耗在 C_地方截留 累积 8.4→16.8→25.2(官绅肥/官衙穷),每 tick 三断言均 PASS。
-- **G10** 追赃 · **G11** 多 costed 共享 k · **G12** 赈济 Due>0 · **G13** 拨付+追赃同 tick · **G14** 动态税基(清丈抬税基)· **G15** 双债户偿还序(军饷>官俸)· **G16** 清丈枯竭+土地守恒 · **G17** 赈济饿死(unmet_relief)。
+- **G9** 三 tick 链(穷省+recurring 营建):死亡螺旋实显——军饷欠 30→97→133、火耗在 C_地方截留 累积 9.8→19.6→29.4(官绅肥/官衙穷),每 tick 三断言均 PASS。
+- **G10** 追赃 · **G11** 多 costed 共享 k · **G12** 赈济 Due>0 · **G13** 拨付+追赃同 tick · **G14** 动态税基(清丈抬税基)· **G15** 双债户偿还序(军饷>官俸)· **G16** 清丈枯竭+土地守恒 · **G17** 赈济饿死(unmet_relief)· **G22** 三饷火耗分量(三饷30→C_地方截留12.6,漏派必 FAIL)。
 - **5 层断言**:现金守恒 / 债务 per-account oracle / C per-account oracle / **末态硬期望常量(第4类独立锚)** / **土地守恒(Δ(官民田+隐田)=0)**;+ 输入校验 fail-loud(eff/amount/cost/rates 越界、补饷带 amount → raise);+ 输出 `unmet_relief`。
-- **自变异实证(全被某层 FAIL)**:中饱→省库、火耗→省库、军饷新债→官俸欠、虚增火耗×2、起运去 clamp、k 砍半、补饷只减欠不扣省库、清丈×2、偿还序 flip、清丈凭空造地、unmet 漏算。
+- **自变异实证(全被某层 FAIL)**:中饱→省库、火耗→省库、军饷新债→官俸欠、虚增火耗×2、起运去 clamp、k 砍半、补饷只减欠不扣省库、清丈×2、偿还序 flip、清丈凭空造地、unmet 漏算、漏三饷火耗、三饷火耗×2。
 - 仍待补(port TODO):recurring k=0 停工语义、跨 tick「期初==上tick期末」断言、arrears_allowed。
 
 ## 6.7 可执行 spike(golden 种子)
@@ -71,7 +71,7 @@ k=action力度系数(ΣCost仅含action银,Due不入;Cost>0 action其 delta/scal
 **史实校准(spec §1 已标⚠️,port 前必做):**
 - spike base 数值是**游戏校准占位、比率关系对、绝对量级偏史实约 3–10×**(正赋 720万/年 vs 陕西实际约150–250万),`官民田` 单位=万亩;port 时按 Sources[1][2] 重标,勿把占位当史实锚点。
 - **三饷按时间线拆**:辽饷(万历末起,崇祯四年增)/剿饷(崇祯十年,1637)/练饷(**崇祯十二年,1639** —— 杨嗣昌十一年议、十二年行;原误作十一年),seed 不能把三者都当开局常量;字段可叫 `三饷应征` 但分量分时间线注入。1629 开局只该有辽饷。
-- **火耗仅派正赋是有意简化**(`火耗应派=正赋×火耗率`):史实上三饷亦以银征、同样有火耗。当前只对正赋计火耗是刻意从简,**勿当 bug 修**(改了会破全部 golden);如要更全,三饷火耗另立分量。
+- **三饷计火耗(2026-06-10 拍板,v23 实装)**:`火耗应派=正赋火耗+三饷火耗=(正赋+三饷)×火耗率`,两分量另立(三饷分量随辽/剿/练饷时间线注入而消长)。史实依据:三饷亦以银征、同样加耗。v22 前曾误标「有意简化」——该取舍从未真正决策过;补全后 golden 全部手推重算(base 参数下 C_地方截留 8.4→9.8,差值=三饷火耗 10×0.2×0.7=1.4),G22 专钉三饷分量(漏派则必 FAIL)。
 
 **port TODO(spike→真引擎时补,非当前 spine 缺陷):**
 - recurring obligation 持久化:k=0(穷省)时军事/俸禄类强制转 Due 成债(停饷即叛),工程营建类挂起进度 0——需 spec 显式锁。
