@@ -335,3 +335,34 @@ def test_web_directive_endpoints_409_when_frozen(monkeypatch):
         asyncio.run(web_app.api_confirm_directive(1))
     assert ei.value.status_code == 409
     assert "结算" in str(ei.value.detail)
+
+
+def test_shape_garbage_extractor_product_aborts_loudly(game, monkeypatch, tmp_path):
+    """shape 垃圾的 extractor 产物走 S6 中止机制（pack+SettlementAbort），不裸抛 ValueError（ship-pre r4）。
+
+    裸 ValueError 没人接：CLI 原始 traceback 崩出、无错误包——validate 的 docstring
+    引过的真实战例（RT-1/Gemini R2）正是这类。
+    """
+    from ming_sim.exceptions import SettlementAbort
+    from tests.test_resolve_context_recovery import _drive_settle_after_narrative
+    import ming_sim.decree as dm
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    # stub extractor 返回 shape 垃圾（region_delta 应为 dict 实得 list）
+    monkeypatch.setattr(dm, "create_season_simulator_agent", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "create_score_extractor_module_agent", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "build_extractor_shared_context", lambda *a, **k: "ctx")
+    monkeypatch.setattr(dm, "extract_scores_by_modules_with_agno",
+                        lambda *a, **k: ({"region_delta": ["garbage"]}, "o", "i"))
+
+    with pytest.raises(SettlementAbort) as ei:
+        dm._settle_after_narrative(
+            state, db, None, None,
+            "诏", "邸报", {}, [], [],
+            state.turn, lambda *a: None,
+            content=content, registry=None,
+        )
+    assert ei.value.stage == "extract"
+    assert db.get_resolve_context(state.turn) is None  # 垃圾未入真源

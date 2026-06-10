@@ -988,6 +988,18 @@ function App() {
         />
       ) : null}
 
+      {/* 恢复入口（ship-pre r4）：崩溃/中止后重载时相位停在 settling——last_decree 已被
+          begin_turn 清空、盖玺按钮藏在非空诏文之后、write_decree 又拒恢复态，没有这个
+          按钮 web 玩家永远够不到 resolve_turn 的恢复分流（重放/重新推演由后端自行分辨）。 */}
+      {!settling && state.turn.phase === "settling" ? (
+        <div className="recovery-banner">
+          <span>上月结算未完成（进度已保存）。</span>
+          <button className="seal-btn-issue" onClick={issueDecree} disabled={!!busy}>
+            续跑结算
+          </button>
+        </div>
+      ) : null}
+
       {cheatOpen ? (
         <CheatConsole
           directive={cheatDirective}
