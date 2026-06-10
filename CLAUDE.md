@@ -54,3 +54,4 @@ hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`�
 ## 规则
 - 所有 user-facing 输出用中文。
 - 改仓库内容前要明确授权（沿用全局 `~/.claude/CLAUDE.md`）。
+- **PR 合并默认 merge commit，尽量不 squash**（用户 2026-06-10 明示：没有「干净历史」洁癖，逐 commit 过程史比 main 整洁重要；squash 唯一一次是 #72，导致 22 轮评审迭代史只活在 probe/tianmu-fiscal 分支上——该分支因此保留勿删）。
