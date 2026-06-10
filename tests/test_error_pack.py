@@ -261,3 +261,31 @@ def test_pack_write_interrupt_propagates_as_interrupt(game, tmp_path, monkeypatc
         _drive_settle_after_narrative(db, state, content, monkeypatch,
                                       extractor_behavior="fail",
                                       error_pack_dir=tmp_path)
+
+
+def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
+    """SettlementAbort 在 /api/decree/issue 回结构化非 500，玩家看得到指引（cmr S6 r2 codex）。"""
+    import asyncio
+    from fastapi import HTTPException
+    import web_app
+    from ming_sim.exceptions import SettlementAbort
+
+    class _StubSession:
+        def resolve_turn(self, cheat_directive=""):
+            raise SettlementAbort(
+                "本月结算失败，进度已保存，可重试。\n错误包已生成：/tmp/x\n请把该文件夹发给作者，以便排查。",
+                turn=3, stage="extract", error_pack_path="/tmp/x")
+
+    class _StubGame:
+        session = _StubSession()
+        class state:
+            ended = False
+
+    monkeypatch.setattr(web_app, "get_game", lambda: _StubGame())
+
+    with pytest.raises(HTTPException) as ei:
+        asyncio.run(web_app.api_issue_decree())
+
+    assert ei.value.status_code != 500
+    assert "可重试" in str(ei.value.detail)
+    assert "错误包" in str(ei.value.detail)
