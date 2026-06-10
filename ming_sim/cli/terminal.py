@@ -299,6 +299,13 @@ def review_directives(session: GameSession) -> str:
             print_all_skill_cards(session.db)
             continue
         if lowered in {"issue", "颁布", "颁布诏书", "发布", "拟诏"}:
+            from ming_sim.session import FRONT_HALF_DONE_PHASES
+            if session.state.turn_phase in FRONT_HALF_DONE_PHASES:
+                # 恢复态：上月结算未完成（崩溃/中止后），跳过拟诏直接续跑结算——
+                # resolve_turn 的恢复分流自己决定重放/重新推演/回放决策点
+                # （ship-pre r3：write_decree 在此态必拒，不开此口 CLI 永远够不到恢复入口）。
+                print("\n检测到上月结算未完成，续跑结算……")
+                return "issue"
             if pending:
                 print(f"尚有 {len(pending)} 道大臣拟旨待核定（confirm/reject），不能颁诏。")
                 continue
