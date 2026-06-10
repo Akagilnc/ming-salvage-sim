@@ -27,7 +27,7 @@ from ming_sim.applier import atomic
 from ming_sim.constants import TURN_UNIT
 from ming_sim.context import ENDING_LABELS, ENDING_ONGOING, ENDING_TIMEOUT, victory_status
 from ming_sim.db import GameDB
-from ming_sim.error_pack import settlement_abort_message, write_error_pack
+from ming_sim.error_pack import clear_for_resimulation, settlement_abort_message, write_error_pack
 from ming_sim.exceptions import LLMContractError, LLMUnavailable, SettlementAbort
 from ming_sim.flows import apply_fixed_period_flows
 from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction, auto_trigger_seed_issues, clear_gated_legacies, validate_delta_shape
@@ -430,6 +430,35 @@ def resolve_settling_recovery(
     # （cmr S7 r1；advance_without_edict 同款不变式）。
     db.commit_pending_actions(state, content=content, registry=registry)
 
+    try:
+        report = _replay_settle(
+            state, db, agno_db, llm_config, extracted,
+            before_turn=before_turn, decree_text=decree_text, narrative=narrative,
+            content=content, registry=registry, _emit=_emit,
+        )
+    except SettlementAbort:
+        # 重放炸 = 值级毒 delta（shape 门挡不住）。不清 context 的话每次重试同样重放
+        # 同样炸=永久软死锁（ADR 决定 6 预言）；原 delta 已在错误包留档不丢证据，
+        # 清掉让下次重试自然走重新推演（决定 6 逃生口在此接线，cmr S7 r2）。
+        clear_for_resimulation(db, before_turn)
+        raise
+    return ResolveResult(awaiting=False, report=report)
+
+
+def _replay_settle(
+    state: GameState,
+    db: GameDB,
+    agno_db: SqliteDb,
+    llm_config: LLMConfig,
+    extracted: Dict[str, object],
+    *,
+    before_turn: int,
+    decree_text: str,
+    narrative: str,
+    content,
+    registry,
+    _emit: Callable[[str, str], None],
+) -> str:
     report = settle_with_delta(
         state,
         db,
@@ -451,7 +480,7 @@ def resolve_settling_recovery(
         ),
         on_stage=lambda label: _emit("stage", label),
     )
-    return ResolveResult(awaiting=False, report=report)
+    return report
 
 
 def persist_resolve_context(
@@ -965,9 +994,20 @@ def resolve_decisions_phase2(
     ctx = db.get_resolve_context(state.turn)
     if ctx is None:
         raise LLMContractError("无待决推演上下文，无法续跑结算（phase1 未暂停或已结算）。")
+    before_turn = state.turn
+    if ctx.get("extracted") is not None:
+        # ready context = 上次 phase2 已抽取并持久化、settle 曾中止。直入重放，不重跑贵的
+        # simulator/extractor（决定 3；重抽还会 upsert 覆盖 ready 真源，cmr S7 r2 codex）。
+        # 亲裁指令已在上次抽取时拼进 narrative 并体现在 ready delta 中。重放炸 →
+        # resolve_settling_recovery 的逃生口清 context，下次重试重新推演。
+        result = resolve_settling_recovery(
+            state, db, agno_db, llm_config, ctx,
+            on_event=on_event, content=content, registry=registry,
+        )
+        db.clear_pending_decisions(before_turn)
+        return result.report
     decisions = db.list_pending_decisions(state.turn)
     decision_directive = _format_decision_directive(decisions)
-    before_turn = state.turn
     report = _settle_after_narrative(
         state, db, agno_db, llm_config,
         decree_text=str(ctx["decree_text"]),
