@@ -709,3 +709,27 @@ def test_fallback_path_commits_pending(game, monkeypatch):
         "SELECT status FROM pending_actions WHERE turn=? AND target_id=?",
         (turn, oid)).fetchone()
     assert row is not None and row["status"] != "pending"  # 终端路落库，不留孤儿
+
+
+def test_recovery_restores_last_decree_for_web_display(game, monkeypatch):
+    """重放路恢复 session.last_decree——跨进程恢复后 web 响应诏书字段不为空（cmr S7 r7）。"""
+    import ming_sim.decree as dm
+
+    db, state, content = game
+    turn = state.turn
+    dm.pre_settle(state, db, content=content)
+    dm.persist_resolve_context(
+        db, turn, {"metric_delta": {"民心": -1}},
+        decree_text="崩溃前诏书全文", narrative="n",
+        simulator_payload={}, secret_orders=[], relevant_memories=[],
+    )
+
+    def _must_not_run(*a, **k):
+        raise AssertionError("不应重跑")
+    monkeypatch.setattr(dm, "simulate_season_with_payload", _must_not_run)
+    monkeypatch.setattr(dm, "extract_scores_by_modules_with_agno", _must_not_run)
+
+    sess = _recovery_session(db, state, content, monkeypatch)
+    assert sess.last_decree == ""  # 跨进程恢复：内存里没有
+    sess.resolve_turn()
+    assert sess.last_decree == "崩溃前诏书全文"
