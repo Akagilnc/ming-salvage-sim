@@ -2,7 +2,7 @@
 
 > **范围:仅锁单省 spine(陕西);跨省 hub deferred;`拨付net/gross` 为 tick 外部入参(测试默认 0)。**
 > **对账方法学(r13–r15 逐层返工锤定)**:三类断言(现金守恒/债务 per-account/C per-account)的期望值**全用独立 oracle**——只从 tick 输入(`st` 开账快照 + `p` params + `actions`)重算,**绝不读 settlement 的任何中间量**(火耗应派/起运池/实征/k/省内可支)。否则校验项与被校验项同源=tautology,一致 relabel 照样过(opus 逐层逮到三层:per-account 流水→上游 param→力度系数 k)。
-> spike **G1–G22 全 PASS**(5层断言+输入校验面完整[action字段/rate/param量纲/开账stock 负值全 fail-loud];r21 补 param/stock 负值校验,防负Due/负起运/负拨付凭空生钱);自变异实证:中饱→省库、火耗→省库、军饷新债→官俸欠、虚增火耗×2、起运去 clamp、k 砍半、漏三饷火耗、三饷火耗×2 —— **现金/总量守恒全 PASS,但独立 oracle 当场 FAIL**。残留仅 `o_pool` 读省内可支(C-oracle 兜底,已注释)。
+> spike **G1–G22 全 PASS**(5层断言+输入校验面完整[action字段/rate/param量纲/开账stock 负值全 fail-loud];r21 补 param/stock 负值校验,防负Due/负起运/负拨付凭空生钱);自变异实证:中饱→省库、火耗→省库、军饷新债→官俸欠、虚增火耗×2、起运去 clamp、k 砍半、漏三饷火耗、三饷火耗×2、清丈两侧同搬税基(官民田_o 重放咬)、NaN Due 吞池(入口非有限拦) —— **现金/总量守恒全 PASS,但独立 oracle/入口校验当场 FAIL**。残留仅 `o_pool` 读省内可支(C-oracle 兜底,已注释;v23.1 起 `正赋_o` 改用 st+actions 独立重放的 `官民田_o`,堵清丈两侧同搬税基——此前第二处同源残留,ship 对抗评审 Claude+Codex 双源点名)。
 > 评审 r1–r15(panel=codex/agy/opus/sonnet)。决策见 [ADR 0007](adr/0007-province-fiscal-substrate-ai-judged.md)。⚠️=待精验。
 
 ## 0. 账户模型(三类 · spike 口径)
@@ -46,7 +46,7 @@ k=action力度系数(ΣCost仅含action银,Due不入;Cost>0 action其 delta/scal
 - **G1** 基线 · **G2** 补饷 k=0.333(死亡螺旋+无双扣)· **G3** 清丈(官民田3050→3350,当 tick 扣成本2)· **G4** 挪借火耗(C 内部转移)· **G5** 漂没.1+中饱.1+拨付30(漂没→C_漂没/中饱→C_中饱/net→省库)· **G6** 超额补饷 clamp(欠5补30只还5)· **G7** 清欠(民间补缴现金入)。
 - **G8** 挪借 eff=0.8 → 激活 C_eff损耗(2→损耗账户),per-account 对账平。
 - **G9** 三 tick 链(穷省+recurring 营建):死亡螺旋实显——军饷欠 30→61→97→133(期初→各tick末态)、火耗在 C_地方截留 累积 9.8→19.6→29.4(官绅肥/官衙穷),每 tick 5 层断言均 PASS。
-- **G10** 追赃 · **G11** 多 costed 共享 k · **G12** 赈济 Due>0 · **G13** 拨付+追赃同 tick · **G14** 动态税基(清丈抬税基)· **G15** 双债户偿还序(军饷>官俸)· **G16** 清丈枯竭+土地守恒 · **G17** 赈济饿死(unmet_relief)· **G22** 三饷火耗分量(三饷30→C_地方截留12.6,漏派必 FAIL)。
+- **G10** 追赃 · **G11** 多 costed 共享 k · **G12** 赈济 Due>0 · **G13** 拨付+追赃同 tick · **G14** 动态税基(清丈抬税基)· **G15** 双债户偿还序(军饷>官俸)· **G16** 清丈枯竭+土地守恒 · **G17** 赈济饿死(unmet_relief)· **G22** 三饷火耗分量(三饷30→C_地方截留12.6,漏派必 FAIL)· **G22b** 三饷=0 退化边界 · **G21i–o** 负/非有限 开账 CLAIM·Due·param raise(各验守门消息)。v23.1:全部 value golden 钉 `省库库银` 末态(「债清钱没出」类 bug 原仅 2/20 兜底);FAIL 退出码 1。
 - **5 层断言**:现金守恒 / 债务 per-account oracle / C per-account oracle / **末态硬期望常量(第4类独立锚)** / **土地守恒(Δ(官民田+隐田)=0)**;+ 输入校验 fail-loud(eff/amount/cost/rates 越界、补饷带 amount → raise);+ 输出 `unmet_relief`。
 - **自变异实证(全被某层 FAIL)**:中饱→省库、火耗→省库、军饷新债→官俸欠、虚增火耗×2、起运去 clamp、k 砍半、补饷只减欠不扣省库、清丈×2、偿还序 flip、清丈凭空造地、unmet 漏算、漏三饷火耗、三饷火耗×2。
 - 仍待补(port TODO):recurring k=0 停工语义、跨 tick「期初==上tick期末」断言、arrears_allowed。
@@ -76,6 +76,9 @@ k=action力度系数(ΣCost仅含action银,Due不入;Cost>0 action其 delta/scal
 **port TODO(spike→真引擎时补,非当前 spine 缺陷):**
 - recurring obligation 持久化:k=0(穷省)时军事/俸禄类强制转 Due 成债(停饷即叛),工程营建类挂起进度 0——需 spec 显式锁。
 - 跨 tick「期初==上 tick 期末」显式断言;`arrears_allowed` funding mode(赊欠/开空票,晚明味,未付进欠账+LLM 判怨气);同类 action 建议合并(重复按 list 序执行,累计不超总欠)。
+- run_tick FAIL 仍返回已变异末态(spike 靠打印+退出码 fail-loud;port 后 driver **必须 gate ok 才落库**,否则毒态持久化)。
+- 绝对容差(EPS=1e-6/末态1e-3)按史实量纲重标后会失配,port 改相对容差。
+- 火耗正赋/三饷分量「另立」现仅到打印与 oracle 公式,末态不暴露分量;port 时如需分量归因(谁的耗派给谁),加分量级断言。
 
 ## 待精验
 各 f() 具体形 · G3–G5 golden 数字 · 数值边界 · 征收能力/士绅协作/粮价/运输/宗室口/驿卒 seed · 负担标准值校准。

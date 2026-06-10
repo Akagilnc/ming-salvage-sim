@@ -10,6 +10,9 @@ golden:G1–G22(基线/补饷k/清丈/挪借/漂没中饱拨付/超额clamp/清�
         追赃/多costed共享k/赈济/拨付追赃/动态税基/双债户偿还序/清丈枯竭土地守恒/赈济饿死unmet/
         三债户waterfall序/三债户repay序/蠲免/三饷火耗分量);5 层断言+输入校验 fail-loud,~20 mutation 自验全咬
 v23:三饷计火耗(火耗应派=(正赋+三饷)×火耗率,分量另立;golden 手推重算 C_地方截留 8.4→9.8)
+v23.1(ship 对抗评审加固):param/Due/开账stock 非有限(NaN/inf)入口拦+G21m–o · 官民田_o 从
+  st+actions 独立重放(堵清丈两侧同搬税基) · go_raise 验守门消息 · Pool 透支 fail-loud+尘埃清零 ·
+  全 golden 钉 省库库银 末态 · G22b 三饷=0 退化边界 · FAIL 退出码 1
 
 账户:CASH{省库库银,C_地方截留,C_中饱,C_漂没,C_eff损耗} / CLAIM{民欠旧赋,军饷欠,官俸欠,宗禄欠}
 守恒(spike 实测):
@@ -18,7 +21,7 @@ v23:三饷计火耗(火耗应派=(正赋+三饷)×火耗率,分量另立;golden 
   债务:负债_new=old+NewDebt−Repaid−action还 ; 民欠_new=old+民欠新增−清欠−蠲免
   C 分账:每个 C_ 子账户 new==old+本账户in−本账户out(per-account,非只 ΣC)
 """
-import math
+import math, sys
 EPS = 1e-6
 CASH_KEYS = ['省库库银','C_地方截留','C_中饱','C_漂没','C_eff损耗']
 CLAIM_KEYS = ['民欠旧赋','军饷欠','官俸欠','宗禄欠']
@@ -61,12 +64,18 @@ def run_tick(name, st, p, actions, expect=None):
             raise ValueError(f"{a['type']} 必须 cost>0(行政成本类): {a}")
     for rk in ('火耗率','逋赋率','漂没率','中饱率'):
         if not (0 <= p.get(rk,0) <= 1): raise ValueError(f"{rk} 越界")
-    for pk in ('正赋应征','三饷应征','起运定额','拨付gross','正赋亩额'):  # param 量纲负值 fail-loud(r21/opus:负值穿透五层=凭空生钱)
-        if p.get(pk,0) is not None and p.get(pk,0) < 0: raise ValueError(f"param {pk} 为负")
-    for hk,dv in p.get('Due',{}).items():
+    for pk in ('正赋应征','三饷应征','起运定额','拨付gross','正赋亩额'):  # param 量纲负/非有限 fail-loud(r21/opus 负值;ship-adv NaN/inf 同拦)
+        v = p.get(pk)
+        if v is not None:
+            if not math.isfinite(float(v)): raise ValueError(f"param {pk} 非有限值(NaN/inf)")
+            if v < 0: raise ValueError(f"param {pk} 为负")
+    for hk,dv in p.get('Due',{}).items():               # NaN Due→min(Pool,nan)=Pool 整池付给 NaN 且五层全过(ship-adv 实测)
+        if not math.isfinite(float(dv)): raise ValueError(f"Due[{hk}] 非有限值(NaN/inf)")
         if dv < 0: raise ValueError(f"Due[{hk}] 为负")
-    for sk in (*CASH_KEYS, *CLAIM_KEYS, '官民田', '隐田'):   # CLAIM 也拦(codex r4:负军饷欠→偿还环 rep<0 凭空生钱)
-        if float(st.get(sk,0)) < 0: raise ValueError(f"开账 stock {sk} 为负")
+    for sk in (*CASH_KEYS, *CLAIM_KEYS, '官民田', '隐田'):   # CLAIM 也拦(codex r4:负军饷欠→偿还环 rep<0 凭空生钱);非有限同拦
+        sv = float(st.get(sk,0))
+        if not math.isfinite(sv): raise ValueError(f"开账 stock {sk} 非有限值(NaN/inf)")
+        if sv < 0: raise ValueError(f"开账 stock {sk} 为负")
     Stock_start = cash['省库库银']
     ΣCost = sum(a.get('cost',0) for a in actions if a.get('cost',0) > 0)
     k = 1.0 if (ΣCost == 0 or ΣCost <= Stock_start) else Stock_start/ΣCost
@@ -100,7 +109,8 @@ def run_tick(name, st, p, actions, expect=None):
             print(f"  蠲免 {mj:.2f}")
 
     # ── ②③④⑦ 应征/火耗/实征/民欠 ──
-    正赋 = p.get('正赋应征', round(官民田*p.get('正赋亩额',0)/12,4)); 三饷 = p['三饷应征']
+    _zf = p.get('正赋应征')                              # None 视为未设(走亩额派生),防 None*float TypeError
+    正赋 = _zf if _zf is not None else round(官民田*p.get('正赋亩额',0)/12,4); 三饷 = p['三饷应征']
     fh = p['火耗率']; bf = p['逋赋率']
     正赋火耗 = 正赋*fh; 三饷火耗 = 三饷*fh          # 三饷亦银征同有火耗(史实);另立分量(spec §9)
     火耗应派 = 正赋火耗 + 三饷火耗
@@ -117,7 +127,9 @@ def run_tick(name, st, p, actions, expect=None):
     cash['省库库银'] += net; cash['C_中饱'] += r['中饱']; cash_in += g; r['拨付gross'] = g
     print(f"⑧⑨⑩ 起运池{起运池:.2f} 省内池{省内池:.2f} 起运到京{r['起运到京']:.2f} 漂没{r['漂没']:.2f} 拨付g{g:.2f}(net{net:.2f}中饱{r['中饱']:.2f})")
     # ── ⑪ 省内可支→付款→偿还→结转 ──
-    省内可支 = cash['省库库银'] + 省内池; Pool = 省内可支
+    省内可支 = cash['省库库银'] + 省内池
+    if 省内可支 < -EPS: raise ValueError(f"省内可支为负({省内可支}):省库实质透支,支付环禁入")
+    Pool = max(0.0, 省内可支)                            # k-clamp float 尘埃(~1e-16)清零,防 min(Pool,d)<0 静默造债
     for h in ['军饷','官俸','宗禄','赈济']:
         d = p['Due'].get(h,0.0); pay = min(Pool,d); Pool -= pay; cash_out += pay; r['实付'] += pay
         nd = d-pay
@@ -137,6 +149,13 @@ def run_tick(name, st, p, actions, expect=None):
     # 独立重算 k(r15/opus:settlement 的 k 是同源中间量,oracle 必须自算,否则 k 被污染时 cash/debt 一致偏移漏过)
     o_Stock = float(st.get('省库库银',0)); o_ΣCost = sum(a.get('cost',0) for a in actions if a.get('cost',0) > 0)
     o_k = 1.0 if (o_ΣCost == 0 or o_ΣCost <= o_Stock) else o_Stock/o_ΣCost
+    官民田_o = float(st.get('官民田',0)); 隐田_o = float(st.get('隐田',0))   # 土地从 st+actions 独立重放(ship-adv:正赋_o 原读清丈后运行时 官民田=同源)
+    for a in actions:
+        if a['type'] == '清丈':
+            _ak = o_k if a.get('cost',0) > 0 else 1.0
+            挖_o = min(a.get('挖隐田',0)*_ak, 隐田_o); 隐田_o -= 挖_o; 官民田_o += 挖_o
+    _zf_o = p.get('正赋应征')
+    正赋_o = _zf_o if _zf_o is not None else round(官民田_o*p.get('正赋亩额',0)/12,4)
     # 债务 per-account · 独立 oracle(r13/opus:同 C,从 params/claim0/action入参 重跑,堵科目 relabel)
     # 注(r15/sonnet 残留):o_pool 读 省内可支(运行时),对「C金额→省库」类 relabel 依赖 C 分账 oracle 兜底;勿单独删 C oracle
     o_pool = 省内可支; o_paid = {}
@@ -158,15 +177,14 @@ def run_tick(name, st, p, actions, expect=None):
     for a in actions:
         if a['type'] in ('清欠','蠲免'):
             o_my -= min(a.get('amount',0)*(o_k if a.get('cost',0)>0 else 1.0), o_my)
-    o_my += (正赋+三饷)*bf
+    o_my += (正赋_o+三饷)*bf
     if abs(claim['民欠旧赋']-o_my) > EPS: ok_debt=False; print(f"  [债务FAIL]民欠 {claim['民欠旧赋']:.2f}≠oracle{o_my:.2f}")
     print(f"[债务对账·独立oracle] {'PASS' if ok_debt else 'FAIL'}")
     # per-account C 对账 · 独立 oracle(r14/opus:下沉到原始 param 重算,不读 settlement 的 火耗应派/起运池 局部变量)
-    正赋_o = p.get('正赋应征', round(官民田*p.get('正赋亩额',0)/12,4))
     实征_o = (正赋_o + p['三饷应征'])*(1-bf)
     火耗应派_o = (正赋_o + p['三饷应征']) * fh      # 正赋火耗+三饷火耗,两分量均从 param 独立重算
     起运池_o = min(实征_o, p['起运定额'])
-    o_in = {'C_地方截留': 火耗应派_o*(1-bf), 'C_中饱': g*zb, 'C_漂没': 起运池_o*pm, 'C_eff损耗': 0.0}
+    o_in = {'省库库银':0,'C_地方截留': 火耗应派_o*(1-bf), 'C_中饱': g*zb, 'C_漂没': 起运池_o*pm, 'C_eff损耗': 0.0}
     o_out = {ck: 0.0 for ck in C0}
     bal_dfjl, bal_zb = C0['C_地方截留'], C0['C_中饱']   # ⓪挪借/追赃 时的余额(火耗实收⑦/中饱⑩ 才加)
     for a in actions:
@@ -209,70 +227,79 @@ def S(**kw): return dict(dict(省库库银=50,C_地方截留=0,C_中饱=0,C_漂�
                               民欠旧赋=0,军饷欠=20,官俸欠=0,宗禄欠=0,官民田=3050,隐田=1600), **kw)
 R = []
 def go(name, st, p, acts, expect=None): ok,_ = run_tick(name, st, p, acts, expect); R.append((name, ok)); return _
-def go_raise(name, st, p, acts):                     # 断言非法输入 fail-loud
+def go_raise(name, st, p, acts, msg=None):           # 断言非法输入 fail-loud;msg=期望错误子串(防别的守门碰巧兜住)
     try: run_tick(name, st, p, acts); R.append((name, False)); print(f"  [应RAISE但没有]{name}")
-    except ValueError as e: R.append((name, True)); print(f"\n{name}: RAISED ✓ ({e})")
+    except ValueError as e:
+        hit = msg is None or msg in str(e)
+        R.append((name, hit)); print(f"\n{name}: RAISED{' ✓' if hit else ' 但守门不对(期望含「'+msg+'」)'} ({e})")
 
-go("G1 基线", S(), base, [], {'C_地方截留':9.8,'民欠旧赋':21,'军饷欠':18})
-go("G2 补饷k=.33", S(省库库银=10,军饷欠=50), base, [dict(type='补饷',cost=30)], {'C_地方截留':9.8,'民欠旧赋':21,'军饷欠':76,'官俸欠':8,'宗禄欠':4})
-go("G3 清丈(cost2,非现金中性:当tick扣2)", S(), base, [dict(type='清丈',cost=2,挖隐田=300)], {'C_地方截留':9.8,'民欠旧赋':21,'军饷欠':20})
-go("G4 挪借火耗(C20,挪10)", S(C_地方截留=20), base, [dict(type='挪借火耗',amount=10)], {'C_地方截留':19.8,'民欠旧赋':21,'军饷欠':8})
+go("G1 基线", S(), base, [], {'省库库银':0,'C_地方截留':9.8,'民欠旧赋':21,'军饷欠':18})
+go("G2 补饷k=.33", S(省库库银=10,军饷欠=50), base, [dict(type='补饷',cost=30)], {'省库库银':0,'C_地方截留':9.8,'民欠旧赋':21,'军饷欠':76,'官俸欠':8,'宗禄欠':4})
+go("G3 清丈(cost2,非现金中性:当tick扣2)", S(), base, [dict(type='清丈',cost=2,挖隐田=300)], {'省库库银':0,'C_地方截留':9.8,'民欠旧赋':21,'军饷欠':20})
+go("G4 挪借火耗(C20,挪10)", S(C_地方截留=20), base, [dict(type='挪借火耗',amount=10)], {'省库库银':0,'C_地方截留':19.8,'民欠旧赋':21,'军饷欠':8})
 go("G5 漂没.1中饱.1拨付30", S(), dict(base,漂没率=0.1,中饱率=0.1,拨付gross=30), [], {'省库库银':9,'C_地方截留':9.8,'C_中饱':3,'C_漂没':4,'民欠旧赋':21})
-go("G6 超额补饷(欠5补30)", S(省库库银=30,军饷欠=5), base, [dict(type='补饷',cost=30)], {'C_地方截留':9.8,'民欠旧赋':21,'军饷欠':11,'官俸欠':8,'宗禄欠':4})
-go("G7 清欠(民欠15清10)", S(民欠旧赋=15), base, [dict(type='清欠',amount=10)], {'C_地方截留':9.8,'民欠旧赋':26,'军饷欠':8})
-go("G8 挪借eff=.8(激活C_eff损耗)", S(C_地方截留=20), base, [dict(type='挪借火耗',amount=10,eff=0.8)], {'C_地方截留':19.8,'C_eff损耗':2,'民欠旧赋':21,'军饷欠':10})
-go("G10 追赃(C_中饱12,追8 eff=.9)", S(C_中饱=12), base, [dict(type='追赃',amount=8,eff=0.9)], {'C_地方截留':9.8,'C_中饱':4,'C_eff损耗':0.8,'民欠旧赋':21,'军饷欠':10.8})
+go("G6 超额补饷(欠5补30)", S(省库库银=30,军饷欠=5), base, [dict(type='补饷',cost=30)], {'省库库银':0,'C_地方截留':9.8,'民欠旧赋':21,'军饷欠':11,'官俸欠':8,'宗禄欠':4})
+go("G7 清欠(民欠15清10)", S(民欠旧赋=15), base, [dict(type='清欠',amount=10)], {'省库库银':0,'C_地方截留':9.8,'民欠旧赋':26,'军饷欠':8})
+go("G8 挪借eff=.8(激活C_eff损耗)", S(C_地方截留=20), base, [dict(type='挪借火耗',amount=10,eff=0.8)], {'省库库银':0,'C_地方截留':19.8,'C_eff损耗':2,'民欠旧赋':21,'军饷欠':10})
+go("G10 追赃(C_中饱12,追8 eff=.9)", S(C_中饱=12), base, [dict(type='追赃',amount=8,eff=0.9)], {'省库库银':0,'C_地方截留':9.8,'C_中饱':4,'C_eff损耗':0.8,'民欠旧赋':21,'军饷欠':10.8})
 go("G11 多costed(补饷20+营建20,Stock10→k=.25)", S(省库库银=10,军饷欠=50), base,
-   [dict(type='补饷',cost=20), dict(type='营建',cost=20)], {'C_地方截留':9.8,'民欠旧赋':21,'军饷欠':81,'官俸欠':8,'宗禄欠':4})
-go("G12 赈济Due>0", S(省库库银=80), dict(base, Due=dict(军饷=45,官俸=8,宗禄=4,赈济=15)), [], {'C_地方截留':9.8,'民欠旧赋':21,'军饷欠':3})
+   [dict(type='补饷',cost=20), dict(type='营建',cost=20)], {'省库库银':0,'C_地方截留':9.8,'民欠旧赋':21,'军饷欠':81,'官俸欠':8,'宗禄欠':4})
+go("G12 赈济Due>0", S(省库库银=80), dict(base, Due=dict(军饷=45,官俸=8,宗禄=4,赈济=15)), [], {'省库库银':0,'C_地方截留':9.8,'民欠旧赋':21,'军饷欠':3})
 go("G13 拨付30+追赃(C_中饱10,追6)同tick", S(C_中饱=10), dict(base,拨付gross=30,中饱率=0.1),
    [dict(type='追赃',amount=6)], {'省库库银':15,'C_地方截留':9.8,'C_中饱':7,'民欠旧赋':21})
 # G14 动态税基(codex r16:正赋从官民田派生,清丈本 tick 即抬税基;硬期望咬住「清丈effect算错」)
 _p14 = {k:v for k,v in base.items() if k!='正赋应征'}; _p14['正赋亩额']=0.236
 go("G14 动态税基(正赋亩额0.236+清丈+300)", dict(S(), 官民田=3050), _p14,
-   [dict(type='清丈',cost=2,挖隐田=300)], {'C_地方截留':10.6237,'民欠旧赋':22.765,'军饷欠':15.8817})
+   [dict(type='清丈',cost=2,挖隐田=300)], {'省库库银':0,'C_地方截留':10.6237,'民欠旧赋':22.765,'军饷欠':15.8817})
 # G15 双债户偿还优先级(军饷欠20+官俸欠20,余银只够还22→军饷先全清、官俸还2;堵偿还顺序 relabel)
 go("G15 双债户偿还序(军饷>官俸)", S(省库库银=70,军饷欠=20,官俸欠=20), base, [],
-   {'C_地方截留':9.8,'民欠旧赋':21,'军饷欠':0,'官俸欠':18,'宗禄欠':0})
+   {'省库库银':0,'C_地方截留':9.8,'民欠旧赋':21,'军饷欠':0,'官俸欠':18,'宗禄欠':0})
 # G16 土地守恒+清丈枯竭(隐田仅200,挖300被 clamp 到200;官民田+隐田 守恒;堵凭空造地=违铁律P3)
 go("G16 清丈枯竭(隐田200挖300)", S(隐田=200), base, [dict(type='清丈',cost=2,挖隐田=300)],
-   {'C_地方截留':9.8,'民欠旧赋':21,'军饷欠':20})
+   {'省库库银':0,'C_地方截留':9.8,'民欠旧赋':21,'军饷欠':20})
 # G17 赈济饿死(穷省可支9,赈济Due15→实付9、unmet_relief6、不积欠;堵 unmet 不可见)
 go("G17 赈济饿死(unmet_relief)", S(省库库银=0,军饷欠=0), dict(base,Due=dict(军饷=0,官俸=0,宗禄=0,赈济=15)),
-   [], {'C_地方截留':9.8,'民欠旧赋':21,'军饷欠':0,'unmet_relief':6})
+   [], {'省库库银':0,'C_地方截留':9.8,'民欠旧赋':21,'军饷欠':0,'unmet_relief':6})
 # G18 三债户 waterfall 边界(可支16,军饷10足额/官俸8部分→欠2/宗禄4→欠4;钉官俸↔宗禄序)
 go("G18 三债户waterfall序(官俸>宗禄)", S(省库库银=16,军饷欠=0), dict(base,起运定额=50,Due=dict(军饷=10,官俸=8,宗禄=4,赈济=0)),
-   [], {'C_地方截留':9.8,'民欠旧赋':21,'官俸欠':2,'宗禄欠':4})
+   [], {'省库库银':0,'C_地方截留':9.8,'民欠旧赋':21,'官俸欠':2,'宗禄欠':4})
 # G19 三债户 repay 边界(余银13先还官俸欠10、再还宗禄欠3→7;钉偿还在第2、3债户间切分)
 go("G19 三债户repay序", S(省库库银=70,军饷欠=0,官俸欠=10,宗禄欠=10), dict(base,起运定额=100),
-   [], {'C_地方截留':9.8,'民欠旧赋':21,'官俸欠':0,'宗禄欠':7})
+   [], {'省库库银':0,'C_地方截留':9.8,'民欠旧赋':21,'官俸欠':0,'宗禄欠':7})
 # G20 蠲免(免民欠8,不入现金;钉下游军饷欠=18 区分蠲免vs清欠——清欠会让现金多8→军饷欠掉到10)
 go("G20 蠲免(民欠15免8,不入现金)", S(民欠旧赋=15), base, [dict(type='蠲免',amount=8)],
-   {'C_地方截留':9.8,'民欠旧赋':28,'军饷欠':18})
+   {'省库库银':0,'C_地方截留':9.8,'民欠旧赋':28,'军饷欠':18})
 # G22 三饷火耗分量(三饷30:火耗应派=(60+30)×.2=18,实收12.6;钉「三饷计火耗」——只派正赋则 C=8.4 必FAIL)
 go("G22 三饷火耗分量(三饷30)", S(), dict(base,三饷应征=30), [],
-   {'C_地方截留':12.6,'民欠旧赋':27,'军饷欠':4})
+   {'省库库银':0,'C_地方截留':12.6,'民欠旧赋':27,'军饷欠':4})
+# G22b 三饷=0 退化边界(火耗须精确退回只派正赋 8.4;堵常数偏移/零分量错算)
+go("G22b 三饷=0(火耗退化为正赋分量)", S(), dict(base,三饷应征=0), [],
+   {'省库库银':0,'C_地方截留':8.4,'民欠旧赋':18,'军饷欠':20,'官俸欠':1,'宗禄欠':4})
 # G21 非法输入 fail-loud(负挖隐田=反向清丈缩税基,LLM 可达,五层抓不到只能 input 校验拦)
-go_raise("G21 负挖隐田应RAISE", S(), base, [dict(type='清丈',cost=2,挖隐田=-100)])
-go_raise("G21b unknown action应RAISE", S(), base, [dict(type='发射导弹',cost=5)])
-go_raise("G21c 负Due应RAISE", S(), dict(base,Due=dict(军饷=-45,官俸=8,宗禄=4,赈济=0)), [])
-go_raise("G21d 负起运定额应RAISE", S(), dict(base,起运定额=-40), [])
-go_raise("G21e 负拨付gross应RAISE", S(), dict(base,拨付gross=-30), [])
-go_raise("G21f 负开账省库应RAISE", S(省库库银=-10), base, [])
-go_raise("G21g 0-cost清丈应RAISE(免费抬税基)", S(), base, [dict(type='清丈',cost=0,挖隐田=300)])
-go_raise("G21h NaN cost应RAISE", S(), base, [dict(type='营建',cost=float('nan'))])
+go_raise("G21 负挖隐田应RAISE", S(), base, [dict(type='清丈',cost=2,挖隐田=-100)], msg='负 cost/amount/挖隐田')
+go_raise("G21b unknown action应RAISE", S(), base, [dict(type='发射导弹',cost=5)], msg='unknown action')
+go_raise("G21c 负Due应RAISE", S(), dict(base,Due=dict(军饷=-45,官俸=8,宗禄=4,赈济=0)), [], msg='Due[军饷] 为负')
+go_raise("G21d 负起运定额应RAISE", S(), dict(base,起运定额=-40), [], msg='param 起运定额 为负')
+go_raise("G21e 负拨付gross应RAISE", S(), dict(base,拨付gross=-30), [], msg='param 拨付gross 为负')
+go_raise("G21f 负开账省库应RAISE", S(省库库银=-10), base, [], msg='开账 stock 省库库银 为负')
+go_raise("G21g 0-cost清丈应RAISE(免费抬税基)", S(), base, [dict(type='清丈',cost=0,挖隐田=300)], msg='必须 cost>0')
+go_raise("G21h NaN cost应RAISE", S(), base, [dict(type='营建',cost=float('nan'))], msg='非有限值')
 # G21i–l 负开账 CLAIM(codex r4:负军饷欠进偿还环 rep=min(S,负)<0 → S 反增=凭空生钱;守恒/oracle 同源负值全漏,只能入口拦)
-go_raise("G21i 负开账军饷欠应RAISE", S(军饷欠=-5), base, [])
-go_raise("G21j 负开账民欠旧赋应RAISE", S(民欠旧赋=-5), base, [])
-go_raise("G21k 负开账官俸欠应RAISE", S(官俸欠=-5), base, [])
-go_raise("G21l 负开账宗禄欠应RAISE", S(宗禄欠=-5), base, [])
+go_raise("G21i 负开账军饷欠应RAISE", S(军饷欠=-5), base, [], msg='开账 stock 军饷欠 为负')
+go_raise("G21j 负开账民欠旧赋应RAISE", S(民欠旧赋=-5), base, [], msg='开账 stock 民欠旧赋 为负')
+go_raise("G21k 负开账官俸欠应RAISE", S(官俸欠=-5), base, [], msg='开账 stock 官俸欠 为负')
+go_raise("G21l 负开账宗禄欠应RAISE", S(宗禄欠=-5), base, [], msg='开账 stock 宗禄欠 为负')
+# G21m–o 非有限 param/Due/开账(ship-adv F1/F2:NaN Due 吞池五层全过、NaN 开账带毒传播、inf 起运=静默无上限)
+go_raise("G21m NaN Due应RAISE", S(), dict(base,Due=dict(军饷=float('nan'),官俸=8,宗禄=4,赈济=0)), [], msg='Due[军饷] 非有限值')
+go_raise("G21n NaN 开账军饷欠应RAISE", S(军饷欠=float('nan')), base, [], msg='开账 stock 军饷欠 非有限值')
+go_raise("G21o inf 起运定额应RAISE", S(), dict(base,起运定额=float('inf')), [], msg='param 起运定额 非有限值')
 
 # G9 三 tick 链:穷省(省库10)+ recurring 募兵(每 tick cost5),看死亡螺旋累积 + 每 tick 守恒 + 硬期望
 print(f"\n{'#'*64}\n# G9 三 tick 链(穷省 recurring 募兵,死亡螺旋)\n{'#'*64}")
 stt = S(省库库银=10, 军饷欠=30)
-g9exp = [{'C_地方截留':9.8,'民欠旧赋':21,'军饷欠':61,'官俸欠':8,'宗禄欠':4},
-         {'C_地方截留':19.6,'民欠旧赋':42,'军饷欠':97,'官俸欠':16,'宗禄欠':8},
-         {'C_地方截留':29.4,'民欠旧赋':63,'军饷欠':133,'官俸欠':24,'宗禄欠':12}]
+g9exp = [{'省库库银':0,'C_地方截留':9.8,'民欠旧赋':21,'军饷欠':61,'官俸欠':8,'宗禄欠':4},
+         {'省库库银':0,'C_地方截留':19.6,'民欠旧赋':42,'军饷欠':97,'官俸欠':16,'宗禄欠':8},
+         {'省库库银':0,'C_地方截留':29.4,'民欠旧赋':63,'军饷欠':133,'官俸欠':24,'宗禄欠':12}]
 allok = True
 for i in range(1,4):
     duep = dict(base, Due=dict(军饷=45,官俸=8,宗禄=4,赈济=0))
@@ -284,3 +311,4 @@ print(f"\n{'='*64}\n汇总:")
 for n,ok in R: print(f"  {'PASS' if ok else 'FAIL':5s} {n}")
 print(f"  全部 {'PASS' if all(o for _,o in R) else 'FAIL'}")
 print('='*64)
+sys.exit(0 if all(o for _,o in R) else 1)            # 自动化按退出码判;原恒0=假绿(ship-adv)
