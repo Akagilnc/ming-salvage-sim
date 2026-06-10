@@ -80,12 +80,9 @@ def prune_auto_saves(saves_dir: str, campaign_id: str, keep_turns: int = AUTO_SA
                 pass
 
 
-class TurnPhase(str, Enum):
-    SUMMONING = "summoning"   # 召见中：召见、对话、大臣拟旨产 pending
-    REVIEWING = "reviewing"   # 核定草案：增删改、确认/驳回 pending、写诏书
-    AWAITING_DECISION = "awaiting_decision"  # HITL：simulator 出决策点，暂停等皇帝亲裁
-    SETTLING = "settling"     # ADR 0008 S4：pre_settle 前半段已提交，崩溃重进不重跑前半段（中间态）
-    ISSUED = "issued"         # 已颁诏：resolve 完成，待 end_turn
+# TurnPhase 单一真源已下沉 models.py（decree 也要用，import session 会循环）；
+# 此处 re-export 保持旧 import 路径（terminal/web_app/tests 的 from session import TurnPhase）兼容。
+from ming_sim.models import TurnPhase  # noqa: F401  (re-export)
 
 
 @dataclass
@@ -977,9 +974,15 @@ class GameSession:
     # ── 诏书阶段 ──────────────────────────────────────────────────────────
 
     def enter_review(self) -> None:
+        # settling 粘滞：它是「前半段已提交」的崩溃恢复标记，被抹成 reviewing 会让
+        # pre_settle 守门失效=同回合二次财政 tick（cmr S4 r1）。只能由 settle 完成路径复位。
+        if self.state.turn_phase == TurnPhase.SETTLING.value:
+            return
         self._set_phase(TurnPhase.REVIEWING)
 
     def back_to_summoning(self) -> None:
+        if self.state.turn_phase == TurnPhase.SETTLING.value:
+            return
         self._set_phase(TurnPhase.SUMMONING)
 
     def write_decree(self) -> str:

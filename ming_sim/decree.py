@@ -31,7 +31,7 @@ from ming_sim.exceptions import LLMContractError, LLMUnavailable
 from ming_sim.flows import apply_fixed_period_flows
 from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction, auto_trigger_seed_issues, clear_gated_legacies, validate_delta_shape
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
-from ming_sim.models import GameState, LLMConfig
+from ming_sim.models import GameState, LLMConfig, TurnPhase
 from ming_sim.memories import build_timeline, record_chapter_memory
 from ming_sim.simulation import (
     EXTRACTION_MODULES,
@@ -172,8 +172,13 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
     # 退朝未下正式诏书也是月末:先 commit 本回合暂存的结构化写动作(颁诏前未撤回即通过,
     # ADR 0006),否则暂存成孤儿、随 next_period 永久丢失(CMR P1)。须在 next_period 前。
     # content/registry 供 office(任免)落库注册新臣;无则任免落不了(标 failed,不静默)。
-    db.commit_pending_actions(state, content=content, registry=registry)
-    apply_fixed_period_flows(db, state)
+    if state.turn_phase == TurnPhase.SETTLING.value:
+        # 崩溃重载后走 skip 路：前半段（暂存 commit+财政+密令）已随 pre_settle 事务提交，
+        # 二跑=同回合双财政 tick（cmr S4 r1 F3）。只走推进尾。
+        pass
+    else:
+        db.commit_pending_actions(state, content=content, registry=registry)
+        apply_fixed_period_flows(db, state)
     message = f"本{TURN_UNIT}退朝未下正式圣旨，诸事仍待来{TURN_UNIT}处置。"
     db.record_log(state, message)
     print("\n" + message)
@@ -181,6 +186,8 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
     # ready=1 行会被恢复入口当「未完成回合」重放=double-apply（cmr S2+S3 r4）。
     db.clear_resolve_context(state.turn)
     state.next_period()
+    # settling 随推进复位，同 settle_with_delta（cmr S4 r1 F1）。
+    state.turn_phase = TurnPhase.SUMMONING.value
     db.save_state(state)
 
 
@@ -496,15 +503,14 @@ def pre_settle(
     **自己的单事务**——崩在内部=全回滚=相位未变=重进时干净重跑前半段。完成时**同事务内**
     落中间相位 settling（写 state.turn_phase + save_state）：只意味着「前半段已完成，不再
     重跑 pre_settle」，不意味着后半段就绪（恢复入口的消费分流是 S7 的活，本切片只立相位机械）。
-    settling 相位字符串与 session.TurnPhase.SETTLING 一致；此处不 import session（会循环），
-    用 models.GameState 文档化的字面值。settling 已是入口态时直接 return（幂等守门）：
+    settling 相位用 models.TurnPhase.SETTLING（单一真源已下沉 models，无循环）。settling 已是入口态时直接 return（幂等守门）：
     「不再重跑前半段」正是 settling 的语义，恢复后重进 pre_settle 不二次落财政。
 
     auto_submit_due_secret_orders（原在 resolve_directives 调用点）挪入本事务：它只是
     「推演前的确定性写」，崩溃时密令呈递须随财政一并回滚；挪入不改它先于 simulator 的事实。
     """
     # 幂等守门：phase 已是 settling → 前半段在上轮已提交，重进不重跑（防二次财政 tick）。
-    if state.turn_phase == "settling":
+    if state.turn_phase == TurnPhase.SETTLING.value:
         return []
     auto_triggered: List[Dict[str, object]] = []
     with atomic(db):
@@ -529,7 +535,7 @@ def pre_settle(
         if due_orders:
             tlog(f"[secret_order] 到期送核议 {due_orders}")
         # 完成相位：同事务内落 settling（崩在上面任一步=全回滚=相位未变）。
-        state.turn_phase = "settling"
+        state.turn_phase = TurnPhase.SETTLING.value
         db.save_state(state)
     return auto_triggered
 
@@ -645,6 +651,9 @@ def settle_with_delta(
     state.next_period()
     # 不变式先验后再写：assert 排在 clear 之后的话，失败时重试真源已被删（cmr r4 codex）。
     assert state.turn == before_turn + 1
+    # settling 随推进复位（同笔 save_state 落库）：不复位的话下一回合 pre_settle 被守门
+    # 跳过=此后每月财政/暂存/密令全静默丢（cmr S4 r1，3/3）。session 层随后照旧置 ISSUED。
+    state.turn_phase = TurnPhase.SUMMONING.value
     db.save_state(state)
     # ADR 0008 S3：清 resolve_context 作 settle 写序列的最后一笔（紧贴 next_period 等推进写）。
     # 按 before_turn 清本回合那一行（next_period 已把 state.turn 推进到下一回合）。

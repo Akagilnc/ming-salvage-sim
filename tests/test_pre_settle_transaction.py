@@ -168,3 +168,69 @@ def test_crash_inside_pre_settle_no_missing_fiscal(game, monkeypatch):
     assert state.turn_phase != "settling"
     # 连接干净，无悬挂事务
     assert not db.conn.in_transaction
+
+
+# ---------------------------------------------------------------------------
+# cmr S4 r1 修复回归（F1 settling 复位 / F2 sticky / F3 skip 路守门）
+# ---------------------------------------------------------------------------
+
+def test_two_consecutive_driver_settles_both_get_fiscal_tick(game):
+    """driver 连续结算两回合，第二回合财政照常落账（cmr S4 r1 F1，3/3 critical）。
+
+    settling 推进回合后不复位的话，第二回合 pre_settle 被守门跳过=
+    此后每月财政/暂存/密令全静默丢。
+    """
+    from driver import run_settle
+    db, state, content = game
+    t1 = state.turn
+    run_settle(db, state, content, {})
+    t2 = state.turn
+    assert t2 == t1 + 1
+    assert state.turn_phase != "settling"  # 推进后复位
+
+    run_settle(db, state, content, {})
+    assert state.turn == t2 + 1
+    rows_t2 = db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (t2,)).fetchone()[0]
+    assert rows_t2 > 0  # 第二回合财政 tick 真跑了
+
+
+def test_enter_review_does_not_clobber_settling(game):
+    """enter_review 不得抹掉崩溃保活的 settling（cmr S4 r1 F2）。
+
+    抹成 reviewing 后 pre_settle 守门失效=同回合二次财政 tick。
+    """
+    from ming_sim.session import GameSession, TurnPhase
+    db, state, content = game
+    state.turn_phase = "settling"
+    db.save_state(state)
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+
+    sess.enter_review()
+    assert state.turn_phase == "settling"
+
+    sess.back_to_summoning()
+    assert state.turn_phase == "settling"
+
+
+def test_advance_without_edict_after_settling_no_double_tick(game):
+    """崩溃重载后走 skip 路：前半段已提交则不二跑财政，且复位 phase（cmr S4 r1 F3）。"""
+    from ming_sim.decree import advance_without_edict, pre_settle
+    db, state, content = game
+    turn = state.turn
+    pre_settle(state, db)  # 真跑：落财政 + settling
+    rows_after_pre = db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)).fetchone()[0]
+    assert rows_after_pre > 0
+    assert state.turn_phase == "settling"
+
+    advance_without_edict(state, db, content=content)
+
+    rows_final = db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)).fetchone()[0]
+    assert rows_final == rows_after_pre  # 不二跑
+    assert state.turn == turn + 1
+    assert state.turn_phase != "settling"  # 推进后复位
