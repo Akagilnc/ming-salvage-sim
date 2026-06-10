@@ -1284,6 +1284,8 @@ class WebGame:
                         if not draft_text:
                             args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                             draft_text = (args.get("decree_text") or "").strip()
+                        if draft_text and GameSession._proposal_blocked(self.state):
+                            draft_text = ""  # 恢复窗婉拒（ship-pre r2 软死锁环源头，同 session 路）
                         if draft_text:
                             did = self.db.add_directive(
                                 self.state, None, draft_text, "大臣拟旨",

@@ -625,6 +625,8 @@ class GameSession:
                 if not draft_text:
                     args = getattr(tool_exec, "tool_args", {}) or {}
                     draft_text = (args.get("decree_text") or "").strip()
+                if draft_text and self._proposal_blocked(self.state):
+                    draft_text = ""  # 恢复窗婉拒：不入档（见 _proposal_blocked）
                 if draft_text:
                     directive_id = self.db.add_directive(
                         self.state, None, draft_text, "大臣拟旨",
@@ -696,10 +698,15 @@ class GameSession:
             confirm = extract_confirmation_intent(
                 player_message, reply, summaries, llm_config=llm_config)
             if confirm == "应允":
-                self.db.commit_pending_actions(
-                    self.state, minister_name=minister_name,
-                    content=getattr(self, "content", None),
-                    registry=getattr(self, "registry", None))
+                if self.state.turn_phase in FRONT_HALF_DONE_PHASES:
+                    # 恢复窗确认不即时落库（事务外落真表，后续 settle 中止不回滚=半写）。
+                    # 动作留 pending，由推进回合的终端 atomic 统一落（所有权规则，ship-pre r2）。
+                    pass
+                else:
+                    self.db.commit_pending_actions(
+                        self.state, minister_name=minister_name,
+                        content=getattr(self, "content", None),
+                        registry=getattr(self, "registry", None))
             elif confirm == "拒绝":
                 self.db.drop_pending_actions_for_minister(self.state.turn, minister_name)
             if confirm in ("应允", "拒绝"):
@@ -709,6 +716,9 @@ class GameSession:
                 return out
         acts = resolve_minister_actions(
             reply, player_message, default_assignee=minister_name, llm_config=llm_config)
+        if not has_directive and acts["decree_text"] and GameSession._proposal_blocked(self.state):
+            acts = dict(acts)
+            acts["decree_text"] = None  # 恢复窗婉拒：不入档（见 _proposal_blocked）
         if not has_directive and acts["decree_text"]:
             text = acts["decree_text"]
             did = self.db.add_directive(
@@ -950,6 +960,13 @@ class GameSession:
             )
             for r in rows
         ]
+
+    @staticmethod
+    def _proposal_blocked(state) -> bool:
+        """FRONT_HALF_DONE 时 chat 提案不得插 pending directive（ship-pre r2 软死锁环源头）：
+        pending>0 让推进口全拒「请准/驳」而 confirm/reject 已冻结=互相指对方死锁且落盘。
+        正常入 settling 时 pending 必为 0（resolve 口有门），源头堵死即环断。"""
+        return state.turn_phase in FRONT_HALF_DONE_PHASES
 
     def _refuse_if_settling(self) -> None:
         """FRONT_HALF_DONE 冻结诏稿变更：恢复窗口新增/确认的 draft 会被 settle 的

@@ -1051,3 +1051,54 @@ def test_dialogue_reject_filters_by_summoned_minister(game, monkeypatch):
     db.commit_pending_actions(state)
     assert db.conn.execute(
         "SELECT content FROM secret_orders WHERE id=?", (oid_a,)).fetchone()["content"] == "甲原内容"
+
+
+def test_chat_proposal_not_staged_at_front_half_done(game, monkeypatch):
+    """FRONT_HALF_DONE 时 chat 提案不插 pending directive（ship-pre r2，软死锁环源头）。
+
+    pending>0 让推进口全拒「请准/驳」，而 confirm/reject 已冻结=互相指对方死锁。
+    """
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    state.turn_phase = "settling"
+
+    out = GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), ch,
+        player_message="拟旨如下：请拨内帑", answer="请拨内帑十万两以充辽饷。",
+        has_directive=False, secret_order_id=None)
+
+    rows = db.conn.execute(
+        "SELECT COUNT(*) FROM turn_directives WHERE turn=? AND status='pending'",
+        (state.turn,)).fetchone()[0]
+    assert rows == 0  # 源头堵死，环不成立
+
+
+def test_chat_confirm_defers_commit_at_front_half_done(game, monkeypatch):
+    """FRONT_HALF_DONE 时「应允」不即时 commit——留给终端 atomic（ship-pre r2 codex）。
+
+    即时 commit 在事务外落真表，后续 settle 中止不回滚=半写。
+    """
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    db.stage_pending_action(
+        state.turn, kind="secret_order", action="更新", minister_name=name, target_id=oid,
+        payload={"new_title": "恢复窗确认标题", "new_content": "x", "deadline_months": 0})
+    state.turn_phase = "settling"
+
+    monkeypatch.setattr(cb, "extract_confirmation_intent",
+                        lambda *a, **k: "应允")
+    GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), ch,
+        player_message="准了", answer="臣遵旨。",
+        has_directive=False, secret_order_id=None)
+
+    row = db.conn.execute(
+        "SELECT status FROM pending_actions WHERE turn=? AND target_id=?",
+        (state.turn, oid)).fetchone()
+    assert row is not None and row["status"] == "pending"  # 留给终端 atomic
+    title = db.conn.execute(
+        "SELECT title FROM secret_orders WHERE id=?", (oid,)).fetchone()["title"]
+    assert title == "原标题"  # 真表未动
