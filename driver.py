@@ -81,15 +81,17 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
     extracted = _canonicalize_extraction(raw_delta)
     _validate_delta_shape(extracted)  # 崩前拦畸形/未知字段,避免 pre_settle 动 DB 后半落库(RT-1/P1b)
     before_turn = state.turn
-    # 与真实流程同核同语义（ADR 0004/0008）：settle 前把 canonical delta 持久化为重跑
-    # 真源——turn_extractions 在 settle 内部才写，崩在 pre_settle 后 settle 内时若无此行，
-    # 财政已落账而 delta 只活在调用方易失上下文（违 P1）。settle 尾部 clear 自然清掉。
+    pre_settle(state, db)
+    # 与真实流程同核同位（ADR 0004/0008，引擎也在 pre_settle 后才 persist）：settle 前把
+    # canonical delta 持久化为重跑真源——turn_extractions 在 settle 内部才写，崩在 settle
+    # 内时若无此行，财政已落账而 delta 只活在调用方易失上下文（违 P1）。位置必须在
+    # pre_settle 之后：ready=1 统一意为「前半段已提交，只剩 settle」，恢复入口直入 apply
+    # 不会跳过未跑的财政 tick（cmr S2+S3 r5）。settle 尾部 clear 自然清掉。
     persist_resolve_context(
         db, before_turn, extracted,
         decree_text=decree_text, narrative=narrative,
         simulator_payload={}, secret_orders=[], relevant_memories=[],
     )
-    pre_settle(state, db)
     return settle_with_delta(
         state,
         db,

@@ -220,3 +220,23 @@ def test_run_settle_clears_resolve_context_on_completion(game):
     before_turn = state.turn
     run_settle(db, state, content, {"地区变化": {"shanxi": {"动乱": 1}}})
     assert db.get_resolve_context(before_turn) is None
+
+
+def test_crash_inside_pre_settle_leaves_no_ready_context(game, monkeypatch):
+    """崩在 pre_settle 内 → 不留 ready=1 行（cmr S2+S3 r5）。
+
+    ready=1 须统一意为「前半段已提交，只剩 settle」；persist 在 pre_settle 前的话，
+    崩在 pre_settle 内留下「ready=1 但财政未落」态，恢复入口直入 apply 会跳过
+    pre_settle=整月固定财政静默丢。
+    """
+    db, state, content = game
+    before_turn = state.turn
+
+    def _boom(*a, **k):
+        raise RuntimeError("simulated pre_settle crash")
+    monkeypatch.setattr(driver, "pre_settle", _boom)
+
+    with pytest.raises(RuntimeError, match="pre_settle crash"):
+        run_settle(db, state, content, {"地区变化": {"shanxi": {"动乱": 1}}})
+
+    assert db.get_resolve_context(before_turn) is None
