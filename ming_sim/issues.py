@@ -1121,7 +1121,13 @@ def apply_office_appointment(
         return {"name": name, "new_office": new_office, "rejected": True, "reason": "无 content，跳过建档"}
     from ming_sim.session import apply_appointment  # 延迟导入避循环
     appt = {"name": name, "office": new_office, "faction": faction, "reason": reason, "approved": True}
-    appointed, _ = apply_appointment(db, state, content, registry, appt, llm_config=llm_config)
+    # 建档抛错(DB 锁/唯一约束/注册失败)不得上抛崩月末结算致半落库(P1 铁律);
+    # 与 in_roster 分支同样兜成 rejected、把 exc 记进 reason(不静默吞)(线上 gemini high)。
+    try:
+        appointed, _ = apply_appointment(db, state, content, registry, appt, llm_config=llm_config)
+    except Exception as exc:
+        return {"name": name, "new_office": new_office, "rejected": True, "kind": "appoint",
+                "reason": f"建档抛出异常：{exc}；原 status={cur_status or '不在册'}"}
     if appointed:
         # 新任也按 office 文字去重(与 transfer 分支对称):新人占独占实职,从他人剔同名分项,
         # 免占缺旧任者留旧官成双缺官(CMR R4：去 replaces 后新任分支漏了顶替)。
