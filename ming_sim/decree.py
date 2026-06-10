@@ -320,6 +320,8 @@ def resolve_directives(
         # 同 advance_without_edict：推进回合前清 stale context（cmr S2+S3 r4）。
         db.clear_resolve_context(state.turn)
         state.next_period()
+        # 第三条推进尾同样复位 settling（cmr S4 r2）：漏掉的话新回合被守门跳过前半段。
+        state.turn_phase = TurnPhase.SUMMONING.value
         db.save_state(state)
         return ResolveResult(
             awaiting=False,
@@ -331,11 +333,17 @@ def resolve_directives(
     narrative, decisions = parse_decision_blocks(narrative)
     if decisions:
         tlog(f"[HITL] 检测到 {len(decisions)} 个决策点，暂停等皇帝亲裁：{[d['title'] for d in decisions]}")
-        db.save_resolve_context(
-            state.turn, decree_text, narrative, simulator_payload,
-            secret_orders=secret_orders_for_sim, relevant_memories=relevant_memories,
-        )
-        db.save_pending_decisions(state.turn, decisions)
+        # 暂停态三件（上下文+决策点+AWAITING 相位）同事务落库（cmr S4 r2）：相位若靠
+        # session 事后另笔写，崩在窗口里 DB 停在 settling 而决策已存——web submit_decisions
+        # 只认 AWAITING 相位，恢复死路。session 事后那笔写变为幂等。
+        with atomic(db):
+            db.save_resolve_context(
+                state.turn, decree_text, narrative, simulator_payload,
+                secret_orders=secret_orders_for_sim, relevant_memories=relevant_memories,
+            )
+            db.save_pending_decisions(state.turn, decisions)
+            state.turn_phase = TurnPhase.AWAITING_DECISION.value
+            db.save_state(state)
         return ResolveResult(awaiting=True, decisions=db.list_pending_decisions(state.turn))
 
     # 无决策点：透明续跑结算（cheat 仍可叠加）。
@@ -509,8 +517,10 @@ def pre_settle(
     auto_submit_due_secret_orders（原在 resolve_directives 调用点）挪入本事务：它只是
     「推演前的确定性写」，崩溃时密令呈递须随财政一并回滚；挪入不改它先于 simulator 的事实。
     """
-    # 幂等守门：phase 已是 settling → 前半段在上轮已提交，重进不重跑（防二次财政 tick）。
-    if state.turn_phase == TurnPhase.SETTLING.value:
+    # 幂等守门：settling/awaiting_decision → 前半段已提交，重进不重跑（防二次财政 tick）。
+    # AWAITING 只可能在 pre_settle 已提交后出现（HITL 暂停在 resolve 中段），语义同 settling
+    # ——HITL 后重发 issue（web 无相位守门）若只认 settling 会 miss（cmr S4 r2）。
+    if state.turn_phase in (TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value):
         return []
     auto_triggered: List[Dict[str, object]] = []
     with atomic(db):
