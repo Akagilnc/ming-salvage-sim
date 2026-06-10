@@ -254,6 +254,15 @@ def resolve_directives(
         state, db, on_stage=lambda label: _emit("stage", label),
         content=content, registry=registry)
 
+    # 诏书占位真源（ship-pre r5）：pre_settle 成功后立即把 decree_text 落为 ready=0
+    # 占位——begin_turn 会清内存 last_decree，跨进程恢复的 no-ready fallthrough 没有
+    # 此行就只能用 LLM 从草案重新生成，玩家手改的原诏蒸发。HITL/ready persist 后续
+    # 同键 upsert，settle 尾 clear 收掉。
+    db.save_resolve_context(
+        state.turn, decree_text, "", {},
+        secret_orders=[], relevant_memories=[],
+    )
+
     # 1.8) 历史脉络：取近几回合章节记忆注入推演（章节记忆取代旧的关键词原子检索）。
     relevant_memories: List[Dict] = []
     secret_orders_for_sim: list = []  # try 外初始化：检索失败也不能让后续 NameError

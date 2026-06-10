@@ -1085,11 +1085,23 @@ class GameSession:
                 self.db.save_state(self.state)
                 return result
             # 无 ready context：fallthrough 到正常流程重跑推演（前半段被守门跳过）。
+            # 占位真源补诏（ship-pre r5）：begin_turn 已清内存 last_decree，跨进程恢复
+            # 用存的原诏，不让 LLM 重新生成顶替玩家手改稿。
+            if ctx is not None and not (self.last_decree or "").strip():
+                stored = str(ctx.get("decree_text") or "").strip()
+                if stored:
+                    self.last_decree = stored
         if self.pending_count() > 0:
             raise ValueError(f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
         directives = self.db.list_directives(self.state, statuses=("draft",))
         if not directives:
-            raise ValueError("网页/CLI 端不允许跳过回合：至少一条草案才能颁诏。")
+            # 恢复态且有存诏：免草案要求（零草案 settling=driver 档/逃生口降级后是真实态，
+            # 而 add 已冻结——硬要草案=循环死路，ship-pre r5）。directives 仅作非空哨兵。
+            if (self.state.turn_phase in FRONT_HALF_DONE_PHASES
+                    and (self.last_decree or "").strip()):
+                directives = [{"text": self.last_decree}]
+            else:
+                raise ValueError("网页/CLI 端不允许跳过回合：至少一条草案才能颁诏。")
         # 结算前先存一份：LLM 推演有可能崩，留个回滚锚点
         self.auto_save("preresolve")
         decree_text = decree or self.last_decree or write_decree_with_agno(
