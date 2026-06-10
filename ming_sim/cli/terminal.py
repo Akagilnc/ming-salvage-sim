@@ -293,6 +293,12 @@ def review_directives(session: GameSession) -> str:
                 continue
             return "skip"
         if lowered in {"back", "b", "返回", "继续召见"}:
+            from ming_sim.session import FRONT_HALF_DONE_PHASES
+            if session.state.turn_phase in FRONT_HALF_DONE_PHASES:
+                # 粘滞相位下 back 是静默 no-op，play_turn 会立刻把人弹回本菜单——
+                # 给一行提示，别让玩家以为按键失灵（ship-pre r6）。
+                print("\n上月结算未完成，无法继续召见；请输入 issue 续跑结算。")
+                continue
             session.back_to_summoning()
             return "back"
         if lowered in {"skills", "skill", "技能", "技能卡", "查看技能"}:
