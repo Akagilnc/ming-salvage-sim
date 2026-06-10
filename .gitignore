@@ -58,3 +58,6 @@ web/public/ending_timeline_scroll.webp
 scripts/runs/cli_trace_*.jsonl
 scripts/runs/web_server.log
 .antigravitycli/
+
+# 本局游戏存档伴档(配 data/probe.db,纯个人进度,不入库)
+docs/IMPERIAL_NOTES.md
