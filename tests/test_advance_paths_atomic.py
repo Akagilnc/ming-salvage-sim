@@ -69,6 +69,9 @@ def test_advance_without_edict_atomic(game, monkeypatch):
     # 内存与 DB 同源(reload)：turn 未前进、相位未变。
     assert state.turn == turn
     assert state.turn_phase == before_phase
+    # 真正咬住 reload：崩前 apply_fixed_period_flows 已直改内存 metrics(flows 直加)，
+    # 回滚后 reload 必须把它刷回 DB 真相(cmr S7 r1 claude——turn 断言在崩点前未变，空泛)。
+    assert state.metrics == db.load_state().metrics
     assert not db.conn.in_transaction
 
 
@@ -118,6 +121,9 @@ def test_fallback_branch_atomic(game, monkeypatch):
     assert on_disk_report == before_report  # fallback 写序列回滚
     assert on_disk_turn == turn  # 回合未推进
     assert state.turn == turn  # 内存与 DB 同源
+    # 真正咬住 reload：settling 相位是 pre_settle 已提交的 DB 真相，fallback 回滚后
+    # 内存须与之同源；metrics 同断言（cmr S7 r1 claude）。
+    assert state.metrics == db.load_state().metrics
     assert not db.conn.in_transaction
 
 
@@ -148,6 +154,9 @@ def test_settle_crash_after_savestate_before_clear_rolls_back(game, monkeypatch,
     orig_clear = db.clear_resolve_context
 
     def _boom_clear(t):
+        # 抛错前证明窗口真实：next_period/save_state 已发生（clear 在其后），
+        # 否则 clear 被挪到推进写之前测试也照样绿（cmr S7 r1 codex）。
+        assert state.turn == turn + 1, "clear 必须在 next_period/save_state 之后"
         raise RuntimeError("clear boom")
     monkeypatch.setattr(db, "clear_resolve_context", _boom_clear)
 
@@ -181,7 +190,7 @@ def test_settle_code_exception_writes_pack_and_aborts(game, monkeypatch, tmp_pat
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     turn = state.turn
-    extracted = {"metric_delta": {"国库": 30}}
+    extracted = {"metric_delta": {"民心": -4}}  # 国库由 economy_accounts 派生不可直写；民心负向不撞 clamp
     persist_resolve_context(
         db, turn, extracted,
         decree_text="减赋诏", narrative="本月邸报……",
@@ -258,7 +267,7 @@ def test_recovery_entry_consumes_ready_context(game, monkeypatch):
 
     db, state, content = game
     turn = state.turn
-    extracted = {"metric_delta": {"国库": 30}}
+    extracted = {"metric_delta": {"民心": -4}}  # 国库由 economy_accounts 派生不可直写；民心负向不撞 clamp
     # 模拟「崩在 settle 之前、extractor 已产出并 persist」：pre_settle 已落 settling。
     dm.pre_settle(state, db, content=content)
     assert state.turn_phase == TurnPhase.SETTLING.value
@@ -274,6 +283,8 @@ def test_recovery_entry_consumes_ready_context(game, monkeypatch):
     monkeypatch.setattr(dm, "simulate_season_with_payload", _must_not_run)
     monkeypatch.setattr(dm, "extract_scores_by_modules_with_agno", _must_not_run)
 
+    support_before = db.load_state().metrics["民心"]
+
     sess = _recovery_session(db, state, content, monkeypatch)
     result = sess.resolve_turn()
 
@@ -281,6 +292,8 @@ def test_recovery_entry_consumes_ready_context(game, monkeypatch):
     assert state.turn == turn + 1  # 完整推进
     assert db.get_resolve_context(turn) is None  # settle 尾清掉
     assert state.turn_phase == TurnPhase.ISSUED.value
+    # ready delta 真被 apply（不是空 delta 走个过场，cmr S7 r1 codex）。
+    assert db.load_state().metrics["民心"] == support_before - 4
 
 
 def test_recover_after_simulation_crash_can_resettle(game, monkeypatch):
@@ -307,13 +320,18 @@ def test_recover_after_simulation_crash_can_resettle(game, monkeypatch):
     monkeypatch.setattr(dm, "create_score_extractor_module_agent", lambda *a, **k: None)
     monkeypatch.setattr(dm, "build_extractor_shared_context", lambda *a, **k: "ctx")
 
+    calls = {"sim": 0, "extract": 0}
+
     def _resim(*a, **k):
+        calls["sim"] += 1
         return "重新推演后的邸报，无决策块。", (k.get("simulator_payload") or {})
     monkeypatch.setattr(dm, "simulate_season_with_payload", _resim)
 
     def _reextract(*a, **k):
-        return {"metric_delta": {"国库": 10}}, "raw-out", "raw-in"
+        calls["extract"] += 1
+        return {"metric_delta": {"民心": -2}}, "raw-out", "raw-in"
     monkeypatch.setattr(dm, "extract_scores_by_modules_with_agno", _reextract)
+    support_before = db.load_state().metrics["民心"]
 
     sess = _recovery_session(db, state, content, monkeypatch)
     # 需要一条 draft 才能走正常 resolve_directives（fallthrough 路径）。
@@ -326,3 +344,42 @@ def test_recover_after_simulation_crash_can_resettle(game, monkeypatch):
     # 财政不二跑：settling 守门跳过 pre_settle 前半段。
     assert _ledger_count(db, turn) == ledger_after_pre
     assert db.get_resolve_context(turn) is None  # settle 尾清掉
+    # 贵调用真重跑了一次，且重抽的 delta 真落地（cmr S7 r1 codex）。
+    assert calls == {"sim": 1, "extract": 1}
+    assert db.load_state().metrics["民心"] == support_before - 2
+
+
+def test_recovery_path_commits_pending_actions(game, monkeypatch):
+    """恢复直入 apply 路也要 commit 暂存动作（cmr S7 r1 claude，P1）。
+
+    web 在 settling 态可继续召对 stage 动作（chat 无相位门）；恢复结算推进后
+    不 commit 的话这些行成旧回合孤儿死行（违 P1，advance_without_edict 同款不变式）。
+    """
+    from ming_sim.session import TurnPhase
+    import ming_sim.decree as dm
+    from tests.test_pending_actions import _active_minister_name
+
+    db, state, content = game
+    turn = state.turn
+    dm.pre_settle(state, db, content=content)
+    assert state.turn_phase == TurnPhase.SETTLING.value
+    dm.persist_resolve_context(
+        db, turn, {"metric_delta": {"国库": 5}},
+        decree_text="d", narrative="n",
+        simulator_payload={}, secret_orders=[], relevant_memories=[],
+    )
+    # 崩溃重载后玩家继续召对，stage 一条动作
+    name = _active_minister_name(db, content)
+    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    db.stage_pending_action(
+        state.turn, kind="secret_order", action="更新", minister_name=name, target_id=oid,
+        payload={"new_title": "恢复期标题", "new_content": "x", "deadline_months": 0})
+
+    sess = _recovery_session(db, state, content, monkeypatch)
+    result = sess.resolve_turn()
+
+    assert result.awaiting is False
+    assert state.turn == turn + 1
+    statuses = [r["status"] for r in db.conn.execute(
+        "SELECT status FROM pending_actions WHERE turn=?", (turn,)).fetchall()]
+    assert statuses and all(st != "pending" for st in statuses)  # 不留孤儿

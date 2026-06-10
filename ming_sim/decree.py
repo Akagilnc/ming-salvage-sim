@@ -425,7 +425,10 @@ def resolve_settling_recovery(
     before_turn = state.turn
     decree_text = str(ctx.get("decree_text") or "")
     narrative = str(ctx.get("narrative") or "")
-    simulator_payload = ctx["simulator_payload"] if isinstance(ctx.get("simulator_payload"), dict) else {}
+    # 暂存动作 commit（幂等，只处理 pending 行）：恢复期玩家可能继续召对 stage 动作
+    # （web chat 无相位门），不 commit 的话随 next_period 成旧回合孤儿死行，违 P1
+    # （cmr S7 r1；advance_without_edict 同款不变式）。
+    db.commit_pending_actions(state, content=content, registry=registry)
 
     report = settle_with_delta(
         state,
