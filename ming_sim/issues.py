@@ -1111,6 +1111,9 @@ def apply_office_appointment(
         ch.office_type = infer_office_type_from_office(ch.office, new_office_type or ch.office_type, llm_config)
         if registry is not None:
             registry.refresh(name)
+            # 被顶替者 office/office_type 也变了,一并刷 Agent,免本回合后续用陈旧身份/工具(线上 gemini)。
+            for dp in displaced_parts:
+                registry.refresh(dp.split(":")[0])
         return {
             "name": name, "old_status": cur_status, "old_office": old_office, "new_office": new_office,
             "kind": "transfer", "reason": reason,
@@ -1134,6 +1137,10 @@ def apply_office_appointment(
         # displaced 统一取 _displace_duplicate_offices 的 List[str](apply_appointment 的单名
         # displaced 在去 replaces 后恒空,留着会让本字段时而 str 时而 list,故弃)(线上 gemini)。
         displaced_parts = _displace_duplicate_offices(db, content, appointed, new_office)
+        # 被顶替者一并刷 Agent(新任者 apply_appointment 内已注册)(线上 gemini)。
+        if registry is not None:
+            for dp in displaced_parts:
+                registry.refresh(dp.split(":")[0])
         return {"name": appointed, "new_office": new_office, "kind": "appoint", "reason": reason,
                 **({"displaced": displaced_parts} if displaced_parts else {})}
     return {"name": name, "new_office": new_office, "rejected": True, "kind": "appoint",
