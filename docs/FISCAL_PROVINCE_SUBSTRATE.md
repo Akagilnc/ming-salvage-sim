@@ -41,11 +41,11 @@
 k=action力度系数(ΣCost仅含action银,Due不入;Cost>0 action其 delta/scale/transfer_to.amount 全×k;0-cost不缩)。modifier `V_final=clamp(V_base×∏max(0,1+scale)+Σdelta)`,V_base静态不复利,钱类Stock禁set/scale。transfer_to source/target 类型白名单(CASH/CLAIM/BOUNDARY 或指定 Flow)。
 **现金 action 二选一**(防双扣):支付类(补饷/赈济)= 银 Cost 即该笔支付,不再另记 Due;行政成本类 = Cost 扣省库,另带 effect。(spike G2 已验补饷 k=0.333 无双扣。)
 
-## 6.6 golden-tick(spike 实测 · G1–G9 全 PASS,三断言:现金守恒/债务对账/C per-account 对账)
+## 6.6 golden-tick(spike 实测 · G1–G22 全 PASS,5 层断言:现金守恒/债务对账/C per-account 对账/末态硬期望/土地守恒)
 见 [spike_settle_tick.py](../spike_settle_tick.py),已执行,残差均 0:
 - **G1** 基线 · **G2** 补饷 k=0.333(死亡螺旋+无双扣)· **G3** 清丈(官民田3050→3350,当 tick 扣成本2)· **G4** 挪借火耗(C 内部转移)· **G5** 漂没.1+中饱.1+拨付30(漂没→C_漂没/中饱→C_中饱/net→省库)· **G6** 超额补饷 clamp(欠5补30只还5)· **G7** 清欠(民间补缴现金入)。
 - **G8** 挪借 eff=0.8 → 激活 C_eff损耗(2→损耗账户),per-account 对账平。
-- **G9** 三 tick 链(穷省+recurring 营建):死亡螺旋实显——军饷欠 30→97→133、火耗在 C_地方截留 累积 9.8→19.6→29.4(官绅肥/官衙穷),每 tick 三断言均 PASS。
+- **G9** 三 tick 链(穷省+recurring 营建):死亡螺旋实显——军饷欠 30→61→97→133(期初→各tick末态)、火耗在 C_地方截留 累积 9.8→19.6→29.4(官绅肥/官衙穷),每 tick 三断言均 PASS。
 - **G10** 追赃 · **G11** 多 costed 共享 k · **G12** 赈济 Due>0 · **G13** 拨付+追赃同 tick · **G14** 动态税基(清丈抬税基)· **G15** 双债户偿还序(军饷>官俸)· **G16** 清丈枯竭+土地守恒 · **G17** 赈济饿死(unmet_relief)· **G22** 三饷火耗分量(三饷30→C_地方截留12.6,漏派必 FAIL)。
 - **5 层断言**:现金守恒 / 债务 per-account oracle / C per-account oracle / **末态硬期望常量(第4类独立锚)** / **土地守恒(Δ(官民田+隐田)=0)**;+ 输入校验 fail-loud(eff/amount/cost/rates 越界、补饷带 amount → raise);+ 输出 `unmet_relief`。
 - **自变异实证(全被某层 FAIL)**:中饱→省库、火耗→省库、军饷新债→官俸欠、虚增火耗×2、起运去 clamp、k 砍半、补饷只减欠不扣省库、清丈×2、偿还序 flip、清丈凭空造地、unmet 漏算、漏三饷火耗、三饷火耗×2。
