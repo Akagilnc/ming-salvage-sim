@@ -586,6 +586,11 @@ def _settle_after_narrative(
             relevant_memories=relevant_memories,
             secret_orders=secret_orders_for_sim,
         )
+        # shape 垃圾的 extractor 产物 = extractor 失败：在 try 内验形，让它走同一条
+        # pack+SettlementAbort 路（ship-pre r4）——留给 persist 的裸 ValueError 没有
+        # 用户边界接（CLI 原始 traceback 崩出、无错误包）。persist 自身仍二次验形
+        # （driver 路防线，幂等）。
+        validate_delta_shape(extracted)
     except Exception as exc:
         # ADR 0008 决定 3/6（S6）：extractor 失败响亮中止——不再 extracted={} 静默续跑
         # （整月 delta 蒸发而回合照推=最毒半落库点，本 ADR 立项动机）。此分支在 settle_with_delta
