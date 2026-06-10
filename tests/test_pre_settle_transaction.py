@@ -234,3 +234,86 @@ def test_advance_without_edict_after_settling_no_double_tick(game):
     assert rows_final == rows_after_pre  # 不二跑
     assert state.turn == turn + 1
     assert state.turn_phase != "settling"  # 推进后复位
+
+
+# ---------------------------------------------------------------------------
+# cmr S4 r2 修复回归（F1 第三推进尾 / F2 HITL 相位耐崩+守门）
+# ---------------------------------------------------------------------------
+
+def _drive_resolve_directives(db, state, content, monkeypatch, *, simulator_behavior):
+    """stub 驱动真实 resolve_directives。simulator_behavior: 'fail' / 'decision'。"""
+    import ming_sim.decree as decree_mod
+
+    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
+
+    decision_narrative = (
+        "本月邸报正文。\n<<DECISION>>"
+        '{"title": "辽东战和", "context": "皇太极请款", "options": '
+        '[{"label": "战"}, {"label": "和"}]}'
+        "<<END>>"
+    )
+
+    def _stub_sim(*a, **k):
+        if simulator_behavior == "fail":
+            raise RuntimeError("simulated simulator crash")
+        return decision_narrative, k.get("simulator_payload") or {}
+    monkeypatch.setattr(decree_mod, "simulate_season_with_payload", _stub_sim)
+
+    return decree_mod.resolve_directives(
+        state, db, None, None, [1], "减赋诏",
+        content=content, registry=None,
+    )
+
+
+def test_simulator_fallback_tail_resets_settling(game, monkeypatch):
+    """第三条推进尾（simulator-fallback）也要复位 settling（cmr S4 r2 F1）。
+
+    不复位的话推进后的新回合持久化为 settling，下回合前半段被守门跳过
+    ——而那个月的财政/暂存/密令从未做过。
+    """
+    db, state, content = game
+    turn = state.turn
+    res = _drive_resolve_directives(db, state, content, monkeypatch,
+                                    simulator_behavior="fail")
+    assert res.awaiting is False
+    assert state.turn == turn + 1
+    assert state.turn_phase == "summoning"
+    row = db.conn.execute("SELECT turn_phase FROM game_state").fetchone()
+    assert row[0] == "summoning"  # 落库的也复位
+
+
+def test_hitl_pause_persists_awaiting_phase_durably(game, monkeypatch):
+    """HITL 暂停时 AWAITING_DECISION 随决策点同笔持久化（cmr S4 r2 F2a）。
+
+    靠 session 事后另笔写的话，崩在窗口里 DB 停在 settling 而决策已存，
+    web submit_decisions 只认 AWAITING=恢复死路。
+    """
+    db, state, content = game
+    turn = state.turn
+    res = _drive_resolve_directives(db, state, content, monkeypatch,
+                                    simulator_behavior="decision")
+    assert res.awaiting is True
+    assert state.turn == turn  # 回合未推进
+    row = db.conn.execute("SELECT turn_phase FROM game_state").fetchone()
+    assert row[0] == "awaiting_decision"  # DB 持久化的相位，非内存
+    db.clear_resolve_context(turn)
+
+
+def test_pre_settle_guard_covers_awaiting_decision(game):
+    """守门扩到 AWAITING_DECISION：该相位只可能在 pre_settle 已提交后出现（cmr S4 r2 F2b）。
+
+    只认 settling 的话，HITL 后重发 issue 守门 miss=同回合二次财政 tick。
+    """
+    from ming_sim.decree import pre_settle
+    db, state, content = game
+    turn = state.turn
+    state.turn_phase = "awaiting_decision"
+    rows_before = db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)).fetchone()[0]
+
+    out = pre_settle(state, db)
+
+    assert out == []
+    rows_after = db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)).fetchone()[0]
+    assert rows_after == rows_before  # 前半段没有二跑
