@@ -167,7 +167,11 @@ def write_decree_with_agno(
     return text.strip()
 
 
-def advance_without_edict(state: GameState, db: GameDB) -> None:
+def advance_without_edict(state: GameState, db: GameDB, *, content=None, registry=None) -> None:
+    # 退朝未下正式诏书也是月末:先 commit 本回合暂存的结构化写动作(颁诏前未撤回即通过,
+    # ADR 0006),否则暂存成孤儿、随 next_period 永久丢失(CMR P1)。须在 next_period 前。
+    # content/registry 供 office(任免)落库注册新臣;无则任免落不了(标 failed,不静默)。
+    db.commit_pending_actions(state, content=content, registry=registry)
     apply_fixed_period_flows(db, state)
     message = f"本{TURN_UNIT}退朝未下正式圣旨，诸事仍待来{TURN_UNIT}处置。"
     db.record_log(state, message)
@@ -207,7 +211,7 @@ def resolve_directives(
             on_event(kind, data)
 
     if not directives:
-        advance_without_edict(state, db)
+        advance_without_edict(state, db, content=content, registry=registry)
         return ResolveResult(awaiting=False, report=f"本{TURN_UNIT}未颁正式诏书。")
 
     before_turn = state.turn
@@ -216,7 +220,9 @@ def resolve_directives(
 
     # 1) 前括号确定性结算：固定月度财政 tick + auto_trigger 硬立 seed 情势（均在 LLM 推演前）。
     #    与探针 driver 共用同一段（ADR 0004）。
-    auto_triggered = pre_settle(state, db, on_stage=lambda label: _emit("stage", label))
+    auto_triggered = pre_settle(
+        state, db, on_stage=lambda label: _emit("stage", label),
+        content=content, registry=registry)
 
     # 1.8) 历史脉络：取近几回合章节记忆注入推演（章节记忆取代旧的关键词原子检索）。
     relevant_memories: List[Dict] = []
@@ -431,11 +437,20 @@ def _settle_after_narrative(
     )
 
 
-def pre_settle(state: GameState, db: GameDB, *, on_stage=None) -> List[Dict[str, object]]:
+def pre_settle(
+    state: GameState, db: GameDB, *, on_stage=None, content=None, registry=None,
+) -> List[Dict[str, object]]:
     """确定性结算「前括号」：固定月度财政 tick + auto_trigger 硬立 seed 情势，均在 LLM 推演前。
 
     返回本回合程序硬触发的清单。真实流程与探针 driver 共用此核（ADR 0004）。
+    content/registry 供 office(任免)暂存动作落库注册新臣；driver 路径无聊天暂存，传 None 即 no-op。
     """
+    # 动作闸门(ADR 0006)：颁诏最前批量落库本回合暂存的结构化聊天写动作（密令更新/催办/任免/…），
+    # 在跑 LLM 结算管线前，使 simulator/extractor 读到的盘面与旧「召对期直写」时序一致。
+    # driver 路径无聊天暂存 → 空 no-op。幂等（committed 行不重跑）。
+    committed = db.commit_pending_actions(state, content=content, registry=registry)
+    if committed:
+        tlog(f"[pending_actions] 颁诏批量落库 {len(committed)} 条：{[(c['kind'], c['action']) for c in committed]}")
     tlog("结算 1/4 固定月度财政 tick")
     if on_stage is not None:
         on_stage("固定月度财政入账")

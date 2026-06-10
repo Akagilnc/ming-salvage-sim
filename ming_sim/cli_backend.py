@@ -435,6 +435,78 @@ def extract_minister_actions(
     }
 
 
+# 任免(office)会话动作抽取：与密令【完全独立】——任免和密令无关，故另起一函数，
+# 不并进 extract_minister_actions、不挂密令那个 active gate。随召对触发（任何召对都
+# 可能口头派官/罢官，含跟太监说），ungated；过判由「应允才落、拒绝就丢」兜底。
+def extract_appointment_action(
+    player_message: str,
+    minister_reply: str,
+    llm_config: Any = None,
+) -> Dict[str, Any]:
+    """LLM 判皇帝本轮口头是否在任免某人（任命/罢免），返回结构化动作。失败/无 → 「无」。
+    只判自然语言；显式「拟旨如下：」里的任免走 extractor 的 office_changes，不在此。"""
+    prompt = (
+        "你是信息抽取器，不扮演、不写圣旨。读皇帝这句话 + 被召对者回话，判断皇帝**本轮**"
+        "是否在口头任免某人（授官/升迁/调任=任命；革职/罢黜/拿问去职=罢免）。"
+        "只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
+        "{\n"
+        '  "任免动作": "无|任命|罢免",  // 皇帝命某人任/升/调某官=任命；命革/罢/黜某人=罢免；都不是=无\n'
+        '  "姓名": "",                 // 被任/被免者确切姓名\n'
+        '  "官职": ""                  // 任命时所授官职；罢免可空\n'
+        "}\n"
+        "判定要点：皇帝口语如「着X任/授X为/升X/调X去/革X职/罢X/拿X」即任免；闲谈、议事、"
+        "下密令、拟旨都不算。语义判断，别拘字面。无任免 → 任免动作填「无」、其余留空。\n\n"
+        "【皇帝】" + (player_message or "（无）") + "\n"
+        "【回话】" + (minister_reply or "（无）") + "\n"
+    )
+    raw = ""
+    try:
+        raw, _ = _run_backend_for_config(prompt, llm_config)
+    except Exception as exc:  # 抽取失败不阻断对话
+        _log(f"任免动作抽取失败：{exc}")
+    obj = _loads_lenient(raw) or {}
+    # 动作归一到固定枚举：枚举外的串 → 「无」，防按未知动作误操作（同密令抽取 CMR F10）。
+    # 不收「顶替」字段：顶替/去职由落地核 _displace_duplicate_offices 按 office 文字自动去重处理，
+    # 与 extractor 的 office_changes 同一机制（CMR R3：收而不用=capture-but-ignore 不一致）。
+    _raw_action = str(obj.get("任免动作") or "无").strip()
+    _action = _raw_action if _raw_action in {"无", "任命", "罢免"} else "无"
+    return {
+        "appoint_action": _action,
+        "name": str(obj.get("姓名") or "").strip()[:20],
+        "office": str(obj.get("官职") or "").strip()[:40],
+    }
+
+
+def extract_confirmation_intent(
+    player_message: str,
+    minister_reply: str,
+    pending_summaries: List[str],
+    llm_config: Any = None,
+) -> str:
+    """皇帝本轮对【上一轮经大臣领命确认、尚未落库的暂存动作】是应允/拒绝/未表态。
+    对话确认(ADR 0006 重设计)：应允 → 当场 commit，拒绝 → 丢，无 → 留。失败/无 → 「无」。"""
+    summ = "；".join(pending_summaries) or "（无）"
+    prompt = (
+        "你是信息抽取器，不扮演。皇帝上一轮经大臣领命确认后，有几条【尚未落库的暂存政务动作】"
+        "待皇帝定夺。读皇帝这句话，判断他对这些暂存动作的态度：\n"
+        "  应允=准/可/照办/就这么办/依卿所奏/便如此；\n"
+        "  拒绝=不必/罢了/再议/不准/作罢/算了；\n"
+        "  无=没提这些、继续说别的、含糊未表态。\n"
+        "只输出一个 JSON（无代码围栏、无多余字）：{\"确认\":\"应允|拒绝|无\"}。语义判断，别拘字面。\n\n"
+        "【待皇帝定夺的暂存动作】" + summ + "\n"
+        "【皇帝】" + (player_message or "（无）") + "\n"
+        "【大臣回话】" + (minister_reply or "（无）") + "\n"
+    )
+    raw = ""
+    try:
+        raw, _ = _run_backend_for_config(prompt, llm_config)
+    except Exception as exc:  # 抽取失败不阻断对话；当未表态，暂存留到颁诏(算同意)
+        _log(f"确认意图抽取失败：{exc}")
+    obj = _loads_lenient(raw) or {}
+    v = str(obj.get("确认") or "无").strip()
+    return v if v in {"应允", "拒绝", "无"} else "无"
+
+
 def _matched_prefix(message: str, prefixes) -> Optional[str]:
     """消息命中某前缀则返回前缀后的正文（玩家那句意图），否则 None。"""
     pm = (message or "").strip()

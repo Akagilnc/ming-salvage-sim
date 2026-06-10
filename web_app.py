@@ -1162,6 +1162,7 @@ class WebGame:
         registered_minister: str = "",
         displaced_minister: str = "",
         secret_order_id: int = 0,
+        pending_action_id: int = 0,
         chat_turn_id: int = 0,
     ) -> Dict[str, Any]:
         character = self.session._character(minister_name)
@@ -1181,6 +1182,7 @@ class WebGame:
             "registered_minister": registered_minister,
             "displaced_minister": displaced_minister,
             "secret_order_id": secret_order_id or 0,
+            "pending_action_id": pending_action_id or 0,
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
             "suggestions": self.suggestions_for(character),
@@ -1220,6 +1222,7 @@ class WebGame:
             registered_minister=result.registered_minister,
             displaced_minister=result.displaced_minister,
             secret_order_id=result.secret_order_id,
+            pending_action_id=getattr(result, "pending_action_id", 0),
             chat_turn_id=chat_turn_id,
         )
 
@@ -1346,6 +1349,7 @@ class WebGame:
                 proposed = res["directive"]
             if res["secret_order_id"]:
                 secret_order_id = res["secret_order_id"]
+            pending_action_id = int(res.get("pending_action_id") or 0)
             self._record_chat_rollback_items(chat_turn_id, before_snapshot)
             payload = self._chat_payload(
                 minister_name, answer, court_action=court_action, next_minister=next_minister,
@@ -1353,6 +1357,7 @@ class WebGame:
                 registered_minister=registered,
                 displaced_minister=displaced,
                 secret_order_id=secret_order_id,
+                pending_action_id=pending_action_id,
                 chat_turn_id=chat_turn_id,
             )
             yield {"type": "done", "payload": payload}
@@ -1865,6 +1870,29 @@ async def api_secret_orders(status: str = "") -> Dict[str, Any]:
     """列出密令。status 为空返回全部，否则按 active/done/failed 过滤。"""
     orders = get_game().db.list_secret_orders(status=status or None)
     return {"orders": orders}
+
+
+@app.get("/api/pending_actions")
+async def api_pending_actions() -> Dict[str, Any]:
+    """列出本回合待确认动作(动作闸门 ADR 0006):皇帝复核区,颁诏批量落库前可见可撤。"""
+    game = get_game()
+    return {"actions": game.db.list_pending_actions(int(game.state.turn))}
+
+
+@app.post("/api/pending_actions/{action_id}/withdraw")
+async def api_withdraw_pending_action(action_id: int) -> Dict[str, Any]:
+    """皇帝撤回一条尚未颁诏落库的暂存动作。不存在→404;存在但已落库/非本回合→409。
+    先原子条件 DELETE(以删成功为真源,免 check-then-act 竞态,pr-loop sourcery),
+    失败再查行分流 404/409。"""
+    game = get_game()
+    if game.db.withdraw_pending_action(int(action_id), int(game.state.turn)):
+        return {"withdrawn": action_id, "actions": game.db.list_pending_actions(int(game.state.turn))}
+    # 删不动:查清是不存在还是已落库/非本回合
+    row = game.db.conn.execute(
+        "SELECT turn, status FROM pending_actions WHERE id=?", (int(action_id),)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="该待确认动作不存在。")
+    raise HTTPException(status_code=409, detail="该动作已落库或非本回合，无法撤回。")
 
 
 @app.get("/api/turn_extraction")
