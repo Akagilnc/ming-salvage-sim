@@ -1034,6 +1034,11 @@ class GameSession:
         if self.state.turn_phase == TurnPhase.SETTLING.value:
             ctx = self.db.get_resolve_context(self.state.turn)
             if ctx is not None and ctx.get("extracted") is not None:
+                # 与正常路同守门：恢复期大臣新拟的 pending 旨未核定不得推进——
+                # 重放跳过守门会把它孤儿在旧回合（cmr S7 r8）。
+                if self.pending_count() > 0:
+                    raise ValueError(
+                        f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
                 # 重试新传的 decree/cheat 在重放叉被忽略（重放使用崩溃前真源），留痕（cmr S7 r4）。
                 if (decree or "").strip() or (cheat_directive or "").strip():
                     from ming_sim.token_stats import tlog
