@@ -988,10 +988,9 @@ class GameSession:
     def write_decree(self) -> str:
         """生成诏书。要求无 pending 残留、≥1 条 draft。"""
         if self.state.turn_phase == TurnPhase.AWAITING_DECISION.value:
-            # HITL 暂停期重发 issue：幂等返回已存决策点，不二跑 simulator——二跑会覆盖
-            # pending_decisions，或第二次输出无决策块时绕过亲裁直接结算（cmr S4 r3 F3）。
-            return ResolveResult(
-                awaiting=True, decisions=self.db.list_pending_decisions(self.state.turn))
+            # -> str 契约：亲裁期不能拟诏，响亮拒绝走既有 ValueError 错误路径
+            # （web 映射 400 / terminal 打印拟诏失败）。幂等返回决策点的守门在 resolve_turn。
+            raise ValueError("当前在月末亲裁阶段，请先裁决已存决策点，不能拟诏。")
         if self.pending_count() > 0:
             raise ValueError(f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
         directives = self.db.list_directives(self.state, statuses=("draft",))
