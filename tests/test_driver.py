@@ -209,7 +209,8 @@ def test_run_settle_persists_resolve_context_before_settle(game, monkeypatch):
 
     ctx = db.get_resolve_context(before_turn)
     assert ctx is not None
-    assert ctx["extracted"] == {"region_delta": {"shanxi": {"unrest": 3}}}
+    # 顶层 key 已 canonical（地区变化→region_delta）；区域内层字段保持原样由 apply 解析。
+    assert ctx["extracted"] == {"region_delta": {"shanxi": {"动乱": 3}}}
     db.clear_resolve_context(before_turn)
 
 
