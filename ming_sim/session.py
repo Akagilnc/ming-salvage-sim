@@ -84,6 +84,7 @@ class TurnPhase(str, Enum):
     SUMMONING = "summoning"   # 召见中：召见、对话、大臣拟旨产 pending
     REVIEWING = "reviewing"   # 核定草案：增删改、确认/驳回 pending、写诏书
     AWAITING_DECISION = "awaiting_decision"  # HITL：simulator 出决策点，暂停等皇帝亲裁
+    SETTLING = "settling"     # ADR 0008 S4：pre_settle 前半段已提交，崩溃重进不重跑前半段（中间态）
     ISSUED = "issued"         # 已颁诏：resolve 完成，待 end_turn
 
 
@@ -429,8 +430,11 @@ class GameSession:
         self.last_decree = ""
         self.last_report = ""
         # awaiting_decision 必须保活：刷新页时仍要弹决策点续跑结算，不可重置成 summoning。
+        # settling 同样保活（ADR 0008 S4）：pre_settle 前半段已提交，重载若被重置回 summoning，
+        # 守门失效=恢复入口认不出「前半段已完成」会二次重跑前半段（白名单外即被重置）。
         if self.state.turn_phase not in (
-            TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value, TurnPhase.AWAITING_DECISION.value,
+            TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value,
+            TurnPhase.AWAITING_DECISION.value, TurnPhase.SETTLING.value,
         ):
             self.state.turn_phase = TurnPhase.SUMMONING.value
             self.db.save_state(self.state)

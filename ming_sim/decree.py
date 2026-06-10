@@ -23,6 +23,7 @@ from ming_sim.agents import (
     create_season_simulator_agent,
     run_agent_text,
 )
+from ming_sim.applier import atomic
 from ming_sim.constants import TURN_UNIT
 from ming_sim.context import ENDING_LABELS, ENDING_ONGOING, ENDING_TIMEOUT, victory_status
 from ming_sim.db import GameDB
@@ -238,13 +239,8 @@ def resolve_directives(
     except Exception as exc:
         tlog(f"[memory/chapters] 失败，跳过：{exc}")
 
-    # 密令期限：到期 active 自动转 pending_review，保证本月核议一锤定音。
-    try:
-        due_orders = db.auto_submit_due_secret_orders(state)
-        if due_orders:
-            tlog(f"[secret_order] 到期送核议 {due_orders}")
-    except Exception as exc:
-        tlog(f"[secret_order] 到期送核议失败，跳过：{exc}")
+    # 密令期限到期送核议已挪进 pre_settle 事务（ADR 0008 S4）——此处不再单独调用，
+    # 否则二次写在 pre_settle 提交后散落事务外。下面只读注入推演（含 pending_review）。
 
     # 密令注入推演：active + pending_review 都要进（pending_review 需推演本月核议判 done/failed）
     try:
@@ -495,22 +491,46 @@ def pre_settle(
 
     返回本回合程序硬触发的清单。真实流程与探针 driver 共用此核（ADR 0004）。
     content/registry 供 office(任免)暂存动作落库注册新臣；driver 路径无聊天暂存，传 None 即 no-op。
+
+    ADR 0008 S4：整段（暂存动作 commit + 固定财政 + auto_trigger + 到期密令呈递）包成
+    **自己的单事务**——崩在内部=全回滚=相位未变=重进时干净重跑前半段。完成时**同事务内**
+    落中间相位 settling（写 state.turn_phase + save_state）：只意味着「前半段已完成，不再
+    重跑 pre_settle」，不意味着后半段就绪（恢复入口的消费分流是 S7 的活，本切片只立相位机械）。
+    settling 相位字符串与 session.TurnPhase.SETTLING 一致；此处不 import session（会循环），
+    用 models.GameState 文档化的字面值。settling 已是入口态时直接 return（幂等守门）：
+    「不再重跑前半段」正是 settling 的语义，恢复后重进 pre_settle 不二次落财政。
+
+    auto_submit_due_secret_orders（原在 resolve_directives 调用点）挪入本事务：它只是
+    「推演前的确定性写」，崩溃时密令呈递须随财政一并回滚；挪入不改它先于 simulator 的事实。
     """
-    # 动作闸门(ADR 0006)：颁诏最前批量落库本回合暂存的结构化聊天写动作（密令更新/催办/任免/…），
-    # 在跑 LLM 结算管线前，使 simulator/extractor 读到的盘面与旧「召对期直写」时序一致。
-    # driver 路径无聊天暂存 → 空 no-op。幂等（committed 行不重跑）。
-    committed = db.commit_pending_actions(state, content=content, registry=registry)
-    if committed:
-        tlog(f"[pending_actions] 颁诏批量落库 {len(committed)} 条：{[(c['kind'], c['action']) for c in committed]}")
-    tlog("结算 1/4 固定月度财政 tick")
-    if on_stage is not None:
-        on_stage("固定月度财政入账")
-    # 落账副作用；明细不再进 simulator payload（欠饷哗变走前置事件/issue）
-    apply_fixed_period_flows(db, state)
-    # 程序硬触发：标了 auto_trigger 的 seed 情势，gate 达标即由程序直接立项，绕过 LLM 因果判定。
-    auto_triggered = auto_trigger_seed_issues(state, db)
-    if auto_triggered:
-        tlog(f"[AUTO-TRIGGER] 本回合程序硬立项 {len(auto_triggered)} 条：{[t.get('title') for t in auto_triggered]}")
+    # 幂等守门：phase 已是 settling → 前半段在上轮已提交，重进不重跑（防二次财政 tick）。
+    if state.turn_phase == "settling":
+        return []
+    auto_triggered: List[Dict[str, object]] = []
+    with atomic(db):
+        # 动作闸门(ADR 0006)：颁诏最前批量落库本回合暂存的结构化聊天写动作（密令更新/催办/任免/…），
+        # 在跑 LLM 结算管线前，使 simulator/extractor 读到的盘面与旧「召对期直写」时序一致。
+        # driver 路径无聊天暂存 → 空 no-op。幂等（committed 行不重跑）。
+        committed = db.commit_pending_actions(state, content=content, registry=registry)
+        if committed:
+            tlog(f"[pending_actions] 颁诏批量落库 {len(committed)} 条：{[(c['kind'], c['action']) for c in committed]}")
+        tlog("结算 1/4 固定月度财政 tick")
+        if on_stage is not None:
+            on_stage("固定月度财政入账")
+        # 落账副作用；明细不再进 simulator payload（欠饷哗变走前置事件/issue）
+        apply_fixed_period_flows(db, state)
+        # 程序硬触发：标了 auto_trigger 的 seed 情势，gate 达标即由程序直接立项，绕过 LLM 因果判定。
+        auto_triggered = auto_trigger_seed_issues(state, db)
+        if auto_triggered:
+            tlog(f"[AUTO-TRIGGER] 本回合程序硬立项 {len(auto_triggered)} 条：{[t.get('title') for t in auto_triggered]}")
+        # 密令期限：到期 active 自动转 pending_review，保证本月核议一锤定音。
+        # 推演前的确定性写，挪入前半段事务（原在 resolve_directives，ADR 0008 S4）。
+        due_orders = db.auto_submit_due_secret_orders(state)
+        if due_orders:
+            tlog(f"[secret_order] 到期送核议 {due_orders}")
+        # 完成相位：同事务内落 settling（崩在上面任一步=全回滚=相位未变）。
+        state.turn_phase = "settling"
+        db.save_state(state)
     return auto_triggered
 
 
