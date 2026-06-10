@@ -841,3 +841,52 @@ def test_draft_mutators_frozen_at_front_half_done(game, monkeypatch):
     ):
         with pytest.raises(ValueError, match="结算|亲裁"):
             call()
+
+
+def test_noready_recovery_uses_persisted_decree(game, monkeypatch):
+    """跨进程 no-ready 恢复用占位真源里的原诏，免草案要求，不重新生成（ship-pre r5）。
+
+    begin_turn 清 last_decree；不持久化的话玩家手改过的原诏在恢复时被 LLM 重生成顶替；
+    零草案 settling（driver 档/逃生口降级后）还会撞「至少一条草案」死路。
+    """
+    import ming_sim.decree as dm
+    import ming_sim.session as session_mod
+
+    db, state, content = game
+    turn = state.turn
+
+    # 崩在 simulator payload 构建（pre_settle 之后、fallback try 之前）=真崩溃窗口
+    def _crash(*a, **k):
+        raise RuntimeError("crash before simulation")
+    monkeypatch.setattr(dm, "build_simulator_payload", _crash)
+    with pytest.raises(RuntimeError, match="crash before simulation"):
+        dm.resolve_directives(state, db, None, None, [1], "皇帝手改的原诏",
+                              content=content, registry=None)
+
+    ctx = db.get_resolve_context(turn)
+    assert ctx is not None and ctx["extracted"] is None  # 占位 ready=0
+    assert ctx["decree_text"] == "皇帝手改的原诏"
+    assert state.turn_phase == "settling"
+
+    # 跨进程恢复：fresh 拼装（last_decree 空、无草案），fallthrough 用存诏、免草案、不重新生成
+    monkeypatch.undo()
+    monkeypatch.setattr(dm, "create_season_simulator_agent", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "create_score_extractor_module_agent", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "build_extractor_shared_context", lambda *a, **k: "ctx")
+    monkeypatch.setattr(dm, "simulate_season_with_payload",
+                        lambda *a, **k: ("恢复推演邸报。", {}))
+    monkeypatch.setattr(dm, "extract_scores_by_modules_with_agno",
+                        lambda *a, **k: ({"metric_delta": {"民心": -1}}, "o", "i"))
+
+    def _must_not_regen(*a, **k):
+        raise AssertionError("不得重新生成诏书——恢复须用占位真源里的原诏")
+    monkeypatch.setattr(session_mod, "write_decree_with_agno", _must_not_regen)
+
+    sess = _recovery_session(db, state, content, monkeypatch)
+    assert sess.last_decree == ""
+    result = sess.resolve_turn()
+
+    assert result.awaiting is False
+    assert state.turn == turn + 1
+    assert sess.last_decree == "皇帝手改的原诏"  # 原诏从真源恢复

@@ -438,6 +438,11 @@ def play_turn(session: GameSession) -> None:
                     report = session.submit_decisions(choices)
                 else:
                     report = result.report
+            except ValueError as error:
+                # 恢复态守门消息（pending 拟旨/草案等）：打印指引回会话循环，不崩出进程
+                # （ship-pre r5——issue 分支此前只接 SettlementAbort）。
+                print(f"\n{error}")
+                return
             except SettlementAbort as error:
                 # 结算中止（ADR 0008 决定 6/7）：打印玩家指引（含错误包路径）后回会话
                 # 循环——「可重试」要成立就不能崩出进程；重进时 settling/awaiting 守门
