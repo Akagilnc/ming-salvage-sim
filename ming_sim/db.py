@@ -4600,8 +4600,12 @@ class GameDB:
             trait = str(payload.get("trait") or "")
             if not (skill or trait):
                 return False
-            self.cultivate_consort(
-                str(payload.get("name") or pa["minister_name"]), int(state.turn), skill, trait)
+            name = str(payload.get("name") or pa["minister_name"])
+            self.cultivate_consort(name, int(state.turn), skill, trait)
+            # 对话确认是【回合中】落库,刷 Agent 让本回合后续对话即用上新技能/性格(线上 gemini);
+            # 颁诏路在回合末、次回合本就重建,刷一下无害。
+            if registry is not None:
+                registry.refresh(name)
             return True
         return False
 
@@ -4650,6 +4654,9 @@ class GameDB:
             if ch is not None:
                 ch.status = "dismissed"
                 ch.office = ""   # set_character_status 已清 DB office,内存须跟上(roster 读 c.office)
+            # 对话确认回合中落库,刷 Agent 让被罢者本回合后续不再以旧活跃态被召对(线上 gemini)。
+            if registry is not None:
+                registry.refresh(key)
             return True
         return False
 

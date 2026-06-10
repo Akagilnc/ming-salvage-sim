@@ -955,6 +955,44 @@ def test_displace_duplicate_offices_recomputes_office_type(game):
     assert content.characters[x.name].office_type == "都察院"   # 内存同步
 
 
+def test_commit_dismiss_refreshes_registry(game, monkeypatch):
+    """罢免 commit 后刷新被罢者 Agent(对话回合中落库,本回合后续不再以旧活跃态被召对)。(线上 gemini)"""
+    db, state, content = game
+    a, b = _two_active_ming(db, content)
+    reg = _FakeRegistry()
+    sess = types.SimpleNamespace(
+        db=db, state=state, llm_config=types.SimpleNamespace(channel="cli"),
+        registry=reg, content=content)
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda p, llm_config=None: (json.dumps(
+                            {"任免动作": "罢免", "姓名": b.name, "官职": ""}, ensure_ascii=False), 1))
+    GameSession.apply_cli_conversation_actions(
+        sess, a, player_message=f"革{b.name}职", answer="臣遵旨。",
+        has_directive=False, secret_order_id=None)
+    db.commit_pending_actions(state, content=content, registry=reg)
+    assert b.name in reg.refreshed
+    assert db.conn.execute(
+        "SELECT status FROM characters WHERE name=?", (b.name,)).fetchone()["status"] == "dismissed"
+
+
+def test_office_appointment_refreshes_displaced_holder(game):
+    """调任占已占独占实职 → 新任者【与被顶替者】都刷新 Agent(被顶替者 office_type 也变)。(线上 gemini)"""
+    from ming_sim.issues import apply_office_appointment
+    db, state, content = game
+    a, x = _two_active_ming(db, content)
+    db.conn.execute("UPDATE characters SET office=?, office_type=? WHERE name=?",
+                    ("兵部尚书,左都御史", "兵部", x.name))
+    db.conn.commit()
+    content.characters[x.name].office = "兵部尚书,左都御史"
+    content.characters[x.name].office_type = "兵部"
+    reg = _FakeRegistry()
+    res = apply_office_appointment(db, state, content, reg, a.name, "兵部尚书",
+                                   reason="测试调任", llm_config=None)
+    assert not res.get("rejected")
+    assert a.name in reg.refreshed   # 调任者刷新
+    assert x.name in reg.refreshed   # 被顶替者也刷新(线上 gemini #5)
+
+
 def test_dialogue_reject_filters_by_summoned_minister(game, monkeypatch):
     """拒绝只丢【当前召对】大臣的暂存,另一个大臣的暂存留着。(CMR codex R3:拒绝路没测过滤。)"""
     db, state, content = game
