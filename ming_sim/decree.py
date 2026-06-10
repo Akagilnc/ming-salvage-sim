@@ -706,10 +706,13 @@ def pre_settle(
     「推演前的确定性写」，崩溃时密令呈递须随财政一并回滚；挪入不改它先于 simulator 的事实。
     """
     # 幂等守门：前半段已提交相位（FRONT_HALF_DONE_PHASES 单一真源）重进不重跑财政
-    # （防二次 tick，cmr S4 r2/r3）。早退**不消费**暂存动作：所有权规则=推进回合的
-    # 终端写路（settle_with_delta / advance_without_edict / fallback）各自在 atomic 内
-    # commit——早退路在事务外 commit 会让重推演路上 extractor 再炸时动作已提交而回合
-    # 未推进=跨事务半写（cmr S7 r5；S4 r3 当时无终端覆盖的权宜已被取代）。
+    # （防二次 tick，cmr S4 r2/r3）。早退**不消费**暂存动作。所有权规则（cmr S7 r5/r6）：
+    # ① 正常路=pre_settle 前半段事务内 commit（下方正常体）——ADR 0006 要求推演前盘面
+    #   已定，动作必须先于 simulator 提交；extractor 后炸时前半段保持已落是 ADR 决定 2
+    #   明文设计（「pre_settle 的效果在中止/重试时保持已落，这是设计而非缺陷」），非半写。
+    # ② 前半段已提交后（本守门内）新 stage 的动作=推进回合的终端写路
+    #   （settle_with_delta / advance_without_edict / fallback）各自在 atomic 内 commit；
+    #   早退路在事务外 commit 会让重推演路上 extractor 再炸时动作已提交而回合未推进。
     if state.turn_phase in FRONT_HALF_DONE_PHASES:
         return []
     auto_triggered: List[Dict[str, object]] = []
