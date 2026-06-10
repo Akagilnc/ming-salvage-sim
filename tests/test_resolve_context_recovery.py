@@ -97,7 +97,7 @@ def test_resolve_context_survives_mid_settle_crash(game):
 
 def test_hitl_phase1_save_path_not_regressed(game):
     """HITL 回合行为不回退：phase1 暂停时按原签名（不带 extracted）存 resolve_context，
-    仍能 load 回叙事/决策上下文；extracted 缺省为空 dict（phase1 尚未跑 extractor）。"""
+    仍能 load 回叙事/决策上下文；extracted 为 None（占位 ready=0 不可见，cmr F1）。"""
     db, state, content = game
     turn = state.turn
 
@@ -113,7 +113,7 @@ def test_hitl_phase1_save_path_not_regressed(game):
     assert ctx["narrative"] == "含决策点的邸报"
     assert ctx["simulator_payload"] == {"payload": 1}
     assert ctx["secret_orders"] == [{"id": 7}]
-    assert ctx["extracted"] == {}   # phase1 无 delta，缺省空
+    assert ctx["extracted"] is None  # phase1 占位，判别位 ready=0 → 不可见
 
     # phase2 无条件持久化时 upsert 灌入实际 delta，叙事/上下文保留。
     extracted = {"metric_delta": {"国库": 30}}
@@ -126,3 +126,107 @@ def test_hitl_phase1_save_path_not_regressed(game):
     ctx2 = db.get_resolve_context(turn)
     assert ctx2["extracted"] == extracted
     assert ctx2["secret_orders"] == [{"id": 7}]
+
+
+# ---------------------------------------------------------------------------
+# cmr S2+S3 r1 修复回归（F1 判别位 + F3 端到端接线）
+# ---------------------------------------------------------------------------
+
+def _drive_settle_after_narrative(db, state, content, monkeypatch, *, extractor_behavior):
+    """以 stub 驱动真实 _settle_after_narrative，settle 前以哨兵中断。
+
+    extractor_behavior: "ok"(产出非空 delta) / "ok_empty"(产出 {}) / "fail"(抛错)。
+    返回 (before_turn, stub_delta or None)。
+    """
+    import ming_sim.decree as decree_mod
+
+    stub_delta = {"region_delta": {"shanxi": {"unrest": 2}}}
+
+    monkeypatch.setattr(decree_mod, "build_extractor_shared_context",
+                        lambda *a, **k: "ctx")
+    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent",
+                        lambda *a, **k: None)
+    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent",
+                        lambda *a, **k: None)
+
+    def _stub_extract(*a, **k):
+        if extractor_behavior == "fail":
+            raise RuntimeError("simulated extractor crash")
+        delta = stub_delta if extractor_behavior == "ok" else {}
+        return delta, "raw-out", "raw-in"
+    monkeypatch.setattr(decree_mod, "extract_scores_by_modules_with_agno", _stub_extract)
+
+    class _Sentinel(Exception):
+        pass
+
+    def _abort_settle(*a, **k):
+        raise _Sentinel("stop before settle writes")
+    monkeypatch.setattr(decree_mod, "settle_with_delta", _abort_settle)
+
+    before_turn = state.turn
+    with pytest.raises(_Sentinel):
+        decree_mod._settle_after_narrative(
+            state, db, None, None,
+            "减赋诏", "本月邸报……", {"k": "v"}, [], [],
+            before_turn, lambda *a: None,
+            content=content, registry=None,
+        )
+    return before_turn, (stub_delta if extractor_behavior == "ok" else None)
+
+
+def test_e2e_persist_happens_in_real_settle_flow(game, monkeypatch):
+    """端到端：extractor 成功后 persist 发生在真实流程里（cmr S2+S3 r1 F3）。
+
+    删掉 _settle_after_narrative 里的 persist 调用，本测试必红。
+    """
+    db, state, content = game
+    turn, stub_delta = _drive_settle_after_narrative(
+        db, state, content, monkeypatch, extractor_behavior="ok")
+
+    ctx = db.get_resolve_context(turn)
+    assert ctx is not None
+    assert ctx["extracted"] == stub_delta
+    db.clear_resolve_context(turn)
+
+
+def test_extractor_failure_never_persists_as_ready(game, monkeypatch):
+    """extractor 抛错 → 失败产物绝不入重跑真源（cmr S2+S3 r1 F1 案 ii）。
+
+    否则 S4 恢复入口会把 '{}' 当真 delta 重放=整月效果静默丢。
+    """
+    db, state, content = game
+    turn, _ = _drive_settle_after_narrative(
+        db, state, content, monkeypatch, extractor_behavior="fail")
+
+    ctx = db.get_resolve_context(turn)
+    assert ctx is None or ctx["extracted"] is None
+    if ctx is not None:
+        db.clear_resolve_context(turn)
+
+
+def test_hitl_phase1_placeholder_extracted_is_none(game):
+    """HITL phase1 save（无 extracted）→ get 返回 extracted=None（cmr F1 案 i）。
+
+    占位不可见：恢复入口据此判「extractor 未产出 → 重跑」，不会重放占位。
+    """
+    db, state, content = game
+    turn = state.turn
+    db.save_resolve_context(turn, "d", "n", {"k": "v"},
+                            secret_orders=[], relevant_memories=[])
+    ctx = db.get_resolve_context(turn)
+    assert ctx is not None
+    assert ctx["extracted"] is None
+    db.clear_resolve_context(turn)
+
+
+def test_genuinely_empty_delta_distinguishable_from_placeholder(game):
+    """extractor 成功产出空 delta → get 返回 {}（非 None，cmr F1 案 iii 可分）。"""
+    db, state, content = game
+    turn = state.turn
+    db.save_resolve_context(turn, "d", "n", {"k": "v"},
+                            secret_orders=[], relevant_memories=[], extracted={})
+    ctx = db.get_resolve_context(turn)
+    assert ctx is not None
+    assert ctx["extracted"] == {}
+    assert ctx["extracted"] is not None
+    db.clear_resolve_context(turn)
