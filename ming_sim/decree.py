@@ -542,7 +542,9 @@ def reload_state_from_db(db: GameDB, state: GameState, *, content=None, registry
     if content is not None:
         # lazy import：session 顶层 import decree，反向只能函数内取（同 db.py 先例）。
         from ming_sim.session import _sync_offices_from_db_impl
-        _sync_offices_from_db_impl(content, db)
+        # llm_config 必传（restore 各调用点同款）：缺省 None 会让 LLM 自创官职的
+        # office_type 推断降级成「待铨」，reload 后内存又与 DB 分叉（cmr S5 r3 双家）。
+        _sync_offices_from_db_impl(content, db, getattr(db, "llm_config", None))
     return state
 
 
