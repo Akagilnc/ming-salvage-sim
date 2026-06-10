@@ -526,3 +526,116 @@ def test_hitl_poison_replay_downgrades_context_then_reextracts(game, monkeypatch
     report = sess2.submit_decisions([{"label": "战"}])
 
     assert state.turn == turn + 1  # 不再 LLMContractError，正常重抽结算
+
+
+def test_pending_commit_rolls_back_with_failed_replay(game, monkeypatch, tmp_path):
+    """暂存动作 commit 与结算同生死：重放炸 → 动作随结算回滚回 pending（cmr S7 r4，2/2）。
+
+    commit 在 atomic 外的话，结算回滚而动作及其真表副作用留存=跨事务半写。
+    """
+    import ming_sim.decree as dm
+    from ming_sim.exceptions import SettlementAbort
+    from tests.test_pending_actions import _active_minister_name
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+    dm.pre_settle(state, db, content=content)
+    dm.persist_resolve_context(
+        db, turn, {"metric_delta": {"民心": -1}},
+        decree_text="d", narrative="n",
+        simulator_payload={}, secret_orders=[], relevant_memories=[],
+    )
+    name = _active_minister_name(db, content)
+    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    db.stage_pending_action(
+        turn, kind="secret_order", action="更新", minister_name=name, target_id=oid,
+        payload={"new_title": "重放期标题", "new_content": "x", "deadline_months": 0})
+
+    def _poison(*a, **k):
+        raise RuntimeError("value-level poison")
+    monkeypatch.setattr(dm, "apply_score_extraction", _poison)
+
+    sess = _recovery_session(db, state, content, monkeypatch)
+    with pytest.raises(SettlementAbort):
+        sess.resolve_turn()
+
+    row = db.conn.execute(
+        "SELECT status FROM pending_actions WHERE turn=? AND target_id=?",
+        (turn, oid)).fetchone()
+    assert row is not None and row["status"] == "pending"  # 随结算回滚，非半写
+    title = db.conn.execute(
+        "SELECT title FROM secret_orders WHERE id=?", (oid,)).fetchone()["title"]
+    assert title == "原标题"  # 真表副作用也回滚
+
+
+def test_hitl_reextract_branch_commits_pending(game, monkeypatch, tmp_path):
+    """phase2 非 ready 分支也 commit 暂存动作（cmr S7 r4 claude）。"""
+    import ming_sim.decree as dm
+    from tests.test_pending_actions import _active_minister_name
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+    dm.pre_settle(state, db, content=content)
+    # 非 ready context（如降级后）+ awaiting：重试走重抽分支
+    db.save_resolve_context(turn, "HITL诏", "裁断后邸报", {},
+                            secret_orders=[], relevant_memories=[])
+    db.save_pending_decisions(turn, [{
+        "title": "辽东战和", "context": "c",
+        "options": [{"label": "战", "hint": ""}, {"label": "和", "hint": ""}],
+    }])
+    state.turn_phase = "awaiting_decision"
+    db.save_state(state)
+
+    name = _active_minister_name(db, content)
+    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    db.stage_pending_action(
+        turn, kind="secret_order", action="更新", minister_name=name, target_id=oid,
+        payload={"new_title": "重抽期标题", "new_content": "x", "deadline_months": 0})
+
+    monkeypatch.setattr(dm, "create_season_simulator_agent", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "create_score_extractor_module_agent", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "build_extractor_shared_context", lambda *a, **k: "ctx")
+    monkeypatch.setattr(dm, "extract_scores_by_modules_with_agno",
+                        lambda *a, **k: ({"metric_delta": {"民心": -1}}, "o", "i"))
+
+    sess = _recovery_session(db, state, content, monkeypatch)
+    sess.submit_decisions([{"label": "战"}])
+
+    assert state.turn == turn + 1
+    row = db.conn.execute(
+        "SELECT status FROM pending_actions WHERE turn=? AND target_id=?",
+        (turn, oid)).fetchone()
+    assert row is not None and row["status"] != "pending"  # 不留孤儿
+
+
+def test_escape_hatch_failure_does_not_mask_abort(game, monkeypatch, tmp_path):
+    """逃生口自身炸不顶替 SettlementAbort（terminal 只接它=玩家指引不丢，cmr S7 r4）。"""
+    import ming_sim.decree as dm
+    from ming_sim.exceptions import SettlementAbort
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+    dm.pre_settle(state, db, content=content)
+    dm.persist_resolve_context(
+        db, turn, {"metric_delta": {"民心": -1}},
+        decree_text="d", narrative="n",
+        simulator_payload={}, secret_orders=[], relevant_memories=[],
+    )
+
+    def _poison(*a, **k):
+        raise RuntimeError("value-level poison")
+    monkeypatch.setattr(dm, "apply_score_extraction", _poison)
+
+    def _clear_boom(*a, **k):
+        raise RuntimeError("clear boom")
+    monkeypatch.setattr(dm, "clear_for_resimulation", _clear_boom)
+
+    sess = _recovery_session(db, state, content, monkeypatch)
+    with pytest.raises(SettlementAbort) as ei:
+        sess.resolve_turn()
+    assert isinstance(ei.value.__cause__, RuntimeError)
+    assert "clear boom" in str(ei.value.__cause__)
