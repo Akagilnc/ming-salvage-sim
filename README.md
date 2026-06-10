@@ -126,12 +126,15 @@ cd ..
 cp .env.example .env
 ```
 
-编辑 `.env`，至少填入：
+编辑 `.env`，至少填入 API Key，并按你自己的服务商填写端点和模型（本项目不绑定特定服务商，任何 OpenAI 兼容服务都可用）：
 
 ```bash
 OPENAI_API_KEY=your_api_key_here
-OPENAI_BASE_URL=https://api.deepseek.com
-OPENAI_MODEL=deepseek-v4-flash
+# 端点与模型按你的服务商自填,例如:
+#   OpenAI 官方   https://api.openai.com/v1   gpt-4o-mini
+#   DeepSeek 官方 https://api.deepseek.com    deepseek-chat
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL=gpt-4o-mini
 ```
 
 启动网页游戏：
@@ -254,8 +257,8 @@ AI 适合判断官场反应、地方推诿、政策代价、突发事件和叙�
 | 变量 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `OPENAI_API_KEY` | 是 | 无 | API Key |
-| `OPENAI_BASE_URL` | 否 | `https://api.openai.com/v1` | API 地址，推荐 `https://api.deepseek.com` |
-| `OPENAI_MODEL` | 否 | `gpt-4o-mini` | 模型名，推荐 `deepseek-v4-flash` |
+| `OPENAI_BASE_URL` | 否 | `https://api.openai.com/v1` | 任意 OpenAI 兼容服务的端点，按你的服务商填 |
+| `OPENAI_MODEL` | 否 | `gpt-4o-mini` | 模型名，按你的服务商自选（本项目不绑定特定模型）|
 | `MING_SIM_DB` | 否 | `data/ming_sim.db` | 存档数据库路径 |
 | `MING_SIM_SEED` | 否 | `7` | 随机种子 |
 | `MING_SIM_START_YM` | 否 | 空 | 新存档起始年月，如 `1629.04` |
