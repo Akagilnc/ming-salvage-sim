@@ -1034,6 +1034,10 @@ class GameSession:
         if self.state.turn_phase == TurnPhase.SETTLING.value:
             ctx = self.db.get_resolve_context(self.state.turn)
             if ctx is not None and ctx.get("extracted") is not None:
+                # 重试新传的 decree/cheat 在重放叉被忽略（重放使用崩溃前真源），留痕（cmr S7 r4）。
+                if (decree or "").strip() or (cheat_directive or "").strip():
+                    from ming_sim.token_stats import tlog
+                    tlog("[恢复重放] 本次传入的 decree/cheat_directive 被忽略（重放使用崩溃前真源）。")
                 result = resolve_settling_recovery(
                     self.state, self.db, self.agno_db, self.llm_config, ctx,
                     on_event=on_event, content=self.content, registry=self.registry,

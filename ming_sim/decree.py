@@ -425,22 +425,24 @@ def resolve_settling_recovery(
     before_turn = state.turn
     decree_text = str(ctx.get("decree_text") or "")
     narrative = str(ctx.get("narrative") or "")
-    # 暂存动作 commit（幂等，只处理 pending 行）：恢复期玩家可能继续召对 stage 动作
-    # （web chat 无相位门），不 commit 的话随 next_period 成旧回合孤儿死行，违 P1
-    # （cmr S7 r1；advance_without_edict 同款不变式）。
-    db.commit_pending_actions(state, content=content, registry=registry)
-
+    # 暂存动作 commit 已下沉进 settle_with_delta 的 atomic 体内（与结算同生死，
+    # cmr S7 r4）——此处不再事务外预 commit。
     try:
         report = _replay_settle(
             state, db, agno_db, llm_config, extracted,
             before_turn=before_turn, decree_text=decree_text, narrative=narrative,
             content=content, registry=registry, _emit=_emit,
         )
-    except SettlementAbort:
+    except SettlementAbort as abort_exc:
         # 重放炸 = 值级毒 delta（shape 门挡不住）。不清 context 的话每次重试同样重放
         # 同样炸=永久软死锁（ADR 决定 6 预言）；原 delta 已在错误包留档不丢证据，
-        # 清掉让下次重试自然走重新推演（决定 6 逃生口在此接线，cmr S7 r2）。
-        clear_for_resimulation(db, before_turn)
+        # 降级让下次重试自然走重新推演（决定 6 逃生口在此接线，cmr S7 r2/r3）。
+        # 逃生口自身炸不得顶替 SettlementAbort——terminal 只接它，顶替=玩家指引丢失
+        # （cmr S7 r4，与本文件链式惯例一致）。
+        try:
+            clear_for_resimulation(db, before_turn)
+        except Exception as clear_exc:
+            raise abort_exc from clear_exc
         raise
     return ResolveResult(awaiting=False, report=report)
 
@@ -802,6 +804,11 @@ def settle_with_delta(
     # 不触发回滚（决定 4）——故从 settle 冒出的 Exception 即代码异常，一律走错误包。
     try:
         with atomic(db):
+            # 暂存动作 commit 在结算事务内最前（幂等，只处理 pending 行；正常路 pre_settle
+            # 已 commit=无操作）——恢复/phase2 重抽路在此获得覆盖，且与结算同生死：
+            # 事务外 commit 的话重放炸时结算回滚而动作及其真表副作用留存=跨事务半写
+            # （cmr S7 r4，claude+codex 两面同根）。
+            db.commit_pending_actions(state, content=content, registry=registry)
             full_report = _settle_after_extract_body(
                 state, db, extracted,
                 before_turn=before_turn, content=content, registry=registry,
@@ -999,7 +1006,10 @@ def resolve_decisions_phase2(
         # ready context = 上次 phase2 已抽取并持久化、settle 曾中止。直入重放，不重跑贵的
         # simulator/extractor（决定 3；重抽还会 upsert 覆盖 ready 真源，cmr S7 r2 codex）。
         # 亲裁指令已在上次抽取时拼进 narrative 并体现在 ready delta 中。重放炸 →
-        # resolve_settling_recovery 的逃生口清 context，下次重试重新推演。
+        # resolve_settling_recovery 的逃生口降级 context，下次重试重新推演。
+        # 重试新传的 cheat_directive 在重放叉被忽略（重放使用崩溃前真源），留痕（cmr S7 r4）。
+        if (cheat_directive or "").strip():
+            tlog("[恢复重放] 本次传入的 cheat_directive 被忽略（重放使用崩溃前真源）。")
         result = resolve_settling_recovery(
             state, db, agno_db, llm_config, ctx,
             on_event=on_event, content=content, registry=registry,
