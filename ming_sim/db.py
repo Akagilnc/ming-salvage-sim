@@ -5886,9 +5886,14 @@ class GameDB:
     def backup_to(self, target_path: str) -> None:
         """SQLite backup API 热备到 target_path。不需关闭主连接。
 
-        在 atomic() 内调用时内部那次 commit 也被暂停（ADR 0008 决定 2）——
-        接受的语义：错误包应在回滚后、atomic 外做备份，不特殊放行。
+        atomic() 内禁止调用：backup 走同连接 pager，会把未提交（可能随后回滚）
+        的脏页备进文件（cmr S1 F3）。错误包备份必须在 rollback 之后、atomic 外做。
         """
+        if getattr(self.conn, "_commit_suspended", False):
+            raise RuntimeError(
+                "backup_to 在 atomic 事务内禁止：备份会带上未提交脏页。"
+                "请先 rollback/commit（退出 atomic）再备份。"
+            )
         import os as _os
         _os.makedirs(_os.path.dirname(target_path) or ".", exist_ok=True)
         dest = sqlite3.connect(target_path)

@@ -184,3 +184,80 @@ def test_nested_atomic_inner_error_rolls_back_at_outer(game):
     assert db.kv_get("s1_ie_after") == "ok"
     db.conn.execute("DELETE FROM kv_store WHERE key='s1_ie_after'")
     db.conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# cmr S1 r1 修复回归（F1-F4）
+# ---------------------------------------------------------------------------
+
+def test_connection_context_inside_atomic_rolls_back(game):
+    """`with db.conn:` 块在 atomic 内不得逃逸提交（cmr S1 r1 F1，codex 实证）。
+
+    sqlite3.Connection.__exit__ 原生在 C 层 commit、绕过 Python override；
+    真实路径 db.py undo_chat_turn 用 `with self.conn:`。
+    """
+    db, state, content = game
+    db.conn.execute("DELETE FROM kv_store WHERE key='s1_ctx'")
+    db.conn.commit()
+
+    with pytest.raises(RuntimeError):
+        with atomic(db):
+            with db.conn:
+                db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1_ctx','x')")
+            raise RuntimeError("boom after conn-context")
+
+    assert db.kv_get("s1_ctx") is None  # 外层回滚必须救回
+
+
+def test_connection_context_outside_atomic_still_commits(game):
+    """atomic 外 `with db.conn:` 保持原生语义：成功退出真提交。"""
+    db, state, content = game
+    db.conn.execute("DELETE FROM kv_store WHERE key='s1_ctx_out'")
+    db.conn.commit()
+    with db.conn:
+        db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1_ctx_out','y')")
+    assert db.kv_get("s1_ctx_out") == "y"
+    db.conn.execute("DELETE FROM kv_store WHERE key='s1_ctx_out'"); db.conn.commit()
+
+
+def test_swallowed_inner_exception_forces_outer_rollback(game):
+    """内层 atomic 异常被中间层吞掉 → 最外层退出必须回滚并响亮抛错（cmr S1 r1 F2）。"""
+    db, state, content = game
+    db.conn.execute("DELETE FROM kv_store WHERE key='s1_swallow'")
+    db.conn.commit()
+
+    with pytest.raises(RuntimeError, match="回滚"):
+        with atomic(db):
+            try:
+                with atomic(db):
+                    db.conn.execute(
+                        "INSERT INTO kv_store(key,value) VALUES('s1_swallow','z')"
+                    )
+                    raise ValueError("inner fails")
+            except ValueError:
+                pass  # 中间层吞掉——flat 语义下这是禁手
+
+    assert db.kv_get("s1_swallow") is None
+    # 标志复位，连接可续用
+    assert db.conn._commit_suspended is False
+    assert db.conn._atomic_depth == 0
+    db.kv_set("s1_swallow_after", "ok")
+    assert db.kv_get("s1_swallow_after") == "ok"
+    db.conn.execute("DELETE FROM kv_store WHERE key='s1_swallow_after'"); db.conn.commit()
+
+
+def test_backup_to_inside_atomic_fails_loud(game, tmp_path):
+    """atomic 内 backup_to 响亮拒绝（备份会带未提交脏页，cmr S1 r1 F3）。"""
+    db, state, content = game
+    dest = str(tmp_path / "snap.db")
+    with pytest.raises(RuntimeError, match="atomic"):
+        with atomic(db):
+            db.backup_to(dest)
+
+
+def test_executescript_inside_atomic_fails_loud(game):
+    """atomic 内 executescript 响亮拒绝（C 层隐式 commit 绕过暂停，cmr S1 r1 F4）。"""
+    db, state, content = game
+    with pytest.raises(RuntimeError, match="executescript"):
+        with atomic(db):
+            db.conn.executescript("SELECT 1;")
