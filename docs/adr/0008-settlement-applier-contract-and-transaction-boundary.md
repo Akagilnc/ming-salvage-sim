@@ -8,7 +8,7 @@ Status: accepted（实现分波次,见末节;#73 产出问题 1/4 的答案;r1 �
 
 1. **段适配器契约**:每个落库 section 统一为 `apply(items, ctx) → {applied[], rejected[](item, 原因, 类别, source)}` 的适配器。LLM 脏数据(幻觉 id/枚举非法/引用不存在实体)= 逐项拒收留痕,坏项不带走整批(#63);代码异常(KeyError/AttributeError/schema 漂移)= **上抛,绝不吞**(ADR 0005)。`apply_score_extraction` 退化为「按白名单顺序跑适配器 + 聚合拒收报告」的薄编排。
 
-2. **事务原子单元 = 结算后半段**:「extractor 产出 apply + 章节记忆 + next_period」包成单 DB 事务;`pre_settle`(固定财政 + 暂存动作 commit)维持先行提交(ADR 0006 要求推演前盘面已定)。**不变式(收窄):后半段半落库在结构上不可达**——pre_settle 的效果(已确认暂存动作+固定财政)在中止/重试时保持已落,这是设计而非缺陷。实现要点:commit 暂停不可 monkeypatch `conn.commit`(`sqlite3.Connection` 属性只读,运行时必崩),用 `sqlite3.connect(..., factory=自定义Connection)` 或 GameDB 持代理对象拦截。
+2. **事务原子单元 = pre_settle 之后所有推进回合的写路径**:不只正常路(「extractor 产出 apply + 章节记忆 + next_period」),**simulator 失败的 fallback 分支(decree.py:296-319,跳过结算仍写 record_log/save_turn_report/惯性清理/next_period)与退朝无诏的 `advance_without_edict` 同样必须走同一事务包裹**——任何一条推进回合的写序列都全有或全无,不许 ad-hoc 散写;`pre_settle`(固定财政 + 暂存动作 commit)维持先行提交(ADR 0006 要求推演前盘面已定)。**不变式(收窄):后半段半落库在结构上不可达**——pre_settle 的效果(已确认暂存动作+固定财政)在中止/重试时保持已落,这是设计而非缺陷。实现要点:commit 暂停不可 monkeypatch `conn.commit`(`sqlite3.Connection` 属性只读,运行时必崩),用 `sqlite3.connect(..., factory=自定义Connection)` 或 GameDB 持代理对象拦截。
 
 3. **重跑契约(三件缺一不可,r1/r2 评审并发指出,全部列入 PR1 验收)**:
    - **resolve_context 无条件持久化**:现状只有 HITL 回合才 `save_resolve_context`(decree.py:324)——改为每回合进入后半段前必存(extractor delta + 叙事);**持久化前先过 `validate_delta_shape`——畸形 delta 绝不入 resolve_context**(否则毒 payload 钉进重试真源:apply 永崩、而「重跑 extractor」被「context 已存在」挡死=永久 soft-lock),校验失败响亮报错、重跑 extractor 重新生成;**清理在后半段事务内作最后一笔**(commit 后再清会留「已提交但 context 残留」的崩溃窗口)。重跑保证收窄为:**不重跑 simulator/extractor(贵的两步)**——同进程重试用内存产出,跨进程恢复从 resolve_context 重灌;章节记忆/结局总评产出**不入** resolve_context,崩在其后重试会重调这两个便宜调用(可接受)。
@@ -34,7 +34,7 @@ Status: accepted（实现分波次,见末节;#73 产出问题 1/4 的答案;r1 �
 
 ## 实施波次(每 PR 可 review,295 测试护航)
 
-- **PR1**:applier.py 契约类型 + 拒收收集器(落库+commit 后 jsonl)+ 事务包裹(factory/代理式 commit 暂停)+ **重跑契约三件套**(resolve_context 无条件持久化+事务内清 / pre_settle 自事务+完成相位+begin_turn 白名单 / 内存态重载)+ `decree.py:406` 改响亮中止 + 错误包(backup API 存档副本,user-data 路径)。
+- **PR1**:applier.py 契约类型 + 拒收收集器(落库+commit 后 jsonl)+ 事务包裹(factory/代理式 commit 暂停;**覆盖全部三条推进路:正常 apply / simulator-fallback / advance_without_edict**)+ **重跑契约三件套**(resolve_context 无条件持久化+事务内清 / pre_settle 自事务+完成相位+begin_turn 白名单 / 内存态重载)+ `decree.py:406` 改响亮中止 + 错误包(backup API 存档副本,user-data 路径)。
 - **PR2**:两个整段吞(power×2)+ 四个裸奔段迁入契约 + provenance 字段灌注。
 - **后续**:其余 section 分批;邸报 in-world 提示;与财政线对齐后 flows 侧(候选 4)。
 
