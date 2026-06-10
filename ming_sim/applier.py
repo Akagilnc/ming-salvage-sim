@@ -23,7 +23,8 @@ class _SuspendableConnection(sqlite3.Connection):
 
     暂停期内 commit() 变 no-op；非暂停期照常。db.py 以 factory= 此类建连，使
     GameDB 全库 79 处 self.conn.commit() 在 atomic 内自动失效、由最外层统一提交，
-    一字不改。rollback() 不受暂停影响（暂停只拦 commit）。
+    一字不改。rollback() 暂停期仍真回滚，且回滚后立即重开事务（维持「atomic 内
+    永远有开着的事务」，防 DDL autocommit 逃逸）。
 
     _commit_suspended 默认 off：保证 GameDB.__init__ 紧接的 init_schema 建表照常提交。
 
