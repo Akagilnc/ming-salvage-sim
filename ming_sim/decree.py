@@ -28,7 +28,7 @@ from ming_sim.context import ENDING_LABELS, ENDING_ONGOING, ENDING_TIMEOUT, vict
 from ming_sim.db import GameDB
 from ming_sim.exceptions import LLMContractError, LLMUnavailable
 from ming_sim.flows import apply_fixed_period_flows
-from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction, auto_trigger_seed_issues, clear_gated_legacies
+from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction, auto_trigger_seed_issues, clear_gated_legacies, validate_delta_shape
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import GameState, LLMConfig
 from ming_sim.memories import build_timeline, record_chapter_memory
@@ -343,6 +343,32 @@ def resolve_directives(
     return ResolveResult(awaiting=False, report=report)
 
 
+def persist_resolve_context(
+    db: GameDB,
+    turn: int,
+    extracted: Dict[str, object],
+    *,
+    decree_text: str,
+    narrative: str,
+    simulator_payload: Dict[str, object],
+    secret_orders: list,
+    relevant_memories: List[Dict],
+) -> None:
+    """ADR 0008 S2：每回合进入结算后半段前无条件持久化 resolve_context（extractor delta + 叙事）。
+
+    重跑真源：跨进程恢复从此重灌，不重跑贵的 simulator/extractor。
+    **持久化前先过 validate_delta_shape**——畸形 delta 绝不入 resolve_context（否则毒 payload
+    钉进重试真源：apply 永崩、而「重跑 extractor」被「context 已存在」挡死=永久 soft-lock）。
+    校验失败响亮抛 ValueError，本轮按 fail-loud 处理（S6 接「重新推演」逃生口），save 不执行。
+    """
+    validate_delta_shape(extracted)  # 抛 → save 不执行，毒 payload 不钉进真源
+    db.save_resolve_context(
+        turn, decree_text, narrative, simulator_payload,
+        secret_orders=secret_orders, relevant_memories=relevant_memories,
+        extracted=extracted,
+    )
+
+
 def _settle_after_narrative(
     state: GameState,
     db: GameDB,
@@ -407,6 +433,18 @@ def _settle_after_narrative(
         print(f"[WARN] 结算抽取失败：{exc}；本{TURN_UNIT}数值不变。")
         extracted = {}
         extractor_output = f"[抽取失败] {exc}"
+
+    # ADR 0008 S2：进入结算后半段（settle_with_delta 动 DB）前，无条件持久化 resolve_context
+    # （extractor delta + 叙事）作重跑真源——跨进程恢复从它重灌，不重跑贵的 simulator/extractor。
+    # 持久化前过 validate_delta_shape：畸形 delta 响亮抛错且绝不入真源（防毒钉死锁，见 persist_resolve_context）。
+    # before_turn == state.turn（next_period 尚未执行），与 settle 内 clear 同键。
+    persist_resolve_context(
+        db, before_turn, extracted,
+        decree_text=decree_text, narrative=narrative,
+        simulator_payload=simulator_payload,
+        secret_orders=secret_orders_for_sim,
+        relevant_memories=relevant_memories,
+    )
 
     # 后括号确定性结算核：与探针 driver 共用同一段（ADR 0004）。章节记忆 / 结局总评
     # 作为注入回调传入（真实流程= LLM agent 闭包；driver= None 跳过）。
@@ -573,6 +611,10 @@ def settle_with_delta(
     db.mark_directives_issued(state)
     state.next_period()
     db.save_state(state)
+    # ADR 0008 S3：清 resolve_context 作 settle 写序列的最后一笔（紧贴 next_period 等推进写）。
+    # 按 before_turn 清本回合那一行（next_period 已把 state.turn 推进到下一回合）。
+    # commit 后再清会留「已提交但 context 残留」的崩溃窗口；S7 把整段包进 atomic 后此清随事务原子落定。
+    db.clear_resolve_context(before_turn)
     assert state.turn == before_turn + 1
 
     ending = ""
@@ -642,9 +684,9 @@ def resolve_decisions_phase2(
         cheat_directive=cheat_directive,
         decision_directive=decision_directive,
     )
-    # 结算完清掉暂存（next_period 已在 _settle 内执行，故按 before_turn 清理本回合残留）。
+    # 结算完清掉暂存决策点（next_period 已在 _settle 内执行，故按 before_turn 清理本回合残留）。
+    # resolve_context 的清理已移入 settle_with_delta 的写序列内（ADR 0008 S3），不在此 post-settle 处清。
     db.clear_pending_decisions(before_turn)
-    db.clear_resolve_context(before_turn)
     return report
 
 
