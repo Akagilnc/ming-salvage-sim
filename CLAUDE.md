@@ -57,3 +57,17 @@ hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`�
 - **PR 合并默认 merge commit，尽量不 squash**（用户 2026-06-10 明示：没有「干净历史」洁癖，逐 commit 过程史比 main 整洁重要；squash 唯一一次是 #72，导致 22 轮评审迭代史只活在 probe/tianmu-fiscal 分支上——该分支因此保留勿删）。
 - **设计文档（ADR/契约/spec）与代码同等评审**：产出后必须跑完整评审闭环（本地 cmr 收敛 + 线上三 bot 收敛），不因「只是文档」跳步；用户出此类文档时**主动提醒走评审**。实证：ADR 0008 单文档 8 轮（本地 12→11→3→0 + 线上 4 轮），抓出毒 payload 软死锁、simulator-fallback 事务后门等设计级真洞（2026-06-10）。
 - **任何工作（含纯 docs）先开分支再动手**，main 工作区保持干净（多 session 并行，脏 main 影响别人）；唯一常驻例外 = `content/buildings.json` 金手指。
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues（`Akagilnc/ming-salvage-sim`，gh 命令必须写死 `--repo`）。See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+五个 triage 角色用默认字符串（`needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`）。See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+单语境：根目录 `CONTEXT.md` + `docs/adr/`。See `docs/agents/domain.md`.
