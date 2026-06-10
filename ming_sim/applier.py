@@ -47,8 +47,17 @@ class _SuspendableConnection(sqlite3.Connection):
 
     def __exit__(self, exc_type, exc, tb) -> bool:
         if exc_type is None:
-            self.commit()
+            try:
+                self.commit()
+            except BaseException:
+                # 原生语义：body 干净但 commit 失败 → 回滚再抛，不留开事务。
+                self.rollback()
+                raise
         else:
+            if self._commit_suspended:
+                # atomic 内：异常已回滚共享事务（前序写入一并消失），必须让
+                # 最外层 rollback-only，防调用方吞掉异常后半提交（cmr S1 r2 F1）。
+                self._atomic_rollback_only = True
             self.rollback()
         return False
 
@@ -78,10 +87,19 @@ def atomic(db: Any) -> Iterator[None]:
     会响亮拒绝（备份走同连接 pager，会带上未提交脏页，cmr S1 F3）。
     """
     conn = db.conn
+    if not isinstance(conn, _SuspendableConnection):
+        raise TypeError(
+            "atomic() 要求 db.conn 是 _SuspendableConnection（GameDB 默认 factory）；"
+            "普通 sqlite3.Connection 的 commit 拦不住，会静默失去原子性。"
+        )
     conn._commit_suspended = True
     # 进入深度：>1 表示嵌套内层，退出时不落定。
     depth = getattr(conn, "_atomic_depth", 0) + 1
     conn._atomic_depth = depth
+    if depth == 1 and not conn.in_transaction:
+        # legacy 模式只有 DML 隐式开事务；不显式 BEGIN 的话，DDL 打头的
+        # 序列（如 flush_to_db 建表）跑在 autocommit 里、回滚留表（cmr S1 r2 F2）。
+        conn.execute("BEGIN")
     try:
         yield
     except BaseException:
@@ -105,7 +123,12 @@ def atomic(db: Any) -> Iterator[None]:
                     "atomic: 内层异常被调用方吞掉，事务已整体回滚。"
                     "flat 语义下内层无独立原子性——请勿在 atomic 之间吞内层异常。"
                 )
-            conn.commit()
+            try:
+                conn.commit()
+            except BaseException:
+                # commit 失败不留开事务（与原生 with conn: 语义一致）。
+                conn.rollback()
+                raise
 
 
 # ---------------------------------------------------------------------------
