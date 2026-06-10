@@ -205,3 +205,35 @@ def test_metrics_refresh_never_empty_window(game):
     assert "幽灵指标" not in state.metrics
     fresh = db.load_state()
     assert state.metrics == fresh.metrics
+
+
+def test_rollback_restores_existing_character_attributes(game, monkeypatch):
+    """存量人物的属性变更随回滚刷回 DB 真相（cmr S5 r2，claude+codex 2/2）。
+
+    罢免 commit 改了 content 里现有 Character 的 status/office；回滚还原 DB 行，
+    幽灵清理管不到「名字仍在」的脏属性 → content 与 DB 分叉持续整个 session。
+    """
+    import ming_sim.decree as decree_mod
+    from ming_sim.decree import pre_settle
+    from tests.test_pending_actions import _active_minister_name
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = content.characters[name]
+    office_before = ch.office
+    status_before = ch.status
+
+    db.stage_pending_action(
+        state.turn, kind="office", action="罢免", minister_name="王承恩",
+        payload={"name": name})
+
+    def _boom(*a, **k):
+        raise RuntimeError("post-commit step crash")
+    monkeypatch.setattr(decree_mod, "auto_trigger_seed_issues", _boom)
+
+    with pytest.raises(RuntimeError, match="post-commit step crash"):
+        pre_settle(state, db, content=content, registry=None)
+
+    # DB 已回滚 → 内存 content 必须同源
+    refreshed = content.characters[name]
+    assert refreshed.status == status_before
+    assert refreshed.office == office_before
