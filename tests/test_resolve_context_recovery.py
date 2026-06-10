@@ -132,13 +132,18 @@ def test_hitl_phase1_save_path_not_regressed(game):
 # cmr S2+S3 r1 修复回归（F1 判别位 + F3 端到端接线）
 # ---------------------------------------------------------------------------
 
-def _drive_settle_after_narrative(db, state, content, monkeypatch, *, extractor_behavior):
-    """以 stub 驱动真实 _settle_after_narrative，settle 前以哨兵中断。
+def _drive_settle_after_narrative(db, state, content, monkeypatch, *, extractor_behavior,
+                                  error_pack_dir=None):
+    """以 stub 驱动真实 _settle_after_narrative。
 
-    extractor_behavior: "ok"(产出非空 delta) / "ok_empty"(产出 {}) / "fail"(抛错)。
+    extractor_behavior:
+      "ok"/"ok_empty"：extractor 成功，settle 前以哨兵中断（验 persist）。
+      "fail"：extractor 抛错 → S6 响亮中止（SettlementAbort），不达 settle。
+    fail 时须传 error_pack_dir（隔离错误包，绝不写真实 user-data）。
     返回 (before_turn, stub_delta or None)。
     """
     import ming_sim.decree as decree_mod
+    from ming_sim.exceptions import SettlementAbort
 
     stub_delta = {"region_delta": {"shanxi": {"unrest": 2}}}
 
@@ -164,7 +169,13 @@ def _drive_settle_after_narrative(db, state, content, monkeypatch, *, extractor_
     monkeypatch.setattr(decree_mod, "settle_with_delta", _abort_settle)
 
     before_turn = state.turn
-    with pytest.raises(_Sentinel):
+    if extractor_behavior == "fail":
+        assert error_pack_dir is not None, "fail 路径须隔离错误包目录"
+        monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(error_pack_dir))
+        expected = SettlementAbort
+    else:
+        expected = _Sentinel
+    with pytest.raises(expected):
         decree_mod._settle_after_narrative(
             state, db, None, None,
             "减赋诏", "本月邸报……", {"k": "v"}, [], [],
@@ -189,14 +200,16 @@ def test_e2e_persist_happens_in_real_settle_flow(game, monkeypatch):
     db.clear_resolve_context(turn)
 
 
-def test_extractor_failure_never_persists_as_ready(game, monkeypatch):
+def test_extractor_failure_never_persists_as_ready(game, monkeypatch, tmp_path):
     """extractor 抛错 → 失败产物绝不入重跑真源（cmr S2+S3 r1 F1 案 ii）。
 
-    否则 S4 恢复入口会把 '{}' 当真 delta 重放=整月效果静默丢。
+    S6 后该路径响亮中止（SettlementAbort），但原断言意图保持：失败的占位/空 delta
+    绝不作 ready resolve_context 落库（否则 S4 恢复入口当真 delta 重放=整月效果静默丢）。
     """
     db, state, content = game
     turn, _ = _drive_settle_after_narrative(
-        db, state, content, monkeypatch, extractor_behavior="fail")
+        db, state, content, monkeypatch, extractor_behavior="fail",
+        error_pack_dir=tmp_path)
 
     ctx = db.get_resolve_context(turn)
     assert ctx is None or ctx["extracted"] is None

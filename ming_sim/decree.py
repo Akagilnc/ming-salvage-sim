@@ -27,7 +27,8 @@ from ming_sim.applier import atomic
 from ming_sim.constants import TURN_UNIT
 from ming_sim.context import ENDING_LABELS, ENDING_ONGOING, ENDING_TIMEOUT, victory_status
 from ming_sim.db import GameDB
-from ming_sim.exceptions import LLMContractError, LLMUnavailable
+from ming_sim.error_pack import settlement_abort_message, write_error_pack
+from ming_sim.exceptions import LLMContractError, LLMUnavailable, SettlementAbort
 from ming_sim.flows import apply_fixed_period_flows
 from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction, auto_trigger_seed_issues, clear_gated_legacies, validate_delta_shape
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
@@ -450,10 +451,24 @@ def _settle_after_narrative(
             secret_orders=secret_orders_for_sim,
         )
     except Exception as exc:
-        print(f"[WARN] 结算抽取失败：{exc}；本{TURN_UNIT}数值不变。")
-        extracted = {}
-        extractor_output = f"[抽取失败] {exc}"
-        extractor_ok = False
+        # ADR 0008 决定 3/6（S6）：extractor 失败响亮中止——不再 extracted={} 静默续跑
+        # （整月 delta 蒸发而回合照推=最毒半落库点，本 ADR 立项动机）。此分支在 settle_with_delta
+        # 的 atomic 之外（resolve_context 也只有真成功才 persist），中止后 LLM 产出本未持久化，
+        # 重试=重跑 simulator/extractor（决定 3 明示唯一选择且可接受）；pre_settle 的 settling
+        # 相位已提交，重进被守门跳过前半段直接重推演。错误包在 atomic 外写（backup_to 拒绝事务内备份）。
+        try:
+            pack_path = write_error_pack(
+                db, state, exc=exc, extracted=None,
+                resolve_ctx=db.get_resolve_context(before_turn),
+            )
+        except BaseException as pack_exc:
+            # 写包自身炸（磁盘满/路径不可写）不得顶替原 extractor 异常（同 pre_settle
+            # reload 先例 raise exc from ...）：原异常是真因，写包失败是次生。
+            raise exc from pack_exc
+        raise SettlementAbort(
+            settlement_abort_message(pack_path),
+            turn=before_turn, stage="extract", error_pack_path=pack_path,
+        ) from exc
     else:
         extractor_ok = True
 
