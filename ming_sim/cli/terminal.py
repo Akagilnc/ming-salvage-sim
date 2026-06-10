@@ -13,7 +13,7 @@ from typing import List, Optional
 from ming_sim.constants import COURT_BREAK_COMMANDS, EXIT_COMMANDS, TURN_UNIT
 from ming_sim.assets import wrap
 from ming_sim.context import match_minister_from_text
-from ming_sim.exceptions import ExitGame
+from ming_sim.exceptions import ExitGame, SettlementAbort
 from ming_sim.models import Character, GameState
 from ming_sim.session import GameSession, TurnPhase
 from ming_sim.skills import print_all_skill_cards, print_skill_card, skill_display_name
@@ -406,19 +406,26 @@ def play_turn(session: GameSession) -> None:
             session.advance_without_decree()
             return
         if action == "issue":
-            result = session.resolve_turn()
-            if result.awaiting:
-                # CLI 端暂未做交互式决策 UI（本期只接 Web）：每个决策点默认取首个预设选项续跑。
-                print("\n【月末重大抉择】（CLI 暂自动取首选项；交互式裁决见网页版）")
-                choices = []
-                for d in result.decisions:
-                    opts = d.get("options") or []
-                    first = opts[0] if opts else {}
-                    print(f"  · {d.get('title')} → {first.get('label', '（无）')}")
-                    choices.append(dict(first))
-                report = session.submit_decisions(choices)
-            else:
-                report = result.report
+            try:
+                result = session.resolve_turn()
+                if result.awaiting:
+                    # CLI 端暂未做交互式决策 UI（本期只接 Web）：每个决策点默认取首个预设选项续跑。
+                    print("\n【月末重大抉择】（CLI 暂自动取首选项；交互式裁决见网页版）")
+                    choices = []
+                    for d in result.decisions:
+                        opts = d.get("options") or []
+                        first = opts[0] if opts else {}
+                        print(f"  · {d.get('title')} → {first.get('label', '（无）')}")
+                        choices.append(dict(first))
+                    report = session.submit_decisions(choices)
+                else:
+                    report = result.report
+            except SettlementAbort as error:
+                # 结算中止（ADR 0008 决定 6/7）：打印玩家指引（含错误包路径）后回会话
+                # 循环——「可重试」要成立就不能崩出进程；重进时 settling/awaiting 守门
+                # 保证前半段不重跑。
+                print(f"\n{error}")
+                return
             print(report)
             session.end_turn()
             return

@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 from ming_sim.constants import ROOT_DIR
 from ming_sim.paths import bundled_path, user_data_path, user_data_dir
-from ming_sim.exceptions import ExitGame, LLMUnavailable
+from ming_sim.exceptions import ExitGame, LLMUnavailable, SettlementAbort
 from ming_sim.llm_config import (
     CLI_DEFAULT_TIMEOUT_SECONDS,
     VALID_CHANNELS,
@@ -2139,6 +2139,10 @@ async def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> D
         result = game.session.resolve_turn(cheat_directive=body.cheat)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
+    except SettlementAbort as e:
+        # 结算中止（ADR 0008 决定 6/7）：进度已保存可重试，detail 即玩家指引
+        # （含错误包路径+「请发给作者」）。非 500——这是已处理的可重试态，不是服务器 bug。
+        raise HTTPException(status_code=409, detail=str(e)) from None
     decree = game.session.last_decree
     if result.awaiting:
         # 决策点暂停：回合未结算，返回决策点让前端弹窗；不刷新、不计 steam。
