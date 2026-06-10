@@ -16,6 +16,7 @@ v23.1(ship 对抗评审加固):param/Due/开账stock 非有限(NaN/inf)入口拦
   (G14c,钉 settlement k缩放+oracle _ak 两侧) · 官民田/隐田 入末态硬期望 · None 语义钉死(G14b/G21p) ·
   Due 科目白名单(拼错=两侧一致吞付,G21q) · action 缺 type/非数值字段干净 raise(G21r/s) ·
   线上R2:必填参数 presence 检查(缺失=干净raise非KeyError,不默认0,G21t) · 开账None前置拦(G21u) · oracle 同分量式(R1)
+  线上R3:率值/param/Due/开账 全面型别拦(字符串/bool 原 TypeError,G21v/w) · sys.exit 包 __main__ guard
 
 账户:CASH{省库库银,C_地方截留,C_中饱,C_漂没,C_eff损耗} / CLAIM{民欠旧赋,军饷欠,官俸欠,宗禄欠}
 守恒(spike 实测):
@@ -73,10 +74,13 @@ def run_tick(name, st, p, actions, expect=None):
         if a['type'] in ('清丈','营建') and a.get('cost',0) <= 0:    # 行政成本类必须 cost>0(否则免费抬税基=违P3爽感)
             raise ValueError(f"{a['type']} 必须 cost>0(行政成本类): {a}")
     for rk in ('火耗率','逋赋率','漂没率','中饱率'):
-        if not (0 <= p.get(rk,0) <= 1): raise ValueError(f"{rk} 越界")
+        rv = p.get(rk, 0)                                # 字符串/bool 率值原在比较处 TypeError(gemini R3);bool 是 int 子类须显式拒
+        if isinstance(rv, bool) or not isinstance(rv, (int, float)): raise ValueError(f"{rk} 非数值")
+        if not (0 <= rv <= 1): raise ValueError(f"{rk} 越界")
     for pk in ('正赋应征','三饷应征','起运定额','拨付gross','正赋亩额'):  # param 量纲负/非有限 fail-loud(r21/opus 负值;ship-adv NaN/inf 同拦)
         v = p.get(pk)
         if v is not None:
+            if isinstance(v, bool) or not isinstance(v, (int, float)): raise ValueError(f"param {pk} 非数值")
             if not math.isfinite(float(v)): raise ValueError(f"param {pk} 非有限值(NaN/inf)")
             if v < 0: raise ValueError(f"param {pk} 为负")
         elif pk in p and pk != '正赋应征':                  # 仅 正赋应征 可 None=走亩额派生;其余显式 None 拒(防 TypeError 半程崩)
@@ -84,10 +88,13 @@ def run_tick(name, st, p, actions, expect=None):
     for hk,dv in p.get('Due',{}).items():               # NaN Due→min(Pool,nan)=Pool 整池付给 NaN 且五层全过(ship-adv 实测)
         if hk not in ('军饷','官俸','宗禄','赈济'):       # 拼错科目=settlement+oracle 一致 .get 忽略→法定支出静默蒸发(codex r2)
             raise ValueError(f"Due 含未知科目 {hk}")
+        if isinstance(dv, bool) or not isinstance(dv, (int, float)): raise ValueError(f"Due[{hk}] 非数值")
         if not math.isfinite(float(dv)): raise ValueError(f"Due[{hk}] 非有限值(NaN/inf)")
         if dv < 0: raise ValueError(f"Due[{hk}] 为负")
     for sk in (*CASH_KEYS, *CLAIM_KEYS, '官民田', '隐田'):   # CLAIM 也拦(codex r4:负军饷欠→偿还环 rep<0 凭空生钱);非有限同拦
-        sv = float(st.get(sk,0))
+        _sraw = st.get(sk, 0)
+        if isinstance(_sraw, bool) or not isinstance(_sraw, (int, float)): raise ValueError(f"开账 stock {sk} 非数值")
+        sv = float(_sraw)
         if not math.isfinite(sv): raise ValueError(f"开账 stock {sk} 非有限值(NaN/inf)")
         if sv < 0: raise ValueError(f"开账 stock {sk} 为负")
     Stock_start = cash['省库库银']
@@ -322,6 +329,8 @@ go_raise("G21r action缺type应RAISE", S(), base, [dict(cost=5)], msg='action �
 go_raise("G21s 字符串cost应RAISE", S(), base, [dict(type='营建',cost='5')], msg='cost 非数值')
 go_raise("G21t 缺火耗率应RAISE(必填,不默认0)", S(), {k:v for k,v in base.items() if k!='火耗率'}, [], msg='param 火耗率 缺失')
 go_raise("G21u None开账省库应RAISE", S(省库库银=None), base, [], msg='开账 stock 省库库银 为 None')
+go_raise("G21v 字符串火耗率应RAISE", S(), dict(base,火耗率='0.2'), [], msg='火耗率 非数值')
+go_raise("G21w bool拨付gross应RAISE(bool是int子类)", S(), dict(base,拨付gross=True), [], msg='param 拨付gross 非数值')
 
 # G9 三 tick 链:穷省(省库10)+ recurring 募兵(每 tick cost5),看死亡螺旋累积 + 每 tick 守恒 + 硬期望
 print(f"\n{'#'*64}\n# G9 三 tick 链(穷省 recurring 募兵,死亡螺旋)\n{'#'*64}")
@@ -340,4 +349,5 @@ print(f"\n{'='*64}\n汇总:")
 for n,ok in R: print(f"  {'PASS' if ok else 'FAIL':5s} {n}")
 print(f"  全部 {'PASS' if all(o for _,o in R) else 'FAIL'}")
 print('='*64)
-sys.exit(0 if all(o for _,o in R) else 1)            # 自动化按退出码判;原恒0=假绿(ship-adv)
+if __name__ == '__main__':                           # import 不杀进程(sourcery R3);golden 仍按退出码门(自动化原恒0=假绿)
+    sys.exit(0 if all(o for _,o in R) else 1)
