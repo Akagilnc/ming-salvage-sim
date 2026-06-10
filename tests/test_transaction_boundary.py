@@ -261,3 +261,119 @@ def test_executescript_inside_atomic_fails_loud(game):
     with pytest.raises(RuntimeError, match="executescript"):
         with atomic(db):
             db.conn.executescript("SELECT 1;")
+
+
+# ---------------------------------------------------------------------------
+# cmr S1 r2 修复回归（F1-F4）
+# ---------------------------------------------------------------------------
+
+def test_swallowed_conn_context_exception_forces_outer_rollback(game):
+    """`with db.conn:` 内抛错被吞 → 最外层必须回滚+响亮（cmr S1 r2 F1，3/3 共识）。
+
+    异常时 __exit__ 已回滚掉前序写入 W1；若不置 rollback-only，
+    外层会把吞异常后的 W2 照常提交 = W1 静默丢 + W2 半提交。
+    """
+    db, state, content = game
+    for k in ("s1r2_w1", "s1r2_w2"):
+        db.conn.execute("DELETE FROM kv_store WHERE key=?", (k,))
+    db.conn.commit()
+
+    with pytest.raises(RuntimeError, match="回滚"):
+        with atomic(db):
+            db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1r2_w1','W1')")
+            try:
+                with db.conn:
+                    raise ValueError("conn-context fails")
+            except ValueError:
+                pass  # 吞
+            db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1r2_w2','W2')")
+
+    assert db.kv_get("s1r2_w1") is None
+    assert db.kv_get("s1r2_w2") is None
+    assert db.conn._commit_suspended is False
+    assert db.conn._atomic_depth == 0
+
+
+def test_ddl_first_inside_atomic_rolls_back(game):
+    """atomic 内 DDL 打头也要随回滚消失（cmr S1 r2 F2）。
+
+    legacy 模式只有 DML 隐式开事务；最外层须显式 BEGIN，
+    否则打头的 CREATE TABLE 跑 autocommit、回滚留表。
+    """
+    db, state, content = game
+    db.conn.execute("DROP TABLE IF EXISTS rejection_reports")
+    db.conn.commit()
+
+    from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
+    rc = RejectionCollector()
+    ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
+    rc.record("army_delta", ri, turn=1)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        with atomic(db):
+            rc.flush_to_db(db)  # 第一条语句 = CREATE TABLE
+            raise RuntimeError("boom")
+
+    tbl = db.conn.execute(
+        "SELECT name FROM sqlite_master WHERE name='rejection_reports'"
+    ).fetchone()
+    assert tbl is None  # 表本身也回滚
+
+
+def test_commit_failure_in_conn_context_rolls_back(game, monkeypatch):
+    """atomic 外 `with db.conn:` body 干净但 commit 失败 → 回滚再抛（原生语义）。"""
+    db, state, content = game
+    db.conn.execute("DELETE FROM kv_store WHERE key='s1r2_cf'")
+    db.conn.commit()
+
+    from ming_sim.applier import _SuspendableConnection
+    real_commit = _SuspendableConnection.commit
+    def failing_commit(self):
+        monkeypatch.setattr(_SuspendableConnection, "commit", real_commit)
+        raise sqlite3.OperationalError("simulated commit failure")
+    monkeypatch.setattr(_SuspendableConnection, "commit", failing_commit)
+
+    with pytest.raises(sqlite3.OperationalError):
+        with db.conn:
+            db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1r2_cf','x')")
+
+    assert not db.conn.in_transaction  # 已回滚，不留开事务
+    assert db.kv_get("s1r2_cf") is None
+
+
+def test_commit_failure_at_atomic_exit_rolls_back(game, monkeypatch):
+    """atomic 最外层 commit 失败 → 回滚再抛，不留开事务。"""
+    db, state, content = game
+    db.conn.execute("DELETE FROM kv_store WHERE key='s1r2_acf'")
+    db.conn.commit()
+
+    from ming_sim.applier import _SuspendableConnection
+    real_commit = _SuspendableConnection.commit
+    calls = {"n": 0}
+    def failing_commit(self):
+        # atomic 解除暂停后的那次真 commit 才失败
+        if not self._commit_suspended and calls["n"] == 0:
+            calls["n"] += 1
+            raise sqlite3.OperationalError("simulated commit failure")
+        return real_commit(self)
+    monkeypatch.setattr(_SuspendableConnection, "commit", failing_commit)
+
+    with pytest.raises(sqlite3.OperationalError):
+        with atomic(db):
+            db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1r2_acf','x')")
+
+    assert not db.conn.in_transaction
+    assert db.kv_get("s1r2_acf") is None
+    assert db.conn._commit_suspended is False
+    assert db.conn._atomic_depth == 0
+
+
+def test_atomic_rejects_plain_connection(tmp_path):
+    """atomic 对普通 sqlite3.Connection 响亮拒绝（cmr S1 r2 F4，静默失效=最危险）。"""
+    class PlainDB:
+        def __init__(self):
+            self.conn = sqlite3.connect(str(tmp_path / "plain.db"))
+
+    with pytest.raises(TypeError, match="_SuspendableConnection"):
+        with atomic(PlainDB()):
+            pass
