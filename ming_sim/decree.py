@@ -433,18 +433,24 @@ def _settle_after_narrative(
         print(f"[WARN] 结算抽取失败：{exc}；本{TURN_UNIT}数值不变。")
         extracted = {}
         extractor_output = f"[抽取失败] {exc}"
+        extractor_ok = False
+    else:
+        extractor_ok = True
 
-    # ADR 0008 S2：进入结算后半段（settle_with_delta 动 DB）前，无条件持久化 resolve_context
+    # ADR 0008 S2：进入结算后半段（settle_with_delta 动 DB）前，持久化 resolve_context
     # （extractor delta + 叙事）作重跑真源——跨进程恢复从它重灌，不重跑贵的 simulator/extractor。
     # 持久化前过 validate_delta_shape：畸形 delta 响亮抛错且绝不入真源（防毒钉死锁，见 persist_resolve_context）。
     # before_turn == state.turn（next_period 尚未执行），与 settle 内 clear 同键。
-    persist_resolve_context(
-        db, before_turn, extracted,
-        decree_text=decree_text, narrative=narrative,
-        simulator_payload=simulator_payload,
-        secret_orders=secret_orders_for_sim,
-        relevant_memories=relevant_memories,
-    )
+    # 仅 extractor 真成功才入真源：失败的 {} 占位若持久化，恢复入口会当真 delta
+    # 重放=整月效果静默丢（cmr S2+S3 F1；响亮中止是 S6 的活，in-process 路径暂照旧）。
+    if extractor_ok:
+        persist_resolve_context(
+            db, before_turn, extracted,
+            decree_text=decree_text, narrative=narrative,
+            simulator_payload=simulator_payload,
+            secret_orders=secret_orders_for_sim,
+            relevant_memories=relevant_memories,
+        )
 
     # 后括号确定性结算核：与探针 driver 共用同一段（ADR 0004）。章节记忆 / 结局总评
     # 作为注入回调传入（真实流程= LLM agent 闭包；driver= None 跳过）。
@@ -613,7 +619,9 @@ def settle_with_delta(
     db.save_state(state)
     # ADR 0008 S3：清 resolve_context 作 settle 写序列的最后一笔（紧贴 next_period 等推进写）。
     # 按 before_turn 清本回合那一行（next_period 已把 state.turn 推进到下一回合）。
-    # commit 后再清会留「已提交但 context 残留」的崩溃窗口；S7 把整段包进 atomic 后此清随事务原子落定。
+    # 注意：此刻 save_state 与本清仍是两次独立 commit，「已提交但 context 残留」的崩溃
+    # 窗口尚未闭合——本切片只把位置摆好，S7 把整段包进 atomic 后窗口才真正关掉
+    # （cmr S2+S3 codex R2，defer→S7，S7 须加该崩溃点回归测试）。
     db.clear_resolve_context(before_turn)
     assert state.turn == before_turn + 1
 
