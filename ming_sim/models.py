@@ -23,6 +23,11 @@ class TurnPhase(str, Enum):
     ISSUED = "issued"         # 已颁诏：resolve 完成，待 end_turn
 
 
+# 「前半段已提交」相位集：pre_settle 守门/粘滞/skip 跳过判定的单一真源（cmr S4 r3 集中化）。
+# AWAITING 只可能在 pre_settle 事务提交后出现（HITL 暂停在 resolve 中段），语义同 settling。
+FRONT_HALF_DONE_PHASES = (TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value)
+
+
 @dataclass
 class ChatResult:
     action: str

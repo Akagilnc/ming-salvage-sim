@@ -317,3 +317,97 @@ def test_pre_settle_guard_covers_awaiting_decision(game):
     rows_after = db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)).fetchone()[0]
     assert rows_after == rows_before  # 前半段没有二跑
+
+
+# ---------------------------------------------------------------------------
+# cmr S4 r3 修复回归（FRONT_HALF_DONE_PHASES 集中化）
+# ---------------------------------------------------------------------------
+
+def test_sticky_phases_cover_awaiting_decision(game):
+    """粘滞守门覆盖 awaiting_decision（cmr S4 r3 F1）。
+
+    CLI 重载于 awaiting 时 enter_review 抹相位=守门 miss 双 tick+决策搁浅。
+    """
+    from ming_sim.session import GameSession
+    db, state, content = game
+    state.turn_phase = "awaiting_decision"
+    db.save_state(state)
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+
+    sess.enter_review()
+    assert state.turn_phase == "awaiting_decision"
+    sess.back_to_summoning()
+    assert state.turn_phase == "awaiting_decision"
+
+
+def test_advance_without_edict_at_awaiting_no_double_tick(game):
+    """skip 路守门覆盖 awaiting_decision（cmr S4 r3 F2）。"""
+    from ming_sim.decree import advance_without_edict, pre_settle
+    db, state, content = game
+    turn = state.turn
+    pre_settle(state, db)  # 真落财政 + settling
+    state.turn_phase = "awaiting_decision"  # HITL 暂停后的相位
+    rows_before = db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)).fetchone()[0]
+
+    advance_without_edict(state, db, content=content)
+
+    rows_after = db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)).fetchone()[0]
+    assert rows_after == rows_before
+    assert state.turn == turn + 1
+    assert state.turn_phase == "summoning"
+
+
+def test_resolve_turn_idempotent_at_awaiting(game, monkeypatch):
+    """resolve_turn 在 awaiting 态幂等返回已存决策，不二跑 simulator（cmr S4 r3 F3）。
+
+    二跑会覆盖 pending_decisions 或绕过亲裁直接结算。
+    """
+    import ming_sim.session as session_mod
+    from ming_sim.session import GameSession
+    db, state, content = game
+    state.turn_phase = "awaiting_decision"
+    db.save_state(state)
+    db.save_pending_decisions(state.turn, [{
+        "title": "辽东战和", "context": "皇太极请款",
+        "options": [{"label": "战", "hint": ""}, {"label": "和", "hint": ""}],
+    }])
+
+    def _must_not_run(*a, **k):
+        raise AssertionError("resolve_directives 不应被调")
+    monkeypatch.setattr(session_mod, "resolve_directives", _must_not_run)
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+
+    res = sess.resolve_turn()
+    assert res.awaiting is True
+    assert res.decisions
+    db.clear_resolve_context(state.turn)
+
+
+def test_guarded_paths_still_commit_pending_actions(game):
+    """守门路径仍 commit 暂存动作——幂等安全，跳过=孤儿死行违 P1（cmr S4 r3 F4）。"""
+    from ming_sim.decree import pre_settle
+    from tests.test_pending_actions import _active_minister_name
+    db, state, content = game
+    name = _active_minister_name(db, content)
+
+    pre_settle(state, db)  # 落 settling
+    # 崩溃重载后玩家召对新 stage 的动作
+    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    db.stage_pending_action(
+        state.turn, kind="secret_order", action="更新", minister_name=name, target_id=oid,
+        payload={"new_title": "守门后标题", "new_content": "x", "deadline_months": 0})
+
+    out = pre_settle(state, db)  # 守门早退,但暂存不能成孤儿
+
+    assert out == []
+    statuses = [r["status"] for r in db.conn.execute(
+        "SELECT status FROM pending_actions WHERE turn=?", (state.turn,)).fetchall()]
+    assert statuses and all(s != "pending" for s in statuses)

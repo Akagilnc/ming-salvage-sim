@@ -31,7 +31,7 @@ from ming_sim.exceptions import LLMContractError, LLMUnavailable
 from ming_sim.flows import apply_fixed_period_flows
 from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction, auto_trigger_seed_issues, clear_gated_legacies, validate_delta_shape
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
-from ming_sim.models import GameState, LLMConfig, TurnPhase
+from ming_sim.models import FRONT_HALF_DONE_PHASES, GameState, LLMConfig, TurnPhase
 from ming_sim.memories import build_timeline, record_chapter_memory
 from ming_sim.simulation import (
     EXTRACTION_MODULES,
@@ -172,12 +172,14 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
     # 退朝未下正式诏书也是月末:先 commit 本回合暂存的结构化写动作(颁诏前未撤回即通过,
     # ADR 0006),否则暂存成孤儿、随 next_period 永久丢失(CMR P1)。须在 next_period 前。
     # content/registry 供 office(任免)落库注册新臣;无则任免落不了(标 failed,不静默)。
-    if state.turn_phase == TurnPhase.SETTLING.value:
-        # 崩溃重载后走 skip 路：前半段（暂存 commit+财政+密令）已随 pre_settle 事务提交，
-        # 二跑=同回合双财政 tick（cmr S4 r1 F3）。只走推进尾。
+    # 暂存动作 commit 幂等（只处理 pending 行），两条分支都跑：守门分支跳过它的话，
+    # 崩溃重载后新 stage 的动作随 next_period 成旧回合孤儿死行，违 P1（cmr S4 r3 F4）。
+    db.commit_pending_actions(state, content=content, registry=registry)
+    if state.turn_phase in FRONT_HALF_DONE_PHASES:
+        # 崩溃重载后走 skip 路：前半段（财政+auto_trigger+密令）已随 pre_settle 事务提交，
+        # 二跑=同回合双财政 tick（cmr S4 r1 F3 / r3 F2）。只走推进尾。
         pass
     else:
-        db.commit_pending_actions(state, content=content, registry=registry)
         apply_fixed_period_flows(db, state)
     message = f"本{TURN_UNIT}退朝未下正式圣旨，诸事仍待来{TURN_UNIT}处置。"
     db.record_log(state, message)
@@ -517,10 +519,13 @@ def pre_settle(
     auto_submit_due_secret_orders（原在 resolve_directives 调用点）挪入本事务：它只是
     「推演前的确定性写」，崩溃时密令呈递须随财政一并回滚；挪入不改它先于 simulator 的事实。
     """
-    # 幂等守门：settling/awaiting_decision → 前半段已提交，重进不重跑（防二次财政 tick）。
-    # AWAITING 只可能在 pre_settle 已提交后出现（HITL 暂停在 resolve 中段），语义同 settling
-    # ——HITL 后重发 issue（web 无相位守门）若只认 settling 会 miss（cmr S4 r2）。
-    if state.turn_phase in (TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value):
+    # 幂等守门：前半段已提交相位（FRONT_HALF_DONE_PHASES 单一真源）重进不重跑财政
+    # （防二次 tick，cmr S4 r2/r3）。暂存动作 commit 幂等、早退前仍要跑：崩溃重载后
+    # 新 stage 的动作不 commit 会成孤儿死行，违 P1（cmr S4 r3 F4）。
+    if state.turn_phase in FRONT_HALF_DONE_PHASES:
+        committed = db.commit_pending_actions(state, content=content, registry=registry)
+        if committed:
+            tlog(f"[pending_actions] 守门早退前落库 {len(committed)} 条")
         return []
     auto_triggered: List[Dict[str, object]] = []
     with atomic(db):

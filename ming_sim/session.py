@@ -81,7 +81,7 @@ def prune_auto_saves(saves_dir: str, campaign_id: str, keep_turns: int = AUTO_SA
 
 # TurnPhase 单一真源已下沉 models.py（decree 也要用，import session 会循环）；
 # 此处 re-export 保持旧 import 路径（terminal/web_app/tests 的 from session import TurnPhase）兼容。
-from ming_sim.models import TurnPhase  # noqa: F401  (re-export)
+from ming_sim.models import FRONT_HALF_DONE_PHASES, TurnPhase  # noqa: F401  (re-export)
 
 
 @dataclass
@@ -973,19 +973,25 @@ class GameSession:
     # ── 诏书阶段 ──────────────────────────────────────────────────────────
 
     def enter_review(self) -> None:
-        # settling 粘滞：它是「前半段已提交」的崩溃恢复标记，被抹成 reviewing 会让
-        # pre_settle 守门失效=同回合二次财政 tick（cmr S4 r1）。只能由 settle 完成路径复位。
-        if self.state.turn_phase == TurnPhase.SETTLING.value:
+        # 前半段已提交相位粘滞（FRONT_HALF_DONE_PHASES 单一真源）：被抹成 reviewing 会让
+        # pre_settle 守门失效=同回合二次财政 tick，awaiting 还会令 submit_decisions 拒收
+        # =决策搁浅（cmr S4 r1/r3）。只能由 settle 完成路径复位。
+        if self.state.turn_phase in FRONT_HALF_DONE_PHASES:
             return
         self._set_phase(TurnPhase.REVIEWING)
 
     def back_to_summoning(self) -> None:
-        if self.state.turn_phase == TurnPhase.SETTLING.value:
+        if self.state.turn_phase in FRONT_HALF_DONE_PHASES:
             return
         self._set_phase(TurnPhase.SUMMONING)
 
     def write_decree(self) -> str:
         """生成诏书。要求无 pending 残留、≥1 条 draft。"""
+        if self.state.turn_phase == TurnPhase.AWAITING_DECISION.value:
+            # HITL 暂停期重发 issue：幂等返回已存决策点，不二跑 simulator——二跑会覆盖
+            # pending_decisions，或第二次输出无决策块时绕过亲裁直接结算（cmr S4 r3 F3）。
+            return ResolveResult(
+                awaiting=True, decisions=self.db.list_pending_decisions(self.state.turn))
         if self.pending_count() > 0:
             raise ValueError(f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
         directives = self.db.list_directives(self.state, statuses=("draft",))
@@ -1013,6 +1019,11 @@ class GameSession:
         调用方据 result.decisions 弹窗，皇帝裁完调 submit_decisions。无决策点 → awaiting=False，
         回合已结算推进，置 issued 态。
         """
+        if self.state.turn_phase == TurnPhase.AWAITING_DECISION.value:
+            # HITL 暂停期重发 issue：幂等返回已存决策点，不二跑 simulator——二跑会覆盖
+            # pending_decisions，或第二次输出无决策块时绕过亲裁直接结算（cmr S4 r3 F3）。
+            return ResolveResult(
+                awaiting=True, decisions=self.db.list_pending_decisions(self.state.turn))
         if self.pending_count() > 0:
             raise ValueError(f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
         directives = self.db.list_directives(self.state, statuses=("draft",))
