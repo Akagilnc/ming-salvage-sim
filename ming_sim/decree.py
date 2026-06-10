@@ -180,15 +180,16 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
     # / 财政 / record_log / clear / 推进写序列全有或全无，不许半写）。回滚后内存从 DB 重载
     # （同 pre_settle 先例），链式 re-raise 不吞（fail-loud，ADR 0005）。pre_settle 自己的
     # atomic 与本路不嵌套（advance 路上 pre_settle 不在调用栈），各包裹层自治。
+    # ADR 决定 6：不提供「跳过本月结算」。前半段已提交后退朝=财政已落而本月 LLM 结算
+    # 永不落+丢弃已存结算上下文=自愿半落库（ship-pre r1，废除 S4 时代的「安全推进」语义）。
+    if state.turn_phase in FRONT_HALF_DONE_PHASES:
+        if state.turn_phase == TurnPhase.AWAITING_DECISION.value:
+            raise ValueError("月末重大抉择待裁决，请先裁决后完成结算，不能退朝跳过。")
+        raise ValueError("月末结算已开始（前半段已入账），请重试颁诏完成结算，不能退朝跳过。")
     try:
         with atomic(db):
             db.commit_pending_actions(state, content=content, registry=registry)
-            if state.turn_phase in FRONT_HALF_DONE_PHASES:
-                # 崩溃重载后走 skip 路：前半段（财政+auto_trigger+密令）已随 pre_settle 事务提交，
-                # 二跑=同回合双财政 tick（cmr S4 r1 F3 / r3 F2）。只走推进尾。
-                pass
-            else:
-                apply_fixed_period_flows(db, state)
+            apply_fixed_period_flows(db, state)
             message = f"本{TURN_UNIT}退朝未下正式圣旨，诸事仍待来{TURN_UNIT}处置。"
             db.record_log(state, message)
             print("\n" + message)

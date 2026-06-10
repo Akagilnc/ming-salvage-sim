@@ -216,8 +216,8 @@ def test_enter_review_does_not_clobber_settling(game):
     assert state.turn_phase == "settling"
 
 
-def test_advance_without_edict_after_settling_no_double_tick(game):
-    """崩溃重载后走 skip 路：前半段已提交则不二跑财政，且复位 phase（cmr S4 r1 F3）。"""
+def test_advance_without_edict_refused_after_settling(game):
+    """前半段已提交后退朝被拒（ADR 决定 6 不提供跳过；ship-pre r1 改约，废除 skip 语义）。"""
     from ming_sim.decree import advance_without_edict, pre_settle
     db, state, content = game
     turn = state.turn
@@ -227,13 +227,14 @@ def test_advance_without_edict_after_settling_no_double_tick(game):
     assert rows_after_pre > 0
     assert state.turn_phase == "settling"
 
-    advance_without_edict(state, db, content=content)
+    with pytest.raises(ValueError, match="结算"):
+        advance_without_edict(state, db, content=content)
 
     rows_final = db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)).fetchone()[0]
-    assert rows_final == rows_after_pre  # 不二跑
-    assert state.turn == turn + 1
-    assert state.turn_phase != "settling"  # 推进后复位
+    assert rows_final == rows_after_pre  # 财政不动
+    assert state.turn == turn  # 未推进
+    assert state.turn_phase == "settling"  # 相位保留，待重试颁诏
 
 
 # ---------------------------------------------------------------------------
@@ -343,8 +344,8 @@ def test_sticky_phases_cover_awaiting_decision(game):
     assert state.turn_phase == "awaiting_decision"
 
 
-def test_advance_without_edict_at_awaiting_no_double_tick(game):
-    """skip 路守门覆盖 awaiting_decision（cmr S4 r3 F2）。"""
+def test_advance_without_edict_refused_at_awaiting(game):
+    """awaiting 退朝被拒——须先裁决月末抉择（ADR 决定 6；ship-pre r1 改约）。"""
     from ming_sim.decree import advance_without_edict, pre_settle
     db, state, content = game
     turn = state.turn
@@ -353,13 +354,14 @@ def test_advance_without_edict_at_awaiting_no_double_tick(game):
     rows_before = db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)).fetchone()[0]
 
-    advance_without_edict(state, db, content=content)
+    with pytest.raises(ValueError, match="裁决"):
+        advance_without_edict(state, db, content=content)
 
     rows_after = db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)).fetchone()[0]
     assert rows_after == rows_before
-    assert state.turn == turn + 1
-    assert state.turn_phase == "summoning"
+    assert state.turn == turn
+    assert state.turn_phase == "awaiting_decision"
 
 
 def test_resolve_turn_idempotent_at_awaiting(game, monkeypatch):
