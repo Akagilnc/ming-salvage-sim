@@ -331,6 +331,9 @@ export function SavesList({
   );
 }
 
+// CLI 子进程默认超时（秒），与后端 llm_config.CLI_DEFAULT_TIMEOUT_SECONDS 对齐（#55 跨语言）。
+const CLI_DEFAULT_TIMEOUT = 300;
+
 export function LLMConfigTab() {
   const [info, setInfo] = React.useState<LLMConfigInfo | null>(null);
   const [baseUrl, setBaseUrl] = React.useState("");
@@ -343,6 +346,11 @@ export function LLMConfigTab() {
   const [maxTokens, setMaxTokens] = React.useState("8000");
   const [timeoutSeconds, setTimeoutSeconds] = React.useState("180");
   const [thinkingLevel, setThinkingLevel] = React.useState("");
+  // 通道感知（#51）：局中也能切 API / CLI 通道,不再被强制降级到 api。
+  const [channel, setChannel] = React.useState<"api" | "cli">("api");
+  const [cliRunner, setCliRunner] = React.useState("agy");
+  const [cliModel, setCliModel] = React.useState("");
+  const [cliTimeout, setCliTimeout] = React.useState(String(CLI_DEFAULT_TIMEOUT));
   const [show, setShow] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [msg, setMsg] = React.useState("");
@@ -360,6 +368,13 @@ export function LLMConfigTab() {
         setMaxTokens(String(data.max_tokens || 8000));
         setTimeoutSeconds(String(data.timeout_seconds || 180));
         setThinkingLevel(data.thinking_level || "");
+        setChannel(data.channel === "cli" ? "cli" : "api");
+        // 从已存 CLI 槽(persisted)初始化优先,而非 active cfg.cli_*——API 会话下 cfg.cli_model 可能被
+        // cli_model_from_env 兜底成 API model 名,直接回填会把它当用户选项 post 回去(CMR R3 codex)。
+        // (存盘响应无 persisted 字段 → 回落 active,channel=cli 时即刚提交值,正确。)
+        setCliRunner(data.persisted?.cli_runner || (data.channel === "cli" ? data.cli_runner || "" : "") || "agy");
+        setCliModel(data.persisted?.cli_model ?? (data.channel === "cli" ? data.cli_model || "" : ""));
+        setCliTimeout(String(data.persisted?.cli_timeout_seconds || data.cli_timeout_seconds || CLI_DEFAULT_TIMEOUT));
       })
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
   }, []);
@@ -382,9 +397,18 @@ export function LLMConfigTab() {
           advanced_base_url: advancedBaseUrl,
           advanced_api_key: advancedApiKey.trim() ? advancedApiKey : "__keep__",
           advanced_thinking_level: advancedThinkingLevel.trim(),
+          channel,
+          cli_runner: channel === "cli" ? cliRunner : "__keep__",
+          cli_model: channel === "cli" ? cliModel : "__keep__",
+          cli_timeout_seconds: channel === "cli" ? parseFloat(cliTimeout) || CLI_DEFAULT_TIMEOUT : 0,
         }),
       });
       setInfo((cur) => (cur ? { ...cur, ...data } : null));
+      // 用服务端归一后的响应同步本地通道/CLI 状态,避免与 info 漂移(Sourcery R1)。
+      setChannel(data.channel === "cli" ? "cli" : "api");
+      setCliRunner(data.cli_runner || "agy");
+      setCliModel(data.cli_model || "");
+      setCliTimeout(String(data.cli_timeout_seconds || CLI_DEFAULT_TIMEOUT));
       setApiKey("");
       setAdvancedApiKey("");
       setMsg("已生效并写入 data/runtime_llm.json。");
@@ -402,6 +426,50 @@ export function LLMConfigTab() {
       <p className="menu-hint">
         立即生效并写入 <code>data/runtime_llm.json</code>，重启进程后自动加载。api_key 留空保留当前。
       </p>
+      <label className="menu-field">
+        <span>执行通道</span>
+        <select
+          className="menu-input"
+          value={channel}
+          onChange={(e) => setChannel(e.target.value === "cli" ? "cli" : "api")}
+        >
+          <option value="api">API（OpenAI 兼容，需 key）</option>
+          <option value="cli">CLI（本地 codex/agy/claude，脱 key）</option>
+        </select>
+      </label>
+      {channel === "cli" ? (
+        <>
+          <label className="menu-field">
+            <span>CLI Runner</span>
+            <select className="menu-input" value={cliRunner} onChange={(e) => setCliRunner(e.target.value)}>
+              <option value="agy">agy（Gemini）</option>
+              <option value="codex">codex</option>
+              <option value="claude">claude</option>
+            </select>
+          </label>
+          <label className="menu-field">
+            <span>CLI Model <small className="menu-hint">（空=runner 默认）</small></span>
+            <input
+              className="menu-input"
+              value={cliModel}
+              onChange={(e) => setCliModel(e.target.value)}
+              placeholder="gpt-5.5 / claude-opus-4-8 / 空"
+            />
+          </label>
+          <label className="menu-field">
+            <span>CLI 超时（秒）</span>
+            <input
+              className="menu-input"
+              type="number"
+              min={30}
+              max={1800}
+              value={cliTimeout}
+              onChange={(e) => setCliTimeout(e.target.value)}
+              placeholder="300"
+            />
+          </label>
+        </>
+      ) : null}
       <label className="menu-field">
         <span>Base URL</span>
         <input
