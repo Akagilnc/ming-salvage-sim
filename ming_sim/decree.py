@@ -516,18 +516,33 @@ def reload_state_from_db(db: GameDB, state: GameState, *, content=None, registry
     持引用（session.state、driver 闭包、各调用栈），必须**原地刷新**而非返回新对象——把 DB 值
     写回同一对象的字段、metrics dict 原地 clear+update，返回同一 state（id 不变）。
 
-    content/registry：本切片只做 state 刷新（最痛点 = state.metrics/turn_phase 脏读）。
-    registry 重建依赖 GameSession 重型协作者（CourtContext/LLMConfig/agno_db），applier 层
-    与 decree 层都拿不全，留参数占位、传 None 时 no-op；content.characters/registry 的
-    DB 同源重载是 session 级的活（S7/后续接 session.refresh_runtime_after_chat_rollback 同款）。
-    传入非 None 时本切片亦不处理（只透传不报错），待后续接线。
+    content 非 None 时清 characters 幽灵：任免 commit 先挂 content 再写 DB，回滚删行
+    留幽灵——重试时幽灵让 apply 走「在册」路因无行被拒，合法任免标 failed=决策丢失
+    （cmr S5 r1 codex trace）。判据：content↔DB 严格 1:1 同步（开局即 sync，实证 58=58），
+    「content 有而 DB 无」即本回合随回滚消失的内存挂载，安全删。
+    registry 重建依赖 GameSession 重型协作者，decree 层拿不全；幽灵对应的 registry agent
+    若存在会成悬挂引用，本层无清理接口（限制：session 级重载后续接线时处理）。
+
+    嵌套 atomic 内禁止 reload：depth>0 时 rollback 尚未发生（flat 语义，最外层才回滚），
+    load_state 同连接会读到未提交脏写——把脏数据当真相刷进 state（cmr S5 r1 claude）。
     """
+    if getattr(db.conn, "_atomic_depth", 0) > 0:
+        raise RuntimeError(
+            "reload_state_from_db 在 atomic 事务内禁止：回滚尚未发生，会把未提交脏写"
+            "当 DB 真相刷进内存。最外层 atomic 拥有者负责真回滚后再 reload。"
+        )
     fresh = db.load_state()
     for field_name in _RELOAD_SCALAR_FIELDS:
         setattr(state, field_name, getattr(fresh, field_name))
-    # metrics 原地刷：clear+update 保持同一 dict 对象（持引用方继续读同一引用）。
-    state.metrics.clear()
+    # metrics 原地刷，update-then-prune：任何时刻 dict 非空（Ctrl-C 落在中间也不会
+    # 留全空 metrics，cmr S5 r1）、同一 dict 对象（持引用方继续读同一引用）。
     state.metrics.update(fresh.metrics)
+    for key in [k for k in state.metrics if k not in fresh.metrics]:
+        del state.metrics[key]
+    if content is not None:
+        db_names = {row[0] for row in db.conn.execute("SELECT name FROM characters")}
+        for ghost in [n for n in content.characters if n not in db_names]:
+            del content.characters[ghost]
     return state
 
 
@@ -584,11 +599,14 @@ def pre_settle(
             state.turn_phase = TurnPhase.SETTLING.value
             db.save_state(state)
     except BaseException:
-        # atomic 已回滚 SQLite，但内存副作用留脏（ADR 0008 决定 3 第三条）：
+        # atomic 已回滚 SQLite（仅当本层是最外层），但内存副作用留脏（ADR 0008 决定 3 第三条）：
         # apply_fixed_period_flows 直改了 state.metrics（flows.py:192）、尾部 turn_phase 已被赋 settling。
         # 回滚后立即把 state 从 DB 重载刷净——否则脏 settling 会被下次 pre_settle 守门跳过=该月财政
         # 永久丢（cmr S4 r1 F4），脏 metrics 污染重跑读数。reload 后原样 re-raise（fail-loud，不吞，ADR 0005）。
-        reload_state_from_db(db, state, content=content, registry=registry)
+        # 嵌套在外层 atomic 内时回滚尚未发生，load_state 会读到未提交脏写——跳过 reload，
+        # 由最外层拥有者真回滚后处理（cmr S5 r1）。
+        if getattr(db.conn, "_atomic_depth", 0) == 0:
+            reload_state_from_db(db, state, content=content, registry=registry)
         raise
     return auto_triggered
 

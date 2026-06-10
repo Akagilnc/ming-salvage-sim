@@ -119,3 +119,89 @@ def test_pre_settle_self_reloads_memory_on_rollback(game, monkeypatch):
     pre_settle(state, db)
     assert state.turn_phase == "settling"
     assert _ledger_count(db, turn) > before_ledger
+
+
+# ---------------------------------------------------------------------------
+# cmr S5 r1 修复回归（F1 content 幽灵 / F2 嵌套脏读 / F3 metrics 窗口）
+# ---------------------------------------------------------------------------
+
+def test_rollback_purges_content_character_ghost(game, monkeypatch):
+    """回滚后 content.characters 幽灵被清，重试任免不再被误拒（cmr S5 r1 F1，codex trace）。
+
+    任免 commit 先挂 content 再写 DB；回滚删行留幽灵 → 重试走「在册」路因无行被拒，
+    合法 pending 任免标 failed = 决策丢失。
+    """
+    import ming_sim.decree as decree_mod
+    from ming_sim.decree import pre_settle
+    db, state, content = game
+    new_name = "赵无忌"
+    db.stage_pending_action(
+        state.turn, kind="office", action="任命", minister_name="王承恩",
+        payload={"name": new_name, "office": "兵部右侍郎"})
+
+    # commit_pending_actions 之后的步骤抛错 → 回滚
+    def _boom(*a, **k):
+        raise RuntimeError("post-commit step crash")
+    monkeypatch.setattr(decree_mod, "auto_trigger_seed_issues", _boom)
+
+    with pytest.raises(RuntimeError, match="post-commit step crash"):
+        pre_settle(state, db, content=content, registry=None)
+
+    assert new_name not in content.characters  # 幽灵已清
+    assert db.conn.execute(
+        "SELECT name FROM characters WHERE name=?", (new_name,)).fetchone() is None
+    # pending 行随回滚回到 pending(行本身也回滚了 status 变更)
+    monkeypatch.undo()
+
+    pre_settle(state, db, content=content, registry=None)  # 正常重试
+
+    row = db.conn.execute(
+        "SELECT status FROM pending_actions WHERE turn=? AND kind='office'",
+        (state.turn,)).fetchone()
+    assert row is not None and row["status"] == "committed"  # 合法任免不被误拒
+    assert db.conn.execute(
+        "SELECT name FROM characters WHERE name=?", (new_name,)).fetchone() is not None
+
+
+def test_reload_skipped_inside_nested_atomic(game, monkeypatch):
+    """嵌套 atomic 内不 reload：rollback 尚未发生，load_state 读到未提交脏写（cmr S5 r1 F2）。"""
+    import ming_sim.decree as decree_mod
+    from ming_sim.applier import atomic
+    from ming_sim.decree import pre_settle
+    db, state, content = game
+
+    calls = {"n": 0}
+    real_reload = decree_mod.reload_state_from_db
+    def _counting_reload(*a, **k):
+        calls["n"] += 1
+        return real_reload(*a, **k)
+    monkeypatch.setattr(decree_mod, "reload_state_from_db", _counting_reload)
+
+    def _boom(*a, **k):
+        raise RuntimeError("inner crash")
+    monkeypatch.setattr(decree_mod, "auto_trigger_seed_issues", _boom)
+
+    with pytest.raises(RuntimeError, match="回滚"):  # 外层 rollback-only 响亮
+        with atomic(db):
+            try:
+                pre_settle(state, db)
+            except RuntimeError:
+                pass  # 吞内层异常,外层 rollback-only 接管
+
+    assert calls["n"] == 0  # 嵌套内未 reload(脏读防线)
+
+
+def test_metrics_refresh_never_empty_window(game):
+    """metrics 刷新无空窗口：同一 dict 对象、键集与 DB 一致（cmr S5 r1 F3）。"""
+    from ming_sim.decree import reload_state_from_db
+    db, state, content = game
+    before_id = id(state.metrics)
+    state.metrics["国库"] = 999999  # 脏值
+    state.metrics["幽灵指标"] = 1   # DB 没有的 key
+
+    reload_state_from_db(db, state)
+
+    assert id(state.metrics) == before_id
+    assert "幽灵指标" not in state.metrics
+    fresh = db.load_state()
+    assert state.metrics == fresh.metrics
