@@ -1029,10 +1029,14 @@ class GameDB:
     }
 
     def _stem_of(self, key: str) -> str:
-        # 循环剥后缀（cmr S3 r4）：单层剥离时双后缀 key（田赋_rate_base）归一成
-        # 田赋_rate,存在性检查漏撞既有 rate 行 → 建出幻影预算科目被当真月度流水。
-        while key.endswith("_base") or key.endswith("_rate"):
+        # 单层剥后缀;剥后仍带后缀 = 多重后缀垃圾 key（田赋_rate_base），返 "" 标记
+        # 非法——归一化它两头都危险：create 漏撞建幻影科目（cmr S3 r4），remove 把
+        # 垃圾 key 归一到真 stem 误删科目+清零各省实收（cmr S3 r5,不可逆）。
+        # create/remove 对 stem 为空一律 return None = 拒收留痕。
+        if key.endswith("_base") or key.endswith("_rate"):
             key = key[:-5]
+            if key.endswith("_base") or key.endswith("_rate"):
+                return ""
         return key
 
     def apply_dynamic_fiscal_scale(self, stem: str, ratio: float) -> int:
