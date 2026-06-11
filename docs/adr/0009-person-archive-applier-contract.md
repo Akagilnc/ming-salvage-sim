@@ -27,7 +27,7 @@ Status: proposed（待评审；实现等 PR #90 合入 + M0 收口）
 
 ## 决定 3：易主必填「方式」与内嵌反噬
 
-`易主` 必填 `方式` ∈ {主动投敌, 被俘而降} ∪ {不明}（「不明」为 alias 翻译专用值，新路径出现= `invalid_enum` 拒收；初稿曾设「被掳」，评审证明其无独立事实形态——被掳而降即被俘而降，被掳未降非易主——已删）。
+`易主` 必填 `方式` ∈ {主动投敌, 被俘而降, **主动归附**} ∪ {不明}（「不明」为 alias 翻译专用值，新路径出现= `invalid_enum` 拒收；初稿曾设「被掳」，评审证明其无独立事实形态已删）。**主动归附覆盖敌→明方向**：招抚流寇/海寇归顺（郑芝龙类）、边将反正（刘兴祚类）——级联同构（翻 power_id 至 ming + 绑身名分「归附」，授职走后续任命），内嵌反应字段此向记**失方势力削弱与本朝派系反应**（仍由 LLM 给值、代码 clamp）。
 
 - 级联：翻 power_id + 解绑本朝名分 + **绑新名衔**（payload 可选，缺省「降臣」，身名分）——人仍 active（在敌方任事），不变式 1 不破。
 - **被掳而未降 ≠ 易主**：人仍是明臣，走 `处置(下狱→imprisoned, reason=陷虏)` 一类表达（洪承畴被俘到降隔了数月，两段是两个事件）。
@@ -89,16 +89,16 @@ status 枚举 = models.py 七值 + 实存的 `candidate`（registry.py:375 秀�
 
 「不在任上」不是一个状态，是一张谱系；「启用被错误排挤的有才之士」是核心玩趣，机制必须让池子**可发现、有来历、起用有政治分量**。
 
-- **被顶替（无过错）→ 听用候铨**：active + 身名分「听用候铨」（office_type `待铨`，实档现成约定）。人留在可用人才池，**再任命走「身名分→职名分=任命」边界（决定 1），零摩擦、无政治标记派生**。
+- **被顶替（无过错）→ 听用候铨**：active + 身名分「听用候铨」。人留在可用人才池，**再任命走「身名分→职名分=任命」边界（决定 1），零摩擦、无政治标记派生**。⚠️ **人才池成员资格锚在身名分「听用候铨」+ `reason_code=被顶替`，不锚 office_type**——现网 `待铨` office_type 同时是分类失败 fallback（infer_office_type_from_office 表查不中即落「待铨」，session.py:207 缺省同值），在职官员可能被 fallback 误标；实现期数据清洗加一项：审计现存 office_type=待铨 行。
 - **`status_reason` 半结构化**：新增机读 `reason_code` ∈ {被顶替, 获罪削籍, 致仕, 丁忧, 自请, 出宫, 陷虏, …}（自由文本照旧并存）。读者有二：人才池视图 + 档一派生选择（决定 8：reason_code 专项优先于 status 通则）。
 - **起复阶梯**（全部由两档状态机推导，零新动作）：候铨→直接任命，无派生；致仕/赋闲→派生 `起复`（温和）；**获罪削籍→派生 `昭雪`**（翻案=政治事件，裁判照例产派系风暴，昭雪本身落库——你平反过谁，史官记得）；丁忧→派生 `夺情`（清流哗然，reason_code 优先规则）。
-- **人才池视图 = 读取端**：`(active+待铨) ∪ (offstage/retired/dismissed 在世者)` 带 reason_code，接进盘面 TSV——裁判与玩家都看得见「某公，因忤逆案削籍，居家」。此视图同时就是 reason_code 与 transit_to 的消费者（消费者纪律闭环）。
+- **人才池视图 = 读取端**：`(active+身名分听用候铨) ∪ (offstage/retired/dismissed 在世者)` 带 reason_code，接进盘面 TSV——裁判与玩家都看得见「某公，因忤逆案削籍，居家」。此视图同时就是 reason_code 与 transit_to 的消费者（消费者纪律闭环）。
 
 ## 决定 11：旧 key 退场
 
 **总则（2026-06-11 拍）：旧有/上游机制能用不是坏事，但若成为改进的绊脚石，果断踢开——不为将就吞技术债。** alias 的存在理由只有「重放正确性」（ADR 0008 ready=1 重试真源 + 历史 delta 文件），不是对旧 key 的敬意；哪天碍事，一次性迁移脚本洗旧数据 + 删 alias，不背永久房租。新管线设计永远不为旧 key 语义弯腰。
 
-- **状态感知翻译**住 sanitize 层（`TOP_LEVEL_ALIASES` 入口，翻译时可读当前状态）：`office_changes` → 目标现持职名分则译**调任**、否则译**任命**（兑现 DELTA_SCHEMA 旧契约「任命/调任/升迁/改授」的两义，逐项保真）；`character_status_changes` → 译**处置**；其中 `status=active` 项**译为拒收**（`invalid_enum` + legacy 注记）——实测旧管线两个消费路径的 valid_status 均不含 active（issues.py:1332/694，历史行为即拒收），译成任何真实迁移反而改写历史，违背重放保真；同理，**月末 delta 通道的项打 `legacy_gate` 标记**（通道知识在翻译调用点——翻月末 delta 还是结案效果由调用方天然知道，无需 C2 ApplyContext 扩展），**闸门在条目执行位求值**：执行彼刻目标 status≠active → 拒收（legacy 注记），逐项复刻旧管线 mid-sequence 语义（issues.py:1352）；**结案效果通道不打此标记**——旧结案路径（issues.py:694）历史上无此闸，「下狱→赐死」类迁移在彼处合法落库过，加闸反而改写历史；`character_power_changes` → **易主(方式=不明)**；`appointments` → **字段感知**：office_type=后宫 → 册封，其余 → 按 office_changes 同规译任命/调任（复刻旧管线 spillover 行为，issues.py:1292——历史上朝臣项确实经此路落库）。
+- **状态感知翻译**住 sanitize 层（`TOP_LEVEL_ALIASES` 入口，翻译时可读当前状态）：`office_changes` → 目标现持职名分则译**调任**、否则译**任命**（兑现 DELTA_SCHEMA 旧契约「任命/调任/升迁/改授」的两义，逐项保真）；`character_status_changes` → 译**处置**；其中 `status=active` 项**译为拒收**（`invalid_enum` + legacy 注记）——实测旧管线两个消费路径的 valid_status 均不含 active：月末路径历史行为即逐项拒收（issues.py:1332），结案路径历史行为为响亮中止（issues.py:694）；两者均从未把 active 落为真实迁移，译为拒收不改写已落库历史（结案通道由中止改逐项拒收=C2 拒收语义的有意收编）；同理，**月末 delta 通道的项打 `legacy_gate` 标记**（通道知识在翻译调用点——翻月末 delta 还是结案效果由调用方天然知道，无需 C2 ApplyContext 扩展），**闸门在条目执行位求值**：执行彼刻目标 status≠active → 拒收（legacy 注记），逐项复刻旧管线 mid-sequence 语义（issues.py:1352）；**结案效果通道不打此标记**——旧结案路径（issues.py:694）历史上无此闸，「下狱→赐死」类迁移在彼处合法落库过，加闸反而改写历史；`character_power_changes` → **易主(方式=不明)**；`appointments` → **字段感知**：office_type=后宫 → 册封，其余 → 按 office_changes 同规译任命/调任（复刻旧管线 spillover 行为，issues.py:1292——历史上朝臣项确实经此路落库）。
 - **四旧 key 译项按旧管线执行序拼入数组**：appointments(后宫→册封) → character_status_changes → character_power_changes → office_changes → **appointments 朝臣 spillover 译项（任命/调任）殿后**——复刻旧管线 `office_change_items = 本体 + spillover` 的实际执行位（issues.py:1292 收集、:1391 殿后执行），同 delta 多 key 触及同一人时末态与旧管线一致。
 - alias 保留但**不写文档**：DELTA_SCHEMA 重写后只记载 `人物变更`；旧 key 永不获得新能力（行止/方式/reason_code 仅新 key），自然枯死。
 - 迁移打包进实现 PR 不分阶段（新旧并存的中间态是 #13 温床）：applier adapter + 4 个 score_extractor prompt + 产 delta 手册 + DELTA_SCHEMA 重写 + 围栏/契约测试一次带齐。
@@ -123,6 +123,7 @@ status 枚举 = models.py 七值 + 实存的 `candidate`（registry.py:375 秀�
 | S12 | 幻觉人事（sim 编造任命） | 任命〔不存在者〕为兵部尚书 | `hallucinated_id` 拒收 | 响亮拒收进 rejection_reports |
 | S13 | 任命死人 | 任命毛文龙（已殁）镇东江 | `invalid_transition` 拒收 | 档二；重名/幻觉必须响 |
 | S14 | 选妃册封（candidate 出边） | 册封某氏为妃 | `册封`（前置=candidate→active）；落选=`处置(→offstage, reason=落选)` | candidate 状态机闭合 |
+| S15 | 招抚归明（郑芝龙受抚） | 招安郑芝龙，授游击 | `易主(方式=主动归附)`+`任命(游击)`，按序两条 | 敌→明方向合法；反应字段记失方削弱 |
 
 ## Consequences
 
