@@ -23,3 +23,5 @@ Status: accepted（实现 deferred，见末节）
 ## 实现时机（deferred）
 
 本决策**现在不实现**。它涉及合并四条 apply 管线 + 重写 prompt 契约 + 改 DELTA_SCHEMA，改动面与 issue #3(事务边界)、#14(静默吞收集器)、以及 codex 进行中的 channel 分支相邻，宜在重构波统一做，不在当前小批(#4/#10)里抢工期。issue #13 已据此重定性为该合并的载体。
+
+2026-06-11 更新：实现契约已定稿，见 [ADR 0009（人事档案 applier 契约）](0009-person-archive-applier-contract.md)——动作枚举、级联原语、状态机与旧 key 退场均在彼处兑现本决策。
