@@ -683,11 +683,15 @@ def _apply_issue_entities(db: GameDB, state: GameState, effect: Dict[str, object
     全局严格、不静默——非法 delta 直接抛错中断当回合，绝不无声丢失。
     （effect_on_resolve 原本只支持 metrics/economy/buildings/legacy，这里补 army/人事两线。）"""
     # ADR 0008 决定 1（PR2-S2）后,底层 db 方法对 LLM 脏项改「逐项拒收留痕」而非
-    # raise——但国策结案路（本函数）的契约是「全局严格、不静默」，与 season-settle
-    # 的「坏项拒收、好项照落」不同：此处把任何拒收项重新升级为 ValueError 中断当回合，
-    # 维持原行为不变（拒收记录在返回列表里，不静默丢）。
+    # raise——国策结案路（本函数）把拒收项升级回 ValueError 中断当回合，**仅限历史上
+    # 本就 raise 的类别**（查无此军/owner 幻觉/缺必填等）。历史上 print-skip 或静默
+    # 走默认的案（army 非法字段/重复无 manpower/重复非整/可选脏值/非 dict 项）带
+    # issue_strict=False 标——容忍不升级,否则历史可活的脏数据变成新的崩月路
+    # （cmr S2 r1）。两类都留拒收记录,不无声丢。
     def _raise_on_rejected(results, what: str) -> None:
-        rejected = [r for r in (results or []) if isinstance(r, dict) and r.get("rejected")]
+        rejected = [r for r in (results or [])
+                    if isinstance(r, dict) and r.get("rejected")
+                    and r.get("issue_strict", True)]
         if rejected:
             reasons = "；".join(str(r.get("reason") or "") for r in rejected)
             raise ValueError(f"{label} {what} 非法（全局严格，不静默）：{reasons}")
