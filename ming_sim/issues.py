@@ -1267,6 +1267,16 @@ def apply_score_extraction(
         "cancels": extracted.get("cancels") or [],
     }, llm_config=llm_config)
 
+    def _norm_int_leaf(v):
+        """无损整数串归一（cmr S3 r10,2/2）：strip 后能精确 int 的 str 转 int,
+        其余原样返回——归一唯一落点在 applier,cleaner 不再做值逻辑。"""
+        if isinstance(v, str):
+            try:
+                return int(v.strip())
+            except ValueError:
+                return v
+        return v
+
     # 6.4) fiscal_removes：推演彻底裁撤月固定收支项（罢税/裁俸），优先级最高，先于 creates/changes。
     #      含 dynamic（田赋/辽饷/盐税/商税/皇庄），后果玩家自负。删 base+rate 两行。
     applied_fiscal_removes: List[Dict[str, object]] = []
@@ -1276,6 +1286,14 @@ def apply_score_extraction(
             # 空 key = 脏项,记拒留痕(不再纯静默 continue;ADR 决定 1 / S3)。
             applied_fiscal_removes.append({
                 "rejected": True, "reason": "fiscal_removes 缺 key,无法定位裁撤目标。",
+                "category": "invalid_enum", "item": remove,
+            })
+            continue
+        if db._stem_of(key) == "":
+            # 多重后缀垃圾 key = 非法,与 create 段同口径 invalid_enum——误标
+            # missing_ref「不存在」会让机读聚合失真（cmr S3 r10）。
+            applied_fiscal_removes.append({
+                "rejected": True, "reason": f"裁撤 key「{key}」非法（多重 _base/_rate 后缀）。",
                 "category": "invalid_enum", "item": remove,
             })
             continue
@@ -1314,7 +1332,7 @@ def apply_score_extraction(
             continue
         # init_value 缺省/null = 0 合法；在场脏值（字符串/float/bool/负值）显式拒，不静默归 0。
         # bool 是 int 子类，先于 int 判（对称 S1/S2）。
-        init_raw = create.get("init_value")
+        init_raw = _norm_int_leaf(create.get("init_value"))  # 无损整数串归一（cmr S3 r10）
         if init_raw is None:
             init_value = 0
         elif isinstance(init_raw, bool) or not isinstance(init_raw, int) or init_raw < 0:
@@ -1327,7 +1345,9 @@ def apply_score_extraction(
             continue
         else:
             init_value = init_raw
-        display = str(create.get("display") or "")
+        # display 缺省=key 去 _base 后缀（DELTA_SCHEMA 契约;默认只在 cleaner 时
+        # driver 路建出空名预算行——cmr S3 r10）。
+        display = str(create.get("display") or "").strip() or key.replace("_base", "")
         new_key = db.create_fiscal_item(
             key, account, direction, display, init_value,
             note=str(create.get("reason") or "")[:120],
@@ -1359,7 +1379,7 @@ def apply_score_extraction(
                 "category": "invalid_enum", "item": change,
             })
             continue
-        delta_raw = change.get("delta")
+        delta_raw = _norm_int_leaf(change.get("delta"))  # 无损整数串归一（cmr S3 r10）
         # delta 缺省 = 无操作,静默放过不记拒（免得每月刷无意义拒收行）。
         if delta_raw is None:
             continue
