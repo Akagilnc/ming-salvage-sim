@@ -156,3 +156,44 @@ def test_power_change_formatter_skips_rejected_items():
     only_rejected = format_power_changes([
         {"rejected": True, "category": "invalid_enum", "reason": "字段非法"}])
     assert "未见明确势力盘面变化" in only_rejected
+
+
+def test_dirty_power_value_rejected_sibling_field_lands(game):
+    """白名单字段的脏值(null/"3成")= LLM 脏数据,逐项拒收——validate_delta_shape
+    只验容器、明文容忍 null 叶,裸 int(value) 会让一个脏值崩整月(cmr S1 r1,2/2)。
+    同一势力的兄弟好字段照落。"""
+    db, state, content = game
+    turn = state.turn
+    good = _valid_power_id(db)
+    before = db.conn.execute(
+        "SELECT military_strength FROM powers WHERE id=?", (good,)).fetchone()[0]
+
+    run_settle(db, state, content, {
+        "power_updates": {
+            good: {"leverage": None, "military_strength": 3},  # null 脏值 + 兄弟好字段
+        },
+    }, narrative="x", decree_text="y")  # 不抛 = 没崩整月
+
+    rows = [r for r in _rejection_rows(db, turn) if r[0] == "power_changes"]
+    assert len(rows) == 1
+    _, reason, category, _ = rows[0]
+    assert category == "invalid_enum"
+    assert reason
+    after = db.conn.execute(
+        "SELECT military_strength FROM powers WHERE id=?", (good,)).fetchone()[0]
+    assert after != before  # 兄弟好字段照落
+
+
+def test_dirty_power_value_string_rejected(game):
+    """字符串脏值("三成")同路拒收,不 SettlementAbort。"""
+    db, state, content = game
+    turn = state.turn
+    good = _valid_power_id(db)
+
+    run_settle(db, state, content, {
+        "power_updates": {good: {"leverage": "三成"}},
+    }, narrative="x", decree_text="y")
+
+    rows = [r for r in _rejection_rows(db, turn) if r[0] == "power_changes"]
+    assert len(rows) == 1
+    assert rows[0][2] == "invalid_enum"
