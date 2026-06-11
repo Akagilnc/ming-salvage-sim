@@ -764,9 +764,11 @@ _DIRECTION_NORMALIZE = {
 
 
 def _clean_fiscal_creates(raw: object) -> List[Dict[str, object]]:
-    """LLM 推演中凭空新立的月固定收支项（税是其一种）。完全放开——
-    只做枚举校验：account∈{国库,内库}、direction∈{income,expense}、key 非空。
-    税种／数值由 LLM 全权裁夺，代码不预设白名单。
+    """LLM 推演中凭空新立的月固定收支项（税是其一种）。
+
+    本 cleaner 只做无损规范化（direction 同义词映射、整数串照转、缺省 init_value
+    归 0）+ 非法值原样透传——枚举守门唯一落点在 apply_score_extraction（applier
+    拒收留痕,cmr S3 r1/r2）。税种／数值由 LLM 全权裁夺，代码不预设税种白名单。
     """
     cleaned: List[Dict[str, object]] = []
     if not isinstance(raw, list):

@@ -345,3 +345,48 @@ def test_cleaner_passes_dirty_create_fields_through():
     assert by_key["t3"]["account"] == "省库"
     assert by_key["t4"]["direction"] == "斜着走"
     assert by_key["t5"]["init_value"] == 0
+
+
+def test_create_rate_only_sibling_collision_rejected_not_abort(game):
+    """田赋默认只有 田赋_rate 无 _base——create_fiscal_item 只查 base 键,新立
+    田赋_base 时第二条 INSERT 撞 rate 键 PK = IntegrityError 崩整月,绕过拒收
+    (cmr S3 r2 codex high)。存在性检查须覆盖 base+rate 双键。"""
+    db, state, content = game
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "fiscal_creates": [{"key": "田赋_base", "account": "国库",
+                            "direction": "income", "init_value": 1}],
+    }, narrative="x", decree_text="y")  # 不抛 = 没崩
+
+    rows = [r for r in _rejection_rows(db, turn) if r[0] == "fiscal_creates"]
+    assert len(rows) == 1
+
+
+@pytest.mark.parametrize("noop_delta", [0, None])
+def test_empty_key_rejected_even_with_noop_delta(game, noop_delta):
+    """空 key + delta 0/null:无操作短路不得吞掉「空 key=脏项」的留痕
+    (与 falsy 短路同类序错,cmr S3 r2 claude)。"""
+    db, state, content = game
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "fiscal_changes": [{"key": "", "delta": noop_delta}],
+    }, narrative="x", decree_text="y")
+
+    rows = [r for r in _rejection_rows(db, turn) if r[0] == "fiscal_changes"]
+    assert len(rows) == 1
+
+
+def test_remove_missing_key_rejected(game):
+    """fiscal_removes 缺 key → 记拒(新分支补测试,cmr S3 r2 claude)。"""
+    db, state, content = game
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "fiscal_removes": [{"reason": "缺 key"}],
+    }, narrative="x", decree_text="y")
+
+    rows = [r for r in _rejection_rows(db, turn) if r[0] == "fiscal_removes"]
+    assert len(rows) == 1
+    assert rows[0][2] == "invalid_enum"

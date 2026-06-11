@@ -990,8 +990,11 @@ class GameDB:
             return None
         base_key = f"{stem}_base"
         rate_key = f"{stem}_rate"
+        # 存在性须覆盖 base+rate 双键（cmr S3 r2 codex）：田赋等 dynamic 税默认只有
+        # _rate 行,只查 base 会放行「田赋_base」,第二条 INSERT 撞 rate 键 PK 崩整月。
+        # 语义与 remove_fiscal_item 的 base-or-rate 对称。
         exists = self.conn.execute(
-            "SELECT 1 FROM fiscal_config WHERE key = ?", (base_key,)
+            "SELECT 1 FROM fiscal_config WHERE key IN (?, ?)", (base_key, rate_key)
         ).fetchone()
         if exists is not None:
             return None
