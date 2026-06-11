@@ -705,6 +705,16 @@ def reload_state_from_db(db: GameDB, state: GameState, *, content=None, registry
     return state
 
 
+class _AtomicOutcome:
+    """atomic_and_reload yield 出的结果句柄（cmr PR2 R1 sourcery）：取代把
+    `_reload_failed` 动态属性挂到任意 BaseException 上（slotted/复用异常时脆弱）。
+    专用对象、固定字段——settle 用 `as` 接、外层 except 读 `.reload_failed`。"""
+    __slots__ = ("reload_failed",)
+
+    def __init__(self) -> None:
+        self.reload_failed = False
+
+
 @contextmanager
 def atomic_and_reload(
     db: GameDB,
@@ -713,7 +723,7 @@ def atomic_and_reload(
     content=None,
     registry=None,
     on_error: Optional[Callable[[BaseException], None]] = None,
-) -> Iterator[None]:
+) -> "Iterator[_AtomicOutcome]":
     """`with atomic(db)` + 「最外层异常回滚后从 DB 重载内存」的公共内核（ADR 0008 S4）。
 
     抽自结算管线 ~6 处同款 try/atomic/except-reload-reraise（pre_settle / settle_with_delta /
@@ -730,9 +740,10 @@ def atomic_and_reload(
     内存缓冲须同步清场）。settle 的中断透传 / 错误包 / SettlementAbort 包装等**特殊** except
     逻辑不属公共内核，仍由调用方在本助手之外的外层 try/except 处理。
     """
+    outcome = _AtomicOutcome()
     try:
         with atomic(db):
-            yield
+            yield outcome
     except BaseException as exc:
         if on_error is not None:
             on_error(exc)
@@ -740,10 +751,10 @@ def atomic_and_reload(
             try:
                 reload_state_from_db(db, state, content=content, registry=registry)
             except BaseException as reload_exc:
-                # 标记 reload 失败（cmr S4 r1,2/2）：settle 的外层 except 凭此裸传播,
-                # 不包 SettlementAbort 不写错误包——内存仍脏时宣传「可重试」是误导,
-                # 写包也会基于脏态（b12a60e 原语义保真）。
-                exc._reload_failed = True  # type: ignore[attr-defined]
+                # reload 失败标记落在专用句柄上（不挂异常属性）：settle 的外层 except
+                # 凭 `as` 句柄裸传播原异常,不包 SettlementAbort 不写错误包（内存仍脏时
+                # 宣传可重试/基于脏态写包都是误导;b12a60e 原语义保真,cmr S4 r1）。
+                outcome.reload_failed = True
                 raise exc from reload_exc
         raise
 
@@ -876,7 +887,7 @@ def settle_with_delta(
         with atomic_and_reload(
             db, state, content=content, registry=registry,
             on_error=lambda _exc: collector.reset(),
-        ):
+        ) as _atomic:
             # 暂存动作 commit 在结算事务内最前（幂等，只处理 pending 行；正常路 pre_settle
             # 已 commit=无操作）——恢复/phase2 重抽路在此获得覆盖，且与结算同生死：
             # 事务外 commit 的话重放炸时结算回滚而动作及其真表副作用留存=跨事务半写
@@ -893,9 +904,9 @@ def settle_with_delta(
                 collector=collector, source=source,
             )
     except BaseException as exc:
-        # reload 失败标记（atomic_and_reload 打的,cmr S4 r1）：内存仍脏——裸传播,
-        # 不写包不包 SettlementAbort（脏态写包/宣传可重试都是误导;b12a60e 原语义）。
-        if getattr(exc, "_reload_failed", False):
+        # reload 失败（atomic_and_reload 在 yield 句柄上标的,cmr S4 r1）：内存仍脏——
+        # 裸传播,不写包不包 SettlementAbort（脏态写包/宣传可重试都是误导;b12a60e 原语义）。
+        if _atomic.reload_failed:
             raise
         # 中断/降级类异常（KeyboardInterrupt/SystemExit/LLMUnavailable）不当代码异常处理：
         # 不写包、不二次包装，原样传播。SettlementAbort（理论上 settle 内不抛）也不二次包。
