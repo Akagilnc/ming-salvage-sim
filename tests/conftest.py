@@ -62,10 +62,17 @@ def active_ming_character(db, content) -> str:
 
 
 @pytest.fixture(autouse=True)
-def _isolated_user_data_dir(tmp_path, monkeypatch):
+def _isolated_user_data_dir(tmp_path):
     """全套测试隔离 user-data（错误包/拒收镜像）——集中兜底（cmr S1 r2 P1）。
 
     没有它，任何走 run_settle/写包路径的用例都把测试产物写进真实 data/error_packs
     （实证 18 包 75MB + 假行混真 jsonl + attempt 序号灌高）。各用例自己 setenv 指
-    自己的 tmp_path 仍可覆盖本兜底（monkeypatch 后设者胜）。"""
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "user_data"))
+    自己的 tmp_path 仍可覆盖本兜底（后设者胜）。
+
+    用独立 MonkeyPatch 实例而非共享的 monkeypatch fixture：后者与测试同一实例，
+    测试里 monkeypatch.undo() 会把本兜底一并撤掉（实证 test_noready_recovery
+    undo 后 settle 把空目录建回真实 data/）。"""
+    mp = pytest.MonkeyPatch()
+    mp.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "user_data"))
+    yield
+    mp.undo()
