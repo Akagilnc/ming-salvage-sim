@@ -1644,16 +1644,30 @@ class GameDB:
             new_power = str(raw.get("new_power") or raw.get("新势力") or "").strip()
             reason = str(raw.get("reason") or raw.get("原因") or "")[:120]
             if not name or not new_power:
-                print(f"[WARN] character_power_changes 缺 name/new_power → 跳过: {raw}")
+                applied.append({
+                    "rejected": True, "category": "invalid_enum",
+                    "reason": "character_power_changes 缺 name/new_power",
+                    "item": raw,
+                })
                 continue
             if new_power not in valid_powers:
-                print(f"[WARN] character_power_changes new_power '{new_power}' 未在 powers → 跳过 {name}")
+                applied.append({
+                    "name": name, "new_power": new_power, "rejected": True,
+                    "category": "hallucinated_id",
+                    "reason": f"character_power_changes new_power '{new_power}' 未在 powers",
+                    "item": raw,
+                })
                 continue
             row = self.conn.execute(
                 "SELECT power_id FROM characters WHERE name=?", (name,)
             ).fetchone()
             if row is None:
-                print(f"[WARN] character_power_changes 人物 '{name}' 未入库 → 跳过")
+                applied.append({
+                    "name": name, "new_power": new_power, "rejected": True,
+                    "category": "missing_ref",
+                    "reason": f"character_power_changes 人物 '{name}' 未入库",
+                    "item": raw,
+                })
                 continue
             old_power = row["power_id"] or "ming"
             if old_power == new_power:
@@ -2196,7 +2210,12 @@ class GameDB:
                 continue
             row = self.conn.execute("SELECT * FROM powers WHERE id = ?", (power_id,)).fetchone()
             if row is None:
-                print(f"[WARN] power_updates 引用未入库势力 '{power_id}' → 跳过")
+                changes.append({
+                    "power_id": power_id, "rejected": True,
+                    "category": "hallucinated_id",
+                    "reason": f"power_updates 引用未入库势力 '{power_id}'",
+                    "item": {"power_id": power_id, "changes": raw_changes},
+                })
                 continue
             reason = str(
                 raw_changes.get("reason")
@@ -2210,7 +2229,12 @@ class GameDB:
                 if field == "reason":
                     continue
                 if field not in allowed_fields:
-                    print(f"[WARN] power_updates 只允许 威望/实力/经济，'{raw_field}' → 跳过")
+                    changes.append({
+                        "power": row["name"], "field": str(raw_field),
+                        "rejected": True, "category": "invalid_enum",
+                        "reason": f"power_updates 只允许 威望/实力/经济，'{raw_field}' 非法",
+                        "item": {"power_id": power_id, "field": str(raw_field), "value": value},
+                    })
                     continue
                 old_value = row[field]
                 delta = int(value)
