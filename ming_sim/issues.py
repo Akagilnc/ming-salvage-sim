@@ -588,6 +588,11 @@ _LEGACY_DURATION_MONTHS = {"1年": 12, "2年": 24, "永久": -1}
 _LEGACY_ACCOUNT_KEYS = ("国库", "内库", "民心", "皇威")  # 全局可被 % 修正的四项
 _LEGACY_PCT_CAP = 5  # 单条帝国修正对某维度的百分比上限，防幅度过大
 
+# 月固定收支项的合法账户 / 方向白名单（fiscal_creates 枚举守门，集中一处；
+# 与 simulation._clean_fiscal_creates 的同名校验语义一致——值变了两处一起改）。
+_FISCAL_ACCOUNTS = ("国库", "内库")
+_FISCAL_DIRECTIONS = ("income", "expense")
+
 
 def _clamp_pct(v: object) -> Optional[int]:
     try:
@@ -1268,10 +1273,19 @@ def apply_score_extraction(
     for remove in extracted.get("fiscal_removes") or []:
         key = str(remove.get("key") or "")
         if not key:
+            # 空 key = 脏项,记拒留痕(不再纯静默 continue;ADR 决定 1 / S3)。
+            applied_fiscal_removes.append({
+                "rejected": True, "reason": "fiscal_removes 缺 key,无法定位裁撤目标。",
+                "category": "invalid_enum", "item": remove,
+            })
             continue
         removed_key = db.remove_fiscal_item(key)
         if removed_key is None:
-            print(f"[WARN] fiscal_removes: '{key}' 不存在，跳过裁撤。")
+            # 查无此项 = 正常业务拒绝,逐项拒收留痕(不再 print 静默跳;ADR 决定 1 / S3)。
+            applied_fiscal_removes.append({
+                "rejected": True, "reason": f"裁撤目标「{key}」不存在,跳过。",
+                "category": "missing_ref", "item": remove,
+            })
             continue
         applied_fiscal_removes.append({
             "key": removed_key, "reason": str(remove.get("reason") or ""),
@@ -1284,19 +1298,41 @@ def apply_score_extraction(
         key = str(create.get("key") or "")
         account = str(create.get("account") or "")
         direction = str(create.get("direction") or "")
-        if not key or account not in ("国库", "内库") or direction not in ("income", "expense"):
+        # key 空 / account / direction 非法 = 脏枚举,原先纯静默 continue,改记拒留痕
+        # （ADR 决定 1 / S3；「在场即须合法」对称 S1/S2）。
+        if not key or account not in _FISCAL_ACCOUNTS or direction not in _FISCAL_DIRECTIONS:
+            applied_fiscal_creates.append({
+                "rejected": True,
+                "reason": f"新立项枚举非法（key={key!r} account={account!r} direction={direction!r}）。",
+                "category": "invalid_enum", "item": create,
+            })
             continue
-        try:
-            init_value = int(create.get("init_value") or 0)
-        except (TypeError, ValueError):
+        # init_value 缺省 0 合法；在场脏值（null/字符串/float/bool）显式拒，不静默归 0。
+        # bool 是 int 子类，先于 int 判（对称 S1/S2）。
+        init_raw = create.get("init_value")
+        if init_raw is None:
             init_value = 0
+        elif isinstance(init_raw, bool) or not isinstance(init_raw, int):
+            applied_fiscal_creates.append({
+                "rejected": True,
+                "reason": f"新立项「{key}」初值 init_value 非整数（{init_raw!r}），不静默归 0。",
+                "category": "invalid_enum", "item": create,
+            })
+            continue
+        else:
+            init_value = init_raw
         display = str(create.get("display") or "")
         new_key = db.create_fiscal_item(
             key, account, direction, display, init_value,
             note=str(create.get("reason") or "")[:120],
         )
         if new_key is None:
-            print(f"[WARN] fiscal_creates: '{key}' 已存在或非法，跳过新立。")
+            # 已存在 / db 拒 = 正常业务拒绝,逐项拒收留痕（不再 print 静默跳）。
+            applied_fiscal_creates.append({
+                "rejected": True,
+                "reason": f"新立项「{key}」已存在或被落库拒绝,跳过。",
+                "category": "invalid_enum", "item": create,
+            })
             continue
         applied_fiscal_creates.append({
             "key": new_key, "account": account, "direction": direction,
@@ -1308,15 +1344,34 @@ def apply_score_extraction(
     applied_fiscal: List[Dict[str, object]] = []
     for change in extracted.get("fiscal_changes") or []:
         key = str(change.get("key") or "")
-        try:
-            delta = int(change.get("delta") or 0)
-        except (TypeError, ValueError):
+        delta_raw = change.get("delta")
+        # delta 缺省 / 显式 0 = 无操作,静默放过不记拒（免得每月刷无意义拒收行）。
+        if delta_raw is None or delta_raw == 0:
             continue
-        if not key or delta == 0:
+        # delta 在场但脏（字符串/float/bool）= LLM 脏数据,原裸 int() 静默 continue（吞），
+        # 改显式拒留痕；bool 是 int 子类,先于 int 判（对称 S1/S2 / S3）。
+        if isinstance(delta_raw, bool) or not isinstance(delta_raw, int):
+            applied_fiscal.append({
+                "rejected": True,
+                "reason": f"调率 delta 非整数（{delta_raw!r}），不静默吞。",
+                "category": "invalid_enum", "item": change,
+            })
+            continue
+        delta = delta_raw
+        if not key:
+            # 空 key = 脏项（与「delta=0 无操作」不同,空 key 无定位目标）,记拒留痕。
+            applied_fiscal.append({
+                "rejected": True, "reason": "fiscal_changes 缺 key,无法定位调率目标。",
+                "category": "invalid_enum", "item": change,
+            })
             continue
         current = db.get_fiscal_config().get(key)
         if current is None:
-            print(f"[WARN] fiscal_changes: 未知 key '{key}'，跳过。")
+            # 未知 key = 正常业务拒绝,逐项拒收留痕（不再 print 静默跳）。
+            applied_fiscal.append({
+                "rejected": True, "reason": f"调率目标「{key}」不存在,跳过。",
+                "category": "missing_ref", "item": change,
+            })
             continue
         new_val = max(0, current + delta)
         db.set_fiscal_config(key, new_val)
