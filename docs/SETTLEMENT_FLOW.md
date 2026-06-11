@@ -13,8 +13,8 @@
 [颁诏后开始结算]
   1. before_turn = state.turn                    # 记下推进不变式的基线
 
-  ── 前半段 pre_settle：自带单事务；提交后效果**保持已落**（中止重试不回滚=设计明文）──
-  2. pre_settle(state, db, content=, registry=)
+  ── 前半段：pre_settle + 占位 context 同一外层 atomic（PR #90 R1）；提交后效果**保持已落**（中止重试不回滚=设计明文）──
+  2. pre_settle(state, db, content=, registry=)   # 内层事务被外层 atomic 并入（flat 可重入）
      a. db.commit_pending_actions(...)            # 动作闸门：聊天暂存的结构化写动作批量落库（driver 路无暂存=no-op）
      b. apply_fixed_period_flows(db, state)       # 月度财政 tick
         ↳ compute_budget_lines 的定额项（田赋/辽饷/盐税/商税/官俸/宫廷/…）
@@ -30,7 +30,10 @@
      return，不二次落财政；崩在内部 = 全回滚 = 相位未变 = 重进干净重跑。
 
   3. db.save_resolve_context(decree_text, ready=0) # 诏书原文占位真源：跨进程恢复不丢玩家手改稿
-     （driver 路无此占位，settle 前直接 persist_resolve_context 存 ready=1，见 8.5）
+     与 2 同一外层 atomic 提交（PR #90 R1）：不变式「settling 可见 ⟹ context 行可见」，
+     崩在 2/3 之间的窗口不再可能——要么都见，要么整段回滚 + reload_state_from_db 刷内存。
+     （driver 路无 ready=0 占位，同一 atomic 内 pre_settle 后直接 persist_resolve_context
+     存 ready=1，见 8.5）
 
   4. chapter_memories = db.list_chapter_memories(upto_turn=state.turn, recent=6)
      secret_orders = db.list_secret_orders(status in (active, pending_review))
@@ -62,7 +65,8 @@
   8.5 persist_resolve_context(db, before_turn, extracted, ...)   # ADR 0008 S2
      - 先过 validate_delta_shape（毒 payload 不得钉进重试真源），再存 ready=1
      - 跨进程恢复的重跑真源：崩溃后直接重放落库，不再花一次 LLM 重推演
-     - driver 路同位同义（run_settle 在 pre_settle 后、settle_with_delta 前调）
+     - driver 路同位同义：run_settle 把 pre_settle + persist_resolve_context(ready=1)
+       包进同一 atomic（PR #90 R1，与引擎 2/3 同修），settle_with_delta 前提交
 
   ── 后半段 settle_with_delta：整段单一 atomic 事务，9–15 全有或全无 ──
   9. applied = apply_score_extraction(db, state, delta, content=content, registry=None)
@@ -123,7 +127,11 @@ advance_without_edict(state, db, *, content=None, registry=None):
 - `awaiting_decision` → 幂等返回已存决策点等亲裁，不二跑 simulator。
 - `settling` + ready=1 的 resolve_context → `resolve_settling_recovery` 直入后半段重放落库，**不重跑贵的 simulator/extractor**；诏书原文从存档真源回填。
 - `settling` + 无 ready context（崩在推演期）→ 落回正常流程重跑推演；`pre_settle` 被 settling 守门跳过=财政不二落。
-- settling 恢复窗口内**冻结改盘操作**（下旨草案/撤回/跳过等 7 个入口，`session._refuse_if_settling`；web 对应端点 409，CLI 打印恢复指引）。
+- settling 恢复窗口内**冻结改盘操作**：
+  - 下旨草案/撤回/跳过等 7 个入口（`session._refuse_if_settling`；web 对应端点 409，CLI 打印恢复指引并留在本回合交互循环不重印回合头——PR #90 R1）。
+  - 全部即时写聊天路径一并冻（PR #90 R2，`_proposal_blocked` 总闸）：任免落地（`_apply_appointment`）、编外人物登记、密令房 tool 四个 action（issue/progress/submit/rush，`tools.py` dispatcher 一处冻）、CLI 前缀密令 upsert——这些直写在 settle 重试事务边界外，重放中止回滚不会回滚它们。
+  - 自然语言抽取的**新暂存动作**短路不入档（PR #90 R3，抽取器 LLM 调用一并跳过）——窗内新 stage 会被重试 settle 的 commit_pending_actions 落进「保存的 delta 推演时并不知道」的旧回合。
+  - 窗**前**已暂存的 pending 不受影响：对话确认（应允延迟提交/拒绝丢弃）保持可用，仍随 settle 事务统一提交。
 - ready 但值级坏掉的 payload 反复重放失败 → 「重新推演」逃生口 `error_pack.clear_for_resimulation`：把 context **降级为非 ready**（保留邸报字段），不删行，崩溃循环切断。
 - 每次中止落一份五件套错误包（DB 快照/上下文/错误链/manifest/拒收记录），**永不覆盖旧包**。
 
@@ -136,6 +144,7 @@ advance_without_edict(state, db, *, content=None, registry=None):
 - **三条推进尾同款**（settle_with_delta / advance_without_edict / simulator 失败 fallback）：各自 atomic 内同笔做完「清 resolve_context → next_period → 相位复位 summoning → save_state」，缺一条就是恢复入口的雷。
 - **回滚后必 reload**：事务回滚只回 SQLite，内存副作用（metrics 直加 / 脏 settling 相位）必须 `reload_state_from_db` 刷净——脏 settling 被 pre_settle 守门跳过=下月财政永久丢。atomic 体内禁止 reload（读到未提交脏写）；嵌套时只有最外层回滚后才重载。
 - **毒 payload 不入真源**：`persist_resolve_context` 前必过 `validate_delta_shape`；shape 垃圾走 SettlementAbort+错误包，不许静默吞、也不许钉进 ready=1 重试真源。
+- **settling 可见 ⟹ context 行可见**（PR #90 R1）：settling 相位与 resolve_context 行（引擎 ready=0 占位 / driver ready=1）必须同一事务提交，两边（resolve_directives / run_settle）都不许拆成两笔——拆了就是「相位卡 settling、恢复入口无米下锅、玩家手改旨意原文蒸发」。
 
 ## 已知接口层（确定性↔我，别让我自己数数）
 
@@ -152,7 +161,8 @@ advance_without_edict(state, db, *, content=None, registry=None):
 | `ming_sim/decree.py` | `resolve_directives` + `_settle_after_narrative` 编排；可复用核 `pre_settle` / `settle_with_delta`；`advance_without_edict`；`resolve_settling_recovery` / `persist_resolve_context` 恢复机械 |
 | `ming_sim/applier.py` | `atomic` 事务边界（`_SuspendableConnection`：内层 commit 暂停、executescript 拒绝、嵌套深度计数）+ `RejectionCollector` 拒收留痕契约 |
 | `ming_sim/error_pack.py` | `write_error_pack` 五件套诊断包 / `clear_for_resimulation` 重新推演逃生口 |
-| `ming_sim/session.py` | settling/awaiting 恢复分流入口 + 恢复窗口冻结（`_refuse_if_settling`） |
+| `ming_sim/session.py` | settling/awaiting 恢复分流入口 + 恢复窗口冻结（`_refuse_if_settling` 7 入口；`_proposal_blocked` 即时写/新暂存总闸） |
+| `ming_sim/tools.py` | 密令房 tool dispatcher 的恢复窗冻结（issue/progress/submit/rush 四 action 一处冻） |
 | `ming_sim/flows.py` | `apply_fixed_period_flows` `compute_budget_lines` |
 | `ming_sim/issues.py` | `apply_score_extraction` `apply_issue_inertia_and_ongoing` `auto_trigger_seed_issues` `clear_gated_legacies` `validate_delta_shape` |
 | `ming_sim/context.py` | `victory_status()` 结局判定 / `ENDING_*` 常量 |
