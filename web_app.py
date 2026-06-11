@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 from ming_sim.constants import ROOT_DIR
 from ming_sim.paths import bundled_path, user_data_path, user_data_dir
-from ming_sim.exceptions import ExitGame, LLMUnavailable
+from ming_sim.exceptions import ExitGame, LLMUnavailable, SettlementAbort
 from ming_sim.llm_config import (
     CLI_DEFAULT_TIMEOUT_SECONDS,
     VALID_CHANNELS,
@@ -1284,6 +1284,8 @@ class WebGame:
                         if not draft_text:
                             args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                             draft_text = (args.get("decree_text") or "").strip()
+                        if draft_text and GameSession._proposal_blocked(self.state):
+                            draft_text = ""  # 恢复窗婉拒（ship-pre r2 软死锁环源头，同 session 路）
                         if draft_text:
                             did = self.db.add_directive(
                                 self.state, None, draft_text, "大臣拟旨",
@@ -2056,7 +2058,10 @@ async def api_chat_stream(minister_name: str, request: ChatRequest) -> Streaming
 async def api_create_directive(request: DirectiveRequest) -> Dict[str, Any]:
     if not request.text.strip():
         raise HTTPException(status_code=400, detail="指令内容不能为空。")
-    dv = get_game().session.add_directive(request.text.strip(), notes=request.notes)
+    try:
+        dv = get_game().session.add_directive(request.text.strip(), notes=request.notes)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from None  # 恢复窗冻结指引
     return {
         "directive": {"id": dv.id, "text": dv.text, "status": dv.status},
         "directives": [get_game().directive_payload(item) for item in get_game().directive_rows()],
@@ -2072,20 +2077,29 @@ async def api_update_directive(directive_id: int, request: DirectivePatch) -> Di
     text = request.text if request.text is not None else str(row["text"])
     if not text.strip():
         raise HTTPException(status_code=400, detail="指令内容不能为空。")
-    get_game().session.update_directive(directive_id, text.strip())
+    try:
+        get_game().session.update_directive(directive_id, text.strip())
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from None
     return {"directives": [get_game().directive_payload(item) for item in get_game().directive_rows()]}
 
 
 @app.delete("/api/directives/{directive_id}")
 async def api_delete_directive(directive_id: int) -> Dict[str, Any]:
-    get_game().session.delete_directive(directive_id)
+    try:
+        get_game().session.delete_directive(directive_id)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from None
     return {"directives": [get_game().directive_payload(item) for item in get_game().directive_rows()]}
 
 
 @app.post("/api/directives/{directive_id}/confirm")
 async def api_confirm_directive(directive_id: int) -> Dict[str, Any]:
     """大臣拟旨经皇帝核定：pending → draft。"""
-    get_game().session.confirm_directive(directive_id)
+    try:
+        get_game().session.confirm_directive(directive_id)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from None
     return {
         "directives": [get_game().directive_payload(item) for item in get_game().directive_rows()],
         "pending_count": get_game().session.pending_count(),
@@ -2095,7 +2109,10 @@ async def api_confirm_directive(directive_id: int) -> Dict[str, Any]:
 @app.post("/api/directives/{directive_id}/reject")
 async def api_reject_directive(directive_id: int) -> Dict[str, Any]:
     """皇帝驳回大臣拟旨：pending → rejected。"""
-    get_game().session.reject_directive(directive_id)
+    try:
+        get_game().session.reject_directive(directive_id)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from None
     return {
         "directives": [get_game().directive_payload(item) for item in get_game().directive_rows()],
         "pending_count": get_game().session.pending_count(),
@@ -2139,6 +2156,10 @@ async def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> D
         result = game.session.resolve_turn(cheat_directive=body.cheat)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
+    except SettlementAbort as e:
+        # 结算中止（ADR 0008 决定 6/7）：进度已保存可重试，detail 即玩家指引
+        # （含错误包路径+「请发给作者」）。非 500——这是已处理的可重试态，不是服务器 bug。
+        raise HTTPException(status_code=409, detail=str(e)) from None
     decree = game.session.last_decree
     if result.awaiting:
         # 决策点暂停：回合未结算，返回决策点让前端弹窗；不刷新、不计 steam。

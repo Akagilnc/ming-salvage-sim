@@ -25,3 +25,26 @@ class LLMUnavailable(Exception):
 
 class LLMContractError(Exception):
     pass
+
+
+class SettlementAbort(Exception):
+    """结算中止可重试（ADR 0008 决定 3/6）。
+
+    extractor 失败 / 结算核代码异常时上抛——绝不静默续跑（半落库 P1 破口）。
+    携带 turn / 阶段 / 错误包路径，供上层向玩家提示「本月结算失败，进度已保存，可重试」。
+    重试 = 重跑 simulator/extractor（其产出本未持久化），与决定 3 不冲突。
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        turn: int,
+        stage: str = "extract",
+        error_pack_path: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.turn = turn
+        self.stage = stage
+        self.error_pack_path = error_pack_path

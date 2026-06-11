@@ -7,7 +7,7 @@ from typing import List
 
 from ming_sim.constants import TURN_UNIT
 from ming_sim.context import _ctx as _content_ctx, state_context
-from ming_sim.models import Character, CourtContext
+from ming_sim.models import FRONT_HALF_DONE_PHASES, Character, CourtContext
 from ming_sim.skills import skill_template
 
 _STATUS_CN = {
@@ -338,6 +338,10 @@ def build_minister_tools(character: Character, context: CourtContext,
         - "submit"：提交结案。填 order_id、claim（办结陈词200字内）。
         - "rush"：催办加急。填 order_id；deadline_months=1 下月核议，0=本月即核。
         """
+        # 恢复窗总闸（PR #90 R2 codex P2）：FRONT_HALF_DONE 时四个 action 都是
+        # settle 重试事务边界外的直写，重放中止回滚不回滚它们——dispatcher 一处冻全部。
+        if context.state.turn_phase in FRONT_HALF_DONE_PHASES:
+            return "本月结算未完（恢复中），密令房暂不办事；请先续跑结算，再行降旨。"
         act = (action or "").strip().lower()
         if act == "issue":
             return _secret_order_issue(title, content, tags_json, assignee, deadline_months)

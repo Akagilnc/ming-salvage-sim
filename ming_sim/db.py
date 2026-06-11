@@ -134,7 +134,10 @@ class GameDB:
         self.llm_config = llm_config
         # check_same_thread=False：流式颁诏在 worker 线程跑 resolve_turn，
         # 复用同一 GameDB 连接。游戏单写者、无并发写，跨线程安全。
-        self.conn = sqlite3.connect(path, check_same_thread=False)
+        # factory=_SuspendableConnection：使 atomic() 能暂停全库 commit（ADR 0008 决定 2/8）。
+        # 暂停标志默认 off，下面 init_schema 建表照常提交。
+        from ming_sim.applier import _SuspendableConnection
+        self.conn = sqlite3.connect(path, check_same_thread=False, factory=_SuspendableConnection)
         self.conn.row_factory = sqlite3.Row
         # 遗产修正符缓存：legacy_modifiers 在落账热路径被频繁调用，缓存聚合结果，
         # 仅在 active 遗产集变化（insert_legacy / expire_legacies）时失效。
@@ -826,6 +829,12 @@ class GameDB:
         self.ensure_column("legacies", "legacy_key", "TEXT NOT NULL DEFAULT ''")
         # 章节记忆正文：event_type='chapter_summary' 用，存整段叙事章节（不受 outcome 80 字限）。
         self.ensure_column("event_memories", "body", "TEXT NOT NULL DEFAULT ''")
+        # extractor 产出的 canonical delta：resolve_context 无条件持久化的重跑真源（ADR 0008 S2）。
+        # 老存档此列缺省 '{}'（HITL 暂停时 phase1 尚无 delta，亦填 '{}'）。
+        self.ensure_column("pending_resolve_context", "extracted_delta_json", "TEXT NOT NULL DEFAULT '{}'")
+        # 判别位：1=extractor 真产出过（'{}' 即真空 delta），0=占位（phase1 未跑/失败未存）。
+        # 没有它 '{}' 三义不可分，恢复入口会把占位当真 delta 重放（cmr S2+S3 F1）。
+        self.ensure_column("pending_resolve_context", "extracted_ready", "INTEGER NOT NULL DEFAULT 0")
         # 后宫调教记录
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS consort_traits (
@@ -4685,24 +4694,35 @@ class GameDB:
         simulator_payload: Dict[str, object],
         secret_orders: Optional[List[Dict[str, object]]] = None,
         relevant_memories: Optional[List[Dict[str, object]]] = None,
+        extracted: Optional[Dict[str, object]] = None,
     ) -> None:
-        """暂存 phase1 推演结果，供 phase2 读回（决策暂停期间不重算 simulator）。"""
+        """暂存 phase1 推演结果，供 phase2 读回（决策暂停期间不重算 simulator）。
+
+        extracted：extractor 产出的 canonical delta（ADR 0008 S2 无条件持久化的重跑真源）。
+        传 None = 占位（HITL phase1 尚未跑 extractor）→ ready=0，get 时 extracted 不可见；
+        显式传 dict（含空 {} = 真空 delta）→ ready=1。判别位防恢复入口把占位当真 delta 重放。
+        """
         self.conn.execute(
             """INSERT INTO pending_resolve_context
                (turn, decree_text, narrative, simulator_payload_json,
-                secret_orders_json, relevant_memories_json)
-               VALUES (?, ?, ?, ?, ?, ?)
+                secret_orders_json, relevant_memories_json, extracted_delta_json,
+                extracted_ready)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(turn) DO UPDATE SET
                    decree_text = excluded.decree_text,
                    narrative = excluded.narrative,
                    simulator_payload_json = excluded.simulator_payload_json,
                    secret_orders_json = excluded.secret_orders_json,
-                   relevant_memories_json = excluded.relevant_memories_json""",
+                   relevant_memories_json = excluded.relevant_memories_json,
+                   extracted_delta_json = excluded.extracted_delta_json,
+                   extracted_ready = excluded.extracted_ready""",
             (
                 int(turn), decree_text, narrative,
                 json.dumps(simulator_payload or {}, ensure_ascii=False),
                 json.dumps(secret_orders or [], ensure_ascii=False),
                 json.dumps(relevant_memories or [], ensure_ascii=False),
+                json.dumps(extracted if extracted is not None else {}, ensure_ascii=False),
+                1 if extracted is not None else 0,
             ),
         )
         self.conn.commit()
@@ -4711,7 +4731,8 @@ class GameDB:
         """读回 phase1 暂存的推演上下文。无则 None。"""
         row = self.conn.execute(
             "SELECT decree_text, narrative, simulator_payload_json, "
-            "secret_orders_json, relevant_memories_json "
+            "secret_orders_json, relevant_memories_json, extracted_delta_json, "
+            "extracted_ready "
             "FROM pending_resolve_context WHERE turn = ?",
             (int(turn),),
         ).fetchone()
@@ -4722,12 +4743,25 @@ class GameDB:
                 return json.loads(text) if text else default
             except Exception:
                 return default
+        def _load_extracted():
+            # ready=0 占位不可见；ready=1 但 JSON 损坏也回 None（逼「重跑 extractor」）——
+            # 吞成 {} 会复活判别位刚消掉的歧义：重放空 delta=整月效果静默丢（cmr r4）。
+            if not row["extracted_ready"]:
+                return None
+            try:
+                parsed = json.loads(row["extracted_delta_json"])
+            except Exception:
+                return None
+            # 合法 JSON 非 dict（type-corrupt）同样回 None（重抽）：原样返回会让恢复叉
+            # 抛 LLMContractError 绕过逃生口=corruption 软死锁（ship-pre r1）。
+            return parsed if isinstance(parsed, dict) else None
         return {
             "decree_text": row["decree_text"],
             "narrative": row["narrative"],
             "simulator_payload": _load(row["simulator_payload_json"], {}),
             "secret_orders": _load(row["secret_orders_json"], []),
             "relevant_memories": _load(row["relevant_memories_json"], []),
+            "extracted": _load_extracted(),
         }
 
     def clear_resolve_context(self, turn: int) -> None:
@@ -5881,7 +5915,16 @@ class GameDB:
         self.conn.close()
 
     def backup_to(self, target_path: str) -> None:
-        """SQLite backup API 热备到 target_path。不需关闭主连接。"""
+        """SQLite backup API 热备到 target_path。不需关闭主连接。
+
+        atomic() 内禁止调用：backup 走同连接 pager，会把未提交（可能随后回滚）
+        的脏页备进文件（cmr S1 F3）。错误包备份必须在 rollback 之后、atomic 外做。
+        """
+        if getattr(self.conn, "_commit_suspended", False):
+            raise RuntimeError(
+                "backup_to 在 atomic 事务内禁止：备份会带上未提交脏页。"
+                "请先 rollback/commit（退出 atomic）再备份。"
+            )
         import os as _os
         _os.makedirs(_os.path.dirname(target_path) or ".", exist_ok=True)
         dest = sqlite3.connect(target_path)

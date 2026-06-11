@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import Dict, List, Optional, Tuple
 
 from ming_sim.agents import bind_content as _bind_agents
@@ -28,6 +27,7 @@ from ming_sim.decree import (
     advance_without_edict,
     resolve_decisions_phase2,
     resolve_directives,
+    resolve_settling_recovery,
     write_decree_with_agno,
 )
 from ming_sim.issues import bind_content as _bind_issues
@@ -80,11 +80,9 @@ def prune_auto_saves(saves_dir: str, campaign_id: str, keep_turns: int = AUTO_SA
                 pass
 
 
-class TurnPhase(str, Enum):
-    SUMMONING = "summoning"   # 召见中：召见、对话、大臣拟旨产 pending
-    REVIEWING = "reviewing"   # 核定草案：增删改、确认/驳回 pending、写诏书
-    AWAITING_DECISION = "awaiting_decision"  # HITL：simulator 出决策点，暂停等皇帝亲裁
-    ISSUED = "issued"         # 已颁诏：resolve 完成，待 end_turn
+# TurnPhase 单一真源已下沉 models.py（decree 也要用，import session 会循环）；
+# 此处 re-export 保持旧 import 路径（terminal/web_app/tests 的 from session import TurnPhase）兼容。
+from ming_sim.models import FRONT_HALF_DONE_PHASES, TurnPhase  # noqa: F401  (re-export)
 
 
 @dataclass
@@ -429,8 +427,11 @@ class GameSession:
         self.last_decree = ""
         self.last_report = ""
         # awaiting_decision 必须保活：刷新页时仍要弹决策点续跑结算，不可重置成 summoning。
+        # settling 同样保活（ADR 0008 S4）：pre_settle 前半段已提交，重载若被重置回 summoning，
+        # 守门失效=恢复入口认不出「前半段已完成」会二次重跑前半段（白名单外即被重置）。
         if self.state.turn_phase not in (
-            TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value, TurnPhase.AWAITING_DECISION.value,
+            TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value,
+            TurnPhase.AWAITING_DECISION.value, TurnPhase.SETTLING.value,
         ):
             self.state.turn_phase = TurnPhase.SUMMONING.value
             self.db.save_state(self.state)
@@ -624,6 +625,8 @@ class GameSession:
                 if not draft_text:
                     args = getattr(tool_exec, "tool_args", {}) or {}
                     draft_text = (args.get("decree_text") or "").strip()
+                if draft_text and self._proposal_blocked(self.state):
+                    draft_text = ""  # 恢复窗婉拒：不入档（见 _proposal_blocked）
                 if draft_text:
                     directive_id = self.db.add_directive(
                         self.state, None, draft_text, "大臣拟旨",
@@ -695,10 +698,15 @@ class GameSession:
             confirm = extract_confirmation_intent(
                 player_message, reply, summaries, llm_config=llm_config)
             if confirm == "应允":
-                self.db.commit_pending_actions(
-                    self.state, minister_name=minister_name,
-                    content=getattr(self, "content", None),
-                    registry=getattr(self, "registry", None))
+                if self.state.turn_phase in FRONT_HALF_DONE_PHASES:
+                    # 恢复窗确认不即时落库（事务外落真表，后续 settle 中止不回滚=半写）。
+                    # 动作留 pending，由推进回合的终端 atomic 统一落（所有权规则，ship-pre r2）。
+                    pass
+                else:
+                    self.db.commit_pending_actions(
+                        self.state, minister_name=minister_name,
+                        content=getattr(self, "content", None),
+                        registry=getattr(self, "registry", None))
             elif confirm == "拒绝":
                 self.db.drop_pending_actions_for_minister(self.state.turn, minister_name)
             if confirm in ("应允", "拒绝"):
@@ -706,6 +714,14 @@ class GameSession:
                 # 抽取,会把刚 commit 的动作从复述里重抽成新暂存→颁诏二次落库,或重建刚拒的动作。
                 # 故确认轮直接返回,不再抽新动作(线上 codex P2)。确认句无前缀,前缀路无损失。
                 return out
+        if GameSession._proposal_blocked(self.state):
+            # 恢复窗总闸（PR #90 R1/R2/R3 收束为单一出口）：前缀拟旨/密令与自然语言
+            # 抽取的新暂存（密令动作/调教/任免）一并婉拒——窗内新写在 settle 重试事务
+            # 边界外，窗内新 stage 则会被重试 settle 的 commit_pending_actions 落进
+            # 「保存的 delta 推演时并不知道」的旧回合。上方对话确认块（应允延迟提交/
+            # 拒绝丢弃）针对的是窗前已暂存的 pending，保持可用（ship-pre r2 设计）。
+            # 抽取器（LLM 调用）一并跳过。
+            return out
         acts = resolve_minister_actions(
             reply, player_message, default_assignee=minister_name, llm_config=llm_config)
         if not has_directive and acts["decree_text"]:
@@ -824,7 +840,13 @@ class GameSession:
     def _apply_appointment(self, payload: str, appointer: Character) -> Tuple[str, str]:
         """吏部 propose_appointment 落地：建档入库 + 注册 Agent，本回合即可召见。
         吏部尚书 LLM 已判过史实合理性；代码端只做姓名查重与字段兜底，不做历史校验。
-        返回 (新任者姓名, 被腾缺罢黜者姓名)；payload 不合法或重名则返回 ("", "")。"""
+        返回 (新任者姓名, 被腾缺罢黜者姓名)；payload 不合法或重名则返回 ("", "")。
+
+        恢复窗婉拒（PR #90 R2 codex P2）：FRONT_HALF_DONE 时不落地——此写在 settle
+        重试事务边界外，重放中止回滚不会回滚它=恢复窗改盘。session.chat 与 web
+        流式路都委托本方法，顶部守门一处覆盖两路（与 draft 的 _proposal_blocked 同例）。"""
+        if self._proposal_blocked(self.state):
+            return ("", "")
         import json as _json
         try:
             data = _json.loads(payload) if payload else {}
@@ -833,7 +855,11 @@ class GameSession:
         return apply_appointment(self.db, self.state, self.content, self.registry, data, llm_config=self.llm_config)
 
     def _apply_unlisted_person_registration(self, payload: str) -> Tuple[str, bool]:
-        """登记史实未预设/用户确认背景的人物，进入本局正式可召见人物池。"""
+        """登记史实未预设/用户确认背景的人物，进入本局正式可召见人物池。
+
+        恢复窗婉拒（PR #90 R2 codex P2）：同 _apply_appointment，事务边界外直写一律冻。"""
+        if self._proposal_blocked(self.state):
+            return ("", False)
         import json as _json
         try:
             data = _json.loads(payload) if payload else {}
@@ -950,21 +976,39 @@ class GameSession:
             for r in rows
         ]
 
+    @staticmethod
+    def _proposal_blocked(state) -> bool:
+        """FRONT_HALF_DONE 时 chat 提案不得插 pending directive（ship-pre r2 软死锁环源头）：
+        pending>0 让推进口全拒「请准/驳」而 confirm/reject 已冻结=互相指对方死锁且落盘。
+        正常入 settling 时 pending 必为 0（resolve 口有门），源头堵死即环断。"""
+        return state.turn_phase in FRONT_HALF_DONE_PHASES
+
+    def _refuse_if_settling(self) -> None:
+        """FRONT_HALF_DONE 冻结诏稿变更：恢复窗口新增/确认的 draft 会被 settle 的
+        mark_directives_issued 连带标 issued，而重放 delta 不含它们=幽灵颁布（ship-pre r1）。"""
+        if self.state.turn_phase in FRONT_HALF_DONE_PHASES:
+            raise ValueError("月末结算进行中（恢复态），请先完成结算再改诏稿。")
+
     def confirm_directive(self, directive_id: int) -> None:
+        self._refuse_if_settling()
         self.db.confirm_directive(directive_id)
 
     def reject_directive(self, directive_id: int) -> None:
+        self._refuse_if_settling()
         self.db.reject_directive(directive_id)
 
     def add_directive(self, text: str, notes: str = "") -> DirectiveView:
+        self._refuse_if_settling()
         directive_id = self.db.add_directive(self.state, None, text, "手动新增", notes=notes)
         return DirectiveView(id=directive_id, text=text, status="draft",
                              source="手动新增", notes=notes)
 
     def update_directive(self, directive_id: int, text: str) -> None:
+        self._refuse_if_settling()
         self.db.update_directive_text(directive_id, text)
 
     def delete_directive(self, directive_id: int) -> None:
+        self._refuse_if_settling()
         self.db.delete_directive(directive_id)
 
     def pending_count(self) -> int:
@@ -973,13 +1017,25 @@ class GameSession:
     # ── 诏书阶段 ──────────────────────────────────────────────────────────
 
     def enter_review(self) -> None:
+        # 前半段已提交相位粘滞（FRONT_HALF_DONE_PHASES 单一真源）：被抹成 reviewing 会让
+        # pre_settle 守门失效=同回合二次财政 tick，awaiting 还会令 submit_decisions 拒收
+        # =决策搁浅（cmr S4 r1/r3）。只能由 settle 完成路径复位。
+        if self.state.turn_phase in FRONT_HALF_DONE_PHASES:
+            return
         self._set_phase(TurnPhase.REVIEWING)
 
     def back_to_summoning(self) -> None:
+        if self.state.turn_phase in FRONT_HALF_DONE_PHASES:
+            return
         self._set_phase(TurnPhase.SUMMONING)
 
     def write_decree(self) -> str:
         """生成诏书。要求无 pending 残留、≥1 条 draft。"""
+        if self.state.turn_phase == TurnPhase.AWAITING_DECISION.value:
+            # -> str 契约：亲裁期不能拟诏，响亮拒绝走既有 ValueError 错误路径
+            # （web 映射 400 / terminal 打印拟诏失败）。幂等返回决策点的守门在 resolve_turn。
+            raise ValueError("当前在月末亲裁阶段，请先裁决已存决策点，不能拟诏。")
+        self._refuse_if_settling()
         if self.pending_count() > 0:
             raise ValueError(f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
         directives = self.db.list_directives(self.state, statuses=("draft",))
@@ -991,6 +1047,7 @@ class GameSession:
 
     def set_decree(self, text: str) -> str:
         """皇帝手动改定诏书正文（拟诏后、颁诏前）。颁诏时 resolve_turn 用此 last_decree。"""
+        self._refuse_if_settling()
         text = (text or "").strip()
         if not text:
             raise ValueError("诏书正文不能为空。")
@@ -1007,11 +1064,59 @@ class GameSession:
         调用方据 result.decisions 弹窗，皇帝裁完调 submit_decisions。无决策点 → awaiting=False，
         回合已结算推进，置 issued 态。
         """
+        if self.state.turn_phase == TurnPhase.AWAITING_DECISION.value:
+            # HITL 暂停期重发 issue：幂等返回已存决策点，不二跑 simulator——二跑会覆盖
+            # pending_decisions，或第二次输出无决策块时绕过亲裁直接结算（cmr S4 r3 F3）。
+            return ResolveResult(
+                awaiting=True, decisions=self.db.list_pending_decisions(self.state.turn))
+        # ADR 0008 S7（决定 3）：settling 态崩溃恢复分流。settling 只意味着「前半段已完成」，
+        # 不意味着后半段就绪——查 resolve_context 判别：
+        #   有 ready context（extractor 已产出并 persist）→ 直入 apply，不重跑贵的 simulator/
+        #     extractor（验收③的对偶：跨进程恢复从真源重灌）。完成后照常置 ISSUED。
+        #   无 ready context（崩在推演/抽取期间，LLM 产出本就没持久化）→ 落到下方正常流程
+        #     重跑推演（pre_settle 被 settling 守门跳过=前半段不二跑，simulator/extractor 重跑，
+        #     = ADR「重跑是唯一选择」，即验收③）。
+        if self.state.turn_phase == TurnPhase.SETTLING.value:
+            ctx = self.db.get_resolve_context(self.state.turn)
+            if ctx is not None and ctx.get("extracted") is not None:
+                # 与正常路同守门：恢复期大臣新拟的 pending 旨未核定不得推进——
+                # 重放跳过守门会把它孤儿在旧回合（cmr S7 r8）。
+                if self.pending_count() > 0:
+                    raise ValueError(
+                        f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
+                # 重试新传的 decree/cheat 在重放叉被忽略（重放使用崩溃前真源），留痕（cmr S7 r4）。
+                if (decree or "").strip() or (cheat_directive or "").strip():
+                    from ming_sim.token_stats import tlog
+                    tlog("[恢复重放] 本次传入的 decree/cheat_directive 被忽略（重放使用崩溃前真源）。")
+                # 跨进程恢复时内存 last_decree 已被 begin_turn 清空——web 成功响应读它
+                # 作诏书展示，从真源恢复（cmr S7 r7）。
+                self.last_decree = str(ctx.get("decree_text") or "")
+                result = resolve_settling_recovery(
+                    self.state, self.db, self.agno_db, self.llm_config, ctx,
+                    on_event=on_event, content=self.content, registry=self.registry,
+                )
+                self.last_report = result.report
+                self.state.turn_phase = TurnPhase.ISSUED.value
+                self.db.save_state(self.state)
+                return result
+            # 无 ready context：fallthrough 到正常流程重跑推演（前半段被守门跳过）。
+            # 占位真源补诏（ship-pre r5）：begin_turn 已清内存 last_decree，跨进程恢复
+            # 用存的原诏，不让 LLM 重新生成顶替玩家手改稿。
+            if ctx is not None and not (self.last_decree or "").strip():
+                stored = str(ctx.get("decree_text") or "").strip()
+                if stored:
+                    self.last_decree = stored
         if self.pending_count() > 0:
             raise ValueError(f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
         directives = self.db.list_directives(self.state, statuses=("draft",))
         if not directives:
-            raise ValueError("网页/CLI 端不允许跳过回合：至少一条草案才能颁诏。")
+            # 恢复态且有存诏：免草案要求（零草案 settling=driver 档/逃生口降级后是真实态，
+            # 而 add 已冻结——硬要草案=循环死路，ship-pre r5）。directives 仅作非空哨兵。
+            if (self.state.turn_phase in FRONT_HALF_DONE_PHASES
+                    and (self.last_decree or "").strip()):
+                directives = [{"text": self.last_decree}]
+            else:
+                raise ValueError("网页/CLI 端不允许跳过回合：至少一条草案才能颁诏。")
         # 结算前先存一份：LLM 推演有可能崩，留个回滚锚点
         self.auto_save("preresolve")
         decree_text = decree or self.last_decree or write_decree_with_agno(
@@ -1049,6 +1154,11 @@ class GameSession:
         要求当前处于 awaiting_decision 态。返回完整结算报告，置 issued。"""
         if self.current_phase() != TurnPhase.AWAITING_DECISION:
             raise ValueError("当前不在待裁决策阶段，无法提交亲裁。")
+        # 与 resolve_turn 同守门（cmr S7 r8/r9 对称面）：暂停期大臣新拟的 pending 旨
+        # 未核定不得推进——phase2（重放或重抽）随 next_period 会把它孤儿在旧回合。
+        if self.pending_count() > 0:
+            raise ValueError(
+                f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
         # 回写选择
         stored = self.db.list_pending_decisions(self.state.turn)
         import json as _json
@@ -1062,6 +1172,11 @@ class GameSession:
                 (_json.dumps(choice, ensure_ascii=False), self.state.turn, idx),
             )
         self.db.conn.commit()
+        if not (self.last_decree or "").strip():
+            # 跨进程恢复：phase2 结算后 context 即清，趁前从真源补回诏书展示字段（cmr S7 r7）。
+            ctx0 = self.db.get_resolve_context(self.state.turn)
+            if ctx0 is not None:
+                self.last_decree = str(ctx0.get("decree_text") or "")
         report = resolve_decisions_phase2(
             self.state, self.db, self.agno_db, self.llm_config,
             on_event=on_event, content=self.content, registry=self.registry,

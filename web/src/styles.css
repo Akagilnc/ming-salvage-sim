@@ -6716,3 +6716,21 @@ button:disabled {
   cursor: not-allowed;
   filter: grayscale(0.5);
 }
+
+/* 恢复入口横幅（ship-pre r4）：settling 重载后续跑结算 */
+.recovery-banner {
+  position: fixed;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 18px;
+  background: rgba(120, 30, 30, 0.92);
+  color: #f5e9d0;
+  border: 1px solid #a4862f;
+  border-radius: 8px;
+  font-size: 14px;
+}
