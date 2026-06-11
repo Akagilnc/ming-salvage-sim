@@ -515,3 +515,57 @@ def test_whitespace_only_key_rejected_on_driver_path(game):
     rows = [r for r in _rejection_rows(db, turn) if r[0] == "fiscal_changes"]
     assert len(rows) == 1
     assert rows[0][2] == "invalid_enum"  # 按空 key 拒,而非未知 key missing_ref
+
+
+# ──────── cmr S3 r10:终局集中化——cleaner 零值逻辑,applier 唯一语义点 ────────
+
+def test_lossless_int_string_same_verdict_both_paths(game):
+    """无损整数串("5"/"300")在 applier 归一接受——转换留在 cleaner 时引擎路收
+    driver 路拒=同输入两判(cmr S3 r10,2/2 high;与 r9 direction 同处方)。"""
+    db, state, content = game
+    turn = state.turn
+    key = next(iter(db.get_fiscal_config()))
+    before = db.get_fiscal_config()[key]
+
+    run_settle(db, state, content, {
+        "fiscal_changes": [{"key": key, "delta": "5"}],
+        "fiscal_creates": [{"key": "整串测试_base", "account": "国库",
+                            "direction": "income", "init_value": "300"}],
+    }, narrative="x", decree_text="y")
+
+    assert [r for r in _rejection_rows(db, turn)] == []  # 两项都不拒
+    assert db.get_fiscal_config()[key] == before + 5
+    assert db.conn.execute(
+        "SELECT value FROM fiscal_config WHERE key='整串测试_base'").fetchone()[0] == 300
+
+
+def test_driver_path_display_defaults_from_key(game):
+    """display 缺省=key 去 _base 后缀——默认只在 cleaner 时 driver 路建出空名
+    预算行(DELTA_SCHEMA 契约对象正是 driver 路)(cmr S3 r10 claude medium)。"""
+    db, state, content = game
+
+    run_settle(db, state, content, {
+        "fiscal_creates": [{"key": "显名测试_base", "account": "国库",
+                            "direction": "income", "init_value": 1}],
+    }, narrative="x", decree_text="y")
+
+    row = db.conn.execute(
+        "SELECT display FROM fiscal_config WHERE key='显名测试_base'").fetchone()
+    assert row is not None and row[0] == "显名测试"
+
+
+def test_garbage_key_category_consistent_across_sections(game):
+    """同形双后缀垃圾 key 在 create/remove 两段同口径:invalid_enum「key 非法」,
+    而非 remove 侧误标 missing_ref「不存在」(cmr S3 r10 claude low)。"""
+    db, state, content = game
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "fiscal_creates": [{"key": "辽饷_base_base", "account": "国库",
+                            "direction": "income", "init_value": 1}],
+        "fiscal_removes": [{"key": "盐税_rate_rate", "reason": "垃圾"}],
+    }, narrative="x", decree_text="y")
+
+    cats = {r[0]: r[2] for r in _rejection_rows(db, turn)}
+    assert cats.get("fiscal_creates") == "invalid_enum"
+    assert cats.get("fiscal_removes") == "invalid_enum"  # 非法 key ≠ 不存在
