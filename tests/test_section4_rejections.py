@@ -627,3 +627,29 @@ def test_float_bool_army_delta_tolerated_on_issue_path(game):
         I._apply_issue_entities(db, state, {
             "army_delta": {aid: {"morale": None}},
         }, "局势#测试结案")
+
+
+def test_mixed_cause_required_fields_stay_strict_on_issue_path(game):
+    """必填字段混合成因(一边 float、另一边缺键/None/串=历史致命)不得因 or 合取
+    被误判容忍——历史谓词按整项算:两键都在且都能 int() 才算「历史可活」
+    (cmr S2 r4,2/2)。"""
+    import ming_sim.issues as I
+
+    db, state, content = game
+    # manpower=float 但 maintenance 缺键:历史 int(3.7)=3 成功后 KeyError → raise
+    with pytest.raises(ValueError):
+        I._apply_issue_entities(db, state, {
+            "new_armies": [{"id": "mixed_a", "name": "混因军甲", "owner_power": "ming",
+                            "manpower": 3.7}],
+        }, "局势#测试结案")
+    # manpower=串 + maintenance=float:历史 int("三千") ValueError → raise
+    with pytest.raises(ValueError):
+        I._apply_issue_entities(db, state, {
+            "new_armies": [{"id": "mixed_b", "name": "混因军乙", "owner_power": "ming",
+                            "manpower": "三千", "maintenance_per_turn": 2.5}],
+        }, "局势#测试结案")
+    # 纯 float 双键在场:历史静默套用=可活 → 容忍不抛
+    I._apply_issue_entities(db, state, {
+        "new_armies": [{"id": "mixed_c", "name": "混因军丙", "owner_power": "ming",
+                        "manpower": 5000.0, "maintenance_per_turn": 2.0}],
+    }, "局势#测试结案")  # 不抛
