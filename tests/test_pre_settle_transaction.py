@@ -5,6 +5,10 @@ pre_settle（暂存动作 commit + 固定财政 + auto_trigger + auto_submit_due
 重进时干净重跑前半段。settling 加进 begin_turn 保活白名单，重载不被重置回 summoning。
 
 用 conftest 的 game fixture（活存档副本，连接走 _SuspendableConnection factory，atomic 可用）。
+
+注：本文件设置/断言 turn_phase 时故意用 raw 字符串（如 "settling"/"awaiting_decision"）而非
+TurnPhase.X.value——pin 的是**落盘字符串值本身**，有意 enum 无关：枚举重命名而落盘值漂移时
+应响亮失败。S4 把生产代码相位比较统一到 TurnPhase enum，测试侧落盘断言不跟随。
 """
 
 from __future__ import annotations

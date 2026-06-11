@@ -7,6 +7,10 @@ apply(不重跑贵的 simulator/extractor)；无则重跑推演(验收③)。
 决定 4：事务内 LLM 回调失败沿用降级，不触发回滚(章节记忆/结局总评内部已自吞)。
 
 用 conftest 的 game fixture(活存档副本，连接走 _SuspendableConnection factory，atomic 可用)。
+
+注：本文件设置/断言 turn_phase 时故意用 raw 字符串(如 "settling"/"awaiting_decision")而非
+TurnPhase.X.value——它们 pin 的是**落盘字符串值本身**，有意 enum 无关：枚举重命名而落盘值
+漂移时这些断言应响亮失败。S4 把生产代码相位比较统一到 TurnPhase enum，测试侧落盘断言不跟随。
 """
 
 from __future__ import annotations

@@ -2,6 +2,11 @@
 
 run_settle 收一份**中文 schema 形态**的稀疏 delta（我在对话里产的形态），
 规范化 → pre_settle → settle_with_delta，推进一回合。CLI 子命令是它的薄壳。
+
+注：本文件断言 turn_phase 时故意用 raw 字符串（如 "summoning"）而非 TurnPhase.X.value——
+它们 pin 的是**落盘字符串值本身**（DB 持久化的真值），有意 enum 无关：若枚举重命名而
+落盘值漂移，这些断言应当响亮失败。S4 把生产代码的相位比较统一到 TurnPhase enum，测试侧
+的落盘断言不跟随。
 """
 
 from __future__ import annotations
