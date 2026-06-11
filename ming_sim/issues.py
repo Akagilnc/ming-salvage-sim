@@ -1073,7 +1073,9 @@ def validate_delta_shape(extracted: dict) -> None:
     否则**任何 DB 改动前**抛 ValueError——畸形值直送 apply 会在结算中途崩 `.items()`,叠加非
     原子结算 = 半落库(违反 P1 落库铁律;cmr RT-1 / Gemini PR#50 R2)。driver 在 pre_settle 前
     调一次防 pre_settle 半改;落库核 apply_score_extraction 自身也调一次防 apply 内部半落库。
-    彻底原子化需事务边界(issue #3),此校验是廉价前置防线。"""
+    彻底原子化的事务边界(原 issue #3)已由 ADR 0008 落地(v0.8.0.0,见 applier.atomic):结算写
+    序列整体包单事务、崩则全回滚。本校验仍保留为廉价**前置**防线——在动 DB 前就拦畸形 delta,
+    省去事务回滚成本并给出更精确的字段级报错。"""
     from ming_sim.simulation import EMPTY_EXTRACTION  # 懒 import 避 issues↔simulation 循环
     for key, value in extracted.items():
         if key not in EMPTY_EXTRACTION:

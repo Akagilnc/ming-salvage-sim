@@ -3,6 +3,10 @@
 DB 回滚不还原内存副作用（state.metrics 直加 flows.py:192、turn_phase、next_period）。
 回滚后重跑前把 state 从 DB 重载（与 restore/load_state 同路径），原地刷新同一对象
 （各处持引用，不能换新对象）。
+
+注：本文件设置/断言 turn_phase 时故意用 raw 字符串（如 "settling"/"reviewing"）而非
+TurnPhase.X.value——pin 的是**落盘字符串值本身**，有意 enum 无关。S4 把生产代码相位比较
+统一到 TurnPhase enum，测试侧落盘断言不跟随。
 """
 
 from __future__ import annotations
@@ -272,3 +276,90 @@ def test_reload_passes_llm_config_to_content_rebuild(game, monkeypatch):
     reload_state_from_db(db, state, content=content)
 
     assert seen["llm_config"] is db.llm_config
+
+
+# ── atomic_and_reload helper（S4：六处 try/atomic/except-reload-reraise 公共内核） ──
+
+def test_atomic_and_reload_commits_on_success(game):
+    """正常退出：body 写入照常提交（与裸 with atomic 同语义）。"""
+    from ming_sim.decree import atomic_and_reload
+    db, state, content = game
+    with atomic_and_reload(db, state, content=content):
+        db.conn.execute("UPDATE metrics SET value = 12345 WHERE key = '国库'")
+    row = db.conn.execute("SELECT value FROM metrics WHERE key = '国库'").fetchone()
+    assert int(row["value"]) == 12345
+
+
+def test_atomic_and_reload_reloads_and_reraises_at_depth0(game):
+    """最外层 body 抛错：回滚后 reload 刷净内存，原异常透传。"""
+    from ming_sim.decree import atomic_and_reload
+    db, state, content = game
+    state.metrics["国库"] = 999999  # 脏内存
+    with pytest.raises(RuntimeError, match="boom"):
+        with atomic_and_reload(db, state, content=content):
+            db.conn.execute("UPDATE metrics SET value = 7 WHERE key = '国库'")
+            raise RuntimeError("boom")
+    # 回滚 + reload：内存与 DB 同源，脏值被刷掉
+    fresh = db.load_state()
+    assert state.metrics == fresh.metrics
+    assert state.metrics["国库"] != 999999
+
+
+def test_atomic_and_reload_skips_reload_when_nested(game, monkeypatch):
+    """嵌套（depth>0）：内核不 reload（rollback 未发生，防脏读），原异常透传给外层。"""
+    import ming_sim.decree as decree_mod
+    from ming_sim.applier import atomic
+    from ming_sim.decree import atomic_and_reload
+    db, state, content = game
+
+    calls = {"n": 0}
+    real_reload = decree_mod.reload_state_from_db
+    def _counting_reload(*a, **k):
+        calls["n"] += 1
+        return real_reload(*a, **k)
+    monkeypatch.setattr(decree_mod, "reload_state_from_db", _counting_reload)
+
+    with pytest.raises(RuntimeError, match="回滚"):  # 外层 rollback-only 响亮
+        with atomic(db):
+            try:
+                with atomic_and_reload(db, state, content=content):
+                    raise RuntimeError("inner crash")
+            except RuntimeError:
+                pass  # 吞内层异常，外层 rollback-only 接管
+    assert calls["n"] == 0  # 嵌套内未 reload
+
+
+def test_atomic_and_reload_chains_reload_failure(game, monkeypatch):
+    """reload 自身再炸：原异常不被顶替，reload 异常链上抛（raise exc from reload_exc）。"""
+    import ming_sim.decree as decree_mod
+    from ming_sim.decree import atomic_and_reload
+    db, state, content = game
+
+    def _boom_reload(*a, **k):
+        raise ValueError("reload failed")
+    monkeypatch.setattr(decree_mod, "reload_state_from_db", _boom_reload)
+
+    with pytest.raises(RuntimeError, match="orig") as ei:
+        with atomic_and_reload(db, state, content=content):
+            raise RuntimeError("orig")
+    assert isinstance(ei.value.__cause__, ValueError)  # 链：orig from reload failed
+
+
+def test_atomic_and_reload_runs_on_error_before_reload(game, monkeypatch):
+    """on_error 钩子在 reload 前触发（settle 的 collector.reset 语义）。"""
+    import ming_sim.decree as decree_mod
+    from ming_sim.decree import atomic_and_reload
+    db, state, content = game
+
+    order = []
+    real_reload = decree_mod.reload_state_from_db
+    def _tracking_reload(*a, **k):
+        order.append("reload")
+        return real_reload(*a, **k)
+    monkeypatch.setattr(decree_mod, "reload_state_from_db", _tracking_reload)
+
+    with pytest.raises(RuntimeError):
+        with atomic_and_reload(db, state, content=content,
+                               on_error=lambda exc: order.append("on_error")):
+            raise RuntimeError("boom")
+    assert order == ["on_error", "reload"]
