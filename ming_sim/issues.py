@@ -1207,13 +1207,13 @@ def apply_score_extraction(
     #     effect_on_fail 里的 `buildings` 段在局势结案时落地（见 _apply_issue_buildings）。
 
     # 5) power_updates：非明势力三项简表（威望/实力/经济）落库
+    # ADR 0008 决定 1:不再整段吞——LLM 脏数据(未知 power id/字段非法)在
+    # apply_power_deltas 内逐项拒收留痕(返回列表含 {"rejected": True, ...});
+    # 代码异常(KeyError/AttributeError 等)上抛到 settle 层回滚整批,绝不吞。
     power_updates_raw = extracted.get("power_updates") or {}
     power_changes: List[Dict[str, object]] = []
     if isinstance(power_updates_raw, dict) and power_updates_raw:
-        try:
-            power_changes = db.apply_power_deltas(state, power_updates_raw)
-        except Exception as exc:
-            print(f"[WARN] power_updates 落库失败：{exc}")
+        power_changes = db.apply_power_deltas(state, power_updates_raw)
 
     # 6) issue_advances / new_issues / close_issues / cancels (复用旧 tracker 落地)
     issue_summary = apply_issue_tracker_output(db, state, {
@@ -1385,13 +1385,11 @@ def apply_score_extraction(
         })
 
     # 9b) character_power_changes：人物易主（降将/叛臣/归正）
-    applied_power_changes: List[Dict[str, object]] = []
-    try:
-        applied_power_changes = db.apply_character_power_changes(
-            extracted.get("character_power_changes") or []
-        )
-    except Exception as exc:
-        print(f"[WARN] character_power_changes 落库失败：{exc}")
+    # ADR 0008 决定 1:不再整段吞——脏数据(查无此人/未知 power/缺字段)在
+    # apply_character_power_changes 内逐项拒收留痕;代码异常上抛到 settle 回滚。
+    applied_power_changes: List[Dict[str, object]] = db.apply_character_power_changes(
+        extracted.get("character_power_changes") or []
+    )
 
     # 10) office_changes：朝臣官职变更——统一吃「新任（建档）」与「调任（改职）」。
     #     extractor 不再分新任/调任，代码按 name 在不在册自判：
