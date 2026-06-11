@@ -727,6 +727,11 @@ class GameSession:
             )
             out["directive"] = {"id": did, "text": text, "status": "pending",
                                 "notes": f"由{minister_name}拟旨入档"}
+        if acts["secret_order"] and GameSession._proposal_blocked(self.state):
+            # 恢复窗婉拒（PR #90 R2 codex P2）：前缀密令 upsert 是 settle 重试事务
+            # 边界外的直写——同 decree_text 模式，不入档。
+            acts = dict(acts)
+            acts["secret_order"] = None
         if not out["secret_order_id"] and acts["secret_order"]:
             so = acts["secret_order"]
             assignee = so.get("assignee") or minister_name
@@ -835,7 +840,13 @@ class GameSession:
     def _apply_appointment(self, payload: str, appointer: Character) -> Tuple[str, str]:
         """吏部 propose_appointment 落地：建档入库 + 注册 Agent，本回合即可召见。
         吏部尚书 LLM 已判过史实合理性；代码端只做姓名查重与字段兜底，不做历史校验。
-        返回 (新任者姓名, 被腾缺罢黜者姓名)；payload 不合法或重名则返回 ("", "")。"""
+        返回 (新任者姓名, 被腾缺罢黜者姓名)；payload 不合法或重名则返回 ("", "")。
+
+        恢复窗婉拒（PR #90 R2 codex P2）：FRONT_HALF_DONE 时不落地——此写在 settle
+        重试事务边界外，重放中止回滚不会回滚它=恢复窗改盘。session.chat 与 web
+        流式路都委托本方法，顶部守门一处覆盖两路（与 draft 的 _proposal_blocked 同例）。"""
+        if self._proposal_blocked(self.state):
+            return ("", "")
         import json as _json
         try:
             data = _json.loads(payload) if payload else {}
@@ -844,7 +855,11 @@ class GameSession:
         return apply_appointment(self.db, self.state, self.content, self.registry, data, llm_config=self.llm_config)
 
     def _apply_unlisted_person_registration(self, payload: str) -> Tuple[str, bool]:
-        """登记史实未预设/用户确认背景的人物，进入本局正式可召见人物池。"""
+        """登记史实未预设/用户确认背景的人物，进入本局正式可召见人物池。
+
+        恢复窗婉拒（PR #90 R2 codex P2）：同 _apply_appointment，事务边界外直写一律冻。"""
+        if self._proposal_blocked(self.state):
+            return ("", False)
         import json as _json
         try:
             data = _json.loads(payload) if payload else {}
