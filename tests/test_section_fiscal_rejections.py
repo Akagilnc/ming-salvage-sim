@@ -1,0 +1,284 @@
+"""PR2-S3(ADR 0008 决定 1,#91)——apply_score_extraction 的 fiscal 三段迁拒收契约。
+
+fiscal_removes / fiscal_creates / fiscal_changes 三段原先 LLM 脏项要么 print 静默跳、
+要么静默归 0/continue。改为:裁撤不存在 key、create 重复 key/非法枚举、changes 未知 key
+或脏 delta → 逐项拒收留痕(返回列表含 {rejected,reason,category,item}),好项照落、坏一项
+不带走整批;桥接 _collect_inline_rejections 自动收进 rejection_reports。
+
+「在场即须合法」vs「缺省走默认」:fiscal_creates 的 init_value 缺省 0 合法、在场脏值拒;
+fiscal_changes 的 delta 显式给 0 = 无操作不记拒。
+
+经 driver.run_settle 端到端驱动(公共接口,与 test_section4_rejections.py 同风格)。
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from driver import run_settle
+
+
+def _rejection_rows(db, turn, section=None):
+    rows = db.conn.execute(
+        "SELECT section, reason, category, source FROM rejection_reports"
+        " WHERE turn=? ORDER BY id", (turn,)
+    ).fetchall()
+    if section is not None:
+        rows = [r for r in rows if r[0] == section]
+    return rows
+
+
+def _a_fiscal_key(db):
+    """取一个开局在册的 fiscal base key,供「好项照落」对照。"""
+    cfg = db.get_fiscal_config()
+    for k in cfg:
+        if k.endswith("_base"):
+            return k
+    raise AssertionError("找不到 fiscal base key")
+
+
+# ---- fiscal_removes：裁撤不存在的 key ----
+
+def test_remove_unknown_fiscal_key_rejected_good_removal_lands(game):
+    """fiscal_removes 引用不存在的 key → 原 print 静默跳,改为逐项拒收留痕(missing_ref),
+    同信封里真实存在的 key 照样裁撤——坏一项不带走整批(ADR 决定 1)。"""
+    db, state, content = game
+    turn = state.turn
+    good = _a_fiscal_key(db)
+
+    run_settle(db, state, content, {
+        "fiscal_removes": [
+            {"key": "查无此税项", "reason": "罢废"},
+            {"key": good, "reason": "裁撤"},
+        ],
+    }, narrative="x", decree_text="y")  # 不抛 = 没崩整月
+
+    rows = _rejection_rows(db, turn, "fiscal_removes")
+    assert len(rows) == 1
+    _, reason, category, _ = rows[0]
+    assert reason  # 人读原因非空
+    assert category == "missing_ref"
+    # 好项照落:base key 被删
+    assert db.conn.execute(
+        "SELECT 1 FROM fiscal_config WHERE key=?", (good,)).fetchone() is None
+
+
+def test_remove_dynamic_tax_still_zeroes_region_field(game):
+    """好路 pin:裁撤 dynamic 税(辽饷)→ base/rate 行删除 + 各省实收字段归零
+    (db.remove_fiscal_item 的 dynamic 联动语义不被本切片破坏)。"""
+    db, state, content = game
+    # 先确保至少一省有辽饷实收
+    db.conn.execute(
+        "UPDATE regions SET fiscal=json_set(COALESCE(NULLIF(fiscal,''),'{}'),'$.liao_xiang',500)"
+        " WHERE id=(SELECT id FROM regions LIMIT 1)")
+    db.conn.commit()
+    rid = db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()[0]
+
+    run_settle(db, state, content, {
+        "fiscal_removes": [{"key": "辽饷", "reason": "永罢辽饷"}],
+    }, narrative="x", decree_text="y")
+
+    assert db.conn.execute(
+        "SELECT 1 FROM fiscal_config WHERE key='辽饷_base'").fetchone() is None
+    import json as _json
+    fiscal = _json.loads(db.conn.execute(
+        "SELECT fiscal FROM regions WHERE id=?", (rid,)).fetchone()[0] or "{}")
+    assert int(fiscal.get("liao_xiang", 0) or 0) == 0  # dynamic 联动归零
+
+
+# ---- fiscal_creates：重复 key / 非法枚举 / 脏 init_value ----
+
+def test_create_duplicate_key_rejected_good_create_lands(game):
+    """fiscal_creates 命中已存在的 base key → db.create_fiscal_item 返 None,原 print
+    静默跳,改为逐项拒收留痕;同信封里的合法新立照建(ADR 决定 1)。"""
+    db, state, content = game
+    turn = state.turn
+    dup_stem = _a_fiscal_key(db)[:-5]  # 去掉 _base 取 stem
+
+    run_settle(db, state, content, {
+        "fiscal_creates": [
+            {"key": dup_stem, "account": "国库", "direction": "income",
+             "display": "撞名项", "init_value": 100, "reason": "重复"},
+            {"key": "haiguan_s3", "account": "国库", "direction": "income",
+             "display": "海关税", "init_value": 50, "reason": "新立"},
+        ],
+    }, narrative="x", decree_text="y")  # 不抛
+
+    rows = _rejection_rows(db, turn, "fiscal_creates")
+    assert len(rows) == 1
+    assert rows[0][1]  # reason 非空
+    # 好项照落:新 base key 建成
+    assert db.conn.execute(
+        "SELECT 1 FROM fiscal_config WHERE key='haiguan_s3_base'").fetchone() is not None
+
+
+@pytest.mark.parametrize("bad_account", ["私库", "民心", ""])
+def test_create_illegal_account_rejected_sibling_lands(game, bad_account):
+    """fiscal_creates account 非法（不在 国库/内库）→ 原纯静默 continue,改记拒留痕
+    (invalid_enum);同信封合法新立照建(在场即须合法 / 集中化白名单)。"""
+    db, state, content = game
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "fiscal_creates": [
+            {"key": "badacct_s3", "account": bad_account, "direction": "income",
+             "display": "脏账户项", "init_value": 10, "reason": "脏"},
+            {"key": "goodacct_s3", "account": "内库", "direction": "expense",
+             "display": "内库支项", "init_value": 5, "reason": "好"},
+        ],
+    }, narrative="x", decree_text="y")  # 不抛
+
+    rows = _rejection_rows(db, turn, "fiscal_creates")
+    assert len(rows) == 1
+    assert rows[0][2] == "invalid_enum"
+    assert rows[0][1]
+    assert db.conn.execute(
+        "SELECT 1 FROM fiscal_config WHERE key='goodacct_s3_base'").fetchone() is not None
+    assert db.conn.execute(
+        "SELECT 1 FROM fiscal_config WHERE key='badacct_s3_base'").fetchone() is None
+
+
+@pytest.mark.parametrize("bad_init", ["三百", 3.7, True])
+def test_create_dirty_init_value_rejected_not_silent_zero(game, bad_init):
+    """fiscal_creates init_value 在场但脏(字符串/float/bool)= LLM 脏数据,原静默归 0
+    凭空建零值项,改显式拒(invalid_enum);bool 是 int 子类先判(对称 S1/S2)。
+    同信封合法新立照建。"""
+    db, state, content = game
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "fiscal_creates": [
+            {"key": "dirtyinit_s3", "account": "国库", "direction": "income",
+             "display": "脏初值项", "init_value": bad_init, "reason": "脏"},
+            {"key": "cleaninit_s3", "account": "国库", "direction": "income",
+             "display": "净初值项", "init_value": 20, "reason": "好"},
+        ],
+    }, narrative="x", decree_text="y")  # 不抛
+
+    rows = _rejection_rows(db, turn, "fiscal_creates")
+    assert len(rows) == 1
+    assert rows[0][2] == "invalid_enum"
+    assert rows[0][1]
+    # 脏项没落、好项照落
+    assert db.conn.execute(
+        "SELECT 1 FROM fiscal_config WHERE key='dirtyinit_s3_base'").fetchone() is None
+    assert db.conn.execute(
+        "SELECT value FROM fiscal_config WHERE key='cleaninit_s3_base'").fetchone()[0] == 20
+
+
+def test_create_absent_init_value_defaults_zero(game):
+    """init_value 缺省 = 合法,走默认 0 照建(「缺省走默认」不被「在场即须合法」误伤,pin)。"""
+    db, state, content = game
+
+    run_settle(db, state, content, {
+        "fiscal_creates": [
+            {"key": "defaultinit_s3", "account": "内库", "direction": "income",
+             "display": "默认初值项", "reason": "缺省"}],
+    }, narrative="x", decree_text="y")
+
+    row = db.conn.execute(
+        "SELECT value FROM fiscal_config WHERE key='defaultinit_s3_base'").fetchone()
+    assert row is not None and row[0] == 0
+
+
+# ---- fiscal_changes：未知 key / 脏 delta ----
+
+def test_change_unknown_key_rejected_good_change_lands(game):
+    """fiscal_changes 引用未知 key → 原 print 静默跳,改为逐项拒收留痕(missing_ref);
+    同信封里真实 key 的调率照落(ADR 决定 1)。"""
+    db, state, content = game
+    turn = state.turn
+    good = _a_fiscal_key(db)
+    before = db.get_fiscal_config()[good]
+
+    run_settle(db, state, content, {
+        "fiscal_changes": [
+            {"key": "查无此配置项", "delta": 10, "reason": "未知"},
+            {"key": good, "delta": 5, "reason": "调增"},
+        ],
+    }, narrative="x", decree_text="y")  # 不抛
+
+    rows = _rejection_rows(db, turn, "fiscal_changes")
+    assert len(rows) == 1
+    _, reason, category, _ = rows[0]
+    assert reason
+    assert category == "missing_ref"
+    # 好项照落
+    assert db.get_fiscal_config()[good] == max(0, before + 5)
+
+
+@pytest.mark.parametrize("bad_delta", ["增三成", 3.7, True])
+def test_change_dirty_delta_rejected_sibling_lands(game, bad_delta):
+    """fiscal_changes delta 脏(字符串/float/bool)→ 原裸 int() 静默 continue(吞),改显式
+    拒留痕(invalid_enum);bool 是 int 子类先判(对称 S1/S2);同信封好项照落。"""
+    db, state, content = game
+    turn = state.turn
+    good = _a_fiscal_key(db)
+    before = db.get_fiscal_config()[good]
+
+    run_settle(db, state, content, {
+        "fiscal_changes": [
+            {"key": good, "delta": bad_delta, "reason": "脏"},
+            {"key": good, "delta": 3, "reason": "好"},
+        ],
+    }, narrative="x", decree_text="y")  # 不抛
+
+    rows = _rejection_rows(db, turn, "fiscal_changes")
+    assert len(rows) == 1
+    assert rows[0][2] == "invalid_enum"
+    assert rows[0][1]
+    # 好项照落
+    assert db.get_fiscal_config()[good] == max(0, before + 3)
+
+
+def test_change_zero_delta_no_op_not_rejected(game):
+    """fiscal_changes delta 显式给 0 = 无操作,不记拒(免得每月刷无意义拒收行;pin)。"""
+    db, state, content = game
+    turn = state.turn
+    good = _a_fiscal_key(db)
+
+    run_settle(db, state, content, {
+        "fiscal_changes": [{"key": good, "delta": 0, "reason": "无操作"}],
+    }, narrative="x", decree_text="y")
+
+    assert _rejection_rows(db, turn, "fiscal_changes") == []
+
+
+def test_change_empty_key_rejected(game):
+    """fiscal_changes 空 key = 脏项,记拒留痕(invalid_enum)——空 key 与「delta=0 无操作」
+    不同,前者无定位目标(ADR 决定 1 / S3)。"""
+    db, state, content = game
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "fiscal_changes": [{"key": "", "delta": 5, "reason": "缺 key"}],
+    }, narrative="x", decree_text="y")
+
+    rows = _rejection_rows(db, turn, "fiscal_changes")
+    assert len(rows) == 1
+    assert rows[0][2] == "invalid_enum"
+    assert rows[0][1]
+
+
+def test_change_dynamic_tax_rate_scales_region_field(game):
+    """好路 pin:调 dynamic 税(辽饷)系数 → fiscal_config 改 + 各省实收按比例缩放
+    (db dynamic 联动缩放语义不被本切片破坏)。"""
+    db, state, content = game
+    db.conn.execute(
+        "UPDATE regions SET fiscal=json_set(COALESCE(NULLIF(fiscal,''),'{}'),'$.liao_xiang',400)"
+        " WHERE id=(SELECT id FROM regions LIMIT 1)")
+    db.conn.commit()
+    rid = db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()[0]
+    old_rate = db.get_fiscal_config()["辽饷_rate"]
+
+    run_settle(db, state, content, {
+        "fiscal_changes": [{"key": "辽饷_rate", "delta": -50, "reason": "减辽饷"}],
+    }, narrative="x", decree_text="y")
+
+    new_rate = db.get_fiscal_config()["辽饷_rate"]
+    assert new_rate == max(0, old_rate - 50)
+    import json as _json
+    fiscal = _json.loads(db.conn.execute(
+        "SELECT fiscal FROM regions WHERE id=?", (rid,)).fetchone()[0] or "{}")
+    # 按 new/old 比例缩放后实收 < 400(联动当真生效)
+    assert 0 <= int(fiscal.get("liao_xiang", 0) or 0) < 400
