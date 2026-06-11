@@ -579,3 +579,51 @@ def test_issue_path_tolerated_rejections_reach_reports(game):
     rows = _rejection_rows(db, turn, "issue_summary.entity_rejections")
     assert len(rows) == 1
     assert "士气大振" in rows[0][1] or "非法字段" in rows[0][1]
+
+
+def test_inertia_natural_resolution_tolerated_rejection_no_crash(game):
+    """inertia 自然推到 100 结案的 issue,其 effect 含容忍类脏项(army 非法字段)
+    → 不得崩(tlog 留痕路在 issues.py 没 import 即 NameError 崩月,
+    cmr S2 r3 claude P1)。好字段照落。"""
+    import ming_sim.issues as I
+
+    db, state, content = game
+    aid = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()[0]
+    before = db.conn.execute("SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()[0]
+    issue_id = db.insert_issue(
+        state, kind="initiative", title="测试惯性结案留痕", origin_kind="decree",
+        origin_ref="", bar_value=99, bar_good_meaning="成", bar_bad_meaning="败",
+        inertia=5, stage_text="", severity=50, region_hint="", faction_hint="",
+        tags=[], ongoing_effects={}, cancellable="decree", cancel_cost={},
+        effect_on_resolve={"army_delta": {aid: {"morale": 1, "士气大振": 9}}},
+        effect_on_fail={}, resolve_condition="", fail_condition="",
+    )
+    db.conn.commit()
+
+    I.apply_issue_inertia_and_ongoing(db, state, touched_ids=set())  # 不抛
+
+    row = db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()
+    assert row[0] == "resolved"
+    after = db.conn.execute("SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()[0]
+    assert after == min(100, before + 1)  # 好字段照落
+
+
+def test_float_bool_army_delta_tolerated_on_issue_path(game):
+    """army_delta 的 float/bool 叶在改前是静默套用(int(3.7)=3 照落)=历史可活
+    ——issue 路不得升级为崩月;None/字符串历史就 raise,保持严格
+    (cmr S2 r3,2/2:「仅限历史上本就 raise 的类别」当真)。"""
+    import ming_sim.issues as I
+
+    db, state, content = game
+    aid = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()[0]
+
+    # float/bool:容忍(不抛,拒收留痕,不套用)
+    I._apply_issue_entities(db, state, {
+        "army_delta": {aid: {"morale": 3.7}},
+    }, "局势#测试结案")  # 不抛
+
+    # None:历史 int(None) TypeError → raise,保持严格
+    with pytest.raises(ValueError):
+        I._apply_issue_entities(db, state, {
+            "army_delta": {aid: {"morale": None}},
+        }, "局势#测试结案")

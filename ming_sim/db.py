@@ -3042,6 +3042,9 @@ class GameDB:
                             "rejected": True, "category": "invalid_enum",
                             "reason": f"army_delta '{raw_field}' 值非整数：{value!r}",
                             "item": {"army_id": army_id, "field": field, "value": value},
+                            # float/bool 改前是静默套用（int(3.7)=3 照落）=历史可活,
+                            # issue 路容忍;None/字符串历史就 raise,保持严格（cmr S2 r3,2/2）。
+                            "issue_strict": not isinstance(value, (bool, float)),
                         })
                         continue
                 old_value = row[field]
@@ -3238,14 +3241,18 @@ class GameDB:
                     "id": aid, "rejected": True, "category": "invalid_enum",
                     "reason": f"new_armies '{aid}' 缺/非法 manpower 或 maintenance_per_turn（无法建军）：{exc}",
                     "item": raw,
+                    # float/bool 必填值改前静默套用建军=历史可活,issue 路容忍;
+                    # 缺键/None/字符串历史就 raise,保持严格（cmr S2 r3,2/2）。
+                    "issue_strict": not (isinstance(item.get("manpower"), (bool, float))
+                                         or isinstance(item.get("maintenance_per_turn"), (bool, float))),
                 })
                 continue
             # 可选数值字段「在场即须合法」（cmr S2 r1 codex P1）：在场脏值静默走默认
             # = 伪造军备（morale "高"→50、cannon "几门"→0）。None 视为缺省（LLM 习惯
             # 用 null 表「无」,validate_delta_shape 亦容忍 null 叶）；其余非整拒该项。
             # 守门集从字段表派生（cmr S2 r2,2/2:硬列漏 equipment/mobility/loyalty）
-            # ——ARMY_SCORE_FIELDS 全量 + 建军行额外消费的 arrears;字段表变守门自动跟。
-            _optional_numeric = tuple(ARMY_SCORE_FIELDS) + ("arrears",)
+            # ——ARMY_SCORE_FIELDS 全量已含 arrears;字段表变守门自动跟。
+            _optional_numeric = tuple(ARMY_SCORE_FIELDS)
             _dirty_field = None
             for _f in _optional_numeric:
                 _v = item.get(_f)
