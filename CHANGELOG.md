@@ -4,6 +4,24 @@
 
 ## [未发布]
 
+## [0.9.0.0] - 2026-06-12
+
+### 新增
+- **结算落库拒收契约(ADR 0008 PR2)**:月末落库的 9 个 section(势力/人物易主/地区/军队/建军/财政三段)从「整段吞异常·裸奔崩整月·静默丢脏项」统一迁成**逐项拒收留痕**——LLM 脏数据(幻觉 id、查无此人/此地/此军、字段非法、值不可解析、负值)单项被拒并记进 `rejection_reports`(turn/section/原始项/原因/类别/来源),好项照落,坏一项不再带走整批;代码异常(bug 类)仍上抛回滚。**拒收报告从此有内容**:支撑「哪个 section 最常被喂脏」聚合,事务内落 DB、提交成功后镜像 jsonl(可回收副本)。
+- 拒收记录带来源标记(provenance):引擎推演路标 `system_simulation`、探针 driver 路标 `unknown`,随行落 DB+jsonl(按来源细分到玩家诏书/HITL 留后续波次)。
+
+### 变更
+- **值语义集中到落库层(applier)单点守门**:财政三段的 key 规范化(strip/多重后缀拒)、direction 中文同义词归一、无损整数串转换、display 默认派生全部收口到 `apply_score_extraction`,cleaner 只做无损 canonicalize 不再吞脏——引擎路与探针 driver 路对同一输入同判(此前两路两判)。
+- **国策结案路保留历史容忍语义**:`_apply_issue_entities` 对历史上本就 raise 的脏项升级中断,对历史 print-skip/静默走默认的脏项容忍并留痕(issue_strict 按整项历史谓词分类),不把历史可活的脏数据变成新的崩月路。
+- 抽出 `atomic_and_reload` 上下文管理器,收编结算管线 6 处重复的「事务 + 回滚后从 DB 重载 + 链式上抛」模式;回合相位比较统一走 `TurnPhase` 枚举(落库仍是 `.value` 字符串)。
+- 错误包/拒收镜像在测试中隔离到临时 user-data 目录(conftest autouse),不再污染真实 `data/error_packs`。
+
+### 修复
+- 财政新立项存在性检查覆盖 base+rate 双键:`田赋_base`(田赋默认只有 rate 行)撞 PK 崩整月,改为逐项拒收。
+- `_stem_of` 对多重后缀垃圾 key(`辽饷_base_base`)返非法标记而非归一——此前会让裁撤路误删真科目并清零各省实收(不可逆)。
+- 空 key / falsy delta(`False`/`0.0`)不再被「无操作短路」吞掉无痕;`delta` 在场脏值显式拒。
+- 结算中回滚后内存重载自身再失败时,原异常裸传播(不二次包成 SettlementAbort、不基于脏态写错误包)。
+
 ## [0.8.0.0] - 2026-06-11
 
 ### 新增
