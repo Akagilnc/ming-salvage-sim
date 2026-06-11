@@ -947,7 +947,9 @@ def _collect_inline_rejections(
                 continue
             collector.record(section, RejectedItem(
                 item=item,
-                reason=str(item.get("reason") or ""),
+                # ADR「拒收行必带人读原因」在此集中守门：producer 漏给则合成非空兜底
+                # ——规则写一处，新 section 免疫同类缺陷（fix-coverage 处方，cmr S0 r3）。
+                reason=str(item.get("reason") or "") or f"拒收（{section} 未注明原因）",
                 category=str(item.get("category") or "legacy_inline"),
                 source=source,
             ), turn)
