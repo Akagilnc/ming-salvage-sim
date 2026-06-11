@@ -1325,12 +1325,18 @@ def apply_score_extraction(
             else:
                 rejected_name = str(item.get("name") or "").strip()
                 if rejected_name:
+                    approved = bool(item.get("approved", True))
                     applied_appointments.append({
                         "name": rejected_name,
                         "office": str(item.get("office") or ""),
                         "rejected": True,
-                        "reason": str(item.get("reason") or ""),
-                        "approved": bool(item.get("approved", True)),
+                        # reason=拒收原因（apply_appointment 不回传具体因，枚举已知拒因；
+                        # LLM 的任命理由另存 appointment_reason，不顶替拒因——cmr S0 r3）。
+                        "reason": ("未获准（approved=false）" if not approved
+                                   else "纳妃建档被拒（重名/已在册/字段不合）"),
+                        "category": "appointment_rejected",
+                        "appointment_reason": str(item.get("reason") or ""),
+                        "approved": approved,
                     })
 
     # 9) character_status_changes：LLM 判定的既有大臣去向（罢/狱/流/致仕/死）

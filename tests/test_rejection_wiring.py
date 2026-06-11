@@ -203,3 +203,42 @@ def test_noncancellable_cancel_rejection_carries_reason(game, monkeypatch, tmp_p
     rows = [r for r in _rejection_rows(db, turn) if r[0] == "issue_summary.cancels"]
     assert len(rows) == 1
     assert rows[0][1]  # reason 非空
+
+
+def test_rejected_appointment_carries_rejection_cause(game, monkeypatch, tmp_path):
+    """后宫纳妃被拒(重名/字段不合/未获准)的拒收行 reason=拒收原因,不是 LLM 任命
+    理由回显——与 r2 cancels 同类缺陷的另一 producer(cmr S0 r3,2/2)。"""
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+    existing = next(iter(content.characters))  # 重名 → apply_appointment 拒
+
+    run_settle(db, state, content, {
+        "appointments": [{"name": existing, "office": "贵妃", "office_type": "后宫",
+                          "reason": "椒房之选"}],
+    }, narrative="x", decree_text="y")
+
+    rows = [r for r in _rejection_rows(db, turn) if r[0] == "appointments"]
+    assert len(rows) == 1
+    assert rows[0][1] and rows[0][1] != "椒房之选"  # 拒收原因,非任命理由回显
+    assert rows[0][2] == "appointment_rejected"
+
+
+def test_bridge_synthesizes_reason_when_producer_omits(game):
+    """桥接层集中守 ADR「拒收行必带原因」不变式:任何 producer 漏给 reason,
+    落库前合成非空兜底——规则写一处,未来新 section 免疫同类缺陷(fix-coverage
+    drift 处方:集中化,cmr S0 r3)。"""
+    from ming_sim.applier import Provenance, RejectionCollector
+    from ming_sim.decree import _collect_inline_rejections
+
+    db, state, content = game
+    collector = RejectionCollector()
+    _collect_inline_rejections(collector, {
+        "some_section": [{"rejected": True}],  # producer 没给 reason
+    }, 1, Provenance.unknown)
+    collector.flush_to_db(db)
+    db.conn.commit()
+
+    row = db.conn.execute(
+        "SELECT reason FROM rejection_reports WHERE section='some_section'").fetchone()
+    assert row is not None and row[0]  # 非空兜底
