@@ -740,6 +740,10 @@ def atomic_and_reload(
             try:
                 reload_state_from_db(db, state, content=content, registry=registry)
             except BaseException as reload_exc:
+                # 标记 reload 失败（cmr S4 r1,2/2）：settle 的外层 except 凭此裸传播,
+                # 不包 SettlementAbort 不写错误包——内存仍脏时宣传「可重试」是误导,
+                # 写包也会基于脏态（b12a60e 原语义保真）。
+                exc._reload_failed = True  # type: ignore[attr-defined]
                 raise exc from reload_exc
         raise
 
@@ -889,6 +893,10 @@ def settle_with_delta(
                 collector=collector, source=source,
             )
     except BaseException as exc:
+        # reload 失败标记（atomic_and_reload 打的,cmr S4 r1）：内存仍脏——裸传播,
+        # 不写包不包 SettlementAbort（脏态写包/宣传可重试都是误导;b12a60e 原语义）。
+        if getattr(exc, "_reload_failed", False):
+            raise
         # 中断/降级类异常（KeyboardInterrupt/SystemExit/LLMUnavailable）不当代码异常处理：
         # 不写包、不二次包装，原样传播。SettlementAbort（理论上 settle 内不抛）也不二次包。
         if isinstance(exc, (KeyboardInterrupt, SystemExit, LLMUnavailable, SettlementAbort)):
