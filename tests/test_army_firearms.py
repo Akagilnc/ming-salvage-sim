@@ -186,16 +186,18 @@ def test_fresh_seed_wires_firearm_not_all_zero(content):
                 os.remove(f)
 
 
-def test_create_army_cannon_nonint_does_not_crash(game):
-    """建军时 cannon_equipment 给非 int(如"几门")→ 兜底 0 不抛崩(PR codex db.py:3028)。"""
+def test_create_army_cannon_nonint_rejected_not_crash(game):
+    """建军时 cannon_equipment 给非 int(如"几门")→ 逐项拒收留痕,不抛崩也不再
+    静默兜底 0（旧语义被 cmr S2 r1「在场即须合法」取代——静默 0=伪造军备）。"""
     db, state, _ = game
-    db.create_armies_from_extraction(state, [{
+    created = db.create_armies_from_extraction(state, [{
         "id": "cannon_nonint_test", "name": "炮非数测试", "owner_power": "ming",
         "manpower": 2000, "maintenance_per_turn": 1, "cannon_equipment": "几门",
     }], actor="测试")
-    val = db.conn.execute(
-        "SELECT cannon_equipment FROM armies WHERE id='cannon_nonint_test'").fetchone()[0]
-    assert val == 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM armies WHERE id='cannon_nonint_test'").fetchone()[0] == 0
+    rej = [c for c in created if c.get("rejected")]
+    assert len(rej) == 1 and rej[0]["category"] == "invalid_enum"
 
 
 def test_apply_army_delta_chinese_keys(game):
