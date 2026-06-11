@@ -345,6 +345,7 @@ def test_cleaner_passes_dirty_create_fields_through():
     assert by_key["t3"]["account"] == "省库"
     assert by_key["t4"]["direction"] == "斜着走"
     assert by_key["t5"]["init_value"] == 0
+    assert by_key["t5"]["display"] == ""  # cleaner 不预填 display,默认归 applier(r12)
 
 
 def test_create_rate_only_sibling_collision_rejected_not_abort(game):

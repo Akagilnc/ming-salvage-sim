@@ -798,7 +798,9 @@ def _clean_fiscal_creates(raw: object) -> List[Dict[str, object]]:
             except ValueError:
                 pass  # 坏串透传
         # 负值不再 max(0,·) 有损钳制——原样透传,applier 按脏值拒留痕（cmr S3 r3）。
-        display = str(item.get("display") or "").strip() or key.replace("_base", "")
+        # display 默认由 applier 统一派生（归一 stem,cmr S3 r12）——cleaner 不再
+        # 预填,否则引擎路抢先用 raw-key 去 _base 的旧式默认=两路两值。
+        display = str(item.get("display") or "").strip()
         cleaned.append({
             "key": key,
             "account": account,

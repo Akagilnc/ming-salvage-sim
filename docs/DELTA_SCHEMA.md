@@ -57,7 +57,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 | 字段 | 约束 | 说明 |
 |---|---|---|
 | `account` | **必须** `国库` 或 `内库` | 不在表内整条丢 |
-| `delta` | int（无损整数串 `"5"` 可）；0/缺省/null = 无操作不记拒；bool/float/坏串 → 整项拒收留痕（v0.8.x PR2-S3） | 0 静默放过 |
+| `delta` | **必须** int 且 **非零** | 0 直接丢 |
 | `category` | ≤40 字 | 自由文本 |
 | `reason` | ≤80 字 | 自由文本 |
 | `purpose` | 可选 `补饷` / `其它` | 补饷会跟 army arrears 联动 |
@@ -88,7 +88,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 | 字段 | 约束 |
 |---|---|
 | `key` | **必须**非空（key 在 `fiscal_config` 表里，如 `liao_xiang_rate`）|
-| `delta` | **必须** int 且 **非零** |
+| `delta` | int（无损整数串 `"5"` 可）；0/缺省/null = 无操作不记拒；bool/float/坏串 → 整项拒收留痕（v0.8.x PR2-S3）|
 | `reason` | ≤120 字 |
 
 ### `fiscal_creates` — 新立月度收支
@@ -98,7 +98,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 | `account` | **必须** `国库` 或 `内库` |
 | `direction` | **必须** `income` 或 `expense`（吃中文别名 `收`/`支`/`收入`/`支出`/`进账`/`出账`）|
 | `init_value` | 非负 int；缺省/null = 0；在场负值或非 int（bool/float/坏串）→ 整项拒收留痕（rejection_reports），不再静默 clamp（v0.8.x PR2-S3） |
-| `display` | 缺省=key 去 `_base` 后缀 |
+| `display` | 缺省=key 去 `_base`/`_rate` 后缀（归一 stem）|
 | `reason` | ≤120 字 |
 
 > 用于「新设关税岁额折月二十万」「新立宗藩裁革月省禄米三十万」这类**常设新增**。一次性进账（抄没/缴获）不属此类，归 `economy_moves`。
