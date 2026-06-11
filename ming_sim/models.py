@@ -6,9 +6,26 @@ CourtContext 的 state/db 注解用字符串前向引用，避免 import db.py�
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Dict, List
 
 from ming_sim.constants import ECONOMY_ACCOUNTS
+
+
+class TurnPhase(str, Enum):
+    """回合相位单一真源（原住 session.py；decree 也要用，session import decree 会循环，
+    故下沉至此，session 保持 re-export 兼容旧 import 路径）。"""
+
+    SUMMONING = "summoning"   # 召见中：召见、对话、大臣拟旨产 pending
+    REVIEWING = "reviewing"   # 核定草案：增删改、确认/驳回 pending、写诏书
+    AWAITING_DECISION = "awaiting_decision"  # HITL：simulator 出决策点，暂停等皇帝亲裁
+    SETTLING = "settling"     # ADR 0008 S4：pre_settle 前半段已提交，崩溃重进不重跑前半段（中间态）
+    ISSUED = "issued"         # 已颁诏：resolve 完成，待 end_turn
+
+
+# 「前半段已提交」相位集：pre_settle 守门/粘滞/skip 跳过判定的单一真源（cmr S4 r3 集中化）。
+# AWAITING 只可能在 pre_settle 事务提交后出现（HITL 暂停在 resolve 中段），语义同 settling。
+FRONT_HALF_DONE_PHASES = (TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value)
 
 
 @dataclass
@@ -225,7 +242,7 @@ class GameState:
     year: int = 1627
     period: int = 10
     turn: int = 1
-    turn_phase: str = "summoning"  # summoning | reviewing | issued —— 见 session.TurnPhase
+    turn_phase: str = "summoning"  # summoning | reviewing | awaiting_decision | settling | issued —— 见本模块 TurnPhase
     ended: bool = False  # 结局已触发：游戏终结，拒绝继续召见/结算
     ending_status: str = ""  # 结局类型（context.ENDING_*），ended=True 时有值
     metrics: Dict[str, int] = field(

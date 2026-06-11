@@ -11,8 +11,14 @@ import argparse
 import json
 import sys
 
+from ming_sim.applier import atomic
 from ming_sim.context import bind_content
-from ming_sim.decree import pre_settle, settle_with_delta
+from ming_sim.decree import (
+    persist_resolve_context,
+    pre_settle,
+    reload_state_from_db,
+    settle_with_delta,
+)
 import ming_sim.issues as issues_mod
 from ming_sim.issues import apply_score_extraction, validate_delta_shape as _validate_delta_shape
 from ming_sim.content import GameContent
@@ -81,7 +87,28 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
     extracted = _canonicalize_extraction(raw_delta)
     _validate_delta_shape(extracted)  # 崩前拦畸形/未知字段,避免 pre_settle 动 DB 后半落库(RT-1/P1b)
     before_turn = state.turn
-    pre_settle(state, db)
+    # 与真实流程同核同位（ADR 0004/0008，引擎也在 pre_settle 后才 persist）：settle 前把
+    # canonical delta 持久化为重跑真源——turn_extractions 在 settle 内部才写，崩在 settle
+    # 内时若无此行，财政已落账而 delta 只活在调用方易失上下文（违 P1）。位置必须在
+    # pre_settle 之后：ready=1 统一意为「前半段已提交，只剩 settle」，恢复入口直入 apply
+    # 不会跳过未跑的财政 tick（cmr S2+S3 r5）。settle 尾部 clear 自然清掉。
+    # 两步同事务（PR #90 R1 codex P2 同窗，与引擎 resolve_directives 同修）：崩在
+    # 「settling 已提交、context 未落」的窗口=违背「settling ⟹ context 可见」不变式。
+    try:
+        with atomic(db):
+            pre_settle(state, db)
+            persist_resolve_context(
+                db, before_turn, extracted,
+                decree_text=decree_text, narrative=narrative,
+                simulator_payload={}, secret_orders=[], relevant_memories=[],
+            )
+    except BaseException as exc:
+        if getattr(db.conn, "_atomic_depth", 0) == 0:
+            try:
+                reload_state_from_db(db, state, content=content, registry=registry)
+            except BaseException as reload_exc:
+                raise exc from reload_exc
+        raise
     return settle_with_delta(
         state,
         db,

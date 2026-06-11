@@ -188,3 +188,86 @@ def test_cli_dump_prints_regions(game, capsys):
     out = capsys.readouterr().out
     assert rc == 0
     assert "shanxi" in out
+
+
+def test_run_settle_persists_resolve_context_before_settle(game, monkeypatch, tmp_path):
+    """崩在 settle 内 → resolve_context 已持久化，delta 有 DB 真源可重放（cmr S2+S3 r3）。
+
+    driver 与真实流程同核同语义（ADR 0004/0008）：turn_extractions 在 settle 内部才写，
+    没有 persist 的话 pre_settle 已落账而 delta 只活在调用方易失上下文（违 P1）。
+    S7：settle 整段包 atomic，代码异常上抛后被包成 SettlementAbort(stage="settle")，
+    DB 整体回滚——但 resolve_context 在 settle 之前已 persist（其行随回滚消失？否：persist
+    在 pre_settle 之后、settle 的 atomic 之外单独 commit，故崩在 settle 内时 context 仍在）。
+    """
+    from ming_sim.exceptions import SettlementAbort
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    before_turn = state.turn
+
+    def _boom(*a, **k):
+        raise RuntimeError("simulated apply crash")
+    monkeypatch.setattr(driver, "apply_score_extraction", _boom)
+
+    raw = {"地区变化": {"shanxi": {"动乱": 3}}}
+    with pytest.raises(SettlementAbort) as ei:
+        run_settle(db, state, content, raw, narrative="邸报", decree_text="诏")
+    assert ei.value.stage == "settle"
+    assert isinstance(ei.value.__cause__, RuntimeError)
+
+    ctx = db.get_resolve_context(before_turn)
+    assert ctx is not None
+    # 顶层 key 已 canonical（地区变化→region_delta）；区域内层字段保持原样由 apply 解析。
+    assert ctx["extracted"] == {"region_delta": {"shanxi": {"动乱": 3}}}
+    db.clear_resolve_context(before_turn)
+
+
+def test_run_settle_clears_resolve_context_on_completion(game):
+    """正常完成后 context 已清（settle 内 clear 对 driver 同样生效）。"""
+    db, state, content = game
+    before_turn = state.turn
+    run_settle(db, state, content, {"地区变化": {"shanxi": {"动乱": 1}}})
+    assert db.get_resolve_context(before_turn) is None
+
+
+def test_crash_inside_pre_settle_leaves_no_ready_context(game, monkeypatch):
+    """崩在 pre_settle 内 → 不留 ready=1 行（cmr S2+S3 r5）。
+
+    ready=1 须统一意为「前半段已提交，只剩 settle」；persist 在 pre_settle 前的话，
+    崩在 pre_settle 内留下「ready=1 但财政未落」态，恢复入口直入 apply 会跳过
+    pre_settle=整月固定财政静默丢。
+    """
+    db, state, content = game
+    before_turn = state.turn
+
+    def _boom(*a, **k):
+        raise RuntimeError("simulated pre_settle crash")
+    monkeypatch.setattr(driver, "pre_settle", _boom)
+
+    with pytest.raises(RuntimeError, match="pre_settle crash"):
+        run_settle(db, state, content, {"地区变化": {"shanxi": {"动乱": 1}}})
+
+    assert db.get_resolve_context(before_turn) is None
+
+
+def test_persist_crash_rolls_back_pre_settle(game, monkeypatch):
+    """pre_settle 与 ready=1 持久化同事务（PR #90 R1 codex P2 同窗，driver 路）：
+    persist 崩 → 财政/相位整体回滚，不留「settling 而无 context 行」的盘。"""
+    db, state, content = game
+    turn = state.turn
+    before = db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)
+    ).fetchone()[0]
+
+    def _boom(*a, **k):
+        raise RuntimeError("persist crash")
+    monkeypatch.setattr(driver, "persist_resolve_context", _boom)
+
+    with pytest.raises(RuntimeError, match="persist crash"):
+        run_settle(db, state, content, {}, narrative="x", decree_text="y")
+
+    assert state.turn == turn
+    assert state.turn_phase == "summoning"
+    assert db.load_state().turn_phase == "summoning"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)
+    ).fetchone()[0] == before

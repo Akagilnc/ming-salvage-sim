@@ -13,7 +13,7 @@ from typing import List, Optional
 from ming_sim.constants import COURT_BREAK_COMMANDS, EXIT_COMMANDS, TURN_UNIT
 from ming_sim.assets import wrap
 from ming_sim.context import match_minister_from_text
-from ming_sim.exceptions import ExitGame
+from ming_sim.exceptions import ExitGame, SettlementAbort
 from ming_sim.models import Character, GameState
 from ming_sim.session import GameSession, TurnPhase
 from ming_sim.skills import print_all_skill_cards, print_skill_card, skill_display_name
@@ -293,12 +293,25 @@ def review_directives(session: GameSession) -> str:
                 continue
             return "skip"
         if lowered in {"back", "b", "返回", "继续召见"}:
+            from ming_sim.session import FRONT_HALF_DONE_PHASES
+            if session.state.turn_phase in FRONT_HALF_DONE_PHASES:
+                # 粘滞相位下 back 是静默 no-op，play_turn 会立刻把人弹回本菜单——
+                # 给一行提示，别让玩家以为按键失灵（ship-pre r6）。
+                print("\n上月结算未完成，无法继续召见；请输入 issue 续跑结算。")
+                continue
             session.back_to_summoning()
             return "back"
         if lowered in {"skills", "skill", "技能", "技能卡", "查看技能"}:
             print_all_skill_cards(session.db)
             continue
         if lowered in {"issue", "颁布", "颁布诏书", "发布", "拟诏"}:
+            from ming_sim.session import FRONT_HALF_DONE_PHASES
+            if session.state.turn_phase in FRONT_HALF_DONE_PHASES:
+                # 恢复态：上月结算未完成（崩溃/中止后），跳过拟诏直接续跑结算——
+                # resolve_turn 的恢复分流自己决定重放/重新推演/回放决策点
+                # （ship-pre r3：write_decree 在此态必拒，不开此口 CLI 永远够不到恢复入口）。
+                print("\n检测到上月结算未完成，续跑结算……")
+                return "issue"
             if pending:
                 print(f"尚有 {len(pending)} 道大臣拟旨待核定（confirm/reject），不能颁诏。")
                 continue
@@ -316,52 +329,58 @@ def review_directives(session: GameSession) -> str:
             if confirm in {"yes", "y", "颁布", "确认"}:
                 return "issue"
             continue
-        if lowered == "add" or raw == "新增":
-            text = input("指令内容：").strip()
-            if text:
-                dv = session.add_directive(text)
-                print(f"已新增草案 #{dv.id}。")
-            else:
-                print("指令为空，已取消。")
-            continue
-        parts = raw.split(maxsplit=1)
-        verb = parts[0].lower()
-        if len(parts) == 2 and parts[1].lstrip("#").isdigit():
-            target_id = int(parts[1].lstrip("#"))
-            if verb in {"confirm", "准"}:
-                if any(d.id == target_id for d in pending):
-                    session.confirm_directive(target_id)
-                    print(f"已核定 #{target_id}，入颁诏候选。")
+        # 变更器统一接 ValueError（FRONT_HALF_DONE 冻结期的指引消息）：打印后留在
+        # 审阅循环，不崩出进程（ship-pre r2，与 write_decree 既有 try 同款）。
+        try:
+            if lowered == "add" or raw == "新增":
+                text = input("指令内容：").strip()
+                if text:
+                    dv = session.add_directive(text)
+                    print(f"已新增草案 #{dv.id}。")
                 else:
-                    print("没有这条待核定拟旨。")
+                    print("指令为空，已取消。")
                 continue
-            if verb in {"reject", "驳"}:
-                if any(d.id == target_id for d in pending):
-                    session.reject_directive(target_id)
-                    print(f"已驳回 #{target_id}。")
-                else:
-                    print("没有这条待核定拟旨。")
-                continue
-            if verb in {"edit", "改", "修改"}:
-                if not any(d.id == target_id for d in drafts):
-                    print("没有这条草案。")
+            parts = raw.split(maxsplit=1)
+            verb = parts[0].lower()
+            if len(parts) == 2 and parts[1].lstrip("#").isdigit():
+                target_id = int(parts[1].lstrip("#"))
+                if verb in {"confirm", "准"}:
+                    if any(d.id == target_id for d in pending):
+                        session.confirm_directive(target_id)
+                        print(f"已核定 #{target_id}，入颁诏候选。")
+                    else:
+                        print("没有这条待核定拟旨。")
                     continue
-                new_text = input("新的指令内容：").strip()
-                if new_text:
-                    session.update_directive(target_id, new_text)
-                    print("已修改。")
-                continue
-            if verb in {"del", "delete", "删", "删除"}:
-                if any(d.id == target_id for d in drafts):
-                    session.delete_directive(target_id)
-                    print("已删除。")
-                elif any(d.id == target_id for d in pending):
-                    # pending 草案删掉 = 驳回大臣拟旨
-                    session.reject_directive(target_id)
-                    print(f"已驳回 #{target_id}（待核定拟旨）。")
-                else:
-                    print("没有这条草案。")
-                continue
+                if verb in {"reject", "驳"}:
+                    if any(d.id == target_id for d in pending):
+                        session.reject_directive(target_id)
+                        print(f"已驳回 #{target_id}。")
+                    else:
+                        print("没有这条待核定拟旨。")
+                    continue
+                if verb in {"edit", "改", "修改"}:
+                    if not any(d.id == target_id for d in drafts):
+                        print("没有这条草案。")
+                        continue
+                    new_text = input("新的指令内容：").strip()
+                    if new_text:
+                        session.update_directive(target_id, new_text)
+                        print("已修改。")
+                    continue
+                if verb in {"del", "delete", "删", "删除"}:
+                    if any(d.id == target_id for d in drafts):
+                        session.delete_directive(target_id)
+                        print("已删除。")
+                    elif any(d.id == target_id for d in pending):
+                        # pending 草案删掉 = 驳回大臣拟旨
+                        session.reject_directive(target_id)
+                        print(f"已驳回 #{target_id}（待核定拟旨）。")
+                    else:
+                        print("没有这条草案。")
+                    continue
+        except ValueError as error:
+            print(f"\n{error}")
+            continue
         print("未识别操作。")
 
 
@@ -403,22 +422,40 @@ def play_turn(session: GameSession) -> None:
         if action == "back":
             continue
         if action == "skip":
-            session.advance_without_decree()
+            try:
+                session.advance_without_decree()
+            except ValueError as error:
+                # FRONT_HALF_DONE 拒绝跳过（ADR 决定 6）：打印指引回会话循环，不崩出进程。
+                print(f"\n{error}")
+                continue
             return
         if action == "issue":
-            result = session.resolve_turn()
-            if result.awaiting:
-                # CLI 端暂未做交互式决策 UI（本期只接 Web）：每个决策点默认取首个预设选项续跑。
-                print("\n【月末重大抉择】（CLI 暂自动取首选项；交互式裁决见网页版）")
-                choices = []
-                for d in result.decisions:
-                    opts = d.get("options") or []
-                    first = opts[0] if opts else {}
-                    print(f"  · {d.get('title')} → {first.get('label', '（无）')}")
-                    choices.append(dict(first))
-                report = session.submit_decisions(choices)
-            else:
-                report = result.report
+            try:
+                result = session.resolve_turn()
+                if result.awaiting:
+                    # CLI 端暂未做交互式决策 UI（本期只接 Web）：每个决策点默认取首个预设选项续跑。
+                    print("\n【月末重大抉择】（CLI 暂自动取首选项；交互式裁决见网页版）")
+                    choices = []
+                    for d in result.decisions:
+                        opts = d.get("options") or []
+                        first = opts[0] if opts else {}
+                        print(f"  · {d.get('title')} → {first.get('label', '（无）')}")
+                        choices.append(dict(first))
+                    report = session.submit_decisions(choices)
+                else:
+                    report = result.report
+            except ValueError as error:
+                # 恢复态守门消息（pending 拟旨/草案等）：打印指引留在本回合交互循环
+                # （continue 与 skip 分支同语义，不 return 重进 play_turn 刷屏——
+                # PR #90 R1 gemini；ship-pre r5——issue 分支此前只接 SettlementAbort）。
+                print(f"\n{error}")
+                continue
+            except SettlementAbort as error:
+                # 结算中止（ADR 0008 决定 6/7）：打印玩家指引（含错误包路径）后留在
+                # 本回合交互循环——「可重试」要成立就不能崩出进程；重进时
+                # settling/awaiting 守门保证前半段不重跑。
+                print(f"\n{error}")
+                continue
             print(report)
             session.end_turn()
             return
