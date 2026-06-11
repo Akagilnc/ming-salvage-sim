@@ -4,6 +4,9 @@
 >
 > **追踪方式（2026-06-08 起，渐进迁移）**：主用 GitHub issue 记问题/讨论/状态；本文件**逐步舍弃**，只留「需要做、但不值得单开 issue 的小事」+ 已上 issue 项的指针索引。新发现的实质 bug/架构项直接开 issue，不再在此写长条目。
 
+## 🟠 ADR 0008 PR2 待办（PR1=#90 收敛时 defer 的全部事项）
+- 单一入口 → [issue #91](https://github.com/Akagilnc/ming-salvage-sim/issues/91)：RejectionCollector 接线 + 拒收可见性（ADR 声明的 PR2 主体）、coordinator 拆分 / atomic+reload helper / TurnPhase enum 统一 / error_pack 并发熵（PR #90 评审 defer）、issues.py:1028 docstring 债。**开 PR2 前先读它。**
+
 ## 🟠 PR #2 CMR Deferred（cross-model review 8 轮 5/5 concur 后 defer 的契约/架构项）
 - ~~D1 settlement 事务半落库 → [issue #3](https://github.com/Akagilnc/ming-salvage-sim/issues/3)~~ ✅ ADR 0008 PR1 (v0.8.0.0, 2026-06-11)：后半段单一事务 `applier.atomic` + 可恢复 resolve_context + 响亮中止/错误包（合并后手动关 issue，等用户验收）
 - ~~D2 城防炮 region.cannon 无 delta 写入路径 → [issue #4](https://github.com/Akagilnc/ming-salvage-sim/issues/4)~~ ✅ PR #16 (v0.5.1)
