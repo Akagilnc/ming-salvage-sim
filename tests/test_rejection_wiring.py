@@ -157,3 +157,49 @@ def test_nested_atomic_success_path_does_not_orphan_jsonl(game, monkeypatch, tmp
 
     assert _rejection_rows(db, turn) == []  # DB 行随外层回滚消失
     assert not (tmp_path / "error_packs" / "rejections.jsonl").exists()  # 镜像未先写
+
+
+def test_attempt_derivation_failure_does_not_abort_settlement(game, monkeypatch, tmp_path):
+    """attempt 推导(扫错误目录)是诊断侧路径——它自身故障(目录不可遍历等)不得
+    崩掉正常结算,回落 attempt=1(与 mirror 失败同向:副信道绝不拖垮主流程)
+    (cmr S0 r2 codex P2)。"""
+    import ming_sim.decree as decree_mod
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+
+    def _boom(t):
+        raise OSError("error_packs root not traversable")
+    monkeypatch.setattr(decree_mod, "_next_attempt", _boom)
+
+    run_settle(db, state, content, {
+        "人物状态变化": [{"name": "查无此人己", "status": "dead", "reason": "测试"}],
+    }, narrative="x", decree_text="y")  # 不抛=结算完成
+
+    rows = _rejection_rows(db, turn)
+    assert len(rows) == 1
+    assert rows[0][4] == 1  # attempt 回落 1
+
+
+def test_noncancellable_cancel_rejection_carries_reason(game, monkeypatch, tmp_path):
+    """不可撤国策被诏书撤销→转强推(皇威-2)的拒收记录必须带人读 reason
+    ——ADR 决定 5 拒收行含原因,空字符串行无法聚合分析(cmr S0 r2 codex P2)。"""
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+
+    row = db.conn.execute(
+        "SELECT id FROM issues WHERE status='active' LIMIT 1").fetchone()
+    assert row is not None, "probe.db 需至少一条 active issue"
+    issue_id = int(row[0])
+    db.conn.execute("UPDATE issues SET cancellable='no' WHERE id=?", (issue_id,))
+    db.conn.commit()
+
+    run_settle(db, state, content, {
+        "cancels": [{"issue_id": issue_id, "narrative": "测试撤销"}],
+    }, narrative="x", decree_text="y")
+
+    rows = [r for r in _rejection_rows(db, turn) if r[0] == "issue_summary.cancels"]
+    assert len(rows) == 1
+    assert rows[0][1]  # reason 非空

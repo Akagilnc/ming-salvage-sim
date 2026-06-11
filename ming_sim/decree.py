@@ -861,8 +861,14 @@ def settle_with_delta(
     # 拒收收集器与结算事务同生命周期（ADR 决定 5，PR2-S0）：apply 的拒收项在事务内
     # flush 进 rejection_reports（行随回滚消失），commit 成功后才镜像 jsonl（文件 append
     # 不可回滚），异常路 reset 清场。attempt 从错误目录推导——同一回合第 N 次重试的拒收
-    # 与第 N 个错误包同号，不从 DB 取（DB 计数随回滚重置即失真）。
-    collector = RejectionCollector(attempt=_next_attempt(before_turn))
+    # 与第 N 个错误包同号，不从 DB 取（DB 计数随回滚重置即失真）。推导扫的是诊断目录，
+    # 自身故障（不可遍历等）不得拖垮主流程：回落 attempt=1（与 mirror 失败同向，cmr S0 r2）。
+    try:
+        attempt = _next_attempt(before_turn)
+    except Exception as attempt_exc:
+        tlog(f"[rejection] attempt 推导失败，回落 1（诊断侧路径不拖垮结算）：{attempt_exc}")
+        attempt = 1
+    collector = RejectionCollector(attempt=attempt)
     try:
         with atomic(db):
             # 暂存动作 commit 在结算事务内最前（幂等，只处理 pending 行；正常路 pre_settle
