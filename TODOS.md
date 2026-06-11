@@ -4,6 +4,9 @@
 >
 > **追踪方式（2026-06-08 起，渐进迁移）**：主用 GitHub issue 记问题/讨论/状态；本文件**逐步舍弃**，只留「需要做、但不值得单开 issue 的小事」+ 已上 issue 项的指针索引。新发现的实质 bug/架构项直接开 issue，不再在此写长条目。
 
+## 🔵 E2E 验证总台 → [issue #92](https://github.com/Akagilnc/ming-salvage-sim/issues/92)
+- 已修待实玩验证的 issue 全挂那里（checklist + 验证剧本）；**merge 不关的 issue，merge 当时就往 #92 加条目 + 源 issue 回贴互链**。当前待验：#3（v0.8.0.0 结算事务，5 步剧本）+ CA3（大臣领命 prompt）。
+
 ## 🟠 ADR 0008 PR2 待办（PR1=#90 收敛时 defer 的全部事项）
 - 单一入口 → [issue #91](https://github.com/Akagilnc/ming-salvage-sim/issues/91)：RejectionCollector 接线 + 拒收可见性（ADR 声明的 PR2 主体）、coordinator 拆分 / atomic+reload helper / TurnPhase enum 统一 / error_pack 并发熵（PR #90 评审 defer）、issues.py:1028 docstring 债。**开 PR2 前先读它。**
 
