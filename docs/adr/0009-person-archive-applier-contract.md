@@ -30,7 +30,7 @@ Status: proposed（待评审；实现等 PR #90 合入 + M0 收口）
 `易主` 必填 `方式` ∈ {主动投敌, 被俘而降, **主动归附**} ∪ {不明}（「不明」为 alias 翻译专用值，新路径出现= `invalid_enum` 拒收；初稿曾设「被掳」，评审证明其无独立事实形态已删）。**主动归附覆盖敌→明方向**：招抚流寇/海寇归顺（郑芝龙类）、边将反正（刘兴祚类）——级联同构（翻 power_id 至 ming + 绑身名分「归附」，授职走后续任命），内嵌反应字段此向记**失方势力削弱与本朝派系反应**（仍由 LLM 给值、代码 clamp）。
 
 - 级联：翻 power_id + **解绑原势力名分** + **绑新名衔**（payload 可选，缺省「降臣」，身名分；主动归附方向=解绑敌方官职、绑「归附」）——人仍 active（在新主任事），不变式 1 不破。
-- **被掳而未降 ≠ 易主**：人仍是明臣，走 `处置(下狱→imprisoned, reason=陷虏)` 一类表达（洪承畴被俘到降隔了数月，两段是两个事件）。
+- **被掳而未降 ≠ 易主**：人仍是明臣，走 `处置(下狱→imprisoned, reason_code=陷虏)` 一类表达（洪承畴被俘到降隔了数月，两段是两个事件）。
 - **派系反噬内嵌于易主条目**（新路径必填，缺=`missing_field` 拒收；alias 翻译项缺省为**零值反噬 + `legacy_partial` 注记**——保重放不保丰度）：反噬数值由 LLM 给、代码 clamp，由本管线的派系连动原语落库——**不依赖兄弟 section 条目**，C2 适配器签名（`apply(items, ctx)` 无跨段视野）因此无需扩展。「引擎强制结构、数值 LLM 给、代码 clamp」与 #45/#46 同族，治 B1（阉党 leverage 不联动）类。
 
 ## 决定 4：处置无回滚，出狱永远是新动作
@@ -58,7 +58,7 @@ applier 在 C2 事务内写 DB 并**同步写内存 `content.characters`**——
 
 ## 决定 7：写路径全收口 + 围栏
 
-月末 delta / 对话闸门 / 国策结案效果 / web 直写 / 杂项散点**全部过单一入口**；只豁免开局 seed 与旧档迁移（豁免路径不产 RejectedItem，无需扩 Provenance 枚举，与 PR2 零协调）。来源映射：闸门动作=`player_decree`、结案效果=`system_simulation`、月末 delta=按来源灌注。**两个常驻程序写点同样收口**：后宫候选创建（present_consort_candidates）=管线内专用创建入口（仅产 candidate，决定 8「人物必须已存在」的唯一结构性例外）；月初历史卒/历史登场 tick = `处置(→dead, reason=历史卒)` / `处置(→active, reason=登场)`，source=`system_simulation`（处置族为此补具名「卒」）。
+月末 delta / 对话闸门 / 国策结案效果 / web 直写 / 杂项散点**全部过单一入口**；只豁免开局 seed 与旧档迁移（豁免路径不产 RejectedItem，无需扩 Provenance 枚举，与 PR2 零协调）。来源映射：闸门动作=`player_decree`、结案效果=`system_simulation`、月末 delta=按来源灌注。**两个常驻程序写点同样收口**：后宫候选创建（present_consort_candidates）=管线内专用创建入口（仅产 candidate，决定 8「人物必须已存在」的唯一结构性例外）；月初历史卒/历史登场 tick = `处置(→dead, reason_code=历史卒)` / `处置(→active, reason_code=登场)`，source=`system_simulation`（处置族为此补具名「卒」）。
 
 **围栏**：静态扫描（applier 模块之外对 `characters` 的 SQL 直写 / `content.characters` 字段直改即红，allowlist=applier 本体与豁免路径）为 best-effort 第一道，**契约测试为互补**（每条写路径的端到端断言）。深模块靠围栏不靠自觉：否则第 36 个写点明年照样长出来。
 
@@ -79,7 +79,7 @@ applier 在 C2 事务内写 DB 并**同步写内存 `content.characters`**——
 
 status 枚举 = models.py 七值 + 实存的 `candidate`（registry.py:375 秀女候选已在产线使用，**收编而非视而不见**）：
 
-`active` 在事（在朝任职、听用候铨、外臣在其位）/ **`candidate` 后宫候选**（专属态：入边=候选创建路径，出边=`册封`→active 或 落选`处置`→offstage+reason）/ `offstage` 居家（赋闲、出宫+reason、丁忧+reason、自请归里）/ `dismissed` 获罪罢斥（削籍闲住，起用须昭雪）/ `imprisoned` 在押（含陷虏 reason）/ `exiled` 流放 / `retired` 致仕 / `dead` 殁。
+`active` 在事（在朝任职、听用候铨、外臣在其位）/ **`candidate` 后宫候选**（专属态：入边=候选创建路径，出边=`册封`→active 或 落选`处置`→offstage+reason_code）/ `offstage` 居家（赋闲、出宫/丁忧/自请等以 reason_code 区分）/ `dismissed` 获罪罢斥（削籍闲住，起用须昭雪）/ `imprisoned` 在押（含 reason_code=陷虏）/ `exiled` 流放 / `retired` 致仕 / `dead` 殁。
 
 - **不变式 1（两条单向）**：①**职名分**非空 ⟹ `status = active`（占坑必在事；candidate 只持身名分「待选」——位号是册封那一刻才绑的职名分，候选不占坑；逆否：离事者职名分必清）；②`status ∈ {active, candidate}` ⟹ 名分非空（职或身皆可——史可法以「诸生」身名分在册即合法）。**身名分可伴随任意在世 status**：seed 里李自成「驿卒」+offstage（册中候场，决定 8 依赖的形态）合法。由原语保证，围栏断言（#11/#12/钱龙锡 = 违例样本）。
 - **不变式 3**：`transit_to` 非空 ⟹ `status=active`（决定 5），由「迁出 active 即清 transit_to」原语保证，围栏断言。
@@ -91,7 +91,7 @@ status 枚举 = models.py 七值 + 实存的 `candidate`（registry.py:375 秀�
 
 「不在任上」不是一个状态，是一张谱系；「启用被错误排挤的有才之士」是核心玩趣，机制必须让池子**可发现、有来历、起用有政治分量**。
 
-- **被顶替（无过错）→ 听用候铨**：active + 身名分「听用候铨」。人留在可用人才池，**再任命走「身名分→职名分=任命」边界（决定 1），零摩擦、无政治标记派生**。⚠️ **人才池成员资格锚在身名分「听用候铨」+ `reason_code=被顶替`，不锚 office_type**——现网 `待铨` office_type 同时是分类失败 fallback（infer_office_type_from_office 表查不中即落「待铨」，session.py:207 缺省同值），在职官员可能被 fallback 误标；实现期数据清洗加一项：审计现存 office_type=待铨 行。
+- **被顶替（无过错）→ 听用候铨**：active + 身名分「听用候铨」。人留在可用人才池，**再任命走「身名分→职名分=任命」边界（决定 1），零摩擦、无政治标记派生**。⚠️ **人才池成员资格锚在身名分「听用候铨」+ `reason_code=被顶替`，不锚 office_type**——现网 `待铨` office_type 同时是分类失败 fallback（infer_office_type_from_office 表查不中即落「待铨」，session.py:207 缺省同值），在职官员可能被 fallback 误标；实现期数据清洗加一项：审计现存 office_type=待铨 的数据行。
 - **`status_reason` 半结构化**：新增机读 `reason_code`（自由文本照旧并存）。字段关系表：
 
   | 字段 | 性质 | 读者 |
@@ -107,7 +107,7 @@ status 枚举 = models.py 七值 + 实存的 `candidate`（registry.py:375 秀�
 
 **总则（2026-06-11 拍）：旧有/上游机制能用不是坏事，但若成为改进的绊脚石，果断踢开——不为将就吞技术债。** alias 的存在理由只有「重放正确性」（ADR 0008 ready=1 重试真源 + 历史 delta 文件），不是对旧 key 的敬意；哪天碍事，一次性迁移脚本洗旧数据 + 删 alias，不背永久房租。新管线设计永远不为旧 key 语义弯腰。
 
-- **状态感知翻译**住 sanitize 层（`TOP_LEVEL_ALIASES` 入口，翻译时可读当前状态）：`office_changes` → 目标现持职名分则译**调任**、否则译**任命**（兑现 DELTA_SCHEMA 旧契约「任命/调任/升迁/改授」的两义，逐项保真）；`character_status_changes` → 译**处置**；其中 `status=active` 项**译为拒收**（`invalid_enum` + legacy 注记）——实测旧管线两个消费路径的 valid_status 均不含 active：月末路径历史行为即逐项拒收（issues.py:1332），结案路径历史行为为响亮中止（issues.py:694）；两者均从未把 active 落为真实迁移，译为拒收不改写已落库历史（结案通道由中止改逐项拒收=C2 拒收语义的有意收编）；同理，**月末 delta 通道的项打 `legacy_gate` 标记**（通道知识在翻译调用点——翻月末 delta 还是结案效果由调用方天然知道，无需 C2 ApplyContext 扩展），**闸门在条目执行位求值**：执行彼刻目标 status≠active → 拒收（legacy 注记），逐项复刻旧管线 mid-sequence 语义（issues.py:1352）；**结案效果通道不打此标记**——旧结案路径（issues.py:694）历史上无此闸，「下狱→赐死」类迁移在彼处合法落库过，加闸反而改写历史；`character_power_changes` → **易主(方式=不明)**；`appointments` → **字段感知**：office_type=后宫 → 册封，其余 → 按 office_changes 同规译任命/调任（复刻旧管线 spillover 行为，issues.py:1292——历史上朝臣项确实经此路落库）。
+- **状态感知翻译**住 sanitize 层（`TOP_LEVEL_ALIASES` 入口，翻译时可读当前状态）：`office_changes` → 目标现持职名分则译**调任**、否则译**任命**（兑现 DELTA_SCHEMA 旧契约「任命/调任/升迁/改授」的两义，逐项保真）；`character_status_changes` → 译**处置**；其中 `status=active` 项**译为拒收**（`invalid_enum` + legacy 注记）——实测旧管线两个消费路径的 valid_status 均不含 active：月末路径历史行为即逐项拒收（issues.py:1332），结案路径历史行为为响亮中止（issues.py:694）；两者均从未把 active 落为真实迁移，译为拒收不改写已落库历史（结案通道由中止改逐项拒收=C2 拒收语义的有意收编）；同理，**月末 delta 通道的项打 `legacy_gate` 标记**（通道知识在翻译调用点——翻月末 delta 还是结案效果由调用方天然知道，无需 C2 ApplyContext 扩展），**闸门在条目执行位求值**：执行彼刻**目标人物的当前 status**≠active → 拒收（legacy 注记），逐项复刻旧管线 mid-sequence 语义（issues.py:1352；注意区分——这里校验的是人物彼刻状态，不是 payload 里的迁往 status）；**结案效果通道不打此标记**——旧结案路径（issues.py:694）历史上无此闸，「下狱→赐死」类迁移在彼处合法落库过，加闸反而改写历史；`character_power_changes` → **易主(方式=不明)**；`appointments` → **字段感知**：office_type=后宫 → 册封，其余 → 按 office_changes 同规译任命/调任（复刻旧管线 spillover 行为，issues.py:1292——历史上朝臣项确实经此路落库）。
 - **四旧 key 译项按旧管线执行序拼入数组**：appointments(后宫→册封) → character_status_changes → character_power_changes → office_changes → **appointments 朝臣 spillover 译项（任命/调任）殿后**——复刻旧管线 `office_change_items = 本体 + spillover` 的实际执行位（issues.py:1292 收集、:1391 殿后执行），同 delta 多 key 触及同一人时末态与旧管线一致。
 - **逐 key 翻译流程表**（实现者照表写，不必从散文重推）：
 
@@ -115,7 +115,7 @@ status 枚举 = models.py 七值 + 实存的 `candidate`（registry.py:375 秀�
   |---|---|---|---|
   | appointments（后宫项） | 册封 | — | candidate 前置 |
   | appointments（朝臣项） | 任命/调任 初选（声明归一兜底纠偏） | spillover：**殿后拼入** | — |
-  | character_status_changes | 处置（status=active → 直接拒收 invalid_enum+legacy） | 月末通道打 `legacy_gate`；结案通道不打 | `legacy_gate` 项执行彼刻目标 status≠active → 拒收 |
+  | character_status_changes | 处置（payload status=active → 直接拒收 invalid_enum+legacy） | 月末通道打 `legacy_gate`；结案通道不打 | `legacy_gate` 项执行彼刻**目标人物当前** status≠active → 拒收 |
   | character_power_changes | 易主(方式=不明, 反噬=零值+legacy_partial) | — | — |
   | office_changes | 任命/调任 初选（声明归一兜底纠偏） | — | — |
 
@@ -134,14 +134,14 @@ status 枚举 = models.py 七值 + 实存的 `candidate`（registry.py:375 秀�
 | S4 | 夺情（杨嗣昌丁忧夺情入阁） | 夺情起复杨嗣昌 | `任命` + 派生`处置(夺情)`（reason_code=丁忧 优先于 offstage 通则） | 派生优先级规则 |
 | S5 | 被顶替（任命新尚书，旧尚书无过错离任） | 任命毕自严为户部尚书 | `任命` + 后果派生「顶替离任→听用候铨」 | 派生在 applied 中；旧人进人才池 |
 | S6 | 主动投敌（孔有德携炮降后金） | 孔有德举军降虏 | `易主(方式=主动投敌, 反噬内嵌)` | 缺方式/缺反噬=拒收；反噬由本管线落库 |
-| S7 | 被俘未降（洪承畴被俘初期） | 洪承畴兵败被执 | `处置(下狱, reason=陷虏)`——**不是易主** | 数月后真降才是 S6；陷虏期间对其`任命`=拒收（放归不可推导，防「系统传送回明营」） |
+| S7 | 被俘未降（洪承畴被俘初期） | 洪承畴兵败被执 | `处置(下狱, reason_code=陷虏)`——**不是易主** | 数月后真降才是 S6；陷虏期间对其`任命`=拒收（放归不可推导，防「系统传送回明营」） |
 | S8 | 官降三级 | 放出某官贬三级任用 | `处置(放归→offstage)`+`任命(低阶)`+派生`起复`，**三条** | 声明项各自派生；组合按序 |
-| S9 | 出宫（客氏案 #11） | 客氏出宫居家 | `处置(→offstage, reason=出宫)` + 名分解绑 | 不变式 1；#11 了结 |
+| S9 | 出宫（客氏案 #11） | 客氏出宫居家 | `处置(→offstage, reason_code=出宫)` + 名分解绑 | 不变式 1；#11 了结 |
 | S10 | 追谥（毛文龙身后） | 追谥毛文龙 | **不进本管线**——metrics/派系/叙事通道 | 不变式 2′；dead 对七动作全拒收 |
 | S11 | 赴任在途（袁崇焕 #86） | 袁崇焕今日启程赴辽 | `行止(启程, transit_to=辽东)` | 去向落结构化字段；盘面 TSV 可见 |
 | S12 | 幻觉人事（sim 编造任命） | 任命〔不存在者〕为兵部尚书 | `hallucinated_id` 拒收 | 响亮拒收进 rejection_reports |
 | S13 | 任命死人 | 任命毛文龙（已殁）镇东江 | `invalid_transition` 拒收 | 档二；重名/幻觉必须响 |
-| S14 | 选妃册封（candidate 出边） | 册封某氏为妃 | `册封`（前置=candidate→active）；落选=`处置(→offstage, reason=落选)` | candidate 状态机闭合 |
+| S14 | 选妃册封（candidate 出边） | 册封某氏为妃 | `册封`（前置=candidate→active）；落选=`处置(→offstage, reason_code=落选)` | candidate 状态机闭合 |
 | S15 | 招抚归明（郑芝龙受抚） | 招安郑芝龙，授游击 | `易主(方式=主动归附)`+`任命(游击)`，按序两条 | 敌→明方向合法；反应字段记失方削弱 |
 
 ## Consequences
