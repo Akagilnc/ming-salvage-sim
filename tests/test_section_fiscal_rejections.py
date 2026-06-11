@@ -477,6 +477,8 @@ def test_sanitizer_passes_empty_key_items_through():
     )
 
     assert _clean_fiscal_changes([{"key": "", "delta": 5}]) != []
+    assert _clean_fiscal_changes([{"key": ""}]) != []  # 空 key+无 delta 退化角(r8)
+    assert _clean_fiscal_changes([{"key": "", "delta": 0}]) != []  # 空 key+真0 退化角(r8)
     assert _clean_fiscal_creates([{"key": "", "account": "国库",
                                    "direction": "income", "init_value": 1}]) != []
     assert _clean_fiscal_removes([{"key": "", "reason": "x"}]) != []

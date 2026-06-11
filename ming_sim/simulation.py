@@ -736,8 +736,9 @@ def _clean_fiscal_changes(raw: object) -> List[Dict[str, object]]:
         if not isinstance(item, dict):
             continue
         key = str(item.get("key") or "").strip()
-        if "delta" not in item:
-            continue  # 无 delta = 无操作项,照旧滤（applier 对 delta 缺省同语义）
+        if key and "delta" not in item:
+            continue  # 非空 key 且无 delta = 无操作项,照旧滤（applier 对 delta 缺省同语义）;
+            # 空 key 的垃圾项无论有无 delta 都透传 applier 记拒（cmr S3 r8 退化角）。
         # 空 key 不再静默滤——透传 applier 记拒（cmr S3 r7:driver 路有痕、引擎路无痕=同输入两判）。
         # cleaner 只做无损规范化,不吞脏（cmr S3 r1,2/2:此处曾 coerce 3.7→3/True→1、
         # 静默丢脏串——引擎真路被预消毒,applier 的拒收契约对 fiscal 失明）。
@@ -748,8 +749,8 @@ def _clean_fiscal_changes(raw: object) -> List[Dict[str, object]]:
                 delta = int(delta.strip())
             except ValueError:
                 pass  # 坏串透传
-        if isinstance(delta, int) and not isinstance(delta, bool) and delta == 0:
-            continue  # 真 int 0 = 无操作,照旧滤掉
+        if key and isinstance(delta, int) and not isinstance(delta, bool) and delta == 0:
+            continue  # 非空 key 的真 int 0 = 无操作,照旧滤;空 key 垃圾项透传记拒（cmr S3 r8）
         cleaned.append({
             "key": key,
             "delta": delta,
