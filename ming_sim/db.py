@@ -2237,7 +2237,19 @@ class GameDB:
                     })
                     continue
                 old_value = row[field]
-                delta = int(value)
+                try:
+                    # LLM 叶子值脏（null/"三成"/小数串）= 脏数据逐项拒，不崩整批
+                    # （validate_delta_shape 只验容器、容忍 null 叶——cmr S1 r1，
+                    # 同 secret_order order_id 非整数先例）。
+                    delta = int(value)
+                except (TypeError, ValueError):
+                    changes.append({
+                        "power": row["name"], "field": str(raw_field),
+                        "rejected": True, "category": "invalid_enum",
+                        "reason": f"power_updates '{raw_field}' 值非整数：{value!r}",
+                        "item": {"power_id": power_id, "field": str(raw_field), "value": value},
+                    })
+                    continue
                 new_value = max(0, min(100, int(old_value) + delta))
                 actual_delta = new_value - int(old_value)
                 if actual_delta == 0:
