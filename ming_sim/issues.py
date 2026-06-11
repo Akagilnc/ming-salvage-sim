@@ -1307,7 +1307,7 @@ def apply_score_extraction(
                 "category": "invalid_enum", "item": create,
             })
             continue
-        # init_value 缺省 0 合法；在场脏值（null/字符串/float/bool）显式拒，不静默归 0。
+        # init_value 缺省/null = 0 合法；在场脏值（字符串/float/bool/负值）显式拒，不静默归 0。
         # bool 是 int 子类，先于 int 判（对称 S1/S2）。
         init_raw = create.get("init_value")
         if init_raw is None:

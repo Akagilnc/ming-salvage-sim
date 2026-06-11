@@ -446,3 +446,24 @@ def test_double_suffix_key_rejected_no_phantom(game, bad_key):
     assert db.conn.execute(
         "SELECT COUNT(*) FROM fiscal_config WHERE key LIKE ?", (bad_key + "%",)
     ).fetchone()[0] == 0  # 零幻影行
+
+
+def test_double_suffix_remove_rejected_not_destructive(game):
+    """remove 路对多重后缀垃圾 key(辽饷_base_base)必须拒收——循环剥后缀会把它
+    归一成 辽饷 命中真行,垃圾 key 触发不可逆删科目+清零各省辽饷
+    (cmr S3 r5 claude medium:与 create 路同形输入须同判)。"""
+    db, state, content = game
+    turn = state.turn
+    before = db.conn.execute(
+        "SELECT COUNT(*) FROM fiscal_config WHERE key LIKE '辽饷%'").fetchone()[0]
+    assert before > 0  # 前提:辽饷在册
+
+    run_settle(db, state, content, {
+        "fiscal_removes": [{"key": "辽饷_base_base", "reason": "垃圾key"}],
+    }, narrative="x", decree_text="y")
+
+    rows = [r for r in _rejection_rows(db, turn) if r[0] == "fiscal_removes"]
+    assert len(rows) == 1
+    after = db.conn.execute(
+        "SELECT COUNT(*) FROM fiscal_config WHERE key LIKE '辽饷%'").fetchone()[0]
+    assert after == before  # 真科目毫发无损
