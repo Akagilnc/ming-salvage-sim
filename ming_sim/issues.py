@@ -1383,6 +1383,15 @@ def apply_score_extraction(
                 "category": "invalid_enum", "item": change,
             })
             continue
+        if db._stem_of(key) == "":
+            # 多重后缀垃圾 key 与 create/remove 同口径 invalid_enum——标 missing_ref
+            # 「不存在」会让机读聚合失真（ship-pre r5,三段补齐）。
+            applied_fiscal.append({
+                "rejected": True,
+                "reason": f"调率 key「{key}」非法（多重 _base/_rate 后缀）。",
+                "category": "invalid_enum", "item": change,
+            })
+            continue
         delta_raw = _norm_int_leaf(change.get("delta"))  # 无损整数串归一（cmr S3 r10）
         # delta 缺省 = 无操作,静默放过不记拒（免得每月刷无意义拒收行）。
         if delta_raw is None:

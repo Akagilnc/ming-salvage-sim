@@ -565,8 +565,10 @@ def test_garbage_key_category_consistent_across_sections(game):
         "fiscal_creates": [{"key": "辽饷_base_base", "account": "国库",
                             "direction": "income", "init_value": 1}],
         "fiscal_removes": [{"key": "盐税_rate_rate", "reason": "垃圾"}],
+        "fiscal_changes": [{"key": "商税_base_base", "delta": 3}],
     }, narrative="x", decree_text="y")
 
     cats = {r[0]: r[2] for r in _rejection_rows(db, turn)}
     assert cats.get("fiscal_creates") == "invalid_enum"
     assert cats.get("fiscal_removes") == "invalid_enum"  # 非法 key ≠ 不存在
+    assert cats.get("fiscal_changes") == "invalid_enum"  # 三段同口径(ship-pre r5)
