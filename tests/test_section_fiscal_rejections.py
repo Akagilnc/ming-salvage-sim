@@ -482,3 +482,36 @@ def test_sanitizer_passes_empty_key_items_through():
     assert _clean_fiscal_creates([{"key": "", "account": "国库",
                                    "direction": "income", "init_value": 1}]) != []
     assert _clean_fiscal_removes([{"key": "", "reason": "x"}]) != []
+
+
+def test_chinese_direction_alias_accepted_on_driver_path(game):
+    """direction='收' 经 driver 路也要同判落库——同义词归一须在唯一守门人(applier)
+    处做,放在 driver 不经过的 cleaner 层 = 同输入两判(cmr S3 r9 claude;
+    DELTA_SCHEMA 明言吃中文别名)。"""
+    db, state, content = game
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "fiscal_creates": [{"key": "别名测试_base", "account": "国库",
+                            "direction": "收", "init_value": 5}],
+    }, narrative="x", decree_text="y")
+
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM fiscal_config WHERE key='别名测试_base'").fetchone()[0] == 1
+    rows = [r for r in _rejection_rows(db, turn) if r[0] == "fiscal_creates"]
+    assert rows == []
+
+
+def test_whitespace_only_key_rejected_on_driver_path(game):
+    """空白 key('  ')在 applier 不 strip 时两路两判——applier 守门处统一 strip
+    (cmr S3 r9 codex)。"""
+    db, state, content = game
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "fiscal_changes": [{"key": "  ", "delta": 5}],
+    }, narrative="x", decree_text="y")
+
+    rows = [r for r in _rejection_rows(db, turn) if r[0] == "fiscal_changes"]
+    assert len(rows) == 1
+    assert rows[0][2] == "invalid_enum"  # 按空 key 拒,而非未知 key missing_ref
