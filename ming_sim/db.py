@@ -25,6 +25,24 @@ from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
 from ming_sim.models import Event, GameState, monthly_amount, period_label
 from ming_sim.token_stats import tlog
 
+# 落库字段白名单（模块级常量化——避免在 apply_region_deltas / apply_army_deltas /
+# create_armies_from_extraction 的内循环每项重算同一常量集合，cmr PR2 R1 gemini perf）。
+_REGION_DIRECT_TUPLE = REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + REGION_TEXT_FIELDS
+_REGION_DIRECT_SET = frozenset(_REGION_DIRECT_TUPLE)
+_REGION_NUMERIC_SET = frozenset(REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS)
+_ARMY_VALID_SET = frozenset(ARMY_SCORE_FIELDS + ARMY_QUANTITY_FIELDS + ARMY_TEXT_FIELDS)
+
+
+def _new_army_historically_applied(it: dict) -> bool:
+    """建军必填字段：旧代码 int() 两步都成功（含 bool/float 的静默套用）= 历史可活
+    （cmr S2 r4 整项谓词；模块级——避免每个 new_armies 项重定义，PR2 R1 gemini perf）。"""
+    try:
+        int(it["manpower"])
+        int(it["maintenance_per_turn"])
+        return True
+    except (KeyError, TypeError, ValueError):
+        return False
+
 
 def normalize_office(office: str) -> str:
     """官职多职统一为半角逗号分隔：旧「兼/兼掌/兼署」与全角「，」「、」一律归一逗号，
@@ -2590,14 +2608,13 @@ class GameDB:
 
                 # ADR 0008 决定 1:LLM 引用非法地区字段 = 逐项拒收留痕(invalid_enum),
                 # 不再 raise 崩整月;同地区的合法字段照落,坏一项不带走整批。
-                all_direct = REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + REGION_TEXT_FIELDS
-                if field not in all_direct and field not in FISCAL_SCORE_FIELDS:
+                if field not in _REGION_DIRECT_SET and field not in FISCAL_SCORE_FIELDS:
                     changes.append({
                         "region": row["name"], "field": str(raw_field),
                         "rejected": True, "category": "invalid_enum",
                         "reason": (
                             f"region_delta 引用非法地区字段 '{raw_field}'（地区 '{region_id}'）；"
-                            f"合法字段：{all_direct + FISCAL_SCORE_FIELDS}"
+                            f"合法字段：{_REGION_DIRECT_TUPLE + FISCAL_SCORE_FIELDS}"
                         ),
                         "item": {"region_id": region_id, "field": str(raw_field), "value": value},
                     })
@@ -2607,7 +2624,7 @@ class GameDB:
                 # (null/字符串/float/bool)= LLM 脏数据,逐项拒收(invalid_enum),不让
                 # 裸 int(value) 崩整月;bool 是 int 子类、float 静默截断,都非整数 delta
                 # 须显式拒(对称 S1)。text 字段走 str(),不在此判。
-                if field in REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS or field in FISCAL_SCORE_FIELDS:
+                if field in _REGION_NUMERIC_SET or field in FISCAL_SCORE_FIELDS:
                     try:
                         if isinstance(value, bool) or isinstance(value, float):
                             raise ValueError("非整数 delta")
@@ -3026,12 +3043,11 @@ class GameDB:
                 })
                 continue
             reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()[:80]
-            _valid_army_fields = set(ARMY_SCORE_FIELDS + ARMY_QUANTITY_FIELDS + ARMY_TEXT_FIELDS)
             for raw_field, value in raw_changes.items():
                 field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
                 if field == "reason":
                     continue
-                if field not in _valid_army_fields:
+                if field not in _ARMY_VALID_SET:
                     # ADR 0008 决定 1:LLM 引用非法军队字段 = 逐项拒收留痕(invalid_enum),
                     # 不再 print 静默跳;同军队的合法字段照落,坏一项不带走整批。
                     changes.append({
@@ -3121,7 +3137,7 @@ class GameDB:
                     stored_new = text_value
                     log_delta = None
                 else:
-                    # field 已过 _valid_army_fields 校验，能落到此处=合法字段未被任一
+                    # field 已过 _ARMY_VALID_SET 校验，能落到此处=合法字段未被任一
                     # 分支处理=代码漏接(往 ARMY_*_FIELDS 加了字段却忘了 dispatch)。
                     # 按 ADR 0008 决定 1：代码 bug 响亮上抛触发回滚，不静默丢一个合法 delta。
                     raise RuntimeError(f"army_delta 合法字段 '{field}' 无落库分支（代码漏接）")
@@ -3243,14 +3259,6 @@ class GameDB:
                 )
                 created.append({"army": existing["name"], "manpower_added": delta, "merged_into_existing": True})
                 continue
-            def _historically_applied(it) -> bool:
-                """旧代码 int() 两步都成功（含 bool/float 的静默套用）= 历史可活。"""
-                try:
-                    int(it["manpower"])
-                    int(it["maintenance_per_turn"])
-                    return True
-                except (KeyError, TypeError, ValueError):
-                    return False
             # 必填字段：缺/非法 = LLM 脏数据,逐项拒收留痕(invalid_enum),不再 raise
             # 崩整月(ADR 0008 决定 1);同信封好军照建。bool/float 显式拒(对称 S1)。
             try:
@@ -3270,7 +3278,7 @@ class GameDB:
                     # 旧代码 int(item["manpower"])+int(item["maintenance_per_turn"])
                     # 两步都成功才「静默套用=可活」,任一步缺键/TypeError/ValueError
                     # 即历史 raise → 保持严格。
-                    "issue_strict": not _historically_applied(item),
+                    "issue_strict": not _new_army_historically_applied(item),
                 })
                 continue
             # 可选数值字段「在场即须合法」（cmr S2 r1 codex P1）：在场脏值静默走默认
@@ -3278,9 +3286,8 @@ class GameDB:
             # 用 null 表「无」,validate_delta_shape 亦容忍 null 叶）；其余非整拒该项。
             # 守门集从字段表派生（cmr S2 r2,2/2:硬列漏 equipment/mobility/loyalty）
             # ——ARMY_SCORE_FIELDS 全量已含 arrears;字段表变守门自动跟。
-            _optional_numeric = tuple(ARMY_SCORE_FIELDS)
             _dirty_field = None
-            for _f in _optional_numeric:
+            for _f in ARMY_SCORE_FIELDS:
                 _v = item.get(_f)
                 if _f in item and _v is not None:
                     if isinstance(_v, (bool, float)):
