@@ -1027,7 +1027,16 @@ def _settle_after_extract_body(
     touched_ids = set()
     for adv in applied.get("issue_summary", {}).get("advances", []) or []:
         touched_ids.add(int(adv.get("issue_id") or 0))
-    apply_issue_inertia_and_ongoing(db, state, touched_ids=touched_ids)
+    inertia_rejections = apply_issue_inertia_and_ongoing(db, state, touched_ids=touched_ids)
+    if collector is not None and inertia_rejections:
+        # 桥接跑在 inertia 之前——自然结案路的容忍拒收在此补收并再 flush（仍在事务内,
+        # flush 增量安全;只 tlog 等于这条路脱离 rejection_reports 管线,ship-pre r1）。
+        # 注:fallback 推进路(resolve_directives 降级分支)无收集器,其 inertia 容忍项
+        # 维持 tlog-only(该路本就跳过结算管线)。
+        _collect_inline_rejections(
+            collector, {"issue_inertia": {"entity_rejections": inertia_rejections}},
+            before_turn, source)
+        collector.flush_to_db(db)
 
     # 开局负面帝国修正：本月若达成消除条件即清除（程序判定，不靠 LLM/时长）
     cleared = clear_gated_legacies(db, state)
