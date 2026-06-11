@@ -66,7 +66,7 @@ applier 在 C2 事务内写 DB 并**同步写内存 `content.characters`**——
 
 **状态机两档制**（防弱模型把「狱中拜将」玩死）：
 
-- **档一·可推导 → 自动补全为派生事件**。分两种：**必要前置**（不放不能任：`任命(imprisoned)` → 派生 `处置(放归)`）与**政治标记**（可任但有政治分量：`任命(retired/offstage)` → 派生 `起复`；`任命(dismissed·获罪)` → 派生 `昭雪`；`任命(offstage·reason=丁忧)` → 派生 `夺情`）。**派生选择规则：reason_code 专项规则优先于 status 通则**（丁忧虽落 offstage，夺情优先于起复）。**声明归一**：`动作=任命` 而目标现持职名分时，按决定 1 边界自动以调任级联执行并记 `normalized` 注记（「让他任此职」唯一合法解读；与 alias 层同规，弱模型无须自带盘面知识）。判据底线不变：声明意图对前置**有且只有一种合法解读**才推导；弱模型说一句，代码落两条，derived_from 可审计——**说全义务从 LLM 移给代码**，P1 更满足。与 ADR 0003 反对的「字段袋反推意图」方向相反：意图是声明的，推导的是其合法前置如何成立。
+- **档一·可推导 → 自动补全为派生事件**。分两种：**必要前置**（不放不能任：`任命(imprisoned)` → 派生 `处置(放归)`）与**政治标记**（可任但有政治分量：`任命(retired/offstage)` → 派生 `起复`；`任命(dismissed·获罪)` → 派生 `昭雪`；`任命(offstage·reason=丁忧)` → 派生 `夺情`）。**派生选择规则：reason_code 专项规则优先于 status 通则**（丁忧虽落 offstage，夺情优先于起复）。**声明归一（双向）**：`动作=任命` 而目标现持职名分 → 自动以调任级联执行；`动作=调任` 而目标现无职名分 → 自动以任命级联执行——均记 `normalized` 注记（「让他任此职」唯一合法解读；与 alias 层同规，弱模型无须自带盘面知识；亦消除同数组前项清职后项调任的时序歧义）。判据底线不变：声明意图对前置**有且只有一种合法解读**才推导；弱模型说一句，代码落两条，derived_from 可审计——**说全义务从 LLM 移给代码**，P1 更满足。与 ADR 0003 反对的「字段袋反推意图」方向相反：意图是声明的，推导的是其合法前置如何成立。
 - **档二·无解读/多解读 → 响亮拒收**（`invalid_transition`）：放归未押者（状态已漂，正该响）；**`dead` 为目标的全部七个动作一律拒收**（含行止——灵柩归葬是叙事不是行止；任命死人=幻觉或重名，必须响）。
 
 **人物必须已存在**：名字不在 `characters` → `hallucinated_id`。**明文认账：这是对现管线「不在册→建新档」路径的有意回退**（issues.py:1384 现状），围堵 sim 幻觉人事；回退由**明末人员名单补齐**消解——名单齐后，册外拒收=反幻觉常态（李自成该是册中驿卒等出场，不是裁判即兴建档），虚构小人物不入册=纪律红利（人物表只装机制相关者）。后宫候选创建沿现状（见决定 9 candidate）；「立传」（新人物入场通道）维持另案。
@@ -97,8 +97,8 @@ status 枚举 = models.py 七值 + 实存的 `candidate`（registry.py:375 秀�
 
 **总则（2026-06-11 拍）：旧有/上游机制能用不是坏事，但若成为改进的绊脚石，果断踢开——不为将就吞技术债。** alias 的存在理由只有「重放正确性」（ADR 0008 ready=1 重试真源 + 历史 delta 文件），不是对旧 key 的敬意；哪天碍事，一次性迁移脚本洗旧数据 + 删 alias，不背永久房租。新管线设计永远不为旧 key 语义弯腰。
 
-- **状态感知翻译**住 sanitize 层（`TOP_LEVEL_ALIASES` 入口，翻译时可读当前状态）：`office_changes` → 目标现持职名分则译**调任**、否则译**任命**（兑现 DELTA_SCHEMA 旧契约「任命/调任/升迁/改授」的两义，逐项保真）；`character_status_changes` → 译**处置**；其中 `status=active` 项**译为拒收**（`invalid_enum` + legacy 注记）——实测旧管线两个消费路径的 valid_status 均不含 active（issues.py:1332/694，历史行为即拒收），译成任何真实迁移反而改写历史，违背重放保真；同理，**目标当前 status≠active 的项译为拒收**（legacy 注记），复刻旧管线「只许从 active 出发」的闸门（issues.py:1352）；`character_power_changes` → **易主(方式=不明)**；`appointments` → **字段感知**：office_type=后宫 → 册封，其余 → 按 office_changes 同规译任命/调任（复刻旧管线 spillover 行为，issues.py:1292——历史上朝臣项确实经此路落库）。
-- **四旧 key 译项按旧管线执行序拼入数组**：appointments → character_status_changes → character_power_changes → office_changes（issues.py 既有 section 序），同 delta 多 key 触及同一人时末态与旧管线一致。
+- **状态感知翻译**住 sanitize 层（`TOP_LEVEL_ALIASES` 入口，翻译时可读当前状态）：`office_changes` → 目标现持职名分则译**调任**、否则译**任命**（兑现 DELTA_SCHEMA 旧契约「任命/调任/升迁/改授」的两义，逐项保真）；`character_status_changes` → 译**处置**；其中 `status=active` 项**译为拒收**（`invalid_enum` + legacy 注记）——实测旧管线两个消费路径的 valid_status 均不含 active（issues.py:1332/694，历史行为即拒收），译成任何真实迁移反而改写历史，违背重放保真；同理，**月末 delta 来源的项若目标当前 status≠active 译为拒收**（legacy 注记），复刻该路径「只许从 active 出发」的闸门（issues.py:1352）；**结案效果来源（system_simulation）的项不加此闸**——旧结案路径（issues.py:694）历史上无此闸，「下狱→赐死」类迁移在彼处合法落库过，加闸反而改写历史；`character_power_changes` → **易主(方式=不明)**；`appointments` → **字段感知**：office_type=后宫 → 册封，其余 → 按 office_changes 同规译任命/调任（复刻旧管线 spillover 行为，issues.py:1292——历史上朝臣项确实经此路落库）。
+- **四旧 key 译项按旧管线执行序拼入数组**：appointments(后宫→册封) → character_status_changes → character_power_changes → office_changes → **appointments 朝臣 spillover 译项（任命/调任）殿后**——复刻旧管线 `office_change_items = 本体 + spillover` 的实际执行位（issues.py:1292 收集、:1391 殿后执行），同 delta 多 key 触及同一人时末态与旧管线一致。
 - alias 保留但**不写文档**：DELTA_SCHEMA 重写后只记载 `人物变更`；旧 key 永不获得新能力（行止/方式/reason_code 仅新 key），自然枯死。
 - 迁移打包进实现 PR 不分阶段（新旧并存的中间态是 #13 温床）：applier adapter + 4 个 score_extractor prompt + 产 delta 手册 + DELTA_SCHEMA 重写 + 围栏/契约测试一次带齐。
 
