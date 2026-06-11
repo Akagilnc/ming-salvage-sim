@@ -242,3 +242,29 @@ def test_bridge_synthesizes_reason_when_producer_omits(game):
     row = db.conn.execute(
         "SELECT reason FROM rejection_reports WHERE section='some_section'").fetchone()
     assert row is not None and row[0]  # 非空兜底
+
+
+def test_inertia_tolerated_rejections_reach_reports(game, monkeypatch, tmp_path):
+    """inertia 自然结案的容忍拒收项也要进 rejection_reports——桥接在 inertia 前
+    已跑,只 tlog 等于这条路永远脱离收集器/attempt/provenance 管线,与 tracker-close
+    路(issue_summary.entity_rejections 有行)同输入两判(ship-pre r1 codex high)。"""
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+    aid = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()[0]
+    db.insert_issue(
+        state, kind="initiative", title="惯性留痕测试", origin_kind="decree",
+        origin_ref="", bar_value=99, bar_good_meaning="成", bar_bad_meaning="败",
+        inertia=5, stage_text="", severity=50, region_hint="", faction_hint="",
+        tags=[], ongoing_effects={}, cancellable="decree", cancel_cost={},
+        effect_on_resolve={"army_delta": {aid: {"morale": 1, "士气大振": 9}}},
+        effect_on_fail={}, resolve_condition="", fail_condition="",
+    )
+    db.conn.commit()
+
+    run_settle(db, state, content, {}, narrative="x", decree_text="y")
+
+    rows = [r for r in _rejection_rows(db, turn)
+            if r[0] == "issue_inertia.entity_rejections"]
+    assert len(rows) == 1
+    assert "士气大振" in rows[0][1] or "非法字段" in rows[0][1]

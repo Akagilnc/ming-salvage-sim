@@ -1271,7 +1271,9 @@ def apply_score_extraction(
 
     def _norm_int_leaf(v):
         """无损整数串归一（cmr S3 r10,2/2）：strip 后能精确 int 的 str 转 int,
-        其余原样返回——归一唯一落点在 applier,cleaner 不再做值逻辑。"""
+        其余原样返回。无损归一在 cleaner（引擎路）与此处（driver 路）各一次,
+        **判定语义只在 applier**（ship-pre r1 措辞修正:cleaner 残留的同式转换
+        与本函数同结果,见 S3 disposition「无害重复」）。"""
         if isinstance(v, str):
             try:
                 return int(v.strip())
@@ -1642,10 +1644,14 @@ def apply_issue_inertia_and_ongoing(
     db: GameDB,
     state: GameState,
     touched_ids: Optional[set] = None,
-) -> None:
+) -> List[Dict[str, object]]:
+    """返回 inertia 自然结案路产生的容忍拒收项——settle 在 inertia 之后补收进
+    收集器(桥接跑在 inertia 前,只 tlog 等于这条路脱离 rejection_reports 管线,
+    与 tracker-close 路同输入两判;ship-pre r1)。"""
     # inertia 是每月自然漂移基础量，对所有进行中 issue 都生效（含本月被 advance 触动的）。
     # advance 的 delta_bar 是皇帝本月实旨推动的额外量，与 inertia 叠加，互不顶替。
     _ = touched_ids  # 保留入参不破坏调用方；inertia 漂移不再按它跳过
+    inertia_rejections: List[Dict[str, object]] = []
     active = db.list_active_issues()
     # 累计单月 metric 落账，用于上限 clamp
     period_metric_acc: Dict[str, int] = {}
@@ -1679,8 +1685,8 @@ def apply_issue_inertia_and_ongoing(
                     # 与 tracker advance/close 路径一致：自然结案也落实体后果 + 帝国修正，
                     # 否则靠 inertia 推到 100 的 issue 会丢 new_armies/army_delta/人物状态/legacy（codexB-P1）。
                     for _tr in _apply_issue_entities(db, state, effect, f"局势#{issue_id}结案"):
-                        # inertia 路无 applied dict 可挂——tlog 留痕（≥改前 print 可观测性）。
                         tlog(f"[issue-entities] 容忍拒收：{_tr.get('reason')}")
+                        inertia_rejections.append(_tr)
                     _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
                     continue
                 elif new_row["status"] == "failed":
@@ -1691,6 +1697,7 @@ def apply_issue_inertia_and_ongoing(
                     _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}失败")
                     for _tr in _apply_issue_entities(db, state, effect, f"局势#{issue_id}失败"):
                         tlog(f"[issue-entities] 容忍拒收：{_tr.get('reason')}")
+                        inertia_rejections.append(_tr)
                     _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
                     continue
                 row = db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
@@ -1761,6 +1768,8 @@ def apply_issue_inertia_and_ongoing(
 
 
 # ── 开局负面帝国修正：不立 issue、不进推演，靠 clear_gate 程序判定消除 ──────────────
+
+    return inertia_rejections
 
 def clear_gated_legacies(db: GameDB, state: GameState) -> List[str]:
     """每月调一次：取所有 active 且带 clear_gate 的 legacy，gate 达标即置 'cleared'。

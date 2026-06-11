@@ -2562,6 +2562,7 @@ class GameDB:
                             "rejected": True, "category": "invalid_enum",
                             "reason": f"region_delta 'cannon'（地区 '{region_id}'）值非整数：{value!r}",
                             "item": {"region_id": region_id, "field": field, "value": value},
+                            "issue_strict": not isinstance(value, (bool, float)),  # 同上 convention
                         })
                         continue
                     old_value = int(row["cannon"])
@@ -2617,6 +2618,9 @@ class GameDB:
                             "rejected": True, "category": "invalid_enum",
                             "reason": f"region_delta '{raw_field}'（地区 '{region_id}'）值非整数：{value!r}",
                             "item": {"region_id": region_id, "field": field, "value": value},
+                            # float/bool 历史静默套用=可活;None/串历史 int() 致命=严格
+                            # （convention 对称 army,防未来 issue 路接入误升级;ship-pre r1）。
+                            "issue_strict": not isinstance(value, (bool, float)),
                         })
                         continue
 
