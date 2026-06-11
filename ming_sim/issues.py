@@ -1271,7 +1271,7 @@ def apply_score_extraction(
     #      含 dynamic（田赋/辽饷/盐税/商税/皇庄），后果玩家自负。删 base+rate 两行。
     applied_fiscal_removes: List[Dict[str, object]] = []
     for remove in extracted.get("fiscal_removes") or []:
-        key = str(remove.get("key") or "")
+        key = str(remove.get("key") or "").strip()
         if not key:
             # 空 key = 脏项,记拒留痕(不再纯静默 continue;ADR 决定 1 / S3)。
             applied_fiscal_removes.append({
@@ -1295,9 +1295,14 @@ def apply_score_extraction(
     #      使同{月}「新立关税 + 立即调率」可一气落地。
     applied_fiscal_creates: List[Dict[str, object]] = []
     for create in extracted.get("fiscal_creates") or []:
-        key = str(create.get("key") or "")
-        account = str(create.get("account") or "")
-        direction = str(create.get("direction") or "")
+        key = str(create.get("key") or "").strip()
+        account = str(create.get("account") or "").strip()
+        # direction 同义词在唯一守门人处归一（cmr S3 r9:归一放 driver 不经过的
+        # cleaner 层=同输入两判;DELTA_SCHEMA 明言吃中文别名）。表与 cleaner 共用
+        # simulation._DIRECTION_NORMALIZE（懒 import 避循环）。
+        from ming_sim.simulation import _DIRECTION_NORMALIZE
+        direction_raw = str(create.get("direction") or "").strip()
+        direction = _DIRECTION_NORMALIZE.get(direction_raw, direction_raw)
         # key 空 / account / direction 非法 = 脏枚举,原先纯静默 continue,改记拒留痕
         # （ADR 决定 1 / S3；「在场即须合法」对称 S1/S2）。
         if not key or account not in _FISCAL_ACCOUNTS or direction not in _FISCAL_DIRECTIONS:
@@ -1344,7 +1349,7 @@ def apply_score_extraction(
     # 7) fiscal_changes：调整月度固定收支系数
     applied_fiscal: List[Dict[str, object]] = []
     for change in extracted.get("fiscal_changes") or []:
-        key = str(change.get("key") or "")
+        key = str(change.get("key") or "").strip()
         if not key:
             # 空 key = 脏项,先于一切无操作短路记拒——否则 delta 0/null 的空 key 项
             # 被短路吞掉无痕（与 falsy 短路同类序错,cmr S3 r2）。
