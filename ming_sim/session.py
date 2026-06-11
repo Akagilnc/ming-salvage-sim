@@ -714,11 +714,16 @@ class GameSession:
                 # 抽取,会把刚 commit 的动作从复述里重抽成新暂存→颁诏二次落库,或重建刚拒的动作。
                 # 故确认轮直接返回,不再抽新动作(线上 codex P2)。确认句无前缀,前缀路无损失。
                 return out
+        if GameSession._proposal_blocked(self.state):
+            # 恢复窗总闸（PR #90 R1/R2/R3 收束为单一出口）：前缀拟旨/密令与自然语言
+            # 抽取的新暂存（密令动作/调教/任免）一并婉拒——窗内新写在 settle 重试事务
+            # 边界外，窗内新 stage 则会被重试 settle 的 commit_pending_actions 落进
+            # 「保存的 delta 推演时并不知道」的旧回合。上方对话确认块（应允延迟提交/
+            # 拒绝丢弃）针对的是窗前已暂存的 pending，保持可用（ship-pre r2 设计）。
+            # 抽取器（LLM 调用）一并跳过。
+            return out
         acts = resolve_minister_actions(
             reply, player_message, default_assignee=minister_name, llm_config=llm_config)
-        if not has_directive and acts["decree_text"] and GameSession._proposal_blocked(self.state):
-            acts = dict(acts)
-            acts["decree_text"] = None  # 恢复窗婉拒：不入档（见 _proposal_blocked）
         if not has_directive and acts["decree_text"]:
             text = acts["decree_text"]
             did = self.db.add_directive(
@@ -727,11 +732,6 @@ class GameSession:
             )
             out["directive"] = {"id": did, "text": text, "status": "pending",
                                 "notes": f"由{minister_name}拟旨入档"}
-        if acts["secret_order"] and GameSession._proposal_blocked(self.state):
-            # 恢复窗婉拒（PR #90 R2 codex P2）：前缀密令 upsert 是 settle 重试事务
-            # 边界外的直写——同 decree_text 模式，不入档。
-            acts = dict(acts)
-            acts["secret_order"] = None
         if not out["secret_order_id"] and acts["secret_order"]:
             so = acts["secret_order"]
             assignee = so.get("assignee") or minister_name

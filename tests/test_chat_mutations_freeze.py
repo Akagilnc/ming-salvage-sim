@@ -107,3 +107,44 @@ def test_cli_prefix_secret_order_blocked_in_recovery_window(game, monkeypatch):
 
     assert out["secret_order_id"] is None
     assert db.conn.execute("SELECT COUNT(*) FROM secret_orders").fetchone()[0] == before
+
+
+def test_nl_staged_actions_blocked_in_recovery_window(game, monkeypatch):
+    """恢复窗内自然语言抽取不 stage 新暂存（PR #90 R3 codex P2）。
+
+    窗内新 stage 的动作会被重试 settle 的 commit_pending_actions 落进旧回合，
+    而保存的 delta 推演时并不知道它们；且与前缀路（已冻）不一致。窗前已暂存的
+    pending 不受影响（对话确认/颁诏统一落，ship-pre r2 设计）。"""
+    import ming_sim.cli_backend as cb
+
+    db, state, content = game
+    sess = _settling_session(db, state, content)
+    sess.llm_config = SimpleNamespace(channel="cli")
+    character = SimpleNamespace(name="测试丁召对", office_type="文官")
+
+    extractor_calls = []
+    monkeypatch.setattr(cb, "resolve_minister_actions", lambda *a, **k: {
+        "decree_text": None, "secret_order": None})
+    monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "")
+    monkeypatch.setattr(
+        cb, "extract_minister_actions",
+        lambda *a, **k: extractor_calls.append("minister") or {
+            "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
+            "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": ""})
+    monkeypatch.setattr(
+        cb, "extract_appointment_action",
+        lambda *a, **k: extractor_calls.append("appointment") or {
+            "appoint_action": "任命", "name": "测试戊", "office": "兵部主事"})
+
+    before = db.conn.execute(
+        "SELECT COUNT(*) FROM pending_actions WHERE turn=?", (state.turn,)
+    ).fetchone()[0]
+    out = sess.apply_cli_conversation_actions(
+        character, "任命测试戊为兵部主事", "臣领旨。",
+        has_directive=False, secret_order_id=None)
+
+    assert out.get("pending_action_id") is None
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM pending_actions WHERE turn=?", (state.turn,)
+    ).fetchone()[0] == before
+    assert extractor_calls == []  # 窗内连抽取都不跑（省 LLM 调用）
