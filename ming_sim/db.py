@@ -21,7 +21,6 @@ from ming_sim.constants import (
     FISCAL_SCORE_FIELDS, REGION_FIELD_ALIASES, REGION_SCORE_FIELDS, REGION_TEXT_FIELDS, TURN_UNIT,
 )
 from ming_sim.content import GameContent
-from ming_sim.exceptions import LLMContractError
 from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
 from ming_sim.models import Event, GameState, monthly_amount, period_label
 from ming_sim.token_stats import tlog
@@ -2517,7 +2516,14 @@ class GameDB:
         for region_id, raw_changes in region_deltas.items():
             row = self.conn.execute("SELECT * FROM regions WHERE id = ?", (region_id,)).fetchone()
             if row is None:
-                print(f"[WARN] region_delta 引用未入库地区 '{region_id}' → 跳过")
+                # ADR 0008 决定 1:LLM 幻觉地区 id = 逐项拒收留痕,不再 print 静默跳;
+                # 坏一项不带走整批(同信封好地区照落)。
+                changes.append({
+                    "region_id": region_id, "rejected": True,
+                    "category": "missing_ref",
+                    "reason": f"region_delta 引用未入库地区 '{region_id}'",
+                    "item": {"region_id": region_id, "changes": raw_changes},
+                })
                 continue
             reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()[:80]
             for raw_field, value in raw_changes.items():
@@ -2551,13 +2557,38 @@ class GameDB:
                     })
                     continue
 
-                # 先判字段合法，再取值：非法字段直接报清楚。
+                # ADR 0008 决定 1:LLM 引用非法地区字段 = 逐项拒收留痕(invalid_enum),
+                # 不再 raise 崩整月;同地区的合法字段照落,坏一项不带走整批。
                 all_direct = REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + REGION_TEXT_FIELDS
                 if field not in all_direct and field not in FISCAL_SCORE_FIELDS:
-                    raise LLMContractError(
-                        f"{TURN_UNIT}末执行评估引用了非法地区字段：'{raw_field}'（地区 '{region_id}'）。"
-                        f"合法字段：{all_direct + FISCAL_SCORE_FIELDS}"
-                    )
+                    changes.append({
+                        "region": row["name"], "field": str(raw_field),
+                        "rejected": True, "category": "invalid_enum",
+                        "reason": (
+                            f"region_delta 引用非法地区字段 '{raw_field}'（地区 '{region_id}'）；"
+                            f"合法字段：{all_direct + FISCAL_SCORE_FIELDS}"
+                        ),
+                        "item": {"region_id": region_id, "field": str(raw_field), "value": value},
+                    })
+                    continue
+
+                # ADR 0008 决定 1:数值字段(fiscal/score/quantity)的脏叶子值
+                # (null/字符串/float/bool)= LLM 脏数据,逐项拒收(invalid_enum),不让
+                # 裸 int(value) 崩整月;bool 是 int 子类、float 静默截断,都非整数 delta
+                # 须显式拒(对称 S1)。text 字段走 str(),不在此判。
+                if field in REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS or field in FISCAL_SCORE_FIELDS:
+                    try:
+                        if isinstance(value, bool) or isinstance(value, float):
+                            raise ValueError("非整数 delta")
+                        value = int(value)
+                    except (TypeError, ValueError):
+                        changes.append({
+                            "region": row["name"], "field": field,
+                            "rejected": True, "category": "invalid_enum",
+                            "reason": f"region_delta '{raw_field}'（地区 '{region_id}'）值非整数：{value!r}",
+                            "item": {"region_id": region_id, "field": field, "value": value},
+                        })
+                        continue
 
                 # ── fiscal JSON 子字段（corruption 等）────────────────────────
                 if field in FISCAL_SCORE_FIELDS:
@@ -2950,7 +2981,16 @@ class GameDB:
         for army_id, raw_changes in army_deltas.items():
             row = self.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
             if row is None:
-                raise ValueError(f"army_delta 引用未入库军队 '{army_id}'（补兵/改属性落不了，先建军）")
+                # ADR 0008 决定 1:LLM 幻觉军队 id = 逐项拒收留痕(missing_ref),不再
+                # raise 崩整月;同信封好军队照落,坏一项不带走整批(原意「先建军」由
+                # new_armies 段负责,此处只拒补兵/改属性的悬空引用)。
+                changes.append({
+                    "army_id": army_id, "rejected": True,
+                    "category": "missing_ref",
+                    "reason": f"army_delta 引用未入库军队 '{army_id}'（补兵/改属性落不了，先建军）",
+                    "item": {"army_id": army_id, "changes": raw_changes},
+                })
+                continue
             reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()[:80]
             _valid_army_fields = set(ARMY_SCORE_FIELDS + ARMY_QUANTITY_FIELDS + ARMY_TEXT_FIELDS)
             for raw_field, value in raw_changes.items():
@@ -2958,8 +2998,31 @@ class GameDB:
                 if field == "reason":
                     continue
                 if field not in _valid_army_fields:
-                    print(f"[WARN] army_delta 引用非法字段 '{raw_field}' → 跳过")
+                    # ADR 0008 决定 1:LLM 引用非法军队字段 = 逐项拒收留痕(invalid_enum),
+                    # 不再 print 静默跳;同军队的合法字段照落,坏一项不带走整批。
+                    changes.append({
+                        "army": row["name"], "field": str(raw_field),
+                        "rejected": True, "category": "invalid_enum",
+                        "reason": f"army_delta 引用非法字段 '{raw_field}'",
+                        "item": {"army_id": army_id, "field": str(raw_field), "value": value},
+                    })
                     continue
+                # ADR 0008 决定 1:数值字段的脏叶子值(null/字符串/float/bool)= LLM 脏数据,
+                # 逐项拒收(invalid_enum),不让裸 int(value) 崩整月;bool 是 int 子类、float
+                # 静默截断须显式拒(对称 S1/region)。text 字段走 str(),不在此判。
+                if field not in ARMY_TEXT_FIELDS:
+                    try:
+                        if isinstance(value, bool) or isinstance(value, float):
+                            raise ValueError("非整数 delta")
+                        value = int(value)
+                    except (TypeError, ValueError):
+                        changes.append({
+                            "army": row["name"], "field": field,
+                            "rejected": True, "category": "invalid_enum",
+                            "reason": f"army_delta '{raw_field}' 值非整数：{value!r}",
+                            "item": {"army_id": army_id, "field": field, "value": value},
+                        })
+                        continue
                 old_value = row[field]
                 if field == "arrears":
                     # arrears 单位=累计欠饷万两，无上限，按需累加。
@@ -3018,8 +3081,10 @@ class GameDB:
                     stored_new = text_value
                     log_delta = None
                 else:
-                    print(f"[WARN] army_delta 未处理字段 '{field}' → 跳过")
-                    continue
+                    # field 已过 _valid_army_fields 校验，能落到此处=合法字段未被任一
+                    # 分支处理=代码漏接(往 ARMY_*_FIELDS 加了字段却忘了 dispatch)。
+                    # 按 ADR 0008 决定 1：代码 bug 响亮上抛触发回滚，不静默丢一个合法 delta。
+                    raise RuntimeError(f"army_delta 合法字段 '{field}' 无落库分支（代码漏接）")
                 self.conn.execute(
                     f"UPDATE armies SET {field} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     (stored_new, army_id),
@@ -3077,10 +3142,24 @@ class GameDB:
             item = {_AA.get(str(k).strip(), str(k).strip()): v for k, v in raw.items()}
             aid = str(item.get("id") or "").strip()
             if not aid:
-                raise ValueError(f"new_armies 缺 id（无法建军）：{raw}")
+                # ADR 0008 决定 1:缺 id = LLM 脏数据,逐项拒收留痕(invalid_enum),
+                # 不再 raise 崩整月;同信封好军照建,坏一项不带走整批。
+                created.append({
+                    "rejected": True, "category": "invalid_enum",
+                    "reason": "new_armies 缺 id（无法建军）",
+                    "item": raw,
+                })
+                continue
             owner = str(item.get("owner_power") or "ming").strip() or "ming"
             if owner not in valid_powers:
-                raise ValueError(f"new_armies owner_power '{owner}' 不在 powers 表（无法建军 {aid}）")
+                # ADR 0008 决定 1:owner_power 幻觉 = 逐项拒收留痕(hallucinated_id)。
+                created.append({
+                    "id": aid, "owner_power": owner,
+                    "rejected": True, "category": "hallucinated_id",
+                    "reason": f"new_armies owner_power '{owner}' 不在 powers 表（无法建军 {aid}）",
+                    "item": raw,
+                })
+                continue
             name = str(item.get("name") or aid).strip()
             # 查重：同 id 或 同 name → 转 manpower 扩军增量
             existing = self.conn.execute(
@@ -3089,12 +3168,24 @@ class GameDB:
             if existing is not None:
                 manpower = item.get("manpower")
                 if manpower is None:
-                    print(f"[WARN] new_armies 重复 id/name '{aid}' 且无 manpower → 跳过")
+                    # ADR 0008 决定 1:命中已有军但无扩军增量 = 无意义项,逐项拒收留痕。
+                    created.append({
+                        "id": aid, "rejected": True, "category": "invalid_enum",
+                        "reason": f"new_armies 重复 id/name '{aid}' 且无 manpower（无扩军增量）",
+                        "item": raw,
+                    })
                     continue
                 try:
+                    if isinstance(manpower, (bool, float)):
+                        raise ValueError("非整数")
                     delta = int(manpower)
                 except (TypeError, ValueError):
-                    print(f"[WARN] new_armies '{aid}' manpower 非整数 → 跳过")
+                    # ADR 0008 决定 1:扩军增量非整数 = LLM 脏数据,逐项拒收留痕。
+                    created.append({
+                        "id": aid, "rejected": True, "category": "invalid_enum",
+                        "reason": f"new_armies '{aid}' manpower 非整数：{manpower!r}",
+                        "item": raw,
+                    })
                     continue
                 if delta == 0:
                     continue
@@ -3105,14 +3196,22 @@ class GameDB:
                 )
                 created.append({"army": existing["name"], "manpower_added": delta, "merged_into_existing": True})
                 continue
-            # 必填字段
+            # 必填字段：缺/非法 = LLM 脏数据,逐项拒收留痕(invalid_enum),不再 raise
+            # 崩整月(ADR 0008 决定 1);同信封好军照建。bool/float 显式拒(对称 S1)。
             try:
-                manpower = int(item["manpower"])
-                maintenance = int(item["maintenance_per_turn"])
+                _mp = item["manpower"]
+                _mt = item["maintenance_per_turn"]
+                if isinstance(_mp, (bool, float)) or isinstance(_mt, (bool, float)):
+                    raise ValueError("非整数")
+                manpower = int(_mp)
+                maintenance = int(_mt)
             except (KeyError, TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"new_armies '{aid}' 缺/非法 manpower 或 maintenance_per_turn（无法建军）：{exc}"
-                ) from exc
+                created.append({
+                    "id": aid, "rejected": True, "category": "invalid_enum",
+                    "reason": f"new_armies '{aid}' 缺/非法 manpower 或 maintenance_per_turn（无法建军）：{exc}",
+                    "item": raw,
+                })
+                continue
             def _score(field: str, default: int = 50) -> int:
                 try:
                     return max(0, min(100, int(item.get(field, default))))
