@@ -116,7 +116,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 - 中文别名都吃
 
 ### `new_armies` — 建军
-⚠️ **`id` 必填**（英文 army_id，如 `tianxiong`）。缺 id 整条被跳过并印 `[WARN] new_armies 缺 id → 跳过`。〔崇祯二年八月实测，turn 11〕
+⚠️ **`id` 必填**（英文 army_id，如 `tianxiong`）。缺 id 该项逐项拒收留痕（落 `rejection_reports`，不再 print WARN——v0.8.x PR2-S2）。〔崇祯二年八月实测，turn 11〕
 全字段：`id`（必填）`name` `owner_power` `station` `theater` `commander` `controller` `troop_type` `manpower` `morale` `training` `loyalty` `equipment` `supply` `mobility` `maintenance_per_turn` `status`…（参考 `ARMY_FIELD_ALIASES`）
 
 ### `power_updates` — 外部势力变化
@@ -219,7 +219,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 | `new_issues[].title` | — | ≤60 字 |
 | `new_issues` 总数 | — | active `initiative` ≤10 |
 | `close_issues[].reason` | 填了 `result` 没填 `reason` | close_issues 要 **`reason`** 字段（不是 result），空则整条被跳过。注：若同时用 `issue_advances` 把 bar 推满（≥100），issue 会**自动 resolved**，不依赖 close_issues |
-| `power_updates` 字段 | 写 `{"stance":...}` 或 `{"satisfaction":...}` | **实际守门只收三个字段：`威望`(leverage) / `实力`(military_strength) / `经济`(economy)。** 连 `satisfaction` / `cohesion` / `supply` / `stance` / `leader` / `agenda` 全被拒，印 `[WARN] power_updates 只允许 威望/实力/经济，'X' → 跳过`。改外势态度文用 `world_advance`（≤40字）；改归附倾向只能动 leverage/military_strength/economy。本文档上方 `power_updates` 段（列了 satisfaction/cohesion/stance/leader…）是 doc 与守门的漂移，**以本坑为准**。〔崇祯二年五、六月结算实测，turn 8/9〕|
+| `power_updates` 字段 | 写 `{"stance":...}` 或 `{"satisfaction":...}` | **实际守门只收三个字段：`威望`(leverage) / `实力`(military_strength) / `经济`(economy)。** 连 `satisfaction` / `cohesion` / `stance` / `leader` / `agenda` 全被拒（`supply` 自 v0.8.x 在守门白名单内），逐项拒收留痕落 `rejection_reports`（不再 print WARN——v0.8.x PR2-S1）。改外势态度文用 `world_advance`（≤40字）；改归附倾向只能动 leverage/military_strength/economy。本文档上方 `power_updates` 段（列了 satisfaction/cohesion/stance/leader…）是 doc 与守门的漂移，**以本坑为准**。〔崇祯二年五、六月结算实测，turn 8/9〕|
 
 每踩一坑就补到这张表里，下次别再来一遍。
 
