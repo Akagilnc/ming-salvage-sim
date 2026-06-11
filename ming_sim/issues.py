@@ -589,7 +589,7 @@ _LEGACY_ACCOUNT_KEYS = ("国库", "内库", "民心", "皇威")  # 全局可被 
 _LEGACY_PCT_CAP = 5  # 单条帝国修正对某维度的百分比上限，防幅度过大
 
 # 月固定收支项的合法账户 / 方向白名单（fiscal_creates 枚举守门，集中一处；
-# 与 simulation._clean_fiscal_creates 的同名校验语义一致——值变了两处一起改）。
+# applier 是唯一的枚举守门（cleaner 只做 direction 同义词映射等无损规范化,cmr S3 r2）。
 _FISCAL_ACCOUNTS = ("国库", "内库")
 _FISCAL_DIRECTIONS = ("income", "expense")
 
@@ -1344,6 +1344,15 @@ def apply_score_extraction(
     applied_fiscal: List[Dict[str, object]] = []
     for change in extracted.get("fiscal_changes") or []:
         key = str(change.get("key") or "")
+        if not key:
+            # 空 key = 脏项,先于一切无操作短路记拒——否则 delta 0/null 的空 key 项
+            # 被短路吞掉无痕（与 falsy 短路同类序错,cmr S3 r2）。
+            applied_fiscal.append({
+                "rejected": True,
+                "reason": "调率项缺 key,无法定位科目。",
+                "category": "invalid_enum", "item": change,
+            })
+            continue
         delta_raw = change.get("delta")
         # delta 缺省 = 无操作,静默放过不记拒（免得每月刷无意义拒收行）。
         if delta_raw is None:
@@ -1360,16 +1369,9 @@ def apply_score_extraction(
             })
             continue
         if delta_raw == 0:
-            # 显式 int 0 = 无操作（脏值已在上方拒掉,此处只剩真 int）。
+            # 显式 int 0 = 无操作（脏值已在上方拒掉,此处只剩真 int;空 key 已在循环顶记拒）。
             continue
         delta = delta_raw
-        if not key:
-            # 空 key = 脏项（与「delta=0 无操作」不同,空 key 无定位目标）,记拒留痕。
-            applied_fiscal.append({
-                "rejected": True, "reason": "fiscal_changes 缺 key,无法定位调率目标。",
-                "category": "invalid_enum", "item": change,
-            })
-            continue
         current = db.get_fiscal_config().get(key)
         if current is None:
             # 未知 key = 正常业务拒绝,逐项拒收留痕（不再 print 静默跳）。
