@@ -1345,9 +1345,9 @@ def apply_score_extraction(
             continue
         else:
             init_value = init_raw
-        # display 缺省=key 去 _base 后缀（DELTA_SCHEMA 契约;默认只在 cleaner 时
-        # driver 路建出空名预算行——cmr S3 r10）。
-        display = str(create.get("display") or "").strip() or key.replace("_base", "")
+        # display 缺省=归一 stem（与落库同源——raw key 去 _base 会把「关税_rate」
+        # 显示成「关税_rate」,cmr S3 r11;DELTA_SCHEMA 契约「缺省=key 去后缀」）。
+        display = str(create.get("display") or "").strip() or (db._stem_of(key) or key)
         new_key = db.create_fiscal_item(
             key, account, direction, display, init_value,
             note=str(create.get("reason") or "")[:120],
