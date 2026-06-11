@@ -3227,6 +3227,14 @@ class GameDB:
                 )
                 created.append({"army": existing["name"], "manpower_added": delta, "merged_into_existing": True})
                 continue
+            def _historically_applied(it) -> bool:
+                """旧代码 int() 两步都成功（含 bool/float 的静默套用）= 历史可活。"""
+                try:
+                    int(it["manpower"])
+                    int(it["maintenance_per_turn"])
+                    return True
+                except (KeyError, TypeError, ValueError):
+                    return False
             # 必填字段：缺/非法 = LLM 脏数据,逐项拒收留痕(invalid_enum),不再 raise
             # 崩整月(ADR 0008 决定 1);同信封好军照建。bool/float 显式拒(对称 S1)。
             try:
@@ -3241,10 +3249,12 @@ class GameDB:
                     "id": aid, "rejected": True, "category": "invalid_enum",
                     "reason": f"new_armies '{aid}' 缺/非法 manpower 或 maintenance_per_turn（无法建军）：{exc}",
                     "item": raw,
-                    # float/bool 必填值改前静默套用建军=历史可活,issue 路容忍;
-                    # 缺键/None/字符串历史就 raise,保持严格（cmr S2 r3,2/2）。
-                    "issue_strict": not (isinstance(item.get("manpower"), (bool, float))
-                                         or isinstance(item.get("maintenance_per_turn"), (bool, float))),
+                    # 历史谓词按整项算（cmr S2 r4,2/2:or 合取会让混合成因项——
+                    # 一边 float、另一边缺键/None/串=历史致命——被误判容忍）：
+                    # 旧代码 int(item["manpower"])+int(item["maintenance_per_turn"])
+                    # 两步都成功才「静默套用=可活」,任一步缺键/TypeError/ValueError
+                    # 即历史 raise → 保持严格。
+                    "issue_strict": not _historically_applied(item),
                 })
                 continue
             # 可选数值字段「在场即须合法」（cmr S2 r1 codex P1）：在场脏值静默走默认
