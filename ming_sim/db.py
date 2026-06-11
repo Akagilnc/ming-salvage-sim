@@ -2224,13 +2224,18 @@ class GameDB:
                     "item": {"power_id": power_id, "changes": raw_changes},
                 })
                 continue
-            reason = str(
-                raw_changes.get("reason")
-                or raw_changes.get("原因")
-                or raw_changes.get("last_action")
-                or raw_changes.get("近动")
-                or "势力推演"
-            ).strip()[:120]
+            # reason 载体按别名表扫描（近况/最近行动 等与 近动/last_action 同义，
+            # 硬编码键名会漏——cmr S1 r3）：先取 reason 义，再取 last_action 义。
+            reason = ""
+            for _canon in ("reason", "last_action"):
+                for k, v in raw_changes.items():
+                    mapped = POWER_FIELD_ALIASES.get(str(k).strip(), str(k).strip())
+                    if mapped == _canon and str(v or "").strip():
+                        reason = str(v).strip()
+                        break
+                if reason:
+                    break
+            reason = (reason or "势力推演")[:120]
             for raw_field, value in raw_changes.items():
                 field = POWER_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
                 if field in ("reason", "last_action"):
