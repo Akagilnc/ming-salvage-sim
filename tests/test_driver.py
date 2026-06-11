@@ -247,3 +247,27 @@ def test_crash_inside_pre_settle_leaves_no_ready_context(game, monkeypatch):
         run_settle(db, state, content, {"地区变化": {"shanxi": {"动乱": 1}}})
 
     assert db.get_resolve_context(before_turn) is None
+
+
+def test_persist_crash_rolls_back_pre_settle(game, monkeypatch):
+    """pre_settle 与 ready=1 持久化同事务（PR #90 R1 codex P2 同窗，driver 路）：
+    persist 崩 → 财政/相位整体回滚，不留「settling 而无 context 行」的盘。"""
+    db, state, content = game
+    turn = state.turn
+    before = db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)
+    ).fetchone()[0]
+
+    def _boom(*a, **k):
+        raise RuntimeError("persist crash")
+    monkeypatch.setattr(driver, "persist_resolve_context", _boom)
+
+    with pytest.raises(RuntimeError, match="persist crash"):
+        run_settle(db, state, content, {}, narrative="x", decree_text="y")
+
+    assert state.turn == turn
+    assert state.turn_phase == "summoning"
+    assert db.load_state().turn_phase == "summoning"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)
+    ).fetchone()[0] == before
