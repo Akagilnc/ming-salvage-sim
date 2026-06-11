@@ -2534,8 +2534,23 @@ class GameDB:
                 # ── 城防炮（城头红夷炮）：另挂 region.cannon，走 apply_region_cannon（clamp city_level×8），
                 #    不入通用 SCORE/QUANTITY 路径（通用路径不套城防上限，会破 P2 铁律）。──
                 if field == "cannon":
+                    # 脏炮值守门与通用数值路对称（cmr S2 r1，3票）：cannon 不在
+                    # SCORE/QUANTITY 集,通用守门罩不到——此处先验再 dispatch,
+                    # 否则裸 int(value) 让 null/"数十门" 崩整月、bool/float 静默拟真。
+                    try:
+                        if isinstance(value, bool) or isinstance(value, float):
+                            raise ValueError("非整数 delta")
+                        cannon_delta = int(value)
+                    except (TypeError, ValueError):
+                        changes.append({
+                            "region": row["name"], "field": field,
+                            "rejected": True, "category": "invalid_enum",
+                            "reason": f"region_delta 'cannon'（地区 '{region_id}'）值非整数：{value!r}",
+                            "item": {"region_id": region_id, "field": field, "value": value},
+                        })
+                        continue
                     old_value = int(row["cannon"])
-                    new_value = self.apply_region_cannon(state, region_id, int(value))
+                    new_value = self.apply_region_cannon(state, region_id, cannon_delta)
                     actual_delta = new_value - old_value
                     if actual_delta == 0:
                         continue
@@ -3005,6 +3020,9 @@ class GameDB:
                         "rejected": True, "category": "invalid_enum",
                         "reason": f"army_delta 引用非法字段 '{raw_field}'",
                         "item": {"army_id": army_id, "field": str(raw_field), "value": value},
+                        # 历史上此案是 print-skip（非 raise）——国策结案路不升级为
+                        # 崩月（cmr S2 r1 claude:「维持原行为」当真）。
+                        "issue_strict": False,
                     })
                     continue
                 # ADR 0008 决定 1:数值字段的脏叶子值(null/字符串/float/bool)= LLM 脏数据,
@@ -3135,6 +3153,13 @@ class GameDB:
         created: List[Dict[str, object]] = []
         for raw in new_armies:
             if not isinstance(raw, dict):
+                # 不再静默丢：留拒收记录（season 路本就被 validate_delta_shape 挡在
+                # S6;issue 路历史即静默,容忍不升级——issue_strict=False,cmr S2 r1）。
+                created.append({
+                    "rejected": True, "category": "invalid_enum",
+                    "reason": f"new_armies 含非 dict 项：{raw!r}",
+                    "item": raw, "issue_strict": False,
+                })
                 continue
             item = {POWER_FIELD_ALIASES.get(k, k) if False else k: v for k, v in raw.items()}
             # 规范键：复用 ARMY_FIELD_ALIASES（兼容中文）
@@ -3172,7 +3197,7 @@ class GameDB:
                     created.append({
                         "id": aid, "rejected": True, "category": "invalid_enum",
                         "reason": f"new_armies 重复 id/name '{aid}' 且无 manpower（无扩军增量）",
-                        "item": raw,
+                        "item": raw, "issue_strict": False,  # 历史 print-skip,结案路容忍
                     })
                     continue
                 try:
@@ -3184,7 +3209,7 @@ class GameDB:
                     created.append({
                         "id": aid, "rejected": True, "category": "invalid_enum",
                         "reason": f"new_armies '{aid}' manpower 非整数：{manpower!r}",
-                        "item": raw,
+                        "item": raw, "issue_strict": False,  # 历史 print-skip,结案路容忍
                     })
                     continue
                 if delta == 0:
@@ -3210,6 +3235,33 @@ class GameDB:
                     "id": aid, "rejected": True, "category": "invalid_enum",
                     "reason": f"new_armies '{aid}' 缺/非法 manpower 或 maintenance_per_turn（无法建军）：{exc}",
                     "item": raw,
+                })
+                continue
+            # 可选数值字段「在场即须合法」（cmr S2 r1 codex P1）：在场脏值静默走默认
+            # = 伪造军备（morale "高"→50、cannon "几门"→0）。None 视为缺省（LLM 习惯
+            # 用 null 表「无」,validate_delta_shape 亦容忍 null 叶）；其余非整拒该项。
+            _optional_numeric = ("supply", "morale", "training",
+                                 "firearm_equipment", "cannon_equipment", "arrears")
+            _dirty_field = None
+            for _f in _optional_numeric:
+                _v = item.get(_f)
+                if _f in item and _v is not None:
+                    if isinstance(_v, (bool, float)):
+                        _dirty_field = (_f, _v)
+                        break
+                    try:
+                        int(_v)
+                    except (TypeError, ValueError):
+                        _dirty_field = (_f, _v)
+                        break
+            if _dirty_field is not None:
+                created.append({
+                    "id": aid, "rejected": True, "category": "invalid_enum",
+                    "reason": (f"new_armies '{aid}' 可选字段 '{_dirty_field[0]}' 值非整数："
+                               f"{_dirty_field[1]!r}（在场即须合法，缺省才走默认）"),
+                    "item": raw,
+                    # 历史上此案静默走默认值（非 raise）——结案路容忍不升级。
+                    "issue_strict": False,
                 })
                 continue
             def _score(field: str, default: int = 50) -> int:

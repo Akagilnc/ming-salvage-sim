@@ -433,3 +433,101 @@ def test_duplicate_army_noninteger_manpower_rejected(game):
     assert len(rows) == 1
     assert rows[0][2] == "invalid_enum"
     assert rows[0][1]
+
+
+# ───────────────────────── cmr S2 r1 修复回归 ─────────────────────────
+
+@pytest.mark.parametrize("bad", [None, "数十门", 3.7, True])
+def test_dirty_region_cannon_value_rejected_not_abort(game, bad):
+    """cannon 分支 dispatch 在脏值守门之前,裸 int(value)——脏炮值崩整月+bool/float
+    静默拟真(cmr S2 r1,3票 P1)。改逐项拒收;同地区好字段照落。"""
+    db, state, content = game
+    turn = state.turn
+    rid = _a_region(db)
+
+    run_settle(db, state, content, {
+        "region_delta": {rid: {"cannon": bad, "public_support": 2}},
+    }, narrative="x", decree_text="y")  # 不抛 = 没崩整月
+
+    rows = [r for r in _rejection_rows(db, turn) if r[0] == "region_changes"]
+    assert len(rows) == 1
+    assert rows[0][2] == "invalid_enum"
+    # 好字段照落
+    log = db.conn.execute(
+        "SELECT COUNT(*) FROM region_logs WHERE region_id=? AND field='public_support' AND turn=?",
+        (rid, turn)).fetchone()[0]
+    assert log == 1
+
+
+def test_dirty_optional_army_field_rejects_item(game):
+    """new_armies 可选数值字段在场但脏(morale '高'→静默 50)= 伪造军备——
+    在场即须合法,拒该项留痕;缺省才走默认(cmr S2 r1 codex P1)。"""
+    db, state, content = game
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "new_armies": [{"id": "dirty_morale_army", "name": "脏士气军", "owner_power": "ming",
+                        "manpower": 5000, "maintenance_per_turn": 2, "morale": "高"}],
+    }, narrative="x", decree_text="y")
+
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM armies WHERE id='dirty_morale_army'").fetchone()[0] == 0
+    rows = [r for r in _rejection_rows(db, turn) if r[0] == "created_armies"]
+    assert len(rows) == 1
+    assert rows[0][2] == "invalid_enum"
+
+
+def test_absent_optional_army_fields_use_defaults(game):
+    """缺省可选字段照走默认(50/0)——「在场即须合法」不影响缺省路(pin)。"""
+    db, state, content = game
+
+    run_settle(db, state, content, {
+        "new_armies": [{"id": "default_army_ok", "name": "默认军", "owner_power": "ming",
+                        "manpower": 5000, "maintenance_per_turn": 2}],
+    }, narrative="x", decree_text="y")
+
+    row = db.conn.execute(
+        "SELECT morale, cannon_equipment FROM armies WHERE id='default_army_ok'").fetchone()
+    assert row is not None
+    assert row[0] == 50 and row[1] == 0
+
+
+def test_issue_path_tolerates_previously_skipped_cases(game):
+    """国策结案路对「历史上 print-skip」的三案(army 非法字段等)不升级为崩月
+    ——S2 把它们改成拒收记录后,_raise_on_rejected 不得把历史可活的脏数据
+    变成新的中断路(cmr S2 r1 claude P2:「维持原行为」当真)。好字段照落。"""
+    import ming_sim.issues as I
+
+    db, state, content = game
+    aid = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()[0]
+    before = db.conn.execute(
+        "SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()[0]
+
+    I._apply_issue_entities(db, state, {
+        "army_delta": {aid: {"morale": 2, "士气大振": 1}},  # 非法字段,历史 print-skip
+    }, "局势#测试结案")  # 不抛
+
+    after = db.conn.execute(
+        "SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()[0]
+    assert after == min(100, before + 2)  # 好字段照落
+
+
+def test_issue_path_still_strict_for_historically_fatal(game):
+    """历史上就 raise 的类别(查无此军)在国策结案路保持严格(pin)。"""
+    import ming_sim.issues as I
+
+    db, state, content = game
+    with pytest.raises(ValueError):
+        I._apply_issue_entities(db, state, {
+            "army_delta": {"查无此军xyz": {"morale": 2}},
+        }, "局势#测试结案")
+
+
+def test_nondict_new_army_item_recorded_not_silent(game):
+    """new_armies 非 dict 项不再静默 continue——留拒收记录(issue 路容忍不升级,
+    历史即静默;season 路本就被 validate_delta_shape 挡在 S6)(cmr S2 r1 P3)。"""
+    db, state, content = game
+    created = db.create_armies_from_extraction(state, ["不是dict的项"], actor="测试")
+    rej = [c for c in created if c.get("rejected")]
+    assert len(rej) == 1
+    assert rej[0]["category"] == "invalid_enum"
