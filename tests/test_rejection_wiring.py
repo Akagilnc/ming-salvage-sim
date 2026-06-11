@@ -268,3 +268,26 @@ def test_inertia_tolerated_rejections_reach_reports(game, monkeypatch, tmp_path)
             if r[0] == "issue_inertia.entity_rejections"]
     assert len(rows) == 1
     assert "士气大振" in rows[0][1] or "非法字段" in rows[0][1]
+
+
+def test_item_json_is_original_delta_item_when_producer_carries_it(game, monkeypatch, tmp_path):
+    """rejection_reports.item_json = 原始 delta 项(ADR 决定 5「原 item 原样保留」)
+    ——S1-S3 producers 已在 wrapper 里带原件('item' 键),桥接应解包而非存整个
+    wrapper(嵌套结构破坏重放分析消费形状,ship-pre r3 codex)。"""
+    import json as _json
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "power_updates": {"查无此势力": {"leverage": 5}},
+    }, narrative="x", decree_text="y")
+
+    row = db.conn.execute(
+        "SELECT item_json FROM rejection_reports WHERE turn=? AND section='power_changes'",
+        (turn,)).fetchone()
+    assert row is not None
+    item = _json.loads(row[0])
+    assert "rejected" not in item  # 不是 wrapper
+    assert item == {"power_id": "查无此势力", "changes": {"leverage": 5}}  # 原件
