@@ -464,3 +464,30 @@ def test_hitl_pause_crash_reloads_memory(game, monkeypatch):
     assert state.turn_phase == "settling"
     assert db.load_state().turn_phase == "settling"
     assert db.list_pending_decisions(turn) == []  # 决策随回滚消失
+
+
+def test_placeholder_save_crash_rolls_back_settling(game, monkeypatch):
+    """settling 相位与诏书占位同事务可见（PR #90 R1 codex P2）：占位写崩 → 前半段
+    整体回滚（相位回 summoning、财政无残留、无 context 行）。
+
+    否则崩在 pre_settle 提交后、占位落盘前的窗口 = 盘上 settling 而无 context 行，
+    恢复 fallthrough 只能用 LLM 从草案重生诏书——玩家手编原诏蒸发。"""
+    import ming_sim.decree as decree_mod
+
+    db, state, content = game
+    turn = state.turn
+    before_ledger = _ledger_count(db, turn)
+
+    def _boom(self, *a, **k):
+        raise RuntimeError("placeholder save crash")
+    monkeypatch.setattr(type(db), "save_resolve_context", _boom)
+
+    with pytest.raises(RuntimeError, match="placeholder save crash"):
+        decree_mod.resolve_directives(state, db, None, None, [1], "减赋诏",
+                                      content=content, registry=None)
+
+    monkeypatch.undo()
+    assert state.turn_phase == "summoning"            # 内存已重载刷净
+    assert db.load_state().turn_phase == "summoning"  # 盘上 settling 未泄漏
+    assert _ledger_count(db, turn) == before_ledger   # 财政随占位一起回滚
+    assert db.get_resolve_context(turn) is None       # 不留半截上下文

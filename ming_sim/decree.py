@@ -250,18 +250,34 @@ def resolve_directives(
 
     # 1) 前括号确定性结算：固定月度财政 tick + auto_trigger 硬立 seed 情势（均在 LLM 推演前）。
     #    与探针 driver 共用同一段（ADR 0004）。
-    auto_triggered = pre_settle(
-        state, db, on_stage=lambda label: _emit("stage", label),
-        content=content, registry=registry)
-
+    #
     # 诏书占位真源（ship-pre r5）：pre_settle 成功后立即把 decree_text 落为 ready=0
     # 占位——begin_turn 会清内存 last_decree，跨进程恢复的 no-ready fallthrough 没有
     # 此行就只能用 LLM 从草案重新生成，玩家手改的原诏蒸发。HITL/ready persist 后续
     # 同键 upsert，settle 尾 clear 收掉。
-    db.save_resolve_context(
-        state.turn, decree_text, "", {},
-        secret_orders=[], relevant_memories=[],
-    )
+    #
+    # 占位与 settling 相位同事务可见（PR #90 R1 codex P2）：外层 atomic 把 pre_settle
+    # 的内层事务并入（flat 可重入），崩在「settling 已提交、占位未落」的窗口不再可能
+    # ——要么两者都见，要么整段回滚重来。恢复重推演路重进时 pre_settle 幂等守门
+    # 早退、占位同键 upsert，语义不变。
+    try:
+        with atomic(db):
+            auto_triggered = pre_settle(
+                state, db, on_stage=lambda label: _emit("stage", label),
+                content=content, registry=registry)
+            db.save_resolve_context(
+                state.turn, decree_text, "", {},
+                secret_orders=[], relevant_memories=[],
+            )
+    except BaseException as exc:
+        # pre_settle 自己的 except 在嵌套（depth>0）时跳过 reload，由本层（最外层）
+        # 真回滚后重载刷净内存（同 advance_without_edict 先例）；reload 再炸链上抛。
+        if getattr(db.conn, "_atomic_depth", 0) == 0:
+            try:
+                reload_state_from_db(db, state, content=content, registry=registry)
+            except BaseException as reload_exc:
+                raise exc from reload_exc
+        raise
 
     # 1.8) 历史脉络：取近几回合章节记忆注入推演（章节记忆取代旧的关键词原子检索）。
     relevant_memories: List[Dict] = []
