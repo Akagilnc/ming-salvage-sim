@@ -1765,11 +1765,10 @@ def apply_issue_inertia_and_ongoing(
             db.conn.commit()
 
     state.clamp()
+    return inertia_rejections
 
 
 # ── 开局负面帝国修正：不立 issue、不进推演，靠 clear_gate 程序判定消除 ──────────────
-
-    return inertia_rejections
 
 def clear_gated_legacies(db: GameDB, state: GameState) -> List[str]:
     """每月调一次：取所有 active 且带 clear_gate 的 legacy，gate 达标即置 'cleared'。
