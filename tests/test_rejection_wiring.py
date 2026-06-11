@@ -118,3 +118,42 @@ def test_engine_extractor_path_stamps_system_simulation(game, monkeypatch, tmp_p
     rows = _rejection_rows(db, turn)
     assert len(rows) == 1
     assert rows[0][3] == "system_simulation"  # source
+
+
+def test_issue_summary_nested_rejections_are_collected(game, monkeypatch, tmp_path):
+    """issue_summary 是 dict(嵌套 new_issues/cancels 列表),桥接不能只看顶层 list
+    ——new_issues 正是实测最常被喂脏的段(origin_kind 缺失被拒,agy 实录),
+    决定 5 的「哪个 section 最常被喂脏」聚合对它失明即失去主要价值(cmr S0 r1,2/2)。"""
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "new_issues": [{"title": "臆造局势", "kind": "initiative"}],  # 缺 origin_kind → 拒
+    }, narrative="x", decree_text="y")
+
+    rows = _rejection_rows(db, turn)
+    assert len(rows) == 1
+    assert rows[0][0] == "issue_summary.new_issues"
+    assert "decree/event_pool" in rows[0][1]  # 拒收原因原样保留
+
+
+def test_nested_atomic_success_path_does_not_orphan_jsonl(game, monkeypatch, tmp_path):
+    """嵌套 atomic 内跑 settle:mirror 必须等最外层 commit——否则外层回滚后
+    DB 行消失而 jsonl 已写=孤立镜像行(违决定 5「commit 成功后才 append」;
+    异常路有对称守门,成功路同样要有)(cmr S0 r1,2/2)。"""
+    from ming_sim.applier import atomic
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+
+    with pytest.raises(RuntimeError, match="outer rollback"):
+        with atomic(db):
+            run_settle(db, state, content, {
+                "人物状态变化": [{"name": "查无此人戊", "status": "dead", "reason": "测试"}],
+            }, narrative="x", decree_text="y")
+            raise RuntimeError("outer rollback")
+
+    assert _rejection_rows(db, turn) == []  # DB 行随外层回滚消失
+    assert not (tmp_path / "error_packs" / "rejections.jsonl").exists()  # 镜像未先写
