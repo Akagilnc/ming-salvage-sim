@@ -71,8 +71,11 @@
   ── 后半段 settle_with_delta：整段单一 atomic 事务，9–15 全有或全无 ──
   9. applied = apply_score_extraction(db, state, delta, content=content, registry=None)
      ↳ 内部 _sanitize → _merge → 分发到 region/army/building/economy/issue/character 各 apply_*
-     ↳ 白名单外字段仍被沉默裁掉，关键违规印 [INFO]/[WARN]
-       （applier.RejectionCollector 拒收留痕契约层已立，apply 各分支接线见 issue #14）
+     ↳ 白名单外字段仍被沉默裁掉；9 个结算 section 的关键违规（坏值/缺 id/非法 enum 等）
+       不再印 [WARN]，改逐项拒收留痕落 `rejection_reports`（坏一项不带走整批，ADR 0008 PR2）
+       （settle_with_delta 构造 RejectionCollector(attempt=_next_attempt(turn))，桥接下探
+       applied.issue_summary 收 entity_rejections + inertia_rejections → flush 进事务内的
+       rejection_reports；最外层 commit 成功后才 mirror_to_jsonl 落 rejections.jsonl 副本）
      ↳ 返回 applied.issue_summary.advances → 用来算 touched_ids
 
   10. db.record_log(narrative[:1200]) + db.save_turn_report(narrative) + db.save_turn_extraction(...)
