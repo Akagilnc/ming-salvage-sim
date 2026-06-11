@@ -932,7 +932,13 @@ def apply_issue_tracker_output(
             )
             state.metrics["皇威"] = max(0, int(state.metrics.get("皇威", 0)) - 2)
             touched_ids.add(issue_id)
-            applied_cancels.append({"issue_id": issue_id, "rejected": True, "title": row["title"]})
+            applied_cancels.append({
+                "issue_id": issue_id, "rejected": True, "title": row["title"],
+                # 拒收行必须带人读原因（ADR 0008 决定 5）；此拒收有部分落库副作用
+                # （已转强推+皇威-2），category 区分于纯丢弃（cmr S0 r2）。
+                "reason": "此事非诏可消（不可撤国策），已转强行推进并损皇威 2 点。",
+                "category": "non_cancellable_converted",
+            })
             continue
         # 可撤：应用 applied_cost
         cost = cn.get("applied_cost") or {}
