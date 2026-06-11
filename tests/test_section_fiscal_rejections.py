@@ -282,3 +282,66 @@ def test_change_dynamic_tax_rate_scales_region_field(game):
         "SELECT fiscal FROM regions WHERE id=?", (rid,)).fetchone()[0] or "{}")
     # 按 new/old 比例缩放后实收 < 400(联动当真生效)
     assert 0 <= int(fiscal.get("liao_xiang", 0) or 0) < 400
+
+
+@pytest.mark.parametrize("bad", [False, 0.0])
+def test_falsy_dirty_delta_still_rejected(game, bad):
+    """False==0 / 0.0==0 为真——无操作短路跑在脏值判定之前,把脏 bool/float 静默
+    吞掉(cmr S3 r1 claude:与 S1 的「bool 先判」顺序对称才成立)。"""
+    db, state, content = game
+    turn = state.turn
+    key = next(iter(db.get_fiscal_config()))
+
+    run_settle(db, state, content, {
+        "fiscal_changes": [{"key": key, "delta": bad}],
+    }, narrative="x", decree_text="y")
+
+    rows = [r for r in _rejection_rows(db, turn) if r[0] == "fiscal_changes"]
+    assert len(rows) == 1
+    assert rows[0][2] == "invalid_enum"
+
+
+# ───────── cmr S3 r1:引擎真路 cleaner 不得吞脏(验证单点化在 applier) ─────────
+
+def test_cleaner_passes_dirty_delta_through():
+    """_clean_fiscal_changes 不得 coerce(3.7→3/True→1)或静默丢脏串——原样透传,
+    由 applier 拒收留痕;无损整数串("5")照转,真 int 0 照旧滤掉(cmr S3 r1,2/2:
+    引擎真路被 cleaner 预消毒,拒收契约对 fiscal 失明)。"""
+    from ming_sim.simulation import _clean_fiscal_changes
+
+    out = _clean_fiscal_changes([
+        {"key": "a_base", "delta": 3.7},      # lossy float → 透传
+        {"key": "b_base", "delta": True},     # bool → 透传
+        {"key": "c_base", "delta": "三成"},    # 脏串 → 透传
+        {"key": "d_base", "delta": "5"},      # 无损整数串 → 转 5
+        {"key": "e_base", "delta": 0},        # 真 0 → 滤
+        {"key": "f_base", "delta": 2},        # 好值 → 保
+    ])
+    by_key = {c["key"]: c["delta"] for c in out}
+    assert by_key["a_base"] == 3.7
+    assert by_key["b_base"] is True
+    assert by_key["c_base"] == "三成"
+    assert by_key["d_base"] == 5
+    assert "e_base" not in by_key
+    assert by_key["f_base"] == 2
+
+
+def test_cleaner_passes_dirty_create_fields_through():
+    """_clean_fiscal_creates 不得把脏 init_value 归 0、不得静默丢非法
+    account/direction——透传由 applier 拒留痕;direction 同义词(收/支出)仍规范化,
+    init_value 缺省/null 仍归 0(合法默认)(cmr S3 r1,2/2)。"""
+    from ming_sim.simulation import _clean_fiscal_creates
+
+    out = _clean_fiscal_creates([
+        {"key": "t1", "account": "国库", "direction": "收", "init_value": 10},   # 同义词规范化
+        {"key": "t2", "account": "国库", "direction": "income", "init_value": "三百"},  # 脏值透传
+        {"key": "t3", "account": "省库", "direction": "income", "init_value": 1},  # 非法 account 透传
+        {"key": "t4", "account": "国库", "direction": "斜着走", "init_value": 1},  # 非法 direction 透传
+        {"key": "t5", "account": "国库", "direction": "income"},                  # 缺省 → 0
+    ])
+    by_key = {c["key"]: c for c in out}
+    assert by_key["t1"]["direction"] == "income"
+    assert by_key["t2"]["init_value"] == "三百"
+    assert by_key["t3"]["account"] == "省库"
+    assert by_key["t4"]["direction"] == "斜着走"
+    assert by_key["t5"]["init_value"] == 0

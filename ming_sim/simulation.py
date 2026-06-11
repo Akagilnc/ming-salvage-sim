@@ -738,12 +738,17 @@ def _clean_fiscal_changes(raw: object) -> List[Dict[str, object]]:
         key = str(item.get("key") or "").strip()
         if not key or "delta" not in item:
             continue
-        try:
-            delta = int(item.get("delta"))
-        except (TypeError, ValueError):
-            continue
-        if delta == 0:
-            continue
+        # cleaner 只做无损规范化,不吞脏（cmr S3 r1,2/2:此处曾 coerce 3.7→3/True→1、
+        # 静默丢脏串——引擎真路被预消毒,applier 的拒收契约对 fiscal 失明）。
+        # 无损整数串照转;脏值（float/bool/坏串/null）原样透传,由 applier 拒收留痕。
+        delta = item.get("delta")
+        if isinstance(delta, str):
+            try:
+                delta = int(delta.strip())
+            except ValueError:
+                pass  # 坏串透传
+        if isinstance(delta, int) and not isinstance(delta, bool) and delta == 0:
+            continue  # 真 int 0 = 无操作,照旧滤掉
         cleaned.append({
             "key": key,
             "delta": delta,
@@ -775,23 +780,29 @@ def _clean_fiscal_creates(raw: object) -> List[Dict[str, object]]:
         key = str(item.get("key") or "").strip()
         if not key:
             continue
+        # cleaner 只做无损规范化,不吞脏（cmr S3 r1,2/2）：非法 account/direction
+        # 原样透传（applier 拒收留痕,不再静默丢）;direction 同义词（收/支出）仍映射。
         account = str(item.get("account") or "").strip()
-        if account not in ("国库", "内库"):
-            continue
-        direction = _DIRECTION_NORMALIZE.get(str(item.get("direction") or "").strip())
-        if direction is None:
-            continue
-        try:
-            init_value = int(item.get("init_value") or 0)
-        except (TypeError, ValueError):
+        direction_raw = str(item.get("direction") or "").strip()
+        direction = _DIRECTION_NORMALIZE.get(direction_raw, direction_raw)
+        # init_value 缺省/null = 合法默认 0;在场脏值（float/bool/坏串）透传给 applier 拒。
+        init_value = item.get("init_value")
+        if init_value is None:
             init_value = 0
+        elif isinstance(init_value, str):
+            try:
+                init_value = max(0, int(init_value.strip()))
+            except ValueError:
+                pass  # 坏串透传
+        elif isinstance(init_value, int) and not isinstance(init_value, bool):
+            init_value = max(0, init_value)
         display = str(item.get("display") or "").strip() or key.replace("_base", "")
         cleaned.append({
             "key": key,
             "account": account,
             "direction": direction,
             "display": display,
-            "init_value": max(0, init_value),
+            "init_value": init_value,
             "reason": str(item.get("reason") or "")[:120],
         })
     return cleaned
