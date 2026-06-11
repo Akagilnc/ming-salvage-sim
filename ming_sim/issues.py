@@ -1345,9 +1345,11 @@ def apply_score_extraction(
     for change in extracted.get("fiscal_changes") or []:
         key = str(change.get("key") or "")
         delta_raw = change.get("delta")
-        # delta 缺省 / 显式 0 = 无操作,静默放过不记拒（免得每月刷无意义拒收行）。
-        if delta_raw is None or delta_raw == 0:
+        # delta 缺省 = 无操作,静默放过不记拒（免得每月刷无意义拒收行）。
+        if delta_raw is None:
             continue
+        # 脏值判定必须先于「==0 无操作」短路——False==0 / 0.0==0 为真,放后面会把
+        # 脏 bool/float 静默吞掉（cmr S3 r1,顺序与 S1 对称）。
         # delta 在场但脏（字符串/float/bool）= LLM 脏数据,原裸 int() 静默 continue（吞），
         # 改显式拒留痕；bool 是 int 子类,先于 int 判（对称 S1/S2 / S3）。
         if isinstance(delta_raw, bool) or not isinstance(delta_raw, int):
@@ -1356,6 +1358,9 @@ def apply_score_extraction(
                 "reason": f"调率 delta 非整数（{delta_raw!r}），不静默吞。",
                 "category": "invalid_enum", "item": change,
             })
+            continue
+        if delta_raw == 0:
+            # 显式 int 0 = 无操作（脏值已在上方拒掉,此处只剩真 int）。
             continue
         delta = delta_raw
         if not key:
