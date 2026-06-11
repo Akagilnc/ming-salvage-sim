@@ -909,11 +909,14 @@ def settle_with_delta(
             turn=before_turn, stage="settle", error_pack_path=pack_path,
         ) from exc
     # commit 已成功（atomic 正常退出）才镜像——jsonl 是可回收副本，DB 为真源（决定 5/7）。
-    # 镜像失败不回滚结算：吞 Exception 记日志（行已在 DB，丢的只是副本）。
-    try:
-        collector.mirror_to_jsonl(rejections_jsonl_path())
-    except Exception as mirror_exc:
-        tlog(f"[rejection] jsonl 镜像失败（DB 行已落，仅副本丢失）：{mirror_exc}")
+    # 嵌套守门与异常路对称（cmr S0 r1）：depth>0 时本层退出并未真 commit，先写镜像=
+    # 外层回滚后留「DB 无行、jsonl 有行」孤儿；嵌套场景放弃镜像（丢的只是可回收副本）。
+    # 镜像失败不回滚结算：吞 Exception 记日志（行已在 DB）。
+    if getattr(db.conn, "_atomic_depth", 0) == 0:
+        try:
+            collector.mirror_to_jsonl(rejections_jsonl_path())
+        except Exception as mirror_exc:
+            tlog(f"[rejection] jsonl 镜像失败（DB 行已落，仅副本丢失）：{mirror_exc}")
     return full_report
 
 
@@ -927,11 +930,13 @@ def _collect_inline_rejections(
 
     约定：section 结果列表中 `{"rejected": True, ...}` 即拒收项；`reason` 为人读原因，
     `category` 为机读类别（未迁契约的 section 没有此键 → 兜底 "legacy_inline"）。
+    一层 dict-of-list（issue_summary 的 new_issues/cancels 等）也要下探——new_issues
+    正是实测最常被拒的段，跳过它聚合就失明（cmr S0 r1）。
+    注意 item 是 apply 产出的**拒收结果记录**（name/status/reason 回显），不是 extractor
+    原始 delta 项——原项字段 apply 现不回传；S1-S3 section 迁契约后由适配器携原件补全。
     """
-    for section, value in applied.items():
-        if not isinstance(value, list):
-            continue
-        for item in value:
+    def _scan(section: str, items: list) -> None:
+        for item in items:
             if not (isinstance(item, dict) and item.get("rejected")):
                 continue
             collector.record(section, RejectedItem(
@@ -940,6 +945,14 @@ def _collect_inline_rejections(
                 category=str(item.get("category") or "legacy_inline"),
                 source=source,
             ), turn)
+
+    for section, value in applied.items():
+        if isinstance(value, list):
+            _scan(section, value)
+        elif isinstance(value, dict):
+            for subkey, subvalue in value.items():
+                if isinstance(subvalue, list):
+                    _scan(f"{section}.{subkey}", subvalue)
 
 
 def _settle_after_extract_body(
