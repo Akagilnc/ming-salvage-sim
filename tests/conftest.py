@@ -59,3 +59,13 @@ def active_ming_character(db, content) -> str:
         if db.get_character_status(name)[0] == "active":
             return name
     raise AssertionError("找不到 active 的大明大臣")
+
+
+@pytest.fixture(autouse=True)
+def _isolated_user_data_dir(tmp_path, monkeypatch):
+    """全套测试隔离 user-data（错误包/拒收镜像）——集中兜底（cmr S1 r2 P1）。
+
+    没有它，任何走 run_settle/写包路径的用例都把测试产物写进真实 data/error_packs
+    （实证 18 包 75MB + 假行混真 jsonl + attempt 序号灌高）。各用例自己 setenv 指
+    自己的 tmp_path 仍可覆盖本兜底（monkeypatch 后设者胜）。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "user_data"))

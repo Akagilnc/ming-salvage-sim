@@ -197,3 +197,55 @@ def test_dirty_power_value_string_rejected(game):
     rows = [r for r in _rejection_rows(db, turn) if r[0] == "power_changes"]
     assert len(rows) == 1
     assert rows[0][2] == "invalid_enum"
+
+
+def test_ming_power_update_rejected_with_trace(game):
+    """power_updates 写 ming = prompt 明文禁止的脏数据 → 逐项拒收留痕,
+    不再 print 静默跳(cmr S1 r2,2/2——迁了 section 却留一条 print 路不一致)。"""
+    db, state, content = game
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "power_updates": {"ming": {"leverage": 5}},
+    }, narrative="x", decree_text="y")
+
+    rows = [r for r in _rejection_rows(db, turn) if r[0] == "power_changes"]
+    assert len(rows) == 1
+    assert rows[0][2] == "invalid_enum"
+    assert "ming" in rows[0][1] or "大明" in rows[0][1]
+
+
+def test_float_and_bool_power_values_rejected(game):
+    """float(3.7→3 静默截断)与 bool(True→1 静默拟真)叶子值绕过 int() 异常路
+    ——一律拒收,prompt 要求整数 delta(cmr S1 r2 codex)。"""
+    db, state, content = game
+    turn = state.turn
+    good = _valid_power_id(db)
+    before = db.conn.execute(
+        "SELECT leverage FROM powers WHERE id=?", (good,)).fetchone()[0]
+
+    run_settle(db, state, content, {
+        "power_updates": {good: {"leverage": 3.7, "military_strength": True}},
+    }, narrative="x", decree_text="y")
+
+    rows = [r for r in _rejection_rows(db, turn) if r[0] == "power_changes"]
+    assert len(rows) == 2
+    assert all(r[2] == "invalid_enum" for r in rows)
+    after = db.conn.execute(
+        "SELECT leverage FROM powers WHERE id=?", (good,)).fetchone()[0]
+    assert after == before  # 3.7 没有被截断成 3 落库
+
+
+def test_reason_carrier_aliases_not_recorded_as_rejection(game):
+    """last_action/近动 是函数自己消费的 reason 载体键——不得同时被记成
+    invalid_enum 拒收(假阳行污染分析账本,cmr S1 r2 claude)。"""
+    db, state, content = game
+    turn = state.turn
+    good = _valid_power_id(db)
+
+    run_settle(db, state, content, {
+        "power_updates": {good: {"leverage": 3, "近动": "联姻蒙古", "last_action": "遣使"}},
+    }, narrative="x", decree_text="y")
+
+    rows = [r for r in _rejection_rows(db, turn) if r[0] == "power_changes"]
+    assert rows == []  # 零假阳

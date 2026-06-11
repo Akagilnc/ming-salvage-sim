@@ -2206,7 +2206,14 @@ class GameDB:
         changes: List[Dict[str, object]] = []
         for power_id, raw_changes in updates.items():
             if power_id == "ming":
-                print("[WARN] power_updates 不再处理大明自身 → 跳过")
+                # prompt 明文禁止写 ming——按脏数据逐项拒收留痕，与同函数其余拒收
+                # 路一致（cmr S1 r2，原 print 静默跳是迁契约漏网）。
+                changes.append({
+                    "power_id": power_id, "rejected": True,
+                    "category": "invalid_enum",
+                    "reason": "power_updates 不处理大明自身（ming），prompt 明文禁止",
+                    "item": {"power_id": power_id, "changes": raw_changes},
+                })
                 continue
             row = self.conn.execute("SELECT * FROM powers WHERE id = ?", (power_id,)).fetchone()
             if row is None:
@@ -2226,7 +2233,9 @@ class GameDB:
             ).strip()[:120]
             for raw_field, value in raw_changes.items():
                 field = POWER_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-                if field == "reason":
+                if field in ("reason", "last_action"):
+                    # reason/last_action（含 近动 等别名）是本函数上方消费的 reason
+                    # 载体键——跳过，不得记成 invalid_enum 假阳（cmr S1 r2）。
                     continue
                 if field not in allowed_fields:
                     changes.append({
@@ -2240,7 +2249,11 @@ class GameDB:
                 try:
                     # LLM 叶子值脏（null/"三成"/小数串）= 脏数据逐项拒，不崩整批
                     # （validate_delta_shape 只验容器、容忍 null 叶——cmr S1 r1，
-                    # 同 secret_order order_id 非整数先例）。
+                    # 同 secret_order order_id 非整数先例）。float/bool 显式拒：
+                    # int(3.7)→3 静默截断、True→1 拟真，都不是 prompt 要的整数
+                    # delta（cmr S1 r2；bool 是 int 子类须先判）。
+                    if isinstance(value, bool) or isinstance(value, float):
+                        raise ValueError("非整数 delta")
                     delta = int(value)
                 except (TypeError, ValueError):
                     changes.append({
