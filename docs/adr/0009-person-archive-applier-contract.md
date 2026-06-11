@@ -19,7 +19,8 @@ Status: proposed（待评审；实现等 PR #90 合入 + M0 收口）
 
 所有级联分解为同一套原语：解绑名分 / 绑名分 / status 迁移 / 去向变更 / 派系连动。**任命的级联不是特殊代码，是内部递归**：被顶替者作为**派生事件**走同一管线（→ 听用候铨，见决定 10），**继承触发项的 source（C2 Provenance）**，另带 `derived_from` 指向触发条目——来源通道与派生因果是两根轴，审计链完整。
 
-- **派生只算一次、不递归**：派生事件按其触发条目的**派生前状态**计算，且派生事件自身不再触发二次派生。例：`任命(imprisoned)` 派生 `处置(放归)` 后即执行任命，**不**因放归后的落点再派生起复。
+- **执行位求值总则**：一切状态依赖判定（档一派生选择、声明归一、`invalid_transition`、legacy 闸门）一律在**条目执行位**对彼刻状态求值——翻译/sanitize 层不固化状态快照（同数组前项改状态，后项判定必须看见）。alias 翻译时的任命/调任初选只是标签，执行位的声明归一兜底纠偏。
+- **派生只算一次、不递归**：派生事件按其触发条目执行位的**派生前状态**计算，且派生事件自身不再触发二次派生。例：`任命(imprisoned)` 派生 `处置(放归)` 后即执行任命，**不**因放归后的落点再派生起复。
 - **派生事件执行序**：前置类派生（放归/起复/昭雪/夺情）紧贴其触发条目**之前**执行；后果类派生（顶替离任）紧贴**之后**。整体仍在数组序内。
 - **派系连动是本管线原语**（非跨段依赖）：易主必带（决定 3），罢黜/处置（赐死重臣等）的派系反应由裁判视情产出，applier 不强制。
 - 弃案：顶替者在任命级联里就地处理（现状 displaced 字符串列表）→ 同步责任散落，正是本 ADR 要灭的类。
@@ -36,7 +37,7 @@ Status: proposed（待评审；实现等 PR #90 合入 + M0 收口）
 
 下狱=革职拿问（清名分，明制逮问先削职）。**放归默认落点 = `offstage`（赋闲）**；要落别处须显式参数（贬庶民=`处置(放归→dismissed)`）。**放出不是撤销下狱，是新组合**：官复原职=`处置(放归)`+`任命(原职)`（史实「起复」本就是新诏）；官降三级=`处置(放归)`+`任命(低阶官)`（放归后无职名分可解绑，按决定 1 边界走任命而非调任）。「戴罪视事/革职留任」不扩枚举——任命即默认可任事，风味归叙事与大臣系统线（#89）。
 
-**处置 payload 形态**：目标 `status` 必填 + 具名子动作可选 + `reason_code` 可选。族列举（下狱/流放/致仕/放归/赐死/起复/昭雪/夺情/卒）是常用具名示例，无名迁移以目标 status 为准（S9 出宫、S14 落选即此形）；`invalid_transition` 判据对目标 status 生效。**政治标记类具名（起复/昭雪/夺情）作为档一派生产出时目标 status=active**（与触发任命的置位一致——标记不迁移，仅落档审计），S2–S4 的派生条目即此形。
+**处置 payload 形态**：目标 `status` 必填 + 具名子动作可选 + `reason_code` 可选。族列举（下狱/流放/致仕/放归/赐死/起复/昭雪/夺情/卒）是常用具名示例，无名迁移以目标 status 为准（S9 出宫、S14 落选即此形）；`invalid_transition` 判据对目标 status 生效。**政治标记类具名（起复/昭雪/夺情）作为档一派生产出时为纯审计记录**：不执行 status 迁移原语（「目标 status 必填」对标记类派生豁免），状态置位由触发任命自身的级联完成——避免「先标记置 active、名分未绑」的中间态（不变式 1 全程成立）。S2–S4 的派生条目即此形。
 
 ## 决定 5：行止与去向模型（#86 收编）
 
@@ -97,7 +98,7 @@ status 枚举 = models.py 七值 + 实存的 `candidate`（registry.py:375 秀�
 
 **总则（2026-06-11 拍）：旧有/上游机制能用不是坏事，但若成为改进的绊脚石，果断踢开——不为将就吞技术债。** alias 的存在理由只有「重放正确性」（ADR 0008 ready=1 重试真源 + 历史 delta 文件），不是对旧 key 的敬意；哪天碍事，一次性迁移脚本洗旧数据 + 删 alias，不背永久房租。新管线设计永远不为旧 key 语义弯腰。
 
-- **状态感知翻译**住 sanitize 层（`TOP_LEVEL_ALIASES` 入口，翻译时可读当前状态）：`office_changes` → 目标现持职名分则译**调任**、否则译**任命**（兑现 DELTA_SCHEMA 旧契约「任命/调任/升迁/改授」的两义，逐项保真）；`character_status_changes` → 译**处置**；其中 `status=active` 项**译为拒收**（`invalid_enum` + legacy 注记）——实测旧管线两个消费路径的 valid_status 均不含 active（issues.py:1332/694，历史行为即拒收），译成任何真实迁移反而改写历史，违背重放保真；同理，**月末 delta 来源的项若目标当前 status≠active 译为拒收**（legacy 注记），复刻该路径「只许从 active 出发」的闸门（issues.py:1352）；**结案效果来源（system_simulation）的项不加此闸**——旧结案路径（issues.py:694）历史上无此闸，「下狱→赐死」类迁移在彼处合法落库过，加闸反而改写历史；`character_power_changes` → **易主(方式=不明)**；`appointments` → **字段感知**：office_type=后宫 → 册封，其余 → 按 office_changes 同规译任命/调任（复刻旧管线 spillover 行为，issues.py:1292——历史上朝臣项确实经此路落库）。
+- **状态感知翻译**住 sanitize 层（`TOP_LEVEL_ALIASES` 入口，翻译时可读当前状态）：`office_changes` → 目标现持职名分则译**调任**、否则译**任命**（兑现 DELTA_SCHEMA 旧契约「任命/调任/升迁/改授」的两义，逐项保真）；`character_status_changes` → 译**处置**；其中 `status=active` 项**译为拒收**（`invalid_enum` + legacy 注记）——实测旧管线两个消费路径的 valid_status 均不含 active（issues.py:1332/694，历史行为即拒收），译成任何真实迁移反而改写历史，违背重放保真；同理，**月末 delta 通道的项打 `legacy_gate` 标记**（通道知识在翻译调用点——翻月末 delta 还是结案效果由调用方天然知道，无需 C2 ApplyContext 扩展），**闸门在条目执行位求值**：执行彼刻目标 status≠active → 拒收（legacy 注记），逐项复刻旧管线 mid-sequence 语义（issues.py:1352）；**结案效果通道不打此标记**——旧结案路径（issues.py:694）历史上无此闸，「下狱→赐死」类迁移在彼处合法落库过，加闸反而改写历史；`character_power_changes` → **易主(方式=不明)**；`appointments` → **字段感知**：office_type=后宫 → 册封，其余 → 按 office_changes 同规译任命/调任（复刻旧管线 spillover 行为，issues.py:1292——历史上朝臣项确实经此路落库）。
 - **四旧 key 译项按旧管线执行序拼入数组**：appointments(后宫→册封) → character_status_changes → character_power_changes → office_changes → **appointments 朝臣 spillover 译项（任命/调任）殿后**——复刻旧管线 `office_change_items = 本体 + spillover` 的实际执行位（issues.py:1292 收集、:1391 殿后执行），同 delta 多 key 触及同一人时末态与旧管线一致。
 - alias 保留但**不写文档**：DELTA_SCHEMA 重写后只记载 `人物变更`；旧 key 永不获得新能力（行止/方式/reason_code 仅新 key），自然枯死。
 - 迁移打包进实现 PR 不分阶段（新旧并存的中间态是 #13 温床）：applier adapter + 4 个 score_extractor prompt + 产 delta 手册 + DELTA_SCHEMA 重写 + 围栏/契约测试一次带齐。
