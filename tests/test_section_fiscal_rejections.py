@@ -426,3 +426,23 @@ def test_negative_init_value_rejected_not_clamped(game):
     assert len(rows) == 1
     assert db.conn.execute(
         "SELECT COUNT(*) FROM fiscal_config WHERE key='负值测试_base'").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("bad_key", ["田赋_rate_base", "辽饷_base_base"])
+def test_double_suffix_key_rejected_no_phantom(game, bad_key):
+    """双后缀 key(田赋_rate_base)单层剥离后仍漏撞既有行,建出幻影预算科目并被
+    iter_budget_items 当真月度流水重复计税(cmr S3 r4 claude medium)。
+    _stem_of 须循环剥后缀。"""
+    db, state, content = game
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "fiscal_creates": [{"key": bad_key, "account": "国库",
+                            "direction": "income", "init_value": 100}],
+    }, narrative="x", decree_text="y")
+
+    rows = [r for r in _rejection_rows(db, turn) if r[0] == "fiscal_creates"]
+    assert len(rows) == 1
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM fiscal_config WHERE key LIKE ?", (bad_key + "%",)
+    ).fetchone()[0] == 0  # 零幻影行

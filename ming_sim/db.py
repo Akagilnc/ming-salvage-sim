@@ -1029,8 +1029,10 @@ class GameDB:
     }
 
     def _stem_of(self, key: str) -> str:
-        if key.endswith("_base") or key.endswith("_rate"):
-            return key[:-5]
+        # 循环剥后缀（cmr S3 r4）：单层剥离时双后缀 key（田赋_rate_base）归一成
+        # 田赋_rate,存在性检查漏撞既有 rate 行 → 建出幻影预算科目被当真月度流水。
+        while key.endswith("_base") or key.endswith("_rate"):
+            key = key[:-5]
         return key
 
     def apply_dynamic_fiscal_scale(self, stem: str, ratio: float) -> int:
