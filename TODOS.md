@@ -5,7 +5,7 @@
 > **追踪方式（2026-06-08 起，渐进迁移）**：主用 GitHub issue 记问题/讨论/状态；本文件**逐步舍弃**，只留「需要做、但不值得单开 issue 的小事」+ 已上 issue 项的指针索引。新发现的实质 bug/架构项直接开 issue，不再在此写长条目。
 
 ## 🟠 PR #2 CMR Deferred（cross-model review 8 轮 5/5 concur 后 defer 的契约/架构项）
-- D1 settlement 事务半落库 → [issue #3](https://github.com/Akagilnc/ming-salvage-sim/issues/3)
+- ~~D1 settlement 事务半落库 → [issue #3](https://github.com/Akagilnc/ming-salvage-sim/issues/3)~~ ✅ ADR 0008 PR1 (v0.8.0.0, 2026-06-11)：后半段单一事务 `applier.atomic` + 可恢复 resolve_context + 响亮中止/错误包（合并后手动关 issue，等用户验收）
 - ~~D2 城防炮 region.cannon 无 delta 写入路径 → [issue #4](https://github.com/Akagilnc/ming-salvage-sim/issues/4)~~ ✅ PR #16 (v0.5.1)
 - D3 conftest 依赖 gitignored probe.db → CI 假绿 → [issue #5](https://github.com/Akagilnc/ming-salvage-sim/issues/5)
 - D4 _loads_lenient JSONC 非 quote-aware 病态边界 → [issue #6](https://github.com/Akagilnc/ming-salvage-sim/issues/6)
@@ -24,6 +24,7 @@
 
 ### B11. 全系统静默吞异常/吞畸形数据（不抛错不告警），该落没落无人知 → [issue #14](https://github.com/Akagilnc/ming-salvage-sim/issues/14)
 - 系统级模式（从 B10 抽象）：delta 畸形项 `continue` 丢弃 / apply 拒收只记 `rejected` 不报 / db.py broad `except` 返默认 / gate 解析失败返 None。后果=静默数据丢失 + DB↔叙事漂移 + 调试盲区，侵蚀 P1 落库铁律。修法待定（结算级 reject 收集器 / except 收窄记日志 / gate 失败区分）。与 #3、#13 同根。
+- **进展（v0.8.0.0, ADR 0008 PR1）**：「结算级 reject 收集器」已落地（`applier.RejectionCollector`，provenance + 事务内落 DB + commit 后镜像 JSONL）；shape 垃圾/损坏 JSON 改响亮中止+错误包。**剩余**：apply 各分支真正接上 collector（PR1 只建契约层）、db.py broad except 收窄、gate 解析失败区分——issue #14 不关。
 
 ### B10. delta 顶层 key 近义易混（人事变更/人物状态变化）+ office_changes 静默拒收吞死亡 → [issue #13](https://github.com/Akagilnc/ming-salvage-sim/issues/13)
 - "毛文龙没死"真因：turn21 我把毛的死产进 `人事变更`(office_changes)而非 `人物状态变化`(character_status_changes)，office_changes 因 `new_office` 空静默拒收（[issues.py:1250](../ming_sim/issues.py)）。两个中文 key 太像。rename 候选（待议）：office_changes→`职务变更`、character_status_changes→`人物状态变更`（alias 可保旧加新别名）。修正了 #12 对"毛没死"的归因。
