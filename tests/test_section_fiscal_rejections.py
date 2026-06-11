@@ -432,7 +432,7 @@ def test_negative_init_value_rejected_not_clamped(game):
 def test_double_suffix_key_rejected_no_phantom(game, bad_key):
     """双后缀 key(田赋_rate_base)单层剥离后仍漏撞既有行,建出幻影预算科目并被
     iter_budget_items 当真月度流水重复计税(cmr S3 r4 claude medium)。
-    _stem_of 须循环剥后缀。"""
+    _stem_of 对多重后缀返空标记非法（不循环剥归一——循环归一在 remove 路不可逆危险,见 r5）。"""
     db, state, content = game
     turn = state.turn
 
