@@ -531,3 +531,51 @@ def test_nondict_new_army_item_recorded_not_silent(game):
     rej = [c for c in created if c.get("rejected")]
     assert len(rej) == 1
     assert rej[0]["category"] == "invalid_enum"
+
+
+@pytest.mark.parametrize("field,bad", [("equipment", "精良"), ("mobility", "快"), ("loyalty", "高")])
+def test_all_score_fields_guarded_on_creation(game, field, bad):
+    """守门集从 ARMY_SCORE_FIELDS 派生——硬列 6 字段漏 equipment/mobility/loyalty,
+    脏值仍静默 50(cmr S2 r2,2/2;集中化:字段表变了守门自动跟)。"""
+    db, state, content = game
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "new_armies": [{"id": f"guard_{field}_army", "name": f"守门{field}军",
+                        "owner_power": "ming", "manpower": 5000,
+                        "maintenance_per_turn": 2, field: bad}],
+    }, narrative="x", decree_text="y")
+
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM armies WHERE id=?", (f"guard_{field}_army",)
+    ).fetchone()[0] == 0
+    rows = _rejection_rows(db, turn, "created_armies")
+    assert len(rows) == 1
+
+
+def test_issue_path_tolerated_rejections_reach_reports(game):
+    """issue 结案路的容忍拒收项不得蒸发——经 issue_summary.entity_rejections 落
+    rejection_reports(改前是 print,改后曾比 print 更静默=违「容忍+留痕」,
+    cmr S2 r2,2/2)。"""
+    import json as _json
+
+    db, state, content = game
+    turn = state.turn
+    aid = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()[0]
+    issue_id = db.insert_issue(
+        state, kind="initiative", title="测试容忍留痕", origin_kind="decree",
+        origin_ref="", bar_value=50, bar_good_meaning="成", bar_bad_meaning="败",
+        inertia=0, stage_text="", severity=50, region_hint="", faction_hint="",
+        tags=[], ongoing_effects={}, cancellable="decree", cancel_cost={},
+        effect_on_resolve={"army_delta": {aid: {"morale": 1, "士气大振": 9}}},
+        effect_on_fail={}, resolve_condition="", fail_condition="",
+    )
+    db.conn.commit()
+
+    run_settle(db, state, content, {
+        "close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "测试结案"}],
+    }, narrative="x", decree_text="y")
+
+    rows = _rejection_rows(db, turn, "issue_summary.entity_rejections")
+    assert len(rows) == 1
+    assert "士气大振" in rows[0][1] or "非法字段" in rows[0][1]

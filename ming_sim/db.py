@@ -2523,6 +2523,9 @@ class GameDB:
                     "category": "missing_ref",
                     "reason": f"region_delta 引用未入库地区 '{region_id}'",
                     "item": {"region_id": region_id, "changes": raw_changes},
+                    # 历史 print-skip → convention 一致补标（当前 issue 路不走 region,
+                    # 防未来接入时误升级——cmr S2 r2 claude P3）。
+                    "issue_strict": False,
                 })
                 continue
             reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()[:80]
@@ -3240,8 +3243,9 @@ class GameDB:
             # 可选数值字段「在场即须合法」（cmr S2 r1 codex P1）：在场脏值静默走默认
             # = 伪造军备（morale "高"→50、cannon "几门"→0）。None 视为缺省（LLM 习惯
             # 用 null 表「无」,validate_delta_shape 亦容忍 null 叶）；其余非整拒该项。
-            _optional_numeric = ("supply", "morale", "training",
-                                 "firearm_equipment", "cannon_equipment", "arrears")
+            # 守门集从字段表派生（cmr S2 r2,2/2:硬列漏 equipment/mobility/loyalty）
+            # ——ARMY_SCORE_FIELDS 全量 + 建军行额外消费的 arrears;字段表变守门自动跟。
+            _optional_numeric = tuple(ARMY_SCORE_FIELDS) + ("arrears",)
             _dirty_field = None
             for _f in _optional_numeric:
                 _v = item.get(_f)

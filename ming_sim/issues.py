@@ -678,7 +678,7 @@ def _spawn_legacy_from_effect(
     return summary
 
 
-def _apply_issue_entities(db: GameDB, state: GameState, effect: Dict[str, object], label: str) -> None:
+def _apply_issue_entities(db: GameDB, state: GameState, effect: Dict[str, object], label: str) -> List[Dict[str, object]]:
     """国策结案的实体后果：建军 / 补兵改属性 / 人物状态(死/流放/下狱/罢/致仕)。
     全局严格、不静默——非法 delta 直接抛错中断当回合，绝不无声丢失。
     （effect_on_resolve 原本只支持 metrics/economy/buildings/legacy，这里补 army/人事两线。）"""
@@ -688,13 +688,23 @@ def _apply_issue_entities(db: GameDB, state: GameState, effect: Dict[str, object
     # 走默认的案（army 非法字段/重复无 manpower/重复非整/可选脏值/非 dict 项）带
     # issue_strict=False 标——容忍不升级,否则历史可活的脏数据变成新的崩月路
     # （cmr S2 r1）。两类都留拒收记录,不无声丢。
+    tolerated: List[Dict[str, object]] = []
+
     def _raise_on_rejected(results, what: str) -> None:
-        rejected = [r for r in (results or [])
-                    if isinstance(r, dict) and r.get("rejected")
-                    and r.get("issue_strict", True)]
-        if rejected:
-            reasons = "；".join(str(r.get("reason") or "") for r in rejected)
+        strict = [r for r in (results or [])
+                  if isinstance(r, dict) and r.get("rejected")
+                  and r.get("issue_strict", True)]
+        if strict:
+            reasons = "；".join(str(r.get("reason") or "") for r in strict)
             raise ValueError(f"{label} {what} 非法（全局严格，不静默）：{reasons}")
+        # 容忍项（issue_strict=False）留痕不蒸发（cmr S2 r2,2/2:改前是 print,
+        # 不留比 print 更静默）：收集返回,tracker-output 路挂 issue_summary 进
+        # rejection_reports,inertia 路由 caller tlog。
+        tolerated.extend(
+            {**r, "label": label}
+            for r in (results or [])
+            if isinstance(r, dict) and r.get("rejected") and not r.get("issue_strict", True)
+        )
 
     new_armies = effect.get("new_armies")
     if isinstance(new_armies, list) and new_armies:
@@ -723,6 +733,7 @@ def _apply_issue_entities(db: GameDB, state: GameState, effect: Dict[str, object
             if name not in chars:
                 raise ValueError(f"{label} 人物状态引用未知人物：{name!r}")
             db.set_character_status(state, name, status, reason)
+    return tolerated
 
 
 def apply_issue_tracker_output(
@@ -735,6 +746,9 @@ def apply_issue_tracker_output(
     applied_advances: List[Dict[str, object]] = []
     applied_new: List[Dict[str, object]] = []
     applied_cancels: List[Dict[str, object]] = []
+    # issue 实体后果的容忍拒收项（issue_strict=False）——挂进返回 summary,
+    # S0 桥接一层下探自动收进 rejection_reports（留痕不蒸发,cmr S2 r2）。
+    entity_rejections: List[Dict[str, object]] = []
     event_by_id = _ctx().event_by_id
 
     # 1) advances
@@ -768,7 +782,8 @@ def apply_issue_tracker_output(
             _apply_economy_list(db, state, effect.get("economy") or [])
             _apply_faction_dict(db, effect.get("factions") or {})
             _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}结案")
-            _apply_issue_entities(db, state, effect, f"局势#{issue_id}结案")
+            entity_rejections.extend(
+                _apply_issue_entities(db, state, effect, f"局势#{issue_id}结案"))
             _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
         elif new_row["status"] == "failed":
             effect = json.loads(new_row["effect_on_fail"] or "{}")
@@ -776,7 +791,8 @@ def apply_issue_tracker_output(
             _apply_economy_list(db, state, effect.get("economy") or [])
             _apply_faction_dict(db, effect.get("factions") or {})
             _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}失败")
-            _apply_issue_entities(db, state, effect, f"局势#{issue_id}失败")
+            entity_rejections.extend(
+                _apply_issue_entities(db, state, effect, f"局势#{issue_id}失败"))
             _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
         applied_advances.append({
             "issue_id": issue_id,
@@ -919,7 +935,8 @@ def apply_issue_tracker_output(
             db, state, effect.get("buildings"),
             _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}{'结案' if reason == 'resolved' else '失败'}",
         )
-        _apply_issue_entities(db, state, effect, f"局势#{issue_id}{'结案' if reason == 'resolved' else '失败'}")
+        entity_rejections.extend(_apply_issue_entities(
+            db, state, effect, f"局势#{issue_id}{'结案' if reason == 'resolved' else '失败'}"))
         _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
         applied_closes.append({
             "issue_id": issue_id,
@@ -978,6 +995,7 @@ def apply_issue_tracker_output(
         "new_issues": applied_new,
         "closes": applied_closes,
         "cancels": applied_cancels,
+        "entity_rejections": entity_rejections,
         "touched_ids": sorted(touched_ids),
     }
 
@@ -1569,7 +1587,9 @@ def apply_issue_inertia_and_ongoing(
                     _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}结案")
                     # 与 tracker advance/close 路径一致：自然结案也落实体后果 + 帝国修正，
                     # 否则靠 inertia 推到 100 的 issue 会丢 new_armies/army_delta/人物状态/legacy（codexB-P1）。
-                    _apply_issue_entities(db, state, effect, f"局势#{issue_id}结案")
+                    for _tr in _apply_issue_entities(db, state, effect, f"局势#{issue_id}结案"):
+                        # inertia 路无 applied dict 可挂——tlog 留痕（≥改前 print 可观测性）。
+                        tlog(f"[issue-entities] 容忍拒收：{_tr.get('reason')}")
                     _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
                     continue
                 elif new_row["status"] == "failed":
@@ -1578,7 +1598,8 @@ def apply_issue_inertia_and_ongoing(
                     _apply_economy_list(db, state, effect.get("economy") or [])
                     _apply_faction_dict(db, effect.get("factions") or {})
                     _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}失败")
-                    _apply_issue_entities(db, state, effect, f"局势#{issue_id}失败")
+                    for _tr in _apply_issue_entities(db, state, effect, f"局势#{issue_id}失败"):
+                        tlog(f"[issue-entities] 容忍拒收：{_tr.get('reason')}")
                     _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
                     continue
                 row = db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
