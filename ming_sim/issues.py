@@ -682,13 +682,27 @@ def _apply_issue_entities(db: GameDB, state: GameState, effect: Dict[str, object
     """国策结案的实体后果：建军 / 补兵改属性 / 人物状态(死/流放/下狱/罢/致仕)。
     全局严格、不静默——非法 delta 直接抛错中断当回合，绝不无声丢失。
     （effect_on_resolve 原本只支持 metrics/economy/buildings/legacy，这里补 army/人事两线。）"""
+    # ADR 0008 决定 1（PR2-S2）后,底层 db 方法对 LLM 脏项改「逐项拒收留痕」而非
+    # raise——但国策结案路（本函数）的契约是「全局严格、不静默」，与 season-settle
+    # 的「坏项拒收、好项照落」不同：此处把任何拒收项重新升级为 ValueError 中断当回合，
+    # 维持原行为不变（拒收记录在返回列表里，不静默丢）。
+    def _raise_on_rejected(results, what: str) -> None:
+        rejected = [r for r in (results or []) if isinstance(r, dict) and r.get("rejected")]
+        if rejected:
+            reasons = "；".join(str(r.get("reason") or "") for r in rejected)
+            raise ValueError(f"{label} {what} 非法（全局严格，不静默）：{reasons}")
+
     new_armies = effect.get("new_armies")
     if isinstance(new_armies, list) and new_armies:
-        db.create_armies_from_extraction(state, new_armies, actor=label)
+        _raise_on_rejected(
+            db.create_armies_from_extraction(state, new_armies, actor=label), "建军"
+        )
     army_delta = effect.get("army_delta")
     if isinstance(army_delta, dict) and army_delta:
         pseudo = type("E", (), {"id": "issue", "title": label})()
-        db.apply_army_deltas(state, pseudo, None, label, army_delta)
+        _raise_on_rejected(
+            db.apply_army_deltas(state, pseudo, None, label, army_delta), "补兵/改属性"
+        )
     csc = effect.get("character_status_changes")
     if isinstance(csc, list) and csc:
         valid_status = {"dismissed", "imprisoned", "exiled", "retired", "dead", "offstage"}
@@ -1194,8 +1208,10 @@ def apply_score_extraction(
     army_changes: List[Dict[str, object]] = []
     created_armies: List[Dict[str, object]] = []
     # 先建军：避免同回合 army_delta 引用新军被跳过。
-    # 不吞异常（全局严格）：建军/补兵 delta 非法直接抛错中断当回合，不静默丢，
-    # 以免「军没建成、账实不符」无声发生。
+    # ADR 0008 决定 1（PR2-S2）：LLM 脏数据（查无此地/此军、字段非法、值不可解析）在
+    # 三个 db 方法内逐项拒收留痕（返回列表含 {"rejected": True, ...}，桥接自动收进
+    # rejection_reports），好项照落、坏一项不带走整批；代码异常（bug 类）仍上抛到 settle
+    # 层回滚整批，绝不吞。clamp 语义（城防炮 city_level×8、随军炮 cap12、火器 0-100）不变。
     if isinstance(new_armies_raw, list) and new_armies_raw:
         created_armies = db.create_armies_from_extraction(state, new_armies_raw, actor="档房")
     if isinstance(region_deltas_raw, dict) and region_deltas_raw:
