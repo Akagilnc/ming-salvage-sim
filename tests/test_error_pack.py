@@ -366,3 +366,40 @@ def test_shape_garbage_extractor_product_aborts_loudly(game, monkeypatch, tmp_pa
         )
     assert ei.value.stage == "extract"
     assert db.get_resolve_context(state.turn) is None  # 垃圾未入真源
+
+
+def test_next_attempt_skips_malformed_and_foreign_entries(game, monkeypatch, tmp_path):
+    """attempt 推导跳过畸形后缀/他 turn/非目录项，取本 turn 数字后缀 max+1
+    （PR #90 R3 sourcery：钉 _next_attempt 防御分支）。"""
+    from ming_sim.error_pack import error_packs_root, write_error_pack
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+    root = error_packs_root()
+    root.mkdir(parents=True, exist_ok=True)
+    (root / f"turn{turn}_attempt7").mkdir()        # 有效：进 max
+    (root / f"turn{turn}_attemptX").mkdir()        # 畸形后缀：忽略
+    (root / f"turn{turn + 1}_attempt99").mkdir()   # 他 turn：不串号
+    (root / f"turn{turn}_attempt9").write_text("")  # 同名文件非目录：忽略
+
+    p = write_error_pack(db, state, exc=RuntimeError("boom"),
+                         extracted=None, resolve_ctx=None)
+
+    m = json.loads((Path(p) / "manifest.json").read_text(encoding="utf-8"))
+    assert m["attempt"] == 8  # 7+1，不被 X/99/文件项带偏
+
+
+def test_version_read_failure_falls_back_to_unknown(game, monkeypatch, tmp_path):
+    """VERSION 缺失/读失败 → manifest.version='unknown'，写包不失败
+    （PR #90 R3 sourcery：钉 _read_version 防御分支）。"""
+    import ming_sim.error_pack as ep
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(ep, "bundled_path",
+                        lambda name: str(tmp_path / "no-such-dir" / name))
+
+    p = ep.write_error_pack(db, state, exc=RuntimeError("boom"),
+                            extracted=None, resolve_ctx=None)
+
+    m = json.loads((Path(p) / "manifest.json").read_text(encoding="utf-8"))
+    assert m["version"] == "unknown"
