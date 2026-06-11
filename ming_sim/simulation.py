@@ -736,8 +736,9 @@ def _clean_fiscal_changes(raw: object) -> List[Dict[str, object]]:
         if not isinstance(item, dict):
             continue
         key = str(item.get("key") or "").strip()
-        if not key or "delta" not in item:
-            continue
+        if "delta" not in item:
+            continue  # 无 delta = 无操作项,照旧滤（applier 对 delta 缺省同语义）
+        # 空 key 不再静默滤——透传 applier 记拒（cmr S3 r7:driver 路有痕、引擎路无痕=同输入两判）。
         # cleaner 只做无损规范化,不吞脏（cmr S3 r1,2/2:此处曾 coerce 3.7→3/True→1、
         # 静默丢脏串——引擎真路被预消毒,applier 的拒收契约对 fiscal 失明）。
         # 无损整数串照转;脏值（float/bool/坏串/null）原样透传,由 applier 拒收留痕。
@@ -780,8 +781,7 @@ def _clean_fiscal_creates(raw: object) -> List[Dict[str, object]]:
         if not isinstance(item, dict):
             continue
         key = str(item.get("key") or "").strip()
-        if not key:
-            continue
+        # 空 key 不再静默滤——透传 applier 记拒（cmr S3 r7）。
         # cleaner 只做无损规范化,不吞脏（cmr S3 r1,2/2）：非法 account/direction
         # 原样透传（applier 拒收留痕,不再静默丢）;direction 同义词（收/支出）仍映射。
         account = str(item.get("account") or "").strip()
@@ -823,8 +823,7 @@ def _clean_fiscal_removes(raw: object) -> List[Dict[str, object]]:
         if not isinstance(item, dict):
             continue
         key = str(item.get("key") or "").strip()
-        if not key:
-            continue
+        # 空 key 不再静默滤——透传 applier 记拒（cmr S3 r7）。
         cleaned.append({
             "key": key,
             "reason": str(item.get("reason") or "")[:120],

@@ -467,3 +467,16 @@ def test_double_suffix_remove_rejected_not_destructive(game):
     after = db.conn.execute(
         "SELECT COUNT(*) FROM fiscal_config WHERE key LIKE '辽饷%'").fetchone()[0]
     assert after == before  # 真科目毫发无损
+
+
+def test_sanitizer_passes_empty_key_items_through():
+    """引擎 sanitizer 路的空 key 项不得被 cleaner 静默滤——透传给 applier 记拒
+    (cmr S3 r7 codex:driver 路有痕、引擎路无痕=同输入两判,推翻原 disposition)。"""
+    from ming_sim.simulation import (
+        _clean_fiscal_changes, _clean_fiscal_creates, _clean_fiscal_removes,
+    )
+
+    assert _clean_fiscal_changes([{"key": "", "delta": 5}]) != []
+    assert _clean_fiscal_creates([{"key": "", "account": "国库",
+                                   "direction": "income", "init_value": 1}]) != []
+    assert _clean_fiscal_removes([{"key": "", "reason": "x"}]) != []
