@@ -37,7 +37,7 @@ def rejections_jsonl_path() -> str:
 
     RejectionCollector.mirror_to_jsonl 的目标路径约定 = user-data 错误目录下 `rejections.jsonl`。
     返回前确保父目录就位——mirror 是纯机械 append（open(path,"a") 不建父），开箱即写。
-    本切片只提供 helper；真正接线（mirror 调用）在 PR2 迁 section 契约时。
+    接线于 settle_with_delta（PR2-S0）：commit 成功且最外层事务退出后 mirror。
     """
     root = error_packs_root()
     root.mkdir(parents=True, exist_ok=True)
