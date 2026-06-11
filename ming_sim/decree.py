@@ -23,11 +23,17 @@ from ming_sim.agents import (
     create_season_simulator_agent,
     run_agent_text,
 )
-from ming_sim.applier import atomic
+from ming_sim.applier import Provenance, RejectedItem, RejectionCollector, atomic
 from ming_sim.constants import TURN_UNIT
 from ming_sim.context import ENDING_LABELS, ENDING_ONGOING, ENDING_TIMEOUT, victory_status
 from ming_sim.db import GameDB
-from ming_sim.error_pack import clear_for_resimulation, settlement_abort_message, write_error_pack
+from ming_sim.error_pack import (
+    _next_attempt,
+    clear_for_resimulation,
+    rejections_jsonl_path,
+    settlement_abort_message,
+    write_error_pack,
+)
 from ming_sim.exceptions import LLMContractError, LLMUnavailable, SettlementAbort
 from ming_sim.flows import apply_fixed_period_flows
 from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction, auto_trigger_seed_issues, clear_gated_legacies, validate_delta_shape
@@ -519,6 +525,7 @@ def _replay_settle(
             d, s, ex, content=ct, registry=rg, llm_config=llm_config
         ),
         on_stage=lambda label: _emit("stage", label),
+        source=Provenance.system_simulation,
     )
     return report
 
@@ -677,6 +684,9 @@ def _settle_after_narrative(
             d, s, ex, content=ct, registry=rg, llm_config=llm_config
         ),
         on_stage=lambda label: _emit("stage", label),
+        # extractor 产出属推演管线（决定 5 provenance）；driver 信封路保持 unknown 兜底。
+        # 按 source 细分到 player_decree/hitl_decision 需 extractor schema 扩来源字段（后续波次）。
+        source=Provenance.system_simulation,
     )
 
 
@@ -815,6 +825,7 @@ def settle_with_delta(
     ending_summarizer=None,
     delta_applier=None,
     on_stage=None,
+    source: Provenance = Provenance.unknown,
 ) -> str:
     """确定性结算「后括号」：apply→turn_logs→章节记忆→inertia→clear→结局判定→next_period。
 
@@ -847,6 +858,11 @@ def settle_with_delta(
     # resolve_context 仍在可重试。回滚后内存从 DB 重载（决定 3），再于 atomic 外写错误包并抛
     # SettlementAbort（决定 6）。事务内 LLM 回调（章节记忆/结局总评）失败沿用降级、内部已自吞
     # 不触发回滚（决定 4）——故从 settle 冒出的 Exception 即代码异常，一律走错误包。
+    # 拒收收集器与结算事务同生命周期（ADR 决定 5，PR2-S0）：apply 的拒收项在事务内
+    # flush 进 rejection_reports（行随回滚消失），commit 成功后才镜像 jsonl（文件 append
+    # 不可回滚），异常路 reset 清场。attempt 从错误目录推导——同一回合第 N 次重试的拒收
+    # 与第 N 个错误包同号，不从 DB 取（DB 计数随回滚重置即失真）。
+    collector = RejectionCollector(attempt=_next_attempt(before_turn))
     try:
         with atomic(db):
             # 暂存动作 commit 在结算事务内最前（幂等，只处理 pending 行；正常路 pre_settle
@@ -862,8 +878,10 @@ def settle_with_delta(
                 extractor_input=extractor_input, extractor_output=extractor_output,
                 chapter_recorder=chapter_recorder, ending_summarizer=ending_summarizer,
                 delta_applier=delta_applier, _stage=_stage,
+                collector=collector, source=source,
             )
     except BaseException as exc:
+        collector.reset()  # DB 行已随回滚消失，内存缓冲同步清场，不留待镜像快照
         # 回滚后内存从 DB 重载（同 pre_settle 先例）；嵌套在外层 atomic 内时回滚未发生，跳过。
         if getattr(db.conn, "_atomic_depth", 0) == 0:
             try:
@@ -890,7 +908,38 @@ def settle_with_delta(
             settlement_abort_message(pack_path),
             turn=before_turn, stage="settle", error_pack_path=pack_path,
         ) from exc
+    # commit 已成功（atomic 正常退出）才镜像——jsonl 是可回收副本，DB 为真源（决定 5/7）。
+    # 镜像失败不回滚结算：吞 Exception 记日志（行已在 DB，丢的只是副本）。
+    try:
+        collector.mirror_to_jsonl(rejections_jsonl_path())
+    except Exception as mirror_exc:
+        tlog(f"[rejection] jsonl 镜像失败（DB 行已落，仅副本丢失）：{mirror_exc}")
     return full_report
+
+
+def _collect_inline_rejections(
+    collector: RejectionCollector,
+    applied: Dict[str, object],
+    turn: int,
+    source: Provenance,
+) -> None:
+    """把 apply 结果里各 section 内嵌的拒收项收进收集器（PR2-S0 桥接）。
+
+    约定：section 结果列表中 `{"rejected": True, ...}` 即拒收项；`reason` 为人读原因，
+    `category` 为机读类别（未迁契约的 section 没有此键 → 兜底 "legacy_inline"）。
+    """
+    for section, value in applied.items():
+        if not isinstance(value, list):
+            continue
+        for item in value:
+            if not (isinstance(item, dict) and item.get("rejected")):
+                continue
+            collector.record(section, RejectedItem(
+                item=item,
+                reason=str(item.get("reason") or ""),
+                category=str(item.get("category") or "legacy_inline"),
+                source=source,
+            ), turn)
 
 
 def _settle_after_extract_body(
@@ -910,6 +959,8 @@ def _settle_after_extract_body(
     ending_summarizer,
     delta_applier,
     _stage: Callable[[str], None],
+    collector: Optional[RejectionCollector] = None,
+    source: Provenance = Provenance.unknown,
 ) -> str:
     """settle_with_delta 的后半段写序列正文（被其 atomic 包裹调用）。
 
@@ -921,6 +972,12 @@ def _settle_after_extract_body(
         applied = delta_applier(db, state, extracted, content, registry)
     else:
         applied = apply_score_extraction(db, state, extracted, content=content, registry=registry)
+    if collector is not None:
+        # 桥接：各 section 内嵌的拒收项（{"rejected": True, ...}）收进收集器并在
+        # 事务内 flush——delta_applier 闭包签名不动（ADR 决定 8 原地迁入）。section
+        # 迁契约后（S1-S3）在此带上精确 category；桥接对未迁 section 兜底。
+        _collect_inline_rejections(collector, applied, before_turn, source)
+        collector.flush_to_db(db)
 
     # 把 narrative 与诏书写入 turn_logs 作下月前文
     db.record_log(state, narrative[:1200])
