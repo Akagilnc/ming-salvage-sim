@@ -793,11 +793,10 @@ def _clean_fiscal_creates(raw: object) -> List[Dict[str, object]]:
             init_value = 0
         elif isinstance(init_value, str):
             try:
-                init_value = max(0, int(init_value.strip()))
+                init_value = int(init_value.strip())
             except ValueError:
                 pass  # 坏串透传
-        elif isinstance(init_value, int) and not isinstance(init_value, bool):
-            init_value = max(0, init_value)
+        # 负值不再 max(0,·) 有损钳制——原样透传,applier 按脏值拒留痕（cmr S3 r3）。
         display = str(item.get("display") or "").strip() or key.replace("_base", "")
         cleaned.append({
             "key": key,

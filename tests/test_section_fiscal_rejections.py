@@ -390,3 +390,39 @@ def test_remove_missing_key_rejected(game):
     rows = [r for r in _rejection_rows(db, turn) if r[0] == "fiscal_removes"]
     assert len(rows) == 1
     assert rows[0][2] == "invalid_enum"
+
+
+def test_create_with_rate_suffix_key_rejected(game):
+    """create 的 stem 归一须与 remove 同用 _stem_of(剥 _base 和 _rate 双后缀)
+    ——只剥 _base 时 key='田赋_rate' 查成 田赋_rate_base 漏撞,建出冒牌科目
+    (cmr S3 r3 codex)。"""
+    db, state, content = game
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "fiscal_creates": [{"key": "田赋_rate", "account": "国库",
+                            "direction": "income", "init_value": 1}],
+    }, narrative="x", decree_text="y")
+
+    rows = [r for r in _rejection_rows(db, turn) if r[0] == "fiscal_creates"]
+    assert len(rows) == 1
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM fiscal_config WHERE key LIKE '田赋_rate_%'"
+    ).fetchone()[0] == 0  # 没建冒牌行
+
+
+def test_negative_init_value_rejected_not_clamped(game):
+    """负 init_value 静默 clamp 0 = 又一面「凭空建零值项」——负月度定额无意义,
+    按脏值拒留痕(cmr S3 r3 claude;cleaner 同步取消 max(0,·) 有损钳制)。"""
+    db, state, content = game
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "fiscal_creates": [{"key": "负值测试_base", "account": "国库",
+                            "direction": "income", "init_value": -5}],
+    }, narrative="x", decree_text="y")
+
+    rows = [r for r in _rejection_rows(db, turn) if r[0] == "fiscal_creates"]
+    assert len(rows) == 1
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM fiscal_config WHERE key='负值测试_base'").fetchone()[0] == 0

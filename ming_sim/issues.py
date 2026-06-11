@@ -1312,10 +1312,11 @@ def apply_score_extraction(
         init_raw = create.get("init_value")
         if init_raw is None:
             init_value = 0
-        elif isinstance(init_raw, bool) or not isinstance(init_raw, int):
+        elif isinstance(init_raw, bool) or not isinstance(init_raw, int) or init_raw < 0:
+            # 负值同拒：静默 clamp 0 = 又一面「凭空建零值项」（cmr S3 r3）。
             applied_fiscal_creates.append({
                 "rejected": True,
-                "reason": f"新立项「{key}」初值 init_value 非整数（{init_raw!r}），不静默归 0。",
+                "reason": f"新立项「{key}」初值 init_value 非法（{init_raw!r}，须非负整数），不静默归 0。",
                 "category": "invalid_enum", "item": create,
             })
             continue

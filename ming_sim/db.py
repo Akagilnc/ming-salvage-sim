@@ -985,7 +985,10 @@ class GameDB:
         返回新建的 base key；冲突或非法返回 None。元数据走 fixed 预算目录，
         flows.iter_budget_items 下{月}起自动遍历落账——零代码加新税种／新月俸。
         """
-        stem = key[:-5] if key.endswith("_base") else key
+        # stem 归一与 remove_fiscal_item 同用 _stem_of（剥 _base/_rate 双后缀,
+        # cmr S3 r3）：只剥 _base 时 key='田赋_rate' 查成 田赋_rate_base 漏撞既有
+        # rate 行,建出冒牌科目。
+        stem = self._stem_of(key)
         if not stem:
             return None
         base_key = f"{stem}_base"
