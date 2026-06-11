@@ -249,3 +249,20 @@ def test_reason_carrier_aliases_not_recorded_as_rejection(game):
 
     rows = [r for r in _rejection_rows(db, turn) if r[0] == "power_changes"]
     assert rows == []  # 零假阳
+
+
+def test_all_reason_aliases_consumed_as_reason(game):
+    """近况/最近行动 与 近动/last_action 同为别名——被跳过就必须也被消费成
+    应用变更的 reason,不得回落「势力推演」(cmr S1 r3 codex)。"""
+    db, state, content = game
+    good = _valid_power_id(db)
+
+    run_settle(db, state, content, {
+        "power_updates": {good: {"leverage": 3, "近况": "联姻蒙古"}},
+    }, narrative="x", decree_text="y")
+
+    row = db.conn.execute(
+        "SELECT reason FROM power_logs WHERE power_id=? ORDER BY id DESC LIMIT 1",
+        (good,)).fetchone()
+    assert row is not None
+    assert row[0] == "联姻蒙古"
