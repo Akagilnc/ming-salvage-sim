@@ -11,7 +11,6 @@ import pytest
 
 from driver import run_settle
 from ming_sim.constants import REGION_FIELD_LABELS
-from ming_sim.exceptions import LLMContractError
 from ming_sim.issues import apply_score_extraction
 
 
@@ -46,10 +45,16 @@ def test_city_cannon_capped_at_zero_for_low_city_level(game):
     assert cannon == 0
 
 
-def test_illegal_region_field_raises_contract_error(game):
-    """非法 region 字段应抛 LLMContractError（曾因 db.py 漏 import 该异常而抛 NameError）。"""
+def test_illegal_region_field_rejected_not_raised(game):
+    """非法 region 字段：ADR 0008 决定 1（PR2-S2）后不再 raise LLMContractError 崩整月，
+    改为逐项拒收留痕（region_changes 含 {"rejected": True, "category": "invalid_enum"}），
+    好项照落、坏一项不带走整批。"""
     db, state, content = game
-    with pytest.raises(LLMContractError):
-        apply_score_extraction(
-            db, state, {"region_delta": {"beizhili": {"不存在的字段": 5}}}, content=content
-        )
+    applied = apply_score_extraction(
+        db, state, {"region_delta": {"beizhili": {"不存在的字段": 5}}}, content=content
+    )
+    rejected = [c for c in applied["region_changes"]
+                if isinstance(c, dict) and c.get("rejected")]
+    assert len(rejected) == 1
+    assert rejected[0]["category"] == "invalid_enum"
+    assert rejected[0]["reason"]

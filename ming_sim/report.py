@@ -33,6 +33,8 @@ def print_header(state: GameState, db: Optional[GameDB] = None) -> None:
 
 
 def format_region_changes(changes: List[Dict[str, object]]) -> str:
+    # 拒收项(ADR 0008 决定 1)与 applied 项同列，但不是盘面变化，先滤掉。
+    changes = [c for c in (changes or []) if not (isinstance(c, dict) and c.get("rejected"))]
     if not changes:
         return f"本{TURN_UNIT}未见明确地区盘面变化。"
     parts = []
@@ -47,6 +49,8 @@ def format_region_changes(changes: List[Dict[str, object]]) -> str:
 
 
 def format_army_changes(changes: List[Dict[str, object]]) -> str:
+    # 拒收项(ADR 0008 决定 1)与 applied 项同列，但不是盘面变化，先滤掉。
+    changes = [c for c in (changes or []) if not (isinstance(c, dict) and c.get("rejected"))]
     if not changes:
         return f"本{TURN_UNIT}未见明确军队盘面变化。"
     parts = []
@@ -67,10 +71,12 @@ def format_army_changes(changes: List[Dict[str, object]]) -> str:
 
 
 def format_power_changes(changes: List[Dict[str, object]]) -> str:
-    if not changes:
+    # 拒收项(ADR 0008 决定 1)与 applied 项同列，但不是盘面变化，先滤掉。
+    applied = [c for c in (changes or []) if not (isinstance(c, dict) and c.get("rejected"))]
+    if not applied:
         return f"本{TURN_UNIT}未见明确势力盘面变化。"
     parts = []
-    for change in changes:
+    for change in applied:
         delta = change["delta"]
         if delta is None:
             parts.append(f"{change['power']}{change['label']}改为{change['new']}（{change['reason']}）")

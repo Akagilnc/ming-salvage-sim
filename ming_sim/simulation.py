@@ -736,14 +736,21 @@ def _clean_fiscal_changes(raw: object) -> List[Dict[str, object]]:
         if not isinstance(item, dict):
             continue
         key = str(item.get("key") or "").strip()
-        if not key or "delta" not in item:
-            continue
-        try:
-            delta = int(item.get("delta"))
-        except (TypeError, ValueError):
-            continue
-        if delta == 0:
-            continue
+        if key and "delta" not in item:
+            continue  # 非空 key 且无 delta = 无操作项,照旧滤（applier 对 delta 缺省同语义）;
+            # 空 key 的垃圾项无论有无 delta 都透传 applier 记拒（cmr S3 r8 退化角）。
+        # 空 key 不再静默滤——透传 applier 记拒（cmr S3 r7:driver 路有痕、引擎路无痕=同输入两判）。
+        # cleaner 只做无损规范化,不吞脏（cmr S3 r1,2/2:此处曾 coerce 3.7→3/True→1、
+        # 静默丢脏串——引擎真路被预消毒,applier 的拒收契约对 fiscal 失明）。
+        # 无损整数串照转;脏值（float/bool/坏串/null）原样透传,由 applier 拒收留痕。
+        delta = item.get("delta")
+        if isinstance(delta, str):
+            try:
+                delta = int(delta.strip())
+            except ValueError:
+                pass  # 坏串透传
+        if key and isinstance(delta, int) and not isinstance(delta, bool) and delta == 0:
+            continue  # 非空 key 的真 int 0 = 无操作,照旧滤;空 key 垃圾项透传记拒（cmr S3 r8）
         cleaned.append({
             "key": key,
             "delta": delta,
@@ -759,9 +766,11 @@ _DIRECTION_NORMALIZE = {
 
 
 def _clean_fiscal_creates(raw: object) -> List[Dict[str, object]]:
-    """LLM 推演中凭空新立的月固定收支项（税是其一种）。完全放开——
-    只做枚举校验：account∈{国库,内库}、direction∈{income,expense}、key 非空。
-    税种／数值由 LLM 全权裁夺，代码不预设白名单。
+    """LLM 推演中凭空新立的月固定收支项（税是其一种）。
+
+    本 cleaner 只做无损规范化（direction 同义词映射、整数串照转、缺省 init_value
+    归 0）+ 非法值原样透传——枚举守门唯一落点在 apply_score_extraction（applier
+    拒收留痕,cmr S3 r1/r2）。税种／数值由 LLM 全权裁夺，代码不预设税种白名单。
     """
     cleaned: List[Dict[str, object]] = []
     if not isinstance(raw, list):
@@ -773,25 +782,31 @@ def _clean_fiscal_creates(raw: object) -> List[Dict[str, object]]:
         if not isinstance(item, dict):
             continue
         key = str(item.get("key") or "").strip()
-        if not key:
-            continue
+        # 空 key 不再静默滤——透传 applier 记拒（cmr S3 r7）。
+        # cleaner 只做无损规范化,不吞脏（cmr S3 r1,2/2）：非法 account/direction
+        # 原样透传（applier 拒收留痕,不再静默丢）;direction 同义词（收/支出）仍映射。
         account = str(item.get("account") or "").strip()
-        if account not in ("国库", "内库"):
-            continue
-        direction = _DIRECTION_NORMALIZE.get(str(item.get("direction") or "").strip())
-        if direction is None:
-            continue
-        try:
-            init_value = int(item.get("init_value") or 0)
-        except (TypeError, ValueError):
+        direction_raw = str(item.get("direction") or "").strip()
+        direction = _DIRECTION_NORMALIZE.get(direction_raw, direction_raw)
+        # init_value 缺省/null = 合法默认 0;在场脏值（float/bool/坏串）透传给 applier 拒。
+        init_value = item.get("init_value")
+        if init_value is None:
             init_value = 0
-        display = str(item.get("display") or "").strip() or key.replace("_base", "")
+        elif isinstance(init_value, str):
+            try:
+                init_value = int(init_value.strip())
+            except ValueError:
+                pass  # 坏串透传
+        # 负值不再 max(0,·) 有损钳制——原样透传,applier 按脏值拒留痕（cmr S3 r3）。
+        # display 默认由 applier 统一派生（归一 stem,cmr S3 r12）——cleaner 不再
+        # 预填,否则引擎路抢先用 raw-key 去 _base 的旧式默认=两路两值。
+        display = str(item.get("display") or "").strip()
         cleaned.append({
             "key": key,
             "account": account,
             "direction": direction,
             "display": display,
-            "init_value": max(0, init_value),
+            "init_value": init_value,
             "reason": str(item.get("reason") or "")[:120],
         })
     return cleaned
@@ -811,8 +826,7 @@ def _clean_fiscal_removes(raw: object) -> List[Dict[str, object]]:
         if not isinstance(item, dict):
             continue
         key = str(item.get("key") or "").strip()
-        if not key:
-            continue
+        # 空 key 不再静默滤——透传 applier 记拒（cmr S3 r7）。
         cleaned.append({
             "key": key,
             "reason": str(item.get("reason") or "")[:120],

@@ -26,6 +26,7 @@ from ming_sim.flows import (
     _apply_metric_dict,
 )
 from ming_sim.models import Event, GameState
+from ming_sim.token_stats import tlog
 
 _content: Optional[GameContent] = None
 
@@ -587,6 +588,11 @@ _LEGACY_DURATION_MONTHS = {"1年": 12, "2年": 24, "永久": -1}
 _LEGACY_ACCOUNT_KEYS = ("国库", "内库", "民心", "皇威")  # 全局可被 % 修正的四项
 _LEGACY_PCT_CAP = 5  # 单条帝国修正对某维度的百分比上限，防幅度过大
 
+# 月固定收支项的合法账户 / 方向白名单（fiscal_creates 枚举守门，集中一处；
+# applier 是唯一的枚举守门（cleaner 只做 direction 同义词映射等无损规范化,cmr S3 r2）。
+_FISCAL_ACCOUNTS = ("国库", "内库")
+_FISCAL_DIRECTIONS = ("income", "expense")
+
 
 def _clamp_pct(v: object) -> Optional[int]:
     try:
@@ -678,17 +684,45 @@ def _spawn_legacy_from_effect(
     return summary
 
 
-def _apply_issue_entities(db: GameDB, state: GameState, effect: Dict[str, object], label: str) -> None:
+def _apply_issue_entities(db: GameDB, state: GameState, effect: Dict[str, object], label: str) -> List[Dict[str, object]]:
     """国策结案的实体后果：建军 / 补兵改属性 / 人物状态(死/流放/下狱/罢/致仕)。
     全局严格、不静默——非法 delta 直接抛错中断当回合，绝不无声丢失。
     （effect_on_resolve 原本只支持 metrics/economy/buildings/legacy，这里补 army/人事两线。）"""
+    # ADR 0008 决定 1（PR2-S2）后,底层 db 方法对 LLM 脏项改「逐项拒收留痕」而非
+    # raise——国策结案路（本函数）把拒收项升级回 ValueError 中断当回合，**仅限历史上
+    # 本就 raise 的类别**（查无此军/owner 幻觉/缺必填等）。历史上 print-skip 或静默
+    # 走默认的案（army 非法字段/重复无 manpower/重复非整/可选脏值/非 dict 项）带
+    # issue_strict=False 标——容忍不升级,否则历史可活的脏数据变成新的崩月路
+    # （cmr S2 r1）。两类都留拒收记录,不无声丢。
+    tolerated: List[Dict[str, object]] = []
+
+    def _raise_on_rejected(results, what: str) -> None:
+        strict = [r for r in (results or [])
+                  if isinstance(r, dict) and r.get("rejected")
+                  and r.get("issue_strict", True)]
+        if strict:
+            reasons = "；".join(str(r.get("reason") or "") for r in strict)
+            raise ValueError(f"{label} {what} 非法（全局严格，不静默）：{reasons}")
+        # 容忍项（issue_strict=False）留痕不蒸发（cmr S2 r2,2/2:改前是 print,
+        # 不留比 print 更静默）：收集返回,tracker-output 路挂 issue_summary 进
+        # rejection_reports,inertia 路由 caller tlog。
+        tolerated.extend(
+            {**r, "label": label}
+            for r in (results or [])
+            if isinstance(r, dict) and r.get("rejected") and not r.get("issue_strict", True)
+        )
+
     new_armies = effect.get("new_armies")
     if isinstance(new_armies, list) and new_armies:
-        db.create_armies_from_extraction(state, new_armies, actor=label)
+        _raise_on_rejected(
+            db.create_armies_from_extraction(state, new_armies, actor=label), "建军"
+        )
     army_delta = effect.get("army_delta")
     if isinstance(army_delta, dict) and army_delta:
         pseudo = type("E", (), {"id": "issue", "title": label})()
-        db.apply_army_deltas(state, pseudo, None, label, army_delta)
+        _raise_on_rejected(
+            db.apply_army_deltas(state, pseudo, None, label, army_delta), "补兵/改属性"
+        )
     csc = effect.get("character_status_changes")
     if isinstance(csc, list) and csc:
         valid_status = {"dismissed", "imprisoned", "exiled", "retired", "dead", "offstage"}
@@ -705,6 +739,7 @@ def _apply_issue_entities(db: GameDB, state: GameState, effect: Dict[str, object
             if name not in chars:
                 raise ValueError(f"{label} 人物状态引用未知人物：{name!r}")
             db.set_character_status(state, name, status, reason)
+    return tolerated
 
 
 def apply_issue_tracker_output(
@@ -717,6 +752,9 @@ def apply_issue_tracker_output(
     applied_advances: List[Dict[str, object]] = []
     applied_new: List[Dict[str, object]] = []
     applied_cancels: List[Dict[str, object]] = []
+    # issue 实体后果的容忍拒收项（issue_strict=False）——挂进返回 summary,
+    # S0 桥接一层下探自动收进 rejection_reports（留痕不蒸发,cmr S2 r2）。
+    entity_rejections: List[Dict[str, object]] = []
     event_by_id = _ctx().event_by_id
 
     # 1) advances
@@ -750,7 +788,8 @@ def apply_issue_tracker_output(
             _apply_economy_list(db, state, effect.get("economy") or [])
             _apply_faction_dict(db, effect.get("factions") or {})
             _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}结案")
-            _apply_issue_entities(db, state, effect, f"局势#{issue_id}结案")
+            entity_rejections.extend(
+                _apply_issue_entities(db, state, effect, f"局势#{issue_id}结案"))
             _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
         elif new_row["status"] == "failed":
             effect = json.loads(new_row["effect_on_fail"] or "{}")
@@ -758,7 +797,8 @@ def apply_issue_tracker_output(
             _apply_economy_list(db, state, effect.get("economy") or [])
             _apply_faction_dict(db, effect.get("factions") or {})
             _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}失败")
-            _apply_issue_entities(db, state, effect, f"局势#{issue_id}失败")
+            entity_rejections.extend(
+                _apply_issue_entities(db, state, effect, f"局势#{issue_id}失败"))
             _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
         applied_advances.append({
             "issue_id": issue_id,
@@ -901,7 +941,8 @@ def apply_issue_tracker_output(
             db, state, effect.get("buildings"),
             _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}{'结案' if reason == 'resolved' else '失败'}",
         )
-        _apply_issue_entities(db, state, effect, f"局势#{issue_id}{'结案' if reason == 'resolved' else '失败'}")
+        entity_rejections.extend(_apply_issue_entities(
+            db, state, effect, f"局势#{issue_id}{'结案' if reason == 'resolved' else '失败'}"))
         _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
         applied_closes.append({
             "issue_id": issue_id,
@@ -932,7 +973,13 @@ def apply_issue_tracker_output(
             )
             state.metrics["皇威"] = max(0, int(state.metrics.get("皇威", 0)) - 2)
             touched_ids.add(issue_id)
-            applied_cancels.append({"issue_id": issue_id, "rejected": True, "title": row["title"]})
+            applied_cancels.append({
+                "issue_id": issue_id, "rejected": True, "title": row["title"],
+                # 拒收行必须带人读原因（ADR 0008 决定 5）；此拒收有部分落库副作用
+                # （已转强推+皇威-2），category 区分于纯丢弃（cmr S0 r2）。
+                "reason": "此事非诏可消（不可撤国策），已转强行推进并损皇威 2 点。",
+                "category": "non_cancellable_converted",
+            })
             continue
         # 可撤：应用 applied_cost
         cost = cn.get("applied_cost") or {}
@@ -954,6 +1001,7 @@ def apply_issue_tracker_output(
         "new_issues": applied_new,
         "closes": applied_closes,
         "cancels": applied_cancels,
+        "entity_rejections": entity_rejections,
         "touched_ids": sorted(touched_ids),
     }
 
@@ -1025,7 +1073,9 @@ def validate_delta_shape(extracted: dict) -> None:
     否则**任何 DB 改动前**抛 ValueError——畸形值直送 apply 会在结算中途崩 `.items()`,叠加非
     原子结算 = 半落库(违反 P1 落库铁律;cmr RT-1 / Gemini PR#50 R2)。driver 在 pre_settle 前
     调一次防 pre_settle 半改;落库核 apply_score_extraction 自身也调一次防 apply 内部半落库。
-    彻底原子化需事务边界(issue #3),此校验是廉价前置防线。"""
+    彻底原子化的事务边界(原 issue #3)已由 ADR 0008 落地(v0.8.0.0,见 applier.atomic):结算写
+    序列整体包单事务、崩则全回滚。本校验仍保留为廉价**前置**防线——在动 DB 前就拦畸形 delta,
+    省去事务回滚成本并给出更精确的字段级报错。"""
     from ming_sim.simulation import EMPTY_EXTRACTION  # 懒 import 避 issues↔simulation 循环
     for key, value in extracted.items():
         if key not in EMPTY_EXTRACTION:
@@ -1188,8 +1238,10 @@ def apply_score_extraction(
     army_changes: List[Dict[str, object]] = []
     created_armies: List[Dict[str, object]] = []
     # 先建军：避免同回合 army_delta 引用新军被跳过。
-    # 不吞异常（全局严格）：建军/补兵 delta 非法直接抛错中断当回合，不静默丢，
-    # 以免「军没建成、账实不符」无声发生。
+    # ADR 0008 决定 1（PR2-S2）：LLM 脏数据（查无此地/此军、字段非法、值不可解析）在
+    # 三个 db 方法内逐项拒收留痕（返回列表含 {"rejected": True, ...}，桥接自动收进
+    # rejection_reports），好项照落、坏一项不带走整批；代码异常（bug 类）仍上抛到 settle
+    # 层回滚整批，绝不吞。clamp 语义（城防炮 city_level×8、随军炮 cap12、火器 0-100）不变。
     if isinstance(new_armies_raw, list) and new_armies_raw:
         created_armies = db.create_armies_from_extraction(state, new_armies_raw, actor="档房")
     if isinstance(region_deltas_raw, dict) and region_deltas_raw:
@@ -1201,13 +1253,13 @@ def apply_score_extraction(
     #     effect_on_fail 里的 `buildings` 段在局势结案时落地（见 _apply_issue_buildings）。
 
     # 5) power_updates：非明势力三项简表（威望/实力/经济）落库
+    # ADR 0008 决定 1:不再整段吞——LLM 脏数据(未知 power id/字段非法)在
+    # apply_power_deltas 内逐项拒收留痕(返回列表含 {"rejected": True, ...});
+    # 代码异常(KeyError/AttributeError 等)上抛到 settle 层回滚整批,绝不吞。
     power_updates_raw = extracted.get("power_updates") or {}
     power_changes: List[Dict[str, object]] = []
     if isinstance(power_updates_raw, dict) and power_updates_raw:
-        try:
-            power_changes = db.apply_power_deltas(state, power_updates_raw)
-        except Exception as exc:
-            print(f"[WARN] power_updates 落库失败：{exc}")
+        power_changes = db.apply_power_deltas(state, power_updates_raw)
 
     # 6) issue_advances / new_issues / close_issues / cancels (复用旧 tracker 落地)
     issue_summary = apply_issue_tracker_output(db, state, {
@@ -1217,16 +1269,45 @@ def apply_score_extraction(
         "cancels": extracted.get("cancels") or [],
     }, llm_config=llm_config)
 
+    def _norm_int_leaf(v):
+        """无损整数串归一（cmr S3 r10,2/2）：strip 后能精确 int 的 str 转 int,
+        其余原样返回。无损归一在 cleaner（引擎路）与此处（driver 路）各一次,
+        **判定语义只在 applier**（ship-pre r1 措辞修正:cleaner 残留的同式转换
+        与本函数同结果,见 S3 disposition「无害重复」）。"""
+        if isinstance(v, str):
+            try:
+                return int(v.strip())
+            except ValueError:
+                return v
+        return v
+
     # 6.4) fiscal_removes：推演彻底裁撤月固定收支项（罢税/裁俸），优先级最高，先于 creates/changes。
     #      含 dynamic（田赋/辽饷/盐税/商税/皇庄），后果玩家自负。删 base+rate 两行。
     applied_fiscal_removes: List[Dict[str, object]] = []
     for remove in extracted.get("fiscal_removes") or []:
-        key = str(remove.get("key") or "")
+        key = str(remove.get("key") or "").strip()
         if not key:
+            # 空 key = 脏项,记拒留痕(不再纯静默 continue;ADR 决定 1 / S3)。
+            applied_fiscal_removes.append({
+                "rejected": True, "reason": "fiscal_removes 缺 key,无法定位裁撤目标。",
+                "category": "invalid_enum", "item": remove,
+            })
+            continue
+        if db._stem_of(key) == "":
+            # 多重后缀垃圾 key = 非法,与 create 段同口径 invalid_enum——误标
+            # missing_ref「不存在」会让机读聚合失真（cmr S3 r10）。
+            applied_fiscal_removes.append({
+                "rejected": True, "reason": f"裁撤 key「{key}」非法（多重 _base/_rate 后缀）。",
+                "category": "invalid_enum", "item": remove,
+            })
             continue
         removed_key = db.remove_fiscal_item(key)
         if removed_key is None:
-            print(f"[WARN] fiscal_removes: '{key}' 不存在，跳过裁撤。")
+            # 查无此项 = 正常业务拒绝,逐项拒收留痕(不再 print 静默跳;ADR 决定 1 / S3)。
+            applied_fiscal_removes.append({
+                "rejected": True, "reason": f"裁撤目标「{key}」不存在,跳过。",
+                "category": "missing_ref", "item": remove,
+            })
             continue
         applied_fiscal_removes.append({
             "key": removed_key, "reason": str(remove.get("reason") or ""),
@@ -1236,22 +1317,52 @@ def apply_score_extraction(
     #      使同{月}「新立关税 + 立即调率」可一气落地。
     applied_fiscal_creates: List[Dict[str, object]] = []
     for create in extracted.get("fiscal_creates") or []:
-        key = str(create.get("key") or "")
-        account = str(create.get("account") or "")
-        direction = str(create.get("direction") or "")
-        if not key or account not in ("国库", "内库") or direction not in ("income", "expense"):
+        key = str(create.get("key") or "").strip()
+        account = str(create.get("account") or "").strip()
+        # direction 同义词在唯一守门人处归一（cmr S3 r9:归一放 driver 不经过的
+        # cleaner 层=同输入两判;DELTA_SCHEMA 明言吃中文别名）。表与 cleaner 共用
+        # simulation._DIRECTION_NORMALIZE（懒 import 避循环）。
+        from ming_sim.simulation import _DIRECTION_NORMALIZE
+        direction_raw = str(create.get("direction") or "").strip()
+        direction = _DIRECTION_NORMALIZE.get(direction_raw, direction_raw)
+        # key 空 / account / direction 非法 = 脏枚举,原先纯静默 continue,改记拒留痕
+        # （ADR 决定 1 / S3；「在场即须合法」对称 S1/S2）。
+        if not key or account not in _FISCAL_ACCOUNTS or direction not in _FISCAL_DIRECTIONS:
+            applied_fiscal_creates.append({
+                "rejected": True,
+                "reason": f"新立项枚举非法（key={key!r} account={account!r} direction={direction!r}）。",
+                "category": "invalid_enum", "item": create,
+            })
             continue
-        try:
-            init_value = int(create.get("init_value") or 0)
-        except (TypeError, ValueError):
+        # init_value 缺省/null = 0 合法；在场脏值（字符串/float/bool/负值）显式拒，不静默归 0。
+        # bool 是 int 子类，先于 int 判（对称 S1/S2）。
+        init_raw = _norm_int_leaf(create.get("init_value"))  # 无损整数串归一（cmr S3 r10）
+        if init_raw is None:
             init_value = 0
-        display = str(create.get("display") or "")
+        elif isinstance(init_raw, bool) or not isinstance(init_raw, int) or init_raw < 0:
+            # 负值同拒：静默 clamp 0 = 又一面「凭空建零值项」（cmr S3 r3）。
+            applied_fiscal_creates.append({
+                "rejected": True,
+                "reason": f"新立项「{key}」初值 init_value 非法（{init_raw!r}，须非负整数），不静默归 0。",
+                "category": "invalid_enum", "item": create,
+            })
+            continue
+        else:
+            init_value = init_raw
+        # display 缺省=归一 stem（与落库同源——raw key 去 _base 会把「关税_rate」
+        # 显示成「关税_rate」,cmr S3 r11;DELTA_SCHEMA 契约「缺省=key 去后缀」）。
+        display = str(create.get("display") or "").strip() or (db._stem_of(key) or key)
         new_key = db.create_fiscal_item(
             key, account, direction, display, init_value,
             note=str(create.get("reason") or "")[:120],
         )
         if new_key is None:
-            print(f"[WARN] fiscal_creates: '{key}' 已存在或非法，跳过新立。")
+            # 已存在 / db 拒 = 正常业务拒绝,逐项拒收留痕（不再 print 静默跳）。
+            applied_fiscal_creates.append({
+                "rejected": True,
+                "reason": f"新立项「{key}」已存在或被落库拒绝,跳过。",
+                "category": "invalid_enum", "item": create,
+            })
             continue
         applied_fiscal_creates.append({
             "key": new_key, "account": account, "direction": direction,
@@ -1262,16 +1373,51 @@ def apply_score_extraction(
     # 7) fiscal_changes：调整月度固定收支系数
     applied_fiscal: List[Dict[str, object]] = []
     for change in extracted.get("fiscal_changes") or []:
-        key = str(change.get("key") or "")
-        try:
-            delta = int(change.get("delta") or 0)
-        except (TypeError, ValueError):
+        key = str(change.get("key") or "").strip()
+        if not key:
+            # 空 key = 脏项,先于一切无操作短路记拒——否则 delta 0/null 的空 key 项
+            # 被短路吞掉无痕（与 falsy 短路同类序错,cmr S3 r2）。
+            applied_fiscal.append({
+                "rejected": True,
+                "reason": "调率项缺 key,无法定位科目。",
+                "category": "invalid_enum", "item": change,
+            })
             continue
-        if not key or delta == 0:
+        if db._stem_of(key) == "":
+            # 多重后缀垃圾 key 与 create/remove 同口径 invalid_enum——标 missing_ref
+            # 「不存在」会让机读聚合失真（ship-pre r5,三段补齐）。
+            applied_fiscal.append({
+                "rejected": True,
+                "reason": f"调率 key「{key}」非法（多重 _base/_rate 后缀）。",
+                "category": "invalid_enum", "item": change,
+            })
             continue
+        delta_raw = _norm_int_leaf(change.get("delta"))  # 无损整数串归一（cmr S3 r10）
+        # delta 缺省 = 无操作,静默放过不记拒（免得每月刷无意义拒收行）。
+        if delta_raw is None:
+            continue
+        # 脏值判定必须先于「==0 无操作」短路——False==0 / 0.0==0 为真,放后面会把
+        # 脏 bool/float 静默吞掉（cmr S3 r1,顺序与 S1 对称）。
+        # delta 在场但脏（字符串/float/bool）= LLM 脏数据,原裸 int() 静默 continue（吞），
+        # 改显式拒留痕；bool 是 int 子类,先于 int 判（对称 S1/S2 / S3）。
+        if isinstance(delta_raw, bool) or not isinstance(delta_raw, int):
+            applied_fiscal.append({
+                "rejected": True,
+                "reason": f"调率 delta 非整数（{delta_raw!r}），不静默吞。",
+                "category": "invalid_enum", "item": change,
+            })
+            continue
+        if delta_raw == 0:
+            # 显式 int 0 = 无操作（脏值已在上方拒掉,此处只剩真 int;空 key 已在循环顶记拒）。
+            continue
+        delta = delta_raw
         current = db.get_fiscal_config().get(key)
         if current is None:
-            print(f"[WARN] fiscal_changes: 未知 key '{key}'，跳过。")
+            # 未知 key = 正常业务拒绝,逐项拒收留痕（不再 print 静默跳）。
+            applied_fiscal.append({
+                "rejected": True, "reason": f"调率目标「{key}」不存在,跳过。",
+                "category": "missing_ref", "item": change,
+            })
             continue
         new_val = max(0, current + delta)
         db.set_fiscal_config(key, new_val)
@@ -1319,12 +1465,18 @@ def apply_score_extraction(
             else:
                 rejected_name = str(item.get("name") or "").strip()
                 if rejected_name:
+                    approved = bool(item.get("approved", True))
                     applied_appointments.append({
                         "name": rejected_name,
                         "office": str(item.get("office") or ""),
                         "rejected": True,
-                        "reason": str(item.get("reason") or ""),
-                        "approved": bool(item.get("approved", True)),
+                        # reason=拒收原因（apply_appointment 不回传具体因，枚举已知拒因；
+                        # LLM 的任命理由另存 appointment_reason，不顶替拒因——cmr S0 r3）。
+                        "reason": ("未获准（approved=false）" if not approved
+                                   else "纳妃建档被拒（重名/已在册/字段不合）"),
+                        "category": "appointment_rejected",
+                        "appointment_reason": str(item.get("reason") or ""),
+                        "approved": approved,
                     })
 
     # 9) character_status_changes：LLM 判定的既有大臣去向（罢/狱/流/致仕/死）
@@ -1373,13 +1525,11 @@ def apply_score_extraction(
         })
 
     # 9b) character_power_changes：人物易主（降将/叛臣/归正）
-    applied_power_changes: List[Dict[str, object]] = []
-    try:
-        applied_power_changes = db.apply_character_power_changes(
-            extracted.get("character_power_changes") or []
-        )
-    except Exception as exc:
-        print(f"[WARN] character_power_changes 落库失败：{exc}")
+    # ADR 0008 决定 1:不再整段吞——脏数据(查无此人/未知 power/缺字段)在
+    # apply_character_power_changes 内逐项拒收留痕;代码异常上抛到 settle 回滚。
+    applied_power_changes: List[Dict[str, object]] = db.apply_character_power_changes(
+        extracted.get("character_power_changes") or []
+    )
 
     # 10) office_changes：朝臣官职变更——统一吃「新任（建档）」与「调任（改职）」。
     #     extractor 不再分新任/调任，代码按 name 在不在册自判：
@@ -1503,10 +1653,14 @@ def apply_issue_inertia_and_ongoing(
     db: GameDB,
     state: GameState,
     touched_ids: Optional[set] = None,
-) -> None:
+) -> List[Dict[str, object]]:
+    """返回 inertia 自然结案路产生的容忍拒收项——settle 在 inertia 之后补收进
+    收集器(桥接跑在 inertia 前,只 tlog 等于这条路脱离 rejection_reports 管线,
+    与 tracker-close 路同输入两判;ship-pre r1)。"""
     # inertia 是每月自然漂移基础量，对所有进行中 issue 都生效（含本月被 advance 触动的）。
     # advance 的 delta_bar 是皇帝本月实旨推动的额外量，与 inertia 叠加，互不顶替。
     _ = touched_ids  # 保留入参不破坏调用方；inertia 漂移不再按它跳过
+    inertia_rejections: List[Dict[str, object]] = []
     active = db.list_active_issues()
     # 累计单月 metric 落账，用于上限 clamp
     period_metric_acc: Dict[str, int] = {}
@@ -1539,7 +1693,9 @@ def apply_issue_inertia_and_ongoing(
                     _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}结案")
                     # 与 tracker advance/close 路径一致：自然结案也落实体后果 + 帝国修正，
                     # 否则靠 inertia 推到 100 的 issue 会丢 new_armies/army_delta/人物状态/legacy（codexB-P1）。
-                    _apply_issue_entities(db, state, effect, f"局势#{issue_id}结案")
+                    for _tr in _apply_issue_entities(db, state, effect, f"局势#{issue_id}结案"):
+                        tlog(f"[issue-entities] 容忍拒收：{_tr.get('reason')}")
+                        inertia_rejections.append(_tr)
                     _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
                     continue
                 elif new_row["status"] == "failed":
@@ -1548,7 +1704,9 @@ def apply_issue_inertia_and_ongoing(
                     _apply_economy_list(db, state, effect.get("economy") or [])
                     _apply_faction_dict(db, effect.get("factions") or {})
                     _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}失败")
-                    _apply_issue_entities(db, state, effect, f"局势#{issue_id}失败")
+                    for _tr in _apply_issue_entities(db, state, effect, f"局势#{issue_id}失败"):
+                        tlog(f"[issue-entities] 容忍拒收：{_tr.get('reason')}")
+                        inertia_rejections.append(_tr)
                     _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
                     continue
                 row = db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
@@ -1616,6 +1774,7 @@ def apply_issue_inertia_and_ongoing(
             db.conn.commit()
 
     state.clamp()
+    return inertia_rejections
 
 
 # ── 开局负面帝国修正：不立 issue、不进推演，靠 clear_gate 程序判定消除 ──────────────

@@ -7,6 +7,10 @@ apply(不重跑贵的 simulator/extractor)；无则重跑推演(验收③)。
 决定 4：事务内 LLM 回调失败沿用降级，不触发回滚(章节记忆/结局总评内部已自吞)。
 
 用 conftest 的 game fixture(活存档副本，连接走 _SuspendableConnection factory，atomic 可用)。
+
+注：本文件设置/断言 turn_phase 时故意用 raw 字符串(如 "settling"/"awaiting_decision")而非
+TurnPhase.X.value——它们 pin 的是**落盘字符串值本身**，有意 enum 无关：枚举重命名而落盘值
+漂移时这些断言应响亮失败。S4 把生产代码相位比较统一到 TurnPhase enum，测试侧落盘断言不跟随。
 """
 
 from __future__ import annotations
@@ -890,3 +894,34 @@ def test_noready_recovery_uses_persisted_decree(game, monkeypatch):
     assert result.awaiting is False
     assert state.turn == turn + 1
     assert sess.last_decree == "皇帝手改的原诏"  # 原诏从真源恢复
+
+
+def test_settle_reload_failure_propagates_raw_not_abort(game, monkeypatch, tmp_path):
+    """settle 崩+回滚后 reload 自身再炸 → 原异常裸传播(带 __cause__=reload 异常),
+    **不包 SettlementAbort 不写错误包**——内存仍脏时向玩家宣传「可重试」是误导,
+    写包也会基于脏态(b12a60e 原语义;cmr S4 r1,2/2:helper 重构后被外层 except
+    二次捕获误包装)。"""
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+    extracted = {"metric_delta": {"民心": -1}}
+    persist_resolve_context(
+        db, turn, extracted,
+        decree_text="减赋诏", narrative="本月邸报……",
+        simulator_payload={}, secret_orders=[], relevant_memories=[],
+    )
+
+    def _boom(*a, **k):
+        raise RuntimeError("apply boom")
+    monkeypatch.setattr(decree_mod, "apply_score_extraction", _boom)
+
+    def _reload_boom(*a, **k):
+        raise OSError("reload boom")
+    monkeypatch.setattr(decree_mod, "reload_state_from_db", _reload_boom)
+
+    with pytest.raises(RuntimeError, match="apply boom") as ei:
+        settle_with_delta(state, db, extracted, before_turn=turn, content=content)
+
+    assert isinstance(ei.value.__cause__, OSError)  # reload 异常链上保留
+    packs = list((tmp_path / "error_packs").glob("turn*")) if (tmp_path / "error_packs").exists() else []
+    assert packs == []  # 不基于脏态写包
