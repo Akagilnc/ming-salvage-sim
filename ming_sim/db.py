@@ -205,9 +205,11 @@ class GameDB:
                 debut_month INTEGER NOT NULL DEFAULT 0,
                 status TEXT NOT NULL DEFAULT 'active',
                 status_reason TEXT NOT NULL DEFAULT '',
+                reason_code TEXT NOT NULL DEFAULT '',
                 status_changed_turn INTEGER NOT NULL DEFAULT 0,
                 power_id TEXT NOT NULL DEFAULT 'ming',
-                location TEXT NOT NULL DEFAULT ''
+                location TEXT NOT NULL DEFAULT '',
+                transit_to TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS character_offices (
@@ -218,6 +220,21 @@ class GameDB:
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(character_name) REFERENCES characters(name),
                 FOREIGN KEY(office_type) REFERENCES offices(office_type)
+            );
+
+            CREATE TABLE IF NOT EXISTS person_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                turn INTEGER NOT NULL,
+                year INTEGER NOT NULL,
+                period INTEGER NOT NULL,
+                person_name TEXT NOT NULL,
+                action TEXT NOT NULL,
+                payload_summary TEXT NOT NULL DEFAULT '',
+                derived_from TEXT NOT NULL DEFAULT '',
+                normalized TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(person_name) REFERENCES characters(name)
             );
 
             CREATE TABLE IF NOT EXISTS factions (
@@ -643,6 +660,9 @@ class GameDB:
             CREATE INDEX IF NOT EXISTS idx_power_logs_turn
             ON power_logs(turn, power_id);
 
+            CREATE INDEX IF NOT EXISTS idx_person_logs_turn
+            ON person_logs(turn, person_name);
+
             CREATE TABLE IF NOT EXISTS issues (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 kind TEXT NOT NULL,
@@ -805,6 +825,7 @@ class GameDB:
         self._apply_region_city_levels()
         self.ensure_column("characters", "power_id", "TEXT NOT NULL DEFAULT 'ming'")
         self.ensure_column("characters", "location", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("characters", "transit_to", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "resolve_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "fail_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "birth_year", "INTEGER NOT NULL DEFAULT 0")
@@ -814,6 +835,7 @@ class GameDB:
         self.ensure_column("characters", "debut_month", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "status", "TEXT NOT NULL DEFAULT 'active'")
         self.ensure_column("characters", "status_reason", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("characters", "reason_code", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "status_changed_turn", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "portrait_id", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "court_role", "TEXT NOT NULL DEFAULT ''")
