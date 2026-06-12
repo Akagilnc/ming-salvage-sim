@@ -480,7 +480,7 @@ class GameDB:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
-            -- 推演链每个 agent 的原始输入/输出留痕，每回合一行，便于事后追查。
+            -- 推演链每回合一行：extractor_input 留原输入，extractor_output 留 applied 可见结果。
             CREATE TABLE IF NOT EXISTS turn_extractions (
                 turn INTEGER PRIMARY KEY,
                 year INTEGER NOT NULL,
@@ -1237,8 +1237,8 @@ class GameDB:
                     INSERT INTO characters
                     (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style,
                      birth_year, historical_death_year, historical_death_month, debut_year, debut_month,
-                     status, status_reason, status_changed_turn, portrait_id, power_id, location, summary)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     status, status_reason, status_changed_turn, portrait_id, power_id, location, transit_to, summary)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         character.name,
@@ -1263,6 +1263,7 @@ class GameDB:
                         character.portrait_id,
                         character.power_id,
                         character.location,
+                        character.transit_to,
                         character.summary,
                     ),
                 )
@@ -1650,25 +1651,62 @@ class GameDB:
         name: str,
         status: str,
         reason: str = "",
+        reason_code: str | None = None,
     ) -> None:
         """改人物状态：active/offstage/dismissed/imprisoned/exiled/retired/dead。
         大臣走 characters 表；后宫（consorts）走内存对象 + consort_traits 备档。"""
         valid = {"active", "offstage", "dismissed", "imprisoned", "exiled", "retired", "dead"}
         if status not in valid:
             raise ValueError(f"character status 非法：{status}")
-        # 去职（下狱/革职/流放/致仕/死）即削职：清空 characters.office，
-        # 原职仍留在 character_offices 备档可追溯。复职（active/offstage）不动 office。
-        ousted = status in {"dismissed", "imprisoned", "exiled", "retired", "dead"}
+        # 去职（下狱/革职/流放/致仕/出宫/死）即削职：清空 characters.office，
+        # 原职仍留在 character_offices 备档可追溯。复职（active）不动 office。
+        ousted = status in {"offstage", "dismissed", "imprisoned", "exiled", "retired", "dead"}
+        reason_code_value = str(reason_code or "")[:40]
         if ousted:
             self.conn.execute(
-                "UPDATE characters SET status=?, status_reason=?, status_changed_turn=?, office='' WHERE name=?",
-                (status, reason[:200], state.turn, name),
+                "UPDATE characters SET status=?, status_reason=?, "
+                "status_changed_turn=?, office='', transit_to='', reason_code=? WHERE name=?",
+                (status, reason[:200], state.turn, reason_code_value, name),
             )
         else:
             self.conn.execute(
-                "UPDATE characters SET status=?, status_reason=?, status_changed_turn=? WHERE name=?",
-                (status, reason[:200], state.turn, name),
+                "UPDATE characters SET status=?, status_reason=?, status_changed_turn=?, reason_code=? WHERE name=?",
+                (status, reason[:200], state.turn, reason_code_value, name),
             )
+        self.conn.commit()
+
+    def record_person_log(
+        self,
+        state: GameState,
+        person_name: str,
+        action: str,
+        payload_summary: str = "",
+        derived_from: str = "",
+        normalized: str | Dict[str, object] = "",
+        source: str = "",
+    ) -> None:
+        if isinstance(normalized, dict):
+            normalized_text = json.dumps(normalized, ensure_ascii=False, sort_keys=True)
+        else:
+            normalized_text = str(normalized or "")
+        self.conn.execute(
+            """
+            INSERT INTO person_logs
+            (turn, year, period, person_name, action, payload_summary, derived_from, normalized, source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                state.turn,
+                state.year,
+                state.period,
+                person_name,
+                action,
+                str(payload_summary or "")[:200],
+                str(derived_from or "")[:120],
+                normalized_text[:500],
+                str(source or "")[:80],
+            ),
+        )
         self.conn.commit()
 
     def get_character_status(self, name: str) -> Tuple[str, str]:
@@ -1961,8 +1999,8 @@ class GameDB:
             INSERT INTO characters
             (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style,
              birth_year, historical_death_year, historical_death_month, debut_year, debut_month,
-             status, status_reason, status_changed_turn, portrait_id, power_id, location, summary)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             status, status_reason, status_changed_turn, portrait_id, power_id, location, transit_to, summary)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 character.name,
@@ -1987,6 +2025,7 @@ class GameDB:
                 portrait_id,
                 getattr(character, "power_id", "ming") or "ming",
                 getattr(character, "location", "") or "",
+                getattr(character, "transit_to", "") or "",
                 getattr(character, "summary", "") or "",
             ),
         )
@@ -4685,7 +4724,7 @@ class GameDB:
         extractor_input: str = "",
         extractor_output: str = "",
     ) -> None:
-        """推演链原始输入/输出留痕（turn_extractions），事后可追可重放。"""
+        """推演链留痕（turn_extractions）：输入 + applied 可见输出。"""
         self.conn.execute(
             """
             INSERT INTO turn_extractions
@@ -4934,6 +4973,7 @@ class GameDB:
             if ch is not None:
                 ch.status = "dismissed"
                 ch.office = ""   # set_character_status 已清 DB office,内存须跟上(roster 读 c.office)
+                ch.transit_to = ""
             # 对话确认回合中落库,刷 Agent 让被罢者本回合后续不再以旧活跃态被召对(线上 gemini)。
             if registry is not None:
                 registry.refresh(key)

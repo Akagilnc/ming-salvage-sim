@@ -36,7 +36,8 @@ def _appointment_to_person_change(
             "name": item.get("name", ""),
             ACTION_KEY: "册封",
             "office": item.get("office", ""),
-            **_copy_present(item, "office_type", "faction", "reason"),
+            **_copy_present(item, "office_type", "faction", "reason", "approved", "准许"),
+            "legacy_appointment": True,
         }, False
     return {
         "name": item.get("name", ""),
@@ -63,6 +64,7 @@ def _power_to_person_change(item: Mapping[str, object]) -> dict[str, object]:
         "new_power": item.get("new_power", ""),
         "方式": "不明",
         "反噬": {},
+        **_copy_present(item, "reason"),
         "legacy_partial": True,
     }
 

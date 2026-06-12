@@ -66,6 +66,7 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             style=str_field(item, "style", f"characters.json.characters[{idx}]"),
             power_id=str_field(item, "power_id", f"characters.json.characters[{idx}]"),
             location=str(item.get("location") or "").strip(),
+            transit_to=str(item.get("transit_to") or "").strip(),
             birth_year=int(item.get("birth_year") or 0),
             historical_death_year=int(item.get("historical_death_year") or 0),
             historical_death_month=int(item.get("historical_death_month") or 0),

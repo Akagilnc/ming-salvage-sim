@@ -124,18 +124,59 @@ def effect_brief(applied: Dict[str, object]) -> str:
     if razed:
         parts.append(f"废止：{'、'.join(r for r in razed if r)[:60]}")
 
-    offices = [o for o in (applied.get("office_changes") or []) if isinstance(o, dict) and not o.get("rejected")]
-    if offices:
-        names = "、".join(_short(o.get("name"), 8) for o in offices[:3])
-        parts.append(f"人事调整：{names}")
-
-    status_changes = [
-        s for s in (applied.get("character_status_changes") or [])
-        if isinstance(s, dict) and not s.get("rejected")
+    person_source = []
+    seen_person_changes: set[str] = set()
+    for source in (applied.get("applied_person_changes"), issue_summary.get("applied_person_changes")):
+        if isinstance(source, list):
+            for item in source:
+                if not isinstance(item, dict):
+                    continue
+                key = json.dumps(item, sort_keys=True, ensure_ascii=False)
+                if key in seen_person_changes:
+                    continue
+                seen_person_changes.add(key)
+                person_source.append(item)
+    person_changes = [
+        p for p in person_source
+        if isinstance(p, dict) and not p.get("rejected")
     ]
-    if status_changes:
-        names = "、".join(_short(s.get("name"), 8) for s in status_changes[:3])
-        parts.append(f"处分：{names}")
+    if person_changes:
+        adjustments = [
+            p for p in person_changes
+            if str(p.get("动作") or p.get("action") or "") in {"任命", "调任", "易主", "册封", "行止"}
+        ]
+        if adjustments:
+            names = "、".join(_short(p.get("name") or p.get("姓名"), 8) for p in adjustments[:3])
+            parts.append(f"人事调整：{names}")
+        release_markers = {"放归", "赦还", "起复", "昭雪", "夺情"}
+        punishments = [
+            p for p in person_changes
+            if str(p.get("动作") or p.get("action") or "") == "罢黜"
+            or (
+                str(p.get("动作") or p.get("action") or "") == "处置"
+                and str(p.get("status") or "") != "active"
+                and str(p.get("reason") or p.get("derived_from") or "") not in release_markers
+            )
+        ]
+        if punishments:
+            names = "、".join(_short(p.get("name") or p.get("姓名"), 8) for p in punishments[:3])
+            parts.append(f"处分：{names}")
+    else:
+        offices = [
+            o for o in (applied.get("office_changes") or [])
+            if isinstance(o, dict) and not o.get("rejected")
+        ]
+        if offices:
+            names = "、".join(_short(o.get("name"), 8) for o in offices[:3])
+            parts.append(f"人事调整：{names}")
+
+        status_changes = [
+            s for s in (applied.get("character_status_changes") or [])
+            if isinstance(s, dict) and not s.get("rejected")
+        ]
+        if status_changes:
+            names = "、".join(_short(s.get("name"), 8) for s in status_changes[:3])
+            parts.append(f"处分：{names}")
 
     return "；".join(parts) or "盘面无显著结构化变化"
 

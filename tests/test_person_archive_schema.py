@@ -1,8 +1,10 @@
 """ADR 0009 person archive schema contract."""
 
 import sqlite3
+from pathlib import Path
 
 from ming_sim.db import GameDB
+from ming_sim.models import Character
 
 
 def _columns(db, table):
@@ -95,6 +97,34 @@ def test_person_logs_accepts_audit_rows_for_existing_characters(game):
     }
 
 
+def test_add_character_persists_transit_to(game):
+    """Runtime-created characters preserve ADR 0009 travel state."""
+    db, state, _ = game
+    character = Character(
+        name="测试在途人物",
+        office="听用",
+        office_type="候补",
+        faction="中立",
+        aliases=[],
+        personal_skills=[],
+        loyalty=50,
+        ability=50,
+        integrity=50,
+        courage=50,
+        style="测试人物",
+        power_id="ming",
+        location="beizhili",
+        transit_to="liaodong",
+    )
+
+    db.add_character(state, character)
+
+    row = db.conn.execute(
+        "SELECT location, transit_to FROM characters WHERE name=?", (character.name,)
+    ).fetchone()
+    assert dict(row) == {"location": "beizhili", "transit_to": "liaodong"}
+
+
 def test_old_save_schema_is_upgraded_for_person_archive_fields(tmp_path, content):
     """Opening an old save adds ADR 0009 fields and audit table without reseeding."""
     path = tmp_path / "old-save.db"
@@ -136,3 +166,27 @@ def test_old_save_schema_is_upgraded_for_person_archive_fields(tmp_path, content
         }
     finally:
         db.conn.close()
+
+
+def test_personnel_extractor_prompt_teaches_person_change_contract():
+    """Real personnel extraction prompts must ask for the ADR 0009 write surface."""
+    prompt_dir = Path(__file__).resolve().parents[1] / "content" / "prompts"
+    shared = (prompt_dir / "score_extractor_shared.md").read_text(encoding="utf-8")
+    personnel = (prompt_dir / "score_extractor_personnel_secret.md").read_text(
+        encoding="utf-8"
+    )
+
+    for text in (shared, personnel):
+        assert "人物变更" in text
+        assert "行止" in text
+        assert "transit_to" in text
+    assert "location" in personnel
+    assert "任命" in personnel
+    assert "罢黜" in personnel
+    assert "调任" in personnel
+    assert "处置" in personnel
+    assert "易主" in personnel
+    assert "册封" in personnel
+    assert "新登场的非明朝人物" in personnel
+    assert "若不在人物名册中，不写 `人物变更`" in personnel
+    assert "走 `任命`，不走这里" not in personnel

@@ -421,8 +421,8 @@ def resolve_settling_recovery(
     extractor delta，不重跑贵的 simulator/extractor，直接调 settle_with_delta 后半段。
 
     ctx = db.get_resolve_context(before_turn)，要求 ctx["extracted"] is not None（ready）。
-    跨进程恢复无原 extractor_input/raw output（那些在崩溃进程的易失内存里）——extractor_output
-    用一句恢复标记重建（仅 turn_extractions 留痕用，不影响落库）。章节记忆/结局总评是便宜调用，
+    跨进程恢复无原 extractor_input（那些在崩溃进程的易失内存里）；turn_extractions 的
+    extractor_output 会由 applied 结果重建。章节记忆/结局总评是便宜调用，
     按真实流程同款构造（决定 3/4 明示重调可接受）。pre_settle 的 settling 相位已提交，恢复路
     不重跑前半段（财政不二跑）。
     """
@@ -962,19 +962,27 @@ def _collect_inline_rejections(
     """
     def _scan(section: str, items: list) -> None:
         for item in items:
-            if not (isinstance(item, dict) and item.get("rejected")):
+            if not isinstance(item, dict):
                 continue
-            collector.record(section, RejectedItem(
-                # item_json = 原始 delta 项（ADR 决定 5「原 item 原样保留」）：迁约
-                # producer 在 wrapper 里带原件（'item' 键）则解包,否则兜底存 wrapper
-                # （ship-pre r3——存整个 wrapper 会让重放分析消费到嵌套形状）。
-                item=item.get("item", item) if isinstance(item.get("item", None), (dict, list, str)) else item,
-                # ADR「拒收行必带人读原因」在此集中守门：producer 漏给则合成非空兜底
-                # ——规则写一处，新 section 免疫同类缺陷（fix-coverage 处方，cmr S0 r3）。
-                reason=str(item.get("reason") or "") or f"拒收（{section} 未注明原因）",
-                category=str(item.get("category") or "legacy_inline"),
-                source=source,
-            ), turn)
+            if item.get("rejected"):
+                report_section = str(item.get("report_section") or section)
+                collector.record(report_section, RejectedItem(
+                    # item_json = 原始 delta 项（ADR 决定 5「原 item 原样保留」）：迁约
+                    # producer 在 wrapper 里带原件（'item' 键）则解包,否则兜底存 wrapper
+                    # （ship-pre r3——存整个 wrapper 会让重放分析消费到嵌套形状）。
+                    item=item.get("item", item) if isinstance(item.get("item", None), (dict, list, str)) else item,
+                    # ADR「拒收行必带人读原因」在此集中守门：producer 漏给则合成非空兜底
+                    # ——规则写一处，新 section 免疫同类缺陷（fix-coverage 处方，cmr S0 r3）。
+                    reason=str(item.get("reason") or "") or f"拒收（{report_section} 未注明原因）",
+                    category=str(item.get("report_category") or item.get("category") or "legacy_inline"),
+                    source=source,
+                ), turn)
+            for subkey, subvalue in item.items():
+                if isinstance(subvalue, list):
+                    nested_section = f"{section}.{subkey}"
+                    if nested_section == "issue_summary.closes.applied_person_changes":
+                        continue
+                    _scan(nested_section, subvalue)
 
     for section, value in applied.items():
         if isinstance(value, list):
@@ -983,6 +991,34 @@ def _collect_inline_rejections(
             for subkey, subvalue in value.items():
                 if isinstance(subvalue, list):
                     _scan(f"{section}.{subkey}", subvalue)
+
+
+def _player_visible_extractor_output(applied: object) -> object:
+    if not isinstance(applied, dict):
+        return applied
+    visible = dict(applied)
+    visible.pop("person_changes", None)
+    issue_summary = visible.get("issue_summary")
+    if isinstance(issue_summary, dict):
+        issue_person_changes = issue_summary.get("applied_person_changes")
+        if isinstance(issue_person_changes, list) and issue_person_changes:
+            direct = visible.get("applied_person_changes")
+            merged = list(direct) if isinstance(direct, list) else []
+            merged.extend(issue_person_changes)
+            visible["applied_person_changes"] = merged
+    return _strip_player_internal_fields(visible)
+
+
+def _strip_player_internal_fields(value: object) -> object:
+    if isinstance(value, list):
+        return [_strip_player_internal_fields(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _strip_player_internal_fields(item)
+            for key, item in value.items()
+            if key not in {"item", "report_section", "report_category"}
+        }
+    return value
 
 
 def _settle_after_extract_body(
@@ -1025,13 +1061,49 @@ def _settle_after_extract_body(
     # 把 narrative 与诏书写入 turn_logs 作下月前文
     db.record_log(state, narrative[:1200])
     db.save_turn_report(state, narrative)
-    # 推演链原始输入/输出留痕，事后可追「该立的 issue 为何没立」。
+
+    # 落 inertia + ongoing (未被本月 issue_advances 触动的)
+    touched_ids = set()
+    for adv in applied.get("issue_summary", {}).get("advances", []) or []:
+        touched_ids.add(int(adv.get("issue_id") or 0))
+    inertia_person_changes: list[dict[str, object]] = []
+    inertia_rejections = apply_issue_inertia_and_ongoing(
+        db,
+        state,
+        touched_ids=touched_ids,
+        applied_person_changes=inertia_person_changes,
+    )
+    if inertia_person_changes:
+        issue_summary = applied.setdefault("issue_summary", {})
+        existing = issue_summary.get("applied_person_changes")
+        if isinstance(existing, list):
+            existing.extend(inertia_person_changes)
+        else:
+            issue_summary["applied_person_changes"] = list(inertia_person_changes)
+    if collector is not None and (inertia_rejections or inertia_person_changes):
+        # 桥接跑在 inertia 之前——自然结案路的容忍拒收在此补收并再 flush（仍在事务内,
+        # flush 增量安全;只 tlog 等于这条路脱离 rejection_reports 管线,ship-pre r1）。
+        # 注:fallback 推进路(resolve_directives 降级分支)无收集器,其 inertia 容忍项
+        # 维持 tlog-only(该路本就跳过结算管线)。
+        inline_rejections: dict[str, object] = {}
+        if inertia_rejections:
+            inline_rejections["issue_inertia"] = {"entity_rejections": inertia_rejections}
+        if inertia_person_changes:
+            inline_rejections["issue_summary"] = {"applied_person_changes": inertia_person_changes}
+        _collect_inline_rejections(
+            collector, inline_rejections,
+            before_turn, source)
+        collector.flush_to_db(db)
+
+    # 推演链留痕：extractor_input 保留输入；extractor_output 存最终 applied 结果,
+    # 供玩家明细/时间线读取（raw canonical delta 的重跑真源在 pending_resolve_context）。
+    # inertia/ongoing 也可能追加玩家可见人物变更,所以必须在上方合并后再保存。
     db.save_turn_extraction(
         state,
         decree_text=decree_text,
         narrative=trace_narrative,  # 留痕含作弊段，便于事后追「为何这么落库」
         extractor_input=extractor_input,
-        extractor_output=extractor_output,
+        extractor_output=json.dumps(_player_visible_extractor_output(applied), ensure_ascii=False),
     )
 
     # 章节记忆：注入回调（真实流程= LLM 浓缩落 event_memories；driver= None 跳过）。失败不抛断。
@@ -1041,21 +1113,6 @@ def _settle_after_extract_body(
             chapter_recorder(db, state, decree_text, narrative, applied)
         except Exception as exc:
             tlog(f"[chapter-memory] 跳过：{exc}")
-
-    # 落 inertia + ongoing (未被本月 issue_advances 触动的)
-    touched_ids = set()
-    for adv in applied.get("issue_summary", {}).get("advances", []) or []:
-        touched_ids.add(int(adv.get("issue_id") or 0))
-    inertia_rejections = apply_issue_inertia_and_ongoing(db, state, touched_ids=touched_ids)
-    if collector is not None and inertia_rejections:
-        # 桥接跑在 inertia 之前——自然结案路的容忍拒收在此补收并再 flush（仍在事务内,
-        # flush 增量安全;只 tlog 等于这条路脱离 rejection_reports 管线,ship-pre r1）。
-        # 注:fallback 推进路(resolve_directives 降级分支)无收集器,其 inertia 容忍项
-        # 维持 tlog-only(该路本就跳过结算管线)。
-        _collect_inline_rejections(
-            collector, {"issue_inertia": {"entity_rejections": inertia_rejections}},
-            before_turn, source)
-        collector.flush_to_db(db)
 
     # 开局负面帝国修正：本月若达成消除条件即清除（程序判定，不靠 LLM/时长）
     cleared = clear_gated_legacies(db, state)
