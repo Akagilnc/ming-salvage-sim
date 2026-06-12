@@ -62,7 +62,7 @@ hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`�
 
 ### Issue tracker
 
-GitHub Issues（`Akagilnc/ming-salvage-sim`，gh 命令必须写死 `--repo`）。See `docs/agents/issue-tracker.md`.
+GitHub Issues（`Akagilnc/ming-salvage-sim`，已设为本 clone 的 gh 默认仓库（`gh repo set-default`），`--repo` 可省；跨 clone / CI / 重设 remote 后仍建议显式带 `--repo` 防误打 upstream）。See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
