@@ -291,3 +291,31 @@ def test_item_json_is_original_delta_item_when_producer_carries_it(game, monkeyp
     item = _json.loads(row[0])
     assert "rejected" not in item  # 不是 wrapper
     assert item == {"power_id": "查无此势力", "changes": {"leverage": 5}}  # 原件
+
+
+def test_person_change_rejection_item_json_keeps_original_delta_item(game, monkeypatch, tmp_path):
+    """人物变更拒收也必须把原始条目带进 rejection_reports，不能只存截断 wrapper。"""
+    import json as _json
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+    raw_item = {"name": "孔有德", "动作": "行止", "location": "辽东"}
+
+    run_settle(
+        db,
+        state,
+        content,
+        {"人物变更": [raw_item]},
+        narrative="x",
+        decree_text="y",
+    )
+
+    row = db.conn.execute(
+        "SELECT item_json FROM rejection_reports WHERE turn=? AND section='applied_person_changes'",
+        (turn,),
+    ).fetchone()
+    assert row is not None
+    item = _json.loads(row[0])
+    assert "rejected" not in item
+    assert item == raw_item
