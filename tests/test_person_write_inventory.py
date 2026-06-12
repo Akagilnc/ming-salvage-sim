@@ -21,6 +21,7 @@ def test_person_write_inventory_covers_current_character_sql_writes():
         "ming_sim/db.py:set_character_office",
         "ming_sim/db.py:add_character",
         "ming_sim/issues.py:_displace_duplicate_offices",
+        "ming_sim/issues.py:_apply_person_changes",
         "ming_sim/session.py:_apply_appointment_delta:candidate_upgrade",
     } <= inventory_locations
 
@@ -59,6 +60,7 @@ def test_person_write_inventory_lists_pending_migration_locations():
         "ming_sim/db.py:apply_character_power_changes",
         "ming_sim/db.py:set_character_office",
         "ming_sim/db.py:set_character_status",
+        "ming_sim/issues.py:_apply_person_changes",
         "ming_sim/issues.py:_displace_duplicate_offices",
     )
 

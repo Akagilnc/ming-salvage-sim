@@ -48,24 +48,25 @@ def test_persist_rejects_malformed_delta_and_writes_nothing(game):
     assert db.get_resolve_context(turn) is None
 
 
-def test_persist_rejects_unwired_person_change_delta_and_writes_nothing(game):
-    """非空人物变更在写路径接好前必须 pre-persist 拒绝，避免 ready=1 毒 payload 软死锁。"""
+def test_persist_accepts_person_change_delta_after_applier_is_wired(game):
+    """人物变更写路径接入后，resolve_context 可保存新 key，供重试/回放恢复同一 delta。"""
     db, state, content = game
     turn = state.turn
-    bad = {
+    extracted = {
         "人物变更": [
-            {"name": "孔有德", "动作": "易主", "new_power": "houjin"}
+            {"name": "孔有德", "动作": "处置", "status": "dismissed", "reason": "削职听勘"}
         ]
     }
 
-    with pytest.raises(ValueError, match="人物变更.*写路径未接"):
-        persist_resolve_context(
-            db, turn, bad,
-            decree_text="x", narrative="y",
-            simulator_payload={}, secret_orders=[], relevant_memories=[],
-        )
+    persist_resolve_context(
+        db, turn, extracted,
+        decree_text="x", narrative="y",
+        simulator_payload={}, secret_orders=[], relevant_memories=[],
+    )
 
-    assert db.get_resolve_context(turn) is None
+    ctx = db.get_resolve_context(turn)
+    assert ctx is not None
+    assert ctx["extracted"] == extracted
 
 
 def test_settle_clears_resolve_context_on_completion(game):

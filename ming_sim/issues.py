@@ -1088,8 +1088,6 @@ def validate_delta_shape(extracted: dict) -> None:
             # None = 字段缺省/LLM 输出 null;apply 用 `.get(key) or {}`/`or []` 当空 no-op,
             # 校验同样放行(别比 apply 更严,否则合法 null 会被误拒,Gemini R1)。
             continue
-        if key == "人物变更" and value:
-            raise ValueError("人物变更 写路径未接：当前仅归一 legacy 四 key，非空新 key 不得静默回显")
         expected = EMPTY_EXTRACTION[key]
         if isinstance(expected, dict) and not isinstance(value, dict):
             raise ValueError(f"delta 字段 {key} 必须是 object(dict)，实得 {type(value).__name__}")
@@ -1200,6 +1198,104 @@ def apply_office_appointment(
             "reason": f"建档失败（查重/字段不合）；原 status={cur_status or '不在册'}"}
 
 
+def _apply_person_changes(
+    db: GameDB,
+    state: GameState,
+    changes: List[Dict[str, object]],
+    content=None,
+) -> List[Dict[str, object]]:
+    def rejected(
+        item: Dict[str, object],
+        reason: str,
+        category: str,
+        *,
+        status: str | None = None,
+    ) -> Dict[str, object]:
+        result: Dict[str, object] = {
+            "name": str(item.get("name") or "").strip(),
+            "动作": str(item.get("动作") or "").strip(),
+            "rejected": True,
+            "reason": reason,
+            "category": category,
+            "item": dict(item),
+        }
+        if status is not None:
+            result["status"] = status
+        return result
+
+    applied: List[Dict[str, object]] = []
+    person_statuses = {
+        "active",
+        "candidate",
+        "offstage",
+        "dismissed",
+        "imprisoned",
+        "exiled",
+        "retired",
+        "dead",
+    }
+    disposition_statuses = person_statuses - {"active", "candidate"}
+    office_clear_statuses = {"offstage", "dismissed", "imprisoned", "exiled", "retired", "dead"}
+    for item in changes:
+        name = str(item.get("name") or "").strip()
+        action = str(item.get("动作") or "").strip()
+        if not name or not action:
+            applied.append(rejected(item, "name 或 动作 缺失", "missing_field"))
+            continue
+
+        if action in {"处置", "罢黜"}:
+            status = "dismissed" if action == "罢黜" else str(item.get("status") or "").strip()
+            if status not in person_statuses:
+                applied.append(rejected(item, "status 非白名单", "invalid_enum", status=status))
+                continue
+            if status not in disposition_statuses:
+                applied.append(
+                    rejected(
+                        item,
+                        "处置 不直接迁入 active/candidate，走任命/册封级联",
+                        "invalid_transition",
+                        status=status,
+                    )
+                )
+                continue
+            if content is not None and name not in content.characters:
+                applied.append(rejected(item, "非既有人物", "hallucinated_id", status=status))
+                continue
+            row = db.conn.execute("SELECT name FROM characters WHERE name=?", (name,)).fetchone()
+            if row is None:
+                applied.append(rejected(item, "非既有人物", "hallucinated_id", status=status))
+                continue
+            cur_status, _ = db.get_character_status(name)
+            if cur_status == "dead" and status != "dead":
+                applied.append(
+                    rejected(item, "dead 无 status 出边", "invalid_transition", status=status)
+                )
+                continue
+            db.set_character_status(state, name, status, str(item.get("reason") or ""))
+            if status in office_clear_statuses:
+                db.conn.execute("UPDATE characters SET office='' WHERE name=?", (name,))
+                db.conn.commit()
+            if content is not None and name in content.characters:
+                ch = content.characters[name]
+                ch.status = status
+                if status in office_clear_statuses:
+                    ch.office = ""
+            applied.append(
+                {
+                    "name": name,
+                    "动作": action,
+                    "status": status,
+                    "reason": str(item.get("reason") or ""),
+                }
+            )
+            continue
+
+        applied.append(
+            rejected(item, "人物变更动作写路径未接", "invalid_transition")
+        )
+    return applied
+
+
 def apply_score_extraction(
     db: GameDB,
     state: GameState,
@@ -1215,6 +1311,10 @@ def apply_score_extraction(
     # 0) 落库前校验容器/二级类型,畸形值崩前拦住,不让前面字段半落库(#57)。
     validate_delta_shape(extracted)
     person_changes = normalize_person_changes(extracted)
+    new_person_changes = normalize_person_changes({"人物变更": extracted.get("人物变更") or []})
+    applied_person_changes = _apply_person_changes(
+        db, state, new_person_changes, content=content
+    ) if new_person_changes else []
     # 1) metric_delta
     applied_metric = _apply_metric_dict(state, extracted.get("metric_delta") or {}, db=db)
     # 2) economy_moves
@@ -1634,6 +1734,7 @@ def apply_score_extraction(
         "fiscal_removes": applied_fiscal_removes,
         "appointments": applied_appointments,
         "person_changes": person_changes,
+        "applied_person_changes": applied_person_changes,
         "character_status_changes": applied_status_changes,
         "character_power_changes": applied_power_changes,
         "office_changes": applied_office_changes,
