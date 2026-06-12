@@ -48,6 +48,26 @@ def test_persist_rejects_malformed_delta_and_writes_nothing(game):
     assert db.get_resolve_context(turn) is None
 
 
+def test_persist_rejects_unwired_person_change_delta_and_writes_nothing(game):
+    """非空人物变更在写路径接好前必须 pre-persist 拒绝，避免 ready=1 毒 payload 软死锁。"""
+    db, state, content = game
+    turn = state.turn
+    bad = {
+        "人物变更": [
+            {"name": "孔有德", "动作": "易主", "new_power": "houjin"}
+        ]
+    }
+
+    with pytest.raises(ValueError, match="人物变更.*写路径未接"):
+        persist_resolve_context(
+            db, turn, bad,
+            decree_text="x", narrative="y",
+            simulator_payload={}, secret_orders=[], relevant_memories=[],
+        )
+
+    assert db.get_resolve_context(turn) is None
+
+
 def test_settle_clears_resolve_context_on_completion(game):
     """正常结算完成后 resolve_context 已清（clear 在 settle 写序列内，settle 完成 = context 干净）。"""
     db, state, content = game
