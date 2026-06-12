@@ -883,6 +883,10 @@ def settle_with_delta(
     # on_error 在 reload 前清拒收缓冲（DB 行随回滚消失，内存同步清场，不留待镜像快照）。
     # settle 特有的「中断透传 / 错误包 / SettlementAbort 包装」属特殊路，仍在本助手之外的
     # 外层 try/except 处理（ADR 0008 决定 6）——helper 化内核，特殊路外包。
+    # _atomic 预置 None：atomic_and_reload 的 __enter__ 在 yield 前就抛（如 atomic(db)
+    # 拒非 _SuspendableConnection、BEGIN 撞锁）时 as 绑定不发生，except 块若裸访问
+    # _atomic.reload_failed 会触发 UnboundLocalError 吃掉原始结算异常（cmr S4 三模型收敛）。
+    _atomic = None
     try:
         with atomic_and_reload(
             db, state, content=content, registry=registry,
@@ -906,7 +910,7 @@ def settle_with_delta(
     except BaseException as exc:
         # reload 失败（atomic_and_reload 在 yield 句柄上标的,cmr S4 r1）：内存仍脏——
         # 裸传播,不写包不包 SettlementAbort（脏态写包/宣传可重试都是误导;b12a60e 原语义）。
-        if _atomic.reload_failed:
+        if _atomic is not None and _atomic.reload_failed:
             raise
         # 中断/降级类异常（KeyboardInterrupt/SystemExit/LLMUnavailable）不当代码异常处理：
         # 不写包、不二次包装，原样传播。SettlementAbort（理论上 settle 内不抛）也不二次包。

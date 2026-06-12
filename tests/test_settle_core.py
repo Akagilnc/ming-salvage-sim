@@ -8,6 +8,11 @@ settle_with_delta 是从 decree._settle_after_narrative 抽出的「后括号」
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+
+import pytest
+
+import ming_sim.decree as decree
 from ming_sim.decree import pre_settle, settle_with_delta
 
 
@@ -63,3 +68,24 @@ def test_pre_settle_runs_fixed_fiscal_tick(game):
     ).fetchone()[0]
     assert after > before
     assert isinstance(auto, list)
+
+
+class _EnterBoom(BaseException):
+    """非-Exception 的 BaseException：原样透传路（不写错误包），sentinel 干净可断言。"""
+
+
+def test_settle_with_delta_enter_failure_preserves_original(game, monkeypatch):
+    """atomic_and_reload 的 __enter__ 在 yield 前就抛时，原异常须原样透传——
+    而不是被外层 except 里 `_atomic.reload_failed` 的 UnboundLocalError 吃掉
+    （cmr S4 三模型收敛：gemini high×2 / sourcery bug_risk / codex P2）。"""
+    db, state, content = game
+
+    @contextmanager
+    def _atomic_boom(_db):
+        raise _EnterBoom("enter-time failure before yield")
+        yield  # pragma: no cover - unreachable, keeps it a generator CM
+
+    monkeypatch.setattr(decree, "atomic", _atomic_boom)
+
+    with pytest.raises(_EnterBoom):
+        settle_with_delta(state, db, {}, before_turn=state.turn, content=content)
