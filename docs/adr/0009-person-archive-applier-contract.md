@@ -1,6 +1,6 @@
 # 人事档案 applier 契约（C1）
 
-Status: proposed（待评审；实现等 PR #90 合入 + M0 收口）
+Status: accepted（评审收敛并 main：PR #94，2026-06-11；前置 PR #90 / PR #95（ADR 0008 PR1/PR2）均已落地——2026-06-12 进入实现期，载体 #13，实现 kickoff checklist 见 #13 评论）
 
 人物状态的写路径现状：35 个写点散在 4 个文件，≥5 个高危「仅 DB」点（db.py:1604/1609/1653、issues.py:707/1359、web_app.py:2331），DB `characters` / 内存 `content.characters` / registry Agent 三面各写各的。实证灾害：毛文龙 dead 仍挂官位（#12）、客氏出宫 status 仍 active（#11）、袁崇焕 office 文本「(在途)」与 location 空串与密令叙事三处矛盾（#86）、钱龙锡 office=「前礼部尚书,罢居松江」而 status=active（状态挤在名分文本里的同款病）、动作闸门 PR 五轮评审反复抓漏同步。
 
