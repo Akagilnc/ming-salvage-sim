@@ -62,6 +62,8 @@ def test_person_write_inventory_lists_pending_migration_locations():
         "ming_sim/db.py:set_character_status",
         "ming_sim/issues.py:_apply_person_changes",
         "ming_sim/issues.py:_displace_duplicate_offices",
+        "ming_sim/issues.py:_restore_person_write_state",
+        "ming_sim/issues.py:apply_office_appointment",
     )
 
 

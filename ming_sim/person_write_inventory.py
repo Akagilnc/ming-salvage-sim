@@ -50,10 +50,22 @@ PERSON_WRITE_POINT_INVENTORY = (
         "reason": "顶替腾缺是任命派生事件，需收口。",
     },
     {
+        "location": "ming_sim/issues.py:apply_office_appointment",
+        "owner": "legacy_person_path",
+        "disposition": "migrate_to_person_applier",
+        "reason": "任官后清状态原因仍是人物状态/名分写入，需随任命核收口。",
+    },
+    {
         "location": "ming_sim/issues.py:_apply_person_changes",
         "owner": "adr0009_tracer_person_path",
         "disposition": "migrate_to_person_applier",
         "reason": "Slice 6 处置 tracer bullet 的过渡写点，后续随 C1 applier 收口。",
+    },
+    {
+        "location": "ming_sim/issues.py:_restore_person_write_state",
+        "owner": "adr0009_tracer_person_path",
+        "disposition": "migrate_to_person_applier",
+        "reason": "任官失败局部恢复的过渡写点，后续随 C1 applier 收口。",
     },
     {
         "location": "ming_sim/session.py:_apply_appointment_delta:candidate_upgrade",

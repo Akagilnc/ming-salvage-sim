@@ -14,6 +14,8 @@ import pytest
 
 import ming_sim.decree as decree
 from ming_sim.decree import pre_settle, settle_with_delta
+from ming_sim.memories import effect_brief
+from tests.conftest import active_ming_character
 
 
 def test_settle_with_delta_applies_region_and_advances_turn(game):
@@ -51,6 +53,53 @@ def test_settle_with_delta_invokes_injected_callbacks(game):
 
     assert "chapter" in calls
     assert any(isinstance(c, tuple) and c[0] == "stage" for c in calls)
+
+
+def test_settle_with_delta_includes_inertia_person_changes_in_chapter_brief(game):
+    db, state, content = game
+    name = active_ming_character(db, content)
+    before_turn = state.turn
+    old_status = content.characters[name].status
+    old_office = content.characters[name].office
+    seen: dict = {}
+
+    try:
+        db.insert_issue(
+            state,
+            kind="situation",
+            title="自然失败章节人事摘要测试",
+            bar_value=1,
+            inertia=-1,
+            effect_on_fail={
+                "人物变更": [
+                    {"name": name, "动作": "处置", "status": "dismissed", "reason": "自然失败问责"}
+                ]
+            },
+        )
+
+        settle_with_delta(
+            state,
+            db,
+            {},
+            before_turn=state.turn,
+            content=content,
+            chapter_recorder=lambda _db, _state, _decree, _narrative, applied: seen.update(applied),
+        )
+
+        assert seen["issue_summary"]["applied_person_changes"] == [
+            {"name": name, "动作": "处置", "status": "dismissed", "reason": "自然失败问责"}
+        ]
+        persisted = db.get_turn_extraction(before_turn)["extractor_output"]
+        assert persisted["issue_summary"]["applied_person_changes"] == [
+            {"name": name, "动作": "处置", "status": "dismissed", "reason": "自然失败问责"}
+        ]
+        assert persisted["applied_person_changes"] == [
+            {"name": name, "动作": "处置", "status": "dismissed", "reason": "自然失败问责"}
+        ]
+        assert f"处分：{name}" in effect_brief(seen)
+    finally:
+        content.characters[name].status = old_status
+        content.characters[name].office = old_office
 
 
 def test_pre_settle_runs_fixed_fiscal_tick(game):

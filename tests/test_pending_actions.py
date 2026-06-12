@@ -20,6 +20,7 @@ import types
 import pytest
 
 import ming_sim.cli_backend as cb
+import ming_sim.issues as issues
 from ming_sim.decree import advance_without_edict, pre_settle
 from ming_sim.session import GameSession
 
@@ -617,6 +618,39 @@ def test_dialogue_affirm_commits_office_now(game, monkeypatch):
         assert db.list_pending_actions(state.turn) == []
     finally:
         content.characters.pop(new_name, None)
+
+
+def test_commit_new_office_action_restores_when_post_create_helper_raises(game, monkeypatch):
+    """新任建档后 helper 抛错 → pending 标 failed,但新臣不得半落库进 DB/content。"""
+    db, state, content = game
+    new_name = "测试新臣半落库"
+    content.characters.pop(new_name, None)
+
+    def fail_after_create(*_args, **_kwargs):
+        raise RuntimeError("simulated post-create failure")
+
+    monkeypatch.setattr(issues, "_displace_duplicate_offices", fail_after_create)
+    db.conn.execute(
+        """INSERT INTO pending_actions (turn, kind, action, minister_name, payload_json)
+           VALUES (?, 'office', '任命', ?, ?)""",
+        (
+            state.turn,
+            "测试召对",
+            json.dumps({"name": new_name, "office": "陕西总督"}, ensure_ascii=False),
+        ),
+    )
+    db.conn.commit()
+
+    applied = db.commit_pending_actions(state, content=content, registry=None)
+
+    assert applied == []
+    assert db.list_pending_actions(state.turn) == []
+    failed = db.list_pending_actions(state.turn, status="failed")
+    assert len(failed) == 1
+    assert db.conn.execute(
+        "SELECT name FROM characters WHERE name=?", (new_name,)
+    ).fetchone() is None
+    assert new_name not in content.characters
 
 
 # ── 任免 commit 补全(CMR R1 P1/P2):升迁调任既有官 / 罢免清内存 office / 纳妃带 office_type ──

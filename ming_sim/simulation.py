@@ -268,8 +268,9 @@ def build_simulator_payload(
     ]
     court_roster = _auto_table([
         dict(r) for r in db.conn.execute(
-            "SELECT name,office,office_type,faction,status,power_id,location FROM characters "
-            "WHERE status!='offstage' AND office_type!='后宫' ORDER BY rowid"
+            "SELECT name,office,office_type,faction,status,power_id,"
+            "location,transit_to FROM characters WHERE status!='offstage' "
+            "AND office_type!='后宫' ORDER BY rowid"
         ).fetchall()
     ])
     return {
@@ -396,8 +397,7 @@ MODULE_FIELDS: Dict[str, set[str]] = {
     "military_external": {"army_delta", "new_armies", "power_updates", "world_advance"},
     "issues": {"issue_advances", "new_issues", "cancels", "close_issues"},
     "personnel_secret": {
-        "人物变更", "office_changes", "character_status_changes", "character_power_changes", "appointments",
-        "secret_order_updates", "secret_order_closes", "emperor_fate",
+        "人物变更", "secret_order_updates", "secret_order_closes", "emperor_fate",
     },
 }
 
@@ -472,12 +472,13 @@ def _extractor_context_payload(
     ]
     active_ministers = [
         dict(r) for r in db.conn.execute(
-            "SELECT name,office,office_type,faction,power_id,location FROM characters WHERE status='active' ORDER BY rowid"
+            "SELECT name,office,office_type,faction,power_id,location,transit_to "
+            "FROM characters WHERE status='active' ORDER BY rowid"
         ).fetchall()
     ]
     offstage_ministers = [
         dict(r) for r in db.conn.execute(
-            "SELECT name,office,faction,power_id,location,debut_year,debut_month "
+            "SELECT name,office,faction,power_id,location,transit_to,debut_year,debut_month "
             "FROM characters WHERE status='offstage' ORDER BY name"
         ).fetchall()
     ]

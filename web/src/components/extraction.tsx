@@ -47,6 +47,12 @@ export function ExtractionView({ data, loading, error }: { data: ExtractionData 
   const out = (rawOut as any).mode === "modular" && (rawOut as any).merged && typeof (rawOut as any).merged === "object"
     ? (rawOut as any).merged
     : rawOut;
+  const issueSummary = pickField(out, "局势摘要", "issue_summary") || {};
+  const personChanges = mergeLists(
+    pickField(out, "人物变更", "applied_person_changes"),
+    pickField(issueSummary, "人物变更", "applied_person_changes"),
+  );
+  const hasUnifiedPersonChanges = !isEmptyData(personChanges);
   return (
     <div className="document-section extraction-view">
       <ExtractionSection title="国势变化">
@@ -61,41 +67,44 @@ export function ExtractionView({ data, loading, error }: { data: ExtractionData 
       <ExtractionSection title="阶级变化">
         <ClassDeltaBlock data={pickField(out, "阶级变化", "class_delta")} />
       </ExtractionSection>
+      <ExtractionSection title="人物变更">
+        <PersonChangesBlock data={personChanges} />
+      </ExtractionSection>
       <ExtractionSection title="官职任免">
-        <OfficeChangesBlock data={pickField(out, "人事变更", "office_changes")} />
+        <OfficeChangesBlock data={hasUnifiedPersonChanges ? undefined : pickField(out, "人事变更", "office_changes")} />
       </ExtractionSection>
       <ExtractionSection title="去职变更">
-        <StatusChangesBlock data={pickField(out, "人物状态变化", "character_status_changes")} />
+        <StatusChangesBlock data={hasUnifiedPersonChanges ? undefined : pickField(out, "人物状态变化", "character_status_changes")} />
       </ExtractionSection>
       <ExtractionSection title="人物易主">
-        <PowerChangesBlock data={pickField(out, "人物易主", "character_power_changes")} />
+        <PowerChangesBlock data={hasUnifiedPersonChanges ? undefined : pickField(out, "人物易主", "character_power_changes")} />
       </ExtractionSection>
       <ExtractionSection title="后宫纳妃">
-        <AppointmentsBlock data={pickField(out, "后宫册封", "appointments")} />
+        <AppointmentsBlock data={hasUnifiedPersonChanges ? undefined : pickField(out, "后宫册封", "appointments")} />
       </ExtractionSection>
       <ExtractionSection title="局势推进">
-        <IssueAdvancesBlock data={pickField(out, "局势推进", "issue_advances")} />
+        <IssueAdvancesBlock data={pickField(issueSummary, "局势推进", "advances") ?? pickField(out, "局势推进", "issue_advances")} />
       </ExtractionSection>
       <ExtractionSection title="新立局势">
-        <NewIssuesBlock data={pickField(out, "新立局势", "new_issues")} />
+        <NewIssuesBlock data={pickField(issueSummary, "新立局势", "new_issues") ?? pickField(out, "新立局势", "new_issues")} />
       </ExtractionSection>
       <ExtractionSection title="结案 / 失败">
-        <CloseIssuesBlock data={pickField(out, "结案局势", "close_issues")} />
+        <CloseIssuesBlock data={pickField(issueSummary, "结案局势", "closes") ?? pickField(out, "结案局势", "close_issues")} />
       </ExtractionSection>
       <ExtractionSection title="撤旨">
-        <CancelsBlock data={pickField(out, "撤销局势", "cancels")} />
+        <CancelsBlock data={pickField(issueSummary, "撤销局势", "cancels") ?? pickField(out, "撤销局势", "cancels")} />
       </ExtractionSection>
       <ExtractionSection title="地区变化">
-        <EntityDeltaBlock data={pickField(out, "地区变化", "region_delta")} labelFn={labelRegion} />
+        <EntityDeltaBlock data={pickField(out, "地区变化", "region_changes") ?? pickField(out, "地区变化", "region_delta")} labelFn={labelRegion} />
       </ExtractionSection>
       <ExtractionSection title="军队变化">
-        <EntityDeltaBlock data={pickField(out, "军队变化", "army_delta")} labelFn={labelArmy} />
+        <EntityDeltaBlock data={pickField(out, "军队变化", "army_changes") ?? pickField(out, "军队变化", "army_delta")} labelFn={labelArmy} />
       </ExtractionSection>
       <ExtractionSection title="新建军队">
-        <NewArmiesBlock data={pickField(out, "新建军队", "new_armies")} />
+        <NewArmiesBlock data={pickField(out, "新建军队", "created_armies") ?? pickField(out, "新建军队", "new_armies")} />
       </ExtractionSection>
       <ExtractionSection title="势力变化">
-        <EntityDeltaBlock data={pickField(out, "势力变化", "power_updates")} labelFn={labelPower} />
+        <EntityDeltaBlock data={pickField(out, "势力变化", "power_changes") ?? pickField(out, "势力变化", "power_updates")} labelFn={labelPower} />
       </ExtractionSection>
       <ExtractionSection title="财政系数">
         <FiscalBlock data={pickField(out, "财政制度变化", "fiscal_changes")} />
@@ -121,6 +130,21 @@ export function pickField(obj: any, cn: string, en: string): any {
 export function pickItem(obj: any, cn: string, en: string): any {
   if (!obj || typeof obj !== "object") return undefined;
   return obj[cn] ?? obj[en];
+}
+
+export function mergeLists(...values: any[]): any[] | undefined {
+  const merged: any[] = [];
+  const seen = new Set<string>();
+  values.forEach((value) => {
+    if (!Array.isArray(value)) return;
+    value.forEach((item) => {
+      const key = typeof item === "object" && item !== null ? JSON.stringify(item) : String(item);
+      if (seen.has(key)) return;
+      seen.add(key);
+      merged.push(item);
+    });
+  });
+  return merged.length ? merged : undefined;
 }
 
 export function ExtractionSection({ title, children }: { title: string; children: React.ReactNode }) {
@@ -197,16 +221,23 @@ export function IssueAdvancesBlock({ data }: { data: any }) {
   if (isEmptyData(data) || !Array.isArray(data)) return <p className="extraction-empty">无</p>;
   return (
     <ul className="extraction-list">
-      {data.map((it: any, i: number) => (
-        <li key={i}>
-          <b className={Number(pickItem(it, "进度增量", "delta_bar")) >= 0 ? "good" : "bad"}>
-            {labelIssue(pickItem(it, "局势编号", "issue_id"))} 进度 {fmtDelta(pickItem(it, "进度增量", "delta_bar"))}
-            {pickItem(it, "惯性增量", "inertia_delta") ? `，惯性 ${fmtDelta(pickItem(it, "惯性增量", "inertia_delta"))}` : ""}
-          </b>
-          {pickItem(it, "阶段", "stage_text") ? <span>{pickItem(it, "阶段", "stage_text")}</span> : null}
-          {pickItem(it, "叙述", "narrative") ? <span className="extraction-narr">{pickItem(it, "叙述", "narrative")}</span> : null}
-        </li>
-      ))}
+      {data.map((it: any, i: number) => {
+        const delta = pickItem(it, "进度增量", "delta_bar");
+        const fromValue = pickItem(it, "旧进度", "from_value");
+        const toValue = pickItem(it, "新进度", "to_value");
+        const toneDelta = delta != null ? Number(delta) : fromValue != null && toValue != null ? Number(toValue) - Number(fromValue) : 0;
+        const progress = delta != null ? `进度 ${fmtDelta(delta)}` : fromValue != null && toValue != null ? `进度 ${fromValue}→${toValue}` : "进度 0";
+        return (
+          <li key={i}>
+            <b className={toneDelta >= 0 ? "good" : "bad"}>
+              {labelIssue(pickItem(it, "局势编号", "issue_id"))} {progress}
+              {pickItem(it, "惯性增量", "inertia_delta") ? `，惯性 ${fmtDelta(pickItem(it, "惯性增量", "inertia_delta"))}` : ""}
+            </b>
+            {pickItem(it, "阶段", "stage_text") ? <span>{pickItem(it, "阶段", "stage_text")}</span> : null}
+            {pickItem(it, "叙述", "narrative") ? <span className="extraction-narr">{pickItem(it, "叙述", "narrative")}</span> : null}
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -295,6 +326,46 @@ export function StatusChangesBlock({ data }: { data: any }) {
   );
 }
 
+export function PersonChangesBlock({ data }: { data: any }) {
+  if (isEmptyData(data) || !Array.isArray(data)) return <p className="extraction-empty">无</p>;
+  const statusLabel: Record<string, string> = {
+    active: "起复",
+    dismissed: "罢黜", imprisoned: "下狱", exiled: "流放",
+    retired: "致仕", dead: "身故", offstage: "去位",
+  };
+  return (
+    <ul className="extraction-list">
+      {data.map((it: any, i: number) => {
+        const action = pickItem(it, "动作", "action") || "变更";
+        const name = pickItem(it, "姓名", "name") || "?";
+        const rejected = pickItem(it, "rejected", "rejected");
+        const office = pickItem(it, "新官职", "new_office") || pickItem(it, "位号", "office") || pickItem(it, "官职", "office");
+        const title = pickItem(it, "位号", "office");
+        const status = pickItem(it, "状态", "status");
+        const power = pickItem(it, "新势力", "new_power");
+        const location = pickItem(it, "所在", "location");
+        const transitTo = pickItem(it, "目标地点", "transit_to");
+        let main = `${name} ${action}`;
+        if (action === "任命" || action === "调任") main = `${name} ${action} ${office || "?"}`;
+        if (action === "册封") main = `${name} 册封 ${title || "?"}`;
+        if (action === "易主") main = `${name} → ${labelPower(power)}`;
+        if (action === "行止") main = `${name} 行止 ${labelRegion(transitTo || location) || "未定"}`;
+        if (action === "罢黜" || action === "处置") {
+          main = `${name} ${statusLabel[status] || cnValue(status) || action}`;
+        }
+        return (
+          <li key={i}>
+            <b className={rejected ? "bad" : "good"}>
+              {main}{rejected ? "（未落地）" : ""}
+            </b>
+            {pickItem(it, "原因", "reason") ? <span>{pickItem(it, "原因", "reason")}</span> : null}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 export function AppointmentsBlock({ data }: { data: any }) {
   if (isEmptyData(data) || !Array.isArray(data)) return <p className="extraction-empty">无</p>;
   return (
@@ -342,6 +413,43 @@ export function fmtFieldVal(v: any): { text: string; tone: string } {
 
 // 地区/军队/势力变化：外层 key=实体 id（翻中文名），内层=字段→增量/新值。
 export function EntityDeltaBlock({ data, labelFn }: { data: any; labelFn: (id: any) => string }) {
+  if (Array.isArray(data)) {
+    if (data.length === 0) return <p className="extraction-empty">无</p>;
+    return (
+      <ul className="extraction-list">
+        {data.map((item: any, i: number) => {
+          const rawId = pickItem(item, "编号", "id")
+            || pickItem(item, "地区编号", "region_id")
+            || pickItem(item, "军队编号", "army_id")
+            || pickItem(item, "地区", "region")
+            || pickItem(item, "军队", "army")
+            || pickItem(item, "势力", "power_id")
+            || pickItem(item, "势力", "power");
+          const field = pickItem(item, "字段", "field");
+          const label = pickItem(item, "标签", "label") || cnField(field);
+          const delta = pickItem(item, "增量", "delta");
+          const oldValue = pickItem(item, "旧值", "old");
+          const newValue = pickItem(item, "新值", "new");
+          const rejected = Boolean(pickItem(item, "rejected", "rejected"));
+          const valueText = delta != null
+            ? fmtDelta(delta)
+            : oldValue != null || newValue != null
+              ? `${cnValue(oldValue)}→${cnValue(newValue)}`
+              : "";
+          const entityLabel = labelFn(rawId) || rawId || "?";
+          return (
+            <li key={i}>
+              <b className={rejected ? "bad" : ""}>{entityLabel}{rejected ? "（未落地）" : ""}</b>
+              <span className="extraction-fieldline">
+                <em className={rejected ? "bad" : Number(delta ?? 0) >= 0 ? "good" : "bad"}>{label} {valueText}</em>
+              </span>
+              {pickItem(item, "原因", "reason") ? <span>{pickItem(item, "原因", "reason")}</span> : null}
+            </li>
+          );
+        })}
+      </ul>
+    );
+  }
   if (isEmptyData(data) || typeof data !== "object" || Array.isArray(data)) return <p className="extraction-empty">无</p>;
   return (
     <ul className="extraction-list">
