@@ -26,6 +26,7 @@ from ming_sim.flows import (
     _apply_metric_dict,
 )
 from ming_sim.models import Event, GameState
+from ming_sim.person_delta_adapter import normalize_person_changes
 from ming_sim.token_stats import tlog
 
 _content: Optional[GameContent] = None
@@ -1087,6 +1088,8 @@ def validate_delta_shape(extracted: dict) -> None:
             # None = 字段缺省/LLM 输出 null;apply 用 `.get(key) or {}`/`or []` 当空 no-op,
             # 校验同样放行(别比 apply 更严,否则合法 null 会被误拒,Gemini R1)。
             continue
+        if key == "人物变更" and value:
+            raise ValueError("人物变更 写路径未接：当前仅归一 legacy 四 key，非空新 key 不得静默回显")
         expected = EMPTY_EXTRACTION[key]
         if isinstance(expected, dict) and not isinstance(value, dict):
             raise ValueError(f"delta 字段 {key} 必须是 object(dict)，实得 {type(value).__name__}")
@@ -1211,6 +1214,7 @@ def apply_score_extraction(
     缺省则跳过（向后兼容老调用）。"""
     # 0) 落库前校验容器/二级类型,畸形值崩前拦住,不让前面字段半落库(#57)。
     validate_delta_shape(extracted)
+    person_changes = normalize_person_changes(extracted)
     # 1) metric_delta
     applied_metric = _apply_metric_dict(state, extracted.get("metric_delta") or {}, db=db)
     # 2) economy_moves
@@ -1629,6 +1633,7 @@ def apply_score_extraction(
         "fiscal_creates": applied_fiscal_creates,
         "fiscal_removes": applied_fiscal_removes,
         "appointments": applied_appointments,
+        "person_changes": person_changes,
         "character_status_changes": applied_status_changes,
         "character_power_changes": applied_power_changes,
         "office_changes": applied_office_changes,

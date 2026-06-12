@@ -48,6 +48,8 @@ TOP_LEVEL_ALIASES = {
     "人物状态变化": "character_status_changes",
     "人物易主": "character_power_changes",
     "后宫册封": "appointments",
+    "person_changes": "人物变更",
+    "人物变更": "人物变更",
     "密令副作用": "secret_order_updates",
     "密令结案": "secret_order_closes",
     "崇祯结局": "emperor_fate",
@@ -383,6 +385,7 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "appointments": [],
     "character_status_changes": [],
     "character_power_changes": [],
+    "人物变更": [],
     "secret_order_updates": [],
     "secret_order_closes": [],
     "emperor_fate": None,  # 崇祯结局：abdicate(退位/禅让)/suicide(自尽/殉国)/null(无)
@@ -393,7 +396,7 @@ MODULE_FIELDS: Dict[str, set[str]] = {
     "military_external": {"army_delta", "new_armies", "power_updates", "world_advance"},
     "issues": {"issue_advances", "new_issues", "cancels", "close_issues"},
     "personnel_secret": {
-        "office_changes", "character_status_changes", "character_power_changes", "appointments",
+        "人物变更", "office_changes", "character_status_changes", "character_power_changes", "appointments",
         "secret_order_updates", "secret_order_closes", "emperor_fate",
     },
 }
