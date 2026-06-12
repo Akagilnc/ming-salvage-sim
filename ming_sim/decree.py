@@ -8,8 +8,9 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, Iterator, List, Optional
 
 from agno.db.sqlite import SqliteDb
 
@@ -23,11 +24,17 @@ from ming_sim.agents import (
     create_season_simulator_agent,
     run_agent_text,
 )
-from ming_sim.applier import atomic
+from ming_sim.applier import Provenance, RejectedItem, RejectionCollector, atomic
 from ming_sim.constants import TURN_UNIT
 from ming_sim.context import ENDING_LABELS, ENDING_ONGOING, ENDING_TIMEOUT, victory_status
 from ming_sim.db import GameDB
-from ming_sim.error_pack import clear_for_resimulation, settlement_abort_message, write_error_pack
+from ming_sim.error_pack import (
+    _next_attempt,
+    clear_for_resimulation,
+    rejections_jsonl_path,
+    settlement_abort_message,
+    write_error_pack,
+)
 from ming_sim.exceptions import LLMContractError, LLMUnavailable, SettlementAbort
 from ming_sim.flows import apply_fixed_period_flows
 from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction, auto_trigger_seed_issues, clear_gated_legacies, validate_delta_shape
@@ -184,30 +191,21 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
         if state.turn_phase == TurnPhase.AWAITING_DECISION.value:
             raise ValueError("月末重大抉择待裁决，请先裁决后完成结算，不能退朝跳过。")
         raise ValueError("月末结算已开始（前半段已入账），请重试颁诏完成结算，不能退朝跳过。")
-    try:
-        with atomic(db):
-            db.commit_pending_actions(state, content=content, registry=registry)
-            apply_fixed_period_flows(db, state)
-            message = f"本{TURN_UNIT}退朝未下正式圣旨，诸事仍待来{TURN_UNIT}处置。"
-            db.record_log(state, message)
-            print("\n" + message)
-            # 推进回合的路都得清本回合 resolve_context：崩溃重试后改走此路时，留下的
-            # ready=1 行会被恢复入口当「未完成回合」重放=double-apply（cmr S2+S3 r4）。
-            db.clear_resolve_context(state.turn)
-            state.next_period()
-            # settling 随推进复位，同 settle_with_delta（cmr S4 r1 F1）。
-            state.turn_phase = TurnPhase.SUMMONING.value
-            db.save_state(state)
-    except BaseException as exc:
-        # atomic 已回滚 SQLite（仅当本层是最外层）；内存副作用（state.metrics 直加、
-        # next_period 推进、turn_phase）留脏，回滚后从 DB 重载刷净（ADR 0008 决定 3）。
-        # reload 自身再炸时原异常不被顶替（链上抛，同 pre_settle 先例 cmr S5 r2）。
-        if getattr(db.conn, "_atomic_depth", 0) == 0:
-            try:
-                reload_state_from_db(db, state, content=content, registry=registry)
-            except BaseException as reload_exc:
-                raise exc from reload_exc
-        raise
+    # atomic + 最外层回滚后从 DB 重载刷净内存（state.metrics 直加 / next_period / turn_phase
+    # 留脏）：公共内核见 atomic_and_reload（ADR 0008 决定 3，reload 再炸链上抛 cmr S5 r2）。
+    with atomic_and_reload(db, state, content=content, registry=registry):
+        db.commit_pending_actions(state, content=content, registry=registry)
+        apply_fixed_period_flows(db, state)
+        message = f"本{TURN_UNIT}退朝未下正式圣旨，诸事仍待来{TURN_UNIT}处置。"
+        db.record_log(state, message)
+        print("\n" + message)
+        # 推进回合的路都得清本回合 resolve_context：崩溃重试后改走此路时，留下的
+        # ready=1 行会被恢复入口当「未完成回合」重放=double-apply（cmr S2+S3 r4）。
+        db.clear_resolve_context(state.turn)
+        state.next_period()
+        # settling 随推进复位，同 settle_with_delta（cmr S4 r1 F1）。
+        state.turn_phase = TurnPhase.SUMMONING.value
+        db.save_state(state)
 
 
 def resolve_directives(
@@ -260,24 +258,16 @@ def resolve_directives(
     # 的内层事务并入（flat 可重入），崩在「settling 已提交、占位未落」的窗口不再可能
     # ——要么两者都见，要么整段回滚重来。恢复重推演路重进时 pre_settle 幂等守门
     # 早退、占位同键 upsert，语义不变。
-    try:
-        with atomic(db):
-            auto_triggered = pre_settle(
-                state, db, on_stage=lambda label: _emit("stage", label),
-                content=content, registry=registry)
-            db.save_resolve_context(
-                state.turn, decree_text, "", {},
-                secret_orders=[], relevant_memories=[],
-            )
-    except BaseException as exc:
-        # pre_settle 自己的 except 在嵌套（depth>0）时跳过 reload，由本层（最外层）
-        # 真回滚后重载刷净内存（同 advance_without_edict 先例）；reload 再炸链上抛。
-        if getattr(db.conn, "_atomic_depth", 0) == 0:
-            try:
-                reload_state_from_db(db, state, content=content, registry=registry)
-            except BaseException as reload_exc:
-                raise exc from reload_exc
-        raise
+    # pre_settle 自己的 atomic 在此嵌套（depth>0）时跳过 reload，由本层（最外层）真回滚后
+    # 重载刷净内存（同 advance_without_edict 先例）；reload 再炸链上抛。见 atomic_and_reload。
+    with atomic_and_reload(db, state, content=content, registry=registry):
+        auto_triggered = pre_settle(
+            state, db, on_stage=lambda label: _emit("stage", label),
+            content=content, registry=registry)
+        db.save_resolve_context(
+            state.turn, decree_text, "", {},
+            secret_orders=[], relevant_memories=[],
+        )
 
     # 1.8) 历史脉络：取近几回合章节记忆注入推演（章节记忆取代旧的关键词原子检索）。
     relevant_memories: List[Dict] = []
@@ -355,36 +345,28 @@ def resolve_directives(
         # 重载、回合不前进，与正常路/advance 同语义。此路无 LLM 产出、无 resolve_context 入真源
         # （extractor 被跳过），故不写错误包——裸异常透传（上游 user 边界按普通错误处理；本
         # 路本就不抛 SettlementAbort）。pre_settle 自有 atomic 在本 except 之前已提交，不嵌套。
-        try:
-            with atomic(db):
-                # 终端写路所有权：fallback 推进回合，暂存动作在此 atomic 内 commit
-                # （幂等；守门早退已不消费，不补则成孤儿，cmr S7 r5）。
-                db.commit_pending_actions(state, content=content, registry=registry)
-                # 跳过 extractor，避免连锁失败
-                db.record_log(state, narrative[:1200])
-                db.save_turn_report(state, narrative)
-                db.save_turn_extraction(
-                    state, decree_text=decree_text, narrative=narrative,
-                    extractor_output=f"[推演 agent 失败] {exc}；本回合跳过 extractor。",
-                )
-                apply_issue_inertia_and_ongoing(db, state, touched_ids=set())
-                for name in clear_gated_legacies(db, state):
-                    db.record_log(state, f"帝国修正消除：{name}")
-                db.mark_directives_issued(state)
-                # 同 advance_without_edict：推进回合前清 stale context（cmr S2+S3 r4）。
-                db.clear_resolve_context(state.turn)
-                state.next_period()
-                # 第三条推进尾同样复位 settling（cmr S4 r2）：漏掉的话新回合被守门跳过前半段。
-                state.turn_phase = TurnPhase.SUMMONING.value
-                db.save_state(state)
-        except BaseException as write_exc:
-            # 回滚后内存从 DB 重载（同 pre_settle 先例），链式 re-raise 不吞（fail-loud）。
-            if getattr(db.conn, "_atomic_depth", 0) == 0:
-                try:
-                    reload_state_from_db(db, state, content=content, registry=registry)
-                except BaseException as reload_exc:
-                    raise write_exc from reload_exc
-            raise
+        # 回滚后内存从 DB 重载（同 pre_settle 先例），链式 re-raise 不吞（fail-loud）。见 atomic_and_reload。
+        with atomic_and_reload(db, state, content=content, registry=registry):
+            # 终端写路所有权：fallback 推进回合，暂存动作在此 atomic 内 commit
+            # （幂等；守门早退已不消费，不补则成孤儿，cmr S7 r5）。
+            db.commit_pending_actions(state, content=content, registry=registry)
+            # 跳过 extractor，避免连锁失败
+            db.record_log(state, narrative[:1200])
+            db.save_turn_report(state, narrative)
+            db.save_turn_extraction(
+                state, decree_text=decree_text, narrative=narrative,
+                extractor_output=f"[推演 agent 失败] {exc}；本回合跳过 extractor。",
+            )
+            apply_issue_inertia_and_ongoing(db, state, touched_ids=set())
+            for name in clear_gated_legacies(db, state):
+                db.record_log(state, f"帝国修正消除：{name}")
+            db.mark_directives_issued(state)
+            # 同 advance_without_edict：推进回合前清 stale context（cmr S2+S3 r4）。
+            db.clear_resolve_context(state.turn)
+            state.next_period()
+            # 第三条推进尾同样复位 settling（cmr S4 r2）：漏掉的话新回合被守门跳过前半段。
+            state.turn_phase = TurnPhase.SUMMONING.value
+            db.save_state(state)
         return ResolveResult(
             awaiting=False,
             report=f"\n本{TURN_UNIT}颁布诏书：\n" + decree_text + "\n\n" + narrative,
@@ -398,25 +380,17 @@ def resolve_directives(
         # 暂停态三件（上下文+决策点+AWAITING 相位）同事务落库（cmr S4 r2）：相位若靠
         # session 事后另笔写，崩在窗口里 DB 停在 settling 而决策已存——web submit_decisions
         # 只认 AWAITING 相位，恢复死路。session 事后那笔写变为幂等。
-        try:
-            with atomic(db):
-                db.save_resolve_context(
-                    state.turn, decree_text, narrative, simulator_payload,
-                    secret_orders=secret_orders_for_sim, relevant_memories=relevant_memories,
-                )
-                db.save_pending_decisions(state.turn, decisions)
-                state.turn_phase = TurnPhase.AWAITING_DECISION.value
-                db.save_state(state)
-        except BaseException as exc:
-            # 五个事务块同款（ADR 决定 3）：回滚后内存与 DB 同源——不 reload 的话内存留
-            # awaiting/DB 回滚回 settling，进程内重试走 awaiting 幂等叉读空决策=死胡同
-            # （ship-pre r2）。嵌套时跳过，最外层拥有者处理。
-            if getattr(db.conn, "_atomic_depth", 0) == 0:
-                try:
-                    reload_state_from_db(db, state, content=content, registry=registry)
-                except BaseException as reload_exc:
-                    raise exc from reload_exc
-            raise
+        # 五个事务块同款（ADR 决定 3）：回滚后内存与 DB 同源——不 reload 的话内存留
+        # awaiting/DB 回滚回 settling，进程内重试走 awaiting 幂等叉读空决策=死胡同
+        # （ship-pre r2）。嵌套时跳过，最外层拥有者处理。见 atomic_and_reload。
+        with atomic_and_reload(db, state, content=content, registry=registry):
+            db.save_resolve_context(
+                state.turn, decree_text, narrative, simulator_payload,
+                secret_orders=secret_orders_for_sim, relevant_memories=relevant_memories,
+            )
+            db.save_pending_decisions(state.turn, decisions)
+            state.turn_phase = TurnPhase.AWAITING_DECISION.value
+            db.save_state(state)
         return ResolveResult(awaiting=True, decisions=db.list_pending_decisions(state.turn))
 
     # 无决策点：透明续跑结算（cheat 仍可叠加）。
@@ -519,6 +493,7 @@ def _replay_settle(
             d, s, ex, content=ct, registry=rg, llm_config=llm_config
         ),
         on_stage=lambda label: _emit("stage", label),
+        source=Provenance.system_simulation,
     )
     return report
 
@@ -677,6 +652,9 @@ def _settle_after_narrative(
             d, s, ex, content=ct, registry=rg, llm_config=llm_config
         ),
         on_stage=lambda label: _emit("stage", label),
+        # extractor 产出属推演管线（决定 5 provenance）；driver 信封路保持 unknown 兜底。
+        # 按 source 细分到 player_decree/hitl_decision 需 extractor schema 扩来源字段（后续波次）。
+        source=Provenance.system_simulation,
     )
 
 
@@ -727,6 +705,60 @@ def reload_state_from_db(db: GameDB, state: GameState, *, content=None, registry
     return state
 
 
+class _AtomicOutcome:
+    """atomic_and_reload yield 出的结果句柄（cmr PR2 R1 sourcery）：取代把
+    `_reload_failed` 动态属性挂到任意 BaseException 上（slotted/复用异常时脆弱）。
+    专用对象、固定字段——settle 用 `as` 接、外层 except 读 `.reload_failed`。"""
+    __slots__ = ("reload_failed",)
+
+    def __init__(self) -> None:
+        self.reload_failed = False
+
+
+@contextmanager
+def atomic_and_reload(
+    db: GameDB,
+    state: GameState,
+    *,
+    content=None,
+    registry=None,
+    on_error: Optional[Callable[[BaseException], None]] = None,
+) -> "Iterator[_AtomicOutcome]":
+    """`with atomic(db)` + 「最外层异常回滚后从 DB 重载内存」的公共内核（ADR 0008 S4）。
+
+    抽自结算管线 ~6 处同款 try/atomic/except-reload-reraise（pre_settle / settle_with_delta /
+    advance_without_edict / resolve_directives 前括号 + fallback + HITL 暂停三件 + driver.run_settle）。
+
+    语义（逐处保真）：
+    - body 包进 `with atomic(db)`，正常退出由 atomic 统一提交（嵌套时由最外层落定）。
+    - body 抛 BaseException 时：先（若有）调 on_error(exc)，再仅当 `_atomic_depth==0`（本层
+      即最外层、atomic 已真回滚）调 reload_state_from_db 把脏内存按 DB 刷净；嵌套（depth>0）
+      跳过 reload（回滚尚未发生，load_state 会读未提交脏写）。reload 自身再炸不顶替原异常，
+      链上抛 `raise exc from reload_exc`。最后原样 re-raise 原异常（fail-loud，ADR 0005）。
+
+    on_error 在 reload 之前触发（settle_with_delta 的 collector.reset 语义：DB 行随回滚消失，
+    内存缓冲须同步清场）。settle 的中断透传 / 错误包 / SettlementAbort 包装等**特殊** except
+    逻辑不属公共内核，仍由调用方在本助手之外的外层 try/except 处理。
+    """
+    outcome = _AtomicOutcome()
+    try:
+        with atomic(db):
+            yield outcome
+    except BaseException as exc:
+        if on_error is not None:
+            on_error(exc)
+        if getattr(db.conn, "_atomic_depth", 0) == 0:
+            try:
+                reload_state_from_db(db, state, content=content, registry=registry)
+            except BaseException as reload_exc:
+                # reload 失败标记落在专用句柄上（不挂异常属性）：settle 的外层 except
+                # 凭 `as` 句柄裸传播原异常,不包 SettlementAbort 不写错误包（内存仍脏时
+                # 宣传可重试/基于脏态写包都是误导;b12a60e 原语义保真,cmr S4 r1）。
+                outcome.reload_failed = True
+                raise exc from reload_exc
+        raise
+
+
 def pre_settle(
     state: GameState, db: GameDB, *, on_stage=None, content=None, registry=None,
 ) -> List[Dict[str, object]]:
@@ -756,45 +788,33 @@ def pre_settle(
     if state.turn_phase in FRONT_HALF_DONE_PHASES:
         return []
     auto_triggered: List[Dict[str, object]] = []
-    try:
-        with atomic(db):
-            # 动作闸门(ADR 0006)：颁诏最前批量落库本回合暂存的结构化聊天写动作（密令更新/催办/任免/…），
-            # 在跑 LLM 结算管线前，使 simulator/extractor 读到的盘面与旧「召对期直写」时序一致。
-            # driver 路径无聊天暂存 → 空 no-op。幂等（committed 行不重跑）。
-            committed = db.commit_pending_actions(state, content=content, registry=registry)
-            if committed:
-                tlog(f"[pending_actions] 颁诏批量落库 {len(committed)} 条：{[(c['kind'], c['action']) for c in committed]}")
-            tlog("结算 1/4 固定月度财政 tick")
-            if on_stage is not None:
-                on_stage("固定月度财政入账")
-            # 落账副作用；明细不再进 simulator payload（欠饷哗变走前置事件/issue）
-            apply_fixed_period_flows(db, state)
-            # 程序硬触发：标了 auto_trigger 的 seed 情势，gate 达标即由程序直接立项，绕过 LLM 因果判定。
-            auto_triggered = auto_trigger_seed_issues(state, db)
-            if auto_triggered:
-                tlog(f"[AUTO-TRIGGER] 本回合程序硬立项 {len(auto_triggered)} 条：{[t.get('title') for t in auto_triggered]}")
-            # 密令期限：到期 active 自动转 pending_review，保证本月核议一锤定音。
-            # 推演前的确定性写，挪入前半段事务（原在 resolve_directives，ADR 0008 S4）。
-            due_orders = db.auto_submit_due_secret_orders(state)
-            if due_orders:
-                tlog(f"[secret_order] 到期送核议 {due_orders}")
-            # 完成相位：同事务内落 settling（崩在上面任一步=全回滚=相位未变）。
-            state.turn_phase = TurnPhase.SETTLING.value
-            db.save_state(state)
-    except BaseException as exc:
-        # atomic 已回滚 SQLite（仅当本层是最外层），但内存副作用留脏（ADR 0008 决定 3 第三条）：
-        # apply_fixed_period_flows 直改了 state.metrics（flows.py:192）、尾部 turn_phase 已被赋 settling。
-        # 回滚后立即把 state 从 DB 重载刷净——否则脏 settling 会被下次 pre_settle 守门跳过=该月财政
-        # 永久丢（cmr S4 r1 F4），脏 metrics 污染重跑读数。reload 后 re-raise 原异常（fail-loud）；
-        # reload 自身再炸（如盘故障连带）时原异常不被顶替，链上抛（cmr S5 r2）。
-        # 嵌套在外层 atomic 内时回滚尚未发生，load_state 会读到未提交脏写——跳过 reload，
-        # 由最外层拥有者真回滚后处理（cmr S5 r1）。
-        if getattr(db.conn, "_atomic_depth", 0) == 0:
-            try:
-                reload_state_from_db(db, state, content=content, registry=registry)
-            except BaseException as reload_exc:
-                raise exc from reload_exc
-        raise
+    # atomic + 最外层回滚后从 DB 重载（ADR 0008 决定 3 第三条）：apply_fixed_period_flows 直改了
+    # state.metrics（flows.py:192）、尾部 turn_phase 已被赋 settling，脏 settling 会被下次 pre_settle
+    # 守门跳过=该月财政永久丢（cmr S4 r1 F4）。嵌套时跳过 reload，由最外层拥有者处理。见 atomic_and_reload。
+    with atomic_and_reload(db, state, content=content, registry=registry):
+        # 动作闸门(ADR 0006)：颁诏最前批量落库本回合暂存的结构化聊天写动作（密令更新/催办/任免/…），
+        # 在跑 LLM 结算管线前，使 simulator/extractor 读到的盘面与旧「召对期直写」时序一致。
+        # driver 路径无聊天暂存 → 空 no-op。幂等（committed 行不重跑）。
+        committed = db.commit_pending_actions(state, content=content, registry=registry)
+        if committed:
+            tlog(f"[pending_actions] 颁诏批量落库 {len(committed)} 条：{[(c['kind'], c['action']) for c in committed]}")
+        tlog("结算 1/4 固定月度财政 tick")
+        if on_stage is not None:
+            on_stage("固定月度财政入账")
+        # 落账副作用；明细不再进 simulator payload（欠饷哗变走前置事件/issue）
+        apply_fixed_period_flows(db, state)
+        # 程序硬触发：标了 auto_trigger 的 seed 情势，gate 达标即由程序直接立项，绕过 LLM 因果判定。
+        auto_triggered = auto_trigger_seed_issues(state, db)
+        if auto_triggered:
+            tlog(f"[AUTO-TRIGGER] 本回合程序硬立项 {len(auto_triggered)} 条：{[t.get('title') for t in auto_triggered]}")
+        # 密令期限：到期 active 自动转 pending_review，保证本月核议一锤定音。
+        # 推演前的确定性写，挪入前半段事务（原在 resolve_directives，ADR 0008 S4）。
+        due_orders = db.auto_submit_due_secret_orders(state)
+        if due_orders:
+            tlog(f"[secret_order] 到期送核议 {due_orders}")
+        # 完成相位：同事务内落 settling（崩在上面任一步=全回滚=相位未变）。
+        state.turn_phase = TurnPhase.SETTLING.value
+        db.save_state(state)
     return auto_triggered
 
 
@@ -815,6 +835,7 @@ def settle_with_delta(
     ending_summarizer=None,
     delta_applier=None,
     on_stage=None,
+    source: Provenance = Provenance.unknown,
 ) -> str:
     """确定性结算「后括号」：apply→turn_logs→章节记忆→inertia→clear→结局判定→next_period。
 
@@ -847,8 +868,30 @@ def settle_with_delta(
     # resolve_context 仍在可重试。回滚后内存从 DB 重载（决定 3），再于 atomic 外写错误包并抛
     # SettlementAbort（决定 6）。事务内 LLM 回调（章节记忆/结局总评）失败沿用降级、内部已自吞
     # 不触发回滚（决定 4）——故从 settle 冒出的 Exception 即代码异常，一律走错误包。
+    # 拒收收集器与结算事务同生命周期（ADR 决定 5，PR2-S0）：apply 的拒收项在事务内
+    # flush 进 rejection_reports（行随回滚消失），commit 成功后才镜像 jsonl（文件 append
+    # 不可回滚），异常路 reset 清场。attempt 从错误目录推导——同一回合第 N 次重试的拒收
+    # 与第 N 个错误包同号，不从 DB 取（DB 计数随回滚重置即失真）。推导扫的是诊断目录，
+    # 自身故障（不可遍历等）不得拖垮主流程：回落 attempt=1（与 mirror 失败同向，cmr S0 r2）。
     try:
-        with atomic(db):
+        attempt = _next_attempt(before_turn)
+    except Exception as attempt_exc:
+        tlog(f"[rejection] attempt 推导失败，回落 1（诊断侧路径不拖垮结算）：{attempt_exc}")
+        attempt = 1
+    collector = RejectionCollector(attempt=attempt)
+    # 公共内核（atomic + 最外层回滚后 reload + 链式 reraise）走 atomic_and_reload；
+    # on_error 在 reload 前清拒收缓冲（DB 行随回滚消失，内存同步清场，不留待镜像快照）。
+    # settle 特有的「中断透传 / 错误包 / SettlementAbort 包装」属特殊路，仍在本助手之外的
+    # 外层 try/except 处理（ADR 0008 决定 6）——helper 化内核，特殊路外包。
+    # _atomic 预置 None：atomic_and_reload 的 __enter__ 在 yield 前就抛（如 atomic(db)
+    # 拒非 _SuspendableConnection、BEGIN 撞锁）时 as 绑定不发生，except 块若裸访问
+    # _atomic.reload_failed 会触发 UnboundLocalError 吃掉原始结算异常（cmr S4 三模型收敛）。
+    _atomic = None
+    try:
+        with atomic_and_reload(
+            db, state, content=content, registry=registry,
+            on_error=lambda _exc: collector.reset(),
+        ) as _atomic:
             # 暂存动作 commit 在结算事务内最前（幂等，只处理 pending 行；正常路 pre_settle
             # 已 commit=无操作）——恢复/phase2 重抽路在此获得覆盖，且与结算同生死：
             # 事务外 commit 的话重放炸时结算回滚而动作及其真表副作用留存=跨事务半写
@@ -862,14 +905,13 @@ def settle_with_delta(
                 extractor_input=extractor_input, extractor_output=extractor_output,
                 chapter_recorder=chapter_recorder, ending_summarizer=ending_summarizer,
                 delta_applier=delta_applier, _stage=_stage,
+                collector=collector, source=source,
             )
     except BaseException as exc:
-        # 回滚后内存从 DB 重载（同 pre_settle 先例）；嵌套在外层 atomic 内时回滚未发生，跳过。
-        if getattr(db.conn, "_atomic_depth", 0) == 0:
-            try:
-                reload_state_from_db(db, state, content=content, registry=registry)
-            except BaseException as reload_exc:
-                raise exc from reload_exc
+        # reload 失败（atomic_and_reload 在 yield 句柄上标的,cmr S4 r1）：内存仍脏——
+        # 裸传播,不写包不包 SettlementAbort（脏态写包/宣传可重试都是误导;b12a60e 原语义）。
+        if _atomic is not None and _atomic.reload_failed:
+            raise
         # 中断/降级类异常（KeyboardInterrupt/SystemExit/LLMUnavailable）不当代码异常处理：
         # 不写包、不二次包装，原样传播。SettlementAbort（理论上 settle 内不抛）也不二次包。
         if isinstance(exc, (KeyboardInterrupt, SystemExit, LLMUnavailable, SettlementAbort)):
@@ -890,7 +932,57 @@ def settle_with_delta(
             settlement_abort_message(pack_path),
             turn=before_turn, stage="settle", error_pack_path=pack_path,
         ) from exc
+    # commit 已成功（atomic 正常退出）才镜像——jsonl 是可回收副本，DB 为真源（决定 5/7）。
+    # 嵌套守门与异常路对称（cmr S0 r1）：depth>0 时本层退出并未真 commit，先写镜像=
+    # 外层回滚后留「DB 无行、jsonl 有行」孤儿；嵌套场景放弃镜像（丢的只是可回收副本）。
+    # 镜像失败不回滚结算：吞 Exception 记日志（行已在 DB）。
+    if getattr(db.conn, "_atomic_depth", 0) == 0:
+        try:
+            collector.mirror_to_jsonl(rejections_jsonl_path())
+        except Exception as mirror_exc:
+            tlog(f"[rejection] jsonl 镜像失败（DB 行已落，仅副本丢失）：{mirror_exc}")
     return full_report
+
+
+def _collect_inline_rejections(
+    collector: RejectionCollector,
+    applied: Dict[str, object],
+    turn: int,
+    source: Provenance,
+) -> None:
+    """把 apply 结果里各 section 内嵌的拒收项收进收集器（PR2-S0 桥接）。
+
+    约定：section 结果列表中 `{"rejected": True, ...}` 即拒收项；`reason` 为人读原因，
+    `category` 为机读类别（未迁契约的 section 没有此键 → 兜底 "legacy_inline"）。
+    一层 dict-of-list（issue_summary 的 new_issues/cancels 等）也要下探——new_issues
+    正是实测最常被拒的段，跳过它聚合就失明（cmr S0 r1）。
+    item_json 的取值（ship-pre r3/r4）：迁约 producer（S1-S3 已迁全部）在 wrapper 里
+    携原始 delta 项（'item' 键）→ 桥接解包存原件；仅未迁 legacy section
+    （office_changes/secret_order_* 等）无 'item' 键时才兜底存 wrapper 回显记录。
+    """
+    def _scan(section: str, items: list) -> None:
+        for item in items:
+            if not (isinstance(item, dict) and item.get("rejected")):
+                continue
+            collector.record(section, RejectedItem(
+                # item_json = 原始 delta 项（ADR 决定 5「原 item 原样保留」）：迁约
+                # producer 在 wrapper 里带原件（'item' 键）则解包,否则兜底存 wrapper
+                # （ship-pre r3——存整个 wrapper 会让重放分析消费到嵌套形状）。
+                item=item.get("item", item) if isinstance(item.get("item", None), (dict, list, str)) else item,
+                # ADR「拒收行必带人读原因」在此集中守门：producer 漏给则合成非空兜底
+                # ——规则写一处，新 section 免疫同类缺陷（fix-coverage 处方，cmr S0 r3）。
+                reason=str(item.get("reason") or "") or f"拒收（{section} 未注明原因）",
+                category=str(item.get("category") or "legacy_inline"),
+                source=source,
+            ), turn)
+
+    for section, value in applied.items():
+        if isinstance(value, list):
+            _scan(section, value)
+        elif isinstance(value, dict):
+            for subkey, subvalue in value.items():
+                if isinstance(subvalue, list):
+                    _scan(f"{section}.{subkey}", subvalue)
 
 
 def _settle_after_extract_body(
@@ -910,6 +1002,8 @@ def _settle_after_extract_body(
     ending_summarizer,
     delta_applier,
     _stage: Callable[[str], None],
+    collector: Optional[RejectionCollector] = None,
+    source: Provenance = Provenance.unknown,
 ) -> str:
     """settle_with_delta 的后半段写序列正文（被其 atomic 包裹调用）。
 
@@ -921,6 +1015,12 @@ def _settle_after_extract_body(
         applied = delta_applier(db, state, extracted, content, registry)
     else:
         applied = apply_score_extraction(db, state, extracted, content=content, registry=registry)
+    if collector is not None:
+        # 桥接：各 section 内嵌的拒收项（{"rejected": True, ...}）收进收集器并在
+        # 事务内 flush——delta_applier 闭包签名不动（ADR 决定 8 原地迁入）。section
+        # 迁契约后（S1-S3）在此带上精确 category；桥接对未迁 section 兜底。
+        _collect_inline_rejections(collector, applied, before_turn, source)
+        collector.flush_to_db(db)
 
     # 把 narrative 与诏书写入 turn_logs 作下月前文
     db.record_log(state, narrative[:1200])
@@ -946,7 +1046,16 @@ def _settle_after_extract_body(
     touched_ids = set()
     for adv in applied.get("issue_summary", {}).get("advances", []) or []:
         touched_ids.add(int(adv.get("issue_id") or 0))
-    apply_issue_inertia_and_ongoing(db, state, touched_ids=touched_ids)
+    inertia_rejections = apply_issue_inertia_and_ongoing(db, state, touched_ids=touched_ids)
+    if collector is not None and inertia_rejections:
+        # 桥接跑在 inertia 之前——自然结案路的容忍拒收在此补收并再 flush（仍在事务内,
+        # flush 增量安全;只 tlog 等于这条路脱离 rejection_reports 管线,ship-pre r1）。
+        # 注:fallback 推进路(resolve_directives 降级分支)无收集器,其 inertia 容忍项
+        # 维持 tlog-only(该路本就跳过结算管线)。
+        _collect_inline_rejections(
+            collector, {"issue_inertia": {"entity_rejections": inertia_rejections}},
+            before_turn, source)
+        collector.flush_to_db(db)
 
     # 开局负面帝国修正：本月若达成消除条件即清除（程序判定，不靠 LLM/时长）
     cleared = clear_gated_legacies(db, state)

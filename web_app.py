@@ -49,7 +49,7 @@ from ming_sim.skills import available_skill_ids, skill_display_name, skill_sourc
 from ming_sim.context import match_minister_from_text
 from ming_sim.flows import compute_budget_lines
 from ming_sim.exceptions import LLMContractError  # noqa: F401  (保留：供错误处理)
-from ming_sim.models import Character, LLMConfig
+from ming_sim.models import Character, LLMConfig, TurnPhase
 from ming_sim import steam_events
 
 WEB_DIST = bundled_path("web", "dist")
@@ -1074,7 +1074,7 @@ class WebGame:
             "pending_count": self.session.pending_count(),
             "pending_decisions": (
                 self.session.pending_decisions()
-                if self.state.turn_phase == "awaiting_decision" else []
+                if self.state.turn_phase == TurnPhase.AWAITING_DECISION.value else []
             ),
             "last_decree": self.last_decree,
             "last_report": self.last_report,
@@ -1093,7 +1093,7 @@ class WebGame:
     def can_undo_last_chat(self, minister_name: str) -> bool:
         if not self._persistent_chat_minister(minister_name):
             return False
-        if self.state.turn_phase not in ("summoning", "reviewing"):
+        if self.state.turn_phase not in (TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value):
             return False
         return self.db.can_undo_last_chat_turn(minister_name, self.state.turn)
 
@@ -1120,7 +1120,7 @@ class WebGame:
         self.db.record_chat_turn_rollback_diffs(chat_turn_id, before_snapshot, after_snapshot)
 
     def undo_last_chat(self, minister_name: str) -> Dict[str, Any]:
-        if self.state.turn_phase not in ("summoning", "reviewing"):
+        if self.state.turn_phase not in (TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value):
             raise HTTPException(status_code=409, detail="本回合已经进入颁诏结算，不能撤回召对。")
         if not self._persistent_chat_minister(minister_name):
             raise HTTPException(status_code=409, detail="临时召见人物暂不支持撤回。")

@@ -6,6 +6,10 @@
 
 测试走公开行为:驱动 GameSession.apply_cli_conversation_actions(CLI 后端会话落地唯一真源),
 monkeypatch LLM 边界 _run_backend_for_config 喂固定意图 JSON;断言 DB 可观察状态。
+
+注:本文件设置 turn_phase 时故意用 raw 字符串(如 "settling")而非 TurnPhase.X.value——
+pin 的是**落盘字符串值本身**,有意 enum 无关。S4 把生产代码相位比较统一到 TurnPhase enum,
+测试侧落盘字面不跟随。
 """
 
 from __future__ import annotations

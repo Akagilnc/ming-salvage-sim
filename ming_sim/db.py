@@ -21,10 +21,27 @@ from ming_sim.constants import (
     FISCAL_SCORE_FIELDS, REGION_FIELD_ALIASES, REGION_SCORE_FIELDS, REGION_TEXT_FIELDS, TURN_UNIT,
 )
 from ming_sim.content import GameContent
-from ming_sim.exceptions import LLMContractError
 from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
 from ming_sim.models import Event, GameState, monthly_amount, period_label
 from ming_sim.token_stats import tlog
+
+# 落库字段白名单（模块级常量化——避免在 apply_region_deltas / apply_army_deltas /
+# create_armies_from_extraction 的内循环每项重算同一常量集合，cmr PR2 R1 gemini perf）。
+_REGION_DIRECT_TUPLE = REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + REGION_TEXT_FIELDS
+_REGION_DIRECT_SET = frozenset(_REGION_DIRECT_TUPLE)
+_REGION_NUMERIC_SET = frozenset(REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS)
+_ARMY_VALID_SET = frozenset(ARMY_SCORE_FIELDS + ARMY_QUANTITY_FIELDS + ARMY_TEXT_FIELDS)
+
+
+def _new_army_historically_applied(it: dict) -> bool:
+    """建军必填字段：旧代码 int() 两步都成功（含 bool/float 的静默套用）= 历史可活
+    （cmr S2 r4 整项谓词；模块级——避免每个 new_armies 项重定义，PR2 R1 gemini perf）。"""
+    try:
+        int(it["manpower"])
+        int(it["maintenance_per_turn"])
+        return True
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 def normalize_office(office: str) -> str:
@@ -986,13 +1003,19 @@ class GameDB:
         返回新建的 base key；冲突或非法返回 None。元数据走 fixed 预算目录，
         flows.iter_budget_items 下{月}起自动遍历落账——零代码加新税种／新月俸。
         """
-        stem = key[:-5] if key.endswith("_base") else key
+        # stem 归一与 remove_fiscal_item 同用 _stem_of（剥 _base/_rate 双后缀,
+        # cmr S3 r3）：只剥 _base 时 key='田赋_rate' 查成 田赋_rate_base 漏撞既有
+        # rate 行,建出冒牌科目。
+        stem = self._stem_of(key)
         if not stem:
             return None
         base_key = f"{stem}_base"
         rate_key = f"{stem}_rate"
+        # 存在性须覆盖 base+rate 双键（cmr S3 r2 codex）：田赋等 dynamic 税默认只有
+        # _rate 行,只查 base 会放行「田赋_base」,第二条 INSERT 撞 rate 键 PK 崩整月。
+        # 语义与 remove_fiscal_item 的 base-or-rate 对称。
         exists = self.conn.execute(
-            "SELECT 1 FROM fiscal_config WHERE key = ?", (base_key,)
+            "SELECT 1 FROM fiscal_config WHERE key IN (?, ?)", (base_key, rate_key)
         ).fetchone()
         if exists is not None:
             return None
@@ -1024,8 +1047,14 @@ class GameDB:
     }
 
     def _stem_of(self, key: str) -> str:
+        # 单层剥后缀;剥后仍带后缀 = 多重后缀垃圾 key（田赋_rate_base），返 "" 标记
+        # 非法——归一化它两头都危险：create 漏撞建幻影科目（cmr S3 r4），remove 把
+        # 垃圾 key 归一到真 stem 误删科目+清零各省实收（cmr S3 r5,不可逆）。
+        # create/remove 对 stem 为空一律 return None = 拒收留痕。
         if key.endswith("_base") or key.endswith("_rate"):
-            return key[:-5]
+            key = key[:-5]
+            if key.endswith("_base") or key.endswith("_rate"):
+                return ""
         return key
 
     def apply_dynamic_fiscal_scale(self, stem: str, ratio: float) -> int:
@@ -1644,16 +1673,30 @@ class GameDB:
             new_power = str(raw.get("new_power") or raw.get("新势力") or "").strip()
             reason = str(raw.get("reason") or raw.get("原因") or "")[:120]
             if not name or not new_power:
-                print(f"[WARN] character_power_changes 缺 name/new_power → 跳过: {raw}")
+                applied.append({
+                    "rejected": True, "category": "invalid_enum",
+                    "reason": "character_power_changes 缺 name/new_power",
+                    "item": raw,
+                })
                 continue
             if new_power not in valid_powers:
-                print(f"[WARN] character_power_changes new_power '{new_power}' 未在 powers → 跳过 {name}")
+                applied.append({
+                    "name": name, "new_power": new_power, "rejected": True,
+                    "category": "hallucinated_id",
+                    "reason": f"character_power_changes new_power '{new_power}' 未在 powers",
+                    "item": raw,
+                })
                 continue
             row = self.conn.execute(
                 "SELECT power_id FROM characters WHERE name=?", (name,)
             ).fetchone()
             if row is None:
-                print(f"[WARN] character_power_changes 人物 '{name}' 未入库 → 跳过")
+                applied.append({
+                    "name": name, "new_power": new_power, "rejected": True,
+                    "category": "missing_ref",
+                    "reason": f"character_power_changes 人物 '{name}' 未入库",
+                    "item": raw,
+                })
                 continue
             old_power = row["power_id"] or "ming"
             if old_power == new_power:
@@ -2192,28 +2235,68 @@ class GameDB:
         changes: List[Dict[str, object]] = []
         for power_id, raw_changes in updates.items():
             if power_id == "ming":
-                print("[WARN] power_updates 不再处理大明自身 → 跳过")
+                # prompt 明文禁止写 ming——按脏数据逐项拒收留痕，与同函数其余拒收
+                # 路一致（cmr S1 r2，原 print 静默跳是迁契约漏网）。
+                changes.append({
+                    "power_id": power_id, "rejected": True,
+                    "category": "invalid_enum",
+                    "reason": "power_updates 不处理大明自身（ming），prompt 明文禁止",
+                    "item": {"power_id": power_id, "changes": raw_changes},
+                })
                 continue
             row = self.conn.execute("SELECT * FROM powers WHERE id = ?", (power_id,)).fetchone()
             if row is None:
-                print(f"[WARN] power_updates 引用未入库势力 '{power_id}' → 跳过")
+                changes.append({
+                    "power_id": power_id, "rejected": True,
+                    "category": "hallucinated_id",
+                    "reason": f"power_updates 引用未入库势力 '{power_id}'",
+                    "item": {"power_id": power_id, "changes": raw_changes},
+                })
                 continue
-            reason = str(
-                raw_changes.get("reason")
-                or raw_changes.get("原因")
-                or raw_changes.get("last_action")
-                or raw_changes.get("近动")
-                or "势力推演"
-            ).strip()[:120]
+            # reason 载体按别名表扫描（近况/最近行动 等与 近动/last_action 同义，
+            # 硬编码键名会漏——cmr S1 r3）：先取 reason 义，再取 last_action 义。
+            reason = ""
+            for _canon in ("reason", "last_action"):
+                for k, v in raw_changes.items():
+                    mapped = POWER_FIELD_ALIASES.get(str(k).strip(), str(k).strip())
+                    if mapped == _canon and str(v or "").strip():
+                        reason = str(v).strip()
+                        break
+                if reason:
+                    break
+            reason = (reason or "势力推演")[:120]
             for raw_field, value in raw_changes.items():
                 field = POWER_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-                if field == "reason":
+                if field in ("reason", "last_action"):
+                    # reason/last_action（含 近动 等别名）是本函数上方消费的 reason
+                    # 载体键——跳过，不得记成 invalid_enum 假阳（cmr S1 r2）。
                     continue
                 if field not in allowed_fields:
-                    print(f"[WARN] power_updates 只允许 威望/实力/经济，'{raw_field}' → 跳过")
+                    changes.append({
+                        "power": row["name"], "field": str(raw_field),
+                        "rejected": True, "category": "invalid_enum",
+                        "reason": f"power_updates 只允许 威望/实力/经济，'{raw_field}' 非法",
+                        "item": {"power_id": power_id, "field": str(raw_field), "value": value},
+                    })
                     continue
                 old_value = row[field]
-                delta = int(value)
+                try:
+                    # LLM 叶子值脏（null/"三成"/小数串）= 脏数据逐项拒，不崩整批
+                    # （validate_delta_shape 只验容器、容忍 null 叶——cmr S1 r1，
+                    # 同 secret_order order_id 非整数先例）。float/bool 显式拒：
+                    # int(3.7)→3 静默截断、True→1 拟真，都不是 prompt 要的整数
+                    # delta（cmr S1 r2；bool 是 int 子类须先判）。
+                    if isinstance(value, bool) or isinstance(value, float):
+                        raise ValueError("非整数 delta")
+                    delta = int(value)
+                except (TypeError, ValueError):
+                    changes.append({
+                        "power": row["name"], "field": str(raw_field),
+                        "rejected": True, "category": "invalid_enum",
+                        "reason": f"power_updates '{raw_field}' 值非整数：{value!r}",
+                        "item": {"power_id": power_id, "field": str(raw_field), "value": value},
+                    })
+                    continue
                 new_value = max(0, min(100, int(old_value) + delta))
                 actual_delta = new_value - int(old_value)
                 if actual_delta == 0:
@@ -2463,7 +2546,17 @@ class GameDB:
         for region_id, raw_changes in region_deltas.items():
             row = self.conn.execute("SELECT * FROM regions WHERE id = ?", (region_id,)).fetchone()
             if row is None:
-                print(f"[WARN] region_delta 引用未入库地区 '{region_id}' → 跳过")
+                # ADR 0008 决定 1:LLM 幻觉地区 id = 逐项拒收留痕,不再 print 静默跳;
+                # 坏一项不带走整批(同信封好地区照落)。
+                changes.append({
+                    "region_id": region_id, "rejected": True,
+                    "category": "missing_ref",
+                    "reason": f"region_delta 引用未入库地区 '{region_id}'",
+                    "item": {"region_id": region_id, "changes": raw_changes},
+                    # 历史 print-skip → convention 一致补标（当前 issue 路不走 region,
+                    # 防未来接入时误升级——cmr S2 r2 claude P3）。
+                    "issue_strict": False,
+                })
                 continue
             reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()[:80]
             for raw_field, value in raw_changes.items():
@@ -2474,8 +2567,24 @@ class GameDB:
                 # ── 城防炮（城头红夷炮）：另挂 region.cannon，走 apply_region_cannon（clamp city_level×8），
                 #    不入通用 SCORE/QUANTITY 路径（通用路径不套城防上限，会破 P2 铁律）。──
                 if field == "cannon":
+                    # 脏炮值守门与通用数值路对称（cmr S2 r1，3票）：cannon 不在
+                    # SCORE/QUANTITY 集,通用守门罩不到——此处先验再 dispatch,
+                    # 否则裸 int(value) 让 null/"数十门" 崩整月、bool/float 静默拟真。
+                    try:
+                        if isinstance(value, bool) or isinstance(value, float):
+                            raise ValueError("非整数 delta")
+                        cannon_delta = int(value)
+                    except (TypeError, ValueError):
+                        changes.append({
+                            "region": row["name"], "field": field,
+                            "rejected": True, "category": "invalid_enum",
+                            "reason": f"region_delta 'cannon'（地区 '{region_id}'）值非整数：{value!r}",
+                            "item": {"region_id": region_id, "field": field, "value": value},
+                            "issue_strict": not isinstance(value, (bool, float)),  # 同上 convention
+                        })
+                        continue
                     old_value = int(row["cannon"])
-                    new_value = self.apply_region_cannon(state, region_id, int(value))
+                    new_value = self.apply_region_cannon(state, region_id, cannon_delta)
                     actual_delta = new_value - old_value
                     if actual_delta == 0:
                         continue
@@ -2497,13 +2606,40 @@ class GameDB:
                     })
                     continue
 
-                # 先判字段合法，再取值：非法字段直接报清楚。
-                all_direct = REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + REGION_TEXT_FIELDS
-                if field not in all_direct and field not in FISCAL_SCORE_FIELDS:
-                    raise LLMContractError(
-                        f"{TURN_UNIT}末执行评估引用了非法地区字段：'{raw_field}'（地区 '{region_id}'）。"
-                        f"合法字段：{all_direct + FISCAL_SCORE_FIELDS}"
-                    )
+                # ADR 0008 决定 1:LLM 引用非法地区字段 = 逐项拒收留痕(invalid_enum),
+                # 不再 raise 崩整月;同地区的合法字段照落,坏一项不带走整批。
+                if field not in _REGION_DIRECT_SET and field not in FISCAL_SCORE_FIELDS:
+                    changes.append({
+                        "region": row["name"], "field": str(raw_field),
+                        "rejected": True, "category": "invalid_enum",
+                        "reason": (
+                            f"region_delta 引用非法地区字段 '{raw_field}'（地区 '{region_id}'）；"
+                            f"合法字段：{_REGION_DIRECT_TUPLE + FISCAL_SCORE_FIELDS}"
+                        ),
+                        "item": {"region_id": region_id, "field": str(raw_field), "value": value},
+                    })
+                    continue
+
+                # ADR 0008 决定 1:数值字段(fiscal/score/quantity)的脏叶子值
+                # (null/字符串/float/bool)= LLM 脏数据,逐项拒收(invalid_enum),不让
+                # 裸 int(value) 崩整月;bool 是 int 子类、float 静默截断,都非整数 delta
+                # 须显式拒(对称 S1)。text 字段走 str(),不在此判。
+                if field in _REGION_NUMERIC_SET or field in FISCAL_SCORE_FIELDS:
+                    try:
+                        if isinstance(value, bool) or isinstance(value, float):
+                            raise ValueError("非整数 delta")
+                        value = int(value)
+                    except (TypeError, ValueError):
+                        changes.append({
+                            "region": row["name"], "field": field,
+                            "rejected": True, "category": "invalid_enum",
+                            "reason": f"region_delta '{raw_field}'（地区 '{region_id}'）值非整数：{value!r}",
+                            "item": {"region_id": region_id, "field": field, "value": value},
+                            # float/bool 历史静默套用=可活;None/串历史 int() 致命=严格
+                            # （convention 对称 army,防未来 issue 路接入误升级;ship-pre r1）。
+                            "issue_strict": not isinstance(value, (bool, float)),
+                        })
+                        continue
 
                 # ── fiscal JSON 子字段（corruption 等）────────────────────────
                 if field in FISCAL_SCORE_FIELDS:
@@ -2896,16 +3032,53 @@ class GameDB:
         for army_id, raw_changes in army_deltas.items():
             row = self.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
             if row is None:
-                raise ValueError(f"army_delta 引用未入库军队 '{army_id}'（补兵/改属性落不了，先建军）")
+                # ADR 0008 决定 1:LLM 幻觉军队 id = 逐项拒收留痕(missing_ref),不再
+                # raise 崩整月;同信封好军队照落,坏一项不带走整批(原意「先建军」由
+                # new_armies 段负责,此处只拒补兵/改属性的悬空引用)。
+                changes.append({
+                    "army_id": army_id, "rejected": True,
+                    "category": "missing_ref",
+                    "reason": f"army_delta 引用未入库军队 '{army_id}'（补兵/改属性落不了，先建军）",
+                    "item": {"army_id": army_id, "changes": raw_changes},
+                })
+                continue
             reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()[:80]
-            _valid_army_fields = set(ARMY_SCORE_FIELDS + ARMY_QUANTITY_FIELDS + ARMY_TEXT_FIELDS)
             for raw_field, value in raw_changes.items():
                 field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
                 if field == "reason":
                     continue
-                if field not in _valid_army_fields:
-                    print(f"[WARN] army_delta 引用非法字段 '{raw_field}' → 跳过")
+                if field not in _ARMY_VALID_SET:
+                    # ADR 0008 决定 1:LLM 引用非法军队字段 = 逐项拒收留痕(invalid_enum),
+                    # 不再 print 静默跳;同军队的合法字段照落,坏一项不带走整批。
+                    changes.append({
+                        "army": row["name"], "field": str(raw_field),
+                        "rejected": True, "category": "invalid_enum",
+                        "reason": f"army_delta 引用非法字段 '{raw_field}'",
+                        "item": {"army_id": army_id, "field": str(raw_field), "value": value},
+                        # 历史上此案是 print-skip（非 raise）——国策结案路不升级为
+                        # 崩月（cmr S2 r1 claude:「维持原行为」当真）。
+                        "issue_strict": False,
+                    })
                     continue
+                # ADR 0008 决定 1:数值字段的脏叶子值(null/字符串/float/bool)= LLM 脏数据,
+                # 逐项拒收(invalid_enum),不让裸 int(value) 崩整月;bool 是 int 子类、float
+                # 静默截断须显式拒(对称 S1/region)。text 字段走 str(),不在此判。
+                if field not in ARMY_TEXT_FIELDS:
+                    try:
+                        if isinstance(value, bool) or isinstance(value, float):
+                            raise ValueError("非整数 delta")
+                        value = int(value)
+                    except (TypeError, ValueError):
+                        changes.append({
+                            "army": row["name"], "field": field,
+                            "rejected": True, "category": "invalid_enum",
+                            "reason": f"army_delta '{raw_field}' 值非整数：{value!r}",
+                            "item": {"army_id": army_id, "field": field, "value": value},
+                            # float/bool 改前是静默套用（int(3.7)=3 照落）=历史可活,
+                            # issue 路容忍;None/字符串历史就 raise,保持严格（cmr S2 r3,2/2）。
+                            "issue_strict": not isinstance(value, (bool, float)),
+                        })
+                        continue
                 old_value = row[field]
                 if field == "arrears":
                     # arrears 单位=累计欠饷万两，无上限，按需累加。
@@ -2964,8 +3137,10 @@ class GameDB:
                     stored_new = text_value
                     log_delta = None
                 else:
-                    print(f"[WARN] army_delta 未处理字段 '{field}' → 跳过")
-                    continue
+                    # field 已过 _ARMY_VALID_SET 校验，能落到此处=合法字段未被任一
+                    # 分支处理=代码漏接(往 ARMY_*_FIELDS 加了字段却忘了 dispatch)。
+                    # 按 ADR 0008 决定 1：代码 bug 响亮上抛触发回滚，不静默丢一个合法 delta。
+                    raise RuntimeError(f"army_delta 合法字段 '{field}' 无落库分支（代码漏接）")
                 self.conn.execute(
                     f"UPDATE armies SET {field} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     (stored_new, army_id),
@@ -3016,6 +3191,13 @@ class GameDB:
         created: List[Dict[str, object]] = []
         for raw in new_armies:
             if not isinstance(raw, dict):
+                # 不再静默丢：留拒收记录（season 路本就被 validate_delta_shape 挡在
+                # S6;issue 路历史即静默,容忍不升级——issue_strict=False,cmr S2 r1）。
+                created.append({
+                    "rejected": True, "category": "invalid_enum",
+                    "reason": f"new_armies 含非 dict 项：{raw!r}",
+                    "item": raw, "issue_strict": False,
+                })
                 continue
             item = {POWER_FIELD_ALIASES.get(k, k) if False else k: v for k, v in raw.items()}
             # 规范键：复用 ARMY_FIELD_ALIASES（兼容中文）
@@ -3023,10 +3205,24 @@ class GameDB:
             item = {_AA.get(str(k).strip(), str(k).strip()): v for k, v in raw.items()}
             aid = str(item.get("id") or "").strip()
             if not aid:
-                raise ValueError(f"new_armies 缺 id（无法建军）：{raw}")
+                # ADR 0008 决定 1:缺 id = LLM 脏数据,逐项拒收留痕(invalid_enum),
+                # 不再 raise 崩整月;同信封好军照建,坏一项不带走整批。
+                created.append({
+                    "rejected": True, "category": "invalid_enum",
+                    "reason": "new_armies 缺 id（无法建军）",
+                    "item": raw,
+                })
+                continue
             owner = str(item.get("owner_power") or "ming").strip() or "ming"
             if owner not in valid_powers:
-                raise ValueError(f"new_armies owner_power '{owner}' 不在 powers 表（无法建军 {aid}）")
+                # ADR 0008 决定 1:owner_power 幻觉 = 逐项拒收留痕(hallucinated_id)。
+                created.append({
+                    "id": aid, "owner_power": owner,
+                    "rejected": True, "category": "hallucinated_id",
+                    "reason": f"new_armies owner_power '{owner}' 不在 powers 表（无法建军 {aid}）",
+                    "item": raw,
+                })
+                continue
             name = str(item.get("name") or aid).strip()
             # 查重：同 id 或 同 name → 转 manpower 扩军增量
             existing = self.conn.execute(
@@ -3035,12 +3231,24 @@ class GameDB:
             if existing is not None:
                 manpower = item.get("manpower")
                 if manpower is None:
-                    print(f"[WARN] new_armies 重复 id/name '{aid}' 且无 manpower → 跳过")
+                    # ADR 0008 决定 1:命中已有军但无扩军增量 = 无意义项,逐项拒收留痕。
+                    created.append({
+                        "id": aid, "rejected": True, "category": "invalid_enum",
+                        "reason": f"new_armies 重复 id/name '{aid}' 且无 manpower（无扩军增量）",
+                        "item": raw, "issue_strict": False,  # 历史 print-skip,结案路容忍
+                    })
                     continue
                 try:
+                    if isinstance(manpower, (bool, float)):
+                        raise ValueError("非整数")
                     delta = int(manpower)
                 except (TypeError, ValueError):
-                    print(f"[WARN] new_armies '{aid}' manpower 非整数 → 跳过")
+                    # ADR 0008 决定 1:扩军增量非整数 = LLM 脏数据,逐项拒收留痕。
+                    created.append({
+                        "id": aid, "rejected": True, "category": "invalid_enum",
+                        "reason": f"new_armies '{aid}' manpower 非整数：{manpower!r}",
+                        "item": raw, "issue_strict": False,  # 历史 print-skip,结案路容忍
+                    })
                     continue
                 if delta == 0:
                     continue
@@ -3051,14 +3259,55 @@ class GameDB:
                 )
                 created.append({"army": existing["name"], "manpower_added": delta, "merged_into_existing": True})
                 continue
-            # 必填字段
+            # 必填字段：缺/非法 = LLM 脏数据,逐项拒收留痕(invalid_enum),不再 raise
+            # 崩整月(ADR 0008 决定 1);同信封好军照建。bool/float 显式拒(对称 S1)。
             try:
-                manpower = int(item["manpower"])
-                maintenance = int(item["maintenance_per_turn"])
+                _mp = item["manpower"]
+                _mt = item["maintenance_per_turn"]
+                if isinstance(_mp, (bool, float)) or isinstance(_mt, (bool, float)):
+                    raise ValueError("非整数")
+                manpower = int(_mp)
+                maintenance = int(_mt)
             except (KeyError, TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"new_armies '{aid}' 缺/非法 manpower 或 maintenance_per_turn（无法建军）：{exc}"
-                ) from exc
+                created.append({
+                    "id": aid, "rejected": True, "category": "invalid_enum",
+                    "reason": f"new_armies '{aid}' 缺/非法 manpower 或 maintenance_per_turn（无法建军）：{exc}",
+                    "item": raw,
+                    # 历史谓词按整项算（cmr S2 r4,2/2:or 合取会让混合成因项——
+                    # 一边 float、另一边缺键/None/串=历史致命——被误判容忍）：
+                    # 旧代码 int(item["manpower"])+int(item["maintenance_per_turn"])
+                    # 两步都成功才「静默套用=可活」,任一步缺键/TypeError/ValueError
+                    # 即历史 raise → 保持严格。
+                    "issue_strict": not _new_army_historically_applied(item),
+                })
+                continue
+            # 可选数值字段「在场即须合法」（cmr S2 r1 codex P1）：在场脏值静默走默认
+            # = 伪造军备（morale "高"→50、cannon "几门"→0）。None 视为缺省（LLM 习惯
+            # 用 null 表「无」,validate_delta_shape 亦容忍 null 叶）；其余非整拒该项。
+            # 守门集从字段表派生（cmr S2 r2,2/2:硬列漏 equipment/mobility/loyalty）
+            # ——ARMY_SCORE_FIELDS 全量已含 arrears;字段表变守门自动跟。
+            _dirty_field = None
+            for _f in ARMY_SCORE_FIELDS:
+                _v = item.get(_f)
+                if _f in item and _v is not None:
+                    if isinstance(_v, (bool, float)):
+                        _dirty_field = (_f, _v)
+                        break
+                    try:
+                        int(_v)
+                    except (TypeError, ValueError):
+                        _dirty_field = (_f, _v)
+                        break
+            if _dirty_field is not None:
+                created.append({
+                    "id": aid, "rejected": True, "category": "invalid_enum",
+                    "reason": (f"new_armies '{aid}' 可选字段 '{_dirty_field[0]}' 值非整数："
+                               f"{_dirty_field[1]!r}（在场即须合法，缺省才走默认）"),
+                    "item": raw,
+                    # 历史上此案静默走默认值（非 raise）——结案路容忍不升级。
+                    "issue_strict": False,
+                })
+                continue
             def _score(field: str, default: int = 50) -> int:
                 try:
                     return max(0, min(100, int(item.get(field, default))))
