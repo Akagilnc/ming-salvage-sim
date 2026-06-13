@@ -22,9 +22,25 @@ def _active_ming_minister(db, content) -> str:
 
 
 def test_active_ming_minister_visible(game):
-    db, state, content = game
+    db, _state, content = game
     name = _active_ming_minister(db, content)
     assert visible_in_court(content.characters[name], db) is True
+
+
+def test_active_non_ming_character_not_in_court(game):
+    """非 ming 治下人物即便 DB active 也不入朝堂（锁 power_id 过滤，Sourcery R1）。"""
+    db, state, content = game
+    name = next(
+        (n for n, c in content.characters.items()
+         if getattr(c, "power_id", "ming") != "ming"
+         and getattr(c, "office_type", "") != "后宫"),
+        None,
+    )
+    if name is None:
+        import pytest
+        pytest.skip("基底盘面无非 ming 人物")
+    db.set_character_status(state, name, "active", "测试：在世")
+    assert visible_in_court(content.characters[name], db) is False
 
 
 def test_db_offstage_excluded_even_if_memory_active(game):
@@ -50,7 +66,7 @@ def test_db_active_included_even_if_memory_offstage(game):
 
 def test_consort_excluded_from_court(game):
     """后宫不算朝堂大臣，DB active 也不入列。"""
-    db, state, content = game
+    db, _state, content = game
     consort = next(
         (n for n, c in content.characters.items()
          if getattr(c, "office_type", "") == "后宫"),
