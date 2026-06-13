@@ -2199,6 +2199,39 @@ def test_legacy_office_pollution_resolves_transit_to_region_id(game):
         f"在途辽东 应解析 transit_to=liaodong（中文→region_id），实际 {row2['transit_to']!r}"
 
 
+def test_displaced_holder_transit_to_cleared(game):
+    """5b r7（codex-b R1）：顶替全腾缺时，被挤下来的旧任若正在赴任途中，transit_to 须清——
+    否则人才池里「听用候铨」的他还挂着去老职位的路线（三面同步 stale）。"""
+    from ming_sim.issues import _displace_duplicate_offices
+    db, state, content = game
+    names = [
+        r["name"] for r in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
+            "AND office_type!='后宫' ORDER BY rowid LIMIT 2"
+        ).fetchall()
+    ]
+    old, new_holder = names[0], names[1]
+    db.conn.execute(
+        "UPDATE characters SET office='蓟辽总督', office_type='督抚', transit_to='liaodong' WHERE name=?",
+        (old,),
+    )
+    db.conn.commit()
+    if old in content.characters:
+        content.characters[old].office = "蓟辽总督"
+        content.characters[old].office_type = "督抚"
+        content.characters[old].transit_to = "liaodong"
+
+    _displace_duplicate_offices(db, content, new_holder, "蓟辽总督")
+
+    row = db.conn.execute(
+        "SELECT office, transit_to FROM characters WHERE name=?", (old,)
+    ).fetchone()
+    assert row["office"] == "听用候铨", "全腾缺旧任应落听用候铨"
+    assert (row["transit_to"] or "") == "", f"被顶替者 transit_to 须清，实际 {row['transit_to']!r}"
+    if old in content.characters:
+        assert getattr(content.characters[old], "transit_to", "") == "", "内存 transit_to 也须清"
+
+
 def test_historical_death_tick_sets_reason_code(game):
     """ADR 决定7：月初历史卒 tick = 处置(→dead, reason_code=历史卒)。
     裸 set_character_status 不置 reason_code → 人才池/审计认不出死因。"""
