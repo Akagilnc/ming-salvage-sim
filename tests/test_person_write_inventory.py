@@ -22,7 +22,7 @@ def test_person_write_inventory_covers_current_character_sql_writes():
         "ming_sim/db.py:add_character",
         "ming_sim/issues.py:_displace_duplicate_offices",
         "ming_sim/issues.py:_apply_person_changes",
-        "ming_sim/session.py:_apply_appointment_delta:candidate_upgrade",
+        "ming_sim/session.py:apply_appointment:candidate_upgrade",
     } <= inventory_locations
 
 
@@ -47,7 +47,7 @@ def test_person_write_inventory_classifies_each_write_point_disposition():
         "outside_person_archive"
     )
     assert by_location[
-        "ming_sim/session.py:_apply_appointment_delta:candidate_upgrade"
+        "ming_sim/session.py:apply_appointment:candidate_upgrade"
     ]["disposition"] == "dedicated_person_entry"
 
 

@@ -52,6 +52,8 @@ PERSON_REASON_CODE_ALIASES = {
 
 PERSON_REASON_TRANSITION_OVERRIDES = {
     ("offstage", "任命", "丁忧"): "derive:夺情",
+    # offstage 丁忧 起复经 调任 颁来时（无职名分→归一任命）也派生夺情，与 任命 同（5b r4 codex-a R1）。
+    ("offstage", "调任", "丁忧"): "derive:夺情",
     ("imprisoned", "任命", "陷虏"): "reject:invalid_transition",
     ("imprisoned", "调任", "陷虏"): "reject:invalid_transition",
     ("imprisoned", "易主", "陷虏"): "apply",

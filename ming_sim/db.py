@@ -1481,6 +1481,11 @@ class GameDB:
                 )
         self._migrate_arrears_unit_to_silver(is_fresh_armies_seed)
         self._apply_region_city_levels()  # 新档 region 此时才 INSERT 完，按史实补 city_level
+        # 新档罢居/在途 office 污染清洗：init_schema 路径在空表上 no-op（构造在 seed 前），
+        # 故 seed 后须再跑一次才对新档生效（决定9/L94 一次性清洗；幂等，老档由 init_schema
+        # 路径已处理）。此刻 characters + regions 均已 INSERT，location region_id 校验可用。
+        # 5b r4（Claude + codex-b concur, P1）：漏此调用则新档 7 名罢居旧臣留 active+污染、不进人才池。
+        self._migrate_legacy_office_pollution()
         self.conn.commit()
 
     def _migrate_arrears_unit_to_silver(self, is_fresh_armies_seed: bool) -> None:

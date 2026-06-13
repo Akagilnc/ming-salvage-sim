@@ -157,6 +157,10 @@ def test_person_transition_resolver_applies_reason_code_special_cases_first():
 
     assert resolve_person_transition("offstage", "任命", reason_code="丁忧") == "derive:夺情"
     assert resolve_person_transition("offstage", "任命", reason_code="守制") == "derive:夺情"
+    # 5b r4（codex-a R1）：offstage 起复无论走 任命 还是 调任（无职名分时 调任 归一为任命），
+    # 丁忧/守制 都应派生 夺情 审计标，不能漏（调任 变体此前落到 matrix normalize:任命）。
+    assert resolve_person_transition("offstage", "调任", reason_code="丁忧") == "derive:夺情"
+    assert resolve_person_transition("offstage", "调任", reason_code="守制") == "derive:夺情"
     assert resolve_person_transition("imprisoned", "任命", reason_code="陷虏") == (
         "reject:invalid_transition"
     )

@@ -74,7 +74,7 @@ PERSON_WRITE_POINT_INVENTORY = (
         "reason": "任官失败局部恢复的过渡写点，后续随 C1 applier 收口。",
     },
     {
-        "location": "ming_sim/session.py:_apply_appointment_delta:candidate_upgrade",
+        "location": "ming_sim/session.py:apply_appointment:candidate_upgrade",
         "owner": "candidate_entry",
         "disposition": "dedicated_person_entry",
         "reason": "后宫 candidate 创建/册封是 ADR 0009 明确专用入口。",
@@ -183,5 +183,5 @@ def _inventory_location(relative: str, function_name: str, sql: str) -> str:
         if function_name == "seed_static_data":
             return "ming_sim/db.py:seed_static_data"
     if relative == "ming_sim/session.py" and "office_type='后宫'" in sql:
-        return "ming_sim/session.py:_apply_appointment_delta:candidate_upgrade"
+        return "ming_sim/session.py:apply_appointment:candidate_upgrade"
     return f"{relative}:{function_name}"

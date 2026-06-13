@@ -42,6 +42,9 @@ def test_person_changes_block_labels_derived_active_by_event_not_blanket_release
     # 处置/active 改走 derived_from/缘由 派生标签。
     assert 'pickItem(it, "derived_from", "derived_from")' in text
     assert 'pickItem(it, "缘由", "reason_code")' in text
+    # main 必须由 tag 派生链赋值，而非另行硬编标签——否则计算了 tag 却仍写死「起复」也会过
+    # （codex r4 R1：钉住赋值表达式，不只钉 tag 出现）。
+    assert "tag || cnValue(status) || action" in text
 
 
 def test_extraction_view_reads_applied_trace_shape():
