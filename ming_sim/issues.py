@@ -1400,6 +1400,9 @@ def apply_office_appointment(
         _restore_person_write_state(db, content, snapshot)
         return {"name": name, "new_office": new_office, "rejected": True, "kind": "appoint",
                 "reason": f"落库失败：{exc}；原 status={cur_status or '不在册'}"}
+    # apply_appointment 返回假值（查重拒/approved false/字段空——现均改库前早退）：防御性还原快照、
+    # 与 except 路对称，确保此分支在任何 apply_appointment 行为下都不留半落库（P1 第一铁律，线上 gemini R3）。
+    _restore_person_write_state(db, content, snapshot)
     return {"name": name, "new_office": new_office, "rejected": True, "kind": "appoint",
             "reason": f"建档失败（查重/字段不合）；原 status={cur_status or '不在册'}"}
 
@@ -1609,6 +1612,14 @@ def _apply_person_changes(
             continue
 
         if action in {"任命", "调任"}:
+            # 别名归一须在 hallucinated_id 闸前：extractor 可能用在册大臣 alias（韩阁老→韩爌），
+            # 仅按确切 key 判在册会把别名任命误拒成 hallucinated_id、玩家指令丢失（旧 office_changes
+            # 路直调含归一的 apply_office_appointment 无此退化）。与下游归一同源（线上 codex R3 P2）。
+            if content is not None:
+                from ming_sim.session import _find_existing_minister
+                _canon = _find_existing_minister(content, name)
+                if _canon:
+                    name = _canon
             if content is not None and name not in content.characters:
                 applied.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
