@@ -2361,13 +2361,13 @@
       "personal_skills": [
         "督师调度",
         "联络支撑",
-        "支撑残局"
+        "督调联络"
       ],
       "loyalty": 72,
       "ability": 66,
       "integrity": 70,
       "courage": 68,
-      "style": "支撑残局",
+      "style": "勤干任事",
       "birth_year": 1592,
       "historical_death_year": 0,
       "historical_death_month": 0,
@@ -2390,13 +2390,13 @@
       "personal_skills": [
         "守城经略",
         "刚正",
-        "孤忠死节"
+        "刚正持守"
       ],
       "loyalty": 76,
       "ability": 68,
       "integrity": 82,
       "courage": 74,
-      "style": "刚正孤忠",
+      "style": "刚正不阿",
       "birth_year": 1590,
       "historical_death_year": 0,
       "historical_death_month": 0,
@@ -2420,7 +2420,7 @@
       "personal_skills": [
         "海陆治军",
         "孤忠",
-        "跨海图复"
+        "闽海经略"
       ],
       "loyalty": 85,
       "ability": 82,
@@ -2503,7 +2503,7 @@
         "苍水"
       ],
       "personal_skills": [
-        "海上抗清",
+        "海防文武",
         "文武兼资",
         "忠贞"
       ],
@@ -2721,7 +2721,7 @@
     },
     {
       "name": "福临",
-      "office": "（后金皇子，未生）",
+      "office": "后金皇子（皇太极第九子）",
       "office_type": "外臣",
       "faction": "后金",
       "aliases": [
@@ -2757,13 +2757,13 @@
       ],
       "personal_skills": [
         "宗藩法统",
-        "流亡支撑"
+        "宗藩守土"
       ],
       "loyalty": 58,
       "ability": 40,
       "integrity": 48,
       "courage": 42,
-      "style": "流亡之主",
+      "style": "守成宗藩",
       "birth_year": 1623,
       "historical_death_year": 0,
       "historical_death_month": 0,
