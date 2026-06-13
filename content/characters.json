@@ -1870,6 +1870,121 @@
       "debut_month": 0,
       "power_id": "ming",
       "location": ""
+    },
+    {
+      "name": "朱常洵",
+      "office": "福王，就藩洛阳",
+      "office_type": "宗藩",
+      "faction": "宗室",
+      "aliases": [
+        "朱常洵",
+        "福王"
+      ],
+      "personal_skills": [
+        "宗藩自重",
+        "聚敛田产",
+        "坐拥厚资"
+      ],
+      "loyalty": 60,
+      "ability": 33,
+      "integrity": 25,
+      "courage": 28,
+      "style": "骄奢自重",
+      "birth_year": 1586,
+      "historical_death_year": 1641,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "万历宠子，就藩洛阳，富甲诸藩；日后城破死于李自成。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "henan"
+    },
+    {
+      "name": "朱常瀛",
+      "office": "桂王，就藩衡州",
+      "office_type": "宗藩",
+      "faction": "宗室",
+      "aliases": [
+        "朱常瀛",
+        "桂王"
+      ],
+      "personal_skills": [
+        "宗藩守成",
+        "藩府自保"
+      ],
+      "loyalty": 58,
+      "ability": 38,
+      "integrity": 40,
+      "courage": 35,
+      "style": "守成自保",
+      "birth_year": 1597,
+      "historical_death_year": 1645,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "万历第七子，就藩衡州；永历帝之父，南明宗室法统所系。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "huguang"
+    },
+    {
+      "name": "朱由崧",
+      "office": "福王世子",
+      "office_type": "宗藩",
+      "faction": "宗室",
+      "aliases": [
+        "朱由崧",
+        "福世子"
+      ],
+      "personal_skills": [
+        "宗藩嗣子",
+        "因循自适"
+      ],
+      "loyalty": 55,
+      "ability": 30,
+      "integrity": 28,
+      "courage": 30,
+      "style": "因循嬉怠",
+      "birth_year": 1607,
+      "historical_death_year": 1646,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "福王朱常洵世子；日后立为弘光帝，南明首主。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "henan"
+    },
+    {
+      "name": "懿安皇后",
+      "office": "懿安皇后（天启帝后）",
+      "office_type": "后宫",
+      "faction": "宗室",
+      "aliases": [
+        "张嫣",
+        "懿安皇后",
+        "张太后"
+      ],
+      "personal_skills": [
+        "中宫法统",
+        "清君侧助力",
+        "持正护储"
+      ],
+      "loyalty": 80,
+      "ability": 58,
+      "integrity": 82,
+      "courage": 60,
+      "style": "持正端肃",
+      "birth_year": 1606,
+      "historical_death_year": 1644,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "天启帝皇后，崇祯皇嫂；助崇祯翦除魏忠贤，京破自缢。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "beizhili"
     }
   ]
 }
