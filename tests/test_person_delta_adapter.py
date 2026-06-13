@@ -1701,6 +1701,32 @@ def test_talent_pool_ming_noncourt_only(game):
     assert nonming == [], f"人才池混进非明势力：{nonming}"
 
 
+def test_extractor_active_ministers_ming_noncourt_only(game):
+    """5b r1 PR#106（CodeRabbit Major，roster-scope coverage-drift 第 4 处）：extractor 上下文的
+    active_ministers 须与 court_roster 同口径 = 大明、非后宫。否则 active 外臣（皇太极）/active 后宫漏入。"""
+    db, state, content = game
+    payload = _extractor_context_payload(db, state, narrative="", decree_text="")
+    am = payload["active_ministers"]
+    pidx = am["cols"].index("power_id")
+    nonming = [r for r in am["rows"] if r[pidx] != "ming"]
+    assert nonming == [], f"extractor active_ministers 混进非明势力：{nonming}"
+
+
+def test_person_log_normalized_not_truncated(game):
+    """5b r1 PR#106（CodeRabbit Major）：person_logs.normalized 是结构化审计 JSON，须全量存可解析——
+    旧码 normalized_text[:500] 会从 JSON 中间切断成不可解析。"""
+    import json as _json
+    db, state, content = game
+    big = {"name": "甲" * 300, "动作": "处置", "status": "dismissed",
+           "reason": "乙" * 300, "extra": list(range(40))}
+    db.record_person_log(state, "审计长度测试", "处置", payload_summary="s", normalized=big)
+    row = db.conn.execute(
+        "SELECT normalized FROM person_logs WHERE person_name='审计长度测试' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    parsed = _json.loads(row["normalized"])
+    assert parsed["name"] == "甲" * 300 and parsed["动作"] == "处置"
+
+
 def test_apply_score_extraction_rejects_invalid_person_travel(game):
     db, state, content = game
     name = active_ming_character(db, content)

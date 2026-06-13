@@ -502,8 +502,10 @@ def _extractor_context_payload(
     ]
     active_ministers = [
         dict(r) for r in db.conn.execute(
+            # roster scope（同 court_roster / _talent_pool_rows / tools.get_active_ministers）：
+            # 大明、非后宫。否则 active 外臣（皇太极等）/ active 后宫漏进 extractor 在朝名单（PR #106 CodeRabbit）。
             "SELECT name,office,office_type,faction,power_id,location,transit_to "
-            "FROM characters WHERE status='active' ORDER BY rowid"
+            "FROM characters WHERE status='active' AND power_id='ming' AND office_type!='后宫' ORDER BY rowid"
         ).fetchall()
     ]
     # ADR 0009 人才池视图：与 simulator 盘面共用 _talent_pool_rows（防两处漂移）。
