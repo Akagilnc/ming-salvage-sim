@@ -2048,3 +2048,30 @@ def test_simulator_payload_talent_pool_includes_displaced_oncall_holder(game):
     prow = next(r for r in pool_rows if r[cols.index("name")] == name)
     assert prow[cols.index("reason_code")] == "被顶替"
     assert prow[cols.index("status")] == "active"
+
+
+def test_legacy_office_pollution_migrated_on_load(game):
+    """ADR 决定9/L94 一次性数据清洗（幂等，载入时跑）：pre-0009 老档里塞在 office 串的
+    状态词归位到 status/transit_to，使其正确进人才池。条件触发（office 含污染标记才动），
+    绝不误降已被玩家起复的 active 旧臣。"""
+    db, _, _ = game
+
+    def row(n):
+        return db.conn.execute(
+            "SELECT status, office, reason_code, transit_to FROM characters WHERE name=?", (n,)
+        ).fetchone()
+
+    # 罢居 → offstage（钱龙锡）/ dismissed（钱谦益 科场案削籍，B 口径）
+    qlx = row("钱龙锡")
+    assert qlx["status"] == "offstage", "罢居者应归位 offstage"
+    assert "罢居" not in (qlx["office"] or ""), "office 串污染状态词应清除"
+    qqy = row("钱谦益")
+    assert qqy["status"] == "dismissed", "科场案削籍 → dismissed（→昭雪）"
+    assert qqy["reason_code"] == "获罪削籍"
+    # (在途) 串清除
+    ycc = row("袁崇焕")
+    assert "(在途)" not in (ycc["office"] or ""), "(在途) 串应清除"
+    # 已起复的 active 旧臣不被误降
+    assert row("孙承宗")["status"] == "active", "已起复者不得被误降"
+    assert row("韩爌")["status"] == "active"
+    assert row("袁可立")["status"] == "active"

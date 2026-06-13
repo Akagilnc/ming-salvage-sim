@@ -897,7 +897,57 @@ class GameDB:
             )
         """)
         self.conn.commit()
+        self._migrate_legacy_office_pollution()
         self.init_fiscal_config()
+
+    def _migrate_legacy_office_pollution(self) -> None:
+        """ADR 0009 决定9/L94 一次性数据清洗（幂等，init 时跑）：pre-0009 存档把状态词塞在
+        office 串里（「前X，罢居Y」「…(在途)」），归位到 status/reason_code/location/transit_to，
+        使其正确进人才池（G1）。**条件触发**（office 含污染标记才动）——不误降已被玩家起复的
+        active 旧臣（其 office 已是真职、无标记，跳过）；幂等（清洗后再跑无标记可清）。"""
+        import re
+        # 罢居=居家可起复：钱谦益 天启科场案削籍 → dismissed（→昭雪，B 口径）；其余罢居 → offstage（→起复）。
+        DISMISSED_OVERRIDE = {"钱谦益": "获罪削籍"}
+        for r in self.conn.execute(
+            "SELECT name, office FROM characters WHERE office LIKE '%罢居%' AND status='active'"
+        ).fetchall():
+            name = r["name"]
+            office = str(r["office"] or "")
+            m = re.search(r"罢居([^，,]+)", office)
+            loc = m.group(1).strip() if m else ""
+            if name in DISMISSED_OVERRIDE:
+                status, rc = "dismissed", DISMISSED_OVERRIDE[name]
+            else:
+                status, rc = "offstage", "自请"
+            self.conn.execute(
+                "UPDATE characters SET status=?, reason_code=?, status_reason=?, office='', "
+                "location=CASE WHEN COALESCE(location,'')='' THEN ? ELSE location END, transit_to='' "
+                "WHERE name=?",
+                (status, rc, office, loc, name),
+            )
+        # office 带「(在途)」→ 清串保留 active；transit_to 仅当解析出合法 region_id 才落（保守，不瞎猜目的地）。
+        region_ids = {row["id"] for row in self.conn.execute("SELECT id FROM regions").fetchall()}
+        for r in self.conn.execute(
+            "SELECT name, office FROM characters WHERE office LIKE '%在途%'"
+        ).fetchall():
+            name = r["name"]
+            office = str(r["office"] or "")
+            cleaned = office.replace("（在途）", "").replace("(在途)", "").strip().rstrip(",，")
+            dest = ""
+            for kw in ("督师", "镇守", "赴", "之任"):
+                mm = re.search(kw + r"([一-龥]{2,4})", office)
+                if mm and mm.group(1) in region_ids:
+                    dest = mm.group(1)
+                    break
+            if dest:
+                self.conn.execute(
+                    "UPDATE characters SET office=?, transit_to=? WHERE name=?", (cleaned, dest, name)
+                )
+            else:
+                self.conn.execute(
+                    "UPDATE characters SET office=? WHERE name=?", (cleaned, name)
+                )
+        self.conn.commit()
 
     def init_fiscal_config(self) -> None:
         """从 content/fiscal_config.json（self.content.fiscal_items）seed 财政科目目录。
