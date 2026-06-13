@@ -56,6 +56,7 @@ hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`�
 - 所有 user-facing 输出用中文。
 - 改仓库内容前要明确授权（沿用全局 `~/.claude/CLAUDE.md`）。
 - **PR 合并默认 merge commit，尽量不 squash**（用户 2026-06-10 明示：没有「干净历史」洁癖，逐 commit 过程史比 main 整洁重要；squash 唯一一次是 #72，导致 22 轮评审迭代史只活在 probe/tianmu-fiscal 分支上——该分支因此保留勿删）。
+- **评审轮 = 独立 commit，禁止 amend 折叠多轮（对所有 agent：Claude / codex / 其它，2026-06-13 立）**：每一轮 cmr/评审 fix **各提一个新 commit**（如 PR2 的 `cmr S3 r5: …`），**严禁 `git commit --amend` 把多轮压进同一个 commit**。理由同「不 squash」：过程史 > 干净历史，评审迭代必须进**永久 git 历史**、PR 上评审者看得见每轮抓了什么改了什么。**reflog 不算数**（本地、默认 90 天 gc、不推远端、PR 不可见——amend 比 squash 还脆，轮次叙事一次 gc/清 worktree 就蒸发）。切片级「一 slice 一 commit」仍可，但 **slice 内每轮必须新 commit**。实证教训：codex 跑 ADR 0009 时把 travel 切片 ~18 轮全 amend 进一个 commit，git log 一行照不到（2026-06-13 reflog 挖出）。
 - **设计文档（ADR/契约/spec）与代码同等评审**：产出后必须跑完整评审闭环（本地 cmr 收敛 + 线上三 bot 收敛），不因「只是文档」跳步；用户出此类文档时**主动提醒走评审**。实证：ADR 0008 单文档 8 轮（本地 12→11→3→0 + 线上 4 轮），抓出毒 payload 软死锁、simulator-fallback 事务后门等设计级真洞（2026-06-10）。
 - **任何代码工作先开分支再动手**，main 工作区保持干净（多 session 并行，脏 main 影响别人）；**纯文档工作除外，可直接在 main 改并提交**（TODOS/README/docs 叙事类；用户 2026-06-11 明示。注意：ADR/契约/spec 类设计文档虽可在 main 直改，评审要求见上条不豁免）；常驻例外 = `content/buildings.json` 金手指。
 
