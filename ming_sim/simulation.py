@@ -286,10 +286,14 @@ def build_simulator_payload(
             "loyalty,firearm_equipment,cannon_equipment,status,owner_power FROM armies ORDER BY id"
         ).fetchall()
     ]
+    # 在朝名单 = 目前当官的（active）：simulator 在朝盘面 + 任命查重。可起复者（居家/致仕/
+    # 削籍）走 offstage_ministers 人才池，在押/流放者两份都不在（玩家下旨决定去留）。旧 status!=
+    # 'offstage' 会把削籍/致仕/在押者也混进在朝名单、与人才池双重曝光自相矛盾。注：大臣 system 的
+    # 现状参照名册（registry.build_court_roster）另有用途、故意含非 active 带状态标签，不在此口径。
     court_roster = _auto_table([
         dict(r) for r in db.conn.execute(
             "SELECT name,office,office_type,faction,status,power_id,"
-            "location,transit_to FROM characters WHERE status!='offstage' "
+            "location,transit_to FROM characters WHERE status='active' "
             "AND office_type!='后宫' ORDER BY rowid"
         ).fetchall()
     ])
