@@ -1749,6 +1749,10 @@ def _apply_person_changes(
                         ch.office = str(row["office"] or "")
                         ch.office_type = str(row["office_type"] or ch.office_type)
                         ch.transit_to = str(row["transit_to"] or "")
+                        # 对称 DB 侧回滚（上方 UPDATE 已还原全 7 字段）：内存也还原缘由/码，
+                        # 守三面同步（决定6），免前置步刷过内存缘由后此路回滚留脏值（PR#106 R2 gemini）。
+                        ch.status_reason = str(row["status_reason"] or "")
+                        ch.reason_code = str(row["reason_code"] or "")
                 else:
                     applied.append(release_result)
                     log_applied(release_result, item)
