@@ -2107,6 +2107,29 @@ def test_simulator_payload_talent_pool_includes_displaced_oncall_holder(game):
     assert prow[cols.index("status")] == "active"
 
 
+def test_fresh_seed_migrates_legacy_office_pollution(tmp_path):
+    """5b r4（Claude + codex-b concur, P1）：新开档 _migrate_legacy_office_pollution 须在
+    seed 之后跑——init_schema 在空表上 no-op，seed 后若不再迁移，罢居旧臣留 active+污染 office、
+    不进人才池（探针第一年盘面错）。钱谦益（office='…罢居常熟'）∈DISMISSED_OVERRIDE → dismissed/获罪削籍。"""
+    from ming_sim.content import GameContent
+    from ming_sim.db import GameDB
+
+    fresh = GameContent.load()
+    db = GameDB(str(tmp_path / "fresh.db"), fresh)
+    try:
+        db.seed_static_data()
+        row = db.conn.execute(
+            "SELECT status, reason_code, office FROM characters WHERE name=?", ("钱谦益",)
+        ).fetchone()
+    finally:
+        db.conn.close()
+    assert row is not None, "钱谦益 未 seed"
+    assert row["status"] == "dismissed", \
+        f"新开档未迁移：钱谦益 status={row['status']!r} office={row['office']!r}（migration 在 seed 前空表 no-op）"
+    assert row["reason_code"] == "获罪削籍"
+    assert "罢居" not in (row["office"] or ""), f"污染 office 串未清：{row['office']!r}"
+
+
 def test_legacy_office_pollution_migrated_on_load(game):
     """ADR 决定9/L94 一次性数据清洗（幂等，载入时跑）：pre-0009 老档里塞在 office 串的
     状态词归位到 status/transit_to，使其正确进人才池。条件触发（office 含污染标记才动），
