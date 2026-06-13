@@ -906,6 +906,9 @@ class GameDB:
         使其正确进人才池（G1）。**条件触发**（office 含污染标记才动）——不误降已被玩家起复的
         active 旧臣（其 office 已是真职、无标记，跳过）；幂等（清洗后再跑无标记可清）。"""
         import re
+        # location 是 region_id；罢居地名（松江/高阳等府名）多非 region_id，只在解析出合法 region_id
+        # 才写 location（同下方在途循环口径，不把府名硬塞进 region_id 列）；罢居地信息留在 status_reason。
+        region_ids = {row["id"] for row in self.conn.execute("SELECT id FROM regions").fetchall()}
         # 罢居=居家可起复：钱谦益 天启科场案削籍 → dismissed（→昭雪，B 口径）；其余罢居 → offstage（→起复）。
         DISMISSED_OVERRIDE = {"钱谦益": "获罪削籍"}
         for r in self.conn.execute(
@@ -915,6 +918,7 @@ class GameDB:
             office = str(r["office"] or "")
             m = re.search(r"罢居([^，,]+)", office)
             loc = m.group(1).strip() if m else ""
+            loc_region = loc if loc in region_ids else ""
             if name in DISMISSED_OVERRIDE:
                 status, rc = "dismissed", DISMISSED_OVERRIDE[name]
             else:
@@ -923,10 +927,9 @@ class GameDB:
                 "UPDATE characters SET status=?, reason_code=?, status_reason=?, office='', "
                 "location=CASE WHEN COALESCE(location,'')='' THEN ? ELSE location END, transit_to='' "
                 "WHERE name=?",
-                (status, rc, office, loc, name),
+                (status, rc, office, loc_region, name),
             )
         # office 带「(在途)」→ 清串保留 active；transit_to 仅当解析出合法 region_id 才落（保守，不瞎猜目的地）。
-        region_ids = {row["id"] for row in self.conn.execute("SELECT id FROM regions").fetchall()}
         for r in self.conn.execute(
             "SELECT name, office FROM characters WHERE office LIKE '%在途%'"
         ).fetchall():

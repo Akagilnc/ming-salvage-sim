@@ -1831,12 +1831,14 @@ def _apply_person_changes(
                     ch.status = "active"
                     ch.transit_to = ""
                     ch.reason_code = ""
-                # 易主后人仍 active（在新主任事，持身名分=降臣/归附），不变式1 不破；
-                # 清原 reason_code（如陷虏）——已投敌，不再是本朝在押（决定3/不变式）。
+                    ch.status_reason = str(item.get("reason") or "")
+                # 易主后人仍 active（在新主任事，持身名分=降臣/归附），不变式1 不破；清原 reason_code/
+                # status_reason（如陷虏「松山兵败被执」）——已投敌、不再是本朝在押，旧因不能滞留（决定3）；
+                # status_changed_turn 记本回合（易主即状态变更）。
                 db.conn.execute(
                     "UPDATE characters SET office=?, office_type=?, status='active', "
-                    "reason_code='', transit_to='' WHERE name=?",
-                    (new_title, "身名分", name),
+                    "reason_code='', status_reason=?, status_changed_turn=?, transit_to='' WHERE name=?",
+                    (new_title, "身名分", str(item.get("reason") or ""), state.turn, name),
                 )
                 db.conn.commit()
                 wrapped = {"动作": action, "方式": way, "反噬": backlash, **result}

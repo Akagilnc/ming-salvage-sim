@@ -2273,3 +2273,42 @@ def test_reappointment_clears_displaced_mark_in_both_db_and_content(game):
     ch = content.characters[name]
     assert row["reason_code"] == "" and row["status_reason"] == "", "DB 未清被顶替标记"
     assert ch.reason_code == "" and ch.status_reason == "", f"content 未清，实得 {ch.reason_code!r}/{ch.status_reason!r}"
+
+
+def test_migration_does_not_write_nonregion_location(game):
+    """5b R1：老档迁移罢居地名（府名，非 region_id）不得写进 location（region_id 列）。
+    7 个 seed 旧臣迁移后 location 应为空（罢居地信息留 status_reason），不破 region_id 不变式。"""
+    db, _, _ = game
+    region_ids = {r["id"] for r in db.conn.execute("SELECT id FROM regions").fetchall()}
+    rows = db.conn.execute(
+        "SELECT name, location FROM characters WHERE status IN ('offstage','dismissed') "
+        "AND status_reason LIKE '%罢居%'"
+    ).fetchall()
+    for r in rows:
+        loc = r["location"] or ""
+        assert loc == "" or loc in region_ids, \
+            f"{r['name']} location={loc!r} 非合法 region_id（破 region_id 不变式）"
+
+
+def test_yizhu_clears_status_reason_in_db(game):
+    """5b F2：陷虏者易主投敌后，DB status_reason 须清（不能滞留『松山兵败被执』），
+    status_changed_turn 记本回合——否则 active 者带着旧下狱缘由，DB 自相矛盾。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    db.set_character_status(state, name, "imprisoned", "松山兵败被执", reason_code="陷虏")
+    if name in content.characters:
+        content.characters[name].status = "imprisoned"
+
+    issues.apply_score_extraction(
+        db, state,
+        {"人物变更": [{"name": name, "动作": "易主", "new_power": "houjin",
+                      "方式": "被俘而降", "反噬": {}, "reason": "剃发降清"}]},
+        content=content,
+    )
+
+    row = db.conn.execute(
+        "SELECT status, status_reason, reason_code FROM characters WHERE name=?", (name,)
+    ).fetchone()
+    assert row["status"] == "active"
+    assert row["status_reason"] != "松山兵败被执", "易主后 DB 仍滞留旧下狱缘由"
+    assert row["reason_code"] == ""
