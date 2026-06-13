@@ -1666,6 +1666,26 @@ def test_apply_score_extraction_applies_person_travel_and_exposes_transit_to(gam
         content.characters[name].transit_to = old_transit_to
 
 
+def test_simulator_court_roster_is_active_only_dismissed_in_talent_pool(game):
+    """在朝名单（court_roster）= 目前当官的（active）：用途是给 simulator 看在朝盘面 + 任命查重。
+    被削籍/致仕/在押者不进在朝名单——可起复者（居家/致仕/削籍）走人才池 offstage_ministers，
+    在押/流放者两份都不在（玩家下旨决定去留）。回归：迁移后 dismissed 者曾同时出现在
+    court_roster 和人才池，自相矛盾。注：大臣 system 的现状参照名册（registry）另有用途、故意含
+    非 active 带状态标签，不在此约束内。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    db.set_character_status(state, name, "dismissed", "削籍闲住", reason_code="获罪削籍")
+
+    payload = build_simulator_payload(state, db, decree_text="", previous_narrative="")
+    court = payload["court_roster"]
+    court_names = [r[court["cols"].index("name")] for r in court["rows"]]
+    assert name not in court_names, "被削籍者不应在在朝名单（court_roster=只放当官的）"
+
+    pool = payload["offstage_ministers"]
+    pool_names = [r[pool["cols"].index("name")] for r in pool["rows"]]
+    assert name in pool_names, "被削籍者应在人才名单 offstage_ministers（可起复）"
+
+
 def test_apply_score_extraction_rejects_invalid_person_travel(game):
     db, state, content = game
     name = active_ming_character(db, content)
