@@ -2208,3 +2208,18 @@ def test_apply_score_extraction_consort_candidate_falls_out_to_offstage(game):
         assert row["reason_code"] == "落选"
     finally:
         content.characters.pop(name, None)
+
+
+def test_reload_syncs_reason_code_status_reason_to_content(game):
+    """ADR 决定6 三面同步：回滚统一重载须把 DB 的 reason_code/status_reason 刷回
+    content.characters，否则内存对象缺 ADR 0009 新字段、三面不一致（读内存即拿空/报错）。"""
+    db, state, content = game
+    from ming_sim.session import _sync_offices_from_db_impl
+    name = active_ming_character(db, content)
+    db.set_character_status(state, name, "dismissed", "忤逆案削籍", reason_code="获罪削籍")
+
+    _sync_offices_from_db_impl(content, db)
+
+    ch = content.characters[name]
+    assert getattr(ch, "reason_code", None) == "获罪削籍", "重载未同步 reason_code"
+    assert getattr(ch, "status_reason", None) == "忤逆案削籍", "重载未同步 status_reason"
