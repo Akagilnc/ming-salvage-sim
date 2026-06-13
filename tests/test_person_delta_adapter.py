@@ -2299,6 +2299,10 @@ def test_yizhu_clears_status_reason_in_db(game):
     if name in content.characters:
         content.characters[name].status = "imprisoned"
 
+    # 下狱发生在更早回合；推进一回合再易主，status_changed_turn 才能证伪「沿用下狱回合残值」
+    # （若同回合两写则 status_changed_turn 恒等 state.turn，断言无牙、抓不住 F2 回归）。
+    state.turn += 1
+
     issues.apply_score_extraction(
         db, state,
         {"人物变更": [{"name": name, "动作": "易主", "new_power": "houjin",
@@ -2307,8 +2311,10 @@ def test_yizhu_clears_status_reason_in_db(game):
     )
 
     row = db.conn.execute(
-        "SELECT status, status_reason, reason_code FROM characters WHERE name=?", (name,)
+        "SELECT status, status_reason, status_changed_turn, reason_code FROM characters WHERE name=?", (name,)
     ).fetchone()
     assert row["status"] == "active"
     assert row["status_reason"] != "松山兵败被执", "易主后 DB 仍滞留旧下狱缘由"
+    assert row["status_reason"] == "剃发降清", "易主须把 status_reason 换成本次易主缘由（非任意非空残值即过）"
+    assert row["status_changed_turn"] == state.turn, "易主即状态变更，status_changed_turn 须记本回合（docstring 称验却漏断言=F2 半漏）"
     assert row["reason_code"] == ""
