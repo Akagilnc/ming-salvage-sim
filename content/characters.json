@@ -1584,6 +1584,1219 @@
       "debut_month": 0,
       "power_id": "bandits",
       "location": "shaanxi"
+    },
+    {
+      "name": "吴三桂",
+      "office": "辽东总兵吴襄子，武生",
+      "office_type": "边镇",
+      "faction": "军队",
+      "aliases": [
+        "吴三桂",
+        "长伯"
+      ],
+      "personal_skills": [
+        "辽东骑战",
+        "将门人脉",
+        "见机自保"
+      ],
+      "loyalty": 50,
+      "ability": 82,
+      "integrity": 38,
+      "courage": 85,
+      "style": "骁勇善变",
+      "birth_year": 1612,
+      "historical_death_year": 1678,
+      "historical_death_month": 0,
+      "status": "offstage",
+      "summary": "辽东总兵吴襄之子，将门骁锐，年少未显——边镇前程系于辽事与其向背。",
+      "debut_year": 1631,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "liaodong"
+    },
+    {
+      "name": "左良玉",
+      "office": "辽东军中下级武弁",
+      "office_type": "边镇",
+      "faction": "军队",
+      "aliases": [
+        "左良玉",
+        "昆山"
+      ],
+      "personal_skills": [
+        "临阵敢战",
+        "笼络部曲",
+        "养寇自重"
+      ],
+      "loyalty": 40,
+      "ability": 74,
+      "integrity": 33,
+      "courage": 80,
+      "style": "拥兵自重",
+      "birth_year": 1599,
+      "historical_death_year": 1645,
+      "historical_death_month": 0,
+      "status": "offstage",
+      "summary": "辽东行伍出身的悍将之才，能战而难驭，秉性中有养寇自重之患。",
+      "debut_year": 1630,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "liaodong"
+    },
+    {
+      "name": "高迎祥",
+      "office": "陕北边军逃卒，潜在流寇渠首",
+      "office_type": "外臣",
+      "faction": "流寇",
+      "aliases": [
+        "高迎祥",
+        "闯王"
+      ],
+      "personal_skills": [
+        "剽悍聚众",
+        "马队冲突",
+        "流民号召"
+      ],
+      "loyalty": 38,
+      "ability": 72,
+      "integrity": 35,
+      "courage": 80,
+      "style": "剽悍敢死",
+      "birth_year": 1591,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "offstage",
+      "summary": "陕北边军逃卒，剽悍能聚众——旱荒民变之际，或为流寇渠魁。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "bandits",
+      "location": "shaanxi"
+    },
+    {
+      "name": "罗汝才",
+      "office": "潜在流寇渠首",
+      "office_type": "外臣",
+      "faction": "流寇",
+      "aliases": [
+        "罗汝才",
+        "曹操"
+      ],
+      "personal_skills": [
+        "狡黠多谋",
+        "联营合纵",
+        "见利合分"
+      ],
+      "loyalty": 35,
+      "ability": 75,
+      "integrity": 30,
+      "courage": 70,
+      "style": "狡黠多谋",
+      "birth_year": 0,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "offstage",
+      "summary": "绰号曹操的边塞枭桀，狡黠善合纵——乱起则为诸营连横之枢。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "bandits",
+      "location": "shaanxi"
+    },
+    {
+      "name": "多尔衮",
+      "office": "和硕贝勒（后金）",
+      "office_type": "外臣",
+      "faction": "后金",
+      "aliases": [
+        "多尔衮",
+        "墨尔根戴青"
+      ],
+      "personal_skills": [
+        "八旗统兵",
+        "果决决断",
+        "权谋制衡"
+      ],
+      "loyalty": 85,
+      "ability": 85,
+      "integrity": 62,
+      "courage": 82,
+      "style": "果决深沉",
+      "birth_year": 1612,
+      "historical_death_year": 1650,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "努尔哈赤第十四子，后金少壮贝勒，果决深沉、长于权谋制衡。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "houjin",
+      "location": "jianzhou"
+    },
+    {
+      "name": "高起潜",
+      "office": "司礼监太监，知兵监军",
+      "office_type": "内臣",
+      "faction": "阉党",
+      "aliases": [
+        "高起潜"
+      ],
+      "personal_skills": [
+        "监军节制",
+        "畏战自保",
+        "内廷耳目"
+      ],
+      "loyalty": 55,
+      "ability": 48,
+      "integrity": 28,
+      "courage": 40,
+      "style": "畏战避战",
+      "birth_year": 0,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "崇祯倚信的知兵太监，屡监关宁、宣大军，怯战掣肘前线。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "beizhili"
+    },
+    {
+      "name": "孙元化",
+      "office": "兵部职方，火器西法",
+      "office_type": "兵部",
+      "faction": "西学",
+      "aliases": [
+        "孙元化",
+        "初阳"
+      ],
+      "personal_skills": [
+        "红夷炮法",
+        "西学筑台",
+        "练火器营"
+      ],
+      "loyalty": 62,
+      "ability": 80,
+      "integrity": 66,
+      "courage": 58,
+      "style": "精擅火器",
+      "birth_year": 1582,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "徐光启门生，精西法火器与红夷炮，长于筑台练兵的西学干才。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "beizhili"
+    },
+    {
+      "name": "陈新甲",
+      "office": "兵部郎中（候用）",
+      "office_type": "兵部",
+      "faction": "军队",
+      "aliases": [
+        "陈新甲"
+      ],
+      "personal_skills": [
+        "综理兵事",
+        "勤干任劳",
+        "边饷调度"
+      ],
+      "loyalty": 52,
+      "ability": 70,
+      "integrity": 45,
+      "courage": 52,
+      "style": "勤干善兵",
+      "birth_year": 0,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "offstage",
+      "summary": "举人出身、综理兵事的勤干之臣，长于边饷调度。",
+      "debut_year": 1640,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": ""
+    },
+    {
+      "name": "傅宗龙",
+      "office": "兵部边务（候用）",
+      "office_type": "边镇",
+      "faction": "军队",
+      "aliases": [
+        "傅宗龙",
+        "仲纶"
+      ],
+      "personal_skills": [
+        "边镇综理",
+        "刚直任事",
+        "督师调度"
+      ],
+      "loyalty": 58,
+      "ability": 68,
+      "integrity": 64,
+      "courage": 66,
+      "style": "刚直任事",
+      "birth_year": 0,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "offstage",
+      "summary": "刚直任事的边镇之才，能综理军务、督调边饷。",
+      "debut_year": 1639,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": ""
+    },
+    {
+      "name": "丁启睿",
+      "office": "地方监司（候用）",
+      "office_type": "外臣",
+      "faction": "军队",
+      "aliases": [
+        "丁启睿"
+      ],
+      "personal_skills": [
+        "地方综理",
+        "谨庸自守"
+      ],
+      "loyalty": 45,
+      "ability": 52,
+      "integrity": 46,
+      "courage": 44,
+      "style": "庸谨自守",
+      "birth_year": 0,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "offstage",
+      "summary": "循谨自守的地方监司之才，综理有余、果断不足。",
+      "debut_year": 1640,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": ""
+    },
+    {
+      "name": "朱常洵",
+      "office": "福王，就藩洛阳",
+      "office_type": "宗藩",
+      "faction": "宗室",
+      "aliases": [
+        "朱常洵",
+        "福王"
+      ],
+      "personal_skills": [
+        "宗藩自重",
+        "聚敛田产",
+        "坐拥厚资"
+      ],
+      "loyalty": 60,
+      "ability": 33,
+      "integrity": 25,
+      "courage": 28,
+      "style": "骄奢自重",
+      "birth_year": 1586,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "万历宠子，就藩洛阳，富甲诸藩——骄奢自重、坐拥厚资。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "henan"
+    },
+    {
+      "name": "朱常瀛",
+      "office": "桂王，就藩衡州",
+      "office_type": "宗藩",
+      "faction": "宗室",
+      "aliases": [
+        "朱常瀛",
+        "桂王"
+      ],
+      "personal_skills": [
+        "宗藩守成",
+        "藩府自保"
+      ],
+      "loyalty": 58,
+      "ability": 38,
+      "integrity": 40,
+      "courage": 35,
+      "style": "守成自保",
+      "birth_year": 1597,
+      "historical_death_year": 1645,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "万历第七子，就藩衡州的守成之藩，宗室法统一脉所系。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "huguang"
+    },
+    {
+      "name": "朱由崧",
+      "office": "福王世子",
+      "office_type": "宗藩",
+      "faction": "宗室",
+      "aliases": [
+        "朱由崧",
+        "福世子"
+      ],
+      "personal_skills": [
+        "宗藩嗣子",
+        "因循自适"
+      ],
+      "loyalty": 55,
+      "ability": 30,
+      "integrity": 28,
+      "courage": 30,
+      "style": "因循嬉怠",
+      "birth_year": 1607,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "福王朱常洵世子，因循嬉怠的宗藩嗣子。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "henan"
+    },
+    {
+      "name": "懿安皇后",
+      "office": "懿安皇后（天启帝后）",
+      "office_type": "后宫",
+      "faction": "宗室",
+      "aliases": [
+        "张嫣",
+        "懿安皇后",
+        "张太后"
+      ],
+      "personal_skills": [
+        "中宫法统",
+        "清君侧助力",
+        "持正护储"
+      ],
+      "loyalty": 80,
+      "ability": 58,
+      "integrity": 82,
+      "courage": 60,
+      "style": "持正端肃",
+      "birth_year": 1606,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "天启帝皇后、崇祯皇嫂，持正端肃；翦除魏忠贤之助力，中宫法统所重。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "beizhili"
+    },
+    {
+      "name": "张延登",
+      "office": "左都御史",
+      "office_type": "都察院",
+      "faction": "中立",
+      "aliases": [
+        "张延登"
+      ],
+      "personal_skills": [
+        "台谏纠弹",
+        "持法",
+        "清议"
+      ],
+      "loyalty": 63,
+      "ability": 62,
+      "integrity": 70,
+      "courage": 55,
+      "style": "持法纠弹",
+      "birth_year": 1566,
+      "historical_death_year": 1641,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "崇祯初左都御史，掌台谏纠弹。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": ""
+    },
+    {
+      "name": "吴甡",
+      "office": "佥都御史，巡按",
+      "office_type": "都察院",
+      "faction": "东林",
+      "aliases": [
+        "吴甡",
+        "鹿友"
+      ],
+      "personal_skills": [
+        "地方综理",
+        "荒政赈务",
+        "知兵"
+      ],
+      "loyalty": 66,
+      "ability": 75,
+      "integrity": 72,
+      "courage": 62,
+      "style": "干练任事",
+      "birth_year": 1589,
+      "historical_death_year": 1670,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "东林系干练之臣，历巡抚、后入阁，长于荒政与兵事。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": ""
+    },
+    {
+      "name": "吴昌时",
+      "office": "吏部司属",
+      "office_type": "吏部",
+      "faction": "中立",
+      "aliases": [
+        "吴昌时"
+      ],
+      "personal_skills": [
+        "铨曹钻营",
+        "结党联络",
+        "通内"
+      ],
+      "loyalty": 45,
+      "ability": 62,
+      "integrity": 28,
+      "courage": 50,
+      "style": "钻营结党",
+      "birth_year": 0,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "周延儒党羽，工于铨政钻营、结纳通内。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": ""
+    },
+    {
+      "name": "张凤翼",
+      "office": "总督，后兵部尚书",
+      "office_type": "边镇",
+      "faction": "军队",
+      "aliases": [
+        "张凤翼"
+      ],
+      "personal_skills": [
+        "边镇综理",
+        "兵部部务",
+        "畏咎自保"
+      ],
+      "loyalty": 50,
+      "ability": 60,
+      "integrity": 42,
+      "courage": 48,
+      "style": "畏咎自保",
+      "birth_year": 0,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "崇祯朝兵部之才，能综理部务边镇；遇大敌则畏咎自保。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": ""
+    },
+    {
+      "name": "朱燮元",
+      "office": "总督西南军务",
+      "office_type": "边镇",
+      "faction": "军队",
+      "aliases": [
+        "朱燮元",
+        "懋和"
+      ],
+      "personal_skills": [
+        "平叛方略",
+        "西南军务",
+        "坚毅持重"
+      ],
+      "loyalty": 75,
+      "ability": 82,
+      "integrity": 72,
+      "courage": 78,
+      "style": "坚毅持重",
+      "birth_year": 1566,
+      "historical_death_year": 1638,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "平奢安之乱的西南名督，坚毅持重。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "guizhou"
+    },
+    {
+      "name": "邹维琏",
+      "office": "巡抚",
+      "office_type": "地方",
+      "faction": "东林",
+      "aliases": [
+        "邹维琏"
+      ],
+      "personal_skills": [
+        "海防经略",
+        "刚正",
+        "御夷"
+      ],
+      "loyalty": 65,
+      "ability": 72,
+      "integrity": 74,
+      "courage": 70,
+      "style": "刚正御夷",
+      "birth_year": 0,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "刚正能御夷的巡抚之才，长于海防经略。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "fujian"
+    },
+    {
+      "name": "练国事",
+      "office": "巡抚",
+      "office_type": "地方",
+      "faction": "军队",
+      "aliases": [
+        "练国事"
+      ],
+      "personal_skills": [
+        "剿寇调度",
+        "地方综理"
+      ],
+      "loyalty": 58,
+      "ability": 66,
+      "integrity": 58,
+      "courage": 62,
+      "style": "勤事剿寇",
+      "birth_year": 0,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "历陕豫巡抚，预剿流寇军务。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "shaanxi"
+    },
+    {
+      "name": "李待问",
+      "office": "巡抚",
+      "office_type": "地方",
+      "faction": "中立",
+      "aliases": [
+        "李待问"
+      ],
+      "personal_skills": [
+        "地方综理",
+        "钱谷"
+      ],
+      "loyalty": 52,
+      "ability": 62,
+      "integrity": 55,
+      "courage": 50,
+      "style": "循谨",
+      "birth_year": 0,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "崇祯朝巡抚，理地方钱谷军务。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": ""
+    },
+    {
+      "name": "焦源溥",
+      "office": "巡抚",
+      "office_type": "地方",
+      "faction": "中立",
+      "aliases": [
+        "焦源溥"
+      ],
+      "personal_skills": [
+        "边镇地方",
+        "守土"
+      ],
+      "loyalty": 55,
+      "ability": 60,
+      "integrity": 58,
+      "courage": 60,
+      "style": "守土任事",
+      "birth_year": 0,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "大同巡抚，守土任事的边镇地方之才。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "shanxi"
+    },
+    {
+      "name": "曾樱",
+      "office": "布政使",
+      "office_type": "地方",
+      "faction": "东林",
+      "aliases": [
+        "曾樱"
+      ],
+      "personal_skills": [
+        "地方钱谷",
+        "清正",
+        "守土"
+      ],
+      "loyalty": 66,
+      "ability": 68,
+      "integrity": 76,
+      "courage": 66,
+      "style": "清正守土",
+      "birth_year": 1581,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "清正守土之臣，历布政、巡抚，钱谷干练。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "fujian"
+    },
+    {
+      "name": "余大成",
+      "office": "布政使",
+      "office_type": "地方",
+      "faction": "中立",
+      "aliases": [
+        "余大成"
+      ],
+      "personal_skills": [
+        "地方综理",
+        "奏牍"
+      ],
+      "loyalty": 50,
+      "ability": 58,
+      "integrity": 52,
+      "courage": 48,
+      "style": "循谨",
+      "birth_year": 0,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "崇祯朝布政使，预袁崇焕案周边奏议。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": ""
+    },
+    {
+      "name": "王尊德",
+      "office": "总督两广",
+      "office_type": "边镇",
+      "faction": "军队",
+      "aliases": [
+        "王尊德"
+      ],
+      "personal_skills": [
+        "两广军务",
+        "海防",
+        "地方综理"
+      ],
+      "loyalty": 56,
+      "ability": 64,
+      "integrity": 58,
+      "courage": 60,
+      "style": "持重综理",
+      "birth_year": 0,
+      "historical_death_year": 1633,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "两广总督，督岭南海防军务。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "guangdong"
+    },
+    {
+      "name": "郑芝龙",
+      "office": "海上巨商，受抚授官",
+      "office_type": "边镇",
+      "faction": "中立",
+      "aliases": [
+        "郑芝龙",
+        "飞黄"
+      ],
+      "personal_skills": [
+        "海贸巨利",
+        "水师纵横",
+        "见利转向"
+      ],
+      "loyalty": 45,
+      "ability": 76,
+      "integrity": 35,
+      "courage": 68,
+      "style": "逐利善变",
+      "birth_year": 1604,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "闽海巨商，崇祯初受抚授官，水师纵横、逐利善变；郑成功之父。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "fujian"
+    },
+    {
+      "name": "何腾蛟",
+      "office": "地方司属",
+      "office_type": "地方",
+      "faction": "东林",
+      "aliases": [
+        "何腾蛟",
+        "云从"
+      ],
+      "personal_skills": [
+        "督师调度",
+        "联络支撑",
+        "督调联络"
+      ],
+      "loyalty": 72,
+      "ability": 66,
+      "integrity": 70,
+      "courage": 68,
+      "style": "勤干任事",
+      "birth_year": 1592,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "崇祯朝地方之臣，长于督调联络、支撑局面。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": ""
+    },
+    {
+      "name": "瞿式耜",
+      "office": "地方官",
+      "office_type": "地方",
+      "faction": "东林",
+      "aliases": [
+        "瞿式耜",
+        "起田"
+      ],
+      "personal_skills": [
+        "守城经略",
+        "刚正",
+        "刚正持守"
+      ],
+      "loyalty": 76,
+      "ability": 68,
+      "integrity": 82,
+      "courage": 74,
+      "style": "刚正不阿",
+      "birth_year": 1590,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "东林清流，刚正而能守城经略。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": ""
+    },
+    {
+      "name": "郑成功",
+      "office": "泉州童子（郑芝龙子）",
+      "office_type": "未仕",
+      "faction": "军队",
+      "aliases": [
+        "郑成功",
+        "郑森"
+      ],
+      "personal_skills": [
+        "海陆治军",
+        "治军才具",
+        "闽海经略"
+      ],
+      "loyalty": 85,
+      "ability": 82,
+      "integrity": 78,
+      "courage": 84,
+      "style": "刚毅果决",
+      "birth_year": 1624,
+      "historical_death_year": 1662,
+      "historical_death_month": 0,
+      "status": "offstage",
+      "summary": "郑芝龙之子，年幼颖异——海陆之才在其禀赋，长成或为闽海长城。",
+      "debut_year": 1645,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "fujian"
+    },
+    {
+      "name": "李定国",
+      "office": "流民少年（潜在）",
+      "office_type": "未仕",
+      "faction": "流寇",
+      "aliases": [
+        "李定国"
+      ],
+      "personal_skills": [
+        "骑战方略",
+        "治军",
+        "忠勇"
+      ],
+      "loyalty": 70,
+      "ability": 82,
+      "integrity": 68,
+      "courage": 84,
+      "style": "骁勇敢战",
+      "birth_year": 1620,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "offstage",
+      "summary": "陕北流民少年，骁勇而有方略——乱世或成一方名将。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "bandits",
+      "location": "shaanxi"
+    },
+    {
+      "name": "孙可望",
+      "office": "流民少年（潜在）",
+      "office_type": "未仕",
+      "faction": "流寇",
+      "aliases": [
+        "孙可望"
+      ],
+      "personal_skills": [
+        "治军经营",
+        "跋扈",
+        "权谋"
+      ],
+      "loyalty": 50,
+      "ability": 72,
+      "integrity": 35,
+      "courage": 66,
+      "style": "跋扈擅权",
+      "birth_year": 0,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "offstage",
+      "summary": "流民少年，能治军经营而性跋扈擅权。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "bandits",
+      "location": "shaanxi"
+    },
+    {
+      "name": "张煌言",
+      "office": "童生",
+      "office_type": "未仕",
+      "faction": "东林",
+      "aliases": [
+        "张煌言",
+        "苍水"
+      ],
+      "personal_skills": [
+        "海防文武",
+        "文武兼资",
+        "忠贞"
+      ],
+      "loyalty": 82,
+      "ability": 70,
+      "integrity": 80,
+      "courage": 76,
+      "style": "忠贞文武",
+      "birth_year": 1620,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "offstage",
+      "summary": "浙东少年童生，文武兼资、刚劲敏锐。",
+      "debut_year": 1642,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "zhejiang"
+    },
+    {
+      "name": "孔有德",
+      "office": "东江毛文龙部将",
+      "office_type": "边镇",
+      "faction": "军队",
+      "aliases": [
+        "孔有德"
+      ],
+      "personal_skills": [
+        "火器水陆",
+        "临阵",
+        "反复无常"
+      ],
+      "loyalty": 40,
+      "ability": 70,
+      "integrity": 30,
+      "courage": 76,
+      "style": "骁悍反复",
+      "birth_year": 1602,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "毛文龙东江旧部，骁悍善火器水陆；能战而反复难测。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "dongjiang_area"
+    },
+    {
+      "name": "耿仲明",
+      "office": "东江毛文龙部将",
+      "office_type": "边镇",
+      "faction": "军队",
+      "aliases": [
+        "耿仲明"
+      ],
+      "personal_skills": [
+        "火器水陆",
+        "治军",
+        "见机转向"
+      ],
+      "loyalty": 42,
+      "ability": 66,
+      "integrity": 32,
+      "courage": 72,
+      "style": "骁悍善变",
+      "birth_year": 1604,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "毛文龙东江旧部，善火器水陆、见机而动。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "dongjiang_area"
+    },
+    {
+      "name": "尚可喜",
+      "office": "辽东东江明将",
+      "office_type": "边镇",
+      "faction": "军队",
+      "aliases": [
+        "尚可喜"
+      ],
+      "personal_skills": [
+        "水师边战",
+        "治军",
+        "识时转向"
+      ],
+      "loyalty": 45,
+      "ability": 70,
+      "integrity": 38,
+      "courage": 74,
+      "style": "沉鸷识时",
+      "birth_year": 1604,
+      "historical_death_year": 1676,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "辽东东江明将，沉鸷识时，长于水师边战。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "dongjiang_area"
+    },
+    {
+      "name": "多铎",
+      "office": "和硕贝勒（后金）",
+      "office_type": "外臣",
+      "faction": "后金",
+      "aliases": [
+        "多铎",
+        "额尔克楚虎尔"
+      ],
+      "personal_skills": [
+        "八旗劲旅",
+        "锐战",
+        "少壮敢任"
+      ],
+      "loyalty": 86,
+      "ability": 82,
+      "integrity": 60,
+      "courage": 86,
+      "style": "锐悍敢战",
+      "birth_year": 1614,
+      "historical_death_year": 1649,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "努尔哈赤第十五子，少壮贝勒，锐悍敢战、统八旗劲旅。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "houjin",
+      "location": "jianzhou"
+    },
+    {
+      "name": "阿济格",
+      "office": "和硕贝勒（后金）",
+      "office_type": "外臣",
+      "faction": "后金",
+      "aliases": [
+        "阿济格"
+      ],
+      "personal_skills": [
+        "八旗骁将",
+        "勇悍",
+        "粗豪"
+      ],
+      "loyalty": 80,
+      "ability": 72,
+      "integrity": 48,
+      "courage": 88,
+      "style": "勇悍粗豪",
+      "birth_year": 1605,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "努尔哈赤第十二子，八旗骁将，勇悍敢战。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "houjin",
+      "location": "jianzhou"
+    },
+    {
+      "name": "豪格",
+      "office": "和硕贝勒（后金，皇太极长子）",
+      "office_type": "外臣",
+      "faction": "后金",
+      "aliases": [
+        "豪格"
+      ],
+      "personal_skills": [
+        "统兵",
+        "储位之争",
+        "刚愎"
+      ],
+      "loyalty": 78,
+      "ability": 74,
+      "integrity": 55,
+      "courage": 80,
+      "style": "刚愎争立",
+      "birth_year": 1609,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "皇太极长子，统兵贝勒，刚愎而当储位之重。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "houjin",
+      "location": "jianzhou"
+    },
+    {
+      "name": "鳌拜",
+      "office": "后金巴牙喇（潜在）",
+      "office_type": "外臣",
+      "faction": "后金",
+      "aliases": [
+        "鳌拜"
+      ],
+      "personal_skills": [
+        "勇力冠军",
+        "死战",
+        "跋扈"
+      ],
+      "loyalty": 75,
+      "ability": 68,
+      "integrity": 45,
+      "courage": 90,
+      "style": "勇力跋扈",
+      "birth_year": 0,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "offstage",
+      "summary": "后金少壮勇将，勇力冠军、性悍而跋扈。",
+      "debut_year": 1634,
+      "debut_month": 0,
+      "power_id": "houjin",
+      "location": "jianzhou"
+    },
+    {
+      "name": "福临",
+      "office": "后金皇子（皇太极第九子）",
+      "office_type": "外臣",
+      "faction": "后金",
+      "aliases": [
+        "福临"
+      ],
+      "personal_skills": [
+        "冲龄践阼"
+      ],
+      "loyalty": 70,
+      "ability": 60,
+      "integrity": 55,
+      "courage": 55,
+      "style": "冲龄之主",
+      "birth_year": 1638,
+      "historical_death_year": 1661,
+      "historical_death_month": 0,
+      "status": "offstage",
+      "summary": "皇太极第九子（崇祯十一年生），后金幼支。",
+      "debut_year": 1638,
+      "debut_month": 0,
+      "power_id": "houjin",
+      "location": "jianzhou"
+    },
+    {
+      "name": "朱由榔",
+      "office": "宗室幼藩（桂藩）",
+      "office_type": "宗藩",
+      "faction": "宗室",
+      "aliases": [
+        "朱由榔"
+      ],
+      "personal_skills": [
+        "宗藩法统",
+        "宗藩守土"
+      ],
+      "loyalty": 58,
+      "ability": 40,
+      "integrity": 48,
+      "courage": 42,
+      "style": "守成宗藩",
+      "birth_year": 1623,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "offstage",
+      "summary": "桂藩幼支，宗室法统一脉。",
+      "debut_year": 1646,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "huguang"
+    },
+    {
+      "name": "朱术桂",
+      "office": "宗室幼藩",
+      "office_type": "宗藩",
+      "faction": "宗室",
+      "aliases": [
+        "朱术桂"
+      ],
+      "personal_skills": [
+        "宗藩端介",
+        "守礼"
+      ],
+      "loyalty": 62,
+      "ability": 42,
+      "integrity": 66,
+      "courage": 60,
+      "style": "宗藩端介",
+      "birth_year": 1617,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "offstage",
+      "summary": "宗室远支幼藩，性端介守礼、谨持藩分。",
+      "debut_year": 1645,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": ""
     }
   ]
 }
