@@ -223,12 +223,17 @@ def _talent_pool_rows(db: "GameDB") -> List[Dict[str, object]]:
     """ADR 0009 人才池视图（读取端闭环）：居家/致仕/削籍在世者皆可起复，带
     status + reason_code（机读）+ status_reason（可读），裁判与玩家才看得见
     「某公因忤逆案削籍居家」。simulator 盘面与 extractor 上下文共用此源、防两处漂移。
-    键名沿用 offstage_ministers（prompt/dedup 已引；语义已扩为起复候选池）。"""
+    键名沿用 offstage_ministers（prompt/dedup 已引；语义已扩为起复候选池）。
+
+    ADR L104 池 = (active+身名分听用候铨) ∪ (offstage/retired/dismissed 在世)。active 半=
+    顶替离任者（office='听用候铨'，仍 active 可即起复，S5 核心玩趣）。锚 身名分 office='听用候铨'
+    （非 office_type=待铨——后者兼作分类失败 fallback、被污染，决定10/L94）。"""
     return [
         dict(r) for r in db.conn.execute(
             "SELECT name,office,office_type,faction,status,reason_code,status_reason,"
             "power_id,location,transit_to,debut_year,debut_month "
             "FROM characters WHERE status IN ('offstage','retired','dismissed') "
+            "OR (status='active' AND office='听用候铨') "
             "ORDER BY status, name"
         ).fetchall()
     ]

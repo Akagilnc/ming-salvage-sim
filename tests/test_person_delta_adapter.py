@@ -2019,3 +2019,32 @@ def test_political_marker_is_audit_only_no_status_premigration(game):
         db.set_character_status = orig_set
         content.characters[name].status = old_status
         content.characters[name].office = old_office
+
+
+def test_simulator_payload_talent_pool_includes_displaced_oncall_holder(game):
+    """ADR L104 人才池 = (active+身名分听用候铨) ∪ (offstage/retired/dismissed)。
+    顶替离任→听用候铨 的人仍 active，但必须在人才池盘面可见（S5 核心玩趣），
+    否则裁判/玩家看不见可起复之人。锚 office='听用候铨'（身名分），绕 office_type 污染。"""
+    db, state, _ = game
+    from ming_sim.simulation import build_simulator_payload
+
+    name = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND office_type!='后宫' "
+        "ORDER BY rowid LIMIT 1"
+    ).fetchone()["name"]
+    db.conn.execute(
+        "UPDATE characters SET office='听用候铨', status_reason='被顶替', "
+        "reason_code='被顶替' WHERE name=?",
+        (name,),
+    )
+    db.conn.commit()
+
+    payload = build_simulator_payload(state, db, "", "")
+    pool = payload.get("offstage_ministers") or {}
+    cols = pool.get("cols") or []
+    pool_rows = pool.get("rows") or []
+    names = {r[cols.index("name")] for r in pool_rows}
+    assert name in names, "顶替离任→听用候铨 的 active 候铨者缺失于人才池盘面（ADR L104 active 半）"
+    prow = next(r for r in pool_rows if r[cols.index("name")] == name)
+    assert prow[cols.index("reason_code")] == "被顶替"
+    assert prow[cols.index("status")] == "active"
