@@ -2319,6 +2319,488 @@
       "debut_month": 0,
       "power_id": "ming",
       "location": "guangdong"
+    },
+    {
+      "name": "郑芝龙",
+      "office": "海上巨商，受抚授官",
+      "office_type": "边镇",
+      "faction": "中立",
+      "aliases": [
+        "郑芝龙",
+        "飞黄"
+      ],
+      "personal_skills": [
+        "海贸巨利",
+        "水师纵横",
+        "见利转向"
+      ],
+      "loyalty": 45,
+      "ability": 76,
+      "integrity": 35,
+      "courage": 68,
+      "style": "逐利善变",
+      "birth_year": 1604,
+      "historical_death_year": 1661,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "闽海巨商，崇祯初受抚授官；郑成功之父，后降清。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "fujian"
+    },
+    {
+      "name": "何腾蛟",
+      "office": "地方司属",
+      "office_type": "地方",
+      "faction": "东林",
+      "aliases": [
+        "何腾蛟",
+        "云从"
+      ],
+      "personal_skills": [
+        "督师调度",
+        "联络支撑",
+        "支撑残局"
+      ],
+      "loyalty": 72,
+      "ability": 66,
+      "integrity": 70,
+      "courage": 68,
+      "style": "支撑残局",
+      "birth_year": 1592,
+      "historical_death_year": 1649,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "崇祯朝地方之臣；日后督师两湖，支撑南明残局。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": ""
+    },
+    {
+      "name": "瞿式耜",
+      "office": "地方官",
+      "office_type": "地方",
+      "faction": "东林",
+      "aliases": [
+        "瞿式耜",
+        "起田"
+      ],
+      "personal_skills": [
+        "守城经略",
+        "刚正",
+        "孤忠死节"
+      ],
+      "loyalty": 76,
+      "ability": 68,
+      "integrity": 82,
+      "courage": 74,
+      "style": "刚正孤忠",
+      "birth_year": 1590,
+      "historical_death_year": 1651,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "东林清流之臣；日后辅永历，桂林殉国。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": ""
+    },
+    {
+      "name": "郑成功",
+      "office": "泉州童子（郑芝龙子）",
+      "office_type": "未仕",
+      "faction": "军队",
+      "aliases": [
+        "郑成功",
+        "郑森",
+        "国姓爷"
+      ],
+      "personal_skills": [
+        "海陆治军",
+        "孤忠",
+        "跨海图复"
+      ],
+      "loyalty": 85,
+      "ability": 82,
+      "integrity": 78,
+      "courage": 84,
+      "style": "孤忠刚毅",
+      "birth_year": 1624,
+      "historical_death_year": 1662,
+      "historical_death_month": 0,
+      "status": "offstage",
+      "summary": "郑芝龙子，年幼；日后举闽海抗清、复台。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "fujian"
+    },
+    {
+      "name": "李定国",
+      "office": "流民少年（潜在）",
+      "office_type": "未仕",
+      "faction": "流寇",
+      "aliases": [
+        "李定国"
+      ],
+      "personal_skills": [
+        "骑战方略",
+        "治军",
+        "忠烈"
+      ],
+      "loyalty": 70,
+      "ability": 82,
+      "integrity": 68,
+      "courage": 84,
+      "style": "骁勇忠烈",
+      "birth_year": 1620,
+      "historical_death_year": 1662,
+      "historical_death_month": 0,
+      "status": "offstage",
+      "summary": "陕北流民少年；日后张献忠义子、南明柱石，两蹶名王。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "bandits",
+      "location": "shaanxi"
+    },
+    {
+      "name": "孙可望",
+      "office": "流民少年（潜在）",
+      "office_type": "未仕",
+      "faction": "流寇",
+      "aliases": [
+        "孙可望"
+      ],
+      "personal_skills": [
+        "治军经营",
+        "跋扈",
+        "权谋"
+      ],
+      "loyalty": 50,
+      "ability": 72,
+      "integrity": 35,
+      "courage": 66,
+      "style": "跋扈擅权",
+      "birth_year": 0,
+      "historical_death_year": 1660,
+      "historical_death_month": 0,
+      "status": "offstage",
+      "summary": "张献忠义子；日后据滇黔、挟永历，终叛降清。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "bandits",
+      "location": "shaanxi"
+    },
+    {
+      "name": "张煌言",
+      "office": "童生",
+      "office_type": "未仕",
+      "faction": "东林",
+      "aliases": [
+        "张煌言",
+        "苍水"
+      ],
+      "personal_skills": [
+        "海上抗清",
+        "文武兼资",
+        "忠贞"
+      ],
+      "loyalty": 82,
+      "ability": 70,
+      "integrity": 80,
+      "courage": 76,
+      "style": "忠贞文武",
+      "birth_year": 1620,
+      "historical_death_year": 1664,
+      "historical_death_month": 0,
+      "status": "offstage",
+      "summary": "少年童生；日后浙海抗清二十年，从容就义。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "zhejiang"
+    },
+    {
+      "name": "孔有德",
+      "office": "东江毛文龙部将",
+      "office_type": "边镇",
+      "faction": "军队",
+      "aliases": [
+        "孔有德"
+      ],
+      "personal_skills": [
+        "火器水陆",
+        "临阵",
+        "反复无常"
+      ],
+      "loyalty": 40,
+      "ability": 70,
+      "integrity": 30,
+      "courage": 76,
+      "style": "骁悍反复",
+      "birth_year": 1602,
+      "historical_death_year": 1652,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "毛文龙东江旧部；吴桥兵变后降金，后为定南王。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "dongjiang_area"
+    },
+    {
+      "name": "耿仲明",
+      "office": "东江毛文龙部将",
+      "office_type": "边镇",
+      "faction": "军队",
+      "aliases": [
+        "耿仲明"
+      ],
+      "personal_skills": [
+        "火器水陆",
+        "治军",
+        "见机转向"
+      ],
+      "loyalty": 42,
+      "ability": 66,
+      "integrity": 32,
+      "courage": 72,
+      "style": "骁悍善变",
+      "birth_year": 1604,
+      "historical_death_year": 1649,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "毛文龙东江旧部；后随孔有德降金，封靖南王。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "dongjiang_area"
+    },
+    {
+      "name": "尚可喜",
+      "office": "辽东东江明将",
+      "office_type": "边镇",
+      "faction": "军队",
+      "aliases": [
+        "尚可喜"
+      ],
+      "personal_skills": [
+        "水师边战",
+        "治军",
+        "识时转向"
+      ],
+      "loyalty": 45,
+      "ability": 70,
+      "integrity": 38,
+      "courage": 74,
+      "style": "沉鸷识时",
+      "birth_year": 1604,
+      "historical_death_year": 1676,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "辽东东江明将；后浮海降金，终为平南王、三藩之一。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "dongjiang_area"
+    },
+    {
+      "name": "多铎",
+      "office": "和硕贝勒（后金）",
+      "office_type": "外臣",
+      "faction": "后金",
+      "aliases": [
+        "多铎",
+        "额尔克楚虎尔"
+      ],
+      "personal_skills": [
+        "八旗劲旅",
+        "锐战",
+        "少壮敢任"
+      ],
+      "loyalty": 86,
+      "ability": 82,
+      "integrity": 60,
+      "courage": 86,
+      "style": "锐悍敢战",
+      "birth_year": 1614,
+      "historical_death_year": 1649,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "努尔哈赤第十五子，少壮贝勒；日后下江南、屠扬州。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "houjin",
+      "location": "jianzhou"
+    },
+    {
+      "name": "阿济格",
+      "office": "和硕贝勒（后金）",
+      "office_type": "外臣",
+      "faction": "后金",
+      "aliases": [
+        "阿济格"
+      ],
+      "personal_skills": [
+        "八旗骁将",
+        "勇悍",
+        "粗豪"
+      ],
+      "loyalty": 80,
+      "ability": 72,
+      "integrity": 48,
+      "courage": 88,
+      "style": "勇悍粗豪",
+      "birth_year": 1605,
+      "historical_death_year": 1651,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "努尔哈赤第十二子，八旗骁将，勇悍敢战。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "houjin",
+      "location": "jianzhou"
+    },
+    {
+      "name": "豪格",
+      "office": "和硕贝勒（后金，皇太极长子）",
+      "office_type": "外臣",
+      "faction": "后金",
+      "aliases": [
+        "豪格"
+      ],
+      "personal_skills": [
+        "统兵",
+        "储位之争",
+        "刚愎"
+      ],
+      "loyalty": 78,
+      "ability": 74,
+      "integrity": 55,
+      "courage": 80,
+      "style": "刚愎争立",
+      "birth_year": 1609,
+      "historical_death_year": 1648,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "皇太极长子，统兵贝勒；日后储位之争失势。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "houjin",
+      "location": "jianzhou"
+    },
+    {
+      "name": "鳌拜",
+      "office": "后金巴牙喇（潜在）",
+      "office_type": "外臣",
+      "faction": "后金",
+      "aliases": [
+        "鳌拜"
+      ],
+      "personal_skills": [
+        "勇力冠军",
+        "死战",
+        "跋扈"
+      ],
+      "loyalty": 75,
+      "ability": 68,
+      "integrity": 45,
+      "courage": 90,
+      "style": "勇力跋扈",
+      "birth_year": 0,
+      "historical_death_year": 1669,
+      "historical_death_month": 0,
+      "status": "offstage",
+      "summary": "后金少壮勇将；日后清初辅政、专擅遭擒。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "houjin",
+      "location": "jianzhou"
+    },
+    {
+      "name": "福临",
+      "office": "（后金皇子，未生）",
+      "office_type": "外臣",
+      "faction": "后金",
+      "aliases": [
+        "福临",
+        "顺治"
+      ],
+      "personal_skills": [
+        "冲龄践阼"
+      ],
+      "loyalty": 70,
+      "ability": 60,
+      "integrity": 55,
+      "courage": 55,
+      "style": "冲龄之主",
+      "birth_year": 1638,
+      "historical_death_year": 1661,
+      "historical_death_month": 0,
+      "status": "offstage",
+      "summary": "皇太极第九子；日后入关为顺治帝。",
+      "debut_year": 1638,
+      "debut_month": 0,
+      "power_id": "houjin",
+      "location": "jianzhou"
+    },
+    {
+      "name": "朱由榔",
+      "office": "宗室幼藩（桂藩）",
+      "office_type": "宗藩",
+      "faction": "宗室",
+      "aliases": [
+        "朱由榔",
+        "永历"
+      ],
+      "personal_skills": [
+        "宗藩法统",
+        "流亡支撑"
+      ],
+      "loyalty": 58,
+      "ability": 40,
+      "integrity": 48,
+      "courage": 42,
+      "style": "流亡之主",
+      "birth_year": 1623,
+      "historical_death_year": 1662,
+      "historical_death_month": 0,
+      "status": "offstage",
+      "summary": "桂藩幼支；日后立为永历帝，南明最后法统。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "huguang"
+    },
+    {
+      "name": "朱术桂",
+      "office": "宗室幼藩",
+      "office_type": "宗藩",
+      "faction": "宗室",
+      "aliases": [
+        "朱术桂",
+        "宁靖王"
+      ],
+      "personal_skills": [
+        "宗藩孤忠",
+        "守节"
+      ],
+      "loyalty": 62,
+      "ability": 42,
+      "integrity": 66,
+      "courage": 60,
+      "style": "宗藩孤忠",
+      "birth_year": 1617,
+      "historical_death_year": 1683,
+      "historical_death_month": 0,
+      "status": "offstage",
+      "summary": "宗室幼藩；日后宁靖王，守台湾、明亡殉国。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": ""
     }
   ]
 }
