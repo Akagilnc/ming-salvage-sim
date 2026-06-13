@@ -2175,6 +2175,59 @@ def test_disposition_manual_rollback_restores_memory_reason_fields(game, monkeyp
         f"处置回滚漏还原内存 reason_code：内存={ch.reason_code!r} != DB {row['reason_code']!r}"
 
 
+def test_unified_appointment_resolves_alias_before_hallucinated_guard(game):
+    """5b（PR#106 R3 codex P2）：人物变更 任命 用在册大臣别名时须先 _find_existing_minister 归一再判
+    在册——此前仅按确切 key 判 → 别名任命被误拒 hallucinated_id、玩家指令丢失（旧 office_changes 路
+    直调含归一的 apply_office_appointment 无此退化；最严重落库 bug 类）。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    db.set_character_status(state, name, "dismissed", "削籍", reason_code="获罪削籍")
+    content.characters[name].status = "dismissed"
+    alias = "孤例别名阁老"
+    ch = content.characters[name]
+    ch.aliases = list(ch.aliases or []) + [alias]
+
+    issues.apply_score_extraction(
+        db, state,
+        {"人物变更": [{"name": alias, "动作": "任命", "office": "陕西总督", "reason": "起用"}]},
+        content=content,
+    )
+
+    row = db.conn.execute(
+        "SELECT status, office FROM characters WHERE name=?", (name,)
+    ).fetchone()
+    assert row["status"] == "active" and "陕西总督" in (row["office"] or ""), \
+        f"别名任命应归一落到 canonical 人物并起复授官：status={row['status']!r} office={row['office']!r}"
+
+
+def test_new_appointment_falsy_return_restores_snapshot(game, monkeypatch):
+    """5b（PR#106 R3 gemini high，防御 P1）：新建档分支若 apply_appointment 改库后返回假值（非抛错），
+    须 _restore_person_write_state 还原快照、免半落库（第一铁律）。现 apply_appointment 的假值返回均
+    在改库前早退故无活 bug，本测试锁防御契约：mutate-then-falsy 也不留半落库。"""
+    from ming_sim import session as _session
+    db, state, content = game
+    victim = active_ming_character(db, content)
+    orig_office = db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (victim,)
+    ).fetchone()["office"]
+
+    def mutate_then_falsy(*_a, **_k):
+        db.conn.execute("UPDATE characters SET office='脏半落库' WHERE name=?", (victim,))
+        db.conn.commit()
+        return ("", "")
+    monkeypatch.setattr(_session, "apply_appointment", mutate_then_falsy)
+
+    res = issues.apply_office_appointment(
+        db, state, content, None, "不在册新人甲", "陕西总督", reason="新任"
+    )
+    assert res.get("rejected"), f"falsy-return 应兜成 rejected：{res}"
+    now_office = db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (victim,)
+    ).fetchone()["office"]
+    assert now_office == orig_office, \
+        f"falsy-return 后半落库未回滚：victim office={now_office!r} 期望 {orig_office!r}"
+
+
 def test_simulator_payload_talent_pool_includes_displaced_oncall_holder(game):
     """ADR L104 人才池 = (active+身名分听用候铨) ∪ (offstage/retired/dismissed)。
     顶替离任→听用候铨 的人仍 active，但必须在人才池盘面可见（S5 核心玩趣），
