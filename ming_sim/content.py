@@ -73,8 +73,8 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             debut_year=int(item.get("debut_year") or 0),
             debut_month=int(item.get("debut_month") or 0),
             status=str(item.get("status") or "active"),
-            status_reason=str(item.get("status_reason") or ""),
-            reason_code=str(item.get("reason_code") or ""),
+            status_reason=str(item.get("status_reason") or "").strip(),
+            reason_code=str(item.get("reason_code") or "").strip(),
             summary=str(item.get("summary") or ""),
             portrait_id=str(item.get("portrait_id") or ""),
         )

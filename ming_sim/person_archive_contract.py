@@ -121,7 +121,9 @@ def resolve_person_transition(
     )
     if title_kind_override is not None:
         return title_kind_override
-    return PERSON_TRANSITION_MATRIX[status_key][action_key]
+    # 防御（5b r1 PR #106 gemini）：status/action 非矩阵已知 key（历史脏数据/未预期输入）时
+    # 用 .get() 回落 reject 而非 KeyError 崩结算——状态白名单在 applier 先校验，此为深防。
+    return PERSON_TRANSITION_MATRIX.get(status_key, {}).get(action_key, "reject:invalid_transition")
 
 
 PERSON_TRANSITION_MATRIX = {

@@ -1766,7 +1766,7 @@ class GameDB:
                 action,
                 str(payload_summary or "")[:200],
                 str(derived_from or "")[:120],
-                normalized_text[:500],
+                normalized_text,  # 全量存：normalized 是结构化审计 JSON，[:500] 会从中间切断成不可解析（PR #106 CodeRabbit）
                 str(source or "")[:80],
             ),
         )

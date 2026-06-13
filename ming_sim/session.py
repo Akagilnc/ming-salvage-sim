@@ -367,7 +367,7 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
             reason_code=row["reason_code"] or "",
             power_id=row["power_id"],
             location=row["location"],
-            transit_to=row["transit_to"],
+            transit_to=row["transit_to"] or "",
             portrait_id=row["portrait_id"],
             summary=row["summary"],
         )
