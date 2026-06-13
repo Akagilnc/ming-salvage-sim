@@ -2459,7 +2459,7 @@
       "historical_death_month": 0,
       "status": "offstage",
       "summary": "陕北流民少年，骁勇而有方略——乱世或成一方名将。",
-      "debut_year": 1640,
+      "debut_year": 0,
       "debut_month": 0,
       "power_id": "bandits",
       "location": "shaanxi"
@@ -2487,7 +2487,7 @@
       "historical_death_month": 0,
       "status": "offstage",
       "summary": "流民少年，能治军经营而性跋扈擅权。",
-      "debut_year": 1644,
+      "debut_year": 0,
       "debut_month": 0,
       "power_id": "bandits",
       "location": "shaanxi"
@@ -2515,7 +2515,7 @@
       "historical_death_year": 0,
       "historical_death_month": 0,
       "status": "offstage",
-      "summary": "浙东少年童生，文武兼资、忠贞有节。",
+      "summary": "浙东少年童生，文武兼资、刚劲敏锐。",
       "debut_year": 1642,
       "debut_month": 0,
       "power_id": "ming",
@@ -2727,13 +2727,13 @@
         "福临"
       ],
       "personal_skills": [
-        "冲龄践阼"
+        "幼弱未定"
       ],
       "loyalty": 70,
       "ability": 60,
       "integrity": 55,
       "courage": 55,
-      "style": "冲龄之主",
+      "style": "皇子幼支",
       "birth_year": 1638,
       "historical_death_year": 1661,
       "historical_death_month": 0,
