@@ -1931,3 +1931,40 @@ def test_personnel_secret_module_fields_only_advertise_unified_person_key():
 
     assert "人物变更" in allowed
     assert {"appointments", "office_changes", "character_status_changes", "character_power_changes"}.isdisjoint(allowed)
+
+
+def test_simulator_payload_talent_pool_includes_retired_dismissed_with_reason_code(game):
+    """ADR 0009 人才池视图（读取端闭环）：致仕/削籍在世者必须进盘面、带 reason_code，
+    否则裁判与玩家看不见「某公因忤逆案削籍居家」、无从起复。offstage_ministers 即此池。"""
+    db, state, _ = game
+    from ming_sim.simulation import build_simulator_payload
+
+    rows = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND office_type!='后宫' "
+        "ORDER BY rowid LIMIT 2"
+    ).fetchall()
+    retired_name, dismissed_name = rows[0]["name"], rows[1]["name"]
+    db.conn.execute(
+        "UPDATE characters SET status='retired', reason_code='致仕', "
+        "status_reason='年老乞休' WHERE name=?",
+        (retired_name,),
+    )
+    db.conn.execute(
+        "UPDATE characters SET status='dismissed', reason_code='获罪削籍', "
+        "status_reason='忤逆案削籍居家' WHERE name=?",
+        (dismissed_name,),
+    )
+    db.conn.commit()
+
+    payload = build_simulator_payload(state, db, "", "")
+    pool = payload.get("offstage_ministers") or {}
+    cols = pool.get("cols") or []
+    pool_rows = pool.get("rows") or []
+
+    assert "reason_code" in cols, f"人才池视图缺 reason_code 列：{cols}"
+    assert "status" in cols, f"人才池视图缺 status 列（区分致仕/削籍/居家）：{cols}"
+    names = {r[cols.index("name")] for r in pool_rows}
+    assert retired_name in names, "致仕者缺失于人才池视图"
+    assert dismissed_name in names, "削籍者缺失于人才池视图"
+    drow = next(r for r in pool_rows if r[cols.index("name")] == dismissed_name)
+    assert drow[cols.index("reason_code")] == "获罪削籍"

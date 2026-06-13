@@ -219,6 +219,21 @@ def _auto_table(rows: List[Dict[str, object]]) -> Dict[str, object]:
     return _table(rows, cols)
 
 
+def _talent_pool_rows(db: "GameDB") -> List[Dict[str, object]]:
+    """ADR 0009 人才池视图（读取端闭环）：居家/致仕/削籍在世者皆可起复，带
+    status + reason_code（机读）+ status_reason（可读），裁判与玩家才看得见
+    「某公因忤逆案削籍居家」。simulator 盘面与 extractor 上下文共用此源、防两处漂移。
+    键名沿用 offstage_ministers（prompt/dedup 已引；语义已扩为起复候选池）。"""
+    return [
+        dict(r) for r in db.conn.execute(
+            "SELECT name,office,office_type,faction,status,reason_code,status_reason,"
+            "power_id,location,transit_to,debut_year,debut_month "
+            "FROM characters WHERE status IN ('offstage','retired','dismissed') "
+            "ORDER BY status, name"
+        ).fetchall()
+    ]
+
+
 
 
 def build_simulator_payload(
@@ -291,6 +306,9 @@ def build_simulator_payload(
         "armies": _auto_table(army_rows),
         "buildings": _auto_table(db.building_payload()),
         "court_roster": court_roster,
+        # ADR 0009 人才池视图（读取端闭环）：居家/致仕/削籍在世者带 reason_code，
+        # 裁判与玩家看得见可起复之人。自动转 TSV（build_simulator_context 尾部兜底）。
+        "offstage_ministers": _auto_table(_talent_pool_rows(db)),
         "deaths_this_turn": deaths_this_turn or [],
         "debuts_this_turn": debuts_this_turn or [],
         "relevant_memories": relevant_memories or [],
@@ -476,12 +494,8 @@ def _extractor_context_payload(
             "FROM characters WHERE status='active' ORDER BY rowid"
         ).fetchall()
     ]
-    offstage_ministers = [
-        dict(r) for r in db.conn.execute(
-            "SELECT name,office,faction,power_id,location,transit_to,debut_year,debut_month "
-            "FROM characters WHERE status='offstage' ORDER BY name"
-        ).fetchall()
-    ]
+    # ADR 0009 人才池视图：与 simulator 盘面共用 _talent_pool_rows（防两处漂移）。
+    offstage_ministers = _talent_pool_rows(db)
     return {
         "turn": {"year": state.year, "period": state.period, "turn": state.turn},
         "narrative": narrative,
