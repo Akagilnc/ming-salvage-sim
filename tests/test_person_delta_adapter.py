@@ -1680,6 +1680,8 @@ def test_simulator_court_roster_is_active_only_dismissed_in_talent_pool(game):
     court = payload["court_roster"]
     court_names = [r[court["cols"].index("name")] for r in court["rows"]]
     assert name not in court_names, "被削籍者不应在在朝名单（court_roster=只放当官的）"
+    # 5b r6（codex-b high）：active 外臣（非明势力，如后金皇太极）不进 Ming 在朝名单（power_id='ming'）
+    assert "皇太极" not in court_names, "active 非明势力人物（外臣）不应在 Ming 在朝名单"
 
     pool = payload["offstage_ministers"]
     pool_names = [r[pool["cols"].index("name")] for r in pool["rows"]]
@@ -2175,6 +2177,26 @@ def test_legacy_office_pollution_migrated_on_load(game):
     assert row("孙承宗")["status"] == "active", "已起复者不得被误降"
     assert row("韩爌")["status"] == "active"
     assert row("袁可立")["status"] == "active"
+
+
+def test_legacy_office_pollution_resolves_transit_to_region_id(game):
+    """5b r6（Gemini high）：在途 office 串迁移须把中文目的地解析成 region_id 落 transit_to。
+    旧码 `mm.group(1) in region_ids`（中文「辽东」vs 英文 region id「liaodong」）恒 False
+    → transit_to 永不落（死分支）；应改用 match_region_id_from_text 解析中文目的地。"""
+    db, _, content = game
+    name = active_ming_character(db, content)
+    db.conn.execute(
+        "UPDATE characters SET office=?, transit_to='', status='active' WHERE name=?",
+        ("兵部尚书督师辽东（在途）", name),
+    )
+    db.conn.commit()
+    db._migrate_legacy_office_pollution()
+    row2 = db.conn.execute(
+        "SELECT office, transit_to FROM characters WHERE name=?", (name,)
+    ).fetchone()
+    assert "在途" not in (row2["office"] or ""), "在途 串应清除"
+    assert row2["transit_to"] == "liaodong", \
+        f"在途辽东 应解析 transit_to=liaodong（中文→region_id），实际 {row2['transit_to']!r}"
 
 
 def test_historical_death_tick_sets_reason_code(game):
