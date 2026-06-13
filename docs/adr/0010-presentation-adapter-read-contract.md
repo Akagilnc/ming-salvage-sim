@@ -18,13 +18,15 @@
 | 势力 | 3 | |
 | 派系 | 2 | 仅 prose，从未结构化 |
 
-已有**半个 seam**：`_auto_table()`（`simulation.py:212`，array-of-dicts → `{cols,rows}` TSV）。六类实体都过它转 TSV，**但每个实体各自手拼 row**（自己的 SQL + dict 映射），row 构造没统一。
+已有**半个 seam**：`_auto_table()`（`simulation.py:212`，array-of-dicts → `{cols,rows}` TSV）。region/army/building/character/power **过它转 TSV，但每个实体各自手拼 row**（自己的 SQL + dict 映射），row 构造没统一；Faction 仅 prose、Event 走 `issue_to_payload` —— 连「过不过 `_auto_table`」本身都不一致，也是散落的一种。
 
 ## 决定 1：呈现适配器 = 段适配器的读取端孪生，不合并
 
-每类有状态实体一个**独立**的呈现适配器（读），与段适配器（写）**并列、在同一 per-实体 registry 登记**。
+每类有状态实体一个**独立**的呈现适配器（读），与段适配器（写）**并列、按 per-实体 共置**。
 
-不合并成单一「实体适配器」的理由：写（delta items → DB）与读（model/DB → LLM 文本）**数据流相反、输入不同、代码位置不同**，是两个 seam；one adapter ≠ 把反向数据流塞进同一接口（deletion test：硬并是捆两件不相干的事，不concentrate 复杂度）。registry 共置保证「实体 X 的写适配器 + 读适配器」一处可寻，locality 不丢。
+> **「共置」是本 ADR 要新引入的实体适配器目录/索引,不是复用现成基建**：① 不是 `registry.py` 的 `MinisterRegistry`（那是 agent 刷新用的运行时登记，别撞术语）；② 0008 的写适配器现住在 `applier.py` 的各 section、并无「registry」，本 ADR 需明说写适配器如何挪进/登记到这个新目录。共置只是一条**约定**：实体 X 的读+写适配器一处可寻。
+
+不合并成单一「实体适配器」的理由：写（delta items → DB）与读（model/DB → LLM 文本）**数据流相反、输入不同、代码位置不同**，是两个 seam；one adapter ≠ 把反向数据流塞进同一接口（deletion test：硬并是捆两件不相干的事，不concentrate 复杂度）。共置约定保证「实体 X 的写适配器 + 读适配器」一处可寻，locality 不丢。
 
 ## 决定 2：呈现两形状 —— 名册行 + 全档，字段集进契约
 
@@ -41,7 +43,7 @@
 
 现状：玩家只见 **LLM 输出**（邸报、大臣开口），有状态实体字段**从不直接渲染给皇帝**——唯一**玩家面**漏点 `skills.py:88` 的 debug print（`属性：忠诚X | 能力Y`）。（`db.py` 的 army_brief/army_detail 等也吐裸数值，但消费者是 inspect 工具 / simulator payload = 机面，属允许范畴。）
 
-故 P4 **不做成「人面渲染方法」**（那是空槽，将来 web 人物面板才需要），做成横在所有渲染之上的保证。**守门测试的扫描面 = 玩家面**（CLI 终端 print + 邸报装配路径），**排除** agent system prompt / inspect 工具 / simulator payload 这些机面全档：
+故 P4 **不做成「人面渲染方法」**（那是空槽，将来 web 人物面板才需要），做成横在所有渲染之上的保证。**守门面 = 玩家输出边界（不分 CLI/web，按本游戏 web 为主定，#96）**——把守门定在「最终呈现给皇帝的文本」这个共享边界上，覆盖 CLI 终端 print + **web 大臣对话 / SSE 响应 / 存储的对话历史** + 邸报装配路径；**排除** agent system prompt / inspect 工具 / simulator payload 这些机面全档。**不可枚举成 CLI-only**——web 大臣对话若旁路 LLM 直拼实体字段就漏。
 
 - **构造级**：没有任何呈现方法把原始数值吐给玩家面；数值→定性映射（若将来需要人面渲染）是呈现适配器私有。
 - **测试级（钉死）**：回归测试扫人面输出 + 邸报装配路径，**出现裸角色属性数值即红**——禁的是**角色属性**（忠诚/能力/清廉/胆略等）；**世界事实数值（年/月/银两/兵额/城防门数等）是玩家本就该见的，不禁**。守门规则按「属性字段名 + 其值」匹配，不是「任何数字即红」。P4 从「prompt 口头纪律」变成 CI 守门。
@@ -57,9 +59,9 @@
 
 ## 验收（实现 PR 用）
 
-- 48+ 散落点全迁进各实体的呈现适配器；`_auto_table` seam 复用不动。
-- 名册行 / 全档字段集有断言测试（钉死列集，咬住军队三处漂移）。
-- P4 守门测试：**玩家面**（CLI 终端 print + 邸报装配路径）无裸数值（红/绿）；不扫机面全档。
+- 48+ 散落点全迁进各实体的呈现适配器；`_auto_table` seam 复用不动。（呈现适配器的具体接口签名留实现 PR 定；本 ADR 只钉契约：两形状 + 列集 + P4 守门面。）
+- 名册行 / 全档字段集有断言测试（钉死列集，咬住军队漂移；实现 PR 钉 canonical 列集前先枚举 simulator 侧实际列数作可查基线 —— 现 roster 17 已实核，simulator「19」与 `db.py` 第三变体待枚举）。
+- P4 守门测试：扫**玩家输出边界**（CLI print + web 大臣对话/SSE/对话历史 + 邸报装配路径）无裸角色属性数值（红/绿）；不扫机面全档（agent prompt/inspect/simulator payload）。
 - 人物两套扮演头（`registry.py:437` 后宫 / `registry.py:494` 大臣，后者经 `context.py:153` `character_context` 渲染）合一 —— 作为安全第一刀（候选 C）。**合一取并集、保留 summary**：现 437 含 summary、494 缺，统一后的全档必须带 summary，大臣路径不再丢。
 - 派系有字段（满意度/筹码），迁移时给它结构化名册行档（机面、数值），不留「仅 prose」黑洞；当前无真正无字段的实体，故不需要 prose-only 豁免分支。
 
