@@ -1968,3 +1968,54 @@ def test_simulator_payload_talent_pool_includes_retired_dismissed_with_reason_co
     assert dismissed_name in names, "削籍者缺失于人才池视图"
     drow = next(r for r in pool_rows if r[cols.index("name")] == dismissed_name)
     assert drow[cols.index("reason_code")] == "获罪削籍"
+
+
+def test_political_marker_is_audit_only_no_status_premigration(game):
+    """决定4：政治标记派生（起复/昭雪/夺情）为纯审计记录，不执行 status 迁移原语——
+    不得在绑名分前先 set_character_status(active)，避免「先置 active、名分未绑」幽灵态。
+    status→active 由任命级联原子完成；昭雪仍落库（审计，ADR L103）。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    old_status = content.characters[name].status
+    old_office = content.characters[name].office
+
+    calls = []
+    orig_set = db.set_character_status
+
+    def spy(state_, nm, status_, reason_, *a, **k):
+        if nm == name:
+            calls.append((status_, reason_))
+        return orig_set(state_, nm, status_, reason_, *a, **k)
+
+    try:
+        db.set_character_status(state, name, "dismissed", "忤逆案削籍", reason_code="获罪削籍")
+        content.characters[name].status = "dismissed"
+        calls.clear()
+        db.set_character_status = spy
+        before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
+
+        issues.apply_score_extraction(
+            db, state,
+            {"人物变更": [{
+                "name": name, "动作": "任命",
+                "office": "都察院左都御史", "reason": "起用获罪诸臣",
+            }]},
+            content=content,
+        )
+
+        assert not any(r == "昭雪" for _, r in calls), \
+            f"政治标记昭雪不应执行 status 迁移原语（决定4）；实际调用={calls}"
+        row = db.conn.execute(
+            "SELECT status, office FROM characters WHERE name=?", (name,)
+        ).fetchone()
+        assert row["status"] == "active"
+        assert row["office"] == "都察院左都御史"
+        marks = db.conn.execute(
+            "SELECT derived_from FROM person_logs WHERE id > ? AND derived_from='昭雪'",
+            (before_logs,),
+        ).fetchall()
+        assert marks, "昭雪审计记录应落 person_logs（ADR L103）"
+    finally:
+        db.set_character_status = orig_set
+        content.characters[name].status = old_status
+        content.characters[name].office = old_office
