@@ -1142,8 +1142,12 @@ def _displace_duplicate_offices(
                 (new_holder_office, new_type, row["name"]),
             )
         if content is not None and row["name"] in content.characters:
-            content.characters[row["name"]].office = new_holder_office
-            content.characters[row["name"]].office_type = new_type
+            ch = content.characters[row["name"]]
+            ch.office = new_holder_office
+            ch.office_type = new_type
+            if fully_displaced:
+                ch.status_reason = "被顶替"
+                ch.reason_code = "被顶替"
     db.conn.commit()
     return displaced
 
@@ -1573,6 +1577,8 @@ def _apply_person_changes(
             if content is not None and name in content.characters:
                 ch = content.characters[name]
                 ch.status = status
+                ch.status_reason = reason_text
+                ch.reason_code = str(reason_code or "")
                 if status in {"offstage", "dismissed", "imprisoned", "exiled", "retired", "dead"}:
                     ch.office = ""
                     ch.transit_to = ""
@@ -1820,6 +1826,7 @@ def _apply_person_changes(
                     ch.office_type = "身名分"
                     ch.status = "active"
                     ch.transit_to = ""
+                    ch.reason_code = ""
                 # 易主后人仍 active（在新主任事，持身名分=降臣/归附），不变式1 不破；
                 # 清原 reason_code（如陷虏）——已投敌，不再是本朝在押（决定3/不变式）。
                 db.conn.execute(

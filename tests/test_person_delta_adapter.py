@@ -2223,3 +2223,25 @@ def test_reload_syncs_reason_code_status_reason_to_content(game):
     ch = content.characters[name]
     assert getattr(ch, "reason_code", None) == "获罪削籍", "重载未同步 reason_code"
     assert getattr(ch, "status_reason", None) == "忤逆案削籍", "重载未同步 status_reason"
+
+
+def test_disposition_syncs_reason_code_to_content_in_txn(game):
+    """ADR 决定6 三面同步：处置在事务内须把 reason_code/status_reason 同步到内存
+    content.characters（F-C 加字段后，改 status 的 in-txn sync 点都要带上），
+    否则同事务内读内存拿到旧 reason_code。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+
+    issues.apply_score_extraction(
+        db, state,
+        {"人物变更": [{
+            "name": name, "动作": "处置",
+            "status": "dismissed", "reason_code": "获罪削籍", "reason": "忤逆案削籍",
+        }]},
+        content=content,
+    )
+
+    ch = content.characters[name]
+    assert ch.status == "dismissed"
+    assert ch.reason_code == "获罪削籍", f"in-txn 内存 reason_code 未同步，实得 {ch.reason_code!r}"
+    assert ch.status_reason == "忤逆案削籍"
