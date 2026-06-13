@@ -1985,6 +1985,340 @@
       "debut_month": 0,
       "power_id": "ming",
       "location": "beizhili"
+    },
+    {
+      "name": "张延登",
+      "office": "左都御史",
+      "office_type": "都察院",
+      "faction": "中立",
+      "aliases": [
+        "张延登"
+      ],
+      "personal_skills": [
+        "台谏纠弹",
+        "持法",
+        "清议"
+      ],
+      "loyalty": 63,
+      "ability": 62,
+      "integrity": 70,
+      "courage": 55,
+      "style": "持法纠弹",
+      "birth_year": 1566,
+      "historical_death_year": 1641,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "崇祯初左都御史，掌台谏纠弹。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": ""
+    },
+    {
+      "name": "吴甡",
+      "office": "佥都御史，巡按",
+      "office_type": "都察院",
+      "faction": "东林",
+      "aliases": [
+        "吴甡",
+        "鹿友"
+      ],
+      "personal_skills": [
+        "地方综理",
+        "荒政赈务",
+        "知兵"
+      ],
+      "loyalty": 66,
+      "ability": 75,
+      "integrity": 72,
+      "courage": 62,
+      "style": "干练任事",
+      "birth_year": 1589,
+      "historical_death_year": 1670,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "东林系干练之臣，历巡抚、后入阁，长于荒政与兵事。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": ""
+    },
+    {
+      "name": "吴昌时",
+      "office": "吏部司属",
+      "office_type": "吏部",
+      "faction": "中立",
+      "aliases": [
+        "吴昌时"
+      ],
+      "personal_skills": [
+        "铨曹钻营",
+        "结党联络",
+        "通内"
+      ],
+      "loyalty": 45,
+      "ability": 62,
+      "integrity": 28,
+      "courage": 50,
+      "style": "钻营结党",
+      "birth_year": 0,
+      "historical_death_year": 1643,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "周延儒党羽，工于铨政钻营；后以通内罔利伏诛。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": ""
+    },
+    {
+      "name": "张凤翼",
+      "office": "总督，后兵部尚书",
+      "office_type": "边镇",
+      "faction": "军队",
+      "aliases": [
+        "张凤翼"
+      ],
+      "personal_skills": [
+        "边镇综理",
+        "兵部部务",
+        "畏咎自保"
+      ],
+      "loyalty": 50,
+      "ability": 60,
+      "integrity": 42,
+      "courage": 48,
+      "style": "畏咎自保",
+      "birth_year": 0,
+      "historical_death_year": 1636,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "崇祯朝兵部尚书；后金入塞督师无功，仰药自尽。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": ""
+    },
+    {
+      "name": "朱燮元",
+      "office": "总督西南军务",
+      "office_type": "边镇",
+      "faction": "军队",
+      "aliases": [
+        "朱燮元",
+        "懋和"
+      ],
+      "personal_skills": [
+        "平叛方略",
+        "西南军务",
+        "坚毅持重"
+      ],
+      "loyalty": 75,
+      "ability": 82,
+      "integrity": 72,
+      "courage": 78,
+      "style": "坚毅持重",
+      "birth_year": 1566,
+      "historical_death_year": 1638,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "平奢安之乱的西南名督，坚毅持重。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "guizhou"
+    },
+    {
+      "name": "邹维琏",
+      "office": "巡抚",
+      "office_type": "地方",
+      "faction": "东林",
+      "aliases": [
+        "邹维琏"
+      ],
+      "personal_skills": [
+        "海防经略",
+        "刚正",
+        "御夷"
+      ],
+      "loyalty": 65,
+      "ability": 72,
+      "integrity": 74,
+      "courage": 70,
+      "style": "刚正御夷",
+      "birth_year": 0,
+      "historical_death_year": 1635,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "福建巡抚，督料罗湾之战御荷兰、郑芝龙。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "fujian"
+    },
+    {
+      "name": "练国事",
+      "office": "巡抚",
+      "office_type": "地方",
+      "faction": "军队",
+      "aliases": [
+        "练国事"
+      ],
+      "personal_skills": [
+        "剿寇调度",
+        "地方综理"
+      ],
+      "loyalty": 58,
+      "ability": 66,
+      "integrity": 58,
+      "courage": 62,
+      "style": "勤事剿寇",
+      "birth_year": 0,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "历陕豫巡抚，预剿流寇军务。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "shaanxi"
+    },
+    {
+      "name": "李待问",
+      "office": "巡抚",
+      "office_type": "地方",
+      "faction": "中立",
+      "aliases": [
+        "李待问"
+      ],
+      "personal_skills": [
+        "地方综理",
+        "钱谷"
+      ],
+      "loyalty": 52,
+      "ability": 62,
+      "integrity": 55,
+      "courage": 50,
+      "style": "循谨",
+      "birth_year": 0,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "崇祯朝巡抚，理地方钱谷军务。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": ""
+    },
+    {
+      "name": "焦源溥",
+      "office": "巡抚",
+      "office_type": "地方",
+      "faction": "中立",
+      "aliases": [
+        "焦源溥"
+      ],
+      "personal_skills": [
+        "边镇地方",
+        "守土"
+      ],
+      "loyalty": 55,
+      "ability": 60,
+      "integrity": 58,
+      "courage": 60,
+      "style": "守土任事",
+      "birth_year": 0,
+      "historical_death_year": 1643,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "大同巡抚，城破殉节。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "shanxi"
+    },
+    {
+      "name": "曾樱",
+      "office": "布政使",
+      "office_type": "地方",
+      "faction": "东林",
+      "aliases": [
+        "曾樱"
+      ],
+      "personal_skills": [
+        "地方钱谷",
+        "清正",
+        "守土"
+      ],
+      "loyalty": 66,
+      "ability": 68,
+      "integrity": 76,
+      "courage": 66,
+      "style": "清正守土",
+      "birth_year": 1581,
+      "historical_death_year": 1651,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "清正守土之臣，历布政、巡抚；南明殉节于福京。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "fujian"
+    },
+    {
+      "name": "余大成",
+      "office": "布政使",
+      "office_type": "地方",
+      "faction": "中立",
+      "aliases": [
+        "余大成"
+      ],
+      "personal_skills": [
+        "地方综理",
+        "奏牍"
+      ],
+      "loyalty": 50,
+      "ability": 58,
+      "integrity": 52,
+      "courage": 48,
+      "style": "循谨",
+      "birth_year": 0,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "崇祯朝布政使，预袁崇焕案周边奏议。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": ""
+    },
+    {
+      "name": "王尊德",
+      "office": "总督两广",
+      "office_type": "边镇",
+      "faction": "军队",
+      "aliases": [
+        "王尊德"
+      ],
+      "personal_skills": [
+        "两广军务",
+        "海防",
+        "地方综理"
+      ],
+      "loyalty": 56,
+      "ability": 64,
+      "integrity": 58,
+      "courage": 60,
+      "style": "持重综理",
+      "birth_year": 0,
+      "historical_death_year": 1633,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "两广总督，督岭南海防军务。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "guangdong"
     }
   ]
 }
