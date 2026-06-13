@@ -1132,8 +1132,8 @@ def _displace_duplicate_offices(
         )
         if fully_displaced:
             db.conn.execute(
-                "UPDATE characters SET office=?, office_type=?, status_reason=?, reason_code=? "
-                "WHERE name=?",
+                "UPDATE characters SET office=?, office_type=?, status_reason=?, reason_code=?, "
+                "transit_to='' WHERE name=?",
                 (new_holder_office, new_type, "被顶替", "被顶替", row["name"]),
             )
         else:
@@ -1148,6 +1148,7 @@ def _displace_duplicate_offices(
             if fully_displaced:
                 ch.status_reason = "被顶替"
                 ch.reason_code = "被顶替"
+                ch.transit_to = ""
     db.conn.commit()
     return displaced
 
