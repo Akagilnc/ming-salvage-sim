@@ -59,9 +59,14 @@ def test_db_active_included_even_if_memory_offstage(game):
     db, state, content = game
     name = _active_ming_minister(db, content)
     ch = content.characters[name]
-    ch.status = "offstage"  # 模拟 JSON seed / stale 内存
-    db.set_character_status(state, name, "active", "测试：历史登场")
-    assert visible_in_court(ch, db) is True
+    original_status = ch.status
+    try:
+        ch.status = "offstage"  # 模拟 JSON seed / stale 内存
+        db.set_character_status(state, name, "active", "测试：历史登场")
+        assert visible_in_court(ch, db) is True
+    finally:
+        # content fixture 是 session 作用域，还原内存 status 防跨用例污染（Codex R2）
+        ch.status = original_status
 
 
 def test_consort_excluded_from_court(game):
