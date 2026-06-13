@@ -24,7 +24,7 @@
 
 每类有状态实体一个**独立**的呈现适配器（读），与段适配器（写）**并列、按 per-实体 共置**。
 
-> **「共置」是本 ADR 要新引入的实体适配器目录/索引,不是复用现成基建**：① 不是 `registry.py` 的 `MinisterRegistry`（那是 agent 刷新用的运行时登记，别撞术语）；② 0008 的写适配器现住在 `applier.py` 的各 section、并无「registry」，本 ADR 需明说写适配器如何挪进/登记到这个新目录。共置只是一条**约定**：实体 X 的读+写适配器一处可寻。
+> **「共置」是本 ADR 要新引入的实体适配器目录/索引,不是复用现成基建**：① 不是 `registry.py` 的 `MinisterRegistry`（那是 agent 刷新用的运行时登记，别撞术语）；② 0008 的写侧也**没有**「registry」——`applier.py` 是 0008 的契约类型 / `RejectionCollector` / `atomic` helper，而各 section 的落库逻辑仍住在 `apply_score_extraction`（`issues.py`）/ `GameDB` / issue 路径里、由 `decree.py` 桥接（section 原地迁入、未集中）。本 ADR 需明说这些**现有写主**如何登记/包进新目录。共置只是一条**约定**：实体 X 的读+写适配器一处可寻。
 
 不合并成单一「实体适配器」的理由：写（delta items → DB）与读（model/DB → LLM 文本）**数据流相反、输入不同、代码位置不同**，是两个 seam；one adapter ≠ 把反向数据流塞进同一接口（deletion test：硬并是捆两件不相干的事，不concentrate 复杂度）。共置约定保证「实体 X 的写适配器 + 读适配器」一处可寻，locality 不丢。
 
@@ -60,7 +60,7 @@
 ## 验收（实现 PR 用）
 
 - 48+ 散落点全迁进各实体的呈现适配器；`_auto_table` seam 复用不动。（呈现适配器的具体接口签名留实现 PR 定；本 ADR 只钉契约：两形状 + 列集 + P4 守门面。）
-- **新建实体适配器目录/索引**（决定 1 的「共置」落地）：定义这个 per-实体目录，**读适配器登记进去**，并明确 0008 写适配器（现 `applier.py` 各 section）如何挪入/登记 —— 这条不做，「共置」只是空话。
+- **新建实体适配器目录/索引**（决定 1 的「共置」落地）：定义这个 per-实体目录，**读适配器登记进去**，并明确 0008 的写侧落库主（`apply_score_extraction`/`GameDB`/issue 路径，`applier.py` 提供契约+collector+atomic）如何登记/包入 —— 这条不做，「共置」只是空话。
 - 名册行 / 全档字段集有断言测试（钉死列集，咬住军队漂移；实现 PR 钉 canonical 列集前先枚举 simulator 侧实际列数作可查基线 —— 现 roster 17 已实核，simulator「19」与 `db.py` 第三变体待枚举）。
 - P4 守门测试：扫**玩家输出边界**（CLI print + web 大臣对话/SSE/对话历史 + 邸报装配路径）无裸角色属性数值（红/绿）；不扫机面全档（agent prompt/inspect/simulator payload）。
 - 人物两套扮演头（`registry.py:437` 后宫 / `registry.py:494` 大臣，后者经 `context.py:153` `character_context` 渲染）合一 —— 作为安全第一刀（候选 C）。**合一取并集、保留 summary**：现 437 含 summary、494 缺，统一后的全档必须带 summary，大臣路径不再丢。
