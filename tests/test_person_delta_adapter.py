@@ -2075,3 +2075,76 @@ def test_legacy_office_pollution_migrated_on_load(game):
     assert row("孙承宗")["status"] == "active", "已起复者不得被误降"
     assert row("韩爌")["status"] == "active"
     assert row("袁可立")["status"] == "active"
+
+
+def test_historical_death_tick_sets_reason_code(game):
+    """ADR 决定7：月初历史卒 tick = 处置(→dead, reason_code=历史卒)。
+    裸 set_character_status 不置 reason_code → 人才池/审计认不出死因。"""
+    db, state, _ = game
+    name = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND office_type!='后宫' "
+        "AND power_id='ming' ORDER BY rowid LIMIT 1"
+    ).fetchone()["name"]
+    db.conn.execute(
+        "UPDATE characters SET historical_death_year=?, historical_death_month=1 WHERE name=?",
+        (state.year - 1, name),
+    )
+    db.conn.commit()
+
+    db.apply_historical_deaths(state)
+
+    row = db.conn.execute(
+        "SELECT status, reason_code FROM characters WHERE name=?", (name,)
+    ).fetchone()
+    assert row["status"] == "dead"
+    assert row["reason_code"] == "历史卒", f"历史卒 tick 应置 reason_code=历史卒，实得 {row['reason_code']!r}"
+
+
+def test_historical_death_tick_writes_person_log(game):
+    """ADR 决定7：历史卒 tick 落 person_logs 审计，source=system_simulation（可复盘）。"""
+    db, state, _ = game
+    name = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND office_type!='后宫' "
+        "AND power_id='ming' ORDER BY rowid LIMIT 1"
+    ).fetchone()["name"]
+    db.conn.execute(
+        "UPDATE characters SET historical_death_year=?, historical_death_month=1 WHERE name=?",
+        (state.year - 1, name),
+    )
+    db.conn.commit()
+
+    db.apply_historical_deaths(state)
+
+    logs = db.conn.execute(
+        "SELECT action, source, derived_from FROM person_logs "
+        "WHERE person_name=? AND source='system_simulation'", (name,)
+    ).fetchall()
+    assert logs, "历史卒 tick 应落 person_log source=system_simulation（决定7 可复盘）"
+
+
+def test_historical_debut_tick_sets_reason_code_and_log(game):
+    """ADR 决定7：月初历史登场 tick = 处置(→active, reason_code=登场)，落 person_log
+    source=system_simulation。镜像历史卒。"""
+    db, state, _ = game
+    name = db.conn.execute(
+        "SELECT name FROM characters WHERE office_type!='后宫' AND power_id='ming' "
+        "ORDER BY rowid LIMIT 1"
+    ).fetchone()["name"]
+    db.conn.execute(
+        "UPDATE characters SET status='offstage', debut_year=?, debut_month=1 WHERE name=?",
+        (state.year - 1, name),
+    )
+    db.conn.commit()
+
+    db.apply_historical_debuts(state)
+
+    row = db.conn.execute(
+        "SELECT status, reason_code FROM characters WHERE name=?", (name,)
+    ).fetchone()
+    assert row["status"] == "active"
+    assert row["reason_code"] == "登场", f"登场 tick 应置 reason_code=登场，实得 {row['reason_code']!r}"
+    logs = db.conn.execute(
+        "SELECT 1 FROM person_logs WHERE person_name=? AND source='system_simulation' "
+        "AND derived_from='登场'", (name,)
+    ).fetchall()
+    assert logs, "登场 tick 应落 person_log source=system_simulation derived_from=登场"

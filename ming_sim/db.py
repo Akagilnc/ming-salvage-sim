@@ -1885,7 +1885,14 @@ class GameDB:
             if not triggered:
                 continue
             name = r["name"]
-            self.set_character_status(state, name, "dead", f"历史卒于 {year}年{month or '?'}月")
+            self.set_character_status(
+                state, name, "dead", f"历史卒于 {year}年{month or '?'}月", reason_code="历史卒"
+            )
+            self.record_person_log(
+                state, name, "处置",
+                payload_summary=f"历史卒于 {year}年{month or '?'}月",
+                derived_from="历史卒", source="system_simulation",
+            )
             died.append({
                 "name": name,
                 "office": r["office"] or "重臣",
@@ -1913,7 +1920,14 @@ class GameDB:
             if not triggered:
                 continue
             name = r["name"]
-            self.set_character_status(state, name, "active", f"历史登场 {year}年{month or '?'}月")
+            self.set_character_status(
+                state, name, "active", f"历史登场 {year}年{month or '?'}月", reason_code="登场"
+            )
+            self.record_person_log(
+                state, name, "处置",
+                payload_summary=f"历史登场 {year}年{month or '?'}月",
+                derived_from="登场", source="system_simulation",
+            )
             debuted.append({
                 "name": name,
                 "office": r["office"] or "重臣",
