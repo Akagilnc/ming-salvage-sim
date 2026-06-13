@@ -228,12 +228,15 @@ def _talent_pool_rows(db: "GameDB") -> List[Dict[str, object]]:
     ADR L104 池 = (active+身名分听用候铨) ∪ (offstage/retired/dismissed 在世)。active 半=
     顶替离任者（office='听用候铨'，仍 active 可即起复，S5 核心玩趣）。锚 身名分 office='听用候铨'
     （非 office_type=待铨——后者兼作分类失败 fallback、被污染，决定10/L94）。"""
+    # roster scope（与 court_roster / tools.get_active_ministers 同口径）：只放大明、非后宫。
+    # 否则后金/流寇 offstage 者（李自成/张献忠 等）漏进起复人才池、被当可起复的大明官（违决定10）。
     return [
         dict(r) for r in db.conn.execute(
             "SELECT name,office,office_type,faction,status,reason_code,status_reason,"
             "power_id,location,transit_to,debut_year,debut_month "
-            "FROM characters WHERE status IN ('offstage','retired','dismissed') "
-            "OR (status='active' AND office='听用候铨' AND reason_code='被顶替') "
+            "FROM characters WHERE (status IN ('offstage','retired','dismissed') "
+            "OR (status='active' AND office='听用候铨' AND reason_code='被顶替')) "
+            "AND power_id='ming' AND office_type!='后宫' "
             "ORDER BY status, name"
         ).fetchall()
     ]

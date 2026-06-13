@@ -1688,6 +1688,19 @@ def test_simulator_court_roster_is_active_only_dismissed_in_talent_pool(game):
     assert name in pool_names, "被削籍者应在人才名单 offstage_ministers（可起复）"
 
 
+def test_talent_pool_ming_noncourt_only(game):
+    """5b r8（gemini-R5，roster-scope coverage-drift）：人才池 offstage_ministers 须与 court_roster
+    同口径含 power_id='ming' AND office_type!='后宫'。否则后金/流寇（offstage bandits 如李自成）漏进，
+    被当「可起复的大明官」给裁判/玩家看（违 ADR 决定10：池=皇帝可起复的大明官）。"""
+    db, state, content = game
+    payload = build_simulator_payload(state, db, decree_text="", previous_narrative="")
+    pool = payload["offstage_ministers"]
+    pidx = pool["cols"].index("power_id")
+    nidx = pool["cols"].index("name")
+    nonming = [r[nidx] for r in pool["rows"] if r[pidx] != "ming"]
+    assert nonming == [], f"人才池混进非明势力：{nonming}"
+
+
 def test_apply_score_extraction_rejects_invalid_person_travel(game):
     db, state, content = game
     name = active_ming_character(db, content)
