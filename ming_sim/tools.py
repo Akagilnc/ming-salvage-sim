@@ -12,6 +12,8 @@ from ming_sim.skills import skill_template
 
 _STATUS_CN = {
     "active": "在朝",
+    "offstage": "赋闲",
+    "candidate": "候选",
     "dismissed": "已罢黜",
     "imprisoned": "下狱",
     "exiled": "流放",

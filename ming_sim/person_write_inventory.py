@@ -14,6 +14,12 @@ PERSON_WRITE_POINT_INVENTORY = (
         "reason": "开局 seed 不产 RejectedItem，ADR 0009 明确豁免。",
     },
     {
+        "location": "ming_sim/db.py:_migrate_legacy_office_pollution",
+        "owner": "migration",
+        "disposition": "adr0009_exempt",
+        "reason": "决定9/L94 一次性老档数据清洗（init 时跑、幂等），属豁免路径，不产 RejectedItem。",
+    },
+    {
         "location": "ming_sim/db.py:set_character_status",
         "owner": "legacy_person_path",
         "disposition": "migrate_to_person_applier",
