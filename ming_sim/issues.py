@@ -1175,6 +1175,8 @@ def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
                 "office": ch.office,
                 "office_type": ch.office_type,
                 "transit_to": ch.transit_to,
+                "status_reason": getattr(ch, "status_reason", ""),
+                "reason_code": getattr(ch, "reason_code", ""),
             }
             for name, ch in content.characters.items()
         }
@@ -1238,6 +1240,8 @@ def _restore_person_write_state(db: GameDB, content: Optional[GameContent], snap
             ch.office = values["office"]
             ch.office_type = values["office_type"]
             ch.transit_to = values["transit_to"]
+            ch.status_reason = values.get("status_reason", "")
+            ch.reason_code = values.get("reason_code", "")
 
 
 # 校验「二级非 dict 会让 apply 在**逐 entity 写 DB 的中途崩**,留下部分已写 + 回合照推 = 半落库」
@@ -1345,10 +1349,15 @@ def apply_office_appointment(
             displaced_parts = _displace_duplicate_offices(db, content, name, new_office)
             ch = content.characters[name]
             ch.status = "active"
-            if cur_status == "active":
-                # 与上方 DB 清 status_reason/reason_code 同步（重任命 active 者清被顶替等旧标记）。
-                ch.status_reason = ""
-                ch.reason_code = ""
+            # 三面同步（决定6）：DB 写已定 status_reason/reason_code（active 路上方清空；
+            # 非 active 起复路由 set_character_status 写入起复缘由）——回读刷回内存 Character，
+            # 否则非 active 起复后内存滞留旧削籍/下狱缘由，DB 与内存不一致（5b r3 codex-b R1）。
+            _reason_row = db.conn.execute(
+                "SELECT status_reason, reason_code FROM characters WHERE name=?", (name,)
+            ).fetchone()
+            if _reason_row is not None:
+                ch.status_reason = str(_reason_row["status_reason"] or "")
+                ch.reason_code = str(_reason_row["reason_code"] or "")
             ch.office = normalize_office(new_office)
             ch.office_type = infer_office_type_from_office(ch.office, new_office_type or ch.office_type, llm_config)
             if registry is not None:

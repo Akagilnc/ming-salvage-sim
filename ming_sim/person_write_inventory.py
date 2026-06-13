@@ -96,22 +96,43 @@ def discover_character_write_sql_locations() -> tuple[dict[str, str], ...]:
     locations: set[str] = set()
     for path in sorted((root / "ming_sim").rglob("*.py")):
         relative = path.relative_to(root).as_posix()
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        parents: dict[ast.AST, ast.AST] = {}
-        for parent in ast.walk(tree):
-            for child in ast.iter_child_nodes(parent):
-                parents[child] = parent
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
-                continue
-            if not _is_sql_execute_argument(node, parents):
-                continue
-            sql = " ".join(node.value.split())
-            if not any(marker in sql for marker in _MUTATING_SQL_MARKERS):
-                continue
-            function_name = _enclosing_function_name(node, parents)
-            locations.add(_inventory_location(relative, function_name, sql))
+        locations.update(_write_locations_in_source(path.read_text(encoding="utf-8"), relative))
     return tuple({"location": location} for location in sorted(locations))
+
+
+def _write_locations_in_source(source: str, relative: str) -> set[str]:
+    """Scan one module's source for direct ``characters``-mutating execute() SQL.
+
+    Handles both plain string literals AND f-strings (``ast.JoinedStr``): an
+    f-string execute arg like ``f"DELETE FROM characters WHERE ..."`` is the
+    Call arg as a whole, so it matches directly (its inner ``Constant`` parts
+    have the JoinedStr as parent — not the Call — so they are correctly skipped
+    by ``_is_sql_execute_argument``; before this an f-string-only write point
+    escaped the inventory scan entirely)."""
+    tree = ast.parse(source)
+    parents: dict[ast.AST, ast.AST] = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[child] = parent
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            sql_src = node.value
+        elif isinstance(node, ast.JoinedStr):
+            sql_src = "".join(
+                v.value for v in node.values
+                if isinstance(v, ast.Constant) and isinstance(v.value, str)
+            )
+        else:
+            continue
+        if not _is_sql_execute_argument(node, parents):
+            continue
+        sql = " ".join(sql_src.split())
+        if not any(marker in sql for marker in _MUTATING_SQL_MARKERS):
+            continue
+        function_name = _enclosing_function_name(node, parents)
+        found.add(_inventory_location(relative, function_name, sql))
+    return found
 
 
 def person_write_locations_by_disposition(disposition: str) -> tuple[str, ...]:

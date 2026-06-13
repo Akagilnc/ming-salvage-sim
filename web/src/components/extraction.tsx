@@ -329,7 +329,6 @@ export function StatusChangesBlock({ data }: { data: any }) {
 export function PersonChangesBlock({ data }: { data: any }) {
   if (isEmptyData(data) || !Array.isArray(data)) return <p className="extraction-empty">无</p>;
   const statusLabel: Record<string, string> = {
-    active: "起复",
     dismissed: "罢黜", imprisoned: "下狱", exiled: "流放",
     retired: "致仕", dead: "身故", offstage: "去位",
   };
@@ -351,7 +350,17 @@ export function PersonChangesBlock({ data }: { data: any }) {
         if (action === "易主") main = `${name} → ${labelPower(power)}`;
         if (action === "行止") main = `${name} 行止 ${labelRegion(transitTo || location) || "未定"}`;
         if (action === "罢黜" || action === "处置") {
-          main = `${name} ${statusLabel[status] || cnValue(status) || action}`;
+          if (status === "active") {
+            // 处置/active 只来自派生项（被顶替腾缺→听用候铨 / 起复·昭雪·夺情释放）：
+            // applier 拒生产者直发 处置(status=active)，故按 derived_from/缘由 标具体事由，
+            // 不能一律「起复」（会把「被顶替」误显成「起复」）。
+            const tag = pickItem(it, "derived_from", "derived_from")
+              || pickItem(it, "缘由", "reason_code")
+              || pickItem(it, "原因", "reason") || office;
+            main = `${name} ${tag || cnValue(status) || action}`;
+          } else {
+            main = `${name} ${statusLabel[status] || cnValue(status) || action}`;
+          }
         }
         return (
           <li key={i}>
