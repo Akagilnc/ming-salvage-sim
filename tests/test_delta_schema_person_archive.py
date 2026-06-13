@@ -44,24 +44,19 @@ def test_delta_schema_documents_person_actions_and_payloads():
         assert legacy_heading not in text
 
 
-def test_delta_schema_documents_legacy_translation_order_example():
-    """Legacy four-key replay semantics are documented as a worked example."""
+def test_delta_schema_does_not_document_legacy_keys():
+    """ADR 0009 决定11：alias 保留但**不写文档**——DELTA_SCHEMA 只记 `人物变更`，
+    旧四 key 不作 worked example 暴露于用户面契约（自然枯死）；翻译保真由
+    person_delta_adapter.py + 测试覆盖，不在 schema 重复。"""
     text = _text()
 
-    assert "旧四 key 翻译示例" in text
-    expected_order = (
-        "appointments（后宫项） → character_status_changes → "
-        "character_power_changes → office_changes → appointments（朝臣 spillover）"
-    )
-    assert expected_order in text
-    for phrase in (
-        "character_status_changes",
-        "legacy_gate",
-        "character_power_changes",
-        "方式=不明",
-        "appointments（朝臣 spillover）",
-    ):
-        assert phrase in text
+    # 旧四 key 不再作 worked example 暴露
+    assert "旧四 key 翻译示例" not in text
+    assert '"character_status_changes": [' not in text
+    assert '"office_changes": [' not in text
+    # 内部 compat 说明在，指向代码/测试真源
+    assert "不在本契约文档化" in text
+    assert "person_delta_adapter.py" in text
 
 
 def test_delta_schema_documents_power_change_backlash_contract():
@@ -77,7 +72,3 @@ def test_delta_schema_documents_power_change_backlash_contract():
         assert field in required_fields
     assert "`反噬`" not in optional_fields
     assert "legacy 翻译才可用 `不明`" in notes
-
-    assert "零值反噬" in text
-    assert '"方式": "不明"' in text
-    assert "legacy_partial" in text

@@ -233,7 +233,7 @@ def _talent_pool_rows(db: "GameDB") -> List[Dict[str, object]]:
             "SELECT name,office,office_type,faction,status,reason_code,status_reason,"
             "power_id,location,transit_to,debut_year,debut_month "
             "FROM characters WHERE status IN ('offstage','retired','dismissed') "
-            "OR (status='active' AND office='听用候铨') "
+            "OR (status='active' AND office='听用候铨' AND reason_code='被顶替') "
             "ORDER BY status, name"
         ).fetchall()
     ]

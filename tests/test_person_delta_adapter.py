@@ -2148,3 +2148,28 @@ def test_historical_debut_tick_sets_reason_code_and_log(game):
         "AND derived_from='登场'", (name,)
     ).fetchall()
     assert logs, "登场 tick 应落 person_log source=system_simulation derived_from=登场"
+
+
+def test_yizhu_sets_active_in_new_master_service(game):
+    """ADR 决定3/不变式：易主后人仍 active（在新主任事，持身名分），不变式1 不破。
+    陷虏者投敌（imprisoned→易主）尤其要置 active——否则盘面留「下狱」幽灵、与实际在敌任事矛盾。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    db.set_character_status(state, name, "imprisoned", "松山兵败被执", reason_code="陷虏")
+    if name in content.characters:
+        content.characters[name].status = "imprisoned"
+
+    issues.apply_score_extraction(
+        db, state,
+        {"人物变更": [{
+            "name": name, "动作": "易主",
+            "new_power": "houjin", "方式": "被俘而降", "反噬": {},
+        }]},
+        content=content,
+    )
+
+    row = db.conn.execute(
+        "SELECT status, power_id FROM characters WHERE name=?", (name,)
+    ).fetchone()
+    assert row["power_id"] == "houjin", "易主应改 power_id"
+    assert row["status"] == "active", f"易主后应 active（在新主任事），实得 {row['status']!r}"
