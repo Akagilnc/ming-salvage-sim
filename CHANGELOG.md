@@ -4,6 +4,27 @@
 
 ## [未发布]
 
+## [0.10.0.0] - 2026-06-14
+
+### 新增
+- **人事档案 applier 契约（ADR 0009 C1）**：人物状态/名分/去向的落库从分散多入口（office_changes / character_status_changes / character_power_changes / appointments）统一收口到单一 `人物变更` delta + 契约化 applier。新增 `person_archive_contract.py`（状态/动作/缘由转移矩阵 + reason_code 规范化）、`person_delta_adapter.py`（旧四 key → `人物变更` 保真翻译，旧 key 仅作 ready=1 重试兼容、自然枯死）、`person_write_inventory.py`（直写 characters 表的写点清单 + AST 扫描守门）。
+- **起复人才池视图**（offstage_ministers）：居家/致仕/削籍在世大臣带 reason_code/status_reason 进 simulator 盘面与 extractor 上下文，裁判/玩家看得见可起复之人。
+- **三面同步（决定6）**：Character 携 reason_code/status_reason；处置/易主/顶替/起复后 DB 行、in-txn content、内存 Character 一致，reload 回滚兜底。
+
+### 变更
+- 历史 卒/登场 tick 经 `处置` 语义统一落库；易主置 active 并清旧滞留缘由（如「松山兵败被执」）+ 记 status_changed_turn。
+- 在朝名单（court_roster）/ 起复人才池 / active_ministers 三处统一 roster 口径 = 大明、非后宫（active 外臣如皇太极、offstage 流寇如李自成不再混入）。
+- 月末结算重排：inertia 漂移在留痕 + 章节记忆之前跑，使其追加的玩家可见人物变更并入 applied（SETTLEMENT_FLOW 同步）。
+- extractor prompt 正向化（移除负向「不要X」指令）+ 教 reason_code by 缘由。
+
+### 修复
+- 新开档老档迁移：罢居府名不再硬写进 region_id 列（地名留 status_reason）；在途中文目的地经 `match_region_id_from_text` 解析成 region_id 落 transit_to（旧码中文 vs 英文 id 恒不等、transit_to 永不落）。
+- 顶替全腾缺清 transit_to（被顶替者落听用候铨、不留赴老职路线）。
+
+### 备注
+- ship-pre 双闸：5a 完整性闸 PASS、5b 正确性闸 8 轮 cross-model review + 对抗性核验收敛（0 真 P0/P1）。
+- Deferred findings（契约加固/审计/测试批）追踪于 [issue #97](https://github.com/Akagilnc/ming-salvage-sim/issues/97)。
+
 ## [0.9.0.0] - 2026-06-12
 
 ### 新增
