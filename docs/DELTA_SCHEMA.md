@@ -192,50 +192,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 
 状态白名单：`active` / `candidate` / `offstage` / `dismissed` / `imprisoned` / `exiled` / `retired` / `dead`。死人没有 status 出边；追谥、追赠等身后事不进 `人物变更`。
 
-#### 旧四 key 翻译示例（仅重放语义）
-新产出的 delta 只写 `人物变更`。旧四 key 只作为历史 delta / ready=1 重试真源的兼容翻译层，不在新契约里获得新能力。
-
-旧 key 拼入执行序固定为：
-
-```text
-appointments（后宫项） → character_status_changes → character_power_changes → office_changes → appointments（朝臣 spillover）
-```
-
-示例旧输入：
-
-```jsonc
-{
-  "appointments": [
-    {"name": "某氏", "office": "贵人", "office_type": "后宫"},
-    {"name": "孙传庭", "office": "陕西总督"}
-  ],
-  "character_status_changes": [
-    {"name": "洪承畴", "status": "imprisoned", "reason_code": "陷虏", "reason": "松山兵败被执"}
-  ],
-  "character_power_changes": [
-    {"name": "孔有德", "new_power": "houjin"}
-  ],
-  "office_changes": [
-    {"name": "毕自严", "new_office": "户部尚书", "new_office_type": "户部"}
-  ]
-}
-```
-
-等价翻译为：
-
-```jsonc
-{
-  "人物变更": [
-    {"name": "某氏", "动作": "册封", "office": "贵人", "office_type": "后宫"},
-    {"name": "洪承畴", "动作": "处置", "status": "imprisoned", "reason_code": "陷虏", "reason": "松山兵败被执", "legacy_gate": true},
-    {"name": "孔有德", "动作": "易主", "new_power": "houjin", "方式": "不明", "反噬": {}, "legacy_partial": true},
-    {"name": "毕自严", "动作": "任命", "office": "户部尚书", "office_type": "户部"},
-    {"name": "孙传庭", "动作": "任命", "office": "陕西总督", "legacy_spillover": "appointments（朝臣 spillover）"}
-  ]
-}
-```
-
-注意：`character_status_changes` 的月末通道项带 `legacy_gate`，在执行位若目标人物彼刻已非 active，则拒收；结案效果通道不打这个闸。`character_power_changes` 旧项因没有方式/反噬细节，只能译为 `方式=不明` + 零值反噬 + `legacy_partial`。
+> **旧四 key（appointments / character_status_changes / character_power_changes / office_changes）不在本契约文档化**（ADR 0009 决定11「alias 保留但不写文档」）：新产出的 delta 只写 `人物变更`；旧 key 仅作历史 delta / ready=1 重试真源的内部兼容翻译层，永不获得新能力（行止/方式/reason_code 仅新 key），自然枯死。翻译保真（执行序、spillover 殿后、legacy_gate/legacy_partial 注记）由 `ming_sim/person_delta_adapter.py` + `tests/test_person_delta_adapter.py` 覆盖，不在用户面 schema 重复。
 
 ### `secret_order_updates` / `secret_order_closes`
 - updates：`order_id` int + `sim_note`（本月推进实况）+ 可选 `impact`
