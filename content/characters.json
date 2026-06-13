@@ -1609,7 +1609,7 @@
       "historical_death_month": 0,
       "status": "offstage",
       "summary": "辽东总兵吴襄之子，将门骁锐，年少未显——边镇前程系于辽事与其向背。",
-      "debut_year": 0,
+      "debut_year": 1631,
       "debut_month": 0,
       "power_id": "ming",
       "location": "liaodong"
@@ -1638,7 +1638,7 @@
       "historical_death_month": 0,
       "status": "offstage",
       "summary": "辽东行伍出身的悍将之才，能战而难驭，秉性中有养寇自重之患。",
-      "debut_year": 0,
+      "debut_year": 1630,
       "debut_month": 0,
       "power_id": "ming",
       "location": "liaodong"
@@ -1810,7 +1810,7 @@
       "historical_death_month": 0,
       "status": "offstage",
       "summary": "举人出身、综理兵事的勤干之臣，长于边饷调度。",
-      "debut_year": 0,
+      "debut_year": 1640,
       "debut_month": 0,
       "power_id": "ming",
       "location": ""
@@ -1839,7 +1839,7 @@
       "historical_death_month": 0,
       "status": "offstage",
       "summary": "刚直任事的边镇之才，能综理军务、督调边饷。",
-      "debut_year": 0,
+      "debut_year": 1639,
       "debut_month": 0,
       "power_id": "ming",
       "location": ""
@@ -1866,7 +1866,7 @@
       "historical_death_month": 0,
       "status": "offstage",
       "summary": "循谨自守的地方监司之才，综理有余、果断不足。",
-      "debut_year": 0,
+      "debut_year": 1640,
       "debut_month": 0,
       "power_id": "ming",
       "location": ""
@@ -2414,25 +2414,24 @@
       "faction": "军队",
       "aliases": [
         "郑成功",
-        "郑森",
-        "国姓爷"
+        "郑森"
       ],
       "personal_skills": [
         "海陆治军",
-        "孤忠",
+        "治军才具",
         "闽海经略"
       ],
       "loyalty": 85,
       "ability": 82,
       "integrity": 78,
       "courage": 84,
-      "style": "孤忠刚毅",
+      "style": "刚毅果决",
       "birth_year": 1624,
       "historical_death_year": 1662,
       "historical_death_month": 0,
       "status": "offstage",
       "summary": "郑芝龙之子，年幼颖异——海陆之才在其禀赋，长成或为闽海长城。",
-      "debut_year": 0,
+      "debut_year": 1645,
       "debut_month": 0,
       "power_id": "ming",
       "location": "fujian"
@@ -2448,19 +2447,19 @@
       "personal_skills": [
         "骑战方略",
         "治军",
-        "忠烈"
+        "忠勇"
       ],
       "loyalty": 70,
       "ability": 82,
       "integrity": 68,
       "courage": 84,
-      "style": "骁勇忠烈",
+      "style": "骁勇敢战",
       "birth_year": 1620,
       "historical_death_year": 0,
       "historical_death_month": 0,
       "status": "offstage",
       "summary": "陕北流民少年，骁勇而有方略——乱世或成一方名将。",
-      "debut_year": 0,
+      "debut_year": 1640,
       "debut_month": 0,
       "power_id": "bandits",
       "location": "shaanxi"
@@ -2488,7 +2487,7 @@
       "historical_death_month": 0,
       "status": "offstage",
       "summary": "流民少年，能治军经营而性跋扈擅权。",
-      "debut_year": 0,
+      "debut_year": 1644,
       "debut_month": 0,
       "power_id": "bandits",
       "location": "shaanxi"
@@ -2517,7 +2516,7 @@
       "historical_death_month": 0,
       "status": "offstage",
       "summary": "浙东少年童生，文武兼资、忠贞有节。",
-      "debut_year": 0,
+      "debut_year": 1642,
       "debut_month": 0,
       "power_id": "ming",
       "location": "zhejiang"
@@ -2714,7 +2713,7 @@
       "historical_death_month": 0,
       "status": "offstage",
       "summary": "后金少壮勇将，勇力冠军、性悍而跋扈。",
-      "debut_year": 0,
+      "debut_year": 1634,
       "debut_month": 0,
       "power_id": "houjin",
       "location": "jianzhou"
@@ -2725,8 +2724,7 @@
       "office_type": "外臣",
       "faction": "后金",
       "aliases": [
-        "福临",
-        "顺治"
+        "福临"
       ],
       "personal_skills": [
         "冲龄践阼"
@@ -2752,8 +2750,7 @@
       "office_type": "宗藩",
       "faction": "宗室",
       "aliases": [
-        "朱由榔",
-        "永历"
+        "朱由榔"
       ],
       "personal_skills": [
         "宗藩法统",
@@ -2769,7 +2766,7 @@
       "historical_death_month": 0,
       "status": "offstage",
       "summary": "桂藩幼支，宗室法统一脉。",
-      "debut_year": 0,
+      "debut_year": 1646,
       "debut_month": 0,
       "power_id": "ming",
       "location": "huguang"
@@ -2780,24 +2777,23 @@
       "office_type": "宗藩",
       "faction": "宗室",
       "aliases": [
-        "朱术桂",
-        "宁靖王"
+        "朱术桂"
       ],
       "personal_skills": [
-        "宗藩孤忠",
-        "守节"
+        "宗藩端介",
+        "守礼"
       ],
       "loyalty": 62,
       "ability": 42,
       "integrity": 66,
       "courage": 60,
-      "style": "宗藩孤忠",
+      "style": "宗藩端介",
       "birth_year": 1617,
       "historical_death_year": 0,
       "historical_death_month": 0,
       "status": "offstage",
       "summary": "宗室幼藩，性孤忠而守节。",
-      "debut_year": 0,
+      "debut_year": 1645,
       "debut_month": 0,
       "power_id": "ming",
       "location": ""
