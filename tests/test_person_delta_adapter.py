@@ -2139,6 +2139,42 @@ def test_reappoint_rollback_restores_character_reason(game, monkeypatch):
     assert ch.reason_code == "获罪削籍", f"回滚后内存 reason_code 未还原：{ch.reason_code!r}"
 
 
+def test_disposition_manual_rollback_restores_memory_reason_fields(game, monkeypatch):
+    """5b（PR#106 R2 gemini medium）：处置级人工回滚（issues.py，apply_office_appointment 返回
+    rejected 且带 derive_label 时触发）此前只把内存 Character 的 status/office/office_type/transit_to
+    还原回快照，漏 status_reason/reason_code——同处 DB 侧回滚 UPDATE 已还原全 7 字段，内存须对称
+    还原才守三面同步（决定6），否则任一前置步刷过内存缘由后此路回滚就留脏值。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    # DB 快照基线：dismissed + 缘由/码（row 由 character_row 从 DB 读到这些）。
+    db.set_character_status(state, name, "dismissed", "DB原缘由", reason_code="获罪削籍")
+    # 内存预置成与 DB 背离的「脏」缘由：回滚若漏还原这两字段，内存就滞留脏值。
+    ch = content.characters[name]
+    ch.status = "dismissed"
+    ch.status_reason = "脏内存缘由"
+    ch.reason_code = "脏内存码"
+
+    # 逼 apply_office_appointment 返回 rejected（非抛错），走处置级人工回滚（该路不自还原内存）。
+    def reject(*_a, **_k):
+        return {"name": name, "new_office": "陕西总督", "rejected": True, "reason": "forced reject"}
+    monkeypatch.setattr(issues, "apply_office_appointment", reject)
+
+    issues.apply_score_extraction(
+        db, state,
+        {"人物变更": [{"name": name, "动作": "任命", "office": "陕西总督", "reason": "起用"}]},
+        content=content,
+    )
+
+    row = db.conn.execute(
+        "SELECT status_reason, reason_code FROM characters WHERE name=?", (name,)
+    ).fetchone()
+    ch = content.characters[name]
+    assert ch.status_reason == (row["status_reason"] or ""), \
+        f"处置回滚漏还原内存 status_reason：内存={ch.status_reason!r} != DB {row['status_reason']!r}"
+    assert ch.reason_code == (row["reason_code"] or ""), \
+        f"处置回滚漏还原内存 reason_code：内存={ch.reason_code!r} != DB {row['reason_code']!r}"
+
+
 def test_simulator_payload_talent_pool_includes_displaced_oncall_holder(game):
     """ADR L104 人才池 = (active+身名分听用候铨) ∪ (offstage/retired/dismissed)。
     顶替离任→听用候铨 的人仍 active，但必须在人才池盘面可见（S5 核心玩趣），
