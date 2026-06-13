@@ -1819,6 +1819,7 @@ def _apply_person_changes(
                     ch.office = new_title
                     ch.office_type = "身名分"
                     ch.status = "active"
+                    ch.transit_to = ""
                 # 易主后人仍 active（在新主任事，持身名分=降臣/归附），不变式1 不破；
                 # 清原 reason_code（如陷虏）——已投敌，不再是本朝在押（决定3/不变式）。
                 db.conn.execute(

@@ -2173,3 +2173,38 @@ def test_yizhu_sets_active_in_new_master_service(game):
     ).fetchone()
     assert row["power_id"] == "houjin", "易主应改 power_id"
     assert row["status"] == "active", f"易主后应 active（在新主任事），实得 {row['status']!r}"
+
+
+def test_apply_score_extraction_consort_candidate_falls_out_to_offstage(game):
+    """ADR S14：后宫 candidate 出边的另一半——落选 = 处置(→offstage, reason_code=落选)。
+    册封正例的对偶，闭合 candidate 状态机两条出边。"""
+    db, state, content = game
+    name = "测试宫人落选"
+    candidate = Character(
+        name=name, office="待选", office_type="后宫", faction="后宫",
+        aliases=[], personal_skills=[], loyalty=60, ability=55, integrity=60,
+        courage=50, style="测试待选", power_id="ming", status="candidate",
+    )
+    try:
+        content.characters[name] = candidate
+        db.add_character(state, candidate)
+
+        applied = issues.apply_score_extraction(
+            db, state,
+            {"人物变更": [{
+                "name": name, "动作": "处置",
+                "status": "offstage", "reason_code": "落选", "reason": "未获册封,出宫",
+            }]},
+            content=content,
+        )
+        item = next(
+            r for r in applied["applied_person_changes"] if r.get("name") == name
+        )
+        assert not item.get("rejected"), f"落选应被接受，实得 {item}"
+        row = db.conn.execute(
+            "SELECT status, reason_code FROM characters WHERE name=?", (name,)
+        ).fetchone()
+        assert row["status"] == "offstage"
+        assert row["reason_code"] == "落选"
+    finally:
+        content.characters.pop(name, None)
