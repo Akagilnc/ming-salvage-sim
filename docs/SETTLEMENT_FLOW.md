@@ -65,7 +65,7 @@
      - 跨进程恢复的重跑真源：崩溃后直接重放落库，不再花一次 LLM 重推演
      - driver 路：run_settle 把 pre_settle + persist_resolve_context(ready=1) 包进同一 atomic，settle 前提交
 
-  ── 后半段 settle_with_delta：整段单一 atomic 事务，9–15 全有或全无 ──
+  ── 后半段 settle_with_delta：整段单一 atomic 事务，9–16 全有或全无 ──
   9. applied = apply_score_extraction(db, state, delta, content=content, registry=None)
      ↳ 内部 _sanitize → _merge → 分发到 region/army/building/economy/issue/character 各 apply_*
      ↳ 白名单外字段仍被沉默裁掉；9 个结算 section 的脏项（坏值/缺 id/非法 enum）逐项拒收
@@ -73,24 +73,30 @@
        rejections.jsonl 副本。机制细节（RejectionCollector / attempt / 桥接）见 ADR 0008 PR2。
      ↳ 返回 applied.issue_summary.advances → 用来算 touched_ids
 
-  10. db.record_log(narrative[:1200]) + db.save_turn_report(narrative) + db.save_turn_extraction(...)
+  10. db.record_log(narrative[:1200]) + db.save_turn_report(narrative)
 
-  11. [我产 chapter memory {body, tags}]  ← 起居注史官身份
-      → record_chapter_memory(state, {body, tags})  # 必须在结局判定前
+  11. touched_ids = {a.issue_id for a in applied.issue_summary.advances}
+      apply_issue_inertia_and_ongoing(db, state, touched_ids=touched_ids,
+                                      applied_person_changes=inertia_person_changes)
+      ↳ 全部 active issue 走惯性漂 / ongoing_effects 月支（touched_ids 入参保留但已不按它跳过——
+        见 issues.py `_ = touched_ids`；本月被推进的 issue 也吃惯性，避免漏算）
+      ↳ inertia 追加的玩家可见人物变更并进 applied.issue_summary.applied_person_changes
+        （下方 12 留痕 + 13 chapter memory 都读 applied，须先合并再存/记，否则两者漏 inertia 人物变更）
 
-  12. touched_ids = {a.issue_id for a in applied.issue_summary.advances}
-      apply_issue_inertia_and_ongoing(db, state, touched_ids=touched_ids)
-      ↳ 未被本月触动的 issue 才走惯性漂 / ongoing_effects 月支
+  12. db.save_turn_extraction(...)                  # inertia 合并后才存：玩家明细 / 时间线含 inertia 人物变更
 
-  13. clear_gated_legacies(db, state)              # 开局负面修正按 clear_gate 程序判定消除
+  13. [我产 chapter memory {body, tags}]  ← 起居注史官身份
+      → record_chapter_memory(state, {body, tags})  # 必须在结局判定前；记的 applied 已含 inertia 人物变更
 
-  14. 结局三级判定（state.ended=False 时才判，已 ended 跳过省 token）：
+  14. clear_gated_legacies(db, state)              # 开局负面修正按 clear_gate 程序判定消除
+
+  15. 结局三级判定（state.ended=False 时才判，已 ended 跳过省 token）：
       a) 叙事型：applied.victory_status / 退位 / 自尽 → ENDING_NARRATIVE
       b) 数值型：京畿失守等 → context.victory_status()
       c) 到期型：state.turn >= TIMEOUT_TURN(240) → ENDING_TIMEOUT
       若 ended=True → [我产 ending summary]，db.save_ending_summary(...)
 
-  15. db.mark_directives_issued(state)
+  16. db.mark_directives_issued(state)
       state.next_period()
       assert state.turn == before_turn + 1          # 推进不变式（先验后写，失败时重试真源还在）
       state.turn_phase = summoning                  # settling 随推进复位，同笔 save_state
@@ -98,7 +104,7 @@
       db.clear_resolve_context(before_turn)         # 写序列最后一笔：清重试真源（防下月 double-apply）
       （state.clamp() 在 issues.py 各 apply 路内部调，不在此尾）
 
-  ── 9–15 任一步崩 → 整段 SQLite 回滚 + reload_state_from_db 刷内存 → 原异常链上抛 ──
+  ── 9–16 任一步崩 → 整段 SQLite 回滚 + reload_state_from_db 刷内存 → 原异常链上抛 ──
 ```
 
 ## 无诏推进（玩家退朝未下旨）
@@ -135,7 +141,7 @@ advance_without_edict(state, db, *, content=None, registry=None):
 
 ## 不变式 / 雷区
 
-- **顺序不能改**：`auto_trigger_seed_issues` 必须在产邸报前；`chapter memory` 必须在结局判定前；`apply_issue_inertia_and_ongoing(touched_ids=)` 中 touched_ids 必须来自 `applied.issue_summary.advances`。
+- **顺序不能改**：`auto_trigger_seed_issues` 必须在产邸报前；`apply_issue_inertia_and_ongoing` 必须在 `save_turn_extraction` + `chapter memory` 之前（inertia 追加的玩家可见人物变更要先并进 `applied` 再存 / 记，否则玩家明细与起居注漏 inertia 人物变更）；`chapter memory` 必须在结局判定前。（注：`apply_issue_inertia_and_ongoing` 的 `touched_ids=` 入参已不再用作跳过过滤——`issues.py` 内 `_ = touched_ids`、惯性漂吃全部 active issue；decree 仍按 advances 计算并传入只为保留调用签名，非不变式。）
 - **assert turn==before_turn+1**：phase2 完整跑完必须推进一回合，没推进就是 bug。
 - **HITL 暂停时不要推进**：return awaiting=True 时 state.turn 不动，玩家亲裁后续跑 phase2 才推。
 - **结算只判一次结局**：state.ended=True 后保持不动，继续推月只走 fixed flows。

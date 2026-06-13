@@ -19,6 +19,7 @@ import pytest
 
 import driver
 from driver import run_settle
+from tests.conftest import active_ming_character
 
 
 def test_cli_settle_rejects_non_dict_envelope_delta(game, tmp_path):
@@ -111,8 +112,8 @@ def test_run_settle_normalizes_chinese_delta_and_advances(game):
     assert new_unrest == old_unrest + 5
 
 
-def test_run_settle_persists_narrative_and_delta_trace(game):
-    """driver 传入邸报叙事 → 落 turn_report;delta 以 JSON 落 turn_extractions.extractor_output（供 replay 重建）。"""
+def test_run_settle_persists_narrative_and_applied_extraction_trace(game):
+    """driver 传入邸报叙事 → 落 turn_report;applied 结果落 extractor_output 供玩家明细/时间线读。"""
     db, state, content = game
     before = state.turn
     narrative = "【邸报·测试】山西动乱微升，余无大事。"
@@ -126,9 +127,165 @@ def test_run_settle_persists_narrative_and_delta_trace(game):
     extr = db.conn.execute(
         "SELECT extractor_output FROM turn_extractions WHERE turn=?", (before,)
     ).fetchone()[0]
-    # canonical delta 以 JSON 落 extractor_output,replay/timeline 可解析重建。
-    # 注:region 字段别名(动乱→unrest)在 apply_region_deltas 做,_canonicalize 不动它,故留中文 key。
-    assert json.loads(extr) == {"region_delta": {"shanxi": {"动乱": 1}}}
+    out = json.loads(extr)
+    assert out["region_changes"] == [
+        {
+            "region": "山西",
+            "field": "unrest",
+            "label": "动乱",
+            "old": 60,
+            "new": 61,
+            "delta": 1,
+            "reason": "月末整体推演",
+        }
+    ]
+
+
+def test_run_settle_persists_applied_person_results_for_player_visible_extraction(game):
+    """邸报详明/时间线读 turn_extractions,这里必须保存 applied 结果而非 raw 人物变更。"""
+    db, state, content = game
+    before = state.turn
+
+    run_settle(
+        db,
+        state,
+        content,
+        {
+            "人物变更": [
+                {
+                    "name": "不存在的人",
+                    "动作": "任命",
+                    "office": "首辅",
+                    "reason": "测试拒收可见性",
+                }
+            ]
+        },
+        narrative="x",
+        decree_text="y",
+    )
+
+    out = db.get_turn_extraction(before)["extractor_output"]
+    assert "人物变更" not in out
+    assert "person_changes" not in out
+    assert "item" not in out["applied_person_changes"][0]
+    assert "report_section" not in out["applied_person_changes"][0]
+    assert "report_category" not in out["applied_person_changes"][0]
+    assert out["applied_person_changes"] == [
+        {
+            "name": "不存在的人",
+            "动作": "任命",
+            "rejected": True,
+            "reason": "非既有人物",
+            "category": "hallucinated_id",
+        }
+    ]
+
+
+def test_run_settle_preserves_legacy_person_key_order_after_issue_close(game):
+    """旧 character_status_changes 兼容 replay 仍应在 issue close 后执行,不抢先改人导致结算中止。"""
+    db, state, content = game
+    before = state.turn
+    name = active_ming_character(db, content)
+    ch = content.characters[name]
+    old_status = ch.status
+    old_office = ch.office
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="旧键顺序复现",
+        origin_kind="decree",
+        bar_value=50,
+        effect_on_resolve={
+            "character_status_changes": [
+                {"name": name, "status": "imprisoned", "reason": "结案下狱"}
+            ]
+        },
+    )
+    db.conn.commit()
+
+    try:
+        run_settle(
+            db,
+            state,
+            content,
+            {
+                "close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "测试结案"}],
+                "character_status_changes": [
+                    {"name": name, "status": "dead", "reason": "同月处死"}
+                ],
+            },
+            narrative="x",
+            decree_text="y",
+        )
+
+        assert db.get_character_status(name)[0] == "imprisoned"
+        out = db.get_turn_extraction(before)["extractor_output"]
+        assert out["issue_summary"]["applied_person_changes"] == [
+            {"name": name, "动作": "处置", "status": "imprisoned", "reason": "结案下狱"}
+        ]
+        assert any(
+            item.get("name") == name
+            and item.get("rejected")
+            and item.get("status") == "dead"
+            and item.get("reason") == "当前非 active（imprisoned）"
+            for item in out["applied_person_changes"]
+        )
+    finally:
+        ch.status = old_status
+        ch.office = old_office
+
+
+def test_run_settle_preserves_unified_person_key_order_after_issue_close(game):
+    """新 人物变更 也应在 issue close 后执行,顺序不得只修旧 flat key。"""
+    db, state, content = game
+    before = state.turn
+    name = active_ming_character(db, content)
+    ch = content.characters[name]
+    old_status = ch.status
+    old_office = ch.office
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="新键顺序复现",
+        origin_kind="decree",
+        bar_value=50,
+        effect_on_resolve={
+            "人物变更": [
+                {"name": name, "动作": "处置", "status": "imprisoned", "reason": "结案下狱"}
+            ]
+        },
+    )
+    db.conn.commit()
+
+    try:
+        run_settle(
+            db,
+            state,
+            content,
+            {
+                "close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "测试结案"}],
+                "人物变更": [
+                    {"name": name, "动作": "处置", "status": "dead", "reason": "同月处死"}
+                ],
+            },
+            narrative="x",
+            decree_text="y",
+        )
+
+        assert db.get_character_status(name)[0] == "dead"
+        out = db.get_turn_extraction(before)["extractor_output"]
+        assert out["issue_summary"]["applied_person_changes"] == [
+            {"name": name, "动作": "处置", "status": "imprisoned", "reason": "结案下狱"}
+        ]
+        assert {"name": name, "动作": "处置", "status": "imprisoned", "reason": "结案下狱"} in out[
+            "applied_person_changes"
+        ]
+        assert {"name": name, "动作": "处置", "status": "dead", "reason": "同月处死"} in out[
+            "applied_person_changes"
+        ]
+    finally:
+        ch.status = old_status
+        ch.office = old_office
 
 
 def test_cli_state_prints_board(game, capsys):

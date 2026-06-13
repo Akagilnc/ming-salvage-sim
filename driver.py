@@ -74,8 +74,9 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
     规范化（中文 key→英文 canonical）→ pre_settle（财政 tick + auto_trigger）→
     settle_with_delta（落库→inertia→结局→推进），推进一回合。返回结算报告文本。
 
-    narrative 落 turn_logs/turn_reports 作下月前文 + 玩家邸报;canonical delta 以 JSON 落
-    turn_extractions.extractor_output 作 replay/timeline 重建痕迹（memories 读此字段）。
+    narrative 落 turn_logs/turn_reports 作下月前文 + 玩家邸报；canonical delta 先落
+    pending_resolve_context 作重跑真源，turn_extractions.extractor_output 存 applied
+    结果供玩家明细/timeline 读取。
     章节记忆 / 结局总评不注入（driver 无 llm_config），由对话里的我另行产出。
     畸形 delta 抛 `ValueError`（库语义）；CLI 由 `main()` 转退出码。
     """
@@ -88,8 +89,8 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
     _validate_delta_shape(extracted)  # 崩前拦畸形/未知字段,避免 pre_settle 动 DB 后半落库(RT-1/P1b)
     before_turn = state.turn
     # 与真实流程同核同位（ADR 0004/0008，引擎也在 pre_settle 后才 persist）：settle 前把
-    # canonical delta 持久化为重跑真源——turn_extractions 在 settle 内部才写，崩在 settle
-    # 内时若无此行，财政已落账而 delta 只活在调用方易失上下文（违 P1）。位置必须在
+    # canonical delta 持久化为重跑真源。turn_extractions 在 settle 内部写 applied
+    # 玩家可见结果；崩在 settle 内时若无 context 行，财政已落账而 delta 只活在调用方易失上下文（违 P1）。位置必须在
     # pre_settle 之后：ready=1 统一意为「前半段已提交，只剩 settle」，恢复入口直入 apply
     # 不会跳过未跑的财政 tick（cmr S2+S3 r5）。settle 尾部 clear 自然清掉。
     # 两步同事务（PR #90 R1 codex P2 同窗，与引擎 resolve_directives 同修）：崩在

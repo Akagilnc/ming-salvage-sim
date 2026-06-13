@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from driver import run_settle
+from tests.conftest import active_ming_character
 
 
 def _rejection_rows(db, turn):
@@ -291,3 +292,317 @@ def test_item_json_is_original_delta_item_when_producer_carries_it(game, monkeyp
     item = _json.loads(row[0])
     assert "rejected" not in item  # 不是 wrapper
     assert item == {"power_id": "查无此势力", "changes": {"leverage": 5}}  # 原件
+
+
+def test_person_change_rejection_item_json_keeps_original_delta_item(game, monkeypatch, tmp_path):
+    """人物变更拒收也必须把原始条目带进 rejection_reports，不能只存截断 wrapper。"""
+    import json as _json
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+    raw_item = {"name": "孔有德", "动作": "行止", "location": "辽东"}
+
+    run_settle(
+        db,
+        state,
+        content,
+        {"人物变更": [raw_item]},
+        narrative="x",
+        decree_text="y",
+    )
+
+    row = db.conn.execute(
+        "SELECT item_json FROM rejection_reports WHERE turn=? AND section='applied_person_changes'",
+        (turn,),
+    ).fetchone()
+    assert row is not None
+    item = _json.loads(row[0])
+    assert "rejected" not in item
+    assert item == raw_item
+
+
+def test_power_move_rejection_item_json_keeps_original_person_delta_item(game, monkeypatch, tmp_path):
+    """易主委托底层 power helper 后的拒收,也要保留完整 ADR0009 原始条目。"""
+    import json as _json
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+    name = active_ming_character(db, content)
+    raw_item = {
+        "name": name,
+        "动作": "易主",
+        "new_power": "ghost_power",
+        "方式": "主动投敌",
+        "反噬": {},
+        "reason": "测试非法势力",
+    }
+
+    run_settle(
+        db,
+        state,
+        content,
+        {"人物变更": [raw_item]},
+        narrative="x",
+        decree_text="y",
+    )
+
+    row = db.conn.execute(
+        "SELECT item_json FROM rejection_reports WHERE turn=? AND section='applied_person_changes'",
+        (turn,),
+    ).fetchone()
+    assert row is not None
+    item = _json.loads(row[0])
+    assert "rejected" not in item
+    assert item == raw_item
+
+
+def test_office_change_rejection_item_json_keeps_original_person_delta_item(game, monkeypatch, tmp_path):
+    """任命/调任委托任官 helper 后的拒收,也要保留完整 ADR0009 原始条目。"""
+    import json as _json
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+    name = active_ming_character(db, content)
+    raw_item = {"name": name, "动作": "任命", "reason": "漏填官职"}
+
+    run_settle(
+        db,
+        state,
+        content,
+        {"人物变更": [raw_item]},
+        narrative="x",
+        decree_text="y",
+    )
+
+    row = db.conn.execute(
+        "SELECT category, item_json FROM rejection_reports "
+        "WHERE turn=? AND section='applied_person_changes'",
+        (turn,),
+    ).fetchone()
+    assert row is not None
+    assert row["category"] == "missing_field"
+    item = _json.loads(row["item_json"])
+    assert "rejected" not in item
+    assert item == raw_item
+
+
+def test_non_ming_appointment_rejection_keeps_original_person_delta_item(game, monkeypatch, tmp_path):
+    """非明人物任大明官被拒时,也要保留完整 ADR0009 原始条目。"""
+    import json as _json
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+    name = active_ming_character(db, content)
+    ch = content.characters[name]
+    old_power = ch.power_id
+    raw_item = {"name": name, "动作": "任命", "office": "陕西总督", "reason": "测试错授外臣"}
+
+    try:
+        ch.power_id = "houjin"
+        db.conn.execute("UPDATE characters SET power_id=? WHERE name=?", ("houjin", name))
+        db.conn.commit()
+
+        run_settle(
+            db,
+            state,
+            content,
+            {"人物变更": [raw_item]},
+            narrative="x",
+            decree_text="y",
+        )
+
+        row = db.conn.execute(
+            "SELECT category, item_json FROM rejection_reports "
+            "WHERE turn=? AND section='applied_person_changes'",
+            (turn,),
+        ).fetchone()
+        assert row is not None
+        assert row["category"] == "invalid_transition"
+        item = _json.loads(row["item_json"])
+        assert "rejected" not in item
+        assert item == raw_item
+    finally:
+        ch.power_id = old_power
+        db.conn.execute("UPDATE characters SET power_id=? WHERE name=?", (old_power, name))
+        db.conn.commit()
+
+
+def test_power_move_backlash_rejection_lands_in_reports(game, monkeypatch, tmp_path):
+    """易主本身可落库时,嵌套反噬拒收也要进入 rejection_reports,不能藏在成功项内部。"""
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+    name = next(
+        candidate
+        for candidate, ch in content.characters.items()
+        if getattr(ch, "power_id", "ming") == "ming"
+        and getattr(ch, "office_type", "") != "后宫"
+        and db.get_character_status(candidate)[0] == "active"
+    )
+    ch = content.characters[name]
+    old_power = ch.power_id
+    old_office = ch.office
+    old_office_type = ch.office_type
+
+    try:
+        run_settle(
+            db,
+            state,
+            content,
+            {
+                "人物变更": [
+                    {
+                        "name": name,
+                        "动作": "易主",
+                        "new_power": "houjin",
+                        "方式": "主动投敌",
+                        "反噬": {"查无此势力": {"leverage": 5}},
+                        "reason": "测试反噬拒收",
+                    }
+                ]
+            },
+            narrative="x",
+            decree_text="y",
+        )
+
+        rows = [
+            dict(row)
+            for row in db.conn.execute(
+                "SELECT section, reason, category, item_json FROM rejection_reports "
+                "WHERE turn=? ORDER BY id",
+                (turn,),
+            ).fetchall()
+        ]
+        assert len(rows) == 1
+        assert rows[0]["section"] == "applied_person_changes.backlash_results"
+        assert rows[0]["reason"] == "power_updates 引用未入库势力 '查无此势力'"
+        assert rows[0]["category"] == "hallucinated_id"
+        assert json.loads(rows[0]["item_json"]) == {
+            "power_id": "查无此势力",
+            "changes": {"leverage": 5},
+        }
+    finally:
+        ch.power_id = old_power
+        ch.office = old_office
+        ch.office_type = old_office_type
+
+
+def test_issue_close_power_move_backlash_rejection_is_not_duplicated(game, monkeypatch, tmp_path):
+    """结案人物变更同时挂 close 详情与 issue_summary 聚合时,嵌套拒收只应入库一次。"""
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+    name = active_ming_character(db, content)
+    ch = content.characters[name]
+    old_power = ch.power_id
+    old_office = ch.office
+    old_office_type = ch.office_type
+
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="结案反噬去重测试",
+        origin_kind="decree",
+        bar_value=50,
+        effect_on_resolve={
+            "人物变更": [
+                {
+                    "name": name,
+                    "动作": "易主",
+                    "new_power": "houjin",
+                    "方式": "主动投敌",
+                    "反噬": {"查无此势力": {"leverage": 5}},
+                    "reason": "测试结案反噬拒收",
+                }
+            ]
+        },
+    )
+    db.conn.commit()
+
+    try:
+        run_settle(
+            db,
+            state,
+            content,
+            {"close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "测试结案"}]},
+            narrative="x",
+            decree_text="y",
+        )
+
+        rows = [
+            dict(row)
+            for row in db.conn.execute(
+                "SELECT section, reason, category, item_json FROM rejection_reports "
+                "WHERE turn=? ORDER BY id",
+                (turn,),
+            ).fetchall()
+        ]
+        assert len(rows) == 1
+        assert rows[0]["section"] == "issue_summary.applied_person_changes.backlash_results"
+        assert rows[0]["reason"] == "power_updates 引用未入库势力 '查无此势力'"
+        assert rows[0]["category"] == "hallucinated_id"
+        assert json.loads(rows[0]["item_json"]) == {
+            "power_id": "查无此势力",
+            "changes": {"leverage": 5},
+        }
+    finally:
+        ch.power_id = old_power
+        ch.office = old_office
+        ch.office_type = old_office_type
+
+
+def test_inertia_power_move_backlash_rejection_lands_in_reports(game, monkeypatch, tmp_path):
+    """自然结案的人物易主反噬拒收也要入 rejection_reports,不能只藏在 applied 输出里。"""
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+    name = active_ming_character(db, content)
+    ch = content.characters[name]
+    old_power = ch.power_id
+    old_office = ch.office
+    old_office_type = ch.office_type
+
+    db.insert_issue(
+        state,
+        kind="situation",
+        title="惯性反噬留痕测试",
+        bar_value=99,
+        inertia=1,
+        effect_on_resolve={
+            "人物变更": [
+                {
+                    "name": name,
+                    "动作": "易主",
+                    "new_power": "houjin",
+                    "方式": "主动投敌",
+                    "反噬": {"查无此势力": {"leverage": 5}},
+                    "reason": "测试惯性反噬拒收",
+                }
+            ]
+        },
+    )
+    db.conn.commit()
+
+    try:
+        run_settle(db, state, content, {}, narrative="x", decree_text="y")
+
+        rows = [
+            dict(row)
+            for row in db.conn.execute(
+                "SELECT section, reason, category, item_json FROM rejection_reports "
+                "WHERE turn=? ORDER BY id",
+                (turn,),
+            ).fetchall()
+        ]
+        assert len(rows) == 1
+        assert rows[0]["section"] == "issue_summary.applied_person_changes.backlash_results"
+        assert rows[0]["reason"] == "power_updates 引用未入库势力 '查无此势力'"
+        assert rows[0]["category"] == "hallucinated_id"
+    finally:
+        ch.power_id = old_power
+        ch.office = old_office
+        ch.office_type = old_office_type

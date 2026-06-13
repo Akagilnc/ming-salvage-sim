@@ -48,6 +48,27 @@ def test_persist_rejects_malformed_delta_and_writes_nothing(game):
     assert db.get_resolve_context(turn) is None
 
 
+def test_persist_accepts_person_change_delta_after_applier_is_wired(game):
+    """人物变更写路径接入后，resolve_context 可保存新 key，供重试/回放恢复同一 delta。"""
+    db, state, content = game
+    turn = state.turn
+    extracted = {
+        "人物变更": [
+            {"name": "孔有德", "动作": "处置", "status": "dismissed", "reason": "削职听勘"}
+        ]
+    }
+
+    persist_resolve_context(
+        db, turn, extracted,
+        decree_text="x", narrative="y",
+        simulator_payload={}, secret_orders=[], relevant_memories=[],
+    )
+
+    ctx = db.get_resolve_context(turn)
+    assert ctx is not None
+    assert ctx["extracted"] == extracted
+
+
 def test_settle_clears_resolve_context_on_completion(game):
     """正常结算完成后 resolve_context 已清（clear 在 settle 写序列内，settle 完成 = context 干净）。"""
     db, state, content = game
