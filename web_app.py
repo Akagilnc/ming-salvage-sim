@@ -410,6 +410,27 @@ class DirectivePatch(BaseModel):
     notes: Optional[str] = None
 
 
+def _character_power_id(character: Character, db) -> str:
+    """人物所属势力 id：DB 权威，回退内存 power_id，默认 ming。"""
+    row = db.conn.execute(
+        "SELECT power_id FROM characters WHERE name=?", (character.name,)
+    ).fetchone()
+    return (row["power_id"] if row else None) or getattr(character, "power_id", "ming") or "ming"
+
+
+def visible_in_court(character: Character, db) -> bool:
+    """朝堂大臣列表准入：ming 治下、非后宫，且 DB 权威状态非 offstage（离场/未登场不入列）。
+
+    状态与势力一律以 DB 为准（与 public_character 同源）——内存 c.status 在 auto-debut
+    等路径（set_character_status 只写 DB、不回写内存）会 stale，不能用作过滤依据（见 #104）。
+    """
+    if character.office_type == "后宫":
+        return False
+    if db.get_character_status(character.name)[0] == "offstage":
+        return False
+    return _character_power_id(character, db) == "ming"
+
+
 class WebGame:
     """Web 端会话包装：持一个 GameSession + 网页专属态（聊天历史、收藏）。"""
 
@@ -805,10 +826,7 @@ class WebGame:
         }
 
     def character_power_id(self, character: Character) -> str:
-        row = self.db.conn.execute(
-            "SELECT power_id FROM characters WHERE name=?", (character.name,)
-        ).fetchone()
-        return (row["power_id"] if row else None) or getattr(character, "power_id", "ming") or "ming"
+        return _character_power_id(character, self.db)
 
     def directive_payload(self, row) -> Dict[str, Any]:
         return {
@@ -1063,7 +1081,7 @@ class WebGame:
             "ministers": [
                 self.public_character(c)
                 for c in self.content.characters.values()
-                if c.office_type != "后宫" and self.character_power_id(c) == "ming"
+                if visible_in_court(c, self.db)
             ],
             "consorts": [
                 self.public_character(c)
