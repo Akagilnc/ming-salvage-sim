@@ -1345,6 +1345,10 @@ def apply_office_appointment(
             displaced_parts = _displace_duplicate_offices(db, content, name, new_office)
             ch = content.characters[name]
             ch.status = "active"
+            if cur_status == "active":
+                # 与上方 DB 清 status_reason/reason_code 同步（重任命 active 者清被顶替等旧标记）。
+                ch.status_reason = ""
+                ch.reason_code = ""
             ch.office = normalize_office(new_office)
             ch.office_type = infer_office_type_from_office(ch.office, new_office_type or ch.office_type, llm_config)
             if registry is not None:

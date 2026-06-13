@@ -2245,3 +2245,31 @@ def test_disposition_syncs_reason_code_to_content_in_txn(game):
     assert ch.status == "dismissed"
     assert ch.reason_code == "获罪削籍", f"in-txn 内存 reason_code 未同步，实得 {ch.reason_code!r}"
     assert ch.status_reason == "忤逆案削籍"
+
+
+def test_reappointment_clears_displaced_mark_in_both_db_and_content(game):
+    """ADR 决定6：重任命 active 者（清被顶替标记）时，DB 与 content.characters 都要清
+    reason_code/status_reason，否则同事务内读内存仍见旧『被顶替』。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    # 制造被顶替态（active + 听用候铨 + 被顶替）
+    db.conn.execute(
+        "UPDATE characters SET office='听用候铨', status_reason='被顶替', reason_code='被顶替' WHERE name=?",
+        (name,),
+    )
+    db.conn.commit()
+    if name in content.characters:
+        content.characters[name].office = "听用候铨"
+        content.characters[name].reason_code = "被顶替"
+        content.characters[name].status_reason = "被顶替"
+
+    issues.apply_score_extraction(
+        db, state,
+        {"人物变更": [{"name": name, "动作": "任命", "office": "兵部尚书", "reason": "起复任事"}]},
+        content=content,
+    )
+
+    row = db.conn.execute("SELECT reason_code, status_reason FROM characters WHERE name=?", (name,)).fetchone()
+    ch = content.characters[name]
+    assert row["reason_code"] == "" and row["status_reason"] == "", "DB 未清被顶替标记"
+    assert ch.reason_code == "" and ch.status_reason == "", f"content 未清，实得 {ch.reason_code!r}/{ch.status_reason!r}"
