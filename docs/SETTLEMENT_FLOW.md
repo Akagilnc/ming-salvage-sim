@@ -78,7 +78,8 @@
   11. touched_ids = {a.issue_id for a in applied.issue_summary.advances}
       apply_issue_inertia_and_ongoing(db, state, touched_ids=touched_ids,
                                       applied_person_changes=inertia_person_changes)
-      ↳ 未被本月触动的 issue 才走惯性漂 / ongoing_effects 月支
+      ↳ 全部 active issue 走惯性漂 / ongoing_effects 月支（touched_ids 入参保留但已不按它跳过——
+        见 issues.py `_ = touched_ids`；本月被推进的 issue 也吃惯性，避免漏算）
       ↳ inertia 追加的玩家可见人物变更并进 applied.issue_summary.applied_person_changes
         （下方 12 留痕 + 13 chapter memory 都读 applied，须先合并再存/记，否则两者漏 inertia 人物变更）
 
@@ -140,7 +141,7 @@ advance_without_edict(state, db, *, content=None, registry=None):
 
 ## 不变式 / 雷区
 
-- **顺序不能改**：`auto_trigger_seed_issues` 必须在产邸报前；`apply_issue_inertia_and_ongoing` 必须在 `save_turn_extraction` + `chapter memory` 之前（inertia 追加的玩家可见人物变更要先并进 `applied` 再存 / 记，否则玩家明细与起居注漏 inertia 人物变更）；`chapter memory` 必须在结局判定前；`apply_issue_inertia_and_ongoing(touched_ids=)` 中 touched_ids 必须来自 `applied.issue_summary.advances`。
+- **顺序不能改**：`auto_trigger_seed_issues` 必须在产邸报前；`apply_issue_inertia_and_ongoing` 必须在 `save_turn_extraction` + `chapter memory` 之前（inertia 追加的玩家可见人物变更要先并进 `applied` 再存 / 记，否则玩家明细与起居注漏 inertia 人物变更）；`chapter memory` 必须在结局判定前。（注：`apply_issue_inertia_and_ongoing` 的 `touched_ids=` 入参已不再用作跳过过滤——`issues.py` 内 `_ = touched_ids`、惯性漂吃全部 active issue；decree 仍按 advances 计算并传入只为保留调用签名，非不变式。）
 - **assert turn==before_turn+1**：phase2 完整跑完必须推进一回合，没推进就是 bug。
 - **HITL 暂停时不要推进**：return awaiting=True 时 state.turn 不动，玩家亲裁后续跑 phase2 才推。
 - **结算只判一次结局**：state.ended=True 后保持不动，继续推月只走 fixed flows。
