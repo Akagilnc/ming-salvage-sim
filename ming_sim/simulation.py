@@ -294,7 +294,7 @@ def build_simulator_payload(
         dict(r) for r in db.conn.execute(
             "SELECT name,office,office_type,faction,status,power_id,"
             "location,transit_to FROM characters WHERE status='active' "
-            "AND office_type!='后宫' ORDER BY rowid"
+            "AND power_id='ming' AND office_type!='后宫' ORDER BY rowid"
         ).fetchall()
     ])
     return {

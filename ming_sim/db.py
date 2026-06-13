@@ -936,12 +936,17 @@ class GameDB:
             name = r["name"]
             office = str(r["office"] or "")
             cleaned = office.replace("（在途）", "").replace("(在途)", "").strip().rstrip(",，")
+            # 目的地是中文地名（辽东/陕西），region_id 是英文（liaodong/shaanxi）——直接
+            # `in region_ids` 恒 False、transit_to 永不落（死分支，5b r6 Gemini high）。用
+            # match_region_id_from_text 把中文解析成 region_id（同 db.py:2626 口径），解析得到才落。
             dest = ""
             for kw in ("督师", "镇守", "赴", "之任"):
                 mm = re.search(kw + r"([一-龥]{2,4})", office)
-                if mm and mm.group(1) in region_ids:
-                    dest = mm.group(1)
-                    break
+                if mm:
+                    rid = match_region_id_from_text(mm.group(1), self.content.regions)
+                    if rid:
+                        dest = rid
+                        break
             if dest:
                 self.conn.execute(
                     "UPDATE characters SET office=?, transit_to=? WHERE name=?", (cleaned, dest, name)
