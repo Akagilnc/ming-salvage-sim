@@ -35,13 +35,13 @@
 
 字段集进接口 → 军队 roster 17 / simulator 19 等多处漂移被接口逼齐，desync 在测试期暴露（**interface 即 test surface**）。
 
-`present_consort_candidates`（后宫选秀候选名单）是**呈御览 = 人面**，且现渲染含 loyalty/ability 等裸数值 —— 即决定 3 现状里的第二处 P4 漏点，**不是机面全档的复数用法**。本 ADR 不展开（随后宫工作 defer），但分类上归人面候选册：将来迁入时走名册行的人面投影（定性、无裸属性数值），与 `skills.py:88` 同批堵。
+`present_consort_candidates`（后宫选秀候选名单）是**呈御览 = 人面**（**不是机面全档的复数用法**）。但其御览输出**当前不含裸属性数值** —— 输出块只拼 name/性情/特质/summary，loyalty/ability 仅作 `Character(...)` 构造 kwargs 落库、从不进返回串（`registry.py:390-405`，三家 R5 实核）。故它是个**人面待防点**而非现状漏点：将来御览若改吐属性才会漏。本 ADR 不展开（随后宫工作 defer），但分类归人面候选册、纳入 P4 守门面：迁入时走名册行的人面投影（定性、无裸属性数值）。
 
 ## 决定 3：P4（皇帝看不见数值）是横切保证，不是渲染形状
 
 **机面 / 人面的界定（先划线，免得误读）**：全档与名册行是**机面**——喂裁判 / 扮演 agent 的 system prompt / simulator payload / `inspect_*` 工具。**机面带数值是设计本意，不算 P4 违规**（数值是驱动 LLM 的隐藏燃料，玩家看不见）。P4 只管**人面**——直接给皇帝看的渲染。
 
-现状：玩家大多只见 **LLM 输出**（邸报、大臣开口），有状态实体字段**几乎不直接渲染给皇帝**——已知两处**玩家面**漏点：① `skills.py:88` 的 debug print（`属性：忠诚X | 能力Y`）；② 选秀候选 `present_consort_candidates`（呈御览，含 loyalty/ability 裸数值，见决定 2，随后宫工作 defer）。（`db.py` 的 `army_detail` 等也吐裸数值，但消费者是 inspect 工具 / simulator payload = 机面，属允许范畴。）
+现状：玩家大多只见 **LLM 输出**（邸报、大臣开口），有状态实体字段**几乎不直接渲染给皇帝**——已知**一处真玩家面漏点**：`skills.py:88` 的 debug print（`属性：忠诚X | 能力Y`，`terminal.py:138` 调用）。另一个**人面待防点**：选秀候选 `present_consort_candidates`（呈御览=人面，但御览输出当前不吐属性数值、见决定 2；将来御览若改吐才漏，随后宫工作 defer）。（`db.py` 的 `army_detail` 等也吐裸数值，但消费者是 inspect 工具 / simulator payload = 机面，属允许范畴。）
 
 故 P4 **不做成「人面渲染方法」**（那是空槽，将来 web 人物面板才需要），做成横在所有渲染之上的保证。**守门面 = 玩家输出边界（不分 CLI/web，按本游戏 web 为主定，#96）**——把守门定在「最终呈现给皇帝的文本」这个共享边界上，覆盖 CLI 终端 print + **web 大臣对话 / SSE 响应 / 存储的对话历史** + 邸报装配路径；**排除** agent system prompt / inspect 工具 / simulator payload 这些机面全档。**不可枚举成 CLI-only**——web 大臣对话若旁路 LLM 直拼实体字段就漏。
 
