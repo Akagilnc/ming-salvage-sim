@@ -55,7 +55,7 @@ LLM显式传`expires_turn`时优先；否则按上表自动计算。
 directive          -- 诏书草案
 decree             -- 正式颁诏全文
 simulation_narrative -- 月末邸报叙事
-extractor_output   -- score_extractor JSON输出
+extractor_output   -- applied 可见结果（raw delta 真源在 pending_resolve_context）
 issue              -- 事项进度快照
 chat_message       -- 召对聊天（大臣承诺/情报）
 turn_report        -- 月末奏报
@@ -96,7 +96,7 @@ system             -- 规则层直接写入
   │
   ├─ 2. extract_event_memories_with_agent()         [memories.py]  ← 可选LLM路径
   │       agent：memory_extractor（prompts/memory_extractor.md）
-  │       payload：turn + directives + decree_text + narrative + applied + extractor_output
+  │       payload：turn + directives + decree_text + narrative + applied + extractor_output(applied view)
   │       输出：memories[] JSON → _write_llm_memories() → upsert_event_memory()
   │
   └─ 3. extract_all_chat_memories()                [memories.py]

@@ -68,12 +68,15 @@ class Character:
     style: str
     power_id: str
     location: str = ""
+    transit_to: str = ""
     birth_year: int = 0  # 历史生年（公历，0=未填）
     historical_death_year: int = 0  # 历史卒年（公历，0=未填）
     historical_death_month: int = 0  # 1-12，0=未指定
     debut_year: int = 0  # 历史登场年（公历，0=开局即在场）
     debut_month: int = 0  # 1-12，0=不限月
     status: str = "active"  # active | offstage | dismissed | imprisoned | exiled | retired | dead
+    status_reason: str = ""  # 人读去职/迁移缘由（ADR 0009 三面同步；DB characters.status_reason 真源）
+    reason_code: str = ""  # 机读缘由枚举（ADR 0009；人才池/起复派生用；DB characters.reason_code 真源）
     summary: str = ""  # 人物简介，后宫/大臣均有
     portrait_id: str = ""  # 头像文件标识：空=无专属；"minister_pool_3"=用第3号预设头像
 

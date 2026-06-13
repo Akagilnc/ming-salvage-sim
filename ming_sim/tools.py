@@ -12,6 +12,8 @@ from ming_sim.skills import skill_template
 
 _STATUS_CN = {
     "active": "在朝",
+    "offstage": "赋闲",
+    "candidate": "候选",
     "dismissed": "已罢黜",
     "imprisoned": "下狱",
     "exiled": "流放",
@@ -619,7 +621,9 @@ def build_board_query_tools(context: CourtContext):
         """查当前在朝（active）官员名单：姓名、官职、派系。
         写 office_changes / character_status_changes 前必查，核实人物是否确实在朝。"""
         rows = context.db.conn.execute(
-            "SELECT name,office,faction FROM characters WHERE status='active' AND power_id='ming' ORDER BY rowid"
+            # roster scope（同 court_roster / _talent_pool_rows）：大明、非后宫。
+            "SELECT name,office,faction FROM characters WHERE status='active' "
+            "AND power_id='ming' AND office_type!='后宫' ORDER BY rowid"
         ).fetchall()
         return "\n".join(f"{r['name']}：{r['office']}，{r['faction']}" for r in rows)
 

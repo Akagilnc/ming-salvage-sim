@@ -48,6 +48,8 @@ TOP_LEVEL_ALIASES = {
     "人物状态变化": "character_status_changes",
     "人物易主": "character_power_changes",
     "后宫册封": "appointments",
+    "person_changes": "人物变更",
+    "人物变更": "人物变更",
     "密令副作用": "secret_order_updates",
     "密令结案": "secret_order_closes",
     "崇祯结局": "emperor_fate",
@@ -217,6 +219,29 @@ def _auto_table(rows: List[Dict[str, object]]) -> Dict[str, object]:
     return _table(rows, cols)
 
 
+def _talent_pool_rows(db: "GameDB") -> List[Dict[str, object]]:
+    """ADR 0009 人才池视图（读取端闭环）：居家/致仕/削籍在世者皆可起复，带
+    status + reason_code（机读）+ status_reason（可读），裁判与玩家才看得见
+    「某公因忤逆案削籍居家」。simulator 盘面与 extractor 上下文共用此源、防两处漂移。
+    键名沿用 offstage_ministers（prompt/dedup 已引；语义已扩为起复候选池）。
+
+    ADR L104 池 = (active+身名分听用候铨) ∪ (offstage/retired/dismissed 在世)。active 半=
+    顶替离任者（office='听用候铨'，仍 active 可即起复，S5 核心玩趣）。锚 身名分 office='听用候铨'
+    （非 office_type=待铨——后者兼作分类失败 fallback、被污染，决定10/L94）。"""
+    # roster scope（与 court_roster / tools.get_active_ministers 同口径）：只放大明、非后宫。
+    # 否则后金/流寇 offstage 者（李自成/张献忠 等）漏进起复人才池、被当可起复的大明官（违决定10）。
+    return [
+        dict(r) for r in db.conn.execute(
+            "SELECT name,office,office_type,faction,status,reason_code,status_reason,"
+            "power_id,location,transit_to,debut_year,debut_month "
+            "FROM characters WHERE (status IN ('offstage','retired','dismissed') "
+            "OR (status='active' AND office='听用候铨' AND reason_code='被顶替')) "
+            "AND power_id='ming' AND office_type!='后宫' "
+            "ORDER BY status, name"
+        ).fetchall()
+    ]
+
+
 
 
 def build_simulator_payload(
@@ -264,10 +289,15 @@ def build_simulator_payload(
             "loyalty,firearm_equipment,cannon_equipment,status,owner_power FROM armies ORDER BY id"
         ).fetchall()
     ]
+    # 在朝名单 = 目前当官的（active）：simulator 在朝盘面 + 任命查重。可起复者（居家/致仕/
+    # 削籍）走 offstage_ministers 人才池，在押/流放者两份都不在（玩家下旨决定去留）。旧 status!=
+    # 'offstage' 会把削籍/致仕/在押者也混进在朝名单、与人才池双重曝光自相矛盾。注：大臣 system 的
+    # 现状参照名册（registry.build_court_roster）另有用途、故意含非 active 带状态标签，不在此口径。
     court_roster = _auto_table([
         dict(r) for r in db.conn.execute(
-            "SELECT name,office,office_type,faction,status,power_id,location FROM characters "
-            "WHERE status!='offstage' AND office_type!='后宫' ORDER BY rowid"
+            "SELECT name,office,office_type,faction,status,power_id,"
+            "location,transit_to FROM characters WHERE status='active' "
+            "AND power_id='ming' AND office_type!='后宫' ORDER BY rowid"
         ).fetchall()
     ])
     return {
@@ -288,6 +318,9 @@ def build_simulator_payload(
         "armies": _auto_table(army_rows),
         "buildings": _auto_table(db.building_payload()),
         "court_roster": court_roster,
+        # ADR 0009 人才池视图（读取端闭环）：居家/致仕/削籍在世者带 reason_code，
+        # 裁判与玩家看得见可起复之人。自动转 TSV（build_simulator_context 尾部兜底）。
+        "offstage_ministers": _auto_table(_talent_pool_rows(db)),
         "deaths_this_turn": deaths_this_turn or [],
         "debuts_this_turn": debuts_this_turn or [],
         "relevant_memories": relevant_memories or [],
@@ -383,6 +416,7 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "appointments": [],
     "character_status_changes": [],
     "character_power_changes": [],
+    "人物变更": [],
     "secret_order_updates": [],
     "secret_order_closes": [],
     "emperor_fate": None,  # 崇祯结局：abdicate(退位/禅让)/suicide(自尽/殉国)/null(无)
@@ -393,8 +427,7 @@ MODULE_FIELDS: Dict[str, set[str]] = {
     "military_external": {"army_delta", "new_armies", "power_updates", "world_advance"},
     "issues": {"issue_advances", "new_issues", "cancels", "close_issues"},
     "personnel_secret": {
-        "office_changes", "character_status_changes", "character_power_changes", "appointments",
-        "secret_order_updates", "secret_order_closes", "emperor_fate",
+        "人物变更", "secret_order_updates", "secret_order_closes", "emperor_fate",
     },
 }
 
@@ -469,15 +502,14 @@ def _extractor_context_payload(
     ]
     active_ministers = [
         dict(r) for r in db.conn.execute(
-            "SELECT name,office,office_type,faction,power_id,location FROM characters WHERE status='active' ORDER BY rowid"
+            # roster scope（同 court_roster / _talent_pool_rows / tools.get_active_ministers）：
+            # 大明、非后宫。否则 active 外臣（皇太极等）/ active 后宫漏进 extractor 在朝名单（PR #106 CodeRabbit）。
+            "SELECT name,office,office_type,faction,power_id,location,transit_to "
+            "FROM characters WHERE status='active' AND power_id='ming' AND office_type!='后宫' ORDER BY rowid"
         ).fetchall()
     ]
-    offstage_ministers = [
-        dict(r) for r in db.conn.execute(
-            "SELECT name,office,faction,power_id,location,debut_year,debut_month "
-            "FROM characters WHERE status='offstage' ORDER BY name"
-        ).fetchall()
-    ]
+    # ADR 0009 人才池视图：与 simulator 盘面共用 _talent_pool_rows（防两处漂移）。
+    offstage_ministers = _talent_pool_rows(db)
     return {
         "turn": {"year": state.year, "period": state.period, "turn": state.turn},
         "narrative": narrative,

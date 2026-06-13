@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 import ming_sim.issues as I
+from ming_sim.memories import effect_brief
 from tests.conftest import active_ming_character
 
 
@@ -35,10 +36,219 @@ def test_resolve_creates_army(game):
 def test_resolve_changes_character_status(game):
     db, state, content = game
     name = active_ming_character(db, content)
+    before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
     I._apply_issue_entities(db, state, {
         "character_status_changes": [{"name": name, "status": "exiled", "reason": "国策清算"}],
     }, "局势#测试结案")
     assert db.get_character_status(name)[0] == "exiled"
+    assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs + 1
+    log = db.conn.execute(
+        "SELECT person_name, action, payload_summary, derived_from, source "
+        "FROM person_logs ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert dict(log) == {
+        "person_name": name,
+        "action": "处置",
+        "payload_summary": "国策清算",
+        "derived_from": "局势#测试结案",
+        "source": "system_simulation",
+    }
+
+
+def test_legacy_issue_status_change_uses_person_transition_matrix(game):
+    db, state, content = game
+    name = active_ming_character(db, content)
+    db.set_character_status(state, name, "dead", "前置死亡")
+    content.characters[name].status = "dead"
+
+    with pytest.raises(ValueError, match="dead 无 status 出边"):
+        I._apply_issue_entities(
+            db,
+            state,
+            {
+                "character_status_changes": [
+                    {"name": name, "status": "dismissed", "reason": "旧键误写罢黜"}
+                ]
+            },
+            "局势#测试结案",
+            content=content,
+        )
+
+    assert db.get_character_status(name)[0] == "dead"
+    assert content.characters[name].status == "dead"
+
+
+def test_legacy_issue_status_change_does_not_use_month_end_active_gate(game):
+    db, state, content = game
+    name = active_ming_character(db, content)
+    ch = content.characters[name]
+    old_status = ch.status
+    old_office = ch.office
+    old_transit_to = ch.transit_to
+
+    try:
+        db.set_character_status(state, name, "imprisoned", "前置下狱")
+        ch.status = "imprisoned"
+        ch.office = ""
+        ch.transit_to = ""
+
+        I._apply_issue_entities(
+            db,
+            state,
+            {
+                "character_status_changes": [
+                    {"name": name, "status": "dead", "reason": "结案赐死"}
+                ]
+            },
+            "局势#测试结案",
+            content=content,
+        )
+
+        assert db.get_character_status(name)[0] == "dead"
+        assert ch.status == "dead"
+    finally:
+        ch.status = old_status
+        ch.office = old_office
+        ch.transit_to = old_transit_to
+
+
+def test_resolve_character_status_syncs_content_travel_state(game):
+    db, state, content = game
+    name = active_ming_character(db, content)
+    old_status = content.characters[name].status
+    old_office = content.characters[name].office
+    old_transit_to = content.characters[name].transit_to
+
+    try:
+        I.apply_score_extraction(
+            db,
+            state,
+            {"人物变更": [{"name": name, "动作": "行止", "transit_to": "liaodong"}]},
+            content=content,
+        )
+
+        I._apply_issue_entities(
+            db,
+            state,
+            {
+                "character_status_changes": [
+                    {"name": name, "status": "dismissed", "reason": "局势失败问责"}
+                ]
+            },
+            "局势#测试结案",
+            content=content,
+        )
+
+        row = db.conn.execute(
+            "SELECT status, office, transit_to FROM characters WHERE name=?", (name,)
+        ).fetchone()
+        assert row["status"] == "dismissed"
+        assert row["office"] == ""
+        assert row["transit_to"] == ""
+        assert content.characters[name].status == "dismissed"
+        assert content.characters[name].office == ""
+        assert content.characters[name].transit_to == ""
+    finally:
+        content.characters[name].status = old_status
+        content.characters[name].office = old_office
+        content.characters[name].transit_to = old_transit_to
+
+
+def test_resolve_applies_unified_person_change_effect(game):
+    db, state, content = game
+    name = active_ming_character(db, content)
+    old_location = content.characters[name].location
+    old_transit_to = content.characters[name].transit_to
+
+    try:
+        tolerated = I._apply_issue_entities(
+            db,
+            state,
+            {"人物变更": [{"name": name, "动作": "行止", "transit_to": "liaodong"}]},
+            "局势#测试结案",
+            content=content,
+        )
+
+        row = db.conn.execute(
+            "SELECT location, transit_to FROM characters WHERE name=?", (name,)
+        ).fetchone()
+        assert tolerated == []
+        assert row["location"] == old_location
+        assert row["transit_to"] == "liaodong"
+        assert content.characters[name].transit_to == "liaodong"
+    finally:
+        content.characters[name].location = old_location
+        content.characters[name].transit_to = old_transit_to
+
+
+def test_issue_unified_person_change_shadows_legacy_person_effects(game):
+    db, state, content = game
+    name = active_ming_character(db, content)
+    old_status = content.characters[name].status
+    old_office = content.characters[name].office
+    old_office_type = content.characters[name].office_type
+    applied_person_changes = []
+
+    try:
+        I._apply_issue_entities(
+            db,
+            state,
+            {
+                "character_status_changes": [
+                    {
+                        "name": name,
+                        "status": "imprisoned",
+                        "reason_code": "陷虏",
+                        "reason": "旧键应被新键遮蔽",
+                    }
+                ],
+                "人物变更": [
+                    {
+                        "name": name,
+                        "动作": "任命",
+                        "office": "陕西总督",
+                        "reason": "新键任官",
+                    }
+                ],
+            },
+            "局势#测试结案",
+            content=content,
+            applied_person_changes=applied_person_changes,
+        )
+
+        row = db.conn.execute(
+            "SELECT status, office, reason_code FROM characters WHERE name=?", (name,)
+        ).fetchone()
+        assert row["status"] == "active"
+        assert row["office"] == "陕西总督"
+        assert row["reason_code"] == ""
+        assert all(item.get("status") != "imprisoned" for item in applied_person_changes)
+        assert any(item.get("new_office") == "陕西总督" for item in applied_person_changes)
+    finally:
+        content.characters[name].status = old_status
+        content.characters[name].office = old_office
+        content.characters[name].office_type = old_office_type
+
+
+def test_resolve_rejects_bad_unified_person_change_effect(game):
+    db, state, content = game
+
+    with pytest.raises(ValueError, match="人物变更 非法"):
+        I._apply_issue_entities(
+            db,
+            state,
+            {"人物变更": [{"name": "不存在的人", "动作": "行止", "transit_to": "liaodong"}]},
+            "局势#测试结案",
+            content=content,
+        )
+
+
+@pytest.mark.parametrize("bad_effect", [{"人物变更": "bad"}, {"人物变更": ["bad"]}])
+def test_issue_person_change_effect_rejects_malformed_shape(game, bad_effect):
+    db, state, content = game
+
+    with pytest.raises(ValueError, match="人物变更"):
+        I._apply_issue_entities(db, state, bad_effect, "局势#测试结案", content=content)
 
 
 def test_malformed_army_raises_not_silent(game):
@@ -291,6 +501,77 @@ def test_inertia_natural_resolve_applies_entities(game):
     cnt = db.conn.execute(
         "SELECT COUNT(*) FROM armies WHERE id='inertia_army_test'").fetchone()[0]
     assert cnt == 1                               # 自然结案也建了奖励军
+
+
+def test_inertia_natural_resolve_applies_unified_person_change_with_bound_content(game):
+    """自然结案的人物变更与 tracker close 同口径,不能因缺 content 误拒合法在册人物。"""
+    from ming_sim.issues import apply_issue_inertia_and_ongoing
+    db, state, content = game
+    name = active_ming_character(db, content)
+    old_office = content.characters[name].office
+
+    try:
+        db.insert_issue(
+            state, kind="situation", title="自然结案人事测试",
+            bar_value=99, inertia=1,
+            effect_on_resolve={
+                "人物变更": [
+                    {
+                        "name": name,
+                        "动作": "调任",
+                        "office": "陕西总督",
+                        "office_type": "督抚",
+                        "reason": "自然结案调任",
+                    }
+                ]
+            },
+        )
+
+        apply_issue_inertia_and_ongoing(db, state)
+
+        row = db.conn.execute("SELECT office FROM characters WHERE name=?", (name,)).fetchone()
+        assert row["office"] == "陕西总督"
+        assert content.characters[name].office == "陕西总督"
+    finally:
+        content.characters[name].office = old_office
+
+
+def test_issue_resolve_person_effect_is_visible_to_effect_brief(game):
+    db, state, content = game
+    name = active_ming_character(db, content)
+    old_status = content.characters[name].status
+    old_office = content.characters[name].office
+    issue_id = db.insert_issue(
+        state,
+        kind="situation",
+        title="结案人事摘要测试",
+        bar_value=50,
+        effect_on_resolve={
+            "人物变更": [
+                {"name": name, "动作": "处置", "status": "dismissed", "reason": "结案问责"}
+            ]
+        },
+    )
+
+    try:
+        applied = I.apply_score_extraction(
+            db,
+            state,
+            {
+                "close_issues": [
+                    {"issue_id": issue_id, "reason": "resolved", "narrative": "测试结案"}
+                ]
+            },
+            content=content,
+        )
+
+        assert applied["issue_summary"]["applied_person_changes"] == [
+            {"name": name, "动作": "处置", "status": "dismissed", "reason": "结案问责"}
+        ]
+        assert f"处分：{name}" in effect_brief({"issue_summary": applied["issue_summary"]})
+    finally:
+        content.characters[name].status = old_status
+        content.characters[name].office = old_office
 
 
 def test_inertia_natural_fail_applies_entities(game):

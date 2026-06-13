@@ -3,9 +3,9 @@
 **真相源**：`ming_sim/simulation.py`（`EMPTY_EXTRACTION` / `MODULE_FIELDS` / `_clean_*`）+ `ming_sim/issues.py`（落库守门）+ `ming_sim/constants.py`（白名单）。
 
 用途：每回合月末，我以裁判身份产一份 delta JSON，由 driver 喂 `apply_score_extraction(db, state, extracted)` 落库。**没在白名单里的字段会被沉默裁掉、值不合法的整条丢弃。** 必须查表，不要凭"我以为"。
-v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、未知顶层字段）过不了 `validate_delta_shape`，结算会响亮中止（SettlementAbort + 诊断错误包），不再静默吞——产出前自查顶层 23 字段，别指望守门人帮忙兜。
+v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、未知顶层字段）过不了 `validate_delta_shape`，结算会响亮中止（SettlementAbort + 诊断错误包），不再静默吞——产出前自查顶层 20 字段，别指望守门人帮忙兜。
 
-## 顶层 23 字段（容器类型固定）
+## 顶层 20 字段（容器类型固定）
 
 ```jsonc
 {
@@ -32,10 +32,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
   "close_issues":     [],  // 结案 issue
 
   // ── personnel_secret 模块 ──
-  "office_changes":             [],  // 人事除目（任官 / 调任）
-  "appointments":               [],  // 后宫册封
-  "character_status_changes":   [],  // 人物状态（罢黜/下狱/流放/致仕/死）
-  "character_power_changes":    [],  // 人物易主
+  "人物变更":                    [],  // ADR 0009 单一人物入口：每项必带「动作」
   "secret_order_updates":       [],  // 密令副作用
   "secret_order_closes":        [],  // 密令核议结案
   "emperor_fate":               null // "abdicate" | "suicide" | null
@@ -171,23 +168,31 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 - `issue_id` int + `result` 文本（描述 done/failed 的实况）
 - 一般由 issue bar=100/0 自动了结；这里用于强行结案。
 
-### `office_changes` — 人事除目
-- 必填：`name`（必须在 `characters` 名册）+ `new_office`
-- 可选：`new_office_type`（内阁/六部/督抚/边将/锦衣卫/司礼监…）、`faction`
-- ⚠️ 用于**任命/调任/升迁/改授**；罢黜/下狱用 `character_status_changes`。
+### `人物变更` — 人事档案单一入口
+每条必须带 `name`（必须在 `characters` 名册）和 `动作`。`动作` 只收七个值：`任命` / `罢黜` / `调任` / `处置` / `易主` / `册封` / `行止`。未知动作、查无此人、缺必填字段、非法枚举或非法状态迁移都会逐项拒收留痕。
 
-### `character_status_changes` — 人物状态
-- 必填：`name` + `status`
-- ⚠️ **status 白名单**：`active` / `offstage` / `dismissed` / `imprisoned` / `exiled` / `retired` / `dead`
-- 不在表内会抛 `ValueError("character status 非法")`
-- 同一人本月 active→imprisoned 等迁移要符合状态机（不能死人复活）
+共通字段：
+| 字段 | 约束 |
+|---|---|
+| `name` | 必填，精确人物名 |
+| `动作` | 必填，七动作之一 |
+| `reason` / `status_reason` | 可选，人读叙事说明 |
+| `reason_code` | 可选，机读枚举；未知值归一到 `未识别`，缺省和读不懂不能混成一个语义 |
 
-### `character_power_changes` — 人物易主
-- 必填：`name` + `new_power`（power_id）
-- 用于"降清""归附""投流寇"等
+动作 payload：
+| 动作 | 必填 | 可选 | 说明 |
+|---|---|---|---|
+| `任命` | `office` | `office_type` / `faction` | 身名分入职名分；若目标现持职名分，执行位可归一为 `调任` |
+| `罢黜` | — | `reason_code` | 清职名分并落 `dismissed`；政治反应由裁判另产 |
+| `调任` | `office` | `office_type` / `faction` | 旧职解绑、新职绑定；若目标现无职名分，执行位可归一为 `任命` |
+| `处置` | `status` | `子动作` / `reason_code` | 状态迁移：下狱、流放、致仕、放归、赐死、卒、起复、昭雪、夺情等 |
+| `易主` | `new_power` / `方式` / `反噬` | `new_title` | `方式` ∈ `主动投敌` / `被俘而降` / `主动归附`；`反噬` 为内嵌派系/势力反应；legacy 翻译才可用 `不明` |
+| `册封` | `office` | `office_type` | 后宫 candidate 出边；落选走 `处置(status=offstage, reason_code=落选)` |
+| `行止` | `location` 或 `transit_to` | `reason_code` | 去向变更；`transit_to` 非空表示在途，迁出 active 时会被清空 |
 
-### `appointments` — 后宫册封
-- 字段：`name`（候选秀女或宫人）+ `office`（如"贵人""嫔""妃""贵妃"）
+状态白名单（DB 全集 8 态）：`active` / `candidate` / `offstage` / `dismissed` / `imprisoned` / `exiled` / `retired` / `dead`。其中 **`处置.status` 只可直迁 6 态**（去掉 `active` / `candidate`——二者经 `任命` / `册封` 级联或 applier 起复派生达成；直接 `处置(status=active/candidate)` 被拒 `invalid_transition`，见 `issues.py` `disposition_statuses`）。死人没有 status 出边；追谥、追赠等身后事不进 `人物变更`。
+
+> **旧四 key（appointments / character_status_changes / character_power_changes / office_changes）不在本契约文档化**（ADR 0009 决定11「alias 保留但不写文档」）：新产出的 delta 只写 `人物变更`；旧 key 仅作历史 delta / ready=1 重试真源的内部兼容翻译层，永不获得新能力（`行止` / `方式` 仅新 key；`reason_code` 系 处置/罢黜 通用辅助字段，legacy `character_status_changes` 翻译保真带过、非新增能力），自然枯死。翻译保真（执行序、spillover 殿后、legacy_gate/legacy_partial 注记）由 `ming_sim/person_delta_adapter.py` + `tests/test_person_delta_adapter.py` 覆盖，不在用户面 schema 重复。
 
 ### `secret_order_updates` / `secret_order_closes`
 - updates：`order_id` int + `sim_note`（本月推进实况）+ 可选 `impact`
@@ -206,7 +211,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 | `internal` | `metric_delta` `economy_moves` `faction_delta` `class_delta` `region_delta` `fiscal_changes` `fiscal_creates` `fiscal_removes` |
 | `military_external` | `army_delta` `new_armies` `power_updates` `world_advance` |
 | `issues` | `issue_advances` `new_issues` `cancels` `close_issues` |
-| `personnel_secret` | `office_changes` `appointments` `character_status_changes` `character_power_changes` `secret_order_updates` `secret_order_closes` `emperor_fate` |
+| `personnel_secret` | `人物变更` `secret_order_updates` `secret_order_closes` `emperor_fate` |
 
 ---
 

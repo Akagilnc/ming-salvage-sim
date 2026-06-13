@@ -205,9 +205,11 @@ class GameDB:
                 debut_month INTEGER NOT NULL DEFAULT 0,
                 status TEXT NOT NULL DEFAULT 'active',
                 status_reason TEXT NOT NULL DEFAULT '',
+                reason_code TEXT NOT NULL DEFAULT '',
                 status_changed_turn INTEGER NOT NULL DEFAULT 0,
                 power_id TEXT NOT NULL DEFAULT 'ming',
-                location TEXT NOT NULL DEFAULT ''
+                location TEXT NOT NULL DEFAULT '',
+                transit_to TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS character_offices (
@@ -218,6 +220,21 @@ class GameDB:
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(character_name) REFERENCES characters(name),
                 FOREIGN KEY(office_type) REFERENCES offices(office_type)
+            );
+
+            CREATE TABLE IF NOT EXISTS person_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                turn INTEGER NOT NULL,
+                year INTEGER NOT NULL,
+                period INTEGER NOT NULL,
+                person_name TEXT NOT NULL,
+                action TEXT NOT NULL,
+                payload_summary TEXT NOT NULL DEFAULT '',
+                derived_from TEXT NOT NULL DEFAULT '',
+                normalized TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(person_name) REFERENCES characters(name)
             );
 
             CREATE TABLE IF NOT EXISTS factions (
@@ -463,7 +480,7 @@ class GameDB:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
-            -- 推演链每个 agent 的原始输入/输出留痕，每回合一行，便于事后追查。
+            -- 推演链每回合一行：extractor_input 留原输入，extractor_output 留 applied 可见结果。
             CREATE TABLE IF NOT EXISTS turn_extractions (
                 turn INTEGER PRIMARY KEY,
                 year INTEGER NOT NULL,
@@ -643,6 +660,9 @@ class GameDB:
             CREATE INDEX IF NOT EXISTS idx_power_logs_turn
             ON power_logs(turn, power_id);
 
+            CREATE INDEX IF NOT EXISTS idx_person_logs_turn
+            ON person_logs(turn, person_name);
+
             CREATE TABLE IF NOT EXISTS issues (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 kind TEXT NOT NULL,
@@ -805,6 +825,7 @@ class GameDB:
         self._apply_region_city_levels()
         self.ensure_column("characters", "power_id", "TEXT NOT NULL DEFAULT 'ming'")
         self.ensure_column("characters", "location", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("characters", "transit_to", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "resolve_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "fail_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "birth_year", "INTEGER NOT NULL DEFAULT 0")
@@ -814,6 +835,7 @@ class GameDB:
         self.ensure_column("characters", "debut_month", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "status", "TEXT NOT NULL DEFAULT 'active'")
         self.ensure_column("characters", "status_reason", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("characters", "reason_code", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "status_changed_turn", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "portrait_id", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "court_role", "TEXT NOT NULL DEFAULT ''")
@@ -875,7 +897,65 @@ class GameDB:
             )
         """)
         self.conn.commit()
+        self._migrate_legacy_office_pollution()
         self.init_fiscal_config()
+
+    def _migrate_legacy_office_pollution(self) -> None:
+        """ADR 0009 决定9/L94 一次性数据清洗（幂等，init 时跑）：pre-0009 存档把状态词塞在
+        office 串里（「前X，罢居Y」「…(在途)」），归位到 status/reason_code/location/transit_to，
+        使其正确进人才池（G1）。**条件触发**（office 含污染标记才动）——不误降已被玩家起复的
+        active 旧臣（其 office 已是真职、无标记，跳过）；幂等（清洗后再跑无标记可清）。"""
+        import re
+        # location 是 region_id；罢居地名（松江/高阳等府名）多非 region_id，只在解析出合法 region_id
+        # 才写 location（同下方在途循环口径，不把府名硬塞进 region_id 列）；罢居地信息留在 status_reason。
+        region_ids = {row["id"] for row in self.conn.execute("SELECT id FROM regions").fetchall()}
+        # 罢居=居家可起复：钱谦益 天启科场案削籍 → dismissed（→昭雪，B 口径）；其余罢居 → offstage（→起复）。
+        DISMISSED_OVERRIDE = {"钱谦益": "获罪削籍"}
+        for r in self.conn.execute(
+            "SELECT name, office FROM characters WHERE office LIKE '%罢居%' AND status='active'"
+        ).fetchall():
+            name = r["name"]
+            office = str(r["office"] or "")
+            m = re.search(r"罢居([^，,]+)", office)
+            loc = m.group(1).strip() if m else ""
+            loc_region = loc if loc in region_ids else ""
+            if name in DISMISSED_OVERRIDE:
+                status, rc = "dismissed", DISMISSED_OVERRIDE[name]
+            else:
+                status, rc = "offstage", "自请"
+            self.conn.execute(
+                "UPDATE characters SET status=?, reason_code=?, status_reason=?, office='', "
+                "location=CASE WHEN COALESCE(location,'')='' THEN ? ELSE location END, transit_to='' "
+                "WHERE name=?",
+                (status, rc, office, loc_region, name),
+            )
+        # office 带「(在途)」→ 清串保留 active；transit_to 仅当解析出合法 region_id 才落（保守，不瞎猜目的地）。
+        for r in self.conn.execute(
+            "SELECT name, office FROM characters WHERE office LIKE '%在途%'"
+        ).fetchall():
+            name = r["name"]
+            office = str(r["office"] or "")
+            cleaned = office.replace("（在途）", "").replace("(在途)", "").strip().rstrip(",，")
+            # 目的地是中文地名（辽东/陕西），region_id 是英文（liaodong/shaanxi）——直接
+            # `in region_ids` 恒 False、transit_to 永不落（死分支，5b r6 Gemini high）。用
+            # match_region_id_from_text 把中文解析成 region_id（同 db.py:2626 口径），解析得到才落。
+            dest = ""
+            for kw in ("督师", "镇守", "赴", "之任"):
+                mm = re.search(kw + r"([一-龥]{2,4})", office)
+                if mm:
+                    rid = match_region_id_from_text(mm.group(1), self.content.regions)
+                    if rid:
+                        dest = rid
+                        break
+            if dest:
+                self.conn.execute(
+                    "UPDATE characters SET office=?, transit_to=? WHERE name=?", (cleaned, dest, name)
+                )
+            else:
+                self.conn.execute(
+                    "UPDATE characters SET office=? WHERE name=?", (cleaned, name)
+                )
+        self.conn.commit()
 
     def init_fiscal_config(self) -> None:
         """从 content/fiscal_config.json（self.content.fiscal_items）seed 财政科目目录。
@@ -1215,8 +1295,8 @@ class GameDB:
                     INSERT INTO characters
                     (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style,
                      birth_year, historical_death_year, historical_death_month, debut_year, debut_month,
-                     status, status_reason, status_changed_turn, portrait_id, power_id, location, summary)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     status, status_reason, status_changed_turn, portrait_id, power_id, location, transit_to, summary)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         character.name,
@@ -1241,6 +1321,7 @@ class GameDB:
                         character.portrait_id,
                         character.power_id,
                         character.location,
+                        character.transit_to,
                         character.summary,
                     ),
                 )
@@ -1405,6 +1486,11 @@ class GameDB:
                 )
         self._migrate_arrears_unit_to_silver(is_fresh_armies_seed)
         self._apply_region_city_levels()  # 新档 region 此时才 INSERT 完，按史实补 city_level
+        # 新档罢居/在途 office 污染清洗：init_schema 路径在空表上 no-op（构造在 seed 前），
+        # 故 seed 后须再跑一次才对新档生效（决定9/L94 一次性清洗；幂等，老档由 init_schema
+        # 路径已处理）。此刻 characters + regions 均已 INSERT，location region_id 校验可用。
+        # 5b r4（Claude + codex-b concur, P1）：漏此调用则新档 7 名罢居旧臣留 active+污染、不进人才池。
+        self._migrate_legacy_office_pollution()
         self.conn.commit()
 
     def _migrate_arrears_unit_to_silver(self, is_fresh_armies_seed: bool) -> None:
@@ -1628,25 +1714,62 @@ class GameDB:
         name: str,
         status: str,
         reason: str = "",
+        reason_code: str | None = None,
     ) -> None:
         """改人物状态：active/offstage/dismissed/imprisoned/exiled/retired/dead。
         大臣走 characters 表；后宫（consorts）走内存对象 + consort_traits 备档。"""
         valid = {"active", "offstage", "dismissed", "imprisoned", "exiled", "retired", "dead"}
         if status not in valid:
             raise ValueError(f"character status 非法：{status}")
-        # 去职（下狱/革职/流放/致仕/死）即削职：清空 characters.office，
-        # 原职仍留在 character_offices 备档可追溯。复职（active/offstage）不动 office。
-        ousted = status in {"dismissed", "imprisoned", "exiled", "retired", "dead"}
+        # 去职（下狱/革职/流放/致仕/出宫/死）即削职：清空 characters.office，
+        # 原职仍留在 character_offices 备档可追溯。复职（active）不动 office。
+        ousted = status in {"offstage", "dismissed", "imprisoned", "exiled", "retired", "dead"}
+        reason_code_value = str(reason_code or "")[:40]
         if ousted:
             self.conn.execute(
-                "UPDATE characters SET status=?, status_reason=?, status_changed_turn=?, office='' WHERE name=?",
-                (status, reason[:200], state.turn, name),
+                "UPDATE characters SET status=?, status_reason=?, "
+                "status_changed_turn=?, office='', transit_to='', reason_code=? WHERE name=?",
+                (status, reason[:200], state.turn, reason_code_value, name),
             )
         else:
             self.conn.execute(
-                "UPDATE characters SET status=?, status_reason=?, status_changed_turn=? WHERE name=?",
-                (status, reason[:200], state.turn, name),
+                "UPDATE characters SET status=?, status_reason=?, status_changed_turn=?, reason_code=? WHERE name=?",
+                (status, reason[:200], state.turn, reason_code_value, name),
             )
+        self.conn.commit()
+
+    def record_person_log(
+        self,
+        state: GameState,
+        person_name: str,
+        action: str,
+        payload_summary: str = "",
+        derived_from: str = "",
+        normalized: str | Dict[str, object] = "",
+        source: str = "",
+    ) -> None:
+        if isinstance(normalized, dict):
+            normalized_text = json.dumps(normalized, ensure_ascii=False, sort_keys=True)
+        else:
+            normalized_text = str(normalized or "")
+        self.conn.execute(
+            """
+            INSERT INTO person_logs
+            (turn, year, period, person_name, action, payload_summary, derived_from, normalized, source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                state.turn,
+                state.year,
+                state.period,
+                person_name,
+                action,
+                str(payload_summary or "")[:200],
+                str(derived_from or "")[:120],
+                normalized_text,  # 全量存：normalized 是结构化审计 JSON，[:500] 会从中间切断成不可解析（PR #106 CodeRabbit）
+                str(source or "")[:80],
+            ),
+        )
         self.conn.commit()
 
     def get_character_status(self, name: str) -> Tuple[str, str]:
@@ -1775,7 +1898,14 @@ class GameDB:
             if not triggered:
                 continue
             name = r["name"]
-            self.set_character_status(state, name, "dead", f"历史卒于 {year}年{month or '?'}月")
+            self.set_character_status(
+                state, name, "dead", f"历史卒于 {year}年{month or '?'}月", reason_code="历史卒"
+            )
+            self.record_person_log(
+                state, name, "处置",
+                payload_summary=f"历史卒于 {year}年{month or '?'}月",
+                derived_from="历史卒", source="system_simulation",
+            )
             died.append({
                 "name": name,
                 "office": r["office"] or "重臣",
@@ -1803,7 +1933,14 @@ class GameDB:
             if not triggered:
                 continue
             name = r["name"]
-            self.set_character_status(state, name, "active", f"历史登场 {year}年{month or '?'}月")
+            self.set_character_status(
+                state, name, "active", f"历史登场 {year}年{month or '?'}月", reason_code="登场"
+            )
+            self.record_person_log(
+                state, name, "处置",
+                payload_summary=f"历史登场 {year}年{month or '?'}月",
+                derived_from="登场", source="system_simulation",
+            )
             debuted.append({
                 "name": name,
                 "office": r["office"] or "重臣",
@@ -1939,8 +2076,8 @@ class GameDB:
             INSERT INTO characters
             (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style,
              birth_year, historical_death_year, historical_death_month, debut_year, debut_month,
-             status, status_reason, status_changed_turn, portrait_id, power_id, location, summary)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             status, status_reason, status_changed_turn, portrait_id, power_id, location, transit_to, summary)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 character.name,
@@ -1965,6 +2102,7 @@ class GameDB:
                 portrait_id,
                 getattr(character, "power_id", "ming") or "ming",
                 getattr(character, "location", "") or "",
+                getattr(character, "transit_to", "") or "",
                 getattr(character, "summary", "") or "",
             ),
         )
@@ -4663,7 +4801,7 @@ class GameDB:
         extractor_input: str = "",
         extractor_output: str = "",
     ) -> None:
-        """推演链原始输入/输出留痕（turn_extractions），事后可追可重放。"""
+        """推演链留痕（turn_extractions）：输入 + applied 可见输出。"""
         self.conn.execute(
             """
             INSERT INTO turn_extractions
@@ -4912,6 +5050,7 @@ class GameDB:
             if ch is not None:
                 ch.status = "dismissed"
                 ch.office = ""   # set_character_status 已清 DB office,内存须跟上(roster 读 c.office)
+                ch.transit_to = ""
             # 对话确认回合中落库,刷 Agent 让被罢者本回合后续不再以旧活跃态被召对(线上 gemini)。
             if registry is not None:
                 registry.refresh(key)
