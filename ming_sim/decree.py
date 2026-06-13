@@ -837,7 +837,7 @@ def settle_with_delta(
     on_stage=None,
     source: Provenance = Provenance.unknown,
 ) -> str:
-    """确定性结算「后括号」：apply→turn_logs→章节记忆→inertia→clear→结局判定→next_period。
+    """确定性结算「后括号」：apply→turn_logs→inertia→留痕→章节记忆→clear→结局判定→next_period。
 
     收一份**已规范化**的 extracted（英文 canonical key，见 simulation._canonicalize_extraction）。
     不依赖 llm_config —— 章节记忆 / 结局总评 / 落库 enrichment 全经注入闭包：
@@ -862,7 +862,7 @@ def settle_with_delta(
         if on_stage is not None:
             on_stage(label)
 
-    # ADR 0008 S7（决定 2）：整个后半段写序列包进单事务——apply→turn_logs→章节记忆→inertia
+    # ADR 0008 S7（决定 2）：整个后半段写序列包进单事务——apply→turn_logs→inertia→留痕→章节记忆
     # →clear→结局→next_period 全有或全无。崩在中途（含 save_state 之后、clear 之前那个
     # 「已提交但 context 残留」的崩溃窗口，S2+S3 codex R2 defer 至此）则整体回滚，turn 不推进、
     # resolve_context 仍在可重试。回滚后内存从 DB 重载（决定 3），再于 atomic 外写错误包并抛
