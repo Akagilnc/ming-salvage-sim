@@ -1668,19 +1668,22 @@ def _apply_person_changes(
                 continue
             if derive_label:
                 release_status = "offstage" if derive_label in {"放归", "赦还"} else "active"
-                db.set_character_status(
-                    state,
-                    name,
-                    release_status,
-                    derive_label,
-                    reason_code="",
-                )
-                if content is not None and name in content.characters:
-                    ch = content.characters[name]
-                    ch.status = release_status
-                    if release_status == "offstage":
+                # 必要前置（放归/赦还）执行 status 迁移原语（→offstage 居家），再由任命级联置 active。
+                # 政治标记（起复/昭雪/夺情）为纯审计记录、不迁移 status（决定4）——status→active+绑名分
+                # 由下面 apply_office_appointment 原子完成，避免「先置 active、名分未绑」的中间态（不变式1 全程成立）。
+                if derive_label in {"放归", "赦还"}:
+                    db.set_character_status(
+                        state,
+                        name,
+                        release_status,
+                        derive_label,
+                        reason_code="",
+                    )
+                    if content is not None and name in content.characters:
+                        ch = content.characters[name]
+                        ch.status = release_status
                         ch.office = ""
-                    ch.transit_to = ""
+                        ch.transit_to = ""
                 release_result = {
                     "name": name,
                     "动作": "处置",
