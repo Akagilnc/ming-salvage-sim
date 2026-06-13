@@ -2021,6 +2021,63 @@ def test_political_marker_is_audit_only_no_status_premigration(game):
         content.characters[name].office = old_office
 
 
+def test_reappoint_nonactive_syncs_character_reason_to_db(game):
+    """5b r3（codex-b R1）三面同步（决定6）：非 active 起复（dismissed→任命）后，内存
+    Character 的 status_reason/reason_code 须与 DB 一致——此前只在 cur_status=='active'
+    分支清，非 active 路漏同步，内存滞留旧削籍缘由（DB 已更新而 Character 没跟）。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    db.set_character_status(state, name, "dismissed", "忤逆案削籍", reason_code="获罪削籍")
+    content.characters[name].status = "dismissed"
+    content.characters[name].status_reason = "忤逆案削籍"
+    content.characters[name].reason_code = "获罪削籍"
+
+    issues.apply_score_extraction(
+        db, state,
+        {"人物变更": [{"name": name, "动作": "任命",
+                      "office": "都察院左都御史", "reason": "起用获罪诸臣"}]},
+        content=content,
+    )
+
+    row = db.conn.execute(
+        "SELECT status, status_reason, reason_code FROM characters WHERE name=?", (name,)
+    ).fetchone()
+    ch = content.characters[name]
+    assert row["status"] == "active" and ch.status == "active"
+    assert ch.status_reason == (row["status_reason"] or ""), \
+        f"三面同步漏：内存 status_reason={ch.status_reason!r} != DB {row['status_reason']!r}"
+    assert ch.reason_code == (row["reason_code"] or ""), \
+        f"三面同步漏：内存 reason_code={ch.reason_code!r} != DB {row['reason_code']!r}"
+
+
+def test_reappoint_rollback_restores_character_reason(game, monkeypatch):
+    """5b r3（codex-b R1 rollback 半）：任命在 read-back 之后失败回滚，内存 Character 的
+    status_reason/reason_code 须随 content 快照还原——此前 content 快照只存
+    status/office/office_type/transit_to，漏这两字段 → 回滚后内存滞留刷过的起复缘由。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    db.set_character_status(state, name, "dismissed", "旧削籍缘由", reason_code="获罪削籍")
+    content.characters[name].status = "dismissed"
+    content.characters[name].status_reason = "旧削籍缘由"
+    content.characters[name].reason_code = "获罪削籍"
+
+    # 在 read-back（ch.status_reason 已刷成起复缘由）之后触发失败，逼 except 回滚。
+    def boom(*_a, **_k):
+        raise RuntimeError("post-readback failure")
+    monkeypatch.setattr(issues, "infer_office_type_from_office", boom)
+
+    issues.apply_score_extraction(
+        db, state,
+        {"人物变更": [{"name": name, "动作": "任命", "office": "陕西总督", "reason": "起用"}]},
+        content=content,
+    )
+
+    ch = content.characters[name]
+    assert ch.status == "dismissed", f"回滚后内存 status 未还原：{ch.status!r}"
+    assert ch.status_reason == "旧削籍缘由", f"回滚后内存 status_reason 未还原：{ch.status_reason!r}"
+    assert ch.reason_code == "获罪削籍", f"回滚后内存 reason_code 未还原：{ch.reason_code!r}"
+
+
 def test_simulator_payload_talent_pool_includes_displaced_oncall_holder(game):
     """ADR L104 人才池 = (active+身名分听用候铨) ∪ (offstage/retired/dismissed)。
     顶替离任→听用候铨 的人仍 active，但必须在人才池盘面可见（S5 核心玩趣），

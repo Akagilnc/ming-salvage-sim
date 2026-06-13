@@ -32,11 +32,16 @@ def test_person_changes_block_reads_localized_title_for_office_actions():
     ) in text
 
 
-def test_person_changes_block_labels_derived_active_disposition_as_release():
-    """派生 active 处置是释放/起复前置,不能显示成局势枚举的「进行中」。"""
+def test_person_changes_block_labels_derived_active_by_event_not_blanket_release():
+    """派生 active 处置（被顶替腾缺 / 起复·昭雪·夺情释放）须按 derived_from/缘由 标具体事由,
+    不能一律「起复」——否则把「被顶替」误显成「起复」(5b r3 codex-c R1)。"""
     text = EXTRACTION_TSX.read_text(encoding="utf-8")
 
-    assert 'active: "起复"' in text
+    # 旧的「active 一律起复」硬映射已删（被顶替也会落 active 处置，会被误标）。
+    assert 'active: "起复"' not in text
+    # 处置/active 改走 derived_from/缘由 派生标签。
+    assert 'pickItem(it, "derived_from", "derived_from")' in text
+    assert 'pickItem(it, "缘由", "reason_code")' in text
 
 
 def test_extraction_view_reads_applied_trace_shape():

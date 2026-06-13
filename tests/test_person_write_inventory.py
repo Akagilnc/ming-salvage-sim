@@ -91,3 +91,18 @@ def test_person_write_inventory_scanner_fallbacks_are_explicit():
         "future_insert_character",
         "INSERT INTO characters (name) VALUES (?)",
     ) == "ming_sim/db.py:future_insert_character"
+
+
+def test_scanner_detects_fstring_character_write():
+    """5b r3（codex-a R1）：扫描器须识别 f-string SQL（ast.JoinedStr）——否则只有 f-string
+    直写 characters 的函数会逃出 inventory 审计（_restore_person_write_state 现有 plain DELETE
+    兜底，但未来 f-string-only 新写点会漏）。"""
+    from ming_sim.person_write_inventory import _write_locations_in_source
+
+    src = (
+        "def wipe(conn, names):\n"
+        "    ph = ','.join('?' for _ in names)\n"
+        "    conn.execute(f\"DELETE FROM characters WHERE name NOT IN ({ph})\", tuple(names))\n"
+    )
+    locs = _write_locations_in_source(src, "ming_sim/probe.py")
+    assert "ming_sim/probe.py:wipe" in locs, f"f-string SQL 未被扫描器识别：{locs}"
