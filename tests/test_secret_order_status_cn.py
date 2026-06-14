@@ -121,8 +121,9 @@ def test_group_empty_input_returns_both_empty_groups():
 
 
 def test_simulator_payload_secret_orders_has_no_english_enum(game):
-    """边界保证：构建出的 simulator_payload 的 secret_orders 字段 + data_note
-    序列化后零 active/pending_review/status 字面——LLM 收不到英文 enum，泄漏构造上消失。"""
+    """边界保证：payload["secret_orders"] 序列化后零 active/pending_review/status 字面
+    （LLM 收不到英文 enum，泄漏构造上消失）；data_note 不再述密令 status 字段（data_note 仍含
+    active_issues 等其它字段名，故只断言其无 status 描述，不整体扫 active 子串）。"""
     from ming_sim.decree import group_secret_orders_for_sim
     from ming_sim.simulation import build_simulator_payload
 
