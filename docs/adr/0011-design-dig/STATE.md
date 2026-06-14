@@ -20,8 +20,10 @@
 > |---|---|---|---|---|---|
 > | T1 | 母 ADR 补全（决定8/9 + 1/3 细化 + roadmap） | ✅ | n/a（T5 全套 cmr） | T5 | `c8918e1` |
 > | T2 | 0011-3 价值矩阵 | ✅ | ✅ 16-agent 4P1/6P2/6P3 全修 | ⏳ | `8ffc2a3` |
-> | T3 | 0011-4 ceiling + seed | ✅ | 🔄 `wqteza478` in-flight | ⏳ | `3df1314` |
-> | T4 | 0011-5 四层票拟 resolve | ✅ | 🔄 `wc5c1k0gd` in-flight | ⏳ | 待（红队 fix 后） |
+> | T3 | 0011-4 ceiling + seed | ✅ | ✅ 15-agent 3P1/6P2/8P3 全修 | ⏳ | `3df1314`+`b877df1` |
+> | T4 | 0011-5 四层票拟 resolve | ✅ | ✅ 15-agent 10P1/14P2/7P3 全修(跨 0011-2/4 同改) | ⏳ | author `b877df1` + fix 本批 |
+>
+> **三 sub-ADR 内部红队全收口 → 下一步 = CMR 阶段**（0011-3/4/5 走 ak-cross-m-review doc 模式 1+1+1 到 3/3 concur）。
 > | T5 | 母 ADR 全套 cmr（9 决定 + 引各 sub-ADR） | — | — | ⏳ | — |
 >
 > **下一步链**：两红队 fix → commit → **cmr 阶段**（0011-3/4/5 走 `ak-cross-m-review` doc 模式 1+1+1 到 3/3 concur，每轮 fix 独立 commit）→ T5 母 ADR 全套 cmr → 整条线 ship-ready → **开 PR（base main）→ 线上三 bot 收敛 → merge**（授权；Sourcery 若 SKIP 走 --admin，见 memory）→ **M0 残留**（#73 起）。

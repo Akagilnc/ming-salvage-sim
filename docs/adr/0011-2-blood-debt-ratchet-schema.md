@@ -16,7 +16,7 @@ Status: Proposed（草案；承母 ADR `0011-edict-resistance-and-centrifuge-led
 
 - 方案2 critical：透支账寄生 `GameState.metrics` 自由 dict，被 `clamp[0,100]` + 白名单**双杀**。
 - 方案3 4×high：罪档无结构化真源 + 一上来就 42 格过度工程。
-- 方案4 high：provisional 转 final 托付不存在的「月初 tick」，撞 `pre_settle:190` 早退软死锁。
+- 方案4 high：provisional 转 final 托付不存在的「月初 tick」，撞 `pre_settle` 早退守门（`decree.py:788`）软死锁。
 
 ---
 
@@ -63,7 +63,7 @@ Status: Proposed（草案；承母 ADR `0011-edict-resistance-and-centrifuge-led
 
 ```
 severity      = SEVERITY_BASE{申饬:3, 罢黜:10, 廷杖:40, 抄家:70, 诛:100}   ← 结构化处置类型，非措辞
-crime_weight  = CRIME_BY_CODE{获罪削籍:70, 陷虏:50, 无:10}；STIGMA{中旨除授, 非正途, 罗织} → crime_weight=1
+crime_weight  = CRIME_BY_CODE{依律集〔依律/谋逆坐实/贪墨坐实/获罪削籍〕:70〔坐实重罪〕, 陷虏:50, 无:10}；STIGMA{中旨除授, 非正途, 罗织} → crime_weight=1   ← 依律集见 D2-5 单一真源(同时是 0011-4 D4-4 翻轴白名单:坐实=高cw=低血债 且 塌ceiling)
 mismatch      = max(0, severity − crime_weight)                          ← 失称度版避除零
 legitimacy_pct= clamp(10 + 90 × mismatch / severity, 10, 100)
 Δblood_debt(direct) = round(severity × legitimacy_pct / 100)
@@ -77,7 +77,7 @@ legitimacy_pct= clamp(10 + 90 × mismatch / severity, 10, 100)
 | 小罪重罚 | 10 | 87% | +61 |
 | 中旨罗织 | 1（STIGMA） | 99% | **+69** + 透支账 |
 
-**血债差 8.7 倍 = 母 ADR 决定5「攒合法性别硬来」的教学曲线落进数值。**
+**破局曲线（血债维度，单一真源）：走程序坐实真贪 +7 vs 硬推罗织 +69 = 约 10 倍差**（小罪重罚 +61 为第三参照点 = +61/+7 ≈ 8.7 倍）；母 ADR 决定5「攒合法性别硬来」的教学曲线落进数值。**⚠️ 此为血债差；ceiling 维度的墙塌（如福王 91→35）是另一根轴 ≈ 2.6 倍，两者别混标同一倍数（下游 0011-4/0011-5 引此口径）。**
 
 **弃案**：比值版（severity/crime_weight）——要新建罪档表、且 crime_weight=0 时除零。
 
@@ -85,7 +85,12 @@ legitimacy_pct= clamp(10 + 90 × mismatch / severity, 10, 100)
 
 ### D2-5 crime 载体 = reason_code + STIGMA 常量；罪与罚账第一刀就建（轻）
 
-**决定**：crime_weight 由 `reason_code`（扩 ADR 0009 enum）派生；污名 STIGMA（中旨除授 / 非正途 / 罗织）= 独立常量码。
+**决定**：crime_weight 由 `reason_code` 派生。**码集二分（单一真源，三 sub-ADR 共用，P1-10/P3-6）**：
+
+- **依律集 = {依律, 谋逆坐实, 贪墨坐实, 获罪削籍}** = **扩 0009 reason_code enum**（坐实重罪）；CRIME_BY_CODE 高档（cw=70 = 低血债），**且同时是 0011-4 D4-4 翻轴白名单**（坐实即塌 ceiling）——一个码两用（血债折扣 + ceiling 翻轴），破局动作两端读同一集、曲线算得出。
+- **STIGMA = {中旨除授, 非正途, 罗织} = 独立常量表、不进 0009 enum**（crime_weight=1 = 满血债）；与依律集同批协调静态围栏，但不混进 reason_code enum。
+
+本 ADR 是依律集 / STIGMA 二分的真源；0011-4 D4-4 / D4-8、0011-5 D5-10 引用、不另定义。
 
 **罪与罚的账第一刀就建（轻）**（用户纠：不是「查案/办案玩法系统」，那才牵扯 #89）——它就是**像 42 格一样为叙事多存状态**：办谁时记一笔（什么罪 / 查实没 / 判什么），从当时叙事记，不是搜证小游戏。顺手让「罪罚相称」判定回归直觉（有真罪号就能直接拿罚比罪，失称度公式内部定）。
 
@@ -126,7 +131,7 @@ net_centrifuge       = Σ( Δsatisfaction项 + Δleverage项 )    ← 签名物�
 
 **但本 ADR 钉死它的最低契约**（避 fan-out 方案4 实测的 3 坑，让第二刀有据可依、不留设计空洞）：
 
-1. **转 final 扫表放 settle 后半段 `atomic` 内、对 `before_turn` 幂等**（不放 `pre_settle`，避 `pre_settle:190` 早退软死锁）。
+1. **转 final 扫表放 settle 后半段 `atomic` 内、对 `before_turn` 幂等**（不放 `pre_settle`，避 `pre_settle` 早退守门软死锁——`decree.py:788 if state.turn_phase in FRONT_HALF_DONE_PHASES: return []`，def 在 `decree.py:762`）。
 2. **`expires_turn` 到必转 final**（避 ADR 0008 毒 payload 永挂）。
 3. **fungible（钱）= 见坑④**（国库净额 −amount、不退款、落 `economy_ledger`，非「正反账冲销净 0」）；**status 类后果**（家产已没 / 将就位）封驳窗 `W=1` 压窗 + 当回合作废转「打回」（H6 status 类真闭）。**涉钱不全闭**——钱已出不退（以「非正途」污名 + 血债为代价，非 escrow）；P1（当回合全量落库）× H6（既成事实套利）是固有张力，**不假装两全**（见下「中旨按历史」+ 坑④）。
 4. **⚠️ 坑④（内部红队补 → CMR r1 修正记账方向 + 落账表）：fungible 中旨须让国库净额 = −amount（钱真没了）、且落 `economy_ledger` 不落 `compute_budget_lines`。** 我原写「+amount 后 −amount 净额归 0」**方向反了**：净额 0 = 国库做平 = 钱回来了，正撞「钱没了就是没了」（CMR Claude + codex concur）；且一次性中旨拨款是**事务性**条目，该进 `economy_ledger`，不进 `compute_budget_lines`（后者是 fiscal_config/buildings 派生的**经常性**月流水，塞一次性条目会破经常性账——CMR gemini 实读 flows.py）。**契约**：① 中旨拨款 = `economy_ledger` 一笔 **−amount**（钱出库、长留不退）；② 六科封驳 = **另一笔 append-only 审计/状态行**（economy_ledger 既有 `reason` 列＝「六科封驳作废」，**非新增 `reason_code`**——库内 economy_ledger 用 `reason`；**不贷回国库**）——只标「此拨款用途被封还作废」，非 +amount 退款。国库净额 = **−amount**（反映「钱没了」），双笔可审计读出「真拨（钱已出）+ 真驳（用途作废未达成）」= 乱用中旨的牙，**不是净额对冲的虚账**。双笔进 0008 atomic + before_turn 幂等，restore 只读 `economy_ledger` 即复原「拨过且被驳、钱没回来」；`season_simulator`/审计大臣 prompt 补正向口径（带此对 `reason` 的同月条目 =「钱已实拨、被六科封还作废、不退」，不判虚账）。
@@ -138,7 +143,7 @@ net_centrifuge       = Σ( Δsatisfaction项 + Δleverage项 )    ← 签名物�
 **决定**（明确依赖，非无成本复用）：
 
 - **0008**：`accrue` 走 `applier.atomic` 落库链；`idem_key UNIQUE` 防 0008 重跑 / 断点续跑二次累加。
-- **0009**：crime `reason_code` = **扩 0009 的 reason_code enum** + 协调 0009 静态围栏 / 契约；污名 STIGMA 新增码同理。
+- **0009**：crime `reason_code` 依律集（D2-5）= **扩 0009 的 reason_code enum** + 协调 0009 静态围栏 / 契约；污名 STIGMA 走**独立常量表**（D2-5，不进 0009 enum）、同批协调静态围栏。
 - **faction-UPDATE 写路径缺口**（dig-6 叛变需要）：`db.py` 现无 `UPDATE characters SET faction=?`（faction 仅 INSERT 时写）；叛变落库须补此口径。设计先钉，实现按 DoD 点检。
 
 ---
