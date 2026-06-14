@@ -5108,7 +5108,7 @@ class GameDB:
             # 仅大明【在职】大臣可罢:_find_existing_minister 已 ming-guard + 解 alias;
             # 外藩(power_id≠ming)/后宫/不在册不接(无字面 fallback,免误黜皇太极,CMR R2);
             # 再校 active,免把已故/已黜/致仕者的终态改写成 dismissed(CMR R3 codex R2)。
-            key = _find_existing_minister(content, name)
+            key = _find_existing_minister(content, name, self)
             if key is None or self.get_character_status(key)[0] != "active":
                 return False
             # 宗藩（就藩宗室）非朝堂命官，不可作朝臣罢免——_find_existing_minister 仍会解析到宗藩名
@@ -5923,7 +5923,7 @@ class GameDB:
         # （CodeRabbit R3 Major）。解不到（自由名/临时人）保留原名。lazy import 避 db↔session 循环。
         if self.content is not None:
             from ming_sim.session import _find_existing_minister
-            minister_name = _find_existing_minister(self.content, minister_name) or minister_name
+            minister_name = _find_existing_minister(self.content, minister_name, self) or minister_name
             _ch = self.content.characters.get(minister_name)
             if _ch is not None and is_vassal_prince(_ch):
                 raise ValueError(f"{minister_name}为就藩宗室，非朝廷命官，不可受密令。")
