@@ -608,7 +608,7 @@ def test_fresh_start_cli_verify_failure_keeps_existing_main_db(tmp_path, monkeyp
         "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": "240"},
     })
 
-    def fail_cli_verify(prompt, llm_config=None):
+    def fail_cli_verify(prompt, llm_config=None, tag=""):
         raise RuntimeError("codex missing")
 
     monkeypatch.setattr(_cb, "_run_backend_for_config", fail_cli_verify)

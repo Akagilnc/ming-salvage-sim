@@ -130,10 +130,12 @@ def infer_office_type_from_office(
     表查不中且 CLI 后端在场再交 LLM 判（生造官名），都不中落『待铨』。
     取代旧版那串临时正则词表（脆、漏）。外藩(后金/蒙古/朝鲜)按 power_id≠ming 另处理，不入此路。
 
-    use_llm=False：跳过 LLM 兜底，表查不中直接信传入的 current_type（content 既定值）。
-    静态名册接档（seed_static_data）专用——101 人里 ~28 个外藩/宗藩/平民官名表查不中，
-    content 早已写好 office_type，逐人现拉 codex 判属纯浪费（开局慢 5 分钟根因）且可能
-    被分类器从明廷类型里硬选一个污染。动态生造官名（任命/issues）仍走默认 use_llm=True。"""
+    use_llm=False：跳过 LLM 兜底。表查不中时，非朝堂类 current_type（外臣/宗藩/边镇/地方/
+    未仕…）原样保留；朝堂六部类(COURT_OFFICE_TYPES)或空 kind 仍落「待铨」——与无 CLI 后端
+    路径完全同末态（不是把 current_type 无条件信回去）。静态名册接档（seed_static_data /
+    _sync_offices_from_db_impl）专用：101 人里 ~28 个非明廷官名表查不中，其 content 既定
+    office_type 绝大多数为非朝堂类、即权威，逐人现拉 codex 判属纯浪费（开局慢 5 分钟根因）
+    且可能被分类器从明廷类型里硬选一个污染。动态生造官名（任免/issues）仍走默认 use_llm=True。"""
     kind = (current_type or "").strip()
     if kind == "后宫":
         return kind

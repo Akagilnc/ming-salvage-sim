@@ -170,8 +170,11 @@ def test_use_llm_false_skips_backend_and_trusts_content_type(monkeypatch):
         lambda prompt, llm_config=None, tag="": called.append(prompt) or ("内阁", 1),
     )
     cfg = _cli_cfg()
-    # 外藩官名表查不中 + content=外臣 → use_llm=False 信 content、不打后端
+    # 外藩官名表查不中 + content=外臣（非朝堂类）→ use_llm=False 原样保留、不打后端
     assert infer("后金汗", current_type="外臣", llm_config=cfg, use_llm=False) == "外臣"
+    # 朝堂六部类(COURT) current_type 表查不中：use_llm=False 仍落待铨，不把 礼部 无条件信回去
+    # （与无 CLI 后端路径同末态；契约文字与此一致——cmr R1）。
+    assert infer("册封朝鲜使归途", current_type="礼部", llm_config=cfg, use_llm=False) == "待铨"
     assert called == [], "use_llm=False 不得调 CLI 后端"
     # 默认 use_llm=True：动态路径仍问后端
     assert infer("后金汗", current_type="外臣", llm_config=cfg) == "内阁"
@@ -187,7 +190,7 @@ def test_fresh_seed_makes_no_office_type_backend_calls(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(
         cb, "_run_backend_for_config",
-        lambda prompt, llm_config=None: calls.append(prompt) or ("待铨", 1),
+        lambda prompt, llm_config=None, tag="": calls.append(prompt) or ("待铨", 1),
     )
     content = GameContent.load()
     bind_content(content)
@@ -220,7 +223,7 @@ def test_fresh_gamesession_start_makes_no_backend_calls(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(
         cb, "_run_backend_for_config",
-        lambda prompt, llm_config=None: calls.append(prompt) or ("待铨", 1),
+        lambda prompt, llm_config=None, tag="": calls.append(prompt) or ("待铨", 1),
     )
     content = GameContent.load()
     bind_content(content)
