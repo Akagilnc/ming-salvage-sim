@@ -16,6 +16,19 @@ from pydantic import BaseModel
 import ming_sim.cli_backend as cb
 
 
+@pytest.fixture(autouse=True)
+def _isolate_cli_bin_resolution(monkeypatch):
+    """每个测试前隔离 runner 定位状态：清 _BIN_CACHE，并把登录 shell 探测短路成
+    "不触发"（_DISCOVERED_LOGIN_PATH="" → _login_shell_path 立即返 None）。
+    这样既有 runner 测试在缺 binary 的机器上也不会真 spawn 一个 zsh（C：测试卫生），
+    解析类测试之间也不串 cache。需要真跑 _login_shell_path 解析逻辑的测试，自行
+    把 _DISCOVERED_LOGIN_PATH 重置为 None 并 mock _RAW_RUN。"""
+    cb._BIN_CACHE.clear()
+    monkeypatch.setattr(cb, "_DISCOVERED_LOGIN_PATH", "")
+    yield
+    cb._BIN_CACHE.clear()
+
+
 # ── resolve_minister_actions：拟旨/密令前缀分派（拟旨纯逻辑、无 agy）──
 
 def test_draft_prefix_captures_reply():
@@ -306,11 +319,11 @@ def test_run_claude_accepts_config_model_and_timeout(monkeypatch):
 # ── _resolve_cli_bin：GUI(.app)启动 PATH 缺 ~/.local/bin 时仍定位已装的 runner ──
 # Finder 双击的 .app 拿不到登录 shell 的 PATH（只继承 launchd 精简 PATH），
 # 裸名 exec "codex" 会 [Errno 2] No such file or directory 即便用户已按官方装好。
-# 解析到绝对路径即治本：现有 PATH → 补常见安装目录 → 登录 shell PATH → 退回原名。
+# 解析到绝对路径即治本，分级兜底（登录 shell 是**最后**一级，仅前两级都 miss 才 spawn）：
+#   现有 PATH → 补常见安装目录(不 spawn) → 登录 shell 真实 PATH → 退回原名(不缓存)。
 
 def test_resolve_cli_bin_found_on_current_path(monkeypatch):
     """当前进程 PATH 就能 which 到 → 直接绝对化，不触发补目录/登录 shell。"""
-    cb._BIN_CACHE.clear()
     monkeypatch.setattr(cb.shutil, "which",
                         lambda name, path=None: "/usr/local/bin/codex" if path is None else None)
     monkeypatch.setattr(cb, "_login_shell_path", lambda: (_ for _ in ()).throw(AssertionError("不该触发")))
@@ -318,15 +331,27 @@ def test_resolve_cli_bin_found_on_current_path(monkeypatch):
 
 
 def test_resolve_cli_bin_found_via_extra_dirs_when_gui_path_bare(monkeypatch):
-    """复现 bug：GUI 精简 PATH 下 which 失败，补常见安装目录(~/.local/bin 等)后命中。"""
-    cb._BIN_CACHE.clear()
-    home_bin = "/Users/x/.local/bin/codex"
+    """复现 bug：GUI 精简 PATH 下 which 失败，补常见安装目录后命中；
+    且此时**不触发登录 shell**（登录 shell 是更后一级的兜底，codex X-R1）。"""
+    monkeypatch.setattr(cb, "_EXTRA_BIN_DIRS", ["/fake/extra/bin"])
+    monkeypatch.setattr(cb.os.path, "isdir", lambda p: True)
+    home_bin = "/fake/extra/bin/codex"
 
     def fake_which(name, path=None):
-        return None if path is None else home_bin   # 当前 PATH 找不到，补目录后命中
+        if path is None:
+            return None                       # 当前 PATH 找不到
+        assert "/fake/extra/bin" in path      # D：真断言补了常见安装目录，不只是"第二次 which"
+        return home_bin
+
+    login_calls = {"n": 0}
+
+    def spy_login():
+        login_calls["n"] += 1
+        return None
     monkeypatch.setattr(cb.shutil, "which", fake_which)
-    monkeypatch.setattr(cb, "_login_shell_path", lambda: None)
+    monkeypatch.setattr(cb, "_login_shell_path", spy_login)
     assert cb._resolve_cli_bin("codex", "codex") == home_bin
+    assert login_calls["n"] == 0              # extra-dir 命中时登录 shell 不触发
 
 
 def test_resolve_cli_bin_login_shell_path_last_resort(monkeypatch):
@@ -364,6 +389,46 @@ def test_resolve_cli_bin_caches(monkeypatch):
     assert cb._resolve_cli_bin("codex", "codex") == "/abs/codex"
     assert cb._resolve_cli_bin("codex", "codex") == "/abs/codex"
     assert calls["n"] == 1                 # 第二次命中缓存，不再 which
+
+
+# ── _login_shell_path：sentinel 包裹的 PATH 解析鲁棒（gemini G-R1）──
+
+def test_login_shell_path_extracts_from_sentinels_despite_noise(monkeypatch):
+    """rc 噪声行(含冒号+斜杠的告警)混进 stdout 时，仍只取 sentinel 内的真实 PATH，
+    不被噪声行误匹配。"""
+    monkeypatch.setattr(cb, "_DISCOVERED_LOGIN_PATH", None)   # 绕过 autouse 的短路
+
+    class _P:
+        stdout = ("Warning: /usr/local/bin not writable: skipping\n"
+                  "<<<CMRPATH>>>/Users/x/.local/bin:/opt/homebrew/bin:/usr/bin<<<ENDPATH>>>\n")
+        stderr = ""
+        returncode = 0
+    monkeypatch.setattr(cb, "_RAW_RUN", lambda *a, **k: _P())
+    assert cb._login_shell_path() == "/Users/x/.local/bin:/opt/homebrew/bin:/usr/bin"
+
+
+def test_login_shell_path_single_dir_not_dropped(monkeypatch):
+    """单目录 PATH(无 os.pathsep) 也能取出——旧 heuristic 因没有分隔符会漏掉。"""
+    monkeypatch.setattr(cb, "_DISCOVERED_LOGIN_PATH", None)
+
+    class _P:
+        stdout = "<<<CMRPATH>>>/usr/bin<<<ENDPATH>>>\n"
+        stderr = ""
+        returncode = 0
+    monkeypatch.setattr(cb, "_RAW_RUN", lambda *a, **k: _P())
+    assert cb._login_shell_path() == "/usr/bin"
+
+
+def test_resolve_cli_bin_does_not_cache_miss(monkeypatch):
+    """找不到 → 退回原名但**不缓存**；binary 后到能重新解析到真路径（Claude C-R1）。"""
+    monkeypatch.setattr(cb, "_login_shell_path", lambda: None)
+    monkeypatch.setattr(cb.shutil, "which", lambda name, path=None: None)
+    assert cb._resolve_cli_bin("codex", "codex") == "codex"   # 退回原名
+    assert "codex" not in cb._BIN_CACHE                       # miss 不进缓存
+    # binary 后到：换成能 which 命中，应重解析（而非返回缓存的裸名）
+    monkeypatch.setattr(cb.shutil, "which",
+                        lambda name, path=None: "/Users/x/.local/bin/codex" if path is None else None)
+    assert cb._resolve_cli_bin("codex", "codex") == "/Users/x/.local/bin/codex"
 
 
 def test_run_codex_execs_resolved_abspath(monkeypatch):

@@ -84,7 +84,9 @@ _RAW_RUN = subprocess.run
 
 
 def _login_shell_path() -> Optional[str]:
-    """问用户登录 shell 要真实 PATH（GUI/.app 不继承 shell PATH 的最后兜底）。
+    """问用户登录 shell 要真实 PATH（GUI/.app 不继承 shell PATH 的**最后**一级兜底）。
+    用 sentinel 包裹 printf "$PATH"，正则只取 sentinel 之间的真实 PATH——rc 噪声行
+    （含冒号/斜杠的告警）不会被误当 PATH，单目录 PATH（无分隔符）也不会被漏掉。
     缓存一次：探测代价高（会 source rc），且进程内不变。失败返回 None。"""
     global _DISCOVERED_LOGIN_PATH
     if _DISCOVERED_LOGIN_PATH is not None:
@@ -93,30 +95,20 @@ def _login_shell_path() -> Optional[str]:
     shell = os.environ.get("SHELL") or "/bin/zsh"
     try:
         proc = _RAW_RUN(
-            [shell, "-lic", 'echo "$PATH"'],
+            [shell, "-lic", 'printf "<<<CMRPATH>>>%s<<<ENDPATH>>>" "$PATH"'],
             capture_output=True, text=True, timeout=8,
         )
-        # rc 可能往 stdout 喷噪声，取最后一条像 PATH 的行（含路径分隔符 + 斜杠）。
-        for line in reversed((proc.stdout or "").splitlines()):
-            line = line.strip()
-            if os.pathsep in line and "/" in line:
-                discovered = line
-                break
+        m = re.search(r"<<<CMRPATH>>>(.*?)<<<ENDPATH>>>", proc.stdout or "", re.S)
+        if m:
+            discovered = m.group(1).strip()
     except Exception:
         discovered = ""
     _DISCOVERED_LOGIN_PATH = discovered
     return discovered or None
 
 
-def _augmented_search_path() -> str:
-    """当前 PATH + 常见安装目录 + 登录 shell PATH，去重保序。"""
-    chunks: List[str] = [d for d in _EXTRA_BIN_DIRS if os.path.isdir(d)]
-    cur = os.environ.get("PATH", "")
-    if cur:
-        chunks.append(cur)
-    login = _login_shell_path()
-    if login:
-        chunks.append(login)
+def _dedup_path(chunks: List[str]) -> str:
+    """把若干 PATH 片段拼成一条去重保序的 search path。"""
     seen: set = set()
     dirs: List[str] = []
     for chunk in chunks:
@@ -127,20 +119,38 @@ def _augmented_search_path() -> str:
     return os.pathsep.join(dirs)
 
 
+def _static_search_path() -> str:
+    """当前 PATH + 常见安装目录，去重保序（**不含**登录 shell——那是更后一级兜底，
+    避免在 extra-dir 本可命中时也白 spawn 一个 zsh）。"""
+    chunks: List[str] = [d for d in _EXTRA_BIN_DIRS if os.path.isdir(d)]
+    cur = os.environ.get("PATH", "")
+    if cur:
+        chunks.append(cur)
+    return _dedup_path(chunks)
+
+
 def _resolve_cli_bin(name: str, configured: str) -> str:
-    """runner（agy/codex/claude）解析成可执行绝对路径，结果按 name 缓存。
-    1) 现有 PATH which 命中（含 MING_SIM_*_BIN 给的绝对路径）→ 用。
-    2) 补常见安装目录（~/.local/bin 等）+ 登录 shell PATH，再 which。
-    3) 全不中 → 退回原配置名，让 subprocess 抛清晰 FileNotFoundError（不静默吞）。"""
+    """runner（agy/codex/claude）解析成可执行绝对路径，**命中才缓存**。分级兜底，
+    登录 shell 是最后一级（仅前两级都 miss 才 spawn zsh）：
+    1) 现有 PATH which（含 MING_SIM_*_BIN 给的绝对路径）。
+    2) 补常见安装目录（~/.local/bin 等）再 which——不 spawn 登录 shell。
+    3) 仍 miss → 问登录 shell 要真实 PATH，并入再 which（此时才 spawn zsh）。
+    4) 全不中 → 退回原配置名（让 subprocess 抛清晰 FileNotFoundError），**不缓存**，
+       binary 之后才装上时下次仍能重新解析（不被裸名负缓存毒住）。"""
     cached = _BIN_CACHE.get(name)
     if cached:
         return cached
     found = shutil.which(configured)
     if not found:
-        found = shutil.which(configured, path=_augmented_search_path())
-    result = found or configured
-    _BIN_CACHE[name] = result
-    return result
+        found = shutil.which(configured, path=_static_search_path())
+    if not found:
+        login = _login_shell_path()
+        if login:
+            found = shutil.which(configured, path=_dedup_path([_static_search_path(), login]))
+    if found:
+        _BIN_CACHE[name] = found
+        return found
+    return configured
 
 
 _VERBOSE = os.environ.get("MING_SIM_LLM_DEBUG", "") not in ("", "0", "false")
