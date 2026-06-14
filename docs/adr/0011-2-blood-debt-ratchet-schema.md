@@ -207,7 +207,7 @@ CREATE TABLE centrifuge_log (
 
 ```
 Δwariness(同派旁观, kinship) = round( severity × legitimacy_pct / 100 × 0.3 × k_id )
-k_id = clamp(identity / 100, 0, 1)        ← 浮点除（identity=98→0.98，实现禁整除）；用户 2026-06-14 拍：去掉原 max(1,…) 下界
+k_id = clamp(identity / 100.0, 0, 1)        ← 浮点除（写 `100.0` 显式防跨语言/SQL 整除截断：`98/100=0`；identity=98→0.98）；用户 2026-06-14 拍：去掉原 max(1,…) 下界
 ```
 
 - `identity` = 第五个 per-人值 [0,100]（与 faction / seed-guilt / #89 loyalty 全正交），答「此人多真是其挂名 faction 的核心」，**只缩 kinship 乘数**；**direct 血债臂签名物理不接 identity**。

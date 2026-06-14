@@ -1,5 +1,7 @@
 # 派系功能/效用 — 深挖决策 ledger（进行中，待 fold 进 ADR 0011 / sub-ADR）
 
+> ⚠️ **底稿（scratch / 过程史）**：本文已 fold 进母 ADR **决定8**（派系功能）；凡与正式 ADR 冲突一律**以正式 ADR 为准（later-doc-wins）**。本文留作设计 provenance、**非实现真源**（如「location boolean」措辞——实际 `location` 是 TEXT region_id、「在京」按区域判定，见母 ADR 决定8）。
+
 来源：2026-06-14 设计 session，承 #112 tracker。**这是设计累积,尚未写 ADR**（CMR r2 修仍 parked，随 ADR 修订一起落）。
 
 ## 现状（已 ground）
