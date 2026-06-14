@@ -15,7 +15,8 @@ def _w(title, tags=None, ongoing=None, effect=None):
 def test_military_initiative_without_army_warns():
     warns = _w("练成天雄军镇蓟镇", tags=["练军"], effect={"metrics": {"民心": 1}})
     assert warns, "军事国策结案无 new_armies 应告警"
-    assert any("new_armies" in w or "office_changes" in w for w in warns)
+    # 练军告警用 "new_armies"（缺主将调任才用 "人物变更"）；assert 精确到本例的关键词（PR#107 coderabbit nit）
+    assert any("new_armies" in w for w in warns)
 
 
 def test_military_initiative_with_new_armies_no_warn():
@@ -94,6 +95,22 @@ def test_fiscal_numeric_string_delta_no_warn():
     # CMR R2（claude）：flows 用 int() 强转 delta，数字串 "-500" 会立账 → 不应告警。
     assert _w("设太学府月经费", ongoing={"economy": [{"account": "国库", "delta": "-500"}]},
               effect={"metrics": {"民心": 1}}) == [], "数字串 delta（flows 会立账）不应告警"
+
+
+def test_nonlist_economy_no_crash_warns():
+    # PR#107 R1（gemini high）：非 list 的 economy（int/str/bool）不应 TypeError 崩结算，
+    # 按「无有效月支」告警即可（warn-only 不许把畸形数据变成崩溃）。
+    assert _w("设太学府月经费", effect={"economy": 5})
+    assert _w("设太学府月经费", effect={"economy": "三十万"})
+    assert _w("设太学府月经费", ongoing={"economy": True}, effect={"metrics": {"民心": 1}})
+
+
+def test_malformed_pairing_shape_warns():
+    # PR#107 R1（codex P2）：非 list/dict 的配对字段（字符串、错容器）不算真配对——
+    # _apply_issue_entities 只落 list 的 new_armies/人物变更、dict 的 army_delta，畸形不该消音。
+    assert _w("练成天雄军", tags=["练军"], effect={"new_armies": "天雄军已成"})  # 字符串非 list
+    assert _w("练成天雄军", tags=["练军"], effect={"army_delta": [1, 2]})  # list 非 dict
+    assert _w("调卢象升督师", tags=["调将"], effect={"人物变更": "已调任"})  # 字符串非 list
 
 
 def test_resolve_surfaces_pairing_warning_in_result(game):
