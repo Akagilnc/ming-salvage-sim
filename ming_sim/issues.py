@@ -1458,7 +1458,7 @@ def apply_office_appointment(
     # candidate/不在册返 None → name 不变（candidate 仍由 in_roster 确切 key 命中走激活分支）。
     if content is not None:
         from ming_sim.session import _find_existing_minister
-        canon = _find_existing_minister(content, name)
+        canon = _find_existing_minister(content, name, db)
         if canon:
             name = canon
     in_roster = content is not None and name in content.characters
@@ -1758,7 +1758,7 @@ def _apply_person_changes(
             # 路直调含归一的 apply_office_appointment 无此退化）。与下游归一同源（线上 codex R3 P2）。
             if content is not None:
                 from ming_sim.session import _find_existing_minister
-                _canon = _find_existing_minister(content, name)
+                _canon = _find_existing_minister(content, name, db)
                 if _canon:
                     name = _canon
             if content is not None and name not in content.characters:
