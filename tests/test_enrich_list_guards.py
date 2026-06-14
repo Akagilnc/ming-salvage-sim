@@ -23,6 +23,7 @@ def test_enrich_buildings_non_list_no_crash(monkeypatch):
         monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: (raw, 1))
         out = cb.enrich_initiative_effects("练新军", "现状", llm_config=None)
         assert isinstance(out["effect_on_resolve"], dict)  # 不崩、结构正常
+        assert out["effect_on_resolve"].get("buildings") == []  # 脏非 list 值被源头清成 []（gemini PR#127）
 
 
 def test_apply_economy_list_non_list_no_crash(game):
@@ -66,7 +67,8 @@ def test_apply_economy_list_skips_non_dict_items(game):
     """list 内混非 dict 项不崩，跳过非 dict、只落合法项（#117 codex 逐项守）。"""
     db, state, _content = game
     out = _apply_economy_list(db, state, [1, "x", None, {"account": "国库", "delta": -3, "reason": "t"}])
-    assert isinstance(out, list)  # 不抛 AttributeError
+    assert len(out) == 1, f"非 dict 项未被跳过/合法项未保留：{out}"
+    assert out[0].get("account") == "国库"  # 只落合法那一项
 
 
 def test_apply_metric_faction_class_dict_non_dict_no_crash(game):
