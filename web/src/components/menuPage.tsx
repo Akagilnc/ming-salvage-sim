@@ -320,8 +320,10 @@ export function ApiSettingsModal({
                 <option value="claude">claude</option>
               </select>
             </label>
-            <label>
-              CLI Model <small className="menu-hint">（默认档=runner 默认；其他=手填任意 id）</small>
+            {/* div 而非 label：custom 态 CliModelField 同时渲染 select+input，HTML5 规定
+                一个 label 至多含一个可表单关联控件（gemini R2）。深色控件样式见 .menu-cli-field。 */}
+            <div className="menu-cli-field">
+              <span>CLI Model <small className="menu-hint">（默认档=runner 默认；其他=手填任意 id）</small></span>
               <CliModelField
                 key={cliRunner}
                 runner={cliRunner}
@@ -329,7 +331,7 @@ export function ApiSettingsModal({
                 value={cliModel}
                 onChange={setCliModel}
               />
-            </label>
+            </div>
             <label>
               CLI Timeout Seconds
               <input type="number" min={30} max={1800} value={cliTimeout} onChange={(e) => setCliTimeout(e.target.value)} placeholder="300" />

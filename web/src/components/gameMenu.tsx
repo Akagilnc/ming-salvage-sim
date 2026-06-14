@@ -458,7 +458,9 @@ export function LLMConfigTab() {
               <option value="claude">claude</option>
             </select>
           </label>
-          <label className="menu-field">
+          {/* div 而非 label：custom 态 CliModelField 同时渲染 select+input，HTML5 规定
+              一个 label 至多含一个可表单关联控件，两个会无效且无障碍歧义（gemini R2）。 */}
+          <div className="menu-field">
             <span>CLI Model <small className="menu-hint">（默认档=runner 默认；其他=手填任意 id）</small></span>
             <CliModelField
               key={cliRunner}
@@ -468,7 +470,7 @@ export function LLMConfigTab() {
               value={cliModel}
               onChange={setCliModel}
             />
-          </label>
+          </div>
           <label className="menu-field">
             <span>CLI 超时（秒）</span>
             <input
