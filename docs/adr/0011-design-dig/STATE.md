@@ -7,7 +7,7 @@
 
 > ## 🏁 里程碑（2026-06-14）：actor 博弈设计阶段收口
 > **决定 1–9 全有设计稿、全用户拍板、全 durable。substrate 机制+值全齐**(血债dig-4/矩阵dig-5/认同度dig-6/seed dig-7/**ceiling dig-9**)。内核 end-to-end 闭合：`substrate → resolve_directive 四层票拟(dig-8) → outcome → 反馈`。破局回路(走程序坐实→旨意轴翻转→命门变非命门→顺颁)串起全部，出路恒可达已证明。
-> **进行中 = 收口 + 评审**：✅ **血债 sub-ADR 0011-2 已成稿**（`../0011-2-blood-debt-ratchet-schema.md`：fold dig-4 schema + dig-6 kinship 去 max(1) + parked CMR r2 三项 provisional/H5/净负 钉最低契约）+ ✅ **内部对抗预检过**（15-agent：7 fold 保真核 + 8 承重 claim 红队；修 5 P1=人人有点脏/母ADR钱归宿矛盾/H5跨派别名/provisional第4坑/P4字段泄漏，5 承重 claim 攻不破=42格→新表/kinship 0-边界/净负vs出路恒可达/build-upon/H2棘轮）。**下一步 = 正式 CMR**（本地 cmr 三家 + 线上三 bot，本轮重点盯 sub-ADR 六处 ⚠️）。余：① dig-1/2/3/8/9 fold 成正式 ADR 0011 决定（母 ADR 已应 r1 fix + 回标钱-封驳）② 母 ADR 全套 CMR。
+> **进行中 = 收口 + 评审**：✅ **血债 sub-ADR 0011-2 已成稿**（`../0011-2-blood-debt-ratchet-schema.md`：fold dig-4 schema + dig-6 kinship 去 max(1) + parked CMR r2 三项 provisional/H5/净负 钉最低契约）+ ✅ **内部对抗预检过**（15-agent：7 fold 保真核 + 8 承重 claim 红队；修 5 P1=人人有点脏/母ADR钱归宿矛盾/H5跨派别名/provisional第4坑/P4字段泄漏，5 承重 claim 攻不破=42格→新表/kinship 0-边界/净负vs出路恒可达/build-upon/H2棘轮）。+ ✅ **本地 cmr 收敛**（ak-cross-m-review，1+1+1 full=Claude Opus + codex gpt-5.5 + gemini/agy，零降级；R1→R4：13→7→5→**0**，R4 3/3 concur；fix commit `03273d9`/`a364f19`/`ab79ab1`）。**下一步 = 线上三 bot**（Layer 3 pr-review-loop，需 push + 开 PR；PR 范围待定=整条 0011 设计线 vs 仅 sub-ADR）。余：① dig-1/2/3/8/9 fold 成正式 ADR 0011 决定（母 ADR 已应 r1 fix + 回标钱-封驳）② 母 ADR 全套评审。
 > **实现 = 编码活，spawn 隔壁**，硬序：血债 schema + 矩阵42值 + identity列 + seed 先落，四层票拟后做（resolve 读它们，零实现则读空值）。
 > **待办散件**：ceiling 表已设计(dig-9)，精确值随矩阵α/β playtest调；高起潜剔出阉党(characters.json)；叛变需补 faction-UPDATE 写路径；issues "停滞"语义实现端确认。
 > **会话存档**：gstack checkpoint `20260614-215230-...-substrate-complete.md`(本次完整态)。
