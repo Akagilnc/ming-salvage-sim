@@ -21,8 +21,10 @@ def loads_effect_dict(raw: object) -> Dict[str, object]:
     避免 db↔issues 循环——db / issues / simulation / web_app 都从这里取（cmr #117 R4）。"""
     if isinstance(raw, dict):
         return raw
+    if not raw:  # None / 空串等常见空值：快速返 {}，免 json.loads 解析开销（gemini PR#127 R2）
+        return {}
     try:
-        v = json.loads(raw or "{}")
+        v = json.loads(raw)
     except (ValueError, TypeError):
         return {}
     return v if isinstance(v, dict) else {}
