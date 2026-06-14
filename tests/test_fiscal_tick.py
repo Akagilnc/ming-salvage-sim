@@ -121,6 +121,12 @@ RAISE_CASES = [
     ("G21x Due=None", S(), dict(base, Due=None), [], "Due 非字典"),
     ("G21y Due=list", S(), dict(base, Due=[]), [], "Due 非字典"),
     ("G21z Due=数值", S(), dict(base, Due=5), [], "Due 非字典"),
+    # cmr ship-pre R2（codex concur P1/P2）：同类 type-escape 的其它面——开账 stock 非数值
+    # （float([]) TypeError 早于守门）、action 非 dict / action 字段显式 None（later compare/mul
+    # TypeError），都曾逃逸 flows 隔离炸 pre_settle。全面前置验形归 ValueError。
+    ("G21A1 stock非数值", S(省库库银=[]), base, [], "开账 stock 省库库银 非数值"),
+    ("G21A2 action非dict", S(), base, [5], "action 非字典"),
+    ("G21A3 action字段None", S(), base, [dict(type="营建", cost=None)], "cost 为 None"),
 ]
 
 

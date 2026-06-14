@@ -52,10 +52,19 @@ def settle_tick(
     for rq in ("三饷应征", "火耗率", "逋赋率", "起运定额", "Due"):
         if rq not in p:
             raise ValueError(f"param {rq} 缺失")
-    # ── 开账显式 None 前置拦（float(None) TypeError 早于守门）──
+    # ── 开账 stock 全面验形（前置于下方 float 构造：float([]) 等非数值会 TypeError 早于守门、
+    #    逃逸调用方 (ValueError/守恒破) 隔离炸 pre_settle，cmr ship-pre R1/R2；CLAIM 也拦——
+    #    负军饷欠→偿还环凭空生钱）──
     for sk in (*CASH_KEYS, *CLAIM_KEYS, "官民田", "隐田"):
         if sk in st and st[sk] is None:
             raise ValueError(f"开账 stock {sk} 为 None")
+        _sraw = st.get(sk, 0)
+        if isinstance(_sraw, bool) or not isinstance(_sraw, (int, float)):
+            raise ValueError(f"开账 stock {sk} 非数值")
+        if not math.isfinite(float(_sraw)):
+            raise ValueError(f"开账 stock {sk} 非有限值(NaN/inf)")
+        if float(_sraw) < 0:
+            raise ValueError(f"开账 stock {sk} 为负")
 
     cash = {k: float(st.get(k, 0)) for k in CASH_KEYS}
     claim = {k: float(st.get(k, 0)) for k in CLAIM_KEYS}
@@ -87,12 +96,16 @@ def settle_tick(
 
     # ── 输入校验 fail-loud（NaN/inf/非数/负/未知 action/越界 eff/语义违例）──
     for a in actions:
+        if not isinstance(a, dict):  # 非 dict action（含「误传单 dict→迭代出 key 串」）→ ValueError，
+            raise ValueError(f"action 非字典: {a!r}")  # 否则 a.get/a["type"] 抛 AttributeError 逃逸隔离（cmr R2 codex）
         if "type" not in a:
             raise ValueError(f"action 缺 type: {a}")
         for nf in ("cost", "amount", "挖隐田", "eff"):
-            v = a.get(nf)
-            if v is None:
-                continue
+            if nf not in a:
+                continue  # 字段可选，缺省走默认值
+            v = a[nf]
+            if v is None:  # 显式 None（非缺省）→ ValueError；否则下方 < / 乘法对 None 抛 TypeError（cmr R2 codex）
+                raise ValueError(f"{nf} 为 None: {a}")
             if isinstance(v, bool) or not isinstance(v, (int, float)):
                 raise ValueError(f"{nf} 非数值: {a}")
             if not math.isfinite(float(v)):
@@ -138,16 +151,6 @@ def settle_tick(
             raise ValueError(f"Due[{hk}] 非有限值(NaN/inf)")
         if dv < 0:
             raise ValueError(f"Due[{hk}] 为负")
-    for sk in (*CASH_KEYS, *CLAIM_KEYS, "官民田", "隐田"):  # CLAIM 也拦（负军饷欠→偿还环凭空生钱）
-        _sraw = st.get(sk, 0)
-        if isinstance(_sraw, bool) or not isinstance(_sraw, (int, float)):
-            raise ValueError(f"开账 stock {sk} 非数值")
-        sv = float(_sraw)
-        if not math.isfinite(sv):
-            raise ValueError(f"开账 stock {sk} 非有限值(NaN/inf)")
-        if sv < 0:
-            raise ValueError(f"开账 stock {sk} 为负")
-
     # ── ⓪ action 相位：先算 k（超预算按库存比例缩），再按 k 执行 ──
     Stock_start = cash["省库库银"]
     ΣCost = sum(a.get("cost", 0) for a in actions if a.get("cost", 0) > 0)
