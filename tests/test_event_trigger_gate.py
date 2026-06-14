@@ -69,6 +69,15 @@ def test_gate_passed_tolerates_none(game):
     assert _gate_passed(None, state.metrics, db) is True
 
 
+def test_gate_passed_tolerates_nonstring_cond(game):
+    # PR#107 R2（gemini high）：条件值写成非字符串（{"民心":60} 而非 ">=60"）不应 cond.strip()
+    # AttributeError 崩候选收集；str() 强转后不匹配操作符正则 → 门不达标（安全降级、不崩）。
+    db, state, content = game
+    from ming_sim.issues import _gate_passed
+    assert _gate_passed({"民心": 60}, state.metrics, db) is False
+    assert _gate_passed({"民心": True}, state.metrics, db) is False
+
+
 def test_historical_event_none_gate_no_crash(game):
     db, state, content = game
     issues.bind_content(content)
