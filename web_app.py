@@ -61,7 +61,15 @@ from ming_sim.skills import available_skill_ids, skill_display_name, skill_sourc
 from ming_sim.context import match_minister_from_text
 from ming_sim.flows import compute_budget_lines
 from ming_sim.exceptions import LLMContractError  # noqa: F401  (保留：供错误处理)
-from ming_sim.models import Character, LLMConfig, TurnPhase, is_vassal_prince, loads_effect_dict
+from ming_sim.models import (
+    API_DEFAULT_MAX_TOKENS,
+    API_DEFAULT_TIMEOUT_SECONDS,
+    Character,
+    LLMConfig,
+    TurnPhase,
+    is_vassal_prince,
+    loads_effect_dict,
+)
 from ming_sim import steam_events
 
 WEB_DIST = bundled_path("web", "dist")
@@ -499,7 +507,7 @@ class WebGame:
         advanced_api_key = os.environ.get("OPENAI_ADVANCED_API_KEY", "")
         thinking_level = os.environ.get("OPENAI_THINKING_LEVEL", "")
         advanced_thinking_level = os.environ.get("OPENAI_ADVANCED_THINKING_LEVEL", "")
-        timeout_seconds = float(os.environ.get("OPENAI_TIMEOUT_SECONDS", "180") or 180)
+        timeout_seconds = float(os.environ.get("OPENAI_TIMEOUT_SECONDS", str(API_DEFAULT_TIMEOUT_SECONDS)) or API_DEFAULT_TIMEOUT_SECONDS)
         # 菜单写的 runtime_llm.json 优先于 env，让"在网页里改的配置"重启后仍生效。
         runtime = load_runtime_llm()
         base_url = runtime.get("base_url") or base_url
@@ -513,7 +521,7 @@ class WebGame:
         advanced_base_url = runtime.get("advanced_base_url") or advanced_base_url
         advanced_api_key = real_api_key_or_empty(runtime.get("advanced_api_key")) or advanced_api_key
         advanced_thinking_level = runtime.get("advanced_thinking_level") or advanced_thinking_level
-        max_tokens = int(runtime.get("max_tokens") or 8000)
+        max_tokens = int(runtime.get("max_tokens") or API_DEFAULT_MAX_TOKENS)
         timeout_seconds = float(runtime.get("timeout_seconds") or timeout_seconds)
         random.seed(int(os.environ.get("MING_SIM_SEED", "7")))
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
@@ -1630,8 +1638,8 @@ async def api_menu_status() -> Dict[str, Any]:
             "cli_model_saved": cli_model_saved,
             "cli_model_choices": cli_model_choices(),
             "cli_timeout_seconds": cli_timeout,
-            "max_tokens": int(runtime.get("max_tokens") or 8000),
-            "timeout_seconds": float(runtime.get("timeout_seconds") or os.environ.get("OPENAI_TIMEOUT_SECONDS", "180") or 180),
+            "max_tokens": int(runtime.get("max_tokens") or API_DEFAULT_MAX_TOKENS),
+            "timeout_seconds": float(runtime.get("timeout_seconds") or os.environ.get("OPENAI_TIMEOUT_SECONDS", str(API_DEFAULT_TIMEOUT_SECONDS)) or API_DEFAULT_TIMEOUT_SECONDS),
             "thinking_level": runtime.get("thinking_level") or os.environ.get("OPENAI_THINKING_LEVEL", ""),
             "advanced_model": runtime.get("advanced_model") or os.environ.get("OPENAI_ADVANCED_MODEL", ""),
             "advanced_base_url": runtime.get("advanced_base_url") or os.environ.get("OPENAI_ADVANCED_BASE_URL", ""),
@@ -1744,8 +1752,8 @@ class LlmSetupRequest(BaseModel):
     base_url: str
     model: str
     api_key: str
-    max_tokens: int = 8000
-    timeout_seconds: float = 180
+    max_tokens: int = API_DEFAULT_MAX_TOKENS
+    timeout_seconds: float = API_DEFAULT_TIMEOUT_SECONDS
     thinking_level: str = ""
     advanced_model: str = ""
     advanced_base_url: str = ""
@@ -1762,8 +1770,8 @@ async def _menu_save_cli_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     cli_runner = (request.cli_runner or "").strip().lower()
     cli_model = (request.cli_model or "").strip()
     cli_timeout = request.cli_timeout_seconds if request.cli_timeout_seconds and request.cli_timeout_seconds > 0 else CLI_DEFAULT_TIMEOUT_SECONDS
-    max_tokens = request.max_tokens if request.max_tokens > 0 else 8000
-    timeout_seconds = request.timeout_seconds if request.timeout_seconds > 0 else 180
+    max_tokens = request.max_tokens if request.max_tokens > 0 else API_DEFAULT_MAX_TOKENS
+    timeout_seconds = request.timeout_seconds if request.timeout_seconds > 0 else API_DEFAULT_TIMEOUT_SECONDS
     if not cli_runner:
         raise HTTPException(status_code=400, detail="cli_runner 不能为空。")
     config = LLMConfig(
@@ -1833,8 +1841,8 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     adv_base_in = (request.advanced_base_url or "").strip()
     advanced_base_url = normalize_openai_base_url(adv_base_in) if adv_base_in else ""
     advanced_api_key = (request.advanced_api_key or "").strip()
-    max_tokens = request.max_tokens if request.max_tokens > 0 else 8000
-    timeout_seconds = request.timeout_seconds if request.timeout_seconds > 0 else 180
+    max_tokens = request.max_tokens if request.max_tokens > 0 else API_DEFAULT_MAX_TOKENS
+    timeout_seconds = request.timeout_seconds if request.timeout_seconds > 0 else API_DEFAULT_TIMEOUT_SECONDS
     thinking_level = normalize_thinking_level(request.thinking_level)
     advanced_thinking_level = normalize_thinking_level(request.advanced_thinking_level)
     if not (base_url and model):
@@ -2504,8 +2512,8 @@ async def api_get_llm_config() -> Dict[str, Any]:
             "base_url": saved.get("base_url", ""),
             "model": saved.get("model", ""),
             "has_api_key": _has_real_api_key(saved.get("api_key", "")),
-            "max_tokens": int(saved.get("max_tokens") or 8000),
-            "timeout_seconds": float(saved.get("timeout_seconds") or 180),
+            "max_tokens": int(saved.get("max_tokens") or API_DEFAULT_MAX_TOKENS),
+            "timeout_seconds": float(saved.get("timeout_seconds") or API_DEFAULT_TIMEOUT_SECONDS),
             "thinking_level": saved.get("thinking_level", ""),
             "advanced_model": saved.get("advanced_model", ""),
             "advanced_base_url": saved.get("advanced_base_url", ""),
