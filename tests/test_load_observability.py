@@ -1,7 +1,8 @@
 """#84 接档观测性：CLI 通道日志显示真实 runner/model（非 API-fallback 占位 cfg.model）。
 
 `[simulator] 使用模型 gpt-4o-mini` 这类是 CLI 通道下 cfg.model 的 API-fallback 占位，真实走
-codex spark——误导排查。describe_effective_model 与 create_chat_model / trace 同口径解真实后端。
+codex spark——误导排查。describe_effective_model 与 create_chat_model 的后端解析同口径解真实 runner/model
+（legacy-env 默认模型下比 trace 的未解析 id 更准，见源 docstring）。
 """
 from __future__ import annotations
 
