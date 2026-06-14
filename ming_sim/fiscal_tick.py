@@ -43,16 +43,6 @@ class FiscalTickResult:
     breakdown: Dict[str, Any]
 
 
-def _require_finite_nonneg(value: Any, label: str, *, allow_none_label: str = "") -> None:
-    """通用入口拦：bool/非数 → ValueError；NaN/inf → ValueError；负 → ValueError。"""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"{label} 非数值")
-    if not math.isfinite(float(value)):
-        raise ValueError(f"{label} 非有限值(NaN/inf)")
-    if float(value) < 0:
-        raise ValueError(f"{label} 为负")
-
-
 def settle_tick(
     st: Dict[str, Any], p: Dict[str, Any], actions: List[Dict[str, Any]]
 ) -> FiscalTickResult:
@@ -136,7 +126,10 @@ def settle_tick(
                 raise ValueError(f"param {pk} 为负")
         elif pk in p and pk != "正赋应征":  # 仅 正赋应征 可 None=走亩额派生
             raise ValueError(f"param {pk} 为 None(仅 正赋应征 可 None)")
-    for hk, dv in p.get("Due", {}).items():
+    _due = p["Due"]  # presence 已在必填检查（line 62）；此处验形：Due 非 dict（None/list/数值）→
+    if isinstance(_due, bool) or not isinstance(_due, dict):  # ValueError，否则下方 .items()/.get() 抛
+        raise ValueError("Due 非字典")  # AttributeError 逃逸调用方隔离（flows 只 catch ValueError/守恒破）炸 pre_settle（cmr ship-pre P1）
+    for hk, dv in _due.items():
         if hk not in _DUE_KEYS:
             raise ValueError(f"Due 含未知科目 {hk}")
         if isinstance(dv, bool) or not isinstance(dv, (int, float)):

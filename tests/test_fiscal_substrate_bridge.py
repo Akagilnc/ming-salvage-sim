@@ -137,3 +137,23 @@ def test_substrate_corrupt_isolated_from_flows(fresh_game):
     assert isinstance(flows, list) and flows, "坏基座不该掀翻固定财政（cmr S4 F4）"
     after = _read_settle(db)["st"]
     assert abs(after["军饷欠"] - 20) < 1e-3, "坏基座不该推进（港口锁：FAIL tick 不落库）"
+
+
+def test_substrate_corrupt_due_isolated(fresh_game):
+    # cmr ship-pre R1（codex+gemini concur P1）：Due 非字典曾抛 AttributeError 逃逸 flows 的
+    # (ValueError, FiscalConservationError) 隔离 → 炸 pre_settle 固定财政。settle_tick 验形归
+    # ValueError 后→被隔离捕获，固定财政照常完成 + 基座不推进（港口锁）。
+    from ming_sim.flows import apply_fixed_period_flows
+    db, state = fresh_game
+    row = db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
+    fiscal = json.loads(str(row["fiscal"]))
+    fiscal["settle"]["p"]["Due"] = None  # 非字典
+    db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id='shaanxi'",
+        (json.dumps(fiscal, ensure_ascii=False),),
+    )
+    db.conn.commit()
+    flows = apply_fixed_period_flows(db, state)
+    assert isinstance(flows, list) and flows, "Due 非字典不该掀翻固定财政（AttributeError 逃逸隔离）"
+    after = _read_settle(db)["st"]
+    assert abs(after["军饷欠"] - 20) < 1e-3, "坏 Due 不该推进（港口锁）"
