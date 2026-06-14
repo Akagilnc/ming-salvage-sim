@@ -439,14 +439,21 @@ class GameSession:
 
     def begin_turn(self) -> TurnSnapshot:
         """加载/刷新本回合：历史卒、上回合奏报、重建 registry。幂等。"""
+        # 接档/刷新阶段计时（#84）：begin_turn 是「继续」载入的慢段所在（大臣 registry 重建可触发
+        # office_type 推断等 LLM 调用），原零日志=进度盲区；逐阶段 tlog 用时定位慢点。
+        from ming_sim.token_stats import tlog
+        _t = time.monotonic()
         self.state = self.db.load_state()
         self.deaths_this_turn = self.db.apply_historical_deaths(self.state)
         self.debuts_this_turn = self.db.apply_historical_debuts(self.state)
         self.power_renames_this_turn = self.db.apply_historical_power_renames(self.state)
         _sync_offices_from_db_impl(self.content, self.db, self.llm_config)
         self.previous_summary = self.db.previous_turn_summary(self.state) or ""
+        tlog(f"[接档] begin_turn 读档+历史 tick+人物同步+奏报 {time.monotonic() - _t:.1f}s")
+        _t = time.monotonic()
         context = CourtContext(state=self.state, db=self.db, previous_summary=self.previous_summary)
         self.registry = MinisterRegistry(self.llm_config, self.agno_db, context)
+        tlog(f"[接档] begin_turn 大臣 registry 重建 {time.monotonic() - _t:.1f}s")
         self.last_decree = ""
         self.last_report = ""
         # awaiting_decision 必须保活：刷新页时仍要弹决策点续跑结算，不可重置成 summoning。
