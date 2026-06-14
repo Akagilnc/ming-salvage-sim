@@ -1701,6 +1701,33 @@ def test_talent_pool_ming_noncourt_only(game):
     assert nonming == [], f"人才池混进非明势力：{nonming}"
 
 
+def test_talent_pool_excludes_amnestied_rebel_by_faction(game):
+    """招抚归明后 power_id 翻 ming（character_power_changes），仅靠 power_id='ming' 闸
+    会把前流寇漏进起复人才池（被当可起复的大明官，违 ADR 决定10）。faction='流寇' 才是真闸。
+    设 offstage + power_id=ming（招抚末态），断言不入 offstage_ministers。与 web in_talent_pool
+    同一 bug 类的孪生面（cmr R1 finding A 广范围自查）。"""
+    db, state, content = game
+    name = next(
+        (n for n, r in (
+            (row["name"], row) for row in db.conn.execute(
+                "SELECT name FROM characters WHERE faction='流寇'"
+            ).fetchall()
+        )),
+        None,
+    )
+    if name is None:
+        import pytest
+        pytest.skip("基底盘面无流寇人物")
+    db.set_character_status(state, name, "offstage", "招抚后罢居")
+    db.conn.execute("UPDATE characters SET power_id='ming' WHERE name=?", (name,))
+    db.conn.commit()
+    payload = build_simulator_payload(state, db, decree_text="", previous_narrative="")
+    pool = payload["offstage_ministers"]
+    nidx = pool["cols"].index("name")
+    pool_names = [r[nidx] for r in pool["rows"]]
+    assert name not in pool_names, f"招抚后的前流寇 {name} 漏进起复人才池"
+
+
 def test_extractor_active_ministers_ming_noncourt_only(game):
     """5b r1 PR#106（CodeRabbit Major，roster-scope coverage-drift 第 4 处）：extractor 上下文的
     active_ministers 须与 court_roster 同口径 = 大明、非后宫。否则 active 外臣（皇太极）/active 后宫漏入。"""

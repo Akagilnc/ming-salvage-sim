@@ -7,6 +7,9 @@ issue #104 原提议的 `c.status != "offstage"` 会把「DB 已 active 但内�
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import web_app
 from web_app import in_talent_pool, visible_in_court
 
 
@@ -102,7 +105,7 @@ def test_offstage_former_minister_in_talent_pool(game):
         import pytest
         pytest.skip("基底盘面无合适的朝堂类前臣")
     db.set_character_status(state, name, "offstage", "测试：自请罢居")
-    assert in_talent_pool(content.characters[name], db, state.year) is True
+    assert in_talent_pool(content.characters[name], db, state.year, state.period) is True
     # 在野不入朝堂列表（两个列表互斥，offstage 只进人才池）
     assert visible_in_court(content.characters[name], db) is False
 
@@ -111,21 +114,62 @@ def test_active_minister_not_in_talent_pool(game):
     """在朝（active）大臣不进在野池——人才池只补 offstage 这一漏面。"""
     db, state, content = game
     name = _active_ming_minister(db, content)
-    assert in_talent_pool(content.characters[name], db, state.year) is False
+    assert in_talent_pool(content.characters[name], db, state.year, state.period) is False
 
 
-def test_vassal_and_rebel_excluded_from_talent_pool(game):
-    """宗藩（藩王不入仕）/ 流寇（非起复对象）即便 offstage 也不进人才池。"""
+def test_vassal_prince_excluded_from_talent_pool(game):
+    """宗藩（藩王不入仕）即便 offstage 也不进人才池（按 office_type 排除）。"""
     db, state, content = game
-    for ot in ("宗藩", "流寇"):
-        name = next(
-            (n for n, c in content.characters.items() if getattr(c, "office_type", "") == ot),
-            None,
-        )
-        if name is None:
-            continue
+    name = next(
+        (n for n, c in content.characters.items() if getattr(c, "office_type", "") == "宗藩"),
+        None,
+    )
+    if name is None:
+        import pytest
+        pytest.skip("基底盘面无宗藩人物")
+    db.set_character_status(state, name, "offstage", "测试")
+    assert in_talent_pool(content.characters[name], db, state.year, state.period) is False
+
+
+def test_amnestied_rebel_excluded_from_talent_pool(game):
+    """流寇按 faction 排除，非 office_type——盘面无 office_type=流寇（实为 外臣/未仕）。
+    招抚归明后 power_id 翻 ming（character_power_changes），若仅靠 power_id 闸会把前流寇漏进
+    起复池；faction='流寇' 才是真闸。故设 offstage + power_id=ming（招抚末态），断言仍排除。"""
+    db, state, content = game
+    name = next(
+        (n for n, c in content.characters.items() if getattr(c, "faction", "") == "流寇"),
+        None,
+    )
+    if name is None:
+        import pytest
+        pytest.skip("基底盘面无流寇人物")
+    ch = content.characters[name]
+    db.set_character_status(state, name, "offstage", "测试：招抚后罢居")
+    db.conn.execute("UPDATE characters SET power_id='ming' WHERE name=?", (name,))
+    db.conn.commit()
+    assert db.get_character_status(name)[0] == "offstage"
+    assert in_talent_pool(ch, db, state.year, state.period) is False
+
+
+def test_same_year_future_month_debut_excluded_from_talent_pool(game):
+    """登场判据须对齐 db.apply_historical_debuts 的 year+month：同年但月份未到
+    （debut_month 晚于当前 period）的人物仍未登场，不得提前进人才池（剧透）。"""
+    db, state, content = game
+    if state.period >= 12:
+        import pytest
+        pytest.skip("当前已是年末，无法构造同年未来月份")
+    name = _active_ming_minister(db, content)
+    ch = content.characters[name]
+    orig = (ch.debut_year, ch.debut_month)
+    try:
         db.set_character_status(state, name, "offstage", "测试")
-        assert in_talent_pool(content.characters[name], db, state.year) is False
+        ch.debut_year, ch.debut_month = state.year, state.period + 1  # 同年下月才登场
+        assert in_talent_pool(ch, db, state.year, state.period) is False
+        ch.debut_month = state.period  # 月份已到 → 视为已登场，可进池
+        assert in_talent_pool(ch, db, state.year, state.period) is True
+    finally:
+        # content fixture 是 session 作用域，还原内存 debut 字段防跨用例污染
+        ch.debut_year, ch.debut_month = orig
 
 
 def test_consort_excluded_from_court(game):
@@ -140,3 +184,51 @@ def test_consort_excluded_from_court(game):
         import pytest
         pytest.skip("基底盘面无后宫人物")
     assert visible_in_court(content.characters[consort], db) is False
+
+
+def _stub_game(monkeypatch, db, content):
+    """把 web_app.web_game 换成轻量 stub（复用真 db/content），供 _require_active_minister 端点守门测试。"""
+    stub = SimpleNamespace(
+        session=SimpleNamespace(temporary_characters={}),
+        content=content,
+        db=db,
+        character_power_id=lambda c: web_app._character_power_id(c, db),
+    )
+    monkeypatch.setattr(web_app, "web_game", stub)
+
+
+def test_vassal_prince_chat_rejected(game, monkeypatch):
+    """宗藩不仅被朝堂列表挡，/chat 端点（_require_active_minister）也须拒绝——否则可绕列表
+    按名经 API 直接召对（cmr R1 finding D）。即便 active+ming 也拒。"""
+    import pytest
+    from fastapi import HTTPException
+    db, state, content = game
+    name = next(
+        (n for n, c in content.characters.items() if getattr(c, "office_type", "") == "宗藩"),
+        None,
+    )
+    if name is None:
+        pytest.skip("基底盘面无宗藩人物")
+    db.set_character_status(state, name, "active", "测试：在世")
+    _stub_game(monkeypatch, db, content)
+    with pytest.raises(HTTPException) as ei:
+        web_app._require_active_minister(name)
+    assert ei.value.status_code == 409
+    assert "宗室" in ei.value.detail
+
+
+def test_active_consort_chat_not_rejected(game, monkeypatch):
+    """后宫不在 _require_active_minister 的宗藩闸内——嫔妃 chat 复用本端点，active+ming 后宫
+    须能召对（finding D「别误伤后宫」反向锁）。"""
+    import pytest
+    db, state, content = game
+    consort = next(
+        (n for n, c in content.characters.items()
+         if getattr(c, "office_type", "") == "后宫" and getattr(c, "power_id", "ming") == "ming"),
+        None,
+    )
+    if consort is None:
+        pytest.skip("基底盘面无大明后宫人物")
+    db.set_character_status(state, consort, "active", "测试：在位")
+    _stub_game(monkeypatch, db, content)
+    web_app._require_active_minister(consort)  # 不抛 = 通过（后宫未被宗藩闸误伤）
