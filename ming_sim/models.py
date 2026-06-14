@@ -95,7 +95,15 @@ def is_vassal_prince(character: "Character") -> bool:
     - registry: build_court_roster / build_court_roster_index
     - session: can_summon（召对 choke）/ list_ministers（召见阶段名册）
     - issues: apply_office_appointment（任命落地核 choke——授官会改 office_type、反解 roster 隐藏，必守）
-    roster 类同时排 后宫，用 office_type in ('后宫','宗藩')；本 helper 只判宗藩这一面。"""
+    - session: can_summon（召对 choke，覆盖 session/web/CLI choose_minister 三路）
+    - db: create_secret_order（密令唯一 DB 写口 choke）/ _commit_office_action 罢免（玩家罢免）
+    roster 类同时排 后宫，用 office_type in ('后宫','宗藩')；本 helper 只判宗藩这一面。
+
+    **规则边界（玩家动作 vs 世界事件，cmr R7 拍）**：守的是「皇帝把宗室当朝堂命官来召见/任免/
+    罢免/下密令」这类玩家动作面。**simulator/extractor 叙事处置故意不守**——宗室可因世界事件
+    死/被俘/废为庶人（史实如福王 1641 被李自成所杀），extractor character_status_changes 的
+    罢黜/处置路（issues.apply_person_status_changes）应允许改宗藩状态；况且 dismiss/dead 不改
+    office_type，宗藩照旧不入任何 roster。勿在叙事处置路加宗藩闸（会掐掉合法 diegetic 事件）。"""
     return character.office_type == VASSAL_PRINCE_OFFICE_TYPE
 
 
