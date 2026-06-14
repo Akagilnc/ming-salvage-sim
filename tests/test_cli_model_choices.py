@@ -80,17 +80,9 @@ def test_choices_returns_independent_copies():
 
 # ── 端点暴露：两个 config 端点都把清单带给前端 ──
 
-def test_menu_status_exposes_choices(monkeypatch):
-    import web_app
-    monkeypatch.setattr(web_app, "_scan_saves", lambda: [])
-    monkeypatch.setattr(web_app, "_scan_campaigns", lambda: [])
-    monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: None)
-    monkeypatch.setattr(web_app, "_has_main_db", lambda: False)
-    data = asyncio.run(web_app.api_menu_status())
-    assert data["llm"]["cli_model_choices"] == cb.cli_model_choices()
-
-
 def _patch_status_io(monkeypatch, runtime):
+    """把 api_menu_status 的全部磁盘 I/O monkeypatch 掉（含 load_runtime_llm），
+    使端点测试 hermetic、不与本地配置文件耦合（gemini R1）。"""
     import web_app
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: runtime)
     monkeypatch.setattr(web_app, "_scan_saves", lambda: [])
@@ -98,6 +90,12 @@ def _patch_status_io(monkeypatch, runtime):
     monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: None)
     monkeypatch.setattr(web_app, "_has_main_db", lambda: False)
     return web_app
+
+
+def test_menu_status_exposes_choices(monkeypatch):
+    web_app = _patch_status_io(monkeypatch, {})
+    data = asyncio.run(web_app.api_menu_status())
+    assert data["llm"]["cli_model_choices"] == cb.cli_model_choices()
 
 
 def test_menu_status_exposes_raw_cli_model_saved_default(monkeypatch):
