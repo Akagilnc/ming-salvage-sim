@@ -123,9 +123,19 @@ def test_apply_fixed_period_flows_advances_shaanxi_substrate(fresh_game):
 
 
 def test_substrate_absent_does_not_break_flows(game):
-    # 旧档（probe.db）无 settle 种子 → shadow 隔离：固定财政照常完成，不抛
+    # 旧档无 settle 种子 → shadow 隔离：固定财政照常完成，不抛。
+    # 显式保证「无基座」前提（不依赖 probe.db 恰好缺 settle——刷新种子档也不失效，PR#110 coderabbit）。
     from ming_sim.flows import apply_fixed_period_flows
     db, state, _ = game
+    row = db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
+    fiscal = json.loads(str(row["fiscal"] or "{}")) if row else {}
+    fiscal.pop("settle", None)
+    db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id='shaanxi'",
+        (json.dumps(fiscal, ensure_ascii=False),),
+    )
+    db.conn.commit()
+    assert _read_settle(db) is None, "前提：陕西无 settle 基座"
     flows = apply_fixed_period_flows(db, state)
     assert isinstance(flows, list) and flows, "固定财政应照常落账（基座缺失不该掀翻 pre_settle）"
 
