@@ -208,6 +208,39 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
         db.save_state(state)
 
 
+def group_secret_orders_for_sim(
+    rows: List[Dict[str, object]],
+) -> Dict[str, List[Dict[str, object]]]:
+    """把密令 DB 行按状态分进中文键两组，作喂 simulator/extractor 的承载形状（#48）。
+
+    输入 = db.list_secret_orders 返回的行（含英文 status）；输出 =
+    `{"在办": [...], "待核议": [...]}`。英文 status（active/pending_review）只用来分组，
+    **不当字段进 LLM 输入**——否则 simulator 把它照抄进「密旨动向」邸报段，中文游戏里
+    冒出「孙承宗密旨（active）」（本 issue 根因）。条目保留
+    id/minister_name/title/content[:120]/turn_issued/due_turn/progress/sim_note，不含 status。
+    done/failed/cancelled 是裁决输出、无注入需求，落到此函数时忽略不进任何组。
+
+    单点改：fan-out 到 simulator 推演、extractor 抽取、恢复存档三处同一承载，形状一致。
+    """
+    groups: Dict[str, List[Dict[str, object]]] = {"在办": [], "待核议": []}
+    bucket = {"active": "在办", "pending_review": "待核议"}
+    for o in rows:
+        key = bucket.get(o.get("status"))
+        if key is None:
+            continue
+        groups[key].append({
+            "id": int(o["id"]),
+            "minister_name": o["minister_name"],
+            "title": o["title"],
+            "content": (o.get("content") or "")[:120],
+            "turn_issued": o.get("turn_issued") or 0,
+            "due_turn": o.get("due_turn") or 0,
+            "progress": o.get("result") or "",      # 承办人聊天里存的当前进展
+            "sim_note": o.get("sim_note") or "",     # 上轮推演写的副作用
+        })
+    return groups
+
+
 def resolve_directives(
     state: GameState,
     db: GameDB,
@@ -271,7 +304,7 @@ def resolve_directives(
 
     # 1.8) 历史脉络：取近几回合章节记忆注入推演（章节记忆取代旧的关键词原子检索）。
     relevant_memories: List[Dict] = []
-    secret_orders_for_sim: list = []  # try 外初始化：检索失败也不能让后续 NameError
+    secret_orders_for_sim: Dict[str, list] = {}  # try 外初始化：检索失败也不能让后续 NameError
     try:
         _emit("stage", "回顾近来朝局")
         # state.turn 此刻仍是本回合（尚未 next_period），章节记忆存的是 turn-1 及更早的已结算回合。
@@ -289,21 +322,11 @@ def resolve_directives(
             db.list_secret_orders(status="active")
             + db.list_secret_orders(status="pending_review")
         )[:20]
-        for o in active_orders:
-            secret_orders_for_sim.append({
-                "id": int(o["id"]),
-                "minister_name": o["minister_name"],
-                "title": o["title"],
-                "content": o["content"][:120],
-                "status": o["status"],
-                "turn_issued": o.get("turn_issued") or 0,
-                "due_turn": o.get("due_turn") or 0,
-                "progress": o.get("result") or "",      # 承办人聊天里存的当前进展
-                "sim_note": o.get("sim_note") or "",     # 上轮推演写的副作用
-            })
-        n_active = sum(1 for o in active_orders if o["status"] == "active")
-        n_pending = sum(1 for o in active_orders if o["status"] == "pending_review")
-        tlog(f"[secret_order] 注入推演 active={n_active} pending_review={n_pending}"
+        # 分组承载、剥英文 status：simulator/extractor 收到的密令零英文 enum（#48）。
+        secret_orders_for_sim = group_secret_orders_for_sim(active_orders)
+        n_active = len(secret_orders_for_sim["在办"])
+        n_pending = len(secret_orders_for_sim["待核议"])
+        tlog(f"[secret_order] 注入推演 在办={n_active} 待核议={n_pending}"
              + (f" titles={[o['title'] for o in active_orders]}" if active_orders else ""))
     except Exception as exc:
         tlog(f"[secret_order] 注入失败，跳过：{exc}")
@@ -506,7 +529,7 @@ def persist_resolve_context(
     decree_text: str,
     narrative: str,
     simulator_payload: Dict[str, object],
-    secret_orders: list,
+    secret_orders: Dict[str, object],
     relevant_memories: List[Dict],
 ) -> None:
     """ADR 0008 S2：每回合进入结算后半段前无条件持久化 resolve_context（extractor delta + 叙事）。
@@ -535,7 +558,7 @@ def _settle_after_narrative(
     narrative: str,
     simulator_payload: Dict[str, object],
     relevant_memories: List[Dict],
-    secret_orders: list,
+    secret_orders: Dict[str, object],
     before_turn: int,
     _emit: Callable[[str, str], None],
     content=None,
@@ -1238,7 +1261,8 @@ def resolve_decisions_phase2(
         narrative=str(ctx["narrative"]),
         simulator_payload=ctx["simulator_payload"] if isinstance(ctx["simulator_payload"], dict) else {},
         relevant_memories=ctx["relevant_memories"] if isinstance(ctx["relevant_memories"], list) else [],
-        secret_orders=ctx["secret_orders"] if isinstance(ctx["secret_orders"], list) else [],
+        # 分组承载是 dict（#48）；兼容部署窗口内仍是旧 list 形状的在途 ctx，二者都透传。
+        secret_orders=ctx["secret_orders"] if isinstance(ctx["secret_orders"], (list, dict)) else {},
         before_turn=before_turn, _emit=_emit,
         content=content, registry=registry,
         cheat_directive=cheat_directive,
