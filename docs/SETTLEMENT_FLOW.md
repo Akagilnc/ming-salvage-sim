@@ -20,6 +20,9 @@
         ↳ compute_budget_lines 的定额项（田赋/辽饷/盐税/商税/官俸/宫廷/…）
         ↳ 逐军 arrears tick / 逐建筑 condition × output_amount → 国库/内库
         ↳ 我那座金矿(+800)/银行(+300)/帝国航空(+10皇威) 在这一步生效
+        ↳ #66 省级财政基座：db.settle_province_tick(陕西) 推进 settle_tick 基座（shadow）
+          —— 末态逐月演化+落库，但**不驱动国库**（占位数偏史实 3–10×，⑫国库入账 cutover
+          待 #70 史实重标）；fail-loud 但隔离（基座 bug 不掀翻本步固定财政，cmr S4 F4）。
         ⚠️ 我的 economy_moves 不要重复这些固定项！
      c. auto_trigger_seed_issues(state, db)       # 程序硬触发（必须在我产邸报前）
         ↳ trigger_gate 达标 + auto_trigger=True 的 seed event 直接立成 issue
@@ -34,7 +37,7 @@
      （driver 路无 ready=0 占位，pre_settle 后直接存 ready=1，见 8.5）
 
   4. chapter_memories = db.list_chapter_memories(upto_turn=state.turn, recent=6)
-     secret_orders = db.list_secret_orders(status in (active, pending_review))
+     secret_orders = group_secret_orders_for_sim(active + pending_review 行)  # 分中文键两组{在办,待核议}、剥英文 status（#48 防 enum 泄漏邸报）
      previous_summary = db.previous_turn_summary(state.turn)
 
   5. [我产邸报 narrative]  ← 季末讲官身份，照 season_simulator.md 的章法

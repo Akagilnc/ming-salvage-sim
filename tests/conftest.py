@@ -76,3 +76,25 @@ def _isolated_user_data_dir(tmp_path):
     mp.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "user_data"))
     yield
     mp.undo()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_cli_bin_resolution():
+    """全套测试隔离 runner 可执行定位：清 _BIN_CACHE，并把登录 shell 探测短路成
+    "不触发"（_DISCOVERED_LOGIN_PATH="" → _login_shell_path 立即返 None）。
+
+    这样任何走 _resolve_cli_bin 的 runner 测试（test_cli_backend / test_llm_channel_config
+    等）在缺 codex/claude/agy 的机器上都不会真 spawn 一个 zsh，解析类测试也不串 cache。
+    （cmr r2 codex X-R1：原 fixture 只在 test_cli_backend.py，漏了 test_llm_channel_config.py
+    的 runner 测试——移到 conftest 集中兜底。）
+
+    用独立 MonkeyPatch 实例（同 _isolated_user_data_dir）：测试里 monkeypatch.undo() 不会
+    把本兜底一并撤掉。需真跑 _login_shell_path 解析逻辑的测试，自行把 _DISCOVERED_LOGIN_PATH
+    重置为 None 并 mock _RAW_RUN。"""
+    import ming_sim.cli_backend as _cb
+    _cb._BIN_CACHE.clear()
+    mp = pytest.MonkeyPatch()
+    mp.setattr(_cb, "_DISCOVERED_LOGIN_PATH", "")
+    yield
+    mp.undo()
+    _cb._BIN_CACHE.clear()

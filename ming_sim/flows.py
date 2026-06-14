@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Tuple
 from ming_sim.constants import TURN_UNIT
 from ming_sim.db import GameDB
 from ming_sim.models import GameState
+from ming_sim.token_stats import tlog
 
 
 # ── 省级财政计算 ──────────────────────────────────────────────────────────────
@@ -506,7 +507,47 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     # 帝国修正（旧称遗产）不在此自我落账：它作为百分比修正符，由 record_issue_economy_move /
     # apply_region_deltas / apply_army_deltas 在每笔增量落账时按维度净 pct 放大/缩小。
     # 因此上面的固定收支（田赋/军饷/建筑产出）已自动被修正，无需独立 tick，否则会重复计。
+
+    # ── #66 省级财政基座（settle_tick）shadow 推进 ──
+    _advance_province_fiscal_substrate(db, state)
     return flows
+
+
+# 单省脊柱：省级 settle_tick 基座目前只锚陕西（跨省 hub deferred，ADR 0007 锁定单省脊柱）。
+_FISCAL_SUBSTRATE_SPINE = ("shaanxi",)
+
+
+def _advance_province_fiscal_substrate(db: GameDB, state: GameState) -> None:
+    """#66 slice3：月末固定财政相位推进省级 settle_tick 基座（单省脊柱·陕西）。
+
+    **shadow 模式**：推进基座末态（军饷欠/民欠/火耗的死亡螺旋逐月累积）并落库，但**不驱动
+    国库**——占位数（正赋 60/月）比陕西史实（~9/月）高 3–10×，未史实重标前 cutover 会破坏
+    游戏平衡（FISCAL_PROVINCE_SUBSTRATE.md §史实校准）。国库 cutover + 史实重标 + 饷率
+    effect 通道 + 跨省 hub 均为 follow-up。
+
+    **fail-loud 但隔离**：基座缺失（旧档无种子）或 settle_tick 抛 ValueError/守恒破时，tlog
+    响亮告警并跳过该省该月推进（港口锁：FAIL tick 不落库），但**绝不让 shadow 基座 bug 掀翻
+    pre_settle 的固定财政**（那会丢整月财政，cmr S4 r1 F4）。settle_tick 自身契约外的代码异常
+    （TypeError/KeyError 等桥接 bug）仍上抛 fail-loud（ADR 0005），不在此吞。cutover 后本相位
+    转为 fail-loud 中止。
+
+    action 翻译（玩家旨意/事件 → settle_tick actions）属 slice4；本 slice 以空 action 跑基线螺旋。
+    """
+    from ming_sim.fiscal_tick import FiscalConservationError
+
+    for region_id in _FISCAL_SUBSTRATE_SPINE:
+        try:
+            res = db.settle_province_tick(region_id, actions=[])
+        except (ValueError, FiscalConservationError) as exc:
+            # settle_tick 的契约失败（坏态/守恒破）+ 基座缺失 → shadow 隔离，不炸 pre_settle
+            tlog(f"[fiscal-substrate] {region_id} 本{TURN_UNIT}未推进（隔离）：{type(exc).__name__}: {exc}")
+            continue
+        b = res.breakdown
+        tlog(
+            f"[fiscal-substrate] {region_id} 推进：实征{b.get('实征', 0):.1f}/起运{b.get('起运到京', 0):.1f}/"
+            f"火耗入截留{b.get('火耗实收', 0):.1f}；末态 军饷欠{res.new_st.get('军饷欠', 0):.0f}/"
+            f"民欠{res.new_st.get('民欠旧赋', 0):.0f}（shadow，未入国库）"
+        )
 
 
 def _apply_faction_dict(db: GameDB, faction_delta: Dict[str, object]) -> Dict[str, object]:

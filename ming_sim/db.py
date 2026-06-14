@@ -1165,6 +1165,43 @@ class GameDB:
             self.conn.commit()
         return touched
 
+    def settle_province_tick(
+        self, region_id: str, actions: Optional[List[Dict[str, Any]]] = None
+    ):
+        """省级月度财政 settle_tick 的 DB 桥（#66 slice2）：读 regions.fiscal['settle'] 的
+        开账 st + 月参 p → 跑 settle_tick → 写回 new_st。返回 FiscalTickResult。
+
+        **港口锁**（fiscal_tick.py §港口锁 / ADR 0008）：settle_tick 对坏输入(ValueError)/
+        守恒破(FiscalConservationError) 一律 raise，异常在下方 UPDATE **之前**抛出 → FAIL
+        tick 绝不持久化（毒态不钉进存档）。本方法只写 conn、不自带 commit——提交交调用方
+        事务边界（slice3 的 applier.atomic 全有或全无）控制；异常上抛由其回滚。
+
+        settle_tick 纯读 st（不就地改），故无需深拷贝；new_st 是全新 dict，覆盖回 settle.st。
+        官民田/隐田（清丈重分类）只写进 settle.st，不同步顶层 registered_land/hidden_land——
+        基座 dormant 期与旧 calc_province_fiscal 解耦，接入并轨在 slice3。
+        """
+        from .fiscal_tick import settle_tick
+
+        row = self.conn.execute(
+            "SELECT fiscal FROM regions WHERE id = ?", (region_id,)
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"region {region_id!r} 不存在，无法 settle_tick")
+        fiscal = json.loads(str(row["fiscal"] or "{}"))
+        if not isinstance(fiscal, dict):  # fiscal JSON 非 dict（null/list）→ ValueError，否则 .get 抛 AttributeError 逃逸隔离（cmr R3 gemini）
+            raise ValueError(f"region {region_id!r} fiscal 非字典")
+        settle = fiscal.get("settle")
+        if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
+                or not isinstance(settle.get("p"), dict):
+            raise ValueError(f"region {region_id!r} 无 settle 财政基座（缺 st/p）")
+        result = settle_tick(settle["st"], settle["p"], actions or [])  # raise→下方不执行（港口锁）
+        settle["st"] = result.new_st
+        self.conn.execute(
+            "UPDATE regions SET fiscal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (json.dumps(fiscal, ensure_ascii=False), region_id),
+        )
+        return result
+
     def scale_tian_fu(self, ratio: float) -> int:
         """田赋无独立字段（=tax_per_turn 减辽饷/盐税/商税的残差）。按 ratio 缩放田赋部分：
         新 tax_per_turn = 三税之和 + 田赋残差×ratio。ratio=0 即罢田赋（仅留三税基）。
@@ -5080,7 +5117,9 @@ class GameDB:
     def save_resolve_context(
         self, turn: int, decree_text: str, narrative: str,
         simulator_payload: Dict[str, object],
-        secret_orders: Optional[List[Dict[str, object]]] = None,
+        # #48：分组承载 dict {在办,待核议} 为正形；运行期仍兼容旧档/占位的 list（json 落库不挑类型），
+        # 故注解取两者并集，不窄化成 dict-only（否则误判恢复路 list 调用为类型错）。
+        secret_orders: Optional[Dict[str, object] | List[Dict[str, object]]] = None,
         relevant_memories: Optional[List[Dict[str, object]]] = None,
         extracted: Optional[Dict[str, object]] = None,
     ) -> None:
@@ -5107,7 +5146,9 @@ class GameDB:
             (
                 int(turn), decree_text, narrative,
                 json.dumps(simulator_payload or {}, ensure_ascii=False),
-                json.dumps(secret_orders or [], ensure_ascii=False),
+                # #48：分组承载是 dict；空 dict 也按 dict 存（`or []` 会把 {} 退成 []，
+                # 与 Dict 契约不符）。显式传 list（旧档/占位）仍原样存，None→{}。
+                json.dumps(secret_orders if secret_orders is not None else {}, ensure_ascii=False),
                 json.dumps(relevant_memories or [], ensure_ascii=False),
                 json.dumps(extracted if extracted is not None else {}, ensure_ascii=False),
                 1 if extracted is not None else 0,
