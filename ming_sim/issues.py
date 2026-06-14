@@ -325,6 +325,10 @@ def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
             continue
         if not _event_window_open(ev, state):
             continue
+        # 历史事件带结构化前提门时也须达标（与 seed 情势同门）：纯日历窗口会放行前提已不成立
+        # 的事件误触发（#12 毛文龙：已安抚/效顺仍按年月弹出）。无 gate（空 dict）→ 恒过、行为不变。
+        if not _gate_passed(ev.trigger_gate, state.metrics, db):
+            continue
         candidates.append(ev)
     # seed 情势：trigger_gate 阈值达标即进候选
     for ev in c.seed_events:
