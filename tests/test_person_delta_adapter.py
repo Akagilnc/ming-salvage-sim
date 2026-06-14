@@ -1870,6 +1870,26 @@ def test_create_secret_order_rejects_vassal_prince_by_alias(game):
         db.create_secret_order(state, alias, "密查", "着尔暗中查访", [])
 
 
+def test_create_secret_order_persists_canonical_name(game):
+    """密令按别名下达给在册大臣时落库存规范名（非别名），否则后续按规范名查不到此令（cmr R3 CodeRabbit）。"""
+    import pytest
+    db, state, content = game
+    target = next(
+        (n for n, c in content.characters.items()
+         if getattr(c, "power_id", "ming") == "ming"
+         and c.office_type not in ("后宫", "宗藩")
+         and any(a != n for a in (c.aliases or []))
+         and db.get_character_status(n)[0] == "active"),
+        None,
+    )
+    if target is None:
+        pytest.skip("无带别名的在册大臣")
+    alias = next(a for a in content.characters[target].aliases if a != target)
+    oid = db.create_secret_order(state, alias, "密查", "着尔暗中查访", [])
+    row = db.conn.execute("SELECT minister_name FROM secret_orders WHERE id=?", (oid,)).fetchone()
+    assert row["minister_name"] == target  # 存规范名，非别名
+
+
 def test_pending_dismiss_rejects_vassal_prince(game):
     """pending 罢免落库（_commit_office_action 罢免路）拒宗藩——宗室非朝臣，不可作朝臣罢免（cmr R6）。"""
     db, state, content = game

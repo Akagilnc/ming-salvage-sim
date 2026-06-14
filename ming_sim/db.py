@@ -5907,12 +5907,13 @@ class GameDB:
     ) -> int:
         # 宗藩（就藩宗室）非朝堂命官，不可受密令——密令创建的唯一 DB 写口，集中守此一处即覆盖
         # API / 大臣工具 / CLI 自然语言 / upsert 回落 create 全路（cmr R6 cross-section）。
-        # 先经 _find_existing_minister 把别名（如「福王」）解到规范 key 再校，否则别名绕过宗藩闸
-        # （codex + CodeRabbit R2 concur）。lazy import 避 db↔session 循环（同本文件其它处）。
+        # 先经 _find_existing_minister 把别名（如「福王」）解到规范 key，再校宗藩、并以规范名落库——
+        # 否则别名绕过宗藩闸（codex+CodeRabbit R2 concur），且按别名存会让后续按规范名查不到此令
+        # （CodeRabbit R3 Major）。解不到（自由名/临时人）保留原名。lazy import 避 db↔session 循环。
         if self.content is not None:
             from ming_sim.session import _find_existing_minister
-            _canon = _find_existing_minister(self.content, minister_name) or minister_name
-            _ch = self.content.characters.get(_canon)
+            minister_name = _find_existing_minister(self.content, minister_name) or minister_name
+            _ch = self.content.characters.get(minister_name)
             if _ch is not None and is_vassal_prince(_ch):
                 raise ValueError(f"{minister_name}为就藩宗室，非朝廷命官，不可受密令。")
         active_count = self.conn.execute(

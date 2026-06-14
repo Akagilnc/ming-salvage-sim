@@ -244,7 +244,9 @@ def _talent_pool_rows(db: "GameDB", state: GameState) -> List[Dict[str, object]]
             "FROM characters WHERE (status IN ('offstage','retired','dismissed') "
             "OR (status='active' AND office='听用候铨' AND reason_code='被顶替')) "
             "AND power_id='ming' AND office_type NOT IN ('后宫','宗藩','未仕') AND faction!='流寇' "
-            "AND NOT (debut_year > ? OR (debut_year = ? AND debut_month > ?)) "
+            # debut_year/month 虽 schema NOT NULL DEFAULT 0，此处是唯一在 WHERE 比较 debut 的查询，
+            # COALESCE 兜 NULL 防未来 schema 改动时静默漏人，并与 Python 侧 (… or 0) 回落一致（R3 gemini）。
+            "AND NOT (COALESCE(debut_year,0) > ? OR (COALESCE(debut_year,0) = ? AND COALESCE(debut_month,0) > ?)) "
             "ORDER BY status, name",
             (state.year, state.year, state.period),
         ).fetchall()

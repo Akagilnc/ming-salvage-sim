@@ -1473,7 +1473,8 @@ def apply_office_appointment(
         # 宗藩（就藩宗室）非朝堂命官，不可授官（PR#121）。这是任命落地核——授官会把 office_type
         # 从「宗藩」改成新官署、反解掉所有 roster 隐藏，故必须在此写侧拒（extractor office_changes
         # 与 CLI/pending 任免都经本核，集中守一处，cmr R5 cross-section）。宗藩在册数据保持不变。
-        if is_vassal_prince(content.characters[name]):
+        _appointee = content.characters.get(name)  # name 经 in_roster 必在册，.get 防御一致（R3 gemini）
+        if _appointee is not None and is_vassal_prince(_appointee):
             return {"name": name, "new_office": new_office, "rejected": True,
                     "reason": "宗藩（就藩宗室）非朝堂命官，不可授官"}
         old_office = content.characters[name].office
