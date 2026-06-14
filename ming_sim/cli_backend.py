@@ -467,19 +467,23 @@ _PARALLEL_SAFE_CLI_RUNNERS = {"codex"}
 
 
 def cli_backend_parallel_safe(llm_config: Any = None) -> bool:
-    """月末多 extractor 并发是否安全：须是 CLI 后端、且 runner 在 _PARALLEL_SAFE_CLI_RUNNERS 内。
+    """月末多 extractor 并发是否安全：实际后端 runner 须在 _PARALLEL_SAFE_CLI_RUNNERS 内（仅 codex）。
 
-    比 cli_backend_active 严：后者「是不是 CLI 后端」，本预言「这个 CLI runner 并发取数安全吗」。
-    --ephemeral 隔离只对 codex 成立，故只有 codex 返 True；claude/agy/api/形态1 返 False=串行（#83）。"""
-    if not cli_backend_active(llm_config):
+    比 cli_backend_active 严：后者「是不是 CLI 后端」，本预言「这个 runner 并发取数安全吗」。
+    --ephemeral 隔离只对 codex 成立，故只有 codex 返 True；claude/agy/api/形态1 返 False=串行（#83）。
+
+    runner 解析**精确镜像 create_chat_model**（llm_model.py，extractor 真正用的后端）：
+    channel=='cli' → cli_runner or 旧 env or 'agy'；channel=='' → 旧 env（legacy/形态1）；'api' → 无 CLI。
+    与 cli_backend_active 用 _cli_config_parts（只认显式 cli channel）不同——否则 legacy env=codex
+    会被误判串行（cmr #83 codex R3：门控须与执行端同口径解 runner）。"""
+    channel = _llm_channel(llm_config)
+    if channel == "api":
         return False
-    try:
-        parts = _cli_config_parts(llm_config)
-    except RuntimeError:
-        return False
-    if parts is None:
-        return False
-    return parts[0] in _PARALLEL_SAFE_CLI_RUNNERS
+    if channel == "cli":
+        runner = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "agy").strip().lower()
+    else:
+        runner = cli_backend_from_env()  # 空 channel（legacy/形态1）：env 回落，无 env → None
+    return runner in _PARALLEL_SAFE_CLI_RUNNERS
 
 
 def _messages_to_prompt(
