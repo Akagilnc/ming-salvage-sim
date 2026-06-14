@@ -147,3 +147,34 @@ def test_resolve_with_new_armies_no_warning_in_result(game):
         content=content,
     )
     assert (out.get("pairing_warnings") or []) == [], f"带 new_armies 不应告警：{out.get('pairing_warnings')}"
+
+
+def test_emit_preparsed_list_tags_still_warns():
+    # PR#107 R3（gemini medium）：_emit_pairing_warnings 对 tags/ongoing_effects 一律 json.loads；
+    # 若调用方传入的已是解析好的 list/dict（test/mock/上游预解析），json.loads(list) 抛 TypeError
+    # → except 把 tags 重置成 [] → 静默丢有效数据 → 军事语义被吞、配对告警不响（false negative）。
+    # 用「军事语义只来自 tags、title 不含军事词」的 row 暴露：丢了 tags 就丢了告警。
+    sink = []
+    new_row = {
+        "kind": "initiative",
+        "title": "蓟镇方略",          # title 不含 raise/move 词，军事语义全靠 tags
+        "tags": ["募营"],             # 已是 list（非 JSON 串）
+        "ongoing_effects": {},        # 已是 dict
+    }
+    issues._emit_pairing_warnings(new_row, {"metrics": {"民心": 1}}, sink)
+    assert any("new_armies" in w for w in sink), \
+        f"预解析 list tags 不应被 json.loads 吞成空 → 军事配对告警须响：{sink}"
+
+
+def test_emit_preparsed_dict_ongoing_no_false_warn():
+    # PR#107 R3（gemini medium）：反向——ongoing_effects 已是 dict 且含有效月支时，
+    # 若被 json.loads(dict) 抛 TypeError 重置成 {}，会误判「无月支」凭空报假告警。
+    sink = []
+    new_row = {
+        "kind": "initiative",
+        "title": "设太学府月经费",     # 经制语义，fiscal 检查会跑
+        "tags": [],                   # 已是 list
+        "ongoing_effects": {"economy": [{"account": "国库", "delta": -500}]},  # 已是 dict、有效月支
+    }
+    issues._emit_pairing_warnings(new_row, {"metrics": {"民心": 1}}, sink)
+    assert sink == [], f"预解析 dict ongoing 的有效月支不应被吞 → 不应报假告警：{sink}"
