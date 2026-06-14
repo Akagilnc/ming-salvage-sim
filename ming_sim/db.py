@@ -1187,7 +1187,9 @@ class GameDB:
         ).fetchone()
         if row is None:
             raise ValueError(f"region {region_id!r} 不存在，无法 settle_tick")
-        fiscal: dict = json.loads(str(row["fiscal"] or "{}"))
+        fiscal = json.loads(str(row["fiscal"] or "{}"))
+        if not isinstance(fiscal, dict):  # fiscal JSON 非 dict（null/list）→ ValueError，否则 .get 抛 AttributeError 逃逸隔离（cmr R3 gemini）
+            raise ValueError(f"region {region_id!r} fiscal 非字典")
         settle = fiscal.get("settle")
         if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
                 or not isinstance(settle.get("p"), dict):

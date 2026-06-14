@@ -127,6 +127,13 @@ RAISE_CASES = [
     ("G21A1 stock非数值", S(省库库银=[]), base, [], "开账 stock 省库库银 非数值"),
     ("G21A2 action非dict", S(), base, [5], "action 非字典"),
     ("G21A3 action字段None", S(), base, [dict(type="营建", cost=None)], "cost 为 None"),
+    # cmr ship-pre R3（codex×2+gemini concur）：补全输入「容器型」验形——actions/st/p 非期望容器
+    # 或 action type 非 str 时，曾在 `for a in actions`/`sk in st`/`rq in p`/`type not in SET`
+    # 抛 TypeError 而非 ValueError，逃逸隔离。至此全部外部输入「验形归 ValueError 早于 type-敏感操作」。
+    ("G21B1 actions非list", S(), base, 5, "actions 非 list/tuple"),
+    ("G21B2 st非字典", 5, base, [], "st 非字典"),
+    ("G21B3 p非字典", S(), 5, [], "p 非字典"),
+    ("G21B4 action type非str", S(), base, [dict(type=["清丈"], cost=2)], "action type 非字符串"),
 ]
 
 
