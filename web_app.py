@@ -49,7 +49,7 @@ from ming_sim.skills import available_skill_ids, skill_display_name, skill_sourc
 from ming_sim.context import match_minister_from_text
 from ming_sim.flows import compute_budget_lines
 from ming_sim.exceptions import LLMContractError  # noqa: F401  (保留：供错误处理)
-from ming_sim.models import Character, LLMConfig, TurnPhase, is_vassal_prince
+from ming_sim.models import Character, LLMConfig, TurnPhase, is_vassal_prince, loads_effect_dict
 from ming_sim import steam_events
 
 WEB_DIST = bundled_path("web", "dist")
@@ -952,10 +952,7 @@ class WebGame:
         for row in self.db.list_closed_issues_at(target_turn):
             status = str(row["status"])
             effect_key = "effect_on_resolve" if status == "resolved" else "effect_on_fail"
-            try:
-                effect = json.loads(str(row[effect_key] or "{}"))
-            except Exception:
-                effect = {}
+            effect = loads_effect_dict(row[effect_key])  # 统一守门，绝不向前端吐非 dict（#117 R5）
             out.append({
                 "id": int(row["id"]),
                 "kind": row["kind"],
@@ -988,8 +985,8 @@ class WebGame:
                 "resolve_condition": _humanize_condition(row["resolve_condition"] or ""),
                 "fail_condition": _humanize_condition(row["fail_condition"] or ""),
                 "ongoing_text": _format_issue_ongoing(str(row["ongoing_effects"] or "{}")),
-                "effect_on_resolve": dict(json.loads(str(row["effect_on_resolve"] or "{}"))),
-                "effect_on_fail": dict(json.loads(str(row["effect_on_fail"] or "{}"))),
+                "effect_on_resolve": loads_effect_dict(row["effect_on_resolve"]),
+                "effect_on_fail": loads_effect_dict(row["effect_on_fail"]),
             })
         return payloads
 

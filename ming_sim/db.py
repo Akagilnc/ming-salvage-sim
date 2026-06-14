@@ -22,7 +22,7 @@ from ming_sim.constants import (
 )
 from ming_sim.content import GameContent
 from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
-from ming_sim.models import Event, GameState, is_vassal_prince, monthly_amount, period_label
+from ming_sim.models import Event, GameState, is_vassal_prince, loads_effect_dict, monthly_amount, period_label
 from ming_sim.token_stats import tlog
 
 # 落库字段白名单（模块级常量化——避免在 apply_region_deltas / apply_army_deltas /
@@ -5581,7 +5581,7 @@ class GameDB:
         # 崩坏能力由 effect_on_fail 是否非空判定：有崩坏效果=会崩坏（bar 能到 0、failed 终结）；
         # 空=不会崩坏（天灾/正面机遇等不可控或无失败态局势，bar 下限钳到 1，永不 failed，
         # 只靠 ongoing_effects 每月持续流血）。
-        can_collapse = bool(json.loads(row["effect_on_fail"] or "{}"))
+        can_collapse = bool(loads_effect_dict(row["effect_on_fail"]))  # 非 dict→{}→False（#117 统一守门）
         floor = 0 if can_collapse else 1
         # clamp single advance
         delta_bar = max(-50, min(50, int(delta_bar)))
@@ -5644,7 +5644,7 @@ class GameDB:
             return None
         # 不可崩坏局势（effect_on_fail 空：天灾/不可控灾害）没有「失败终结」态——LLM 误判 failed
         # 时拒绝结案，留 active 继续靠 ongoing_effects 流血，只能靠 resolved（赈济平息）收尾。
-        if reason == "failed" and not json.loads(row["effect_on_fail"] or "{}"):
+        if reason == "failed" and not loads_effect_dict(row["effect_on_fail"]):  # #117 统一守门
             print(f"[INFO] close_issue 已拒：issue {issue_id}（{row['title']}）无 effect_on_fail，不可崩坏，保持 active。")
             return None
         from_value = int(row["bar_value"])
