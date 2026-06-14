@@ -72,21 +72,35 @@ def test_db_active_included_even_if_memory_offstage(game):
         ch.status = original_status
 
 
-def test_vassal_prince_excluded_from_court(game):
-    """宗室/就藩藩王（office_type=宗藩）不是可召见/可任免的朝堂官员，即便 ming+active 也不入列
-    （用户 2026-06-14 拍：宗室要隐藏）。藩王在册数据照旧留 DB（事件按名引用不受影响），只是不进
-    朝堂/任免列表 UI。"""
-    db, state, content = game
+def _materialized_prince(db, state, content):
+    """把一个 content 宗藩王真正物化进测试 DB 后返回 (name, character)。
+
+    probe.db 是旧档、没有宗藩行（朱常洵 等只在 characters.json），对缺行的
+    db.set_character_status 是 no-op、status/power_id 只能靠缺行默认值兜——setup 形同虚设、
+    断言无法验真 DB 态（cmr R2 codex sec1）。先 add_character 物化（保 office_type=宗藩/
+    power_id=ming），后续 set_character_status 才真生效、断言才证得了「即便 active+ming 也拒」。"""
     name = next(
-        (n for n, c in content.characters.items()
-         if getattr(c, "office_type", "") == "宗藩"),
+        (n for n, c in content.characters.items() if getattr(c, "office_type", "") == "宗藩"),
         None,
     )
     if name is None:
         import pytest
         pytest.skip("基底盘面无宗藩人物")
     ch = content.characters[name]
+    db.add_character(state, ch, source="测试物化")
+    return name, ch
+
+
+def test_vassal_prince_excluded_from_court(game):
+    """宗室/就藩藩王（office_type=宗藩）不是可召见/可任免的朝堂官员，即便 ming+active 也不入列
+    （用户 2026-06-14 拍：宗室要隐藏）。藩王在册数据照旧留 DB（事件按名引用不受影响），只是不进
+    朝堂/任免列表 UI。"""
+    db, state, content = game
+    name, ch = _materialized_prince(db, state, content)
     db.set_character_status(state, name, "active", "测试：在世")
+    # 物化后 setup 真生效：DB 确为 active+ming（否则仅 office_type 短路，测不出 gate 优先于状态）
+    assert db.get_character_status(name)[0] == "active"
+    assert web_app._character_power_id(ch, db) == "ming"
     assert visible_in_court(ch, db) is False
 
 
@@ -118,17 +132,12 @@ def test_active_minister_not_in_talent_pool(game):
 
 
 def test_vassal_prince_excluded_from_talent_pool(game):
-    """宗藩（藩王不入仕）即便 offstage 也不进人才池（按 office_type 排除）。"""
+    """宗藩（藩王不入仕）即便 offstage+ming 也不进人才池（按 office_type 排除）。"""
     db, state, content = game
-    name = next(
-        (n for n, c in content.characters.items() if getattr(c, "office_type", "") == "宗藩"),
-        None,
-    )
-    if name is None:
-        import pytest
-        pytest.skip("基底盘面无宗藩人物")
+    name, ch = _materialized_prince(db, state, content)
     db.set_character_status(state, name, "offstage", "测试")
-    assert in_talent_pool(content.characters[name], db, state.year, state.period) is False
+    assert db.get_character_status(name)[0] == "offstage"  # 物化后 setup 真生效
+    assert in_talent_pool(ch, db, state.year, state.period) is False
 
 
 def test_amnestied_rebel_excluded_from_talent_pool(game):
@@ -203,13 +212,9 @@ def test_vassal_prince_chat_rejected(game, monkeypatch):
     import pytest
     from fastapi import HTTPException
     db, state, content = game
-    name = next(
-        (n for n, c in content.characters.items() if getattr(c, "office_type", "") == "宗藩"),
-        None,
-    )
-    if name is None:
-        pytest.skip("基底盘面无宗藩人物")
+    name, _ch = _materialized_prince(db, state, content)
     db.set_character_status(state, name, "active", "测试：在世")
+    assert db.get_character_status(name)[0] == "active"  # 物化后 setup 真生效：即便 active 也拒
     _stub_game(monkeypatch, db, content)
     with pytest.raises(HTTPException) as ei:
         web_app._require_active_minister(name)
