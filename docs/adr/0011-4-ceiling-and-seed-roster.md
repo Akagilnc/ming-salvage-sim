@@ -1,6 +1,6 @@
 # 敏感度天花板 ceiling + seed 名册 schema（ADR 0011 决定1/4 子 ADR · 0011-4）
 
-Status: Proposed（草案；承母 ADR `0011-edict-resistance-and-centrifuge-ledger.md` 决定1（敏感度天花板查表）+ 决定4（议题敏感度 = 阻力天花板），由 design-dig `dig-9`（ceiling）+ `dig-7`（seed 名册）fold 而成。**待评审**——按 CLAUDE.md 设计文档铁律走本地 cmr 收敛 + 线上三 bot 收敛，未收敛前不进实现期。实现属编码活、spawn 隔壁。）
+Status: Proposed（草案；承母 ADR `0011-edict-resistance-and-centrifuge-ledger.md` 决定1（敏感度天花板查表）+ 决定4（议题敏感度 = 阻力天花板），由 design-dig `dig-9`（ceiling）+ `dig-7`（seed 名册）fold 而成。**评审收敛**——本地 ship-pre cmr R1–R8 4/4 concur（2026-06-15）+ 线上 PR #123 R1–R3 评审收敛；merge 即转 Accepted。实现属编码活、spawn 隔壁。）
 
 承 GitHub #112 tracker。本 ADR 收口两块第一刀 substrate：① **敏感度天花板 ceiling 表 + 目标 tag modifier + 命门 = 合法性 floor + 出路恒可达机理**（dig-9）；② **seed 名册数据 spec**（dig-7：开局朝堂 74 人 seed-guilt / identity），它是失称度（0011-2 失称度公式的 `crime_weight`）与认同度（0011-2 kinship 的 `k_id`）的真源，并入本 ADR 一并收口（substrate 同批、少一个独立评审周期）。
 
@@ -81,7 +81,7 @@ per_layer_resistance = max( min(cap, α×血债项) , 命门合法性floor , min
 **⚠️ floor 分两类（外压调制性，P1-4 — 议和可颁的真机制落点）**：
 
 - **祖制硬核 floor（T0：易储 / 废嫡 / 私改科举 / 动太庙）= 不松**：集体合法性底线，外压再大也不下调（史实：国本之争 15 年、再大边患也没动易储）→ 这类走 D4-4 (c) 盘面级兜底、无动作级出路。
-- **华夷命门 floor（T1 议和）= 吃外压调制**：议和的合法性底线**本就随存亡压力松动**（史实：庚戌之变后明蒙互市、隆庆和议在压力下成；陈新甲弃市是「代价不明白 / 偷着办暴露」那种）。故 `华夷命门 floor = f(外压严峻度, 代价明白度)`——二者均**外压 substrate 结构化派生、非 LLM 判**（P1，Codex 线上抓「定义后再用」）：**外压严峻度** = 后金 / 流寇 `power` level + 边镇 unrest（powers/classes 结构化读）；**代价明白度** = 不议和的代价是否已**结构化暴露** = 已 fire 的史实危机 events（`events.json` trigger_year，如己巳之变 / 京师告急）+ unrest 过阈（朝野 structurally 看到「不和则亡」、区别陈新甲「偷着办、代价没暴露」那种）。外压严峻 + 代价明白时 floor **真下调**（不只降 dynamic_term）→ 议和 resistance 降 → 可颁。**这是 D4-4 (b) 外压杠杆击穿 floor 的真落点**（0011-3 D3-4 / 0011-5 D5-4 消费此调制；resolve_core 结构化读、不破「LLM 零算账」）。
+- **华夷命门 floor（T1 议和）= 吃外压调制**：议和的合法性底线**本就随存亡压力松动**（史实：庚戌之变后明蒙互市、隆庆和议在压力下成；陈新甲弃市是「代价不明白 / 偷着办暴露」那种）。故 `华夷命门 floor = f(外压严峻度, 代价明白度)`——二者均**外压 substrate 结构化派生、非 LLM 判**（P1，Codex 线上抓「定义后再用」）：**外压严峻度** = 后金 / 流寇 `power` level + 边镇 unrest（powers/classes 结构化读）；**代价明白度** = 不议和的代价是否已**结构化暴露** = 已 fire 的史实危机 events（`events.json` trigger_year，如己巳之变 / 京师告急）+ unrest 过阈（朝野 structurally 看到「不和则亡」、区别陈新甲「偷着办、代价没暴露」那种）。外压严峻 + 代价明白时 floor **真下调**（不只降 dynamic_term）→ 议和 resistance 降 → 可颁。**这是 D4-4 (b) 外压杠杆击穿 floor 的真落点**（0011-3 D3-4 / 0011-5 D5-4 消费此调制；resolve_core **读时计算、不新增存储列**〔同 ceiling 查表〕、不破「LLM 零算账」）。
 
 **血债臂 cap（与 0011-2 D2-7 一字对齐，P1-1）**：血债臂是 `min(cap, α×血债项)`，**cap 真源在 0011-2 D2-7**（cap < 依律出路阈 ~35、CMR r2 裁为硬不变式：血债单调无界，任意固定 α 下 α×血债→∞ 终超 35 会封死翻轴后的依律出路）。**cap 只加血债臂、不加命门合法性 floor 臂**——floor 须能托到 ceiling 95（国本之争原型），不可被 cap 削。本 ADR 不重定义 cap。
 
@@ -96,7 +96,7 @@ per_layer_resistance = max( min(cap, α×血债项) , 命门合法性floor , min
 **(a) 翻轴出路**（针对**有被告 / 有可坐实罪名**的命门动作：既得-对人对产 / **有被告的祖制动作**〔如削藩除国一个通寇坐实的具体宗室〕/ **有被告的清议动作**〔如弹劾以党争罪名入罪者〕——可走程序定罪。**⚠️ 纯制度祖制〔易储 / 废嫡 / 私改科举 / 动太庙〕+ 无被告清议〔夺情 / 南迁〕= 无被告可坐实 → 落 (c) 盘面级、非 (a)**）：
 
 1. **走程序坐实** → `reason_code ∈ {依律 / 谋逆坐实 / 贪墨坐实}`（机读枚举、非措辞，堵 H5）；
-2. **轴翻转**：`if reason_code ∈ 依律集: axis = "依律处置"`——原 axis 为祖制 95 / 既得 72+modifier 时，reason_code = 依律一律**重路由到非命门「依律处置」行（base ~35）**（命门 tag 触发条件含 `reason_code ∉ 依律` → 坐实时整体不命中、modifier 归零）。**leverage modifier 因 axis 从既得切到「依律处置」而自然失效**（modifier 仅既得轴 D4-2），非被特判清零——故高 leverage 既得目标（lev92 → 85）坐实翻轴后 ceiling = 依律处置 base ~35，leverage 不再 fire（P3-8）。**⚠️ `依律处置` 是 ceiling 表的一行（翻轴 = 改「查 ceiling 哪行」）、不是账本 axis 值**（Gemini 线上抓）：血债落 `centrifuge_log`/`faction_axis_debt` 时仍用动作**原始标准轴**（既得 / 礼法等，受 6-轴 CHECK 约束、保 42 格封闭，0011-2 DDL）——直接把「依律处置」写入账本 axis 会撞 CHECK 崩。翻轴只动 ceiling 查询、不动账本轴。
+2. **轴翻转**：`if reason_code ∈ 依律集: axis = "依律处置"`——原 axis 为祖制 95 / 既得 72+modifier 时，`reason_code ∈ 依律集`（**3 码{依律/谋逆坐实/贪墨坐实}，非单码「依律」**——Gemini 线上：写「=依律」会被误实现成只判单码、漏另两码翻轴）一律**重路由到非命门「依律处置」行（base ~35）**（命门 tag 触发条件含 `reason_code ∉ 依律集` → 坐实时整体不命中、modifier 归零）。**leverage modifier 因 axis 从既得切到「依律处置」而自然失效**（modifier 仅既得轴 D4-2），非被特判清零——故高 leverage 既得目标（lev92 → 85）坐实翻轴后 ceiling = 依律处置 base ~35，leverage 不再 fire（P3-8）。**⚠️ `依律处置` 是 ceiling 表的一行（翻轴 = 改「查 ceiling 哪行」）、不是账本 axis 值**（Gemini 线上抓）：血债落 `centrifuge_log`/`faction_axis_debt` 时仍用动作**原始标准轴**（既得 / 礼法等，受 6-轴 CHECK 约束、保 42 格封闭，0011-2 DDL）——直接把「依律处置」写入账本 axis 会撞 CHECK 崩。翻轴只动 ceiling 查询、不动账本轴。
 3. **effective ceiling 塌**。**数值证（用 seed 真有重罪的阉党核心，P1-8）**：崔呈秀（阉党、seed 重罪、identity 98）——硬推罗织抄家 = 既得命门 72 + 血债 +69（罗织 cw=1）；走程序坐实其真重罪（贪墨坐实 ∈ 依律集，cw=70 与抄家 severity 70 相称）→ 翻轴「依律处置」ceiling **35** + 血债 **+7**（罪罚相称）。**ceiling 维度 72→35（≈2 倍）+ 血债维度 +69→+7（≈10 倍，0011-2 D2-4 真源）**。定逆案 262 人 = 走程序把清算做成依律惩逆。
    - **对比福王（宗室、seed 仅轻贪吝、无重罪，P1-8）**：坐实其轻贪 → `贪墨坐实 ∈ 依律集`（**翻轴只看 reason_code ∈ 依律集、不看罪轻重**）→ ceiling 91 仍可翻轴塌到 35；**但血债不低**——`crime_weight` 取真罪 gravity = 轻（与翻轴 flag 正交，0011-2 D2-4）、配抄家重罚 = 小罪重罚（失称度高、+61 量级）。即**福王 ceiling 能塌、血债却高**（≠ 崔呈秀重罪的 ceiling 塌 + 血债低 +7）→ **宗室无重罪 = 「能颁但代价高」的更难破局靶**（呼应 seed：重罪全压阉党、clean 靶子在阉党，0011-4 B / 0011-2）。
 

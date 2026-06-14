@@ -23,10 +23,10 @@
 > | T3 | 0011-4 ceiling + seed | ✅ | ✅ 15-agent 3P1/6P2/8P3 全修 | ⏳ | `3df1314`+`b877df1` |
 > | T4 | 0011-5 四层票拟 resolve | ✅ | ✅ 15-agent 10P1/14P2/7P3 全修(跨 0011-2/4 同改) | ⏳ | author `b877df1` + fix 本批 |
 >
-> **✅ ship-pre 本地 cmr 收敛（R1–R8，2026-06-15）**：统一审全 5 ADR（母 + 0011-2/3/4/5，**subsume T5**）；R8 **4/4 concur**（Claude Opus + codex×3 全空）+ flag `本轮缺 gemini`（agy 全配额耗尽 129h；R1–R3 gemini 有声经 agy-Sonnet fallback）。轨迹：R1 6 设计洞 → R2 3 细化 → R3 福王 crime_weight 深洞 → R4–R7 fix-residue grep-sweep（议和 floor / seg / crime_weight 解耦 / satisfaction 越界 / dry_run）→ R8 全空。fix commits `01de49c`/`363db2f`/`c73375a`/`de2da11`/`9a6b100`/`f10c5a2`/`cb6b40e`。**下一步 = 开 PR（base main）→ 线上三 bot 收敛 → merge（用户 /goal 授权；Sourcery SKIP 走 --admin）→ M0 残留（#73 起）**。
+> **✅ ship-pre 本地 cmr 收敛（R1–R8，2026-06-15）**：统一审全 5 ADR（母 + 0011-2/3/4/5，**subsume T5**）；R8 **4/4 concur**（Claude Opus + codex×3 全空）+ flag `本轮缺 gemini`（agy 全配额耗尽 129h；R1–R3 gemini 有声经 agy-Sonnet fallback）。轨迹：R1 6 设计洞 → R2 3 细化 → R3 福王 crime_weight 深洞 → R4–R7 fix-residue grep-sweep（议和 floor / seg / crime_weight 解耦 / satisfaction 越界 / dry_run）→ R8 全空。fix commits `01de49c`/`363db2f`/`c73375a`/`de2da11`/`9a6b100`/`f10c5a2`/`cb6b40e`。**✅ PR #123 开（base main，merge 无冲突）+ 线上 R1–R3 评审收敛**（Codex +1 approve / Gemini medium 全修 / CodeRabbit pass；Sourcery 周配额死 skip → merge 走 --admin 越 ruleset）。**下一步 = merge（用户 /goal 授权）→ M0 残留（#73 起）**。
 > | T5 | 母 ADR 全套 cmr（9 决定 + 引各 sub-ADR） | — | — | ⏳ | — |
 >
-> **下一步链**：两红队 fix → commit → **cmr 阶段**（0011-3/4/5 走 `ak-cross-m-review` doc 模式 1+1+1 到 3/3 concur，每轮 fix 独立 commit）→ T5 母 ADR 全套 cmr → 整条线 ship-ready → **开 PR（base main）→ 线上三 bot 收敛 → merge**（授权；Sourcery 若 SKIP 走 --admin，见 memory）→ **M0 残留**（#73 起）。
+> **✅ 全链完成至 merge 前**：cmr R1–R8 收敛 + PR #123 线上 R1–R3 收敛；剩 merge（--admin 越 Sourcery-degraded ruleset）→ M0 残留（#73 起）。
 > **跨文件一致性已锁**：符号路由真源=0011-2（0011-3 D3-8 引）；离心公式真源=0011-3（0011-2 引）；命门 floor+ceiling 真源=0011-4（0011-2 D2-7 / 0011-5 D5-4 引）；seed 真源=0011-4 B；议和出路=外压 dynamic 臂（0011-3 D3-4 / 0011-4 D4-4b / 0011-5 D5-4）。
 
 ## ⚠️ 重验日志 2026-06-14（隔壁开发推进后，对承重 claim 重新 query 实际系统）

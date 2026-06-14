@@ -1,6 +1,6 @@
 # 血债棘轮 schema（ADR 0011 决定2 子 ADR · 0011-2）
 
-Status: Proposed（草案；承母 ADR `0011-edict-resistance-and-centrifuge-ledger.md` 决定2，由 design-dig `dig-4`/`dig-5`/`dig-6`/`dig-7`/`dig-9` fold 而成。**待评审**——按 CLAUDE.md 设计文档铁律走本地 cmr 收敛 + 线上三 bot 收敛，未收敛前不进实现期。实现属编码活、spawn 隔壁。）
+Status: Proposed（草案；承母 ADR `0011-edict-resistance-and-centrifuge-ledger.md` 决定2，由 design-dig `dig-4`/`dig-5`/`dig-6`/`dig-7`/`dig-9` fold 而成。**评审收敛**——本地 ship-pre cmr R1–R8 4/4 concur（2026-06-15）+ 线上 PR #123 R1–R3 评审收敛；merge 即转 Accepted。实现属编码活、spawn 隔壁。）
 
 承 GitHub #112 tracker。本 ADR 收口母 ADR 留给子机制的「血债精确 schema」，并应用母 ADR CMR r2 parked 的三项最低契约（provisional / H5 / 净负）。
 
@@ -137,7 +137,7 @@ net_centrifuge       = Σ( Δsatisfaction项 + Δleverage项 )    ← 签名物�
 1. **转 final 扫表放 settle 后半段 `atomic` 内、对 `before_turn` 幂等**（不放 `pre_settle`，避 `pre_settle` 早退守门软死锁——`decree.py:788 if state.turn_phase in FRONT_HALF_DONE_PHASES: return []`，def 在 `decree.py:762`）。
 2. **`expires_turn` 到必转 final**（避 ADR 0008 毒 payload 永挂）。
 3. **fungible（钱）= 见坑④**（国库净额 −amount、不退款、落 `economy_ledger`，非「正反账冲销净 0」）；**status 类后果**（家产已没 / 将就位）封驳窗 `W=1` 压窗 + 当回合作废转「打回」（H6 status 类真闭）。**涉钱不全闭**——钱已出不退（以「非正途」污名 + 血债为代价，非 escrow）；P1（当回合全量落库）× H6（既成事实套利）是固有张力，**不假装两全**（见下「中旨按历史」+ 坑④）。
-4. **⚠️ 坑④（内部红队补 → CMR r1 修正记账方向 + 落账表）：fungible 中旨须让国库净额 = −amount（钱真没了）、且落 `economy_ledger` 不落 `compute_budget_lines`。** 我原写「+amount 后 −amount 净额归 0」**方向反了**：净额 0 = 国库做平 = 钱回来了，正撞「钱没了就是没了」（CMR Claude + codex concur）；且一次性中旨拨款是**事务性**条目，该进 `economy_ledger`，不进 `compute_budget_lines`（后者是 fiscal_config/buildings 派生的**经常性**月流水，塞一次性条目会破经常性账——CMR gemini 实读 flows.py）。**契约**：① 中旨拨款 = `economy_ledger` 一笔 **−amount**（钱出库、长留不退）；② 六科封驳 = **另一笔 append-only 审计/状态行**（economy_ledger 既有 `reason` 列＝「六科封驳作废」，**非新增 `reason_code`**——库内 economy_ledger 用 `reason`；**不贷回国库**）——只标「此拨款用途被封还作废」，非 +amount 退款。国库净额 = **−amount**（反映「钱没了」），双笔可审计读出「真拨（钱已出）+ 真驳（用途作废未达成）」= 乱用中旨的牙，**不是净额对冲的虚账**。双笔进 0008 atomic + before_turn 幂等，restore 只读 `economy_ledger` 即复原「拨过且被驳、钱没回来」；`season_simulator`/审计大臣 prompt 补正向口径（带此对 `reason` 的同月条目 =「钱已实拨、被六科封还作废、不退」，不判虚账）。
+4. **⚠️ 坑④（内部红队补 → CMR r1 修正记账方向 + 落账表）：fungible 中旨须让国库净额 = −amount（钱真没了）、且落 `economy_ledger` 不落 `fiscal_config`（经常性账表；`compute_budget_lines` 是读 `fiscal_config` 的函数、非表——Gemini 线上正表级语义）。** 我原写「+amount 后 −amount 净额归 0」**方向反了**：净额 0 = 国库做平 = 钱回来了，正撞「钱没了就是没了」（CMR Claude + codex concur）；且一次性中旨拨款是**事务性**条目，该进 `economy_ledger`，不进 `compute_budget_lines`（后者是 fiscal_config/buildings 派生的**经常性**月流水，塞一次性条目会破经常性账——CMR gemini 实读 flows.py）。**契约**：① 中旨拨款 = `economy_ledger` 一笔 **−amount**（钱出库、长留不退）；② 六科封驳 = **另一笔 append-only 审计/状态行**（economy_ledger 既有 `reason` 列＝「六科封驳作废」，**非新增 `reason_code`**——库内 economy_ledger 用 `reason`；**不贷回国库**）——只标「此拨款用途被封还作废」，非 +amount 退款。国库净额 = **−amount**（反映「钱没了」），双笔可审计读出「真拨（钱已出）+ 真驳（用途作废未达成）」= 乱用中旨的牙，**不是净额对冲的虚账**。双笔进 0008 atomic + before_turn 幂等，restore 只读 `economy_ledger` 即复原「拨过且被驳、钱没回来」；`season_simulator`/审计大臣 prompt 补正向口径（带此对 `reason` 的同月条目 =「钱已实拨、被六科封还作废、不退」，不判虚账）。
 
 **中旨按历史（用户拍，溶解原 fork-4 escrow）**：中旨绕内阁、六科可封驳、带「非正途」污名、**钱拨了被封驳就是没了**（史实）。用户：「钱没了就是没了」是**牙不是缺陷**，逼「别乱来、攒合法性慢办」。故不做暂存账 / 退款。中旨 / 封驳跟「四层票拟改革」（dig-8）一起做，**血债先、它后**（顺序可再议）。**⚠️ 覆盖母 ADR 决定5 line 90**：母 ADR 原把「钱入库」列进封驳作废集（=钱要被反转），与此处「钱没了就是没了」相反；用户 2026-06-14 拍板（钱不退）时间在后、为最终权威，本条覆盖之，并已回标母 ADR（见母 ADR 决定5 line 90 注：「钱-封驳语义已由 0011-2 D2-8 收口」）。
 
