@@ -93,6 +93,15 @@ def test_settle_province_tick_unknown_region_raises(fresh_db):
         fresh_db.settle_province_tick("atlantis", [])
 
 
+def test_settle_province_tick_nondict_fiscal_raises(fresh_db):
+    # cmr R3（gemini）：fiscal JSON 非 dict（如 "[]"）→ ValueError（可被隔离捕获），
+    # 非 fiscal.get 抛 AttributeError 逃逸。
+    fresh_db.conn.execute("UPDATE regions SET fiscal='[]' WHERE id='shaanxi'")
+    fresh_db.conn.commit()
+    with pytest.raises(ValueError):
+        fresh_db.settle_province_tick("shaanxi", [])
+
+
 # ── slice3：接入月末固定财政相位（shadow，不驱动国库；fail-loud 但隔离）──
 
 @pytest.fixture

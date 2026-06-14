@@ -48,6 +48,14 @@ def settle_tick(
 ) -> FiscalTickResult:
     """单省单月财政 tick。st=开账(CASH/CLAIM/官民田/隐田)，p=本月参数(率/额/Due)，
     actions=本月动作(玩家旨意/事件灌入)。返回新末态 + 流水分解；坏输入/守恒破一律 raise。"""
+    # ── 容器型验形（最前置）：st/p 非 dict、actions 非 list/tuple → ValueError，否则下方
+    #    `sk in st` / `rq in p` / `for a in actions` 抛 TypeError 逃逸调用方隔离（cmr R3 concur）──
+    if not isinstance(st, dict):
+        raise ValueError("st 非字典")
+    if not isinstance(p, dict):
+        raise ValueError("p 非字典")
+    if not isinstance(actions, (list, tuple)):
+        raise ValueError("actions 非 list/tuple")
     # ── 必填参数 presence（缺省不默认 0——火耗率缺省成 0 = 静默改经济学）──
     for rq in ("三饷应征", "火耗率", "逋赋率", "起运定额", "Due"):
         if rq not in p:
@@ -100,6 +108,8 @@ def settle_tick(
             raise ValueError(f"action 非字典: {a!r}")  # 否则 a.get/a["type"] 抛 AttributeError 逃逸隔离（cmr R2 codex）
         if "type" not in a:
             raise ValueError(f"action 缺 type: {a}")
+        if not isinstance(a["type"], str):  # 非 str type（如 list）unhashable → `not in SET` 抛 TypeError 逃逸（cmr R3 gemini）
+            raise ValueError(f"action type 非字符串: {a}")
         for nf in ("cost", "amount", "挖隐田", "eff"):
             if nf not in a:
                 continue  # 字段可选，缺省走默认值
