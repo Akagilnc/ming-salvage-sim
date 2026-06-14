@@ -147,7 +147,7 @@ net_centrifuge       = Σ( Δsatisfaction项 + Δleverage项 )    ← 签名物�
 
 - **0008**：`accrue` 走 `applier.atomic` 落库链；`idem_key UNIQUE` 防 0008 重跑 / 断点续跑二次累加。
 - **0009**：crime `reason_code` 依律集（D2-5）= **扩 0009 的 reason_code enum** + 协调 0009 静态围栏 / 契约；污名 STIGMA 走**独立常量表**（D2-5，不进 0009 enum）、同批协调静态围栏。
-- **faction-UPDATE 写路径缺口**（dig-6 叛变需要）：`db.py` 现无 `UPDATE characters SET faction=?`（faction 仅 INSERT 时写）；叛变落库须补此口径。设计先钉，实现按 DoD 点检。
+- **faction-UPDATE 写路径 + `defected_from` 列缺口（dig-6 叛变需要）= defer #89**：`db.py` 现无 `UPDATE characters SET faction=?`（faction 仅 INSERT 时写）、亦无 `defected_from` 列；叛变落库须补此二者。**叛变属 #89 大臣系统线的机制、非本线第一刀**——故本线 DDL **不含 `defected_from`** 列（设计先钉缺口、随 #89 实现）。本线第一刀只用静态 seed `identity`（不动态漂移、不叛变）。
 
 ---
 

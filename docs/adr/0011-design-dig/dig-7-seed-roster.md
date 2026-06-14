@@ -1,5 +1,7 @@
 # seed-guilt + 认同度 史实名单（开局朝堂74人）— dig（2026-06-14，承 #112 / dig-6 seed）
 
+> ⚠️ **底稿（scratch / 过程史）**：本文已被正式 sub-ADR **0011-4 B 部分** fold + 覆盖（如高起潜 faction → 0011-4 定为「中立」保 7 派封闭集，非本文旧措辞）；凡与 0011-4 冲突一律**以 0011-4 为准（later-doc-wins）**。本文留作设计 provenance、**非实现真源**。
+
 > 全量在 task 输出：`/private/tmp/claude-501/.../tasks/wo1l0n2bf.output`（9-agent：ground定逆案六等 + 7派各assign + 合成）。**开局 seed 数据，待用户拍 5 争议 + 几处数据修后定稿。** 落库=characters.json per-人加 seed_guilt/identity 字段。
 
 ## 自检（全过）

@@ -1,5 +1,7 @@
 # 四层票拟 + 中旨 + 执行层（决定4/5）— dig（2026-06-14，承 #112，圣旨颁布阻力网心脏）
 
+> ⚠️ **底稿（scratch / 过程史）**：本文已被正式 sub-ADR **0011-5** fold + 覆盖（如本文司礼监批红读 satisfaction/identity → 0011-5 已否定：阻力只读血债/leverage 不读 satisfaction〔堵 H2 洗白〕、identity 只缩 kinship）；凡与 0011-5 冲突一律**以 0011-5 为准（later-doc-wins）**。本文留作设计 provenance、**非实现真源**。
+
 > 全量在 task 输出：`/private/tmp/claude-501/.../tasks/wyw2m5rz7.output`（5-agent：ground颁旨链+四层史实 + 3路设计 + 合成）。**设计累积，待用户拍5问 + 跟整体走 CMR。最重最后，硬依赖血债 schema 先落。**
 
 ## 核心：resolve_directive(action, substrate, mode) 一次幕后纯函数
