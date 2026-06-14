@@ -331,7 +331,14 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
     characters: Dict[str, Character] = {}
     for row in rows:
         name = row["name"]
-        office_type = infer_office_type_from_office(row["office"], row["office_type"], llm_config)
+        # DB 是真相：表查不中时按库里存的 office_type 原样落回内存（含朝堂类，仅空落待铨——
+        # use_llm=False 契约），不每回合现拉 codex 重判、也不降级。否则全员逐人判 office_type，
+        # 外藩/宗藩/平民官名表查不中 → 启动/每 begin_turn 都触发 ~28 串行 codex（开局慢 5 分钟
+        # 的同源风暴）；且若降级朝堂类，动态任免落库的 礼部/兵部 等会被每回合 sync 悄悄抹成待铨
+        # （cmr R2）。任免变更本身走动态路径仍 LLM。
+        office_type = infer_office_type_from_office(
+            row["office"], row["office_type"], llm_config, use_llm=False
+        )
         import json as _json
 
         try:
