@@ -2597,10 +2597,16 @@ select:focus-visible {
 }
 
 .chat-portrait-wrap {
-  flex: 1 1 auto;
+  /* 固定容器为立绘原生比例 341:512，避免 flex:1 1 auto 吃满栏高把构图裁坏
+     （立绘没被拉伸，是容器比例≠图导致 cover 裁切难看，2026-06-14）。
+     max-height 护栏：栏太矮时不撑爆面板。 */
+  flex: 0 0 auto;
+  width: 100%;
+  aspect-ratio: 341 / 512;
+  max-height: 100%;
   min-height: 0;
   display: flex;
-  align-items: stretch;
+  align-items: center;
   justify-content: center;
   margin-top: 4px;
 }
@@ -2608,9 +2614,8 @@ select:focus-visible {
 .chat-portrait-wrap .minister-card-portrait {
   width: 100%;
   height: 100%;
-  flex: 1 1 auto;
   object-fit: cover;
-  object-position: top center;
+  object-position: center top;
   border-radius: 10px;
 }
 
