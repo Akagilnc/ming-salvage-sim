@@ -115,6 +115,12 @@ RAISE_CASES = [
     ("G21u None开账省库", S(省库库银=None), base, [], "开账 stock 省库库银 为 None"),
     ("G21v 字符串火耗率", S(), dict(base, 火耗率="0.2"), [], "火耗率 非数值"),
     ("G21w bool拨付gross", S(), dict(base, 拨付gross=True), [], "param 拨付gross 非数值"),
+    # cmr ship-pre R1（codex+gemini concur P1）：Due 非字典曾 .items()/.get() 抛 AttributeError，
+    # 逃逸 flows 的 (ValueError, FiscalConservationError) 隔离 → 炸 pre_settle 固定财政（F4）。
+    # 验形归 ValueError，使坏 Due 走港口锁+隔离而非 AttributeError 逃逸。
+    ("G21x Due=None", S(), dict(base, Due=None), [], "Due 非字典"),
+    ("G21y Due=list", S(), dict(base, Due=[]), [], "Due 非字典"),
+    ("G21z Due=数值", S(), dict(base, Due=5), [], "Due 非字典"),
 ]
 
 
