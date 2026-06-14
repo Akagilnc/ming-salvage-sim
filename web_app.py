@@ -13,8 +13,20 @@ import os
 import queue
 import random
 import re
+import sys
 import threading
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional
+
+# 源码模式 `uvicorn web_app:app` 在 nohup/重定向（>> web_server.log）下 Python stdout 块缓冲，
+# 日志滞后数分钟、结算中段 tail 看不见进度（#84）。强制行缓冲让 tlog + 各 print 近实时落盘；
+# TTY 下本就行缓冲、无变化。frozen 打包路径已由 launcher.py 处理，此处覆盖源码 uvicorn 路径。
+try:
+    if sys.stdout is not None:
+        sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
+    if sys.stderr is not None:
+        sys.stderr.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
+except Exception:  # noqa: BLE001 — 缓冲设置失败不该阻断 web 启动
+    pass
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
