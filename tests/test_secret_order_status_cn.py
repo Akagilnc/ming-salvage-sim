@@ -120,6 +120,22 @@ def test_group_empty_input_returns_both_empty_groups():
     assert grouped == {"在办": [], "待核议": []}
 
 
+def test_group_hardens_against_malformed_input():
+    """恢复路可能喂进损坏存档（非 list / 含非 dict 元素）——照 simulation._clean_* 的守门惯例
+    不得崩：非 list 返回空两组，非 dict 元素跳过。"""
+    from ming_sim.decree import group_secret_orders_for_sim
+
+    for bad in (None, "junk", 123, {"在办": []}):
+        assert group_secret_orders_for_sim(bad) == {"在办": [], "待核议": []}
+
+    grouped = group_secret_orders_for_sim([
+        None, 5, "x",  # 非 dict 元素，跳过
+        {"id": 1, "minister_name": "甲", "title": "t", "content": "c", "status": "active",
+         "turn_issued": 1, "due_turn": 4, "result": "", "sim_note": ""},
+    ])
+    assert [o["id"] for o in grouped["在办"]] == [1]
+
+
 def test_simulator_payload_secret_orders_has_no_english_enum(game):
     """边界保证：payload["secret_orders"] 序列化后零 active/pending_review/status 字面
     （LLM 收不到英文 enum，泄漏构造上消失）；data_note 不再述密令 status 字段（data_note 仍含

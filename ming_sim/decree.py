@@ -224,14 +224,20 @@ def group_secret_orders_for_sim(
     """
     groups: Dict[str, List[Dict[str, object]]] = {"在办": [], "待核议": []}
     bucket = {"active": "在办", "pending_review": "待核议"}
+    # 恢复路也用本函数重分组旧存档 list（见 _recovered_grouped）；损坏/历史遗留数据可能非 list
+    # 或含非 dict 元素，照 simulation._clean_* 的守门惯例跳过，不让 TypeError 崩在恢复链上。
+    if not isinstance(rows, list):
+        return groups
     for o in rows:
+        if not isinstance(o, dict):
+            continue
         key = bucket.get(o.get("status"))
         if key is None:
             continue
         groups[key].append({
-            "id": int(o["id"]),
-            "minister_name": o["minister_name"],
-            "title": o["title"],
+            "id": int(o.get("id") or 0),
+            "minister_name": o.get("minister_name") or "",
+            "title": o.get("title") or "",
             "content": (o.get("content") or "")[:120],
             "turn_issued": o.get("turn_issued") or 0,
             "due_turn": o.get("due_turn") or 0,
@@ -315,7 +321,7 @@ def resolve_directives(
             content=content, registry=registry)
         db.save_resolve_context(
             state.turn, decree_text, "", {},
-            secret_orders=[], relevant_memories=[],
+            secret_orders={}, relevant_memories=[],   # #48：占位用分组承载的空 dict（旋即被真存覆盖）
         )
 
     # 1.8) 历史脉络：取近几回合章节记忆注入推演（章节记忆取代旧的关键词原子检索）。
