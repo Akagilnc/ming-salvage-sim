@@ -266,6 +266,7 @@ export type GameState = {
   map_nodes: MapNode[];
   ministers: Minister[];
   consorts: Minister[];
+  talent_pool?: Minister[];  // 在野人才池：可起复的罢居/致仕前臣（offstage，#120）
   directives: Directive[];
   pending_count: number;
   pending_decisions?: PendingDecision[];

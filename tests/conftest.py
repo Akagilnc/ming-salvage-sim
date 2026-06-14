@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import copy
 import os
 import shutil
 import tempfile
@@ -28,6 +29,22 @@ def content() -> GameContent:
     ctx_bind(c)
     issues_mod.bind_content(c)
     return c
+
+
+@pytest.fixture(autouse=True)
+def _restore_content_characters(content):
+    """content 是 session 作用域共享对象，但建 GameSession（读档/_sync_offices_from_db_impl）
+    会按 DB characters 表重建并**整体替换** content.characters。基底 data/probe.db 是旧档、
+    缺 characters.json 独有的角色（如宗藩王 朱常洵 等），一旦某用例建过 session，content
+    就从 101 缩成 58、宗藩王永久消失，泄漏到后续用例——实证宗藩可见性测试（含 /chat 守门）
+    在全量里被静默 skip（「基底盘面无宗藩人物」），等于没验。
+
+    每用例前快照、后还原 content.characters（深拷贝，连带 in-place 改的 office_type/status
+    等字段一并隔离），从根上断掉这层跨用例泄漏。只拷 characters：观测到的泄漏在此面，
+    region/faction 等不涉，避免无谓开销。"""
+    saved = copy.deepcopy(content.characters)
+    yield
+    content.characters = saved
 
 
 @pytest.fixture

@@ -81,6 +81,34 @@ class Character:
     portrait_id: str = ""  # 头像文件标识：空=无专属；"minister_pool_3"=用第3号预设头像
 
 
+VASSAL_PRINCE_OFFICE_TYPE = "宗藩"
+
+
+def is_vassal_prince(character: "Character") -> bool:
+    """宗藩（就藩宗室）非朝堂命官——召见/任免/密令/名册一律排除（用户 2026-06-14 拍：宗室隐藏）。
+
+    单一定义，所有面引用此规则（PR#121，cmr R3–R5 cross-section coverage-drift 收敛于此）。
+    受守面清单（新增同类面时一并加，勿漏）：
+    - web_app: visible_in_court / in_talent_pool / _require_active_minister / api_create_secret_order
+    - simulation: court_roster / active_ministers / _talent_pool_rows（SQL office_type NOT IN(…'宗藩'…)）
+    - tools: get_active_ministers / query_court_roster
+    - registry: build_court_roster / build_court_roster_index
+    - session: can_summon（召对 choke）/ list_ministers（召见阶段名册）
+    - issues: apply_office_appointment（任命落地核 choke——授官会改 office_type、反解 roster 隐藏，必守）
+    - session: can_summon（召对 choke，覆盖 session/web/CLI choose_minister 三路）
+    - db: create_secret_order（密令唯一 DB 写口 choke）/ _commit_office_action 罢免（玩家罢免）
+    roster 类同时排 后宫，用 office_type in ('后宫','宗藩')；本 helper 只判宗藩这一面。
+
+    **规则边界（玩家动作 vs 世界事件，cmr R7 拍）**：守的是「皇帝把宗室当朝堂命官来召见/任免/
+    罢免/下密令」这类玩家动作面。**simulator/extractor 叙事处置故意不守**——宗室可因世界事件
+    死/被俘/废为庶人（史实如福王 1641 被李自成所杀），extractor character_status_changes 的
+    罢黜/处置路（issues.apply_person_status_changes）应允许改宗藩状态；况且 dismiss/dead 不改
+    office_type，宗藩照旧不入任何 roster。勿在叙事处置路加宗藩闸（会掐掉合法 diegetic 事件）。
+
+    容 None（防御，R3 gemini）：传 None 返 False，使本判据不比调用点的存在性检查更严。"""
+    return character is not None and character.office_type == VASSAL_PRINCE_OFFICE_TYPE
+
+
 @dataclass
 class Event:
     id: str
