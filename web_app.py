@@ -49,7 +49,7 @@ from ming_sim.skills import available_skill_ids, skill_display_name, skill_sourc
 from ming_sim.context import match_minister_from_text
 from ming_sim.flows import compute_budget_lines
 from ming_sim.exceptions import LLMContractError  # noqa: F401  (保留：供错误处理)
-from ming_sim.models import Character, LLMConfig, TurnPhase
+from ming_sim.models import Character, LLMConfig, TurnPhase, is_vassal_prince
 from ming_sim import steam_events
 
 WEB_DIST = bundled_path("web", "dist")
@@ -2047,7 +2047,7 @@ def _require_active_minister(minister_name: str) -> None:
     # 宗藩（就藩藩王）已被 visible_in_court 挡出朝堂/任免列表，但 /chat 端点须同步拒绝，
     # 否则可绕列表直接按名经 API 召对（用户 2026-06-14 拍：宗室不可召见）。后宫不在此拒——
     # 嫔妃 chat 复用本端点，加 后宫 会误伤选妃后的召对路径。
-    if character.office_type == "宗藩":
+    if is_vassal_prince(character):
         raise HTTPException(status_code=409, detail=f"{minister_name}为就藩宗室，非朝廷命官，无法召见。")
     if get_game().character_power_id(character) != "ming":
         raise HTTPException(status_code=409, detail=f"{minister_name}不属大明朝廷，无法召见。")
@@ -2078,6 +2078,9 @@ async def api_create_secret_order(minister_name: str, request: SecretOrderReques
     if not character:
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail=f"未找到大臣：{minister_name}")
+    if is_vassal_prince(character):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=409, detail=f"{minister_name}为就藩宗室，非朝廷命官，无法下达密令。")
     if game.character_power_id(character) != "ming":
         from fastapi import HTTPException
         raise HTTPException(status_code=409, detail=f"{minister_name}不属大明朝廷，无法下达密令。")

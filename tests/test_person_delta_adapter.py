@@ -1817,6 +1817,31 @@ def test_registry_and_tools_court_roster_exclude_active_prince(game):
         assert name not in mtools["query_court_roster"]()
 
 
+def test_apply_office_appointment_rejects_vassal_prince(game):
+    """任命落地核（extractor office_changes + CLI/pending 任免共用）须拒绝给宗藩授官——否则授官会把
+    office_type 从「宗藩」改成新官署、反解掉所有 roster 隐藏（最严重落库 bug 类，cmr R5 keystone）。
+    在册数据须保持不变（仍宗藩、状态不被翻 active）。"""
+    db, state, content = game
+    name = _materialize_active_prince(db, state, content)
+    db.set_character_status(state, name, "offstage", "测试：就藩在外")  # 即便被点名也不得授官
+    res = issues.apply_office_appointment(db, state, content, None, name, "兵部尚书", reason="幻觉任命")
+    assert res.get("rejected") is True, f"宗藩授官应被拒：{res}"
+    row = db.conn.execute("SELECT office_type, status FROM characters WHERE name=?", (name,)).fetchone()
+    assert row["office_type"] == "宗藩", "宗藩 office_type 被授官改写=反解隐藏"
+    assert row["status"] == "offstage", "宗藩被授官路径翻成 active"
+
+
+def test_list_ministers_excludes_active_prince(game):
+    """召见阶段名册 GameSession.list_ministers 与各 roster 同口径排除 active 宗藩（cmr R5）。"""
+    from ming_sim.session import GameSession
+    db, state, content = game
+    name = _materialize_active_prince(db, state, content)
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.content = content
+    assert name not in [v.name for v in sess.list_ministers()], f"宗藩 {name} 漏进 list_ministers"
+
+
 def test_extractor_active_ministers_ming_noncourt_only(game):
     """5b r1 PR#106（CodeRabbit Major，roster-scope coverage-drift 第 4 处）：extractor 上下文的
     active_ministers 须与 court_roster 同口径 = 大明、非后宫。否则 active 外臣（皇太极）/active 后宫漏入。"""

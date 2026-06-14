@@ -270,3 +270,26 @@ def test_zongfan_cannot_be_summoned_via_can_summon(game):
         db.set_character_status(state, consort, "active", "测试")
         ok2, _ = sess.can_summon(content.characters[consort])
         assert ok2 is True
+
+
+def test_vassal_prince_secret_order_rejected(game, monkeypatch):
+    """密令端点 api_create_secret_order 也须拒宗藩（同 /chat 的 API 直连绕过形态，cmr R5）。"""
+    import asyncio
+    import pytest
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from web_app import SecretOrderRequest
+    db, state, content = game
+    name = next((n for n, c in content.characters.items() if c.office_type == "宗藩"), None)
+    if name is None:
+        pytest.skip("基底盘面无宗藩人物")
+    stub = SimpleNamespace(
+        session=SimpleNamespace(content=content),
+        character_power_id=lambda c: web_app._character_power_id(c, db),
+    )
+    monkeypatch.setattr(web_app, "web_game", stub)
+    req = SecretOrderRequest(title="密查", content="着尔暗中查访")
+    with pytest.raises(HTTPException) as ei:
+        asyncio.run(web_app.api_create_secret_order(name, req))
+    assert ei.value.status_code == 409
+    assert "宗室" in ei.value.detail
