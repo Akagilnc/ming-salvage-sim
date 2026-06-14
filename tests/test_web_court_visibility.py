@@ -357,6 +357,28 @@ def test_list_ministers_uses_db_power_id(game):
     assert enemy not in {v.name for v in sess.list_ministers()}
 
 
+def test_find_existing_minister_uses_db_power_id(game):
+    """_find_existing_minister 是罢黜/任命去重/密令 canonical 的 ming-guard，须与 can_summon 同口径
+    （DB 权威，#125 R2 codex high）：招抚归明者(DB翻ming/content仍旧势力)可召就必须可查到（可罢/可任）；
+    外藩(皇太极 DB houjin)仍查不到，防误黜外藩的保护不丢。"""
+    from ming_sim.session import _find_existing_minister
+    import pytest
+    db, state, content = game
+    # 招抚归明者：DB 翻 ming、content 仍非 ming、active → 应被 _find_existing_minister 命中
+    归明 = next((n for n, c in content.characters.items()
+                if getattr(c, "power_id", "ming") != "ming"
+                and c.office_type not in ("后宫", "宗藩") and c.status != "candidate"), None)
+    if 归明 is None:
+        pytest.skip("基底盘面无非 ming 可招抚人物")
+    db.conn.execute("UPDATE characters SET power_id='ming' WHERE name=?", (归明,))
+    db.conn.commit()
+    db.set_character_status(state, 归明, "active", "测试：招抚归明")
+    assert _find_existing_minister(content, 归明, db) == 归明, "DB 已归明者却被内存值挡出 ming-guard（可召不可罢）"
+    # 外藩 active（DB houjin）仍查不到（防误黜皇太极）
+    enemy = _enemy_active_name(db, content)
+    assert _find_existing_minister(content, enemy, db) is None
+
+
 def test_db_resolve_power_id_authoritative(game):
     """db.resolve_power_id：DB 行 power_id 优先于内存，DB 无行时回退内存，再默认 ming。"""
     db, state, content = game

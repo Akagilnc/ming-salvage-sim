@@ -152,20 +152,22 @@ def _find_candidate_by_name(content: GameContent, name: str) -> Optional[str]:
     return None
 
 
-def _find_existing_minister(content: GameContent, name: str) -> Optional[str]:
+def _find_existing_minister(content: GameContent, name: str, db: "GameDB") -> Optional[str]:
     """铨选查重：拟任者是否已在册（非 candidate）。精确名 → aliases 命中。
     不做子串互含——'李标' vs '标' 那种巧合会误拒同义改写。
     后宫人物不在此查（走 _find_candidate_by_name）。返回在册原始 key，无则 None。
 
-    此处 power_id 用 content 静态值（非 db.resolve_power_id 的 DB 权威，#125）是刻意的：这是按
-    content 名册原始建制做身份去重，不接 db（模块函数无 db）；授官的活 power 闸在
-    apply_office_appointment（DB-first，issues.py）。归明者授官正确性由那条保证，不在此路。"""
+    power_id 用 db.resolve_power_id（DB 权威，#125）而非 content 静态值：本函数是罢黜/任命去重/
+    密令 canonical 等 live court action 的 ming-guard（db._commit_office_action / apply_appointment /
+    create_secret_order / apply_office_appointment 别名归一），与 can_summon/list_ministers 必须同口径——
+    招抚归明者(DB翻ming但content仍旧势力)可召就必须可罢/可任，否则可召不可罢、跨切面不自洽（cmr #125 R2 codex high）。
+    外藩(皇太极 DB houjin)resolve_power_id≠ming 仍不接，防误黜外藩的保护不丢。"""
     if name in content.characters:
         c = content.characters[name]
-        if c.office_type != "后宫" and c.status != "candidate" and c.power_id == "ming":
+        if c.office_type != "后宫" and c.status != "candidate" and db.resolve_power_id(c) == "ming":
             return name
     for key, c in content.characters.items():
-        if c.office_type == "后宫" or c.status == "candidate" or c.power_id != "ming":
+        if c.office_type == "后宫" or c.status == "candidate" or db.resolve_power_id(c) != "ming":
             continue
         if name in (c.aliases or []):
             return key
@@ -251,7 +253,7 @@ def apply_appointment(
 
     # ── 普通路径查重：精确名 + aliases 命中即拒，不重复建档 ──────────
     if not is_consort:
-        existing = _find_existing_minister(content, name)
+        existing = _find_existing_minister(content, name, db)
         if existing is not None:
             return ("", "")
     elif name in content.characters and content.characters[name].status != "candidate":
@@ -923,10 +925,10 @@ class GameSession:
             return ("", False)
         aliases_raw = data.get("aliases") or []
         aliases = [str(alias).strip() for alias in aliases_raw if str(alias).strip()] if isinstance(aliases_raw, list) else []
-        if _find_existing_minister(self.content, name) is not None:
+        if _find_existing_minister(self.content, name, self.db) is not None:
             return ("", False)
         for alias in aliases:
-            if _find_existing_minister(self.content, alias) is not None:
+            if _find_existing_minister(self.content, alias, self.db) is not None:
                 return ("", False)
         faction = str(data.get("faction") or "中立").strip()
         if faction not in self.content.factions:
