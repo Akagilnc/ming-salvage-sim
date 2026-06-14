@@ -4,6 +4,16 @@
 
 ## [未发布]
 
+## [0.11.0.0] - 2026-06-14
+
+### 新增
+- **省级财政基座 port（#66，Epic #65 / M3）**：把 22 轮跨模型评审收敛的 `spike_settle_tick.py`（v23.1）搬成真引擎代码。
+  - `ming_sim/fiscal_tick.py` `settle_tick(st, p, actions)`：单省单月复式记账结算（⓪–⑪：action 相位/应征火耗实征民欠/起运存留分池漂没/拨付中饱/法定付款 waterfall 偿旧欠结转），4 独立守恒 oracle（现金/债务 per-account/C 分账/土地）每 tick 自校，坏输入→`ValueError`、守恒破→`FiscalConservationError`。
+  - `tests/test_fiscal_tick.py`：G1–G22 末态硬期望 golden + G21 fail-loud 输入校验面 + G9 三 tick 死亡螺旋链（69 测）。
+  - `GameDB.settle_province_tick`（`ming_sim/db.py`）：DB↔settle_tick 桥（读 `regions.fiscal.settle.{st,p}` → tick → 写回 `new_st`）。陕西（单省脊柱）种子 = v23 占位数（史实重标见 #70）。
+  - 接入月末固定财政相位（`apply_fixed_period_flows`）**shadow 模式**：基座逐月演化+落库，但暂不驱动国库（占位数偏史实 3–10×，⑫国库 cutover 待 #70 重标后切）；fail-loud 但隔离（基座失败不掀翻 pre_settle 固定财政）。
+  - 港口锁（ADR 0008）：FAIL tick 在 UPDATE 前 raise、绝不持久化。
+
 ## [0.10.0.0] - 2026-06-14
 
 ### 新增
