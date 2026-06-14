@@ -14,6 +14,14 @@ from agno.models.message import Message
 from pydantic import BaseModel
 
 import ming_sim.cli_backend as cb
+from ming_sim.models import LLMConfig
+
+
+def _cli_codex_cfg() -> LLMConfig:
+    return LLMConfig(
+        api_key="cli-backend", base_url="", model="api-fallback",
+        channel="cli", cli_runner="codex", cli_model="gpt-5.5",
+    )
 
 # runner 定位隔离 fixture（清 _BIN_CACHE + 短路登录 shell）已移到 tests/conftest.py
 # 的全局 autouse `_isolate_cli_bin_resolution`，覆盖本模块 + test_llm_channel_config
@@ -910,3 +918,62 @@ def test_clichat_call_cli_unknown_backend_raises():
     import pytest
     with pytest.raises(RuntimeError):
         cb.CliChat(id="m", backend="bogus")._call_cli("p")
+
+
+# ── trace 咽喉：每个经 _run_backend_for_config 的 CLI 调用都必须写日志 ──
+# （观测盲区根因：trace 原靠各调用方自觉手写，office_infer/verify/三个 extract 都漏过，
+#  导致「cli_trace 空 = 零 LLM」假象、开局慢 5 分钟无人察觉。下沉到咽喉，谁调都记。）
+
+def test_run_backend_for_config_traces_every_call(monkeypatch):
+    """咽喉 trace：任何经 _run_backend_for_config 的调用都写且仅写一条 trace，
+    携带传入的 tag、prompt、真实 backend/attempts，error 为 None。"""
+    recs = []
+    monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
+    monkeypatch.setattr(cb, "_run_codex", lambda prompt, model=None, timeout=None: ("外臣", 1))
+    out, attempts = cb._run_backend_for_config("判官名：后金汗", _cli_codex_cfg(), tag="office_infer")
+    assert out == "外臣" and attempts == 1
+    assert len(recs) == 1, f"咽喉应写且仅写 1 条 trace，实 {len(recs)}"
+    r = recs[0]
+    assert r["tag"] == "office_infer"
+    assert "后金汗" in r["prompt"] and r["response"] == "外臣"
+    assert r["backend"] == "codex" and r["error"] is None
+
+
+def test_run_backend_for_config_traces_on_backend_error(monkeypatch):
+    """后端抛错也要留痕：trace 记下 error，再把异常抛给调用方。"""
+    recs = []
+    monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
+
+    def boom(prompt, model=None, timeout=None):
+        raise RuntimeError("codex 挂了")
+
+    monkeypatch.setattr(cb, "_run_codex", boom)
+    with pytest.raises(RuntimeError):
+        cb._run_backend_for_config("任意提示", _cli_codex_cfg(), tag="probe")
+    assert len(recs) == 1
+    assert recs[0]["error"] and "codex 挂了" in recs[0]["error"]
+
+
+def test_office_inference_llm_call_is_traced(monkeypatch):
+    """端到端：动态生造官名走 LLM 兜底时（use_llm 默认 True），该调用必须留痕——
+    这正是当初被漏记、把人误导成『零 LLM』的那条路。"""
+    import ming_sim.db as dbmod
+    dbmod._OFFICE_TYPE_LLM_CACHE.clear()
+    recs = []
+    monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
+    monkeypatch.setattr(cb, "_run_codex", lambda prompt, model=None, timeout=None: ("边镇", 1))
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    got = dbmod.infer_office_type_from_office("绝无此名的杜撰怪衔甲", llm_config=_cli_codex_cfg())
+    assert got == "边镇"
+    assert len(recs) == 1 and "绝无此名的杜撰怪衔甲" in recs[0]["prompt"]
+
+
+def test_secret_extract_traces_exactly_once(monkeypatch):
+    """防双写守门：trace 搬到咽喉后，密令提取仍恰好一条（不双写、不漏写）。"""
+    recs = []
+    monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
+    canned = '{"标题":"密查","内容":"查关宁军饷","承办人":"骆养性","期限月数":3,"标签":["关宁"]}'
+    monkeypatch.setattr(cb, "_run_agy", lambda prompt, timeout=None: (canned, 1))
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    cb._extract_secret_order("密查关宁军饷", "臣遵旨", "骆养性")
+    assert len(recs) == 1, f"密令提取应恰好 1 条 trace，实 {len(recs)}"

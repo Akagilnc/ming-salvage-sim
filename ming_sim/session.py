@@ -331,7 +331,12 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
     characters: Dict[str, Character] = {}
     for row in rows:
         name = row["name"]
-        office_type = infer_office_type_from_office(row["office"], row["office_type"], llm_config)
+        # DB 是真相：信库里存的 office_type，表查不中也不每回合现拉 codex 重判。
+        # 否则全员逐人判 office_type，外藩/宗藩/平民官名表查不中 → 启动/每 begin_turn
+        # 都触发 ~28 串行 codex（开局慢 5 分钟的同源风暴；任免变更走动态路径仍 LLM）。
+        office_type = infer_office_type_from_office(
+            row["office"], row["office_type"], llm_config, use_llm=False
+        )
         import json as _json
 
         try:

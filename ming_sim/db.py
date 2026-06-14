@@ -114,7 +114,7 @@ def _office_type_via_llm(text: str, llm_config: Any = None) -> str:
     )
     out = ""
     try:
-        raw, _ = _run_backend_for_config(prompt, llm_config)
+        raw, _ = _run_backend_for_config(prompt, llm_config, tag="office_infer")
         cand = (raw or "").strip().splitlines()[0].strip() if raw else ""
         out = cand if cand in allowed_set else ""
     except Exception:
@@ -123,10 +123,17 @@ def _office_type_via_llm(text: str, llm_config: Any = None) -> str:
     return out
 
 
-def infer_office_type_from_office(office: str, current_type: str = "", llm_config: Any = None) -> str:
+def infer_office_type_from_office(
+    office: str, current_type: str = "", llm_config: Any = None, use_llm: bool = True
+) -> str:
     """用 office 文本判 office_type：先查 offices.json 参考表（明制权威、确定），
     表查不中且 CLI 后端在场再交 LLM 判（生造官名），都不中落『待铨』。
-    取代旧版那串临时正则词表（脆、漏）。外藩(后金/蒙古/朝鲜)按 power_id≠ming 另处理，不入此路。"""
+    取代旧版那串临时正则词表（脆、漏）。外藩(后金/蒙古/朝鲜)按 power_id≠ming 另处理，不入此路。
+
+    use_llm=False：跳过 LLM 兜底，表查不中直接信传入的 current_type（content 既定值）。
+    静态名册接档（seed_static_data）专用——101 人里 ~28 个外藩/宗藩/平民官名表查不中，
+    content 早已写好 office_type，逐人现拉 codex 判属纯浪费（开局慢 5 分钟根因）且可能
+    被分类器从明廷类型里硬选一个污染。动态生造官名（任命/issues）仍走默认 use_llm=True。"""
     kind = (current_type or "").strip()
     if kind == "后宫":
         return kind
@@ -136,9 +143,10 @@ def infer_office_type_from_office(office: str, current_type: str = "", llm_confi
     t = _office_type_from_table(text)
     if t:
         return t
-    t = _office_type_via_llm(text, llm_config)
-    if t:
-        return t
+    if use_llm:
+        t = _office_type_via_llm(text, llm_config)
+        if t:
+            return t
     return "待铨" if kind in COURT_OFFICE_TYPES or not kind else kind
 
 
@@ -1326,7 +1334,11 @@ class GameDB:
         if not self.table_has_rows("characters"):
             for character in self.content.characters.values():
                 office = normalize_office(character.office)
-                office_type = infer_office_type_from_office(office, character.office_type, self.llm_config)
+                # 静态名册接档：content 已写好 office_type，表查不中也不逐人现拉 codex
+                # （开局 LLM 风暴根因，~28 外藩/宗藩/平民官名 × 串行 codex ≈ 5 分钟）。
+                office_type = infer_office_type_from_office(
+                    office, character.office_type, self.llm_config, use_llm=False
+                )
                 self.conn.execute(
                     """
                     INSERT INTO characters
