@@ -266,6 +266,15 @@ def _recovered_grouped(value: object) -> Dict[str, object]:
     return {}
 
 
+def _select_secret_orders_for_sim(db: GameDB, cap: int = 20) -> List[Dict[str, object]]:
+    """选注入月末推演的密令：**pending_review 全进**（到期密令本回合须给 done/failed 裁决，被截断会
+    永久卡住不结案）+ active 填满剩余预算（cap）。修 #108：旧码 `(active + pending_review)[:cap]`
+    在 active 满载 cap 时把所有 pending_review 整体切掉、饿死核议。pending_review 即便超 cap 也全保。"""
+    pending = db.list_secret_orders(status="pending_review")
+    active = db.list_secret_orders(status="active")
+    return pending + active[: max(0, cap - len(pending))]
+
+
 def resolve_directives(
     state: GameState,
     db: GameDB,
@@ -343,10 +352,7 @@ def resolve_directives(
 
     # 密令注入推演：active + pending_review 都要进（pending_review 需推演本月核议判 done/failed）
     try:
-        active_orders = (
-            db.list_secret_orders(status="active")
-            + db.list_secret_orders(status="pending_review")
-        )[:20]
+        active_orders = _select_secret_orders_for_sim(db)  # pending_review 全进，不被 active 饿死（#108）
         # 分组承载、剥英文 status：simulator/extractor 收到的密令零英文 enum（#48）。
         secret_orders_for_sim = group_secret_orders_for_sim(active_orders)
         n_active = len(secret_orders_for_sim["在办"])
