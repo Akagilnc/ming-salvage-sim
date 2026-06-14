@@ -2580,7 +2580,8 @@ select:focus-visible {
 
 .chat-full-grid {
   display: grid;
-  grid-template-columns: minmax(210px, 260px) minmax(0, 1fr);
+  /* 左侧立绘栏加宽（260→400），立绘更大、更贴底，右侧对话栏不再过空（用户 2026-06-15）。 */
+  grid-template-columns: minmax(300px, 400px) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   gap: 12px;
   min-height: 0;
