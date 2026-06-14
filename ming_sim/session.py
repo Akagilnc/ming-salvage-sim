@@ -167,9 +167,11 @@ def _find_existing_minister(content: GameContent, name: str, db: "GameDB") -> Op
         if c.office_type != "后宫" and c.status != "candidate" and db.resolve_power_id(c) == "ming":
             return name
     for key, c in content.characters.items():
-        if c.office_type == "后宫" or c.status == "candidate" or db.resolve_power_id(c) != "ming":
+        # 先 in-memory 短路（office/candidate/别名命中），别名命中才查库 resolve_power_id——
+        # 避免对每个人物都打一次 DB（N+1，gemini PR#130 R1 medium）。
+        if c.office_type == "后宫" or c.status == "candidate":
             continue
-        if name in (c.aliases or []):
+        if name in (c.aliases or []) and db.resolve_power_id(c) == "ming":
             return key
     return None
 
@@ -516,12 +518,13 @@ class GameSession:
         # 状态以 DB 为准（历史卒/登场/罢黜均落 DB）；offstage 未登场者不进名单。
         views: List[MinisterView] = []
         for c in self.content.characters.values():
+            # 先 in-memory 短路（宗藩），再查库——避免对宗藩也打一次 resolve_power_id DB 查询
+            # （gemini PR#130 R1 medium）。宗藩（就藩宗室）非朝堂命官，同各 roster 排除（PR#121，cmr R5）。
+            if is_vassal_prince(c):
+                continue
             # DB 权威 power_id：招抚归明者(DB翻ming/content仍旧势力)须入召见名册，否则可召(can_summon
             # 认 DB)却不在册，两端不一致（#125；与 can_summon/court_roster 同口径）。
             if self.db.resolve_power_id(c) != "ming":
-                continue
-            # 宗藩（就藩宗室）非朝堂命官，召见阶段名册同各 roster 排除（PR#121，cmr R5）。
-            if is_vassal_prince(c):
                 continue
             status, _ = self.db.get_character_status(c.name)
             if status == "offstage":
