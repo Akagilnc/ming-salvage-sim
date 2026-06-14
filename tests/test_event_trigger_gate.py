@@ -59,3 +59,24 @@ def test_ungated_historical_event_unchanged(game):
             "无前提门的历史事件应保持纯日历窗口行为不变"
     finally:
         content.events.remove(ev)
+
+
+def test_gate_passed_tolerates_none(game):
+    # PR#107 R1（gemini medium）：trigger_gate=None（content JSON 显式 null）传进 _gate_passed
+    # 不应 None.items() AttributeError 崩候选收集；None 视同空门、恒过。
+    db, state, content = game
+    from ming_sim.issues import _gate_passed
+    assert _gate_passed(None, state.metrics, db) is True
+
+
+def test_historical_event_none_gate_no_crash(game):
+    db, state, content = game
+    issues.bind_content(content)
+    ev = _hist_event("__test_none_gate__", {})
+    ev.trigger_gate = None  # 模拟 content JSON 显式 null
+    content.events.append(ev)
+    try:
+        cands = issues.gather_candidate_events(state, db)  # 不应 AttributeError
+        assert any(c.id == "__test_none_gate__" for c in cands), "None 门视同空门、恒过进候选"
+    finally:
+        content.events.remove(ev)

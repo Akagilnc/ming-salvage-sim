@@ -277,9 +277,10 @@ def _eval_gate_key_str(key: str, db: GameDB) -> Optional[str]:
 
 def _gate_passed(gate: Dict[str, str], metrics: Dict[str, int], db: GameDB) -> bool:
     """trigger_gate 全部条件满足才返回 True。条件形如 '<=240'（数值）或 '==ming'（文本相等）。
-    key 形式见 _eval_gate_key。
+    key 形式见 _eval_gate_key。gate=None（content JSON 显式 null）视同空门、恒过，不 .items()
+    AttributeError 崩候选收集（PR#107 gemini；集中守 None，seed/历史两分支共用此函数同得保护）。
     """
-    for key, cond in gate.items():
+    for key, cond in (gate or {}).items():
         cond = cond.strip()
         # 文本相等：==<word> / !=<word>（RHS 非纯数字）
         sm = re.match(r"^(==|!=)\s*(.+)$", cond)
@@ -809,13 +810,25 @@ _FISCAL_RECURRING_PHRASES = (
 )
 
 
+def _nonempty_list(v: object) -> bool:
+    return isinstance(v, list) and len(v) > 0
+
+
+def _nonempty_dict(v: object) -> bool:
+    return isinstance(v, dict) and len(v) > 0
+
+
 def _has_economy_entry(d: object) -> bool:
     """是否含「flows 会真正立账」的月度 economy 项：account∈(国库,内库) + delta 经 int() 强转非零
     ——与 flows._apply_economy_list 同口径（它只对 国库/内库 立账、`int(delta or 0)` 强转、跳过
-    零额/非数/它账）。空壳/它账/零额/非数不算配对，数字串 delta 同 flows 认账（CMR codex+claude）。"""
+    零额/非数/它账）。空壳/它账/零额/非数不算配对，数字串 delta 同 flows 认账（CMR codex+claude）。
+    economy 非 list（畸形 JSON：int/str/bool）→ 安全返 False，不 TypeError 崩结算（PR#107 gemini）。"""
     if not isinstance(d, dict):
         return False
-    for item in d.get("economy") or []:
+    eco = d.get("economy")
+    if not isinstance(eco, list):
+        return False
+    for item in eco:
         if not isinstance(item, dict):
             continue
         if str(item.get("account") or "") not in ("国库", "内库"):
@@ -845,8 +858,13 @@ def _initiative_resolve_pairing_warnings(
     needs_army = any(p in blob for p in _MILITARY_RAISE_PHRASES)
     needs_office = any(p in blob for p in _MILITARY_MOVE_PHRASES)
     if needs_army or needs_office:
-        has_army = bool(effect.get("new_armies")) or bool(effect.get("army_delta"))
-        has_office = bool(effect.get("人物变更") or effect.get("character_status_changes"))
+        # 形对：_apply_issue_entities 只落 list 的 new_armies/人物变更/character_status_changes、
+        # dict 的 army_delta；畸形容器（字符串/错类型）不算真配对，不该消音告警（PR#107 codex）。
+        has_army = _nonempty_list(effect.get("new_armies")) or _nonempty_dict(effect.get("army_delta"))
+        has_office = (
+            _nonempty_list(effect.get("人物变更"))
+            or _nonempty_list(effect.get("character_status_changes"))
+        )
         if needs_army and not has_army:
             warns.append(
                 f"军事国策「{str(title)[:16]}」结案无 new_armies 配对（练军/募营疑未建军籍，#46）"
