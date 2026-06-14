@@ -122,7 +122,7 @@ def _settle_capturing_parallel(game, monkeypatch, cfg):
 
 
 def test_settle_passes_parallel_for_cli_backend(game, monkeypatch):
-    """decree 按 cli_backend_active 决定 parallel：CLI 后端（codex）→ True。"""
+    """decree 按 cli_backend_parallel_safe 决定 parallel：codex CLI 后端 → True。"""
     from ming_sim.models import LLMConfig
     cli_cfg = LLMConfig(api_key="cli-backend", base_url="", model="api-fallback",
                         channel="cli", cli_runner="codex", cli_model="gpt-5.5", cli_timeout_seconds=240)
@@ -143,6 +143,34 @@ def test_settle_serial_for_non_codex_cli_runner(game, monkeypatch):
     agy_cfg = LLMConfig(api_key="cli-backend", base_url="", model="api-fallback",
                         channel="cli", cli_runner="agy", cli_model="", cli_timeout_seconds=240)
     assert _settle_capturing_parallel(game, monkeypatch, agy_cfg) is False
+
+
+def test_cli_backend_parallel_safe_resolution(monkeypatch):
+    """门控 cli_backend_parallel_safe 与 create_chat_model 同口径解 runner（cmr #83 codex R3）：
+    codex（显式 cli / legacy env / cli channel 无 runner+env）→ True；agy/claude/api/形态1 → False。"""
+    import ming_sim.cli_backend as cb
+    from ming_sim.models import LLMConfig
+
+    def cfg(**kw):
+        kw.setdefault("api_key", "cli-backend")
+        kw.setdefault("base_url", "")
+        kw.setdefault("model", "m")
+        return LLMConfig(**kw)
+
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    # 显式 cli channel
+    assert cb.cli_backend_parallel_safe(cfg(channel="cli", cli_runner="codex")) is True
+    assert cb.cli_backend_parallel_safe(cfg(channel="cli", cli_runner="agy")) is False
+    assert cb.cli_backend_parallel_safe(cfg(channel="cli", cli_runner="claude")) is False
+    # api / 形态1（空 channel 无 env）
+    assert cb.cli_backend_parallel_safe(cfg(channel="api", base_url="https://x/v1", model="gpt")) is False
+    assert cb.cli_backend_parallel_safe(cfg(channel="")) is False
+    # legacy env（空 channel + 旧 env）——须与 create_chat_model 一致
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
+    assert cb.cli_backend_parallel_safe(cfg(channel="")) is True            # legacy env=codex → 并行
+    assert cb.cli_backend_parallel_safe(cfg(channel="cli")) is True         # cli channel 无 runner → env codex
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
+    assert cb.cli_backend_parallel_safe(cfg(channel="")) is False           # legacy env=agy → 串行
 
 
 def test_parallel_extract_propagates_extractor_error(game, monkeypatch):
