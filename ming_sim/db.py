@@ -130,12 +130,13 @@ def infer_office_type_from_office(
     表查不中且 CLI 后端在场再交 LLM 判（生造官名），都不中落『待铨』。
     取代旧版那串临时正则词表（脆、漏）。外藩(后金/蒙古/朝鲜)按 power_id≠ming 另处理，不入此路。
 
-    use_llm=False：跳过 LLM 兜底。表查不中时，非朝堂类 current_type（外臣/宗藩/边镇/地方/
-    未仕…）原样保留；朝堂六部类(COURT_OFFICE_TYPES)或空 kind 仍落「待铨」——与无 CLI 后端
-    路径完全同末态（不是把 current_type 无条件信回去）。静态名册接档（seed_static_data /
-    _sync_offices_from_db_impl）专用：101 人里 ~28 个非明廷官名表查不中，其 content 既定
-    office_type 绝大多数为非朝堂类、即权威，逐人现拉 codex 判属纯浪费（开局慢 5 分钟根因）
-    且可能被分类器从明廷类型里硬选一个污染。动态生造官名（任免/issues）仍走默认 use_llm=True。"""
+    use_llm=False：跳过 LLM 兜底。表查不中时直接信传入的 current_type（content/DB 既定值，
+    含朝堂六部类）原样保留，仅空 kind 落「待铨」。静态名册接档（seed_static_data）与每回合
+    DB sync（_sync_offices_from_db_impl）专用：content/DB 的 office_type 即权威，逐人现拉
+    codex 判属纯浪费（开局慢 5 分钟根因），且若沿用动态路径的「朝堂类表查不中→待铨」降级，
+    会把动态任命已落库的朝堂类 office_type 在每回合 sync 时悄悄降级、内存与 DB 不一致
+    （cmr R2 codex）。动态生造官名（任免/issues）仍走默认 use_llm=True（保留 LLM 兜底 +
+    朝堂类无确证则落待铨的谨慎语义）。"""
     kind = (current_type or "").strip()
     if kind == "后宫":
         return kind
@@ -145,10 +146,13 @@ def infer_office_type_from_office(
     t = _office_type_from_table(text)
     if t:
         return t
-    if use_llm:
-        t = _office_type_via_llm(text, llm_config)
-        if t:
-            return t
+    if not use_llm:
+        # 静态 seed / DB sync：content/DB 既定 office_type 即权威，表查不中原样保留(含朝堂类)，
+        # 不降级——否则每回合 sync 把动态任命落库的朝堂类 office_type 悄悄降级成待铨(cmr R2)。
+        return kind or "待铨"
+    t = _office_type_via_llm(text, llm_config)
+    if t:
+        return t
     return "待铨" if kind in COURT_OFFICE_TYPES or not kind else kind
 
 
