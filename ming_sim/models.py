@@ -5,11 +5,27 @@ CourtContext 的 state/db 注解用字符串前向引用，避免 import db.py�
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List
 
 from ming_sim.constants import ECONOMY_ACCOUNTS
+
+
+def loads_effect_dict(raw: object) -> Dict[str, object]:
+    """读 effect_on_resolve / effect_on_fail / ongoing_effects 等存库 effect-JSON 的单一入口（#117）：
+    - 已是 dict（调用方传解析过的对象）→ 原样返回；
+    - JSON 字符串 → 解析；解析失败或真值非 dict（脏库/历史写路径/标量）→ {}。
+    所有 effect-列读取统一经此，下游 .get/.items 永不在非 dict 上崩回合。放 models（leaf，只依赖 json）
+    避免 db↔issues 循环——db / issues / simulation / web_app 都从这里取（cmr #117 R4）。"""
+    if isinstance(raw, dict):
+        return raw
+    try:
+        v = json.loads(raw or "{}")
+    except (ValueError, TypeError):
+        return {}
+    return v if isinstance(v, dict) else {}
 
 
 class TurnPhase(str, Enum):
