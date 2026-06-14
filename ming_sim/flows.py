@@ -197,7 +197,11 @@ def _apply_metric_dict(
     # 传 db 时，民心/皇威 增量先过帝国修正 %（base>=0 ×(1+net/100)，base<0 ×(1-net/100)），再夹 cap。
     mods = db.legacy_modifiers(state) if db is not None else {}
     applied: Dict[str, int] = {}
-    for key, val in (metric_delta or {}).items():
+    # isinstance 守卫：issue-effect 路径（enrich/stored，未过 validate_delta_shape）的 metrics 可能
+    # 被 LLM 给成真值非 dict，`or {}` 兜不住→.items() 抛 AttributeError 崩回合（#117 同类，顶层 delta
+    # 已由 validate_delta_shape 保 dict，此守卫只对未验证的 issue-effect 调用点生效、不误伤）。
+    metric_delta = metric_delta if isinstance(metric_delta, dict) else {}
+    for key, val in metric_delta.items():
         if key not in ISSUE_METRIC_KEYS:
             continue
         try:
@@ -290,6 +294,8 @@ def _apply_economy_list(
     # 非 list（true/数字/字符串），`economy or []` 兜不住→`for move in 它`抛 TypeError 崩结算（#117
     # 同 bug 类，与 _apply_issue_buildings 的 list 守卫一致）。此处是 economy 应用 choke，护全部调用点。
     for move in (economy if isinstance(economy, list) else []):
+        if not isinstance(move, dict):  # list 内混非 dict 项（[1,"x"]）也守，免 move.get 抛 AttributeError（#117 codex）
+            continue
         account = str(move.get("account") or "")
         if account not in ("国库", "内库"):
             continue
@@ -559,7 +565,8 @@ def _apply_faction_dict(db: GameDB, faction_delta: Dict[str, object]) -> Dict[st
     - 新格式：{"阉党": {"satisfaction": -10, "leverage": -15}}
     """
     cleaned: Dict[str, object] = {}
-    for key, val in (faction_delta or {}).items():
+    faction_delta = faction_delta if isinstance(faction_delta, dict) else {}  # #117 同类：真值非 dict 守卫
+    for key, val in faction_delta.items():
         if isinstance(val, dict):
             entry: Dict[str, int] = {}
             for fname in ("satisfaction", "leverage"):
@@ -591,7 +598,8 @@ def _apply_class_dict(db: GameDB, class_delta: Dict[str, object]) -> Dict[str, D
     key 不带 @ 默认全国汇总。字段只接 satisfaction / leverage 增量。
     """
     cleaned: Dict[str, Dict[str, int]] = {}
-    for key, fields in (class_delta or {}).items():
+    class_delta = class_delta if isinstance(class_delta, dict) else {}  # #117 同类：真值非 dict 守卫
+    for key, fields in class_delta.items():
         if not isinstance(fields, dict):
             continue
         entry: Dict[str, int] = {}
