@@ -5117,7 +5117,9 @@ class GameDB:
     def save_resolve_context(
         self, turn: int, decree_text: str, narrative: str,
         simulator_payload: Dict[str, object],
-        secret_orders: Optional[List[Dict[str, object]]] = None,
+        # #48：分组承载 dict {在办,待核议} 为正形；运行期仍兼容旧档/占位的 list（json 落库不挑类型），
+        # 故注解取两者并集，不窄化成 dict-only（否则误判恢复路 list 调用为类型错）。
+        secret_orders: Optional[Dict[str, object] | List[Dict[str, object]]] = None,
         relevant_memories: Optional[List[Dict[str, object]]] = None,
         extracted: Optional[Dict[str, object]] = None,
     ) -> None:
@@ -5144,7 +5146,9 @@ class GameDB:
             (
                 int(turn), decree_text, narrative,
                 json.dumps(simulator_payload or {}, ensure_ascii=False),
-                json.dumps(secret_orders or [], ensure_ascii=False),
+                # #48：分组承载是 dict；空 dict 也按 dict 存（`or []` 会把 {} 退成 []，
+                # 与 Dict 契约不符）。显式传 list（旧档/占位）仍原样存，None→{}。
+                json.dumps(secret_orders if secret_orders is not None else {}, ensure_ascii=False),
                 json.dumps(relevant_memories or [], ensure_ascii=False),
                 json.dumps(extracted if extracted is not None else {}, ensure_ascii=False),
                 1 if extracted is not None else 0,
