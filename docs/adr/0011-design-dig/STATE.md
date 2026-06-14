@@ -38,7 +38,8 @@
 
 ## Roadmap
 1. ~~挑资源 menu~~（甲）✅ **方向已挑**（4 recommend 认 + 带宽=批红积压暂定）。**但全是"方向"非"HOW"**——三维度至此都只到"方向/决定"层，机制/schema 设计是下一层。用户明确感知："都不知道怎么做"。
-2. **收口血债棘轮 schema**（乙）🔵 **schema 草案出炉**（design fan-out 9-agent，详见 [dig-4](dig-4-blooddebt-schema.md)）：方案1 极简逐派列骨架 + 嫁接方案2 审计账，攻击驱动选型。第一刀=factions 加3列(blood_debt/wariness/edict_overdraw)+centrifuge_log；provisional/轴矩阵/中旨闸 defer 第二刀。合法性失称度算式落数(同抄阉党血债差8.7倍=教学曲线)。净负vs棘轮=max(floor=α×血债, dynamic)血债当冻土失望/lev当薄冰。**5 个 fork 待用户拍**(粒度scalar/provisional defer/合法性算法/fungible H6/7派外语义)。
+2. **收口血债棘轮 schema**（乙）🟢 **schema 草案 + 用户拍板收敛**（详见 [dig-4](dig-4-blooddebt-schema.md) 末「用户拍板收敛」节）：fan-out 出骨架(方案1+审计账+净负冻土/薄冰)，用户**覆盖了 5 推荐**——①粒度=**42 格逐派×轴**(喂叙事，非 scalar；决定3 矩阵从defer变现在填) ②"合法性"反了→改名**失称度**(罚配不配罪) ③中旨**按历史·钱没了就是没了**(=牙非缺陷，溶解 fork4 escrow；跟四层票拟一起做) ④**罪与罚账第一刀就建**(轻、像42为叙事存状态，非查案系统；罪罚判定回归直觉) ⑤**seed-guilt 开局预装罪**(人人有点脏阉党最多；白送悲剧弧+厂卫致盲扣) ⑥信息=大面公知/具体在相关人手(actor-mediated非搜证) ⑦血债=朝堂7派专属。**北极星**=东林查隐田90分体验([[playthrough-north-star-90fen]])。
+   - **待办**：谁有罪=**查史实**(seed 预装数据)；后期大臣再犯罪=后话；provisional/中旨闸仍 defer 第二刀。
 3. fold 决定 8/9 + 细化 → ADR 0011 + 应用 parked CMR r2 修。
 4. 承重落地洞 → sub-ADR。
 5. 恢复 CMR 走完，再让 0011 落 main。
