@@ -5080,7 +5080,7 @@ class GameDB:
     def save_resolve_context(
         self, turn: int, decree_text: str, narrative: str,
         simulator_payload: Dict[str, object],
-        secret_orders: Optional[List[Dict[str, object]]] = None,
+        secret_orders: Optional[Dict[str, object]] = None,  # #48：分组承载 {在办,待核议}（旧档为 list，json 落库不挑类型）
         relevant_memories: Optional[List[Dict[str, object]]] = None,
         extracted: Optional[Dict[str, object]] = None,
     ) -> None:
