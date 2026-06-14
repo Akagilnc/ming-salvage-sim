@@ -20,7 +20,7 @@
 - **高 leverage**(仅既得轴):既得 ceiling=max(72, leverage_target)——lev92南直东林士绅顶85、lev22闲散宗藩塌50。从 classes/powers 结构化 leverage 读,非LLM。
 
 ## ⭐ 出路恒可达（硬不变式，已证明无绝对墙）
-**命门度挂 `axis-tag(私意 vs 坐实)`、不挂目标身份。** 三步:① 走程序坐实→`reason_code∈{依律/谋逆坐实/贪墨坐实}`(机读枚举非措辞,堵H5);② 轴翻转:`if 依律翻轴: axis="依律处置"`——不论原axis祖制95/华夷85/既得72+14,**reason_code=依律一律重路由到非命门「依律处置」行(base~35)**(换行查非改值,命门tag触发条件含reason_code≠依律→坐实时整体不命中、modifier归零);③ effective ceiling 塌。同一福王:naive私意抄家=既得+宗室≈91 → 查实通寇依律除国=35。**ceiling 表里没有任何(动作,目标)组合高到坐实也永远命门。** 定逆案262人=走程序把清算做成依律惩逆。
+**命门度挂 `axis-tag(私意 vs 坐实)`、不挂目标身份。** 三步:① 走程序坐实→`reason_code∈{依律/谋逆坐实/贪墨坐实}`(机读枚举非措辞,堵H5);② 轴翻转:`if 依律翻轴: axis="依律处置"`——不论原axis祖制95/既得72+14,**reason_code=依律一律重路由到非命门「依律处置」行(base~35)**（⚠️ 华夷85 除外:议和无罪可坐实=无翻轴路,走外压杠杆出路非翻轴,见 0011-4 D4-4(b) 收口）(换行查非改值,命门tag触发条件含reason_code≠依律→坐实时整体不命中、modifier归零);③ effective ceiling 塌。同一福王:naive私意抄家=既得+宗室≈91 → 查实通寇依律除国=35。**ceiling 表里没有任何命门题永远封死(有罪可坐实者走翻轴、无罪的华夷议和走外压杠杆,两机制覆盖全部命门轴;见 0011-4 D4-4)。** 定逆案262人=走程序把清算做成依律惩逆。
 
 ## 命门=合法性 FLOOR（ground 关键洞，补强 dig-8 resolve）
 命门 ceiling 不只是 min() cap,是一条**合法性硬底**:`per_layer_resistance = max(α×血债, 命门合法性floor, min(ceiling, dynamic))`。命门题即便各派dynamic低(没人激烈反对),合法性floor仍把阻力托到ceiling——国本之争原型(文官未必个个激烈,祖制底线集体托95,15年颁不动)。**dig-8 resolve 公式据此加 命门合法性floor 臂。**
