@@ -419,12 +419,16 @@ def _character_power_id(character: Character, db) -> str:
 
 
 def visible_in_court(character: Character, db) -> bool:
-    """朝堂大臣列表准入：ming 治下、非后宫，且 DB 权威状态非 offstage（离场/未登场不入列）。
+    """朝堂大臣列表准入：ming 治下、非后宫、非宗藩，且 DB 权威状态非 offstage（离场/未登场不入列）。
 
     状态与势力一律以 DB 为准（与 public_character 同源）——内存 c.status 在 auto-debut
     等路径（set_character_status 只写 DB、不回写内存）会 stale，不能用作过滤依据（见 #104）。
+
+    宗藩（就藩藩王，office_type=宗藩）不是可召见/可任免的朝堂官员，排除出朝堂+任免列表
+    （用户 2026-06-14 拍）。藩王在册数据照旧留 DB，事件按名引用不受影响；office_type 由
+    seed 走 use_llm=False 信 content 既定值=宗藩（PR#118 后确定可靠）。
     """
-    if character.office_type == "后宫":
+    if character.office_type in ("后宫", "宗藩"):
         return False
     if db.get_character_status(character.name)[0] == "offstage":
         return False
