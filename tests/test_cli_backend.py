@@ -699,6 +699,17 @@ def test_loads_lenient_preserves_url_in_string():
     assert cb._loads_lenient('{"url":"http://x.com//y", "n":1,}') == {"url": "http://x.com//y", "n": 1}
 
 
+def test_loads_lenient_array_trailing_comma():
+    """数组尾逗号 ,] 也清掉（覆盖尾逗号判定的 ] 臂，#6 cmr R1）。"""
+    assert cb._loads_lenient('{"xs":[1, 2, ],}') == {"xs": [1, 2]}
+
+
+def test_loads_lenient_escaped_quote_then_slashes_in_string():
+    """转义引号 \\\" 不结束字符串：其后仍在串内的 // 须保留，不被当注释剥
+    （覆盖转义态机 \\\" / \\\\ 臂，#6 cmr R1）。"""
+    assert cb._loads_lenient('{"a":"he said \\"hi\\" //x", "n":1,}') == {"a": 'he said "hi" //x', "n": 1}
+
+
 # ── _run_agy：warm + retry×4（auth race 缓解，wiki 核心 workaround）──
 
 class _Proc:
