@@ -252,7 +252,7 @@ def build_simulator_payload(
     deaths_this_turn: Optional[List[Dict[str, str]]] = None,
     debuts_this_turn: Optional[List[Dict[str, str]]] = None,
     relevant_memories: Optional[List[Dict[str, object]]] = None,
-    secret_orders: Optional[List[Dict[str, object]]] = None,
+    secret_orders: Optional[Dict[str, object]] = None,
 ) -> Dict[str, object]:
     active = db.list_active_issues()
     issues_payload = [
@@ -324,10 +324,10 @@ def build_simulator_payload(
         "deaths_this_turn": deaths_this_turn or [],
         "debuts_this_turn": debuts_this_turn or [],
         "relevant_memories": relevant_memories or [],
-        "secret_orders": secret_orders or [],
+        "secret_orders": secret_orders or {},
         # HITL：本回合 simulator 至少应产出的重大决策点数（全局玩法设置，0=不强制）。
         "hitl_min_decisions": _load_hitl_min_decisions(),
-        "data_note": "盘面表（buildings/court_roster/armies/regions）在本输入的开头以 TSV 文本块给出（首行列名、tab 分隔、每行一条记录），不在本 JSON 内；本 JSON 只含其余字段（含 powers_brief/factions_brief/classes_brief 叙述串、active_issues 等）。secret_orders 为皇帝密令列表，独立于 relevant_memories，每条含 id/minister_name/title/content/status/result 字段。",
+        "data_note": "盘面表（buildings/court_roster/armies/regions）在本输入的开头以 TSV 文本块给出（首行列名、tab 分隔、每行一条记录），不在本 JSON 内；本 JSON 只含其余字段（含 powers_brief/factions_brief/classes_brief 叙述串、active_issues 等）。secret_orders 为皇帝密令分组对象（两组：在办=承办中、待核议=待本回合核议裁决），独立于 relevant_memories；每组条目含 id/minister_name/title/content/turn_issued/due_turn/progress/sim_note。",
     }
 
 
@@ -342,7 +342,7 @@ def simulate_season_with_agno(
     on_thinking: Optional[Callable[[str], None]] = None,
     on_text: Optional[Callable[[str], None]] = None,
     relevant_memories: Optional[List[Dict[str, object]]] = None,
-    secret_orders: Optional[List[Dict[str, object]]] = None,
+    secret_orders: Optional[Dict[str, object]] = None,
 ) -> str:
     """推演 agent: 全量盘面塞 user payload，无 tool。"""
     narrative, _payload = simulate_season_with_payload(
@@ -372,7 +372,7 @@ def simulate_season_with_payload(
     on_thinking: Optional[Callable[[str], None]] = None,
     on_text: Optional[Callable[[str], None]] = None,
     relevant_memories: Optional[List[Dict[str, object]]] = None,
-    secret_orders: Optional[List[Dict[str, object]]] = None,
+    secret_orders: Optional[Dict[str, object]] = None,
     simulator_payload: Optional[Dict[str, object]] = None,
 ) -> tuple[str, Dict[str, object]]:
     """推演 agent，同时返回本次推演 user payload，供 extractor 复用缓存前缀。"""
@@ -438,7 +438,7 @@ def _extractor_context_payload(
     narrative: str,
     decree_text: str,
     relevant_memories: Optional[List[Dict[str, object]]] = None,
-    secret_orders: Optional[List[Dict[str, object]]] = None,
+    secret_orders: Optional[Dict[str, object]] = None,
 ) -> Dict[str, object]:
     active = db.list_active_issues()
 
@@ -532,7 +532,7 @@ def _extractor_context_payload(
         "power_ids": [str(r["id"]) for r in db.conn.execute("SELECT id FROM powers").fetchall()],
         "fiscal_config": db.get_fiscal_config(),
         "relevant_memories": relevant_memories or [],
-        "secret_orders": secret_orders or [],
+        "secret_orders": secret_orders or {},
         "_format_note": "offstage_ministers（及未剔除时的盘面表）为 header+二维数组（cols 列名 + rows 数据）。",
     }
 
@@ -588,7 +588,7 @@ def build_extractor_shared_context(
     narrative: str,
     decree_text: str,
     relevant_memories: Optional[List[Dict[str, object]]] = None,
-    secret_orders: Optional[List[Dict[str, object]]] = None,
+    secret_orders: Optional[Dict[str, object]] = None,
 ) -> Dict[str, object]:
     """供模块 extractor 放入 system 前缀的共同结算补充上下文。
 
@@ -882,7 +882,7 @@ def extract_scores_by_modules_with_agno(
     decree_text: str = "",
     sanitizer: Optional[Agent] = None,
     relevant_memories: Optional[List[Dict[str, object]]] = None,
-    secret_orders: Optional[List[Dict[str, object]]] = None,
+    secret_orders: Optional[Dict[str, object]] = None,
 ) -> tuple[Dict[str, object], str, str]:
     """四模块结算 extractor：内政财政、军务外势、局势、人事密令。"""
     base_payload = _extractor_context_payload(

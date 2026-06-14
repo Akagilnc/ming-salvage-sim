@@ -34,7 +34,7 @@
      （driver 路无 ready=0 占位，pre_settle 后直接存 ready=1，见 8.5）
 
   4. chapter_memories = db.list_chapter_memories(upto_turn=state.turn, recent=6)
-     secret_orders = db.list_secret_orders(status in (active, pending_review))
+     secret_orders = group_secret_orders_for_sim(active + pending_review 行)  # 分中文键两组{在办,待核议}、剥英文 status（#48 防 enum 泄漏邸报）
      previous_summary = db.previous_turn_summary(state.turn)
 
   5. [我产邸报 narrative]  ← 季末讲官身份，照 season_simulator.md 的章法
