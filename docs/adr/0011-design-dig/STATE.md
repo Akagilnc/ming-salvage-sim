@@ -12,6 +12,21 @@
 > **待办散件**：ceiling 表已设计(dig-9)，精确值随矩阵α/β playtest调；高起潜剔出阉党(characters.json)；叛变需补 faction-UPDATE 写路径；issues "停滞"语义实现端确认。
 > **会话存档**：gstack checkpoint `20260614-215230-...-substrate-complete.md`(本次完整态)。
 
+## 🚀 全量收口执行进度（2026-06-15 自治 run，承 /goal）
+
+> **目标（用户 /goal 2026-06-15）**：0011 整条线收口 → **走完流程（本地 cmr + 线上三 bot）→ 用户授权 merge** → 接 **M0 残留**（财政 #73 契约 → 重构）做到「不得不让用户拍」为止。**零待拍设计点**（kinship max(1) 2026-06-15 已 settle）。
+>
+> | T | sub-ADR | author | 内部红队 | 本地 cmr | commit |
+> |---|---|---|---|---|---|
+> | T1 | 母 ADR 补全（决定8/9 + 1/3 细化 + roadmap） | ✅ | n/a（T5 全套 cmr） | T5 | `c8918e1` |
+> | T2 | 0011-3 价值矩阵 | ✅ | ✅ 16-agent 4P1/6P2/6P3 全修 | ⏳ | `8ffc2a3` |
+> | T3 | 0011-4 ceiling + seed | ✅ | 🔄 `wqteza478` in-flight | ⏳ | `3df1314` |
+> | T4 | 0011-5 四层票拟 resolve | ✅ | 🔄 `wc5c1k0gd` in-flight | ⏳ | 待（红队 fix 后） |
+> | T5 | 母 ADR 全套 cmr（9 决定 + 引各 sub-ADR） | — | — | ⏳ | — |
+>
+> **下一步链**：两红队 fix → commit → **cmr 阶段**（0011-3/4/5 走 `ak-cross-m-review` doc 模式 1+1+1 到 3/3 concur，每轮 fix 独立 commit）→ T5 母 ADR 全套 cmr → 整条线 ship-ready → **开 PR（base main）→ 线上三 bot 收敛 → merge**（授权；Sourcery 若 SKIP 走 --admin，见 memory）→ **M0 残留**（#73 起）。
+> **跨文件一致性已锁**：符号路由真源=0011-2（0011-3 D3-8 引）；离心公式真源=0011-3（0011-2 引）；命门 floor+ceiling 真源=0011-4（0011-2 D2-7 / 0011-5 D5-4 引）；seed 真源=0011-4 B；议和出路=外压 dynamic 臂（0011-3 D3-4 / 0011-4 D4-4b / 0011-5 D5-4）。
+
 ## ⚠️ 重验日志 2026-06-14（隔壁开发推进后，对承重 claim 重新 query 实际系统）
 触发：用户问"隔壁开发推进了，你之前说的没完成的东西还靠谱不"。结果：**4 条承重判断全部仍成立，2 条过时（都不致命）**。
 
