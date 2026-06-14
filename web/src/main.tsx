@@ -298,7 +298,9 @@ function App() {
     return powerId ? { ...node, power: powerById.get(powerId) } : node;
   });
   const selectedNode = mapNodes.find((node) => node.id === selectedNodeId) || mapNodes[0];
-  const ministers = filterMinisters(state.ministers, ministerGroup);
+  const ministers = ministerGroup === "在野"
+    ? (state.talent_pool || [])  // 在野人才池（offstage 罢居前臣，#120）单独走 talent_pool
+    : filterMinisters(state.ministers, ministerGroup);
   const consorts = filterConsorts(state.consorts || [], haremGroup);
   const allCharacters = [...state.ministers, ...(state.consorts || [])];
   const activeMinister = selectedMinister
