@@ -408,7 +408,10 @@ export function LLMConfigTab() {
       // 用服务端归一后的响应同步本地通道/CLI 状态,避免与 info 漂移(Sourcery R1)。
       setChannel(data.channel === "cli" ? "cli" : "api");
       setCliRunner(data.cli_runner || "agy");
-      setCliModel(data.cli_model || "");
+      // cliModel 不从 data.cli_model 回灌：那是 resolved 值（空/__keep__ 会被兜底成
+      // 默认名或 cur 的已解析值），灌回会让策展下拉把默认/留空误判成「其他(手填)」。
+      // 本地 cliModel 即用户刚提交且通过连通性校验的原值（raw），保留它即可——与加载端
+      // 读 persisted.cli_model、menuPage 读 cli_model_saved 一致同走 raw（CMR R3 codex+gemini）。
       setCliTimeout(String(data.cli_timeout_seconds || CLI_DEFAULT_TIMEOUT));
       setApiKey("");
       setAdvancedApiKey("");
