@@ -1,7 +1,8 @@
 import React from "react";
 import { Loader2, Trash2 } from "lucide-react";
 import { api, normalizeApiError } from "../api";
-import type { MenuCampaign, MenuStatus } from "../types";
+import type { CliModelChoices, MenuCampaign, MenuStatus } from "../types";
+import { CliModelField } from "./cliModelField";
 
 export function MenuPage({
   status,
@@ -227,6 +228,7 @@ export function ApiSettingsModal({
     channel?: "api" | "cli";
     cli_runner?: string;
     cli_model?: string;
+    cli_model_choices?: CliModelChoices;
     cli_timeout_seconds?: number;
   };
   onClose: () => void;
@@ -303,15 +305,27 @@ export function ApiSettingsModal({
           <>
             <label>
               CLI Runner
-              <select value={cliRunner} onChange={(e) => setCliRunner(e.target.value)}>
+              <select
+                value={cliRunner}
+                onChange={(e) => {
+                  setCliRunner(e.target.value);
+                  setCliModel("");  // 换 runner 归零到默认档，避免旧模型漏进新 runner
+                }}
+              >
                 <option value="agy">agy（Gemini）</option>
                 <option value="codex">codex</option>
                 <option value="claude">claude</option>
               </select>
             </label>
             <label>
-              CLI Model <small className="menu-hint">（留空=runner 默认档）</small>
-              <input value={cliModel} onChange={(e) => setCliModel(e.target.value)} placeholder="gpt-5.5 / 默认" />
+              CLI Model <small className="menu-hint">（默认档=runner 默认；其他=手填任意 id）</small>
+              <CliModelField
+                key={cliRunner}
+                runner={cliRunner}
+                choices={initial?.cli_model_choices}
+                value={cliModel}
+                onChange={setCliModel}
+              />
             </label>
             <label>
               CLI Timeout Seconds
