@@ -97,8 +97,10 @@ def _login_shell_path() -> Optional[str]:
         # 用 printenv 取已导出的 PATH（shell 无关）：不靠 "$PATH" 展开——fish 把 $PATH
         # 当 list、双引号里展开成空格分隔，会破后面的冒号切分（gemini r2 G-R1）。
         # printenv 是外部命令，读到的是登录 shell 导出的 env PATH（恒冒号分隔）。
+        # flag 分开传 -l -i -c：组合形式 -lic 在 fish 等 shell 报错（不支持组合单字符
+        # 选项）；分开形式各 shell 通吃，仍由外层 try 兜底（gemini PR#115 high）。
         proc = _RAW_RUN(
-            [shell, "-lic", 'printf "<<<CMRPATH>>>"; printenv PATH; printf "<<<ENDPATH>>>"'],
+            [shell, "-l", "-i", "-c", 'printf "<<<CMRPATH>>>"; printenv PATH; printf "<<<ENDPATH>>>"'],
             capture_output=True, text=True, timeout=8,
         )
         m = re.search(r"<<<CMRPATH>>>(.*?)<<<ENDPATH>>>", proc.stdout or "", re.S)
