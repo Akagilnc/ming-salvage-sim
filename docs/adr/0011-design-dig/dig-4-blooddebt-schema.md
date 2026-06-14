@@ -23,7 +23,7 @@ centrifuge_log(append-only): id,turn,faction(FK),kind(direct|kinship|overdraw),b
 - crime_weight = CRIME_BY_CODE{获罪削籍70,陷虏50,''=10}；STIGMA{中旨除授,非正途,罗织}→crime=1
 - legitimacy_pct = clamp(10 + 90×mismatch/severity, 10,100)；mismatch=max(0,severity−crime_weight)（失称度版避除零）
 - Δblood_debt(目标派,direct)=round(severity×legitimacy/100)
-- Δwariness(同派旁观,kinship)=max(1,round(severity×legitimacy/100×0.3))（吃折扣不到0）
+- Δwariness(同派旁观,kinship)=round(severity×legitimacy/100×0.3×**k_id**)，k_id=clamp(identity/100,0,1)（**用户 2026-06-14 拍：去掉原 max(1) 下界**，identity≈0 时同党反应真归零=乐见顶包；k_id 由认同度层供，见 [dig-6](dig-6-identity-layer.md)）。⚠️ 此改动动了原"同类防备底单调不减"语义(归零 vs 至少+1)，**随血债 sub-ADR 一起走 CMR 重确认，别当已收敛**。
 - **数值例**：同抄阉党(sev70)：走程序抄真贪(crime70,leg10%)→+7；小罪重罚(crime10,leg87%)→+61；中旨罗织(crime1,leg99%)→+69+透支账。**血债差 8.7倍=决定5"攒合法性别硬来"教学曲线落数。**
 
 ## 4 不变式代码层强制点
