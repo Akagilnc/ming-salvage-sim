@@ -15,6 +15,10 @@ from pydantic import BaseModel
 
 import ming_sim.cli_backend as cb
 
+# runner 定位隔离 fixture（清 _BIN_CACHE + 短路登录 shell）已移到 tests/conftest.py
+# 的全局 autouse `_isolate_cli_bin_resolution`，覆盖本模块 + test_llm_channel_config
+# 等所有走 _resolve_cli_bin 的 runner 测试（cmr r2 codex X-R1：原只在本模块、漏了它）。
+
 
 # ── resolve_minister_actions：拟旨/密令前缀分派（拟旨纯逻辑、无 agy）──
 
@@ -301,6 +305,203 @@ def test_run_claude_accepts_config_model_and_timeout(monkeypatch):
     assert out == "臣领旨。"
     assert captured["cmd"][captured["cmd"].index("--model") + 1] == "claude-configured"
     assert captured["timeout"] == 234
+
+
+# ── _resolve_cli_bin：GUI(.app)启动 PATH 缺 ~/.local/bin 时仍定位已装的 runner ──
+# Finder 双击的 .app 拿不到登录 shell 的 PATH（只继承 launchd 精简 PATH），
+# 裸名 exec "codex" 会 [Errno 2] No such file or directory 即便用户已按官方装好。
+# 解析到绝对路径即治本，分级兜底（登录 shell 是**最后**一级，仅前两级都 miss 才 spawn）：
+#   现有 PATH → 补常见安装目录(不 spawn) → 登录 shell 真实 PATH → 退回原名(不缓存)。
+
+def test_resolve_cli_bin_found_on_current_path(monkeypatch):
+    """当前进程 PATH 就能 which 到 → 直接绝对化，不触发补目录/登录 shell。"""
+    monkeypatch.setattr(cb.shutil, "which",
+                        lambda name, path=None: "/usr/local/bin/codex" if path is None else None)
+    monkeypatch.setattr(cb, "_login_shell_path", lambda: (_ for _ in ()).throw(AssertionError("不该触发")))
+    assert cb._resolve_cli_bin("codex", "codex") == "/usr/local/bin/codex"
+
+
+def test_resolve_cli_bin_found_via_extra_dirs_when_gui_path_bare(monkeypatch):
+    """复现 bug：GUI 精简 PATH 下 which 失败，补常见安装目录后命中；
+    且此时**不触发登录 shell**（登录 shell 是更后一级的兜底，codex X-R1）。"""
+    monkeypatch.setattr(cb, "_EXTRA_BIN_DIRS", ["/fake/extra/bin"])
+    monkeypatch.setattr(cb.os.path, "isdir", lambda p: True)
+    home_bin = "/fake/extra/bin/codex"
+
+    def fake_which(name, path=None):
+        if path is None:
+            return None                       # 当前 PATH 找不到
+        assert "/fake/extra/bin" in path      # D：真断言补了常见安装目录，不只是"第二次 which"
+        return home_bin
+
+    login_calls = {"n": 0}
+
+    def spy_login():
+        login_calls["n"] += 1
+        return None
+    monkeypatch.setattr(cb.shutil, "which", fake_which)
+    monkeypatch.setattr(cb, "_login_shell_path", spy_login)
+    assert cb._resolve_cli_bin("codex", "codex") == home_bin
+    assert login_calls["n"] == 0              # extra-dir 命中时登录 shell 不触发
+
+
+def test_resolve_cli_bin_login_shell_path_last_resort(monkeypatch):
+    """补目录仍找不到 → 问登录 shell 要真实 PATH，再 which。"""
+    cb._BIN_CACHE.clear()
+    found = {}
+
+    def fake_which(name, path=None):
+        if path and "/opt/odd/bin" in path:
+            return "/opt/odd/bin/codex"
+        return None
+    monkeypatch.setattr(cb.shutil, "which", fake_which)
+    monkeypatch.setattr(cb, "_login_shell_path", lambda: "/opt/odd/bin")
+    assert cb._resolve_cli_bin("codex", "codex") == "/opt/odd/bin/codex"
+
+
+def test_resolve_cli_bin_falls_back_to_name_when_truly_missing(monkeypatch):
+    """彻底找不到 → 退回原名，让 subprocess 抛清晰 FileNotFoundError，不静默。"""
+    cb._BIN_CACHE.clear()
+    monkeypatch.setattr(cb.shutil, "which", lambda name, path=None: None)
+    monkeypatch.setattr(cb, "_login_shell_path", lambda: None)
+    assert cb._resolve_cli_bin("codex", "codex") == "codex"
+
+
+def test_resolve_cli_bin_caches(monkeypatch):
+    """解析结果按 runner 名缓存，进程内不重复探测。"""
+    cb._BIN_CACHE.clear()
+    calls = {"n": 0}
+
+    def fake_which(name, path=None):
+        calls["n"] += 1
+        return "/abs/codex"
+    monkeypatch.setattr(cb.shutil, "which", fake_which)
+    monkeypatch.setattr(cb, "_login_shell_path", lambda: None)
+    assert cb._resolve_cli_bin("codex", "codex") == "/abs/codex"
+    assert cb._resolve_cli_bin("codex", "codex") == "/abs/codex"
+    assert calls["n"] == 1                 # 第二次命中缓存，不再 which
+
+
+# ── _login_shell_path：sentinel 包裹的 PATH 解析鲁棒（gemini G-R1）──
+
+def test_login_shell_path_extracts_from_sentinels_despite_noise(monkeypatch):
+    """rc 噪声行(含冒号+斜杠的告警)混进 stdout 时，仍只取 sentinel 内的真实 PATH，
+    不被噪声行误匹配。"""
+    monkeypatch.setattr(cb, "_DISCOVERED_LOGIN_PATH", None)   # 绕过 autouse 的短路
+
+    class _P:
+        stdout = ("Warning: /usr/local/bin not writable: skipping\n"
+                  "<<<CMRPATH>>>/Users/x/.local/bin:/opt/homebrew/bin:/usr/bin<<<ENDPATH>>>\n")
+        stderr = ""
+        returncode = 0
+    monkeypatch.setattr(cb, "_RAW_RUN", lambda *a, **k: _P())
+    assert cb._login_shell_path() == "/Users/x/.local/bin:/opt/homebrew/bin:/usr/bin"
+
+
+def test_login_shell_path_single_dir_not_dropped(monkeypatch):
+    """单目录 PATH(无 os.pathsep) 也能取出——旧 heuristic 因没有分隔符会漏掉。"""
+    monkeypatch.setattr(cb, "_DISCOVERED_LOGIN_PATH", None)
+
+    class _P:
+        stdout = "<<<CMRPATH>>>/usr/bin<<<ENDPATH>>>\n"
+        stderr = ""
+        returncode = 0
+    monkeypatch.setattr(cb, "_RAW_RUN", lambda *a, **k: _P())
+    assert cb._login_shell_path() == "/usr/bin"
+
+
+def test_resolve_cli_bin_does_not_cache_miss(monkeypatch):
+    """找不到 → 退回原名但**不缓存**；binary 后到能重新解析到真路径（Claude C-R1）。"""
+    monkeypatch.setattr(cb, "_login_shell_path", lambda: None)
+    monkeypatch.setattr(cb.shutil, "which", lambda name, path=None: None)
+    assert cb._resolve_cli_bin("codex", "codex") == "codex"   # 退回原名
+    assert "codex" not in cb._BIN_CACHE                       # miss 不进缓存
+    # binary 后到：换成能 which 命中，应重解析（而非返回缓存的裸名）
+    monkeypatch.setattr(cb.shutil, "which",
+                        lambda name, path=None: "/Users/x/.local/bin/codex" if path is None else None)
+    assert cb._resolve_cli_bin("codex", "codex") == "/Users/x/.local/bin/codex"
+
+
+def test_login_shell_path_uses_printenv_not_dollar_path(monkeypatch):
+    """用 printenv 取 PATH(shell 无关),不靠 \"$PATH\" 展开——fish 把 $PATH 展开成
+    空格分隔会破 _dedup_path 的冒号切分（gemini r2 G-R1）。"""
+    monkeypatch.setattr(cb, "_DISCOVERED_LOGIN_PATH", None)
+    captured = {}
+
+    class _P:
+        stdout = "<<<CMRPATH>>>/a/bin:/b/bin<<<ENDPATH>>>"
+        stderr = ""
+        returncode = 0
+
+    def fake_raw(cmd, **kw):
+        captured["cmd"] = cmd
+        return _P()
+    monkeypatch.setattr(cb, "_RAW_RUN", fake_raw)
+    assert cb._login_shell_path() == "/a/bin:/b/bin"
+    joined = " ".join(captured["cmd"])
+    assert "printenv PATH" in joined       # shell 无关取法
+    assert '"$PATH"' not in joined          # 不靠 shell 的 $PATH 展开
+    # flag 分开传,不用组合 -lic(fish 等不支持组合单字符 flag,gemini PR#115 high)
+    assert "-lic" not in captured["cmd"]
+    assert {"-l", "-i", "-c"} <= set(captured["cmd"])
+
+
+def test_resolve_cli_bin_absolutizes_relative_result(monkeypatch):
+    """which 返回相对路径(相对 MING_SIM_*_BIN 或相对 PATH 项)时，解析结果须绝对化——
+    否则 _run_* 用 cwd=_AGY_CWD 跑会按沙箱目录解析、FileNotFoundError（gemini r2 G-R2）。"""
+    monkeypatch.setattr(cb, "_login_shell_path", lambda: None)
+    monkeypatch.setattr(cb.shutil, "which",
+                        lambda name, path=None: "./bin/codex" if path is None else None)
+    result = cb._resolve_cli_bin("codex", "./bin/codex")
+    assert cb.os.path.isabs(result)                      # 必须绝对
+    assert result == cb.os.path.abspath("./bin/codex")
+
+
+def test_run_codex_execs_resolved_abspath(monkeypatch):
+    """_run_codex 用解析出的绝对路径当 argv[0]（修 GUI 启动找不到 codex）。"""
+    cb._BIN_CACHE.clear()
+    monkeypatch.setattr(cb, "_resolve_cli_bin", lambda name, configured: "/Users/x/.local/bin/codex")
+    captured = {}
+
+    class _P:
+        stdout = "ok"
+        stderr = ""
+        returncode = 0
+
+    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
+    monkeypatch.setattr(cb.subprocess, "run", lambda cmd, **kw: (captured.update(cmd=cmd) or _P()))
+    cb._run_codex("p")
+    assert captured["cmd"][0] == "/Users/x/.local/bin/codex"
+
+
+def test_run_claude_execs_resolved_abspath(monkeypatch):
+    cb._BIN_CACHE.clear()
+    monkeypatch.setattr(cb, "_resolve_cli_bin", lambda name, configured: "/opt/homebrew/bin/claude")
+    captured = {}
+
+    class _P:
+        stdout = "ok"
+        stderr = ""
+        returncode = 0
+
+    monkeypatch.setattr(cb.subprocess, "run", lambda cmd, **kw: (captured.update(cmd=cmd) or _P()))
+    cb._run_claude("p")
+    assert captured["cmd"][0] == "/opt/homebrew/bin/claude"
+
+
+def test_run_agy_execs_resolved_abspath(monkeypatch):
+    cb._BIN_CACHE.clear()
+    monkeypatch.setattr(cb, "_resolve_cli_bin", lambda name, configured: "/Users/x/.local/bin/agy")
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        if cmd and cmd[0] == "security":
+            return _Proc()                 # 暖 keychain
+        seen["cmd"] = cmd
+        return _Proc(stdout="臣领旨。")
+    monkeypatch.setattr(cb.subprocess, "run", fake_run)
+    cb._run_agy("p")
+    assert seen["cmd"][0] == "/Users/x/.local/bin/agy"
 
 
 # ── extract_minister_actions：LLM 判会话动作（取代关键字白名单）──
