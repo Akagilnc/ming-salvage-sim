@@ -1,7 +1,8 @@
 import React from "react";
 import { Loader2, Trash2 } from "lucide-react";
 import { api, normalizeApiError } from "../api";
-import type { MenuCampaign, MenuStatus } from "../types";
+import type { CliModelChoices, MenuCampaign, MenuStatus } from "../types";
+import { CliModelField } from "./cliModelField";
 
 export function MenuPage({
   status,
@@ -227,6 +228,8 @@ export function ApiSettingsModal({
     channel?: "api" | "cli";
     cli_runner?: string;
     cli_model?: string;
+    cli_model_saved?: string;
+    cli_model_choices?: CliModelChoices;
     cli_timeout_seconds?: number;
   };
   onClose: () => void;
@@ -234,7 +237,9 @@ export function ApiSettingsModal({
 }) {
   const [channel, setChannel] = React.useState<"api" | "cli">(initial?.channel === "cli" ? "cli" : "api");
   const [cliRunner, setCliRunner] = React.useState(initial?.cli_runner || "agy");
-  const [cliModel, setCliModel] = React.useState(initial?.cli_model || "");
+  // 用 raw cli_model_saved（空=默认档），不用 resolved cli_model——后者把默认兜底成
+  // 模型名会让下拉误判「其他(手填)」并在空保存时钉死字面量（CMR R1）。
+  const [cliModel, setCliModel] = React.useState(initial?.cli_model_saved ?? "");
   const [cliTimeout, setCliTimeout] = React.useState(String(initial?.cli_timeout_seconds || 300));
   const [baseUrl, setBaseUrl] = React.useState(initial?.base_url || "https://api.deepseek.com");
   const [model, setModel] = React.useState(initial?.model || "deepseek-chat");
@@ -303,16 +308,30 @@ export function ApiSettingsModal({
           <>
             <label>
               CLI Runner
-              <select value={cliRunner} onChange={(e) => setCliRunner(e.target.value)}>
+              <select
+                value={cliRunner}
+                onChange={(e) => {
+                  setCliRunner(e.target.value);
+                  setCliModel("");  // 换 runner 归零到默认档，避免旧模型漏进新 runner
+                }}
+              >
                 <option value="agy">agy（Gemini）</option>
                 <option value="codex">codex</option>
                 <option value="claude">claude</option>
               </select>
             </label>
-            <label>
-              CLI Model <small className="menu-hint">（留空=runner 默认档）</small>
-              <input value={cliModel} onChange={(e) => setCliModel(e.target.value)} placeholder="gpt-5.5 / 默认" />
-            </label>
+            {/* div 而非 label：custom 态 CliModelField 同时渲染 select+input，HTML5 规定
+                一个 label 至多含一个可表单关联控件（gemini R2）。深色控件样式见 .menu-cli-field。 */}
+            <div className="menu-cli-field">
+              <span>CLI Model <small className="menu-hint">（默认档=runner 默认；其他=手填任意 id）</small></span>
+              <CliModelField
+                key={cliRunner}
+                runner={cliRunner}
+                choices={initial?.cli_model_choices}
+                value={cliModel}
+                onChange={setCliModel}
+              />
+            </div>
             <label>
               CLI Timeout Seconds
               <input type="number" min={30} max={1800} value={cliTimeout} onChange={(e) => setCliTimeout(e.target.value)} placeholder="300" />
