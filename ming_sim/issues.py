@@ -390,11 +390,15 @@ def _format_issue_ongoing(ongoing_raw: str) -> str:
     except Exception:
         return ""
     parts: List[str] = []
-    metrics = eff.get("metrics") or {}
+    # isinstance 守卫：eff 读自已存 JSON（源自 enrich/extractor，未必清洗），metrics/economy 可能
+    # 是真值非 dict/list（`or {}`/`or []` 兜不住）→ .items()/迭代 抛错。本函数是展示用 brief，守住免崩（#117 同类）。
+    _m = eff.get("metrics")
+    metrics = _m if isinstance(_m, dict) else {}
     for key, val in metrics.items():
         if isinstance(val, (int, float)) and val:
             parts.append(f"{key}{'+' if val > 0 else ''}{int(val)}")
-    for econ in eff.get("economy") or []:
+    _eco = eff.get("economy")
+    for econ in (_eco if isinstance(_eco, list) else []):
         if isinstance(econ, dict):
             delta = econ.get("delta")
             acc = econ.get("account")

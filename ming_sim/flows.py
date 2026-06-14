@@ -286,7 +286,10 @@ def _apply_economy_list(
     """
     from ming_sim.constants import ECONOMY_PURPOSES, ECONOMY_TARGET_KINDS, TURN_UNIT as _TU
     applied: List[Dict[str, object]] = []
-    for move in economy or []:
+    # isinstance 守卫：issue-effect 的 economy（来自 enrich，未经 schema 清洗）可能被 LLM 给成真值
+    # 非 list（true/数字/字符串），`economy or []` 兜不住→`for move in 它`抛 TypeError 崩结算（#117
+    # 同 bug 类，与 _apply_issue_buildings 的 list 守卫一致）。此处是 economy 应用 choke，护全部调用点。
+    for move in (economy if isinstance(economy, list) else []):
         account = str(move.get("account") or "")
         if account not in ("国库", "内库"):
             continue

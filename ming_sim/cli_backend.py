@@ -790,8 +790,11 @@ def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = Non
         return v if isinstance(v, dict) else {}
     norm = _d(norm)
     resolve = _d(norm.get("effect_on_resolve"))
-    # 建筑 create 缺 region_id 兜底，免得静默落不了地
-    for b in (resolve.get("buildings") or []):
+    # 建筑 create 缺 region_id 兜底，免得静默落不了地。
+    # isinstance 守卫：LLM 可能把 buildings 给成真值非 list（true/数字/字符串），`or []` 兜不住
+    # （字符串还会逐字符迭代），`for b in 它` 抛 TypeError 崩回合（#117）——同文件 tags 的 list 守卫风格。
+    _bld = resolve.get("buildings")
+    for b in (_bld if isinstance(_bld, list) else []):
         if isinstance(b, dict) and str(b.get("action") or "").lower() == "create" and not b.get("region_id"):
             b["region_id"] = "beizhili"
     return {
