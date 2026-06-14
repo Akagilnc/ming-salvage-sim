@@ -898,24 +898,38 @@ def extract_scores_by_modules_with_agno(
     sanitizer: Optional[Agent] = None,
     relevant_memories: Optional[List[Dict[str, object]]] = None,
     secret_orders: Optional[Dict[str, object]] = None,
+    parallel: bool = False,
 ) -> tuple[Dict[str, object], str, str]:
-    """四模块结算 extractor：内政财政、军务外势、局势、人事密令。"""
+    """四模块结算 extractor：内政财政、军务外势、局势、人事密令。
+
+    parallel=True（仅并发安全 CLI runner=codex，#83）：4 个互不依赖的 extractor LLM 调用并发跑，
+    wall-clock≈最慢单个而非串行总和。解析/sanitizer/合并仍串行按模块顺序——确定性不变、sanitizer
+    单实例不并发、输出与串行版字节一致。落库（apply_score_extraction）在本函数之外，仍串行单事务
+    （ADR 0008）。形态1（session 当 LLM）/api/非 codex CLI runner 走 parallel=False（默认）串行，
+    行为字节级不受影响（调用方门控见 cli_backend_parallel_safe）。
+    并发安全依据：extractor agent 一次性、不写 agno_db、各持独立 model；codex --ephemeral 隔离子进程
+    （openai/codex#11435 workaround）——故仅 codex 入并行白名单，claude/agy 待验证。"""
     base_payload = _extractor_context_payload(
         db, state, narrative, decree_text,
         relevant_memories=relevant_memories,
         secret_orders=secret_orders,
     )
     module_outputs: Dict[str, Dict[str, object]] = {}
-    module_raw: Dict[str, str] = {}
     module_inputs: Dict[str, object] = {}
+
+    # 各模块 payload 先串行备好（纯计算、确定性，不含 LLM 调用）。
+    module_payload_json: Dict[str, str] = {}
     for module in EXTRACTION_MODULES:
-        agent = agents[module]
         payload = _payload_for_module(base_payload, module)
         module_inputs[module] = payload
-        payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=False)
+        module_payload_json[module] = json.dumps(payload, ensure_ascii=False, sort_keys=False)
+
+    def _run_raw(module: str) -> str:
+        payload_json = module_payload_json[module]
         tlog(f"[extractor/{module}] user payload total={len(payload_json)} chars (~{len(payload_json)//1.5:.0f} tok)")
-        raw = run_agent_text(agent, payload_json, tag=f"extractor/{module}")
-        module_raw[module] = raw
+        return run_agent_text(agents[module], payload_json, tag=f"extractor/{module}")
+
+    def _parse_module(module: str, raw: str) -> Dict[str, object]:
         try:
             parsed = parse_agent_json(raw, f"结算抽取-{module}")
         except Exception as parse_err:
@@ -924,7 +938,23 @@ def extract_scores_by_modules_with_agno(
             tlog(f"[extractor/{module}] 主输出解析失败：{parse_err}；调 sanitizer 重整")
             cleaned = run_agent_text(sanitizer, raw, tag=f"sanitizer/{module}")
             parsed = parse_agent_json(cleaned, f"结算抽取-{module}（sanitizer）")
-        module_outputs[module] = _sanitize_module_output(module, parsed)
+        return _sanitize_module_output(module, parsed)
+
+    if parallel and len(EXTRACTION_MODULES) > 1:
+        # CLI 后端：4 个 LLM 调用并发取 raw（ThreadPoolExecutor.map 保序），再串行按模块顺序
+        # 解析/sanitizer/净化（sanitizer 单实例不并发、确定性）。任一模块抛错经 map 迭代原样上抛
+        # （with 块先等齐在跑线程再传播）→ 与串行同样触发上层 SettlementAbort。
+        from concurrent.futures import ThreadPoolExecutor
+        tlog(f"[extractor] CLI 后端并发抽取 {len(EXTRACTION_MODULES)} 模块（wall-clock≈最慢单个）")
+        with ThreadPoolExecutor(max_workers=len(EXTRACTION_MODULES)) as pool:
+            raws = list(pool.map(_run_raw, EXTRACTION_MODULES))
+        for module, raw in zip(EXTRACTION_MODULES, raws):
+            module_outputs[module] = _parse_module(module, raw)
+    else:
+        # 串行（形态1/api 默认）：保持 run→parse 逐模块交错的原貌——含「run 失败即停、不跑后续」
+        # 的旧时机，行为字节级不变（cmr #83 codex：并行不改串行路径）。
+        for module in EXTRACTION_MODULES:
+            module_outputs[module] = _parse_module(module, _run_raw(module))
     merged = _merge_module_outputs(module_outputs)
     localized_merged = _localized_extraction(merged)
     trace_input = {
