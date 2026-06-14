@@ -42,7 +42,7 @@ from ming_sim.llm_config import (
 from ming_sim.agents import _dump_llm_messages
 from ming_sim.llm_model import extract_agent_text, verify_llm_available
 from ming_sim.llm_contract import fail_if_llm_error
-from ming_sim.issues import _format_issue_ongoing
+from ming_sim.issues import _format_issue_ongoing, loads_effect_dict
 from ming_sim.session import GameSession
 from ming_sim.session import AUTO_SAVE_PREFIX
 from ming_sim.skills import available_skill_ids, skill_display_name, skill_source_labels
@@ -988,8 +988,8 @@ class WebGame:
                 "resolve_condition": _humanize_condition(row["resolve_condition"] or ""),
                 "fail_condition": _humanize_condition(row["fail_condition"] or ""),
                 "ongoing_text": _format_issue_ongoing(str(row["ongoing_effects"] or "{}")),
-                "effect_on_resolve": dict(json.loads(str(row["effect_on_resolve"] or "{}"))),
-                "effect_on_fail": dict(json.loads(str(row["effect_on_fail"] or "{}"))),
+                "effect_on_resolve": loads_effect_dict(row["effect_on_resolve"]),
+                "effect_on_fail": loads_effect_dict(row["effect_on_fail"]),
             })
         return payloads
 

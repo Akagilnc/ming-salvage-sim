@@ -40,6 +40,15 @@ def test_apply_economy_list_valid_still_works(game):
     assert out[0].get("account") == "国库"
 
 
+def test_loads_effect_dict_coerces_non_dict():
+    """loads_effect_dict：effect_on_resolve/fail/ongoing_effects 列读取单一守门——合法 dict 原样，
+    真值非 dict / 解析失败 / 空 → {}（#117 R3：集中所有 effect-列读取于此，止 coverage-drift）。"""
+    from ming_sim.issues import loads_effect_dict
+    assert loads_effect_dict('{"metrics": {"民心": 1}}') == {"metrics": {"民心": 1}}
+    for bad in ('"oops"', "5", "true", "[1,2]", "null", "", None, "不是合法json"):
+        assert loads_effect_dict(bad) == {}, f"{bad!r} 未归 {{}}"
+
+
 def test_inertia_ongoing_non_dict_no_crash(game):
     """apply_issue_inertia_and_ongoing（结算链 ongoing_effects 第三读取者）读到已存的真值非 dict
     ongoing_effects 不崩——与 _issue_auto_economy / _format_issue_ongoing 同口径外层守（#117 R2 Claude+codex）。"""
