@@ -742,6 +742,58 @@ def _matched_prefix(message: str, prefixes) -> Optional[str]:
     return None
 
 
+def _scan_outside_strings(text: str, handle) -> str:
+    """逐字扫描 text，字符串内部（含转义）原样输出；字符串外的字符交给
+    handle(text, i, out, n) -> next_i 处理（append 想保留的到 out、返回下一位置）。
+    JSONC 清洗的共享底座：字符串/转义态只在此一处维护，避免每趟各写一份状态机。"""
+    out: List[str] = []
+    in_str = esc = False
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if in_str:
+            out.append(ch)
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            i += 1
+        elif ch == '"':
+            in_str = True
+            out.append(ch)
+            i += 1
+        else:
+            i = handle(text, i, out, n)
+    return "".join(out)
+
+
+def _strip_jsonc(body: str) -> str:
+    """quote-aware 清洗 JSONC：剥 // 行注释、去结构尾逗号，但字符串内部一律不动——
+    串值里的 //、,}、:// （如 "x,}" / "a//b" / "http://..."）全保留。
+    旧实现用裸正则非 quote-aware，会把串内 // 当注释、串内 ,} 当尾逗号误伤（#6）。
+    两趟扫描：先剥注释（避免「逗号到右括号之间夹注释」漏判尾逗号），再去尾逗号。"""
+    def _strip_comment(t: str, i: int, out: List[str], n: int) -> int:
+        if t[i] == "/" and i + 1 < n and t[i + 1] == "/":
+            nl = t.find("\n", i)
+            return n if nl == -1 else nl  # 跳到行尾（换行本身保留，由下一轮 append）
+        out.append(t[i])
+        return i + 1
+
+    def _strip_trailing_comma(t: str, i: int, out: List[str], n: int) -> int:
+        if t[i] == ",":
+            k = i + 1
+            while k < n and t[k] in " \t\r\n":
+                k += 1
+            if k < n and t[k] in "}]":
+                return i + 1  # 丢弃结构尾逗号
+        out.append(t[i])
+        return i + 1
+
+    return _scan_outside_strings(_scan_outside_strings(body, _strip_comment), _strip_trailing_comma)
+
+
 def _loads_lenient(raw: str) -> Optional[dict]:
     """容错解析 JSON：剥代码围栏、截首 { 到末 }。失败返回 None。"""
     t = (raw or "").strip()
@@ -756,12 +808,10 @@ def _loads_lenient(raw: str) -> Optional[dict]:
         obj = json.loads(body)
     except (ValueError, TypeError):
         # 严格解析失败才做 JSONC 容错（CMR F8）：模型照 prompt 模板回带 // 行注释或尾逗号时救回。
-        # 先严格、失败才清洗 —— 合法 JSON 不经正则，避免误伤串值里的 // 或 ,}（如 "x,}"）。
-        # `(?<!:)` 避开字符串里的 :// （如 http://）；尾逗号 `,}`/`,]` → `}`/`]`。
-        cleaned = re.sub(r"(?<!:)//[^\n]*", "", body)
-        cleaned = re.sub(r",(\s*[}\]])", r"\1", cleaned)
+        # 先严格、失败才清洗 —— 合法 JSON 不经清洗器。清洗器 quote-aware：串值里的 //、,}、://
+        # 一律不动（#6，旧裸正则会误伤 "x,}"→"x}"、"a//b"→截断）。
         try:
-            obj = json.loads(cleaned)
+            obj = json.loads(_strip_jsonc(body))
         except (ValueError, TypeError):
             return None
     return obj if isinstance(obj, dict) else None

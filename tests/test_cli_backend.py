@@ -675,6 +675,41 @@ def test_loads_lenient_braces_but_invalid_json():
     assert cb._loads_lenient("前缀 {坏的: json,} 后缀") is None
 
 
+# ── _loads_lenient：JSONC 容错须 quote-aware，不误伤串值（#6）──
+
+def test_loads_lenient_jsonc_trailing_comma_stripped():
+    """合法 JSONC 恢复：真尾逗号 + 行注释清掉，正常解析。"""
+    assert cb._loads_lenient('{"a": 1, // 注释\n"b": 2,}') == {"a": 1, "b": 2}
+
+
+def test_loads_lenient_preserves_comma_brace_in_string():
+    """串值含 ,} 不被尾逗号清洗误伤——只去真正的结构尾逗号（#6 病态边界）。
+    旧非 quote-aware 正则把 \"x,}\" 改成 \"x}\"。"""
+    assert cb._loads_lenient('{"note":"x,}", "n":1,}') == {"note": "x,}", "n": 1}
+
+
+def test_loads_lenient_preserves_double_slash_in_string():
+    """串值含 // 不被行注释清洗误伤（#6 病态边界）。
+    旧 `(?<!:)//` 正则会把无前导冒号的串内 // 当注释剥掉。"""
+    assert cb._loads_lenient('{"note":"a//b", "n":1,}') == {"note": "a//b", "n": 1}
+
+
+def test_loads_lenient_preserves_url_in_string():
+    """串值含 :// （URL）保留——回归旧 `(?<!:)` 行为，quote-aware 后天然成立。"""
+    assert cb._loads_lenient('{"url":"http://x.com//y", "n":1,}') == {"url": "http://x.com//y", "n": 1}
+
+
+def test_loads_lenient_array_trailing_comma():
+    """数组尾逗号 ,] 也清掉（覆盖尾逗号判定的 ] 臂，#6 cmr R1）。"""
+    assert cb._loads_lenient('{"xs":[1, 2, ],}') == {"xs": [1, 2]}
+
+
+def test_loads_lenient_escaped_quote_then_slashes_in_string():
+    """转义引号 \\\" 不结束字符串：其后仍在串内的 // 须保留，不被当注释剥
+    （覆盖转义态机 \\\" / \\\\ 臂，#6 cmr R1）。"""
+    assert cb._loads_lenient('{"a":"he said \\"hi\\" //x", "n":1,}') == {"a": 'he said "hi" //x', "n": 1}
+
+
 # ── _run_agy：warm + retry×4（auth race 缓解，wiki 核心 workaround）──
 
 class _Proc:
