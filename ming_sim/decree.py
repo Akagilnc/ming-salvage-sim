@@ -25,6 +25,7 @@ from ming_sim.agents import (
     run_agent_text,
 )
 from ming_sim.applier import Provenance, RejectedItem, RejectionCollector, atomic
+from ming_sim.cli_backend import cli_backend_active
 from ming_sim.constants import TURN_UNIT
 from ming_sim.context import ENDING_LABELS, ENDING_ONGOING, ENDING_TIMEOUT, victory_status
 from ming_sim.db import GameDB
@@ -628,10 +629,13 @@ def _settle_after_narrative(
             )
             for module in EXTRACTION_MODULES
         }
+        # CLI 后端（codex/claude CLI）下并发跑 4 个 extractor LLM 调用（#83，省约 1 分钟）；
+        # 形态1/api 后端 cli_backend_active=False → 串行不变。合并/落库仍串行单事务（ADR 0008）。
         extracted, extractor_output, extractor_input = extract_scores_by_modules_with_agno(
             extractors, db, state, effective_narrative, decree_text=decree_text, sanitizer=sanitizer,
             relevant_memories=relevant_memories,
             secret_orders=secret_orders_for_sim,
+            parallel=cli_backend_active(llm_config),
         )
         # shape 垃圾的 extractor 产物 = extractor 失败：在 try 内验形，让它走同一条
         # pack+SettlementAbort 路（ship-pre r4）——留给 persist 的裸 ValueError 没有
