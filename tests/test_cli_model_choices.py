@@ -79,6 +79,38 @@ def test_menu_status_exposes_choices(monkeypatch):
     assert data["llm"]["cli_model_choices"] == cb.cli_model_choices()
 
 
+def _patch_status_io(monkeypatch, runtime):
+    import web_app
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: runtime)
+    monkeypatch.setattr(web_app, "_scan_saves", lambda: [])
+    monkeypatch.setattr(web_app, "_scan_campaigns", lambda: [])
+    monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: None)
+    monkeypatch.setattr(web_app, "_has_main_db", lambda: False)
+    return web_app
+
+
+def test_menu_status_exposes_raw_cli_model_saved_default(monkeypatch):
+    """空 saved model（=用户选「默认」档）→ menu-status 须暴露 raw cli_model_saved=''，
+    前端据此显示「默认」档；不能只给被 cli_model_from_env 兜底成默认名的 resolved 值，
+    否则下拉把默认误判成「其他(手填)」、空保存把字面量钉死（CMR R1 Claude+Gemini concur）。"""
+    web_app = _patch_status_io(monkeypatch, {
+        "channel": "cli", "api": {}, "cli": {"runner": "codex", "model": "", "timeout_seconds": 300},
+    })
+    llm = asyncio.run(web_app.api_menu_status())["llm"]
+    assert llm["cli_model_saved"] == ""        # raw 留空 = 默认档（表单用）
+    assert llm["cli_model"] == "gpt-5.5"        # resolved 仍供「当前后端」展示
+
+
+def test_menu_status_cli_model_saved_passes_explicit(monkeypatch):
+    """显式存了某档 → raw 原样回传（表单选中该档）。"""
+    web_app = _patch_status_io(monkeypatch, {
+        "channel": "cli", "api": {},
+        "cli": {"runner": "codex", "model": "gpt-5.3-codex-spark", "timeout_seconds": 300},
+    })
+    llm = asyncio.run(web_app.api_menu_status())["llm"]
+    assert llm["cli_model_saved"] == "gpt-5.3-codex-spark"
+
+
 def test_get_llm_config_exposes_choices(monkeypatch):
     import web_app
     from ming_sim.models import LLMConfig

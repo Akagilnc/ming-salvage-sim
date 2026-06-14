@@ -1553,7 +1553,11 @@ async def api_menu_status() -> Dict[str, Any]:
         channel = "cli" if env_runner else "api"
     cli_slot = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
     cli_runner = str(cli_slot.get("runner") or env_runner or ("agy" if channel == "cli" else "")).strip().lower()
-    cli_model = str(cli_slot.get("model") or cli_model_from_env(cli_runner, "")).strip()
+    # cli_model_saved = 原样存盘值（空=用户选「默认」档）；cli_model = 兜底成默认名的 resolved 值。
+    # 表单（CliModelField 下拉）须读 raw，否则空保存被 resolved 成默认名 → 下拉误判「其他(手填)」
+    # 并把字面量钉死（CMR R1 Claude+Gemini concur）。resolved 仅供「当前后端」展示行。
+    cli_model_saved = str(cli_slot.get("model") or "").strip()
+    cli_model = cli_model_saved or cli_model_from_env(cli_runner, "").strip()
     cli_timeout = _runtime_float(cli_slot.get("timeout_seconds"), CLI_DEFAULT_TIMEOUT_SECONDS)
     has_api_key = _has_real_api_key(runtime.get("api_key")) or _has_real_api_key(os.environ.get("OPENAI_API_KEY"))
     # readiness 按 active channel 判：API 通道看真实 key，CLI 通道看 runner 是否受支持。
@@ -1575,6 +1579,7 @@ async def api_menu_status() -> Dict[str, Any]:
             "has_api_key": has_api_key,
             "cli_runner": cli_runner,
             "cli_model": cli_model,
+            "cli_model_saved": cli_model_saved,
             "cli_model_choices": cli_model_choices(),
             "cli_timeout_seconds": cli_timeout,
             "max_tokens": int(runtime.get("max_tokens") or 8000),

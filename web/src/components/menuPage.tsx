@@ -228,6 +228,7 @@ export function ApiSettingsModal({
     channel?: "api" | "cli";
     cli_runner?: string;
     cli_model?: string;
+    cli_model_saved?: string;
     cli_model_choices?: CliModelChoices;
     cli_timeout_seconds?: number;
   };
@@ -236,7 +237,9 @@ export function ApiSettingsModal({
 }) {
   const [channel, setChannel] = React.useState<"api" | "cli">(initial?.channel === "cli" ? "cli" : "api");
   const [cliRunner, setCliRunner] = React.useState(initial?.cli_runner || "agy");
-  const [cliModel, setCliModel] = React.useState(initial?.cli_model || "");
+  // 用 raw cli_model_saved（空=默认档），不用 resolved cli_model——后者把默认兜底成
+  // 模型名会让下拉误判「其他(手填)」并在空保存时钉死字面量（CMR R1）。
+  const [cliModel, setCliModel] = React.useState(initial?.cli_model_saved ?? "");
   const [cliTimeout, setCliTimeout] = React.useState(String(initial?.cli_timeout_seconds || 300));
   const [baseUrl, setBaseUrl] = React.useState(initial?.base_url || "https://api.deepseek.com");
   const [model, setModel] = React.useState(initial?.model || "deepseek-chat");
