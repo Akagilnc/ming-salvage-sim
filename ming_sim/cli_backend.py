@@ -23,6 +23,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -177,25 +178,28 @@ def _resolve_cli_bin(name: str, configured: str) -> str:
     3) 仍 miss → 问登录 shell 要真实 PATH，并入再 which（此时才 spawn zsh）。
     4) 全不中 → 退回原配置名（让 subprocess 抛清晰 FileNotFoundError），**不缓存**，
        binary 之后才装上时下次仍能重新解析（不被裸名负缓存毒住）。"""
-    cached = _BIN_CACHE.get(name)
-    if cached:
-        return cached
-    found = shutil.which(configured)
-    if not found:
-        found = shutil.which(configured, path=_static_search_path())
-    if not found:
-        login = _login_shell_path()
-        if login:
-            found = shutil.which(configured, path=_dedup_path([_static_search_path(), login]))
-    if found:
-        # 绝对化:configured 是相对路径(相对 MING_SIM_*_BIN / 相对 PATH 项)时 which 会
-        # 返回相对串,而 _run_* 用 cwd=_AGY_CWD 跑会按沙箱目录解析→FileNotFoundError;
-        # 绝对路径才兑现「解析成可执行绝对路径」的契约(gemini r2 G-R2)。abspath 对已
-        # 绝对的路径是 no-op。
-        found = os.path.abspath(found)
-        _BIN_CACHE[name] = found
-        return found
-    return configured
+    # 锁护缓存读改写：#83 并发首解时只让一个线程跑解析（含可能 spawn 登录 shell），余者待后命中
+    # 缓存，免重复 spawn / 竞态写缓存。命中后是一次性开销，串行路径无竞争。
+    with _BIN_CACHE_LOCK:
+        cached = _BIN_CACHE.get(name)
+        if cached:
+            return cached
+        found = shutil.which(configured)
+        if not found:
+            found = shutil.which(configured, path=_static_search_path())
+        if not found:
+            login = _login_shell_path()
+            if login:
+                found = shutil.which(configured, path=_dedup_path([_static_search_path(), login]))
+        if found:
+            # 绝对化:configured 是相对路径(相对 MING_SIM_*_BIN / 相对 PATH 项)时 which 会
+            # 返回相对串,而 _run_* 用 cwd=_AGY_CWD 跑会按沙箱目录解析→FileNotFoundError;
+            # 绝对路径才兑现「解析成可执行绝对路径」的契约(gemini r2 G-R2)。abspath 对已
+            # 绝对的路径是 no-op。
+            found = os.path.abspath(found)
+            _BIN_CACHE[name] = found
+            return found
+        return configured
 
 
 _VERBOSE = os.environ.get("MING_SIM_LLM_DEBUG", "") not in ("", "0", "false")
@@ -209,6 +213,12 @@ _TRACE_PATH = os.environ.get(
 _TRACE_FIELD_CAP = int(os.environ.get("MING_SIM_TRACE_CAP", "40000"))  # 单字段字符上限
 _seq = 0
 _trace_announced = False
+# #83 月末 extractor 并发：CliChat.invoke 被多线程并发调（codex 后端）。_seq 自增是非原子读改写
+# （丢增量→seq 重复）、trace 大行并发写可能交错、_BIN_CACHE 首解可重复 spawn——加锁让这些共享态
+# 线程安全（cmr #83 线上 gemini high）。锁只护「计数/写盘/缓存」瞬时段，LLM 调用 _call_cli 在锁外，
+# 并发不受影响。串行/形态1 路径下锁无竞争、开销可忽略。
+_TRACE_LOCK = threading.Lock()      # 护 _seq 自增 + _trace 写盘 + _trace_announced
+_BIN_CACHE_LOCK = threading.Lock()  # 护 _BIN_CACHE 解析+写入（首解只一次，余者命中缓存）
 
 
 def _log(msg: str) -> None:
@@ -251,10 +261,13 @@ def _trace(record: Dict[str, Any]) -> None:
             v = record.get(k)
             if isinstance(v, str) and len(v) > cap:
                 record[k] = v[: cap // 2] + f"\n...[截断 {len(v) - cap} 字]...\n" + v[-cap // 2:]
-        with open(_TRACE_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
-        if not _trace_announced:
+        line = json.dumps(record, ensure_ascii=False) + "\n"
+        with _TRACE_LOCK:  # 串行化写盘，防并发大行交错损坏 trace（#83）
+            with open(_TRACE_PATH, "a", encoding="utf-8") as f:
+                f.write(line)
+            announce = not _trace_announced
             _trace_announced = True
+        if announce:
             print(f"[cli_backend] LLM trace → {_TRACE_PATH}", flush=True)
     except Exception as exc:  # trace 永不应中断游戏
         _log(f"trace 写盘失败：{exc}")
@@ -894,8 +907,9 @@ class CliChat(OpenAIChat):
         # 玩家用拟旨/密令按钮（消息带前缀）时，handler 用 resolve_minister_actions
         # 把这句回话原文整段入档。invoke 只负责出文本。
         prompt = _messages_to_prompt(messages, response_format)
-        _seq += 1
-        seq = _seq
+        with _TRACE_LOCK:  # 原子自增，防并发丢增量/seq 重复（#83）
+            _seq += 1
+            seq = _seq
         tag = _infer_tag(prompt)
         t0 = time.monotonic()
         error = None
