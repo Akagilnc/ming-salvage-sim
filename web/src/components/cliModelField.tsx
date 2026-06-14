@@ -1,0 +1,71 @@
+import React from "react";
+import type { CliModelChoice } from "../types";
+
+// 「其他（手填）」逃生口的下拉哨兵值（绝不会是真实模型 id）。
+const CUSTOM = "__custom__";
+
+/**
+ * CLI Model 策展下拉 + 手填逃生口。
+ *
+ * 档位清单单一真源在后端 cli_backend.cli_model_choices()，经 config 端点下发，
+ * 这里不硬编完整清单（缺失时仅兜底一个「默认」档保证可渲染）。选「其他（手填）」
+ * 露出文本框，老手仍能填任意值（含将来新模型 / 大写 id）——不做小写归一，
+ * 可用性由连通性检查兜底。
+ *
+ * 调用约定：父级须传 `key={runner}` 让 runner 切换时本组件重挂（据新 runner 的
+ * 清单重新判定手填态），并在 runner onChange 里把 value 归零（默认档），否则旧
+ * runner 的模型会以「自定义值」漏进新 runner。
+ */
+export function CliModelField({
+  runner,
+  choices,
+  value,
+  onChange,
+  className,
+}: {
+  runner: string;
+  choices?: Record<string, CliModelChoice[]>;
+  value: string;
+  onChange: (value: string) => void;
+  className?: string;
+}) {
+  const base = choices?.[runner] ?? [];
+  const options = base.some((o) => o.value === "")
+    ? base
+    : [{ value: "", label: "默认" }, ...base];
+  // 当前值不在策展档内（持久化的自定义值 / 将来的新模型）→ 初始进手填态。
+  const [custom, setCustom] = React.useState(() => !options.some((o) => o.value === value));
+
+  return (
+    <>
+      <select
+        className={className}
+        value={custom ? CUSTOM : value}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === CUSTOM) {
+            setCustom(true);
+          } else {
+            setCustom(false);
+            onChange(v);
+          }
+        }}
+      >
+        {options.map((o) => (
+          <option key={o.value || "__default__"} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+        <option value={CUSTOM}>其他（手填）</option>
+      </select>
+      {custom ? (
+        <input
+          className={className}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="自定义模型 id（区分大小写，如 gpt-5.5）"
+        />
+      ) : null}
+    </>
+  );
+}

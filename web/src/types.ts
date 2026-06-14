@@ -292,6 +292,11 @@ export type ModalName = "none" | "state" | "chat" | "edict" | "report" | "extrac
 
 export type SaveEntry = { name: string; size: number; mtime: number };
 
+// CLI Model 策展下拉的一档；value="" = runner 默认档（提交空串走后端默认）。
+// 单一真源在后端 cli_backend.cli_model_choices()，经 config 端点下发，前端不硬编。
+export type CliModelChoice = { value: string; label: string };
+export type CliModelChoices = Record<string, CliModelChoice[]>;
+
 export type LLMConfigInfo = {
   channel?: "api" | "cli";
   base_url: string;
@@ -306,6 +311,7 @@ export type LLMConfigInfo = {
   has_api_key: boolean;
   cli_runner?: string;
   cli_model?: string;
+  cli_model_choices?: CliModelChoices;
   cli_timeout_seconds?: number;
   persisted: {
     channel?: "api" | "cli";
@@ -413,6 +419,7 @@ export type MenuStatus = {
     has_api_key: boolean;
     cli_runner?: string;
     cli_model?: string;
+    cli_model_choices?: CliModelChoices;
     cli_timeout_seconds?: number;
     max_tokens: number;
     timeout_seconds: number;

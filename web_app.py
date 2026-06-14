@@ -1546,7 +1546,7 @@ def _has_main_db() -> bool:
 async def api_menu_status() -> Dict[str, Any]:
     """菜单页状态：API key 是否配好、上次主 DB 是否存在、存档列表。"""
     runtime = load_runtime_llm()
-    from ming_sim.cli_backend import cli_backend_from_env, is_supported_cli_runner
+    from ming_sim.cli_backend import cli_backend_from_env, cli_model_choices, is_supported_cli_runner
     env_runner = cli_backend_from_env()
     channel = str(runtime.get("channel") or "").strip().lower()
     if channel not in VALID_CHANNELS:
@@ -1575,6 +1575,7 @@ async def api_menu_status() -> Dict[str, Any]:
             "has_api_key": has_api_key,
             "cli_runner": cli_runner,
             "cli_model": cli_model,
+            "cli_model_choices": cli_model_choices(),
             "cli_timeout_seconds": cli_timeout,
             "max_tokens": int(runtime.get("max_tokens") or 8000),
             "timeout_seconds": float(runtime.get("timeout_seconds") or os.environ.get("OPENAI_TIMEOUT_SECONDS", "180") or 180),
@@ -2416,6 +2417,7 @@ async def api_reset_game() -> Dict[str, Any]:
 @app.get("/api/llm/config")
 async def api_get_llm_config() -> Dict[str, Any]:
     """读当前生效的 LLM 配置。api_key 不回传明文，只回是否已设置。"""
+    from ming_sim.cli_backend import cli_model_choices
     cfg = get_game().session.llm_config
     saved = load_runtime_llm()
     saved_cli = saved.get("cli") if isinstance(saved.get("cli"), dict) else {}
@@ -2433,6 +2435,7 @@ async def api_get_llm_config() -> Dict[str, Any]:
         "has_api_key": _has_real_api_key(cfg.api_key),
         "cli_runner": cfg.cli_runner,
         "cli_model": cfg.cli_model,
+        "cli_model_choices": cli_model_choices(),
         "cli_timeout_seconds": cfg.cli_timeout_seconds,
         "persisted": {
             "channel": saved.get("channel", ""),

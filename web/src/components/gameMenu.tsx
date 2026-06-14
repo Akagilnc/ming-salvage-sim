@@ -2,6 +2,7 @@ import React from "react";
 import { Check, Loader2, LogOut, Power, RotateCcw, Save, Settings, Trash2, Upload, X } from "lucide-react";
 import { ApiRequestError, api } from "../api";
 import type { LLMConfigInfo, SaveEntry } from "../types";
+import { CliModelField } from "./cliModelField";
 
 export function GameMenuModal({
   onClose,
@@ -441,19 +442,28 @@ export function LLMConfigTab() {
         <>
           <label className="menu-field">
             <span>CLI Runner</span>
-            <select className="menu-input" value={cliRunner} onChange={(e) => setCliRunner(e.target.value)}>
+            <select
+              className="menu-input"
+              value={cliRunner}
+              onChange={(e) => {
+                setCliRunner(e.target.value);
+                setCliModel("");  // 换 runner 归零到默认档，避免旧模型漏进新 runner
+              }}
+            >
               <option value="agy">agy（Gemini）</option>
               <option value="codex">codex</option>
               <option value="claude">claude</option>
             </select>
           </label>
           <label className="menu-field">
-            <span>CLI Model <small className="menu-hint">（空=runner 默认）</small></span>
-            <input
+            <span>CLI Model <small className="menu-hint">（默认档=runner 默认；其他=手填任意 id）</small></span>
+            <CliModelField
+              key={cliRunner}
               className="menu-input"
+              runner={cliRunner}
+              choices={info?.cli_model_choices}
               value={cliModel}
-              onChange={(e) => setCliModel(e.target.value)}
-              placeholder="gpt-5.5 / claude-opus-4-8 / 空"
+              onChange={setCliModel}
             />
           </label>
           <label className="menu-field">
