@@ -136,6 +136,15 @@ def test_settle_serial_for_non_cli_backend(game, monkeypatch):
     assert _settle_capturing_parallel(game, monkeypatch, api_cfg) is False
 
 
+def test_settle_serial_for_non_codex_cli_runner(game, monkeypatch):
+    """非 codex 的 CLI runner（agy/claude，并发安全未证）→ parallel=False（cmr #83 codex R2：
+    --ephemeral 隔离只对 codex 成立，门控收窄到 codex）。"""
+    from ming_sim.models import LLMConfig
+    agy_cfg = LLMConfig(api_key="cli-backend", base_url="", model="api-fallback",
+                        channel="cli", cli_runner="agy", cli_model="", cli_timeout_seconds=240)
+    assert _settle_capturing_parallel(game, monkeypatch, agy_cfg) is False
+
+
 def test_parallel_extract_propagates_extractor_error(game, monkeypatch):
     """任一 extractor 抛错经并行路径原样上抛（→ 上层 SettlementAbort），不被并发吞掉。"""
     import pytest

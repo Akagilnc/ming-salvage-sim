@@ -459,6 +459,29 @@ def cli_backend_active(llm_config: Any = None) -> bool:
     return cli_backend_from_env() is not None
 
 
+# 已证「并发取数无 session 串话」的 CLI runner 白名单：仅 codex（每次 exec 带 --ephemeral，
+# 不落盘 session rollout，openai/codex#11435 workaround，#83 立项基础）。claude（claude -p 虽
+# 独立进程但并发未实测、有 rate-limit 顾虑）、agy（keychain auth-race，cmr 故意一次只跑一个）暂
+# 不在内——验证其并发安全后再加。月末 4-extractor 并行只对本名单启用，其余 runner 串行不变。
+_PARALLEL_SAFE_CLI_RUNNERS = {"codex"}
+
+
+def cli_backend_parallel_safe(llm_config: Any = None) -> bool:
+    """月末多 extractor 并发是否安全：须是 CLI 后端、且 runner 在 _PARALLEL_SAFE_CLI_RUNNERS 内。
+
+    比 cli_backend_active 严：后者「是不是 CLI 后端」，本预言「这个 CLI runner 并发取数安全吗」。
+    --ephemeral 隔离只对 codex 成立，故只有 codex 返 True；claude/agy/api/形态1 返 False=串行（#83）。"""
+    if not cli_backend_active(llm_config):
+        return False
+    try:
+        parts = _cli_config_parts(llm_config)
+    except RuntimeError:
+        return False
+    if parts is None:
+        return False
+    return parts[0] in _PARALLEL_SAFE_CLI_RUNNERS
+
+
 def _messages_to_prompt(
     messages: List[Message],
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
