@@ -1852,6 +1852,24 @@ def test_create_secret_order_rejects_vassal_prince(game):
         db.create_secret_order(state, name, "密查", "着尔暗中查访", [])
 
 
+def test_create_secret_order_rejects_vassal_prince_by_alias(game):
+    """密令 assignee 用别名（如「福王」）也须被宗藩闸挡——create_secret_order 先 _find_existing_minister
+    把别名规范化到在册 key 再校（cmr R2 online codex+CodeRabbit concur：原仅按 raw 名 .get，别名绕过）。"""
+    import pytest
+    db, state, content = game
+    prince = next(
+        (n for n, c in content.characters.items()
+         if c.office_type == "宗藩" and any(a != n for a in (c.aliases or []))),
+        None,
+    )
+    if prince is None:
+        pytest.skip("基底盘面无带别名的宗藩")
+    db.add_character(state, content.characters[prince], source="测试")
+    alias = next(a for a in content.characters[prince].aliases if a != prince)
+    with pytest.raises(ValueError, match="宗室"):
+        db.create_secret_order(state, alias, "密查", "着尔暗中查访", [])
+
+
 def test_pending_dismiss_rejects_vassal_prince(game):
     """pending 罢免落库（_commit_office_action 罢免路）拒宗藩——宗室非朝臣，不可作朝臣罢免（cmr R6）。"""
     db, state, content = game
