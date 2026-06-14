@@ -457,6 +457,30 @@ def _backend_label(llm_config: Any = None) -> str:
     return cli_backend_from_env() or "agy"
 
 
+def describe_effective_model(llm_config: Any = None) -> str:
+    """日志用：返回该 config **实际调用**的「runner/model」可读串，而非 CLI 通道下的 API-fallback
+    占位 `cfg.model`（如 gpt-4o-mini）——后者误导排查（#84）。runner 解析与 create_chat_model 同口径：
+    api 通道→cfg.model；cli/legacy-env→真实 runner + 解析后的 cli_model（如 codex/gpt-5.3-codex-spark）。
+    注：legacy-env 默认模型下，CliChat.id 留空（_run_codex 再回落 _CODEX_MODEL），故 trace 的 model_id
+    可能是空串而本函数已解析出真实默认——本函数是更准的可读标签，不与 trace 的未解析 id 逐字对齐。"""
+    channel = _llm_channel(llm_config)
+    if channel == "cli":
+        runner = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "agy").strip().lower()
+    elif channel != "api":
+        runner = cli_backend_from_env()  # 空 channel：legacy env 回落
+    else:
+        runner = None
+    if not runner:  # api 通道 / 形态1（空 channel 无 env）：用 cfg.model
+        return str(getattr(llm_config, "model", "") or "?")
+    # 只有实际吃 --model 的 runner（codex/claude）才追加 /model；agy 忽略 model、走自身 Gemini ladder，
+    # 给它挂个不被消费的 cli_model 反而误导（#84 codex），只显示 runner 名。
+    if runner in ("codex", "claude"):
+        from ming_sim.llm_config import cli_model_from_env
+        model = (str(getattr(llm_config, "cli_model", "") or "").strip()) or cli_model_from_env(runner)
+        return f"{runner}/{model}" if model else runner
+    return runner
+
+
 def cli_backend_active(llm_config: Any = None) -> bool:
     """是否处于 CLI 后端路径：显式 channel 直接按其 runner 判，无显式 channel 才看旧 env。"""
     channel = _llm_channel(llm_config)

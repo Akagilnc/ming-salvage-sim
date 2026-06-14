@@ -18,6 +18,7 @@ from agno.db.sqlite import SqliteDb
 from ming_sim.assets import strip_json_fence
 from ming_sim.content import GameContent
 from ming_sim.exceptions import LLMContractError, LLMUnavailable
+from ming_sim.cli_backend import describe_effective_model
 from ming_sim.llm_config import for_role as _llm_for_role, is_minimax_base_url
 from ming_sim.llm_contract import abort_llm_contract, fail_if_llm_error
 from ming_sim.llm_model import create_chat_model, extract_agent_text
@@ -390,7 +391,7 @@ def create_season_simulator_agent(
     一次性 agent：不传 db，免得 runs 累积撑爆 <db>.emperor.db。"""
     del db, state, agno_db
     cfg = _llm_for_role(llm_config, "simulator")
-    tlog(f"[simulator] 使用模型 {cfg.model}")
+    tlog(f"[simulator] 使用模型 {describe_effective_model(cfg)}")
     # simulator_context 与 extractor 共用 build_simulator_context → 字节一致 → 暖好 extractor 前缀缓存。
     simulator_context = build_simulator_context(simulator_payload)
     instructions = [_ctx().game_world_prompt, simulator_context, _ctx().season_simulator_prompt]
@@ -421,7 +422,7 @@ def create_score_extractor_module_agent(
     if not prompt:
         raise RuntimeError(f"未知结算提取模块：{module}")
     cfg = _llm_for_role(llm_config, "extractor")
-    tlog(f"[extractor/{module}] 使用模型 {cfg.model}")
+    tlog(f"[extractor/{module}] 使用模型 {describe_effective_model(cfg)}")
     # 与 simulator 共用同一函数 → simulator_context 字节级一致 → 命中 simulator 暖好的前缀缓存。
     simulator_context = build_simulator_context(simulator_payload)
     supplemental = (
