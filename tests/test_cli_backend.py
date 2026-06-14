@@ -15,18 +15,9 @@ from pydantic import BaseModel
 
 import ming_sim.cli_backend as cb
 
-
-@pytest.fixture(autouse=True)
-def _isolate_cli_bin_resolution(monkeypatch):
-    """每个测试前隔离 runner 定位状态：清 _BIN_CACHE，并把登录 shell 探测短路成
-    "不触发"（_DISCOVERED_LOGIN_PATH="" → _login_shell_path 立即返 None）。
-    这样既有 runner 测试在缺 binary 的机器上也不会真 spawn 一个 zsh（C：测试卫生），
-    解析类测试之间也不串 cache。需要真跑 _login_shell_path 解析逻辑的测试，自行
-    把 _DISCOVERED_LOGIN_PATH 重置为 None 并 mock _RAW_RUN。"""
-    cb._BIN_CACHE.clear()
-    monkeypatch.setattr(cb, "_DISCOVERED_LOGIN_PATH", "")
-    yield
-    cb._BIN_CACHE.clear()
+# runner 定位隔离 fixture（清 _BIN_CACHE + 短路登录 shell）已移到 tests/conftest.py
+# 的全局 autouse `_isolate_cli_bin_resolution`，覆盖本模块 + test_llm_channel_config
+# 等所有走 _resolve_cli_bin 的 runner 测试（cmr r2 codex X-R1：原只在本模块、漏了它）。
 
 
 # ── resolve_minister_actions：拟旨/密令前缀分派（拟旨纯逻辑、无 agy）──
@@ -429,6 +420,38 @@ def test_resolve_cli_bin_does_not_cache_miss(monkeypatch):
     monkeypatch.setattr(cb.shutil, "which",
                         lambda name, path=None: "/Users/x/.local/bin/codex" if path is None else None)
     assert cb._resolve_cli_bin("codex", "codex") == "/Users/x/.local/bin/codex"
+
+
+def test_login_shell_path_uses_printenv_not_dollar_path(monkeypatch):
+    """用 printenv 取 PATH(shell 无关),不靠 \"$PATH\" 展开——fish 把 $PATH 展开成
+    空格分隔会破 _dedup_path 的冒号切分（gemini r2 G-R1）。"""
+    monkeypatch.setattr(cb, "_DISCOVERED_LOGIN_PATH", None)
+    captured = {}
+
+    class _P:
+        stdout = "<<<CMRPATH>>>/a/bin:/b/bin<<<ENDPATH>>>"
+        stderr = ""
+        returncode = 0
+
+    def fake_raw(cmd, **kw):
+        captured["cmd"] = cmd
+        return _P()
+    monkeypatch.setattr(cb, "_RAW_RUN", fake_raw)
+    assert cb._login_shell_path() == "/a/bin:/b/bin"
+    joined = " ".join(captured["cmd"])
+    assert "printenv PATH" in joined       # shell 无关取法
+    assert '"$PATH"' not in joined          # 不靠 shell 的 $PATH 展开
+
+
+def test_resolve_cli_bin_absolutizes_relative_result(monkeypatch):
+    """which 返回相对路径(相对 MING_SIM_*_BIN 或相对 PATH 项)时，解析结果须绝对化——
+    否则 _run_* 用 cwd=_AGY_CWD 跑会按沙箱目录解析、FileNotFoundError（gemini r2 G-R2）。"""
+    monkeypatch.setattr(cb, "_login_shell_path", lambda: None)
+    monkeypatch.setattr(cb.shutil, "which",
+                        lambda name, path=None: "./bin/codex" if path is None else None)
+    result = cb._resolve_cli_bin("codex", "./bin/codex")
+    assert cb.os.path.isabs(result)                      # 必须绝对
+    assert result == cb.os.path.abspath("./bin/codex")
 
 
 def test_run_codex_execs_resolved_abspath(monkeypatch):
