@@ -7,6 +7,7 @@ CLI 和 Web 各自只做 I/O 包装。
 
 from __future__ import annotations
 
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
@@ -400,12 +401,23 @@ class GameSession:
         if verify_llm:
             verify_llm_available(llm_config)
         self.db = GameDB(db_path, content=self.content, llm_config=llm_config)
+        # 接档载入阶段计时（#84）：原为零日志盲区，群友以为死机；逐阶段 tlog 用时，
+        # 自部署者在 server 控制台看得见进度、定位慢阶段。
+        from ming_sim.token_stats import tlog
+        _t = time.monotonic()
         self.db.seed_static_data()
+        _t, _e = time.monotonic(), time.monotonic() - _t
+        tlog(f"[载入] 1/4 静态盘面 seed {_e:.1f}s")
         _sync_offices_from_db_impl(self.content, self.db, llm_config)
         self.agno_db = create_agno_db(db_path)
+        _t, _e = time.monotonic(), time.monotonic() - _t
+        tlog(f"[载入] 2/4 官职同步 + agno {_e:.1f}s")
         self.state = self.db.load_state(start_ym)
+        _t, _e = time.monotonic(), time.monotonic() - _t
+        tlog(f"[载入] 3/4 状态载入 {_e:.1f}s")
         # 开局负面帝国修正：新档补全、旧档补缺、已达消除条件的不补/清残。不立 issue、不进推演。
         sync_opening_legacies(self.db, self.state)
+        tlog(f"[载入] 4/4 开局修正 {time.monotonic() - _t:.1f}s")
         self.deaths_this_turn: List[Dict[str, str]] = []
         self.debuts_this_turn: List[Dict[str, str]] = []
         self.power_renames_this_turn: List[Dict[str, object]] = []
