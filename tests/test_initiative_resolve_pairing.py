@@ -49,6 +49,27 @@ def test_neutral_initiative_no_warn():
     assert warns == [], f"无军/财语义不应告警：{warns}"
 
 
+def test_military_effect_with_only_legacy_office_changes_warns():
+    # CMR R1（gemini high）：office_changes 是 ADR 0009 后的死键，_apply_issue_entities 只读
+    # 人物变更/character_status_changes，不读 office_changes → 不应被它消音军事配对告警。
+    warns = _w("调卢象升督天雄军", tags=["调将"],
+               effect={"office_changes": [{"name": "卢象升", "new_office": "荡寇将军"}]})
+    assert warns, "effect 只挂死键 office_changes（引擎不落）不应消音军事配对告警"
+
+
+def test_fiscal_invalid_economy_shell_warns():
+    # CMR R1（codex medium）：flows 跳过缺 account/零额/非数 delta 的 economy 项，不立账；
+    # 这类空壳不应消音经制配对告警。
+    assert _w("设太学府月经费", effect={"economy": [{}]}), "空 economy 壳不应消音"
+    assert _w("设太学府月经费", effect={"economy": [{"account": "国库", "delta": 0}]}), \
+        "零额 economy 不应消音"
+    assert _w("设太学府月经费", ongoing={"economy": [{"delta": -5}]}, effect={"metrics": {"民心": 1}}), \
+        "缺 account 的 ongoing economy 不应消音"
+    # 正例：有效月支不告警
+    assert _w("设太学府月经费", ongoing={"economy": [{"account": "国库", "delta": -500}]},
+              effect={"metrics": {"民心": 1}}) == [], "有效月支不应告警"
+
+
 def test_resolve_surfaces_pairing_warning_in_result(game):
     """接线：军事国策经 close→resolved 结案、effect 缺 new_armies 时，
     apply_issue_tracker_output 的结果 pairing_warnings 应带告警。"""

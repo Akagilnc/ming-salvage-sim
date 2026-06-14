@@ -810,10 +810,18 @@ _FISCAL_RECURRING_PHRASES = (
 
 
 def _has_economy_entry(d: object) -> bool:
+    """是否含「能真正立账」的月度 economy 项：须有非空 account + 非零数值 delta——
+    flows 会跳过缺 account/零额/非数 delta 的项不立账，故空壳/零额不算配对（CMR codex）。"""
     if not isinstance(d, dict):
         return False
-    eco = d.get("economy")
-    return isinstance(eco, list) and len(eco) > 0
+    for item in d.get("economy") or []:
+        if not isinstance(item, dict):
+            continue
+        acct = str(item.get("account") or "").strip()
+        delta = item.get("delta")
+        if acct and isinstance(delta, (int, float)) and not isinstance(delta, bool) and delta != 0:
+            return True
+    return False
 
 
 def _initiative_resolve_pairing_warnings(
@@ -828,29 +836,33 @@ def _initiative_resolve_pairing_warnings(
 
     if any(p in blob for p in _MILITARY_RAISE_PHRASES) or any(p in blob for p in _MILITARY_MOVE_PHRASES):
         has_army = bool(effect.get("new_armies")) or bool(effect.get("army_delta"))
+        # 调将落人物变更（任命/调任）；character_status_changes 兼容。office_changes 是 ADR 0009
+        # 后的死键、_apply_issue_entities 不读，故不纳入判定（纳入会消音本该响的告警，CMR gemini）。
         has_office = bool(
-            effect.get("人物变更") or effect.get("office_changes")
-            or effect.get("character_status_changes")
+            effect.get("人物变更") or effect.get("character_status_changes")
         )
-        # 练军/募营 须落 new_armies；调将 须落 office_changes/人物变更；两者皆缺即告警。
+        # 练军/募营 须落 new_armies；调将 须落人物变更；两者皆缺即告警。
         if not has_army and not has_office:
             warns.append(
-                f"军事国策「{str(title)[:16]}」结案无 new_armies/office_changes 配对"
+                f"军事国策「{str(title)[:16]}」结案无 new_armies/人物变更 配对"
                 "（疑只推进度条未建军籍/调将，#46）"
             )
 
     if any(p in blob for p in _FISCAL_RECURRING_PHRASES):
+        # 只查国策自身 effect/ongoing 的月度 economy；顶层 fiscal_creates 不在本纯函数视野内，
+        # 故告警文案不声称查了它——若另经 fiscal_creates 立账可忽略本提示（CMR claude）。
         if not _has_economy_entry(effect) and not _has_economy_entry(ongoing_effects):
             warns.append(
-                f"经制国策「{str(title)[:16]}」结案无月度 economy/fiscal_creates 配对"
-                "（疑月经费/俸饷只活邸报未立账，#45）"
+                f"经制国策「{str(title)[:16]}」结案无月度 economy 配对"
+                "（疑月经费/俸饷未立常设月支；若已另经 fiscal_creates 立账可忽略，#45）"
             )
     return warns
 
 
-def _emit_pairing_warnings(new_row, effect: object, sink: List[str]) -> None:
-    """在 initiative 结案处调配对守门：tlog 响亮告警（#14/#27 风格）并收进 sink 供 surface。
-    仅对 kind=initiative 生效；row 字段缺失/JSON 畸形一律安全降级、不阻断结算。"""
+def _emit_pairing_warnings(new_row, effect: object, sink: Optional[List[str]] = None) -> None:
+    """在 initiative 结案处调配对守门：tlog 响亮告警（#14/#27 风格）；sink 给定时再收进供
+    程序 surface（inertia 自然结案路只 tlog、不收 sink）。仅对 kind=initiative 生效；
+    row 字段缺失/JSON 畸形一律安全降级、不阻断结算。"""
     def _g(key, default):
         try:
             return new_row[key]
@@ -868,7 +880,8 @@ def _emit_pairing_warnings(new_row, effect: object, sink: List[str]) -> None:
         ongoing = {}
     for w in _initiative_resolve_pairing_warnings(str(_g("title", "") or ""), tags, ongoing, effect):
         tlog(f"[pairing] {w}")
-        sink.append(w)
+        if sink is not None:
+            sink.append(w)
 
 
 def apply_issue_tracker_output(
@@ -2609,7 +2622,6 @@ def apply_issue_inertia_and_ongoing(
     # advance 的 delta_bar 是皇帝本月实旨推动的额外量，与 inertia 叠加，互不顶替。
     _ = touched_ids  # 保留入参不破坏调用方；inertia 漂移不再按它跳过
     inertia_rejections: List[Dict[str, object]] = []
-    inertia_pairing_warnings: List[str] = []  # #45/#46 自然结案路配对告警（tlog surface）
     active = db.list_active_issues()
     # 累计单月 metric 落账，用于上限 clamp
     period_metric_acc: Dict[str, int] = {}
@@ -2636,7 +2648,7 @@ def apply_issue_inertia_and_ongoing(
                     continue
                 if new_row["status"] == "resolved":
                     effect = json.loads(new_row["effect_on_resolve"] or "{}")
-                    _emit_pairing_warnings(new_row, effect, inertia_pairing_warnings)
+                    _emit_pairing_warnings(new_row, effect)  # inertia 路只 tlog（#45/#46）
                     _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
                     _apply_economy_list(db, state, effect.get("economy") or [])
                     _apply_faction_dict(db, effect.get("factions") or {})
