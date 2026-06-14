@@ -43,9 +43,10 @@ def test_apply_economy_list_valid_still_works(game):
 def test_loads_effect_dict_coerces_non_dict():
     """loads_effect_dict：effect_on_resolve/fail/ongoing_effects 列读取单一守门——合法 dict 原样，
     真值非 dict / 解析失败 / 空 → {}（#117 R3：集中所有 effect-列读取于此，止 coverage-drift）。"""
-    from ming_sim.issues import loads_effect_dict
+    from ming_sim.models import loads_effect_dict  # 单一 home 在 models（leaf），各模块从此取
     assert loads_effect_dict('{"metrics": {"民心": 1}}') == {"metrics": {"民心": 1}}
-    for bad in ('"oops"', "5", "true", "[1,2]", "null", "", None, "不是合法json"):
+    assert loads_effect_dict({"already": "parsed"}) == {"already": "parsed"}  # 已解析 dict 原样（codex R4）
+    for bad in ('"oops"', "5", "true", "[1,2]", "null", "", None, "不是合法json", 5, [1, 2], True):
         assert loads_effect_dict(bad) == {}, f"{bad!r} 未归 {{}}"
 
 

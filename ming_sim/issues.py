@@ -25,7 +25,7 @@ from ming_sim.flows import (
     _apply_faction_dict,
     _apply_metric_dict,
 )
-from ming_sim.models import Event, GameState, is_vassal_prince
+from ming_sim.models import Event, GameState, is_vassal_prince, loads_effect_dict
 from ming_sim.person_archive_contract import (
     PERSON_ALLEGIANCE_CHANGE_WAYS,
     PERSON_IDENTITY_TITLES,
@@ -53,17 +53,6 @@ def _ctx() -> GameContent:
     if _content is None:
         raise RuntimeError("issues.bind_content() 未调用：GameContent 未注入。")
     return _content
-
-
-def loads_effect_dict(raw: object) -> Dict[str, object]:
-    """读 effect_on_resolve / effect_on_fail / ongoing_effects 等存库 effect-JSON 列的单一入口：
-    解析为 dict；解析失败或真值非 dict（脏库/历史写路径/标量）一律归 {}，免下游 effect.get / .items
-    在非 dict 上崩回合（#117 读侧不信任存库 JSON——所有 effect-列读取统一经此，防再漂）。"""
-    try:
-        v = json.loads(raw or "{}")
-    except (ValueError, TypeError):
-        return {}
-    return v if isinstance(v, dict) else {}
 
 
 def _apply_issue_buildings(

@@ -42,14 +42,14 @@ from ming_sim.llm_config import (
 from ming_sim.agents import _dump_llm_messages
 from ming_sim.llm_model import extract_agent_text, verify_llm_available
 from ming_sim.llm_contract import fail_if_llm_error
-from ming_sim.issues import _format_issue_ongoing, loads_effect_dict
+from ming_sim.issues import _format_issue_ongoing
 from ming_sim.session import GameSession
 from ming_sim.session import AUTO_SAVE_PREFIX
 from ming_sim.skills import available_skill_ids, skill_display_name, skill_source_labels
 from ming_sim.context import match_minister_from_text
 from ming_sim.flows import compute_budget_lines
 from ming_sim.exceptions import LLMContractError  # noqa: F401  (保留：供错误处理)
-from ming_sim.models import Character, LLMConfig, TurnPhase, is_vassal_prince
+from ming_sim.models import Character, LLMConfig, TurnPhase, is_vassal_prince, loads_effect_dict
 from ming_sim import steam_events
 
 WEB_DIST = bundled_path("web", "dist")
