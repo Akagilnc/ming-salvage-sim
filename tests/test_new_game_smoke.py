@@ -35,7 +35,7 @@ def fresh_game_dir(tmp_path):
         yield sess, dbp, content
     finally:
         try:
-            sess.db.conn.close()
+            sess.close()
         except Exception:
             pass
 
@@ -73,10 +73,10 @@ def test_new_game_three_turn_chain_advances_substrate_and_restores(fresh_game_di
         f"3 回合后军饷欠应累积（{seed_arrears}→{end_arrears}），证明基座在固定财政相位真推进"
 
     # restore：关库重开 → 状态接续（turn 一致 + 基座仍在）
-    db.conn.close()
+    db.close()
     db2, state2, _content2 = open_game(dbp)
     try:
         assert state2.turn == state.turn, "restore 接续：turn 一致"
         assert _shaanxi_settle(db2) is not None, "restore 后 #66 基座仍在 DB"
     finally:
-        db2.conn.close()
+        db2.close()
