@@ -928,21 +928,7 @@ def extract_scores_by_modules_with_agno(
         tlog(f"[extractor/{module}] user payload total={len(payload_json)} chars (~{len(payload_json)//1.5:.0f} tok)")
         return run_agent_text(agents[module], payload_json, tag=f"extractor/{module}")
 
-    # 4 个 extractor LLM 调用阶段：CLI 后端并发，其余串行。ThreadPoolExecutor.map 保序，
-    # 故 module_raw 仍按 EXTRACTION_MODULES 顺序，下游合并确定性不变。任一模块抛错经 map 迭代
-    # 原样上抛（with 块先等齐在跑的线程再传播）→ 与串行同样触发上层 SettlementAbort。
-    if parallel and len(EXTRACTION_MODULES) > 1:
-        from concurrent.futures import ThreadPoolExecutor
-        tlog(f"[extractor] CLI 后端并发抽取 {len(EXTRACTION_MODULES)} 模块（wall-clock≈最慢单个）")
-        with ThreadPoolExecutor(max_workers=len(EXTRACTION_MODULES)) as pool:
-            raws = list(pool.map(_run_raw, EXTRACTION_MODULES))
-        module_raw: Dict[str, str] = dict(zip(EXTRACTION_MODULES, raws))
-    else:
-        module_raw = {module: _run_raw(module) for module in EXTRACTION_MODULES}
-
-    # 解析 + sanitizer 兜底 + 模块净化：串行、按模块顺序（确定性 + sanitizer 单实例不并发）。
-    for module in EXTRACTION_MODULES:
-        raw = module_raw[module]
+    def _parse_module(module: str, raw: str) -> Dict[str, object]:
         try:
             parsed = parse_agent_json(raw, f"结算抽取-{module}")
         except Exception as parse_err:
@@ -951,7 +937,23 @@ def extract_scores_by_modules_with_agno(
             tlog(f"[extractor/{module}] 主输出解析失败：{parse_err}；调 sanitizer 重整")
             cleaned = run_agent_text(sanitizer, raw, tag=f"sanitizer/{module}")
             parsed = parse_agent_json(cleaned, f"结算抽取-{module}（sanitizer）")
-        module_outputs[module] = _sanitize_module_output(module, parsed)
+        return _sanitize_module_output(module, parsed)
+
+    if parallel and len(EXTRACTION_MODULES) > 1:
+        # CLI 后端：4 个 LLM 调用并发取 raw（ThreadPoolExecutor.map 保序），再串行按模块顺序
+        # 解析/sanitizer/净化（sanitizer 单实例不并发、确定性）。任一模块抛错经 map 迭代原样上抛
+        # （with 块先等齐在跑线程再传播）→ 与串行同样触发上层 SettlementAbort。
+        from concurrent.futures import ThreadPoolExecutor
+        tlog(f"[extractor] CLI 后端并发抽取 {len(EXTRACTION_MODULES)} 模块（wall-clock≈最慢单个）")
+        with ThreadPoolExecutor(max_workers=len(EXTRACTION_MODULES)) as pool:
+            raws = list(pool.map(_run_raw, EXTRACTION_MODULES))
+        for module, raw in zip(EXTRACTION_MODULES, raws):
+            module_outputs[module] = _parse_module(module, raw)
+    else:
+        # 串行（形态1/api 默认）：保持 run→parse 逐模块交错的原貌——含「run 失败即停、不跑后续」
+        # 的旧时机，行为字节级不变（cmr #83 codex：并行不改串行路径）。
+        for module in EXTRACTION_MODULES:
+            module_outputs[module] = _parse_module(module, _run_raw(module))
     merged = _merge_module_outputs(module_outputs)
     localized_merged = _localized_extraction(merged)
     trace_input = {
