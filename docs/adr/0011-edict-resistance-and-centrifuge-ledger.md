@@ -22,7 +22,7 @@ design-grounding fan 的红队四角度一致暴露同一承重缝：**若离心
 **分界拍板**：
 
 - **账本（确定性）管「累积量 + 天花板」**：applier 在 P1 落库链**机械累加**，不交 LLM 数数。进账本的量：①血债（逐派、单调不减）②中旨/廷杖频度 ③逐派离心 ④敏感度天花板（**由动作触及的实体 id 结构化查表得，不由措辞**——堵话术诱导 H5：实体 id 须从 delta 的**结构化字段**解析出目标 faction/勋戚/宗室/祖制 tag，**不经 LLM 解析措辞**;⚠️ 若实体解析本身仍走 LLM extractor 则注入面残留——查表 schema 与「实体解析是否非-LLM」留 sub-ADR，见决定 5）。
-- **软判（LLM）管「本回合叙事化结果」**：这道旨意这回合具体怎么被封驳/阳奉阴违/反噬的叙事与裁定，**吃账本当硬约束（不低于天花板）**，花样交给 LLM（保 P2 软判哲学）。
+- **软判（LLM）管「本回合叙事化结果」**：这道旨意这回合具体怎么被封驳/阳奉阴违/反噬的叙事与裁定，**吃账本当硬约束（不得软判出比 resolve 算出的阻力更轻的结果；精确硬约束契约见 0011-5 D5-11 resolve↔simulator）**，花样交给 LLM（保 P2 软判哲学）。
 
 弃案：①全软判（=承重缝本身，装饰性机制，暴君可被一个好回合洗白）；②全结构化数值结局机（顶撞 P2、且与现有裁判打架）。
 
@@ -174,7 +174,7 @@ design-grounding fan 的红队四角度一致暴露同一承重缝：**若离心
 前置：0009 person 线已并 main（#106/#107），`reason_code`/character 写路径围栏可复用。
 
 - **第 0 步（现在）**：本母 ADR + `season_simulator.md` 软判规则草案（prompt 文件低冲突）。
-- **第 1 件**：离心账本 + 6 轴价值画像（factions/metrics/flows 确在 0009 diff 外，但**失望层用 factions 表、污名走 reason_code = build upon 0009 契约**、非「不撞」；含血债棘轮 + 中旨频度计数器）。
+- **第 1 件**：离心账本 + 6 轴价值画像（factions/metrics/flows 确在 0009 diff 外，但**失望层用 factions 表、污名 STIGMA 走独立常量表（0011-2 D2-5，非 0009 enum）/ 依律集扩 0009 enum = build upon 0009 契约**、非「不撞」；含血债棘轮 + 中旨频度计数器）。
 - **第 2 件**：抄家核议结构化输入（decree.py 注入点 + simulation.py payload + season_simulator prompt 输入侧 0009 不碰；但**「拿到人」落 character_status_changes 走 0009 的 Character applier = build upon、非独立**）。
 - **第 3–5 件（0009 之上）**：节操退场/称病（复用 0009 reason_code 载体）→ 恢复门 actor 前置（`_eval_gate_key` 加 character 前缀 + audiences active 过滤）→ 四层票拟+中旨闸（最重最后）。
 - **探针第一刀**：母 ADR + 件1 + 件2 输入侧 + 红队三 high 缓解（密令透支账 / 中旨非正途污名不可洗 / 恢复门 actor 前置占位）。四层票拟整套 defer。

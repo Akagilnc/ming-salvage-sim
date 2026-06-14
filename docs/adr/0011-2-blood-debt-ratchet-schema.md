@@ -63,19 +63,22 @@ Status: Proposed（草案；承母 ADR `0011-edict-resistance-and-centrifuge-led
 
 ```
 severity      = SEVERITY_BASE{申饬:3, 罢黜:10, 廷杖:40, 抄家:70, 诛:100}   ← 结构化处置类型，非措辞
-crime_weight  = CRIME_BY_CODE{依律集〔依律/谋逆坐实/贪墨坐实〕:70, 获罪削籍:70〔已获罪状态、非本动作翻轴码〕, 陷虏:50, 无:10}；STIGMA{中旨除授, 非正途, 罗织} → crime_weight=1   ← 依律集(3 码)见 D2-5 单一真源 = 0011-4 D4-4 翻轴白名单(坐实=高cw=低血债 且 塌ceiling);获罪削籍是另一 cw=70 码(已获罪、不触发翻轴)
+crime_weight  = 被坐实罪的**实际 gravity**(真源=该人 seed_guilt severity / 办他时查定罪档, 1–100; **不由「是否走程序」决定**)。例: 真重贪坐实 cw≈70、真轻贪坐实 cw≈10、陷虏 50、无罪 10。STIGMA{中旨除授,非正途,罗织}(罗织无真罪)→ crime_weight=1
+              ⚠️ 依律集{依律/谋逆坐实/贪墨坐实}(D2-5) 是**走程序坐实 flag**(① 触发 0011-4 D4-4 翻轴塌 ceiling ② crime_weight 取被坐实罪真实 gravity、非罗织 cw=1)——**与 crime_weight 高低正交**: 同 ∈依律集, 崔呈秀真重罪 cw=70→+7(罪罚相称)、福王真轻贪 cw=10→+61(轻罪重罚)。获罪削籍 = 既存定罪状态码(不触发本动作翻轴)。
 mismatch      = max(0, severity − crime_weight)                          ← 失称度版避除零
 legitimacy_pct= clamp(10 + 90 × mismatch / severity, 10, 100)
 Δblood_debt(direct) = round(severity × legitimacy_pct / 100)
 ```
 
-**数值例（同抄阉党，severity 70）**：
+**数值例（抄家 severity 70；crime_weight = 真罪 gravity，与依律集翻轴 flag 正交）**：
 
-| 路径 | crime_weight | legitimacy_pct | Δblood_debt |
-|---|---|---|---|
-| 走程序抄真贪 | 70（坐实） | 10% | **+7** |
-| 小罪重罚 | 10 | 87% | +61 |
-| 中旨罗织 | 1（STIGMA） | 99% | **+69** + 透支账 |
+| 路径 | crime_weight | 翻轴? | legitimacy_pct | Δblood_debt |
+|---|---|---|---|---|
+| 走程序坐实真重罪（崔呈秀；∈依律集） | 70 | ✅塌 | 10% | **+7**（罪罚相称） |
+| 走程序坐实真轻罪、重罚（福王；∈依律集，cw 低） | 10 | ✅塌 | 87% | **+61**（轻罪重罚） |
+| 中旨罗织（STIGMA；不∈依律集） | 1 | ❌不塌 | 99% | **+69** + 透支账 |
+
+—— 崔呈秀 / 福王 **同走程序坐实（同 ∈依律集 → ceiling 同塌）**，但 crime_weight（真罪 gravity）70 vs 10 → 血债 +7 vs +61。这就是「福王 ceiling 能塌、血债却高 = 能颁但代价高」的数值来源（0011-4 D4-4 福王对比）。
 
 **破局曲线（血债维度，单一真源）：走程序坐实真贪 +7 vs 硬推罗织 +69 = 约 10 倍差**（小罪重罚 +61 为第三参照点 = +61/+7 ≈ 8.7 倍）；母 ADR 决定5「攒合法性别硬来」的教学曲线落进数值。**⚠️ 此为血债差；ceiling 维度的墙塌是另一根轴 ≈ 2 倍（下游统一锚 = 崔呈秀 72→35 ≈ 2.06 倍；福王 91→35 ≈ 2.6 倍为次例），两者别混标同一倍数。**
 
@@ -154,7 +157,7 @@ net_centrifuge       = Σ( Δsatisfaction项 + Δleverage项 )    ← 签名物�
 -- 6 轴枚举（dig-5；下文 CHECK 复用）：礼法名节 / 既得利益 / 实务事功 / 皇权依附 / 华夷战和 / 民本恤民
 
 -- 逐派 scalar（皇权透支账，非逐轴）
-ALTER TABLE factions ADD COLUMN edict_overdraw INTEGER DEFAULT 0;   -- 中旨/廷杖频度，单调（H1/H4）
+ALTER TABLE factions ADD COLUMN edict_overdraw INTEGER DEFAULT 0;   -- 频度累加器：廷杖侧(第一刀)+中旨侧(第二刀随中旨闸)，单调（H1/H4）
 
 -- 42 格缓存（逐派 × 轴；O(1) 读，由 centrifuge_log SUM 重建）
 CREATE TABLE faction_axis_debt (
@@ -227,7 +230,7 @@ k_id = clamp(identity / 100, 0, 1)        ← 浮点除（identity=98→0.98，�
 
 ### H1/H2/H5/H6 闭合
 
-- **H1（中旨频度反噬无载体）**：`edict_overdraw` 落 factions 列（不落 metrics，规避双杀），applier 撞派 `+=1` 单调。残留：归派精度依赖轴矩阵（defer），第一刀粗粒度按 target faction。
+- **H1（中旨频度反噬无载体）**：`edict_overdraw` 落 factions 列（不落 metrics，规避双杀），applier 撞派 `+=1` 单调。**刀分配**：列 + **廷杖侧累加 = 第一刀**（粗粒度按 target faction）；**中旨侧累加 + 暴露螺旋后果 = 第二刀**（随中旨闸，0011-5 D5-6）。残留：归派精度依赖轴矩阵（defer）。
 - **H2（离心可被好回合洗白）**：不变式1 + 2（唯一写只 `+=`、读侧不 SELECT satisfaction）。攻击判「真正的棘轮牙、攻不破」。
 - **H5（软判可被话术诱导降敏感度）**：受害派 faction（`SQL 查 characters.faction`）+ crime_weight（`reason_code` 枚举）+ severity（**解析失败 fail-closed：落最高档或 SettlementAbort，绝不降罚**——CMR r1 codex：落最低档会让模糊措辞把重罚记成轻罚＝压低血债代价的 H5 漏洞；crime_weight 反向默认低档＝失称度偏高＝多记血债，方向本就保守、保留）**三入参全结构化**。**⚠️ 残留比原想的大（内部红队攻破，本轮必修）**：`source_name`→faction 解析不仅过 extractor，且本仓库 name→row 是**模糊子串/别名匹配、非 PK 精确**（`session.py:_find_candidate_by_name` 做 `key in name or name in key`），而 seed 存**跨派同名别名**——实证 `袁巡抚` 同时是袁可立（东林）与袁崇焕（军队）的别名。攻击路径：皇帝以官衔「袁巡抚」重办袁崇焕（军队），extractor 产 `source_name="袁巡抚"`，上游别名解析撞两派、无 tie-break、worst-case 静默选错 → 高 severity 血债落到东林而非军队；因不变式1（单调）+ 不变式3（不可跨派冲抵）**永久不可撤**，静默腐蚀悲剧引擎。**解析契约钉死**：① `source_name` 只接名册原始全名（extractor 朝臣 name 补「须用原始全名」纪律，对齐妃嫔已有约束），禁 alias/官衔进 source_name；② accrue 前 name→faction **PK 精确查**，命中 0 或 >1（歧义）一律 SettlementAbort + 报错包、绝不静默任选首行；③ 治本（**须按序**，CMR r1 gemini）：**先**洗 `content/characters.json` 跨派别名去歧义（`袁巡抚` 这类纯官衔别名加人名前缀或剔除），**再**开 startup 断言「无任何 alias/name 跨 faction 多映射」当不变式守门——**断言先于清洗会开局即崩**（gemini 实证 `袁巡抚` 现存跨派）；④ 诚实标：H5「收窄非归零」对存在跨派同名官衔的人物当前**实为可诱导跨派**，须上述精确化后才成立。彻底归零（任意自由文本→实体）仍留**母 ADR 决定5**。
 - **H6（中旨当回合落库 + 封驳异步套利）**：第一刀不做、随中旨闸 defer 第二刀（D2-8）。提前做必撞软死锁 / 套利。
