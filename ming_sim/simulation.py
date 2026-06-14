@@ -219,7 +219,7 @@ def _auto_table(rows: List[Dict[str, object]]) -> Dict[str, object]:
     return _table(rows, cols)
 
 
-def _talent_pool_rows(db: "GameDB") -> List[Dict[str, object]]:
+def _talent_pool_rows(db: "GameDB", state: GameState) -> List[Dict[str, object]]:
     """ADR 0009 人才池视图（读取端闭环）：居家/致仕/削籍在世者皆可起复，带
     status + reason_code（机读）+ status_reason（可读），裁判与玩家才看得见
     「某公因忤逆案削籍居家」。simulator 盘面与 extractor 上下文共用此源、防两处漂移。
@@ -228,18 +228,25 @@ def _talent_pool_rows(db: "GameDB") -> List[Dict[str, object]]:
     ADR L104 池 = (active+身名分听用候铨) ∪ (offstage/retired/dismissed 在世)。active 半=
     顶替离任者（office='听用候铨'，仍 active 可即起复，S5 核心玩趣）。锚 身名分 office='听用候铨'
     （非 office_type=待铨——后者兼作分类失败 fallback、被污染，决定10/L94）。"""
-    # roster scope（与 court_roster / tools.get_active_ministers 同口径）：只放大明、非后宫、非流寇。
-    # 否则后金/流寇 offstage 者（李自成/张献忠 等）漏进起复人才池、被当可起复的大明官（违决定10）。
-    # 流寇按 faction 排除而非只靠 power_id='ming'：招抚归明后 power_id 翻 ming（character_power_changes），
-    # 仅 power_id 闸会把前流寇漏进起复池（与 web_app.in_talent_pool 同一 bug 类，cmr R1 finding A）。
+    # roster scope（与 court_roster / active_ministers / tools.get_active_ministers /
+    # tools.query_court_roster / registry.build_court_roster / web_app.in_talent_pool 同口径）：
+    # 只放大明、非后宫、非宗藩、非未仕、非流寇，且已历史登场。否则混进非起复对象：
+    # ① 流寇/后金 offstage（李自成等）——流寇按 faction 排除，招抚归明后 power_id 翻 ming
+    #   （character_power_changes）、仅 power_id 闸漏（与 web_app.in_talent_pool 同 bug 类，cmr R1 A）；
+    # ② 就藩宗藩（朱常洵，宗室不入仕，PR#121 隐藏宗藩——web 已挡、后端 roster 须同步，cmr R3 cross-section）；
+    # ③ 未仕（史可法，未入仕非「可起复前臣」）；
+    # ④ 未来才登场者（郑成功 1645 等，offstage 但尚未在世=剧透，cmr R3 gemini）。
+    # 登场判据对齐 db.apply_historical_debuts（year+month），与 web in_talent_pool 一致。
     return [
         dict(r) for r in db.conn.execute(
             "SELECT name,office,office_type,faction,status,reason_code,status_reason,"
             "power_id,location,transit_to,debut_year,debut_month "
             "FROM characters WHERE (status IN ('offstage','retired','dismissed') "
             "OR (status='active' AND office='听用候铨' AND reason_code='被顶替')) "
-            "AND power_id='ming' AND office_type!='后宫' AND faction!='流寇' "
-            "ORDER BY status, name"
+            "AND power_id='ming' AND office_type NOT IN ('后宫','宗藩','未仕') AND faction!='流寇' "
+            "AND NOT (debut_year > ? OR (debut_year = ? AND debut_month > ?)) "
+            "ORDER BY status, name",
+            (state.year, state.year, state.period),
         ).fetchall()
     ]
 
@@ -297,9 +304,11 @@ def build_simulator_payload(
     # 现状参照名册（registry.build_court_roster）另有用途、故意含非 active 带状态标签，不在此口径。
     court_roster = _auto_table([
         dict(r) for r in db.conn.execute(
+            # roster scope：大明、非后宫、非宗藩（宗室就藩非朝堂命官，PR#121；web visible_in_court
+            # 已挡、simulator 在朝盘面须同步否则裁判仍把宗藩当可任命官/幻觉任命，cmr R3 cross-section）。
             "SELECT name,office,office_type,faction,status,power_id,"
             "location,transit_to FROM characters WHERE status='active' "
-            "AND power_id='ming' AND office_type!='后宫' ORDER BY rowid"
+            "AND power_id='ming' AND office_type NOT IN ('后宫','宗藩') ORDER BY rowid"
         ).fetchall()
     ])
     return {
@@ -322,7 +331,7 @@ def build_simulator_payload(
         "court_roster": court_roster,
         # ADR 0009 人才池视图（读取端闭环）：居家/致仕/削籍在世者带 reason_code，
         # 裁判与玩家看得见可起复之人。自动转 TSV（build_simulator_context 尾部兜底）。
-        "offstage_ministers": _auto_table(_talent_pool_rows(db)),
+        "offstage_ministers": _auto_table(_talent_pool_rows(db, state)),
         "deaths_this_turn": deaths_this_turn or [],
         "debuts_this_turn": debuts_this_turn or [],
         "relevant_memories": relevant_memories or [],
@@ -505,13 +514,15 @@ def _extractor_context_payload(
     active_ministers = [
         dict(r) for r in db.conn.execute(
             # roster scope（同 court_roster / _talent_pool_rows / tools.get_active_ministers）：
-            # 大明、非后宫。否则 active 外臣（皇太极等）/ active 后宫漏进 extractor 在朝名单（PR #106 CodeRabbit）。
+            # 大明、非后宫、非宗藩。否则 active 外臣（皇太极等）/ active 后宫漏进 extractor 在朝名单
+            # （PR #106 CodeRabbit）；宗藩同 court_roster 排除（PR#121，cmr R3 cross-section）。
             "SELECT name,office,office_type,faction,power_id,location,transit_to "
-            "FROM characters WHERE status='active' AND power_id='ming' AND office_type!='后宫' ORDER BY rowid"
+            "FROM characters WHERE status='active' AND power_id='ming' "
+            "AND office_type NOT IN ('后宫','宗藩') ORDER BY rowid"
         ).fetchall()
     ]
     # ADR 0009 人才池视图：与 simulator 盘面共用 _talent_pool_rows（防两处漂移）。
-    offstage_ministers = _talent_pool_rows(db)
+    offstage_ministers = _talent_pool_rows(db, state)
     return {
         "turn": {"year": state.year, "period": state.period, "turn": state.turn},
         "narrative": narrative,
