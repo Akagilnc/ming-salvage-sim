@@ -70,6 +70,32 @@ def test_fiscal_invalid_economy_shell_warns():
               effect={"metrics": {"民心": 1}}) == [], "有效月支不应告警"
 
 
+def test_raise_with_only_person_change_still_warns():
+    # CMR R2（codex high）：练军/募营须落 new_armies；只挂人物变更（无军）应仍告警缺军籍。
+    warns = _w("练成天雄军", tags=["练军"],
+               effect={"人物变更": [{"name": "卢象升", "动作": "调任", "office": "荡寇将军"}]})
+    assert any("new_armies" in w for w in warns), "练军只挂人物变更（无 new_armies）应告警缺军籍"
+
+
+def test_move_with_only_army_still_warns():
+    # CMR R2（codex high）：调将须落人物变更；只挂 new_armies（无调任）应仍告警缺主将调任。
+    warns = _w("调卢象升镇蓟镇", tags=["调将"],
+               effect={"new_armies": [{"id": "x", "name": "x", "manpower": 1}]})
+    assert any("人物变更" in w for w in warns), "调将只挂 new_armies（无人物变更）应告警缺主将调任"
+
+
+def test_fiscal_account_not_applied_by_flows_warns():
+    # CMR R2（codex+claude）：flows 只对 国库/内库 立账，其它账户跳过 → 不应消音告警。
+    assert _w("设太学府月经费", effect={"economy": [{"account": "户部", "delta": -500}]}), \
+        "非 国库/内库 账户（flows 不立账）不应消音告警"
+
+
+def test_fiscal_numeric_string_delta_no_warn():
+    # CMR R2（claude）：flows 用 int() 强转 delta，数字串 "-500" 会立账 → 不应告警。
+    assert _w("设太学府月经费", ongoing={"economy": [{"account": "国库", "delta": "-500"}]},
+              effect={"metrics": {"民心": 1}}) == [], "数字串 delta（flows 会立账）不应告警"
+
+
 def test_resolve_surfaces_pairing_warning_in_result(game):
     """接线：军事国策经 close→resolved 结案、effect 缺 new_armies 时，
     apply_issue_tracker_output 的结果 pairing_warnings 应带告警。"""
