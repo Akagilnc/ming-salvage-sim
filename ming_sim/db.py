@@ -5080,7 +5080,9 @@ class GameDB:
     def save_resolve_context(
         self, turn: int, decree_text: str, narrative: str,
         simulator_payload: Dict[str, object],
-        secret_orders: Optional[Dict[str, object]] = None,  # #48：分组承载 {在办,待核议}（旧档为 list，json 落库不挑类型）
+        # #48：分组承载 dict {在办,待核议} 为正形；运行期仍兼容旧档/占位的 list（json 落库不挑类型），
+        # 故注解取两者并集，不窄化成 dict-only（否则误判恢复路 list 调用为类型错）。
+        secret_orders: Optional[Dict[str, object] | List[Dict[str, object]]] = None,
         relevant_memories: Optional[List[Dict[str, object]]] = None,
         extracted: Optional[Dict[str, object]] = None,
     ) -> None:
