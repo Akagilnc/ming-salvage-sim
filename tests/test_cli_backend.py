@@ -441,6 +441,9 @@ def test_login_shell_path_uses_printenv_not_dollar_path(monkeypatch):
     joined = " ".join(captured["cmd"])
     assert "printenv PATH" in joined       # shell 无关取法
     assert '"$PATH"' not in joined          # 不靠 shell 的 $PATH 展开
+    # flag 分开传,不用组合 -lic(fish 等不支持组合单字符 flag,gemini PR#115 high)
+    assert "-lic" not in captured["cmd"]
+    assert {"-l", "-i", "-c"} <= set(captured["cmd"])
 
 
 def test_resolve_cli_bin_absolutizes_relative_result(monkeypatch):
@@ -461,7 +464,9 @@ def test_run_codex_execs_resolved_abspath(monkeypatch):
     captured = {}
 
     class _P:
-        stdout = "ok"; stderr = ""; returncode = 0
+        stdout = "ok"
+        stderr = ""
+        returncode = 0
 
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
     monkeypatch.setattr(cb.subprocess, "run", lambda cmd, **kw: (captured.update(cmd=cmd) or _P()))
@@ -475,7 +480,9 @@ def test_run_claude_execs_resolved_abspath(monkeypatch):
     captured = {}
 
     class _P:
-        stdout = "ok"; stderr = ""; returncode = 0
+        stdout = "ok"
+        stderr = ""
+        returncode = 0
 
     monkeypatch.setattr(cb.subprocess, "run", lambda cmd, **kw: (captured.update(cmd=cmd) or _P()))
     cb._run_claude("p")
