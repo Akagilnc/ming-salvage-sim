@@ -118,7 +118,7 @@ net_centrifuge       = Σ( Δsatisfaction项 + Δleverage项 )    ← 签名物�
 
 **硬下界不变式（堵纸面净负实操死锁）**：floor 不得碾平至**少一条可执行净负动作**；净负路收窄判据 = 「≥1 派未触底（sat>0 ∨ lev>0）则净负窄路恒存」。全派打穿 = 母 ADR 决定6 允许的**涌现尽头**、非钦定灭亡。
 
-**残留**：α/β/γ/δ 是 playtest 调参（留 sub-spec），但**下界本身是硬不变式、不是可调参数**——这条是与决定2 单调棘轮的最硬张力的解。**⚠️ CMR r1 裁定**（gemini 提 critical「血债 floor 在 min(ceiling) 之外 → resistance 可超 ceiling、破出路」vs Claude 判一致——裁为 clarify）：`α×血债` floor 在 `min(ceiling,…)` **之外是母 ADR/dig-9『命门=合法性 floor』的有意设计**——resistance **本就可超 ceiling**（国本之争：合法性底集体托 95+），ceiling 非 resistance 硬帽。gemini 建议把血债收进 `min(ceiling, max(...))` 会**塌掉冻土**（ceiling 翻轴一并清掉血债 floor），违背「血债=冻土压不动」棘轮命根，**不采**。但钉清：**「出路恒可达」≠ resistance→0**，而是 ①净负层硬下界（≥1 条可执行净负动作恒存）+ ②对**该具体命门动作**走程序坐实 → axis 翻轴 → 其 ceiling/命门floor 塌；血债 floor 是对**该派**的持久代价。**α 须 sub-spec 标定**令 α×血债 floor 单独**不足以封死**翻轴后的「依律处置」出路动作（否则血债攒满即锁死全盘=违出路恒可达）；此 α 约束进 playtest oracle。
+**残留**：α/β/γ/δ 是 playtest 调参（留 sub-spec），但**下界本身是硬不变式、不是可调参数**——这条是与决定2 单调棘轮的最硬张力的解。**⚠️ CMR r1 裁定**（gemini 提 critical「血债 floor 在 min(ceiling) 之外 → resistance 可超 ceiling、破出路」vs Claude 判一致——裁为 clarify）：`α×血债` floor 在 `min(ceiling,…)` **之外是母 ADR/dig-9『命门=合法性 floor』的有意设计**——resistance **本就可超 ceiling**（国本之争：合法性底集体托 95+），ceiling 非 resistance 硬帽。gemini 建议把血债收进 `min(ceiling, max(...))` 会**塌掉冻土**（ceiling 翻轴一并清掉血债 floor），违背「血债=冻土压不动」棘轮命根，**不采**。但钉清：**「出路恒可达」≠ resistance→0**，而是 ①净负层硬下界（≥1 条可执行净负动作恒存）+ ②对**该具体命门动作**走程序坐实 → axis 翻轴 → 其 ceiling/命门floor 塌；血债 floor 是对**该派**的持久代价。**α 须 sub-spec 标定**令 α×血债 floor 单独**不足以封死**翻轴后的「依律处置」出路动作（否则血债攒满即锁死全盘=违出路恒可达）；此 α 约束进 playtest oracle。**⚠️ CMR r2 补（gemini）**：血债**单调无界**，任意固定 α 下 α×血债→∞ 终超任何阈——故 α×血债 对 floor 的**贡献须设硬上限 cap**：`floor 血债臂 = min(cap, α×血债)`，且 **cap < 「依律处置」（走程序坐实）出路动作的 base resistance**（~35）。如此血债冻土能永久挡**私意高墙动作**，但**挡不死走程序坐实的依律出路**——出路恒可达对 unbounded 血债仍成立。（cap 精确值随 playtest 标定、与 α 同进 oracle。）
 
 ### D2-8 provisional 归属 = defer 第二刀（钉最低契约）—— parked CMR r2 项①
 
@@ -128,7 +128,7 @@ net_centrifuge       = Σ( Δsatisfaction项 + Δleverage项 )    ← 签名物�
 
 1. **转 final 扫表放 settle 后半段 `atomic` 内、对 `before_turn` 幂等**（不放 `pre_settle`，避 `pre_settle:190` 早退软死锁）。
 2. **`expires_turn` 到必转 final**（避 ADR 0008 毒 payload 永挂）。
-3. **fungible（钱）照落 live 国库 + 封驳窗 `W=1` 压窗 + 当回合正反账冲销**；status 类后果（家产已没 / 将就位）H6 真闭，**涉钱只压窗不全闭**——P1（当回合全量落库）× H6（既成事实套利）是固有张力，**不假装两全、不做 escrow**（见下「中旨按历史」）。
+3. **fungible（钱）= 见坑④**（国库净额 −amount、不退款、落 `economy_ledger`，非「正反账冲销净 0」）；**status 类后果**（家产已没 / 将就位）封驳窗 `W=1` 压窗 + 当回合作废转「打回」（H6 status 类真闭）。**涉钱不全闭**——钱已出不退（以「非正途」污名 + 血债为代价，非 escrow）；P1（当回合全量落库）× H6（既成事实套利）是固有张力，**不假装两全**（见下「中旨按历史」+ 坑④）。
 4. **⚠️ 坑④（内部红队补 → CMR r1 修正记账方向 + 落账表）：fungible 中旨须让国库净额 = −amount（钱真没了）、且落 `economy_ledger` 不落 `compute_budget_lines`。** 我原写「+amount 后 −amount 净额归 0」**方向反了**：净额 0 = 国库做平 = 钱回来了，正撞「钱没了就是没了」（CMR Claude + codex concur）；且一次性中旨拨款是**事务性**条目，该进 `economy_ledger`，不进 `compute_budget_lines`（后者是 fiscal_config/buildings 派生的**经常性**月流水，塞一次性条目会破经常性账——CMR gemini 实读 flows.py）。**契约**：① 中旨拨款 = `economy_ledger` 一笔 **−amount**（钱出库、长留不退）；② 六科封驳 = **另一笔 append-only 审计/状态行**（`reason_code=六科封驳作废`，**不贷回国库**）——只标「此拨款用途被封还作废」，非 +amount 退款。国库净额 = **−amount**（反映「钱没了」），双笔可审计读出「真拨（钱已出）+ 真驳（用途作废未达成）」= 乱用中旨的牙，**不是净额对冲的虚账**。双笔进 0008 atomic + before_turn 幂等，restore 只读 `economy_ledger` 即复原「拨过且被驳、钱没回来」；`season_simulator`/审计大臣 prompt 补正向口径（带此对 reason_code 的同月条目 =「钱已实拨、被六科封还作废、不退」，不判虚账）。
 
 **中旨按历史（用户拍，溶解原 fork-4 escrow）**：中旨绕内阁、六科可封驳、带「非正途」污名、**钱拨了被封驳就是没了**（史实）。用户：「钱没了就是没了」是**牙不是缺陷**，逼「别乱来、攒合法性慢办」。故不做暂存账 / 退款。中旨 / 封驳跟「四层票拟改革」（dig-8）一起做，**血债先、它后**（顺序可再议）。**⚠️ 覆盖母 ADR 决定5 line 82**：母 ADR 原把「钱入库」列进封驳作废集（=钱要被反转），与此处「钱没了就是没了」相反；用户 2026-06-14 拍板（钱不退）时间在后、为最终权威，本条覆盖之，并已回标母 ADR（见母 ADR line 82 注）。
@@ -146,26 +146,29 @@ net_centrifuge       = Σ( Δsatisfaction项 + Δleverage项 )    ← 签名物�
 ## DDL（第一刀，走 `ensure_column` 幂等 ALTER，老档补默认）
 
 ```sql
+-- 6 轴枚举（dig-5；下文 CHECK 复用）：礼法名节 / 既得利益 / 实务事功 / 皇权依附 / 华夷战和 / 民本恤民
+
 -- 逐派 scalar（皇权透支账，非逐轴）
-ALTER factions ADD COLUMN edict_overdraw INTEGER DEFAULT 0;   -- 中旨/廷杖频度，单调（H1/H4）
+ALTER TABLE factions ADD COLUMN edict_overdraw INTEGER DEFAULT 0;   -- 中旨/廷杖频度，单调（H1/H4）
 
 -- 42 格缓存（逐派 × 轴；O(1) 读，由 centrifuge_log SUM 重建）
 CREATE TABLE faction_axis_debt (
   faction     TEXT    NOT NULL REFERENCES factions(name),
-  axis        TEXT    NOT NULL,                       -- 6 轴枚举（dig-5）
-  blood_debt  INTEGER NOT NULL DEFAULT 0 CHECK (blood_debt  >= 0),   -- 单调不减 floor
-  wariness    INTEGER NOT NULL DEFAULT 0 CHECK (wariness    >= 0),   -- 同类防备底（kinship 臂）
+  axis        TEXT    NOT NULL CHECK (axis IN ('礼法名节','既得利益','实务事功','皇权依附','华夷战和','民本恤民')),
+  blood_debt  INTEGER NOT NULL DEFAULT 0 CHECK (blood_debt  >= 0),   -- 单调不减 floor（缓存可为 0）
+  wariness    INTEGER NOT NULL DEFAULT 0 CHECK (wariness    >= 0),   -- 同类防备底（kinship 臂；缓存可为 0）
   PRIMARY KEY (faction, axis)
 );
 
--- 审计真源（append-only）。缓存重建：
---   faction_axis_debt.{blood_debt,wariness} = SUM(amount) WHERE kind IN ('direct','kinship') GROUP BY (faction,axis,kind)
---   factions.edict_overdraw                 = SUM(amount) WHERE kind='overdraw' GROUP BY faction
+-- 审计真源（append-only）。缓存重建用 COALESCE 防「无行→NULL 覆盖默认 0」（CMR r2）：
+--   faction_axis_debt.blood_debt = COALESCE(SUM(amount),0) FROM centrifuge_log WHERE kind='direct'   GROUP BY (faction,axis)
+--   faction_axis_debt.wariness   = COALESCE(SUM(amount),0) FROM centrifuge_log WHERE kind='kinship'  GROUP BY (faction,axis)
+--   factions.edict_overdraw      = COALESCE(SUM(amount),0) FROM centrifuge_log WHERE kind='overdraw' GROUP BY faction
 CREATE TABLE centrifuge_log (
   id            INTEGER PRIMARY KEY,
   turn          INTEGER NOT NULL,
   faction       TEXT    NOT NULL REFERENCES factions(name),
-  axis          TEXT,                                 -- 6 轴枚举（dig-5）；kind='overdraw' 时 NULL（逐派 scalar、非逐轴）
+  axis          TEXT    CHECK (axis IS NULL OR axis IN ('礼法名节','既得利益','实务事功','皇权依附','华夷战和','民本恤民')),
   kind          TEXT    NOT NULL,                     -- direct | kinship | overdraw
   base          INTEGER,                              -- severity；kind='overdraw' 时 NULL
   legitimacy_pct INTEGER,                             -- kind='overdraw' 时 NULL
@@ -176,8 +179,12 @@ CREATE TABLE centrifuge_log (
   idem_key      TEXT    NOT NULL UNIQUE,              -- 防 0008 重跑二次累加
   created_at    TEXT    NOT NULL,
   CHECK (kind IN ('direct','kinship','overdraw')),
-  -- direct/kinship 三列必填；overdraw 三列须 NULL（CMR r1：overdraw 是逐派 scalar，不塞假轴值）
-  CHECK ( (kind = 'overdraw') = (axis IS NULL AND base IS NULL AND legitimacy_pct IS NULL) )
+  -- 列填充按 kind 二分（CMR r2：双条件式，强制 direct/kinship 三列非空、overdraw 三列 NULL；
+  --   原 biconditional `(kind='overdraw')=(三列全NULL)` 太弱——direct 行漏填某列也会过）
+  CHECK (
+    (kind = 'overdraw' AND axis IS NULL AND base IS NULL AND legitimacy_pct IS NULL)
+    OR (kind IN ('direct','kinship') AND axis IS NOT NULL AND base IS NOT NULL AND legitimacy_pct IS NOT NULL)
+  )
 );
 ```
 
@@ -191,7 +198,7 @@ CREATE TABLE centrifuge_log (
 
 ```
 Δwariness(同派旁观, kinship) = round( severity × legitimacy_pct / 100 × 0.3 × k_id )
-k_id = clamp(identity / 100, 0, 1)        ← 用户 2026-06-14 拍：去掉原 max(1,…) 下界
+k_id = clamp(identity / 100, 0, 1)        ← 浮点除（identity=98→0.98，实现禁整除）；用户 2026-06-14 拍：去掉原 max(1,…) 下界
 ```
 
 - `identity` = 第五个 per-人值 [0,100]（与 faction / seed-guilt / #89 loyalty 全正交），答「此人多真是其挂名 faction 的核心」，**只缩 kinship 乘数**；**direct 血债臂签名物理不接 identity**。
@@ -270,4 +277,4 @@ provisional / 中旨闸第二刀（D2-8）；血债字段 P4 呈现层（接口�
 
 ### 出处
 
-由 design-dig fan-out 合成：dig-4（9-agent 4 方案 → 对抗攻击 → 合成）、dig-5（14-agent 两路 42/42 一致）、dig-6（4-agent 认同度层）、dig-7（9-agent seed 六等）、dig-9（ceiling-sensitivity workflow）。用户 2026-06-14 设计 session 逐点拍板。承母 ADR 决定2 + CMR r1（commit `dfe8482`）+ parked r2。**草稿后经内部对抗预检**（15-agent：7 fold 保真核 + 8 承重 claim 红队，2026-06-14）——修 5 处 P1（人人有点脏 / 母 ADR 钱归宿矛盾 / H5 跨派别名 / provisional 第4坑 / P4 字段泄漏）+ 2 处 P2，5 处承重 claim 攻不破（42格→新表 / kinship 0-边界 / 净负 vs 出路恒可达 / build-upon / H2 棘轮），再进正式 CMR。**CMR r1**（1+1+1 full：Claude Opus + codex gpt-5.5 + gemini/agy，2026-06-14，无降级）修 3 P1（坑④ 记账方向反 + 落 economy_ledger 非 compute_budget_lines / overdraw 轴列 nullable + 重建定义 / 符号离心路由怒→血债·悦→satisfaction）+ 4 P2（净负 floor 公式 vs 出路恒可达 clarify + α 约束 / severity 解析失败 fail-closed 非降罚 / amount>0 skip-0 写 / 断言须先洗 seed）+ 1 P4（第一刀 P4 呈现层 defer）。
+由 design-dig fan-out 合成：dig-4（9-agent 4 方案 → 对抗攻击 → 合成）、dig-5（14-agent 两路 42/42 一致）、dig-6（4-agent 认同度层）、dig-7（9-agent seed 六等）、dig-9（ceiling-sensitivity workflow）。用户 2026-06-14 设计 session 逐点拍板。承母 ADR 决定2 + CMR r1（commit `dfe8482`）+ parked r2。**草稿后经内部对抗预检**（15-agent：7 fold 保真核 + 8 承重 claim 红队，2026-06-14）——修 5 处 P1（人人有点脏 / 母 ADR 钱归宿矛盾 / H5 跨派别名 / provisional 第4坑 / P4 字段泄漏）+ 2 处 P2，5 处承重 claim 攻不破（42格→新表 / kinship 0-边界 / 净负 vs 出路恒可达 / build-upon / H2 棘轮），再进正式 CMR。**CMR r1**（1+1+1 full：Claude Opus + codex gpt-5.5 + gemini/agy，2026-06-14，无降级）修 3 P1（坑④ 记账方向反 + 落 economy_ledger 非 compute_budget_lines / overdraw 轴列 nullable + 重建定义 / 符号离心路由怒→血债·悦→satisfaction）+ 4 P2（净负 floor 公式 vs 出路恒可达 clarify + α 约束 / severity 解析失败 fail-closed 非降罚 / amount>0 skip-0 写 / 断言须先洗 seed）+ 1 P4（第一刀 P4 呈现层 defer）。**CMR r2**（同 squad，无降级；Claude+codex 空、gemini 7）修 2 P1（坑③/坑④ 净额冲销自相矛盾对齐 / overdraw CHECK biconditional 太弱 → 双条件式）+ 2 P2（血债 floor 设 cap 保 unbounded 下出路恒可达 / k_id 浮点除）+ 3 low（ALTER TABLE / 重建 COALESCE / axis enum CHECK）。
