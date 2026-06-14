@@ -91,3 +91,49 @@ def test_settle_province_tick_port_lock_no_persist_on_raise(fresh_db):
 def test_settle_province_tick_unknown_region_raises(fresh_db):
     with pytest.raises(ValueError):
         fresh_db.settle_province_tick("atlantis", [])
+
+
+# ── slice3：接入月末固定财政相位（shadow，不驱动国库；fail-loud 但隔离）──
+
+@pytest.fixture
+def fresh_game(fresh_db):
+    """fresh_db + load_state，供调 apply_fixed_period_flows（需 GameState）。"""
+    return fresh_db, fresh_db.load_state()
+
+
+def test_apply_fixed_period_flows_advances_shaanxi_substrate(fresh_game):
+    # 月末固定财政相位推进省级基座：陕西种子=G1 基线，空 action 一 tick → 军饷欠 20→18、省库 50→0
+    from ming_sim.flows import apply_fixed_period_flows
+    db, state = fresh_game
+    assert _read_settle(db)["st"]["军饷欠"] == 20  # 种子
+    apply_fixed_period_flows(db, state)
+    after = _read_settle(db)["st"]
+    assert abs(after["军饷欠"] - 18) < 1e-3, f"军饷欠 {after['军饷欠']} ≠ 18（基座未在固定财政相位推进？）"
+    assert abs(after["省库库银"] - 0) < 1e-3
+    assert abs(after["C_地方截留"] - 9.8) < 1e-3
+
+
+def test_substrate_absent_does_not_break_flows(game):
+    # 旧档（probe.db）无 settle 种子 → shadow 隔离：固定财政照常完成，不抛
+    from ming_sim.flows import apply_fixed_period_flows
+    db, state, _ = game
+    flows = apply_fixed_period_flows(db, state)
+    assert isinstance(flows, list) and flows, "固定财政应照常落账（基座缺失不该掀翻 pre_settle）"
+
+
+def test_substrate_corrupt_isolated_from_flows(fresh_game):
+    # 坏基座（删必填火耗率）→ settle_tick raise → 隔离：固定财政照常完成 + 基座不推进（港口锁）
+    from ming_sim.flows import apply_fixed_period_flows
+    db, state = fresh_game
+    row = db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
+    fiscal = json.loads(str(row["fiscal"]))
+    del fiscal["settle"]["p"]["火耗率"]
+    db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id='shaanxi'",
+        (json.dumps(fiscal, ensure_ascii=False),),
+    )
+    db.conn.commit()
+    flows = apply_fixed_period_flows(db, state)
+    assert isinstance(flows, list) and flows, "坏基座不该掀翻固定财政（cmr S4 F4）"
+    after = _read_settle(db)["st"]
+    assert abs(after["军饷欠"] - 20) < 1e-3, "坏基座不该推进（港口锁：FAIL tick 不落库）"
