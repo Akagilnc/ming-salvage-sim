@@ -107,10 +107,10 @@ def build_court_roster(context: CourtContext) -> str:
         # 宗藩不入此册，与 web visible_in_court 同步，cmr R3 cross-section）。
         if c.office_type in ("后宫", "宗藩"):
             continue
-        if getattr(c, "power_id", "ming") != "ming":
-            continue
         status, reason = db.get_character_status(c.name)
-        if status == "offstage":
+        if status == "offstage":  # offstage 多，先短路省一次 resolve_power_id DB 查询（gemini PR#130 R1）
+            continue
+        if db.resolve_power_id(c) != "ming":  # DB 权威：招抚归明者(DB翻ming/content仍旧势力)入册
             continue
         # 直接按字段吐原值，不脑补、不翻译。状态原值 + 缘由（如有）。
         state_cell = f"{status}（{reason}）" if reason else status
@@ -134,10 +134,10 @@ def build_court_roster_index(context: CourtContext) -> str:
         # roster scope：非后宫、非宗藩（同 build_court_roster，cmr R3 cross-section）。
         if c.office_type in ("后宫", "宗藩"):
             continue
-        if getattr(c, "power_id", "ming") != "ming":
-            continue
         status, reason = db.get_character_status(c.name)
-        if status == "offstage":
+        if status == "offstage":  # offstage 多，先短路省一次 resolve_power_id DB 查询（gemini PR#130 R1）
+            continue
+        if db.resolve_power_id(c) != "ming":  # DB 权威：招抚归明者(DB翻ming/content仍旧势力)入册
             continue
         state_cell = f"{status}（{reason}）" if reason else status
         lines.append(f"{c.name}：{c.office or '无现任官职'}，{state_cell}")
@@ -452,9 +452,12 @@ def create_minister_agent(
         # 运行时判断规模：人物>100 或军队>30 切换为 tool 按需查，否则全量注入 system
         active_char_count = sum(
             1 for ch in _ctx().characters.values()
-            if ch.office_type != "后宫"
-            and getattr(ch, "power_id", "ming") == "ming"
+            # 排除后宫+宗藩：本计数是 build_court_roster↔index 切换阈值，须与两 builder 同口径
+            # （都跳宗藩），否则宗藩多时虚高、误切索引路丢全名册上下文（CodeRabbit PR#130 R2 Minor）。
+            if ch.office_type not in ("后宫", "宗藩")
+            # status 先于 resolve_power_id：多数人物 offstage，先短路省一次 DB 查询（gemini PR#130 R1）
             and context.db.get_character_status(ch.name)[0] != "offstage"
+            and context.db.resolve_power_id(ch) == "ming"  # DB 权威，同 court_roster
         )
         army_count = context.db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0]
         use_roster_tool = active_char_count > 100

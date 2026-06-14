@@ -423,11 +423,11 @@ class DirectivePatch(BaseModel):
 
 
 def _character_power_id(character: Character, db) -> str:
-    """人物所属势力 id：DB 权威，回退内存 power_id，默认 ming。"""
-    row = db.conn.execute(
-        "SELECT power_id FROM characters WHERE name=?", (character.name,)
-    ).fetchone()
-    return (row["power_id"] if row else None) or getattr(character, "power_id", "ming") or "ming"
+    """人物所属势力 id：DB 权威，回退内存 power_id，默认 ming。
+
+    权威解析单一真源在 db.resolve_power_id（session.can_summon 等同源复用，见 #125），
+    此处委托，朝堂可见性/召见两端口径一致、不各写一份。"""
+    return db.resolve_power_id(character)
 
 
 def visible_in_court(character: Character, db) -> bool:
@@ -845,10 +845,7 @@ class WebGame:
         office = character.office  # 去职者已被清空，可能为空串
         # summary 不含官职（卡片/详情已单独显 office），避免重复
         summary = f"{character.faction}一系，行事{character.style}。"
-        power_row = self.db.conn.execute(
-            "SELECT power_id FROM characters WHERE name=?", (character.name,)
-        ).fetchone()
-        power_id = (power_row["power_id"] if power_row else None) or getattr(character, "power_id", "ming") or "ming"
+        power_id = self.db.resolve_power_id(character)  # 权威解析单一真源（#125）
         return {
             "name": character.name,
             "office": office,

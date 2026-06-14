@@ -272,6 +272,129 @@ def test_zongfan_cannot_be_summoned_via_can_summon(game):
         assert ok2 is True
 
 
+def _bare_session(db):
+    from ming_sim.session import GameSession
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.temporary_characters = {}
+    return sess
+
+
+def _enemy_active_name(db, content) -> str:
+    """content 里有、且 DB 权威 power_id 非 ming、status=active 的人物（皇太极等外藩）。"""
+    import pytest
+    for name, ch in content.characters.items():
+        row = db.conn.execute("SELECT power_id, status FROM characters WHERE name=?", (name,)).fetchone()
+        if row and (row["power_id"] or "ming") != "ming" and row["status"] == "active":
+            return name
+    pytest.skip("基底盘面无 active 外藩人物")
+
+
+def test_enemy_active_character_cannot_be_summoned(game):
+    """非大明势力（后金/蒙古/朝鲜/流寇）即便 active 也不可召见——皇帝召的是大明朝廷命官，
+    不能召对敌酋（如皇太极）。can_summon 是 summon_minister 工具链共用闸，集中守此一处（#125）。
+    现状 bug：can_summon 只查 status，active 外藩按名召直接放行。"""
+    db, state, content = game
+    sess = _bare_session(db)
+    enemy = _enemy_active_name(db, content)
+    assert db.get_character_status(enemy)[0] == "active"  # active 也拒
+    ok, reason = sess.can_summon(content.characters[enemy])
+    assert ok is False
+    assert "大明" in reason  # 拒因须点明非大明，而非误报「尚未登场」等状态话术
+
+
+def test_summon_power_check_uses_db_not_content(game):
+    """招抚归明者：流寇/降将 power_id 经 apply_character_power_changes 翻 ming，但 content/内存
+    仍是旧势力。can_summon 须认 **DB 权威 power_id**，否则按内存把归明者误拒在朝堂外（#125 核心）。"""
+    db, state, content = game
+    sess = _bare_session(db)
+    # 找一个 content 内存非 ming 的人物，把其 DB power_id 翻成 ming（模拟招抚归明落库）
+    name = next((n for n, c in content.characters.items()
+                 if getattr(c, "power_id", "ming") != "ming"
+                 and c.office_type not in ("后宫", "宗藩")), None)
+    import pytest
+    if name is None:
+        pytest.skip("基底盘面无非 ming 可招抚人物")
+    db.conn.execute("UPDATE characters SET power_id='ming' WHERE name=?", (name,))
+    db.conn.commit()
+    db.set_character_status(state, name, "active", "测试：招抚归明")
+    assert getattr(content.characters[name], "power_id", "ming") != "ming"  # 内存仍旧势力
+    ok, reason = sess.can_summon(content.characters[name])
+    assert ok is True, f"DB 已归明却被内存值误拒：{reason}"
+
+
+def test_normal_ming_minister_still_summonable(game):
+    """回归：正常大明 active 大臣不受 #125 power 闸影响，照常可召。"""
+    db, state, content = game
+    sess = _bare_session(db)
+    name = _active_ming_minister(db, content)
+    ok, _ = sess.can_summon(content.characters[name])
+    assert ok is True
+
+
+def test_list_ministers_uses_db_power_id(game):
+    """召见名册 list_ministers 须与 can_summon 同口径（DB 权威 power_id，#125 centralize）：
+    招抚归明者(DB翻ming/content仍旧势力) 入册；外藩 active 不入册。否则可召却不在册、两端不一致。"""
+    from ming_sim.session import GameSession
+    import pytest
+    db, state, content = game
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.content = content
+    # 招抚归明者：content 非 ming，DB 翻 ming → 应入册
+    归明 = next((n for n, c in content.characters.items()
+                if getattr(c, "power_id", "ming") != "ming"
+                and c.office_type not in ("后宫", "宗藩")), None)
+    if 归明 is None:
+        pytest.skip("基底盘面无非 ming 可招抚人物")
+    db.conn.execute("UPDATE characters SET power_id='ming' WHERE name=?", (归明,))
+    db.conn.commit()
+    db.set_character_status(state, 归明, "active", "测试：招抚归明")
+    names = {v.name for v in sess.list_ministers()}
+    assert 归明 in names, "DB 已归明者却被内存值挡出召见名册"
+    # 外藩 active（DB 非 ming）不入册
+    enemy = _enemy_active_name(db, content)
+    assert enemy not in {v.name for v in sess.list_ministers()}
+
+
+def test_find_existing_minister_uses_db_power_id(game):
+    """_find_existing_minister 是罢黜/任命去重/密令 canonical 的 ming-guard，须与 can_summon 同口径
+    （DB 权威，#125 R2 codex high）：招抚归明者(DB翻ming/content仍旧势力)可召就必须可查到（可罢/可任）；
+    外藩(皇太极 DB houjin)仍查不到，防误黜外藩的保护不丢。"""
+    from ming_sim.session import _find_existing_minister
+    import pytest
+    db, state, content = game
+    # 招抚归明者：DB 翻 ming、content 仍非 ming、active → 应被 _find_existing_minister 命中
+    归明 = next((n for n, c in content.characters.items()
+                if getattr(c, "power_id", "ming") != "ming"
+                and c.office_type not in ("后宫", "宗藩") and c.status != "candidate"), None)
+    if 归明 is None:
+        pytest.skip("基底盘面无非 ming 可招抚人物")
+    db.conn.execute("UPDATE characters SET power_id='ming' WHERE name=?", (归明,))
+    db.conn.commit()
+    db.set_character_status(state, 归明, "active", "测试：招抚归明")
+    assert _find_existing_minister(content, 归明, db) == 归明, "DB 已归明者却被内存值挡出 ming-guard（可召不可罢）"
+    # 外藩 active（DB houjin）仍查不到（防误黜皇太极）
+    enemy = _enemy_active_name(db, content)
+    assert _find_existing_minister(content, enemy, db) is None
+
+
+def test_db_resolve_power_id_authoritative(game):
+    """db.resolve_power_id：DB 行 power_id 优先于内存，DB 无行时回退内存，再默认 ming。"""
+    db, state, content = game
+    name = _active_ming_minister(db, content)
+    ch = content.characters[name]
+    db.conn.execute("UPDATE characters SET power_id='houjin' WHERE name=?", (name,))
+    db.conn.commit()
+    assert db.resolve_power_id(ch) == "houjin"  # DB 权威压过内存的 ming
+    # DB 无该行 → 回退内存 power_id
+    ghost = SimpleNamespace(name="查无此人_测试", power_id="mongol")
+    assert db.resolve_power_id(ghost) == "mongol"
+    # 内存也无 → 默认 ming
+    ghost2 = SimpleNamespace(name="查无此人_测试2")
+    assert db.resolve_power_id(ghost2) == "ming"
+
+
 def test_vassal_prince_secret_order_rejected(game, monkeypatch):
     """密令端点 api_create_secret_order 也须拒宗藩（同 /chat 的 API 直连绕过形态，cmr R5）。"""
     import asyncio

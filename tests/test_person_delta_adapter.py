@@ -1890,6 +1890,55 @@ def test_create_secret_order_persists_canonical_name(game):
     assert row["minister_name"] == target  # 存规范名，非别名
 
 
+def test_create_secret_order_rejects_foreign_power(game):
+    """密令唯一 DB 写口 create_secret_order 拒外藩（皇太极等非大明势力）——同宗藩集中守此一处覆盖
+    API/大臣工具/CLI/upsert 全路，按 DB 权威 power_id 判（#125；CodeRabbit PR#130 R1 Major：
+    _find_existing_minister 返 None 后 `or 原名` 回退会把外藩 raw 名写进 secret_orders，须显式拒）。"""
+    import pytest
+    db, state, content = game
+    enemy = next((n for n, c in content.characters.items()
+                  if db.conn.execute("SELECT power_id FROM characters WHERE name=?", (n,)).fetchone()
+                  and (db.conn.execute("SELECT power_id FROM characters WHERE name=?", (n,)).fetchone()["power_id"] or "ming") != "ming"), None)
+    if enemy is None:
+        pytest.skip("基底盘面无外藩人物")
+    with pytest.raises(ValueError, match="不属大明朝廷"):
+        db.create_secret_order(state, enemy, "密查", "着尔暗中查访", [])
+
+
+def test_create_secret_order_rejects_foreign_power_by_alias(game):
+    """密令 assignee 用外藩别名也须被资格闸挡——_find_existing_minister 不解非 ming 别名，
+    须按名/别名兜回显式拒，否则别名经 `or 原名` 回退绕闸（#125；CodeRabbit PR#130 R1 Major）。"""
+    import pytest
+    db, state, content = game
+    enemy = next(
+        (n for n, c in content.characters.items()
+         if (db.conn.execute("SELECT power_id FROM characters WHERE name=?", (n,)).fetchone() or {"power_id": "ming"})["power_id"] not in (None, "ming")
+         and any(a != n for a in (c.aliases or []))),
+        None,
+    )
+    if enemy is None:
+        pytest.skip("基底盘面无带别名的外藩")
+    alias = next(a for a in content.characters[enemy].aliases if a != enemy)
+    with pytest.raises(ValueError, match="不属大明朝廷"):
+        db.create_secret_order(state, alias, "密查", "着尔暗中查访", [])
+
+
+def test_create_secret_order_allows_returned_defector(game):
+    """招抚归明者（DB power_id 翻 ming、content 仍旧势力）可受密令——资格闸认 DB 权威，
+    不被内存旧势力误拒（#125 与 can_summon 同口径）。"""
+    import pytest
+    db, state, content = game
+    defector = next((n for n, c in content.characters.items()
+                     if getattr(c, "power_id", "ming") != "ming"
+                     and c.office_type not in ("后宫", "宗藩")), None)
+    if defector is None:
+        pytest.skip("基底盘面无可招抚人物")
+    db.conn.execute("UPDATE characters SET power_id='ming' WHERE name=?", (defector,))
+    db.conn.commit()
+    oid = db.create_secret_order(state, defector, "密查", "着尔暗中查访", [])
+    assert oid > 0  # DB 已归明 → 不被资格闸拒
+
+
 def test_pending_dismiss_rejects_vassal_prince(game):
     """pending 罢免落库（_commit_office_action 罢免路）拒宗藩——宗室非朝臣，不可作朝臣罢免（cmr R6）。"""
     db, state, content = game
