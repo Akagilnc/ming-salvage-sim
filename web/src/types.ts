@@ -418,7 +418,8 @@ export type MenuStatus = {
     model: string;
     has_api_key: boolean;
     cli_runner?: string;
-    cli_model?: string;
+    cli_model?: string;          // resolved（兜底默认名，供「当前后端」展示）
+    cli_model_saved?: string;    // raw 存盘值（空=默认档，供设置表单初始化）
     cli_model_choices?: CliModelChoices;
     cli_timeout_seconds?: number;
     max_tokens: number;

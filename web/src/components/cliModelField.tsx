@@ -12,9 +12,11 @@ const CUSTOM = "__custom__";
  * 露出文本框，老手仍能填任意值（含将来新模型 / 大写 id）——不做小写归一，
  * 可用性由连通性检查兜底。
  *
- * 调用约定：父级须传 `key={runner}` 让 runner 切换时本组件重挂（据新 runner 的
- * 清单重新判定手填态），并在 runner onChange 里把 value 归零（默认档），否则旧
- * runner 的模型会以「自定义值」漏进新 runner。
+ * 手填态判定每次渲染重算 `manual || !isKnown`：value 不在当前 runner 策展档内
+ * （持久化自定义值 / 将来新模型 / 被 resolved 的非策展值）必显手填框，不依赖一次性
+ * 初值，故 value 在异步加载或保存后变化也跟随，不会留下空白下拉（CMR R1 codex）。
+ * 调用约定：父级仍须传 `key={runner}` 让 runner 切换时重挂（复位 `manual` 显式手填态），
+ * 并在 runner onChange 里把 value 归零（默认档），否则旧 runner 的模型会漏进新 runner。
  */
 export function CliModelField({
   runner,
@@ -33,8 +35,10 @@ export function CliModelField({
   const options = base.some((o) => o.value === "")
     ? base
     : [{ value: "", label: "默认" }, ...base];
-  // 当前值不在策展档内（持久化的自定义值 / 将来的新模型）→ 初始进手填态。
-  const [custom, setCustom] = React.useState(() => !options.some((o) => o.value === value));
+  const isKnown = options.some((o) => o.value === value);
+  // manual = 用户显式点了「其他（手填）」；isKnown=false 时也强制手填态（每渲染重算）。
+  const [manual, setManual] = React.useState(false);
+  const custom = manual || !isKnown;
 
   return (
     <>
@@ -44,9 +48,9 @@ export function CliModelField({
         onChange={(e) => {
           const v = e.target.value;
           if (v === CUSTOM) {
-            setCustom(true);
+            setManual(true);
           } else {
-            setCustom(false);
+            setManual(false);
             onChange(v);
           }
         }}
