@@ -32,7 +32,8 @@ ground 查证：当前皇帝一回合可下无限道旨/召遍大臣/20 条密�
 信息/认知稀缺(皇帝被蒙蔽、盘面失真——崇祯核心困境,P4已铺方向但没当资源维度) / 执行稀缺(下旨≠办成,#89大臣挡执行+#87阶层挡圣旨) / 物资实物稀缺(有银无粮/有饷无兵) / 天命外生冲击(灾异随机抽干) / 时间呈现(240大限无倒计时)。
 
 ## ⚙️ #70/#113 接口协调（2026-06-14，已 post comment）
-PR#113（#70 step1 史实重标，改 FISCAL_PROVINCE_SUBSTRATE.md）在定的东西正是本菜单 fiscal 三条的接口钩子。doc 阶段对齐最划算。已 post forward-compat comment → [#113 comment](https://github.com/Akagilnc/ming-salvage-sim/pull/113#issuecomment-4701140109)。用户将让隔壁 session 看，可能 re-run #113 评审。
+PR#113（#70 step1 史实重标，改 FISCAL_PROVINCE_SUBSTRATE.md）在定的东西正是本菜单 fiscal 三条的接口钩子。doc 阶段对齐最划算。已 post forward-compat comment → [#113 comment](https://github.com/Akagilnc/ming-salvage-sim/pull/113#issuecomment-4701140109)。
+> **归属决定（1b，2026-06-14）**：这 3 条接口需求的**权威家=本 dig（消费者 ADR 0011 自己声明）**，不寄生 #70 spec。#70 只留一句薄护栏（「末态分量按 source 可拆 / 起运可扩展 / 饷率可复用通道，别预先焊死，详见本 dig」=通用扩展性卫生，无 ADR 0011 机制）。理由：依赖方向（消费者声明需求）+ X-R1 证明草案设计churn 不该污染 #70 cmr。下方 3 点 = 权威详细要求。
 **需 #70 配合 3 点**：
 1. **settle_tick 末态暴露 per-省 breakdown**（民欠新增/军饷欠/unmet_relief）——「三饷→民怨」传导要拿来映射 adjust_classes。doc 已注「末态不暴露分量」，点名下游消费者=离心账本，建议归因列 port 必做（否则实现后回插）。**（最高风险项）**
    - **X-R1 裁定(2026-06-14，codex 抓出我"即可"过强)**：`民欠新增` 不能只暴露合并总额（=正赋+三饷−实征），**须按 source 拆出三饷分量**——「三饷→民怨」是三饷专属传导(史实压垮农民的是三饷非正赋)，合并总额算不出三饷的锅；且 doc 对火耗已保留正赋/三饷分量、同份 doc 不该一处拆一处合。**三饷分量 = 三饷→民怨的输入(ADR 0011 设计要求)**。分摊规则属 fiscal 建模(lean=三饷-marginal: min(短缺,三饷应征)归三饷余额归正赋；pro-rata 替代)，硬要求=三饷分量可分。顺带解了 加征反噬的"复用三饷通道难做反噬归因"。已发 [#113 comment](https://github.com/Akagilnc/ming-salvage-sim/pull/113#issuecomment-4701341649) 更正原帖。
