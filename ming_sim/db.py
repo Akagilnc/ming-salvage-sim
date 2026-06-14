@@ -1835,6 +1835,17 @@ class GameDB:
             return ("active", "")
         return (row["status"], row["status_reason"] or "")
 
+    def resolve_power_id(self, character) -> str:
+        """人物所属势力 id 的权威解析：DB 行 power_id 优先，回退内存 power_id，默认 ming。
+
+        DB 为准是关键：招抚归明者（流寇/降将 power_id 经 apply_character_power_changes 翻 ming，
+        但 content/内存 power_id 仍是旧势力 bandits/houjin）必须认 DB——否则按内存会把已归明者
+        误判为外藩、误拒在朝堂外（见 #125、web_app._character_power_id 同源）。"""
+        row = self.conn.execute(
+            "SELECT power_id FROM characters WHERE name=?", (character.name,)
+        ).fetchone()
+        return (row["power_id"] if row else None) or getattr(character, "power_id", "ming") or "ming"
+
     def apply_character_power_changes(
         self,
         changes: List[Dict[str, object]],

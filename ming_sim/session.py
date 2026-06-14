@@ -605,6 +605,11 @@ class GameSession:
         # 集中守此一处即覆盖两路，否则裁判可绕列表按名召宗藩（cmr R4 cross-section）。后宫不在此拒。
         if is_vassal_prince(character):
             return (False, f"{character.name}为就藩宗室，非朝廷命官，无法召见。")
+        # 非大明势力（后金/蒙古/朝鲜/流寇）非朝廷命官，即便 active 也不可召见——皇帝召的是
+        # 大明朝廷之臣，不召敌酋（皇太极等）。按 DB 权威 power_id 判：招抚归明者 DB 已翻 ming
+        # 但内存仍旧势力，认 DB 才不会误拒归明者（#125；与 web_app 朝堂可见性同口径）。
+        if self.db.resolve_power_id(character) != "ming":
+            return (False, f"{character.name}不属大明朝廷，无法召见。")
         status, reason = self.db.get_character_status(character.name)
         if status == "active":
             return (True, "")
