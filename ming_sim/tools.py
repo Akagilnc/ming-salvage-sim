@@ -58,7 +58,9 @@ def build_minister_tools(character: Character, context: CourtContext,
         db = context.db
         results = []
         for c in _content_ctx().characters.values():
-            if c.office_type == "后宫":
+            # roster scope：非后宫、非宗藩（宗室就藩非朝堂命官，PR#121 隐藏宗藩；
+            # 大臣据此知他人现状，宗藩不应入此名册，cmr R3 cross-section）。
+            if c.office_type in ("后宫", "宗藩"):
                 continue
             if getattr(c, "power_id", "ming") != "ming":
                 continue
@@ -621,9 +623,10 @@ def build_board_query_tools(context: CourtContext):
         """查当前在朝（active）官员名单：姓名、官职、派系。
         写 office_changes / character_status_changes 前必查，核实人物是否确实在朝。"""
         rows = context.db.conn.execute(
-            # roster scope（同 court_roster / _talent_pool_rows）：大明、非后宫。
+            # roster scope（同 court_roster / _talent_pool_rows）：大明、非后宫、非宗藩
+            # （宗室就藩非朝堂命官，PR#121；写 office_changes 前查此名单不应见宗藩，cmr R3 cross-section）。
             "SELECT name,office,faction FROM characters WHERE status='active' "
-            "AND power_id='ming' AND office_type!='后宫' ORDER BY rowid"
+            "AND power_id='ming' AND office_type NOT IN ('后宫','宗藩') ORDER BY rowid"
         ).fetchall()
         return "\n".join(f"{r['name']}：{r['office']}，{r['faction']}" for r in rows)
 

@@ -1728,6 +1728,95 @@ def test_talent_pool_excludes_amnestied_rebel_by_faction(game):
     assert name not in pool_names, f"招抚后的前流寇 {name} 漏进起复人才池"
 
 
+def _materialize_active_prince(db, state, content):
+    """物化一个 active+ming 宗藩王进测试 DB（probe.db 旧档无宗藩行），返回 name。"""
+    name = next(
+        (n for n, c in content.characters.items() if getattr(c, "office_type", "") == "宗藩"),
+        None,
+    )
+    if name is None:
+        import pytest
+        pytest.skip("基底盘面无宗藩人物")
+    db.add_character(state, content.characters[name], source="测试物化")
+    assert db.get_character_status(name)[0] == "active"
+    return name
+
+
+def test_simulator_court_roster_excludes_active_prince(game):
+    """PR#121 cmr R3 cross-section：web 隐藏宗藩后，simulator 在朝盘面 court_roster 也须排除
+    active 宗藩，否则裁判仍把宗室当可任命的在朝官（sim 幻觉任命风险）。"""
+    db, state, content = game
+    name = _materialize_active_prince(db, state, content)
+    payload = build_simulator_payload(state, db, decree_text="", previous_narrative="")
+    roster = payload["court_roster"]
+    nidx = roster["cols"].index("name")
+    assert name not in [r[nidx] for r in roster["rows"]], f"宗藩 {name} 漏进 simulator court_roster"
+
+
+def test_extractor_active_ministers_excludes_active_prince(game):
+    """extractor 上下文 active_ministers 与 court_roster 同口径排除宗藩。"""
+    db, state, content = game
+    name = _materialize_active_prince(db, state, content)
+    payload = _extractor_context_payload(db, state, narrative="", decree_text="")
+    am = payload["active_ministers"]
+    nidx = am["cols"].index("name")
+    assert name not in [r[nidx] for r in am["rows"]], f"宗藩 {name} 漏进 extractor active_ministers"
+
+
+def test_talent_pool_excludes_prince_unfilled_and_future_debut(game):
+    """offstage 宗藩 / 未仕 / 未来登场者不入 offstage_ministers 起复池（与 web in_talent_pool
+    同口径：宗藩非起复对象、未仕未入仕、未来登场=剧透，cmr R3 gemini）。"""
+    db, state, content = game
+    pn = next((n for n, c in content.characters.items()
+               if getattr(c, "office_type", "") == "宗藩"), None)
+    un = next((n for n, c in content.characters.items()
+               if getattr(c, "office_type", "") == "未仕"
+               and getattr(c, "power_id", "ming") == "ming"), None)
+    fn = next((n for n, c in content.characters.items()
+               if getattr(c, "power_id", "ming") == "ming"
+               and int(getattr(c, "debut_year", 0) or 0) > state.year), None)
+    seeded = [n for n in (pn, un, fn) if n]
+    if not seeded:
+        import pytest
+        pytest.skip("基底盘面缺宗藩/未仕/未来登场样本")
+    for n in seeded:
+        db.add_character(state, content.characters[n], source="测试")
+        db.set_character_status(state, n, "offstage", "测试")
+    payload = build_simulator_payload(state, db, decree_text="", previous_narrative="")
+    pool = payload["offstage_ministers"]
+    nidx = pool["cols"].index("name")
+    names = [r[nidx] for r in pool["rows"]]
+    for n, why in ((pn, "宗藩"), (un, "未仕"), (fn, "未来登场")):
+        if n:
+            assert n not in names, f"{why} {n} 漏进起复人才池 offstage_ministers"
+
+
+def test_registry_and_tools_court_roster_exclude_active_prince(game):
+    """registry.build_court_roster(_index) + tools.get_active_ministers / query_court_roster
+    与 simulator/web 同口径排除 active 宗藩（cmr R3 cross-section，全 roster 面一致）。"""
+    from ming_sim.models import CourtContext
+    from ming_sim import registry as reg
+    from ming_sim.tools import build_board_query_tools, build_minister_tools
+    db, state, content = game
+    name = _materialize_active_prince(db, state, content)
+    reg.bind_content(content)
+    ctx = CourtContext(state=state, db=db, previous_summary="")
+    assert name not in reg.build_court_roster(ctx)
+    assert name not in reg.build_court_roster_index(ctx)
+    board = {f.__name__: f for f in build_board_query_tools(ctx)}
+    assert name not in board["get_active_ministers"]()
+    minister_name = next(
+        n for n, c in content.characters.items()
+        if getattr(c, "power_id", "ming") == "ming"
+        and getattr(c, "office_type", "") not in ("后宫", "宗藩")
+        and db.get_character_status(n)[0] == "active"
+    )
+    mtools = {f.__name__: f
+              for f in build_minister_tools(content.characters[minister_name], ctx, use_roster_tool=True)}
+    if "query_court_roster" in mtools:
+        assert name not in mtools["query_court_roster"]()
+
+
 def test_extractor_active_ministers_ming_noncourt_only(game):
     """5b r1 PR#106（CodeRabbit Major，roster-scope coverage-drift 第 4 处）：extractor 上下文的
     active_ministers 须与 court_roster 同口径 = 大明、非后宫。否则 active 外臣（皇太极）/active 后宫漏入。"""
