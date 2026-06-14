@@ -2741,7 +2741,9 @@ def apply_issue_inertia_and_ongoing(
 
         # 2) ongoing_effects：bar 高时折扣
         ongoing = json.loads(row["ongoing_effects"] or "{}")
-        if not ongoing:
+        # stored JSON 可能是真值非 dict（#117 同类）——须先守，否则下方 ongoing.get 在内层 metrics
+        # 守卫之前就抛 AttributeError。与 _issue_auto_economy / _format_issue_ongoing 两读取者同口径。
+        if not isinstance(ongoing, dict) or not ongoing:
             continue
         # 折扣系数：bar 越高（越好）越少扣
         # bar=0~40 → 100%, bar=40~80 → 60%, bar=80~100 → 30%
