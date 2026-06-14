@@ -108,7 +108,7 @@ legitimacy_pct= clamp(10 + 90 × mismatch / severity, 10, 100)
 **决定**：
 
 ```
-per_layer_resistance = max( floor=α×血债 , 命门合法性floor[dig-9] , min(ceiling, dynamic_term) )
+per_layer_resistance = max( floor=min(cap, α×血债) , 命门合法性floor[dig-9] , min(ceiling, dynamic_term) )   -- cap < 依律出路阈，见下「残留」CMR r2
 net_centrifuge       = Σ( Δsatisfaction项 + Δleverage项 )    ← 签名物理不接 blood_debt
 ```
 
@@ -116,7 +116,7 @@ net_centrifuge       = Σ( Δsatisfaction项 + Δleverage项 )    ← 签名物�
 - 破局 = **移动薄冰、烧不掉冻土**。降 leverage / 招回退场 actor 解锁回流前置来移动盘面，不是抵消「阻力只读」的血债。
 - **命门合法性 floor**（dig-9 ground 洞）：命门题即便各派 dynamic 低（没人激烈反对），合法性 floor 仍把阻力托到 ceiling（国本之争原型）。故 floor 臂含 `命门合法性floor`。
 
-**硬下界不变式（堵纸面净负实操死锁）**：floor 不得碾平至**少一条可执行净负动作**；净负路收窄判据 = 「≥1 派未触底（sat>0 ∨ lev>0）则净负窄路恒存」。全派打穿 = 母 ADR 决定6 允许的**涌现尽头**、非钦定灭亡。
+**硬下界不变式（堵纸面净负实操死锁）**：floor 不得高到**抹杀掉最后一条可执行净负动作**；净负路收窄判据 = 「≥1 派未触底（sat>0 ∨ lev>0）则净负窄路恒存」。全派打穿 = 母 ADR 决定6 允许的**涌现尽头**、非钦定灭亡。
 
 **残留**：α/β/γ/δ 是 playtest 调参（留 sub-spec），但**下界本身是硬不变式、不是可调参数**——这条是与决定2 单调棘轮的最硬张力的解。**⚠️ CMR r1 裁定**（gemini 提 critical「血债 floor 在 min(ceiling) 之外 → resistance 可超 ceiling、破出路」vs Claude 判一致——裁为 clarify）：`α×血债` floor 在 `min(ceiling,…)` **之外是母 ADR/dig-9『命门=合法性 floor』的有意设计**——resistance **本就可超 ceiling**（国本之争：合法性底集体托 95+），ceiling 非 resistance 硬帽。gemini 建议把血债收进 `min(ceiling, max(...))` 会**塌掉冻土**（ceiling 翻轴一并清掉血债 floor），违背「血债=冻土压不动」棘轮命根，**不采**。但钉清：**「出路恒可达」≠ resistance→0**，而是 ①净负层硬下界（≥1 条可执行净负动作恒存）+ ②对**该具体命门动作**走程序坐实 → axis 翻轴 → 其 ceiling/命门floor 塌；血债 floor 是对**该派**的持久代价。**α 须 sub-spec 标定**令 α×血债 floor 单独**不足以封死**翻轴后的「依律处置」出路动作（否则血债攒满即锁死全盘=违出路恒可达）；此 α 约束进 playtest oracle。**⚠️ CMR r2 补（gemini）**：血债**单调无界**，任意固定 α 下 α×血债→∞ 终超任何阈——故 α×血债 对 floor 的**贡献须设硬上限 cap**：`floor 血债臂 = min(cap, α×血债)`，且 **cap < 「依律处置」（走程序坐实）出路动作的 base resistance**（~35）。如此血债冻土能永久挡**私意高墙动作**，但**挡不死走程序坐实的依律出路**——出路恒可达对 unbounded 血债仍成立。（cap 精确值随 playtest 标定、与 α 同进 oracle。）
 
@@ -129,7 +129,7 @@ net_centrifuge       = Σ( Δsatisfaction项 + Δleverage项 )    ← 签名物�
 1. **转 final 扫表放 settle 后半段 `atomic` 内、对 `before_turn` 幂等**（不放 `pre_settle`，避 `pre_settle:190` 早退软死锁）。
 2. **`expires_turn` 到必转 final**（避 ADR 0008 毒 payload 永挂）。
 3. **fungible（钱）= 见坑④**（国库净额 −amount、不退款、落 `economy_ledger`，非「正反账冲销净 0」）；**status 类后果**（家产已没 / 将就位）封驳窗 `W=1` 压窗 + 当回合作废转「打回」（H6 status 类真闭）。**涉钱不全闭**——钱已出不退（以「非正途」污名 + 血债为代价，非 escrow）；P1（当回合全量落库）× H6（既成事实套利）是固有张力，**不假装两全**（见下「中旨按历史」+ 坑④）。
-4. **⚠️ 坑④（内部红队补 → CMR r1 修正记账方向 + 落账表）：fungible 中旨须让国库净额 = −amount（钱真没了）、且落 `economy_ledger` 不落 `compute_budget_lines`。** 我原写「+amount 后 −amount 净额归 0」**方向反了**：净额 0 = 国库做平 = 钱回来了，正撞「钱没了就是没了」（CMR Claude + codex concur）；且一次性中旨拨款是**事务性**条目，该进 `economy_ledger`，不进 `compute_budget_lines`（后者是 fiscal_config/buildings 派生的**经常性**月流水，塞一次性条目会破经常性账——CMR gemini 实读 flows.py）。**契约**：① 中旨拨款 = `economy_ledger` 一笔 **−amount**（钱出库、长留不退）；② 六科封驳 = **另一笔 append-only 审计/状态行**（`reason_code=六科封驳作废`，**不贷回国库**）——只标「此拨款用途被封还作废」，非 +amount 退款。国库净额 = **−amount**（反映「钱没了」），双笔可审计读出「真拨（钱已出）+ 真驳（用途作废未达成）」= 乱用中旨的牙，**不是净额对冲的虚账**。双笔进 0008 atomic + before_turn 幂等，restore 只读 `economy_ledger` 即复原「拨过且被驳、钱没回来」；`season_simulator`/审计大臣 prompt 补正向口径（带此对 reason_code 的同月条目 =「钱已实拨、被六科封还作废、不退」，不判虚账）。
+4. **⚠️ 坑④（内部红队补 → CMR r1 修正记账方向 + 落账表）：fungible 中旨须让国库净额 = −amount（钱真没了）、且落 `economy_ledger` 不落 `compute_budget_lines`。** 我原写「+amount 后 −amount 净额归 0」**方向反了**：净额 0 = 国库做平 = 钱回来了，正撞「钱没了就是没了」（CMR Claude + codex concur）；且一次性中旨拨款是**事务性**条目，该进 `economy_ledger`，不进 `compute_budget_lines`（后者是 fiscal_config/buildings 派生的**经常性**月流水，塞一次性条目会破经常性账——CMR gemini 实读 flows.py）。**契约**：① 中旨拨款 = `economy_ledger` 一笔 **−amount**（钱出库、长留不退）；② 六科封驳 = **另一笔 append-only 审计/状态行**（economy_ledger 既有 `reason` 列＝「六科封驳作废」，**非新增 `reason_code`**——库内 economy_ledger 用 `reason`；**不贷回国库**）——只标「此拨款用途被封还作废」，非 +amount 退款。国库净额 = **−amount**（反映「钱没了」），双笔可审计读出「真拨（钱已出）+ 真驳（用途作废未达成）」= 乱用中旨的牙，**不是净额对冲的虚账**。双笔进 0008 atomic + before_turn 幂等，restore 只读 `economy_ledger` 即复原「拨过且被驳、钱没回来」；`season_simulator`/审计大臣 prompt 补正向口径（带此对 `reason` 的同月条目 =「钱已实拨、被六科封还作废、不退」，不判虚账）。
 
 **中旨按历史（用户拍，溶解原 fork-4 escrow）**：中旨绕内阁、六科可封驳、带「非正途」污名、**钱拨了被封驳就是没了**（史实）。用户：「钱没了就是没了」是**牙不是缺陷**，逼「别乱来、攒合法性慢办」。故不做暂存账 / 退款。中旨 / 封驳跟「四层票拟改革」（dig-8）一起做，**血债先、它后**（顺序可再议）。**⚠️ 覆盖母 ADR 决定5 line 82**：母 ADR 原把「钱入库」列进封驳作废集（=钱要被反转），与此处「钱没了就是没了」相反；用户 2026-06-14 拍板（钱不退）时间在后、为最终权威，本条覆盖之，并已回标母 ADR（见母 ADR line 82 注）。
 
@@ -177,7 +177,7 @@ CREATE TABLE centrifuge_log (
   reason_code   TEXT,                                 -- 0009 列
   source        TEXT,                                 -- 0008 来源
   idem_key      TEXT    NOT NULL UNIQUE,              -- 防 0008 重跑二次累加
-  created_at    TEXT    NOT NULL,
+  created_at    TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,   -- 按库内审计表惯例
   CHECK (kind IN ('direct','kinship','overdraw')),
   -- 列填充按 kind 二分（CMR r2：双条件式，强制 direct/kinship 三列非空、overdraw 三列 NULL；
   --   原 biconditional `(kind='overdraw')=(三列全NULL)` 太弱——direct 行漏填某列也会过）
@@ -191,6 +191,7 @@ CREATE TABLE centrifuge_log (
 - **失望层**：复用 `factions.satisfaction`（不双真源）。
 - **leverage**：复用 `factions.leverage`（与血债双轴解耦）。
 - **seed-guilt / identity**：落 `characters` 表（`seed_guilt` / `identity`，走 `content.py int_field` 链 + `ensure_column` 老档补 `identity DEFAULT 50`），是失称度（crime_weight）与 kinship（k_id）的真源——见下「依赖 substrate」。
+- **⚠️ DDL 是示意 / schematic（CMR r3 centralize）**：本节 SQL 钉的是**设计**（哪些表/列/语义/不变式），**不是可直接跑的 production DDL**。精确**列名**（如 economy_ledger 用既有 `reason` 列、非新增 `reason_code`）、**默认值惯例**（`created_at DEFAULT CURRENT_TIMESTAMP` 等）、**恢复端 SELECT 接线**（`ming_sim/session.py` 重建 character/faction 内存对象的 SELECT 须纳入新列 `seed_guilt`/`identity`/血债缓存，否则 P1 restore 丢值）= **实现期对齐 live `db.py` 的活**。实现 PR 走 TDD 逐条点检 DoD 六面：**写入端 + 读取端 + 恢复端 + extractor 真实输出 + UI/呈现端 + 文档契约**（CLAUDE.md DoD 铁律）。
 
 ## 同类防备底（kinship 臂）+ 认同度修正 —— ⚠️ 动了已收敛语义、本轮必复核
 
