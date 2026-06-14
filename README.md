@@ -298,6 +298,31 @@ AI 适合判断官场反应、地方推诿、政策代价、突发事件和叙�
 
 ---
 
+## 打包发行（桌面包 · 自部署）
+
+发行形态 = **自部署**：群友各自跑实例，LLM 后端在游戏内「设置」面板自理（API 通道填 key，或 CLI 通道走本地 `codex`/`agy`/`claude` runner 脱 key，见上方「配置」）。
+
+桌面包用 PyInstaller 把后端 + 前端冻结成单个可分发应用（pywebview 套壳渲染 React UI，无需另起 uvicorn）：
+
+```bash
+pip install pyinstaller pywebview tiktoken     # 打包额外依赖
+pyinstaller --noconfirm --clean MingSalvageSim.spec
+# 产物：
+#   macOS         → dist/MingSalvageSim.app
+#   Windows/Linux → dist/MingSalvageSim/（整目录分发）
+```
+
+双击启动后自动开 webview 窗口；`MING_USE_BROWSER=1` 改用系统浏览器，`MING_DEBUG=1` 开 devtools + uvicorn 日志。
+
+- **金手指不入包**：`content/buildings.json` 末尾三个本地实验建筑（皇家天佑金矿 / 大明中央银行 / 帝国航空）只活在开发工作区的未提交改动里，**发行包从 main 打、自动不含**；需要的群友单独找作者拿。
+- **`/admin` 慎用**：内置 `/admin` 是**无鉴权的 DB 全表编辑器**——自部署下是玩家自己的存档，改坏自负，当「修档工具」用即可，别拿它当玩法。
+
+## 许可（GPLv3）
+
+本仓库继承上游 [wangwei-ying3/ming-salvage-sim](https://github.com/wangwei-ying3/ming-salvage-sim) 的 **GPLv3** 许可。发行包按 GPLv3 须附源码指向 —— 即本公开仓库：<https://github.com/Akagilnc/ming-salvage-sim>。
+
+---
+
 ## 致谢
 
 本分支基于 [wangwei-ying3/ming-salvage-sim](https://github.com/wangwei-ying3/ming-salvage-sim)。感谢原项目提供的晚明皇帝模拟器框架、内容基础和玩法方向。
