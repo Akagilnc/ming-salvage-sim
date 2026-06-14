@@ -86,13 +86,13 @@ per_layer_resistance = max( min(cap, α×血债)[真源 0011-2 D2-7] , 命门合
 
 **弃案**：破局 = 绕过 ceiling 的特例 / 后门（gamey）；数值堆够就过（抹平「攒合法性」教学）；用无重罪的目标（福王）演 +7 聪明解（产不出，P1-8）。
 
-### D5-6 中旨（绕内阁、六科照封、代价落库；edict_overdraw/provisional defer 第二刀）
+### D5-6 中旨（绕内阁、六科照封、代价落库；edict_overdraw 中旨螺旋 / provisional defer 第二刀）
 
 **决定**（母 ADR 决定5 / ✅ 用户拍③）：
 
 - **绕内阁**（L1 置 0）= 中旨唯一买到的；**六科照样封驳且陡升**（`MIDZHI_PENALTY`）→ 行政旨几乎无伤、**命门题照样打回**（白绕、还多担「非正途」污名）。代价曲线 = 命门陡 / 行政平。
 - **⚠️ MIDZHI_PENALTY = 这道旨的全局污名项、不依赖短路跑到 L3（P1-6）**：挂在 ResolveResult 的中旨 flag 上、**当回合无条件落库**（即便 L2 批红先超阈也照落），不靠循环评估到六科才 fire。
-- **⚠️ 第一刀中旨打回仍落代价（P1-7，消除 D5-6/D5-8 矛盾）**：第一刀中旨打回时**仍落 `STIGMA` 污名（独立常量表、非 0009 reason_code，D5-10）+ 该派血债陡**（走 0011-2 D2-4：STIGMA cw=1 → legitimacy≈99% → 血债≈severity 满档）；**只 defer `edict_overdraw` 与 provisional 至第二刀**。如此命门题下「顺颁打回（血债低）vs 中旨打回（血债陡）」在下一回合大臣态度 / 邸报**可观察可复现**——埋伏笔成立（不是纯装饰选项）。一句锚：**第一刀中旨 = 落 STIGMA + 血债（P1）；defer edict_overdraw / provisional 第二刀**。
+- **⚠️ 第一刀中旨打回仍落代价（P1-7，消除 D5-6/D5-8 矛盾）**：第一刀中旨打回时**仍落 `STIGMA` 污名（独立常量表、非 0009 reason_code，D5-10）+ 该派血债陡**（走 0011-2 D2-4：STIGMA cw=1 → legitimacy≈99% → 血债≈severity 满档）；**只 defer `edict_overdraw` 的中旨侧累加 + 暴露螺旋后果 + provisional 至第二刀**（`edict_overdraw` 计数列 + 廷杖侧累加第一刀已建，0011-2 H1）。如此命门题下「顺颁打回（血债低）vs 中旨打回（血债陡）」在下一回合大臣态度 / 邸报**可观察可复现**——埋伏笔成立（不是纯装饰选项）。一句锚：**第一刀中旨 = 落 STIGMA + 血债（P1）；defer edict_overdraw 中旨螺旋 / provisional 第二刀（计数列 + 廷杖累加第一刀已建）**。
 - **⚠️ 行政旨端代价曲线（P2）**：第一刀「中旨 = 必碰壁打回」**限定命门题**；低敏感行政旨中旨**照过 + 落非正途污名**（与「行政平」曲线一致），不是一律打回（否则行政旨用中旨反比顺颁差、与曲线矛盾）。
 - **provisional / 未生效标记 = defer 第二刀**（H6；最低契约已由 0011-2 D2-8 钉死：钱拨了被封驳 = 没了、status 类压窗 W=1 当回合作废、转 final 放 settle 后半段 atomic 对 before_turn 幂等、绝不放 pre_settle 早退守门避软死锁）。本 ADR **不重复 0011-2 D2-8**，只声明四层侧消费点。`MIDZHI_PENALTY` 的真闸（陡升量级）= 第二刀调参（D5-8 调参节，**不与第一刀公式阈值并列**）。
 
