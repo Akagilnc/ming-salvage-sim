@@ -62,7 +62,7 @@ def build_minister_tools(character: Character, context: CourtContext,
             # 大臣据此知他人现状，宗藩不应入此名册，cmr R3 cross-section）。
             if c.office_type in ("后宫", "宗藩"):
                 continue
-            if getattr(c, "power_id", "ming") != "ming":
+            if db.resolve_power_id(c) != "ming":  # DB 权威：招抚归明者入册（同 court_roster）
                 continue
             status, reason = db.get_character_status(c.name)
             if status == "offstage":

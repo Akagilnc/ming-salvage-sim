@@ -845,10 +845,7 @@ class WebGame:
         office = character.office  # 去职者已被清空，可能为空串
         # summary 不含官职（卡片/详情已单独显 office），避免重复
         summary = f"{character.faction}一系，行事{character.style}。"
-        power_row = self.db.conn.execute(
-            "SELECT power_id FROM characters WHERE name=?", (character.name,)
-        ).fetchone()
-        power_id = (power_row["power_id"] if power_row else None) or getattr(character, "power_id", "ming") or "ming"
+        power_id = self.db.resolve_power_id(character)  # 权威解析单一真源（#125）
         return {
             "name": character.name,
             "office": office,

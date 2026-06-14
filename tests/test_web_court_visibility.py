@@ -332,6 +332,31 @@ def test_normal_ming_minister_still_summonable(game):
     assert ok is True
 
 
+def test_list_ministers_uses_db_power_id(game):
+    """召见名册 list_ministers 须与 can_summon 同口径（DB 权威 power_id，#125 centralize）：
+    招抚归明者(DB翻ming/content仍旧势力) 入册；外藩 active 不入册。否则可召却不在册、两端不一致。"""
+    from ming_sim.session import GameSession
+    import pytest
+    db, state, content = game
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.content = content
+    # 招抚归明者：content 非 ming，DB 翻 ming → 应入册
+    归明 = next((n for n, c in content.characters.items()
+                if getattr(c, "power_id", "ming") != "ming"
+                and c.office_type not in ("后宫", "宗藩")), None)
+    if 归明 is None:
+        pytest.skip("基底盘面无非 ming 可招抚人物")
+    db.conn.execute("UPDATE characters SET power_id='ming' WHERE name=?", (归明,))
+    db.conn.commit()
+    db.set_character_status(state, 归明, "active", "测试：招抚归明")
+    names = {v.name for v in sess.list_ministers()}
+    assert 归明 in names, "DB 已归明者却被内存值挡出召见名册"
+    # 外藩 active（DB 非 ming）不入册
+    enemy = _enemy_active_name(db, content)
+    assert enemy not in {v.name for v in sess.list_ministers()}
+
+
 def test_db_resolve_power_id_authoritative(game):
     """db.resolve_power_id：DB 行 power_id 优先于内存，DB 无行时回退内存，再默认 ming。"""
     db, state, content = game
