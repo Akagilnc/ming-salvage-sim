@@ -48,7 +48,7 @@ Status: Proposed（草案；承母 ADR `0011-edict-resistance-and-centrifuge-led
 
 **决定**（fold 时 reconcile）：
 
-- 血债/同类防备底（per-轴）→ **新表 `faction_axis_debt`（42 行）**，不是 factions 上加 42 列。
+- 血债/同类防备底（per-轴）→ **新表 `faction_axis_debt`（逻辑 7×6=42 格，物理 sparse：只 materialize 有非零累加的 `(faction, axis)` 行；读侧缺行 = 0，与 `amount>0` skip-0 写 + 重建 COALESCE 一致；非预建 42 行 dense、无 seed 步）**，不是 factions 上加 42 列。
 - `edict_overdraw`（皇权透支账，逐派 scalar、非逐轴）→ **仍 factions 单列**。
 
 **为什么新表不违反 dig-4 原「列，避 metrics 双杀」**：那个「双杀」（`clamp[0,100]` + 白名单）专打的是 **`GameState.metrics` 自由 dict**（data-drift 病源，审计过要灭的）。母 ADR 决定2 明文认可的替代是「**逐派列或新表**，非全局 metrics dict」——结构化关系表 `faction_axis_debt` 正是这个「新表」选项，带显式列、FK、CHECK 约束，**不经过 metrics dict 的 clamp/白名单管道**，双杀规避论证对它依然成立。
@@ -63,7 +63,7 @@ Status: Proposed（草案；承母 ADR `0011-edict-resistance-and-centrifuge-led
 
 ```
 severity      = SEVERITY_BASE{申饬:3, 罢黜:10, 廷杖:40, 抄家:70, 诛:100}   ← 结构化处置类型，非措辞
-crime_weight  = CRIME_BY_CODE{依律集〔依律/谋逆坐实/贪墨坐实/获罪削籍〕:70〔坐实重罪〕, 陷虏:50, 无:10}；STIGMA{中旨除授, 非正途, 罗织} → crime_weight=1   ← 依律集见 D2-5 单一真源(同时是 0011-4 D4-4 翻轴白名单:坐实=高cw=低血债 且 塌ceiling)
+crime_weight  = CRIME_BY_CODE{依律集〔依律/谋逆坐实/贪墨坐实〕:70, 获罪削籍:70〔已获罪状态、非本动作翻轴码〕, 陷虏:50, 无:10}；STIGMA{中旨除授, 非正途, 罗织} → crime_weight=1   ← 依律集(3 码)见 D2-5 单一真源 = 0011-4 D4-4 翻轴白名单(坐实=高cw=低血债 且 塌ceiling);获罪削籍是另一 cw=70 码(已获罪、不触发翻轴)
 mismatch      = max(0, severity − crime_weight)                          ← 失称度版避除零
 legitimacy_pct= clamp(10 + 90 × mismatch / severity, 10, 100)
 Δblood_debt(direct) = round(severity × legitimacy_pct / 100)
@@ -87,7 +87,7 @@ legitimacy_pct= clamp(10 + 90 × mismatch / severity, 10, 100)
 
 **决定**：crime_weight 由 `reason_code` 派生。**码集二分（单一真源，三 sub-ADR 共用，P1-10/P3-6）**：
 
-- **依律集 = {依律, 谋逆坐实, 贪墨坐实, 获罪削籍}** = **扩 0009 reason_code enum**（坐实重罪）；CRIME_BY_CODE 高档（cw=70 = 低血债），**且同时是 0011-4 D4-4 翻轴白名单**（坐实即塌 ceiling）——一个码两用（血债折扣 + ceiling 翻轴），破局动作两端读同一集、曲线算得出。
+- **依律集 = {依律, 谋逆坐实, 贪墨坐实}**（3 码）= **扩 0009 reason_code enum**（走程序坐实重罪）；CRIME_BY_CODE 高档（cw=70 = 低血债），**且同时是 0011-4 D4-4 翻轴白名单**（坐实即塌 ceiling）——一个码两用（血债折扣 + ceiling 翻轴），破局动作两端读同一集、曲线算得出。**`获罪削籍` 是另一个 cw=70 码**（已获罪状态、血债折扣用），**但不在翻轴白名单**（它是既存定罪状态、非「本动作走程序坐实」的翻轴触发）。
 - **STIGMA = {中旨除授, 非正途, 罗织} = 独立常量表、不进 0009 enum**（crime_weight=1 = 满血债）；与依律集同批协调静态围栏，但不混进 reason_code enum。
 
 本 ADR 是依律集 / STIGMA 二分的真源；0011-4 D4-4 / D4-8、0011-5 D5-10 引用、不另定义。
@@ -103,7 +103,7 @@ legitimacy_pct= clamp(10 + 90 × mismatch / severity, 10, 100)
 
 **决定**（每条配物理强制点，mutation 自验立即咬）：
 
-1. **单调棘轮**：唯一写函数 `accrue_blood_debt`（只 `+=`、`assert amount >= 0`）+ 列 `CHECK >= 0` + `idem_key UNIQUE` + 静态围栏（扩 0009 allowlist）。mutation 把 `+=` 改 `=` 立即咬。
+1. **单调棘轮**：唯一写函数 `accrue_blood_debt`（算出 amount；**`==0` 早返回、不写行**〔乐见顶包，见「同类防备底」节〕；**`>0` 才 `+=` 并落行 + `assert amount > 0`**，与 `centrifuge_log.amount CHECK(amount>0)` 一致）+ 缓存列 `CHECK >= 0` + `idem_key UNIQUE` + 静态围栏（扩 0009 allowlist）。mutation 把 `+=` 改 `=` 立即咬。
 2. **阻力 / 称病只读血债（非失望）**：函数签名物理不接 `satisfaction` 参数、SQL 不 `SELECT satisfaction`；`adjust_factions` 只动 sat/lev、碰不到 blood_debt。→ 一个好回合压不掉结构性负面（堵 H2 洗白）。
 3. **不可跨派冲抵**：`accrue` 按 faction PK 单派 UPDATE，全库无「A 转 B」签名；安抚东林改东林 sat 列，与阉党 blood_debt **不同行不同列、物理无法相消**。→ 偷 Tyranny「favor ≠ wrath」，是涌现尽头能成立的命根。
 4. **血债 ≠ leverage**：两列两写路径（blood_debt 走 `accrue` / 严重度派生；leverage 走 `adjust` / 局势派生），不共享写函数。→ 血债 = 该派多恨你、leverage = 该派多能挡你，双轴解耦。
@@ -136,7 +136,7 @@ net_centrifuge       = Σ( Δsatisfaction项 + Δleverage项 )    ← 签名物�
 3. **fungible（钱）= 见坑④**（国库净额 −amount、不退款、落 `economy_ledger`，非「正反账冲销净 0」）；**status 类后果**（家产已没 / 将就位）封驳窗 `W=1` 压窗 + 当回合作废转「打回」（H6 status 类真闭）。**涉钱不全闭**——钱已出不退（以「非正途」污名 + 血债为代价，非 escrow）；P1（当回合全量落库）× H6（既成事实套利）是固有张力，**不假装两全**（见下「中旨按历史」+ 坑④）。
 4. **⚠️ 坑④（内部红队补 → CMR r1 修正记账方向 + 落账表）：fungible 中旨须让国库净额 = −amount（钱真没了）、且落 `economy_ledger` 不落 `compute_budget_lines`。** 我原写「+amount 后 −amount 净额归 0」**方向反了**：净额 0 = 国库做平 = 钱回来了，正撞「钱没了就是没了」（CMR Claude + codex concur）；且一次性中旨拨款是**事务性**条目，该进 `economy_ledger`，不进 `compute_budget_lines`（后者是 fiscal_config/buildings 派生的**经常性**月流水，塞一次性条目会破经常性账——CMR gemini 实读 flows.py）。**契约**：① 中旨拨款 = `economy_ledger` 一笔 **−amount**（钱出库、长留不退）；② 六科封驳 = **另一笔 append-only 审计/状态行**（economy_ledger 既有 `reason` 列＝「六科封驳作废」，**非新增 `reason_code`**——库内 economy_ledger 用 `reason`；**不贷回国库**）——只标「此拨款用途被封还作废」，非 +amount 退款。国库净额 = **−amount**（反映「钱没了」），双笔可审计读出「真拨（钱已出）+ 真驳（用途作废未达成）」= 乱用中旨的牙，**不是净额对冲的虚账**。双笔进 0008 atomic + before_turn 幂等，restore 只读 `economy_ledger` 即复原「拨过且被驳、钱没回来」；`season_simulator`/审计大臣 prompt 补正向口径（带此对 `reason` 的同月条目 =「钱已实拨、被六科封还作废、不退」，不判虚账）。
 
-**中旨按历史（用户拍，溶解原 fork-4 escrow）**：中旨绕内阁、六科可封驳、带「非正途」污名、**钱拨了被封驳就是没了**（史实）。用户：「钱没了就是没了」是**牙不是缺陷**，逼「别乱来、攒合法性慢办」。故不做暂存账 / 退款。中旨 / 封驳跟「四层票拟改革」（dig-8）一起做，**血债先、它后**（顺序可再议）。**⚠️ 覆盖母 ADR 决定5 line 82**：母 ADR 原把「钱入库」列进封驳作废集（=钱要被反转），与此处「钱没了就是没了」相反；用户 2026-06-14 拍板（钱不退）时间在后、为最终权威，本条覆盖之，并已回标母 ADR（见母 ADR line 82 注）。
+**中旨按历史（用户拍，溶解原 fork-4 escrow）**：中旨绕内阁、六科可封驳、带「非正途」污名、**钱拨了被封驳就是没了**（史实）。用户：「钱没了就是没了」是**牙不是缺陷**，逼「别乱来、攒合法性慢办」。故不做暂存账 / 退款。中旨 / 封驳跟「四层票拟改革」（dig-8）一起做，**血债先、它后**（顺序可再议）。**⚠️ 覆盖母 ADR 决定5 line 90**：母 ADR 原把「钱入库」列进封驳作废集（=钱要被反转），与此处「钱没了就是没了」相反；用户 2026-06-14 拍板（钱不退）时间在后、为最终权威，本条覆盖之，并已回标母 ADR（见母 ADR 决定5 line 90 注：「钱-封驳语义已由 0011-2 D2-8 收口」）。
 
 ### D2-9 build-upon ADR 0008 / 0009
 
@@ -279,7 +279,7 @@ provisional / 中旨闸第二刀（D2-8）；血债字段 P4 呈现层（接口�
 
 ### 评审
 
-本 ADR 是设计文档，按 CLAUDE.md 铁律产出后必跑完整评审闭环（本地 cmr 收敛 + 线上三 bot 收敛），不因「只是文档」跳步。**本轮评审重点盯六处 ⚠️**（①–③=fold 期 reconcile，④–⑥=内部红队攻破已修、须复裁）：① D2-1/D2-3 的 42 格 → 新表 schema 翻案；② kinship 去 max(1) 下界对 dig-4 单调语义的 0-vs-1 边界冲击；③ D2-7 净负硬下界与 dig-9 出路恒可达的相容性；④ H5 `source_name`→faction 解析契约（跨派同名别名 `袁巡抚` 实证可诱导）；⑤ P4 新增字段呈现契约（接口层定性翻译 + 哨兵 DoD）；⑥ 中旨钱-封驳的**记账机制**（append-only 双笔 vs 金手指虚存审计）——**方向「钱没了就是没了」已收敛**（用户 2026-06-14 复确认、后出为准覆盖母 ADR line 82），CMR 只复核记账机制、不重开方向。实现属编码活、按工作流分工交隔壁 session。
+本 ADR 是设计文档，按 CLAUDE.md 铁律产出后必跑完整评审闭环（本地 cmr 收敛 + 线上三 bot 收敛），不因「只是文档」跳步。**本轮评审重点盯六处 ⚠️**（①–③=fold 期 reconcile，④–⑥=内部红队攻破已修、须复裁）：① D2-1/D2-3 的 42 格 → 新表 schema 翻案；② kinship 去 max(1) 下界对 dig-4 单调语义的 0-vs-1 边界冲击；③ D2-7 净负硬下界与 dig-9 出路恒可达的相容性；④ H5 `source_name`→faction 解析契约（跨派同名别名 `袁巡抚` 实证可诱导）；⑤ P4 新增字段呈现契约（接口层定性翻译 + 哨兵 DoD）；⑥ 中旨钱-封驳的**记账机制**（append-only 双笔 vs 金手指虚存审计）——**方向「钱没了就是没了」已收敛**（用户 2026-06-14 复确认、后出为准覆盖母 ADR 决定5 line 90），CMR 只复核记账机制、不重开方向。实现属编码活、按工作流分工交隔壁 session。
 
 ### 出处
 

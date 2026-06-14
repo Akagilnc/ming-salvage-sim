@@ -54,15 +54,15 @@ Status: Proposed（草案；承母 ADR `0011-edict-resistance-and-centrifuge-led
 - **祖制 tag**（合取：动作 ∈ {册封 / 废后 / 易储 / 除国} × `office_type` ∈ {后宫 / 宗藩} × `reason_code` ∉ 依律集）→ **换行路由到 95**（不是加数）。
 - **宗室 tag**（`faction == 宗室`）：祖制轴 +5（95 → 100 顶满）/ 既得轴 **+宗室法统加成 `ZONGSHI_JIDE_BONUS`（首版 ≈ 19、随 playtest 标定）**。宗室**双命门**（法统 T0 + 既得 T2），撞哪条看 axis-tag。
 - **勋戚外戚 tag**（`office_type == 后宫` ∨ 爵位正则派生——无干净 faction 必须硬派生）：既得轴 **+8**；叠「代理人保险丝」（大臣代行强夺勋戚 → 暴露反噬，薛国观锚）。
-- **高 leverage**（仅既得轴）：既得取 leverage 段（lev92 南直东林士绅顶 85、lev22 闲散宗藩塌 50）。**`leverage_target` = 目标所属派 / 阶层的 leverage（`factions.leverage` 或对应 `classes.leverage`）、非逐人物列**（P3-6：现 schema 无人物 leverage 列，实现别误接成查人物）。从 `classes`/`powers` 结构化读，非 LLM。
+- **leverage 段（仅既得轴）**：既得 base 取单调段函数 `seg(leverage)`（lev92 南直东林士绅 → 顶 85、lev22 闲散宗藩 → 塌 50；**取代 max-floor-72**，见下复合算法）。**leverage = 目标所属派 / 阶层的 leverage（`factions.leverage` 或对应 `classes.leverage`）、非逐人物列**（P3-6：现 schema 无人物 leverage 列，实现别误接成查人物）。从 `classes`/`powers` 结构化读，非 LLM。
 
 **既得轴复合算法（单一、无二次复合，P1-2）**：
 
 ```
-既得 effective = clamp( max( 72 + 宗室法统加成 + 勋戚加数 , leverage_target ) , 0, 100 )
+既得 effective = clamp( seg(leverage) + 宗室法统加成 + 勋戚加数 , 0, 100 )
 ```
 
-——所有**加数先在 base 72 上累加**（宗室 +19 / 勋戚 +8），**再与 `leverage_target` 一次 `max` 收尾**，无二次复合。**福王 worked example**（宗室、坐实前 naive 私意抄家、闲散宗藩 leverage 低）：`max(72 + 19, leverage_target) = 91`（72 base + 19 法统加成；leverage 段不顶）。golden 可写出确定值 91。
+——`seg(leverage)` 是 raw leverage → 既得 base ceiling 的**单调段函数**（低 lev 塌 / 高 lev 顶；首版断点 `seg(闲散 lev22)≈50 / seg(典型)≈72 / seg(南直士绅 lev92)≈85`，随 playtest 标定），**取代原 `max(72, raw_lev)`**——max floor 在 72、低 lev 既得塌不到 50（dig-9 散稿公式 bug，本轮修）。加数（宗室 +19 / 勋戚 +8）在 `seg` 上累加、一次 `clamp` 收尾，无二次复合。**福王 worked example**（**显赫宗室**：万历宠 / 洛阳巨富 = 政治分量非闲散，`seg(福王 leverage)≈72`；坐实前 naive 私意抄家）：`clamp(72 + 19, 0, 100) = 91`（72 seg + 19 法统加成）。golden 确定值 91。**对比**：闲散宗藩（minor、lev22）= `seg(22)≈50 + 19 = 69`；南直士绅（非宗室、lev92）= `seg(92)≈85`；闲散非宗室（lev22）= `seg(22)≈50`（真塌——旧 `max(72,…)` 做不到）。
 
 **弃案**：乘加混合制（难写 golden、调参不可解释）；身份直接定 ceiling（违出路恒可达，见 D4-4——命门挂 axis-tag 不挂身份）；加数与 leverage 二次复合（顺序歧义，golden 写不出确定值）。
 
@@ -102,7 +102,7 @@ per_layer_resistance = max( min(cap, α×血债项) , 命门合法性floor , min
 
 **(b) 外压杠杆出路**（针对**无被告但有外压杠杆**的命门轴：华夷战和 / 议和——政策抉择、无人可定罪、无依律翻轴路）：
 
-- 议和**不靠翻轴**（华夷轴无坐实触发条件），靠 **0011-3 D3-4 / 母 ADR 决定9 的外压 dynamic 臂**：外压够大 + 代价够明白 → 务实派被推着默许、dynamic resistance 降 → 议和可颁（dig-2 Q4 ✅）。
+- 议和**不靠翻轴**（华夷轴无坐实触发条件），靠 **D4-3 的华夷命门 floor 外压调制**（决定性）：外压够大 + 代价够明白 → **华夷命门 floor 随外压下调**（区别于祖制硬核 floor 不松）→ 议和 resistance 降 → 可颁（dig-2 Q4 ✅）。**只降 dynamic_term 会被 `max()` 命门 floor 臂短路、不足**——务实派 dynamic 软化是次要项，floor 调制才是决定项。
 
 **(c) 盘面级兜底**（针对**既无被告、又无外压杠杆**的纯制度命门：易储 / 废嫡 / 私改科举根本 / 动太庙祖陵 等 T0 祖制硬核，南迁 / 夺情 等无被告清议动作）：
 

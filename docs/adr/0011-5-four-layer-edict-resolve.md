@@ -51,7 +51,7 @@ Status: Proposed（草案；承母 ADR `0011-edict-resistance-and-centrifuge-led
 
 - **⚠️ 物理只读护栏（P1-2，不靠「函数体记得别写」）**：拆 **`resolve_core(action, substrate_snapshot, mode) → ResolveResult`（零 db 写、零内存可观察态写、纯算）** + **`apply_resolve(ResolveResult) → 落库`（薄落库层）**。`dry_run` 只调 `resolve_core`；live 调 `resolve_core` + `apply_resolve`。**单一真源落在共享纯算核**（而非含写副作用的整函数）。`resolve_core` 签名只接 **substrate 只读快照 / 视图**、不接可变 `state`——从签名层堵死 db / 内存副作用（防 0008 内存态污染，0008 决定3：DB 回滚不还原内存、召对期不触发 atomic_and_reload）。
 - **⚠️ dry_run 不偷写 directive（P1-3）**：实流程 directive 在召对/chat 期即时落库（`session.py:635 self.db.add_directive`、不在 atomic 内、远早于 settle）。`dry_run` 侦察复用 propose 后路径**须显式短路 `session.py:635` 那条 `add_directive`**；测试断言「召对侦察 N 次后 `turn_directives` 行数不变 + state 内存指纹不变」。
-- **⚠️ 等价性强制点（P2，单一真源可证伪）**：golden/mutation 断言 `resolve_core(...,dry_run=True) == resolve_core(...,dry_run=False)`（同一 substrate 下 ResolveResult 逐字等，mutation 把某分支判定改算法立即咬）；ResolveResult 由内核唯一产出、live 仅追加落库不重算判定值。列入第一刀 DoD。
+- **⚠️ 等价性强制点（P2，单一真源可证伪）**：`dry_run` 是 **wrapper / use-site 层概念、不进 `resolve_core` 签名**（`resolve_core(action, substrate_snapshot, mode)`，无 dry_run 形参）。golden/mutation 断言**侦察路径拿到的 ResolveResult ≡ live 路径在 `apply_resolve` 之前的 ResolveResult**（同一 substrate 快照、`resolve_core` 唯一产出、live 仅追加落库不重算判定值）；mutation 把 live 分支某判定改算法立即咬。列入第一刀 DoD。
 - **⚠️ dry_run 须 mode-aware（P2，埋伏笔的事前信号）**：`dry_run` 接 `mode`（顺颁 / 中旨），对命门题产**可区分的两套谏言**（顺颁路「六科必争」vs 中旨路「纵下中旨、六科仍可封还，且落非正途之讥」）——玩家三选前就能从大臣的话读出中旨在此题白绕。
 - 谏言**不暴露价值轴 / blocked_layer 标签 / 数值**（P4，见 D5-11）——信号是大臣的话与态度。
 
@@ -69,7 +69,7 @@ per_layer_resistance = max( min(cap, α×血债)[真源 0011-2 D2-7] , 命门合
 
 - **dynamic_term** = 该层把关派系的当下激烈度，读 **satisfaction/leverage + 外压 substrate（powers/classes，母 ADR 决定9）**（**不含 identity**——identity 只缩 kinship，0011-2 D2 限定）。**dynamic_term 的 base 语义由本 ADR 首次定义**（上游只用它占位 + 定义外压臂降它，无别处真源可撞）；三臂的**值真源**在别处（血债 floor=0011-2、命门 floor + ceiling=0011-4、议和外压调制=0011-4 D4-3），本 ADR 只组装、不重定义那三项。
 - **⚠️ 议和外压臂如何击穿命门 floor（P1-4，与 0011-4 D4-3 对齐）**：议和是华夷命门题，命门 floor 把阻力托到 ceiling 85、不受 dynamic_term 影响——故**外压臂不能只降 dynamic_term（会被 max() 短路）**。真机制：**华夷命门 floor 本身吃外压调制**（`华夷命门floor = f(外压 substrate, 代价明白度)`，真源 0011-4 D4-3：华夷 floor 软、祖制硬核 floor 不松）——`外压够大 + 代价够明白`（两合取项，对齐 0011-3 D3-4 / 0011-4 D4-4b）→ 华夷命门 floor 真下调 → 议和 resistance 随之降 → 可颁。议和真正 blocked 在 **L3 六科**；外压经「朝堂主战共识松动 → 六科失清议背书」传导到六科的命门 floor（floor 调制即此传导的落点），非降 L1 务实派 dynamic（那救不了 L3）。
-- **⚠️ blocked_layer = 全算取真墙（P1-6，弃 first-over-threshold）**：阶段一三层**全算**（轻量纯函数、无性能压力），`blocked_layer = argmax(per_layer_resistance over 三层中超阈者)`、ResolveResult 带**全三层诊断串**（不短路、防后层无值）。**不变式**：命门 floor 顶满（≥ ceiling）的层**必判超阈**（命门题必由六科挡、不因全局阈调高而漏）。弃 first-over-threshold：它会让抄福王在 L1 内阁先超阈即短路、误报 blocked_layer=内阁，六科 91 真墙没算到，玩家误以为「过内阁就行」→ 走中旨绕内阁再撞六科（line 矛盾根因）。
+- **⚠️ blocked_layer = 全算取真墙（P1-6，弃 first-over-threshold）**：阶段一三层**全算**（轻量纯函数、无性能压力），`blocked_layer = argmax(per_layer_resistance over 三层中超阈者)`、ResolveResult 带**全三层诊断串**（不短路、防后层无值）。**不变式**：命门 floor 顶满（≥ ceiling）的层**必判超阈**（命门题必由六科挡、不因全局阈调高而漏）。弃 first-over-threshold：某命门题若某**前层**（如 L2 司礼监批红，阉党 leverage 高 → dynamic 超普通阈，D5-2 L2 读阉党 sat/lev）先超阈即短路、误报 `blocked_layer=批红`，**L3 六科命门 floor 真墙没算到**，玩家误以为「过了批红就行」→ 实撞六科（这正是「命门必由六科挡」不变式要保证、short-circuit 会破坏的）。
 - **⚠️ 阈值（P2）**：`resistance 超阈` 的阈**逐层（per-layer）**，与 max() 三臂量纲挂钩；至少钉死「命门 floor 顶满该层必超阈」不变式，与可调的普通层阈区分。首版随 playtest，但此不变式非调参旋钮。
 
 **弃案**：把三臂值在本 ADR 重定义（双真源漂移）；外压臂只降 dynamic_term（被命门 floor 短路、议和悬空，P1-4）；dynamic_term 读 identity（违 0011-2）；first-over-threshold 定 blocked_layer（误报真墙）。
@@ -92,7 +92,7 @@ per_layer_resistance = max( min(cap, α×血债)[真源 0011-2 D2-7] , 命门合
 
 - **绕内阁**（L1 置 0）= 中旨唯一买到的；**六科照样封驳且陡升**（`MIDZHI_PENALTY`）→ 行政旨几乎无伤、**命门题照样打回**（白绕、还多担「非正途」污名）。代价曲线 = 命门陡 / 行政平。
 - **⚠️ MIDZHI_PENALTY = 这道旨的全局污名项、不依赖短路跑到 L3（P1-6）**：挂在 ResolveResult 的中旨 flag 上、**当回合无条件落库**（即便 L2 批红先超阈也照落），不靠循环评估到六科才 fire。
-- **⚠️ 第一刀中旨打回仍落代价（P1-7，消除 D5-6/D5-8 矛盾）**：第一刀中旨打回时**仍落 `STIGMA` 污名 reason_code + 该派血债陡**（走 0011-2 D2-4：STIGMA cw=1 → legitimacy≈99% → 血债≈severity 满档）；**只 defer `edict_overdraw` 与 provisional 至第二刀**。如此命门题下「顺颁打回（血债低）vs 中旨打回（血债陡）」在下一回合大臣态度 / 邸报**可观察可复现**——埋伏笔成立（不是纯装饰选项）。一句锚：**第一刀中旨 = 落 STIGMA + 血债（P1）；defer edict_overdraw / provisional 第二刀**。
+- **⚠️ 第一刀中旨打回仍落代价（P1-7，消除 D5-6/D5-8 矛盾）**：第一刀中旨打回时**仍落 `STIGMA` 污名（独立常量表、非 0009 reason_code，D5-10）+ 该派血债陡**（走 0011-2 D2-4：STIGMA cw=1 → legitimacy≈99% → 血债≈severity 满档）；**只 defer `edict_overdraw` 与 provisional 至第二刀**。如此命门题下「顺颁打回（血债低）vs 中旨打回（血债陡）」在下一回合大臣态度 / 邸报**可观察可复现**——埋伏笔成立（不是纯装饰选项）。一句锚：**第一刀中旨 = 落 STIGMA + 血债（P1）；defer edict_overdraw / provisional 第二刀**。
 - **⚠️ 行政旨端代价曲线（P2）**：第一刀「中旨 = 必碰壁打回」**限定命门题**；低敏感行政旨中旨**照过 + 落非正途污名**（与「行政平」曲线一致），不是一律打回（否则行政旨用中旨反比顺颁差、与曲线矛盾）。
 - **provisional / 未生效标记 = defer 第二刀**（H6；最低契约已由 0011-2 D2-8 钉死：钱拨了被封驳 = 没了、status 类压窗 W=1 当回合作废、转 final 放 settle 后半段 atomic 对 before_turn 幂等、绝不放 pre_settle 早退守门避软死锁）。本 ADR **不重复 0011-2 D2-8**，只声明四层侧消费点。`MIDZHI_PENALTY` 的真闸（陡升量级）= 第二刀调参（D5-8 调参节，**不与第一刀公式阈值并列**）。
 
@@ -128,13 +128,13 @@ per_layer_resistance = max( min(cap, α×血债)[真源 0011-2 D2-7] , 命门合
 
 - **0004**：颁旨链复用 `pre_settle`/`settle_with_delta` 同核；resolve 落库时序须与现有 `add_directive` 即时写对齐（D5-3，**非简单「propose 后落表前」**）。
 - **0008**：`apply_resolve` 落库走 `applier.atomic`；中旨 provisional 转 final（第二刀）对 `before_turn` 幂等（0011-2 D2-8）。`resolve_core` 只读路径**不进 atomic**、live 落库路径才进（D5-3）。
-- **0009 + 码集二分（真源 0011-2 D2-5）**：**依律集 {依律 / 谋逆坐实 / 贪墨坐实 / 获罪削籍} = 扩 0009 reason_code enum**（坐实 cw=70、同时是 0011-4 D4-4 翻轴白名单）；**STIGMA {中旨除授 / 非正途 / 罗织} = 独立常量表、不进 0009 enum**（cw=1）。三 sub-ADR（本 ADR / 0011-2 / 0011-4）**引用 0011-2 D2-5 的二分、不各定各的**（破局动作两端读同一集、曲线算得出，P1-10）。`estimate_resistance` 在 `tools.py:136`（def）；召对 location 闸（FF-4）依赖 0009 `location`（第二刀）。
+- **0009 + 码集二分（真源 0011-2 D2-5）**：**依律集 {依律 / 谋逆坐实 / 贪墨坐实}（3 码）= 扩 0009 reason_code enum**（坐实 cw=70、同时是 0011-4 D4-4 翻轴白名单；`获罪削籍` 是另一 cw=70 血债码、**不在**翻轴白名单）；**STIGMA {中旨除授 / 非正途 / 罗织} = 独立常量表、不进 0009 enum**（cw=1）。三 sub-ADR（本 ADR / 0011-2 / 0011-4）**引用 0011-2 D2-5 的二分、不各定各的**（破局动作两端读同一集、曲线算得出，P1-10）。`estimate_resistance` 在 `tools.py:136`（def）；召对 location 闸（FF-4）依赖 0009 `location`（第二刀）。
 
 ### D5-11 resolve ↔ simulator 裁判分界（LLM 吃判决、禁重算）
 
 **决定**（补母 ADR 决定1 承重缝：确定性账本不被 LLM 软判即兴重算成装饰，P1-1）：
 
-- **resolve 的 `outcome` + `blocked_layer` + `exec_fidelity` 是 simulator 诏书核销（`season_simulator.md:106-113`）+ 密令核议的硬约束输入**：旨被 resolve 判 `打回` → simulator **只能叙事「搁置不行 / 受阻折损」并写卡在 `blocked_layer`、禁写「已办成」**。第一刀须改 `season_simulator.md` 加正向吃判决指令（「依 `resolve_result` 复盘旨意下落」），列入本切片 prompt 文档端 DoD。
+- **resolve 的 `outcome` + `blocked_layer` 是 simulator 诏书核销（`season_simulator.md:106-113`）的硬约束输入**（第一刀；**`exec_fidelity` 是阶段二执行层产物、第一刀不入 payload**——D5-7/D5-8 defer、第二刀随执行层四态 + 密令核议侧加）：旨被 resolve 判 `打回` → simulator **只能叙事「搁置不行 / 受阻折损」并写卡在 `blocked_layer`、禁写「已办成」**。第一刀须改 `season_simulator.md` 加正向吃判决指令（「依 `resolve_result.outcome/blocked_layer` 复盘旨意下落」），列入本切片 prompt 文档端 DoD。
 - **打回 → 二次决策点接线（P2）**：resolve 判「打回」须把 `blocked_layer` + 反咬列表**注入 simulator payload**；`season_simulator.md` HITL `<<DECISION>>` 章（`:125-141`）补口径「凡 `input.resolve_result` 含被打回旨意，必为其生成一个二次决策块（以卡哪层为 context），不另凭自判造」——使「打回 → 二次决策点」闭环、非悬空。
 - **P4 呈现禁令枚举扩（P2）**：`blocked_layer` / `exec_fidelity` / `per_layer_resistance` / `ceiling` / `命门` / `失称度` 等系统词与数值**永不裸呈现**；邸报只把 `blocked_layer` 翻成 in-character 叙事（「六科封还」而非标签 / 数值）。散文禁令枚举**与 0011-2 P4 同批扩 `season_simulator.md`**，哨兵 / 概念泄漏断言纳入本切片呈现端 DoD。
 
