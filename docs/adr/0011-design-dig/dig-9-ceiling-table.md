@@ -23,12 +23,14 @@
 **命门度挂 `axis-tag(私意 vs 坐实)`、不挂目标身份。** 三步:① 走程序坐实→`reason_code∈{依律/谋逆坐实/贪墨坐实}`(机读枚举非措辞,堵H5);② 轴翻转:`if 依律翻轴: axis="依律处置"`——不论原axis祖制95/既得72+14,**reason_code=依律一律重路由到非命门「依律处置」行(base~35)**（⚠️ 华夷85 除外:议和无罪可坐实=无翻轴路,走外压杠杆出路非翻轴,见 0011-4 D4-4(b) 收口）(换行查非改值,命门tag触发条件含reason_code≠依律→坐实时整体不命中、modifier归零);③ effective ceiling 塌。同一福王:naive私意抄家=既得+宗室≈91 → 查实通寇依律除国=35。**ceiling 表里没有任何命门题永远封死(有罪可坐实者走翻轴、无罪的华夷议和走外压杠杆,两机制覆盖全部命门轴;见 0011-4 D4-4)。** 定逆案262人=走程序把清算做成依律惩逆。
 
 ## 命门=合法性 FLOOR（ground 关键洞，补强 dig-8 resolve）
-命门 ceiling 不只是 min() cap,是一条**合法性硬底**:`per_layer_resistance = max(α×血债, 命门合法性floor, min(ceiling, dynamic))`。命门题即便各派dynamic低(没人激烈反对),合法性floor仍把阻力托到ceiling——国本之争原型(文官未必个个激烈,祖制底线集体托95,15年颁不动)。**dig-8 resolve 公式据此加 命门合法性floor 臂。**
+命门 ceiling 不只是 min() cap,是一条**合法性硬底**:`per_layer_resistance = max(α×血债, 命门合法性floor, min(ceiling, dynamic))`（⚠️ 散稿示意；血债臂正式形态 = `min(cap, α×血债)`、cap<依律出路阈~35，真源 0011-2 D2-7 / 0011-4 D4-3）。命门题即便各派dynamic低(没人激烈反对),合法性floor仍把阻力托到ceiling——国本之争原型(文官未必个个激烈,祖制底线集体托95,15年颁不动)。**dig-8 resolve 公式据此加 命门合法性floor 臂。**
 
 ## 结构化查表(决定1,堵H5)
 ceiling key=(axis-tag从DELTA七动作/reason_code结构化派生, leverage段从classes/powers, 命门tag集) 全机读字段、零LLM措辞;翻轴开关=reason_code机读枚举。残留=动作目标name抽取仍过extractor(同dig-6 H5残留,name须命中既有行)。
 
-## 待用户拍
+## 待用户拍（⚠️ 已被覆盖，2026-06-15）
+
+> 本节是更早标记。ceiling 设计已由 dig-8「✅ 用户拍」节（「ceiling 表跟矩阵一起拍」+ 出路恒可达先锁）+ STATE「决定 1–9 全用户拍板」批准，并 fold 进正式 sub-ADR **`0011-4`**；精确 base/modifier 值是 sub-spec 填充项（随 playtest）。下方为历史 scratch，真源见 0011-4。
 - ceiling 表骨架(三级命门+非命门+目标tag)+ 命门=合法性floor + 出路恒可达(axis-tag翻轴) = 设计。**精确值(95/85/82/72/35/40/30 + modifier量)= 首版,随矩阵α/β playtest调参(镜像spike G1-G22方法学),非现在拍死。**
 - modifier 数学:取加数制(设计2,好写golden);设计1乘加制弃。
 - **substrate 至此机制+值全齐**(血债dig-4/矩阵dig-5/认同度dig-6/seed dig-7/ceiling dig-9);四层resolve(dig-8)读它们的料都有了。
