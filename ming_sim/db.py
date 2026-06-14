@@ -5102,7 +5102,8 @@ class GameDB:
                 return False
             # 宗藩（就藩宗室）非朝堂命官，不可作朝臣罢免——_find_existing_minister 仍会解析到宗藩名
             # （任命核需解到名才能显式拒），故罢免侧单独守（cmr R6 cross-section）。
-            if is_vassal_prince(content.characters[key]):
+            _ch_key = content.characters.get(key)  # key 来自 _find_existing_minister 必在册，.get 防御一致（R2 gemini）
+            if _ch_key is not None and is_vassal_prince(_ch_key):
                 return False
             self.set_character_status(state, key, "dismissed", reason="奉旨罢黜")
             ch = content.characters.get(key)
@@ -5906,9 +5907,14 @@ class GameDB:
     ) -> int:
         # 宗藩（就藩宗室）非朝堂命官，不可受密令——密令创建的唯一 DB 写口，集中守此一处即覆盖
         # API / 大臣工具 / CLI 自然语言 / upsert 回落 create 全路（cmr R6 cross-section）。
-        _ch = self.content.characters.get(minister_name) if self.content else None
-        if _ch is not None and is_vassal_prince(_ch):
-            raise ValueError(f"{minister_name}为就藩宗室，非朝廷命官，不可受密令。")
+        # 先经 _find_existing_minister 把别名（如「福王」）解到规范 key 再校，否则别名绕过宗藩闸
+        # （codex + CodeRabbit R2 concur）。lazy import 避 db↔session 循环（同本文件其它处）。
+        if self.content is not None:
+            from ming_sim.session import _find_existing_minister
+            _canon = _find_existing_minister(self.content, minister_name) or minister_name
+            _ch = self.content.characters.get(_canon)
+            if _ch is not None and is_vassal_prince(_ch):
+                raise ValueError(f"{minister_name}为就藩宗室，非朝廷命官，不可受密令。")
         active_count = self.conn.execute(
             "SELECT COUNT(*) FROM secret_orders WHERE status='active'"
         ).fetchone()[0]
