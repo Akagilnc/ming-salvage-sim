@@ -9,7 +9,10 @@
 
 本档单测覆盖两层边界保证：
 ① 纯函数分组 + 剥 status + 字段保留 + done/failed 不进；
-② 构建出的 simulator_payload 的 secret_orders 字段与 data_note 序列化后零 active/pending_review/status 字面。
+② 构建出的 payload["secret_orders"] 字段序列化后零 active/pending_review/status 字面，
+   且 data_note 不再描述密令的 status 字段（data_note 仍含 active_issues 等其它字段名，
+   故只断言 secret_orders 承载与 data_note 的 status 描述，不整体扫 active 子串）。
+另含恢复端归一（旧 list 形状 ctx 重分组）与 resolve_context dict 往返。
 两个 prompt（season_simulator.md 密旨动向段、score_extractor_personnel_secret.md 密令段）
 的措辞改动 LLM 输出非确定不可单测，走 cross-model 评审。
 """
@@ -215,3 +218,7 @@ def test_resolve_context_roundtrips_grouped_secret_orders_as_dict(game):
     ctx = db.get_resolve_context(state.turn)
     assert isinstance(ctx["secret_orders"], dict)
     assert set(ctx["secret_orders"].keys()) == {"在办", "待核议"}
+
+    # 空分组 dict 也按 dict 存（不被 `or []` 退成 list）——契约与新 Dict 注解一致。
+    db.save_resolve_context(state.turn, "诏", "邸报", {}, secret_orders={}, relevant_memories=[])
+    assert db.get_resolve_context(state.turn)["secret_orders"] == {}

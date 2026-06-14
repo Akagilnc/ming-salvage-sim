@@ -5107,7 +5107,9 @@ class GameDB:
             (
                 int(turn), decree_text, narrative,
                 json.dumps(simulator_payload or {}, ensure_ascii=False),
-                json.dumps(secret_orders or [], ensure_ascii=False),
+                # #48：分组承载是 dict；空 dict 也按 dict 存（`or []` 会把 {} 退成 []，
+                # 与 Dict 契约不符）。显式传 list（旧档/占位）仍原样存，None→{}。
+                json.dumps(secret_orders if secret_orders is not None else {}, ensure_ascii=False),
                 json.dumps(relevant_memories or [], ensure_ascii=False),
                 json.dumps(extracted if extracted is not None else {}, ensure_ascii=False),
                 1 if extracted is not None else 0,
