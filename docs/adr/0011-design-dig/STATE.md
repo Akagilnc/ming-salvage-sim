@@ -7,7 +7,7 @@
 
 > ## 🏁 里程碑（2026-06-14）：actor 博弈设计阶段收口
 > **决定 1–9 全有设计稿、全用户拍板、全 durable。substrate 机制+值全齐**(血债dig-4/矩阵dig-5/认同度dig-6/seed dig-7/**ceiling dig-9**)。内核 end-to-end 闭合：`substrate → resolve_directive 四层票拟(dig-8) → outcome → 反馈`。破局回路(走程序坐实→旨意轴翻转→命门变非命门→顺颁)串起全部，出路恒可达已证明。
-> **进行中 = 收口 + 评审**：✅ **血债 sub-ADR 0011-2 已成稿**（`../0011-2-blood-debt-ratchet-schema.md`：fold dig-4 schema + dig-6 kinship 去 max(1) + parked CMR r2 三项 provisional/H5/净负 钉最低契约）+ ✅ **内部对抗预检过**（15-agent：7 fold 保真核 + 8 承重 claim 红队；修 5 P1=人人有点脏/母ADR钱归宿矛盾/H5跨派别名/provisional第4坑/P4字段泄漏，5 承重 claim 攻不破=42格→新表/kinship 0-边界/净负vs出路恒可达/build-upon/H2棘轮）。+ ✅ **本地 cmr 收敛**（ak-cross-m-review，1+1+1 full=Claude Opus + codex gpt-5.5 + gemini/agy，零降级；R1→R4：13→7→5→**0**，R4 3/3 concur；fix commit `03273d9`/`a364f19`/`ab79ab1`）。**进行中 = 全量收口**（用户 2026-06-14 拍「全量」+ 暂缓线上、整条 0011 线收口完再一次性 PR）。任务 T1-T5（硬序 A→B→C）：**T1** 母 ADR 补全（决定8 派系功能 dig-1 + 决定9 外压 dig-2 + 细化决定1 账本只累积永不判负 dig-2Q1 + 细化决定3 入轴不要求对称/华夷主和极 emergent dig-2Q4 + 资源 roadmap note dig-3，插决定7 后）；**T2** 0011-3 价值矩阵 sub-ADR（dig-5）；**T3** 0011-4 ceiling sub-ADR（dig-9 + seed dig-7 数据）；**T4** 0011-5 四层票拟 sub-ADR（dig-8，硬序最后读全 substrate）；**T5** 母 ADR 全套 cmr（9 决定齐 + 引各 final sub-ADR 后）→ 整条线 ship-ready → 用户拍 PR（线上三 bot）。每份 sub-ADR 同血债规格（author→内部红队→本地 cmr 3/3 收敛，每轮 fix 独立 commit 不 amend）。
+> **进行中 = 收口 + 评审**：✅ **血债 sub-ADR 0011-2 已成稿**（`../0011-2-blood-debt-ratchet-schema.md`：fold dig-4 schema + dig-6 kinship 去 max(1) + parked CMR r2 三项 provisional/H5/净负 钉最低契约）+ ✅ **内部对抗预检过**（15-agent：7 fold 保真核 + 8 承重 claim 红队；修 5 P1=人人有点脏/母ADR钱归宿矛盾/H5跨派别名/provisional第4坑/P4字段泄漏，5 承重 claim 攻不破=42格→新表/kinship 0-边界/净负vs出路恒可达/build-upon/H2棘轮）。+ ✅ **本地 cmr 收敛**（ak-cross-m-review，1+1+1 full=Claude Opus + codex gpt-5.5 + gemini/agy，零降级；R1→R4：13→7→5→**0**，R4 3/3 concur；fix commit `03273d9`/`a364f19`/`ab79ab1`）。**进行中 = 全量收口**（用户 2026-06-14 拍「全量」+ 暂缓线上、整条 0011 线收口完再一次性 PR）。任务 T1-T5（硬序 A→B→C）：✅ **T1 完成（2026-06-14）** 母 ADR 补全：决定 8（派系功能 dig-1）+ 决定 9（外压集成 dig-2）已 fold；决定 1-Q1（账本只累积永不判负）+ 决定 3-Q4（入轴不要求对称/华夷轴不对称主和极 emergent）已细化；资源 roadmap note（dig-3）已加；脊梁计数 8→9 一致性修。母 ADR 现 9 决定齐，结构 决定 1–9 → Roadmap 注记 → 后果。**T2（下一步）** 0011-3 价值矩阵 sub-ADR（dig-5）；**T3** 0011-4 ceiling sub-ADR（dig-9 + seed dig-7 数据）；**T4** 0011-5 四层票拟 sub-ADR（dig-8，硬序最后读全 substrate）；**T5** 母 ADR 全套 cmr（9 决定齐 + 引各 final sub-ADR 后）→ 整条线 ship-ready → 用户拍 PR（线上三 bot）。每份 sub-ADR 同血债规格（author→内部红队→本地 cmr 3/3 收敛，每轮 fix 独立 commit 不 amend）。
 > **实现 = 编码活，spawn 隔壁**，硬序：血债 schema + 矩阵42值 + identity列 + seed 先落，四层票拟后做（resolve 读它们，零实现则读空值）。
 > **待办散件**：ceiling 表已设计(dig-9)，精确值随矩阵α/β playtest调；高起潜剔出阉党(characters.json)；叛变需补 faction-UPDATE 写路径；issues "停滞"语义实现端确认。
 > **会话存档**：gstack checkpoint `20260614-215230-...-substrate-complete.md`(本次完整态)。
@@ -34,7 +34,7 @@
 | 资源经济(具象) | ✅ **方向已挑**（HOW 未设计） | 4 recommend 认(方向)；带宽=批红积压(暂定,最虚)；亲临 defer；6 maybe/2 cut 未过（dig-3） |
 | 呈现层 P4 | ⏸ PARKED | — |
 
-## 决定清单（待 fold 进 ADR 0011）
+## 决定清单（fold 状态：决定 8/9 + 决定 1-Q1 + 决定 3-Q4 已随 T1 fold 进母 ADR ✅；决定 2 → 0011-2 sub-ADR ✅；个人认同度层 max(1) 仍待用户拍 + 回 0011-2 走轮）
 - **决定 8（派系功能）**：每派一条承重功能（供给面），走光=失能、惹毛=反咬（同轴两 failure mode）；功能数不设配额（按实际）；接触途径分层（召对 location 闸，蹭 0009 不碰 #93）；不发明新机读态（落 factions离心/issues/裁判规则）；P4 定性。dig-1 全文。
 - **决定 9（外压集成）**：外压=破局压力引擎；前半截(外压→逼旨)已大半接好(gate 机器现成)；net-new 承重=血债棘轮①/三饷传导②/power_tick③/leverage联动④/华夷轴不对称⑤；困境链(三饷绞索/攘外安内/暴君螺旋)每条留真出路；后宫/外戚/监军 defer(剧本-gated)。dig-2 全文。
 - **决定 1 细化**（Q1）：确定性账本只累积、永不内嵌判负；判死分层(结局层)；确定性因果链可全做，只守"账不判死 + 出路杠杆恒可达"。
