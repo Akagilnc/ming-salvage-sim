@@ -4,7 +4,7 @@ Status: Proposed（草案；承母 ADR `0011-edict-resistance-and-centrifuge-led
 
 承 GitHub #112 tracker。本 ADR 收口两块第一刀 substrate：① **敏感度天花板 ceiling 表 + 目标 tag modifier + 命门 = 合法性 floor + 出路恒可达机理**（dig-9）；② **seed 名册数据 spec**（dig-7：开局朝堂 74 人 seed-guilt / identity），它是失称度（0011-2 失称度公式的 `crime_weight`）与认同度（0011-2 kinship 的 `k_id`）的真源，并入本 ADR 一并收口（substrate 同批、少一个独立评审周期）。
 
-> **⚠️ ceiling 批准状态（诚实标，本轮须复核）**：`dig-9` 自身尾部仍写「待用户拍」，但那是更早标记——**dig-8「✅ 用户拍板」节明载「ceiling 表 ✅ 跟矩阵 42 格一起拍（co-依赖）、出路杠杆恒可达硬不变式先锁」**，且 STATE.md 里程碑同步「决定 1–9 全用户拍板」。故本 ADR 据 dig-8 ✅ + STATE 视 **ceiling 设计已批准**；**精确值 = 首版、随矩阵 α/β playtest 调参**（已约定方法学，非待拍设计点）。本轮评审 / 用户复核请确认此判断。
+> **⚠️ ceiling 批准状态（诚实标，本轮须复核）**：`dig-9` 自身尾部仍写「待用户拍」，但那是更早标记——**dig-8「✅ 用户拍板」节明载「ceiling 表 ✅ 跟矩阵 42 格一起拍（co-依赖）、出路杠杆恒可达硬不变式先锁」**，且 STATE.md 里程碑同步「决定 1–9 全用户拍板」。故本 ADR 据 dig-8 ✅ + STATE 视 **ceiling 的三项硬不变式（分级结构 + 命门=合法性 floor + 出路恒可达）已批准**；**精确 base / modifier 值是 dig-8 自承的「随矩阵 sub-spec 一起填」项、随 playtest 标定**（D4-6，非待拍设计点）。本轮评审 / 用户复核请确认此判断。
 
 ## 为什么 ceiling 是「命门题的墙 + 出路的门」
 
@@ -41,6 +41,10 @@ Status: Proposed（草案；承母 ADR `0011-edict-resistance-and-centrifuge-led
 
 **弃案**：单一阻力曲线无分级（抹平「祖制 vs 行政旨」的史实级差）；命门用 flag / 阈值硬判（gamey，违 organic）。
 
+**⚠️ rank ≠ effective-value（P2-2）**：「T2 既得 = 命门最低」指的是 **base 最低**；三级命门是 **base 史实级差分类**、不是 effective ceiling 的全序保证。既得轴受 leverage 调制后 effective 可进 T1 区间（lev92 → 85 = 华夷 T1、> 清议 82），这是「既得阻力随目标多能挡你而升」的有意设计——分级管 base 锚 + 是否触发合法性 floor，不管调制后谁数值更高。
+
+**⚠️ 既得 = leverage-gated 软命门（P2-3）**：既得轴的命门身份与 floor 强度**随 leverage 连续变化**——高 leverage（南直士绅 lev92 → floor 托 85）才是真命门；低 leverage（闲散宗藩 lev22 → effective 50 ≈ 行政旨档）effective 接近非命门。区别于 T0 祖制 / T1 华夷清议这类**无条件命门**。故「既得命门最低」精确为「条件命门、强度连续」。
+
 **残留**：精确 base 值（95/85/82/72/40/35/30）= 首版，随 α/β playtest 调参（D4-6），非现在拍死。
 
 #### D4-2 目标 tag modifier = 加数制（祖制换行路由 / 宗室 / 勋戚外戚 / 高 leverage）
@@ -48,23 +52,33 @@ Status: Proposed（草案；承母 ADR `0011-edict-resistance-and-centrifuge-led
 **决定**（modifier 数学取**加数制**，dig-9：好写 golden 测试；乘加制弃）：
 
 - **祖制 tag**（合取：动作 ∈ {册封 / 废后 / 易储 / 除国} × `office_type` ∈ {后宫 / 宗藩} × `reason_code` ∉ 依律集）→ **换行路由到 95**（不是加数）。
-- **宗室 tag**（`faction == 宗室`）：祖制轴 +5（95 → 100 顶满）/ 既得轴加法统加成。宗室**双命门**（法统 T0 + 既得 T2），撞哪条看 axis-tag。
-- **勋戚外戚 tag**（`office_type == 后宫` ∨ 爵位正则派生——无干净 faction 必须硬派生）：既得轴 +8 → 85；叠「代理人保险丝」（大臣代行强夺勋戚 → 暴露反噬，薛国观锚）。
-- **高 leverage**（仅既得轴）：既得 ceiling = `max(72, leverage_target)`（lev92 南直东林士绅顶 85、lev22 闲散宗藩塌 50）。leverage 从 `classes`/`powers` 结构化读，非 LLM。
+- **宗室 tag**（`faction == 宗室`）：祖制轴 +5（95 → 100 顶满）/ 既得轴 **+宗室法统加成 `ZONGSHI_JIDE_BONUS`（首版 ≈ 19、随 playtest 标定）**。宗室**双命门**（法统 T0 + 既得 T2），撞哪条看 axis-tag。
+- **勋戚外戚 tag**（`office_type == 后宫` ∨ 爵位正则派生——无干净 faction 必须硬派生）：既得轴 **+8**；叠「代理人保险丝」（大臣代行强夺勋戚 → 暴露反噬，薛国观锚）。
+- **高 leverage**（仅既得轴）：既得取 leverage 段（lev92 南直东林士绅顶 85、lev22 闲散宗藩塌 50）。**`leverage_target` = 目标所属派 / 阶层的 leverage（`factions.leverage` 或对应 `classes.leverage`）、非逐人物列**（P3-6：现 schema 无人物 leverage 列，实现别误接成查人物）。从 `classes`/`powers` 结构化读，非 LLM。
 
-**弃案**：乘加混合制（难写 golden、调参不可解释）；身份直接定 ceiling（违出路恒可达，见 D4-4——命门挂 axis-tag 不挂身份）。
+**既得轴复合算法（单一、无二次复合，P1-2）**：
 
-**⚠️ CMR**：祖制 tag 用「换行路由」（改查哪行）、其余用「加数 / max」（改值），两套机制混在 modifier 里，须复核语义边界清晰、且与 D4-4 翻轴的「换行」机制一致不打架。
+```
+既得 effective = clamp( max( 72 + 宗室法统加成 + 勋戚加数 , leverage_target ) , 0, 100 )
+```
+
+——所有**加数先在 base 72 上累加**（宗室 +19 / 勋戚 +8），**再与 `leverage_target` 一次 `max` 收尾**，无二次复合。**福王 worked example**（宗室、坐实前 naive 私意抄家、闲散宗藩 leverage 低）：`max(72 + 19, leverage_target) = 91`（72 base + 19 法统加成；leverage 段不顶）。golden 可写出确定值 91。
+
+**弃案**：乘加混合制（难写 golden、调参不可解释）；身份直接定 ceiling（违出路恒可达，见 D4-4——命门挂 axis-tag 不挂身份）；加数与 leverage 二次复合（顺序歧义，golden 写不出确定值）。
+
+**互斥收口（原 ⚠️ CMR，P3-7）**：祖制 tag 用「换行路由」（改查哪行）、宗室 / 勋戚 / leverage 用「加数 / max」（改值）；两套**不冲突**——祖制换行（`reason_code ∉ 依律`）与 D4-4 翻轴换行（`reason_code ∈ 依律`）在 `reason_code` 机读字段上**严格互斥**，任一动作至多命中一条换行、无优先级问题；坐实即整条命门 tag 不命中、加数 modifier 一并归零（见 D4-4 a）。
 
 #### D4-3 命门 = 合法性 FLOOR（不只是 min cap，是阻力硬底）
 
 **决定**（dig-9 ground 关键洞，补强 dig-8 resolve 公式）：命门 ceiling **不只是 `min()` cap**，是一条**合法性硬底**：
 
 ```
-per_layer_resistance = max( α×血债项 , 命门合法性floor , min(ceiling, dynamic_term) )
+per_layer_resistance = max( min(cap, α×血债项) , 命门合法性floor , min(ceiling, dynamic_term) )
 ```
 
 命门题即便各派 dynamic 低（没人激烈反对），**合法性 floor 仍把阻力托到 ceiling**——国本之争原型（文官未必个个激烈，但祖制底线集体托 95，15 年颁不动）。
+
+**血债臂 cap（与 0011-2 D2-7 一字对齐，P1-1）**：血债臂是 `min(cap, α×血债项)`，**cap 真源在 0011-2 D2-7**（cap < 依律出路阈 ~35、CMR r2 裁为硬不变式：血债单调无界，任意固定 α 下 α×血债→∞ 终超 35 会封死翻轴后的依律出路）。**cap 只加血债臂、不加命门合法性 floor 臂**——floor 须能托到 ceiling 95（国本之争原型），不可被 cap 削。本 ADR 不重定义 cap。
 
 **本 ADR 是 `命门合法性floor` 的权威定义源；`0011-2` D2-7 的 resistance 公式 floor 臂消费它**（单一真源，避免两文件各定一份）。
 
@@ -77,14 +91,19 @@ per_layer_resistance = max( α×血债项 , 命门合法性floor , min(ceiling, 
 **(a) 翻轴出路**（针对**有罪可坐实**的命门轴：祖制硬核 / 既得 / 清议——动作对人 / 对产、可走程序定罪）：
 
 1. **走程序坐实** → `reason_code ∈ {依律 / 谋逆坐实 / 贪墨坐实}`（机读枚举、非措辞，堵 H5）；
-2. **轴翻转**：`if reason_code ∈ 依律集: axis = "依律处置"`——原 axis 为祖制 95 / 既得 72+modifier 时，reason_code = 依律一律**重路由到非命门「依律处置」行（base ~35）**（命门 tag 触发条件含 `reason_code ∉ 依律` → 坐实时整体不命中、modifier 归零）；
-3. **effective ceiling 塌**。**数值证**：同一福王——naive 私意抄家 = 既得 + 宗室 ≈ 91；查实通寇 → 依律除国 = 35。定逆案 262 人 = 走程序把清算做成依律惩逆。
+2. **轴翻转**：`if reason_code ∈ 依律集: axis = "依律处置"`——原 axis 为祖制 95 / 既得 72+modifier 时，reason_code = 依律一律**重路由到非命门「依律处置」行（base ~35）**（命门 tag 触发条件含 `reason_code ∉ 依律` → 坐实时整体不命中、modifier 归零）。**leverage modifier 因 axis 从既得切到「依律处置」而自然失效**（modifier 仅既得轴 D4-2），非被特判清零——故高 leverage 既得目标（lev92 → 85）坐实翻轴后 ceiling = 依律处置 base ~35，leverage 不再 fire（P3-8）。
+3. **effective ceiling 塌**。**数值证**：同一福王——naive 私意抄家 = 既得 base 72 + 宗室法统加成 19 = **91**；查实通寇 → 依律除国 = **35**。定逆案 262 人 = 走程序把清算做成依律惩逆。
 
-**(b) 外压杠杆出路**（针对**无罪可坐实**的命门轴：华夷战和 / 议和——政策抉择、无人可定罪、无依律翻轴路）：
+**(b) 外压杠杆出路**（针对**无被告但有外压杠杆**的命门轴：华夷战和 / 议和——政策抉择、无人可定罪、无依律翻轴路）：
 
-- 议和**不靠翻轴**（华夷轴无坐实触发条件），靠 **0011-3 D3-4 / 母 ADR 决定9 的外压 dynamic 臂**：外压够大 + 代价够明白 → 务实派被推着默许、dynamic resistance 降 → 议和可颁（dig-2 Q4 ✅）。这是命门题的**第二条出路机制**，与翻轴并列。
+- 议和**不靠翻轴**（华夷轴无坐实触发条件），靠 **0011-3 D3-4 / 母 ADR 决定9 的外压 dynamic 臂**：外压够大 + 代价够明白 → 务实派被推着默许、dynamic resistance 降 → 议和可颁（dig-2 Q4 ✅）。
 
-**⚠️ 全称 claim 收口（内部红队跨文件抓，P2-5）**：原稿（及 dig-9 line 23）「不论原 axis 祖制 / 华夷 / 既得…一律翻轴」对**华夷轴不成立**（议和无罪可坐实）。修正后全称 = **「ceiling 表里没有任何命门题永远封死——有罪可坐实者走翻轴（a）、无罪的华夷议和走外压杠杆（b），两机制覆盖全部命门轴」**。dig-9 line 23 散稿已同步标注（本 ADR 为 ceiling 真源、覆盖 dig-9）。
+**(c) 盘面级兜底**（针对**既无被告、又无外压杠杆**的纯制度命门：易储 / 废嫡 / 私改科举根本 / 动太庙祖陵 等 T0 祖制硬核，南迁 / 夺情 等无被告清议动作）：
+
+- 这类动作是皇帝自身的继统 / 礼仪 / 制度抉择，**无人 / 产可坐实罪**（落不进 a）、**非华夷政策**（落不进 b）→ **无动作级专属出路**。它们走**母 ADR 决定6 的盘面级（board-level）净负窄路兜底**：出路恒可达是**盘面级不变式**（有 actor 在场时任一盘面 ≥1 条净离心为负窄路），**不保证每个具体动作都可颁**。
+- **史实即如此**：易储正是 T0 锚「国本之争 15 年完败」——皇帝**就是推不动易储**，但盘面整体始终有别的窄路（不是全局死锁）。这与 pressure-not-scripted-doom 不冲突：**单个命门动作可以是真墙、盘面永不全堵**。
+
+**⚠️ 全称 claim 收口（内部红队跨文件抓，P1-3 / P2-5）**：原稿（及 dig-9 line 23）「不论原 axis 祖制 / 华夷 / 既得…一律翻轴」对**华夷 + 纯制度祖制 / 无被告清议轴均不成立**（无罪可坐实）。修正后分三类，**出路恒可达 = (a)(b) 动作级 + (c) 盘面级的合取，不是「每个命门动作都可颁」**：(a) 有被告命门走翻轴；(b) 华夷议和走外压杠杆；(c) 纯制度祖制 / 无被告清议无动作级出路、走母 ADR 决定6 盘面级净负窄路兜底。dig-9 line 23 散稿已同步标注（本 ADR 为 ceiling 真源、覆盖 dig-9）。
 
 **与血债的关系（钉清，对齐 0011-2 D2-7）**：「出路恒可达」≠ resistance → 0。翻轴塌的是**该具体命门动作**的 ceiling / 命门 floor；外压杠杆降的是务实派 dynamic 臂；**血债 floor 是对该派的持久代价**（冻土，两出路都不清）。0011-2 D2-7 已钉：血债 floor 臂设 `cap < 依律出路阈(~35)`，令 unbounded 血债能挡私意高墙、但挡不死出路动作 → 出路恒可达对 unbounded 血债仍成立。**议和侧**：议和累 blood_debt（冻土）、不触底任何派 sat/lev，故净负窄路不变式不被破（0011-3 D3-4）。
 
@@ -100,13 +119,13 @@ per_layer_resistance = max( α×血债项 , 命门合法性floor , min(ceiling, 
 
 **决定**：base ceiling（95/85/82/72/40/35/30）+ modifier 量（祖制 +5 / 勋戚 +8 / leverage max）= **首版**，随矩阵 α/β playtest 调参（镜像 spike G1-G22 方法学：独立 oracle + 末态硬期望 + mutation 自验）。
 
-**但**：①「三级命门 + 非命门」分级结构、② 命门 = 合法性 floor、③ 出路恒可达 axis-tag 翻轴 = **设计 / 硬不变式，不是调参旋钮**。playtest 调的是墙多高，不是「坐实还命门 / 命门挂身份」。
+**但**：①「三级命门 + 非命门」分级结构、② 命门 = 合法性 floor、③ 出路恒可达（**翻轴〔有被告〕+ 外压杠杆〔华夷〕+ 盘面级兜底〔纯制度〕三机制**，D4-4）= **设计 / 硬不变式，不是调参旋钮**。playtest 调的是墙多高，不是「坐实还命门 / 命门挂身份」。
 
 #### D4-7 与 0011-2 净负 floor 的接口（单一真源）
 
 **决定**：本 ADR 定义 `命门合法性floor`（D4-3）与 `min(ceiling, dynamic)` 上限（A 表）；`0011-2` D2-7 的 `per_layer_resistance = max(min(cap,α×血债), 命门合法性floor[本ADR], min(ceiling, dynamic))` **消费它们**。两文件**不各定一份 floor**——本 ADR 是 ceiling / 命门 floor 真源，0011-2 是血债 floor 真源 + 组合公式宿主。
 
-**⚠️ CMR**：须复核 0011-2 D2-7 引用的 `命门合法性floor[dig-9]` 与本 ADR D4-3 定义**语义一致、无漂移**（fold 后引用源从 dig-9 升级到本 ADR）。
+**单一真源已闭合（原 ⚠️ CMR，P2-1）**：0011-2 D2-7 公式 + 依赖节的 `命门合法性floor` / `ceiling` 引用源**已从 dig-9 升级到本 ADR D4-3**（本轮 fix：0011-2 line 111/117/237 同步），语义一致（dynamic 低时 floor 托到 ceiling、国本之争原型）。dig-9 保留为底稿出处。
 
 #### D4-8 build-upon ADR 0008 / 0009
 
@@ -158,14 +177,16 @@ per_layer_resistance = max( α×血债项 , 命门合法性floor , min(ceiling, 
 1. **钱谦益轻 ✅ 保留**（东林非纯、喂北极星「刀口对自己人」）。
 2. **降清诸将 identity 40-55 ✅ 保留**（1627 真实性格非不公前瞻，降清是低认同后果）。
 3. **温 / 周 16-18 全册最低 ✅ 保留**（最纯人 ≠ 党教学，初见反差 = feature）。
-4. **高起潜 ✅ 剔出阉党**——实现改 characters.json：faction 从阉党 → 监军 / 内监别籍（崇祯监军太监非魏党），seed_guilt = 无。
-5. **吴昌时 ✅ 降为无**（贪是崇祯十六年后事，铁律不预坐）；郑芝龙海盗出身保留轻（1627 现实污点）。
+4. **高起潜 ✅ 剔出阉党**——实现改 characters.json：faction 从阉党 → **中立**（监军太监无党、落既有 **7 派封闭集**内；**不得新建 faction 值**——7 派封闭集是 0011-3 矩阵 42 格地基，凭空多一派会让矩阵 / 血债缺格），保留 `office_type = 内臣`（内监是 office_type 维度、非 faction），seed_guilt = 无。
+5. **吴昌时 ✅ seed_guilt 不填（= 无罪）、faction 保持中立不动**（贪是崇祯十六年后事，铁律不预坐；`seed_guilt` 是净新字段、无旧值可减，故「不填」非「降」）；郑芝龙海盗出身保留轻（1627 现实污点）。
 
 → 非阉党带罪者最终仅 **2 人轻**（钱谦益党争 + 郑芝龙海盗出身）+ 福王 1 轻（贪吝）；重 + 中 9 人全阉党。
 
 ### 落库注（实现）
 
 characters.json per-人加 `seed_guilt`(crime / severity) + `identity`(int)；走 `content.py int_field` 链 + `ensure_column` 老档补默认（`identity DEFAULT 50` / severity 无）。74 人全值见 dig-7 task 输出 `full_list`。
+
+**⚠️ 与 0011-2 H5 治本步骤③同批改 characters.json（P2-6）**：seed 落库与 0011-2 H5 的「先洗跨派别名」改的是**同一个 characters.json**，须**同一 PR 点检**：① 加 `seed_guilt`/`identity` 列；② 洗「袁巡抚」类纯官衔跨派别名（袁可立东林 / 袁崇焕军队 共用，加人名前缀或剔除）；③ 后置 startup「无跨 faction 别名映射」断言（断言须后于清洗，否则开局即崩）。三者同批、避免漏洗。
 
 **⚠️ DDL / 字段是示意**（对齐 0011-2 CMR r3 centralize 惯例）：精确列名 / 默认 / 恢复端 SELECT（`session.py` 重建 character 内存对象须 select 新列 `seed_guilt`/`identity`，否则 P1 restore 丢值）= 实现期对齐 live `db.py` 的活，TDD 逐条点检 DoD 六面。
 
@@ -198,12 +219,12 @@ ceiling 表（A）+ seed 名册（B）+ 矩阵 42 值（0011-3）+ 血债 schema
 
 ### 调参 / playtest
 
-base ceiling + modifier 量 + seed identity 值 = **首版**，随矩阵 α/β playtest 调参（镜像 spike G1-G22）。**三级命门结构 / 命门 = 合法性 floor / 出路恒可达 axis-tag 翻轴 = 设计与硬不变式、不是调参旋钮。**
+base ceiling + modifier 量 + seed identity 值 = **首版**，随矩阵 α/β playtest 调参（镜像 spike G1-G22）。**三级命门结构 / 命门 = 合法性 floor / 出路恒可达（翻轴 + 外压杠杆 + 盘面级兜底三机制）= 设计与硬不变式、不是调参旋钮。**
 
 ### 评审
 
-本 ADR 是设计文档，按 CLAUDE.md 铁律产出后必跑完整评审闭环（本地 cmr 收敛 + 线上三 bot 收敛）。**本轮评审重点盯**：① ceiling 批准状态判断（据 dig-8 ✅ + STATE 视已批、dig-9 尾部「待用户拍」已被覆盖）是否成立——**请用户复核**；② D4-2 modifier 两套机制（换行路由 vs 加数 / max）边界是否清、与 D4-4 翻轴换行是否一致；③ D4-3 命门 = 合法性 floor 与 D4-7 跨 0011-2 引用是否单一真源、无漂移；④ D4-4 出路恒可达对 unbounded 血债 + 双命门宗室目标是否真成立（与 0011-2 血债 cap 接口）；⑤ B 部分 seed 名册与 0011-2「依赖 substrate · seed-guilt」节是否无双真源（本 ADR 是 seed 真源、0011-2 引用它）；⑥ 高起潜剔出阉党 / 吴昌时降无的实现注是否完整可执行。实现属编码活、交隔壁 session。
+本 ADR 是设计文档，按 CLAUDE.md 铁律产出后必跑完整评审闭环（本地 cmr 收敛 + 线上三 bot 收敛）。**草稿后经内部对抗预检**（15-agent：6 fold 保真核 + 8 承重 claim 红队 + 合成，2026-06-15）——修 **3 P1**（D4-3 floor 血债臂漏 cap〔与 0011-2 CMR r2 硬不变式对齐〕/ 既得 modifier 复合顺序未定 + 宗室法统加成无值〔钉单一复合算法 + `ZONGSHI_JIDE_BONUS`≈19、福王 91〕/ D4-4 全称对祖制易储 + 清议南迁破〔补 (c) 盘面级兜底、出路三机制三分〕）+ **6 P2**（命门 floor 单一真源升级 0011-2 / rank≠effective-value / 既得 leverage-gated 软命门 / 出路恒可达三处表述统一 / 高起潜 faction→中立保 7 派封闭 / seed 落库与 0011-2 H5 同批洗别名）+ **8 P3**（seed 真源升级 / dig-9·dig-7 散稿清洁 / 吴昌时措辞 / 批准状态精确 / leverage 粒度派阶层级 / 换行 reason_code 互斥 / leverage modifier 翻轴失效 / 等）。**ceiling 表 + seed 名册本体保真核 PASS**。**本轮 cmr 复裁重点**：① (c) 盘面级兜底（易储 / 南迁走母 ADR 决定6）是否真不违 pressure-not-scripted-doom；② 既得复合算法 + `ZONGSHI_JIDE_BONUS`≈19 首版值是否自洽（福王 91）；③ floor / ceiling / seed 跨 0011-2 单一真源是否真无漂移；④ leverage-gated 软命门语义是否周延。实现属编码活、交隔壁 session。
 
 ### 出处
 
-由 design-dig fold：`dig-9`（ceiling-sensitivity workflow：ground + 2 路设计高度收敛，Claude 从 3 完成结果合成 synth）+ `dig-7`（9-agent：ground 定逆案六等 + 7 派 assign + 合成）。ceiling 设计据 dig-8「✅ 用户拍板」节（ceiling 跟矩阵一起拍 + 出路恒可达先锁）+ STATE「决定 1–9 全用户拍板」视已批准；seed 名册据 dig-7「✅ 5 争议已拍 + 名单定稿」。精确值首版、随 playtest 调参。承母 ADR 决定1 / 决定4。
+由 design-dig fold：`dig-9`（ceiling-sensitivity workflow：ground + 2 路设计高度收敛，Claude 从 3 完成结果合成 synth）+ `dig-7`（9-agent：ground 定逆案六等 + 7 派 assign + 合成）。ceiling 设计据 dig-8「✅ 用户拍板」节（ceiling 跟矩阵一起拍 + 出路恒可达先锁）+ STATE「决定 1–9 全用户拍板」视三项硬不变式已批准；seed 名册据 dig-7「✅ 5 争议已拍 + 名单定稿」。精确值首版、随 playtest 调参。承母 ADR 决定1 / 决定4。**草稿后经内部对抗预检 15-agent（2026-06-15）修 3 P1 + 6 P2 + 8 P3，再进正式 cmr。**
