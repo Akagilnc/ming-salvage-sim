@@ -155,7 +155,11 @@ def _find_candidate_by_name(content: GameContent, name: str) -> Optional[str]:
 def _find_existing_minister(content: GameContent, name: str) -> Optional[str]:
     """铨选查重：拟任者是否已在册（非 candidate）。精确名 → aliases 命中。
     不做子串互含——'李标' vs '标' 那种巧合会误拒同义改写。
-    后宫人物不在此查（走 _find_candidate_by_name）。返回在册原始 key，无则 None。"""
+    后宫人物不在此查（走 _find_candidate_by_name）。返回在册原始 key，无则 None。
+
+    此处 power_id 用 content 静态值（非 db.resolve_power_id 的 DB 权威，#125）是刻意的：这是按
+    content 名册原始建制做身份去重，不接 db（模块函数无 db）；授官的活 power 闸在
+    apply_office_appointment（DB-first，issues.py）。归明者授官正确性由那条保证，不在此路。"""
     if name in content.characters:
         c = content.characters[name]
         if c.office_type != "后宫" and c.status != "candidate" and c.power_id == "ming":
@@ -510,7 +514,9 @@ class GameSession:
         # 状态以 DB 为准（历史卒/登场/罢黜均落 DB）；offstage 未登场者不进名单。
         views: List[MinisterView] = []
         for c in self.content.characters.values():
-            if getattr(c, "power_id", "ming") != "ming":
+            # DB 权威 power_id：招抚归明者(DB翻ming/content仍旧势力)须入召见名册，否则可召(can_summon
+            # 认 DB)却不在册，两端不一致（#125；与 can_summon/court_roster 同口径）。
+            if self.db.resolve_power_id(c) != "ming":
                 continue
             # 宗藩（就藩宗室）非朝堂命官，召见阶段名册同各 roster 排除（PR#121，cmr R5）。
             if is_vassal_prince(c):

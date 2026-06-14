@@ -46,7 +46,7 @@ def choose_minister(session: GameSession) -> Optional[Character]:
         name for name in characters
         if session.db.get_character_status(name)[0] not in ("offstage", "candidate")
         and getattr(characters[name], "status", "active") != "candidate"
-        and getattr(characters[name], "power_id", "ming") == "ming"
+        and session.db.resolve_power_id(characters[name]) == "ming"  # DB 权威，同 can_summon（#125）
         and not is_vassal_prince(characters[name])  # 宗藩（就藩宗室）不入召见名单（PR#121，cmr R6）
     ]
     print("\n可召见大臣：")

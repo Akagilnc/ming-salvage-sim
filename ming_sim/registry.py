@@ -107,7 +107,7 @@ def build_court_roster(context: CourtContext) -> str:
         # 宗藩不入此册，与 web visible_in_court 同步，cmr R3 cross-section）。
         if c.office_type in ("后宫", "宗藩"):
             continue
-        if getattr(c, "power_id", "ming") != "ming":
+        if db.resolve_power_id(c) != "ming":  # DB 权威：招抚归明者(DB翻ming/content仍旧势力)入册
             continue
         status, reason = db.get_character_status(c.name)
         if status == "offstage":
@@ -134,7 +134,7 @@ def build_court_roster_index(context: CourtContext) -> str:
         # roster scope：非后宫、非宗藩（同 build_court_roster，cmr R3 cross-section）。
         if c.office_type in ("后宫", "宗藩"):
             continue
-        if getattr(c, "power_id", "ming") != "ming":
+        if db.resolve_power_id(c) != "ming":  # DB 权威：招抚归明者(DB翻ming/content仍旧势力)入册
             continue
         status, reason = db.get_character_status(c.name)
         if status == "offstage":
@@ -453,7 +453,7 @@ def create_minister_agent(
         active_char_count = sum(
             1 for ch in _ctx().characters.values()
             if ch.office_type != "后宫"
-            and getattr(ch, "power_id", "ming") == "ming"
+            and context.db.resolve_power_id(ch) == "ming"  # DB 权威，同 court_roster
             and context.db.get_character_status(ch.name)[0] != "offstage"
         )
         army_count = context.db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0]
