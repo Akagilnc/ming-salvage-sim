@@ -235,10 +235,26 @@ def group_secret_orders_for_sim(
             "content": (o.get("content") or "")[:120],
             "turn_issued": o.get("turn_issued") or 0,
             "due_turn": o.get("due_turn") or 0,
-            "progress": o.get("result") or "",      # 承办人聊天里存的当前进展
+            # DB 行的进展在 result；已分组过的旧承载条目在 progress——两者都收，使本函数
+            # 能就地重分组旧 list 形状 ctx（恢复端归一，见 _recovered_grouped）。
+            "progress": o.get("result") or o.get("progress") or "",
             "sim_note": o.get("sim_note") or "",     # 上轮推演写的副作用
         })
     return groups
+
+
+def _recovered_grouped(value: object) -> Dict[str, object]:
+    """恢复路把存档里的 secret_orders 归一成分组 dict（#48 恢复端闭环）。
+
+    新档已是分组 dict → 原样返回。**部署前存的旧 list 形状 ctx** → 按状态重分组、剥英文
+    status（旧条目仍带 status，可据以分桶）：否则把扁平 list 透传给改读 `secret_orders.在办`/
+    `待核议` 的新 extractor prompt，HITL 续跑会漏抽密令副作用/结案。其余杂值 → 空 dict。
+    """
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, list):
+        return group_secret_orders_for_sim(value)
+    return {}
 
 
 def resolve_directives(
@@ -1255,14 +1271,20 @@ def resolve_decisions_phase2(
         return result.report
     decisions = db.list_pending_decisions(state.turn)
     decision_directive = _format_decision_directive(decisions)
+    # #48 恢复端闭环：HITL 续跑直接复用存档的 narrative + simulator_payload（不重推演），
+    # extractor 实际从 simulator_payload 读密令分组（module 模式剔除补充上下文里的副本）。
+    # 故把分组承载归一成 dict——新档原样、旧 list 形状 ctx 就地重分组——再喂下游，使新
+    # extractor prompt（读 secret_orders.在办/待核议）在旧档恢复时也不漏抽密令副作用/结案。
+    sim_payload = ctx["simulator_payload"] if isinstance(ctx["simulator_payload"], dict) else {}
+    if isinstance(sim_payload.get("secret_orders"), list):
+        sim_payload = {**sim_payload, "secret_orders": _recovered_grouped(sim_payload["secret_orders"])}
     report = _settle_after_narrative(
         state, db, agno_db, llm_config,
         decree_text=str(ctx["decree_text"]),
         narrative=str(ctx["narrative"]),
-        simulator_payload=ctx["simulator_payload"] if isinstance(ctx["simulator_payload"], dict) else {},
+        simulator_payload=sim_payload,
         relevant_memories=ctx["relevant_memories"] if isinstance(ctx["relevant_memories"], list) else [],
-        # 分组承载是 dict（#48）；兼容部署窗口内仍是旧 list 形状的在途 ctx，二者都透传。
-        secret_orders=ctx["secret_orders"] if isinstance(ctx["secret_orders"], (list, dict)) else {},
+        secret_orders=_recovered_grouped(ctx["secret_orders"]),
         before_turn=before_turn, _emit=_emit,
         content=content, registry=registry,
         cheat_directive=cheat_directive,

@@ -153,9 +153,65 @@ def test_simulator_payload_secret_orders_has_no_english_enum(game):
 
 
 def test_build_simulator_payload_defaults_secret_orders_to_empty_dict(game):
-    """无密令时 secret_orders 默认空 dict（嵌套中文键承载的空形状），不是空 list。"""
+    """不传密令时 secret_orders 默认空 dict（不是空 list）——`secret_orders or {}` 的默认形状。"""
     from ming_sim.simulation import build_simulator_payload
 
     db, state, _ = game
     payload = build_simulator_payload(state, db, "", "")
     assert payload["secret_orders"] == {}
+
+
+def test_group_reads_progress_from_legacy_progress_key():
+    """分组函数能消化『旧档承载条目』——其进度存在 `progress` 键（非 DB 行的 `result`）。
+
+    恢复路归一旧 list 形状 ctx 时复用本函数；旧条目用 progress、新 DB 行用 result，
+    两者都要落进 grouped 条目的 progress（#48 恢复端闭环）。"""
+    from ming_sim.decree import group_secret_orders_for_sim
+
+    legacy_entry = {
+        "id": 5, "minister_name": "甲", "title": "t", "content": "c",
+        "status": "active", "turn_issued": 1, "due_turn": 4,
+        "progress": "已办到南京", "sim_note": "风声",  # 旧承载键：progress / sim_note，无 result
+    }
+    grouped = group_secret_orders_for_sim([legacy_entry])
+    assert grouped["在办"][0]["progress"] == "已办到南京"
+    assert "status" not in grouped["在办"][0]
+
+
+def test_recovered_grouped_normalizes_legacy_list():
+    """_recovered_grouped：新档 dict 原样透传；旧档 list 形状归一成分组 dict（剥 status）；杂值 → {}。"""
+    from ming_sim.decree import _recovered_grouped, group_secret_orders_for_sim
+
+    already = {"在办": [{"id": 1}], "待核议": []}
+    assert _recovered_grouped(already) is already  # dict 原样
+
+    legacy_list = [
+        {"id": 1, "minister_name": "甲", "title": "t", "content": "c",
+         "status": "active", "turn_issued": 1, "due_turn": 4, "progress": "p", "sim_note": ""},
+        {"id": 2, "minister_name": "乙", "title": "u", "content": "d",
+         "status": "pending_review", "turn_issued": 1, "due_turn": 3, "progress": "", "sim_note": ""},
+    ]
+    out = _recovered_grouped(legacy_list)
+    assert set(out.keys()) == {"在办", "待核议"}
+    assert [o["id"] for o in out["在办"]] == [1]
+    assert [o["id"] for o in out["待核议"]] == [2]
+    for entry in out["在办"] + out["待核议"]:
+        assert "status" not in entry  # 旧档英文 status 在归一时剥掉
+
+    assert _recovered_grouped(None) == {}
+    assert _recovered_grouped("junk") == {}
+
+
+def test_resolve_context_roundtrips_grouped_secret_orders_as_dict(game):
+    """save→get resolve_context 保持分组 dict 形状（非空与空分组都不退成 list）。"""
+    db, state, _ = game
+    grouped = {
+        "在办": [{"id": 1, "minister_name": "甲", "title": "t", "content": "c",
+                  "turn_issued": 1, "due_turn": 4, "progress": "", "sim_note": ""}],
+        "待核议": [],
+    }
+    db.save_resolve_context(state.turn, "诏", "邸报", {"secret_orders": grouped},
+                            secret_orders=grouped, relevant_memories=[])
+    ctx = db.get_resolve_context(state.turn)
+    assert isinstance(ctx["secret_orders"], dict)
+    assert set(ctx["secret_orders"].keys()) == {"在办", "待核议"}
