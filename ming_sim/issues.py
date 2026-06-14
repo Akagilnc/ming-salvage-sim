@@ -281,7 +281,7 @@ def _gate_passed(gate: Dict[str, str], metrics: Dict[str, int], db: GameDB) -> b
     AttributeError 崩候选收集（PR#107 gemini；集中守 None，seed/历史两分支共用此函数同得保护）。
     """
     for key, cond in (gate or {}).items():
-        cond = cond.strip()
+        cond = str(cond).strip()  # 非字符串条件值(JSON 漏引号写成 60/True)先 str 强转，不 .strip() 崩（PR#107 gemini）
         # 文本相等：==<word> / !=<word>（RHS 非纯数字）
         sm = re.match(r"^(==|!=)\s*(.+)$", cond)
         if sm and not re.match(r"^-?\d+$", sm.group(2).strip()):
