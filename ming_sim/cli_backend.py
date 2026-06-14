@@ -94,8 +94,11 @@ def _login_shell_path() -> Optional[str]:
     discovered = ""
     shell = os.environ.get("SHELL") or "/bin/zsh"
     try:
+        # 用 printenv 取已导出的 PATH（shell 无关）：不靠 "$PATH" 展开——fish 把 $PATH
+        # 当 list、双引号里展开成空格分隔，会破后面的冒号切分（gemini r2 G-R1）。
+        # printenv 是外部命令，读到的是登录 shell 导出的 env PATH（恒冒号分隔）。
         proc = _RAW_RUN(
-            [shell, "-lic", 'printf "<<<CMRPATH>>>%s<<<ENDPATH>>>" "$PATH"'],
+            [shell, "-lic", 'printf "<<<CMRPATH>>>"; printenv PATH; printf "<<<ENDPATH>>>"'],
             capture_output=True, text=True, timeout=8,
         )
         m = re.search(r"<<<CMRPATH>>>(.*?)<<<ENDPATH>>>", proc.stdout or "", re.S)
@@ -148,6 +151,11 @@ def _resolve_cli_bin(name: str, configured: str) -> str:
         if login:
             found = shutil.which(configured, path=_dedup_path([_static_search_path(), login]))
     if found:
+        # 绝对化:configured 是相对路径(相对 MING_SIM_*_BIN / 相对 PATH 项)时 which 会
+        # 返回相对串,而 _run_* 用 cwd=_AGY_CWD 跑会按沙箱目录解析→FileNotFoundError;
+        # 绝对路径才兑现「解析成可执行绝对路径」的契约(gemini r2 G-R2)。abspath 对已
+        # 绝对的路径是 no-op。
+        found = os.path.abspath(found)
         _BIN_CACHE[name] = found
         return found
     return configured
