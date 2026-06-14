@@ -452,7 +452,9 @@ def create_minister_agent(
         # 运行时判断规模：人物>100 或军队>30 切换为 tool 按需查，否则全量注入 system
         active_char_count = sum(
             1 for ch in _ctx().characters.values()
-            if ch.office_type != "后宫"
+            # 排除后宫+宗藩：本计数是 build_court_roster↔index 切换阈值，须与两 builder 同口径
+            # （都跳宗藩），否则宗藩多时虚高、误切索引路丢全名册上下文（CodeRabbit PR#130 R2 Minor）。
+            if ch.office_type not in ("后宫", "宗藩")
             # status 先于 resolve_power_id：多数人物 offstage，先短路省一次 DB 查询（gemini PR#130 R1）
             and context.db.get_character_status(ch.name)[0] != "offstage"
             and context.db.resolve_power_id(ch) == "ming"  # DB 权威，同 court_roster
