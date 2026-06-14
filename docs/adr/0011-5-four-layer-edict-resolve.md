@@ -12,7 +12,7 @@ Status: Proposed（草案；承母 ADR `0011-edict-resistance-and-centrifuge-led
 
 ## 核心：`resolve_directive(action, substrate, mode)` 一次幕后纯函数
 
-- **读全 substrate**（0011-3 矩阵 / 0011-2 血债 + 失称度 / 0011-4 ceiling + seed / identity）→ 输出 `ResolveResult{ outcome, blocked_layer, exec_fidelity, per_layer 全诊断串, 反咬列表, 机械后果包 }`。**LLM 只叙事、零算账**（镜像 settle_tick：程序定胜负、LLM 描花样；硬约束见 D5-11）。
+- **读全 substrate**（0011-3 矩阵 / 0011-2 血债 + 失称度 / 0011-4 ceiling + seed / identity）→ 输出 `ResolveResult{ outcome, blocked_layer, per_layer 全诊断串, 反咬列表, 机械后果包；exec_fidelity（第一刀 = None / 未算、仅第二刀执行层填，D5-7/D5-11） }`。**LLM 只叙事、零算账**（镜像 settle_tick：程序定胜负、LLM 描花样；硬约束见 D5-11）。
 - **召对侦察 = 同纯算核 `dry_run=True`**（单一真源：侦察口径 ≡ 实际 resolve 口径，玩家能信；物理只读护栏见 D5-3）。
 - **替换 `estimate_resistance`**（`tools.py:136` def、拍平 `AVG(leverage)` 启发式在 `:147`）；落库时序与 `add_directive` 的关系见 D5-3 / D5-10（**非简单「propose 后落表前」**，须校正）。
 - **build-upon**：ADR 0004 `pre_settle`/`settle_with_delta` 同核 / 0008 `applier.atomic` / 0009 `reason_code`（见 D5-10）。
@@ -69,7 +69,7 @@ per_layer_resistance = max( min(cap, α×血债)[真源 0011-2 D2-7] , 命门合
 
 - **dynamic_term** = 该层把关派系的当下激烈度，读 **satisfaction/leverage + 外压 substrate（powers/classes，母 ADR 决定9）**（**不含 identity**——identity 只缩 kinship，0011-2 D2 限定）。**dynamic_term 的 base 语义由本 ADR 首次定义**（上游只用它占位 + 定义外压臂降它，无别处真源可撞）；三臂的**值真源**在别处（血债 floor=0011-2、命门 floor + ceiling=0011-4、议和外压调制=0011-4 D4-3），本 ADR 只组装、不重定义那三项。
 - **⚠️ 议和外压臂如何击穿命门 floor（P1-4，与 0011-4 D4-3 对齐）**：议和是华夷命门题，命门 floor 把阻力托到 ceiling 85、不受 dynamic_term 影响——故**外压臂不能只降 dynamic_term（会被 max() 短路）**。真机制：**华夷命门 floor 本身吃外压调制**（`华夷命门floor = f(外压 substrate, 代价明白度)`，真源 0011-4 D4-3：华夷 floor 软、祖制硬核 floor 不松）——`外压够大 + 代价够明白`（两合取项，对齐 0011-3 D3-4 / 0011-4 D4-4b）→ 华夷命门 floor 真下调 → 议和 resistance 随之降 → 可颁。议和真正 blocked 在 **L3 六科**；外压经「朝堂主战共识松动 → 六科失清议背书」传导到六科的命门 floor（floor 调制即此传导的落点），非降 L1 务实派 dynamic（那救不了 L3）。
-- **⚠️ blocked_layer = 全算取真墙（P1-6，弃 first-over-threshold）**：阶段一三层**全算**（轻量纯函数、无性能压力），`blocked_layer = argmax(per_layer_resistance over 三层中超阈者)`、ResolveResult 带**全三层诊断串**（不短路、防后层无值）。**不变式**：命门 floor 顶满（≥ ceiling）的层**必判超阈**（命门题必由六科挡、不因全局阈调高而漏）。弃 first-over-threshold：某命门题若某**前层**（如 L2 司礼监批红，阉党 leverage 高 → dynamic 超普通阈，D5-2 L2 读阉党 sat/lev）先超阈即短路、误报 `blocked_layer=批红`，**L3 六科命门 floor 真墙没算到**，玩家误以为「过了批红就行」→ 实撞六科（这正是「命门必由六科挡」不变式要保证、short-circuit 会破坏的）。
+- **⚠️ blocked_layer = 全算取真墙（P1-6，弃 first-over-threshold）**：阶段一三层**全算**（轻量纯函数、无性能压力），`blocked_layer = 命门 floor 顶满（≥ceiling）的最高 tier 层优先（命门真墙赢）；无命门 floor 活跃时 = argmax(per_layer_resistance over 超阈层)`（**命门题 blocked_layer 必指六科真墙、不被前层 raw argmax 抢报**）、ResolveResult 带**全三层诊断串**（不短路、防后层无值）。**不变式**：命门 floor 顶满（≥ ceiling）的层**必判超阈**（命门题必由六科挡、不因全局阈调高而漏）。弃 first-over-threshold：某命门题若某**前层**（如 L2 司礼监批红，阉党 leverage 高 → dynamic 超普通阈，D5-2 L2 读阉党 sat/lev）先超阈即短路、误报 `blocked_layer=批红`，**L3 六科命门 floor 真墙没算到**，玩家误以为「过了批红就行」→ 实撞六科（这正是「命门必由六科挡」不变式要保证、short-circuit 会破坏的）。
 - **⚠️ 阈值（P2）**：`resistance 超阈` 的阈**逐层（per-layer）**，与 max() 三臂量纲挂钩；至少钉死「命门 floor 顶满该层必超阈」不变式，与可调的普通层阈区分。首版随 playtest，但此不变式非调参旋钮。
 
 **弃案**：把三臂值在本 ADR 重定义（双真源漂移）；外压臂只降 dynamic_term（被命门 floor 短路、议和悬空，P1-4）；dynamic_term 读 identity（违 0011-2）；first-over-threshold 定 blocked_layer（误报真墙）。
