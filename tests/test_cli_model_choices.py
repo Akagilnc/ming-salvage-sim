@@ -34,11 +34,22 @@ def test_each_runner_has_default_escape_option_first():
         assert len(values) == len(set(values)), f"{runner} 档位 value 重复"
 
 
-def test_default_labels_reuse_single_source_constants():
-    """默认档 label 必须复用 cli_backend 的默认常量，不重写字面量（单一真源）。"""
+def test_default_labels_reuse_single_source_constants(monkeypatch):
+    """无 env 覆盖时，默认档 label 复用 cli_backend 的默认常量，不重写字面量（单一真源）。"""
+    monkeypatch.delenv("MING_SIM_CODEX_MODEL", raising=False)
+    monkeypatch.delenv("MING_SIM_CLAUDE_MODEL", raising=False)
     choices = cb.cli_model_choices()
     assert cb.CODEX_DEFAULT_MODEL in choices["codex"][0]["label"]
     assert cb.CLAUDE_DEFAULT_MODEL in choices["claude"][0]["label"]
+
+
+def test_default_label_reflects_env_override(monkeypatch):
+    """设了 MING_SIM_CODEX_MODEL → 默认档 label 跟随真实 resolved 默认（cli_model_from_env），
+    与 api_menu_status 的 resolved cli_model 同源，不停留在内置常量（CMR R2 codex spec-impl）。"""
+    monkeypatch.setenv("MING_SIM_CODEX_MODEL", "env-override-model")
+    label = cb.cli_model_choices()["codex"][0]["label"]
+    assert "env-override-model" in label
+    assert cb.CODEX_DEFAULT_MODEL not in label
 
 
 def test_codex_offers_spark_fast_tier():
@@ -93,6 +104,7 @@ def test_menu_status_exposes_raw_cli_model_saved_default(monkeypatch):
     """空 saved model（=用户选「默认」档）→ menu-status 须暴露 raw cli_model_saved=''，
     前端据此显示「默认」档；不能只给被 cli_model_from_env 兜底成默认名的 resolved 值，
     否则下拉把默认误判成「其他(手填)」、空保存把字面量钉死（CMR R1 Claude+Gemini concur）。"""
+    monkeypatch.delenv("MING_SIM_CODEX_MODEL", raising=False)  # hermetic：断言内置默认名
     web_app = _patch_status_io(monkeypatch, {
         "channel": "cli", "api": {}, "cli": {"runner": "codex", "model": "", "timeout_seconds": 300},
     })
