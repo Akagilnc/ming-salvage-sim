@@ -32,6 +32,7 @@
 ## 边界（最小版 vs #89）
 本层只碰：identity+defected_from 两新列 + faction 既有列(补UPDATE) + dig-4 kinship 一行 + season_simulator 话术。**留 #89**：loyalty/ability/integrity/courage 接机制、identity 动态漂移、叛变硬概率/关系图、后期新罪更新 identity。越此即停手归 #89。
 
-## 待用户拍
-- **①（真决定）**：同党反应能否真归零(去 max(1) 下界)？Claude lean=能(乐见顶包是对的)+接受回 dig-4 评审。
-- **②–⑤（Claude lean 接受最小默认）**：k_id 先线性 / identity 暂兼叛变倾向先简化 / 262人"六等骨架+争议从轻" / 反水者新派低认同(中立派kinship本弱)。
+## ✅ 用户拍板（2026-06-14，认同度层定稿）
+- **1（真决定）✅ 拍：同党反应真归零** = 去掉 dig-4 kinship 的 max(1) 下界(乐见顶包成立)。**已落 dig-4 公式(line 26)，标明随血债 sub-ADR 一起走 CMR 重确认**。
+- **2–5 ✅ 拍接受最小默认**：k_id 先线性(playtest 再调) / identity 暂兼"叛变倾向"先简化 / 262人 seed "六等骨架+争议从轻(认同度从低)" / 反水者新派低认同≈20(中立派 kinship 本就一盘散沙)。
+- **认同度层定稿**（待整体随血债 sub-ADR + dig-4 改动一起走评审）。
