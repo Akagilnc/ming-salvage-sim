@@ -435,22 +435,34 @@ def visible_in_court(character: Character, db) -> bool:
     return _character_power_id(character, db) == "ming"
 
 
-def in_talent_pool(character: Character, db, current_year: int) -> bool:
-    """在野人才池准入：可起复的前臣——DB 权威状态 offstage（不在朝） + ming 治下 +
-    非（后宫/宗藩/流寇/未仕），且非「未来才登场」的人物（debut_year 为 0 或不晚于当年）。
+def in_talent_pool(character: Character, db, current_year: int, current_period: int) -> bool:
+    """在野人才池准入（UI 端 offstage 子集）：可起复的前臣——DB 权威状态 offstage（不在朝）
+    + ming 治下 + 非（后宫/宗藩/未仕）+ 非流寇（按 faction）+ 已历史登场（year+month）。
 
     解决「罢居前臣（孙承宗/韩爌/钱龙锡 等）被 #104 挡出朝堂列表后哪都看不见、无法起复」——
     他们 status=offstage、office_type=边镇/地方/礼部/内阁、debut_year=0（开局即在世，自请罢居）。
-    排除：①未登场的未来人物（debut_year > 当年，如左良玉 1630、吴三桂 1631——剧透）②流寇/未仕
-    （李自成/史可法这类非起复对象）③宗藩（藩王不入仕）。设计依据 docs/HISTORICAL_CASE_LIBRARY.md:41
-    「人才池视图 + 起复派生」。dismissed/retired/imprisoned 等在朝转出的非 active 已在朝堂「全部」
-    栏可见（visible_in_court 只挡 offstage），故人才池只补 offstage 这一漏面。"""
-    if character.office_type in ("后宫", "宗藩", "流寇", "未仕"):
+    排除：①未登场的未来人物（登场年月晚于当前，如左良玉 1630、吴三桂 1631——剧透）②未仕（史可法
+    这类未入仕者）③流寇（李自成/张献忠 这类非起复对象）④宗藩（藩王不入仕）。设计依据
+    docs/HISTORICAL_CASE_LIBRARY.md:41「人才池视图 + 起复派生」。
+
+    流寇按 **faction** 排除而非 office_type：盘面无 office_type=流寇（实为 外臣/未仕），且招抚归明
+    后 power_id 翻 ming（character_power_changes），仅靠 power_id 闸会把前流寇漏进起复池。
+
+    登场判据对齐 db.apply_historical_debuts（year+month），否则同年但月份未到的人物会提前进池。
+
+    范围说明：此函数是 ADR 0009 域内人才池 simulation._talent_pool_rows 的 **UI 子集**——后者覆盖
+    offstage/retired/dismissed/听用候铨被顶替全部可起复者，而 dismissed/retired/imprisoned 等在朝
+    转出的非 active 已在朝堂「全部」栏可见（visible_in_court 只挡 offstage），故 UI 人才池只补
+    offstage 这一漏面，两者口径不同、勿等同。"""
+    if character.office_type in ("后宫", "宗藩", "未仕"):
+        return False
+    if getattr(character, "faction", "") == "流寇":
         return False
     if db.get_character_status(character.name)[0] != "offstage":
         return False
     debut_year = int(getattr(character, "debut_year", 0) or 0)
-    if debut_year and debut_year > current_year:
+    debut_month = int(getattr(character, "debut_month", 0) or 0)
+    if debut_year > current_year or (debut_year == current_year and debut_month > current_period):
         return False
     return _character_power_id(character, db) == "ming"
 
@@ -1116,7 +1128,7 @@ class WebGame:
                 # 角标覆盖成「罢居」：offstage 通用 label 是「尚未登场」，对在野前臣读着怪（韩爌曾是首辅）。
                 {**self.public_character(c), "status_label": "罢居"}
                 for c in self.content.characters.values()
-                if in_talent_pool(c, self.db, self.state.year)
+                if in_talent_pool(c, self.db, self.state.year, self.state.period)
             ],
             "directives": directives,
             "pending_count": self.session.pending_count(),
@@ -2031,7 +2043,13 @@ def _require_active_minister(minister_name: str) -> None:
         return
     if minister_name not in get_game().content.characters:
         raise HTTPException(status_code=404, detail=f"未找到人物：{minister_name}")
-    if get_game().character_power_id(get_game().content.characters[minister_name]) != "ming":
+    character = get_game().content.characters[minister_name]
+    # 宗藩（就藩藩王）已被 visible_in_court 挡出朝堂/任免列表，但 /chat 端点须同步拒绝，
+    # 否则可绕列表直接按名经 API 召对（用户 2026-06-14 拍：宗室不可召见）。后宫不在此拒——
+    # 嫔妃 chat 复用本端点，加 后宫 会误伤选妃后的召对路径。
+    if character.office_type == "宗藩":
+        raise HTTPException(status_code=409, detail=f"{minister_name}为就藩宗室，非朝廷命官，无法召见。")
+    if get_game().character_power_id(character) != "ming":
         raise HTTPException(status_code=409, detail=f"{minister_name}不属大明朝廷，无法召见。")
     status, reason = get_game().db.get_character_status(minister_name)
     if status != "active":
