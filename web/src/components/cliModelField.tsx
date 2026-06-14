@@ -24,12 +24,16 @@ export function CliModelField({
   value,
   onChange,
   className,
+  ariaLabel = "CLI 模型",
 }: {
   runner: string;
   choices?: Record<string, CliModelChoice[]>;
   value: string;
   onChange: (value: string) => void;
   className?: string;
+  // 控件无障碍名：本组件外层是 <div>（非 <label>，因 custom 态有两个控件，见调用处注释），
+  // 故 select/input 不再有隐式 label 关联，须显式 aria-label 给屏幕阅读器可读名（WCAG，CodeRabbit R3）。
+  ariaLabel?: string;
 }) {
   const base = choices?.[runner] ?? [];
   const options = base.some((o) => o.value === "")
@@ -44,6 +48,7 @@ export function CliModelField({
     <>
       <select
         className={className}
+        aria-label={ariaLabel}
         value={custom ? CUSTOM : value}
         onChange={(e) => {
           const v = e.target.value;
@@ -65,6 +70,7 @@ export function CliModelField({
       {custom ? (
         <input
           className={className}
+          aria-label={`${ariaLabel}（手填）`}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder="自定义模型 id（区分大小写，如 gpt-5.5）"
