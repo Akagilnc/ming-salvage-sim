@@ -1,0 +1,151 @@
+"""#83：月末 4 个 extractor 串行改并行（仅 CLI 后端）。
+
+并行只动 LLM 调用阶段（run_agent_text ×4，互不依赖）；解析/sanitizer/合并仍串行按模块顺序，
+输出与串行版语义一致。落库在本函数之外、仍串行单事务（ADR 0008）。形态1/api 后端串行不变。
+"""
+from __future__ import annotations
+
+import threading
+import time
+
+import ming_sim.simulation as simulation
+from ming_sim.simulation import EXTRACTION_MODULES, extract_scores_by_modules_with_agno
+
+# 各模块一个 allowed 字段的最小 canned 输出（见 MODULE_FIELDS）。
+_CANNED = {
+    "internal": '{"economy_moves": [{"账户": "国库", "增量": 5, "原因": "测试"}]}',
+    "military_external": '{"new_armies": []}',
+    "issues": '{"new_issues": []}',
+    "personnel_secret": '{"secret_order_updates": []}',
+}
+
+
+def _module_of(tag: str) -> str:
+    return tag.split("/", 1)[1]
+
+
+def _fake_run(agent, prompt, tag):
+    if tag.startswith("extractor/"):
+        return _CANNED[_module_of(tag)]
+    return prompt  # sanitizer 直通（本测试 canned 均合法，不触发）
+
+
+def _dummy_agents():
+    return {m: object() for m in EXTRACTION_MODULES}
+
+
+def test_parallel_extract_matches_serial(game, monkeypatch):
+    """并行与串行产出的 merged delta 字节级一致——并行只改取数时机，不改解析/合并。"""
+    db, state, content = game
+    monkeypatch.setattr(simulation, "run_agent_text", _fake_run)
+    serial = extract_scores_by_modules_with_agno(
+        _dummy_agents(), db, state, "邸报", parallel=False)
+    parallel = extract_scores_by_modules_with_agno(
+        _dummy_agents(), db, state, "邸报", parallel=True)
+    assert serial[0] == parallel[0]      # merged dict 一致
+    assert serial[1] == parallel[1]      # 本地化 JSON 一致
+
+
+def test_parallel_extract_runs_concurrently(game, monkeypatch):
+    """parallel=True 时 4 个 LLM 调用真并发：峰值并发 ≥2，wall-clock 明显短于串行总和。"""
+    db, state, content = game
+    active = 0
+    max_active = 0
+    lock = threading.Lock()
+    delay = 0.25
+
+    def _slow(agent, prompt, tag):
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(delay)
+        with lock:
+            active -= 1
+        return _fake_run(agent, prompt, tag)
+
+    monkeypatch.setattr(simulation, "run_agent_text", _slow)
+    t0 = time.monotonic()
+    extract_scores_by_modules_with_agno(_dummy_agents(), db, state, "邸报", parallel=True)
+    elapsed = time.monotonic() - t0
+    assert max_active >= 2, f"未真正并发，峰值并发={max_active}"
+    assert elapsed < delay * len(EXTRACTION_MODULES), (
+        f"wall-clock {elapsed:.2f}s 未短于串行总和 {delay*len(EXTRACTION_MODULES):.2f}s")
+
+
+def test_serial_extract_stays_serial(game, monkeypatch):
+    """parallel=False（形态1/api 默认）峰值并发==1，串行不受影响。"""
+    db, state, content = game
+    active = 0
+    max_active = 0
+    lock = threading.Lock()
+
+    def _track(agent, prompt, tag):
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.05)
+        with lock:
+            active -= 1
+        return _fake_run(agent, prompt, tag)
+
+    monkeypatch.setattr(simulation, "run_agent_text", _track)
+    extract_scores_by_modules_with_agno(_dummy_agents(), db, state, "邸报", parallel=False)
+    assert max_active == 1, f"串行路径出现并发，峰值={max_active}"
+
+
+def _settle_capturing_parallel(game, monkeypatch, cfg):
+    """跑一遍 _settle_after_narrative（绕真 extractor），返回传给 extract 的 parallel 值。"""
+    import ming_sim.decree as decree
+    import ming_sim.cli_backend as _cb
+    db, state, content = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(_cb, "enrich_initiative_effects",
+                        lambda *a, **k: {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}})
+    monkeypatch.setattr(decree, "build_extractor_shared_context", lambda *a, **k: "")
+    monkeypatch.setattr(decree, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree, "create_score_extractor_module_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree, "record_chapter_memory", lambda *a, **k: None)
+    captured = {}
+
+    def _capture(*a, **k):
+        captured["parallel"] = k.get("parallel")
+        return ({}, "extractor-out", "extractor-in")
+
+    monkeypatch.setattr(decree, "extract_scores_by_modules_with_agno", _capture)
+    decree._settle_after_narrative(
+        state, db, None, cfg, decree_text="试旨", narrative="本月邸报。",
+        simulator_payload={}, relevant_memories=[], secret_orders=[],
+        before_turn=state.turn, _emit=lambda *a, **k: None, content=content, registry=None)
+    return captured.get("parallel")
+
+
+def test_settle_passes_parallel_for_cli_backend(game, monkeypatch):
+    """decree 按 cli_backend_active 决定 parallel：CLI 后端（codex）→ True。"""
+    from ming_sim.models import LLMConfig
+    cli_cfg = LLMConfig(api_key="cli-backend", base_url="", model="api-fallback",
+                        channel="cli", cli_runner="codex", cli_model="gpt-5.5", cli_timeout_seconds=240)
+    assert _settle_capturing_parallel(game, monkeypatch, cli_cfg) is True
+
+
+def test_settle_serial_for_non_cli_backend(game, monkeypatch):
+    """非 CLI 后端（api channel / 形态1）→ parallel=False，串行不变。"""
+    from ming_sim.models import LLMConfig
+    api_cfg = LLMConfig(api_key="sk-x", base_url="https://api.example/v1", model="gpt-x", channel="api")
+    assert _settle_capturing_parallel(game, monkeypatch, api_cfg) is False
+
+
+def test_parallel_extract_propagates_extractor_error(game, monkeypatch):
+    """任一 extractor 抛错经并行路径原样上抛（→ 上层 SettlementAbort），不被并发吞掉。"""
+    import pytest
+
+    def _one_fails(agent, prompt, tag):
+        if tag == "extractor/issues":
+            raise RuntimeError("extractor issues 模拟失败")
+        return _fake_run(agent, prompt, tag)
+
+    db, state, content = game
+    monkeypatch.setattr(simulation, "run_agent_text", _one_fails)
+    with pytest.raises(RuntimeError, match="extractor issues 模拟失败"):
+        extract_scores_by_modules_with_agno(_dummy_agents(), db, state, "邸报", parallel=True)
