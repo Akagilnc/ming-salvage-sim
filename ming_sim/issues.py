@@ -25,7 +25,7 @@ from ming_sim.flows import (
     _apply_faction_dict,
     _apply_metric_dict,
 )
-from ming_sim.models import Event, GameState, is_vassal_prince
+from ming_sim.models import Event, GameState, is_vassal_prince, loads_effect_dict
 from ming_sim.person_archive_contract import (
     PERSON_ALLEGIANCE_CHANGE_WAYS,
     PERSON_IDENTITY_TITLES,
@@ -125,9 +125,9 @@ def issue_to_payload(row: sqlite3.Row, recent_advances: List[sqlite3.Row]) -> Di
         "状态": row["stage_text"],
         "进度": int(row["bar_value"]),
         "局势走向": int(row["inertia"]),
-        f"当前每{TURN_UNIT}效果": json.loads(row["ongoing_effects"] or "{}"),
-        "失败效果": json.loads(row["effect_on_fail"] or "{}"),
-        "成功效果": json.loads(row["effect_on_resolve"] or "{}"),
+        f"当前每{TURN_UNIT}效果": loads_effect_dict(row["ongoing_effects"]),
+        "失败效果": loads_effect_dict(row["effect_on_fail"]),
+        "成功效果": loads_effect_dict(row["effect_on_resolve"]),
         "结案条件": resolve_cond or "(未填)",
         "失败条件": fail_cond or "(未填)",
         "cancellable": row["cancellable"],
@@ -385,16 +385,17 @@ def _bar_ascii(value: int, width: int = 20) -> str:
 
 def _format_issue_ongoing(ongoing_raw: str) -> str:
     """简短描述每月固定影响。"""
-    try:
-        eff = json.loads(ongoing_raw or "{}")
-    except Exception:
-        return ""
+    eff = loads_effect_dict(ongoing_raw)  # 非 dict/解析失败→{}（#117 统一守）
     parts: List[str] = []
-    metrics = eff.get("metrics") or {}
+    # isinstance 守卫：eff 读自已存 JSON（源自 enrich/extractor，未必清洗），metrics/economy 可能
+    # 是真值非 dict/list（`or {}`/`or []` 兜不住）→ .items()/迭代 抛错。本函数是展示用 brief，守住免崩（#117 同类）。
+    _m = eff.get("metrics")
+    metrics = _m if isinstance(_m, dict) else {}
     for key, val in metrics.items():
         if isinstance(val, (int, float)) and val:
             parts.append(f"{key}{'+' if val > 0 else ''}{int(val)}")
-    for econ in eff.get("economy") or []:
+    _eco = eff.get("economy")
+    for econ in (_eco if isinstance(_eco, list) else []):
         if isinstance(econ, dict):
             delta = econ.get("delta")
             acc = econ.get("account")
@@ -908,14 +909,9 @@ def _emit_pairing_warnings(new_row, effect: object, sink: Optional[List[str]] = 
             tags = json.loads(raw_tags or "[]")
         except (TypeError, ValueError):
             tags = []
-    raw_ongoing = _g("ongoing_effects", "{}")
-    if isinstance(raw_ongoing, dict):
-        ongoing = raw_ongoing
-    else:
-        try:
-            ongoing = json.loads(raw_ongoing or "{}")
-        except (TypeError, ValueError):
-            ongoing = {}
+    # ongoing_effects 经统一守门 loads_effect_dict（已解析 dict 原样 / JSON 串解析 / 非 dict→{}，
+    # 含调用方预解析容器的兼容，#117 R5 chokepoint 一致）。
+    ongoing = loads_effect_dict(_g("ongoing_effects", "{}"))
     for w in _initiative_resolve_pairing_warnings(str(_g("title", "") or ""), tags, ongoing, effect):
         tlog(f"[pairing] {w}")
         if sink is not None:
@@ -966,7 +962,7 @@ def apply_issue_tracker_output(
         touched_ids.add(issue_id)
         # 终结结算：bar 自然推到 100/0 触发的 resolved/failed，与 close_issues 一样落终结效果（含建筑）
         if new_row["status"] == "resolved":
-            effect = json.loads(new_row["effect_on_resolve"] or "{}")
+            effect = loads_effect_dict(new_row["effect_on_resolve"])
             _emit_pairing_warnings(new_row, effect, pairing_warnings)
             _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
             _apply_economy_list(db, state, effect.get("economy") or [])
@@ -984,7 +980,7 @@ def apply_issue_tracker_output(
                 ))
             _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
         elif new_row["status"] == "failed":
-            effect = json.loads(new_row["effect_on_fail"] or "{}")
+            effect = loads_effect_dict(new_row["effect_on_fail"])
             _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
             _apply_economy_list(db, state, effect.get("economy") or [])
             _apply_faction_dict(db, effect.get("factions") or {})
@@ -1126,10 +1122,10 @@ def apply_issue_tracker_output(
         # 终结效果：以 issue 立项时预设的 effect 为底，叠加 LLM 在本次结案项 cl 里现给的 effect。
         # 现给优先——event_pool 预设 issue（如阉党之祸）立项时 effect 多为空，帝国修正只能结案当下给。
         if reason == "resolved":
-            effect = json.loads(new_row["effect_on_resolve"] or "{}")
+            effect = loads_effect_dict(new_row["effect_on_resolve"])
             cl_effect = cl.get("effect_on_resolve")
         else:
-            effect = json.loads(new_row["effect_on_fail"] or "{}")
+            effect = loads_effect_dict(new_row["effect_on_fail"])
             cl_effect = cl.get("effect_on_fail")
         if isinstance(cl_effect, dict):
             # 浅合并：metrics/economy/factions/buildings/legacy 等顶层段，现给覆盖预设
@@ -2692,7 +2688,7 @@ def apply_issue_inertia_and_ongoing(
                 if new_row is None:
                     continue
                 if new_row["status"] == "resolved":
-                    effect = json.loads(new_row["effect_on_resolve"] or "{}")
+                    effect = loads_effect_dict(new_row["effect_on_resolve"])
                     _emit_pairing_warnings(new_row, effect)  # inertia 路只 tlog（#45/#46）
                     _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
                     _apply_economy_list(db, state, effect.get("economy") or [])
@@ -2712,7 +2708,7 @@ def apply_issue_inertia_and_ongoing(
                     _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
                     continue
                 elif new_row["status"] == "failed":
-                    effect = json.loads(new_row["effect_on_fail"] or "{}")
+                    effect = loads_effect_dict(new_row["effect_on_fail"])
                     _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
                     _apply_economy_list(db, state, effect.get("economy") or [])
                     _apply_faction_dict(db, effect.get("factions") or {})
@@ -2733,8 +2729,8 @@ def apply_issue_inertia_and_ongoing(
                     continue
                 bar = int(row["bar_value"])
 
-        # 2) ongoing_effects：bar 高时折扣
-        ongoing = json.loads(row["ongoing_effects"] or "{}")
+        # 2) ongoing_effects：bar 高时折扣。经 loads_effect_dict 统一守（非 dict→{}，#117）。
+        ongoing = loads_effect_dict(row["ongoing_effects"])
         if not ongoing:
             continue
         # 折扣系数：bar 越高（越好）越少扣
@@ -2748,7 +2744,8 @@ def apply_issue_inertia_and_ongoing(
 
         # metrics
         metric_part: Dict[str, int] = {}
-        for k, v in (ongoing.get("metrics") or {}).items():
+        _om = ongoing.get("metrics")  # #117 同类：stored ongoing 的 metrics 真值非 dict 守卫
+        for k, v in (_om if isinstance(_om, dict) else {}).items():
             if k not in ISSUE_METRIC_KEYS:
                 continue
             try:

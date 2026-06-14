@@ -12,7 +12,7 @@ from ming_sim.agents import parse_agent_json, run_agent_stream_text, run_agent_t
 from ming_sim.context import historical_anchor_for_month, victory_status
 from ming_sim.db import GameDB
 from ming_sim.issues import gather_candidate_events, issue_to_payload
-from ming_sim.models import GameState
+from ming_sim.models import GameState, loads_effect_dict
 from ming_sim.token_stats import tlog
 
 
@@ -459,12 +459,12 @@ def _extractor_context_payload(
         """该 issue 每回合 ongoing_effects 里的固定经济支出/收入。
         这些由 apply_issue_inertia_and_ongoing 程序自动落账（extractor 结算之后），
         extractor 看到此清单即知「邸报里提到的这笔是局势自动月支，已由程序扣，勿重抽 钱粮收支」。"""
-        try:
-            ongoing = json.loads(row["ongoing_effects"] or "{}")
-        except (ValueError, TypeError):
-            return []
+        ongoing = loads_effect_dict(row["ongoing_effects"])  # 非 dict/解析失败→{}（#117 统一守）
         out: List[Dict[str, object]] = []
-        for econ in ongoing.get("economy") or []:
+        _eco = ongoing.get("economy")
+        for econ in (_eco if isinstance(_eco, list) else []):  # economy 值真值非 list 守卫（#117 codex）
+            if not isinstance(econ, dict):  # 逐项守：econ.get 在非 dict 上抛 AttributeError
+                continue
             try:
                 delta = int(econ.get("delta"))
             except (TypeError, ValueError):
