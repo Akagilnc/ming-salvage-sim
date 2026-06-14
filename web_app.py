@@ -1113,7 +1113,8 @@ class WebGame:
                 if c.office_type == "后宫" and c.status == "active" and self.character_power_id(c) == "ming"
             ],
             "talent_pool": [
-                self.public_character(c)
+                # 角标覆盖成「罢居」：offstage 通用 label 是「尚未登场」，对在野前臣读着怪（韩爌曾是首辅）。
+                {**self.public_character(c), "status_label": "罢居"}
                 for c in self.content.characters.values()
                 if in_talent_pool(c, self.db, self.state.year)
             ],
