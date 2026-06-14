@@ -170,7 +170,7 @@ def verify_llm_available(llm_config: LLMConfig) -> None:
     channel = (getattr(llm_config, "channel", "") or "").strip().lower()
     if channel == "cli" or (channel != "api" and cli_backend_from_env() is not None):
         try:
-            raw, _ = _run_backend_for_config("输出 ok", llm_config)
+            raw, _ = _run_backend_for_config("输出 ok", llm_config, tag="verify")
             fail_if_llm_error(str(raw), "LLM 连通性检查")
         except LLMUnavailable:
             raise

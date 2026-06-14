@@ -392,19 +392,44 @@ def _cli_config_parts(llm_config: Any = None) -> Optional[Tuple[str, str, Option
     return runner, model, timeout
 
 
-def _run_backend_for_config(prompt: str, llm_config: Any = None) -> Tuple[str, int]:
-    """runtime CLI 配置优先；没有显式 CLI channel 时保持旧 env/default 行为。"""
+def _run_backend_for_config(prompt: str, llm_config: Any = None, tag: str = "") -> Tuple[str, int]:
+    """runtime CLI 配置优先；没有显式 CLI channel 时保持旧 env/default 行为。
+
+    直接编程路径（职官分类/各 extractor/国策补全/连通性 verify）的唯一咽喉：
+    每次调用 try/finally 写一条 trace，谁调都记，不靠各调用方自觉手写。
+    （agno 游戏路径走 CliChat.invoke 自有 trace，与此咽喉不重叠。）
+    tag 空时退回 _infer_tag(prompt)。"""
     if _llm_channel(llm_config) == "api":
         raise RuntimeError("显式 API channel 未启用本地 CLI backend")
     parts = _cli_config_parts(llm_config)
-    if parts is None:
-        return _run_backend(prompt)
-    runner, model, timeout = parts
-    if runner == "codex":
-        return _run_codex(prompt, model=model or None, timeout=timeout)
-    if runner == "claude":
-        return _run_claude(prompt, model=model or None, timeout=timeout)
-    return _run_agy(prompt, timeout=timeout)
+    model_id = (parts[1] if parts else "") or _backend_label(llm_config)
+    t0 = time.monotonic()
+    text, attempts, error = "", 0, None
+    try:
+        if parts is None:
+            text, attempts = _run_backend(prompt)
+        else:
+            runner, model, timeout = parts
+            if runner == "codex":
+                text, attempts = _run_codex(prompt, model=model or None, timeout=timeout)
+            elif runner == "claude":
+                text, attempts = _run_claude(prompt, model=model or None, timeout=timeout)
+            else:
+                text, attempts = _run_agy(prompt, timeout=timeout)
+        return text, attempts
+    except Exception as exc:
+        error = str(exc)
+        raise
+    finally:
+        _trace({
+            "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "seq": -1, "tag": tag or _infer_tag(prompt),
+            "backend": _backend_label(llm_config), "model_id": model_id,
+            "dur_s": round(time.monotonic() - t0, 1), "attempts": attempts,
+            "wants_json": False,
+            "prompt_chars": len(prompt), "resp_chars": len(text),
+            "error": error, "prompt": prompt, "response": text,
+        })
 
 
 def _backend_label(llm_config: Any = None) -> str:
@@ -546,7 +571,7 @@ def extract_minister_actions(
     )
     raw = ""
     try:
-        raw, _ = _run_backend_for_config(prompt, llm_config)
+        raw, _ = _run_backend_for_config(prompt, llm_config, tag="minister_actions")
     except Exception as exc:  # 抽取失败不阻断对话
         _log(f"大臣动作抽取失败：{exc}")
     obj = _loads_lenient(raw) or {}
@@ -598,7 +623,7 @@ def extract_appointment_action(
     )
     raw = ""
     try:
-        raw, _ = _run_backend_for_config(prompt, llm_config)
+        raw, _ = _run_backend_for_config(prompt, llm_config, tag="appointment")
     except Exception as exc:  # 抽取失败不阻断对话
         _log(f"任免动作抽取失败：{exc}")
     obj = _loads_lenient(raw) or {}
@@ -636,7 +661,7 @@ def extract_confirmation_intent(
     )
     raw = ""
     try:
-        raw, _ = _run_backend_for_config(prompt, llm_config)
+        raw, _ = _run_backend_for_config(prompt, llm_config, tag="confirmation")
     except Exception as exc:  # 抽取失败不阻断对话；当未表态，暂存留到颁诏(算同意)
         _log(f"确认意图抽取失败：{exc}")
     obj = _loads_lenient(raw) or {}
@@ -710,16 +735,9 @@ def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = Non
     )
     raw = ""
     try:
-        raw, _ = _run_backend_for_config(prompt, llm_config)
-    except Exception as exc:  # 补全失败不阻断结算
+        raw, _ = _run_backend_for_config(prompt, llm_config, tag="issue_enrich")
+    except Exception as exc:  # 补全失败不阻断结算（trace 已在咽喉记下，含 error）
         _log(f"国策效果补全失败：{exc}")
-    _trace({
-        "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "seq": -1, "tag": "issue_enrich", "backend": _backend_label(llm_config), "model_id": "enrich",
-        "dur_s": 0, "attempts": 1, "wants_json": True,
-        "prompt_chars": len(prompt), "resp_chars": len(raw),
-        "error": None, "prompt": prompt, "response": raw,
-    })
     obj = _loads_lenient(raw) or {}
     try:
         from ming_sim.simulation import _canonical_item_fields
@@ -768,16 +786,9 @@ def _extract_secret_order(
     )
     raw = ""
     try:
-        raw, _attempts = _run_backend_for_config(prompt, llm_config)
-    except Exception as exc:  # 提取失败不阻断：退回默认
+        raw, _attempts = _run_backend_for_config(prompt, llm_config, tag="secret_extract")
+    except Exception as exc:  # 提取失败不阻断：退回默认（trace 已在咽喉记下，含 error）
         _log(f"密令提取失败：{exc}")
-    _trace({
-        "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "seq": -1, "tag": "secret_extract", "backend": _backend_label(llm_config), "model_id": "extract",
-        "dur_s": 0, "attempts": 1, "wants_json": True,
-        "prompt_chars": len(prompt), "resp_chars": len(raw),
-        "error": None, "prompt": prompt, "response": raw,
-    })
     obj = _loads_lenient(raw) or {}
     content = str(obj.get("内容") or "").strip() or (minister_reply or "").strip() or player_command
     title = str(obj.get("标题") or "").strip()[:20] or (player_command or content)[:14]
