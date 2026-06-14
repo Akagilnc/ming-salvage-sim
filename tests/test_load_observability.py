@@ -30,6 +30,13 @@ def test_api_channel_uses_model():
     assert describe_effective_model(api) == "gpt-x"
 
 
+def test_agy_runner_no_misleading_model_suffix():
+    """agy 不消费 --model（走自身 Gemini ladder），即便挂了 cli_model 也只显示 'agy'，不误导（#84 codex）。"""
+    agy = LLMConfig(api_key="cli-backend", base_url="", model="api-fallback",
+                    channel="cli", cli_runner="agy", cli_model="不该显示的model")
+    assert describe_effective_model(agy) == "agy"
+
+
 def test_legacy_env_shows_real_runner(monkeypatch):
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
     cfg = LLMConfig(api_key="cli-backend", base_url="", model="api-fallback", channel="")
