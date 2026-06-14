@@ -60,23 +60,28 @@ _CLI_BACKENDS = {"agy", "codex", "claude"}
 def cli_model_choices() -> Dict[str, List[Dict[str, str]]]:
     """每个 CLI runner 的策展模型档——前端「CLI Model」下拉的单一真源。
 
-    每档 {value, label}：value="" = runner 默认档（提交空串走后端默认，对应
-    cli_model_from_env 的兜底）；首档恒为默认档。label 复用 *_DEFAULT_MODEL
-    常量，不重写字面量（单一真源）。清单来源 = docs/LLM_BACKEND_BENCH.md「可用主力」。
-    下拉只挡常见拼写/大小写错；某档实际可用性仍取决于账号类型(ChatGPT vs API key)
-    与 CLI 版本，故连通性检查仍是兜底，下拉不替代它。
+    每档 {value, label}：value="" = runner 默认档（提交空串走后端默认）；首档恒为默认档。
+    默认档 label 用 cli_model_from_env(runner, "") 算「真实 resolved 默认」——它先认
+    MING_SIM_{CODEX,CLAUDE}_MODEL env 覆盖、再回落 *_DEFAULT_MODEL 常量，与
+    api_menu_status 的 resolved cli_model 同源，故 env 覆盖下 label 不与实际相左（CMR R2）。
+    清单来源 = docs/LLM_BACKEND_BENCH.md「可用主力」。下拉只挡常见拼写/大小写错；某档实际
+    可用性仍取决于账号类型(ChatGPT vs API key)与 CLI 版本，连通性检查仍是兜底。
     每次返回独立副本，调用方改动不污染下次调用。"""
+    # 懒导入避免与 llm_config 的环依赖（llm_config 已懒导入本模块的默认常量）。
+    from ming_sim.llm_config import cli_model_from_env
+    codex_default = cli_model_from_env("codex", CODEX_DEFAULT_MODEL)
+    claude_default = cli_model_from_env("claude", CLAUDE_DEFAULT_MODEL)
     return {
         # codex：默认 gpt-5.5（机理扎实、字段全）；spark 最快、建 issue 满分。
         # gpt-5.4 不入档（bench 偏长且不在「可用主力」；mini 漏 DECISION 块已淘汰）。
         "codex": [
-            {"value": "", "label": f"默认 · {CODEX_DEFAULT_MODEL}"},
+            {"value": "", "label": f"默认 · {codex_default}"},
             {"value": "gpt-5.3-codex-spark", "label": "gpt-5.3-codex-spark · 快"},
         ],
         # claude：默认 opus-4-8；haiku 配 MAX_THINKING_TOKENS≈10k 时与 codex/agy 同档快；
         # sonnet 跑 simulator 5-7 分钟，交互嫌慢，留作离线叙事鉴赏。
         "claude": [
-            {"value": "", "label": f"默认 · {CLAUDE_DEFAULT_MODEL}"},
+            {"value": "", "label": f"默认 · {claude_default}"},
             {"value": "claude-haiku-4-5", "label": "claude-haiku-4-5 · 快"},
             {"value": "claude-sonnet-4-6", "label": "claude-sonnet-4-6 · 慢，偏离线鉴赏"},
         ],
