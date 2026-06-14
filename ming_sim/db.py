@@ -5916,17 +5916,28 @@ class GameDB:
         importance: int = 4,
         deadline_months: int = 0,
     ) -> int:
-        # 宗藩（就藩宗室）非朝堂命官，不可受密令——密令创建的唯一 DB 写口，集中守此一处即覆盖
+        # 宗藩/外藩 非朝堂命官，不可受密令——密令创建的唯一 DB 写口，集中守此一处即覆盖
         # API / 大臣工具 / CLI 自然语言 / upsert 回落 create 全路（cmr R6 cross-section）。
-        # 先经 _find_existing_minister 把别名（如「福王」）解到规范 key，再校宗藩、并以规范名落库——
-        # 否则别名绕过宗藩闸（codex+CodeRabbit R2 concur），且按别名存会让后续按规范名查不到此令
-        # （CodeRabbit R3 Major）。解不到（自由名/临时人）保留原名。lazy import 避 db↔session 循环。
+        # 先经 _find_existing_minister 把别名（如「福王」）解到规范 key，再校资格、并以规范名落库——
+        # 否则别名绕过资格闸（codex+CodeRabbit R2 concur），且按别名存会让后续按规范名查不到此令
+        # （CodeRabbit R3 Major）。lazy import 避 db↔session 循环。
         if self.content is not None:
             from ming_sim.session import _find_existing_minister
             minister_name = _find_existing_minister(self.content, minister_name, self) or minister_name
-            _ch = self.content.characters.get(minister_name)
+            # 资格闸：known 在册者（按规范 key / 确切名 / 别名匹配）若是宗藩或外藩，不可受密令。
+            # _find_existing_minister 只解 ming 在册者，解不到时须分辨「自由名/临时人(放行)」与
+            # 「known-but-ineligible(皇太极等外藩/宗藩) raw 名绕闸」——后者按名/别名兜回显式拒，
+            # 否则 `or 原名` 回退把不合资格者写进 secret_orders、重开本闸要堵的旁路（#125；CodeRabbit PR#130 R1 Major）。
+            _raw = (minister_name or "").strip()
+            _ch = self.content.characters.get(minister_name) or next(
+                (c for c in self.content.characters.values()
+                 if _raw == c.name or _raw in (c.aliases or [])),
+                None,
+            )
             if _ch is not None and is_vassal_prince(_ch):
-                raise ValueError(f"{minister_name}为就藩宗室，非朝廷命官，不可受密令。")
+                raise ValueError(f"{_ch.name}为就藩宗室，非朝廷命官，不可受密令。")
+            if _ch is not None and self.resolve_power_id(_ch) != "ming":
+                raise ValueError(f"{_ch.name}不属大明朝廷，不可受密令。")
         active_count = self.conn.execute(
             "SELECT COUNT(*) FROM secret_orders WHERE status='active'"
         ).fetchone()[0]
