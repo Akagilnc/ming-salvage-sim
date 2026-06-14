@@ -182,7 +182,8 @@ def clear_for_resimulation(db: Any, turn: int) -> None:
         str(ctx.get("decree_text") or ""),
         str(ctx.get("narrative") or ""),
         ctx.get("simulator_payload") if isinstance(ctx.get("simulator_payload"), dict) else {},
-        secret_orders=ctx.get("secret_orders") if isinstance(ctx.get("secret_orders"), list) else [],
+        # 分组承载是 dict（#48）；兼容在途旧 list 形状的 ctx，二者都透传。
+        secret_orders=ctx.get("secret_orders") if isinstance(ctx.get("secret_orders"), (list, dict)) else {},
         relevant_memories=ctx.get("relevant_memories") if isinstance(ctx.get("relevant_memories"), list) else [],
         # 不传 extracted → upsert ready=0：LLM 段产出清除，phase1 字段保留。
     )

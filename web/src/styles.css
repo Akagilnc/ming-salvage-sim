@@ -5493,8 +5493,12 @@ button:disabled {
   margin-bottom: 12px;
 }
 
+/* .menu-cli-field = CLI Model 字段用 div 包裹(避免 label 含 select+input 双控件,见组件注释)，
+   控件复用 .menu-modal label 的深色主题(选择器扩展,不重写属性)。 */
 .menu-modal label input,
-.menu-modal label select {
+.menu-modal label select,
+.menu-modal .menu-cli-field input,
+.menu-modal .menu-cli-field select {
   display: block;
   width: 100%;
   margin-top: 4px;
@@ -5508,16 +5512,29 @@ button:disabled {
   box-sizing: border-box;
 }
 
-.menu-modal label select option {
+.menu-modal label select option,
+.menu-modal .menu-cli-field select option {
   background: #2a1f12;
   color: #f3e6c4;
 }
 
 .menu-modal label input:focus,
-.menu-modal label select:focus {
+.menu-modal label select:focus,
+.menu-modal .menu-cli-field input:focus,
+.menu-modal .menu-cli-field select:focus {
   outline: none;
   border-color: rgba(240, 200, 100, 0.8);
   background: rgba(255, 245, 215, 0.14);
+}
+
+/* 包裹层与标题文字对齐其它 .menu-modal label 字段的间距与配色。 */
+.menu-modal .menu-cli-field {
+  margin-bottom: 12px;
+}
+.menu-modal .menu-cli-field > span {
+  display: block;
+  font-size: 0.85rem;
+  color: #d8c590;
 }
 
 .menu-modal-actions {

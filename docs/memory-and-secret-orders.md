@@ -236,9 +236,16 @@ session.py._apply_close_secret_order 截获 → db.close_secret_order(order_id, 
 月末 `resolve_directives` step 1.8：
 
 ```python
-active_orders = db.list_secret_orders(status="active")[:20]
-# 每条截取 content[:120] 防止token膨胀
-secret_orders_for_sim = [{id, minister_name, title, content, status, result}, ...]
+active_orders = (db.list_secret_orders(status="active")
+                 + db.list_secret_orders(status="pending_review"))[:20]
+# group_secret_orders_for_sim 按状态分进中文键两组、剥英文 status
+# （#48：status=active/pending_review 只用来分组，绝不当字段进 LLM 输入，
+#   否则 simulator 把 active 照抄进「密旨动向」邸报段——「孙承宗密旨（active）」）
+secret_orders_for_sim = {
+    "在办":   [...],   # active：承办中
+    "待核议": [...],   # pending_review：本回合待裁决
+}
+# 每条 {id, minister_name, title, content[:120], turn_issued, due_turn, progress, sim_note}（无 status）
 # 注入 simulator / extractor payload 的独立字段 secret_orders
 ```
 
