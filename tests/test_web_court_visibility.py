@@ -7,7 +7,7 @@ issue #104 原提议的 `c.status != "offstage"` 会把「DB 已 active 但内�
 """
 from __future__ import annotations
 
-from web_app import visible_in_court
+from web_app import in_talent_pool, visible_in_court
 
 
 def _active_ming_minister(db, content) -> str:
@@ -85,6 +85,47 @@ def test_vassal_prince_excluded_from_court(game):
     ch = content.characters[name]
     db.set_character_status(state, name, "active", "测试：在世")
     assert visible_in_court(ch, db) is False
+
+
+def test_offstage_former_minister_in_talent_pool(game):
+    """罢居/在野前臣（offstage + ming + 朝堂类、非未来登场）入「在野人才池」，供浏览起复
+    （#120 / docs/HISTORICAL_CASE_LIBRARY.md:41）。这正是 #104 把 offstage 挡出朝堂后丢失的读取面。"""
+    db, state, content = game
+    name = next(
+        (n for n, c in content.characters.items()
+         if getattr(c, "power_id", "ming") == "ming"
+         and getattr(c, "office_type", "") not in ("后宫", "宗藩", "流寇", "未仕")
+         and int(getattr(c, "debut_year", 0) or 0) == 0),
+        None,
+    )
+    if name is None:
+        import pytest
+        pytest.skip("基底盘面无合适的朝堂类前臣")
+    db.set_character_status(state, name, "offstage", "测试：自请罢居")
+    assert in_talent_pool(content.characters[name], db, state.year) is True
+    # 在野不入朝堂列表（两个列表互斥，offstage 只进人才池）
+    assert visible_in_court(content.characters[name], db) is False
+
+
+def test_active_minister_not_in_talent_pool(game):
+    """在朝（active）大臣不进在野池——人才池只补 offstage 这一漏面。"""
+    db, state, content = game
+    name = _active_ming_minister(db, content)
+    assert in_talent_pool(content.characters[name], db, state.year) is False
+
+
+def test_vassal_and_rebel_excluded_from_talent_pool(game):
+    """宗藩（藩王不入仕）/ 流寇（非起复对象）即便 offstage 也不进人才池。"""
+    db, state, content = game
+    for ot in ("宗藩", "流寇"):
+        name = next(
+            (n for n, c in content.characters.items() if getattr(c, "office_type", "") == ot),
+            None,
+        )
+        if name is None:
+            continue
+        db.set_character_status(state, name, "offstage", "测试")
+        assert in_talent_pool(content.characters[name], db, state.year) is False
 
 
 def test_consort_excluded_from_court(game):

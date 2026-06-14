@@ -435,6 +435,26 @@ def visible_in_court(character: Character, db) -> bool:
     return _character_power_id(character, db) == "ming"
 
 
+def in_talent_pool(character: Character, db, current_year: int) -> bool:
+    """在野人才池准入：可起复的前臣——DB 权威状态 offstage（不在朝） + ming 治下 +
+    非（后宫/宗藩/流寇/未仕），且非「未来才登场」的人物（debut_year 为 0 或不晚于当年）。
+
+    解决「罢居前臣（孙承宗/韩爌/钱龙锡 等）被 #104 挡出朝堂列表后哪都看不见、无法起复」——
+    他们 status=offstage、office_type=边镇/地方/礼部/内阁、debut_year=0（开局即在世，自请罢居）。
+    排除：①未登场的未来人物（debut_year > 当年，如左良玉 1630、吴三桂 1631——剧透）②流寇/未仕
+    （李自成/史可法这类非起复对象）③宗藩（藩王不入仕）。设计依据 docs/HISTORICAL_CASE_LIBRARY.md:41
+    「人才池视图 + 起复派生」。dismissed/retired/imprisoned 等在朝转出的非 active 已在朝堂「全部」
+    栏可见（visible_in_court 只挡 offstage），故人才池只补 offstage 这一漏面。"""
+    if character.office_type in ("后宫", "宗藩", "流寇", "未仕"):
+        return False
+    if db.get_character_status(character.name)[0] != "offstage":
+        return False
+    debut_year = int(getattr(character, "debut_year", 0) or 0)
+    if debut_year and debut_year > current_year:
+        return False
+    return _character_power_id(character, db) == "ming"
+
+
 class WebGame:
     """Web 端会话包装：持一个 GameSession + 网页专属态（聊天历史、收藏）。"""
 
@@ -1091,6 +1111,11 @@ class WebGame:
                 self.public_character(c)
                 for c in self.content.characters.values()
                 if c.office_type == "后宫" and c.status == "active" and self.character_power_id(c) == "ming"
+            ],
+            "talent_pool": [
+                self.public_character(c)
+                for c in self.content.characters.values()
+                if in_talent_pool(c, self.db, self.state.year)
             ],
             "directives": directives,
             "pending_count": self.session.pending_count(),
