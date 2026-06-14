@@ -22,7 +22,7 @@ from ming_sim.constants import (
 )
 from ming_sim.content import GameContent
 from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
-from ming_sim.models import Event, GameState, monthly_amount, period_label
+from ming_sim.models import Event, GameState, is_vassal_prince, monthly_amount, period_label
 from ming_sim.token_stats import tlog
 
 # 落库字段白名单（模块级常量化——避免在 apply_region_deltas / apply_army_deltas /
@@ -5100,6 +5100,10 @@ class GameDB:
             key = _find_existing_minister(content, name)
             if key is None or self.get_character_status(key)[0] != "active":
                 return False
+            # 宗藩（就藩宗室）非朝堂命官，不可作朝臣罢免——_find_existing_minister 仍会解析到宗藩名
+            # （任命核需解到名才能显式拒），故罢免侧单独守（cmr R6 cross-section）。
+            if is_vassal_prince(content.characters[key]):
+                return False
             self.set_character_status(state, key, "dismissed", reason="奉旨罢黜")
             ch = content.characters.get(key)
             if ch is not None:
@@ -5900,6 +5904,11 @@ class GameDB:
         importance: int = 4,
         deadline_months: int = 0,
     ) -> int:
+        # 宗藩（就藩宗室）非朝堂命官，不可受密令——密令创建的唯一 DB 写口，集中守此一处即覆盖
+        # API / 大臣工具 / CLI 自然语言 / upsert 回落 create 全路（cmr R6 cross-section）。
+        _ch = self.content.characters.get(minister_name) if self.content else None
+        if _ch is not None and is_vassal_prince(_ch):
+            raise ValueError(f"{minister_name}为就藩宗室，非朝廷命官，不可受密令。")
         active_count = self.conn.execute(
             "SELECT COUNT(*) FROM secret_orders WHERE status='active'"
         ).fetchone()[0]

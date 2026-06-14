@@ -14,7 +14,7 @@ from ming_sim.constants import COURT_BREAK_COMMANDS, EXIT_COMMANDS, TURN_UNIT
 from ming_sim.assets import wrap
 from ming_sim.context import match_minister_from_text
 from ming_sim.exceptions import ExitGame, SettlementAbort
-from ming_sim.models import Character, GameState
+from ming_sim.models import Character, GameState, is_vassal_prince
 from ming_sim.session import GameSession, TurnPhase
 from ming_sim.skills import print_all_skill_cards, print_skill_card, skill_display_name
 
@@ -47,6 +47,7 @@ def choose_minister(session: GameSession) -> Optional[Character]:
         if session.db.get_character_status(name)[0] not in ("offstage", "candidate")
         and getattr(characters[name], "status", "active") != "candidate"
         and getattr(characters[name], "power_id", "ming") == "ming"
+        and not is_vassal_prince(characters[name])  # 宗藩（就藩宗室）不入召见名单（PR#121，cmr R6）
     ]
     print("\n可召见大臣：")
     for idx, name in enumerate(names, 1):
@@ -92,12 +93,12 @@ def choose_minister(session: GameSession) -> Optional[Character]:
             if is_temporary:
                 print(f"临时传{candidate.name}入殿。\n")
                 return candidate
-        if candidate.name not in session.temporary_characters:
-            status, reason = session.db.get_character_status(candidate.name)
-            if status != "active":
-                tag = _STATUS_LABEL.get(status, status)
-                print(f"{candidate.name}已{tag}，无法召见。{reason}")
-                continue
+        # 召对总闸 can_summon（含宗藩拒 + 非 active 拒）——按名/编号/模糊任一路解析到的人都过此闸，
+        # 与 web /chat、LLM summon 工具同口径集中守（cmr R6：CLI 选臣菜单原先只查 status、漏宗藩）。
+        ok, reason = session.can_summon(candidate)
+        if not ok:
+            print(reason)
+            continue
         return candidate
 
 

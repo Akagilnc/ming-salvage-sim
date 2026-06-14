@@ -1842,6 +1842,25 @@ def test_list_ministers_excludes_active_prince(game):
     assert name not in [v.name for v in sess.list_ministers()], f"宗藩 {name} 漏进 list_ministers"
 
 
+def test_create_secret_order_rejects_vassal_prince(game):
+    """密令创建唯一 DB 写口 create_secret_order 拒宗藩——集中守此一处覆盖 API/大臣工具/CLI/upsert
+    回落 create 全路（cmr R6：web 端点单守不够，工具/CLI 路径绕过）。"""
+    import pytest
+    db, state, content = game
+    name = _materialize_active_prince(db, state, content)
+    with pytest.raises(ValueError, match="宗室"):
+        db.create_secret_order(state, name, "密查", "着尔暗中查访", [])
+
+
+def test_pending_dismiss_rejects_vassal_prince(game):
+    """pending 罢免落库（_commit_office_action 罢免路）拒宗藩——宗室非朝臣，不可作朝臣罢免（cmr R6）。"""
+    db, state, content = game
+    name = _materialize_active_prince(db, state, content)
+    ok = db._commit_office_action(state, {"action": "罢免"}, {"name": name}, content, None)
+    assert ok is False
+    assert db.get_character_status(name)[0] == "active"  # 未被罢、状态不变
+
+
 def test_extractor_active_ministers_ming_noncourt_only(game):
     """5b r1 PR#106（CodeRabbit Major，roster-scope coverage-drift 第 4 处）：extractor 上下文的
     active_ministers 须与 court_roster 同口径 = 大明、非后宫。否则 active 外臣（皇太极）/active 后宫漏入。"""
