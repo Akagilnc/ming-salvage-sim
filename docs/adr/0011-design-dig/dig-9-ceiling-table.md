@@ -1,5 +1,7 @@
 # 敏感度天花板 ceiling 查表（决定1）— dig（2026-06-14，substrate 最后一格）
 
+> ⚠️ **底稿（scratch / 过程史）**：本文已被正式 sub-ADR **0011-4 A 部分** fold + 覆盖（如本文既得 ceiling `max(72, leverage_target)` → 0011-4 已修为单调段函数 `seg(leverage)`〔低 lev 真塌 50，max-72 是 bug〕）；凡与 0011-4 冲突一律**以 0011-4 为准（later-doc-wins）**。本文留作设计 provenance、**非实现真源**。
+
 > 来源:workflow `wtvac0cjm`(ceiling-sensitivity-table) ——ground+2路设计**跑完且高度收敛**,但 synth 卡死(快1小时未出完整 StructuredOutput);**Claude 从 3 个完成结果(journal)自合成**(synth 那点活)。原始 3 结果存 `/tmp/ceiling_3results.json`。**待用户拍。**
 
 ## Ceiling 表（[0,100]，给 naive 动作的墙；命门三级）

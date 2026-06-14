@@ -1,6 +1,6 @@
 # 圣旨颁布阻力网 + 离心账本（actor 博弈框架母 ADR）
 
-Status: Proposed（草案；grill-with-docs 八问 D1–D8 + 两轮 fan-out 于 2026-06-14 收敛。**待评审**——按 CLAUDE.md 设计文档铁律走本地 cmr + 线上三 bot，未收敛前不进实现期。）
+Status: Accepted（设计收敛：grill-with-docs 八问 D1–D8 + 两轮 fan-out〔2026-06-14〕+ 每份子 ADR 内部对抗预检 + **本地 ship-pre cmr R1–R8 4/4 concur 收敛**〔2026-06-15，统一审全 5 ADR〕+ 线上 PR #123 三 bot 评审。**设计 ship-ready；实现属编码活、spawn 隔壁 session**——硬序：substrate〔血债 schema/矩阵 42 值/identity/seed/ceiling〕先落，四层 resolve 后做。）
 
 ## 脉络
 

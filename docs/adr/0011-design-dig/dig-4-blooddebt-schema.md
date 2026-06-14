@@ -1,5 +1,7 @@
 # 血债棘轮 schema 收口 — 深挖 ledger（2026-06-14，承 #112，ADR 0011 决定2 sub-ADR 0011-2）
 
+> ⚠️ **底稿（scratch / 过程史）**：本文已被正式 sub-ADR **0011-2** fold + 覆盖（如本文 blood_debt/wariness 作 factions 列 → 0011-2 已重构为独立新表 `faction_axis_debt`）；凡与正式 sub-ADR 冲突一律**以 sub-ADR 为准（later-doc-wins）**。本文留作设计 provenance、**非实现真源**。
+
 > 全量在 task 输出：`/private/tmp/claude-501/.../tasks/w66wpeyio.output`（9-agent design panel：4 方案 → 对抗攻击 → 合成）。**设计累积，未写 ADR/未实现。** 实现属编码活、spawn 隔壁。
 
 ## 选型（攻击驱动，非自夸）
