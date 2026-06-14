@@ -470,9 +470,13 @@ def describe_effective_model(llm_config: Any = None) -> str:
         runner = None
     if not runner:  # api 通道 / 形态1（空 channel 无 env）：用 cfg.model
         return str(getattr(llm_config, "model", "") or "?")
-    from ming_sim.llm_config import cli_model_from_env
-    model = (str(getattr(llm_config, "cli_model", "") or "").strip()) or cli_model_from_env(runner)
-    return f"{runner}/{model}" if model else runner
+    # 只有实际吃 --model 的 runner（codex/claude）才追加 /model；agy 忽略 model、走自身 Gemini ladder，
+    # 给它挂个不被消费的 cli_model 反而误导（#84 codex），只显示 runner 名。
+    if runner in ("codex", "claude"):
+        from ming_sim.llm_config import cli_model_from_env
+        model = (str(getattr(llm_config, "cli_model", "") or "").strip()) or cli_model_from_env(runner)
+        return f"{runner}/{model}" if model else runner
+    return runner
 
 
 def cli_backend_active(llm_config: Any = None) -> bool:
