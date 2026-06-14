@@ -25,7 +25,7 @@ from ming_sim.flows import (
     _apply_faction_dict,
     _apply_metric_dict,
 )
-from ming_sim.models import Event, GameState
+from ming_sim.models import Event, GameState, is_vassal_prince
 from ming_sim.person_archive_contract import (
     PERSON_ALLEGIANCE_CHANGE_WAYS,
     PERSON_IDENTITY_TITLES,
@@ -1470,6 +1470,12 @@ def apply_office_appointment(
     if in_roster:
         if cur_status == "dead":
             return {"name": name, "new_office": new_office, "rejected": True, "reason": "人物已故，不能重新启用"}
+        # 宗藩（就藩宗室）非朝堂命官，不可授官（PR#121）。这是任命落地核——授官会把 office_type
+        # 从「宗藩」改成新官署、反解掉所有 roster 隐藏，故必须在此写侧拒（extractor office_changes
+        # 与 CLI/pending 任免都经本核，集中守一处，cmr R5 cross-section）。宗藩在册数据保持不变。
+        if is_vassal_prince(content.characters[name]):
+            return {"name": name, "new_office": new_office, "rejected": True,
+                    "reason": "宗藩（就藩宗室）非朝堂命官，不可授官"}
         old_office = content.characters[name].office
         snapshot = _snapshot_person_write_state(db, content)
         try:
