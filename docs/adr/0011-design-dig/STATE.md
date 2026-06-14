@@ -38,8 +38,7 @@
 
 ## Roadmap
 1. ~~挑资源 menu~~（甲）✅ **方向已挑**（4 recommend 认 + 带宽=批红积压暂定）。**但全是"方向"非"HOW"**——三维度至此都只到"方向/决定"层，机制/schema 设计是下一层。用户明确感知："都不知道怎么做"。
-2. **收口血债棘轮 schema**（乙，大石头，**最承重的那个 HOW**，可配 design fan-out 对抗红队 H1-H6）——它是"怎么做"的总解锁。
-   - ⚠️ 当前状态判断：三维度方向已铺 + durable，是个干净的暂停点。HOW 设计（尤其血债棘轮）是深活，按需开。
+2. **收口血债棘轮 schema**（乙）🔵 **schema 草案出炉**（design fan-out 9-agent，详见 [dig-4](dig-4-blooddebt-schema.md)）：方案1 极简逐派列骨架 + 嫁接方案2 审计账，攻击驱动选型。第一刀=factions 加3列(blood_debt/wariness/edict_overdraw)+centrifuge_log；provisional/轴矩阵/中旨闸 defer 第二刀。合法性失称度算式落数(同抄阉党血债差8.7倍=教学曲线)。净负vs棘轮=max(floor=α×血债, dynamic)血债当冻土失望/lev当薄冰。**5 个 fork 待用户拍**(粒度scalar/provisional defer/合法性算法/fungible H6/7派外语义)。
 3. fold 决定 8/9 + 细化 → ADR 0011 + 应用 parked CMR r2 修。
 4. 承重落地洞 → sub-ADR。
 5. 恢复 CMR 走完，再让 0011 落 main。
