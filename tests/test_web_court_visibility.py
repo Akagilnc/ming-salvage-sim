@@ -234,6 +234,39 @@ def test_active_consort_chat_not_rejected(game, monkeypatch):
     )
     if consort is None:
         pytest.skip("基底盘面无大明后宫人物")
+    # 物化进 DB 后 set_character_status 才真生效（选中的 content 后宫未必在 probe.db 旧档，
+    # 缺行时 set 是 no-op、status 只靠缺行默认 active 兜——gemini R4）。物化使「active 后宫过闸」可证。
+    db.add_character(state, content.characters[consort], source="测试物化")
     db.set_character_status(state, consort, "active", "测试：在位")
+    assert db.get_character_status(consort)[0] == "active"
     _stub_game(monkeypatch, db, content)
     web_app._require_active_minister(consort)  # 不抛 = 通过（后宫未被宗藩闸误伤）
+
+
+def test_zongfan_cannot_be_summoned_via_can_summon(game):
+    """summon_minister 工具链（session 召对 + web 流式两路）共用 session.can_summon 闸——宗藩须在此拒，
+    否则裁判可绕朝堂列表按名召宗室（cmr R4：_require_active_minister 只守 /chat 直连，summon 工具走
+    can_summon）。集中守 can_summon 一处覆盖两路；后宫不受此闸影响。"""
+    import pytest
+    from ming_sim.session import GameSession
+    db, state, content = game
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.temporary_characters = {}
+    prince = next((n for n, c in content.characters.items() if c.office_type == "宗藩"), None)
+    if prince is None:
+        pytest.skip("基底盘面无宗藩人物")
+    db.add_character(state, content.characters[prince], source="测试物化")
+    db.set_character_status(state, prince, "active", "测试：在世")
+    assert db.get_character_status(prince)[0] == "active"  # 即便 active 也拒
+    ok, reason = sess.can_summon(content.characters[prince])
+    assert ok is False
+    assert "宗室" in reason
+    # 后宫不受宗藩闸影响：active+ming 后宫仍可召
+    consort = next((n for n, c in content.characters.items()
+                    if c.office_type == "后宫" and getattr(c, "power_id", "ming") == "ming"), None)
+    if consort:
+        db.add_character(state, content.characters[consort], source="测试物化")
+        db.set_character_status(state, consort, "active", "测试")
+        ok2, _ = sess.can_summon(content.characters[consort])
+        assert ok2 is True
