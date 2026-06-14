@@ -268,6 +268,8 @@ AI 适合判断官场反应、地方推诿、政策代价、突发事件和叙�
 | `MING_SIM_LLM_BACKEND` | 否 | 无 | 设 `agy`/`codex`/`claude` 走本地 CLI runner 当 LLM 后端(无需 API Key);留空走 API 通道 |
 
 > **LLM 执行通道(v0.6.0.0 起)**:菜单设置面板支持 **API / CLI 双通道**选择并各自持久化。选 **CLI 通道**(本地 `codex`/`agy`/`claude` runner)即可**脱 API Key** 跑;选 **API 通道**则用上面的 `OPENAI_*` 配置。`MING_SIM_LLM_BACKEND` 是不开 UI 时的 legacy env 入口。
+>
+> CLI 通道的 **CLI Model** 是 **per-runner 策展下拉**(随 CLI Runner 切换):codex/claude/agy 各列各自已知可用档,首档「默认」= 走该 runner 的后端默认模型;选「其他(手填)」露出文本框可填任意 id(将来新模型 / 大写 id)。档位清单单一真源在后端 `ming_sim/cli_backend.py:cli_model_choices()`,经 config 端点下发,前端不硬编。下拉只挡常见拼写/大小写错(某档实际可用性仍取决于账号类型与 CLI 版本,故连通性检查仍是兜底)。API 通道的模型字段保持自由手填(任意 OpenAI 兼容端点)。
 
 ---
 

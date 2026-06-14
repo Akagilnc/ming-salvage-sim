@@ -2,6 +2,7 @@ import React from "react";
 import { Check, Loader2, LogOut, Power, RotateCcw, Save, Settings, Trash2, Upload, X } from "lucide-react";
 import { ApiRequestError, api } from "../api";
 import type { LLMConfigInfo, SaveEntry } from "../types";
+import { CliModelField } from "./cliModelField";
 
 export function GameMenuModal({
   onClose,
@@ -407,7 +408,10 @@ export function LLMConfigTab() {
       // 用服务端归一后的响应同步本地通道/CLI 状态,避免与 info 漂移(Sourcery R1)。
       setChannel(data.channel === "cli" ? "cli" : "api");
       setCliRunner(data.cli_runner || "agy");
-      setCliModel(data.cli_model || "");
+      // cliModel 不从 data.cli_model 回灌：那是 resolved 值（空/__keep__ 会被兜底成
+      // 默认名或 cur 的已解析值），灌回会让策展下拉把默认/留空误判成「其他(手填)」。
+      // 本地 cliModel 即用户刚提交且通过连通性校验的原值（raw），保留它即可——与加载端
+      // 读 persisted.cli_model、menuPage 读 cli_model_saved 一致同走 raw（CMR R3 codex+gemini）。
       setCliTimeout(String(data.cli_timeout_seconds || CLI_DEFAULT_TIMEOUT));
       setApiKey("");
       setAdvancedApiKey("");
@@ -441,21 +445,32 @@ export function LLMConfigTab() {
         <>
           <label className="menu-field">
             <span>CLI Runner</span>
-            <select className="menu-input" value={cliRunner} onChange={(e) => setCliRunner(e.target.value)}>
+            <select
+              className="menu-input"
+              value={cliRunner}
+              onChange={(e) => {
+                setCliRunner(e.target.value);
+                setCliModel("");  // 换 runner 归零到默认档，避免旧模型漏进新 runner
+              }}
+            >
               <option value="agy">agy（Gemini）</option>
               <option value="codex">codex</option>
               <option value="claude">claude</option>
             </select>
           </label>
-          <label className="menu-field">
-            <span>CLI Model <small className="menu-hint">（空=runner 默认）</small></span>
-            <input
+          {/* div 而非 label：custom 态 CliModelField 同时渲染 select+input，HTML5 规定
+              一个 label 至多含一个可表单关联控件，两个会无效且无障碍歧义（gemini R2）。 */}
+          <div className="menu-field">
+            <span>CLI Model <small className="menu-hint">（默认档=runner 默认；其他=手填任意 id）</small></span>
+            <CliModelField
+              key={cliRunner}
               className="menu-input"
+              runner={cliRunner}
+              choices={info?.cli_model_choices}
               value={cliModel}
-              onChange={(e) => setCliModel(e.target.value)}
-              placeholder="gpt-5.5 / claude-opus-4-8 / 空"
+              onChange={setCliModel}
             />
-          </label>
+          </div>
           <label className="menu-field">
             <span>CLI 超时（秒）</span>
             <input
