@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -60,6 +61,87 @@ _CLI_BACKENDS = {"agy", "codex", "claude"}
 def is_supported_cli_runner(name: object) -> bool:
     """runner 名是否是受支持的 CLI 后端（agy / codex / claude）。"""
     return str(name or "").strip().lower() in _CLI_BACKENDS
+
+
+# ── runner 可执行定位（GUI/.app 启动 PATH 缺失的治本解）────────────────────
+# Finder 双击的 .app 只继承 launchd 精简 PATH（无 ~/.local/bin、/opt/homebrew/bin），
+# 裸名 exec "codex"/"claude"/"agy" 会 FileNotFoundError——即便用户已按官方装好。
+# 解析成绝对路径即治本：用绝对路径 exec 不依赖 PATH。解析顺序见 _resolve_cli_bin。
+_EXTRA_BIN_DIRS = [
+    os.path.expanduser("~/.local/bin"),       # codex 官方独立安装 / pipx
+    os.path.expanduser("~/.bun/bin"),
+    os.path.expanduser("~/.deno/bin"),
+    os.path.expanduser("~/.cargo/bin"),
+    os.path.expanduser("~/.npm-global/bin"),   # npm -g 自定义前缀
+    "/opt/homebrew/bin",                       # Apple Silicon homebrew
+    "/usr/local/bin",                          # Intel homebrew / 手装
+]
+_BIN_CACHE: Dict[str, str] = {}               # runner 名 → 解析后的可执行路径（进程内缓存）
+_DISCOVERED_LOGIN_PATH: Optional[str] = None  # 登录 shell PATH，懒发现一次
+# 登录 shell 探测走「import 时捕获的原始 run」，不受测试 monkeypatch cb.subprocess.run
+# 影响，也就不会污染 _run_agy 等的 mock 调用计数。
+_RAW_RUN = subprocess.run
+
+
+def _login_shell_path() -> Optional[str]:
+    """问用户登录 shell 要真实 PATH（GUI/.app 不继承 shell PATH 的最后兜底）。
+    缓存一次：探测代价高（会 source rc），且进程内不变。失败返回 None。"""
+    global _DISCOVERED_LOGIN_PATH
+    if _DISCOVERED_LOGIN_PATH is not None:
+        return _DISCOVERED_LOGIN_PATH or None
+    discovered = ""
+    shell = os.environ.get("SHELL") or "/bin/zsh"
+    try:
+        proc = _RAW_RUN(
+            [shell, "-lic", 'echo "$PATH"'],
+            capture_output=True, text=True, timeout=8,
+        )
+        # rc 可能往 stdout 喷噪声，取最后一条像 PATH 的行（含路径分隔符 + 斜杠）。
+        for line in reversed((proc.stdout or "").splitlines()):
+            line = line.strip()
+            if os.pathsep in line and "/" in line:
+                discovered = line
+                break
+    except Exception:
+        discovered = ""
+    _DISCOVERED_LOGIN_PATH = discovered
+    return discovered or None
+
+
+def _augmented_search_path() -> str:
+    """当前 PATH + 常见安装目录 + 登录 shell PATH，去重保序。"""
+    chunks: List[str] = [d for d in _EXTRA_BIN_DIRS if os.path.isdir(d)]
+    cur = os.environ.get("PATH", "")
+    if cur:
+        chunks.append(cur)
+    login = _login_shell_path()
+    if login:
+        chunks.append(login)
+    seen: set = set()
+    dirs: List[str] = []
+    for chunk in chunks:
+        for d in chunk.split(os.pathsep):
+            if d and d not in seen:
+                seen.add(d)
+                dirs.append(d)
+    return os.pathsep.join(dirs)
+
+
+def _resolve_cli_bin(name: str, configured: str) -> str:
+    """runner（agy/codex/claude）解析成可执行绝对路径，结果按 name 缓存。
+    1) 现有 PATH which 命中（含 MING_SIM_*_BIN 给的绝对路径）→ 用。
+    2) 补常见安装目录（~/.local/bin 等）+ 登录 shell PATH，再 which。
+    3) 全不中 → 退回原配置名，让 subprocess 抛清晰 FileNotFoundError（不静默吞）。"""
+    cached = _BIN_CACHE.get(name)
+    if cached:
+        return cached
+    found = shutil.which(configured)
+    if not found:
+        found = shutil.which(configured, path=_augmented_search_path())
+    result = found or configured
+    _BIN_CACHE[name] = result
+    return result
+
 
 _VERBOSE = os.environ.get("MING_SIM_LLM_DEBUG", "") not in ("", "0", "false")
 
@@ -144,7 +226,7 @@ def _run_agy(prompt: str, timeout: Optional[float] = None) -> Tuple[str, int]:
             # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
             # 安全审计(Sourcery):list-form argv、无 shell=True → 不经 shell 解析,无注入面。prompt 走 stdin。
             proc = subprocess.run(
-                [_AGY_BIN, "-p", "--sandbox"],
+                [_resolve_cli_bin("agy", _AGY_BIN), "-p", "--sandbox"],
                 input=prompt, capture_output=True, text=True, timeout=run_timeout,
                 cwd=_AGY_CWD,
             )
@@ -177,7 +259,7 @@ def _run_codex(prompt: str, model: Optional[str] = None, timeout: Optional[float
     - 干净最终回话在 **stdout**，诊断/日志在 stderr —— 只取 stdout，绝不合并（合并会把
       "OpenAI Codex v…/tokens used" 等日志混进角色回话）。stdout 空时兜底从合并流剥壳。
     reasoning：默认不强加，尊重用户 ~/.codex/config.toml；设 MING_SIM_CODEX_REASONING 才传 -c。"""
-    cmd = [_CODEX_BIN, "exec", "--model", (model or _CODEX_MODEL)]
+    cmd = [_resolve_cli_bin("codex", _CODEX_BIN), "exec", "--model", (model or _CODEX_MODEL)]
     reasoning = (os.environ.get("MING_SIM_CODEX_REASONING") or "").strip()
     if reasoning:
         cmd += ["-c", f'model_reasoning_effort="{reasoning}"']
@@ -206,8 +288,8 @@ def _run_claude(prompt: str, model: Optional[str] = None, timeout: Optional[floa
     与 codex 不同：claude -p 干净最终回话在 **stdout**，日志/诊断在 stderr，
     故只取 stdout、不合并 stderr（合并会把日志混进角色回话）。
     思考预算不强加：继承父进程 env，用户可自行 export MAX_THINKING_TOKENS。"""
-    cmd = [_CLAUDE_BIN, "-p", "--model", (model or _CLAUDE_MODEL), "--output-format", "text",
-           "--disallowed-tools", *_CLAUDE_DISALLOWED]
+    cmd = [_resolve_cli_bin("claude", _CLAUDE_BIN), "-p", "--model", (model or _CLAUDE_MODEL),
+           "--output-format", "text", "--disallowed-tools", *_CLAUDE_DISALLOWED]
     try:
         # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
         # 安全审计(Sourcery):list-form argv、无 shell=True;runner 已 allowlist、model 为独立 argv、prompt 走 stdin → 无注入面。

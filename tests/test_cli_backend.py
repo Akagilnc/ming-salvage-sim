@@ -303,6 +303,112 @@ def test_run_claude_accepts_config_model_and_timeout(monkeypatch):
     assert captured["timeout"] == 234
 
 
+# ── _resolve_cli_bin：GUI(.app)启动 PATH 缺 ~/.local/bin 时仍定位已装的 runner ──
+# Finder 双击的 .app 拿不到登录 shell 的 PATH（只继承 launchd 精简 PATH），
+# 裸名 exec "codex" 会 [Errno 2] No such file or directory 即便用户已按官方装好。
+# 解析到绝对路径即治本：现有 PATH → 补常见安装目录 → 登录 shell PATH → 退回原名。
+
+def test_resolve_cli_bin_found_on_current_path(monkeypatch):
+    """当前进程 PATH 就能 which 到 → 直接绝对化，不触发补目录/登录 shell。"""
+    cb._BIN_CACHE.clear()
+    monkeypatch.setattr(cb.shutil, "which",
+                        lambda name, path=None: "/usr/local/bin/codex" if path is None else None)
+    monkeypatch.setattr(cb, "_login_shell_path", lambda: (_ for _ in ()).throw(AssertionError("不该触发")))
+    assert cb._resolve_cli_bin("codex", "codex") == "/usr/local/bin/codex"
+
+
+def test_resolve_cli_bin_found_via_extra_dirs_when_gui_path_bare(monkeypatch):
+    """复现 bug：GUI 精简 PATH 下 which 失败，补常见安装目录(~/.local/bin 等)后命中。"""
+    cb._BIN_CACHE.clear()
+    home_bin = "/Users/x/.local/bin/codex"
+
+    def fake_which(name, path=None):
+        return None if path is None else home_bin   # 当前 PATH 找不到，补目录后命中
+    monkeypatch.setattr(cb.shutil, "which", fake_which)
+    monkeypatch.setattr(cb, "_login_shell_path", lambda: None)
+    assert cb._resolve_cli_bin("codex", "codex") == home_bin
+
+
+def test_resolve_cli_bin_login_shell_path_last_resort(monkeypatch):
+    """补目录仍找不到 → 问登录 shell 要真实 PATH，再 which。"""
+    cb._BIN_CACHE.clear()
+    found = {}
+
+    def fake_which(name, path=None):
+        if path and "/opt/odd/bin" in path:
+            return "/opt/odd/bin/codex"
+        return None
+    monkeypatch.setattr(cb.shutil, "which", fake_which)
+    monkeypatch.setattr(cb, "_login_shell_path", lambda: "/opt/odd/bin")
+    assert cb._resolve_cli_bin("codex", "codex") == "/opt/odd/bin/codex"
+
+
+def test_resolve_cli_bin_falls_back_to_name_when_truly_missing(monkeypatch):
+    """彻底找不到 → 退回原名，让 subprocess 抛清晰 FileNotFoundError，不静默。"""
+    cb._BIN_CACHE.clear()
+    monkeypatch.setattr(cb.shutil, "which", lambda name, path=None: None)
+    monkeypatch.setattr(cb, "_login_shell_path", lambda: None)
+    assert cb._resolve_cli_bin("codex", "codex") == "codex"
+
+
+def test_resolve_cli_bin_caches(monkeypatch):
+    """解析结果按 runner 名缓存，进程内不重复探测。"""
+    cb._BIN_CACHE.clear()
+    calls = {"n": 0}
+
+    def fake_which(name, path=None):
+        calls["n"] += 1
+        return "/abs/codex"
+    monkeypatch.setattr(cb.shutil, "which", fake_which)
+    monkeypatch.setattr(cb, "_login_shell_path", lambda: None)
+    assert cb._resolve_cli_bin("codex", "codex") == "/abs/codex"
+    assert cb._resolve_cli_bin("codex", "codex") == "/abs/codex"
+    assert calls["n"] == 1                 # 第二次命中缓存，不再 which
+
+
+def test_run_codex_execs_resolved_abspath(monkeypatch):
+    """_run_codex 用解析出的绝对路径当 argv[0]（修 GUI 启动找不到 codex）。"""
+    cb._BIN_CACHE.clear()
+    monkeypatch.setattr(cb, "_resolve_cli_bin", lambda name, configured: "/Users/x/.local/bin/codex")
+    captured = {}
+
+    class _P:
+        stdout = "ok"; stderr = ""; returncode = 0
+
+    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
+    monkeypatch.setattr(cb.subprocess, "run", lambda cmd, **kw: (captured.update(cmd=cmd) or _P()))
+    cb._run_codex("p")
+    assert captured["cmd"][0] == "/Users/x/.local/bin/codex"
+
+
+def test_run_claude_execs_resolved_abspath(monkeypatch):
+    cb._BIN_CACHE.clear()
+    monkeypatch.setattr(cb, "_resolve_cli_bin", lambda name, configured: "/opt/homebrew/bin/claude")
+    captured = {}
+
+    class _P:
+        stdout = "ok"; stderr = ""; returncode = 0
+
+    monkeypatch.setattr(cb.subprocess, "run", lambda cmd, **kw: (captured.update(cmd=cmd) or _P()))
+    cb._run_claude("p")
+    assert captured["cmd"][0] == "/opt/homebrew/bin/claude"
+
+
+def test_run_agy_execs_resolved_abspath(monkeypatch):
+    cb._BIN_CACHE.clear()
+    monkeypatch.setattr(cb, "_resolve_cli_bin", lambda name, configured: "/Users/x/.local/bin/agy")
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        if cmd and cmd[0] == "security":
+            return _Proc()                 # 暖 keychain
+        seen["cmd"] = cmd
+        return _Proc(stdout="臣领旨。")
+    monkeypatch.setattr(cb.subprocess, "run", fake_run)
+    cb._run_agy("p")
+    assert seen["cmd"][0] == "/Users/x/.local/bin/agy"
+
+
 # ── extract_minister_actions：LLM 判会话动作（取代关键字白名单）──
 
 def test_extract_minister_actions_update(monkeypatch):
