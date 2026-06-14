@@ -590,6 +590,11 @@ class GameSession:
     def can_summon(self, character: Character) -> Tuple[bool, str]:
         if character.name in self.temporary_characters:
             return (True, "")
+        # 宗藩（就藩宗室）非朝堂命官，不可召见——与 web _require_active_minister / 各 roster 同口径
+        # （PR#121 隐藏宗藩）。can_summon 是 summon_minister 工具链（session + web 流式两路）的共用闸，
+        # 集中守此一处即覆盖两路，否则裁判可绕列表按名召宗藩（cmr R4 cross-section）。后宫不在此拒。
+        if character.office_type == "宗藩":
+            return (False, f"{character.name}为就藩宗室，非朝廷命官，无法召见。")
         status, reason = self.db.get_character_status(character.name)
         if status == "active":
             return (True, "")
