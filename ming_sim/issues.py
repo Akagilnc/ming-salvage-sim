@@ -896,14 +896,26 @@ def _emit_pairing_warnings(new_row, effect: object, sink: Optional[List[str]] = 
             return default
     if str(_g("kind", "") or "") != "initiative":
         return
-    try:
-        tags = json.loads(_g("tags", "[]") or "[]")
-    except (TypeError, ValueError):
-        tags = []
-    try:
-        ongoing = json.loads(_g("ongoing_effects", "{}") or "{}")
-    except (TypeError, ValueError):
-        ongoing = {}
+    # tags/ongoing_effects 在 DB row 里是 JSON 串，但调用方（test/mock/上游预解析）可能已传
+    # 解析好的 list/dict——此时 json.loads(容器) 抛 TypeError 被 except 吞成空，会静默丢有效
+    # 数据、把本该响的告警消音 / 把有效月支误判成缺失（PR#107 R3 gemini medium，与下游
+    # _initiative_resolve_pairing_warnings 的 isinstance 防御同向）。先认已解析的容器。
+    raw_tags = _g("tags", "[]")
+    if isinstance(raw_tags, (list, tuple)):
+        tags = list(raw_tags)
+    else:
+        try:
+            tags = json.loads(raw_tags or "[]")
+        except (TypeError, ValueError):
+            tags = []
+    raw_ongoing = _g("ongoing_effects", "{}")
+    if isinstance(raw_ongoing, dict):
+        ongoing = raw_ongoing
+    else:
+        try:
+            ongoing = json.loads(raw_ongoing or "{}")
+        except (TypeError, ValueError):
+            ongoing = {}
     for w in _initiative_resolve_pairing_warnings(str(_g("title", "") or ""), tags, ongoing, effect):
         tlog(f"[pairing] {w}")
         if sink is not None:
