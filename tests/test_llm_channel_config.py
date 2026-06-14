@@ -132,7 +132,7 @@ def test_verify_llm_available_smokes_cli_channel_without_backend_env(monkeypatch
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     seen = {}
 
-    def fake_run(prompt, llm_config=None):
+    def fake_run(prompt, llm_config=None, tag=""):
         seen["prompt"] = prompt
         seen["config"] = llm_config
         return "ok", 1
@@ -157,7 +157,7 @@ def test_verify_llm_available_smokes_cli_channel_without_backend_env(monkeypatch
 def test_verify_llm_available_cli_channel_failure_raises(monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
-    def boom(prompt, llm_config=None):
+    def boom(prompt, llm_config=None, tag=""):
         raise RuntimeError("codex missing")
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", boom)
@@ -182,7 +182,7 @@ def test_verify_llm_available_smokes_legacy_env_only_backend(monkeypatch):
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     seen = {}
 
-    def fake_run(prompt, llm_config=None):
+    def fake_run(prompt, llm_config=None, tag=""):
         seen["prompt"] = prompt
         return "ok", 1
 
@@ -196,7 +196,7 @@ def test_verify_llm_available_legacy_env_only_failure_raises(monkeypatch):
     """legacy env-only smoke 失败同样抛 LLMUnavailable（fail-fast，不静默放行）。"""
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
 
-    def boom(prompt, llm_config=None):
+    def boom(prompt, llm_config=None, tag=""):
         raise RuntimeError("agy missing")
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", boom)
