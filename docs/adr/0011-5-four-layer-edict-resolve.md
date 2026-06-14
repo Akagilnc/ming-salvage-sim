@@ -36,7 +36,7 @@ Status: Proposed（草案；承母 ADR `0011-edict-resistance-and-centrifuge-led
 **阶段一·颁布（产 blocked_layer，前三层）**：
 
 1. **内阁票拟**（软否决：封还 / 拟温和版 / 辞职逼宫）——东林 + 中立把着，读 0011-3 东林礼法 / 祖制轴立场 + 0011-2 血债 floor。**中旨绕此层**（D5-6）。
-2. **司礼监批红**（阉党承重功能 = 母 ADR 决定8）——阉党核心把着，读阉党 **satisfaction/leverage**（**不读 identity 入阻力**——identity 只缩 kinship，0011-2 D2 限定，见 D5-4 残留）。**清了阉党 → 从「顺」翻「失能阻力」= 自我致盲**（北极星；根因 B1/#9 退场 leverage 联动未做，决定8/0011-2 D2-9）。
+2. **司礼监批红**（阉党承重功能 = 母 ADR 决定8）——阉党核心把着，读阉党 **leverage（+ 血债 floor）**（**不读 satisfaction 入阻力**——阻力 / 称病只读血债〔非失望〕，0011-2 D2-6 不变式2 / H2 堵好回合洗白；satisfaction 是失望 / 召对层、走净负不入阻力。**亦不读 identity 入阻力**——只缩 kinship，0011-2 D2 限定）。**清了阉党 → 从「顺」翻「失能阻力」= 自我致盲**（北极星；根因 B1/#9 退场 leverage 联动未做，决定8/0011-2 D2-9）。
 3. **六科封驳**（硬否决，最关键，中旨天敌）——六科 + 御史，读 ① ceiling（0011-4）② 是否中旨（MIDZHI 污名项，D5-6）③ 失称度（0011-2 D2-4）。**破局核心层、命门题真墙**。
 
 **阶段二·执行（产 exec_fidelity，第一刀 defer 见 D5-7/D5-8）**：
@@ -67,7 +67,7 @@ Status: Proposed（草案；承母 ADR `0011-edict-resistance-and-centrifuge-led
 per_layer_resistance = max( min(cap, α×血债)[真源 0011-2 D2-7] , 命门合法性floor[真源 0011-4 D4-3] , min(ceiling[0011-4], dynamic_term) )
 ```
 
-- **dynamic_term** = 该层把关派系的当下激烈度，读 **satisfaction/leverage + 外压 substrate（powers/classes，母 ADR 决定9）**（**不含 identity**——identity 只缩 kinship，0011-2 D2 限定）。**dynamic_term 的 base 语义由本 ADR 首次定义**（上游只用它占位 + 定义外压臂降它，无别处真源可撞）；三臂的**值真源**在别处（血债 floor=0011-2、命门 floor + ceiling=0011-4、议和外压调制=0011-4 D4-3），本 ADR 只组装、不重定义那三项。
+- **dynamic_term** = 该层把关派系的当下阻挡力，读 **leverage + 外压 substrate（powers/classes，母 ADR 决定9）**（**不读 satisfaction**——阻力 / 称病只读血债〔非失望〕，0011-2 D2-6 不变式2 / H2 堵好回合洗白：好回合涨 satisfaction 只动失望 / 召对 + 净负、永不松阻力；阻力的可变部分 = leverage〔多能挡〕+ 外压，持久部分 = 血债 floor。**不含 identity**——只缩 kinship，0011-2 D2 限定）。**dynamic_term 的 base 语义由本 ADR 首次定义**（上游只用它占位 + 定义外压臂降它，无别处真源可撞）；三臂的**值真源**在别处（血债 floor=0011-2、命门 floor + ceiling=0011-4、议和外压调制=0011-4 D4-3），本 ADR 只组装、不重定义那三项。
 - **⚠️ 议和外压臂如何击穿命门 floor（P1-4，与 0011-4 D4-3 对齐）**：议和是华夷命门题，命门 floor 把阻力托到 ceiling 85、不受 dynamic_term 影响——故**外压臂不能只降 dynamic_term（会被 max() 短路）**。真机制：**华夷命门 floor 本身吃外压调制**（`华夷命门floor = f(外压 substrate, 代价明白度)`，真源 0011-4 D4-3：华夷 floor 软、祖制硬核 floor 不松）——`外压够大 + 代价够明白`（两合取项，对齐 0011-3 D3-4 / 0011-4 D4-4b）→ 华夷命门 floor 真下调 → 议和 resistance 随之降 → 可颁。议和真正 blocked 在 **L3 六科**；外压经「朝堂主战共识松动 → 六科失清议背书」传导到六科的命门 floor（floor 调制即此传导的落点），非降 L1 务实派 dynamic（那救不了 L3）。
 - **⚠️ blocked_layer = 全算取真墙（P1-6，弃 first-over-threshold）**：阶段一三层**全算**（轻量纯函数、无性能压力），`blocked_layer = 命门 floor 顶满（≥ceiling）的最高 tier 层优先（命门真墙赢）；无命门 floor 活跃时 = argmax(per_layer_resistance over 超阈层)`（**命门题 blocked_layer 必指六科真墙、不被前层 raw argmax 抢报**）、ResolveResult 带**全三层诊断串**（不短路、防后层无值）。**不变式**：命门 floor 顶满（≥ ceiling）的层**必判超阈**（命门题必由六科挡、不因全局阈调高而漏）。弃 first-over-threshold：某命门题若某**前层**（如 L2 司礼监批红，阉党 leverage 高 → dynamic 超普通阈，D5-2 L2 读阉党 sat/lev）先超阈即短路、误报 `blocked_layer=批红`，**L3 六科命门 floor 真墙没算到**，玩家误以为「过了批红就行」→ 实撞六科（这正是「命门必由六科挡」不变式要保证、short-circuit 会破坏的）。
 - **⚠️ 阈值（P2）**：`resistance 超阈` 的阈**逐层（per-layer）**，与 max() 三臂量纲挂钩；至少钉死「命门 floor 顶满该层必超阈」不变式，与可调的普通层阈区分。首版随 playtest，但此不变式非调参旋钮。
@@ -145,7 +145,7 @@ per_layer_resistance = max( min(cap, α×血债)[真源 0011-2 D2-7] , 命门合
 ## 自检（11 条）
 
 1. **轻交互真没堆成 CK3**：一次 resolve、blocked_layer 只进邸报复盘，零新面板。
-2. **读 substrate 对**：逐条核 0011-2/3/4 值与字段；identity 不入阻力（只缩 kinship）。
+2. **读 substrate 对**：逐条核 0011-2/3/4 值与字段；**阻力只读 血债 floor / leverage / ceiling / 外压**，**不读 satisfaction**（失望层、走召对 + 净负）、**不读 identity**（只缩 kinship）——0011-2 D2-6 不变式2 / H2 堵好回合洗白。执行层 `exec_fidelity`（非阻力）才读 satisfaction / kinship。
 3. **破局非灭亡**：ceiling 硬墙但走程序压成顺颁（D5-5）、dig-2 红线守死不内嵌判负。
 4. **中旨第一刀自洽 + 非装饰**：命门题打回仍落 STIGMA + 血债（可观察，D5-6）；真中旨闸 defer。
 5. **gaming 扫洞**：① 中旨绕四层 → 六科照封 + MIDZHI 全局污名 + 透支账（第二刀）；② 话术诱导降敏感度 → 结构化查表（0011-4 D4-5）；③ 召对侦察套利 → dry_run 物理只读护栏（D5-3）；④ LLM 把打回写成办成 → D5-11 硬约束。
