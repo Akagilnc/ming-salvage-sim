@@ -602,7 +602,7 @@ export function CourtDrawer({
           <button className="icon-button" aria-label="收起" onClick={onClose}><X size={16} /></button>
         </div>
         <div className="segmented">
-          {["内阁+六部", "收藏", "在职", "全部"].map((group) => (
+          {["内阁+六部", "收藏", "在职", "全部", "在野"].map((group) => (
             <button
               className={ministerGroup === group ? "active" : ""}
               key={group}
@@ -619,7 +619,7 @@ export function CourtDrawer({
           list={filtered}
           portraitPrefix="minister_"
           selectedMinister={selectedMinister}
-          emptyNote={q ? "无匹配大臣。" : "此栏暂无可召见大臣。"}
+          emptyNote={q ? "无匹配大臣。" : (ministerGroup === "在野" ? "暂无在野前臣可起复。" : "此栏暂无可召见大臣。")}
           onOpenChat={onOpenChat}
           courtMode={ministerGroup === "内阁+六部" || ministerGroup === "收藏"}
           onUploadPortrait={onUploadPortrait}

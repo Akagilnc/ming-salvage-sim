@@ -98,12 +98,14 @@ def build_court_brief(context: CourtContext) -> str:
 def build_court_roster(context: CourtContext) -> str:
     """全体在朝大臣名册——表格（| 分隔）压 token，固定喂进大臣 system。
     去掉了 inspect_minister/list_court/list_personnel 后，大臣据此知道"别人"现状，不再调工具查。
-    含被罢/下狱/流放/致仕者（标状态），不含后宫、非大明势力、未登场者（防剧透）。
+    含被罢/下狱/流放/致仕者（标状态），不含后宫、宗藩（就藩宗室非朝堂命官）、非大明势力、未登场者（防剧透）。
     """
     db = context.db
     lines: List[str] = []
     for c in _ctx().characters.values():
-        if c.office_type == "后宫":
+        # roster scope：非后宫、非宗藩（宗室就藩非朝堂命官，PR#121；大臣据此名册知他人现状，
+        # 宗藩不入此册，与 web visible_in_court 同步，cmr R3 cross-section）。
+        if c.office_type in ("后宫", "宗藩"):
             continue
         if getattr(c, "power_id", "ming") != "ming":
             continue
@@ -129,7 +131,8 @@ def build_court_roster_index(context: CourtContext) -> str:
     db = context.db
     lines: List[str] = []
     for c in _ctx().characters.values():
-        if c.office_type == "后宫":
+        # roster scope：非后宫、非宗藩（同 build_court_roster，cmr R3 cross-section）。
+        if c.office_type in ("后宫", "宗藩"):
             continue
         if getattr(c, "power_id", "ming") != "ming":
             continue

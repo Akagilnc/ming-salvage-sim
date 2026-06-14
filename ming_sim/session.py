@@ -34,7 +34,7 @@ from ming_sim.decree import (
 from ming_sim.issues import bind_content as _bind_issues
 from ming_sim.issues import sync_opening_legacies
 from ming_sim.llm_model import create_agno_db, extract_agent_text, verify_llm_available
-from ming_sim.models import Character, CourtContext, GameState, LLMConfig
+from ming_sim.models import Character, CourtContext, GameState, LLMConfig, is_vassal_prince
 from ming_sim.paths import user_data_path
 from ming_sim.registry import MinisterRegistry, bind_content as _bind_registry
 from ming_sim.skills import bind_content as _bind_skills
@@ -505,6 +505,9 @@ class GameSession:
         for c in self.content.characters.values():
             if getattr(c, "power_id", "ming") != "ming":
                 continue
+            # 宗藩（就藩宗室）非朝堂命官，召见阶段名册同各 roster 排除（PR#121，cmr R5）。
+            if is_vassal_prince(c):
+                continue
             status, _ = self.db.get_character_status(c.name)
             if status == "offstage":
                 continue
@@ -590,6 +593,11 @@ class GameSession:
     def can_summon(self, character: Character) -> Tuple[bool, str]:
         if character.name in self.temporary_characters:
             return (True, "")
+        # 宗藩（就藩宗室）非朝堂命官，不可召见——与 web _require_active_minister / 各 roster 同口径
+        # （PR#121 隐藏宗藩）。can_summon 是 summon_minister 工具链（session + web 流式两路）的共用闸，
+        # 集中守此一处即覆盖两路，否则裁判可绕列表按名召宗藩（cmr R4 cross-section）。后宫不在此拒。
+        if is_vassal_prince(character):
+            return (False, f"{character.name}为就藩宗室，非朝廷命官，无法召见。")
         status, reason = self.db.get_character_status(character.name)
         if status == "active":
             return (True, "")
