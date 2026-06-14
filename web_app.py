@@ -423,11 +423,11 @@ class DirectivePatch(BaseModel):
 
 
 def _character_power_id(character: Character, db) -> str:
-    """人物所属势力 id：DB 权威，回退内存 power_id，默认 ming。"""
-    row = db.conn.execute(
-        "SELECT power_id FROM characters WHERE name=?", (character.name,)
-    ).fetchone()
-    return (row["power_id"] if row else None) or getattr(character, "power_id", "ming") or "ming"
+    """人物所属势力 id：DB 权威，回退内存 power_id，默认 ming。
+
+    权威解析单一真源在 db.resolve_power_id（session.can_summon 等同源复用，见 #125），
+    此处委托，朝堂可见性/召见两端口径一致、不各写一份。"""
+    return db.resolve_power_id(character)
 
 
 def visible_in_court(character: Character, db) -> bool:
