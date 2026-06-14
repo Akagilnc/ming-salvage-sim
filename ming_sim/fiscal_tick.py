@@ -281,6 +281,12 @@ def settle_tick(
     new_st["官民田"] = 官民田
     new_st["隐田"] = 隐田
     new_st["unmet_relief"] = r["unmet_relief"]  # §9：输出给 LLM 裁判
+    # 末态前置 finite 校验：有限但极大输入（如 正赋+三饷 溢出）会使派生值成 inf/nan，而守恒断言的
+    # nan 比较恒 False、漏过 → 静默持久化毒态。非有限即 settlement 产出垃圾，fail-loud 不落库
+    # （PR#110 coderabbit）。用 FiscalConservationError（调用方隔离捕获、港口锁不持久化）。
+    for _k, _v in new_st.items():
+        if not math.isfinite(float(_v)):
+            raise FiscalConservationError(f"末态 {_k} 非有限值（派生溢出 inf/nan）：{_v}")
     return FiscalTickResult(new_st=new_st, breakdown=r)
 
 

@@ -162,6 +162,13 @@ def test_fiscal_g9_three_tick_death_spiral():
         st = res.new_st
 
 
+def test_fiscal_nonfinite_derived_fails_loud():
+    # 线上 PR#110（coderabbit major）：有限但极大输入（正赋+三饷 → inf）派生 inf/nan；守恒断言因
+    # nan 比较恒 False 漏过 → 静默持久化毒态。末态 finite 校验 → FiscalConservationError（被隔离不落库）。
+    with pytest.raises(FiscalConservationError):
+        settle_tick(S(), dict(base, 正赋应征=1e308, 三饷应征=1e308), [])
+
+
 def test_conservation_error_is_distinct_type():
     # 守恒破是 settlement bug（fail-loud），与坏输入 ValueError 区分；正常 tick 不抛
     assert issubclass(FiscalConservationError, AssertionError)
