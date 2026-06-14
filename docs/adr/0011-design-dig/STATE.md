@@ -2,13 +2,14 @@
 
 > **这是什么**：ADR 0011（actor 博弈：圣旨阻力网 + 离心账本）的设计深挖工作存档。承 GitHub #112 tracker。**设计累积，未写进 ADR 正文**（待批量 fold + CMR r2 修一起落）。
 > **位置**：`docs/adr/0011-design-dig/`，分支 `design/0011-actor-resistance-adr`。
-> **细节 8 文件**：[dig-1 派系功能(决定8)](dig-1-faction-function.md) / [dig-2 外压(决定9)](dig-2-external-pressure.md) / [dig-3 资源经济menu](dig-3-resource-economy.md) / [dig-4 血债schema(决定2)](dig-4-blooddebt-schema.md) / [dig-5 价值矩阵(决定3)](dig-5-value-matrix.md) / [dig-6 认同度层](dig-6-identity-layer.md) / [dig-7 seed名单74人](dig-7-seed-roster.md) / [dig-8 四层票拟(决定4/5)](dig-8-four-layer-edict.md) / [north-star](north-star-90fen.md)。
+> **细节 9 文件**：[dig-1 派系功能(决定8)](dig-1-faction-function.md) / [dig-2 外压(决定9)](dig-2-external-pressure.md) / [dig-3 资源经济menu](dig-3-resource-economy.md) / [dig-4 血债schema(决定2)](dig-4-blooddebt-schema.md) / [dig-5 价值矩阵(决定3)](dig-5-value-matrix.md) / [dig-6 认同度层](dig-6-identity-layer.md) / [dig-7 seed名单74人](dig-7-seed-roster.md) / [dig-8 四层票拟(决定4/5)](dig-8-four-layer-edict.md) / [dig-9 ceiling敏感度天花板(决定1)](dig-9-ceiling-table.md) / [north-star](north-star-90fen.md)。
 
 > ## 🏁 里程碑（2026-06-14）：actor 博弈设计阶段收口
-> **决定 1–9 全有设计稿、全用户拍板、全 durable。** 内核 end-to-end 闭合：`substrate(血债dig-4/矩阵dig-5/认同度dig-6/seed dig-7) → resolve_directive 四层票拟(dig-8) → outcome → 反馈`。破局回路(走程序坐实→旨意轴翻转→命门变非命门→顺颁)串起全部。
+> **决定 1–9 全有设计稿、全用户拍板、全 durable。substrate 机制+值全齐**(血债dig-4/矩阵dig-5/认同度dig-6/seed dig-7/**ceiling dig-9**)。内核 end-to-end 闭合：`substrate → resolve_directive 四层票拟(dig-8) → outcome → 反馈`。破局回路(走程序坐实→旨意轴翻转→命门变非命门→顺颁)串起全部，出路恒可达已证明。
 > **下一阶段 = 收口 + 评审(大活，清醒时干)**：① 把 dig-1~8 fold 成正式 ADR 0011 决定 + sub-ADR（血债 sub-ADR 0011-2 先=总解锁，带 dig-6 kinship 去max(1)改动一起 CMR）② parked CMR r2 修 ③ 全套走完整 CMR（设计文档同等评审）。
 > **实现 = 编码活，spawn 隔壁**，硬序：血债 schema + 矩阵42值 + identity列 + seed 先落，四层票拟后做（resolve 读它们，零实现则读空值）。
-> **待办散件**：ceiling 表随矩阵值填；高起潜剔出阉党(characters.json)；叛变需补 faction-UPDATE 写路径；issues "停滞"语义实现端确认。
+> **待办散件**：ceiling 表已设计(dig-9)，精确值随矩阵α/β playtest调；高起潜剔出阉党(characters.json)；叛变需补 faction-UPDATE 写路径；issues "停滞"语义实现端确认。
+> **会话存档**：gstack checkpoint `20260614-215230-...-substrate-complete.md`(本次完整态)。
 
 ## ⚠️ 重验日志 2026-06-14（隔壁开发推进后，对承重 claim 重新 query 实际系统）
 触发：用户问"隔壁开发推进了，你之前说的没完成的东西还靠谱不"。结果：**4 条承重判断全部仍成立，2 条过时（都不致命）**。
