@@ -234,17 +234,19 @@ def group_secret_orders_for_sim(
         key = bucket.get(o.get("status"))
         if key is None:
             continue
+        # 字符串字段一律 str() 兜底：损坏存档里若为非字符串（如 content 是整数），切片/落库
+        # 不致 TypeError（照 simulation._clean_* 的 `str(item.get(...) or "")` 惯例）。
         groups[key].append({
             "id": int(o.get("id") or 0),
-            "minister_name": o.get("minister_name") or "",
-            "title": o.get("title") or "",
-            "content": (o.get("content") or "")[:120],
+            "minister_name": str(o.get("minister_name") or ""),
+            "title": str(o.get("title") or ""),
+            "content": str(o.get("content") or "")[:120],
             "turn_issued": o.get("turn_issued") or 0,
             "due_turn": o.get("due_turn") or 0,
             # DB 行的进展在 result；已分组过的旧承载条目在 progress——两者都收，使本函数
             # 能就地重分组旧 list 形状 ctx（恢复端归一，见 _recovered_grouped）。
-            "progress": o.get("result") or o.get("progress") or "",
-            "sim_note": o.get("sim_note") or "",     # 上轮推演写的副作用
+            "progress": str(o.get("result") or o.get("progress") or ""),
+            "sim_note": str(o.get("sim_note") or ""),     # 上轮推演写的副作用
         })
     return groups
 

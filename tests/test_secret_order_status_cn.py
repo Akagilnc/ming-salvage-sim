@@ -135,6 +135,15 @@ def test_group_hardens_against_malformed_input():
     ])
     assert [o["id"] for o in grouped["在办"]] == [1]
 
+    # 字符串字段非字符串（损坏存档）：str() 兜底，不在 content 切片处 TypeError
+    bad = group_secret_orders_for_sim([
+        {"id": 7, "minister_name": 999, "title": None, "content": 12345,
+         "status": "pending_review"},
+    ])["待核议"][0]
+    assert bad["content"] == "12345"           # str() 后再切片，不崩
+    assert bad["minister_name"] == "999"
+    assert isinstance(bad["title"], str)
+
 
 def test_simulator_payload_secret_orders_has_no_english_enum(game):
     """边界保证：payload["secret_orders"] 序列化后零 active/pending_review/status 字面
