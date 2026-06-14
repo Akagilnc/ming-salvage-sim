@@ -173,6 +173,34 @@ def test_cli_backend_parallel_safe_resolution(monkeypatch):
     assert cb.cli_backend_parallel_safe(cfg(channel="")) is False           # legacy env=agy → 串行
 
 
+def test_cli_trace_concurrent_writes_not_corrupted(tmp_path, monkeypatch):
+    """并发 _trace 写盘不交错损坏：N 线程各写一条大记录，文件行数正确且每行都是合法 JSON
+    （cmr #83 线上 gemini high：CliChat.invoke 并发下 trace 写须加锁）。"""
+    import json as _json
+    import threading
+    import ming_sim.cli_backend as cb
+    p = tmp_path / "trace.jsonl"
+    monkeypatch.setattr(cb, "_TRACE_PATH", str(p))
+    monkeypatch.setattr(cb, "_TRACE_DISABLED", False)
+    monkeypatch.setattr(cb, "_trace_announced", True)  # 免 announce print
+    n = 24
+
+    def _w(i):
+        cb._trace({"ts": "t", "seq": i, "tag": f"t{i}", "backend": "codex", "model_id": "m",
+                   "dur_s": 0, "attempts": 1, "wants_json": False, "prompt_chars": 0,
+                   "resp_chars": 0, "error": None, "prompt": "p" * 800, "response": "r" * 800})
+
+    threads = [threading.Thread(target=_w, args=(i,)) for i in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    lines = p.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == n, f"行数 {len(lines)} != {n}（并发写交错/丢行）"
+    for ln in lines:
+        _json.loads(ln)  # 每行合法 JSON = 无交错损坏
+
+
 def test_parallel_extract_propagates_extractor_error(game, monkeypatch):
     """任一 extractor 抛错经并行路径原样上抛（→ 上层 SettlementAbort），不被并发吞掉。"""
     import pytest
