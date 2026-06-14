@@ -909,14 +909,9 @@ def _emit_pairing_warnings(new_row, effect: object, sink: Optional[List[str]] = 
             tags = json.loads(raw_tags or "[]")
         except (TypeError, ValueError):
             tags = []
-    raw_ongoing = _g("ongoing_effects", "{}")
-    if isinstance(raw_ongoing, dict):
-        ongoing = raw_ongoing
-    else:
-        try:
-            ongoing = json.loads(raw_ongoing or "{}")
-        except (TypeError, ValueError):
-            ongoing = {}
+    # ongoing_effects 经统一守门 loads_effect_dict（已解析 dict 原样 / JSON 串解析 / 非 dict→{}，
+    # 含调用方预解析容器的兼容，#117 R5 chokepoint 一致）。
+    ongoing = loads_effect_dict(_g("ongoing_effects", "{}"))
     for w in _initiative_resolve_pairing_warnings(str(_g("title", "") or ""), tags, ongoing, effect):
         tlog(f"[pairing] {w}")
         if sink is not None:
