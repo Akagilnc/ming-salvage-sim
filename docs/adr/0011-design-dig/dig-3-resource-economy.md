@@ -35,6 +35,7 @@ ground 查证：当前皇帝一回合可下无限道旨/召遍大臣/20 条密�
 PR#113（#70 step1 史实重标，改 FISCAL_PROVINCE_SUBSTRATE.md）在定的东西正是本菜单 fiscal 三条的接口钩子。doc 阶段对齐最划算。已 post forward-compat comment → [#113 comment](https://github.com/Akagilnc/ming-salvage-sim/pull/113#issuecomment-4701140109)。用户将让隔壁 session 看，可能 re-run #113 评审。
 **需 #70 配合 3 点**：
 1. **settle_tick 末态暴露 per-省 breakdown**（民欠新增/军饷欠/unmet_relief）——「三饷→民怨」传导要拿来映射 adjust_classes。doc 已注「末态不暴露分量」，点名下游消费者=离心账本，建议归因列 port 必做（否则实现后回插）。**（最高风险项）**
+   - **X-R1 裁定(2026-06-14，codex 抓出我"即可"过强)**：`民欠新增` 不能只暴露合并总额（=正赋+三饷−实征），**须按 source 拆出三饷分量**——「三饷→民怨」是三饷专属传导(史实压垮农民的是三饷非正赋)，合并总额算不出三饷的锅；且 doc 对火耗已保留正赋/三饷分量、同份 doc 不该一处拆一处合。**三饷分量 = 三饷→民怨的输入(ADR 0011 设计要求)**。分摊规则属 fiscal 建模(lean=三饷-marginal: min(短缺,三饷应征)归三饷余额归正赋；pro-rata 替代)，硬要求=三饷分量可分。顺带解了 加征反噬的"复用三饷通道难做反噬归因"。已发 [#113 comment](https://github.com/Akagilnc/ming-salvage-sim/pull/113#issuecomment-4701341649) 更正原帖。
 2. **`起运定额` step2 选型纳入「可截留/可预支」**——寅吃卯粮（截留京运/预支三饷）需要，单一死封顶表达不出选择性截留。
 3. **确认 `三饷应征`（饷率 effect 通道）对玩家动作开放**——加征反噬复用此通道（同时间线事件）。
 
