@@ -810,16 +810,21 @@ _FISCAL_RECURRING_PHRASES = (
 
 
 def _has_economy_entry(d: object) -> bool:
-    """是否含「能真正立账」的月度 economy 项：须有非空 account + 非零数值 delta——
-    flows 会跳过缺 account/零额/非数 delta 的项不立账，故空壳/零额不算配对（CMR codex）。"""
+    """是否含「flows 会真正立账」的月度 economy 项：account∈(国库,内库) + delta 经 int() 强转非零
+    ——与 flows._apply_economy_list 同口径（它只对 国库/内库 立账、`int(delta or 0)` 强转、跳过
+    零额/非数/它账）。空壳/它账/零额/非数不算配对，数字串 delta 同 flows 认账（CMR codex+claude）。"""
     if not isinstance(d, dict):
         return False
     for item in d.get("economy") or []:
         if not isinstance(item, dict):
             continue
-        acct = str(item.get("account") or "").strip()
-        delta = item.get("delta")
-        if acct and isinstance(delta, (int, float)) and not isinstance(delta, bool) and delta != 0:
+        if str(item.get("account") or "") not in ("国库", "内库"):
+            continue
+        try:
+            delta = int(item.get("delta") or 0)
+        except (TypeError, ValueError):
+            continue
+        if delta != 0:
             return True
     return False
 
@@ -834,18 +839,21 @@ def _initiative_resolve_pairing_warnings(
     effect = effect if isinstance(effect, dict) else {}
     warns: List[str] = []
 
-    if any(p in blob for p in _MILITARY_RAISE_PHRASES) or any(p in blob for p in _MILITARY_MOVE_PHRASES):
+    # 练军/募营 须落 new_armies；调将 须落人物变更——分别判，不混为一谈（练军只挂调任仍缺军籍、
+    # 调将只挂建军仍缺主将调任，混判会互相消音，CMR codex）。office_changes 是 ADR 0009 死键、
+    # _apply_issue_entities 不读，不纳入 has_office（纳入会消音本该响的告警，CMR gemini）。
+    needs_army = any(p in blob for p in _MILITARY_RAISE_PHRASES)
+    needs_office = any(p in blob for p in _MILITARY_MOVE_PHRASES)
+    if needs_army or needs_office:
         has_army = bool(effect.get("new_armies")) or bool(effect.get("army_delta"))
-        # 调将落人物变更（任命/调任）；character_status_changes 兼容。office_changes 是 ADR 0009
-        # 后的死键、_apply_issue_entities 不读，故不纳入判定（纳入会消音本该响的告警，CMR gemini）。
-        has_office = bool(
-            effect.get("人物变更") or effect.get("character_status_changes")
-        )
-        # 练军/募营 须落 new_armies；调将 须落人物变更；两者皆缺即告警。
-        if not has_army and not has_office:
+        has_office = bool(effect.get("人物变更") or effect.get("character_status_changes"))
+        if needs_army and not has_army:
             warns.append(
-                f"军事国策「{str(title)[:16]}」结案无 new_armies/人物变更 配对"
-                "（疑只推进度条未建军籍/调将，#46）"
+                f"军事国策「{str(title)[:16]}」结案无 new_armies 配对（练军/募营疑未建军籍，#46）"
+            )
+        if needs_office and not has_office:
+            warns.append(
+                f"军事国策「{str(title)[:16]}」结案无人物变更配对（调将疑未落主将调任，#46）"
             )
 
     if any(p in blob for p in _FISCAL_RECURRING_PHRASES):
