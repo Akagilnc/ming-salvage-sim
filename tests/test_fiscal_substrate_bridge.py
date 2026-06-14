@@ -157,3 +157,22 @@ def test_substrate_corrupt_due_isolated(fresh_game):
     assert isinstance(flows, list) and flows, "Due 非字典不该掀翻固定财政（AttributeError 逃逸隔离）"
     after = _read_settle(db)["st"]
     assert abs(after["军饷欠"] - 20) < 1e-3, "坏 Due 不该推进（港口锁）"
+
+
+def test_substrate_corrupt_stock_isolated(fresh_game):
+    # cmr ship-pre R2（codex concur P1）：开账 stock 非数值（如 省库库银=[]）曾在 float() 抛
+    # TypeError 逃逸 flows 隔离炸 pre_settle。前置验形归 ValueError 后→被隔离捕获，固定财政照常。
+    from ming_sim.flows import apply_fixed_period_flows
+    db, state = fresh_game
+    row = db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
+    fiscal = json.loads(str(row["fiscal"]))
+    fiscal["settle"]["st"]["省库库银"] = []  # 非数值
+    db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id='shaanxi'",
+        (json.dumps(fiscal, ensure_ascii=False),),
+    )
+    db.conn.commit()
+    flows = apply_fixed_period_flows(db, state)
+    assert isinstance(flows, list) and flows, "非数值 stock 不该掀翻固定财政（TypeError 逃逸隔离）"
+    after = _read_settle(db)["st"]
+    assert after["省库库银"] == [], "坏 stock 不该推进（港口锁：原值不变）"
