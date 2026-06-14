@@ -134,6 +134,10 @@ RAISE_CASES = [
     ("G21B2 st非字典", 5, base, [], "st 非字典"),
     ("G21B3 p非字典", S(), 5, [], "p 非字典"),
     ("G21B4 action type非str", S(), base, [dict(type=["清丈"], cost=2)], "action type 非字符串"),
+    # 线上 PR#110 R1（gemini medium）：正赋应征=None（亩额派生）但 正赋亩额 缺省/0 → 正赋 静默
+    # 算成 0，违 fail-loud。须 正赋亩额>0，否则 ValueError。
+    ("G21C1 None正赋缺亩额", S(), dict(base, 正赋应征=None), [], "正赋亩额>0"),
+    ("G21C2 None正赋亩额0", S(), dict(base, 正赋应征=None, 正赋亩额=0), [], "正赋亩额>0"),
 ]
 
 

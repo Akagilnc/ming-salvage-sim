@@ -149,6 +149,9 @@ def settle_tick(
                 raise ValueError(f"param {pk} 为负")
         elif pk in p and pk != "正赋应征":  # 仅 正赋应征 可 None=走亩额派生
             raise ValueError(f"param {pk} 为 None(仅 正赋应征 可 None)")
+    # 正赋应征=None（启用亩额派生）时 正赋亩额 须 >0，否则 正赋 静默算成 0（违 fail-loud，PR#110 gemini）
+    if p.get("正赋应征") is None and p.get("正赋亩额", 0) <= 0:
+        raise ValueError("正赋应征=None(亩额派生) 须 正赋亩额>0")
     _due = p["Due"]  # presence 已在必填检查（line 62）；此处验形：Due 非 dict（None/list/数值）→
     if isinstance(_due, bool) or not isinstance(_due, dict):  # ValueError，否则下方 .items()/.get() 抛
         raise ValueError("Due 非字典")  # AttributeError 逃逸调用方隔离（flows 只 catch ValueError/守恒破）炸 pre_settle（cmr ship-pre P1）
