@@ -463,8 +463,13 @@ def _extractor_context_payload(
             ongoing = json.loads(row["ongoing_effects"] or "{}")
         except (ValueError, TypeError):
             return []
+        if not isinstance(ongoing, dict):  # stored JSON 可能是非 dict（#117 同类）
+            return []
         out: List[Dict[str, object]] = []
-        for econ in ongoing.get("economy") or []:
+        _eco = ongoing.get("economy")
+        for econ in (_eco if isinstance(_eco, list) else []):  # 真值非 list 守卫（#117 codex）
+            if not isinstance(econ, dict):  # 逐项守：econ.get 在非 dict 上抛 AttributeError（不被下方 TypeError/ValueError 接）
+                continue
             try:
                 delta = int(econ.get("delta"))
             except (TypeError, ValueError):

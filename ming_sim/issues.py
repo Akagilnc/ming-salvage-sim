@@ -389,6 +389,8 @@ def _format_issue_ongoing(ongoing_raw: str) -> str:
         eff = json.loads(ongoing_raw or "{}")
     except Exception:
         return ""
+    if not isinstance(eff, dict):  # stored JSON 可能是非 dict（#117 同类）
+        return ""
     parts: List[str] = []
     # isinstance 守卫：eff 读自已存 JSON（源自 enrich/extractor，未必清洗），metrics/economy 可能
     # 是真值非 dict/list（`or {}`/`or []` 兜不住）→ .items()/迭代 抛错。本函数是展示用 brief，守住免崩（#117 同类）。
@@ -2752,7 +2754,8 @@ def apply_issue_inertia_and_ongoing(
 
         # metrics
         metric_part: Dict[str, int] = {}
-        for k, v in (ongoing.get("metrics") or {}).items():
+        _om = ongoing.get("metrics")  # #117 同类：stored ongoing 的 metrics 真值非 dict 守卫
+        for k, v in (_om if isinstance(_om, dict) else {}).items():
             if k not in ISSUE_METRIC_KEYS:
                 continue
             try:

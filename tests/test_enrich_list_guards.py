@@ -7,7 +7,12 @@ issue-effect 的 economy（经 _apply_economy_list apply choke）与展示用 _f
 from __future__ import annotations
 
 import ming_sim.cli_backend as cb
-from ming_sim.flows import _apply_economy_list
+from ming_sim.flows import (
+    _apply_class_dict,
+    _apply_economy_list,
+    _apply_faction_dict,
+    _apply_metric_dict,
+)
 
 
 def test_enrich_buildings_non_list_no_crash(monkeypatch):
@@ -32,3 +37,19 @@ def test_apply_economy_list_valid_still_works(game):
     db, state, _content = game
     out = _apply_economy_list(db, state, [{"account": "国库", "delta": -5, "reason": "测试"}])
     assert isinstance(out, list)  # 正常路径不被守卫吞掉
+
+
+def test_apply_economy_list_skips_non_dict_items(game):
+    """list 内混非 dict 项不崩，跳过非 dict、只落合法项（#117 codex 逐项守）。"""
+    db, state, _content = game
+    out = _apply_economy_list(db, state, [1, "x", None, {"account": "国库", "delta": -3, "reason": "t"}])
+    assert isinstance(out, list)  # 不抛 AttributeError
+
+
+def test_apply_metric_faction_class_dict_non_dict_no_crash(game):
+    """metrics/factions/class 被给成真值非 dict（issue-effect 未验证路径）时不抛、返回空（#117 同类）。"""
+    db, state, _content = game
+    for bad in (True, 5, "oops", [1, 2]):
+        assert _apply_metric_dict(state, bad, db=db) == {}
+        assert _apply_faction_dict(db, bad) == {}
+        assert _apply_class_dict(db, bad) == {}
