@@ -69,6 +69,24 @@ def test_db_active_included_even_if_memory_offstage(game):
         ch.status = original_status
 
 
+def test_vassal_prince_excluded_from_court(game):
+    """宗室/就藩藩王（office_type=宗藩）不是可召见/可任免的朝堂官员，即便 ming+active 也不入列
+    （用户 2026-06-14 拍：宗室要隐藏）。藩王在册数据照旧留 DB（事件按名引用不受影响），只是不进
+    朝堂/任免列表 UI。"""
+    db, state, content = game
+    name = next(
+        (n for n, c in content.characters.items()
+         if getattr(c, "office_type", "") == "宗藩"),
+        None,
+    )
+    if name is None:
+        import pytest
+        pytest.skip("基底盘面无宗藩人物")
+    ch = content.characters[name]
+    db.set_character_status(state, name, "active", "测试：在世")
+    assert visible_in_court(ch, db) is False
+
+
 def test_consort_excluded_from_court(game):
     """后宫不算朝堂大臣，DB active 也不入列。"""
     db, _state, content = game
