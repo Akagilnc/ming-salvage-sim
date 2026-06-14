@@ -952,10 +952,7 @@ class WebGame:
         for row in self.db.list_closed_issues_at(target_turn):
             status = str(row["status"])
             effect_key = "effect_on_resolve" if status == "resolved" else "effect_on_fail"
-            try:
-                effect = json.loads(str(row[effect_key] or "{}"))
-            except Exception:
-                effect = {}
+            effect = loads_effect_dict(row[effect_key])  # 统一守门，绝不向前端吐非 dict（#117 R5）
             out.append({
                 "id": int(row["id"]),
                 "kind": row["kind"],
