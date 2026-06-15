@@ -2948,9 +2948,9 @@ def test_person_change_rejects_unknown_action_not_silent(game):
     pcs = applied["applied_person_changes"]
     assert len(pcs) == 1
     assert pcs[0].get("rejected") is True, "未知动作必须被拒收，不能静默落库或丢弃"
-    # 拒收项不得落库：payload 给的 office='兵部尚书' 绝不能被写进 DB/内存（否则「写了再拒」=半落库，
-    # 只查动作文本会漏抓；须断言 DB+内存 office 都未变（codex R1）。
+    # 拒收项不得落库：office 须与拒收前完全一致（含 payload 里的 兵部尚书 绝不被写）。断言「office 未变」
+    # 即完整覆盖「写了再拒」半落库；不再单独断言「兵部尚书 not in office」——那对原职本就含该串的人物会误失败
+    # （codex+CodeRabbit R2 concur，brittle）。「未变」本身已 robust 覆盖 payload 不落库（codex R1）。
     after_office_db = db.conn.execute("SELECT office FROM characters WHERE name=?", (name,)).fetchone()["office"]
-    assert after_office_db == before_office_db, "拒收项不得改 DB office（含 payload 里的 兵部尚书）"
+    assert after_office_db == before_office_db, "拒收项不得改 DB office（payload 兵部尚书 不得落库）"
     assert content.characters[name].office == before_office_mem, "拒收项不得改内存 office"
-    assert "兵部尚书" not in (after_office_db or ""), "拒收项 payload office 绝不落库"
