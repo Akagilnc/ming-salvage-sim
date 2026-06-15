@@ -86,6 +86,28 @@ def test_new_issue_oversized_severity_clamped_not_abort(game):
     assert sev == 100  # clamp 到域上界
 
 
+def test_new_issue_infinity_field_rejected_not_abort(game):
+    db, state, _ = game
+    # JSON 里 1e309 解析成 float('inf')，int(inf) 抛 OverflowError（非 TypeError/ValueError）——
+    # 预校验须连 OverflowError 一起拒整项，不能逃逸 abort（cmr ni r3 codex）。
+    ni = {"origin_kind": "decree", "kind": "situation", "title": "测试·inf", "bar_value": 1e309}
+    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
+    rej = _rejected(out)
+    assert len(rej) == 1, out
+    assert rej[0]["category"] == "invalid_enum"
+    assert "强转失败" in rej[0]["reason"]
+
+
+def test_new_issue_infinity_expected_months_defaults_not_abort(game):
+    db, state, _ = game
+    # expected_months=inf → _compute_inertia 内层 int(inf) OverflowError 默认 em=0（与其它脏
+    # expected_months 一致），不逃逸、issue 照常落库（inertia=0）。
+    ni = {"origin_kind": "decree", "kind": "situation", "title": "测试·inf月数", "expected_months": 1e309}
+    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
+    created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
+    assert len(created) == 1, out
+
+
 def test_new_issue_insert_code_exception_propagates(game, monkeypatch):
     db, state, _ = game
     def _boom(*a, **k):
