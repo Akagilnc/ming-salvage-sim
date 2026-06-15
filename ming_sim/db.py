@@ -2354,10 +2354,14 @@ class GameDB:
         )
         return f"阶级总览：{head}。高压预警：{warn}。"
 
-    def adjust_classes(self, deltas: Dict[str, Dict[str, int]]) -> None:
+    def adjust_classes(self, deltas: Dict[str, Dict[str, int]]) -> List[Dict[str, object]]:
         """deltas 结构：{ key: {satisfaction: +/-N, leverage: +/-N} }
         key 形式：'农民' (全国) 或 '农民@shaanxi' (省级)。
+
+        查无此阶级（名/省不匹配）→ missing_ref 逐项拒收留痕（ADR 0008 决定 1，#14/#63
+        死法 3）；入参经 _apply_class_dict 预清洗。返回拒收项列表，桥接自动收。
         """
+        rejected: List[Dict[str, object]] = []
         for key, fields in deltas.items():
             if not fields:
                 continue
@@ -2370,6 +2374,11 @@ class GameDB:
                 (name.strip(), region_id.strip()),
             ).fetchone()
             if not row:
+                rejected.append({
+                    "name": key, "rejected": True, "category": "missing_ref",
+                    "reason": f"class_delta 查无此阶级「{key}」（未入 classes 表）",
+                    "item": {key: fields},
+                })
                 continue
             sat = int(row["satisfaction"]) + int(fields.get("satisfaction", 0) or 0)
             lev = int(row["leverage"]) + int(fields.get("leverage", 0) or 0)
@@ -2381,6 +2390,7 @@ class GameDB:
                 (sat, lev, name.strip(), region_id.strip()),
             )
         self.conn.commit()
+        return rejected
 
     def power_rows(self, exclude_self: bool = False) -> List[sqlite3.Row]:
         where = "WHERE id != 'ming'" if exclude_self else ""
@@ -3872,7 +3882,11 @@ class GameDB:
             f"{row['status']}"
         )
 
-    def adjust_factions(self, deltas: Dict[str, object]) -> None:
+    def adjust_factions(self, deltas: Dict[str, object]) -> List[Dict[str, object]]:
+        """逐项落库；查无此派系名 → missing_ref 逐项拒收留痕（ADR 0008 决定 1，#14/#63
+        死法 3）。入参经 _apply_faction_dict 预清洗（坏值已在那层拒），此处只余未知名一类。
+        返回拒收项列表（{"rejected": True, ...}），桥接 _collect_inline_rejections 自动收。"""
+        rejected: List[Dict[str, object]] = []
         for faction, val in deltas.items():
             if isinstance(val, dict):
                 sat_d = int(val.get("satisfaction") or 0)
@@ -3889,6 +3903,11 @@ class GameDB:
                 "SELECT satisfaction, leverage FROM factions WHERE name = ?", (faction,)
             ).fetchone()
             if not row:
+                rejected.append({
+                    "name": faction, "rejected": True, "category": "missing_ref",
+                    "reason": f"faction_delta 查无此派系「{faction}」（未入 factions 表）",
+                    "item": {faction: val},
+                })
                 continue
             new_sat = max(0, min(100, int(row["satisfaction"]) + sat_d))
             new_lev = max(0, min(100, int(row["leverage"]) + lev_d))
@@ -3897,6 +3916,7 @@ class GameDB:
                 (new_sat, new_lev, faction),
             )
         self.conn.commit()
+        return rejected
 
     def turn_economy_summary(self, turn: int) -> str:
         rows = self.conn.execute(
