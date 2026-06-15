@@ -108,3 +108,33 @@ def test_advance_code_exception_propagates(game, monkeypatch):
     monkeypatch.setattr(type(db), "advance_issue", _boom)
     with pytest.raises(RuntimeError, match="模拟 advance_issue"):
         I.apply_issue_tracker_output(db, state, {"advances": [{"issue_id": iid, "delta_bar": 5}]})
+
+
+# --- reject 路径不得泄漏 metric 副作用（cmr advances r1 codex high + claude concur）---
+# advances 段曾在 advance_issue 的 None 检查之前就 _apply_metric_dict（就地 mutate state.metrics）：
+# 引用 stale/已非 active issue 但带 metric_delta 时，metric 已落 state、项却标 missing_ref「未落地」
+# ——矛盾且结算 commit 无 rollback。fix：pre-check active，确认后才应用 metric。
+
+
+def test_advance_missing_issue_no_metric_leak(game):
+    db, state, _ = game
+    before = dict(state.metrics)
+    out = I.apply_issue_tracker_output(db, state, {
+        "advances": [{"issue_id": 999999, "delta_bar": 5, "metric_delta": {"民心": -10}}],
+    })
+    rej = _rejected(out)
+    assert len(rej) == 1 and rej[0]["category"] == "missing_ref", out
+    assert dict(state.metrics) == before, f"missing_ref advance 不得泄漏 metric：{before} → {dict(state.metrics)}"
+
+
+def test_advance_non_active_issue_no_metric_leak(game):
+    db, state, _ = game
+    iid = _make_active_issue(db, state)
+    db.close_issue(state, iid, reason="resolved", narrative="先结案")
+    before = dict(state.metrics)
+    out = I.apply_issue_tracker_output(db, state, {
+        "advances": [{"issue_id": iid, "delta_bar": 5, "metric_delta": {"皇威": -8}}],
+    })
+    rej = _rejected(out)
+    assert len(rej) == 1 and rej[0]["category"] == "missing_ref", out
+    assert dict(state.metrics) == before, "已非 active advance 不得泄漏 metric"
