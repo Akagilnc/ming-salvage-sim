@@ -225,6 +225,29 @@ def test_for_role_preserves_cli_channel_fields_for_advanced_roles():
     assert derived.cli_timeout_seconds == 240
 
 
+def test_config_constants_single_source_in_models():
+    """SSOT 接线（#58/#60）：channel/model/timeout/max_tokens 默认常量的 canonical 定义在 models，
+    llm_config / cli_backend 旧址只是 re-export（同一对象），LLMConfig 默认值即引用这些常量——
+    防未来在第二处重写字面量漂移。"""
+    import ming_sim.models as m
+    import ming_sim.llm_config as lc
+    import ming_sim.cli_backend as cb
+    from ming_sim.models import LLMConfig
+    # re-export 同一对象（不是各写一份字面量）
+    assert lc.CLI_DEFAULT_TIMEOUT_SECONDS is m.CLI_DEFAULT_TIMEOUT_SECONDS
+    assert lc.VALID_CHANNELS is m.VALID_CHANNELS
+    assert lc.CODEX_DEFAULT_MODEL is m.CODEX_DEFAULT_MODEL
+    assert cb.CODEX_DEFAULT_MODEL is m.CODEX_DEFAULT_MODEL
+    assert cb.CLAUDE_DEFAULT_MODEL is m.CLAUDE_DEFAULT_MODEL
+    assert lc.API_DEFAULT_MAX_TOKENS is m.API_DEFAULT_MAX_TOKENS
+    assert lc.API_DEFAULT_TIMEOUT_SECONDS is m.API_DEFAULT_TIMEOUT_SECONDS
+    # LLMConfig 默认值 == 常量（dataclass 默认引用 SSOT，非裸字面量）
+    cfg = LLMConfig(api_key="", base_url="", model="m")
+    assert cfg.max_tokens == m.API_DEFAULT_MAX_TOKENS
+    assert cfg.timeout_seconds == m.API_DEFAULT_TIMEOUT_SECONDS
+    assert cfg.cli_timeout_seconds == m.CLI_DEFAULT_TIMEOUT_SECONDS
+
+
 def test_load_llm_config_cli_env_uses_cli_default_timeout_not_api(monkeypatch):
     """codex R1 #2：legacy env CLI（MING_SIM_LLM_BACKEND 设）时 cli_timeout_seconds 必须用
     CLI 默认（300），不沿用 API 的 timeout_seconds（180）——后者会被当 CLI 子进程超时上限。"""

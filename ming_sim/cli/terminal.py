@@ -14,7 +14,7 @@ from ming_sim.constants import COURT_BREAK_COMMANDS, EXIT_COMMANDS, TURN_UNIT
 from ming_sim.assets import wrap
 from ming_sim.context import match_minister_from_text
 from ming_sim.exceptions import ExitGame, SettlementAbort
-from ming_sim.models import Character, GameState, is_vassal_prince
+from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS, Character, GameState, is_vassal_prince
 from ming_sim.session import GameSession, TurnPhase
 from ming_sim.skills import print_all_skill_cards, print_skill_card, skill_display_name
 
@@ -471,7 +471,7 @@ def run_cli(
     advanced_model: str = "",
     advanced_base_url: str = "",
     advanced_api_key: str = "",
-    timeout_seconds: float = 180.0,
+    timeout_seconds: float = API_DEFAULT_TIMEOUT_SECONDS,
 ) -> None:
     """CLI 主循环：建 GameSession，逐回合 play_turn。"""
     from ming_sim.llm_config import load_llm_config

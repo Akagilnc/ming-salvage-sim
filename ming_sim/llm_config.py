@@ -7,7 +7,15 @@ import json
 import os
 from typing import Dict, Optional
 
-from ming_sim.models import LLMConfig
+from ming_sim.models import (
+    LLMConfig,
+    CODEX_DEFAULT_MODEL,
+    CLAUDE_DEFAULT_MODEL,
+    CLI_DEFAULT_TIMEOUT_SECONDS,
+    VALID_CHANNELS,
+    API_DEFAULT_MAX_TOKENS,
+    API_DEFAULT_TIMEOUT_SECONDS,
+)
 from ming_sim.paths import user_data_path
 
 RUNTIME_LLM_PATH = user_data_path("runtime_llm.json")
@@ -35,12 +43,8 @@ _CLI_RUNTIME_FIELDS = ("runner", "model", "timeout_seconds")
 # CLI 通道在内存里用这个占位符填 LLMConfig.api_key（脱 key 运行），它绝不是真实 key。
 CLI_BACKEND_PLACEHOLDER = "cli-backend"
 
-# CLI 子进程默认超时（秒）。与 LLMConfig.cli_timeout_seconds 默认对齐；CLI 通道的
-# timeout 单一真源——别拿 API 的 timeout_seconds（默认 180）当 CLI 子进程超时（codex R1）。
-CLI_DEFAULT_TIMEOUT_SECONDS = 300.0
-
-# 合法执行通道集合——单一真源,新增通道只改这里（#55）。
-VALID_CHANNELS = frozenset({"api", "cli"})
+# CLI_DEFAULT_TIMEOUT_SECONDS / VALID_CHANNELS 的 canonical 定义已下沉到 models（L0 叶子，#60），
+# 此处经上面的 import re-export，保留 `from ming_sim.llm_config import CLI_DEFAULT_TIMEOUT_SECONDS` 既有路径。
 
 
 def is_real_api_key(value: object) -> bool:
@@ -66,7 +70,10 @@ def _slot_text(data: Dict[str, object], key: str) -> str:
 
 # API slot 的数值字段保持 JSON 数值类型（int/float），让 preserve-save 与 fresh-save 产出
 # 同一形态、load 归一也统一类型（#53）。default 与 save_runtime_llm 签名默认对齐。
-_API_NUMERIC_FIELDS = {"max_tokens": (int, 8000), "timeout_seconds": (float, 180.0)}
+_API_NUMERIC_FIELDS = {
+    "max_tokens": (int, API_DEFAULT_MAX_TOKENS),
+    "timeout_seconds": (float, API_DEFAULT_TIMEOUT_SECONDS),
+}
 
 
 def _slot_number(value: object, caster, default):
@@ -154,8 +161,7 @@ def normalize_thinking_level(level: str) -> str:
 
 
 def cli_model_from_env(runner: str, fallback: str = "") -> str:
-    # 默认模型复用 cli_backend 的单一真源常量,不重写字面量（#55）。
-    from ming_sim.cli_backend import CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL
+    # 默认模型复用 models 的单一真源常量(#60：原懒-import cli_backend 已消，改 top-level import models)。
     if runner == "codex":
         return (os.environ.get("MING_SIM_CODEX_MODEL") or CODEX_DEFAULT_MODEL).strip()
     if runner == "claude":
@@ -167,7 +173,7 @@ def load_llm_config(
     base_url: str,
     model: str,
     api_key: str = "",
-    timeout_seconds: float = 180.0,
+    timeout_seconds: float = API_DEFAULT_TIMEOUT_SECONDS,
     thinking_level: str = "",
     advanced_model: str = "",
     advanced_base_url: str = "",
@@ -293,8 +299,8 @@ def save_runtime_llm(
     base_url: str,
     model: str,
     api_key: str,
-    max_tokens: int = 8000,
-    timeout_seconds: float = 180.0,
+    max_tokens: int = API_DEFAULT_MAX_TOKENS,
+    timeout_seconds: float = API_DEFAULT_TIMEOUT_SECONDS,
     thinking_level: str = "",
     advanced_model: str = "",
     advanced_base_url: str = "",

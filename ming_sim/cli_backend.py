@@ -35,6 +35,10 @@ from openai.types.chat import ChatCompletion, ChatCompletionMessage
 from openai.types.chat.chat_completion import Choice
 from pydantic import BaseModel
 
+# CLI runner 默认模型单一真源在 models（L0 叶子），此处 re-export 保留
+# `from ming_sim.cli_backend import CODEX_DEFAULT_MODEL` 既有路径（#60）。
+from ming_sim.models import CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL
+
 # agy 是自治编程 agent：给它仓库目录当 workspace，它会跑去翻源码/DB 研究问题，
 # 行动计划（英文）泄进角色对话 + 元游戏泄漏。给它一个空目录当 cwd，无可探。
 _AGY_CWD = os.path.join(tempfile.gettempdir(), "ming_agy_sandbox")
@@ -43,9 +47,7 @@ os.makedirs(_AGY_CWD, exist_ok=True)
 # agy 单次调用上限（秒）。extractor payload 大 + 自治 agent 启动慢，给足。
 _AGY_TIMEOUT = int(os.environ.get("MING_SIM_AGY_TIMEOUT", "300"))
 _AGY_BIN = os.environ.get("MING_SIM_AGY_BIN", "agy")
-# CLI runner 默认模型——单一真源(llm_config.cli_model_from_env 复用,别在第二处重写字面量)。
-CODEX_DEFAULT_MODEL = "gpt-5.5"
-CLAUDE_DEFAULT_MODEL = "claude-opus-4-8"
+# CODEX_DEFAULT_MODEL / CLAUDE_DEFAULT_MODEL 现 import 自 models（见上，#60）。
 _CODEX_BIN = os.environ.get("MING_SIM_CODEX_BIN", "codex")
 _CODEX_MODEL = os.environ.get("MING_SIM_CODEX_MODEL", CODEX_DEFAULT_MODEL)
 # claude -p 独立进程后端：opus/sonnet/haiku。纯文本输出无日志壳。
