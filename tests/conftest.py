@@ -59,17 +59,21 @@ def game(content):
     content（101 全），不被 probe.db 旧档（缺 characters.json 独有的宗藩王等、缩成 58）掩盖。"""
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
-    db = GameDB(path, content)
-    db.seed_static_data()
-    state = db.load_state()
-    # 与生产开局序列一致（session.py：seed_static_data → load_state → sync_opening_legacies）：补开局
-    # 负面帝国修正 modifiers——metric/economy delta 会查 active legacy modifier 做 %修正，缺则盘面与
-    # 生产不一致、依赖修正的断言对不上（codex #5 r1 high）。不立 issue、不进推演（同生产）。
-    issues_mod.sync_opening_legacies(db, state)
+    db = None
     try:
+        db = GameDB(path, content)
+        db.seed_static_data()
+        state = db.load_state()
+        # 与生产开局序列一致（session.py：seed_static_data → load_state → sync_opening_legacies）：补开局
+        # 负面帝国修正 modifiers——metric/economy delta 会查 active legacy modifier 做 %修正，缺则盘面与
+        # 生产不一致、依赖修正的断言对不上（codex #5 r1 high）。不立 issue、不进推演（同生产）。
+        issues_mod.sync_opening_legacies(db, state)
         yield db, state, content
     finally:
-        db.conn.close()
+        # setup（GameDB/seed/load_state）抛错也清 temp——原 setup 在 try 外，失败绕过 teardown 泄漏
+        # 临时 DB 文件/句柄（cmr #5 r2 coderabbit）。走封装的 db.close() 而非裸 conn.close()（gemini #5）。
+        if db is not None:
+            db.close()
         for p in (path, f"{path}_agno.db"):
             if os.path.exists(p):
                 os.remove(p)
@@ -89,13 +93,16 @@ def saved_game(content):
         pytest.skip("缺玩过存档 data/probe.db（gitignored）；本用例依赖运行时状态，待 deterministic 化（#5 followup）")
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
-    shutil.copy(_SEED_DB, path)
-    db = GameDB(path, content)
-    state = db.load_state()
+    db = None
     try:
+        shutil.copy(_SEED_DB, path)
+        db = GameDB(path, content)
+        state = db.load_state()
         yield db, state, content
     finally:
-        db.conn.close()
+        # setup（copy/GameDB/load_state）抛错也清 temp（cmr #5 r2 coderabbit）；封装 db.close()（gemini #5）。
+        if db is not None:
+            db.close()
         for p in (path, f"{path}_agno.db"):
             if os.path.exists(p):
                 os.remove(p)
