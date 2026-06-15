@@ -2791,16 +2791,23 @@ class GameDB:
                     new_value = self.apply_region_cannon(state, region_id, cannon_delta)
                     actual_delta = new_value - old_value
                     if actual_delta == 0:
-                        # 请求非 0 却被城防上限 clamp 成 no-op（如 level-0 边地 cap=0）：不能静默 continue
-                        # ——邸报叙述了加炮、盘面无变化、restore 只读 DB 接续不到这条决策＝违 P1 落库铁律
-                        # （#18，issue #14 静默吞家族）。记一条 delta=0 的 region_log 留痕（cap=city_level×8）。
-                        # 真 no-op 请求（cannon_delta==0，本就没要加炮）无须留痕，避免噪声。
+                        # 请求非 0 却被 clamp 成 no-op：不能静默 continue——邸报叙述了改炮、盘面无变化、
+                        # restore 只读 DB 接续不到这条决策＝违 P1 落库铁律（#18，issue #14 静默吞家族）。
+                        # 记一条 delta=0 的 region_log 留痕。真 no-op 请求（cannon_delta==0）无须留痕避噪。
+                        # 区分上/下限钳制（codex+CodeRabbit R1 concur）：请求加炮(>0)=撞 city_level×8 上限；
+                        # 请求减炮(<0)却 no-op=已无炮可减（下限 0），缘由不能一律归「上限」。
                         if cannon_delta != 0:
                             _cap = int(row["city_level"]) * 8
-                            _clamp_reason = (
-                                f"{reason}（城防炮请求{cannon_delta:+d}门被城防上限拦截："
-                                f"城市等级{int(row['city_level'])}→上限{_cap}门，无变化）"
-                            )
+                            if cannon_delta > 0:
+                                _clamp_reason = (
+                                    f"{reason}（城防炮请求+{cannon_delta}门被城防上限拦截："
+                                    f"城市等级{int(row['city_level'])}→上限{_cap}门，已达上限无变化）"
+                                )
+                            else:
+                                _clamp_reason = (
+                                    f"{reason}（城防炮请求{cannon_delta}门但已无炮可减"
+                                    f"（现{old_value}门），无变化）"
+                                )
                             self.conn.execute(
                                 """
                                 INSERT INTO region_logs
