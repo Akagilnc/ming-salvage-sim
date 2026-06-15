@@ -13,6 +13,7 @@ import os
 import sys
 from pathlib import Path
 
+from ming_sim.applier import Provenance
 from ming_sim.context import bind_content
 from ming_sim.decree import (
     atomic_and_reload,
@@ -107,10 +108,14 @@ def _dump_board(db, state) -> None:
         print(f"  {r['id']}：民心{r['public_support']} 动乱{r['unrest']} 城防炮{r['cannon']}门")
 
 
-def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", registry=None) -> str:
+def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", registry=None,
+               source: Provenance = Provenance.player_decree) -> str:
     """收一份中文 schema 形态的稀疏 delta（+ 我产的邸报 narrative / 诏书 decree_text）→
     规范化（中文 key→英文 canonical）→ pre_settle（财政 tick + auto_trigger）→
     settle_with_delta（落库→inertia→结局→推进），推进一回合。返回结算报告文本。
+
+    source 默认 player_decree：探针每回合即皇帝下旨之结算，其落库拒收对玩家可见（邸报给一句
+    in-world 提示，ADR 0008 决定 5）。纯世界推演回合可由信封传 source=system_simulation 静默。
 
     narrative 落 turn_logs/turn_reports 作下月前文 + 玩家邸报；canonical delta 先落
     pending_resolve_context 作重跑真源，turn_extractions.extractor_output 存 applied
@@ -150,6 +155,7 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
         narrative=narrative,
         decree_text=decree_text,
         extractor_output=json.dumps(extracted, ensure_ascii=False),
+        source=source,  # 拒收来源（决定玩家面邸报提示，ADR 0008 决定 5）
         # 注入确定性 applier:落库不走 legacy env CLI enrichment,driver 纯确定性(#54)。
         delta_applier=lambda d, s, ex, ct, rg: apply_score_extraction(
             d, s, ex, content=ct, registry=rg, llm_config=_DETERMINISTIC_LLM
@@ -186,17 +192,26 @@ def main(argv=None, *, game=None) -> int:
     if args.cmd == "settle":
         with open(args.delta, encoding="utf-8") as f:
             obj = json.load(f)
-        # 信封形态 {narrative, decree_text, delta}（我每回合的完整产出）;否则裸 delta（兼容）。
+        # 信封形态 {narrative, decree_text, delta, source?}（我每回合的完整产出）;否则裸 delta（兼容）。
+        source = Provenance.player_decree
         if isinstance(obj, dict) and "delta" in obj:
             raw_delta = obj["delta"]
             narrative = str(obj.get("narrative") or "")
             decree_text = str(obj.get("decree_text") or "")
+            # 信封可显式标来源（纯世界推演回合传 system_simulation 静默拒收提示）；非法值回落默认。
+            _raw_src = str(obj.get("source") or "").strip()
+            if _raw_src:
+                try:
+                    source = Provenance(_raw_src)
+                except ValueError:
+                    source = Provenance.player_decree
         else:
             raw_delta, narrative, decree_text = obj, "", ""
         # run_settle 抛 ValueError（畸形/未知/非 dict delta，含信封 delta 非 object）→ CLI 转退出码。
         try:
             report = run_settle(
-                db, state, content, raw_delta, narrative=narrative, decree_text=decree_text
+                db, state, content, raw_delta, narrative=narrative, decree_text=decree_text,
+                source=source,
             )
         except ValueError as exc:
             print(f"settle 失败：{exc}", file=sys.stderr)
