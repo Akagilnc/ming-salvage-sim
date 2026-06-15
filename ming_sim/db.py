@@ -78,7 +78,8 @@ def _offices_table() -> Dict[str, object]:
             from ming_sim.assets import load_json_asset
             data = load_json_asset("offices.json")
             _OFFICES_TABLE = data if isinstance(data, dict) else {}
-        except Exception:
+        except Exception as exc:
+            tlog(f"[content] offices.json 加载失败，回空表（核心内容缺失/损坏）：{exc}")  # #14 surface
             _OFFICES_TABLE = {}
     return _OFFICES_TABLE
 
@@ -4521,7 +4522,8 @@ class GameDB:
                 continue
             try:
                 tags = json.loads(row["tags"] or "[]")
-            except Exception:
+            except Exception as exc:
+                tlog(f"[db] tags JSON 损坏，回空（subject={row['subject_id']}）：{exc}")  # #14 surface
                 tags = []
             tag_matches = [t for t in tag_needles if t and any(str(t) in str(tag) or str(tag) in str(t) for tag in tags)]
             exact = row["subject_type"] == "character" and row["subject_id"] == character_name
@@ -4649,7 +4651,8 @@ class GameDB:
             age = max(0, int(turn) - int(row["turn"]))
             try:
                 tags = json.loads(row["tags"] or "[]")
-            except Exception:
+            except Exception as exc:
+                tlog(f"[db] tags JSON 损坏，回空（turn={row['turn']}）：{exc}")  # #14 surface
                 tags = []
             hit_count = sum(
                 1 for n in needles
@@ -4834,7 +4837,8 @@ class GameDB:
             return None
         try:
             timeline = json.loads(row["timeline"] or "[]")
-        except Exception:
+        except Exception as exc:
+            tlog(f"[db] timeline JSON 损坏，回空：{exc}")  # #14 surface
             timeline = []
         return {
             "turn": int(row["turn"]),
@@ -4972,7 +4976,8 @@ class GameDB:
         for r in rows:
             try:
                 options = json.loads(r["options_json"] or "[]")
-            except Exception:
+            except Exception as exc:
+                tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
                 options = []
             choice = (r["choice_json"] or "").strip()
             out.append({
@@ -5842,7 +5847,8 @@ class GameDB:
         ).fetchall():
             try:
                 eff = json.loads(str(lg["modifiers"] or "{}"))
-            except Exception:
+            except Exception as exc:
+                tlog(f"[db] legacy modifiers JSON 损坏，跳过该 legacy：{exc}")  # #14 surface
                 continue
             for acc in ("国库", "内库", "民心", "皇威"):
                 v = eff.get(acc)
