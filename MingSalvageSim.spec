@@ -70,18 +70,22 @@ def _release_guard():
             "  金手指=常驻例外，打包前还原： git stash push content/buildings.json （打完 git stash pop）"
         )
 
-    # 3) git 可用时：content/buildings.json 不得有任何未提交改动（更一般，兜未来新增作弊）
-    try:
-        rc = subprocess.run(
-            ["git", "diff", "--quiet", "HEAD", "--", "content/buildings.json"]
-        ).returncode
-    except (FileNotFoundError, OSError):
-        rc = 0  # 无 git（纯 export 包）→ 跳过；已知 cheat id 扫描已兜底
-    if rc == 1:
-        raise SystemExit(
-            "[release-guard] content/buildings.json 有未提交改动——发行包须从干净 content 打。\n"
-            "  先： git stash push content/buildings.json （打完 git stash pop）"
-        )
+    # 3) 真 git 仓库时：content/buildings.json 不得有任何未提交改动（更一般，兜未来新增作弊）。
+    #    仅在 .git 存在（真 working tree）才查——纯 export 包（无 .git，即便装了 git）跳过，
+    #    否则 `git diff HEAD` 因 HEAD 不可达返 rc=1 会误报「有未提交改动」（cmr r1 claude）；
+    #    export 包的金手指由上面 ② 已知 id 扫描兜底。
+    if Path(".git").exists():
+        try:
+            rc = subprocess.run(
+                ["git", "diff", "--quiet", "HEAD", "--", "content/buildings.json"]
+            ).returncode
+        except (FileNotFoundError, OSError):
+            rc = 0  # 无 git 二进制 → 跳过；②已知 cheat id 扫描兜底
+        if rc == 1:
+            raise SystemExit(
+                "[release-guard] content/buildings.json 有未提交改动——发行包须从干净 content 打。\n"
+                "  先： git stash push content/buildings.json （打完 git stash pop）"
+            )
 
 
 _release_guard()
