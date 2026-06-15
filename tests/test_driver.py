@@ -59,7 +59,20 @@ def test_run_settle_logs_chapter_memory_skip(game, capsys):
     run_settle(db, state, content, None)
     out = capsys.readouterr().out
     assert "跳过章节记忆" in out
-    assert str(before) in out  # 含 turn 号便于审计定位是哪回合
+    assert f"turn {before}→{before + 1}" in out  # 精确校验审计回合范围（不松到任意数字误匹配）
+
+
+def test_run_settle_no_chapter_skip_audit_when_settle_aborts(game, capsys, monkeypatch):
+    """settle 中途失败（SettlementAbort/异常）→回合未推进、可重试，不该误记一条「已跳章节记忆」审计
+    （codex PR#133 P3：审计须在 settle_with_delta 成功之后打）。"""
+    db, state, content = game
+    def _boom(*a, **k):
+        raise RuntimeError("settle 炸了")
+    monkeypatch.setattr(driver, "settle_with_delta", _boom)
+    with pytest.raises(RuntimeError):
+        run_settle(db, state, content, None)
+    out = capsys.readouterr().out
+    assert "跳过章节记忆" not in out  # 失败回合不留误导审计
 
 
 def test_run_settle_rejects_non_dict_nested_value(game):
