@@ -11,6 +11,7 @@ import argparse
 import os
 
 from ming_sim.cli.terminal import run_cli
+from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS
 
 
 def main() -> None:
@@ -45,7 +46,7 @@ def main() -> None:
     parser.add_argument(
         "--timeout-seconds",
         type=float,
-        default=float(os.environ.get("OPENAI_TIMEOUT_SECONDS", "180") or 180),
+        default=float(os.environ.get("OPENAI_TIMEOUT_SECONDS", str(API_DEFAULT_TIMEOUT_SECONDS)) or API_DEFAULT_TIMEOUT_SECONDS),
         help="LLM request timeout seconds（读 OPENAI_TIMEOUT_SECONDS）",
     )
     parser.add_argument(
