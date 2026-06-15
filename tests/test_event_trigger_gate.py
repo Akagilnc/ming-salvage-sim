@@ -214,3 +214,12 @@ def test_text_cond_field_must_be_text_field():
     assert gate_text_key_form_error("power.houjin.stance") == ""            # 文本字段 OK
     assert gate_text_key_form_error("region.huguang.unrest")               # 数值字段 → 拒
     assert gate_text_key_form_error("power.houjin.leverage")               # 数值字段 → 拒
+
+
+def test_gate_key_rejects_empty_region_after_at():
+    """online codex P2：class.<名>@<空> = 想写 regional 漏 region → runtime 静默回退 national，
+    fail-loud 拒之。national 用无 @ 形式仍放行；存量 @region 形式不误拒。"""
+    from ming_sim.content import gate_key_form_error
+    assert gate_key_form_error("class.士绅@.satisfaction")          # @ 后空 region → 拒
+    assert gate_key_form_error("class.士绅.satisfaction") == ""     # national（无 @）放行
+    assert gate_key_form_error("class.士绅@nanzhili.satisfaction") == ""  # regional 正常放行

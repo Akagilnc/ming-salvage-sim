@@ -138,11 +138,15 @@ def gate_key_form_error(key: str) -> str:
         return "id 或 字段 为空"
     if any(not m.strip() for m in id_segment.split("|")):
         return "id 列表含空成员（| 分隔）"
-    # class.<名>[@<region>] 的类名不得为空（@ 前；cmr r2 Claude+codex concur，| 守不到 @ 子形）
+    # class.<名>[@<region>] 成员校验（cmr r2/online concur）：类名（@ 前）非空；带 @ 者 region
+    # （@ 后）也须非空——空 region 的 @ 是「想写 regional 却漏 region」的 malformed regional gate，
+    # runtime 会静默回退 national class 行（应 fail-loud；online codex P2）。national 用无 @ 形式。
     if parts[0] == "class":
         for member in id_segment.split("|"):
             if not member.split("@", 1)[0].strip():
                 return "class 名为空（@ 前）"
+            if "@" in member and not member.split("@", 1)[1].strip():
+                return "class @ 后 region 为空（regional gate 须指定 region；national 用无 @ 形式）"
     return ""
 
 
@@ -154,8 +158,8 @@ def gate_text_key_form_error(key: str) -> str:
     parts = key.split(".")
     if len(parts) != 3:
         return "文本相等 gate 的 key 须 表.id.字段 三段（不支持多 id / 聚合 / bare metric）"
-    if parts[0] not in ("region", "army", "power"):
-        return f"文本相等 gate 仅支持 region/army/power 表，得「{parts[0]}」"
+    if parts[0] not in _GATE_TEXT_FIELDS:  # 文本可求值表（复用中央 _GATE_TEXT_FIELDS keys，非硬编码）
+        return f"文本相等 gate 仅支持 {'/'.join(_GATE_TEXT_FIELDS)} 表，得「{parts[0]}」"
     if "|" in parts[1]:  # _eval_gate_key_str 仅单 id（| 多 id 在段内不增 "." 段数，须单独拒）
         return "文本相等 gate 不支持多 id（| 分隔）"
     if not parts[1].strip() or not parts[2].strip():

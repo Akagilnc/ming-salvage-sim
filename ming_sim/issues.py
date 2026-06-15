@@ -303,9 +303,12 @@ def _gate_passed(gate: Dict[str, str], metrics: Dict[str, int], db: GameDB) -> b
             try:
                 cur = _eval_gate_key_str(key, db)
             except sqlite3.OperationalError as exc:
-                # typo'd 字段名 → SELECT 绑 SQLite 抛 OperationalError；fail-loud 成清晰 content
-                # 错误（#12 Q3：trigger_gate 字段错属静态 content schema 错），不留 cryptic 崩。
-                raise ValueError(f"trigger_gate key「{key}」字段无效（DB 无此列）：{exc}") from exc
+                # typo'd 字段名 → SELECT 绑 SQLite 抛「no such column」；fail-loud 成清晰 content
+                # 错误（#12 Q3：trigger_gate 字段错属静态 content schema 错）。其它 DB 错（锁/无表等）
+                # 不误标字段，原样上抛（online sourcery）。
+                if "no such column" in str(exc).lower():
+                    raise ValueError(f"trigger_gate key「{key}」字段无效（DB 无此列）：{exc}") from exc
+                raise
             if cur is None:
                 return False
             if sop == "==" and cur != sval:
@@ -320,7 +323,9 @@ def _gate_passed(gate: Dict[str, str], metrics: Dict[str, int], db: GameDB) -> b
         try:
             val = _eval_gate_key(key, metrics, db)
         except sqlite3.OperationalError as exc:
-            raise ValueError(f"trigger_gate key「{key}」字段无效（DB 无此列）：{exc}") from exc
+            if "no such column" in str(exc).lower():
+                raise ValueError(f"trigger_gate key「{key}」字段无效（DB 无此列）：{exc}") from exc
+            raise  # 其它 DB 错不误标字段（online sourcery）
         if val is None:
             return False
         if op == ">=" and not val >= num:
