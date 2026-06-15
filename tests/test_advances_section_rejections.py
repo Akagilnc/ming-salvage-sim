@@ -138,3 +138,18 @@ def test_advance_non_active_issue_no_metric_leak(game):
     rej = _rejected(out)
     assert len(rej) == 1 and rej[0]["category"] == "missing_ref", out
     assert dict(state.metrics) == before, "已非 active advance 不得泄漏 metric"
+
+
+@pytest.mark.parametrize("bad_metric", [["列表"], "字符串", 5])
+def test_advance_non_dict_metric_delta_tolerated(game, bad_metric):
+    db, state, _ = game
+    # metric_delta 非 dict（list/str/数值）→ _apply_metric_dict 的 isinstance 守卫 sanitize 为 {}
+    # （flows 同款 #117 守门）：不 raise、正常推进、metrics 不变（sourcery advances r2 testing）。
+    iid = _make_active_issue(db, state)
+    before = dict(state.metrics)
+    out = I.apply_issue_tracker_output(db, state, {
+        "advances": [{"issue_id": iid, "delta_bar": 5, "metric_delta": bad_metric}],
+    })
+    done = [a for a in _adv(out) if not a.get("rejected") and a.get("issue_id") == iid]
+    assert len(done) == 1, out
+    assert dict(state.metrics) == before, "非 dict metric_delta 须 sanitize 为 {}、metrics 不变"
