@@ -457,3 +457,81 @@ def test_persist_crash_rolls_back_pre_settle(game, monkeypatch):
     assert db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)
     ).fetchone()[0] == before
+
+
+# ── #17: DEFAULT_DB 绝对路径 + 缺库响亮失败（不静默新建空库）──
+
+def test_default_db_is_absolute_repo_anchored():
+    """DEFAULT_DB 须绝对路径、锚 driver.py 旁的 data/probe.db（cwd 无关）——否则从非 repo 根跑
+    driver 会按 cwd 静默开错/新建库（codex-P2d，#17）。
+    注：不断言文件存在——data/*.db 被 .gitignore（#5），clean checkout/CI 上不在；只断言路径值
+    （codex R1 critical：原 assert exists 在 CI 是假绿/真红隐患）。"""
+    import os
+    from pathlib import Path
+    import driver as drv
+    assert os.path.isabs(drv.DEFAULT_DB), f"DEFAULT_DB 须绝对路径，实得 {drv.DEFAULT_DB!r}"
+    expected = Path(drv.__file__).resolve().parent / "data" / "probe.db"
+    assert Path(drv.DEFAULT_DB) == expected, f"DEFAULT_DB 须锚 driver.py 旁 data/probe.db，实得 {drv.DEFAULT_DB!r}"
+
+
+def test_open_game_fails_loud_on_missing_db(tmp_path):
+    """缺库响亮失败：driver 只在既有探针存档上结算，绝不静默 sqlite3.connect 新建空库
+    （否则 load_state 得退化盘面、玩家不知开错档，codex-P2d）。"""
+    import os
+    import pytest
+    import driver as drv
+    missing = str(tmp_path / "no_such_save.db")
+    with pytest.raises(FileNotFoundError):
+        drv.open_game(missing)
+    assert not os.path.exists(missing), "失败路径不得被静默新建"
+
+
+def test_open_game_rejects_empty_or_nonsave_db(tmp_path):
+    """存在但非真存档（空文件/非 SQLite/缺 game_state id=1）也须响亮失败——否则 init_schema +
+    load_state 会把它静默补成退化新局（codex R1 medium：仅查 exists 不够）。"""
+    import pytest
+    import driver as drv
+    empty = tmp_path / "empty.db"
+    empty.write_bytes(b"")          # 0 字节存在文件
+    with pytest.raises(ValueError):  # 收紧到设计抛的 ValueError，不用 Exception 兜底掩盖回归（CodeRabbit R1）
+        drv.open_game(str(empty))
+    garbage = tmp_path / "garbage.db"
+    garbage.write_text("not a sqlite db")
+    with pytest.raises(ValueError):
+        drv.open_game(str(garbage))
+
+
+def test_open_game_rejects_degenerate_db_with_state_but_empty_board(tmp_path):
+    """退化库：有 game_state id=1 但静态盘面 regions 空（旧 bug 在空库 load_state 写了 id=1、
+    没 seed_static_data）也须拒——只看 game_state 哨兵不够（codex R1 P2）。"""
+    import sqlite3
+    import pytest
+    import driver as drv
+    degen = tmp_path / "degenerate.db"
+    conn = sqlite3.connect(str(degen))
+    conn.execute("CREATE TABLE game_state (id INTEGER PRIMARY KEY, turn INTEGER)")
+    conn.execute("INSERT INTO game_state (id, turn) VALUES (1, 5)")
+    conn.execute("CREATE TABLE regions (id TEXT PRIMARY KEY)")  # 表在但无数据
+    conn.commit()
+    conn.close()
+    with pytest.raises(ValueError):
+        drv.open_game(str(degen))
+
+
+def test_open_game_handles_uri_special_chars_in_path(tmp_path):
+    """路径含 URI 特殊字符（空格/#）的退化库经 as_uri 编码后仍正常走 ro-probe 并响亮拒，
+    不因 f'file:{path}?mode=ro' 误解析崩（codex R2 P3）。"""
+    import sqlite3
+    import pytest
+    import driver as drv
+    weird_dir = tmp_path / "a b#c"
+    weird_dir.mkdir()
+    degen = weird_dir / "save.db"
+    conn = sqlite3.connect(str(degen))
+    conn.execute("CREATE TABLE game_state (id INTEGER PRIMARY KEY)")
+    conn.execute("INSERT INTO game_state (id) VALUES (1)")
+    conn.execute("CREATE TABLE regions (id TEXT)")  # 空盘面 → 应拒
+    conn.commit()
+    conn.close()
+    with pytest.raises(ValueError):  # 编码正确则正常走到 regions 空判定；编码错会是别的崩
+        drv.open_game(str(degen))

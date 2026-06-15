@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+from pathlib import Path
 
 from ming_sim.context import bind_content
 from ming_sim.decree import (
@@ -26,7 +28,9 @@ from ming_sim.models import LLMConfig
 from ming_sim.simulation import _canonicalize_extraction
 from ming_sim.token_stats import tlog
 
-DEFAULT_DB = "data/probe.db"
+# 绝对路径锚 repo 的 data/probe.db：相对路径会按 cwd 解析，从非 repo 根跑 driver 时静默开错/
+# 新建空库（codex-P2d，#17）。用 __file__ 锚定，cwd 无关。
+DEFAULT_DB = str(Path(__file__).resolve().parent / "data" / "probe.db")
 
 # 探针 driver 显式确定性(#54 / ADR-0004):对话里的我已是 LLM、自产完整 delta,落库核绝不该
 # 再 spawn 第二个 LLM 做 issue/office enrichment。传 channel=api 空配置 → cli_backend_active
@@ -43,7 +47,40 @@ _DETERMINISTIC_LLM = LLMConfig(api_key="", base_url="", model="", channel="api")
 
 
 def open_game(db_path: str = DEFAULT_DB):
-    """打开存档：load content + bind + GameDB + load_state。返回 (db, state, content)。"""
+    """打开存档：load content + bind + GameDB + load_state。返回 (db, state, content)。
+
+    缺库响亮失败：driver 只在既有探针存档上结算，绝不静默 sqlite3.connect 新建空库——否则
+    load_state 得退化盘面、玩家不知开错档（codex-P2d，#17）。新开局走正式建档路径，非本工具。"""
+    if not os.path.exists(db_path):
+        raise FileNotFoundError(
+            f"存档不存在：{db_path}（driver 只在既有探针存档上结算，不静默新建空库；"
+            f"从 repo 根运行或用 --db 指向真实存档）"
+        )
+    # 存在但非真存档（空文件/非 SQLite/缺 game_state id=1/静态盘面空）也须响亮失败：否则 GameDB.
+    # init_schema + load_state 会把它静默补成退化新局，玩家不知开错档（codex-P2d / R1 medium）。
+    # 只看 game_state id=1 不够：旧 bug 在空库上调过 load_state 会写 id=1，但静态盘面（regions/
+    # characters）只在 GameSession.seed_static_data 路径写——这种退化库仍须拒（codex R1 P2）。
+    # 只读(mode=ro)探一下，不 mutate：需 game_state id=1 且 regions 表有数据。
+    import sqlite3 as _sqlite3
+    # 路径经 as_uri() 正确百分号编码再拼 query：裸 f"file:{db_path}?mode=ro" 遇路径含 ?/#/空格 等
+    # URI 特殊字符会误解析（codex R2 P3）。as_uri 要求绝对路径，先 resolve。
+    _ro_uri = Path(db_path).resolve().as_uri() + "?mode=ro"
+    try:
+        _probe = _sqlite3.connect(_ro_uri, uri=True)
+        try:
+            _has_save = bool(
+                _probe.execute("SELECT 1 FROM game_state WHERE id=1").fetchone()
+                and _probe.execute("SELECT 1 FROM regions LIMIT 1").fetchone()
+            )
+        finally:
+            _probe.close()
+    except _sqlite3.Error:
+        _has_save = False
+    if not _has_save:
+        raise ValueError(
+            f"{db_path} 不是有效探针存档（缺 game_state id=1 或静态盘面 regions 为空）：driver 不在"
+            f"空库/非存档/退化 SQLite 上结算。新开局走正式建档（GameSession），非本工具。"
+        )
     content = GameContent.load()
     bind_content(content)
     issues_mod.bind_content(content)
