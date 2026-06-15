@@ -2954,3 +2954,104 @@ def test_person_change_rejects_unknown_action_not_silent(game):
     after_office_db = db.conn.execute("SELECT office FROM characters WHERE name=?", (name,)).fetchone()["office"]
     assert after_office_db == before_office_db, "拒收项不得改 DB office（payload 兵部尚书 不得落库）"
     assert content.characters[name].office == before_office_mem, "拒收项不得改内存 office"
+
+
+# ── ADR 0009 S8/S9/S15 验收 end-to-end（补完 S1-S15 骨架，#97 M0）──
+
+def test_s9_consort_leaves_palace_clears_office(game):
+    """S9 出宫（客氏案 #11）：active 后宫 受 处置(→offstage, reason_code=出宫) → status=offstage、
+    office 清空（不变式 offstage_clears_office）、reason_code=出宫。了结 #11「出宫但 status 仍 active」。"""
+    db, state, content = game
+    name = "测试出宫宫人"
+    consort = Character(
+        name=name, office="尚宫局司饰", office_type="后宫", faction="后宫",
+        aliases=[], personal_skills=[], loyalty=60, ability=55, integrity=60,
+        courage=50, style="测试出宫", power_id="ming", status="active",
+    )
+    try:
+        content.characters[name] = consort
+        db.add_character(state, consort)
+        db.set_character_status(state, name, "active", "在宫")
+        applied = issues.apply_score_extraction(
+            db, state,
+            {"人物变更": [{"name": name, "动作": "处置", "status": "offstage",
+                          "reason_code": "出宫", "reason": "出宫居家"}]},
+            content=content,
+        )
+        item = next(r for r in applied["applied_person_changes"] if r.get("name") == name)
+        assert not item.get("rejected"), f"出宫应被接受，实得 {item}"
+        row = db.conn.execute("SELECT status, office, reason_code FROM characters WHERE name=?", (name,)).fetchone()
+        assert row["status"] == "offstage"
+        assert row["reason_code"] == "出宫"
+        assert (row["office"] or "") == "", "出宫(迁出 active)须清空名分，不留幽灵官职（#11）"
+    finally:
+        content.characters.pop(name, None)
+
+
+def test_s15_amnesty_to_ming_then_appoint(game):
+    """S15 招抚归明（郑芝龙受抚）：敌→明 易主(方式=主动归附) + 任命(游击)，按序两条。
+    敌→明方向合法；power_id 翻 ming 后任命落官。"""
+    db, state, content = game
+    # 须选 active 敌方：只有 active 可易主（迁出 active 的状态不接易主）；不加 status 过滤会在 seed
+    # 插入序变动使 offstage 敌（李自成等）首选时以混淆断言失败而非 skip（Claude PR cmr R2 robustness）。
+    name = next((n for n, c in content.characters.items()
+                 if (db.conn.execute("SELECT power_id FROM characters WHERE name=?", (n,)).fetchone() or {"power_id": "ming"})["power_id"] not in (None, "ming")
+                 and c.office_type not in ("后宫", "宗藩")
+                 and db.get_character_status(n)[0] == "active"), None)
+    import pytest
+    if name is None:
+        pytest.skip("基底盘面无 active 敌方可招抚人物")
+    old = dict(db.conn.execute("SELECT power_id, status, office FROM characters WHERE name=?", (name,)).fetchone())
+    try:
+        applied = issues.apply_score_extraction(
+            db, state,
+            {"人物变更": [
+                {"name": name, "动作": "易主", "new_power": "ming", "方式": "主动归附",
+                 "反噬": {}, "reason": "受抚归明"},
+                {"name": name, "动作": "任命", "office": "福建游击", "reason": "授游击"},
+            ]},
+            content=content,
+        )
+        pcs = [r for r in applied["applied_person_changes"] if r.get("name") == name]
+        assert any(r.get("动作") == "易主" and not r.get("rejected") for r in pcs), f"易主(归附)应被接受：{pcs}"
+        row = db.conn.execute("SELECT power_id, office FROM characters WHERE name=?", (name,)).fetchone()
+        assert row["power_id"] == "ming", "招抚归明 power_id 须翻 ming"
+        assert "游击" in (row["office"] or ""), f"归明后任命须落官，实得 office={row['office']!r}"
+    finally:
+        db.conn.execute("UPDATE characters SET power_id=?, status=?, office=? WHERE name=?",
+                        (old["power_id"], old["status"], old["office"], name))
+        db.conn.commit()
+
+
+def test_s8_demotion_release_then_lower_appointment_derives_qifu(game):
+    """S8 官降三级（放出某官贬三级任用）：imprisoned 受 处置(放归→offstage) + 任命(低阶) →
+    任命从 offstage 派生 起复，多条按序落库，末态 active + 低阶官。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    _ch = content.characters[name]
+    _saved = (_ch.status, _ch.office, _ch.office_type, getattr(_ch, "status_reason", ""), getattr(_ch, "reason_code", ""))
+    try:
+        db.set_character_status(state, name, "imprisoned", "旧案在押")
+        _ch.status = "imprisoned"
+        applied = issues.apply_score_extraction(
+            db, state,
+            {"人物变更": [
+                {"name": name, "动作": "处置", "status": "offstage", "reason": "查明释放"},
+                {"name": name, "动作": "任命", "office": "知县", "reason": "贬三级任用"},
+            ]},
+            content=content,
+        )
+        pcs = [r for r in applied["applied_person_changes"] if r.get("name") == name]
+        # 末态：active + 低阶官；任命从 offstage 派生 起复。契约 require 'sequence'：派生的 处置(起复)
+        # 须落在 任命 之前（release 先于 appoint），用索引锁顺序、不止 any()（Claude PR R1：
+        # any 抓不住顺序回归）。robust 对前导 declared 处置 + 可能的 S5 顶替行。
+        row = db.conn.execute("SELECT status, office FROM characters WHERE name=?", (name,)).fetchone()
+        assert row["status"] == "active"
+        assert row["office"] == "知县"
+        appoint_idx = next(i for i, r in enumerate(pcs)
+                           if r.get("动作") == "任命" and not r.get("rejected"))
+        release_idx = next(i for i, r in enumerate(pcs)
+                           if r.get("动作") == "处置" and r.get("derived_from") == "起复")
+        assert release_idx < appoint_idx, f"派生 处置(起复) 须按序落在 任命 之前：{pcs}"
+    finally:
+        _ch.status, _ch.office, _ch.office_type, _ch.status_reason, _ch.reason_code = _saved
