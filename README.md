@@ -307,12 +307,16 @@ AI 适合判断官场反应、地方推诿、政策代价、突发事件和叙�
 桌面包用 PyInstaller 把后端 + 前端冻结成单个可分发应用（pywebview 套壳渲染 React UI，无需另起 uvicorn）：
 
 ```bash
-pip install pyinstaller pywebview tiktoken     # 打包额外依赖
+cd web && npm install && npm run build && cd ..   # 必须先构建前端：web/dist 被 .gitignore 排除，
+                                                  # 不先 build，打出来的包会缺前端（运行期白屏）
+pip install pyinstaller pywebview tiktoken         # 打包额外依赖
 pyinstaller --noconfirm --clean MingSalvageSim.spec
 # 产物：
 #   macOS         → dist/MingSalvageSim.app
 #   Windows/Linux → dist/MingSalvageSim/（整目录分发）
 ```
+
+> 打包前先确认 `git status content/buildings.json` 干净（无未提交改动）——金手指建筑（见下）若没还原，会被打进发行包。`MingSalvageSim.spec` 已内置 build-time 守门：前端未构建 / content/buildings.json 带金手指 / 有未提交改动时**会响亮报错中止**，不会静默打出坏包或作弊包。
 
 双击启动后自动开 webview 窗口；`MING_USE_BROWSER=1` 改用系统浏览器，`MING_DEBUG=1` 开 devtools + uvicorn 日志。
 

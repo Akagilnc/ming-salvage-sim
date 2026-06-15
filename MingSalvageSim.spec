@@ -38,6 +38,63 @@ def tree_datas(root: str, dest: str, exclude_parts=()):
         rows.append((str(path), str(Path(dest) / rel.parent)))
     return rows
 
+
+# ── 发行包 build-time fail-loud 守门（#96 release）──────────────────────────────
+# spec 从工作区文件系统直接打 content/ 与 web/dist；二者各有静默坏包风险，构建前响亮拦：
+#   1) 金手指：content/buildings.json 三建筑是开发工作区「常驻例外」未提交改动；脏树直接
+#      打包会把作弊建筑带进发行包（违「金手指不带」）。
+#   2) 前端：web/dist 被 .gitignore 排除；从干净 clone 跳过 `npm run build` 直接打包，
+#      tree_datas 对缺失目录静默返 0 行 → 得到 import 全成功、运行期前端缺失的「假成功」坏包。
+def _release_guard():
+    import subprocess
+
+    # 1) 前端构建产物必须在且非空（否则运行期 StaticFiles 指向空目录）
+    if not Path("web/dist/index.html").is_file():
+        raise SystemExit(
+            "[release-guard] web/dist/index.html 缺失——发行包前端未构建。\n"
+            "  先： cd web && npm install && npm run build && cd .."
+        )
+    assets_dir = Path("web/dist/assets")
+    if not assets_dir.is_dir() or not any(assets_dir.glob("*.js")):
+        raise SystemExit(
+            "[release-guard] web/dist/assets 无 JS 产物——前端构建不完整。先： cd web && npm run build"
+        )
+
+    # 2) 金手指建筑不得进包（无 git 依赖的硬底线：直接扫已知作弊建筑 id）
+    KNOWN_CHEAT_IDS = ("royal_gold_mine", "royal_inner_bank", "imperial_aviation")
+    try:
+        bj_text = Path("content/buildings.json").read_text(encoding="utf-8")
+    except OSError as exc:  # 核心内容文件缺失/不可读 → 清晰中止，不抛 raw traceback（cmr 线上 sourcery）
+        raise SystemExit(f"[release-guard] 读 content/buildings.json 失败（核心内容缺失？）：{exc}")
+    hits = [cid for cid in KNOWN_CHEAT_IDS if cid in bj_text]
+    if hits:
+        raise SystemExit(
+            f"[release-guard] content/buildings.json 含金手指建筑 {hits}——发行包不可含。\n"
+            "  金手指=常驻例外，打包前还原： git stash push content/buildings.json （打完 git stash pop）"
+        )
+
+    # 3) 真 git 仓库时：content/buildings.json 不得有任何未提交改动（更一般，兜未来新增作弊）。
+    #    仅在 .git 存在（真 working tree）才查——纯 export 包（无 .git，即便装了 git）跳过，
+    #    否则 `git diff HEAD` 因 HEAD 不可达返 rc=1 会误报「有未提交改动」（cmr r1 claude）；
+    #    export 包的金手指由上面 ② 已知 id 扫描兜底。
+    if Path(".git").exists():
+        try:
+            rc = subprocess.run(
+                ["git", "diff", "--quiet", "HEAD", "--", "content/buildings.json"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,  # 保持 build 控制台干净（cmr 线上 gemini）
+            ).returncode
+        except (FileNotFoundError, OSError):
+            rc = 0  # 无 git 二进制 → 跳过；②已知 cheat id 扫描兜底
+        if rc == 1:
+            raise SystemExit(
+                "[release-guard] content/buildings.json 有未提交改动——发行包须从干净 content 打。\n"
+                "  先： git stash push content/buildings.json （打完 git stash pop）"
+            )
+
+
+_release_guard()
+
+
 # FastAPI/uvicorn 系列
 hiddenimports = (
     _agno_hidden
