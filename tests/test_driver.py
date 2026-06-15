@@ -457,3 +457,26 @@ def test_persist_crash_rolls_back_pre_settle(game, monkeypatch):
     assert db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)
     ).fetchone()[0] == before
+
+
+# ── #17: DEFAULT_DB 绝对路径 + 缺库响亮失败（不静默新建空库）──
+
+def test_default_db_is_absolute_repo_anchored():
+    """DEFAULT_DB 须绝对路径、锚 repo 的 data/probe.db——否则从非 repo 根跑 driver 会按 cwd
+    静默开错/新建库（codex-P2d，#17）。"""
+    import os
+    import driver as drv
+    assert os.path.isabs(drv.DEFAULT_DB), f"DEFAULT_DB 须绝对路径，实得 {drv.DEFAULT_DB!r}"
+    assert drv.DEFAULT_DB.replace(os.sep, "/").endswith("data/probe.db")
+    assert os.path.exists(drv.DEFAULT_DB), "repo 内 DEFAULT_DB 应存在（绝对锚定后）"
+
+
+def test_open_game_fails_loud_on_missing_db(tmp_path):
+    """缺库响亮失败：driver 只在既有探针存档上结算，绝不静默 sqlite3.connect 新建空库
+    （否则 load_state 得退化盘面、玩家不知开错档，codex-P2d）。"""
+    import pytest
+    import driver as drv
+    missing = str(tmp_path / "no_such_save.db")
+    with pytest.raises(FileNotFoundError):
+        drv.open_game(missing)
+    assert not __import__("os").path.exists(missing), "失败路径不得被静默新建"

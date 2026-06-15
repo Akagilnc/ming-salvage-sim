@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+from pathlib import Path
 
 from ming_sim.context import bind_content
 from ming_sim.decree import (
@@ -26,7 +28,9 @@ from ming_sim.models import LLMConfig
 from ming_sim.simulation import _canonicalize_extraction
 from ming_sim.token_stats import tlog
 
-DEFAULT_DB = "data/probe.db"
+# 绝对路径锚 repo 的 data/probe.db：相对路径会按 cwd 解析，从非 repo 根跑 driver 时静默开错/
+# 新建空库（codex-P2d，#17）。用 __file__ 锚定，cwd 无关。
+DEFAULT_DB = str(Path(__file__).resolve().parent / "data" / "probe.db")
 
 # 探针 driver 显式确定性(#54 / ADR-0004):对话里的我已是 LLM、自产完整 delta,落库核绝不该
 # 再 spawn 第二个 LLM 做 issue/office enrichment。传 channel=api 空配置 → cli_backend_active
@@ -43,7 +47,15 @@ _DETERMINISTIC_LLM = LLMConfig(api_key="", base_url="", model="", channel="api")
 
 
 def open_game(db_path: str = DEFAULT_DB):
-    """打开存档：load content + bind + GameDB + load_state。返回 (db, state, content)。"""
+    """打开存档：load content + bind + GameDB + load_state。返回 (db, state, content)。
+
+    缺库响亮失败：driver 只在既有探针存档上结算，绝不静默 sqlite3.connect 新建空库——否则
+    load_state 得退化盘面、玩家不知开错档（codex-P2d，#17）。新开局走正式建档路径，非本工具。"""
+    if not os.path.exists(db_path):
+        raise FileNotFoundError(
+            f"存档不存在：{db_path}（driver 只在既有探针存档上结算，不静默新建空库；"
+            f"从 repo 根运行或用 --db 指向真实存档）"
+        )
     content = GameContent.load()
     bind_content(content)
     issues_mod.bind_content(content)
