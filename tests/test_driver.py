@@ -462,21 +462,40 @@ def test_persist_crash_rolls_back_pre_settle(game, monkeypatch):
 # ── #17: DEFAULT_DB 绝对路径 + 缺库响亮失败（不静默新建空库）──
 
 def test_default_db_is_absolute_repo_anchored():
-    """DEFAULT_DB 须绝对路径、锚 repo 的 data/probe.db——否则从非 repo 根跑 driver 会按 cwd
-    静默开错/新建库（codex-P2d，#17）。"""
+    """DEFAULT_DB 须绝对路径、锚 driver.py 旁的 data/probe.db（cwd 无关）——否则从非 repo 根跑
+    driver 会按 cwd 静默开错/新建库（codex-P2d，#17）。
+    注：不断言文件存在——data/*.db 被 .gitignore（#5），clean checkout/CI 上不在；只断言路径值
+    （codex R1 critical：原 assert exists 在 CI 是假绿/真红隐患）。"""
     import os
+    from pathlib import Path
     import driver as drv
     assert os.path.isabs(drv.DEFAULT_DB), f"DEFAULT_DB 须绝对路径，实得 {drv.DEFAULT_DB!r}"
-    assert drv.DEFAULT_DB.replace(os.sep, "/").endswith("data/probe.db")
-    assert os.path.exists(drv.DEFAULT_DB), "repo 内 DEFAULT_DB 应存在（绝对锚定后）"
+    expected = Path(drv.__file__).resolve().parent / "data" / "probe.db"
+    assert Path(drv.DEFAULT_DB) == expected, f"DEFAULT_DB 须锚 driver.py 旁 data/probe.db，实得 {drv.DEFAULT_DB!r}"
 
 
 def test_open_game_fails_loud_on_missing_db(tmp_path):
     """缺库响亮失败：driver 只在既有探针存档上结算，绝不静默 sqlite3.connect 新建空库
     （否则 load_state 得退化盘面、玩家不知开错档，codex-P2d）。"""
+    import os
     import pytest
     import driver as drv
     missing = str(tmp_path / "no_such_save.db")
     with pytest.raises(FileNotFoundError):
         drv.open_game(missing)
-    assert not __import__("os").path.exists(missing), "失败路径不得被静默新建"
+    assert not os.path.exists(missing), "失败路径不得被静默新建"
+
+
+def test_open_game_rejects_empty_or_nonsave_db(tmp_path):
+    """存在但非真存档（空文件/非 SQLite/缺 game_state id=1）也须响亮失败——否则 init_schema +
+    load_state 会把它静默补成退化新局（codex R1 medium：仅查 exists 不够）。"""
+    import pytest
+    import driver as drv
+    empty = tmp_path / "empty.db"
+    empty.write_bytes(b"")          # 0 字节存在文件
+    with pytest.raises((ValueError, Exception)):
+        drv.open_game(str(empty))
+    garbage = tmp_path / "garbage.db"
+    garbage.write_text("not a sqlite db")
+    with pytest.raises((ValueError, Exception)):
+        drv.open_game(str(garbage))
