@@ -56,6 +56,22 @@ def open_game(db_path: str = DEFAULT_DB):
             f"存档不存在：{db_path}（driver 只在既有探针存档上结算，不静默新建空库；"
             f"从 repo 根运行或用 --db 指向真实存档）"
         )
+    # 存在但非真存档（空文件/非 SQLite/缺 game_state id=1）也须响亮失败：否则 GameDB.init_schema +
+    # load_state 会把它静默补成退化新局，玩家不知开错档（codex-P2d / R1 medium）。只读探一下，不 mutate。
+    import sqlite3 as _sqlite3
+    try:
+        _probe = _sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            _has_save = _probe.execute("SELECT 1 FROM game_state WHERE id=1").fetchone()
+        finally:
+            _probe.close()
+    except _sqlite3.Error:
+        _has_save = None
+    if not _has_save:
+        raise ValueError(
+            f"{db_path} 不是有效探针存档（缺 game_state id=1）：driver 不在空库/非存档 SQLite 上结算。"
+            f"新开局走正式建档（GameSession），非本工具。"
+        )
     content = GameContent.load()
     bind_content(content)
     issues_mod.bind_content(content)
