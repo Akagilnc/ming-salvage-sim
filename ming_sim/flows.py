@@ -296,6 +296,17 @@ def _apply_economy_list(
     for move in (economy if isinstance(economy, list) else []):
         if not isinstance(move, dict):  # list 内混非 dict 项（[1,"x"]）也守，免 move.get 抛 AttributeError（#117 codex）
             continue
+        # 先解析 delta：None/"" = 缺额 → 0 no-op；bool/float/坏串 → bad_delta（_strict_int 拒
+        # bool/float，与 faction/region/army 同约）。no-op（可解析的 0/缺额）行无钱动 → 静默跳，
+        # 不论 account（空占位行不当拒收，免噪声 + 假玩家提示，#14 cmr r1 线上 codex）。
+        raw_delta = move.get("delta")
+        try:
+            delta = 0 if raw_delta in (None, "") else _strict_int(raw_delta)
+            bad_delta = False
+        except (TypeError, ValueError):
+            delta, bad_delta = 0, True
+        if not bad_delta and delta == 0:
+            continue
         account = str(move.get("account") or "")
         if account not in ("国库", "内库"):
             # 账户非法不再静默丢——逐项拒收留痕（#14 ADR0008 决定1，统一拒收契约）。
@@ -303,12 +314,7 @@ def _apply_economy_list(
                             "reason": f"economy_moves 账户非法（须 国库/内库）：{account!r}",
                             "item": move})
             continue
-        raw_delta = move.get("delta")
-        try:
-            # None/"" = 缺额 → 0 no-op；bool/float/坏串 → 拒收（_strict_int 拒 bool/float，
-            # 与 faction/region/army 同约，#14 cmr r1 codex）。
-            delta = 0 if raw_delta in (None, "") else _strict_int(raw_delta)
-        except (TypeError, ValueError):
+        if bad_delta:
             applied.append({"account": account, "rejected": True, "category": "invalid_enum",
                             "reason": f"economy_moves delta 非整数：{raw_delta!r}",
                             "item": move})

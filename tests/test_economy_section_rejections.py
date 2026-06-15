@@ -130,6 +130,47 @@ def test_float_and_bool_delta_rejected(game):
     assert len(rows) == 2, rows
 
 
+def test_noop_bad_account_skipped_not_rejected(game):
+    """no-op 空占位行（delta==0/缺额）即便 account 空/非法也静默跳，不拒收（免噪声+假提示，
+    codex r1 线上）；只有真有钱动（delta≠0）的非法 account 才拒。"""
+    db, state, content = game
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "economy_moves": [
+            {"account": "金库", "delta": 0, "reason": "空占位非法账户"},  # no-op → 跳
+            {"account": "", "reason": "缺 delta 空账户"},                # no-op → 跳
+        ],
+    }, narrative="x", decree_text="y")
+
+    assert _rejection_rows(db, turn, ECO_REJ) == []
+
+
+def test_issue_effect_cancel_economy_reaches_reports(game):
+    """撤局势 applied_cost 的 economy 账户非法 → 拒收经 entity_rejections 达 rejection_reports
+    （issue-effect 第二条路 cancel，sourcery r1 覆盖；与 close 路同 sink）。"""
+    db, state, content = game
+    turn = state.turn
+    issue_id = db.insert_issue(
+        state, kind="initiative", title="测试撤局 economy 拒收", origin_kind="decree",
+        origin_ref="", bar_value=50, bar_good_meaning="成", bar_bad_meaning="败",
+        inertia=0, stage_text="", severity=50, region_hint="", faction_hint="",
+        tags=[], ongoing_effects={}, effect_on_resolve={}, effect_on_fail={},
+        resolve_condition="", fail_condition="", cancellable="decree", cancel_cost={},
+    )
+    db.conn.commit()
+
+    run_settle(db, state, content, {
+        "cancels": [{"issue_id": issue_id,
+                     "applied_cost": {"economy": [{"account": "金库", "delta": -4, "reason": "非法"}]},
+                     "narrative": "撤"}],
+    }, narrative="x", decree_text="y")
+
+    rows = [r for r in _rejection_rows(db, turn, "issue_summary.entity_rejections")
+            if r[2] == "invalid_enum"]
+    assert len(rows) == 1, rows
+
+
 def test_economy_rejections_not_in_player_visible(game):
     """拒收项不进玩家可见 extractor_output（P4，cmr r1 codex）：economy_moves 段无 rejected 项、
     无 economy_moves_rejections 段。"""
