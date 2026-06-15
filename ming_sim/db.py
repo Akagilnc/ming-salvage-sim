@@ -5621,6 +5621,11 @@ class GameDB:
         if cancellable not in ("decree", "never", "by_progress"):
             raise ValueError(f"cancellable 非法：{cancellable}")
         bar_value = max(0, min(100, int(bar_value)))
+        # severity 与 bar_value 同为 0-100 分值，同样 clamp：原仅 int(severity) 直绑 SQLite，
+        # severity=10**100 这类（int() 过得了但绑定超 64-bit）会抛 OverflowError——new_issues 段
+        # 移除 broad except 后会逃逸成 SettlementAbort（cmr ni r2 codex）。clamp 既治溢出又补齐与
+        # bar_value 一致的值域不变式（出域静默归 0-100，同 bar_value，非拒整项）。
+        severity = max(0, min(100, int(severity)))
         phase = self._derive_issue_phase(bar_value)
         cur = self.conn.execute(
             """
@@ -5636,7 +5641,7 @@ class GameDB:
             (
                 kind, title, origin_kind, origin_ref, state.turn,
                 bar_value, bar_good_meaning, bar_bad_meaning, int(inertia),
-                phase, stage_text, int(severity), region_hint, faction_hint,
+                phase, stage_text, severity, region_hint, faction_hint,
                 json.dumps(tags or [], ensure_ascii=False),
                 json.dumps(ongoing_effects or {}, ensure_ascii=False),
                 cancellable,
