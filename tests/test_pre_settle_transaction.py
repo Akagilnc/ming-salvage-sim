@@ -83,10 +83,11 @@ def test_settling_survives_begin_turn_phase_whitelist(game, monkeypatch):
     assert db.load_state().turn_phase == TurnPhase.SETTLING.value
 
 
-def test_due_secret_order_submission_rolls_back_on_pre_settle_crash(game, monkeypatch):
+def test_due_secret_order_submission_rolls_back_on_pre_settle_crash(saved_game, monkeypatch):
     """auto_submit_due_secret_orders 挪进 pre_settle 事务（ADR 0008 S4）：到期密令本应
-    转 pending_review，但 pre_settle 内部崩溃 → 该状态翻转随事务回滚，order 仍是 active。"""
-    db, state, content = game
+    转 pending_review，但 pre_settle 内部崩溃 → 该状态翻转随事务回滚，order 仍是 active。
+    用 saved_game：依赖玩过存档里到期的 secret_order，fresh seed 无（#5）。"""
+    db, state, content = saved_game
     turn = state.turn
     # 让某 active 密令本回合到期（due_turn <= 当前 turn），auto_submit 应将其转 pending_review。
     db.conn.execute(

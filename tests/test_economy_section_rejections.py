@@ -62,9 +62,10 @@ def test_top_level_nonint_delta_rejected(game):
     assert len(rows) == 1, rows
 
 
-def test_valid_economy_still_applies_no_reject(game):
-    """合法 economy 照常落账、零拒收（不误伤）。"""
-    db, state, content = game
+def test_valid_economy_still_applies_no_reject(saved_game):
+    """合法 economy 照常落账、零拒收（不误伤）。
+    用 saved_game：断言依赖玩过存档的国库余额基线，fresh seed 不复现（#5）。"""
+    db, state, content = saved_game
     turn = state.turn
     before = _guoku(db)
 
