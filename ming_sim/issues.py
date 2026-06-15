@@ -1007,6 +1007,20 @@ def apply_issue_tracker_output(
             continue
         stage_text = str(adv.get("stage_text") or "")[:120]
         narrative = str(adv.get("narrative") or "")[:400]
+        # 先验 issue 存在且 active（与 db.advance_issue 的 None 条件 row is None / status!=active 一致）：
+        # 未找到/已非 active → missing_ref 逐项拒收留痕（陈旧/幻觉引用，同 close_issues None 归类，#63），
+        # 不裸 continue 静默丢。**必须先验、再应用 metric**：原序先 _apply_metric_dict（就地 mutate
+        # state.metrics）后判 None，会让拒收项的 metric_delta 副作用已落 state、与「未落地」矛盾且结算
+        # commit 无 rollback（cmr advances r1 codex high + claude concur）。
+        _chk = db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()
+        if _chk is None or _chk["status"] != "active":
+            applied_advances.append({
+                "rejected": True, "category": "missing_ref",
+                "reason": f"advances 引用未找到或已非 active 的 issue {issue_id}", "item": adv,
+            })
+            continue
+        # 确认 active 后才应用 metric（单线程内 _apply_metric_dict 不改 issue 表 status，故下方
+        # advance_issue 必非 None——pre-check 与其内部判定同条件）。
         metric_delta_raw = adv.get("metric_delta") or {}
         applied_metrics = _apply_metric_dict(state, metric_delta_raw if isinstance(metric_delta_raw, dict) else {}, db=db)
         new_row = db.advance_issue(
@@ -1018,14 +1032,6 @@ def apply_issue_tracker_output(
             metric_delta=applied_metrics,
             inertia_delta=inertia_delta,
         )
-        if new_row is None:
-            # advance_issue 回 None = issue 不存在 或 已非 active → 陈旧/幻觉引用，逐项拒收留痕
-            # （missing_ref），不裸 continue 静默丢（同 close_issues None 归类，#63）。
-            applied_advances.append({
-                "rejected": True, "category": "missing_ref",
-                "reason": f"advances 引用未找到或已非 active 的 issue {issue_id}", "item": adv,
-            })
-            continue
         touched_ids.add(issue_id)
         # 终结结算：bar 自然推到 100/0 触发的 resolved/failed，与 close_issues 一样落终结效果（含建筑）
         if new_row["status"] == "resolved":
