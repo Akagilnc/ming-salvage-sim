@@ -31,10 +31,12 @@
 ### B11. 全系统静默吞异常/吞畸形数据（不抛错不告警），该落没落无人知 → [issue #14](https://github.com/Akagilnc/ming-salvage-sim/issues/14)
 - 系统级模式（从 B10 抽象）：delta 畸形项 `continue` 丢弃 / apply 拒收只记 `rejected` 不报 / db.py broad `except` 返默认 / gate 解析失败返 None。后果=静默数据丢失 + DB↔叙事漂移 + 调试盲区，侵蚀 P1 落库铁律。修法待定（结算级 reject 收集器 / except 收窄记日志 / gate 失败区分）。与 #3、#13 同根。
 - **进展（v0.8.0.0, ADR 0008 PR1）**：「结算级 reject 收集器」已落地（`applier.RejectionCollector`，provenance + 事务内落 DB + commit 后镜像 JSONL）；shape 垃圾/损坏 JSON 改响亮中止+错误包。
-- **进展（v0.9.0.0, ADR 0008 PR2）**：`settle_with_delta` 真正接上 collector——9 个结算 section（势力/人物易主/地区/军队/建军/财政三段）从整段吞/裸奔崩/静默丢统一迁成逐项拒收留痕落 `rejection_reports`，值语义集中到 applier 单点守门（引擎路与探针 driver 路同判）。**剩余**：db.py broad except 收窄、gate 解析失败区分——issue #14 不关。
+- **进展（v0.9.0.0, ADR 0008 PR2）**：`settle_with_delta` 真正接上 collector——9 个结算 section（势力/人物易主/地区/军队/建军/财政三段）从整段吞/裸奔崩/静默丢统一迁成逐项拒收留痕落 `rejection_reports`，值语义集中到 applier 单点守门（引擎路与探针 driver 路同判）。
+- **进展（2026-06-15, PR #147/#148）**：再迁 faction_delta/class_delta（未知名→missing_ref、坏值含 bool/float→invalid_enum，issue-effect 路拒收不蒸发、未落库未知名不进 web 面板段）+ secret_order_updates/closes（补精确 category；修 updates 未知/非active id 静默报成功；修超界 order_id 绑 SQLite OverflowError 崩整月=#63.5）。**剩余**：issue-tracker 段（含限额/重复类拒收，需 taxonomy 设计）、人物段（用 reason_code/ADR0009 域）、db.py broad except 收窄、gate 解析失败区分——均待议，issue #14 不关。
 
-### B10. delta 顶层 key 近义易混（人事变更/人物状态变化）+ office_changes 静默拒收吞死亡 → [issue #13](https://github.com/Akagilnc/ming-salvage-sim/issues/13)
-- "毛文龙没死"真因：turn21 我把毛的死产进 `人事变更`(office_changes)而非 `人物状态变化`(character_status_changes)，office_changes 因 `new_office` 空静默拒收（[issues.py:1250](../ming_sim/issues.py)）。两个中文 key 太像。rename 候选（待议）：office_changes→`职务变更`、character_status_changes→`人物状态变更`（alias 可保旧加新别名）。修正了 #12 对"毛没死"的归因。
+### B10. delta 顶层 key 近义易混（人事变更/人物状态变化）+ office_changes 静默拒收吞死亡 ✅ 已解决（2026-06-15 关闭 #13） → [issue #13](https://github.com/Akagilnc/ming-salvage-sim/issues/13)
+- "毛文龙没死"真因：turn21 我把毛的死产进 `人事变更`(office_changes)而非 `人物状态变化`(character_status_changes)，office_changes 因 `new_office` 空静默拒收（[issues.py:1250](../ming_sim/issues.py)）。两个中文 key 太像。
+- **已解决**：ADR 0003/0009 单 `人物变更` 顶层 key + 显式 `动作` 分发已落地（`person_delta_adapter.normalize_person_changes` 合流旧 4-key，未知动作响亮拒），毛文龙「动作=处置 status=dead」现正确落库；问题二（静默拒收 surface）由 ADR 0008 RejectionCollector 覆盖。#13 已关闭。
 
 ### B9. 历史事件无结构化前提门，袁崇焕斩毛文龙在已安抚前提下误触发 → [issue #12](https://github.com/Akagilnc/ming-salvage-sim/issues/12)
 - **现象**（turn21/1629-06 实测）：玩家 turn20 已安排袁安抚毛、奏对确认"毛饷已足、效顺"，`mao_wenlong` 仍被 simulator 弹出（`event_triggers` turn21 source=simulation）；邸报叙述"列十二罪斩毛文龙于帐前"，但 DB 里 `characters.毛文龙.status=active`（**没死**）、军队 faction satisfaction 仍 100。
