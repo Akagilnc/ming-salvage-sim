@@ -2914,10 +2914,12 @@ def test_s4_reappointment_derives_duoqing_when_mourning(game):
         applied = _appoint(db, state, content, name, "礼部尚书兼东阁大学士", "夺情起复入阁")
         row = db.conn.execute("SELECT status, office FROM characters WHERE name=?", (name,)).fetchone()
         assert row["status"] == "active"
+        assert row["office"] == "礼部尚书,东阁大学士", "夺情任命须真授官（office 规范化兼→,），否则 status=active 但 office 漏写也漏抓（codex R1）"
         pcs = applied["applied_person_changes"]
         # 丁忧 优先于 offstage→起复：派生须是 夺情 而非 起复
         assert pcs[0]["动作"] == "处置" and pcs[0]["derived_from"] == "夺情"
         assert pcs[1]["动作"] == "任命" and pcs[1]["derived_from"] == "夺情"
+        assert pcs[1].get("rejected") is not True, "夺情任命不应被拒"
     finally:
         content.characters[name].status, content.characters[name].office = old_status, old_office
 
@@ -2927,6 +2929,8 @@ def test_person_change_rejects_unknown_action_not_silent(game):
     不静默吞成空结算照样推进。运行时围栏在 issues.py 动作分发。"""
     db, state, content = game
     name = active_ming_character(db, content)
+    before_office_db = db.conn.execute("SELECT office FROM characters WHERE name=?", (name,)).fetchone()["office"]
+    before_office_mem = content.characters[name].office
     applied = issues.apply_score_extraction(
         db, state,
         {"人物变更": [{"name": name, "动作": "瞎搞一通", "office": "兵部尚书", "reason": "非法动作"}]},
@@ -2935,4 +2939,9 @@ def test_person_change_rejects_unknown_action_not_silent(game):
     pcs = applied["applied_person_changes"]
     assert len(pcs) == 1
     assert pcs[0].get("rejected") is True, "未知动作必须被拒收，不能静默落库或丢弃"
-    assert "瞎搞一通" not in (content.characters[name].office or ""), "拒收项不得落库"
+    # 拒收项不得落库：payload 给的 office='兵部尚书' 绝不能被写进 DB/内存（否则「写了再拒」=半落库，
+    # 只查动作文本会漏抓；须断言 DB+内存 office 都未变（codex R1）。
+    after_office_db = db.conn.execute("SELECT office FROM characters WHERE name=?", (name,)).fetchone()["office"]
+    assert after_office_db == before_office_db, "拒收项不得改 DB office（含 payload 里的 兵部尚书）"
+    assert content.characters[name].office == before_office_mem, "拒收项不得改内存 office"
+    assert "兵部尚书" not in (after_office_db or ""), "拒收项 payload office 绝不落库"
