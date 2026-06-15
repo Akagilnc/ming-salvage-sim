@@ -444,6 +444,13 @@ MODULE_FIELDS: Dict[str, set[str]] = {
     },
 }
 
+# 字段 → 所属模块 反向图（4 个模块 field 集互斥，故每字段恰一主）。
+# 用于 #63 class 2：某模块 extractor 输出里若混进「属其它模块」的字段，
+# _sanitize_module_output 会按白名单静默剔除——查此图即知它本该去哪，留痕不静默吞。
+_FIELD_OWNER_MODULE: Dict[str, str] = {
+    field: module for module, fields in MODULE_FIELDS.items() for field in fields
+}
+
 
 def _extractor_context_payload(
     db: GameDB,
@@ -702,6 +709,16 @@ def _sanitize_module_output(module: str, data: Dict[str, object]) -> Dict[str, o
     for key in allowed:
         if key in data:
             cleaned[key] = data[key]
+    # #63 class 2：本模块 extractor 输出里混进「属其它模块」的合法字段会被上面的白名单
+    # 静默剔除（合法 delta 无声蒸发）。留痕点名键 + 它本该去的模块（不 reroute，仅 surface，
+    # 保持行为不变；无主/垃圾键不报，避免噪音）。
+    misrouted = {
+        key: _FIELD_OWNER_MODULE[key]
+        for key in data
+        if key in _FIELD_OWNER_MODULE and key not in allowed
+    }
+    if misrouted:
+        tlog(f"[extractor/{module}] 字段错放进本模块、已按白名单剔除（misroute，应属对应模块）：{misrouted}")  # #63 surface
     if module == "internal":
         cleaned["economy_moves"] = _clean_economy_moves(cleaned.get("economy_moves"))
         cleaned["fiscal_changes"] = _clean_fiscal_changes(cleaned.get("fiscal_changes"))
