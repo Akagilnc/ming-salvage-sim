@@ -108,6 +108,42 @@ def test_illegal_faction_value_rejected(game):
     assert rows[0][1]
 
 
+def test_illegal_class_value_rejected(game):
+    """class_delta 合法阶级但值非整数 → invalid_enum 逐项拒收，阶级行不变（对称 faction）。"""
+    db, state, content = game
+    turn = state.turn
+    good = _valid_class_key(db)
+    before = _class_satisfaction(db, good)
+
+    run_settle(db, state, content, {
+        "class_delta": {good: {"satisfaction": "boom"}},
+    }, narrative="x", decree_text="y")
+
+    rows = [r for r in _rejection_rows(db, turn, CLASS_REJ_SECTION)
+            if r[2] == "invalid_enum"]
+    assert len(rows) == 1, rows
+    assert rows[0][1]
+    assert _class_satisfaction(db, good) == before
+
+
+def test_float_and_bool_class_values_rejected(game):
+    """class_delta satisfaction/leverage 为 float/bool → 两条 invalid_enum 拒收，不落库
+    （对称 faction，cmr 线上 r1 sourcery）。"""
+    db, state, content = game
+    turn = state.turn
+    good = _valid_class_key(db)
+    before = _class_satisfaction(db, good)
+
+    run_settle(db, state, content, {
+        "class_delta": {good: {"satisfaction": 3.7, "leverage": True}},
+    }, narrative="x", decree_text="y")
+
+    rows = [r for r in _rejection_rows(db, turn, CLASS_REJ_SECTION)
+            if r[2] == "invalid_enum"]
+    assert len(rows) == 2, rows
+    assert _class_satisfaction(db, good) == before
+
+
 def test_float_and_bool_faction_values_rejected(game):
     """float(3.7→3 静默截断)与 bool(True→1)叶子值绕过 int() 异常路 → 一律 invalid_enum
     拒收（prompt 要求整数 delta；与 power/fiscal section 同约，cmr r1 codex）。"""
