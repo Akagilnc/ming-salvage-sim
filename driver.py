@@ -25,7 +25,7 @@ from ming_sim.issues import apply_score_extraction, validate_delta_shape as _val
 from ming_sim.content import GameContent
 from ming_sim.db import GameDB
 from ming_sim.models import LLMConfig
-from ming_sim.simulation import _canonicalize_extraction
+from ming_sim.simulation import canonicalize_extraction
 from ming_sim.token_stats import tlog
 
 # 绝对路径锚 repo 的 data/probe.db：相对路径会按 cwd 解析，从非 repo 根跑 driver 时静默开错/
@@ -123,7 +123,7 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
         raw_delta = {}
     if not isinstance(raw_delta, dict):
         raise ValueError(f"delta 必须是 object(dict)，实得 {type(raw_delta).__name__}")
-    extracted = _canonicalize_extraction(raw_delta)
+    extracted = canonicalize_extraction(raw_delta)
     _validate_delta_shape(extracted)  # 崩前拦畸形/未知字段,避免 pre_settle 动 DB 后半落库(RT-1/P1b)
     before_turn = state.turn
     # 与真实流程同核同位（ADR 0004/0008，引擎也在 pre_settle 后才 persist）：settle 前把
