@@ -127,7 +127,35 @@ def gate_key_form_error(key: str) -> str:
         return "id 或 字段 为空"
     if any(not m.strip() for m in id_segment.split("|")):
         return "id 列表含空成员（| 分隔）"
+    # class.<名>[@<region>] 的类名不得为空（@ 前；cmr r2 Claude+codex concur，| 守不到 @ 子形）
+    if parts[0] == "class":
+        for member in id_segment.split("|"):
+            if not member.split("@", 1)[0].strip():
+                return "class 名为空（@ 前）"
     return ""
+
+
+def gate_text_key_form_error(key: str) -> str:
+    """文本相等（==/!=非数字）gate 的 key 形态校验（#12 cmr r2 codex）。合法→""；非法→错误说明。
+    runtime _eval_gate_key_str 仅支持单 id 的 region/army/power 三段文本字段——故文本 cond 配
+    多 id/聚合/class/faction/building/bare-metric key 会 load 放行而 runtime 静默返 None（永不达标）。
+    本 PR 首次放行文本 cond 入 load → 须配对校验 key 为文本可求值形态，否则 fail-loud。"""
+    parts = key.split(".")
+    if len(parts) != 3:
+        return "文本相等 gate 的 key 须 表.id.字段 三段（不支持多 id / 聚合 / bare metric）"
+    if parts[0] not in ("region", "army", "power"):
+        return f"文本相等 gate 仅支持 region/army/power 表，得「{parts[0]}」"
+    if "|" in parts[1]:  # _eval_gate_key_str 仅单 id（| 多 id 在段内不增 "." 段数，须单独拒）
+        return "文本相等 gate 不支持多 id（| 分隔）"
+    if not parts[1].strip() or not parts[2].strip():
+        return "id 或 字段 为空"
+    return ""
+
+
+def gate_cond_is_text(cond: str) -> bool:
+    """cond 是否文本相等（==/!= + 非纯数字 RHS）——与 runtime _gate_passed 文本分支同判。"""
+    sm = re.match(r"^(==|!=)\s*(.+)$", cond.strip())
+    return bool(sm and not re.match(r"^-?\d+$", sm.group(2).strip()))
 
 
 def load_event_content(filename: str = "events.json") -> List[Event]:
@@ -153,7 +181,10 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
             cond_err = gate_cond_form_error(cond)
             if cond_err:
                 raise SystemExit(f"{filename}[{idx}] trigger_gate['{mk}'] 比较式非法：{cond_err}。")
-            key_err = gate_key_form_error(str(mk))
+            # 文本相等 cond 须配文本可求值的 key（单 id region/army/power 三段）；否则 runtime
+            # 静默永不达标（cmr r2 codex）。数值 cond 走通用 key 形态校验。
+            key_err = (gate_text_key_form_error(str(mk)) if gate_cond_is_text(cond)
+                       else gate_key_form_error(str(mk)))
             if key_err:
                 raise SystemExit(f"{filename}[{idx}] trigger_gate key「{mk}」非法：{key_err}。")
             trigger_gate[str(mk)] = cond
