@@ -19,7 +19,13 @@ from ming_sim.assets import (
     str_field,
     string_list,
 )
-from ming_sim.constants import BUILDING_CATEGORIES, BUILDING_OUTPUT_METRICS
+from ming_sim.constants import (
+    BUILDING_CATEGORIES,
+    BUILDING_OUTPUT_METRICS,
+    GATE_AGG_FUNCS,
+    GATE_METRIC_KEYS,
+    GATE_TABLES,
+)
 from ming_sim.models import (
     Army,
     Building,
@@ -84,6 +90,36 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
     return factions, characters
 
 
+def gate_cond_form_error(cond: str) -> str:
+    """trigger_gate 比较式形态校验（#12 Q3 fail-loud）。合法→""；非法→错误说明。
+    数值比较：(>=|<=|>|<|==|!=) + 整数；文本相等：(==|!=) + 非数字串（与 runtime _gate_passed
+    的两分支对齐——原 load 只放数值、文本会被误拒，load/runtime 不一致，ADR 0012 残留 4b②）。"""
+    cond = cond.strip()
+    if re.match(r"^(>=|<=|>|<|==|!=)\s*-?\d+$", cond):
+        return ""
+    if re.match(r"^(==|!=)\s*\S.*$", cond):  # 文本相等（RHS 非空、非纯数字已被上条接走）
+        return ""
+    return f"{cond!r}（应形如 '<=240' / '>=34' 数值，或 '==ming' / '!=houjin' 文本相等）"
+
+
+def gate_key_form_error(key: str) -> str:
+    """trigger_gate key 形态校验（#12 Q3 fail-loud，ADR 0012 残留 4b①）。合法→""；非法→错误说明。
+    bare key（无 "."）须是已知 metric；点分 key 首段须是合法表名、结构完整（去末段聚合后 ≥3 段）。
+    字段名(列)是否存在由 _eval_gate_key 运行期对 DB schema 兜底（content load 无 DB 不校验列）。"""
+    if "." not in key:
+        if key not in GATE_METRIC_KEYS:
+            return f"未知 metric「{key}」（须 {'/'.join(GATE_METRIC_KEYS)} 之一，或用 表.id.字段 形式）"
+        return ""
+    parts = key.split(".")
+    if parts[0] not in GATE_TABLES:
+        return f"未知表「{parts[0]}」（须 {'/'.join(GATE_TABLES)} 之一）"
+    if parts[-1] in GATE_AGG_FUNCS:
+        parts = parts[:-1]
+    if len(parts) < 3:
+        return "结构不完整（应形如 表.id.字段[.聚合]）"
+    return ""
+
+
 def load_event_content(filename: str = "events.json") -> List[Event]:
     events: List[Event] = []
     for idx, raw in enumerate(require_list(load_json_asset(filename), filename), 1):
@@ -98,15 +134,18 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
             raise SystemExit(f"{filename}[{idx}] trigger_gate 必须是对象（key→比较式）。")
         trigger_gate: Dict[str, str] = {}
         # key 形式见 issues._eval_gate_key：metric 名、region.<id>.<field>、army.<id>.<field>、
-        # building.<id>.<field>、external.<id>.<field>、class.<name>[@<region>].<field>，
+        # building.<id>.<field>、power.<id>.<field>、class.<name>[@<region>].<field>，
         # 多 id 用 | 分隔时末段 .<agg>(max/min/avg/sum)。
-        # 这里只校验比较式格式，key 形式由求值器在 runtime 校验（id/field 存不存在）。
+        # load 校验 key 形态(metric/表名/结构)+比较式形态(数值/文本相等)，fail-loud（#12 Q3）；
+        # 字段名(列)是否存在由求值器运行期对 DB schema 兜底（load 无 DB）。
         for mk, mv in gate_raw.items():
             cond = str(mv).strip()
-            if not re.match(r"^(>=|<=|>|<|==)\s*-?\d+$", cond):
-                raise SystemExit(
-                    f"{filename}[{idx}] trigger_gate['{mk}'] 非法：{cond!r}（应形如 '<=240' / '>=34'）。"
-                )
+            cond_err = gate_cond_form_error(cond)
+            if cond_err:
+                raise SystemExit(f"{filename}[{idx}] trigger_gate['{mk}'] 比较式非法：{cond_err}。")
+            key_err = gate_key_form_error(str(mk))
+            if key_err:
+                raise SystemExit(f"{filename}[{idx}] trigger_gate key「{mk}」非法：{key_err}。")
             trigger_gate[str(mk)] = cond
         events.append(
             Event(

@@ -89,3 +89,55 @@ def test_historical_event_none_gate_no_crash(game):
         assert any(c.id == "__test_none_gate__" for c in cands), "None 门视同空门、恒过进候选"
     finally:
         content.events.remove(ev)
+
+
+# ── #12(b)：trigger_gate key/cond fail-loud（ADR 0012 残留 4b，Q3 裁断=fail-loud）──
+
+def test_gate_key_form_error_accepts_valid_forms():
+    """存量 6 形态 + 文本字段 key 全合法（不误拒）。"""
+    from ming_sim.content import gate_key_form_error
+    for k in ("民心", "皇威", "国库", "内库",
+              "power.houjin.leverage", "region.huguang.grain_security",
+              "region.shaanxi|shanxi|henan.unrest.min",
+              "class.士绅@nanzhili|zhejiang|fujian.satisfaction.max",
+              "region.x.controlled_by"):
+        assert gate_key_form_error(k) == "", (k, gate_key_form_error(k))
+
+
+def test_gate_key_form_error_rejects_typo_metric_table_structure():
+    """typo'd metric / 未知表 / 结构不完整 → 非空错误说明（fail-loud 素材）。"""
+    from ming_sim.content import gate_key_form_error
+    assert "未知 metric" in gate_key_form_error("民生")        # 民心 typo
+    assert "未知表" in gate_key_form_error("regon.x.unrest")   # region typo
+    assert gate_key_form_error("region.x")                      # 2 段，结构不完整
+
+
+def test_gate_cond_form_error_numeric_and_text():
+    """数值比较 + 文本相等都合法（load/runtime 调和，残留 4b②）；垃圾非法。"""
+    from ming_sim.content import gate_cond_form_error
+    for c in ("<=240", ">=34", "==5", "!=-3", "==ming", "!=houjin"):
+        assert gate_cond_form_error(c) == "", (c, gate_cond_form_error(c))
+    assert gate_cond_form_error("abc")
+    assert gate_cond_form_error(">> 5")
+
+
+def test_load_event_fail_loud_on_bad_gate_key(monkeypatch):
+    """load 时 trigger_gate key typo → SystemExit fail-loud（不再静默当条件不满足）。"""
+    import pytest
+    import ming_sim.content as content_mod
+    bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
+            "urgency": 1, "severity": 1, "credibility": 1,
+            "trigger_gate": {"民生": "<=5"}}]  # 民心 typo
+    monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
+    with pytest.raises(SystemExit, match="未知 metric"):
+        content_mod.load_event_content("x.json")
+
+
+def test_typo_field_gate_raises_clear_not_operationalerror(game):
+    """gate 引用 typo'd 字段（DB 无此列）→ 求值期 SELECT 抛 OperationalError，被 fail-loud
+    成清晰 ValueError（含 key + 'DB 无此列'），不留 cryptic 崩（#12 Q3）。"""
+    import pytest
+    from ming_sim.issues import _gate_passed
+    db, state, content = game
+    with pytest.raises(ValueError, match="字段无效|DB 无此列"):
+        _gate_passed({"region.huguang.grane_security": ">=1"}, state.metrics, db)  # grain_security typo
