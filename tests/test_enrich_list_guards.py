@@ -72,9 +72,13 @@ def test_apply_economy_list_skips_non_dict_items(game):
 
 
 def test_apply_metric_faction_class_dict_non_dict_no_crash(game):
-    """metrics/factions/class 被给成真值非 dict（issue-effect 未验证路径）时不抛、返回空（#117 同类）。"""
+    """metrics/factions/class 被给成真值非 dict（issue-effect 未验证路径）时不抛、返回空（#117 同类）。
+
+    faction/class 自迁逐项拒收契约后返回拒收项列表（ADR 0008 决定 1，#14/#63），
+    非 dict 入参 → 无项可拒 → 空列表 `[]`；metric 仍返 dict。
+    """
     db, state, _content = game
     for bad in (True, 5, "oops", [1, 2]):
         assert _apply_metric_dict(state, bad, db=db) == {}
-        assert _apply_faction_dict(db, bad) == {}
-        assert _apply_class_dict(db, bad) == {}
+        assert _apply_faction_dict(db, bad) == []
+        assert _apply_class_dict(db, bad) == []
