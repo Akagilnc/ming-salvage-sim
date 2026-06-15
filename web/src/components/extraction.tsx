@@ -305,17 +305,21 @@ export function CancelsBlock({ data }: { data: any }) {
       {data.map((it: any, i: number) => {
         // 逐项拒收项（rejected，如 non_cancellable_converted：不可撤局势的撤旨被转/拒）：
         // 不能渲染成「撤旨」既成。同 CloseIssuesBlock 范式标「（未落地）」+ 显原因（#63）。
+        // issue_id 当前恒存在（reject 仅在 int(issue_id) 成功 + row active 后 append）；仍防御兜底
+        // 「未知局势」——持久 extraction 是 LLM 影响的 player-visible JSON，不渲染 #undefined（gemini r1）。
+        const issueId = pickItem(it, "局势编号", "issue_id");
+        const issueLabel = issueId != null ? labelIssue(issueId) : "未知局势";
         if (pickItem(it, "rejected", "rejected")) {
           return (
             <li key={i}>
-              <b className="bad">{labelIssue(pickItem(it, "局势编号", "issue_id"))} 撤旨（未落地）</b>
+              <b className="bad">{issueLabel} 撤旨（未落地）</b>
               {pickItem(it, "原因", "reason") ? <span>{pickItem(it, "原因", "reason")}</span> : null}
             </li>
           );
         }
         return (
           <li key={i}>
-            <b>{labelIssue(pickItem(it, "局势编号", "issue_id"))} 撤旨</b>
+            <b>{issueLabel} 撤旨</b>
             {pickItem(it, "叙述", "narrative") ? <span>{pickItem(it, "叙述", "narrative")}</span> : null}
           </li>
         );
