@@ -2992,12 +2992,15 @@ def test_s15_amnesty_to_ming_then_appoint(game):
     """S15 招抚归明（郑芝龙受抚）：敌→明 易主(方式=主动归附) + 任命(游击)，按序两条。
     敌→明方向合法；power_id 翻 ming 后任命落官。"""
     db, state, content = game
+    # 须选 active 敌方：只有 active 可易主（迁出 active 的状态不接易主）；不加 status 过滤会在 seed
+    # 插入序变动使 offstage 敌（李自成等）首选时以混淆断言失败而非 skip（Claude PR cmr R2 robustness）。
     name = next((n for n, c in content.characters.items()
                  if (db.conn.execute("SELECT power_id FROM characters WHERE name=?", (n,)).fetchone() or {"power_id": "ming"})["power_id"] not in (None, "ming")
-                 and c.office_type not in ("后宫", "宗藩")), None)
+                 and c.office_type not in ("后宫", "宗藩")
+                 and db.get_character_status(n)[0] == "active"), None)
     import pytest
     if name is None:
-        pytest.skip("基底盘面无敌方可招抚人物")
+        pytest.skip("基底盘面无 active 敌方可招抚人物")
     old = dict(db.conn.execute("SELECT power_id, status, office FROM characters WHERE name=?", (name,)).fetchone())
     try:
         applied = issues.apply_score_extraction(
