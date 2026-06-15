@@ -536,32 +536,33 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event) -> Optional[int]:
         effect_resolve = ev.effect_on_resolve
     if ev.effect_on_fail:
         effect_fail = ev.effect_on_fail
-    try:
-        return db.insert_issue(
-            state,
-            kind="situation",
-            title=ev.title,
-            origin_kind="event_pool",
-            origin_ref=ev.id,
-            bar_value=bar,
-            bar_good_meaning=ev.bar_good_meaning or "已平",
-            bar_bad_meaning=ev.bar_bad_meaning or "失控",
-            inertia=inertia,
-            stage_text=ev.stage_text or ev.summary[:80],
-            severity=int(ev.severity),
-            region_hint=ev.region_hint,
-            faction_hint=",".join(ev.interests[:2]),
-            tags=ev.issue_tags or [ev.kind],
-            ongoing_effects=ongoing,
-            cancellable="never",
-            effect_on_resolve=effect_resolve,
-            effect_on_fail=effect_fail,
-            resolve_condition=ev.resolve_condition,
-            fail_condition=ev.fail_condition,
-        )
-    except Exception as exc:
-        print(f"[WARN] 事件 {ev.title} 立项失败：{exc}；跳过。")
-        return None
+    # insert 的代码/DB 真异常上抛（ADR 0008 决定1 / ADR 0005 fail-loud），与 decree 路径
+    # （apply_issue_tracker_output 的 new_issues 段）一致；旧 `except Exception: WARN; return None`
+    # 把真异常吞成 None、调用方记普通 rejected，正是 #14/#63 catalog「该落没落无人知」实例
+    # （cmr ni r7 codex high）。两种 None 来源已在上方分开：幂等去重经 find_*_by_origin 在此 try
+    # 之外 early-return None（正常跳过），故此处无需也不应再兜真异常。
+    return db.insert_issue(
+        state,
+        kind="situation",
+        title=ev.title,
+        origin_kind="event_pool",
+        origin_ref=ev.id,
+        bar_value=bar,
+        bar_good_meaning=ev.bar_good_meaning or "已平",
+        bar_bad_meaning=ev.bar_bad_meaning or "失控",
+        inertia=inertia,
+        stage_text=ev.stage_text or ev.summary[:80],
+        severity=int(ev.severity),
+        region_hint=ev.region_hint,
+        faction_hint=",".join(ev.interests[:2]),
+        tags=ev.issue_tags or [ev.kind],
+        ongoing_effects=ongoing,
+        cancellable="never",
+        effect_on_resolve=effect_resolve,
+        effect_on_fail=effect_fail,
+        resolve_condition=ev.resolve_condition,
+        fail_condition=ev.fail_condition,
+    )
 
 
 # 会崩坏的局势：人为可控、有明确「彻底失败」时刻——镇压不住/边镇沦陷/朝局崩坏。
@@ -1076,7 +1077,10 @@ def apply_issue_tracker_output(
                 continue
             issue_id = event_to_issue(db, state, ev)
             if issue_id is None:
-                applied_new.append({"title": ev.title, "rejected": True, "reason": "事件已触发过或落库失败"})
+                # event_to_issue 移除 broad except 后，返回 None 只剩一种语义：同源 issue 已存在的
+                # 幂等去重跳过（在其 insert try 之外 early-return）；insert 的真代码/DB 异常现已上抛、
+                # 不再走此 None 分支（cmr ni r7 codex high），故 reason 不再含「或落库失败」。
+                applied_new.append({"title": ev.title, "rejected": True, "reason": "事件已触发过（同源局势已立，幂等跳过）"})
             else:
                 applied_new.append({"issue_id": issue_id, "kind": "situation", "title": ev.title, "rejected": False})
             continue

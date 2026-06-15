@@ -19,6 +19,20 @@ def _rejected(result):
     return [n for n in _new(result) if n.get("rejected")]
 
 
+def _pick_event_pool_id(db):
+    """取一个 situation 类、非 auto_trigger、当前库未触发过的预设 event id（不硬编死名，
+    随内容包变化自适应，同 conftest.active_ming_character 风格）。供 event_pool 路径用例。"""
+    for eid, ev in I._ctx().event_by_id.items():
+        if getattr(ev, "event_type", "") != "situation":
+            continue
+        if getattr(ev, "auto_trigger", False):
+            continue
+        if db.find_any_issue_by_origin("event_pool", ev.id) is not None:
+            continue
+        return eid
+    pytest.skip("内容包无可用 situation/非auto/未触发 预设 event，跳过 event_pool 用例")
+
+
 @pytest.mark.parametrize("bad_item", [None, 42, "字符串"])
 def test_new_issue_non_dict_item_rejected_not_crash(game, bad_item):
     db, state, _ = game
@@ -191,3 +205,53 @@ def test_new_issue_valid_decree_still_creates(game):
     row = db.conn.execute("SELECT title, status FROM issues WHERE id=?", (iid,)).fetchone()
     assert row["title"] == "测试·新立局势"
     assert row["status"] == "active"
+
+
+# --- event_pool 路径 fail-loud（cmr ni r7 codex high）---
+# new_issues 段第二条 insert 路 = event_pool（预设事件触发，走 event_to_issue）。decree 路径
+# R1-R6 已 fail-loud（insert 代码/DB 真异常上抛），但 event_to_issue 旧把 db.insert_issue 裹在
+# `except Exception: WARN; return None`，把真异常吞成 None、调用方记普通 rejected——同段契约的
+# 遗漏分支。移除该 broad except 后真异常上抛（与 decree 路径一致），幂等去重 early-return None
+# （在 try 外）不受影响。
+
+
+def test_event_to_issue_insert_exception_propagates(game, monkeypatch):
+    db, state, _ = game
+    # 直接覆盖 fix 点：event_to_issue 内 insert 真异常上抛，不再 WARN 吞成 None。
+    eid = _pick_event_pool_id(db)
+    ev = I._ctx().event_by_id[eid]
+
+    def _boom(*a, **k):
+        raise RuntimeError("模拟 event_to_issue insert 落库代码异常")
+
+    monkeypatch.setattr(type(db), "insert_issue", _boom)
+    with pytest.raises(RuntimeError, match="模拟 event_to_issue"):
+        I.event_to_issue(db, state, ev)
+
+
+def test_new_issue_event_pool_insert_exception_propagates(game, monkeypatch):
+    db, state, _ = game
+    # codex 强调的 call-site seam：通过 apply_issue_tracker_output 的 event_pool 分支驱动，
+    # insert 真异常一路上抛（上层 applier.atomic 据此 SettlementAbort），不被吞成静默 rejected。
+    eid = _pick_event_pool_id(db)
+
+    def _boom(*a, **k):
+        raise RuntimeError("模拟 event_pool insert 落库代码异常")
+
+    monkeypatch.setattr(type(db), "insert_issue", _boom)
+    with pytest.raises(RuntimeError, match="模拟 event_pool"):
+        I.apply_issue_tracker_output(db, state, {
+            "new_issues": [{"origin_kind": "event_pool", "id": eid}],
+        })
+
+
+def test_event_to_issue_duplicate_returns_none_not_raise(game):
+    db, state, _ = game
+    # 幂等回归保护：移除 broad except 不得波及两种 None 的区分——同源事件第二次触发仍由
+    # try 外的去重 early-return None（正常跳过），绝不抛、不重立（否则 fix 错把幂等当真异常）。
+    eid = _pick_event_pool_id(db)
+    ev = I._ctx().event_by_id[eid]
+    first = I.event_to_issue(db, state, ev)
+    assert first is not None, "首次触发应立项"
+    again = I.event_to_issue(db, state, ev)
+    assert again is None, "同源事件重复触发应幂等返回 None，不抛不重立"
