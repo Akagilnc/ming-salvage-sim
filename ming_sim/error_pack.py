@@ -185,5 +185,12 @@ def clear_for_resimulation(db: Any, turn: int) -> None:
         # 分组承载是 dict（#48）；兼容在途旧 list 形状的 ctx，二者都透传。
         secret_orders=ctx.get("secret_orders") if isinstance(ctx.get("secret_orders"), (list, dict)) else {},
         relevant_memories=ctx.get("relevant_memories") if isinstance(ctx.get("relevant_memories"), list) else [],
+        # 拒收来源随降级保留（#144 cmr r1）：source 是 phase1 持久字段，重抽后
+        # 恢复重放仍需原始 provenance 判玩家可见性；不回传会被默认 system_simulation
+        # 盖掉原 player_decree/hitl_decision，使降级路径静默吞掉玩家可见提示。
+        # 拒收来源随降级保留（#144 cmr r1）：source 是 phase1 持久字段，重抽后
+        # 恢复重放仍需原始 provenance 判玩家可见性；不回传会被默认 system_simulation
+        # 盖掉原 player_decree/hitl_decision，使降级路径静默吞掉玩家可见提示。
+        source=str(ctx.get("source") or "system_simulation"),
         # 不传 extracted → upsert ready=0：LLM 段产出清除，phase1 字段保留。
     )

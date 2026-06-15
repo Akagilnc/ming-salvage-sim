@@ -202,6 +202,33 @@ def test_clear_for_resimulation_downgrades_context_keeps_settling(game):
     db.clear_resolve_context(turn)
 
 
+def test_clear_for_resimulation_preserves_source(game):
+    """降级回写须保留 provenance source（#144 cmr r1 回归）。
+
+    clear_for_resimulation 回读 phase1 字段重建 context；source 是 #144 新增的
+    phase1 持久字段，恢复重放据此判玩家可见性。若回写漏传 source，会被
+    save_resolve_context 默认 system_simulation 盖掉，使降级路径静默吞掉
+    player_decree/hitl_decision 来源 → 恢复后玩家可见拒收提示丢失。
+    """
+    from ming_sim.error_pack import clear_for_resimulation
+    db, state, content = game
+    turn = state.turn
+
+    db.save_resolve_context(turn, "d", "n", {"k": "v"},
+                            secret_orders=[], relevant_memories=[],
+                            extracted={"metric_delta": {"国库": 1}},
+                            source="player_decree")
+    assert db.get_resolve_context(turn)["source"] == "player_decree"
+
+    clear_for_resimulation(db, turn)
+
+    ctx = db.get_resolve_context(turn)
+    assert ctx is not None
+    assert ctx["extracted"] is None, "LLM 段产出仍应清除"
+    assert ctx["source"] == "player_decree", "玩家来源须随降级保留，不被默认 system_simulation 盖回"
+    db.clear_resolve_context(turn)
+
+
 def test_clear_for_resimulation_noop_when_no_context(game):
     """无 context 行时逃生口 no-op（分支双侧）。"""
     from ming_sim.error_pack import clear_for_resimulation
