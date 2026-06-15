@@ -63,11 +63,19 @@ def test_unknown_faction_rejected_good_item_lands(game):
     assert after != before, "好项（合法派系）应照常落库"
 
 
+def _class_satisfaction(db, key):
+    name, region_id = (key.split("@", 1) + [""])[:2] if "@" in key else (key, "")
+    return db.conn.execute(
+        "SELECT satisfaction FROM classes WHERE name=? AND region_id=?",
+        (name.strip(), region_id.strip())).fetchone()[0]
+
+
 def test_unknown_class_rejected_good_item_lands(game):
-    """class_delta 引用未入库阶级 → missing_ref 逐项拒收留痕，合法阶级照落。"""
+    """class_delta 引用未入库阶级 → missing_ref 逐项拒收留痕，合法阶级照落（好项不被坏项带走）。"""
     db, state, content = game
     turn = state.turn
     good = _valid_class_key(db)
+    before = _class_satisfaction(db, good)
 
     run_settle(db, state, content, {
         "class_delta": {
@@ -80,6 +88,8 @@ def test_unknown_class_rejected_good_item_lands(game):
     assert len(rows) == 1, rows
     assert rows[0][2] == "missing_ref"
     assert rows[0][1]
+    # 好项（合法阶级）应精确落库，不被坏项带走（cmr r4 codex）
+    assert _class_satisfaction(db, good) == max(0, min(100, before + 6))
 
 
 def test_illegal_faction_value_rejected(game):
