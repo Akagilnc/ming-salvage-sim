@@ -623,7 +623,11 @@ def _apply_faction_dict(
             if d != 0:
                 cleaned[str(key)] = d
     if cleaned:
-        rejected.extend(db.adjust_factions(cleaned))
+        # db 层未知名 → missing_ref 拒收：未写库，须从 cleaned 剔除，否则未落库的未知派系
+        # 会进 faction_delta 段被 web 面板当「已落」误显（cmr r3 codex，DB↔呈现漂移=#14 本症）。
+        for _rej in db.adjust_factions(cleaned):
+            cleaned.pop(str(_rej.get("name", "")), None)
+            rejected.append(_rej)
     return cleaned, rejected
 
 
@@ -661,5 +665,8 @@ def _apply_class_dict(
         if entry:
             cleaned[str(key)] = entry
     if cleaned:
-        rejected.extend(db.adjust_classes(cleaned))
+        # 同 faction：db 层未知名 missing_ref 拒收未写库，从 cleaned 剔除防面板误显（cmr r3 codex）。
+        for _rej in db.adjust_classes(cleaned):
+            cleaned.pop(str(_rej.get("name", "")), None)
+            rejected.append(_rej)
     return cleaned, rejected
