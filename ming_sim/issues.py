@@ -1178,11 +1178,17 @@ def apply_issue_tracker_output(
                 category, why = "missing_ref", f"close_issues 引用未找到的 issue {issue_id}"
             elif chk["status"] != "active":
                 category, why = "missing_ref", f"close_issues 引用已非 active（{chk['status']}）的 issue {issue_id}"
-            else:
+            elif reason == "failed":
+                # 找到且 active 却被拒，今天 close_issue 唯一这条 active-None 路径＝reason=failed
+                # 用于无 effect_on_fail 的不可崩坏局势（LLM 语义误判，保持 active）。
                 category, why = "invalid_enum", (
                     f"close_issues 对不可崩坏局势 issue {issue_id} 误判 failed"
                     "（无 effect_on_fail，拒结案、保持 active）"
                 )
+            else:
+                # reason=resolved 对 active issue 今天必返回非 None（不可达此分支）；留通用兜底
+                # 防 close_issue 未来新增 active-None 路径时消息说谎（gemini-code-assist）。
+                category, why = "invalid_enum", f"close_issues 结案被拒、issue {issue_id} 保持 active"
             applied_closes.append({"rejected": True, "category": category, "reason": why, "item": cl})
             continue
         touched_ids.add(issue_id)
