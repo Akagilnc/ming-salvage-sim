@@ -1,9 +1,9 @@
 """secret_order 段拒收补精确 category（ADR 0008 决定 1 逐项拒收契约统一，#14 C2）。
 
-secret_order_updates/closes 早已逐项拒收（含未知 order_id「密令不存在」），但拒收项无
-`category` 键 → 桥接 _collect_inline_rejections 兜底记成 legacy_inline，与已迁 section
-（region/army/power/faction/class 的 missing_ref/invalid_enum）不一致。本组验数据校验类拒收
-带上精确 category（未知 order_id → missing_ref，坏值/坏状态 → invalid_enum）。
+secret_order_closes 早已逐项拒收（含未知 order_id「密令不存在」）、updates 此前对未知/非
+active id 静默报成功（cmr r1 codex 抓出，#14 silent-success）。本组把两段数据校验类拒收
+统一带精确 category（未知 order_id → missing_ref，坏值/坏状态/非 active → invalid_enum），
+并补 updates 的未知 id 拒收（对齐 closes）。
 
 只覆盖 LLM 数据校验类拒收；落库真异常（except）的拒收不在此（属 #63.4 设计待定，不动）。
 经 driver.run_settle 端到端查 rejection_reports。
@@ -85,3 +85,20 @@ def test_update_nonint_order_id_invalid_enum(game):
     rows = [r for r in _rejection_rows(db, turn, "secret_order_updates")
             if r[2] == "invalid_enum"]
     assert len(rows) == 1, rows
+
+
+def test_update_unknown_order_id_missing_ref(game):
+    """secret_order_updates 引用不存在的整数 order_id → missing_ref 拒收达 rejection_reports
+    （此前静默报「已应用」无留痕，cmr r1 codex，#14 silent-success）。"""
+    db, state, content = game
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "secret_order_updates": [
+            {"order_id": 999999, "sim_note": "查无此密令的副作用"},
+        ],
+    }, narrative="x", decree_text="y")
+
+    rows = _rejection_rows(db, turn, "secret_order_updates")
+    assert len(rows) == 1, rows
+    assert rows[0][2] == "missing_ref", rows
