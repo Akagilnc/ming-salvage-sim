@@ -70,6 +70,22 @@ def test_new_issue_dirty_inertia_rejected(game):
     assert "强转失败" in rej[0]["reason"]
 
 
+def test_new_issue_oversized_severity_clamped_not_abort(game):
+    db, state, _ = game
+    # severity=10**100：int() 过得了但绑定 SQLite 抛 OverflowError——insert_issue 移除 broad
+    # except 后会逃逸 abort。severity 与 bar_value 同 0-100 分值，应 clamp 到 100、照常落库
+    # （非拒整项；与 bar_value 静默 clamp 一致，cmr ni r2 codex）。
+    out = I.apply_issue_tracker_output(db, state, {
+        "new_issues": [{"origin_kind": "decree", "kind": "situation",
+                        "title": "测试·超大severity", "severity": 10 ** 100}],
+    })
+    created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
+    assert len(created) == 1, out  # 不 abort、照常落库
+    iid = int(created[0]["issue_id"])
+    sev = db.conn.execute("SELECT severity FROM issues WHERE id=?", (iid,)).fetchone()["severity"]
+    assert sev == 100  # clamp 到域上界
+
+
 def test_new_issue_insert_code_exception_propagates(game, monkeypatch):
     db, state, _ = game
     def _boom(*a, **k):
