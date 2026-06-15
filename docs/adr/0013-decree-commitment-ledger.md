@@ -39,7 +39,7 @@ Status: Proposed（设计草案，2026-06-15；**务实版**——用户拍板�
 | ③ 未来一次性（X 月后复试/复核） | issue + `end_turn`（**无 ongoing、无 firing 机制**） | `end_turn` 到期：issue 仍 active → simulator/核销自然 surface 一句话，**至多结算弹一个现有事件选项**（复用 candidate_events/HITL 决策块，不建专门 firing） |
 
 - ①②可叠（先到者停）。开放式承诺（`stop_condition` 永不达成 + `end_turn=0`）= 有意永久挂账、皇帝可主动撤。
-- **形态③刻意最小化（用户拍）**：不存 firing payload、不建注入槽、不挂 0011-5。但 ⚠️ **光靠「issue 到期 active → LLM 核销自觉提」会被 `season_simulator.md:9`「active_issues 仅背景、不可触发新动作」压住、复现 #136 到期没人提**（R3-medium 实证）。故 form③ 唯一**必需的最小机制** = 结算扫到 `end_turn<=turn` 的 form③ → 把它**从背景 active_issues 提升为「本回合到期待裁」显式项喂 simulator/核销**（仿密令到期送核议的程序注入模式——`decree.py` 的 `_select_secret_orders_for_sim`/`group_secret_orders_for_sim` 调用处）。这一个轻信号即可（不是 R1 那套 firing payload 重机制）；之后「至多结算弹一个现有事件选项」让皇帝拍。〔撤回 R1 的 firing_kind/firing_payload 列 + due_commitments 注入槽，只留这一个到期顶出信号。〕
+- **形态③刻意最小化（用户拍）**：不存 firing payload、不建注入槽、不挂 0011-5。但 ⚠️ **光靠「issue 到期 active → LLM 核销自觉提」会被 `season_simulator.md:9`「active_issues 仅背景、不可触发新动作」压住、复现 #136 到期没人提**（R3-medium 实证）。故 form③ 唯一**必需的最小机制** = 结算扫到 `end_turn<=turn` 的 form③ → 把它**从背景 active_issues 提升为「本回合到期待裁」显式项喂 simulator/核销**（仿密令到期送核议的程序注入模式——`decree.py` 的 `_select_secret_orders_for_sim`/`group_secret_orders_for_sim` 调用处）。这一个轻信号即可（不是 R1 那套 firing payload 重机制）；之后「至多结算弹一个现有事件选项」让皇帝拍。⚠️ **轻通道 ≠ 无通道**（Gemini 线上）：撤回的是 R1 的 `due_commitments` 复杂结构 + firing payload 列，但「到期顶出」**仍须一个最小喂入通道**——复用密令到期送核议的**同一 payload 通道**把「本回合到期的 form③」喂进 simulator/HITL，不另起 `due_commitments` 结构。
 
 ### D4 钱类承诺 → 喂现有 arrears 还款池（损耗为意图、v1 待 #44/#67）
 「补饷」类承诺的每月 X **喂进现有 `_auto_pay_arrears_by_priority`（flows.py:227）的还款预算**——真按优先级还各军 `armies.arrears`，不是单走一笔扣账（用户拍：要真减欠饷）。**设计意图**：补饷该有损耗——截流、贪污使实际到账 < 名义拨款，「直到补齐」才是真挣扎（钱一直拨、层层克扣、降得慢，合明末味）。⚠️ **但 v1 给不了**：现 `_auto_pay_arrears_by_priority`（`flows.py:252` `pay=min(arrears,budget)`）**全额到账、零损耗** → **本 ADR v1 补饷无损耗、arrears 准时即按额减；「真挣扎」须待 #44/#67 损耗建模（代码损耗率/吏治调制/密令查贪可减损）落地、本契约不交付**（别误读为本 ADR 即给挣扎感，R3-high）。本契约只负责「每月 X 喂进还款池 + 直到 `arrears==0` 停」；「直到补齐」依赖 **#44** 先修好 arrears 累计（否则数不准、停不对）。
@@ -61,14 +61,16 @@ Status: Proposed（设计草案，2026-06-15；**务实版**——用户拍板�
 - **#67/substrate**：财政类承诺未兑现对齐 substrate 语义（停饷成债 等）；cutover（待 M0 #73）后财政类承诺归约 substrate Due，现暂落全局。冲突按 later-doc-wins。
 
 ### D9 承诺-issue 与普通 initiative 的差异（集中列，免逐个漏）
-承诺虽 `kind=initiative` 复用 issue 行，但语义与普通国策不同，须用一个判别（`origin_kind=decree` + 承诺特征列，或一个专门 commitment tag）让创建/补全/结案/扫描各路径识别「这是承诺」并走差异——**一次列全（线上反复抓「又漏 bypass 一处」，集中规则止它）**：
+承诺虽 `kind=initiative` 复用 issue 行，但语义与普通国策不同，须用一个**专门判别标记**让创建/补全/结案/扫描各路径识别「这是承诺」并走差异——⚠️ **`origin_kind=decree` 不够**（普通玩家国策也 `origin_kind=decree`，Gemini 线上）；用一个**专门 `commitment` 标记**（新加 bool 列、或复用某未用字段标位、或一个 `kind='commitment'` 子类——实现时定，但必须是承诺独占的标记）。**一次列全（线上反复抓「又漏 bypass 一处」，集中规则止它）**：
 - **cap**：initiative 上限 10→15（`issues.py:1060`）；同步改硬编码文案「已有十事在办…」（`issues.py:1061`）或改读常量（Gemini 线上）。
 - **inertia=0**：不给 `expected_months`（bar 不随 random inertia 自漂、不假性了结）。
 - **resolve-effect enrich 跳过**：`apply_issue_tracker_output` 对缺 `effect_on_resolve` 的 initiative 会兜底补效果——承诺（只该有 `ongoing_effects`）结案时被补全会附**无关民心/建筑/实体效果污染**（codex P2 线上）；承诺路径须跳过该 enrich。
 - **空 `stop_condition` 不跑 `_gate_passed`**（D6，否则空 gate 返 True 假性收尾）。
 - **`cancellable='decree'`**（D2，皇帝可无损撤自己的承诺）。
 - **bar 折扣只折 metrics、不折 economy**（`issues.py:2820`，补饷额恒定，已三验）。
-- **form②/③ 到期分流**（Gemini/CodeRabbit 线上）：扫到 `end_turn<=turn` 时——**有 `ongoing_effects`=form②**（停账收尾）；**无 `ongoing_effects`（光 end_turn）=form③**（顶为「本回合到期待裁」喂 simulator，D3）。按 `ongoing_effects` 空否分流。
+- **form②/③ 到期分流**（Gemini/CodeRabbit 线上）：扫到 `end_turn<=turn` 时——**有 `ongoing_effects`=form②**（停账收尾 close）；**无 `ongoing_effects`（光 end_turn）=form③**（**fire 顶为「本回合到期待裁」喂 simulator、非 close**，D3）。按 `ongoing_effects` 空否分流。
+
+**实现期待细化（线上 R3 codex/Gemini 提示，归编码 session、非 ADR 级阻塞）**：① `stop_condition` 多 id 不带聚合后缀时 `_eval_gate_key` 的默认聚合行为要确认（用 `.sum` 显式更稳）；② bar=补齐进度需持久一个**基线**（如立项时 arrears 总额）才能算「补齐 %」；③ #45/#46 pairing（`_initiative_resolve_pairing_warnings`）与承诺逐月/到期后果的对接细节。落地时核。
 
 ## Considered Options
 - **新建 `commitments` 表 / dedicated `kind`**：否决——issue 已具进度/留痕/收尾/呈现/溯源全套，新表/新 kind = 平行第二套 + 重建这些；用户务实选 reuse。
