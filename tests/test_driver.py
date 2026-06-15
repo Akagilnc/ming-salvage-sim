@@ -493,9 +493,26 @@ def test_open_game_rejects_empty_or_nonsave_db(tmp_path):
     import driver as drv
     empty = tmp_path / "empty.db"
     empty.write_bytes(b"")          # 0 字节存在文件
-    with pytest.raises((ValueError, Exception)):
+    with pytest.raises(ValueError):  # 收紧到设计抛的 ValueError，不用 Exception 兜底掩盖回归（CodeRabbit R1）
         drv.open_game(str(empty))
     garbage = tmp_path / "garbage.db"
     garbage.write_text("not a sqlite db")
-    with pytest.raises((ValueError, Exception)):
+    with pytest.raises(ValueError):
         drv.open_game(str(garbage))
+
+
+def test_open_game_rejects_degenerate_db_with_state_but_empty_board(tmp_path):
+    """退化库：有 game_state id=1 但静态盘面 regions 空（旧 bug 在空库 load_state 写了 id=1、
+    没 seed_static_data）也须拒——只看 game_state 哨兵不够（codex R1 P2）。"""
+    import sqlite3
+    import pytest
+    import driver as drv
+    degen = tmp_path / "degenerate.db"
+    conn = sqlite3.connect(str(degen))
+    conn.execute("CREATE TABLE game_state (id INTEGER PRIMARY KEY, turn INTEGER)")
+    conn.execute("INSERT INTO game_state (id, turn) VALUES (1, 5)")
+    conn.execute("CREATE TABLE regions (id TEXT PRIMARY KEY)")  # 表在但无数据
+    conn.commit()
+    conn.close()
+    with pytest.raises(ValueError):
+        drv.open_game(str(degen))
