@@ -1,6 +1,6 @@
 # M0 状态完整性内审结论（#73 收口）
 
-Status: Proposed（内审结论 doc。**线上对抗验证（2026-06-15，6 红队 + 综合裁决）复核 = close_conditional**：Q4 真 done；Q1/Q3 有代码实证缺口；关 #73 会清空 M0 milestone + 孤儿化 C4/C5——故 **#73 宜保持 open 作 rollout 伞、勿直接关**。待用户拍 Q3 契约裁断 + rollout 方向。）
+Status: Proposed（内审结论 doc。**线上对抗验证（2026-06-15，6 红队 + 综合裁决）复核 = close_conditional**：Q4 真 done；Q1/Q3 有代码实证缺口；关 #73 会清空 M0 milestone + 孤儿化 C4/C5——故 **#73 宜保持 open 作 rollout 伞、勿直接关**。**Q3 契约裁断已拍（用户 2026-06-15）= fail-loud**（见残留 4）→ **M0 设计面 100% 冻结、无设计残留**，剩纯编码 rollout。待用户拍 rollout 优先级。）
 
 `#73`（M0 总控内审）要求产「一份短文档或 ADR，回答 5 个契约问题」，并冻结「LLM 输出 → extractor → 事件触发 → apply/settlement → DB 落库 → 下回合读取」这条链路的 fail-loud / 事务 / 状态契约。
 
@@ -23,13 +23,13 @@ Status: Proposed（内审结论 doc。**线上对抗验证（2026-06-15，6 红�
 1. **ADR 0008 PR2（#91，OPEN）** — 2 个整段吞（power×2）+ 4 个裸奔段迁入 adapter 契约 + provenance 字段灌注。
 2. **ADR 0008 后续 sections** — 其余 section 迁契约；尤其 **#14 A 类「畸形→continue 丢弃」**（`simulation.py:750`/`795`/`844`/`468` 的 `_clean_*` / `_ongoing_effects_to_economy`，delta `int()` 失败凭空丢笔）；**legacy 路（simulator / driver）未接 `RejectionCollector`**（`applier.py:240` 现仅 `settle_with_delta` 路接入）。
 3. **C1 人事 applier 实现（#13 载体 / #97 追踪）** — ADR 0009 契约 → 代码；含 **C3** `db.py` `_commit_office_action` 分层倒置搬家（ADR 0009 决定 6 已在契约层判死 lazy import）。
-4. **⚠️ 一个真设计裁断点（非纯编码）— Q3 第二半未冻结** — 「`trigger_gate` 缺字段/字段写错时如何 fail-loud」。对抗验证已**代码实证**：坏/拼错的 gate 条件现在**静默当「条件不满足」**，既不 raise 也不 log——`issues.py:194`（未知 metric_key → `return None`）→ `:302`（`val is None → return False`）；`:298`（坏比较语法 regex 不匹配 → `return False`）；`models.py:131` `trigger_gate: Dict[str,str]` 纯 dataclass、content 加载期零 schema 校验。**这违 ADR 0005「schema 不符=必须响亮、绝不吞」**。裁断点：坏 gate 应 fail-loud（拒收/告警，符合 0005——则实装是 bug，编码修）还是有意容忍（则本 ADR 须明文豁免理由）？**推荐前者**（与 0005 一致）。这一句裁断是设计活，落实是编码活。
+4. **✅ Q3 第二半契约已冻结（用户 2026-06-15 拍 = fail-loud）→ 转编码** — 「`trigger_gate` 缺字段/字段写错时如何 fail-loud」。对抗验证已**代码实证**：坏/拼错的 gate 条件现在**静默当「条件不满足」**，既不 raise 也不 log——`issues.py:194`（未知 metric_key → `return None`）→ `:302`（`val is None → return False`）；`:298`（坏比较语法 regex 不匹配 → `return False`）；`models.py:131` `trigger_gate: Dict[str,str]` 纯 dataclass、content 加载期零 schema 校验。**这违 ADR 0005「schema 不符=必须响亮、绝不吞」**。**裁断（已拍）：坏/拼错的 gate 条件 = fail-loud**（未知 metric_key / 非法表引用 / 坏比较语法 → 报错或拒收留痕，符 ADR 0005）；**保留区分**：合法但「条件未满足」仍正常 `return False`（不报错）——只对**畸形**条件响亮。**实装是 bug、归 #12 编码修**（契约见 #12 评论）。M0 设计层至此无残留。
 
 5. **Q1 契约对真 apply 路失明（编码 rollout，已实证活着）** — `flows.py:291-296` `_apply_economy_list`：非法 account（`not in 国库/内库`）/ 坏 int 全 `continue` 静默丢、零拒收留痕（docstring 明写「退化为常规扣账」）；`issues.py` world_advance 纯透传无 apply 无 reject。ADR 0008 实施波次已把 flows 列「候选 4 后续」，故属已知编码 rollout——但验证确认此刻是**活的静默丢**，rollout 时优先。
 
 ## Consequences
 
-- **M0 的设计/契约面绝大部分已冻结**（ADR 0005/0008/0009 + trigger_gate 接入），但**对抗验证抓出一个真设计裁断点**：Q3 坏 gate 的 fail-loud 契约未冻结（见残留 4）。除这一句裁断外，无其它待决策设计残留。
-- 推进财政基座 port（#65/#66）所依赖的「M0→M1 重构完成」前置，**设计部分基本就绪**（除 Q3 裁断）；主卡点转为 M1 rollout 编码（#91/#14/#13/#97 + flows economy 静默丢）的执行。
+- **M0 的设计/契约面 100% 已冻结**（ADR 0005/0008/0009 + trigger_gate 接入 + Q3 fail-loud 裁断已拍）——**无任何待决策设计残留**。
+- 推进财政基座 port（#65/#66）所依赖的「M0→M1 重构完成」前置，**设计部分已全部就绪**；主卡点纯转为 M1 rollout 编码（#91/#14/#13/#97/#12 + flows economy 静默丢）的执行，由编码 session 按用户优先级推进。
 - **#73 保持 open 作 rollout 伞**：关闭会清空 M0 milestone（#73 是该 milestone 唯一 open issue）并孤儿化 C4（flows.py golden 测试）/C5（web TestClient 测试）——二者无独立 tracking issue，C4 原计划吸收方 #66 已 CLOSED 未捎带。关 #73 前须先为 C4/C5 建 tracker 或显式 defer 留痕。
 - 本 doc 无新契约 → 不引入「与 0008/0009 平行的第二套契约」（避免 over-build）；唯一新增 = Q3 裁断点的标注（待拍）。
