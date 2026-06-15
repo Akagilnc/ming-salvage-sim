@@ -1,0 +1,201 @@
+"""结算 payload 工具：与事务/恢复/相位无关的纯/准纯函数（#91 coordinator 拆分第一刀）。
+
+从 decree.py 抽出——这些是叶子函数（解析邸报决策块、密令分组承载、已裁决策正文、玩家可见
+呈现脱敏 + 注入文案常量），无 state 写 / 无事务 / 无相位转移、从不被测试 monkeypatch，
+故可纯搬家、行为保持。decree.py 仍 re-import 它们保 `from ming_sim.decree import X` 公开表面。
+
+真正的事务编排 / 恢复路由 / error-pack / 相位 coordinator 拆分**不在此**——那些函数的契约
+是隐式的 `monkeypatch.setattr(decree_mod, ...)`（几十处测试 patch decree 模块级名），跨模块搬会
+静默破坏 monkeypatch（测试仍绿但行为变），须配设计讨论决定 patch 焊点与相位守门归属。
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from typing import TYPE_CHECKING, Dict, List
+
+if TYPE_CHECKING:  # GameDB 仅用于 _select_secret_orders_for_sim 的类型注解（已 `from __future__ annotations`
+    from ming_sim.db import GameDB  # 惰性字符串）；不在运行时 import db，使本模块运行时零 db 依赖（线上 sourcery）
+
+CHEAT_NARRATIVE_PREFIX = (
+    "【天命强制·结算优先】以下为既成事实，最高优先级，先于一切规则与档位上限。"
+    "你必须把它当作本回合百分百已发生的结果，按字面抽满对应结构化增量，"
+    "无视合理性、史实、盘面、对手反扑、涨幅上限——它说什么成了就抽什么。"
+    "数值类（如「国库增至九千万」）按当前值算差额一次性入账；"
+    "局势结案按字面写满 bar 并结案；人物/军队/势力存亡按字面落 status/势力变化。"
+    "与下方正常邸报冲突时以本段为准，本段没提的下方照常抽。照字面落库：\n"
+)
+
+# HITL 决策点：皇帝亲裁后，把所选选项+自由批语作为「圣意既定」拼到邸报最前喂 extractor。
+# 与 cheat 同机制（既成事实、最高优先级），但语气是皇帝御断而非天命强制。
+DECISION_NARRATIVE_PREFIX = (
+    "【圣意亲裁·结算优先】以下为本回合月末重大抉择，陛下已御笔亲断，最高优先级。"
+    "你必须把每条裁断当作百分百已发生的结果，按其方向抽对应结构化增量与事项推进，"
+    "与下方正常邸报冲突时以本段为准。各条裁断如下：\n"
+)
+
+# 决策块边界标记。simulator 在邸报末尾按规范输出，本回合解析后从 narrative 剥离。
+_DECISION_RE = re.compile(r"<<DECISION>>\s*(\{.*?\})\s*<<END>>", re.DOTALL)
+MAX_DECISIONS_PER_TURN = 5
+
+
+def parse_decision_blocks(narrative: str) -> tuple[str, List[Dict[str, object]]]:
+    """从邸报抽 <<DECISION>>...<<END>> JSON 块，返回 (剥离后的干净邸报, 决策列表)。
+
+    每块须含 title/context/options（2-3 项，每项 label + 可选 hint）。
+    解析失败的块直接丢弃（连同标记一起剥离），不抛断——无决策块视作普通回合。
+    最多取 MAX_DECISIONS_PER_TURN 条，超出忽略。
+    """
+    decisions: List[Dict[str, object]] = []
+    for m in _DECISION_RE.finditer(narrative or ""):
+        if len(decisions) >= MAX_DECISIONS_PER_TURN:
+            break
+        try:
+            obj = json.loads(m.group(1))
+        except Exception:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        title = str(obj.get("title") or "").strip()
+        raw_opts = obj.get("options")
+        if not title or not isinstance(raw_opts, list):
+            continue
+        options: List[Dict[str, str]] = []
+        for o in raw_opts:
+            if not isinstance(o, dict):
+                continue
+            label = str(o.get("label") or "").strip()
+            if not label:
+                continue
+            options.append({"label": label, "hint": str(o.get("hint") or "").strip()})
+        if len(options) < 2:  # 至少给 2 个选项才算有效抉择
+            continue
+        decisions.append({
+            "title": title,
+            "context": str(obj.get("context") or "").strip(),
+            "options": options[:3],
+        })
+    clean = _DECISION_RE.sub("", narrative or "").strip()
+    return clean, decisions
+
+
+def group_secret_orders_for_sim(
+    rows: List[Dict[str, object]],
+) -> Dict[str, List[Dict[str, object]]]:
+    """把密令 DB 行按状态分进中文键两组，作喂 simulator/extractor 的承载形状（#48）。
+
+    输入 = db.list_secret_orders 返回的行（含英文 status）；输出 =
+    `{"在办": [...], "待核议": [...]}`。英文 status（active/pending_review）只用来分组，
+    **不当字段进 LLM 输入**——否则 simulator 把它照抄进「密旨动向」邸报段，中文游戏里
+    冒出「孙承宗密旨（active）」（本 issue 根因）。条目保留
+    id/minister_name/title/content[:120]/turn_issued/due_turn/progress/sim_note，不含 status。
+    done/failed/cancelled 是裁决输出、无注入需求，落到此函数时忽略不进任何组。
+
+    单点改：fan-out 到 simulator 推演、extractor 抽取、恢复存档三处同一承载，形状一致。
+    """
+    groups: Dict[str, List[Dict[str, object]]] = {"在办": [], "待核议": []}
+    bucket = {"active": "在办", "pending_review": "待核议"}
+    # 恢复路也用本函数重分组旧存档 list（见 _recovered_grouped）；损坏/历史遗留数据可能非 list
+    # 或含非 dict 元素，照 simulation._clean_* 的守门惯例跳过，不让 TypeError 崩在恢复链上。
+    if not isinstance(rows, list):
+        return groups
+    for o in rows:
+        if not isinstance(o, dict):
+            continue
+        key = bucket.get(o.get("status"))
+        if key is None:
+            continue
+        # 字符串字段一律 str() 兜底：损坏存档里若为非字符串（如 content 是整数），切片/落库
+        # 不致 TypeError（照 simulation._clean_* 的 `str(item.get(...) or "")` 惯例）。
+        groups[key].append({
+            "id": int(o.get("id") or 0),
+            "minister_name": str(o.get("minister_name") or ""),
+            "title": str(o.get("title") or ""),
+            "content": str(o.get("content") or "")[:120],
+            "turn_issued": o.get("turn_issued") or 0,
+            "due_turn": o.get("due_turn") or 0,
+            # DB 行的进展在 result；已分组过的旧承载条目在 progress——两者都收，使本函数
+            # 能就地重分组旧 list 形状 ctx（恢复端归一，见 _recovered_grouped）。
+            "progress": str(o.get("result") or o.get("progress") or ""),
+            "sim_note": str(o.get("sim_note") or ""),     # 上轮推演写的副作用
+        })
+    return groups
+
+
+def _recovered_grouped(value: object) -> Dict[str, object]:
+    """恢复路把存档里的 secret_orders 归一成分组 dict（#48 恢复端闭环）。
+
+    新档已是分组 dict → 原样返回。**部署前存的旧 list 形状 ctx** → 按状态重分组、剥英文
+    status（旧条目仍带 status，可据以分桶）：否则把扁平 list 透传给改读 `secret_orders.在办`/
+    `待核议` 的新 extractor prompt，HITL 续跑会漏抽密令副作用/结案。其余杂值 → 空 dict。
+    """
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, list):
+        return group_secret_orders_for_sim(value)
+    return {}
+
+
+def _select_secret_orders_for_sim(db: GameDB, cap: int = 20) -> List[Dict[str, object]]:
+    """选注入月末推演的密令：**pending_review 全进**（到期密令本回合须给 done/failed 裁决，被截断会
+    永久卡住不结案）+ active 填满剩余预算（cap）。修 #108：旧码 `(active + pending_review)[:cap]`
+    在 active 满载 cap 时把所有 pending_review 整体切掉、饿死核议。pending_review 即便超 cap 也全保。"""
+    pending = db.list_secret_orders(status="pending_review")
+    active = db.list_secret_orders(status="active")
+    return pending + active[: max(0, cap - len(pending))]
+
+
+def _format_decision_directive(decisions: List[Dict[str, object]]) -> str:
+    """把皇帝已裁的决策点拼成喂 extractor 的「圣意亲裁」正文。
+    每条：标题 + 所选选项 label/hint + 自由批语。未裁的跳过。"""
+    lines: List[str] = []
+    for i, d in enumerate(decisions, 1):
+        choice = d.get("choice") or {}
+        if not isinstance(choice, dict):
+            continue
+        label = str(choice.get("label") or "").strip()
+        note = str(choice.get("note") or "").strip()
+        if not label and not note:
+            continue
+        title = str(d.get("title") or f"抉择{i}").strip()
+        seg = f"{i}. 【{title}】陛下御断：{label or '（未选预设项）'}"
+        hint = str(choice.get("hint") or "").strip()
+        if hint:
+            seg += f"（倾向：{hint}）"
+        if note:
+            seg += f"。朱批：{note}"
+        lines.append(seg)
+    return "\n".join(lines)
+
+
+def _player_visible_extractor_output(applied: object) -> object:
+    if not isinstance(applied, dict):
+        return applied
+    visible = dict(applied)
+    visible.pop("person_changes", None)
+    # 拒收项是内部可观测信号（含 rejected/reason/category），不进皇帝可见呈现（P4）。
+    visible.pop("faction_delta_rejections", None)
+    visible.pop("class_delta_rejections", None)
+    visible.pop("economy_moves_rejections", None)
+    issue_summary = visible.get("issue_summary")
+    if isinstance(issue_summary, dict):
+        issue_person_changes = issue_summary.get("applied_person_changes")
+        if isinstance(issue_person_changes, list) and issue_person_changes:
+            direct = visible.get("applied_person_changes")
+            merged = list(direct) if isinstance(direct, list) else []
+            merged.extend(issue_person_changes)
+            visible["applied_person_changes"] = merged
+    return _strip_player_internal_fields(visible)
+
+
+def _strip_player_internal_fields(value: object) -> object:
+    if isinstance(value, list):
+        return [_strip_player_internal_fields(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _strip_player_internal_fields(item)
+            for key, item in value.items()
+            if key not in {"item", "report_section", "report_category"}
+        }
+    return value
