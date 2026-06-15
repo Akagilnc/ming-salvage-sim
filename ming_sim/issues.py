@@ -2198,7 +2198,11 @@ def apply_score_extraction(
     # 1) metric_delta
     applied_metric = _apply_metric_dict(state, extracted.get("metric_delta") or {}, db=db)
     # 2) economy_moves
-    applied_economy = _apply_economy_list(db, state, extracted.get("economy_moves") or [])
+    # 拒收项拆到独立 economy_moves_rejections 段（不污染玩家可见 economy_moves list；
+    # 同 faction_delta_rejections 治理，#14 cmr r1 codex/P4）。
+    _eco_out = _apply_economy_list(db, state, extracted.get("economy_moves") or [])
+    applied_economy = [r for r in _eco_out if not r.get("rejected")]
+    economy_rejections = [r for r in _eco_out if r.get("rejected")]
     # 3) faction_delta + class_delta（朝堂派系 + 社会阶级；联动靠 LLM，不在代码做）
     # 返回 (已落 delta dict, 拒收项列表)：dict 供 web 面板（形状不变），拒收列表置于
     # 独立 *_rejections 段供桥接收集器（ADR 0008 决定 1，#14/#63）——不复用 *_delta key
@@ -2652,6 +2656,7 @@ def apply_score_extraction(
     return {
         "metric_delta": applied_metric,
         "economy_moves": applied_economy,
+        "economy_moves_rejections": economy_rejections,  # 拒收独立段（#14 cmr r1）；玩家可见输出会 pop
         "faction_delta": applied_factions,
         "class_delta": applied_classes,
         # 拒收项独立段（list）：供 _collect_inline_rejections 扫记 rejection_reports；
