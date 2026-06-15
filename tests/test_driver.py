@@ -516,3 +516,22 @@ def test_open_game_rejects_degenerate_db_with_state_but_empty_board(tmp_path):
     conn.close()
     with pytest.raises(ValueError):
         drv.open_game(str(degen))
+
+
+def test_open_game_handles_uri_special_chars_in_path(tmp_path):
+    """路径含 URI 特殊字符（空格/#）的退化库经 as_uri 编码后仍正常走 ro-probe 并响亮拒，
+    不因 f'file:{path}?mode=ro' 误解析崩（codex R2 P3）。"""
+    import sqlite3
+    import pytest
+    import driver as drv
+    weird_dir = tmp_path / "a b#c"
+    weird_dir.mkdir()
+    degen = weird_dir / "save.db"
+    conn = sqlite3.connect(str(degen))
+    conn.execute("CREATE TABLE game_state (id INTEGER PRIMARY KEY)")
+    conn.execute("INSERT INTO game_state (id) VALUES (1)")
+    conn.execute("CREATE TABLE regions (id TEXT)")  # 空盘面 → 应拒
+    conn.commit()
+    conn.close()
+    with pytest.raises(ValueError):  # 编码正确则正常走到 regions 空判定；编码错会是别的崩
+        drv.open_game(str(degen))
