@@ -42,13 +42,13 @@ _content: Optional[GameContent] = None
 _SQLITE_INT_MIN, _SQLITE_INT_MAX = -(2 ** 63), 2 ** 63 - 1
 
 
-def _parse_order_id(raw: object) -> int:
-    """解析 secret_order order_id：非整数/bool/float/超 SQLite 64-bit 范围 → 抛 ValueError
-    （调用方拒为 invalid_enum）。避免 get_secret_order 绑定超界 int 抛 OverflowError 崩整月
-    结算（#63.5 一坏项带走整批；cmr secret-order r2 codex）。"""
+def _parse_sqlite_id(raw: object) -> int:
+    """解析将绑进 SQLite 的整型主键 id（secret_order / issue 等通用）：非整数/bool/float/超
+    SQLite 64-bit 范围 → 抛 ValueError（调用方拒为 invalid_enum）。避免绑定超界 int 抛
+    OverflowError 崩整月结算（#63.5 一坏项带走整批；cmr secret-order r2 / close-issues r1 codex）。"""
     val = _strict_int(raw)  # bool/float/非数 → ValueError
     if not (_SQLITE_INT_MIN <= val <= _SQLITE_INT_MAX):
-        raise ValueError("order_id 超出 SQLite 64-bit 范围")
+        raise ValueError("id 超出 SQLite 64-bit 范围")
     return val
 
 # 给建筑/地区落库做 event 关联用的占位事件（issue 结案触发的副作用无真实 event）。
@@ -1139,11 +1139,13 @@ def apply_issue_tracker_output(
         # ADR 0008 决定 1：LLM 脏数据逐项拒收留痕（坏 id/reason/陈旧引用），不静默丢；
         # db.close_issue 的代码/DB 异常不再 WARN 吞，上抛触发 SettlementAbort（ADR 0005 fail-loud）。
         try:
-            issue_id = int(cl.get("issue_id"))
+            # _parse_sqlite_id：非整数/bool/float/超 SQLite 64-bit 范围 → ValueError（含 10**100
+            # 这类 int() 过得了但绑定 SQLite 抛 OverflowError 的脏 id，避免上抛崩整月，codex r1）。
+            issue_id = _parse_sqlite_id(cl.get("issue_id"))
         except (TypeError, ValueError):
             applied_closes.append({
                 "rejected": True, "category": "invalid_enum",
-                "reason": f"close_issues issue_id 非法（无法取整）：{cl.get('issue_id')!r}",
+                "reason": f"close_issues issue_id 非法（非整数或超 SQLite 范围）：{cl.get('issue_id')!r}",
                 "item": cl,
             })
             continue
@@ -1158,12 +1160,21 @@ def apply_issue_tracker_output(
         narrative = str(cl.get("narrative") or "")[:400]
         new_row = db.close_issue(state, issue_id, reason=reason, narrative=narrative)
         if new_row is None:
-            # close_issue 对未找到 / 已非 active 的 issue 回 None：陈旧/幻觉引用 → 逐项拒收留痕。
-            applied_closes.append({
-                "rejected": True, "category": "missing_ref",
-                "reason": f"close_issues 引用未找到或已非 active 的 issue {issue_id}",
-                "item": cl,
-            })
+            # close_issue 回 None 有三态，回查 status 精确归类（cmr Claude high）：
+            #   ① 未找到 / ② 已非 active → 陈旧/幻觉引用（missing_ref）；
+            #   ③ 找到且仍 active 却被拒 → close_issue 唯一剩余 None 路径＝reason=failed 用于
+            #      不可崩坏局势（无 effect_on_fail，保持 active）＝LLM 语义误判（invalid_enum），非「未找到」。
+            chk = db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()
+            if chk is None:
+                category, why = "missing_ref", f"close_issues 引用未找到的 issue {issue_id}"
+            elif chk["status"] != "active":
+                category, why = "missing_ref", f"close_issues 引用已非 active（{chk['status']}）的 issue {issue_id}"
+            else:
+                category, why = "invalid_enum", (
+                    f"close_issues 对不可崩坏局势 issue {issue_id} 误判 failed"
+                    "（无 effect_on_fail，拒结案、保持 active）"
+                )
+            applied_closes.append({"rejected": True, "category": category, "reason": why, "item": cl})
             continue
         touched_ids.add(issue_id)
         # 终结效果：以 issue 立项时预设的 effect 为底，叠加 LLM 在本次结案项 cl 里现给的 effect。
@@ -2616,7 +2627,7 @@ def apply_score_extraction(
                                           "reason": "order_id 或 sim_note 缺失"})
             continue
         try:
-            real_id = _parse_order_id(raw_id)
+            real_id = _parse_sqlite_id(raw_id)
         except (TypeError, ValueError):
             applied_secret_orders.append({"order_id": raw_id, "rejected": True,
                                           "category": "invalid_enum", "reason": "order_id 非整数或超界"})
@@ -2662,7 +2673,7 @@ def apply_score_extraction(
                                           "reason": "order_id 或 result 缺失"})
             continue
         try:
-            real_id = _parse_order_id(raw_id)
+            real_id = _parse_sqlite_id(raw_id)
         except (TypeError, ValueError):
             applied_secret_closes.append({"order_id": raw_id, "rejected": True,
                                           "category": "invalid_enum", "reason": "order_id 非整数或超界"})

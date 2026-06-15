@@ -53,6 +53,70 @@ def test_close_unknown_issue_rejected_missing_ref(game):
     assert rej[0]["category"] == "missing_ref"
 
 
+def test_close_overflow_issue_id_rejected(game):
+    db, state, _ = game
+    # 10**100：int() 过得了但绑定 SQLite 会抛 OverflowError——必须在解析期拒收（invalid_enum），
+    # 不能让 OverflowError 上抛崩整月（codex r1，复用 _parse_sqlite_id 64-bit 守门）。
+    out = I.apply_issue_tracker_output(
+        db, state, {"close_issues": [{"issue_id": 10 ** 100, "reason": "resolved"}]}
+    )
+    rej = _rejected(out)
+    assert len(rej) == 1
+    assert rej[0]["category"] == "invalid_enum"
+
+
+def test_close_already_inactive_rejected_missing_ref(game):
+    db, state, _ = game
+    iid = db.insert_issue(state, kind="situation", title="测试·先结再结",
+                          effect_on_resolve={"metrics": {"民心": 1}})
+    # 先合法结案一次（resolved），issue → status!=active。
+    I.apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": iid, "reason": "resolved"}]})
+    # 再结一次：已非 active → missing_ref（不是「未找到」，但归陈旧引用类）。
+    out = I.apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": iid, "reason": "resolved"}]})
+    rej = _rejected(out)
+    assert len(rej) == 1
+    assert rej[0]["category"] == "missing_ref"
+    assert "active" in rej[0]["reason"]
+
+
+def test_close_failed_on_uncollapsible_rejected_invalid_enum(game):
+    db, state, _ = game
+    # 不可崩坏局势：active 但无 effect_on_fail。reason=failed → close_issue 回 None（保持 active）。
+    # 这是「找到且 active 却被拒」的第三种 None——应归 invalid_enum（语义误判），非 missing_ref。
+    iid = db.insert_issue(state, kind="situation", title="测试·不可崩坏天灾",
+                          effect_on_resolve={"metrics": {"民心": 1}}, effect_on_fail={})
+    out = I.apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": iid, "reason": "failed"}]})
+    rej = _rejected(out)
+    assert len(rej) == 1
+    assert rej[0]["category"] == "invalid_enum"
+    assert "不可崩坏" in rej[0]["reason"]
+    # 行为：issue 仍 active（拒结案，不被误标 missing_ref 也未被结案）。
+    assert db.conn.execute("SELECT status FROM issues WHERE id=?", (iid,)).fetchone()["status"] == "active"
+
+
+def test_close_rejection_reaches_rejection_reports(game):
+    """端到端 plumbing：close 段拒收经 _collect_inline_rejections 真落 rejection_reports 表
+    （桥接下探 issue_summary.closes，cmr Claude r1）。"""
+    db, state, _ = game
+    from ming_sim.applier import Provenance, RejectionCollector
+    from ming_sim.decree import _collect_inline_rejections
+
+    applied = {"issue_summary": {"closes": [{
+        "rejected": True, "category": "missing_ref",
+        "reason": "close 测试拒收", "item": {"issue_id": 999999, "reason": "resolved"},
+    }]}}
+    collector = RejectionCollector()
+    _collect_inline_rejections(collector, applied, 7, Provenance.unknown)
+    collector.flush_to_db(db)
+
+    row = db.conn.execute(
+        "SELECT section, category, reason FROM rejection_reports "
+        "WHERE turn=7 AND section LIKE '%closes%'"
+    ).fetchone()
+    assert row is not None, "close 段拒收未落 rejection_reports"
+    assert row["category"] == "missing_ref"
+
+
 def test_close_issue_code_exception_propagates(game, monkeypatch):
     db, state, _ = game
     def _boom(*a, **k):
