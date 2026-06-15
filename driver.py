@@ -62,8 +62,11 @@ def open_game(db_path: str = DEFAULT_DB):
     # characters）只在 GameSession.seed_static_data 路径写——这种退化库仍须拒（codex R1 P2）。
     # 只读(mode=ro)探一下，不 mutate：需 game_state id=1 且 regions 表有数据。
     import sqlite3 as _sqlite3
+    # 路径经 as_uri() 正确百分号编码再拼 query：裸 f"file:{db_path}?mode=ro" 遇路径含 ?/#/空格 等
+    # URI 特殊字符会误解析（codex R2 P3）。as_uri 要求绝对路径，先 resolve。
+    _ro_uri = Path(db_path).resolve().as_uri() + "?mode=ro"
     try:
-        _probe = _sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        _probe = _sqlite3.connect(_ro_uri, uri=True)
         try:
             _has_save = bool(
                 _probe.execute("SELECT 1 FROM game_state WHERE id=1").fetchone()
