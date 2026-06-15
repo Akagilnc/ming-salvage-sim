@@ -136,9 +136,10 @@ def test_run_settle_normalizes_chinese_delta_and_advances(game):
     assert new_unrest == old_unrest + 5
 
 
-def test_run_settle_persists_narrative_and_applied_extraction_trace(game):
-    """driver 传入邸报叙事 → 落 turn_report;applied 结果落 extractor_output 供玩家明细/时间线读。"""
-    db, state, content = game
+def test_run_settle_persists_narrative_and_applied_extraction_trace(saved_game):
+    """driver 传入邸报叙事 → 落 turn_report;applied 结果落 extractor_output 供玩家明细/时间线读。
+    用 saved_game：断言依赖玩过存档的国库基线/结算状态，fresh seed 不复现（#5）。"""
+    db, state, content = saved_game
     before = state.turn
     narrative = "【邸报·测试】山西动乱微升，余无大事。"
 

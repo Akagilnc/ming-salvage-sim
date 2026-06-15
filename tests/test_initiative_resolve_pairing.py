@@ -132,9 +132,10 @@ def test_resolve_surfaces_pairing_warning_in_result(game):
     assert any("new_armies" in w for w in warns), f"军事国策结案应 surface 配对告警：{warns}"
 
 
-def test_resolve_with_new_armies_no_warning_in_result(game):
-    """接线负例：effect 带 new_armies 时不应告警。"""
-    db, state, content = game
+def test_resolve_with_new_armies_no_warning_in_result(saved_game):
+    """接线负例：effect 带 new_armies 时不应告警。
+    用 saved_game：依赖玩过存档的特定 issue（带 new_armies effect 的 resolve），fresh seed 无（#5）。"""
+    db, state, content = saved_game
     issue_id = db.insert_issue(
         state, kind="initiative", title="练成天雄军",
         origin_kind="decree", bar_value=50, tags=["练军"],

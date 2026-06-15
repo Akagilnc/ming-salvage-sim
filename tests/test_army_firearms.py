@@ -42,8 +42,8 @@ def test_new_army_defaults_zero_firearm(game):
     assert row["cannon_equipment"] == 0
 
 
-def test_apply_army_delta_sets_firearm(game):
-    db, state, _ = game
+def test_apply_army_delta_sets_firearm(saved_game):
+    db, state, _ = saved_game  # saved_game：断言依赖玩过存档的特定 army 火器基线（#5）
     aid = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()["id"]
     pseudo = type("E", (), {"id": "test", "title": "配火器"})()
     db.apply_army_deltas(state, pseudo, None, "测试", {aid: {"firearm_equipment": 40, "cannon_equipment": 10}})
