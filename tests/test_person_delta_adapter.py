@@ -2848,3 +2848,109 @@ def test_yizhu_clears_status_reason_in_db(game):
     assert row["status_reason"] == "剃发降清", "易主须把 status_reason 换成本次易主缘由（非任意非空残值即过）"
     assert row["status_changed_turn"] == state.turn, "易主即状态变更，status_changed_turn 须记本回合（docstring 称验却漏断言=F2 半漏）"
     assert row["reason_code"] == ""
+
+
+# ── ADR 0009 S2/S3/S4 派生链 end-to-end 验收（#97 验收骨架闭环；S1 已有 e2e，此补三派生）──
+
+def _appoint(db, state, content, name, office, reason):
+    return issues.apply_score_extraction(
+        db, state,
+        {"人物变更": [{"name": name, "动作": "任命", "office": office, "reason": reason}]},
+        content=content,
+    )
+
+
+def test_s2_reappointment_derives_qifu_from_retired(game):
+    """S2 起复（孙承宗家居复出）：retired 人物受任命 → 派生 处置(起复) + 任命 两条，末态 active。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    _ch = content.characters[name]
+    # 全量捕获本测试会经 set_character_status/apply 改动的内存字段，finally 完整还原（autouse
+    # _restore_content_characters 已兜底深还原，此为防 smell 的显式补全，gemini PR#138 R1）。
+    _saved = (_ch.status, _ch.office, _ch.office_type, getattr(_ch, "status_reason", ""), getattr(_ch, "reason_code", ""))
+    try:
+        db.set_character_status(state, name, "retired", "乞休归籍", reason_code="致仕")
+        content.characters[name].status = "retired"
+        applied = _appoint(db, state, content, name, "蓟辽督师", "家居复出，起复督师")
+        row = db.conn.execute("SELECT status, office FROM characters WHERE name=?", (name,)).fetchone()
+        assert row["status"] == "active"
+        assert row["office"] == "蓟辽督师"
+        # 不断言 person_logs 绝对条数：所选 office 若被占会派生 S5 顶替（合法级联），条数随盘面浮动。
+        # 只验 S2 起复 derive 链本身：前两项必是 处置(起复) → 任命。
+        pcs = applied["applied_person_changes"]
+        assert pcs[0]["动作"] == "处置" and pcs[0]["derived_from"] == "起复"
+        assert pcs[1]["动作"] == "任命" and pcs[1]["derived_from"] == "起复"
+    finally:
+        _ch.status, _ch.office, _ch.office_type, _ch.status_reason, _ch.reason_code = _saved
+
+
+def test_s3_reappointment_derives_zhaoxue_from_dismissed(game):
+    """S3 翻案起用（崇祯初起复被阉党削籍的东林诸臣）：dismissed 人物受任命 → 派生 处置(昭雪) + 任命。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    _ch = content.characters[name]
+    # 全量捕获本测试会经 set_character_status/apply 改动的内存字段，finally 完整还原（autouse
+    # _restore_content_characters 已兜底深还原，此为防 smell 的显式补全，gemini PR#138 R1）。
+    _saved = (_ch.status, _ch.office, _ch.office_type, getattr(_ch, "status_reason", ""), getattr(_ch, "reason_code", ""))
+    before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
+    try:
+        db.set_character_status(state, name, "dismissed", "阉党构陷削籍", reason_code="获罪削籍")
+        content.characters[name].status = "dismissed"
+        applied = _appoint(db, state, content, name, "东阁大学士", "翻案起用入阁")
+        row = db.conn.execute("SELECT status, office FROM characters WHERE name=?", (name,)).fetchone()
+        assert row["status"] == "active"
+        assert row["office"] == "东阁大学士"
+        assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs + 2
+        pcs = applied["applied_person_changes"]
+        assert pcs[0]["动作"] == "处置" and pcs[0]["derived_from"] == "昭雪"
+        assert pcs[1]["动作"] == "任命" and pcs[1]["derived_from"] == "昭雪"
+    finally:
+        _ch.status, _ch.office, _ch.office_type, _ch.status_reason, _ch.reason_code = _saved
+
+
+def test_s4_reappointment_derives_duoqing_when_mourning(game):
+    """S4 夺情（杨嗣昌丁忧夺情入阁）：offstage+reason_code=丁忧 受任命 → 派生 处置(夺情)，
+    reason_code=丁忧 专项规则优先于 offstage→起复 通则（决定5 派生选择规则）。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    _ch = content.characters[name]
+    # 全量捕获本测试会经 set_character_status/apply 改动的内存字段，finally 完整还原（autouse
+    # _restore_content_characters 已兜底深还原，此为防 smell 的显式补全，gemini PR#138 R1）。
+    _saved = (_ch.status, _ch.office, _ch.office_type, getattr(_ch, "status_reason", ""), getattr(_ch, "reason_code", ""))
+    try:
+        db.set_character_status(state, name, "offstage", "丁内艰守制", reason_code="丁忧")
+        content.characters[name].status = "offstage"
+        applied = _appoint(db, state, content, name, "礼部尚书兼东阁大学士", "夺情起复入阁")
+        row = db.conn.execute("SELECT status, office FROM characters WHERE name=?", (name,)).fetchone()
+        assert row["status"] == "active"
+        assert row["office"] == "礼部尚书,东阁大学士", "夺情任命须真授官（office 规范化兼→,），否则 status=active 但 office 漏写也漏抓（codex R1）"
+        pcs = applied["applied_person_changes"]
+        # 丁忧 优先于 offstage→起复：派生须是 夺情 而非 起复
+        assert pcs[0]["动作"] == "处置" and pcs[0]["derived_from"] == "夺情"
+        assert pcs[1]["动作"] == "任命" and pcs[1]["derived_from"] == "夺情"
+        assert pcs[1].get("rejected") is not True, "夺情任命不应被拒"
+    finally:
+        _ch.status, _ch.office, _ch.office_type, _ch.status_reason, _ch.reason_code = _saved
+
+
+def test_person_change_rejects_unknown_action_not_silent(game):
+    """围栏（决定7 + 决定9 消费者纪律）：未接动作（不在七动作内）须响亮逐项拒收、不静默回显，
+    不静默吞成空结算照样推进。运行时围栏在 issues.py 动作分发。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    before_office_db = db.conn.execute("SELECT office FROM characters WHERE name=?", (name,)).fetchone()["office"]
+    before_office_mem = content.characters[name].office
+    applied = issues.apply_score_extraction(
+        db, state,
+        {"人物变更": [{"name": name, "动作": "瞎搞一通", "office": "兵部尚书", "reason": "非法动作"}]},
+        content=content,
+    )
+    pcs = applied["applied_person_changes"]
+    assert len(pcs) == 1
+    assert pcs[0].get("rejected") is True, "未知动作必须被拒收，不能静默落库或丢弃"
+    # 拒收项不得落库：office 须与拒收前完全一致（含 payload 里的 兵部尚书 绝不被写）。断言「office 未变」
+    # 即完整覆盖「写了再拒」半落库；不再单独断言「兵部尚书 not in office」——那对原职本就含该串的人物会误失败
+    # （codex+CodeRabbit R2 concur，brittle）。「未变」本身已 robust 覆盖 payload 不落库（codex R1）。
+    after_office_db = db.conn.execute("SELECT office FROM characters WHERE name=?", (name,)).fetchone()["office"]
+    assert after_office_db == before_office_db, "拒收项不得改 DB office（payload 兵部尚书 不得落库）"
+    assert content.characters[name].office == before_office_mem, "拒收项不得改内存 office"
