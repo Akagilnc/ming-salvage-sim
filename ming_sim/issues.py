@@ -24,6 +24,7 @@ from ming_sim.flows import (
     _apply_economy_list,
     _apply_faction_dict,
     _apply_metric_dict,
+    _strict_int,
 )
 from ming_sim.models import Event, GameState, is_vassal_prince, loads_effect_dict
 from ming_sim.person_archive_contract import (
@@ -36,6 +37,19 @@ from ming_sim.person_delta_adapter import normalize_person_changes
 from ming_sim.token_stats import tlog
 
 _content: Optional[GameContent] = None
+
+# SQLite 有符号 64-bit 整数边界：超界 int 绑进 SQLite 会抛 OverflowError。
+_SQLITE_INT_MIN, _SQLITE_INT_MAX = -(2 ** 63), 2 ** 63 - 1
+
+
+def _parse_order_id(raw: object) -> int:
+    """解析 secret_order order_id：非整数/bool/float/超 SQLite 64-bit 范围 → 抛 ValueError
+    （调用方拒为 invalid_enum）。避免 get_secret_order 绑定超界 int 抛 OverflowError 崩整月
+    结算（#63.5 一坏项带走整批；cmr secret-order r2 codex）。"""
+    val = _strict_int(raw)  # bool/float/非数 → ValueError
+    if not (_SQLITE_INT_MIN <= val <= _SQLITE_INT_MAX):
+        raise ValueError("order_id 超出 SQLite 64-bit 范围")
+    return val
 
 # 给建筑/地区落库做 event 关联用的占位事件（issue 结案触发的副作用无真实 event）。
 _ISSUE_PSEUDO_EVENT = Event(
@@ -2561,12 +2575,27 @@ def apply_score_extraction(
         sim_note = str(item.get("sim_note") or item.get("result") or "").strip()
         if raw_id is None or not sim_note:
             applied_secret_orders.append({"order_id": raw_id, "rejected": True,
+                                          "category": "invalid_enum",
                                           "reason": "order_id 或 sim_note 缺失"})
             continue
         try:
-            real_id = int(raw_id)
+            real_id = _parse_order_id(raw_id)
         except (TypeError, ValueError):
-            applied_secret_orders.append({"order_id": raw_id, "rejected": True, "reason": "order_id 非整数"})
+            applied_secret_orders.append({"order_id": raw_id, "rejected": True,
+                                          "category": "invalid_enum", "reason": "order_id 非整数或超界"})
+            continue
+        # 未知/非 active 密令的副作用写不进（_append_secret_order_line 静默返 False）→ 须显式拒收，
+        # 否则未知 id 被无脑 append 成功 = 静默报「已应用」（cmr secret-order r1 codex，#14）。
+        # 与 secret_order_closes 同结构对齐。
+        order = db.get_secret_order(real_id)
+        if order is None:
+            applied_secret_orders.append({"order_id": real_id, "rejected": True,
+                                          "category": "missing_ref", "reason": "密令不存在"})
+            continue
+        if order["status"] != "active":
+            applied_secret_orders.append({"order_id": real_id, "rejected": True,
+                                          "category": "invalid_enum",
+                                          "reason": f"密令当前 {order['status']}，非 active，不写推演副作用"})
             continue
         try:
             db.update_secret_order_sim_note(
@@ -2587,24 +2616,29 @@ def apply_score_extraction(
         result_text = str(item.get("result") or "").strip()
         if status not in {"done", "failed"}:
             applied_secret_closes.append({"order_id": raw_id, "rejected": True,
+                                          "category": "invalid_enum",
                                           "reason": f"status 必须 done/failed，得到 {status!r}"})
             continue
         if raw_id is None or not result_text:
             applied_secret_closes.append({"order_id": raw_id, "rejected": True,
+                                          "category": "invalid_enum",
                                           "reason": "order_id 或 result 缺失"})
             continue
         try:
-            real_id = int(raw_id)
+            real_id = _parse_order_id(raw_id)
         except (TypeError, ValueError):
-            applied_secret_closes.append({"order_id": raw_id, "rejected": True, "reason": "order_id 非整数"})
+            applied_secret_closes.append({"order_id": raw_id, "rejected": True,
+                                          "category": "invalid_enum", "reason": "order_id 非整数或超界"})
             continue
         # 仅 pending_review 状态才允许结案；active 不能跳级，done/failed 已结案不重复
         order = db.get_secret_order(real_id)
         if order is None:
-            applied_secret_closes.append({"order_id": real_id, "rejected": True, "reason": "密令不存在"})
+            applied_secret_closes.append({"order_id": real_id, "rejected": True,
+                                          "category": "missing_ref", "reason": "密令不存在"})
             continue
         if order["status"] != "pending_review":
             applied_secret_closes.append({"order_id": real_id, "rejected": True,
+                                          "category": "invalid_enum",
                                           "reason": f"当前状态 {order['status']}，非 pending_review，不予结案"})
             continue
         try:
