@@ -1138,6 +1138,15 @@ def apply_issue_tracker_output(
     for cl in tracker_output.get("close_issues", []) or []:
         # ADR 0008 决定 1：LLM 脏数据逐项拒收留痕（坏 id/reason/陈旧引用），不静默丢；
         # db.close_issue 的代码/DB 异常不再 WARN 吞，上抛触发 SettlementAbort（ADR 0005 fail-loud）。
+        if not isinstance(cl, dict):
+            # 非 dict 项（如 close_issues:[null]/标量，_sanitize 不清列表项可达）：cl.get 会抛
+            # AttributeError（不在下方 except 内）崩整月——逐项拒收，不让坏项带走整批（codex r4）。
+            applied_closes.append({
+                "rejected": True, "category": "invalid_enum",
+                "reason": f"close_issues 条目非对象（应为 dict）：{cl!r}",
+                "item": cl,
+            })
+            continue
         try:
             # _parse_sqlite_id：非整数/bool/float/超 SQLite 64-bit 范围 → ValueError（含 10**100
             # 这类 int() 过得了但绑定 SQLite 抛 OverflowError 的脏 id，避免上抛崩整月，codex r1）。

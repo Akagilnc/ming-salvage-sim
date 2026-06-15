@@ -30,6 +30,18 @@ def test_close_bad_issue_id_rejected(game):
     assert "issue_id" in rej[0]["reason"]
 
 
+@pytest.mark.parametrize("bad_item", [None, 42, "字符串", ["列表"]])
+def test_close_non_dict_item_rejected_not_crash(game, bad_item):
+    db, state, _ = game
+    # 非 dict close 项（close_issues:[null]/标量，_sanitize 不清列表项可达）：必须逐项拒收，
+    # 不能 cl.get 抛 AttributeError 崩整月（codex r4）。
+    out = I.apply_issue_tracker_output(db, state, {"close_issues": [bad_item]})
+    rej = _rejected(out)
+    assert len(rej) == 1
+    assert rej[0]["category"] == "invalid_enum"
+    assert "非对象" in rej[0]["reason"]
+
+
 def test_close_bad_reason_rejected(game):
     db, state, _ = game
     # reason 在调用 close_issue 前先验，故任意 id 都会先因坏 reason 被拒。
