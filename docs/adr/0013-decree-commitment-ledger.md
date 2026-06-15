@@ -27,6 +27,7 @@ Status: Proposed（设计草案，2026-06-15；**务实版**——用户拍板�
 - **cap 10→15**（`issues.py` `initiative_active >= 10` 那处）——承诺与国策共用名额，放宽免得承诺被名额挤掉（小改，不另设承诺专属池）。
 - **`end_turn INTEGER DEFAULT 0`**（仅「连续 N 月/半年为限」硬时限用；立项 `end_turn = turn + N`，到期停账）。
 - **`stop_condition TEXT DEFAULT ''`**（「直到补齐」用；复用 `_gate_passed` 的 `{key: "比较式"}` 语法，同 `legacies.clear_gate`；可寻址 `armies.arrears` 等）。
+- **`close_reason TEXT DEFAULT ''`**（收尾原因，如 `承诺到期`——区分「到期 `dropped`」与「玩家撤销 `dropped`」；`cancel_issue` 现置 dropped 不写 reason，读者无从分辨，故补此列。修 Claude R2-high）。
 - **bar = 履行/补齐进度**（由实际进度/arrears 派生，或 LLM 按真进度给），**不给 random `expected_months` inertia 漂移**——免得 bar 自漂到 100 假性了结。漂到 100（补齐）=真了结，与 `stop_condition` 一致。〔这取代 R1 误加的「bar-exempt」：bar 不是要剥离，是要当进度用、由真进度驱动。〕
 
 ### D3 三形态 → 载体落点
