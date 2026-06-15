@@ -145,6 +145,28 @@ def test_effect_brief_ignores_rejected_closes():
     assert "真·平叛结案" in brief and "了结局势" in brief
 
 
+def test_scalar_item_rejection_preserves_original_in_reports(game):
+    """非 dict 坏项（item 为标量/null）的 item_json 须存原始坏项本身（ADR 决定 5），
+    不是整个 rejected wrapper——桥接按 'item' 键存在性解包、覆盖标量原件（cmr r5 codex）。"""
+    import json
+    from ming_sim.applier import Provenance, RejectionCollector
+    from ming_sim.decree import _collect_inline_rejections
+
+    applied = {"issue_summary": {"closes": [
+        {"rejected": True, "category": "invalid_enum", "reason": "条目非对象", "item": 42},
+        {"rejected": True, "category": "invalid_enum", "reason": "条目非对象", "item": None},
+    ]}}
+    collector = RejectionCollector()
+    _collect_inline_rejections(collector, applied, 8, Provenance.unknown)
+    collector.flush_to_db(db := game[0])
+
+    rows = db.conn.execute(
+        "SELECT item_json FROM rejection_reports WHERE turn=8 AND section LIKE '%closes%' ORDER BY id"
+    ).fetchall()
+    items = [json.loads(r["item_json"]) for r in rows]
+    assert 42 in items and None in items, items  # 原始标量原件保真，非嵌套 wrapper
+
+
 def test_close_issue_code_exception_propagates(game, monkeypatch):
     db, state, _ = game
     def _boom(*a, **k):
