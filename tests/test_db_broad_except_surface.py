@@ -40,6 +40,55 @@ def test_pending_decisions_corrupt_options_json_falls_back_and_surfaces(game, mo
     assert any("options_json 损坏" in m for m in msgs), msgs
 
 
+def _insert_corrupt_tags_memory(db, *, subject_type, subject_id, turn, tags_raw, suffix):
+    """插一条 tags 列为损坏 JSON 的 event_memory（绕过正常写入的 json.dumps）。"""
+    db.conn.execute(
+        "INSERT INTO event_memories "
+        "(subject_type, subject_id, turn, year, period, event_type, title, "
+        " importance, tags, source_kind, source_id) "
+        "VALUES (?, ?, ?, 1, 1, 'test', '损坏标签事件', 5, ?, 'test', ?)",
+        (subject_type, subject_id, turn, tags_raw, suffix),
+    )
+    db.conn.commit()
+
+
+def test_relevant_memories_corrupt_tags_no_crash_and_surfaces(game, monkeypatch):
+    db, _state, _content = game
+    # 损坏 tags 的 character 行——经 subject_id 精确匹配被选中，importance=5 过滤存活。
+    db.conn.execute("DELETE FROM event_memories")  # 清空，确保被测行入 result[:limit]
+    db.conn.commit()
+    _insert_corrupt_tags_memory(
+        db, subject_type="character", subject_id="测试人物甲",
+        turn=10, tags_raw="[坏掉的tags", suffix="r1",
+    )
+
+    msgs = _capture_tlog(monkeypatch)
+    # 修复前：result 构建循环二次 json.loads 损坏 tags → 抛异常崩库。
+    out = db.get_relevant_event_memories("测试人物甲", "", "", turn=12, ignore_expiry=True)
+
+    assert len(out) == 1
+    assert out[0]["tags"] == []  # 行为：损坏 tags 回退空 list，不再崩
+    assert any("tags JSON 损坏" in m for m in msgs), msgs
+
+
+def test_keyword_memories_corrupt_tags_no_crash_and_surfaces(game, monkeypatch):
+    db, _state, _content = game
+    db.conn.execute("DELETE FROM event_memories")
+    db.conn.commit()
+    # tags 原文含锚词「搜索锚」供 SQL `tags LIKE` 命中，但整体非合法 JSON。
+    _insert_corrupt_tags_memory(
+        db, subject_type="court", subject_id="x",
+        turn=10, tags_raw='["搜索锚" 坏JSON', suffix="r2",
+    )
+
+    msgs = _capture_tlog(monkeypatch)
+    out = db.get_memories_by_keywords(["搜索锚"], turn=12, ignore_expiry=True)
+
+    assert len(out) == 1
+    assert out[0]["tags"] == []  # 行为：损坏 tags 回退空 list，不再崩
+    assert any("tags JSON 损坏" in m for m in msgs), msgs
+
+
 def test_legacy_modifiers_corrupt_json_skips_and_surfaces(game, monkeypatch):
     db, state, _content = game
     # 种子档可能已有 active legacy（国库基线非 0），故测 delta：以「插入贡献 +10 →
