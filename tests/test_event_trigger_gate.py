@@ -172,3 +172,35 @@ def test_typo_field_text_gate_raises_clear(game):
     db, state, content = game
     with pytest.raises(ValueError, match="字段无效|DB 无此列"):
         _gate_passed({"region.huguang.controled_by": "==ming"}, state.metrics, db)  # controlled_by typo
+
+
+def test_gate_key_rejects_empty_class_name():
+    """cmr r2（Claude+codex concur）：class.<名>@<region> 的类名为空（@ 前）→ fail-loud
+    （| 守不到单 @ 子形）。存量 class.士绅@... 正常仍放行。"""
+    from ming_sim.content import gate_key_form_error
+    assert gate_key_form_error("class.@nanzhili.satisfaction")          # 空类名
+    assert gate_key_form_error("class.@n1|@n2.satisfaction")            # | 多成员均空类名
+    assert gate_key_form_error("class.士绅@nanzhili.satisfaction") == ""  # 正常
+
+
+def test_text_cond_requires_text_capable_key():
+    """cmr r2（codex）：文本相等 cond 须配单 id region/army/power 三段 key；多 id/聚合/class/
+    bare-metric 配文本 cond → fail-loud（runtime _eval_gate_key_str 不支持、否则静默永不达标）。"""
+    from ming_sim.content import gate_text_key_form_error, gate_cond_is_text
+    assert gate_cond_is_text("==ming") and not gate_cond_is_text("==5")
+    assert gate_text_key_form_error("region.huguang.controlled_by") == ""   # 合法
+    assert gate_text_key_form_error("region.a|b.controlled_by")              # 多 id 拒
+    assert gate_text_key_form_error("class.士绅.satisfaction")                # class 拒
+    assert gate_text_key_form_error("民心")                                  # bare metric 拒
+
+
+def test_load_fail_loud_on_text_cond_multi_id_key(monkeypatch):
+    """load 时 文本 cond 配多 id key → SystemExit fail-loud（配对校验）。"""
+    import pytest
+    import ming_sim.content as content_mod
+    bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
+            "urgency": 1, "severity": 1, "credibility": 1,
+            "trigger_gate": {"region.a|b.controlled_by": "==ming"}}]
+    monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
+    with pytest.raises(SystemExit):
+        content_mod.load_event_content("x.json")
