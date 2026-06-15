@@ -4535,10 +4535,10 @@ class GameDB:
                 + max(0, 10 - age)
                 + (12 if active_hit else 0)
             )
-            scored.append((score, row, tag_matches))
+            scored.append((score, row, tags))  # 存已解析 tags（含损坏回退 []）供 result 复用，免二次 json.loads（#14）
         scored.sort(key=lambda item: (item[0], int(item[1]["turn"]), int(item[1]["id"])), reverse=True)
         result: List[Dict[str, object]] = []
-        for _score, row, _matches in scored[:limit]:
+        for _score, row, tags in scored[:limit]:
             result.append({
                 "id": int(row["id"]),
                 "subject_type": row["subject_type"],
@@ -4553,7 +4553,7 @@ class GameDB:
                 "outcome": row["outcome"],
                 "sentiment": row["sentiment"],
                 "importance": int(row["importance"]),
-                "tags": json.loads(row["tags"] or "[]"),
+                "tags": tags,  # 复用评分循环已解析的 tags（损坏行回退 []，不再二次 json.loads 崩库，#14 cmr）
             })
         if result:
             ids = ",".join(str(item["id"]) for item in result)
@@ -4659,11 +4659,11 @@ class GameDB:
                 if any(n in str(t) or str(t) in n for t in tags)
             )
             score = int(row["importance"]) * 10 + hit_count * 5 + max(0, 8 - age)
-            scored.append((score, row))
+            scored.append((score, row, tags))  # 带上已解析 tags（含损坏回退 []）供 result 复用（#14）
 
         scored.sort(key=lambda x: x[0], reverse=True)
         result = []
-        for _score, row in scored[:limit]:
+        for _score, row, tags in scored[:limit]:
             result.append({
                 "id": int(row["id"]),
                 "subject_type": row["subject_type"],
@@ -4675,7 +4675,7 @@ class GameDB:
                 "cause": row["cause"],
                 "outcome": row["outcome"],
                 "importance": int(row["importance"]),
-                "tags": json.loads(row["tags"] or "[]"),
+                "tags": tags,  # 复用评分循环已解析的 tags（损坏行回退 []，不再二次 json.loads 崩库，#14 cmr）
                 "source_kind": row["source_kind"],  # 演算记忆 vs 大臣记忆
             })
         tlog(f"[memory/keywords] needles={len(needles)} hit={len(result)}")
