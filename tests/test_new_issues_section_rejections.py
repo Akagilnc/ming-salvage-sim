@@ -108,6 +108,42 @@ def test_new_issue_infinity_expected_months_defaults_not_abort(game):
     assert len(created) == 1, out
 
 
+def test_new_issue_severity_zero_preserved(game):
+    db, state, _ = game
+    # 合法 severity=0 须保留，不能被 `or 50` 静默改成 50（数据保真，cmr ni r4 codex）。
+    out = I.apply_issue_tracker_output(db, state, {
+        "new_issues": [{"origin_kind": "decree", "kind": "situation", "title": "测试·severity0",
+                        "severity": 0, "effect_on_resolve": {"metrics": {"民心": 1}}}],
+    })
+    created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
+    assert len(created) == 1, out
+    iid = int(created[0]["issue_id"])
+    assert db.conn.execute("SELECT severity FROM issues WHERE id=?", (iid,)).fetchone()["severity"] == 0
+
+
+def test_new_issue_garbage_severity_rejected(game):
+    db, state, _ = game
+    # severity=[] 是脏值（非缺省/null）——应走拒整项（int([]) TypeError），不静默默认 50。
+    out = I.apply_issue_tracker_output(db, state, {
+        "new_issues": [{"origin_kind": "decree", "kind": "situation", "title": "测试·脏severity", "severity": []}],
+    })
+    rej = _rejected(out)
+    assert len(rej) == 1, out
+    assert rej[0]["category"] == "invalid_enum"
+
+
+def test_new_issue_lone_surrogate_string_rejected_not_abort(game):
+    db, state, _ = game
+    # 字符串字段含孤代理（JSON \ud800 解析所得）→ 绑 SQLite 抛 UnicodeEncodeError——属脏数据，
+    # 须逐项拒收、不逃逸 abort（cmr ni r4 codex）。
+    ni = {"origin_kind": "decree", "kind": "situation", "title": "坏\ud800标题"}
+    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
+    rej = _rejected(out)
+    assert len(rej) == 1, out
+    assert rej[0]["category"] == "invalid_enum"
+    assert "不可编码" in rej[0]["reason"]
+
+
 def test_new_issue_insert_code_exception_propagates(game, monkeypatch):
     db, state, _ = game
     def _boom(*a, **k):
