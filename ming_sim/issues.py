@@ -1112,6 +1112,11 @@ def apply_issue_tracker_output(
         ongoing_eff = _eff_dict(ni.get("ongoing_effects"))
         resolve_eff = _eff_dict(ni.get("effect_on_resolve"))
         fail_eff = _eff_dict(ni.get("effect_on_fail"))
+        # cancel_cost 同属 dict 字段，与上 3 个统一走 _eff_dict 容忍归 {}（cmr ni r9 codex medium）：
+        # 旧 `dict(ni.get("cancel_cost") or {})` 对 list-of-pairs 静默 garble（dict([["民心",-5]])=
+        # {'民心':-5}、dict(["ab"])={'a':'b'}）、对标量串 raise 拒整项——而 cancel_cost 是次要字段，
+        # 脏不该丢掉整个 issue 决策后果（违 P1 落库铁律）。容忍归 {} 既不 garble、又保 issue 主体。
+        cancel_cost = _eff_dict(ni.get("cancel_cost"))
         # 校验：国策必须有「办成回报」。CLI 后端(agy)一贯不填效果字段（实测 0/4），
         # 空则聚焦补全，保证「国策跑完有实质后果」(A 方案)；floor 兜底，绝不入空壳。
         if kind == "initiative" and not resolve_eff:
@@ -1142,7 +1147,8 @@ def apply_issue_tracker_output(
             bar_value = _strict_int(25 if _bv is None else _bv)
             _sv = ni.get("severity", 50)
             severity = _strict_int(50 if _sv is None else _sv)
-            cancel_cost = dict(ni.get("cancel_cost") or {})
+            # cancel_cost 已在 try 外随 effect 字段走 _eff_dict 容忍归 {}（cmr ni r9）——不在此强转、
+            # 不进 except 拒收路。
             # tags 严格化（cmr ni r8 codex medium，与上方 int 字段同一字段校验 class）：缺省/null/
             # 空串 → []；present 必须是 list/tuple 且元素全为 str。原 `list(ni.get("tags") or [])`
             # 把标量串拆字（list("募营")=['募','营']）——既污染 DB tags，又让 _initiative_resolve_
@@ -1161,7 +1167,7 @@ def apply_issue_tracker_output(
             # float（含 inf/nan）归 ValueError，OverflowError 兜超大 int 等残余路（cmr ni r3 codex）。
             applied_new.append({
                 "rejected": True, "category": "invalid_enum",
-                "reason": f"new_issue 字段强转失败（bar_value/severity/cancel_cost/tags/inertia 脏数据）：{exc}",
+                "reason": f"new_issue 字段强转失败（bar_value/severity/tags/inertia 脏数据）：{exc}",
                 "item": ni, "title": title,
             })
             continue

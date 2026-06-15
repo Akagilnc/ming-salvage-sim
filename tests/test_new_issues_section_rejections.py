@@ -48,8 +48,9 @@ def test_new_issue_non_dict_item_rejected_not_crash(game, bad_item):
 @pytest.mark.parametrize("field,bad", [
     ("bar_value", "abc"),     # int() 抛
     ("severity", "高"),        # int() 抛
-    ("cancel_cost", "白银万两"),  # dict(str) 抛
     ("tags", 5),               # list(int) 抛
+    # 注：cancel_cost 不在此（拒整项）——它与 ongoing/effect 同属 dict 字段，走 _eff_dict 容忍
+    # 归 {}（次要字段脏不丢整个 issue=符 P1），见 test_new_issue_non_dict_cancel_cost_tolerated。
 ])
 def test_new_issue_dirty_coercion_field_rejected(game, field, bad):
     db, state, _ = game
@@ -297,3 +298,34 @@ def test_new_issue_valid_list_tags_preserved(game):
     iid = int(created[0]["issue_id"])
     row = db.conn.execute("SELECT tags FROM issues WHERE id=?", (iid,)).fetchone()
     assert json.loads(row["tags"]) == ["募营", "边事"], "整词须保全、不得拆字"
+
+
+# --- cancel_cost 与 effect 字段同走 _eff_dict 容忍（cmr ni r9 codex medium）---
+# cancel_cost 旧用 dict(raw)：标量串 raise 拒整项（违 P1：次要字段脏不该丢整个 issue），list-of-pairs
+# 静默 garble（dict([["民心",-5]])={'民心':-5}、dict(["ab"])={'a':'b'}）。改与 ongoing/effect 三个
+# dict 字段统一 _eff_dict（非 dict → {} 容忍）：issue 仍正常立、cancel_cost 落空 {} 不 garble。
+
+
+@pytest.mark.parametrize("bad_cancel", ["白银万两", [["民心", -5]], ["ab"], [], 5])
+def test_new_issue_non_dict_cancel_cost_tolerated(game, bad_cancel):
+    db, state, _ = game
+    ni = {"origin_kind": "decree", "kind": "situation", "title": "测试·脏cancel", "cancel_cost": bad_cancel}
+    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
+    created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
+    assert len(created) == 1, out  # issue 仍立（不因次要字段脏拒整项）
+    iid = int(created[0]["issue_id"])
+    row = db.conn.execute("SELECT cancel_cost FROM issues WHERE id=?", (iid,)).fetchone()
+    assert json.loads(row["cancel_cost"]) == {}, "非 dict cancel_cost 须容忍归空 {}，不得 garble"
+
+
+def test_new_issue_valid_cancel_cost_preserved(game):
+    db, state, _ = game
+    # 正常 dict cancel_cost 原样保全（_eff_dict 对 dict 直通）。
+    ni = {"origin_kind": "decree", "kind": "situation", "title": "测试·正常cancel",
+          "cancellable": "decree", "cancel_cost": {"民心": -5, "皇威": -2}}
+    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
+    created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
+    assert len(created) == 1, out
+    iid = int(created[0]["issue_id"])
+    row = db.conn.execute("SELECT cancel_cost FROM issues WHERE id=?", (iid,)).fetchone()
+    assert json.loads(row["cancel_cost"]) == {"民心": -5, "皇威": -2}
