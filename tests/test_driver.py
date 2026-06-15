@@ -554,12 +554,17 @@ def test_canonicalize_extraction_public_api():
 # ── ADR 0008 决定 5：拒收玩家可见性（player_decree/hitl → 邸报 in-world 提示）──
 
 def test_run_settle_player_sourced_rejection_surfaces_diegetic_hint(game):
-    """driver 默认 player_decree 来源：落库拒收 → 邸报给一句 in-world 提示（不暴露明细，明细进 DB/jsonl）。"""
+    """driver 默认 player_decree 来源：落库拒收 → 邸报给一句 in-world 提示（不暴露明细，明细进 DB/jsonl），
+    且提示**持久化进 turn_report**（web/history/重读都见，非仅即时返回串，codex R1 high）。"""
     db, state, content = game
+    before = state.turn
     report = run_settle(db, state, content,
         {"人物变更": [{"name": "查无此人甲", "动作": "任命", "office": "首辅", "reason": "测试拒收"}]})
     assert "有司奏" in report, "player_decree 来源的拒收须在邸报给玩家一句提示（决定 5）"
     assert "查无此人甲" not in report, "提示只一句 in-world，不暴露拒收明细（明细进 DB/jsonl）"
+    # 持久化：turn_reports（web/history 读它）也须含提示，非仅 run_settle 即时返回
+    persisted = db.conn.execute("SELECT report FROM turn_reports WHERE turn=?", (before,)).fetchone()[0]
+    assert "有司奏" in persisted, "提示须持久化进 turn_report（codex R1：仅返回串则 web/history 看不到）"
 
 
 def test_run_settle_no_rejection_no_hint(game):

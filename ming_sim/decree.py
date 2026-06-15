@@ -1117,6 +1117,12 @@ def _settle_after_extract_body(
 
     # 把 narrative 与诏书写入 turn_logs 作下月前文
     db.record_log(state, narrative[:1200])
+    # ADR 0008 决定 5：玩家来源(player_decree/hitl_decision)的落库拒收 → 邸报附一句 in-world 提示，
+    # 且**持久化进 turn_report**（web/history/重读都见，非仅即时返回串，codex R1 high）。在 record_log
+    # 之后追加：turn_logs 是 sim 下月前文、不带提示噪声；turn_report 是玩家邸报、带提示。主 apply 拒收
+    # 已于上面 flush，此刻 has_player_visible_rejection 即覆盖玩家下旨的拒收案。提示极简不暴露明细。
+    if collector is not None and collector.has_player_visible_rejection():
+        narrative = narrative + "\n\n有司奏：所拟之事有窒碍未行者，已录档待酌。"
     db.save_turn_report(state, narrative)
 
     # 落 inertia + ongoing (未被本月 issue_advances 触动的)
@@ -1223,12 +1229,9 @@ def _settle_after_extract_body(
         ending = f"\n\n【结局·{label}】{outcome.get('summary', '')}"
         if ending_text:
             ending += "\n\n" + ending_text
+    # in-world 拒收提示已在 save_turn_report 前追加进 narrative（持久化 + 流入此处 full_report），
+    # 不在此重复 append（ADR 0008 决定 5；codex R1 high：须持久化非仅返回串）。
     full_report = f"\n本{TURN_UNIT}颁布诏书：\n" + decree_text + "\n\n" + narrative + ending
-    # ADR 0008 决定 5：玩家来源(player_decree/hitl_decision)的落库拒收，邸报给一句 in-world 提示——
-    # 让皇帝知道「有事窒碍未行」；系统推演来源对玩家安静。提示极简、不暴露拒收明细（明细落 DB/jsonl
-    # 供分析，不在游戏内文本堆给非技术试玩者）。
-    if collector is not None and collector.has_player_visible_rejection():
-        full_report += "\n\n有司奏：所拟之事有窒碍未行者，已录档待酌。"
     return full_report
 
 
