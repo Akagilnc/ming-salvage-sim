@@ -115,7 +115,8 @@ def test_gate_key_form_error_rejects_typo_metric_table_structure():
 def test_gate_cond_form_error_numeric_and_text():
     """数值比较 + 文本相等都合法（load/runtime 调和，残留 4b②）；垃圾非法。"""
     from ming_sim.content import gate_cond_form_error
-    for c in ("<=240", ">=34", "==5", "!=-3", "==ming", "!=houjin"):
+    # 数值比较（无 !=）+ 文本相等（==/!=）；数值 != 见 test_gate_cond_numeric_neq_rejected_*
+    for c in ("<=240", ">=34", "==5", "==ming", "!=houjin"):
         assert gate_cond_form_error(c) == "", (c, gate_cond_form_error(c))
     assert gate_cond_form_error("abc")
     assert gate_cond_form_error(">> 5")
@@ -141,3 +142,33 @@ def test_typo_field_gate_raises_clear_not_operationalerror(game):
     db, state, content = game
     with pytest.raises(ValueError, match="字段无效|DB 无此列"):
         _gate_passed({"region.huguang.grane_security": ">=1"}, state.metrics, db)  # grain_security typo
+
+
+def test_gate_cond_numeric_neq_rejected_text_neq_ok():
+    """cmr r1（Claude+codex concur）：'!=5' 数值 not-equal load 不许（runtime 数值分支无 !=、
+    永远 False）；'!=houjin' 文本相等仍合法（与 runtime 两分支精确对齐）。"""
+    from ming_sim.content import gate_cond_form_error
+    assert gate_cond_form_error("!=5")        # 数值 != → 拒
+    assert gate_cond_form_error("!=-3")       # 数值 != → 拒
+    assert gate_cond_form_error("!=houjin") == ""   # 文本 != → 放行
+    assert gate_cond_form_error("==ming") == ""
+    assert gate_cond_form_error("==5") == ""        # 数值 == → 放行
+
+
+def test_gate_key_rejects_empty_segments():
+    """cmr r1（codex）：空 id / 空字段 / | 列表空成员 → fail-loud 素材（非静默/SQL 崩）。"""
+    from ming_sim.content import gate_key_form_error
+    assert gate_key_form_error("region..unrest")        # 空 id
+    assert gate_key_form_error("region.x.")             # 空字段
+    assert gate_key_form_error("region.shaanxi|.unrest")  # | 含空成员
+    assert gate_key_form_error("region.shaanxi.unrest") == ""  # 正常仍放行
+
+
+def test_typo_field_text_gate_raises_clear(game):
+    """cmr r1（Claude）：文本相等 gate 引用 typo'd 字段 → text-branch（_eval_gate_key_str）的
+    OperationalError 也被 fail-loud 成清晰 ValueError（覆盖文本分支 wrap）。"""
+    import pytest
+    from ming_sim.issues import _gate_passed
+    db, state, content = game
+    with pytest.raises(ValueError, match="字段无效|DB 无此列"):
+        _gate_passed({"region.huguang.controled_by": "==ming"}, state.metrics, db)  # controlled_by typo

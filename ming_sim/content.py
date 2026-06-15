@@ -92,12 +92,15 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
 
 def gate_cond_form_error(cond: str) -> str:
     """trigger_gate 比较式形态校验（#12 Q3 fail-loud）。合法→""；非法→错误说明。
-    数值比较：(>=|<=|>|<|==|!=) + 整数；文本相等：(==|!=) + 非数字串（与 runtime _gate_passed
-    的两分支对齐——原 load 只放数值、文本会被误拒，load/runtime 不一致，ADR 0012 残留 4b②）。"""
+    **精确镜像 runtime _gate_passed 两分支**（cmr r1 Claude+codex concur）：
+    - 文本相等：(==|!=) + 非纯数字 RHS；
+    - 数值比较：(>=|<=|>|<|==) + 整数（runtime 数值分支**不含 !=**——故 '!=5' 数值不许，
+      否则 load 放行而 runtime 永远 False，ADR 0012 残留 4b②对齐）。"""
     cond = cond.strip()
-    if re.match(r"^(>=|<=|>|<|==|!=)\s*-?\d+$", cond):
+    sm = re.match(r"^(==|!=)\s*(.+)$", cond)
+    if sm and not re.match(r"^-?\d+$", sm.group(2).strip()):  # 文本相等（RHS 非纯数字）
         return ""
-    if re.match(r"^(==|!=)\s*\S.*$", cond):  # 文本相等（RHS 非空、非纯数字已被上条接走）
+    if re.match(r"^(>=|<=|>|<|==)\s*-?\d+$", cond):  # 数值（无 !=，同 runtime）
         return ""
     return f"{cond!r}（应形如 '<=240' / '>=34' 数值，或 '==ming' / '!=houjin' 文本相等）"
 
@@ -117,6 +120,13 @@ def gate_key_form_error(key: str) -> str:
         parts = parts[:-1]
     if len(parts) < 3:
         return "结构不完整（应形如 表.id.字段[.聚合]）"
+    # 拒空段（cmr r1 codex）：空 id / 空字段 / | 列表含空成员 → 静默不达标或 SQL 崩，须 fail-loud
+    field = parts[-1]
+    id_segment = ".".join(parts[1:-1])
+    if not field.strip() or not id_segment.strip():
+        return "id 或 字段 为空"
+    if any(not m.strip() for m in id_segment.split("|")):
+        return "id 列表含空成员（| 分隔）"
     return ""
 
 
