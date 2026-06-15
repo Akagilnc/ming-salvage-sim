@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Dict, List
+from typing import TYPE_CHECKING, Dict, List
 
-from ming_sim.db import GameDB
+if TYPE_CHECKING:  # GameDB 仅用于 _select_secret_orders_for_sim 的类型注解（已 `from __future__ annotations`
+    from ming_sim.db import GameDB  # 惰性字符串）；不在运行时 import db，使本模块运行时零 db 依赖（线上 sourcery）
 
 CHEAT_NARRATIVE_PREFIX = (
     "【天命强制·结算优先】以下为既成事实，最高优先级，先于一切规则与档位上限。"
