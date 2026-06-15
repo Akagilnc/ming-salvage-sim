@@ -102,3 +102,45 @@ def test_update_unknown_order_id_missing_ref(game):
     rows = _rejection_rows(db, turn, "secret_order_updates")
     assert len(rows) == 1, rows
     assert rows[0][2] == "missing_ref", rows
+
+
+def _active_order_id(db):
+    row = db.conn.execute(
+        "SELECT id FROM secret_orders WHERE status='active' ORDER BY id LIMIT 1").fetchone()
+    return row[0] if row else None
+
+
+def test_update_valid_active_order_applies_no_reject(game):
+    """正向守门（cmr r2 claude）：合法 active 密令 update 不被新 get_secret_order gate 误拒，
+    sim_note 真写入、零拒收行。"""
+    db, state, content = game
+    turn = state.turn
+    oid = _active_order_id(db)
+    if oid is None:
+        import pytest
+        pytest.skip("基底无 active 密令")
+
+    run_settle(db, state, content, {
+        "secret_order_updates": [{"order_id": oid, "sim_note": "推演副作用XYZ"}],
+    }, narrative="x", decree_text="y")
+
+    assert _rejection_rows(db, turn, "secret_order_updates") == []
+    assert "推演副作用XYZ" in (db.get_secret_order(oid)["sim_note"] or "")
+
+
+def test_oversized_order_id_rejected_not_crash(game):
+    """超 SQLite 64-bit 范围的 order_id（int() 不抛但 get_secret_order 绑定会 OverflowError）
+    → invalid_enum 逐项拒收，不崩整月结算（#63.5；cmr r2 codex）。updates + closes 都覆盖。"""
+    db, state, content = game
+    turn = state.turn
+    huge = 10 ** 100
+
+    run_settle(db, state, content, {
+        "secret_order_updates": [{"order_id": huge, "sim_note": "超界 id"}],
+        "secret_order_closes": [{"order_id": huge, "status": "done", "result": "超界 id"}],
+    }, narrative="x", decree_text="y")
+
+    up = [r for r in _rejection_rows(db, turn, "secret_order_updates") if r[2] == "invalid_enum"]
+    cl = [r for r in _rejection_rows(db, turn, "secret_order_closes") if r[2] == "invalid_enum"]
+    assert len(up) == 1, up
+    assert len(cl) == 1, cl
