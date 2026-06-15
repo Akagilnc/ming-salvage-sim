@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, NamedTuple, Optional, Tuple
 
 from ming_sim.constants import TURN_UNIT
 from ming_sim.db import GameDB
@@ -559,12 +559,53 @@ def _advance_province_fiscal_substrate(db: GameDB, state: GameState) -> None:
         )
 
 
-def _apply_faction_dict(db: GameDB, faction_delta: Dict[str, object]) -> Dict[str, object]:
+class DeltaApplyResult(NamedTuple):
+    """faction/class 应用结果：applied=真正写库的 delta dict（供 web 面板）、
+    rejections=逐项拒收列表（供桥接收集器）。命名字段替代裸 tuple 索引（cmr 线上 r1 sourcery）。
+    与裸 (dict, list) 元组按值相等，向后兼容解包与既有断言。"""
+    applied: Dict[str, object]
+    rejections: List[Dict[str, object]]
+
+
+def _value_reject(key: str, raw: object, item: object, field: str = "") -> Dict[str, object]:
+    """构造 faction/class 值级 invalid_enum 拒收项（坏值留痕，#14 模式 A）。
+    item 载原始 delta 项（供恢复重放/诊断，ADR 决定 5「原 item 原样保留」）。"""
+    where = f"{field} " if field else ""
+    out: Dict[str, object] = {
+        "name": str(key), "rejected": True,
+        "category": "invalid_enum",
+        "reason": f"「{key}」{where}值非整数：{raw!r}",
+        "item": {str(key): item},
+    }
+    if field:
+        out["field"] = field
+    return out
+
+
+def _strict_int(raw: object) -> int:
+    """严格整数转换：bool/float 一律视为非整数（仿 region/army/power section，
+    bool 是 int 子类、float 静默截断都非合法 delta）。返回 int 或抛 ValueError。
+    （注：仍接受可解析整数串如 "5"，与 region/army/power 的 int() 容忍一致。）"""
+    if isinstance(raw, bool) or isinstance(raw, float):
+        raise ValueError("非整数 delta")
+    return int(raw)  # type: ignore[arg-type]
+
+
+def _apply_faction_dict(
+    db: GameDB, faction_delta: Dict[str, object]
+) -> DeltaApplyResult:
     """支持两种格式：
     - 旧格式：{"阉党": -10}  → 仅 satisfaction 增量
     - 新格式：{"阉党": {"satisfaction": -10, "leverage": -15}}
+
+    逐项拒收契约（ADR 0008 决定 1，#14/#63）：satisfaction/leverage 值非整数（含
+    bool/float，cmr r1 codex）→ invalid_enum 逐项拒收留痕（#14 模式 A，原 `continue`
+    静默跳）；查无此派系名由 db.adjust_factions 返 missing_ref。
+    返回 (已落 delta dict, 拒收项列表)：前者供 web 「派系变化」面板（形状不变），
+    后者由顶层置于 "faction_delta_rejections" 段、桥接 _collect_inline_rejections 自动收。
     """
     cleaned: Dict[str, object] = {}
+    rejected: List[Dict[str, object]] = []
     faction_delta = faction_delta if isinstance(faction_delta, dict) else {}  # #117 同类：真值非 dict 守卫
     for key, val in faction_delta.items():
         if isinstance(val, dict):
@@ -574,8 +615,9 @@ def _apply_faction_dict(db: GameDB, faction_delta: Dict[str, object]) -> Dict[st
                 if raw is None:
                     continue
                 try:
-                    d = int(raw)
+                    d = _strict_int(raw)
                 except (TypeError, ValueError):
+                    rejected.append(_value_reject(key, raw, val, fname))
                     continue
                 if d != 0:
                     entry[fname] = d
@@ -583,21 +625,35 @@ def _apply_faction_dict(db: GameDB, faction_delta: Dict[str, object]) -> Dict[st
                 cleaned[str(key)] = entry
         else:
             try:
-                d = int(val)  # type: ignore[arg-type]
+                d = _strict_int(val)
             except (TypeError, ValueError):
+                rejected.append(_value_reject(key, val, val))
                 continue
             if d != 0:
                 cleaned[str(key)] = d
     if cleaned:
-        db.adjust_factions(cleaned)
-    return cleaned
+        # db 层未知名 → missing_ref 拒收：未写库，须从 cleaned 剔除，否则未落库的未知派系
+        # 会进 faction_delta 段被 web 面板当「已落」误显（cmr r3 codex，DB↔呈现漂移=#14 本症）。
+        for _rej in db.adjust_factions(cleaned):
+            cleaned.pop(str(_rej.get("name", "")), None)
+            rejected.append(_rej)
+    return DeltaApplyResult(cleaned, rejected)
 
 
-def _apply_class_dict(db: GameDB, class_delta: Dict[str, object]) -> Dict[str, Dict[str, int]]:
+def _apply_class_dict(
+    db: GameDB, class_delta: Dict[str, object]
+) -> DeltaApplyResult:
     """class_delta 结构：{ '农民@shaanxi': {'satisfaction': -5, 'leverage': +3}, '士绅': {...} }
     key 不带 @ 默认全国汇总。字段只接 satisfaction / leverage 增量。
+
+    逐项拒收契约（ADR 0008 决定 1，#14/#63）：字段值非整数（含 bool/float）→
+    invalid_enum 逐项拒收；查无此阶级名由 db.adjust_classes 返 missing_ref。
+    返回 (已落 delta dict, 拒收项列表)：前者供 web 「阶级变化」面板，后者由顶层置于
+    "class_delta_rejections" 段、桥接自动收。二级真值非 dict（如 {"农民": 0}）仍按既有
+    约定静默跳（extractor prompt 容忍，validate 不拒——见 test_issue_entities）。
     """
     cleaned: Dict[str, Dict[str, int]] = {}
+    rejected: List[Dict[str, object]] = []
     class_delta = class_delta if isinstance(class_delta, dict) else {}  # #117 同类：真值非 dict 守卫
     for key, fields in class_delta.items():
         if not isinstance(fields, dict):
@@ -608,8 +664,9 @@ def _apply_class_dict(db: GameDB, class_delta: Dict[str, object]) -> Dict[str, D
             if raw is None:
                 continue
             try:
-                d = int(raw)
+                d = _strict_int(raw)
             except (TypeError, ValueError):
+                rejected.append(_value_reject(key, raw, fields, fname))
                 continue
             if d == 0:
                 continue
@@ -617,5 +674,8 @@ def _apply_class_dict(db: GameDB, class_delta: Dict[str, object]) -> Dict[str, D
         if entry:
             cleaned[str(key)] = entry
     if cleaned:
-        db.adjust_classes(cleaned)
-    return cleaned
+        # 同 faction：db 层未知名 missing_ref 拒收未写库，从 cleaned 剔除防面板误显（cmr r3 codex）。
+        for _rej in db.adjust_classes(cleaned):
+            cleaned.pop(str(_rej.get("name", "")), None)
+            rejected.append(_rej)
+    return DeltaApplyResult(cleaned, rejected)
