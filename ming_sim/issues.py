@@ -1133,8 +1133,12 @@ def apply_issue_tracker_output(
         # _normalize_cancellable / 各 str() 自带兜底不抛。原 except Exception WARN-skip 整项保留为
         # 「拒收留痕」，insert 的代码/DB 异常分出去上抛。
         try:
-            bar_value = int(ni.get("bar_value", 25))
-            severity = int(ni.get("severity") or 50)
+            # 缺省/null → 默认；0 须保留（原 `or 50` 把合法 severity=0 静默改成 50=数据保真 bug，
+            # cmr ni r4 codex）；脏值（str/list/inf 等）落 except 拒整项。
+            _bv = ni.get("bar_value", 25)
+            bar_value = int(25 if _bv is None else _bv)
+            _sv = ni.get("severity", 50)
+            severity = int(50 if _sv is None else _sv)
             cancel_cost = dict(ni.get("cancel_cost") or {})
             tags = list(ni.get("tags") or [])
             inertia = _compute_inertia(ni)
@@ -1148,30 +1152,40 @@ def apply_issue_tracker_output(
             })
             continue
         # insert_issue 不再裹 broad except：代码/DB 异常上抛 → SettlementAbort（ADR 0005 fail-loud），
-        # 不再当 WARN 吞（那会半落库 + 丢决策，违 P1 铁律）。
-        issue_id = db.insert_issue(
-            state,
-            kind=kind,
-            title=title[:60] or "无名事项",
-            origin_kind="decree",
-            origin_ref=str(ni.get("origin_ref") or ""),
-            bar_value=bar_value,
-            bar_good_meaning=str(ni.get("bar_good_meaning") or "已成"),
-            bar_bad_meaning=str(ni.get("bar_bad_meaning") or "废止"),
-            inertia=inertia,
-            stage_text=str(ni.get("stage_text") or "")[:120],
-            severity=severity,
-            region_hint=str(ni.get("region_hint") or ""),
-            faction_hint=str(ni.get("faction_hint") or ""),
-            tags=tags,
-            ongoing_effects=ongoing_eff,
-            cancellable=_normalize_cancellable(ni.get("cancellable")),
-            cancel_cost=cancel_cost,
-            effect_on_resolve=resolve_eff,
-            effect_on_fail=fail_eff,
-            resolve_condition=str(ni.get("resolve_condition") or "")[:300],
-            fail_condition=str(ni.get("fail_condition") or "")[:300],
-        )
+        # 不再当 WARN 吞（那会半落库 + 丢决策，违 P1 铁律）。仅定向兜 UnicodeEncodeError——脏字符串
+        # 字段（如 JSON 解析出的孤代理 "\ud800"）绑 SQLite 抛 UnicodeEncodeError，属脏数据非代码 bug，
+        # 逐项拒收（cmr ni r4 codex；同类 str/JSON 字段在其它段亦有此 edge，已登记 #63 通用治理）。
+        try:
+            issue_id = db.insert_issue(
+                state,
+                kind=kind,
+                title=title[:60] or "无名事项",
+                origin_kind="decree",
+                origin_ref=str(ni.get("origin_ref") or ""),
+                bar_value=bar_value,
+                bar_good_meaning=str(ni.get("bar_good_meaning") or "已成"),
+                bar_bad_meaning=str(ni.get("bar_bad_meaning") or "废止"),
+                inertia=inertia,
+                stage_text=str(ni.get("stage_text") or "")[:120],
+                severity=severity,
+                region_hint=str(ni.get("region_hint") or ""),
+                faction_hint=str(ni.get("faction_hint") or ""),
+                tags=tags,
+                ongoing_effects=ongoing_eff,
+                cancellable=_normalize_cancellable(ni.get("cancellable")),
+                cancel_cost=cancel_cost,
+                effect_on_resolve=resolve_eff,
+                effect_on_fail=fail_eff,
+                resolve_condition=str(ni.get("resolve_condition") or "")[:300],
+                fail_condition=str(ni.get("fail_condition") or "")[:300],
+            )
+        except UnicodeEncodeError as exc:
+            applied_new.append({
+                "rejected": True, "category": "invalid_enum",
+                "reason": f"new_issue 字符串字段含不可编码字符（如孤代理）：{exc}",
+                "item": ni, "title": title,
+            })
+            continue
         if kind == "initiative":
             initiative_active += 1
         applied_new.append({"issue_id": issue_id, "kind": kind, "title": title, "rejected": False})
