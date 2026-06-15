@@ -45,6 +45,31 @@ def test_new_issue_dirty_coercion_field_rejected(game, field, bad):
     assert "强转失败" in rej[0]["reason"]
 
 
+@pytest.mark.parametrize("bad_kind", ["reform", "policy", "局势"])
+def test_new_issue_bad_kind_rejected(game, bad_kind):
+    db, state, _ = game
+    # 脏 kind（DELTA_SCHEMA 记 reform 等是已知坏值）→ insert_issue 会抛 ValueError；移除 broad
+    # except 后须预检拒整项，不能逃逸成 SettlementAbort（cmr ni r1 concur）。
+    ni = {"origin_kind": "decree", "kind": bad_kind, "title": "测试·脏kind"}
+    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
+    rej = _rejected(out)
+    assert len(rej) == 1, out
+    assert rej[0]["category"] == "invalid_enum"
+    assert "kind" in rej[0]["reason"]
+
+
+def test_new_issue_dirty_inertia_rejected(game):
+    db, state, _ = game
+    # _compute_inertia 的 legacy int(inertia) 回退在其 try 外，脏 inertia 会抛——须在预校验 try
+    # 内拒整项，不能逃逸 abort（cmr ni r2 codex）。
+    ni = {"origin_kind": "decree", "kind": "situation", "title": "测试·脏inertia", "inertia": "abc"}
+    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
+    rej = _rejected(out)
+    assert len(rej) == 1, out
+    assert rej[0]["category"] == "invalid_enum"
+    assert "强转失败" in rej[0]["reason"]
+
+
 def test_new_issue_insert_code_exception_propagates(game, monkeypatch):
     db, state, _ = game
     def _boom(*a, **k):
