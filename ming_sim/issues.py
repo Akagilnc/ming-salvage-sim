@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from ming_sim.constants import (
     TURN_UNIT, REGION_SCORE_FIELDS, ARMY_SCORE_FIELDS, FISCAL_SCORE_FIELDS,
-    REGION_FIELD_ALIASES, ARMY_FIELD_ALIASES,
+    REGION_FIELD_ALIASES, ARMY_FIELD_ALIASES, GATE_TABLES,
 )
 from ming_sim.content import GameContent
 from ming_sim.context import victory_status
@@ -208,7 +208,7 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
         return None
     parts = key.split(".")
     table = parts[0]
-    if table not in ("region", "army", "building", "power", "class", "faction"):
+    if table not in GATE_TABLES:
         return None
     # 末段可能是 agg，先抽出
     agg = None
@@ -300,7 +300,15 @@ def _gate_passed(gate: Dict[str, str], metrics: Dict[str, int], db: GameDB) -> b
         sm = re.match(r"^(==|!=)\s*(.+)$", cond)
         if sm and not re.match(r"^-?\d+$", sm.group(2).strip()):
             sop, sval = sm.group(1), sm.group(2).strip()
-            cur = _eval_gate_key_str(key, db)
+            try:
+                cur = _eval_gate_key_str(key, db)
+            except sqlite3.OperationalError as exc:
+                # typo'd 字段名 → SELECT 绑 SQLite 抛「no such column」；fail-loud 成清晰 content
+                # 错误（#12 Q3：trigger_gate 字段错属静态 content schema 错）。其它 DB 错（锁/无表等）
+                # 不误标字段，原样上抛（online sourcery）。
+                if "no such column" in str(exc).lower():
+                    raise ValueError(f"trigger_gate key「{key}」字段无效（DB 无此列）：{exc}") from exc
+                raise
             if cur is None:
                 return False
             if sop == "==" and cur != sval:
@@ -312,7 +320,12 @@ def _gate_passed(gate: Dict[str, str], metrics: Dict[str, int], db: GameDB) -> b
         if not m:
             return False
         op, num = m.group(1), int(m.group(2))
-        val = _eval_gate_key(key, metrics, db)
+        try:
+            val = _eval_gate_key(key, metrics, db)
+        except sqlite3.OperationalError as exc:
+            if "no such column" in str(exc).lower():
+                raise ValueError(f"trigger_gate key「{key}」字段无效（DB 无此列）：{exc}") from exc
+            raise  # 其它 DB 错不误标字段（online sourcery）
         if val is None:
             return False
         if op == ">=" and not val >= num:

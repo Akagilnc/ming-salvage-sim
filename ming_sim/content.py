@@ -19,7 +19,24 @@ from ming_sim.assets import (
     str_field,
     string_list,
 )
-from ming_sim.constants import BUILDING_CATEGORIES, BUILDING_OUTPUT_METRICS
+from ming_sim.constants import (
+    ARMY_TEXT_FIELDS,
+    BUILDING_CATEGORIES,
+    BUILDING_OUTPUT_METRICS,
+    GATE_AGG_FUNCS,
+    GATE_METRIC_KEYS,
+    GATE_TABLES,
+    POWER_TEXT_FIELDS,
+    REGION_TEXT_FIELDS,
+)
+
+# 文本相等 gate 可比的字段（按表）——runtime _eval_gate_key_str 取 str(row[字段])，
+# 文本 cond 配数值字段会得 "50"!=ming 永远 False，故限定为各表 TEXT 字段（#12 cmr r3 codex）。
+_GATE_TEXT_FIELDS = {
+    "region": set(REGION_TEXT_FIELDS),
+    "army": set(ARMY_TEXT_FIELDS),
+    "power": set(POWER_TEXT_FIELDS),
+}
 from ming_sim.models import (
     Army,
     Building,
@@ -84,6 +101,80 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
     return factions, characters
 
 
+def gate_cond_form_error(cond: str) -> str:
+    """trigger_gate 比较式形态校验（#12 Q3 fail-loud）。合法→""；非法→错误说明。
+    **精确镜像 runtime _gate_passed 两分支**（cmr r1 Claude+codex concur）：
+    - 文本相等：(==|!=) + 非纯数字 RHS；
+    - 数值比较：(>=|<=|>|<|==) + 整数（runtime 数值分支**不含 !=**——故 '!=5' 数值不许，
+      否则 load 放行而 runtime 永远 False，ADR 0012 残留 4b②对齐）。"""
+    cond = cond.strip()
+    sm = re.match(r"^(==|!=)\s*(.+)$", cond)
+    if sm and not re.match(r"^-?\d+$", sm.group(2).strip()):  # 文本相等（RHS 非纯数字）
+        return ""
+    if re.match(r"^(>=|<=|>|<|==)\s*-?\d+$", cond):  # 数值（无 !=，同 runtime）
+        return ""
+    return f"{cond!r}（应形如 '<=240' / '>=34' 数值，或 '==ming' / '!=houjin' 文本相等）"
+
+
+def gate_key_form_error(key: str) -> str:
+    """trigger_gate key 形态校验（#12 Q3 fail-loud，ADR 0012 残留 4b①）。合法→""；非法→错误说明。
+    bare key（无 "."）须是已知 metric；点分 key 首段须是合法表名、结构完整（去末段聚合后 ≥3 段）。
+    字段名(列)是否存在由 _eval_gate_key 运行期对 DB schema 兜底（content load 无 DB 不校验列）。"""
+    if "." not in key:
+        if key not in GATE_METRIC_KEYS:
+            return f"未知 metric「{key}」（须 {'/'.join(GATE_METRIC_KEYS)} 之一，或用 表.id.字段 形式）"
+        return ""
+    parts = key.split(".")
+    if parts[0] not in GATE_TABLES:
+        return f"未知表「{parts[0]}」（须 {'/'.join(GATE_TABLES)} 之一）"
+    if parts[-1] in GATE_AGG_FUNCS:
+        parts = parts[:-1]
+    if len(parts) < 3:
+        return "结构不完整（应形如 表.id.字段[.聚合]）"
+    # 拒空段（cmr r1 codex）：空 id / 空字段 / | 列表含空成员 → 静默不达标或 SQL 崩，须 fail-loud
+    field = parts[-1]
+    id_segment = ".".join(parts[1:-1])
+    if not field.strip() or not id_segment.strip():
+        return "id 或 字段 为空"
+    if any(not m.strip() for m in id_segment.split("|")):
+        return "id 列表含空成员（| 分隔）"
+    # class.<名>[@<region>] 成员校验（cmr r2/online concur）：类名（@ 前）非空；带 @ 者 region
+    # （@ 后）也须非空——空 region 的 @ 是「想写 regional 却漏 region」的 malformed regional gate，
+    # runtime 会静默回退 national class 行（应 fail-loud；online codex P2）。national 用无 @ 形式。
+    if parts[0] == "class":
+        for member in id_segment.split("|"):
+            if not member.split("@", 1)[0].strip():
+                return "class 名为空（@ 前）"
+            if "@" in member and not member.split("@", 1)[1].strip():
+                return "class @ 后 region 为空（regional gate 须指定 region；national 用无 @ 形式）"
+    return ""
+
+
+def gate_text_key_form_error(key: str) -> str:
+    """文本相等（==/!=非数字）gate 的 key 形态校验（#12 cmr r2 codex）。合法→""；非法→错误说明。
+    runtime _eval_gate_key_str 仅支持单 id 的 region/army/power 三段文本字段——故文本 cond 配
+    多 id/聚合/class/faction/building/bare-metric key 会 load 放行而 runtime 静默返 None（永不达标）。
+    本 PR 首次放行文本 cond 入 load → 须配对校验 key 为文本可求值形态，否则 fail-loud。"""
+    parts = key.split(".")
+    if len(parts) != 3:
+        return "文本相等 gate 的 key 须 表.id.字段 三段（不支持多 id / 聚合 / bare metric）"
+    if parts[0] not in _GATE_TEXT_FIELDS:  # 文本可求值表（复用中央 _GATE_TEXT_FIELDS keys，非硬编码）
+        return f"文本相等 gate 仅支持 {'/'.join(_GATE_TEXT_FIELDS)} 表，得「{parts[0]}」"
+    if "|" in parts[1]:  # _eval_gate_key_str 仅单 id（| 多 id 在段内不增 "." 段数，须单独拒）
+        return "文本相等 gate 不支持多 id（| 分隔）"
+    if not parts[1].strip() or not parts[2].strip():
+        return "id 或 字段 为空"
+    if parts[2] not in _GATE_TEXT_FIELDS[parts[0]]:  # 文本 cond 须配文本字段，否则永远 False
+        return f"「{parts[2]}」非 {parts[0]} 文本字段（文本相等仅可比 {'/'.join(sorted(_GATE_TEXT_FIELDS[parts[0]]))}）"
+    return ""
+
+
+def gate_cond_is_text(cond: str) -> bool:
+    """cond 是否文本相等（==/!= + 非纯数字 RHS）——与 runtime _gate_passed 文本分支同判。"""
+    sm = re.match(r"^(==|!=)\s*(.+)$", cond.strip())
+    return bool(sm and not re.match(r"^-?\d+$", sm.group(2).strip()))
+
+
 def load_event_content(filename: str = "events.json") -> List[Event]:
     events: List[Event] = []
     for idx, raw in enumerate(require_list(load_json_asset(filename), filename), 1):
@@ -98,15 +189,21 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
             raise SystemExit(f"{filename}[{idx}] trigger_gate 必须是对象（key→比较式）。")
         trigger_gate: Dict[str, str] = {}
         # key 形式见 issues._eval_gate_key：metric 名、region.<id>.<field>、army.<id>.<field>、
-        # building.<id>.<field>、external.<id>.<field>、class.<name>[@<region>].<field>，
+        # building.<id>.<field>、power.<id>.<field>、class.<name>[@<region>].<field>，
         # 多 id 用 | 分隔时末段 .<agg>(max/min/avg/sum)。
-        # 这里只校验比较式格式，key 形式由求值器在 runtime 校验（id/field 存不存在）。
+        # load 校验 key 形态(metric/表名/结构)+比较式形态(数值/文本相等)，fail-loud（#12 Q3）；
+        # 字段名(列)是否存在由求值器运行期对 DB schema 兜底（load 无 DB）。
         for mk, mv in gate_raw.items():
             cond = str(mv).strip()
-            if not re.match(r"^(>=|<=|>|<|==)\s*-?\d+$", cond):
-                raise SystemExit(
-                    f"{filename}[{idx}] trigger_gate['{mk}'] 非法：{cond!r}（应形如 '<=240' / '>=34'）。"
-                )
+            cond_err = gate_cond_form_error(cond)
+            if cond_err:
+                raise SystemExit(f"{filename}[{idx}] trigger_gate['{mk}'] 比较式非法：{cond_err}。")
+            # 文本相等 cond 须配文本可求值的 key（单 id region/army/power 三段）；否则 runtime
+            # 静默永不达标（cmr r2 codex）。数值 cond 走通用 key 形态校验。
+            key_err = (gate_text_key_form_error(str(mk)) if gate_cond_is_text(cond)
+                       else gate_key_form_error(str(mk)))
+            if key_err:
+                raise SystemExit(f"{filename}[{idx}] trigger_gate key「{mk}」非法：{key_err}。")
             trigger_gate[str(mk)] = cond
         events.append(
             Event(
