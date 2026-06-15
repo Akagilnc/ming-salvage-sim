@@ -153,7 +153,7 @@ def test_valid_flat_int_faction_not_rejected(game):
         "faction_delta": {good: -5},
     }, narrative="x", decree_text="y")
 
-    assert _rejection_rows(db, turn, "faction_delta") == []
+    assert _rejection_rows(db, turn, FACTION_REJ_SECTION) == []
     after = db.conn.execute(
         "SELECT satisfaction FROM factions WHERE name=?", (good,)).fetchone()[0]
     assert after == max(0, before - 5)
@@ -169,4 +169,31 @@ def test_zero_delta_faction_not_rejected(game):
         "faction_delta": {good: 0},
     }, narrative="x", decree_text="y")
 
-    assert _rejection_rows(db, turn, "faction_delta") == []
+    assert _rejection_rows(db, turn, FACTION_REJ_SECTION) == []
+
+
+def test_issue_effect_faction_rejection_reaches_reports(game):
+    """局势 effect_on_resolve 里的 factions 引用未知派系 → 拒收经 entity_rejections 落
+    rejection_reports，不蒸发（与 test_issue_path_tolerated_rejections_reach_reports 同契约，
+    cmr r2 codex：issue 路派系拒收原被 bare 调用丢弃，#14/#63）。"""
+    db, state, content = game
+    turn = state.turn
+    issue_id = db.insert_issue(
+        state, kind="initiative", title="测试派系拒收留痕", origin_kind="decree",
+        origin_ref="", bar_value=50, bar_good_meaning="成", bar_bad_meaning="败",
+        inertia=0, stage_text="", severity=50, region_hint="", faction_hint="",
+        tags=[], ongoing_effects={},
+        effect_on_resolve={"factions": {"查无此派系": {"satisfaction": 9}}},
+        effect_on_fail={}, resolve_condition="", fail_condition="",
+        cancellable="decree", cancel_cost={},
+    )
+    db.conn.commit()
+
+    run_settle(db, state, content, {
+        "close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "测试结案"}],
+    }, narrative="x", decree_text="y")
+
+    rows = _rejection_rows(db, turn, "issue_summary.entity_rejections")
+    rows = [r for r in rows if r[2] == "missing_ref"]
+    assert len(rows) == 1, rows
+    assert "查无此派系" in rows[0][1]

@@ -966,7 +966,7 @@ def apply_issue_tracker_output(
             _emit_pairing_warnings(new_row, effect, pairing_warnings)
             _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
             _apply_economy_list(db, state, effect.get("economy") or [])
-            _apply_faction_dict(db, effect.get("factions") or {})
+            entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {})[1])  # 派系拒收不蒸发（#14/#63 cmr r2）
             _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}结案")
             entity_rejections.extend(
                 _apply_issue_entities(
@@ -983,7 +983,7 @@ def apply_issue_tracker_output(
             effect = loads_effect_dict(new_row["effect_on_fail"])
             _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
             _apply_economy_list(db, state, effect.get("economy") or [])
-            _apply_faction_dict(db, effect.get("factions") or {})
+            entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {})[1])  # 派系拒收不蒸发（#14/#63 cmr r2）
             _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}失败")
             entity_rejections.extend(
                 _apply_issue_entities(
@@ -1134,7 +1134,7 @@ def apply_issue_tracker_output(
             _emit_pairing_warnings(new_row, effect, pairing_warnings)
         _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
         _apply_economy_list(db, state, effect.get("economy") or [])
-        _apply_faction_dict(db, effect.get("factions") or {})
+        entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {})[1])  # 派系拒收不蒸发（#14/#63 cmr r2）
         building_ops = _apply_issue_buildings(
             db, state, effect.get("buildings"),
             _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}{'结案' if reason == 'resolved' else '失败'}",
@@ -1196,7 +1196,7 @@ def apply_issue_tracker_output(
         if isinstance(cost, dict):
             _apply_metric_dict(state, cost.get("metrics") or {}, db=db)
             _apply_economy_list(db, state, cost.get("economy") or [])
-            _apply_faction_dict(db, cost.get("factions") or {})
+            entity_rejections.extend(_apply_faction_dict(db, cost.get("factions") or {})[1])  # 派系拒收不蒸发（#14/#63 cmr r2）
         db.cancel_issue(
             state, issue_id,
             narrative=str(cn.get("narrative") or "")[:400],
@@ -2699,7 +2699,7 @@ def apply_issue_inertia_and_ongoing(
                     _emit_pairing_warnings(new_row, effect)  # inertia 路只 tlog（#45/#46）
                     _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
                     _apply_economy_list(db, state, effect.get("economy") or [])
-                    _apply_faction_dict(db, effect.get("factions") or {})
+                    inertia_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {})[1])  # 派系拒收不蒸发（#14/#63 cmr r2）
                     _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}结案")
                     # 与 tracker advance/close 路径一致：自然结案也落实体后果 + 帝国修正，
                     # 否则靠 inertia 推到 100 的 issue 会丢 new_armies/army_delta/人物状态/legacy（codexB-P1）。
@@ -2718,7 +2718,7 @@ def apply_issue_inertia_and_ongoing(
                     effect = loads_effect_dict(new_row["effect_on_fail"])
                     _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
                     _apply_economy_list(db, state, effect.get("economy") or [])
-                    _apply_faction_dict(db, effect.get("factions") or {})
+                    inertia_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {})[1])  # 派系拒收不蒸发（#14/#63 cmr r2）
                     _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}失败")
                     for _tr in _apply_issue_entities(
                         db,
