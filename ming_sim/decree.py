@@ -1115,15 +1115,10 @@ def _settle_after_extract_body(
         _collect_inline_rejections(collector, applied, before_turn, source)
         collector.flush_to_db(db)
 
-    # 把 narrative 与诏书写入 turn_logs 作下月前文
+    # 把 narrative 写入 turn_logs 作下月前文（sim 前文，不带玩家邸报提示噪声）。
+    # save_turn_report 延后到 inertia 拒收收齐之后（见下），以涵盖 inertia-only 的玩家来源拒收
+    # （codex R1 P2 + CodeRabbit Major：提前算会漏 inertia 路产生的拒收）。
     db.record_log(state, narrative[:1200])
-    # ADR 0008 决定 5：玩家来源(player_decree/hitl_decision)的落库拒收 → 邸报附一句 in-world 提示，
-    # 且**持久化进 turn_report**（web/history/重读都见，非仅即时返回串，codex R1 high）。在 record_log
-    # 之后追加：turn_logs 是 sim 下月前文、不带提示噪声；turn_report 是玩家邸报、带提示。主 apply 拒收
-    # 已于上面 flush，此刻 has_player_visible_rejection 即覆盖玩家下旨的拒收案。提示极简不暴露明细。
-    if collector is not None and collector.has_player_visible_rejection():
-        narrative = narrative + "\n\n有司奏：所拟之事有窒碍未行者，已录档待酌。"
-    db.save_turn_report(state, narrative)
 
     # 落 inertia + ongoing (未被本月 issue_advances 触动的)
     touched_ids = set()
@@ -1157,6 +1152,14 @@ def _settle_after_extract_body(
             collector, inline_rejections,
             before_turn, source)
         collector.flush_to_db(db)
+
+    # ADR 0008 决定 5：主 apply + inertia 拒收全部收齐后，玩家来源(player_decree/hitl_decision)的
+    # 落库拒收 → 邸报附一句 in-world 提示，并**持久化进 turn_report**（web/history/重读都见，非仅即时
+    # 返回串；涵盖 inertia-only 拒收，codex R1 P2 + CodeRabbit Major）。system_simulation 来源静默。
+    # record_log(sim 下月前文)在 inertia 前已跑、不带此提示噪声。提示极简、不暴露明细（明细落 DB/jsonl）。
+    if collector is not None and collector.has_player_visible_rejection():
+        narrative = narrative + "\n\n有司奏：所拟之事有窒碍未行者，已录档待酌。"
+    db.save_turn_report(state, narrative)
 
     # 推演链留痕：extractor_input 保留输入；extractor_output 存最终 applied 结果,
     # 供玩家明细/时间线读取（raw canonical delta 的重跑真源在 pending_resolve_context）。
