@@ -1136,21 +1136,34 @@ def apply_issue_tracker_output(
     # 3) closes（LLM 主动结案/失败，不看 bar 门槛）
     applied_closes: List[Dict[str, object]] = []
     for cl in tracker_output.get("close_issues", []) or []:
+        # ADR 0008 决定 1：LLM 脏数据逐项拒收留痕（坏 id/reason/陈旧引用），不静默丢；
+        # db.close_issue 的代码/DB 异常不再 WARN 吞，上抛触发 SettlementAbort（ADR 0005 fail-loud）。
         try:
             issue_id = int(cl.get("issue_id"))
         except (TypeError, ValueError):
+            applied_closes.append({
+                "rejected": True, "category": "invalid_enum",
+                "reason": f"close_issues issue_id 非法（无法取整）：{cl.get('issue_id')!r}",
+                "item": cl,
+            })
             continue
         reason = str(cl.get("reason") or "").strip().lower()
         if reason not in ("resolved", "failed"):
-            print(f"[WARN] close_issues: reason 非法 '{reason}'，跳过 issue {issue_id}")
+            applied_closes.append({
+                "rejected": True, "category": "invalid_enum",
+                "reason": f"close_issues reason 非法 '{reason}'（须 resolved/failed），issue {issue_id}",
+                "item": cl,
+            })
             continue
         narrative = str(cl.get("narrative") or "")[:400]
-        try:
-            new_row = db.close_issue(state, issue_id, reason=reason, narrative=narrative)
-        except Exception as exc:
-            print(f"[WARN] close_issue 落库失败：{exc}；跳过 issue {issue_id}")
-            continue
+        new_row = db.close_issue(state, issue_id, reason=reason, narrative=narrative)
         if new_row is None:
+            # close_issue 对未找到 / 已非 active 的 issue 回 None：陈旧/幻觉引用 → 逐项拒收留痕。
+            applied_closes.append({
+                "rejected": True, "category": "missing_ref",
+                "reason": f"close_issues 引用未找到或已非 active 的 issue {issue_id}",
+                "item": cl,
+            })
             continue
         touched_ids.add(issue_id)
         # 终结效果：以 issue 立项时预设的 effect 为底，叠加 LLM 在本次结案项 cl 里现给的 effect。
