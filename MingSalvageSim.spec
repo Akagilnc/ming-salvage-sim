@@ -62,7 +62,10 @@ def _release_guard():
 
     # 2) 金手指建筑不得进包（无 git 依赖的硬底线：直接扫已知作弊建筑 id）
     KNOWN_CHEAT_IDS = ("royal_gold_mine", "royal_inner_bank", "imperial_aviation")
-    bj_text = Path("content/buildings.json").read_text(encoding="utf-8")
+    try:
+        bj_text = Path("content/buildings.json").read_text(encoding="utf-8")
+    except OSError as exc:  # 核心内容文件缺失/不可读 → 清晰中止，不抛 raw traceback（cmr 线上 sourcery）
+        raise SystemExit(f"[release-guard] 读 content/buildings.json 失败（核心内容缺失？）：{exc}")
     hits = [cid for cid in KNOWN_CHEAT_IDS if cid in bj_text]
     if hits:
         raise SystemExit(
@@ -77,7 +80,8 @@ def _release_guard():
     if Path(".git").exists():
         try:
             rc = subprocess.run(
-                ["git", "diff", "--quiet", "HEAD", "--", "content/buildings.json"]
+                ["git", "diff", "--quiet", "HEAD", "--", "content/buildings.json"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,  # 保持 build 控制台干净（cmr 线上 gemini）
             ).returncode
         except (FileNotFoundError, OSError):
             rc = 0  # 无 git 二进制 → 跳过；②已知 cheat id 扫描兜底
