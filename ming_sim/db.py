@@ -2791,6 +2791,32 @@ class GameDB:
                     new_value = self.apply_region_cannon(state, region_id, cannon_delta)
                     actual_delta = new_value - old_value
                     if actual_delta == 0:
+                        # 请求非 0 却被城防上限 clamp 成 no-op（如 level-0 边地 cap=0）：不能静默 continue
+                        # ——邸报叙述了加炮、盘面无变化、restore 只读 DB 接续不到这条决策＝违 P1 落库铁律
+                        # （#18，issue #14 静默吞家族）。记一条 delta=0 的 region_log 留痕（cap=city_level×8）。
+                        # 真 no-op 请求（cannon_delta==0，本就没要加炮）无须留痕，避免噪声。
+                        if cannon_delta != 0:
+                            _cap = int(row["city_level"]) * 8
+                            _clamp_reason = (
+                                f"{reason}（城防炮请求{cannon_delta:+d}门被城防上限拦截："
+                                f"城市等级{int(row['city_level'])}→上限{_cap}门，无变化）"
+                            )
+                            self.conn.execute(
+                                """
+                                INSERT INTO region_logs
+                                (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                """,
+                                (state.turn, state.year, state.period, region_id,
+                                 field, str(old_value), str(new_value), 0,
+                                 _clamp_reason, event.id, edict_id, actor),
+                            )
+                            changes.append({
+                                "region": row["name"], "field": field,
+                                "label": REGION_FIELD_LABELS.get(field, field),
+                                "old": old_value, "new": new_value,
+                                "delta": 0, "reason": _clamp_reason, "clamped": True,
+                            })
                         continue
                     self.conn.execute(
                         """
