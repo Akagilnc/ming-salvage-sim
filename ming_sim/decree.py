@@ -1224,6 +1224,11 @@ def _settle_after_extract_body(
         if ending_text:
             ending += "\n\n" + ending_text
     full_report = f"\n本{TURN_UNIT}颁布诏书：\n" + decree_text + "\n\n" + narrative + ending
+    # ADR 0008 决定 5：玩家来源(player_decree/hitl_decision)的落库拒收，邸报给一句 in-world 提示——
+    # 让皇帝知道「有事窒碍未行」；系统推演来源对玩家安静。提示极简、不暴露拒收明细（明细落 DB/jsonl
+    # 供分析，不在游戏内文本堆给非技术试玩者）。
+    if collector is not None and collector.has_player_visible_rejection():
+        full_report += "\n\n有司奏：所拟之事有窒碍未行者，已录档待酌。"
     return full_report
 
 
