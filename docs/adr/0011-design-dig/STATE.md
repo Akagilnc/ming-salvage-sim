@@ -26,7 +26,7 @@
 > **✅ ship-pre 本地 cmr 收敛（R1–R8，2026-06-15）**：统一审全 5 ADR（母 + 0011-2/3/4/5，**subsume T5**）；R8 **4/4 concur**（Claude Opus + codex×3 全空）+ flag `本轮缺 gemini`（agy 全配额耗尽 129h；R1–R3 gemini 有声经 agy-Sonnet fallback）。轨迹：R1 6 设计洞 → R2 3 细化 → R3 福王 crime_weight 深洞 → R4–R7 fix-residue grep-sweep（议和 floor / seg / crime_weight 解耦 / satisfaction 越界 / dry_run）→ R8 全空。fix commits `01de49c`/`363db2f`/`c73375a`/`de2da11`/`9a6b100`/`f10c5a2`/`cb6b40e`。**✅ PR #123 开（base main，merge 无冲突）+ 线上 R1–R3 评审收敛**（Codex +1 approve / Gemini medium 全修 / CodeRabbit pass；Sourcery 周配额死 skip → merge 走 --admin 越 ruleset）。**下一步 = merge（用户 /goal 授权）→ M0 残留（#73 起）**。
 > | T5 | 母 ADR 全套 cmr（9 决定 + 引各 sub-ADR） | — | — | ⏳ | — |
 >
-> **✅ 全链完成至 merge 前**：cmr R1–R8 收敛 + PR #123 线上 R1–R3 收敛；剩 merge（--admin 越 Sourcery-degraded ruleset）→ M0 残留（#73 起）。
+> **✅✅ 0011 线全收口 + 已 MERGED**（2026-06-15）：cmr R1–R8 4/4 concur + PR #123 线上 R1–R3 收敛 → **merge 进 main**（mergeCommit `847dc3da5`，--admin 越 Sourcery-degraded ruleset）。母 + 4 sub-ADR + 9 dig 底稿全进 main。**0011 actor 博弈设计线 DONE**。下一步（用户 /goal）= **M0 残留（#73 契约决策起）做到不得不让用户拍**。实现属编码活、spawn 隔壁。
 > **跨文件一致性已锁**：符号路由真源=0011-2（0011-3 D3-8 引）；离心公式真源=0011-3（0011-2 引）；命门 floor+ceiling 真源=0011-4（0011-2 D2-7 / 0011-5 D5-4 引）；seed 真源=0011-4 B；议和出路=外压 dynamic 臂（0011-3 D3-4 / 0011-4 D4-4b / 0011-5 D5-4）。
 
 ## ⚠️ 重验日志 2026-06-14（隔壁开发推进后，对承重 claim 重新 query 实际系统）
