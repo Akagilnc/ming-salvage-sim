@@ -1763,10 +1763,11 @@ def test_extractor_active_ministers_excludes_active_prince(game):
     assert name not in [r[nidx] for r in am["rows"]], f"宗藩 {name} 漏进 extractor active_ministers"
 
 
-def test_talent_pool_excludes_prince_unfilled_and_future_debut(game):
+def test_talent_pool_excludes_prince_unfilled_and_future_debut(saved_game):
     """offstage 宗藩 / 未仕 / 未来登场者不入 offstage_ministers 起复池（与 web in_talent_pool
-    同口径：宗藩非起复对象、未仕未入仕、未来登场=剧透，cmr R3 gemini）。"""
-    db, state, content = game
+    同口径：宗藩非起复对象、未仕未入仕、未来登场=剧透，cmr R3 gemini）。
+    用 saved_game：断言依赖玩过存档的人物状态分布，fresh seed（101 全开局态）不复现（#5）。"""
+    db, state, content = saved_game
     pn = next((n for n, c in content.characters.items()
                if getattr(c, "office_type", "") == "宗藩"), None)
     un = next((n for n, c in content.characters.items()
@@ -2527,11 +2528,12 @@ def test_fresh_seed_migrates_legacy_office_pollution(tmp_path):
     assert "罢居" not in (row["office"] or ""), f"污染 office 串未清：{row['office']!r}"
 
 
-def test_legacy_office_pollution_migrated_on_load(game):
+def test_legacy_office_pollution_migrated_on_load(saved_game):
     """ADR 决定9/L94 一次性数据清洗（幂等，载入时跑）：pre-0009 老档里塞在 office 串的
     状态词归位到 status/transit_to，使其正确进人才池。条件触发（office 含污染标记才动），
-    绝不误降已被玩家起复的 active 旧臣。"""
-    db, _, _ = game
+    绝不误降已被玩家起复的 active 旧臣。
+    用 saved_game：依赖玩过存档里 pre-0009 污染 office 串的旧档人物，fresh seed 无（#5）。"""
+    db, _, _ = saved_game
 
     def row(n):
         return db.conn.execute(

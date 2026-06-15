@@ -138,7 +138,8 @@ def test_resolve_with_new_armies_no_warning_in_result(game):
     issue_id = db.insert_issue(
         state, kind="initiative", title="练成天雄军",
         origin_kind="decree", bar_value=50, tags=["练军"],
-        effect_on_resolve={"new_armies": [{"id": "tianxiong", "name": "天雄军", "manpower": 18000}]},
+        # maintenance_per_turn 必填（fresh seed 无 tianxiong → 走建新军严格校验路；#5 deterministic）
+        effect_on_resolve={"new_armies": [{"id": "tianxiong", "name": "天雄军", "manpower": 18000, "maintenance_per_turn": 50}]},
     )
     db.conn.commit()
     out = issues.apply_issue_tracker_output(

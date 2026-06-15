@@ -94,10 +94,11 @@ def test_power_deltas_code_exception_aborts_settlement(game, monkeypatch):
 
 # ---- section 9b: character_power_changes(人物易主) ----
 
-def test_unknown_person_power_change_rejected_good_lands(game):
+def test_unknown_person_power_change_rejected_good_lands(saved_game):
     """character_power_changes 引用查无此人 → 逐项拒收留痕(不再 print 静默跳);
-    同信封里合法人物易主照落——坏一项不带走整批(ADR 决定 1)。"""
-    db, state, content = game
+    同信封里合法人物易主照落——坏一项不带走整批(ADR 决定 1)。
+    用 saved_game：依赖玩过存档的特定人物易主基线，fresh seed 不复现（#5）。"""
+    db, state, content = saved_game
     turn = state.turn
     good_power = _valid_power_id(db)
     # 取一个开局在册的大明大臣作「好项」(易主到 good_power)
