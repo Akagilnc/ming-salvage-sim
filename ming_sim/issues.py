@@ -256,7 +256,14 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
             return None
         try:
             values.append(int(row[0]))
-        except (TypeError, ValueError):
+        except ValueError as exc:
+            # 非数值字符串 = 数值 cond 配了文本字段（如 region.x.controlled_by >=1）→ str 列 int 不动。
+            # fail-loud 成清晰 content 错误（#159；Q3：trigger_gate 字段类型错属静态 content schema 错，
+            # 不静默回 None 当条件不满足）。NULL/None 走 TypeError 分支视同不达标（合法数据，非内容错）。
+            raise ValueError(
+                f"trigger_gate key「{key}」字段非数值（数值比较不可比文本字段）：{row[0]!r}"
+            ) from exc
+        except TypeError:
             return None
     if not values:
         return None
