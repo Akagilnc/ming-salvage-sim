@@ -4981,13 +4981,18 @@ class GameDB:
             except Exception as exc:
                 tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
                 options = []
-            choice = (r["choice_json"] or "").strip()
+            choice_raw = (r["choice_json"] or "").strip()
+            try:
+                choice = json.loads(choice_raw) if choice_raw else None
+            except Exception as exc:
+                tlog(f"[db] choice_json 损坏，回 None（idx={r['idx']}）：{exc}")  # #14 surface
+                choice = None
             out.append({
                 "idx": int(r["idx"]),
                 "title": r["title"],
                 "context": r["context"],
                 "options": options if isinstance(options, list) else [],
-                "choice": json.loads(choice) if choice else None,
+                "choice": choice,
                 "status": r["status"],
             })
         return out
@@ -5268,10 +5273,11 @@ class GameDB:
         ).fetchone()
         if row is None:
             return None
-        def _load(text: str, default):
+        def _load(text: str, default, label: str):
             try:
                 return json.loads(text) if text else default
-            except Exception:
+            except Exception as exc:
+                tlog(f"[db] resolve_context {label} JSON 损坏，回退默认、恢复将丢该段（turn={turn}）：{exc}")  # #14 surface
                 return default
         def _load_extracted():
             # ready=0 占位不可见；ready=1 但 JSON 损坏也回 None（逼「重跑 extractor」）——
@@ -5280,7 +5286,8 @@ class GameDB:
                 return None
             try:
                 parsed = json.loads(row["extracted_delta_json"])
-            except Exception:
+            except Exception as exc:
+                tlog(f"[db] resolve_context extracted_delta JSON 损坏，回 None 逼重抽（turn={turn}）：{exc}")  # #14 surface
                 return None
             # 合法 JSON 非 dict（type-corrupt）同样回 None（重抽）：原样返回会让恢复叉
             # 抛 LLMContractError 绕过逃生口=corruption 软死锁（ship-pre r1）。
@@ -5288,9 +5295,9 @@ class GameDB:
         return {
             "decree_text": row["decree_text"],
             "narrative": row["narrative"],
-            "simulator_payload": _load(row["simulator_payload_json"], {}),
-            "secret_orders": _load(row["secret_orders_json"], []),
-            "relevant_memories": _load(row["relevant_memories_json"], []),
+            "simulator_payload": _load(row["simulator_payload_json"], {}, "simulator_payload"),
+            "secret_orders": _load(row["secret_orders_json"], [], "secret_orders"),
+            "relevant_memories": _load(row["relevant_memories_json"], [], "relevant_memories"),
             "extracted": _load_extracted(),
             "source": row["source"] or "system_simulation",  # 拒收来源，恢复重放用（#144）
         }
