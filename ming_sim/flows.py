@@ -303,11 +303,14 @@ def _apply_economy_list(
                             "reason": f"economy_moves 账户非法（须 国库/内库）：{account!r}",
                             "item": move})
             continue
+        raw_delta = move.get("delta")
         try:
-            delta = int(move.get("delta") or 0)
+            # None/"" = 缺额 → 0 no-op；bool/float/坏串 → 拒收（_strict_int 拒 bool/float，
+            # 与 faction/region/army 同约，#14 cmr r1 codex）。
+            delta = 0 if raw_delta in (None, "") else _strict_int(raw_delta)
         except (TypeError, ValueError):
             applied.append({"account": account, "rejected": True, "category": "invalid_enum",
-                            "reason": f"economy_moves delta 非整数：{move.get('delta')!r}",
+                            "reason": f"economy_moves delta 非整数：{raw_delta!r}",
                             "item": move})
             continue
         category = str(move.get("category") or move.get("reason") or "事项")[:40]
