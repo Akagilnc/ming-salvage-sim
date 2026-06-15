@@ -568,10 +568,13 @@ def test_run_settle_player_sourced_rejection_surfaces_diegetic_hint(game):
 
 
 def test_run_settle_no_rejection_no_hint(game):
-    """无拒收 → 无提示（避免噪声）。"""
+    """无拒收 → 无提示（避免噪声）；且不误持久化进 turn_report（Sourcery R1）。"""
     db, state, content = game
+    before = state.turn
     report = run_settle(db, state, content, {"地区变化": {"shanxi": {"动乱": 1}}})
     assert "有司奏" not in report
+    persisted = db.conn.execute("SELECT report FROM turn_reports WHERE turn=?", (before,)).fetchone()[0]
+    assert "有司奏" not in persisted, "无拒收不应把提示误持久化进 turn_report"
 
 
 def test_run_settle_system_source_rejection_stays_silent(game):
