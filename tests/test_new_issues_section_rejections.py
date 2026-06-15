@@ -6,6 +6,8 @@ print[WARN]; skip`——脏字段（int("abc")/dict("脏")/list(5)）与 insert 
 insert 的代码/DB 异常上抛（ADR 0005 fail-loud）。用 kind=situation 避开 initiative 配额门。
 """
 
+import json
+
 import pytest
 
 import ming_sim.issues as I
@@ -255,3 +257,43 @@ def test_event_to_issue_duplicate_returns_none_not_raise(game):
     assert first is not None, "首次触发应立项"
     again = I.event_to_issue(db, state, ev)
     assert again is None, "同源事件重复触发应幂等返回 None，不抛不重立"
+
+
+# --- tags 字段严格化（cmr ni r8 codex medium）---
+# tags = list(ni.get("tags") or []) 对标量串静默拆字（list("募营")=['募','营']）、对非串元素
+# 不拒（list([5])=[5]）。后果：_initiative_resolve_pairing_warnings 用子串匹配整词「募营」判
+# new_armies 配对，拆字后「募 营」失配 → bypass #45/#46 守门；且拆字本身污染 DB tags。与 R6
+# int 字段 _strict_int 同一字段校验 class——缺省/null/空串→[]，present 须 list/tuple 且元素全 str。
+
+
+@pytest.mark.parametrize("bad_tags", ["募营", "单串标量"])
+def test_new_issue_scalar_string_tags_rejected(game, bad_tags):
+    db, state, _ = game
+    ni = {"origin_kind": "decree", "kind": "situation", "title": "测试·标量tags", "tags": bad_tags}
+    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
+    rej = _rejected(out)
+    assert len(rej) == 1, out
+    assert rej[0]["category"] == "invalid_enum"
+    assert "tags" in rej[0]["reason"]
+
+
+def test_new_issue_non_string_tag_element_rejected(game):
+    db, state, _ = game
+    ni = {"origin_kind": "decree", "kind": "situation", "title": "测试·脏tag元素", "tags": [5, "正常"]}
+    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
+    rej = _rejected(out)
+    assert len(rej) == 1, out
+    assert rej[0]["category"] == "invalid_enum"
+    assert "tags" in rej[0]["reason"]
+
+
+def test_new_issue_valid_list_tags_preserved(game):
+    db, state, _ = game
+    # 正常 list[str] tags 整词保全（不拆字），pairing 短语完整 → 正常立项落库。
+    ni = {"origin_kind": "decree", "kind": "situation", "title": "测试·正常tags", "tags": ["募营", "边事"]}
+    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
+    created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
+    assert len(created) == 1, out
+    iid = int(created[0]["issue_id"])
+    row = db.conn.execute("SELECT tags FROM issues WHERE id=?", (iid,)).fetchone()
+    assert json.loads(row["tags"]) == ["募营", "边事"], "整词须保全、不得拆字"

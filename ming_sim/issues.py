@@ -1143,7 +1143,18 @@ def apply_issue_tracker_output(
             _sv = ni.get("severity", 50)
             severity = _strict_int(50 if _sv is None else _sv)
             cancel_cost = dict(ni.get("cancel_cost") or {})
-            tags = list(ni.get("tags") or [])
+            # tags 严格化（cmr ni r8 codex medium，与上方 int 字段同一字段校验 class）：缺省/null/
+            # 空串 → []；present 必须是 list/tuple 且元素全为 str。原 `list(ni.get("tags") or [])`
+            # 把标量串拆字（list("募营")=['募','营']）——既污染 DB tags，又让 _initiative_resolve_
+            # pairing_warnings 的整词子串匹配（"募营" in blob）失配 → bypass #45/#46 new_armies 配对
+            # 守门；非串元素（list([5])=[5]）也静默落库。脏值落 except 拒整项。
+            _tags_raw = ni.get("tags")
+            if _tags_raw is None or _tags_raw == "":
+                tags = []
+            elif isinstance(_tags_raw, (list, tuple)) and all(isinstance(t, str) for t in _tags_raw):
+                tags = list(_tags_raw)
+            else:
+                raise ValueError(f"tags 须为字符串列表（拒标量串拆字 / 非串元素）：{_tags_raw!r}")
             inertia = _compute_inertia(ni)
         except (TypeError, ValueError, OverflowError) as exc:
             # OverflowError：JSON 里 1e309 解析成 float('inf')，超界 int 绑定亦抛；_strict_int 已把
