@@ -87,11 +87,13 @@ def effect_brief(applied: Dict[str, object]) -> str:
         parts.append("、".join(metric_bits))
 
     issue_summary = applied.get("issue_summary") or {}
-    closes = [c for c in (issue_summary.get("closes") or []) if isinstance(c, dict)]
+    # 过滤逐项拒收项（{rejected:True}）：它们是内部拒收留痕、无 title，不是成功结案/推进，
+    # 不能被当成「了结局势」喊进效果摘要（cmr close-issues r2 codex）。
+    closes = [c for c in (issue_summary.get("closes") or []) if isinstance(c, dict) and not c.get("rejected")]
     if closes:
         names = "、".join(_short(c.get("title"), 16) for c in closes[:3])
         parts.append(f"了结局势：{names}")
-    advances = [a for a in (issue_summary.get("advances") or []) if isinstance(a, dict)]
+    advances = [a for a in (issue_summary.get("advances") or []) if isinstance(a, dict) and not a.get("rejected")]
     if advances:
         names = "、".join(_short(a.get("title"), 16) for a in advances[:3])
         parts.append(f"推进局势：{names}")
