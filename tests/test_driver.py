@@ -51,6 +51,17 @@ def test_run_settle_none_delta_is_empty_turn(game):
     assert state.turn == before + 1
 
 
+def test_run_settle_logs_chapter_memory_skip(game, capsys):
+    """driver 不注入 chapter_recorder（无 llm_config，章节记忆由对话方另产），settle 时须留一条
+    审计 tlog，便于事后查「哪回合没记起居注」——章节记忆这条浓缩若对话方某回合忘补=静默缺口（#19）。"""
+    db, state, content = game
+    before = state.turn
+    run_settle(db, state, content, None)
+    out = capsys.readouterr().out
+    assert "跳过章节记忆" in out
+    assert str(before) in out  # 含 turn 号便于审计定位是哪回合
+
+
 def test_run_settle_rejects_non_dict_nested_value(game):
     """实体→{字段}模块(如 地区变化)的二级值非 dict 时结算前响亮报错、不半落库(Gemini R1 G2)。"""
     db, state, content = game
