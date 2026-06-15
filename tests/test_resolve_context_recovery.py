@@ -31,6 +31,34 @@ def test_persist_resolve_context_stores_extracted_delta(game):
     assert ctx["extracted"] == extracted
 
 
+def test_persist_resolve_context_stores_source_for_recovery(game):
+    """#144 / ADR 0008 决定 5：provenance source 一并持久化，崩溃恢复重放（resolve_settling_recovery
+    读 ctx['source'] → _replay_settle → settle source）据此还原原始来源——否则玩家来源拒收被恢复路
+    记成 system_simulation、静默不提示。"""
+    from ming_sim.applier import Provenance
+    db, state, content = game
+    turn = state.turn
+    persist_resolve_context(
+        db, turn, {"region_delta": {"shanxi": {"unrest": 1}}},
+        decree_text="x", narrative="y",
+        simulator_payload={}, secret_orders=[], relevant_memories=[],
+        source=Provenance.player_decree,
+    )
+    assert db.get_resolve_context(turn)["source"] == "player_decree", "玩家来源须持久化进 resolve_context"
+
+
+def test_persist_resolve_context_source_defaults_system_simulation(game):
+    """未传 source（旧档/引擎实流）→ 默认 system_simulation（恢复路行为不变，老档兼容）。"""
+    db, state, content = game
+    turn = state.turn
+    persist_resolve_context(
+        db, turn, {"region_delta": {"shanxi": {"unrest": 1}}},
+        decree_text="x", narrative="y",
+        simulator_payload={}, secret_orders=[], relevant_memories=[],
+    )
+    assert db.get_resolve_context(turn)["source"] == "system_simulation"
+
+
 def test_persist_rejects_malformed_delta_and_writes_nothing(game):
     """畸形 delta（region_delta 应为 dict 实得 list）→ 响亮抛 ValueError，
     且 resolve_context **未被写入**（防毒 payload 钉进重试真源）。"""
