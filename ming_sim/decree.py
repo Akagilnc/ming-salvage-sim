@@ -925,7 +925,10 @@ def _collect_inline_rejections(
                     # item_json = 原始 delta 项（ADR 决定 5「原 item 原样保留」）：迁约
                     # producer 在 wrapper 里带原件（'item' 键）则解包,否则兜底存 wrapper
                     # （ship-pre r3——存整个 wrapper 会让重放分析消费到嵌套形状）。
-                    item=item.get("item", item) if isinstance(item.get("item", None), (dict, list, str)) else item,
+                    # 按 'item' 键**存在性**解包（非值类型）：原 isinstance(dict/list/str) 判会把
+                    # 标量/null 原件（如 close_issues:[null]/[42] 的非 dict 拒收）误存成 wrapper、
+                    # 丢原件保真——key 在即解包，覆盖标量原件（cmr close-issues r5 codex）。
+                    item=item["item"] if "item" in item else item,
                     # ADR「拒收行必带人读原因」在此集中守门：producer 漏给则合成非空兜底
                     # ——规则写一处，新 section 免疫同类缺陷（fix-coverage 处方，cmr S0 r3）。
                     reason=str(item.get("reason") or "") or f"拒收（{report_section} 未注明原因）",
