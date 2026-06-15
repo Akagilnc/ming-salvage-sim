@@ -204,3 +204,13 @@ def test_load_fail_loud_on_text_cond_multi_id_key(monkeypatch):
     monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
     with pytest.raises(SystemExit):
         content_mod.load_event_content("x.json")
+
+
+def test_text_cond_field_must_be_text_field():
+    """cmr r3（codex）：文本相等 cond 须配各表文本字段；配数值字段（如 region.x.unrest）→ fail-loud
+    （runtime str(数值)!=文本 永远 False）。controlled_by 等文本字段仍放行。"""
+    from ming_sim.content import gate_text_key_form_error
+    assert gate_text_key_form_error("region.huguang.controlled_by") == ""   # 文本字段 OK
+    assert gate_text_key_form_error("power.houjin.stance") == ""            # 文本字段 OK
+    assert gate_text_key_form_error("region.huguang.unrest")               # 数值字段 → 拒
+    assert gate_text_key_form_error("power.houjin.leverage")               # 数值字段 → 拒
