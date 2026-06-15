@@ -117,6 +117,22 @@ def test_close_rejection_reaches_rejection_reports(game):
     assert row["category"] == "missing_ref"
 
 
+def test_effect_brief_ignores_rejected_closes():
+    """效果摘要消费 issue_summary.closes 时必须跳过拒收项——否则无 title 的拒收 wrapper
+    被当成功结案喊进「了结局势」污染章节摘要（cmr close-issues r2 codex）。"""
+    from ming_sim.memories import effect_brief
+    only_rejected = {"issue_summary": {"closes": [
+        {"rejected": True, "category": "missing_ref", "reason": "查无此 issue", "item": {}},
+    ]}}
+    assert "了结局势" not in effect_brief(only_rejected)
+    mixed = {"issue_summary": {"closes": [
+        {"rejected": True, "category": "missing_ref", "reason": "查无此 issue", "item": {}},
+        {"issue_id": 5, "title": "真·平叛结案", "rejected": False},
+    ]}}
+    brief = effect_brief(mixed)
+    assert "真·平叛结案" in brief and "了结局势" in brief
+
+
 def test_close_issue_code_exception_propagates(game, monkeypatch):
     db, state, _ = game
     def _boom(*a, **k):
