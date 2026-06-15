@@ -655,12 +655,18 @@ def _canonical_item_fields(value: object) -> object:
     }
 
 
-def _canonicalize_extraction(data: Dict[str, object]) -> Dict[str, object]:
+def canonicalize_extraction(data: Dict[str, object]) -> Dict[str, object]:
+    """delta 顶层 key 中文→英文 canonical 归一 + 逐项字段归一。公有 API：driver（ADR 0004）等
+    跨模块复用此入口，别引私有名（#17）。`_canonicalize_extraction` 为历史私有别名（向后兼容）。"""
     canonical: Dict[str, object] = {}
     for raw_key, value in data.items():
         key = TOP_LEVEL_ALIASES.get(str(raw_key).strip(), str(raw_key).strip())
         canonical[key] = _canonical_item_fields(value)
     return canonical
+
+
+# 历史私有别名：保留既有内部/外部 `_canonicalize_extraction` 引用（#17 公有化，不破调用方）。
+_canonicalize_extraction = canonicalize_extraction
 
 
 def _localized_item_fields(value: object, parent_key: str = "") -> object:

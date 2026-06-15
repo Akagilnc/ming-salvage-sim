@@ -535,3 +535,17 @@ def test_open_game_handles_uri_special_chars_in_path(tmp_path):
     conn.close()
     with pytest.raises(ValueError):  # 编码正确则正常走到 regions 空判定；编码错会是别的崩
         drv.open_game(str(degen))
+
+
+def test_canonicalize_extraction_public_api():
+    """#17：driver 等跨模块复用 simulation.canonicalize_extraction 公有 API，不引私有名；
+    历史私有别名 _canonicalize_extraction 仍指向同一实现（向后兼容）。"""
+    from ming_sim import simulation as sim
+    assert sim.canonicalize_extraction is sim._canonicalize_extraction
+    # 公有 API 真归一：验完整结构——顶层中文 key → 英文 canonical（地区变化→region_delta）；
+    # 嵌套字段(动乱)此层不动，由 apply 层 REGION_FIELD_ALIASES 转（Sourcery R1：验全结构非仅 key 存在）。
+    assert sim.canonicalize_extraction({"地区变化": {"shanxi": {"动乱": 1}}}) == {
+        "region_delta": {"shanxi": {"动乱": 1}}
+    }
+    import driver as drv
+    assert drv.canonicalize_extraction is sim.canonicalize_extraction
