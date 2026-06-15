@@ -24,6 +24,7 @@ from ming_sim.content import GameContent
 from ming_sim.db import GameDB
 from ming_sim.models import LLMConfig
 from ming_sim.simulation import _canonicalize_extraction
+from ming_sim.token_stats import tlog
 
 DEFAULT_DB = "data/probe.db"
 
@@ -102,7 +103,7 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
             decree_text=decree_text, narrative=narrative,
             simulator_payload={}, secret_orders=[], relevant_memories=[],
         )
-    return settle_with_delta(
+    report = settle_with_delta(
         state,
         db,
         extracted,
@@ -117,6 +118,12 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
             d, s, ex, content=ct, registry=rg, llm_config=_DETERMINISTIC_LLM
         ),
     )
+    # settle 成功推进后才记审计：driver 不注入 chapter_recorder（无 llm_config，章节记忆由对话方另产），
+    # 留一条痕迹便于事后查「哪回合没记起居注」（忘补=静默缺口，#19）。须在 settle 成功之后——
+    # 若 settle 中途 SettlementAbort/ValueError，回合未推进、可重试，不该误记一条「已跳章节记忆」
+    # 的未完成回合（codex PR#133 P3）。
+    tlog(f"[driver] 跳过章节记忆(driver 模式)，turn {before_turn}→{before_turn + 1}（章节记忆由对话方另产）")
+    return report
 
 
 def main(argv=None, *, game=None) -> int:
