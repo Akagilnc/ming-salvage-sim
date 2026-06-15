@@ -2186,8 +2186,11 @@ def apply_score_extraction(
     # 2) economy_moves
     applied_economy = _apply_economy_list(db, state, extracted.get("economy_moves") or [])
     # 3) faction_delta + class_delta（朝堂派系 + 社会阶级；联动靠 LLM，不在代码做）
-    applied_factions = _apply_faction_dict(db, extracted.get("faction_delta") or {})
-    applied_classes = _apply_class_dict(db, extracted.get("class_delta") or {})
+    # 返回 (已落 delta dict, 拒收项列表)：dict 供 web 面板（形状不变），拒收列表置于
+    # 独立 *_rejections 段供桥接收集器（ADR 0008 决定 1，#14/#63）——不复用 *_delta key
+    # 覆盖面板数据（cmr r1 claude：复用同 key 会令面板把拒收项当 dict 误渲染）。
+    applied_factions, faction_rejections = _apply_faction_dict(db, extracted.get("faction_delta") or {})
+    applied_classes, class_rejections = _apply_class_dict(db, extracted.get("class_delta") or {})
     # 4) new_armies → region_delta / army_delta (复用旧 db 方法)
     region_deltas_raw = extracted.get("region_delta") or {}
     army_deltas_raw = extracted.get("army_delta") or {}
@@ -2617,6 +2620,10 @@ def apply_score_extraction(
         "economy_moves": applied_economy,
         "faction_delta": applied_factions,
         "class_delta": applied_classes,
+        # 拒收项独立段（list）：供 _collect_inline_rejections 扫记 rejection_reports；
+        # 与上面 *_delta（dict，web 面板数据）分开，互不污染（cmr r1，#14/#63）。
+        "faction_delta_rejections": faction_rejections,
+        "class_delta_rejections": class_rejections,
         "region_changes": region_changes,
         "army_changes": army_changes,
         "created_armies": created_armies,
