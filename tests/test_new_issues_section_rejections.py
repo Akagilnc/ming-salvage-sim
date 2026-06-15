@@ -132,18 +132,6 @@ def test_new_issue_garbage_severity_rejected(game):
     assert rej[0]["category"] == "invalid_enum"
 
 
-def test_new_issue_lone_surrogate_string_rejected_not_abort(game):
-    db, state, _ = game
-    # 字符串字段含孤代理（JSON \ud800 解析所得）→ 绑 SQLite 抛 UnicodeEncodeError——属脏数据，
-    # 须逐项拒收、不逃逸 abort（cmr ni r4 codex）。
-    ni = {"origin_kind": "decree", "kind": "situation", "title": "坏\ud800标题"}
-    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
-    rej = _rejected(out)
-    assert len(rej) == 1, out
-    assert rej[0]["category"] == "invalid_enum"
-    assert "不可编码" in rej[0]["reason"]
-
-
 def test_new_issue_insert_code_exception_propagates(game, monkeypatch):
     db, state, _ = game
     def _boom(*a, **k):

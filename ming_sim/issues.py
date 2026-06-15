@@ -1152,40 +1152,35 @@ def apply_issue_tracker_output(
             })
             continue
         # insert_issue 不再裹 broad except：代码/DB 异常上抛 → SettlementAbort（ADR 0005 fail-loud），
-        # 不再当 WARN 吞（那会半落库 + 丢决策，违 P1 铁律）。仅定向兜 UnicodeEncodeError——脏字符串
-        # 字段（如 JSON 解析出的孤代理 "\ud800"）绑 SQLite 抛 UnicodeEncodeError，属脏数据非代码 bug，
-        # 逐项拒收（cmr ni r4 codex；同类 str/JSON 字段在其它段亦有此 edge，已登记 #63 通用治理）。
-        try:
-            issue_id = db.insert_issue(
-                state,
-                kind=kind,
-                title=title[:60] or "无名事项",
-                origin_kind="decree",
-                origin_ref=str(ni.get("origin_ref") or ""),
-                bar_value=bar_value,
-                bar_good_meaning=str(ni.get("bar_good_meaning") or "已成"),
-                bar_bad_meaning=str(ni.get("bar_bad_meaning") or "废止"),
-                inertia=inertia,
-                stage_text=str(ni.get("stage_text") or "")[:120],
-                severity=severity,
-                region_hint=str(ni.get("region_hint") or ""),
-                faction_hint=str(ni.get("faction_hint") or ""),
-                tags=tags,
-                ongoing_effects=ongoing_eff,
-                cancellable=_normalize_cancellable(ni.get("cancellable")),
-                cancel_cost=cancel_cost,
-                effect_on_resolve=resolve_eff,
-                effect_on_fail=fail_eff,
-                resolve_condition=str(ni.get("resolve_condition") or "")[:300],
-                fail_condition=str(ni.get("fail_condition") or "")[:300],
-            )
-        except UnicodeEncodeError as exc:
-            applied_new.append({
-                "rejected": True, "category": "invalid_enum",
-                "reason": f"new_issue 字符串字段含不可编码字符（如孤代理）：{exc}",
-                "item": ni, "title": title,
-            })
-            continue
+        # 不再当 WARN 吞（那会半落库 + 丢决策，违 P1 铁律）。
+        # 注：字符串字段含孤代理（JSON 解析出的 "\ud800"）会在 SQLite bind 抛 UnicodeEncodeError——
+        # 这是**跨段通用**序列化层问题（不仅 insert，连拒收行/turn_extraction 的 json.dumps 绑定也中毒），
+        # 且 ensure_ascii=True 全局翻转会破坏 DB 中文可读性，需「保中文、净孤代理」helper 统一治理；
+        # section 级兜 except 会因拒收行回写原值而把 abort 挪到 rejection flush（cmr ni r5 codex 实证），
+        # 故本刀不在此 piecemeal 处理，整体归 #63 通用切片。
+        issue_id = db.insert_issue(
+            state,
+            kind=kind,
+            title=title[:60] or "无名事项",
+            origin_kind="decree",
+            origin_ref=str(ni.get("origin_ref") or ""),
+            bar_value=bar_value,
+            bar_good_meaning=str(ni.get("bar_good_meaning") or "已成"),
+            bar_bad_meaning=str(ni.get("bar_bad_meaning") or "废止"),
+            inertia=inertia,
+            stage_text=str(ni.get("stage_text") or "")[:120],
+            severity=severity,
+            region_hint=str(ni.get("region_hint") or ""),
+            faction_hint=str(ni.get("faction_hint") or ""),
+            tags=tags,
+            ongoing_effects=ongoing_eff,
+            cancellable=_normalize_cancellable(ni.get("cancellable")),
+            cancel_cost=cancel_cost,
+            effect_on_resolve=resolve_eff,
+            effect_on_fail=fail_eff,
+            resolve_condition=str(ni.get("resolve_condition") or "")[:300],
+            fail_condition=str(ni.get("fail_condition") or "")[:300],
+        )
         if kind == "initiative":
             initiative_active += 1
         applied_new.append({"issue_id": issue_id, "kind": kind, "title": title, "rejected": False})
