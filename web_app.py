@@ -507,7 +507,7 @@ class WebGame:
         advanced_api_key = os.environ.get("OPENAI_ADVANCED_API_KEY", "")
         thinking_level = os.environ.get("OPENAI_THINKING_LEVEL", "")
         advanced_thinking_level = os.environ.get("OPENAI_ADVANCED_THINKING_LEVEL", "")
-        timeout_seconds = float(os.environ.get("OPENAI_TIMEOUT_SECONDS", str(API_DEFAULT_TIMEOUT_SECONDS)) or API_DEFAULT_TIMEOUT_SECONDS)
+        timeout_seconds = float(os.environ.get("OPENAI_TIMEOUT_SECONDS") or API_DEFAULT_TIMEOUT_SECONDS)
         # 菜单写的 runtime_llm.json 优先于 env，让"在网页里改的配置"重启后仍生效。
         runtime = load_runtime_llm()
         base_url = runtime.get("base_url") or base_url
@@ -1639,7 +1639,7 @@ async def api_menu_status() -> Dict[str, Any]:
             "cli_model_choices": cli_model_choices(),
             "cli_timeout_seconds": cli_timeout,
             "max_tokens": int(runtime.get("max_tokens") or API_DEFAULT_MAX_TOKENS),
-            "timeout_seconds": float(runtime.get("timeout_seconds") or os.environ.get("OPENAI_TIMEOUT_SECONDS", str(API_DEFAULT_TIMEOUT_SECONDS)) or API_DEFAULT_TIMEOUT_SECONDS),
+            "timeout_seconds": float(runtime.get("timeout_seconds") or os.environ.get("OPENAI_TIMEOUT_SECONDS") or API_DEFAULT_TIMEOUT_SECONDS),
             "thinking_level": runtime.get("thinking_level") or os.environ.get("OPENAI_THINKING_LEVEL", ""),
             "advanced_model": runtime.get("advanced_model") or os.environ.get("OPENAI_ADVANCED_MODEL", ""),
             "advanced_base_url": runtime.get("advanced_base_url") or os.environ.get("OPENAI_ADVANCED_BASE_URL", ""),
