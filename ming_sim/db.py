@@ -79,7 +79,9 @@ def _offices_table() -> Dict[str, object]:
             data = load_json_asset("offices.json")
             _OFFICES_TABLE = data if isinstance(data, dict) else {}
         except Exception as exc:
-            tlog(f"[content] offices.json 加载失败，回空表（核心内容缺失/损坏）：{exc}")  # #14 surface
+            # 注：文件缺失 / JSON 损坏会在 load_json_asset 直接 SystemExit fail-loud（核心内容
+            # 不该静默回空表），不经此分支；这里只兜 import / 意外错误（gemini-code-assist cmr）。
+            tlog(f"[content] offices.json 意外加载失败，回空表：{exc}")  # #14 surface
             _OFFICES_TABLE = {}
     return _OFFICES_TABLE
 
