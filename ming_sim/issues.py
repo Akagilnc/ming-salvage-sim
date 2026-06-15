@@ -979,7 +979,7 @@ def apply_issue_tracker_output(
             effect = loads_effect_dict(new_row["effect_on_resolve"])
             _emit_pairing_warnings(new_row, effect, pairing_warnings)
             _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
-            _apply_economy_list(db, state, effect.get("economy") or [])
+            entity_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or []) if r.get("rejected"))  # economy 拒收不蒸发（#14）
             entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
             _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}结案")
             entity_rejections.extend(
@@ -996,7 +996,7 @@ def apply_issue_tracker_output(
         elif new_row["status"] == "failed":
             effect = loads_effect_dict(new_row["effect_on_fail"])
             _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
-            _apply_economy_list(db, state, effect.get("economy") or [])
+            entity_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or []) if r.get("rejected"))  # economy 拒收不蒸发（#14）
             entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
             _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}失败")
             entity_rejections.extend(
@@ -1147,7 +1147,7 @@ def apply_issue_tracker_output(
         if reason == "resolved":
             _emit_pairing_warnings(new_row, effect, pairing_warnings)
         _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
-        _apply_economy_list(db, state, effect.get("economy") or [])
+        entity_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or []) if r.get("rejected"))  # economy 拒收不蒸发（#14）
         entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
         building_ops = _apply_issue_buildings(
             db, state, effect.get("buildings"),
@@ -1209,7 +1209,7 @@ def apply_issue_tracker_output(
         cost = cn.get("applied_cost") or {}
         if isinstance(cost, dict):
             _apply_metric_dict(state, cost.get("metrics") or {}, db=db)
-            _apply_economy_list(db, state, cost.get("economy") or [])
+            entity_rejections.extend(r for r in _apply_economy_list(db, state, cost.get("economy") or []) if r.get("rejected"))  # economy 拒收不蒸发（#14）
             entity_rejections.extend(_apply_faction_dict(db, cost.get("factions") or {}).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
         db.cancel_issue(
             state, issue_id,
@@ -2198,7 +2198,11 @@ def apply_score_extraction(
     # 1) metric_delta
     applied_metric = _apply_metric_dict(state, extracted.get("metric_delta") or {}, db=db)
     # 2) economy_moves
-    applied_economy = _apply_economy_list(db, state, extracted.get("economy_moves") or [])
+    # 拒收项拆到独立 economy_moves_rejections 段（不污染玩家可见 economy_moves list；
+    # 同 faction_delta_rejections 治理，#14 cmr r1 codex/P4）。
+    _eco_out = _apply_economy_list(db, state, extracted.get("economy_moves") or [])
+    applied_economy = [r for r in _eco_out if not r.get("rejected")]
+    economy_rejections = [r for r in _eco_out if r.get("rejected")]
     # 3) faction_delta + class_delta（朝堂派系 + 社会阶级；联动靠 LLM，不在代码做）
     # 返回 (已落 delta dict, 拒收项列表)：dict 供 web 面板（形状不变），拒收列表置于
     # 独立 *_rejections 段供桥接收集器（ADR 0008 决定 1，#14/#63）——不复用 *_delta key
@@ -2652,6 +2656,7 @@ def apply_score_extraction(
     return {
         "metric_delta": applied_metric,
         "economy_moves": applied_economy,
+        "economy_moves_rejections": economy_rejections,  # 拒收独立段（#14 cmr r1）；玩家可见输出会 pop
         "faction_delta": applied_factions,
         "class_delta": applied_classes,
         # 拒收项独立段（list）：供 _collect_inline_rejections 扫记 rejection_reports；
@@ -2732,7 +2737,7 @@ def apply_issue_inertia_and_ongoing(
                     effect = loads_effect_dict(new_row["effect_on_resolve"])
                     _emit_pairing_warnings(new_row, effect)  # inertia 路只 tlog（#45/#46）
                     _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
-                    _apply_economy_list(db, state, effect.get("economy") or [])
+                    inertia_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or []) if r.get("rejected"))  # economy 拒收不蒸发（#14）
                     inertia_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
                     _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}结案")
                     # 与 tracker advance/close 路径一致：自然结案也落实体后果 + 帝国修正，
@@ -2751,7 +2756,7 @@ def apply_issue_inertia_and_ongoing(
                 elif new_row["status"] == "failed":
                     effect = loads_effect_dict(new_row["effect_on_fail"])
                     _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
-                    _apply_economy_list(db, state, effect.get("economy") or [])
+                    inertia_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or []) if r.get("rejected"))  # economy 拒收不蒸发（#14）
                     inertia_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
                     _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}失败")
                     for _tr in _apply_issue_entities(
@@ -2812,7 +2817,9 @@ def apply_issue_inertia_and_ongoing(
             metric_part[k] = allowed
 
         # economy
-        economy_part = _apply_economy_list(db, state, ongoing.get("economy") or [])
+        _eco_out = _apply_economy_list(db, state, ongoing.get("economy") or [])
+        inertia_rejections.extend(r for r in _eco_out if r.get("rejected"))  # economy 拒收不蒸发（#14）
+        economy_part = [r for r in _eco_out if not r.get("rejected")]
 
         if metric_part or economy_part:
             db.conn.execute(

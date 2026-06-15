@@ -749,15 +749,24 @@ def _clean_economy_moves(raw: object) -> List[Dict[str, object]]:
         if not isinstance(item, dict):
             continue
         account = str(item.get("account") or "").strip()
-        if account not in {"国库", "内库"}:
-            continue
-        if "delta" not in item:
-            continue
-        try:
-            delta = int(item.get("delta"))
-        except (TypeError, ValueError):
-            continue
-        if delta == 0:
+        # 账户非法 / delta 非整数(含 bool/float)不再静默丢——透传该项（_canonical_item_fields
+        # 已归一字段别名；坏 account/delta 的原值故意保留，供 applier 逐项拒收留痕）给 apply
+        # （#14 ADR0008 决定1，校验+拒收统一在 applier，cleaner 只规范化别名、不判值）。bool/float
+        # 与 applier 的 _strict_int 同约判非整数（cleaner 不引 flows 避循环，故内联同款检查）。
+        raw_delta = item.get("delta")
+        if raw_delta in (None, ""):
+            delta, bad_int = 0, False
+        elif isinstance(raw_delta, bool) or isinstance(raw_delta, float):
+            delta, bad_int = 0, True
+        else:
+            try:
+                delta, bad_int = int(raw_delta), False
+            except (TypeError, ValueError):
+                delta, bad_int = 0, True
+        if not bad_int and delta == 0:
+            continue  # 0 / 缺 delta = no-op 空占位，静默跳（无论 account，免假拒收；codex r1 线上）
+        if account not in {"国库", "内库"} or bad_int:
+            cleaned.append(item)
             continue
         entry: Dict[str, object] = {
             "account": account,
