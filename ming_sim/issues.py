@@ -1047,8 +1047,10 @@ def apply_issue_tracker_output(
     initiative_active = db.count_active_initiatives()
     for ni in tracker_output.get("new_issues", []) or []:
         if not isinstance(ni, dict):
-            # 非 dict 项（new_issues:[null]/标量）：ni.get 会抛 AttributeError 崩整月——逐项拒收
-            # （ADR 0008 决定 1，同 close_issues 非 dict 守卫，codex close r4）。
+            # 非 dict 项（new_issues:[null]/标量）：ni.get 会抛 AttributeError。真实 settle 路
+            # validate_delta_shape 已在 apply 前拦非 dict list 项，此为 defense-in-depth（直接调
+            # apply_issue_tracker_output / 绕过 validate 时生效）——逐项拒收，不让坏项带走整批
+            # （ADR 0008 决定 1，同 close_issues 非 dict 守卫，cmr ni r1 Claude）。
             applied_new.append({
                 "rejected": True, "category": "invalid_enum",
                 "reason": f"new_issues 条目非对象（应为 dict）：{ni!r}", "item": ni,
@@ -1085,6 +1087,16 @@ def apply_issue_tracker_output(
             applied_new.append({"title": title, "rejected": True, "reason": "来源非 decree/event_pool 不许新立"})
             continue
         kind = str(ni.get("kind") or "initiative")
+        if kind not in ("situation", "initiative"):
+            # 脏 kind（LLM 偶给 "reform"/"policy"/"局势" 等，见 DELTA_SCHEMA.md）→ insert_issue 会
+            # 抛 ValueError；本刀移除 broad except 后会逃逸成 SettlementAbort，故须在此预检拒整项
+            # （与 4 个脏强转同口径，cmr ni r1 Claude+codex concur）。
+            applied_new.append({
+                "rejected": True, "category": "invalid_enum",
+                "reason": f"new_issue kind 非法 '{kind}'（须 situation/initiative）",
+                "item": ni, "title": title,
+            })
+            continue
         if kind == "initiative" and initiative_active >= 10:
             applied_new.append({"title": title, "rejected": True, "reason": "已有十事在办，朝廷分身乏术，难再添新工。"})
             continue
@@ -1112,18 +1124,21 @@ def apply_issue_tracker_output(
                 if not resolve_eff:
                     resolve_eff = {"metrics": {"民心": 1}}
         # 字段强转脏数据 → 拒整项（ADR 0008 决定 1：new_issue 即「项」，坏字段令该项无法洁净构造
-        # → 拒留痕，非默认掩盖）。只有这 4 个强转会因脏 LLM 数据抛（int("abc") / dict("脏") /
-        # list(5)）；_compute_inertia / _normalize_cancellable / 各 str() 自带兜底不抛。原 except
-        # Exception WARN-skip 整项的行为保留为「拒收留痕」，并把 insert 的代码/DB 异常分出去上抛。
+        # → 拒留痕，非默认掩盖）。这些强转会因脏 LLM 数据抛：bar_value/severity 的 int()、
+        # cancel_cost 的 dict("脏")、tags 的 list(5)、_compute_inertia 的 legacy `int(inertia)`
+        # 回退（其 expected_months 路自带兜底，但旧 inertia 字段在 try 外，cmr ni r2 codex）。
+        # _normalize_cancellable / 各 str() 自带兜底不抛。原 except Exception WARN-skip 整项保留为
+        # 「拒收留痕」，insert 的代码/DB 异常分出去上抛。
         try:
             bar_value = int(ni.get("bar_value", 25))
             severity = int(ni.get("severity") or 50)
             cancel_cost = dict(ni.get("cancel_cost") or {})
             tags = list(ni.get("tags") or [])
+            inertia = _compute_inertia(ni)
         except (TypeError, ValueError) as exc:
             applied_new.append({
                 "rejected": True, "category": "invalid_enum",
-                "reason": f"new_issue 字段强转失败（bar_value/severity/cancel_cost/tags 脏数据）：{exc}",
+                "reason": f"new_issue 字段强转失败（bar_value/severity/cancel_cost/tags/inertia 脏数据）：{exc}",
                 "item": ni, "title": title,
             })
             continue
@@ -1138,7 +1153,7 @@ def apply_issue_tracker_output(
             bar_value=bar_value,
             bar_good_meaning=str(ni.get("bar_good_meaning") or "已成"),
             bar_bad_meaning=str(ni.get("bar_bad_meaning") or "废止"),
-            inertia=_compute_inertia(ni),
+            inertia=inertia,
             stage_text=str(ni.get("stage_text") or "")[:120],
             severity=severity,
             region_hint=str(ni.get("region_hint") or ""),
