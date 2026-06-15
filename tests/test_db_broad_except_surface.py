@@ -81,6 +81,28 @@ def test_resolve_context_corrupt_payload_falls_back_and_surfaces(game, monkeypat
     assert any("simulator_payload JSON 损坏" in m for m in msgs), msgs
 
 
+def test_resolve_context_corrupt_secret_orders_falls_back_to_dict_and_surfaces(game, monkeypatch):
+    db, _state, _content = game
+    db.save_resolve_context(
+        502, decree_text="旨", narrative="报",
+        simulator_payload={}, secret_orders={"在办": [{"id": 1}]}, relevant_memories=[],
+    )
+    db.conn.execute(
+        "UPDATE pending_resolve_context SET secret_orders_json = ? WHERE turn = ?",
+        ("{坏orders", 502),
+    )
+    db.conn.commit()
+
+    msgs = _capture_tlog(monkeypatch)
+    ctx = db.get_resolve_context(502)
+
+    assert ctx is not None
+    # 行为：secret_orders 是 dict-first 承载，损坏 fallback 用 {} 而非 []（与 save 默认一致，
+    # 否则 dict 消费者读 secret_orders.在办 会破）。
+    assert ctx["secret_orders"] == {}
+    assert any("secret_orders JSON 损坏" in m for m in msgs), msgs
+
+
 def test_resolve_context_corrupt_extracted_returns_none_and_surfaces(game, monkeypatch):
     db, _state, _content = game
     # 显式传 extracted（非 None）→ ready=1，get 时 extracted 可见路径。

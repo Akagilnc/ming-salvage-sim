@@ -5296,7 +5296,9 @@ class GameDB:
             "decree_text": row["decree_text"],
             "narrative": row["narrative"],
             "simulator_payload": _load(row["simulator_payload_json"], {}, "simulator_payload"),
-            "secret_orders": _load(row["secret_orders_json"], [], "secret_orders"),
+            # secret_orders 是 dict-first 承载（#48：save 时 None→{}），损坏 fallback 也用 {} 对齐
+            # 契约——回 [] 会把分组 dict 退成 list、破坏 secret_orders.在办 式 dict 消费者（cmr CodeRabbit）。
+            "secret_orders": _load(row["secret_orders_json"], {}, "secret_orders"),
             "relevant_memories": _load(row["relevant_memories_json"], [], "relevant_memories"),
             "extracted": _load_extracted(),
             "source": row["source"] or "system_simulation",  # 拒收来源，恢复重放用（#144）
