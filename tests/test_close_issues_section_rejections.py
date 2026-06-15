@@ -19,10 +19,18 @@ def _rejected(result):
     return [c for c in _closes(result) if c.get("rejected")]
 
 
-def test_close_bad_issue_id_rejected(game):
+@pytest.mark.parametrize("bad_issue_id", [
+    "abc",      # 非数字串
+    None,       # None
+    True,       # bool（_strict_int 拒）
+    1.5,        # float
+    -10 ** 100,  # 超 SQLite 64-bit 下界
+])
+def test_close_bad_issue_id_rejected(game, bad_issue_id):
     db, state, _ = game
+    # _parse_sqlite_id 拒非整数/bool/float/超 64-bit → 全数逐项拒收 invalid_enum，不泄漏/不崩。
     out = I.apply_issue_tracker_output(
-        db, state, {"close_issues": [{"issue_id": "abc", "reason": "resolved"}]}
+        db, state, {"close_issues": [{"issue_id": bad_issue_id, "reason": "resolved"}]}
     )
     rej = _rejected(out)
     assert len(rej) == 1
