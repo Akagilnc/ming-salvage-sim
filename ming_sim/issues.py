@@ -616,21 +616,16 @@ def _normalize_cancellable(raw: object) -> str:
 
 
 def _compute_inertia(ni: Dict[str, object]) -> int:
-    """从 expected_months 算 inertia；兼容旧 inertia 直接填的写法。"""
+    """从 expected_months 算 inertia；兼容旧 inertia 直接填的写法。整数字段用 _strict_int 严格转换
+    （拒 bool/float/非数/inf/nan，与 new_issues 其它整数字段一致，cmr ni r6 codex）——脏值抛
+    ValueError/OverflowError，由唯一调用方 apply_issue_tracker_output 的预校验 try 拒整项。"""
     em_raw = ni.get("expected_months")
     if em_raw is not None:
-        try:
-            em = int(em_raw)
-        except (TypeError, ValueError, OverflowError):
-            # OverflowError：expected_months=1e309 解析成 inf，int(inf) 抛 OverflowError；
-            # 与其它脏 expected_months 同样默认 em=0（cmr ni r3 codex）。legacy int(inertia)
-            # 回退（下方 630）的 OverflowError 则由调用方预校验 try 兜（拒整项）。
-            em = 0
+        em = _strict_int(em_raw)  # bool/float（含 inf/nan）/非数 → ValueError
         if em != 0:
-            inertia = round(100 / em)
-            return max(-10, min(10, inertia))
-    # 兼容旧字段
-    return max(-10, min(10, int(ni.get("inertia") or 0)))
+            return max(-10, min(10, round(100 / em)))
+    legacy = ni.get("inertia")
+    return max(-10, min(10, _strict_int(0 if legacy is None else legacy)))
 
 
 # 离散时长档：LLM 只能给这几档（防乱填）；映射到月。
@@ -1089,7 +1084,10 @@ def apply_issue_tracker_output(
             print(f"[INFO] new_issue 已拒：'{title}'（origin_kind={origin_kind!r}，仅接 decree / event_pool）。")
             applied_new.append({"title": title, "rejected": True, "reason": "来源非 decree/event_pool 不许新立"})
             continue
-        kind = str(ni.get("kind") or "initiative")
+        # kind 缺省/null/空串 → 默认 initiative；present 非法值（含 false/0/[] 这类 falsy 非串，
+        # 原 `or "initiative"` 会把它们静默默认、绕过白名单，cmr ni r6 codex）→ 留给白名单拒收。
+        _kind_raw = ni.get("kind")
+        kind = "initiative" if _kind_raw in (None, "") else str(_kind_raw)
         if kind not in ("situation", "initiative"):
             # 脏 kind（LLM 偶给 "reform"/"policy"/"局势" 等，见 DELTA_SCHEMA.md）→ insert_issue 会
             # 抛 ValueError；本刀移除 broad except 后会逃逸成 SettlementAbort，故须在此预检拒整项
@@ -1133,18 +1131,19 @@ def apply_issue_tracker_output(
         # _normalize_cancellable / 各 str() 自带兜底不抛。原 except Exception WARN-skip 整项保留为
         # 「拒收留痕」，insert 的代码/DB 异常分出去上抛。
         try:
-            # 缺省/null → 默认；0 须保留（原 `or 50` 把合法 severity=0 静默改成 50=数据保真 bug，
-            # cmr ni r4 codex）；脏值（str/list/inf 等）落 except 拒整项。
+            # 整数字段用 _strict_int（与 region/army/faction 段一致）：拒 bool/float（int(3.7)=3 截断、
+            # int(True)=1 都非合法整数 delta，cmr ni r6 codex）+ 非数串/inf/nan/超界。缺省/null → 默认，
+            # 0 须保留（原 `or 50` 把合法 severity=0 静默改 50=保真 bug，cmr ni r4）；脏值落 except 拒整项。
             _bv = ni.get("bar_value", 25)
-            bar_value = int(25 if _bv is None else _bv)
+            bar_value = _strict_int(25 if _bv is None else _bv)
             _sv = ni.get("severity", 50)
-            severity = int(50 if _sv is None else _sv)
+            severity = _strict_int(50 if _sv is None else _sv)
             cancel_cost = dict(ni.get("cancel_cost") or {})
             tags = list(ni.get("tags") or [])
             inertia = _compute_inertia(ni)
         except (TypeError, ValueError, OverflowError) as exc:
-            # OverflowError：JSON 里 1e309 解析成 float('inf')，int(inf) 抛 OverflowError（非
-            # TypeError/ValueError）；不纳入则脏 inf 字段逃逸成 abort（cmr ni r3 codex）。
+            # OverflowError：JSON 里 1e309 解析成 float('inf')，超界 int 绑定亦抛；_strict_int 已把
+            # float（含 inf/nan）归 ValueError，OverflowError 兜超大 int 等残余路（cmr ni r3 codex）。
             applied_new.append({
                 "rejected": True, "category": "invalid_enum",
                 "reason": f"new_issue 字段强转失败（bar_value/severity/cancel_cost/tags/inertia 脏数据）：{exc}",

@@ -98,14 +98,15 @@ def test_new_issue_infinity_field_rejected_not_abort(game):
     assert "强转失败" in rej[0]["reason"]
 
 
-def test_new_issue_infinity_expected_months_defaults_not_abort(game):
+def test_new_issue_infinity_expected_months_rejected_not_abort(game):
     db, state, _ = game
-    # expected_months=inf → _compute_inertia 内层 int(inf) OverflowError 默认 em=0（与其它脏
-    # expected_months 一致），不逃逸、issue 照常落库（inertia=0）。
+    # expected_months=inf 经严格化的 _compute_inertia（_strict_int 拒 float/inf，cmr ni r6）→
+    # 拒整项（与 bar_value=inf 一致），不逃逸 abort。
     ni = {"origin_kind": "decree", "kind": "situation", "title": "测试·inf月数", "expected_months": 1e309}
     out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
-    created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
-    assert len(created) == 1, out
+    rej = _rejected(out)
+    assert len(rej) == 1, out
+    assert rej[0]["category"] == "invalid_enum"
 
 
 def test_new_issue_severity_zero_preserved(game):
@@ -130,6 +131,37 @@ def test_new_issue_garbage_severity_rejected(game):
     rej = _rejected(out)
     assert len(rej) == 1, out
     assert rej[0]["category"] == "invalid_enum"
+
+
+@pytest.mark.parametrize("field,bad", [
+    ("bar_value", 3.7),    # float 截断非合法整数 delta
+    ("severity", True),    # bool
+    ("severity", 2.5),     # float
+    ("inertia", True),     # bool（legacy inertia 经 _compute_inertia 严格转换）
+    ("expected_months", 1.5),  # float（expected_months 经 _compute_inertia）
+])
+def test_new_issue_bool_float_int_field_rejected(game, field, bad):
+    db, state, _ = game
+    # 整数字段用 _strict_int：bool/float 拒整项（与 region/army/faction 段一致，cmr ni r6 codex），
+    # 不再 int(3.7)=3 / int(True)=1 静默强转落库。
+    ni = {"origin_kind": "decree", "kind": "situation", "title": "测试·bool/float", field: bad}
+    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
+    rej = _rejected(out)
+    assert len(rej) == 1, out
+    assert rej[0]["category"] == "invalid_enum"
+
+
+@pytest.mark.parametrize("bad_kind", [False, 0, []])
+def test_new_issue_falsy_nonstring_kind_rejected(game, bad_kind):
+    db, state, _ = game
+    # present 的 falsy 非串 kind（false/0/[]）不再被 `or "initiative"` 静默默认、绕过白名单——
+    # None-sentinel 只对 缺省/null/空串 默认，其余走白名单拒收（cmr ni r6 codex）。
+    ni = {"origin_kind": "decree", "kind": bad_kind, "title": "测试·falsy kind"}
+    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
+    rej = _rejected(out)
+    assert len(rej) == 1, out
+    assert rej[0]["category"] == "invalid_enum"
+    assert "kind" in rej[0]["reason"]
 
 
 def test_new_issue_insert_code_exception_propagates(game, monkeypatch):
