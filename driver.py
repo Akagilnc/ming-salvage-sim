@@ -24,6 +24,7 @@ from ming_sim.content import GameContent
 from ming_sim.db import GameDB
 from ming_sim.models import LLMConfig
 from ming_sim.simulation import _canonicalize_extraction
+from ming_sim.token_stats import tlog
 
 DEFAULT_DB = "data/probe.db"
 
@@ -102,6 +103,9 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
             decree_text=decree_text, narrative=narrative,
             simulator_payload={}, secret_orders=[], relevant_memories=[],
         )
+    # driver 不注入 chapter_recorder（无 llm_config，章节记忆由对话方另产）——留一条审计痕迹，
+    # 便于事后查「哪回合没记起居注」。章节记忆这条浓缩若对话方某回合忘补=静默缺口，无此痕迹无从定位（#19）。
+    tlog(f"[driver] 跳过章节记忆(driver 模式)，turn {before_turn}→{before_turn + 1}（章节记忆由对话方另产）")
     return settle_with_delta(
         state,
         db,
