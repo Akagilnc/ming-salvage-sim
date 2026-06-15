@@ -969,16 +969,63 @@ def apply_issue_tracker_output(
     issue_person_changes: List[Dict[str, object]] = []
     event_by_id = _ctx().event_by_id
 
-    # 1) advances
+    # 1) advances（ADR 0008 决定1：LLM 脏数据逐项拒收留痕，不裸 continue 静默丢；db.advance_issue
+    #    的代码/DB 异常上抛 SettlementAbort，同 close_issues / new_issues 段，#63）
     for adv in tracker_output.get("advances", []) or []:
-        try:
-            issue_id = int(adv.get("issue_id"))
-        except (TypeError, ValueError):
+        if not isinstance(adv, dict):
+            # 非 dict 项（advances:[null]/标量，_sanitize 不清列表项可达）：adv.get 抛 AttributeError
+            # 崩整月——逐项拒收守门（同 close_issues 非 dict 守卫）。注：真实 settle 路
+            # validate_delta_shape 已前置 abort 非 dict list 项（结构畸形＝响亮失败防半落库），故此
+            # 守卫是 defense-in-depth——直接调 apply / 绕过 validate 时才生效（codex advances r2 P2：
+            # 非 dict 主路径走 validate abort、非逐项拒收，是 validate 层「结构畸形前置 abort」vs
+            # 「值脏逐项拒收」的两层分工；改 validate 让非 dict 亦逐项拒收＝跨所有 list 段的设计决策，
+            # defer #63 validate 层通用切片）。
+            applied_advances.append({
+                "rejected": True, "category": "invalid_enum",
+                "reason": f"advances 条目非对象（应为 dict）：{adv!r}", "item": adv,
+            })
             continue
-        delta_bar = int(adv.get("delta_bar") or 0)
-        inertia_delta = int(adv.get("inertia_delta") or 0)
+        try:
+            # _parse_sqlite_id：非整数/bool/float/超 SQLite 64-bit → ValueError（含 10**100 这类
+            # int() 过得了但绑定 SQLite 抛 OverflowError 的脏 id，避免上抛崩整月，同 close_issues）。
+            issue_id = _parse_sqlite_id(adv.get("issue_id"))
+        except (TypeError, ValueError):
+            applied_advances.append({
+                "rejected": True, "category": "invalid_enum",
+                "reason": f"advances issue_id 非法（非整数或超 SQLite 范围）：{adv.get('issue_id')!r}",
+                "item": adv,
+            })
+            continue
+        try:
+            # delta_bar/inertia_delta 用 _strict_int（拒 bool/float/inf/非数）：原裸 int() 在此 try
+            # 之外，int("高")/int(1e309) 直接逃逸成 SettlementAbort、int(True)=1 静默截断。缺省/null → 0。
+            _db_raw = adv.get("delta_bar")
+            delta_bar = _strict_int(0 if _db_raw is None else _db_raw)
+            _id_raw = adv.get("inertia_delta")
+            inertia_delta = _strict_int(0 if _id_raw is None else _id_raw)
+        except (TypeError, ValueError, OverflowError) as exc:
+            applied_advances.append({
+                "rejected": True, "category": "invalid_enum",
+                "reason": f"advances 字段强转失败（delta_bar/inertia_delta 脏数据）：{exc}",
+                "item": adv,
+            })
+            continue
         stage_text = str(adv.get("stage_text") or "")[:120]
         narrative = str(adv.get("narrative") or "")[:400]
+        # 先验 issue 存在且 active（与 db.advance_issue 的 None 条件 row is None / status!=active 一致）：
+        # 未找到/已非 active → missing_ref 逐项拒收留痕（陈旧/幻觉引用，同 close_issues None 归类，#63），
+        # 不裸 continue 静默丢。**必须先验、再应用 metric**：原序先 _apply_metric_dict（就地 mutate
+        # state.metrics）后判 None，会让拒收项的 metric_delta 副作用已落 state、与「未落地」矛盾且结算
+        # commit 无 rollback（cmr advances r1 codex high + claude concur）。
+        _chk = db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()
+        if _chk is None or _chk["status"] != "active":
+            applied_advances.append({
+                "rejected": True, "category": "missing_ref",
+                "reason": f"advances 引用未找到或已非 active 的 issue {issue_id}", "item": adv,
+            })
+            continue
+        # 确认 active 后才应用 metric（单线程内 _apply_metric_dict 不改 issue 表 status，故下方
+        # advance_issue 必非 None——pre-check 与其内部判定同条件）。
         metric_delta_raw = adv.get("metric_delta") or {}
         applied_metrics = _apply_metric_dict(state, metric_delta_raw if isinstance(metric_delta_raw, dict) else {}, db=db)
         new_row = db.advance_issue(
@@ -990,8 +1037,6 @@ def apply_issue_tracker_output(
             metric_delta=applied_metrics,
             inertia_delta=inertia_delta,
         )
-        if new_row is None:
-            continue
         touched_ids.add(issue_id)
         # 终结结算：bar 自然推到 100/0 触发的 resolved/failed，与 close_issues 一样落终结效果（含建筑）
         if new_row["status"] == "resolved":
