@@ -3039,11 +3039,16 @@ def test_s8_demotion_release_then_lower_appointment_derives_qifu(game):
             content=content,
         )
         pcs = [r for r in applied["applied_person_changes"] if r.get("name") == name]
-        # 末态：active + 低阶官；任命从 offstage 派生 起复（多条按序）
+        # 末态：active + 低阶官；任命从 offstage 派生 起复。契约 require 'sequence'：派生的 处置(起复)
+        # 须落在 任命 之前（release 先于 appoint），用索引锁顺序、不止 any()（Claude PR R1：
+        # any 抓不住顺序回归）。robust 对前导 declared 处置 + 可能的 S5 顶替行。
         row = db.conn.execute("SELECT status, office FROM characters WHERE name=?", (name,)).fetchone()
         assert row["status"] == "active"
         assert row["office"] == "知县"
-        assert any(r.get("动作") == "任命" and not r.get("rejected") for r in pcs), f"低阶任命应落：{pcs}"
-        assert any(r.get("derived_from") == "起复" for r in pcs), f"offstage→任命 须派生 起复：{pcs}"
+        appoint_idx = next(i for i, r in enumerate(pcs)
+                           if r.get("动作") == "任命" and not r.get("rejected"))
+        release_idx = next(i for i, r in enumerate(pcs)
+                           if r.get("动作") == "处置" and r.get("derived_from") == "起复")
+        assert release_idx < appoint_idx, f"派生 处置(起复) 须按序落在 任命 之前：{pcs}"
     finally:
         _ch.status, _ch.office, _ch.office_type, _ch.status_reason, _ch.reason_code = _saved
