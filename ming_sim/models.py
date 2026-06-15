@@ -53,13 +53,25 @@ class ChatResult:
     refresh_ministers: List[str] = field(default_factory=list)
 
 
+# LLM 后端默认值 / 通道集合的单一真源——放 L0 叶子 models，llm_config 与 cli_backend 都从此处
+# import（两者皆 import models），彻底消除 llm_config↔cli_backend 的懒-import（#60）。旧址
+# （llm_config.CLI_DEFAULT_TIMEOUT_SECONDS/VALID_CHANNELS、cli_backend.CODEX/CLAUDE_DEFAULT_MODEL）
+# 改为从这里 re-export，保留既有 import 路径。
+CODEX_DEFAULT_MODEL = "gpt-5.5"
+CLAUDE_DEFAULT_MODEL = "claude-opus-4-8"
+CLI_DEFAULT_TIMEOUT_SECONDS = 300.0  # CLI 子进程默认超时（秒），与 API 的 timeout_seconds 区分
+VALID_CHANNELS = frozenset({"api", "cli"})  # 合法执行通道集合，新增通道只改这里
+API_DEFAULT_MAX_TOKENS = 8000  # API 通道默认 max_tokens 单一真源（#58）
+API_DEFAULT_TIMEOUT_SECONDS = 180.0  # API 请求默认超时（秒）单一真源（#58）
+
+
 @dataclass
 class LLMConfig:
     api_key: str
     base_url: str
     model: str
-    max_tokens: int = 8000
-    timeout_seconds: float = 180.0
+    max_tokens: int = API_DEFAULT_MAX_TOKENS
+    timeout_seconds: float = API_DEFAULT_TIMEOUT_SECONDS
     thinking_level: str = ""  # 空=沿用旧逻辑；否则原样传给 reasoning_effort
     advanced_model: str = ""  # 空=fallback model；非空=推演/打分专用更强模型（如 deepseek-reasoner / gpt-5）
     advanced_base_url: str = ""  # 空=复用主 base_url；非空=advanced 角色专用网关
@@ -68,7 +80,7 @@ class LLMConfig:
     channel: str = ""  # ""=沿用旧 env 探针；api=OpenAI 兼容 API；cli=本地 CLI runner
     cli_runner: str = ""  # agy | codex | claude
     cli_model: str = ""  # CLI runner 的模型名/档位，由具体后端解释
-    cli_timeout_seconds: float = 300.0  # 与 llm_config.CLI_DEFAULT_TIMEOUT_SECONDS 对齐(此处不引入以免循环 import)
+    cli_timeout_seconds: float = CLI_DEFAULT_TIMEOUT_SECONDS  # CLI 子进程超时，同模块常量直接引用
 
 
 @dataclass
