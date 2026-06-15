@@ -559,12 +559,18 @@ def _advance_province_fiscal_substrate(db: GameDB, state: GameState) -> None:
         )
 
 
-def _apply_faction_dict(db: GameDB, faction_delta: Dict[str, object]) -> Dict[str, object]:
+def _apply_faction_dict(db: GameDB, faction_delta: Dict[str, object]) -> List[Dict[str, object]]:
     """支持两种格式：
     - 旧格式：{"阉党": -10}  → 仅 satisfaction 增量
     - 新格式：{"阉党": {"satisfaction": -10, "leverage": -15}}
+
+    逐项拒收契约（ADR 0008 决定 1，#14/#63）：satisfaction/leverage 值非整数 →
+    invalid_enum 逐项拒收留痕（#14 模式 A，原 `continue` 静默跳）；查无此派系名由
+    db.adjust_factions 返 missing_ref。返回拒收项列表，桥接 _collect_inline_rejections
+    自动收（顶层 return dict 的 "faction_delta" 段即此列表）。
     """
     cleaned: Dict[str, object] = {}
+    rejected: List[Dict[str, object]] = []
     faction_delta = faction_delta if isinstance(faction_delta, dict) else {}  # #117 同类：真值非 dict 守卫
     for key, val in faction_delta.items():
         if isinstance(val, dict):
@@ -576,6 +582,12 @@ def _apply_faction_dict(db: GameDB, faction_delta: Dict[str, object]) -> Dict[st
                 try:
                     d = int(raw)
                 except (TypeError, ValueError):
+                    rejected.append({
+                        "faction": str(key), "field": fname, "rejected": True,
+                        "category": "invalid_enum",
+                        "reason": f"faction_delta「{key}」{fname} 值非整数：{raw!r}",
+                        "item": {str(key): val},
+                    })
                     continue
                 if d != 0:
                     entry[fname] = d
@@ -585,19 +597,31 @@ def _apply_faction_dict(db: GameDB, faction_delta: Dict[str, object]) -> Dict[st
             try:
                 d = int(val)  # type: ignore[arg-type]
             except (TypeError, ValueError):
+                rejected.append({
+                    "faction": str(key), "rejected": True,
+                    "category": "invalid_enum",
+                    "reason": f"faction_delta「{key}」值非整数：{val!r}",
+                    "item": {str(key): val},
+                })
                 continue
             if d != 0:
                 cleaned[str(key)] = d
     if cleaned:
-        db.adjust_factions(cleaned)
-    return cleaned
+        rejected.extend(db.adjust_factions(cleaned))
+    return rejected
 
 
-def _apply_class_dict(db: GameDB, class_delta: Dict[str, object]) -> Dict[str, Dict[str, int]]:
+def _apply_class_dict(db: GameDB, class_delta: Dict[str, object]) -> List[Dict[str, object]]:
     """class_delta 结构：{ '农民@shaanxi': {'satisfaction': -5, 'leverage': +3}, '士绅': {...} }
     key 不带 @ 默认全国汇总。字段只接 satisfaction / leverage 增量。
+
+    逐项拒收契约（ADR 0008 决定 1，#14/#63）：字段值非整数 → invalid_enum 逐项拒收；
+    查无此阶级名由 db.adjust_classes 返 missing_ref。返回拒收项列表，桥接自动收。
+    二级真值非 dict（如 {"农民": 0}）仍按既有约定静默跳（extractor prompt 容忍，
+    validate 不拒——见 test_issue_entities）。
     """
     cleaned: Dict[str, Dict[str, int]] = {}
+    rejected: List[Dict[str, object]] = []
     class_delta = class_delta if isinstance(class_delta, dict) else {}  # #117 同类：真值非 dict 守卫
     for key, fields in class_delta.items():
         if not isinstance(fields, dict):
@@ -610,6 +634,12 @@ def _apply_class_dict(db: GameDB, class_delta: Dict[str, object]) -> Dict[str, D
             try:
                 d = int(raw)
             except (TypeError, ValueError):
+                rejected.append({
+                    "class": str(key), "field": fname, "rejected": True,
+                    "category": "invalid_enum",
+                    "reason": f"class_delta「{key}」{fname} 值非整数：{raw!r}",
+                    "item": {str(key): fields},
+                })
                 continue
             if d == 0:
                 continue
@@ -617,5 +647,5 @@ def _apply_class_dict(db: GameDB, class_delta: Dict[str, object]) -> Dict[str, D
         if entry:
             cleaned[str(key)] = entry
     if cleaned:
-        db.adjust_classes(cleaned)
-    return cleaned
+        rejected.extend(db.adjust_classes(cleaned))
+    return rejected
