@@ -536,32 +536,33 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event) -> Optional[int]:
         effect_resolve = ev.effect_on_resolve
     if ev.effect_on_fail:
         effect_fail = ev.effect_on_fail
-    try:
-        return db.insert_issue(
-            state,
-            kind="situation",
-            title=ev.title,
-            origin_kind="event_pool",
-            origin_ref=ev.id,
-            bar_value=bar,
-            bar_good_meaning=ev.bar_good_meaning or "已平",
-            bar_bad_meaning=ev.bar_bad_meaning or "失控",
-            inertia=inertia,
-            stage_text=ev.stage_text or ev.summary[:80],
-            severity=int(ev.severity),
-            region_hint=ev.region_hint,
-            faction_hint=",".join(ev.interests[:2]),
-            tags=ev.issue_tags or [ev.kind],
-            ongoing_effects=ongoing,
-            cancellable="never",
-            effect_on_resolve=effect_resolve,
-            effect_on_fail=effect_fail,
-            resolve_condition=ev.resolve_condition,
-            fail_condition=ev.fail_condition,
-        )
-    except Exception as exc:
-        print(f"[WARN] 事件 {ev.title} 立项失败：{exc}；跳过。")
-        return None
+    # insert 的代码/DB 真异常上抛（ADR 0008 决定1 / ADR 0005 fail-loud），与 decree 路径
+    # （apply_issue_tracker_output 的 new_issues 段）一致；旧 `except Exception: WARN; return None`
+    # 把真异常吞成 None、调用方记普通 rejected，正是 #14/#63 catalog「该落没落无人知」实例
+    # （cmr ni r7 codex high）。两种 None 来源已在上方分开：幂等去重经 find_*_by_origin 在此 try
+    # 之外 early-return None（正常跳过），故此处无需也不应再兜真异常。
+    return db.insert_issue(
+        state,
+        kind="situation",
+        title=ev.title,
+        origin_kind="event_pool",
+        origin_ref=ev.id,
+        bar_value=bar,
+        bar_good_meaning=ev.bar_good_meaning or "已平",
+        bar_bad_meaning=ev.bar_bad_meaning or "失控",
+        inertia=inertia,
+        stage_text=ev.stage_text or ev.summary[:80],
+        severity=int(ev.severity),
+        region_hint=ev.region_hint,
+        faction_hint=",".join(ev.interests[:2]),
+        tags=ev.issue_tags or [ev.kind],
+        ongoing_effects=ongoing,
+        cancellable="never",
+        effect_on_resolve=effect_resolve,
+        effect_on_fail=effect_fail,
+        resolve_condition=ev.resolve_condition,
+        fail_condition=ev.fail_condition,
+    )
 
 
 # 会崩坏的局势：人为可控、有明确「彻底失败」时刻——镇压不住/边镇沦陷/朝局崩坏。
@@ -616,18 +617,16 @@ def _normalize_cancellable(raw: object) -> str:
 
 
 def _compute_inertia(ni: Dict[str, object]) -> int:
-    """从 expected_months 算 inertia；兼容旧 inertia 直接填的写法。"""
+    """从 expected_months 算 inertia；兼容旧 inertia 直接填的写法。整数字段用 _strict_int 严格转换
+    （拒 bool/float/非数/inf/nan，与 new_issues 其它整数字段一致，cmr ni r6 codex）——脏值抛
+    ValueError/OverflowError，由唯一调用方 apply_issue_tracker_output 的预校验 try 拒整项。"""
     em_raw = ni.get("expected_months")
     if em_raw is not None:
-        try:
-            em = int(em_raw)
-        except (TypeError, ValueError):
-            em = 0
+        em = _strict_int(em_raw)  # bool/float（含 inf/nan）/非数 → ValueError
         if em != 0:
-            inertia = round(100 / em)
-            return max(-10, min(10, inertia))
-    # 兼容旧字段
-    return max(-10, min(10, int(ni.get("inertia") or 0)))
+            return max(-10, min(10, round(100 / em)))
+    legacy = ni.get("inertia")
+    return max(-10, min(10, _strict_int(0 if legacy is None else legacy)))
 
 
 # 离散时长档：LLM 只能给这几档（防乱填）；映射到月。
@@ -1046,6 +1045,16 @@ def apply_issue_tracker_output(
     #    其它来源一律拒。
     initiative_active = db.count_active_initiatives()
     for ni in tracker_output.get("new_issues", []) or []:
+        if not isinstance(ni, dict):
+            # 非 dict 项（new_issues:[null]/标量）：ni.get 会抛 AttributeError。真实 settle 路
+            # validate_delta_shape 已在 apply 前拦非 dict list 项，此为 defense-in-depth（直接调
+            # apply_issue_tracker_output / 绕过 validate 时生效）——逐项拒收，不让坏项带走整批
+            # （ADR 0008 决定 1，同 close_issues 非 dict 守卫，cmr ni r1 Claude）。
+            applied_new.append({
+                "rejected": True, "category": "invalid_enum",
+                "reason": f"new_issues 条目非对象（应为 dict）：{ni!r}", "item": ni,
+            })
+            continue
         title = str(ni.get("title") or "")
         origin_kind = str(ni.get("origin_kind") or "").lower()
         if origin_kind == "event_pool":
@@ -1068,7 +1077,10 @@ def apply_issue_tracker_output(
                 continue
             issue_id = event_to_issue(db, state, ev)
             if issue_id is None:
-                applied_new.append({"title": ev.title, "rejected": True, "reason": "事件已触发过或落库失败"})
+                # event_to_issue 移除 broad except 后，返回 None 只剩一种语义：同源 issue 已存在的
+                # 幂等去重跳过（在其 insert try 之外 early-return）；insert 的真代码/DB 异常现已上抛、
+                # 不再走此 None 分支（cmr ni r7 codex high），故 reason 不再含「或落库失败」。
+                applied_new.append({"title": ev.title, "rejected": True, "reason": "事件已触发过（同源局势已立，幂等跳过）"})
             else:
                 applied_new.append({"issue_id": issue_id, "kind": "situation", "title": ev.title, "rejected": False})
             continue
@@ -1076,7 +1088,20 @@ def apply_issue_tracker_output(
             print(f"[INFO] new_issue 已拒：'{title}'（origin_kind={origin_kind!r}，仅接 decree / event_pool）。")
             applied_new.append({"title": title, "rejected": True, "reason": "来源非 decree/event_pool 不许新立"})
             continue
-        kind = str(ni.get("kind") or "initiative")
+        # kind 缺省/null/空串 → 默认 initiative；present 非法值（含 false/0/[] 这类 falsy 非串，
+        # 原 `or "initiative"` 会把它们静默默认、绕过白名单，cmr ni r6 codex）→ 留给白名单拒收。
+        _kind_raw = ni.get("kind")
+        kind = "initiative" if _kind_raw in (None, "") else str(_kind_raw)
+        if kind not in ("situation", "initiative"):
+            # 脏 kind（LLM 偶给 "reform"/"policy"/"局势" 等，见 DELTA_SCHEMA.md）→ insert_issue 会
+            # 抛 ValueError；本刀移除 broad except 后会逃逸成 SettlementAbort，故须在此预检拒整项
+            # （与 4 个脏强转同口径，cmr ni r1 Claude+codex concur）。
+            applied_new.append({
+                "rejected": True, "category": "invalid_enum",
+                "reason": f"new_issue kind 非法 '{kind}'（须 situation/initiative）",
+                "item": ni, "title": title,
+            })
+            continue
         if kind == "initiative" and initiative_active >= 10:
             applied_new.append({"title": title, "rejected": True, "reason": "已有十事在办，朝廷分身乏术，难再添新工。"})
             continue
@@ -1087,6 +1112,11 @@ def apply_issue_tracker_output(
         ongoing_eff = _eff_dict(ni.get("ongoing_effects"))
         resolve_eff = _eff_dict(ni.get("effect_on_resolve"))
         fail_eff = _eff_dict(ni.get("effect_on_fail"))
+        # cancel_cost 同属 dict 字段，与上 3 个统一走 _eff_dict 容忍归 {}（cmr ni r9 codex medium）：
+        # 旧 `dict(ni.get("cancel_cost") or {})` 对 list-of-pairs 静默 garble（dict([["民心",-5]])=
+        # {'民心':-5}、dict(["ab"])={'a':'b'}）、对标量串 raise 拒整项——而 cancel_cost 是次要字段，
+        # 脏不该丢掉整个 issue 决策后果（违 P1 落库铁律）。容忍归 {} 既不 garble、又保 issue 主体。
+        cancel_cost = _eff_dict(ni.get("cancel_cost"))
         # 校验：国策必须有「办成回报」。CLI 后端(agy)一贯不填效果字段（实测 0/4），
         # 空则聚焦补全，保证「国策跑完有实质后果」(A 方案)；floor 兜底，绝不入空壳。
         if kind == "initiative" and not resolve_eff:
@@ -1103,35 +1133,77 @@ def apply_issue_tracker_output(
                 # floor 在 try 外：即便 enrich 抛错或没补上，CLI 后端国策也绝不入空壳（codexB）。
                 if not resolve_eff:
                     resolve_eff = {"metrics": {"民心": 1}}
+        # 字段强转脏数据 → 拒整项（ADR 0008 决定 1：new_issue 即「项」，坏字段令该项无法洁净构造
+        # → 拒留痕，非默认掩盖）。这些强转会因脏 LLM 数据抛：bar_value/severity 的 int()、
+        # cancel_cost 的 dict("脏")、tags 的 list(5)、_compute_inertia 的 legacy `int(inertia)`
+        # 回退（其 expected_months 路自带兜底，但旧 inertia 字段在 try 外，cmr ni r2 codex）。
+        # _normalize_cancellable / 各 str() 自带兜底不抛。原 except Exception WARN-skip 整项保留为
+        # 「拒收留痕」，insert 的代码/DB 异常分出去上抛。
         try:
-            issue_id = db.insert_issue(
-                state,
-                kind=kind,
-                title=title[:60] or "无名事项",
-                origin_kind="decree",
-                origin_ref=str(ni.get("origin_ref") or ""),
-                bar_value=int(ni.get("bar_value", 25)),
-                bar_good_meaning=str(ni.get("bar_good_meaning") or "已成"),
-                bar_bad_meaning=str(ni.get("bar_bad_meaning") or "废止"),
-                inertia=_compute_inertia(ni),
-                stage_text=str(ni.get("stage_text") or "")[:120],
-                severity=int(ni.get("severity") or 50),
-                region_hint=str(ni.get("region_hint") or ""),
-                faction_hint=str(ni.get("faction_hint") or ""),
-                tags=list(ni.get("tags") or []),
-                ongoing_effects=ongoing_eff,
-                cancellable=_normalize_cancellable(ni.get("cancellable")),
-                cancel_cost=dict(ni.get("cancel_cost") or {}),
-                effect_on_resolve=resolve_eff,
-                effect_on_fail=fail_eff,
-                resolve_condition=str(ni.get("resolve_condition") or "")[:300],
-                fail_condition=str(ni.get("fail_condition") or "")[:300],
-            )
-            if kind == "initiative":
-                initiative_active += 1
-            applied_new.append({"issue_id": issue_id, "kind": kind, "title": title, "rejected": False})
-        except Exception as exc:
-            print(f"[WARN] new_issue 落库失败：{exc}；跳过 {title}")
+            # 整数字段用 _strict_int（与 region/army/faction 段一致）：拒 bool/float（int(3.7)=3 截断、
+            # int(True)=1 都非合法整数 delta，cmr ni r6 codex）+ 非数串/inf/nan/超界。缺省/null → 默认，
+            # 0 须保留（原 `or 50` 把合法 severity=0 静默改 50=保真 bug，cmr ni r4）；脏值落 except 拒整项。
+            _bv = ni.get("bar_value", 25)
+            bar_value = _strict_int(25 if _bv is None else _bv)
+            _sv = ni.get("severity", 50)
+            severity = _strict_int(50 if _sv is None else _sv)
+            # cancel_cost 已在 try 外随 effect 字段走 _eff_dict 容忍归 {}（cmr ni r9）——不在此强转、
+            # 不进 except 拒收路。
+            # tags 严格化（cmr ni r8 codex medium，与上方 int 字段同一字段校验 class）：缺省/null/
+            # 空串 → []；present 必须是 list/tuple 且元素全为 str。原 `list(ni.get("tags") or [])`
+            # 把标量串拆字（list("募营")=['募','营']）——既污染 DB tags，又让 _initiative_resolve_
+            # pairing_warnings 的整词子串匹配（"募营" in blob）失配 → bypass #45/#46 new_armies 配对
+            # 守门；非串元素（list([5])=[5]）也静默落库。脏值落 except 拒整项。
+            _tags_raw = ni.get("tags")
+            if _tags_raw is None or _tags_raw == "":
+                tags = []
+            elif isinstance(_tags_raw, (list, tuple)) and all(isinstance(t, str) for t in _tags_raw):
+                tags = list(_tags_raw)
+            else:
+                raise ValueError(f"tags 须为字符串列表（拒标量串拆字 / 非串元素）：{_tags_raw!r}")
+            inertia = _compute_inertia(ni)
+        except (TypeError, ValueError, OverflowError) as exc:
+            # OverflowError：JSON 里 1e309 解析成 float('inf')，超界 int 绑定亦抛；_strict_int 已把
+            # float（含 inf/nan）归 ValueError，OverflowError 兜超大 int 等残余路（cmr ni r3 codex）。
+            applied_new.append({
+                "rejected": True, "category": "invalid_enum",
+                "reason": f"new_issue 字段强转失败（bar_value/severity/tags/inertia 脏数据）：{exc}",
+                "item": ni, "title": title,
+            })
+            continue
+        # insert_issue 不再裹 broad except：代码/DB 异常上抛 → SettlementAbort（ADR 0005 fail-loud），
+        # 不再当 WARN 吞（那会半落库 + 丢决策，违 P1 铁律）。
+        # 注：字符串字段含孤代理（JSON 解析出的 "\ud800"）会在 SQLite bind 抛 UnicodeEncodeError——
+        # 这是**跨段通用**序列化层问题（不仅 insert，连拒收行/turn_extraction 的 json.dumps 绑定也中毒），
+        # 且 ensure_ascii=True 全局翻转会破坏 DB 中文可读性，需「保中文、净孤代理」helper 统一治理；
+        # section 级兜 except 会因拒收行回写原值而把 abort 挪到 rejection flush（cmr ni r5 codex 实证），
+        # 故本刀不在此 piecemeal 处理，整体归 #63 通用切片。
+        issue_id = db.insert_issue(
+            state,
+            kind=kind,
+            title=title[:60] or "无名事项",
+            origin_kind="decree",
+            origin_ref=str(ni.get("origin_ref") or ""),
+            bar_value=bar_value,
+            bar_good_meaning=str(ni.get("bar_good_meaning") or "已成"),
+            bar_bad_meaning=str(ni.get("bar_bad_meaning") or "废止"),
+            inertia=inertia,
+            stage_text=str(ni.get("stage_text") or "")[:120],
+            severity=severity,
+            region_hint=str(ni.get("region_hint") or ""),
+            faction_hint=str(ni.get("faction_hint") or ""),
+            tags=tags,
+            ongoing_effects=ongoing_eff,
+            cancellable=_normalize_cancellable(ni.get("cancellable")),
+            cancel_cost=cancel_cost,
+            effect_on_resolve=resolve_eff,
+            effect_on_fail=fail_eff,
+            resolve_condition=str(ni.get("resolve_condition") or "")[:300],
+            fail_condition=str(ni.get("fail_condition") or "")[:300],
+        )
+        if kind == "initiative":
+            initiative_active += 1
+        applied_new.append({"issue_id": issue_id, "kind": kind, "title": title, "rejected": False})
 
     # 3) closes（LLM 主动结案/失败，不看 bar 门槛）
     applied_closes: List[Dict[str, object]] = []
