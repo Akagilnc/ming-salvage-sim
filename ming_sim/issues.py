@@ -1046,6 +1046,14 @@ def apply_issue_tracker_output(
     #    其它来源一律拒。
     initiative_active = db.count_active_initiatives()
     for ni in tracker_output.get("new_issues", []) or []:
+        if not isinstance(ni, dict):
+            # 非 dict 项（new_issues:[null]/标量）：ni.get 会抛 AttributeError 崩整月——逐项拒收
+            # （ADR 0008 决定 1，同 close_issues 非 dict 守卫，codex close r4）。
+            applied_new.append({
+                "rejected": True, "category": "invalid_enum",
+                "reason": f"new_issues 条目非对象（应为 dict）：{ni!r}", "item": ni,
+            })
+            continue
         title = str(ni.get("title") or "")
         origin_kind = str(ni.get("origin_kind") or "").lower()
         if origin_kind == "event_pool":
@@ -1103,35 +1111,50 @@ def apply_issue_tracker_output(
                 # floor 在 try 外：即便 enrich 抛错或没补上，CLI 后端国策也绝不入空壳（codexB）。
                 if not resolve_eff:
                     resolve_eff = {"metrics": {"民心": 1}}
+        # 字段强转脏数据 → 拒整项（ADR 0008 决定 1：new_issue 即「项」，坏字段令该项无法洁净构造
+        # → 拒留痕，非默认掩盖）。只有这 4 个强转会因脏 LLM 数据抛（int("abc") / dict("脏") /
+        # list(5)）；_compute_inertia / _normalize_cancellable / 各 str() 自带兜底不抛。原 except
+        # Exception WARN-skip 整项的行为保留为「拒收留痕」，并把 insert 的代码/DB 异常分出去上抛。
         try:
-            issue_id = db.insert_issue(
-                state,
-                kind=kind,
-                title=title[:60] or "无名事项",
-                origin_kind="decree",
-                origin_ref=str(ni.get("origin_ref") or ""),
-                bar_value=int(ni.get("bar_value", 25)),
-                bar_good_meaning=str(ni.get("bar_good_meaning") or "已成"),
-                bar_bad_meaning=str(ni.get("bar_bad_meaning") or "废止"),
-                inertia=_compute_inertia(ni),
-                stage_text=str(ni.get("stage_text") or "")[:120],
-                severity=int(ni.get("severity") or 50),
-                region_hint=str(ni.get("region_hint") or ""),
-                faction_hint=str(ni.get("faction_hint") or ""),
-                tags=list(ni.get("tags") or []),
-                ongoing_effects=ongoing_eff,
-                cancellable=_normalize_cancellable(ni.get("cancellable")),
-                cancel_cost=dict(ni.get("cancel_cost") or {}),
-                effect_on_resolve=resolve_eff,
-                effect_on_fail=fail_eff,
-                resolve_condition=str(ni.get("resolve_condition") or "")[:300],
-                fail_condition=str(ni.get("fail_condition") or "")[:300],
-            )
-            if kind == "initiative":
-                initiative_active += 1
-            applied_new.append({"issue_id": issue_id, "kind": kind, "title": title, "rejected": False})
-        except Exception as exc:
-            print(f"[WARN] new_issue 落库失败：{exc}；跳过 {title}")
+            bar_value = int(ni.get("bar_value", 25))
+            severity = int(ni.get("severity") or 50)
+            cancel_cost = dict(ni.get("cancel_cost") or {})
+            tags = list(ni.get("tags") or [])
+        except (TypeError, ValueError) as exc:
+            applied_new.append({
+                "rejected": True, "category": "invalid_enum",
+                "reason": f"new_issue 字段强转失败（bar_value/severity/cancel_cost/tags 脏数据）：{exc}",
+                "item": ni, "title": title,
+            })
+            continue
+        # insert_issue 不再裹 broad except：代码/DB 异常上抛 → SettlementAbort（ADR 0005 fail-loud），
+        # 不再当 WARN 吞（那会半落库 + 丢决策，违 P1 铁律）。
+        issue_id = db.insert_issue(
+            state,
+            kind=kind,
+            title=title[:60] or "无名事项",
+            origin_kind="decree",
+            origin_ref=str(ni.get("origin_ref") or ""),
+            bar_value=bar_value,
+            bar_good_meaning=str(ni.get("bar_good_meaning") or "已成"),
+            bar_bad_meaning=str(ni.get("bar_bad_meaning") or "废止"),
+            inertia=_compute_inertia(ni),
+            stage_text=str(ni.get("stage_text") or "")[:120],
+            severity=severity,
+            region_hint=str(ni.get("region_hint") or ""),
+            faction_hint=str(ni.get("faction_hint") or ""),
+            tags=tags,
+            ongoing_effects=ongoing_eff,
+            cancellable=_normalize_cancellable(ni.get("cancellable")),
+            cancel_cost=cancel_cost,
+            effect_on_resolve=resolve_eff,
+            effect_on_fail=fail_eff,
+            resolve_condition=str(ni.get("resolve_condition") or "")[:300],
+            fail_condition=str(ni.get("fail_condition") or "")[:300],
+        )
+        if kind == "initiative":
+            initiative_active += 1
+        applied_new.append({"issue_id": issue_id, "kind": kind, "title": title, "rejected": False})
 
     # 3) closes（LLM 主动结案/失败，不看 bar 门槛）
     applied_closes: List[Dict[str, object]] = []
