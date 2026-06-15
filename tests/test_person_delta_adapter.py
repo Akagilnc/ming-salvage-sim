@@ -2864,7 +2864,10 @@ def test_s2_reappointment_derives_qifu_from_retired(game):
     """S2 起复（孙承宗家居复出）：retired 人物受任命 → 派生 处置(起复) + 任命 两条，末态 active。"""
     db, state, content = game
     name = active_ming_character(db, content)
-    old_status, old_office = content.characters[name].status, content.characters[name].office
+    _ch = content.characters[name]
+    # 全量捕获本测试会经 set_character_status/apply 改动的内存字段，finally 完整还原（autouse
+    # _restore_content_characters 已兜底深还原，此为防 smell 的显式补全，gemini PR#138 R1）。
+    _saved = (_ch.status, _ch.office, _ch.office_type, getattr(_ch, "status_reason", ""), getattr(_ch, "reason_code", ""))
     try:
         db.set_character_status(state, name, "retired", "乞休归籍", reason_code="致仕")
         content.characters[name].status = "retired"
@@ -2878,14 +2881,17 @@ def test_s2_reappointment_derives_qifu_from_retired(game):
         assert pcs[0]["动作"] == "处置" and pcs[0]["derived_from"] == "起复"
         assert pcs[1]["动作"] == "任命" and pcs[1]["derived_from"] == "起复"
     finally:
-        content.characters[name].status, content.characters[name].office = old_status, old_office
+        _ch.status, _ch.office, _ch.office_type, _ch.status_reason, _ch.reason_code = _saved
 
 
 def test_s3_reappointment_derives_zhaoxue_from_dismissed(game):
     """S3 翻案起用（崇祯初起复被阉党削籍的东林诸臣）：dismissed 人物受任命 → 派生 处置(昭雪) + 任命。"""
     db, state, content = game
     name = active_ming_character(db, content)
-    old_status, old_office = content.characters[name].status, content.characters[name].office
+    _ch = content.characters[name]
+    # 全量捕获本测试会经 set_character_status/apply 改动的内存字段，finally 完整还原（autouse
+    # _restore_content_characters 已兜底深还原，此为防 smell 的显式补全，gemini PR#138 R1）。
+    _saved = (_ch.status, _ch.office, _ch.office_type, getattr(_ch, "status_reason", ""), getattr(_ch, "reason_code", ""))
     before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
     try:
         db.set_character_status(state, name, "dismissed", "阉党构陷削籍", reason_code="获罪削籍")
@@ -2899,7 +2905,7 @@ def test_s3_reappointment_derives_zhaoxue_from_dismissed(game):
         assert pcs[0]["动作"] == "处置" and pcs[0]["derived_from"] == "昭雪"
         assert pcs[1]["动作"] == "任命" and pcs[1]["derived_from"] == "昭雪"
     finally:
-        content.characters[name].status, content.characters[name].office = old_status, old_office
+        _ch.status, _ch.office, _ch.office_type, _ch.status_reason, _ch.reason_code = _saved
 
 
 def test_s4_reappointment_derives_duoqing_when_mourning(game):
@@ -2907,7 +2913,10 @@ def test_s4_reappointment_derives_duoqing_when_mourning(game):
     reason_code=丁忧 专项规则优先于 offstage→起复 通则（决定5 派生选择规则）。"""
     db, state, content = game
     name = active_ming_character(db, content)
-    old_status, old_office = content.characters[name].status, content.characters[name].office
+    _ch = content.characters[name]
+    # 全量捕获本测试会经 set_character_status/apply 改动的内存字段，finally 完整还原（autouse
+    # _restore_content_characters 已兜底深还原，此为防 smell 的显式补全，gemini PR#138 R1）。
+    _saved = (_ch.status, _ch.office, _ch.office_type, getattr(_ch, "status_reason", ""), getattr(_ch, "reason_code", ""))
     try:
         db.set_character_status(state, name, "offstage", "丁内艰守制", reason_code="丁忧")
         content.characters[name].status = "offstage"
@@ -2921,7 +2930,7 @@ def test_s4_reappointment_derives_duoqing_when_mourning(game):
         assert pcs[1]["动作"] == "任命" and pcs[1]["derived_from"] == "夺情"
         assert pcs[1].get("rejected") is not True, "夺情任命不应被拒"
     finally:
-        content.characters[name].status, content.characters[name].office = old_status, old_office
+        _ch.status, _ch.office, _ch.office_type, _ch.status_reason, _ch.reason_code = _saved
 
 
 def test_person_change_rejects_unknown_action_not_silent(game):
