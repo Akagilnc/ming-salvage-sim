@@ -137,6 +137,9 @@ def test_web_panel_faction_delta_stays_applied_dict(game):
     assert isinstance(fd, dict), f"faction_delta 段应为 web 面板 dict，实为 {type(fd)}"
     assert good in fd
     assert not any(isinstance(v, dict) and v.get("rejected") for v in fd.values())
+    # 未落库的未知派系不得出现在面板 dict（cmr r3 codex：值可解析的未知名曾混进 cleaned
+    # 被当「已落」误显 = DB↔呈现漂移）。
+    assert "查无此派系" not in fd
     # 拒收项不进玩家可见呈现（P4）
     assert "faction_delta_rejections" not in visible
 

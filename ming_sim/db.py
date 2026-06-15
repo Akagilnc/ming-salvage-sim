@@ -2375,7 +2375,7 @@ class GameDB:
             ).fetchone()
             if not row:
                 rejected.append({
-                    "class": key, "rejected": True, "category": "missing_ref",
+                    "name": key, "rejected": True, "category": "missing_ref",
                     "reason": f"class_delta 查无此阶级「{key}」（未入 classes 表）",
                     "item": {key: fields},
                 })
@@ -3904,7 +3904,7 @@ class GameDB:
             ).fetchone()
             if not row:
                 rejected.append({
-                    "faction": faction, "rejected": True, "category": "missing_ref",
+                    "name": faction, "rejected": True, "category": "missing_ref",
                     "reason": f"faction_delta 查无此派系「{faction}」（未入 factions 表）",
                     "item": {faction: val},
                 })
