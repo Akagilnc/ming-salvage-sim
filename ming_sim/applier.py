@@ -304,3 +304,10 @@ class RejectionCollector:
         """丢弃缓冲与待镜像快照（回滚路径：DB 行已随事务回滚，内存同步清场）。"""
         self._buffer.clear()
         self._flushed.clear()
+
+    def has_player_visible_rejection(self) -> bool:
+        """本回合是否有 player_decree / hitl_decision 来源的拒收——决定玩家面邸报是否给一句
+        in-world 提示（ADR 0008 决定 5：仅这两来源对玩家可见，系统推演来源安静）。
+        检 _buffer + _flushed：报告组装在事务内、commit/mirror 前，拒收已 record 可能已 flush 未 mirror。"""
+        _visible = {Provenance.player_decree.value, Provenance.hitl_decision.value}
+        return any(row["source"] in _visible for row in (*self._buffer, *self._flushed))
