@@ -260,14 +260,28 @@ export function CloseIssuesBlock({ data }: { data: any }) {
   if (isEmptyData(data) || !Array.isArray(data)) return <p className="extraction-empty">无</p>;
   return (
     <ul className="extraction-list">
-      {data.map((it: any, i: number) => (
-        <li key={i}>
-          <b className={pickItem(it, "原因", "reason") === "resolved" ? "good" : "bad"}>
-            {labelIssue(pickItem(it, "局势编号", "issue_id"))} {pickItem(it, "原因", "reason") === "resolved" ? "结案" : "失败"}
-          </b>
-          {pickItem(it, "叙述", "narrative") ? <span>{pickItem(it, "叙述", "narrative")}</span> : null}
-        </li>
-      ))}
+      {data.map((it: any, i: number) => {
+        // 逐项拒收项（rejected）：reason 是中文拒收说明、非 resolved/failed 枚举，且 issue_id
+        // 已随 item 剥离——不能按成功结案渲染。与 OfficeChangesBlock/StatusChangesBlock 同范式
+        // 标「（未落地）」+ 显拒收原因（cmr close-issues r3 Claude）。
+        if (pickItem(it, "rejected", "rejected")) {
+          return (
+            <li key={i}>
+              <b className="bad">局势结案（未落地）</b>
+              {pickItem(it, "原因", "reason") ? <span>{pickItem(it, "原因", "reason")}</span> : null}
+            </li>
+          );
+        }
+        const reason = pickItem(it, "原因", "reason");
+        return (
+          <li key={i}>
+            <b className={reason === "resolved" ? "good" : "bad"}>
+              {labelIssue(pickItem(it, "局势编号", "issue_id"))} {reason === "resolved" ? "结案" : "失败"}
+            </b>
+            {pickItem(it, "叙述", "narrative") ? <span>{pickItem(it, "叙述", "narrative")}</span> : null}
+          </li>
+        );
+      })}
     </ul>
   );
 }
