@@ -20,12 +20,23 @@ from ming_sim.assets import (
     string_list,
 )
 from ming_sim.constants import (
+    ARMY_TEXT_FIELDS,
     BUILDING_CATEGORIES,
     BUILDING_OUTPUT_METRICS,
     GATE_AGG_FUNCS,
     GATE_METRIC_KEYS,
     GATE_TABLES,
+    POWER_TEXT_FIELDS,
+    REGION_TEXT_FIELDS,
 )
+
+# 文本相等 gate 可比的字段（按表）——runtime _eval_gate_key_str 取 str(row[字段])，
+# 文本 cond 配数值字段会得 "50"!=ming 永远 False，故限定为各表 TEXT 字段（#12 cmr r3 codex）。
+_GATE_TEXT_FIELDS = {
+    "region": set(REGION_TEXT_FIELDS),
+    "army": set(ARMY_TEXT_FIELDS),
+    "power": set(POWER_TEXT_FIELDS),
+}
 from ming_sim.models import (
     Army,
     Building,
@@ -149,6 +160,8 @@ def gate_text_key_form_error(key: str) -> str:
         return "文本相等 gate 不支持多 id（| 分隔）"
     if not parts[1].strip() or not parts[2].strip():
         return "id 或 字段 为空"
+    if parts[2] not in _GATE_TEXT_FIELDS[parts[0]]:  # 文本 cond 须配文本字段，否则永远 False
+        return f"「{parts[2]}」非 {parts[0]} 文本字段（文本相等仅可比 {'/'.join(sorted(_GATE_TEXT_FIELDS[parts[0]]))}）"
     return ""
 
 
