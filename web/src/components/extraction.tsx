@@ -222,6 +222,17 @@ export function IssueAdvancesBlock({ data }: { data: any }) {
   return (
     <ul className="extraction-list">
       {data.map((it: any, i: number) => {
+        // 逐项拒收项（rejected）：advances 段对坏 issue_id / 脏 delta / 陈旧引用（missing_ref，
+        // 引用未找到或已非 active）会拒收留痕——不能当成功推进渲染，标「（未落地）」+ 显原因
+        // （同 NewIssuesBlock/CloseIssuesBlock 范式，#63 advances 段）。
+        if (pickItem(it, "rejected", "rejected")) {
+          return (
+            <li key={i}>
+              <b className="bad">局势推进（未落地）</b>
+              {pickItem(it, "原因", "reason") ? <span>{pickItem(it, "原因", "reason")}</span> : null}
+            </li>
+          );
+        }
         const delta = pickItem(it, "进度增量", "delta_bar");
         const fromValue = pickItem(it, "旧进度", "from_value");
         const toValue = pickItem(it, "新进度", "to_value");
