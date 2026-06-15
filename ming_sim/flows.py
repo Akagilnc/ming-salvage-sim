@@ -298,10 +298,17 @@ def _apply_economy_list(
             continue
         account = str(move.get("account") or "")
         if account not in ("国库", "内库"):
+            # 账户非法不再静默丢——逐项拒收留痕（#14 ADR0008 决定1，统一拒收契约）。
+            applied.append({"account": account, "rejected": True, "category": "invalid_enum",
+                            "reason": f"economy_moves 账户非法（须 国库/内库）：{account!r}",
+                            "item": move})
             continue
         try:
             delta = int(move.get("delta") or 0)
         except (TypeError, ValueError):
+            applied.append({"account": account, "rejected": True, "category": "invalid_enum",
+                            "reason": f"economy_moves delta 非整数：{move.get('delta')!r}",
+                            "item": move})
             continue
         category = str(move.get("category") or move.get("reason") or "事项")[:40]
         reason = str(move.get("reason") or "")[:80]
