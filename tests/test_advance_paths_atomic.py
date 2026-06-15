@@ -263,13 +263,14 @@ def _recovery_session(db, state, content, monkeypatch):
     return sess
 
 
-def test_recovery_entry_consumes_ready_context(game, monkeypatch):
+def test_recovery_entry_consumes_ready_context(saved_game, monkeypatch):
     """settling + ready context（手工 persist 一份非空 delta）→ resolve_turn 直入 apply：
-    不重跑 simulator/extractor（stub 成抛错断言未被调）、context 清掉、turn+1（ADR 0008 决定 3）。"""
+    不重跑 simulator/extractor（stub 成抛错断言未被调）、context 清掉、turn+1（ADR 0008 决定 3）。
+    用 saved_game：断言依赖玩过存档的民心基线 + 帝国修正下的 metric 增量，fresh seed 不复现（#5）。"""
     from ming_sim.session import TurnPhase
     import ming_sim.decree as dm
 
-    db, state, content = game
+    db, state, content = saved_game
     turn = state.turn
     extracted = {"metric_delta": {"民心": -4}}  # 国库由 economy_accounts 派生不可直写；民心负向不撞 clamp
     # 模拟「崩在 settle 之前、extractor 已产出并 persist」：pre_settle 已落 settling。
@@ -300,16 +301,17 @@ def test_recovery_entry_consumes_ready_context(game, monkeypatch):
     assert db.load_state().metrics["民心"] == support_before - 4
 
 
-def test_recover_after_simulation_crash_can_resettle(game, monkeypatch):
+def test_recover_after_simulation_crash_can_resettle(saved_game, monkeypatch):
     """验收③：真跑 pre_settle（settling 落库）→ 模拟崩在推演期间（无 ready context）→
     恢复（resolve_turn 走 fallthrough 重跑推演）→ 能重新推演并完整结算推进（turn+1、财政不二跑）。
 
     崩于推演/抽取期间的窗口里 LLM 产出本就没持久化（resolve_context 无 ready）——重跑是
-    唯一选择（ADR 0008 决定 3）。pre_settle 的 settling 守门保证前半段不二跑。"""
+    唯一选择（ADR 0008 决定 3）。pre_settle 的 settling 守门保证前半段不二跑。
+    用 saved_game：断言依赖玩过存档的结算链路状态，fresh seed 不复现（#5）。"""
     from ming_sim.session import TurnPhase
     import ming_sim.decree as dm
 
-    db, state, content = game
+    db, state, content = saved_game
     turn = state.turn
     # 真跑前半段：财政落账 + settling 相位提交。模拟「崩在推演期间」——无 resolve_context。
     dm.pre_settle(state, db, content=content)
@@ -442,16 +444,17 @@ def test_poison_replay_clears_context_for_resimulation(game, monkeypatch, tmp_pa
     assert state.turn == turn + 1
 
 
-def test_hitl_retry_replays_ready_context_without_reextract(game, monkeypatch):
+def test_hitl_retry_replays_ready_context_without_reextract(saved_game, monkeypatch):
     """HITL 重试消费 ready context，不重跑 extractor（cmr S7 r2 codex）。
 
     phase2 已 persist ready delta 后 settle 曾 abort：重试 submit_decisions
     不得重跑贵调用并覆盖 ready context。
+    用 saved_game：断言依赖玩过存档的结算链路状态，fresh seed 不复现（#5）。
     """
     from ming_sim.session import TurnPhase
     import ming_sim.decree as dm
 
-    db, state, content = game
+    db, state, content = saved_game
     turn = state.turn
     dm.pre_settle(state, db, content=content)
     # 模拟「phase2 已抽取并 persist、settle abort 后」的 DB 态

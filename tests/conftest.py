@@ -49,9 +49,40 @@ def _restore_content_characters(content):
 
 @pytest.fixture
 def game(content):
-    """返回 (db, state, content)：data/probe.db 的临时副本（盘面齐全），用例间隔离。"""
+    """返回 (db, state, content)：全新临时库经 seed_static_data 初始化静态盘面（offices/characters/
+    character_offices/classes/factions/armies/regions/powers 齐全）+ load_state（开局危机/账本/邸报），
+    用例间隔离。
+
+    不依赖 gitignored data/probe.db（#5）：原 fixture copy probe.db 副本，缺则 skip——而 probe.db
+    被 .gitignore 忽略，干净 checkout / CI 上依赖它的用例大面积 skip 当过=假绿。改走真实新档路径
+    （seed_static_data，与生产开局同核）后，CI 无需任何外部 DB 即可跑；且 characters 直接来自
+    content（101 全），不被 probe.db 旧档（缺 characters.json 独有的宗藩王等、缩成 58）掩盖。"""
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    db = GameDB(path, content)
+    db.seed_static_data()
+    state = db.load_state()
+    try:
+        yield db, state, content
+    finally:
+        db.conn.close()
+        for p in (path, f"{path}_agno.db"):
+            if os.path.exists(p):
+                os.remove(p)
+
+
+@pytest.fixture
+def saved_game(content):
+    """返回 (db, state, content)：data/probe.db「玩过存档」副本（带历史 issue / 账本流水 / 已退场
+    人物 / 到期密令 / 帝国修正等运行时状态），用例间隔离。
+
+    与 `game`（fresh seed 开局态）区别：这些用例的断言依赖**玩过后的特定运行时状态**（某历史
+    issue、国库余额、帝国修正下的 metric 增量、due secret_order 等），fresh seed 无法复现。暂用
+    probe.db 隔离，缺则**明确 skip 并注明原因**（非隐藏假绿，#5）——区别于原 `game` 缺 probe.db
+    时静默 skip 掉**全部**盘面用例。后续应逐个 deterministic 化（测试自带 setup 注入所需状态），
+    见 #5 followup。"""
     if not os.path.exists(_SEED_DB):
-        pytest.skip("缺基底存档 data/probe.db，跳过需要完整盘面的用例")
+        pytest.skip("缺玩过存档 data/probe.db（gitignored）；本用例依赖运行时状态，待 deterministic 化（#5 followup）")
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     shutil.copy(_SEED_DB, path)
