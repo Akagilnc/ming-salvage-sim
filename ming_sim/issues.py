@@ -621,7 +621,10 @@ def _compute_inertia(ni: Dict[str, object]) -> int:
     if em_raw is not None:
         try:
             em = int(em_raw)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
+            # OverflowError：expected_months=1e309 解析成 inf，int(inf) 抛 OverflowError；
+            # 与其它脏 expected_months 同样默认 em=0（cmr ni r3 codex）。legacy int(inertia)
+            # 回退（下方 630）的 OverflowError 则由调用方预校验 try 兜（拒整项）。
             em = 0
         if em != 0:
             inertia = round(100 / em)
@@ -1135,7 +1138,9 @@ def apply_issue_tracker_output(
             cancel_cost = dict(ni.get("cancel_cost") or {})
             tags = list(ni.get("tags") or [])
             inertia = _compute_inertia(ni)
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, OverflowError) as exc:
+            # OverflowError：JSON 里 1e309 解析成 float('inf')，int(inf) 抛 OverflowError（非
+            # TypeError/ValueError）；不纳入则脏 inf 字段逃逸成 abort（cmr ni r3 codex）。
             applied_new.append({
                 "rejected": True, "category": "invalid_enum",
                 "reason": f"new_issue 字段强转失败（bar_value/severity/cancel_cost/tags/inertia 脏数据）：{exc}",
