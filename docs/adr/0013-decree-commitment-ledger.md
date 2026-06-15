@@ -26,9 +26,10 @@ Status: Proposed（设计草案，2026-06-15；**务实版**——用户拍板�
 ### D2 最小 schema/参数改动
 - **cap 10→15**（`issues.py` `initiative_active >= 10` 那处）——承诺与国策共用名额，放宽免得承诺被名额挤掉（小改，不另设承诺专属池）。
 - **`end_turn INTEGER DEFAULT 0`**（仅「连续 N 月/半年为限」硬时限用；立项 `end_turn = turn + N`，到期停账）。
-- **`stop_condition TEXT DEFAULT ''`**（「直到补齐」用；复用 `_gate_passed` 的 `{key: "比较式"}` 语法，同 `legacies.clear_gate`；可寻址 `armies.arrears` 等）。
-- **`close_reason TEXT DEFAULT ''`**（收尾原因，如 `承诺到期`——区分「到期 `dropped`」与「玩家撤销 `dropped`」；`cancel_issue` 现置 dropped 不写 reason，读者无从分辨，故补此列。修 Claude R2-high）。
-- **bar = 履行/补齐进度**（由实际进度/arrears 派生，或 LLM 按真进度给），**不给 random `expected_months` inertia 漂移**——免得 bar 自漂到 100 假性了结。漂到 100（补齐）=真了结，与 `stop_condition` 一致。〔这取代 R1 误加的「bar-exempt」：bar 不是要剥离，是要当进度用、由真进度驱动。〕
+- **`stop_condition TEXT DEFAULT ''`**（「直到补齐」用；复用 `_gate_passed` 的 `{key: "比较式"}` 语法，同 `legacies.clear_gate`）。⚠️ **必须用可求值的带表前缀 key**——裸 `arrears` 会被 `_eval_gate_key` 判 None→恒不通过→承诺永不停（R3-high）；正确形 `army.<id>.arrears<=0`，多军补饷用 `_gate_passed` 的多 id 聚合 `army.关宁军|蓟镇.arrears.sum<=0`（`issues.py` `_eval_gate_key` 支持 id 列表 + sum/max/min/avg）。创建端须把诏书「边军」映射到具体 army.id 集合。
+- **收尾区分不另加列**：用既有 `resolution_summary`（叙事）+ `issue_advances.trigger_kind`（`expire` vs `cancel`）区分「到期收尾」与「玩家撤销」（R3-medium：避免与 `resolution_summary` 重叠造冗余列）。〔撤回上一版加的 `close_reason` 列。〕
+- **bar = 履行/补齐进度**，立项 **`inertia=0`（显式；`expected_months` 省略即回落 inertia=0）**，bar 由 `stop_condition`/真进度推、不靠 random inertia 自漂——免得假性了结。漂到 100（补齐）=真了结，与 `stop_condition` 一致。〔取代 R1 误加的「bar-exempt」：bar 不剥离、当进度用。〕**注：`ongoing_effects` 的 bar 折扣只折 metrics、不折 economy（`issues.py:2820` `_apply_economy_list` 传原始 economy，已三次核实）→ 补饷（economy）额恒定、无「越补越少」（codex R2/Claude R3 该处过度声明，纠）。**
+- **承诺 issue 须 `cancellable='decree'`**（皇帝可无损撤自己的承诺）——否则落 `_normalize_cancellable` 默认 `by_progress`、撤回走「此事非诏可消」+皇威 −2，语义荒谬（R3-high）。创建端写死，不靠 LLM 默认。
 
 ### D3 三形态 → 载体落点
 | 形态 | 载体 | 终止 |
@@ -38,20 +39,20 @@ Status: Proposed（设计草案，2026-06-15；**务实版**——用户拍板�
 | ③ 未来一次性（X 月后复试/复核） | issue + `end_turn`（**无 ongoing、无 firing 机制**） | `end_turn` 到期：issue 仍 active → simulator/核销自然 surface 一句话，**至多结算弹一个现有事件选项**（复用 candidate_events/HITL 决策块，不建专门 firing） |
 
 - ①②可叠（先到者停）。开放式承诺（`stop_condition` 永不达成 + `end_turn=0`）= 有意永久挂账、皇帝可主动撤。
-- **形态③刻意最小化（用户拍）**：不存 firing payload、不建 pre_settle 注入槽、不挂 0011-5；「X 月后复试」就是 issue 到期还 active → LLM 在核销/邸报提一句，需要时复用现有结算事件选项让皇帝拍。重 firing 机制留作日后（实测不够再说）。〔撤回 R1 加的 firing_kind/firing_payload 列 + due_commitments 注入槽。〕
+- **形态③刻意最小化（用户拍）**：不存 firing payload、不建注入槽、不挂 0011-5。但 ⚠️ **光靠「issue 到期 active → LLM 核销自觉提」会被 `season_simulator.md:9`「active_issues 仅背景、不可触发新动作」压住、复现 #136 到期没人提**（R3-medium 实证）。故 form③ 唯一**必需的最小机制** = 结算扫到 `end_turn<=turn` 的 form③ → 把它**从背景 active_issues 提升为「本回合到期待裁」显式项喂 simulator/核销**（仿密令到期送核议 `decree.py:350` 的程序注入模式）。这一个轻信号即可（不是 R1 那套 firing payload 重机制）；之后「至多结算弹一个现有事件选项」让皇帝拍。〔撤回 R1 的 firing_kind/firing_payload 列 + due_commitments 注入槽，只留这一个到期顶出信号。〕
 
-### D4 钱类承诺 → 喂现有 arrears 还款池（含损耗，补齐不易）
-「补饷」类承诺的每月 X **喂进现有 `_auto_pay_arrears_by_priority`（flows.py:227）的还款预算**——真按优先级还各军 `armies.arrears`，不是单走一笔扣账（用户拍：要真减欠饷）。**补饷有损耗**：截流、贪污使实际到账 < 名义拨款，故「直到补齐」是真挣扎（钱一直拨、层层克扣、arrears 降得慢，合明末味）。损耗的具体建模（代码损耗率 / 吏治调制 / 密令查贪可减损）归 **arrears/财政线（#44/#67）**——本契约只负责「每月 X 喂进还款池 + 直到 `arrears==0` 停」。⚠️ 「直到补齐」依赖 **#44** 先修好 arrears 累计（否则数不准、停不对）。
+### D4 钱类承诺 → 喂现有 arrears 还款池（损耗为意图、v1 待 #44/#67）
+「补饷」类承诺的每月 X **喂进现有 `_auto_pay_arrears_by_priority`（flows.py:227）的还款预算**——真按优先级还各军 `armies.arrears`，不是单走一笔扣账（用户拍：要真减欠饷）。**设计意图**：补饷该有损耗——截流、贪污使实际到账 < 名义拨款，「直到补齐」才是真挣扎（钱一直拨、层层克扣、降得慢，合明末味）。⚠️ **但 v1 给不了**：现 `_auto_pay_arrears_by_priority`（`flows.py:252` `pay=min(arrears,budget)`）**全额到账、零损耗** → **本 ADR v1 补饷无损耗、arrears 准时即按额减；「真挣扎」须待 #44/#67 损耗建模（代码损耗率/吏治调制/密令查贪可减损）落地、本契约不交付**（别误读为本 ADR 即给挣扎感，R3-high）。本契约只负责「每月 X 喂进还款池 + 直到 `arrears==0` 停」；「直到补齐」依赖 **#44** 先修好 arrears 累计（否则数不准、停不对）。
 
 ### D5 创建端（extractor）：承诺路由规则（#136 主修）
 玩家旨意含「今后每月 X / 连续 N 月 / 直到补齐 / X 月后复试」等**未来/时限/周期**语义 → 路由为带 `ongoing_effects`（+视情 `end_turn`/`stop_condition`）+ `origin_ref` 的 `new_issue`。这是 #136 真洞（实证 extractor 当时啥 issue 都没产、只一次性 economy_move）。现状三重门（边军月饷当固定流不重写 / 非新科目不触发 fiscal_create / `new_issue` 门只收工程改革案）需放行承诺类。
 
 ### D6 检查端（结算事务内）+ 诏书核销读结构化
 - 每回合对 active 承诺 issue：跑 `stop_condition`（`_gate_passed` code 判，如 `arrears==0`）达标→收尾；扫 `end_turn>0 AND end_turn<=turn` 到期→停账收尾。均在结算后半段 `applier.atomic` 内（随原子、不破 `assert turn==before+1`）。
-- **诏书核销改读结构化承诺状态**：现「诏书核销」是 LLM 每回合现编（`season_simulator.md` 诏书核销章），context 压缩即丢。改为**读 active 承诺-issue 的履行进度/状态**，核销基于结构化事实、不凭记忆——这才让「连续3月补饷」不会一月后没人记得。
+- **诏书核销改读结构化承诺状态**：现「诏书核销」是 LLM 每回合现编（`season_simulator.md` 诏书核销章），context 压缩即丢。改为**读 active 承诺-issue 的履行进度/状态**，核销基于结构化事实、不凭记忆——这才让「连续3月补饷」不会一月后没人记得。**数据通路**：用既有 `db.find_active_issue_by_origin(origin_kind,origin_ref)` / `list_active_issues` 取 active 承诺-issue → 经 `build_simulator_context` 把履行进度注入 simulator → 诏书核销章口径改「对带 `origin_kind=decree` 的 active issue 逐条报进度」（正向表述）。
 
 ### D7 有始有终（收尾 + 呈现）
-- 收尾复用既有 status：补齐→`resolved`；到期未达成→`dropped` + `close_reason='承诺到期'`（不引新 `expired` 枚举、不跑 resolve/fail 效果；新增 `expire_commitment` 收尾路、不复用会放效果的 `close_issue('resolved')`）。
+- 收尾复用既有 status：补齐→`resolved`；到期未达成→`dropped`，**到期 vs 玩家撤销靠 `issue_advances.trigger_kind`（`expire` vs `cancel`）+ `resolution_summary` 叙事区分，不加 `close_reason` 列**（复用既有、避免冗余，R3-medium）。新增 `expire_commitment` 收尾路（标 `dropped`、写 `issue_advances(trigger_kind='expire')`、**不跑 resolve/fail 效果**），不复用会放效果的 `close_issue('resolved')`。
 - 每月兑现写 `issue_advances`；报告「待办未解」已会列承诺（`origin_kind=decree` 玩家可见：「边军月饷·已第 3 月·直到欠饷补齐」）。承诺=皇帝看得见始终的活账。
 
 ### D8 Provenance + 对齐已有（不造平行第二套）
@@ -68,7 +69,7 @@ Status: Proposed（设计草案，2026-06-15；**务实版**——用户拍板�
 
 ## Consequences
 - #136 解决：承诺有结构化载体 + 直到补齐/到期收尾 + 诏书核销读结构化 + 有始有终；「每月 50 万补饷」「三月后复试」不再丢。
-- **真改动小**：cap 一行 + `end_turn`/`stop_condition` 两列 + extractor 路由 + 补饷喂 arrears 池 + 核销读结构化；issue 全套复用、**不新表、形态③零新机制**。
-- 依赖 **#44**（arrears 累计）才能让「直到补齐」准；财政类承诺与 substrate cutover 后归约 Due。
+- **真改动小**：cap 一行 + `end_turn`/`stop_condition` 两列 + extractor 路由 + 补饷喂 arrears 池 + 核销读结构化 + 形态③一个到期顶出信号；issue 全套复用、**不新表、无重 firing 机制**。
+- 依赖 **#44**（arrears 累计）才能让「直到补齐」准；损耗（真挣扎）亦待 #44/#67；财政类承诺与 substrate cutover 后归约 Due。
 - restore 无损：承诺当回合全量落库（`ongoing_effects`/`end_turn`/`stop_condition`/`origin_ref`），崩溃续跑不靠记忆（P1）。
-- 实现属编码（spawn 隔壁）：cap 放宽 + 两列迁移 + extractor 路由 + 补饷接 `_auto_pay_arrears` + 结算两扫描 + 核销读结构化 + `expire_commitment` 收尾路 + 呈现。
+- 实现属编码（spawn 隔壁）：cap 放宽 + 两列迁移（`end_turn`/`stop_condition`）+ 承诺 issue 建 `inertia=0`/`cancellable='decree'` + extractor 路由 + 补饷接 `_auto_pay_arrears` + 结算两扫描（`stop_condition` 求值 + `end_turn` 到期）+ 形态③到期顶出信号（仿密令送核议）+ 核销读结构化 + `expire_commitment` 收尾路 + 呈现。
