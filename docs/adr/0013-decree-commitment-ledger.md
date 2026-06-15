@@ -26,7 +26,7 @@ Status: Proposed（设计草案，2026-06-15；**务实版**——用户拍板�
 ### D2 最小 schema/参数改动
 - **cap 10→15**（`issues.py` `initiative_active >= 10` 那处）——承诺与国策共用名额，放宽免得承诺被名额挤掉（小改，不另设承诺专属池）。
 - **`end_turn INTEGER DEFAULT 0`**（仅「连续 N 月/半年为限」硬时限用；立项 `end_turn = turn + N`，到期停账）。
-- **`stop_condition TEXT DEFAULT ''`**（「直到补齐」用；复用 `_gate_passed` 的 `{key: "比较式"}` 语法，同 `legacies.clear_gate`）。⚠️ **必须用可求值的带表前缀 key**——裸 `arrears` 会被 `_eval_gate_key` 判 None→恒不通过→承诺永不停（R3-high）；正确形 `army.<id>.arrears<=0`，多军补饷用 `_gate_passed` 的多 id 聚合 `army.guanning|jizhen.arrears.sum<=0`（`issues.py` `_eval_gate_key` 按 `armies.id` 查、支持 id 列表 + sum/max/min/avg）。⚠️ **id 是英文 slug**（`guanning`/`jizhen`/`xuan_da`… 非中文名「关宁军/蓟镇」，否则查不到→永不停，Gemini 线上）——创建端须把诏书「边军」映射到具体 `armies.id` 英文集合。
+- **`stop_condition TEXT DEFAULT ''`**（「直到补齐」用；存 `_gate_passed` 的 **dict JSON `{寻址key: "比较式"}`、算符在 value**，同 `legacies.clear_gate`）。⚠️ **三处坑（线上三 bot concur）**：① 算符在 **value 不嵌进 key**——`{"army.<id>.arrears": "<=0"}`、多军 `{"army.guanning|jizhen.arrears.sum": "<=0"}`；写成扁平串 `army...<=0` 会解析失败→永不停。② key 须**带表前缀**（裸 `arrears` → `_eval_gate_key` 判 None→恒不过）。③ id 是**英文 slug**（`guanning`/`jizhen`/`xuan_da`… 非中文「关宁军/蓟镇」）。`_eval_gate_key` 按 `armies.id` 查、支持 id 列表 + sum/max/min/avg；创建端须把诏书「边军」映射到 `armies.id` 英文集合。
 - **收尾区分不另加列**：用既有 `resolution_summary`（叙事）+ `issue_advances.trigger_kind`（`expire` vs `cancel`）区分「到期收尾」与「玩家撤销」（R3-medium：避免与 `resolution_summary` 重叠造冗余列）。〔撤回上一版加的 `close_reason` 列。〕
 - **bar = 履行/补齐进度**，立项 **`inertia=0`（显式；`expected_months` 省略即回落 inertia=0）**，bar 由 `stop_condition`/真进度推、不靠 random inertia 自漂——免得假性了结。漂到 100（补齐）=真了结，与 `stop_condition` 一致。〔取代 R1 误加的「bar-exempt」：bar 不剥离、当进度用。〕**注：`ongoing_effects` 的 bar 折扣只折 metrics、不折 economy（`issues.py:2820` `_apply_economy_list` 传原始 economy，已三次核实）→ 补饷（economy）额恒定、无「越补越少」（codex R2/Claude R3 该处过度声明，纠）。**
 - **承诺 issue 须 `cancellable='decree'`**（皇帝可无损撤自己的承诺）——否则落 `_normalize_cancellable` 默认 `by_progress`、撤回走「此事非诏可消」+皇威 −2，语义荒谬（R3-high）。创建端写死，不靠 LLM 默认。
@@ -48,8 +48,8 @@ Status: Proposed（设计草案，2026-06-15；**务实版**——用户拍板�
 玩家旨意含「今后每月 X / 连续 N 月 / 直到补齐 / X 月后复试」等**未来/时限/周期**语义 → 路由为带 `ongoing_effects`（+视情 `end_turn`/`stop_condition`）+ `origin_ref` 的 `new_issue`。这是 #136 真洞（实证 extractor 当时啥 issue 都没产、只一次性 economy_move）。现状三重门（边军月饷当固定流不重写 / 非新科目不触发 fiscal_create / `new_issue` 门只收工程改革案）需放行承诺类。
 
 ### D6 检查端（结算事务内）+ 诏书核销读结构化
-- 每回合对 active 承诺 issue：跑 `stop_condition`（`_gate_passed` code 判，如 `arrears==0`）达标→收尾；扫 `end_turn>0 AND end_turn<=turn` 到期→停账收尾。均在结算后半段 `applier.atomic` 内（随原子、不破 `assert turn==before+1`）。
-- **诏书核销改读结构化承诺状态**：现「诏书核销」是 LLM 每回合现编（`season_simulator.md` 诏书核销章），context 压缩即丢。改为**读 active 承诺-issue 的履行进度/状态**，核销基于结构化事实、不凭记忆——这才让「连续3月补饷」不会一月后没人记得。**数据通路**：用既有 `db.find_active_issue_by_origin(origin_kind,origin_ref)` / `list_active_issues` 取 active 承诺-issue → 经 `build_simulator_context` 把履行进度注入 simulator → 诏书核销章口径改「对带 `origin_kind=decree` 的 active issue 逐条报进度」（正向表述）。
+- 每回合对 active 承诺 issue：**仅当 `stop_condition` 非空**才跑 `_gate_passed` 判停（⚠️ `_gate_passed` 对**空 gate 返 True**——空 stop_condition 直接调会第一回合假性收尾，Gemini 线上；空=无条件停、靠 `end_turn` 或开放式）；另扫 `end_turn>0 AND end_turn<=turn` 到期→停账收尾。均在结算后半段 `applier.atomic` 内（随原子、不破 `assert turn==before+1`）。
+- **诏书核销改读结构化承诺状态**：现「诏书核销」是 LLM 每回合现编（`season_simulator.md` 诏书核销章），context 压缩即丢。改为**读 active 承诺-issue 的履行进度/状态**，核销基于结构化事实、不凭记忆——这才让「连续3月补饷」不会一月后没人记得。**数据通路**：用既有 `db.find_active_issue_by_origin(origin_kind,origin_ref)` / `list_active_issues` 取 active 承诺-issue → 经 `build_simulator_payload`（推演 payload；extractor 侧 `build_extractor_shared_context`，Gemini 线上正名）把履行进度注入 → 诏书核销章口径改「对带 `origin_kind=decree` 的 active issue 逐条报进度」（正向表述）。
 
 ### D7 有始有终（收尾 + 呈现）
 - 收尾复用既有 status：补齐→`resolved`；到期未达成→`dropped`，**到期 vs 玩家撤销靠 `issue_advances.trigger_kind`（`expire` vs `cancel`）+ `resolution_summary` 叙事区分，不加 `close_reason` 列**（复用既有、避免冗余，R3-medium）。新增 `expire_commitment` 收尾路（标 `dropped`、写 `issue_advances(trigger_kind='expire')`、**不跑 resolve/fail 效果**），不复用会放效果的 `close_issue('resolved')`。
@@ -59,6 +59,16 @@ Status: Proposed（设计草案，2026-06-15；**务实版**——用户拍板�
 - `source=player_decree` + `origin_ref` 溯源；**用 `origin_ref` 不用 `source` 硬 reject**（避孙承宗 `system_simulation` 坑，同 #158 教训）。
 - **#45/#46**（结案强制配对，现 warn-only）：承诺载体成为其检查对象、升级为「凭承诺载体强制」；改写其「后果当回合一次性配齐」假设（承诺后果未来逐月发生）。
 - **#67/substrate**：财政类承诺未兑现对齐 substrate 语义（停饷成债 等）；cutover（待 M0 #73）后财政类承诺归约 substrate Due，现暂落全局。冲突按 later-doc-wins。
+
+### D9 承诺-issue 与普通 initiative 的差异（集中列，免逐个漏）
+承诺虽 `kind=initiative` 复用 issue 行，但语义与普通国策不同，须用一个判别（`origin_kind=decree` + 承诺特征列，或一个专门 commitment tag）让创建/补全/结案/扫描各路径识别「这是承诺」并走差异——**一次列全（线上反复抓「又漏 bypass 一处」，集中规则止它）**：
+- **cap**：initiative 上限 10→15（`issues.py:1060`）；同步改硬编码文案「已有十事在办…」（`issues.py:1061`）或改读常量（Gemini 线上）。
+- **inertia=0**：不给 `expected_months`（bar 不随 random inertia 自漂、不假性了结）。
+- **resolve-effect enrich 跳过**：`apply_issue_tracker_output` 对缺 `effect_on_resolve` 的 initiative 会兜底补效果——承诺（只该有 `ongoing_effects`）结案时被补全会附**无关民心/建筑/实体效果污染**（codex P2 线上）；承诺路径须跳过该 enrich。
+- **空 `stop_condition` 不跑 `_gate_passed`**（D6，否则空 gate 返 True 假性收尾）。
+- **`cancellable='decree'`**（D2，皇帝可无损撤自己的承诺）。
+- **bar 折扣只折 metrics、不折 economy**（`issues.py:2820`，补饷额恒定，已三验）。
+- **form②/③ 到期分流**（Gemini/CodeRabbit 线上）：扫到 `end_turn<=turn` 时——**有 `ongoing_effects`=form②**（停账收尾）；**无 `ongoing_effects`（光 end_turn）=form③**（顶为「本回合到期待裁」喂 simulator，D3）。按 `ongoing_effects` 空否分流。
 
 ## Considered Options
 - **新建 `commitments` 表 / dedicated `kind`**：否决——issue 已具进度/留痕/收尾/呈现/溯源全套，新表/新 kind = 平行第二套 + 重建这些；用户务实选 reuse。
