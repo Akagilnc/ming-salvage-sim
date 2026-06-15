@@ -223,3 +223,14 @@ def test_gate_key_rejects_empty_region_after_at():
     assert gate_key_form_error("class.士绅@.satisfaction")          # @ 后空 region → 拒
     assert gate_key_form_error("class.士绅.satisfaction") == ""     # national（无 @）放行
     assert gate_key_form_error("class.士绅@nanzhili.satisfaction") == ""  # regional 正常放行
+
+
+def test_numeric_cond_on_text_field_raises_clear(game):
+    """#159：数值比较 cond 配文本字段（如 region.x.controlled_by >=1）→ runtime int(str) ValueError
+    被 fail-loud 成清晰 ValueError（数值不可比文本字段），不静默回 None 当条件不满足（Q3）。"""
+    import pytest
+    from ming_sim.issues import _gate_passed
+    db, state, content = game
+    # controlled_by 是文本字段（'ming'/'houjin'），对它做数值比较 → fail-loud
+    with pytest.raises(ValueError, match="字段非数值|不可比文本"):
+        _gate_passed({"region.huguang.controlled_by": ">=1"}, state.metrics, db)
