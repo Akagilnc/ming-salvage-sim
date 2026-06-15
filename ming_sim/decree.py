@@ -491,13 +491,19 @@ def resolve_settling_recovery(
     before_turn = state.turn
     decree_text = str(ctx.get("decree_text") or "")
     narrative = str(ctx.get("narrative") or "")
+    # 恢复重放沿用持久化的原始拒收来源（#144）：玩家来源(player_decree/hitl)拒收恢复后仍给玩家
+    # 邸报提示，不被记成 system_simulation 而静默。非法/缺失值回落 system_simulation（旧档兼容）。
+    try:
+        source = Provenance(str(ctx.get("source") or "system_simulation"))
+    except ValueError:
+        source = Provenance.system_simulation
     # 暂存动作 commit 已下沉进 settle_with_delta 的 atomic 体内（与结算同生死，
     # cmr S7 r4）——此处不再事务外预 commit。
     try:
         report = _replay_settle(
             state, db, agno_db, llm_config, extracted,
             before_turn=before_turn, decree_text=decree_text, narrative=narrative,
-            content=content, registry=registry, _emit=_emit,
+            content=content, registry=registry, _emit=_emit, source=source,
         )
     except SettlementAbort as abort_exc:
         # 重放炸 = 值级毒 delta（shape 门挡不住）。不清 context 的话每次重试同样重放
@@ -526,6 +532,7 @@ def _replay_settle(
     content,
     registry,
     _emit: Callable[[str, str], None],
+    source: Provenance = Provenance.system_simulation,
 ) -> str:
     report = settle_with_delta(
         state,
@@ -547,7 +554,7 @@ def _replay_settle(
             d, s, ex, content=ct, registry=rg, llm_config=llm_config
         ),
         on_stage=lambda label: _emit("stage", label),
-        source=Provenance.system_simulation,
+        source=source,  # 恢复重放沿用原始来源（#144）：玩家来源拒收恢复后仍给提示，不被记成 system
     )
     return report
 
@@ -562,8 +569,12 @@ def persist_resolve_context(
     simulator_payload: Dict[str, object],
     secret_orders: Dict[str, object],
     relevant_memories: List[Dict],
+    source: Provenance = Provenance.system_simulation,
 ) -> None:
     """ADR 0008 S2：每回合进入结算后半段前无条件持久化 resolve_context（extractor delta + 叙事）。
+
+    source（#144）：拒收 provenance 一并持久化，崩溃恢复重放（resolve_settling_recovery）据此还原
+    原始来源——否则玩家来源(player_decree/hitl)拒收被恢复路记成 system_simulation、静默不提示。
 
     重跑真源：跨进程恢复从此重灌，不重跑贵的 simulator/extractor。
     **持久化前先过 validate_delta_shape**——形状畸形的 delta 绝不入 resolve_context
@@ -576,7 +587,7 @@ def persist_resolve_context(
     db.save_resolve_context(
         turn, decree_text, narrative, simulator_payload,
         secret_orders=secret_orders, relevant_memories=relevant_memories,
-        extracted=extracted,
+        extracted=extracted, source=Provenance(source).value,
     )
 
 
