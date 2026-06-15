@@ -2791,6 +2791,39 @@ class GameDB:
                     new_value = self.apply_region_cannon(state, region_id, cannon_delta)
                     actual_delta = new_value - old_value
                     if actual_delta == 0:
+                        # 请求非 0 却被 clamp 成 no-op：不能静默 continue——邸报叙述了改炮、盘面无变化、
+                        # restore 只读 DB 接续不到这条决策＝违 P1 落库铁律（#18，issue #14 静默吞家族）。
+                        # 记一条 delta=0 的 region_log 留痕。真 no-op 请求（cannon_delta==0）无须留痕避噪。
+                        # 区分上/下限钳制（codex+CodeRabbit R1 concur）：请求加炮(>0)=撞 city_level×8 上限；
+                        # 请求减炮(<0)却 no-op=已无炮可减（下限 0），缘由不能一律归「上限」。
+                        if cannon_delta != 0:
+                            _cap = int(row["city_level"]) * 8
+                            if cannon_delta > 0:
+                                _clamp_reason = (
+                                    f"{reason}（城防炮请求+{cannon_delta}门被城防上限拦截："
+                                    f"城市等级{int(row['city_level'])}→上限{_cap}门，已达上限无变化）"
+                                )
+                            else:
+                                _clamp_reason = (
+                                    f"{reason}（城防炮请求{cannon_delta}门但已无炮可减"
+                                    f"（现{old_value}门），无变化）"
+                                )
+                            self.conn.execute(
+                                """
+                                INSERT INTO region_logs
+                                (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                """,
+                                (state.turn, state.year, state.period, region_id,
+                                 field, str(old_value), str(new_value), 0,
+                                 _clamp_reason, event.id, edict_id, actor),
+                            )
+                            changes.append({
+                                "region": row["name"], "field": field,
+                                "label": REGION_FIELD_LABELS.get(field, field),
+                                "old": old_value, "new": new_value,
+                                "delta": 0, "reason": _clamp_reason, "clamped": True,
+                            })
                         continue
                     self.conn.execute(
                         """
