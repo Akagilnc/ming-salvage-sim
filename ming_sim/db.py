@@ -888,6 +888,10 @@ class GameDB:
         # 判别位：1=extractor 真产出过（'{}' 即真空 delta），0=占位（phase1 未跑/失败未存）。
         # 没有它 '{}' 三义不可分，恢复入口会把占位当真 delta 重放（cmr S2+S3 F1）。
         self.ensure_column("pending_resolve_context", "extracted_ready", "INTEGER NOT NULL DEFAULT 0")
+        # 拒收 provenance source（#144 / ADR 0008 决定 5）：崩溃恢复重放须用原始来源，否则玩家
+        # 来源(player_decree/hitl)的拒收被恢复路记成 system_simulation、静默不提示。老档缺省
+        # 'system_simulation'（与原 resolve_settling_recovery 硬编值一致，行为不变）。
+        self.ensure_column("pending_resolve_context", "source", "TEXT NOT NULL DEFAULT 'system_simulation'")
         # 后宫调教记录
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS consort_traits (
@@ -5189,6 +5193,7 @@ class GameDB:
         secret_orders: Optional[Dict[str, object] | List[Dict[str, object]]] = None,
         relevant_memories: Optional[List[Dict[str, object]]] = None,
         extracted: Optional[Dict[str, object]] = None,
+        source: str = "system_simulation",
     ) -> None:
         """暂存 phase1 推演结果，供 phase2 读回（决策暂停期间不重算 simulator）。
 
@@ -5200,8 +5205,8 @@ class GameDB:
             """INSERT INTO pending_resolve_context
                (turn, decree_text, narrative, simulator_payload_json,
                 secret_orders_json, relevant_memories_json, extracted_delta_json,
-                extracted_ready)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                extracted_ready, source)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(turn) DO UPDATE SET
                    decree_text = excluded.decree_text,
                    narrative = excluded.narrative,
@@ -5209,7 +5214,8 @@ class GameDB:
                    secret_orders_json = excluded.secret_orders_json,
                    relevant_memories_json = excluded.relevant_memories_json,
                    extracted_delta_json = excluded.extracted_delta_json,
-                   extracted_ready = excluded.extracted_ready""",
+                   extracted_ready = excluded.extracted_ready,
+                   source = excluded.source""",
             (
                 int(turn), decree_text, narrative,
                 json.dumps(simulator_payload or {}, ensure_ascii=False),
@@ -5219,6 +5225,7 @@ class GameDB:
                 json.dumps(relevant_memories or [], ensure_ascii=False),
                 json.dumps(extracted if extracted is not None else {}, ensure_ascii=False),
                 1 if extracted is not None else 0,
+                str(source or "system_simulation"),
             ),
         )
         self.conn.commit()
@@ -5228,7 +5235,7 @@ class GameDB:
         row = self.conn.execute(
             "SELECT decree_text, narrative, simulator_payload_json, "
             "secret_orders_json, relevant_memories_json, extracted_delta_json, "
-            "extracted_ready "
+            "extracted_ready, source "
             "FROM pending_resolve_context WHERE turn = ?",
             (int(turn),),
         ).fetchone()
@@ -5258,6 +5265,7 @@ class GameDB:
             "secret_orders": _load(row["secret_orders_json"], []),
             "relevant_memories": _load(row["relevant_memories_json"], []),
             "extracted": _load_extracted(),
+            "source": row["source"] or "system_simulation",  # 拒收来源，恢复重放用（#144）
         }
 
     def clear_resolve_context(self, turn: int) -> None:
