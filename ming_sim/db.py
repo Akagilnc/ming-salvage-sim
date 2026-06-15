@@ -78,7 +78,10 @@ def _offices_table() -> Dict[str, object]:
             from ming_sim.assets import load_json_asset
             data = load_json_asset("offices.json")
             _OFFICES_TABLE = data if isinstance(data, dict) else {}
-        except Exception:
+        except Exception as exc:
+            # 注：文件缺失 / JSON 损坏会在 load_json_asset 直接 SystemExit fail-loud（核心内容
+            # 不该静默回空表），不经此分支；这里只兜 import / 意外错误（gemini-code-assist cmr）。
+            tlog(f"[content] offices.json 意外加载失败，回空表：{exc}")  # #14 surface
             _OFFICES_TABLE = {}
     return _OFFICES_TABLE
 
@@ -4521,7 +4524,8 @@ class GameDB:
                 continue
             try:
                 tags = json.loads(row["tags"] or "[]")
-            except Exception:
+            except Exception as exc:
+                tlog(f"[db] tags JSON 损坏，回空（subject={row['subject_id']}）：{exc}")  # #14 surface
                 tags = []
             tag_matches = [t for t in tag_needles if t and any(str(t) in str(tag) or str(tag) in str(t) for tag in tags)]
             exact = row["subject_type"] == "character" and row["subject_id"] == character_name
@@ -4533,10 +4537,10 @@ class GameDB:
                 + max(0, 10 - age)
                 + (12 if active_hit else 0)
             )
-            scored.append((score, row, tag_matches))
+            scored.append((score, row, tags))  # 存已解析 tags（含损坏回退 []）供 result 复用，免二次 json.loads（#14）
         scored.sort(key=lambda item: (item[0], int(item[1]["turn"]), int(item[1]["id"])), reverse=True)
         result: List[Dict[str, object]] = []
-        for _score, row, _matches in scored[:limit]:
+        for _score, row, tags in scored[:limit]:
             result.append({
                 "id": int(row["id"]),
                 "subject_type": row["subject_type"],
@@ -4551,7 +4555,7 @@ class GameDB:
                 "outcome": row["outcome"],
                 "sentiment": row["sentiment"],
                 "importance": int(row["importance"]),
-                "tags": json.loads(row["tags"] or "[]"),
+                "tags": tags,  # 复用评分循环已解析的 tags（损坏行回退 []，不再二次 json.loads 崩库，#14 cmr）
             })
         if result:
             ids = ",".join(str(item["id"]) for item in result)
@@ -4649,18 +4653,19 @@ class GameDB:
             age = max(0, int(turn) - int(row["turn"]))
             try:
                 tags = json.loads(row["tags"] or "[]")
-            except Exception:
+            except Exception as exc:
+                tlog(f"[db] tags JSON 损坏，回空（turn={row['turn']}）：{exc}")  # #14 surface
                 tags = []
             hit_count = sum(
                 1 for n in needles
                 if any(n in str(t) or str(t) in n for t in tags)
             )
             score = int(row["importance"]) * 10 + hit_count * 5 + max(0, 8 - age)
-            scored.append((score, row))
+            scored.append((score, row, tags))  # 带上已解析 tags（含损坏回退 []）供 result 复用（#14）
 
         scored.sort(key=lambda x: x[0], reverse=True)
         result = []
-        for _score, row in scored[:limit]:
+        for _score, row, tags in scored[:limit]:
             result.append({
                 "id": int(row["id"]),
                 "subject_type": row["subject_type"],
@@ -4672,7 +4677,7 @@ class GameDB:
                 "cause": row["cause"],
                 "outcome": row["outcome"],
                 "importance": int(row["importance"]),
-                "tags": json.loads(row["tags"] or "[]"),
+                "tags": tags,  # 复用评分循环已解析的 tags（损坏行回退 []，不再二次 json.loads 崩库，#14 cmr）
                 "source_kind": row["source_kind"],  # 演算记忆 vs 大臣记忆
             })
         tlog(f"[memory/keywords] needles={len(needles)} hit={len(result)}")
@@ -4834,7 +4839,8 @@ class GameDB:
             return None
         try:
             timeline = json.loads(row["timeline"] or "[]")
-        except Exception:
+        except Exception as exc:
+            tlog(f"[db] timeline JSON 损坏，回空：{exc}")  # #14 surface
             timeline = []
         return {
             "turn": int(row["turn"]),
@@ -4972,7 +4978,8 @@ class GameDB:
         for r in rows:
             try:
                 options = json.loads(r["options_json"] or "[]")
-            except Exception:
+            except Exception as exc:
+                tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
                 options = []
             choice = (r["choice_json"] or "").strip()
             out.append({
@@ -5842,7 +5849,8 @@ class GameDB:
         ).fetchall():
             try:
                 eff = json.loads(str(lg["modifiers"] or "{}"))
-            except Exception:
+            except Exception as exc:
+                tlog(f"[db] legacy modifiers JSON 损坏，跳过该 legacy：{exc}")  # #14 surface
                 continue
             for acc in ("国库", "内库", "民心", "皇威"):
                 v = eff.get(acc)
