@@ -951,6 +951,80 @@ def test_col_added_uncalibrated_save_recalibrates_on_open(game):
         os.remove(path)
 
 
+def _make_legacy_save_calibrated_no_marker(content):
+    """构造「已校准但缺持久标记」的老档（R4 codex P2 场景）：offset 已是正确校准值（非 0）、
+    leverage 已被 clamp 到偏离基线的值（这里全打到 0）、但 __leverage_offsets_calibrated 标记缺失。
+    模拟旧版 #9 代码（早于线上 R3 加持久标记）已完成校准却没写标记的真实存档——开发者玩过多回合
+    的 probe.db 即此态。返回 (db_path, {faction: 校准后 offset})。"""
+    import os
+    import tempfile
+    from ming_sim.db import GameDB, _LEVERAGE_FACTIONS
+
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    seed_db = GameDB(path, content)
+    seed_db.seed_static_data()  # offset 正确校准 + 持久标记落
+    seed_db.load_state()
+    offsets = {}
+    for faction in _LEVERAGE_FACTIONS:
+        row = seed_db.conn.execute(
+            "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
+        ).fetchone()
+        if row is not None:
+            offsets[faction] = int(row["leverage_offset"])
+    # 模拟玩过后 clamp 触底：把白名单 leverage 全打到 0（≠钦定基线），offset 保持正确校准值不动。
+    seed_db.conn.execute(
+        "UPDATE factions SET leverage=0 WHERE name IN ({})".format(
+            ",".join("?" * len(_LEVERAGE_FACTIONS))
+        ),
+        tuple(_LEVERAGE_FACTIONS),
+    )
+    # 删持久标记（旧版代码从未写过）。
+    seed_db.conn.execute("DELETE FROM metrics WHERE key='__leverage_offsets_calibrated'")
+    seed_db.conn.commit()
+    seed_db.close()
+    return path, offsets
+
+
+def test_calibrated_save_without_marker_not_re_anchored(game):
+    """#9 线上 R4（codex P2）：DB 已有 leverage_offset 且 offset 已正确校准（非 0），但缺持久标记
+    __leverage_offsets_calibrated（旧版 #9 代码已校准、未写标记）。若此后 leverage 被 clamp 偏离基线，
+    重启不得把『缺标记』误判成崩溃态、强制重锚 offset=clamp 值−权重和（永久腐蚀基线）。
+    修前：marker 缺 → 强制 offset_col_added=True → 重锚 → offset 被改成 round(0−权重和)≠原值（红）。
+    修后：offset 非全 0 → 判为已校准 → 只补持久标记、绝不动 offset。"""
+    from ming_sim.db import GameDB
+
+    _, _, content = game
+    path, expected_offsets = _make_legacy_save_calibrated_no_marker(content)
+    assert expected_offsets, "前置：白名单派系应在 content.factions 且已校准出 offset"
+    assert any(v != 0 for v in expected_offsets.values()), (
+        "前置：至少一个派系 offset 应非 0（才构成『已校准』态、与崩溃态区分）"
+    )
+    try:
+        # 正常开档（driver 路：仅 init_schema，不 seed_static_data）。
+        db = GameDB(path, content)
+        try:
+            db.load_state()
+            for faction, exp in expected_offsets.items():
+                got = db.conn.execute(
+                    "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
+                ).fetchone()["leverage_offset"]
+                assert got == exp, (
+                    f"{faction}：已校准缺标记的老档（clamp 后）不得重锚 offset，"
+                    f"期望保持 {exp}，得 {got}"
+                )
+            # 持久标记应已补落（下次开档走 marker 早返、彻底不再碰 offset）。
+            assert db._has_meta_flag("__leverage_offsets_calibrated"), (
+                "已校准缺标记的老档应补落持久标记 __leverage_offsets_calibrated"
+            )
+        finally:
+            db.close()
+    finally:
+        import os
+
+        os.remove(path)
+
+
 def test_rollback_snapshot_restores_leverage_offset(game):
     """#9 R1 finding#2：person 写状态快照/还原须含 leverage_offset（leverage 由 offset+权重派生、
     二者一个逻辑态）。构造：改 offset 后还原，断言 offset 也回到原值。"""

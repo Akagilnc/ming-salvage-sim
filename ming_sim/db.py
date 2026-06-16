@@ -1050,12 +1050,22 @@ class GameDB:
         # fresh 新档此时 factions 表空（行在 seed_static_data 才 INSERT）→ 这里跳过，仍走 seed 末尾的
         # fresh 校准（从 content.factions 取钦定基线）。
         # #9 线上 R3 crash-safety：触发条件 = 列刚 ADD **或** 持久标记缺失（崩在加列/校准之间的老档）。
-        # 二者取或：标记缺失即未校准过，补做（offset_col_added=True 走老档反推分支）。
-        needs_calibration = self._leverage_offset_col_added or not self._leverage_offsets_calibrated
-        if needs_calibration and self.table_has_rows("factions"):
-            self._calibrate_faction_offsets(
-                is_fresh_factions_seed=False, offset_col_added=True
-            )
+        # #9 线上 R4（codex P2）：「标记缺失」有两源——(a) 真崩在『加列/校准』之间（offset 仍全 0，须
+        # 反推校准）；(b) 旧版 #9 代码已校准、当时尚无持久标记（offset 已非 0）。后者若被当崩溃态强制
+        # 重锚，会把已被 clamp 偏离基线的 leverage 烙进 offset、永久腐蚀基线。故按 offset 是否全 0 区分：
+        # 全 0=未校准（真崩溃/列刚 ADD）→ 反推校准；非全 0=已校准 → 只补持久标记、绝不重锚。
+        if self.table_has_rows("factions") and (
+            self._leverage_offset_col_added or not self._leverage_offsets_calibrated
+        ):
+            if self._leverage_offset_col_added or self._faction_offsets_all_zero():
+                self._calibrate_faction_offsets(
+                    is_fresh_factions_seed=False, offset_col_added=True
+                )
+            else:
+                # 已校准缺标记（旧版遗留）：只补持久标记，offset 维持原校准值、不重锚。
+                self._set_meta_flag("__leverage_offsets_calibrated")
+                self._leverage_offsets_calibrated = True
+                self._leverage_offset_col_added = False
             self.conn.commit()
         self.init_fiscal_config()
 
@@ -2001,6 +2011,21 @@ class GameDB:
         hook 重算过再扫一遍也得同值。不在此 commit——由调用方（结算 atomic）统一提交。"""
         for faction in _LEVERAGE_FACTIONS:
             self.recompute_faction_leverage(faction)
+
+    def _faction_offsets_all_zero(self) -> bool:
+        """白名单派系的 leverage_offset 是否全为 0。用于区分「列已存在但缺持久校准标记」的两态
+        （#9 线上 R4 codex P2）：全 0 = 校准从未跑过（真崩在『加列/校准』之间，或列刚 ADD 默认 0）
+        → 须反推校准；任一非 0 = 已校准过（旧版 #9 代码遗留、当时尚无持久标记）→ 只补标记、绝不
+        重锚（重锚会把 clamp 后偏离基线的 leverage 烙进 offset、永久腐蚀基线）。
+        注：真校准过的档极不可能全派系 offset 恰为 0（需每派系『钦定基线==开局权重和』）；纵使如此，
+        其 leverage 必=clamp(0+权重和)=钦定基线（基线在 [0,100] 内、无 clamp），重校准幂等、无腐蚀。"""
+        rows = self.conn.execute(
+            "SELECT leverage_offset FROM factions WHERE name IN ({})".format(
+                ",".join("?" * len(_LEVERAGE_FACTIONS))
+            ),
+            tuple(_LEVERAGE_FACTIONS),
+        ).fetchall()
+        return all(int(r["leverage_offset"] or 0) == 0 for r in rows)
 
     def _calibrate_faction_offsets(
         self, is_fresh_factions_seed: bool, offset_col_added: bool = False
