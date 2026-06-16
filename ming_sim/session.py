@@ -1154,6 +1154,11 @@ class GameSession:
                 self.db.save_state(self.state)
                 return result
             # 无 ready context：fallthrough 到正常流程重跑推演（前半段被守门跳过）。
+            # 来源不变式（#146 本地 cmr）：非 ready 的 SETTLING ctx 恒为 player_decree——
+            # SETTLING 仅由 settle_with_delta 设、其前置 resolve_directives 的 ready=0 占位
+            # （decree.py 占位真源）只标 player_decree；无旨退朝 advance_without_edict 既 clear_resolve_context
+            # 又在 SETTLING 态直接 raise、从不留非 ready 占位。故此处 fallthrough 重走
+            # resolve_directives（player 路）即保真原来源，不会把系统来源误标成皇帝来源。
             # 占位真源补诏（ship-pre r5）：begin_turn 已清内存 last_decree，跨进程恢复
             # 用存的原诏，不让 LLM 重新生成顶替玩家手改稿。
             if ctx is not None and not (self.last_decree or "").strip():
