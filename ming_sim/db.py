@@ -44,6 +44,20 @@ def _new_army_historically_applied(it: dict) -> bool:
         return False
 
 
+def _coerce_new_salary_rate(raw, default: float = 1.5) -> float:
+    """#44 新军名义月饷率健壮解析：缺省/None/bool/0/负/非数 一律落边军史实锚点 1.5。
+    salary_rate<=0 = 有兵无饷率 = 免费军 = 正是 #44 要堵的白嫖（游戏无自给/屯田军概念）；
+    原 `item.get(...) or 1.5` 只挡 0/None、漏负值（-1 经 army_needed rate<=0 → 0 成免费军，
+    cmr r3 codex medium）。salary_rate 非必填，脏值不拒整军、兜底锚点。"""
+    if isinstance(raw, bool) or raw is None:
+        return default
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return default
+    return v if v > 0 else default
+
+
 def normalize_office(office: str) -> str:
     """官职多职统一为半角逗号分隔：旧「兼/兼掌/兼署」与全角「，」「、」一律归一逗号，
     去空分项、去重、保序。是 office 字段落库的唯一规范化入口——所有写 characters.office
@@ -3630,10 +3644,9 @@ class GameDB:
                 _score("loyalty"),
                 _score("firearm_equipment", 0),
                 _cannon(),  # 随军大炮=门数，clamp 0-12，非 int 兜底 0
-                # #44 新军名义月饷率：缺省/None/0 一律落边军史实锚点 1.5（两/兵·月）。salary_rate=0 = 有兵
-                # 无饷率 = 免费军 = 正是 #44 要堵的白嫖，故**不允许显式 0**（codex r3 主张保留 0、本 session
-                # 一度采纳，复判后驳回：0 饷率与 #44 精神冲突，回退为 `or 1.5`）。游戏现无「自给/屯田军」概念。
-                float(item.get("salary_rate") or 1.5),
+                # #44 新军名义月饷率：缺省/None/0/负/非数 一律落锚点 1.5（salary_rate<=0=免费军=白嫖，禁；
+                # 游戏无自给/屯田军概念）。原 `or 1.5` 漏负值（-1→免费军），改健壮 helper（cmr r3 codex）。
+                _coerce_new_salary_rate(item.get("salary_rate")),
                 str(item.get("status") or "新立"),
                 owner,
             )

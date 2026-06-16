@@ -133,6 +133,18 @@ def test_auto_pay_reaches_maint0_salary_army(game):
     assert spent > 0, "兜底拨饷应能花到该军（旧 filter 下 spent 恒 0）"
 
 
+def test_coerce_new_salary_rate_blocks_freeload():
+    # cmr r3 codex medium: 新军 salary_rate 健壮解析——负/非数/bool/0/None → 锚点 1.5（防免费军白嫖）。
+    # 原 `or 1.5` 漏负值：-1 经 army_needed(rate<=0→0) 成免费军，绕过 #44 防白嫖。
+    from ming_sim.db import _coerce_new_salary_rate
+    assert _coerce_new_salary_rate(-1) == 1.5, "负值=白嫖→锚点"
+    assert _coerce_new_salary_rate(0) == 1.5
+    assert _coerce_new_salary_rate(None) == 1.5
+    assert _coerce_new_salary_rate("脏") == 1.5, "非数→锚点"
+    assert _coerce_new_salary_rate(True) == 1.5, "bool→锚点"
+    assert _coerce_new_salary_rate(2.0) == 2.0, "正常正值保留"
+
+
 def test_twelve_turns_no_arrears_explosion(game):
     # #44 设计 TDD：开局 12 回合无干预，新升率（京营/陕西/登莱等率升）不过早引爆 arrears→民变链。
     # 结构性重切近对冲（旧 65 → 新 66.5 万/月），开局国库应可持续。run_settle(None) 确定性、无 LLM。
