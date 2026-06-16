@@ -954,7 +954,12 @@ class GameDB:
         self.ensure_column("legacies", "legacy_key", "TEXT NOT NULL DEFAULT ''")
         # #9 派系势力 offset 锚点：leverage = clamp(offset + 在朝官职权重和)。开局校准时
         # offset = 钦定基线 − 开局权重和（见 _calibrate_faction_offsets）。老档缺省 0，由该校准回填。
-        self.ensure_column("factions", "leverage_offset", "INTEGER NOT NULL DEFAULT 0")
+        # #9 cmr R3：记下「本次 init 是否刚 ADD 该列」——老档反推 offset 只许在列刚迁移那一次跑，
+        # 之后每次 load 不再碰 offset（否则 leverage 被 clamp 后再 load，offset 被重锚成
+        # round(clamped − weight_sum)≠原值 → 基线永久腐蚀）。该 flag 传给 _calibrate_faction_offsets。
+        self._leverage_offset_col_added = self.ensure_column(
+            "factions", "leverage_offset", "INTEGER NOT NULL DEFAULT 0"
+        )
         # 章节记忆正文：event_type='chapter_summary' 用，存整段叙事章节（不受 outcome 80 字限）。
         self.ensure_column("event_memories", "body", "TEXT NOT NULL DEFAULT ''")
         # extractor 产出的 canonical delta：resolve_context 无条件持久化的重跑真源（ADR 0008 S2）。
@@ -1353,10 +1358,14 @@ class GameDB:
         self.conn.commit()
         return base_key
 
-    def ensure_column(self, table: str, column: str, definition: str) -> None:
+    def ensure_column(self, table: str, column: str, definition: str) -> bool:
+        """确保 table.column 存在。返回 True=本次新增了该列（真·一次性迁移），
+        False=列已存在（后续 load 的常态）。多数 caller 忽略返回值即可。"""
         columns = {row["name"] for row in self.conn.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in columns:
             self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            return True
+        return False
 
     # 城市等级 0-5（静态，史实分级；未列出的地区默认 0=游牧/孤岛/边荒）。
     # 用途：城防大炮上限(city_level×8) + 将来经济/内政。1627 实况，非现代省份概念。
@@ -1627,7 +1636,10 @@ class GameDB:
         # 5b r4（Claude + codex-b concur, P1）：漏此调用则新档 7 名罢居旧臣留 active+污染、不进人才池。
         self._migrate_legacy_office_pollution()
         # #9：派系势力 offset 校准。此刻 factions + characters 均已 INSERT、office 污染已洗。
-        self._calibrate_faction_offsets(is_fresh_factions_seed)
+        # cmr R3：传 offset 列「本次是否刚 ADD」——老档反推只在迁移那次跑，常规 load 不碰 offset。
+        self._calibrate_faction_offsets(
+            is_fresh_factions_seed, getattr(self, "_leverage_offset_col_added", False)
+        )
         self.conn.commit()
 
     def _migrate_arrears_unit_to_silver(self, is_fresh_armies_seed: bool) -> None:
@@ -1914,15 +1926,23 @@ class GameDB:
         new_lev = max(0, min(100, round(offset + weight_sum)))
         self.conn.execute("UPDATE factions SET leverage=? WHERE name=?", (new_lev, faction))
 
-    def _calibrate_faction_offsets(self, is_fresh_factions_seed: bool) -> None:
-        """#9 offset 校准：offset = 基线 leverage − 当前在朝官职权重和。
+    def _calibrate_faction_offsets(
+        self, is_fresh_factions_seed: bool, offset_col_added: bool = False
+    ) -> None:
+        """#9 offset 校准：offset = 基线 leverage − 当前在朝官职权重和。每个 DB 生命周期最多跑一次。
         新档（is_fresh_factions_seed）：基线取**钦定 content.factions[f].leverage**（不读 DB——
         污染清洗的 set_character_status 已用 offset=0 把 DB leverage 改脏，读 DB 会把脏值烙进 offset），
         校准后立即 recompute 令 DB leverage 自洽（开局权重和稳定 → leverage 复现钦定基线、保开局平衡）。
-        老档（column 刚 ADD、offset 缺省 0）：基线取**当前 DB leverage**（玩过后的真值），offset
-        令首次 recompute 不跳变（幂等迁移）；不 recompute（避免把老档当前值改动）。
+        老档且 offset 列**本次刚 ADD**（真·一次性迁移）：基线取**当前 DB leverage**（玩过后的真值），
+        offset 令首次 recompute 不跳变（幂等迁移）；不 recompute（避免把老档当前值改动）。
+        否则（列已存在的常规后续 load）：**直接 return、什么都不碰**——offset 已校准。
+        cmr R3：缺这一闸，老档每次 load 都重锚 offset；leverage 被 clamp 到 0/100 后再 load，
+        offset 会被重锚成 round(clamped − weight_sum)≠原值，基线永久腐蚀。
         只校准白名单 faction；非白名单 offset 留 0、leverage 永不被 recompute 触碰。
         不在此 commit——由 seed_static_data 末尾统一提交。"""
+        # 老档常规 load（列早已存在、offset 已校准）：绝不再碰 offset。
+        if not is_fresh_factions_seed and not offset_col_added:
+            return
         for faction in _LEVERAGE_FACTIONS:
             row = self.conn.execute(
                 "SELECT leverage FROM factions WHERE name=?", (faction,)

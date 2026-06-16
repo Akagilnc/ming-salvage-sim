@@ -1430,6 +1430,7 @@ def _displace_duplicate_offices(
     if not new_parts:
         return []
     displaced: List[str] = []
+    displaced_names: set[str] = set()  # #9 cmr R1：被顶替者去重，循环后逐派系重算 leverage。
     rows = db.conn.execute(
         "SELECT name, office FROM characters WHERE status='active' AND power_id='ming' AND name!=?",
         (new_holder,),
@@ -1439,6 +1440,7 @@ def _displace_duplicate_offices(
         kept = [p for p in holder_parts if p not in new_parts]
         if len(kept) == len(holder_parts):
             continue  # 此人不占同名独缺
+        displaced_names.add(row["name"])
         for lost in (p for p in holder_parts if p in new_parts):
             displaced.append(f"{row['name']}:{lost}")
         fully_displaced = not kept
@@ -1473,6 +1475,20 @@ def _displace_duplicate_offices(
                 ch.status_reason = "被顶替"
                 ch.reason_code = "被顶替"
                 ch.transit_to = ""
+    # #9 cmr R1：被顶替者的 office_type 经上方裸 UPDATE 改了（全顶替→身名分=0 权重），绕过了
+    # set_character_office 钩子，故其所属派系（常与新任者异派系）的 leverage 须在此补重算，否则
+    # 残留偏高、违 #9 不变式。新任者自身派系已由 set_character_office 钩子重算，这里只补被顶替者。
+    # commit 前调用——recompute 读当前在朝成员、不内部 commit，正反映刚改完的 office_type；
+    # 绝对幂等（非白名单 return、重复无害）。去重后逐派系各调一次。
+    displaced_factions = set()
+    for dn in displaced_names:
+        frow = db.conn.execute(
+            "SELECT faction FROM characters WHERE name=?", (dn,)
+        ).fetchone()
+        if frow is not None:
+            displaced_factions.add(str(frow["faction"] or ""))
+    for fac in displaced_factions:
+        db.recompute_faction_leverage(fac)
     db.conn.commit()
     return displaced
 
