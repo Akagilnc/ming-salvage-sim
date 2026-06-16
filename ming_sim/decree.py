@@ -1084,6 +1084,15 @@ def _settle_after_extract_body(
             state.ended = True
             state.ending_status = str(outcome.get("status") or "")
 
+    # #9 cmr R2：派系 leverage 全量 reconcile 兜底（两层设计的第二层，见 db.recompute_all_faction_leverage）。
+    # 即时 hook 覆盖单点 office/status/易主变动，但多条改 faction 成员的路径会绕过 hook
+    # （裸 UPDATE 改 office_type、power_id 翻走的易主/降臣、放归赦还+任命被拒回滚 等）。在此处
+    # （delta 全部落库 + inertia/ongoing 推进之后、next_period 之前）扫一遍全部白名单派系重算成
+    # 公式末值，保无论本回合经哪条路径改了成员/官职/易主，末态都正确、无残留漂移。
+    # 位置在 settle_with_delta 的 atomic_and_reload 体内（与结算同生死、可整体回滚），故崩溃/回滚
+    # 不会留下半重算的脏 leverage；recompute 绝对幂等（即便已被 hook 重算过再扫一遍得同值）。
+    db.recompute_all_faction_leverage()
+
     db.mark_directives_issued(state)
     state.next_period()
     # 不变式先验后再写：assert 排在 clear 之后的话，失败时重试真源已被删（cmr r4 codex）。
