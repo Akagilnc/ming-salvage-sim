@@ -1510,9 +1510,13 @@ def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
     ]
     # #9：起复路（apply_office_appointment）中途经 set_character_status/set_character_office 会
     # 全重算 factions.leverage；失败回滚必须连 leverage 一并还原，否则 leverage 凭空抬高（违「全有或全无」）。
+    # #9 R1 finding#2：leverage 现由 offset+权重派生、二者是一个逻辑态；若包裹流里 offset 被改
+    # （adjust_factions 白名单路改 offset）后回滚，须连 leverage_offset 一并还原，否则基线漂移。
     faction_rows = [
         dict(row)
-        for row in db.conn.execute("SELECT name, leverage FROM factions").fetchall()
+        for row in db.conn.execute(
+            "SELECT name, leverage, leverage_offset FROM factions"
+        ).fetchall()
     ]
     content_rows = {}
     if content is not None:
@@ -1574,10 +1578,12 @@ def _restore_person_write_state(db: GameDB, content: Optional[GameContent], snap
             for row in office_rows
         ],
     )
-    # #9：还原 factions.leverage（起复路中途的全重算回滚，与 character 状态一并还原）。
+    # #9：还原 factions.leverage + leverage_offset（起复路中途的全重算回滚，与 character 状态一并
+    # 还原）。R1 finding#2：offset 是基线逻辑态，漏还原则即便 leverage 还原也会被后续 reconcile 用脏
+    # offset 重算回去 → 基线漂移。
     db.conn.executemany(
-        "UPDATE factions SET leverage=? WHERE name=?",
-        [(row["leverage"], row["name"]) for row in faction_rows],
+        "UPDATE factions SET leverage=?, leverage_offset=? WHERE name=?",
+        [(row["leverage"], row["leverage_offset"], row["name"]) for row in faction_rows],
     )
     db.conn.commit()
     if content is not None:

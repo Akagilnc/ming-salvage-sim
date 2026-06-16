@@ -130,9 +130,10 @@ def test_restore_uses_new_office_weight_not_old(game):
     db, state, content = game
     # 取一个阉党在朝成员，先退场，再分别试起复到内阁 vs 地方，比末值。
     # 用两份独立的人各跑一边，避免相互污染（同一 faction、同一回合两次起复会叠加）。
+    # #9 R1 finding#6：LIMIT 须配 ORDER BY，否则取哪两人顺序依赖、跨 SQLite 版本/页布局 flake。
     cands = db.conn.execute(
         "SELECT name FROM characters WHERE faction='阉党' AND status='active' "
-        "AND office_type NOT IN ('后宫','宗藩','未仕','') LIMIT 2"
+        "AND office_type NOT IN ('后宫','宗藩','未仕','') ORDER BY name LIMIT 2"
     ).fetchall()
     if len(cands) < 2:
         pytest.skip("阉党在朝握官成员不足 2（数据依赖）")
@@ -720,4 +721,150 @@ def test_non_whitelist_faction_delta_direct_leverage_survives_reconcile(game):
     after_reconcile = db.faction_leverage(faction)
     assert after_reconcile == before + 6, (
         f"非白名单(宗室) leverage 不被 reconcile 动、增量留存（after_reconcile={after_reconcile}）"
+    )
+
+
+# ----------------------------------------------------------------------------
+# #9 线上 R1 评审 6 项 fix 的回归测试
+# ----------------------------------------------------------------------------
+
+
+def _make_legacy_save_without_offset_col(content):
+    """构造「老档」：有 factions+characters 行、leverage 为玩过后的真值、但无 leverage_offset 列。
+    返回 db_path（已 close）。先 seed 一个新档拿到完整静态盘面，再 DROP 掉 offset 列、把 leverage
+    设成基线钦定值（模拟老档存的就是裸 leverage、从未 offset 校准过）。"""
+    import os
+    import tempfile
+    from ming_sim.db import GameDB, _LEVERAGE_FACTIONS
+
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    seed_db = GameDB(path, content)
+    seed_db.seed_static_data()
+    seed_db.load_state()
+    # 老档 leverage = 钦定基线（content.factions[f].leverage），抹掉 offset 列。
+    for faction in _LEVERAGE_FACTIONS:
+        cf = content.factions.get(faction)
+        if cf is None:
+            continue
+        seed_db.conn.execute(
+            "UPDATE factions SET leverage=? WHERE name=?", (int(cf.leverage), faction)
+        )
+    seed_db.conn.execute("ALTER TABLE factions DROP COLUMN leverage_offset")
+    seed_db.conn.commit()
+    seed_db.close()
+    return path
+
+
+def test_legacy_save_calibrates_offset_via_driver_path(game):
+    """#9 R1 finding#1 [P1]：老档经 driver 风格 GameDB() 打开（仅 init_schema，不 seed_static_data）
+    时，leverage_offset 列刚 ADD 后必须立即一次性校准（offset = 当前 DB leverage − 权重和），
+    使 leverage == clamp(offset+权重和) == 钦定基线，而非 0+权重和（未锚定基线的错值）。"""
+    from ming_sim.db import GameDB, _LEVERAGE_FACTIONS
+
+    _, _, content = game
+    path = _make_legacy_save_without_offset_col(content)
+    try:
+        # driver 路：只 GameDB()（init_schema 内迁移校准），绝不 seed_static_data。
+        db = GameDB(path, content)
+        try:
+            db.load_state()
+            faction = "阉党"
+            baseline = int(content.factions[faction].leverage)
+            weight_sum = db._faction_office_weight_sum(faction)
+            offset = db.conn.execute(
+                "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
+            ).fetchone()["leverage_offset"]
+            lev = db.faction_leverage(faction)
+            # offset 应被校准成 round(baseline − 权重和)，而非默认 0。
+            assert offset == round(baseline - weight_sum), (
+                f"driver 路老档应一次性校准 offset：得 {offset}，期望 {round(baseline - weight_sum)}"
+            )
+            # leverage 应锚定钦定基线，而非 0+权重和。
+            assert lev == max(0, min(100, round(offset + weight_sum))) == baseline, (
+                f"driver 路老档 leverage 应=钦定基线 {baseline}，得 {lev}（offset={offset} 权重={weight_sum}）"
+            )
+        finally:
+            db.close()
+    finally:
+        import os
+        os.remove(path)
+
+
+def test_rollback_snapshot_restores_leverage_offset(game):
+    """#9 R1 finding#2：person 写状态快照/还原须含 leverage_offset（leverage 由 offset+权重派生、
+    二者一个逻辑态）。构造：改 offset 后还原，断言 offset 也回到原值。"""
+    from ming_sim.issues import _snapshot_person_write_state, _restore_person_write_state
+
+    db, state, content = game
+    faction = "阉党"
+    before_offset = db.conn.execute(
+        "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
+    ).fetchone()["leverage_offset"]
+
+    snapshot = _snapshot_person_write_state(db, content)
+    # 模拟包裹流中途改 offset（adjust_factions 白名单路会改 offset）。
+    db.conn.execute(
+        "UPDATE factions SET leverage_offset = leverage_offset + 13 WHERE name=?", (faction,)
+    )
+    db.conn.commit()
+    _restore_person_write_state(db, content, snapshot)
+
+    after_offset = db.conn.execute(
+        "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
+    ).fetchone()["leverage_offset"]
+    assert after_offset == before_offset, (
+        f"回滚应还原 leverage_offset：before={before_offset} after={after_offset}"
+    )
+
+
+def test_calibrate_offset_flag_consumed_once(game):
+    """#9 R1 finding#3：一次性迁移 flag(_leverage_offset_col_added)用后须置 False，
+    同实例第二次 seed_static_data 不再走老档迁移分支重锚 offset。"""
+    db, state, content = game
+    faction = "阉党"
+    # game fixture 已 seed 过一次（fresh 路）；此实例 flag 应已被消费成 False。
+    assert getattr(db, "_leverage_offset_col_added", False) is False, (
+        "首次 seed 后 _leverage_offset_col_added 应已被消费置 False"
+    )
+    # 手动把 flag 强行设回 True（模拟「若未消费」的隐患），并把 leverage clamp 到 0。
+    db.conn.execute("UPDATE factions SET leverage=0 WHERE name=?", (faction,))
+    db.conn.commit()
+    db._leverage_offset_col_added = True  # 模拟未消费
+    # 第二次 seed：_calibrate_faction_offsets 应在用掉 flag 后立即置 False，
+    # 但本次因 flag=True 仍会进老档分支——为防「同实例连续两次」腐蚀，校准须一次性消费。
+    # 真正的回归点：校准跑完后 flag 必须是 False。
+    db.seed_static_data()
+    assert getattr(db, "_leverage_offset_col_added", False) is False, (
+        "_calibrate_faction_offsets 用掉 flag 后必须置 False（一次性消费）"
+    )
+
+
+def test_chat_rollback_restores_faction_leverage(game):
+    """#9 R1 finding#4：chat 回滚快照表集须含 factions。leverage hook 会改 factions.leverage，
+    撤销一个 chat office/dismiss 动作须连 factions 一并还原，不留脏。"""
+    db, state, content = game
+    faction = "阉党"
+    name = db.conn.execute(
+        "SELECT name FROM characters WHERE faction='阉党' AND status='active' "
+        "AND office_type NOT IN ('后宫','宗藩','未仕','') LIMIT 1"
+    ).fetchone()["name"]
+    before = db.faction_leverage(faction)
+
+    # chat 回滚口径：先快照，做一个会改 leverage 的动作（退场该成员），再按 diff 还原。
+    before_snap = db.capture_chat_rollback_snapshot()
+    assert "factions" in before_snap, "chat 回滚快照表集应含 factions"
+    db.set_character_status(state, name, "dismissed", reason="召对清算")
+    after = db.faction_leverage(faction)
+    assert after < before, "退场应使 leverage 下跌（前置：动作确实改了 factions）"
+    after_snap = db.capture_chat_rollback_snapshot()
+
+    chat_turn_id = db.create_chat_turn(state, name, "sess-x", 0)
+    db.record_chat_turn_rollback_diffs(chat_turn_id, before_snap, after_snap)
+    db.update_chat_turn_messages(chat_turn_id, user_message_id=1, minister_message_id=2)
+    db.undo_chat_turn(chat_turn_id)
+
+    restored = db.faction_leverage(faction)
+    assert restored == before, (
+        f"chat 撤回应连 factions leverage 一并还原：before={before} restored={restored}"
     )
