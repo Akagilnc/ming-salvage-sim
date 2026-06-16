@@ -280,11 +280,13 @@ def test_offset_not_re_anchored_on_reload_after_clamp(game):
 
 
 def test_leverage_clamps_at_zero_no_negative(game):
-    """#9 finding#4 clamp 边界：连续退场把某 faction 在朝权重和打到使 offset+和<0 → leverage=0(不为负)。
-    用 offset 较小的派系(东林开局钦定 28、offset 负)更易触底；这里把白名单某 faction 全员退场验 ≥0。"""
+    """#9 finding#4 clamp 边界：连续退场把某 faction 在朝权重和打到使 offset+和<0 → leverage 恰=0(不为负、真触底)。
+    用权重和大、offset 深负的派系(阉党开局钦定 78、offset≈-78)：全员退场后权重和→0、offset+和<0→clamp 0。
+    cmr R2 强化：原仅断言 >=0（残留正值也能蒙混过关），改为 (1) 先证未 clamp 的 offset+权重和 < 0
+    (确属真触底场景，否则跳过)，(2) 断言 leverage 恰 == 0，真锁住下界。"""
     db, state, content = game
-    # 选一个白名单 faction，把其所有在朝握官成员全退场，逼权重和→0、leverage→offset(可能负)→clamp 0。
-    faction = "东林"  # 钦定 28、人多但多为低权/罢居 → offset 偏负，全退后易触 0
+    # 选一个 offset 深负的白名单 faction，把其所有在朝握官成员全退场，逼权重和→0、leverage→offset(负)→clamp 0。
+    faction = "阉党"  # 钦定 78、权重和重(核心多握高权官) → offset 深负，全退后必触 0
     members = db.conn.execute(
         "SELECT name FROM characters WHERE faction=? AND status='active' AND power_id='ming'",
         (faction,),
@@ -293,8 +295,121 @@ def test_leverage_clamps_at_zero_no_negative(game):
         pytest.skip(f"{faction} 无在朝成员（数据依赖）")
     for m in members:
         db.set_character_status(state, m["name"], "dismissed", reason="尽贬")
+    # 全员退场后权重和应≈0，未 clamp 的 offset+和 = offset；唯有 offset<0 才是真触底场景。
+    offset = db.conn.execute(
+        "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
+    ).fetchone()["leverage_offset"]
+    weight_sum = db._faction_office_weight_sum(faction)
+    raw = round(offset + weight_sum)
+    if raw >= 0:
+        pytest.skip(f"{faction} 全退后未 clamp 值非负(raw={raw})，非下界触底场景")
     after = db.faction_leverage(faction)
-    assert after >= 0, f"{faction} 全员退场后 leverage 不应为负(after={after})"
-    # 再起复一人（不补 office，仅状态 active）：权重仍≈0，leverage 仍 clamp、不破对称（不为负）
+    assert after == 0, f"{faction} 全员退场(未 clamp raw={raw}<0)后 leverage 应恰 clamp 到 0(after={after})"
+    # 再起复一人（不补 office，仅状态 active）：权重仍≈0，leverage 仍 clamp、不破对称（仍 == 0）
     db.set_character_status(state, members[0]["name"], "active", reason="复一人")
-    assert db.faction_leverage(faction) >= 0, "起复后仍不应为负"
+    assert db.faction_leverage(faction) == 0, "起复一人(无职)后仍应恰 clamp 到 0"
+
+
+def test_add_character_appointment_lifts_faction_leverage(game):
+    """#9 cmr R2 finding#2：经 apply_office_appointment 任命一个【不在册的新大臣】到白名单派系的握权官，
+    该派系 leverage 应即时上升（add_character hook）。修前 add_character 不联动 → leverage 不变（红）。"""
+    db, state, content = game
+    faction = "东林"
+    # 授「翰林院侍读学士」——office_type=翰林院(域权重 2) × 佐贰档(×0.5)=权重 2.0、非独占实职
+    # (不触发 _displace 顶替别人)；权重 2.0 清掉 round() 边界（编修 0.5 会被 round(28.5)→28 吃掉），
+    # 保证只测「新建成员加入 → 该派系权重和上升 → leverage 上升」这一路、不受四舍五入边界干扰。
+    new_name = "#9测试新科翰林"
+    assert db.conn.execute(
+        "SELECT name FROM characters WHERE name=?", (new_name,)
+    ).fetchone() is None, "测试用新人物不应已在册"
+    before = db.faction_leverage(faction)
+    before_ws = db._faction_office_weight_sum(faction)
+    result = apply_office_appointment(
+        db, state, content, None, new_name, "翰林院侍读学士", reason="新科入翰林", faction=faction
+    )
+    assert not result.get("rejected"), f"新大臣任命不应被拒：{result}"
+    assert result.get("kind") == "appoint", f"应走新建档(appoint)路：{result}"
+    # 新成员确入册且 active/ming（add_character 落库成功），权重和随之上升。
+    after_ws = db._faction_office_weight_sum(faction)
+    assert after_ws > before_ws, f"新建大臣应使{faction}权重和上升(before={before_ws} after={after_ws})"
+    after = db.faction_leverage(faction)
+    assert after > before, (
+        f"经 add_character 新建大臣加入{faction}后 leverage 应上升(before={before} after={after})"
+    )
+
+
+def test_active_member_empty_office_contributes_zero_weight(game):
+    """#9 cmr R2 finding#3：active + power_id='ming' + office='' + office_type 非空(理论可达边界)
+    对 faction 权重和贡献为 0（无实职=不贡献 leverage）。修前 _member_office_weight 会把
+    _office_rank_multiplier('') 的默认 1.0 × office_type 域权重算进去 → 误算满权重（红）。"""
+    db, state, content = game
+    faction = "东林"
+    # 取一个该派系在朝握官成员，裸 UPDATE 把 office 清空但保留 office_type='兵部'，制造边界态。
+    row = db.conn.execute(
+        "SELECT name, office_type FROM characters WHERE faction=? AND status='active' AND power_id='ming' "
+        "AND office_type NOT IN ('后宫','宗藩','未仕','') LIMIT 1",
+        (faction,),
+    ).fetchone()
+    if row is None:
+        pytest.skip(f"{faction} 无握官在朝成员（数据依赖）")
+    name = row["name"]
+    # 该成员单独的权重贡献：office 空、office_type='兵部' → 应为 0。
+    db.conn.execute(
+        "UPDATE characters SET office='', office_type='兵部' WHERE name=?", (name,)
+    )
+    db.conn.commit()
+    from ming_sim.db import _member_office_weight
+    assert _member_office_weight("兵部", "") == 0.0, (
+        "active 但 office 空的成员 office_type 再高也应贡献 0 权重"
+    )
+    # 端到端：把其余在朝成员全退场后，仅剩该「空 office」成员，权重和应为 0。
+    others = db.conn.execute(
+        "SELECT name FROM characters WHERE faction=? AND status='active' AND power_id='ming' AND name!=?",
+        (faction, name),
+    ).fetchall()
+    for o in others:
+        db.set_character_status(state, o["name"], "dismissed", reason="清场")
+    weight_sum = db._faction_office_weight_sum(faction)
+    assert weight_sum == 0.0, (
+        f"仅剩 active 空 office 成员时 faction 权重和应为 0(weight_sum={weight_sum})"
+    )
+
+
+def test_recompute_all_reconciles_drift_from_unhooked_path(game):
+    """#9 cmr R2 finding#1（集中化兜底）：绕过所有 hook 的裸 UPDATE 改了 faction 成员 office_type 后，
+    recompute_all_faction_leverage() 把全部白名单派系重算回公式值（结算尾兜底层等价直测）。"""
+    db, state, content = game
+    from ming_sim.db import _LEVERAGE_FACTIONS
+
+    faction = "阉党"
+    # 裸 UPDATE 把阉党所有在朝成员 office 清空（绕过 set_character_office/status 钩子）→ leverage 残留旧值。
+    db.conn.execute(
+        "UPDATE characters SET office='' WHERE faction=? AND status='active' AND power_id='ming'",
+        (faction,),
+    )
+    db.conn.commit()
+    # 此刻 leverage 仍是旧值（没有 hook 触发重算）。
+    stale = db.faction_leverage(faction)
+    # 兜底重算全部白名单派系。
+    db.recompute_all_faction_leverage()
+    db.conn.commit()
+    # 重算后该派系 leverage == 公式值（offset + 当前权重和，clamp）。
+    offset = db.conn.execute(
+        "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
+    ).fetchone()["leverage_offset"]
+    weight_sum = db._faction_office_weight_sum(faction)
+    expected = max(0, min(100, round(offset + weight_sum)))
+    reconciled = db.faction_leverage(faction)
+    assert reconciled == expected, (
+        f"recompute_all 后{faction} leverage 应= 公式值(stale={stale} reconciled={reconciled} expected={expected})"
+    )
+    # 全部白名单派系都应被重算到各自公式值。
+    for f in _LEVERAGE_FACTIONS:
+        row = db.conn.execute(
+            "SELECT leverage, leverage_offset FROM factions WHERE name=?", (f,)
+        ).fetchone()
+        if row is None:
+            continue
+        ws = db._faction_office_weight_sum(f)
+        exp = max(0, min(100, round(int(row["leverage_offset"] or 0) + ws)))
+        assert row["leverage"] == exp, f"{f} 应被 recompute_all 重算到公式值(got={row['leverage']} exp={exp})"

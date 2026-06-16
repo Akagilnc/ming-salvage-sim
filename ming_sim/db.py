@@ -106,7 +106,12 @@ def _office_rank_multiplier(office: str) -> float:
 
 def _member_office_weight(office_type: str, office: str) -> float:
     """单个在朝成员的官职权重 = office_type 域权重 × 品级档 multiplier。
-    office_type 不在表里（后宫/宗藩/未仕等）→ 0（品级再高也乘 0）。"""
+    office_type 不在表里（后宫/宗藩/未仕等）→ 0（品级再高也乘 0）。
+    #9 cmr R2 finding#3：office 规范化后为空（无实职）→ 0，不让 _office_rank_multiplier('') 的
+    保守默认 1.0 把 office_type 域权重算进去。堵「active 且 office 空但 office_type 非空」的
+    边界（理论可达：顶替全腾空前的中间态、裸 UPDATE 清职等）误算满权重。"""
+    if not normalize_office(office).strip():
+        return 0.0
     domain = _OFFICE_LEVERAGE_WEIGHT.get(office_type, 0)
     if domain == 0:
         return 0.0
@@ -1926,6 +1931,21 @@ class GameDB:
         new_lev = max(0, min(100, round(offset + weight_sum)))
         self.conn.execute("UPDATE factions SET leverage=? WHERE name=?", (new_lev, faction))
 
+    def recompute_all_faction_leverage(self) -> None:
+        """#9 cmr R2：全量重算所有白名单朝堂派系 leverage（集中化兜底层）。
+
+        两层设计：
+          (1) 即时 hook（set_character_status / set_character_office / _displace_duplicate_offices /
+              add_character）——单个成员状态/官职/易主变动时就地重算其所属派系，保回合内即时联动。
+          (2) 本方法（reconcile 兜底）——在月末结算尾（settle_with_delta 的 atomic 内、delta 全部
+              落库且 inertia 推进之后、next_period 之前）扫一遍全部白名单派系，重算成公式末值。
+              覆盖任何绕过 hook 的路径（裸 UPDATE 改 office_type、power_id 翻走的易主/降臣、
+              放归赦还后任命被拒回滚、未挂 hook 的新建大臣 等），保末态与公式一致、无残留漂移。
+        绝对重算（每个派系从 offset+当前在朝权重和现算、不累加）→ 幂等、时序无关、即便已被
+        hook 重算过再扫一遍也得同值。不在此 commit——由调用方（结算 atomic）统一提交。"""
+        for faction in _LEVERAGE_FACTIONS:
+            self.recompute_faction_leverage(faction)
+
     def _calibrate_faction_offsets(
         self, is_fresh_factions_seed: bool, offset_col_added: bool = False
     ) -> None:
@@ -2364,6 +2384,14 @@ class GameDB:
             """,
             (character.name, character.office, character.office_type, office_source),
         )
+        # #9 cmr R2 finding#2：新建大臣（经 apply_office_appointment→apply_appointment 任命的不在册者）
+        # 入朝即联动其所属派系 leverage（与 set_character_office/status hook 一致，commit 前重算）。
+        # 仅对 active + 大明 + 非后宫的朝臣——后宫(consort)不握明官、leverage 另义；非白名单派系
+        # recompute 内部自会 return（幂等无害）。
+        power_id = getattr(character, "power_id", "ming") or "ming"
+        is_consort = character.office_type == "后宫" or character.faction == "后宫"
+        if character.status == "active" and power_id == "ming" and not is_consort:
+            self.recompute_faction_leverage(str(character.faction or ""))
         self.conn.commit()
 
     def record_economy_moves(
