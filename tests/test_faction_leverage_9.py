@@ -413,7 +413,24 @@ def test_recompute_all_reconciles_drift_from_unhooked_path(game):
         (faction,),
     )
     db.conn.commit()
-    # 此刻 leverage 仍是旧值（没有 hook 触发重算）。
+    # cmr R7：仅对阉党制造 drift，其余白名单派系开局校准本就 == 公式值 → 对它们的断言是空验
+    # （recompute_all 就算没碰它们、值也碰巧对）。这里把【每个】存在的白名单派系 leverage 列脏写成
+    # 出格 sentinel(999)，逼 recompute_all 必须真把每一个都重算回各自公式值才能过——证明它重算的
+    # 是全部白名单派系、不只阉党。
+    SENTINEL = 999
+    dirtied = []
+    for f in _LEVERAGE_FACTIONS:
+        cur = db.conn.execute("SELECT 1 FROM factions WHERE name=?", (f,)).fetchone()
+        if cur is None:
+            continue
+        db.conn.execute("UPDATE factions SET leverage=? WHERE name=?", (SENTINEL, f))
+        dirtied.append(f)
+    db.conn.commit()
+    assert dirtied, "白名单派系应至少有一个在 factions 表（数据前提）"
+    # 脏写已生效：每个被脏写的派系此刻读到的就是 sentinel（确证 recompute_all 之后的归位非假绿）。
+    for f in dirtied:
+        assert db.faction_leverage(f) == SENTINEL, f"{f} sentinel 脏写应已落库"
+    # 此刻 leverage 是脏 sentinel（阉党还叠了 unhooked office 清空的 drift）。
     stale = db.faction_leverage(faction)
     # 兜底重算全部白名单派系。
     db.recompute_all_faction_leverage()
@@ -580,6 +597,39 @@ def test_whitelist_faction_delta_routes_to_offset_survives_reconcile(game):
     assert after_reconcile == before + 8, (
         f"白名单 faction_delta +8 注入 offset 后应经 reconcile 留存、不被抹回"
         f"（before={before} after_reconcile={after_reconcile}）"
+    )
+
+
+def test_whitelist_faction_delta_survives_full_settlement(game):
+    """#9 cmr R7 端到端：白名单派系的 LLM faction_delta.leverage 经【整条真实结算路】
+    run_settle（pre_settle → apply_score_extraction → _apply_faction_dict →
+    adjust_factions 注 offset → … → 结算尾 recompute_all_faction_leverage 兜底 reconcile
+    → next_period）跑一回合后仍保留——证明 R5 修的 HIGH 集成 bug（offset 穿过结算尾 reconcile）
+    在生产路径上真闭环，而非仅单元层直调 adjust_factions+recompute 能过。
+    与上面的 test_whitelist_faction_delta_routes_to_offset_survives_reconcile（直调单元路）
+    互补：那条证机制、本条证生产 wiring（含 settle-tail reconcile）。"""
+    db, state, content = game
+    faction = "阉党"  # 白名单
+    before = db.faction_leverage(faction)
+    before_turn = state.turn
+
+    # faction_delta payload 真实 schema：顶层 key=faction_delta（canonical 英文；
+    # 中文「派系变化」亦可，canonicalize 等价），value={派系名: {"leverage": 增量}}。
+    # 经 run_settle → apply_score_extraction(extracted.get("faction_delta")) → _apply_faction_dict
+    # 识别 dict 形态的 leverage 项 → adjust_factions 把白名单 +8 注入 leverage_offset。
+    run_settle(
+        db, state, content,
+        {"faction_delta": {faction: {"leverage": 8}}},
+        narrative="阉党气焰复炽", decree_text="x",
+    )
+
+    # 结算后 turn 已推进（证明 settle-tail reconcile 在 next_period 之前已跑过整条路）。
+    assert state.turn == before_turn + 1, "结算后回合应已推进（整条结算路跑完）"
+    after = db.faction_leverage(faction)
+    # +8 已含进 offset → settle-tail recompute_all 算出的公式值已含 +8，不被抹回。
+    assert after == before + 8, (
+        f"白名单 faction_delta +8 经整条 run_settle（含结算尾 reconcile）后应留存、不被抹回"
+        f"（before={before} after={after}）"
     )
 
 
