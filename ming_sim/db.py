@@ -837,6 +837,7 @@ class GameDB:
         self.ensure_column("armies", "firearm_equipment", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("armies", "cannon_equipment", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("armies", "salary_rate", "REAL NOT NULL DEFAULT 0")  # #44 名义月饷率(两/兵·月)
+        self._backfill_salary_rate()  # #44 旧档 default 0 → army_needed 判 0 停饷，按 content/锚点回填（cmr r1 codex high）
         self.ensure_column("regions", "controlled_by", "TEXT NOT NULL DEFAULT 'ming'")
         # 城市等级 0-5(静态,史实分级,将来供经济/内政)+ 城防大炮门数(城头红夷炮,上限 city_level×8)
         self.ensure_column("regions", "city_level", "INTEGER NOT NULL DEFAULT 0")
@@ -1305,6 +1306,19 @@ class GameDB:
         """按史实分级写各 region 的 city_level（静态，故每次加载校准即可；未列出者保持默认 0）。"""
         for rid, level in self._CITY_LEVEL_TIERS.items():
             self.conn.execute("UPDATE regions SET city_level=? WHERE id=?", (int(level), rid))
+
+    def _backfill_salary_rate(self) -> None:
+        """#44 旧档迁移：ensure_column 给 salary_rate 默认 0，但 army_needed 判 rate<=0 → 0 应发，会让
+        旧存档**所有明军停饷**（cmr r1 codex high）。回填 salary_rate<=0 的明军：static 军取
+        content.armies[id].salary_rate；不在 content 的（动态建的旧军）用边军史实锚点 1.5（同新建军默认）。
+        幂等——只补 <=0 的，不覆盖已设值；fresh seed 此刻空表 / 已是真实率，no-op。"""
+        for r in self.conn.execute(
+            "SELECT id FROM armies WHERE owner_power='ming' AND salary_rate <= 0"
+        ).fetchall():
+            aid = str(r["id"])
+            army = self.content.armies.get(aid)
+            rate = float(army.salary_rate) if (army and army.salary_rate > 0) else 1.5
+            self.conn.execute("UPDATE armies SET salary_rate=? WHERE id=?", (rate, aid))
 
     def apply_region_cannon(self, state: "GameState", region_id: str, delta: int) -> int:
         """改某地城防大炮门数(城头红夷炮)。上限 = city_level×8；clamp [0, cap]。返回新值。
@@ -3616,9 +3630,10 @@ class GameDB:
                 _score("loyalty"),
                 _score("firearm_equipment", 0),
                 _cannon(),  # 随军大炮=门数，clamp 0-12，非 int 兜底 0
-                # #44 新军名义月饷率：extractor army_delta 不带饷字段，设计未明定新军 rate→用边军史实
-                # 锚点 1.5（两/兵·月）；LLM 若显式给则用。应发随 manpower 派生（army_needed）。
-                float(item.get("salary_rate") or 1.5),
+                # #44 新军名义月饷率：extractor army_delta 不带饷字段，设计未明定新军 rate→缺省/None/空串
+                # 用边军史实锚点 1.5（两/兵·月）；LLM 若显式给则按值（**含 0.0**，区分 missing 与显式 0——
+                # 原 `or 1.5` 把显式 0 也当缺省，cmr r3 codex medium）。脏值 float() 上抛=fail-loud（罕见）。
+                (1.5 if item.get("salary_rate") in (None, "") else float(item["salary_rate"])),
                 str(item.get("status") or "新立"),
                 owner,
             )

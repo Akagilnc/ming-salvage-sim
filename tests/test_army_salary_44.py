@@ -64,28 +64,35 @@ def test_army_needed_non_ming_no_pay(game):
     assert army_needed(row) == 0
 
 
-def test_total_ming_salary_near_design(game):
-    # 设计总月应发 ~66.5 万两（结构性重切非抬总额，开局国库零冲击）。
+def test_total_ming_salary_is_72_ceil_sum(game):
+    # 实际总月应发 = sum(ceil(每军))=72 万两。设计「66.5」是 sum(小数月应发)；army_needed 每军 ceil
+    # （万两整数、不少发），ceil 累积使总额 72 > 66.5（cmr r1 codex/claude 实测）。开局 vs 旧 65 = +10.8%
+    # （非设计表述的 +2.4%）——ceil 公式 vs「66.5 零冲击」是设计内部不一致，ceil 公式经 ratify，此处锁实际值。
     db, state, _ = game
     rows = db.conn.execute("SELECT * FROM armies WHERE owner_power='ming'").fetchall()
     total = sum(army_needed(r) for r in rows)
-    assert 60 <= total <= 72, f"明军总月应发 {total} 万两应在设计 ~66.5 附近"
+    assert total == 72, f"明军总月应发 = sum(ceil)=72 万两（设计 66.5 为小数和），实得 {total}"
 
 
 def test_manpower_clamp_to_zero_leaves_army_log(game):
-    # #44 顺手：减兵超过现有 → clamp 0、净 delta=0，但请求非 0 → 留 army_log（不静默吞，#14/#44）。
+    # #44 顺手：0 兵再减 → clamp 仍 0、净 delta==0，但请求非 0 → 留 army_log delta=0（不静默吞，#14/#44）。
+    # cmr r4 codex：起点必须先置 0 才命中 clamp 分支——正 manpower 减大数 → 净 delta 为负、走正常路。
     db, state, _ = game
     aid = db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"]
+    db.conn.execute("UPDATE armies SET manpower=0 WHERE id=?", (aid,))  # 起点 0 兵，命中 clamp 净 0 分支
+    db.conn.commit()
     pseudo = type("E", (), {"id": "test", "title": "裁军"})()
     before = db.conn.execute(
         "SELECT COUNT(*) FROM army_logs WHERE army_id=? AND field='manpower'", (aid,)).fetchone()[0]
-    db.apply_army_deltas(state, pseudo, None, "裁撤", {aid: {"manpower": -99999999}})
+    db.apply_army_deltas(state, pseudo, None, "裁撤", {aid: {"manpower": -5}})  # 0 再减 → clamp 0、请求非 0
     after = db.conn.execute(
         "SELECT COUNT(*) FROM army_logs WHERE army_id=? AND field='manpower'", (aid,)).fetchone()[0]
-    assert after == before + 1, "请求非 0 经 clamp 0 应留 army_log（不静默）"
-    assert db.conn.execute(
-        "SELECT manpower FROM armies WHERE id=?", (aid,)).fetchone()[0] == 0
+    assert after == before + 1, "0 兵再减(请求非 0 经 clamp 净 0)应留 army_log（不静默）"
+    last = db.conn.execute(
+        "SELECT delta FROM army_logs WHERE army_id=? AND field='manpower' ORDER BY id DESC LIMIT 1",
+        (aid,)).fetchone()
+    assert last["delta"] == 0, "clamp 净 0 的 army_log delta 应为 0"
 
 
 def test_manpower_true_noop_no_log(game):
