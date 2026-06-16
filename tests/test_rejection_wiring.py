@@ -712,3 +712,25 @@ def test_system_rejection_stays_silent_and_keeps_system_provenance(game, monkeyp
         "SELECT report FROM turn_reports WHERE turn=?", (turn,)).fetchone()
     assert report is not None
     assert "窒碍未行" not in report[0]
+
+
+def test_provenance_from_stored_recovers_all_forms():
+    """#146/#175 R2（gemini + coderabbit concur）：_provenance_from_stored 三层兼容——
+    Provenance 实例、纯值字符串、历史误序列化的 'Provenance.<name>' 脏串都能还原回原来源，
+    不静默退化成 system_simulation；只有真正非法/缺失才回落。"""
+    from ming_sim.decree import _provenance_from_stored
+    from ming_sim.applier import Provenance
+
+    # ① Provenance 实例原样返回
+    assert _provenance_from_stored(Provenance.player_decree) is Provenance.player_decree
+    # ② 纯值字符串（正常持久化形态）
+    assert _provenance_from_stored("player_decree") == Provenance.player_decree
+    assert _provenance_from_stored("system_simulation") == Provenance.system_simulation
+    # ③ 历史 str(枚举实例) 脏串 'Provenance.player_decree'——剥前缀按成员名查回（本轮硬化点）
+    assert _provenance_from_stored("Provenance.player_decree") == Provenance.player_decree
+    assert _provenance_from_stored("Provenance.system_simulation") == Provenance.system_simulation
+    # ④ 非法/缺失 → system_simulation 回落
+    assert _provenance_from_stored("") == Provenance.system_simulation
+    assert _provenance_from_stored(None) == Provenance.system_simulation
+    assert _provenance_from_stored("查无此来源") == Provenance.system_simulation
+    assert _provenance_from_stored("Provenance.查无此成员") == Provenance.system_simulation
