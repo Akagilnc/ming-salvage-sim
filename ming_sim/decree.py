@@ -351,18 +351,29 @@ def resolve_directives(
 
 
 def _provenance_from_stored(value: object) -> Provenance:
-    """从 ctx 持久值还原 Provenance（#146 恢复路）：兼容已存的字符串值、Provenance 实例、
-    及非法/缺失值。非法/缺失回落 system_simulation（旧档兼容）。
+    """从 ctx 持久值还原 Provenance（#146 恢复路）：兼容 Provenance 实例、已存的字符串值、
+    历史误序列化的 'Provenance.<name>' 字面串、及非法/缺失值。非法/缺失回落 system_simulation。
 
-    防 Sourcery #175 静默丢源：若 value 是 Provenance 实例，str(member) 在多数 Python 版本是
-    'Provenance.player_decree' 而非 'player_decree'，Provenance(...) 不匹配 → ValueError →
-    退回 system_simulation。故先识别 enum 实例直接返回，再对字符串走 Provenance(...)。"""
+    防静默丢源（Sourcery + gemini + coderabbit #175 concur）：Provenance 是 (str, Enum)，
+    若曾把枚举实例 str() 落库会得到 'Provenance.player_decree'（而非值 'player_decree'），
+    Provenance(...) 不匹配 → ValueError → 丢源退回 system_simulation。故分三层：
+    ① 实例直接返回；② 纯值走 Provenance(value)；③ 'Provenance.<name>' 旧脏串剥前缀按成员名查回；
+    仍无法识别才回落 system_simulation。"""
     if isinstance(value, Provenance):
         return value
+    text = str(value or "system_simulation")
     try:
-        return Provenance(str(value or "system_simulation"))
+        return Provenance(text)
     except ValueError:
-        return Provenance.system_simulation
+        pass
+    # 历史误序列化：str(枚举实例) 落库的 'Provenance.player_decree' 脏串——剥前缀按成员名查回，
+    # 不让旧档玩家来源静默退化成 system_simulation。
+    if text.startswith("Provenance."):
+        try:
+            return Provenance[text.split(".", 1)[1]]
+        except KeyError:
+            pass
+    return Provenance.system_simulation
 
 
 def resolve_settling_recovery(
