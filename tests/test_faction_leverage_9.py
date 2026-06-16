@@ -488,6 +488,47 @@ def test_settle_path_triggers_reconcile_before_next_period(game, monkeypatch):
     assert state.turn == before_turn + 1, "结算后回合应已推进（证明 reconcile 在 next_period 前跑过）"
 
 
+def test_reconcile_runs_before_clear_gated_legacies_same_turn(game):
+    """#9 线上 R6（codex P2）：结算尾 recompute_all_faction_leverage() 必须排在 clear_gated_legacies()
+    之前。否则同回合经兜底 reconcile 才更新的 faction leverage（易主/裸 UPDATE 改成员、绕即时 hook）
+    会被先跑的 legacy gate 读到陈旧值，使「阉党专权」(gate: faction.阉党.leverage<30) 多挂一回合。
+
+    构造：裸 UPDATE 清空阉党在朝 office（绕 hook → DB leverage 残留开局 78、但公式值=clamp(offset+0)=0<30），
+    「阉党专权」legacy 此刻 active（开局 78≥30 未达标）。跑真实结算一回合（driver 路、空 delta）：
+      修前 clear_gated 在 reconcile 前读 78 → gate 不过 → legacy 仍 active（红）；
+      修后 reconcile 先跑 → leverage=0 → gate 过 → legacy 本回合即 cleared（绿）。"""
+    db, state, content = game
+    faction = "阉党"
+
+    leg = db.conn.execute(
+        "SELECT id, status FROM legacies WHERE legacy_key='yandang_zhuanquan' AND status='active'"
+    ).fetchone()
+    if leg is None:
+        pytest.skip("阉党专权 legacy 未 active（数据前提不满足）")
+
+    # 裸 UPDATE 清空阉党在朝 office（绕 set_character_office/status 钩子）→ DB leverage 残留旧值≥30，
+    # 而公式值（offset + 当前权重和=0）会被 reconcile 压到 0<30。
+    db.conn.execute(
+        "UPDATE characters SET office='' WHERE faction=? AND status='active' AND power_id='ming'",
+        (faction,),
+    )
+    db.conn.commit()
+    stale = db.faction_leverage(faction)
+    assert stale >= 30, f"前提：裸 UPDATE 后 DB leverage 应残留≥30（stale={stale}）"
+
+    run_settle(db, state, content, {}, narrative="x", decree_text="y")
+
+    after = db.conn.execute(
+        "SELECT status FROM legacies WHERE id=?", (leg["id"],)
+    ).fetchone()["status"]
+    reconciled = db.faction_leverage(faction)
+    assert reconciled < 30, f"前提：reconcile 后公式值应<30（reconciled={reconciled}）"
+    assert after == "cleared", (
+        f"阉党专权 legacy 应在本回合即 cleared（reconcile 须先于 clear_gated_legacies），"
+        f"得 status={after}（reconcile 后 leverage={reconciled}）"
+    )
+
+
 def test_office_weight_takes_highest_domain_across_joint_offices():
     """#9（用户挑战：九千岁退场怎么可能影响小）：兼职跨 domain 时，官职权重取头衔各分项里【最高】的
     domain（按 offices.json 词干表确定性映射、无 LLM），不只看 office_type 单桶。

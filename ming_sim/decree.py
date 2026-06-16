@@ -306,6 +306,10 @@ def resolve_directives(
                 extractor_output=f"[推演 agent 失败] {exc}；本回合跳过 extractor。",
             )
             apply_issue_inertia_and_ongoing(db, state, touched_ids=set())
+            # #9 线上 R6（codex P2）：fallback 路同样须在 clear_gated_legacies 之前 reconcile——
+            # commit_pending_actions / inertia 可能经绕 hook 的路径改 faction 成员，否则 legacy gate
+            # （如「阉党专权」读 faction.阉党.leverage）读陈旧值、帝国修正多挂一回合。幂等、可整体回滚。
+            db.recompute_all_faction_leverage()
             for name in clear_gated_legacies(db, state):
                 db.record_log(state, f"帝国修正消除：{name}")
             db.mark_directives_issued(state)
@@ -1083,6 +1087,18 @@ def _settle_after_extract_body(
         extractor_output=json.dumps(_player_visible_extractor_output(applied), ensure_ascii=False),
     )
 
+    # #9 cmr R2：派系 leverage 全量 reconcile 兜底（两层设计的第二层，见 db.recompute_all_faction_leverage）。
+    # 即时 hook 覆盖单点 office/status/易主变动，但多条改 faction 成员的路径会绕过 hook
+    # （裸 UPDATE 改 office_type、power_id 翻走的易主/降臣、放归赦还+任命被拒回滚 等）。在此处
+    # （delta 全部落库 + inertia/ongoing 推进之后）扫一遍全部白名单派系重算成公式末值，保无论本回合经
+    # 哪条路径改了成员/官职/易主，末态都正确、无残留漂移。
+    # #9 线上 R6（codex P2）：必须排在【任何读 faction leverage 的下游】之前——章节记忆、
+    # clear_gated_legacies（legacy gate 如「阉党专权」读 faction.阉党.leverage<30）、结局判定。
+    # 原置于 clear_gated_legacies 之后 → 同回合经兜底 reconcile 才跌破阈值的派系，会被先跑的 gate
+    # 读到陈旧值、使该帝国修正多挂一回合。故前移到此（仍在 settle_with_delta 的 atomic_and_reload 体内、
+    # next_period 之前——与结算同生死、可整体回滚；recompute 绝对幂等，被 hook 重算过再扫一遍得同值）。
+    db.recompute_all_faction_leverage()
+
     # 章节记忆：注入回调（真实流程= LLM 浓缩落 event_memories；driver= None 跳过）。失败不抛断。
     _stage("记起居注")
     if chapter_recorder is not None:
@@ -1121,15 +1137,6 @@ def _settle_after_extract_body(
                 ending_text = ending_summarizer(db, state, outcome)
             state.ended = True
             state.ending_status = str(outcome.get("status") or "")
-
-    # #9 cmr R2：派系 leverage 全量 reconcile 兜底（两层设计的第二层，见 db.recompute_all_faction_leverage）。
-    # 即时 hook 覆盖单点 office/status/易主变动，但多条改 faction 成员的路径会绕过 hook
-    # （裸 UPDATE 改 office_type、power_id 翻走的易主/降臣、放归赦还+任命被拒回滚 等）。在此处
-    # （delta 全部落库 + inertia/ongoing 推进之后、next_period 之前）扫一遍全部白名单派系重算成
-    # 公式末值，保无论本回合经哪条路径改了成员/官职/易主，末态都正确、无残留漂移。
-    # 位置在 settle_with_delta 的 atomic_and_reload 体内（与结算同生死、可整体回滚），故崩溃/回滚
-    # 不会留下半重算的脏 leverage；recompute 绝对幂等（即便已被 hook 重算过再扫一遍得同值）。
-    db.recompute_all_faction_leverage()
 
     db.mark_directives_issued(state)
     state.next_period()
