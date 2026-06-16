@@ -44,6 +44,22 @@ def _new_army_historically_applied(it: dict) -> bool:
         return False
 
 
+# #9 派系势力联动：在朝(active)成员官职权重(office_type→weight)决定朝堂派系 leverage。
+# 只对朝堂博弈派系；外族(后金/蒙古/朝鲜)/后宫/宗室/流寇不握明朝官职、leverage 另义、不联动。
+_LEVERAGE_FACTIONS = {"阉党", "东林", "皇党", "中立", "军队"}
+_OFFICE_LEVERAGE_WEIGHT = {
+    "内阁": 10, "司礼监": 9,                       # 中枢首脑(票拟/批红)
+    "兵部": 8, "吏部": 8, "户部": 7, "边镇": 7,    # 实权部院 / 实兵权(督师/总兵)
+    "都察院": 6, "锦衣卫": 6, "东厂": 6,           # 监察 / 厂卫
+    "礼部": 5, "工部": 5, "翰林院": 4, "内臣": 4,  # 部务 / 清贵储相 / 一般宦官
+    "地方": 3, "外臣": 2,                          # 地方督抚以下 / 外朝低阶闲职
+    # 后宫 / 宗藩 / 未仕 → 0(不在朝堂博弈或无实权)
+}
+
+# 退场类状态(削职)——与 active 互斥，跨这条边界才动 faction leverage。
+_OUSTED_STATES = {"offstage", "dismissed", "imprisoned", "exiled", "retired", "dead"}
+
+
 def normalize_office(office: str) -> str:
     """官职多职统一为半角逗号分隔：旧「兼/兼掌/兼署」与全角「，」「、」一律归一逗号，
     去空分项、去重、保序。是 office 字段落库的唯一规范化入口——所有写 characters.office
@@ -1779,13 +1795,18 @@ class GameDB:
         reason_code: str | None = None,
     ) -> None:
         """改人物状态：active/offstage/dismissed/imprisoned/exiled/retired/dead。
-        大臣走 characters 表；后宫（consorts）走内存对象 + consort_traits 备档。"""
+        大臣走 characters 表；后宫（consorts）走内存对象 + consort_traits 备档。
+        #9：跨 active↔退场 边界时，按官职权重增量联动所属朝堂派系 leverage（党魁倒台势力跟跌）。"""
         valid = {"active", "offstage", "dismissed", "imprisoned", "exiled", "retired", "dead"}
         if status not in valid:
             raise ValueError(f"character status 非法：{status}")
+        # #9：UPDATE 前读旧状态 + 派系 + 官职类型（退场会清 office 但 office_type 保留，仍可读权重）。
+        prev = self.conn.execute(
+            "SELECT status, faction, office_type FROM characters WHERE name=?", (name,)
+        ).fetchone()
         # 去职（下狱/革职/流放/致仕/出宫/死）即削职：清空 characters.office，
         # 原职仍留在 character_offices 备档可追溯。复职（active）不动 office。
-        ousted = status in {"offstage", "dismissed", "imprisoned", "exiled", "retired", "dead"}
+        ousted = status in _OUSTED_STATES
         reason_code_value = str(reason_code or "")[:40]
         if ousted:
             self.conn.execute(
@@ -1798,7 +1819,36 @@ class GameDB:
                 "UPDATE characters SET status=?, status_reason=?, status_changed_turn=?, reason_code=? WHERE name=?",
                 (status, reason[:200], state.turn, reason_code_value, name),
             )
+        # #9：跨 active↔退场 边界 → 所属朝堂派系 leverage 按官职权重增量（退场扣、起复加）。
+        if prev is not None:
+            self._adjust_faction_leverage_on_status(
+                faction=str(prev["faction"] or ""),
+                office_type=str(prev["office_type"] or ""),
+                was_ousted=str(prev["status"] or "active") in _OUSTED_STATES,
+                now_ousted=ousted,
+            )
         self.conn.commit()
+
+    def _adjust_faction_leverage_on_status(
+        self, faction: str, office_type: str, was_ousted: bool, now_ousted: bool
+    ) -> None:
+        """#9：人物跨 active↔退场 边界时，按其官职权重增量调所属朝堂派系 leverage。
+        退场（active→ousted）扣、起复（ousted→active）加，对称无累积漂移；clamp 0-100。
+        只对 _LEVERAGE_FACTIONS（外族/后宫/宗室不握明官、不联动）；office_type 无权重（后宫/未仕等）跳过。
+        不在此 commit——由调用方 set_character_status 末尾统一提交。"""
+        if faction not in _LEVERAGE_FACTIONS or was_ousted == now_ousted:
+            return
+        weight = _OFFICE_LEVERAGE_WEIGHT.get(office_type, 0)
+        if weight == 0:
+            return
+        delta = -weight if now_ousted else weight  # active→ousted 扣；ousted→active 加
+        row = self.conn.execute(
+            "SELECT leverage FROM factions WHERE name=?", (faction,)
+        ).fetchone()
+        if row is None:
+            return
+        new_lev = max(0, min(100, int(row["leverage"]) + delta))
+        self.conn.execute("UPDATE factions SET leverage=? WHERE name=?", (new_lev, faction))
 
     def record_person_log(
         self,
