@@ -2017,8 +2017,12 @@ class GameDB:
         （#9 线上 R4 codex P2）：全 0 = 校准从未跑过（真崩在『加列/校准』之间，或列刚 ADD 默认 0）
         → 须反推校准；任一非 0 = 已校准过（旧版 #9 代码遗留、当时尚无持久标记）→ 只补标记、绝不
         重锚（重锚会把 clamp 后偏离基线的 leverage 烙进 offset、永久腐蚀基线）。
-        注：真校准过的档极不可能全派系 offset 恰为 0（需每派系『钦定基线==开局权重和』）；纵使如此，
-        其 leverage 必=clamp(0+权重和)=钦定基线（基线在 [0,100] 内、无 clamp），重校准幂等、无腐蚀。"""
+        安全性论证（线上 R4 双 reviewer concur 复核后修正）：leverage_offset = 钦定基线 − 开局权重和；
+        要全六派系恰为 0 需每派系『钦定基线==开局权重和』——实际 content 下各派系基线与开局权重和
+        有显著差（offset 均非 0），故「已校准却全 0」这一误判窗口对真实存档不可达。安全性据此
+        （已校准态不可能与『offset 全 0』共存），**不**依赖『全 0 ⇒ leverage 未 clamp 故重校准幂等』
+        的假设——该假设在玩过多回合、weight_sum 漂移触 clamp 后并不恒成立（codex R4 指出的缺口，
+        但其触发前提『全派系 offset 同时为 0』本身不可达，故不构成真实风险）。"""
         rows = self.conn.execute(
             "SELECT leverage_offset FROM factions WHERE name IN ({})".format(
                 ",".join("?" * len(_LEVERAGE_FACTIONS))
