@@ -413,3 +413,36 @@ def test_recompute_all_reconciles_drift_from_unhooked_path(game):
         ws = db._faction_office_weight_sum(f)
         exp = max(0, min(100, round(int(row["leverage_offset"] or 0) + ws)))
         assert row["leverage"] == exp, f"{f} 应被 recompute_all 重算到公式值(got={row['leverage']} exp={exp})"
+
+
+def test_office_weight_takes_highest_domain_across_joint_offices():
+    """#9（用户挑战：九千岁退场怎么可能影响小）：兼职跨 domain 时，官职权重取头衔各分项里【最高】的
+    domain（按 offices.json 词干表确定性映射、无 LLM），不只看 office_type 单桶。
+    魏忠贤 司礼监秉笔(批红 20)+东厂提督(8) → 20；来宗道 礼部尚书(5)+东阁大学士(内阁 18) → 18。
+    修前只认 office_type 桶 → 魏忠贤误算 8(东厂)、来宗道误算 5(礼部)，九千岁退场只掉 8。"""
+    from ming_sim.db import _member_office_weight
+    # 魏忠贤：domain 取司礼监 20（秉笔/提督 均堂官档 ×1.0）——不再因 office_type=东厂 而只值 8。
+    assert _member_office_weight("东厂", "司礼监秉笔太监,东厂提督") == 20.0
+    # 来宗道：domain 取内阁 18（兼礼部尚书=堂官 ×1.0）——不再因 office_type=礼部 而只值 5。
+    assert _member_office_weight("礼部", "礼部尚书,东阁大学士") == 18.0
+    # 单职不变：兵部尚书 = 兵部 12 × 堂官 1.0。
+    assert _member_office_weight("兵部", "兵部尚书") == 12.0
+    # 空 office 仍 0（cafac368 守卫不被本改回归）。
+    assert _member_office_weight("司礼监", "") == 0.0
+
+
+def test_weizhongxian_ouster_drops_yandang_by_sili_weight(game):
+    """#9（用户挑战）：魏忠贤(九千岁)退场对阉党的冲击应按司礼监批红(20)算，不是东厂(8)。
+    他真权在司礼监秉笔=批红，office_type=东厂只是兼差。退场掉 20 而非 8。"""
+    db, state, content = game
+    row = db.conn.execute(
+        "SELECT name, office, office_type, status FROM characters WHERE name='魏忠贤'"
+    ).fetchone()
+    if row is None or row["status"] != "active":
+        pytest.skip("魏忠贤 非在朝（数据依赖）")
+    assert "司礼监" in (row["office"] or ""), "魏忠贤 office 应含司礼监秉笔（数据前提）"
+    before = db.faction_leverage("阉党")
+    db.set_character_status(state, "魏忠贤", "dismissed", reason="崇祯清算九千岁")
+    after = db.faction_leverage("阉党")
+    drop = before - after
+    assert drop == 20, f"九千岁退场应按司礼监批红掉 20（非东厂 8）：before={before} after={after} drop={drop}"
