@@ -105,14 +105,22 @@ def _office_rank_multiplier(office: str) -> float:
 
 
 def _member_office_weight(office_type: str, office: str) -> float:
-    """单个在朝成员的官职权重 = office_type 域权重 × 品级档 multiplier。
-    office_type 不在表里（后宫/宗藩/未仕等）→ 0（品级再高也乘 0）。
-    #9 cmr R2 finding#3：office 规范化后为空（无实职）→ 0，不让 _office_rank_multiplier('') 的
-    保守默认 1.0 把 office_type 域权重算进去。堵「active 且 office 空但 office_type 非空」的
-    边界（理论可达：顶替全腾空前的中间态、裸 UPDATE 清职等）误算满权重。"""
-    if not normalize_office(office).strip():
+    """单个在朝成员的官职权重 = 域权重 × 品级档 multiplier。
+    域权重取 office 头衔【各分项里最高】的 domain：兼职跨 domain 时不漏更高的那个——魏忠贤
+    司礼监秉笔(批红 20)+东厂提督(8) → 20、来宗道 礼部尚书(5)+东阁大学士(内阁 18) → 18。
+    按 offices.json 词干表（_office_type_from_table）确定性映射分项→office_type（无 LLM，可在
+    recompute 热路安全调用）；office_type 桶作下限兜底（分项均无已知 domain 关键词时）。
+    （只看 office_type 单桶会把九千岁误算成东厂 8——「九千岁退场影响小」之误，用户挑战修。）
+    office 规范化后为空（无实职）→ 0（#9 cmr R2 finding#3：不让 _office_rank_multiplier('') 的
+    默认 1.0 把空职算成满权重，堵「active 且 office 空但 office_type 非空」边界）。"""
+    office_n = normalize_office(office)
+    if not office_n.strip():
         return 0.0
-    domain = _OFFICE_LEVERAGE_WEIGHT.get(office_type, 0)
+    domain = _OFFICE_LEVERAGE_WEIGHT.get(office_type, 0)  # office_type 桶下限
+    for part in (p.strip() for p in office_n.split(",") if p.strip()):
+        w = _OFFICE_LEVERAGE_WEIGHT.get(_office_type_from_table(part), 0)
+        if w > domain:
+            domain = w
     if domain == 0:
         return 0.0
     return domain * _office_rank_multiplier(office)
