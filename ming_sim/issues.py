@@ -1492,6 +1492,12 @@ def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
             "FROM character_offices"
         ).fetchall()
     ]
+    # #9：起复路（apply_office_appointment）中途经 set_character_status/set_character_office 会
+    # 全重算 factions.leverage；失败回滚必须连 leverage 一并还原，否则 leverage 凭空抬高（违「全有或全无」）。
+    faction_rows = [
+        dict(row)
+        for row in db.conn.execute("SELECT name, leverage FROM factions").fetchall()
+    ]
     content_rows = {}
     if content is not None:
         content_rows = {
@@ -1505,11 +1511,11 @@ def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
             }
             for name, ch in content.characters.items()
         }
-    return character_rows, office_rows, content_rows
+    return character_rows, office_rows, faction_rows, content_rows
 
 
 def _restore_person_write_state(db: GameDB, content: Optional[GameContent], snapshot) -> None:
-    character_rows, office_rows, content_rows = snapshot
+    character_rows, office_rows, faction_rows, content_rows = snapshot
     db.conn.execute("DELETE FROM character_offices")
     snapshot_names = {str(row["name"]) for row in character_rows}
     if snapshot_names:
@@ -1551,6 +1557,11 @@ def _restore_person_write_state(db: GameDB, content: Optional[GameContent], snap
             )
             for row in office_rows
         ],
+    )
+    # #9：还原 factions.leverage（起复路中途的全重算回滚，与 character 状态一并还原）。
+    db.conn.executemany(
+        "UPDATE factions SET leverage=? WHERE name=?",
+        [(row["leverage"], row["name"]) for row in faction_rows],
     )
     db.conn.commit()
     if content is not None:
