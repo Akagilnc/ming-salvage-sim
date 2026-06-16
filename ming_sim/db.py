@@ -57,7 +57,8 @@ _OFFICE_LEVERAGE_WEIGHT = {
     "司礼监": 20, "内阁": 18,                                  # 批红 / 票拟 中枢
     "兵部": 12, "吏部": 12, "户部": 10, "边镇": 10,            # 部院 / 督师边镇
     "锦衣卫": 8, "东厂": 8, "都察院": 8,                       # 厂卫 / 监察
-    "礼部": 5, "刑部": 5, "工部": 5, "内臣": 4,                # 中层部务（六部齐全：刑部勿漏）
+    "礼部": 5, "刑部": 5, "工部": 5,                           # 中层部务（六部齐全：刑部勿漏）
+    "内臣": 4, "内廷": 4,                                       # 宫廷宦官（御马监/内官监等，与内臣同档）
     "翰林院": 2, "地方": 2, "外臣": 1,                         # 长尾
     # 后宫 / 宗藩 / 未仕 → 0（不在朝堂博弈或无实权）；office_type 不在表里 → 权重 0。
 }
@@ -4097,7 +4098,15 @@ class GameDB:
     def adjust_factions(self, deltas: Dict[str, object]) -> List[Dict[str, object]]:
         """逐项落库；查无此派系名 → missing_ref 逐项拒收留痕（ADR 0008 决定 1，#14/#63
         死法 3）。入参经 _apply_faction_dict 预清洗（坏值已在那层拒），此处只余未知名一类。
-        返回拒收项列表（{"rejected": True, ...}），桥接 _collect_inline_rejections 自动收。"""
+        返回拒收项列表（{"rejected": True, ...}），桥接 _collect_inline_rejections 自动收。
+
+        #9 cmr R5 finding#1：白名单朝堂派系（_LEVERAGE_FACTIONS）的 leverage 列由「offset+官职和」
+        派生、结算尾 recompute_all_faction_leverage() 绝对幂等兜底。若此处对白名单直写 leverage 列，
+        会被该 reconcile 抹回公式值 → LLM「影响力变化」静默蒸发、DB 与玩家可见「已落」分叉。
+        故白名单的 leverage 增量改注入 **leverage_offset**（无形政治基线变动），再 recompute_faction_leverage
+        立即令 leverage 体现（offset+官职和，含本次增量）；结算尾 reconcile 确认同值、不抹。
+        offset 不 clamp（leverage 读时 clamp）。非白名单（宗室等）维持原样直写 leverage 列
+        （reconcile 不碰非白名单）。satisfaction 两者都照旧 clamp 直写。"""
         rejected: List[Dict[str, object]] = []
         for faction, val in deltas.items():
             if isinstance(val, dict):
@@ -4122,11 +4131,22 @@ class GameDB:
                 })
                 continue
             new_sat = max(0, min(100, int(row["satisfaction"]) + sat_d))
-            new_lev = max(0, min(100, int(row["leverage"]) + lev_d))
-            self.conn.execute(
-                "UPDATE factions SET satisfaction = ?, leverage = ? WHERE name = ?",
-                (new_sat, new_lev, faction),
-            )
+            if faction in _LEVERAGE_FACTIONS:
+                # 白名单：leverage 增量注入 offset（不被 reconcile 抹），satisfaction 仍直写。
+                self.conn.execute(
+                    "UPDATE factions SET satisfaction = ?, leverage_offset = leverage_offset + ? "
+                    "WHERE name = ?",
+                    (new_sat, lev_d, faction),
+                )
+                # 立即令 leverage 体现 offset 变化（含本次增量）；reconcile 后确认同值。
+                self.recompute_faction_leverage(faction)
+            else:
+                # 非白名单：维持原样直写 leverage 列（reconcile 不碰非白名单）。
+                new_lev = max(0, min(100, int(row["leverage"]) + lev_d))
+                self.conn.execute(
+                    "UPDATE factions SET satisfaction = ?, leverage = ? WHERE name = ?",
+                    (new_sat, new_lev, faction),
+                )
         self.conn.commit()
         return rejected
 

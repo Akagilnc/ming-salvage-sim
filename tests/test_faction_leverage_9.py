@@ -55,18 +55,28 @@ def test_faction_leverage_rises_back_when_minister_restored(game):
     assert restored == base, f"起复+复职应回到原值(base={base} restored={restored})"
 
 
-def test_foreign_faction_leverage_not_touched(game):
-    """#9 边界：外族(后金)非白名单 → 其成员状态变不联动 leverage(不按明官算)。"""
+def test_non_whitelist_faction_row_leverage_not_recomputed(game):
+    """#9 cmr R5 finding#3 边界：宗室是真·在 factions 表的行(leverage=40)、但**不在**白名单
+    _LEVERAGE_FACTIONS → 其在朝成员官职变动不按明官 recompute leverage。
+    （原测试用「后金」——后金是 power、不在 factions 表，faction_leverage 无行返默认 50，
+    前后都 50=假绿：代码永远碰不到后金、就算白名单逻辑坏了也过。改用宗室=正经非白名单 faction-表行边界。）"""
     db, state, content = game
+    from ming_sim.db import _LEVERAGE_FACTIONS
+
+    # 前提：宗室在 factions 表、且不在白名单（真边界，非假绿的「无行返默认」）。
+    assert db.conn.execute(
+        "SELECT 1 FROM factions WHERE name='宗室'"
+    ).fetchone() is not None, "宗室应在 factions 表（真·非白名单 faction 行）"
+    assert "宗室" not in _LEVERAGE_FACTIONS, "宗室应不在白名单（本测试验非白名单不被 recompute）"
+
     row = db.conn.execute(
-        "SELECT name FROM characters WHERE faction='后金' AND status='active' LIMIT 1"
+        "SELECT name FROM characters WHERE faction='宗室' AND status='active' LIMIT 1"
     ).fetchone()
-    if row is None:
-        pytest.skip("基底盘面无后金在朝成员（数据依赖）")
-    before = db.faction_leverage("后金")
-    db.set_character_status(state, row["name"], "dead", reason="阵亡")
-    after = db.faction_leverage("后金")
-    assert after == before, "外族派系 leverage 不按明朝官职联动"
+    assert row is not None, "宗室需有在朝成员（数据前提）"
+    before = db.faction_leverage("宗室")
+    db.set_character_status(state, row["name"], "dead", reason="薨")
+    after = db.faction_leverage("宗室")
+    assert after == before, "非白名单派系(宗室) leverage 不按明朝官职联动 recompute"
 
 
 def test_xixue_faction_in_whitelist_drops_when_member_ousted(game):
@@ -496,6 +506,41 @@ def test_xingbu_has_leverage_weight_like_other_ministries():
         )
 
 
+def test_neiting_has_leverage_weight_like_other_court_eunuchs():
+    """#9 cmr R5 finding#2：内廷(御马监/内官监等宫廷宦官)在 offices.json allowed_types，
+    词干表把「御马监掌印太监→内廷」，但 _OFFICE_LEVERAGE_WEIGHT 修前漏内廷 → 这类在朝宦官
+    贡献 0、与 内臣(4)/东厂(8)/司礼监(20) 等在朝宦官不一致。补「内廷:4」（与内臣同宫廷宦官档）。"""
+    from ming_sim.db import _OFFICE_LEVERAGE_WEIGHT, _member_office_weight, _office_type_from_table
+
+    # 词干表确把御马监掌印映到内廷（数据前提）。
+    assert _office_type_from_table("御马监掌印太监") == "内廷", (
+        "offices.json 词干表应把御马监掌印→内廷"
+    )
+    assert "内廷" in _OFFICE_LEVERAGE_WEIGHT, "内廷应在 _OFFICE_LEVERAGE_WEIGHT（宫廷宦官有实权）"
+    # 御马监掌印太监=内廷域权重(4) × 堂官(掌印 ×1.0)=4；非零，与其余在朝宦官一致。
+    assert _member_office_weight("内廷", "御马监掌印太监") == 4.0, (
+        "内廷宫廷宦官(御马监掌印)应贡献非零权重"
+    )
+
+
+def test_all_court_allowed_types_have_leverage_weight():
+    """#9 cmr R5 finding#2 完整性锁（集中化，防再漏第三个）：遍历 offices.json allowed_types，
+    除纯民/无朝堂实权的 {后宫,生员,乡绅,富商,布衣,流寇,待铨} 外，每个 allowed_type 都必须在
+    _OFFICE_LEVERAGE_WEIGHT。（这条本应在补刑部那轮加——加了内廷这轮就不会冒第三个。）"""
+    from ming_sim.assets import load_json_asset
+    from ming_sim.db import _OFFICE_LEVERAGE_WEIGHT
+
+    allowed = load_json_asset("offices.json").get("allowed_types") or []
+    assert allowed, "offices.json allowed_types 不应为空（数据前提）"
+    NON_COURT = {"后宫", "生员", "乡绅", "富商", "布衣", "流寇", "待铨"}
+    for t in allowed:
+        if t in NON_COURT:
+            continue
+        assert t in _OFFICE_LEVERAGE_WEIGHT, (
+            f"allowed_type「{t}」有朝堂实权却缺 _OFFICE_LEVERAGE_WEIGHT 权重（该类在朝者贡献 0）"
+        )
+
+
 def test_weizhongxian_ouster_drops_yandang_by_sili_weight(game):
     """#9（用户挑战）：魏忠贤(九千岁)退场对阉党的冲击应按司礼监批红(20)算，不是东厂(8)。
     他真权在司礼监秉笔=批红，office_type=东厂只是兼差。退场掉 20 而非 8。"""
@@ -511,3 +556,48 @@ def test_weizhongxian_ouster_drops_yandang_by_sili_weight(game):
     after = db.faction_leverage("阉党")
     drop = before - after
     assert drop == 20, f"九千岁退场应按司礼监批红掉 20（非东厂 8）：before={before} after={after} drop={drop}"
+
+
+def test_whitelist_faction_delta_routes_to_offset_survives_reconcile(game):
+    """#9 cmr R5 finding#1 [HIGH]：白名单派系的 LLM faction_delta.leverage 经 adjust_factions
+    注入 leverage_offset（而非直写 leverage 列），随后结算尾 recompute_all_faction_leverage()
+    兜底重算时不被抹回——LLM 的「影响力变化」与官职派生权重复合留存。
+    修前：adjust_factions 直写 leverage 列 → recompute_all 用旧 offset 算回公式值、把 +8 抹掉（红）。
+    修后：+8 进 offset → recompute_all 算出的公式值已含 +8、确认同值、不抹（绿）。"""
+    db, state, content = game
+    faction = "阉党"  # 白名单
+    before = db.faction_leverage(faction)
+    # 经 LLM faction_delta 路给阉党 +8 influence（adjust_factions 是落库单一入口）。
+    db.adjust_factions({faction: {"leverage": 8}})
+    after_apply = db.faction_leverage(faction)
+    assert after_apply == before + 8, (
+        f"faction_delta +8 应即时体现在 leverage（before={before} after_apply={after_apply}）"
+    )
+    # 模拟结算尾兜底 reconcile。
+    db.recompute_all_faction_leverage()
+    db.conn.commit()
+    after_reconcile = db.faction_leverage(faction)
+    assert after_reconcile == before + 8, (
+        f"白名单 faction_delta +8 注入 offset 后应经 reconcile 留存、不被抹回"
+        f"（before={before} after_reconcile={after_reconcile}）"
+    )
+
+
+def test_non_whitelist_faction_delta_direct_leverage_survives_reconcile(game):
+    """#9 cmr R5 finding#1：非白名单派系(宗室)的 faction_delta.leverage 仍直写 leverage 列，
+    recompute_all 不碰非白名单 → 增量留存（维持原行为）。"""
+    db, state, content = game
+    from ming_sim.db import _LEVERAGE_FACTIONS
+
+    faction = "宗室"
+    assert faction not in _LEVERAGE_FACTIONS, "宗室应为非白名单"
+    before = db.faction_leverage(faction)
+    db.adjust_factions({faction: {"leverage": 6}})
+    after_apply = db.faction_leverage(faction)
+    assert after_apply == before + 6, f"非白名单 +6 应直写 leverage（after_apply={after_apply}）"
+    db.recompute_all_faction_leverage()
+    db.conn.commit()
+    after_reconcile = db.faction_leverage(faction)
+    assert after_reconcile == before + 6, (
+        f"非白名单(宗室) leverage 不被 reconcile 动、增量留存（after_reconcile={after_reconcile}）"
+    )
