@@ -537,6 +537,37 @@ def test_office_rank_deputy_titles_not_inflated_to_principal():
     assert _office_rank_multiplier("火器西法") == 1.0
 
 
+def test_office_rank_aux_titles_audit_offices_json():
+    """#9 线上 R3（codex P2）：副都御史 是 offices.json 认的合法佐贰官名、⊃都御史(1.0 子串)，
+    经 min-within-part 却只命中 1.0 档 → 误判正职、都察院权重×1.0（应 0.5）。本测通治审计
+    offices.json 里所有「含某 1.0 档关键词作子串」的佐贰官名（副/佥/同知 类），断言全归 0.5；
+    同时把同批已修的 副总兵/佥都御史 一起验，并守正职(左/右都御史 是都察院堂官、提督/总督 类)
+    不被误降。修前红：副都御史/都督佥事/都督同知/同知/指挥同知 现返 1.0（应 0.5）。"""
+    from ming_sim.db import _office_rank_multiplier
+
+    # 含 1.0 子串的佐贰（应 0.5）——审计补全：
+    #   副都御史 ⊃ 都御史（本 finding 核心）、都督佥事 ⊃ 都督、都督同知 ⊃ 都督。
+    assert _office_rank_multiplier("副都御史") == 0.5, "副都御史⊃都御史 不该被误判正职 1.0"
+    assert _office_rank_multiplier("右副都御史") == 0.5, "右副都御史(带方位前缀)仍 0.5"
+    assert _office_rank_multiplier("都督佥事") == 0.5, "都督佥事⊃都督 是佐贰、应 0.5"
+    assert _office_rank_multiplier("都督同知") == 0.5, "都督同知⊃都督 是佐贰、应 0.5"
+    # 通治 generic 佐贰词干（同知/佥事）——覆盖将来其它复合衔（指挥同知/府同知…）。
+    assert _office_rank_multiplier("同知") == 0.5
+    assert _office_rank_multiplier("佥事") == 0.5
+    assert _office_rank_multiplier("指挥同知") == 0.5, "卫指挥同知 是佐贰、应 0.5"
+    # 同批已修两例一起验（防回归）。
+    assert _office_rank_multiplier("副总兵") == 0.5
+    assert _office_rank_multiplier("佥都御史") == 0.5
+    # 正职护栏：左/右都御史 是都察院堂官（非副），提督/总督 类是主官——不被新增 0.5 词误降。
+    assert _office_rank_multiplier("左都御史") == 1.0, "左都御史 是都察院堂官、应 1.0"
+    assert _office_rank_multiplier("右都御史") == 1.0, "右都御史 是都察院堂官、应 1.0"
+    assert _office_rank_multiplier("提督东厂") == 1.0
+    assert _office_rank_multiplier("提督京营") == 1.0
+    assert _office_rank_multiplier("总督军务") == 1.0
+    assert _office_rank_multiplier("秉笔太监") == 1.0
+    assert _office_rank_multiplier("都指挥使") == 1.0
+
+
 def test_jundadou_deputy_ouster_impact_is_half_of_principal():
     """#9 线上 R2 端到端：祖大寿(军队·锦州副总兵·边镇)退场对军队 leverage 的冲击 ≈ 域权重(边镇10)×0.5，
     即副职档(5)而非正职档(10)——证明品级子串修复贯穿到 _member_office_weight 与 leverage 全重算。"""
@@ -831,6 +862,88 @@ def test_legacy_save_calibrates_offset_via_driver_path(game):
             assert lev == max(0, min(100, round(offset + weight_sum))) == baseline, (
                 f"driver 路老档 leverage 应=钦定基线 {baseline}，得 {lev}（offset={offset} 权重={weight_sum}）"
             )
+        finally:
+            db.close()
+    finally:
+        import os
+        os.remove(path)
+
+
+def _make_legacy_save_col_added_uncalibrated(content):
+    """构造「列已加但未校准」的老档（崩溃断点态）：有 factions+characters 行、leverage 为玩过后的
+    真值、leverage_offset 列**已存在**（非本次刚 ADD、值全 0），但**校准从未完成**——持久校准标记
+    (__leverage_offsets_calibrated)缺失。模拟上次进程崩在「ensure_column 已 ADD 列并提交、
+    _calibrate_faction_offsets 未跑完（标记未落）」之间：重启见列已存在（flag False），仅凭内存 flag
+    会跳过校准 → offset 全留 0。返回 db_path（已 close）。"""
+    import os
+    import tempfile
+    from ming_sim.db import GameDB, _LEVERAGE_FACTIONS
+
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    seed_db = GameDB(path, content)
+    seed_db.seed_static_data()
+    seed_db.load_state()
+    # 把 offset 抹回 0、leverage 设回钦定基线（模拟「列在、未校准」），并删掉持久校准标记
+    # ——这才是崩在加列/校准之间的真断点态（列已存在但标记缺失），而非「列刚 ADD」。
+    for faction in _LEVERAGE_FACTIONS:
+        cf = content.factions.get(faction)
+        if cf is None:
+            continue
+        seed_db.conn.execute(
+            "UPDATE factions SET leverage=?, leverage_offset=0 WHERE name=?",
+            (int(cf.leverage), faction),
+        )
+    seed_db.conn.execute(
+        "DELETE FROM metrics WHERE key='__leverage_offsets_calibrated'"
+    )
+    seed_db.conn.commit()
+    seed_db.close()
+    return path
+
+
+def test_col_added_uncalibrated_save_recalibrates_on_open(game):
+    """#9 线上 R3（codex P2）crash-safety：老档「列已加但 offset 未校准（留 0）」态——上次崩在
+    『加列 / 校准』之间。修前：重启见列已存在 → ensure_column 返 False → flag False → 跳过校准 →
+    offset 全留 0 → 下次 reconcile 把白名单 leverage 重写成裸权重和（非锚定钦定基线）= 平衡崩。
+    修后（同事务 加列+老档校准 原子）：列存在但未校准 时仍补校准，offset 非全 0、leverage 复现 DB
+    基线。先红验（修前列已存在→跳校准→offset 留 0、leverage 被改成裸权重和）。"""
+    from ming_sim.db import GameDB, _LEVERAGE_FACTIONS
+
+    _, _, content = game
+    path = _make_legacy_save_col_added_uncalibrated(content)
+    try:
+        # 基线 = 钦定 content.factions[f].leverage（helper 把 DB leverage 设回了它）。直接取，
+        # 不另开 probe——probe 的 init_schema 会先把校准跑掉，遮蔽待测的 db 开档路径。
+        baselines = {
+            f: int(content.factions[f].leverage)
+            for f in _LEVERAGE_FACTIONS
+            if content.factions.get(f) is not None
+        }
+        assert baselines, "前置：白名单派系应在 content.factions"
+
+        # 正常开档（driver 路：仅 init_schema，不 seed_static_data）——这一步的 init_schema
+        # 须凭「列已存在但标记缺失」检测出未校准、补校准。
+        db = GameDB(path, content)
+        try:
+            db.load_state()
+            any_nonzero = False
+            for f, baseline in baselines.items():
+                offset = db.conn.execute(
+                    "SELECT leverage_offset FROM factions WHERE name=?", (f,)
+                ).fetchone()["leverage_offset"]
+                weight_sum = db._faction_office_weight_sum(f)
+                lev = db.faction_leverage(f)
+                if offset != 0:
+                    any_nonzero = True
+                # offset 应被补校准成 round(baseline − 权重和)，leverage 复现 DB 基线。
+                assert offset == round(baseline - weight_sum), (
+                    f"{f}：列已加未校准的老档应被补校准 offset，得 {offset} 期望 {round(baseline - weight_sum)}"
+                )
+                assert lev == max(0, min(100, round(offset + weight_sum))) == baseline, (
+                    f"{f}：leverage 应复现 DB 基线 {baseline}，得 {lev}（offset={offset} 权重={weight_sum}）"
+                )
+            assert any_nonzero, "至少一个白名单派系 offset 应非 0（证明确实补了校准、非全留 0）"
         finally:
             db.close()
     finally:
