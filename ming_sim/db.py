@@ -73,6 +73,13 @@ _OFFICE_RANK_TIERS = (
     )),
     (0.5, (  # 佐贰
         "侍郎", "次辅", "大学士", "副总兵", "参政", "佥都御史", "少卿",
+        # #9 线上 R3（codex P2）审计补全：offices.json 里「含某 1.0 档关键词作子串」的佐贰官名，
+        # 经 min-within-part 会与 1.0 子串共同命中、取 min 落 0.5（与 副总兵⊃总兵 同治）。逐个：
+        #   副都御史 ⊃ 都御史（本 finding 核心：都察院佐贰，左/右副都御史，非堂官）；
+        #   同知 ⊃（都督同知⊃都督、府同知、卫指挥同知）——通治 generic 佐贰词干「同知」；
+        #   佥事 ⊃（都督佥事⊃都督、按察佥事）——通治 generic 佐贰词干「佥事」（佥都御史已在上）。
+        # 不加 左/右都御史（都察院堂官、是主官非副）、提督/总督 类（主官）——它们正职档 1.0 不动。
+        "副都御史", "同知", "佥事",
     )),
     (0.25, (  # 属官 / 微员
         "郎中", "主事", "职方", "司属", "编修", "检讨", "游击", "守备",
@@ -988,6 +995,14 @@ class GameDB:
         self._leverage_offset_col_added = self.ensure_column(
             "factions", "leverage_offset", "INTEGER NOT NULL DEFAULT 0"
         )
+        # #9 线上 R3（codex P2）crash-safety：单靠「列刚 ADD」内存 flag 不够——若上次进程崩在
+        # 『ensure_column 已 ADD 列、_calibrate_faction_offsets 未执行』之间，重启见列已存在 →
+        # ensure_column 返 False → flag False → 跳过校准 → offset 全留 0 → 下次 reconcile 把白名单
+        # leverage 重写成裸权重和(非锚定钦定基线)=平衡崩。故另立**持久校准标记**(metrics 表的
+        # __leverage_offsets_calibrated)：校准成功时由 _calibrate_faction_offsets 写入；开档时只要
+        # 标记缺失就补校准（与 flag 取或）。标记写入与 offset/leverage 写入同事务提交(见 1041 行的
+        # commit)——崩在校准中途则标记未落、下次开档重做，二者全有或全无(原子)。
+        self._leverage_offsets_calibrated = self._has_meta_flag("__leverage_offsets_calibrated")
         # 章节记忆正文：event_type='chapter_summary' 用，存整段叙事章节（不受 outcome 80 字限）。
         self.ensure_column("event_memories", "body", "TEXT NOT NULL DEFAULT ''")
         # extractor 产出的 canonical delta：resolve_context 无条件持久化的重跑真源（ADR 0008 S2）。
@@ -1034,7 +1049,10 @@ class GameDB:
         # 校准后 flag 被消费置 False（见 _calibrate_faction_offsets），seed 路再调时直接 return、不重锚。
         # fresh 新档此时 factions 表空（行在 seed_static_data 才 INSERT）→ 这里跳过，仍走 seed 末尾的
         # fresh 校准（从 content.factions 取钦定基线）。
-        if self._leverage_offset_col_added and self.table_has_rows("factions"):
+        # #9 线上 R3 crash-safety：触发条件 = 列刚 ADD **或** 持久标记缺失（崩在加列/校准之间的老档）。
+        # 二者取或：标记缺失即未校准过，补做（offset_col_added=True 走老档反推分支）。
+        needs_calibration = self._leverage_offset_col_added or not self._leverage_offsets_calibrated
+        if needs_calibration and self.table_has_rows("factions"):
             self._calibrate_faction_offsets(
                 is_fresh_factions_seed=False, offset_col_added=True
             )
@@ -1997,7 +2015,16 @@ class GameDB:
         cmr R3：缺这一闸，老档每次 load 都重锚 offset；leverage 被 clamp 到 0/100 后再 load，
         offset 会被重锚成 round(clamped − weight_sum)≠原值，基线永久腐蚀。
         只校准白名单 faction；非白名单 offset 留 0、leverage 永不被 recompute 触碰。
-        不在此 commit——由 seed_static_data 末尾统一提交。"""
+        不在此 commit——由 seed_static_data 末尾统一提交。
+        #9 线上 R3 crash-safety：校准成功后写持久标记 __leverage_offsets_calibrated；该标记已存在
+        （已校准过）则直接 return、绝不再碰 offset——比内存 flag 更强（跨进程/跨实例、崩溃可检测）。"""
+        # 持久标记已在（上一生命周期校准成功落库）且**列非本次刚 ADD**（offset 数据仍在）：绝不再碰
+        # offset——堵「已校准的 leverage 被 clamp 后再重锚成 round(clamped−weight) 腐蚀基线」。
+        # 注意须排除 offset_col_added：列若刚被 DROP+重 ADD（offset 数据已丢），即便 metrics 里残留
+        # 旧标记也必须重校准（数据真没了），否则 offset 全留 0、leverage 被重写成裸权重和。
+        if not offset_col_added and self._has_meta_flag("__leverage_offsets_calibrated"):
+            self._leverage_offset_col_added = False
+            return
         # 老档常规 load（列早已存在、offset 已校准）：绝不再碰 offset。
         if not is_fresh_factions_seed and not offset_col_added:
             return
@@ -2026,6 +2053,27 @@ class GameDB:
             if is_fresh_factions_seed:
                 # 立即 recompute 令 DB leverage 与公式自洽（修污染清洗用 offset=0 写脏的中间值）。
                 self.recompute_faction_leverage(faction)
+        # 校准成功：落持久标记。与上面 offset/leverage 的写在同一事务（调用方统一 commit），
+        # 崩在校准中途则标记一并未落、下次开档重做（原子：offset+标记 全有或全无）。
+        self._set_meta_flag("__leverage_offsets_calibrated")
+        self._leverage_offsets_calibrated = True
+
+    def _has_meta_flag(self, key: str) -> bool:
+        """查 metrics 表里某持久标记是否存在（#9 R3 crash-safe 迁移标记用）。metrics 在 init_schema
+        建表脚本里已建，故此调用安全。值约定 1=已置位。"""
+        row = self.conn.execute(
+            "SELECT value FROM metrics WHERE key=?", (key,)
+        ).fetchone()
+        return row is not None and int(row["value"]) == 1
+
+    def _set_meta_flag(self, key: str) -> None:
+        """置 metrics 表里某持久标记=1（幂等 upsert）。不在此 commit——由调用方统一提交，
+        与同事务的其它写一并落库或一并回滚。"""
+        self.conn.execute(
+            "INSERT INTO metrics(key, value) VALUES(?, 1) "
+            "ON CONFLICT(key) DO UPDATE SET value=1",
+            (key,),
+        )
 
     def record_person_log(
         self,
