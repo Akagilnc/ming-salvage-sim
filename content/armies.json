@@ -24,7 +24,8 @@
       "mobility": 35,
       "loyalty": 48,
       "status": "拱卫京师但空额、克扣和操练废弛严重。",
-      "owner_power": "ming"
+      "owner_power": "ming",
+      "salary_rate": 1.0
     },
     {
       "id": "guanning",
@@ -44,7 +45,8 @@
       "mobility": 48,
       "loyalty": 55,
       "status": "宁锦守线尚可，欠饷严重，主动大举出击风险极高。",
-      "owner_power": "ming"
+      "owner_power": "ming",
+      "salary_rate": 2.0
     },
     {
       "id": "shanhaiguan",
@@ -64,7 +66,8 @@
       "mobility": 28,
       "loyalty": 58,
       "status": "京师门户，守强攻弱，需与宁锦军饷联动。",
-      "owner_power": "ming"
+      "owner_power": "ming",
+      "salary_rate": 1.1
     },
     {
       "id": "xuan_da",
@@ -84,7 +87,8 @@
       "mobility": 54,
       "loyalty": 50,
       "status": "边饷紧、旱灾重，防蒙古与后金绕袭压力并存。",
-      "owner_power": "ming"
+      "owner_power": "ming",
+      "salary_rate": 1.5
     },
     {
       "id": "jizhen",
@@ -104,7 +108,8 @@
       "mobility": 50,
       "loyalty": 49,
       "status": "京师屏障，欠饷和军纪问题会直接牵动京畿。",
-      "owner_power": "ming"
+      "owner_power": "ming",
+      "salary_rate": 1.55
     },
     {
       "id": "denglai",
@@ -124,7 +129,8 @@
       "mobility": 62,
       "loyalty": 46,
       "status": "可支援辽东和海运，但虚实难辨，兵变风险需防。",
-      "owner_power": "ming"
+      "owner_power": "ming",
+      "salary_rate": 1.4
     },
     {
       "id": "dongjiang",
@@ -144,7 +150,8 @@
       "mobility": 72,
       "loyalty": 38,
       "status": "牵制后金有用，但自主性强、报功报饷虚实难辨。",
-      "owner_power": "ming"
+      "owner_power": "ming",
+      "salary_rate": 1.2
     },
     {
       "id": "shaanxi_army",
@@ -164,7 +171,8 @@
       "mobility": 50,
       "loyalty": 34,
       "status": "饥荒、裁驿和欠饷交叠，易与地方民变互相点燃。",
-      "owner_power": "ming"
+      "owner_power": "ming",
+      "salary_rate": 1.4
     },
     {
       "id": "nanjing_garrison",
@@ -184,7 +192,8 @@
       "mobility": 45,
       "loyalty": 52,
       "status": "江南财赋重地，军力可守不可远征，士绅牵制明显。",
-      "owner_power": "ming"
+      "owner_power": "ming",
+      "salary_rate": 0.75
     },
     {
       "id": "fujian_navy",
@@ -204,7 +213,8 @@
       "mobility": 70,
       "loyalty": 45,
       "status": "海防与海贸灰区纠缠，能巡海但难离本省太久。",
-      "owner_power": "ming"
+      "owner_power": "ming",
+      "salary_rate": 1.25
     },
     {
       "id": "guangdong_navy",
@@ -224,7 +234,8 @@
       "mobility": 68,
       "loyalty": 47,
       "status": "可守海口与护商，远离本地会受地方掣肘。",
-      "owner_power": "ming"
+      "owner_power": "ming",
+      "salary_rate": 1.25
     },
     {
       "id": "southwest_tusi",
@@ -244,7 +255,8 @@
       "mobility": 60,
       "loyalty": 32,
       "status": "山地作战有用，听调取决于土司关系和赏赐名分。",
-      "owner_power": "ming"
+      "owner_power": "ming",
+      "salary_rate": 0.8
     },
     {
       "id": "manchu_banners_main",
