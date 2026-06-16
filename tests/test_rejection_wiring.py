@@ -734,3 +734,71 @@ def test_provenance_from_stored_recovers_all_forms():
     assert _provenance_from_stored(None) == Provenance.system_simulation
     assert _provenance_from_stored("查无此来源") == Provenance.system_simulation
     assert _provenance_from_stored("Provenance.查无此成员") == Provenance.system_simulation
+
+
+def test_settling_recovery_fallthrough_preserves_system_source(content, tmp_path, monkeypatch):
+    """#146 cmr r2（Claude clarity + codex medium concur）：SETTLING 非 ready 崩溃恢复
+    fallthrough（ctx 存在但 extracted is None）重走 resolve_directives 重新推演结算时，必须把存档
+    ctx['source'] 经 _provenance_from_stored 穿透传入——provenance 按构造保真。
+
+    构造一条 source=system_simulation 的非 ready SETTLING ctx（clear_for_resimulation 把 ready ctx
+    降级成 ready=0 保留 source、driver persist system 来源 ctx 都会留下此形态），让 extractor 产个会被拒
+    的坏 delta，经 session.resolve_turn() 走恢复 fallthrough 结算，断言：拒收行 source==system_simulation
+    （不被误标 player_decree）+ 邸报无「窒碍未行」（系统拒收对玩家静默）。
+
+    红验：把 step2 的 source 穿透改回硬编码 player_decree（resolve_directives 不读 ct'source）→ 该测试红
+    （source 误标 player、邸报出现「窒碍未行」）；恢复穿透后绿。"""
+    import ming_sim.decree as decree_mod
+    from ming_sim.applier import Provenance
+    from ming_sim.models import LLMConfig, TurnPhase
+    from ming_sim.session import GameSession
+
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "user_data"))
+    cfg = LLMConfig(api_key="", base_url="http://unused", model="unused")
+    dbp = str(tmp_path / "recovery.db")
+    sess = GameSession(db_path=dbp, llm_config=cfg, content=content, verify_llm=False)
+    try:
+        db, state = sess.db, sess.state
+        turn = state.turn
+
+        # 模拟崩溃后的非 ready SETTLING 状态：source=system_simulation 的占位 ctx（ready=0，无 extracted），
+        # decree_text 作哨兵草案（FRONT_HALF_DONE 免草案恢复路据它续跑）。
+        db.save_resolve_context(
+            turn, "某诏", "本月邸报。", {},
+            secret_orders={}, relevant_memories=[],
+            source=Provenance.system_simulation.value,
+        )
+        state.turn_phase = TurnPhase.SETTLING.value
+        db.save_state(state)
+        # 跨进程恢复：内存 last_decree 已被 begin_turn 清空（哨兵草案从 ctx['decree_text'] 恢复）。
+        sess.last_decree = ""
+
+        # 重新推演：simulator 出无决策块邸报、extractor 产坏 delta（拒收）。
+        monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
+        monkeypatch.setattr(decree_mod, "simulate_season_with_payload",
+                            lambda *a, **k: ("本月邸报。", k.get("simulator_payload") or {}))
+        monkeypatch.setattr(decree_mod, "build_extractor_shared_context", lambda *a, **k: "")
+        monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
+        monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: None)
+        monkeypatch.setattr(
+            decree_mod, "extract_scores_by_modules_with_agno",
+            lambda *a, **k: ({"character_status_changes": [
+                {"name": "查无此人子", "status": "dead", "reason": "测试"}]}, "out", "in"))
+
+        sess.resolve_turn()
+
+        # A 来源：恢复 fallthrough 穿透 ctx['source'] → 拒收记 system_simulation，不误标 player。
+        rows = _rejection_rows(db, turn)
+        assert len(rows) == 1
+        assert rows[0][3] == "system_simulation"
+
+        # B 可见性：系统来源拒收对玩家静默——邸报无「窒碍未行」提示。
+        report = db.conn.execute(
+            "SELECT report FROM turn_reports WHERE turn=?", (turn,)).fetchone()
+        assert report is not None
+        assert "窒碍未行" not in report[0]
+    finally:
+        try:
+            sess.close()
+        except Exception:
+            pass
