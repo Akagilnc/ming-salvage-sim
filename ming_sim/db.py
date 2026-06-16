@@ -5601,7 +5601,11 @@ class GameDB:
                 json.dumps(relevant_memories or [], ensure_ascii=False),
                 json.dumps(extracted if extracted is not None else {}, ensure_ascii=False),
                 1 if extracted is not None else 0,
-                str(source or "system_simulation"),
+                # source 显式归一为枚举「值」字符串：Provenance 是 (str, Enum)，str(member) 在多数
+                # Python 版本落 'Provenance.player_decree' 而非 'player_decree'——重抽时
+                # Provenance(...) 不匹配 → 静默退回 system_simulation 丢源（Sourcery #175 bug_risk）。
+                # getattr(.,"value",.) 让枚举取 .value、普通字符串原样、None/空回落 system_simulation。
+                str(getattr(source, "value", source) or "system_simulation"),
             ),
         )
         self.conn.commit()
