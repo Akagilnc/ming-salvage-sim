@@ -227,7 +227,7 @@ def resolve_directives(
         db.save_resolve_context(
             state.turn, decree_text, "", {},
             secret_orders={}, relevant_memories=[],   # #48：占位用分组承载的空 dict（旋即被真存覆盖）
-            source=source.value,    # #146 A：皇帝下旨回合默认 player（被真存同值覆盖）；恢复 fallthrough 穿透 ctx 真源
+            source=Provenance(source).value,    # #146 A：皇帝下旨回合默认 player（被真存同值覆盖）；恢复 fallthrough 穿透 ctx 真源。Provenance(source).value 归一(兼容 enum/合法值串)、与 persist_resolve_context 一致(gemini R5)
         )
 
     # 1.8) 历史脉络：取近几回合章节记忆注入推演（章节记忆取代旧的关键词原子检索）。
@@ -335,7 +335,7 @@ def resolve_directives(
             db.save_resolve_context(
                 state.turn, decree_text, narrative, simulator_payload,
                 secret_orders=secret_orders_for_sim, relevant_memories=relevant_memories,
-                source=source.value,  # #146 A：HITL 暂停存触发源（默认 player），phase2 续跑/崩溃恢复继承
+                source=Provenance(source).value,  # #146 A：HITL 暂停存触发源（默认 player），phase2 续跑/崩溃恢复继承。Provenance(source).value 归一(兼容 enum/合法值串)、与 persist_resolve_context 一致(gemini R5)
             )
             db.save_pending_decisions(state.turn, decisions)
             state.turn_phase = TurnPhase.AWAITING_DECISION.value
