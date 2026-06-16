@@ -1485,8 +1485,10 @@ def _displace_duplicate_offices(
         frow = db.conn.execute(
             "SELECT faction FROM characters WHERE name=?", (dn,)
         ).fetchone()
-        if frow is not None:
-            displaced_factions.add(str(frow["faction"] or ""))
+        # 空/None faction 提前滤掉（recompute_faction_leverage("") 虽被白名单校验 no-op，
+        # 但提前过滤免去无意义调用，集合也不残留空串。线上 R5 gemini medium。
+        if frow is not None and frow["faction"]:
+            displaced_factions.add(str(frow["faction"]))
     for fac in displaced_factions:
         db.recompute_faction_leverage(fac)
     db.conn.commit()

@@ -2022,14 +2022,17 @@ class GameDB:
         有显著差（offset 均非 0），故「已校准却全 0」这一误判窗口对真实存档不可达。安全性据此
         （已校准态不可能与『offset 全 0』共存），**不**依赖『全 0 ⇒ leverage 未 clamp 故重校准幂等』
         的假设——该假设在玩过多回合、weight_sum 漂移触 clamp 后并不恒成立（codex R4 指出的缺口，
-        但其触发前提『全派系 offset 同时为 0』本身不可达，故不构成真实风险）。"""
-        rows = self.conn.execute(
-            "SELECT leverage_offset FROM factions WHERE name IN ({})".format(
-                ",".join("?" * len(_LEVERAGE_FACTIONS))
-            ),
-            tuple(_LEVERAGE_FACTIONS),
-        ).fetchall()
-        return all(int(r["leverage_offset"] or 0) == 0 for r in rows)
+        但其触发前提『全派系 offset 同时为 0』本身不可达，故不构成真实风险）。
+
+        逐派系单参数查询（白名单仅 6 项）——不拼 IN(...) 动态占位串（线上 R5 sourcery opengrep
+        把 .format 拼 SQL 标为注入面；虽只拼 `?` 占位、值仍参数绑定无注入，此写法更干净地避开）。"""
+        for faction in _LEVERAGE_FACTIONS:
+            row = self.conn.execute(
+                "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
+            ).fetchone()
+            if row is not None and int(row["leverage_offset"] or 0) != 0:
+                return False
+        return True
 
     def _calibrate_faction_offsets(
         self, is_fresh_factions_seed: bool, offset_col_added: bool = False
