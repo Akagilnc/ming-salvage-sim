@@ -44,20 +44,73 @@ def _new_army_historically_applied(it: dict) -> bool:
         return False
 
 
-# #9 派系势力联动：在朝(active)成员官职权重(office_type→weight)决定朝堂派系 leverage。
-# 只对朝堂博弈派系；外族(后金/蒙古/朝鲜)/后宫/宗室/流寇不握明朝官职、leverage 另义、不联动。
-_LEVERAGE_FACTIONS = {"阉党", "东林", "皇党", "中立", "军队"}
+# #9 派系势力联动（全重算，offset 锚定钦定基线）：
+# leverage(faction) = clamp(0,100, offset + 当前在朝(active)成员官职权重和)
+# 其中 offset = 钦定基线 − 开局校准时的权重和（开局时两者相等 → leverage==钦定基线，保开局平衡）。
+# 核心退场→当前和降→leverage 降（修 #9）；起复/升迁→升。绝对重算每次从公式现算、不累加 → 无漂移。
+# 只对朝堂博弈派系；外族(后金/蒙古/朝鲜)/后宫(中宫/嫔妃/宠妃)/宗室/流寇不握明朝官职、leverage 另义、不联动。
+_LEVERAGE_FACTIONS = {"阉党", "东林", "皇党", "中立", "军队", "西学"}
+
+# office_type 域权重（陡梯：顶层中枢压倒、长尾近零）。数值可调（因 offset 锚定，权重只决定
+# 「变化幅度」不决定开局水平）；结构（顶层压倒 + 品级调制）是硬要求。
 _OFFICE_LEVERAGE_WEIGHT = {
-    "内阁": 10, "司礼监": 9,                       # 中枢首脑(票拟/批红)
-    "兵部": 8, "吏部": 8, "户部": 7, "边镇": 7,    # 实权部院 / 实兵权(督师/总兵)
-    "都察院": 6, "锦衣卫": 6, "东厂": 6,           # 监察 / 厂卫
-    "礼部": 5, "工部": 5, "翰林院": 4, "内臣": 4,  # 部务 / 清贵储相 / 一般宦官
-    "地方": 3, "外臣": 2,                          # 地方督抚以下 / 外朝低阶闲职
-    # 后宫 / 宗藩 / 未仕 → 0(不在朝堂博弈或无实权)
+    "司礼监": 20, "内阁": 18,                                  # 批红 / 票拟 中枢
+    "兵部": 12, "吏部": 12, "户部": 10, "边镇": 10,            # 部院 / 督师边镇
+    "锦衣卫": 8, "东厂": 8, "都察院": 8,                       # 厂卫 / 监察
+    "礼部": 5, "工部": 5, "内臣": 4,                           # 中层部务
+    "翰林院": 2, "地方": 2, "外臣": 1,                         # 长尾
+    # 后宫 / 宗藩 / 未仕 → 0（不在朝堂博弈或无实权）；office_type 不在表里 → 权重 0。
 }
 
-# 退场类状态(削职)——与 active 互斥，跨这条边界才动 faction leverage。
+# 品级档 multiplier：从 office 头衔字串解析（同一 office_type 内 尚书 vs 职方 权力天差地别）。
+# 关键词按档分组；一个头衔逐档命中（堂官档优先于佐贰、佐贰优先于属官）。未识别 → 默认 1.0（保守，
+# 避免漏算堂官）。词序在档内不影响（只判是否含子串）。
+_OFFICE_RANK_TIERS = (
+    (1.0, (  # 堂官 / 主官
+        "尚书", "掌印", "秉笔", "提督", "首辅", "督师", "总督", "巡抚",
+        "总兵", "都督", "都指挥使", "都御史",
+    )),
+    (0.5, (  # 佐贰
+        "侍郎", "次辅", "大学士", "副总兵", "参政", "佥都御史", "少卿",
+    )),
+    (0.25, (  # 属官 / 微员
+        "郎中", "主事", "职方", "司属", "编修", "检讨", "游击", "守备",
+        "候补", "候用", "随堂", "信邸内官",
+    )),
+)
+_DEFAULT_OFFICE_RANK_MULTIPLIER = 1.0  # 未识别头衔的保守默认（避免漏算堂官）
+
+# 退场类状态(削职)——与 active 互斥（set_character_status 据此清空 office）。
 _OUSTED_STATES = {"offstage", "dismissed", "imprisoned", "exiled", "retired", "dead"}
+
+
+def _office_rank_multiplier(office: str) -> float:
+    """从 office 头衔字串解析品级 multiplier。逗号分隔的多职取**已识别分项中的最高档**。
+    只在整串无任何识别词时才落默认 1.0（保守，避免漏算堂官）——故描述性尾缀（如「兵部职方,
+    火器西法」的「火器西法」）不会把默认 1.0 拉进 max 污染掉真实品级。"""
+    text = office or ""
+    if not text.strip():
+        return _DEFAULT_OFFICE_RANK_MULTIPLIER
+    best: Optional[float] = None
+    for part in (p.strip() for p in normalize_office(text).split(",")):
+        if not part:
+            continue
+        for mult, keywords in _OFFICE_RANK_TIERS:
+            if any(kw in part for kw in keywords):
+                if best is None or mult > best:
+                    best = mult
+                break  # 档内自高到低，首个命中即该分项最高档
+    # 整串无任一识别词 → 保守默认（避免把生造/罕见堂官头衔误判成低档）
+    return best if best is not None else _DEFAULT_OFFICE_RANK_MULTIPLIER
+
+
+def _member_office_weight(office_type: str, office: str) -> float:
+    """单个在朝成员的官职权重 = office_type 域权重 × 品级档 multiplier。
+    office_type 不在表里（后宫/宗藩/未仕等）→ 0（品级再高也乘 0）。"""
+    domain = _OFFICE_LEVERAGE_WEIGHT.get(office_type, 0)
+    if domain == 0:
+        return 0.0
+    return domain * _office_rank_multiplier(office)
 
 
 def normalize_office(office: str) -> str:
@@ -899,6 +952,9 @@ class GameDB:
         # 开局负面帝国修正：clear_gate(机器消除条件)、legacy_key(对应 opening_legacies.key，开局修正去重用)
         self.ensure_column("legacies", "clear_gate", "TEXT NOT NULL DEFAULT '{}'")
         self.ensure_column("legacies", "legacy_key", "TEXT NOT NULL DEFAULT ''")
+        # #9 派系势力 offset 锚点：leverage = clamp(offset + 在朝官职权重和)。开局校准时
+        # offset = 钦定基线 − 开局权重和（见 _calibrate_faction_offsets）。老档缺省 0，由该校准回填。
+        self.ensure_column("factions", "leverage_offset", "INTEGER NOT NULL DEFAULT 0")
         # 章节记忆正文：event_type='chapter_summary' 用，存整段叙事章节（不受 outcome 80 字限）。
         self.ensure_column("event_memories", "body", "TEXT NOT NULL DEFAULT ''")
         # extractor 产出的 canonical delta：resolve_context 无条件持久化的重跑真源（ADR 0008 S2）。
@@ -1413,7 +1469,8 @@ class GameDB:
                     (row["name"], row["office"], row["office_type"], "存档迁移"),
                 )
 
-        if not self.table_has_rows("factions"):
+        is_fresh_factions_seed = not self.table_has_rows("factions")
+        if is_fresh_factions_seed:
             for faction in self.content.factions.values():
                 self.conn.execute(
                     """
@@ -1569,6 +1626,8 @@ class GameDB:
         # 路径已处理）。此刻 characters + regions 均已 INSERT，location region_id 校验可用。
         # 5b r4（Claude + codex-b concur, P1）：漏此调用则新档 7 名罢居旧臣留 active+污染、不进人才池。
         self._migrate_legacy_office_pollution()
+        # #9：派系势力 offset 校准。此刻 factions + characters 均已 INSERT、office 污染已洗。
+        self._calibrate_faction_offsets(is_fresh_factions_seed)
         self.conn.commit()
 
     def _migrate_arrears_unit_to_silver(self, is_fresh_armies_seed: bool) -> None:
@@ -1796,13 +1855,13 @@ class GameDB:
     ) -> None:
         """改人物状态：active/offstage/dismissed/imprisoned/exiled/retired/dead。
         大臣走 characters 表；后宫（consorts）走内存对象 + consort_traits 备档。
-        #9：跨 active↔退场 边界时，按官职权重增量联动所属朝堂派系 leverage（党魁倒台势力跟跌）。"""
+        #9：状态变更后全重算所属朝堂派系 leverage（在朝成员官职权重和 + offset；党魁倒台势力跟跌）。"""
         valid = {"active", "offstage", "dismissed", "imprisoned", "exiled", "retired", "dead"}
         if status not in valid:
             raise ValueError(f"character status 非法：{status}")
-        # #9：UPDATE 前读旧状态 + 派系 + 官职类型（退场会清 office 但 office_type 保留，仍可读权重）。
+        # #9：UPDATE 前读旧派系（退场清 office 后仍按当前在朝成员现算，与旧职无关）。
         prev = self.conn.execute(
-            "SELECT status, faction, office_type FROM characters WHERE name=?", (name,)
+            "SELECT faction FROM characters WHERE name=?", (name,)
         ).fetchone()
         # 去职（下狱/革职/流放/致仕/出宫/死）即削职：清空 characters.office，
         # 原职仍留在 character_offices 备档可追溯。复职（active）不动 office。
@@ -1819,36 +1878,72 @@ class GameDB:
                 "UPDATE characters SET status=?, status_reason=?, status_changed_turn=?, reason_code=? WHERE name=?",
                 (status, reason[:200], state.turn, reason_code_value, name),
             )
-        # #9：跨 active↔退场 边界 → 所属朝堂派系 leverage 按官职权重增量（退场扣、起复加）。
+        # #9：状态变更后全重算该人物所属朝堂派系 leverage（绝对值、读当前所有在朝成员 → 无漂移）。
         if prev is not None:
-            self._adjust_faction_leverage_on_status(
-                faction=str(prev["faction"] or ""),
-                office_type=str(prev["office_type"] or ""),
-                was_ousted=str(prev["status"] or "active") in _OUSTED_STATES,
-                now_ousted=ousted,
-            )
+            self.recompute_faction_leverage(str(prev["faction"] or ""))
         self.conn.commit()
 
-    def _adjust_faction_leverage_on_status(
-        self, faction: str, office_type: str, was_ousted: bool, now_ousted: bool
-    ) -> None:
-        """#9：人物跨 active↔退场 边界时，按其官职权重增量调所属朝堂派系 leverage。
-        退场（active→ousted）扣、起复（ousted→active）加，对称无累积漂移；clamp 0-100。
-        只对 _LEVERAGE_FACTIONS（外族/后宫/宗室不握明官、不联动）；office_type 无权重（后宫/未仕等）跳过。
-        不在此 commit——由调用方 set_character_status 末尾统一提交。"""
-        if faction not in _LEVERAGE_FACTIONS or was_ousted == now_ousted:
+    def _faction_office_weight_sum(self, faction: str) -> float:
+        """该 faction 当前所有 status='active' 的大明成员的官职权重和
+        （每人 = office_type 域权重 × 品级档 multiplier）。只算大明朝臣（power_id='ming'）——
+        外藩成员即便挂 ming 风格头衔也不握明官；白名单派系本就全 ming，此约束为防御。"""
+        rows = self.conn.execute(
+            "SELECT office_type, office FROM characters "
+            "WHERE faction=? AND status='active' AND power_id='ming'",
+            (faction,),
+        ).fetchall()
+        return sum(
+            _member_office_weight(str(r["office_type"] or ""), str(r["office"] or ""))
+            for r in rows
+        )
+
+    def recompute_faction_leverage(self, faction: str) -> None:
+        """#9：全重算朝堂派系 leverage = clamp(0,100, offset + 当前在朝官职权重和)。
+        绝对值（每次从公式现算、不累加）→ 无 clamp 漂移、时序无关（多次调用末值一致）。
+        只对 _LEVERAGE_FACTIONS（外族/后宫/宗室不握明官、leverage 另义）；非白名单直接 return、不动。
+        不在此 commit——由调用方统一提交（保事务原子性）。"""
+        if faction not in _LEVERAGE_FACTIONS:
             return
-        weight = _OFFICE_LEVERAGE_WEIGHT.get(office_type, 0)
-        if weight == 0:
-            return
-        delta = -weight if now_ousted else weight  # active→ousted 扣；ousted→active 加
         row = self.conn.execute(
-            "SELECT leverage FROM factions WHERE name=?", (faction,)
+            "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
         ).fetchone()
         if row is None:
             return
-        new_lev = max(0, min(100, int(row["leverage"]) + delta))
+        offset = int(row["leverage_offset"] or 0)
+        weight_sum = self._faction_office_weight_sum(faction)
+        new_lev = max(0, min(100, round(offset + weight_sum)))
         self.conn.execute("UPDATE factions SET leverage=? WHERE name=?", (new_lev, faction))
+
+    def _calibrate_faction_offsets(self, is_fresh_factions_seed: bool) -> None:
+        """#9 offset 校准：offset = 基线 leverage − 当前在朝官职权重和。
+        新档（is_fresh_factions_seed）：基线取**钦定 content.factions[f].leverage**（不读 DB——
+        污染清洗的 set_character_status 已用 offset=0 把 DB leverage 改脏，读 DB 会把脏值烙进 offset），
+        校准后立即 recompute 令 DB leverage 自洽（开局权重和稳定 → leverage 复现钦定基线、保开局平衡）。
+        老档（column 刚 ADD、offset 缺省 0）：基线取**当前 DB leverage**（玩过后的真值），offset
+        令首次 recompute 不跳变（幂等迁移）；不 recompute（避免把老档当前值改动）。
+        只校准白名单 faction；非白名单 offset 留 0、leverage 永不被 recompute 触碰。
+        不在此 commit——由 seed_static_data 末尾统一提交。"""
+        for faction in _LEVERAGE_FACTIONS:
+            row = self.conn.execute(
+                "SELECT leverage FROM factions WHERE name=?", (faction,)
+            ).fetchone()
+            if row is None:
+                continue  # 该白名单派系不在本档 factions 表（数据缺失）→ 跳过
+            if is_fresh_factions_seed:
+                content_faction = self.content.factions.get(faction)
+                if content_faction is None:
+                    continue
+                baseline = int(content_faction.leverage)
+            else:
+                baseline = int(row["leverage"])
+            weight_sum = self._faction_office_weight_sum(faction)
+            offset = round(baseline - weight_sum)
+            self.conn.execute(
+                "UPDATE factions SET leverage_offset=? WHERE name=?", (offset, faction)
+            )
+            if is_fresh_factions_seed:
+                # 立即 recompute 令 DB leverage 与公式自洽（修污染清洗用 offset=0 写脏的中间值）。
+                self.recompute_faction_leverage(faction)
 
     def record_person_log(
         self,
@@ -1964,7 +2059,9 @@ class GameDB:
         llm_config: Any = None,
     ) -> None:
         """既有官员调任/升迁：改 characters.office（office_type 给空则不动），
-        同步 character_offices 备档。状态不变（仍 active）。"""
+        同步 character_offices 备档。状态不变（仍 active）。
+        #9：授官改了 office_type/品级 → 末尾全重算所属朝堂派系 leverage（升迁也联动；
+        起复路 set_character_status(active)→set_character_office(新职) 双 recompute，新职覆盖中间值）。"""
         office = normalize_office(office)
         current_type = (
             self.conn.execute(
@@ -1996,6 +2093,12 @@ class GameDB:
             """,
             (name, office, eff_type, source),
         )
+        # #9：授官改了 office_type/品级权重 → 全重算该人物所属朝堂派系 leverage（commit 前）。
+        faction_row = self.conn.execute(
+            "SELECT faction FROM characters WHERE name=?", (name,)
+        ).fetchone()
+        if faction_row is not None:
+            self.recompute_faction_leverage(str(faction_row["faction"] or ""))
         self.conn.commit()
         if name in self.content.characters:
             self.content.characters[name].office = office
