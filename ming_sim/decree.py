@@ -175,8 +175,14 @@ def resolve_directives(
     content=None,
     registry=None,
     cheat_directive: str = "",
+    source: Provenance = Provenance.player_decree,
 ) -> ResolveResult:
     """phase1：跑固定财政 + simulator 写邸报，解析 HITL 决策点。
+
+    source（#146 cmr r2）：本回合结算 delta 的来源。默认 player_decree——正常皇帝下旨路
+    行为不变。崩溃恢复 fallthrough（SETTLING 非 ready ctx 重走本函数）须把存档 ctx['source']
+    经 _provenance_from_stored 还原后传入，使 provenance 按构造保真（system_simulation 重跑仍
+    记 system、对玩家静默），不依赖「非 ready SETTLING ctx 恒 player」这一脆弱不变式。
 
     on_event(kind, data): 推演过程实时回调。
     kind ∈ {stage, thinking, text}；stage 携带阶段名，thinking/text 携带增量片段。
@@ -221,7 +227,7 @@ def resolve_directives(
         db.save_resolve_context(
             state.turn, decree_text, "", {},
             secret_orders={}, relevant_memories=[],   # #48：占位用分组承载的空 dict（旋即被真存覆盖）
-            source=Provenance.player_decree.value,    # #146 A：皇帝下旨回合，占位即标 player（被真存同值覆盖）
+            source=source.value,    # #146 A：皇帝下旨回合默认 player（被真存同值覆盖）；恢复 fallthrough 穿透 ctx 真源
         )
 
     # 1.8) 历史脉络：取近几回合章节记忆注入推演（章节记忆取代旧的关键词原子检索）。
@@ -329,14 +335,15 @@ def resolve_directives(
             db.save_resolve_context(
                 state.turn, decree_text, narrative, simulator_payload,
                 secret_orders=secret_orders_for_sim, relevant_memories=relevant_memories,
-                source=Provenance.player_decree.value,  # #146 A：HITL 暂停存 player，phase2 续跑/崩溃恢复继承
+                source=source.value,  # #146 A：HITL 暂停存触发源（默认 player），phase2 续跑/崩溃恢复继承
             )
             db.save_pending_decisions(state.turn, decisions)
             state.turn_phase = TurnPhase.AWAITING_DECISION.value
             db.save_state(state)
         return ResolveResult(awaiting=True, decisions=db.list_pending_decisions(state.turn))
 
-    # 无决策点：透明续跑结算（cheat 仍可叠加）。皇帝下旨触发 → player_decree（#146 A：拒收提示皇帝）。
+    # 无决策点：透明续跑结算（cheat 仍可叠加）。来源贯穿 source 参数（默认 player_decree：皇帝下旨
+    # 拒收提示皇帝；恢复 fallthrough 穿透 ctx 真源，system 重跑仍记 system 静默——#146 cmr r2）。
     report = _settle_after_narrative(
         state, db, agno_db, llm_config, decree_text, narrative,
         simulator_payload=simulator_payload,
@@ -345,7 +352,7 @@ def resolve_directives(
         before_turn=before_turn, _emit=_emit,
         content=content, registry=registry,
         cheat_directive=cheat_directive,
-        source=Provenance.player_decree,
+        source=source,
     )
     return ResolveResult(awaiting=False, report=report)
 
