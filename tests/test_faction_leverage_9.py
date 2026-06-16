@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import pytest
 
+from driver import run_settle
 from ming_sim.issues import apply_office_appointment
 
 
@@ -133,21 +134,35 @@ def test_restore_uses_new_office_weight_not_old(game):
     base_after_both_out = db.faction_leverage("阉党")
 
     # name_lo 起复到地方(低权)
-    apply_office_appointment(
+    result_lo = apply_office_appointment(
         db, state, content, None, name_lo, "某府知府", reason="起复地方", faction="阉党"
     )
     after_low = db.faction_leverage("阉党")
 
     # name_hi 起复到内阁(高权)
-    apply_office_appointment(
+    result_hi = apply_office_appointment(
         db, state, content, None, name_hi, "内阁大学士", reason="起复内阁", faction="阉党"
     )
     after_high = db.faction_leverage("阉党")
 
-    assert after_low >= base_after_both_out, "起复到地方应至少不降"
-    # name_hi 起复(内阁)的增量 应大于 name_lo 起复(地方)的增量
+    # cmr R3 finding#3 防假绿：两次任命都必须真落库（未被拒）——若低职任命被拒(inc_low=0)，
+    # 高职任命成功仍满足 inc_high>inc_low，本测试会假绿（没真验「加的是新职权重」）。
+    assert not result_lo.get("rejected"), f"起复到地方不应被拒：{result_lo}"
+    assert not result_hi.get("rejected"), f"起复到内阁不应被拒：{result_hi}"
+    # 低职起复后该人应 active 且 office 含目标低职（新职权重确被计入，而非任命形同未发生）。
+    assert db.get_character_status(name_lo)[0] == "active", "低职起复后该人应 active"
+    lo_office = db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (name_lo,)
+    ).fetchone()["office"]
+    assert "知府" in (lo_office or ""), "低职起复后 office 应含目标低职"
+
     inc_low = after_low - base_after_both_out
     inc_high = after_high - after_low
+    # 低职新权重确被计入（>0），不是被拒后的 0——这是与「加的是新职权重」相对的硬下界。
+    assert inc_low > 0, (
+        f"起复到地方(低权)应使 leverage 上升(新职权重确被计入)：inc_low={inc_low}"
+    )
+    # name_hi 起复(内阁)的增量 应大于 name_lo 起复(地方)的增量
     assert inc_high > inc_low, (
         f"起复到内阁(高权)的 leverage 增量应大于起复到地方(低权)：内阁+{inc_high} vs 地方+{inc_low}"
     )
@@ -415,6 +430,36 @@ def test_recompute_all_reconciles_drift_from_unhooked_path(game):
         assert row["leverage"] == exp, f"{f} 应被 recompute_all 重算到公式值(got={row['leverage']} exp={exp})"
 
 
+def test_settle_path_triggers_reconcile_before_next_period(game, monkeypatch):
+    """#9 cmr R3 finding#2：reconcile 兜底确由【真实结算路】在 next_period 之前触发——
+    锁住生产 wiring（decree.py 结算尾 db.recompute_all_faction_leverage()）+ 其顺序。
+    现有 test_recompute_all_reconciles_drift_from_unhooked_path 直调该方法、不走结算路，
+    就算结算尾那行 wiring 被删/移到 next_period 之后，那测试照过、证明不了生产接线。
+    本测试经 driver.run_settle（公共结算接口）跑一回合，spy 记录方法被调用时 state.turn，
+    断言：(1) 被调用过；(2) 调用时 turn 仍是 before_turn（未 next_period）；(3) 结算后 turn 已 +1
+    （证明 reconcile 在 next_period 之前跑过）。把结算尾 wiring 删掉则 spy 不触发 → 红。"""
+    db, state, content = game
+    before_turn = state.turn
+    calls = []
+
+    real = type(db).recompute_all_faction_leverage
+
+    def _spy(self):
+        # 记录被调用时刻的 turn（生产 wiring 应在 next_period 之前 → turn 仍是 before_turn）。
+        calls.append(state.turn)
+        return real(self)
+
+    monkeypatch.setattr(type(db), "recompute_all_faction_leverage", _spy)
+
+    run_settle(db, state, content, {}, narrative="x", decree_text="y")
+
+    assert calls, "结算路应触发 recompute_all_faction_leverage（生产 wiring 未接 → 此处为空）"
+    assert all(t == before_turn for t in calls), (
+        f"reconcile 应在 next_period 之前被调用（调用时 turn 应={before_turn}，实得 {calls}）"
+    )
+    assert state.turn == before_turn + 1, "结算后回合应已推进（证明 reconcile 在 next_period 前跑过）"
+
+
 def test_office_weight_takes_highest_domain_across_joint_offices():
     """#9（用户挑战：九千岁退场怎么可能影响小）：兼职跨 domain 时，官职权重取头衔各分项里【最高】的
     domain（按 offices.json 词干表确定性映射、无 LLM），不只看 office_type 单桶。
@@ -429,6 +474,26 @@ def test_office_weight_takes_highest_domain_across_joint_offices():
     assert _member_office_weight("兵部", "兵部尚书") == 12.0
     # 空 office 仍 0（cafac368 守卫不被本改回归）。
     assert _member_office_weight("司礼监", "") == 0.0
+
+
+def test_xingbu_has_leverage_weight_like_other_ministries():
+    """#9 cmr R3 finding#1：六部齐全——刑部尚书(六部堂官)应与礼部/工部同档贡献权重，不漏成 0。
+    COURT_OFFICE_TYPES/MINISTRY_OFFICE_TYPES 明列刑部为正经六部、offices.json 词干表也把
+    「刑部尚书→刑部」，但 _OFFICE_LEVERAGE_WEIGHT 修前漏刑部 → 刑部尚书贡献 0、与其余五部不一致。"""
+    from ming_sim.db import (
+        _OFFICE_LEVERAGE_WEIGHT,
+        _member_office_weight,
+        MINISTRY_OFFICE_TYPES,
+    )
+    # 刑部尚书=刑部域权重 × 堂官档 ×1.0；与礼部/工部同「中层部务」档（=5）。
+    assert _member_office_weight("刑部", "刑部尚书") == 5.0, (
+        "刑部尚书(六部堂官)应贡献非零权重，与其余五部一致"
+    )
+    # 防再漏：六部每一部都必须在权重表里。
+    for ministry in MINISTRY_OFFICE_TYPES:
+        assert ministry in _OFFICE_LEVERAGE_WEIGHT, (
+            f"六部之{ministry}缺 _OFFICE_LEVERAGE_WEIGHT 权重（漏配 → 该部堂官贡献 0）"
+        )
 
 
 def test_weizhongxian_ouster_drops_yandang_by_sili_weight(game):
