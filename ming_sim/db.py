@@ -85,15 +85,18 @@ _DEFAULT_OFFICE_RANK_MULTIPLIER = 1.0  # 未识别头衔的保守默认（避免
 _OUSTED_STATES = {"offstage", "dismissed", "imprisoned", "exiled", "retired", "dead"}
 
 
-def _office_rank_multiplier(office: str) -> float:
+def _office_rank_multiplier(office: str, already_normalized: bool = False) -> float:
     """从 office 头衔字串解析品级 multiplier。逗号分隔的多职取**已识别分项中的最高档**。
     只在整串无任何识别词时才落默认 1.0（保守，避免漏算堂官）——故描述性尾缀（如「兵部职方,
-    火器西法」的「火器西法」）不会把默认 1.0 拉进 max 污染掉真实品级。"""
+    火器西法」的「火器西法」）不会把默认 1.0 拉进 max 污染掉真实品级。
+    #9 R1 finding#5：already_normalized=True 时入参已是 normalize_office 结果，跳过重复 normalize
+    （热路 _member_office_weight 已归一过，避免二次 normalize 冗余）。"""
     text = office or ""
     if not text.strip():
         return _DEFAULT_OFFICE_RANK_MULTIPLIER
+    normalized = text if already_normalized else normalize_office(text)
     best: Optional[float] = None
-    for part in (p.strip() for p in normalize_office(text).split(",")):
+    for part in (p.strip() for p in normalized.split(",")):
         if not part:
             continue
         for mult, keywords in _OFFICE_RANK_TIERS:
@@ -124,7 +127,8 @@ def _member_office_weight(office_type: str, office: str) -> float:
             domain = w
     if domain == 0:
         return 0.0
-    return domain * _office_rank_multiplier(office)
+    # #9 R1 finding#5：office_n 已 normalize，直接复用、不让 _office_rank_multiplier 再 normalize 一次。
+    return domain * _office_rank_multiplier(office_n, already_normalized=True)
 
 
 def normalize_office(office: str) -> str:
@@ -1010,6 +1014,21 @@ class GameDB:
         """)
         self.conn.commit()
         self._migrate_legacy_office_pollution()
+        # #9 R1 finding#1 [P1]：老档迁移校准须放在「seed 路 + driver 路」都过的点。driver.open_game
+        # 只 GameDB()（→ init_schema）+ load_state、不调 seed_static_data，故若校准仅在 seed 末尾，
+        # driver 路老档的 offset 永远停在默认 0 → leverage=0+权重和（未锚定钦定基线、错值）。
+        # 因此：leverage_offset 列**本次刚 ADD**且 factions 表已有行（=老档，characters 此刻亦已持久化、
+        # 权重和可算）时，在此立即一次性反推校准（offset_col_added=True 走老档分支：offset=当前 DB
+        # leverage − 权重和）。放在 _migrate_legacy_office_pollution 之后，使权重和按【已清洗】的 office
+        # 算（与 seed 路 _migrate→_calibrate 同序；pre-0009 污染 office 在迁移前会算错权重和）。
+        # 校准后 flag 被消费置 False（见 _calibrate_faction_offsets），seed 路再调时直接 return、不重锚。
+        # fresh 新档此时 factions 表空（行在 seed_static_data 才 INSERT）→ 这里跳过，仍走 seed 末尾的
+        # fresh 校准（从 content.factions 取钦定基线）。
+        if self._leverage_offset_col_added and self.table_has_rows("factions"):
+            self._calibrate_faction_offsets(
+                is_fresh_factions_seed=False, offset_col_added=True
+            )
+            self.conn.commit()
         self.init_fiscal_config()
 
     def _migrate_legacy_office_pollution(self) -> None:
@@ -1972,6 +1991,10 @@ class GameDB:
         # 老档常规 load（列早已存在、offset 已校准）：绝不再碰 offset。
         if not is_fresh_factions_seed and not offset_col_added:
             return
+        # #9 R1 finding#3：一次性迁移 flag 用后即消费置 False（无论本次走老档反推还是 fresh 校准，
+        # 都已锚定完毕）。否则同实例第二次 seed_static_data 仍见 flag=True、再进老档迁移分支，把
+        # 已 clamp 的 leverage 重锚成 round(clamped − weight_sum)≠原值 → 基线腐蚀。
+        self._leverage_offset_col_added = False
         for faction in _LEVERAGE_FACTIONS:
             row = self.conn.execute(
                 "SELECT leverage FROM factions WHERE name=?", (faction,)
@@ -4269,6 +4292,11 @@ class GameDB:
         # 动作闸门(ADR 0006)：召对暂存的结构化写动作。撤回召对须删本轮暂存,
         # 否则颁诏仍会落库,破坏 undo 保证(CMR P1)。
         "pending_actions": "id",
+        # #9 R1 finding#4：leverage hook（set_character_status/set_character_office）会改 factions
+        # .leverage(+offset)。chat office/dismiss 动作撤回须连 factions 一并还原，否则 characters
+        # 被还原而 factions leverage 留脏。快照 SELECT * 含 leverage+offset，restore INSERT OR REPLACE
+        # 全列覆盖、二者同还原。
+        "factions": "name",
     }
 
     def _row_dict(self, row: sqlite3.Row) -> Dict[str, Any]:
