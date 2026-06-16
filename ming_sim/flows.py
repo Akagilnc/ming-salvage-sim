@@ -254,9 +254,12 @@ def _auto_pay_arrears_by_priority(
     返回实际花出去的总额（万两）。"""
     if budget <= 0:
         return 0
+    # #44：受饷资格用 arrears>0（不再 maintenance_per_turn>0）。#44 把欠饷累计从 maintenance 改成
+    # army_needed(salary_rate 派生)，二者已解耦——salary_rate>0 但 maintenance=0 的军会累 arrears 却被
+    # 旧 filter 排除、拨饷永远散不到（cmr r2 claude）。arrears>0 本就隐含曾有应发（needed>0 才累）。
     rows = db.conn.execute(
         "SELECT id, name, arrears FROM armies "
-        "WHERE owner_power='ming' AND maintenance_per_turn>0 AND arrears>0"
+        "WHERE owner_power='ming' AND arrears>0"
     ).fetchall()
     army_map = {str(r["id"]): r for r in rows}
     ordered = [army_map[k] for k in ARMY_SALARY_PRIORITY if k in army_map]

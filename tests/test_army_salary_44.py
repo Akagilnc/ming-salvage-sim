@@ -109,6 +109,30 @@ def test_manpower_true_noop_no_log(game):
     assert after == before, "真 no-op(delta==0)不留痕"
 
 
+def test_auto_pay_reaches_maint0_salary_army(game):
+    # cmr r2 Claude R1: salary_rate>0 但 maintenance=0 的军（#44 解耦后真实可达：新军 maint=0+默认率
+    # 1.5、旧档动态军 backfill）会累 arrears，旧 filter(maintenance_per_turn>0)把它排除、兜底拨饷永远
+    # 散不到、arrears/morale 卡死。验证：旧 filter 漏掉它、新 filter(arrears>0)纳入受饷候选、
+    # 且兜底拨饷真能花到（spent>0）。
+    from ming_sim.flows import _auto_pay_arrears_by_priority
+    db, state, _ = game
+    aid = str(db.conn.execute(
+        "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
+    # 只留这一支有欠饷，孤立验证「它是否进得了受饷分发」
+    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute(
+        "UPDATE armies SET maintenance_per_turn=0, salary_rate=1.5, arrears=10 WHERE id=?", (aid,))
+    db.conn.commit()
+    old_hit = {str(r["id"]) for r in db.conn.execute(
+        "SELECT id FROM armies WHERE owner_power='ming' AND maintenance_per_turn>0 AND arrears>0")}
+    new_hit = {str(r["id"]) for r in db.conn.execute(
+        "SELECT id FROM armies WHERE owner_power='ming' AND arrears>0")}
+    assert aid not in old_hit, "佐证 bug：旧 filter(maintenance>0)把 maint=0 欠饷军排除"
+    assert aid in new_hit, "新 filter(arrears>0)应纳入 maint=0+salary>0 的欠饷军"
+    spent = _auto_pay_arrears_by_priority(db, state, "国库", 5, "补饷", "诏拨补饷")
+    assert spent > 0, "兜底拨饷应能花到该军（旧 filter 下 spent 恒 0）"
+
+
 def test_twelve_turns_no_arrears_explosion(game):
     # #44 设计 TDD：开局 12 回合无干预，新升率（京营/陕西/登莱等率升）不过早引爆 arrears→民变链。
     # 结构性重切近对冲（旧 65 → 新 66.5 万/月），开局国库应可持续。run_settle(None) 确定性、无 LLM。
