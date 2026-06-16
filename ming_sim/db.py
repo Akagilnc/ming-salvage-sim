@@ -90,7 +90,12 @@ def _office_rank_multiplier(office: str, already_normalized: bool = False) -> fl
     只在整串无任何识别词时才落默认 1.0（保守，避免漏算堂官）——故描述性尾缀（如「兵部职方,
     火器西法」的「火器西法」）不会把默认 1.0 拉进 max 污染掉真实品级。
     #9 R1 finding#5：already_normalized=True 时入参已是 normalize_office 结果，跳过重复 normalize
-    （热路 _member_office_weight 已归一过，避免二次 normalize 冗余）。"""
+    （热路 _member_office_weight 已归一过，避免二次 normalize 冗余）。
+
+    #9 线上 R2 finding（品级子串误匹配）：**单个分项取「所有命中档里最低的 multiplier」**——
+    因为副职关键词更长（副总兵⊃总兵、佥都御史⊃都御史），与正职子串会共同命中，取 min 自然落到
+    副职档（0.5）；纯正职（如单独「总兵」「都御史」）只命中 1.0 档 → 仍 1.0。这样通治所有
+    「子串包含」overlap（不止副总兵/佥都御史两例）。跨分项仍取 max（身兼数职取最高官）。"""
     text = office or ""
     if not text.strip():
         return _DEFAULT_OFFICE_RANK_MULTIPLIER
@@ -99,11 +104,16 @@ def _office_rank_multiplier(office: str, already_normalized: bool = False) -> fl
     for part in (p.strip() for p in normalized.split(",")):
         if not part:
             continue
+        # 该分项命中的所有档取最低 multiplier（副职关键词更长、与正职子串共同命中时取 min 落副职）。
+        part_mult: Optional[float] = None
         for mult, keywords in _OFFICE_RANK_TIERS:
             if any(kw in part for kw in keywords):
-                if best is None or mult > best:
-                    best = mult
-                break  # 档内自高到低，首个命中即该分项最高档
+                if part_mult is None or mult < part_mult:
+                    part_mult = mult
+        if part_mult is None:
+            continue  # 该分项无任何识别词 → 不贡献（沿用整体兜底语义）
+        if best is None or part_mult > best:
+            best = part_mult  # 跨分项取最高官
     # 整串无任一识别词 → 保守默认（避免把生造/罕见堂官头衔误判成低档）
     return best if best is not None else _DEFAULT_OFFICE_RANK_MULTIPLIER
 

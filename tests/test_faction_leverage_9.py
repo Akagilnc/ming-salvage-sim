@@ -504,6 +504,53 @@ def test_office_weight_takes_highest_domain_across_joint_offices():
     assert _member_office_weight("司礼监", "") == 0.0
 
 
+def test_office_rank_deputy_titles_not_inflated_to_principal():
+    """#9 线上 R2（gemini high + codex P2 concur）：品级子串误匹配——副职头衔含正职关键词作子串
+    （副总兵⊃总兵、佥都御史⊃都御史）被误判成正职档(1.0)。修法=每个分项取「所有命中档里最低」
+    （副职关键词更长、与正职子串共同命中时取 min 自然落副职档），纯正职单独命中仍 1.0；跨分项取 max。
+    修前红：副总兵/锦州副总兵/佥都御史 返 1.0（应 0.5）。"""
+    from ming_sim.db import _office_rank_multiplier
+
+    # 副职(佐贰)：含正职子串但应判 0.5——本 finding 的核心两例 + 通治验证。
+    assert _office_rank_multiplier("副总兵") == 0.5, "副总兵⊃总兵 不该被误判正职 1.0"
+    assert _office_rank_multiplier("锦州副总兵") == 0.5, "锦州副总兵(祖大寿) 不该被误判正职 1.0"
+    assert _office_rank_multiplier("佥都御史") == 0.5, "佥都御史⊃都御史 不该被误判正职 1.0"
+    assert _office_rank_multiplier("佥都御史，巡按") == 0.5, "佥都御史(吴甡) 带尾缀仍 0.5"
+    # 纯正职(堂官)：单独命中、无更长副职词 → 仍 1.0（别被 min 误降）。
+    assert _office_rank_multiplier("总兵") == 1.0
+    assert _office_rank_multiplier("都御史") == 1.0
+    assert _office_rank_multiplier("兵部尚书") == 1.0
+    assert _office_rank_multiplier("内阁首辅") == 1.0
+    assert _office_rank_multiplier("司礼监掌印太监") == 1.0
+    assert _office_rank_multiplier("司礼监秉笔太监") == 1.0
+    # 其余佐贰仍 0.5（不被误降到属官）。
+    assert _office_rank_multiplier("侍郎") == 0.5
+    assert _office_rank_multiplier("东阁大学士") == 0.5
+    assert _office_rank_multiplier("次辅") == 0.5
+    # 属官 0.25 不变。
+    assert _office_rank_multiplier("兵部职方") == 0.25
+    assert _office_rank_multiplier("郎中") == 0.25
+    assert _office_rank_multiplier("游击") == 0.25
+    # 多职跨分项取 max：礼部尚书(堂官 1.0)胜过东阁大学士(佐贰 0.5)。
+    assert _office_rank_multiplier("礼部尚书,东阁大学士") == 1.0
+    # 整串无识别词 → 保守默认 1.0（现有行为不破）。
+    assert _office_rank_multiplier("火器西法") == 1.0
+
+
+def test_jundadou_deputy_ouster_impact_is_half_of_principal():
+    """#9 线上 R2 端到端：祖大寿(军队·锦州副总兵·边镇)退场对军队 leverage 的冲击 ≈ 域权重(边镇10)×0.5，
+    即副职档(5)而非正职档(10)——证明品级子串修复贯穿到 _member_office_weight 与 leverage 全重算。"""
+    from ming_sim.db import _member_office_weight, _OFFICE_LEVERAGE_WEIGHT
+
+    # 锦州副总兵：边镇域(10) × 佐贰档(0.5) = 5（不是 ×1.0=10）。
+    assert _member_office_weight("边镇", "锦州副总兵") == 5.0, (
+        "祖大寿(副总兵)应按佐贰半档算权重，不按正职满档"
+    )
+    # 对比：若是正职(锦州总兵)则满档 10——确认两者确实差一倍。
+    assert _member_office_weight("边镇", "锦州总兵") == 10.0
+    assert _OFFICE_LEVERAGE_WEIGHT["边镇"] == 10
+
+
 def test_xingbu_has_leverage_weight_like_other_ministries():
     """#9 cmr R3 finding#1：六部齐全——刑部尚书(六部堂官)应与礼部/工部同档贡献权重，不漏成 0。
     COURT_OFFICE_TYPES/MINISTRY_OFFICE_TYPES 明列刑部为正经六部、offices.json 词干表也把
