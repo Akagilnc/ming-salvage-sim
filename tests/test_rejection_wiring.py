@@ -93,9 +93,10 @@ def test_attempt_derived_from_error_pack_dirs(game, monkeypatch, tmp_path):
     assert rows[0][4] == 2  # attempt
 
 
-def test_engine_extractor_path_stamps_system_simulation(game, monkeypatch, tmp_path):
-    """引擎 resolve 路(simulator→extractor→settle)的拒收行 source=system_simulation
-    ——extractor 产出属推演管线,与 driver 信封(unknown 兜底)区分(决定 5 provenance)。"""
+def test_engine_extractor_path_stamps_player_decree(game, monkeypatch, tmp_path):
+    """#146(A 方案)：皇帝下旨触发的结算(resolve_directives)→ extractor 产出整批标 player_decree
+    ——皇帝下旨这回合的拒收要给皇帝可见提示(整批按触发源；无旨自动推进/世界自演变才 system)。
+    原断言 system_simulation 已废：player_decree 来源此前从未实装、皇帝下旨被拒从不提示(#146)。"""
     import ming_sim.decree as decree_mod
 
     db, state, content = game
@@ -118,7 +119,7 @@ def test_engine_extractor_path_stamps_system_simulation(game, monkeypatch, tmp_p
 
     rows = _rejection_rows(db, turn)
     assert len(rows) == 1
-    assert rows[0][3] == "system_simulation"  # source
+    assert rows[0][3] == "player_decree"  # #146 A：皇帝下旨=玩家来源
 
 
 def test_issue_summary_nested_rejections_are_collected(game, monkeypatch, tmp_path):
@@ -606,3 +607,65 @@ def test_inertia_power_move_backlash_rejection_lands_in_reports(game, monkeypatc
         ch.power_id = old_power
         ch.office = old_office
         ch.office_type = old_office_type
+
+
+def test_resimulation_inherits_player_source_from_ctx(game, monkeypatch, tmp_path):
+    """#146 A：HITL 续跑 / 崩溃重抽走 resolve_decisions_phase2 → _settle_after_narrative 时，source 从
+    ctx['source'] 继承（phase1 皇帝下旨存的 player_decree），不因重抽退化成 system。重抽是格式重跑、
+    皇帝原旨没变 → 来源不变（用户拍）。验：重抽路拒收 source 仍 player_decree。"""
+    import ming_sim.decree as decree_mod
+    from ming_sim.applier import Provenance
+    from ming_sim.models import TurnPhase
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+    # phase1：皇帝下旨暂停存 ctx（source=player_decree, ready=0 占位）+ 决策点
+    db.save_resolve_context(turn, "减赋诏", "本月邸报。", {},
+                            secret_orders={}, relevant_memories=[],
+                            source=Provenance.player_decree.value)
+    db.save_pending_decisions(turn, [{"title": "T", "options": ["a", "b"], "chosen": "a"}])
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    # phase2 重新推演：extractor 产坏 delta（拒收）
+    monkeypatch.setattr(decree_mod, "build_extractor_shared_context", lambda *a, **k: "")
+    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod, "extract_scores_by_modules_with_agno",
+        lambda *a, **k: ({"character_status_changes": [
+            {"name": "查无此人辛", "status": "dead", "reason": "测试"}]}, "out", "in"))
+
+    decree_mod.resolve_decisions_phase2(state, db, None, None, content=content, registry=None)
+
+    rows = _rejection_rows(db, turn)
+    assert len(rows) == 1
+    assert rows[0][3] == "player_decree"  # #146 A：重抽贯穿 ctx 的 player，不退化 system
+
+
+def test_player_decree_rejection_surfaces_prompt_in_turn_report(game, monkeypatch, tmp_path):
+    """#146 A 闭环：皇帝下旨结算里 delta 被拒（player_decree 来源）→ 邸报附「窒碍未行」可见提示、落
+    turn_reports（决定 5）。修前 source 恒 system、has_player_visible_rejection 永 False、提示从不出。"""
+    import ming_sim.decree as decree_mod
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree_mod, "simulate_season_with_payload",
+                        lambda *a, **k: ("本月邸报。", k.get("simulator_payload") or {}))
+    monkeypatch.setattr(decree_mod, "build_extractor_shared_context", lambda *a, **k: "")
+    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod, "extract_scores_by_modules_with_agno",
+        lambda *a, **k: ({"character_status_changes": [
+            {"name": "查无此人壬", "status": "dead", "reason": "测试"}]}, "out", "in"))
+
+    decree_mod.resolve_directives(state, db, None, None, [1], "减赋诏",
+                                  content=content, registry=None)
+
+    report = db.conn.execute(
+        "SELECT report FROM turn_reports WHERE turn=?", (turn,)).fetchone()
+    assert report is not None
+    assert "窒碍未行" in report[0]  # #146 A：皇帝来源拒收 → 邸报可见提示（修前恒静默）
