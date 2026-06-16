@@ -214,6 +214,71 @@ def test_failed_appointment_rolls_back_faction_leverage(game):
     assert db.get_character_status(name)[0] == "dismissed", "失败任命应回滚人物状态"
 
 
+def test_displaced_minister_faction_leverage_recomputed(game):
+    """#9 cmr R1：顶替路也要重算【被顶替者】所属派系 leverage。
+    新任者属 A 派系(东林)，经 apply_office_appointment 任命到独占实职(兵部尚书)，
+    顶替掉持该职、属 B 派系(阉党≠东林)的在朝核心崔呈秀。
+    _displace_duplicate_offices 用裸 UPDATE 把崔呈秀的 office_type 改成低权(剥兵部尚书后只剩左都御史
+    /或身名分)，绕过 set_character_office 钩子 → 修前 B(阉党) leverage 不被重算、残留偏高。
+    断言：任命后阉党 leverage < 任命前（被顶替者权重下跌、其派系全重算联动）。"""
+    db, state, content = game
+    chong = db.conn.execute(
+        "SELECT name, office, office_type, faction FROM characters WHERE name='崔呈秀' AND status='active'"
+    ).fetchone()
+    # 新任者属东林（≠阉党），无需 active——apply_office_appointment 会起复激活后再授官。
+    new_holder = db.conn.execute(
+        "SELECT name, faction FROM characters WHERE name='孙承宗'"
+    ).fetchone()
+    if chong is None or new_holder is None:
+        pytest.skip("基底盘面缺 崔呈秀/孙承宗（数据依赖）")
+    assert chong["faction"] == "阉党", "崔呈秀应为阉党"
+    assert new_holder["faction"] == "东林", "孙承宗应为东林(≠阉党)"
+    assert "兵部尚书" in (chong["office"] or ""), "崔呈秀应持兵部尚书(独占实职)"
+
+    before = db.faction_leverage("阉党")
+    result = apply_office_appointment(
+        db, state, content, None, "孙承宗", "兵部尚书", reason="起复掌兵部", faction="东林"
+    )
+    assert not result.get("rejected"), f"任命不应被拒：{result}"
+    assert result.get("displaced"), f"应顶替崔呈秀的兵部尚书：{result}"
+    after = db.faction_leverage("阉党")
+    assert after < before, (
+        f"被顶替者(崔呈秀)所属阉党 leverage 应在顶替后全重算下跌(before={before} after={after})"
+    )
+
+
+def test_offset_not_re_anchored_on_reload_after_clamp(game):
+    """#9 cmr R3：老档每次 load 重锚 offset，clamp 后腐蚀基线。
+    seed 后取白名单派系 offset；手动把 leverage 打到 0（模拟 clamp 触底）；再开一个 GameDB
+    （生产里每次 GameSession init = 新 GameDB.__init__→init_schema→seed_static_data，是真正的 reload，
+    offset 列已存在于 DB 文件 → ensure_column 返 False）。修前老档分支每次 load 都
+    offset=round(0−weight_sum)≠原值（被腐蚀）；修后因「列已存在 + 非新档」直接 return，offset 不变。"""
+    from ming_sim.db import GameDB
+
+    db, state, content = game
+    faction = "阉党"
+    before_offset = db.conn.execute(
+        "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
+    ).fetchone()["leverage_offset"]
+
+    # 模拟 leverage 被 clamp 到 0 触底（玩过后的脏值）
+    db.conn.execute("UPDATE factions SET leverage=0 WHERE name=?", (faction,))
+    db.conn.commit()
+
+    # 真·reload：在同一 DB 文件上新开 GameDB（init_schema 见 offset 列已存在 → flag=False），再 seed。
+    reloaded = GameDB(db.path, content)
+    try:
+        reloaded.seed_static_data()
+        after_offset = reloaded.conn.execute(
+            "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
+        ).fetchone()["leverage_offset"]
+    finally:
+        reloaded.close()
+    assert after_offset == before_offset, (
+        f"reload(clamp 后)不应重锚 offset：before={before_offset} after={after_offset}"
+    )
+
+
 def test_leverage_clamps_at_zero_no_negative(game):
     """#9 finding#4 clamp 边界：连续退场把某 faction 在朝权重和打到使 offset+和<0 → leverage=0(不为负)。
     用 offset 较小的派系(东林开局钦定 28、offset 负)更易触底；这里把白名单某 faction 全员退场验 ≥0。"""
