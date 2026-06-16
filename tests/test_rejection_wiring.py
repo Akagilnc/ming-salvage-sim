@@ -669,3 +669,46 @@ def test_player_decree_rejection_surfaces_prompt_in_turn_report(game, monkeypatc
         "SELECT report FROM turn_reports WHERE turn=?", (turn,)).fetchone()
     assert report is not None
     assert "窒碍未行" in report[0]  # #146 A：皇帝来源拒收 → 邸报可见提示（修前恒静默）
+
+
+def test_system_rejection_stays_silent_and_keeps_system_provenance(game, monkeypatch, tmp_path):
+    """#146 A 对照（B 面，Sourcery #175 建议）：无旨 / 世界自演变（system_simulation 来源）的 delta 被拒
+    → 拒收记 system_simulation、且邸报**不**出「窒碍未行」可见提示（系统拒收对玩家静默）。与
+    test_player_decree_rejection_surfaces_prompt_in_turn_report 构成 A/B 对照，锁死「可见性↔来源」
+    契约：玩家来源拒收提示、系统来源静默（决定 5），防回归把系统拒收暴露给皇帝。
+    走重抽路（resolve_decisions_phase2 从 ctx['source'] 继承）顺带覆盖 _provenance_from_stored。"""
+    import ming_sim.decree as decree_mod
+    from ming_sim.applier import Provenance
+    from ming_sim.models import TurnPhase
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+    # phase1：无旨自演变暂停存 ctx（source=system_simulation, ready=0 占位）+ 决策点
+    db.save_resolve_context(turn, "", "本月邸报。", {},
+                            secret_orders={}, relevant_memories=[],
+                            source=Provenance.system_simulation.value)
+    db.save_pending_decisions(turn, [{"title": "T", "options": ["a", "b"], "chosen": "a"}])
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    # phase2 重新推演：extractor 产坏 delta（拒收）——与 player 路同款坏 payload，仅来源不同
+    monkeypatch.setattr(decree_mod, "build_extractor_shared_context", lambda *a, **k: "")
+    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod, "extract_scores_by_modules_with_agno",
+        lambda *a, **k: ({"character_status_changes": [
+            {"name": "查无此人癸", "status": "dead", "reason": "测试"}]}, "out", "in"))
+
+    decree_mod.resolve_decisions_phase2(state, db, None, None, content=content, registry=None)
+
+    # A 来源：拒收来自 system_simulation（重抽继承 ctx、不误标 player）
+    rows = _rejection_rows(db, turn)
+    assert len(rows) == 1
+    assert rows[0][3] == "system_simulation"
+
+    # B 可见性：系统来源拒收对玩家静默——邸报无「窒碍未行」提示
+    report = db.conn.execute(
+        "SELECT report FROM turn_reports WHERE turn=?", (turn,)).fetchone()
+    assert report is not None
+    assert "窒碍未行" not in report[0]
