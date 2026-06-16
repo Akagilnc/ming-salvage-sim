@@ -370,6 +370,7 @@ class GameDB:
                 loyalty INTEGER NOT NULL,
                 firearm_equipment INTEGER NOT NULL DEFAULT 0,
                 cannon_equipment INTEGER NOT NULL DEFAULT 0,
+                salary_rate REAL NOT NULL DEFAULT 0,
                 status TEXT NOT NULL,
                 owner_power TEXT NOT NULL DEFAULT 'ming',
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -835,6 +836,7 @@ class GameDB:
         # 火器装备(鸟铳,野战+守城)/大炮装备(红夷炮,守城攻城、不利野战)：simulator 软判用的两条军备轴
         self.ensure_column("armies", "firearm_equipment", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("armies", "cannon_equipment", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column("armies", "salary_rate", "REAL NOT NULL DEFAULT 0")  # #44 名义月饷率(两/兵·月)
         self.ensure_column("regions", "controlled_by", "TEXT NOT NULL DEFAULT 'ming'")
         # 城市等级 0-5(静态,史实分级,将来供经济/内政)+ 城防大炮门数(城头红夷炮,上限 city_level×8)
         self.ensure_column("regions", "city_level", "INTEGER NOT NULL DEFAULT 0")
@@ -1477,8 +1479,8 @@ class GameDB:
                     INSERT INTO armies
                     (id, name, station, theater, commander, controller, troop_type, manpower,
                      maintenance_per_turn, supply, morale, training, equipment, arrears,
-                     mobility, loyalty, firearm_equipment, cannon_equipment, status, owner_power)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     mobility, loyalty, firearm_equipment, cannon_equipment, salary_rate, status, owner_power)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         army.id,
@@ -1499,6 +1501,7 @@ class GameDB:
                         army.loyalty,
                         army.firearm_equipment,   # 新档贯通火器/随军大炮（CMR codexB）
                         army.cannon_equipment,
+                        army.salary_rate,         # #44 名义月饷率(两/兵·月)
                         army.status,
                         army.owner_power,
                     ),
@@ -3373,6 +3376,20 @@ class GameDB:
                     new_value = max(0, int(old_value) + delta)
                     actual_delta = new_value - int(old_value)
                     if actual_delta == 0:
+                        # #44：请求非 0 但 clamp 后无净变化（如减兵超过现有兵力→clamp 到 0）留一条
+                        # delta=0 army_log（参照 region cannon delta=0 留痕，#14 不静默吞）；真 no-op
+                        # （delta==0）无须留痕避噪。
+                        if delta != 0:
+                            self.conn.execute(
+                                """
+                                INSERT INTO army_logs
+                                (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
+                                VALUES (?, ?, ?, ?, 'manpower', ?, ?, 0, ?, ?, ?, ?)
+                                """,
+                                (state.turn, state.year, state.period, army_id,
+                                 str(old_value), str(new_value),
+                                 f"{reason}（请求 {delta:+d} 经 clamp 后无净变化）", event.id, edict_id, actor),
+                            )
                         continue
                     stored_new = new_value
                     log_delta = actual_delta
@@ -3599,6 +3616,9 @@ class GameDB:
                 _score("loyalty"),
                 _score("firearm_equipment", 0),
                 _cannon(),  # 随军大炮=门数，clamp 0-12，非 int 兜底 0
+                # #44 新军名义月饷率：extractor army_delta 不带饷字段，设计未明定新军 rate→用边军史实
+                # 锚点 1.5（两/兵·月）；LLM 若显式给则用。应发随 manpower 派生（army_needed）。
+                float(item.get("salary_rate") or 1.5),
                 str(item.get("status") or "新立"),
                 owner,
             )
@@ -3608,8 +3628,8 @@ class GameDB:
                     INSERT INTO armies
                     (id, name, station, theater, commander, controller, troop_type, manpower,
                      maintenance_per_turn, supply, morale, training, equipment, arrears,
-                     mobility, loyalty, firearm_equipment, cannon_equipment, status, owner_power)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     mobility, loyalty, firearm_equipment, cannon_equipment, salary_rate, status, owner_power)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     row,
                 )

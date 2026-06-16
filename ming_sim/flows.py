@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Dict, List, NamedTuple, Optional, Tuple
 
 from ming_sim.constants import TURN_UNIT
@@ -131,9 +132,12 @@ def compute_budget_lines(db: GameDB, state: GameState) -> Dict[str, Dict[str, li
     其余＝fiscal_config base×rate（全月值）。三处调用方据此各取所需，不重算。"""
     cfg = db.get_fiscal_config()
     gk_tax, nk_huang, _ = calc_province_fiscal(state, db)
-    army_total = db.conn.execute(
-        "SELECT SUM(maintenance_per_turn) FROM armies WHERE owner_power='ming'"
-    ).fetchone()[0] or 0
+    # #44 军饷=SUM(应发)，应发挂钩兵力(army_needed=ceil(manpower×salary_rate/10000))，非旧 maintenance 定额。
+    army_total = sum(
+        army_needed(r) for r in db.conn.execute(
+            "SELECT manpower, salary_rate, owner_power FROM armies WHERE owner_power='ming'"
+        ).fetchall()
+    )
 
     budget: Dict[str, Dict[str, list]] = {
         "国库": {"income": [], "expense": []},
@@ -185,9 +189,27 @@ ISSUE_METRIC_LOCK_CAPS = {
 }
 
 ARMY_SALARY_PRIORITY = [
+    # #44：id 与 content/armies.json 实际 id 对齐（原 denglaiz/shaanxi/nanjing/fujian/guangdong/xinar
+    # 六个错配 + 漏 southwest_tusi，致这些军排不进优先序、欠饷时被错序克扣）。
     "guanning", "xuan_da", "jizhen", "shanhaiguan", "jingying",
-    "denglaiz", "dongjiang", "shaanxi", "nanjing", "fujian", "guangdong", "xinar",
+    "denglai", "dongjiang", "shaanxi_army", "nanjing_garrison", "fujian_navy", "guangdong_navy", "southwest_tusi",
 ]
+
+
+def army_needed(row) -> int:
+    """#44 军饷应发(万两) = ceil(manpower × salary_rate / 10000)，仅 owner_power=='ming'。
+
+    salary_rate = 每军名义月饷率(两/兵·月)；应发由兵力派生、随扩军自动涨（堵「兵涨饷不涨」白嫖）。
+    0 兵 / 0 rate → 0 应发（白嫖扩军上界 + 零兵吃饷下界一并消解，#22 撤番因此不必要）。非明军不强加
+    饷需（叛军/外族不吃明国库）。名义口径——国库实发不出时差额仍按现机制累 arrears（欠饷与名义率正交）。
+    row 需含 owner_power / manpower / salary_rate 三列。"""
+    if str(row["owner_power"]) != "ming":
+        return 0
+    manpower = int(row["manpower"])
+    rate = float(row["salary_rate"])
+    if manpower <= 0 or rate <= 0:
+        return 0
+    return math.ceil(manpower * rate / 10000)
 
 
 def _apply_metric_dict(
@@ -425,7 +447,8 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     #   缺口 → arrears += 缺口；当月足额且仍有国库余 → arrears -= 抵欠（不下穿 0）。
     # 拨饷诏书走 economy_moves 加钱进国库，下月自动抵旧欠。extractor 禁写 arrears。
     army_rows_raw = db.conn.execute(
-        "SELECT id, name, maintenance_per_turn, arrears, morale FROM armies"
+        # #44 army_needed 需 manpower/salary_rate/owner_power（应发挂钩兵力派生）
+        "SELECT id, name, manpower, salary_rate, owner_power, maintenance_per_turn, arrears, morale FROM armies"
     ).fetchall()
     if not army_rows_raw:
         raise SystemExit("fiscal_tick: armies 表无数据，中止。")
@@ -436,7 +459,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     for row in ordered:
         army_id = str(row["id"])
         name = str(row["name"])
-        needed = int(row["maintenance_per_turn"])
+        needed = army_needed(row)  # #44 应发挂钩兵力(ceil(manpower×salary_rate/10000)，仅 ming)
         if needed <= 0:
             continue
         available = max(0, int(state.metrics["国库"]))
