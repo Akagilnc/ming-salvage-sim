@@ -350,6 +350,21 @@ def resolve_directives(
     return ResolveResult(awaiting=False, report=report)
 
 
+def _provenance_from_stored(value: object) -> Provenance:
+    """从 ctx 持久值还原 Provenance（#146 恢复路）：兼容已存的字符串值、Provenance 实例、
+    及非法/缺失值。非法/缺失回落 system_simulation（旧档兼容）。
+
+    防 Sourcery #175 静默丢源：若 value 是 Provenance 实例，str(member) 在多数 Python 版本是
+    'Provenance.player_decree' 而非 'player_decree'，Provenance(...) 不匹配 → ValueError →
+    退回 system_simulation。故先识别 enum 实例直接返回，再对字符串走 Provenance(...)。"""
+    if isinstance(value, Provenance):
+        return value
+    try:
+        return Provenance(str(value or "system_simulation"))
+    except ValueError:
+        return Provenance.system_simulation
+
+
 def resolve_settling_recovery(
     state: GameState,
     db: GameDB,
@@ -383,10 +398,7 @@ def resolve_settling_recovery(
     narrative = str(ctx.get("narrative") or "")
     # 恢复重放沿用持久化的原始拒收来源（#144）：玩家来源(player_decree/hitl)拒收恢复后仍给玩家
     # 邸报提示，不被记成 system_simulation 而静默。非法/缺失值回落 system_simulation（旧档兼容）。
-    try:
-        source = Provenance(str(ctx.get("source") or "system_simulation"))
-    except ValueError:
-        source = Provenance.system_simulation
+    source = _provenance_from_stored(ctx.get("source"))
     # 暂存动作 commit 已下沉进 settle_with_delta 的 atomic 体内（与结算同生死，
     # cmr S7 r4）——此处不再事务外预 commit。
     try:
@@ -1169,10 +1181,7 @@ def resolve_decisions_phase2(
         sim_payload = {**sim_payload, "secret_orders": _recovered_grouped(sim_payload["secret_orders"])}
     # #146 A：来源从 ctx 继承（phase1 皇帝下旨存的 player_decree）。HITL 续跑 / 崩溃重抽都不改来源
     # ——皇帝原旨没变、来源就没变。非法/缺失回落 system_simulation（旧档兼容，同 resolve_settling_recovery）。
-    try:
-        ctx_source = Provenance(str(ctx.get("source") or "system_simulation"))
-    except ValueError:
-        ctx_source = Provenance.system_simulation
+    ctx_source = _provenance_from_stored(ctx.get("source"))
     report = _settle_after_narrative(
         state, db, agno_db, llm_config,
         decree_text=str(ctx["decree_text"]),
