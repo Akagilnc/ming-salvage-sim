@@ -3630,10 +3630,10 @@ class GameDB:
                 _score("loyalty"),
                 _score("firearm_equipment", 0),
                 _cannon(),  # 随军大炮=门数，clamp 0-12，非 int 兜底 0
-                # #44 新军名义月饷率：extractor army_delta 不带饷字段，设计未明定新军 rate→缺省/None/空串
-                # 用边军史实锚点 1.5（两/兵·月）；LLM 若显式给则按值（**含 0.0**，区分 missing 与显式 0——
-                # 原 `or 1.5` 把显式 0 也当缺省，cmr r3 codex medium）。脏值 float() 上抛=fail-loud（罕见）。
-                (1.5 if item.get("salary_rate") in (None, "") else float(item["salary_rate"])),
+                # #44 新军名义月饷率：缺省/None/0 一律落边军史实锚点 1.5（两/兵·月）。salary_rate=0 = 有兵
+                # 无饷率 = 免费军 = 正是 #44 要堵的白嫖，故**不允许显式 0**（codex r3 主张保留 0、本 session
+                # 一度采纳，复判后驳回：0 饷率与 #44 精神冲突，回退为 `or 1.5`）。游戏现无「自给/屯田军」概念。
+                float(item.get("salary_rate") or 1.5),
                 str(item.get("status") or "新立"),
                 owner,
             )
