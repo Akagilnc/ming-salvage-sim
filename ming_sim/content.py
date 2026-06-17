@@ -226,6 +226,10 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
                 trigger_end_month=int(item.get("trigger_end_month") or 0),
                 precondition=str(item.get("precondition") or ""),
                 event_type=event_type,
+                person_core_subjects=(
+                    string_list(item.get("person_core_subjects"), f"{filename}[{idx}].person_core_subjects")
+                    if item.get("person_core_subjects") else []
+                ),
                 trigger_gate=trigger_gate,
                 auto_trigger=bool(item.get("auto_trigger") or False),
                 bar_value=int(item.get("bar_value") or 0),
