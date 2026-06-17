@@ -300,3 +300,43 @@ def test_character_text_gate_rejects_numeric_character_field():
     from ming_sim.content import gate_text_key_form_error
 
     assert gate_text_key_form_error("character.毛文龙.loyalty")
+
+
+def test_mao_wenlong_event_excluded_after_appeasement(game):
+    """#203/#12：毛文龙 loyalty 已过阈值时，袁斩毛文龙不应再按日历进候选。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 6
+    db.conn.execute("UPDATE characters SET loyalty = ? WHERE name = ?", (70, "毛文龙"))
+
+    cands = issues.gather_candidate_events(state, db)
+
+    assert all(ev.id != "mao_wenlong" for ev in cands)
+
+
+def test_mao_wenlong_event_trigger_lands_character_status(game):
+    """#203：未安抚时袁斩毛文龙触发后，毛文龙退场事实必须落库。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 6
+    db.conn.execute("UPDATE characters SET loyalty = ? WHERE name = ?", (44, "毛文龙"))
+
+    cands = issues.gather_candidate_events(state, db)
+    assert any(ev.id == "mao_wenlong" for ev in cands)
+    before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)).fetchone()[0]
+
+    out = issues.apply_issue_tracker_output(
+        db,
+        state,
+        {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
+        content=content,
+    )
+
+    assert out["new_issues"][0]["rejected"] is False
+    assert db.get_character_status("毛文龙")[0] == "dead"
+    assert content.characters["毛文龙"].status == "dead"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
+    ).fetchone()[0] == before_logs + 1

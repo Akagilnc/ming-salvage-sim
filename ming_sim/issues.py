@@ -1131,6 +1131,18 @@ def apply_issue_tracker_output(
                 applied_new.append({"title": ev.title, "rejected": True, "reason": "auto_trigger 事件仅程序可触发"})
                 continue
             if ev.event_type != "situation":
+                if ev.effect_on_trigger:
+                    entity_rejections.extend(
+                        _apply_issue_entities(
+                            db,
+                            state,
+                            ev.effect_on_trigger,
+                            f"事件#{ev.id}触发",
+                            content=content,
+                            llm_config=llm_config,
+                            applied_person_changes=issue_person_changes,
+                        )
+                    )
                 db.mark_event_triggered(state, ev.id)
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 为 {ev.event_type}，不转 issue。")
                 applied_new.append({"title": ev.title, "rejected": False, "reason": f"event_type={ev.event_type} 已记为触发"})
