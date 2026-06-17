@@ -70,8 +70,8 @@ BUILDING_FIELD_ALIASES = {
 POWER_SCORE_FIELDS = ("leverage", "satisfaction", "military_strength", "cohesion", "supply")
 POWER_TEXT_FIELDS = ("leader", "stance", "agenda", "status", "last_action")
 CHARACTER_TEXT_FIELDS = (
-    "office", "office_type", "faction", "personal_skills", "style", "status",
-    "status_reason", "reason_code", "power_id", "location", "transit_to",
+    "office", "office_type", "faction", "style", "status", "status_reason",
+    "reason_code", "power_id", "location", "transit_to",
 )
 POWER_FIELD_LABELS = {
     "leader": "首领",
