@@ -196,19 +196,32 @@ ARMY_SALARY_PRIORITY = [
 ]
 
 
+# #44 边军史实月饷锚点（两/兵·月）：ming 军 salary_rate<=0 非法时的兜底率。与 db._coerce_new_salary_rate
+# 募兵默认 + _backfill_salary_rate 迁移兜底同值——三处（结算 army_needed / 募兵 / 迁移）共用此锚点。
+SALARY_RATE_ANCHOR = 1.5
+
+
 def army_needed(row) -> int:
     """#44 军饷应发(万两) = ceil(manpower × salary_rate / 10000)，仅 owner_power=='ming'。
 
     salary_rate = 每军名义月饷率(两/兵·月)；应发由兵力派生、随扩军自动涨（堵「兵涨饷不涨」白嫖）。
-    0 兵 / 0 rate → 0 应发（白嫖扩军上界 + 零兵吃饷下界一并消解，#22 撤番因此不必要）。非明军不强加
-    饷需（叛军/外族不吃明国库）。名义口径——国库实发不出时差额仍按现机制累 arrears（欠饷与名义率正交）。
-    row 需含 owner_power / manpower / salary_rate 三列。"""
+    0 兵 → 0 应发（零兵吃饷下界消解，#22 撤番因此不必要）。非明军不强加饷需（叛军/外族不吃明国库）。
+    名义口径——国库实发不出时差额仍按现机制累 arrears（欠饷与名义率正交）。
+    row 需含 owner_power / manpower / salary_rate 三列。
+
+    #44 ship-pre R1（codex high）：ming 军「有兵必有饷」。salary_rate<=0 对 ming 军非法（=白嫖），
+    募兵入口（_coerce_new_salary_rate 默认 1.5）+ 迁移入口（_backfill_salary_rate）已堵，但 runtime
+    易主（owner_power 经 army_delta 翻成 ming）/裸 UPDATE 会留下 rate<=0 的明军（如倒戈的满洲八旗
+    62000 兵、salary_rate 0）。在结算唯一咽喉对 ming+有兵+rate<=0 锚定 SALARY_RATE_ANCHOR（边军史实
+    锚点），一处堵死所有入口（不依赖每个 mutation 点各自 coerce）。"""
     if str(row["owner_power"]) != "ming":
         return 0
     manpower = int(row["manpower"])
-    rate = float(row["salary_rate"])
-    if manpower <= 0 or rate <= 0:
+    if manpower <= 0:
         return 0
+    rate = float(row["salary_rate"])
+    if rate <= 0:
+        rate = SALARY_RATE_ANCHOR  # ming 有兵必有饷：rate<=0 非法 → 锚点，堵 runtime 易主/裸 UPDATE 漏网
     return math.ceil(manpower * rate / 10000)
 
 
