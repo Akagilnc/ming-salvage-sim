@@ -288,7 +288,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 姿势锚点：
 身体朝向=半侧身站在炮台窗前，肩背被窗外火光照亮；重心=压在靠近炮台的一侧脚，身体却向门外乱兵声回转；双手位置=右手抓住熏黑炮耳，左手把无字炮图卷起离开案面；道具关系=炮耳、火绳、卷起的炮图、窗外乱兵火光形成「火器残局」关系；视线方向=回望窗外乱兵火光；动作类型=站姿半转、抓炮耳、卷图回望，不俯身按图。
 
-场景服饰：深蓝黑兵部巡抚文官袍，袖口简洁，可有轻便护臂或工务围布暗示实作；登州炮台或火器档房，红夷炮小模型、量尺、无字炮图、火药罐、被熏黑的炮耳，窗外有乱兵火光和海风。
+场景服饰：深蓝黑兵部巡抚文官袍，袖口简洁，可有轻便护臂或工务围布暗示实作；登州炮台或火器档房，红夷炮小模型、量尺、无字炮图、火药罐、火绳、被熏黑的炮耳，窗外有乱兵火光和海风。
 
 专属负面：不要画成徐光启同款温和学者（孙元化更紧、更焦灼，被火光逼）。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
@@ -885,7 +885,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 场景服饰：深青黑文官督师袍，雨湿披风；扬州城楼，湿城砖、火把、空粮袋、无字军旗、远处清军营火。
 
-专属负面：不要老白须，不要高龄监察官脸，不要殉国圣像光，不要普通东林书生。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要老白须，不要高龄监察官脸，不要殉国圣像光，不要普通东林书生，不要像李待问的年轻白净半跪压遗书姿态。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 邹维琏 `minister_邹维琏.png`
 人物：邹维琏，东林出身，疏劾魏忠贤后被削籍，崇祯五年复起为福建巡抚，任内调郑芝龙抗击荷兰东印度公司，料罗湾海战为最大辨识点。
@@ -930,7 +930,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 场景服饰：深褐文官袍，雨湿守城披风，简洁低黑帽或士人软帽；松江东门、雨夜、书卷、印匣、远处清军火光。
 
-专属负面：不要长须，不要灰白须，不要老臣脸，不要像焦源溥/曾樱/瞿式耜。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要长须，不要灰白须，不要老臣脸，不要像史可法的扬州城楼抓栏回望姿态，不要像焦源溥/曾樱/瞿式耜。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 焦源溥 `minister_焦源溥.png`
 人物：焦源溥，陕西三原人，御史出身，移宫案中慷慨陈词；崇祯七年巡抚大同，因边境兵事日紧、军民缺饷，请赈不得而自劾去职，后来关中陷落时骂贼殉难。
@@ -1128,7 +1128,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 历史锚点：盛京汗帐升座理政，一边按兵权、一边总揽八旗与汉臣的一瞬。
 脸部锚点：脸型=宽厚方脸；额头=宽而饱满；眉眼=眉浓直、眼神冷静带压迫；鼻梁=直挺有肉；颧骨=平阔有力；嘴唇=厚而抿稳；下颌=方厚；胡须/发饰=满洲剃发垂辫、短须修整；肤色=北地偏黄；皱纹/年龄纹=三十多岁、眉间一道沉纹；神情=冷静强断、城府深。
 姿势锚点：身体朝向=正面略偏；重心=端坐压在王座上；双手位置=右手按住无字八旗令牌，左手搭案边；道具关系=令牌、汗座、军旗形成“据座理政”，兵刃退到腰侧为辅；视线方向=直视前方下臣；动作类型=坐镇总揽。
-场景服饰：盛京汗帐，皮帐、火盆、无字军旗、八旗甲士阴影；后金汗王袍与甲胄结合，黑金深蓝皮裘，满洲头饰。
+场景服饰：盛京汗帐，汗座、案边无字八旗令牌、皮帐、火盆、无字军旗、八旗甲士阴影；后金汗王袍与甲胄结合，黑金深蓝皮裘，满洲头饰。
 专属负面：不要画成野蛮莽夫、不要怒目、不要纯武将站姿。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 代善 `minister_代善.png`
@@ -1137,7 +1137,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 历史锚点：四大贝勒议政帐中，他把红旗令牌推向皇太极一侧、默许其继位的一瞬。
 脸部锚点：脸型=宽阔圆方脸；额头=厚高；眉眼=眉浓而平、眼皮重、眼神沉稳内敛；鼻梁=宽钝；颧骨=圆厚；嘴唇=厚而闭紧；下颌=圆重；胡须/发饰=满洲垂辫、浓须带灰；肤色=风霜暗黄；皱纹/年龄纹=五十多岁、风霜纹深；神情=沉稳不外露、有分量。
 姿势锚点：身体朝向=坐姿侧对帐中；重心=稳压低座；双手位置=右手推红旗令牌、左手按膝；道具关系=主动让出令牌；视线方向=不看令牌、看对面继位局势；动作类型=坐而让权。
-场景服饰：后金议政大帐，兽皮、火盆、无字八旗令牌、弓刀、黑红旗影；后金贵族甲胄与厚皮袍，深色皮裘，红旗系暗红细节，佩刀。
+场景服饰：后金议政大帐，兽皮、火盆、无字八旗令牌、弓刀、无字黑红旗影；后金贵族甲胄与厚皮袍，深色皮裘，红旗系暗红细节，佩刀。
 专属负面：不要画成普通骑兵或发怒猛将、不要怒目。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 莽古尔泰 `minister_莽古尔泰.png`
@@ -1152,7 +1152,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 #### 阿敏 `minister_阿敏.png`
 
 人物：阿敏，舒尔哈齐之子，四大贝勒之一，镶蓝旗主，永平弃城焚掠、违皇太极经营关内之意，终被幽禁。
-历史锚点：永平城撤退前，他站在燃烧城门外按刀下令撤走的一瞬。
+历史锚点：永平城撤退前，他站在燃烧城门外拉紧马缰、抓住封缄撤军令下令撤走的一瞬。
 脸部锚点：脸型=长脸；额头=平直；眉眼=眼窝略深、眼神斜冷；鼻梁=长直；颧骨=明显高耸；嘴唇=薄而紧；下颌=偏窄；胡须/发饰=满洲垂辫、短须修整；肤色=被风吹暗；皱纹/年龄纹=四十多岁、眉间冷纹；神情=宗室骄横夹被疑阴影。
 姿势锚点：身体朝向=半侧背向画面；重心=已偏向撤离方向；双手位置=右手拉紧马缰，左手抓住封缄撤军令；道具关系=马缰、撤军令、燃烧城门形成“弃城离去”关系；视线方向=回头看燃烧城门；动作类型=回望撤退，不按刀逞威。
 场景服饰：永平城外后金营地，城门火光、撤军车队、无字军报、散落财货、冷风；后金甲胄与皮袍，蓝旗系暗蓝细节，佩刀。
@@ -1179,10 +1179,10 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 #### 林丹汗 `minister_林丹汗.png`
 
 人物：林丹汗，察哈尔汗，北元最后公认大汗，力图统一蒙古、联明抗后金，被皇太极追击西迁、病死青海途中。
-历史锚点：察哈尔本部西迁大溃退，他在风雪草原汗帐前握金印与弯刀回望东面的一瞬。
+历史锚点：察哈尔本部西迁大溃退，他在风雪草原汗帐前护住印面朝下的汗印与弯刀回望东面的一瞬。
 脸部锚点：脸型=高瘦长脸；额头=高窄；眉眼=鹰眼锐利；鼻梁=高挺鹰钩；颧骨=瘦高突出；嘴唇=薄而抿；下颌=尖瘦；胡须/发饰=蒙古髡发、髭须或短长须；肤色=高原晒红粗黑；皱纹/年龄纹=四十上下、风霜法令纹；神情=骄傲焦躁、旧霸权崩塌的孤高。
-姿势锚点：身体朝向=身朝西、脸回望东；重心=立于帐门前微侧；双手位置=一手按弯刀，一手护汗印；道具关系=守护金印不舍霸权；视线方向=回望东方追兵；动作类型=溃退回望。
-场景服饰：草原迁徙汗帐，倒伏无字旗幡、马群、驼队、火盆、远处西行队伍与雪尘；蒙古贵族袍、皮裘、金饰、弯刀，衣袍被西迁风沙打乱。
+姿势锚点：身体朝向=身朝西、脸回望东；重心=立于帐门前微侧；双手位置=一手按弯刀，一手护住印面朝下的汗印；道具关系=守护汗印不舍霸权；视线方向=回望东方追兵；动作类型=溃退回望。
+场景服饰：草原迁徙汗帐，倒伏无字旗幡、马群、驼队、火盆、远处西行队伍与雪尘、印面朝下的汗印；蒙古贵族袍、皮裘、金饰、弯刀，衣袍被西迁风沙打乱。
 专属负面：不要画成后金贝勒、不要满洲甲胄装束。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 仁祖 `minister_仁祖.png`
@@ -1224,7 +1224,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 场景服饰：年轻贝勒战袍和轻甲，黑蓝皮裘，暗金细节；后金军帐，风雪、马具、火盆、无字旗影、关内城池木牌、弓刀。
 
-专属负面：不要画成孩童，不要和多铎同脸，不要做成粗豪猛将或成熟汗王。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要画成孩童，不要和多铎同脸，不要和豪格共用汗帐王座争位姿势，不要做成粗豪猛将或成熟汗王。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 多铎 `minister_多铎.png`
 
@@ -1238,7 +1238,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 姿势锚点：
 身体朝向=身体朝南方火光前倾；重心=压在牵马的左腿和肩部；双手位置=左手抓紧马缰，右手从弓袋边抽弓；道具关系=马缰、弓袋、南方城火形成“南征锋芒”关系；视线方向=盯向远处城火；动作类型=站姿、牵马欲出、抽弓，不半侧按案。
 
-场景服饰：轻甲、皮裘、暗红腰带，佩刀，少量亲王贵气；骑兵营地，马匹、弓袋、火盆、风雪、远处城池火光或南征旗影。
+场景服饰：轻甲、皮裘、暗红腰带，佩刀，少量亲王贵气；骑兵营地，马匹、弓袋、火盆、风雪、远处城池火光与无字南征旗影。
 
 专属负面：不要和多尔衮共用漂亮冷脸，不要画成普通骑兵，不要过分成熟。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
@@ -1254,7 +1254,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 姿势锚点：
 身体朝向=正面压近镜头；重心=肩背前压，像正在出营；双手位置=右手把重刀横扛在肩后，左手抓住马鞍；道具关系=重刀、马鞍、破雪地形成“追击前线”关系；视线方向=越过观者看逃敌方向；动作类型=站姿、扛刀、迎风出营，不站案前。
 
-场景服饰：厚甲、皮裘、重刀，黑褐重甲压迫感强；前线军营，火盆、马匹、破雪地、无字战报、残旗。
+场景服饰：厚甲、皮裘、重刀，黑褐重甲压迫感强；前线军营，火盆、马匹、破雪地、无字战报、无字残旗。
 
 专属负面：不要画成多尔衮式俊冷贝勒，不要画成后金文臣，不要做成晚年权臣。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
@@ -1262,7 +1262,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 人物：豪格，皇太极长子，肃亲王，战功强而性格刚愎；皇太极死后与多尔衮争位失败，幼弟福临折中登位，豪格后来被幽禁而死。
 
-历史锚点：盛京汗帐争位会议后，小王座被推到中央，他手按刀柄却失去主动权。
+历史锚点：盛京汗帐争位会议后，小王座被推到中央，他攥紧腰间军令、抓住帷绳却失去主动权。
 
 脸部锚点：
 脸型=宽脸但带壮年王子气；额头=宽平，帽檐压住怒纹；眉眼=直浓眉，眼睛倔强不服；鼻梁=宽直；颧骨=宽而不削；嘴唇=紧抿；下颌=方硬；胡须/发饰=短须整齐，满洲辫规整；肤色=偏深；皱纹/年龄纹=三十多岁，眉间怒纹浅深；神情=压住怒气的不服输，不是凶恶。
@@ -1270,9 +1270,9 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 姿势锚点：
 身体朝向=站在幼主小座侧后方；重心=上身向小座前倾但脚步停住；双手位置=右手攥紧腰间军令，左手抓住空汗位旁的帷绳；道具关系=军令、帷绳、小王座形成“争位失败却不得越位”关系；视线方向=盯着小王座而非观者；动作类型=站姿、前倾停步、攥令抓帷，不按刀。
 
-场景服饰：后金王子战袍甲胄，暗金纹样比普通贝勒更显贵；盛京汗帐议政处，空汗位、幼主小座、八旗令牌、火盆、成人甲士阴影。
+场景服饰：后金王子战袍甲胄，暗金纹样比普通贝勒更显贵；盛京汗帐议政处，空汗位旁垂下的帷绳、幼主小座、八旗令牌、火盆、成人甲士阴影。
 
-专属负面：不要画成成熟汗王，不要和代善同成老王，不要把怒气画成失控莽夫。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要画成成熟汗王，不要和代善同成老王，不要和多尔衮共用俯视关内木牌的年轻贝勒姿态，不要把怒气画成失控莽夫。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 鳌拜 `minister_鳌拜.png`
 
@@ -1312,7 +1312,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 人物：王嘉胤，陕北府谷人，早期流寇首领，崇祯元年因年荒饥馑起事，自立为王，麾下有高迎祥、罗汝才、张献忠等，后被部下灌醉刺死。
 
-历史锚点：陕北饥荒营地中，他把破碗和简陋王旗放在火堆旁，宣布起事的一瞬。
+历史锚点：陕北饥荒营地中，他把破碗和无字简陋破旗放在火堆旁，宣布起事的一瞬。
 
 脸部锚点：
 脸型=瘦硬凹脸；额头=窄而晒黑；眉眼=乱眉下压，眼神凶亮而精；鼻梁=短硬带折；颧骨=高突，脸颊深凹；嘴唇=干裂薄唇；下颌=尖硬；胡须=乱短须夹黄土；肤色=陕北饥荒黄黑色；皱纹=嘴角裂纹、眼尾风沙纹；神情=从饥荒和逃亡里活出来的狡悍，不是正规将军。
