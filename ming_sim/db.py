@@ -3464,10 +3464,11 @@ class GameDB:
         rows = self.conn.execute("SELECT * FROM armies").fetchall()
         if danger_order:
             def _danger_key(r):
-                # arrears 累计欠饷万两，按月应发归一成"欠饷月数*10"（0-100），与各 0-100 短板相加。
+                # arrears 累计欠饷万两，按月应发归一成"欠饷月数*10"（截至 100），与各 0-100 短板相加。
+                # 用浮点归一（排序键，不截断小数；线上 gemini）；arrears 虽 NOT NULL 仍 `or 0` 防御。
                 pay = self._army_pay(r)
-                arr = int(r["arrears"]) or 0
-                arrears_norm = min(100, arr * 10 // pay) if pay > 0 else 0
+                arr = int(r["arrears"] or 0)
+                arrears_norm = min(100.0, arr * 10.0 / pay) if pay > 0 else 0.0
                 danger = (arrears_norm + (100 - int(r["supply"])) + (100 - int(r["morale"]))
                           + (100 - int(r["loyalty"])) + (100 - int(r["training"])))
                 return (-danger, str(r["name"]))  # danger 降序、name 升序（同原 SQL ... DESC, name）

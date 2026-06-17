@@ -13,7 +13,7 @@ from ming_sim.flows import army_needed
 
 def test_army_payload_exposes_army_needed(game):
     """army_payload 须暴露引擎实扣应发 army_needed（供 web/LLM 呈现「月饷」），与 flows.army_needed 一致。"""
-    db, state, _ = game
+    db, _state, _ = game
     payload = db.army_payload()
     assert payload, "应有军队"
     by_id = {p["id"]: p for p in payload}
@@ -28,7 +28,7 @@ def test_army_payload_exposes_army_needed(game):
 def test_army_report_shows_actual_charge_not_maintenance(game):
     """army_report 的月饷总额/欠饷月数须基于 army_needed（实扣），非退役 maintenance_per_turn。
     构造一支 maintenance≠army_needed 的明军（扩军使 needed 涨、maint 不动），断言报告里出现实扣值。"""
-    db, state, _ = game
+    db, _state, _ = game
     # 取一支明军，扩兵让 army_needed 明显 > maintenance_per_turn（制造显示≠实扣差）。
     row = db.conn.execute(
         "SELECT id, manpower, maintenance_per_turn, salary_rate FROM armies "
@@ -46,6 +46,10 @@ def test_army_report_shows_actual_charge_not_maintenance(game):
     total_maint = db.conn.execute("SELECT SUM(maintenance_per_turn) AS t FROM armies").fetchone()["t"]
     assert total_needed != total_maint, "前提：总实扣应≠总 maintenance"
     report = db.army_report(limit=20)
-    assert f"{total_needed}" in report, (
-        f"army_report 月饷总额应=实扣总和 {total_needed}，实际报告未含该值（仍按 maintenance {total_maint}？）"
+    # 用引擎同款格式化串断言（避免裸数字子串脆性，线上 sourcery）。
+    from ming_sim.assets import format_money
+    from ming_sim.models import monthly_amount
+    expected = format_money(monthly_amount(total_needed))
+    assert expected in report, (
+        f"army_report 月饷总额应=实扣总和格式化『{expected}』，实际报告未含（仍按 maintenance {total_maint}？）"
     )
