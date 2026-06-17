@@ -412,8 +412,8 @@ def test_strategic_foreign_event_records_trigger_and_lands_soft_result_delta(gam
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "region_delta": {"beizhili": {"military_pressure": 35, "controlled_by": "ming"}},
-            "army_delta": {"jingying": {"manpower": -5000, "morale": -8}},
+            "region_delta": {"beizhili": {"military_pressure": 35, "controlled_by": "ming", "reason": "己巳之变软判敌逼京畿"}},
+            "army_delta": {"jingying": {"manpower": -5000, "morale": -8, "reason": "己巳之变勤王战损"}},
         },
         content=content,
     )
@@ -453,8 +453,8 @@ def test_strategic_foreign_event_survives_named_commander_death_with_soft_result
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "songshan_battle"}],
-            "region_delta": {"liaodong": {"military_pressure": 18}},
-            "army_delta": {"guanning": {"manpower": -12000, "morale": -12}},
+            "region_delta": {"liaodong": {"military_pressure": 18, "reason": "松锦决战软判辽东吃紧"}},
+            "army_delta": {"guanning": {"manpower": -12000, "morale": -12, "reason": "松锦决战关宁主力战损"}},
         },
         content=content,
     )
@@ -540,6 +540,33 @@ def test_unrelated_region_delta_does_not_satisfy_strategic_event_result_gate(gam
     ).fetchone()["unrest"] == 79
 
 
+def test_target_region_delta_without_event_anchor_does_not_satisfy_strategic_event_result_gate(game):
+    """#189 CMR R5：目标地区上的普通变化也不能冒充该战事结果。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    db.conn.execute("UPDATE regions SET unrest = ? WHERE id = ?", (78, "beizhili"))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "region_delta": {"beizhili": {"unrest": 1, "reason": "ordinary beizhili unrest unrelated to battle"}},
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert "主账" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert not db.has_event_triggered("jisi_lubian")
+    assert db.conn.execute(
+        "SELECT unrest FROM regions WHERE id = ?", ("beizhili",)
+    ).fetchone()["unrest"] == 79
+    assert out["region_changes"][0].get("rejected") is not True
+
+
 def test_unrelated_person_delta_does_not_satisfy_strategic_event_result_gate(game):
     """#189 CMR R4：无关人物变化不能冒充战略战事主账结果。"""
     db, state, content = game
@@ -565,6 +592,31 @@ def test_unrelated_person_delta_does_not_satisfy_strategic_event_result_gate(gam
     assert out["applied_person_changes"][0].get("rejected") is not True
 
 
+def test_target_person_delta_without_event_anchor_does_not_satisfy_strategic_event_result_gate(game):
+    """#189 CMR R5：点名将普通人物变化不能只靠姓名冒充该战事结果。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1638
+    state.period = 9
+    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "卢象升"))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
+            "人物变更": [{"name": "卢象升", "动作": "处置", "status": "dead", "reason": "病重卒于任上"}],
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert "主账" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert not db.has_event_triggered("wuyin_lubian")
+    assert db.get_character_status("卢象升")[0] == "dead"
+    assert out["applied_person_changes"][0].get("rejected") is not True
+
+
 def test_rejected_strategic_foreign_event_does_not_land_battle_delta(game):
     """#189 CMR：战略事件被同信封关门拒收时，伴随战果 delta 不得半落库。"""
     db, state, content = game
@@ -579,7 +631,7 @@ def test_rejected_strategic_foreign_event_does_not_land_battle_delta(game):
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "region_delta": {"beizhili": {"military_pressure": 20}},
+            "region_delta": {"beizhili": {"military_pressure": 20, "reason": "己巳之变重复引用战果"}},
         },
         content=content,
     )
@@ -618,6 +670,33 @@ def test_rejected_strategic_foreign_event_preserves_unrelated_region_delta(game)
     assert db.conn.execute(
         "SELECT unrest FROM regions WHERE id = ?", ("shaanxi",)
     ).fetchone()["unrest"] == 79
+
+
+def test_rejected_strategic_event_preserves_unanchored_target_region_delta(game):
+    """#189 CMR R5：战略事件拒收时，目标地区上的无关普通变化仍须落库。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    db.mark_event_triggered(state, "jisi_lubian")
+    db.conn.execute("UPDATE regions SET unrest = ? WHERE id = ?", (78, "beizhili"))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "region_delta": {"beizhili": {"unrest": 1, "reason": "ordinary beizhili unrest unrelated to battle"}},
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert "候选" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert db.conn.execute(
+        "SELECT unrest FROM regions WHERE id = ?", ("beizhili",)
+    ).fetchone()["unrest"] == 79
+    assert out["region_changes"][0].get("rejected") is not True
 
 
 def test_rejected_strategic_event_preserves_unrelated_person_delta(game):
@@ -659,7 +738,7 @@ def test_previously_triggered_strategic_event_rejects_duplicate_without_landing_
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "region_delta": {"beizhili": {"military_pressure": 10}},
+            "region_delta": {"beizhili": {"military_pressure": 10, "reason": "己巳之变重复引用战果"}},
         },
         content=content,
     )
@@ -709,7 +788,7 @@ def test_invalid_strategic_event_result_delta_does_not_mark_event_triggered(game
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "region_delta": {"beizhili": {"不存在字段": 1}},
+            "region_delta": {"beizhili": {"不存在字段": 1, "reason": "己巳之变无效战果字段"}},
         },
         content=content,
     )
