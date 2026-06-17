@@ -346,7 +346,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 场景服饰：素净深青文官袍，乌纱帽，几乎无金线装饰；城破夜里的寒冷书斋，窗外隐约火光，无字绝笔奏疏、无字书卷、冷烛、官帽匣。
 
-专属负面：不要画成普通直谏青年，不要画成做作的殉国圣像光。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要画成普通直谏青年，不要画成做作的殉国圣像光；绝笔奏疏、书卷、官帽匣可见面保持空白或纯材质，不要可读文字、伪字、书法笔画、题签、印章、编号或墨迹纹理。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 黄道周 `minister_黄道周.png`
 
@@ -362,7 +362,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 场景服饰：朴素深灰蓝文官袍，衣摆有尘土和磨损，仍保持士大夫整洁；冷暗囚室或临刑前的石室，墙边有锁链、冷光、无刻字竹简和无字诗稿，背景极简压抑。
 
-专属负面：不要画成温和书斋学者，不要与瞿式耜同款坐姿囚臣（黄道周站立带链、举诗稿），不要出现劝降者、第二个人或伸进画面的手。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要画成温和书斋学者，不要与瞿式耜同款坐姿囚臣（黄道周站立带链、举诗稿），不要出现劝降者、第二个人或伸进画面的手；诗稿、竹简和墙面可见处保持空白或纯材质，不要可读文字、伪字、书法笔画、刻字、题签、印章或编号。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 吴昌时 `minister_吴昌时.png`
 
@@ -526,7 +526,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 场景服饰：深蓝黑兵部文官袍，厚披风，少量边防尘土；山海关军务厅，无字边防图、关城木模型、八里外新城小模型、无字旧军报、冷烛，窗外长城关城阴影。
 
-专属负面：不要画成纯粹无能老臣或冲锋督师，不要黝黑猛将脸，不要正面站定。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要画成纯粹无能老臣或冲锋督师，不要黝黑猛将脸，不要正面站定；边防图、关城模型、新城模型、木筹、旧军报可见面不要地名、标签、路线箭头、数字、徽记、符号或伪字，地图只保留无字地形色块和无文字模型轮廓。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 曹文诏 `minister_曹文诏.png`
 
@@ -766,7 +766,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 场景服饰：文官督师袍外加厚披风与轻甲护肩，适合西南湿冷山地，衣料厚重；西南军营，山地雾气、火盆、成都城门模型、粮仓模型、无字归附土司木印、无字屯田粮册、湿竹帘。
 
-专属负面：不要辽东边将，不要清瘦文弱的书生官，不要急躁临阵的督师，不要与杨嗣昌共用木筹地图布网或十面张网姿态。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要辽东边将，不要清瘦文弱的书生官，不要急躁临阵的督师，不要与杨嗣昌共用木筹地图布网或十面张网姿态；土司木印只能露纯木面或背面，不要印文、像文字的刻痕、符号、徽记或伪字，屯田册、粮仓模型、城门模型可见面也不要标签、编号、印章或文字纹理。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 王尊德 `minister_王尊德.png`
 
@@ -939,7 +939,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 场景服饰：深褐文官袍，雨湿守城披风，简洁低黑帽或士人软帽；松江东门、雨夜、书卷、印匣、远处清军火光与模糊火线；不要出现背景人群、士兵、人物剪影、背景人脸、身体或伸进画面的手。
 
-专属负面：不要长须，不要灰白须，不要老臣脸，不要像史可法的扬州城楼抓栏回望姿态，不要像焦源溥/曾樱/瞿式耜。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要长须，不要灰白须，不要老臣脸，不要像史可法的扬州城楼抓栏回望姿态，不要像焦源溥/曾樱/瞿式耜；遗书卷、书卷、印匣、门梁可见面保持空白或纯材质，不要可读文字、伪字、书法笔画、题签、印章、编号或刻字纹理。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 焦源溥 `minister_焦源溥.png`
 人物：焦源溥，陕西三原人，御史出身，移宫案中慷慨陈词；崇祯七年巡抚大同，因边境兵事日紧、军民缺饷，请赈不得而自劾去职，后来关中陷落时骂贼殉难。
@@ -999,7 +999,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 场景服饰：深蓝文官督师袍，行旅披风和轻甲护肩；湘楚临水军务行营、湿冷火盆、低木凳、无字湖南军图、湘江/洞庭补给船影、纯色无纹旧旗残片、封缄无字军报；这是内河军务行营，不是浙江/福建海防楼台；旗面不要出现像字形、书法或徽记笔画的亮色痕迹。
 
-专属负面：不要像邹维琏的火船模型海防桌案，不要红夷船牌、海防炮台或浙江/福建海楼，不要像史可法的城墙守死，不要普通地方官，不要与杨嗣昌共用俯身按木筹于军图的布网姿态，不要与李定国共用半跪军图前双手摆弄令牌/符筹剪影。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要像邹维琏的火船模型海防桌案，不要红夷船牌、海防炮台或浙江/福建海楼，不要像史可法的城墙守死，不要普通地方官，不要与杨嗣昌共用俯身按木筹于军图的布网姿态，不要与李定国共用半跪军图前双手摆弄令牌/符筹剪影；圆形军符、大顺木筹、湿绳结、军图和军报可见面保持纯材质或无字色块，不要徽记、符号、地名、标签、编号、伪字、印章或像文字的刻痕。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 瞿式耜 `minister_瞿式耜.png`
 人物：瞿式耜，常熟人，南明广西巡抚、永历朝大学士，留守桂林，城破被俘后囚禁四十余日，与张同敞唱和赋诗，不屈就义。
@@ -1029,7 +1029,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 场景服饰：深青文武混合袍服，海风短披风，佩剑克制；浙东/舟山海船甲板、夜海、船帆、布面纯色无纹的纯色无纹军旗、远处城影；旗面不要出现像字形、书法或徽记笔画的亮色痕迹。
 
-专属负面：不要老白须，不要少年童生，不要普通成熟将军，不要像史可法的城墙守臣，不要抓船索/桅绳，不要抱卷贴胸，不要与刘鸿训共用海船抓缆护书姿态，不要与郑成功共用台江战船按模型握令旗姿态。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要老白须，不要少年童生，不要普通成熟将军，不要像史可法的城墙守臣，不要抓船索/桅绳，不要抱卷贴胸，不要与刘鸿训共用海船抓缆护书姿态，不要与郑成功共用台江战船按模型握令旗姿态；案上诗卷、船帆和旗面可见处保持空白或纯色布面，不要可读文字、伪字、书法笔画、题签、印章、编号、徽记或地图式符号。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 ## 宗藩与宫廷宗室
 
@@ -1127,7 +1127,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 姿势锚点：
 身体朝向=朝海风站直；重心=挺立沉定；双手位置=右手把无字无徽记印匣推入案内阴影，左手压无字诗卷；道具关系=印匣与无字绝命诗卷并陈并封存；视线方向=面向窗外海潮；动作类型=封存印册的诀别，不做交接动作。
 
-专属负面：不要画成富贵藩王或具体自尽场景，避免臃肿骄奢之相，不要出现接收印册的人、伸来的手、侍从、第二个人、背景人脸或伸进画面的手。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要画成富贵藩王或具体自尽场景，避免臃肿骄奢之相，不要出现接收印册的人、伸来的手、侍从、第二个人、背景人脸或伸进画面的手；绝命诗卷、印匣、封缄宗室旧册匣可见面保持空白或纯材质，不要可读文字、伪字、书法笔画、印文、封签、题签、编号、徽记或印章纹理。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 ## 后金、蒙古、朝鲜
 
@@ -1174,7 +1174,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 脸部锚点：脸型=清瘦长脸；额头=高朗；眉眼=眉细、眼神深沉；鼻梁=直而瘦；颧骨=略显；嘴唇=薄而平；下颌=收窄；胡须/发饰=辫发束整、胡须整齐；肤色=书斋偏白；皱纹/年龄纹=四十上下、眼角浅纹；神情=儒雅冷静而不软。
 姿势锚点：身体朝向=半侧身站在文馆侧架前；重心=站姿微前倾，压在收旧匣的一侧；双手位置=右手把文面朝下的无字明制文书封套推入旧文书匣，左手把无字无徽记后金令牌放到无字制度草案旁；道具关系=旧文书匣、无字制度草案、无字无徽记令牌形成“旧制入匣、新制上案”的转换；视线方向=低看制度草案边缘；动作类型=站姿、侧身收旧匣、置令牌，不是正面伏案按令牌压文书。
 场景服饰：盛京文馆或汗帐侧室，侧架、无字制度草案、印匣、满汉文书匣、封缄且文面朝下的空白文书封套、无字无徽记令牌、低烛；汉式文官袍与后金官服混合，深蓝黑，略带满洲官服元素、不着甲胄。
-专属负面：不要画成明臣忠良或普通幕僚、不要持兵披甲，不要与皇太极或孙可望共用正面坐姿一手按令牌/印匣一手压文书的据案总揽剪影。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要画成明臣忠良或普通幕僚、不要持兵披甲，不要与皇太极或孙可望共用正面坐姿一手按令牌/印匣一手压文书的据案总揽剪影；制度草案、明制文书封套、文书匣、印匣和令牌可见面必须纯空白或纯材质，不要文字、伪字、满汉字形、印章、封签、题签、编号、徽记或任何 glyph-like marks。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 佟养性 `minister_佟养性.png`
 
