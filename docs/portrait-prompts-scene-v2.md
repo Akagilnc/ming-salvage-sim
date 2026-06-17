@@ -170,7 +170,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 场景服饰：深黑蓝文官袍，吏部权柄感，纹样锋利克制；吏部铨选房，高卷宗架、无字名册、印匣、无字官员履历卷宗。
 
-专属负面：不要拿刀剑，不要画成狞笑奸臣，不要出现旁侧官员、背景人物、第二个人或伸进画面的手。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要拿刀剑，不要画成狞笑奸臣，不要出现旁侧官员、背景人物、第二个人或伸进画面的手，不要在名单册、名册、履历卷宗或印匣上出现文字、姓名、印文、编号或伪 glyph。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 杨嗣昌 `minister_杨嗣昌.png`
 
@@ -378,7 +378,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 场景服饰：深褐中低阶文官袍，衣冠整齐但略显油滑，不要大权臣华服；吏部廊下连着相府后门，茶盏、小银匣、无字铨选名册、封缄私札、烛光。
 
-专属负面：不要画成大权臣或清流名士，不要出现第二个人物、门内人物轮廓或第二只伸出的手，不要与王绍徽同款铨选重臣（吴昌时更瘦、更油滑，在相府后廊而非铨选房）。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要画成大权臣或清流名士，不要出现第二个人物、门内人物轮廓或第二只伸出的手，不要与王绍徽同款铨选重臣（吴昌时更瘦、更油滑，在相府后廊而非铨选房），不要在铨选名册、私札、银匣或木匣上出现文字、姓名、印文、编号或伪 glyph。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 ## 内廷、东厂、锦衣卫
 
@@ -999,7 +999,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 场景服饰：深蓝文官督师袍，行旅披风和轻甲护肩；湘楚临水军务行营、湿冷火盆、低木凳、无字湖南军图、湘江/洞庭补给船影、纯色无纹旧旗残片、封缄无字军报；这是内河军务行营，不是浙江/福建海防楼台；旗面不要出现像字形、书法或徽记笔画的亮色痕迹。
 
-专属负面：不要像邹维琏的火船模型海防桌案，不要红夷船牌、海防炮台或浙江/福建海楼，不要像史可法的城墙守死，不要普通地方官，不要与杨嗣昌共用俯身按木筹于军图的布网姿态。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要像邹维琏的火船模型海防桌案，不要红夷船牌、海防炮台或浙江/福建海楼，不要像史可法的城墙守死，不要普通地方官，不要与杨嗣昌共用俯身按木筹于军图的布网姿态，不要与李定国共用半跪军图前双手摆弄令牌/符筹剪影。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 瞿式耜 `minister_瞿式耜.png`
 人物：瞿式耜，常熟人，南明广西巡抚、永历朝大学士，留守桂林，城破被俘后囚禁四十余日，与张同敞唱和赋诗，不屈就义。
@@ -1417,17 +1417,17 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 人物：李定国，张献忠义子，大西军出身，南明晋王，抗清名将；桂林、衡州两捷击败孔有德、尼堪，“两蹶名王”天下震动。
 
-历史锚点：衡州捷后，他在战后高地或军帐地形图前，双指压住两枚牌面朝下的无字敌王令牌，身体前倾，准备继续北伐。
+历史锚点：衡州捷后，他在战后高地地形图前单膝将起，举起两枚牌面朝下的无字敌王令牌，抬旗望向北方，准备继续北伐。
 
 脸部锚点：
 脸型=瘦硬脸，骨相干净；额头=中等偏窄，有战场风尘；眉眼=直眉略短，眼神亮而冷定；鼻梁=薄直；颧骨=高而清楚；嘴唇=薄且紧；下颌=尖硬；胡须=短须修整，不老；肤色=长期征战的黄褐带风霜；皱纹=眼尾细纹、鼻侧浅纹；神情=少年流寇底色未退但已经有名将冷定，不是忠臣脸谱。
 
 姿势锚点：
-身体朝向=半跪在战后地形图前；重心=前压到双指与前膝；双手位置=右手双指压住两枚牌面朝下的无字敌王令牌，左手按住一面纯色无纹小旗，旗杆斜指北方；道具关系=两枚无字敌王令牌、破旗碎片、纯色无纹小旗、地形图形成“两蹶名王后继续北伐”关系；视线方向=抬眼望向北方战线；动作类型=半跪、压令牌、前倾，不站案前按刀。
+身体朝向=单膝将起在战后地形图前，胸口朝北方战线；重心=从前膝推向即将站起的后脚；双手位置=右手双指夹起两枚牌面朝下的无字敌王令牌举到胸前，左手握住一面纯色无纹小旗并抬向北方；道具关系=两枚无字敌王令牌、破旗碎片、纯色无纹小旗、地形图形成“两蹶名王后继续北伐”关系；视线方向=抬眼望向北方战线；动作类型=单膝将起、举令牌、抬旗望北，不是半跪低头摆弄军图符筹，不站案前按刀。
 
 场景服饰：南明/大西混合军装，深色甲衣，暗红披风，佩刀低调；湖南衡州军帐或战后高地，火盆、无字军图、两枚牌面朝下的无字敌王令牌、破旗碎片、战马阴影。
 
-专属负面：不要和孙可望画成兄弟脸，不要圆厚王爵脸，不要流民少年，也不要普通成熟将军。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要和孙可望画成兄弟脸，不要圆厚王爵脸，不要流民少年，也不要普通成熟将军，不要与何腾蛟共用半跪军图前双手摆弄令牌/符筹剪影。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 孙可望 `minister_孙可望.png`
 
@@ -1439,8 +1439,8 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 脸型=圆厚脸，颊肉重；额头=宽而低；眉眼=重眉压眼，眼神猜忌强势；鼻梁=鼻梁不高但鼻翼宽；颧骨=被厚脸肉压住；嘴唇=中厚，嘴角下坠；下颌=宽圆而重；胡须=短浓黑须，修得比李定国更王爵化；肤色=滇黔湿热里的暗黄；皱纹=眉间压纹、嘴角下坠纹；神情=霸道野心与不服管，不是正面忠臣。
 
 姿势锚点：
-身体朝向=正坐高案后面对观者；重心=上身压向案面形成压迫；双手位置=左手按无字无徽记秦王印匣，右手压住封缄无字永历诏书卷，文面不可见；道具关系=无字秦王印匣、封缄无字永历诏书卷、远处空置御座轮廓形成“挟天子与内斗”关系；视线方向=直视案上封诏与印匣；动作类型=坐姿、按印、压诏，像把朝廷压在案上。
+身体朝向=正坐高案后面对观者；重心=上身越过案面前压形成压迫，肩背比皇太极更逼近案沿；双手位置=左手按无字无徽记秦王印匣，右手压住封缄无字永历诏书卷，文面不可见；道具关系=无字秦王印匣、封缄无字永历诏书卷、远处空置御座轮廓形成“挟天子与内斗”关系；视线方向=直视案上封诏与印匣；动作类型=坐姿、前压按印、压诏，像把朝廷压在案上，不是端坐据座理政。
 
 场景服饰：大西军将领与南明王爵混合袍甲，暗红披风，金饰略过分；贵州安隆府王府式军帐，无字无徽记秦王印匣、封缄无字永历诏书卷、无字滇黔地图模型、火盆、背后远处空置御座轮廓模糊，不出现儿童轮廓、人脸或第二个人。
 
-专属负面：不要和李定国画成兄弟脸，不要瘦硬冷定名将脸，不要正面忠臣感，不要流寇苦人脸，不要出现幼主、儿童、御座上人物、第二个人、背景人脸或伸进画面的手，不要在印匣或诏书上出现文字、印文、徽记或伪 glyph。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要和李定国画成兄弟脸，不要瘦硬冷定名将脸，不要正面忠臣感，不要流寇苦人脸，不要与皇太极或范文程共用正面坐姿一手按令牌/印匣一手压文书的据案总揽剪影，不要出现幼主、儿童、御座上人物、第二个人、背景人脸或伸进画面的手，不要在印匣或诏书上出现文字、印文、徽记或伪 glyph。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
