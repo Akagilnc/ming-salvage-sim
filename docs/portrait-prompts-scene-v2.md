@@ -186,7 +186,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 场景服饰：深蓝黑文官袍，整洁讲究，带兵部户部之间的筹策气；军政筹划值房，无字战略地图、无字军报、算盘、封缄文书、十枚不同方向木筹或铜钉。
 
-专属负面：不要画成年轻轻浮公子，不要画成炫技军师脸谱。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要画成年轻轻浮公子，不要画成炫技军师脸谱，不要与朱燮元共用西南山地军帐坐姿治理模型；杨嗣昌的核心必须是俯身木筹布网和十面张网。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 温体仁 `minister_温体仁.png`
 
@@ -456,11 +456,11 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 脸型=瘦硬长脸；额头=有横纹；眉眼=眉直而不浓，眼清亮坚定；鼻梁=直；颧骨=硬而显；嘴唇=干薄；下颌=硬；胡须=短须带灰；肤色=被风雨打得粗糙；皱纹=额间横纹深、眼角风霜纹；神情=刚正坚守，与酷吏的冷麻木完全不同。
 
 姿势锚点：
-身体朝向=正对城门、背朝城内，以身挡门；重心=肩背直立、稳压双腿，像顶住门的重量；双手位置=一手按住沉重门闩，一手握无字无徽记令牌；道具关系=门闩、无字无徽记令牌、城门木梁连成“城破死守门户”关系；视线方向=回望身后城内冷火，似仍在守；动作类型=站姿、挡门、按梁握牌，不自尽、不阴鸷。
+身体朝向=正对城门、背朝城内，以身挡门；重心=肩背直立、稳压双腿，像顶住门的重量；双手位置=右手按住沉重门闩，左手撑住城门横木梁，腰侧只露一枚无字无徽记令牌；道具关系=门闩、城门木梁、腰侧无字令牌连成“城破死守门户”关系；视线方向=回望身后城内冷火，似仍在守；动作类型=站姿、挡门、按闩撑梁，不握令牌回望，不自尽、不阴鸷。
 
 场景服饰：深色锦衣卫服，飞鱼纹低调，佩刀朴素，披风被风吹开；崇文门夜战后的城门内侧，巨大门闩、石阶、冷火光、风雨、远处雨幕火点、无字旗帜。
 
-专属负面：不要画成阴狠酷吏，不要自尽场景，不要田尔耕、许显纯的诏狱刑官气，不要在令牌上出现文字、刻痕、徽记或伪 glyph。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要画成阴狠酷吏，不要自尽场景，不要田尔耕、许显纯的诏狱刑官气，不要与吴三桂共用城门内侧按门闩握令钥回望城内剪影，不要在令牌上出现文字、刻痕、徽记或伪 glyph。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 高起潜 `minister_高起潜.png`
 
@@ -670,7 +670,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 场景服饰：明军边将轻甲，深蓝黑内衬，皮护肩，暗红披风，腰间佩刀；山海关城门内侧军帐门口，巨大门闩、关城阴影、远处关外烟尘、纯色无纹军旗、马匹暗影。
 
-专属负面：不要画成普通辽东训练少年，不要粗豪老将脸，不要按案持令，不要与耿仲明共用贴城门低伏抓钥启闩姿态。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要画成普通辽东训练少年，不要粗豪老将脸，不要按案持令，不要与耿仲明共用贴城门低伏抓钥启闩姿态，不要与李若琏共用城门内侧按门闩守死回望剪影。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 左良玉 `minister_左良玉.png`
 
@@ -756,17 +756,17 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 人物：朱燮元，总督西南军务，平定奢安之乱的文臣统帅，成都坚守、山地合围、招抚屯田都极具辨识度。
 
-历史锚点：奢安之乱后期，他在西南山地军帐中以木筹布置四面合围、断敌交通的一瞬。
+历史锚点：奢安之乱后期，他在成都坚守后的西南军帐中，把无字屯田册和归附土司木印收拢到粮仓模型旁，以守城、招抚、屯田收束乱局。
 
 脸部锚点：
 脸型=宽厚方脸；额头=宽而饱满；眉眼=浓眉舒展，眼睛沉稳有定力、不急不怒；鼻梁=直挺厚实；颧骨=丰隆不削；嘴唇=厚实平和、闭得稳；下颌=宽厚带肉、显沉稳；胡须=灰白浓密的整须，齐整有威；肤色=山地风霜的暗黄褐；皱纹=额上数道沉稳横纹、眼角风纹；神情=把复杂山地战压进一盘棋的笃定。
 
 姿势锚点：
-身体朝向=稳坐军帐案前、上身正对山地模型；重心=端坐沉稳、四平八稳压在座上；双手位置=右手把一支木筹插进山地模型的隘口、左手按住无字粮屯册；道具关系=山地木模、木筹、粮屯册、土司寨模型构成“运筹合围”关系；视线方向=俯视模型隘口、专注推演；动作类型=坐姿、插筹布局、按册，沉静运筹而非临阵慌忙。
+身体朝向=稳坐军帐案前、上身正对粮仓与成都城门模型；重心=端坐沉稳、四平八稳压在座上；双手位置=右手把无字归附土司木印推到粮仓模型旁，左手按住无字屯田粮册；道具关系=成都城门模型、粮仓模型、土司木印、屯田粮册构成“坚守后招抚屯田”关系；视线方向=俯视粮仓模型与土司木印之间；动作类型=坐姿、推印归档、按册收束，沉静治理而非木筹布网。
 
-场景服饰：文官督师袍外加厚披风与轻甲护肩，适合西南湿冷山地，衣料厚重；西南军营，山地雾气、火盆、无字山地木模、无字驿道木牌、土司寨模型、无字粮屯册、湿竹帘。
+场景服饰：文官督师袍外加厚披风与轻甲护肩，适合西南湿冷山地，衣料厚重；西南军营，山地雾气、火盆、成都城门模型、粮仓模型、无字归附土司木印、无字屯田粮册、湿竹帘。
 
-专属负面：不要辽东边将，不要清瘦文弱的书生官，不要急躁临阵的督师。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要辽东边将，不要清瘦文弱的书生官，不要急躁临阵的督师，不要与杨嗣昌共用木筹地图布网或十面张网姿态。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 王尊德 `minister_王尊德.png`
 
@@ -1347,7 +1347,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 场景服饰：破旧驿卒衣与轻甲混合，腰间短刀，粗布包袱；驿道荒原，瘦马、风沙、远处乱火和空棚。
 
-专属负面：不要画成王嘉胤式凶亮渠首，不要画成张献忠式暴烈军头，不要过早王者化。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要画成王嘉胤式凶亮渠首，不要画成张献忠式暴烈军头，不要过早王者化，不要与高迎祥共用陕北瘦黑长脸；李自成必须更年轻、近乎无须、只有短髭青茬和沉默韧性。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 张献忠 `minister_张献忠.png`
 
@@ -1379,7 +1379,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 场景服饰：边军破甲、粗布披风、马刀，衣甲带黄土和雪泥；陕北/秦岭山沟，黄土雪泥、火堆余烬、弃置包袱、逃散脚印、无字断旗、马匹。
 
-专属负面：不要和王嘉胤同脸，不要画成正规骑将，不要后期帝王化。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要和王嘉胤同脸，不要与李自成共用年轻驿卒瘦黑长脸，不要画成正规骑将，不要后期帝王化；高迎祥必须更年长、更野、更焦躁，乱须带泥雪。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 罗汝才 `minister_罗汝才.png`
 
