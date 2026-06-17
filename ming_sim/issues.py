@@ -1445,9 +1445,70 @@ def _is_strategic_person_result_change(item: Dict[str, object]) -> bool:
 def _person_change_reason_text(item: Dict[str, object]) -> str:
     parts = [
         str(item.get(key) or "")
-        for key in ("reason", "原因", "derived_from", "narrative", "summary", "说明")
+        for key in ("reason", "原因", "event_id", "source_event_id", "origin_ref", "derived_from", "narrative", "summary", "说明")
     ]
     return " ".join(part.strip() for part in parts if part)
+
+
+def _change_reason_text(raw_changes: object) -> str:
+    if not isinstance(raw_changes, dict):
+        return ""
+    parts = [
+        str(raw_changes.get(key) or "")
+        for key in ("reason", "原因", "event_id", "source_event_id", "origin_ref", "derived_from", "narrative", "summary", "说明")
+    ]
+    return " ".join(part.strip() for part in parts if part)
+
+
+def _change_mentions_strategic_event(raw_changes: object, event_id: str) -> bool:
+    reason_text = _change_reason_text(raw_changes)
+    anchors = _STRATEGIC_FOREIGN_NODE_PERSON_ANCHORS.get(event_id, frozenset())
+    return event_id in reason_text or any(anchor in reason_text for anchor in anchors)
+
+
+def _strategic_entity_delta_event_ids(
+    entity_id: str,
+    raw_changes: object,
+    target_key: str,
+    strategic_event_ids: set[str],
+) -> set[str]:
+    event_ids: set[str] = set()
+    for event_id in strategic_event_ids:
+        targets = _strategic_event_outcome_targets(event_id)
+        if entity_id in targets[target_key] and _change_mentions_strategic_event(raw_changes, event_id):
+            event_ids.add(event_id)
+    return event_ids
+
+
+def _split_strategic_entity_deltas(
+    raw: object,
+    target_key: str,
+    strategic_event_ids: set[str],
+) -> tuple[Dict[str, object], Dict[str, object]]:
+    if not isinstance(raw, dict):
+        return {}, {}
+    strategic: Dict[str, object] = {}
+    other: Dict[str, object] = {}
+    for entity_id, raw_changes in raw.items():
+        if _strategic_entity_delta_event_ids(str(entity_id), raw_changes, target_key, strategic_event_ids):
+            strategic[entity_id] = raw_changes
+        else:
+            other[entity_id] = raw_changes
+    return strategic, other
+
+
+def _entity_deltas_for_strategic_event(
+    raw: object,
+    target_key: str,
+    event_id: str,
+) -> Dict[str, object]:
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        entity_id: raw_changes
+        for entity_id, raw_changes in raw.items()
+        if event_id in _strategic_entity_delta_event_ids(str(entity_id), raw_changes, target_key, {event_id})
+    }
 
 
 def _strategic_person_result_event_ids(
@@ -1460,9 +1521,8 @@ def _strategic_person_result_event_ids(
     reason_text = _person_change_reason_text(item)
     event_ids: set[str] = set()
     for event_id in strategic_event_ids:
-        targets = _strategic_event_outcome_targets(event_id)
         anchors = _STRATEGIC_FOREIGN_NODE_PERSON_ANCHORS.get(event_id, frozenset())
-        if (name and name in targets["characters"]) or any(anchor in reason_text for anchor in anchors):
+        if event_id in reason_text or any(anchor in reason_text for anchor in anchors):
             event_ids.add(event_id)
     return event_ids
 
@@ -1486,17 +1546,26 @@ def _event_result_delta_event_ids(
     extracted: Dict[str, object],
     person_changes: List[Dict[str, object]],
 ) -> set[str]:
-    region_ids = set((extracted.get("region_delta") or {}).keys()) if isinstance(extracted.get("region_delta"), dict) else set()
-    army_ids = set((extracted.get("army_delta") or {}).keys()) if isinstance(extracted.get("army_delta"), dict) else set()
+    region_result_event_ids: set[str] = set()
+    if isinstance(extracted.get("region_delta"), dict):
+        for region_id, raw_changes in (extracted.get("region_delta") or {}).items():
+            region_result_event_ids.update(
+                _strategic_entity_delta_event_ids(str(region_id), raw_changes, "regions", strategic_event_ids)
+            )
+    army_result_event_ids: set[str] = set()
+    if isinstance(extracted.get("army_delta"), dict):
+        for army_id, raw_changes in (extracted.get("army_delta") or {}).items():
+            army_result_event_ids.update(
+                _strategic_entity_delta_event_ids(str(army_id), raw_changes, "armies", strategic_event_ids)
+            )
     person_result_event_ids: set[str] = set()
     for item in person_changes:
         person_result_event_ids.update(_strategic_person_result_event_ids(item, strategic_event_ids))
     result_ids: set[str] = set()
     for event_id in strategic_event_ids:
-        targets = _strategic_event_outcome_targets(event_id)
         if (
-            region_ids.intersection(targets["regions"])
-            or army_ids.intersection(targets["armies"])
+            event_id in region_result_event_ids
+            or event_id in army_result_event_ids
             or event_id in person_result_event_ids
         ):
             result_ids.add(event_id)
@@ -3394,13 +3463,15 @@ def apply_score_extraction(
     region_deltas_raw = extracted.get("region_delta") or {}
     army_deltas_raw = extracted.get("army_delta") or {}
     new_armies_raw = extracted.get("new_armies") or []
-    strategic_region_deltas_raw, ordinary_region_deltas_raw = _split_mapping_by_keys(
+    strategic_region_deltas_raw, ordinary_region_deltas_raw = _split_strategic_entity_deltas(
         region_deltas_raw,
-        _target_union(strategic_event_pool_ids, "regions"),
+        "regions",
+        strategic_event_pool_ids,
     )
-    strategic_army_deltas_raw, ordinary_army_deltas_raw = _split_mapping_by_keys(
+    strategic_army_deltas_raw, ordinary_army_deltas_raw = _split_strategic_entity_deltas(
         army_deltas_raw,
-        _target_union(strategic_event_pool_ids, "armies"),
+        "armies",
+        strategic_event_pool_ids,
     )
 
     pseudo_event = Event(
@@ -3477,13 +3548,15 @@ def apply_score_extraction(
 
     def _reject_suppressed_strategic_results(event_id: str, event_title: str) -> None:
         targets = _strategic_event_outcome_targets(event_id)
-        event_region_deltas, _ = _split_mapping_by_keys(
+        event_region_deltas = _entity_deltas_for_strategic_event(
             strategic_region_deltas_raw,
-            set(targets["regions"]),
+            "regions",
+            event_id,
         )
-        event_army_deltas, _ = _split_mapping_by_keys(
+        event_army_deltas = _entity_deltas_for_strategic_event(
             strategic_army_deltas_raw,
-            set(targets["armies"]),
+            "armies",
+            event_id,
         )
         event_person_changes = [
             item
@@ -3536,13 +3609,15 @@ def apply_score_extraction(
         if event_id not in strategic_event_pool_ids:
             continue
         targets = _strategic_event_outcome_targets(event_id)
-        event_region_deltas, _ = _split_mapping_by_keys(
+        event_region_deltas = _entity_deltas_for_strategic_event(
             strategic_region_deltas_raw,
-            set(targets["regions"]),
+            "regions",
+            event_id,
         )
-        event_army_deltas, _ = _split_mapping_by_keys(
+        event_army_deltas = _entity_deltas_for_strategic_event(
             strategic_army_deltas_raw,
-            set(targets["armies"]),
+            "armies",
+            event_id,
         )
         event_person_changes = [
             item
