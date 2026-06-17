@@ -211,6 +211,66 @@ def test_apply_score_extraction_rejects_person_change_power_move_without_way(gam
     ]
 
 
+def test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_delta(game):
+    db, state, content = game
+    before = db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name='毛文龙'"
+    ).fetchone()["loyalty"]
+
+    applied = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "kind": "initiative",
+                    "title": "安抚毛文龙·进行中",
+                    "bar_value": 20,
+                    "expected_months": 3,
+                    "stage_text": "遣臣持诏赴皮岛，安抚东江镇",
+                    "stop_condition": "character.毛文龙.loyalty >= 65",
+                    "effect_on_resolve": {"metrics": {"皇威": 1}},
+                    "cancellable": "decree",
+                }
+            ],
+            "人物变更": [
+                {
+                    "name": "毛文龙",
+                    "动作": "评定",
+                    "loyalty": 8,
+                    "reason": "奉旨安抚，软判其观望稍解",
+                }
+            ],
+        },
+        content=content,
+    )
+
+    assert applied["issue_summary"]["new_issues"][0]["title"] == "安抚毛文龙·进行中"
+    issue_row = db.conn.execute(
+        "SELECT title, resolve_condition, status FROM issues WHERE title='安抚毛文龙·进行中'"
+    ).fetchone()
+    assert dict(issue_row) == {
+        "title": "安抚毛文龙·进行中",
+        "resolve_condition": "character.毛文龙.loyalty >= 65",
+        "status": "active",
+    }
+    after = db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name='毛文龙'"
+    ).fetchone()["loyalty"]
+    assert after == min(100, before + 8)
+    assert applied["applied_person_changes"] == [
+        {
+            "name": "毛文龙",
+            "动作": "评定",
+            "loyalty": 8,
+            "old_loyalty": before,
+            "new_loyalty": after,
+            "reason": "奉旨安抚，软判其观望稍解",
+        }
+    ]
+
+
 def test_apply_score_extraction_rejects_malformed_power_move_backlash_before_writing(game):
     db, state, content = game
     name = active_ming_character(db, content)
