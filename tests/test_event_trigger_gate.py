@@ -564,7 +564,9 @@ def test_rejected_strategic_foreign_event_does_not_land_battle_delta(game):
     assert db.conn.execute(
         "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
     ).fetchone()["military_pressure"] == 20
-    assert out["region_changes"] == []
+    assert out["region_changes"][0]["rejected"] is True
+    assert out["region_changes"][0]["category"] == "event_rejected"
+    assert "战果不落" in out["region_changes"][0]["reason"]
 
 
 def test_rejected_strategic_foreign_event_preserves_unrelated_region_delta(game):
@@ -617,6 +619,32 @@ def test_previously_triggered_strategic_event_rejects_duplicate_without_landing_
     assert db.conn.execute(
         "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
     ).fetchone()["military_pressure"] == 20
+
+
+def test_rejected_strategic_event_does_not_land_substitute_commander_person_delta(game):
+    """#189 CMR R3：替补将也是战事软判结果；重复/拒收事件不得单独杀人。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1641
+    state.period = 8
+    db.mark_event_triggered(state, "songshan_battle")
+    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "孙传庭"))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "songshan_battle"}],
+            "人物变更": [{"name": "孙传庭", "动作": "处置", "status": "dead", "reason": "松锦替补战死"}],
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert "候选" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert db.get_character_status("孙传庭")[0] == "active"
+    assert out["applied_person_changes"][0]["rejected"] is True
+    assert "战果不落" in out["applied_person_changes"][0]["reason"]
 
 
 def test_invalid_strategic_event_result_delta_does_not_mark_event_triggered(game):
