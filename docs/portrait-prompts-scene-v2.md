@@ -362,7 +362,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 场景服饰：朴素深灰蓝文官袍，衣摆有尘土和磨损，仍保持士大夫整洁；冷暗囚室或临刑前的石室，墙边有锁链、冷光、无刻字竹简和无字诗稿，背景极简压抑。
 
-专属负面：不要画成温和书斋学者，不要与瞿式耜同款坐姿囚臣（黄道周站立带链、举诗稿），不要出现劝降者、第二个人或伸进画面的手；诗稿、竹简和墙面不要出现错名、现代题字、乱码、AI 伪字、编号或不合囚室语境的刻字，若有字迹只能是模糊古雅墨迹。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要画成温和书斋学者，不要与瞿式耜共用囚室诗稿姿态（黄道周是站立带链、胸前举诗稿、侧脸拒降），不要出现劝降者、第二个人或伸进画面的手；诗稿、竹简和墙面不要出现错名、现代题字、乱码、AI 伪字、编号或不合囚室语境的刻字，若有字迹只能是模糊古雅墨迹。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 吴昌时 `minister_吴昌时.png`
 
@@ -474,7 +474,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 姿势锚点：
 身体朝向=半坐在矮榻边，身体向帐内缩；重心=后缩偏离帐外，避向暖处；双手位置=右手死死按住未发出的令箭盒，左手握监军符节拢住披风；道具关系=无字援兵令、令箭盒、监军符节、远处空白军报连成“拥兵不救与冒功”关系；视线方向=避开帐外战火，眼神游移；动作类型=半坐、按令、拢披风，不督师按图。
 
-场景服饰：深紫内官袍外披轻便军中披风，佩监军符节而无真正武将气；寒冷军营监军帐，火盆、纯色无纹军旗、无字援兵令、远处战火影、卢象升方向的空白军报。
+场景服饰：深紫内官袍外披轻便军中披风，佩监军符节而无真正武将气；寒冷军营监军帐，火盆、纯色无纹军旗、无字援兵令、远处战火影、巨鹿方向的空白军报；军报、军旗、援兵令上不要出现其他人物姓名、现代标签、乱码或 AI 伪字。
 
 专属负面：不要画成英武督师，不要蠢坏脸，不要田尔耕的酷吏冷硬气、不要李若琏的刚直守门姿。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
@@ -604,9 +604,9 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 姿势锚点：
 身体朝向=坐案侧身朝旁侧军令匣方向，上半身略转；重心=偏压在推令的右臂；双手位置=左手按住一封空白保任奏疏，右手把空白将令推向旁侧军令匣方向，但右手和整枚将令完整留在中轴安全区内；道具关系=保任奏疏、空白将令、辽东地图连成“替边将保任”关系；视线方向=却望向关门外，似有忧虑；动作类型=按奏疏、推将令，不双手按桌。
 
-场景服饰：文官督师袍外加厚披风与轻甲护肩；宁远军务帐，无字辽东地图、无字无徽记满桂军牌、空白将令、尚方剑匣、火盆、无字旧军报。
+场景服饰：文官督师袍外加厚披风与轻甲护肩；宁远军务帐，无字辽东地图、无字无徽记边将军牌、空白将令、尚方剑匣、火盆、无字旧军报。
 
-专属负面：不要画成英武名帅，不要黝黑猛将，不要双手按桌，不要出现第二个人物或第二只伸出的令手。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要画成英武名帅，不要黝黑猛将，不要双手按桌，不要出现第二个人物或第二只伸出的令手；边将军牌、保任奏疏、将令、军报和地图上不要出现袁崇焕、满桂或任何其他人物姓名，不要现代标签、乱码、AI 伪字或错误旗号。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 毛文龙 `minister_毛文龙.png`
 
@@ -982,9 +982,9 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 姿势锚点：
 身体朝向=坐在矮几旁，身体僵硬前倾；重心=从素斋静坐被急报拉向桌面；双手位置=右手停在半串念珠上，左手刚碰到登州急报；道具关系=念珠、素斋碗、登州急报形成“清修撞上兵变”关系；视线方向=看向急报；动作类型=坐姿、惊停，不站不按图。
 
-场景服饰：深褐地方巡抚袍，朴素衣冠；素斋碗、念珠、无字登州急报、封缄袁崇焕旧案卷筒、窗外火光。
+场景服饰：深褐地方巡抚袍，朴素衣冠；素斋碗、念珠、无字登州急报、封缄辽东旧案卷筒、窗外火光。
 
-专属负面：不要硬官脸，不要清流殉国脸，不要尖鼻阴相，不要画成和尚。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要硬官脸，不要清流殉国脸，不要尖鼻阴相，不要画成和尚；登州急报、旧案卷筒和素斋器物上不要出现袁崇焕或其他人物姓名，不要现代标签、乱码、AI 伪字或错误地名。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 何腾蛟 `minister_何腾蛟.png`
 人物：何腾蛟，南明湖广总督，曾联合李自成大顺余部共御清军，湘潭被俘后不屈遇害；其成败都带强烈的乱世拼凑感。
@@ -1004,17 +1004,17 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 #### 瞿式耜 `minister_瞿式耜.png`
 人物：瞿式耜，常熟人，南明广西巡抚、永历朝大学士，留守桂林，城破被俘后囚禁四十余日，与张同敞唱和赋诗，不屈就义。
 
-历史锚点：桂林陷落后的囚室中，他在冷光下写下无字诗稿，侧身避开空牢门外的冷风。
+历史锚点：桂林陷落后的囚室中，他坐在低石案旁，把诗稿平铺在冷窗下，手停在墨砚边，像在囚中唱和之后静候就义。
 
 脸部锚点：
 脸型=长马脸；额头=高，露在素冠/头巾下；眉眼=灰白长眉，眼睛深陷而冷静；鼻梁=长直但不鹰钩；颧骨=瘦高但被牢狱疲惫压住；嘴唇=薄；下颌=瘦长；胡须=两缕细长白须分开垂下；肤色=苍白带牢狱灰气；皱纹=眼下深纹、颊侧细纹；神情=疲惫但脊梁不弯。
 
 姿势锚点：
-身体朝向=站在桂林囚室冷窗旁，身体侧向牢门冷光；重心=直立压在靠窗一侧，脊背不弯；双手位置=右手把无字诗稿贴在胸前，左手垂在袖中不碰茶盏；道具关系=诗稿、冷窗、锁链阴影形成“囚中拒降”关系；视线方向=不看牢门冷光，侧望冷窗外残城火光；动作类型=站姿、贴胸持诗、侧拒，不坐低石案，不端茶停手。
+身体朝向=坐在低石案旁，身体侧向冷窗而非牢门；重心=端坐前倾，压在石案边缘；双手位置=右手悬在墨砚旁像刚停笔，左手按住平铺在石案上的无字诗稿一角；道具关系=低石案、诗稿、冷窗、锁链阴影形成“囚中唱和后静候就义”关系；视线方向=侧望冷窗外残城火光；动作类型=坐姿、停笔、按住平铺诗稿，不站立贴胸持诗，不端茶停手。
 
-场景服饰：不要高乌纱帽；低素黑软帽或囚中士人头巾，素净深青袍，衣摆磨损；桂林囚室、冷窗、无刻字竹简、无字诗稿、锁链阴影、残城火光。
+场景服饰：不要高乌纱帽；低素黑软帽或囚中士人头巾，素净深青袍，衣摆磨损；桂林囚室、低石案、冷窗、墨砚、无刻字竹简、无字诗稿、锁链阴影、残城火光。
 
-专属负面：不要高乌纱老官，不要方正短须曾樱，不要鹰鼻焦源溥，不要普通书房老人，不要与洪承畴共用坐姿囚臣矮案停茶剪影，不要出现劝降者、第二个人或伸进画面的茶手纸手。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要高乌纱老官，不要方正短须曾樱，不要鹰鼻焦源溥，不要普通书房老人，不要与洪承畴共用坐姿囚臣矮案停茶剪影，不要与黄道周共用站立带链、胸前举诗稿、侧脸牢门冷光姿态，不要出现劝降者、第二个人或伸进画面的茶手纸手；诗稿、竹简、石案和墙面不要出现错名、现代题字、乱码、AI 伪字或离谱刻字。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 张煌言 `minister_张煌言.png`
 人物：张煌言，号苍水，南明抗清名将、诗人，长期海上抗清，北伐南京，后被俘殉国，与岳飞、于谦并称西湖三杰。
