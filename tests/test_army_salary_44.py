@@ -87,6 +87,47 @@ def test_defected_army_to_ming_owes_salary_not_free(game):
     assert needed > 0
 
 
+def _insert_dynamic_ming_army(db, aid, name, manpower, maintenance):
+    """构造旧档动态明军（id 不在 content）：salary_rate 留 0（旧档 default）模拟未迁移态。"""
+    db.conn.execute(
+        "INSERT INTO armies (id, name, station, theater, commander, controller, troop_type, "
+        "manpower, maintenance_per_turn, supply, morale, training, equipment, arrears, mobility, "
+        "loyalty, salary_rate, status, owner_power) "
+        "VALUES (?, ?, '某地', 'jingji', '某将', 'ming', '步', ?, ?, 80, 70, 60, 50, 0, 50, 70, 0, '驻防', 'ming')",
+        (aid, name, manpower, maintenance),
+    )
+
+
+def test_backfill_derives_dynamic_army_rate_from_maintenance(game):
+    """#44 ship-pre 线上 codex P2：旧档动态明军（不在 content）回填 salary_rate 时，须从既有
+    maintenance_per_turn 反推率（maint×10000/manpower），不能一律落锚点 1.5——否则把 5000 兵
+    maint=20 的军重定价成 ceil(5000×1.5/10000)=1 万两、20→1 腐蚀旧档预算/欠饷。"""
+    db, state, _ = game
+    _insert_dynamic_ming_army(db, "dyn_old_army", "某旧募军", 5000, 20)
+    db.conn.commit()
+    db._backfill_salary_rate()
+    db.conn.commit()
+    row = db.conn.execute("SELECT salary_rate FROM armies WHERE id='dyn_old_army'").fetchone()
+    assert row["salary_rate"] == pytest.approx(20 * 10000 / 5000), (
+        f"动态旧军应从 maint 反推率=40，得 {row['salary_rate']}"
+    )
+    # 反推率使 army_needed 复现原 maint 量级（20），非锚点 1.5 的 1。
+    full = db.conn.execute("SELECT * FROM armies WHERE id='dyn_old_army'").fetchone()
+    assert army_needed(full) == 20, f"反推后应发应≈原 maint 20，得 {army_needed(full)}"
+
+
+def test_backfill_anchor_fallback_when_no_maintenance(game):
+    """#44 回填兜底：动态明军既无 content 率、又无 maintenance（或 0 兵）→ 落边军史实锚点。"""
+    db, state, _ = game
+    _insert_dynamic_ming_army(db, "dyn_no_maint", "某新军", 3000, 0)
+    db.conn.commit()
+    db._backfill_salary_rate()
+    db.conn.commit()
+    row = db.conn.execute("SELECT salary_rate FROM armies WHERE id='dyn_no_maint'").fetchone()
+    from ming_sim.constants import SALARY_RATE_ANCHOR
+    assert row["salary_rate"] == pytest.approx(SALARY_RATE_ANCHOR)
+
+
 def test_total_ming_salary_is_72_ceil_sum(game):
     # 实际总月应发 = sum(ceil(每军))=72 万两。设计「66.5」是 sum(小数月应发)；army_needed 每军 ceil
     # （万两整数、不少发），ceil 累积使总额 72 > 66.5（cmr r1 codex/claude 实测）。开局 vs 旧 65 = +10.8%

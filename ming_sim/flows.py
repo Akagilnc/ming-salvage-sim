@@ -6,7 +6,7 @@ import json
 import math
 from typing import Dict, List, NamedTuple, Optional, Tuple
 
-from ming_sim.constants import TURN_UNIT
+from ming_sim.constants import SALARY_RATE_ANCHOR, TURN_UNIT
 from ming_sim.db import GameDB
 from ming_sim.models import GameState
 from ming_sim.token_stats import tlog
@@ -194,11 +194,6 @@ ARMY_SALARY_PRIORITY = [
     "guanning", "xuan_da", "jizhen", "shanhaiguan", "jingying",
     "denglai", "dongjiang", "shaanxi_army", "nanjing_garrison", "fujian_navy", "guangdong_navy", "southwest_tusi",
 ]
-
-
-# #44 边军史实月饷锚点（两/兵·月）：ming 军 salary_rate<=0 非法时的兜底率。与 db._coerce_new_salary_rate
-# 募兵默认 + _backfill_salary_rate 迁移兜底同值——三处（结算 army_needed / 募兵 / 迁移）共用此锚点。
-SALARY_RATE_ANCHOR = 1.5
 
 
 def army_needed(row) -> int:
