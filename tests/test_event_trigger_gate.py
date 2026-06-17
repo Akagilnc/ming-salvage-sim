@@ -541,6 +541,48 @@ def test_mao_wenlong_event_pool_uses_candidate_snapshot_before_advances(game):
         content.event_by_id.pop(ev.id, None)
 
 
+def test_event_pool_uses_candidate_snapshot_before_top_level_metric_delta(game):
+    """post-merge CMR R3：顶层 metric_delta 不能先打开 event_pool gate 再触发。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.metrics["民心"] = 20
+    ev = Event(
+        id="__test_top_level_metric_snapshot__",
+        title="测试·顶层数值快照",
+        kind="朝议",
+        summary="只用于验证顶层 metric_delta 前的候选池快照。",
+        urgency=10,
+        severity=10,
+        credibility=100,
+        interests=[],
+        audiences=[],
+        event_type="node",
+        trigger_gate={"民心": "<=10"},
+    )
+    content.seed_events.append(ev)
+    content.event_by_id[ev.id] = ev
+    try:
+        assert all(c.id != ev.id for c in issues.gather_candidate_events(state, db))
+
+        out = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "metric_delta": {"民心": -15},
+                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
+            },
+            content=content,
+        )
+
+        assert state.metrics["民心"] == 5
+        assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+        assert "候选" in out["issue_summary"]["new_issues"][0]["reason"]
+        assert not db.has_event_triggered(ev.id)
+    finally:
+        content.seed_events.remove(ev)
+        content.event_by_id.pop(ev.id, None)
+
+
 def test_mao_wenlong_event_pool_rechecks_after_same_turn_loyalty_assessment(game):
     """post-merge CMR：同回合人物评定应先影响 event_pool 前提门。"""
     db, state, content = game
