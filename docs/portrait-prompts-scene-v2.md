@@ -218,7 +218,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 场景服饰：素净深蓝文官袍，少装饰，带罢官后的清寒感；江南书斋，无字辽东军报、无字边地图、无字旧奏疏、冷茶。
 
-专属负面：不要画成逍遥文人，不要画成奢华府邸主人，不要出现门外人影、敲门者、人物剪影、第二个人、背景人脸或伸进画面的手。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要画成逍遥文人，不要画成奢华府邸主人，不要出现门外人影、敲门者、人物剪影、第二个人、背景人脸或伸进画面的手；边案卷宗、辩疏、辽东军报、边地图与旧奏疏上不要出现袁崇焕、毛文龙或其他人物姓名，不要现代标签、乱码、AI 伪字或错误地名，若有字迹只能是模糊墨迹。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 刘鸿训 `minister_刘鸿训.png`
 
