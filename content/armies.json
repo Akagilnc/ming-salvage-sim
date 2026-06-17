@@ -1,7 +1,7 @@
 {
   "meta": {
     "manpower_unit": "人",
-    "maintenance_unit": "万两/月",
+    "salary_rate_unit": "两/兵·月（月饷 army_needed=ceil(manpower×salary_rate/10000)，万两/月）",
     "score_unit": "0-100（arrears 例外，单位为累计欠饷万两、整数、无上限）",
     "note": "MVP 军队盘面为历史近似，不追求完整编制；核心服务于问话、调度、拨饷和月末结算。月饷由引擎按 army_needed=ceil(manpower×salary_rate/10000) 派生（salary_rate 为每军名义月饷率，全国合计约65万/月，年约780万，贴近崇祯实际军费需求）。arrears 字段=累计欠饷万两，flows 月末按差额累加。"
   },

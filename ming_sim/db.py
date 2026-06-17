@@ -1495,16 +1495,31 @@ class GameDB:
         army_needed 判 rate<=0 → 锚定后才算，旧存档明军若不回填则显示/欠饷口径错（cmr r1 codex high）。
         回填 salary_rate<=0 的明军：
           ① static 军（在 content 且率>0）→ content.armies[id].salary_rate；
-          ② 否则（动态旧军/content 无率）→ 边军史实锚点 SALARY_RATE_ANCHOR。
-        #173：maintenance_per_turn 列已删，原「动态旧军从维护费反推率」一路并入锚点兜底。该回填仅在
-        salary_rate 列首次 ADD 时跑一次，现存档早已跑过（不再触发），故反推退化为锚点对现存档无影响、
-        仅对将来全新加 salary_rate 列的档生效（罕见）。只补 <=0 的、不覆盖已设正值（幂等）。"""
+          ② 动态旧军（不在 content）且维护费列仍在 → 从 maintenance_per_turn 反推率
+             = maint×10000/manpower（保旧档应发量级/欠饷连续，线上 codex P2）；
+          ③ 维护费列已删（新档/已删档）或值不可用 → 边军史实锚点 SALARY_RATE_ANCHOR。
+        #173 cmr drop R4（codex medium）：backfill 在 _drop_maintenance_column 之前跑，**直接升级
+        老档**（salary_rate 首次 ADD 时维护费列仍在）须保留②反推保真——drop 后旧 pay 源无可恢复，
+        若一律落锚点会把 5000 兵 maint=20 的军重定价成 ceil(5000×1.5/10000)=1、20→1 腐蚀旧档预算。
+        故用 column-exists gate：列在走②反推，列不在（新档 CREATE 已无该列）走③锚点（SELECT 不读
+        维护费、不崩）。该回填仅 salary_rate 列首次 ADD 时跑一次。只补 <=0 的、不覆盖已设正值（幂等）。"""
+        has_maint = "maintenance_per_turn" in {
+            r["name"] for r in self.conn.execute("PRAGMA table_info(armies)").fetchall()
+        }
+        select_cols = "id, manpower, maintenance_per_turn" if has_maint else "id"
         for r in self.conn.execute(
-            "SELECT id FROM armies WHERE owner_power='ming' AND salary_rate <= 0"
+            f"SELECT {select_cols} FROM armies WHERE owner_power='ming' AND salary_rate <= 0"
         ).fetchall():
             aid = str(r["id"])
             army = self.content.armies.get(aid)
-            rate = float(army.salary_rate) if (army is not None and army.salary_rate > 0) else SALARY_RATE_ANCHOR
+            if army is not None and army.salary_rate > 0:
+                rate = float(army.salary_rate)                       # ① content 史实率
+            elif has_maint:                                          # ② 直接升级老档：从维护费反推
+                manpower = int(r["manpower"] or 0)
+                maint = float(r["maintenance_per_turn"] or 0)
+                rate = (maint * 10000 / manpower) if (manpower > 0 and maint > 0) else SALARY_RATE_ANCHOR
+            else:                                                    # ③ 列已删/值不可用：锚点
+                rate = SALARY_RATE_ANCHOR
             self.conn.execute("UPDATE armies SET salary_rate=? WHERE id=?", (rate, aid))
 
     def apply_region_cannon(self, state: "GameState", region_id: str, delta: int) -> int:
