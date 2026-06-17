@@ -119,6 +119,80 @@ def test_open_window_historical_event_never_expires(game):
         content.events.remove(ev)
 
 
+def test_open_window_historical_event_still_waits_for_earliest_time(game):
+    db, state, content = game
+    issues.bind_content(content)
+    ev = _hist_event("__test_open_window_future_hist__", {})
+    ev.trigger_year = 1629
+    ev.trigger_month = 6
+    ev.open_window = True
+    content.events.append(ev)
+    try:
+        state.year = 1627
+        state.period = 10
+
+        cands = issues.gather_candidate_events(state, db)
+
+        assert all(c.id != "__test_open_window_future_hist__" for c in cands)
+    finally:
+        content.events.remove(ev)
+
+
+def test_seed_event_expires_after_latest_window_when_gate_unsatisfied(game):
+    db, state, content = game
+    issues.bind_content(content)
+    ev = _hist_event("__test_expiring_seed__", {"民心": "<=5"})
+    ev.trigger_year = 1629
+    ev.trigger_month = 1
+    ev.trigger_end_year = 1629
+    ev.trigger_end_month = 2
+    content.seed_events.append(ev)
+    try:
+        state.year = 1629
+        state.period = 3
+        state.metrics["民心"] = 60
+
+        cands = issues.gather_candidate_events(state, db)
+
+        assert all(c.id != "__test_expiring_seed__" for c in cands)
+        row = db.conn.execute(
+            "SELECT terminal_status FROM event_triggers WHERE event_id=?",
+            ("__test_expiring_seed__",),
+        ).fetchone()
+        assert row is not None
+        assert row["terminal_status"] == "expired"
+    finally:
+        content.seed_events.remove(ev)
+
+
+def test_auto_trigger_seed_event_expires_after_latest_window_when_gate_unsatisfied(game):
+    db, state, content = game
+    issues.bind_content(content)
+    ev = _hist_event("__test_expiring_auto_seed__", {"民心": "<=5"})
+    ev.trigger_year = 1629
+    ev.trigger_month = 1
+    ev.trigger_end_year = 1629
+    ev.trigger_end_month = 2
+    ev.auto_trigger = True
+    content.seed_events.append(ev)
+    try:
+        state.year = 1629
+        state.period = 3
+        state.metrics["民心"] = 60
+
+        triggered = issues.auto_trigger_seed_issues(state, db)
+
+        assert triggered == []
+        row = db.conn.execute(
+            "SELECT terminal_status FROM event_triggers WHERE event_id=?",
+            ("__test_expiring_auto_seed__",),
+        ).fetchone()
+        assert row is not None
+        assert row["terminal_status"] == "expired"
+    finally:
+        content.seed_events.remove(ev)
+
+
 def test_gate_passed_tolerates_none(game):
     # PR#107 R1（gemini medium）：trigger_gate=None（content JSON 显式 null）传进 _gate_passed
     # 不应 None.items() AttributeError 崩候选收集；None 视同空门、恒过。
@@ -203,6 +277,21 @@ def test_load_event_requires_latest_or_open_window(monkeypatch):
             "trigger_gate": {"民心": "<=5"}}]
     monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
     with pytest.raises(SystemExit, match="trigger_end_year|open_window"):
+        content_mod.load_event_content("x.json")
+
+
+def test_load_event_rejects_non_boolean_open_window(monkeypatch):
+    """open_window 必须是 JSON boolean，不能让字符串 'false' 被 bool() 误作 True。"""
+    import pytest
+    import ming_sim.content as content_mod
+    bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
+            "urgency": 1, "severity": 1, "credibility": 1,
+            "interests": [], "audiences": [],
+            "trigger_year": 1629, "trigger_month": 6,
+            "open_window": "false",
+            "trigger_gate": {"民心": "<=5"}}]
+    monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
+    with pytest.raises(SystemExit, match="open_window"):
         content_mod.load_event_content("x.json")
 
 

@@ -186,7 +186,10 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
             )
         trigger_year = int(item.get("trigger_year") or 0)
         trigger_end_year = int(item.get("trigger_end_year") or 0)
-        open_window = bool(item.get("open_window") or False)
+        open_window_raw = item.get("open_window", False)
+        if not isinstance(open_window_raw, bool):
+            raise SystemExit(f"{filename}[{idx}] open_window 必须是 JSON boolean。")
+        open_window = open_window_raw
         if trigger_year > 0 and trigger_end_year <= 0 and not open_window:
             raise SystemExit(
                 f"{filename}[{idx}] 历史锚定事件必须显式声明 trigger_end_year 或 open_window。"

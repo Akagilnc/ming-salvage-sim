@@ -168,13 +168,13 @@ def _spawned_event_refs(db: GameDB) -> set:
 
 def _event_window_open(ev: Event, state: GameState) -> bool:
     """Return True when the current date is inside an event's optional trigger window."""
-    if ev.open_window:
-        return True
     if ev.trigger_year > 0:
         if state.year < ev.trigger_year:
             return False
         if state.year == ev.trigger_year and ev.trigger_month > 0 and state.period < ev.trigger_month:
             return False
+    if ev.open_window:
+        return True
     if ev.trigger_end_year > 0:
         if state.year > ev.trigger_end_year:
             return False
@@ -192,6 +192,14 @@ def _event_window_expired(ev: Event, state: GameState) -> bool:
     if state.year > ev.trigger_end_year:
         return True
     if ev.trigger_end_month > 0 and state.year == ev.trigger_end_year and state.period > ev.trigger_end_month:
+        return True
+    return False
+
+
+def _mark_expired_if_needed(ev: Event, state: GameState, db: GameDB, spawned: set) -> bool:
+    if _event_window_expired(ev, state):
+        db.mark_event_expired(state, ev.id)
+        spawned.add(ev.id)
         return True
     return False
 
@@ -373,9 +381,7 @@ def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
     for ev in c.events:
         if ev.id in spawned or ev.trigger_year <= 0:
             continue
-        if _event_window_expired(ev, state):
-            db.mark_event_expired(state, ev.id)
-            spawned.add(ev.id)
+        if _mark_expired_if_needed(ev, state, db, spawned):
             continue
         if not _event_window_open(ev, state):
             continue
@@ -387,6 +393,8 @@ def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
     # seed 情势：trigger_gate 阈值达标即进候选
     for ev in c.seed_events:
         if ev.id in spawned:
+            continue
+        if _mark_expired_if_needed(ev, state, db, spawned):
             continue
         # auto_trigger 事件只能由程序硬触发，绝不进 LLM 候选池
         if ev.auto_trigger:
@@ -405,9 +413,14 @@ def auto_trigger_seed_issues(state: GameState, db: GameDB) -> List[Dict[str, obj
 
     放在结算链 simulator 之前调用，使硬立的 issue 当回合即进盘面、被邸报叙述。"""
     c = _ctx()
+    spawned = _spawned_event_refs(db)
     triggered: List[Dict[str, object]] = []
     for ev in c.seed_events:
         if not ev.auto_trigger:
+            continue
+        if ev.id in spawned:
+            continue
+        if _mark_expired_if_needed(ev, state, db, spawned):
             continue
         # trigger_gate 为空 = 开局即立的局势，只由 seed_opening_crises 立一次，绝不在此重立。
         # （空 gate 会被 _gate_passed 判为恒真，必须显式排除，否则每回合都试图重立。）
