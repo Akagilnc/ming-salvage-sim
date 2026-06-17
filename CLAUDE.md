@@ -56,7 +56,7 @@ hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`�
 2. （可选）`prototype` 去风险（状态/UI 开放问题）。
 3. `grill-with-docs`（+`grill-me`）→ **tiny 单决策 ADR** + `CONTEXT.md` 词表，挂回父 issue。**止于不可逆决策。**
 4. 设计评审：`ak-cross-m-review`（本地 cmr）+ 线上 4 bot → 合 ADR、Status→Accepted。〈设计侧到此结束〉
-5. `to-issues` 切 thin vertical-slice 子 issue（带 Parent + 验收 + HITL/AFK + blocked-by）。
+5. `to-issues` 切 thin vertical-slice 子 issue（带 Parent + 验收 + HITL/AFK + blocked-by）。**⚠️ 切完必做原生补救**（Matt skill 还没跟上 GitHub 新功能）：① 子挂父 **native sub-issue**（`POST issues/<父>/sub_issues`，父自动出子列表+进度条）② 子↔子 **native blocked_by**（`POST issues/<blocked>/dependencies/blocked_by`，原生依赖）③ **撤父的工作态标签**变 tracker（防别的 agent 误抓父一口气全做，Matt #292）。命令 + 为什么见 [DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md)「to-issues 后的原生补救」。
 6. 逐切片 `tdd`（详设在 Planning 现场涌现、你在场拍）；硬 bug → `diagnose`、架构清理 → `improve-codebase-architecture`。
 7. 代码评审：per-slice `ak-cross-m-review` + ship-pre 双闸 + 线上 bot；`gstack-ship` 收尾。
 8. merge commit（不 squash）→ 关子 issue；全完 → 关父 issue。
