@@ -424,6 +424,31 @@ def test_mao_wenlong_event_trigger_respects_outer_transaction_rollback(game):
     ).fetchone()[0] == before_logs
 
 
+def test_issue_tracker_rollback_restores_bound_content_when_content_omitted(game):
+    """review R3：content 省略时也要 snapshot bind_content() 的人物内存。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 6
+    db.conn.execute("UPDATE characters SET loyalty = ?, status = ? WHERE name = ?", (44, "active", "毛文龙"))
+    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "袁崇焕"))
+    content.characters["毛文龙"].status = "active"
+    db.conn.commit()
+
+    db.conn.execute("BEGIN")
+    out = issues.apply_issue_tracker_output(
+        db,
+        state,
+        {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
+    )
+    assert out["new_issues"][0]["rejected"] is False
+    assert content.characters["毛文龙"].status == "dead"
+    db.conn.rollback()
+
+    assert db.get_character_status("毛文龙")[0] == "active"
+    assert content.characters["毛文龙"].status == "active"
+
+
 def test_apply_score_extraction_metric_delta_restores_runtime_on_outer_rollback(game):
     """post-merge CMR R9：外层事务 rollback 后，state.metrics 内存也必须回到事务前。"""
     db, state, content = game
@@ -1104,10 +1129,18 @@ def test_apply_score_extraction_class_delta_respects_outer_transaction_rollback(
     assert out["class_delta"][class_key]["satisfaction"] == -1
     db.conn.rollback()
 
-    after = db.conn.execute(
-        "SELECT satisfaction FROM classes WHERE name=? AND region_id=?",
-        (row["name"], row["region_id"]),
-    ).fetchone()["satisfaction"]
+    if row["region_id"] is None:
+        after_row = db.conn.execute(
+            "SELECT satisfaction FROM classes WHERE name=? AND region_id IS NULL",
+            (row["name"],),
+        ).fetchone()
+    else:
+        after_row = db.conn.execute(
+            "SELECT satisfaction FROM classes WHERE name=? AND region_id=?",
+            (row["name"], row["region_id"]),
+        ).fetchone()
+    assert after_row is not None
+    after = after_row["satisfaction"]
     assert int(after) == before
 
 

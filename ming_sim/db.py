@@ -6324,7 +6324,8 @@ class GameDB:
 
     def list_active_legacies(self, state: GameState) -> List[sqlite3.Row]:
         """当前仍生效的帝国修正，顺手把已到期的失活。"""
-        self.expire_legacies(state, commit=not self.conn.in_transaction)
+        external_transaction = bool(getattr(self.conn, "_commit_suspended", False) or self.conn.in_transaction)
+        self.expire_legacies(state, commit=not external_transaction)
         return self.conn.execute(
             "SELECT * FROM legacies WHERE status='active' ORDER BY id"
         ).fetchall()
@@ -6372,7 +6373,7 @@ class GameDB:
         """
         # expire 可能改变 active 集 → 先跑。若调用方已有外层事务，不能在读修正符时提交；
         # 且该未提交 active 集不可写入缓存，否则 rollback 后会留下脏 cache。
-        cache_allowed = not self.conn.in_transaction
+        cache_allowed = not (getattr(self.conn, "_commit_suspended", False) or self.conn.in_transaction)
         self.expire_legacies(state, commit=cache_allowed)
         if cache_allowed and self._legacy_mod_cache is not None:
             return self._legacy_mod_cache
