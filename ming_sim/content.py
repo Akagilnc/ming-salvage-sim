@@ -236,6 +236,7 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
                 region_hint=str(item.get("region_hint") or ""),
                 issue_tags=string_list(item.get("tags"), f"{filename}[{idx}].tags") if item.get("tags") else [],
                 ongoing_effects=dict(item.get("ongoing_effects") or {}),
+                effect_on_trigger=dict(item.get("effect_on_trigger") or {}),
                 effect_on_resolve=dict(item.get("effect_on_resolve") or {}),
                 effect_on_fail=dict(item.get("effect_on_fail") or {}),
             )
