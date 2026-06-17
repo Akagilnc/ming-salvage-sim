@@ -540,6 +540,31 @@ def test_unrelated_region_delta_does_not_satisfy_strategic_event_result_gate(gam
     ).fetchone()["unrest"] == 79
 
 
+def test_unrelated_person_delta_does_not_satisfy_strategic_event_result_gate(game):
+    """#189 CMR R4：无关人物变化不能冒充战略战事主账结果。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "孙传庭"))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "人物变更": [{"name": "孙传庭", "动作": "处置", "status": "dead", "reason": "病重卒于任上"}],
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert "主账" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert not db.has_event_triggered("jisi_lubian")
+    assert db.get_character_status("孙传庭")[0] == "dead"
+    assert out["applied_person_changes"][0].get("rejected") is not True
+
+
 def test_rejected_strategic_foreign_event_does_not_land_battle_delta(game):
     """#189 CMR：战略事件被同信封关门拒收时，伴随战果 delta 不得半落库。"""
     db, state, content = game
@@ -593,6 +618,31 @@ def test_rejected_strategic_foreign_event_preserves_unrelated_region_delta(game)
     assert db.conn.execute(
         "SELECT unrest FROM regions WHERE id = ?", ("shaanxi",)
     ).fetchone()["unrest"] == 79
+
+
+def test_rejected_strategic_event_preserves_unrelated_person_delta(game):
+    """#189 CMR R4：战略事件重复/拒收时，不能吞掉同信封无关人物变化。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    db.mark_event_triggered(state, "jisi_lubian")
+    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "孙传庭"))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "人物变更": [{"name": "孙传庭", "动作": "处置", "status": "dead", "reason": "病重卒于任上"}],
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert "候选" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert db.get_character_status("孙传庭")[0] == "dead"
+    assert out["applied_person_changes"][0].get("rejected") is not True
 
 
 def test_previously_triggered_strategic_event_rejects_duplicate_without_landing_delta(game):

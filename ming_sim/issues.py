@@ -1370,6 +1370,11 @@ _STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS: Dict[str, Dict[str, frozenset[str]]] = 
         "characters": frozenset({"洪承畴"}),
     },
 }
+_STRATEGIC_FOREIGN_NODE_PERSON_ANCHORS: Dict[str, frozenset[str]] = {
+    "jisi_lubian": frozenset({"己巳", "喜峰口", "龙井关", "德胜门", "左安门"}),
+    "wuyin_lubian": frozenset({"戊寅", "墙子岭", "青山口", "巨鹿", "贾庄", "畿南"}),
+    "songshan_battle": frozenset({"松锦", "松山", "锦州", "杏山", "塔山", "援锦"}),
+}
 
 
 def _is_strategic_foreign_node_event(ev: Event) -> bool:
@@ -1437,15 +1442,43 @@ def _is_strategic_person_result_change(item: Dict[str, object]) -> bool:
     return str(item.get("动作") or item.get("action") or "").strip() != "评定"
 
 
-def _split_person_changes_by_names(
+def _person_change_reason_text(item: Dict[str, object]) -> str:
+    parts = [
+        str(item.get(key) or "")
+        for key in ("reason", "原因", "derived_from", "narrative", "summary", "说明")
+    ]
+    return " ".join(part.strip() for part in parts if part)
+
+
+def _strategic_person_result_event_ids(
+    item: Dict[str, object],
+    strategic_event_ids: set[str],
+) -> set[str]:
+    if not _is_strategic_person_result_change(item):
+        return set()
+    name = _person_change_name(item)
+    reason_text = _person_change_reason_text(item)
+    event_ids: set[str] = set()
+    for event_id in strategic_event_ids:
+        targets = _strategic_event_outcome_targets(event_id)
+        anchors = _STRATEGIC_FOREIGN_NODE_PERSON_ANCHORS.get(event_id, frozenset())
+        if (name and name in targets["characters"]) or any(anchor in reason_text for anchor in anchors):
+            event_ids.add(event_id)
+    return event_ids
+
+
+def _split_strategic_person_result_changes(
     changes: List[Dict[str, object]],
-    target_names: set[str],
+    strategic_event_ids: set[str],
 ) -> tuple[List[Dict[str, object]], List[Dict[str, object]]]:
-    targeted: List[Dict[str, object]] = []
+    strategic: List[Dict[str, object]] = []
     other: List[Dict[str, object]] = []
     for item in changes:
-        (targeted if _person_change_name(item) in target_names else other).append(item)
-    return targeted, other
+        if _strategic_person_result_event_ids(item, strategic_event_ids):
+            strategic.append(item)
+        else:
+            other.append(item)
+    return strategic, other
 
 
 def _event_result_delta_event_ids(
@@ -1455,16 +1488,16 @@ def _event_result_delta_event_ids(
 ) -> set[str]:
     region_ids = set((extracted.get("region_delta") or {}).keys()) if isinstance(extracted.get("region_delta"), dict) else set()
     army_ids = set((extracted.get("army_delta") or {}).keys()) if isinstance(extracted.get("army_delta"), dict) else set()
-    person_names = {_person_change_name(item) for item in person_changes}
-    has_person_result = any(_is_strategic_person_result_change(item) for item in person_changes)
+    person_result_event_ids: set[str] = set()
+    for item in person_changes:
+        person_result_event_ids.update(_strategic_person_result_event_ids(item, strategic_event_ids))
     result_ids: set[str] = set()
     for event_id in strategic_event_ids:
         targets = _strategic_event_outcome_targets(event_id)
         if (
             region_ids.intersection(targets["regions"])
             or army_ids.intersection(targets["armies"])
-            or person_names.intersection(targets["characters"])
-            or has_person_result
+            or event_id in person_result_event_ids
         ):
             result_ids.add(event_id)
     return result_ids
@@ -3284,25 +3317,14 @@ def apply_score_extraction(
         return pre_issue, post_issue
 
     pre_issue_person_changes, post_issue_person_changes = _split_pre_issue_person_changes(person_changes)
-    strategic_character_targets = _target_union(strategic_event_pool_ids, "characters")
-    strategic_pre_issue_person_changes, pre_issue_person_changes = _split_person_changes_by_names(
+    strategic_pre_issue_person_changes, pre_issue_person_changes = _split_strategic_person_result_changes(
         pre_issue_person_changes,
-        strategic_character_targets,
+        strategic_event_pool_ids,
     )
-    strategic_post_issue_person_changes, post_issue_person_changes = _split_person_changes_by_names(
+    strategic_post_issue_person_changes, post_issue_person_changes = _split_strategic_person_result_changes(
         post_issue_person_changes,
-        strategic_character_targets,
+        strategic_event_pool_ids,
     )
-    if strategic_event_pool_ids:
-        event_result_post_issue_person_changes: List[Dict[str, object]] = []
-        ordinary_post_issue_person_changes: List[Dict[str, object]] = []
-        for item in post_issue_person_changes:
-            if _is_strategic_person_result_change(item):
-                event_result_post_issue_person_changes.append(item)
-            else:
-                ordinary_post_issue_person_changes.append(item)
-        strategic_post_issue_person_changes.extend(event_result_post_issue_person_changes)
-        post_issue_person_changes = ordinary_post_issue_person_changes
     strategic_person_result_changes = strategic_pre_issue_person_changes + strategic_post_issue_person_changes
 
     def _annotate_legacy_person_rejections(results: List[Dict[str, object]]) -> None:
@@ -3463,7 +3485,11 @@ def apply_score_extraction(
             strategic_army_deltas_raw,
             set(targets["armies"]),
         )
-        event_person_changes = list(strategic_person_result_changes)
+        event_person_changes = [
+            item
+            for item in strategic_person_result_changes
+            if event_id in _strategic_person_result_event_ids(item, {event_id})
+        ]
         reason = f"战略/外敌事件「{event_title or event_id}」未触发，战果不落主账"
         for region_id, raw_changes in event_region_deltas.items():
             region_changes.append({
@@ -3518,7 +3544,11 @@ def apply_score_extraction(
             strategic_army_deltas_raw,
             set(targets["armies"]),
         )
-        event_person_changes = list(strategic_person_result_changes)
+        event_person_changes = [
+            item
+            for item in strategic_person_result_changes
+            if event_id in _strategic_person_result_event_ids(item, {event_id})
+        ]
         event_region_changes: List[Dict[str, object]] = []
         event_army_changes: List[Dict[str, object]] = []
         event_person_results: List[Dict[str, object]] = []
