@@ -184,6 +184,13 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
             raise SystemExit(
                 f"{filename}[{idx}] event_type 非法：{event_type!r}（仅 situation/node/ending）。"
             )
+        trigger_year = int(item.get("trigger_year") or 0)
+        trigger_end_year = int(item.get("trigger_end_year") or 0)
+        open_window = bool(item.get("open_window") or False)
+        if trigger_year > 0 and trigger_end_year <= 0 and not open_window:
+            raise SystemExit(
+                f"{filename}[{idx}] 历史锚定事件必须显式声明 trigger_end_year 或 open_window。"
+            )
         gate_raw = item.get("trigger_gate") or {}
         if not isinstance(gate_raw, dict):
             raise SystemExit(f"{filename}[{idx}] trigger_gate 必须是对象（key→比较式）。")
@@ -218,10 +225,11 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
                 audiences=string_list(item.get("audiences"), f"{filename}[{idx}].audiences"),
                 resolve_condition=str(item.get("resolve_condition") or ""),
                 fail_condition=str(item.get("fail_condition") or ""),
-                trigger_year=int(item.get("trigger_year") or 0),
+                trigger_year=trigger_year,
                 trigger_month=int(item.get("trigger_month") or 0),
-                trigger_end_year=int(item.get("trigger_end_year") or 0),
+                trigger_end_year=trigger_end_year,
                 trigger_end_month=int(item.get("trigger_end_month") or 0),
+                open_window=open_window,
                 precondition=str(item.get("precondition") or ""),
                 event_type=event_type,
                 trigger_gate=trigger_gate,

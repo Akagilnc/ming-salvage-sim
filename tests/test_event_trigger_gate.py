@@ -61,6 +61,64 @@ def test_ungated_historical_event_unchanged(game):
         content.events.remove(ev)
 
 
+def test_historical_event_expires_after_latest_window_when_gate_unsatisfied(game):
+    db, state, content = game
+    issues.bind_content(content)
+    ev = _hist_event("__test_expiring_hist__", {"民心": "<=5"})
+    ev.trigger_year = 1629
+    ev.trigger_month = 1
+    ev.trigger_end_year = 1629
+    ev.trigger_end_month = 2
+    content.events.append(ev)
+    try:
+        state.year = 1629
+        state.period = 3
+        state.metrics["民心"] = 60
+
+        cands = issues.gather_candidate_events(state, db)
+
+        assert all(c.id != "__test_expiring_hist__" for c in cands)
+        row = db.conn.execute(
+            "SELECT terminal_status FROM event_triggers WHERE event_id=?",
+            ("__test_expiring_hist__",),
+        ).fetchone()
+        assert row is not None
+        assert row["terminal_status"] == "expired"
+
+        state.metrics["民心"] = 3
+        later_cands = issues.gather_candidate_events(state, db)
+        assert all(c.id != "__test_expiring_hist__" for c in later_cands)
+    finally:
+        content.events.remove(ev)
+
+
+def test_open_window_historical_event_never_expires(game):
+    db, state, content = game
+    issues.bind_content(content)
+    ev = _hist_event("__test_open_window_hist__", {"民心": "<=5"})
+    ev.trigger_year = 1629
+    ev.trigger_month = 1
+    ev.trigger_end_year = 1629
+    ev.trigger_end_month = 2
+    ev.open_window = True
+    content.events.append(ev)
+    try:
+        state.year = 1629
+        state.period = 3
+        state.metrics["民心"] = 3
+
+        cands = issues.gather_candidate_events(state, db)
+
+        assert any(c.id == "__test_open_window_hist__" for c in cands)
+        row = db.conn.execute(
+            "SELECT terminal_status FROM event_triggers WHERE event_id=?",
+            ("__test_open_window_hist__",),
+        ).fetchone()
+        assert row is None
+    finally:
+        content.events.remove(ev)
+
+
 def test_gate_passed_tolerates_none(game):
     # PR#107 R1（gemini medium）：trigger_gate=None（content JSON 显式 null）传进 _gate_passed
     # 不应 None.items() AttributeError 崩候选收集；None 视同空门、恒过。
@@ -131,6 +189,20 @@ def test_load_event_fail_loud_on_bad_gate_key(monkeypatch):
             "trigger_gate": {"民生": "<=5"}}]  # 民心 typo
     monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
     with pytest.raises(SystemExit, match="未知 metric"):
+        content_mod.load_event_content("x.json")
+
+
+def test_load_event_requires_latest_or_open_window(monkeypatch):
+    """历史锚定事件必须显式声明最晚时点或 open_window，漏填不许隐式永不过期。"""
+    import pytest
+    import ming_sim.content as content_mod
+    bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
+            "urgency": 1, "severity": 1, "credibility": 1,
+            "interests": [], "audiences": [],
+            "trigger_year": 1629, "trigger_month": 6,
+            "trigger_gate": {"民心": "<=5"}}]
+    monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
+    with pytest.raises(SystemExit, match="trigger_end_year|open_window"):
         content_mod.load_event_content("x.json")
 
 
