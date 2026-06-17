@@ -170,6 +170,7 @@ class Event:
     region_hint: str = ""
     issue_tags: List[str] = field(default_factory=list)           # 空=用 [kind]
     ongoing_effects: Dict[str, object] = field(default_factory=dict)
+    effect_on_trigger: Dict[str, object] = field(default_factory=dict)
     effect_on_resolve: Dict[str, object] = field(default_factory=dict)
     effect_on_fail: Dict[str, object] = field(default_factory=dict)
 

@@ -5,6 +5,9 @@ seed 情势，历史 `events` 分支只过纯日历窗口 `_event_window_open` �
 年月误触发（毛文龙已安抚/效顺仍被弹出的机制半）。把门接进历史分支：带 gate 的历史事件须达标
 才进候选；无 gate（空 dict）= 纯日历锚定，行为不变。
 """
+import json
+from pathlib import Path
+
 from ming_sim import issues
 from ming_sim.models import Event
 
@@ -234,3 +237,281 @@ def test_numeric_cond_on_text_field_raises_clear(game):
     # controlled_by 是文本字段（'ming'/'houjin'），对它做数值比较 → fail-loud
     with pytest.raises(ValueError, match="字段非数值|不可比文本"):
         _gate_passed({"region.huguang.controlled_by": ">=1"}, state.metrics, db)
+
+
+def test_character_numeric_gate_supports_comparison(game):
+    """character.<name>.<field> 数值字段可参与 trigger_gate 比较（#201）。"""
+    from ming_sim.issues import _gate_passed
+    db, state, content = game
+
+    row = db.conn.execute("SELECT loyalty FROM characters WHERE name = ?", ("毛文龙",)).fetchone()
+    assert row is not None, "测试盘面应有毛文龙"
+
+    assert _gate_passed({"character.毛文龙.loyalty": f">={int(row['loyalty'])}"}, state.metrics, db)
+    assert not _gate_passed({"character.毛文龙.loyalty": f">{int(row['loyalty'])}"}, state.metrics, db)
+
+
+def test_character_numeric_gate_supports_aggregation(game):
+    """character.<name>|<name>.<field>.<agg> 与其它 gate 表同样支持聚合。"""
+    from ming_sim.issues import _gate_passed
+    db, state, _content = game
+
+    db.conn.execute("UPDATE characters SET loyalty=? WHERE name=?", (40, "毛文龙"))
+    db.conn.execute("UPDATE characters SET loyalty=? WHERE name=?", (80, "袁崇焕"))
+    db.conn.commit()
+
+    assert _gate_passed({"character.毛文龙|袁崇焕.loyalty.avg": ">=60"}, state.metrics, db)
+    assert not _gate_passed({"character.毛文龙|袁崇焕.loyalty.min": ">=60"}, state.metrics, db)
+
+
+def test_character_gate_rejects_malformed_field_before_sql(game):
+    """trigger_gate 字段名必须先过白名单，不能把畸形字段拼进 SQL。"""
+    import pytest
+    from ming_sim.issues import _gate_passed
+    db, state, _content = game
+
+    with pytest.raises(ValueError, match="字段无效"):
+        _gate_passed({"character.毛文龙.loyalty;DROP": ">=1"}, state.metrics, db)
+
+
+def test_character_numeric_field_text_gate_raises_clear(game):
+    """character 数值字段走文本比较时必须 fail-loud，不能 str(loyalty) 后静默 False。"""
+    import pytest
+    from ming_sim.issues import _gate_passed
+    db, state, _content = game
+
+    with pytest.raises(ValueError, match="字段非文本"):
+        _gate_passed({"character.毛文龙.loyalty": "==active"}, state.metrics, db)
+
+
+def test_character_text_gate_supports_equality(game):
+    """character.<name>.<field> 文本字段可参与 trigger_gate 相等/不等比较（#201）。"""
+    from ming_sim.issues import _gate_passed
+    db, state, content = game
+
+    db.conn.execute("UPDATE characters SET location = ? WHERE name = ?", ("liaodong", "毛文龙"))
+
+    assert _gate_passed({"character.毛文龙.location": "==liaodong"}, state.metrics, db)
+    assert _gate_passed({"character.毛文龙.location": "!=capital"}, state.metrics, db)
+    assert not _gate_passed({"character.毛文龙.location": "==capital"}, state.metrics, db)
+
+
+def test_character_typo_field_gate_raises_clear(game):
+    """character gate 字段名 typo（DB 无此列）沿用清晰 ValueError（#201）。"""
+    import pytest
+    from ming_sim.issues import _gate_passed
+    db, state, content = game
+
+    with pytest.raises(ValueError, match="字段无效|DB 无此列"):
+        _gate_passed({"character.毛文龙.loyality": ">=1"}, state.metrics, db)
+
+
+def test_character_text_typo_field_gate_raises_clear(game):
+    """character 文本 gate 字段名 typo 也必须 fail-loud（#201 cmr P2）。"""
+    import pytest
+    from ming_sim.issues import _gate_passed
+    db, state, content = game
+
+    with pytest.raises(ValueError, match="字段无效|DB 无此列"):
+        _gate_passed({"character.毛文龙.locaiton": "==liaodong"}, state.metrics, db)
+
+
+def test_character_text_gate_key_passes_content_validation():
+    """load-time 文本 gate 校验接受 character 的文本字段（#201）。"""
+    from ming_sim.content import gate_text_key_form_error
+
+    assert gate_text_key_form_error("character.毛文龙.location") == ""
+    assert gate_text_key_form_error("character.毛文龙.office") == ""
+
+
+def test_character_text_gate_rejects_serialized_list_field():
+    """character.personal_skills 是序列化列表，不适合作普通文本等值门。"""
+    from ming_sim.content import gate_text_key_form_error
+
+    assert gate_text_key_form_error("character.毛文龙.personal_skills")
+
+
+def test_character_text_gate_rejects_numeric_character_field():
+    """character loyalty 等数值字段不应被文本等值门放行。"""
+    from ming_sim.content import gate_text_key_form_error
+
+    assert gate_text_key_form_error("character.毛文龙.loyalty")
+
+
+def test_mao_event_effect_uses_unified_person_change_key():
+    """ADR 0009 后新增事件效果应写统一 人物变更，不再写旧 flat key。"""
+    events_path = Path(__file__).resolve().parents[1] / "content" / "events.json"
+    events = json.loads(events_path.read_text())
+    mao = next(item for item in events if item["id"] == "mao_wenlong")
+
+    effect = mao["effect_on_trigger"]
+    assert "人物变更" in effect
+    assert "character_status_changes" not in effect
+    assert effect["人物变更"] == [
+        {"name": "毛文龙", "动作": "处置", "status": "dead", "reason": "袁崇焕双岛斩帅"}
+    ]
+
+
+def test_mao_wenlong_event_excluded_after_appeasement(game):
+    """#203/#12：毛文龙 loyalty 已过阈值时，袁斩毛文龙不应再按日历进候选。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 6
+    db.conn.execute("UPDATE characters SET loyalty = ? WHERE name = ?", (70, "毛文龙"))
+
+    cands = issues.gather_candidate_events(state, db)
+
+    assert all(ev.id != "mao_wenlong" for ev in cands)
+
+
+def test_mao_wenlong_event_trigger_lands_character_status(game):
+    """#203：未安抚时袁斩毛文龙触发后，毛文龙退场事实必须落库。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 6
+    db.conn.execute("UPDATE characters SET loyalty = ? WHERE name = ?", (44, "毛文龙"))
+    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "袁崇焕"))
+
+    cands = issues.gather_candidate_events(state, db)
+    assert any(ev.id == "mao_wenlong" for ev in cands)
+    before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)).fetchone()[0]
+
+    out = issues.apply_issue_tracker_output(
+        db,
+        state,
+        {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
+        content=content,
+    )
+
+    assert out["new_issues"][0]["rejected"] is False
+    assert db.get_character_status("毛文龙")[0] == "dead"
+    assert content.characters["毛文龙"].status == "dead"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
+    ).fetchone()[0] == before_logs + 1
+
+
+def test_mao_wenlong_event_pool_rechecks_gate_before_effect(game):
+    """#203 CMR：落库端也必须重验 trigger_gate，不能信任 LLM 伪造的候选 id。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 6
+    db.conn.execute("UPDATE characters SET loyalty = ? WHERE name = ?", (70, "毛文龙"))
+    before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)).fetchone()[0]
+
+    out = issues.apply_issue_tracker_output(
+        db,
+        state,
+        {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
+        content=content,
+    )
+
+    assert out["new_issues"][0]["rejected"] is True
+    assert "候选" in out["new_issues"][0]["reason"]
+    assert db.get_character_status("毛文龙")[0] == "active"
+    assert content.characters["毛文龙"].status == "active"
+    assert not db.has_event_triggered("mao_wenlong")
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
+    ).fetchone()[0] == before_logs
+
+
+def test_mao_wenlong_event_excluded_when_character_already_inactive(game):
+    """#203 CMR：毛文龙已退场时，斩毛事件不应再按低 loyalty 进入候选。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 6
+    db.conn.execute(
+        "UPDATE characters SET loyalty = ?, status = ? WHERE name = ?",
+        (44, "dead", "毛文龙"),
+    )
+
+    cands = issues.gather_candidate_events(state, db)
+    assert all(ev.id != "mao_wenlong" for ev in cands)
+
+    out = issues.apply_issue_tracker_output(
+        db,
+        state,
+        {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
+        content=content,
+    )
+
+    assert out["new_issues"][0]["rejected"] is True
+    assert "候选" in out["new_issues"][0]["reason"]
+    assert db.get_character_status("毛文龙")[0] == "dead"
+    assert not db.has_event_triggered("mao_wenlong")
+
+
+def test_mao_wenlong_event_excluded_when_yuan_unavailable(game):
+    """#187 ship-pre：袁崇焕不在 active 位时，不应发生袁崇焕斩毛文龙。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 6
+
+    for yuan_status in ("dismissed", "imprisoned", "exiled", "retired", "offstage", "dead"):
+        db.conn.execute(
+            "UPDATE characters SET loyalty = ?, status = ? WHERE name = ?",
+            (44, "active", "毛文龙"),
+        )
+        db.conn.execute(
+            "UPDATE characters SET status = ? WHERE name = ?",
+            (yuan_status, "袁崇焕"),
+        )
+        before_logs = db.conn.execute(
+            "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
+        ).fetchone()[0]
+
+        cands = issues.gather_candidate_events(state, db)
+        assert all(ev.id != "mao_wenlong" for ev in cands), yuan_status
+
+        out = issues.apply_issue_tracker_output(
+            db,
+            state,
+            {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
+            content=content,
+        )
+
+        assert out["new_issues"][0]["rejected"] is True
+        assert "候选" in out["new_issues"][0]["reason"]
+        assert db.get_character_status("毛文龙")[0] == "active"
+        assert content.characters["毛文龙"].status == "active"
+        assert not db.has_event_triggered("mao_wenlong")
+        assert db.conn.execute(
+            "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
+        ).fetchone()[0] == before_logs
+
+
+def test_mao_wenlong_event_pool_duplicate_emit_is_idempotent(game):
+    """#203 CMR：同一轮重复 emit 已触发事件时，第二条应拒收留痕而不是 abort。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 6
+    db.conn.execute("UPDATE characters SET loyalty = ? WHERE name = ?", (44, "毛文龙"))
+    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "袁崇焕"))
+    before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)).fetchone()[0]
+
+    out = issues.apply_issue_tracker_output(
+        db,
+        state,
+        {"new_issues": [
+            {"origin_kind": "event_pool", "id": "mao_wenlong"},
+            {"origin_kind": "event_pool", "id": "mao_wenlong"},
+        ]},
+        content=content,
+    )
+
+    assert out["new_issues"][0]["rejected"] is False
+    assert out["new_issues"][1]["rejected"] is True
+    assert "候选" in out["new_issues"][1]["reason"]
+    assert db.get_character_status("毛文龙")[0] == "dead"
+    assert content.characters["毛文龙"].status == "dead"
+    assert db.has_event_triggered("mao_wenlong")
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
+    ).fetchone()[0] == before_logs + 1
