@@ -1089,6 +1089,7 @@ def apply_issue_tracker_output(
     llm_config: Any = None,
     content=None,
     pending_person_changes_for_gates: Optional[List[Dict[str, object]]] = None,
+    candidate_event_ids_at_input: Optional[set[str]] = None,
 ) -> Dict[str, object]:
     touched_ids: set = set()
     applied_advances: List[Dict[str, object]] = []
@@ -1101,7 +1102,12 @@ def apply_issue_tracker_output(
     issue_person_changes: List[Dict[str, object]] = []
     event_by_id = _ctx().event_by_id
     external_transaction = db.conn.in_transaction
-    candidate_event_ids = {candidate.id for candidate in gather_candidate_events(state, db)}
+    candidate_event_ids = (
+        set(candidate_event_ids_at_input)
+        if candidate_event_ids_at_input is not None
+        else {candidate.id for candidate in gather_candidate_events(state, db)}
+    )
+    current_candidate_event_ids = {candidate.id for candidate in gather_candidate_events(state, db)}
     consumed_event_ids: set[str] = set()
 
     # 1) advances（ADR 0008 决定1：LLM 脏数据逐项拒收留痕，不裸 continue 静默丢；db.advance_issue
@@ -1250,7 +1256,11 @@ def apply_issue_tracker_output(
                 print(f"[INFO] new_issue 已拒：event {event_id} 标了 auto_trigger，只能程序硬触发。")
                 applied_new.append({"title": ev.title, "rejected": True, "reason": "auto_trigger 事件仅程序可触发"})
                 continue
-            if ev.id not in candidate_event_ids or ev.id in consumed_event_ids:
+            if (
+                ev.id not in candidate_event_ids
+                or ev.id not in current_candidate_event_ids
+                or ev.id in consumed_event_ids
+            ):
                 # LLM 只能从本回合候选池中挑选事件；落库端重验窗口、trigger_gate 与已触发状态，
                 # 避免陈旧/伪造 id 穿透候选层后直接应用确定性后果（#203 CMR）。
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 当前未进 event_pool 候选池。")
@@ -2667,6 +2677,7 @@ def apply_score_extraction(
     caller_transaction = db.conn.in_transaction
     # 0) 落库前校验容器/二级类型,畸形值崩前拦住,不让前面字段半落库(#57)。
     validate_delta_shape(extracted)
+    candidate_event_ids_at_input = {candidate.id for candidate in gather_candidate_events(state, db)}
     new_person_changes = normalize_person_changes({"人物变更": extracted.get("人物变更") or []})
     legacy_person_changes = [] if new_person_changes else normalize_person_changes({
         "appointments": extracted.get("appointments") or [],
@@ -2790,7 +2801,9 @@ def apply_score_extraction(
         "new_issues": extracted.get("new_issues") or [],
         "close_issues": extracted.get("close_issues") or [],
         "cancels": extracted.get("cancels") or [],
-    }, llm_config=llm_config, content=content, pending_person_changes_for_gates=post_issue_person_changes)
+    }, llm_config=llm_config, content=content,
+        pending_person_changes_for_gates=post_issue_person_changes,
+        candidate_event_ids_at_input=candidate_event_ids_at_input)
     _apply_normalized_person_changes(post_issue_person_changes, legacy=legacy_person_mode)
 
     def _norm_int_leaf(v):
