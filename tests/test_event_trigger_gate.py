@@ -234,3 +234,45 @@ def test_numeric_cond_on_text_field_raises_clear(game):
     # controlled_by 是文本字段（'ming'/'houjin'），对它做数值比较 → fail-loud
     with pytest.raises(ValueError, match="字段非数值|不可比文本"):
         _gate_passed({"region.huguang.controlled_by": ">=1"}, state.metrics, db)
+
+
+def test_character_numeric_gate_supports_comparison(game):
+    """character.<name>.<field> 数值字段可参与 trigger_gate 比较（#201）。"""
+    from ming_sim.issues import _gate_passed
+    db, state, content = game
+
+    row = db.conn.execute("SELECT loyalty FROM characters WHERE name = ?", ("毛文龙",)).fetchone()
+    assert row is not None, "测试盘面应有毛文龙"
+
+    assert _gate_passed({"character.毛文龙.loyalty": f">={int(row['loyalty'])}"}, state.metrics, db)
+    assert not _gate_passed({"character.毛文龙.loyalty": f">{int(row['loyalty'])}"}, state.metrics, db)
+
+
+def test_character_text_gate_supports_equality(game):
+    """character.<name>.<field> 文本字段可参与 trigger_gate 相等/不等比较（#201）。"""
+    from ming_sim.issues import _gate_passed
+    db, state, content = game
+
+    db.conn.execute("UPDATE characters SET location = ? WHERE name = ?", ("liaodong", "毛文龙"))
+
+    assert _gate_passed({"character.毛文龙.location": "==liaodong"}, state.metrics, db)
+    assert _gate_passed({"character.毛文龙.location": "!=capital"}, state.metrics, db)
+    assert not _gate_passed({"character.毛文龙.location": "==capital"}, state.metrics, db)
+
+
+def test_character_typo_field_gate_raises_clear(game):
+    """character gate 字段名 typo（DB 无此列）沿用清晰 ValueError（#201）。"""
+    import pytest
+    from ming_sim.issues import _gate_passed
+    db, state, content = game
+
+    with pytest.raises(ValueError, match="字段无效|DB 无此列"):
+        _gate_passed({"character.毛文龙.loyality": ">=1"}, state.metrics, db)
+
+
+def test_character_text_gate_key_passes_content_validation():
+    """load-time 文本 gate 校验接受 character 的文本字段（#201）。"""
+    from ming_sim.content import gate_text_key_form_error
+
+    assert gate_text_key_form_error("character.毛文龙.location") == ""
+    assert gate_text_key_form_error("character.毛文龙.office") == ""
