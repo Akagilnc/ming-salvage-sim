@@ -687,6 +687,48 @@ def test_yuan_xialing_event_included_after_jisi_event_issue_triggers(game):
     assert any(ev.id == "yuan_xialing" for ev in issues.gather_candidate_events(state, db))
 
 
+def test_legacy_event_pool_issue_backfills_event_trigger_for_chain_gate(game):
+    """#191 CMR R3：旧档已有 event_pool issue 时，schema 迁移应补 event_triggers 链门。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    db.save_state(state)
+    db.insert_issue(
+        state,
+        kind="situation",
+        title=content.event_by_id["jisi_lubian"].title,
+        origin_kind="event_pool",
+        origin_ref="jisi_lubian",
+        commit=True,
+    )
+    assert db.conn.execute(
+        "SELECT event_id FROM event_triggers WHERE event_id=?",
+        ("jisi_lubian",),
+    ).fetchone() is None
+
+    db.init_schema()
+
+    row = db.conn.execute(
+        "SELECT terminal_state, source FROM event_triggers WHERE event_id=?",
+        ("jisi_lubian",),
+    ).fetchone()
+    assert row is not None
+    assert row["terminal_state"] == "triggered"
+    assert row["source"] == "legacy_event_pool"
+
+    state.year = 1629
+    state.period = 12
+    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("active", "袁崇焕"))
+    db.conn.execute("UPDATE armies SET commander=? WHERE id=?", ("袁崇焕", "guanning"))
+    db.conn.execute(
+        "UPDATE characters SET status=?, status_reason=? WHERE name=?",
+        ("dead", "袁崇焕双岛斩帅", "毛文龙"),
+    )
+
+    assert any(ev.id == "yuan_xialing" for ev in issues.gather_candidate_events(state, db))
+
+
 def test_luoyang_fallen_not_obsoleted_when_fu_wang_is_dead(game):
     """#191 CMR：洛阳陷落是城市/流寇压力事件，福王已死不应让事件进入人物核心作废终态。"""
     db, state, content = game
@@ -720,6 +762,29 @@ def test_li_chenghai_event_opens_after_li_zicheng_historical_debut(game):
     assert any(item["name"] == "李自成" for item in debuted)
     assert db.get_character_status("李自成")[0] == "active"
     assert any(ev.id == "li_chenghai" for ev in cands)
+
+
+def test_zhangxianzhong_event_opens_after_historical_debut_and_surrender_path(game):
+    """#191 CMR R3：张献忠不能被 offstage+debut 0 卡死；招抚态落库后再反门应可达。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+
+    debuted = db.apply_historical_debuts(state)
+
+    assert any(item["name"] == "张献忠" for item in debuted)
+    assert db.get_character_status("张献忠")[0] == "active"
+
+    state.year = 1639
+    state.period = 5
+    db.conn.execute(
+        "UPDATE characters SET power_id=?, location=? WHERE name=?",
+        ("ming", "huguang", "张献忠"),
+    )
+    db.conn.execute("UPDATE regions SET unrest=? WHERE id=?", (55, "huguang"))
+
+    assert any(ev.id == "zhangxianzhong_zaifan" for ev in issues.gather_candidate_events(state, db))
 
 
 def test_issue_191_person_core_events_are_explicitly_classified(content):
