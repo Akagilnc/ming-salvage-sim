@@ -256,7 +256,7 @@ def _talent_pool_rows(db: "GameDB", state: GameState) -> List[Dict[str, object]]
 
 
 def _army_rows_with_needed(
-    db: GameDB, select_sql: str, drop: Tuple[str, ...] = ("salary_rate",),
+    db: GameDB, select_sql: str, drop: tuple[str, ...] = ("salary_rate",),
 ) -> List[Dict[str, object]]:
     """#173 cmr（codex high + Claude medium concur）：simulator/extractor 盘面军队行加引擎实扣
     army_needed 列（裁判/审计大臣读的「月饷」真源）。select_sql 须含 owner_power/manpower/salary_rate
