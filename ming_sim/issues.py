@@ -1243,7 +1243,7 @@ def apply_issue_tracker_output(
             cancel_cost=cancel_cost,
             effect_on_resolve=resolve_eff,
             effect_on_fail=fail_eff,
-            resolve_condition=str(ni.get("resolve_condition") or "")[:300],
+            resolve_condition=str(ni.get("resolve_condition") or ni.get("stop_condition") or "")[:300],
             fail_condition=str(ni.get("fail_condition") or "")[:300],
         )
         if kind == "initiative":
@@ -1892,6 +1892,41 @@ def _apply_person_changes(
         action = str(item.get("动作") or "").strip()
         if not name or not action:
             applied.append(rejected(item, "name 或 动作 缺失", "missing_field"))
+            continue
+
+        if action == "评定":
+            if content is not None and name not in content.characters:
+                applied.append(rejected(item, "非既有人物", "hallucinated_id"))
+                continue
+            row = db.conn.execute(
+                "SELECT name, loyalty FROM characters WHERE name=?", (name,)
+            ).fetchone()
+            if row is None:
+                applied.append(rejected(item, "非既有人物", "hallucinated_id"))
+                continue
+            raw_delta = item.get("loyalty")
+            if isinstance(raw_delta, bool) or not isinstance(raw_delta, int) or raw_delta == 0:
+                applied.append(rejected(item, "评定 loyalty 须为非零整数增量", "invalid_enum"))
+                continue
+            old_loyalty = int(row["loyalty"])
+            new_loyalty = max(0, min(100, old_loyalty + raw_delta))
+            db.conn.execute(
+                "UPDATE characters SET loyalty=? WHERE name=?",
+                (new_loyalty, name),
+            )
+            db.conn.commit()
+            if content is not None and name in content.characters:
+                content.characters[name].loyalty = new_loyalty
+            result = {
+                "name": name,
+                "动作": action,
+                "loyalty": raw_delta,
+                "old_loyalty": old_loyalty,
+                "new_loyalty": new_loyalty,
+                "reason": str(item.get("reason") or ""),
+            }
+            applied.append(result)
+            log_applied(result, item)
             continue
 
         if action in {"处置", "罢黜"}:

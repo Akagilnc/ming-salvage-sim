@@ -152,6 +152,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 | `title` | ≤60 字 |
 | `bar_value` | int，默认 25 |
 | `expected_months` | int |
+| `resolve_condition` / `stop_condition` | 文本；`stop_condition` 是别名，落库到 `resolve_condition` |
 | `bar_good_meaning` / `bar_bad_meaning` | 文案 |
 | `ongoing_effects` / `effect_on_resolve` / `effect_on_fail` | dict，月度持续/结案/失败效果 |
 | `cancellable` | "decree" / "never" / "by_progress" |
@@ -160,6 +161,8 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 ⚠️ **kind 白名单**：落库时 `kind` 不在 `(situation, initiative)` 内会被拒。**第二次踩的坑**：`kind="reform"` 被拒（应改 `initiative`）。
 
 ⚠️ **数量上限**：active `kind=initiative` 的 issue **总数不超过 10**，超过新立直接拒（"已有十事在办，朝廷分身乏术"）。
+
+人物承诺型事项也属 `initiative`：如皇帝命臣安抚毛文龙，应立标题类似 `安抚毛文龙·进行中` 的玩家可见 issue，并用 `stop_condition` 表达意图阈值（例：`character.毛文龙.loyalty >= 65`）。本字段只存停止/达成意图；自动按条件完成/关闭不在本片。一次性赏赐、抚恤、拨银若当回合办完，不立 issue，只走 `economy_moves` 与必要的 `人物变更`。
 
 ### `cancels` — 撤销 issue
 - `issue_id` int + `reason` 文本
@@ -170,13 +173,13 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 - 一般由 issue bar=100/0 自动了结；这里用于强行结案。
 
 ### `人物变更` — 人事档案单一入口
-每条必须带 `name`（必须在 `characters` 名册）和 `动作`。`动作` 只收七个值：`任命` / `罢黜` / `调任` / `处置` / `易主` / `册封` / `行止`。未知动作、查无此人、缺必填字段、非法枚举或非法状态迁移都会逐项拒收留痕。
+每条必须带 `name`（必须在 `characters` 名册）和 `动作`。`动作` 只收八个值：`任命` / `罢黜` / `调任` / `处置` / `易主` / `册封` / `行止` / `评定`。未知动作、查无此人、缺必填字段、非法枚举或非法状态迁移都会逐项拒收留痕。
 
 共通字段：
 | 字段 | 约束 |
 |---|---|
 | `name` | 必填，精确人物名 |
-| `动作` | 必填，七动作之一 |
+| `动作` | 必填，八动作之一 |
 | `reason` / `status_reason` | 可选，人读叙事说明 |
 | `reason_code` | 可选，机读枚举；未知值归一到 `未识别`，缺省和读不懂不能混成一个语义 |
 
@@ -190,6 +193,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 | `易主` | `new_power` / `方式` / `反噬` | `new_title` | `方式` ∈ `主动投敌` / `被俘而降` / `主动归附`；`反噬` 为内嵌派系/势力反应；legacy 翻译才可用 `不明` |
 | `册封` | `office` | `office_type` | 后宫 candidate 出边；落选走 `处置(status=offstage, reason_code=落选)` |
 | `行止` | `location` 或 `transit_to` | `reason_code` | 去向变更；`transit_to` 非空表示在途，迁出 active 时会被清空 |
+| `评定` | `loyalty` | — | 人物忠诚软判增量（integer，非新值），用于安抚/离心等叙事裁判后的结构化数值变化 |
 
 状态白名单（DB 全集 8 态）：`active` / `candidate` / `offstage` / `dismissed` / `imprisoned` / `exiled` / `retired` / `dead`。其中 **`处置.status` 只可直迁 6 态**（去掉 `active` / `candidate`——二者经 `任命` / `册封` 级联或 applier 起复派生达成；直接 `处置(status=active/candidate)` 被拒 `invalid_transition`，见 `issues.py` `disposition_statuses`）。死人没有 status 出边；追谥、追赠等身后事不进 `人物变更`。
 
