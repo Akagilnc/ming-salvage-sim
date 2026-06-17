@@ -255,6 +255,24 @@ def _talent_pool_rows(db: "GameDB", state: GameState) -> List[Dict[str, object]]
 
 
 
+def _army_rows_with_needed(
+    db: GameDB, select_sql: str, drop: Tuple[str, ...] = ("salary_rate",),
+) -> List[Dict[str, object]]:
+    """#173 cmr（codex high + Claude medium concur）：simulator/extractor 盘面军队行加引擎实扣
+    army_needed 列（裁判/审计大臣读的「月饷」真源）。select_sql 须含 owner_power/manpower/salary_rate
+    供 army_needed 计算；drop 列仅用于算、不进盘面（默认 salary_rate；调用方原本无 owner_power 的也一并
+    drop 以最小化盘面列变化）。maintenance_per_turn 退役、留作 extractor 写端兼容。"""
+    from ming_sim.flows import army_needed
+    out: List[Dict[str, object]] = []
+    for r in db.conn.execute(select_sql).fetchall():
+        d = dict(r)
+        d["army_needed"] = army_needed(r)
+        for c in drop:
+            d.pop(c, None)
+        out.append(d)
+    return out
+
+
 def build_simulator_payload(
     state: GameState,
     db: GameDB,
@@ -293,13 +311,13 @@ def build_simulator_payload(
             "json_extract(fiscal,'$.corruption') as corruption FROM regions ORDER BY id"
         ).fetchall()
     ]
-    army_rows = [
-        dict(r) for r in db.conn.execute(
-            "SELECT name,station,theater,commander,controller,troop_type,manpower,"
-            "maintenance_per_turn,supply,morale,training,equipment,arrears,mobility,"
-            "loyalty,firearm_equipment,cannon_equipment,status,owner_power FROM armies ORDER BY id"
-        ).fetchall()
-    ]
+    army_rows = _army_rows_with_needed(
+        db,
+        "SELECT name,station,theater,commander,controller,troop_type,manpower,"
+        "maintenance_per_turn,supply,morale,training,equipment,arrears,mobility,"
+        "loyalty,firearm_equipment,cannon_equipment,status,owner_power,salary_rate "
+        "FROM armies ORDER BY id",
+    )
     # 在朝名单 = 目前当官的（active）：simulator 在朝盘面 + 任命查重。可起复者（居家/致仕/
     # 削籍）走 offstage_ministers 人才池，在押/流放者两份都不在（玩家下旨决定去留）。旧 status!=
     # 'offstage' 会把削籍/致仕/在押者也混进在朝名单、与人才池双重曝光自相矛盾。注：大臣 system 的
@@ -513,13 +531,13 @@ def _extractor_context_payload(
             "json_extract(fiscal,'$.corruption') as corruption FROM regions ORDER BY id"
         ).fetchall()
     ]
-    army_rows = [
-        dict(r) for r in db.conn.execute(
-            "SELECT id,name,station,theater,commander,controller,troop_type,manpower,"
-            "maintenance_per_turn,supply,morale,training,equipment,arrears,mobility,"
-            "loyalty,status FROM armies ORDER BY id"
-        ).fetchall()
-    ]
+    army_rows = _army_rows_with_needed(
+        db,
+        "SELECT id,name,station,theater,commander,controller,troop_type,manpower,"
+        "maintenance_per_turn,supply,morale,training,equipment,arrears,mobility,"
+        "loyalty,status,owner_power,salary_rate FROM armies ORDER BY id",
+        drop=("salary_rate", "owner_power"),  # extractor 盘面原无 owner_power，只新增 army_needed 列
+    )
     active_ministers = [
         dict(r) for r in db.conn.execute(
             # roster scope（同 court_roster / _talent_pool_rows / tools.get_active_ministers）：
