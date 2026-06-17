@@ -963,6 +963,14 @@ class GameDB:
         # 误覆盖动态态）；列已存在的后续 load 跳过（army_needed 的 rate<=0 锚定兜底 runtime 漏网）。
         if self.ensure_column("armies", "salary_rate", "REAL NOT NULL DEFAULT 0"):
             self._backfill_salary_rate()
+        # #173：维护费列退役迁移——**必须在每个打开路径跑**。driver 开现存档只走 GameDB.__init__→
+        # init_schema、不走 seed_static_data；若只挂 seed，现存档（probe.db: maintenance INTEGER
+        # NOT NULL 无 default）永不删列 → 删列后建新军 INSERT（已不含该列）崩（cmr drop R1 codex high）。
+        # 现存档此刻维护费列在：先确保 arrears 换算读完维护费（幂等 version gate），再 drop；新档此时
+        # armies 空（CREATE TABLE 已无该列）→ 两步皆 no-op，seed 路再正常建。
+        if self.table_has_rows("armies"):
+            self._migrate_arrears_unit_to_silver(is_fresh_armies_seed=False)
+        self._drop_maintenance_column()
         self.ensure_column("regions", "controlled_by", "TEXT NOT NULL DEFAULT 'ming'")
         # 城市等级 0-5(静态,史实分级,将来供经济/内政)+ 城防大炮门数(城头红夷炮,上限 city_level×8)
         self.ensure_column("regions", "city_level", "INTEGER NOT NULL DEFAULT 0")
@@ -1743,9 +1751,8 @@ class GameDB:
                     ),
                 )
         self._migrate_arrears_unit_to_silver(is_fresh_armies_seed)
-        # #173：物理移除退役的维护费列——必须在所有读它的迁移（salary_rate backfill / arrears 换算）
-        # 之后，老档此刻维护费仍在、迁移已读完，drop 安全；新档无此列、为 no-op。
-        self._drop_maintenance_column()
+        # #173：维护费列退役 drop 已上移至 init_schema（每个打开路径都跑，含 driver 开现存档的纯
+        # init_schema 路径，见 cmr drop R1）；此处新档 seed INSERT 后该列本就不存在，无需再 drop。
         self._apply_region_city_levels()  # 新档 region 此时才 INSERT 完，按史实补 city_level
         # 新档罢居/在途 office 污染清洗：init_schema 路径在空表上 no-op（构造在 seed 前），
         # 故 seed 后须再跑一次才对新档生效（决定9/L94 一次性清洗；幂等，老档由 init_schema
