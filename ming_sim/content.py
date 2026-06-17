@@ -26,6 +26,7 @@ from ming_sim.constants import (
     GATE_AGG_FUNCS,
     GATE_METRIC_KEYS,
     GATE_TABLES,
+    CHARACTER_TEXT_FIELDS,
     POWER_TEXT_FIELDS,
     REGION_TEXT_FIELDS,
 )
@@ -36,6 +37,7 @@ _GATE_TEXT_FIELDS = {
     "region": set(REGION_TEXT_FIELDS),
     "army": set(ARMY_TEXT_FIELDS),
     "power": set(POWER_TEXT_FIELDS),
+    "character": set(CHARACTER_TEXT_FIELDS),
 }
 from ming_sim.models import (
     Army,
