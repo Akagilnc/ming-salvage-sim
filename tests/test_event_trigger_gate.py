@@ -473,15 +473,126 @@ def test_strategic_foreign_event_survives_named_commander_death_with_soft_result
     assert army["morale"] == 43
 
 
+def test_strategic_foreign_event_rejects_trigger_without_world_state_delta(game):
+    """#189 CMR：战略/外敌战事不能只记事件触发而无主账结果。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+
+    assert any(ev.id == "jisi_lubian" for ev in issues.gather_candidate_events(state, db))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {"new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}]},
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert "主账" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert not db.has_event_triggered("jisi_lubian")
+
+
+def test_rejected_strategic_foreign_event_does_not_land_battle_delta(game):
+    """#189 CMR：战略事件被同信封关门拒收时，伴随战果 delta 不得半落库。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    state.metrics["民心"] = 20
+    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"))
+    issue_id = db.insert_issue(
+        state,
+        kind="situation",
+        title="测试·先行推进关门",
+        origin_kind="decree",
+        bar_value=40,
+        stage_text="尚未触发",
+    )
+
+    ev = Event(
+        id="__test_strategic_rejected_delta__",
+        title="测试·战略拒收不落战果",
+        kind="军事",
+        summary="测试战略战事。",
+        urgency=10,
+        severity=10,
+        credibility=100,
+        interests=["北直隶"],
+        audiences=[],
+        event_type="node",
+        trigger_gate={"民心": ">= 10"},
+    )
+    content.seed_events.append(ev)
+    content.event_by_id[ev.id] = ev
+    try:
+        assert any(c.id == ev.id for c in issues.gather_candidate_events(state, db))
+
+        out = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "issue_advances": [{"issue_id": issue_id, "delta_bar": 1, "metric_delta": {"民心": -15}}],
+                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
+                "region_delta": {"beizhili": {"military_pressure": 20}},
+            },
+            content=content,
+        )
+
+        assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+        assert "候选" in out["issue_summary"]["new_issues"][0]["reason"]
+        assert not db.has_event_triggered(ev.id)
+        assert db.conn.execute(
+            "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
+        ).fetchone()["military_pressure"] == 20
+        assert out["region_changes"] == []
+    finally:
+        content.seed_events.remove(ev)
+        content.event_by_id.pop(ev.id, None)
+
+
+def test_strategic_foreign_event_lands_soft_result_person_delta(game):
+    """#189 CMR：战略战事的人死/生是软判结果，须能落人物主账。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1638
+    state.period = 9
+    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "卢象升"))
+
+    assert any(ev.id == "wuyin_lubian" for ev in issues.gather_candidate_events(state, db))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
+            "人物变更": [{"name": "卢象升", "动作": "处置", "status": "dead", "reason": "戊寅虏变软判战死"}],
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is False
+    assert db.has_event_triggered("wuyin_lubian")
+    assert db.get_character_status("卢象升")[0] == "dead"
+
+
 def test_wuyin_lubian_content_treats_lu_death_as_soft_battle_outcome():
     """#189：戊寅虏变不能把卢象升写成人物核心；卢死/生是战事软判结果。"""
     events_path = Path(__file__).resolve().parents[1] / "content" / "events.json"
     events = json.loads(events_path.read_text())
     wuyin = next(item for item in events if item["id"] == "wuyin_lubian")
+    songshan = next(item for item in events if item["id"] == "songshan_battle")
 
     assert "殉国" not in wuyin["title"]
     assert "本局按盘面软判" in wuyin["summary"]
+    assert "卢象升得" not in wuyin["resolve_condition"]
+    assert "卢象升孤军战死" not in wuyin["fail_condition"]
     assert "卢象升生死由软判" in wuyin["precondition"]
+    assert "本局按盘面软判援锦主帅" in songshan["summary"]
+    assert "洪承畴率" not in songshan["summary"]
+    assert "洪承畴稳" not in songshan["resolve_condition"]
+    assert "洪承畴降金" not in songshan["fail_condition"]
 
 
 def test_mao_wenlong_event_trigger_respects_outer_transaction_rollback(game):
