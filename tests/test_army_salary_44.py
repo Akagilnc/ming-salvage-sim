@@ -134,6 +134,23 @@ def test_backfill_reverse_fills_from_maintenance_on_direct_upgrade(game):
     )
 
 
+def test_backfill_anchor_when_column_present_but_data_unusable(game):
+    """#173 cmr drop PR R1(Sourcery testing)：维护费列**在**但数据不可用（maint<=0 或 manpower<=0）
+    → ②反推兜底落边军史实锚点（不除零、不留 0 率白嫖）。补 column-exists gate 列在态的退化边界
+    （前一测试钉列在+正常数据反推、再前一钉列不在锚点）。"""
+    db, _state, _ = game
+    from ming_sim.constants import SALARY_RATE_ANCHOR
+    db.conn.execute("ALTER TABLE armies ADD COLUMN maintenance_per_turn INTEGER NOT NULL DEFAULT 0")
+    _insert_dynamic_ming_army(db, "dyn_maint0", "无饷动态军", 5000)  # maint 默认 0、salary_rate 留 0
+    db.conn.commit()
+    db._backfill_salary_rate()
+    db.conn.commit()
+    row = db.conn.execute("SELECT salary_rate FROM armies WHERE id='dyn_maint0'").fetchone()
+    assert row["salary_rate"] == pytest.approx(SALARY_RATE_ANCHOR), (
+        f"维护费列在但 maint=0 应落锚点（②反推兜底），得 {row['salary_rate']}"
+    )
+
+
 def test_total_ming_salary_is_72_ceil_sum(game):
     # 实际总月应发 = sum(ceil(每军))=72 万两。设计「66.5」是 sum(小数月应发)；army_needed 每军 ceil
     # （万两整数、不少发），ceil 累积使总额 72 > 66.5（cmr r1 codex/claude 实测）。开局 vs 旧 65 = +10.8%

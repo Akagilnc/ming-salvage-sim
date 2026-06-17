@@ -1506,10 +1506,18 @@ class GameDB:
         has_maint = "maintenance_per_turn" in {
             r["name"] for r in self.conn.execute("PRAGMA table_info(armies)").fetchall()
         }
-        select_cols = "id, manpower, maintenance_per_turn" if has_maint else "id"
-        for r in self.conn.execute(
-            f"SELECT {select_cols} FROM armies WHERE owner_power='ming' AND salary_rate <= 0"
-        ).fetchall():
+        # 两条完整字面 SQL 二选一（不 f-string 拼列名）：列在时多取 manpower/维护费供②反推。两 query 都
+        # 无外部输入、纯字面常量（Sourcery R1 security：消除 raw-query 字符串拼接的 SQLi 告警面）。
+        if has_maint:
+            rows = self.conn.execute(
+                "SELECT id, manpower, maintenance_per_turn FROM armies "
+                "WHERE owner_power='ming' AND salary_rate <= 0"
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT id FROM armies WHERE owner_power='ming' AND salary_rate <= 0"
+            ).fetchall()
+        for r in rows:
             aid = str(r["id"])
             army = self.content.armies.get(aid)
             if army is not None and army.salary_rate > 0:
