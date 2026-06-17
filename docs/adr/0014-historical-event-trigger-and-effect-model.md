@@ -1,6 +1,6 @@
 # ADR 0014：历史事件触发与后果模型
 
-- Status: Proposed（2026-06-16 grill-with-docs session 收敛；待评审闭环）
+- Status: Accepted（2026-06-16 grill-with-docs 收敛；2026-06-17 本地 cmr 7 轮 + 线上 R1–R5 评审闭环）
 - 关联：#174（16 个事件 trigger_gate 全空）、#12（误触发根因）、#93（距离/行程，deferred）、ADR 0009（人事动作＝招安载体）、CLAUDE.md P2 铁律（判战永远 LLM 软判，代码只 clamp）
 
 ## Context
