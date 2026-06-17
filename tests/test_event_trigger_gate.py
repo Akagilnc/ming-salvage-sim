@@ -368,6 +368,33 @@ def test_mao_wenlong_event_pool_rechecks_gate_before_effect(game):
     ).fetchone()[0] == before_logs
 
 
+def test_mao_wenlong_event_excluded_when_character_already_inactive(game):
+    """#203 CMR：毛文龙已退场时，斩毛事件不应再按低 loyalty 进入候选。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 6
+    db.conn.execute(
+        "UPDATE characters SET loyalty = ?, status = ? WHERE name = ?",
+        (44, "dead", "毛文龙"),
+    )
+
+    cands = issues.gather_candidate_events(state, db)
+    assert all(ev.id != "mao_wenlong" for ev in cands)
+
+    out = issues.apply_issue_tracker_output(
+        db,
+        state,
+        {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
+        content=content,
+    )
+
+    assert out["new_issues"][0]["rejected"] is True
+    assert "候选" in out["new_issues"][0]["reason"]
+    assert db.get_character_status("毛文龙")[0] == "dead"
+    assert not db.has_event_triggered("mao_wenlong")
+
+
 def test_mao_wenlong_event_pool_duplicate_emit_is_idempotent(game):
     """#203 CMR：同一轮重复 emit 已触发事件时，第二条应拒收留痕而不是 abort。"""
     db, state, content = game
