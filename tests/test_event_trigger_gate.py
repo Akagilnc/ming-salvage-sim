@@ -365,6 +365,42 @@ def test_mao_wenlong_event_excluded_after_appeasement(game):
     assert all(ev.id != "mao_wenlong" for ev in cands)
 
 
+def test_mao_wenlong_event_excluded_after_player_relocates_mao(game):
+    """#191：玩家用行止把毛文龙调离东江后，location gate 可查并关闭斩毛事件。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 6
+    db.conn.execute(
+        "UPDATE characters SET loyalty=?, status=?, location=?, transit_to='' WHERE name=?",
+        (44, "active", "dongjiang_area", "毛文龙"),
+    )
+    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("active", "袁崇焕"))
+    content.characters["毛文龙"].loyalty = 44
+    content.characters["毛文龙"].status = "active"
+    content.characters["毛文龙"].location = "dongjiang_area"
+    content.characters["毛文龙"].transit_to = ""
+    content.characters["袁崇焕"].status = "active"
+
+    assert any(ev.id == "mao_wenlong" for ev in issues.gather_candidate_events(state, db))
+
+    applied = issues.apply_score_extraction(
+        db,
+        state,
+        {"人物变更": [{"name": "毛文龙", "动作": "行止", "location": "shaanxi", "reason": "调往陕西剿抚"}]},
+        content=content,
+    )
+
+    assert applied["applied_person_changes"] == [
+        {"name": "毛文龙", "动作": "行止", "location": "shaanxi", "transit_to": ""}
+    ]
+    assert db.conn.execute(
+        "SELECT location FROM characters WHERE name=?",
+        ("毛文龙",),
+    ).fetchone()["location"] == "shaanxi"
+    assert all(ev.id != "mao_wenlong" for ev in issues.gather_candidate_events(state, db))
+
+
 def test_mao_wenlong_event_trigger_lands_character_status(game):
     """#203：未安抚时袁斩毛文龙触发后，毛文龙退场事实必须落库。"""
     db, state, content = game
@@ -551,6 +587,80 @@ def test_mao_wenlong_event_pool_rechecks_gate_before_effect(game):
     assert db.conn.execute(
         "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
     ).fetchone()[0] == before_logs
+
+
+def test_person_core_event_obsoletes_when_named_subject_is_dead(game):
+    """#191：人物核心事件的点名主体永久死亡时，应 durable 作废并退出候选池。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 12
+    db.set_character_status(state, "袁崇焕", "dead", reason="测试：提前身故")
+
+    cands = issues.gather_candidate_events(state, db)
+
+    assert all(ev.id != "yuan_xialing" for ev in cands)
+    row = db.conn.execute(
+        "SELECT terminal_state, source FROM event_triggers WHERE event_id=?",
+        ("yuan_xialing",),
+    ).fetchone()
+    assert row is not None
+    assert row["terminal_state"] == "obsolete"
+    assert row["source"] == "person_core_dead"
+
+    cands_again = issues.gather_candidate_events(state, db)
+    assert all(ev.id != "yuan_xialing" for ev in cands_again)
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM event_triggers WHERE event_id=?",
+        ("yuan_xialing",),
+    ).fetchone()[0] == 1
+
+
+def test_issue_191_person_core_events_are_explicitly_classified(content):
+    """#191：人物核心类逐事件显式标注；战略/外敌点名将不误纳入。"""
+    expected = {
+        "mao_wenlong": (
+            ["毛文龙"],
+            {"character.毛文龙.status", "character.毛文龙.location", "character.袁崇焕.status"},
+        ),
+        "yuan_xialing": (
+            ["袁崇焕"],
+            {"character.袁崇焕.status", "army.guanning.commander", "character.毛文龙.status", "character.毛文龙.status_reason"},
+        ),
+        "kong_youde": (
+            ["孔有德"],
+            {"character.孔有德.status", "character.孔有德.power_id", "character.孔有德.location", "character.毛文龙.status"},
+        ),
+        "li_chenghai": (
+            ["李自成"],
+            {"character.李自成.status", "character.李自成.power_id", "character.李自成.location", "region.shaanxi.unrest"},
+        ),
+        "zhangxianzhong_zaifan": (
+            ["张献忠"],
+            {"character.张献忠.status", "character.张献忠.power_id", "character.张献忠.loyalty", "character.张献忠.location"},
+        ),
+        "luoyang_fallen": (
+            ["朱常洵"],
+            {"character.朱常洵.status", "character.朱常洵.location", "region.henan.controlled_by", "power.bandits.military_strength"},
+        ),
+    }
+    for event_id, (subjects, gate_keys) in expected.items():
+        ev = content.event_by_id[event_id]
+        assert ev.person_core_subjects == subjects
+        assert gate_keys <= set(ev.trigger_gate)
+
+    strategic_or_external = {
+        "jisi_lubian",
+        "dalingghe",
+        "lindan_xiqian",
+        "huangtaiji_chengdi",
+        "wuyin_lubian",
+        "songshan_battle",
+    }
+    assert not {
+        event_id for event_id in strategic_or_external
+        if content.event_by_id[event_id].person_core_subjects
+    }
 
 
 def test_mao_wenlong_event_pool_uses_candidate_snapshot_before_advances(game):
@@ -2510,8 +2620,8 @@ def test_invalid_pending_person_change_does_not_block_event_gate(game):
     assert out["applied_person_changes"][0]["category"] == "invalid_transition"
 
 
-def test_mao_wenlong_event_excluded_when_character_already_inactive(game):
-    """#203 CMR：毛文龙已退场时，斩毛事件不应再按低 loyalty 进入候选。"""
+def test_mao_wenlong_event_obsolete_when_core_subject_already_dead(game):
+    """#191：毛文龙已永久死亡时，斩毛人物核心事件应作废而非只当回合空判。"""
     db, state, content = game
     issues.bind_content(content)
     state.year = 1629
@@ -2534,7 +2644,13 @@ def test_mao_wenlong_event_excluded_when_character_already_inactive(game):
     assert out["new_issues"][0]["rejected"] is True
     assert "候选" in out["new_issues"][0]["reason"]
     assert db.get_character_status("毛文龙")[0] == "dead"
-    assert not db.has_event_triggered("mao_wenlong")
+    row = db.conn.execute(
+        "SELECT terminal_state, source FROM event_triggers WHERE event_id=?",
+        ("mao_wenlong",),
+    ).fetchone()
+    assert row is not None
+    assert row["terminal_state"] == "obsolete"
+    assert row["source"] == "person_core_dead"
 
 
 def test_mao_wenlong_event_excluded_when_yuan_unavailable(game):

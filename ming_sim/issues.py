@@ -198,6 +198,18 @@ def _event_window_open(ev: Event, state: GameState) -> bool:
     return True
 
 
+def _dead_person_core_subjects(ev: Event, db: GameDB) -> List[str]:
+    dead: List[str] = []
+    for name in getattr(ev, "person_core_subjects", []) or []:
+        row = db.conn.execute(
+            "SELECT status FROM characters WHERE name = ?",
+            (str(name),),
+        ).fetchone()
+        if row is not None and str(row["status"] or "") == "dead":
+            dead.append(str(name))
+    return dead
+
+
 _GATE_AGG_FUNCS = {
     "max": max,
     "min": min,
@@ -426,6 +438,16 @@ def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
     # 历史锚定 EVENTS：到点（含错过补出）即进候选
     for ev in c.events:
         if ev.id in spawned or ev.trigger_year <= 0:
+            continue
+        dead_subjects = _dead_person_core_subjects(ev, db)
+        if dead_subjects:
+            db.mark_event_obsolete(
+                state,
+                ev.id,
+                reason=f"人物核心主体永久死亡：{', '.join(dead_subjects)}",
+                commit=not db.conn.in_transaction,
+            )
+            spawned.add(ev.id)
             continue
         if not _event_window_open(ev, state):
             continue

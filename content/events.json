@@ -13,7 +13,8 @@
     "fail_condition": "东江旧部失饷离心、孔耿等部哗走或渐生叛意，皮岛废弛，为日后吴桥兵变与降金埋祸",
     "trigger_year": 1629,
     "trigger_month": 6,
-    "trigger_gate": {"character.毛文龙.loyalty": "<65", "character.毛文龙.status": "==active", "character.袁崇焕.status": "==active"},
+    "person_core_subjects": ["毛文龙"],
+    "trigger_gate": {"character.毛文龙.loyalty": "<65", "character.毛文龙.status": "==active", "character.毛文龙.location": "==dongjiang_area", "character.袁崇焕.status": "==active"},
     "effect_on_trigger": {
       "人物变更": [
         {"name": "毛文龙", "动作": "处置", "status": "dead", "reason": "袁崇焕双岛斩帅"}
@@ -52,6 +53,8 @@
     "fail_condition": "凌迟袁崇焕致祖大寿叛走或关宁军整编瓦解，宁锦防线无人能守",
     "trigger_year": 1629,
     "trigger_month": 12,
+    "person_core_subjects": ["袁崇焕"],
+    "trigger_gate": {"character.袁崇焕.status": "==active", "army.guanning.commander": "==袁崇焕", "character.毛文龙.status": "==dead", "character.毛文龙.status_reason": "==袁崇焕双岛斩帅"},
     "precondition": "己巳之变后必发；若 jisi_lubian 未触发或玩家提前罢袁崇焕则跳过",
     "event_type": "node"
   },
@@ -69,6 +72,8 @@
     "fail_condition": "孔耿率部渡海降金，携西洋火炮与匠师投皇太极，明火器优势彻底丧失",
     "trigger_year": 1631,
     "trigger_month": 8,
+    "person_core_subjects": ["孔有德"],
+    "trigger_gate": {"character.孔有德.status": "==active", "character.孔有德.power_id": "==ming", "character.孔有德.location": "==dongjiang_area", "character.毛文龙.status": "==dead", "army.dongjiang.loyalty": "<=42", "army.denglai.arrears": ">=6"},
     "precondition": "若毛文龙已被斩 + 登莱欠饷严重，必触发；玩家可提前安抚或裁汰旧部"
   },
   {
@@ -152,6 +157,8 @@
     "fail_condition": "张献忠率部再起合罗汝才入川，杨嗣昌督师入川追剿无功，湖广四川糜烂为流寇腹地",
     "trigger_year": 1639,
     "trigger_month": 5,
+    "person_core_subjects": ["张献忠"],
+    "trigger_gate": {"character.张献忠.status": "==active", "character.张献忠.power_id": "==ming", "character.张献忠.loyalty": "<=50", "character.张献忠.location": "==huguang", "region.huguang.unrest": ">=45"},
     "precondition": "历史既定：崇祯十二年五月张献忠于谷城再反；若熊文灿招抚未实削兵权、未拆其据点，则必反",
     "event_type": "node"
   },
@@ -185,6 +192,8 @@
     "fail_condition": "李自成攻陷洛阳、福王被烹，河南成流寇腹地",
     "trigger_year": 1634,
     "trigger_month": 1,
+    "person_core_subjects": ["李自成"],
+    "trigger_gate": {"character.李自成.status": "==active", "character.李自成.power_id": "==bandits", "character.李自成.location": "==shaanxi", "region.shaanxi.unrest": ">=70", "power.bandits.military_strength": ">=35"},
     "precondition": "陕西逃户/民变持续未解时触发"
   },
   {
@@ -217,6 +226,8 @@
     "fail_condition": "洛阳陷、福王被烹，李自成势如破竹，河南腹地丧失",
     "trigger_year": 1641,
     "trigger_month": 1,
+    "person_core_subjects": ["朱常洵"],
+    "trigger_gate": {"region.henan.controlled_by": "==ming", "region.henan.unrest": ">=60", "power.bandits.military_strength": ">=45", "character.朱常洵.status": "==active", "character.朱常洵.location": "==henan"},
     "precondition": "李自成入河南未压制 + 藩禄改革未推时触发",
     "event_type": "node"
   },

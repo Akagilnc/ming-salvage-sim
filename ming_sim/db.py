@@ -605,6 +605,8 @@ class GameDB:
                 year INTEGER NOT NULL,
                 period INTEGER NOT NULL,
                 source TEXT NOT NULL DEFAULT 'simulation',
+                terminal_state TEXT NOT NULL DEFAULT 'triggered',
+                terminal_reason TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(event_id) REFERENCES events(id)
             );
@@ -999,6 +1001,8 @@ class GameDB:
         self.ensure_column("characters", "court_role", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "summary", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "aliases", "TEXT NOT NULL DEFAULT '[]'")
+        self.ensure_column("event_triggers", "terminal_state", "TEXT NOT NULL DEFAULT 'triggered'")
+        self.ensure_column("event_triggers", "terminal_reason", "TEXT NOT NULL DEFAULT ''")
         # 步骤7：回合阶段（旧库迁移，schema 升级非 fallback）
         self.ensure_column("game_state", "turn_phase", "TEXT NOT NULL DEFAULT 'summoning'")
         # 结局：ended=1 时游戏终结；ending_status 为 context.ENDING_* 类型。
@@ -6094,6 +6098,26 @@ class GameDB:
             VALUES (?, ?, ?, ?, ?)
             """,
             (event_id, state.turn, state.year, state.period, source),
+        )
+        if commit:
+            self.conn.commit()
+
+    def mark_event_obsolete(
+        self,
+        state: GameState,
+        event_id: str,
+        reason: str,
+        source: str = "person_core_dead",
+        *,
+        commit: bool = True,
+    ) -> None:
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO event_triggers
+                (event_id, turn, year, period, source, terminal_state, terminal_reason)
+            VALUES (?, ?, ?, ?, ?, 'obsolete', ?)
+            """,
+            (event_id, state.turn, state.year, state.period, source, reason[:200]),
         )
         if commit:
             self.conn.commit()
