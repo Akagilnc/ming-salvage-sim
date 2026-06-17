@@ -635,7 +635,7 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
     # 把真异常吞成 None、调用方记普通 rejected，正是 #14/#63 catalog「该落没落无人知」实例
     # （cmr ni r7 codex high）。两种 None 来源已在上方分开：幂等去重经 find_*_by_origin 在此 try
     # 之外 early-return None（正常跳过），故此处无需也不应再兜真异常。
-    return db.insert_issue(
+    issue_id = db.insert_issue(
         state,
         kind="situation",
         title=ev.title,
@@ -656,8 +656,12 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
         effect_on_fail=effect_fail,
         resolve_condition=ev.resolve_condition,
         fail_condition=ev.fail_condition,
-        commit=commit,
+        commit=False,
     )
+    db.mark_event_triggered(state, ev.id, source="event_pool", commit=False)
+    if commit:
+        db.conn.commit()
+    return issue_id
 
 
 _CHARACTER_TEXT_GATE_RE = re.compile(r"^character\.([^.]+)\.([A-Za-z_][A-Za-z0-9_]*)$")
