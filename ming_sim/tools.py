@@ -559,12 +559,12 @@ def build_board_query_tools(context: CourtContext):
             return str(dict(row))
 
     def list_armies() -> str:
-        """查看大明主要军队的驻扎、维护费、补给、士气、火器、随军大炮和欠饷警讯。"""
+        """查看大明主要军队的驻扎、月应发军饷（引擎实扣 army_needed）、补给、士气、火器、随军大炮和欠饷警讯。"""
         return context.db.army_report(limit=8)
 
     def inspect_army(army: str) -> str:
         """查某支军队详细数值：supply/morale/training/equipment/firearm_equipment/cannon_equipment/
-        arrears/mobility/loyalty/manpower/maintenance_per_turn/station/commander/controller/troop_type/status。
+        arrears/mobility/loyalty/manpower/army_needed（月应发军饷=引擎实扣）/station/commander/controller/troop_type/status。
         army 可传军队名（如"关宁军"）或 army_id（如"guanning"），两者均支持；动态新建军同样可查。"""
         # army_detail 已统一按 DB id/name 直查 + 静态别名兜底 + SELECT* 渲染(含火器/随军大炮)，
         # 直接复用，不再各写一份窄 SELECT fallback（CMR codexB/C：army render 单一真源）。
