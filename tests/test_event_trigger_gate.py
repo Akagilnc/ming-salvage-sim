@@ -2452,6 +2452,68 @@ def test_mao_wenlong_event_excluded_when_yuan_unavailable(game):
         ).fetchone()[0] == before_logs
 
 
+def test_event_pool_current_candidate_recheck_cached_until_state_changes(game, monkeypatch):
+    """online R2 Gemini：同一批无状态变化的 event_pool 项不应重复重算候选池。"""
+    db, state, content = game
+    issues.bind_content(content)
+    ev1 = Event(
+        id="__test_cached_current_candidate_1__",
+        title="测试·候选缓存一",
+        kind="朝议",
+        summary="x",
+        urgency=10,
+        severity=10,
+        credibility=100,
+        interests=[],
+        audiences=[],
+        event_type="situation",
+    )
+    ev2 = Event(
+        id="__test_cached_current_candidate_2__",
+        title="测试·候选缓存二",
+        kind="朝议",
+        summary="x",
+        urgency=10,
+        severity=10,
+        credibility=100,
+        interests=[],
+        audiences=[],
+        event_type="situation",
+    )
+    content.seed_events.extend([ev1, ev2])
+    content.event_by_id[ev1.id] = ev1
+    content.event_by_id[ev2.id] = ev2
+    calls = 0
+
+    def fake_gather_candidate_events(_state, _db):
+        nonlocal calls
+        calls += 1
+        return []
+
+    monkeypatch.setattr(issues, "gather_candidate_events", fake_gather_candidate_events)
+    try:
+        out = issues.apply_issue_tracker_output(
+            db,
+            state,
+            {
+                "new_issues": [
+                    {"origin_kind": "event_pool", "id": ev1.id},
+                    {"origin_kind": "event_pool", "id": ev2.id},
+                ],
+            },
+            content=content,
+            candidate_event_ids_at_input={ev1.id, ev2.id},
+        )
+    finally:
+        content.seed_events.remove(ev1)
+        content.seed_events.remove(ev2)
+        content.event_by_id.pop(ev1.id, None)
+        content.event_by_id.pop(ev2.id, None)
+
+    assert [item["rejected"] for item in out["new_issues"]] == [True, True]
+    assert calls == 1
+
+
 def test_mao_wenlong_event_pool_duplicate_emit_is_idempotent(game):
     """#203 CMR：同一轮重复 emit 已触发事件时，第二条应拒收留痕而不是 abort。"""
     db, state, content = game

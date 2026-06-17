@@ -1451,6 +1451,8 @@ def apply_issue_tracker_output(
         else {candidate.id for candidate in gather_candidate_events(state, db)}
     )
     consumed_event_ids: set[str] = set()
+    current_candidate_event_ids: set[str] = set()
+    candidates_dirty = True
 
     # 1) advances（ADR 0008 决定1：LLM 脏数据逐项拒收留痕，不裸 continue 静默丢；db.advance_issue
     #    的代码/DB 异常上抛 SettlementAbort，同 close_issues / new_issues 段，#63）
@@ -1601,14 +1603,23 @@ def apply_issue_tracker_output(
                 print(f"[INFO] new_issue 已拒：event {event_id} 标了 auto_trigger，只能程序硬触发。")
                 applied_new.append({"title": ev.title, "rejected": True, "reason": "auto_trigger 事件仅程序可触发"})
                 continue
-            current_candidate_event_ids = {candidate.id for candidate in gather_candidate_events(state, db)}
             if (
                 ev.id not in candidate_event_ids
-                or ev.id not in current_candidate_event_ids
                 or ev.id in consumed_event_ids
             ):
                 # LLM 只能从本回合候选池中挑选事件；落库端重验窗口、trigger_gate 与已触发状态，
                 # 避免陈旧/伪造 id 穿透候选层后直接应用确定性后果（#203 CMR）。
+                print(f"[INFO] new_issue 已拒：事件 {event_id} 当前未进 event_pool 候选池。")
+                applied_new.append({
+                    "title": ev.title,
+                    "rejected": True,
+                    "reason": "事件当前未进候选池（窗口/前提门/已触发不满足）",
+                })
+                continue
+            if candidates_dirty:
+                current_candidate_event_ids = {candidate.id for candidate in gather_candidate_events(state, db)}
+                candidates_dirty = False
+            if ev.id not in current_candidate_event_ids:
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 当前未进 event_pool 候选池。")
                 applied_new.append({
                     "title": ev.title,
@@ -1646,6 +1657,7 @@ def apply_issue_tracker_output(
                     )
                 db.mark_event_triggered(state, ev.id, commit=not external_transaction)
                 consumed_event_ids.add(ev.id)
+                candidates_dirty = True
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 为 {ev.event_type}，不转 issue。")
                 applied_new.append({"title": ev.title, "rejected": False, "reason": f"event_type={ev.event_type} 已记为触发"})
                 continue
@@ -1657,6 +1669,7 @@ def apply_issue_tracker_output(
                 applied_new.append({"title": ev.title, "rejected": True, "reason": "事件已触发过（同源局势已立，幂等跳过）"})
             else:
                 consumed_event_ids.add(ev.id)
+                candidates_dirty = True
                 applied_new.append({"issue_id": issue_id, "kind": "situation", "title": ev.title, "rejected": False})
             continue
         if origin_kind != "decree":
