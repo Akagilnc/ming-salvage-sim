@@ -340,3 +340,59 @@ def test_mao_wenlong_event_trigger_lands_character_status(game):
     assert db.conn.execute(
         "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
     ).fetchone()[0] == before_logs + 1
+
+
+def test_mao_wenlong_event_pool_rechecks_gate_before_effect(game):
+    """#203 CMR：落库端也必须重验 trigger_gate，不能信任 LLM 伪造的候选 id。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 6
+    db.conn.execute("UPDATE characters SET loyalty = ? WHERE name = ?", (70, "毛文龙"))
+    before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)).fetchone()[0]
+
+    out = issues.apply_issue_tracker_output(
+        db,
+        state,
+        {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
+        content=content,
+    )
+
+    assert out["new_issues"][0]["rejected"] is True
+    assert "候选" in out["new_issues"][0]["reason"]
+    assert db.get_character_status("毛文龙")[0] == "active"
+    assert content.characters["毛文龙"].status == "active"
+    assert not db.has_event_triggered("mao_wenlong")
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
+    ).fetchone()[0] == before_logs
+
+
+def test_mao_wenlong_event_pool_duplicate_emit_is_idempotent(game):
+    """#203 CMR：同一轮重复 emit 已触发事件时，第二条应拒收留痕而不是 abort。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 6
+    db.conn.execute("UPDATE characters SET loyalty = ? WHERE name = ?", (44, "毛文龙"))
+    before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)).fetchone()[0]
+
+    out = issues.apply_issue_tracker_output(
+        db,
+        state,
+        {"new_issues": [
+            {"origin_kind": "event_pool", "id": "mao_wenlong"},
+            {"origin_kind": "event_pool", "id": "mao_wenlong"},
+        ]},
+        content=content,
+    )
+
+    assert out["new_issues"][0]["rejected"] is False
+    assert out["new_issues"][1]["rejected"] is True
+    assert "候选" in out["new_issues"][1]["reason"]
+    assert db.get_character_status("毛文龙")[0] == "dead"
+    assert content.characters["毛文龙"].status == "dead"
+    assert db.has_event_triggered("mao_wenlong")
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
+    ).fetchone()[0] == before_logs + 1
