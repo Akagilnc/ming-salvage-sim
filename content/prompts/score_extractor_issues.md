@@ -107,7 +107,7 @@
 
 ## 结案与撤销
 
-- `结案局势`：对照 active issue 的 `resolve_condition` / `fail_condition`。满足解决写 `原因:"resolved"`，彻底失败写 `原因:"failed"`。人物承诺型 `stop_condition` 不套用 `resolve_condition` 达标即结案规则，即使当前 loyalty 已达阈值，也不要写 `结案局势`；自动按条件完成属于 #136。
+- `结案局势`：对照 active issue 的 `resolve_condition` / `fail_condition`。满足解决写 `原因:"resolved"`，彻底失败写 `原因:"failed"`。人物承诺型 `stop_condition` 不套用 `resolve_condition` 达标即结案规则；若 active issue 带 `condition_role:"commitment_stop_condition"`，即使当前 loyalty 已达阈值，也不要写 `结案局势`；自动按条件完成属于 #136。
 - **判结案以 input 盘面数值为准，不被邸报措辞影响**：`resolve_condition` 若含可量化阈值（如「民心>60」「unrest<30」「国库转正」「欠饷补过半」），直接拿 input 里 `active_issues`/`regions`/`armies`/`current_state` 的**当前数值**对照——阈值已达标就必须写 `结案局势 resolved`，**即使邸报只写「近结案」「暂稳」「初见成效」等进行时措辞也照样结案**。邸报叙事偏保守是常态，不要因为邸报没明说「已结案」就只推进不结案。盘面达标=结案，这是硬规则。
 - 不可崩坏局势（`effect_on_fail` 为空的天灾/水患/瘟疫/饥荒本身）禁止写 `reason:"failed"`，只能 resolved 或不结案。
 - **结案项可带 `解决效果` / `失败效果`**：结案时若这桩大事会落下长期国运影响，就在该结案项里写一个 `解决效果`（resolved）或 `失败效果`（failed），内含 `帝国修正` 段（格式见上「帝国修正」节）。**这是把帝国修正落地的唯一时机**——尤其阉党荡平、辽饷裁撤、九边整军成制、国家级科技突破、决定性军事胜负这类大结案。寻常结案不带。

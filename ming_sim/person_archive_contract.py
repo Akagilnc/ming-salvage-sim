@@ -8,7 +8,11 @@ tests name ADR scenarios before the state mutation code exists.
 from __future__ import annotations
 
 
-PERSON_ACTIONS = ("任命", "罢黜", "调任", "处置", "易主", "册封", "行止")
+PERSON_TRANSITION_ACTIONS = ("任命", "罢黜", "调任", "处置", "易主", "册封", "行止")
+
+PERSON_NON_TRANSITION_ACTIONS = ("评定",)
+
+PERSON_ACTIONS = PERSON_TRANSITION_ACTIONS + PERSON_NON_TRANSITION_ACTIONS
 
 PERSON_STATUSES = (
     "active",
