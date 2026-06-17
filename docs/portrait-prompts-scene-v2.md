@@ -160,7 +160,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 姿势锚点：
 身体朝向=站在卷宗架旁，身体正面略偏左；重心=直立稳在两脚之间；双手位置=右手从高架抽出一本厚空白名单册，左手把另一册夹在腋下；道具关系=名单册、履历卷宗、印匣形成「决定谁进谁退」关系；视线方向=平平扫向旁侧人影，像在掂量人；动作类型=站姿、抽册、夹册，不坐案前递册。
 
-场景服饰：深黑蓝文官袍，吏部权柄感，纹样锋利克制；吏部铨选房，高卷宗架、无字名册、印匣、官员履历卷宗。
+场景服饰：深黑蓝文官袍，吏部权柄感，纹样锋利克制；吏部铨选房，高卷宗架、无字名册、印匣、无字官员履历卷宗。
 
 专属负面：不要拿刀剑，不要画成狞笑奸臣。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
@@ -226,7 +226,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 场景服饰：深色文官袍外加被海风打湿的旅行披风，衣摆有盐渍和尘土；夜色海船甲板或登岸驿口，破帆、浪影、封缄国书箱、昏暗船灯，不要现代船。
 
-专属负面：不要画成文弱馆阁官，不要与张延登、袁可立同款海防楼台文官（刘鸿训在颠簸海船、身带怒气）。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要画成文弱馆阁官，不要与张延登、袁可立同款海防楼台文官，不要与张煌言共用诗人海船抓绳抱卷姿态（刘鸿训在颠簸海船、身带怒气）。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 钱谦益 `minister_钱谦益.png`
 
@@ -254,7 +254,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 脸型=端正的长方脸；额头=方正平整；眉眼=眉眼沉稳，目光正而不凌厉；鼻梁=直；颧骨=平稳端正；嘴唇=端方不薄；下颌=方而稳；胡须=整齐，少量灰；肤色=端正的中和肤色，不晒不病；皱纹=额头平纹、眼角浅纹；神情=可靠守法的制度感，严肃而不凌厉。
 
 姿势锚点：
-身体朝向=正面略前倾，朝召对方向；重心=肩背端直，稳立；双手位置=一手把无字奏疏竖起在胸前，另一手平伸作克制劝谏；道具关系=奏疏、烛台、无字奏疏匣形成「朝堂直言辩白」关系；视线方向=平视前方，正对召对；动作类型=正立前倾、举疏、伸手劝谏，不拢袖静立。
+身体朝向=正面略前倾，朝召对方向；重心=肩背端直，稳立；双手位置=一手把无字奏疏竖起在胸前，另一手抬在胸前作克制劝谏，手掌完整留在中轴安全区内；道具关系=奏疏、烛台、无字奏疏匣形成「朝堂直言辩白」关系；视线方向=平视前方，正对召对；动作类型=正立前倾、举疏、抬手劝谏，不拢袖静立。
 
 场景服饰：深蓝黑文官袍，简洁端方；宫中召对或礼部堂上，暗色柱影、烛台、无字奏疏匣。
 
@@ -318,11 +318,11 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 脸型=白而松的椭圆脸；额头=宽；眉眼=眉细，眼神聪明但漂移；鼻梁=直而细；颧骨=被松软白肉盖住；嘴唇=笑意已经僵住，嘴角发紧；下颌=松而圆；胡须=修整得很细；肤色=养白却被军帐风尘压暗；皱纹=眼下松纹、嘴角僵笑纹；神情=把怯战包装成功劳的心虚，不是青年新贵。
 
 姿势锚点：
-身体朝向=半坐半起，身体微微后缩；重心=欲起又缩，悬在椅与案之间；双手位置=一手把封缄捷报递向旁侧信使方向，但手和整封捷报完整留在中轴安全区内，另一手用袖口压住散乱无字军报与被压住的败报；道具关系=虚捷报、被压住的败报、令牌形成「军帐递虚捷」关系；视线方向=递报却不敢正视信使，眼神飘；动作类型=半坐半起、递捷、压败报，不拱手正立。
+身体朝向=半坐半起，身体微微后缩；重心=欲起又缩，悬在椅与案之间；双手位置=一手把封缄捷报递向旁侧空位方向，但手和整封捷报完整留在中轴安全区内，另一手用袖口压住散乱无字军报与被压住的败报；道具关系=虚捷报、被压住的败报、令牌形成「军帐递虚捷」关系；视线方向=递报却不敢正视旁侧空位，眼神飘；动作类型=半坐半起、递捷、压败报，不拱手正立。
 
 场景服饰：精致深蓝黑首辅文官袍，外披军中暗色厚披风，衣冠仍讲究但被风尘压住；通州临时督师帐，帐外远处有京畿烽烟和寒风，无字捷报、被压住的败报、令牌、半凉茶盏。
 
-专属负面：不要画成青年新贵，不要画成脸谱奸相，不要与温体仁或钱谦益共用白净椭圆脸和漂移眼神。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要画成青年新贵，不要画成脸谱奸相，不要出现第二个人物或第二只接报手，不要与温体仁或钱谦益共用白净椭圆脸和漂移眼神。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 倪元璐 `minister_倪元璐.png`
 
@@ -594,25 +594,25 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 脸型=长方严肃脸，六十岁上下；额头=高而起横纹；眉眼=花白浓眉，眼神沉重疲惫；鼻梁=直而平；颧骨=不削，带松弛；嘴唇=抿而下垂；下颌=略松微垂；胡须=花白长须，齐整；肤色=灰黄少血色；皱纹=额纹、眼袋纹、法令纹深；神情=知自己只是暂压矛盾的沉重。
 
 姿势锚点：
-身体朝向=坐案侧身朝旁侧边将方向，上半身略转；重心=偏压在推令的右臂；双手位置=左手按住一封空白保任奏疏，右手把空白将令推向旁侧边将方向，但右手和整枚将令完整留在中轴安全区内；道具关系=保任奏疏、空白将令、辽东地图连成“替边将保任”关系；视线方向=却望向关门外，似有忧虑；动作类型=按奏疏、推将令，不双手按桌。
+身体朝向=坐案侧身朝旁侧军令匣方向，上半身略转；重心=偏压在推令的右臂；双手位置=左手按住一封空白保任奏疏，右手把空白将令推向旁侧军令匣方向，但右手和整枚将令完整留在中轴安全区内；道具关系=保任奏疏、空白将令、辽东地图连成“替边将保任”关系；视线方向=却望向关门外，似有忧虑；动作类型=按奏疏、推将令，不双手按桌。
 
 场景服饰：文官督师袍外加厚披风与轻甲护肩；宁远军务帐，无字辽东地图、满桂军牌空白将令、尚方剑匣、火盆、旧军报。
 
-专属负面：不要画成英武名帅，不要黝黑猛将，不要双手按桌。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要画成英武名帅，不要黝黑猛将，不要双手按桌，不要出现第二个人物或第二只接令手。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 毛文龙 `minister_毛文龙.png`
 
 人物：毛文龙，东江镇总兵，经营皮岛、牵制后金，却跋扈难制，最终被袁崇焕斩于双岛。
 
-历史锚点：双岛召见前的皮岛海上军镇里，他倚着船桅压住东江军册，斜视脚边未拆的空白督师令，神色不服。
+历史锚点：双岛召见前的皮岛海上军镇里，他倚着船桅压住东江军册，斜视桅座旁未拆的空白督师令，神色不服。
 
 脸部锚点：
 脸型=宽阔粗脸，五十岁上下；额头=宽而粗糙；眉眼=乱浓眉，眼神桀骜不服；鼻梁=宽而带海风皴裂；颧骨=高阔；嘴唇=厚而下撇；下颌=方阔带须；胡须=乱黑须夹灰，不守规整；肤色=海风吹出的黝黑；皱纹=额纹、眼角纹、风皴；神情=江湖军阀气，桀骜难制。
 
 姿势锚点：
-身体朝向=半侧身倚着船桅，肩朝海外；重心=斜倚压在桅杆上，散漫；双手位置=右手按刀柄，左手压住无字东江军饷册；道具关系=无字东江军饷册、脚边未拆的空白督师令、粮船货箱连成“跋扈待罪”关系；视线方向=斜睨脚边督师令，不服；动作类型=倚桅压册斜视，不站立持令。
+身体朝向=半侧身倚着船桅，肩朝海外；重心=斜倚压在桅杆上，散漫；双手位置=右手按刀柄，左手压住无字东江军饷册；道具关系=无字东江军饷册、桅座旁未拆的空白督师令、粮船货箱连成“跋扈待罪”关系；视线方向=斜睨桅座旁督师令，不服；动作类型=倚桅压册斜视，不站立持令。
 
-场景服饰：明军将领甲胄混搭厚皮袍，略不守规制；皮岛东江海岛军营，海风、船影、火盆、无字军旗、粮船货箱、空白督师令。
+场景服饰：明军将领甲胄混搭厚皮袍，略不守规制；皮岛东江海岛军营，海风、船影、火盆、无字军旗、粮船货箱、桅座旁空白督师令。
 
 专属负面：不要画成正统边帅或处决场景，不要瘦长脸，不要正面站定持令，不要与左良玉共用病态倚舷抓绳回望火光姿态。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
@@ -626,11 +626,11 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 脸型=厚重偏方的北地官脸；额头=宽而被风吹暗；眉眼=眉毛粗短，眼神疲惫里带算计；鼻梁=宽直；颧骨=中高，被风霜磨出硬线；嘴唇=偏厚，嘴角向下压；下颌=宽钝；胡须=浓短灰黑须，边镇尘土未净；肤色=风霜暗黄；皱纹=眼袋重、额侧风纹和法令纹深；神情=边务疲惫与附阉求稳混在一起，不是纯武将。
 
 姿势锚点：
-身体朝向=半侧身站在祠堂木模型与边防图之间；重心=向递奏稿的右臂前压；双手位置=右手把封缄颂功奏稿递向旁侧内侍方向，但手和整封奏稿完整留在中轴安全区内，左手按住祠堂木模型；道具关系=颂功奏稿、祠堂模型、边防图形成“边务献媚内廷”关系；视线方向=看向屏风外的内侍方向；动作类型=站姿、递稿、压模型，不按刀。
+身体朝向=半侧身站在祠堂木模型与边防图之间；重心=向递奏稿的右臂前压；双手位置=右手把封缄颂功奏稿递向屏风前阴影方向，但手和整封奏稿完整留在中轴安全区内，左手按住祠堂木模型；道具关系=颂功奏稿、祠堂模型、边防图形成“边务献媚内廷”关系；视线方向=看向屏风前阴影方向；动作类型=站姿、递稿、压模型，不按刀。
 
 场景服饰：文官督师袍加厚披风，暗色官帽，少量军务尘土；蓟辽总督衙署旁的暗色祠堂筹建值房，边墙阴影、无字边防图、祠堂木模型、军报、封缄颂功奏稿。
 
-专属负面：不要画成纯武将，不要像王在晋的保守关防老人，不要把附阉画成夸张奸笑。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要画成纯武将，不要像王在晋的保守关防老人，不要把附阉画成夸张奸笑，不要出现第二个人物或第二只接稿手。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 洪承畴 `minister_洪承畴.png`
 
@@ -706,7 +706,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 脸型=方阔国字脸；额头=中等、压在束发软帻下，发际被尘汗黏住；眉眼=浓硬粗眉，眼睛直瞪而含怒；鼻梁=直而宽，鼻翼绷紧；颧骨=方硬突出；嘴唇=厚而紧抿，几乎咬住；下颌=宽方有力；胡须=硬而短的络腮连下颌须，根根支楞不修；肤色=被旷野风沙晒成的赭褐；皱纹=眉间深竖纹、嘴角硬纹；神情=兵孤粮尽却脊梁不折的刚怒。
 
 姿势锚点：
-身体朝向=正面挺立，胸膛朝向逼降者，头却扭向城墙的反方向；重心=双脚分立稳压地面，被绳束仍站得笔直；双手位置=双手在身前被粗绳草草缚住、十指相扣不肯松；道具关系=束绳、脚边落下的劝降令、空粮袋构成“被俘拒喊话”关系；视线方向=别开逼降者、斜望旷野远处城墙；动作类型=站姿、扭头拒喊、十指相扣，不按桌不持械。
+身体朝向=正面挺立，胸膛朝向逼降者，头却扭向城墙的反方向；重心=双脚分立稳压地面，被绳束仍站得笔直；双手位置=双手在身前被粗绳草草缚住、十指相扣不肯松；道具关系=束绳、腰前挂住的无字劝降令、空粮袋构成“被俘拒喊话”关系；视线方向=别开逼降者、斜望旷野远处城墙；动作类型=站姿、扭头拒喊、十指相扣，不按桌不持械。
 
 场景服饰：文官督师袍外罩破损披风与轻甲护肩，深蓝黑、沾泥血尘但不血腥，衣摆撕裂；河南旷野临时敌营，无字破旗、断箭、空粮袋、寒风、远处城墙剪影。
 
@@ -912,7 +912,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 脸型=矮瘦窄脸；额头=不高，额角被尘土压暗；眉眼=短斜眉，小眼警醒；鼻梁=薄而直；颧骨=外露，脸颊收紧；嘴唇=干裂；下颌=尖硬；胡须=短黑须夹尘灰；肤色=黝黑带黄土色；皱纹=眼尾和嘴角有风沙细纹；神情=实地清点战果的警惕，不是坐衙书生。
 
 姿势锚点：
-身体朝向=半蹲在木柱旁；重心=压在靠近木牌的右膝和右手；双手位置=右手挂一串无字木牌，左手握巡抚令牌；道具关系=木牌、军报、缴获兵器连成“俘杀群寇”关系；视线方向=侧向营外火光；动作类型=半蹲、挂牌、握令，不按桌。
+身体朝向=半蹲在木柱旁；重心=压在靠近木牌的右膝和右手；双手位置=右手挂一串无字木牌，左手握小型无字巡抚令牌且完整留在中轴安全区内；道具关系=木牌、军报、缴获兵器连成“俘杀群寇”关系；视线方向=侧向营外火光；动作类型=半蹲、挂牌、握令，不按桌。
 
 场景服饰：地方文官袍外披军务短披风；陕西黄土行营，火盆、缴获兵器、临时木柱、无字木牌、封缄军报。
 
@@ -989,7 +989,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 姿势锚点：
 身体朝向=面向湿冷军图大幅前倾；重心=压在两臂之间；双手位置=一手握明军令牌，一手推大顺旧木牌向中间合拢；道具关系=明军令牌、大顺旧牌、湖南军图形成“拼凑联盟”关系；视线方向=盯两牌交汇处；动作类型=俯身、双臂合牌，不是海防推模型。
 
-场景服饰：深蓝文官督师袍，行旅披风和轻甲护肩；湘楚军务行营、湿冷火盆、无字湖南军图、旧旗残片、封缄军报。
+场景服饰：深蓝文官督师袍，行旅披风和轻甲护肩；湘楚军务行营、湿冷火盆、无字湖南军图、纯色无纹旧旗残片、封缄军报；旗面不要出现像字形、书法或徽记笔画的亮色痕迹，不出现背景人物脸。
 
 专属负面：不要像邹维琏的海防桌案，不要像史可法的城墙守死，不要普通地方官。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
@@ -1021,7 +1021,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 场景服饰：深青文武混合袍服，海风短披风，佩剑克制；浙东/舟山海船甲板、夜海、船帆、布面纯色无纹的无字军旗、远处城影；旗面不要出现像字形、书法或徽记笔画的亮色痕迹。
 
-专属负面：不要老白须，不要少年童生，不要普通成熟将军，不要像史可法的城墙守臣。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要老白须，不要少年童生，不要普通成熟将军，不要像史可法的城墙守臣，不要与刘鸿训共用海船抓缆护书姿态，不要与郑成功共用台江战船按模型握令旗姿态。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 ## 宗藩与宫廷宗室
 
@@ -1147,7 +1147,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 历史锚点：后金议政帐中，他在皇太极面前怒而半拔刀、越过礼法线的一瞬。
 脸部锚点：脸型=短宽脸、脖颈粗；额头=低宽；眉眼=眉浓乱、眼大外露；鼻梁=钝粗；颧骨=粗阔；嘴唇=嘴角绷硬；下颌=宽厚紧绷；胡须/发饰=满洲垂辫、浓黑短须；肤色=风吹粗粝；皱纹/年龄纹=四十上下、额颊粗纹；神情=一点就着、暴烈失控。
 姿势锚点：身体朝向=斜向前方冲出；重心=前倾失稳；双手位置=右手握半出鞘刀柄、左手抓扯乱的披风边；道具关系=露刃越礼；视线方向=逼视皇太极；动作类型=怒而半拔刀。
-场景服饰：后金军帐，火盆、无字蓝旗影、刀弓、被震翻的酒碗、议政木牌散乱；后金甲胄，厚皮袍，蓝旗系深蓝细节，暗色披风。
+场景服饰：后金军帐，火盆、无字蓝旗影、刀弓、被震翻的酒碗、牌面朝下的无字无刻痕议政木牌散乱；后金甲胄，厚皮袍，蓝旗系深蓝细节，暗色披风。
 专属负面：不要画成沉稳统帅或普通猛将、不要丑化成蛮汉。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 阿敏 `minister_阿敏.png`
@@ -1257,7 +1257,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 场景服饰：厚甲、皮裘、重刀，黑褐重甲压迫感强；前线军营，火盆、马匹、破雪地、无字战报、无字残旗。
 
-专属负面：不要画成多尔衮式俊冷贝勒，不要画成后金文臣，不要做成晚年权臣。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要画成多尔衮式俊冷贝勒，不要画成后金文臣，不要做成晚年权臣，不要与鳌拜共用攀城梯强压迫姿态。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 豪格 `minister_豪格.png`
 
