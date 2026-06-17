@@ -186,7 +186,7 @@ export const EN_FIELD_CN: Record<string, string> = {
   // 军队
   supply: "补给", morale: "士气", training: "操练", equipment: "军械",
   arrears: "欠饷", mobility: "机动", loyalty: "忠诚", manpower: "兵力",
-  maintenance_quarter: "月饷", maintenance_per_turn: "月饷",
+  army_needed: "月饷", // #173：军「月饷」呈现取引擎实扣 army_needed（维护费列已删）
   station: "驻地", commander: "统帅", controller: "主管", troop_type: "兵种", owner_power: "归属",
   // 势力
   cohesion: "凝聚", 威望: "威望", leverage: "威望", 实力: "实力",
