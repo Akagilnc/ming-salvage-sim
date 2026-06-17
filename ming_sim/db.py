@@ -1003,6 +1003,7 @@ class GameDB:
         self.ensure_column("characters", "aliases", "TEXT NOT NULL DEFAULT '[]'")
         self.ensure_column("event_triggers", "terminal_state", "TEXT NOT NULL DEFAULT 'triggered'")
         self.ensure_column("event_triggers", "terminal_reason", "TEXT NOT NULL DEFAULT ''")
+        self._backfill_event_triggers_from_event_pool_issues()
         # 步骤7：回合阶段（旧库迁移，schema 升级非 fallback）
         self.ensure_column("game_state", "turn_phase", "TEXT NOT NULL DEFAULT 'summoning'")
         # 结局：ended=1 时游戏终结；ending_status 为 context.ENDING_* 类型。
@@ -1847,6 +1848,32 @@ class GameDB:
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note",
             (ARREARS_UNIT_VERSION,),
         )
+
+    def _backfill_event_triggers_from_event_pool_issues(self) -> None:
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO event_triggers
+                (event_id, turn, year, period, source, terminal_state, terminal_reason)
+            WITH legacy AS (
+                SELECT origin_ref AS event_id, MIN(origin_turn) AS turn
+                FROM issues
+                WHERE origin_kind = 'event_pool' AND origin_ref <> ''
+                GROUP BY origin_ref
+            )
+            SELECT
+                legacy.event_id,
+                legacy.turn,
+                COALESCE(turn_reports.year, game_state.year, 0),
+                COALESCE(turn_reports.period, game_state.period, 0),
+                'legacy_event_pool',
+                'triggered',
+                ''
+            FROM legacy
+            LEFT JOIN turn_reports ON turn_reports.turn = legacy.turn
+            LEFT JOIN game_state ON game_state.id = 1
+            """
+        )
+        self.conn.commit()
 
     def has_state(self) -> bool:
         row = self.conn.execute("SELECT 1 FROM game_state WHERE id = 1").fetchone()
