@@ -83,13 +83,33 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 - **`Blocked by` = 散文约定**：写子 issue body 里，靠抓 issue 的人读了、看 blocker 关没关、没关就先不开。**GitHub 不强制。**
 - **AFK / HITL**：AFK 可甩多 session 真并行；HITL（要人在环）串行在你的注意力上。
 
+### to-issues 后的原生补救（Matt skill 还没跟上 GitHub 新功能，必做）
+
+`to-issues` 只往子 body 写 prose `## Parent` / `## Blocked by`——**不用 GitHub 2024–25 上的原生 sub-issues + issue dependencies**，于是父不列子 / 无进度条、依赖不强制、父拆完还能被误抓。**这正是 Matt 自己 skills backlog 在补的**（#47 native sub-issues、#262 native blocked_by、#238 wave milestones、#292 protect parent）。功能已就绪，所以**每跑完 `to-issues` 手动补这几步**（命令本项目实测可用）：
+
+1. **子挂父 native sub-issue**（父页自动出子列表 + 进度条 → 解决「找子 / 导航」）：
+   ```bash
+   cid=$(gh api repos/O/R/issues/<子号> -q .id)        # 取 numeric .id，不是 issue 号
+   gh api -X POST repos/O/R/issues/<父号>/sub_issues -F sub_issue_id=$cid
+   ```
+2. **子↔子 native blocked_by**（GitHub 原生依赖，可 filter 未阻塞 → 解决「先抓哪」）：
+   ```bash
+   bid=$(gh api repos/O/R/issues/<blocker号> -q .id)
+   gh api -X POST repos/O/R/issues/<blocked号>/dependencies/blocked_by -F issue_id=$bid
+   ```
+3. **保护父**：拆完**撤父的工作态 label → 变 tracker 留空**（防别的 agent 误抓父、一口气全做、子变孤儿；Matt #292）：
+   ```bash
+   gh issue edit <父号> --repo O/R --remove-label ready-for-agent   # 工作态全撤
+   ```
+4. **(可选) wave milestone**：无前置 = `wave-1`、前置都在更早波 = `waveN`（告诉 agent 先抓哪；Matt #238）。**大图才需要**——native blocked_by 已把依赖上了 tracker，小图（unblocked 没几个）可省。
+
 ### 追踪模型
 
 > [!important] 状态活在 label + open/close，不活在散文 body
 > 看「啥能抓」查 `ready-for-agent` 桶；看「还剩啥」filter open 子 issue。
 
 > [!warning] 几个 GitHub 事实
-> ① **父→子归属** = 子 body 一句 `## Parent #N`（cross-ref）；`to-issues` 不改父 issue。② **Matt 不挂进度条**——父 body 挂 `- [ ] #N` task-list / native sub-issues 是 GitHub 功能、可选增强，非 Matt 纯。③ **父「完成」= 人手动关**（子全关后整体验收再关），GitHub 不自动关父。④ **`Blocked by` 不被 GitHub 强制**——是约定。
+> ① **父→子归属** = **native sub-issue**（见上「to-issues 后补救」）+ 子 body `## Parent #N` 面包屑；父页自动出子列表 + 进度条。② **依赖 = native blocked_by**（GitHub 原生、可 filter 未阻塞），不再只是 prose 约定。③ **父「完成」= 人手动关**（子全关后整体验收再关），GitHub 不自动关父；**关父即解锁 blocked_by 父的下游**。④ ⚠️ Matt 现行 skill 还停在 prose 版、不挂这些——靠「to-issues 后补救」手动补到位（他 backlog #47/#238/#262/#292 正在把这些写进 skill）。
 
 ---
 
