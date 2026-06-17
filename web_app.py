@@ -173,7 +173,7 @@ _CONDITION_OPERATOR_LABELS = {
 
 def _humanize_condition_value(field: str, value: str) -> str:
     if field == "status":
-        return globals().get("_STATUS_LABEL_WEB", {}).get(value, value)
+        return _STATUS_LABEL_WEB.get(value, value)
     for src, dst in _CONDITION_DISPLAY_REPLACEMENTS:
         value = value.replace(src, dst)
     return value
@@ -189,8 +189,12 @@ def _humanize_condition(text: str) -> str:
     )
     if character_condition:
         name, field, op, value = character_condition.groups()
-        if field == "loyalty" and op in {">=", ">"} and re.fullmatch(r"\d+", value):
-            return f"{name}忠诚回稳"
+        if field == "loyalty" and re.fullmatch(r"\d+", value):
+            if op in {">=", ">"}:
+                return f"{name}忠诚回稳"
+            if op in {"<=", "<"}:
+                return f"{name}忠诚未稳"
+            return f"{name}忠诚非通常阈值"
         label = _CHARACTER_CONDITION_FIELD_LABELS.get(field, field)
         op_label = _CONDITION_OPERATOR_LABELS.get(op, op)
         value_label = _humanize_condition_value(field, value)

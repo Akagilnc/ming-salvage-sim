@@ -74,3 +74,30 @@ def test_appease_mao_simulator_payload_marks_character_loyalty_stop_condition(ga
     assert issue["结案条件"] == "character.毛文龙.loyalty >= 65"
     assert issue["condition_role"] == "commitment_stop_condition"
     assert "不要按 resolve_condition 达标自动结案" in issue["condition_note"]
+
+
+def test_appease_mao_commitment_bar_100_stays_active_until_explicit_close(game):
+    db, state, _ = game
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="安抚毛文龙·进行中",
+        origin_kind="decree",
+        bar_value=90,
+        stage_text="遣臣持诏赴皮岛",
+        cancellable="decree",
+        resolve_condition="character.毛文龙.loyalty >= 65",
+        effect_on_resolve={"metrics": {"皇威": 1}},
+    )
+
+    row = db.advance_issue(
+        state,
+        issue_id,
+        trigger_kind="decree",
+        delta_bar=20,
+        narrative="承办有进展，但承诺完成仍待专门闭环。",
+    )
+
+    assert row["bar_value"] == 100
+    assert row["status"] == "active"
+    assert row["closed_turn"] is None

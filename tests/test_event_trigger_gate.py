@@ -254,7 +254,7 @@ def test_character_numeric_gate_supports_comparison(game):
 def test_character_numeric_gate_supports_aggregation(game):
     """character.<name>|<name>.<field>.<agg> 与其它 gate 表同样支持聚合。"""
     from ming_sim.issues import _gate_passed
-    db, state, content = game
+    db, state, _content = game
 
     db.conn.execute("UPDATE characters SET loyalty=? WHERE name=?", (40, "毛文龙"))
     db.conn.execute("UPDATE characters SET loyalty=? WHERE name=?", (80, "袁崇焕"))
@@ -268,10 +268,20 @@ def test_character_gate_rejects_malformed_field_before_sql(game):
     """trigger_gate 字段名必须先过白名单，不能把畸形字段拼进 SQL。"""
     import pytest
     from ming_sim.issues import _gate_passed
-    db, state, content = game
+    db, state, _content = game
 
     with pytest.raises(ValueError, match="字段无效"):
         _gate_passed({"character.毛文龙.loyalty;DROP": ">=1"}, state.metrics, db)
+
+
+def test_character_numeric_field_text_gate_raises_clear(game):
+    """character 数值字段走文本比较时必须 fail-loud，不能 str(loyalty) 后静默 False。"""
+    import pytest
+    from ming_sim.issues import _gate_passed
+    db, state, _content = game
+
+    with pytest.raises(ValueError, match="字段非文本"):
+        _gate_passed({"character.毛文龙.loyalty": "==active"}, state.metrics, db)
 
 
 def test_character_text_gate_supports_equality(game):

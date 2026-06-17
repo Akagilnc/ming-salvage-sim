@@ -215,21 +215,37 @@ _CHARACTER_NUMERIC_GATE_FIELDS = (
     "debut_month",
     "status_changed_turn",
 )
-_GATE_SQL_FIELDS = {
-    "region": set(REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + REGION_TEXT_FIELDS + ("city_level", "cannon")),
-    "army": set(ARMY_SCORE_FIELDS + ARMY_QUANTITY_FIELDS + ARMY_TEXT_FIELDS),
-    "building": set(BUILDING_SCORE_FIELDS + BUILDING_QUANTITY_FIELDS + BUILDING_TEXT_FIELDS),
-    "power": set(POWER_SCORE_FIELDS + POWER_TEXT_FIELDS),
-    "faction": {"satisfaction", "leverage", "agenda"},
-    "character": set(_CHARACTER_NUMERIC_GATE_FIELDS + CHARACTER_TEXT_FIELDS),
-    "class": {"population", "satisfaction", "leverage", "agenda"},
+_GATE_NUMERIC_SQL_FIELDS = {
+    "region": set(REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + ("city_level", "cannon")),
+    "army": set(ARMY_SCORE_FIELDS + ARMY_QUANTITY_FIELDS),
+    "building": set(BUILDING_SCORE_FIELDS + BUILDING_QUANTITY_FIELDS),
+    "power": set(POWER_SCORE_FIELDS),
+    "faction": {"satisfaction", "leverage"},
+    "character": set(_CHARACTER_NUMERIC_GATE_FIELDS),
+    "class": {"population", "satisfaction", "leverage"},
 }
+_GATE_TEXT_SQL_FIELDS = {
+    "region": set(REGION_TEXT_FIELDS),
+    "army": set(ARMY_TEXT_FIELDS),
+    "power": set(POWER_TEXT_FIELDS),
+    "character": set(CHARACTER_TEXT_FIELDS),
+}
+_GATE_SQL_FIELDS = {
+    table: set(fields) | set(_GATE_TEXT_SQL_FIELDS.get(table, set()))
+    for table, fields in _GATE_NUMERIC_SQL_FIELDS.items()
+}
+for _table, _fields in _GATE_TEXT_SQL_FIELDS.items():
+    _GATE_SQL_FIELDS.setdefault(_table, set()).update(_fields)
 
 
-def _gate_sql_field(table: str, field: str, key: str) -> str:
+def _gate_sql_field(table: str, field: str, key: str, *, kind: str) -> str:
     allowed = _GATE_SQL_FIELDS.get(table)
     if allowed is None or field not in allowed:
         raise ValueError(f"trigger_gate key「{key}」字段无效：{table}.{field}")
+    typed_allowed = _GATE_NUMERIC_SQL_FIELDS if kind == "numeric" else _GATE_TEXT_SQL_FIELDS
+    if field not in typed_allowed.get(table, set()):
+        label = "非数值" if kind == "numeric" else "非文本"
+        raise ValueError(f"trigger_gate key「{key}」字段{label}（比较类型不匹配）：{table}.{field}")
     return field
 
 
@@ -264,7 +280,7 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
         return None
     field = parts[-1]
     id_segment = ".".join(parts[1:-1])
-    field = _gate_sql_field(table, field, key)
+    field = _gate_sql_field(table, field, key, kind="numeric")
     if table == "class" and "@" in id_segment and "|" in id_segment.split("@", 1)[1]:
         # 简写：class.<name>@<r1>|<r2>|<r3>.<field> → 展开成 [name@r1, name@r2, name@r3]
         cname, rest = id_segment.split("@", 1)
@@ -331,7 +347,7 @@ def _eval_gate_key_str(key: str, db: GameDB) -> Optional[str]:
     if len(parts) != 3:
         return None
     table, cid, field = parts
-    field = _gate_sql_field(table, field, key)
+    field = _gate_sql_field(table, field, key, kind="text")
     sql = {
         "region": f"SELECT {field} FROM regions WHERE id = ?",
         "army": f"SELECT {field} FROM armies WHERE id = ?",
@@ -1858,6 +1874,7 @@ def _apply_person_changes(
     source: str = "system_simulation",
     derived_from: str = "",
     allow_legacy_partial_power: bool = False,
+    external_transaction: bool | None = None,
 ) -> List[Dict[str, object]]:
     def rejected(
         item: Dict[str, object],
@@ -1885,7 +1902,7 @@ def _apply_person_changes(
             (name,),
         ).fetchone()
 
-    def log_applied(result: Dict[str, object], item: Dict[str, object]) -> None:
+    def log_applied(result: Dict[str, object], item: Dict[str, object], *, commit: bool = True) -> None:
         if result.get("rejected"):
             return
         name = str(result.get("name") or "").strip()
@@ -1912,6 +1929,7 @@ def _apply_person_changes(
             derived_from=str(result.get("derived_from") or derived_from or ""),
             normalized=normalized,
             source=source,
+            commit=commit,
         )
 
     def identity_title_for_allegiance(item: Dict[str, object], new_power: str) -> str:
@@ -1950,7 +1968,10 @@ def _apply_person_changes(
             )
         return results
 
+    if external_transaction is None:
+        external_transaction = db.conn.in_transaction
     applied: List[Dict[str, object]] = []
+    needs_person_change_commit = False
     person_statuses = {
         "active",
         "candidate",
@@ -1989,7 +2010,6 @@ def _apply_person_changes(
                 "UPDATE characters SET loyalty=? WHERE name=?",
                 (new_loyalty, name),
             )
-            db.conn.commit()
             if content is not None and name in content.characters:
                 content.characters[name].loyalty = new_loyalty
             result = {
@@ -2001,7 +2021,8 @@ def _apply_person_changes(
                 "reason": str(item.get("reason") or ""),
             }
             applied.append(result)
-            log_applied(result, item)
+            log_applied(result, item, commit=False)
+            needs_person_change_commit = True
             continue
 
         if action in {"处置", "罢黜"}:
@@ -2459,6 +2480,8 @@ def _apply_person_changes(
         applied.append(
             rejected(item, "人物变更动作写路径未接", "invalid_transition")
         )
+    if needs_person_change_commit and not external_transaction:
+        db.conn.commit()
     return applied
 
 
@@ -2491,6 +2514,7 @@ def apply_score_extraction(
 
     content/registry：若传入则处理 `appointments`——把诏书任命的新人建档入朝。
     缺省则跳过（向后兼容老调用）。"""
+    caller_transaction = db.conn.in_transaction
     # 0) 落库前校验容器/二级类型,畸形值崩前拦住,不让前面字段半落库(#57)。
     validate_delta_shape(extracted)
     new_person_changes = normalize_person_changes({"人物变更": extracted.get("人物变更") or []})
@@ -2589,6 +2613,7 @@ def apply_score_extraction(
                 content=content,
                 registry=registry,
                 llm_config=llm_config,
+                external_transaction=caller_transaction,
             )
         )
     elif legacy_person_changes:
@@ -2600,6 +2625,7 @@ def apply_score_extraction(
             registry=registry,
             llm_config=llm_config,
             allow_legacy_partial_power=True,
+            external_transaction=caller_transaction,
         )
         _annotate_legacy_person_rejections(legacy_applied_person_changes)
         applied_person_changes.extend(legacy_applied_person_changes)
