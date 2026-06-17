@@ -14,7 +14,7 @@
     "trigger_year": 1629,
     "trigger_month": 6,
     "person_core_subjects": ["毛文龙"],
-    "trigger_gate": {"character.毛文龙.loyalty": "<65", "character.毛文龙.status": "==active", "character.毛文龙.location": "==dongjiang_area", "character.袁崇焕.status": "==active"},
+    "trigger_gate": {"character.毛文龙.loyalty": "<65", "character.毛文龙.status": "==active", "character.毛文龙.location": "==dongjiang_area", "character.袁崇焕.status": "==active", "army.guanning.commander": "==袁崇焕"},
     "effect_on_trigger": {
       "人物变更": [
         {"name": "毛文龙", "动作": "处置", "status": "dead", "reason": "袁崇焕双岛斩帅"}
@@ -54,7 +54,7 @@
     "trigger_year": 1629,
     "trigger_month": 12,
     "person_core_subjects": ["袁崇焕"],
-    "trigger_gate": {"character.袁崇焕.status": "==active", "army.guanning.commander": "==袁崇焕", "character.毛文龙.status": "==dead", "character.毛文龙.status_reason": "==袁崇焕双岛斩帅"},
+    "trigger_gate": {"character.袁崇焕.status": "==active", "army.guanning.commander": "==袁崇焕", "character.毛文龙.status": "==dead", "character.毛文龙.status_reason": "==袁崇焕双岛斩帅", "event.jisi_lubian.terminal_state": "==triggered"},
     "precondition": "己巳之变后必发；若 jisi_lubian 未触发或玩家提前罢袁崇焕则跳过",
     "event_type": "node"
   },
@@ -226,8 +226,7 @@
     "fail_condition": "洛阳陷、福王被烹，李自成势如破竹，河南腹地丧失",
     "trigger_year": 1641,
     "trigger_month": 1,
-    "person_core_subjects": ["朱常洵"],
-    "trigger_gate": {"region.henan.controlled_by": "==ming", "region.henan.unrest": ">=60", "power.bandits.military_strength": ">=45", "character.朱常洵.status": "==active", "character.朱常洵.location": "==henan"},
+    "trigger_gate": {"region.henan.controlled_by": "==ming", "region.henan.unrest": ">=60", "power.bandits.military_strength": ">=45"},
     "precondition": "李自成入河南未压制 + 藩禄改革未推时触发",
     "event_type": "node"
   },

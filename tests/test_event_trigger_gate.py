@@ -401,6 +401,24 @@ def test_mao_wenlong_event_excluded_after_player_relocates_mao(game):
     assert all(ev.id != "mao_wenlong" for ev in issues.gather_candidate_events(state, db))
 
 
+def test_mao_wenlong_event_excluded_after_player_reassigns_yuan(game):
+    """#191 CMR：袁崇焕仍活但不掌关宁时，斩毛事件不应仅因袁 active 进候选。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 6
+    db.conn.execute(
+        "UPDATE characters SET loyalty=?, status=?, location=? WHERE name=?",
+        (44, "active", "dongjiang_area", "毛文龙"),
+    )
+    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("active", "袁崇焕"))
+    db.conn.execute("UPDATE armies SET commander=? WHERE id=?", ("孙承宗", "guanning"))
+
+    cands = issues.gather_candidate_events(state, db)
+
+    assert all(ev.id != "mao_wenlong" for ev in cands)
+
+
 def test_mao_wenlong_event_trigger_lands_character_status(game):
     """#203：未安抚时袁斩毛文龙触发后，毛文龙退场事实必须落库。"""
     db, state, content = game
@@ -616,16 +634,53 @@ def test_person_core_event_obsoletes_when_named_subject_is_dead(game):
     ).fetchone()[0] == 1
 
 
+def test_yuan_xialing_event_excluded_without_jisi_triggered(game):
+    """#191 CMR：袁下狱依赖己巳之变已发生，不能与上游事件同月凭其它事实一起候选。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 12
+    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("active", "袁崇焕"))
+    db.conn.execute("UPDATE armies SET commander=? WHERE id=?", ("袁崇焕", "guanning"))
+    db.conn.execute(
+        "UPDATE characters SET status=?, status_reason=? WHERE name=?",
+        ("dead", "袁崇焕双岛斩帅", "毛文龙"),
+    )
+
+    cands = issues.gather_candidate_events(state, db)
+
+    assert all(ev.id != "yuan_xialing" for ev in cands)
+
+
+def test_luoyang_fallen_not_obsoleted_when_fu_wang_is_dead(game):
+    """#191 CMR：洛阳陷落是城市/流寇压力事件，福王已死不应让事件进入人物核心作废终态。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1641
+    state.period = 1
+    db.conn.execute("UPDATE regions SET controlled_by=?, unrest=? WHERE id=?", ("ming", 80, "henan"))
+    db.conn.execute("UPDATE powers SET military_strength=? WHERE id=?", (70, "bandits"))
+    db.set_character_status(state, "朱常洵", "dead", reason="测试：此前身故")
+
+    cands = issues.gather_candidate_events(state, db)
+
+    assert any(ev.id == "luoyang_fallen" for ev in cands)
+    assert db.conn.execute(
+        "SELECT event_id FROM event_triggers WHERE event_id=?",
+        ("luoyang_fallen",),
+    ).fetchone() is None
+
+
 def test_issue_191_person_core_events_are_explicitly_classified(content):
     """#191：人物核心类逐事件显式标注；战略/外敌点名将不误纳入。"""
     expected = {
         "mao_wenlong": (
             ["毛文龙"],
-            {"character.毛文龙.status", "character.毛文龙.location", "character.袁崇焕.status"},
+            {"character.毛文龙.status", "character.毛文龙.location", "character.袁崇焕.status", "army.guanning.commander"},
         ),
         "yuan_xialing": (
             ["袁崇焕"],
-            {"character.袁崇焕.status", "army.guanning.commander", "character.毛文龙.status", "character.毛文龙.status_reason"},
+            {"character.袁崇焕.status", "army.guanning.commander", "character.毛文龙.status", "character.毛文龙.status_reason", "event.jisi_lubian.terminal_state"},
         ),
         "kong_youde": (
             ["孔有德"],
@@ -639,26 +694,23 @@ def test_issue_191_person_core_events_are_explicitly_classified(content):
             ["张献忠"],
             {"character.张献忠.status", "character.张献忠.power_id", "character.张献忠.loyalty", "character.张献忠.location"},
         ),
-        "luoyang_fallen": (
-            ["朱常洵"],
-            {"character.朱常洵.status", "character.朱常洵.location", "region.henan.controlled_by", "power.bandits.military_strength"},
-        ),
     }
     for event_id, (subjects, gate_keys) in expected.items():
         ev = content.event_by_id[event_id]
         assert ev.person_core_subjects == subjects
         assert gate_keys <= set(ev.trigger_gate)
 
-    strategic_or_external = {
+    not_person_core = {
         "jisi_lubian",
         "dalingghe",
         "lindan_xiqian",
         "huangtaiji_chengdi",
         "wuyin_lubian",
         "songshan_battle",
+        "luoyang_fallen",
     }
     assert not {
-        event_id for event_id in strategic_or_external
+        event_id for event_id in not_person_core
         if content.event_by_id[event_id].person_core_subjects
     }
 
