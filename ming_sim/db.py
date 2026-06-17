@@ -6048,7 +6048,14 @@ class GameDB:
         ).fetchone()
         return row is not None
 
-    def mark_event_triggered(self, state: GameState, event_id: str, source: str = "simulation") -> None:
+    def mark_event_triggered(
+        self,
+        state: GameState,
+        event_id: str,
+        source: str = "simulation",
+        *,
+        commit: bool = True,
+    ) -> None:
         self.conn.execute(
             """
             INSERT OR IGNORE INTO event_triggers (event_id, turn, year, period, source)
@@ -6056,7 +6063,8 @@ class GameDB:
             """,
             (event_id, state.turn, state.year, state.period, source),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
     def insert_issue(
         self,

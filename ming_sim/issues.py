@@ -1034,6 +1034,9 @@ def apply_issue_tracker_output(
     entity_rejections: List[Dict[str, object]] = []
     issue_person_changes: List[Dict[str, object]] = []
     event_by_id = _ctx().event_by_id
+    external_transaction = db.conn.in_transaction
+    candidate_event_ids = {candidate.id for candidate in gather_candidate_events(state, db)}
+    consumed_event_ids: set[str] = set()
 
     # 1) advances（ADR 0008 决定1：LLM 脏数据逐项拒收留痕，不裸 continue 静默丢；db.advance_issue
     #    的代码/DB 异常上抛 SettlementAbort，同 close_issues / new_issues 段，#63）
@@ -1181,7 +1184,7 @@ def apply_issue_tracker_output(
                 print(f"[INFO] new_issue 已拒：event {event_id} 标了 auto_trigger，只能程序硬触发。")
                 applied_new.append({"title": ev.title, "rejected": True, "reason": "auto_trigger 事件仅程序可触发"})
                 continue
-            if ev.id not in {candidate.id for candidate in gather_candidate_events(state, db)}:
+            if ev.id not in candidate_event_ids or ev.id in consumed_event_ids:
                 # LLM 只能从本回合候选池中挑选事件；落库端重验窗口、trigger_gate 与已触发状态，
                 # 避免陈旧/伪造 id 穿透候选层后直接应用确定性后果（#203 CMR）。
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 当前未进 event_pool 候选池。")
@@ -1204,7 +1207,8 @@ def apply_issue_tracker_output(
                             applied_person_changes=issue_person_changes,
                         )
                     )
-                db.mark_event_triggered(state, ev.id)
+                db.mark_event_triggered(state, ev.id, commit=not external_transaction)
+                consumed_event_ids.add(ev.id)
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 为 {ev.event_type}，不转 issue。")
                 applied_new.append({"title": ev.title, "rejected": False, "reason": f"event_type={ev.event_type} 已记为触发"})
                 continue
@@ -1215,6 +1219,7 @@ def apply_issue_tracker_output(
                 # 不再走此 None 分支（cmr ni r7 codex high），故 reason 不再含「或落库失败」。
                 applied_new.append({"title": ev.title, "rejected": True, "reason": "事件已触发过（同源局势已立，幂等跳过）"})
             else:
+                consumed_event_ids.add(ev.id)
                 applied_new.append({"issue_id": issue_id, "kind": "situation", "title": ev.title, "rejected": False})
             continue
         if origin_kind != "decree":
@@ -1375,6 +1380,23 @@ def apply_issue_tracker_output(
             })
             continue
         narrative = str(cl.get("narrative") or "")[:400]
+        chk = db.conn.execute(
+            "SELECT status, resolve_condition FROM issues WHERE id=?", (issue_id,)
+        ).fetchone()
+        if (
+            reason == "resolved"
+            and chk is not None
+            and chk["status"] == "active"
+            and commitment_condition_role(chk["resolve_condition"]).get("condition_role")
+            == "commitment_stop_condition"
+        ):
+            applied_closes.append({
+                "rejected": True,
+                "category": "invalid_enum",
+                "reason": f"close_issues 对人物承诺型 stop_condition issue {issue_id} 误判 resolved（须走专门完成闭环）",
+                "item": cl,
+            })
+            continue
         new_row = db.close_issue(state, issue_id, reason=reason, narrative=narrative)
         if new_row is None:
             # close_issue 回 None 有三态，回查 status 精确归类（cmr Claude high）：
@@ -2580,6 +2602,19 @@ def apply_score_extraction(
     })
     person_changes = new_person_changes or legacy_person_changes
     use_legacy_person_keys = not person_changes
+    legacy_person_mode = bool(legacy_person_changes)
+
+    def _split_pre_issue_person_changes(changes: List[Dict[str, object]]) -> tuple[List[Dict[str, object]], List[Dict[str, object]]]:
+        pre_issue: List[Dict[str, object]] = []
+        post_issue: List[Dict[str, object]] = []
+        for item in changes:
+            if str(item.get("动作") or "").strip() == "评定":
+                pre_issue.append(item)
+            else:
+                post_issue.append(item)
+        return pre_issue, post_issue
+
+    pre_issue_person_changes, post_issue_person_changes = _split_pre_issue_person_changes(person_changes)
 
     def _annotate_legacy_person_rejections(results: List[Dict[str, object]]) -> None:
         for result in results:
@@ -2594,6 +2629,28 @@ def apply_score_extraction(
                         result["report_category"] = "missing_ref"
 
     applied_person_changes: List[Dict[str, object]] = []
+
+    def _apply_normalized_person_changes(
+        changes: List[Dict[str, object]],
+        *,
+        legacy: bool,
+    ) -> None:
+        if not changes:
+            return
+        results = _apply_person_changes(
+            db,
+            state,
+            changes,
+            content=content,
+            registry=registry,
+            llm_config=llm_config,
+            allow_legacy_partial_power=legacy,
+            external_transaction=caller_transaction,
+        )
+        if legacy:
+            _annotate_legacy_person_rejections(results)
+        applied_person_changes.extend(results)
+
     # 1) metric_delta
     applied_metric = _apply_metric_dict(state, extracted.get("metric_delta") or {}, db=db)
     # 2) economy_moves
@@ -2651,6 +2708,8 @@ def apply_score_extraction(
     if isinstance(power_updates_raw, dict) and power_updates_raw:
         power_changes = db.apply_power_deltas(state, power_updates_raw)
 
+    _apply_normalized_person_changes(pre_issue_person_changes, legacy=legacy_person_mode)
+
     # 6) issue_advances / new_issues / close_issues / cancels (复用旧 tracker 落地)
     issue_summary = apply_issue_tracker_output(db, state, {
         "advances": extracted.get("issue_advances") or [],
@@ -2658,31 +2717,7 @@ def apply_score_extraction(
         "close_issues": extracted.get("close_issues") or [],
         "cancels": extracted.get("cancels") or [],
     }, llm_config=llm_config, content=content)
-    if new_person_changes:
-        applied_person_changes.extend(
-            _apply_person_changes(
-                db,
-                state,
-                new_person_changes,
-                content=content,
-                registry=registry,
-                llm_config=llm_config,
-                external_transaction=caller_transaction,
-            )
-        )
-    elif legacy_person_changes:
-        legacy_applied_person_changes = _apply_person_changes(
-            db,
-            state,
-            legacy_person_changes,
-            content=content,
-            registry=registry,
-            llm_config=llm_config,
-            allow_legacy_partial_power=True,
-            external_transaction=caller_transaction,
-        )
-        _annotate_legacy_person_rejections(legacy_applied_person_changes)
-        applied_person_changes.extend(legacy_applied_person_changes)
+    _apply_normalized_person_changes(post_issue_person_changes, legacy=legacy_person_mode)
 
     def _norm_int_leaf(v):
         """无损整数串归一（cmr S3 r10,2/2）：strip 后能精确 int 的 str 转 int,
