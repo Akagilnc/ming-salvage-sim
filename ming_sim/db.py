@@ -599,6 +599,7 @@ class GameDB:
                 turn INTEGER NOT NULL,
                 year INTEGER NOT NULL,
                 period INTEGER NOT NULL,
+                terminal_status TEXT NOT NULL DEFAULT 'occurred',
                 source TEXT NOT NULL DEFAULT 'simulation',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(event_id) REFERENCES events(id)
@@ -999,6 +1000,7 @@ class GameDB:
         # 结局：ended=1 时游戏终结；ending_status 为 context.ENDING_* 类型。
         self.ensure_column("game_state", "ended", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("game_state", "ending_status", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("event_triggers", "terminal_status", "TEXT NOT NULL DEFAULT 'occurred'")
         # 密令推演副作用列（result 留给承办人进展，sim_note 给推演写泄漏/反弹，互不覆盖）
         self.ensure_column("secret_orders", "sim_note", "TEXT NOT NULL DEFAULT ''")
         # 密令期限：0=无硬期限；到 due_turn 时自动转入待核议，由推演当月判 done/failed。
@@ -6026,7 +6028,7 @@ class GameDB:
 
     def has_event_triggered(self, event_id: str) -> bool:
         row = self.conn.execute(
-            "SELECT 1 FROM event_triggers WHERE event_id=? LIMIT 1",
+            "SELECT 1 FROM event_triggers WHERE event_id=? AND terminal_status='occurred' LIMIT 1",
             (event_id,),
         ).fetchone()
         return row is not None
@@ -6034,10 +6036,20 @@ class GameDB:
     def mark_event_triggered(self, state: GameState, event_id: str, source: str = "simulation") -> None:
         self.conn.execute(
             """
-            INSERT OR IGNORE INTO event_triggers (event_id, turn, year, period, source)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT OR IGNORE INTO event_triggers (event_id, turn, year, period, terminal_status, source)
+            VALUES (?, ?, ?, ?, 'occurred', ?)
             """,
             (event_id, state.turn, state.year, state.period, source),
+        )
+        self.conn.commit()
+
+    def mark_event_expired(self, state: GameState, event_id: str) -> None:
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO event_triggers (event_id, turn, year, period, terminal_status, source)
+            VALUES (?, ?, ?, ?, 'expired', 'window_expired')
+            """,
+            (event_id, state.turn, state.year, state.period),
         )
         self.conn.commit()
 

@@ -168,6 +168,8 @@ def _spawned_event_refs(db: GameDB) -> set:
 
 def _event_window_open(ev: Event, state: GameState) -> bool:
     """Return True when the current date is inside an event's optional trigger window."""
+    if ev.open_window:
+        return True
     if ev.trigger_year > 0:
         if state.year < ev.trigger_year:
             return False
@@ -179,6 +181,19 @@ def _event_window_open(ev: Event, state: GameState) -> bool:
         if state.year == ev.trigger_end_year and ev.trigger_end_month > 0 and state.period > ev.trigger_end_month:
             return False
     return True
+
+
+def _event_window_expired(ev: Event, state: GameState) -> bool:
+    """Return True once the current date is past an event's explicit latest point."""
+    if ev.open_window:
+        return False
+    if ev.trigger_end_year <= 0:
+        return False
+    if state.year > ev.trigger_end_year:
+        return True
+    if ev.trigger_end_month > 0 and state.year == ev.trigger_end_year and state.period > ev.trigger_end_month:
+        return True
+    return False
 
 
 _GATE_AGG_FUNCS = {
@@ -357,6 +372,10 @@ def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
     # 历史锚定 EVENTS：到点（含错过补出）即进候选
     for ev in c.events:
         if ev.id in spawned or ev.trigger_year <= 0:
+            continue
+        if _event_window_expired(ev, state):
+            db.mark_event_expired(state, ev.id)
+            spawned.add(ev.id)
             continue
         if not _event_window_open(ev, state):
             continue
