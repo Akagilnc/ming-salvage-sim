@@ -79,6 +79,7 @@ def _apply_issue_buildings(
     ops: object,
     pseudo_event: Event,
     reason: str,
+    commit: bool = True,
 ) -> List[Dict[str, object]]:
     """落地 issue effect 里的 buildings 段：建筑随局势结案而新建/改数值/废止。
 
@@ -110,6 +111,7 @@ def _apply_issue_buildings(
                     output_amount=int(op.get("output_amount", 0)),
                     status=str(op.get("status") or ""),
                     origin="issue",
+                    commit=commit,
                 )
                 applied.append({"action": "create", "building_id": bid,
                                  "name": str(op.get("name") or "")})
@@ -118,11 +120,11 @@ def _apply_issue_buildings(
                 fields = {k: v for k, v in op.items()
                           if k not in ("action", "building_id")}
                 fields.setdefault("reason", reason)
-                ch = db.apply_building_deltas(state, pseudo_event, None, "档房", {bid: fields})
+                ch = db.apply_building_deltas(state, pseudo_event, None, "档房", {bid: fields}, commit=commit)
                 applied.append({"action": "modify", "building_id": bid, "changes": ch})
             elif action == "remove":
                 bid = str(op.get("building_id") or "")
-                ok = db.remove_building(state, bid, reason=reason)
+                ok = db.remove_building(state, bid, reason=reason, commit=commit)
                 applied.append({"action": "remove", "building_id": bid, "removed": ok})
             else:
                 print(f"[WARN] issue effect buildings: action 非法 '{action}'，跳过。")
@@ -789,6 +791,7 @@ def _spawn_legacy_from_effect(
     effect: Dict[str, object],
     issue_id: int,
     issue_title: str,
+    commit: bool = True,
 ) -> Optional[Dict[str, object]]:
     """结案 effect 里若带 legacy（帝国修正）段，落 legacies 表。返回落地摘要供日志。
     legacy schema:
@@ -853,6 +856,7 @@ def _spawn_legacy_from_effect(
         narrative_hint=str(legacy.get("narrative_hint") or "")[:200],
         duration_months=duration,
         source_issue_id=issue_id,
+        commit=commit,
     )
     summary = {
         "legacy_id": new_id, "name": name,
@@ -872,6 +876,7 @@ def _apply_issue_entities(
     registry=None,
     llm_config: Any = None,
     applied_person_changes: Optional[List[Dict[str, object]]] = None,
+    commit: bool = True,
 ) -> List[Dict[str, object]]:
     """国策结案的实体后果：建军 / 补兵改属性 / 人物状态(死/流放/下狱/罢/致仕)。
     全局严格、不静默——非法 delta 直接抛错中断当回合，绝不无声丢失。
@@ -905,13 +910,13 @@ def _apply_issue_entities(
     new_armies = effect.get("new_armies")
     if isinstance(new_armies, list) and new_armies:
         _raise_on_rejected(
-            db.create_armies_from_extraction(state, new_armies, actor=label), "建军"
+            db.create_armies_from_extraction(state, new_armies, actor=label, commit=commit), "建军"
         )
     army_delta = effect.get("army_delta")
     if isinstance(army_delta, dict) and army_delta:
         pseudo = type("E", (), {"id": "issue", "title": label})()
         _raise_on_rejected(
-            db.apply_army_deltas(state, pseudo, None, label, army_delta), "补兵/改属性"
+            db.apply_army_deltas(state, pseudo, None, label, army_delta, commit=commit), "补兵/改属性"
         )
     raw_person_changes = effect.get("人物变更")
     if raw_person_changes is not None:
@@ -1104,6 +1109,7 @@ def apply_issue_tracker_output(
     issue_person_changes: List[Dict[str, object]] = []
     event_by_id = _ctx().event_by_id
     external_transaction = db.conn.in_transaction
+    commit_now = not external_transaction
     candidate_event_ids = (
         set(candidate_event_ids_at_input)
         if candidate_event_ids_at_input is not None
@@ -1186,9 +1192,9 @@ def apply_issue_tracker_output(
             effect = loads_effect_dict(new_row["effect_on_resolve"])
             _emit_pairing_warnings(new_row, effect, pairing_warnings)
             _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
-            entity_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or []) if r.get("rejected"))  # economy 拒收不蒸发（#14）
-            entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
-            _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}结案")
+            entity_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or [], commit=commit_now) if r.get("rejected"))  # economy 拒收不蒸发（#14）
+            entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}, commit=commit_now).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
+            _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}结案", commit=commit_now)
             entity_rejections.extend(
                 _apply_issue_entities(
                     db,
@@ -1198,14 +1204,15 @@ def apply_issue_tracker_output(
                     content=content,
                     llm_config=llm_config,
                     applied_person_changes=issue_person_changes,
+                    commit=commit_now,
                 ))
-            _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
+            _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]), commit=commit_now)
         elif new_row["status"] == "failed":
             effect = loads_effect_dict(new_row["effect_on_fail"])
             _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
-            entity_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or []) if r.get("rejected"))  # economy 拒收不蒸发（#14）
-            entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
-            _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}失败")
+            entity_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or [], commit=commit_now) if r.get("rejected"))  # economy 拒收不蒸发（#14）
+            entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}, commit=commit_now).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
+            _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}失败", commit=commit_now)
             entity_rejections.extend(
                 _apply_issue_entities(
                     db,
@@ -1215,8 +1222,9 @@ def apply_issue_tracker_output(
                     content=content,
                     llm_config=llm_config,
                     applied_person_changes=issue_person_changes,
+                    commit=commit_now,
                 ))
-            _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
+            _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]), commit=commit_now)
         applied_advances.append({
             "issue_id": issue_id,
             "title": new_row["title"],
@@ -1231,7 +1239,6 @@ def apply_issue_tracker_output(
     #    decree     —— 玩家诏书强推，由 LLM 给字段新立 issue
     #    event_pool —— 预设事件（EVENTS/SEED_EVENTS）被推演判定触发，按预设 event 立 issue
     #    其它来源一律拒。
-    current_candidate_event_ids = {candidate.id for candidate in gather_candidate_events(state, db)}
     initiative_active = db.count_active_initiatives()
     for ni in tracker_output.get("new_issues", []) or []:
         if not isinstance(ni, dict):
@@ -1259,6 +1266,7 @@ def apply_issue_tracker_output(
                 print(f"[INFO] new_issue 已拒：event {event_id} 标了 auto_trigger，只能程序硬触发。")
                 applied_new.append({"title": ev.title, "rejected": True, "reason": "auto_trigger 事件仅程序可触发"})
                 continue
+            current_candidate_event_ids = {candidate.id for candidate in gather_candidate_events(state, db)}
             if (
                 ev.id not in candidate_event_ids
                 or ev.id not in current_candidate_event_ids
@@ -1292,6 +1300,7 @@ def apply_issue_tracker_output(
                             content=content,
                             llm_config=llm_config,
                             applied_person_changes=issue_person_changes,
+                            commit=commit_now,
                         )
                     )
                 db.mark_event_triggered(state, ev.id, commit=not external_transaction)
@@ -1428,6 +1437,7 @@ def apply_issue_tracker_output(
             effect_on_fail=fail_eff,
             resolve_condition=resolve_condition[:300],
             fail_condition=str(ni.get("fail_condition") or "")[:300],
+            commit=commit_now,
         )
         if kind == "initiative":
             initiative_active += 1
@@ -1529,11 +1539,12 @@ def apply_issue_tracker_output(
         if reason == "resolved":
             _emit_pairing_warnings(new_row, effect, pairing_warnings)
         _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
-        entity_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or []) if r.get("rejected"))  # economy 拒收不蒸发（#14）
-        entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
+        entity_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or [], commit=commit_now) if r.get("rejected"))  # economy 拒收不蒸发（#14）
+        entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}, commit=commit_now).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
         building_ops = _apply_issue_buildings(
             db, state, effect.get("buildings"),
             _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}{'结案' if reason == 'resolved' else '失败'}",
+            commit=commit_now,
         )
         close_person_changes: List[Dict[str, object]] = []
         entity_rejections.extend(_apply_issue_entities(
@@ -1544,9 +1555,10 @@ def apply_issue_tracker_output(
             content=content,
             llm_config=llm_config,
             applied_person_changes=close_person_changes,
+            commit=commit_now,
         ))
         issue_person_changes.extend(close_person_changes)
-        _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
+        _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]), commit=commit_now)
         close_record = {
             "issue_id": issue_id,
             "title": new_row["title"],
@@ -1592,8 +1604,8 @@ def apply_issue_tracker_output(
         cost = cn.get("applied_cost") or {}
         if isinstance(cost, dict):
             _apply_metric_dict(state, cost.get("metrics") or {}, db=db)
-            entity_rejections.extend(r for r in _apply_economy_list(db, state, cost.get("economy") or []) if r.get("rejected"))  # economy 拒收不蒸发（#14）
-            entity_rejections.extend(_apply_faction_dict(db, cost.get("factions") or {}).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
+            entity_rejections.extend(r for r in _apply_economy_list(db, state, cost.get("economy") or [], commit=commit_now) if r.get("rejected"))  # economy 拒收不蒸发（#14）
+            entity_rejections.extend(_apply_faction_dict(db, cost.get("factions") or {}, commit=commit_now).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
         db.cancel_issue(
             state, issue_id,
             narrative=str(cn.get("narrative") or "")[:400],

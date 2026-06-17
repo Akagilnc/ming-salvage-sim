@@ -3714,6 +3714,7 @@ class GameDB:
         edict_id: int | None,
         actor: str,
         army_deltas: Dict[str, Dict[str, object]],
+        commit: bool = True,
     ) -> List[Dict[str, object]]:
         changes: List[Dict[str, object]] = []
         for army_id, raw_changes in army_deltas.items():
@@ -3870,7 +3871,8 @@ class GameDB:
                         "reason": reason,
                     }
                 )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return changes
 
     def create_armies_from_extraction(
@@ -3878,6 +3880,7 @@ class GameDB:
         state: GameState,
         new_armies: List[Dict[str, object]],
         actor: str = "档房",
+        commit: bool = True,
     ) -> List[Dict[str, object]]:
         """据 extractor 输出建新军队。同 id/name 已存在 → 把 manpower 当扩军增量。owner_power 必须是已知 power。"""
         valid_powers = {r["id"] for r in self.conn.execute("SELECT id FROM powers").fetchall()}
@@ -3948,7 +3951,12 @@ class GameDB:
                 reason = str(item.get("reason") or item.get("status") or "扩军")[:80]
                 pseudo_event = type("E", (), {"id": "season", "title": reason})()
                 self.apply_army_deltas(
-                    state, pseudo_event, None, actor, {existing["id"]: {"manpower": delta, "reason": reason}}
+                    state,
+                    pseudo_event,
+                    None,
+                    actor,
+                    {existing["id"]: {"manpower": delta, "reason": reason}},
+                    commit=False,
                 )
                 created.append({"army": existing["name"], "manpower_added": delta, "merged_into_existing": True})
                 continue
@@ -4071,7 +4079,8 @@ class GameDB:
                 "created": True,
                 "reason": reason,
             })
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return created
 
     # ── 建筑 ──────────────────────────────────────────────────────────────────
@@ -4091,6 +4100,7 @@ class GameDB:
         output_amount: int = 0,
         status: str = "",
         origin: str = "decree",
+        commit: bool = True,
     ) -> str:
         """运行时新立建筑（玩家诏书）。category / output_metric 走白名单硬校验，违规 ValueError。"""
         if category not in BUILDING_CATEGORIES:
@@ -4138,10 +4148,17 @@ class GameDB:
             """,
             (state.turn, state.year, state.period, building_id, name.strip()[:60], "诏书新立建筑"),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return building_id
 
-    def remove_building(self, state: GameState, building_id: str, reason: str = "") -> bool:
+    def remove_building(
+        self,
+        state: GameState,
+        building_id: str,
+        reason: str = "",
+        commit: bool = True,
+    ) -> bool:
         """拆除/废止建筑（issue 失败或撤销结案）。返回是否真删了一行。"""
         row = self.conn.execute("SELECT name FROM buildings WHERE id = ?", (building_id,)).fetchone()
         if row is None:
@@ -4156,7 +4173,8 @@ class GameDB:
              str(row["name"]), (reason or "建筑废止").strip()[:80]),
         )
         self.conn.execute("DELETE FROM buildings WHERE id = ?", (building_id,))
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return True
 
     def apply_building_deltas(
@@ -4166,6 +4184,7 @@ class GameDB:
         edict_id: int | None,
         actor: str,
         building_deltas: Dict[str, Dict[str, object]],
+        commit: bool = True,
     ) -> List[Dict[str, object]]:
         """改既有建筑。仿 apply_army_deltas。供 issue effect 落地复用。"""
         changes: List[Dict[str, object]] = []
@@ -4247,7 +4266,8 @@ class GameDB:
                     "delta": log_delta,
                     "reason": reason,
                 })
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return changes
 
     def buildings_report(self, region_id: str = "") -> str:
@@ -4324,7 +4344,7 @@ class GameDB:
             f"{row['status']}"
         )
 
-    def adjust_factions(self, deltas: Dict[str, object]) -> List[Dict[str, object]]:
+    def adjust_factions(self, deltas: Dict[str, object], commit: bool = True) -> List[Dict[str, object]]:
         """逐项落库；查无此派系名 → missing_ref 逐项拒收留痕（ADR 0008 决定 1，#14/#63
         死法 3）。入参经 _apply_faction_dict 预清洗（坏值已在那层拒），此处只余未知名一类。
         返回拒收项列表（{"rejected": True, ...}），桥接 _collect_inline_rejections 自动收。
@@ -4376,7 +4396,8 @@ class GameDB:
                     "UPDATE factions SET satisfaction = ?, leverage = ? WHERE name = ?",
                     (new_sat, new_lev, faction),
                 )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return rejected
 
     def turn_economy_summary(self, turn: int) -> str:
@@ -6266,6 +6287,7 @@ class GameDB:
         source_issue_id: int | None = None,
         clear_gate: Dict[str, str] | None = None,
         legacy_key: str = "",
+        commit: bool = True,
     ) -> int:
         """结案产生持续修正符。start_month=当前绝对月，duration_months=-1 为永久。
         clear_gate 非空时：靠程序按 _gate_passed 判定消除（见 issues.clear_gated_legacies），与时长无关。"""
@@ -6284,7 +6306,8 @@ class GameDB:
                 str(legacy_key)[:60],
             ),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         self._legacy_mod_cache = None  # active 集变了，修正符缓存失效
         return int(cur.lastrowid)
 
@@ -6425,6 +6448,7 @@ class GameDB:
         purpose: str | None = None,
         target_kind: str | None = None,
         target_id: str | None = None,
+        commit: bool = True,
     ) -> int:
         """记一笔经济流水到 economy_ledger，同步更新 metrics[account]。
 
@@ -6456,7 +6480,8 @@ class GameDB:
              category, reason, purpose, target_kind, target_id),
         )
         self.sync_economy_accounts(state)
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return actual
 
     def kv_get(self, key: str) -> str | None:
