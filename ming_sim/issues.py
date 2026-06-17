@@ -244,6 +244,7 @@ _GATE_TEXT_SQL_FIELDS = {
     "army": set(ARMY_TEXT_FIELDS),
     "power": set(POWER_TEXT_FIELDS),
     "character": set(CHARACTER_TEXT_FIELDS),
+    "event": {"terminal_state"},
 }
 _GATE_SQL_FIELDS = {
     table: set(fields) | set(_GATE_TEXT_SQL_FIELDS.get(table, set()))
@@ -273,6 +274,7 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
       - 'building.<id>.<field>' / 多建筑 + agg
       - 'power.<id>.<field>' / 多 + agg
       - 'character.<name>.<field>' / 多人物 + agg
+      - 'event.<id>.terminal_state'               → event_triggers 表文本门专用
       - 'class.<name>.<field>'                  → classes 表全国汇总 (region_id='')
       - 'class.<name>@<region>.<field>'         → classes 表省级
       - 'class.<name>@<r1>|<r2>|.<field>.<agg>' → 多省同阶级聚合
@@ -356,7 +358,7 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
 
 def _eval_gate_key_str(key: str, db: GameDB) -> Optional[str]:
     """取一个文本型字段值（如 region.<id>.controlled_by → 'ming'/'houjin'）。
-    仅支持单 id 的 region/army/power/character 文本字段；解析失败返回 None。
+    仅支持单 id 的 region/army/power/character/event 文本字段；解析失败返回 None。
     """
     parts = key.split(".")
     if len(parts) != 3:
@@ -368,6 +370,7 @@ def _eval_gate_key_str(key: str, db: GameDB) -> Optional[str]:
         "army": f"SELECT {field} FROM armies WHERE id = ?",
         "power": f"SELECT {field} FROM powers WHERE id = ?",
         "character": f"SELECT {field} FROM characters WHERE name = ?",
+        "event": f"SELECT {field} FROM event_triggers WHERE event_id = ?",
     }.get(table)
     if sql is None:
         return None
