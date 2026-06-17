@@ -7,6 +7,7 @@ GameDB 持有 self.content（GameContent），seed 类方法从中读人物/地�
 from __future__ import annotations
 
 import json
+import math
 import re
 import sqlite3
 from typing import Any, Dict, List, Optional, Tuple
@@ -56,7 +57,10 @@ def _coerce_new_salary_rate(raw, default: float = SALARY_RATE_ANCHOR) -> float:
         v = float(raw)
     except (TypeError, ValueError):
         return default
-    return v if v > 0 else default
+    # 非有限值（inf/-inf/nan）也落锚点：inf>0 为真会漏过、经 army_needed 的 ceil(manpower×inf/10000)
+    # 抛 OverflowError 崩结算（线上 gemini high + coderabbit inf 探针）。salary_rate 非必填、脏值兜底锚点，
+    # 不 fail-loud 拒整军（#44 cmr R3 定的设计：不为一个非关键余饷字段拒绝建军）。
+    return v if (math.isfinite(v) and v > 0) else default
 
 
 # #9 派系势力联动（全重算，offset 锚定钦定基线）：

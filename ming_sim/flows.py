@@ -215,8 +215,10 @@ def army_needed(row) -> int:
     if manpower <= 0:
         return 0
     rate = float(row["salary_rate"])
-    if rate <= 0:
-        rate = SALARY_RATE_ANCHOR  # ming 有兵必有饷：rate<=0 非法 → 锚点，堵 runtime 易主/裸 UPDATE 漏网
+    # ming 有兵必有饷：rate<=0 非法 → 锚点（堵 runtime 易主/裸 UPDATE 漏网）；非有限值(inf/nan)同样
+    # 归锚点而非 fail-loud——结算咽喉若为一个脏 salary_rate 抛错会崩掉整月结算（线上 gemini high）。
+    if not math.isfinite(rate) or rate <= 0:
+        rate = SALARY_RATE_ANCHOR
     return math.ceil(manpower * rate / 10000)
 
 
