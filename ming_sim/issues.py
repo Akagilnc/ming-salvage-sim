@@ -644,6 +644,8 @@ def _pending_person_changes_block_event_gate(
     ev: Event,
     pending_person_changes: List[Dict[str, object]],
     db: GameDB,
+    *,
+    allow_legacy_partial_power: bool = False,
 ) -> bool:
     """Re-check character status gates against accepted same-turn person changes.
 
@@ -653,14 +655,41 @@ def _pending_person_changes_block_event_gate(
     if not pending_person_changes or not ev.trigger_gate:
         return False
     pending_fields: Dict[str, Dict[str, str]] = {}
+    shadow_rows: Dict[str, Dict[str, str]] = {}
+
+    def row_value(row: Dict[str, str], field: str, default: str = "") -> str:
+        return str(row.get(field) or default)
+
+    def character_row(name: str) -> Optional[Dict[str, str]]:
+        if name in shadow_rows:
+            return shadow_rows[name]
+        row = db.conn.execute(
+            "SELECT status, location, transit_to, power_id, office, office_type, reason_code FROM characters WHERE name=?",
+            (name,),
+        ).fetchone()
+        if row is None:
+            return None
+        data = {
+            "status": str(row["status"] or "active"),
+            "location": str(row["location"] or ""),
+            "transit_to": str(row["transit_to"] or ""),
+            "power_id": str(row["power_id"] or "ming"),
+            "office": str(row["office"] or ""),
+            "office_type": str(row["office_type"] or ""),
+            "reason_code": str(row["reason_code"] or ""),
+        }
+        shadow_rows[name] = data
+        return data
 
     def overlay(name: str, field: str, value: object) -> None:
         value_text = str(value or "").strip()
         pending_fields.setdefault(name, {})[field] = value_text
+        if name in shadow_rows:
+            shadow_rows[name][field] = value_text
 
-    def current_title_kind(row) -> str:
-        current_office = str(row["office"] or "").strip()
-        current_office_type = str(row["office_type"] or "").strip()
+    def current_title_kind(row: Dict[str, str]) -> str:
+        current_office = row_value(row, "office").strip()
+        current_office_type = row_value(row, "office_type").strip()
         if (
             not current_office
             or current_office_type == "身名分"
@@ -683,13 +712,10 @@ def _pending_person_changes_block_event_gate(
         action = str(item.get("动作") or "").strip()
         if not name:
             continue
-        row = db.conn.execute(
-            "SELECT status, location, transit_to, power_id, office, office_type, reason_code FROM characters WHERE name=?",
-            (name,),
-        ).fetchone()
+        row = character_row(name)
         if row is None:
             continue
-        cur_status = str(row["status"] or "active")
+        cur_status = row_value(row, "status", "active")
         if action in {"罢黜", "处置"}:
             if action == "罢黜":
                 status = "dismissed"
@@ -725,12 +751,15 @@ def _pending_person_changes_block_event_gate(
                     break
             if not valid:
                 continue
-            overlay(name, "location", new_location or row["location"])
+            overlay(name, "location", new_location or row_value(row, "location"))
             overlay(name, "transit_to", transit_to)
         elif action == "易主":
             way = str(item.get("方式") or item.get("way") or "").strip()
             backlash = item.get("反噬", item.get("backlash"))
-            if not way or way not in PERSON_ALLEGIANCE_CHANGE_WAYS:
+            legacy_partial = allow_legacy_partial_power and bool(item.get("legacy_partial"))
+            if not way:
+                continue
+            if way not in PERSON_ALLEGIANCE_CHANGE_WAYS and not legacy_partial:
                 continue
             if not isinstance(backlash, dict):
                 continue
@@ -741,10 +770,12 @@ def _pending_person_changes_block_event_gate(
                 continue
             if db.conn.execute("SELECT 1 FROM powers WHERE id=?", (new_power,)).fetchone() is None:
                 continue
+            if row_value(row, "power_id", "ming").strip() == new_power:
+                continue
             transition = resolve_person_transition(
                 cur_status,
                 action,
-                reason_code=str(row["reason_code"] or item.get("reason_code") or ""),
+                reason_code=str(row_value(row, "reason_code") or item.get("reason_code") or ""),
             )
             if transition.startswith("reject:"):
                 continue
@@ -763,16 +794,16 @@ def _pending_person_changes_block_event_gate(
             transition = resolve_person_transition(
                 cur_status,
                 action,
-                reason_code=str(row["reason_code"] or item.get("reason_code") or ""),
+                reason_code=str(row_value(row, "reason_code") or item.get("reason_code") or ""),
                 current_title_kind=current_title_kind(row),
             )
             if transition.startswith("reject:"):
                 continue
-            if str(row["power_id"] or "ming") not in {"", "ming"}:
+            if row_value(row, "power_id", "ming") not in {"", "ming"}:
                 continue
             overlay(name, "status", "active")
             overlay(name, "office", new_office)
-            overlay(name, "office_type", item.get("office_type") or item.get("new_office_type") or row["office_type"])
+            overlay(name, "office_type", item.get("office_type") or item.get("new_office_type") or row_value(row, "office_type"))
             overlay(name, "transit_to", "")
         else:
             continue
@@ -1199,6 +1230,7 @@ def apply_issue_tracker_output(
     llm_config: Any = None,
     content=None,
     pending_person_changes_for_gates: Optional[List[Dict[str, object]]] = None,
+    allow_legacy_partial_power_for_gates: bool = False,
     candidate_event_ids_at_input: Optional[set[str]] = None,
 ) -> Dict[str, object]:
     touched_ids: set = set()
@@ -1384,7 +1416,12 @@ def apply_issue_tracker_output(
                     "reason": "事件当前未进候选池（窗口/前提门/已触发不满足）",
                 })
                 continue
-            if _pending_person_changes_block_event_gate(ev, pending_person_changes_for_gates or [], db):
+            if _pending_person_changes_block_event_gate(
+                ev,
+                pending_person_changes_for_gates or [],
+                db,
+                allow_legacy_partial_power=allow_legacy_partial_power_for_gates,
+            ):
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 被同回合人物变更阻断。")
                 applied_new.append({
                     "title": ev.title,
@@ -2962,6 +2999,7 @@ def apply_score_extraction(
         "cancels": extracted.get("cancels") or [],
     }, llm_config=llm_config, content=content,
         pending_person_changes_for_gates=post_issue_person_changes,
+        allow_legacy_partial_power_for_gates=legacy_person_mode,
         candidate_event_ids_at_input=candidate_event_ids_at_input)
     _apply_normalized_person_changes(post_issue_person_changes, legacy=legacy_person_mode)
 
@@ -3296,7 +3334,11 @@ def apply_score_extraction(
             continue
         try:
             db.update_secret_order_sim_note(
-                real_id, sim_note, year=state.year, period=state.period
+                real_id,
+                sim_note,
+                year=state.year,
+                period=state.period,
+                commit=commit_now,
             )
             print(f"[secret_order] 推演副作用 id={real_id} note={sim_note[:60]!r}")
             applied_secret_orders.append({"order_id": real_id, "sim_note": sim_note})
@@ -3339,7 +3381,7 @@ def apply_score_extraction(
                                           "reason": f"当前状态 {order['status']}，非 pending_review，不予结案"})
             continue
         try:
-            db.close_secret_order(real_id, status, result_text, state.turn)
+            db.close_secret_order(real_id, status, result_text, state.turn, commit=commit_now)
             print(f"[secret_order] 推演结案 id={real_id} status={status} result={result_text[:60]!r}")
             applied_secret_closes.append({"order_id": real_id, "status": status, "result": result_text})
         except Exception as exc:

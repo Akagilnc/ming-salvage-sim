@@ -1496,6 +1496,164 @@ def test_event_pool_pending_rejected_legacy_gate_change_does_not_block(game):
         content.event_by_id.pop(ev.id, None)
 
 
+def test_event_pool_pending_legacy_power_change_blocks_gate(game):
+    """post-merge CMR R8：旧 flat 易主会真实落库，pending 闸门也必须按同一语义预检。"""
+    db, state, content = game
+    issues.bind_content(content)
+    db.conn.execute(
+        "UPDATE characters SET status=?, power_id=? WHERE name=?",
+        ("active", "ming", "袁崇焕"),
+    )
+    if "袁崇焕" in content.characters:
+        ch = content.characters["袁崇焕"]
+        ch.status = "active"
+        ch.power_id = "ming"
+    ev = Event(
+        id="__test_legacy_power_pending__",
+        title="测试·旧易主门",
+        kind="朝议",
+        summary="袁崇焕仍属明时才可触发。",
+        urgency=10,
+        severity=10,
+        credibility=100,
+        interests=[],
+        audiences=[],
+        event_type="situation",
+        trigger_gate={"character.袁崇焕.power_id": "== ming"},
+    )
+    content.seed_events.append(ev)
+    content.event_by_id[ev.id] = ev
+    try:
+        assert any(c.id == ev.id for c in issues.gather_candidate_events(state, db))
+
+        out = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
+                "character_power_changes": [
+                    {"name": "袁崇焕", "new_power": "houjin", "reason": "测试旧易主"}
+                ],
+            },
+            content=content,
+        )
+
+        new_issue = out["issue_summary"]["new_issues"][0]
+        assert new_issue["rejected"] is True
+        assert "候选" in new_issue["reason"]
+        assert db.conn.execute(
+            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
+            (ev.id,),
+        ).fetchone() is None
+        assert db.conn.execute(
+            "SELECT power_id FROM characters WHERE name=?",
+            ("袁崇焕",),
+        ).fetchone()["power_id"] == "houjin"
+    finally:
+        content.seed_events.remove(ev)
+        content.event_by_id.pop(ev.id, None)
+
+
+def test_event_pool_pending_same_power_allegiance_noop_does_not_block_gate(game):
+    """post-merge CMR R8：同势力易主是 no-op，不能先把职名覆盖成身份名分再误阻断。"""
+    db, state, content = game
+    issues.bind_content(content)
+    db.conn.execute(
+        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
+        ("active", "ming", "蓟辽督师", "职名分", "袁崇焕"),
+    )
+    if "袁崇焕" in content.characters:
+        ch = content.characters["袁崇焕"]
+        ch.status = "active"
+        ch.power_id = "ming"
+        ch.office = "蓟辽督师"
+        ch.office_type = "职名分"
+    ev = Event(
+        id="__test_same_power_noop_pending__",
+        title="测试·同势力易主 no-op",
+        kind="朝议",
+        summary="袁崇焕仍为督师时才可触发。",
+        urgency=10,
+        severity=10,
+        credibility=100,
+        interests=[],
+        audiences=[],
+        event_type="situation",
+        trigger_gate={"character.袁崇焕.office": "== 蓟辽督师"},
+    )
+    content.seed_events.append(ev)
+    content.event_by_id[ev.id] = ev
+    try:
+        out = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
+                "人物变更": [
+                    {
+                        "name": "袁崇焕",
+                        "动作": "易主",
+                        "new_power": "ming",
+                        "方式": "主动归附",
+                        "反噬": {},
+                        "reason": "测试同势力 no-op",
+                    }
+                ],
+            },
+            content=content,
+        )
+
+        assert out["issue_summary"]["new_issues"][0]["rejected"] is False
+        assert out["applied_person_changes"][0]["rejected"] is True
+        assert out["applied_person_changes"][0]["category"] == "noop"
+        assert db.conn.execute(
+            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
+            (ev.id,),
+        ).fetchone() is not None
+        assert db.conn.execute(
+            "SELECT office FROM characters WHERE name=?",
+            ("袁崇焕",),
+        ).fetchone()["office"] == "蓟辽督师"
+    finally:
+        content.seed_events.remove(ev)
+        content.event_by_id.pop(ev.id, None)
+
+
+def test_event_pool_pending_person_changes_are_simulated_sequentially(game):
+    """post-merge CMR R8：同一人的 pending 变更必须按顺序模拟，后续拒收项不能复活前序处置。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 6
+    db.conn.execute(
+        "UPDATE characters SET loyalty=?, status=? WHERE name=?",
+        (44, "active", "毛文龙"),
+    )
+    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("active", "袁崇焕"))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}],
+            "人物变更": [
+                {"name": "袁崇焕", "动作": "处置", "status": "dead", "reason": "测试先处死"},
+                {"name": "袁崇焕", "动作": "任命", "office": "兵部尚书", "reason": "测试后任命"},
+            ],
+        },
+        content=content,
+    )
+
+    new_issue = out["issue_summary"]["new_issues"][0]
+    assert new_issue["rejected"] is True
+    assert "候选" in new_issue["reason"]
+    assert not db.has_event_triggered("mao_wenlong")
+    assert db.get_character_status("毛文龙")[0] == "active"
+    assert db.get_character_status("袁崇焕")[0] == "dead"
+    assert out["applied_person_changes"][0]["status"] == "dead"
+    assert out["applied_person_changes"][1]["rejected"] is True
+
+
 def test_issue_tracker_cancel_respects_outer_transaction_rollback(game):
     """post-merge CMR R4：cancels 段不得由 db.cancel_issue 提前提交外层事务。"""
     db, state, _content = game
