@@ -127,6 +127,16 @@ def _apply_issue_buildings(
     return applied
 
 
+def commitment_condition_role(resolve_condition: object) -> Dict[str, str]:
+    text = str(resolve_condition or "").strip()
+    if re.fullmatch(r"character\.[^.]+\.loyalty\s*(?:>=|>)\s*\d+", text):
+        return {
+            "condition_role": "commitment_stop_condition",
+            "condition_note": "人物承诺停止条件；不要按 resolve_condition 达标自动结案，自动完成属于 #136。",
+        }
+    return {}
+
+
 def issue_to_payload(row: sqlite3.Row, recent_advances: List[sqlite3.Row]) -> Dict[str, object]:
     """喂给推演 agent 的事项精简视图：状态、进度、效果、最近一次推进。"""
     keys = row.keys() if hasattr(row, "keys") else []
@@ -152,6 +162,7 @@ def issue_to_payload(row: sqlite3.Row, recent_advances: List[sqlite3.Row]) -> Di
             }
             if recent_advances else None
         ),
+        **commitment_condition_role(resolve_cond),
     }
 
 

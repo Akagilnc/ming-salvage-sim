@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 import sqlite3
 from typing import Callable, Dict, List, Optional
 
@@ -12,7 +11,7 @@ from agno.agent import Agent
 from ming_sim.agents import parse_agent_json, run_agent_stream_text, run_agent_text
 from ming_sim.context import historical_anchor_for_month, victory_status
 from ming_sim.db import GameDB
-from ming_sim.issues import gather_candidate_events, issue_to_payload
+from ming_sim.issues import commitment_condition_role, gather_candidate_events, issue_to_payload
 from ming_sim.models import GameState, loads_effect_dict
 from ming_sim.token_stats import tlog
 
@@ -483,15 +482,6 @@ def _extractor_context_payload(
 ) -> Dict[str, object]:
     active = db.list_active_issues()
 
-    def _condition_role(resolve_condition: object) -> Dict[str, str]:
-        text = str(resolve_condition or "").strip()
-        if re.fullmatch(r"character\.[^.]+\.loyalty\s*(?:>=|>)\s*\d+", text):
-            return {
-                "condition_role": "commitment_stop_condition",
-                "condition_note": "人物承诺停止条件；不要按 resolve_condition 达标自动结案，自动完成属于 #136。",
-            }
-        return {}
-
     def _issue_auto_economy(row) -> List[Dict[str, object]]:
         """该 issue 每回合 ongoing_effects 里的固定经济支出/收入。
         这些由 apply_issue_inertia_and_ongoing 程序自动落账（extractor 结算之后），
@@ -526,7 +516,7 @@ def _extractor_context_payload(
             "cancellable": r["cancellable"],
             "resolve_condition": (r["resolve_condition"] if "resolve_condition" in r.keys() else "") or "(未填)",
             "fail_condition": (r["fail_condition"] if "fail_condition" in r.keys() else "") or "(未填)",
-            **_condition_role(r["resolve_condition"] if "resolve_condition" in r.keys() else ""),
+            **commitment_condition_role(r["resolve_condition"] if "resolve_condition" in r.keys() else ""),
         }
         for r in active
     ]
