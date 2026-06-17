@@ -41,7 +41,9 @@ def _new_army_historically_applied(it: dict) -> bool:
     try:
         int(it["manpower"])
         return True
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, OverflowError):
+        # OverflowError：int(float("inf"/"-inf")) 不在 (TypeError,ValueError) 内（线上 R2
+        # CodeRabbit major）→ inf manpower 历史即崩（致命），判定历史不可活=严格。
         return False
 
 
@@ -3703,7 +3705,10 @@ class GameDB:
                     try:
                         int(value)
                         _maint_strict = False
-                    except (TypeError, ValueError):
+                    except (TypeError, ValueError, OverflowError):
+                        # OverflowError：int(float("inf"/"-inf")) 不在 (TypeError,ValueError) 内
+                        # （线上 R2 CodeRabbit major）→ inf 是 float，按 float 类容忍（_maint_strict
+                        # =False），与原 3700 脏值校验对 float 的 isinstance 容忍一致、不崩结算咽喉。
                         _maint_strict = not isinstance(value, (bool, float))
                     changes.append({
                         "army": row["name"], "field": "维护费",

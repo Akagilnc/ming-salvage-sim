@@ -183,3 +183,30 @@ def test_extractor_write_prompts_no_longer_teach_army_maintenance():
         assert "maintenance_per_turn" not in txt, f"{fname} 仍含 maintenance_per_turn 写端教学"
     src = inspect.getsource(cb.enrich_initiative_effects)
     assert "maintenance_per_turn" not in src, "enrich_initiative_effects 仍教 maintenance_per_turn"
+
+
+# ── 线上 R2(CodeRabbit Major)：int(float('inf')) 抛 OverflowError 不得崩结算咽喉 ──
+
+def test_maintenance_inf_paychange_no_crash_on_issue_path(game):
+    # int(float("inf")) 抛 OverflowError，不在 (TypeError,ValueError) 捕获内 → 维护费=inf 改军
+    # 会崩 issue 结案路。须捕 OverflowError、按 float 类容忍（对齐 _coerce_new_salary_rate 的
+    # 非有限值不 fail-loud 设计：结算咽喉为一个脏字段抛错会崩整月）。
+    import ming_sim.issues as I
+    db, state, _ = game
+    aid = str(db.conn.execute(
+        "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
+    for v in (float("inf"), float("-inf")):
+        I._apply_issue_entities(
+            db, state, {"army_delta": {aid: {"维护费": v}}}, "局势#测试结案")  # 不崩(容忍)
+
+
+def test_new_army_inf_manpower_rejected_not_crash(game):
+    # _new_army_historically_applied 的 int(manpower) 对 inf 抛 OverflowError 漏网会崩建军;
+    # inf manpower 应逐项拒收留痕、不崩(谓词捕 OverflowError → 历史致命=严格)。
+    db, state, _ = game
+    created = db.create_armies_from_extraction(state, [{
+        "id": "inf_army", "name": "无穷营", "owner_power": "ming", "manpower": float("inf"),
+    }])
+    assert created[0].get("rejected"), "inf manpower 应拒建军"
+    assert db.conn.execute(
+        "SELECT id FROM armies WHERE id='inf_army'").fetchone() is None
