@@ -239,7 +239,6 @@ class Army:
     controller: str
     troop_type: str
     manpower: int
-    maintenance_per_turn: int
     supply: int
     morale: int
     training: int

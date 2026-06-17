@@ -461,7 +461,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     # 拨饷诏书走 economy_moves 加钱进国库，下月自动抵旧欠。extractor 禁写 arrears。
     army_rows_raw = db.conn.execute(
         # #44 army_needed 需 manpower/salary_rate/owner_power（应发挂钩兵力派生）
-        "SELECT id, name, manpower, salary_rate, owner_power, maintenance_per_turn, arrears, morale FROM armies"
+        "SELECT id, name, manpower, salary_rate, owner_power, arrears, morale FROM armies"
     ).fetchall()
     if not army_rows_raw:
         raise SystemExit("fiscal_tick: armies 表无数据，中止。")

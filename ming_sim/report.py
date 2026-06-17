@@ -62,8 +62,6 @@ def format_army_changes(changes: List[Dict[str, object]]) -> str:
         elif field == "manpower":
             sign = "+" if int(delta) > 0 else ""
             parts.append(f"{change['army']}{change['label']}{sign}{int(delta)}人（{change['reason']}）")
-        elif field == "maintenance_per_turn":
-            parts.append(f"{change['army']}{change['label']}{format_money_delta(int(delta))}（{change['reason']}）")
         else:
             sign = "+" if int(delta) > 0 else ""
             parts.append(f"{change['army']}{change['label']}{sign}{int(delta)}（{change['reason']}）")

@@ -26,11 +26,14 @@ sqlite3 data/military_flow_probe.db \
 
 sqlite3 -header -column data/military_flow_probe.db "
 SELECT id,name,owner_power,station,commander,troop_type,
-       manpower,maintenance_per_turn,supply,morale,training,equipment,
+       manpower,salary_rate,supply,morale,training,equipment,
        arrears,mobility,loyalty,status
 FROM armies
 WHERE id='guanning' OR name LIKE '%神枢%'
 ORDER BY id;"
+-- #173：维护费列已删，月饷由 army_needed=ceil(manpower×salary_rate/10000)(仅 ming)派生；
+-- 上表用 salary_rate(名义月饷率)配合 manpower 复算 army_needed(=ceil(manpower×salary_rate/10000))，
+-- 作为已删的 maintenance_per_turn 替代口径（salary_rate 是费率、非月饷金额本身）。
 
 sqlite3 -header -column data/military_flow_probe.db "
 SELECT turn,year,period,army_id,field,old_value,new_value,delta,reason
@@ -50,7 +53,7 @@ ORDER BY turn;"
 - `turn_logs=3`，`game_state` 推进到第 4 回合待召见。
 - 三篇 `turn_reports` 都有独立大章 `军事`，位置在普通事件章之后。
 - 只存在一支 `神枢新军`，不得因后续扩编/裁撤重复建军。
-- `army_logs` 能看到：关宁军换统帅；神枢新军 created；神枢新军 +2000、维护费 +1、改兵种、改统帅、调驻地、训练 +8、装备 +5、补给 -5、机动 -5；神枢新军 -3000、维护费 -1；关宁军 -5000、维护费 -1。
+- `army_logs` 能看到：关宁军换统帅；神枢新军 created；神枢新军 +2000、改兵种、改统帅、调驻地、训练 +8、装备 +5、补给 -5、机动 -5；神枢新军 -3000；关宁军 -5000。（#173：维护费列已删，`army_logs` 不再记维护费变化；兵力增减即月饷增减，由 `army_needed` 派生。）
 
 ## 本次实测结果
 
@@ -58,8 +61,9 @@ ORDER BY turn;"
 
 结果：通过。最终状态：
 
-- `guanning`：统帅孙承宗，兵额 67000，月维护费 14，状态 `裁汰空额后整饬、欠饷待发`。
-- `shenshu_new_army`：兵额 7000，月维护费 2，驻 `辽东 / 宁远`，统帅孙承宗，兵种 `火器步兵、炮兵、车营辎重`，状态 `裁撤老弱后驻辽东并整训火器`。
+- `guanning`：统帅孙承宗，兵额 67000，状态 `裁汰空额后整饬、欠饷待发`。
+- `shenshu_new_army`：兵额 7000，驻 `辽东 / 宁远`，统帅孙承宗，兵种 `火器步兵、炮兵、车营辎重`，状态 `裁撤老弱后驻辽东并整训火器`。
+- （#173：维护费列已删，原快照的「月维护费」值已移除；月饷由 `army_needed` 按兵力派生。）
 
 注意：第二回合邸报曾把已存在的神枢新军状态更新写在 `新建军队` 行，但抽取器没有重复建军，仍正确落到 `军队变化`。已在 `season_simulator.md` 加硬约束：`input.armies` 已有军队后续变化只能写 `军队变化`。
 
@@ -88,7 +92,7 @@ FROM characters
 WHERE name='祖大寿';"
 
 sqlite3 -header -column data/dalinghe_defection_probe.db "
-SELECT id,name,owner_power,station,commander,manpower,maintenance_per_turn,status
+SELECT id,name,owner_power,station,commander,manpower,salary_rate,status
 FROM armies
 WHERE id='guanning'
    OR name LIKE '%祖%'
@@ -107,13 +111,13 @@ ORDER BY id;"
 
 - `characters` 中祖大寿 `power_id='houjin'`。
 - `armies` 中出现 `祖大寿降军`，`owner_power='houjin'`，驻地为 `辽东 / 大凌河降营`，统帅为祖大寿。
-- `guanning` 仍为 `owner_power='ming'`，但兵额减少 20000，月维护费减少 4，驻地退到锦州宁远，状态说明大凌河所部投后金。
-- `army_logs` 有 `zu_dashou_defectors created`，同时有 `guanning` 的减员、减维护费、降补给/士气/忠诚、改驻地和改状态记录。
+- `guanning` 仍为 `owner_power='ming'`，但兵额减少 20000（月饷随兵力 `army_needed` 自动减），驻地退到锦州宁远，状态说明大凌河所部投后金。
+- `army_logs` 有 `zu_dashou_defectors created`，同时有 `guanning` 的减员、降补给/士气/忠诚、改驻地和改状态记录。（#173：维护费列已删，不再有减维护费 log。）
 
 实测结果：通过。最终状态：
 
 - `祖大寿`：`power_id=houjin`。
-- `guanning`：`owner_power=ming`，兵额 52000，月维护费 11，驻 `辽东 / 锦州宁远`，状态 `大凌河所部投后金、宁锦余部退守锦州宁远`。
+- `guanning`：`owner_power=ming`，兵额 52000，驻 `辽东 / 锦州宁远`，状态 `大凌河所部投后金、宁锦余部退守锦州宁远`。
 - `zu_dashou_defectors`：`祖大寿降军`，`owner_power=houjin`，兵额 20000，驻 `辽东 / 大凌河降营`，统帅祖大寿，状态 `新降后金、待皇太极改编`。
 
 备注：测试中曾尝试直接把整个 `关宁军 / 宁锦防线` 改为后金，但这会把宁锦余部也错误转走。更合理的盘面表达是“关宁军减员 + 新建后金降军实体”，后续测试按此标准复用。

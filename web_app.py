@@ -94,7 +94,6 @@ _CONDITION_DISPLAY_REPLACEMENTS = [
     ("faction.", "派系："),
     ("class.", "阶级："),
     ("power.", "势力："),
-    ("maintenance_per_turn", "月饷"),
     ("registered_land", "已册田亩"),
     ("hidden_land", "隐田"),
     ("tax_per_turn", "月税"),
