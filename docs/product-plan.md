@@ -121,7 +121,7 @@ OpenAI / DeepSeek 前缀缓存规则：前缀需稳定 + 共同前缀 ≥ 1024 t
 - 钱粮整数（国库、内库，万两）。
 - 0-100 量表：民心、皇威。
 - 地区字段：public_support / unrest / grain_security / gentry_resistance / military_pressure / population / registered_land / hidden_land / tax_quarter。
-- 军队字段：supply / morale / training / equipment / arrears / mobility / loyalty / manpower / maintenance_quarter。
+- 军队字段：supply / morale / training / equipment / arrears / mobility / loyalty / manpower / salary_rate（月饷由 army_needed=ceil(manpower×salary_rate/10000) 派生；#173 维护费列已删）。
 
 ### 简化
 

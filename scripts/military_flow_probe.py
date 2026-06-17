@@ -76,7 +76,7 @@ def _query_snapshot(sess: GameSession) -> dict[str, object]:
         for r in db.conn.execute(
             """
             SELECT id,name,owner_power,station,commander,troop_type,
-                   manpower,maintenance_per_turn,supply,morale,training,equipment,
+                   manpower,supply,morale,training,equipment,
                    arrears,mobility,loyalty,status
             FROM armies
             WHERE id IN ('guanning','shen_shu_new_army')

@@ -484,7 +484,6 @@ class GameDB:
                 controller TEXT NOT NULL,
                 troop_type TEXT NOT NULL,
                 manpower INTEGER NOT NULL,
-                maintenance_per_turn INTEGER NOT NULL,
                 supply INTEGER NOT NULL,
                 morale INTEGER NOT NULL,
                 training INTEGER NOT NULL,
@@ -964,6 +963,14 @@ class GameDB:
         # 误覆盖动态态）；列已存在的后续 load 跳过（army_needed 的 rate<=0 锚定兜底 runtime 漏网）。
         if self.ensure_column("armies", "salary_rate", "REAL NOT NULL DEFAULT 0"):
             self._backfill_salary_rate()
+        # #173：维护费列退役迁移——**必须在每个打开路径跑**。driver 开现存档只走 GameDB.__init__→
+        # init_schema、不走 seed_static_data；若只挂 seed，现存档（probe.db: maintenance INTEGER
+        # NOT NULL 无 default）永不删列 → 删列后建新军 INSERT（已不含该列）崩（cmr drop R1 codex high）。
+        # 现存档此刻维护费列在：先确保 arrears 换算读完维护费（幂等 version gate），再 drop；新档此时
+        # armies 空（CREATE TABLE 已无该列）→ 两步皆 no-op，seed 路再正常建。
+        if self.table_has_rows("armies"):
+            self._migrate_arrears_unit_to_silver(is_fresh_armies_seed=False)
+        self._drop_maintenance_column()
         self.ensure_column("regions", "controlled_by", "TEXT NOT NULL DEFAULT 'ming'")
         # 城市等级 0-5(静态,史实分级,将来供经济/内政)+ 城防大炮门数(城头红夷炮,上限 city_level×8)
         self.ensure_column("regions", "city_level", "INTEGER NOT NULL DEFAULT 0")
@@ -1488,23 +1495,39 @@ class GameDB:
         army_needed 判 rate<=0 → 锚定后才算，旧存档明军若不回填则显示/欠饷口径错（cmr r1 codex high）。
         回填 salary_rate<=0 的明军：
           ① static 军（在 content 且率>0）→ content.armies[id].salary_rate；
-          ② 动态旧军（不在 content）→ 从既有 maintenance_per_turn 反推率 = maint×10000/manpower——
-             保旧档应发量级/欠饷连续（线上 codex P2：直接落锚点会把 5000 兵 maint=20 的军重定价成
-             ceil(5000×1.5/10000)=1 万两、20→1 腐蚀旧档预算）；
-          ③ maint/manpower 不可用 → 边军史实锚点 SALARY_RATE_ANCHOR。
-        只补 <=0 的、不覆盖已设正值（幂等）。"""
-        for r in self.conn.execute(
-            "SELECT id, manpower, maintenance_per_turn FROM armies "
-            "WHERE owner_power='ming' AND salary_rate <= 0"
-        ).fetchall():
+          ② 动态旧军（不在 content）且维护费列仍在 → 从 maintenance_per_turn 反推率
+             = maint×10000/manpower（保旧档应发量级/欠饷连续，线上 codex P2）；
+          ③ 维护费列已删（新档/已删档）或值不可用 → 边军史实锚点 SALARY_RATE_ANCHOR。
+        #173 cmr drop R4（codex medium）：backfill 在 _drop_maintenance_column 之前跑，**直接升级
+        老档**（salary_rate 首次 ADD 时维护费列仍在）须保留②反推保真——drop 后旧 pay 源无可恢复，
+        若一律落锚点会把 5000 兵 maint=20 的军重定价成 ceil(5000×1.5/10000)=1、20→1 腐蚀旧档预算。
+        故用 column-exists gate：列在走②反推，列不在（新档 CREATE 已无该列）走③锚点（SELECT 不读
+        维护费、不崩）。该回填仅 salary_rate 列首次 ADD 时跑一次。只补 <=0 的、不覆盖已设正值（幂等）。"""
+        has_maint = "maintenance_per_turn" in {
+            r["name"] for r in self.conn.execute("PRAGMA table_info(armies)").fetchall()
+        }
+        # 两条完整字面 SQL 二选一（不 f-string 拼列名）：列在时多取 manpower/维护费供②反推。两 query 都
+        # 无外部输入、纯字面常量（Sourcery R1 security：消除 raw-query 字符串拼接的 SQLi 告警面）。
+        if has_maint:
+            rows = self.conn.execute(
+                "SELECT id, manpower, maintenance_per_turn FROM armies "
+                "WHERE owner_power='ming' AND salary_rate <= 0"
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT id FROM armies WHERE owner_power='ming' AND salary_rate <= 0"
+            ).fetchall()
+        for r in rows:
             aid = str(r["id"])
             army = self.content.armies.get(aid)
             if army is not None and army.salary_rate > 0:
-                rate = float(army.salary_rate)
-            else:
+                rate = float(army.salary_rate)                       # ① content 史实率
+            elif has_maint:                                          # ② 直接升级老档：从维护费反推
                 manpower = int(r["manpower"] or 0)
                 maint = float(r["maintenance_per_turn"] or 0)
                 rate = (maint * 10000 / manpower) if (manpower > 0 and maint > 0) else SALARY_RATE_ANCHOR
+            else:                                                    # ③ 列已删/值不可用：锚点
+                rate = SALARY_RATE_ANCHOR
             self.conn.execute("UPDATE armies SET salary_rate=? WHERE id=?", (rate, aid))
 
     def apply_region_cannon(self, state: "GameState", region_id: str, delta: int) -> int:
@@ -1680,9 +1703,9 @@ class GameDB:
                     """
                     INSERT INTO armies
                     (id, name, station, theater, commander, controller, troop_type, manpower,
-                     maintenance_per_turn, supply, morale, training, equipment, arrears,
+                     supply, morale, training, equipment, arrears,
                      mobility, loyalty, firearm_equipment, cannon_equipment, salary_rate, status, owner_power)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         army.id,
@@ -1693,7 +1716,6 @@ class GameDB:
                         army.controller,
                         army.troop_type,
                         army.manpower,
-                        army.maintenance_per_turn,
                         army.supply,
                         army.morale,
                         army.training,
@@ -1752,6 +1774,8 @@ class GameDB:
                     ),
                 )
         self._migrate_arrears_unit_to_silver(is_fresh_armies_seed)
+        # #173：维护费列退役 drop 已上移至 init_schema（每个打开路径都跑，含 driver 开现存档的纯
+        # init_schema 路径，见 cmr drop R1）；此处新档 seed INSERT 后该列本就不存在，无需再 drop。
         self._apply_region_city_levels()  # 新档 region 此时才 INSERT 完，按史实补 city_level
         # 新档罢居/在途 office 污染清洗：init_schema 路径在空表上 no-op（构造在 seed 前），
         # 故 seed 后须再跑一次才对新档生效（决定9/L94 一次性清洗；幂等，老档由 init_schema
@@ -1764,6 +1788,17 @@ class GameDB:
             is_fresh_factions_seed, getattr(self, "_leverage_offset_col_added", False)
         )
         self.conn.commit()
+
+    def _drop_maintenance_column(self) -> None:
+        """#173：物理移除退役的 armies.maintenance_per_turn 列（月饷由 army_needed 按兵力派生）。
+        幂等：列存在才 DROP（SQLite 3.35+ 支持 ALTER TABLE DROP COLUMN，本仓 3.53）。调用点保证排在
+        所有读维护费的迁移之后（见 init_schema：salary_rate backfill + arrears 换算之后）：老档此刻列
+        仍在、迁移已读完，drop 安全；新档/已删档无此列，PRAGMA 查不到 → no-op。"""
+        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(armies)").fetchall()}
+        if "maintenance_per_turn" in cols:
+            self.conn.execute("ALTER TABLE armies DROP COLUMN maintenance_per_turn")
+            self.conn.commit()  # DDL 显式提交，保证 drop 跨打开/环境持久（Gemini PR R3；init_schema
+                                # 末尾另有 commit 兜底，此处显式化事务边界、不依赖后续步骤的提交时机）
 
     def _migrate_arrears_unit_to_silver(self, is_fresh_armies_seed: bool) -> None:
         """一次性迁移：armies.arrears 从 0-100 抽象分换成累计欠饷万两。
@@ -1783,11 +1818,15 @@ class GameDB:
         if cur >= ARREARS_UNIT_VERSION:
             return
         if not is_fresh_armies_seed:
-            # 真老档：换算分数 → 万两
-            self.conn.execute(
-                "UPDATE armies SET arrears = CAST(arrears * maintenance_per_turn / 25.0 AS INTEGER) "
-                "WHERE maintenance_per_turn > 0"
-            )
+            # 真老档：换算分数 → 万两。#173：换算读 maintenance_per_turn，仅在列仍在时跑（调用点排在
+            # _drop_maintenance_column 之前，老档此刻列必在；加 column-exists gate 是防御未来顺序变化/
+            # 已删档误入此路——列没了则跳过换算、只打 version，arrears 保持原值）。
+            cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(armies)").fetchall()}
+            if "maintenance_per_turn" in cols:
+                self.conn.execute(
+                    "UPDATE armies SET arrears = CAST(arrears * maintenance_per_turn / 25.0 AS INTEGER) "
+                    "WHERE maintenance_per_turn > 0"
+                )
         # 无论新老档，都把 version 打上，下次启动直接跳过
         self.conn.execute(
             "INSERT INTO fiscal_config (key, value, kind, note) VALUES "
@@ -3495,10 +3534,8 @@ class GameDB:
                     "controller": row["controller"],
                     "troop_type": row["troop_type"],
                     "manpower": int(row["manpower"]),
-                    # #173：引擎实扣月应发（呈现层「月饷」真源）。maintenance_per_turn 退役、仅留作历史/迁移，
-                    # 不再作月饷呈现（删列=字段去留设计决策，本 slice 留列只改呈现）。
+                    # #173：引擎实扣月应发（呈现层「月饷」唯一真源）。维护费列已删。
                     "army_needed": self._army_pay(row),
-                    "maintenance_per_turn": int(row["maintenance_per_turn"]),
                     "supply": int(row["supply"]),
                     "morale": int(row["morale"]),
                     "training": int(row["training"]),
@@ -3649,8 +3686,6 @@ class GameDB:
                 sign = "+" if int(delta) > 0 else ""
                 if row["field"] == "manpower":
                     parts.append(f"{row['army_name']}{label}{sign}{int(delta)}人（{row['reason']}）")
-                elif row["field"] == "maintenance_per_turn":
-                    parts.append(f"{row['army_name']}{label}{format_money_delta(int(delta))}（{row['reason']}）")
                 else:
                     parts.append(f"{row['army_name']}{label}{sign}{int(delta)}（{row['reason']}）")
         return "；".join(parts) + "。"
@@ -3693,29 +3728,6 @@ class GameDB:
                         # 历史上此案是 print-skip（非 raise）——国策结案路不升级为
                         # 崩月（cmr S2 r1 claude:「维持原行为」当真）。
                         "issue_strict": False,
-                    })
-                    continue
-                if field == "maintenance_per_turn":
-                    # #173 PR2：维护费退役，月饷随兵力 army_needed(salary_rate×兵力)派生。改维护费=改死
-                    # 列，原 silent 落库会让 LLM 误以为调了月饷其实零效果 → 显式拒收留痕，引导改兵力（月饷
-                    # 自动随之变）。维护费列尚在（删 maintenance PR 物理移除），此处只断写端：永不落库改它。
-                    # cmr R1 P2(codex R2)：保留 issue 路对脏值的历史严格度——原 maintenance 落库分支在
-                    # 下方数值脏值校验之后，故非数字串/None 历史走严格 invalid-value（issue_strict=True、
-                    # 结案路 raise），bool/float/int-like 历史容忍。退役后拒因变「退役」，严格度判定不变。
-                    try:
-                        int(value)
-                        _maint_strict = False
-                    except (TypeError, ValueError, OverflowError):
-                        # OverflowError：int(float("inf"/"-inf")) 不在 (TypeError,ValueError) 内
-                        # （线上 R2 CodeRabbit major）→ inf 是 float，按 float 类容忍（_maint_strict
-                        # =False），与原 3700 脏值校验对 float 的 isinstance 容忍一致、不崩结算咽喉。
-                        _maint_strict = not isinstance(value, (bool, float))
-                    changes.append({
-                        "army": row["name"], "field": "维护费",
-                        "rejected": True, "category": "invalid_enum",
-                        "reason": "维护费已退役（月饷随兵力 army_needed 派生）：改月饷请调兵力，勿写维护费",
-                        "item": {"army_id": army_id, "field": field, "value": value},
-                        "issue_strict": _maint_strict,
                     })
                     continue
                 # ADR 0008 决定 1:数值字段的脏叶子值(null/字符串/float/bool)= LLM 脏数据,
@@ -3941,14 +3953,8 @@ class GameDB:
                     "issue_strict": not _new_army_historically_applied(item),
                 })
                 continue
-            # #173 PR2：维护费退役为死列（尚未删，本切片不动 schema），建军缺省 0；只认非负 int，
-            # 其余（bool/float/None/串等非整数脏值）一律兜底 0、不拒整军（死列值无意义，月饷由
-            # army_needed 按兵力派生、不看它）。删 maintenance PR 时连列一并移除。
-            _mt_raw = item.get("maintenance_per_turn")
-            maintenance = (
-                _mt_raw if (isinstance(_mt_raw, int) and not isinstance(_mt_raw, bool) and _mt_raw >= 0)
-                else 0
-            )
+            # #173：maintenance_per_turn 列已删（月饷由 army_needed 按兵力派生）；LLM 若仍塞维护费/
+            # 军费，经 ARMY_FIELD_ALIASES 已无该别名 → 当未知键忽略，不入库、不影响建军。
             # 可选数值字段「在场即须合法」（cmr S2 r1 codex P1）：在场脏值静默走默认
             # = 伪造军备（morale "高"→50、cannon "几门"→0）。None 视为缺省（LLM 习惯
             # 用 null 表「无」,validate_delta_shape 亦容忍 null 叶）；其余非整拒该项。
@@ -4003,7 +4009,6 @@ class GameDB:
                 str(item.get("controller") or commander),
                 str(item.get("troop_type") or ""),
                 max(0, manpower),
-                max(0, maintenance),
                 _score("supply"),
                 _score("morale"),
                 _score("training"),
@@ -4024,9 +4029,9 @@ class GameDB:
                     """
                     INSERT INTO armies
                     (id, name, station, theater, commander, controller, troop_type, manpower,
-                     maintenance_per_turn, supply, morale, training, equipment, arrears,
+                     supply, morale, training, equipment, arrears,
                      mobility, loyalty, firearm_equipment, cannon_equipment, salary_rate, status, owner_power)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     row,
                 )
