@@ -1288,6 +1288,9 @@ def apply_issue_tracker_output(
                 "item": ni, "title": title,
             })
             continue
+        resolve_condition = str(ni.get("resolve_condition") or "").strip()
+        if not resolve_condition:
+            resolve_condition = str(ni.get("stop_condition") or "").strip()
         # insert_issue 不再裹 broad except：代码/DB 异常上抛 → SettlementAbort（ADR 0005 fail-loud），
         # 不再当 WARN 吞（那会半落库 + 丢决策，违 P1 铁律）。
         # 注：字符串字段含孤代理（JSON 解析出的 "\ud800"）会在 SQLite bind 抛 UnicodeEncodeError——
@@ -1315,7 +1318,7 @@ def apply_issue_tracker_output(
             cancel_cost=cancel_cost,
             effect_on_resolve=resolve_eff,
             effect_on_fail=fail_eff,
-            resolve_condition=str(ni.get("resolve_condition") or ni.get("stop_condition") or "")[:300],
+            resolve_condition=resolve_condition[:300],
             fail_condition=str(ni.get("fail_condition") or "")[:300],
         )
         if kind == "initiative":
