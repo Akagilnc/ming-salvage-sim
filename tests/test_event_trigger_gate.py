@@ -1640,6 +1640,73 @@ def test_event_pool_pending_same_power_allegiance_noop_does_not_block_gate(game)
         content.event_by_id.pop(ev.id, None)
 
 
+def test_event_pool_pending_allegiance_backlash_blocks_power_gate(game):
+    """post-merge CMR R11：易主反噬会真实改 power.*，pending 闸门也必须看同回合副作用。"""
+    db, state, content = game
+    issues.bind_content(content)
+    db.conn.execute(
+        "UPDATE powers SET leverage=? WHERE id=?",
+        (80, "houjin"),
+    )
+    db.conn.execute(
+        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
+        ("active", "ming", "蓟辽督师", "职名分", "袁崇焕"),
+    )
+    if "袁崇焕" in content.characters:
+        ch = content.characters["袁崇焕"]
+        ch.status = "active"
+        ch.power_id = "ming"
+        ch.office = "蓟辽督师"
+        ch.office_type = "职名分"
+    ev = Event(
+        id="__test_power_backlash_pending__",
+        title="测试·势力反噬门",
+        kind="朝议",
+        summary="后金威望仍高涨时才可触发。",
+        urgency=10,
+        severity=10,
+        credibility=100,
+        interests=[],
+        audiences=[],
+        event_type="situation",
+        trigger_gate={"power.houjin.leverage": ">=75"},
+    )
+    content.seed_events.append(ev)
+    content.event_by_id[ev.id] = ev
+    try:
+        out = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
+                "人物变更": [
+                    {
+                        "name": "袁崇焕",
+                        "动作": "易主",
+                        "new_power": "houjin",
+                        "方式": "被俘而降",
+                        "反噬": {"houjin": {"leverage": -10}},
+                        "reason": "测试反噬后门不达标",
+                    }
+                ],
+            },
+            content=content,
+        )
+
+        assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+        assert db.conn.execute(
+            "SELECT leverage FROM powers WHERE id=?",
+            ("houjin",),
+        ).fetchone()["leverage"] == 70
+        assert db.conn.execute(
+            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
+            (ev.id,),
+        ).fetchone() is None
+    finally:
+        content.seed_events.remove(ev)
+        content.event_by_id.pop(ev.id, None)
+
+
 def test_event_pool_pending_person_changes_are_simulated_sequentially(game):
     """post-merge CMR R8：同一人的 pending 变更必须按顺序模拟，后续拒收项不能复活前序处置。"""
     db, state, content = game
@@ -1673,6 +1740,55 @@ def test_event_pool_pending_person_changes_are_simulated_sequentially(game):
     assert db.get_character_status("袁崇焕")[0] == "dead"
     assert out["applied_person_changes"][0]["status"] == "dead"
     assert out["applied_person_changes"][1]["rejected"] is True
+
+
+def test_apply_score_extraction_registry_refresh_rolls_back_with_outer_transaction(game):
+    """post-merge CMR R11：外层事务回滚时，任命刷新过的 registry 也要回到旧身份。"""
+    import pytest
+
+    from ming_sim.applier import atomic
+
+    db, state, content = game
+    issues.bind_content(content)
+    db.conn.execute(
+        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
+        ("active", "ming", "内阁首辅", "内阁", "韩爌"),
+    )
+    db.conn.commit()
+    content.characters["韩爌"].status = "active"
+    content.characters["韩爌"].power_id = "ming"
+    content.characters["韩爌"].office = "内阁首辅"
+    content.characters["韩爌"].office_type = "内阁"
+
+    class _OfficeSnapshotRegistry:
+        def __init__(self):
+            self.agents = {"韩爌": "内阁首辅"}
+            self.session_ids = {"韩爌": "minister-韩爌-turn-test"}
+
+        def refresh(self, name):
+            self.agents[name] = content.characters[name].office
+
+    registry = _OfficeSnapshotRegistry()
+
+    with pytest.raises(RuntimeError):
+        with atomic(db):
+            issues.apply_score_extraction(
+                db,
+                state,
+                {"人物变更": [{"name": "韩爌", "动作": "任命", "office": "兵部尚书"}]},
+                content=content,
+                registry=registry,
+            )
+            assert registry.agents["韩爌"] == "兵部尚书"
+            raise RuntimeError("rollback registry probe")
+
+    assert db.conn.execute(
+        "SELECT office FROM characters WHERE name=?",
+        ("韩爌",),
+    ).fetchone()["office"] == "内阁首辅"
+    assert content.characters["韩爌"].office == "内阁首辅"
+    assert registry.agents == {"韩爌": "内阁首辅"}
+    assert registry.session_ids == {"韩爌": "minister-韩爌-turn-test"}
 
 
 def test_event_pool_pending_alias_appointment_blocks_canonical_gate(game):
