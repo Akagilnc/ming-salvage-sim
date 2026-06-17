@@ -5,6 +5,9 @@ seed 情势，历史 `events` 分支只过纯日历窗口 `_event_window_open` �
 年月误触发（毛文龙已安抚/效顺仍被弹出的机制半）。把门接进历史分支：带 gate 的历史事件须达标
 才进候选；无 gate（空 dict）= 纯日历锚定，行为不变。
 """
+import json
+from pathlib import Path
+
 from ming_sim import issues
 from ming_sim.models import Event
 
@@ -248,6 +251,29 @@ def test_character_numeric_gate_supports_comparison(game):
     assert not _gate_passed({"character.毛文龙.loyalty": f">{int(row['loyalty'])}"}, state.metrics, db)
 
 
+def test_character_numeric_gate_supports_aggregation(game):
+    """character.<name>|<name>.<field>.<agg> 与其它 gate 表同样支持聚合。"""
+    from ming_sim.issues import _gate_passed
+    db, state, content = game
+
+    db.conn.execute("UPDATE characters SET loyalty=? WHERE name=?", (40, "毛文龙"))
+    db.conn.execute("UPDATE characters SET loyalty=? WHERE name=?", (80, "袁崇焕"))
+    db.conn.commit()
+
+    assert _gate_passed({"character.毛文龙|袁崇焕.loyalty.avg": ">=60"}, state.metrics, db)
+    assert not _gate_passed({"character.毛文龙|袁崇焕.loyalty.min": ">=60"}, state.metrics, db)
+
+
+def test_character_gate_rejects_malformed_field_before_sql(game):
+    """trigger_gate 字段名必须先过白名单，不能把畸形字段拼进 SQL。"""
+    import pytest
+    from ming_sim.issues import _gate_passed
+    db, state, content = game
+
+    with pytest.raises(ValueError, match="字段无效"):
+        _gate_passed({"character.毛文龙.loyalty;DROP": ">=1"}, state.metrics, db)
+
+
 def test_character_text_gate_supports_equality(game):
     """character.<name>.<field> 文本字段可参与 trigger_gate 相等/不等比较（#201）。"""
     from ming_sim.issues import _gate_passed
@@ -300,6 +326,20 @@ def test_character_text_gate_rejects_numeric_character_field():
     from ming_sim.content import gate_text_key_form_error
 
     assert gate_text_key_form_error("character.毛文龙.loyalty")
+
+
+def test_mao_event_effect_uses_unified_person_change_key():
+    """ADR 0009 后新增事件效果应写统一 人物变更，不再写旧 flat key。"""
+    events_path = Path(__file__).resolve().parents[1] / "content" / "events.json"
+    events = json.loads(events_path.read_text())
+    mao = next(item for item in events if item["id"] == "mao_wenlong")
+
+    effect = mao["effect_on_trigger"]
+    assert "人物变更" in effect
+    assert "character_status_changes" not in effect
+    assert effect["人物变更"] == [
+        {"name": "毛文龙", "动作": "处置", "status": "dead", "reason": "袁崇焕双岛斩帅"}
+    ]
 
 
 def test_mao_wenlong_event_excluded_after_appeasement(game):

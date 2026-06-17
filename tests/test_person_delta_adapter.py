@@ -290,6 +290,16 @@ def test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_d
             "评定 loyalty 须为非零整数增量",
         ),
         (
+            {"name": "毛文龙", "动作": "评定"},
+            "invalid_enum",
+            "评定 loyalty 须为非零整数增量",
+        ),
+        (
+            {"name": "毛文龙", "动作": "评定", "loyalty": None},
+            "invalid_enum",
+            "评定 loyalty 须为非零整数增量",
+        ),
+        (
             {"name": "毛文龙", "动作": "评定", "loyalty": "8"},
             "invalid_enum",
             "评定 loyalty 须为非零整数增量",
