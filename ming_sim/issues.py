@@ -2881,6 +2881,22 @@ def _apply_person_changes(
                 )
                 continue
             requested_new_power = str(item.get("new_power") or "")
+            old_power = str(row["power_id"] or "").strip()
+            if way == "主动归附" and requested_new_power == "ming":
+                backlash_power_ids = {
+                    str(power_id).strip()
+                    for power_id in backlash.keys()
+                    if str(power_id).strip()
+                }
+                if any(power_id != old_power for power_id in backlash_power_ids):
+                    applied.append(
+                        rejected(
+                            item,
+                            f"主动归附反噬只能指向原势力股 {old_power}",
+                            "invalid_transition",
+                        )
+                    )
+                    continue
             new_title = identity_title_for_allegiance(item, requested_new_power)
             if not new_title:
                 applied.append(
@@ -3125,6 +3141,50 @@ def apply_score_extraction(
 
     pre_issue_person_changes, post_issue_person_changes = _split_pre_issue_person_changes(person_changes)
 
+    def _amnesty_backlash_power_ids(changes: List[Dict[str, object]]) -> set[str]:
+        power_ids: set[str] = set()
+        for item in changes:
+            if str(item.get("动作") or "").strip() != "易主":
+                continue
+            if str(item.get("方式") or item.get("way") or "").strip() != "主动归附":
+                continue
+            if str(item.get("new_power") or "").strip() != "ming":
+                continue
+            backlash = item.get("反噬", item.get("backlash"))
+            if not isinstance(backlash, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            if content is not None:
+                from ming_sim.session import _find_existing_minister
+                name = _find_existing_minister(content, name, db) or name
+            row = db.conn.execute(
+                "SELECT status, power_id, reason_code FROM characters WHERE name=?",
+                (name,),
+            ).fetchone()
+            if row is None:
+                continue
+            old_power = str(row["power_id"] or "").strip()
+            if old_power in {"", "ming"}:
+                continue
+            transition = resolve_person_transition(
+                str(row["status"] or "active"),
+                "易主",
+                reason_code=str(row["reason_code"] or item.get("reason_code") or ""),
+            )
+            if transition.startswith("reject:"):
+                continue
+            backlash_power_ids = {
+                str(power_id).strip()
+                for power_id in backlash.keys()
+                if str(power_id).strip()
+            }
+            if any(power_id != old_power for power_id in backlash_power_ids):
+                continue
+            power_ids.update(backlash_power_ids)
+        return power_ids
+
+    amnesty_backlash_power_ids = _amnesty_backlash_power_ids(person_changes)
+
     def _annotate_legacy_person_rejections(results: List[Dict[str, object]]) -> None:
         for result in results:
             if isinstance(result, dict) and result.get("rejected"):
@@ -3247,7 +3307,18 @@ def apply_score_extraction(
     power_updates_raw = extracted.get("power_updates") or {}
     power_changes: List[Dict[str, object]] = []
     if isinstance(power_updates_raw, dict) and power_updates_raw:
-        power_changes = db.apply_power_deltas(state, power_updates_raw, commit=commit_now)
+        power_updates_to_apply = dict(power_updates_raw)
+        for power_id in sorted(set(power_updates_to_apply) & amnesty_backlash_power_ids):
+            raw_changes = power_updates_to_apply.pop(power_id)
+            power_changes.append({
+                "power_id": power_id,
+                "rejected": True,
+                "category": "invalid_transition",
+                "reason": "同一股同一时段已随招安易主反噬削股，拒绝顶层 power_updates 再剿股",
+                "item": {"power_id": power_id, "changes": raw_changes},
+            })
+        if power_updates_to_apply:
+            power_changes.extend(db.apply_power_deltas(state, power_updates_to_apply, commit=commit_now))
 
     _apply_normalized_person_changes(pre_issue_person_changes, legacy=legacy_person_mode)
 

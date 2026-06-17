@@ -1553,7 +1553,7 @@
       "summary": "陕北驿卒出身，若裁驿、饥荒和官军失控共振，可能成为后期流寇核心。",
       "debut_year": 0,
       "debut_month": 0,
-      "power_id": "bandits",
+      "power_id": "bandit_li_zicheng",
       "location": "shaanxi"
     },
     {
@@ -1582,7 +1582,7 @@
       "summary": "陕西边地人物，若乱局扩大，可能成为高机动、高破坏的流寇首领。",
       "debut_year": 0,
       "debut_month": 0,
-      "power_id": "bandits",
+      "power_id": "bandit_zhang_xianzhong",
       "location": "shaanxi"
     },
     {
