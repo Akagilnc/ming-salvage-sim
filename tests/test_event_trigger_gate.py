@@ -395,6 +395,44 @@ def test_mao_wenlong_event_excluded_when_character_already_inactive(game):
     assert not db.has_event_triggered("mao_wenlong")
 
 
+def test_mao_wenlong_event_excluded_when_yuan_dead(game):
+    """#187 ship-pre：袁崇焕已死时，不应发生袁崇焕斩毛文龙。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 6
+    db.conn.execute(
+        "UPDATE characters SET loyalty = ?, status = ? WHERE name = ?",
+        (44, "active", "毛文龙"),
+    )
+    db.conn.execute(
+        "UPDATE characters SET status = ? WHERE name = ?",
+        ("dead", "袁崇焕"),
+    )
+    before_logs = db.conn.execute(
+        "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
+    ).fetchone()[0]
+
+    cands = issues.gather_candidate_events(state, db)
+    assert all(ev.id != "mao_wenlong" for ev in cands)
+
+    out = issues.apply_issue_tracker_output(
+        db,
+        state,
+        {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
+        content=content,
+    )
+
+    assert out["new_issues"][0]["rejected"] is True
+    assert "候选" in out["new_issues"][0]["reason"]
+    assert db.get_character_status("毛文龙")[0] == "active"
+    assert content.characters["毛文龙"].status == "active"
+    assert not db.has_event_triggered("mao_wenlong")
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
+    ).fetchone()[0] == before_logs
+
+
 def test_mao_wenlong_event_pool_duplicate_emit_is_idempotent(game):
     """#203 CMR：同一轮重复 emit 已触发事件时，第二条应拒收留痕而不是 abort。"""
     db, state, content = game
