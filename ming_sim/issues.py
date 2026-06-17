@@ -680,6 +680,12 @@ def _register_runtime_rollback_snapshot(
                     del content.characters[name]
             for name, character in character_objects.items():
                 content.characters[name] = character
+                try:
+                    for attr in list(vars(character)):
+                        if attr not in character_attrs.get(name, {}):
+                            delattr(character, attr)
+                except TypeError:
+                    pass
                 for attr, value in character_attrs.get(name, {}).items():
                     setattr(character, attr, value)
         if registry_agents_snapshot is not None and isinstance(registry_agents, dict):
@@ -692,25 +698,8 @@ def _register_runtime_rollback_snapshot(
     callbacks.append(restore_runtime)
 
 
-def _pending_person_changes_block_event_gate(
-    ev: Event,
-    pending_person_changes: List[Dict[str, object]],
-    db: GameDB,
-    *,
-    allow_legacy_partial_power: bool = False,
-    content: Optional[GameContent] = None,
-) -> bool:
-    """Re-check character status gates against accepted same-turn person changes.
-
-    Status-changing person writes intentionally remain post-issue to preserve settlement
-    ordering, but event_pool must not ignore a same-turn removal of an event actor.
-    """
-    if not pending_person_changes or not ev.trigger_gate:
-        return False
-    pending_fields: Dict[str, Dict[str, str]] = {}
+def _load_pending_gate_shadow_rows(db: GameDB) -> Dict[str, Dict[str, str]]:
     shadow_rows: Dict[str, Dict[str, str]] = {}
-    pending_power_fields: Dict[str, Dict[str, int]] = {}
-    power_shadow_rows: Dict[str, Dict[str, int]] = {}
     for row in db.conn.execute(
         "SELECT name, status, status_reason, reason_code, location, transit_to, "
         "power_id, office, office_type FROM characters"
@@ -725,16 +714,58 @@ def _pending_person_changes_block_event_gate(
             "office": str(row["office"] or ""),
             "office_type": str(row["office_type"] or ""),
         }
+    return shadow_rows
+
+
+def _load_pending_gate_power_shadow_rows(db: GameDB) -> Dict[str, Dict[str, int]]:
+    power_shadow_rows: Dict[str, Dict[str, int]] = {}
     for row in db.conn.execute("SELECT id, leverage, military_strength, supply FROM powers").fetchall():
         power_shadow_rows[str(row["id"])] = {
             "leverage": int(row["leverage"] or 0),
             "military_strength": int(row["military_strength"] or 0),
             "supply": int(row["supply"] or 0),
         }
-    valid_regions = {
+    return power_shadow_rows
+
+
+def _load_pending_gate_valid_regions(db: GameDB) -> set[str]:
+    return {
         str(row["id"])
         for row in db.conn.execute("SELECT id FROM regions").fetchall()
     }
+
+
+def _pending_person_changes_block_event_gate(
+    ev: Event,
+    pending_person_changes: List[Dict[str, object]],
+    db: GameDB,
+    *,
+    allow_legacy_partial_power: bool = False,
+    content: Optional[GameContent] = None,
+    shadow_rows: Optional[Dict[str, Dict[str, str]]] = None,
+    power_shadow_rows: Optional[Dict[str, Dict[str, int]]] = None,
+    valid_regions: Optional[set[str]] = None,
+) -> bool:
+    """Re-check character status gates against accepted same-turn person changes.
+
+    Status-changing person writes intentionally remain post-issue to preserve settlement
+    ordering, but event_pool must not ignore a same-turn removal of an event actor.
+    """
+    if not pending_person_changes or not ev.trigger_gate:
+        return False
+    pending_fields: Dict[str, Dict[str, str]] = {}
+    pending_power_fields: Dict[str, Dict[str, int]] = {}
+    shadow_rows = (
+        _load_pending_gate_shadow_rows(db)
+        if shadow_rows is None
+        else {name: dict(row) for name, row in shadow_rows.items()}
+    )
+    power_shadow_rows = (
+        _load_pending_gate_power_shadow_rows(db)
+        if power_shadow_rows is None
+        else {power_id: dict(row) for power_id, row in power_shadow_rows.items()}
+    )
+    valid_regions = _load_pending_gate_valid_regions(db) if valid_regions is None else set(valid_regions)
 
     def row_value(row: Dict[str, str], field: str, default: str = "") -> str:
         return str(row.get(field) or default)
@@ -1454,6 +1485,17 @@ def apply_issue_tracker_output(
     consumed_event_ids: set[str] = set()
     current_candidate_event_ids: set[str] = set()
     candidates_dirty = True
+    shared_shadow_rows: Optional[Dict[str, Dict[str, str]]] = None
+    shared_power_shadow_rows: Optional[Dict[str, Dict[str, int]]] = None
+    shared_valid_regions: Optional[set[str]] = None
+    has_event_pool_new_issue = any(
+        isinstance(item, dict) and str(item.get("origin_kind") or "").lower() == "event_pool"
+        for item in (tracker_output.get("new_issues", []) or [])
+    )
+    if pending_person_changes_for_gates and has_event_pool_new_issue:
+        shared_shadow_rows = _load_pending_gate_shadow_rows(db)
+        shared_power_shadow_rows = _load_pending_gate_power_shadow_rows(db)
+        shared_valid_regions = _load_pending_gate_valid_regions(db)
 
     # 1) advances（ADR 0008 决定1：LLM 脏数据逐项拒收留痕，不裸 continue 静默丢；db.advance_issue
     #    的代码/DB 异常上抛 SettlementAbort，同 close_issues / new_issues 段，#63）
@@ -1634,6 +1676,9 @@ def apply_issue_tracker_output(
                 db,
                 allow_legacy_partial_power=allow_legacy_partial_power_for_gates,
                 content=runtime_content,
+                shadow_rows=shared_shadow_rows,
+                power_shadow_rows=shared_power_shadow_rows,
+                valid_regions=shared_valid_regions,
             ):
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 被同回合人物变更阻断。")
                 applied_new.append({
@@ -1839,7 +1884,7 @@ def apply_issue_tracker_output(
             reason == "resolved"
             and chk is not None
             and chk["status"] == "active"
-            and commitment_condition_role(chk["resolve_condition"]).get("condition_role")
+            and commitment_condition_role(chk["resolve_condition"] or "").get("condition_role")
             == "commitment_stop_condition"
         ):
             applied_closes.append({
