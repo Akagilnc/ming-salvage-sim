@@ -12,6 +12,7 @@ active id 静默报成功（cmr r1 codex 抓出，#14 silent-success）。本组
 from __future__ import annotations
 
 from driver import run_settle
+from ming_sim import issues
 
 
 def _rejection_rows(db, turn, section):
@@ -126,6 +127,51 @@ def test_update_valid_active_order_applies_no_reject(game):
 
     assert _rejection_rows(db, turn, "secret_order_updates") == []
     assert "推演副作用XYZ" in (db.get_secret_order(oid)["sim_note"] or "")
+
+
+def test_apply_score_extraction_secret_order_update_respects_outer_transaction_rollback(game):
+    """post-merge CMR R8：secret_order_updates 不得绕过外层事务硬提交。"""
+    db, state, content = game
+    oid = db.create_secret_order(state, "测试密令官R8", "测试密令", "测试内容", [], deadline_months=1)
+    db.conn.commit()
+
+    db.conn.execute("BEGIN")
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {"secret_order_updates": [{"order_id": oid, "sim_note": "测试密令副作用R8"}]},
+        content=content,
+    )
+    assert out["secret_order_updates"][0]["order_id"] == oid
+    db.conn.rollback()
+
+    row = db.get_secret_order(oid)
+    assert row is not None
+    assert "测试密令副作用R8" not in (row["sim_note"] or "")
+
+
+def test_apply_score_extraction_secret_order_close_respects_outer_transaction_rollback(game):
+    """post-merge CMR R8：secret_order_closes 不得绕过外层事务硬提交。"""
+    db, state, content = game
+    oid = db.create_secret_order(state, "测试密令官R8", "测试结案密令", "测试内容", [], deadline_months=1)
+    db.conn.execute("UPDATE secret_orders SET status='pending_review' WHERE id=?", (oid,))
+    db.conn.commit()
+
+    db.conn.execute("BEGIN")
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {"secret_order_closes": [{"order_id": oid, "status": "done", "result": "测试密令结案R8"}]},
+        content=content,
+    )
+    assert out["secret_order_closes"][0]["order_id"] == oid
+    db.conn.rollback()
+
+    row = db.get_secret_order(oid)
+    assert row is not None
+    assert row["status"] == "pending_review"
+    assert "测试密令结案R8" not in (row["result"] or "")
+    assert row["turn_closed"] is None
 
 
 def test_oversized_order_id_rejected_not_crash(game):

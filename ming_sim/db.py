@@ -6674,7 +6674,15 @@ class GameDB:
         pending = self.list_secret_orders(status="pending_review", minister_name=minister_name)
         return active + pending
 
-    def close_secret_order(self, order_id: int, status: str, result: str, turn_closed: int) -> None:
+    def close_secret_order(
+        self,
+        order_id: int,
+        status: str,
+        result: str,
+        turn_closed: int,
+        *,
+        commit: bool = True,
+    ) -> None:
         self.conn.execute(
             """
             UPDATE secret_orders
@@ -6683,7 +6691,8 @@ class GameDB:
             """,
             (status, result, turn_closed, int(order_id)),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         tlog(f"[secret_order] close id={order_id} status={status}")
 
     def submit_secret_order_for_review(self, order_id: int, claim: str, year: int, period: int) -> bool:
@@ -6727,6 +6736,7 @@ class GameDB:
     def _append_secret_order_line(
         self, order_id: int, column: str, note: str, year: int, period: int,
         reject_if_same_period: bool = False,
+        commit: bool = True,
     ) -> bool:
         """把一条带年月戳的进展/副作用追加进密令的 result/sim_note，存成历史时间线。
         reject_if_same_period=True 时，本年月已有行则拒写（返回 False，用于一回合一步）；
@@ -6754,26 +6764,45 @@ class GameDB:
             f"UPDATE secret_orders SET {column} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             ("\n".join(lines), int(order_id)),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return True
 
     def update_secret_order_progress(
-        self, order_id: int, progress_note: str, year: int = 0, period: int = 0
+        self,
+        order_id: int,
+        progress_note: str,
+        year: int = 0,
+        period: int = 0,
+        *,
+        commit: bool = True,
     ) -> bool:
         """承办人推进一步：按年月追加进 result 历史时间线，不改 status。
         同月再报则替换当月行（修改最新进度，不叠加多条）。"""
         ok = self._append_secret_order_line(
-            order_id, "result", progress_note, year, period, reject_if_same_period=False
+            order_id,
+            "result",
+            progress_note,
+            year,
+            period,
+            reject_if_same_period=False,
+            commit=commit,
         )
         tlog(f"[secret_order] progress id={order_id} ok={ok} note={progress_note[:40]!r}")
         return ok
 
     def update_secret_order_sim_note(
-        self, order_id: int, sim_note: str, year: int = 0, period: int = 0
+        self,
+        order_id: int,
+        sim_note: str,
+        year: int = 0,
+        period: int = 0,
+        *,
+        commit: bool = True,
     ) -> None:
         """推演写密令副作用（泄漏/反弹等），按年月追加进 sim_note 历史时间线，
         不动 result/status。同月再写替换（推演每月一次）。与承办人进展分列。"""
-        self._append_secret_order_line(order_id, "sim_note", sim_note, year, period)
+        self._append_secret_order_line(order_id, "sim_note", sim_note, year, period, commit=commit)
         tlog(f"[secret_order] sim_note id={order_id} note={sim_note[:40]!r}")
 
     def rush_secret_order(
