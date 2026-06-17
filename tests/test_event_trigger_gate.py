@@ -577,6 +577,33 @@ def test_huabei_plague_auto_triggers_with_deterministic_core_effect(game):
     assert after["unrest"] == before["unrest"] + 6
 
 
+def test_historical_auto_trigger_core_effect_is_applied_once(game):
+    """#192：确定性核心事实重进不应二次扣数，event_triggers 是硬幂等门。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1633
+    state.period = 7
+
+    first = issues.auto_trigger_seed_issues(state, db)
+    after_first = db.conn.execute(
+        "SELECT population, unrest FROM regions WHERE id=?",
+        ("shanxi",),
+    ).fetchone()
+    second = issues.auto_trigger_seed_issues(state, db)
+    after_second = db.conn.execute(
+        "SELECT population, unrest FROM regions WHERE id=?",
+        ("shanxi",),
+    ).fetchone()
+
+    assert any(item["id"] == "huabei_plague" for item in first)
+    assert all(item["id"] != "huabei_plague" for item in second)
+    assert dict(after_second) == dict(after_first)
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM event_triggers WHERE event_id=?",
+        ("huabei_plague",),
+    ).fetchone()[0] == 1
+
+
 def test_huabei_plague_keeps_soft_degree_axis_as_situation_issue(game):
     """#192：天灾核心事实硬落后，蔓延/赈疫程度轴仍留 active issue 给软判推进。"""
     db, state, content = game
@@ -598,6 +625,30 @@ def test_huabei_plague_keeps_soft_degree_axis_as_situation_issue(game):
         "origin_kind": "event_pool",
         "origin_ref": "huabei_plague",
     }
+
+
+def test_historical_situation_auto_trigger_rolls_back_soft_issue_when_core_effect_fails(game, monkeypatch):
+    """CMR：核心事实落库失败时，不能留下已建软 issue 但未标 trigger 的半状态。"""
+    import pytest
+
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1633
+    state.period = 7
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("boom after issue insert")
+
+    monkeypatch.setattr(issues, "_apply_issue_entities", boom)
+
+    with pytest.raises(RuntimeError, match="boom after issue insert"):
+        issues.auto_trigger_seed_issues(state, db)
+
+    assert db.conn.execute(
+        "SELECT 1 FROM issues WHERE origin_kind=? AND origin_ref=?",
+        ("event_pool", "huabei_plague"),
+    ).fetchone() is None
+    assert not db.has_event_triggered("huabei_plague")
 
 
 def test_jingshi_plague_auto_triggers_and_weakens_capital_garrison(game):
@@ -645,6 +696,61 @@ def test_huangtaiji_chengdi_auto_triggers_and_renames_houjin(game):
     assert "大清" in row["aliases"]
     assert "称帝" in row["status"]
     assert row["last_action"] == "皇太极称帝改国号大清"
+
+
+def test_huangtaiji_chengdi_keeps_diplomatic_response_axis_as_situation_issue(game):
+    """#192：称帝核心事实硬落后，承不承认伪号/联蒙抗清仍要留给软判推进。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1636
+    state.period = 4
+
+    triggered = issues.auto_trigger_seed_issues(state, db)
+
+    item = next(entry for entry in triggered if entry["id"] == "huangtaiji_chengdi")
+    assert item["issue_id"] > 0
+    issue = db.conn.execute(
+        "SELECT status, kind, origin_kind, origin_ref FROM issues WHERE id=?",
+        (item["issue_id"],),
+    ).fetchone()
+    assert dict(issue) == {
+        "status": "active",
+        "kind": "situation",
+        "origin_kind": "event_pool",
+        "origin_ref": "huangtaiji_chengdi",
+    }
+
+
+def test_historical_power_rename_tick_reads_huangtaiji_event_effect(game):
+    """CMR：月初展示名 tick 也读事件 effect，避免同一称帝事实维护两份文案。"""
+    db, state, content = game
+    ev = content.event_by_id["huangtaiji_chengdi"]
+    rename = ev.effect_on_trigger["power_renames"][0]
+    rename.update(
+        {
+            "new_name": "测试清",
+            "aliases": "后金，测试清",
+            "reason": "测试称帝事实",
+            "status": "测试称帝状态",
+            "last_action": "测试称帝行动",
+        }
+    )
+    state.year = 1636
+    state.period = 4
+
+    changed = db.apply_historical_power_renames(state)
+
+    assert changed and changed[0]["new_name"] == "测试清"
+    row = db.conn.execute(
+        "SELECT name, aliases, status, last_action FROM powers WHERE id=?",
+        ("houjin",),
+    ).fetchone()
+    assert dict(row) == {
+        "name": "测试清",
+        "aliases": "后金，测试清",
+        "status": "测试称帝状态",
+        "last_action": "测试称帝行动",
+    }
 
 
 def test_mao_wenlong_event_pool_uses_candidate_snapshot_before_advances(game):

@@ -133,7 +133,7 @@
       ]
     },
     "precondition": "触发门：无条件/近天定。理由：皇太极称帝改国号是后金内部核心事实，不由明廷取消；明廷承不承认伪号、联蒙或保朝鲜的外交与意识形态响应仍走软判。",
-    "event_type": "node"
+    "event_type": "situation"
   },
   {
     "id": "wuyin_lubian",

@@ -10,6 +10,7 @@ import re
 import sqlite3
 from typing import Any, Dict, List, Optional
 
+from ming_sim.applier import atomic
 from ming_sim.constants import (
     TURN_UNIT, REGION_SCORE_FIELDS, REGION_QUANTITY_FIELDS, REGION_TEXT_FIELDS,
     ARMY_SCORE_FIELDS, ARMY_QUANTITY_FIELDS, ARMY_TEXT_FIELDS, FISCAL_SCORE_FIELDS,
@@ -456,6 +457,12 @@ def auto_trigger_seed_issues(state: GameState, db: GameDB) -> List[Dict[str, obj
     已触发过返回 None 自动跳过。返回本回合硬触发的清单（供日志/邸报告知）。
 
     放在结算链 simulator 之前调用，使硬立的 issue 当回合即进盘面、被邸报叙述。"""
+    with atomic(db):
+        return _auto_trigger_seed_issues_in_atomic(state, db)
+
+
+def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Dict[str, object]]:
+    """auto_trigger_seed_issues 的事务体；由外层函数或 pre_settle 嵌套事务统一提交/回滚。"""
     c = _ctx()
     triggered: List[Dict[str, object]] = []
     for ev in [*c.events, *c.seed_events]:

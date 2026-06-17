@@ -2448,17 +2448,30 @@ class GameDB:
         """月初 tick：历史国号/称谓变化。稳定 id 不变，只改展示名与别名。"""
         changes: List[Dict[str, object]] = []
         if state.year > 1636 or (state.year == 1636 and state.period >= 4):
-            changed = self.apply_power_rename(
-                state,
-                "houjin",
-                "大清",
-                aliases="后金，清，大清",
-                reason="皇太极称帝，改国号大清",
-                status="皇太极称帝改国号大清，建元崇德，整合满蒙汉诸部南向争明",
-                last_action="皇太极称帝改国号大清",
-            )
-            if changed:
-                changes.append(changed)
+            ev = self.content.event_by_id.get("huangtaiji_chengdi")
+            if ev is None or not isinstance(ev.effect_on_trigger, dict):
+                raise ValueError("历史改国号缺少事件真源 huangtaiji_chengdi.effect_on_trigger")
+            power_renames = ev.effect_on_trigger.get("power_renames")
+            if not isinstance(power_renames, list):
+                raise ValueError("历史改国号缺少 power_renames 列表")
+            for idx, item in enumerate(power_renames):
+                if not isinstance(item, dict):
+                    raise ValueError(f"历史改国号 power_renames[{idx}] 非 dict")
+                power_id = str(item.get("power_id") or "").strip()
+                new_name = str(item.get("new_name") or "").strip()
+                if not power_id or not new_name:
+                    raise ValueError(f"历史改国号 power_renames[{idx}] 缺少 power_id/new_name")
+                changed = self.apply_power_rename(
+                    state,
+                    power_id,
+                    new_name,
+                    aliases=str(item.get("aliases") or ""),
+                    reason=str(item.get("reason") or ""),
+                    status=str(item.get("status") or ""),
+                    last_action=str(item.get("last_action") or ""),
+                )
+                if changed:
+                    changes.append(changed)
         return changes
 
     # ── 后宫调教 ──────────────────────────────────────────────────────────
