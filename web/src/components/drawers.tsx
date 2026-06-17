@@ -272,8 +272,8 @@ export function ArmyDrawer({
   const filtered = q ? mingArmies.filter((a) => a.name.includes(q) || a.station.includes(q) || a.commander.includes(q)) : mingArmies;
   const selected = mingArmies.find((a) => a.id === selectedArmyId) || null;
   const arrearsTone = (army: Army) => {
-    const maint = army.maintenance_per_turn || 1;
-    const months = army.arrears / maint;
+    const pay = army.army_needed; // #173 欠饷月数按引擎实扣月应发；0 饷军不造假分母（同后端 pay>0 判）
+    const months = pay > 0 ? army.arrears / pay : 0;
     if (months >= 3) return "danger";
     if (months >= 1) return "warn";
     return "";
@@ -308,13 +308,15 @@ export function ArmyDrawer({
             <tbody>
               <tr><th>驻地</th><td>{selected.station}</td><th>战区</th><td>{selected.theater}</td></tr>
               <tr><th>统帅</th><td>{selected.commander || "—"}</td><th>兵种</th><td>{selected.troop_type}</td></tr>
-              <tr><th>兵力</th><td>{selected.manpower}</td><th>月饷</th><td>{selected.maintenance_per_turn}万</td></tr>
+              <tr><th>兵力</th><td>{selected.manpower}</td><th>月饷</th><td>{selected.army_needed}万</td></tr>
               <tr><th>士气</th><td>{selected.morale}</td><th>操练</th><td>{selected.training}</td></tr>
               <tr><th>军械</th><td>{selected.equipment}</td><th>补给</th><td>{selected.supply}</td></tr>
               <tr><th>机动</th><td>{selected.mobility}</td><th>忠诚</th><td>{selected.loyalty}</td></tr>
               <tr><th>欠饷</th><td colSpan={3}>
                 {selected.arrears > 0
-                  ? `${selected.arrears}万两（≈${(selected.arrears / (selected.maintenance_per_turn || 1)).toFixed(1)}月）`
+                  ? (selected.army_needed > 0
+                      ? `${selected.arrears}万两（≈${(selected.arrears / selected.army_needed).toFixed(1)}月）`
+                      : `${selected.arrears}万两`)
                   : "无欠饷"}
               </td></tr>
               <tr><th>状态</th><td colSpan={3}>{selected.status}</td></tr>

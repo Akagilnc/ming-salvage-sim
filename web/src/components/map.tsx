@@ -816,9 +816,9 @@ export function NodeIntel({ node }: { node: MapNode }) {
           </thead>
           <tbody>
             {node.armies.map((army) => {
-              const maint = army.maintenance_per_turn || 0;
+              const pay = army.army_needed || 0; // #173 月饷/欠饷月数按引擎实扣月应发
               const arr = army.arrears || 0;
-              const months = maint > 0 && arr > 0 ? (arr / maint) : 0;
+              const months = pay > 0 && arr > 0 ? (arr / pay) : 0;
               const arrText = arr > 0
                 ? (months > 0 ? `${arr}万两（≈${months.toFixed(1)}月）` : `${arr}万两`)
                 : '—';
@@ -827,7 +827,7 @@ export function NodeIntel({ node }: { node: MapNode }) {
                   <td>{army.name}</td>
                   <td>{army.troop_type}</td>
                   <td>{army.manpower}</td>
-                  <td>{monthlyAmount(maint)}</td>
+                  <td>{pay}</td>
                   <td>{army.morale}</td>
                   <td>{arrText}</td>
                 </tr>
