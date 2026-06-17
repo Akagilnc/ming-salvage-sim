@@ -393,6 +393,36 @@ def test_mao_wenlong_event_trigger_lands_character_status(game):
     ).fetchone()[0] == before_logs + 1
 
 
+def test_mao_wenlong_event_trigger_respects_outer_transaction_rollback(game):
+    """post-merge CMR：event trigger 写入不得提前提交外层普通事务。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 6
+    db.conn.execute("UPDATE characters SET loyalty = ?, status = ? WHERE name = ?", (44, "active", "毛文龙"))
+    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "袁崇焕"))
+    db.conn.commit()
+    before_logs = db.conn.execute(
+        "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
+    ).fetchone()[0]
+
+    db.conn.execute("BEGIN")
+    out = issues.apply_issue_tracker_output(
+        db,
+        state,
+        {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
+        content=content,
+    )
+    assert out["new_issues"][0]["rejected"] is False
+    db.conn.rollback()
+
+    assert db.get_character_status("毛文龙")[0] == "active"
+    assert not db.has_event_triggered("mao_wenlong")
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
+    ).fetchone()[0] == before_logs
+
+
 def test_mao_wenlong_event_pool_rechecks_gate_before_effect(game):
     """#203 CMR：落库端也必须重验 trigger_gate，不能信任 LLM 伪造的候选 id。"""
     db, state, content = game
@@ -417,6 +447,83 @@ def test_mao_wenlong_event_pool_rechecks_gate_before_effect(game):
     assert db.conn.execute(
         "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
     ).fetchone()[0] == before_logs
+
+
+def test_mao_wenlong_event_pool_uses_candidate_snapshot_before_advances(game):
+    """post-merge CMR：同一 payload 的 advances 不能先打开 event_pool gate 再立刻触发。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.metrics["民心"] = 20
+    issue_id = db.insert_issue(
+        state,
+        kind="situation",
+        title="测试·候选池快照推进",
+        origin_kind="decree",
+        bar_value=40,
+        stage_text="尚未触发",
+        effect_on_resolve={"metrics": {"民心": 1}},
+    )
+    ev = Event(
+        id="__test_candidate_snapshot__",
+        title="测试·候选池快照",
+        kind="朝议",
+        summary="只用于验证候选池快照。",
+        urgency=10,
+        severity=10,
+        credibility=100,
+        interests=[],
+        audiences=[],
+        event_type="node",
+        trigger_gate={"民心": "<=10"},
+    )
+    content.seed_events.append(ev)
+    content.event_by_id[ev.id] = ev
+    try:
+        assert all(c.id != ev.id for c in issues.gather_candidate_events(state, db))
+
+        out = issues.apply_issue_tracker_output(
+            db,
+            state,
+            {
+                "advances": [{"issue_id": issue_id, "delta_bar": 1, "metric_delta": {"民心": -15}}],
+                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
+            },
+            content=content,
+        )
+
+        assert state.metrics["民心"] == 5
+        assert out["new_issues"][0]["rejected"] is True
+        assert "候选" in out["new_issues"][0]["reason"]
+        assert not db.has_event_triggered(ev.id)
+    finally:
+        content.seed_events.remove(ev)
+        content.event_by_id.pop(ev.id, None)
+
+
+def test_mao_wenlong_event_pool_rechecks_after_same_turn_loyalty_assessment(game):
+    """post-merge CMR：同回合人物评定应先影响 event_pool 前提门。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 6
+    db.conn.execute("UPDATE characters SET loyalty = ?, status = ? WHERE name = ?", (60, "active", "毛文龙"))
+    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "袁崇焕"))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}],
+            "人物变更": [{"name": "毛文龙", "动作": "评定", "loyalty": 10, "reason": "同回合安抚见效"}],
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert "候选" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert not db.has_event_triggered("mao_wenlong")
+    assert db.get_character_status("毛文龙")[0] == "active"
+    assert db.conn.execute("SELECT loyalty FROM characters WHERE name=?", ("毛文龙",)).fetchone()["loyalty"] == 70
 
 
 def test_mao_wenlong_event_excluded_when_character_already_inactive(game):
