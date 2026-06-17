@@ -46,6 +46,9 @@ hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`�
 
 ## 开发流程（想法 → merge，2026-06-17 定，本项目试行）
 
+> **完整流程文档（Matt Pocock 整套，验证中）→ [docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md)**（triage 状态机 / agent brief / 追踪模型 / 切片并行全在那）。
+> **标签 Matt 纯化（2026-06-17）**：全仓删掉 `priority/*` `area/*` `type/*` 那套，**只剩 7 个** —— `bug`/`enhancement`（category）+ `needs-triage`/`needs-info`/`ready-for-agent`/`ready-for-human`/`wontfix`（state）。
+
 **贯穿原则**：持久件做小做单一（一条 ADR 一个不可逆决策、一个 issue 一个切片）；可逆细节不提前设计、留 `/tdd` 现场长（「最后责任时刻」：不可逆→设计时定，可逆→写码时长；设计时「忽然难受」=越线信号）。跨 session 靠文档 + 你本人 re-seed，**handoff ≠ 交接**（同一个你驱动）；session 边界画在「上下文满/脏」处、不钉死在某步，小功能可一个 session 连做。
 
 **流水线 + skill**：
@@ -79,7 +82,7 @@ GitHub Issues（`Akagilnc/ming-salvage-sim`，已设为本 clone 的 gh 默认�
 
 ### Triage labels
 
-五个 triage 角色用默认字符串（`needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`）。See `docs/agents/triage-labels.md`.
+**Matt 纯化（2026-06-17）**：全仓只剩 7 个标签——`bug` / `enhancement`（category）+ 五态 `needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`（state）。旧 `priority/area/type` 已删。See `docs/agents/triage-labels.md` + `docs/DEV_WORKFLOW.md`.
 
 ### Domain docs
 
