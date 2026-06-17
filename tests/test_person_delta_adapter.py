@@ -271,6 +271,146 @@ def test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_d
     ]
 
 
+@pytest.mark.parametrize(
+    ("item", "category", "reason"),
+    [
+        (
+            {"name": "不存在的人", "动作": "评定", "loyalty": 5},
+            "hallucinated_id",
+            "非既有人物",
+        ),
+        (
+            {"name": "毛文龙", "动作": "评定", "loyalty": 0},
+            "invalid_enum",
+            "评定 loyalty 须为非零整数增量",
+        ),
+        (
+            {"name": "毛文龙", "动作": "评定", "loyalty": True},
+            "invalid_enum",
+            "评定 loyalty 须为非零整数增量",
+        ),
+        (
+            {"name": "毛文龙", "动作": "评定", "loyalty": "8"},
+            "invalid_enum",
+            "评定 loyalty 须为非零整数增量",
+        ),
+    ],
+)
+def test_apply_score_extraction_rejects_invalid_loyalty_assessment(game, item, category, reason):
+    db, state, content = game
+    before = db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name='毛文龙'"
+    ).fetchone()["loyalty"]
+
+    applied = issues.apply_score_extraction(
+        db,
+        state,
+        {"人物变更": [item]},
+        content=content,
+    )
+
+    after = db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name='毛文龙'"
+    ).fetchone()["loyalty"]
+    assert after == before
+    assert applied["applied_person_changes"] == [
+        {
+            "name": item["name"],
+            "动作": "评定",
+            "rejected": True,
+            "reason": reason,
+            "category": category,
+            "item": item,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("start", "delta", "expected"),
+    [
+        (98, 8, 100),
+        (2, -8, 0),
+    ],
+)
+def test_apply_score_extraction_clamps_loyalty_assessment_delta(game, start, delta, expected):
+    db, state, content = game
+    db.conn.execute("UPDATE characters SET loyalty=? WHERE name='毛文龙'", (start,))
+    db.conn.commit()
+    content.characters["毛文龙"].loyalty = start
+
+    applied = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "人物变更": [
+                {
+                    "name": "毛文龙",
+                    "动作": "评定",
+                    "loyalty": delta,
+                    "reason": "边界软判",
+                }
+            ]
+        },
+        content=content,
+    )
+
+    after = db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name='毛文龙'"
+    ).fetchone()["loyalty"]
+    assert after == expected
+    assert content.characters["毛文龙"].loyalty == expected
+    assert applied["applied_person_changes"] == [
+        {
+            "name": "毛文龙",
+            "动作": "评定",
+            "loyalty": delta,
+            "old_loyalty": start,
+            "new_loyalty": expected,
+            "reason": "边界软判",
+        }
+    ]
+
+
+def test_apply_score_extraction_one_time_grant_and_assessment_do_not_create_commitment_issue(game):
+    db, state, content = game
+    before_issues = db.conn.execute("SELECT COUNT(*) AS n FROM issues").fetchone()["n"]
+    before_loyalty = db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name='毛文龙'"
+    ).fetchone()["loyalty"]
+
+    applied = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "economy_moves": [
+                {
+                    "target": "辽饷",
+                    "amount": 200,
+                    "reason": "一次性抚恤东江镇",
+                }
+            ],
+            "new_issues": [],
+            "人物变更": [
+                {
+                    "name": "毛文龙",
+                    "动作": "评定",
+                    "loyalty": 3,
+                    "reason": "一次性赏赐后略有感念",
+                }
+            ],
+        },
+        content=content,
+    )
+
+    after_issues = db.conn.execute("SELECT COUNT(*) AS n FROM issues").fetchone()["n"]
+    after_loyalty = db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name='毛文龙'"
+    ).fetchone()["loyalty"]
+    assert after_issues == before_issues
+    assert applied["issue_summary"]["new_issues"] == []
+    assert after_loyalty == min(100, before_loyalty + 3)
+
+
 def test_apply_score_extraction_rejects_malformed_power_move_backlash_before_writing(game):
     db, state, content = game
     name = active_ming_character(db, content)
