@@ -1797,6 +1797,8 @@ class GameDB:
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(armies)").fetchall()}
         if "maintenance_per_turn" in cols:
             self.conn.execute("ALTER TABLE armies DROP COLUMN maintenance_per_turn")
+            self.conn.commit()  # DDL 显式提交，保证 drop 跨打开/环境持久（Gemini PR R3；init_schema
+                                # 末尾另有 commit 兜底，此处显式化事务边界、不依赖后续步骤的提交时机）
 
     def _migrate_arrears_unit_to_silver(self, is_fresh_armies_seed: bool) -> None:
         """一次性迁移：armies.arrears 从 0-100 抽象分换成累计欠饷万两。
