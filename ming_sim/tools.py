@@ -150,12 +150,14 @@ def build_minister_tools(character: Character, context: CourtContext,
         resistance = int(row["severity"]) // 4 + int(faction_lev_avg) // 6
         tags = row["faction_hint"] or ""
         if any(t in tags for t in ("边", "军")):
-            # arrears 是累计欠饷万两，按 maintenance 归一成"平均欠饷月数"再加权
-            row_av = db.conn.execute(
-                "SELECT AVG(arrears * 1.0 / NULLIF(maintenance_per_turn, 0)) AS months "
-                "FROM armies WHERE maintenance_per_turn > 0"
-            ).fetchone()
-            months = float(row_av["months"] or 0)
+            # arrears 累计欠饷万两，按【引擎实扣月应发 army_needed】归一成"平均欠饷月数"再加权
+            # （#173：替退役 maintenance_per_turn；army_needed 是 Python 公式，故在此 Python 求均值）。
+            ratios = [
+                int(r["arrears"] or 0) / pay
+                for r in db.army_rows()  # 封装入口（线上 gemini），不直接碰 db.conn
+                if (pay := db._army_pay(r)) > 0
+            ]
+            months = (sum(ratios) / len(ratios)) if ratios else 0.0
             resistance += int(months * 2)
         if any(t in tags for t in ("百姓", "地方", "士绅")):
             unrest_avg = db.conn.execute("SELECT AVG(unrest) AS v FROM regions").fetchone()["v"] or 0

@@ -30,7 +30,8 @@ export type Army = {
   controller: string;
   troop_type: string;
   manpower: number;
-  maintenance_per_turn: number;
+  army_needed: number; // #173 引擎实扣月应发(万两)=ceil(manpower×salary_rate/10000)，月饷呈现真源
+  maintenance_per_turn: number; // 退役：仅历史/迁移，不再作月饷呈现
   supply: number;
   morale: number;
   training: number;
