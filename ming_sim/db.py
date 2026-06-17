@@ -3697,12 +3697,20 @@ class GameDB:
                     # #173 PR2：维护费退役，月饷随兵力 army_needed(salary_rate×兵力)派生。改维护费=改死
                     # 列，原 silent 落库会让 LLM 误以为调了月饷其实零效果 → 显式拒收留痕，引导改兵力（月饷
                     # 自动随之变）。维护费列尚在（删 maintenance PR 物理移除），此处只断写端：永不落库改它。
+                    # cmr R1 P2(codex R2)：保留 issue 路对脏值的历史严格度——原 maintenance 落库分支在
+                    # 下方数值脏值校验之后，故非数字串/None 历史走严格 invalid-value（issue_strict=True、
+                    # 结案路 raise），bool/float/int-like 历史容忍。退役后拒因变「退役」，严格度判定不变。
+                    try:
+                        int(value)
+                        _maint_strict = False
+                    except (TypeError, ValueError):
+                        _maint_strict = not isinstance(value, (bool, float))
                     changes.append({
                         "army": row["name"], "field": "维护费",
                         "rejected": True, "category": "invalid_enum",
                         "reason": "维护费已退役（月饷随兵力 army_needed 派生）：改月饷请调兵力，勿写维护费",
                         "item": {"army_id": army_id, "field": field, "value": value},
-                        "issue_strict": False,  # 原为 silent 落库（非 raise），结案路容忍不升级
+                        "issue_strict": _maint_strict,
                     })
                     continue
                 # ADR 0008 决定 1:数值字段的脏叶子值(null/字符串/float/bool)= LLM 脏数据,
@@ -3928,16 +3936,14 @@ class GameDB:
                     "issue_strict": not _new_army_historically_applied(item),
                 })
                 continue
-            # #173 PR2：维护费退役为死列（尚未删，本切片不动 schema），建军缺省 0；在场脏值(bool/None/
-            # 非数)一律兜底 0、不拒整军（死列值无意义，月饷不看它）。删 maintenance PR 时连列一并移除。
+            # #173 PR2：维护费退役为死列（尚未删，本切片不动 schema），建军缺省 0；只认非负 int，
+            # 其余（bool/float/None/串等非整数脏值）一律兜底 0、不拒整军（死列值无意义，月饷由
+            # army_needed 按兵力派生、不看它）。删 maintenance PR 时连列一并移除。
             _mt_raw = item.get("maintenance_per_turn")
-            if isinstance(_mt_raw, bool) or _mt_raw is None:
-                maintenance = 0
-            else:
-                try:
-                    maintenance = max(0, int(_mt_raw))
-                except (TypeError, ValueError):
-                    maintenance = 0
+            maintenance = (
+                _mt_raw if (isinstance(_mt_raw, int) and not isinstance(_mt_raw, bool) and _mt_raw >= 0)
+                else 0
+            )
             # 可选数值字段「在场即须合法」（cmr S2 r1 codex P1）：在场脏值静默走默认
             # = 伪造军备（morale "高"→50、cannon "几门"→0）。None 视为缺省（LLM 习惯
             # 用 null 表「无」,validate_delta_shape 亦容忍 null 叶）；其余非整拒该项。

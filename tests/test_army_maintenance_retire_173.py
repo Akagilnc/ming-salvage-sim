@@ -109,3 +109,68 @@ def test_army_delta_other_fields_still_apply(game):
     after = db.conn.execute(
         "SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()["morale"]
     assert after == before - 3, "拒维护费不应连累同军合法字段（士气）落库"
+
+
+# ── cmr R1 P2(codex R2)：维护费拒收保留 issue 路脏值历史严格度 ──────────
+
+def test_maintenance_dirty_string_stays_strict_on_issue_path(game):
+    # 维护费退役、一律拒收，但 issue 结案路对脏值的历史严格度须保留：原 maintenance 落库
+    # 分支在数值脏值校验之后，故非数字串/None 历史走严格 invalid-value（issue_strict=True →
+    # 结案路 raise）。前置拒收若硬 issue_strict=False 会把脏串维护费从严格降级为容忍（回归）。
+    import ming_sim.issues as I
+    db, state, _ = game
+    aid = str(db.conn.execute(
+        "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
+    # 非数字串维护费 → issue 路严格 raise（与 morale=None/串 同治，对称）
+    with pytest.raises(ValueError):
+        I._apply_issue_entities(
+            db, state, {"army_delta": {aid: {"维护费": "五万"}}}, "局势#测试结案")
+    # None 维护费 → 同样严格 raise
+    with pytest.raises(ValueError):
+        I._apply_issue_entities(
+            db, state, {"army_delta": {aid: {"维护费": None}}}, "局势#测试结案")
+
+
+def test_maintenance_numeric_paychange_tolerated_on_issue_path(game):
+    # 合法 int / float 维护费 → 退役拒收但容忍（历史会静默落库/套用，不升级崩结案路）。
+    import ming_sim.issues as I
+    db, state, _ = game
+    aid = str(db.conn.execute(
+        "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
+    I._apply_issue_entities(
+        db, state, {"army_delta": {aid: {"维护费": 5}}}, "局势#测试结案")     # int → 不抛
+    I._apply_issue_entities(
+        db, state, {"army_delta": {aid: {"维护费": 3.7}}}, "局势#测试结案")   # float → 不抛
+
+
+# ── cmr R1 P3(Claude f2)：建军维护费脏值兜底分支覆盖 ──────────────────
+
+@pytest.mark.parametrize("dirty,tag", [(3.7, "flt"), (True, "bool"), ("两万", "str"), (None, "none")])
+def test_new_army_dirty_maintenance_tolerated_defaults_zero(game, dirty, tag):
+    # 建军维护费脏值（float/bool/串/None）→ 不拒整军、兜底 0（死列值无意义，月饷不看它）。
+    db, state, _ = game
+    aid = f"qin_pr2_dirty_{tag}"
+    created = db.create_armies_from_extraction(state, [{
+        "id": aid, "name": "脏饷营", "owner_power": "ming",
+        "manpower": 5000, "maintenance_per_turn": dirty,
+    }])
+    assert not created[0].get("rejected"), f"脏维护费不应拒整军：{created[0]}"
+    assert _maint(db, aid) == 0, "脏维护费应兜底 0"
+
+
+# ── cmr R1 P1(Claude f1 + codex R1)：所有 extractor 写端教学面停教军队维护费 ──
+
+def test_extractor_write_prompts_no_longer_teach_army_maintenance():
+    # 3 处 extractor 写端教学面——2 个 .md + cli_backend.enrich_initiative_effects（国策建军
+    # 效果的结构化产出 prompt）——不得再教 LLM 给 new_armies 填 maintenance_per_turn（维护费退役、
+    # 月饷由兵力 army_needed 派生）。防回归：cli_backend 这第三处曾被漏改（cmr R1 跨厂 concur 抓出）。
+    # 建筑维护费在 score_extractor_issues.md，是不同字段，不在此查。
+    import inspect
+    from pathlib import Path
+    import ming_sim.cli_backend as cb
+    base = Path(__file__).resolve().parent.parent / "content" / "prompts"
+    for fname in ("score_extractor_military_external.md", "score_extractor_shared.md"):
+        txt = (base / fname).read_text(encoding="utf-8")
+        assert "maintenance_per_turn" not in txt, f"{fname} 仍含 maintenance_per_turn 写端教学"
+    src = inspect.getsource(cb.enrich_initiative_effects)
+    assert "maintenance_per_turn" not in src, "enrich_initiative_effects 仍教 maintenance_per_turn"
