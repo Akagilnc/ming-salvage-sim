@@ -1440,11 +1440,12 @@ def apply_issue_tracker_output(
     # S0 桥接一层下探自动收进 rejection_reports（留痕不蒸发,cmr S2 r2）。
     entity_rejections: List[Dict[str, object]] = []
     issue_person_changes: List[Dict[str, object]] = []
-    event_by_id = _ctx().event_by_id
+    runtime_content = content if content is not None else _ctx()
+    event_by_id = runtime_content.event_by_id
     external_transaction = db.conn.in_transaction
     commit_now = not external_transaction
     if external_transaction:
-        _register_runtime_rollback_snapshot(db, state, content)
+        _register_runtime_rollback_snapshot(db, state, runtime_content)
     candidate_event_ids = (
         set(candidate_event_ids_at_input)
         if candidate_event_ids_at_input is not None
@@ -1538,7 +1539,7 @@ def apply_issue_tracker_output(
                     state,
                     effect,
                     f"局势#{issue_id}结案",
-                    content=content,
+                    content=runtime_content,
                     llm_config=llm_config,
                     applied_person_changes=issue_person_changes,
                     commit=commit_now,
@@ -1556,7 +1557,7 @@ def apply_issue_tracker_output(
                     state,
                     effect,
                     f"局势#{issue_id}失败",
-                    content=content,
+                    content=runtime_content,
                     llm_config=llm_config,
                     applied_person_changes=issue_person_changes,
                     commit=commit_now,
@@ -1632,7 +1633,7 @@ def apply_issue_tracker_output(
                 pending_person_changes_for_gates or [],
                 db,
                 allow_legacy_partial_power=allow_legacy_partial_power_for_gates,
-                content=content,
+                content=runtime_content,
             ):
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 被同回合人物变更阻断。")
                 applied_new.append({
@@ -1649,7 +1650,7 @@ def apply_issue_tracker_output(
                             state,
                             ev.effect_on_trigger,
                             f"事件#{ev.id}触发",
-                            content=content,
+                            content=runtime_content,
                             llm_config=llm_config,
                             applied_person_changes=issue_person_changes,
                             commit=commit_now,
@@ -1906,7 +1907,7 @@ def apply_issue_tracker_output(
             state,
             effect,
             f"局势#{issue_id}{'结案' if reason == 'resolved' else '失败'}",
-            content=content,
+            content=runtime_content,
             llm_config=llm_config,
             applied_person_changes=close_person_changes,
             commit=commit_now,

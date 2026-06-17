@@ -143,6 +143,9 @@ def test_apply_score_extraction_secret_order_update_respects_outer_transaction_r
         content=content,
     )
     assert out["secret_order_updates"][0]["order_id"] == oid
+    in_tx = db.get_secret_order(oid)
+    assert in_tx is not None
+    assert "测试密令副作用R8" in (in_tx["sim_note"] or "")
     db.conn.rollback()
 
     row = db.get_secret_order(oid)
@@ -165,6 +168,10 @@ def test_apply_score_extraction_secret_order_close_respects_outer_transaction_ro
         content=content,
     )
     assert out["secret_order_closes"][0]["order_id"] == oid
+    in_tx = db.get_secret_order(oid)
+    assert in_tx is not None
+    assert in_tx["status"] == "done"
+    assert "测试密令结案R8" in (in_tx["result"] or "")
     db.conn.rollback()
 
     row = db.get_secret_order(oid)
