@@ -1267,11 +1267,12 @@ class GameDB:
         ).fetchall()
         return {str(r["key"]): int(r["value"]) for r in rows}
 
-    def set_fiscal_config(self, key: str, value: int) -> None:
+    def set_fiscal_config(self, key: str, value: int, commit: bool = True) -> None:
         self.conn.execute(
             "UPDATE fiscal_config SET value = ? WHERE key = ?", (value, key)
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
     def create_fiscal_item(
         self,
@@ -1281,6 +1282,7 @@ class GameDB:
         display: str,
         init_value: int,
         note: str = "",
+        commit: bool = True,
     ) -> Optional[str]:
         """LLM 推演中凭空新立一个月固定收支项（budget_role=fixed）。
 
@@ -1320,7 +1322,8 @@ class GameDB:
             "VALUES (?, 100, 'rate', 'fixed', ?, ?, ?, ?, ?)",
             (rate_key, account, direction, display, sort_order, f"{display}实收率%"),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return base_key
 
     # dynamic 税科目 → regions.fiscal 子字段映射。dynamic 税实收走 calc_province_fiscal
@@ -1343,7 +1346,7 @@ class GameDB:
                 return ""
         return key
 
-    def apply_dynamic_fiscal_scale(self, stem: str, ratio: float) -> int:
+    def apply_dynamic_fiscal_scale(self, stem: str, ratio: float, commit: bool = True) -> int:
         """按 ratio 缩放所有省 regions.fiscal 中该 dynamic 税字段（辽饷/盐税/商税）。
 
         ratio=0 即彻底罢废（字段归零）；0<ratio<1 即按比例削减。田赋走 _scale_tian_fu。
@@ -1367,7 +1370,7 @@ class GameDB:
                 (json.dumps(fiscal, ensure_ascii=False), str(row["id"])),
             )
             touched += 1
-        if touched:
+        if touched and commit:
             self.conn.commit()
         return touched
 
@@ -1408,7 +1411,7 @@ class GameDB:
         )
         return result
 
-    def scale_tian_fu(self, ratio: float) -> int:
+    def scale_tian_fu(self, ratio: float, commit: bool = True) -> int:
         """田赋无独立字段（=tax_per_turn 减辽饷/盐税/商税的残差）。按 ratio 缩放田赋部分：
         新 tax_per_turn = 三税之和 + 田赋残差×ratio。ratio=0 即罢田赋（仅留三税基）。
         返回被改动的省数。"""
@@ -1430,11 +1433,11 @@ class GameDB:
                 (new_tax, str(row["id"])),
             )
             touched += 1
-        if touched:
+        if touched and commit:
             self.conn.commit()
         return touched
 
-    def remove_fiscal_item(self, key: str) -> Optional[str]:
+    def remove_fiscal_item(self, key: str, commit: bool = True) -> Optional[str]:
         """彻底裁撤一个月固定收支项（罢税/裁俸）：删 base+rate 两行。
 
         完全放开——含 dynamic（田赋/辽饷/盐税/商税/皇庄），后果玩家自负。
@@ -1460,10 +1463,11 @@ class GameDB:
         )
         # dynamic 税：同步罢废各省实收字段（皇庄走 config 不在此）。
         if stem in self._DYNAMIC_REGION_FIELD:
-            self.apply_dynamic_fiscal_scale(stem, 0.0)
+            self.apply_dynamic_fiscal_scale(stem, 0.0, commit=commit)
         elif stem == "田赋":
-            self.scale_tian_fu(0.0)
-        self.conn.commit()
+            self.scale_tian_fu(0.0, commit=commit)
+        if commit:
+            self.conn.commit()
         return base_key
 
     def ensure_column(self, table: str, column: str, definition: str) -> bool:
@@ -2786,7 +2790,11 @@ class GameDB:
         )
         return f"阶级总览：{head}。高压预警：{warn}。"
 
-    def adjust_classes(self, deltas: Dict[str, Dict[str, int]]) -> List[Dict[str, object]]:
+    def adjust_classes(
+        self,
+        deltas: Dict[str, Dict[str, int]],
+        commit: bool = True,
+    ) -> List[Dict[str, object]]:
         """deltas 结构：{ key: {satisfaction: +/-N, leverage: +/-N} }
         key 形式：'农民' (全国) 或 '农民@shaanxi' (省级)。
 
@@ -2821,7 +2829,8 @@ class GameDB:
                 "WHERE name = ? AND region_id = ?",
                 (sat, lev, name.strip(), region_id.strip()),
             )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return rejected
 
     def power_rows(self, exclude_self: bool = False) -> List[sqlite3.Row]:
@@ -3193,6 +3202,7 @@ class GameDB:
         edict_id: int | None,
         actor: str,
         region_deltas: Dict[str, Dict[str, object]],
+        commit: bool = True,
     ) -> List[Dict[str, object]]:
         changes: List[Dict[str, object]] = []
         for region_id, raw_changes in region_deltas.items():
@@ -3425,7 +3435,8 @@ class GameDB:
                 ):
                     extra = self._apply_on_restore(state, region_id, event, edict_id, actor, reason)
                     changes.extend(extra)
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return changes
 
     def _apply_on_restore(

@@ -988,7 +988,7 @@ def test_issue_tracker_close_legacy_expiry_respects_outer_transaction_rollback(g
 
 
 def test_apply_issue_entities_person_changes_respect_commit_false(game):
-    """post-merge CMR R6：_apply_issue_entities(commit=False) 的人物变更也不得自行提交。"""
+    """post-merge CMR R6：_apply_issue_entities(commit=False) 的人物 DB 写入不得自行提交。"""
     db, state, content = game
     issues.bind_content(content)
     db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "毛文龙"))
@@ -1017,6 +1017,181 @@ def test_apply_issue_entities_person_changes_respect_commit_false(game):
         "SELECT COUNT(*) FROM person_logs WHERE person_name=?",
         ("毛文龙",),
     ).fetchone()[0] == before_logs
+
+
+def test_apply_score_extraction_top_level_economy_respects_outer_transaction_rollback(game):
+    """post-merge CMR R7：顶层 economy_moves 不得自行提交外层事务。"""
+    db, state, content = game
+    reason = "测试顶层经济事务R7"
+    db.conn.commit()
+
+    db.conn.execute("BEGIN")
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {"economy_moves": [{"account": "国库", "delta": -1, "category": "测试", "reason": reason}]},
+        content=content,
+    )
+    assert out["economy_moves"][0]["reason"] == reason
+    db.conn.rollback()
+
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE reason=?",
+        (reason,),
+    ).fetchone()[0] == 0
+
+
+def test_apply_score_extraction_fiscal_changes_respect_outer_transaction_rollback(game):
+    """post-merge CMR R7：顶层 fiscal_changes 不得由 fiscal_config helper 提前提交。"""
+    db, state, content = game
+    key, before = next(iter(db.get_fiscal_config().items()))
+    db.conn.commit()
+
+    db.conn.execute("BEGIN")
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {"fiscal_changes": [{"key": key, "delta": 1, "reason": "测试顶层财政事务R7"}]},
+        content=content,
+    )
+    assert out["fiscal_changes"][0]["key"] == key
+    db.conn.rollback()
+
+    assert db.get_fiscal_config()[key] == before
+
+
+def test_apply_score_extraction_class_delta_respects_outer_transaction_rollback(game):
+    """post-merge CMR R7：顶层 class_delta 不得由 classes helper 提前提交。"""
+    db, state, content = game
+    row = db.conn.execute(
+        "SELECT name, region_id, satisfaction FROM classes ORDER BY region_id, name LIMIT 1"
+    ).fetchone()
+    assert row is not None
+    class_key = str(row["name"])
+    if str(row["region_id"] or ""):
+        class_key = f"{class_key}@{row['region_id']}"
+    before = int(row["satisfaction"])
+    db.conn.commit()
+
+    db.conn.execute("BEGIN")
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {"class_delta": {class_key: {"satisfaction": -1}}},
+        content=content,
+    )
+    assert out["class_delta"][class_key]["satisfaction"] == -1
+    db.conn.rollback()
+
+    after = db.conn.execute(
+        "SELECT satisfaction FROM classes WHERE name=? AND region_id=?",
+        (row["name"], row["region_id"]),
+    ).fetchone()["satisfaction"]
+    assert int(after) == before
+
+
+def test_apply_score_extraction_top_level_entity_deltas_respect_outer_transaction_rollback(game):
+    """post-merge CMR R7：顶层 region/army/power/faction/new_armies 共享外层事务。"""
+    db, state, content = game
+    region = db.conn.execute(
+        "SELECT id, unrest FROM regions WHERE unrest < 100 ORDER BY id LIMIT 1"
+    ).fetchone()
+    army = db.conn.execute(
+        "SELECT id, manpower FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
+    ).fetchone()
+    power = db.conn.execute(
+        "SELECT id, leverage FROM powers WHERE id!='ming' AND leverage < 100 ORDER BY id LIMIT 1"
+    ).fetchone()
+    faction = db.conn.execute(
+        "SELECT name, satisfaction FROM factions WHERE satisfaction > 0 ORDER BY name LIMIT 1"
+    ).fetchone()
+    assert region is not None and army is not None and power is not None and faction is not None
+    new_army_id = "__test_top_level_entity_txn_army__"
+    db.conn.commit()
+
+    db.conn.execute("BEGIN")
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "region_delta": {region["id"]: {"unrest": 1, "reason": "测试顶层地区事务R7"}},
+            "army_delta": {army["id"]: {"manpower": 1, "reason": "测试顶层军队事务R7"}},
+            "power_updates": {power["id"]: {"leverage": 1, "reason": "测试顶层势力事务R7"}},
+            "faction_delta": {faction["name"]: {"satisfaction": -1}},
+            "new_armies": [
+                {
+                    "id": new_army_id,
+                    "name": "测试顶层事务营",
+                    "owner_power": "ming",
+                    "manpower": 100,
+                    "reason": "测试顶层建军事务R7",
+                }
+            ],
+        },
+        content=content,
+    )
+    assert out["region_changes"]
+    assert out["army_changes"]
+    assert out["power_changes"]
+    assert out["faction_delta"]
+    assert out["created_armies"][0]["id"] == new_army_id
+    db.conn.rollback()
+
+    assert db.conn.execute(
+        "SELECT unrest FROM regions WHERE id=?",
+        (region["id"],),
+    ).fetchone()["unrest"] == region["unrest"]
+    assert db.conn.execute(
+        "SELECT manpower FROM armies WHERE id=?",
+        (army["id"],),
+    ).fetchone()["manpower"] == army["manpower"]
+    assert db.conn.execute(
+        "SELECT leverage FROM powers WHERE id=?",
+        (power["id"],),
+    ).fetchone()["leverage"] == power["leverage"]
+    assert db.conn.execute(
+        "SELECT satisfaction FROM factions WHERE name=?",
+        (faction["name"],),
+    ).fetchone()["satisfaction"] == faction["satisfaction"]
+    assert db.conn.execute("SELECT id FROM armies WHERE id=?", (new_army_id,)).fetchone() is None
+
+
+def test_apply_score_extraction_fiscal_create_and_remove_respect_outer_transaction_rollback(game):
+    """post-merge CMR R7：顶层 fiscal_creates/removes 不得由财政 helper 提前提交。"""
+    db, state, content = game
+    remove_key = next(iter(db.get_fiscal_config()))
+    created_key = "__test_fiscal_txn_r7_base"
+    created_rate_key = "__test_fiscal_txn_r7_rate"
+    db.conn.commit()
+
+    db.conn.execute("BEGIN")
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "fiscal_removes": [{"key": remove_key, "reason": "测试顶层财政裁撤事务R7"}],
+            "fiscal_creates": [
+                {
+                    "key": created_key,
+                    "account": "国库",
+                    "direction": "income",
+                    "display": "测试顶层财政",
+                    "init_value": 1,
+                    "reason": "测试顶层财政新立事务R7",
+                }
+            ],
+        },
+        content=content,
+    )
+    assert out["fiscal_removes"][0]["key"] == f"{db._stem_of(remove_key)}_base"
+    assert out["fiscal_creates"][0]["key"] == created_key
+    db.conn.rollback()
+
+    assert remove_key in db.get_fiscal_config()
+    assert db.conn.execute(
+        "SELECT key FROM fiscal_config WHERE key IN (?, ?)",
+        (created_key, created_rate_key),
+    ).fetchall() == []
 
 
 def test_event_pool_pending_person_location_change_blocks_gate(game):
@@ -1070,6 +1245,209 @@ def test_event_pool_pending_person_location_change_blocks_gate(game):
             "SELECT location FROM characters WHERE name=?",
             ("毛文龙",),
         ).fetchone()["location"] == "beizhili"
+    finally:
+        content.seed_events.remove(ev)
+        content.event_by_id.pop(ev.id, None)
+
+
+def test_event_pool_pending_invalid_appointment_does_not_block_gate(game):
+    """post-merge CMR R7：会被任命转移矩阵拒收的人物变更，不应提前阻断事件门。"""
+    db, state, content = game
+    issues.bind_content(content)
+    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("dead", "袁崇焕"))
+    if "袁崇焕" in content.characters:
+        content.characters["袁崇焕"].status = "dead"
+    ev = Event(
+        id="__test_invalid_appointment_pending__",
+        title="测试·非法任命不阻断",
+        kind="朝议",
+        summary="袁崇焕已死时可触发。",
+        urgency=10,
+        severity=10,
+        credibility=100,
+        interests=[],
+        audiences=[],
+        event_type="situation",
+        trigger_gate={"character.袁崇焕.status": "== dead"},
+    )
+    content.seed_events.append(ev)
+    content.event_by_id[ev.id] = ev
+    try:
+        out = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
+                "人物变更": [{"name": "袁崇焕", "动作": "任命", "office": "兵部尚书"}],
+            },
+            content=content,
+        )
+
+        assert out["issue_summary"]["new_issues"][0]["rejected"] is False
+        assert out["applied_person_changes"][0]["rejected"] is True
+        assert db.conn.execute(
+            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
+            (ev.id,),
+        ).fetchone() is not None
+    finally:
+        content.seed_events.remove(ev)
+        content.event_by_id.pop(ev.id, None)
+
+
+def test_event_pool_pending_invalid_allegiance_change_does_not_block_gate(game):
+    """post-merge CMR R7：缺方式/反噬的易主拒收项，不应提前阻断 power_id 门。"""
+    db, state, content = game
+    issues.bind_content(content)
+    db.conn.execute("UPDATE characters SET status=?, power_id=? WHERE name=?", ("active", "ming", "袁崇焕"))
+    if "袁崇焕" in content.characters:
+        content.characters["袁崇焕"].status = "active"
+        content.characters["袁崇焕"].power_id = "ming"
+    ev = Event(
+        id="__test_invalid_allegiance_pending__",
+        title="测试·非法易主不阻断",
+        kind="朝议",
+        summary="袁崇焕仍属明时可触发。",
+        urgency=10,
+        severity=10,
+        credibility=100,
+        interests=[],
+        audiences=[],
+        event_type="situation",
+        trigger_gate={"character.袁崇焕.power_id": "== ming"},
+    )
+    content.seed_events.append(ev)
+    content.event_by_id[ev.id] = ev
+    try:
+        out = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
+                "人物变更": [{"name": "袁崇焕", "动作": "易主", "new_power": "houjin"}],
+            },
+            content=content,
+        )
+
+        assert out["issue_summary"]["new_issues"][0]["rejected"] is False
+        assert out["applied_person_changes"][0]["rejected"] is True
+        assert db.conn.execute(
+            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
+            (ev.id,),
+        ).fetchone() is not None
+    finally:
+        content.seed_events.remove(ev)
+        content.event_by_id.pop(ev.id, None)
+
+
+def test_event_pool_pending_disposition_clears_office_gate(game):
+    """post-merge CMR R7：同回合处置会清空 office，事件门不得沿用旧职。"""
+    db, state, content = game
+    issues.bind_content(content)
+    db.conn.execute(
+        "UPDATE characters SET status=?, office=?, office_type=? WHERE name=?",
+        ("active", "蓟辽督师", "职名分", "袁崇焕"),
+    )
+    if "袁崇焕" in content.characters:
+        ch = content.characters["袁崇焕"]
+        ch.status = "active"
+        ch.office = "蓟辽督师"
+        ch.office_type = "职名分"
+    ev = Event(
+        id="__test_disposition_clears_office_pending__",
+        title="测试·处置清职门",
+        kind="朝议",
+        summary="袁崇焕仍为督师时才可触发。",
+        urgency=10,
+        severity=10,
+        credibility=100,
+        interests=[],
+        audiences=[],
+        event_type="situation",
+        trigger_gate={"character.袁崇焕.office": "== 蓟辽督师"},
+    )
+    content.seed_events.append(ev)
+    content.event_by_id[ev.id] = ev
+    try:
+        assert any(c.id == ev.id for c in issues.gather_candidate_events(state, db))
+
+        out = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
+                "人物变更": [{"name": "袁崇焕", "动作": "处置", "status": "dismissed", "reason": "测试罢离督师"}],
+            },
+            content=content,
+        )
+
+        new_issue = out["issue_summary"]["new_issues"][0]
+        assert new_issue["rejected"] is True
+        assert "候选" in new_issue["reason"]
+        assert db.conn.execute(
+            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
+            (ev.id,),
+        ).fetchone() is None
+        assert db.conn.execute(
+            "SELECT office FROM characters WHERE name=?",
+            ("袁崇焕",),
+        ).fetchone()["office"] == ""
+    finally:
+        content.seed_events.remove(ev)
+        content.event_by_id.pop(ev.id, None)
+
+
+def test_event_pool_pending_location_change_clears_transit_gate(game):
+    """post-merge CMR R7：同回合行止会清空 transit_to，事件门不得沿用旧在途目的地。"""
+    db, state, content = game
+    issues.bind_content(content)
+    db.conn.execute(
+        "UPDATE characters SET status=?, location=?, transit_to=? WHERE name=?",
+        ("active", "liaodong", "beizhili", "毛文龙"),
+    )
+    if "毛文龙" in content.characters:
+        ch = content.characters["毛文龙"]
+        ch.status = "active"
+        ch.location = "liaodong"
+        ch.transit_to = "beizhili"
+    ev = Event(
+        id="__test_location_clears_transit_pending__",
+        title="测试·行止清在途门",
+        kind="朝议",
+        summary="毛文龙仍在途入京时才可触发。",
+        urgency=10,
+        severity=10,
+        credibility=100,
+        interests=[],
+        audiences=[],
+        event_type="situation",
+        trigger_gate={"character.毛文龙.transit_to": "== beizhili"},
+    )
+    content.seed_events.append(ev)
+    content.event_by_id[ev.id] = ev
+    try:
+        assert any(c.id == ev.id for c in issues.gather_candidate_events(state, db))
+
+        out = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
+                "人物变更": [{"name": "毛文龙", "动作": "行止", "location": "liaodong"}],
+            },
+            content=content,
+        )
+
+        new_issue = out["issue_summary"]["new_issues"][0]
+        assert new_issue["rejected"] is True
+        assert "候选" in new_issue["reason"]
+        assert db.conn.execute(
+            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
+            (ev.id,),
+        ).fetchone() is None
+        assert db.conn.execute(
+            "SELECT transit_to FROM characters WHERE name=?",
+            ("毛文龙",),
+        ).fetchone()["transit_to"] == ""
     finally:
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)

@@ -712,7 +712,10 @@ def _apply_faction_dict(
 
 
 def _apply_class_dict(
-    db: GameDB, class_delta: Dict[str, object]
+    db: GameDB,
+    class_delta: Dict[str, object],
+    *,
+    commit: bool = True,
 ) -> DeltaApplyResult:
     """class_delta 结构：{ '农民@shaanxi': {'satisfaction': -5, 'leverage': +3}, '士绅': {...} }
     key 不带 @ 默认全国汇总。字段只接 satisfaction / leverage 增量。
@@ -746,7 +749,7 @@ def _apply_class_dict(
             cleaned[str(key)] = entry
     if cleaned:
         # 同 faction：db 层未知名 missing_ref 拒收未写库，从 cleaned 剔除防面板误显（cmr r3 codex）。
-        for _rej in db.adjust_classes(cleaned):
+        for _rej in db.adjust_classes(cleaned, commit=commit):
             cleaned.pop(str(_rej.get("name", "")), None)
             rejected.append(_rej)
     return DeltaApplyResult(cleaned, rejected)

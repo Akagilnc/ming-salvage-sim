@@ -656,8 +656,27 @@ def _pending_person_changes_block_event_gate(
 
     def overlay(name: str, field: str, value: object) -> None:
         value_text = str(value or "").strip()
-        if value_text:
-            pending_fields.setdefault(name, {})[field] = value_text
+        pending_fields.setdefault(name, {})[field] = value_text
+
+    def current_title_kind(row) -> str:
+        current_office = str(row["office"] or "").strip()
+        current_office_type = str(row["office_type"] or "").strip()
+        if (
+            not current_office
+            or current_office_type == "身名分"
+            or current_office in PERSON_IDENTITY_TITLES
+        ):
+            return "身名分"
+        return "职名分"
+
+    def identity_title_for_allegiance(item: Dict[str, object], new_power: str) -> str:
+        title = str(item.get("new_title") or item.get("title") or "").strip()
+        if title:
+            return title if title in PERSON_IDENTITY_TITLES else ""
+        way = str(item.get("方式") or item.get("way") or "").strip()
+        if new_power == "ming" or way == "主动归附":
+            return "归附"
+        return "降臣"
 
     for item in pending_person_changes:
         name = str(item.get("name") or "").strip()
@@ -665,7 +684,7 @@ def _pending_person_changes_block_event_gate(
         if not name:
             continue
         row = db.conn.execute(
-            "SELECT status, location, transit_to, power_id, office, office_type FROM characters WHERE name=?",
+            "SELECT status, location, transit_to, power_id, office, office_type, reason_code FROM characters WHERE name=?",
             (name,),
         ).fetchone()
         if row is None:
@@ -690,6 +709,8 @@ def _pending_person_changes_block_event_gate(
             if transition.startswith("reject:"):
                 continue
             overlay(name, "status", status)
+            overlay(name, "office", "")
+            overlay(name, "transit_to", "")
         elif action == "行止":
             if cur_status != "active":
                 continue
@@ -707,17 +728,45 @@ def _pending_person_changes_block_event_gate(
             overlay(name, "location", new_location or row["location"])
             overlay(name, "transit_to", transit_to)
         elif action == "易主":
-            new_power = str(item.get("new_power") or item.get("power_id") or "").strip()
+            way = str(item.get("方式") or item.get("way") or "").strip()
+            backlash = item.get("反噬", item.get("backlash"))
+            if not way or way not in PERSON_ALLEGIANCE_CHANGE_WAYS:
+                continue
+            if not isinstance(backlash, dict):
+                continue
+            if any(not isinstance(raw_changes, dict) for raw_changes in backlash.values()):
+                continue
+            new_power = str(item.get("new_power") or "").strip()
             if not new_power:
                 continue
             if db.conn.execute("SELECT 1 FROM powers WHERE id=?", (new_power,)).fetchone() is None:
                 continue
+            transition = resolve_person_transition(
+                cur_status,
+                action,
+                reason_code=str(row["reason_code"] or item.get("reason_code") or ""),
+            )
+            if transition.startswith("reject:"):
+                continue
+            new_title = identity_title_for_allegiance(item, new_power)
+            if not new_title:
+                continue
             overlay(name, "power_id", new_power)
             overlay(name, "status", "active")
+            overlay(name, "office", new_title)
+            overlay(name, "office_type", "身名分")
             overlay(name, "transit_to", "")
         elif action in {"任命", "调任"}:
             new_office = str(item.get("office") or item.get("new_office") or "").strip()
             if not new_office:
+                continue
+            transition = resolve_person_transition(
+                cur_status,
+                action,
+                reason_code=str(row["reason_code"] or item.get("reason_code") or ""),
+                current_title_kind=current_title_kind(row),
+            )
+            if transition.startswith("reject:"):
                 continue
             if str(row["power_id"] or "ming") not in {"", "ming"}:
                 continue
@@ -2752,6 +2801,7 @@ def apply_score_extraction(
     content/registry：若传入则处理 `appointments`——把诏书任命的新人建档入朝。
     缺省则跳过（向后兼容老调用）。"""
     caller_transaction = db.conn.in_transaction
+    commit_now = not caller_transaction
     # 0) 落库前校验容器/二级类型,畸形值崩前拦住,不让前面字段半落库(#57)。
     validate_delta_shape(extracted)
     candidate_event_ids_at_input = {candidate.id for candidate in gather_candidate_events(state, db)}
@@ -2818,15 +2868,28 @@ def apply_score_extraction(
     # 2) economy_moves
     # 拒收项拆到独立 economy_moves_rejections 段（不污染玩家可见 economy_moves list；
     # 同 faction_delta_rejections 治理，#14 cmr r1 codex/P4）。
-    _eco_out = _apply_economy_list(db, state, extracted.get("economy_moves") or [])
+    _eco_out = _apply_economy_list(
+        db,
+        state,
+        extracted.get("economy_moves") or [],
+        commit=commit_now,
+    )
     applied_economy = [r for r in _eco_out if not r.get("rejected")]
     economy_rejections = [r for r in _eco_out if r.get("rejected")]
     # 3) faction_delta + class_delta（朝堂派系 + 社会阶级；联动靠 LLM，不在代码做）
     # 返回 (已落 delta dict, 拒收项列表)：dict 供 web 面板（形状不变），拒收列表置于
     # 独立 *_rejections 段供桥接收集器（ADR 0008 决定 1，#14/#63）——不复用 *_delta key
     # 覆盖面板数据（cmr r1 claude：复用同 key 会令面板把拒收项当 dict 误渲染）。
-    applied_factions, faction_rejections = _apply_faction_dict(db, extracted.get("faction_delta") or {})
-    applied_classes, class_rejections = _apply_class_dict(db, extracted.get("class_delta") or {})
+    applied_factions, faction_rejections = _apply_faction_dict(
+        db,
+        extracted.get("faction_delta") or {},
+        commit=commit_now,
+    )
+    applied_classes, class_rejections = _apply_class_dict(
+        db,
+        extracted.get("class_delta") or {},
+        commit=commit_now,
+    )
     # 4) new_armies → region_delta / army_delta (复用旧 db 方法)
     region_deltas_raw = extracted.get("region_delta") or {}
     army_deltas_raw = extracted.get("army_delta") or {}
@@ -2852,11 +2915,30 @@ def apply_score_extraction(
     # rejection_reports），好项照落、坏一项不带走整批；代码异常（bug 类）仍上抛到 settle
     # 层回滚整批，绝不吞。clamp 语义（城防炮 city_level×8、随军炮 cap12、火器 0-100）不变。
     if isinstance(new_armies_raw, list) and new_armies_raw:
-        created_armies = db.create_armies_from_extraction(state, new_armies_raw, actor="档房")
+        created_armies = db.create_armies_from_extraction(
+            state,
+            new_armies_raw,
+            actor="档房",
+            commit=commit_now,
+        )
     if isinstance(region_deltas_raw, dict) and region_deltas_raw:
-        region_changes = db.apply_region_deltas(state, pseudo_event, None, "档房", region_deltas_raw)
+        region_changes = db.apply_region_deltas(
+            state,
+            pseudo_event,
+            None,
+            "档房",
+            region_deltas_raw,
+            commit=commit_now,
+        )
     if isinstance(army_deltas_raw, dict) and army_deltas_raw:
-        army_changes = db.apply_army_deltas(state, pseudo_event, None, "档房", army_deltas_raw)
+        army_changes = db.apply_army_deltas(
+            state,
+            pseudo_event,
+            None,
+            "档房",
+            army_deltas_raw,
+            commit=commit_now,
+        )
 
     # 注：建筑的新建/变更/废止不走顶层字段，全由 issue 的 effect_on_resolve /
     #     effect_on_fail 里的 `buildings` 段在局势结案时落地（见 _apply_issue_buildings）。
@@ -2868,7 +2950,7 @@ def apply_score_extraction(
     power_updates_raw = extracted.get("power_updates") or {}
     power_changes: List[Dict[str, object]] = []
     if isinstance(power_updates_raw, dict) and power_updates_raw:
-        power_changes = db.apply_power_deltas(state, power_updates_raw)
+        power_changes = db.apply_power_deltas(state, power_updates_raw, commit=commit_now)
 
     _apply_normalized_person_changes(pre_issue_person_changes, legacy=legacy_person_mode)
 
@@ -2915,7 +2997,7 @@ def apply_score_extraction(
                 "category": "invalid_enum", "item": remove,
             })
             continue
-        removed_key = db.remove_fiscal_item(key)
+        removed_key = db.remove_fiscal_item(key, commit=commit_now)
         if removed_key is None:
             # 查无此项 = 正常业务拒绝,逐项拒收留痕(不再 print 静默跳;ADR 决定 1 / S3)。
             applied_fiscal_removes.append({
@@ -2969,6 +3051,7 @@ def apply_score_extraction(
         new_key = db.create_fiscal_item(
             key, account, direction, display, init_value,
             note=str(create.get("reason") or "")[:120],
+            commit=commit_now,
         )
         if new_key is None:
             # 已存在 / db 拒 = 正常业务拒绝,逐项拒收留痕（不再 print 静默跳）。
@@ -3034,16 +3117,16 @@ def apply_score_extraction(
             })
             continue
         new_val = max(0, current + delta)
-        db.set_fiscal_config(key, new_val)
+        db.set_fiscal_config(key, new_val, commit=commit_now)
         # dynamic 税（辽饷/盐税/商税/田赋）实收走 region.fiscal，改 fiscal_config 不生效；
         # 按 new/old 比例同步缩放各省实收字段，使调额当真改变下月入账。皇庄读 config，无需联动。
         stem = db._stem_of(key)
         if stem in db._DYNAMIC_REGION_FIELD or stem == "田赋":
             ratio = (new_val / current) if current > 0 else (1.0 if new_val == 0 else 0.0)
             if stem == "田赋":
-                db.scale_tian_fu(ratio)
+                db.scale_tian_fu(ratio, commit=commit_now)
             else:
-                db.apply_dynamic_fiscal_scale(stem, ratio)
+                db.apply_dynamic_fiscal_scale(stem, ratio, commit=commit_now)
         applied_fiscal.append({
             "key": key, "old": current, "new": new_val, "delta": delta,
             "reason": str(change.get("reason") or ""),
@@ -3067,7 +3150,15 @@ def apply_score_extraction(
                     "reason": str(item.get("reason") or ""),
                 })
                 continue
-            name, displaced = apply_appointment(db, state, content, registry, item, llm_config=llm_config)
+            name, displaced = apply_appointment(
+                db,
+                state,
+                content,
+                registry,
+                item,
+                llm_config=llm_config,
+                commit=commit_now,
+            )
             if name:
                 applied_appointments.append({
                     "name": name,
@@ -3122,7 +3213,7 @@ def apply_score_extraction(
             })
             continue
         try:
-            db.set_character_status(state, name, status, reason)
+            db.set_character_status(state, name, status, reason, commit=commit_now)
         except Exception as exc:
             applied_status_changes.append({
                 "name": name, "status": status, "rejected": True, "reason": f"落库失败：{exc}",
@@ -3143,7 +3234,8 @@ def apply_score_extraction(
     # ADR 0008 决定 1:不再整段吞——脏数据(查无此人/未知 power/缺字段)在
     # apply_character_power_changes 内逐项拒收留痕;代码异常上抛到 settle 回滚。
     applied_power_changes: List[Dict[str, object]] = db.apply_character_power_changes(
-        (extracted.get("character_power_changes") or []) if use_legacy_person_keys else []
+        (extracted.get("character_power_changes") or []) if use_legacy_person_keys else [],
+        commit=commit_now,
     )
 
     # 10) office_changes：朝臣官职变更——统一吃「新任（建档）」与「调任（改职）」。
@@ -3168,6 +3260,7 @@ def apply_score_extraction(
             new_office_type=str(item.get("new_office_type") or ""),
             faction=str(item.get("faction") or "中立"),
             llm_config=llm_config,
+            commit=commit_now,
         ))
 
     # 11) secret_order_updates：推演写 active 密令副作用（泄漏/反弹）到 sim_note。结案不走这里。
