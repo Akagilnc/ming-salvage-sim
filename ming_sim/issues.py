@@ -1147,6 +1147,10 @@ def apply_issue_tracker_output(
                 print(f"[INFO] new_issue 已拒：event {event_id} 标了 auto_trigger，只能程序硬触发。")
                 applied_new.append({"title": ev.title, "rejected": True, "reason": "auto_trigger 事件仅程序可触发"})
                 continue
+            if db.event_terminal_status(ev.id) == "expired":
+                print(f"[INFO] new_issue 已拒：event {event_id} 已过期终态，不再从 event_pool 立项。")
+                applied_new.append({"title": ev.title, "rejected": True, "reason": "事件已过期终态"})
+                continue
             if ev.event_type != "situation":
                 db.mark_event_triggered(state, ev.id)
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 为 {ev.event_type}，不转 issue。")

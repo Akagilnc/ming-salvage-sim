@@ -92,6 +92,32 @@ def test_historical_event_expires_after_latest_window_when_gate_unsatisfied(game
         content.events.remove(ev)
 
 
+def test_historical_event_latest_month_is_still_inside_window(game):
+    db, state, content = game
+    issues.bind_content(content)
+    ev = _hist_event("__test_latest_month_hist__", {"民心": "<=5"})
+    ev.trigger_year = 1629
+    ev.trigger_month = 1
+    ev.trigger_end_year = 1629
+    ev.trigger_end_month = 2
+    content.events.append(ev)
+    try:
+        state.year = 1629
+        state.period = 2
+        state.metrics["民心"] = 3
+
+        cands = issues.gather_candidate_events(state, db)
+
+        assert any(c.id == "__test_latest_month_hist__" for c in cands)
+        row = db.conn.execute(
+            "SELECT terminal_status FROM event_triggers WHERE event_id=?",
+            ("__test_latest_month_hist__",),
+        ).fetchone()
+        assert row is None
+    finally:
+        content.events.remove(ev)
+
+
 def test_open_window_historical_event_never_expires(game):
     db, state, content = game
     issues.bind_content(content)
@@ -292,6 +318,21 @@ def test_load_event_rejects_non_boolean_open_window(monkeypatch):
             "trigger_gate": {"民心": "<=5"}}]
     monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
     with pytest.raises(SystemExit, match="open_window"):
+        content_mod.load_event_content("x.json")
+
+
+def test_load_event_rejects_latest_before_earliest(monkeypatch):
+    """最晚时点不能早于最早时点，否则该事件永远无法合法开窗。"""
+    import pytest
+    import ming_sim.content as content_mod
+    bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
+            "urgency": 1, "severity": 1, "credibility": 1,
+            "interests": [], "audiences": [],
+            "trigger_year": 1629, "trigger_month": 6,
+            "trigger_end_year": 1629, "trigger_end_month": 5,
+            "trigger_gate": {"民心": "<=5"}}]
+    monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
+    with pytest.raises(SystemExit, match="最晚|早于|窗口"):
         content_mod.load_event_content("x.json")
 
 
