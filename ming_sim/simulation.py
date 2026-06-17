@@ -135,7 +135,6 @@ ITEM_FIELD_ALIASES = {
     "controller": "controller", "主管": "controller",
     "troop_type": "troop_type", "兵种": "troop_type",
     "manpower": "manpower", "人数": "manpower", "兵力": "manpower",
-    "maintenance_per_turn": "maintenance_per_turn", "维护费": "maintenance_per_turn", "军费": "maintenance_per_turn",
     "supply": "supply", "补给": "supply", "粮饷": "supply",
     "morale": "morale", "士气": "morale",
     "training": "training", "训练": "training",
@@ -261,7 +260,7 @@ def _army_rows_with_needed(
     """#173 cmr（codex high + Claude medium concur）：simulator/extractor 盘面军队行加引擎实扣
     army_needed 列（裁判/审计大臣读的「月饷」真源）。select_sql 须含 owner_power/manpower/salary_rate
     供 army_needed 计算；drop 列仅用于算、不进盘面（默认 salary_rate；调用方原本无 owner_power 的也一并
-    drop 以最小化盘面列变化）。maintenance_per_turn 退役、留作 extractor 写端兼容。"""
+    drop 以最小化盘面列变化）。#173：maintenance_per_turn 列已删，盘面不再含维护费。"""
     from ming_sim.flows import army_needed
     if isinstance(drop, str):  # 防御：误传单字符串会被 for 逐字符迭代（线上 gemini）
         drop = (drop,)
@@ -316,7 +315,7 @@ def build_simulator_payload(
     army_rows = _army_rows_with_needed(
         db,
         "SELECT name,station,theater,commander,controller,troop_type,manpower,"
-        "maintenance_per_turn,supply,morale,training,equipment,arrears,mobility,"
+        "supply,morale,training,equipment,arrears,mobility,"
         "loyalty,firearm_equipment,cannon_equipment,status,owner_power,salary_rate "
         "FROM armies ORDER BY id",
     )
@@ -536,7 +535,7 @@ def _extractor_context_payload(
     army_rows = _army_rows_with_needed(
         db,
         "SELECT id,name,station,theater,commander,controller,troop_type,manpower,"
-        "maintenance_per_turn,supply,morale,training,equipment,arrears,mobility,"
+        "supply,morale,training,equipment,arrears,mobility,"
         "loyalty,status,owner_power,salary_rate FROM armies ORDER BY id",
         drop=("salary_rate", "owner_power"),  # extractor 盘面原无 owner_power，只新增 army_needed 列
     )

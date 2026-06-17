@@ -1,9 +1,8 @@
 """#173 显示口径：军饷呈现端从退役的 maintenance_per_turn 迁到引擎实扣的 army_needed。
 
-#44 后引擎按 army_needed=ceil(manpower×salary_rate/10000) 扣应发，但 army_payload/army_report/
-欠饷月数/simulator TSV 仍显示 maintenance_per_turn → 玩家与审计大臣 LLM 看到「显示≠实扣」
-（京营显示 7 实扣 9），项目「账本一致」机制会误判。本 slice 把呈现端统一到 army_needed。
-字段去留（删 maintenance_per_turn 列）= 设计决策，本 slice 留列、只改呈现，不删列。
+#44 后引擎按 army_needed=ceil(manpower×salary_rate/10000) 扣应发；呈现端（army_payload/
+army_report/欠饷月数/simulator TSV）统一到 army_needed，玩家与审计大臣 LLM 看到的月饷=实扣。
+#173 删列 PR 已物理移除 maintenance_per_turn 列，army_needed 是月饷唯一真源。
 """
 
 from __future__ import annotations
@@ -27,43 +26,30 @@ def test_army_payload_exposes_army_needed(game):
         )
 
 
-def test_army_report_shows_actual_charge_not_maintenance(game):
-    """army_report 的月饷总额/欠饷月数须基于 army_needed（实扣），非退役 maintenance_per_turn。
-    构造一支 maintenance≠army_needed 的明军（扩军使 needed 涨、maint 不动），断言报告里出现实扣值。"""
+def test_army_report_shows_actual_charge(game):
+    """army_report 的月饷总额须基于 army_needed（引擎实扣）——#173 删 maintenance 后 army_needed 是
+    月饷唯一真源。扩军使 needed 涨，断言报告里出现实扣总额（格式化串，避免裸数字子串脆性）。"""
     db, _state, _ = game
-    # 取一支明军，扩兵让 army_needed 明显 > maintenance_per_turn（制造显示≠实扣差）。
-    row = db.conn.execute(
-        "SELECT id, manpower, maintenance_per_turn, salary_rate FROM armies "
-        "WHERE owner_power='ming' AND salary_rate>0 ORDER BY manpower DESC LIMIT 1"
-    ).fetchone()
-    aid = row["id"]
+    aid = db.conn.execute(
+        "SELECT id FROM armies WHERE owner_power='ming' AND salary_rate>0 ORDER BY manpower DESC LIMIT 1"
+    ).fetchone()["id"]
     db.conn.execute("UPDATE armies SET manpower = manpower + 100000 WHERE id=?", (aid,))
     db.conn.commit()
-    full = db.conn.execute("SELECT * FROM armies WHERE id=?", (aid,)).fetchone()
-    needed = army_needed(full)
-    maint = int(full["maintenance_per_turn"])
-    assert needed != maint, f"前提：扩军后 needed({needed})应≠maint({maint})"
-    # army_report 月饷总额应反映实扣（army_needed 之和），不应等于 maintenance 之和。
     total_needed = sum(army_needed(r) for r in db.conn.execute("SELECT * FROM armies").fetchall())
-    total_maint = db.conn.execute("SELECT SUM(maintenance_per_turn) AS t FROM armies").fetchone()["t"]
-    assert total_needed != total_maint, "前提：总实扣应≠总 maintenance"
     report = db.army_report(limit=20)
-    # 用引擎同款格式化串断言（避免裸数字子串脆性，线上 sourcery）。
     from ming_sim.assets import format_money
     from ming_sim.models import monthly_amount
     expected = format_money(monthly_amount(total_needed))
-    assert expected in report, (
-        f"army_report 月饷总额应=实扣总和格式化『{expected}』，实际报告未含（仍按 maintenance {total_maint}？）"
-    )
+    assert expected in report, f"army_report 月饷总额应=实扣总和格式化『{expected}』"
 
 
 def test_simulator_payload_exposes_army_needed(game):
     """#173 cmr（codex high + Claude medium concur）：simulator/extractor 盘面（裁判/审计大臣读的 TSV）
-    须暴露引擎实扣 army_needed，否则审计大臣读到 maintenance（显示）≠实扣、「账本一致」机制误判。
-    留 maintenance_per_turn 列（extractor 写端兼容），增 army_needed 列作月应发真源。"""
+    须暴露引擎实扣 army_needed，否则审计大臣读到的月饷≠实扣、「账本一致」机制误判。
+    #173：maintenance_per_turn 列已删，army_needed 列是月应发唯一真源。"""
     from ming_sim.simulation import build_simulator_payload, _extractor_context_payload
     db, _state, _ = game
-    # 扩军造 maintenance≠army_needed 差。
+    # 扩军造可观测的 army_needed 变化。
     aid = db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' AND salary_rate>0 LIMIT 1"
     ).fetchone()["id"]
@@ -72,7 +58,6 @@ def test_simulator_payload_exposes_army_needed(game):
     full = db.conn.execute("SELECT * FROM armies WHERE id=?", (aid,)).fetchone()
     name = full["name"]
     expected = army_needed(full)
-    assert expected != int(full["maintenance_per_turn"]), "前提：扩军后 needed≠maint"
 
     for payload in (
         build_simulator_payload(_state, db, "x", "y"),

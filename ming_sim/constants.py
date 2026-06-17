@@ -33,7 +33,7 @@ REGION_TEXT_FIELDS = ("natural_disaster", "human_disaster", "status", "controlle
 FISCAL_SCORE_FIELDS = ("corruption",)
 ARMY_SCORE_FIELDS = ("supply", "morale", "training", "equipment", "arrears", "mobility", "loyalty",
                      "firearm_equipment", "cannon_equipment")
-ARMY_QUANTITY_FIELDS = ("manpower", "maintenance_per_turn")
+ARMY_QUANTITY_FIELDS = ("manpower",)  # #173：maintenance_per_turn 列已删（月饷由 army_needed 按兵力派生）
 ARMY_TEXT_FIELDS = ("station", "commander", "controller", "troop_type", "status", "owner_power")
 BUILDING_CATEGORIES = ("财政", "军事", "民生", "科技", "交通", "内廷")
 BUILDING_OUTPUT_METRICS = ("国库", "内库", "民心", "皇威", "")
@@ -131,7 +131,6 @@ ARMY_FIELD_LABELS = {
     "controller": "主管",
     "troop_type": "兵种",
     "manpower": "人数",
-    "maintenance_per_turn": "维护费",
     "supply": "补给",
     "morale": "士气",
     "training": "训练",
@@ -190,8 +189,6 @@ ARMY_FIELD_ALIASES = {
     "兵种": "troop_type",
     "人数": "manpower",
     "兵力": "manpower",
-    "维护费": "maintenance_per_turn",
-    "军费": "maintenance_per_turn",
     "补给": "supply",
     "粮饷": "supply",
     "士气": "morale",
