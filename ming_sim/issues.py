@@ -227,6 +227,7 @@ _GATE_NUMERIC_SQL_FIELDS = {
     "faction": {"satisfaction", "leverage"},
     "character": set(_CHARACTER_NUMERIC_GATE_FIELDS),
     "class": {"population", "satisfaction", "leverage"},
+    "event": {"triggered"},
 }
 _GATE_TEXT_SQL_FIELDS = {
     "region": set(REGION_TEXT_FIELDS),
@@ -265,6 +266,7 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
       - 'class.<name>.<field>'                  → classes 表全国汇总 (region_id='')
       - 'class.<name>@<region>.<field>'         → classes 表省级
       - 'class.<name>@<r1>|<r2>|.<field>.<agg>' → 多省同阶级聚合
+      - 'event.<id>.triggered'                  → event_triggers 账，已发=1 未发=0
     解析失败/数据缺失返回 None（gate 视为不通过，由调用方处理）。
     """
     if "." not in key:
@@ -298,6 +300,11 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
     values: List[int] = []
     for cid in ids:
         row = None
+        if table == "event":
+            if cid not in db.content.event_by_id:
+                return None
+            values.append(1 if db.has_event_triggered(cid) else 0)
+            continue
         if table == "region":
             row = db.conn.execute(f"SELECT {field} FROM regions WHERE id = ?", (cid,)).fetchone()
         elif table == "army":
@@ -494,19 +501,30 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
                 triggered.append({"id": ev.id, "title": ev.title, "kind": ev.event_type})
             continue
         issue_id = event_to_issue(db, state, ev)
+        created_issue = issue_id is not None
+        if historical_event and issue_id is None:
+            row = (
+                db.find_active_issue_by_origin("event_pool", ev.id)
+                if ev.trigger_gate
+                else db.find_any_issue_by_origin("event_pool", ev.id)
+            )
+            if row is None:
+                raise RuntimeError(f"历史事件 {ev.id} 未建局势且无法找到同源 issue")
+            issue_id = int(row["id"])
+        if historical_event:
+            if ev.effect_on_trigger:
+                _apply_issue_entities(
+                    db,
+                    state,
+                    ev.effect_on_trigger,
+                    f"事件#{ev.id}触发",
+                    content=c,
+                )
+            db.mark_event_triggered(state, ev.id)
         if issue_id is not None:
-            if historical_event and not db.has_event_triggered(ev.id):
-                if ev.effect_on_trigger:
-                    _apply_issue_entities(
-                        db,
-                        state,
-                        ev.effect_on_trigger,
-                        f"事件#{ev.id}触发",
-                        content=c,
-                    )
-                db.mark_event_triggered(state, ev.id)
             triggered.append({"id": ev.id, "title": ev.title, "issue_id": issue_id})
-            print(f"[AUTO-TRIGGER] gate 达标硬立项 #{issue_id} {ev.title}（{ev.trigger_gate}）")
+            action = "硬立项" if created_issue else "补记"
+            print(f"[AUTO-TRIGGER] gate 达标{action} #{issue_id} {ev.title}（{ev.trigger_gate}）")
     return triggered
 
 
