@@ -944,6 +944,180 @@ def test_issue_tracker_close_entity_effects_respect_outer_transaction_rollback(g
     ).fetchone()[0] == 0
 
 
+def test_issue_tracker_close_legacy_expiry_respects_outer_transaction_rollback(game):
+    """post-merge CMR R6：终结效果读 legacy_modifiers 时过期清理不得提前提交外层事务。"""
+    db, state, _content = game
+    reason = "测试遗产过期事务R6"
+    issue_id = db.insert_issue(
+        state,
+        kind="situation",
+        title="测试·遗产过期事务",
+        origin_kind="decree",
+        bar_value=40,
+        stage_text="结案前",
+        effect_on_resolve={
+            "economy": [{"account": "国库", "delta": -1, "category": "测试", "reason": reason}]
+        },
+    )
+    legacy_id = db.insert_legacy(
+        state,
+        name="测试过期遗产R6",
+        modifiers={"国库": 1},
+        duration_months=0,
+        source_issue_id=issue_id,
+    )
+    db.conn.commit()
+
+    db.conn.execute("BEGIN")
+    out = issues.apply_issue_tracker_output(
+        db,
+        state,
+        {"close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "结案"}]},
+    )
+    assert out["closes"][0]["reason"] == "resolved"
+    db.conn.rollback()
+
+    issue_row = db.conn.execute("SELECT status, bar_value FROM issues WHERE id=?", (issue_id,)).fetchone()
+    legacy_row = db.conn.execute("SELECT status FROM legacies WHERE id=?", (legacy_id,)).fetchone()
+    assert dict(issue_row) == {"status": "active", "bar_value": 40}
+    assert legacy_row["status"] == "active"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE reason=?",
+        (reason,),
+    ).fetchone()[0] == 0
+
+
+def test_apply_issue_entities_person_changes_respect_commit_false(game):
+    """post-merge CMR R6：_apply_issue_entities(commit=False) 的人物变更也不得自行提交。"""
+    db, state, content = game
+    issues.bind_content(content)
+    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "毛文龙"))
+    db.conn.commit()
+    before_logs = db.conn.execute(
+        "SELECT COUNT(*) FROM person_logs WHERE person_name=?",
+        ("毛文龙",),
+    ).fetchone()[0]
+
+    issues._apply_issue_entities(
+        db,
+        state,
+        {
+            "人物变更": [
+                {"name": "毛文龙", "动作": "处置", "status": "dismissed", "reason": "测试 helper no-commit"}
+            ]
+        },
+        "测试 helper no-commit",
+        content=content,
+        commit=False,
+    )
+    db.conn.rollback()
+
+    assert db.get_character_status("毛文龙")[0] == "active"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM person_logs WHERE person_name=?",
+        ("毛文龙",),
+    ).fetchone()[0] == before_logs
+
+
+def test_event_pool_pending_person_location_change_blocks_gate(game):
+    """post-merge CMR R6：同回合行止改变 location 时，事件 text gate 不得沿用旧地点。"""
+    db, state, content = game
+    issues.bind_content(content)
+    db.conn.execute(
+        "UPDATE characters SET status=?, location=?, transit_to='' WHERE name=?",
+        ("active", "liaodong", "毛文龙"),
+    )
+    if "毛文龙" in content.characters:
+        content.characters["毛文龙"].status = "active"
+        content.characters["毛文龙"].location = "liaodong"
+        content.characters["毛文龙"].transit_to = ""
+    ev = Event(
+        id="__test_pending_location_gate__",
+        title="测试·行止地点门",
+        kind="朝议",
+        summary="毛文龙仍在辽东才可触发。",
+        urgency=10,
+        severity=10,
+        credibility=100,
+        interests=[],
+        audiences=[],
+        event_type="situation",
+        trigger_gate={"character.毛文龙.location": "== liaodong"},
+    )
+    content.seed_events.append(ev)
+    content.event_by_id[ev.id] = ev
+    try:
+        assert any(c.id == ev.id for c in issues.gather_candidate_events(state, db))
+
+        out = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
+                "人物变更": [{"name": "毛文龙", "动作": "行止", "location": "beizhili"}],
+            },
+            content=content,
+        )
+
+        new_issue = out["issue_summary"]["new_issues"][0]
+        assert new_issue["rejected"] is True
+        assert "候选" in new_issue["reason"]
+        assert db.conn.execute(
+            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
+            (ev.id,),
+        ).fetchone() is None
+        assert db.conn.execute(
+            "SELECT location FROM characters WHERE name=?",
+            ("毛文龙",),
+        ).fetchone()["location"] == "beizhili"
+    finally:
+        content.seed_events.remove(ev)
+        content.event_by_id.pop(ev.id, None)
+
+
+def test_event_pool_pending_rejected_legacy_gate_change_does_not_block(game):
+    """post-merge CMR R6：会被 legacy_gate 拒收的人物变更，不应提前阻断事件门。"""
+    db, state, content = game
+    issues.bind_content(content)
+    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("dismissed", "袁崇焕"))
+    if "袁崇焕" in content.characters:
+        content.characters["袁崇焕"].status = "dismissed"
+    ev = Event(
+        id="__test_rejected_legacy_gate_pending__",
+        title="测试·legacy gate 拒收不阻断",
+        kind="朝议",
+        summary="袁崇焕已罢黜时可触发。",
+        urgency=10,
+        severity=10,
+        credibility=100,
+        interests=[],
+        audiences=[],
+        event_type="situation",
+        trigger_gate={"character.袁崇焕.status": "== dismissed"},
+    )
+    content.seed_events.append(ev)
+    content.event_by_id[ev.id] = ev
+    try:
+        out = issues.apply_issue_tracker_output(
+            db,
+            state,
+            {"new_issues": [{"origin_kind": "event_pool", "id": ev.id}]},
+            content=content,
+            pending_person_changes_for_gates=[
+                {"name": "袁崇焕", "动作": "处置", "status": "dead", "reason": "测试 legacy gate", "legacy_gate": True}
+            ],
+        )
+
+        assert out["new_issues"][0]["rejected"] is False
+        assert db.conn.execute(
+            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
+            (ev.id,),
+        ).fetchone() is not None
+    finally:
+        content.seed_events.remove(ev)
+        content.event_by_id.pop(ev.id, None)
+
+
 def test_issue_tracker_cancel_respects_outer_transaction_rollback(game):
     """post-merge CMR R4：cancels 段不得由 db.cancel_issue 提前提交外层事务。"""
     db, state, _content = game

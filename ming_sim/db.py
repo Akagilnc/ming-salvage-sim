@@ -6313,12 +6313,12 @@ class GameDB:
 
     def list_active_legacies(self, state: GameState) -> List[sqlite3.Row]:
         """当前仍生效的帝国修正，顺手把已到期的失活。"""
-        self.expire_legacies(state)
+        self.expire_legacies(state, commit=not self.conn.in_transaction)
         return self.conn.execute(
             "SELECT * FROM legacies WHERE status='active' ORDER BY id"
         ).fetchall()
 
-    def expire_legacies(self, state: GameState) -> List[int]:
+    def expire_legacies(self, state: GameState, commit: bool = True) -> List[int]:
         """到期失活：当前月 >= start_month + duration_months（永久 -1 永不到期）。"""
         now = int(state.year) * 12 + int(state.period)
         rows = self.conn.execute(
@@ -6336,7 +6336,8 @@ class GameDB:
                 "UPDATE legacies SET status='expired' WHERE id=?",
                 [(i,) for i in expired],
             )
-            self.conn.commit()
+            if commit:
+                self.conn.commit()
             self._legacy_mod_cache = None  # active 集变了，修正符缓存失效
         return expired
 
@@ -6358,9 +6359,11 @@ class GameDB:
         net_pct 为带符号整数百分比；落账时 base>=0 用 ×(1+net/100)，base<0 用 ×(1-net/100)。
         结果缓存，active 遗产集变化时由 insert_legacy/expire_legacies 清空。
         """
-        # expire 可能改变 active 集 → 先跑（其内部会在有变动时清缓存）
-        self.expire_legacies(state)
-        if self._legacy_mod_cache is not None:
+        # expire 可能改变 active 集 → 先跑。若调用方已有外层事务，不能在读修正符时提交；
+        # 且该未提交 active 集不可写入缓存，否则 rollback 后会留下脏 cache。
+        cache_allowed = not self.conn.in_transaction
+        self.expire_legacies(state, commit=cache_allowed)
+        if cache_allowed and self._legacy_mod_cache is not None:
             return self._legacy_mod_cache
         agg: Dict[str, object] = {"国库": 0, "内库": 0, "民心": 0, "皇威": 0, "regions": {}, "armies": {}}
         for lg in self.conn.execute(
@@ -6387,7 +6390,8 @@ class GameDB:
                     for field, pct in fields.items():
                         if isinstance(pct, (int, float)):
                             bucket[str(field)] = int(bucket.get(str(field), 0)) + int(pct)
-        self._legacy_mod_cache = agg
+        if cache_allowed:
+            self._legacy_mod_cache = agg
         return agg
 
     @staticmethod
