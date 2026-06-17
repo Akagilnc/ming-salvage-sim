@@ -11,7 +11,10 @@ import sqlite3
 from typing import Any, Dict, List, Optional
 
 from ming_sim.constants import (
-    TURN_UNIT, REGION_SCORE_FIELDS, ARMY_SCORE_FIELDS, FISCAL_SCORE_FIELDS,
+    TURN_UNIT, REGION_SCORE_FIELDS, REGION_QUANTITY_FIELDS, REGION_TEXT_FIELDS,
+    ARMY_SCORE_FIELDS, ARMY_QUANTITY_FIELDS, ARMY_TEXT_FIELDS, FISCAL_SCORE_FIELDS,
+    BUILDING_SCORE_FIELDS, BUILDING_QUANTITY_FIELDS, BUILDING_TEXT_FIELDS,
+    POWER_SCORE_FIELDS, POWER_TEXT_FIELDS, CHARACTER_TEXT_FIELDS,
     REGION_FIELD_ALIASES, ARMY_FIELD_ALIASES, GATE_TABLES,
 )
 from ming_sim.content import GameContent
@@ -200,6 +203,36 @@ _GATE_AGG_FUNCS = {
 }
 
 
+_CHARACTER_NUMERIC_GATE_FIELDS = (
+    "loyalty",
+    "ability",
+    "integrity",
+    "courage",
+    "birth_year",
+    "historical_death_year",
+    "historical_death_month",
+    "debut_year",
+    "debut_month",
+    "status_changed_turn",
+)
+_GATE_SQL_FIELDS = {
+    "region": set(REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + REGION_TEXT_FIELDS + ("city_level", "cannon")),
+    "army": set(ARMY_SCORE_FIELDS + ARMY_QUANTITY_FIELDS + ARMY_TEXT_FIELDS),
+    "building": set(BUILDING_SCORE_FIELDS + BUILDING_QUANTITY_FIELDS + BUILDING_TEXT_FIELDS),
+    "power": set(POWER_SCORE_FIELDS + POWER_TEXT_FIELDS),
+    "faction": {"satisfaction", "leverage", "agenda"},
+    "character": set(_CHARACTER_NUMERIC_GATE_FIELDS + CHARACTER_TEXT_FIELDS),
+    "class": {"population", "satisfaction", "leverage", "agenda"},
+}
+
+
+def _gate_sql_field(table: str, field: str, key: str) -> str:
+    allowed = _GATE_SQL_FIELDS.get(table)
+    if allowed is None or field not in allowed:
+        raise ValueError(f"trigger_gate key「{key}」字段无效：{table}.{field}")
+    return field
+
+
 def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[int]:
     """把 gate key 解析成一个 int 值。形式：
       - 'metric_name'                           → metrics[key]
@@ -231,6 +264,7 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
         return None
     field = parts[-1]
     id_segment = ".".join(parts[1:-1])
+    field = _gate_sql_field(table, field, key)
     if table == "class" and "@" in id_segment and "|" in id_segment.split("@", 1)[1]:
         # 简写：class.<name>@<r1>|<r2>|<r3>.<field> → 展开成 [name@r1, name@r2, name@r3]
         cname, rest = id_segment.split("@", 1)
@@ -297,6 +331,7 @@ def _eval_gate_key_str(key: str, db: GameDB) -> Optional[str]:
     if len(parts) != 3:
         return None
     table, cid, field = parts
+    field = _gate_sql_field(table, field, key)
     sql = {
         "region": f"SELECT {field} FROM regions WHERE id = ?",
         "army": f"SELECT {field} FROM armies WHERE id = ?",

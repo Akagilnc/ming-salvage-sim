@@ -150,13 +150,51 @@ _CONDITION_DISPLAY_REPLACEMENTS = [
 ]
 
 
+_CHARACTER_CONDITION_FIELD_LABELS = {
+    "loyalty": "忠诚",
+    "status": "状态",
+    "location": "所在",
+    "transit_to": "去向",
+    "power_id": "归属",
+    "office": "官职",
+    "office_type": "职类",
+    "faction": "派系",
+    "reason_code": "缘由",
+}
+_CONDITION_OPERATOR_LABELS = {
+    "==": "为",
+    "!=": "不是",
+    ">=": "至少",
+    ">": "超过",
+    "<=": "不高于",
+    "<": "低于",
+}
+
+
+def _humanize_condition_value(field: str, value: str) -> str:
+    if field == "status":
+        return globals().get("_STATUS_LABEL_WEB", {}).get(value, value)
+    for src, dst in _CONDITION_DISPLAY_REPLACEMENTS:
+        value = value.replace(src, dst)
+    return value
+
+
 def _humanize_condition(text: str) -> str:
     """把结案/失败条件里的技术 key 替换成玩家可读中文（仅用于展示）。"""
     if not text:
         return text
-    character_loyalty = re.fullmatch(r"\s*character\.([^.]+)\.loyalty\s*(?:>=|>)\s*\d+\s*", text)
-    if character_loyalty:
-        return f"{character_loyalty.group(1)}忠诚回稳"
+    character_condition = re.fullmatch(
+        r"\s*character\.([^.]+)\.([A-Za-z_]+)\s*(==|!=|>=|<=|>|<)\s*(.+?)\s*",
+        text,
+    )
+    if character_condition:
+        name, field, op, value = character_condition.groups()
+        if field == "loyalty" and op in {">=", ">"} and re.fullmatch(r"\d+", value):
+            return f"{name}忠诚回稳"
+        label = _CHARACTER_CONDITION_FIELD_LABELS.get(field, field)
+        op_label = _CONDITION_OPERATOR_LABELS.get(op, op)
+        value_label = _humanize_condition_value(field, value)
+        return f"{name}{label}{op_label}{value_label}"
     for src, dst in _CONDITION_DISPLAY_REPLACEMENTS:
         text = text.replace(src, dst)
     return text
