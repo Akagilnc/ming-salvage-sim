@@ -635,7 +635,8 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
     )
 
 
-_CHARACTER_STATUS_GATE_RE = re.compile(r"^character\.([^.]+)\.status$")
+_CHARACTER_TEXT_GATE_RE = re.compile(r"^character\.([^.]+)\.([A-Za-z_][A-Za-z0-9_]*)$")
+_PENDING_PERSON_GATE_FIELDS = {"status", "location", "transit_to", "power_id", "office", "office_type"}
 _TEXT_CONDITION_RE = re.compile(r"^\s*(==|!=)\s*([^\s]+)\s*$")
 
 
@@ -651,48 +652,99 @@ def _pending_person_changes_block_event_gate(
     """
     if not pending_person_changes or not ev.trigger_gate:
         return False
-    pending_status: Dict[str, str] = {}
+    pending_fields: Dict[str, Dict[str, str]] = {}
+
+    def overlay(name: str, field: str, value: object) -> None:
+        value_text = str(value or "").strip()
+        if value_text:
+            pending_fields.setdefault(name, {})[field] = value_text
+
     for item in pending_person_changes:
         name = str(item.get("name") or "").strip()
         action = str(item.get("动作") or "").strip()
         if not name:
             continue
-        if action == "罢黜":
-            status = "dismissed"
-        elif action == "处置":
-            status = str(item.get("status") or "").strip()
-            if status in {"active", "candidate"}:
-                continue
-        else:
-            continue
-        if status not in PERSON_STATUSES:
-            continue
-        row = db.conn.execute("SELECT status FROM characters WHERE name=?", (name,)).fetchone()
+        row = db.conn.execute(
+            "SELECT status, location, transit_to, power_id, office, office_type FROM characters WHERE name=?",
+            (name,),
+        ).fetchone()
         if row is None:
             continue
-        transition = resolve_person_transition(
-            str(row["status"] or "active"),
-            action,
-            reason_code=normalize_reason_code(item.get("reason_code")),
-        )
-        if transition.startswith("reject:"):
+        cur_status = str(row["status"] or "active")
+        if action in {"罢黜", "处置"}:
+            if action == "罢黜":
+                status = "dismissed"
+            else:
+                status = str(item.get("status") or "").strip()
+                if status in {"active", "candidate"}:
+                    continue
+            if status not in PERSON_STATUSES:
+                continue
+            if item.get("legacy_gate") and cur_status != "active":
+                continue
+            transition = resolve_person_transition(
+                cur_status,
+                action,
+                reason_code=normalize_reason_code(item.get("reason_code")),
+            )
+            if transition.startswith("reject:"):
+                continue
+            overlay(name, "status", status)
+        elif action == "行止":
+            if cur_status != "active":
+                continue
+            new_location = str(item.get("location") or "").strip()
+            transit_to = str(item.get("transit_to") or "").strip()
+            if not new_location and not transit_to:
+                continue
+            valid = True
+            for region_id in (new_location, transit_to):
+                if region_id and db.conn.execute("SELECT 1 FROM regions WHERE id=?", (region_id,)).fetchone() is None:
+                    valid = False
+                    break
+            if not valid:
+                continue
+            overlay(name, "location", new_location or row["location"])
+            overlay(name, "transit_to", transit_to)
+        elif action == "易主":
+            new_power = str(item.get("new_power") or item.get("power_id") or "").strip()
+            if not new_power:
+                continue
+            if db.conn.execute("SELECT 1 FROM powers WHERE id=?", (new_power,)).fetchone() is None:
+                continue
+            overlay(name, "power_id", new_power)
+            overlay(name, "status", "active")
+            overlay(name, "transit_to", "")
+        elif action in {"任命", "调任"}:
+            new_office = str(item.get("office") or item.get("new_office") or "").strip()
+            if not new_office:
+                continue
+            if str(row["power_id"] or "ming") not in {"", "ming"}:
+                continue
+            overlay(name, "status", "active")
+            overlay(name, "office", new_office)
+            overlay(name, "office_type", item.get("office_type") or item.get("new_office_type") or row["office_type"])
+            overlay(name, "transit_to", "")
+        else:
             continue
-        pending_status[name] = status
 
-    if not pending_status:
+    if not pending_fields:
         return False
     for key, cond in ev.trigger_gate.items():
-        match = _CHARACTER_STATUS_GATE_RE.fullmatch(str(key))
+        match = _CHARACTER_TEXT_GATE_RE.fullmatch(str(key))
         if not match:
             continue
-        name = match.group(1)
-        if name not in pending_status:
+        name, field = match.groups()
+        if field not in _PENDING_PERSON_GATE_FIELDS:
+            continue
+        fields = pending_fields.get(name)
+        if not fields or field not in fields:
             continue
         cond_match = _TEXT_CONDITION_RE.fullmatch(str(cond))
         if cond_match is None:
             continue
         op, expected = cond_match.groups()
-        actual = pending_status[name]
+        actual = fields[field]
         if op == "==" and actual != expected:
             return True
         if op == "!=" and actual == expected:
@@ -945,6 +997,7 @@ def _apply_issue_entities(
             llm_config=llm_config,
             source="system_simulation",
             derived_from=label,
+            external_transaction=not commit,
         )
         _raise_on_rejected(results, "character_status_changes")
         if applied_person_changes is not None:
@@ -959,6 +1012,7 @@ def _apply_issue_entities(
             llm_config=llm_config,
             source="system_simulation",
             derived_from=label,
+            external_transaction=not commit,
         )
         _raise_on_rejected(results, "人物变更")
         if applied_person_changes is not None:
