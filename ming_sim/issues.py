@@ -33,6 +33,7 @@ from ming_sim.models import Event, GameState, is_vassal_prince, loads_effect_dic
 from ming_sim.person_archive_contract import (
     PERSON_ALLEGIANCE_CHANGE_WAYS,
     PERSON_IDENTITY_TITLES,
+    PERSON_STATUSES,
     normalize_reason_code,
     resolve_person_transition,
 )
@@ -539,7 +540,7 @@ def show_active_issues(db: GameDB) -> None:
     print()
 
 
-def event_to_issue(db: GameDB, state: GameState, ev: Event) -> Optional[int]:
+def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = True) -> Optional[int]:
     """把一个预设 event（EVENTS / SEED_EVENTS）落成一条 situation issue。供推演判定触发后调用。
 
     去重分两类：
@@ -628,7 +629,71 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event) -> Optional[int]:
         effect_on_fail=effect_fail,
         resolve_condition=ev.resolve_condition,
         fail_condition=ev.fail_condition,
+        commit=commit,
     )
+
+
+_CHARACTER_STATUS_GATE_RE = re.compile(r"^character\.([^.]+)\.status$")
+_TEXT_CONDITION_RE = re.compile(r"^\s*(==|!=)\s*([^\s]+)\s*$")
+
+
+def _pending_person_changes_block_event_gate(
+    ev: Event,
+    pending_person_changes: List[Dict[str, object]],
+    db: GameDB,
+) -> bool:
+    """Re-check character status gates against accepted same-turn person changes.
+
+    Status-changing person writes intentionally remain post-issue to preserve settlement
+    ordering, but event_pool must not ignore a same-turn removal of an event actor.
+    """
+    if not pending_person_changes or not ev.trigger_gate:
+        return False
+    pending_status: Dict[str, str] = {}
+    for item in pending_person_changes:
+        name = str(item.get("name") or "").strip()
+        action = str(item.get("动作") or "").strip()
+        if not name:
+            continue
+        if action == "罢黜":
+            status = "dismissed"
+        elif action == "处置":
+            status = str(item.get("status") or "").strip()
+        else:
+            continue
+        if status not in PERSON_STATUSES:
+            continue
+        row = db.conn.execute("SELECT status FROM characters WHERE name=?", (name,)).fetchone()
+        if row is None:
+            continue
+        transition = resolve_person_transition(
+            str(row["status"] or "active"),
+            action,
+            reason_code=normalize_reason_code(item.get("reason_code")),
+        )
+        if transition.startswith("reject:"):
+            continue
+        pending_status[name] = status
+
+    if not pending_status:
+        return False
+    for key, cond in ev.trigger_gate.items():
+        match = _CHARACTER_STATUS_GATE_RE.fullmatch(str(key))
+        if not match:
+            continue
+        name = match.group(1)
+        if name not in pending_status:
+            continue
+        cond_match = _TEXT_CONDITION_RE.fullmatch(str(cond))
+        if cond_match is None:
+            continue
+        op, expected = cond_match.groups()
+        actual = pending_status[name]
+        if op == "==" and actual != expected:
+            return True
+        if op == "!=" and actual == expected:
+            return True
+    return False
 
 
 # 会崩坏的局势：人为可控、有明确「彻底失败」时刻——镇压不住/边镇沦陷/朝局崩坏。
@@ -1023,6 +1088,7 @@ def apply_issue_tracker_output(
     tracker_output: Dict[str, object],
     llm_config: Any = None,
     content=None,
+    pending_person_changes_for_gates: Optional[List[Dict[str, object]]] = None,
 ) -> Dict[str, object]:
     touched_ids: set = set()
     applied_advances: List[Dict[str, object]] = []
@@ -1194,6 +1260,14 @@ def apply_issue_tracker_output(
                     "reason": "事件当前未进候选池（窗口/前提门/已触发不满足）",
                 })
                 continue
+            if _pending_person_changes_block_event_gate(ev, pending_person_changes_for_gates or [], db):
+                print(f"[INFO] new_issue 已拒：事件 {event_id} 被同回合人物变更阻断。")
+                applied_new.append({
+                    "title": ev.title,
+                    "rejected": True,
+                    "reason": "事件当前未进候选池（同回合人物变更后前提门不满足）",
+                })
+                continue
             if ev.event_type != "situation":
                 if ev.effect_on_trigger:
                     entity_rejections.extend(
@@ -1212,7 +1286,7 @@ def apply_issue_tracker_output(
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 为 {ev.event_type}，不转 issue。")
                 applied_new.append({"title": ev.title, "rejected": False, "reason": f"event_type={ev.event_type} 已记为触发"})
                 continue
-            issue_id = event_to_issue(db, state, ev)
+            issue_id = event_to_issue(db, state, ev, commit=not external_transaction)
             if issue_id is None:
                 # event_to_issue 移除 broad except 后，返回 None 只剩一种语义：同源 issue 已存在的
                 # 幂等去重跳过（在其 insert try 之外 early-return）；insert 的真代码/DB 异常现已上抛、
@@ -2716,7 +2790,7 @@ def apply_score_extraction(
         "new_issues": extracted.get("new_issues") or [],
         "close_issues": extracted.get("close_issues") or [],
         "cancels": extracted.get("cancels") or [],
-    }, llm_config=llm_config, content=content)
+    }, llm_config=llm_config, content=content, pending_person_changes_for_gates=post_issue_person_changes)
     _apply_normalized_person_changes(post_issue_person_changes, legacy=legacy_person_mode)
 
     def _norm_int_leaf(v):

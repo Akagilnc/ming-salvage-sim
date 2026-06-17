@@ -6090,6 +6090,7 @@ class GameDB:
         effect_on_fail: Dict[str, object] | None = None,
         resolve_condition: str = "",
         fail_condition: str = "",
+        commit: bool = True,
     ) -> int:
         if kind not in ("situation", "initiative"):
             raise ValueError(f"issue kind 非法：{kind}")
@@ -6127,7 +6128,8 @@ class GameDB:
                 state.turn,
             ),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return int(cur.lastrowid)
 
     def advance_issue(
