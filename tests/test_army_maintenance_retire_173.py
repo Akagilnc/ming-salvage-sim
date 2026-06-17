@@ -61,16 +61,19 @@ def test_new_army_still_requires_manpower(game):
 
 def test_new_army_pay_derives_from_manpower_not_maintenance(game):
     # 即便 LLM 仍塞了 maintenance，月饷只认 army_needed（salary_rate×兵力），维护费不参与扣费。
+    # 用「同兵力、维护费悬殊两军 army_needed 相等」断言，不耦合具体 salary_rate 锚点值（Sourcery R1）。
     from ming_sim.flows import army_needed
     db, state, _ = game
-    db.create_armies_from_extraction(state, [{
-        "id": "qin_army_pr2d", "name": "秦军丁营", "owner_power": "ming",
-        "manpower": 10000, "maintenance_per_turn": 99,  # 维护费塞大数，不该影响月饷
-    }])
-    row = db.conn.execute(
-        "SELECT * FROM armies WHERE id='qin_army_pr2d'").fetchone()
-    # 缺省 salary_rate 落锚点 1.5 → ceil(10000×1.5/10000)=2，与维护费 99 无关
-    assert army_needed(row) == 2
+    db.create_armies_from_extraction(state, [
+        {"id": "qin_pr2d_lo", "name": "秦军丁营低维护", "owner_power": "ming",
+         "manpower": 10000, "maintenance_per_turn": 1},
+        {"id": "qin_pr2d_hi", "name": "秦军丁营高维护", "owner_power": "ming",
+         "manpower": 10000, "maintenance_per_turn": 999},
+    ])
+    row_lo = db.conn.execute("SELECT * FROM armies WHERE id='qin_pr2d_lo'").fetchone()
+    row_hi = db.conn.execute("SELECT * FROM armies WHERE id='qin_pr2d_hi'").fetchone()
+    # 月饷完全由兵力 + salary_rate 派生，与 maintenance_per_turn 无关 → 同兵力两军同饷。
+    assert army_needed(row_lo) == army_needed(row_hi)
 
 
 # ── 改军：维护费 pay-change 拒收 ────────────────────────────────────────
@@ -149,9 +152,11 @@ def test_maintenance_numeric_paychange_tolerated_on_issue_path(game):
 
 # ── cmr R1 P3(Claude f2)：建军维护费脏值兜底分支覆盖 ──────────────────
 
-@pytest.mark.parametrize("dirty,tag", [(3.7, "flt"), (True, "bool"), ("两万", "str"), (None, "none")])
+@pytest.mark.parametrize(
+    "dirty,tag", [(-5, "neg"), (3.7, "flt"), (True, "bool"), ("两万", "str"), (None, "none")])
 def test_new_army_dirty_maintenance_tolerated_defaults_zero(game, dirty, tag):
-    # 建军维护费脏值（float/bool/串/None）→ 不拒整军、兜底 0（死列值无意义，月饷不看它）。
+    # 建军维护费脏值（负 int/float/bool/串/None）→ 不拒整军、兜底 0（死列值无意义，月饷不看它）。
+    # 负 int 显式锁「只认非负 int」契约（Sourcery R1）。
     db, state, _ = game
     aid = f"qin_pr2_dirty_{tag}"
     created = db.create_armies_from_extraction(state, [{
