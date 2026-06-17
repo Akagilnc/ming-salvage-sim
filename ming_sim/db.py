@@ -33,6 +33,11 @@ _REGION_DIRECT_TUPLE = REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + REGION_TEX
 _REGION_DIRECT_SET = frozenset(_REGION_DIRECT_TUPLE)
 _REGION_NUMERIC_SET = frozenset(REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS)
 _ARMY_VALID_SET = frozenset(ARMY_SCORE_FIELDS + ARMY_QUANTITY_FIELDS + ARMY_TEXT_FIELDS)
+_COMMITMENT_STOP_CONDITION_RE = re.compile(r"character\.[^.]+\.loyalty\s*(?:>=|>)\s*\d+")
+
+
+def _is_commitment_stop_condition(resolve_condition: object) -> bool:
+    return bool(_COMMITMENT_STOP_CONDITION_RE.fullmatch(str(resolve_condition or "").strip()))
 
 
 def _new_army_historically_applied(it: dict) -> bool:
@@ -2207,6 +2212,7 @@ class GameDB:
         derived_from: str = "",
         normalized: str | Dict[str, object] = "",
         source: str = "",
+        commit: bool = True,
     ) -> None:
         if isinstance(normalized, dict):
             normalized_text = json.dumps(normalized, ensure_ascii=False, sort_keys=True)
@@ -2230,7 +2236,8 @@ class GameDB:
                 str(source or "")[:80],
             ),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
     def get_character_status(self, name: str) -> Tuple[str, str]:
         row = self.conn.execute(
@@ -6136,7 +6143,8 @@ class GameDB:
         new_phase = self._derive_issue_phase(to_value)
         new_status = row["status"]
         closed_turn = row["closed_turn"]
-        if to_value >= 100:
+        commitment_stop_condition = _is_commitment_stop_condition(row["resolve_condition"])
+        if to_value >= 100 and not commitment_stop_condition:
             new_status = "resolved"
             closed_turn = state.turn
         elif to_value <= 0 and can_collapse:

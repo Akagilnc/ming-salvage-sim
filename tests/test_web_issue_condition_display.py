@@ -40,3 +40,19 @@ def test_humanize_character_status_condition_hides_machine_key():
     assert text == "袁崇焕状态为在朝"
     assert "character" not in text
     assert "active" not in text
+
+
+def test_humanize_character_location_condition_uses_field_label_and_value_label():
+    text = web_app._humanize_condition("character.毛文龙.location == liaodong")
+
+    assert text == "毛文龙所在为辽东"
+    assert "character" not in text
+    assert "liaodong" not in text
+
+
+def test_humanize_character_low_loyalty_condition_hides_machine_threshold():
+    text = web_app._humanize_condition("character.毛文龙.loyalty <65")
+
+    assert text == "毛文龙忠诚未稳"
+    assert "character" not in text
+    assert "65" not in text

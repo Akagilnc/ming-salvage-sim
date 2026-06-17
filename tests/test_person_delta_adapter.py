@@ -381,6 +381,34 @@ def test_apply_score_extraction_clamps_loyalty_assessment_delta(game, start, del
     ]
 
 
+def test_apply_score_extraction_loyalty_assessment_does_not_commit_inside_batch(game):
+    db, state, content = game
+    before = db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name='毛文龙'"
+    ).fetchone()["loyalty"]
+
+    db.conn.execute("BEGIN")
+    issues._apply_person_changes(
+        db,
+        state,
+        [
+            {
+                "name": "毛文龙",
+                "动作": "评定",
+                "loyalty": 8,
+                "reason": "事务内软判",
+            }
+        ],
+        content=content,
+    )
+    db.conn.rollback()
+
+    after = db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name='毛文龙'"
+    ).fetchone()["loyalty"]
+    assert after == before
+
+
 def test_apply_score_extraction_one_time_grant_and_assessment_do_not_create_commitment_issue(game):
     db, state, content = game
     before_issues = db.conn.execute("SELECT COUNT(*) AS n FROM issues").fetchone()["n"]
