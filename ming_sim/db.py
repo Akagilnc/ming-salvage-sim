@@ -1001,6 +1001,7 @@ class GameDB:
         self.ensure_column("characters", "court_role", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "summary", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "aliases", "TEXT NOT NULL DEFAULT '[]'")
+        self._backfill_person_core_character_static_fields()
         self.ensure_column("event_triggers", "terminal_state", "TEXT NOT NULL DEFAULT 'triggered'")
         self.ensure_column("event_triggers", "terminal_reason", "TEXT NOT NULL DEFAULT ''")
         self._backfill_event_triggers_from_event_pool_issues()
@@ -1848,6 +1849,36 @@ class GameDB:
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note",
             (ARREARS_UNIT_VERSION,),
         )
+
+    def _backfill_person_core_character_static_fields(self) -> None:
+        mao = self.content.characters.get("毛文龙")
+        if mao and mao.location:
+            self.conn.execute(
+                """
+                UPDATE characters
+                SET location = ?
+                WHERE name = '毛文龙'
+                  AND COALESCE(location, '') = ''
+                  AND COALESCE(transit_to, '') = ''
+                """,
+                (mao.location,),
+            )
+        for name in ("李自成", "张献忠"):
+            ch = self.content.characters.get(name)
+            if not ch or ch.debut_year <= 0:
+                continue
+            self.conn.execute(
+                """
+                UPDATE characters
+                SET debut_year = ?, debut_month = ?
+                WHERE name = ?
+                  AND status = 'offstage'
+                  AND COALESCE(debut_year, 0) = 0
+                  AND COALESCE(debut_month, 0) = 0
+                """,
+                (ch.debut_year, ch.debut_month, name),
+            )
+        self.conn.commit()
 
     def _backfill_event_triggers_from_event_pool_issues(self) -> None:
         self.conn.execute(

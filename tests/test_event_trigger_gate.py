@@ -729,6 +729,85 @@ def test_legacy_event_pool_issue_backfills_event_trigger_for_chain_gate(game):
     assert any(ev.id == "yuan_xialing" for ev in issues.gather_candidate_events(state, db))
 
 
+def test_legacy_person_core_static_fields_backfill_reachability(game):
+    """#191 CMR R4：旧档缺新增静态人物字段时，schema 迁移应补回人物核心门底座。"""
+    db, state, content = game
+    issues.bind_content(content)
+    db.conn.execute(
+        "UPDATE characters SET location='', transit_to='' WHERE name=?",
+        ("毛文龙",),
+    )
+    db.conn.execute(
+        "UPDATE characters SET status='offstage', debut_year=0, debut_month=0 WHERE name IN (?, ?)",
+        ("李自成", "张献忠"),
+    )
+    db.conn.commit()
+
+    db.init_schema()
+
+    mao = db.conn.execute(
+        "SELECT location FROM characters WHERE name=?",
+        ("毛文龙",),
+    ).fetchone()
+    li = db.conn.execute(
+        "SELECT debut_year, debut_month FROM characters WHERE name=?",
+        ("李自成",),
+    ).fetchone()
+    zhang = db.conn.execute(
+        "SELECT debut_year, debut_month FROM characters WHERE name=?",
+        ("张献忠",),
+    ).fetchone()
+    assert mao["location"] == "dongjiang_area"
+    assert (li["debut_year"], li["debut_month"]) == (1634, 1)
+    assert (zhang["debut_year"], zhang["debut_month"]) == (1631, 1)
+
+    state.year = 1629
+    state.period = 6
+    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("active", "袁崇焕"))
+    db.conn.execute("UPDATE armies SET commander=? WHERE id=?", ("袁崇焕", "guanning"))
+    assert any(ev.id == "mao_wenlong" for ev in issues.gather_candidate_events(state, db))
+
+    state.year = 1631
+    state.period = 1
+    debuted = db.apply_historical_debuts(state)
+    assert any(item["name"] == "张献忠" for item in debuted)
+
+    state.year = 1634
+    state.period = 1
+    db.conn.execute("UPDATE powers SET military_strength=? WHERE id=?", (50, "bandits"))
+    debuted = db.apply_historical_debuts(state)
+    assert any(item["name"] == "李自成" for item in debuted)
+    assert any(ev.id == "li_chenghai" for ev in issues.gather_candidate_events(state, db))
+
+    state.year = 1639
+    state.period = 5
+    db.conn.execute(
+        "UPDATE characters SET power_id=?, location=? WHERE name=?",
+        ("ming", "huguang", "张献忠"),
+    )
+    db.conn.execute("UPDATE regions SET unrest=? WHERE id=?", (55, "huguang"))
+    assert any(ev.id == "zhangxianzhong_zaifan" for ev in issues.gather_candidate_events(state, db))
+
+
+def test_person_core_static_backfill_preserves_relocated_mao(game):
+    """#191 CMR R4：旧档静态补丁不能覆盖玩家已落库的调离规避状态。"""
+    db, _state, content = game
+    issues.bind_content(content)
+    db.conn.execute(
+        "UPDATE characters SET location=?, transit_to='' WHERE name=?",
+        ("beizhili", "毛文龙"),
+    )
+    db.conn.commit()
+
+    db.init_schema()
+
+    row = db.conn.execute(
+        "SELECT location FROM characters WHERE name=?",
+        ("毛文龙",),
+    ).fetchone()
+    assert row["location"] == "beizhili"
+
+
 def test_luoyang_fallen_not_obsoleted_when_fu_wang_is_dead(game):
     """#191 CMR：洛阳陷落是城市/流寇压力事件，福王已死不应让事件进入人物核心作废终态。"""
     db, state, content = game
