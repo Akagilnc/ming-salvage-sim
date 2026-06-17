@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ming_sim.simulation import _extractor_context_payload
+from ming_sim.simulation import build_simulator_payload, _extractor_context_payload
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -49,5 +49,28 @@ def test_appease_mao_active_issue_context_marks_character_loyalty_stop_condition
     )
 
     assert issue["resolve_condition"] == "character.毛文龙.loyalty >= 65"
+    assert issue["condition_role"] == "commitment_stop_condition"
+    assert "不要按 resolve_condition 达标自动结案" in issue["condition_note"]
+
+
+def test_appease_mao_simulator_payload_marks_character_loyalty_stop_condition(game):
+    db, state, _ = game
+    db.insert_issue(
+        state,
+        kind="initiative",
+        title="安抚毛文龙·进行中",
+        origin_kind="decree",
+        bar_value=20,
+        stage_text="遣臣持诏赴皮岛",
+        cancellable="decree",
+        resolve_condition="character.毛文龙.loyalty >= 65",
+    )
+
+    payload = build_simulator_payload(state, db, "", "")
+    issue = next(
+        item for item in payload["active_issues"] if item["title"] == "安抚毛文龙·进行中"
+    )
+
+    assert issue["结案条件"] == "character.毛文龙.loyalty >= 65"
     assert issue["condition_role"] == "commitment_stop_condition"
     assert "不要按 resolve_condition 达标自动结案" in issue["condition_note"]
