@@ -15,7 +15,7 @@ from ming_sim.constants import (
     ARMY_SCORE_FIELDS, ARMY_QUANTITY_FIELDS, ARMY_TEXT_FIELDS, FISCAL_SCORE_FIELDS,
     BUILDING_SCORE_FIELDS, BUILDING_QUANTITY_FIELDS, BUILDING_TEXT_FIELDS,
     POWER_SCORE_FIELDS, POWER_TEXT_FIELDS, CHARACTER_TEXT_FIELDS,
-    REGION_FIELD_ALIASES, ARMY_FIELD_ALIASES, GATE_TABLES,
+    REGION_FIELD_ALIASES, ARMY_FIELD_ALIASES, POWER_FIELD_ALIASES, GATE_TABLES,
 )
 from ming_sim.content import GameContent
 from ming_sim.context import victory_status
@@ -33,6 +33,7 @@ from ming_sim.models import Event, GameState, is_vassal_prince, loads_effect_dic
 from ming_sim.person_archive_contract import (
     PERSON_ALLEGIANCE_CHANGE_WAYS,
     PERSON_IDENTITY_TITLES,
+    PERSON_STATUSES,
     normalize_reason_code,
     resolve_person_transition,
 )
@@ -78,6 +79,7 @@ def _apply_issue_buildings(
     ops: object,
     pseudo_event: Event,
     reason: str,
+    commit: bool = True,
 ) -> List[Dict[str, object]]:
     """落地 issue effect 里的 buildings 段：建筑随局势结案而新建/改数值/废止。
 
@@ -109,6 +111,7 @@ def _apply_issue_buildings(
                     output_amount=int(op.get("output_amount", 0)),
                     status=str(op.get("status") or ""),
                     origin="issue",
+                    commit=commit,
                 )
                 applied.append({"action": "create", "building_id": bid,
                                  "name": str(op.get("name") or "")})
@@ -117,11 +120,11 @@ def _apply_issue_buildings(
                 fields = {k: v for k, v in op.items()
                           if k not in ("action", "building_id")}
                 fields.setdefault("reason", reason)
-                ch = db.apply_building_deltas(state, pseudo_event, None, "档房", {bid: fields})
+                ch = db.apply_building_deltas(state, pseudo_event, None, "档房", {bid: fields}, commit=commit)
                 applied.append({"action": "modify", "building_id": bid, "changes": ch})
             elif action == "remove":
                 bid = str(op.get("building_id") or "")
-                ok = db.remove_building(state, bid, reason=reason)
+                ok = db.remove_building(state, bid, reason=reason, commit=commit)
                 applied.append({"action": "remove", "building_id": bid, "removed": ok})
             else:
                 print(f"[WARN] issue effect buildings: action 非法 '{action}'，跳过。")
@@ -539,7 +542,7 @@ def show_active_issues(db: GameDB) -> None:
     print()
 
 
-def event_to_issue(db: GameDB, state: GameState, ev: Event) -> Optional[int]:
+def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = True) -> Optional[int]:
     """把一个预设 event（EVENTS / SEED_EVENTS）落成一条 situation issue。供推演判定触发后调用。
 
     去重分两类：
@@ -628,7 +631,434 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event) -> Optional[int]:
         effect_on_fail=effect_fail,
         resolve_condition=ev.resolve_condition,
         fail_condition=ev.fail_condition,
+        commit=commit,
     )
+
+
+_CHARACTER_TEXT_GATE_RE = re.compile(r"^character\.([^.]+)\.([A-Za-z_][A-Za-z0-9_]*)$")
+_PENDING_PERSON_GATE_FIELDS = {
+    "status", "status_reason", "reason_code", "location", "transit_to", "power_id", "office", "office_type",
+}
+_PENDING_POWER_GATE_FIELDS = {"leverage", "military_strength", "supply"}
+_TEXT_CONDITION_RE = re.compile(r"^\s*(==|!=)\s*([^\s]+)\s*$")
+_NUMERIC_CONDITION_RE = re.compile(r"^\s*(>=|<=|>|<|==)\s*(-?\d+)\s*$")
+
+
+def _register_runtime_rollback_snapshot(
+    db: GameDB,
+    state: GameState,
+    content: Optional[GameContent],
+    registry: object = None,
+) -> None:
+    """Restore process memory if the caller rolls back the surrounding DB transaction."""
+    conn = db.conn
+    callbacks = getattr(conn, "_runtime_rollback_callbacks", None)
+    if callbacks is None:
+        callbacks = []
+        conn._runtime_rollback_callbacks = callbacks
+    metrics_snapshot = dict(state.metrics)
+    character_objects = dict(content.characters) if content is not None else {}
+    character_attrs: Dict[str, Dict[str, object]] = {}
+    for name, character in character_objects.items():
+        try:
+            character_attrs[name] = dict(vars(character))
+        except TypeError:
+            character_attrs[name] = {}
+    registry_agents = getattr(registry, "agents", None)
+    registry_session_ids = getattr(registry, "session_ids", None)
+    registry_agents_snapshot = dict(registry_agents) if isinstance(registry_agents, dict) else None
+    registry_session_ids_snapshot = (
+        dict(registry_session_ids) if isinstance(registry_session_ids, dict) else None
+    )
+
+    def restore_runtime() -> None:
+        state.metrics.clear()
+        state.metrics.update(metrics_snapshot)
+        if content is not None:
+            for name in list(content.characters):
+                if name not in character_objects:
+                    del content.characters[name]
+            for name, character in character_objects.items():
+                content.characters[name] = character
+                try:
+                    for attr in list(vars(character)):
+                        if attr not in character_attrs.get(name, {}):
+                            delattr(character, attr)
+                except TypeError:
+                    pass
+                for attr, value in character_attrs.get(name, {}).items():
+                    setattr(character, attr, value)
+        if registry_agents_snapshot is not None and isinstance(registry_agents, dict):
+            registry_agents.clear()
+            registry_agents.update(registry_agents_snapshot)
+        if registry_session_ids_snapshot is not None and isinstance(registry_session_ids, dict):
+            registry_session_ids.clear()
+            registry_session_ids.update(registry_session_ids_snapshot)
+
+    callbacks.append(restore_runtime)
+
+
+def _load_pending_gate_shadow_rows(db: GameDB) -> Dict[str, Dict[str, str]]:
+    shadow_rows: Dict[str, Dict[str, str]] = {}
+    for row in db.conn.execute(
+        "SELECT name, status, status_reason, reason_code, location, transit_to, "
+        "power_id, office, office_type FROM characters"
+    ).fetchall():
+        shadow_rows[str(row["name"])] = {
+            "status": str(row["status"] or "active"),
+            "status_reason": str(row["status_reason"] or ""),
+            "reason_code": str(row["reason_code"] or ""),
+            "location": str(row["location"] or ""),
+            "transit_to": str(row["transit_to"] or ""),
+            "power_id": str(row["power_id"] or "ming"),
+            "office": str(row["office"] or ""),
+            "office_type": str(row["office_type"] or ""),
+        }
+    return shadow_rows
+
+
+def _load_pending_gate_power_shadow_rows(db: GameDB) -> Dict[str, Dict[str, int]]:
+    power_shadow_rows: Dict[str, Dict[str, int]] = {}
+    for row in db.conn.execute("SELECT id, leverage, military_strength, supply FROM powers").fetchall():
+        power_shadow_rows[str(row["id"])] = {
+            "leverage": int(row["leverage"] or 0),
+            "military_strength": int(row["military_strength"] or 0),
+            "supply": int(row["supply"] or 0),
+        }
+    return power_shadow_rows
+
+
+def _load_pending_gate_valid_regions(db: GameDB) -> set[str]:
+    return {
+        str(row["id"])
+        for row in db.conn.execute("SELECT id FROM regions").fetchall()
+    }
+
+
+def _pending_person_changes_block_event_gate(
+    ev: Event,
+    pending_person_changes: List[Dict[str, object]],
+    db: GameDB,
+    *,
+    allow_legacy_partial_power: bool = False,
+    content: Optional[GameContent] = None,
+    shadow_rows: Optional[Dict[str, Dict[str, str]]] = None,
+    power_shadow_rows: Optional[Dict[str, Dict[str, int]]] = None,
+    valid_regions: Optional[set[str]] = None,
+) -> bool:
+    """Re-check character status gates against accepted same-turn person changes.
+
+    Status-changing person writes intentionally remain post-issue to preserve settlement
+    ordering, but event_pool must not ignore a same-turn removal of an event actor.
+    """
+    if not pending_person_changes or not ev.trigger_gate:
+        return False
+    pending_fields: Dict[str, Dict[str, str]] = {}
+    pending_power_fields: Dict[str, Dict[str, int]] = {}
+    shadow_rows = (
+        _load_pending_gate_shadow_rows(db)
+        if shadow_rows is None
+        else {name: dict(row) for name, row in shadow_rows.items()}
+    )
+    power_shadow_rows = (
+        _load_pending_gate_power_shadow_rows(db)
+        if power_shadow_rows is None
+        else {power_id: dict(row) for power_id, row in power_shadow_rows.items()}
+    )
+    valid_regions = _load_pending_gate_valid_regions(db) if valid_regions is None else set(valid_regions)
+
+    def row_value(row: Dict[str, str], field: str, default: str = "") -> str:
+        return str(row.get(field) or default)
+
+    def character_row(name: str) -> Optional[Dict[str, str]]:
+        return shadow_rows.get(name)
+
+    def overlay(name: str, field: str, value: object) -> None:
+        value_text = str(value or "").strip()
+        pending_fields.setdefault(name, {})[field] = value_text
+        if name in shadow_rows:
+            shadow_rows[name][field] = value_text
+
+    def power_row(power_id: str) -> Optional[Dict[str, int]]:
+        return power_shadow_rows.get(power_id)
+
+    def overlay_power_delta(power_id: object, raw_changes: object) -> None:
+        pid = str(power_id or "").strip()
+        if not pid or not isinstance(raw_changes, dict):
+            return
+        row = power_row(pid)
+        if row is None:
+            return
+        for raw_field, value in raw_changes.items():
+            field = POWER_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
+            if field in {"reason", "last_action"}:
+                continue
+            if field not in _PENDING_POWER_GATE_FIELDS:
+                continue
+            try:
+                if isinstance(value, bool) or isinstance(value, float):
+                    raise ValueError("非整数 delta")
+                delta = int(value)
+            except (TypeError, ValueError):
+                continue
+            old_value = int(row[field])
+            new_value = max(0, min(100, old_value + delta))
+            if new_value == old_value:
+                continue
+            row[field] = new_value
+            pending_power_fields.setdefault(pid, {})[field] = new_value
+
+    def pending_power_gate_value(key: str) -> Optional[int]:
+        parts = key.split(".")
+        if not parts or parts[0] != "power":
+            return None
+        agg = None
+        if parts[-1] in _GATE_AGG_FUNCS:
+            agg = parts[-1]
+            parts = parts[:-1]
+        if len(parts) != 3:
+            return None
+        _, id_segment, raw_field = parts
+        field = _gate_sql_field("power", raw_field, key, kind="numeric")
+        if field not in _PENDING_POWER_GATE_FIELDS:
+            return None
+        ids = [pid for pid in id_segment.split("|") if pid]
+        if not ids or not any(field in pending_power_fields.get(pid, {}) for pid in ids):
+            return None
+        values: List[int] = []
+        for pid in ids:
+            row = power_row(pid)
+            if row is None:
+                return None
+            values.append(int(row[field]))
+        if len(values) == 1:
+            return values[0]
+        if agg is None:
+            agg = "min"
+        return int(_GATE_AGG_FUNCS[agg](values))
+
+    def current_title_kind(row: Dict[str, str]) -> str:
+        current_office = row_value(row, "office").strip()
+        current_office_type = row_value(row, "office_type").strip()
+        if (
+            not current_office
+            or current_office_type == "身名分"
+            or current_office in PERSON_IDENTITY_TITLES
+        ):
+            return "身名分"
+        return "职名分"
+
+    def identity_title_for_allegiance(item: Dict[str, object], new_power: str) -> str:
+        title = str(item.get("new_title") or item.get("title") or "").strip()
+        if title:
+            return title if title in PERSON_IDENTITY_TITLES else ""
+        way = str(item.get("方式") or item.get("way") or "").strip()
+        if new_power == "ming" or way == "主动归附":
+            return "归附"
+        return "降臣"
+
+    for item in pending_person_changes:
+        name = str(item.get("name") or "").strip()
+        action = str(item.get("动作") or "").strip()
+        if not name:
+            continue
+        if content is not None:
+            from ming_sim.session import _find_existing_minister
+            canon = _find_existing_minister(content, name, db)
+            if canon:
+                name = canon
+        row = character_row(name)
+        if row is None:
+            continue
+        cur_status = row_value(row, "status", "active")
+        if action in {"罢黜", "处置"}:
+            reason_text = str(item.get("reason") or item.get("status_reason") or "")
+            reason_code = normalize_reason_code(item.get("reason_code"))
+            if action == "罢黜":
+                status = "dismissed"
+            else:
+                status = str(item.get("status") or "").strip()
+                if status in {"active", "candidate"}:
+                    continue
+            if status not in PERSON_STATUSES:
+                continue
+            if item.get("legacy_gate") and cur_status != "active":
+                continue
+            transition = resolve_person_transition(
+                cur_status,
+                action,
+                reason_code=normalize_reason_code(item.get("reason_code")),
+            )
+            if transition.startswith("reject:"):
+                continue
+            overlay(name, "status", status)
+            overlay(name, "status_reason", reason_text[:200])
+            overlay(name, "reason_code", reason_code if reason_code else "")
+            overlay(name, "office", "")
+            overlay(name, "transit_to", "")
+        elif action == "行止":
+            if cur_status != "active":
+                continue
+            new_location = str(item.get("location") or "").strip()
+            transit_to = str(item.get("transit_to") or "").strip()
+            if not new_location and not transit_to:
+                continue
+            valid = True
+            for region_id in (new_location, transit_to):
+                if region_id and region_id not in valid_regions:
+                    valid = False
+                    break
+            if not valid:
+                continue
+            overlay(name, "location", new_location or row_value(row, "location"))
+            overlay(name, "transit_to", transit_to)
+        elif action == "易主":
+            way = str(item.get("方式") or item.get("way") or "").strip()
+            backlash = item.get("反噬", item.get("backlash"))
+            legacy_partial = allow_legacy_partial_power and bool(item.get("legacy_partial"))
+            if not way:
+                continue
+            if way not in PERSON_ALLEGIANCE_CHANGE_WAYS and not legacy_partial:
+                continue
+            if not isinstance(backlash, dict):
+                continue
+            if any(not isinstance(raw_changes, dict) for raw_changes in backlash.values()):
+                continue
+            new_power = str(item.get("new_power") or "").strip()
+            if not new_power:
+                continue
+            if new_power not in power_shadow_rows:
+                continue
+            if row_value(row, "power_id", "ming").strip() == new_power:
+                continue
+            transition = resolve_person_transition(
+                cur_status,
+                action,
+                reason_code=str(row_value(row, "reason_code") or item.get("reason_code") or ""),
+            )
+            if transition.startswith("reject:"):
+                continue
+            new_title = identity_title_for_allegiance(item, new_power)
+            if not new_title:
+                continue
+            overlay(name, "power_id", new_power)
+            overlay(name, "status", "active")
+            overlay(name, "status_reason", str(item.get("reason") or "")[:200])
+            overlay(name, "reason_code", "")
+            overlay(name, "office", new_title)
+            overlay(name, "office_type", "身名分")
+            overlay(name, "transit_to", "")
+            for power_id, raw_changes in backlash.items():
+                overlay_power_delta(power_id, raw_changes)
+        elif action in {"任命", "调任"}:
+            new_office = str(item.get("office") or item.get("new_office") or "").strip()
+            if not new_office:
+                continue
+            normalized_office = normalize_office(new_office)
+            if content is not None:
+                character = content.characters.get(name)
+                if character is None or is_vassal_prince(character):
+                    continue
+            transition = resolve_person_transition(
+                cur_status,
+                action,
+                reason_code=str(row_value(row, "reason_code") or item.get("reason_code") or ""),
+                current_title_kind=current_title_kind(row),
+            )
+            if transition.startswith("reject:"):
+                continue
+            if row_value(row, "power_id", "ming") not in {"", "ming"}:
+                continue
+            overlay(name, "status", "active")
+            if cur_status == "active":
+                overlay(name, "status_reason", "")
+            else:
+                overlay(name, "status_reason", str(item.get("reason") or "")[:200] or "诏书任命")
+            overlay(name, "reason_code", "")
+            overlay(name, "office", normalized_office)
+            overlay(
+                name,
+                "office_type",
+                infer_office_type_from_office(
+                    normalized_office,
+                    item.get("office_type") or item.get("new_office_type") or row_value(row, "office_type"),
+                    db.llm_config,
+                ),
+            )
+            overlay(name, "transit_to", "")
+            new_parts = [p for p in normalized_office.split(",") if _is_exclusive_office(p)]
+            if new_parts:
+                for other_name in set(shadow_rows):
+                    if other_name == name:
+                        continue
+                    other_row = character_row(other_name)
+                    if other_row is None:
+                        continue
+                    if row_value(other_row, "status", "active") != "active":
+                        continue
+                    if row_value(other_row, "power_id", "ming") not in {"", "ming"}:
+                        continue
+                    current_parts = [p.strip() for p in row_value(other_row, "office").split(",") if p.strip()]
+                    kept = [p for p in current_parts if p not in new_parts]
+                    if len(kept) == len(current_parts):
+                        continue
+                    displaced_office = "听用候铨" if not kept else ",".join(kept)
+                    old_type = row_value(other_row, "office_type")
+                    displaced_type = (
+                        "身名分"
+                        if not kept
+                        else infer_office_type_from_office(displaced_office, old_type, db.llm_config)
+                    )
+                    overlay(other_name, "office", displaced_office)
+                    overlay(other_name, "office_type", displaced_type)
+                    if not kept:
+                        overlay(other_name, "status_reason", "被顶替")
+                        overlay(other_name, "reason_code", "被顶替")
+                        overlay(other_name, "transit_to", "")
+        else:
+            continue
+
+    if not pending_fields and not pending_power_fields:
+        return False
+    for key, cond in ev.trigger_gate.items():
+        match = _CHARACTER_TEXT_GATE_RE.fullmatch(str(key))
+        if not match:
+            continue
+        name, field = match.groups()
+        if field not in _PENDING_PERSON_GATE_FIELDS:
+            continue
+        fields = pending_fields.get(name)
+        if not fields or field not in fields:
+            continue
+        cond_match = _TEXT_CONDITION_RE.fullmatch(str(cond))
+        if cond_match is None:
+            continue
+        op, expected = cond_match.groups()
+        actual = fields[field]
+        if op == "==" and actual != expected:
+            return True
+        if op == "!=" and actual == expected:
+            return True
+    for key, cond in ev.trigger_gate.items():
+        actual = pending_power_gate_value(str(key))
+        if actual is None:
+            continue
+        cond_match = _NUMERIC_CONDITION_RE.fullmatch(str(cond))
+        if cond_match is None:
+            continue
+        op, expected_text = cond_match.groups()
+        expected = int(expected_text)
+        if op == ">=" and not actual >= expected:
+            return True
+        if op == "<=" and not actual <= expected:
+            return True
+        if op == ">" and not actual > expected:
+            return True
+        if op == "<" and not actual < expected:
+            return True
+        if op == "==" and not actual == expected:
+            return True
+    return False
 
 
 # 会崩坏的局势：人为可控、有明确「彻底失败」时刻——镇压不住/边镇沦陷/朝局崩坏。
@@ -722,6 +1152,7 @@ def _spawn_legacy_from_effect(
     effect: Dict[str, object],
     issue_id: int,
     issue_title: str,
+    commit: bool = True,
 ) -> Optional[Dict[str, object]]:
     """结案 effect 里若带 legacy（帝国修正）段，落 legacies 表。返回落地摘要供日志。
     legacy schema:
@@ -786,6 +1217,7 @@ def _spawn_legacy_from_effect(
         narrative_hint=str(legacy.get("narrative_hint") or "")[:200],
         duration_months=duration,
         source_issue_id=issue_id,
+        commit=commit,
     )
     summary = {
         "legacy_id": new_id, "name": name,
@@ -805,6 +1237,7 @@ def _apply_issue_entities(
     registry=None,
     llm_config: Any = None,
     applied_person_changes: Optional[List[Dict[str, object]]] = None,
+    commit: bool = True,
 ) -> List[Dict[str, object]]:
     """国策结案的实体后果：建军 / 补兵改属性 / 人物状态(死/流放/下狱/罢/致仕)。
     全局严格、不静默——非法 delta 直接抛错中断当回合，绝不无声丢失。
@@ -838,13 +1271,13 @@ def _apply_issue_entities(
     new_armies = effect.get("new_armies")
     if isinstance(new_armies, list) and new_armies:
         _raise_on_rejected(
-            db.create_armies_from_extraction(state, new_armies, actor=label), "建军"
+            db.create_armies_from_extraction(state, new_armies, actor=label, commit=commit), "建军"
         )
     army_delta = effect.get("army_delta")
     if isinstance(army_delta, dict) and army_delta:
         pseudo = type("E", (), {"id": "issue", "title": label})()
         _raise_on_rejected(
-            db.apply_army_deltas(state, pseudo, None, label, army_delta), "补兵/改属性"
+            db.apply_army_deltas(state, pseudo, None, label, army_delta, commit=commit), "补兵/改属性"
         )
     raw_person_changes = effect.get("人物变更")
     if raw_person_changes is not None:
@@ -873,6 +1306,7 @@ def _apply_issue_entities(
             llm_config=llm_config,
             source="system_simulation",
             derived_from=label,
+            external_transaction=not commit,
         )
         _raise_on_rejected(results, "character_status_changes")
         if applied_person_changes is not None:
@@ -887,6 +1321,7 @@ def _apply_issue_entities(
             llm_config=llm_config,
             source="system_simulation",
             derived_from=label,
+            external_transaction=not commit,
         )
         _raise_on_rejected(results, "人物变更")
         if applied_person_changes is not None:
@@ -1023,6 +1458,9 @@ def apply_issue_tracker_output(
     tracker_output: Dict[str, object],
     llm_config: Any = None,
     content=None,
+    pending_person_changes_for_gates: Optional[List[Dict[str, object]]] = None,
+    allow_legacy_partial_power_for_gates: bool = False,
+    candidate_event_ids_at_input: Optional[set[str]] = None,
 ) -> Dict[str, object]:
     touched_ids: set = set()
     applied_advances: List[Dict[str, object]] = []
@@ -1033,7 +1471,31 @@ def apply_issue_tracker_output(
     # S0 桥接一层下探自动收进 rejection_reports（留痕不蒸发,cmr S2 r2）。
     entity_rejections: List[Dict[str, object]] = []
     issue_person_changes: List[Dict[str, object]] = []
-    event_by_id = _ctx().event_by_id
+    runtime_content = content if content is not None else _ctx()
+    event_by_id = runtime_content.event_by_id
+    external_transaction = db.conn.in_transaction
+    commit_now = not external_transaction
+    if external_transaction:
+        _register_runtime_rollback_snapshot(db, state, runtime_content)
+    candidate_event_ids = (
+        set(candidate_event_ids_at_input)
+        if candidate_event_ids_at_input is not None
+        else {candidate.id for candidate in gather_candidate_events(state, db)}
+    )
+    consumed_event_ids: set[str] = set()
+    current_candidate_event_ids: set[str] = set()
+    candidates_dirty = True
+    shared_shadow_rows: Optional[Dict[str, Dict[str, str]]] = None
+    shared_power_shadow_rows: Optional[Dict[str, Dict[str, int]]] = None
+    shared_valid_regions: Optional[set[str]] = None
+    has_event_pool_new_issue = any(
+        isinstance(item, dict) and str(item.get("origin_kind") or "").lower() == "event_pool"
+        for item in (tracker_output.get("new_issues", []) or [])
+    )
+    if pending_person_changes_for_gates and has_event_pool_new_issue:
+        shared_shadow_rows = _load_pending_gate_shadow_rows(db)
+        shared_power_shadow_rows = _load_pending_gate_power_shadow_rows(db)
+        shared_valid_regions = _load_pending_gate_valid_regions(db)
 
     # 1) advances（ADR 0008 决定1：LLM 脏数据逐项拒收留痕，不裸 continue 静默丢；db.advance_issue
     #    的代码/DB 异常上抛 SettlementAbort，同 close_issues / new_issues 段，#63）
@@ -1102,6 +1564,7 @@ def apply_issue_tracker_output(
             narrative=narrative,
             metric_delta=applied_metrics,
             inertia_delta=inertia_delta,
+            commit=not external_transaction,
         )
         touched_ids.add(issue_id)
         # 终结结算：bar 自然推到 100/0 触发的 resolved/failed，与 close_issues 一样落终结效果（含建筑）
@@ -1109,37 +1572,39 @@ def apply_issue_tracker_output(
             effect = loads_effect_dict(new_row["effect_on_resolve"])
             _emit_pairing_warnings(new_row, effect, pairing_warnings)
             _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
-            entity_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or []) if r.get("rejected"))  # economy 拒收不蒸发（#14）
-            entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
-            _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}结案")
+            entity_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or [], commit=commit_now) if r.get("rejected"))  # economy 拒收不蒸发（#14）
+            entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}, commit=commit_now).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
+            _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}结案", commit=commit_now)
             entity_rejections.extend(
                 _apply_issue_entities(
                     db,
                     state,
                     effect,
                     f"局势#{issue_id}结案",
-                    content=content,
+                    content=runtime_content,
                     llm_config=llm_config,
                     applied_person_changes=issue_person_changes,
+                    commit=commit_now,
                 ))
-            _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
+            _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]), commit=commit_now)
         elif new_row["status"] == "failed":
             effect = loads_effect_dict(new_row["effect_on_fail"])
             _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
-            entity_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or []) if r.get("rejected"))  # economy 拒收不蒸发（#14）
-            entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
-            _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}失败")
+            entity_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or [], commit=commit_now) if r.get("rejected"))  # economy 拒收不蒸发（#14）
+            entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}, commit=commit_now).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
+            _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}失败", commit=commit_now)
             entity_rejections.extend(
                 _apply_issue_entities(
                     db,
                     state,
                     effect,
                     f"局势#{issue_id}失败",
-                    content=content,
+                    content=runtime_content,
                     llm_config=llm_config,
                     applied_person_changes=issue_person_changes,
+                    commit=commit_now,
                 ))
-            _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
+            _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]), commit=commit_now)
         applied_advances.append({
             "issue_id": issue_id,
             "title": new_row["title"],
@@ -1181,7 +1646,10 @@ def apply_issue_tracker_output(
                 print(f"[INFO] new_issue 已拒：event {event_id} 标了 auto_trigger，只能程序硬触发。")
                 applied_new.append({"title": ev.title, "rejected": True, "reason": "auto_trigger 事件仅程序可触发"})
                 continue
-            if ev.id not in {candidate.id for candidate in gather_candidate_events(state, db)}:
+            if (
+                ev.id not in candidate_event_ids
+                or ev.id in consumed_event_ids
+            ):
                 # LLM 只能从本回合候选池中挑选事件；落库端重验窗口、trigger_gate 与已触发状态，
                 # 避免陈旧/伪造 id 穿透候选层后直接应用确定性后果（#203 CMR）。
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 当前未进 event_pool 候选池。")
@@ -1189,6 +1657,34 @@ def apply_issue_tracker_output(
                     "title": ev.title,
                     "rejected": True,
                     "reason": "事件当前未进候选池（窗口/前提门/已触发不满足）",
+                })
+                continue
+            if candidates_dirty:
+                current_candidate_event_ids = {candidate.id for candidate in gather_candidate_events(state, db)}
+                candidates_dirty = False
+            if ev.id not in current_candidate_event_ids:
+                print(f"[INFO] new_issue 已拒：事件 {event_id} 当前未进 event_pool 候选池。")
+                applied_new.append({
+                    "title": ev.title,
+                    "rejected": True,
+                    "reason": "事件当前未进候选池（窗口/前提门/已触发不满足）",
+                })
+                continue
+            if _pending_person_changes_block_event_gate(
+                ev,
+                pending_person_changes_for_gates or [],
+                db,
+                allow_legacy_partial_power=allow_legacy_partial_power_for_gates,
+                content=runtime_content,
+                shadow_rows=shared_shadow_rows,
+                power_shadow_rows=shared_power_shadow_rows,
+                valid_regions=shared_valid_regions,
+            ):
+                print(f"[INFO] new_issue 已拒：事件 {event_id} 被同回合人物变更阻断。")
+                applied_new.append({
+                    "title": ev.title,
+                    "rejected": True,
+                    "reason": "事件当前未进候选池（同回合人物变更后前提门不满足）",
                 })
                 continue
             if ev.event_type != "situation":
@@ -1199,22 +1695,27 @@ def apply_issue_tracker_output(
                             state,
                             ev.effect_on_trigger,
                             f"事件#{ev.id}触发",
-                            content=content,
+                            content=runtime_content,
                             llm_config=llm_config,
                             applied_person_changes=issue_person_changes,
+                            commit=commit_now,
                         )
                     )
-                db.mark_event_triggered(state, ev.id)
+                db.mark_event_triggered(state, ev.id, commit=not external_transaction)
+                consumed_event_ids.add(ev.id)
+                candidates_dirty = True
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 为 {ev.event_type}，不转 issue。")
                 applied_new.append({"title": ev.title, "rejected": False, "reason": f"event_type={ev.event_type} 已记为触发"})
                 continue
-            issue_id = event_to_issue(db, state, ev)
+            issue_id = event_to_issue(db, state, ev, commit=not external_transaction)
             if issue_id is None:
                 # event_to_issue 移除 broad except 后，返回 None 只剩一种语义：同源 issue 已存在的
                 # 幂等去重跳过（在其 insert try 之外 early-return）；insert 的真代码/DB 异常现已上抛、
                 # 不再走此 None 分支（cmr ni r7 codex high），故 reason 不再含「或落库失败」。
                 applied_new.append({"title": ev.title, "rejected": True, "reason": "事件已触发过（同源局势已立，幂等跳过）"})
             else:
+                consumed_event_ids.add(ev.id)
+                candidates_dirty = True
                 applied_new.append({"issue_id": issue_id, "kind": "situation", "title": ev.title, "rejected": False})
             continue
         if origin_kind != "decree":
@@ -1336,6 +1837,7 @@ def apply_issue_tracker_output(
             effect_on_fail=fail_eff,
             resolve_condition=resolve_condition[:300],
             fail_condition=str(ni.get("fail_condition") or "")[:300],
+            commit=commit_now,
         )
         if kind == "initiative":
             initiative_active += 1
@@ -1375,7 +1877,30 @@ def apply_issue_tracker_output(
             })
             continue
         narrative = str(cl.get("narrative") or "")[:400]
-        new_row = db.close_issue(state, issue_id, reason=reason, narrative=narrative)
+        chk = db.conn.execute(
+            "SELECT status, resolve_condition FROM issues WHERE id=?", (issue_id,)
+        ).fetchone()
+        if (
+            reason == "resolved"
+            and chk is not None
+            and chk["status"] == "active"
+            and commitment_condition_role(chk["resolve_condition"] or "").get("condition_role")
+            == "commitment_stop_condition"
+        ):
+            applied_closes.append({
+                "rejected": True,
+                "category": "invalid_enum",
+                "reason": f"close_issues 对人物承诺型 stop_condition issue {issue_id} 误判 resolved（须走专门完成闭环）",
+                "item": cl,
+            })
+            continue
+        new_row = db.close_issue(
+            state,
+            issue_id,
+            reason=reason,
+            narrative=narrative,
+            commit=not external_transaction,
+        )
         if new_row is None:
             # close_issue 回 None 有三态，回查 status 精确归类（cmr Claude high）：
             #   ① 未找到 / ② 已非 active → 陈旧/幻觉引用（missing_ref）；
@@ -1414,11 +1939,12 @@ def apply_issue_tracker_output(
         if reason == "resolved":
             _emit_pairing_warnings(new_row, effect, pairing_warnings)
         _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
-        entity_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or []) if r.get("rejected"))  # economy 拒收不蒸发（#14）
-        entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
+        entity_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or [], commit=commit_now) if r.get("rejected"))  # economy 拒收不蒸发（#14）
+        entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}, commit=commit_now).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
         building_ops = _apply_issue_buildings(
             db, state, effect.get("buildings"),
             _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}{'结案' if reason == 'resolved' else '失败'}",
+            commit=commit_now,
         )
         close_person_changes: List[Dict[str, object]] = []
         entity_rejections.extend(_apply_issue_entities(
@@ -1426,12 +1952,13 @@ def apply_issue_tracker_output(
             state,
             effect,
             f"局势#{issue_id}{'结案' if reason == 'resolved' else '失败'}",
-            content=content,
+            content=runtime_content,
             llm_config=llm_config,
             applied_person_changes=close_person_changes,
+            commit=commit_now,
         ))
         issue_person_changes.extend(close_person_changes)
-        _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
+        _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]), commit=commit_now)
         close_record = {
             "issue_id": issue_id,
             "title": new_row["title"],
@@ -1461,6 +1988,7 @@ def apply_issue_tracker_output(
                 stage_text=row["stage_text"],
                 narrative=str(cn.get("narrative") or "陛下欲罢，然此事非诏可消。")[:400],
                 metric_delta={"皇威": -2},
+                commit=not external_transaction,
             )
             state.metrics["皇威"] = max(0, int(state.metrics.get("皇威", 0)) - 2)
             touched_ids.add(issue_id)
@@ -1476,12 +2004,13 @@ def apply_issue_tracker_output(
         cost = cn.get("applied_cost") or {}
         if isinstance(cost, dict):
             _apply_metric_dict(state, cost.get("metrics") or {}, db=db)
-            entity_rejections.extend(r for r in _apply_economy_list(db, state, cost.get("economy") or []) if r.get("rejected"))  # economy 拒收不蒸发（#14）
-            entity_rejections.extend(_apply_faction_dict(db, cost.get("factions") or {}).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
+            entity_rejections.extend(r for r in _apply_economy_list(db, state, cost.get("economy") or [], commit=commit_now) if r.get("rejected"))  # economy 拒收不蒸发（#14）
+            entity_rejections.extend(_apply_faction_dict(db, cost.get("factions") or {}, commit=commit_now).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
         db.cancel_issue(
             state, issue_id,
             narrative=str(cn.get("narrative") or "")[:400],
             applied_cost=cost if isinstance(cost, dict) else {},
+            commit=not external_transaction,
         )
         touched_ids.add(issue_id)
         applied_cancels.append({"issue_id": issue_id, "rejected": False, "title": row["title"]})
@@ -2030,6 +2559,11 @@ def _apply_person_changes(
         if not name or not action:
             applied.append(rejected(item, "name 或 动作 缺失", "missing_field"))
             continue
+        if content is not None:
+            from ming_sim.session import _find_existing_minister
+            canon = _find_existing_minister(content, name, db)
+            if canon:
+                name = canon
 
         if action == "评定":
             if content is not None and name not in content.characters:
@@ -2151,14 +2685,7 @@ def _apply_person_changes(
             continue
 
         if action in {"任命", "调任"}:
-            # 别名归一须在 hallucinated_id 闸前：extractor 可能用在册大臣 alias（韩阁老→韩爌），
-            # 仅按确切 key 判在册会把别名任命误拒成 hallucinated_id、玩家指令丢失（旧 office_changes
-            # 路直调含归一的 apply_office_appointment 无此退化）。与下游归一同源（线上 codex R3 P2）。
-            if content is not None:
-                from ming_sim.session import _find_existing_minister
-                _canon = _find_existing_minister(content, name, db)
-                if _canon:
-                    name = _canon
+            # 别名归一已在动作分派前统一完成，确保任命与处置/行止/易主同口径。
             if content is not None and name not in content.characters:
                 applied.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
@@ -2569,8 +3096,12 @@ def apply_score_extraction(
     content/registry：若传入则处理 `appointments`——把诏书任命的新人建档入朝。
     缺省则跳过（向后兼容老调用）。"""
     caller_transaction = db.conn.in_transaction
+    commit_now = not caller_transaction
+    if caller_transaction:
+        _register_runtime_rollback_snapshot(db, state, content, registry)
     # 0) 落库前校验容器/二级类型,畸形值崩前拦住,不让前面字段半落库(#57)。
     validate_delta_shape(extracted)
+    candidate_event_ids_at_input = {candidate.id for candidate in gather_candidate_events(state, db)}
     new_person_changes = normalize_person_changes({"人物变更": extracted.get("人物变更") or []})
     legacy_person_changes = [] if new_person_changes else normalize_person_changes({
         "appointments": extracted.get("appointments") or [],
@@ -2580,6 +3111,19 @@ def apply_score_extraction(
     })
     person_changes = new_person_changes or legacy_person_changes
     use_legacy_person_keys = not person_changes
+    legacy_person_mode = bool(legacy_person_changes)
+
+    def _split_pre_issue_person_changes(changes: List[Dict[str, object]]) -> tuple[List[Dict[str, object]], List[Dict[str, object]]]:
+        pre_issue: List[Dict[str, object]] = []
+        post_issue: List[Dict[str, object]] = []
+        for item in changes:
+            if str(item.get("动作") or "").strip() == "评定":
+                pre_issue.append(item)
+            else:
+                post_issue.append(item)
+        return pre_issue, post_issue
+
+    pre_issue_person_changes, post_issue_person_changes = _split_pre_issue_person_changes(person_changes)
 
     def _annotate_legacy_person_rejections(results: List[Dict[str, object]]) -> None:
         for result in results:
@@ -2594,20 +3138,55 @@ def apply_score_extraction(
                         result["report_category"] = "missing_ref"
 
     applied_person_changes: List[Dict[str, object]] = []
+
+    def _apply_normalized_person_changes(
+        changes: List[Dict[str, object]],
+        *,
+        legacy: bool,
+    ) -> None:
+        if not changes:
+            return
+        results = _apply_person_changes(
+            db,
+            state,
+            changes,
+            content=content,
+            registry=registry,
+            llm_config=llm_config,
+            allow_legacy_partial_power=legacy,
+            external_transaction=caller_transaction,
+        )
+        if legacy:
+            _annotate_legacy_person_rejections(results)
+        applied_person_changes.extend(results)
+
     # 1) metric_delta
     applied_metric = _apply_metric_dict(state, extracted.get("metric_delta") or {}, db=db)
     # 2) economy_moves
     # 拒收项拆到独立 economy_moves_rejections 段（不污染玩家可见 economy_moves list；
     # 同 faction_delta_rejections 治理，#14 cmr r1 codex/P4）。
-    _eco_out = _apply_economy_list(db, state, extracted.get("economy_moves") or [])
+    _eco_out = _apply_economy_list(
+        db,
+        state,
+        extracted.get("economy_moves") or [],
+        commit=commit_now,
+    )
     applied_economy = [r for r in _eco_out if not r.get("rejected")]
     economy_rejections = [r for r in _eco_out if r.get("rejected")]
     # 3) faction_delta + class_delta（朝堂派系 + 社会阶级；联动靠 LLM，不在代码做）
     # 返回 (已落 delta dict, 拒收项列表)：dict 供 web 面板（形状不变），拒收列表置于
     # 独立 *_rejections 段供桥接收集器（ADR 0008 决定 1，#14/#63）——不复用 *_delta key
     # 覆盖面板数据（cmr r1 claude：复用同 key 会令面板把拒收项当 dict 误渲染）。
-    applied_factions, faction_rejections = _apply_faction_dict(db, extracted.get("faction_delta") or {})
-    applied_classes, class_rejections = _apply_class_dict(db, extracted.get("class_delta") or {})
+    applied_factions, faction_rejections = _apply_faction_dict(
+        db,
+        extracted.get("faction_delta") or {},
+        commit=commit_now,
+    )
+    applied_classes, class_rejections = _apply_class_dict(
+        db,
+        extracted.get("class_delta") or {},
+        commit=commit_now,
+    )
     # 4) new_armies → region_delta / army_delta (复用旧 db 方法)
     region_deltas_raw = extracted.get("region_delta") or {}
     army_deltas_raw = extracted.get("army_delta") or {}
@@ -2633,11 +3212,30 @@ def apply_score_extraction(
     # rejection_reports），好项照落、坏一项不带走整批；代码异常（bug 类）仍上抛到 settle
     # 层回滚整批，绝不吞。clamp 语义（城防炮 city_level×8、随军炮 cap12、火器 0-100）不变。
     if isinstance(new_armies_raw, list) and new_armies_raw:
-        created_armies = db.create_armies_from_extraction(state, new_armies_raw, actor="档房")
+        created_armies = db.create_armies_from_extraction(
+            state,
+            new_armies_raw,
+            actor="档房",
+            commit=commit_now,
+        )
     if isinstance(region_deltas_raw, dict) and region_deltas_raw:
-        region_changes = db.apply_region_deltas(state, pseudo_event, None, "档房", region_deltas_raw)
+        region_changes = db.apply_region_deltas(
+            state,
+            pseudo_event,
+            None,
+            "档房",
+            region_deltas_raw,
+            commit=commit_now,
+        )
     if isinstance(army_deltas_raw, dict) and army_deltas_raw:
-        army_changes = db.apply_army_deltas(state, pseudo_event, None, "档房", army_deltas_raw)
+        army_changes = db.apply_army_deltas(
+            state,
+            pseudo_event,
+            None,
+            "档房",
+            army_deltas_raw,
+            commit=commit_now,
+        )
 
     # 注：建筑的新建/变更/废止不走顶层字段，全由 issue 的 effect_on_resolve /
     #     effect_on_fail 里的 `buildings` 段在局势结案时落地（见 _apply_issue_buildings）。
@@ -2649,7 +3247,9 @@ def apply_score_extraction(
     power_updates_raw = extracted.get("power_updates") or {}
     power_changes: List[Dict[str, object]] = []
     if isinstance(power_updates_raw, dict) and power_updates_raw:
-        power_changes = db.apply_power_deltas(state, power_updates_raw)
+        power_changes = db.apply_power_deltas(state, power_updates_raw, commit=commit_now)
+
+    _apply_normalized_person_changes(pre_issue_person_changes, legacy=legacy_person_mode)
 
     # 6) issue_advances / new_issues / close_issues / cancels (复用旧 tracker 落地)
     issue_summary = apply_issue_tracker_output(db, state, {
@@ -2657,32 +3257,11 @@ def apply_score_extraction(
         "new_issues": extracted.get("new_issues") or [],
         "close_issues": extracted.get("close_issues") or [],
         "cancels": extracted.get("cancels") or [],
-    }, llm_config=llm_config, content=content)
-    if new_person_changes:
-        applied_person_changes.extend(
-            _apply_person_changes(
-                db,
-                state,
-                new_person_changes,
-                content=content,
-                registry=registry,
-                llm_config=llm_config,
-                external_transaction=caller_transaction,
-            )
-        )
-    elif legacy_person_changes:
-        legacy_applied_person_changes = _apply_person_changes(
-            db,
-            state,
-            legacy_person_changes,
-            content=content,
-            registry=registry,
-            llm_config=llm_config,
-            allow_legacy_partial_power=True,
-            external_transaction=caller_transaction,
-        )
-        _annotate_legacy_person_rejections(legacy_applied_person_changes)
-        applied_person_changes.extend(legacy_applied_person_changes)
+    }, llm_config=llm_config, content=content,
+        pending_person_changes_for_gates=post_issue_person_changes,
+        allow_legacy_partial_power_for_gates=legacy_person_mode,
+        candidate_event_ids_at_input=candidate_event_ids_at_input)
+    _apply_normalized_person_changes(post_issue_person_changes, legacy=legacy_person_mode)
 
     def _norm_int_leaf(v):
         """无损整数串归一（cmr S3 r10,2/2）：strip 后能精确 int 的 str 转 int,
@@ -2716,7 +3295,7 @@ def apply_score_extraction(
                 "category": "invalid_enum", "item": remove,
             })
             continue
-        removed_key = db.remove_fiscal_item(key)
+        removed_key = db.remove_fiscal_item(key, commit=commit_now)
         if removed_key is None:
             # 查无此项 = 正常业务拒绝,逐项拒收留痕(不再 print 静默跳;ADR 决定 1 / S3)。
             applied_fiscal_removes.append({
@@ -2770,6 +3349,7 @@ def apply_score_extraction(
         new_key = db.create_fiscal_item(
             key, account, direction, display, init_value,
             note=str(create.get("reason") or "")[:120],
+            commit=commit_now,
         )
         if new_key is None:
             # 已存在 / db 拒 = 正常业务拒绝,逐项拒收留痕（不再 print 静默跳）。
@@ -2835,16 +3415,16 @@ def apply_score_extraction(
             })
             continue
         new_val = max(0, current + delta)
-        db.set_fiscal_config(key, new_val)
+        db.set_fiscal_config(key, new_val, commit=commit_now)
         # dynamic 税（辽饷/盐税/商税/田赋）实收走 region.fiscal，改 fiscal_config 不生效；
         # 按 new/old 比例同步缩放各省实收字段，使调额当真改变下月入账。皇庄读 config，无需联动。
         stem = db._stem_of(key)
         if stem in db._DYNAMIC_REGION_FIELD or stem == "田赋":
             ratio = (new_val / current) if current > 0 else (1.0 if new_val == 0 else 0.0)
             if stem == "田赋":
-                db.scale_tian_fu(ratio)
+                db.scale_tian_fu(ratio, commit=commit_now)
             else:
-                db.apply_dynamic_fiscal_scale(stem, ratio)
+                db.apply_dynamic_fiscal_scale(stem, ratio, commit=commit_now)
         applied_fiscal.append({
             "key": key, "old": current, "new": new_val, "delta": delta,
             "reason": str(change.get("reason") or ""),
@@ -2868,7 +3448,15 @@ def apply_score_extraction(
                     "reason": str(item.get("reason") or ""),
                 })
                 continue
-            name, displaced = apply_appointment(db, state, content, registry, item, llm_config=llm_config)
+            name, displaced = apply_appointment(
+                db,
+                state,
+                content,
+                registry,
+                item,
+                llm_config=llm_config,
+                commit=commit_now,
+            )
             if name:
                 applied_appointments.append({
                     "name": name,
@@ -2923,7 +3511,7 @@ def apply_score_extraction(
             })
             continue
         try:
-            db.set_character_status(state, name, status, reason)
+            db.set_character_status(state, name, status, reason, commit=commit_now)
         except Exception as exc:
             applied_status_changes.append({
                 "name": name, "status": status, "rejected": True, "reason": f"落库失败：{exc}",
@@ -2944,7 +3532,8 @@ def apply_score_extraction(
     # ADR 0008 决定 1:不再整段吞——脏数据(查无此人/未知 power/缺字段)在
     # apply_character_power_changes 内逐项拒收留痕;代码异常上抛到 settle 回滚。
     applied_power_changes: List[Dict[str, object]] = db.apply_character_power_changes(
-        (extracted.get("character_power_changes") or []) if use_legacy_person_keys else []
+        (extracted.get("character_power_changes") or []) if use_legacy_person_keys else [],
+        commit=commit_now,
     )
 
     # 10) office_changes：朝臣官职变更——统一吃「新任（建档）」与「调任（改职）」。
@@ -2969,6 +3558,7 @@ def apply_score_extraction(
             new_office_type=str(item.get("new_office_type") or ""),
             faction=str(item.get("faction") or "中立"),
             llm_config=llm_config,
+            commit=commit_now,
         ))
 
     # 11) secret_order_updates：推演写 active 密令副作用（泄漏/反弹）到 sim_note。结案不走这里。
@@ -3004,7 +3594,11 @@ def apply_score_extraction(
             continue
         try:
             db.update_secret_order_sim_note(
-                real_id, sim_note, year=state.year, period=state.period
+                real_id,
+                sim_note,
+                year=state.year,
+                period=state.period,
+                commit=commit_now,
             )
             print(f"[secret_order] 推演副作用 id={real_id} note={sim_note[:60]!r}")
             applied_secret_orders.append({"order_id": real_id, "sim_note": sim_note})
@@ -3047,7 +3641,7 @@ def apply_score_extraction(
                                           "reason": f"当前状态 {order['status']}，非 pending_review，不予结案"})
             continue
         try:
-            db.close_secret_order(real_id, status, result_text, state.turn)
+            db.close_secret_order(real_id, status, result_text, state.turn, commit=commit_now)
             print(f"[secret_order] 推演结案 id={real_id} status={status} result={result_text[:60]!r}")
             applied_secret_closes.append({"order_id": real_id, "status": status, "result": result_text})
         except Exception as exc:
