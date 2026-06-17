@@ -427,6 +427,8 @@ def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
     for ev in c.events:
         if ev.id in spawned or ev.trigger_year <= 0:
             continue
+        if ev.auto_trigger:
+            continue
         if not _event_window_open(ev, state):
             continue
         # 历史事件带结构化前提门时也须达标（与 seed 情势同门）：纯日历窗口会放行前提已不成立
@@ -456,12 +458,15 @@ def auto_trigger_seed_issues(state: GameState, db: GameDB) -> List[Dict[str, obj
     放在结算链 simulator 之前调用，使硬立的 issue 当回合即进盘面、被邸报叙述。"""
     c = _ctx()
     triggered: List[Dict[str, object]] = []
-    for ev in c.seed_events:
+    for ev in [*c.events, *c.seed_events]:
+        historical_event = any(ev is item for item in c.events)
         if not ev.auto_trigger:
+            continue
+        if historical_event and db.has_event_triggered(ev.id):
             continue
         # trigger_gate 为空 = 开局即立的局势，只由 seed_opening_crises 立一次，绝不在此重立。
         # （空 gate 会被 _gate_passed 判为恒真，必须显式排除，否则每回合都试图重立。）
-        if not ev.trigger_gate:
+        if ev in c.seed_events and not ev.trigger_gate:
             continue
         if not _event_window_open(ev, state):
             continue
@@ -469,12 +474,30 @@ def auto_trigger_seed_issues(state: GameState, db: GameDB) -> List[Dict[str, obj
             continue
         if ev.event_type != "situation":
             # 非 situation（node/ending）不转 issue，仅记触发避免重复
-            if db.find_any_issue_by_origin("event_pool", ev.id) is None:
+            if not db.has_event_triggered(ev.id):
+                if ev.effect_on_trigger:
+                    _apply_issue_entities(
+                        db,
+                        state,
+                        ev.effect_on_trigger,
+                        f"事件#{ev.id}触发",
+                        content=c,
+                    )
                 db.mark_event_triggered(state, ev.id)
                 triggered.append({"id": ev.id, "title": ev.title, "kind": ev.event_type})
             continue
         issue_id = event_to_issue(db, state, ev)
         if issue_id is not None:
+            if historical_event and not db.has_event_triggered(ev.id):
+                if ev.effect_on_trigger:
+                    _apply_issue_entities(
+                        db,
+                        state,
+                        ev.effect_on_trigger,
+                        f"事件#{ev.id}触发",
+                        content=c,
+                    )
+                db.mark_event_triggered(state, ev.id)
             triggered.append({"id": ev.id, "title": ev.title, "issue_id": issue_id})
             print(f"[AUTO-TRIGGER] gate 达标硬立项 #{issue_id} {ev.title}（{ev.trigger_gate}）")
     return triggered
@@ -1268,6 +1291,12 @@ def _apply_issue_entities(
             if isinstance(r, dict) and r.get("rejected") and not r.get("issue_strict", True)
         )
 
+    region_delta = effect.get("region_delta")
+    if isinstance(region_delta, dict) and region_delta:
+        pseudo = type("E", (), {"id": "issue", "title": label})()
+        _raise_on_rejected(
+            db.apply_region_deltas(state, pseudo, None, label, region_delta, commit=commit), "地区变化"
+        )
     new_armies = effect.get("new_armies")
     if isinstance(new_armies, list) and new_armies:
         _raise_on_rejected(
@@ -1279,6 +1308,29 @@ def _apply_issue_entities(
         _raise_on_rejected(
             db.apply_army_deltas(state, pseudo, None, label, army_delta, commit=commit), "补兵/改属性"
         )
+    power_renames = effect.get("power_renames")
+    if power_renames is not None:
+        if not isinstance(power_renames, list):
+            raise ValueError(f"{label} power_renames 非法（全局严格，不静默）：必须是 list")
+        for idx, item in enumerate(power_renames):
+            if not isinstance(item, dict):
+                raise ValueError(f"{label} power_renames 非法（全局严格，不静默）：第 {idx} 项非 dict")
+            power_id = str(item.get("power_id") or "").strip()
+            new_name = str(item.get("new_name") or "").strip()
+            if not power_id or not new_name:
+                raise ValueError(f"{label} power_renames 非法（全局严格，不静默）：power_id/new_name 缺失")
+            if db.conn.execute("SELECT 1 FROM powers WHERE id=?", (power_id,)).fetchone() is None:
+                raise ValueError(f"{label} power_renames 引用未入库势力 '{power_id}'")
+            db.apply_power_rename(
+                state,
+                power_id,
+                new_name,
+                aliases=str(item.get("aliases") or ""),
+                reason=str(item.get("reason") or label),
+                status=str(item.get("status") or ""),
+                last_action=str(item.get("last_action") or ""),
+                commit=commit,
+            )
     raw_person_changes = effect.get("人物变更")
     if raw_person_changes is not None:
         if not isinstance(raw_person_changes, list):

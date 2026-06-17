@@ -553,6 +553,100 @@ def test_mao_wenlong_event_pool_rechecks_gate_before_effect(game):
     ).fetchone()[0] == before_logs
 
 
+def test_huabei_plague_auto_triggers_with_deterministic_core_effect(game):
+    """#192：华北大疫是天灾核心事实，到点硬触发并落库，不等 LLM 候选记得写。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1633
+    state.period = 7
+    before = db.conn.execute(
+        "SELECT population, unrest FROM regions WHERE id=?",
+        ("shanxi",),
+    ).fetchone()
+
+    triggered = issues.auto_trigger_seed_issues(state, db)
+
+    assert any(item["id"] == "huabei_plague" for item in triggered)
+    assert db.has_event_triggered("huabei_plague")
+    assert all(ev.id != "huabei_plague" for ev in issues.gather_candidate_events(state, db))
+    after = db.conn.execute(
+        "SELECT population, unrest FROM regions WHERE id=?",
+        ("shanxi",),
+    ).fetchone()
+    assert after["population"] == before["population"] - 40
+    assert after["unrest"] == before["unrest"] + 6
+
+
+def test_huabei_plague_keeps_soft_degree_axis_as_situation_issue(game):
+    """#192：天灾核心事实硬落后，蔓延/赈疫程度轴仍留 active issue 给软判推进。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1633
+    state.period = 7
+
+    triggered = issues.auto_trigger_seed_issues(state, db)
+
+    item = next(entry for entry in triggered if entry["id"] == "huabei_plague")
+    assert item["issue_id"] > 0
+    issue = db.conn.execute(
+        "SELECT status, kind, origin_kind, origin_ref FROM issues WHERE id=?",
+        (item["issue_id"],),
+    ).fetchone()
+    assert dict(issue) == {
+        "status": "active",
+        "kind": "situation",
+        "origin_kind": "event_pool",
+        "origin_ref": "huabei_plague",
+    }
+
+
+def test_jingshi_plague_auto_triggers_and_weakens_capital_garrison(game):
+    """#192：京师大疫核心事实直接削京营，不靠 LLM 记得为甲申链写状态。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1643
+    state.period = 3
+    before = db.conn.execute(
+        "SELECT manpower, morale FROM armies WHERE id=?",
+        ("jingying",),
+    ).fetchone()
+
+    triggered = issues.auto_trigger_seed_issues(state, db)
+
+    assert any(item["id"] == "jingshi_plague" for item in triggered)
+    assert db.has_event_triggered("jingshi_plague")
+    assert all(ev.id != "jingshi_plague" for ev in issues.gather_candidate_events(state, db))
+    after = db.conn.execute(
+        "SELECT manpower, morale FROM armies WHERE id=?",
+        ("jingying",),
+    ).fetchone()
+    assert after["manpower"] == before["manpower"] - 51000
+    assert after["morale"] == before["morale"] - 16
+
+
+def test_huangtaiji_chengdi_auto_triggers_and_renames_houjin(game):
+    """#192：皇太极称帝核心事实确定性落库，后金稳定 id 展示为大清。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1636
+    state.period = 4
+
+    triggered = issues.auto_trigger_seed_issues(state, db)
+
+    assert any(item["id"] == "huangtaiji_chengdi" for item in triggered)
+    assert db.has_event_triggered("huangtaiji_chengdi")
+    assert all(ev.id != "huangtaiji_chengdi" for ev in issues.gather_candidate_events(state, db))
+    row = db.conn.execute(
+        "SELECT name, aliases, status, last_action FROM powers WHERE id=?",
+        ("houjin",),
+    ).fetchone()
+    assert row["name"] == "大清"
+    assert "后金" in row["aliases"]
+    assert "大清" in row["aliases"]
+    assert "称帝" in row["status"]
+    assert row["last_action"] == "皇太极称帝改国号大清"
+
+
 def test_mao_wenlong_event_pool_uses_candidate_snapshot_before_advances(game):
     """post-merge CMR：同一 payload 的 advances 不能先打开 event_pool gate 再立刻触发。"""
     db, state, content = game

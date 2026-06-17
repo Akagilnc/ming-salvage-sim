@@ -3008,6 +3008,7 @@ class GameDB:
         aliases: str = "",
         status: str = "",
         last_action: str = "",
+        commit: bool = True,
     ) -> Dict[str, object] | None:
         """Rename a power while keeping its stable id for references.
 
@@ -3048,7 +3049,8 @@ class GameDB:
             """,
             (state.turn, state.year, state.period, power_id, old_name, new_name, old_aliases, new_aliases, reason[:200]),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return {
             "power_id": power_id,
             "old_name": old_name,
