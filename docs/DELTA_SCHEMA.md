@@ -108,13 +108,14 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 - key：army_id（看 `content/armies.json`，如 `guanning` `dadong` 等）
 - value 字段（来自 `ARMY_*` 常量）：
   - score（0-100）：`supply` `morale` `training` `equipment` `arrears` `mobility` `loyalty`
-  - quantity：`manpower` `maintenance_per_turn`
+  - quantity：`manpower`
   - text：`station` `commander` `controller` `troop_type` `status` `owner_power`
 - 中文别名都吃
+- ⚠️ `maintenance_per_turn`（维护费）#173 PR2 起退役、**不再是 extractor 可写字段**：写它会被逐项拒收留痕。月饷由引擎 `army_needed`（按 `manpower` 派生）唯一承载；调月饷改 `manpower`。列本身待「删 maintenance」PR 物理移除。
 
 ### `new_armies` — 建军
 ⚠️ **`id` 必填**（英文 army_id，如 `tianxiong`）。缺 id 该项逐项拒收留痕（落 `rejection_reports`，不再 print WARN——v0.8.x PR2-S2）。〔崇祯二年八月实测，turn 11〕
-全字段：`id`（必填）`name` `owner_power` `station` `theater` `commander` `controller` `troop_type` `manpower` `morale` `training` `loyalty` `equipment` `supply` `mobility` `maintenance_per_turn` `status`…（参考 `ARMY_FIELD_ALIASES`）
+全字段：`id`（必填）`name` `owner_power` `station` `theater` `commander` `controller` `troop_type` `manpower`（必填）`morale` `training` `loyalty` `equipment` `supply` `mobility` `status`…（参考 `ARMY_FIELD_ALIASES`）。`maintenance_per_turn` #173 PR2 起退役、不再必填也不该写（在场仍兼容接收但月饷不看它，由 `army_needed` 按 `manpower` 派生）。
 
 ### `power_updates` — 外部势力变化
 - key：power_id（`houjin` / `mongol` / `korea` / `dutch` / `japan` / `liukou` / `tibet` / `annam` / `ming`）

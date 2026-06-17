@@ -36,11 +36,10 @@ _ARMY_VALID_SET = frozenset(ARMY_SCORE_FIELDS + ARMY_QUANTITY_FIELDS + ARMY_TEXT
 
 
 def _new_army_historically_applied(it: dict) -> bool:
-    """建军必填字段：旧代码 int() 两步都成功（含 bool/float 的静默套用）= 历史可活
-    （cmr S2 r4 整项谓词；模块级——避免每个 new_armies 项重定义，PR2 R1 gemini perf）。"""
+    """建军必填字段（#173 PR2 后仅剩 manpower——维护费退役、不再必填）：manpower int() 成功
+    = 历史可活（cmr S2 r4 整项谓词；模块级——避免每个 new_armies 项重定义，PR2 R1 gemini perf）。"""
     try:
         int(it["manpower"])
-        int(it["maintenance_per_turn"])
         return True
     except (KeyError, TypeError, ValueError):
         return False
@@ -3694,6 +3693,18 @@ class GameDB:
                         "issue_strict": False,
                     })
                     continue
+                if field == "maintenance_per_turn":
+                    # #173 PR2：维护费退役，月饷随兵力 army_needed(salary_rate×兵力)派生。改维护费=改死
+                    # 列，原 silent 落库会让 LLM 误以为调了月饷其实零效果 → 显式拒收留痕，引导改兵力（月饷
+                    # 自动随之变）。维护费列尚在（删 maintenance PR 物理移除），此处只断写端：永不落库改它。
+                    changes.append({
+                        "army": row["name"], "field": "维护费",
+                        "rejected": True, "category": "invalid_enum",
+                        "reason": "维护费已退役（月饷随兵力 army_needed 派生）：改月饷请调兵力，勿写维护费",
+                        "item": {"army_id": army_id, "field": field, "value": value},
+                        "issue_strict": False,  # 原为 silent 落库（非 raise），结案路容忍不升级
+                    })
+                    continue
                 # ADR 0008 决定 1:数值字段的脏叶子值(null/字符串/float/bool)= LLM 脏数据,
                 # 逐项拒收(invalid_enum),不让裸 int(value) 崩整月;bool 是 int 子类、float
                 # 静默截断须显式拒(对称 S1/region)。text 字段走 str(),不在此判。
@@ -3767,14 +3778,6 @@ class GameDB:
                                  str(old_value), str(new_value),
                                  f"{reason}（请求 {delta:+d} 经 clamp 后无净变化）", event.id, edict_id, actor),
                             )
-                        continue
-                    stored_new = new_value
-                    log_delta = actual_delta
-                elif field == "maintenance_per_turn":
-                    delta = int(value)
-                    new_value = max(0, int(old_value) + delta)
-                    actual_delta = new_value - int(old_value)
-                    if actual_delta == 0:
                         continue
                     stored_new = new_value
                     log_delta = actual_delta
@@ -3907,28 +3910,34 @@ class GameDB:
                 )
                 created.append({"army": existing["name"], "manpower_added": delta, "merged_into_existing": True})
                 continue
-            # 必填字段：缺/非法 = LLM 脏数据,逐项拒收留痕(invalid_enum),不再 raise
+            # 必填字段：manpower 缺/非法 = LLM 脏数据,逐项拒收留痕(invalid_enum),不再 raise
             # 崩整月(ADR 0008 决定 1);同信封好军照建。bool/float 显式拒(对称 S1)。
+            # #173 PR2：维护费退役、不再必填——月饷由 army_needed(salary_rate×兵力)派生,不靠维护费。
             try:
                 _mp = item["manpower"]
-                _mt = item["maintenance_per_turn"]
-                if isinstance(_mp, (bool, float)) or isinstance(_mt, (bool, float)):
+                if isinstance(_mp, (bool, float)):
                     raise ValueError("非整数")
                 manpower = int(_mp)
-                maintenance = int(_mt)
             except (KeyError, TypeError, ValueError) as exc:
                 created.append({
                     "id": aid, "rejected": True, "category": "invalid_enum",
-                    "reason": f"new_armies '{aid}' 缺/非法 manpower 或 maintenance_per_turn（无法建军）：{exc}",
+                    "reason": f"new_armies '{aid}' 缺/非法 manpower（无法建军）：{exc}",
                     "item": raw,
-                    # 历史谓词按整项算（cmr S2 r4,2/2:or 合取会让混合成因项——
-                    # 一边 float、另一边缺键/None/串=历史致命——被误判容忍）：
-                    # 旧代码 int(item["manpower"])+int(item["maintenance_per_turn"])
-                    # 两步都成功才「静默套用=可活」,任一步缺键/TypeError/ValueError
-                    # 即历史 raise → 保持严格。
+                    # 历史谓词只看 manpower（#173 PR2 后唯一必填）：manpower int() 成功=历史可活,
+                    # 缺键/TypeError/ValueError 即历史 raise → 保持严格。
                     "issue_strict": not _new_army_historically_applied(item),
                 })
                 continue
+            # #173 PR2：维护费退役为死列（尚未删，本切片不动 schema），建军缺省 0；在场脏值(bool/None/
+            # 非数)一律兜底 0、不拒整军（死列值无意义，月饷不看它）。删 maintenance PR 时连列一并移除。
+            _mt_raw = item.get("maintenance_per_turn")
+            if isinstance(_mt_raw, bool) or _mt_raw is None:
+                maintenance = 0
+            else:
+                try:
+                    maintenance = max(0, int(_mt_raw))
+                except (TypeError, ValueError):
+                    maintenance = 0
             # 可选数值字段「在场即须合法」（cmr S2 r1 codex P1）：在场脏值静默走默认
             # = 伪造军备（morale "高"→50、cannon "几门"→0）。None 视为缺省（LLM 习惯
             # 用 null 表「无」,validate_delta_shape 亦容忍 null 叶）；其余非整拒该项。
