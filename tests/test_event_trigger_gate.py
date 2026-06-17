@@ -1850,6 +1850,161 @@ def test_event_pool_pending_appointment_displacement_blocks_displaced_office_gat
         content.event_by_id.pop(ev.id, None)
 
 
+def test_event_pool_pending_appointment_clears_reason_gate(game):
+    """post-merge CMR R10：任命起复会真实改 reason_code/status_reason，pending 闸门不得沿用旧缘由。"""
+    db, state, content = game
+    issues.bind_content(content)
+    db.conn.execute(
+        "UPDATE characters SET status=?, power_id=?, office='', office_type=?, status_reason=?, reason_code=? WHERE name=?",
+        ("dismissed", "ming", "身名分", "获罪削籍", "获罪削籍", "钱谦益"),
+    )
+    if "钱谦益" in content.characters:
+        ch = content.characters["钱谦益"]
+        ch.status = "dismissed"
+        ch.power_id = "ming"
+        ch.office = ""
+        ch.office_type = "身名分"
+        ch.status_reason = "获罪削籍"
+        ch.reason_code = "获罪削籍"
+    ev = Event(
+        id="__test_reason_gate_pending__",
+        title="测试·缘由门",
+        kind="朝议",
+        summary="钱谦益仍因获罪削籍时才可触发。",
+        urgency=10,
+        severity=10,
+        credibility=100,
+        interests=[],
+        audiences=[],
+        event_type="situation",
+        trigger_gate={"character.钱谦益.reason_code": "== 获罪削籍"},
+    )
+    content.seed_events.append(ev)
+    content.event_by_id[ev.id] = ev
+    try:
+        out = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
+                "人物变更": [{"name": "钱谦益", "动作": "任命", "office": "兵部尚书"}],
+            },
+            content=content,
+        )
+
+        assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+        row = db.conn.execute(
+            "SELECT status, reason_code, status_reason FROM characters WHERE name=?",
+            ("钱谦益",),
+        ).fetchone()
+        assert row["status"] == "active"
+        assert row["reason_code"] == ""
+        assert row["status_reason"] != "获罪削籍"
+    finally:
+        content.seed_events.remove(ev)
+        content.event_by_id.pop(ev.id, None)
+
+
+def test_event_pool_pending_appointment_updates_office_type_gate(game):
+    """post-merge CMR R10：任命后 office_type 由真实写口推断，pending 闸门也要同步。"""
+    db, state, content = game
+    issues.bind_content(content)
+    db.conn.execute(
+        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
+        ("active", "ming", "内阁首辅", "内阁", "韩爌"),
+    )
+    if "韩爌" in content.characters:
+        ch = content.characters["韩爌"]
+        ch.status = "active"
+        ch.power_id = "ming"
+        ch.office = "内阁首辅"
+        ch.office_type = "内阁"
+    ev = Event(
+        id="__test_office_type_pending__",
+        title="测试·官署门",
+        kind="朝议",
+        summary="韩爌仍属内阁时才可触发。",
+        urgency=10,
+        severity=10,
+        credibility=100,
+        interests=[],
+        audiences=[],
+        event_type="situation",
+        trigger_gate={"character.韩爌.office_type": "== 内阁"},
+    )
+    content.seed_events.append(ev)
+    content.event_by_id[ev.id] = ev
+    try:
+        out = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
+                "人物变更": [{"name": "韩爌", "动作": "任命", "office": "兵部尚书"}],
+            },
+            content=content,
+        )
+
+        assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+        assert db.conn.execute(
+            "SELECT office_type FROM characters WHERE name=?",
+            ("韩爌",),
+        ).fetchone()["office_type"] == "兵部"
+    finally:
+        content.seed_events.remove(ev)
+        content.event_by_id.pop(ev.id, None)
+
+
+def test_event_pool_pending_appointment_normalizes_equivalent_office(game):
+    """post-merge CMR R10：全角分隔的等价官职经真实写口规范化后，不应误阻断旧 office 门。"""
+    db, state, content = game
+    issues.bind_content(content)
+    db.conn.execute(
+        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
+        ("active", "ming", "兵部尚书,左都御史", "兵部", "袁崇焕"),
+    )
+    if "袁崇焕" in content.characters:
+        ch = content.characters["袁崇焕"]
+        ch.status = "active"
+        ch.power_id = "ming"
+        ch.office = "兵部尚书,左都御史"
+        ch.office_type = "兵部"
+    ev = Event(
+        id="__test_normalized_office_pending__",
+        title="测试·规范化等价官职门",
+        kind="朝议",
+        summary="袁崇焕仍兼两职时才可触发。",
+        urgency=10,
+        severity=10,
+        credibility=100,
+        interests=[],
+        audiences=[],
+        event_type="situation",
+        trigger_gate={"character.袁崇焕.office": "== 兵部尚书,左都御史"},
+    )
+    content.seed_events.append(ev)
+    content.event_by_id[ev.id] = ev
+    try:
+        out = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
+                "人物变更": [{"name": "袁崇焕", "动作": "任命", "office": "兵部尚书，左都御史"}],
+            },
+            content=content,
+        )
+
+        assert out["issue_summary"]["new_issues"][0]["rejected"] is False
+        assert db.conn.execute(
+            "SELECT office FROM characters WHERE name=?",
+            ("袁崇焕",),
+        ).fetchone()["office"] == "兵部尚书,左都御史"
+    finally:
+        content.seed_events.remove(ev)
+        content.event_by_id.pop(ev.id, None)
+
+
 def test_issue_tracker_cancel_respects_outer_transaction_rollback(game):
     """post-merge CMR R4：cancels 段不得由 db.cancel_issue 提前提交外层事务。"""
     db, state, _content = game
