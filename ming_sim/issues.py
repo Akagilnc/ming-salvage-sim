@@ -1512,7 +1512,12 @@ def _is_exclusive_office(part: str) -> bool:
 
 
 def _displace_duplicate_offices(
-    db: GameDB, content: Optional[GameContent], new_holder: str, new_office: str
+    db: GameDB,
+    content: Optional[GameContent],
+    new_holder: str,
+    new_office: str,
+    *,
+    commit: bool = True,
 ) -> List[str]:
     """新任者 new_holder 拿到 new_office 后，把其中每个独占实职分项从其他 active 官员
     office 里剔除，避免双缺官。返回被腾出的 (旧任者:职) 描述列表。
@@ -1582,7 +1587,8 @@ def _displace_duplicate_offices(
             displaced_factions.add(str(frow["faction"]))
     for fac in displaced_factions:
         db.recompute_faction_leverage(fac)
-    db.conn.commit()
+    if commit:
+        db.conn.commit()
     return displaced
 
 
@@ -1627,7 +1633,13 @@ def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
     return character_rows, office_rows, faction_rows, content_rows
 
 
-def _restore_person_write_state(db: GameDB, content: Optional[GameContent], snapshot) -> None:
+def _restore_person_write_state(
+    db: GameDB,
+    content: Optional[GameContent],
+    snapshot,
+    *,
+    commit: bool = True,
+) -> None:
     character_rows, office_rows, faction_rows, content_rows = snapshot
     db.conn.execute("DELETE FROM character_offices")
     snapshot_names = {str(row["name"]) for row in character_rows}
@@ -1678,7 +1690,8 @@ def _restore_person_write_state(db: GameDB, content: Optional[GameContent], snap
         "UPDATE factions SET leverage=?, leverage_offset=? WHERE name=?",
         [(row["leverage"], row["leverage_offset"], row["name"]) for row in faction_rows],
     )
-    db.conn.commit()
+    if commit:
+        db.conn.commit()
     if content is not None:
         for name in list(content.characters):
             if name not in content_rows:
@@ -1759,6 +1772,7 @@ def apply_office_appointment(
     new_office_type: str = "",
     faction: str = "中立",
     llm_config: Any = None,
+    commit: bool = True,
 ) -> Dict[str, object]:
     """朝臣任命/调任的【唯一落地核】：在册且未死 → 改 active + 授官 + 顶替去重 + 同步内存/registry；
     不在册 → apply_appointment 建新档。extractor 的 office_changes 与 CLI 自然语言任免 commit
@@ -1793,18 +1807,28 @@ def apply_office_appointment(
         snapshot = _snapshot_person_write_state(db, content)
         try:
             if cur_status != "active":
-                db.set_character_status(state, name, "active", reason[:200] or "诏书任命")
+                db.set_character_status(
+                    state,
+                    name,
+                    "active",
+                    reason[:200] or "诏书任命",
+                    commit=commit,
+                )
             db.set_character_office(
                 name, new_office, new_office_type,
                 source=reason[:60] or "诏书调任", llm_config=llm_config,
+                commit=commit,
             )
             if cur_status == "active":
                 db.conn.execute(
                     "UPDATE characters SET status_reason='', reason_code='' WHERE name=?",
                     (name,),
                 )
-                db.conn.commit()
-            displaced_parts = _displace_duplicate_offices(db, content, name, new_office)
+                if commit:
+                    db.conn.commit()
+            displaced_parts = _displace_duplicate_offices(
+                db, content, name, new_office, commit=commit
+            )
             ch = content.characters[name]
             ch.status = "active"
             # 三面同步（决定6）：DB 写已定 status_reason/reason_code（active 路上方清空；
@@ -1824,7 +1848,7 @@ def apply_office_appointment(
                 for dp in displaced_parts:
                     registry.refresh(dp.split(":")[0])
         except Exception as exc:
-            _restore_person_write_state(db, content, snapshot)
+            _restore_person_write_state(db, content, snapshot, commit=commit)
             return {"name": name, "new_office": new_office, "rejected": True, "reason": f"落库失败：{exc}"}
         return {
             "name": name, "old_status": cur_status, "old_office": old_office, "new_office": new_office,
@@ -1840,13 +1864,23 @@ def apply_office_appointment(
     # 与 in_roster 分支同样兜成 rejected、把 exc 记进 reason(不静默吞)(线上 gemini high)。
     snapshot = _snapshot_person_write_state(db, content)
     try:
-        appointed, _ = apply_appointment(db, state, content, registry, appt, llm_config=llm_config)
+        appointed, _ = apply_appointment(
+            db,
+            state,
+            content,
+            registry,
+            appt,
+            llm_config=llm_config,
+            commit=commit,
+        )
         if appointed:
             # 新任也按 office 文字去重(与 transfer 分支对称):新人占独占实职,从他人剔同名分项,
             # 免占缺旧任者留旧官成双缺官(CMR R4：去 replaces 后新任分支漏了顶替)。
             # displaced 统一取 _displace_duplicate_offices 的 List[str](apply_appointment 的单名
             # displaced 在去 replaces 后恒空,留着会让本字段时而 str 时而 list,故弃)(线上 gemini)。
-            displaced_parts = _displace_duplicate_offices(db, content, appointed, new_office)
+            displaced_parts = _displace_duplicate_offices(
+                db, content, appointed, new_office, commit=commit
+            )
             # 被顶替者一并刷 Agent(新任者 apply_appointment 内已注册)(线上 gemini)。
             if registry is not None:
                 for dp in displaced_parts:
@@ -1854,12 +1888,12 @@ def apply_office_appointment(
             return {"name": appointed, "new_office": new_office, "kind": "appoint", "reason": reason,
                     **({"displaced": displaced_parts} if displaced_parts else {})}
     except Exception as exc:
-        _restore_person_write_state(db, content, snapshot)
+        _restore_person_write_state(db, content, snapshot, commit=commit)
         return {"name": name, "new_office": new_office, "rejected": True, "kind": "appoint",
                 "reason": f"落库失败：{exc}；原 status={cur_status or '不在册'}"}
     # apply_appointment 返回假值（查重拒/approved false/字段空——现均改库前早退）：防御性还原快照、
     # 与 except 路对称，确保此分支在任何 apply_appointment 行为下都不留半落库（P1 第一铁律，线上 gemini R3）。
-    _restore_person_write_state(db, content, snapshot)
+    _restore_person_write_state(db, content, snapshot, commit=commit)
     return {"name": name, "new_office": new_office, "rejected": True, "kind": "appoint",
             "reason": f"建档失败（查重/字段不合）；原 status={cur_status or '不在册'}"}
 
@@ -1876,6 +1910,10 @@ def _apply_person_changes(
     allow_legacy_partial_power: bool = False,
     external_transaction: bool | None = None,
 ) -> List[Dict[str, object]]:
+    if external_transaction is None:
+        external_transaction = db.conn.in_transaction
+    commit_person_change = not external_transaction
+
     def rejected(
         item: Dict[str, object],
         reason: str,
@@ -1902,7 +1940,12 @@ def _apply_person_changes(
             (name,),
         ).fetchone()
 
-    def log_applied(result: Dict[str, object], item: Dict[str, object], *, commit: bool = True) -> None:
+    def log_applied(
+        result: Dict[str, object],
+        item: Dict[str, object],
+        *,
+        commit: bool | None = None,
+    ) -> None:
         if result.get("rejected"):
             return
         name = str(result.get("name") or "").strip()
@@ -1929,7 +1972,7 @@ def _apply_person_changes(
             derived_from=str(result.get("derived_from") or derived_from or ""),
             normalized=normalized,
             source=source,
-            commit=commit,
+            commit=commit_person_change if commit is None else commit,
         )
 
     def identity_title_for_allegiance(item: Dict[str, object], new_power: str) -> str:
@@ -1968,8 +2011,6 @@ def _apply_person_changes(
             )
         return results
 
-    if external_transaction is None:
-        external_transaction = db.conn.in_transaction
     applied: List[Dict[str, object]] = []
     needs_person_change_commit = False
     person_statuses = {
@@ -2087,6 +2128,7 @@ def _apply_person_changes(
                 status,
                 reason_text,
                 reason_code=reason_code if reason_code else None,
+                commit=commit_person_change,
             )
             if content is not None and name in content.characters:
                 ch = content.characters[name]
@@ -2172,6 +2214,7 @@ def _apply_person_changes(
                         new_office_type=str(item.get("office_type") or item.get("new_office_type") or ""),
                         faction=str(item.get("faction") or "中立"),
                         llm_config=llm_config,
+                        commit=commit_person_change,
                     ),
                 }
                 if transition.startswith("normalize:"):
@@ -2206,6 +2249,7 @@ def _apply_person_changes(
                         release_status,
                         derive_label,
                         reason_code="",
+                        commit=commit_person_change,
                     )
                     if content is not None and name in content.characters:
                         ch = content.characters[name]
@@ -2230,6 +2274,7 @@ def _apply_person_changes(
                 new_office_type=str(item.get("office_type") or item.get("new_office_type") or ""),
                 faction=str(item.get("faction") or "中立"),
                 llm_config=llm_config,
+                commit=commit_person_change,
             )
             wrapped = {"动作": effective_action, **result}
             if derive_label:
@@ -2250,7 +2295,8 @@ def _apply_person_changes(
                             name,
                         ),
                     )
-                    db.conn.commit()
+                    if commit_person_change:
+                        db.conn.commit()
                     if content is not None and name in content.characters:
                         ch = content.characters[name]
                         ch.status = str(row["status"] or "")
@@ -2325,7 +2371,8 @@ def _apply_person_changes(
                         "new_power": requested_new_power,
                         "reason": str(item.get("reason") or ""),
                     }
-                ]
+                ],
+                commit=commit_person_change,
             )
             if not power_results:
                 applied.append(rejected(item, "易主 未产生变更", "noop"))
@@ -2338,7 +2385,11 @@ def _apply_person_changes(
                         wrapped["item"] = dict(item)
                     applied.append(wrapped)
                 continue
-            backlash_results = db.apply_power_deltas(state, backlash) if backlash else []
+            backlash_results = db.apply_power_deltas(
+                state,
+                backlash,
+                commit=commit_person_change,
+            ) if backlash else []
             for result in power_results:
                 new_power = str(result.get("new_power") or "")
                 if (
@@ -2362,7 +2413,8 @@ def _apply_person_changes(
                     "reason_code='', status_reason=?, status_changed_turn=?, transit_to='' WHERE name=?",
                     (new_title, "身名分", str(item.get("reason") or ""), state.turn, name),
                 )
-                db.conn.commit()
+                if commit_person_change:
+                    db.conn.commit()
                 wrapped = {"动作": action, "方式": way, "反噬": backlash, **result}
                 wrapped["new_title"] = new_title
                 if any(r.get("rejected") for r in backlash_results if isinstance(r, dict)):
@@ -2404,6 +2456,7 @@ def _apply_person_changes(
                     "approved": approved,
                 },
                 llm_config=llm_config,
+                commit=commit_person_change,
             )
             if appointed:
                 result: Dict[str, object] = {
@@ -2461,7 +2514,8 @@ def _apply_person_changes(
                     "UPDATE characters SET location=?, transit_to=? WHERE name=?",
                     (location, transit_to, name),
                 )
-                db.conn.commit()
+                if commit_person_change:
+                    db.conn.commit()
                 if content is not None and name in content.characters:
                     ch = content.characters[name]
                     ch.location = location
@@ -2480,7 +2534,7 @@ def _apply_person_changes(
         applied.append(
             rejected(item, "人物变更动作写路径未接", "invalid_transition")
         )
-    if needs_person_change_commit and not external_transaction:
+    if needs_person_change_commit and commit_person_change:
         db.conn.commit()
     return applied
 

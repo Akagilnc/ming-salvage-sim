@@ -409,6 +409,83 @@ def test_apply_score_extraction_loyalty_assessment_does_not_commit_inside_batch(
     assert after == before
 
 
+def test_apply_person_changes_disposition_does_not_commit_inside_batch(game):
+    db, state, content = game
+    name = active_ming_character(db, content)
+    before = dict(
+        db.conn.execute(
+            "SELECT status, office, office_type, status_reason, reason_code, transit_to "
+            "FROM characters WHERE name=?",
+            (name,),
+        ).fetchone()
+    )
+    before_logs = db.conn.execute(
+        "SELECT COUNT(*) AS n FROM person_logs WHERE person_name=?",
+        (name,),
+    ).fetchone()["n"]
+
+    try:
+        db.conn.execute("BEGIN")
+        issues._apply_person_changes(
+            db,
+            state,
+            [
+                {
+                    "name": name,
+                    "动作": "处置",
+                    "status": "exiled",
+                    "reason": "事务内处置",
+                }
+            ],
+            content=content,
+        )
+        db.conn.rollback()
+
+        after = dict(
+            db.conn.execute(
+                "SELECT status, office, office_type, status_reason, reason_code, transit_to "
+                "FROM characters WHERE name=?",
+                (name,),
+            ).fetchone()
+        )
+        after_logs = db.conn.execute(
+            "SELECT COUNT(*) AS n FROM person_logs WHERE person_name=?",
+            (name,),
+        ).fetchone()["n"]
+        assert after == before
+        assert after_logs == before_logs
+    finally:
+        if db.conn.in_transaction:
+            db.conn.rollback()
+        db.conn.execute(
+            "UPDATE characters SET status=?, office=?, office_type=?, status_reason=?, "
+            "reason_code=?, transit_to=? WHERE name=?",
+            (
+                before["status"],
+                before["office"],
+                before["office_type"],
+                before["status_reason"],
+                before["reason_code"],
+                before["transit_to"],
+                name,
+            ),
+        )
+        db.conn.execute(
+            "DELETE FROM person_logs WHERE person_name=? AND rowid NOT IN ("
+            "SELECT rowid FROM person_logs WHERE person_name=? ORDER BY rowid LIMIT ?"
+            ")",
+            (name, name, before_logs),
+        )
+        db.conn.commit()
+        ch = content.characters[name]
+        ch.status = before["status"]
+        ch.office = before["office"]
+        ch.office_type = before["office_type"]
+        ch.status_reason = before["status_reason"]
+        ch.reason_code = before["reason_code"]
+        ch.transit_to = before["transit_to"]
+
+
 def test_apply_score_extraction_one_time_grant_and_assessment_do_not_create_commitment_issue(game):
     db, state, content = game
     before_issues = db.conn.execute("SELECT COUNT(*) AS n FROM issues").fetchone()["n"]
