@@ -272,8 +272,8 @@ export function ArmyDrawer({
   const filtered = q ? mingArmies.filter((a) => a.name.includes(q) || a.station.includes(q) || a.commander.includes(q)) : mingArmies;
   const selected = mingArmies.find((a) => a.id === selectedArmyId) || null;
   const arrearsTone = (army: Army) => {
-    const pay = army.army_needed || 1; // #173 欠饷月数按引擎实扣月应发
-    const months = army.arrears / pay;
+    const pay = army.army_needed; // #173 欠饷月数按引擎实扣月应发；0 饷军不造假分母（同后端 pay>0 判）
+    const months = pay > 0 ? army.arrears / pay : 0;
     if (months >= 3) return "danger";
     if (months >= 1) return "warn";
     return "";
@@ -314,7 +314,9 @@ export function ArmyDrawer({
               <tr><th>机动</th><td>{selected.mobility}</td><th>忠诚</th><td>{selected.loyalty}</td></tr>
               <tr><th>欠饷</th><td colSpan={3}>
                 {selected.arrears > 0
-                  ? `${selected.arrears}万两（≈${(selected.arrears / (selected.army_needed || 1)).toFixed(1)}月）`
+                  ? (selected.army_needed > 0
+                      ? `${selected.arrears}万两（≈${(selected.arrears / selected.army_needed).toFixed(1)}月）`
+                      : `${selected.arrears}万两`)
                   : "无欠饷"}
               </td></tr>
               <tr><th>状态</th><td colSpan={3}>{selected.status}</td></tr>
