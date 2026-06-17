@@ -3141,7 +3141,7 @@ def apply_score_extraction(
 
     pre_issue_person_changes, post_issue_person_changes = _split_pre_issue_person_changes(person_changes)
 
-    def _amnesty_backlash_power_ids(changes: List[Dict[str, object]]) -> set[str]:
+    def _amnesty_conflict_power_ids(changes: List[Dict[str, object]]) -> set[str]:
         power_ids: set[str] = set()
         for item in changes:
             if str(item.get("动作") or "").strip() != "易主":
@@ -3152,6 +3152,8 @@ def apply_score_extraction(
                 continue
             backlash = item.get("反噬", item.get("backlash"))
             if not isinstance(backlash, dict):
+                continue
+            if any(not isinstance(raw_changes, dict) for raw_changes in backlash.values()):
                 continue
             name = str(item.get("name") or "").strip()
             if content is not None:
@@ -3180,10 +3182,15 @@ def apply_score_extraction(
             }
             if any(power_id != old_power for power_id in backlash_power_ids):
                 continue
-            power_ids.update(backlash_power_ids)
+            explicit_title = str(item.get("new_title") or item.get("title") or "").strip()
+            if explicit_title and explicit_title not in PERSON_IDENTITY_TITLES:
+                continue
+            # Same-period amnesty claims the old stock even if the LLM forgot to put
+            # the weakening in 反噬; a top-level update would be suppression ledgering.
+            power_ids.add(old_power)
         return power_ids
 
-    amnesty_backlash_power_ids = _amnesty_backlash_power_ids(person_changes)
+    amnesty_conflict_power_ids = _amnesty_conflict_power_ids(person_changes)
 
     def _annotate_legacy_person_rejections(results: List[Dict[str, object]]) -> None:
         for result in results:
@@ -3308,13 +3315,13 @@ def apply_score_extraction(
     power_changes: List[Dict[str, object]] = []
     if isinstance(power_updates_raw, dict) and power_updates_raw:
         power_updates_to_apply = dict(power_updates_raw)
-        for power_id in sorted(set(power_updates_to_apply) & amnesty_backlash_power_ids):
+        for power_id in sorted(set(power_updates_to_apply) & amnesty_conflict_power_ids):
             raw_changes = power_updates_to_apply.pop(power_id)
             power_changes.append({
                 "power_id": power_id,
                 "rejected": True,
                 "category": "invalid_transition",
-                "reason": "同一股同一时段已随招安易主反噬削股，拒绝顶层 power_updates 再剿股",
+                "reason": "同一股同一时段已有招安易主，拒绝顶层 power_updates 剿股；削股须随易主反噬一处落账",
                 "item": {"power_id": power_id, "changes": raw_changes},
             })
         if power_updates_to_apply:
