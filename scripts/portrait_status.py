@@ -23,8 +23,9 @@ POOL_N = 20
 
 
 def is_harem_character(character: dict) -> bool:
+    power_id = character.get("power_id") or MING_POWER_ID
     return (
-        character.get("power_id") == MING_POWER_ID
+        power_id == MING_POWER_ID
         and (
             character.get("office_type") == "后宫"
             or character.get("rank") in CONSORT_RANKS
