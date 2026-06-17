@@ -13,13 +13,13 @@
     "fail_condition": "东江旧部失饷离心、孔耿等部哗走或渐生叛意，皮岛废弛，为日后吴桥兵变与降金埋祸",
     "trigger_year": 1629,
     "trigger_month": 6,
-    "trigger_gate": {"character.毛文龙.loyalty": "<65", "character.毛文龙.status": "==active", "character.袁崇焕.status": "!=dead"},
+    "trigger_gate": {"character.毛文龙.loyalty": "<65", "character.毛文龙.status": "==active", "character.袁崇焕.status": "==active"},
     "effect_on_trigger": {
       "character_status_changes": [
         {"name": "毛文龙", "status": "dead", "reason": "袁崇焕双岛斩帅"}
       ]
     },
-    "precondition": "历史既定：崇祯二年六月袁崇焕擅斩毛文龙；当前硬门只判毛文龙未被安抚且毛、袁二人未死，调离/限权等细门归后续逐事件门补齐",
+    "precondition": "历史既定：崇祯二年六月袁崇焕擅斩毛文龙；当前硬门判毛文龙未被安抚且仍在任、袁崇焕仍处 active 位，调离/限权等细门归后续逐事件门补齐",
     "event_type": "node"
   },
   {
