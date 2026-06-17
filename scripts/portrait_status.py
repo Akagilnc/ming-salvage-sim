@@ -22,6 +22,16 @@ CONSORT_RANKS = {"皇后", "贵人", "贵妃", "妃", "嫔"}
 POOL_N = 20
 
 
+def is_harem_character(character: dict) -> bool:
+    return (
+        character.get("power_id") == MING_POWER_ID
+        and (
+            character.get("office_type") == "后宫"
+            or character.get("rank") in CONSORT_RANKS
+        )
+    )
+
+
 def main() -> None:
     characters = json.loads(CHARACTERS.read_text("utf-8"))["characters"]
 
@@ -30,12 +40,12 @@ def main() -> None:
     ministers = [
         (c["name"], c.get("office", ""), c.get("faction", ""), f"minister_{c['name']}.png")
         for c in characters
-        if "rank" not in c
+        if not is_harem_character(c)
     ]
     consorts = [
         (c["name"], c.get("office", ""), c.get("faction", ""), f"consort_{c['name']}.png")
         for c in characters
-        if c.get("power_id") == MING_POWER_ID and c.get("rank") in CONSORT_RANKS
+        if is_harem_character(c)
     ]
 
     m_rows = ["| 人物 | 势力/派系 | 职位 | 文件 | 状态 |", "|---|---|---|---|---|"]
