@@ -2031,6 +2031,7 @@ class GameDB:
         status: str,
         reason: str = "",
         reason_code: str | None = None,
+        commit: bool = True,
     ) -> None:
         """改人物状态：active/offstage/dismissed/imprisoned/exiled/retired/dead。
         大臣走 characters 表；后宫（consorts）走内存对象 + consort_traits 备档。
@@ -2060,7 +2061,8 @@ class GameDB:
         # #9：状态变更后全重算该人物所属朝堂派系 leverage（绝对值、读当前所有在朝成员 → 无漂移）。
         if prev is not None:
             self.recompute_faction_leverage(str(prev["faction"] or ""))
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
     def _faction_office_weight_sum(self, faction: str) -> float:
         """该 faction 当前所有 status='active' 的大明成员的官职权重和
@@ -2261,6 +2263,7 @@ class GameDB:
     def apply_character_power_changes(
         self,
         changes: List[Dict[str, object]],
+        commit: bool = True,
     ) -> List[Dict[str, object]]:
         """据 extractor 输出改人物 power_id（降将/叛臣/归正）。new_power 须为合法 power id。"""
         applied: List[Dict[str, object]] = []
@@ -2307,7 +2310,8 @@ class GameDB:
                 (new_power, name),
             )
             applied.append({"name": name, "old_power": old_power, "new_power": new_power, "reason": reason})
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return applied
 
     def set_character_office(
@@ -2317,6 +2321,7 @@ class GameDB:
         office_type: str = "",
         source: str = "诏书调任",
         llm_config: Any = None,
+        commit: bool = True,
     ) -> None:
         """既有官员调任/升迁：改 characters.office（office_type 给空则不动），
         同步 character_offices 备档。状态不变（仍 active）。
@@ -2359,7 +2364,8 @@ class GameDB:
         ).fetchone()
         if faction_row is not None:
             self.recompute_faction_leverage(str(faction_row["faction"] or ""))
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         if name in self.content.characters:
             self.content.characters[name].office = office
             self.content.characters[name].office_type = eff_type
@@ -2537,6 +2543,7 @@ class GameDB:
         character: "Character",
         source: str = "",
         llm_config: Any = None,
+        commit: bool = True,
     ) -> None:
         """运行时新建人物（吏部任命/皇帝点名）。已存在同名则不动，避免覆盖既有状态。"""
         existing = self.conn.execute(
@@ -2612,7 +2619,8 @@ class GameDB:
         is_consort = character.office_type == "后宫" or character.faction == "后宫"
         if character.status == "active" and power_id == "ming" and not is_consort:
             self.recompute_faction_leverage(str(character.faction or ""))
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
     def record_economy_moves(
         self,
@@ -2872,6 +2880,7 @@ class GameDB:
         self,
         state: GameState,
         updates: Dict[str, Dict[str, object]],
+        commit: bool = True,
     ) -> List[Dict[str, object]]:
         allowed_fields = {"leverage", "military_strength", "supply"}
         changes: List[Dict[str, object]] = []
@@ -2976,7 +2985,8 @@ class GameDB:
                     "delta": log_delta,
                     "reason": reason,
                 })
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return changes
 
     def apply_power_rename(
