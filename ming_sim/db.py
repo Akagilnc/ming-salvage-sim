@@ -6144,6 +6144,7 @@ class GameDB:
         narrative: str = "",
         metric_delta: Dict[str, int] | None = None,
         inertia_delta: int = 0,
+        commit: bool = True,
     ) -> sqlite3.Row | None:
         row = self.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
         if row is None or row["status"] != "active":
@@ -6196,7 +6197,8 @@ class GameDB:
                 json.dumps(metric_delta or {}, ensure_ascii=False),
             ),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return self.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
 
     def close_issue(
@@ -6206,6 +6208,7 @@ class GameDB:
         *,
         reason: str,
         narrative: str = "",
+        commit: bool = True,
     ) -> sqlite3.Row | None:
         """LLM 主动通知收尾。reason 必须是 'resolved' 或 'failed'。不看 bar 门槛。"""
         if reason not in ("resolved", "failed"):
@@ -6247,7 +6250,8 @@ class GameDB:
                 from_stage_text, to_stage_text, narrative,
             ),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return self.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
 
     # ── 帝国修正（legacies 表）：结案留下的长期百分比修正符，落账层放大/缩小增量 ────
@@ -6378,6 +6382,7 @@ class GameDB:
         *,
         narrative: str = "",
         applied_cost: Dict[str, object] | None = None,
+        commit: bool = True,
     ) -> sqlite3.Row | None:
         row = self.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
         if row is None or row["status"] != "active":
@@ -6400,7 +6405,8 @@ class GameDB:
                 json.dumps(applied_cost or {}, ensure_ascii=False),
             ),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return self.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
 
     def list_recent_issue_advances(self, issue_id: int, limit: int = 3) -> List[sqlite3.Row]:

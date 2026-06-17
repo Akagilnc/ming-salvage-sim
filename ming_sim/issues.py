@@ -659,6 +659,8 @@ def _pending_person_changes_block_event_gate(
             status = "dismissed"
         elif action == "处置":
             status = str(item.get("status") or "").strip()
+            if status in {"active", "candidate"}:
+                continue
         else:
             continue
         if status not in PERSON_STATUSES:
@@ -1107,7 +1109,6 @@ def apply_issue_tracker_output(
         if candidate_event_ids_at_input is not None
         else {candidate.id for candidate in gather_candidate_events(state, db)}
     )
-    current_candidate_event_ids = {candidate.id for candidate in gather_candidate_events(state, db)}
     consumed_event_ids: set[str] = set()
 
     # 1) advances（ADR 0008 决定1：LLM 脏数据逐项拒收留痕，不裸 continue 静默丢；db.advance_issue
@@ -1177,6 +1178,7 @@ def apply_issue_tracker_output(
             narrative=narrative,
             metric_delta=applied_metrics,
             inertia_delta=inertia_delta,
+            commit=not external_transaction,
         )
         touched_ids.add(issue_id)
         # 终结结算：bar 自然推到 100/0 触发的 resolved/failed，与 close_issues 一样落终结效果（含建筑）
@@ -1229,6 +1231,7 @@ def apply_issue_tracker_output(
     #    decree     —— 玩家诏书强推，由 LLM 给字段新立 issue
     #    event_pool —— 预设事件（EVENTS/SEED_EVENTS）被推演判定触发，按预设 event 立 issue
     #    其它来源一律拒。
+    current_candidate_event_ids = {candidate.id for candidate in gather_candidate_events(state, db)}
     initiative_active = db.count_active_initiatives()
     for ni in tracker_output.get("new_issues", []) or []:
         if not isinstance(ni, dict):
@@ -1481,7 +1484,13 @@ def apply_issue_tracker_output(
                 "item": cl,
             })
             continue
-        new_row = db.close_issue(state, issue_id, reason=reason, narrative=narrative)
+        new_row = db.close_issue(
+            state,
+            issue_id,
+            reason=reason,
+            narrative=narrative,
+            commit=not external_transaction,
+        )
         if new_row is None:
             # close_issue 回 None 有三态，回查 status 精确归类（cmr Claude high）：
             #   ① 未找到 / ② 已非 active → 陈旧/幻觉引用（missing_ref）；
@@ -1567,6 +1576,7 @@ def apply_issue_tracker_output(
                 stage_text=row["stage_text"],
                 narrative=str(cn.get("narrative") or "陛下欲罢，然此事非诏可消。")[:400],
                 metric_delta={"皇威": -2},
+                commit=not external_transaction,
             )
             state.metrics["皇威"] = max(0, int(state.metrics.get("皇威", 0)) - 2)
             touched_ids.add(issue_id)
@@ -1588,6 +1598,7 @@ def apply_issue_tracker_output(
             state, issue_id,
             narrative=str(cn.get("narrative") or "")[:400],
             applied_cost=cost if isinstance(cost, dict) else {},
+            commit=not external_transaction,
         )
         touched_ids.add(issue_id)
         applied_cancels.append({"issue_id": issue_id, "rejected": False, "title": row["title"]})
