@@ -35,19 +35,11 @@
 - **运行形态（web 第一，CLI 沉浸版后续）**：**目前 web 版本是第一个尝试方向**，走真实 LLM 后端（codex / agy / hermes，见下）。**「agent session 直接当后端」属后续的 CLI 文字沉浸版**——session 串行（一次一个 LLM 调用）使它在 web 月末并发轰多个 extractor 时会死锁，故那条路留给 CLI 沉浸版、不用在 web。⚠️ 别再凭「探针走 CLI」判 web 路 bug「够不着玩家」：web 是当前真实运行形态，web 路的问题就是真问题。
 - **6 文件三向处置**（agents/simulation/registry/decree/memories/llm_model）：🟢 保留契约/骨架 🟡 提炼成我的玩法说明书 🔴 扔纯 agno 管道（`llm_model.py` 整扔）。**领域金矿本体在 `content/prompts/*.md`（13 个，尤其 `season_simulator.md` 16K 字裁判规则 + 4 个 `score_extractor`）**。
 
-## LLM 后端（对照 / 将来换模型用）
-hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`，base_url `http://127.0.0.1:8645/v1`，key 随便填。
-- `nous`：267 模型按量（`deepseek-v4-flash` 最便宜、`anthropic/claude-sonnet-4.6`/`openai/gpt-5.4` 质量高）。
-- `xai`：SuperGrok 订阅免费，但 grok 中文叙事弱、不适合本游戏。
-
-## 后端基准结论（2026-06-07，全文+证据见 `docs/LLM_BACKEND_BENCH.md`，暂存于此待迁专档）
-- **建 issue（结构化落库）**：codex 系（5.5/mini/spark）稳，spark 最快；**agy 偶发漏 `origin_kind` 被落库拒**（把 `decree` 错填进 `可撤销`、漏 `来源类型`，见 `web_server.log:97`）——偶发非常态。
-- **叙事（邸报/大臣奏对）**：claude（sonnet/haiku）最像人、最懂盘面；codex 系信息密度高但偏公文体；agy 够用。
-- **速度可用档（simulator ~40-50s）**：`gpt-5.3-codex-spark`、`gpt-5.5`、`agy`、**`haiku4.5 + MAX_THINKING_TOKENS=10000`**。
-- **淘汰交互**：`sonnet4.6`（simulator 5-7 分钟，生成 bound，关思考也救不动，留作离线叙事鉴赏）、`gpt-5.4-mini`（漏 `<<DECISION>>` 块=砍 HITL）。
-- **真 baseline = Opus 4.8 在 session 里当 LLM（形态1）**：`probe.db` 现存 14 条国策（id 4-18）是它建的，**不是 agy**（agy 只建了 turn16 的 id 19/20）。别再把 DB 战绩算到 agy 头上。
-- **工程坑（换 codex/claude 前必改）**：① codex 必须 `--skip-git-repo-check`（`cli_backend.py:150`，否则非 git cwd 秒失败）② codex 并发必须 `--ephemeral`（否则撞 session 状态丢空输出）③ codex 干净输出在 **stdout**（`OpenAI Codex v` 之前），日志在 stderr，别合并 ④ claude 无 gpt 的 `reasoning_effort` 档，用 `MAX_THINKING_TOKENS`（~10k≈medium），`claude -p` 默认重思考会拖慢。
-- **方法学免责**：本基准是单快照 + 部分并发噪声，结构化成功率别当真实多回合率（DB 实证 agy 真实建 issue 没那么差）；唯一干净速度数据是 thinking 串行 4 跑。
+## LLM 后端（换模型时查，非每回合）
+hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`，base_url `http://127.0.0.1:8645/v1`（`nous` 按量、`xai` SuperGrok 免费但中文叙事弱）。
+- **工程坑（换 codex/claude 前必改）**：codex 必须 `--skip-git-repo-check` + 并发 `--ephemeral`，干净输出在 stdout（日志在 stderr）；claude 用 `MAX_THINKING_TOKENS`（~10k≈medium）代 gpt 的 reasoning_effort，`claude -p` 默认重思考会拖慢。
+- **真 baseline = Opus 4.8 在 session 里当 LLM（形态1）**：`probe.db` 现存 14 条国策（id 4-18）是它建的，非 agy。
+- 各后端**质量/速度选型对比 + 方法学免责**（建 issue / 叙事 / 速度档 / 淘汰交互）→ 全文见 **[docs/LLM_BACKEND_BENCH.md](docs/LLM_BACKEND_BENCH.md)**。
 
 ## 金手指改动（本地实验，非上游原版）
 `content/buildings.json` 末尾加了 3 个建筑：皇家天佑金矿（国库 +800/月）、大明中央银行（内库 +300）、帝国航空（皇威 +10）。原理：建筑走真实月度流水，LLM 查账本认账；直接改国库余额会被大臣审计成「虚存」。**只对新开存档生效**（老档建筑已写进 DB）。
