@@ -228,8 +228,8 @@ def test_unknown_owner_power_army_rejected_good_builds(game):
 
 
 def test_army_missing_manpower_rejected_good_builds(game):
-    """new_armies 缺/非法 manpower 或 maintenance_per_turn → 原 raise ValueError
-    崩整月,改为逐项拒收留痕(invalid_enum),同信封好军照建(ADR 决定 1)。"""
+    """new_armies 缺/非法 manpower（#173 PR2 后唯一必填，维护费退役）→ 原 raise
+    ValueError 崩整月,改为逐项拒收留痕(invalid_enum),同信封好军照建(ADR 决定 1)。"""
     db, state, content = game
     turn = state.turn
     good_owner = _valid_power_id(db)
@@ -629,27 +629,31 @@ def test_float_bool_army_delta_tolerated_on_issue_path(game):
         }, "局势#测试结案")
 
 
-def test_mixed_cause_required_fields_stay_strict_on_issue_path(game):
-    """必填字段混合成因(一边 float、另一边缺键/None/串=历史致命)不得因 or 合取
-    被误判容忍——历史谓词按整项算:两键都在且都能 int() 才算「历史可活」
-    (cmr S2 r4,2/2)。"""
+def test_required_field_historical_strictness_on_issue_path(game):
+    """#173 PR2 后建军唯一必填=manpower（维护费退役、不再必填）。issue 结案路对「历史
+    可活」项容忍、对「历史致命」项保持严格 raise——谓词只看 manpower（原 cmr S2 r4 的
+    「混合成因」防护随维护费退役而单字段化：缺 maintenance 不再是致命成因）。"""
     import ming_sim.issues as I
 
     db, state, content = game
-    # manpower=float 但 maintenance 缺键:历史 int(3.7)=3 成功后 KeyError → raise
-    with pytest.raises(ValueError):
-        I._apply_issue_entities(db, state, {
-            "new_armies": [{"id": "mixed_a", "name": "混因军甲", "owner_power": "ming",
-                            "manpower": 3.7}],
-        }, "局势#测试结案")
-    # manpower=串 + maintenance=float:历史 int("三千") ValueError → raise
-    with pytest.raises(ValueError):
-        I._apply_issue_entities(db, state, {
-            "new_armies": [{"id": "mixed_b", "name": "混因军乙", "owner_power": "ming",
-                            "manpower": "三千", "maintenance_per_turn": 2.5}],
-        }, "局势#测试结案")
-    # 纯 float 双键在场:历史静默套用=可活 → 容忍不抛
+    # manpower=float（历史 int(3.7)=3 静默套用=可活）+ 缺 maintenance（PR2 后不再必填）→ 容忍不抛
     I._apply_issue_entities(db, state, {
-        "new_armies": [{"id": "mixed_c", "name": "混因军丙", "owner_power": "ming",
-                        "manpower": 5000.0, "maintenance_per_turn": 2.0}],
+        "new_armies": [{"id": "req_a", "name": "需填军甲", "owner_power": "ming",
+                        "manpower": 3.7}],
+    }, "局势#测试结案")  # 不抛
+    # manpower=串:历史 int("三千") ValueError → 致命 → raise（维护费在场与否不影响）
+    with pytest.raises(ValueError):
+        I._apply_issue_entities(db, state, {
+            "new_armies": [{"id": "req_b", "name": "需填军乙", "owner_power": "ming",
+                            "manpower": "三千"}],
+        }, "局势#测试结案")
+    # manpower 缺键:历史 KeyError → 致命 → raise
+    with pytest.raises(ValueError):
+        I._apply_issue_entities(db, state, {
+            "new_armies": [{"id": "req_c", "name": "需填军丙", "owner_power": "ming"}],
+        }, "局势#测试结案")
+    # 合法 manpower、缺 maintenance:PR2 核心——维护费退役后建军照样成立 → 容忍不抛
+    I._apply_issue_entities(db, state, {
+        "new_armies": [{"id": "req_d", "name": "需填军丁", "owner_power": "ming",
+                        "manpower": 5000}],
     }, "局势#测试结案")  # 不抛
