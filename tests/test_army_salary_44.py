@@ -115,6 +115,25 @@ def test_backfill_dynamic_army_falls_to_anchor(game):
     )
 
 
+def test_backfill_reverse_fills_from_maintenance_on_direct_upgrade(game):
+    """#173 cmr drop R4(codex medium)：backfill 在 _drop_maintenance_column 之前跑，**直接升级
+    老档**（salary_rate 首次 ADD 时维护费列仍在）须从 maintenance_per_turn 反推率（maint×10000/
+    manpower），保旧档应发量级——不落锚点（否则 5000 兵 maint=20 重定价成 army_needed 20→1 腐蚀
+    旧档预算）。与上一测试（列已删→锚点）互补，钉 column-exists gate 两态。"""
+    db, _state, _ = game
+    # 模拟直接升级老档：维护费列仍在 + 一支 salary_rate=0 的动态明军（不在 content）。
+    db.conn.execute("ALTER TABLE armies ADD COLUMN maintenance_per_turn INTEGER NOT NULL DEFAULT 0")
+    _insert_dynamic_ming_army(db, "dyn_up", "动态旧军", 5000)  # salary_rate 留 0
+    db.conn.execute("UPDATE armies SET maintenance_per_turn=20 WHERE id='dyn_up'")
+    db.conn.commit()
+    db._backfill_salary_rate()
+    db.conn.commit()
+    row = db.conn.execute("SELECT salary_rate FROM armies WHERE id='dyn_up'").fetchone()
+    assert row["salary_rate"] == pytest.approx(20 * 10000 / 5000), (
+        f"维护费列在时动态军应从 maint 反推率=40（保旧档预算），得 {row['salary_rate']}"
+    )
+
+
 def test_total_ming_salary_is_72_ceil_sum(game):
     # 实际总月应发 = sum(ceil(每军))=72 万两。设计「66.5」是 sum(小数月应发)；army_needed 每军 ceil
     # （万两整数、不少发），ceil 累积使总额 72 > 66.5（cmr r1 codex/claude 实测）。开局 vs 旧 65 = +10.8%
