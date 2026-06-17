@@ -3452,31 +3452,31 @@ class GameDB:
             })
         return out
 
+    def _army_pay(self, row) -> int:
+        """#173 显示口径：军「月饷」呈现统一取引擎实扣应发 army_needed（替退役 maintenance_per_turn）。
+        懒 import 避免 db↔flows 顶层循环依赖（同 compute_budget_lines 先例）。非明军 → 0。"""
+        from ming_sim.flows import army_needed
+        return army_needed(row)
+
     def army_rows(self, limit: int | None = None, danger_order: bool = False) -> List[sqlite3.Row]:
-        # arrears 是累计欠饷万两，须按 maintenance 归一成"欠饷月数*10"再加权（0-100 量级）
-        # CASE 兼容 SQLite（无标量 MIN/LEAST）：maintenance=0 视为 0；归一后截至 100。
-        arrears_norm = (
-            "CASE "
-            "WHEN maintenance_per_turn IS NULL OR maintenance_per_turn = 0 THEN 0 "
-            "WHEN arrears * 10 / maintenance_per_turn > 100 THEN 100 "
-            "ELSE arrears * 10 / maintenance_per_turn "
-            "END"
-        )
-        order = (
-            f"({arrears_norm} + (100 - supply) + (100 - morale) + (100 - loyalty) + (100 - training)) DESC, name"
-            if danger_order
-            else "theater, name"
-        )
-        sql = f"""
-            SELECT *
-            FROM armies
-            ORDER BY {order}
-        """
-        params: Tuple[object, ...] = ()
+        # #173：欠饷月数归一改按引擎实扣应发 army_needed（替退役 maintenance_per_turn），与 charge 一致。
+        # army_needed 是 Python 公式（ceil + ming-only + 锚点，SQL 难复现），故 danger 排序在 Python 做。
+        rows = self.conn.execute("SELECT * FROM armies").fetchall()
+        if danger_order:
+            def _danger_key(r):
+                # arrears 累计欠饷万两，按月应发归一成"欠饷月数*10"（0-100），与各 0-100 短板相加。
+                pay = self._army_pay(r)
+                arr = int(r["arrears"]) or 0
+                arrears_norm = min(100, arr * 10 // pay) if pay > 0 else 0
+                danger = (arrears_norm + (100 - int(r["supply"])) + (100 - int(r["morale"]))
+                          + (100 - int(r["loyalty"])) + (100 - int(r["training"])))
+                return (-danger, str(r["name"]))  # danger 降序、name 升序（同原 SQL ... DESC, name）
+            rows = sorted(rows, key=_danger_key)
+        else:
+            rows = sorted(rows, key=lambda r: (str(r["theater"]), str(r["name"])))
         if limit is not None:
-            sql += " LIMIT ?"
-            params = (limit,)
-        return self.conn.execute(sql, params).fetchall()
+            rows = rows[:limit]
+        return rows
 
     def army_payload(self, limit: int | None = None, danger_order: bool = False) -> List[Dict[str, object]]:
         payload: List[Dict[str, object]] = []
@@ -3491,6 +3491,9 @@ class GameDB:
                     "controller": row["controller"],
                     "troop_type": row["troop_type"],
                     "manpower": int(row["manpower"]),
+                    # #173：引擎实扣月应发（呈现层「月饷」真源）。maintenance_per_turn 退役、仅留作历史/迁移，
+                    # 不再作月饷呈现（删列=字段去留设计决策，本 slice 留列只改呈现）。
+                    "army_needed": self._army_pay(row),
                     "maintenance_per_turn": int(row["maintenance_per_turn"]),
                     "supply": int(row["supply"]),
                     "morale": int(row["morale"]),
@@ -3512,24 +3515,25 @@ class GameDB:
         if not rows:
             return "军队尚未建档。"
         total_manpower = self.conn.execute("SELECT SUM(manpower) AS total FROM armies").fetchone()
-        total_maintenance = self.conn.execute("SELECT SUM(maintenance_per_turn) AS total FROM armies").fetchone()
+        # #173：月饷总额按引擎实扣应发 army_needed 之和（替退役 maintenance_per_turn 之和）。
+        total_pay = sum(self._army_pay(r) for r in self.conn.execute("SELECT * FROM armies").fetchall())
         parts = []
         for row in rows:
-            maint = int(row["maintenance_per_turn"]) or 0
+            pay = self._army_pay(row)
             arr = int(row["arrears"]) or 0
-            if maint > 0 and arr > 0:
-                months = arr / maint
+            if pay > 0 and arr > 0:
+                months = arr / pay
                 arr_text = f"欠饷{arr}万两（约{months:.1f}月军饷）"
             else:
                 arr_text = f"欠饷{arr}万两"
             parts.append(
                 f"{row['name']}：驻{row['station']}，兵{row['manpower']}，"
-                f"饷{format_money(monthly_amount(maint))} /{TURN_UNIT}，补给{row['supply']}、"
+                f"饷{format_money(monthly_amount(pay))} /{TURN_UNIT}，补给{row['supply']}、"
                 f"士气{row['morale']}、火器{row['firearm_equipment']}、炮{row['cannon_equipment']}、{arr_text}，{row['status']}"
             )
         return (
             f"军队警讯：{'；'.join(parts)}。"
-            f"建档兵力合计{int(total_manpower['total'] or 0)}人，账面{TURN_UNIT}维护费{format_money(monthly_amount(int(total_maintenance['total'] or 0)))}。"
+            f"建档兵力合计{int(total_manpower['total'] or 0)}人，{TURN_UNIT}应发军饷合计{format_money(monthly_amount(total_pay))}。"
         )
 
     def army_detail(self, raw_name: str) -> str:
@@ -3545,17 +3549,17 @@ class GameDB:
                 row = self.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
         if row is None:
             raise ValueError(f"未找到军队：{raw_name}")
-        maint = int(row["maintenance_per_turn"]) or 0
+        pay = self._army_pay(row)  # #173：月饷取引擎实扣应发
         arr = int(row["arrears"]) or 0
-        if maint > 0 and arr > 0:
-            months = arr / maint
+        if pay > 0 and arr > 0:
+            months = arr / pay
             arr_text = f"欠饷{arr}万两（约{months:.1f}月军饷）"
         else:
             arr_text = f"欠饷{arr}万两"
         return (
             f"{row['name']}：驻扎地{row['station']}，统帅{row['commander']}，"
             f"兵种{row['troop_type']}，人数{row['manpower']}人，"
-            f"维护费{format_money(monthly_amount(maint))} /{TURN_UNIT}，补给{row['supply']}，"
+            f"月应发军饷{format_money(monthly_amount(pay))} /{TURN_UNIT}，补给{row['supply']}，"
             f"士气{row['morale']}，训练{row['training']}，装备{row['equipment']}，"
             f"火器{row['firearm_equipment']}，随军大炮{row['cannon_equipment']}门，"
             f"{arr_text}，机动{row['mobility']}，忠诚{row['loyalty']}。"
@@ -3585,10 +3589,9 @@ class GameDB:
         own: List[str] = []
         other: List[str] = []
         for row in rows:
-            maint = int(row["maintenance_per_turn"]) or 0
             arr = int(row["arrears"]) or 0
-            # 全按月度：maintenance_per_turn 就是月饷，不除 3（别被 monthly_amount 命名误导）。
-            monthly_pay = maint
+            # #173：月饷取引擎实扣应发 army_needed（替退役 maintenance_per_turn）。全按月度，不除 3。
+            monthly_pay = self._army_pay(row)
             months = f"{arr / monthly_pay:.1f}" if monthly_pay > 0 and arr > 0 else "0"
             if str(row["owner_power"]) == "ming":
                 # 列序见表头。兵力/月饷/欠饷单位万两；补给…忠诚为 0-100。
