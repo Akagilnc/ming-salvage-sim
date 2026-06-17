@@ -1846,6 +1846,112 @@ def test_event_pool_pending_alias_appointment_blocks_canonical_gate(game):
         content.event_by_id.pop(ev.id, None)
 
 
+def test_event_pool_pending_alias_disposition_blocks_canonical_gate(game):
+    """online R1 Gemini：非任命动作也会用别名，pending 闸门须按规范名重算。"""
+    db, state, content = game
+    issues.bind_content(content)
+    db.conn.execute(
+        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
+        ("active", "ming", "内阁首辅", "职名分", "韩爌"),
+    )
+    if "韩爌" in content.characters:
+        ch = content.characters["韩爌"]
+        ch.status = "active"
+        ch.power_id = "ming"
+        ch.office = "内阁首辅"
+        ch.office_type = "职名分"
+    ev = Event(
+        id="__test_alias_disposition_pending__",
+        title="测试·别名处置门",
+        kind="朝议",
+        summary="韩爌仍为首辅时才可触发。",
+        urgency=10,
+        severity=10,
+        credibility=100,
+        interests=[],
+        audiences=[],
+        event_type="situation",
+        trigger_gate={"character.韩爌.office": "== 内阁首辅"},
+    )
+    content.seed_events.append(ev)
+    content.event_by_id[ev.id] = ev
+    try:
+        out = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
+                "人物变更": [
+                    {"name": "韩阁老", "动作": "处置", "status": "dismissed", "reason": "测试别名处置"}
+                ],
+            },
+            content=content,
+        )
+
+        assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+        assert out["applied_person_changes"][0]["name"] == "韩爌"
+        row = db.conn.execute(
+            "SELECT status, office FROM characters WHERE name=?",
+            ("韩爌",),
+        ).fetchone()
+        assert row["status"] == "dismissed"
+        assert row["office"] == ""
+        assert db.conn.execute(
+            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
+            (ev.id,),
+        ).fetchone() is None
+    finally:
+        content.seed_events.remove(ev)
+        content.event_by_id.pop(ev.id, None)
+
+
+def test_pending_person_gate_prefetches_character_rows_for_displacement(game):
+    """online R1 Gemini：独占官职顶替模拟不得对每个人物逐条 SELECT。"""
+    db, state, content = game
+    issues.bind_content(content)
+    db.conn.execute(
+        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
+        ("active", "ming", "蓟辽督师", "职名分", "袁崇焕"),
+    )
+    db.conn.execute(
+        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
+        ("active", "ming", "兵部尚书,左都御史", "兵部", "崔呈秀"),
+    )
+    ev = Event(
+        id="__test_prefetch_displacement_pending__",
+        title="测试·顶替预加载",
+        kind="朝议",
+        summary="崔呈秀仍兼兵部尚书时才可触发。",
+        urgency=10,
+        severity=10,
+        credibility=100,
+        interests=[],
+        audiences=[],
+        event_type="situation",
+        trigger_gate={"character.崔呈秀.office": "== 兵部尚书,左都御史"},
+    )
+    select_count = 0
+
+    def trace(sql):
+        nonlocal select_count
+        if sql.lstrip().upper().startswith("SELECT"):
+            select_count += 1
+
+    db.conn.set_trace_callback(trace)
+    try:
+        blocked = issues._pending_person_changes_block_event_gate(
+            ev,
+            [{"name": "袁崇焕", "动作": "任命", "office": "兵部尚书"}],
+            db,
+            content=content,
+        )
+    finally:
+        db.conn.set_trace_callback(None)
+
+    assert blocked is True
+    assert select_count <= 8
+
+
 def test_event_pool_pending_rejected_vassal_appointment_does_not_block_gate(game):
     """post-merge CMR R9：宗藩任命会被真实写口拒收，pending 闸门不得按成功授官误挡。"""
     db, state, content = game

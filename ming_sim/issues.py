@@ -711,21 +711,11 @@ def _pending_person_changes_block_event_gate(
     shadow_rows: Dict[str, Dict[str, str]] = {}
     pending_power_fields: Dict[str, Dict[str, int]] = {}
     power_shadow_rows: Dict[str, Dict[str, int]] = {}
-
-    def row_value(row: Dict[str, str], field: str, default: str = "") -> str:
-        return str(row.get(field) or default)
-
-    def character_row(name: str) -> Optional[Dict[str, str]]:
-        if name in shadow_rows:
-            return shadow_rows[name]
-        row = db.conn.execute(
-            "SELECT status, status_reason, reason_code, location, transit_to, power_id, office, office_type "
-            "FROM characters WHERE name=?",
-            (name,),
-        ).fetchone()
-        if row is None:
-            return None
-        data = {
+    for row in db.conn.execute(
+        "SELECT name, status, status_reason, reason_code, location, transit_to, "
+        "power_id, office, office_type FROM characters"
+    ).fetchall():
+        shadow_rows[str(row["name"])] = {
             "status": str(row["status"] or "active"),
             "status_reason": str(row["status_reason"] or ""),
             "reason_code": str(row["reason_code"] or ""),
@@ -735,8 +725,22 @@ def _pending_person_changes_block_event_gate(
             "office": str(row["office"] or ""),
             "office_type": str(row["office_type"] or ""),
         }
-        shadow_rows[name] = data
-        return data
+    for row in db.conn.execute("SELECT id, leverage, military_strength, supply FROM powers").fetchall():
+        power_shadow_rows[str(row["id"])] = {
+            "leverage": int(row["leverage"] or 0),
+            "military_strength": int(row["military_strength"] or 0),
+            "supply": int(row["supply"] or 0),
+        }
+    valid_regions = {
+        str(row["id"])
+        for row in db.conn.execute("SELECT id FROM regions").fetchall()
+    }
+
+    def row_value(row: Dict[str, str], field: str, default: str = "") -> str:
+        return str(row.get(field) or default)
+
+    def character_row(name: str) -> Optional[Dict[str, str]]:
+        return shadow_rows.get(name)
 
     def overlay(name: str, field: str, value: object) -> None:
         value_text = str(value or "").strip()
@@ -745,21 +749,7 @@ def _pending_person_changes_block_event_gate(
             shadow_rows[name][field] = value_text
 
     def power_row(power_id: str) -> Optional[Dict[str, int]]:
-        if power_id in power_shadow_rows:
-            return power_shadow_rows[power_id]
-        row = db.conn.execute(
-            "SELECT leverage, military_strength, supply FROM powers WHERE id=?",
-            (power_id,),
-        ).fetchone()
-        if row is None:
-            return None
-        data = {
-            "leverage": int(row["leverage"] or 0),
-            "military_strength": int(row["military_strength"] or 0),
-            "supply": int(row["supply"] or 0),
-        }
-        power_shadow_rows[power_id] = data
-        return data
+        return power_shadow_rows.get(power_id)
 
     def overlay_power_delta(power_id: object, raw_changes: object) -> None:
         pid = str(power_id or "").strip()
@@ -841,7 +831,7 @@ def _pending_person_changes_block_event_gate(
         action = str(item.get("动作") or "").strip()
         if not name:
             continue
-        if action in {"任命", "调任"} and content is not None:
+        if content is not None:
             from ming_sim.session import _find_existing_minister
             canon = _find_existing_minister(content, name, db)
             if canon:
@@ -884,7 +874,7 @@ def _pending_person_changes_block_event_gate(
                 continue
             valid = True
             for region_id in (new_location, transit_to):
-                if region_id and db.conn.execute("SELECT 1 FROM regions WHERE id=?", (region_id,)).fetchone() is None:
+                if region_id and region_id not in valid_regions:
                     valid = False
                     break
             if not valid:
@@ -906,7 +896,7 @@ def _pending_person_changes_block_event_gate(
             new_power = str(item.get("new_power") or "").strip()
             if not new_power:
                 continue
-            if db.conn.execute("SELECT 1 FROM powers WHERE id=?", (new_power,)).fetchone() is None:
+            if new_power not in power_shadow_rows:
                 continue
             if row_value(row, "power_id", "ming").strip() == new_power:
                 continue
@@ -967,12 +957,7 @@ def _pending_person_changes_block_event_gate(
             overlay(name, "transit_to", "")
             new_parts = [p for p in normalized_office.split(",") if _is_exclusive_office(p)]
             if new_parts:
-                all_names = {
-                    str(r["name"])
-                    for r in db.conn.execute("SELECT name FROM characters").fetchall()
-                }
-                all_names.update(shadow_rows)
-                for other_name in all_names:
+                for other_name in set(shadow_rows):
                     if other_name == name:
                         continue
                     other_row = character_row(other_name)
@@ -2515,6 +2500,11 @@ def _apply_person_changes(
         if not name or not action:
             applied.append(rejected(item, "name 或 动作 缺失", "missing_field"))
             continue
+        if content is not None:
+            from ming_sim.session import _find_existing_minister
+            canon = _find_existing_minister(content, name, db)
+            if canon:
+                name = canon
 
         if action == "评定":
             if content is not None and name not in content.characters:
@@ -2636,14 +2626,7 @@ def _apply_person_changes(
             continue
 
         if action in {"任命", "调任"}:
-            # 别名归一须在 hallucinated_id 闸前：extractor 可能用在册大臣 alias（韩阁老→韩爌），
-            # 仅按确切 key 判在册会把别名任命误拒成 hallucinated_id、玩家指令丢失（旧 office_changes
-            # 路直调含归一的 apply_office_appointment 无此退化）。与下游归一同源（线上 codex R3 P2）。
-            if content is not None:
-                from ming_sim.session import _find_existing_minister
-                _canon = _find_existing_minister(content, name, db)
-                if _canon:
-                    name = _canon
+            # 别名归一已在动作分派前统一完成，确保任命与处置/行止/易主同口径。
             if content is not None and name not in content.characters:
                 applied.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
