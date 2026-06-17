@@ -97,18 +97,22 @@ def test_army_delta_rejects_maintenance_paychange(game, field_key):
 
 
 def test_army_delta_other_fields_still_apply(game):
-    # 回归：拒维护费不误伤同信封其它合法字段（士气照落）。
+    # 回归：拒维护费不误伤同信封其它合法字段（士气照落）；且混合信封里维护费 reject 项须被
+    # 记录(rejected/invalid_enum)——锁 reject-and-record 契约的两面(cmr R2 codex low)。
     db, state, _ = game
     aid = str(db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
     before = db.conn.execute(
         "SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()["morale"]
-    db.apply_army_deltas(
+    changes = db.apply_army_deltas(
         state, _pseudo("整饬"), None, "兵部",
         {aid: {"维护费": 5, "士气": -3, "reason": "整饬"}})
     after = db.conn.execute(
         "SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()["morale"]
     assert after == before - 3, "拒维护费不应连累同军合法字段（士气）落库"
+    rejected = [c for c in changes if c.get("rejected") and c.get("field") == "维护费"]
+    assert rejected and rejected[0]["category"] == "invalid_enum", \
+        "混合信封里维护费 reject 项须被记录(invalid_enum),不静默吞"
 
 
 # ── cmr R1 P2(codex R2)：维护费拒收保留 issue 路脏值历史严格度 ──────────
