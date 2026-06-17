@@ -175,8 +175,14 @@ def resolve_directives(
     content=None,
     registry=None,
     cheat_directive: str = "",
+    source: Provenance = Provenance.player_decree,
 ) -> ResolveResult:
     """phase1：跑固定财政 + simulator 写邸报，解析 HITL 决策点。
+
+    source（#146 cmr r2）：本回合结算 delta 的来源。默认 player_decree——正常皇帝下旨路
+    行为不变。崩溃恢复 fallthrough（SETTLING 非 ready ctx 重走本函数）须把存档 ctx['source']
+    经 _provenance_from_stored 还原后传入，使 provenance 按构造保真（system_simulation 重跑仍
+    记 system、对玩家静默），不依赖「非 ready SETTLING ctx 恒 player」这一脆弱不变式。
 
     on_event(kind, data): 推演过程实时回调。
     kind ∈ {stage, thinking, text}；stage 携带阶段名，thinking/text 携带增量片段。
@@ -221,6 +227,7 @@ def resolve_directives(
         db.save_resolve_context(
             state.turn, decree_text, "", {},
             secret_orders={}, relevant_memories=[],   # #48：占位用分组承载的空 dict（旋即被真存覆盖）
+            source=Provenance(source).value,    # #146 A：皇帝下旨回合默认 player（被真存同值覆盖）；恢复 fallthrough 穿透 ctx 真源。Provenance(source).value 归一(兼容 enum/合法值串)、与 persist_resolve_context 一致(gemini R5)
         )
 
     # 1.8) 历史脉络：取近几回合章节记忆注入推演（章节记忆取代旧的关键词原子检索）。
@@ -299,6 +306,10 @@ def resolve_directives(
                 extractor_output=f"[推演 agent 失败] {exc}；本回合跳过 extractor。",
             )
             apply_issue_inertia_and_ongoing(db, state, touched_ids=set())
+            # #9 线上 R6（codex P2）：fallback 路同样须在 clear_gated_legacies 之前 reconcile——
+            # commit_pending_actions / inertia 可能经绕 hook 的路径改 faction 成员，否则 legacy gate
+            # （如「阉党专权」读 faction.阉党.leverage）读陈旧值、帝国修正多挂一回合。幂等、可整体回滚。
+            db.recompute_all_faction_leverage()
             for name in clear_gated_legacies(db, state):
                 db.record_log(state, f"帝国修正消除：{name}")
             db.mark_directives_issued(state)
@@ -328,13 +339,15 @@ def resolve_directives(
             db.save_resolve_context(
                 state.turn, decree_text, narrative, simulator_payload,
                 secret_orders=secret_orders_for_sim, relevant_memories=relevant_memories,
+                source=Provenance(source).value,  # #146 A：HITL 暂停存触发源（默认 player），phase2 续跑/崩溃恢复继承。Provenance(source).value 归一(兼容 enum/合法值串)、与 persist_resolve_context 一致(gemini R5)
             )
             db.save_pending_decisions(state.turn, decisions)
             state.turn_phase = TurnPhase.AWAITING_DECISION.value
             db.save_state(state)
         return ResolveResult(awaiting=True, decisions=db.list_pending_decisions(state.turn))
 
-    # 无决策点：透明续跑结算（cheat 仍可叠加）。
+    # 无决策点：透明续跑结算（cheat 仍可叠加）。来源贯穿 source 参数（默认 player_decree：皇帝下旨
+    # 拒收提示皇帝；恢复 fallthrough 穿透 ctx 真源，system 重跑仍记 system 静默——#146 cmr r2）。
     report = _settle_after_narrative(
         state, db, agno_db, llm_config, decree_text, narrative,
         simulator_payload=simulator_payload,
@@ -343,8 +356,35 @@ def resolve_directives(
         before_turn=before_turn, _emit=_emit,
         content=content, registry=registry,
         cheat_directive=cheat_directive,
+        source=source,
     )
     return ResolveResult(awaiting=False, report=report)
+
+
+def _provenance_from_stored(value: object) -> Provenance:
+    """从 ctx 持久值还原 Provenance（#146 恢复路）：兼容 Provenance 实例、已存的字符串值、
+    历史误序列化的 'Provenance.<name>' 字面串、及非法/缺失值。非法/缺失回落 system_simulation。
+
+    防静默丢源（Sourcery + gemini + coderabbit #175 concur）：Provenance 是 (str, Enum)，
+    若曾把枚举实例 str() 落库会得到 'Provenance.player_decree'（而非值 'player_decree'），
+    Provenance(...) 不匹配 → ValueError → 丢源退回 system_simulation。故分三层：
+    ① 实例直接返回；② 纯值走 Provenance(value)；③ 'Provenance.<name>' 旧脏串剥前缀按成员名查回；
+    仍无法识别才回落 system_simulation。"""
+    if isinstance(value, Provenance):
+        return value
+    text = str(value or "system_simulation")
+    try:
+        return Provenance(text)
+    except ValueError:
+        pass
+    # 历史误序列化：str(枚举实例) 落库的 'Provenance.player_decree' 脏串——剥前缀按成员名查回，
+    # 不让旧档玩家来源静默退化成 system_simulation。
+    if text.startswith("Provenance."):
+        try:
+            return Provenance[text.split(".", 1)[1]]
+        except KeyError:
+            pass
+    return Provenance.system_simulation
 
 
 def resolve_settling_recovery(
@@ -380,10 +420,7 @@ def resolve_settling_recovery(
     narrative = str(ctx.get("narrative") or "")
     # 恢复重放沿用持久化的原始拒收来源（#144）：玩家来源(player_decree/hitl)拒收恢复后仍给玩家
     # 邸报提示，不被记成 system_simulation 而静默。非法/缺失值回落 system_simulation（旧档兼容）。
-    try:
-        source = Provenance(str(ctx.get("source") or "system_simulation"))
-    except ValueError:
-        source = Provenance.system_simulation
+    source = _provenance_from_stored(ctx.get("source"))
     # 暂存动作 commit 已下沉进 settle_with_delta 的 atomic 体内（与结算同生死，
     # cmr S7 r4）——此处不再事务外预 commit。
     try:
@@ -494,9 +531,13 @@ def _settle_after_narrative(
     registry=None,
     cheat_directive: str = "",
     decision_directive: str = "",
+    source: Provenance = Provenance.system_simulation,
 ) -> str:
     """phase2：邸报已定（已剥离决策块），跑 extractor→落库→章节记忆→结局→推进。
-    cheat_directive / decision_directive 各自拼到 effective_narrative 最前喂 extractor。"""
+    cheat_directive / decision_directive 各自拼到 effective_narrative 最前喂 extractor。
+    source（#146 A，整批按触发源）：本批 extractor 产出的来源——皇帝下旨触发=player_decree
+    （拒收给皇帝可见提示）、无旨/世界自演变=system_simulation（静默）。重抽路从 ctx['source']
+    贯穿、不因重抽改变（用户拍：皇帝原旨没变、来源就没变）。"""
     secret_orders_for_sim = secret_orders
     # 2.5) 作弊强制项 + 圣意亲裁：拼到邸报最前面一起喂 extractor（唯一入口）。
     #      落库前文/turn_report 仍用原始 narrative，effective 版只进 extractor 与留痕。
@@ -579,6 +620,7 @@ def _settle_after_narrative(
         simulator_payload=simulator_payload,
         secret_orders=secret_orders_for_sim,
         relevant_memories=relevant_memories,
+        source=source,  # #146 A：来源贯穿进 ctx，崩溃恢复重抽从 ctx['source'] 继承、不丢
     )
 
     # 后括号确定性结算核：与探针 driver 共用同一段（ADR 0004）。章节记忆 / 结局总评
@@ -607,9 +649,9 @@ def _settle_after_narrative(
             d, s, ex, content=ct, registry=rg, llm_config=llm_config
         ),
         on_stage=lambda label: _emit("stage", label),
-        # extractor 产出属推演管线（决定 5 provenance）；driver 信封路保持 unknown 兜底。
-        # 按 source 细分到 player_decree/hitl_decision 需 extractor schema 扩来源字段（后续波次）。
-        source=Provenance.system_simulation,
+        # 来源贯穿（#146 A，整批按触发源）：皇帝下旨触发=player_decree（拒收提示皇帝）、
+        # 无旨/世界自演变=system_simulation（静默）。重抽路从 ctx['source'] 继承、不因重抽改变。
+        source=source,
     )
 
 
@@ -1045,6 +1087,18 @@ def _settle_after_extract_body(
         extractor_output=json.dumps(_player_visible_extractor_output(applied), ensure_ascii=False),
     )
 
+    # #9 cmr R2：派系 leverage 全量 reconcile 兜底（两层设计的第二层，见 db.recompute_all_faction_leverage）。
+    # 即时 hook 覆盖单点 office/status/易主变动，但多条改 faction 成员的路径会绕过 hook
+    # （裸 UPDATE 改 office_type、power_id 翻走的易主/降臣、放归赦还+任命被拒回滚 等）。在此处
+    # （delta 全部落库 + inertia/ongoing 推进之后）扫一遍全部白名单派系重算成公式末值，保无论本回合经
+    # 哪条路径改了成员/官职/易主，末态都正确、无残留漂移。
+    # #9 线上 R6（codex P2）：必须排在【任何读 faction leverage 的下游】之前——章节记忆、
+    # clear_gated_legacies（legacy gate 如「阉党专权」读 faction.阉党.leverage<30）、结局判定。
+    # 原置于 clear_gated_legacies 之后 → 同回合经兜底 reconcile 才跌破阈值的派系，会被先跑的 gate
+    # 读到陈旧值、使该帝国修正多挂一回合。故前移到此（仍在 settle_with_delta 的 atomic_and_reload 体内、
+    # next_period 之前——与结算同生死、可整体回滚；recompute 绝对幂等，被 hook 重算过再扫一遍得同值）。
+    db.recompute_all_faction_leverage()
+
     # 章节记忆：注入回调（真实流程= LLM 浓缩落 event_memories；driver= None 跳过）。失败不抛断。
     _stage("记起居注")
     if chapter_recorder is not None:
@@ -1159,6 +1213,9 @@ def resolve_decisions_phase2(
     sim_payload = ctx["simulator_payload"] if isinstance(ctx["simulator_payload"], dict) else {}
     if isinstance(sim_payload.get("secret_orders"), list):
         sim_payload = {**sim_payload, "secret_orders": _recovered_grouped(sim_payload["secret_orders"])}
+    # #146 A：来源从 ctx 继承（phase1 皇帝下旨存的 player_decree）。HITL 续跑 / 崩溃重抽都不改来源
+    # ——皇帝原旨没变、来源就没变。非法/缺失回落 system_simulation（旧档兼容，同 resolve_settling_recovery）。
+    ctx_source = _provenance_from_stored(ctx.get("source"))
     report = _settle_after_narrative(
         state, db, agno_db, llm_config,
         decree_text=str(ctx["decree_text"]),
@@ -1170,6 +1227,7 @@ def resolve_decisions_phase2(
         content=content, registry=registry,
         cheat_directive=cheat_directive,
         decision_directive=decision_directive,
+        source=ctx_source,
     )
     # 结算完清掉暂存决策点（next_period 已在 _settle 内执行，故按 before_turn 清理本回合残留）。
     # resolve_context 的清理已移入 settle_with_delta 的写序列内（ADR 0008 S3），不在此 post-settle 处清。

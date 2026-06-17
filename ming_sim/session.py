@@ -25,6 +25,7 @@ from ming_sim.context import (
 from ming_sim.db import GameDB, infer_office_type_from_office, normalize_office
 from ming_sim.decree import (
     ResolveResult,
+    _provenance_from_stored,
     advance_without_edict,
     resolve_decisions_phase2,
     resolve_directives,
@@ -1130,6 +1131,9 @@ class GameSession:
         #   无 ready context（崩在推演/抽取期间，LLM 产出本就没持久化）→ 落到下方正常流程
         #     重跑推演（pre_settle 被 settling 守门跳过=前半段不二跑，simulator/extractor 重跑，
         #     = ADR「重跑是唯一选择」，即验收③）。
+        # 恢复 fallthrough 用：仅当来自非 ready SETTLING ctx 时被赋真源（#146 cmr r2）；
+        # 正常颁诏路保持 None → 下方 resolve_directives 走默认 player_decree。
+        recovered_source = None
         if self.state.turn_phase == TurnPhase.SETTLING.value:
             ctx = self.db.get_resolve_context(self.state.turn)
             if ctx is not None and ctx.get("extracted") is not None:
@@ -1154,12 +1158,20 @@ class GameSession:
                 self.db.save_state(self.state)
                 return result
             # 无 ready context：fallthrough 到正常流程重跑推演（前半段被守门跳过）。
+            # 来源按构造保真（#146 cmr r2）：恢复 fallthrough 把存档 ctx['source'] 经
+            # _provenance_from_stored 穿透传入下方 resolve_directives，provenance 不依赖
+            # 「非 ready SETTLING ctx 恒 player」这一脆弱不变式（clear_for_resimulation 会把
+            # ready ctx 降级为 ready=0 且保留 source、driver 也能 persist system 来源 ctx，
+            # 都能留下非 ready SETTLING 占位）。system 来源重跑仍记 system、对玩家静默。
             # 占位真源补诏（ship-pre r5）：begin_turn 已清内存 last_decree，跨进程恢复
             # 用存的原诏，不让 LLM 重新生成顶替玩家手改稿。
-            if ctx is not None and not (self.last_decree or "").strip():
-                stored = str(ctx.get("decree_text") or "").strip()
-                if stored:
-                    self.last_decree = stored
+            if ctx is not None:
+                # 仅恢复态（来自非 ready SETTLING ctx）才覆盖默认 player——正常颁诏路不进此分支。
+                recovered_source = _provenance_from_stored(ctx.get("source"))
+                if not (self.last_decree or "").strip():
+                    stored = str(ctx.get("decree_text") or "").strip()
+                    if stored:
+                        self.last_decree = stored
         if self.pending_count() > 0:
             raise ValueError(f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
         directives = self.db.list_directives(self.state, statuses=("draft",))
@@ -1177,6 +1189,11 @@ class GameSession:
             self.llm_config, self.agno_db, self.state, directives, db=self.db
         )
         self.last_decree = decree_text
+        # 恢复 fallthrough 把存档真源穿透传入（#146 cmr r2）；正常颁诏 recovered_source is None
+        # → 省略 source 参数走默认 player_decree（行为不变）。
+        resolve_kwargs = {}
+        if recovered_source is not None:
+            resolve_kwargs["source"] = recovered_source
         result = resolve_directives(
             self.state, self.db, self.agno_db, self.llm_config,
             directives, decree_text, deaths_this_turn=self.deaths_this_turn,
@@ -1184,6 +1201,7 @@ class GameSession:
             on_event=on_event,
             content=self.content, registry=self.registry,
             cheat_directive=cheat_directive,
+            **resolve_kwargs,
         )
         if result.awaiting:
             # 决策点暂停：回合未推进，存 awaiting 态供刷新恢复；待 submit_decisions 续跑。
