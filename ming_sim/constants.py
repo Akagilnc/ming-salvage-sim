@@ -17,6 +17,11 @@ MONEY_UNIT = "万两"
 ECONOMY_ACCOUNTS = ("国库", "内库")
 SCORE_METRICS = ("民心", "皇威")
 
+# #44 边军史实月饷锚点（两/兵·月）：ming 军 salary_rate<=0 非法（=白嫖）时的兜底率。单一真源——
+# 募兵默认（db._coerce_new_salary_rate）/ 旧档迁移兜底（db._backfill_salary_rate）/ 结算咽喉
+# （flows.army_needed 对 ming+有兵+rate<=0 锚定）三处共用，避免 1.5 散落多处漂移（线上 sourcery+coderabbit）。
+SALARY_RATE_ANCHOR = 1.5
+
 # 一回合的时段单位字。改此处即可全局切换回合语义（月/旬/季）；
 # prompts 用占位符 {{TURN_UNIT}}，代码渲染用 TURN_UNIT 变量。
 TURN_UNIT = "月"

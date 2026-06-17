@@ -18,7 +18,8 @@ from ming_sim.constants import (
     BUILDING_QUANTITY_FIELDS, BUILDING_SCORE_FIELDS, BUILDING_TEXT_FIELDS,
     ECONOMY_ACCOUNTS, POWER_FIELD_LABELS, POWER_SCORE_FIELDS,
     POWER_FIELD_ALIASES, POWER_TEXT_FIELDS, MONEY_UNIT, REGION_FIELD_LABELS, REGION_QUANTITY_FIELDS,
-    FISCAL_SCORE_FIELDS, REGION_FIELD_ALIASES, REGION_SCORE_FIELDS, REGION_TEXT_FIELDS, TURN_UNIT,
+    FISCAL_SCORE_FIELDS, REGION_FIELD_ALIASES, REGION_SCORE_FIELDS, REGION_TEXT_FIELDS,
+    SALARY_RATE_ANCHOR, TURN_UNIT,
 )
 from ming_sim.content import GameContent
 from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
@@ -44,7 +45,7 @@ def _new_army_historically_applied(it: dict) -> bool:
         return False
 
 
-def _coerce_new_salary_rate(raw, default: float = 1.5) -> float:
+def _coerce_new_salary_rate(raw, default: float = SALARY_RATE_ANCHOR) -> float:
     """#44 新军名义月饷率健壮解析：缺省/None/bool/0/负/非数 一律落边军史实锚点 1.5。
     salary_rate<=0 = 有兵无饷率 = 免费军 = 正是 #44 要堵的白嫖（游戏无自给/屯田军概念）；
     原 `item.get(...) or 1.5` 只挡 0/None、漏负值（-1 经 army_needed rate<=0 → 0 成免费军，
@@ -954,8 +955,10 @@ class GameDB:
         # 火器装备(鸟铳,野战+守城)/大炮装备(红夷炮,守城攻城、不利野战)：simulator 软判用的两条军备轴
         self.ensure_column("armies", "firearm_equipment", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("armies", "cannon_equipment", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("armies", "salary_rate", "REAL NOT NULL DEFAULT 0")  # #44 名义月饷率(两/兵·月)
-        self._backfill_salary_rate()  # #44 旧档 default 0 → army_needed 判 0 停饷，按 content/锚点回填（cmr r1 codex high）
+        # #44 名义月饷率(两/兵·月)。仅列**首次 ADD** 时回填一次（gemini high：避免每次启动重扫/
+        # 误覆盖动态态）；列已存在的后续 load 跳过（army_needed 的 rate<=0 锚定兜底 runtime 漏网）。
+        if self.ensure_column("armies", "salary_rate", "REAL NOT NULL DEFAULT 0"):
+            self._backfill_salary_rate()
         self.ensure_column("regions", "controlled_by", "TEXT NOT NULL DEFAULT 'ming'")
         # 城市等级 0-5(静态,史实分级,将来供经济/内政)+ 城防大炮门数(城头红夷炮,上限 city_level×8)
         self.ensure_column("regions", "city_level", "INTEGER NOT NULL DEFAULT 0")
@@ -1474,16 +1477,29 @@ class GameDB:
             self.conn.execute("UPDATE regions SET city_level=? WHERE id=?", (int(level), rid))
 
     def _backfill_salary_rate(self) -> None:
-        """#44 旧档迁移：ensure_column 给 salary_rate 默认 0，但 army_needed 判 rate<=0 → 0 应发，会让
-        旧存档**所有明军停饷**（cmr r1 codex high）。回填 salary_rate<=0 的明军：static 军取
-        content.armies[id].salary_rate；不在 content 的（动态建的旧军）用边军史实锚点 1.5（同新建军默认）。
-        幂等——只补 <=0 的，不覆盖已设值；fresh seed 此刻空表 / 已是真实率，no-op。"""
+        """#44 旧档迁移（仅 salary_rate 列**首次 ADD** 时跑一次，见调用点 gate——线上 gemini high：
+        避免每次启动重扫；与 army_needed 的 rate<=0 锚定互为兜底，迁移负责持久化合理率供显示/欠饷，
+        army_needed 负责 runtime 漏网的 charge 防白嫖）。ensure_column 给 salary_rate 默认 0，但
+        army_needed 判 rate<=0 → 锚定后才算，旧存档明军若不回填则显示/欠饷口径错（cmr r1 codex high）。
+        回填 salary_rate<=0 的明军：
+          ① static 军（在 content 且率>0）→ content.armies[id].salary_rate；
+          ② 动态旧军（不在 content）→ 从既有 maintenance_per_turn 反推率 = maint×10000/manpower——
+             保旧档应发量级/欠饷连续（线上 codex P2：直接落锚点会把 5000 兵 maint=20 的军重定价成
+             ceil(5000×1.5/10000)=1 万两、20→1 腐蚀旧档预算）；
+          ③ maint/manpower 不可用 → 边军史实锚点 SALARY_RATE_ANCHOR。
+        只补 <=0 的、不覆盖已设正值（幂等）。"""
         for r in self.conn.execute(
-            "SELECT id FROM armies WHERE owner_power='ming' AND salary_rate <= 0"
+            "SELECT id, manpower, maintenance_per_turn FROM armies "
+            "WHERE owner_power='ming' AND salary_rate <= 0"
         ).fetchall():
             aid = str(r["id"])
             army = self.content.armies.get(aid)
-            rate = float(army.salary_rate) if (army and army.salary_rate > 0) else 1.5
+            if army is not None and army.salary_rate > 0:
+                rate = float(army.salary_rate)
+            else:
+                manpower = int(r["manpower"] or 0)
+                maint = float(r["maintenance_per_turn"] or 0)
+                rate = (maint * 10000 / manpower) if (manpower > 0 and maint > 0) else SALARY_RATE_ANCHOR
             self.conn.execute("UPDATE armies SET salary_rate=? WHERE id=?", (rate, aid))
 
     def apply_region_cannon(self, state: "GameState", region_id: str, delta: int) -> int:
