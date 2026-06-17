@@ -107,7 +107,7 @@ def main() -> None:
     args = ap.parse_args()
 
     if not args.legacy_white_bg:
-        raise SystemExit(
+        ap.error(
             "scripts/gen_portraits.py 只服务旧白底 docs/portrait-prompts.md 规格；"
             "当前 scene-v2 立绘真源是 docs/portrait-prompts-scene-v2.md，不能用本脚本生成。"
             "如确需旧规格，传 --legacy-white-bg。"

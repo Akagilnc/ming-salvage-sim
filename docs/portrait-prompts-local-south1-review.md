@@ -1,4 +1,4 @@
-# 地方/南明文官立绘 prompt 审稿稿
+# 地方/南明文官立绘 prompt 审稿
 
 > 状态：试生成留档，不作为后续批量生成真源；唯一真源是 `docs/portrait-prompts-scene-v2.md`。
 
@@ -44,4 +44,4 @@
 
 ## 归档说明
 
-早期 12 张完整 prompt 卡已迁入 `docs/portrait-prompts-scene-v2.md`，本归档不再保留副本，避免与真源分叉。需要重生图、覆盖资产或继续评审时，只读 scene-v2。
+早期 12 张完整 prompt 卡已迁入 `docs/portrait-prompts-scene-v2.md`，本归档不再保留副本，避免与真源分叉。需要重新生成图像、覆盖资产或继续评审时，只读 scene-v2。

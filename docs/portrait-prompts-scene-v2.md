@@ -4,15 +4,13 @@
 
 ## 本轮范围
 
-暂缓不动：`minister_魏忠贤.png`、`minister_孙承宗.png`、`minister_王承恩.png`、`minister_韩爌.png`。
-
-已作为风格参考、暂不重写：`minister_毕自严.png`、`minister_袁崇焕.png`、`minister_卢象升.png`、`minister_孙传庭.png`。
+本轮已直接落盘的早期/参考资产：`minister_魏忠贤.png`、`minister_孙承宗.png`、`minister_王承恩.png`、`minister_韩爌.png`、`minister_毕自严.png`、`minister_袁崇焕.png`、`minister_卢象升.png`、`minister_孙传庭.png`。这些图不再按“旧图未动”或“仅作参考”处理；后续若要继续重生，必须先在本文件补对应人物卡或另立明确批次记录。
 
 本轮提示词覆盖：其余已有旧图人物、`characters.json` 里尚无专属图的命名人物，以及特殊宫廷人物 `consort_客氏.png`、`consort_懿安皇后.png`。
 
 已有后宫专属图 `consort_周皇后.png`、`consort_周贵人.png`、`consort_田贵妃.png`、`consort_袁贵妃.png`、`consort_慧妃.png` 暂缓不动，不在本轮 prompt 覆盖范围内。
 
-资产落盘分批进行：本轮已提交资产只覆盖已明确验收的南明/地方 12 人与对应替换图；其余人物在本文件中先沉淀 prompt，旧资产保留到后续生成批次，不视为本轮已兑现的 scene-v2 资产。
+资产落盘分批进行：以本 PR 实际 touched 的 `web/public/portraits/*.png` 为已兑现资产；未被本 PR touched 的画像仍保留旧资产，不视为本轮已兑现的 scene-v2 资产。
 
 ## 统一生成规则
 
