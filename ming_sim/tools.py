@@ -154,7 +154,7 @@ def build_minister_tools(character: Character, context: CourtContext,
             # （#173：替退役 maintenance_per_turn；army_needed 是 Python 公式，故在此 Python 求均值）。
             ratios = [
                 int(r["arrears"] or 0) / pay
-                for r in db.conn.execute("SELECT * FROM armies").fetchall()
+                for r in db.army_rows()  # 封装入口（线上 gemini），不直接碰 db.conn
                 if (pay := db._army_pay(r)) > 0
             ]
             months = (sum(ratios) / len(ratios)) if ratios else 0.0

@@ -827,7 +827,7 @@ export function NodeIntel({ node }: { node: MapNode }) {
                   <td>{army.name}</td>
                   <td>{army.troop_type}</td>
                   <td>{army.manpower}</td>
-                  <td>{monthlyAmount(pay)}</td>
+                  <td>{pay}</td>
                   <td>{army.morale}</td>
                   <td>{arrText}</td>
                 </tr>

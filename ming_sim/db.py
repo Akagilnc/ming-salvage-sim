@@ -3459,25 +3459,27 @@ class GameDB:
         return army_needed(row)
 
     def army_rows(self, limit: int | None = None, danger_order: bool = False) -> List[sqlite3.Row]:
-        # #173：欠饷月数归一改按引擎实扣应发 army_needed（替退役 maintenance_per_turn），与 charge 一致。
-        # army_needed 是 Python 公式（ceil + ming-only + 锚点，SQL 难复现），故 danger 排序在 Python 做。
-        rows = self.conn.execute("SELECT * FROM armies").fetchall()
-        if danger_order:
-            def _danger_key(r):
-                # arrears 累计欠饷万两，按月应发归一成"欠饷月数*10"（截至 100），与各 0-100 短板相加。
-                # 用浮点归一（排序键，不截断小数；线上 gemini）；arrears 虽 NOT NULL 仍 `or 0` 防御。
-                pay = self._army_pay(r)
-                arr = int(r["arrears"] or 0)
-                arrears_norm = min(100.0, arr * 10.0 / pay) if pay > 0 else 0.0
-                danger = (arrears_norm + (100 - int(r["supply"])) + (100 - int(r["morale"]))
-                          + (100 - int(r["loyalty"])) + (100 - int(r["training"])))
-                return (-danger, str(r["name"]))  # danger 降序、name 升序（同原 SQL ... DESC, name）
-            rows = sorted(rows, key=_danger_key)
-        else:
-            rows = sorted(rows, key=lambda r: (str(r["theater"]), str(r["name"])))
-        if limit is not None:
-            rows = rows[:limit]
-        return rows
+        # #173：danger 排序的欠饷月数归一改按引擎实扣应发 army_needed（替退役 maintenance_per_turn）。
+        # army_needed 是 Python 公式（ceil + ming-only + 锚点，SQL 难复现），故 danger 排序在 Python 做；
+        # 非 danger 路只按 theater,name 排序、不涉 army_needed，仍走 SQL ORDER BY/LIMIT（线上 gemini perf）。
+        if not danger_order:
+            sql = "SELECT * FROM armies ORDER BY theater, name"
+            params: Tuple[object, ...] = ()
+            if limit is not None:
+                sql += " LIMIT ?"
+                params = (limit,)
+            return self.conn.execute(sql, params).fetchall()
+        def _danger_key(r):
+            # arrears 累计欠饷万两，按月应发归一成"欠饷月数*10"（截至 100），与各 0-100 短板相加。
+            # 用浮点归一（排序键，不截断小数；线上 gemini）；arrears 虽 NOT NULL 仍 `or 0` 防御。
+            pay = self._army_pay(r)
+            arr = int(r["arrears"] or 0)
+            arrears_norm = min(100.0, arr * 10.0 / pay) if pay > 0 else 0.0
+            danger = (arrears_norm + (100 - int(r["supply"])) + (100 - int(r["morale"]))
+                      + (100 - int(r["loyalty"])) + (100 - int(r["training"])))
+            return (-danger, str(r["name"]))  # danger 降序、name 升序（同原 SQL ... DESC, name）
+        rows = sorted(self.conn.execute("SELECT * FROM armies").fetchall(), key=_danger_key)
+        return rows[:limit] if limit is not None else rows
 
     def army_payload(self, limit: int | None = None, danger_order: bool = False) -> List[Dict[str, object]]:
         payload: List[Dict[str, object]] = []
