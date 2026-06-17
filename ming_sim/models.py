@@ -251,6 +251,7 @@ class Army:
     owner_power: str
     firearm_equipment: int = 0  # 火器装备 0-100：鸟铳/三眼铳，野战+守城
     cannon_equipment: int = 0   # 随军大炮门数(clamp 0-12)：红夷炮，守城/攻城，不利野战；城防炮另挂 region.cannon
+    salary_rate: float = 0.0    # #44 名义月饷率(两/兵·月)：应发=ceil(manpower×rate/10000)，仅 ming；新军默认见 db 建军
 
 
 @dataclass

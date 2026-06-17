@@ -294,6 +294,10 @@ def load_army_content() -> Dict[str, Army]:
             troop_type=str_field(item, "troop_type", f"armies.json.armies[{idx}]"),
             manpower=int_field(item, "manpower", f"armies.json.armies[{idx}]"),
             maintenance_per_turn=int_field(item, "maintenance_per_turn", f"armies.json.armies[{idx}]"),
+            # #44 每军名义月饷率(两/兵·月,浮点)：应发=ceil(manpower×rate/10000)。armies.json 明军已写
+            # 史实值；缺省 0（非明/旧 json 容错，army_needed 对 0 rate 派生 0 应发）。maintenance_per_turn
+            # 保留为旧字段（不再驱动应发，退役待删）。
+            salary_rate=float(item.get("salary_rate") or 0.0),
             supply=int_field(item, "supply", f"armies.json.armies[{idx}]"),
             morale=int_field(item, "morale", f"armies.json.armies[{idx}]"),
             training=int_field(item, "training", f"armies.json.armies[{idx}]"),

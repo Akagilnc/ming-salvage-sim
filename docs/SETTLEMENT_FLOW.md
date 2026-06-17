@@ -18,7 +18,9 @@
      a. db.commit_pending_actions(...)            # 动作闸门：聊天暂存的结构化写动作批量落库（driver 路无暂存=no-op）
      b. apply_fixed_period_flows(db, state)       # 月度财政 tick
         ↳ compute_budget_lines 的定额项（田赋/辽饷/盐税/商税/官俸/宫廷/…）
-        ↳ 逐军 arrears tick / 逐建筑 condition × output_amount → 国库/内库
+        ↳ 逐军军饷：**应发 = ceil(manpower × salary_rate / 10000)**（#44 挂钩兵力，仅 ming；
+          0 兵=0 饷；salary_rate=每军名义月饷率两/兵·月，存 rate 不存 derived maintenance），
+          国库不足挂 arrears tick / 逐建筑 condition × output_amount → 国库/内库
         ↳ 我那座金矿(+800)/银行(+300)/帝国航空(+10皇威) 在这一步生效
         ↳ #66 省级财政基座：db.settle_province_tick(陕西) 推进 settle_tick 基座（shadow）
           —— 末态逐月演化+落库，但**不驱动国库**（占位数偏史实 3–10×，⑫国库入账 cutover

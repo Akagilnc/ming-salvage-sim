@@ -7,6 +7,7 @@ GameDB 持有 self.content（GameContent），seed 类方法从中读人物/地�
 from __future__ import annotations
 
 import json
+import math
 import re
 import sqlite3
 from typing import Any, Dict, List, Optional, Tuple
@@ -18,7 +19,8 @@ from ming_sim.constants import (
     BUILDING_QUANTITY_FIELDS, BUILDING_SCORE_FIELDS, BUILDING_TEXT_FIELDS,
     ECONOMY_ACCOUNTS, POWER_FIELD_LABELS, POWER_SCORE_FIELDS,
     POWER_FIELD_ALIASES, POWER_TEXT_FIELDS, MONEY_UNIT, REGION_FIELD_LABELS, REGION_QUANTITY_FIELDS,
-    FISCAL_SCORE_FIELDS, REGION_FIELD_ALIASES, REGION_SCORE_FIELDS, REGION_TEXT_FIELDS, TURN_UNIT,
+    FISCAL_SCORE_FIELDS, REGION_FIELD_ALIASES, REGION_SCORE_FIELDS, REGION_TEXT_FIELDS,
+    SALARY_RATE_ANCHOR, TURN_UNIT,
 )
 from ming_sim.content import GameContent
 from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
@@ -42,6 +44,23 @@ def _new_army_historically_applied(it: dict) -> bool:
         return True
     except (KeyError, TypeError, ValueError):
         return False
+
+
+def _coerce_new_salary_rate(raw, default: float = SALARY_RATE_ANCHOR) -> float:
+    """#44 新军名义月饷率健壮解析：缺省/None/bool/0/负/非数 一律落边军史实锚点 1.5。
+    salary_rate<=0 = 有兵无饷率 = 免费军 = 正是 #44 要堵的白嫖（游戏无自给/屯田军概念）；
+    原 `item.get(...) or 1.5` 只挡 0/None、漏负值（-1 经 army_needed rate<=0 → 0 成免费军，
+    cmr r3 codex medium）。salary_rate 非必填，脏值不拒整军、兜底锚点。"""
+    if isinstance(raw, bool) or raw is None:
+        return default
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return default
+    # 非有限值（inf/-inf/nan）也落锚点：inf>0 为真会漏过、经 army_needed 的 ceil(manpower×inf/10000)
+    # 抛 OverflowError 崩结算（线上 gemini high + coderabbit inf 探针）。salary_rate 非必填、脏值兜底锚点，
+    # 不 fail-loud 拒整军（#44 cmr R3 定的设计：不为一个非关键余饷字段拒绝建军）。
+    return v if (math.isfinite(v) and v > 0) else default
 
 
 # #9 派系势力联动（全重算，offset 锚定钦定基线）：
@@ -474,6 +493,7 @@ class GameDB:
                 loyalty INTEGER NOT NULL,
                 firearm_equipment INTEGER NOT NULL DEFAULT 0,
                 cannon_equipment INTEGER NOT NULL DEFAULT 0,
+                salary_rate REAL NOT NULL DEFAULT 0,
                 status TEXT NOT NULL,
                 owner_power TEXT NOT NULL DEFAULT 'ming',
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -939,6 +959,10 @@ class GameDB:
         # 火器装备(鸟铳,野战+守城)/大炮装备(红夷炮,守城攻城、不利野战)：simulator 软判用的两条军备轴
         self.ensure_column("armies", "firearm_equipment", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("armies", "cannon_equipment", "INTEGER NOT NULL DEFAULT 0")
+        # #44 名义月饷率(两/兵·月)。仅列**首次 ADD** 时回填一次（gemini high：避免每次启动重扫/
+        # 误覆盖动态态）；列已存在的后续 load 跳过（army_needed 的 rate<=0 锚定兜底 runtime 漏网）。
+        if self.ensure_column("armies", "salary_rate", "REAL NOT NULL DEFAULT 0"):
+            self._backfill_salary_rate()
         self.ensure_column("regions", "controlled_by", "TEXT NOT NULL DEFAULT 'ming'")
         # 城市等级 0-5(静态,史实分级,将来供经济/内政)+ 城防大炮门数(城头红夷炮,上限 city_level×8)
         self.ensure_column("regions", "city_level", "INTEGER NOT NULL DEFAULT 0")
@@ -1456,6 +1480,32 @@ class GameDB:
         for rid, level in self._CITY_LEVEL_TIERS.items():
             self.conn.execute("UPDATE regions SET city_level=? WHERE id=?", (int(level), rid))
 
+    def _backfill_salary_rate(self) -> None:
+        """#44 旧档迁移（仅 salary_rate 列**首次 ADD** 时跑一次，见调用点 gate——线上 gemini high：
+        避免每次启动重扫；与 army_needed 的 rate<=0 锚定互为兜底，迁移负责持久化合理率供显示/欠饷，
+        army_needed 负责 runtime 漏网的 charge 防白嫖）。ensure_column 给 salary_rate 默认 0，但
+        army_needed 判 rate<=0 → 锚定后才算，旧存档明军若不回填则显示/欠饷口径错（cmr r1 codex high）。
+        回填 salary_rate<=0 的明军：
+          ① static 军（在 content 且率>0）→ content.armies[id].salary_rate；
+          ② 动态旧军（不在 content）→ 从既有 maintenance_per_turn 反推率 = maint×10000/manpower——
+             保旧档应发量级/欠饷连续（线上 codex P2：直接落锚点会把 5000 兵 maint=20 的军重定价成
+             ceil(5000×1.5/10000)=1 万两、20→1 腐蚀旧档预算）；
+          ③ maint/manpower 不可用 → 边军史实锚点 SALARY_RATE_ANCHOR。
+        只补 <=0 的、不覆盖已设正值（幂等）。"""
+        for r in self.conn.execute(
+            "SELECT id, manpower, maintenance_per_turn FROM armies "
+            "WHERE owner_power='ming' AND salary_rate <= 0"
+        ).fetchall():
+            aid = str(r["id"])
+            army = self.content.armies.get(aid)
+            if army is not None and army.salary_rate > 0:
+                rate = float(army.salary_rate)
+            else:
+                manpower = int(r["manpower"] or 0)
+                maint = float(r["maintenance_per_turn"] or 0)
+                rate = (maint * 10000 / manpower) if (manpower > 0 and maint > 0) else SALARY_RATE_ANCHOR
+            self.conn.execute("UPDATE armies SET salary_rate=? WHERE id=?", (rate, aid))
+
     def apply_region_cannon(self, state: "GameState", region_id: str, delta: int) -> int:
         """改某地城防大炮门数(城头红夷炮)。上限 = city_level×8；clamp [0, cap]。返回新值。
         全局严格：引用未入库地区抛错，不静默。"""
@@ -1630,8 +1680,8 @@ class GameDB:
                     INSERT INTO armies
                     (id, name, station, theater, commander, controller, troop_type, manpower,
                      maintenance_per_turn, supply, morale, training, equipment, arrears,
-                     mobility, loyalty, firearm_equipment, cannon_equipment, status, owner_power)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     mobility, loyalty, firearm_equipment, cannon_equipment, salary_rate, status, owner_power)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         army.id,
@@ -1652,6 +1702,7 @@ class GameDB:
                         army.loyalty,
                         army.firearm_equipment,   # 新档贯通火器/随军大炮（CMR codexB）
                         army.cannon_equipment,
+                        army.salary_rate,         # #44 名义月饷率(两/兵·月)
                         army.status,
                         army.owner_power,
                     ),
@@ -3696,6 +3747,20 @@ class GameDB:
                     new_value = max(0, int(old_value) + delta)
                     actual_delta = new_value - int(old_value)
                     if actual_delta == 0:
+                        # #44：请求非 0 但 clamp 后无净变化（如减兵超过现有兵力→clamp 到 0）留一条
+                        # delta=0 army_log（参照 region cannon delta=0 留痕，#14 不静默吞）；真 no-op
+                        # （delta==0）无须留痕避噪。
+                        if delta != 0:
+                            self.conn.execute(
+                                """
+                                INSERT INTO army_logs
+                                (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
+                                VALUES (?, ?, ?, ?, 'manpower', ?, ?, 0, ?, ?, ?, ?)
+                                """,
+                                (state.turn, state.year, state.period, army_id,
+                                 str(old_value), str(new_value),
+                                 f"{reason}（请求 {delta:+d} 经 clamp 后无净变化）", event.id, edict_id, actor),
+                            )
                         continue
                     stored_new = new_value
                     log_delta = actual_delta
@@ -3922,6 +3987,9 @@ class GameDB:
                 _score("loyalty"),
                 _score("firearm_equipment", 0),
                 _cannon(),  # 随军大炮=门数，clamp 0-12，非 int 兜底 0
+                # #44 新军名义月饷率：缺省/None/0/负/非数 一律落锚点 1.5（salary_rate<=0=免费军=白嫖，禁；
+                # 游戏无自给/屯田军概念）。原 `or 1.5` 漏负值（-1→免费军），改健壮 helper（cmr r3 codex）。
+                _coerce_new_salary_rate(item.get("salary_rate")),
                 str(item.get("status") or "新立"),
                 owner,
             )
@@ -3931,8 +3999,8 @@ class GameDB:
                     INSERT INTO armies
                     (id, name, station, theater, commander, controller, troop_type, manpower,
                      maintenance_per_turn, supply, morale, training, equipment, arrears,
-                     mobility, loyalty, firearm_equipment, cannon_equipment, status, owner_power)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     mobility, loyalty, firearm_equipment, cannon_equipment, salary_rate, status, owner_power)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     row,
                 )
