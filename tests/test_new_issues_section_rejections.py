@@ -260,6 +260,21 @@ def test_event_to_issue_duplicate_returns_none_not_raise(game):
     assert again is None, "同源事件重复触发应幂等返回 None，不抛不重立"
 
 
+def test_new_issue_event_pool_rejects_expired_event(game):
+    db, state, _ = game
+    eid = _pick_event_pool_id(db)
+    db.mark_event_expired(state, eid)
+
+    out = I.apply_issue_tracker_output(db, state, {
+        "new_issues": [{"origin_kind": "event_pool", "id": eid}],
+    })
+
+    rej = _rejected(out)
+    assert len(rej) == 1, out
+    assert "过期" in rej[0]["reason"] or "终态" in rej[0]["reason"]
+    assert db.find_any_issue_by_origin("event_pool", eid) is None
+
+
 # --- tags 字段严格化（cmr ni r8 codex medium）---
 # tags = list(ni.get("tags") or []) 对标量串静默拆字（list("募营")=['募','营']）、对非串元素
 # 不拒（list([5])=[5]）。后果：_initiative_resolve_pairing_warnings 用子串匹配整词「募营」判

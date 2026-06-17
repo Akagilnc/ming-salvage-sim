@@ -6033,6 +6033,13 @@ class GameDB:
         ).fetchone()
         return row is not None
 
+    def event_terminal_status(self, event_id: str) -> str | None:
+        row = self.conn.execute(
+            "SELECT terminal_status FROM event_triggers WHERE event_id=? LIMIT 1",
+            (event_id,),
+        ).fetchone()
+        return str(row["terminal_status"]) if row is not None else None
+
     def mark_event_triggered(self, state: GameState, event_id: str, source: str = "simulation") -> None:
         self.conn.execute(
             """
