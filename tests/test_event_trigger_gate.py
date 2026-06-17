@@ -634,6 +634,105 @@ def test_event_pool_rechecks_after_advances_close_gate(game):
         content.event_by_id.pop(ev.id, None)
 
 
+def test_event_pool_rechecks_after_prior_event_effect_closes_gate(game):
+    """post-merge CMR R5：同一 payload 前一事件效果关门后，后一事件不得沿用旧候选。"""
+    db, state, content = game
+    issues.bind_content(content)
+    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "袁崇焕"))
+    first = Event(
+        id="__test_prior_event_closes_gate__",
+        title="测试·前置人物变更",
+        kind="朝议",
+        summary="先改变人物状态。",
+        urgency=10,
+        severity=10,
+        credibility=100,
+        interests=[],
+        audiences=[],
+        event_type="node",
+        trigger_gate={"民心": ">=0"},
+        effect_on_trigger={
+            "人物变更": [
+                {"name": "袁崇焕", "动作": "处置", "status": "dismissed", "reason": "测试撤任"}
+            ]
+        },
+    )
+    second = Event(
+        id="__test_later_event_requires_yuan_active__",
+        title="测试·后置袁门",
+        kind="朝议",
+        summary="袁崇焕仍在任时才可触发。",
+        urgency=10,
+        severity=10,
+        credibility=100,
+        interests=[],
+        audiences=[],
+        event_type="situation",
+        trigger_gate={"character.袁崇焕.status": "== active"},
+    )
+    content.seed_events.extend([first, second])
+    content.event_by_id[first.id] = first
+    content.event_by_id[second.id] = second
+    try:
+        cands = issues.gather_candidate_events(state, db)
+        assert {first.id, second.id}.issubset({c.id for c in cands})
+
+        out = issues.apply_issue_tracker_output(
+            db,
+            state,
+            {
+                "new_issues": [
+                    {"origin_kind": "event_pool", "id": first.id},
+                    {"origin_kind": "event_pool", "id": second.id},
+                ]
+            },
+            content=content,
+        )
+
+        assert out["new_issues"][0]["rejected"] is False
+        assert db.get_character_status("袁崇焕")[0] == "dismissed"
+        assert out["new_issues"][1]["rejected"] is True
+        assert "候选" in out["new_issues"][1]["reason"]
+        assert db.conn.execute(
+            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
+            (second.id,),
+        ).fetchone() is None
+    finally:
+        content.seed_events.remove(first)
+        content.seed_events.remove(second)
+        content.event_by_id.pop(first.id, None)
+        content.event_by_id.pop(second.id, None)
+
+
+def test_issue_tracker_decree_new_issue_respects_outer_transaction_rollback(game):
+    """post-merge CMR R5：decree 新立 issue 也不得由 insert_issue 提前提交外层事务。"""
+    db, state, _content = game
+    db.conn.commit()
+
+    db.conn.execute("BEGIN")
+    out = issues.apply_issue_tracker_output(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "kind": "situation",
+                    "title": "测试·decree 新立事务",
+                    "bar_value": 25,
+                    "stage_text": "立项中",
+                    "effect_on_resolve": {"metrics": {"民心": 1}},
+                }
+            ]
+        },
+    )
+    assert out["new_issues"][0]["rejected"] is False
+    issue_id = out["new_issues"][0]["issue_id"]
+    db.conn.rollback()
+
+    assert db.conn.execute("SELECT id FROM issues WHERE id=?", (issue_id,)).fetchone() is None
+
+
 def test_issue_tracker_advance_respects_outer_transaction_rollback(game):
     """post-merge CMR R4：advances 段不得由 db.advance_issue 提前提交外层事务。"""
     db, state, _content = game
@@ -667,6 +766,46 @@ def test_issue_tracker_advance_respects_outer_transaction_rollback(game):
         "SELECT COUNT(*) FROM issue_advances WHERE issue_id=?",
         (issue_id,),
     ).fetchone()[0] == before_advances
+
+
+def test_issue_tracker_advance_effects_respect_outer_transaction_rollback(game):
+    """post-merge CMR R5：advance 触发的终结经济效果不得提前提交外层事务。"""
+    db, state, _content = game
+    reason = "测试推进经济事务R5"
+    issue_id = db.insert_issue(
+        state,
+        kind="situation",
+        title="测试·推进终结效果事务",
+        origin_kind="decree",
+        bar_value=95,
+        stage_text="将成",
+        effect_on_resolve={"economy": [{"account": "国库", "delta": -1, "category": "测试", "reason": reason}]},
+    )
+    before_advances = db.conn.execute(
+        "SELECT COUNT(*) FROM issue_advances WHERE issue_id=?",
+        (issue_id,),
+    ).fetchone()[0]
+    db.conn.commit()
+
+    db.conn.execute("BEGIN")
+    out = issues.apply_issue_tracker_output(
+        db,
+        state,
+        {"advances": [{"issue_id": issue_id, "delta_bar": 10, "stage_text": "办成"}]},
+    )
+    assert out["advances"][0]["status"] == "resolved"
+    db.conn.rollback()
+
+    row = db.conn.execute("SELECT bar_value, stage_text, status FROM issues WHERE id=?", (issue_id,)).fetchone()
+    assert dict(row) == {"bar_value": 95, "stage_text": "将成", "status": "active"}
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM issue_advances WHERE issue_id=?",
+        (issue_id,),
+    ).fetchone()[0] == before_advances
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE reason=?",
+        (reason,),
+    ).fetchone()[0] == 0
 
 
 def test_issue_tracker_close_respects_outer_transaction_rollback(game):
@@ -705,6 +844,106 @@ def test_issue_tracker_close_respects_outer_transaction_rollback(game):
     ).fetchone()[0] == before_advances
 
 
+def test_issue_tracker_close_effects_respect_outer_transaction_rollback(game):
+    """post-merge CMR R5：close 终结效果的经济/建筑/派系/遗产写入必须跟外层事务回滚。"""
+    db, state, _content = game
+    reason = "测试结案复合效果事务R5"
+    building_id = db.add_building(
+        state,
+        region_id="beizhili",
+        name="测试事务仓",
+        category="财政",
+        condition=70,
+        origin="test",
+    )
+    faction_before = db.conn.execute(
+        "SELECT satisfaction, leverage_offset FROM factions WHERE name='阉党'"
+    ).fetchone()
+    issue_id = db.insert_issue(
+        state,
+        kind="situation",
+        title="测试·结案复合事务",
+        origin_kind="decree",
+        bar_value=40,
+        stage_text="结案前",
+        effect_on_resolve={
+            "economy": [{"account": "国库", "delta": -1, "category": "测试", "reason": reason}],
+            "buildings": [{"action": "modify", "building_id": building_id, "condition": -7}],
+            "factions": {"阉党": {"satisfaction": -1, "leverage": 1}},
+            "legacy": {"name": "测试遗产R5", "duration": "1年", "modifiers": {"国库": 1}},
+        },
+    )
+    db.conn.commit()
+
+    db.conn.execute("BEGIN")
+    out = issues.apply_issue_tracker_output(
+        db,
+        state,
+        {"close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "结案"}]},
+    )
+    assert out["closes"][0]["reason"] == "resolved"
+    db.conn.rollback()
+
+    issue_row = db.conn.execute("SELECT status, bar_value FROM issues WHERE id=?", (issue_id,)).fetchone()
+    assert dict(issue_row) == {"status": "active", "bar_value": 40}
+    building_row = db.conn.execute("SELECT condition FROM buildings WHERE id=?", (building_id,)).fetchone()
+    assert int(building_row["condition"]) == 70
+    faction_after = db.conn.execute(
+        "SELECT satisfaction, leverage_offset FROM factions WHERE name='阉党'"
+    ).fetchone()
+    assert dict(faction_after) == dict(faction_before)
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE reason=?",
+        (reason,),
+    ).fetchone()[0] == 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM legacies WHERE name='测试遗产R5'"
+    ).fetchone()[0] == 0
+
+
+def test_issue_tracker_close_entity_effects_respect_outer_transaction_rollback(game):
+    """post-merge CMR R5：close 终结实体后果建军也必须跟外层事务回滚。"""
+    db, state, _content = game
+    army_id = "__test_close_entity_txn_army__"
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="测试·结案实体事务",
+        origin_kind="decree",
+        bar_value=40,
+        stage_text="结案前",
+        effect_on_resolve={
+            "new_armies": [
+                {
+                    "id": army_id,
+                    "name": "测试事务营",
+                    "manpower": 1200,
+                    "owner_power": "ming",
+                    "reason": "测试建军事务",
+                }
+            ]
+        },
+    )
+    db.conn.commit()
+
+    db.conn.execute("BEGIN")
+    out = issues.apply_issue_tracker_output(
+        db,
+        state,
+        {"close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "结案"}]},
+    )
+    assert out["closes"][0]["reason"] == "resolved"
+    db.conn.rollback()
+
+    issue_row = db.conn.execute("SELECT status, bar_value FROM issues WHERE id=?", (issue_id,)).fetchone()
+    assert dict(issue_row) == {"status": "active", "bar_value": 40}
+    assert db.conn.execute("SELECT id FROM armies WHERE id=?", (army_id,)).fetchone() is None
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM army_logs WHERE army_id=?",
+        (army_id,),
+    ).fetchone()[0] == 0
+
+
 def test_issue_tracker_cancel_respects_outer_transaction_rollback(game):
     """post-merge CMR R4：cancels 段不得由 db.cancel_issue 提前提交外层事务。"""
     db, state, _content = game
@@ -739,6 +978,49 @@ def test_issue_tracker_cancel_respects_outer_transaction_rollback(game):
         "SELECT COUNT(*) FROM issue_advances WHERE issue_id=?",
         (issue_id,),
     ).fetchone()[0] == before_advances
+
+
+def test_issue_tracker_cancel_cost_respects_outer_transaction_rollback(game):
+    """post-merge CMR R5：cancel applied_cost 的经济效果不得提前提交外层事务。"""
+    db, state, _content = game
+    reason = "测试撤办经济事务R5"
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="测试·撤办成本事务",
+        origin_kind="decree",
+        bar_value=40,
+        stage_text="撤办前",
+        cancellable="decree",
+        effect_on_resolve={"metrics": {"民心": 1}},
+    )
+    db.conn.commit()
+
+    db.conn.execute("BEGIN")
+    out = issues.apply_issue_tracker_output(
+        db,
+        state,
+        {
+            "cancels": [
+                {
+                    "issue_id": issue_id,
+                    "narrative": "撤办",
+                    "applied_cost": {
+                        "economy": [{"account": "国库", "delta": -1, "category": "测试", "reason": reason}]
+                    },
+                }
+            ]
+        },
+    )
+    assert out["cancels"][0]["rejected"] is False
+    db.conn.rollback()
+
+    row = db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()
+    assert row["status"] == "active"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE reason=?",
+        (reason,),
+    ).fetchone()[0] == 0
 
 
 def test_mao_wenlong_event_pool_rechecks_after_same_turn_loyalty_assessment(game):
