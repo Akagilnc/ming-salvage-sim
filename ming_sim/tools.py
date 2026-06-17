@@ -756,7 +756,7 @@ def build_extractor_tools(context: CourtContext):
                             减人口写population，禁止写manpower（军队字段）
         army_delta          军队数值变化 {army_id: {字段:增量}}
                             合法字段：supply/morale/training/equipment/arrears/mobility/loyalty/
-                            manpower/maintenance_quarter/station/commander/controller/troop_type/status
+                            manpower/station/commander/controller/troop_type/status
                             禁止写cohesion（势力字段）
         power_updates       别的势力三项简单属性 {power_id: {"威望":N,"实力":N,"经济":N}}
                             只写非大明势力；三项均为整数增量；不写立场/近动/状态

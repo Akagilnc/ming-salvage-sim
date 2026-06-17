@@ -42,6 +42,32 @@ def test_drop_maintenance_column_removes_and_idempotent(game):
     db._drop_maintenance_column()  # 幂等：列已无 → no-op 不崩
 
 
+def test_existing_save_drops_maintenance_column_on_open(content, tmp_path):
+    # cmr drop R1(codex high)：driver 开现存档只走 GameDB.__init__→init_schema、不走 seed_static_data。
+    # 维护费退役 drop 须挂 init_schema，否则现存档（maintenance NOT NULL 无 default）不删列 → 删列后
+    # 建新军 INSERT（已不含该列）崩。模拟「升级前老档」：seed 后 ADD 回 maintenance 列，重开同档（纯
+    # init_schema 路径）应 drop 该列、且其后建新军不崩。
+    from ming_sim.db import GameDB
+    path = str(tmp_path / "old_save.db")
+    db = GameDB(path, content)
+    db.seed_static_data()
+    db.conn.execute("ALTER TABLE armies ADD COLUMN maintenance_per_turn INTEGER NOT NULL DEFAULT 5")
+    db.conn.commit()
+    db.close()
+    # 重开：GameDB.__init__ → init_schema 的维护费退役迁移应 drop（不调 seed_static_data）。
+    db2 = GameDB(path, content)
+    try:
+        cols = {r["name"] for r in db2.conn.execute("PRAGMA table_info(armies)").fetchall()}
+        assert "maintenance_per_turn" not in cols, "现存档重开应在 init_schema 路径 drop 维护费列"
+        state2 = db2.load_state()
+        created = db2.create_armies_from_extraction(state2, [{
+            "id": "post_drop_army", "name": "迁移后新军", "owner_power": "ming", "manpower": 5000}])
+        assert not created[0].get("rejected"), f"drop 后建新军 INSERT 应成功不崩：{created[0]}"
+        assert db2.conn.execute("SELECT id FROM armies WHERE id='post_drop_army'").fetchone() is not None
+    finally:
+        db2.close()
+
+
 # ── 建军：manpower 唯一必填，维护费不再是字段 ──────────────────────────
 
 def test_new_army_needs_only_manpower(game):
@@ -130,11 +156,18 @@ def test_army_delta_other_fields_still_apply(game):
 # ── extractor 写端 prompt 不教军队维护费 ─────────────────────────────
 
 def test_extractor_write_prompts_no_longer_teach_army_maintenance():
-    # 3 处 extractor 写端教学面（2 个 .md + cli_backend.enrich_initiative_effects）不得再教
-    # 军队维护费。建筑维护费在 score_extractor_issues.md，是不同字段，不在此查。
+    # 维护费已删列——所有喂给 LLM 的写端教学面不得再教军队维护费/军费：
+    #   · 2 个 score_extractor .md + cli_backend.enrich_initiative_effects；
+    #   · game_world.md（喂给 simulator/extractor/decree/chapter/ending 每个 agent，cmr drop R1 f1）；
+    #   · tools army_delta docstring 的合法字段列表（runtime extractor 工具面，cmr drop R2/f2）。
+    # 建筑维护费在 score_extractor_issues.md，是不同字段，不在此查。
     import ming_sim.cli_backend as cb
+    import ming_sim.tools as tools_mod
     base = Path(__file__).resolve().parent.parent / "content" / "prompts"
-    for fname in ("score_extractor_military_external.md", "score_extractor_shared.md"):
+    for fname in ("score_extractor_military_external.md", "score_extractor_shared.md", "game_world.md"):
         txt = (base / fname).read_text(encoding="utf-8")
         assert "maintenance_per_turn" not in txt, f"{fname} 仍含 maintenance_per_turn 写端教学"
     assert "maintenance_per_turn" not in inspect.getsource(cb.enrich_initiative_effects)
+    # tools 的 army_delta 合法字段 docstring 不得列任何维护费类字段（maintenance_quarter 是历史残留）
+    assert "maintenance_quarter" not in inspect.getsource(tools_mod), \
+        "tools army_delta docstring 仍把 maintenance_quarter 列为合法军队字段"
