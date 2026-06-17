@@ -640,12 +640,49 @@ _PENDING_PERSON_GATE_FIELDS = {"status", "location", "transit_to", "power_id", "
 _TEXT_CONDITION_RE = re.compile(r"^\s*(==|!=)\s*([^\s]+)\s*$")
 
 
+def _register_runtime_rollback_snapshot(
+    db: GameDB,
+    state: GameState,
+    content: Optional[GameContent],
+) -> None:
+    """Restore process memory if the caller rolls back the surrounding DB transaction."""
+    conn = db.conn
+    callbacks = getattr(conn, "_runtime_rollback_callbacks", None)
+    if callbacks is None:
+        callbacks = []
+        conn._runtime_rollback_callbacks = callbacks
+    metrics_snapshot = dict(state.metrics)
+    character_objects = dict(content.characters) if content is not None else {}
+    character_attrs: Dict[str, Dict[str, object]] = {}
+    for name, character in character_objects.items():
+        try:
+            character_attrs[name] = dict(vars(character))
+        except TypeError:
+            character_attrs[name] = {}
+
+    def restore_runtime() -> None:
+        state.metrics.clear()
+        state.metrics.update(metrics_snapshot)
+        if content is None:
+            return
+        for name in list(content.characters):
+            if name not in character_objects:
+                del content.characters[name]
+        for name, character in character_objects.items():
+            content.characters[name] = character
+            for attr, value in character_attrs.get(name, {}).items():
+                setattr(character, attr, value)
+
+    callbacks.append(restore_runtime)
+
+
 def _pending_person_changes_block_event_gate(
     ev: Event,
     pending_person_changes: List[Dict[str, object]],
     db: GameDB,
     *,
     allow_legacy_partial_power: bool = False,
+    content: Optional[GameContent] = None,
 ) -> bool:
     """Re-check character status gates against accepted same-turn person changes.
 
@@ -712,6 +749,11 @@ def _pending_person_changes_block_event_gate(
         action = str(item.get("动作") or "").strip()
         if not name:
             continue
+        if action in {"任命", "调任"} and content is not None:
+            from ming_sim.session import _find_existing_minister
+            canon = _find_existing_minister(content, name, db)
+            if canon:
+                name = canon
         row = character_row(name)
         if row is None:
             continue
@@ -791,6 +833,10 @@ def _pending_person_changes_block_event_gate(
             new_office = str(item.get("office") or item.get("new_office") or "").strip()
             if not new_office:
                 continue
+            if content is not None:
+                character = content.characters.get(name)
+                if character is None or is_vassal_prince(character):
+                    continue
             transition = resolve_person_transition(
                 cur_status,
                 action,
@@ -805,6 +851,38 @@ def _pending_person_changes_block_event_gate(
             overlay(name, "office", new_office)
             overlay(name, "office_type", item.get("office_type") or item.get("new_office_type") or row_value(row, "office_type"))
             overlay(name, "transit_to", "")
+            new_parts = [p for p in normalize_office(new_office).split(",") if _is_exclusive_office(p)]
+            if new_parts:
+                all_names = {
+                    str(r["name"])
+                    for r in db.conn.execute("SELECT name FROM characters").fetchall()
+                }
+                all_names.update(shadow_rows)
+                for other_name in all_names:
+                    if other_name == name:
+                        continue
+                    other_row = character_row(other_name)
+                    if other_row is None:
+                        continue
+                    if row_value(other_row, "status", "active") != "active":
+                        continue
+                    if row_value(other_row, "power_id", "ming") not in {"", "ming"}:
+                        continue
+                    current_parts = [p.strip() for p in row_value(other_row, "office").split(",") if p.strip()]
+                    kept = [p for p in current_parts if p not in new_parts]
+                    if len(kept) == len(current_parts):
+                        continue
+                    displaced_office = "听用候铨" if not kept else ",".join(kept)
+                    old_type = row_value(other_row, "office_type")
+                    displaced_type = (
+                        "身名分"
+                        if not kept
+                        else infer_office_type_from_office(displaced_office, old_type, db.llm_config)
+                    )
+                    overlay(other_name, "office", displaced_office)
+                    overlay(other_name, "office_type", displaced_type)
+                    if not kept:
+                        overlay(other_name, "transit_to", "")
         else:
             continue
 
@@ -1245,6 +1323,8 @@ def apply_issue_tracker_output(
     event_by_id = _ctx().event_by_id
     external_transaction = db.conn.in_transaction
     commit_now = not external_transaction
+    if external_transaction:
+        _register_runtime_rollback_snapshot(db, state, content)
     candidate_event_ids = (
         set(candidate_event_ids_at_input)
         if candidate_event_ids_at_input is not None
@@ -1421,6 +1501,7 @@ def apply_issue_tracker_output(
                 pending_person_changes_for_gates or [],
                 db,
                 allow_legacy_partial_power=allow_legacy_partial_power_for_gates,
+                content=content,
             ):
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 被同回合人物变更阻断。")
                 applied_new.append({
@@ -2839,6 +2920,8 @@ def apply_score_extraction(
     缺省则跳过（向后兼容老调用）。"""
     caller_transaction = db.conn.in_transaction
     commit_now = not caller_transaction
+    if caller_transaction:
+        _register_runtime_rollback_snapshot(db, state, content)
     # 0) 落库前校验容器/二级类型,畸形值崩前拦住,不让前面字段半落库(#57)。
     validate_delta_shape(extracted)
     candidate_event_ids_at_input = {candidate.id for candidate in gather_candidate_events(state, db)}

@@ -417,10 +417,31 @@ def test_mao_wenlong_event_trigger_respects_outer_transaction_rollback(game):
     db.conn.rollback()
 
     assert db.get_character_status("毛文龙")[0] == "active"
+    assert content.characters["毛文龙"].status == "active"
     assert not db.has_event_triggered("mao_wenlong")
     assert db.conn.execute(
         "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
     ).fetchone()[0] == before_logs
+
+
+def test_apply_score_extraction_metric_delta_restores_runtime_on_outer_rollback(game):
+    """post-merge CMR R9：外层事务 rollback 后，state.metrics 内存也必须回到事务前。"""
+    db, state, content = game
+    state.metrics["民心"] = 50
+    db.conn.commit()
+
+    db.conn.execute("BEGIN")
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {"metric_delta": {"民心": -7}},
+        content=content,
+    )
+    assert out["metric_delta"]["民心"] == -7
+    assert state.metrics["民心"] == 43
+    db.conn.rollback()
+
+    assert state.metrics["民心"] == 50
 
 
 def test_event_pool_situation_insert_respects_outer_transaction_rollback(game):
@@ -1652,6 +1673,181 @@ def test_event_pool_pending_person_changes_are_simulated_sequentially(game):
     assert db.get_character_status("袁崇焕")[0] == "dead"
     assert out["applied_person_changes"][0]["status"] == "dead"
     assert out["applied_person_changes"][1]["rejected"] is True
+
+
+def test_event_pool_pending_alias_appointment_blocks_canonical_gate(game):
+    """post-merge CMR R9：任命别名会真实归一到在册大臣，pending 闸门也必须看规范名。"""
+    db, state, content = game
+    issues.bind_content(content)
+    db.conn.execute(
+        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
+        ("active", "ming", "内阁首辅", "职名分", "韩爌"),
+    )
+    if "韩爌" in content.characters:
+        ch = content.characters["韩爌"]
+        ch.status = "active"
+        ch.power_id = "ming"
+        ch.office = "内阁首辅"
+        ch.office_type = "职名分"
+    ev = Event(
+        id="__test_alias_appointment_pending__",
+        title="测试·别名任命门",
+        kind="朝议",
+        summary="韩爌仍为首辅时才可触发。",
+        urgency=10,
+        severity=10,
+        credibility=100,
+        interests=[],
+        audiences=[],
+        event_type="situation",
+        trigger_gate={"character.韩爌.office": "== 内阁首辅"},
+    )
+    content.seed_events.append(ev)
+    content.event_by_id[ev.id] = ev
+    try:
+        out = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
+                "人物变更": [{"name": "韩阁老", "动作": "任命", "office": "兵部尚书"}],
+            },
+            content=content,
+        )
+
+        assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+        assert out["applied_person_changes"][0]["name"] == "韩爌"
+        assert db.conn.execute(
+            "SELECT office FROM characters WHERE name=?",
+            ("韩爌",),
+        ).fetchone()["office"] == "兵部尚书"
+        assert db.conn.execute(
+            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
+            (ev.id,),
+        ).fetchone() is None
+    finally:
+        content.seed_events.remove(ev)
+        content.event_by_id.pop(ev.id, None)
+
+
+def test_event_pool_pending_rejected_vassal_appointment_does_not_block_gate(game):
+    """post-merge CMR R9：宗藩任命会被真实写口拒收，pending 闸门不得按成功授官误挡。"""
+    db, state, content = game
+    issues.bind_content(content)
+    db.conn.execute(
+        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
+        ("active", "ming", "福王,就藩洛阳", "宗藩", "朱常洵"),
+    )
+    if "朱常洵" in content.characters:
+        ch = content.characters["朱常洵"]
+        ch.status = "active"
+        ch.power_id = "ming"
+        ch.office = "福王,就藩洛阳"
+        ch.office_type = "宗藩"
+    ev = Event(
+        id="__test_vassal_appointment_pending__",
+        title="测试·宗藩拒任不阻断",
+        kind="朝议",
+        summary="福王仍为宗藩时才可触发。",
+        urgency=10,
+        severity=10,
+        credibility=100,
+        interests=[],
+        audiences=[],
+        event_type="situation",
+        trigger_gate={"character.朱常洵.office": "== 福王,就藩洛阳"},
+    )
+    content.seed_events.append(ev)
+    content.event_by_id[ev.id] = ev
+    try:
+        out = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
+                "人物变更": [{"name": "朱常洵", "动作": "任命", "office": "兵部尚书"}],
+            },
+            content=content,
+        )
+
+        assert out["issue_summary"]["new_issues"][0]["rejected"] is False
+        assert out["applied_person_changes"][0]["rejected"] is True
+        assert "宗藩" in out["applied_person_changes"][0]["reason"]
+        assert db.conn.execute(
+            "SELECT office FROM characters WHERE name=?",
+            ("朱常洵",),
+        ).fetchone()["office"] == "福王,就藩洛阳"
+        assert db.conn.execute(
+            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
+            (ev.id,),
+        ).fetchone() is not None
+    finally:
+        content.seed_events.remove(ev)
+        content.event_by_id.pop(ev.id, None)
+
+
+def test_event_pool_pending_appointment_displacement_blocks_displaced_office_gate(game):
+    """post-merge CMR R9：独占实职顶替会真实改旧任 office，pending 闸门必须模拟被顶替者。"""
+    db, state, content = game
+    issues.bind_content(content)
+    db.conn.execute(
+        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
+        ("active", "ming", "蓟辽督师", "职名分", "袁崇焕"),
+    )
+    db.conn.execute(
+        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
+        ("active", "ming", "兵部尚书,左都御史", "兵部", "崔呈秀"),
+    )
+    if "袁崇焕" in content.characters:
+        ch = content.characters["袁崇焕"]
+        ch.status = "active"
+        ch.power_id = "ming"
+        ch.office = "蓟辽督师"
+        ch.office_type = "职名分"
+    if "崔呈秀" in content.characters:
+        ch = content.characters["崔呈秀"]
+        ch.status = "active"
+        ch.power_id = "ming"
+        ch.office = "兵部尚书,左都御史"
+        ch.office_type = "兵部"
+    ev = Event(
+        id="__test_displacement_pending__",
+        title="测试·顶替旧任门",
+        kind="朝议",
+        summary="崔呈秀仍兼兵部尚书时才可触发。",
+        urgency=10,
+        severity=10,
+        credibility=100,
+        interests=[],
+        audiences=[],
+        event_type="situation",
+        trigger_gate={"character.崔呈秀.office": "== 兵部尚书,左都御史"},
+    )
+    content.seed_events.append(ev)
+    content.event_by_id[ev.id] = ev
+    try:
+        out = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
+                "人物变更": [{"name": "袁崇焕", "动作": "任命", "office": "兵部尚书"}],
+            },
+            content=content,
+        )
+
+        assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+        assert db.conn.execute(
+            "SELECT office FROM characters WHERE name=?",
+            ("崔呈秀",),
+        ).fetchone()["office"] == "左都御史"
+        assert db.conn.execute(
+            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
+            (ev.id,),
+        ).fetchone() is None
+    finally:
+        content.seed_events.remove(ev)
+        content.event_by_id.pop(ev.id, None)
 
 
 def test_issue_tracker_cancel_respects_outer_transaction_rollback(game):
