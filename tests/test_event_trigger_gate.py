@@ -393,6 +393,97 @@ def test_mao_wenlong_event_trigger_lands_character_status(game):
     ).fetchone()[0] == before_logs + 1
 
 
+def test_strategic_foreign_event_records_trigger_and_lands_soft_result_delta(game):
+    """#189：战略/外敌战事触发后，软判结果同信封落世界主账，不转长期 issue。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"))
+    db.conn.execute(
+        "UPDATE armies SET manpower = ?, morale = ? WHERE id = ?",
+        (30000, 50, "jingying"),
+    )
+
+    assert any(ev.id == "jisi_lubian" for ev in issues.gather_candidate_events(state, db))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "region_delta": {"beizhili": {"military_pressure": 35, "controlled_by": "ming"}},
+            "army_delta": {"jingying": {"manpower": -5000, "morale": -8}},
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is False
+    assert db.has_event_triggered("jisi_lubian")
+    assert db.find_any_issue_by_origin("event_pool", "jisi_lubian") is None
+    region = db.conn.execute(
+        "SELECT military_pressure, controlled_by FROM regions WHERE id = ?", ("beizhili",)
+    ).fetchone()
+    army = db.conn.execute(
+        "SELECT manpower, morale FROM armies WHERE id = ?", ("jingying",)
+    ).fetchone()
+    assert region["military_pressure"] == 55
+    assert region["controlled_by"] == "ming"
+    assert army["manpower"] == 25000
+    assert army["morale"] == 42
+
+
+def test_strategic_foreign_event_survives_named_commander_death_with_soft_result_delta(game):
+    """#189：战略战事点名将已死也不作废，由在位军镇承接软判结果。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1641
+    state.period = 8
+    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("dead", "洪承畴"))
+    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (40, "liaodong"))
+    db.conn.execute(
+        "UPDATE armies SET manpower = ?, morale = ? WHERE id = ?",
+        (60000, 55, "guanning"),
+    )
+
+    assert any(ev.id == "songshan_battle" for ev in issues.gather_candidate_events(state, db))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "songshan_battle"}],
+            "region_delta": {"liaodong": {"military_pressure": 18}},
+            "army_delta": {"guanning": {"manpower": -12000, "morale": -12}},
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is False
+    assert db.has_event_triggered("songshan_battle")
+    assert db.find_any_issue_by_origin("event_pool", "songshan_battle") is None
+    region = db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id = ?", ("liaodong",)
+    ).fetchone()
+    army = db.conn.execute(
+        "SELECT manpower, morale FROM armies WHERE id = ?", ("guanning",)
+    ).fetchone()
+    assert region["military_pressure"] == 59
+    assert army["manpower"] == 48000
+    assert army["morale"] == 43
+
+
+def test_wuyin_lubian_content_treats_lu_death_as_soft_battle_outcome():
+    """#189：戊寅虏变不能把卢象升写成人物核心；卢死/生是战事软判结果。"""
+    events_path = Path(__file__).resolve().parents[1] / "content" / "events.json"
+    events = json.loads(events_path.read_text())
+    wuyin = next(item for item in events if item["id"] == "wuyin_lubian")
+
+    assert "殉国" not in wuyin["title"]
+    assert "本局按盘面软判" in wuyin["summary"]
+    assert "卢象升生死由软判" in wuyin["precondition"]
+
+
 def test_mao_wenlong_event_trigger_respects_outer_transaction_rollback(game):
     """post-merge CMR：event trigger 写入不得提前提交外层普通事务。"""
     db, state, content = game
