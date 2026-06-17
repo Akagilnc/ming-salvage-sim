@@ -64,6 +64,29 @@ def test_army_needed_non_ming_no_pay(game):
     assert army_needed(row) == 0
 
 
+def test_defected_army_to_ming_owes_salary_not_free(game):
+    """#44 ship-pre cmr R1（codex high）：原非明军经 owner_power 翻成 ming（倒戈/招安，军务 extractor
+    prompt 明确要求写归属）后，salary_rate<=0（非明军 content 默认 0）不得让 army_needed 返 0 =
+    零饷白嫖军——这正是 #44 已经募兵入口（_coerce_new_salary_rate 默认 1.5）+ 迁移入口
+    （_backfill_salary_rate）堵住、但经 runtime 易主漏网的同一 exploit。army_needed 对
+    ming + manpower>0 + rate<=0 锚定 1.5 → 应发>0。"""
+    db, state, _ = game
+    src = db.conn.execute(
+        "SELECT * FROM armies WHERE owner_power!='ming' AND manpower>0 ORDER BY manpower DESC LIMIT 1"
+    ).fetchone()
+    if src is None:
+        pytest.skip("无非明军可模拟倒戈")
+    assert float(src["salary_rate"]) <= 0, "前提：非明军 content salary_rate 应<=0（默认 0）"
+    manpower = int(src["manpower"])
+    # 模拟 owner_power 翻成 ming（salary_rate 仍是非明军默认 0），settlement 读该行算应发。
+    flipped = {"owner_power": "ming", "manpower": manpower, "salary_rate": float(src["salary_rate"])}
+    needed = army_needed(flipped)
+    assert needed == math.ceil(manpower * 1.5 / 10000), (
+        f"倒戈成 ming 的大军(rate<=0)须按锚点 1.5 欠饷、非零饷白嫖（army_needed={needed}）"
+    )
+    assert needed > 0
+
+
 def test_total_ming_salary_is_72_ceil_sum(game):
     # 实际总月应发 = sum(ceil(每军))=72 万两。设计「66.5」是 sum(小数月应发)；army_needed 每军 ceil
     # （万两整数、不少发），ceil 累积使总额 72 > 66.5（cmr r1 codex/claude 实测）。开局 vs 旧 65 = +10.8%
