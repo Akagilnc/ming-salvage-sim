@@ -270,9 +270,33 @@ def test_character_typo_field_gate_raises_clear(game):
         _gate_passed({"character.毛文龙.loyality": ">=1"}, state.metrics, db)
 
 
+def test_character_text_typo_field_gate_raises_clear(game):
+    """character 文本 gate 字段名 typo 也必须 fail-loud（#201 cmr P2）。"""
+    import pytest
+    from ming_sim.issues import _gate_passed
+    db, state, content = game
+
+    with pytest.raises(ValueError, match="字段无效|DB 无此列"):
+        _gate_passed({"character.毛文龙.locaiton": "==liaodong"}, state.metrics, db)
+
+
 def test_character_text_gate_key_passes_content_validation():
     """load-time 文本 gate 校验接受 character 的文本字段（#201）。"""
     from ming_sim.content import gate_text_key_form_error
 
     assert gate_text_key_form_error("character.毛文龙.location") == ""
     assert gate_text_key_form_error("character.毛文龙.office") == ""
+
+
+def test_character_text_gate_rejects_serialized_list_field():
+    """character.personal_skills 是序列化列表，不适合作普通文本等值门。"""
+    from ming_sim.content import gate_text_key_form_error
+
+    assert gate_text_key_form_error("character.毛文龙.personal_skills")
+
+
+def test_character_text_gate_rejects_numeric_character_field():
+    """character loyalty 等数值字段不应被文本等值门放行。"""
+    from ming_sim.content import gate_text_key_form_error
+
+    assert gate_text_key_form_error("character.毛文龙.loyalty")
