@@ -32,7 +32,8 @@ FROM armies
 WHERE id='guanning' OR name LIKE '%神枢%'
 ORDER BY id;"
 -- #173：维护费列已删，月饷由 army_needed=ceil(manpower×salary_rate/10000)(仅 ming)派生；
--- 上表用 salary_rate(名义月饷率)代替已删的 maintenance_per_turn。
+-- 上表用 salary_rate(名义月饷率)配合 manpower 复算 army_needed(=ceil(manpower×salary_rate/10000))，
+-- 作为已删的 maintenance_per_turn 替代口径（salary_rate 是费率、非月饷金额本身）。
 
 sqlite3 -header -column data/military_flow_probe.db "
 SELECT turn,year,period,army_id,field,old_value,new_value,delta,reason
