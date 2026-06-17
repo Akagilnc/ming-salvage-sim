@@ -1433,6 +1433,10 @@ def _person_change_name(item: Dict[str, object]) -> str:
     ).strip()
 
 
+def _is_strategic_person_result_change(item: Dict[str, object]) -> bool:
+    return str(item.get("动作") or item.get("action") or "").strip() != "评定"
+
+
 def _split_person_changes_by_names(
     changes: List[Dict[str, object]],
     target_names: set[str],
@@ -1452,6 +1456,7 @@ def _event_result_delta_event_ids(
     region_ids = set((extracted.get("region_delta") or {}).keys()) if isinstance(extracted.get("region_delta"), dict) else set()
     army_ids = set((extracted.get("army_delta") or {}).keys()) if isinstance(extracted.get("army_delta"), dict) else set()
     person_names = {_person_change_name(item) for item in person_changes}
+    has_person_result = any(_is_strategic_person_result_change(item) for item in person_changes)
     result_ids: set[str] = set()
     for event_id in strategic_event_ids:
         targets = _strategic_event_outcome_targets(event_id)
@@ -1459,6 +1464,7 @@ def _event_result_delta_event_ids(
             region_ids.intersection(targets["regions"])
             or army_ids.intersection(targets["armies"])
             or person_names.intersection(targets["characters"])
+            or has_person_result
         ):
             result_ids.add(event_id)
     return result_ids
@@ -1758,12 +1764,12 @@ def apply_issue_tracker_output(
             ev = event_by_id.get(event_id)
             if ev is None:
                 print(f"[INFO] new_issue 已拒：event_pool id={event_id!r} 非预设事件，疑似臆造。")
-                applied_new.append({"title": title or event_id, "rejected": True, "reason": "event_pool id 非预设事件"})
+                applied_new.append({"id": event_id, "title": title or event_id, "rejected": True, "reason": "event_pool id 非预设事件"})
                 continue
             if getattr(ev, "auto_trigger", False):
                 # auto_trigger 事件只能程序硬触发，LLM 不准从候选池立项
                 print(f"[INFO] new_issue 已拒：event {event_id} 标了 auto_trigger，只能程序硬触发。")
-                applied_new.append({"title": ev.title, "rejected": True, "reason": "auto_trigger 事件仅程序可触发"})
+                applied_new.append({"id": ev.id, "title": ev.title, "rejected": True, "reason": "auto_trigger 事件仅程序可触发"})
                 continue
             if (
                 ev.id not in candidate_event_ids
@@ -1773,6 +1779,7 @@ def apply_issue_tracker_output(
                 # 避免陈旧/伪造 id 穿透候选层后直接应用确定性后果（#203 CMR）。
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 当前未进 event_pool 候选池。")
                 applied_new.append({
+                    "id": ev.id,
                     "title": ev.title,
                     "rejected": True,
                     "reason": "事件当前未进候选池（窗口/前提门/已触发不满足）",
@@ -1784,6 +1791,7 @@ def apply_issue_tracker_output(
             if ev.id not in current_candidate_event_ids:
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 当前未进 event_pool 候选池。")
                 applied_new.append({
+                    "id": ev.id,
                     "title": ev.title,
                     "rejected": True,
                     "reason": "事件当前未进候选池（窗口/前提门/已触发不满足）",
@@ -1801,6 +1809,7 @@ def apply_issue_tracker_output(
             ):
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 被同回合人物变更阻断。")
                 applied_new.append({
+                    "id": ev.id,
                     "title": ev.title,
                     "rejected": True,
                     "reason": "事件当前未进候选池（同回合人物变更后前提门不满足）",
@@ -1813,6 +1822,7 @@ def apply_issue_tracker_output(
             ):
                 print(f"[INFO] new_issue 已拒：战略/外敌事件 {event_id} 缺世界状态主账结果。")
                 applied_new.append({
+                    "id": ev.id,
                     "title": ev.title,
                     "rejected": True,
                     "reason": "战略/外敌战事缺世界状态主账结果（地区/军队/人物变更）",
@@ -1855,11 +1865,11 @@ def apply_issue_tracker_output(
                 # event_to_issue 移除 broad except 后，返回 None 只剩一种语义：同源 issue 已存在的
                 # 幂等去重跳过（在其 insert try 之外 early-return）；insert 的真代码/DB 异常现已上抛、
                 # 不再走此 None 分支（cmr ni r7 codex high），故 reason 不再含「或落库失败」。
-                applied_new.append({"title": ev.title, "rejected": True, "reason": "事件已触发过（同源局势已立，幂等跳过）"})
+                applied_new.append({"id": ev.id, "title": ev.title, "rejected": True, "reason": "事件已触发过（同源局势已立，幂等跳过）"})
             else:
                 consumed_event_ids.add(ev.id)
                 candidates_dirty = True
-                applied_new.append({"issue_id": issue_id, "kind": "situation", "title": ev.title, "rejected": False})
+                applied_new.append({"id": ev.id, "issue_id": issue_id, "kind": "situation", "title": ev.title, "rejected": False})
             continue
         if origin_kind != "decree":
             print(f"[INFO] new_issue 已拒：'{title}'（origin_kind={origin_kind!r}，仅接 decree / event_pool）。")
@@ -3283,6 +3293,16 @@ def apply_score_extraction(
         post_issue_person_changes,
         strategic_character_targets,
     )
+    if strategic_event_pool_ids:
+        event_result_post_issue_person_changes: List[Dict[str, object]] = []
+        ordinary_post_issue_person_changes: List[Dict[str, object]] = []
+        for item in post_issue_person_changes:
+            if _is_strategic_person_result_change(item):
+                event_result_post_issue_person_changes.append(item)
+            else:
+                ordinary_post_issue_person_changes.append(item)
+        strategic_post_issue_person_changes.extend(event_result_post_issue_person_changes)
+        post_issue_person_changes = ordinary_post_issue_person_changes
     strategic_person_result_changes = strategic_pre_issue_person_changes + strategic_post_issue_person_changes
 
     def _annotate_legacy_person_rejections(results: List[Dict[str, object]]) -> None:
@@ -3432,6 +3452,53 @@ def apply_score_extraction(
         candidate_event_ids_at_input=candidate_event_ids_at_input,
         event_result_delta_event_ids=strategic_event_result_delta_event_ids,
         defer_event_trigger_ids=strategic_event_pool_ids)
+
+    def _reject_suppressed_strategic_results(event_id: str, event_title: str) -> None:
+        targets = _strategic_event_outcome_targets(event_id)
+        event_region_deltas, _ = _split_mapping_by_keys(
+            strategic_region_deltas_raw,
+            set(targets["regions"]),
+        )
+        event_army_deltas, _ = _split_mapping_by_keys(
+            strategic_army_deltas_raw,
+            set(targets["armies"]),
+        )
+        event_person_changes = list(strategic_person_result_changes)
+        reason = f"战略/外敌事件「{event_title or event_id}」未触发，战果不落主账"
+        for region_id, raw_changes in event_region_deltas.items():
+            region_changes.append({
+                "region_id": region_id,
+                "rejected": True,
+                "category": "event_rejected",
+                "reason": reason,
+                "item": {"event_id": event_id, "region_id": region_id, "changes": raw_changes},
+            })
+        for army_id, raw_changes in event_army_deltas.items():
+            army_changes.append({
+                "army_id": army_id,
+                "rejected": True,
+                "category": "event_rejected",
+                "reason": reason,
+                "item": {"event_id": event_id, "army_id": army_id, "changes": raw_changes},
+            })
+        for item in event_person_changes:
+            applied_person_changes.append({
+                "name": _person_change_name(item),
+                "动作": str(item.get("动作") or item.get("action") or "").strip(),
+                "rejected": True,
+                "category": "event_rejected",
+                "reason": reason,
+                "item": dict(item),
+            })
+
+    for new_issue in (issue_summary.get("new_issues") or []):
+        if not isinstance(new_issue, dict) or not new_issue.get("rejected"):
+            continue
+        event_id = str(new_issue.get("id") or "").strip()
+        if event_id not in strategic_event_pool_ids:
+            continue
+        _reject_suppressed_strategic_results(event_id, str(new_issue.get("title") or ""))
+
     for new_issue in (issue_summary.get("new_issues") or []):
         if not (
             isinstance(new_issue, dict)
@@ -3451,10 +3518,7 @@ def apply_score_extraction(
             strategic_army_deltas_raw,
             set(targets["armies"]),
         )
-        event_person_changes, _ = _split_person_changes_by_names(
-            strategic_person_result_changes,
-            set(targets["characters"]),
-        )
+        event_person_changes = list(strategic_person_result_changes)
         event_region_changes: List[Dict[str, object]] = []
         event_army_changes: List[Dict[str, object]] = []
         event_person_results: List[Dict[str, object]] = []
