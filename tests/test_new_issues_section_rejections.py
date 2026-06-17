@@ -35,6 +35,12 @@ def _pick_event_pool_id(db):
     pytest.skip("内容包无可用 situation/非auto/未触发 预设 event，跳过 event_pool 用例")
 
 
+def _open_event_window(state, ev):
+    if getattr(ev, "trigger_year", 0) > 0:
+        state.year = ev.trigger_year
+        state.period = ev.trigger_month or 1
+
+
 @pytest.mark.parametrize("bad_item", [None, 42, "字符串"])
 def test_new_issue_non_dict_item_rejected_not_crash(game, bad_item):
     db, state, _ = game
@@ -237,6 +243,8 @@ def test_new_issue_event_pool_insert_exception_propagates(game, monkeypatch):
     # codex 强调的 call-site seam：通过 apply_issue_tracker_output 的 event_pool 分支驱动，
     # insert 真异常一路上抛（上层 applier.atomic 据此 SettlementAbort），不被吞成静默 rejected。
     eid = _pick_event_pool_id(db)
+    ev = I._ctx().event_by_id[eid]
+    _open_event_window(state, ev)
 
     def _boom(*a, **k):
         raise RuntimeError("模拟 event_pool insert 落库代码异常")

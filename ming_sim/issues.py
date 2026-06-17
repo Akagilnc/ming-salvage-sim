@@ -1130,6 +1130,16 @@ def apply_issue_tracker_output(
                 print(f"[INFO] new_issue 已拒：event {event_id} 标了 auto_trigger，只能程序硬触发。")
                 applied_new.append({"title": ev.title, "rejected": True, "reason": "auto_trigger 事件仅程序可触发"})
                 continue
+            if ev.id not in {candidate.id for candidate in gather_candidate_events(state, db)}:
+                # LLM 只能从本回合候选池中挑选事件；落库端重验窗口、trigger_gate 与已触发状态，
+                # 避免陈旧/伪造 id 穿透候选层后直接应用确定性后果（#203 CMR）。
+                print(f"[INFO] new_issue 已拒：事件 {event_id} 当前未进 event_pool 候选池。")
+                applied_new.append({
+                    "title": ev.title,
+                    "rejected": True,
+                    "reason": "事件当前未进候选池（窗口/前提门/已触发不满足）",
+                })
+                continue
             if ev.event_type != "situation":
                 if ev.effect_on_trigger:
                     entity_rejections.extend(
