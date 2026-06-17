@@ -1353,6 +1353,47 @@ def _nonempty_dict(v: object) -> bool:
     return isinstance(v, dict) and len(v) > 0
 
 
+_STRATEGIC_FOREIGN_NODE_KINDS = {"军事", "外族", "外敌"}
+
+
+def _is_strategic_foreign_node_event(ev: Event) -> bool:
+    return (
+        getattr(ev, "event_type", "situation") != "situation"
+        and str(getattr(ev, "kind", "") or "") in _STRATEGIC_FOREIGN_NODE_KINDS
+    )
+
+
+def _event_pool_ids_for_strategic_foreign_nodes(
+    extracted: Dict[str, object],
+    content: GameContent,
+) -> set[str]:
+    ids: set[str] = set()
+    for item in extracted.get("new_issues") or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("origin_kind") or "").lower() != "event_pool":
+            continue
+        event_id = str(item.get("id") or item.get("origin_ref") or "").strip()
+        ev = content.event_by_id.get(event_id)
+        if ev is not None and _is_strategic_foreign_node_event(ev):
+            ids.add(ev.id)
+    return ids
+
+
+def _has_event_result_world_state_delta(
+    extracted: Dict[str, object],
+    person_changes: List[Dict[str, object]],
+) -> bool:
+    return (
+        _nonempty_dict(extracted.get("region_delta"))
+        or _nonempty_dict(extracted.get("army_delta"))
+        or _nonempty_list(extracted.get("new_armies"))
+        or bool(person_changes)
+        or _nonempty_list(extracted.get("character_status_changes"))
+        or _nonempty_list(extracted.get("character_power_changes"))
+    )
+
+
 def _has_economy_entry(d: object) -> bool:
     """是否含「flows 会真正立账」的月度 economy 项：account∈(国库,内库) + delta 经 int() 强转非零
     ——与 flows._apply_economy_list 同口径（它只对 国库/内库 立账、`int(delta or 0)` 强转、跳过
@@ -1461,6 +1502,7 @@ def apply_issue_tracker_output(
     pending_person_changes_for_gates: Optional[List[Dict[str, object]]] = None,
     allow_legacy_partial_power_for_gates: bool = False,
     candidate_event_ids_at_input: Optional[set[str]] = None,
+    event_result_delta_event_ids: Optional[set[str]] = None,
 ) -> Dict[str, object]:
     touched_ids: set = set()
     applied_advances: List[Dict[str, object]] = []
@@ -1481,6 +1523,11 @@ def apply_issue_tracker_output(
         set(candidate_event_ids_at_input)
         if candidate_event_ids_at_input is not None
         else {candidate.id for candidate in gather_candidate_events(state, db)}
+    )
+    event_result_delta_event_ids = (
+        set(event_result_delta_event_ids)
+        if event_result_delta_event_ids is not None
+        else None
     )
     consumed_event_ids: set[str] = set()
     current_candidate_event_ids: set[str] = set()
@@ -1685,6 +1732,18 @@ def apply_issue_tracker_output(
                     "title": ev.title,
                     "rejected": True,
                     "reason": "事件当前未进候选池（同回合人物变更后前提门不满足）",
+                })
+                continue
+            if (
+                _is_strategic_foreign_node_event(ev)
+                and event_result_delta_event_ids is not None
+                and ev.id not in event_result_delta_event_ids
+            ):
+                print(f"[INFO] new_issue 已拒：战略/外敌事件 {event_id} 缺世界状态主账结果。")
+                applied_new.append({
+                    "title": ev.title,
+                    "rejected": True,
+                    "reason": "战略/外敌战事缺世界状态主账结果（地区/军队/人物变更）",
                 })
                 continue
             if ev.event_type != "situation":
@@ -3101,6 +3160,7 @@ def apply_score_extraction(
         _register_runtime_rollback_snapshot(db, state, content, registry)
     # 0) 落库前校验容器/二级类型,畸形值崩前拦住,不让前面字段半落库(#57)。
     validate_delta_shape(extracted)
+    runtime_content = content if content is not None else _ctx()
     candidate_event_ids_at_input = {candidate.id for candidate in gather_candidate_events(state, db)}
     new_person_changes = normalize_person_changes({"人物变更": extracted.get("人物变更") or []})
     legacy_person_changes = [] if new_person_changes else normalize_person_changes({
@@ -3112,6 +3172,13 @@ def apply_score_extraction(
     person_changes = new_person_changes or legacy_person_changes
     use_legacy_person_keys = not person_changes
     legacy_person_mode = bool(legacy_person_changes)
+    strategic_event_pool_ids = _event_pool_ids_for_strategic_foreign_nodes(extracted, runtime_content)
+    strategic_event_result_delta_event_ids = (
+        set(strategic_event_pool_ids)
+        if _has_event_result_world_state_delta(extracted, person_changes)
+        else set()
+    )
+    defer_strategic_event_result_deltas = bool(strategic_event_pool_ids)
 
     def _split_pre_issue_person_changes(changes: List[Dict[str, object]]) -> tuple[List[Dict[str, object]], List[Dict[str, object]]]:
         pre_issue: List[Dict[str, object]] = []
@@ -3211,14 +3278,22 @@ def apply_score_extraction(
     # 三个 db 方法内逐项拒收留痕（返回列表含 {"rejected": True, ...}，桥接自动收进
     # rejection_reports），好项照落、坏一项不带走整批；代码异常（bug 类）仍上抛到 settle
     # 层回滚整批，绝不吞。clamp 语义（城防炮 city_level×8、随军炮 cap12、火器 0-100）不变。
-    if isinstance(new_armies_raw, list) and new_armies_raw:
+    if (
+        not defer_strategic_event_result_deltas
+        and isinstance(new_armies_raw, list)
+        and new_armies_raw
+    ):
         created_armies = db.create_armies_from_extraction(
             state,
             new_armies_raw,
             actor="档房",
             commit=commit_now,
         )
-    if isinstance(region_deltas_raw, dict) and region_deltas_raw:
+    if (
+        not defer_strategic_event_result_deltas
+        and isinstance(region_deltas_raw, dict)
+        and region_deltas_raw
+    ):
         region_changes = db.apply_region_deltas(
             state,
             pseudo_event,
@@ -3227,7 +3302,11 @@ def apply_score_extraction(
             region_deltas_raw,
             commit=commit_now,
         )
-    if isinstance(army_deltas_raw, dict) and army_deltas_raw:
+    if (
+        not defer_strategic_event_result_deltas
+        and isinstance(army_deltas_raw, dict)
+        and army_deltas_raw
+    ):
         army_changes = db.apply_army_deltas(
             state,
             pseudo_event,
@@ -3260,7 +3339,37 @@ def apply_score_extraction(
     }, llm_config=llm_config, content=content,
         pending_person_changes_for_gates=post_issue_person_changes,
         allow_legacy_partial_power_for_gates=legacy_person_mode,
-        candidate_event_ids_at_input=candidate_event_ids_at_input)
+        candidate_event_ids_at_input=candidate_event_ids_at_input,
+        event_result_delta_event_ids=strategic_event_result_delta_event_ids)
+    if (
+        defer_strategic_event_result_deltas
+        and any(db.has_event_triggered(eid) for eid in strategic_event_pool_ids)
+    ):
+        if isinstance(new_armies_raw, list) and new_armies_raw:
+            created_armies = db.create_armies_from_extraction(
+                state,
+                new_armies_raw,
+                actor="档房",
+                commit=commit_now,
+            )
+        if isinstance(region_deltas_raw, dict) and region_deltas_raw:
+            region_changes = db.apply_region_deltas(
+                state,
+                pseudo_event,
+                None,
+                "档房",
+                region_deltas_raw,
+                commit=commit_now,
+            )
+        if isinstance(army_deltas_raw, dict) and army_deltas_raw:
+            army_changes = db.apply_army_deltas(
+                state,
+                pseudo_event,
+                None,
+                "档房",
+                army_deltas_raw,
+                commit=commit_now,
+            )
     _apply_normalized_person_changes(post_issue_person_changes, legacy=legacy_person_mode)
 
     def _norm_int_leaf(v):
