@@ -197,6 +197,7 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
       - 'army.<id>.<field>' / 多军 + agg
       - 'building.<id>.<field>' / 多建筑 + agg
       - 'power.<id>.<field>' / 多 + agg
+      - 'character.<name>.<field>' / 多人物 + agg
       - 'class.<name>.<field>'                  → classes 表全国汇总 (region_id='')
       - 'class.<name>@<region>.<field>'         → classes 表省级
       - 'class.<name>@<r1>|<r2>|.<field>.<agg>' → 多省同阶级聚合
@@ -243,6 +244,8 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
         elif table == "faction":
             # factions 表主键是 name（中文，如 阉党），field 取 leverage/satisfaction
             row = db.conn.execute(f"SELECT {field} FROM factions WHERE name = ?", (cid,)).fetchone()
+        elif table == "character":
+            row = db.conn.execute(f"SELECT {field} FROM characters WHERE name = ?", (cid,)).fetchone()
         elif table == "class":
             if "@" in cid:
                 cname, rid = cid.split("@", 1)
@@ -277,7 +280,7 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
 
 def _eval_gate_key_str(key: str, db: GameDB) -> Optional[str]:
     """取一个文本型字段值（如 region.<id>.controlled_by → 'ming'/'houjin'）。
-    仅支持单 id 的 region/army/power 文本字段；解析失败返回 None。
+    仅支持单 id 的 region/army/power/character 文本字段；解析失败返回 None。
     """
     parts = key.split(".")
     if len(parts) != 3:
@@ -287,6 +290,7 @@ def _eval_gate_key_str(key: str, db: GameDB) -> Optional[str]:
         "region": f"SELECT {field} FROM regions WHERE id = ?",
         "army": f"SELECT {field} FROM armies WHERE id = ?",
         "power": f"SELECT {field} FROM powers WHERE id = ?",
+        "character": f"SELECT {field} FROM characters WHERE name = ?",
     }.get(table)
     if sql is None:
         return None
