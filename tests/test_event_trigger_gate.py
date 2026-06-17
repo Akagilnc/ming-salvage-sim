@@ -652,6 +652,41 @@ def test_yuan_xialing_event_excluded_without_jisi_triggered(game):
     assert all(ev.id != "yuan_xialing" for ev in cands)
 
 
+def test_yuan_xialing_event_included_after_jisi_event_issue_triggers(game):
+    """#191 CMR：己巳之变真实从 event_pool 触发后，袁下狱上游终态门应可查并打开。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    assert any(ev.id == "jisi_lubian" for ev in issues.gather_candidate_events(state, db))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {"new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}]},
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is False
+    row = db.conn.execute(
+        "SELECT terminal_state FROM event_triggers WHERE event_id=?",
+        ("jisi_lubian",),
+    ).fetchone()
+    assert row is not None
+    assert row["terminal_state"] == "triggered"
+
+    state.year = 1629
+    state.period = 12
+    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("active", "袁崇焕"))
+    db.conn.execute("UPDATE armies SET commander=? WHERE id=?", ("袁崇焕", "guanning"))
+    db.conn.execute(
+        "UPDATE characters SET status=?, status_reason=? WHERE name=?",
+        ("dead", "袁崇焕双岛斩帅", "毛文龙"),
+    )
+
+    assert any(ev.id == "yuan_xialing" for ev in issues.gather_candidate_events(state, db))
+
+
 def test_luoyang_fallen_not_obsoleted_when_fu_wang_is_dead(game):
     """#191 CMR：洛阳陷落是城市/流寇压力事件，福王已死不应让事件进入人物核心作废终态。"""
     db, state, content = game
@@ -669,6 +704,22 @@ def test_luoyang_fallen_not_obsoleted_when_fu_wang_is_dead(game):
         "SELECT event_id FROM event_triggers WHERE event_id=?",
         ("luoyang_fallen",),
     ).fetchone() is None
+
+
+def test_li_chenghai_event_opens_after_li_zicheng_historical_debut(game):
+    """#191 CMR：李自成入河南不能被默认 offstage 卡死；历史登场后人物核心门应可达。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1634
+    state.period = 1
+    db.conn.execute("UPDATE powers SET military_strength=? WHERE id=?", (50, "bandits"))
+
+    debuted = db.apply_historical_debuts(state)
+    cands = issues.gather_candidate_events(state, db)
+
+    assert any(item["name"] == "李自成" for item in debuted)
+    assert db.get_character_status("李自成")[0] == "active"
+    assert any(ev.id == "li_chenghai" for ev in cands)
 
 
 def test_issue_191_person_core_events_are_explicitly_classified(content):
