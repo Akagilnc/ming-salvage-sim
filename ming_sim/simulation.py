@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from typing import Callable, Dict, List, Optional
 
@@ -482,6 +483,15 @@ def _extractor_context_payload(
 ) -> Dict[str, object]:
     active = db.list_active_issues()
 
+    def _condition_role(resolve_condition: object) -> Dict[str, str]:
+        text = str(resolve_condition or "").strip()
+        if re.fullmatch(r"character\.[^.]+\.loyalty\s*(?:>=|>)\s*\d+", text):
+            return {
+                "condition_role": "commitment_stop_condition",
+                "condition_note": "人物承诺停止条件；不要按 resolve_condition 达标自动结案，自动完成属于 #136。",
+            }
+        return {}
+
     def _issue_auto_economy(row) -> List[Dict[str, object]]:
         """该 issue 每回合 ongoing_effects 里的固定经济支出/收入。
         这些由 apply_issue_inertia_and_ongoing 程序自动落账（extractor 结算之后），
@@ -516,6 +526,7 @@ def _extractor_context_payload(
             "cancellable": r["cancellable"],
             "resolve_condition": (r["resolve_condition"] if "resolve_condition" in r.keys() else "") or "(未填)",
             "fail_condition": (r["fail_condition"] if "fail_condition" in r.keys() else "") or "(未填)",
+            **_condition_role(r["resolve_condition"] if "resolve_condition" in r.keys() else ""),
         }
         for r in active
     ]
