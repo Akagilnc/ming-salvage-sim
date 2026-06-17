@@ -1784,8 +1784,8 @@ class GameDB:
     def _drop_maintenance_column(self) -> None:
         """#173：物理移除退役的 armies.maintenance_per_turn 列（月饷由 army_needed 按兵力派生）。
         幂等：列存在才 DROP（SQLite 3.35+ 支持 ALTER TABLE DROP COLUMN，本仓 3.53）。调用点保证排在
-        所有读维护费的迁移之后（见 seed_static_data）：老档此刻列仍在、迁移已读完，drop 安全；新档/
-        已删档无此列，PRAGMA 查不到 → no-op。"""
+        所有读维护费的迁移之后（见 init_schema：salary_rate backfill + arrears 换算之后）：老档此刻列
+        仍在、迁移已读完，drop 安全；新档/已删档无此列，PRAGMA 查不到 → no-op。"""
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(armies)").fetchall()}
         if "maintenance_per_turn" in cols:
             self.conn.execute("ALTER TABLE armies DROP COLUMN maintenance_per_turn")
