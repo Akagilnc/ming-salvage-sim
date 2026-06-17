@@ -449,6 +449,23 @@ def test_issue_tracker_rollback_restores_bound_content_when_content_omitted(game
     assert content.characters["毛文龙"].status == "active"
 
 
+def test_issue_tracker_rollback_removes_dynamic_character_attrs(game):
+    """online R3 Gemini：事务中新添的人物动态属性也要随 runtime rollback 清掉。"""
+    db, state, content = game
+    issues.bind_content(content)
+    character = content.characters["毛文龙"]
+    if hasattr(character, "_test_runtime_ghost_attr"):
+        delattr(character, "_test_runtime_ghost_attr")
+    db.conn.commit()
+
+    db.conn.execute("BEGIN")
+    issues.apply_issue_tracker_output(db, state, {"advances": []}, content=content)
+    character._test_runtime_ghost_attr = "ghost"
+    db.conn.rollback()
+
+    assert not hasattr(character, "_test_runtime_ghost_attr")
+
+
 def test_apply_score_extraction_metric_delta_restores_runtime_on_outer_rollback(game):
     """post-merge CMR R9：外层事务 rollback 后，state.metrics 内存也必须回到事务前。"""
     db, state, content = game
@@ -1940,7 +1957,7 @@ def test_event_pool_pending_alias_disposition_blocks_canonical_gate(game):
 
 def test_pending_person_gate_prefetches_character_rows_for_displacement(game):
     """online R1 Gemini：独占官职顶替模拟不得对每个人物逐条 SELECT。"""
-    db, state, content = game
+    db, _state, content = game
     issues.bind_content(content)
     db.conn.execute(
         "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
@@ -1983,6 +2000,81 @@ def test_pending_person_gate_prefetches_character_rows_for_displacement(game):
 
     assert blocked is True
     assert select_count <= 8
+
+
+def test_event_pool_pending_gate_reuses_shadow_prefetch_across_new_issues(game, monkeypatch):
+    """online R3 Gemini：同一批 event_pool 不应为每个 pending gate 重查全量人物表。"""
+    db, state, content = game
+    issues.bind_content(content)
+    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "袁崇焕"))
+    ev1 = Event(
+        id="__test_shared_shadow_prefetch_1__",
+        title="测试·共享快照一",
+        kind="朝议",
+        summary="x",
+        urgency=10,
+        severity=10,
+        credibility=100,
+        interests=[],
+        audiences=[],
+        event_type="situation",
+        trigger_gate={"character.袁崇焕.status": "== active"},
+    )
+    ev2 = Event(
+        id="__test_shared_shadow_prefetch_2__",
+        title="测试·共享快照二",
+        kind="朝议",
+        summary="x",
+        urgency=10,
+        severity=10,
+        credibility=100,
+        interests=[],
+        audiences=[],
+        event_type="situation",
+        trigger_gate={"character.袁崇焕.status": "== active"},
+    )
+    content.seed_events.extend([ev1, ev2])
+    content.event_by_id[ev1.id] = ev1
+    content.event_by_id[ev2.id] = ev2
+
+    def fake_gather_candidate_events(_state, _db):
+        return [ev1, ev2]
+
+    full_character_selects = 0
+
+    def trace(sql):
+        nonlocal full_character_selects
+        normalized = " ".join(sql.split()).upper()
+        if "FROM CHARACTERS" in normalized and "STATUS_REASON" in normalized:
+            full_character_selects += 1
+
+    monkeypatch.setattr(issues, "gather_candidate_events", fake_gather_candidate_events)
+    db.conn.set_trace_callback(trace)
+    try:
+        out = issues.apply_issue_tracker_output(
+            db,
+            state,
+            {
+                "new_issues": [
+                    {"origin_kind": "event_pool", "id": ev1.id},
+                    {"origin_kind": "event_pool", "id": ev2.id},
+                ]
+            },
+            content=content,
+            pending_person_changes_for_gates=[
+                {"name": "袁崇焕", "动作": "处置", "status": "dismissed", "reason": "测试共享快照"}
+            ],
+            candidate_event_ids_at_input={ev1.id, ev2.id},
+        )
+    finally:
+        db.conn.set_trace_callback(None)
+        content.seed_events.remove(ev1)
+        content.seed_events.remove(ev2)
+        content.event_by_id.pop(ev1.id, None)
+        content.event_by_id.pop(ev2.id, None)
+
+    assert [item["rejected"] for item in out["new_issues"]] == [True, True]
+    assert full_character_selects == 1
 
 
 def test_event_pool_pending_rejected_vassal_appointment_does_not_block_gate(game):
