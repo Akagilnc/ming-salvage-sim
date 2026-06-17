@@ -22,7 +22,7 @@
 
 ## 探针设计铁律（已 grill 定，别违背 / 别重决；自 docs/TODO.md 🟣 迁来 2026-06-08）
 - **P1 决策当回合全量落库（第一铁律）**：凡下旨，机械后果**必须当回合全量落进 DB**，不许只活在邸报——带经费/俸/饷→`fiscal_creates`；练兵/募营/调将镇地→`new_armies`+`office_changes`；抄没/缴获/一次性→`economy_moves`；人物升黜→`office_changes`/`character_status_changes`。**判据**：restore 只读 DB 能无损接续=到位；需"我记得"补=漏了。（context 压缩后只剩 DB，挂叙事的后果全丢——探针实测最痛点。）
-- **P3 国策=「当下旨意的具体后果」，不是玩家点的进度树/科技树面板（品味护栏）**：真护栏=**皇帝角色保真**——这是模拟皇帝的模拟器，皇帝面前不该有能点的科技树/进度面板（同根=不亲手换兵种、P4 皇帝无表、actor 博弈>资源按钮）。**feel 非钦定悲剧**，是《冰汽时代1》式高压绝境求生 + 硬取舍 + **破局可真**（「越努力越难、但出路恒在」）。**长线发展/科技不是禁区，但「合理」须两轴都过**：①**形态**——经旨意/召对/奏报 diegetic（世界观叙事内）涌现（徐光启奏对「能从澳门葡人搞红夷炮练兵」=✅），不是大臣嘴里冒「先点 A 解锁 B」（面板话术=❌）；②**尺度**——史实合理范围一点点（红夷炮/燧发枪 ✅；蒸汽机/化肥/火车/飞机 跨几百年文明阶梯=❌越界）。**禁的是面板形态 + 越界尺度，不是发展/出路本身**。判据=「皇帝会不会坐这面板前点它」，不是「它给不给出路」（出路本就该有）。类型定位=微硬核模拟器（尺度预算低）；自由奔放版（放宽魔幻度、容科技树造飞机）=后面的事、另一个 mode。国策落点=建军/人物去向/营建/财政/局势这些**此刻实体后果**。⚠️ **这条只写 docs，绝不写进游戏 prompt**（meta 设计话不进游戏内容；曾误写进 season_simulator.md 已删）。（理由变更历史：原作「拒绝科技树…稀释悲剧」，2026-06-14 用户纠为「皇帝角色保真」——拒的是面板形态非发展本身、feel 非必悲剧。）
+- **P3 品味护栏 → [docs/ROLE_FIDELITY.md](docs/ROLE_FIDELITY.md)**：国策=旨意的具体后果（建军/人物去向/营建/财政/局势的此刻实体后果），**不是科技树/进度面板**；真护栏=皇帝角色保真 + 冰汽时代式高压求生（破局可真）；长线发展须「diegetic 形态 + 史实合理尺度」两轴过。⚠️ 只写 docs、不进游戏 prompt。全文与理由变更史见专档。
 - **P2 军备/城防建模（数据轴，判战永远 LLM 软判，代码只 clamp 不算胜负）**：军队 `firearm_equipment` 0-100（鸟铳，野战+守城）、`cannon_equipment` 随军红夷炮门数 cap 12（野战带不动多）；地区 `city_level` 0-5（静态史实分级，京师5）、`cannon` 城防红夷炮门数 cap=`city_level×8`（城头炮，守城关键）。佛郎机轻炮归 firearm；随军炮利攻、城防炮利守。
 - **P4 呈现层：DB 有数，皇帝无表（用户核心原则，2026-06-12 拍）**：玩家（皇帝）**永不见裸数值**——忠诚/能力/家产等一律定性叙事呈现（「军事能力优秀」，不是「98」）；皇帝透过奏对/行为/传闻读人，不看角色卡。数值照旧活在 DB 供引擎（与 P2 不冲突：P2 管引擎侧建模，P4 管呈现侧翻译）。配套方向（机制未设计，勿擅自展开）：锦衣卫可查家产但不保证准、精度拟挂目标「阴谋」类能力；叙事可留线索（「国丈哭穷」本身就是信息）。落 prompt 时用正向表述（「以奏疏口吻定性描述人物」），不写「不要显示数值」式负向句。
 
@@ -35,22 +35,32 @@
 - **运行形态（web 第一，CLI 沉浸版后续）**：**目前 web 版本是第一个尝试方向**，走真实 LLM 后端（codex / agy / hermes，见下）。**「agent session 直接当后端」属后续的 CLI 文字沉浸版**——session 串行（一次一个 LLM 调用）使它在 web 月末并发轰多个 extractor 时会死锁，故那条路留给 CLI 沉浸版、不用在 web。⚠️ 别再凭「探针走 CLI」判 web 路 bug「够不着玩家」：web 是当前真实运行形态，web 路的问题就是真问题。
 - **6 文件三向处置**（agents/simulation/registry/decree/memories/llm_model）：🟢 保留契约/骨架 🟡 提炼成我的玩法说明书 🔴 扔纯 agno 管道（`llm_model.py` 整扔）。**领域金矿本体在 `content/prompts/*.md`（13 个，尤其 `season_simulator.md` 16K 字裁判规则 + 4 个 `score_extractor`）**。
 
-## LLM 后端（对照 / 将来换模型用）
-hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`，base_url `http://127.0.0.1:8645/v1`，key 随便填。
-- `nous`：267 模型按量（`deepseek-v4-flash` 最便宜、`anthropic/claude-sonnet-4.6`/`openai/gpt-5.4` 质量高）。
-- `xai`：SuperGrok 订阅免费，但 grok 中文叙事弱、不适合本游戏。
-
-## 后端基准结论（2026-06-07，全文+证据见 `docs/LLM_BACKEND_BENCH.md`，暂存于此待迁专档）
-- **建 issue（结构化落库）**：codex 系（5.5/mini/spark）稳，spark 最快；**agy 偶发漏 `origin_kind` 被落库拒**（把 `decree` 错填进 `可撤销`、漏 `来源类型`，见 `web_server.log:97`）——偶发非常态。
-- **叙事（邸报/大臣奏对）**：claude（sonnet/haiku）最像人、最懂盘面；codex 系信息密度高但偏公文体；agy 够用。
-- **速度可用档（simulator ~40-50s）**：`gpt-5.3-codex-spark`、`gpt-5.5`、`agy`、**`haiku4.5 + MAX_THINKING_TOKENS=10000`**。
-- **淘汰交互**：`sonnet4.6`（simulator 5-7 分钟，生成 bound，关思考也救不动，留作离线叙事鉴赏）、`gpt-5.4-mini`（漏 `<<DECISION>>` 块=砍 HITL）。
-- **真 baseline = Opus 4.8 在 session 里当 LLM（形态1）**：`probe.db` 现存 14 条国策（id 4-18）是它建的，**不是 agy**（agy 只建了 turn16 的 id 19/20）。别再把 DB 战绩算到 agy 头上。
-- **工程坑（换 codex/claude 前必改）**：① codex 必须 `--skip-git-repo-check`（`cli_backend.py:150`，否则非 git cwd 秒失败）② codex 并发必须 `--ephemeral`（否则撞 session 状态丢空输出）③ codex 干净输出在 **stdout**（`OpenAI Codex v` 之前），日志在 stderr，别合并 ④ claude 无 gpt 的 `reasoning_effort` 档，用 `MAX_THINKING_TOKENS`（~10k≈medium），`claude -p` 默认重思考会拖慢。
-- **方法学免责**：本基准是单快照 + 部分并发噪声，结构化成功率别当真实多回合率（DB 实证 agy 真实建 issue 没那么差）；唯一干净速度数据是 thinking 串行 4 跑。
+## LLM 后端（换模型时查，非每回合）
+hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`，base_url `http://127.0.0.1:8645/v1`（`nous` 按量、`xai` SuperGrok 免费但中文叙事弱）。
+- **工程坑（换 codex/claude 前必改）**：codex 必须 `--skip-git-repo-check` + 并发 `--ephemeral`，干净输出在 stdout（日志在 stderr）；claude 用 `MAX_THINKING_TOKENS`（~10k≈medium）代 gpt 的 reasoning_effort，`claude -p` 默认重思考会拖慢。
+- **真 baseline = Opus 4.8 在 session 里当 LLM（形态1）**：`probe.db` 现存 14 条国策（id 4-18）是它建的，非 agy。
+- 各后端**质量/速度选型对比 + 方法学免责**（建 issue / 叙事 / 速度档 / 淘汰交互）→ 全文见 **[docs/LLM_BACKEND_BENCH.md](docs/LLM_BACKEND_BENCH.md)**。
 
 ## 金手指改动（本地实验，非上游原版）
 `content/buildings.json` 末尾加了 3 个建筑：皇家天佑金矿（国库 +800/月）、大明中央银行（内库 +300）、帝国航空（皇威 +10）。原理：建筑走真实月度流水，LLM 查账本认账；直接改国库余额会被大臣审计成「虚存」。**只对新开存档生效**（老档建筑已写进 DB）。
+
+## 开发流程（想法 → merge，2026-06-17 定，本项目试行）
+
+**贯穿原则**：持久件做小做单一（一条 ADR 一个不可逆决策、一个 issue 一个切片）；可逆细节不提前设计、留 `/tdd` 现场长（「最后责任时刻」：不可逆→设计时定，可逆→写码时长；设计时「忽然难受」=越线信号）。跨 session 靠文档 + 你本人 re-seed，**handoff ≠ 交接**（同一个你驱动）；session 边界画在「上下文满/脏」处、不钉死在某步，小功能可一个 session 连做。
+
+**流水线 + skill**：
+1. 想法 → 父 issue（`to-prd` 或手开薄 issue）= 一句说明 + **北极星/用户案例**（验收形状，不写 spec/文件路径）。
+2. （可选）`prototype` 去风险（状态/UI 开放问题）。
+3. `grill-with-docs`（+`grill-me`）→ **tiny 单决策 ADR** + `CONTEXT.md` 词表，挂回父 issue。**止于不可逆决策。**
+4. 设计评审：`ak-cross-m-review`（本地 cmr）+ 线上 4 bot → 合 ADR、Status→Accepted。〈设计侧到此结束〉
+5. `to-issues` 切 thin vertical-slice 子 issue（带 Parent + 验收 + HITL/AFK + blocked-by）。
+6. 逐切片 `tdd`（详设在 Planning 现场涌现、你在场拍）；硬 bug → `diagnose`、架构清理 → `improve-codebase-architecture`。
+7. 代码评审：per-slice `ak-cross-m-review` + ship-pre 双闸 + 线上 bot；`gstack-ship` 收尾。
+8. merge commit（不 squash）→ 关子 issue；全完 → 关父 issue。
+
+**两层分工（2026-06-16 定）**：策划+架构 session 出 ADR，开发 session 读 ADR 做（同一 agent 可兼策划/架构两角，但当下分清在哪层、别拿字段/schema/现有代码卡玩法设计）。
+**文档三层（采 Matt Pocock grill-with-docs DDD）**：① `CONTEXT.md`=领域词表（是什么、零实现）；② `docs/adr/`=非显然决策的为什么（**ADR-FORMAT：1-3 句、单决策、稀有**，hard-to-reverse / surprising / real-tradeoff 才建，不是 spec；大模板会把可逆细节吸进来＝过度设计，避开）；③ 详设/代码任务 → issue；④ 实现 → 代码。给 AI 最薄一层。
+**评审强度跟反悔成本走**：设计审狠（反悔贵）、代码审正确性。
 
 ## 规则
 - 所有 user-facing 输出用中文。
@@ -60,8 +70,6 @@ hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`�
 - **设计文档（ADR/契约/spec）与代码同等评审**：产出后必须跑完整评审闭环（本地 cmr 收敛 + 线上三 bot 收敛），不因「只是文档」跳步；用户出此类文档时**主动提醒走评审**。实证：ADR 0008 单文档 8 轮（本地 12→11→3→0 + 线上 4 轮），抓出毒 payload 软死锁、simulator-fallback 事务后门等设计级真洞（2026-06-10）。
 - **进 ship-pre / CMR 评审循环前必须确认 feature 全闭环完成，不是「核心写路径接通」就进（对所有 agent：Claude / codex / 其它，2026-06-13 立）**：Definition of Done = 所有闭环面都齐——**写入端 + 读取端 + 恢复端 + 真实 extractor 输出 + UI/呈现端 + 文档契约**，缺一面都不算 ship-ready。把「核心写路径接通 + 单元测试绿 + 前几轮 CMR 收敛」误当成「全闭环完成」两头亏：(1) 在不完整目标上启动昂贵的 ship-pre 评审循环，(2) CMR 一轮轮真抓闭环缺口、滚到离谱轮数才被外人判出「功能不足」。**判据**：进 ship-pre 前对着 plan 逐面点检 DoD，任一面（尤其读取/恢复/呈现这些最容易被「写路径接了」盖过的隐性面）未落 = 早了，先补完再进。注意这是 **ship-gate / DoD 判断**，不是编码能力——写路径接了、测试绿都可能为真，错在把「核心接通」当「全闭环完成」。实证：codex 跑 ADR 0009 person，写路径已接 + 25 单测绿、前几轮 CMR 收敛，但读取端（`offstage_ministers` 人才池）/恢复端/extractor/UI/文档闭环未齐，误进 ship-pre CMR 滚到 **r20** 才被旁路 session 判出「功能不足」（2026-06-13）。
 - **任何代码工作先开分支再动手**，main 工作区保持干净（多 session 并行，脏 main 影响别人）；**纯文档工作除外，可直接在 main 改并提交**（TODOS/README/docs 叙事类；用户 2026-06-11 明示。注意：ADR/契约/spec 类设计文档虽可在 main 直改，评审要求见上条不豁免）；常驻例外 = `content/buildings.json` 金手指。
-- **Session 分工（2026-06-16 用户定）**：**策划+架构 session**（游戏策划玩法 model + 架构/详细技术设计）与**开发 session**（写代码）分开，通过 **issue + 文档协调、优先 issue 好追溯**。同一 agent 可兼策划与架构两角，但**当下必须分清在策划层（只写玩法、不拿字段/schema/现有代码能力卡玩法设计）还是架构层、别混**；流程 = 策划拍板 → 架构/详细技术设计 → 编码甩开发 session。
-- **文档方法论（采 Matt Pocock 的 grill-with-docs DDD，2026-06-16 用户拍）**：刻意精简、三层分开，**不写「业务段+详细设计段」的重型设计书**——① **`CONTEXT.md`** = 领域语言术语表（概念「是什么」，零实现）；② **`docs/adr/`** = 非显然决策的「为什么」（精简，hard-to-reverse / surprising / real-tradeoff 才建，不是 spec）；③ **详细技术设计 / 代码任务 → issue**（给开发 handoff、走 issue 好追溯）；④ 实现 → 代码。给 AI 的是「最薄一层文档」。
 
 ## Agent skills
 
