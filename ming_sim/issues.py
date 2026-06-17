@@ -636,7 +636,9 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
 
 
 _CHARACTER_TEXT_GATE_RE = re.compile(r"^character\.([^.]+)\.([A-Za-z_][A-Za-z0-9_]*)$")
-_PENDING_PERSON_GATE_FIELDS = {"status", "location", "transit_to", "power_id", "office", "office_type"}
+_PENDING_PERSON_GATE_FIELDS = {
+    "status", "status_reason", "reason_code", "location", "transit_to", "power_id", "office", "office_type",
+}
 _TEXT_CONDITION_RE = re.compile(r"^\s*(==|!=)\s*([^\s]+)\s*$")
 
 
@@ -701,19 +703,21 @@ def _pending_person_changes_block_event_gate(
         if name in shadow_rows:
             return shadow_rows[name]
         row = db.conn.execute(
-            "SELECT status, location, transit_to, power_id, office, office_type, reason_code FROM characters WHERE name=?",
+            "SELECT status, status_reason, reason_code, location, transit_to, power_id, office, office_type "
+            "FROM characters WHERE name=?",
             (name,),
         ).fetchone()
         if row is None:
             return None
         data = {
             "status": str(row["status"] or "active"),
+            "status_reason": str(row["status_reason"] or ""),
+            "reason_code": str(row["reason_code"] or ""),
             "location": str(row["location"] or ""),
             "transit_to": str(row["transit_to"] or ""),
             "power_id": str(row["power_id"] or "ming"),
             "office": str(row["office"] or ""),
             "office_type": str(row["office_type"] or ""),
-            "reason_code": str(row["reason_code"] or ""),
         }
         shadow_rows[name] = data
         return data
@@ -759,6 +763,8 @@ def _pending_person_changes_block_event_gate(
             continue
         cur_status = row_value(row, "status", "active")
         if action in {"罢黜", "处置"}:
+            reason_text = str(item.get("reason") or item.get("status_reason") or "")
+            reason_code = normalize_reason_code(item.get("reason_code"))
             if action == "罢黜":
                 status = "dismissed"
             else:
@@ -777,6 +783,8 @@ def _pending_person_changes_block_event_gate(
             if transition.startswith("reject:"):
                 continue
             overlay(name, "status", status)
+            overlay(name, "status_reason", reason_text[:200])
+            overlay(name, "reason_code", reason_code if reason_code else "")
             overlay(name, "office", "")
             overlay(name, "transit_to", "")
         elif action == "行止":
@@ -826,6 +834,8 @@ def _pending_person_changes_block_event_gate(
                 continue
             overlay(name, "power_id", new_power)
             overlay(name, "status", "active")
+            overlay(name, "status_reason", str(item.get("reason") or "")[:200])
+            overlay(name, "reason_code", "")
             overlay(name, "office", new_title)
             overlay(name, "office_type", "身名分")
             overlay(name, "transit_to", "")
@@ -833,6 +843,7 @@ def _pending_person_changes_block_event_gate(
             new_office = str(item.get("office") or item.get("new_office") or "").strip()
             if not new_office:
                 continue
+            normalized_office = normalize_office(new_office)
             if content is not None:
                 character = content.characters.get(name)
                 if character is None or is_vassal_prince(character):
@@ -848,10 +859,23 @@ def _pending_person_changes_block_event_gate(
             if row_value(row, "power_id", "ming") not in {"", "ming"}:
                 continue
             overlay(name, "status", "active")
-            overlay(name, "office", new_office)
-            overlay(name, "office_type", item.get("office_type") or item.get("new_office_type") or row_value(row, "office_type"))
+            if cur_status == "active":
+                overlay(name, "status_reason", "")
+            else:
+                overlay(name, "status_reason", str(item.get("reason") or "")[:200] or "诏书任命")
+            overlay(name, "reason_code", "")
+            overlay(name, "office", normalized_office)
+            overlay(
+                name,
+                "office_type",
+                infer_office_type_from_office(
+                    normalized_office,
+                    item.get("office_type") or item.get("new_office_type") or row_value(row, "office_type"),
+                    db.llm_config,
+                ),
+            )
             overlay(name, "transit_to", "")
-            new_parts = [p for p in normalize_office(new_office).split(",") if _is_exclusive_office(p)]
+            new_parts = [p for p in normalized_office.split(",") if _is_exclusive_office(p)]
             if new_parts:
                 all_names = {
                     str(r["name"])
@@ -882,6 +906,8 @@ def _pending_person_changes_block_event_gate(
                     overlay(other_name, "office", displaced_office)
                     overlay(other_name, "office_type", displaced_type)
                     if not kept:
+                        overlay(other_name, "status_reason", "被顶替")
+                        overlay(other_name, "reason_code", "被顶替")
                         overlay(other_name, "transit_to", "")
         else:
             continue
