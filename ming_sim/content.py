@@ -26,6 +26,7 @@ from ming_sim.constants import (
     GATE_AGG_FUNCS,
     GATE_METRIC_KEYS,
     GATE_TABLES,
+    CHARACTER_TEXT_FIELDS,
     POWER_TEXT_FIELDS,
     REGION_TEXT_FIELDS,
 )
@@ -36,6 +37,7 @@ _GATE_TEXT_FIELDS = {
     "region": set(REGION_TEXT_FIELDS),
     "army": set(ARMY_TEXT_FIELDS),
     "power": set(POWER_TEXT_FIELDS),
+    "character": set(CHARACTER_TEXT_FIELDS),
 }
 from ming_sim.models import (
     Army,
@@ -234,6 +236,7 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
                 region_hint=str(item.get("region_hint") or ""),
                 issue_tags=string_list(item.get("tags"), f"{filename}[{idx}].tags") if item.get("tags") else [],
                 ongoing_effects=dict(item.get("ongoing_effects") or {}),
+                effect_on_trigger=dict(item.get("effect_on_trigger") or {}),
                 effect_on_resolve=dict(item.get("effect_on_resolve") or {}),
                 effect_on_fail=dict(item.get("effect_on_fail") or {}),
             )

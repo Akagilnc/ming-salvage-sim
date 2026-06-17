@@ -33,6 +33,11 @@ _REGION_DIRECT_TUPLE = REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + REGION_TEX
 _REGION_DIRECT_SET = frozenset(_REGION_DIRECT_TUPLE)
 _REGION_NUMERIC_SET = frozenset(REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS)
 _ARMY_VALID_SET = frozenset(ARMY_SCORE_FIELDS + ARMY_QUANTITY_FIELDS + ARMY_TEXT_FIELDS)
+_COMMITMENT_STOP_CONDITION_RE = re.compile(r"character\.[^.]+\.loyalty\s*(?:>=|>)\s*\d+")
+
+
+def _is_commitment_stop_condition(resolve_condition: object) -> bool:
+    return bool(_COMMITMENT_STOP_CONDITION_RE.fullmatch(str(resolve_condition or "").strip()))
 
 
 def _new_army_historically_applied(it: dict) -> bool:
@@ -2026,6 +2031,7 @@ class GameDB:
         status: str,
         reason: str = "",
         reason_code: str | None = None,
+        commit: bool = True,
     ) -> None:
         """改人物状态：active/offstage/dismissed/imprisoned/exiled/retired/dead。
         大臣走 characters 表；后宫（consorts）走内存对象 + consort_traits 备档。
@@ -2055,7 +2061,8 @@ class GameDB:
         # #9：状态变更后全重算该人物所属朝堂派系 leverage（绝对值、读当前所有在朝成员 → 无漂移）。
         if prev is not None:
             self.recompute_faction_leverage(str(prev["faction"] or ""))
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
     def _faction_office_weight_sum(self, faction: str) -> float:
         """该 faction 当前所有 status='active' 的大明成员的官职权重和
@@ -2207,6 +2214,7 @@ class GameDB:
         derived_from: str = "",
         normalized: str | Dict[str, object] = "",
         source: str = "",
+        commit: bool = True,
     ) -> None:
         if isinstance(normalized, dict):
             normalized_text = json.dumps(normalized, ensure_ascii=False, sort_keys=True)
@@ -2230,7 +2238,8 @@ class GameDB:
                 str(source or "")[:80],
             ),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
     def get_character_status(self, name: str) -> Tuple[str, str]:
         row = self.conn.execute(
@@ -2254,6 +2263,7 @@ class GameDB:
     def apply_character_power_changes(
         self,
         changes: List[Dict[str, object]],
+        commit: bool = True,
     ) -> List[Dict[str, object]]:
         """据 extractor 输出改人物 power_id（降将/叛臣/归正）。new_power 须为合法 power id。"""
         applied: List[Dict[str, object]] = []
@@ -2300,7 +2310,8 @@ class GameDB:
                 (new_power, name),
             )
             applied.append({"name": name, "old_power": old_power, "new_power": new_power, "reason": reason})
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return applied
 
     def set_character_office(
@@ -2310,6 +2321,7 @@ class GameDB:
         office_type: str = "",
         source: str = "诏书调任",
         llm_config: Any = None,
+        commit: bool = True,
     ) -> None:
         """既有官员调任/升迁：改 characters.office（office_type 给空则不动），
         同步 character_offices 备档。状态不变（仍 active）。
@@ -2352,7 +2364,8 @@ class GameDB:
         ).fetchone()
         if faction_row is not None:
             self.recompute_faction_leverage(str(faction_row["faction"] or ""))
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         if name in self.content.characters:
             self.content.characters[name].office = office
             self.content.characters[name].office_type = eff_type
@@ -2530,6 +2543,7 @@ class GameDB:
         character: "Character",
         source: str = "",
         llm_config: Any = None,
+        commit: bool = True,
     ) -> None:
         """运行时新建人物（吏部任命/皇帝点名）。已存在同名则不动，避免覆盖既有状态。"""
         existing = self.conn.execute(
@@ -2605,7 +2619,8 @@ class GameDB:
         is_consort = character.office_type == "后宫" or character.faction == "后宫"
         if character.status == "active" and power_id == "ming" and not is_consort:
             self.recompute_faction_leverage(str(character.faction or ""))
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
     def record_economy_moves(
         self,
@@ -2865,6 +2880,7 @@ class GameDB:
         self,
         state: GameState,
         updates: Dict[str, Dict[str, object]],
+        commit: bool = True,
     ) -> List[Dict[str, object]]:
         allowed_fields = {"leverage", "military_strength", "supply"}
         changes: List[Dict[str, object]] = []
@@ -2969,7 +2985,8 @@ class GameDB:
                     "delta": log_delta,
                     "reason": reason,
                 })
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return changes
 
     def apply_power_rename(
@@ -6136,7 +6153,8 @@ class GameDB:
         new_phase = self._derive_issue_phase(to_value)
         new_status = row["status"]
         closed_turn = row["closed_turn"]
-        if to_value >= 100:
+        commitment_stop_condition = _is_commitment_stop_condition(row["resolve_condition"])
+        if to_value >= 100 and not commitment_stop_condition:
             new_status = "resolved"
             closed_turn = state.turn
         elif to_value <= 0 and can_collapse:
