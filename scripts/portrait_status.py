@@ -70,7 +70,7 @@ def main() -> None:
         "> 自动生成：`.venv/bin/python scripts/portrait_status.py`。改图后重跑刷新。",
         "> 人员名单来源：`content/characters.json`。臣僚/外臣/流寇 = `minister_<中文名>.png`；开局后宫 = `consort_<中文名>.png`；后宫池 = `consort_pool_<N>.png`（不绑人）。",
         "> 口径：这是旧版“文件是否存在”进度表，只检查运行时取图文件是否存在；不是 scene-v2 暗色立绘 prompt / 验收真源。",
-        "> scene-v2 真源：`docs/portrait-prompts-scene-v2.md`；本轮只验收并落盘南明/地方 12 张，其余旧图保留到后续批次。",
+        "> scene-v2 真源：`docs/portrait-prompts-scene-v2.md`；已兑现资产范围以对应 PR/批次实际 touched 的 `web/public/portraits/*.png` 和评审记录为准，本表不维护验收范围。",
         "",
         f"## 人物专属图（{m_done}/{m_n} 已生成）",
         "",
