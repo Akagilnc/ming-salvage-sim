@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""批量生人物立绘。从 docs/portrait-prompts.md 解析 (文件名, prompt)，调 gpt-image-2 落盘。
+"""旧白底人物立绘批量生成器。
+
+本脚本只服务 docs/portrait-prompts.md 的旧白底全身画像规格。当前暗色
+scene-v2 立绘真源是 docs/portrait-prompts-scene-v2.md，不能用本脚本生成。
 
 key 走环境变量 OPENAI_IMAGE_KEY，绝不写文件。可重跑：已存在的 png 跳过。
 
 用法：
   export OPENAI_IMAGE_KEY=sk-xxx
-  .venv/bin/python scripts/gen_portraits.py            # 跑全部缺失
-  .venv/bin/python scripts/gen_portraits.py --only wang_chengen   # 只跑文件名含此串的
-  .venv/bin/python scripts/gen_portraits.py --limit 3  # 只跑前 N 张（试水）
+  .venv/bin/python scripts/gen_portraits.py --legacy-white-bg            # 跑全部缺失
+  .venv/bin/python scripts/gen_portraits.py --legacy-white-bg --only wang_chengen   # 只跑文件名含此串的
+  .venv/bin/python scripts/gen_portraits.py --legacy-white-bg --limit 3  # 只跑前 N 张（试水）
 """
 from __future__ import annotations
 
@@ -96,7 +99,19 @@ def main() -> None:
     ap.add_argument("--timeout", type=int, default=180)
     ap.add_argument("--retries", type=int, default=2, help="单张失败重试次数")
     ap.add_argument("--workers", type=int, default=1, help="并发线程数")
+    ap.add_argument(
+        "--legacy-white-bg",
+        action="store_true",
+        help="确认使用旧白底 docs/portrait-prompts.md 规格；scene-v2 不走本脚本",
+    )
     args = ap.parse_args()
+
+    if not args.legacy_white_bg:
+        raise SystemExit(
+            "scripts/gen_portraits.py 只服务旧白底 docs/portrait-prompts.md 规格；"
+            "当前 scene-v2 立绘真源是 docs/portrait-prompts-scene-v2.md，不能用本脚本生成。"
+            "如确需旧规格，传 --legacy-white-bg。"
+        )
 
     key = os.environ.get("OPENAI_IMAGE_KEY", "").strip()
     if not key:
