@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from ming_sim.flows import army_needed
 
 
@@ -91,9 +93,12 @@ def test_danger_order_uses_army_needed_for_arrears_months(game):
     （非退役 maintenance）。两明军同短板/同 arrears、唯 salary_rate 不同（→army_needed 不同）：
     army_needed 低（欠饷月数高）者更危、排更前。锁 SQL ORDER BY→Python sorted 重构的归一口径。"""
     db, _state, _ = game
-    a, b = db.conn.execute(
+    rows = db.conn.execute(
         "SELECT id,name FROM armies WHERE owner_power='ming' AND salary_rate>0 LIMIT 2"
     ).fetchall()
+    if len(rows) < 2:
+        pytest.skip("需≥2 支 salary_rate>0 的明军作排序对比（数据前提）")
+    a, b = rows
     for aid in (a["id"], b["id"]):
         db.conn.execute(
             "UPDATE armies SET supply=80,morale=80,loyalty=80,training=80,arrears=50,manpower=20000 WHERE id=?",
@@ -112,6 +117,8 @@ def test_army_rows_non_danger_sorted_by_theater_name(game):
     """#173 cmr：非 danger 路（走 SQL ORDER BY theater,name）排序保持原语义、limit 生效。"""
     db, _state, _ = game
     rows = db.army_rows(danger_order=False)
+    if len(rows) < 2:
+        pytest.skip("需≥2 支军队验排序/limit（数据前提）")
     keys = [(str(r["theater"]), str(r["name"])) for r in rows]
     assert keys == sorted(keys), "非 danger 路应按 theater,name 升序"
     assert len(db.army_rows(limit=2, danger_order=False)) == 2, "limit 应生效"

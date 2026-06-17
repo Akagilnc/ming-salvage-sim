@@ -263,6 +263,8 @@ def _army_rows_with_needed(
     供 army_needed 计算；drop 列仅用于算、不进盘面（默认 salary_rate；调用方原本无 owner_power 的也一并
     drop 以最小化盘面列变化）。maintenance_per_turn 退役、留作 extractor 写端兼容。"""
     from ming_sim.flows import army_needed
+    if isinstance(drop, str):  # 防御：误传单字符串会被 for 逐字符迭代（线上 gemini）
+        drop = (drop,)
     out: List[Dict[str, object]] = []
     for r in db.conn.execute(select_sql).fetchall():
         d = dict(r)
