@@ -15,7 +15,7 @@ from ming_sim.constants import (
     ARMY_SCORE_FIELDS, ARMY_QUANTITY_FIELDS, ARMY_TEXT_FIELDS, FISCAL_SCORE_FIELDS,
     BUILDING_SCORE_FIELDS, BUILDING_QUANTITY_FIELDS, BUILDING_TEXT_FIELDS,
     POWER_SCORE_FIELDS, POWER_TEXT_FIELDS, CHARACTER_TEXT_FIELDS,
-    REGION_FIELD_ALIASES, ARMY_FIELD_ALIASES, GATE_TABLES,
+    REGION_FIELD_ALIASES, ARMY_FIELD_ALIASES, POWER_FIELD_ALIASES, GATE_TABLES,
 )
 from ming_sim.content import GameContent
 from ming_sim.context import victory_status
@@ -639,13 +639,16 @@ _CHARACTER_TEXT_GATE_RE = re.compile(r"^character\.([^.]+)\.([A-Za-z_][A-Za-z0-9
 _PENDING_PERSON_GATE_FIELDS = {
     "status", "status_reason", "reason_code", "location", "transit_to", "power_id", "office", "office_type",
 }
+_PENDING_POWER_GATE_FIELDS = {"leverage", "military_strength", "supply"}
 _TEXT_CONDITION_RE = re.compile(r"^\s*(==|!=)\s*([^\s]+)\s*$")
+_NUMERIC_CONDITION_RE = re.compile(r"^\s*(>=|<=|>|<|==)\s*(-?\d+)\s*$")
 
 
 def _register_runtime_rollback_snapshot(
     db: GameDB,
     state: GameState,
     content: Optional[GameContent],
+    registry: object = None,
 ) -> None:
     """Restore process memory if the caller rolls back the surrounding DB transaction."""
     conn = db.conn
@@ -661,19 +664,30 @@ def _register_runtime_rollback_snapshot(
             character_attrs[name] = dict(vars(character))
         except TypeError:
             character_attrs[name] = {}
+    registry_agents = getattr(registry, "agents", None)
+    registry_session_ids = getattr(registry, "session_ids", None)
+    registry_agents_snapshot = dict(registry_agents) if isinstance(registry_agents, dict) else None
+    registry_session_ids_snapshot = (
+        dict(registry_session_ids) if isinstance(registry_session_ids, dict) else None
+    )
 
     def restore_runtime() -> None:
         state.metrics.clear()
         state.metrics.update(metrics_snapshot)
-        if content is None:
-            return
-        for name in list(content.characters):
-            if name not in character_objects:
-                del content.characters[name]
-        for name, character in character_objects.items():
-            content.characters[name] = character
-            for attr, value in character_attrs.get(name, {}).items():
-                setattr(character, attr, value)
+        if content is not None:
+            for name in list(content.characters):
+                if name not in character_objects:
+                    del content.characters[name]
+            for name, character in character_objects.items():
+                content.characters[name] = character
+                for attr, value in character_attrs.get(name, {}).items():
+                    setattr(character, attr, value)
+        if registry_agents_snapshot is not None and isinstance(registry_agents, dict):
+            registry_agents.clear()
+            registry_agents.update(registry_agents_snapshot)
+        if registry_session_ids_snapshot is not None and isinstance(registry_session_ids, dict):
+            registry_session_ids.clear()
+            registry_session_ids.update(registry_session_ids_snapshot)
 
     callbacks.append(restore_runtime)
 
@@ -695,6 +709,8 @@ def _pending_person_changes_block_event_gate(
         return False
     pending_fields: Dict[str, Dict[str, str]] = {}
     shadow_rows: Dict[str, Dict[str, str]] = {}
+    pending_power_fields: Dict[str, Dict[str, int]] = {}
+    power_shadow_rows: Dict[str, Dict[str, int]] = {}
 
     def row_value(row: Dict[str, str], field: str, default: str = "") -> str:
         return str(row.get(field) or default)
@@ -727,6 +743,78 @@ def _pending_person_changes_block_event_gate(
         pending_fields.setdefault(name, {})[field] = value_text
         if name in shadow_rows:
             shadow_rows[name][field] = value_text
+
+    def power_row(power_id: str) -> Optional[Dict[str, int]]:
+        if power_id in power_shadow_rows:
+            return power_shadow_rows[power_id]
+        row = db.conn.execute(
+            "SELECT leverage, military_strength, supply FROM powers WHERE id=?",
+            (power_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        data = {
+            "leverage": int(row["leverage"] or 0),
+            "military_strength": int(row["military_strength"] or 0),
+            "supply": int(row["supply"] or 0),
+        }
+        power_shadow_rows[power_id] = data
+        return data
+
+    def overlay_power_delta(power_id: object, raw_changes: object) -> None:
+        pid = str(power_id or "").strip()
+        if not pid or not isinstance(raw_changes, dict):
+            return
+        row = power_row(pid)
+        if row is None:
+            return
+        for raw_field, value in raw_changes.items():
+            field = POWER_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
+            if field in {"reason", "last_action"}:
+                continue
+            if field not in _PENDING_POWER_GATE_FIELDS:
+                continue
+            try:
+                if isinstance(value, bool) or isinstance(value, float):
+                    raise ValueError("非整数 delta")
+                delta = int(value)
+            except (TypeError, ValueError):
+                continue
+            old_value = int(row[field])
+            new_value = max(0, min(100, old_value + delta))
+            if new_value == old_value:
+                continue
+            row[field] = new_value
+            pending_power_fields.setdefault(pid, {})[field] = new_value
+
+    def pending_power_gate_value(key: str) -> Optional[int]:
+        parts = key.split(".")
+        if not parts or parts[0] != "power":
+            return None
+        agg = None
+        if parts[-1] in _GATE_AGG_FUNCS:
+            agg = parts[-1]
+            parts = parts[:-1]
+        if len(parts) != 3:
+            return None
+        _, id_segment, raw_field = parts
+        field = _gate_sql_field("power", raw_field, key, kind="numeric")
+        if field not in _PENDING_POWER_GATE_FIELDS:
+            return None
+        ids = [pid for pid in id_segment.split("|") if pid]
+        if not ids or not any(field in pending_power_fields.get(pid, {}) for pid in ids):
+            return None
+        values: List[int] = []
+        for pid in ids:
+            row = power_row(pid)
+            if row is None:
+                return None
+            values.append(int(row[field]))
+        if len(values) == 1:
+            return values[0]
+        if agg is None:
+            agg = "min"
+        return int(_GATE_AGG_FUNCS[agg](values))
 
     def current_title_kind(row: Dict[str, str]) -> str:
         current_office = row_value(row, "office").strip()
@@ -839,6 +927,8 @@ def _pending_person_changes_block_event_gate(
             overlay(name, "office", new_title)
             overlay(name, "office_type", "身名分")
             overlay(name, "transit_to", "")
+            for power_id, raw_changes in backlash.items():
+                overlay_power_delta(power_id, raw_changes)
         elif action in {"任命", "调任"}:
             new_office = str(item.get("office") or item.get("new_office") or "").strip()
             if not new_office:
@@ -912,7 +1002,7 @@ def _pending_person_changes_block_event_gate(
         else:
             continue
 
-    if not pending_fields:
+    if not pending_fields and not pending_power_fields:
         return False
     for key, cond in ev.trigger_gate.items():
         match = _CHARACTER_TEXT_GATE_RE.fullmatch(str(key))
@@ -932,6 +1022,25 @@ def _pending_person_changes_block_event_gate(
         if op == "==" and actual != expected:
             return True
         if op == "!=" and actual == expected:
+            return True
+    for key, cond in ev.trigger_gate.items():
+        actual = pending_power_gate_value(str(key))
+        if actual is None:
+            continue
+        cond_match = _NUMERIC_CONDITION_RE.fullmatch(str(cond))
+        if cond_match is None:
+            continue
+        op, expected_text = cond_match.groups()
+        expected = int(expected_text)
+        if op == ">=" and not actual >= expected:
+            return True
+        if op == "<=" and not actual <= expected:
+            return True
+        if op == ">" and not actual > expected:
+            return True
+        if op == "<" and not actual < expected:
+            return True
+        if op == "==" and not actual == expected:
             return True
     return False
 
@@ -2947,7 +3056,7 @@ def apply_score_extraction(
     caller_transaction = db.conn.in_transaction
     commit_now = not caller_transaction
     if caller_transaction:
-        _register_runtime_rollback_snapshot(db, state, content)
+        _register_runtime_rollback_snapshot(db, state, content, registry)
     # 0) 落库前校验容器/二级类型,畸形值崩前拦住,不让前面字段半落库(#57)。
     validate_delta_shape(extracted)
     candidate_event_ids_at_input = {candidate.id for candidate in gather_candidate_events(state, db)}
