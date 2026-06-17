@@ -154,6 +154,9 @@ def _humanize_condition(text: str) -> str:
     """把结案/失败条件里的技术 key 替换成玩家可读中文（仅用于展示）。"""
     if not text:
         return text
+    character_loyalty = re.fullmatch(r"\s*character\.([^.]+)\.loyalty\s*(?:>=|>)\s*\d+\s*", text)
+    if character_loyalty:
+        return f"{character_loyalty.group(1)}忠诚回稳"
     for src, dst in _CONDITION_DISPLAY_REPLACEMENTS:
         text = text.replace(src, dst)
     return text
