@@ -101,3 +101,34 @@ def test_appease_mao_commitment_bar_100_stays_active_until_explicit_close(game):
     assert row["bar_value"] == 100
     assert row["status"] == "active"
     assert row["closed_turn"] is None
+
+
+def test_appease_mao_commitment_rejects_direct_resolved_close_until_completion_flow(game):
+    """post-merge CMR：人物承诺型 stop_condition 不由 close_issues resolved 直接结案。"""
+    import ming_sim.issues as I
+
+    db, state, _ = game
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="安抚毛文龙·进行中",
+        origin_kind="decree",
+        bar_value=100,
+        stage_text="毛文龙态度已有转圜",
+        cancellable="decree",
+        resolve_condition="character.毛文龙.loyalty >= 65",
+        effect_on_resolve={"metrics": {"皇威": 1}},
+    )
+
+    out = I.apply_issue_tracker_output(
+        db,
+        state,
+        {"close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "误按承诺完成结案"}]},
+    )
+
+    close = out["closes"][0]
+    assert close["rejected"] is True
+    assert close["category"] == "invalid_enum"
+    assert "承诺" in close["reason"]
+    row = db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()
+    assert row["status"] == "active"
