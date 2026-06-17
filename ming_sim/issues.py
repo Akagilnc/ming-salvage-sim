@@ -1430,6 +1430,7 @@ def _displace_duplicate_offices(
     if not new_parts:
         return []
     displaced: List[str] = []
+    displaced_names: set[str] = set()  # #9 cmr R1：被顶替者去重，循环后逐派系重算 leverage。
     rows = db.conn.execute(
         "SELECT name, office FROM characters WHERE status='active' AND power_id='ming' AND name!=?",
         (new_holder,),
@@ -1439,6 +1440,7 @@ def _displace_duplicate_offices(
         kept = [p for p in holder_parts if p not in new_parts]
         if len(kept) == len(holder_parts):
             continue  # 此人不占同名独缺
+        displaced_names.add(row["name"])
         for lost in (p for p in holder_parts if p in new_parts):
             displaced.append(f"{row['name']}:{lost}")
         fully_displaced = not kept
@@ -1473,6 +1475,22 @@ def _displace_duplicate_offices(
                 ch.status_reason = "被顶替"
                 ch.reason_code = "被顶替"
                 ch.transit_to = ""
+    # #9 cmr R1：被顶替者的 office_type 经上方裸 UPDATE 改了（全顶替→身名分=0 权重），绕过了
+    # set_character_office 钩子，故其所属派系（常与新任者异派系）的 leverage 须在此补重算，否则
+    # 残留偏高、违 #9 不变式。新任者自身派系已由 set_character_office 钩子重算，这里只补被顶替者。
+    # commit 前调用——recompute 读当前在朝成员、不内部 commit，正反映刚改完的 office_type；
+    # 绝对幂等（非白名单 return、重复无害）。去重后逐派系各调一次。
+    displaced_factions = set()
+    for dn in displaced_names:
+        frow = db.conn.execute(
+            "SELECT faction FROM characters WHERE name=?", (dn,)
+        ).fetchone()
+        # 空/None faction 提前滤掉（recompute_faction_leverage("") 虽被白名单校验 no-op，
+        # 但提前过滤免去无意义调用，集合也不残留空串。线上 R5 gemini medium。
+        if frow is not None and frow["faction"]:
+            displaced_factions.add(str(frow["faction"]))
+    for fac in displaced_factions:
+        db.recompute_faction_leverage(fac)
     db.conn.commit()
     return displaced
 
@@ -1492,6 +1510,16 @@ def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
             "FROM character_offices"
         ).fetchall()
     ]
+    # #9：起复路（apply_office_appointment）中途经 set_character_status/set_character_office 会
+    # 全重算 factions.leverage；失败回滚必须连 leverage 一并还原，否则 leverage 凭空抬高（违「全有或全无」）。
+    # #9 R1 finding#2：leverage 现由 offset+权重派生、二者是一个逻辑态；若包裹流里 offset 被改
+    # （adjust_factions 白名单路改 offset）后回滚，须连 leverage_offset 一并还原，否则基线漂移。
+    faction_rows = [
+        dict(row)
+        for row in db.conn.execute(
+            "SELECT name, leverage, leverage_offset FROM factions"
+        ).fetchall()
+    ]
     content_rows = {}
     if content is not None:
         content_rows = {
@@ -1505,11 +1533,11 @@ def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
             }
             for name, ch in content.characters.items()
         }
-    return character_rows, office_rows, content_rows
+    return character_rows, office_rows, faction_rows, content_rows
 
 
 def _restore_person_write_state(db: GameDB, content: Optional[GameContent], snapshot) -> None:
-    character_rows, office_rows, content_rows = snapshot
+    character_rows, office_rows, faction_rows, content_rows = snapshot
     db.conn.execute("DELETE FROM character_offices")
     snapshot_names = {str(row["name"]) for row in character_rows}
     if snapshot_names:
@@ -1551,6 +1579,13 @@ def _restore_person_write_state(db: GameDB, content: Optional[GameContent], snap
             )
             for row in office_rows
         ],
+    )
+    # #9：还原 factions.leverage + leverage_offset（起复路中途的全重算回滚，与 character 状态一并
+    # 还原）。R1 finding#2：offset 是基线逻辑态，漏还原则即便 leverage 还原也会被后续 reconcile 用脏
+    # offset 重算回去 → 基线漂移。
+    db.conn.executemany(
+        "UPDATE factions SET leverage=?, leverage_offset=? WHERE name=?",
+        [(row["leverage"], row["leverage_offset"], row["name"]) for row in faction_rows],
     )
     db.conn.commit()
     if content is not None:
