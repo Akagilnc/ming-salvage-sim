@@ -186,7 +186,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 场景服饰：深蓝黑文官袍，整洁讲究，带兵部户部之间的筹策气；军政筹划值房，无字战略地图、无字军报、算盘、封缄文书、十枚不同方向木筹或铜钉。
 
-专属负面：不要画成年轻轻浮公子，不要画成炫技军师脸谱，不要与朱燮元共用西南山地军帐坐姿治理模型；杨嗣昌的核心必须是俯身木筹布网和十面张网。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要画成年轻轻浮公子，不要画成炫技军师脸谱，不要与朱燮元共用西南山地军帐坐姿治理模型；杨嗣昌的核心必须是俯身木筹布网和十面张网；不要在战略地图、军报、算盘或封缄文书上出现文字、地名、数字、符号或伪 glyph，地图只保留木筹与纯线条。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 温体仁 `minister_温体仁.png`
 
@@ -909,7 +909,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 场景服饰：深蓝巡抚文官袍，盐渍海风披风，低黑风帽或压低官帽；金门海防楼台，火船模型、无字郑芝龙水师令牌、无刻字荷兰夹板船木牌、火把、炮烟、灰海。
 
-专属负面：不要像吴甡的黄土赈济短方脸，不要白旗，不要黄河行营，不要清洁高乌纱模板，不要与袁可立、张延登共用海防楼台半侧身按海防道具姿态；邹维琏必须突出两指推火船模型押注海战。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要像吴甡的黄土赈济短方脸，不要白旗，不要黄河行营，不要清洁高乌纱模板，不要与袁可立、张延登共用海防楼台半侧身按海防道具姿态；邹维琏必须突出两指推火船模型押注海战；不要在郑芝龙水师令牌、荷兰船牌、火船模型或海防道具上出现文字、姓名、徽记、印文、编号或伪 glyph。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 练国事 `minister_练国事.png`
 人物：练国事，东林御史，疏劾魏忠贤被削籍，崇祯时巡抚陕西，崇祯五年俘杀点灯子、刘道江等六十余名流寇首领，后因陈奇瑜事遣戍。
@@ -1183,7 +1183,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 脸部锚点：脸型=方正偏宽；额头=平实；眉眼=眉粗、眼神精明；鼻梁=厚直；颧骨=结实；嘴唇=厚而稳；下颌=方实；胡须/发饰=辫发、短须；肤色=风霜偏黑、带火光烤红；皱纹/年龄纹=四十多岁、额上汗纹；神情=技术官精干夹降人审慎。
 姿势锚点：身体朝向=半蹲在炮模与炉火之间，身体侧向炮架；重心=压在前膝和伸向炮架的手臂之间；双手位置=右手把无字献炮令牌放到炮架边，左手撑在无刻字炮模旁的木架上，不直接扶炮身；道具关系=炮模、炉火、炮架、无字献炮令牌成套；视线方向=从令牌抬向炮成方向；动作类型=半蹲、置牌、撑架验模，不是站姿扶炮握令。
 场景服饰：后金火器作坊，炮模、无铭文无刻字的红夷炮小炮身、炮架、火药罐、无数字无刻字量尺、铁水火光、无字验收木牌；后金汉军官服，深色皮袍，工匠围布或护臂，衣上煤灰，手指带煤黑。
-专属负面：不要画成文馆谋士或明朝火器官、不要纯文士装，不要与王尊德共用站姿前倾扶炮持文书的验炮姿态，不要出现工匠、铸炮工、背景人群、第二个人、背景人脸或伸进画面的手，不要在量尺、炮身、验收木牌或炮模上出现数字、刻痕、文字、铭文或伪 glyph。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要画成文馆谋士或明朝火器官、不要纯文士装，不要与王尊德共用站姿前倾扶炮持文书的验炮姿态，不要出现工匠、铸炮工、背景人群、第二个人、背景人脸或伸进画面的手，不要在献炮令牌、令牌、量尺、炮身、验收木牌或炮模上出现数字、刻痕、文字、铭文、徽记或伪 glyph。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 林丹汗 `minister_林丹汗.png`
 
@@ -1427,7 +1427,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 场景服饰：南明/大西混合军装，深色甲衣，暗红披风，佩刀低调；湖南衡州军帐或战后高地，火盆、无字军图、两枚牌面朝下的无字敌王令牌、破旗碎片、战马阴影。
 
-专属负面：不要和孙可望画成兄弟脸，不要圆厚王爵脸，不要流民少年，也不要普通成熟将军，不要与何腾蛟共用半跪军图前双手摆弄令牌/符筹剪影。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
+专属负面：不要和孙可望画成兄弟脸，不要圆厚王爵脸，不要流民少年，也不要普通成熟将军，不要与何腾蛟共用半跪军图前双手摆弄令牌/符筹剪影，不要在两枚敌王令牌、令牌背面、小旗、军图或破旗碎片上出现王字、文字、数字、刻痕、徽记、印文或伪 glyph；令牌可见面必须是纯素无标记材质。Do not reuse the same actor face, facial structure, beard pattern, body type, pose, or silhouette as other portraits in this batch.
 
 #### 孙可望 `minister_孙可望.png`
 
