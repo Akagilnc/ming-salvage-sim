@@ -1940,6 +1940,7 @@ def _strategic_event_result_preflight_error(
     state: GameState,
     event_id: str,
     event_title: str,
+    outcome_label: str,
     region_deltas: Dict[str, object],
     army_deltas: Dict[str, object],
     person_changes: List[Dict[str, object]],
@@ -1965,8 +1966,115 @@ def _strategic_event_result_preflight_error(
             return f"战略/外敌事件「{event_title or event_id}」战果 {kind}.{target_id}.{raw_field} 值非整数：{value!r}"
         return ""
 
+    def _noop_error(kind: str, target_id: str, raw_field: object, value: object) -> str:
+        return (
+            f"战略/外敌事件「{event_title or event_id}」战果 {kind}.{target_id}.{raw_field} "
+            f"无真实世界状态变化：{value!r}"
+        )
+
+    def _region_noop_error(region_id: str, row: sqlite3.Row, raw_field: object, value: object) -> str:
+        field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
+        if field == "reason":
+            return ""
+        if field == "cannon":
+            delta = int(value)
+            cap = int(row["city_level"]) * 8
+            old_value = int(row["cannon"])
+            if max(0, min(cap, old_value + delta)) == old_value:
+                return _noop_error("region", region_id, raw_field, value)
+            return ""
+        if field in FISCAL_SCORE_FIELDS:
+            fiscal = json.loads(str(row["fiscal"] or "{}"))
+            old_value = int(fiscal.get(field, 50))
+            delta = int(value)
+            net_pct = int(((db.legacy_modifiers(state).get("regions") or {})
+                           .get(region_id) or {}).get(field, 0) or 0)
+            if net_pct:
+                delta = db.apply_legacy_pct(delta, net_pct)
+            if max(0, min(100, old_value + delta)) == old_value:
+                return _noop_error("region", region_id, raw_field, value)
+            return ""
+        if field in REGION_SCORE_FIELDS:
+            old_value = int(row[field])
+            delta = int(value)
+            net_pct = int(((db.legacy_modifiers(state).get("regions") or {})
+                           .get(region_id) or {}).get(field, 0) or 0)
+            if net_pct:
+                delta = db.apply_legacy_pct(delta, net_pct)
+            if max(0, min(100, old_value + delta)) == old_value:
+                return _noop_error("region", region_id, raw_field, value)
+            return ""
+        if field in REGION_QUANTITY_FIELDS:
+            old_value = int(row[field])
+            if max(0, old_value + int(value)) == old_value:
+                return _noop_error("region", region_id, raw_field, value)
+            return ""
+        if field in REGION_TEXT_FIELDS:
+            return ""
+        return ""
+
+    def _army_noop_error(army_id: str, row: sqlite3.Row, raw_field: object, value: object) -> str:
+        field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
+        if field == "reason":
+            return ""
+        if field == "cannon_equipment":
+            old_value = int(row[field])
+            if max(0, min(12, old_value + int(value))) == old_value:
+                return _noop_error("army", army_id, raw_field, value)
+            return ""
+        if field == "arrears":
+            old_value = int(row[field])
+            if max(0, old_value + int(value)) == old_value:
+                return _noop_error("army", army_id, raw_field, value)
+            return ""
+        if field in ARMY_SCORE_FIELDS:
+            old_value = int(row[field])
+            delta = int(value)
+            net_pct = int(((db.legacy_modifiers(state).get("armies") or {})
+                           .get(army_id) or {}).get(field, 0) or 0)
+            if net_pct:
+                delta = db.apply_legacy_pct(delta, net_pct)
+            if max(0, min(100, old_value + delta)) == old_value:
+                return _noop_error("army", army_id, raw_field, value)
+            return ""
+        if field in ARMY_QUANTITY_FIELDS:
+            old_value = int(row[field])
+            if max(0, old_value + int(value)) == old_value:
+                return _noop_error("army", army_id, raw_field, value)
+            return ""
+        if field in ARMY_TEXT_FIELDS:
+            return ""
+        return ""
+
+    def _jisi_outcome_profile_error() -> str:
+        if event_id != "jisi_lubian" or outcome_label not in {"挡于边墙", "入塞被遏"}:
+            return ""
+        raw_changes = region_deltas.get("beizhili")
+        if not isinstance(raw_changes, dict):
+            return ""
+        controlled_by = None
+        for raw_field, value in raw_changes.items():
+            field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
+            if field == "controlled_by":
+                controlled_by = value
+                break
+        if controlled_by is None:
+            return ""
+        new_controller = str(controlled_by).strip()
+        if new_controller and new_controller != "ming":
+            return (
+                f"战略/外敌事件「{event_title or event_id}」事件结局「{outcome_label}」"
+                f"与北直隶控制权战果矛盾：{new_controller}"
+            )
+        return ""
+
+    outcome_profile_error = _jisi_outcome_profile_error()
+    if outcome_profile_error:
+        return outcome_profile_error
+
     for region_id, raw_changes in region_deltas.items():
-        if db.conn.execute("SELECT 1 FROM regions WHERE id = ?", (region_id,)).fetchone() is None:
+        row = db.conn.execute("SELECT * FROM regions WHERE id = ?", (region_id,)).fetchone()
+        if row is None:
             return f"战略/外敌事件「{event_title or event_id}」战果引用未入库地区：{region_id}"
         if not isinstance(raw_changes, dict):
             return f"战略/外敌事件「{event_title or event_id}」地区战果须为对象：{region_id}"
@@ -1982,9 +2090,13 @@ def _strategic_event_result_preflight_error(
                 err = _int_delta_error("region", region_id, raw_field, value)
                 if err:
                     return err
+            err = _region_noop_error(region_id, row, raw_field, value)
+            if err:
+                return err
 
     for army_id, raw_changes in army_deltas.items():
-        if db.conn.execute("SELECT 1 FROM armies WHERE id = ?", (army_id,)).fetchone() is None:
+        row = db.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
+        if row is None:
             return f"战略/外敌事件「{event_title or event_id}」战果引用未入库军队：{army_id}"
         if not isinstance(raw_changes, dict):
             return f"战略/外敌事件「{event_title or event_id}」军队战果须为对象：{army_id}"
@@ -2000,6 +2112,9 @@ def _strategic_event_result_preflight_error(
                 err = _int_delta_error("army", army_id, raw_field, value)
                 if err:
                     return err
+            err = _army_noop_error(army_id, row, raw_field, value)
+            if err:
+                return err
 
     if person_changes:
         snapshot = _snapshot_person_write_state(db, content)
@@ -2075,6 +2190,33 @@ def _strategic_event_result_preflight_error(
                     return err
 
     return ""
+
+
+def _strategic_result_item_has_material_world_state(item: Dict[str, object]) -> bool:
+    if item.get("rejected"):
+        return False
+    if item.get("created"):
+        return True
+    if item.get("动作") or item.get("action"):
+        return bool(item.get("name"))
+    for old_key, new_key in (
+        ("old", "new"),
+        ("old_status", "status"),
+        ("old_office", "new_office"),
+        ("old_loyalty", "new_loyalty"),
+        ("old_power", "new_power"),
+    ):
+        if old_key in item and new_key in item and str(item.get(old_key)) != str(item.get(new_key)):
+            return True
+    if "delta" in item:
+        delta = item.get("delta")
+        if delta is None:
+            return False
+        try:
+            return int(delta) != 0
+        except (TypeError, ValueError):
+            return bool(delta)
+    return False
 
 
 def _restore_person_content_from_snapshot(
@@ -4272,6 +4414,7 @@ def apply_score_extraction(
             state,
             event_id,
             str(new_issue.get("title") or ""),
+            outcome_label,
             event_region_deltas,
             event_army_deltas,
             event_person_changes,
@@ -4328,7 +4471,7 @@ def apply_score_extraction(
                 legacy=legacy_person_mode,
         )
         result_items = event_created_armies + event_region_changes + event_army_changes + event_person_results
-        if any(not item.get("rejected") for item in result_items):
+        if any(_strategic_result_item_has_material_world_state(item) for item in result_items):
             db.mark_event_triggered(state, event_id, terminal_reason=outcome_label, commit=commit_now)
             new_issue["reason"] = "event_type=node 已记为触发，软判结果已落主账"
         else:

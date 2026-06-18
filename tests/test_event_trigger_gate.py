@@ -1302,6 +1302,107 @@ def test_invalid_strategic_event_result_delta_does_not_mark_event_triggered(game
     assert out["region_changes"][0]["rejected"] is True
 
 
+def test_strategic_event_cannon_clamp_noop_does_not_mark_event_triggered(game):
+    """CMR R11：clamp 后 delta=0 的审计留痕不算战略战事世界状态结果。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    row = db.conn.execute(
+        "SELECT city_level FROM regions WHERE id = ?", ("beizhili",)
+    ).fetchone()
+    cap = int(row["city_level"]) * 8
+    db.conn.execute("UPDATE regions SET cannon = ? WHERE id = ?", (cap, "beizhili"))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "事件结局": {"jisi_lubian": "入塞被遏"},
+            "region_delta": {
+                "beizhili": {
+                    "cannon": 1,
+                    "reason": "己巳之变软判京畿城防炮已满额仍报增炮",
+                }
+            },
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert "无真实世界状态变化" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert not db.has_event_triggered("jisi_lubian")
+    assert db.conn.execute(
+        "SELECT cannon FROM regions WHERE id = ?", ("beizhili",)
+    ).fetchone()["cannon"] == cap
+
+
+def test_strategic_event_army_clamp_noop_does_not_mark_event_triggered(game):
+    """同族自查：军队数值 clamp 后无变化也不能充当战略战事主账结果。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    db.conn.execute("UPDATE armies SET manpower = ? WHERE id = ?", (0, "jingying"))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "事件结局": {"jisi_lubian": "入塞被遏"},
+            "army_delta": {"jingying": {"manpower": -5000, "reason": "己巳之变勤王战损"}},
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert "无真实世界状态变化" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert not db.has_event_triggered("jisi_lubian")
+    assert db.conn.execute(
+        "SELECT manpower FROM armies WHERE id = ?", ("jingying",)
+    ).fetchone()["manpower"] == 0
+
+
+@pytest.mark.parametrize("control_field", ["controlled_by", "归属"])
+def test_jisi_border_contained_outcome_rejects_invasion_world_state(game, control_field):
+    """CMR R11：己巳结局标签不得与结构化世界状态战果自相矛盾。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    db.conn.execute(
+        "UPDATE regions SET military_pressure = ?, controlled_by = ? WHERE id = ?",
+        (20, "ming", "beizhili"),
+    )
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "事件结局": {"jisi_lubian": "挡于边墙"},
+            "region_delta": {
+                "beizhili": {
+                    control_field: "houjin",
+                    "military_pressure": 40,
+                    "reason": "己巳之变软判后金长驱直入兵临京师",
+                }
+            },
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert "事件结局" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert not db.has_event_triggered("jisi_lubian")
+    region = db.conn.execute(
+        "SELECT military_pressure, controlled_by FROM regions WHERE id = ?", ("beizhili",)
+    ).fetchone()
+    assert dict(region) == {"military_pressure": 20, "controlled_by": "ming"}
+
+
 def test_strategic_event_person_result_rejection_blocks_other_result_deltas(game):
     """ADR0014：战略战事人物战果拒收时，同信封地区战果也不得半落主账。"""
     db, state, content = game
