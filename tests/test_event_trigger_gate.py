@@ -269,6 +269,11 @@ def test_auto_trigger_seed_event_expires_after_latest_window_when_gate_unsatisfi
         ).fetchone()
         assert row is not None
         assert row["terminal_state"] == "expired"
+        assert issues.auto_trigger_seed_issues(state, db) == []
+        assert db.conn.execute(
+            "SELECT COUNT(*) FROM event_triggers WHERE event_id=?",
+            ("__test_expiring_auto_seed__",),
+        ).fetchone()[0] == 1
     finally:
         content.seed_events.remove(ev)
 
@@ -424,6 +429,27 @@ def test_load_event_rejects_latest_before_earliest(monkeypatch):
             "trigger_gate": {"民心": "<=5"}}]
     monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
     with pytest.raises(SystemExit, match="最晚|早于|窗口"):
+        content_mod.load_event_content("x.json")
+
+
+@pytest.mark.parametrize("field,value", [
+    ("trigger_month", 13),
+    ("trigger_month", -1),
+    ("trigger_end_month", 13),
+    ("trigger_end_month", -1),
+])
+def test_load_event_rejects_month_out_of_range(monkeypatch, field, value):
+    import pytest
+    import ming_sim.content as content_mod
+    bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
+            "urgency": 1, "severity": 1, "credibility": 1,
+            "interests": [], "audiences": [],
+            "trigger_year": 1629, "trigger_month": 6,
+            "trigger_end_year": 1629, "trigger_end_month": 7,
+            "trigger_gate": {"民心": "<=5"}}]
+    bad[0][field] = value
+    monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
+    with pytest.raises(SystemExit, match=f"{field}.*0.*12"):
         content_mod.load_event_content("x.json")
 
 
