@@ -66,6 +66,8 @@ hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`�
 **两层分工（2026-06-16 定）**：策划+架构 session 出 ADR，开发 session 读 ADR 做（同一 agent 可兼策划/架构两角，但当下分清在哪层、别拿字段/schema/现有代码卡玩法设计）。
 **文档三层（采 Matt Pocock grill-with-docs DDD）**：① `CONTEXT.md`=领域词表（是什么、零实现）；② `docs/adr/`=非显然决策的为什么（**ADR-FORMAT：1-3 句、单决策、稀有**，hard-to-reverse / surprising / real-tradeoff 才建，不是 spec；大模板会把可逆细节吸进来＝过度设计，避开）；③ 详设/代码任务 → issue；④ 实现 → 代码。给 AI 最薄一层。
 **评审强度跟反悔成本走**：设计审狠（反悔贵）、代码审正确性。
+**真 user story（2026-06-18 立，实证栽过）**：user story 必须**从真实用户的需求**写——「谁真在用这东西、要达成什么价值」，不是把 Implementation Decision 套成「作为 X，我希望〔那条决定〕」凑数。**actor = 被造之物的真实用户**：游戏 → 皇帝/玩家（+ 试玩者/我：抓 bug、要错误包、读拒收数据找规律）；**开发者只在「开发者本就是产品真实用户」时才当 actor**（dev 工具/SDK——实证 Matt 的 `sandcastle` PRD 全「As a developer」、`course-video-manager` PRD 全「As a course creator」，actor 跟产品真实用户走）。**判据**：剥掉「作为 X 我希望…以便…」的壳，剩的是「用户可感知的价值」还是「内部怎么实现」？后者＝假 story，挪 Implementation Decisions。别为凑「extensive」机械批量造、被质疑再事后补说辞——extensive 是把真实用户各面写全，非换壳堆量。
+**学框架学精神、非照搬（2026-06-18 立）**：跑流程框架（如严格按 Matt 试水）是学它的**精神/原理**（为何这么设计、解决什么真问题），不是邯郸学步照搬条文；最终大概率**魔改成适合本项目的形态**。照搬到「不合理/难受」处先问「这条原理在解决什么、我这场景还成立吗」——成立就守，不成立就改 + 记下为什么，别因「Matt 这么写」就硬套。
 
 ## 规则
 - 所有 user-facing 输出用中文。
