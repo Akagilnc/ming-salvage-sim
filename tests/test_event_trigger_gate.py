@@ -519,6 +519,76 @@ def test_strategic_foreign_event_records_trigger_and_lands_soft_result_delta(gam
     assert army["morale"] == 42
 
 
+def test_strategic_foreign_event_lands_new_army_soft_result_delta(game):
+    """ship-pre CMR：战略战事软判结果可落新军主账，并驱动事件触发。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    army_id = "__test_jisi_raider_army__"
+
+    assert any(ev.id == "jisi_lubian" for ev in issues.gather_candidate_events(state, db))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "new_armies": [
+                {
+                    "id": army_id,
+                    "name": "己巳入塞偏师",
+                    "owner_power": "houjin",
+                    "station": "北直隶 / 遵化",
+                    "manpower": 1200,
+                    "reason": "己巳之变软判后金入塞偏师成军",
+                }
+            ],
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is False
+    assert db.has_event_triggered("jisi_lubian")
+    assert dict(db.conn.execute(
+        "SELECT owner_power, manpower FROM armies WHERE id = ?", (army_id,)
+    ).fetchone()) == {"owner_power": "houjin", "manpower": 1200}
+    assert out["created_armies"][0].get("rejected") is not True
+
+
+def test_anchored_strategic_new_army_without_event_trigger_is_rejected(game):
+    """ship-pre CMR：有战役锚点但无 event_pool 触发时，新军战果不得半落库。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    army_id = "__test_orphan_jisi_raider__"
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_armies": [
+                {
+                    "id": army_id,
+                    "name": "孤立入塞偏师",
+                    "owner_power": "houjin",
+                    "station": "北直隶 / 遵化",
+                    "manpower": 1200,
+                    "reason": "己巳之变软判后金入塞偏师成军",
+                }
+            ],
+        },
+        content=content,
+    )
+
+    assert not db.has_event_triggered("jisi_lubian")
+    assert db.conn.execute("SELECT id FROM armies WHERE id = ?", (army_id,)).fetchone() is None
+    assert out["created_armies"][0]["rejected"] is True
+    assert out["created_armies"][0]["category"] == "event_rejected"
+    assert "未触发" in out["created_armies"][0]["reason"]
+
+
 def test_strategic_foreign_event_survives_named_commander_death_with_soft_result_delta(game):
     """#189：战略战事点名将已死也不作废，由在位军镇承接软判结果。"""
     db, state, content = game
@@ -623,6 +693,28 @@ def test_anchored_strategic_result_delta_without_event_trigger_is_rejected(game)
     assert out["region_changes"][0]["rejected"] is True
     assert out["region_changes"][0]["category"] == "event_rejected"
     assert "未触发" in out["region_changes"][0]["reason"]
+
+
+def test_ordinary_army_station_delta_with_strategic_place_anchor_is_not_rejected(game):
+    """ship-pre CMR：普通调防只含战略地名，不得被误当成未触发战役战果。"""
+    db, state, content = game
+    issues.bind_content(content)
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "army_delta": {
+                "guanning": {"驻扎地": "锦州前屯", "reason": "奉旨移镇锦州前屯"}
+            }
+        },
+        content=content,
+    )
+
+    assert db.conn.execute(
+        "SELECT station FROM armies WHERE id = ?", ("guanning",)
+    ).fetchone()["station"] == "锦州前屯"
+    assert out["army_changes"][0].get("rejected") is not True
 
 
 def test_non_battle_foreign_node_can_trigger_without_battle_ledger_delta(game):
