@@ -1932,37 +1932,36 @@ class GameDB:
             ev.id for ev in (*self.content.events, *self.content.seed_events)
             if ev.auto_trigger and bool(ev.effect_on_trigger)
         }
-        where_extra = ""
-        params: List[object] = []
-        if pending_core_effect_ids:
-            placeholders = ",".join("?" for _ in pending_core_effect_ids)
-            where_extra = f" AND origin_ref NOT IN ({placeholders})"
-            params.extend(sorted(pending_core_effect_ids))
-        self.conn.execute(
-            f"""
-            INSERT OR IGNORE INTO event_triggers
-                (event_id, turn, year, period, source, terminal_state, terminal_reason)
+        rows = self.conn.execute(
+            """
             WITH legacy AS (
                 SELECT origin_ref AS event_id, MIN(origin_turn) AS turn
                 FROM issues
                 WHERE origin_kind = 'event_pool' AND origin_ref <> ''
-                {where_extra}
                 GROUP BY origin_ref
             )
             SELECT
-                legacy.event_id,
-                legacy.turn,
-                COALESCE(turn_reports.year, game_state.year, 0),
-                COALESCE(turn_reports.period, game_state.period, 0),
-                'legacy_event_pool',
-                'triggered',
-                ''
+                legacy.event_id AS event_id,
+                legacy.turn AS turn,
+                COALESCE(turn_reports.year, game_state.year, 0) AS year,
+                COALESCE(turn_reports.period, game_state.period, 0) AS period
             FROM legacy
             LEFT JOIN turn_reports ON turn_reports.turn = legacy.turn
             LEFT JOIN game_state ON game_state.id = 1
             """,
-            tuple(params),
-        )
+        ).fetchall()
+        for row in rows:
+            event_id = str(row["event_id"] or "")
+            if event_id in pending_core_effect_ids:
+                continue
+            self.conn.execute(
+                """
+                INSERT OR IGNORE INTO event_triggers
+                    (event_id, turn, year, period, source, terminal_state, terminal_reason)
+                VALUES (?, ?, ?, ?, 'legacy_event_pool', 'triggered', '')
+                """,
+                (event_id, row["turn"], row["year"], row["period"]),
+            )
         self.conn.commit()
 
     def has_state(self) -> bool:
@@ -6234,9 +6233,14 @@ class GameDB:
     ) -> None:
         self.conn.execute(
             """
-            INSERT OR IGNORE INTO event_triggers
+            INSERT INTO event_triggers
                 (event_id, turn, year, period, source, terminal_state, terminal_reason)
             VALUES (?, ?, ?, ?, ?, 'triggered', ?)
+            ON CONFLICT(event_id) DO UPDATE SET
+                terminal_reason = excluded.terminal_reason
+            WHERE event_triggers.terminal_state = 'triggered'
+              AND COALESCE(event_triggers.terminal_reason, '') = ''
+              AND excluded.terminal_reason <> ''
             """,
             (event_id, state.turn, state.year, state.period, source, str(terminal_reason or "")[:200]),
         )
