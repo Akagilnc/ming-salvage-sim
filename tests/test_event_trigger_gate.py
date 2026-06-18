@@ -1609,6 +1609,35 @@ def test_strategic_event_accepts_power_update_as_material_world_state(game):
     )
 
 
+def test_strategic_event_power_update_requires_event_anchor(game):
+    """online R3 Codex：power-only 战略战果也必须带事件 reason 锚点。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    db.conn.execute("UPDATE powers SET military_strength = ? WHERE id = ?", (50, "houjin"))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "事件结局": {"jisi_lubian": "入塞被遏"},
+            "power_updates": {"houjin": {"military_strength": -3}},
+        },
+        content=content,
+    )
+
+    issue = out["issue_summary"]["new_issues"][0]
+    assert issue["rejected"] is True
+    assert "势力战果缺 reason/原因 事件锚点" in issue["reason"]
+    assert not db.has_event_triggered("jisi_lubian")
+    assert db.conn.execute(
+        "SELECT military_strength FROM powers WHERE id = ?", ("houjin",)
+    ).fetchone()["military_strength"] == 50
+    assert out["power_changes"][0]["rejected"] is True
+
+
 def test_accepted_strategic_event_applies_power_updates_after_main_result(game):
     """同族自查：战略事件已有真实主账结果时，power_updates 可作为同信封附带战果落库。"""
     db, state, content = game

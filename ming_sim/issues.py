@@ -2164,6 +2164,11 @@ def _strategic_event_result_preflight_error(
                 return err
 
     if power_updates:
+        for power_id, raw_changes in power_updates.items():
+            if not isinstance(raw_changes, dict):
+                return f"战略/外敌事件「{event_title or event_id}」势力战果须为对象：{power_id}"
+            if not _change_mentions_strategic_event(raw_changes, event_id):
+                return f"战略/外敌事件「{event_title or event_id}」势力战果缺 reason/原因 事件锚点：{power_id}"
         power_results: List[Dict[str, object]] = []
         db.conn.execute("SAVEPOINT strategic_power_result_preflight")
         try:
@@ -2310,7 +2315,9 @@ def _strategic_event_result_preflight_error(
                 f"战略/外敌事件「{event_title or event_id}」新军战果 manpower 须为正整数："
                 f"{manpower}"
             )
-        for field in ARMY_SCORE_FIELDS:
+        for field in army_numeric_fields:
+            if field == "manpower":
+                continue
             if field in item and item.get(field) is not None:
                 err = _int_delta_error("new_army", army_id, field, item.get(field))
                 if err:
@@ -4188,6 +4195,7 @@ def apply_score_extraction(
         db,
     )
     for event_id in sorted(strategic_event_pool_ids & strategic_event_result_delta_event_ids):
+        # Missing labels are rejected per deferred event; this early pass fail-louds unknown labels.
         _strategic_event_outcome_label_or_error(event_id, extracted, runtime_content)
     strategic_event_delta_ids = set(strategic_event_result_delta_event_ids)
     strategic_event_referenced_ids = strategic_event_pool_ids | strategic_event_delta_ids
