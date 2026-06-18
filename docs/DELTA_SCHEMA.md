@@ -118,7 +118,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 全字段：`id`（必填）`name` `owner_power` `station` `theater` `commander` `controller` `troop_type` `manpower`（必填）`morale` `training` `loyalty` `equipment` `supply` `mobility` `status`…（参考 `ARMY_FIELD_ALIASES`）。#173：`maintenance_per_turn` 列已删，LLM 若仍塞维护费键当未知键忽略（不入库、不影响建军）；月饷由 `army_needed` 按 `manpower` 派生。
 
 ### `power_updates` — 外部势力变化
-- key：power_id（`houjin` / `mongol` / `korea` / `dutch` / `japan` / `liukou` / `tibet` / `annam` / `ming`）
+- key：power_id，必须来自输入盘面 `power_ids`（如 `houjin` / `mongol` / `korea` / `bandits` / `bandit_li_zicheng` / `bandit_zhang_xianzhong` / `ming` 等）
 - value 字段（`POWER_*` 常量）：
   - score：`leverage` `satisfaction` `military_strength` `cohesion` `supply`
   - text：`leader` `stance` `agenda` `status` `last_action`
