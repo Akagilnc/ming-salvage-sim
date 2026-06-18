@@ -967,7 +967,8 @@
       "birth_year": 1576,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "location": "dongjiang_area"
     },
     {
       "name": "阎鸣泰",
@@ -1551,8 +1552,8 @@
       "historical_death_month": 0,
       "status": "offstage",
       "summary": "陕北驿卒出身，若裁驿、饥荒和官军失控共振，可能成为后期流寇核心。",
-      "debut_year": 0,
-      "debut_month": 0,
+      "debut_year": 1634,
+      "debut_month": 1,
       "power_id": "bandit_li_zicheng",
       "location": "shaanxi"
     },
@@ -1580,8 +1581,8 @@
       "historical_death_month": 0,
       "status": "offstage",
       "summary": "陕西边地人物，若乱局扩大，可能成为高机动、高破坏的流寇首领。",
-      "debut_year": 0,
-      "debut_month": 0,
+      "debut_year": 1631,
+      "debut_month": 1,
       "power_id": "bandit_zhang_xianzhong",
       "location": "shaanxi"
     },

@@ -20,6 +20,12 @@ PERSON_WRITE_POINT_INVENTORY = (
         "reason": "决定9/L94 一次性老档数据清洗（init 时跑、幂等），属豁免路径，不产 RejectedItem。",
     },
     {
+        "location": "ming_sim/db.py:_backfill_person_core_character_static_fields",
+        "owner": "migration",
+        "disposition": "adr0009_exempt",
+        "reason": "#191 旧档静态字段补丁（init 时幂等，仅补缺省值），不产 RejectedItem。",
+    },
+    {
         "location": "ming_sim/db.py:set_character_status",
         "owner": "legacy_person_path",
         "disposition": "migrate_to_person_applier",
