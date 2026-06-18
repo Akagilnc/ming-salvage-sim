@@ -30,5 +30,5 @@
 - `trigger_end_year` / `trigger_end_month` 或 `open_window`：显式声明最晚窗口或开放窗，避免漏填后无限晚弹。
 - `trigger_gate`：结构化前提门，全部条件满足才进候选；空对象表示天定或纯日历锚定。
 - `event_type`：`situation` 转成长期事项，`node` 只播报并落事件账，`ending` 进入结局判定。
-- `trigger_class`：目前支持 `strategic_foreign`，用于标记战略/外敌类事件。此类事件的点名将领按席位处理，不因将领死亡直接作废；触发时必须同信封落世界状态主账结果。
+- `trigger_class`：目前支持 `strategic_foreign`，用于标记战略/外敌类事件。此类事件的点名将领按席位处理，不因将领死亡直接作废；触发时必须同信封落世界状态主账结果。新增此类事件时，必须同步补消费者 outcome target；漏补会在内容绑定期响亮失败。
 - `person_core_subjects`：人物核心事件主体。主体永久死亡时，事件会作废退候选；不要用于战略/外敌类战事。
