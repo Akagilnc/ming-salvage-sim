@@ -1022,7 +1022,7 @@ def extract_scores_by_modules_with_agno(
     while True:
         merged = _merge_module_outputs(module_outputs)
         try:
-            normalize_event_outcome_labels_or_error(merged, db.content)
+            normalize_event_outcome_labels_or_error(merged, db.content, db=db, state=state)
             break
         except ValueError as outcome_err:
             if retry_attempt >= max(0, event_outcome_retry_limit):

@@ -31,10 +31,17 @@ def _empty_module_json(module: str) -> str:
     raise AssertionError(module)
 
 
+def _strategic_result_internal_json() -> str:
+    return '{"国势变化": {}, "钱粮收支": [], "财政制度变化": [], "新立月度收支": [], "裁撤月度收支": [], "派系变化": [], "阶级变化": {}, "地区变化": {"beizhili": {"military_pressure": 35, "reason": "己巳之变软判敌逼京畿"}}}'
+
+
 def test_event_outcome_label_retry_reruns_only_issues_extractor(game):
     """ADR0014/#193：结局标签无法归一时，只重跑标签所在 issues extractor，不重跑叙事或其它 extractor。"""
     db, state, _content = game
+    state.year = 1629
+    state.period = 11
     agents = {module: FakeAgent(_empty_module_json(module)) for module in EXTRACTION_MODULES}
+    agents["internal"] = FakeAgent(_strategic_result_internal_json())
     agents["issues"] = FakeAgent(
         '{"局势推进": [], "新立局势": [{"来源类型": "event_pool", "编号": "jisi_lubian"}], "事件结局": {"jisi_lubian": "大胜"}, "撤销局势": [], "结案局势": []}',
         '{"局势推进": [], "新立局势": [{"来源类型": "event_pool", "编号": "jisi_lubian"}], "事件结局": {"jisi_lubian": "入塞被遏"}, "撤销局势": [], "结案局势": []}',
@@ -60,7 +67,10 @@ def test_event_outcome_label_retry_reruns_only_issues_extractor(game):
 def test_event_outcome_label_alias_normalizes_without_retry(game):
     """ADR0014/#193：合法别名在 extractor 层归一为闭合集合内标签，不额外重跑 issues。"""
     db, state, _content = game
+    state.year = 1629
+    state.period = 11
     agents = {module: FakeAgent(_empty_module_json(module)) for module in EXTRACTION_MODULES}
+    agents["internal"] = FakeAgent(_strategic_result_internal_json())
     agents["issues"] = FakeAgent(
         '{"局势推进": [], "新立局势": [{"来源类型": "event_pool", "编号": "jisi_lubian"}], "事件结局": {"jisi_lubian": "入塞遭遏"}, "撤销局势": [], "结案局势": []}',
     )
@@ -81,7 +91,10 @@ def test_event_outcome_label_alias_normalizes_without_retry(game):
 def test_event_outcome_label_retry_cap_fails_loud(game):
     """ADR0014/#193：结局标签重试有上限，超限 fail-loud，不写空/假标签。"""
     db, state, _content = game
+    state.year = 1629
+    state.period = 11
     agents = {module: FakeAgent(_empty_module_json(module)) for module in EXTRACTION_MODULES}
+    agents["internal"] = FakeAgent(_strategic_result_internal_json())
     agents["issues"] = FakeAgent(
         '{"局势推进": [], "新立局势": [{"来源类型": "event_pool", "编号": "jisi_lubian"}], "事件结局": {"jisi_lubian": "大胜"}, "撤销局势": [], "结案局势": []}',
         '{"局势推进": [], "新立局势": [{"来源类型": "event_pool", "编号": "jisi_lubian"}], "事件结局": {"jisi_lubian": "惨胜"}, "撤销局势": [], "结案局势": []}',
