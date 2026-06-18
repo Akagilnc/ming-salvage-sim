@@ -2198,6 +2198,28 @@ def _strategic_event_result_preflight_error(
                         action,
                         {"status": target_status},
                     )
+            if action in {"任命", "调任"}:
+                target_office = normalize_office(str(item.get("office") or item.get("new_office") or ""))
+                if target_office:
+                    row = db.conn.execute(
+                        "SELECT office, office_type FROM characters WHERE name = ?",
+                        (name,),
+                    ).fetchone()
+                    if row is not None:
+                        current_office = normalize_office(str(row["office"] or ""))
+                        current_type = str(row["office_type"] or "")
+                        target_type = infer_office_type_from_office(
+                            target_office,
+                            str(item.get("office_type") or item.get("new_office_type") or current_type),
+                            llm_config,
+                        )
+                        if target_office == current_office and target_type == current_type:
+                            return _noop_error(
+                                "person",
+                                name,
+                                action,
+                                {"office": target_office, "office_type": target_type},
+                            )
             if action != "行止":
                 continue
             row = db.conn.execute(
@@ -2298,17 +2320,25 @@ def _strategic_result_item_has_material_world_state(item: Dict[str, object]) -> 
         return False
     if item.get("created"):
         return True
-    if item.get("动作") or item.get("action"):
-        return bool(item.get("name"))
     for old_key, new_key in (
         ("old", "new"),
         ("old_status", "status"),
         ("old_office", "new_office"),
+        ("old_office_type", "office_type"),
         ("old_loyalty", "new_loyalty"),
         ("old_power", "new_power"),
     ):
         if old_key in item and new_key in item and str(item.get(old_key)) != str(item.get(new_key)):
             return True
+    action = str(item.get("动作") or item.get("action") or "").strip()
+    if action in {"处置", "罢黜"} and item.get("status"):
+        return True
+    if action in {"任命", "调任", "册封"} and (
+        item.get("new_office") or item.get("office")
+    ):
+        return True
+    if action == "易主" and item.get("new_power"):
+        return True
     if "delta" in item:
         delta = item.get("delta")
         if delta is None:
