@@ -1248,6 +1248,57 @@ def test_strategic_event_person_result_rejection_blocks_other_result_deltas(game
     assert any(item.get("rejected") for item in out["applied_person_changes"])
 
 
+def test_rejected_strategic_person_preflight_restores_content_power_id(game):
+    """CMR R8：人物战果预检干跑失败后，内存人物 power_id 也必须随 DB 回滚。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1641
+    state.period = 8
+    db.conn.execute("UPDATE characters SET power_id = ?, status = ? WHERE name = ?", ("ming", "active", "洪承畴"))
+    content.characters["洪承畴"].power_id = "ming"
+    before_db_power = db.conn.execute(
+        "SELECT power_id FROM characters WHERE name = ?", ("洪承畴",)
+    ).fetchone()["power_id"]
+    before_content_power = content.characters["洪承畴"].power_id
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "songshan_battle"}],
+            "人物变更": [
+                {
+                    "name": "洪承畴",
+                    "动作": "易主",
+                    "方式": "被俘而降",
+                    "new_power": "houjin",
+                    "new_title": "降臣",
+                    "反噬": {"ming": {"military_strength": -5}},
+                    "reason": "松锦决战软判主帅被俘降金",
+                }
+            ],
+            "new_armies": [
+                {
+                    "id": "__bad_songshan_army__",
+                    "name": "无效松山军",
+                    "owner_power": "__missing_power__",
+                    "station": "松山",
+                    "manpower": 1200,
+                    "reason": "松锦决战软判无效新军",
+                }
+            ],
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert not db.has_event_triggered("songshan_battle")
+    assert db.conn.execute(
+        "SELECT power_id FROM characters WHERE name = ?", ("洪承畴",)
+    ).fetchone()["power_id"] == before_db_power
+    assert content.characters["洪承畴"].power_id == before_content_power
+
+
 def test_strategic_foreign_event_lands_soft_result_person_delta(game):
     """#189 CMR：战略战事的人死/生是软判结果，须能落人物主账。"""
     db, state, content = game
