@@ -1406,6 +1406,44 @@ def test_strategic_event_person_travel_noop_does_not_mark_event_triggered(game):
     assert dict(row) == {"status": "active", "location": "beizhili", "transit_to": ""}
 
 
+@pytest.mark.parametrize("action,status", [("处置", "dismissed"), ("罢黜", "dismissed")])
+def test_strategic_event_person_same_status_noop_does_not_mark_event_triggered(game, action, status):
+    """CMR R13：战略人物处置/罢黜若状态未变，不得只靠改缘由消耗战事事件。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1638
+    state.period = 9
+    db.conn.execute(
+        "UPDATE characters SET status = ?, status_reason = ?, reason_code = '' WHERE name = ?",
+        (status, "已先行罢黜", "卢象升"),
+    )
+    content.characters["卢象升"].status = status
+    content.characters["卢象升"].status_reason = "已先行罢黜"
+    content.characters["卢象升"].reason_code = ""
+    item = {"name": "卢象升", "动作": action, "reason": "戊寅虏变软判主帅已罢黜"}
+    if action == "处置":
+        item["status"] = status
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
+            "人物变更": [item],
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert "无真实世界状态变化" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert not db.has_event_triggered("wuyin_lubian")
+    row = db.conn.execute(
+        "SELECT status, status_reason FROM characters WHERE name = ?",
+        ("卢象升",),
+    ).fetchone()
+    assert dict(row) == {"status": status, "status_reason": "已先行罢黜"}
+
+
 def test_rejected_strategic_event_suppresses_power_updates(game):
     """CMR R12：战略事件缺主账结果被拒时，同信封 power_updates 不得提前落库。"""
     db, state, content = game
