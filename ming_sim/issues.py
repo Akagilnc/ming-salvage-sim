@@ -1844,11 +1844,7 @@ def apply_issue_tracker_output(
         if candidate_event_ids_at_input is not None
         else {candidate.id for candidate in gather_candidate_events(state, db)}
     )
-    event_result_delta_event_ids = (
-        set(event_result_delta_event_ids)
-        if event_result_delta_event_ids is not None
-        else None
-    )
+    event_result_delta_event_ids = set(event_result_delta_event_ids or set())
     defer_event_trigger_ids = set(defer_event_trigger_ids or set())
     consumed_event_ids: set[str] = set()
     current_candidate_event_ids: set[str] = set()
@@ -2060,7 +2056,6 @@ def apply_issue_tracker_output(
                 continue
             if (
                 _is_strategic_foreign_node_event(ev)
-                and event_result_delta_event_ids is not None
                 and ev.id not in event_result_delta_event_ids
             ):
                 print(f"[INFO] new_issue 已拒：战略/外敌事件 {event_id} 缺世界状态主账结果。")
