@@ -1481,6 +1481,16 @@ _STRATEGIC_FOREIGN_NODE_PERSON_ANCHORS: Dict[str, frozenset[str]] = {
     "wuyin_lubian": frozenset({"戊寅", "墙子岭", "青山口", "巨鹿", "贾庄", "畿南"}),
     "songshan_battle": frozenset({"松锦", "松山", "锦州", "杏山", "塔山", "援锦"}),
 }
+_STRATEGIC_FOREIGN_NODE_DIRECT_EVENT_ANCHORS: Dict[str, frozenset[str]] = {
+    "jisi_lubian": frozenset({"己巳"}),
+    "wuyin_lubian": frozenset({"戊寅"}),
+    "songshan_battle": frozenset({"松锦", "援锦"}),
+}
+_STRATEGIC_FOREIGN_NODE_BATTLE_CONTEXT_ANCHORS = frozenset({
+    "之变", "虏变", "入塞", "入寇", "犯阙", "战", "战损", "阵亡", "伤亡",
+    "敌", "后金", "清军", "勤王", "围", "攻", "破", "陷", "失守",
+    "败", "胜", "援", "软判", "主力", "边墙", "逼京",
+})
 _STRATEGIC_FOREIGN_NODE_PERSON_ROLE_ANCHORS = frozenset({"替补", "主帅", "督师", "统帅", "主将"})
 
 
@@ -1570,7 +1580,15 @@ def _change_reason_text(raw_changes: object) -> str:
 def _change_mentions_strategic_event(raw_changes: object, event_id: str) -> bool:
     reason_text = _change_reason_text(raw_changes)
     anchors = _STRATEGIC_FOREIGN_NODE_PERSON_ANCHORS.get(event_id, frozenset())
-    return event_id in reason_text or any(anchor in reason_text for anchor in anchors)
+    if event_id in reason_text:
+        return True
+    direct_anchors = _STRATEGIC_FOREIGN_NODE_DIRECT_EVENT_ANCHORS.get(event_id, frozenset())
+    if any(anchor in reason_text for anchor in direct_anchors):
+        return True
+    return (
+        any(anchor in reason_text for anchor in anchors)
+        and any(anchor in reason_text for anchor in _STRATEGIC_FOREIGN_NODE_BATTLE_CONTEXT_ANCHORS)
+    )
 
 
 def _strategic_entity_delta_event_ids(
@@ -1616,6 +1634,48 @@ def _entity_deltas_for_strategic_event(
         for entity_id, raw_changes in raw.items()
         if event_id in _strategic_entity_delta_event_ids(str(entity_id), raw_changes, target_key, {event_id})
     }
+
+
+def _strategic_new_army_result_event_ids(
+    item: object,
+    strategic_event_ids: set[str],
+) -> set[str]:
+    if not isinstance(item, dict):
+        return set()
+    return {
+        event_id
+        for event_id in strategic_event_ids
+        if _change_mentions_strategic_event(item, event_id)
+    }
+
+
+def _split_strategic_new_armies(
+    raw: object,
+    strategic_event_ids: set[str],
+) -> tuple[List[object], List[object]]:
+    if not isinstance(raw, list):
+        return [], []
+    strategic: List[object] = []
+    other: List[object] = []
+    for item in raw:
+        if _strategic_new_army_result_event_ids(item, strategic_event_ids):
+            strategic.append(item)
+        else:
+            other.append(item)
+    return strategic, other
+
+
+def _new_armies_for_strategic_event(
+    raw: object,
+    event_id: str,
+) -> List[object]:
+    if not isinstance(raw, list):
+        return []
+    return [
+        item
+        for item in raw
+        if event_id in _strategic_new_army_result_event_ids(item, {event_id})
+    ]
 
 
 def _strategic_event_target_commanders(db: GameDB, event_id: str) -> set[str]:
@@ -1702,12 +1762,17 @@ def _event_result_delta_event_ids(
     person_result_event_ids: set[str] = set()
     for item in person_changes:
         person_result_event_ids.update(_strategic_person_result_event_ids(item, strategic_event_ids, db))
+    new_army_result_event_ids: set[str] = set()
+    if isinstance(extracted.get("new_armies"), list):
+        for item in extracted.get("new_armies") or []:
+            new_army_result_event_ids.update(_strategic_new_army_result_event_ids(item, strategic_event_ids))
     result_ids: set[str] = set()
     for event_id in strategic_event_ids:
         if (
             event_id in region_result_event_ids
             or event_id in army_result_event_ids
             or event_id in person_result_event_ids
+            or event_id in new_army_result_event_ids
         ):
             result_ids.add(event_id)
     return result_ids
@@ -3681,6 +3746,10 @@ def apply_score_extraction(
         "armies",
         strategic_event_referenced_ids,
     )
+    strategic_new_armies_raw, ordinary_new_armies_raw = _split_strategic_new_armies(
+        new_armies_raw,
+        strategic_event_referenced_ids,
+    )
 
     pseudo_event = Event(
         id="season",
@@ -3701,10 +3770,10 @@ def apply_score_extraction(
     # 三个 db 方法内逐项拒收留痕（返回列表含 {"rejected": True, ...}，桥接自动收进
     # rejection_reports），好项照落、坏一项不带走整批；代码异常（bug 类）仍上抛到 settle
     # 层回滚整批，绝不吞。clamp 语义（城防炮 city_level×8、随军炮 cap12、火器 0-100）不变。
-    if isinstance(new_armies_raw, list) and new_armies_raw:
+    if ordinary_new_armies_raw:
         created_armies = db.create_armies_from_extraction(
             state,
-            new_armies_raw,
+            ordinary_new_armies_raw,
             actor="档房",
             commit=commit_now,
         )
@@ -3782,6 +3851,10 @@ def apply_score_extraction(
             for item in strategic_person_result_changes
             if event_id in _strategic_person_result_event_ids(item, {event_id}, db)
         ]
+        event_new_armies = _new_armies_for_strategic_event(
+            strategic_new_armies_raw,
+            event_id,
+        )
         reason = f"战略/外敌事件「{event_title or event_id}」未触发，战果不落主账"
         for region_id, raw_changes in event_region_deltas.items():
             region_changes.append({
@@ -3807,6 +3880,15 @@ def apply_score_extraction(
                 "category": "event_rejected",
                 "reason": reason,
                 "item": dict(item),
+            })
+        for item in event_new_armies:
+            raw_item = dict(item) if isinstance(item, dict) else item
+            created_armies.append({
+                "id": str(item.get("id") or "").strip() if isinstance(item, dict) else "",
+                "rejected": True,
+                "category": "event_rejected",
+                "reason": reason,
+                "item": {"event_id": event_id, "new_army": raw_item},
             })
 
     strategic_event_issue_ids_seen: set[str] = set()
@@ -3852,9 +3934,22 @@ def apply_score_extraction(
             for item in strategic_person_result_changes
             if event_id in _strategic_person_result_event_ids(item, {event_id}, db)
         ]
+        event_new_armies = _new_armies_for_strategic_event(
+            strategic_new_armies_raw,
+            event_id,
+        )
         event_region_changes: List[Dict[str, object]] = []
         event_army_changes: List[Dict[str, object]] = []
         event_person_results: List[Dict[str, object]] = []
+        event_created_armies: List[Dict[str, object]] = []
+        if event_new_armies:
+            event_created_armies = db.create_armies_from_extraction(
+                state,
+                event_new_armies,
+                actor="档房",
+                commit=commit_now,
+            )
+            created_armies.extend(event_created_armies)
         if event_region_deltas:
             event_region_changes = db.apply_region_deltas(
                 state,
@@ -3880,14 +3975,14 @@ def apply_score_extraction(
                 event_person_changes,
                 legacy=legacy_person_mode,
             )
-        result_items = event_region_changes + event_army_changes + event_person_results
+        result_items = event_created_armies + event_region_changes + event_army_changes + event_person_results
         if any(not item.get("rejected") for item in result_items):
             db.mark_event_triggered(state, event_id, commit=commit_now)
             new_issue["reason"] = "event_type=node 已记为触发，软判结果已落主账"
         else:
             new_issue["rejected"] = True
             new_issue["category"] = "missing_world_state_delta"
-            new_issue["reason"] = "战略/外敌战事缺世界状态主账结果（地区/军队/人物变更均未成功）"
+            new_issue["reason"] = "战略/外敌战事缺世界状态主账结果（地区/军队/人物变更/新建军队均未成功）"
     _apply_normalized_person_changes(post_issue_person_changes, legacy=legacy_person_mode)
 
     def _norm_int_leaf(v):
