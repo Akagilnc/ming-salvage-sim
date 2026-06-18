@@ -2059,14 +2059,47 @@ def _strategic_event_outcome_label_or_error(
 def normalize_event_outcome_labels_or_error(
     extracted: Dict[str, object],
     content: GameContent,
+    db: Optional[GameDB] = None,
+    state: Optional[GameState] = None,
+    candidate_event_ids: Optional[set[str]] = None,
 ) -> None:
     """Normalize closed historical-event outcome labels in-place, or fail loud.
 
-    This is the extractor-side whitelist gate for ADR0014/#193.  It validates only
-    events actually emitted in this settlement envelope; world-state deltas remain
-    the independent mechanism ledger and are not used to infer labels here.
+    This is the extractor-side whitelist gate for ADR0014/#193.  Retry/fail-loud
+    applies only to strategic events that are actually landable now: the issues
+    extractor selected a current candidate event and another ledger in the same
+    envelope carries a material strategic result for that event.  A hallucinated
+    static event id that the issue adapter would reject later must not abort the
+    whole extractor round and lose unrelated module deltas.
     """
     event_ids = _event_pool_ids_for_strategic_foreign_nodes(extracted, content)
+    if not event_ids:
+        return
+    if db is not None:
+        new_person_changes = normalize_person_changes({"人物变更": extracted.get("人物变更") or []})
+        legacy_person_changes = [] if new_person_changes else normalize_person_changes({
+            "appointments": extracted.get("appointments") or [],
+            "character_status_changes": extracted.get("character_status_changes") or [],
+            "character_power_changes": extracted.get("character_power_changes") or [],
+            "office_changes": extracted.get("office_changes") or [],
+        })
+        person_changes = _canonicalize_person_change_names(
+            new_person_changes or legacy_person_changes,
+            content,
+            db,
+        )
+        result_event_ids = _event_result_delta_event_ids(
+            set(_STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS),
+            event_ids,
+            extracted,
+            person_changes,
+            db,
+        )
+        event_ids &= result_event_ids
+    if candidate_event_ids is None and db is not None and state is not None:
+        candidate_event_ids = {candidate.id for candidate in gather_candidate_events(state, db)}
+    if candidate_event_ids is not None:
+        event_ids &= set(candidate_event_ids)
     if not event_ids:
         return
     raw_outcomes = extracted.get("事件结局")
@@ -4298,8 +4331,16 @@ def apply_score_extraction(
         person_changes,
         db,
     )
-    for event_id in sorted(strategic_event_pool_ids & strategic_event_result_delta_event_ids):
-        # Missing labels are rejected per deferred event; this early pass fail-louds unknown labels.
+    strategic_event_label_gate_ids = (
+        strategic_event_pool_ids
+        & strategic_event_result_delta_event_ids
+        & candidate_event_ids_at_input
+    )
+    for event_id in sorted(strategic_event_label_gate_ids):
+        # Missing labels are rejected per deferred event; this early pass fail-louds
+        # only unknown labels for event outcomes that can actually pass the static
+        # candidate/result gates.  Non-candidate hallucinations are rejected later
+        # as ordinary event_pool rejects so unrelated deltas can still land.
         _strategic_event_outcome_label_or_error(event_id, extracted, runtime_content)
     strategic_event_delta_ids = set(strategic_event_result_delta_event_ids)
     strategic_event_referenced_ids = strategic_event_pool_ids | strategic_event_delta_ids

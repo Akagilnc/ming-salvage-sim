@@ -1099,6 +1099,29 @@ def test_strategic_event_outcome_label_normalizes_known_synonym(game):
     assert row["terminal_reason"] == "入塞被遏"
 
 
+def test_event_outcome_retry_ignores_non_landable_event_without_world_state_delta(game):
+    """PR#214：只因 new_issues 幻觉静态事件 id、但无战果主账时，不应触发 retry/fail-loud。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+
+    extracted = {
+        "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+        "事件结局": {"jisi_lubian": "大胜"},
+        "region_delta": {"shandong": {"民心": -1, "reason": " unrelated famine pressure "}},
+    }
+
+    issues.normalize_event_outcome_labels_or_error(
+        extracted,
+        content,
+        db=db,
+        state=state,
+    )
+
+    assert extracted["事件结局"] == {"jisi_lubian": "大胜"}
+
+
 def test_strategic_event_delta_requires_outcome_label_without_mutation(game):
     """ADR0014：战略战果 delta 必须同写结局标签，缺标签则整组拒收且不落主账。"""
     db, state, content = game
@@ -1518,6 +1541,41 @@ def test_target_person_delta_without_event_anchor_does_not_satisfy_strategic_eve
     assert not db.has_event_triggered("wuyin_lubian")
     assert db.get_character_status("卢象升")[0] == "dead"
     assert out["applied_person_changes"][0].get("rejected") is not True
+
+
+def test_rejected_noncandidate_strategic_event_with_unknown_label_preserves_unrelated_delta(game):
+    """PR#214：非候选事件即使带无法归一标签，也只按候选闸拒收，不应 fail-loud 吞掉无关 delta。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    db.mark_event_triggered(state, "jisi_lubian")
+    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"))
+    db.conn.execute("UPDATE regions SET unrest = ? WHERE id = ?", (78, "shaanxi"))
+    assert all(candidate.id != "jisi_lubian" for candidate in issues.gather_candidate_events(state, db))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "事件结局": {"jisi_lubian": "大胜"},
+            "region_delta": {
+                "beizhili": {"military_pressure": 20, "reason": "己巳之变重复引用战果"},
+                "shaanxi": {"unrest": 1},
+            },
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert "候选" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
+    ).fetchone()["military_pressure"] == 20
+    assert db.conn.execute(
+        "SELECT unrest FROM regions WHERE id = ?", ("shaanxi",)
+    ).fetchone()["unrest"] == 79
 
 
 def test_rejected_strategic_foreign_event_does_not_land_battle_delta(game):
