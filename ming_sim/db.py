@@ -1002,6 +1002,7 @@ class GameDB:
         self.ensure_column("characters", "summary", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "aliases", "TEXT NOT NULL DEFAULT '[]'")
         self._backfill_person_core_character_static_fields()
+        self._backfill_bandit_power_split()
         self.ensure_column("event_triggers", "terminal_state", "TEXT NOT NULL DEFAULT 'triggered'")
         self.ensure_column("event_triggers", "terminal_reason", "TEXT NOT NULL DEFAULT ''")
         self._backfill_event_triggers_from_event_pool_issues()
@@ -1877,6 +1878,52 @@ class GameDB:
                   AND COALESCE(debut_month, 0) = 0
                 """,
                 (ch.debut_year, ch.debut_month, name),
+            )
+        self.conn.commit()
+
+    def _backfill_bandit_power_split(self) -> None:
+        for power_id in ("bandit_li_zicheng", "bandit_zhang_xianzhong"):
+            power = self.content.powers.get(power_id)
+            if not power:
+                continue
+            self.conn.execute(
+                """
+                INSERT OR IGNORE INTO powers
+                (id, name, kind, leader, stance, leverage, satisfaction, military_strength,
+                 cohesion, supply, agenda, status, last_action, aliases)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    power.id,
+                    power.name,
+                    power.kind,
+                    power.leader,
+                    power.stance,
+                    power.leverage,
+                    power.satisfaction,
+                    power.military_strength,
+                    power.cohesion,
+                    power.supply,
+                    power.agenda,
+                    power.status,
+                    power.last_action,
+                    power.aliases,
+                ),
+            )
+        for name in ("李自成", "张献忠"):
+            ch = self.content.characters.get(name)
+            if not ch or not ch.power_id or ch.power_id == "bandits":
+                continue
+            if self.conn.execute("SELECT 1 FROM powers WHERE id=?", (ch.power_id,)).fetchone() is None:
+                continue
+            self.conn.execute(
+                """
+                UPDATE characters
+                SET power_id = ?
+                WHERE name = ?
+                  AND COALESCE(power_id, '') IN ('', 'bandits')
+                """,
+                (ch.power_id, name),
             )
         self.conn.commit()
 
