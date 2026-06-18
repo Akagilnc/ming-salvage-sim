@@ -1680,7 +1680,9 @@ class GameDB:
                     power.agenda,
                     power.status,
                     power.last_action,
-                    power.aliases,
+                    json.dumps(power.aliases, ensure_ascii=False)
+                    if isinstance(power.aliases, list)
+                    else power.aliases,
                 ),
             )
         for region in self.content.regions.values():
@@ -1907,7 +1909,9 @@ class GameDB:
                     power.agenda,
                     power.status,
                     power.last_action,
-                    power.aliases,
+                    json.dumps(power.aliases, ensure_ascii=False)
+                    if isinstance(power.aliases, list)
+                    else power.aliases,
                 ),
             )
         for name in ("李自成", "张献忠"):

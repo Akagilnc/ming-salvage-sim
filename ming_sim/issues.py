@@ -555,7 +555,7 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
                 db.mark_event_triggered(state, ev.id)
                 triggered.append({"id": ev.id, "title": ev.title, "kind": ev.event_type})
             continue
-        issue_id = event_to_issue(db, state, ev)
+        issue_id = event_to_issue(db, state, ev, commit=False)
         created_issue = issue_id is not None
         if historical_event and issue_id is None:
             row = (
@@ -1996,6 +1996,7 @@ def _strategic_event_result_preflight_error(
     legacy_person_mode: bool,
 ) -> str:
     """ADR0014：战略事件战果是同一信封，落库前先拦整组可预见拒收项。"""
+    legacy_mods = db.legacy_modifiers(state)
     region_valid_fields = set(REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + REGION_TEXT_FIELDS + FISCAL_SCORE_FIELDS)
     region_valid_fields.add("cannon")
     region_numeric_fields = set(REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + FISCAL_SCORE_FIELDS)
@@ -2033,7 +2034,7 @@ def _strategic_event_result_preflight_error(
             fiscal = json.loads(str(row["fiscal"] or "{}"))
             old_value = int(fiscal.get(field, 50))
             delta = int(value)
-            net_pct = int(((db.legacy_modifiers(state).get("regions") or {})
+            net_pct = int(((legacy_mods.get("regions") or {})
                            .get(region_id) or {}).get(field, 0) or 0)
             if net_pct:
                 delta = db.apply_legacy_pct(delta, net_pct)
@@ -2043,7 +2044,7 @@ def _strategic_event_result_preflight_error(
         if field in REGION_SCORE_FIELDS:
             old_value = int(row[field])
             delta = int(value)
-            net_pct = int(((db.legacy_modifiers(state).get("regions") or {})
+            net_pct = int(((legacy_mods.get("regions") or {})
                            .get(region_id) or {}).get(field, 0) or 0)
             if net_pct:
                 delta = db.apply_legacy_pct(delta, net_pct)
@@ -2076,7 +2077,7 @@ def _strategic_event_result_preflight_error(
         if field in ARMY_SCORE_FIELDS:
             old_value = int(row[field])
             delta = int(value)
-            net_pct = int(((db.legacy_modifiers(state).get("armies") or {})
+            net_pct = int(((legacy_mods.get("armies") or {})
                            .get(army_id) or {}).get(field, 0) or 0)
             if net_pct:
                 delta = db.apply_legacy_pct(delta, net_pct)
@@ -4633,15 +4634,21 @@ def apply_score_extraction(
                 event_person_changes,
                 legacy=legacy_person_mode,
         )
-        result_items = event_created_armies + event_region_changes + event_army_changes + event_person_results
+        if event_power_updates:
+            event_power_changes = db.apply_power_deltas(
+                state,
+                event_power_updates,
+                commit=commit_now,
+            )
+            power_changes.extend(event_power_changes)
+        result_items = (
+            event_created_armies
+            + event_region_changes
+            + event_army_changes
+            + event_person_results
+            + event_power_changes
+        )
         if any(_strategic_result_item_has_material_world_state(item) for item in result_items):
-            if event_power_updates:
-                event_power_changes = db.apply_power_deltas(
-                    state,
-                    event_power_updates,
-                    commit=commit_now,
-                )
-                power_changes.extend(event_power_changes)
             db.mark_event_triggered(state, event_id, terminal_reason=outcome_label, commit=commit_now)
             new_issue["reason"] = "event_type=node 已记为触发，软判结果已落主账"
         else:
