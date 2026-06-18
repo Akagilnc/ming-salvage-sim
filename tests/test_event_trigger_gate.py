@@ -431,6 +431,12 @@ def test_mao_wenlong_event_excluded_after_player_relocates_mao(game):
         ("毛文龙",),
     ).fetchone()["location"] == "shaanxi"
     assert all(ev.id != "mao_wenlong" for ev in issues.gather_candidate_events(state, db))
+    terminal = db.conn.execute(
+        "SELECT terminal_state, source FROM event_triggers WHERE event_id=?",
+        ("mao_wenlong",),
+    ).fetchone()
+    assert terminal is not None
+    assert dict(terminal) == {"terminal_state": "avoided", "source": "gate_avoided"}
 
 
 def test_mao_wenlong_event_excluded_after_player_reassigns_yuan(game):
@@ -498,6 +504,7 @@ def test_strategic_foreign_event_records_trigger_and_lands_soft_result_delta(gam
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "事件结局": {"jisi_lubian": "入塞被遏"},
             "region_delta": {"beizhili": {"military_pressure": 35, "controlled_by": "ming", "reason": "己巳之变软判敌逼京畿"}},
             "army_delta": {"jingying": {"manpower": -5000, "morale": -8, "reason": "己巳之变勤王战损"}},
         },
@@ -534,6 +541,7 @@ def test_strategic_foreign_event_lands_new_army_soft_result_delta(game):
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "事件结局": {"jisi_lubian": "入塞被遏"},
             "new_armies": [
                 {
                     "id": army_id,
@@ -554,6 +562,32 @@ def test_strategic_foreign_event_lands_new_army_soft_result_delta(game):
         "SELECT owner_power, manpower FROM armies WHERE id = ?", (army_id,)
     ).fetchone()) == {"owner_power": "houjin", "manpower": 1200}
     assert out["created_armies"][0].get("rejected") is not True
+
+
+def test_strategic_event_records_outcome_label_with_world_state_delta(game):
+    """ADR0014：战略战事软判须同写结局标签账，供下游链分支读取。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "事件结局": {"jisi_lubian": "入塞被遏"},
+            "region_delta": {"beizhili": {"military_pressure": 35, "reason": "己巳之变软判敌逼京畿"}},
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is False
+    row = db.conn.execute(
+        "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id=?",
+        ("jisi_lubian",),
+    ).fetchone()
+    assert dict(row) == {"terminal_state": "triggered", "terminal_reason": "入塞被遏"}
 
 
 def test_anchored_strategic_new_army_without_event_trigger_is_rejected(game):
@@ -587,6 +621,54 @@ def test_anchored_strategic_new_army_without_event_trigger_is_rejected(game):
     assert out["created_armies"][0]["rejected"] is True
     assert out["created_armies"][0]["category"] == "event_rejected"
     assert "未触发" in out["created_armies"][0]["reason"]
+
+
+def test_anchored_strategic_region_outcome_without_reason_is_rejected(game):
+    """ship-pre CMR：疑似战略战果缺 reason 时，不得当普通地区 delta 半落库。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "region_delta": {"beizhili": {"military_pressure": 35}},
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert not db.has_event_triggered("jisi_lubian")
+    assert db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
+    ).fetchone()["military_pressure"] == 20
+    assert out["region_changes"][0]["rejected"] is True
+    assert out["region_changes"][0]["category"] == "event_rejected"
+
+
+def test_ordinary_jinzhou_preparedness_delta_is_not_rejected_as_songshan_outcome(game):
+    """ship-pre CMR：普通锦州战备整饬不等于松锦决战战果。"""
+    db, state, content = game
+    issues.bind_content(content)
+    before = db.conn.execute(
+        "SELECT training FROM armies WHERE id = ?", ("guanning",)
+    ).fetchone()["training"]
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {"army_delta": {"guanning": {"training": 5, "reason": "奉旨整饬锦州战备"}}},
+        content=content,
+    )
+
+    assert db.conn.execute(
+        "SELECT training FROM armies WHERE id = ?", ("guanning",)
+    ).fetchone()["training"] == before + 5
+    assert out["army_changes"][0].get("rejected") is not True
 
 
 def test_strategic_foreign_event_survives_named_commander_death_with_soft_result_delta(game):
@@ -1036,6 +1118,7 @@ def test_invalid_strategic_event_result_delta_does_not_mark_event_triggered(game
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "事件结局": {"jisi_lubian": "入塞被遏"},
             "region_delta": {"beizhili": {"不存在字段": 1, "reason": "己巳之变无效战果字段"}},
         },
         content=content,
@@ -1295,6 +1378,23 @@ def test_yuan_xialing_event_excluded_without_jisi_triggered(game):
     assert all(ev.id != "yuan_xialing" for ev in cands)
 
 
+def test_yuan_xialing_event_excluded_after_jisi_border_contained_outcome(game):
+    """ADR0014：己巳挡于边墙结局不应打开袁下狱链。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 12
+    db.mark_event_triggered(state, "jisi_lubian", terminal_reason="挡于边墙")
+    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("active", "袁崇焕"))
+    db.conn.execute("UPDATE armies SET commander=? WHERE id=?", ("袁崇焕", "guanning"))
+    db.conn.execute(
+        "UPDATE characters SET status=?, status_reason=? WHERE name=?",
+        ("dead", "袁崇焕双岛斩帅", "毛文龙"),
+    )
+
+    assert all(ev.id != "yuan_xialing" for ev in issues.gather_candidate_events(state, db))
+
+
 def test_yuan_xialing_event_included_after_jisi_event_issue_triggers(game):
     """#191 CMR：己巳之变真实从 event_pool 触发后，袁下狱上游终态门应可查并打开。"""
     db, state, content = game
@@ -1308,6 +1408,7 @@ def test_yuan_xialing_event_included_after_jisi_event_issue_triggers(game):
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "事件结局": {"jisi_lubian": "入塞被遏"},
             "region_delta": {"beizhili": {"military_pressure": 35, "reason": "己巳之变软判敌逼京畿"}},
             "army_delta": {"jingying": {"manpower": -5000, "morale": -8, "reason": "己巳之变勤王战损"}},
         },
@@ -1316,11 +1417,12 @@ def test_yuan_xialing_event_included_after_jisi_event_issue_triggers(game):
 
     assert out["issue_summary"]["new_issues"][0]["rejected"] is False
     row = db.conn.execute(
-        "SELECT terminal_state FROM event_triggers WHERE event_id=?",
+        "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id=?",
         ("jisi_lubian",),
     ).fetchone()
     assert row is not None
     assert row["terminal_state"] == "triggered"
+    assert row["terminal_reason"] == "入塞被遏"
 
     state.year = 1629
     state.period = 12
@@ -1357,11 +1459,12 @@ def test_legacy_event_pool_issue_backfills_event_trigger_for_chain_gate(game):
     db.init_schema()
 
     row = db.conn.execute(
-        "SELECT terminal_state, source FROM event_triggers WHERE event_id=?",
+        "SELECT terminal_state, terminal_reason, source FROM event_triggers WHERE event_id=?",
         ("jisi_lubian",),
     ).fetchone()
     assert row is not None
     assert row["terminal_state"] == "triggered"
+    assert row["terminal_reason"] == "入塞被遏"
     assert row["source"] == "legacy_event_pool"
 
     state.year = 1629
@@ -1523,7 +1626,7 @@ def test_issue_191_person_core_events_are_explicitly_classified(content):
         ),
         "yuan_xialing": (
             ["袁崇焕"],
-            {"character.袁崇焕.status", "army.guanning.commander", "character.毛文龙.status", "character.毛文龙.status_reason", "event.jisi_lubian.terminal_state"},
+            {"character.袁崇焕.status", "army.guanning.commander", "character.毛文龙.status", "character.毛文龙.status_reason", "event.jisi_lubian.terminal_state", "event.jisi_lubian.terminal_reason"},
         ),
         "kong_youde": (
             ["孔有德"],

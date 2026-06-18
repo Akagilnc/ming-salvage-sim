@@ -3,9 +3,9 @@
 **真相源**：`ming_sim/simulation.py`（`EMPTY_EXTRACTION` / `MODULE_FIELDS` / `_clean_*`）+ `ming_sim/issues.py`（落库守门）+ `ming_sim/constants.py`（白名单）。
 
 用途：每回合月末，我以裁判身份产一份 delta JSON，由 driver 喂 `apply_score_extraction(db, state, extracted)` 落库。**没在白名单里的字段会被沉默裁掉、值不合法的整条丢弃。** 必须查表，不要凭"我以为"。
-v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、未知顶层字段）过不了 `validate_delta_shape`，结算会响亮中止（SettlementAbort + 诊断错误包），不再静默吞——产出前自查顶层 20 字段，别指望守门人帮忙兜。
+v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、未知顶层字段）过不了 `validate_delta_shape`，结算会响亮中止（SettlementAbort + 诊断错误包），不再静默吞——产出前自查顶层 21 字段，别指望守门人帮忙兜。
 
-## 顶层 20 字段（容器类型固定）
+## 顶层 21 字段（容器类型固定）
 
 ```jsonc
 {
@@ -28,6 +28,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
   // ── issues 模块 ──
   "issue_advances":   [],  // 推进既有 issue
   "new_issues":       [],  // 新立 issue（origin_kind 必填）
+  "事件结局":          {},  // dict[event_id -> 闭合结局标签]
   "cancels":          [],  // 撤销 issue
   "close_issues":     [],  // 结案 issue
 
@@ -145,7 +146,17 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 
 **其它来源一律拒**（这是我第一次踩的坑：`origin_kind=''` 直接被丢）。
 
-**战略/外敌战事 node**（如 `jisi_lubian` / `wuyin_lubian` / `songshan_battle`）不能只写 `new_issues`。同一信封必须同时由军务/人事等字段写世界状态主账：`region_delta` / `army_delta` / `人物变更`，并在 `reason` / `原因` 带事件名或战役名；程序会在主账落地后记 `event_triggers`，不转长期 issue。只写 event_pool id 会拒收为“缺世界状态主账结果”。
+**战略/外敌战事 node**（如 `jisi_lubian` / `wuyin_lubian` / `songshan_battle`）不能只写 `new_issues`。同一信封必须同时由军务/人事等字段写世界状态主账：`region_delta` / `army_delta` / `new_armies` / `人物变更`，并在 `reason` / `原因` 带事件名或战役名；程序会在主账落地后记 `event_triggers`，不转长期 issue。只写 event_pool id 会拒收为“缺世界状态主账结果”。
+
+若该战略事件定义了闭合结局标签，还必须同信封写 `事件结局`。当前 `jisi_lubian` 只接受三档：`挡于边墙` / `入塞被遏` / `长驱直入`。例如：
+
+```json
+{
+  "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+  "事件结局": {"jisi_lubian": "入塞被遏"},
+  "region_delta": {"beizhili": {"military_pressure": 35, "reason": "己巳之变软判敌逼京畿"}}
+}
+```
 
 `origin_kind=decree` 时字段：
 | 字段 | 约束 |
@@ -220,7 +231,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 |---|---|
 | `internal` | `metric_delta` `economy_moves` `faction_delta` `class_delta` `region_delta` `fiscal_changes` `fiscal_creates` `fiscal_removes` |
 | `military_external` | `army_delta` `new_armies` `power_updates` `world_advance` |
-| `issues` | `issue_advances` `new_issues` `cancels` `close_issues` |
+| `issues` | `issue_advances` `new_issues` `事件结局` `cancels` `close_issues` |
 | `personnel_secret` | `人物变更` `secret_order_updates` `secret_order_closes` `emperor_fate` |
 
 ---
