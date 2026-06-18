@@ -214,5 +214,8 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 - **本页校订（2026-06-18）**：对照 skill 原文修正三处真错——① `to-prd` 实为「grill 之后」（不访谈，只综合）；② `to-prd` 产**完整 PRD**含 Implementation/Testing Decisions 两层设计（先前误写成薄 issue）；③ `triage` 是**入口匝道**、不对 `to-issues` 产出用——并补「设计六层阶梯」消歧。
 - **关联**：ship 后的 PR 评审循环见 [[pr-review-loop]]；自治 TDD 实现 loop 见 [[tdd-autonomous-dev]]；设计阶段 cross-model 评审见 [[cross-model-review]]。
 
-> [!note] 状态：严格按 Matt 试水中
-> 本页把 Matt 整套当 canonical 写全，本项目严格照它跑一遍验证成不成立。**已知本项目偏离 Matt 的地方**（试水要记下的数据点）：(a) 在 to-prd 后、to-issues 后各插一道 cross-model 评审闸（项目加的，非 Matt）；(b) 是否真用 Matt 的重型 to-prd（含两层设计）还是退回薄 issue —— 由 maintainer 拍，拍了记这里。成立后这套机制的 canonical 应回流 wiki（wiki session 的活）；本项目侧只留「采纳决定 + 指针」在 `CLAUDE.md`。
+> [!note] 状态：严格按 Matt 试水中（完全实验，非照抄）
+> 本页把 Matt 整套当 canonical 写全，本项目**严格照它跑一遍**验证成不成立。**操作姿态（2026-06-18 定）**：先走走看，碰到不合理的地方就**改 / 提 issue**、慢慢理解，**不是无脑照抄**。
+> **已拍决定**：**跑 Matt 的重型 `to-prd`**（含 Implementation/Testing Decisions 两层设计），不退薄 issue（2026-06-18，完全实验——既是 strict Matt 就不再逐点问「要不要照 Matt」）。
+> **仍记的偏离 / 待撞的粗糙边**（数据点）：(a) 在 to-prd 后、to-issues 后各插一道 cross-model 评审闸（项目加的，非 Matt）——其中**设计评审闸的对象应从「ADR」扩到「PRD + ADR」**，因为设计大头现在在 PRD；(b) 实践中撞到的粗糙边（如 to-issues 前父 issue 短暂挂 `ready-for-agent`）按「走走看」原则**遇到再改 / 提 issue**，不提前拍。
+> 成立后这套机制的 canonical 应回流 wiki（wiki session 的活）；本项目侧只留「采纳决定 + 指针」在 `CLAUDE.md`。
