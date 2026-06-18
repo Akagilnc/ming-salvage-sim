@@ -702,6 +702,31 @@ def test_unrelated_person_delta_does_not_satisfy_strategic_event_result_gate(gam
     assert out["applied_person_changes"][0].get("rejected") is not True
 
 
+def test_unrelated_person_delta_with_event_anchor_does_not_satisfy_strategic_event_result_gate(game):
+    """ship-pre CMR R4：无关人物即使 reason 带战役锚词，也不能冒充战略战事主账。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "孙传庭"))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "人物变更": [{"name": "孙传庭", "动作": "处置", "status": "dead", "reason": "己巳之变误写无关人物"}],
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert "主账" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert not db.has_event_triggered("jisi_lubian")
+    assert db.get_character_status("孙传庭")[0] == "dead"
+    assert out["applied_person_changes"][0].get("rejected") is not True
+
+
 def test_target_person_delta_without_event_anchor_does_not_satisfy_strategic_event_result_gate(game):
     """#189 CMR R5：点名将普通人物变化不能只靠姓名冒充该战事结果。"""
     db, state, content = game

@@ -1481,6 +1481,7 @@ _STRATEGIC_FOREIGN_NODE_PERSON_ANCHORS: Dict[str, frozenset[str]] = {
     "wuyin_lubian": frozenset({"戊寅", "墙子岭", "青山口", "巨鹿", "贾庄", "畿南"}),
     "songshan_battle": frozenset({"松锦", "松山", "锦州", "杏山", "塔山", "援锦"}),
 }
+_STRATEGIC_FOREIGN_NODE_PERSON_ROLE_ANCHORS = frozenset({"替补", "主帅", "督师", "统帅", "主将"})
 
 
 def _is_strategic_foreign_node_event(ev: Event) -> bool:
@@ -1617,9 +1618,38 @@ def _entity_deltas_for_strategic_event(
     }
 
 
+def _strategic_event_target_commanders(db: GameDB, event_id: str) -> set[str]:
+    target_armies = _strategic_event_outcome_targets(event_id).get("armies", frozenset())
+    if not target_armies:
+        return set()
+    placeholders = ",".join("?" for _ in target_armies)
+    rows = db.conn.execute(
+        f"SELECT commander FROM armies WHERE id IN ({placeholders})",
+        tuple(sorted(target_armies)),
+    ).fetchall()
+    return {str(row["commander"] or "").strip() for row in rows if str(row["commander"] or "").strip()}
+
+
+def _strategic_person_matches_event_target(
+    name: str,
+    event_id: str,
+    db: GameDB,
+    reason_text: str,
+) -> bool:
+    if not name:
+        return False
+    targets = _strategic_event_outcome_targets(event_id)
+    if name in targets.get("characters", frozenset()):
+        return True
+    if name in _strategic_event_target_commanders(db, event_id):
+        return True
+    return any(anchor in reason_text for anchor in _STRATEGIC_FOREIGN_NODE_PERSON_ROLE_ANCHORS)
+
+
 def _strategic_person_result_event_ids(
     item: Dict[str, object],
     strategic_event_ids: set[str],
+    db: GameDB,
 ) -> set[str]:
     if not _is_strategic_person_result_change(item):
         return set()
@@ -1628,7 +1658,10 @@ def _strategic_person_result_event_ids(
     event_ids: set[str] = set()
     for event_id in strategic_event_ids:
         anchors = _STRATEGIC_FOREIGN_NODE_PERSON_ANCHORS.get(event_id, frozenset())
-        if event_id in reason_text or any(anchor in reason_text for anchor in anchors):
+        if (
+            (event_id in reason_text or any(anchor in reason_text for anchor in anchors))
+            and _strategic_person_matches_event_target(name, event_id, db, reason_text)
+        ):
             event_ids.add(event_id)
     return event_ids
 
@@ -1636,11 +1669,12 @@ def _strategic_person_result_event_ids(
 def _split_strategic_person_result_changes(
     changes: List[Dict[str, object]],
     strategic_event_ids: set[str],
+    db: GameDB,
 ) -> tuple[List[Dict[str, object]], List[Dict[str, object]]]:
     strategic: List[Dict[str, object]] = []
     other: List[Dict[str, object]] = []
     for item in changes:
-        if _strategic_person_result_event_ids(item, strategic_event_ids):
+        if _strategic_person_result_event_ids(item, strategic_event_ids, db):
             strategic.append(item)
         else:
             other.append(item)
@@ -1651,6 +1685,7 @@ def _event_result_delta_event_ids(
     strategic_event_ids: set[str],
     extracted: Dict[str, object],
     person_changes: List[Dict[str, object]],
+    db: GameDB,
 ) -> set[str]:
     region_result_event_ids: set[str] = set()
     if isinstance(extracted.get("region_delta"), dict):
@@ -1666,7 +1701,7 @@ def _event_result_delta_event_ids(
             )
     person_result_event_ids: set[str] = set()
     for item in person_changes:
-        person_result_event_ids.update(_strategic_person_result_event_ids(item, strategic_event_ids))
+        person_result_event_ids.update(_strategic_person_result_event_ids(item, strategic_event_ids, db))
     result_ids: set[str] = set()
     for event_id in strategic_event_ids:
         if (
@@ -3495,6 +3530,7 @@ def apply_score_extraction(
         set(_STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS),
         extracted,
         person_changes,
+        db,
     )
     strategic_event_delta_ids = set(strategic_event_result_delta_event_ids)
     strategic_event_referenced_ids = strategic_event_pool_ids | strategic_event_delta_ids
@@ -3513,10 +3549,12 @@ def apply_score_extraction(
     strategic_pre_issue_person_changes, pre_issue_person_changes = _split_strategic_person_result_changes(
         pre_issue_person_changes,
         strategic_event_referenced_ids,
+        db,
     )
     strategic_post_issue_person_changes, post_issue_person_changes = _split_strategic_person_result_changes(
         post_issue_person_changes,
         strategic_event_referenced_ids,
+        db,
     )
     strategic_person_result_changes = strategic_pre_issue_person_changes + strategic_post_issue_person_changes
 
@@ -3747,7 +3785,7 @@ def apply_score_extraction(
         event_person_changes = [
             item
             for item in strategic_person_result_changes
-            if event_id in _strategic_person_result_event_ids(item, {event_id})
+            if event_id in _strategic_person_result_event_ids(item, {event_id}, db)
         ]
         reason = f"战略/外敌事件「{event_title or event_id}」未触发，战果不落主账"
         for region_id, raw_changes in event_region_deltas.items():
@@ -3817,7 +3855,7 @@ def apply_score_extraction(
         event_person_changes = [
             item
             for item in strategic_person_result_changes
-            if event_id in _strategic_person_result_event_ids(item, {event_id})
+            if event_id in _strategic_person_result_event_ids(item, {event_id}, db)
         ]
         event_region_changes: List[Dict[str, object]] = []
         event_army_changes: List[Dict[str, object]] = []
