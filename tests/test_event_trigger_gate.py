@@ -83,6 +83,18 @@ def test_historical_event_expires_after_latest_window_when_gate_unsatisfied(game
         cands = issues.gather_candidate_events(state, db)
 
         assert all(c.id != "__test_expiring_hist__" for c in cands)
+        assert db.conn.execute(
+            "SELECT terminal_state FROM event_triggers WHERE event_id=?",
+            ("__test_expiring_hist__",),
+        ).fetchone() is None
+
+        terminalized = issues.apply_event_terminal_states(state, db)
+
+        assert {
+            "id": "__test_expiring_hist__",
+            "title": "测试门控历史事件",
+            "terminal_state": "expired",
+        } in terminalized
         row = db.conn.execute(
             "SELECT terminal_state FROM event_triggers WHERE event_id=?",
             ("__test_expiring_hist__",),
@@ -216,6 +228,13 @@ def test_seed_event_expires_after_latest_window_when_gate_unsatisfied(game):
         cands = issues.gather_candidate_events(state, db)
 
         assert all(c.id != "__test_expiring_seed__" for c in cands)
+        assert db.conn.execute(
+            "SELECT terminal_state FROM event_triggers WHERE event_id=?",
+            ("__test_expiring_seed__",),
+        ).fetchone() is None
+
+        issues.apply_event_terminal_states(state, db)
+
         row = db.conn.execute(
             "SELECT terminal_state FROM event_triggers WHERE event_id=?",
             ("__test_expiring_seed__",),
@@ -254,7 +273,7 @@ def test_auto_trigger_seed_event_expires_after_latest_window_when_gate_unsatisfi
         content.seed_events.remove(ev)
 
 
-def test_gather_candidate_events_expires_auto_trigger_seed_before_skip(game):
+def test_gather_candidate_events_filters_expired_auto_trigger_seed_without_writing(game):
     db, state, content = game
     issues.bind_content(content)
     ev = _hist_event("__test_expiring_auto_seed_candidate__", {"民心": "<=5"})
@@ -272,6 +291,13 @@ def test_gather_candidate_events_expires_auto_trigger_seed_before_skip(game):
         cands = issues.gather_candidate_events(state, db)
 
         assert all(c.id != "__test_expiring_auto_seed_candidate__" for c in cands)
+        assert db.conn.execute(
+            "SELECT terminal_state FROM event_triggers WHERE event_id=?",
+            ("__test_expiring_auto_seed_candidate__",),
+        ).fetchone() is None
+
+        issues.apply_event_terminal_states(state, db)
+
         row = db.conn.execute(
             "SELECT terminal_state FROM event_triggers WHERE event_id=?",
             ("__test_expiring_auto_seed_candidate__",),
@@ -714,6 +740,7 @@ def test_mao_wenlong_event_excluded_after_player_relocates_mao(game):
         ("毛文龙",),
     ).fetchone()["location"] == "shaanxi"
     assert all(ev.id != "mao_wenlong" for ev in issues.gather_candidate_events(state, db))
+    issues.apply_event_terminal_states(state, db)
     terminal = db.conn.execute(
         "SELECT terminal_state, source FROM event_triggers WHERE event_id=?",
         ("mao_wenlong",),
@@ -2373,6 +2400,7 @@ def test_person_core_event_obsoletes_when_named_subject_is_dead(game):
     cands = issues.gather_candidate_events(state, db)
 
     assert all(ev.id != "yuan_xialing" for ev in cands)
+    issues.apply_event_terminal_states(state, db)
     row = db.conn.execute(
         "SELECT terminal_state, source FROM event_triggers WHERE event_id=?",
         ("yuan_xialing",),
@@ -5018,6 +5046,8 @@ def test_mao_wenlong_event_obsolete_when_core_subject_already_dead(game):
 
     cands = issues.gather_candidate_events(state, db)
     assert all(ev.id != "mao_wenlong" for ev in cands)
+
+    issues.apply_event_terminal_states(state, db)
 
     out = issues.apply_issue_tracker_output(
         db,
