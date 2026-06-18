@@ -21,3 +21,14 @@
 ## 回合使用
 
 每月给玩家 2-5 条关键奏报。玩家可以召见相关大臣追问细节，也可以直接下旨。事件结算后只告诉玩家“结果、代价、隐患”，不暴露完整后台公式。
+
+## 内容配置字段
+
+`content/events.json` 里的历史事件通过这些字段接入真实盘面：
+
+- `trigger_year` / `trigger_month`：最早可进入候选的史实年月。
+- `trigger_end_year` / `trigger_end_month` 或 `open_window`：显式声明最晚窗口或开放窗，避免漏填后无限晚弹。
+- `trigger_gate`：结构化前提门，全部条件满足才进候选；空对象表示天定或纯日历锚定。
+- `event_type`：`situation` 转成长期事项，`node` 只播报并落事件账，`ending` 进入结局判定。
+- `trigger_class`：目前支持 `strategic_foreign`，用于标记战略/外敌类事件。此类事件的点名将领按席位处理，不因将领死亡直接作废；触发时必须同信封落世界状态主账结果。
+- `person_core_subjects`：人物核心事件主体。主体永久死亡时，事件会作废退候选；不要用于战略/外敌类战事。
