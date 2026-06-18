@@ -23,7 +23,7 @@
 - **提取器误路由覆盖**：`event_outcomes` 能规范化为 `事件结局`，不会被当作跨模块错放字段丢弃或误报。
 
 ### 测试
-- 新增和扩展历史事件、战略战果、人事变更、流寇分股、schema/prompt 和 extractor sanitizer 覆盖；本轮 ship 全量验证为 `1285 passed, 13 skipped`。
+- 新增和扩展历史事件、战略战果、人事变更、流寇分股、schema/prompt 和 extractor sanitizer 覆盖；PR 最终全量验证为 `1293 passed, 13 skipped`。
 
 ## [0.11.1.0] - 2026-06-18
 

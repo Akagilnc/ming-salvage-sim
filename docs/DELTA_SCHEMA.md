@@ -124,6 +124,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 - #190 流寇分股：李自成股 / 张献忠股等必须写各自 power_id（如 `bandit_li_zicheng`、`bandit_zhang_xianzhong`），不是全局 `bandits`。
 - 剿股 / 被剿 / 孤儿股平定：写目标股 `power_updates.<power_id>.military_strength` 下降，这是独立 power 级军事镇压。
 - 招安 / 就抚某流寇头目归明：削股不写顶层 `power_updates`，而写在同一条 `人物变更.易主.反噬` 里；同一股同一信封两边都写会拒收顶层 `power_updates` 防双减。
+- 若作为战略/外敌战事同信封主账战果，`reason` / `原因` 必须带事件名或战役名；缺锚点不能单独触发战略事件。
 
 ### `world_advance` — 四方动向
 - key：势力名（`后金` `蒙古` `朝鲜` `流寇` 等）
@@ -146,7 +147,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 
 **其它来源一律拒**（这是我第一次踩的坑：`origin_kind=''` 直接被丢）。
 
-**战略/外敌战事 node**（如 `jisi_lubian` / `wuyin_lubian` / `songshan_battle`）不能只写 `new_issues`。同一信封必须同时由军务/人事等字段写世界状态主账：`region_delta` / `army_delta` / `new_armies` / `人物变更`，并在 `reason` / `原因` 带事件名或战役名；程序会在主账落地后记 `event_triggers`，不转长期 issue。只写 event_pool id 会拒收为“缺世界状态主账结果”。
+**战略/外敌战事 node**（如 `jisi_lubian` / `wuyin_lubian` / `songshan_battle`）不能只写 `new_issues`。同一信封必须同时由军务/人事等字段写世界状态主账：`region_delta` / `army_delta` / `power_updates` / `new_armies` / `人物变更`，并在 `reason` / `原因` 带事件名或战役名；程序会在主账落地后记 `event_triggers`，不转长期 issue。只写 event_pool id 会拒收为“缺世界状态主账结果”。
 
 若该战略事件定义了闭合结局标签，还必须同信封写 `事件结局`。当前 `jisi_lubian` 只接受三档：`挡于边墙` / `入塞被遏` / `长驱直入`。例如：
 
