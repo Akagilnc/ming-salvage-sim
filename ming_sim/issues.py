@@ -1525,6 +1525,19 @@ _STRATEGIC_FOREIGN_NODE_PERSON_ROLE_ANCHORS = frozenset({"替补", "主帅", "�
 _STRATEGIC_EVENT_OUTCOME_LABELS: Dict[str, frozenset[str]] = {
     "jisi_lubian": frozenset({"挡于边墙", "入塞被遏", "长驱直入"}),
 }
+_STRATEGIC_EVENT_OUTCOME_LABEL_ALIASES: Dict[str, Dict[str, str]] = {
+    "jisi_lubian": {
+        "挡于边墙外": "挡于边墙",
+        "拒于边墙": "挡于边墙",
+        "未能入塞": "挡于边墙",
+        "入塞遭遏": "入塞被遏",
+        "入塞受遏": "入塞被遏",
+        "入塞后被遏": "入塞被遏",
+        "入塞被阻": "入塞被遏",
+        "长驱入京": "长驱直入",
+        "兵临京师": "长驱直入",
+    },
+}
 _STRATEGIC_ENTITY_OUTCOME_FIELDS: Dict[str, frozenset[str]] = {
     "regions": frozenset({"military_pressure", "controlled_by", "军事压力", "控制方", "控制"}),
     "armies": frozenset({
@@ -1889,6 +1902,17 @@ def _event_outcome_label(raw_outcomes: object, event_id: str) -> str:
     return str(raw or "").strip()
 
 
+def _normalize_event_outcome_label(event_id: str, label: str) -> str:
+    allowed = _STRATEGIC_EVENT_OUTCOME_LABELS.get(event_id, frozenset())
+    compact = re.sub(r"\s+", "", str(label or ""))
+    if not compact:
+        return ""
+    for canonical in allowed:
+        if compact == re.sub(r"\s+", "", canonical):
+            return canonical
+    return _STRATEGIC_EVENT_OUTCOME_LABEL_ALIASES.get(event_id, {}).get(compact, "")
+
+
 def _strategic_event_outcome_label_or_error(
     event_id: str,
     extracted: Dict[str, object],
@@ -1901,9 +1925,156 @@ def _strategic_event_outcome_label_or_error(
     event_title = content.event_by_id[event_id].title if event_id in content.event_by_id else event_id
     if not label:
         return "", f"战略/外敌事件「{event_title}」缺事件结局标签"
-    if label not in allowed:
-        return "", f"战略/外敌事件「{event_title}」事件结局标签非法：{label}"
-    return label, ""
+    normalized = _normalize_event_outcome_label(event_id, label)
+    if not normalized:
+        raise ValueError(
+            f"战略/外敌事件「{event_title}」事件结局标签无法归一：{label}；"
+            f"合法标签：{'/'.join(sorted(allowed))}"
+        )
+    return normalized, ""
+
+
+def _strategic_event_result_preflight_error(
+    db: GameDB,
+    state: GameState,
+    event_id: str,
+    event_title: str,
+    region_deltas: Dict[str, object],
+    army_deltas: Dict[str, object],
+    person_changes: List[Dict[str, object]],
+    new_armies: List[object],
+    content: Optional[GameContent],
+    llm_config: Any,
+    legacy_person_mode: bool,
+) -> str:
+    """ADR0014：战略事件战果是同一信封，落库前先拦整组可预见拒收项。"""
+    region_valid_fields = set(REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + REGION_TEXT_FIELDS + FISCAL_SCORE_FIELDS)
+    region_valid_fields.add("cannon")
+    region_numeric_fields = set(REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + FISCAL_SCORE_FIELDS)
+    region_numeric_fields.add("cannon")
+    army_valid_fields = set(ARMY_SCORE_FIELDS + ARMY_QUANTITY_FIELDS + ARMY_TEXT_FIELDS)
+    army_numeric_fields = set(ARMY_SCORE_FIELDS + ARMY_QUANTITY_FIELDS)
+
+    def _int_delta_error(kind: str, target_id: str, raw_field: object, value: object) -> str:
+        if isinstance(value, bool) or isinstance(value, float):
+            return f"战略/外敌事件「{event_title or event_id}」战果 {kind}.{target_id}.{raw_field} 值非整数：{value!r}"
+        try:
+            int(value)
+        except (TypeError, ValueError):
+            return f"战略/外敌事件「{event_title or event_id}」战果 {kind}.{target_id}.{raw_field} 值非整数：{value!r}"
+        return ""
+
+    for region_id, raw_changes in region_deltas.items():
+        if db.conn.execute("SELECT 1 FROM regions WHERE id = ?", (region_id,)).fetchone() is None:
+            return f"战略/外敌事件「{event_title or event_id}」战果引用未入库地区：{region_id}"
+        if not isinstance(raw_changes, dict):
+            return f"战略/外敌事件「{event_title or event_id}」地区战果须为对象：{region_id}"
+        if not _change_mentions_strategic_event(raw_changes, event_id):
+            return f"战略/外敌事件「{event_title or event_id}」地区战果缺 reason/原因 事件锚点：{region_id}"
+        for raw_field, value in raw_changes.items():
+            field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
+            if field == "reason":
+                continue
+            if field not in region_valid_fields:
+                return f"战略/外敌事件「{event_title or event_id}」战果引用非法地区字段：{raw_field}"
+            if field in region_numeric_fields:
+                err = _int_delta_error("region", region_id, raw_field, value)
+                if err:
+                    return err
+
+    for army_id, raw_changes in army_deltas.items():
+        if db.conn.execute("SELECT 1 FROM armies WHERE id = ?", (army_id,)).fetchone() is None:
+            return f"战略/外敌事件「{event_title or event_id}」战果引用未入库军队：{army_id}"
+        if not isinstance(raw_changes, dict):
+            return f"战略/外敌事件「{event_title or event_id}」军队战果须为对象：{army_id}"
+        if not _change_mentions_strategic_event(raw_changes, event_id):
+            return f"战略/外敌事件「{event_title or event_id}」军队战果缺 reason/原因 事件锚点：{army_id}"
+        for raw_field, value in raw_changes.items():
+            field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
+            if field == "reason":
+                continue
+            if field not in army_valid_fields:
+                return f"战略/外敌事件「{event_title or event_id}」战果引用非法军队字段：{raw_field}"
+            if field in army_numeric_fields:
+                err = _int_delta_error("army", army_id, raw_field, value)
+                if err:
+                    return err
+
+    if person_changes:
+        snapshot = _snapshot_person_write_state(db, content)
+        results: List[Dict[str, object]] = []
+        db.conn.execute("SAVEPOINT strategic_person_result_preflight")
+        try:
+            results = _apply_person_changes(
+                db,
+                state,
+                person_changes,
+                content=content,
+                registry=None,
+                llm_config=llm_config,
+                allow_legacy_partial_power=legacy_person_mode,
+                external_transaction=True,
+            )
+        finally:
+            db.conn.execute("ROLLBACK TO SAVEPOINT strategic_person_result_preflight")
+            db.conn.execute("RELEASE SAVEPOINT strategic_person_result_preflight")
+            _restore_person_content_from_snapshot(content, snapshot)
+        for result in results:
+            if result.get("rejected"):
+                return (
+                    f"战略/外敌事件「{event_title or event_id}」人物战果拒收："
+                    f"{result.get('name') or ''}{result.get('动作') or ''} {result.get('reason') or ''}"
+                )
+
+    for raw in new_armies:
+        if not isinstance(raw, dict):
+            return f"战略/外敌事件「{event_title or event_id}」新军战果须为对象"
+        if not _change_mentions_strategic_event(raw, event_id):
+            return f"战略/外敌事件「{event_title or event_id}」新军战果缺 reason/原因 事件锚点"
+        item = {ARMY_FIELD_ALIASES.get(str(k).strip(), str(k).strip()): v for k, v in raw.items()}
+        army_id = str(item.get("id") or "").strip()
+        if not army_id:
+            return f"战略/外敌事件「{event_title or event_id}」新军战果缺 id"
+        owner = str(item.get("owner_power") or "ming").strip() or "ming"
+        if db.conn.execute("SELECT 1 FROM powers WHERE id = ?", (owner,)).fetchone() is None:
+            return f"战略/外敌事件「{event_title or event_id}」新军战果 owner_power 未入库：{owner}"
+        if "manpower" not in item:
+            return f"战略/外敌事件「{event_title or event_id}」新军战果缺 manpower"
+        err = _int_delta_error("new_army", army_id, "manpower", item.get("manpower"))
+        if err:
+            return err
+        for field in ARMY_SCORE_FIELDS:
+            if field in item and item.get(field) is not None:
+                err = _int_delta_error("new_army", army_id, field, item.get(field))
+                if err:
+                    return err
+
+    return ""
+
+
+def _restore_person_content_from_snapshot(
+    content: Optional[GameContent],
+    snapshot: object,
+) -> None:
+    if content is None:
+        return
+    try:
+        content_rows = snapshot[3]  # shape from _snapshot_person_write_state
+    except (IndexError, TypeError):
+        return
+    for name in list(content.characters):
+        if name not in content_rows:
+            del content.characters[name]
+    for name, values in content_rows.items():
+        ch = content.characters.get(name)
+        if ch is None:
+            continue
+        ch.status = values["status"]
+        ch.office = values["office"]
+        ch.office_type = values["office_type"]
+        ch.transit_to = values["transit_to"]
+        ch.status_reason = values.get("status_reason", "")
+        ch.reason_code = values.get("reason_code", "")
 
 
 def _has_economy_entry(d: object) -> bool:
@@ -3721,6 +3892,8 @@ def apply_score_extraction(
         person_changes,
         db,
     )
+    for event_id in sorted(strategic_event_pool_ids & strategic_event_result_delta_event_ids):
+        _strategic_event_outcome_label_or_error(event_id, extracted, runtime_content)
     strategic_event_delta_ids = set(strategic_event_result_delta_event_ids)
     strategic_event_referenced_ids = strategic_event_pool_ids | strategic_event_delta_ids
 
@@ -3966,7 +4139,7 @@ def apply_score_extraction(
         event_result_delta_event_ids=strategic_event_result_delta_event_ids,
         defer_event_trigger_ids=strategic_event_pool_ids)
 
-    def _reject_suppressed_strategic_results(event_id: str, event_title: str) -> None:
+    def _reject_suppressed_strategic_results(event_id: str, event_title: str, reason: str = "") -> None:
         event_region_deltas = _entity_deltas_for_strategic_event(
             strategic_region_deltas_raw,
             "regions",
@@ -3986,7 +4159,7 @@ def apply_score_extraction(
             strategic_new_armies_raw,
             event_id,
         )
-        reason = f"战略/外敌事件「{event_title or event_id}」未触发，战果不落主账"
+        reason = reason or f"战略/外敌事件「{event_title or event_id}」未触发，战果不落主账"
         for region_id, raw_changes in event_region_deltas.items():
             region_changes.append({
                 "region_id": region_id,
@@ -4079,6 +4252,29 @@ def apply_score_extraction(
             strategic_new_armies_raw,
             event_id,
         )
+        result_preflight_error = _strategic_event_result_preflight_error(
+            db,
+            state,
+            event_id,
+            str(new_issue.get("title") or ""),
+            event_region_deltas,
+            event_army_deltas,
+            event_person_changes,
+            event_new_armies,
+            content,
+            llm_config,
+            legacy_person_mode,
+        )
+        if result_preflight_error:
+            new_issue["rejected"] = True
+            new_issue["category"] = "invalid_event_result_delta"
+            new_issue["reason"] = result_preflight_error
+            _reject_suppressed_strategic_results(
+                event_id,
+                str(new_issue.get("title") or ""),
+                reason=f"{result_preflight_error}；整组战果不落主账",
+            )
+            continue
         event_region_changes: List[Dict[str, object]] = []
         event_army_changes: List[Dict[str, object]] = []
         event_person_results: List[Dict[str, object]] = []
