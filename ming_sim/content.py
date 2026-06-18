@@ -150,6 +150,8 @@ def gate_key_form_error(key: str) -> str:
                 return "class 名为空（@ 前）"
             if "@" in member and not member.split("@", 1)[1].strip():
                 return "class @ 后 region 为空（regional gate 须指定 region；national 用无 @ 形式）"
+    if parts[0] == "event" and field != "triggered":
+        return "event gate 仅支持 triggered 字段（形如 event.<event_id>.triggered）"
     return ""
 
 
