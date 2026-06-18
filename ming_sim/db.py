@@ -605,6 +605,8 @@ class GameDB:
                 year INTEGER NOT NULL,
                 period INTEGER NOT NULL,
                 source TEXT NOT NULL DEFAULT 'simulation',
+                terminal_state TEXT NOT NULL DEFAULT 'triggered',
+                terminal_reason TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(event_id) REFERENCES events(id)
             );
@@ -999,6 +1001,10 @@ class GameDB:
         self.ensure_column("characters", "court_role", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "summary", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "aliases", "TEXT NOT NULL DEFAULT '[]'")
+        self._backfill_person_core_character_static_fields()
+        self.ensure_column("event_triggers", "terminal_state", "TEXT NOT NULL DEFAULT 'triggered'")
+        self.ensure_column("event_triggers", "terminal_reason", "TEXT NOT NULL DEFAULT ''")
+        self._backfill_event_triggers_from_event_pool_issues()
         # 步骤7：回合阶段（旧库迁移，schema 升级非 fallback）
         self.ensure_column("game_state", "turn_phase", "TEXT NOT NULL DEFAULT 'summoning'")
         # 结局：ended=1 时游戏终结；ending_status 为 context.ENDING_* 类型。
@@ -1843,6 +1849,62 @@ class GameDB:
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note",
             (ARREARS_UNIT_VERSION,),
         )
+
+    def _backfill_person_core_character_static_fields(self) -> None:
+        mao = self.content.characters.get("毛文龙")
+        if mao and mao.location:
+            self.conn.execute(
+                """
+                UPDATE characters
+                SET location = ?
+                WHERE name = '毛文龙'
+                  AND COALESCE(location, '') = ''
+                  AND COALESCE(transit_to, '') = ''
+                """,
+                (mao.location,),
+            )
+        for name in ("李自成", "张献忠"):
+            ch = self.content.characters.get(name)
+            if not ch or ch.debut_year <= 0:
+                continue
+            self.conn.execute(
+                """
+                UPDATE characters
+                SET debut_year = ?, debut_month = ?
+                WHERE name = ?
+                  AND status = 'offstage'
+                  AND COALESCE(debut_year, 0) = 0
+                  AND COALESCE(debut_month, 0) = 0
+                """,
+                (ch.debut_year, ch.debut_month, name),
+            )
+        self.conn.commit()
+
+    def _backfill_event_triggers_from_event_pool_issues(self) -> None:
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO event_triggers
+                (event_id, turn, year, period, source, terminal_state, terminal_reason)
+            WITH legacy AS (
+                SELECT origin_ref AS event_id, MIN(origin_turn) AS turn
+                FROM issues
+                WHERE origin_kind = 'event_pool' AND origin_ref <> ''
+                GROUP BY origin_ref
+            )
+            SELECT
+                legacy.event_id,
+                legacy.turn,
+                COALESCE(turn_reports.year, game_state.year, 0),
+                COALESCE(turn_reports.period, game_state.period, 0),
+                'legacy_event_pool',
+                'triggered',
+                ''
+            FROM legacy
+            LEFT JOIN turn_reports ON turn_reports.turn = legacy.turn
+            LEFT JOIN game_state ON game_state.id = 1
+            """
+        )
+        self.conn.commit()
 
     def has_state(self) -> bool:
         row = self.conn.execute("SELECT 1 FROM game_state WHERE id = 1").fetchone()
@@ -6094,6 +6156,26 @@ class GameDB:
             VALUES (?, ?, ?, ?, ?)
             """,
             (event_id, state.turn, state.year, state.period, source),
+        )
+        if commit:
+            self.conn.commit()
+
+    def mark_event_obsolete(
+        self,
+        state: GameState,
+        event_id: str,
+        reason: str,
+        source: str = "person_core_dead",
+        *,
+        commit: bool = True,
+    ) -> None:
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO event_triggers
+                (event_id, turn, year, period, source, terminal_state, terminal_reason)
+            VALUES (?, ?, ?, ?, ?, 'obsolete', ?)
+            """,
+            (event_id, state.turn, state.year, state.period, source, reason[:200]),
         )
         if commit:
             self.conn.commit()

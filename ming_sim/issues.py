@@ -198,6 +198,18 @@ def _event_window_open(ev: Event, state: GameState) -> bool:
     return True
 
 
+def _dead_person_core_subjects(ev: Event, db: GameDB) -> List[str]:
+    dead: List[str] = []
+    for name in getattr(ev, "person_core_subjects", []) or []:
+        row = db.conn.execute(
+            "SELECT status FROM characters WHERE name = ?",
+            (str(name),),
+        ).fetchone()
+        if row is not None and str(row["status"] or "") == "dead":
+            dead.append(str(name))
+    return dead
+
+
 _GATE_AGG_FUNCS = {
     "max": max,
     "min": min,
@@ -232,6 +244,7 @@ _GATE_TEXT_SQL_FIELDS = {
     "army": set(ARMY_TEXT_FIELDS),
     "power": set(POWER_TEXT_FIELDS),
     "character": set(CHARACTER_TEXT_FIELDS),
+    "event": {"terminal_state"},
 }
 _GATE_SQL_FIELDS = {
     table: set(fields) | set(_GATE_TEXT_SQL_FIELDS.get(table, set()))
@@ -261,6 +274,7 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
       - 'building.<id>.<field>' / 多建筑 + agg
       - 'power.<id>.<field>' / 多 + agg
       - 'character.<name>.<field>' / 多人物 + agg
+      - 'event.<id>.terminal_state'               → event_triggers 表文本门专用
       - 'class.<name>.<field>'                  → classes 表全国汇总 (region_id='')
       - 'class.<name>@<region>.<field>'         → classes 表省级
       - 'class.<name>@<r1>|<r2>|.<field>.<agg>' → 多省同阶级聚合
@@ -344,7 +358,7 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
 
 def _eval_gate_key_str(key: str, db: GameDB) -> Optional[str]:
     """取一个文本型字段值（如 region.<id>.controlled_by → 'ming'/'houjin'）。
-    仅支持单 id 的 region/army/power/character 文本字段；解析失败返回 None。
+    仅支持单 id 的 region/army/power/character/event 文本字段；解析失败返回 None。
     """
     parts = key.split(".")
     if len(parts) != 3:
@@ -356,6 +370,7 @@ def _eval_gate_key_str(key: str, db: GameDB) -> Optional[str]:
         "army": f"SELECT {field} FROM armies WHERE id = ?",
         "power": f"SELECT {field} FROM powers WHERE id = ?",
         "character": f"SELECT {field} FROM characters WHERE name = ?",
+        "event": f"SELECT {field} FROM event_triggers WHERE event_id = ?",
     }.get(table)
     if sql is None:
         return None
@@ -426,6 +441,16 @@ def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
     # 历史锚定 EVENTS：到点（含错过补出）即进候选
     for ev in c.events:
         if ev.id in spawned or ev.trigger_year <= 0:
+            continue
+        dead_subjects = _dead_person_core_subjects(ev, db)
+        if dead_subjects:
+            db.mark_event_obsolete(
+                state,
+                ev.id,
+                reason=f"人物核心主体永久死亡：{', '.join(dead_subjects)}",
+                commit=not db.conn.in_transaction,
+            )
+            spawned.add(ev.id)
             continue
         if not _event_window_open(ev, state):
             continue
@@ -610,7 +635,7 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
     # 把真异常吞成 None、调用方记普通 rejected，正是 #14/#63 catalog「该落没落无人知」实例
     # （cmr ni r7 codex high）。两种 None 来源已在上方分开：幂等去重经 find_*_by_origin 在此 try
     # 之外 early-return None（正常跳过），故此处无需也不应再兜真异常。
-    return db.insert_issue(
+    issue_id = db.insert_issue(
         state,
         kind="situation",
         title=ev.title,
@@ -631,8 +656,12 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
         effect_on_fail=effect_fail,
         resolve_condition=ev.resolve_condition,
         fail_condition=ev.fail_condition,
-        commit=commit,
+        commit=False,
     )
+    db.mark_event_triggered(state, ev.id, source="event_pool", commit=False)
+    if commit:
+        db.conn.commit()
+    return issue_id
 
 
 _CHARACTER_TEXT_GATE_RE = re.compile(r"^character\.([^.]+)\.([A-Za-z_][A-Za-z0-9_]*)$")

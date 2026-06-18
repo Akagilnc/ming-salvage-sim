@@ -365,6 +365,60 @@ def test_mao_wenlong_event_excluded_after_appeasement(game):
     assert all(ev.id != "mao_wenlong" for ev in cands)
 
 
+def test_mao_wenlong_event_excluded_after_player_relocates_mao(game):
+    """#191：玩家用行止把毛文龙调离东江后，location gate 可查并关闭斩毛事件。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 6
+    db.conn.execute(
+        "UPDATE characters SET loyalty=?, status=?, location=?, transit_to='' WHERE name=?",
+        (44, "active", "dongjiang_area", "毛文龙"),
+    )
+    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("active", "袁崇焕"))
+    content.characters["毛文龙"].loyalty = 44
+    content.characters["毛文龙"].status = "active"
+    content.characters["毛文龙"].location = "dongjiang_area"
+    content.characters["毛文龙"].transit_to = ""
+    content.characters["袁崇焕"].status = "active"
+
+    assert any(ev.id == "mao_wenlong" for ev in issues.gather_candidate_events(state, db))
+
+    applied = issues.apply_score_extraction(
+        db,
+        state,
+        {"人物变更": [{"name": "毛文龙", "动作": "行止", "location": "shaanxi", "reason": "调往陕西剿抚"}]},
+        content=content,
+    )
+
+    assert applied["applied_person_changes"] == [
+        {"name": "毛文龙", "动作": "行止", "location": "shaanxi", "transit_to": ""}
+    ]
+    assert db.conn.execute(
+        "SELECT location FROM characters WHERE name=?",
+        ("毛文龙",),
+    ).fetchone()["location"] == "shaanxi"
+    assert all(ev.id != "mao_wenlong" for ev in issues.gather_candidate_events(state, db))
+
+
+def test_mao_wenlong_event_excluded_after_player_reassigns_yuan(game):
+    """#191 CMR：袁崇焕仍活但不掌关宁时，斩毛事件不应仅因袁 active 进候选。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 6
+    db.conn.execute(
+        "UPDATE characters SET loyalty=?, status=?, location=? WHERE name=?",
+        (44, "active", "dongjiang_area", "毛文龙"),
+    )
+    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("active", "袁崇焕"))
+    db.conn.execute("UPDATE armies SET commander=? WHERE id=?", ("孙承宗", "guanning"))
+
+    cands = issues.gather_candidate_events(state, db)
+
+    assert all(ev.id != "mao_wenlong" for ev in cands)
+
+
 def test_mao_wenlong_event_trigger_lands_character_status(game):
     """#203：未安抚时袁斩毛文龙触发后，毛文龙退场事实必须落库。"""
     db, state, content = game
@@ -1024,6 +1078,309 @@ def test_mao_wenlong_event_pool_rechecks_gate_before_effect(game):
     assert db.conn.execute(
         "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
     ).fetchone()[0] == before_logs
+
+
+def test_person_core_event_obsoletes_when_named_subject_is_dead(game):
+    """#191：人物核心事件的点名主体永久死亡时，应 durable 作废并退出候选池。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 12
+    db.set_character_status(state, "袁崇焕", "dead", reason="测试：提前身故")
+
+    cands = issues.gather_candidate_events(state, db)
+
+    assert all(ev.id != "yuan_xialing" for ev in cands)
+    row = db.conn.execute(
+        "SELECT terminal_state, source FROM event_triggers WHERE event_id=?",
+        ("yuan_xialing",),
+    ).fetchone()
+    assert row is not None
+    assert row["terminal_state"] == "obsolete"
+    assert row["source"] == "person_core_dead"
+
+    cands_again = issues.gather_candidate_events(state, db)
+    assert all(ev.id != "yuan_xialing" for ev in cands_again)
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM event_triggers WHERE event_id=?",
+        ("yuan_xialing",),
+    ).fetchone()[0] == 1
+
+
+def test_yuan_xialing_event_excluded_without_jisi_triggered(game):
+    """#191 CMR：袁下狱依赖己巳之变已发生，不能与上游事件同月凭其它事实一起候选。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 12
+    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("active", "袁崇焕"))
+    db.conn.execute("UPDATE armies SET commander=? WHERE id=?", ("袁崇焕", "guanning"))
+    db.conn.execute(
+        "UPDATE characters SET status=?, status_reason=? WHERE name=?",
+        ("dead", "袁崇焕双岛斩帅", "毛文龙"),
+    )
+
+    cands = issues.gather_candidate_events(state, db)
+
+    assert all(ev.id != "yuan_xialing" for ev in cands)
+
+
+def test_yuan_xialing_event_included_after_jisi_event_issue_triggers(game):
+    """#191 CMR：己巳之变真实从 event_pool 触发后，袁下狱上游终态门应可查并打开。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    assert any(ev.id == "jisi_lubian" for ev in issues.gather_candidate_events(state, db))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {"new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}]},
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is False
+    row = db.conn.execute(
+        "SELECT terminal_state FROM event_triggers WHERE event_id=?",
+        ("jisi_lubian",),
+    ).fetchone()
+    assert row is not None
+    assert row["terminal_state"] == "triggered"
+
+    state.year = 1629
+    state.period = 12
+    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("active", "袁崇焕"))
+    db.conn.execute("UPDATE armies SET commander=? WHERE id=?", ("袁崇焕", "guanning"))
+    db.conn.execute(
+        "UPDATE characters SET status=?, status_reason=? WHERE name=?",
+        ("dead", "袁崇焕双岛斩帅", "毛文龙"),
+    )
+
+    assert any(ev.id == "yuan_xialing" for ev in issues.gather_candidate_events(state, db))
+
+
+def test_legacy_event_pool_issue_backfills_event_trigger_for_chain_gate(game):
+    """#191 CMR R3：旧档已有 event_pool issue 时，schema 迁移应补 event_triggers 链门。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    db.save_state(state)
+    db.insert_issue(
+        state,
+        kind="situation",
+        title=content.event_by_id["jisi_lubian"].title,
+        origin_kind="event_pool",
+        origin_ref="jisi_lubian",
+        commit=True,
+    )
+    assert db.conn.execute(
+        "SELECT event_id FROM event_triggers WHERE event_id=?",
+        ("jisi_lubian",),
+    ).fetchone() is None
+
+    db.init_schema()
+
+    row = db.conn.execute(
+        "SELECT terminal_state, source FROM event_triggers WHERE event_id=?",
+        ("jisi_lubian",),
+    ).fetchone()
+    assert row is not None
+    assert row["terminal_state"] == "triggered"
+    assert row["source"] == "legacy_event_pool"
+
+    state.year = 1629
+    state.period = 12
+    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("active", "袁崇焕"))
+    db.conn.execute("UPDATE armies SET commander=? WHERE id=?", ("袁崇焕", "guanning"))
+    db.conn.execute(
+        "UPDATE characters SET status=?, status_reason=? WHERE name=?",
+        ("dead", "袁崇焕双岛斩帅", "毛文龙"),
+    )
+
+    assert any(ev.id == "yuan_xialing" for ev in issues.gather_candidate_events(state, db))
+
+
+def test_legacy_person_core_static_fields_backfill_reachability(game):
+    """#191 CMR R4：旧档缺新增静态人物字段时，schema 迁移应补回人物核心门底座。"""
+    db, state, content = game
+    issues.bind_content(content)
+    db.conn.execute(
+        "UPDATE characters SET location='', transit_to='' WHERE name=?",
+        ("毛文龙",),
+    )
+    db.conn.execute(
+        "UPDATE characters SET status='offstage', debut_year=0, debut_month=0 WHERE name IN (?, ?)",
+        ("李自成", "张献忠"),
+    )
+    db.conn.commit()
+
+    db.init_schema()
+
+    mao = db.conn.execute(
+        "SELECT location FROM characters WHERE name=?",
+        ("毛文龙",),
+    ).fetchone()
+    li = db.conn.execute(
+        "SELECT debut_year, debut_month FROM characters WHERE name=?",
+        ("李自成",),
+    ).fetchone()
+    zhang = db.conn.execute(
+        "SELECT debut_year, debut_month FROM characters WHERE name=?",
+        ("张献忠",),
+    ).fetchone()
+    assert mao["location"] == "dongjiang_area"
+    assert (li["debut_year"], li["debut_month"]) == (1634, 1)
+    assert (zhang["debut_year"], zhang["debut_month"]) == (1631, 1)
+
+    state.year = 1629
+    state.period = 6
+    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("active", "袁崇焕"))
+    db.conn.execute("UPDATE armies SET commander=? WHERE id=?", ("袁崇焕", "guanning"))
+    assert any(ev.id == "mao_wenlong" for ev in issues.gather_candidate_events(state, db))
+
+    state.year = 1631
+    state.period = 1
+    debuted = db.apply_historical_debuts(state)
+    assert any(item["name"] == "张献忠" for item in debuted)
+
+    state.year = 1634
+    state.period = 1
+    db.conn.execute("UPDATE powers SET military_strength=? WHERE id=?", (50, "bandits"))
+    debuted = db.apply_historical_debuts(state)
+    assert any(item["name"] == "李自成" for item in debuted)
+    assert any(ev.id == "li_chenghai" for ev in issues.gather_candidate_events(state, db))
+
+    state.year = 1639
+    state.period = 5
+    db.conn.execute(
+        "UPDATE characters SET power_id=?, location=? WHERE name=?",
+        ("ming", "huguang", "张献忠"),
+    )
+    db.conn.execute("UPDATE regions SET unrest=? WHERE id=?", (55, "huguang"))
+    assert any(ev.id == "zhangxianzhong_zaifan" for ev in issues.gather_candidate_events(state, db))
+
+
+def test_person_core_static_backfill_preserves_relocated_mao(game):
+    """#191 CMR R4：旧档静态补丁不能覆盖玩家已落库的调离规避状态。"""
+    db, _state, content = game
+    issues.bind_content(content)
+    db.conn.execute(
+        "UPDATE characters SET location=?, transit_to='' WHERE name=?",
+        ("beizhili", "毛文龙"),
+    )
+    db.conn.commit()
+
+    db.init_schema()
+
+    row = db.conn.execute(
+        "SELECT location FROM characters WHERE name=?",
+        ("毛文龙",),
+    ).fetchone()
+    assert row["location"] == "beizhili"
+
+
+def test_luoyang_fallen_not_obsoleted_when_fu_wang_is_dead(game):
+    """#191 CMR：洛阳陷落是城市/流寇压力事件，福王已死不应让事件进入人物核心作废终态。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1641
+    state.period = 1
+    db.conn.execute("UPDATE regions SET controlled_by=?, unrest=? WHERE id=?", ("ming", 80, "henan"))
+    db.conn.execute("UPDATE powers SET military_strength=? WHERE id=?", (70, "bandits"))
+    db.set_character_status(state, "朱常洵", "dead", reason="测试：此前身故")
+
+    cands = issues.gather_candidate_events(state, db)
+
+    assert any(ev.id == "luoyang_fallen" for ev in cands)
+    assert db.conn.execute(
+        "SELECT event_id FROM event_triggers WHERE event_id=?",
+        ("luoyang_fallen",),
+    ).fetchone() is None
+
+
+def test_li_chenghai_event_opens_after_li_zicheng_historical_debut(game):
+    """#191 CMR：李自成入河南不能被默认 offstage 卡死；历史登场后人物核心门应可达。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1634
+    state.period = 1
+    db.conn.execute("UPDATE powers SET military_strength=? WHERE id=?", (50, "bandits"))
+
+    debuted = db.apply_historical_debuts(state)
+    cands = issues.gather_candidate_events(state, db)
+
+    assert any(item["name"] == "李自成" for item in debuted)
+    assert db.get_character_status("李自成")[0] == "active"
+    assert any(ev.id == "li_chenghai" for ev in cands)
+
+
+def test_zhangxianzhong_event_opens_after_historical_debut_and_surrender_path(game):
+    """#191 CMR R3：张献忠不能被 offstage+debut 0 卡死；招抚态落库后再反门应可达。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+
+    debuted = db.apply_historical_debuts(state)
+
+    assert any(item["name"] == "张献忠" for item in debuted)
+    assert db.get_character_status("张献忠")[0] == "active"
+
+    state.year = 1639
+    state.period = 5
+    db.conn.execute(
+        "UPDATE characters SET power_id=?, location=? WHERE name=?",
+        ("ming", "huguang", "张献忠"),
+    )
+    db.conn.execute("UPDATE regions SET unrest=? WHERE id=?", (55, "huguang"))
+
+    assert any(ev.id == "zhangxianzhong_zaifan" for ev in issues.gather_candidate_events(state, db))
+
+
+def test_issue_191_person_core_events_are_explicitly_classified(content):
+    """#191：人物核心类逐事件显式标注；战略/外敌点名将不误纳入。"""
+    expected = {
+        "mao_wenlong": (
+            ["毛文龙"],
+            {"character.毛文龙.status", "character.毛文龙.location", "character.袁崇焕.status", "army.guanning.commander"},
+        ),
+        "yuan_xialing": (
+            ["袁崇焕"],
+            {"character.袁崇焕.status", "army.guanning.commander", "character.毛文龙.status", "character.毛文龙.status_reason", "event.jisi_lubian.terminal_state"},
+        ),
+        "kong_youde": (
+            ["孔有德"],
+            {"character.孔有德.status", "character.孔有德.power_id", "character.孔有德.location", "character.毛文龙.status"},
+        ),
+        "li_chenghai": (
+            ["李自成"],
+            {"character.李自成.status", "character.李自成.power_id", "character.李自成.location", "region.shaanxi.unrest"},
+        ),
+        "zhangxianzhong_zaifan": (
+            ["张献忠"],
+            {"character.张献忠.status", "character.张献忠.power_id", "character.张献忠.loyalty", "character.张献忠.location"},
+        ),
+    }
+    for event_id, (subjects, gate_keys) in expected.items():
+        ev = content.event_by_id[event_id]
+        assert ev.person_core_subjects == subjects
+        assert gate_keys <= set(ev.trigger_gate)
+
+    not_person_core = {
+        "jisi_lubian",
+        "dalingghe",
+        "lindan_xiqian",
+        "huangtaiji_chengdi",
+        "wuyin_lubian",
+        "songshan_battle",
+        "luoyang_fallen",
+    }
+    assert not {
+        event_id for event_id in not_person_core
+        if content.event_by_id[event_id].person_core_subjects
+    }
 
 
 def test_mao_wenlong_event_pool_uses_candidate_snapshot_before_advances(game):
@@ -2983,8 +3340,8 @@ def test_invalid_pending_person_change_does_not_block_event_gate(game):
     assert out["applied_person_changes"][0]["category"] == "invalid_transition"
 
 
-def test_mao_wenlong_event_excluded_when_character_already_inactive(game):
-    """#203 CMR：毛文龙已退场时，斩毛事件不应再按低 loyalty 进入候选。"""
+def test_mao_wenlong_event_obsolete_when_core_subject_already_dead(game):
+    """#191：毛文龙已永久死亡时，斩毛人物核心事件应作废而非只当回合空判。"""
     db, state, content = game
     issues.bind_content(content)
     state.year = 1629
@@ -3007,7 +3364,13 @@ def test_mao_wenlong_event_excluded_when_character_already_inactive(game):
     assert out["new_issues"][0]["rejected"] is True
     assert "候选" in out["new_issues"][0]["reason"]
     assert db.get_character_status("毛文龙")[0] == "dead"
-    assert not db.has_event_triggered("mao_wenlong")
+    row = db.conn.execute(
+        "SELECT terminal_state, source FROM event_triggers WHERE event_id=?",
+        ("mao_wenlong",),
+    ).fetchone()
+    assert row is not None
+    assert row["terminal_state"] == "obsolete"
+    assert row["source"] == "person_core_dead"
 
 
 def test_mao_wenlong_event_excluded_when_yuan_unavailable(game):

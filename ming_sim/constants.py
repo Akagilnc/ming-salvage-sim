@@ -236,5 +236,5 @@ ECONOMY_TARGET_KINDS = {
 # trigger_gate key 语法（content.py load 校验 + issues._eval_gate_key 求值共用，DRY，#12 Q3 fail-loud）：
 # bare key（无 "."）须是已知 metric；点分 key 首段须是合法表名、末段可为聚合函数。
 GATE_METRIC_KEYS = ("国库", "内库", "民心", "皇威")
-GATE_TABLES = ("region", "army", "building", "power", "class", "faction", "character")
+GATE_TABLES = ("region", "army", "building", "power", "class", "faction", "character", "event")
 GATE_AGG_FUNCS = ("max", "min", "sum", "avg")
