@@ -174,14 +174,29 @@ def issue_to_payload(row: sqlite3.Row, recent_advances: List[sqlite3.Row]) -> Di
     }
 
 
-def _spawned_event_refs(db: GameDB) -> set:
+def _event_issue_refs(db: GameDB) -> set:
     refs: set = set()
     for r in db.conn.execute("SELECT origin_ref FROM issues WHERE origin_kind='event_pool'").fetchall():
         if r["origin_ref"]:
             refs.add(r["origin_ref"])
-    for r in db.conn.execute("SELECT event_id FROM event_triggers").fetchall():
+    return refs
+
+
+def _event_trigger_refs(db: GameDB) -> set:
+    return set(_event_terminal_states(db))
+
+
+def _event_terminal_states(db: GameDB) -> Dict[str, str]:
+    states: Dict[str, str] = {}
+    for r in db.conn.execute("SELECT event_id, terminal_state FROM event_triggers").fetchall():
         if r["event_id"]:
-            refs.add(r["event_id"])
+            states[str(r["event_id"])] = str(r["terminal_state"] or "")
+    return states
+
+
+def _spawned_event_refs(db: GameDB) -> set:
+    refs = _event_issue_refs(db)
+    refs.update(_event_trigger_refs(db))
     return refs
 
 
@@ -192,12 +207,27 @@ def _event_window_open(ev: Event, state: GameState) -> bool:
             return False
         if state.year == ev.trigger_year and ev.trigger_month > 0 and state.period < ev.trigger_month:
             return False
+    if ev.open_window:
+        return True
     if ev.trigger_end_year > 0:
         if state.year > ev.trigger_end_year:
             return False
         if state.year == ev.trigger_end_year and ev.trigger_end_month > 0 and state.period > ev.trigger_end_month:
             return False
     return True
+
+
+def _event_window_expired(ev: Event, state: GameState) -> bool:
+    """Return True once the current date is past an event's explicit latest point."""
+    if ev.open_window:
+        return False
+    if ev.trigger_end_year <= 0:
+        return False
+    if state.year > ev.trigger_end_year:
+        return True
+    if ev.trigger_end_month > 0 and state.year == ev.trigger_end_year and state.period > ev.trigger_end_month:
+        return True
+    return False
 
 
 def _dead_person_core_subjects(ev: Event, db: GameDB) -> List[str]:
@@ -471,17 +501,12 @@ def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
     for ev in c.events:
         if ev.id in spawned or ev.trigger_year <= 0:
             continue
+        if _event_window_expired(ev, state):
+            continue
         if ev.auto_trigger:
             continue
         dead_subjects = _dead_person_core_subjects(ev, db)
         if dead_subjects:
-            db.mark_event_obsolete(
-                state,
-                ev.id,
-                reason=f"人物核心主体永久死亡：{', '.join(dead_subjects)}",
-                commit=not db.conn.in_transaction,
-            )
-            spawned.add(ev.id)
             continue
         if not _event_window_open(ev, state):
             continue
@@ -490,18 +515,14 @@ def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
         if not _gate_passed(ev.trigger_gate, state.metrics, db):
             avoided_reason = _person_core_avoided_reason(ev, state, db)
             if avoided_reason:
-                db.mark_event_avoided(
-                    state,
-                    ev.id,
-                    reason=avoided_reason,
-                    commit=not db.conn.in_transaction,
-                )
-                spawned.add(ev.id)
+                continue
             continue
         candidates.append(ev)
     # seed 情势：trigger_gate 阈值达标即进候选
     for ev in c.seed_events:
         if ev.id in spawned:
+            continue
+        if _event_window_expired(ev, state):
             continue
         # auto_trigger 事件只能由程序硬触发，绝不进 LLM 候选池
         if ev.auto_trigger:
@@ -511,6 +532,55 @@ def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
         if _gate_passed(ev.trigger_gate, state.metrics, db):
             candidates.append(ev)
     return candidates
+
+
+def apply_event_terminal_states(
+    state: GameState,
+    db: GameDB,
+    *,
+    commit: bool = True,
+) -> List[Dict[str, object]]:
+    """Persist deterministic event terminal states from the current board position."""
+    c = _ctx()
+    should_commit = commit and not db.conn.in_transaction
+    terminal_refs = _event_trigger_refs(db)
+    terminalized: List[Dict[str, object]] = []
+
+    for ev in c.events:
+        if ev.id in terminal_refs or ev.trigger_year <= 0:
+            continue
+        if _event_window_expired(ev, state):
+            db.mark_event_expired(state, ev.id, commit=False)
+            terminal_refs.add(ev.id)
+            terminalized.append({"id": ev.id, "title": ev.title, "terminal_state": "expired"})
+            continue
+        dead_subjects = _dead_person_core_subjects(ev, db)
+        if dead_subjects:
+            reason = f"人物核心主体永久死亡：{', '.join(dead_subjects)}"
+            db.mark_event_obsolete(state, ev.id, reason=reason, commit=False)
+            terminal_refs.add(ev.id)
+            terminalized.append({"id": ev.id, "title": ev.title, "terminal_state": "obsolete"})
+            continue
+        if not _event_window_open(ev, state):
+            continue
+        if not _gate_passed(ev.trigger_gate, state.metrics, db):
+            avoided_reason = _person_core_avoided_reason(ev, state, db)
+            if avoided_reason:
+                db.mark_event_avoided(state, ev.id, reason=avoided_reason, commit=False)
+                terminal_refs.add(ev.id)
+                terminalized.append({"id": ev.id, "title": ev.title, "terminal_state": "avoided"})
+
+    for ev in c.seed_events:
+        if ev.id in terminal_refs:
+            continue
+        if _event_window_expired(ev, state):
+            db.mark_event_expired(state, ev.id, commit=False)
+            terminal_refs.add(ev.id)
+            terminalized.append({"id": ev.id, "title": ev.title, "terminal_state": "expired"})
+
+    if should_commit and terminalized:
+        db.conn.commit()
+    return terminalized
 
 
 def auto_trigger_seed_issues(state: GameState, db: GameDB) -> List[Dict[str, object]]:
@@ -526,12 +596,18 @@ def auto_trigger_seed_issues(state: GameState, db: GameDB) -> List[Dict[str, obj
 def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Dict[str, object]]:
     """auto_trigger_seed_issues 的事务体；由外层函数或 pre_settle 嵌套事务统一提交/回滚。"""
     c = _ctx()
+    terminal_states = _event_terminal_states(db)
     triggered: List[Dict[str, object]] = []
     for ev in [*c.events, *c.seed_events]:
         historical_event = any(ev is item for item in c.events)
         if not ev.auto_trigger:
             continue
-        if historical_event and db.has_event_triggered(ev.id):
+        terminal_state = terminal_states.get(ev.id)
+        if terminal_state and (historical_event or terminal_state == "expired"):
+            continue
+        if _event_window_expired(ev, state):
+            db.mark_event_expired(state, ev.id, commit=False)
+            terminal_states[ev.id] = "expired"
             continue
         # trigger_gate 为空 = 开局即立的局势，只由 seed_opening_crises 立一次，绝不在此重立。
         # （空 gate 会被 _gate_passed 判为恒真，必须显式排除，否则每回合都试图重立。）
@@ -2670,6 +2746,10 @@ def apply_issue_tracker_output(
                 # auto_trigger 事件只能程序硬触发，LLM 不准从候选池立项
                 print(f"[INFO] new_issue 已拒：event {event_id} 标了 auto_trigger，只能程序硬触发。")
                 applied_new.append({"id": ev.id, "title": ev.title, "rejected": True, "reason": "auto_trigger 事件仅程序可触发"})
+                continue
+            if db.event_terminal_state(ev.id) == "expired":
+                print(f"[INFO] new_issue 已拒：event {event_id} 已过期终态，不再从 event_pool 立项。")
+                applied_new.append({"id": ev.id, "title": ev.title, "rejected": True, "reason": "事件已过期终态"})
                 continue
             if (
                 ev.id not in candidate_event_ids
