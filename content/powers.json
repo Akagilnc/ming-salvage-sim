@@ -77,6 +77,38 @@
       "last_action": "陕西逃户与饥民散入山谷，小股啸聚"
     },
     {
+      "id": "bandit_li_zicheng",
+      "name": "李自成股",
+      "kind": "内乱",
+      "leader": "李自成",
+      "stance": "潜伏",
+      "leverage": 20,
+      "satisfaction": 18,
+      "military_strength": 18,
+      "cohesion": 20,
+      "supply": 18,
+      "agenda": "裹挟驿卒饥民、伺机入豫、扩张闯军声势",
+      "status": "尚为潜在股,随陕西饥荒、裁驿与官军失措而可能坐大",
+      "last_action": "陕北驿卒与饥民暗中依附,尚未合成大股",
+      "aliases": ["李自成部", "闯军", "闯将部"]
+    },
+    {
+      "id": "bandit_zhang_xianzhong",
+      "name": "张献忠股",
+      "kind": "内乱",
+      "leader": "张献忠",
+      "stance": "潜伏",
+      "leverage": 18,
+      "satisfaction": 16,
+      "military_strength": 24,
+      "cohesion": 22,
+      "supply": 16,
+      "agenda": "边兵流亡、流窜劫掠、伺机受抚再起",
+      "status": "尚为潜在股,若湖广陕西局势失控,可滚成高破坏流寇",
+      "last_action": "陕西边地逃卒与饥民零散依附,未与其它流寇股合并",
+      "aliases": ["张献忠部", "八大王部"]
+    },
+    {
       "id": "dutch",
       "name": "荷兰东印度公司",
       "kind": "外夷",
