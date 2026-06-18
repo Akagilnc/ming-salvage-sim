@@ -1519,7 +1519,7 @@ def test_historical_situation_auto_trigger_rolls_back_soft_issue_when_core_effec
 
 
 def test_historical_situation_auto_trigger_backfills_core_effect_for_existing_soft_issue(game):
-    """CMR：旧存档若已有同源 soft issue 但未标 trigger，仍须补落核心事实。"""
+    """CMR：旧存档已有同源 soft issue 经 schema migration 后，仍须补落核心事实。"""
     db, state, content = game
     issues.bind_content(content)
     state.year = 1633
@@ -1532,6 +1532,17 @@ def test_historical_situation_auto_trigger_backfills_core_effect_for_existing_so
         origin_ref="huabei_plague",
         bar_value=40,
     )
+    assert db.conn.execute(
+        "SELECT 1 FROM event_triggers WHERE event_id=?",
+        ("huabei_plague",),
+    ).fetchone() is None
+
+    db.init_schema()
+    assert db.conn.execute(
+        "SELECT 1 FROM event_triggers WHERE event_id=?",
+        ("huabei_plague",),
+    ).fetchone() is None
+
     before = db.conn.execute(
         "SELECT population, unrest FROM regions WHERE id=?",
         ("shanxi",),

@@ -1881,14 +1881,25 @@ class GameDB:
         self.conn.commit()
 
     def _backfill_event_triggers_from_event_pool_issues(self) -> None:
+        pending_core_effect_ids = {
+            ev.id for ev in (*self.content.events, *self.content.seed_events)
+            if ev.auto_trigger and bool(ev.effect_on_trigger)
+        }
+        where_extra = ""
+        params: List[object] = []
+        if pending_core_effect_ids:
+            placeholders = ",".join("?" for _ in pending_core_effect_ids)
+            where_extra = f" AND origin_ref NOT IN ({placeholders})"
+            params.extend(sorted(pending_core_effect_ids))
         self.conn.execute(
-            """
+            f"""
             INSERT OR IGNORE INTO event_triggers
                 (event_id, turn, year, period, source, terminal_state, terminal_reason)
             WITH legacy AS (
                 SELECT origin_ref AS event_id, MIN(origin_turn) AS turn
                 FROM issues
                 WHERE origin_kind = 'event_pool' AND origin_ref <> ''
+                {where_extra}
                 GROUP BY origin_ref
             )
             SELECT
@@ -1902,7 +1913,8 @@ class GameDB:
             FROM legacy
             LEFT JOIN turn_reports ON turn_reports.turn = legacy.turn
             LEFT JOIN game_state ON game_state.id = 1
-            """
+            """,
+            tuple(params),
         )
         self.conn.commit()
 
