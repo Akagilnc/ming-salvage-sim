@@ -375,7 +375,7 @@ def test_character_text_gate_rejects_numeric_character_field():
 def test_mao_event_effect_uses_unified_person_change_key():
     """ADR 0009 后新增事件效果应写统一 人物变更，不再写旧 flat key。"""
     events_path = Path(__file__).resolve().parents[1] / "content" / "events.json"
-    events = json.loads(events_path.read_text())
+    events = json.loads(events_path.read_text(encoding="utf-8"))
     mao = next(item for item in events if item["id"] == "mao_wenlong")
 
     effect = mao["effect_on_trigger"]
@@ -384,6 +384,33 @@ def test_mao_event_effect_uses_unified_person_change_key():
     assert effect["人物变更"] == [
         {"name": "毛文龙", "动作": "处置", "status": "dead", "reason": "袁崇焕双岛斩帅"}
     ]
+
+
+def test_event_content_rejects_falsy_person_core_subjects(monkeypatch):
+    """内容契约：person_core_subjects 写了就必须是字符串数组，空字符串不能吞成缺省。"""
+    from ming_sim import content as content_module
+
+    monkeypatch.setattr(
+        content_module,
+        "load_json_asset",
+        lambda filename: [
+            {
+                "id": "bad_person_core_subjects",
+                "title": "坏人物核心事件",
+                "kind": "situation",
+                "summary": "x",
+                "urgency": 50,
+                "severity": 50,
+                "credibility": 50,
+                "interests": [],
+                "audiences": [],
+                "person_core_subjects": "",
+            }
+        ],
+    )
+
+    with pytest.raises(SystemExit, match="person_core_subjects"):
+        content_module.load_event_content("events.json")
 
 
 def test_mao_wenlong_event_excluded_after_appeasement(game):
@@ -733,6 +760,43 @@ def test_strategic_event_outcome_label_normalizes_known_synonym(game):
         ("jisi_lubian",),
     ).fetchone()
     assert row["terminal_reason"] == "入塞被遏"
+
+
+def test_strategic_event_delta_requires_outcome_label_without_mutation(game):
+    """ADR0014：战略战果 delta 必须同写结局标签，缺标签则整组拒收且不落主账。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    row = db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id = ?",
+        ("beizhili",),
+    ).fetchone()
+    original_pressure = row["military_pressure"]
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "region_delta": {"beizhili": {"military_pressure": 35, "reason": "己巳之变软判敌逼京畿"}},
+        },
+        content=content,
+    )
+
+    issue = out["issue_summary"]["new_issues"][0]
+    assert issue["rejected"] is True
+    assert issue["category"] == "missing_event_outcome"
+    assert "缺事件结局标签" in issue["reason"]
+    row = db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id = ?",
+        ("beizhili",),
+    ).fetchone()
+    assert row["military_pressure"] == original_pressure
+    assert db.conn.execute(
+        "SELECT 1 FROM event_triggers WHERE event_id=?",
+        ("jisi_lubian",),
+    ).fetchone() is None
 
 
 def test_strategic_event_outcome_label_unknown_fails_loud_without_mutation(game):
@@ -1840,7 +1904,7 @@ def test_strategic_foreign_event_lands_soft_result_person_delta(game):
 def test_wuyin_lubian_content_treats_lu_death_as_soft_battle_outcome():
     """#189：戊寅虏变不能把卢象升写成人物核心；卢死/生是战事软判结果。"""
     events_path = Path(__file__).resolve().parents[1] / "content" / "events.json"
-    events = json.loads(events_path.read_text())
+    events = json.loads(events_path.read_text(encoding="utf-8"))
     wuyin = next(item for item in events if item["id"] == "wuyin_lubian")
     songshan = next(item for item in events if item["id"] == "songshan_battle")
 
@@ -2159,6 +2223,48 @@ def test_legacy_event_pool_issue_backfills_trigger_without_guessing_outcome(game
     )
 
     assert all(ev.id != "yuan_xialing" for ev in issues.gather_candidate_events(state, db))
+
+
+def test_legacy_event_trigger_terminal_reason_can_be_filled_by_real_outcome(game):
+    """旧档 backfill 只能占位；同事件后续真实结局标签到达时应补写空 terminal_reason。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    db.save_state(state)
+    db.insert_issue(
+        state,
+        kind="situation",
+        title=content.event_by_id["jisi_lubian"].title,
+        origin_kind="event_pool",
+        origin_ref="jisi_lubian",
+        commit=True,
+    )
+    db.init_schema()
+    row = db.conn.execute(
+        "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id=?",
+        ("jisi_lubian",),
+    ).fetchone()
+    assert dict(row) == {"terminal_state": "triggered", "terminal_reason": ""}
+
+    db.mark_event_triggered(state, "jisi_lubian", terminal_reason="入塞被遏")
+
+    row = db.conn.execute(
+        "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id=?",
+        ("jisi_lubian",),
+    ).fetchone()
+    assert dict(row) == {"terminal_state": "triggered", "terminal_reason": "入塞被遏"}
+
+
+def test_person_write_state_restore_removes_dynamic_character_attrs(game):
+    """人事写口失败回滚必须删除快照中不存在的动态属性，避免内存幽灵状态残留。"""
+    db, _state, content = game
+    snapshot = issues._snapshot_person_write_state(db, content)
+    content.characters["毛文龙"].ghost_preflight_attr = "leak"
+
+    issues._restore_person_write_state(db, content, snapshot, commit=False)
+
+    assert not hasattr(content.characters["毛文龙"], "ghost_preflight_attr")
 
 
 def test_legacy_person_core_static_fields_backfill_reachability(game):

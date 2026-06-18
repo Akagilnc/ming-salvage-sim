@@ -230,8 +230,8 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
                 precondition=str(item.get("precondition") or ""),
                 event_type=event_type,
                 person_core_subjects=(
-                    string_list(item.get("person_core_subjects"), f"{filename}[{idx}].person_core_subjects")
-                    if item.get("person_core_subjects") else []
+                    string_list(item["person_core_subjects"], f"{filename}[{idx}].person_core_subjects")
+                    if "person_core_subjects" in item else []
                 ),
                 trigger_gate=trigger_gate,
                 auto_trigger=bool(item.get("auto_trigger") or False),

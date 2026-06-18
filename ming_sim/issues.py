@@ -1812,11 +1812,14 @@ def _strategic_event_target_commanders(db: GameDB, event_id: str) -> set[str]:
     target_armies = _strategic_event_outcome_targets(event_id).get("armies", frozenset())
     if not target_armies:
         return set()
-    placeholders = ",".join("?" for _ in target_armies)
-    rows = db.conn.execute(
-        f"SELECT commander FROM armies WHERE id IN ({placeholders})",
-        tuple(sorted(target_armies)),
-    ).fetchall()
+    rows = []
+    for army_id in sorted(target_armies):
+        row = db.conn.execute(
+            "SELECT commander FROM armies WHERE id=?",
+            (army_id,),
+        ).fetchone()
+        if row is not None:
+            rows.append(row)
     return {str(row["commander"] or "").strip() for row in rows if str(row["commander"] or "").strip()}
 
 
@@ -3213,6 +3216,9 @@ def _restore_content_character_rows(
         ch = content.characters.get(name)
         if ch is None:
             continue
+        for key in list(vars(ch)):
+            if key not in values:
+                delattr(ch, key)
         for key, value in values.items():
             setattr(ch, key, copy.deepcopy(value))
 
@@ -3227,14 +3233,10 @@ def _restore_person_write_state(
     character_rows, office_rows, faction_rows, content_rows = snapshot
     db.conn.execute("DELETE FROM character_offices")
     snapshot_names = {str(row["name"]) for row in character_rows}
-    if snapshot_names:
-        placeholders = ",".join("?" for _ in snapshot_names)
-        db.conn.execute(
-            f"DELETE FROM characters WHERE name NOT IN ({placeholders})",
-            tuple(snapshot_names),
-        )
-    else:
-        db.conn.execute("DELETE FROM characters")
+    for row in db.conn.execute("SELECT name FROM characters").fetchall():
+        name = str(row["name"])
+        if name not in snapshot_names:
+            db.conn.execute("DELETE FROM characters WHERE name=?", (name,))
     db.conn.executemany(
         "UPDATE characters SET status=?, office=?, office_type=?, status_reason=?, "
         "status_changed_turn=?, reason_code=?, transit_to=? WHERE name=?",
