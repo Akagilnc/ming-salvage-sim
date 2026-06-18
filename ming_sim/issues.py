@@ -4780,7 +4780,7 @@ def apply_score_extraction(
         )
         if any(_strategic_result_item_has_material_world_state(item) for item in result_items):
             db.mark_event_triggered(state, event_id, terminal_reason=outcome_label, commit=commit_now)
-            new_issue["reason"] = "event_type=node 已记为触发，软判结果已落主账"
+            new_issue["reason"] = "事件已记为触发，软判结果已落主账"
         else:
             new_issue["rejected"] = True
             new_issue["category"] = "missing_world_state_delta"
