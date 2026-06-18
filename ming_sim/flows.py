@@ -257,7 +257,14 @@ def _apply_metric_dict(
 
 
 def _auto_pay_arrears_by_priority(
-    db: GameDB, state: GameState, account: str, budget: int, category: str, reason: str,
+    db: GameDB,
+    state: GameState,
+    account: str,
+    budget: int,
+    category: str,
+    reason: str,
+    *,
+    commit: bool = True,
 ) -> int:
     """LLM 补饷 economy_move 没指定 target 时的兜底：按 ARMY_SALARY_PRIORITY 顺序
     分配 budget 给有 arrears 的明军，每军按 arrears 上限扣，扣完 budget 为止。
@@ -289,6 +296,7 @@ def _auto_pay_arrears_by_priority(
             state, account, -pay, category,
             f"{reason}（按优先级分给{name}{pay}万两）",
             purpose="补饷", target_kind="army", target_id=army_id,
+            commit=False,
         )
         if not actual:
             continue
@@ -304,14 +312,19 @@ def _auto_pay_arrears_by_priority(
              str(current_arrears), str(new_arrears), new_arrears - current_arrears,
              f"诏拨补饷{abs(actual)}万两（按优先级）"),
         )
-        db.conn.commit()
+        if commit:
+            db.conn.commit()
         spent += abs(actual)
         remaining -= abs(actual)
     return spent
 
 
 def _apply_economy_list(
-    db: GameDB, state: GameState, economy: List[Dict[str, object]]
+    db: GameDB,
+    state: GameState,
+    economy: List[Dict[str, object]],
+    *,
+    commit: bool = True,
 ) -> List[Dict[str, object]]:
     """落 extractor 抽出的 economy_moves 到 economy_ledger。
 
@@ -368,7 +381,7 @@ def _apply_economy_list(
         # 自动散到各军（每军按 arrears 上限扣，扣完 budget 为止）。
         if purpose == "补饷" and delta < 0 and (target_kind != "army" or not raw_target_id):
             budget = abs(delta)
-            spent = _auto_pay_arrears_by_priority(db, state, account, budget, category, reason)
+            spent = _auto_pay_arrears_by_priority(db, state, account, budget, category, reason, commit=commit)
             applied.append({"account": account, "delta": -spent, "reason": reason})
             continue
         if purpose == "补饷" and target_kind == "army" and delta < 0 and raw_target_id:
@@ -378,7 +391,7 @@ def _apply_economy_list(
             if row is None:
                 # army_id 拼错 → 退化为按优先级散
                 budget = abs(delta)
-                spent = _auto_pay_arrears_by_priority(db, state, account, budget, category, reason)
+                spent = _auto_pay_arrears_by_priority(db, state, account, budget, category, reason, commit=commit)
                 applied.append({"account": account, "delta": -spent, "reason": reason})
                 continue
             current_arrears = int(row["arrears"])
@@ -393,6 +406,7 @@ def _apply_economy_list(
             actual = db.record_issue_economy_move(
                 state, account, -actual_pay, category, reason,
                 purpose="补饷", target_kind="army", target_id=str(row["id"]),
+                commit=False,
             )
             if actual:
                 # 同步减 arrears
@@ -408,7 +422,8 @@ def _apply_economy_list(
                      str(current_arrears), str(new_arrears), new_arrears - current_arrears,
                      f"诏拨补饷{abs(actual)}万两"),
                 )
-                db.conn.commit()
+                if commit:
+                    db.conn.commit()
                 applied.append({"account": account, "delta": actual, "reason": reason})
             continue
 
@@ -417,6 +432,7 @@ def _apply_economy_list(
             state, account, delta, category, reason,
             purpose=purpose or "其它" if delta < 0 else None,
             target_kind=None, target_id=None,
+            commit=commit,
         )
         if actual:
             applied.append({"account": account, "delta": actual, "reason": reason})
@@ -644,7 +660,10 @@ def _strict_int(raw: object) -> int:
 
 
 def _apply_faction_dict(
-    db: GameDB, faction_delta: Dict[str, object]
+    db: GameDB,
+    faction_delta: Dict[str, object],
+    *,
+    commit: bool = True,
 ) -> DeltaApplyResult:
     """支持两种格式：
     - 旧格式：{"阉党": -10}  → 仅 satisfaction 增量
@@ -686,14 +705,17 @@ def _apply_faction_dict(
     if cleaned:
         # db 层未知名 → missing_ref 拒收：未写库，须从 cleaned 剔除，否则未落库的未知派系
         # 会进 faction_delta 段被 web 面板当「已落」误显（cmr r3 codex，DB↔呈现漂移=#14 本症）。
-        for _rej in db.adjust_factions(cleaned):
+        for _rej in db.adjust_factions(cleaned, commit=commit):
             cleaned.pop(str(_rej.get("name", "")), None)
             rejected.append(_rej)
     return DeltaApplyResult(cleaned, rejected)
 
 
 def _apply_class_dict(
-    db: GameDB, class_delta: Dict[str, object]
+    db: GameDB,
+    class_delta: Dict[str, object],
+    *,
+    commit: bool = True,
 ) -> DeltaApplyResult:
     """class_delta 结构：{ '农民@shaanxi': {'satisfaction': -5, 'leverage': +3}, '士绅': {...} }
     key 不带 @ 默认全国汇总。字段只接 satisfaction / leverage 增量。
@@ -727,7 +749,7 @@ def _apply_class_dict(
             cleaned[str(key)] = entry
     if cleaned:
         # 同 faction：db 层未知名 missing_ref 拒收未写库，从 cleaned 剔除防面板误显（cmr r3 codex）。
-        for _rej in db.adjust_classes(cleaned):
+        for _rej in db.adjust_classes(cleaned, commit=commit):
             cleaned.pop(str(_rej.get("name", "")), None)
             rejected.append(_rej)
     return DeltaApplyResult(cleaned, rejected)

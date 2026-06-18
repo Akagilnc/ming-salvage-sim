@@ -255,6 +255,30 @@ def test_backup_to_inside_atomic_fails_loud(game, tmp_path):
             db.backup_to(dest)
 
 
+def test_connection_rollback_attempts_all_runtime_callbacks(game):
+    """online R3 Gemini：一个 runtime 回滚 callback 失败时，其余 callback 仍须尝试。"""
+    db, _state, _content = game
+    calls = []
+
+    def first():
+        calls.append("first")
+
+    def broken():
+        calls.append("broken")
+        raise RuntimeError("callback boom")
+
+    def last():
+        calls.append("last")
+
+    db.conn.execute("BEGIN")
+    db.conn._runtime_rollback_callbacks = [first, broken, last]
+
+    with pytest.raises(RuntimeError, match="runtime rollback callback"):
+        db.conn.rollback()
+
+    assert calls == ["last", "broken", "first"]
+
+
 def test_executescript_inside_atomic_fails_loud(game):
     """atomic 内 executescript 响亮拒绝（C 层隐式 commit 绕过暂停，cmr S1 r1 F4）。"""
     db, state, content = game

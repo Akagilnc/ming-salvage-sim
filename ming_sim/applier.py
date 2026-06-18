@@ -42,14 +42,29 @@ class _SuspendableConnection(sqlite3.Connection):
         if self._commit_suspended:
             return
         super().commit()
+        self._runtime_rollback_callbacks = []
 
     def rollback(self) -> None:
         super().rollback()
-        if self._commit_suspended:
-            # 中途回滚（显式或 with conn: 异常）结束了 BEGIN 的事务；立即重开，
-            # 维持「atomic 内永远有开着的事务」——否则后续 DDL 跑 autocommit
-            # 逃逸外层回滚（cmr S1 r3 F1）。atomic 终态退出前已清暂停标志，不误触。
-            self.execute("BEGIN")
+        callbacks = list(getattr(self, "_runtime_rollback_callbacks", []))
+        self._runtime_rollback_callbacks = []
+        callback_errors = []
+        try:
+            for callback in reversed(callbacks):
+                try:
+                    callback()
+                except Exception as exc:
+                    callback_errors.append(exc)
+        finally:
+            if self._commit_suspended:
+                # 中途回滚（显式或 with conn: 异常）结束了 BEGIN 的事务；立即重开，
+                # 维持「atomic 内永远有开着的事务」——否则后续 DDL 跑 autocommit
+                # 逃逸外层回滚（cmr S1 r3 F1）。atomic 终态退出前已清暂停标志，不误触。
+                self.execute("BEGIN")
+        if callback_errors:
+            raise RuntimeError(
+                f"runtime rollback callback failed ({len(callback_errors)} error(s))"
+            ) from callback_errors[0]
 
     def __enter__(self) -> "_SuspendableConnection":
         return self

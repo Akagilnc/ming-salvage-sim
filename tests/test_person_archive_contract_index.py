@@ -13,13 +13,17 @@ def test_person_archive_contract_index_exposes_canonical_terms_and_scenarios():
         PERSON_ACTIONS,
         PERSON_ALLEGIANCE_CHANGE_WAYS,
         PERSON_LEGACY_ALLEGIANCE_CHANGE_WAYS,
+        PERSON_NON_TRANSITION_ACTIONS,
         PERSON_REASON_CODES,
         PERSON_STATUSES,
         PERSON_TITLE_KINDS,
+        PERSON_TRANSITION_ACTIONS,
         ACCEPTANCE_SCENARIOS,
     )
 
-    assert PERSON_ACTIONS == ("任命", "罢黜", "调任", "处置", "易主", "册封", "行止")
+    assert PERSON_TRANSITION_ACTIONS == ("任命", "罢黜", "调任", "处置", "易主", "册封", "行止")
+    assert PERSON_NON_TRANSITION_ACTIONS == ("评定",)
+    assert PERSON_ACTIONS == PERSON_TRANSITION_ACTIONS + PERSON_NON_TRANSITION_ACTIONS
     assert PERSON_STATUSES == (
         "active",
         "candidate",
@@ -70,14 +74,14 @@ def test_person_archive_contract_index_exposes_canonical_terms_and_scenarios():
 def test_person_transition_matrix_covers_all_status_action_pairs():
     """ADR 0009 transition matrix is complete and pins the hard edge cases."""
     from ming_sim.person_archive_contract import (
-        PERSON_ACTIONS,
         PERSON_STATUSES,
         PERSON_TRANSITION_MATRIX,
+        PERSON_TRANSITION_ACTIONS,
     )
 
     assert set(PERSON_TRANSITION_MATRIX) == set(PERSON_STATUSES)
     for status in PERSON_STATUSES:
-        assert set(PERSON_TRANSITION_MATRIX[status]) == set(PERSON_ACTIONS)
+        assert set(PERSON_TRANSITION_MATRIX[status]) == set(PERSON_TRANSITION_ACTIONS)
 
     assert PERSON_TRANSITION_MATRIX["imprisoned"]["任命"] == "derive:放归"
     assert PERSON_TRANSITION_MATRIX["exiled"]["任命"] == "derive:赦还"

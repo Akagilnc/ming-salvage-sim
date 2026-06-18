@@ -33,6 +33,11 @@ _REGION_DIRECT_TUPLE = REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + REGION_TEX
 _REGION_DIRECT_SET = frozenset(_REGION_DIRECT_TUPLE)
 _REGION_NUMERIC_SET = frozenset(REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS)
 _ARMY_VALID_SET = frozenset(ARMY_SCORE_FIELDS + ARMY_QUANTITY_FIELDS + ARMY_TEXT_FIELDS)
+_COMMITMENT_STOP_CONDITION_RE = re.compile(r"character\.[^.]+\.loyalty\s*(?:>=|>)\s*\d+")
+
+
+def _is_commitment_stop_condition(resolve_condition: object) -> bool:
+    return bool(_COMMITMENT_STOP_CONDITION_RE.fullmatch(str(resolve_condition or "").strip()))
 
 
 def _new_army_historically_applied(it: dict) -> bool:
@@ -599,8 +604,9 @@ class GameDB:
                 turn INTEGER NOT NULL,
                 year INTEGER NOT NULL,
                 period INTEGER NOT NULL,
-                terminal_status TEXT NOT NULL DEFAULT 'occurred',
                 source TEXT NOT NULL DEFAULT 'simulation',
+                terminal_state TEXT NOT NULL DEFAULT 'triggered',
+                terminal_reason TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(event_id) REFERENCES events(id)
             );
@@ -995,12 +1001,16 @@ class GameDB:
         self.ensure_column("characters", "court_role", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "summary", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "aliases", "TEXT NOT NULL DEFAULT '[]'")
+        self._backfill_person_core_character_static_fields()
+        self._backfill_bandit_power_split()
+        self.ensure_column("event_triggers", "terminal_state", "TEXT NOT NULL DEFAULT 'triggered'")
+        self.ensure_column("event_triggers", "terminal_reason", "TEXT NOT NULL DEFAULT ''")
+        self._backfill_event_triggers_from_event_pool_issues()
         # 步骤7：回合阶段（旧库迁移，schema 升级非 fallback）
         self.ensure_column("game_state", "turn_phase", "TEXT NOT NULL DEFAULT 'summoning'")
         # 结局：ended=1 时游戏终结；ending_status 为 context.ENDING_* 类型。
         self.ensure_column("game_state", "ended", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("game_state", "ending_status", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("event_triggers", "terminal_status", "TEXT NOT NULL DEFAULT 'occurred'")
         # 密令推演副作用列（result 留给承办人进展，sim_note 给推演写泄漏/反弹，互不覆盖）
         self.ensure_column("secret_orders", "sim_note", "TEXT NOT NULL DEFAULT ''")
         # 密令期限：0=无硬期限；到 due_turn 时自动转入待核议，由推演当月判 done/failed。
@@ -1264,11 +1274,12 @@ class GameDB:
         ).fetchall()
         return {str(r["key"]): int(r["value"]) for r in rows}
 
-    def set_fiscal_config(self, key: str, value: int) -> None:
+    def set_fiscal_config(self, key: str, value: int, commit: bool = True) -> None:
         self.conn.execute(
             "UPDATE fiscal_config SET value = ? WHERE key = ?", (value, key)
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
     def create_fiscal_item(
         self,
@@ -1278,6 +1289,7 @@ class GameDB:
         display: str,
         init_value: int,
         note: str = "",
+        commit: bool = True,
     ) -> Optional[str]:
         """LLM 推演中凭空新立一个月固定收支项（budget_role=fixed）。
 
@@ -1317,7 +1329,8 @@ class GameDB:
             "VALUES (?, 100, 'rate', 'fixed', ?, ?, ?, ?, ?)",
             (rate_key, account, direction, display, sort_order, f"{display}实收率%"),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return base_key
 
     # dynamic 税科目 → regions.fiscal 子字段映射。dynamic 税实收走 calc_province_fiscal
@@ -1340,7 +1353,7 @@ class GameDB:
                 return ""
         return key
 
-    def apply_dynamic_fiscal_scale(self, stem: str, ratio: float) -> int:
+    def apply_dynamic_fiscal_scale(self, stem: str, ratio: float, commit: bool = True) -> int:
         """按 ratio 缩放所有省 regions.fiscal 中该 dynamic 税字段（辽饷/盐税/商税）。
 
         ratio=0 即彻底罢废（字段归零）；0<ratio<1 即按比例削减。田赋走 _scale_tian_fu。
@@ -1364,7 +1377,7 @@ class GameDB:
                 (json.dumps(fiscal, ensure_ascii=False), str(row["id"])),
             )
             touched += 1
-        if touched:
+        if touched and commit:
             self.conn.commit()
         return touched
 
@@ -1405,7 +1418,7 @@ class GameDB:
         )
         return result
 
-    def scale_tian_fu(self, ratio: float) -> int:
+    def scale_tian_fu(self, ratio: float, commit: bool = True) -> int:
         """田赋无独立字段（=tax_per_turn 减辽饷/盐税/商税的残差）。按 ratio 缩放田赋部分：
         新 tax_per_turn = 三税之和 + 田赋残差×ratio。ratio=0 即罢田赋（仅留三税基）。
         返回被改动的省数。"""
@@ -1427,11 +1440,11 @@ class GameDB:
                 (new_tax, str(row["id"])),
             )
             touched += 1
-        if touched:
+        if touched and commit:
             self.conn.commit()
         return touched
 
-    def remove_fiscal_item(self, key: str) -> Optional[str]:
+    def remove_fiscal_item(self, key: str, commit: bool = True) -> Optional[str]:
         """彻底裁撤一个月固定收支项（罢税/裁俸）：删 base+rate 两行。
 
         完全放开——含 dynamic（田赋/辽饷/盐税/商税/皇庄），后果玩家自负。
@@ -1457,10 +1470,11 @@ class GameDB:
         )
         # dynamic 税：同步罢废各省实收字段（皇庄走 config 不在此）。
         if stem in self._DYNAMIC_REGION_FIELD:
-            self.apply_dynamic_fiscal_scale(stem, 0.0)
+            self.apply_dynamic_fiscal_scale(stem, 0.0, commit=commit)
         elif stem == "田赋":
-            self.scale_tian_fu(0.0)
-        self.conn.commit()
+            self.scale_tian_fu(0.0, commit=commit)
+        if commit:
+            self.conn.commit()
         return base_key
 
     def ensure_column(self, table: str, column: str, definition: str) -> bool:
@@ -1666,7 +1680,9 @@ class GameDB:
                     power.agenda,
                     power.status,
                     power.last_action,
-                    power.aliases,
+                    json.dumps(power.aliases, ensure_ascii=False)
+                    if isinstance(power.aliases, list)
+                    else power.aliases,
                 ),
             )
         for region in self.content.regions.values():
@@ -1836,6 +1852,121 @@ class GameDB:
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note",
             (ARREARS_UNIT_VERSION,),
         )
+
+    def _backfill_person_core_character_static_fields(self) -> None:
+        mao = self.content.characters.get("毛文龙")
+        if mao and mao.location:
+            self.conn.execute(
+                """
+                UPDATE characters
+                SET location = ?
+                WHERE name = '毛文龙'
+                  AND COALESCE(location, '') = ''
+                  AND COALESCE(transit_to, '') = ''
+                """,
+                (mao.location,),
+            )
+        for name in ("李自成", "张献忠"):
+            ch = self.content.characters.get(name)
+            if not ch or ch.debut_year <= 0:
+                continue
+            self.conn.execute(
+                """
+                UPDATE characters
+                SET debut_year = ?, debut_month = ?
+                WHERE name = ?
+                  AND status = 'offstage'
+                  AND COALESCE(debut_year, 0) = 0
+                  AND COALESCE(debut_month, 0) = 0
+                """,
+                (ch.debut_year, ch.debut_month, name),
+            )
+        self.conn.commit()
+
+    def _backfill_bandit_power_split(self) -> None:
+        for power_id in ("bandit_li_zicheng", "bandit_zhang_xianzhong"):
+            power = self.content.powers.get(power_id)
+            if not power:
+                continue
+            self.conn.execute(
+                """
+                INSERT OR IGNORE INTO powers
+                (id, name, kind, leader, stance, leverage, satisfaction, military_strength,
+                 cohesion, supply, agenda, status, last_action, aliases)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    power.id,
+                    power.name,
+                    power.kind,
+                    power.leader,
+                    power.stance,
+                    power.leverage,
+                    power.satisfaction,
+                    power.military_strength,
+                    power.cohesion,
+                    power.supply,
+                    power.agenda,
+                    power.status,
+                    power.last_action,
+                    json.dumps(power.aliases, ensure_ascii=False)
+                    if isinstance(power.aliases, list)
+                    else power.aliases,
+                ),
+            )
+        for name in ("李自成", "张献忠"):
+            ch = self.content.characters.get(name)
+            if not ch or not ch.power_id or ch.power_id == "bandits":
+                continue
+            if self.conn.execute("SELECT 1 FROM powers WHERE id=?", (ch.power_id,)).fetchone() is None:
+                continue
+            self.conn.execute(
+                """
+                UPDATE characters
+                SET power_id = ?
+                WHERE name = ?
+                  AND COALESCE(power_id, '') IN ('', 'bandits')
+                """,
+                (ch.power_id, name),
+            )
+        self.conn.commit()
+
+    def _backfill_event_triggers_from_event_pool_issues(self) -> None:
+        pending_core_effect_ids = {
+            ev.id for ev in (*self.content.events, *self.content.seed_events)
+            if ev.auto_trigger and bool(ev.effect_on_trigger)
+        }
+        rows = self.conn.execute(
+            """
+            WITH legacy AS (
+                SELECT origin_ref AS event_id, MIN(origin_turn) AS turn
+                FROM issues
+                WHERE origin_kind = 'event_pool' AND origin_ref <> ''
+                GROUP BY origin_ref
+            )
+            SELECT
+                legacy.event_id AS event_id,
+                legacy.turn AS turn,
+                COALESCE(turn_reports.year, game_state.year, 0) AS year,
+                COALESCE(turn_reports.period, game_state.period, 0) AS period
+            FROM legacy
+            LEFT JOIN turn_reports ON turn_reports.turn = legacy.turn
+            LEFT JOIN game_state ON game_state.id = 1
+            """,
+        ).fetchall()
+        for row in rows:
+            event_id = str(row["event_id"] or "")
+            if event_id in pending_core_effect_ids:
+                continue
+            self.conn.execute(
+                """
+                INSERT OR IGNORE INTO event_triggers
+                    (event_id, turn, year, period, source, terminal_state, terminal_reason)
+                VALUES (?, ?, ?, ?, 'legacy_event_pool', 'triggered', '')
+                """,
+                (event_id, row["turn"], row["year"], row["period"]),
+            )
+        self.conn.commit()
 
     def has_state(self) -> bool:
         row = self.conn.execute("SELECT 1 FROM game_state WHERE id = 1").fetchone()
@@ -2028,6 +2159,7 @@ class GameDB:
         status: str,
         reason: str = "",
         reason_code: str | None = None,
+        commit: bool = True,
     ) -> None:
         """改人物状态：active/offstage/dismissed/imprisoned/exiled/retired/dead。
         大臣走 characters 表；后宫（consorts）走内存对象 + consort_traits 备档。
@@ -2057,7 +2189,8 @@ class GameDB:
         # #9：状态变更后全重算该人物所属朝堂派系 leverage（绝对值、读当前所有在朝成员 → 无漂移）。
         if prev is not None:
             self.recompute_faction_leverage(str(prev["faction"] or ""))
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
     def _faction_office_weight_sum(self, faction: str) -> float:
         """该 faction 当前所有 status='active' 的大明成员的官职权重和
@@ -2209,6 +2342,7 @@ class GameDB:
         derived_from: str = "",
         normalized: str | Dict[str, object] = "",
         source: str = "",
+        commit: bool = True,
     ) -> None:
         if isinstance(normalized, dict):
             normalized_text = json.dumps(normalized, ensure_ascii=False, sort_keys=True)
@@ -2232,7 +2366,8 @@ class GameDB:
                 str(source or "")[:80],
             ),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
     def get_character_status(self, name: str) -> Tuple[str, str]:
         row = self.conn.execute(
@@ -2256,6 +2391,7 @@ class GameDB:
     def apply_character_power_changes(
         self,
         changes: List[Dict[str, object]],
+        commit: bool = True,
     ) -> List[Dict[str, object]]:
         """据 extractor 输出改人物 power_id（降将/叛臣/归正）。new_power 须为合法 power id。"""
         applied: List[Dict[str, object]] = []
@@ -2302,7 +2438,8 @@ class GameDB:
                 (new_power, name),
             )
             applied.append({"name": name, "old_power": old_power, "new_power": new_power, "reason": reason})
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return applied
 
     def set_character_office(
@@ -2312,6 +2449,7 @@ class GameDB:
         office_type: str = "",
         source: str = "诏书调任",
         llm_config: Any = None,
+        commit: bool = True,
     ) -> None:
         """既有官员调任/升迁：改 characters.office（office_type 给空则不动），
         同步 character_offices 备档。状态不变（仍 active）。
@@ -2354,7 +2492,8 @@ class GameDB:
         ).fetchone()
         if faction_row is not None:
             self.recompute_faction_leverage(str(faction_row["faction"] or ""))
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         if name in self.content.characters:
             self.content.characters[name].office = office
             self.content.characters[name].office_type = eff_type
@@ -2433,17 +2572,30 @@ class GameDB:
         """月初 tick：历史国号/称谓变化。稳定 id 不变，只改展示名与别名。"""
         changes: List[Dict[str, object]] = []
         if state.year > 1636 or (state.year == 1636 and state.period >= 4):
-            changed = self.apply_power_rename(
-                state,
-                "houjin",
-                "大清",
-                aliases="后金，清，大清",
-                reason="皇太极称帝，改国号大清",
-                status="皇太极称帝改国号大清，建元崇德，整合满蒙汉诸部南向争明",
-                last_action="皇太极称帝改国号大清",
-            )
-            if changed:
-                changes.append(changed)
+            ev = self.content.event_by_id.get("huangtaiji_chengdi")
+            if ev is None or not isinstance(ev.effect_on_trigger, dict):
+                raise ValueError("历史改国号缺少事件真源 huangtaiji_chengdi.effect_on_trigger")
+            power_renames = ev.effect_on_trigger.get("power_renames")
+            if not isinstance(power_renames, list):
+                raise ValueError("历史改国号缺少 power_renames 列表")
+            for idx, item in enumerate(power_renames):
+                if not isinstance(item, dict):
+                    raise ValueError(f"历史改国号 power_renames[{idx}] 非 dict")
+                power_id = str(item.get("power_id") or "").strip()
+                new_name = str(item.get("new_name") or "").strip()
+                if not power_id or not new_name:
+                    raise ValueError(f"历史改国号 power_renames[{idx}] 缺少 power_id/new_name")
+                changed = self.apply_power_rename(
+                    state,
+                    power_id,
+                    new_name,
+                    aliases=str(item.get("aliases") or ""),
+                    reason=str(item.get("reason") or ""),
+                    status=str(item.get("status") or ""),
+                    last_action=str(item.get("last_action") or ""),
+                )
+                if changed:
+                    changes.append(changed)
         return changes
 
     # ── 后宫调教 ──────────────────────────────────────────────────────────
@@ -2532,6 +2684,7 @@ class GameDB:
         character: "Character",
         source: str = "",
         llm_config: Any = None,
+        commit: bool = True,
     ) -> None:
         """运行时新建人物（吏部任命/皇帝点名）。已存在同名则不动，避免覆盖既有状态。"""
         existing = self.conn.execute(
@@ -2607,7 +2760,8 @@ class GameDB:
         is_consort = character.office_type == "后宫" or character.faction == "后宫"
         if character.status == "active" and power_id == "ming" and not is_consort:
             self.recompute_faction_leverage(str(character.faction or ""))
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
     def record_economy_moves(
         self,
@@ -2773,7 +2927,11 @@ class GameDB:
         )
         return f"阶级总览：{head}。高压预警：{warn}。"
 
-    def adjust_classes(self, deltas: Dict[str, Dict[str, int]]) -> List[Dict[str, object]]:
+    def adjust_classes(
+        self,
+        deltas: Dict[str, Dict[str, int]],
+        commit: bool = True,
+    ) -> List[Dict[str, object]]:
         """deltas 结构：{ key: {satisfaction: +/-N, leverage: +/-N} }
         key 形式：'农民' (全国) 或 '农民@shaanxi' (省级)。
 
@@ -2808,7 +2966,8 @@ class GameDB:
                 "WHERE name = ? AND region_id = ?",
                 (sat, lev, name.strip(), region_id.strip()),
             )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return rejected
 
     def power_rows(self, exclude_self: bool = False) -> List[sqlite3.Row]:
@@ -2867,6 +3026,7 @@ class GameDB:
         self,
         state: GameState,
         updates: Dict[str, Dict[str, object]],
+        commit: bool = True,
     ) -> List[Dict[str, object]]:
         allowed_fields = {"leverage", "military_strength", "supply"}
         changes: List[Dict[str, object]] = []
@@ -2971,7 +3131,8 @@ class GameDB:
                     "delta": log_delta,
                     "reason": reason,
                 })
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return changes
 
     def apply_power_rename(
@@ -2984,6 +3145,7 @@ class GameDB:
         aliases: str = "",
         status: str = "",
         last_action: str = "",
+        commit: bool = True,
     ) -> Dict[str, object] | None:
         """Rename a power while keeping its stable id for references.
 
@@ -3024,7 +3186,8 @@ class GameDB:
             """,
             (state.turn, state.year, state.period, power_id, old_name, new_name, old_aliases, new_aliases, reason[:200]),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return {
             "power_id": power_id,
             "old_name": old_name,
@@ -3178,6 +3341,7 @@ class GameDB:
         edict_id: int | None,
         actor: str,
         region_deltas: Dict[str, Dict[str, object]],
+        commit: bool = True,
     ) -> List[Dict[str, object]]:
         changes: List[Dict[str, object]] = []
         for region_id, raw_changes in region_deltas.items():
@@ -3410,7 +3574,8 @@ class GameDB:
                 ):
                     extra = self._apply_on_restore(state, region_id, event, edict_id, actor, reason)
                     changes.extend(extra)
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return changes
 
     def _apply_on_restore(
@@ -3699,6 +3864,7 @@ class GameDB:
         edict_id: int | None,
         actor: str,
         army_deltas: Dict[str, Dict[str, object]],
+        commit: bool = True,
     ) -> List[Dict[str, object]]:
         changes: List[Dict[str, object]] = []
         for army_id, raw_changes in army_deltas.items():
@@ -3855,7 +4021,8 @@ class GameDB:
                         "reason": reason,
                     }
                 )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return changes
 
     def create_armies_from_extraction(
@@ -3863,6 +4030,7 @@ class GameDB:
         state: GameState,
         new_armies: List[Dict[str, object]],
         actor: str = "档房",
+        commit: bool = True,
     ) -> List[Dict[str, object]]:
         """据 extractor 输出建新军队。同 id/name 已存在 → 把 manpower 当扩军增量。owner_power 必须是已知 power。"""
         valid_powers = {r["id"] for r in self.conn.execute("SELECT id FROM powers").fetchall()}
@@ -3933,7 +4101,12 @@ class GameDB:
                 reason = str(item.get("reason") or item.get("status") or "扩军")[:80]
                 pseudo_event = type("E", (), {"id": "season", "title": reason})()
                 self.apply_army_deltas(
-                    state, pseudo_event, None, actor, {existing["id"]: {"manpower": delta, "reason": reason}}
+                    state,
+                    pseudo_event,
+                    None,
+                    actor,
+                    {existing["id"]: {"manpower": delta, "reason": reason}},
+                    commit=False,
                 )
                 created.append({"army": existing["name"], "manpower_added": delta, "merged_into_existing": True})
                 continue
@@ -4056,7 +4229,8 @@ class GameDB:
                 "created": True,
                 "reason": reason,
             })
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return created
 
     # ── 建筑 ──────────────────────────────────────────────────────────────────
@@ -4076,6 +4250,7 @@ class GameDB:
         output_amount: int = 0,
         status: str = "",
         origin: str = "decree",
+        commit: bool = True,
     ) -> str:
         """运行时新立建筑（玩家诏书）。category / output_metric 走白名单硬校验，违规 ValueError。"""
         if category not in BUILDING_CATEGORIES:
@@ -4123,10 +4298,17 @@ class GameDB:
             """,
             (state.turn, state.year, state.period, building_id, name.strip()[:60], "诏书新立建筑"),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return building_id
 
-    def remove_building(self, state: GameState, building_id: str, reason: str = "") -> bool:
+    def remove_building(
+        self,
+        state: GameState,
+        building_id: str,
+        reason: str = "",
+        commit: bool = True,
+    ) -> bool:
         """拆除/废止建筑（issue 失败或撤销结案）。返回是否真删了一行。"""
         row = self.conn.execute("SELECT name FROM buildings WHERE id = ?", (building_id,)).fetchone()
         if row is None:
@@ -4141,7 +4323,8 @@ class GameDB:
              str(row["name"]), (reason or "建筑废止").strip()[:80]),
         )
         self.conn.execute("DELETE FROM buildings WHERE id = ?", (building_id,))
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return True
 
     def apply_building_deltas(
@@ -4151,6 +4334,7 @@ class GameDB:
         edict_id: int | None,
         actor: str,
         building_deltas: Dict[str, Dict[str, object]],
+        commit: bool = True,
     ) -> List[Dict[str, object]]:
         """改既有建筑。仿 apply_army_deltas。供 issue effect 落地复用。"""
         changes: List[Dict[str, object]] = []
@@ -4232,7 +4416,8 @@ class GameDB:
                     "delta": log_delta,
                     "reason": reason,
                 })
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return changes
 
     def buildings_report(self, region_id: str = "") -> str:
@@ -4309,7 +4494,7 @@ class GameDB:
             f"{row['status']}"
         )
 
-    def adjust_factions(self, deltas: Dict[str, object]) -> List[Dict[str, object]]:
+    def adjust_factions(self, deltas: Dict[str, object], commit: bool = True) -> List[Dict[str, object]]:
         """逐项落库；查无此派系名 → missing_ref 逐项拒收留痕（ADR 0008 决定 1，#14/#63
         死法 3）。入参经 _apply_faction_dict 预清洗（坏值已在那层拒），此处只余未知名一类。
         返回拒收项列表（{"rejected": True, ...}），桥接 _collect_inline_rejections 自动收。
@@ -4361,7 +4546,8 @@ class GameDB:
                     "UPDATE factions SET satisfaction = ?, leverage = ? WHERE name = ?",
                     (new_sat, new_lev, faction),
                 )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return rejected
 
     def turn_economy_summary(self, turn: int) -> str:
@@ -6028,37 +6214,101 @@ class GameDB:
 
     def has_event_triggered(self, event_id: str) -> bool:
         row = self.conn.execute(
-            "SELECT 1 FROM event_triggers WHERE event_id=? AND terminal_status='occurred' LIMIT 1",
+            "SELECT 1 FROM event_triggers WHERE event_id=? AND terminal_state='triggered' LIMIT 1",
             (event_id,),
         ).fetchone()
         return row is not None
 
-    def event_terminal_status(self, event_id: str) -> str | None:
+    def event_terminal_state(self, event_id: str) -> str | None:
         row = self.conn.execute(
-            "SELECT terminal_status FROM event_triggers WHERE event_id=? LIMIT 1",
+            "SELECT terminal_state FROM event_triggers WHERE event_id=? LIMIT 1",
             (event_id,),
         ).fetchone()
-        return str(row["terminal_status"]) if row is not None else None
+        return str(row["terminal_state"]) if row is not None else None
 
-    def mark_event_triggered(self, state: GameState, event_id: str, source: str = "simulation") -> None:
+    def has_event_terminal_state(self, event_id: str, terminal_state: str) -> bool:
+        row = self.conn.execute(
+            "SELECT 1 FROM event_triggers WHERE event_id=? AND terminal_state=? LIMIT 1",
+            (event_id, terminal_state),
+        ).fetchone()
+        return row is not None
+
+    def mark_event_triggered(
+        self,
+        state: GameState,
+        event_id: str,
+        source: str = "simulation",
+        *,
+        terminal_reason: str = "",
+        commit: bool = True,
+    ) -> None:
         self.conn.execute(
             """
-            INSERT OR IGNORE INTO event_triggers (event_id, turn, year, period, terminal_status, source)
-            VALUES (?, ?, ?, ?, 'occurred', ?)
+            INSERT INTO event_triggers
+                (event_id, turn, year, period, source, terminal_state, terminal_reason)
+            VALUES (?, ?, ?, ?, ?, 'triggered', ?)
+            ON CONFLICT(event_id) DO UPDATE SET
+                terminal_reason = excluded.terminal_reason
+            WHERE event_triggers.terminal_state = 'triggered'
+              AND COALESCE(event_triggers.terminal_reason, '') = ''
+              AND excluded.terminal_reason <> ''
             """,
-            (event_id, state.turn, state.year, state.period, source),
+            (event_id, state.turn, state.year, state.period, source, str(terminal_reason or "")[:200]),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
-    def mark_event_expired(self, state: GameState, event_id: str) -> None:
+    def mark_event_avoided(
+        self,
+        state: GameState,
+        event_id: str,
+        reason: str,
+        source: str = "gate_avoided",
+        *,
+        commit: bool = True,
+    ) -> None:
         self.conn.execute(
             """
-            INSERT OR IGNORE INTO event_triggers (event_id, turn, year, period, terminal_status, source)
-            VALUES (?, ?, ?, ?, 'expired', 'window_expired')
+            INSERT OR IGNORE INTO event_triggers
+                (event_id, turn, year, period, source, terminal_state, terminal_reason)
+            VALUES (?, ?, ?, ?, ?, 'avoided', ?)
+            """,
+            (event_id, state.turn, state.year, state.period, source, reason[:200]),
+        )
+        if commit:
+            self.conn.commit()
+
+    def mark_event_obsolete(
+        self,
+        state: GameState,
+        event_id: str,
+        reason: str,
+        source: str = "person_core_dead",
+        *,
+        commit: bool = True,
+    ) -> None:
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO event_triggers
+                (event_id, turn, year, period, source, terminal_state, terminal_reason)
+            VALUES (?, ?, ?, ?, ?, 'obsolete', ?)
+            """,
+            (event_id, state.turn, state.year, state.period, source, reason[:200]),
+        )
+        if commit:
+            self.conn.commit()
+
+    def mark_event_expired(self, state: GameState, event_id: str, *, commit: bool = True) -> None:
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO event_triggers
+                (event_id, turn, year, period, source, terminal_state, terminal_reason)
+            VALUES (?, ?, ?, ?, 'window_expired', 'expired', '过最晚触发时点仍未达成触发门')
             """,
             (event_id, state.turn, state.year, state.period),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
     def insert_issue(
         self,
@@ -6084,6 +6334,7 @@ class GameDB:
         effect_on_fail: Dict[str, object] | None = None,
         resolve_condition: str = "",
         fail_condition: str = "",
+        commit: bool = True,
     ) -> int:
         if kind not in ("situation", "initiative"):
             raise ValueError(f"issue kind 非法：{kind}")
@@ -6121,7 +6372,8 @@ class GameDB:
                 state.turn,
             ),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return int(cur.lastrowid)
 
     def advance_issue(
@@ -6136,6 +6388,7 @@ class GameDB:
         narrative: str = "",
         metric_delta: Dict[str, int] | None = None,
         inertia_delta: int = 0,
+        commit: bool = True,
     ) -> sqlite3.Row | None:
         row = self.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
         if row is None or row["status"] != "active":
@@ -6155,7 +6408,8 @@ class GameDB:
         new_phase = self._derive_issue_phase(to_value)
         new_status = row["status"]
         closed_turn = row["closed_turn"]
-        if to_value >= 100:
+        commitment_stop_condition = _is_commitment_stop_condition(row["resolve_condition"])
+        if to_value >= 100 and not commitment_stop_condition:
             new_status = "resolved"
             closed_turn = state.turn
         elif to_value <= 0 and can_collapse:
@@ -6187,7 +6441,8 @@ class GameDB:
                 json.dumps(metric_delta or {}, ensure_ascii=False),
             ),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return self.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
 
     def close_issue(
@@ -6197,6 +6452,7 @@ class GameDB:
         *,
         reason: str,
         narrative: str = "",
+        commit: bool = True,
     ) -> sqlite3.Row | None:
         """LLM 主动通知收尾。reason 必须是 'resolved' 或 'failed'。不看 bar 门槛。"""
         if reason not in ("resolved", "failed"):
@@ -6238,7 +6494,8 @@ class GameDB:
                 from_stage_text, to_stage_text, narrative,
             ),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return self.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
 
     # ── 帝国修正（legacies 表）：结案留下的长期百分比修正符，落账层放大/缩小增量 ────
@@ -6253,6 +6510,7 @@ class GameDB:
         source_issue_id: int | None = None,
         clear_gate: Dict[str, str] | None = None,
         legacy_key: str = "",
+        commit: bool = True,
     ) -> int:
         """结案产生持续修正符。start_month=当前绝对月，duration_months=-1 为永久。
         clear_gate 非空时：靠程序按 _gate_passed 判定消除（见 issues.clear_gated_legacies），与时长无关。"""
@@ -6271,18 +6529,20 @@ class GameDB:
                 str(legacy_key)[:60],
             ),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         self._legacy_mod_cache = None  # active 集变了，修正符缓存失效
         return int(cur.lastrowid)
 
     def list_active_legacies(self, state: GameState) -> List[sqlite3.Row]:
         """当前仍生效的帝国修正，顺手把已到期的失活。"""
-        self.expire_legacies(state)
+        external_transaction = bool(getattr(self.conn, "_commit_suspended", False) or self.conn.in_transaction)
+        self.expire_legacies(state, commit=not external_transaction)
         return self.conn.execute(
             "SELECT * FROM legacies WHERE status='active' ORDER BY id"
         ).fetchall()
 
-    def expire_legacies(self, state: GameState) -> List[int]:
+    def expire_legacies(self, state: GameState, commit: bool = True) -> List[int]:
         """到期失活：当前月 >= start_month + duration_months（永久 -1 永不到期）。"""
         now = int(state.year) * 12 + int(state.period)
         rows = self.conn.execute(
@@ -6300,7 +6560,8 @@ class GameDB:
                 "UPDATE legacies SET status='expired' WHERE id=?",
                 [(i,) for i in expired],
             )
-            self.conn.commit()
+            if commit:
+                self.conn.commit()
             self._legacy_mod_cache = None  # active 集变了，修正符缓存失效
         return expired
 
@@ -6322,9 +6583,11 @@ class GameDB:
         net_pct 为带符号整数百分比；落账时 base>=0 用 ×(1+net/100)，base<0 用 ×(1-net/100)。
         结果缓存，active 遗产集变化时由 insert_legacy/expire_legacies 清空。
         """
-        # expire 可能改变 active 集 → 先跑（其内部会在有变动时清缓存）
-        self.expire_legacies(state)
-        if self._legacy_mod_cache is not None:
+        # expire 可能改变 active 集 → 先跑。若调用方已有外层事务，不能在读修正符时提交；
+        # 且该未提交 active 集不可写入缓存，否则 rollback 后会留下脏 cache。
+        cache_allowed = not (getattr(self.conn, "_commit_suspended", False) or self.conn.in_transaction)
+        self.expire_legacies(state, commit=cache_allowed)
+        if cache_allowed and self._legacy_mod_cache is not None:
             return self._legacy_mod_cache
         agg: Dict[str, object] = {"国库": 0, "内库": 0, "民心": 0, "皇威": 0, "regions": {}, "armies": {}}
         for lg in self.conn.execute(
@@ -6351,7 +6614,8 @@ class GameDB:
                     for field, pct in fields.items():
                         if isinstance(pct, (int, float)):
                             bucket[str(field)] = int(bucket.get(str(field), 0)) + int(pct)
-        self._legacy_mod_cache = agg
+        if cache_allowed:
+            self._legacy_mod_cache = agg
         return agg
 
     @staticmethod
@@ -6369,6 +6633,7 @@ class GameDB:
         *,
         narrative: str = "",
         applied_cost: Dict[str, object] | None = None,
+        commit: bool = True,
     ) -> sqlite3.Row | None:
         row = self.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
         if row is None or row["status"] != "active":
@@ -6391,7 +6656,8 @@ class GameDB:
                 json.dumps(applied_cost or {}, ensure_ascii=False),
             ),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return self.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
 
     def list_recent_issue_advances(self, issue_id: int, limit: int = 3) -> List[sqlite3.Row]:
@@ -6410,6 +6676,7 @@ class GameDB:
         purpose: str | None = None,
         target_kind: str | None = None,
         target_id: str | None = None,
+        commit: bool = True,
     ) -> int:
         """记一笔经济流水到 economy_ledger，同步更新 metrics[account]。
 
@@ -6441,7 +6708,8 @@ class GameDB:
              category, reason, purpose, target_kind, target_id),
         )
         self.sync_economy_accounts(state)
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return actual
 
     def kv_get(self, key: str) -> str | None:
@@ -6619,7 +6887,15 @@ class GameDB:
         pending = self.list_secret_orders(status="pending_review", minister_name=minister_name)
         return active + pending
 
-    def close_secret_order(self, order_id: int, status: str, result: str, turn_closed: int) -> None:
+    def close_secret_order(
+        self,
+        order_id: int,
+        status: str,
+        result: str,
+        turn_closed: int,
+        *,
+        commit: bool = True,
+    ) -> None:
         self.conn.execute(
             """
             UPDATE secret_orders
@@ -6628,7 +6904,8 @@ class GameDB:
             """,
             (status, result, turn_closed, int(order_id)),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         tlog(f"[secret_order] close id={order_id} status={status}")
 
     def submit_secret_order_for_review(self, order_id: int, claim: str, year: int, period: int) -> bool:
@@ -6672,6 +6949,7 @@ class GameDB:
     def _append_secret_order_line(
         self, order_id: int, column: str, note: str, year: int, period: int,
         reject_if_same_period: bool = False,
+        commit: bool = True,
     ) -> bool:
         """把一条带年月戳的进展/副作用追加进密令的 result/sim_note，存成历史时间线。
         reject_if_same_period=True 时，本年月已有行则拒写（返回 False，用于一回合一步）；
@@ -6699,26 +6977,45 @@ class GameDB:
             f"UPDATE secret_orders SET {column} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             ("\n".join(lines), int(order_id)),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return True
 
     def update_secret_order_progress(
-        self, order_id: int, progress_note: str, year: int = 0, period: int = 0
+        self,
+        order_id: int,
+        progress_note: str,
+        year: int = 0,
+        period: int = 0,
+        *,
+        commit: bool = True,
     ) -> bool:
         """承办人推进一步：按年月追加进 result 历史时间线，不改 status。
         同月再报则替换当月行（修改最新进度，不叠加多条）。"""
         ok = self._append_secret_order_line(
-            order_id, "result", progress_note, year, period, reject_if_same_period=False
+            order_id,
+            "result",
+            progress_note,
+            year,
+            period,
+            reject_if_same_period=False,
+            commit=commit,
         )
         tlog(f"[secret_order] progress id={order_id} ok={ok} note={progress_note[:40]!r}")
         return ok
 
     def update_secret_order_sim_note(
-        self, order_id: int, sim_note: str, year: int = 0, period: int = 0
+        self,
+        order_id: int,
+        sim_note: str,
+        year: int = 0,
+        period: int = 0,
+        *,
+        commit: bool = True,
     ) -> None:
         """推演写密令副作用（泄漏/反弹等），按年月追加进 sim_note 历史时间线，
         不动 result/status。同月再写替换（推演每月一次）。与承办人进展分列。"""
-        self._append_secret_order_line(order_id, "sim_note", sim_note, year, period)
+        self._append_secret_order_line(order_id, "sim_note", sim_note, year, period, commit=commit)
         tlog(f"[secret_order] sim_note id={order_id} note={sim_note[:40]!r}")
 
     def rush_secret_order(

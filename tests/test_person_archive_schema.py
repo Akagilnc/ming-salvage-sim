@@ -189,4 +189,5 @@ def test_personnel_extractor_prompt_teaches_person_change_contract():
     assert "册封" in personnel
     assert "新登场的非明朝人物" in personnel
     assert "在人物名册内才写 `人物变更`" in personnel
+    assert "同时写 `任命` 授武将名分" in personnel
     assert "走 `任命`，不走这里" not in personnel

@@ -159,6 +159,7 @@ class Event:
     open_window: bool = False  # True=显式开放窗，永不过期
     precondition: str = ""  # 触发前提+改写口子人话说明，喂 simulator 由 LLM 据盘面判断是否改写/跳过（见 season_simulator.md 候选情势触发判定）
     event_type: str = "situation"  # situation=转 bar issue；node=只播报不转 issue；ending=交结局判定
+    person_core_subjects: List[str] = field(default_factory=list)  # 人物核心事件主体：这些人永久死亡→事件作废退候选
     trigger_gate: Dict[str, str] = field(default_factory=dict)  # seed 候选门槛：{metric: 比较式}，全满足才进候选
     auto_trigger: bool = False  # True=gate 达标即由程序硬立项，绕过 LLM 因果判定（不进候选池等 extractor 决定）
     # 以下为可选「精调 issue 字段」：原 opening_crises 那种手调危机用，立项时 event_to_issue 优先读这些，
@@ -171,6 +172,7 @@ class Event:
     region_hint: str = ""
     issue_tags: List[str] = field(default_factory=list)           # 空=用 [kind]
     ongoing_effects: Dict[str, object] = field(default_factory=dict)
+    effect_on_trigger: Dict[str, object] = field(default_factory=dict)
     effect_on_resolve: Dict[str, object] = field(default_factory=dict)
     effect_on_fail: Dict[str, object] = field(default_factory=dict)
 
