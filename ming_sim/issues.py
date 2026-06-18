@@ -185,6 +185,14 @@ def _spawned_event_refs(db: GameDB) -> set:
     return refs
 
 
+def _event_terminal_refs(db: GameDB) -> set:
+    refs: set = set()
+    for r in db.conn.execute("SELECT event_id FROM event_triggers").fetchall():
+        if r["event_id"]:
+            refs.add(r["event_id"])
+    return refs
+
+
 def _event_window_open(ev: Event, state: GameState) -> bool:
     """Return True when the current date is inside an event's optional trigger window."""
     if ev.trigger_year > 0:
@@ -553,18 +561,16 @@ def auto_trigger_seed_issues(state: GameState, db: GameDB) -> List[Dict[str, obj
 def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Dict[str, object]]:
     """auto_trigger_seed_issues 的事务体；由外层函数或 pre_settle 嵌套事务统一提交/回滚。"""
     c = _ctx()
-    spawned = _spawned_event_refs(db)
+    terminal_refs = _event_terminal_refs(db)
     triggered: List[Dict[str, object]] = []
     for ev in [*c.events, *c.seed_events]:
         historical_event = any(ev is item for item in c.events)
         if not ev.auto_trigger:
             continue
         if historical_event:
-            if db.event_terminal_state(ev.id) is not None:
+            if ev.id in terminal_refs:
                 continue
-        elif ev.id in spawned:
-            continue
-        if _mark_expired_if_needed(ev, state, db, spawned):
+        if _mark_expired_if_needed(ev, state, db, terminal_refs):
             continue
         # trigger_gate 为空 = 开局即立的局势，只由 seed_opening_crises 立一次，绝不在此重立。
         # （空 gate 会被 _gate_passed 判为恒真，必须显式排除，否则每回合都试图重立。）
@@ -2706,7 +2712,7 @@ def apply_issue_tracker_output(
                 continue
             if db.event_terminal_state(ev.id) == "expired":
                 print(f"[INFO] new_issue 已拒：event {event_id} 已过期终态，不再从 event_pool 立项。")
-                applied_new.append({"title": ev.title, "rejected": True, "reason": "事件已过期终态"})
+                applied_new.append({"id": ev.id, "title": ev.title, "rejected": True, "reason": "事件已过期终态"})
                 continue
             if (
                 ev.id not in candidate_event_ids
