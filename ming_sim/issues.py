@@ -1494,16 +1494,19 @@ _STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS: Dict[str, Dict[str, frozenset[str]]] = 
         "regions": frozenset({"beizhili"}),
         "armies": frozenset({"jingying", "guanning", "jizhen", "xuan_da"}),
         "characters": frozenset(),
+        "powers": frozenset({"houjin"}),
     },
     "wuyin_lubian": {
         "regions": frozenset({"beizhili", "shandong"}),
         "armies": frozenset({"jingying", "guanning", "jizhen", "xuan_da"}),
         "characters": frozenset({"卢象升"}),
+        "powers": frozenset({"houjin"}),
     },
     "songshan_battle": {
         "regions": frozenset({"liaodong"}),
         "armies": frozenset({"guanning"}),
         "characters": frozenset({"洪承畴"}),
+        "powers": frozenset({"houjin"}),
     },
 }
 _STRATEGIC_FOREIGN_NODE_PERSON_ANCHORS: Dict[str, frozenset[str]] = {
@@ -1546,6 +1549,10 @@ _STRATEGIC_ENTITY_OUTCOME_FIELDS: Dict[str, frozenset[str]] = {
         "station", "status", "人数", "兵力", "士气", "补给", "忠诚", "统帅", "主将",
         "控制", "归属", "驻地", "驻扎地", "状态",
     }),
+    "powers": frozenset({
+        "leverage", "military_strength", "supply", "威望", "威胁", "影响力",
+        "实力", "兵势", "军势", "军事力量", "经济", "补给",
+    }),
 }
 _STRATEGIC_NEW_ARMY_CONTEXT_ANCHORS = frozenset({
     "己巳", "戊寅", "松锦", "松山", "锦州", "入塞", "入寇", "后金", "清军",
@@ -1580,7 +1587,7 @@ def _event_pool_ids_for_strategic_foreign_nodes(
 def _strategic_event_outcome_targets(event_id: str) -> Dict[str, frozenset[str]]:
     return _STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS.get(
         event_id,
-        {"regions": frozenset(), "armies": frozenset(), "characters": frozenset()},
+        {"regions": frozenset(), "armies": frozenset(), "characters": frozenset(), "powers": frozenset()},
     )
 
 
@@ -1612,6 +1619,28 @@ def _person_change_name(item: Dict[str, object]) -> str:
         or item.get("person")
         or ""
     ).strip()
+
+
+def _canonicalize_person_change_names(
+    changes: List[Dict[str, object]],
+    content: Optional[GameContent],
+    db: GameDB,
+) -> List[Dict[str, object]]:
+    if content is None:
+        return changes
+    from ming_sim.session import _find_existing_minister
+
+    canonicalized: List[Dict[str, object]] = []
+    for item in changes:
+        name = _person_change_name(item)
+        canon = _find_existing_minister(content, name, db) if name else None
+        if canon and canon != name:
+            copied = dict(item)
+            copied["name"] = canon
+            canonicalized.append(copied)
+        else:
+            canonicalized.append(item)
+    return canonicalized
 
 
 def _is_strategic_person_result_change(item: Dict[str, object]) -> bool:
@@ -1873,6 +1902,18 @@ def _event_result_delta_event_ids(
                     strategic_event_pool_ids,
                 )
             )
+    power_result_event_ids: set[str] = set()
+    if isinstance(extracted.get("power_updates"), dict):
+        for power_id, raw_changes in (extracted.get("power_updates") or {}).items():
+            power_result_event_ids.update(
+                _strategic_entity_delta_event_ids(
+                    str(power_id),
+                    raw_changes,
+                    "powers",
+                    strategic_event_ids,
+                    strategic_event_pool_ids,
+                )
+            )
     person_result_event_ids: set[str] = set()
     for item in person_changes:
         person_result_event_ids.update(_strategic_person_result_event_ids(item, strategic_event_ids, db))
@@ -1887,6 +1928,7 @@ def _event_result_delta_event_ids(
         if (
             event_id in region_result_event_ids
             or event_id in army_result_event_ids
+            or event_id in power_result_event_ids
             or event_id in person_result_event_ids
             or event_id in new_army_result_event_ids
         ):
@@ -1943,6 +1985,7 @@ def _strategic_event_result_preflight_error(
     outcome_label: str,
     region_deltas: Dict[str, object],
     army_deltas: Dict[str, object],
+    power_updates: Dict[str, object],
     person_changes: List[Dict[str, object]],
     new_armies: List[object],
     content: Optional[GameContent],
@@ -2116,7 +2159,52 @@ def _strategic_event_result_preflight_error(
             if err:
                 return err
 
+    if power_updates:
+        power_results: List[Dict[str, object]] = []
+        db.conn.execute("SAVEPOINT strategic_power_result_preflight")
+        try:
+            power_results = db.apply_power_deltas(
+                state,
+                power_updates,
+                commit=False,
+            )
+        finally:
+            db.conn.execute("ROLLBACK TO SAVEPOINT strategic_power_result_preflight")
+            db.conn.execute("RELEASE SAVEPOINT strategic_power_result_preflight")
+        for result in power_results:
+            if result.get("rejected"):
+                return (
+                    f"战略/外敌事件「{event_title or event_id}」势力战果拒收："
+                    f"{result.get('reason') or result.get('category') or ''}"
+                )
+        if not any(_strategic_result_item_has_material_world_state(result) for result in power_results):
+            power_id = next(iter(power_updates))
+            return _noop_error("power", str(power_id), "power_updates", power_updates.get(power_id))
+
     if person_changes:
+        for item in person_changes:
+            action = str(item.get("动作") or item.get("action") or "").strip()
+            if action != "行止":
+                continue
+            name = _person_change_name(item)
+            row = db.conn.execute(
+                "SELECT location, transit_to FROM characters WHERE name = ?",
+                (name,),
+            ).fetchone()
+            if row is None:
+                continue
+            new_location = str(item.get("location") or "").strip()
+            new_transit_to = str(item.get("transit_to") or "").strip()
+            old_location = str(row["location"] or "")
+            old_transit_to = str(row["transit_to"] or "")
+            target_location = new_location or old_location
+            if target_location == old_location and new_transit_to == old_transit_to:
+                return _noop_error(
+                    "person",
+                    name,
+                    "行止",
+                    {"location": target_location, "transit_to": new_transit_to},
+                )
         snapshot = _snapshot_person_write_state(db, content)
         results: List[Dict[str, object]] = []
         db.conn.execute("SAVEPOINT strategic_person_result_preflight")
@@ -4038,7 +4126,11 @@ def apply_score_extraction(
         "character_power_changes": extracted.get("character_power_changes") or [],
         "office_changes": extracted.get("office_changes") or [],
     })
-    person_changes = new_person_changes or legacy_person_changes
+    person_changes = _canonicalize_person_change_names(
+        new_person_changes or legacy_person_changes,
+        runtime_content,
+        db,
+    )
     use_legacy_person_keys = not person_changes
     legacy_person_mode = bool(legacy_person_changes)
     strategic_event_pool_ids = _event_pool_ids_for_strategic_foreign_nodes(extracted, runtime_content)
@@ -4194,6 +4286,7 @@ def apply_score_extraction(
     # 4) new_armies → region_delta / army_delta (复用旧 db 方法)
     region_deltas_raw = extracted.get("region_delta") or {}
     army_deltas_raw = extracted.get("army_delta") or {}
+    power_updates_raw = extracted.get("power_updates") or {}
     new_armies_raw = extracted.get("new_armies") or []
     strategic_region_deltas_raw, ordinary_region_deltas_raw = _split_strategic_entity_deltas(
         region_deltas_raw,
@@ -4204,6 +4297,12 @@ def apply_score_extraction(
     strategic_army_deltas_raw, ordinary_army_deltas_raw = _split_strategic_entity_deltas(
         army_deltas_raw,
         "armies",
+        strategic_event_referenced_ids,
+        strategic_event_pool_ids,
+    )
+    strategic_power_updates_raw, ordinary_power_updates_raw = _split_strategic_entity_deltas(
+        power_updates_raw,
+        "powers",
         strategic_event_referenced_ids,
         strategic_event_pool_ids,
     )
@@ -4265,10 +4364,9 @@ def apply_score_extraction(
     # ADR 0008 决定 1:不再整段吞——LLM 脏数据(未知 power id/字段非法)在
     # apply_power_deltas 内逐项拒收留痕(返回列表含 {"rejected": True, ...});
     # 代码异常(KeyError/AttributeError 等)上抛到 settle 层回滚整批,绝不吞。
-    power_updates_raw = extracted.get("power_updates") or {}
     power_changes: List[Dict[str, object]] = []
-    if isinstance(power_updates_raw, dict) and power_updates_raw:
-        power_updates_to_apply = dict(power_updates_raw)
+    if ordinary_power_updates_raw:
+        power_updates_to_apply = dict(ordinary_power_updates_raw)
         for power_id in sorted(set(power_updates_to_apply) & amnesty_conflict_power_ids):
             raw_changes = power_updates_to_apply.pop(power_id)
             power_changes.append({
@@ -4307,6 +4405,11 @@ def apply_score_extraction(
             "armies",
             event_id,
         )
+        event_power_updates = _entity_deltas_for_strategic_event(
+            strategic_power_updates_raw,
+            "powers",
+            event_id,
+        )
         event_person_changes = [
             item
             for item in strategic_person_result_changes
@@ -4332,6 +4435,14 @@ def apply_score_extraction(
                 "category": "event_rejected",
                 "reason": reason,
                 "item": {"event_id": event_id, "army_id": army_id, "changes": raw_changes},
+            })
+        for power_id, raw_changes in event_power_updates.items():
+            power_changes.append({
+                "power_id": power_id,
+                "rejected": True,
+                "category": "event_rejected",
+                "reason": reason,
+                "item": {"event_id": event_id, "power_id": power_id, "changes": raw_changes},
             })
         for item in event_person_changes:
             applied_person_changes.append({
@@ -4400,6 +4511,11 @@ def apply_score_extraction(
             "armies",
             event_id,
         )
+        event_power_updates = _entity_deltas_for_strategic_event(
+            strategic_power_updates_raw,
+            "powers",
+            event_id,
+        )
         event_person_changes = [
             item
             for item in strategic_person_result_changes
@@ -4417,6 +4533,7 @@ def apply_score_extraction(
             outcome_label,
             event_region_deltas,
             event_army_deltas,
+            event_power_updates,
             event_person_changes,
             event_new_armies,
             content,
@@ -4437,6 +4554,7 @@ def apply_score_extraction(
         event_army_changes: List[Dict[str, object]] = []
         event_person_results: List[Dict[str, object]] = []
         event_created_armies: List[Dict[str, object]] = []
+        event_power_changes: List[Dict[str, object]] = []
         if event_new_armies:
             event_created_armies = db.create_armies_from_extraction(
                 state,
@@ -4472,12 +4590,20 @@ def apply_score_extraction(
         )
         result_items = event_created_armies + event_region_changes + event_army_changes + event_person_results
         if any(_strategic_result_item_has_material_world_state(item) for item in result_items):
+            if event_power_updates:
+                event_power_changes = db.apply_power_deltas(
+                    state,
+                    event_power_updates,
+                    commit=commit_now,
+                )
+                power_changes.extend(event_power_changes)
             db.mark_event_triggered(state, event_id, terminal_reason=outcome_label, commit=commit_now)
             new_issue["reason"] = "event_type=node 已记为触发，软判结果已落主账"
         else:
             new_issue["rejected"] = True
             new_issue["category"] = "missing_world_state_delta"
             new_issue["reason"] = "战略/外敌战事缺世界状态主账结果（地区/军队/人物变更/新建军队均未成功）"
+            _reject_suppressed_strategic_results(event_id, str(new_issue.get("title") or ""), reason=new_issue["reason"])
     _apply_normalized_person_changes(post_issue_person_changes, legacy=legacy_person_mode)
 
     def _norm_int_leaf(v):
