@@ -18,7 +18,7 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 
 ## 操作规程
 
-权威源 = Matt 的 `ask-matt` 路由器 + 各 skill SKILL.md 原文。整条主线：**想法 → grill 出 CONTEXT/ADR →（按需 prototype）→ to-prd 综合成完整 PRD → 切薄 issue → 逐片 tdd → ship。** 每步一个 skill，状态全靠 label + open/close 跟踪。
+权威源 = Matt 的 `ask-matt` 路由器 + 各 skill SKILL.md 原文。整条主线：**想法 → grill 出 CONTEXT/ADR →（大/模糊想法先 decision-mapping 推雾）→ to-prd 综合成完整 PRD → 切薄 issue → 逐片 implement → ship。** 每步一个 skill，状态全靠 label + open/close 跟踪。
 
 > [!important] grill **在 to-prd 之前**
 > `to-prd` 故意**不访谈**（SKILL.md 原文："Do NOT interview the user — just synthesize what you already know"）。访谈/逼问那一步是 `grill-with-docs`，它在前；`to-prd` 只是把 grill 透的对话**笔录**成 PRD。所以顺序不可能反——to-prd 前面没 grill 就没东西可综合。
@@ -29,37 +29,50 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 > [!important] `to-prd` / `to-issues` 只在「多 session 大活」才走
 > `ask-matt` 第 3 步是个分叉：**多 session 才做的大 feature** 才 `to-prd` → `to-issues`；**单 session 能完的小活直接在同一窗口 implement、跳过这两步**。别把 to-prd/to-issues 当所有活的必经。
 
+> [!important] 大/模糊想法先 `decision-mapping` 推雾，再进 to-prd
+> grill 完若还剩「一次 session 定不完」的开放决策（fog of war），先跑 `decision-mapping`：建 git-tracked 决策图，每个 ticket（Research / Prototype / Discuss，一票一 ~100K session）逐个 resolve、推开迷雾，直到通往终点的路清晰，才进 to-prd。grill 完就没迷雾（多数情况）= 直接往下、不必建图。这是 Matt 原生的多-session **规划** 层（区别于 to-prd/to-issues 的多-session **实现** 层）。
+
 ```
 想法
- └ grill-with-docs ── 逼问；决策结晶当场写 CONTEXT.md 术语 + docs/adr ADR
-        （有 codebase 用 grill-with-docs；没有用 grill-me——同一场 /grilling 访谈，
-          二选一、跑一次；grill-with-docs 多挂 /domain-modeling 才会落文档）
- └ (按需) prototype ── handoff 出 → 扔型原型答「状态/UI 对不对」→ handoff 回；答案落 ADR/issue/NOTES
- └ ❲分叉❳ 多 session 大活？
-      否 ─→ 就在同一窗口直接 implement（本项目用 tdd 替，见下），跳过 to-prd / to-issues
-      是 ↓
- └ to-prd ────────── 把 grill 透的对话综合成「完整 PRD」（不再访谈，只笔录），发 issue tracker 当父/epic
+ └ grilling（核心逼问引擎）── 壳：grill-with-docs[有codebase,落CONTEXT/ADR] / grill-me[无codebase,不落]
+ └ ❲迷雾?❳ grill 完还剩「一次 session 定不完」的开放决策?
+      有 ─→ decision-mapping ── git-tracked 决策图（ticket=Research/Prototype/Discuss，一票一 ~100K session）
+      │                          逐票 resolve（调 grilling/prototype/research）推开迷雾，直到路清
+      无 ↓（grill 完就没迷雾，多数情况）
+ └ ❲规模?❳
+      小（单 session）─→ 直接 implement，跳过 to-prd / to-issues
+      大（多 session）↓
+ └ to-prd ────────── 综合成「完整 PRD」（不访谈，只笔录），发 issue tracker 当父/epic
         Problem / Solution / 详尽 User Stories / Implementation Decisions / Testing Decisions / Out of Scope / Further Notes
  └ to-issues ─────── PRD 切薄垂直切片子 issue（Parent + What to build + 验收 + Blocked by + AFK/HITL）
-        ↑ grill → to-prd → to-issues 全程留在「同一个不间断上下文窗口」，别中途 compact
-          （smart zone ~120k token；快满了用 handoff 转新 thread，别在退化窗口里硬撑）
- └ (每个 issue 开新 session) implement ── canonical 叫 /implement；本机无此 skill，本项目用 /tdd 替：
-          Planning（读 CONTEXT/ADR + 跟你确认接口/行为）→ 红绿（never refactor while RED）→ 重构
+        ↑ grill →(decision-mapping)→ to-prd → to-issues 留同一不间断窗口，别中途 compact（smart zone ~120k）
+ └ (每个 issue 开新 session) implement ── 按 PRD/issue 实现：约定 seam 调 /tdd（never refactor while RED）
+          → 跑 typecheck/单测/全量 → 调 /review → commit 到当前分支
         ▼
      merge commit（不 squash）→ 关子 issue；全完 → 人手动关父
+        （prototype 按需绕道，handoff 出/回桥接）
 ```
 
-| skill | 在主线哪一步 | 干什么 |
+**什么地方用什么（全 skill 速查）**：
+
+| skill | 阶段 | 干什么 |
 |---|---|---|
-| `grill-with-docs` | ① 起点（有 codebase）| 逼问 + 当场更 `CONTEXT.md` + `docs/adr/`（= `/grilling` + `/domain-modeling`）|
-| `grill-me` | ①' 起点（无 codebase）| 同一场逼问，stateless、不落文档（= 只 `/grilling`）|
-| `prototype` | ②（按需绕道）| 扔型原型去风险（状态机 / UI 变体），答案落 durable、原型删 |
-| `to-prd` | ③ | grill 后把对话**综合成完整 PRD**（不访谈），含两层设计，发 issue tracker |
-| `to-issues` | ④ | PRD → 薄垂直切片子 issue（tracer bullet）|
-| `tdd` | ⑤（逐片，各开新 session）| 跑构建步（canonical 名 `/implement`，本机无、用 `/tdd` 替）：Planning → 红绿（never refactor while RED）→ 重构；**代码级实现在这现场长** |
-| `triage` | 入口匝道（非主线）| 外来 issue 走五态状态机、贴标签、发 agent brief |
-| `diagnosing-bugs` | 旁路（硬 bug）| 硬 bug / 性能 regression 调查（旧名 `diagnose`）|
-| `improve-codebase-architecture` | 旁路（保养）| 据 CONTEXT + ADR 找深挖/重构，产出回到 ① 当新想法 |
+| `grilling` | A 规划·引擎 | 核心逼问引擎：一次一问、走决策树、每问给推荐答案；下面几个壳调它 |
+| `grill-with-docs` | A 规划·起点（有 codebase）| grilling + `/domain-modeling`：逼问 + 当场写 `CONTEXT.md` + `docs/adr/` |
+| `grill-me` | A 规划·起点（无 codebase）| 只 grilling：同一场逼问，stateless、不落文档 |
+| `domain-modeling` | A 规划 | 建/磨领域词表 + ADR（被 grill-with-docs 挂用；也可单独修词表/ADR）|
+| `decision-mapping` | A 规划·大/模糊 | 一次 session 定不完时：git-tracked 决策图，ticket=Research/Prototype/Discuss 逐票推雾 |
+| `prototype` | A 规划·去风险 | 扔型原型**二选一**答「逻辑/状态对不对」(终端 app) 或「长啥样」(UI 多变体)；= decision-mapping 的 Prototype ticket，handoff 桥接、答案落 durable、原型删 |
+| `codebase-design` | A 规划·架构词汇 | 深模块设计共享词汇（Module/Interface/Depth/Seam…，被 tdd/improve 挂用）|
+| `to-prd` | B 立项 | grill 透后**综合成完整 PRD**（不访谈），含两层设计，发 issue tracker 当父 |
+| `to-issues` | B 立项 | PRD 切薄垂直切片子 issue（tracer bullet）+ 依赖序 |
+| `implement` | C 实现（逐片，各开新 session）| 按 PRD/issue 实现：约定 seam 调 `/tdd` → typecheck/单测/全量 → 调 `/review` → commit |
+| `tdd` | C 实现（被 implement 调）| 红绿重构；**代码级实现在这现场长**；never refactor while RED |
+| `review` | C 实现·收尾 | 代码评审（implement 末尾调）|
+| `diagnosing-bugs` | C 旁路（硬 bug）| 硬 bug / 性能 regression 调查（旧名 `diagnose`）|
+| `improve-codebase-architecture` | 保养 | 据 CONTEXT + ADR 找深挖/重构，产出回 A 当新想法 |
+| `triage` | 入口匝道（非主线）| **外来** issue（你没创建的）走五态状态机、贴标签、发 agent brief |
+| `handoff` | 横切 | session 间交付（context 满 / 绕道 prototype 的桥）|
 
 > [!note] 本项目在 Matt 之上加的闸（非 Matt canonical）
 > 本项目在 ③ 之后插一道**设计评审**（`ak-cross-m-review` 本地 cmr + 线上 bot，收敛 ADR），在 ⑤ 之后插一道**代码评审**（per-slice cmr + ship-pre + 线上 bot）。这两道是本项目的质量装置，**不是** Matt 的 skill；写在这里是为了「试水」时看清哪些是 Matt 原装、哪些是我们加的。详见 [[cross-model-review]] / [[pr-review-loop]]。
