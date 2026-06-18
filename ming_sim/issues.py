@@ -2184,9 +2184,22 @@ def _strategic_event_result_preflight_error(
     if person_changes:
         for item in person_changes:
             action = str(item.get("动作") or item.get("action") or "").strip()
+            name = _person_change_name(item)
+            if action in {"处置", "罢黜"}:
+                target_status = "dismissed" if action == "罢黜" else str(item.get("status") or "").strip()
+                row = db.conn.execute(
+                    "SELECT status FROM characters WHERE name = ?",
+                    (name,),
+                ).fetchone()
+                if row is not None and str(row["status"] or "") == target_status:
+                    return _noop_error(
+                        "person",
+                        name,
+                        action,
+                        {"status": target_status},
+                    )
             if action != "行止":
                 continue
-            name = _person_change_name(item)
             row = db.conn.execute(
                 "SELECT location, transit_to FROM characters WHERE name = ?",
                 (name,),
