@@ -2044,6 +2044,16 @@ def _strategic_event_result_preflight_error(
         army_id = str(item.get("id") or "").strip()
         if not army_id:
             return f"战略/外敌事件「{event_title or event_id}」新军战果缺 id"
+        army_name = str(item.get("name") or army_id).strip()
+        existing_army = db.conn.execute(
+            "SELECT id, name FROM armies WHERE id = ? OR name = ?",
+            (army_id, army_name),
+        ).fetchone()
+        if existing_army is not None:
+            return (
+                f"战略/外敌事件「{event_title or event_id}」新军战果 id/name 已存在："
+                f"{army_id}/{army_name}（扩编既有军队请走 army_delta）"
+            )
         owner = str(item.get("owner_power") or "ming").strip() or "ming"
         if db.conn.execute("SELECT 1 FROM powers WHERE id = ?", (owner,)).fetchone() is None:
             return f"战略/外敌事件「{event_title or event_id}」新军战果 owner_power 未入库：{owner}"
@@ -2052,6 +2062,12 @@ def _strategic_event_result_preflight_error(
         err = _int_delta_error("new_army", army_id, "manpower", item.get("manpower"))
         if err:
             return err
+        manpower = int(item.get("manpower"))
+        if manpower <= 0:
+            return (
+                f"战略/外敌事件「{event_title or event_id}」新军战果 manpower 须为正整数："
+                f"{manpower}"
+            )
         for field in ARMY_SCORE_FIELDS:
             if field in item and item.get(field) is not None:
                 err = _int_delta_error("new_army", army_id, field, item.get(field))

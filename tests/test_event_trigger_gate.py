@@ -599,6 +599,90 @@ def test_strategic_foreign_event_lands_new_army_soft_result_delta(game):
     assert out["created_armies"][0].get("rejected") is not True
 
 
+@pytest.mark.parametrize(
+    ("army_id", "army_name", "existing_id"),
+    [
+        ("jingying", "己巳入塞偏师", "jingying"),
+        ("__test_jisi_name_collision__", "京营", "jingying"),
+    ],
+)
+def test_strategic_new_army_result_rejects_existing_army_collision(
+    game, army_id, army_name, existing_id
+):
+    """CMR R10：战略新军战果不得撞既有军队 id/name 走扩编合并路径。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    before = db.conn.execute(
+        "SELECT manpower, owner_power FROM armies WHERE id = ?", (existing_id,)
+    ).fetchone()
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "事件结局": {"jisi_lubian": "入塞被遏"},
+            "new_armies": [
+                {
+                    "id": army_id,
+                    "name": army_name,
+                    "owner_power": "houjin",
+                    "station": "北直隶 / 遵化",
+                    "manpower": 1200,
+                    "reason": "己巳之变软判后金入塞偏师成军",
+                }
+            ],
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert not db.has_event_triggered("jisi_lubian")
+    after = db.conn.execute(
+        "SELECT manpower, owner_power FROM armies WHERE id = ?", (existing_id,)
+    ).fetchone()
+    assert dict(after) == dict(before)
+    if army_id != existing_id:
+        assert db.conn.execute("SELECT 1 FROM armies WHERE id = ?", (army_id,)).fetchone() is None
+    assert out["created_armies"][0]["rejected"] is True
+
+
+def test_strategic_new_army_result_rejects_nonpositive_manpower(game):
+    """同族自查：战略新军战果不能用 0/负兵力建出无效新军来触发事件。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    army_id = "__test_zero_jisi_raider_army__"
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "事件结局": {"jisi_lubian": "入塞被遏"},
+            "new_armies": [
+                {
+                    "id": army_id,
+                    "name": "己巳入塞空营",
+                    "owner_power": "houjin",
+                    "station": "北直隶 / 遵化",
+                    "manpower": 0,
+                    "reason": "己巳之变软判后金入塞偏师成军",
+                }
+            ],
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert not db.has_event_triggered("jisi_lubian")
+    assert db.conn.execute("SELECT 1 FROM armies WHERE id = ?", (army_id,)).fetchone() is None
+    assert out["created_armies"][0]["rejected"] is True
+
+
 def test_strategic_event_records_outcome_label_with_world_state_delta(game):
     """ADR0014：战略战事软判须同写结局标签账，供下游链分支读取。"""
     db, state, content = game
