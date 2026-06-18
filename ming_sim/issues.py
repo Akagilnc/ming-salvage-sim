@@ -317,7 +317,7 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
         if table == "event":
             if cid not in db.content.event_by_id:
                 return None
-            values.append(1 if db.has_event_triggered(cid) else 0)
+            values.append(1 if db.has_event_terminal_state(cid, "triggered") else 0)
             continue
         if table == "region":
             row = db.conn.execute(f"SELECT {field} FROM regions WHERE id = ?", (cid,)).fetchone()

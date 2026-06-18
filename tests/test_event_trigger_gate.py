@@ -80,6 +80,20 @@ def test_historical_event_gate_can_read_event_triggered_record(game):
         content.events.remove(ev)
 
 
+def test_historical_event_triggered_gate_ignores_obsolete_terminal(game):
+    """ship-pre CMR：obsolete 终态只用于去重，不应打开 event.<id>.triggered 下游门。"""
+    db, state, content = game
+    issues.bind_content(content)
+    ev = _hist_event("__test_after_obsolete_mao__", {"event.mao_wenlong.triggered": "==1"})
+    content.events.append(ev)
+    try:
+        db.mark_event_obsolete(state, "mao_wenlong", reason="测试：人物核心主体已死")
+
+        assert all(c.id != "__test_after_obsolete_mao__" for c in issues.gather_candidate_events(state, db))
+    finally:
+        content.events.remove(ev)
+
+
 def test_gate_passed_tolerates_none(game):
     # PR#107 R1（gemini medium）：trigger_gate=None（content JSON 显式 null）传进 _gate_passed
     # 不应 None.items() AttributeError 崩候选收集；None 视同空门、恒过。
@@ -1310,7 +1324,8 @@ def test_luoyang_fallen_not_obsoleted_when_fu_wang_is_dead(game):
     state.year = 1641
     state.period = 1
     db.conn.execute("UPDATE regions SET controlled_by=?, unrest=? WHERE id=?", ("ming", 80, "henan"))
-    db.conn.execute("UPDATE powers SET military_strength=? WHERE id=?", (70, "bandits"))
+    db.conn.execute("UPDATE powers SET military_strength=? WHERE id=?", (20, "bandits"))
+    db.conn.execute("UPDATE powers SET military_strength=? WHERE id=?", (70, "bandit_li_zicheng"))
     db.set_character_status(state, "朱常洵", "dead", reason="测试：此前身故")
 
     cands = issues.gather_candidate_events(state, db)
