@@ -1956,10 +1956,7 @@ class GameDB:
                 COALESCE(turn_reports.period, game_state.period, 0),
                 'legacy_event_pool',
                 'triggered',
-                CASE legacy.event_id
-                    WHEN 'jisi_lubian' THEN '入塞被遏'
-                    ELSE ''
-                END
+                ''
             FROM legacy
             LEFT JOIN turn_reports ON turn_reports.turn = legacy.turn
             LEFT JOIN game_state ON game_state.id = 1
