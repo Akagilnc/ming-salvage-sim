@@ -193,6 +193,10 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
         trigger_month = int(item.get("trigger_month") or 0)
         trigger_end_year = int(item.get("trigger_end_year") or 0)
         trigger_end_month = int(item.get("trigger_end_month") or 0)
+        if not (0 <= trigger_month <= 12):
+            raise SystemExit(f"{filename}[{idx}] trigger_month 必须在 0 到 12 之间。")
+        if not (0 <= trigger_end_month <= 12):
+            raise SystemExit(f"{filename}[{idx}] trigger_end_month 必须在 0 到 12 之间。")
         open_window_raw = item.get("open_window", False)
         if not isinstance(open_window_raw, bool):
             raise SystemExit(f"{filename}[{idx}] open_window 必须是 JSON boolean。")

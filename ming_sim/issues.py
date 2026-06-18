@@ -183,11 +183,15 @@ def _event_issue_refs(db: GameDB) -> set:
 
 
 def _event_trigger_refs(db: GameDB) -> set:
-    refs: set = set()
-    for r in db.conn.execute("SELECT event_id FROM event_triggers").fetchall():
+    return set(_event_terminal_states(db))
+
+
+def _event_terminal_states(db: GameDB) -> Dict[str, str]:
+    states: Dict[str, str] = {}
+    for r in db.conn.execute("SELECT event_id, terminal_state FROM event_triggers").fetchall():
         if r["event_id"]:
-            refs.add(r["event_id"])
-    return refs
+            states[str(r["event_id"])] = str(r["terminal_state"] or "")
+    return states
 
 
 def _spawned_event_refs(db: GameDB) -> set:
@@ -591,19 +595,18 @@ def auto_trigger_seed_issues(state: GameState, db: GameDB) -> List[Dict[str, obj
 def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Dict[str, object]]:
     """auto_trigger_seed_issues 的事务体；由外层函数或 pre_settle 嵌套事务统一提交/回滚。"""
     c = _ctx()
-    terminal_refs = _event_trigger_refs(db)
+    terminal_states = _event_terminal_states(db)
     triggered: List[Dict[str, object]] = []
     for ev in [*c.events, *c.seed_events]:
         historical_event = any(ev is item for item in c.events)
         if not ev.auto_trigger:
             continue
-        if historical_event:
-            if ev.id in terminal_refs:
-                continue
+        terminal_state = terminal_states.get(ev.id)
+        if terminal_state and (historical_event or terminal_state == "expired"):
+            continue
         if _event_window_expired(ev, state):
-            if ev.id not in terminal_refs:
-                db.mark_event_expired(state, ev.id, commit=False)
-                terminal_refs.add(ev.id)
+            db.mark_event_expired(state, ev.id, commit=False)
+            terminal_states[ev.id] = "expired"
             continue
         # trigger_gate 为空 = 开局即立的局势，只由 seed_opening_crises 立一次，绝不在此重立。
         # （空 gate 会被 _gate_passed 判为恒真，必须显式排除，否则每回合都试图重立。）
