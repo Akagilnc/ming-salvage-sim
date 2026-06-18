@@ -194,6 +194,10 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
             raise SystemExit(
                 f"{filename}[{idx}] trigger_class 非法：{trigger_class!r}（仅 strategic_foreign 或空）。"
             )
+        if trigger_class == "strategic_foreign" and event_type == "situation":
+            raise SystemExit(
+                f"{filename}[{idx}] trigger_class=strategic_foreign 仅适用于 node/ending，situation 不可声明。"
+            )
         trigger_year = int(item.get("trigger_year") or 0)
         trigger_month = int(item.get("trigger_month") or 0)
         trigger_end_year = int(item.get("trigger_end_year") or 0)
