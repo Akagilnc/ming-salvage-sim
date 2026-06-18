@@ -1444,6 +1444,51 @@ def test_strategic_event_person_same_status_noop_does_not_mark_event_triggered(g
     assert dict(row) == {"status": status, "status_reason": "已先行罢黜"}
 
 
+@pytest.mark.parametrize("action", ["任命", "调任"])
+def test_strategic_event_person_same_office_noop_does_not_mark_event_triggered(game, action):
+    """CMR R14：战略人物任命/调任若官职未变，不得消耗战事事件。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1638
+    state.period = 9
+    office = "大名府知府"
+    office_type = issues.infer_office_type_from_office(office, "", db.llm_config)
+    db.conn.execute(
+        "UPDATE characters SET status = ?, office = ?, office_type = ? WHERE name = ?",
+        ("active", office, office_type, "卢象升"),
+    )
+    content.characters["卢象升"].status = "active"
+    content.characters["卢象升"].office = office
+    content.characters["卢象升"].office_type = office_type
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
+            "人物变更": [
+                {
+                    "name": "卢象升",
+                    "动作": action,
+                    "office": office,
+                    "office_type": office_type,
+                    "reason": "戊寅虏变软判主帅仍督师",
+                }
+            ],
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert "无真实世界状态变化" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert not db.has_event_triggered("wuyin_lubian")
+    row = db.conn.execute(
+        "SELECT status, office, office_type FROM characters WHERE name = ?",
+        ("卢象升",),
+    ).fetchone()
+    assert dict(row) == {"status": "active", "office": office, "office_type": office_type}
+
+
 def test_rejected_strategic_event_suppresses_power_updates(game):
     """CMR R12：战略事件缺主账结果被拒时，同信封 power_updates 不得提前落库。"""
     db, state, content = game
