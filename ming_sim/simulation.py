@@ -42,6 +42,8 @@ TOP_LEVEL_ALIASES = {
     "四方动向": "world_advance",
     "局势推进": "issue_advances",
     "新立局势": "new_issues",
+    "事件结局": "事件结局",
+    "event_outcomes": "事件结局",
     "撤销局势": "cancels",
     "结案局势": "close_issues",
     "人事变更": "office_changes",
@@ -440,6 +442,7 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "world_advance": {},
     "issue_advances": [],
     "new_issues": [],
+    "事件结局": {},
     "cancels": [],
     "close_issues": [],
     "fiscal_changes": [],
@@ -458,7 +461,7 @@ EMPTY_EXTRACTION: Dict[str, object] = {
 MODULE_FIELDS: Dict[str, set[str]] = {
     "internal": {"metric_delta", "economy_moves", "faction_delta", "class_delta", "region_delta", "fiscal_changes", "fiscal_creates", "fiscal_removes"},
     "military_external": {"army_delta", "new_armies", "power_updates", "world_advance"},
-    "issues": {"issue_advances", "new_issues", "cancels", "close_issues"},
+    "issues": {"issue_advances", "new_issues", "事件结局", "cancels", "close_issues"},
     "personnel_secret": {
         "人物变更", "secret_order_updates", "secret_order_closes", "emperor_fate",
     },

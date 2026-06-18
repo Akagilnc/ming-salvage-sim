@@ -5,7 +5,7 @@
 本仓库目的 = 做一个**探针**：把游戏的 LLM 后端从「外部 api key 调商业模型」换成 agent / 真实模型后端，验证「这游戏好不好玩」。**目前 web 版本是第一个尝试方向**（走真实 LLM 后端：codex / agy / hermes，见下）；**CLI 文字沉浸版（agent session 直接当后端：当前对话的 Claude / subagent）待后续开发**。
 
 ## 📚 工作手册（每回合开始前必查，别凭"我以为"）
-- **[docs/DELTA_SCHEMA.md](docs/DELTA_SCHEMA.md)** — 我产 delta JSON 的格式契约：23 个顶层字段、字段约束、白名单、踩过的坑。**产 delta 前查。**
+- **[docs/DELTA_SCHEMA.md](docs/DELTA_SCHEMA.md)** — 我产 delta JSON 的格式契约：顶层字段、字段约束、白名单、踩过的坑。**产 delta 前查。**
 - **[docs/SETTLEMENT_FLOW.md](docs/SETTLEMENT_FLOW.md)** — 月末结算管线：driver 调引擎的完整顺序 + 不变式 + 接口层。**写 driver / 结算时查。**
 - **[TODOS.md](TODOS.md)** — 待修 bug + 探针工程待办。**每回合结算前扫一眼有无"本月要顺手修"的项**（当前：B1 阉党 leverage 不联动）。
 - **[docs/FISCAL_PROVINCE_SUBSTRATE.md](docs/FISCAL_PROVINCE_SUBSTRATE.md)** — 省级财政基座设计（三饷/火耗/起运存留/宗禄/逋赋/隐田），**22 轮跨模型评审已收敛，现 v23（2026-06-10 拍板补「三饷计火耗」：火耗应派=(正赋+三饷)×火耗率）**；可执行 spike `spike_settle_tick.py`（G1–G22 全 PASS，5 层断言+独立 oracle，~20 mutation 自验全咬）。**状态：设计已验证、尚未 port**（等重构完成后接进 `ming_sim`，见 [Milestone #1](https://github.com/Akagilnc/ming-salvage-sim/milestone/1) / Epic #65 / 子任务 #66–#71）。**非每回合必查；要动省级财政机制时查。**

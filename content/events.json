@@ -55,8 +55,8 @@
     "trigger_year": 1629,
     "trigger_month": 12,
     "person_core_subjects": ["袁崇焕"],
-    "trigger_gate": {"character.袁崇焕.status": "==active", "army.guanning.commander": "==袁崇焕", "character.毛文龙.status": "==dead", "character.毛文龙.status_reason": "==袁崇焕双岛斩帅", "event.jisi_lubian.terminal_state": "==triggered"},
-    "precondition": "己巳之变后必发；若 jisi_lubian 未触发或玩家提前罢袁崇焕则跳过",
+    "trigger_gate": {"character.袁崇焕.status": "==active", "army.guanning.commander": "==袁崇焕", "character.毛文龙.status": "==dead", "character.毛文龙.status_reason": "==袁崇焕双岛斩帅", "event.jisi_lubian.terminal_state": "==triggered", "event.jisi_lubian.terminal_reason": "in=入塞被遏|长驱直入"},
+    "precondition": "己巳之变后必发；若 jisi_lubian 未触发、结局仅挡于边墙，或玩家提前罢袁崇焕则跳过",
     "event_type": "node"
   },
   {

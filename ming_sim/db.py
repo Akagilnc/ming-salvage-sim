@@ -1956,7 +1956,10 @@ class GameDB:
                 COALESCE(turn_reports.period, game_state.period, 0),
                 'legacy_event_pool',
                 'triggered',
-                ''
+                CASE legacy.event_id
+                    WHEN 'jisi_lubian' THEN '入塞被遏'
+                    ELSE ''
+                END
             FROM legacy
             LEFT JOIN turn_reports ON turn_reports.turn = legacy.turn
             LEFT JOIN game_state ON game_state.id = 1
@@ -6211,7 +6214,7 @@ class GameDB:
 
     def has_event_triggered(self, event_id: str) -> bool:
         row = self.conn.execute(
-            "SELECT 1 FROM event_triggers WHERE event_id=? LIMIT 1",
+            "SELECT 1 FROM event_triggers WHERE event_id=? AND terminal_state='triggered' LIMIT 1",
             (event_id,),
         ).fetchone()
         return row is not None
@@ -6229,14 +6232,36 @@ class GameDB:
         event_id: str,
         source: str = "simulation",
         *,
+        terminal_reason: str = "",
         commit: bool = True,
     ) -> None:
         self.conn.execute(
             """
-            INSERT OR IGNORE INTO event_triggers (event_id, turn, year, period, source)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT OR IGNORE INTO event_triggers
+                (event_id, turn, year, period, source, terminal_state, terminal_reason)
+            VALUES (?, ?, ?, ?, ?, 'triggered', ?)
             """,
-            (event_id, state.turn, state.year, state.period, source),
+            (event_id, state.turn, state.year, state.period, source, str(terminal_reason or "")[:200]),
+        )
+        if commit:
+            self.conn.commit()
+
+    def mark_event_avoided(
+        self,
+        state: GameState,
+        event_id: str,
+        reason: str,
+        source: str = "gate_avoided",
+        *,
+        commit: bool = True,
+    ) -> None:
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO event_triggers
+                (event_id, turn, year, period, source, terminal_state, terminal_reason)
+            VALUES (?, ?, ?, ?, ?, 'avoided', ?)
+            """,
+            (event_id, state.turn, state.year, state.period, source, reason[:200]),
         )
         if commit:
             self.conn.commit()
