@@ -2026,6 +2026,14 @@ def _strategic_event_result_preflight_error(
                     f"战略/外敌事件「{event_title or event_id}」人物战果拒收："
                     f"{result.get('name') or ''}{result.get('动作') or ''} {result.get('reason') or ''}"
                 )
+            backlash_results = result.get("backlash_results")
+            if isinstance(backlash_results, list):
+                for backlash_result in backlash_results:
+                    if isinstance(backlash_result, dict) and backlash_result.get("rejected"):
+                        return (
+                            f"战略/外敌事件「{event_title or event_id}」人物战果反噬拒收："
+                            f"{backlash_result.get('reason') or backlash_result.get('category') or ''}"
+                        )
 
     for raw in new_armies:
         if not isinstance(raw, dict):
