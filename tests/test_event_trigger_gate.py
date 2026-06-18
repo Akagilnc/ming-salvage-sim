@@ -2852,59 +2852,59 @@ def test_issue_194_strategic_foreign_events_are_explicitly_classified_and_gated(
         for item in json.loads(Path("content/events.json").read_text())
     }
     expected = {
-        "jisi_lubian": set(),
+        "jisi_lubian": {},
         "dalingghe": {
-            "region.liaodong.controlled_by",
-            "army.guanning.supply",
-            "army.guanning.arrears",
-            "power.houjin.military_strength",
+            "region.liaodong.controlled_by": "==ming",
+            "army.guanning.supply": "<=45",
+            "army.guanning.arrears": ">=40",
+            "power.houjin.military_strength": ">=70",
         },
         "lindan_xiqian": {
-            "region.mongol_chahar.controlled_by",
-            "army.mongol_chahar_host.loyalty",
-            "power.mongol.military_strength",
-            "power.houjin.military_strength",
+            "region.mongol_chahar.controlled_by": "==mongol",
+            "army.mongol_chahar_host.loyalty": "<=45",
+            "power.mongol.military_strength": "<=55",
+            "power.houjin.military_strength": ">=70",
         },
         "wuyin_lubian": {
-            "army.jizhen.arrears",
-            "army.xuan_da.morale",
-            "power.mongol.military_strength",
-            "power.houjin.military_strength",
+            "army.jizhen.arrears": ">=10",
+            "army.xuan_da.morale": "<=55",
+            "power.mongol.military_strength": "<=55",
+            "power.houjin.military_strength": ">=75",
         },
         "songshan_battle": {
-            "region.liaodong.controlled_by",
-            "army.guanning.supply",
-            "army.guanning.morale",
-            "power.houjin.military_strength",
+            "region.liaodong.controlled_by": "==ming",
+            "army.guanning.supply": "<=45",
+            "army.guanning.morale": "<=55",
+            "power.houjin.military_strength": ">=70",
         },
         "luoyang_fallen": {
-            "region.henan.controlled_by",
-            "region.henan.unrest",
-            "power.bandit_li_zicheng.military_strength",
+            "region.henan.controlled_by": "==ming",
+            "region.henan.unrest": ">=60",
+            "power.bandit_li_zicheng.military_strength": ">=45",
         },
         "kaifeng_siege": {
-            "event.luoyang_fallen.terminal_state",
-            "region.henan.controlled_by",
-            "region.henan.military_pressure",
-            "power.bandit_li_zicheng.military_strength",
+            "event.luoyang_fallen.terminal_state": "==triggered",
+            "region.henan.controlled_by": "==ming",
+            "region.henan.military_pressure": ">=70",
+            "power.bandit_li_zicheng.military_strength": ">=55",
         },
         "beijing_fallen": {
-            "region.beizhili.controlled_by",
-            "region.beizhili.military_pressure",
-            "army.jingying.morale",
-            "army.jingying.loyalty",
-            "power.bandit_li_zicheng.military_strength",
+            "region.beizhili.controlled_by": "==ming",
+            "region.beizhili.military_pressure": ">=85",
+            "army.jingying.morale": "<=40",
+            "army.jingying.loyalty": "<=45",
+            "power.bandit_li_zicheng.military_strength": ">=65",
         },
     }
 
-    for event_id, gate_keys in expected.items():
+    for event_id, trigger_gate in expected.items():
         raw = raw_by_id[event_id]
         ev = content.event_by_id[event_id]
         assert raw["trigger_class"] == "strategic_foreign"
-        assert isinstance(raw["trigger_gate"], dict)
+        assert raw["trigger_gate"] == trigger_gate
         assert ev.trigger_class == "strategic_foreign"
         assert ev.event_type in {"node", "ending"}
-        assert gate_keys <= set(ev.trigger_gate)
+        assert ev.trigger_gate == trigger_gate
         assert ev.person_core_subjects == []
 
 
