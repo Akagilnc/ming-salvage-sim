@@ -1545,6 +1545,38 @@ def test_henan_place_policy_delta_does_not_capture_untriggered_fall_events(game,
     assert out["region_changes"][0].get("rejected") is not True
 
 
+def test_henan_bandit_policy_delta_does_not_capture_untriggered_luoyang_event(game):
+    """PR R3：普通李自成势力变化不能因河南+流寇泛锚点被误当成洛阳陷落战果。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1642
+    state.period = 9
+    db.conn.execute(
+        "UPDATE powers SET military_strength = ? WHERE id = ?",
+        (52, "bandit_li_zicheng"),
+    )
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "power_updates": {
+                "bandit_li_zicheng": {
+                    "military_strength": -3,
+                    "reason": "河南流寇被围剿，声势稍挫",
+                }
+            }
+        },
+        content=content,
+    )
+
+    assert not db.has_event_triggered("luoyang_fallen")
+    assert db.conn.execute(
+        "SELECT military_strength FROM powers WHERE id = ?", ("bandit_li_zicheng",)
+    ).fetchone()["military_strength"] == 49
+    assert out["power_changes"][0].get("rejected") is not True
+
+
 def test_unrelated_region_delta_does_not_satisfy_strategic_event_result_gate(game):
     """#189 CMR R2：同信封无关地区变化不能冒充该战略战事的主账结果。"""
     db, state, content = game
@@ -3034,6 +3066,16 @@ def test_issue_194_strategic_foreign_events_are_explicitly_classified_and_gated(
         assert ev.event_type in {"node", "ending"}
         assert ev.trigger_gate == trigger_gate
         assert ev.person_core_subjects == []
+
+
+def test_strategic_foreign_classification_requires_outcome_targets(content, monkeypatch):
+    """PR R3：trigger_class 是内容真源，消费者 target map 漏项必须启动期 fail-loud。"""
+    targets = dict(issues._STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS)
+    targets.pop("luoyang_fallen")
+    monkeypatch.setattr(issues, "_STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS", targets)
+
+    with pytest.raises(SystemExit, match="luoyang_fallen.*outcome target"):
+        issues.bind_content(content)
 
 
 def test_issue_194_dead_named_general_does_not_obsolete_strategic_foreign_event(game):

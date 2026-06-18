@@ -66,6 +66,7 @@ _ISSUE_PSEUDO_EVENT = Event(
 
 def bind_content(content: GameContent) -> None:
     global _content
+    _validate_strategic_foreign_node_outcome_targets(content)
     _content = content
 
 
@@ -1621,8 +1622,8 @@ _STRATEGIC_FOREIGN_NODE_PERSON_ANCHORS: Dict[str, frozenset[str]] = {
     "lindan_xiqian": frozenset({"林丹汗", "察哈尔", "蒙古", "青海", "漠南"}),
     "wuyin_lubian": frozenset({"戊寅", "墙子岭", "青山口", "巨鹿", "贾庄", "畿南"}),
     "songshan_battle": frozenset({"松锦", "松山", "锦州", "杏山", "塔山", "援锦"}),
-    "luoyang_fallen": frozenset({"洛阳", "福王", "朱常洵", "河南"}),
-    "kaifeng_siege": frozenset({"开封", "黄河", "河南", "三围"}),
+    "luoyang_fallen": frozenset({"洛阳陷", "洛阳陷落", "攻陷洛阳", "福王", "朱常洵"}),
+    "kaifeng_siege": frozenset({"开封三围", "围攻开封", "开封围城", "黄河决口", "决河"}),
     "beijing_fallen": frozenset({"甲申", "北京", "京师", "居庸关", "煤山"}),
 }
 _STRATEGIC_FOREIGN_NODE_DIRECT_EVENT_ANCHORS: Dict[str, frozenset[str]] = {
@@ -1683,6 +1684,25 @@ def _is_strategic_foreign_node_event(ev: Event) -> bool:
         getattr(ev, "event_type", "situation") != "situation"
         and getattr(ev, "trigger_class", "") == "strategic_foreign"
     )
+
+
+def _validate_strategic_foreign_node_outcome_targets(content: GameContent) -> None:
+    strategic_event_ids = {
+        event_id
+        for event_id, ev in content.event_by_id.items()
+        if _is_strategic_foreign_node_event(ev)
+    }
+    target_event_ids = set(_STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS)
+    missing = sorted(strategic_event_ids - target_event_ids)
+    if missing:
+        raise SystemExit(
+            f"strategic_foreign 事件 {', '.join(missing)} 缺 outcome target map。"
+        )
+    stale = sorted(target_event_ids - strategic_event_ids)
+    if stale:
+        raise SystemExit(
+            f"outcome target map 含非 strategic_foreign 事件：{', '.join(stale)}。"
+        )
 
 
 def _event_pool_ids_for_strategic_foreign_nodes(
