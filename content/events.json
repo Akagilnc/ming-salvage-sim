@@ -124,8 +124,22 @@
     "fail_condition": "朝鲜被迫向清称臣（丙子之役），蒙古诸部尽奉清正朔，士林开始私议「天命已移」，中原与江南观望者增",
     "trigger_year": 1636,
     "trigger_month": 4,
-    "precondition": "历史既定：崇祯九年四月皇太极称帝改国号大清；林丹汗西走、朝鲜被迫归附为前奏；玩家若已联蒙或保朝鲜，宣示力度可减",
-    "event_type": "node"
+    "trigger_gate": {},
+    "auto_trigger": true,
+    "effect_on_trigger": {
+      "power_renames": [
+        {
+          "power_id": "houjin",
+          "new_name": "大清",
+          "aliases": "后金，清，大清",
+          "reason": "皇太极称帝，改国号大清",
+          "status": "皇太极称帝改国号大清，建元崇德，整合满蒙汉诸部南向争明",
+          "last_action": "皇太极称帝改国号大清"
+        }
+      ]
+    },
+    "precondition": "触发门：无条件/近天定。理由：皇太极称帝改国号是后金内部核心事实，不由明廷取消；明廷承不承认伪号、联蒙或保朝鲜的外交与意识形态响应仍走软判。",
+    "event_type": "situation"
   },
   {
     "id": "wuyin_lubian",
@@ -177,7 +191,19 @@
     "fail_condition": "疫情失控蔓延陕豫致逃户暴增、流寇借疫坐大；或边军营中染疫减员，宣大蓟镇兵备空虚",
     "trigger_year": 1633,
     "trigger_month": 7,
-    "precondition": "历史既定：崇祯六年华北鼠疫起于山西；若赈济/医药未备则蔓延更烈"
+    "trigger_gate": {},
+    "auto_trigger": true,
+    "event_type": "situation",
+    "effect_on_trigger": {
+      "region_delta": {
+        "shanxi": {
+          "population": -40,
+          "unrest": 6,
+          "reason": "华北大疫核心事实：山西疫起、人口锐减、逃户动荡增加"
+        }
+      }
+    },
+    "precondition": "触发门：无条件/天定。理由：崇祯六年华北鼠疫起于山西，核心事实不由明廷取消；赈济、隔离、医药只影响蔓延范围与烈度，仍留给软判。"
   },
   {
     "id": "li_chenghai",
@@ -194,7 +220,7 @@
     "trigger_year": 1634,
     "trigger_month": 1,
     "person_core_subjects": ["李自成"],
-    "trigger_gate": {"character.李自成.status": "==active", "character.李自成.power_id": "==bandits", "character.李自成.location": "==shaanxi", "region.shaanxi.unrest": ">=70", "power.bandits.military_strength": ">=35"},
+    "trigger_gate": {"character.李自成.status": "==active", "character.李自成.power_id": "==bandit_li_zicheng", "character.李自成.location": "==shaanxi", "region.shaanxi.unrest": ">=70", "power.bandit_li_zicheng.military_strength": ">=35"},
     "precondition": "陕西逃户/民变持续未解时触发"
   },
   {
@@ -262,7 +288,19 @@
     "fail_condition": "京营因疫不能成军、城防形同虚设；疫死激起民怨与逃亡，京师人心先溃于敌至",
     "trigger_year": 1643,
     "trigger_month": 3,
-    "precondition": "历史既定：崇祯十六年京师大疫，直接削弱次年守城之力；为 beijing_fallen 之先兆"
+    "trigger_gate": {},
+    "auto_trigger": true,
+    "event_type": "situation",
+    "effect_on_trigger": {
+      "army_delta": {
+        "jingying": {
+          "manpower": -51000,
+          "morale": -16,
+          "reason": "京师大疫核心事实：京营疫死减员、守城士气骤挫"
+        }
+      }
+    },
+    "precondition": "触发门：无条件/天定。理由：崇祯十六年京师大疫为史实天灾核心事实；玩家赈疫、隔离、补营可影响蔓延与恢复程度，但疫情入京本身不可用漏填门表达。"
   },
   {
     "id": "beijing_fallen",

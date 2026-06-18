@@ -10,6 +10,7 @@ import re
 import sqlite3
 from typing import Any, Dict, List, Optional
 
+from ming_sim.applier import atomic
 from ming_sim.constants import (
     TURN_UNIT, REGION_SCORE_FIELDS, REGION_QUANTITY_FIELDS, REGION_TEXT_FIELDS,
     ARMY_SCORE_FIELDS, ARMY_QUANTITY_FIELDS, ARMY_TEXT_FIELDS, FISCAL_SCORE_FIELDS,
@@ -238,6 +239,7 @@ _GATE_NUMERIC_SQL_FIELDS = {
     "faction": {"satisfaction", "leverage"},
     "character": set(_CHARACTER_NUMERIC_GATE_FIELDS),
     "class": {"population", "satisfaction", "leverage"},
+    "event": {"triggered"},
 }
 _GATE_TEXT_SQL_FIELDS = {
     "region": set(REGION_TEXT_FIELDS),
@@ -278,6 +280,7 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
       - 'class.<name>.<field>'                  → classes 表全国汇总 (region_id='')
       - 'class.<name>@<region>.<field>'         → classes 表省级
       - 'class.<name>@<r1>|<r2>|.<field>.<agg>' → 多省同阶级聚合
+      - 'event.<id>.triggered'                  → event_triggers 账，已发=1 未发=0
     解析失败/数据缺失返回 None（gate 视为不通过，由调用方处理）。
     """
     if "." not in key:
@@ -311,6 +314,11 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
     values: List[int] = []
     for cid in ids:
         row = None
+        if table == "event":
+            if cid not in db.content.event_by_id:
+                return None
+            values.append(1 if db.has_event_triggered(cid) else 0)
+            continue
         if table == "region":
             row = db.conn.execute(f"SELECT {field} FROM regions WHERE id = ?", (cid,)).fetchone()
         elif table == "army":
@@ -442,6 +450,8 @@ def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
     for ev in c.events:
         if ev.id in spawned or ev.trigger_year <= 0:
             continue
+        if ev.auto_trigger:
+            continue
         dead_subjects = _dead_person_core_subjects(ev, db)
         if dead_subjects:
             db.mark_event_obsolete(
@@ -479,14 +489,23 @@ def auto_trigger_seed_issues(state: GameState, db: GameDB) -> List[Dict[str, obj
     已触发过返回 None 自动跳过。返回本回合硬触发的清单（供日志/邸报告知）。
 
     放在结算链 simulator 之前调用，使硬立的 issue 当回合即进盘面、被邸报叙述。"""
+    with atomic(db):
+        return _auto_trigger_seed_issues_in_atomic(state, db)
+
+
+def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Dict[str, object]]:
+    """auto_trigger_seed_issues 的事务体；由外层函数或 pre_settle 嵌套事务统一提交/回滚。"""
     c = _ctx()
     triggered: List[Dict[str, object]] = []
-    for ev in c.seed_events:
+    for ev in [*c.events, *c.seed_events]:
+        historical_event = any(ev is item for item in c.events)
         if not ev.auto_trigger:
+            continue
+        if historical_event and db.has_event_triggered(ev.id):
             continue
         # trigger_gate 为空 = 开局即立的局势，只由 seed_opening_crises 立一次，绝不在此重立。
         # （空 gate 会被 _gate_passed 判为恒真，必须显式排除，否则每回合都试图重立。）
-        if not ev.trigger_gate:
+        if ev in c.seed_events and not ev.trigger_gate:
             continue
         if not _event_window_open(ev, state):
             continue
@@ -494,14 +513,43 @@ def auto_trigger_seed_issues(state: GameState, db: GameDB) -> List[Dict[str, obj
             continue
         if ev.event_type != "situation":
             # 非 situation（node/ending）不转 issue，仅记触发避免重复
-            if db.find_any_issue_by_origin("event_pool", ev.id) is None:
+            if not db.has_event_triggered(ev.id):
+                if ev.effect_on_trigger:
+                    _apply_issue_entities(
+                        db,
+                        state,
+                        ev.effect_on_trigger,
+                        f"事件#{ev.id}触发",
+                        content=c,
+                    )
                 db.mark_event_triggered(state, ev.id)
                 triggered.append({"id": ev.id, "title": ev.title, "kind": ev.event_type})
             continue
         issue_id = event_to_issue(db, state, ev)
+        created_issue = issue_id is not None
+        if historical_event and issue_id is None:
+            row = (
+                db.find_active_issue_by_origin("event_pool", ev.id)
+                if ev.trigger_gate
+                else db.find_any_issue_by_origin("event_pool", ev.id)
+            )
+            if row is None:
+                raise RuntimeError(f"历史事件 {ev.id} 未建局势且无法找到同源 issue")
+            issue_id = int(row["id"])
+        if historical_event:
+            if ev.effect_on_trigger:
+                _apply_issue_entities(
+                    db,
+                    state,
+                    ev.effect_on_trigger,
+                    f"事件#{ev.id}触发",
+                    content=c,
+                )
+            db.mark_event_triggered(state, ev.id)
         if issue_id is not None:
             triggered.append({"id": ev.id, "title": ev.title, "issue_id": issue_id})
-            print(f"[AUTO-TRIGGER] gate 达标硬立项 #{issue_id} {ev.title}（{ev.trigger_gate}）")
+            action = "硬立项" if created_issue else "补记"
+            print(f"[AUTO-TRIGGER] gate 达标{action} #{issue_id} {ev.title}（{ev.trigger_gate}）")
     return triggered
 
 
@@ -1297,6 +1345,12 @@ def _apply_issue_entities(
             if isinstance(r, dict) and r.get("rejected") and not r.get("issue_strict", True)
         )
 
+    region_delta = effect.get("region_delta")
+    if isinstance(region_delta, dict) and region_delta:
+        pseudo = type("E", (), {"id": "issue", "title": label})()
+        _raise_on_rejected(
+            db.apply_region_deltas(state, pseudo, None, label, region_delta, commit=commit), "地区变化"
+        )
     new_armies = effect.get("new_armies")
     if isinstance(new_armies, list) and new_armies:
         _raise_on_rejected(
@@ -1308,6 +1362,29 @@ def _apply_issue_entities(
         _raise_on_rejected(
             db.apply_army_deltas(state, pseudo, None, label, army_delta, commit=commit), "补兵/改属性"
         )
+    power_renames = effect.get("power_renames")
+    if power_renames is not None:
+        if not isinstance(power_renames, list):
+            raise ValueError(f"{label} power_renames 非法（全局严格，不静默）：必须是 list")
+        for idx, item in enumerate(power_renames):
+            if not isinstance(item, dict):
+                raise ValueError(f"{label} power_renames 非法（全局严格，不静默）：第 {idx} 项非 dict")
+            power_id = str(item.get("power_id") or "").strip()
+            new_name = str(item.get("new_name") or "").strip()
+            if not power_id or not new_name:
+                raise ValueError(f"{label} power_renames 非法（全局严格，不静默）：power_id/new_name 缺失")
+            if db.conn.execute("SELECT 1 FROM powers WHERE id=?", (power_id,)).fetchone() is None:
+                raise ValueError(f"{label} power_renames 引用未入库势力 '{power_id}'")
+            db.apply_power_rename(
+                state,
+                power_id,
+                new_name,
+                aliases=str(item.get("aliases") or ""),
+                reason=str(item.get("reason") or label),
+                status=str(item.get("status") or ""),
+                last_action=str(item.get("last_action") or ""),
+                commit=commit,
+            )
     raw_person_changes = effect.get("人物变更")
     if raw_person_changes is not None:
         if not isinstance(raw_person_changes, list):
