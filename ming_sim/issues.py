@@ -1572,6 +1572,18 @@ _STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS: Dict[str, Dict[str, frozenset[str]]] = 
         "characters": frozenset(),
         "powers": frozenset({"houjin"}),
     },
+    "dalingghe": {
+        "regions": frozenset({"liaodong"}),
+        "armies": frozenset({"guanning"}),
+        "characters": frozenset({"祖大寿"}),
+        "powers": frozenset({"houjin"}),
+    },
+    "lindan_xiqian": {
+        "regions": frozenset({"mongol_chahar", "beizhili"}),
+        "armies": frozenset({"mongol_chahar_host", "jizhen", "xuan_da"}),
+        "characters": frozenset({"林丹汗"}),
+        "powers": frozenset({"mongol", "houjin"}),
+    },
     "wuyin_lubian": {
         "regions": frozenset({"beizhili", "shandong"}),
         "armies": frozenset({"jingying", "guanning", "jizhen", "xuan_da"}),
@@ -1584,22 +1596,51 @@ _STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS: Dict[str, Dict[str, frozenset[str]]] = 
         "characters": frozenset({"洪承畴"}),
         "powers": frozenset({"houjin"}),
     },
+    "luoyang_fallen": {
+        "regions": frozenset({"henan"}),
+        "armies": frozenset({"shaanxi_army"}),
+        "characters": frozenset({"朱常洵"}),
+        "powers": frozenset({"bandit_li_zicheng"}),
+    },
+    "kaifeng_siege": {
+        "regions": frozenset({"henan"}),
+        "armies": frozenset({"shaanxi_army"}),
+        "characters": frozenset(),
+        "powers": frozenset({"bandit_li_zicheng"}),
+    },
+    "beijing_fallen": {
+        "regions": frozenset({"beizhili"}),
+        "armies": frozenset({"jingying", "jizhen", "xuan_da", "guanning"}),
+        "characters": frozenset(),
+        "powers": frozenset({"bandit_li_zicheng"}),
+    },
 }
 _STRATEGIC_FOREIGN_NODE_PERSON_ANCHORS: Dict[str, frozenset[str]] = {
     "jisi_lubian": frozenset({"己巳", "喜峰口", "龙井关", "德胜门", "左安门"}),
+    "dalingghe": frozenset({"大凌河", "祖大寿", "锦州", "辽东"}),
+    "lindan_xiqian": frozenset({"林丹汗", "察哈尔", "蒙古", "青海", "漠南"}),
     "wuyin_lubian": frozenset({"戊寅", "墙子岭", "青山口", "巨鹿", "贾庄", "畿南"}),
     "songshan_battle": frozenset({"松锦", "松山", "锦州", "杏山", "塔山", "援锦"}),
+    "luoyang_fallen": frozenset({"洛阳", "福王", "朱常洵", "河南"}),
+    "kaifeng_siege": frozenset({"开封", "黄河", "河南", "三围"}),
+    "beijing_fallen": frozenset({"甲申", "北京", "京师", "居庸关", "煤山"}),
 }
 _STRATEGIC_FOREIGN_NODE_DIRECT_EVENT_ANCHORS: Dict[str, frozenset[str]] = {
     "jisi_lubian": frozenset({"己巳"}),
+    "dalingghe": frozenset({"大凌河"}),
+    "lindan_xiqian": frozenset({"林丹汗", "察哈尔"}),
     "wuyin_lubian": frozenset({"戊寅"}),
     "songshan_battle": frozenset({"松锦", "援锦"}),
+    "luoyang_fallen": frozenset({"洛阳陷", "洛阳"}),
+    "kaifeng_siege": frozenset({"开封三围", "开封"}),
+    "beijing_fallen": frozenset({"甲申", "北京陷", "李自成攻北京"}),
 }
 _STRATEGIC_FOREIGN_NODE_BATTLE_CONTEXT_ANCHORS = frozenset({
     "之变", "虏变", "入塞", "入寇", "犯阙", "战损", "战死", "战败", "战胜",
     "交战", "大战", "决战", "战果", "战事", "战役", "阵亡", "伤亡",
     "后金", "清军", "勤王", "围城", "攻城", "破关", "破口", "陷落", "失守",
-    "大掠", "软判", "主力", "边墙", "逼京",
+    "大掠", "软判", "主力", "边墙", "逼京", "降金", "西迁", "城破", "决河",
+    "流寇", "闯军", "大顺",
 })
 _STRATEGIC_FOREIGN_NODE_PERSON_ROLE_ANCHORS = frozenset({"替补", "主帅", "督师", "统帅", "主将"})
 _STRATEGIC_EVENT_OUTCOME_LABELS: Dict[str, frozenset[str]] = {
@@ -1632,14 +1673,15 @@ _STRATEGIC_ENTITY_OUTCOME_FIELDS: Dict[str, frozenset[str]] = {
 }
 _STRATEGIC_NEW_ARMY_CONTEXT_ANCHORS = frozenset({
     "己巳", "戊寅", "松锦", "松山", "锦州", "入塞", "入寇", "后金", "清军",
-    "建虏", "虏骑", "喜峰口", "龙井关", "遵化", "京畿", "边墙",
+    "建虏", "虏骑", "喜峰口", "龙井关", "遵化", "京畿", "边墙", "大凌河",
+    "察哈尔", "林丹汗", "洛阳", "开封", "北京", "甲申", "闯军", "大顺",
 })
 
 
 def _is_strategic_foreign_node_event(ev: Event) -> bool:
     return (
         getattr(ev, "event_type", "situation") != "situation"
-        and ev.id in _STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS
+        and getattr(ev, "trigger_class", "") == "strategic_foreign"
     )
 
 

@@ -189,6 +189,11 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
             raise SystemExit(
                 f"{filename}[{idx}] event_type 非法：{event_type!r}（仅 situation/node/ending）。"
             )
+        trigger_class = str(item.get("trigger_class") or "").strip()
+        if trigger_class not in ("", "strategic_foreign"):
+            raise SystemExit(
+                f"{filename}[{idx}] trigger_class 非法：{trigger_class!r}（仅 strategic_foreign 或空）。"
+            )
         trigger_year = int(item.get("trigger_year") or 0)
         trigger_month = int(item.get("trigger_month") or 0)
         trigger_end_year = int(item.get("trigger_end_year") or 0)
@@ -251,6 +256,7 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
                 open_window=open_window,
                 precondition=str(item.get("precondition") or ""),
                 event_type=event_type,
+                trigger_class=trigger_class,
                 person_core_subjects=(
                     string_list(item["person_core_subjects"], f"{filename}[{idx}].person_core_subjects")
                     if "person_core_subjects" in item else []
