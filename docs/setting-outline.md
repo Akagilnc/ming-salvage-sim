@@ -666,7 +666,9 @@ content/characters.json 现配 13 人，每人都带 `birth_year` / `historical_
 
 ### MVP 首批事件
 
-content/events.json 现配 9 条 seed event，每条都带 `resolve_condition` / `fail_condition` 锚点 + 默认 `inertia` 五档（按 kind 自动选 +10/+5/0/-5/-10）。月初 `select_events` 按 urgency+severity+当前压力评分采样，`spawn_situations_from_events` 落库为 issue（origin_kind=event_pool）。
+早期 MVP 基线是 `content/events.json` 配 9 条 seed event，每条带 `resolve_condition` / `fail_condition` 锚点 + 默认 `inertia` 五档（按 kind 自动选 +10/+5/0/-5/-10）。
+
+当前实现（v0.12.1.0）已把历史锚定事件与 seed event 分层：历史事件按 `trigger_year` / `trigger_month`、`trigger_gate`、`trigger_end_*` 与 `open_window` 控制候选、过期和终态；seed 事项仍以 `origin_kind=event_pool` 进入 issue 流。
 
 负面（阻力档）：
 - 魏忠贤请退 (朝政) — 杀/审/留/缓
@@ -681,7 +683,7 @@ content/events.json 现配 9 条 seed event，每条都带 `resolve_condition` /
 - 湖广丰年喜雨 (丰收) — inertia=+10
 - 后金贝勒不和 (战机) — inertia=+10
 
-待补：崇祯朝大事件（皇太极入喜峰口、孔有德吴桥兵变、松锦决战、张献忠破襄阳、李自成围开封、北京陷落等），需"按时间触发"或"时间+阈值触发"机制（计划在 events.json 加 `trigger_year` / `trigger_month` / `precondition` 字段）。
+已补一批崇祯朝大事件（皇太极入喜峰口、孔有德吴桥兵变、松锦决战、张献忠谷城再反、李自成入河南 / 围开封、北京陷落等）；后续继续补事件链覆盖、结局分档和实玩调参。
 
 ## 14. 文案原则
 

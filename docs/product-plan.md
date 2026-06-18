@@ -55,13 +55,11 @@
 
 ## 3. 历史事件预置
 
-现 `content/events.json` 是抽样池，`main.py:select_events` 随机选 N 条。
+当前状态（v0.12.1.0）：`content/events.json` 已从早期抽样池演进为历史锚定事件内容层，运行时按 `trigger_year` / `trigger_month`、`trigger_gate`、`trigger_end_*` 与 `open_window` 控制候选、过期和终态，不再是 `main.py:select_events` 随机选 N 条。
 
-改造：
+后续改造：
 
-- 事件 schema 加字段 `trigger`：`{year, quarter, condition}`。`condition` 用 dict 描述（如 `{"metric": "皇威", "op": ">=", "value": 60}`）。
-- `events` 表加列 `trigger_year`、`trigger_quarter`、`trigger_condition`（JSON）。需 DB 迁移。
-- `select_events` 改造：先取所有满足触发条件的预置事件，再从随机池补足槽位。
+- 继续补齐事件链、逐事件触发门、最晚窗口和终态覆盖。
 - 新增 `docs/modules/historical-timeline.md` 列时间表：1627Q4 登基 → 1628 魏忠贤倒台 → 1629 己巳之变 → 1630 袁崇焕下狱 → ... → 1644 北京失守。每条挂事件 id。
 
 风险：预置事件多了挤掉随机性，回合槽位需要保留 1-2 个给随机。
