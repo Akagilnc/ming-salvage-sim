@@ -26,12 +26,17 @@
           —— 末态逐月演化+落库，但**不驱动国库**（占位数偏史实 3–10×，⑫国库入账 cutover
           待 #70 史实重标）；fail-loud 但隔离（基座 bug 不掀翻本步固定财政，cmr S4 F4）。
         ⚠️ 我的 economy_moves 不要重复这些固定项！
-     c. auto_trigger_seed_issues(state, db)       # 程序硬触发（必须在我产邸报前）
+     c. apply_event_terminal_states(state, db)    # 事件终态写路径（候选读取本身只读）
+        ↳ 声明了 trigger_end_* 且未 `open_window` 的事件，超过最晚时点会先记 `event_triggers.terminal_state=expired`
+        ↳ 人物核心主体已永久死亡则记 obsolete；人物核心门已被玩家处理掉则记 avoided
+        ↳ 该步与 pre_settle 外层事务合并提交；嵌套事务内不提前 commit，回滚时终态写入一并回滚
+     d. auto_trigger_seed_issues(state, db)       # 程序硬触发（必须在我产邸报前）
         ↳ trigger_gate 达标 + auto_trigger=True 的 seed event / historical event 先处理
+        ↳ 已有终态或刚被上一步记成 expired 的事件退出候选 / 硬触发流，防止史实节点晚弹或重入
         ↳ situation 转 issue；node/ending 只记 event_triggers，并可落 effect_on_trigger
         ↳ 出现在本月候选清单 / 硬触发清单里供我推演引用
-     d. db.auto_submit_due_secret_orders(state)   # 到期密令转核议（原在 resolve_directives，已挪入此事务）
-     e. turn_phase = settling + save_state        # 同事务收尾：「前半段已完成」相位锚
+     e. db.auto_submit_due_secret_orders(state)   # 到期密令转核议（原在 resolve_directives，已挪入此事务）
+     f. turn_phase = settling + save_state        # 同事务收尾：「前半段已完成」相位锚
      幂等守门：相位已在 FRONT_HALF_DONE_PHASES（settling/awaiting_decision/…）时直接
      return，不二次落财政；崩在内部 = 全回滚 = 相位未变 = 重进干净重跑。
 

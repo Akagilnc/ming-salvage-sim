@@ -6219,6 +6219,13 @@ class GameDB:
         ).fetchone()
         return row is not None
 
+    def event_terminal_state(self, event_id: str) -> str | None:
+        row = self.conn.execute(
+            "SELECT terminal_state FROM event_triggers WHERE event_id=? LIMIT 1",
+            (event_id,),
+        ).fetchone()
+        return row["terminal_state"] if row is not None else None
+
     def has_event_terminal_state(self, event_id: str, terminal_state: str) -> bool:
         row = self.conn.execute(
             "SELECT 1 FROM event_triggers WHERE event_id=? AND terminal_state=? LIMIT 1",
@@ -6287,6 +6294,18 @@ class GameDB:
             VALUES (?, ?, ?, ?, ?, 'obsolete', ?)
             """,
             (event_id, state.turn, state.year, state.period, source, reason[:200]),
+        )
+        if commit:
+            self.conn.commit()
+
+    def mark_event_expired(self, state: GameState, event_id: str, *, commit: bool = True) -> None:
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO event_triggers
+                (event_id, turn, year, period, source, terminal_state, terminal_reason)
+            VALUES (?, ?, ?, ?, 'window_expired', 'expired', '过最晚触发时点仍未达成触发门')
+            """,
+            (event_id, state.turn, state.year, state.period),
         )
         if commit:
             self.conn.commit()

@@ -38,7 +38,7 @@ from ming_sim.error_pack import (
 )
 from ming_sim.exceptions import LLMContractError, LLMUnavailable, SettlementAbort
 from ming_sim.flows import apply_fixed_period_flows
-from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction, auto_trigger_seed_issues, clear_gated_legacies, validate_delta_shape
+from ming_sim.issues import apply_event_terminal_states, apply_issue_inertia_and_ongoing, apply_score_extraction, auto_trigger_seed_issues, clear_gated_legacies, validate_delta_shape
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import FRONT_HALF_DONE_PHASES, GameState, LLMConfig, TurnPhase
 from ming_sim.memories import build_timeline, record_chapter_memory
@@ -800,6 +800,9 @@ def pre_settle(
             on_stage("固定月度财政入账")
         # 落账副作用；明细不再进 simulator payload（欠饷哗变走前置事件/issue）
         apply_fixed_period_flows(db, state)
+        terminalized = apply_event_terminal_states(state, db, commit=False)
+        if terminalized:
+            tlog(f"[event_terminal] 本回合事件终态落账 {len(terminalized)} 条：{[(t['id'], t['terminal_state']) for t in terminalized]}")
         # 程序硬触发：标了 auto_trigger 的 seed 情势，gate 达标即由程序直接立项，绕过 LLM 因果判定。
         auto_triggered = auto_trigger_seed_issues(state, db)
         if auto_triggered:
