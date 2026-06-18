@@ -1980,6 +1980,30 @@ def _strategic_event_outcome_label_or_error(
     return normalized, ""
 
 
+def normalize_event_outcome_labels_or_error(
+    extracted: Dict[str, object],
+    content: GameContent,
+) -> None:
+    """Normalize closed historical-event outcome labels in-place, or fail loud.
+
+    This is the extractor-side whitelist gate for ADR0014/#193.  It validates only
+    events actually emitted in this settlement envelope; world-state deltas remain
+    the independent mechanism ledger and are not used to infer labels here.
+    """
+    event_ids = _event_pool_ids_for_strategic_foreign_nodes(extracted, content)
+    if not event_ids:
+        return
+    raw_outcomes = extracted.get("事件结局")
+    outcomes: Dict[str, object] = dict(raw_outcomes) if isinstance(raw_outcomes, dict) else {}
+    for event_id in sorted(event_ids):
+        normalized, error = _strategic_event_outcome_label_or_error(event_id, extracted, content)
+        if error:
+            raise ValueError(error)
+        if normalized:
+            outcomes[event_id] = normalized
+    extracted["事件结局"] = outcomes
+
+
 def _strategic_event_result_preflight_error(
     db: GameDB,
     state: GameState,
