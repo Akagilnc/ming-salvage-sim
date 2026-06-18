@@ -211,6 +211,321 @@ def test_apply_score_extraction_rejects_person_change_power_move_without_way(gam
     ]
 
 
+def test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_delta(game):
+    db, state, content = game
+    before = db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name='毛文龙'"
+    ).fetchone()["loyalty"]
+
+    applied = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "kind": "initiative",
+                    "title": "安抚毛文龙·进行中",
+                    "bar_value": 20,
+                    "expected_months": 3,
+                    "stage_text": "遣臣持诏赴皮岛，安抚东江镇",
+                    "stop_condition": "character.毛文龙.loyalty >= 65",
+                    "effect_on_resolve": {"metrics": {"皇威": 1}},
+                    "cancellable": "decree",
+                }
+            ],
+            "人物变更": [
+                {
+                    "name": "毛文龙",
+                    "动作": "评定",
+                    "loyalty": 8,
+                    "reason": "奉旨安抚，软判其观望稍解",
+                }
+            ],
+        },
+        content=content,
+    )
+
+    assert applied["issue_summary"]["new_issues"][0]["title"] == "安抚毛文龙·进行中"
+    issue_row = db.conn.execute(
+        "SELECT title, resolve_condition, status FROM issues WHERE title='安抚毛文龙·进行中'"
+    ).fetchone()
+    assert dict(issue_row) == {
+        "title": "安抚毛文龙·进行中",
+        "resolve_condition": "character.毛文龙.loyalty >= 65",
+        "status": "active",
+    }
+    after = db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name='毛文龙'"
+    ).fetchone()["loyalty"]
+    assert after == min(100, before + 8)
+    assert applied["applied_person_changes"] == [
+        {
+            "name": "毛文龙",
+            "动作": "评定",
+            "loyalty": 8,
+            "old_loyalty": before,
+            "new_loyalty": after,
+            "reason": "奉旨安抚，软判其观望稍解",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("item", "category", "reason"),
+    [
+        (
+            {"name": "不存在的人", "动作": "评定", "loyalty": 5},
+            "hallucinated_id",
+            "非既有人物",
+        ),
+        (
+            {"name": "毛文龙", "动作": "评定", "loyalty": 0},
+            "invalid_enum",
+            "评定 loyalty 须为非零整数增量",
+        ),
+        (
+            {"name": "毛文龙", "动作": "评定", "loyalty": True},
+            "invalid_enum",
+            "评定 loyalty 须为非零整数增量",
+        ),
+        (
+            {"name": "毛文龙", "动作": "评定"},
+            "invalid_enum",
+            "评定 loyalty 须为非零整数增量",
+        ),
+        (
+            {"name": "毛文龙", "动作": "评定", "loyalty": None},
+            "invalid_enum",
+            "评定 loyalty 须为非零整数增量",
+        ),
+        (
+            {"name": "毛文龙", "动作": "评定", "loyalty": "8"},
+            "invalid_enum",
+            "评定 loyalty 须为非零整数增量",
+        ),
+    ],
+)
+def test_apply_score_extraction_rejects_invalid_loyalty_assessment(game, item, category, reason):
+    db, state, content = game
+    before = db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name='毛文龙'"
+    ).fetchone()["loyalty"]
+
+    applied = issues.apply_score_extraction(
+        db,
+        state,
+        {"人物变更": [item]},
+        content=content,
+    )
+
+    after = db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name='毛文龙'"
+    ).fetchone()["loyalty"]
+    assert after == before
+    assert applied["applied_person_changes"] == [
+        {
+            "name": item["name"],
+            "动作": "评定",
+            "rejected": True,
+            "reason": reason,
+            "category": category,
+            "item": item,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("start", "delta", "expected"),
+    [
+        (98, 8, 100),
+        (2, -8, 0),
+    ],
+)
+def test_apply_score_extraction_clamps_loyalty_assessment_delta(game, start, delta, expected):
+    db, state, content = game
+    db.conn.execute("UPDATE characters SET loyalty=? WHERE name='毛文龙'", (start,))
+    db.conn.commit()
+    content.characters["毛文龙"].loyalty = start
+
+    applied = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "人物变更": [
+                {
+                    "name": "毛文龙",
+                    "动作": "评定",
+                    "loyalty": delta,
+                    "reason": "边界软判",
+                }
+            ]
+        },
+        content=content,
+    )
+
+    after = db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name='毛文龙'"
+    ).fetchone()["loyalty"]
+    assert after == expected
+    assert content.characters["毛文龙"].loyalty == expected
+    assert applied["applied_person_changes"] == [
+        {
+            "name": "毛文龙",
+            "动作": "评定",
+            "loyalty": delta,
+            "old_loyalty": start,
+            "new_loyalty": expected,
+            "reason": "边界软判",
+        }
+    ]
+
+
+def test_apply_score_extraction_loyalty_assessment_does_not_commit_inside_batch(game):
+    db, state, content = game
+    before = db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name='毛文龙'"
+    ).fetchone()["loyalty"]
+
+    db.conn.execute("BEGIN")
+    issues._apply_person_changes(
+        db,
+        state,
+        [
+            {
+                "name": "毛文龙",
+                "动作": "评定",
+                "loyalty": 8,
+                "reason": "事务内软判",
+            }
+        ],
+        content=content,
+    )
+    db.conn.rollback()
+
+    after = db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name='毛文龙'"
+    ).fetchone()["loyalty"]
+    assert after == before
+
+
+def test_apply_person_changes_disposition_does_not_commit_inside_batch(game):
+    db, state, content = game
+    name = active_ming_character(db, content)
+    before = dict(
+        db.conn.execute(
+            "SELECT status, office, office_type, status_reason, reason_code, transit_to "
+            "FROM characters WHERE name=?",
+            (name,),
+        ).fetchone()
+    )
+    before_logs = db.conn.execute(
+        "SELECT COUNT(*) AS n FROM person_logs WHERE person_name=?",
+        (name,),
+    ).fetchone()["n"]
+
+    try:
+        db.conn.execute("BEGIN")
+        issues._apply_person_changes(
+            db,
+            state,
+            [
+                {
+                    "name": name,
+                    "动作": "处置",
+                    "status": "exiled",
+                    "reason": "事务内处置",
+                }
+            ],
+            content=content,
+        )
+        db.conn.rollback()
+
+        after = dict(
+            db.conn.execute(
+                "SELECT status, office, office_type, status_reason, reason_code, transit_to "
+                "FROM characters WHERE name=?",
+                (name,),
+            ).fetchone()
+        )
+        after_logs = db.conn.execute(
+            "SELECT COUNT(*) AS n FROM person_logs WHERE person_name=?",
+            (name,),
+        ).fetchone()["n"]
+        assert after == before
+        assert after_logs == before_logs
+    finally:
+        if db.conn.in_transaction:
+            db.conn.rollback()
+        db.conn.execute(
+            "UPDATE characters SET status=?, office=?, office_type=?, status_reason=?, "
+            "reason_code=?, transit_to=? WHERE name=?",
+            (
+                before["status"],
+                before["office"],
+                before["office_type"],
+                before["status_reason"],
+                before["reason_code"],
+                before["transit_to"],
+                name,
+            ),
+        )
+        db.conn.execute(
+            "DELETE FROM person_logs WHERE person_name=? AND rowid NOT IN ("
+            "SELECT rowid FROM person_logs WHERE person_name=? ORDER BY rowid LIMIT ?"
+            ")",
+            (name, name, before_logs),
+        )
+        db.conn.commit()
+        ch = content.characters[name]
+        ch.status = before["status"]
+        ch.office = before["office"]
+        ch.office_type = before["office_type"]
+        ch.status_reason = before["status_reason"]
+        ch.reason_code = before["reason_code"]
+        ch.transit_to = before["transit_to"]
+
+
+def test_apply_score_extraction_one_time_grant_and_assessment_do_not_create_commitment_issue(game):
+    db, state, content = game
+    before_issues = db.conn.execute("SELECT COUNT(*) AS n FROM issues").fetchone()["n"]
+    before_loyalty = db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name='毛文龙'"
+    ).fetchone()["loyalty"]
+
+    applied = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "economy_moves": [
+                {
+                    "target": "辽饷",
+                    "amount": 200,
+                    "reason": "一次性抚恤东江镇",
+                }
+            ],
+            "new_issues": [],
+            "人物变更": [
+                {
+                    "name": "毛文龙",
+                    "动作": "评定",
+                    "loyalty": 3,
+                    "reason": "一次性赏赐后略有感念",
+                }
+            ],
+        },
+        content=content,
+    )
+
+    after_issues = db.conn.execute("SELECT COUNT(*) AS n FROM issues").fetchone()["n"]
+    after_loyalty = db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name='毛文龙'"
+    ).fetchone()["loyalty"]
+    assert after_issues == before_issues
+    assert applied["issue_summary"]["new_issues"] == []
+    assert after_loyalty == min(100, before_loyalty + 3)
+
+
 def test_apply_score_extraction_rejects_malformed_power_move_backlash_before_writing(game):
     db, state, content = game
     name = active_ming_character(db, content)
@@ -3022,6 +3337,473 @@ def test_s15_amnesty_to_ming_then_appoint(game):
     finally:
         db.conn.execute("UPDATE characters SET power_id=?, status=?, office=? WHERE name=?",
                         (old["power_id"], old["status"], old["office"], name))
+        db.conn.commit()
+
+
+def test_bandit_amnesty_rejects_same_power_top_level_suppression(game):
+    """#190：招安同一流寇股时,削股只能作为易主内嵌反噬落一处账。
+
+    顶层 power_updates 同时再剿同一股 = 同一时段招安/剿股并行,须拒收,防双减;
+    其它流寇股不应被波及。
+    """
+    db, state, content = game
+    zhang = "张献忠"
+    li = "李自成"
+    zhang_power = "bandit_zhang_xianzhong_test"
+    li_power = "bandit_li_zicheng_test"
+    for power_id, name, leader, strength in (
+        (zhang_power, "张献忠双减测试股", zhang, 55),
+        (li_power, "李自成双减测试股", li, 48),
+    ):
+        db.conn.execute(
+            """
+            INSERT INTO powers
+            (id, name, kind, leader, stance, leverage, satisfaction, military_strength,
+             cohesion, supply, agenda, status, last_action, aliases)
+            VALUES (?, ?, '内乱', ?, '敌对', 25, 20, ?, 30, 22,
+                    '流寇分股测试', '小股啸聚', '', '[]')
+            """,
+            (power_id, name, leader, strength),
+        )
+    old_rows = {
+        name: dict(db.conn.execute(
+            "SELECT power_id, status, office, office_type FROM characters WHERE name=?",
+            (name,),
+        ).fetchone())
+        for name in (zhang, li)
+    }
+    old_content = {
+        name: (
+            content.characters[name].power_id,
+            content.characters[name].status,
+            content.characters[name].office,
+            content.characters[name].office_type,
+        )
+        for name in (zhang, li)
+    }
+    try:
+        for name, power_id in ((zhang, zhang_power), (li, li_power)):
+            db.conn.execute(
+                "UPDATE characters SET power_id=?, status='active', office=?, office_type='外臣' WHERE name=?",
+                (power_id, f"{name}流寇首领", name),
+            )
+            content.characters[name].power_id = power_id
+            content.characters[name].status = "active"
+            content.characters[name].office = f"{name}流寇首领"
+            content.characters[name].office_type = "外臣"
+        db.conn.commit()
+
+        applied = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "power_updates": {
+                    zhang_power: {"military_strength": -7, "reason": "同股剿股误混"},
+                },
+                "人物变更": [
+                    {
+                        "name": zhang,
+                        "动作": "易主",
+                        "new_power": "ming",
+                        "方式": "主动归附",
+                        "反噬": {zhang_power: {"military_strength": -5, "reason": "谷城就抚拆散其股"}},
+                        "reason": "谷城受抚归明",
+                    },
+                    {"name": zhang, "动作": "任命", "office": "游击将军", "reason": "授武将名分"},
+                ],
+            },
+            content=content,
+        )
+
+        zhang_strength = db.conn.execute(
+            "SELECT military_strength FROM powers WHERE id=?", (zhang_power,)
+        ).fetchone()["military_strength"]
+        li_strength = db.conn.execute(
+            "SELECT military_strength FROM powers WHERE id=?", (li_power,)
+        ).fetchone()["military_strength"]
+        log_deltas = [
+            row["delta"]
+            for row in db.conn.execute(
+                "SELECT delta FROM power_logs WHERE power_id=? AND field='military_strength' ORDER BY id",
+                (zhang_power,),
+            ).fetchall()
+        ]
+        assert zhang_strength == 50, "张献忠股只能吃易主内嵌反噬 -5,不得再叠加顶层剿股 -7"
+        assert li_strength == 48, "招安张献忠不得波及李自成股"
+        assert log_deltas == [-5], "削股须一处落账,不得同股双写 power_logs"
+        assert any(
+            item.get("rejected") and item.get("power_id") == zhang_power
+            for item in applied["power_changes"]
+        ), f"同股顶层剿股应显式拒收,实得 {applied['power_changes']}"
+    finally:
+        for name, row in old_rows.items():
+            db.conn.execute(
+                "UPDATE characters SET power_id=?, status=?, office=?, office_type=? WHERE name=?",
+                (row["power_id"], row["status"], row["office"], row["office_type"], name),
+            )
+        for name, values in old_content.items():
+            ch = content.characters[name]
+            ch.power_id, ch.status, ch.office, ch.office_type = values
+        db.conn.execute("DELETE FROM powers WHERE id IN (?, ?)", (zhang_power, li_power))
+        db.conn.commit()
+
+
+def test_bandit_amnesty_rejects_same_power_top_level_suppression_when_backlash_empty(game):
+    """#190：同股招安/剿股互斥不依赖反噬是否非空。
+
+    LLM 若漏把削股写进易主反噬,也不能让同股顶层 power_updates 作为剿股落账。
+    """
+    db, state, content = game
+    zhang = "张献忠"
+    zhang_power = "bandit_zhang_empty_backlash_test"
+    db.conn.execute(
+        """
+        INSERT INTO powers
+        (id, name, kind, leader, stance, leverage, satisfaction, military_strength,
+         cohesion, supply, agenda, status, last_action, aliases)
+        VALUES (?, '张献忠空反噬测试股', '内乱', ?, '敌对', 25, 20, 55, 30, 22,
+                '流寇空反噬互斥测试', '小股啸聚', '', '[]')
+        """,
+        (zhang_power, zhang),
+    )
+    old_row = dict(db.conn.execute(
+        "SELECT power_id, status, office, office_type FROM characters WHERE name=?",
+        (zhang,),
+    ).fetchone())
+    old_content = (
+        content.characters[zhang].power_id,
+        content.characters[zhang].status,
+        content.characters[zhang].office,
+        content.characters[zhang].office_type,
+    )
+    try:
+        db.conn.execute(
+            "UPDATE characters SET power_id=?, status='active', office=?, office_type='外臣' WHERE name=?",
+            (zhang_power, f"{zhang}流寇首领", zhang),
+        )
+        content.characters[zhang].power_id = zhang_power
+        content.characters[zhang].status = "active"
+        content.characters[zhang].office = f"{zhang}流寇首领"
+        content.characters[zhang].office_type = "外臣"
+        db.conn.commit()
+
+        applied = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "power_updates": {
+                    zhang_power: {"military_strength": -7, "reason": "同股剿股误混"},
+                },
+                "人物变更": [
+                    {
+                        "name": zhang,
+                        "动作": "易主",
+                        "new_power": "ming",
+                        "方式": "主动归附",
+                        "反噬": {},
+                        "reason": "谷城受抚归明",
+                    },
+                    {"name": zhang, "动作": "任命", "office": "游击将军", "reason": "授武将名分"},
+                ],
+            },
+            content=content,
+        )
+
+        zhang_strength = db.conn.execute(
+            "SELECT military_strength FROM powers WHERE id=?", (zhang_power,)
+        ).fetchone()["military_strength"]
+        log_deltas = [
+            row["delta"]
+            for row in db.conn.execute(
+                "SELECT delta FROM power_logs WHERE power_id=? AND field='military_strength' ORDER BY id",
+                (zhang_power,),
+            ).fetchall()
+        ]
+        zhang_row = db.conn.execute(
+            "SELECT power_id, office FROM characters WHERE name=?", (zhang,)
+        ).fetchone()
+
+        assert zhang_row["power_id"] == "ming"
+        assert zhang_row["office"] == "游击将军"
+        assert zhang_strength == 55, "空反噬招安已占用该股,同股顶层剿股不得落账"
+        assert log_deltas == []
+        assert any(
+            item.get("rejected") and item.get("power_id") == zhang_power
+            for item in applied["power_changes"]
+        ), f"空反噬招安也应显式拒收同股顶层剿股,实得 {applied['power_changes']}"
+    finally:
+        db.conn.execute(
+            "UPDATE characters SET power_id=?, status=?, office=?, office_type=? WHERE name=?",
+            (old_row["power_id"], old_row["status"], old_row["office"], old_row["office_type"], zhang),
+        )
+        ch = content.characters[zhang]
+        ch.power_id, ch.status, ch.office, ch.office_type = old_content
+        db.conn.execute("DELETE FROM powers WHERE id=?", (zhang_power,))
+        db.conn.commit()
+
+
+def test_rejected_bandit_amnesty_does_not_block_same_power_suppression(game):
+    """#190：只有可落账的招安才互斥；招安条目自身拒收时,同股剿股仍可落账。"""
+    db, state, content = game
+    zhang = "张献忠"
+    zhang_power = "bandit_zhang_invalid_amnesty_test"
+    db.conn.execute(
+        """
+        INSERT INTO powers
+        (id, name, kind, leader, stance, leverage, satisfaction, military_strength,
+         cohesion, supply, agenda, status, last_action, aliases)
+        VALUES (?, '张献忠非法招安测试股', '内乱', ?, '敌对', 25, 20, 55, 30, 22,
+                '流寇非法招安互斥测试', '小股啸聚', '', '[]')
+        """,
+        (zhang_power, zhang),
+    )
+    old_row = dict(db.conn.execute(
+        "SELECT power_id, status, office, office_type FROM characters WHERE name=?",
+        (zhang,),
+    ).fetchone())
+    old_content = (
+        content.characters[zhang].power_id,
+        content.characters[zhang].status,
+        content.characters[zhang].office,
+        content.characters[zhang].office_type,
+    )
+    try:
+        db.conn.execute(
+            "UPDATE characters SET power_id=?, status='active', office=?, office_type='外臣' WHERE name=?",
+            (zhang_power, f"{zhang}流寇首领", zhang),
+        )
+        content.characters[zhang].power_id = zhang_power
+        content.characters[zhang].status = "active"
+        content.characters[zhang].office = f"{zhang}流寇首领"
+        content.characters[zhang].office_type = "外臣"
+        db.conn.commit()
+
+        applied = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "power_updates": {
+                    zhang_power: {"military_strength": -7, "reason": "剿张献忠股"},
+                },
+                "人物变更": [
+                    {
+                        "name": zhang,
+                        "动作": "易主",
+                        "new_power": "ming",
+                        "方式": "主动归附",
+                        "new_title": "乱填非白名单",
+                        "反噬": {zhang_power: {"military_strength": -5, "reason": "不会落账"}},
+                        "reason": "非法招安条目",
+                    },
+                ],
+            },
+            content=content,
+        )
+
+        zhang_strength = db.conn.execute(
+            "SELECT military_strength FROM powers WHERE id=?", (zhang_power,)
+        ).fetchone()["military_strength"]
+        zhang_row = db.conn.execute(
+            "SELECT power_id, office FROM characters WHERE name=?", (zhang,)
+        ).fetchone()
+
+        assert zhang_strength == 48
+        assert zhang_row["power_id"] == zhang_power
+        assert any(
+            item.get("rejected") and item.get("category") == "invalid_enum"
+            for item in applied["applied_person_changes"]
+        ), f"非法招安应拒收,实得 {applied['applied_person_changes']}"
+        assert any(
+            item.get("power") == "张献忠非法招安测试股" and item.get("delta") == -7
+            for item in applied["power_changes"]
+        ), f"招安拒收后剿股应落账,实得 {applied['power_changes']}"
+    finally:
+        db.conn.execute(
+            "UPDATE characters SET power_id=?, status=?, office=?, office_type=? WHERE name=?",
+            (old_row["power_id"], old_row["status"], old_row["office"], old_row["office_type"], zhang),
+        )
+        ch = content.characters[zhang]
+        ch.power_id, ch.status, ch.office, ch.office_type = old_content
+        db.conn.execute("DELETE FROM powers WHERE id=?", (zhang_power,))
+        db.conn.commit()
+
+
+def test_orphan_bandit_power_can_be_suppressed_when_dead_leader_amnesty_is_rejected(game):
+    """#190：头目已死而股仍存时,死头目不可招安,孤儿股仍可剿股。
+
+    失败的招安条目不应触发同股互斥,否则会把唯一合法的剿股也挡掉。
+    """
+    db, state, content = game
+    zhang = "张献忠"
+    zhang_power = "bandit_zhang_xianzhong_orphan_test"
+    db.conn.execute(
+        """
+        INSERT INTO powers
+        (id, name, kind, leader, stance, leverage, satisfaction, military_strength,
+         cohesion, supply, agenda, status, last_action, aliases)
+        VALUES (?, '张献忠遗股', '内乱', ?, '敌对', 25, 20, 55, 30, 22,
+                '流寇孤儿股测试', '头目已死余众未散', '', '[]')
+        """,
+        (zhang_power, zhang),
+    )
+    old_row = dict(db.conn.execute(
+        "SELECT power_id, status, office, office_type FROM characters WHERE name=?",
+        (zhang,),
+    ).fetchone())
+    old_content = (
+        content.characters[zhang].power_id,
+        content.characters[zhang].status,
+        content.characters[zhang].office,
+        content.characters[zhang].office_type,
+    )
+    try:
+        db.conn.execute(
+            "UPDATE characters SET power_id=?, status='dead', office='', office_type='外臣' WHERE name=?",
+            (zhang_power, zhang),
+        )
+        content.characters[zhang].power_id = zhang_power
+        content.characters[zhang].status = "dead"
+        content.characters[zhang].office = ""
+        content.characters[zhang].office_type = "外臣"
+        db.conn.commit()
+
+        applied = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "power_updates": {
+                    zhang_power: {"military_strength": -9, "reason": "剿灭张献忠遗股"},
+                },
+                "人物变更": [
+                    {
+                        "name": zhang,
+                        "动作": "易主",
+                        "new_power": "ming",
+                        "方式": "主动归附",
+                        "反噬": {zhang_power: {"military_strength": -5, "reason": "误写招安死头目"}},
+                        "reason": "死后不可招安",
+                    },
+                ],
+            },
+            content=content,
+        )
+
+        strength = db.conn.execute(
+            "SELECT military_strength FROM powers WHERE id=?", (zhang_power,)
+        ).fetchone()["military_strength"]
+        log_deltas = [
+            row["delta"]
+            for row in db.conn.execute(
+                "SELECT delta FROM power_logs WHERE power_id=? AND field='military_strength' ORDER BY id",
+                (zhang_power,),
+            ).fetchall()
+        ]
+        assert strength == 46, "孤儿股只能剿股: 顶层 power_updates 应照落 -9"
+        assert log_deltas == [-9], "死头目招安失败后不得再落易主反噬"
+        assert any(
+            item.get("动作") == "易主" and item.get("rejected")
+            for item in applied["applied_person_changes"]
+        ), f"死头目招安须拒收,实得 {applied['applied_person_changes']}"
+    finally:
+        db.conn.execute(
+            "UPDATE characters SET power_id=?, status=?, office=?, office_type=? WHERE name=?",
+            (old_row["power_id"], old_row["status"], old_row["office"], old_row["office_type"], zhang),
+        )
+        ch = content.characters[zhang]
+        ch.power_id, ch.status, ch.office, ch.office_type = old_content
+        db.conn.execute("DELETE FROM powers WHERE id=?", (zhang_power,))
+        db.conn.commit()
+
+
+def test_bandit_amnesty_rejects_backlash_targeting_another_bandit_power(game):
+    """#190：招安削股只能削该头目原股,不得在易主内嵌反噬里波及别股。"""
+    db, state, content = game
+    zhang = "张献忠"
+    li = "李自成"
+    zhang_power = "bandit_zhang_xianzhong_wrong_backlash_test"
+    li_power = "bandit_li_zicheng_wrong_backlash_test"
+    for power_id, name, leader, strength in (
+        (zhang_power, "张献忠错股测试股", zhang, 55),
+        (li_power, "李自成错股测试股", li, 48),
+    ):
+        db.conn.execute(
+            """
+            INSERT INTO powers
+            (id, name, kind, leader, stance, leverage, satisfaction, military_strength,
+             cohesion, supply, agenda, status, last_action, aliases)
+            VALUES (?, ?, '内乱', ?, '敌对', 25, 20, ?, 30, 22,
+                    '流寇错股反噬测试', '小股啸聚', '', '[]')
+            """,
+            (power_id, name, leader, strength),
+        )
+    old_rows = {
+        name: dict(db.conn.execute(
+            "SELECT power_id, status, office, office_type FROM characters WHERE name=?",
+            (name,),
+        ).fetchone())
+        for name in (zhang, li)
+    }
+    old_content = {
+        name: (
+            content.characters[name].power_id,
+            content.characters[name].status,
+            content.characters[name].office,
+            content.characters[name].office_type,
+        )
+        for name in (zhang, li)
+    }
+    try:
+        for name, power_id in ((zhang, zhang_power), (li, li_power)):
+            db.conn.execute(
+                "UPDATE characters SET power_id=?, status='active', office=?, office_type='外臣' WHERE name=?",
+                (power_id, f"{name}流寇首领", name),
+            )
+            content.characters[name].power_id = power_id
+            content.characters[name].status = "active"
+            content.characters[name].office = f"{name}流寇首领"
+            content.characters[name].office_type = "外臣"
+        db.conn.commit()
+
+        applied = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "人物变更": [
+                    {
+                        "name": zhang,
+                        "动作": "易主",
+                        "new_power": "ming",
+                        "方式": "主动归附",
+                        "反噬": {li_power: {"military_strength": -5, "reason": "误削李自成股"}},
+                        "reason": "谷城受抚归明",
+                    },
+                ],
+            },
+            content=content,
+        )
+
+        zhang_row = db.conn.execute(
+            "SELECT power_id FROM characters WHERE name=?", (zhang,)
+        ).fetchone()
+        li_strength = db.conn.execute(
+            "SELECT military_strength FROM powers WHERE id=?", (li_power,)
+        ).fetchone()["military_strength"]
+        assert zhang_row["power_id"] == zhang_power, "错股反噬的招安应整体拒收,不得先易主"
+        assert li_strength == 48, "招安张献忠不得削李自成股"
+        assert any(
+            item.get("动作") == "易主" and item.get("rejected")
+            for item in applied["applied_person_changes"]
+        ), f"错股反噬须拒收,实得 {applied['applied_person_changes']}"
+    finally:
+        for name, row in old_rows.items():
+            db.conn.execute(
+                "UPDATE characters SET power_id=?, status=?, office=?, office_type=? WHERE name=?",
+                (row["power_id"], row["status"], row["office"], row["office_type"], name),
+            )
+        for name, values in old_content.items():
+            ch = content.characters[name]
+            ch.power_id, ch.status, ch.office, ch.office_type = values
+        db.conn.execute("DELETE FROM powers WHERE id IN (?, ?)", (zhang_power, li_power))
         db.conn.commit()
 
 

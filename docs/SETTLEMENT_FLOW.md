@@ -27,8 +27,9 @@
           待 #70 史实重标）；fail-loud 但隔离（基座 bug 不掀翻本步固定财政，cmr S4 F4）。
         ⚠️ 我的 economy_moves 不要重复这些固定项！
      c. auto_trigger_seed_issues(state, db)       # 程序硬触发（必须在我产邸报前）
-        ↳ trigger_gate 达标 + auto_trigger=True 的 seed event 直接立成 issue
-        ↳ 出现在本月候选清单里供我推演引用
+        ↳ trigger_gate 达标 + auto_trigger=True 的 seed event / historical event 先处理
+        ↳ situation 转 issue；node/ending 只记 event_triggers，并可落 effect_on_trigger
+        ↳ 出现在本月候选清单 / 硬触发清单里供我推演引用
      d. db.auto_submit_due_secret_orders(state)   # 到期密令转核议（原在 resolve_directives，已挪入此事务）
      e. turn_phase = settling + save_state        # 同事务收尾：「前半段已完成」相位锚
      幂等守门：相位已在 FRONT_HALF_DONE_PHASES（settling/awaiting_decision/…）时直接

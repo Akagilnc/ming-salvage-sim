@@ -109,7 +109,7 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 > 看「啥能抓」查 `ready-for-agent` 桶；看「还剩啥」filter open 子 issue。
 
 > [!warning] 几个 GitHub 事实
-> ① **父→子归属** = **native sub-issue**（见上「to-issues 后补救」）+ 子 body `## Parent #N` 面包屑；父页自动出子列表 + 进度条。② **依赖 = native blocked_by**（GitHub 原生、可 filter 未阻塞），不再只是 prose 约定。③ **父「完成」= 人手动关**（子全关后整体验收再关），GitHub 不自动关父；**关父即解锁 blocked_by 父的下游**。④ ⚠️ Matt 现行 skill 还停在 prose 版、不挂这些——靠「to-issues 后补救」手动补到位（他 backlog #47/#238/#262/#292 正在把这些写进 skill）。
+> ① **父→子归属** = **native sub-issue**（见上「to-issues 后补救」）+ 子 body `## Parent #N` 面包屑；父页自动出子列表 + 进度条。② **依赖 = native blocked_by**（GitHub 原生、可 filter 未阻塞），不再只是 prose 约定。③ **父「完成」= 人手动关**（子全关后整体验收再关），GitHub 不自动关父；**关父即解锁 blocked_by 父的下游**。④ ⚠️ Matt 现行 skill 还停在 prose 版、不挂这些——靠「to-issues 后补救」手动补到位（他 backlog #47/#238/#262/#292 正在把这些写进 skill）。⑤ ⚠️ **`Closes/Fixes/Resolves #N` 在 PR body 是子串匹配**——动词后的限定词（含中文）挡不住，合并 `main` 即**自动关整条 issue**。所以「merge → 关子 issue」这步：**想引用而不关**（如设计 PR 解决了某 issue 的*设计*但*实现*未做、或引用一个 tracker 父）**绝不带关闭动词**，写「见 #N」「关联 #N」「#N 的设计」；只在该 PR 真要关整条 issue 时才 `Closes #N`；误关 → `gh issue reopen` + 复原 label + 说明。**实证**：#208 body「`Closes #63` 的设计悬置」误关了 #63（设计已定、实现未做、应留 OPEN + `ready-for-agent`）。详版见 [agents/issue-tracker.md](agents/issue-tracker.md)。
 
 ---
 

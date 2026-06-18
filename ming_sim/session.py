@@ -184,6 +184,7 @@ def apply_appointment(
     registry: Optional[MinisterRegistry],
     data: Dict[str, object],
     llm_config: Optional[LLMConfig] = None,
+    commit: bool = True,
 ) -> Tuple[str, str]:
     """诏书任命/吏部铨选共用落地：建档入库 + 注册 Agent，本回合即可召见。
     LLM（吏部 propose_appointment 或档房 appointments 三道闸）已判过史实合理性；
@@ -246,7 +247,8 @@ def apply_appointment(
                        updated_at=CURRENT_TIMESTAMP""",
                 (original_key, office),
             )
-            db.conn.commit()
+            if commit:
+                db.conn.commit()
             # 若 extractor 用了新称呼，在 content 里建别名指向原对象
             if name != original_key:
                 content.characters[name] = character
@@ -271,6 +273,7 @@ def apply_appointment(
             db.set_character_status(
                 state, replaces, "dismissed",
                 reason=f"{office}改授{name}，原任去职",
+                commit=commit,
             )
             old.status = "dismissed"
             old.transit_to = ""
@@ -292,7 +295,7 @@ def apply_appointment(
         status="active",
     )
     content.characters[name] = character
-    db.add_character(state, character, llm_config=llm_config)
+    db.add_character(state, character, llm_config=llm_config, commit=commit)
     # add_character 已写入并分配 portrait_id，回写到内存对象
     row = db.conn.execute(
         "SELECT portrait_id FROM characters WHERE name=?", (name,)

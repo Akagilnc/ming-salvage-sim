@@ -38,12 +38,13 @@
 - "毛文龙没死"真因：turn21 我把毛的死产进 `人事变更`(office_changes)而非 `人物状态变化`(character_status_changes)，office_changes 因 `new_office` 空静默拒收（[issues.py:1250](../ming_sim/issues.py)）。两个中文 key 太像。
 - **已解决**：ADR 0003/0009 单 `人物变更` 顶层 key + 显式 `动作` 分发已落地（`person_delta_adapter.normalize_person_changes` 合流旧 4-key，未知动作响亮拒），毛文龙「动作=处置 status=dead」现正确落库；问题二（静默拒收 surface）由 ADR 0008 RejectionCollector 覆盖。#13 已关闭。
 
-### B9. 历史事件无结构化前提门，袁崇焕斩毛文龙在已安抚前提下误触发 → [issue #12](https://github.com/Akagilnc/ming-salvage-sim/issues/12)
+### ~~B9. 历史事件无结构化前提门，袁崇焕斩毛文龙在已安抚前提下误触发~~ ✅ 已解决（v0.12.0.0, 2026-06-18） → [issue #12](https://github.com/Akagilnc/ming-salvage-sim/issues/12)
 - **现象**（turn21/1629-06 实测）：玩家 turn20 已安排袁安抚毛、奏对确认"毛饷已足、效顺"，`mao_wenlong` 仍被 simulator 弹出（`event_triggers` turn21 source=simulation）；邸报叙述"列十二罪斩毛文龙于帐前"，但 DB 里 `characters.毛文龙.status=active`（**没死**）、军队 faction satisfaction 仍 100。
 - **根因 B9a（机制）**：`gather_candidate_events`（[issues.py:308](../ming_sim/issues.py)）历史分支（`trigger_year>0`）进候选池只过 `_event_window_open`（纯日历窗口），无代码前提校验；`precondition`（[models.py:77](../ming_sim/models.py)）纯文本喂 simulator 软判。结构化硬门 `trigger_gate`+`_gate_passed`（[issues.py:270](../ming_sim/issues.py)，能查 character/faction/army/region）**只接 seed_events，没接历史 events**——守大事的门已造好但没接上。
 - **根因 B9b（P1 违背）**：安抚决策从没落进结构化 DB（无密令/directive/毛 loyalty 增量），只活在奏对叙事 → 喂 simulator 的结构化盘面无"皇帝已干预防斩帅"信号；连事件结果（毛死）也没落库，DB↔邸报漂移。同类前科见 memory `sim-fabricates-appointments`。
 - **修法**：A) 把 `trigger_gate` 接到历史事件，`gather_candidate_events` 历史分支也跑 `_gate_passed` + 给 `mao_wenlong` 加结构化硬前提（治本）；B) 让"安抚"成可落库状态（和解 flag/抬毛 loyalty），门去读；C) 事件触发时强制落 `character_status_changes`（毛→removed）。**A+B+C 互为前提，需一并修**。
 - **注**：P1 机制坑（影响所有历史锚定事件，非仅毛文龙）。修前与 cmr session 在 issues.py/db.py 的改动核对避免撞车。
+- **已解决（v0.12.0.0, 2026-06-18）**：历史事件分支已接 `trigger_gate` + `person_core_subjects`，毛文龙斩帅事件按 loyalty/location/袁崇焕任职/关宁主将重验；未安抚触发时毛文龙 `处置(status=dead)` 真落库，安抚/调离/袁退场/主体已死则 avoided/obsolete，不再按日历误触发。
 
 ### B8. 游戏聊天框中文输入法不学词（Windows 群员报，待 cmr 完再修） → [issue #7](https://github.com/Akagilnc/ming-salvage-sim/issues/7)
 - **现象**：Windows 群员在游戏聊天框打「拟诏/密令」等词，输入法**不学习**（不进用户词库、下次不联想）；同样的词在游戏外能学；回游戏又不联想。打字本身正常（字打得出），只是不学。

@@ -11,7 +11,7 @@ from agno.agent import Agent
 from ming_sim.agents import parse_agent_json, run_agent_stream_text, run_agent_text
 from ming_sim.context import historical_anchor_for_month, victory_status
 from ming_sim.db import GameDB
-from ming_sim.issues import gather_candidate_events, issue_to_payload
+from ming_sim.issues import commitment_condition_role, gather_candidate_events, issue_to_payload
 from ming_sim.models import GameState, loads_effect_dict
 from ming_sim.token_stats import tlog
 
@@ -42,6 +42,8 @@ TOP_LEVEL_ALIASES = {
     "四方动向": "world_advance",
     "局势推进": "issue_advances",
     "新立局势": "new_issues",
+    "事件结局": "事件结局",
+    "event_outcomes": "事件结局",
     "撤销局势": "cancels",
     "结案局势": "close_issues",
     "人事变更": "office_changes",
@@ -80,6 +82,7 @@ ITEM_FIELD_ALIASES = {
     "bar_value": "bar_value", "当前进度": "bar_value",
     "expected_months": "expected_months", "预计月数": "expected_months",
     "resolve_condition": "resolve_condition", "解决条件": "resolve_condition",
+    "stop_condition": "resolve_condition", "停止条件": "resolve_condition",
     "fail_condition": "fail_condition", "失败条件": "fail_condition",
     "ongoing_effects": "ongoing_effects", "持续效果": "ongoing_effects",
     "effect_on_resolve": "effect_on_resolve", "解决效果": "effect_on_resolve",
@@ -439,6 +442,7 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "world_advance": {},
     "issue_advances": [],
     "new_issues": [],
+    "事件结局": {},
     "cancels": [],
     "close_issues": [],
     "fiscal_changes": [],
@@ -457,7 +461,7 @@ EMPTY_EXTRACTION: Dict[str, object] = {
 MODULE_FIELDS: Dict[str, set[str]] = {
     "internal": {"metric_delta", "economy_moves", "faction_delta", "class_delta", "region_delta", "fiscal_changes", "fiscal_creates", "fiscal_removes"},
     "military_external": {"army_delta", "new_armies", "power_updates", "world_advance"},
-    "issues": {"issue_advances", "new_issues", "cancels", "close_issues"},
+    "issues": {"issue_advances", "new_issues", "事件结局", "cancels", "close_issues"},
     "personnel_secret": {
         "人物变更", "secret_order_updates", "secret_order_closes", "emperor_fate",
     },
@@ -515,6 +519,7 @@ def _extractor_context_payload(
             "cancellable": r["cancellable"],
             "resolve_condition": (r["resolve_condition"] if "resolve_condition" in r.keys() else "") or "(未填)",
             "fail_condition": (r["fail_condition"] if "fail_condition" in r.keys() else "") or "(未填)",
+            **commitment_condition_role(r["resolve_condition"] if "resolve_condition" in r.keys() else ""),
         }
         for r in active
     ]
