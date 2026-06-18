@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 import sqlite3
@@ -2062,19 +2063,7 @@ def _restore_person_content_from_snapshot(
         content_rows = snapshot[3]  # shape from _snapshot_person_write_state
     except (IndexError, TypeError):
         return
-    for name in list(content.characters):
-        if name not in content_rows:
-            del content.characters[name]
-    for name, values in content_rows.items():
-        ch = content.characters.get(name)
-        if ch is None:
-            continue
-        ch.status = values["status"]
-        ch.office = values["office"]
-        ch.office_type = values["office_type"]
-        ch.transit_to = values["transit_to"]
-        ch.status_reason = values.get("status_reason", "")
-        ch.reason_code = values.get("reason_code", "")
+    _restore_content_character_rows(content, content_rows)
 
 
 def _has_economy_entry(d: object) -> bool:
@@ -2901,20 +2890,34 @@ def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
             "SELECT name, leverage, leverage_offset FROM factions"
         ).fetchall()
     ]
-    content_rows = {}
-    if content is not None:
-        content_rows = {
-            name: {
-                "status": ch.status,
-                "office": ch.office,
-                "office_type": ch.office_type,
-                "transit_to": ch.transit_to,
-                "status_reason": getattr(ch, "status_reason", ""),
-                "reason_code": getattr(ch, "reason_code", ""),
-            }
-            for name, ch in content.characters.items()
-        }
+    content_rows = _snapshot_content_character_rows(content)
     return character_rows, office_rows, faction_rows, content_rows
+
+
+def _snapshot_content_character_rows(content: Optional[GameContent]) -> Dict[str, Dict[str, object]]:
+    if content is None:
+        return {}
+    return {
+        name: copy.deepcopy(vars(ch))
+        for name, ch in content.characters.items()
+    }
+
+
+def _restore_content_character_rows(
+    content: Optional[GameContent],
+    content_rows: Dict[str, Dict[str, object]],
+) -> None:
+    if content is None:
+        return
+    for name in list(content.characters):
+        if name not in content_rows:
+            del content.characters[name]
+    for name, values in content_rows.items():
+        ch = content.characters.get(name)
+        if ch is None:
+            continue
+        for key, value in values.items():
+            setattr(ch, key, copy.deepcopy(value))
 
 
 def _restore_person_write_state(
@@ -2977,19 +2980,7 @@ def _restore_person_write_state(
     if commit:
         db.conn.commit()
     if content is not None:
-        for name in list(content.characters):
-            if name not in content_rows:
-                del content.characters[name]
-        for name, values in content_rows.items():
-            ch = content.characters.get(name)
-            if ch is None:
-                continue
-            ch.status = values["status"]
-            ch.office = values["office"]
-            ch.office_type = values["office_type"]
-            ch.transit_to = values["transit_to"]
-            ch.status_reason = values.get("status_reason", "")
-            ch.reason_code = values.get("reason_code", "")
+        _restore_content_character_rows(content, content_rows)
 
 
 # 校验「二级非 dict 会让 apply 在**逐 entity 写 DB 的中途崩**,留下部分已写 + 回合照推 = 半落库」
