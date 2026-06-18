@@ -28,6 +28,8 @@
         ⚠️ 我的 economy_moves 不要重复这些固定项！
      c. auto_trigger_seed_issues(state, db)       # 程序硬触发（必须在我产邸报前）
         ↳ trigger_gate 达标 + auto_trigger=True 的 seed event / historical event 先处理
+        ↳ 声明了 trigger_end_* 且未 `open_window` 的事件，超过最晚时点会先记 `event_triggers.terminal_state=expired`
+          并退出候选 / 硬触发流，防止史实节点晚弹或重入
         ↳ situation 转 issue；node/ending 只记 event_triggers，并可落 effect_on_trigger
         ↳ 出现在本月候选清单 / 硬触发清单里供我推演引用
      d. db.auto_submit_due_secret_orders(state)   # 到期密令转核议（原在 resolve_directives，已挪入此事务）
