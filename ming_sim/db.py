@@ -605,6 +605,8 @@ class GameDB:
                 year INTEGER NOT NULL,
                 period INTEGER NOT NULL,
                 source TEXT NOT NULL DEFAULT 'simulation',
+                terminal_state TEXT NOT NULL DEFAULT 'triggered',
+                terminal_reason TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(event_id) REFERENCES events(id)
             );
@@ -999,6 +1001,11 @@ class GameDB:
         self.ensure_column("characters", "court_role", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "summary", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "aliases", "TEXT NOT NULL DEFAULT '[]'")
+        self._backfill_person_core_character_static_fields()
+        self._backfill_bandit_power_split()
+        self.ensure_column("event_triggers", "terminal_state", "TEXT NOT NULL DEFAULT 'triggered'")
+        self.ensure_column("event_triggers", "terminal_reason", "TEXT NOT NULL DEFAULT ''")
+        self._backfill_event_triggers_from_event_pool_issues()
         # 步骤7：回合阶段（旧库迁移，schema 升级非 fallback）
         self.ensure_column("game_state", "turn_phase", "TEXT NOT NULL DEFAULT 'summoning'")
         # 结局：ended=1 时游戏终结；ending_status 为 context.ENDING_* 类型。
@@ -1673,7 +1680,9 @@ class GameDB:
                     power.agenda,
                     power.status,
                     power.last_action,
-                    power.aliases,
+                    json.dumps(power.aliases, ensure_ascii=False)
+                    if isinstance(power.aliases, list)
+                    else power.aliases,
                 ),
             )
         for region in self.content.regions.values():
@@ -1843,6 +1852,121 @@ class GameDB:
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note",
             (ARREARS_UNIT_VERSION,),
         )
+
+    def _backfill_person_core_character_static_fields(self) -> None:
+        mao = self.content.characters.get("毛文龙")
+        if mao and mao.location:
+            self.conn.execute(
+                """
+                UPDATE characters
+                SET location = ?
+                WHERE name = '毛文龙'
+                  AND COALESCE(location, '') = ''
+                  AND COALESCE(transit_to, '') = ''
+                """,
+                (mao.location,),
+            )
+        for name in ("李自成", "张献忠"):
+            ch = self.content.characters.get(name)
+            if not ch or ch.debut_year <= 0:
+                continue
+            self.conn.execute(
+                """
+                UPDATE characters
+                SET debut_year = ?, debut_month = ?
+                WHERE name = ?
+                  AND status = 'offstage'
+                  AND COALESCE(debut_year, 0) = 0
+                  AND COALESCE(debut_month, 0) = 0
+                """,
+                (ch.debut_year, ch.debut_month, name),
+            )
+        self.conn.commit()
+
+    def _backfill_bandit_power_split(self) -> None:
+        for power_id in ("bandit_li_zicheng", "bandit_zhang_xianzhong"):
+            power = self.content.powers.get(power_id)
+            if not power:
+                continue
+            self.conn.execute(
+                """
+                INSERT OR IGNORE INTO powers
+                (id, name, kind, leader, stance, leverage, satisfaction, military_strength,
+                 cohesion, supply, agenda, status, last_action, aliases)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    power.id,
+                    power.name,
+                    power.kind,
+                    power.leader,
+                    power.stance,
+                    power.leverage,
+                    power.satisfaction,
+                    power.military_strength,
+                    power.cohesion,
+                    power.supply,
+                    power.agenda,
+                    power.status,
+                    power.last_action,
+                    json.dumps(power.aliases, ensure_ascii=False)
+                    if isinstance(power.aliases, list)
+                    else power.aliases,
+                ),
+            )
+        for name in ("李自成", "张献忠"):
+            ch = self.content.characters.get(name)
+            if not ch or not ch.power_id or ch.power_id == "bandits":
+                continue
+            if self.conn.execute("SELECT 1 FROM powers WHERE id=?", (ch.power_id,)).fetchone() is None:
+                continue
+            self.conn.execute(
+                """
+                UPDATE characters
+                SET power_id = ?
+                WHERE name = ?
+                  AND COALESCE(power_id, '') IN ('', 'bandits')
+                """,
+                (ch.power_id, name),
+            )
+        self.conn.commit()
+
+    def _backfill_event_triggers_from_event_pool_issues(self) -> None:
+        pending_core_effect_ids = {
+            ev.id for ev in (*self.content.events, *self.content.seed_events)
+            if ev.auto_trigger and bool(ev.effect_on_trigger)
+        }
+        rows = self.conn.execute(
+            """
+            WITH legacy AS (
+                SELECT origin_ref AS event_id, MIN(origin_turn) AS turn
+                FROM issues
+                WHERE origin_kind = 'event_pool' AND origin_ref <> ''
+                GROUP BY origin_ref
+            )
+            SELECT
+                legacy.event_id AS event_id,
+                legacy.turn AS turn,
+                COALESCE(turn_reports.year, game_state.year, 0) AS year,
+                COALESCE(turn_reports.period, game_state.period, 0) AS period
+            FROM legacy
+            LEFT JOIN turn_reports ON turn_reports.turn = legacy.turn
+            LEFT JOIN game_state ON game_state.id = 1
+            """,
+        ).fetchall()
+        for row in rows:
+            event_id = str(row["event_id"] or "")
+            if event_id in pending_core_effect_ids:
+                continue
+            self.conn.execute(
+                """
+                INSERT OR IGNORE INTO event_triggers
+                    (event_id, turn, year, period, source, terminal_state, terminal_reason)
+                VALUES (?, ?, ?, ?, 'legacy_event_pool', 'triggered', '')
+                """,
+                (event_id, row["turn"], row["year"], row["period"]),
+            )
+        self.conn.commit()
 
     def has_state(self) -> bool:
         row = self.conn.execute("SELECT 1 FROM game_state WHERE id = 1").fetchone()
@@ -2448,17 +2572,30 @@ class GameDB:
         """月初 tick：历史国号/称谓变化。稳定 id 不变，只改展示名与别名。"""
         changes: List[Dict[str, object]] = []
         if state.year > 1636 or (state.year == 1636 and state.period >= 4):
-            changed = self.apply_power_rename(
-                state,
-                "houjin",
-                "大清",
-                aliases="后金，清，大清",
-                reason="皇太极称帝，改国号大清",
-                status="皇太极称帝改国号大清，建元崇德，整合满蒙汉诸部南向争明",
-                last_action="皇太极称帝改国号大清",
-            )
-            if changed:
-                changes.append(changed)
+            ev = self.content.event_by_id.get("huangtaiji_chengdi")
+            if ev is None or not isinstance(ev.effect_on_trigger, dict):
+                raise ValueError("历史改国号缺少事件真源 huangtaiji_chengdi.effect_on_trigger")
+            power_renames = ev.effect_on_trigger.get("power_renames")
+            if not isinstance(power_renames, list):
+                raise ValueError("历史改国号缺少 power_renames 列表")
+            for idx, item in enumerate(power_renames):
+                if not isinstance(item, dict):
+                    raise ValueError(f"历史改国号 power_renames[{idx}] 非 dict")
+                power_id = str(item.get("power_id") or "").strip()
+                new_name = str(item.get("new_name") or "").strip()
+                if not power_id or not new_name:
+                    raise ValueError(f"历史改国号 power_renames[{idx}] 缺少 power_id/new_name")
+                changed = self.apply_power_rename(
+                    state,
+                    power_id,
+                    new_name,
+                    aliases=str(item.get("aliases") or ""),
+                    reason=str(item.get("reason") or ""),
+                    status=str(item.get("status") or ""),
+                    last_action=str(item.get("last_action") or ""),
+                )
+                if changed:
+                    changes.append(changed)
         return changes
 
     # ── 后宫调教 ──────────────────────────────────────────────────────────
@@ -3008,6 +3145,7 @@ class GameDB:
         aliases: str = "",
         status: str = "",
         last_action: str = "",
+        commit: bool = True,
     ) -> Dict[str, object] | None:
         """Rename a power while keeping its stable id for references.
 
@@ -3048,7 +3186,8 @@ class GameDB:
             """,
             (state.turn, state.year, state.period, power_id, old_name, new_name, old_aliases, new_aliases, reason[:200]),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return {
             "power_id": power_id,
             "old_name": old_name,
@@ -6075,8 +6214,15 @@ class GameDB:
 
     def has_event_triggered(self, event_id: str) -> bool:
         row = self.conn.execute(
-            "SELECT 1 FROM event_triggers WHERE event_id=? LIMIT 1",
+            "SELECT 1 FROM event_triggers WHERE event_id=? AND terminal_state='triggered' LIMIT 1",
             (event_id,),
+        ).fetchone()
+        return row is not None
+
+    def has_event_terminal_state(self, event_id: str, terminal_state: str) -> bool:
+        row = self.conn.execute(
+            "SELECT 1 FROM event_triggers WHERE event_id=? AND terminal_state=? LIMIT 1",
+            (event_id, terminal_state),
         ).fetchone()
         return row is not None
 
@@ -6086,14 +6232,61 @@ class GameDB:
         event_id: str,
         source: str = "simulation",
         *,
+        terminal_reason: str = "",
         commit: bool = True,
     ) -> None:
         self.conn.execute(
             """
-            INSERT OR IGNORE INTO event_triggers (event_id, turn, year, period, source)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO event_triggers
+                (event_id, turn, year, period, source, terminal_state, terminal_reason)
+            VALUES (?, ?, ?, ?, ?, 'triggered', ?)
+            ON CONFLICT(event_id) DO UPDATE SET
+                terminal_reason = excluded.terminal_reason
+            WHERE event_triggers.terminal_state = 'triggered'
+              AND COALESCE(event_triggers.terminal_reason, '') = ''
+              AND excluded.terminal_reason <> ''
             """,
-            (event_id, state.turn, state.year, state.period, source),
+            (event_id, state.turn, state.year, state.period, source, str(terminal_reason or "")[:200]),
+        )
+        if commit:
+            self.conn.commit()
+
+    def mark_event_avoided(
+        self,
+        state: GameState,
+        event_id: str,
+        reason: str,
+        source: str = "gate_avoided",
+        *,
+        commit: bool = True,
+    ) -> None:
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO event_triggers
+                (event_id, turn, year, period, source, terminal_state, terminal_reason)
+            VALUES (?, ?, ?, ?, ?, 'avoided', ?)
+            """,
+            (event_id, state.turn, state.year, state.period, source, reason[:200]),
+        )
+        if commit:
+            self.conn.commit()
+
+    def mark_event_obsolete(
+        self,
+        state: GameState,
+        event_id: str,
+        reason: str,
+        source: str = "person_core_dead",
+        *,
+        commit: bool = True,
+    ) -> None:
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO event_triggers
+                (event_id, turn, year, period, source, terminal_state, terminal_reason)
+            VALUES (?, ?, ?, ?, ?, 'obsolete', ?)
+            """,
+            (event_id, state.turn, state.year, state.period, source, reason[:200]),
         )
         if commit:
             self.conn.commit()

@@ -38,6 +38,7 @@ _GATE_TEXT_FIELDS = {
     "army": set(ARMY_TEXT_FIELDS),
     "power": set(POWER_TEXT_FIELDS),
     "character": set(CHARACTER_TEXT_FIELDS),
+    "event": {"terminal_state", "terminal_reason"},
 }
 from ming_sim.models import (
     Army,
@@ -106,16 +107,16 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
 def gate_cond_form_error(cond: str) -> str:
     """trigger_gate 比较式形态校验（#12 Q3 fail-loud）。合法→""；非法→错误说明。
     **精确镜像 runtime _gate_passed 两分支**（cmr r1 Claude+codex concur）：
-    - 文本相等：(==|!=) + 非纯数字 RHS；
+    - 文本比较：(==|!=) + 非纯数字 RHS；或 in=a|b；
     - 数值比较：(>=|<=|>|<|==) + 整数（runtime 数值分支**不含 !=**——故 '!=5' 数值不许，
       否则 load 放行而 runtime 永远 False，ADR 0012 残留 4b②对齐）。"""
     cond = cond.strip()
-    sm = re.match(r"^(==|!=)\s*(.+)$", cond)
-    if sm and not re.match(r"^-?\d+$", sm.group(2).strip()):  # 文本相等（RHS 非纯数字）
+    sm = re.match(r"^(==|!=|in=)\s*(.+)$", cond)
+    if sm and (sm.group(1) == "in=" or not re.match(r"^-?\d+$", sm.group(2).strip())):
         return ""
     if re.match(r"^(>=|<=|>|<|==)\s*-?\d+$", cond):  # 数值（无 !=，同 runtime）
         return ""
-    return f"{cond!r}（应形如 '<=240' / '>=34' 数值，或 '==ming' / '!=houjin' 文本相等）"
+    return f"{cond!r}（应形如 '<=240' / '>=34' 数值，或 '==ming' / '!=houjin' / 'in=a|b' 文本比较）"
 
 
 def gate_key_form_error(key: str) -> str:
@@ -149,6 +150,8 @@ def gate_key_form_error(key: str) -> str:
                 return "class 名为空（@ 前）"
             if "@" in member and not member.split("@", 1)[1].strip():
                 return "class @ 后 region 为空（regional gate 须指定 region；national 用无 @ 形式）"
+    if parts[0] == "event" and field != "triggered":
+        return "event 数值 gate 仅支持 triggered 字段（形如 event.<event_id>.triggered）；文本 gate 用 terminal_state/terminal_reason"
     return ""
 
 
@@ -172,9 +175,9 @@ def gate_text_key_form_error(key: str) -> str:
 
 
 def gate_cond_is_text(cond: str) -> bool:
-    """cond 是否文本相等（==/!= + 非纯数字 RHS）——与 runtime _gate_passed 文本分支同判。"""
-    sm = re.match(r"^(==|!=)\s*(.+)$", cond.strip())
-    return bool(sm and not re.match(r"^-?\d+$", sm.group(2).strip()))
+    """cond 是否文本比较（==/!= 非数字 RHS，或 in=a|b）——与 runtime _gate_passed 文本分支同判。"""
+    sm = re.match(r"^(==|!=|in=)\s*(.+)$", cond.strip())
+    return bool(sm and (sm.group(1) == "in=" or not re.match(r"^-?\d+$", sm.group(2).strip())))
 
 
 def load_event_content(filename: str = "events.json") -> List[Event]:
@@ -226,6 +229,10 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
                 trigger_end_month=int(item.get("trigger_end_month") or 0),
                 precondition=str(item.get("precondition") or ""),
                 event_type=event_type,
+                person_core_subjects=(
+                    string_list(item["person_core_subjects"], f"{filename}[{idx}].person_core_subjects")
+                    if "person_core_subjects" in item else []
+                ),
                 trigger_gate=trigger_gate,
                 auto_trigger=bool(item.get("auto_trigger") or False),
                 bar_value=int(item.get("bar_value") or 0),
