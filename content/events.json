@@ -254,7 +254,7 @@
     "fail_condition": "洛阳陷、福王被烹，李自成势如破竹，河南腹地丧失",
     "trigger_year": 1641,
     "trigger_month": 1,
-    "trigger_gate": {"region.henan.controlled_by": "==ming", "region.henan.unrest": ">=60", "power.bandits.military_strength": ">=45"},
+    "trigger_gate": {"region.henan.controlled_by": "==ming", "region.henan.unrest": ">=60", "power.bandit_li_zicheng.military_strength": ">=45"},
     "precondition": "李自成入河南未压制 + 藩禄改革未推时触发",
     "event_type": "node"
   },

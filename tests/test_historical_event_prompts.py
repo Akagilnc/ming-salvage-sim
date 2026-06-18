@@ -17,3 +17,4 @@ def test_season_simulator_prompts_historical_battle_results_as_main_ledger_facts
     assert "军队变化" in prompt
     assert "地区变化" in prompt
     assert "人物变更" in prompt
+    assert "reason / 原因里带上事件名或战役名" in prompt
