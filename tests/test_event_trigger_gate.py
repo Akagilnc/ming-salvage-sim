@@ -254,6 +254,34 @@ def test_auto_trigger_seed_event_expires_after_latest_window_when_gate_unsatisfi
         content.seed_events.remove(ev)
 
 
+def test_gather_candidate_events_expires_auto_trigger_seed_before_skip(game):
+    db, state, content = game
+    issues.bind_content(content)
+    ev = _hist_event("__test_expiring_auto_seed_candidate__", {"民心": "<=5"})
+    ev.trigger_year = 1629
+    ev.trigger_month = 1
+    ev.trigger_end_year = 1629
+    ev.trigger_end_month = 2
+    ev.auto_trigger = True
+    content.seed_events.append(ev)
+    try:
+        state.year = 1629
+        state.period = 3
+        state.metrics["民心"] = 3
+
+        cands = issues.gather_candidate_events(state, db)
+
+        assert all(c.id != "__test_expiring_auto_seed_candidate__" for c in cands)
+        row = db.conn.execute(
+            "SELECT terminal_state FROM event_triggers WHERE event_id=?",
+            ("__test_expiring_auto_seed_candidate__",),
+        ).fetchone()
+        assert row is not None
+        assert row["terminal_state"] == "expired"
+    finally:
+        content.seed_events.remove(ev)
+
+
 def test_gate_passed_tolerates_none(game):
     # PR#107 R1（gemini medium）：trigger_gate=None（content JSON 显式 null）传进 _gate_passed
     # 不应 None.items() AttributeError 崩候选收集；None 视同空门、恒过。
@@ -2753,6 +2781,31 @@ def test_historical_auto_trigger_core_effect_is_applied_once(game):
         "SELECT COUNT(*) FROM event_triggers WHERE event_id=?",
         ("huabei_plague",),
     ).fetchone()[0] == 1
+
+
+def test_historical_auto_trigger_event_expires_after_latest_window(game):
+    """#188：历史 auto_trigger 也须尊重最晚窗口，过期后不能硬触发。"""
+    db, state, content = game
+    issues.bind_content(content)
+    ev = _hist_event("__test_expiring_historical_auto__", {"民心": "<=5"})
+    ev.trigger_year = 1629
+    ev.trigger_month = 1
+    ev.trigger_end_year = 1629
+    ev.trigger_end_month = 2
+    ev.auto_trigger = True
+    content.events.append(ev)
+    try:
+        state.year = 1629
+        state.period = 3
+        state.metrics["民心"] = 3
+
+        triggered = issues.auto_trigger_seed_issues(state, db)
+
+        assert all(item["id"] != "__test_expiring_historical_auto__" for item in triggered)
+        assert db.event_terminal_state("__test_expiring_historical_auto__") == "expired"
+        assert db.find_any_issue_by_origin("event_pool", "__test_expiring_historical_auto__") is None
+    finally:
+        content.events.remove(ev)
 
 
 def test_huabei_plague_keeps_soft_degree_axis_as_situation_issue(game):
