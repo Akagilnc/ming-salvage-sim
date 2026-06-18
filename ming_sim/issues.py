@@ -1353,6 +1353,225 @@ def _nonempty_dict(v: object) -> bool:
     return isinstance(v, dict) and len(v) > 0
 
 
+_STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS: Dict[str, Dict[str, frozenset[str]]] = {
+    "jisi_lubian": {
+        "regions": frozenset({"beizhili"}),
+        "armies": frozenset({"jingying", "guanning", "jizhen", "xuan_da"}),
+        "characters": frozenset(),
+    },
+    "wuyin_lubian": {
+        "regions": frozenset({"beizhili", "shandong"}),
+        "armies": frozenset({"jingying", "guanning", "jizhen", "xuan_da"}),
+        "characters": frozenset({"卢象升"}),
+    },
+    "songshan_battle": {
+        "regions": frozenset({"liaodong"}),
+        "armies": frozenset({"guanning"}),
+        "characters": frozenset({"洪承畴"}),
+    },
+}
+_STRATEGIC_FOREIGN_NODE_PERSON_ANCHORS: Dict[str, frozenset[str]] = {
+    "jisi_lubian": frozenset({"己巳", "喜峰口", "龙井关", "德胜门", "左安门"}),
+    "wuyin_lubian": frozenset({"戊寅", "墙子岭", "青山口", "巨鹿", "贾庄", "畿南"}),
+    "songshan_battle": frozenset({"松锦", "松山", "锦州", "杏山", "塔山", "援锦"}),
+}
+
+
+def _is_strategic_foreign_node_event(ev: Event) -> bool:
+    return (
+        getattr(ev, "event_type", "situation") != "situation"
+        and ev.id in _STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS
+    )
+
+
+def _event_pool_ids_for_strategic_foreign_nodes(
+    extracted: Dict[str, object],
+    content: GameContent,
+) -> set[str]:
+    ids: set[str] = set()
+    for item in extracted.get("new_issues") or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("origin_kind") or "").lower() != "event_pool":
+            continue
+        event_id = str(item.get("id") or item.get("origin_ref") or "").strip()
+        ev = content.event_by_id.get(event_id)
+        if ev is not None and _is_strategic_foreign_node_event(ev):
+            ids.add(ev.id)
+    return ids
+
+
+def _strategic_event_outcome_targets(event_id: str) -> Dict[str, frozenset[str]]:
+    return _STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS.get(
+        event_id,
+        {"regions": frozenset(), "armies": frozenset(), "characters": frozenset()},
+    )
+
+
+def _target_union(event_ids: set[str], target_key: str) -> set[str]:
+    targets: set[str] = set()
+    for event_id in event_ids:
+        targets.update(_strategic_event_outcome_targets(event_id).get(target_key, frozenset()))
+    return targets
+
+
+def _split_mapping_by_keys(
+    raw: object,
+    target_keys: set[str],
+) -> tuple[Dict[str, object], Dict[str, object]]:
+    if not isinstance(raw, dict):
+        return {}, {}
+    targeted: Dict[str, object] = {}
+    other: Dict[str, object] = {}
+    for key, value in raw.items():
+        (targeted if str(key) in target_keys else other)[key] = value
+    return targeted, other
+
+
+def _person_change_name(item: Dict[str, object]) -> str:
+    return str(
+        item.get("name")
+        or item.get("姓名")
+        or item.get("character")
+        or item.get("person")
+        or ""
+    ).strip()
+
+
+def _is_strategic_person_result_change(item: Dict[str, object]) -> bool:
+    return str(item.get("动作") or item.get("action") or "").strip() != "评定"
+
+
+def _person_change_reason_text(item: Dict[str, object]) -> str:
+    parts = [
+        str(item.get(key) or "")
+        for key in ("reason", "原因", "event_id", "source_event_id", "origin_ref", "derived_from", "narrative", "summary", "说明")
+    ]
+    return " ".join(part.strip() for part in parts if part)
+
+
+def _change_reason_text(raw_changes: object) -> str:
+    if not isinstance(raw_changes, dict):
+        return ""
+    parts = [
+        str(raw_changes.get(key) or "")
+        for key in ("reason", "原因", "event_id", "source_event_id", "origin_ref", "derived_from", "narrative", "summary", "说明")
+    ]
+    return " ".join(part.strip() for part in parts if part)
+
+
+def _change_mentions_strategic_event(raw_changes: object, event_id: str) -> bool:
+    reason_text = _change_reason_text(raw_changes)
+    anchors = _STRATEGIC_FOREIGN_NODE_PERSON_ANCHORS.get(event_id, frozenset())
+    return event_id in reason_text or any(anchor in reason_text for anchor in anchors)
+
+
+def _strategic_entity_delta_event_ids(
+    entity_id: str,
+    raw_changes: object,
+    target_key: str,
+    strategic_event_ids: set[str],
+) -> set[str]:
+    event_ids: set[str] = set()
+    for event_id in strategic_event_ids:
+        targets = _strategic_event_outcome_targets(event_id)
+        if entity_id in targets[target_key] and _change_mentions_strategic_event(raw_changes, event_id):
+            event_ids.add(event_id)
+    return event_ids
+
+
+def _split_strategic_entity_deltas(
+    raw: object,
+    target_key: str,
+    strategic_event_ids: set[str],
+) -> tuple[Dict[str, object], Dict[str, object]]:
+    if not isinstance(raw, dict):
+        return {}, {}
+    strategic: Dict[str, object] = {}
+    other: Dict[str, object] = {}
+    for entity_id, raw_changes in raw.items():
+        if _strategic_entity_delta_event_ids(str(entity_id), raw_changes, target_key, strategic_event_ids):
+            strategic[entity_id] = raw_changes
+        else:
+            other[entity_id] = raw_changes
+    return strategic, other
+
+
+def _entity_deltas_for_strategic_event(
+    raw: object,
+    target_key: str,
+    event_id: str,
+) -> Dict[str, object]:
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        entity_id: raw_changes
+        for entity_id, raw_changes in raw.items()
+        if event_id in _strategic_entity_delta_event_ids(str(entity_id), raw_changes, target_key, {event_id})
+    }
+
+
+def _strategic_person_result_event_ids(
+    item: Dict[str, object],
+    strategic_event_ids: set[str],
+) -> set[str]:
+    if not _is_strategic_person_result_change(item):
+        return set()
+    name = _person_change_name(item)
+    reason_text = _person_change_reason_text(item)
+    event_ids: set[str] = set()
+    for event_id in strategic_event_ids:
+        anchors = _STRATEGIC_FOREIGN_NODE_PERSON_ANCHORS.get(event_id, frozenset())
+        if event_id in reason_text or any(anchor in reason_text for anchor in anchors):
+            event_ids.add(event_id)
+    return event_ids
+
+
+def _split_strategic_person_result_changes(
+    changes: List[Dict[str, object]],
+    strategic_event_ids: set[str],
+) -> tuple[List[Dict[str, object]], List[Dict[str, object]]]:
+    strategic: List[Dict[str, object]] = []
+    other: List[Dict[str, object]] = []
+    for item in changes:
+        if _strategic_person_result_event_ids(item, strategic_event_ids):
+            strategic.append(item)
+        else:
+            other.append(item)
+    return strategic, other
+
+
+def _event_result_delta_event_ids(
+    strategic_event_ids: set[str],
+    extracted: Dict[str, object],
+    person_changes: List[Dict[str, object]],
+) -> set[str]:
+    region_result_event_ids: set[str] = set()
+    if isinstance(extracted.get("region_delta"), dict):
+        for region_id, raw_changes in (extracted.get("region_delta") or {}).items():
+            region_result_event_ids.update(
+                _strategic_entity_delta_event_ids(str(region_id), raw_changes, "regions", strategic_event_ids)
+            )
+    army_result_event_ids: set[str] = set()
+    if isinstance(extracted.get("army_delta"), dict):
+        for army_id, raw_changes in (extracted.get("army_delta") or {}).items():
+            army_result_event_ids.update(
+                _strategic_entity_delta_event_ids(str(army_id), raw_changes, "armies", strategic_event_ids)
+            )
+    person_result_event_ids: set[str] = set()
+    for item in person_changes:
+        person_result_event_ids.update(_strategic_person_result_event_ids(item, strategic_event_ids))
+    result_ids: set[str] = set()
+    for event_id in strategic_event_ids:
+        if (
+            event_id in region_result_event_ids
+            or event_id in army_result_event_ids
+            or event_id in person_result_event_ids
+        ):
+            result_ids.add(event_id)
+    return result_ids
+
+
 def _has_economy_entry(d: object) -> bool:
     """是否含「flows 会真正立账」的月度 economy 项：account∈(国库,内库) + delta 经 int() 强转非零
     ——与 flows._apply_economy_list 同口径（它只对 国库/内库 立账、`int(delta or 0)` 强转、跳过
@@ -1461,6 +1680,8 @@ def apply_issue_tracker_output(
     pending_person_changes_for_gates: Optional[List[Dict[str, object]]] = None,
     allow_legacy_partial_power_for_gates: bool = False,
     candidate_event_ids_at_input: Optional[set[str]] = None,
+    event_result_delta_event_ids: Optional[set[str]] = None,
+    defer_event_trigger_ids: Optional[set[str]] = None,
 ) -> Dict[str, object]:
     touched_ids: set = set()
     applied_advances: List[Dict[str, object]] = []
@@ -1482,6 +1703,12 @@ def apply_issue_tracker_output(
         if candidate_event_ids_at_input is not None
         else {candidate.id for candidate in gather_candidate_events(state, db)}
     )
+    event_result_delta_event_ids = (
+        set(event_result_delta_event_ids)
+        if event_result_delta_event_ids is not None
+        else None
+    )
+    defer_event_trigger_ids = set(defer_event_trigger_ids or set())
     consumed_event_ids: set[str] = set()
     current_candidate_event_ids: set[str] = set()
     candidates_dirty = True
@@ -1639,12 +1866,12 @@ def apply_issue_tracker_output(
             ev = event_by_id.get(event_id)
             if ev is None:
                 print(f"[INFO] new_issue 已拒：event_pool id={event_id!r} 非预设事件，疑似臆造。")
-                applied_new.append({"title": title or event_id, "rejected": True, "reason": "event_pool id 非预设事件"})
+                applied_new.append({"id": event_id, "title": title or event_id, "rejected": True, "reason": "event_pool id 非预设事件"})
                 continue
             if getattr(ev, "auto_trigger", False):
                 # auto_trigger 事件只能程序硬触发，LLM 不准从候选池立项
                 print(f"[INFO] new_issue 已拒：event {event_id} 标了 auto_trigger，只能程序硬触发。")
-                applied_new.append({"title": ev.title, "rejected": True, "reason": "auto_trigger 事件仅程序可触发"})
+                applied_new.append({"id": ev.id, "title": ev.title, "rejected": True, "reason": "auto_trigger 事件仅程序可触发"})
                 continue
             if (
                 ev.id not in candidate_event_ids
@@ -1654,6 +1881,7 @@ def apply_issue_tracker_output(
                 # 避免陈旧/伪造 id 穿透候选层后直接应用确定性后果（#203 CMR）。
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 当前未进 event_pool 候选池。")
                 applied_new.append({
+                    "id": ev.id,
                     "title": ev.title,
                     "rejected": True,
                     "reason": "事件当前未进候选池（窗口/前提门/已触发不满足）",
@@ -1665,6 +1893,7 @@ def apply_issue_tracker_output(
             if ev.id not in current_candidate_event_ids:
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 当前未进 event_pool 候选池。")
                 applied_new.append({
+                    "id": ev.id,
                     "title": ev.title,
                     "rejected": True,
                     "reason": "事件当前未进候选池（窗口/前提门/已触发不满足）",
@@ -1682,12 +1911,38 @@ def apply_issue_tracker_output(
             ):
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 被同回合人物变更阻断。")
                 applied_new.append({
+                    "id": ev.id,
                     "title": ev.title,
                     "rejected": True,
                     "reason": "事件当前未进候选池（同回合人物变更后前提门不满足）",
                 })
                 continue
+            if (
+                _is_strategic_foreign_node_event(ev)
+                and event_result_delta_event_ids is not None
+                and ev.id not in event_result_delta_event_ids
+            ):
+                print(f"[INFO] new_issue 已拒：战略/外敌事件 {event_id} 缺世界状态主账结果。")
+                applied_new.append({
+                    "id": ev.id,
+                    "title": ev.title,
+                    "rejected": True,
+                    "reason": "战略/外敌战事缺世界状态主账结果（地区/军队/人物变更）",
+                })
+                continue
             if ev.event_type != "situation":
+                if ev.id in defer_event_trigger_ids:
+                    consumed_event_ids.add(ev.id)
+                    candidates_dirty = True
+                    print(f"[INFO] new_issue 已接收：事件 {event_id} 为 {ev.event_type}，待软判结果落主账后记触发。")
+                    applied_new.append({
+                        "id": ev.id,
+                        "title": ev.title,
+                        "rejected": False,
+                        "deferred_trigger": True,
+                        "reason": f"event_type={ev.event_type} 待软判结果落主账后记触发",
+                    })
+                    continue
                 if ev.effect_on_trigger:
                     entity_rejections.extend(
                         _apply_issue_entities(
@@ -1705,18 +1960,18 @@ def apply_issue_tracker_output(
                 consumed_event_ids.add(ev.id)
                 candidates_dirty = True
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 为 {ev.event_type}，不转 issue。")
-                applied_new.append({"title": ev.title, "rejected": False, "reason": f"event_type={ev.event_type} 已记为触发"})
+                applied_new.append({"id": ev.id, "title": ev.title, "rejected": False, "reason": f"event_type={ev.event_type} 已记为触发"})
                 continue
             issue_id = event_to_issue(db, state, ev, commit=not external_transaction)
             if issue_id is None:
                 # event_to_issue 移除 broad except 后，返回 None 只剩一种语义：同源 issue 已存在的
                 # 幂等去重跳过（在其 insert try 之外 early-return）；insert 的真代码/DB 异常现已上抛、
                 # 不再走此 None 分支（cmr ni r7 codex high），故 reason 不再含「或落库失败」。
-                applied_new.append({"title": ev.title, "rejected": True, "reason": "事件已触发过（同源局势已立，幂等跳过）"})
+                applied_new.append({"id": ev.id, "title": ev.title, "rejected": True, "reason": "事件已触发过（同源局势已立，幂等跳过）"})
             else:
                 consumed_event_ids.add(ev.id)
                 candidates_dirty = True
-                applied_new.append({"issue_id": issue_id, "kind": "situation", "title": ev.title, "rejected": False})
+                applied_new.append({"id": ev.id, "issue_id": issue_id, "kind": "situation", "title": ev.title, "rejected": False})
             continue
         if origin_kind != "decree":
             print(f"[INFO] new_issue 已拒：'{title}'（origin_kind={origin_kind!r}，仅接 decree / event_pool）。")
@@ -3101,6 +3356,7 @@ def apply_score_extraction(
         _register_runtime_rollback_snapshot(db, state, content, registry)
     # 0) 落库前校验容器/二级类型,畸形值崩前拦住,不让前面字段半落库(#57)。
     validate_delta_shape(extracted)
+    runtime_content = content if content is not None else _ctx()
     candidate_event_ids_at_input = {candidate.id for candidate in gather_candidate_events(state, db)}
     new_person_changes = normalize_person_changes({"人物变更": extracted.get("人物变更") or []})
     legacy_person_changes = [] if new_person_changes else normalize_person_changes({
@@ -3112,6 +3368,14 @@ def apply_score_extraction(
     person_changes = new_person_changes or legacy_person_changes
     use_legacy_person_keys = not person_changes
     legacy_person_mode = bool(legacy_person_changes)
+    strategic_event_pool_ids = _event_pool_ids_for_strategic_foreign_nodes(extracted, runtime_content)
+    strategic_event_result_delta_event_ids = _event_result_delta_event_ids(
+        set(_STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS),
+        extracted,
+        person_changes,
+    )
+    strategic_event_delta_ids = set(strategic_event_result_delta_event_ids)
+    strategic_event_referenced_ids = strategic_event_pool_ids | strategic_event_delta_ids
 
     def _split_pre_issue_person_changes(changes: List[Dict[str, object]]) -> tuple[List[Dict[str, object]], List[Dict[str, object]]]:
         pre_issue: List[Dict[str, object]] = []
@@ -3124,6 +3388,15 @@ def apply_score_extraction(
         return pre_issue, post_issue
 
     pre_issue_person_changes, post_issue_person_changes = _split_pre_issue_person_changes(person_changes)
+    strategic_pre_issue_person_changes, pre_issue_person_changes = _split_strategic_person_result_changes(
+        pre_issue_person_changes,
+        strategic_event_referenced_ids,
+    )
+    strategic_post_issue_person_changes, post_issue_person_changes = _split_strategic_person_result_changes(
+        post_issue_person_changes,
+        strategic_event_referenced_ids,
+    )
+    strategic_person_result_changes = strategic_pre_issue_person_changes + strategic_post_issue_person_changes
 
     def _annotate_legacy_person_rejections(results: List[Dict[str, object]]) -> None:
         for result in results:
@@ -3143,9 +3416,9 @@ def apply_score_extraction(
         changes: List[Dict[str, object]],
         *,
         legacy: bool,
-    ) -> None:
+    ) -> List[Dict[str, object]]:
         if not changes:
-            return
+            return []
         results = _apply_person_changes(
             db,
             state,
@@ -3159,6 +3432,7 @@ def apply_score_extraction(
         if legacy:
             _annotate_legacy_person_rejections(results)
         applied_person_changes.extend(results)
+        return results
 
     # 1) metric_delta
     applied_metric = _apply_metric_dict(state, extracted.get("metric_delta") or {}, db=db)
@@ -3191,6 +3465,16 @@ def apply_score_extraction(
     region_deltas_raw = extracted.get("region_delta") or {}
     army_deltas_raw = extracted.get("army_delta") or {}
     new_armies_raw = extracted.get("new_armies") or []
+    strategic_region_deltas_raw, ordinary_region_deltas_raw = _split_strategic_entity_deltas(
+        region_deltas_raw,
+        "regions",
+        strategic_event_referenced_ids,
+    )
+    strategic_army_deltas_raw, ordinary_army_deltas_raw = _split_strategic_entity_deltas(
+        army_deltas_raw,
+        "armies",
+        strategic_event_referenced_ids,
+    )
 
     pseudo_event = Event(
         id="season",
@@ -3218,22 +3502,22 @@ def apply_score_extraction(
             actor="档房",
             commit=commit_now,
         )
-    if isinstance(region_deltas_raw, dict) and region_deltas_raw:
+    if ordinary_region_deltas_raw:
         region_changes = db.apply_region_deltas(
             state,
             pseudo_event,
             None,
             "档房",
-            region_deltas_raw,
+            ordinary_region_deltas_raw,
             commit=commit_now,
         )
-    if isinstance(army_deltas_raw, dict) and army_deltas_raw:
+    if ordinary_army_deltas_raw:
         army_changes = db.apply_army_deltas(
             state,
             pseudo_event,
             None,
             "档房",
-            army_deltas_raw,
+            ordinary_army_deltas_raw,
             commit=commit_now,
         )
 
@@ -3260,7 +3544,133 @@ def apply_score_extraction(
     }, llm_config=llm_config, content=content,
         pending_person_changes_for_gates=post_issue_person_changes,
         allow_legacy_partial_power_for_gates=legacy_person_mode,
-        candidate_event_ids_at_input=candidate_event_ids_at_input)
+        candidate_event_ids_at_input=candidate_event_ids_at_input,
+        event_result_delta_event_ids=strategic_event_result_delta_event_ids,
+        defer_event_trigger_ids=strategic_event_pool_ids)
+
+    def _reject_suppressed_strategic_results(event_id: str, event_title: str) -> None:
+        targets = _strategic_event_outcome_targets(event_id)
+        event_region_deltas = _entity_deltas_for_strategic_event(
+            strategic_region_deltas_raw,
+            "regions",
+            event_id,
+        )
+        event_army_deltas = _entity_deltas_for_strategic_event(
+            strategic_army_deltas_raw,
+            "armies",
+            event_id,
+        )
+        event_person_changes = [
+            item
+            for item in strategic_person_result_changes
+            if event_id in _strategic_person_result_event_ids(item, {event_id})
+        ]
+        reason = f"战略/外敌事件「{event_title or event_id}」未触发，战果不落主账"
+        for region_id, raw_changes in event_region_deltas.items():
+            region_changes.append({
+                "region_id": region_id,
+                "rejected": True,
+                "category": "event_rejected",
+                "reason": reason,
+                "item": {"event_id": event_id, "region_id": region_id, "changes": raw_changes},
+            })
+        for army_id, raw_changes in event_army_deltas.items():
+            army_changes.append({
+                "army_id": army_id,
+                "rejected": True,
+                "category": "event_rejected",
+                "reason": reason,
+                "item": {"event_id": event_id, "army_id": army_id, "changes": raw_changes},
+            })
+        for item in event_person_changes:
+            applied_person_changes.append({
+                "name": _person_change_name(item),
+                "动作": str(item.get("动作") or item.get("action") or "").strip(),
+                "rejected": True,
+                "category": "event_rejected",
+                "reason": reason,
+                "item": dict(item),
+            })
+
+    strategic_event_issue_ids_seen: set[str] = set()
+    for new_issue in (issue_summary.get("new_issues") or []):
+        if isinstance(new_issue, dict):
+            event_id = str(new_issue.get("id") or "").strip()
+            if event_id in strategic_event_referenced_ids:
+                strategic_event_issue_ids_seen.add(event_id)
+        if not isinstance(new_issue, dict) or not new_issue.get("rejected"):
+            continue
+        event_id = str(new_issue.get("id") or "").strip()
+        if event_id not in strategic_event_referenced_ids:
+            continue
+        _reject_suppressed_strategic_results(event_id, str(new_issue.get("title") or ""))
+
+    for event_id in sorted(strategic_event_delta_ids - strategic_event_issue_ids_seen):
+        ev = runtime_content.event_by_id.get(event_id)
+        _reject_suppressed_strategic_results(event_id, ev.title if ev is not None else event_id)
+
+    for new_issue in (issue_summary.get("new_issues") or []):
+        if not (
+            isinstance(new_issue, dict)
+            and new_issue.get("deferred_trigger")
+            and not new_issue.get("rejected")
+        ):
+            continue
+        event_id = str(new_issue.get("id") or "").strip()
+        if event_id not in strategic_event_pool_ids:
+            continue
+        targets = _strategic_event_outcome_targets(event_id)
+        event_region_deltas = _entity_deltas_for_strategic_event(
+            strategic_region_deltas_raw,
+            "regions",
+            event_id,
+        )
+        event_army_deltas = _entity_deltas_for_strategic_event(
+            strategic_army_deltas_raw,
+            "armies",
+            event_id,
+        )
+        event_person_changes = [
+            item
+            for item in strategic_person_result_changes
+            if event_id in _strategic_person_result_event_ids(item, {event_id})
+        ]
+        event_region_changes: List[Dict[str, object]] = []
+        event_army_changes: List[Dict[str, object]] = []
+        event_person_results: List[Dict[str, object]] = []
+        if event_region_deltas:
+            event_region_changes = db.apply_region_deltas(
+                state,
+                pseudo_event,
+                None,
+                "档房",
+                event_region_deltas,
+                commit=commit_now,
+            )
+            region_changes.extend(event_region_changes)
+        if event_army_deltas:
+            event_army_changes = db.apply_army_deltas(
+                state,
+                pseudo_event,
+                None,
+                "档房",
+                event_army_deltas,
+                commit=commit_now,
+            )
+            army_changes.extend(event_army_changes)
+        if event_person_changes:
+            event_person_results = _apply_normalized_person_changes(
+                event_person_changes,
+                legacy=legacy_person_mode,
+            )
+        result_items = event_region_changes + event_army_changes + event_person_results
+        if any(not item.get("rejected") for item in result_items):
+            db.mark_event_triggered(state, event_id, commit=commit_now)
+            new_issue["reason"] = "event_type=node 已记为触发，软判结果已落主账"
+        else:
+            new_issue["rejected"] = True
+            new_issue["category"] = "missing_world_state_delta"
+            new_issue["reason"] = "战略/外敌战事缺世界状态主账结果（地区/军队/人物变更均未成功）"
     _apply_normalized_person_changes(post_issue_person_changes, legacy=legacy_person_mode)
 
     def _norm_int_leaf(v):
