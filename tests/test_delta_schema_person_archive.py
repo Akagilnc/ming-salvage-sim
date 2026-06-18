@@ -72,3 +72,26 @@ def test_delta_schema_documents_power_change_backlash_contract():
         assert field in required_fields
     assert "`反噬`" not in optional_fields
     assert "legacy 翻译才可用 `不明`" in notes
+
+
+def test_delta_schema_power_updates_matches_runtime_guard():
+    """power_updates 文档只能暴露 runtime 真收的三字段，不再把拒收字段写成契约。"""
+    section = _text().split("### `power_updates`", 1)[1].split("### `world_advance`", 1)[0]
+
+    assert "禁止写 `ming`" in section
+    for field in ("`leverage`", "`military_strength`", "`supply`", "`威望`", "`实力`", "`经济`"):
+        assert field in section
+    for rejected_field in ("`satisfaction`", "`cohesion`", "`leader`", "`stance`", "`agenda`"):
+        assert rejected_field not in section
+
+
+def test_delta_schema_documents_strategic_event_pool_main_ledger_contract():
+    """#189：战略/外敌战事 event_pool 触发必须和世界状态主账同信封闭环。"""
+    text = _text()
+
+    assert "战略/外敌战事" in text
+    assert "同一信封" in text
+    assert "世界状态主账" in text
+    assert "`region_delta`" in text
+    assert "`army_delta`" in text
+    assert "`人物变更`" in text

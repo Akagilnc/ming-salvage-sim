@@ -13,7 +13,8 @@
     "fail_condition": "东江旧部失饷离心、孔耿等部哗走或渐生叛意，皮岛废弛，为日后吴桥兵变与降金埋祸",
     "trigger_year": 1629,
     "trigger_month": 6,
-    "trigger_gate": {"character.毛文龙.loyalty": "<65", "character.毛文龙.status": "==active", "character.袁崇焕.status": "==active"},
+    "person_core_subjects": ["毛文龙"],
+    "trigger_gate": {"character.毛文龙.loyalty": "<65", "character.毛文龙.status": "==active", "character.毛文龙.location": "==dongjiang_area", "character.袁崇焕.status": "==active", "army.guanning.commander": "==袁崇焕"},
     "effect_on_trigger": {
       "人物变更": [
         {"name": "毛文龙", "动作": "处置", "status": "dead", "reason": "袁崇焕双岛斩帅"}
@@ -36,6 +37,7 @@
     "fail_condition": "京畿州县大量被劫，永定门破或勤王主帅下狱，朝局崩坏",
     "trigger_year": 1629,
     "trigger_month": 11,
+    "event_type": "node",
     "precondition": "历史既定：崇祯二年十一月皇太极绕道蒙古叩喜峰口、龙井关——此乃后金主动来犯，是否发起不由明廷，玩家无法取消其入塞，只能决定结果。后金避宁锦坚城、择蓟镇边墙之弱处而入，故结果主要由蓟镇一线虚实决定，看盘面：蓟镇(jizhen) arrears/training/equipment/morale、宣大(xuan_da) 同字段、关宁军(guanning) 是否欠饷哗变且能否分兵入卫、京营(jingying) 战力、beizhili.military_pressure。结果按蓟镇宣大此前整备程度分三档：①【挡于边墙】蓟镇宣大欠饷已补、操练城防像样（arrears 低、training/equipment 中上、morale 不低），则建虏顿于喜峰口一线、攻关不下，劫掠数州后粮尽自退，京师至多戒严不破关；②【入塞被遏】只补强部分、或补强不久根基浅，则虏骑破口入塞、掠京畿数县，但勤王军（关宁入卫）合力可将其逐出、未抵京师城下；③【长驱直入】蓟镇空虚、关宁欠饷哗变无力入卫，则破龙井关、陷遵化、兵临德胜门，京畿大掠。蓟镇是关键变量，宁锦再强若蓟镇空虚仍挡不住绕袭；反之蓟镇宣大扎实补强即可显著减轻祸患，不必面面俱到。"
   },
   {
@@ -52,7 +54,9 @@
     "fail_condition": "凌迟袁崇焕致祖大寿叛走或关宁军整编瓦解，宁锦防线无人能守",
     "trigger_year": 1629,
     "trigger_month": 12,
-    "precondition": "己巳之变后必发；若 jisi_lubian 未触发或玩家提前罢袁崇焕则跳过",
+    "person_core_subjects": ["袁崇焕"],
+    "trigger_gate": {"character.袁崇焕.status": "==active", "army.guanning.commander": "==袁崇焕", "character.毛文龙.status": "==dead", "character.毛文龙.status_reason": "==袁崇焕双岛斩帅", "event.jisi_lubian.terminal_state": "==triggered", "event.jisi_lubian.terminal_reason": "in=入塞被遏|长驱直入"},
+    "precondition": "己巳之变后必发；若 jisi_lubian 未触发、结局仅挡于边墙，或玩家提前罢袁崇焕则跳过",
     "event_type": "node"
   },
   {
@@ -69,6 +73,8 @@
     "fail_condition": "孔耿率部渡海降金，携西洋火炮与匠师投皇太极，明火器优势彻底丧失",
     "trigger_year": 1631,
     "trigger_month": 8,
+    "person_core_subjects": ["孔有德"],
+    "trigger_gate": {"character.孔有德.status": "==active", "character.孔有德.power_id": "==ming", "character.孔有德.location": "==dongjiang_area", "character.毛文龙.status": "==dead", "army.dongjiang.loyalty": "<=42", "army.denglai.arrears": ">=6"},
     "precondition": "若毛文龙已被斩 + 登莱欠饷严重，必触发；玩家可提前安抚或裁汰旧部"
   },
   {
@@ -118,24 +124,38 @@
     "fail_condition": "朝鲜被迫向清称臣（丙子之役），蒙古诸部尽奉清正朔，士林开始私议「天命已移」，中原与江南观望者增",
     "trigger_year": 1636,
     "trigger_month": 4,
-    "precondition": "历史既定：崇祯九年四月皇太极称帝改国号大清；林丹汗西走、朝鲜被迫归附为前奏；玩家若已联蒙或保朝鲜，宣示力度可减",
-    "event_type": "node"
+    "trigger_gate": {},
+    "auto_trigger": true,
+    "effect_on_trigger": {
+      "power_renames": [
+        {
+          "power_id": "houjin",
+          "new_name": "大清",
+          "aliases": "后金，清，大清",
+          "reason": "皇太极称帝，改国号大清",
+          "status": "皇太极称帝改国号大清，建元崇德，整合满蒙汉诸部南向争明",
+          "last_action": "皇太极称帝改国号大清"
+        }
+      ]
+    },
+    "precondition": "触发门：无条件/近天定。理由：皇太极称帝改国号是后金内部核心事实，不由明廷取消；明廷承不承认伪号、联蒙或保朝鲜的外交与意识形态响应仍走软判。",
+    "event_type": "situation"
   },
   {
     "id": "wuyin_lubian",
-    "title": "戊寅虏变：卢象升殉国巨鹿",
+    "title": "戊寅虏变：清军大举入塞",
     "kind": "外族",
-    "summary": "多尔衮、岳托率清军大举入塞，破墙子岭、青山口，纵兵畿南山东，连下州县数十。卢象升以兵部尚书督师御之，与高起潜不合、援绝粮尽，战死巨鹿贾庄。",
+    "summary": "多尔衮、岳托率清军大举入塞，破墙子岭、青山口，纵兵畿南山东，连下州县数十。史实中卢象升以兵部尚书督师御之，与高起潜不合、援绝粮尽，战死巨鹿贾庄；本局按盘面软判守将是谁、援兵粮饷如何、卢象升是殉国、突围还是根本未在此席。",
     "urgency": 92,
     "severity": 90,
     "credibility": 90,
     "interests": ["蓟镇", "宣大", "畿南", "山东", "卢象升", "高起潜", "杨嗣昌"],
     "audiences": ["卢象升", "杨嗣昌", "孙承宗", "曹化淳"],
-    "resolve_condition": "卢象升得高起潜援、关宁勤王及时入畿，与清军在通州/真定一线胜负相当，得保大将不殁、畿南州县未尽陷",
-    "fail_condition": "卢象升孤军战死，畿南山东数十城陷，清军大掠满载而归；明朝最后一支能野战之劲旅瓦解",
+    "resolve_condition": "督师席位获得监军与关宁勤王实援，粮饷不断，在通州/真定一线与清军胜负相当；守将是否保全、畿南州县失陷几何由本局软判落账",
+    "fail_condition": "督师席位孤军无援或调度失序，畿南山东数十城陷，清军大掠满载而归；守将殉国、突围或失陷由本局软判落人物账",
     "trigger_year": 1638,
     "trigger_month": 9,
-    "precondition": "历史既定：崇祯十一年九月清军第四次入塞，卢象升十二月战死巨鹿；若林丹汗西迁后蓟镇边墙未补、督师与监军不和则后果更烈",
+    "precondition": "历史既定：崇祯十一年九月清军第四次入塞，史实中卢象升十二月战死巨鹿；本事件是清军入塞的战略/外敌战事，卢象升生死由软判结局决定，不是触发前提。若林丹汗西迁后蓟镇边墙未补、督师与监军不和则后果更烈",
     "event_type": "node"
   },
   {
@@ -152,6 +172,8 @@
     "fail_condition": "张献忠率部再起合罗汝才入川，杨嗣昌督师入川追剿无功，湖广四川糜烂为流寇腹地",
     "trigger_year": 1639,
     "trigger_month": 5,
+    "person_core_subjects": ["张献忠"],
+    "trigger_gate": {"character.张献忠.status": "==active", "character.张献忠.power_id": "==ming", "character.张献忠.loyalty": "<=50", "character.张献忠.location": "==huguang", "region.huguang.unrest": ">=45"},
     "precondition": "历史既定：崇祯十二年五月张献忠于谷城再反；若熊文灿招抚未实削兵权、未拆其据点，则必反",
     "event_type": "node"
   },
@@ -169,7 +191,19 @@
     "fail_condition": "疫情失控蔓延陕豫致逃户暴增、流寇借疫坐大；或边军营中染疫减员，宣大蓟镇兵备空虚",
     "trigger_year": 1633,
     "trigger_month": 7,
-    "precondition": "历史既定：崇祯六年华北鼠疫起于山西；若赈济/医药未备则蔓延更烈"
+    "trigger_gate": {},
+    "auto_trigger": true,
+    "event_type": "situation",
+    "effect_on_trigger": {
+      "region_delta": {
+        "shanxi": {
+          "population": -40,
+          "unrest": 6,
+          "reason": "华北大疫核心事实：山西疫起、人口锐减、逃户动荡增加"
+        }
+      }
+    },
+    "precondition": "触发门：无条件/天定。理由：崇祯六年华北鼠疫起于山西，核心事实不由明廷取消；赈济、隔离、医药只影响蔓延范围与烈度，仍留给软判。"
   },
   {
     "id": "li_chenghai",
@@ -185,22 +219,25 @@
     "fail_condition": "李自成攻陷洛阳、福王被烹，河南成流寇腹地",
     "trigger_year": 1634,
     "trigger_month": 1,
+    "person_core_subjects": ["李自成"],
+    "trigger_gate": {"character.李自成.status": "==active", "character.李自成.power_id": "==bandit_li_zicheng", "character.李自成.location": "==shaanxi", "region.shaanxi.unrest": ">=70", "power.bandit_li_zicheng.military_strength": ">=35"},
     "precondition": "陕西逃户/民变持续未解时触发"
   },
   {
     "id": "songshan_battle",
     "title": "松锦决战",
     "kind": "军事",
-    "summary": "洪承畴率十三万援锦州，皇太极挖壕困之，明军粮道被断，全军崩溃，洪承畴被俘。",
+    "summary": "明廷发十三万援锦州，皇太极挖壕围困，史实中洪承畴督师粮道被断、全军崩溃而被俘；本局按盘面软判援锦主帅是谁、粮道是否断绝、关宁主力是否崩溃。",
     "urgency": 95,
     "severity": 95,
     "credibility": 92,
     "interests": ["辽东", "后金", "洪承畴", "国本"],
     "audiences": ["洪承畴", "孙承宗", "杨嗣昌"],
-    "resolve_condition": "洪承畴稳扎稳打或撤兵保存实力，关宁主力未一战尽失",
-    "fail_condition": "明军主力被歼，洪承畴降金，山海关外尽失",
+    "resolve_condition": "援锦主帅稳扎稳打或撤兵保存实力，关宁主力未一战尽失；主帅生死去向由本局软判落人物账",
+    "fail_condition": "明军主力被歼，援锦主帅被俘、阵亡或突围由本局软判落人物账，山海关外尽失",
     "trigger_year": 1641,
     "trigger_month": 8,
+    "event_type": "node",
     "precondition": "国库/边防长期未补 + 玩家急于进取时触发"
   },
   {
@@ -217,6 +254,7 @@
     "fail_condition": "洛阳陷、福王被烹，李自成势如破竹，河南腹地丧失",
     "trigger_year": 1641,
     "trigger_month": 1,
+    "trigger_gate": {"region.henan.controlled_by": "==ming", "region.henan.unrest": ">=60", "power.bandit_li_zicheng.military_strength": ">=45"},
     "precondition": "李自成入河南未压制 + 藩禄改革未推时触发",
     "event_type": "node"
   },
@@ -250,7 +288,19 @@
     "fail_condition": "京营因疫不能成军、城防形同虚设；疫死激起民怨与逃亡，京师人心先溃于敌至",
     "trigger_year": 1643,
     "trigger_month": 3,
-    "precondition": "历史既定：崇祯十六年京师大疫，直接削弱次年守城之力；为 beijing_fallen 之先兆"
+    "trigger_gate": {},
+    "auto_trigger": true,
+    "event_type": "situation",
+    "effect_on_trigger": {
+      "army_delta": {
+        "jingying": {
+          "manpower": -51000,
+          "morale": -16,
+          "reason": "京师大疫核心事实：京营疫死减员、守城士气骤挫"
+        }
+      }
+    },
+    "precondition": "触发门：无条件/天定。理由：崇祯十六年京师大疫为史实天灾核心事实；玩家赈疫、隔离、补营可影响蔓延与恢复程度，但疫情入京本身不可用漏填门表达。"
   },
   {
     "id": "beijing_fallen",

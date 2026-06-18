@@ -42,6 +42,17 @@ def test_in_module_fields_do_not_surface(monkeypatch):
     assert not [m for m in msgs if "misroute" in m], msgs
 
 
+def test_issues_module_accepts_event_outcomes_alias_without_misroute(monkeypatch):
+    data = {"event_outcomes": {"jisi_lubian": "入塞被遏"}}
+
+    msgs = _capture_tlog(monkeypatch)
+    out = sim._sanitize_module_output("issues", data)
+
+    assert out["事件结局"] == {"jisi_lubian": "入塞被遏"}
+    assert "event_outcomes" not in out
+    assert not [m for m in msgs if "misroute" in m], msgs
+
+
 def test_garbage_key_does_not_surface(monkeypatch):
     # 无主/垃圾键（不属任何模块）——不报 misroute（只报「属其它模块」的错放，避免噪音）。
     data = {"metric_delta": {"皇威": 1}, "totally_made_up_key": 123}
