@@ -580,6 +580,27 @@ def test_strategic_foreign_event_rejects_trigger_without_world_state_delta(game)
     assert not db.has_event_triggered("jisi_lubian")
 
 
+def test_direct_issue_tracker_rejects_strategic_event_without_world_state_delta(game):
+    """ship-pre R5：低层 issue applier 也不能绕过战略战事主账门。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+
+    assert any(ev.id == "jisi_lubian" for ev in issues.gather_candidate_events(state, db))
+
+    out = issues.apply_issue_tracker_output(
+        db,
+        state,
+        {"new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}]},
+        content=content,
+    )
+
+    assert out["new_issues"][0]["rejected"] is True
+    assert "主账" in out["new_issues"][0]["reason"]
+    assert not db.has_event_triggered("jisi_lubian")
+
+
 def test_anchored_strategic_result_delta_without_event_trigger_is_rejected(game):
     """#189 CMR R6：有战役锚点但无 event_pool 触发时，不得只落战果主账。"""
     db, state, content = game
