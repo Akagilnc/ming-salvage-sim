@@ -1365,6 +1365,178 @@ def test_strategic_event_army_clamp_noop_does_not_mark_event_triggered(game):
     ).fetchone()["manpower"] == 0
 
 
+def test_strategic_event_person_travel_noop_does_not_mark_event_triggered(game):
+    """CMR R12：战略人物行止若没有真实位置/在途变化，不得充当战事主账结果。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1638
+    state.period = 9
+    db.conn.execute(
+        "UPDATE characters SET status = ?, location = ?, transit_to = ? WHERE name = ?",
+        ("active", "beizhili", "", "卢象升"),
+    )
+    content.characters["卢象升"].status = "active"
+    content.characters["卢象升"].location = "beizhili"
+    content.characters["卢象升"].transit_to = ""
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
+            "人物变更": [
+                {
+                    "name": "卢象升",
+                    "动作": "行止",
+                    "location": "beizhili",
+                    "reason": "戊寅虏变软判主帅行止",
+                }
+            ],
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert "无真实世界状态变化" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert not db.has_event_triggered("wuyin_lubian")
+    row = db.conn.execute(
+        "SELECT status, location, transit_to FROM characters WHERE name = ?",
+        ("卢象升",),
+    ).fetchone()
+    assert dict(row) == {"status": "active", "location": "beizhili", "transit_to": ""}
+
+
+def test_rejected_strategic_event_suppresses_power_updates(game):
+    """CMR R12：战略事件缺主账结果被拒时，同信封 power_updates 不得提前落库。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    db.conn.execute("UPDATE powers SET military_strength = ? WHERE id = ?", (50, "houjin"))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "事件结局": {"jisi_lubian": "入塞被遏"},
+            "power_updates": {
+                "houjin": {"military_strength": -3, "reason": "己巳之变后金入塞受挫"}
+            },
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert not db.has_event_triggered("jisi_lubian")
+    assert db.conn.execute(
+        "SELECT military_strength FROM powers WHERE id = ?", ("houjin",)
+    ).fetchone()["military_strength"] == 50
+    assert any(
+        item.get("rejected") and item.get("category") == "event_rejected" and item.get("power_id") == "houjin"
+        for item in out["power_changes"]
+    )
+
+
+def test_accepted_strategic_event_applies_power_updates_after_main_result(game):
+    """同族自查：战略事件已有真实主账结果时，power_updates 可作为同信封附带战果落库。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"))
+    db.conn.execute("UPDATE powers SET military_strength = ? WHERE id = ?", (50, "houjin"))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "事件结局": {"jisi_lubian": "入塞被遏"},
+            "region_delta": {"beizhili": {"military_pressure": 10, "controlled_by": "ming", "reason": "己巳之变软判敌逼京畿"}},
+            "power_updates": {
+                "houjin": {"military_strength": -3, "reason": "己巳之变后金入塞受挫"}
+            },
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is False
+    assert db.has_event_triggered("jisi_lubian")
+    assert db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
+    ).fetchone()["military_pressure"] == 30
+    assert db.conn.execute(
+        "SELECT military_strength FROM powers WHERE id = ?", ("houjin",)
+    ).fetchone()["military_strength"] == 47
+    assert any(item.get("field") == "military_strength" and item.get("delta") == -3 for item in out["power_changes"])
+
+
+def test_invalid_strategic_power_update_blocks_main_result(game):
+    """同族自查：同信封 power_updates 自身拒收时，地区战果也不得半落主账。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"))
+    db.conn.execute("UPDATE powers SET military_strength = ? WHERE id = ?", (50, "houjin"))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "事件结局": {"jisi_lubian": "入塞被遏"},
+            "region_delta": {"beizhili": {"military_pressure": 10, "reason": "己巳之变软判敌逼京畿"}},
+            "power_updates": {
+                "houjin": {"城防": 3, "reason": "己巳之变后金入塞受挫"}
+            },
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert "势力战果拒收" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert not db.has_event_triggered("jisi_lubian")
+    assert db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
+    ).fetchone()["military_pressure"] == 20
+    assert db.conn.execute(
+        "SELECT military_strength FROM powers WHERE id = ?", ("houjin",)
+    ).fetchone()["military_strength"] == 50
+    assert any(item.get("rejected") and item.get("category") == "event_rejected" for item in out["region_changes"])
+    assert any(item.get("rejected") and item.get("category") == "event_rejected" for item in out["power_changes"])
+
+
+def test_orphan_strategic_power_update_without_event_issue_is_rejected(game):
+    """同族自查：带战略事件锚点的 power_updates 没有事件立项时，也不得按普通势力变化落库。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    db.conn.execute("UPDATE powers SET military_strength = ? WHERE id = ?", (50, "houjin"))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "power_updates": {
+                "houjin": {"military_strength": -3, "reason": "己巳之变后金入塞受挫"}
+            },
+        },
+        content=content,
+    )
+
+    assert not db.has_event_triggered("jisi_lubian")
+    assert db.conn.execute(
+        "SELECT military_strength FROM powers WHERE id = ?", ("houjin",)
+    ).fetchone()["military_strength"] == 50
+    assert any(
+        item.get("rejected") and item.get("category") == "event_rejected" and item.get("power_id") == "houjin"
+        for item in out["power_changes"]
+    )
+
+
 @pytest.mark.parametrize("control_field", ["controlled_by", "归属"])
 def test_jisi_border_contained_outcome_rejects_invasion_world_state(game, control_field):
     """CMR R11：己巳结局标签不得与结构化世界状态战果自相矛盾。"""
@@ -1431,6 +1603,36 @@ def test_strategic_event_person_result_rejection_blocks_other_result_deltas(game
     assert db.get_character_status("卢象升")[0] == "active"
     assert any(item.get("rejected") for item in out["region_changes"])
     assert any(item.get("rejected") for item in out["applied_person_changes"])
+
+
+def test_strategic_person_alias_stays_in_rejected_event_envelope(game):
+    """CMR R12：战略人物别名须先归一再分流，事件拒收时不得漏成普通人物变更。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1638
+    state.period = 9
+    alias = "__test_lu_zhifu__"
+    content.characters["卢象升"].aliases = list(content.characters["卢象升"].aliases or []) + [alias]
+    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "卢象升"))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
+            "region_delta": {"beizhili": {"不存在字段": 1, "reason": "戊寅虏变无效战果字段"}},
+            "人物变更": [{"name": alias, "动作": "处置", "status": "dead", "reason": "戊寅虏变软判战死"}],
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert not db.has_event_triggered("wuyin_lubian")
+    assert db.get_character_status("卢象升")[0] == "active"
+    assert any(
+        item.get("rejected") and item.get("category") == "event_rejected" and item.get("name") == "卢象升"
+        for item in out["applied_person_changes"]
+    )
 
 
 def test_rejected_strategic_person_preflight_restores_content_power_id(game):
