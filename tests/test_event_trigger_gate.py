@@ -66,6 +66,49 @@ def test_ungated_historical_event_unchanged(game):
         content.events.remove(ev)
 
 
+def test_historical_event_expires_after_latest_window_when_gate_unsatisfied(game):
+    db, state, content = game
+    issues.bind_content(content)
+    ev = _hist_event("__test_expiring_hist__", {"民心": "<=5"})
+    ev.trigger_year = 1629
+    ev.trigger_month = 1
+    ev.trigger_end_year = 1629
+    ev.trigger_end_month = 2
+    content.events.append(ev)
+    try:
+        state.year = 1629
+        state.period = 3
+        state.metrics["民心"] = 60
+
+        cands = issues.gather_candidate_events(state, db)
+
+        assert all(c.id != "__test_expiring_hist__" for c in cands)
+        assert db.conn.execute(
+            "SELECT terminal_state FROM event_triggers WHERE event_id=?",
+            ("__test_expiring_hist__",),
+        ).fetchone() is None
+
+        terminalized = issues.apply_event_terminal_states(state, db)
+
+        assert {
+            "id": "__test_expiring_hist__",
+            "title": "测试门控历史事件",
+            "terminal_state": "expired",
+        } in terminalized
+        row = db.conn.execute(
+            "SELECT terminal_state FROM event_triggers WHERE event_id=?",
+            ("__test_expiring_hist__",),
+        ).fetchone()
+        assert row is not None
+        assert row["terminal_state"] == "expired"
+
+        state.metrics["民心"] = 3
+        later_cands = issues.gather_candidate_events(state, db)
+        assert all(c.id != "__test_expiring_hist__" for c in later_cands)
+    finally:
+        content.events.remove(ev)
+
+
 def test_historical_event_gate_can_read_event_triggered_record(game):
     """#192：核心事实进 event_triggers 后，下游硬门可用 event.<id>.triggered 查询。"""
     db, state, content = game
@@ -82,6 +125,32 @@ def test_historical_event_gate_can_read_event_triggered_record(game):
         content.events.remove(ev)
 
 
+def test_historical_event_latest_month_is_still_inside_window(game):
+    db, state, content = game
+    issues.bind_content(content)
+    ev = _hist_event("__test_latest_month_hist__", {"民心": "<=5"})
+    ev.trigger_year = 1629
+    ev.trigger_month = 1
+    ev.trigger_end_year = 1629
+    ev.trigger_end_month = 2
+    content.events.append(ev)
+    try:
+        state.year = 1629
+        state.period = 2
+        state.metrics["民心"] = 3
+
+        cands = issues.gather_candidate_events(state, db)
+
+        assert any(c.id == "__test_latest_month_hist__" for c in cands)
+        row = db.conn.execute(
+            "SELECT terminal_state FROM event_triggers WHERE event_id=?",
+            ("__test_latest_month_hist__",),
+        ).fetchone()
+        assert row is None
+    finally:
+        content.events.remove(ev)
+
+
 def test_historical_event_triggered_gate_ignores_obsolete_terminal(game):
     """ship-pre CMR：obsolete 终态只用于去重，不应打开 event.<id>.triggered 下游门。"""
     db, state, content = game
@@ -93,6 +162,184 @@ def test_historical_event_triggered_gate_ignores_obsolete_terminal(game):
 
         assert all(c.id != "__test_after_obsolete_mao__" for c in issues.gather_candidate_events(state, db))
     finally:
+        content.events.remove(ev)
+
+
+def test_open_window_historical_event_never_expires(game):
+    db, state, content = game
+    issues.bind_content(content)
+    ev = _hist_event("__test_open_window_hist__", {"民心": "<=5"})
+    ev.trigger_year = 1629
+    ev.trigger_month = 1
+    ev.trigger_end_year = 1629
+    ev.trigger_end_month = 2
+    ev.open_window = True
+    content.events.append(ev)
+    try:
+        state.year = 1629
+        state.period = 3
+        state.metrics["民心"] = 3
+
+        cands = issues.gather_candidate_events(state, db)
+
+        assert any(c.id == "__test_open_window_hist__" for c in cands)
+        row = db.conn.execute(
+            "SELECT terminal_state FROM event_triggers WHERE event_id=?",
+            ("__test_open_window_hist__",),
+        ).fetchone()
+        assert row is None
+    finally:
+        content.events.remove(ev)
+
+
+def test_open_window_historical_event_still_waits_for_earliest_time(game):
+    db, state, content = game
+    issues.bind_content(content)
+    ev = _hist_event("__test_open_window_future_hist__", {})
+    ev.trigger_year = 1629
+    ev.trigger_month = 6
+    ev.open_window = True
+    content.events.append(ev)
+    try:
+        state.year = 1627
+        state.period = 10
+
+        cands = issues.gather_candidate_events(state, db)
+
+        assert all(c.id != "__test_open_window_future_hist__" for c in cands)
+    finally:
+        content.events.remove(ev)
+
+
+def test_seed_event_expires_after_latest_window_when_gate_unsatisfied(game):
+    db, state, content = game
+    issues.bind_content(content)
+    ev = _hist_event("__test_expiring_seed__", {"民心": "<=5"})
+    ev.trigger_year = 1629
+    ev.trigger_month = 1
+    ev.trigger_end_year = 1629
+    ev.trigger_end_month = 2
+    content.seed_events.append(ev)
+    try:
+        state.year = 1629
+        state.period = 3
+        state.metrics["民心"] = 60
+
+        cands = issues.gather_candidate_events(state, db)
+
+        assert all(c.id != "__test_expiring_seed__" for c in cands)
+        assert db.conn.execute(
+            "SELECT terminal_state FROM event_triggers WHERE event_id=?",
+            ("__test_expiring_seed__",),
+        ).fetchone() is None
+
+        issues.apply_event_terminal_states(state, db)
+
+        row = db.conn.execute(
+            "SELECT terminal_state FROM event_triggers WHERE event_id=?",
+            ("__test_expiring_seed__",),
+        ).fetchone()
+        assert row is not None
+        assert row["terminal_state"] == "expired"
+    finally:
+        content.seed_events.remove(ev)
+
+
+def test_auto_trigger_seed_event_expires_after_latest_window_when_gate_unsatisfied(game):
+    db, state, content = game
+    issues.bind_content(content)
+    ev = _hist_event("__test_expiring_auto_seed__", {"民心": "<=5"})
+    ev.trigger_year = 1629
+    ev.trigger_month = 1
+    ev.trigger_end_year = 1629
+    ev.trigger_end_month = 2
+    ev.auto_trigger = True
+    content.seed_events.append(ev)
+    try:
+        state.year = 1629
+        state.period = 3
+        state.metrics["民心"] = 60
+
+        triggered = issues.auto_trigger_seed_issues(state, db)
+
+        assert triggered == []
+        row = db.conn.execute(
+            "SELECT terminal_state FROM event_triggers WHERE event_id=?",
+            ("__test_expiring_auto_seed__",),
+        ).fetchone()
+        assert row is not None
+        assert row["terminal_state"] == "expired"
+        assert issues.auto_trigger_seed_issues(state, db) == []
+        assert db.conn.execute(
+            "SELECT COUNT(*) FROM event_triggers WHERE event_id=?",
+            ("__test_expiring_auto_seed__",),
+        ).fetchone()[0] == 1
+    finally:
+        content.seed_events.remove(ev)
+
+
+def test_gather_candidate_events_filters_expired_auto_trigger_seed_without_writing(game):
+    db, state, content = game
+    issues.bind_content(content)
+    ev = _hist_event("__test_expiring_auto_seed_candidate__", {"民心": "<=5"})
+    ev.trigger_year = 1629
+    ev.trigger_month = 1
+    ev.trigger_end_year = 1629
+    ev.trigger_end_month = 2
+    ev.auto_trigger = True
+    content.seed_events.append(ev)
+    try:
+        state.year = 1629
+        state.period = 3
+        state.metrics["民心"] = 3
+
+        cands = issues.gather_candidate_events(state, db)
+
+        assert all(c.id != "__test_expiring_auto_seed_candidate__" for c in cands)
+        assert db.conn.execute(
+            "SELECT terminal_state FROM event_triggers WHERE event_id=?",
+            ("__test_expiring_auto_seed_candidate__",),
+        ).fetchone() is None
+
+        issues.apply_event_terminal_states(state, db)
+
+        row = db.conn.execute(
+            "SELECT terminal_state FROM event_triggers WHERE event_id=?",
+            ("__test_expiring_auto_seed_candidate__",),
+        ).fetchone()
+        assert row is not None
+        assert row["terminal_state"] == "expired"
+    finally:
+        content.seed_events.remove(ev)
+
+
+def test_apply_event_terminal_states_does_not_commit_existing_transaction(game):
+    db, state, content = game
+    issues.bind_content(content)
+    ev = _hist_event("__test_expiring_inside_outer_txn__", {"民心": "<=5"})
+    ev.trigger_year = 1629
+    ev.trigger_month = 1
+    ev.trigger_end_year = 1629
+    ev.trigger_end_month = 2
+    content.events.append(ev)
+    try:
+        state.year = 1629
+        state.period = 3
+        state.metrics["民心"] = 60
+        db.conn.execute("BEGIN")
+
+        terminalized = issues.apply_event_terminal_states(state, db)
+
+        assert any(item["id"] == "__test_expiring_inside_outer_txn__" for item in terminalized)
+        assert db.conn.in_transaction
+        db.conn.rollback()
+        assert db.conn.execute(
+            "SELECT 1 FROM event_triggers WHERE event_id=?",
+            ("__test_expiring_inside_outer_txn__",),
+        ).fetchone() is None
+    finally:
+        if db.conn.in_transaction:
+            db.conn.rollback()
         content.events.remove(ev)
 
 
@@ -168,6 +415,71 @@ def test_load_event_fail_loud_on_bad_gate_key(monkeypatch):
             "trigger_gate": {"民生": "<=5"}}]  # 民心 typo
     monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
     with pytest.raises(SystemExit, match="未知 metric"):
+        content_mod.load_event_content("x.json")
+
+
+def test_load_event_requires_latest_or_open_window(monkeypatch):
+    """历史锚定事件必须显式声明最晚时点或 open_window，漏填不许隐式永不过期。"""
+    import pytest
+    import ming_sim.content as content_mod
+    bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
+            "urgency": 1, "severity": 1, "credibility": 1,
+            "interests": [], "audiences": [],
+            "trigger_year": 1629, "trigger_month": 6,
+            "trigger_gate": {"民心": "<=5"}}]
+    monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
+    with pytest.raises(SystemExit, match="trigger_end_year|open_window"):
+        content_mod.load_event_content("x.json")
+
+
+def test_load_event_rejects_non_boolean_open_window(monkeypatch):
+    """open_window 必须是 JSON boolean，不能让字符串 'false' 被 bool() 误作 True。"""
+    import pytest
+    import ming_sim.content as content_mod
+    bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
+            "urgency": 1, "severity": 1, "credibility": 1,
+            "interests": [], "audiences": [],
+            "trigger_year": 1629, "trigger_month": 6,
+            "open_window": "false",
+            "trigger_gate": {"民心": "<=5"}}]
+    monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
+    with pytest.raises(SystemExit, match="open_window"):
+        content_mod.load_event_content("x.json")
+
+
+def test_load_event_rejects_latest_before_earliest(monkeypatch):
+    """最晚时点不能早于最早时点，否则该事件永远无法合法开窗。"""
+    import pytest
+    import ming_sim.content as content_mod
+    bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
+            "urgency": 1, "severity": 1, "credibility": 1,
+            "interests": [], "audiences": [],
+            "trigger_year": 1629, "trigger_month": 6,
+            "trigger_end_year": 1629, "trigger_end_month": 5,
+            "trigger_gate": {"民心": "<=5"}}]
+    monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
+    with pytest.raises(SystemExit, match="最晚|早于|窗口"):
+        content_mod.load_event_content("x.json")
+
+
+@pytest.mark.parametrize("field,value", [
+    ("trigger_month", 13),
+    ("trigger_month", -1),
+    ("trigger_end_month", 13),
+    ("trigger_end_month", -1),
+])
+def test_load_event_rejects_month_out_of_range(monkeypatch, field, value):
+    import pytest
+    import ming_sim.content as content_mod
+    bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
+            "urgency": 1, "severity": 1, "credibility": 1,
+            "interests": [], "audiences": [],
+            "trigger_year": 1629, "trigger_month": 6,
+            "trigger_end_year": 1629, "trigger_end_month": 7,
+            "trigger_gate": {"民心": "<=5"}}]
+    bad[0][field] = value
+    monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
+    with pytest.raises(SystemExit, match=f"{field}.*0.*12"):
         content_mod.load_event_content("x.json")
 
 
@@ -484,6 +796,7 @@ def test_mao_wenlong_event_excluded_after_player_relocates_mao(game):
         ("毛文龙",),
     ).fetchone()["location"] == "shaanxi"
     assert all(ev.id != "mao_wenlong" for ev in issues.gather_candidate_events(state, db))
+    issues.apply_event_terminal_states(state, db)
     terminal = db.conn.execute(
         "SELECT terminal_state, source FROM event_triggers WHERE event_id=?",
         ("mao_wenlong",),
@@ -2143,6 +2456,7 @@ def test_person_core_event_obsoletes_when_named_subject_is_dead(game):
     cands = issues.gather_candidate_events(state, db)
 
     assert all(ev.id != "yuan_xialing" for ev in cands)
+    issues.apply_event_terminal_states(state, db)
     row = db.conn.execute(
         "SELECT terminal_state, source FROM event_triggers WHERE event_id=?",
         ("yuan_xialing",),
@@ -2551,6 +2865,74 @@ def test_historical_auto_trigger_core_effect_is_applied_once(game):
         "SELECT COUNT(*) FROM event_triggers WHERE event_id=?",
         ("huabei_plague",),
     ).fetchone()[0] == 1
+
+
+def test_auto_trigger_historical_events_use_preloaded_terminal_refs(game, monkeypatch):
+    """PR review：历史 auto_trigger 去重应批量读 event_triggers，避免每事件查 terminal_state。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1633
+    state.period = 7
+
+    def _unexpected_per_event_probe(*_args, **_kwargs):
+        raise AssertionError("auto_trigger historical loop must not call event_terminal_state per event")
+
+    monkeypatch.setattr(type(db), "event_terminal_state", _unexpected_per_event_probe)
+
+    triggered = issues.auto_trigger_seed_issues(state, db)
+
+    assert any(item["id"] == "huabei_plague" for item in triggered)
+
+
+def test_historical_auto_trigger_event_expires_after_latest_window(game):
+    """#188：历史 auto_trigger 也须尊重最晚窗口，过期后不能硬触发。"""
+    db, state, content = game
+    issues.bind_content(content)
+    ev = _hist_event("__test_expiring_historical_auto__", {"民心": "<=5"})
+    ev.trigger_year = 1629
+    ev.trigger_month = 1
+    ev.trigger_end_year = 1629
+    ev.trigger_end_month = 2
+    ev.auto_trigger = True
+    content.events.append(ev)
+    try:
+        state.year = 1629
+        state.period = 3
+        state.metrics["民心"] = 3
+
+        triggered = issues.auto_trigger_seed_issues(state, db)
+
+        assert all(item["id"] != "__test_expiring_historical_auto__" for item in triggered)
+        assert db.event_terminal_state("__test_expiring_historical_auto__") == "expired"
+        assert db.find_any_issue_by_origin("event_pool", "__test_expiring_historical_auto__") is None
+    finally:
+        content.events.remove(ev)
+
+
+def test_gated_auto_trigger_seed_event_can_recur_after_previous_issue_resolved(game):
+    """PR review：seed auto_trigger 带 gate 时，旧 resolved issue 不应永久压住再触发。"""
+    db, state, content = game
+    issues.bind_content(content)
+    ev = _hist_event("__test_recurring_auto_seed__", {"民心": "<=5"})
+    ev.auto_trigger = True
+    ev.event_type = "situation"
+    content.seed_events.append(ev)
+    try:
+        state.metrics["民心"] = 3
+        first = issues.auto_trigger_seed_issues(state, db)
+        first_item = next(item for item in first if item["id"] == "__test_recurring_auto_seed__")
+        db.conn.execute(
+            "UPDATE issues SET status='resolved' WHERE id=?",
+            (first_item["issue_id"],),
+        )
+        db.conn.commit()
+
+        second = issues.auto_trigger_seed_issues(state, db)
+
+        second_item = next(item for item in second if item["id"] == "__test_recurring_auto_seed__")
+        assert second_item["issue_id"] != first_item["issue_id"]
+    finally:
+        content.seed_events.remove(ev)
 
 
 def test_huabei_plague_keeps_soft_degree_axis_as_situation_issue(game):
@@ -4720,6 +5102,8 @@ def test_mao_wenlong_event_obsolete_when_core_subject_already_dead(game):
 
     cands = issues.gather_candidate_events(state, db)
     assert all(ev.id != "mao_wenlong" for ev in cands)
+
+    issues.apply_event_terminal_states(state, db)
 
     out = issues.apply_issue_tracker_output(
         db,
