@@ -1299,6 +1299,49 @@ def test_rejected_strategic_person_preflight_restores_content_power_id(game):
     assert content.characters["洪承畴"].power_id == before_content_power
 
 
+def test_strategic_person_backlash_rejection_blocks_event_result_envelope(game):
+    """CMR R9：易主顶层成功但反噬拒收，也必须拒整组战略战果。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1641
+    state.period = 8
+    db.conn.execute("UPDATE characters SET power_id = ?, status = ? WHERE name = ?", ("ming", "active", "洪承畴"))
+    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "liaodong"))
+    content.characters["洪承畴"].power_id = "ming"
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "songshan_battle"}],
+            "region_delta": {"liaodong": {"military_pressure": 5, "reason": "松锦决战软判辽东吃紧"}},
+            "人物变更": [
+                {
+                    "name": "洪承畴",
+                    "动作": "易主",
+                    "方式": "被俘而降",
+                    "new_power": "houjin",
+                    "new_title": "降臣",
+                    "反噬": {"__missing_power__": {"military_strength": -5}},
+                    "reason": "松锦决战软判主帅被俘降金",
+                }
+            ],
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert not db.has_event_triggered("songshan_battle")
+    assert db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id = ?", ("liaodong",)
+    ).fetchone()["military_pressure"] == 20
+    assert db.conn.execute(
+        "SELECT power_id FROM characters WHERE name = ?", ("洪承畴",)
+    ).fetchone()["power_id"] == "ming"
+    assert content.characters["洪承畴"].power_id == "ming"
+    assert any(item.get("rejected") for item in out["region_changes"])
+
+
 def test_strategic_foreign_event_lands_soft_result_person_delta(game):
     """#189 CMR：战略战事的人死/生是软判结果，须能落人物主账。"""
     db, state, content = game
