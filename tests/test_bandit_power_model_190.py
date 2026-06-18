@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 
+import json
+
+
 def test_seed_splits_li_zicheng_and_zhang_xianzhong_bandit_powers(game):
     """流寇头目与股分层：李自成、张献忠应绑定各自独立 power,不共享全局 bandits。"""
     db, _state, _content = game
@@ -62,6 +65,21 @@ def test_old_save_schema_init_backfills_bandit_power_split(game):
         "bandit_li_zicheng": "李自成",
         "bandit_zhang_xianzhong": "张献忠",
     }
+
+
+def test_bandit_power_backfill_serializes_list_aliases(game):
+    """旧档补流寇股时，即使 content power aliases 仍是 list，也必须写成 TEXT 不崩。"""
+    db, _state, content = game
+    content.powers["bandit_li_zicheng"].aliases = ["李自成部", "闯军"]
+    db.conn.execute("DELETE FROM powers WHERE id='bandit_li_zicheng'")
+    db.conn.commit()
+
+    db.init_schema()
+
+    aliases = db.conn.execute(
+        "SELECT aliases FROM powers WHERE id='bandit_li_zicheng'"
+    ).fetchone()["aliases"]
+    assert json.loads(aliases) == ["李自成部", "闯军"]
 
 
 def test_bandit_power_split_backfill_preserves_changed_owner(game):

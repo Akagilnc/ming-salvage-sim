@@ -386,6 +386,30 @@ def test_mao_event_effect_uses_unified_person_change_key():
     ]
 
 
+def test_auto_trigger_historical_event_to_issue_uses_outer_transaction(game, monkeypatch):
+    """auto-trigger 事务体内转 issue 时不得内部 commit，回滚边界由外层 atomic 统一控制。"""
+    db, state, content = game
+    issues.bind_content(content)
+    event_id = "__test_auto_trigger_atomic__"
+    ev = _hist_event(event_id, {})
+    ev.auto_trigger = True
+    calls = []
+
+    def fake_event_to_issue(db_arg, state_arg, ev_arg, *, commit=True):
+        calls.append((ev_arg.id, commit))
+        return 999
+
+    monkeypatch.setattr(issues, "event_to_issue", fake_event_to_issue)
+    content.events.append(ev)
+    try:
+        triggered = issues.auto_trigger_seed_issues(state, db)
+    finally:
+        content.events.remove(ev)
+
+    assert calls == [(event_id, False)]
+    assert {"id": event_id, "title": ev.title, "issue_id": 999} in triggered
+
+
 def test_event_content_rejects_falsy_person_core_subjects(monkeypatch):
     """内容契约：person_core_subjects 写了就必须是字符串数组，空字符串不能吞成缺省。"""
     from ming_sim import content as content_module
@@ -1553,8 +1577,8 @@ def test_strategic_event_person_same_office_noop_does_not_mark_event_triggered(g
     assert dict(row) == {"status": "active", "office": office, "office_type": office_type}
 
 
-def test_rejected_strategic_event_suppresses_power_updates(game):
-    """CMR R12：战略事件缺主账结果被拒时，同信封 power_updates 不得提前落库。"""
+def test_strategic_event_accepts_power_update_as_material_world_state(game):
+    """ADR0014：势力也是世界主账，只有有效 power_updates 的战略战果也可触发事件。"""
     db, state, content = game
     issues.bind_content(content)
     state.year = 1629
@@ -1574,13 +1598,13 @@ def test_rejected_strategic_event_suppresses_power_updates(game):
         content=content,
     )
 
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert not db.has_event_triggered("jisi_lubian")
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is False
+    assert db.has_event_triggered("jisi_lubian")
     assert db.conn.execute(
         "SELECT military_strength FROM powers WHERE id = ?", ("houjin",)
-    ).fetchone()["military_strength"] == 50
+    ).fetchone()["military_strength"] == 47
     assert any(
-        item.get("rejected") and item.get("category") == "event_rejected" and item.get("power_id") == "houjin"
+        item.get("field") == "military_strength" and item.get("delta") == -3
         for item in out["power_changes"]
     )
 
