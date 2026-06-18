@@ -542,6 +542,7 @@ def apply_event_terminal_states(
 ) -> List[Dict[str, object]]:
     """Persist deterministic event terminal states from the current board position."""
     c = _ctx()
+    should_commit = commit and not db.conn.in_transaction
     terminal_refs = _event_trigger_refs(db)
     terminalized: List[Dict[str, object]] = []
 
@@ -577,7 +578,7 @@ def apply_event_terminal_states(
             terminal_refs.add(ev.id)
             terminalized.append({"id": ev.id, "title": ev.title, "terminal_state": "expired"})
 
-    if commit and terminalized:
+    if should_commit and terminalized:
         db.conn.commit()
     return terminalized
 

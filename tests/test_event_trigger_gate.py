@@ -313,6 +313,36 @@ def test_gather_candidate_events_filters_expired_auto_trigger_seed_without_writi
         content.seed_events.remove(ev)
 
 
+def test_apply_event_terminal_states_does_not_commit_existing_transaction(game):
+    db, state, content = game
+    issues.bind_content(content)
+    ev = _hist_event("__test_expiring_inside_outer_txn__", {"民心": "<=5"})
+    ev.trigger_year = 1629
+    ev.trigger_month = 1
+    ev.trigger_end_year = 1629
+    ev.trigger_end_month = 2
+    content.events.append(ev)
+    try:
+        state.year = 1629
+        state.period = 3
+        state.metrics["民心"] = 60
+        db.conn.execute("BEGIN")
+
+        terminalized = issues.apply_event_terminal_states(state, db)
+
+        assert any(item["id"] == "__test_expiring_inside_outer_txn__" for item in terminalized)
+        assert db.conn.in_transaction
+        db.conn.rollback()
+        assert db.conn.execute(
+            "SELECT 1 FROM event_triggers WHERE event_id=?",
+            ("__test_expiring_inside_outer_txn__",),
+        ).fetchone() is None
+    finally:
+        if db.conn.in_transaction:
+            db.conn.rollback()
+        content.events.remove(ev)
+
+
 def test_gate_passed_tolerates_none(game):
     # PR#107 R1（gemini medium）：trigger_gate=None（content JSON 显式 null）传进 _gate_passed
     # 不应 None.items() AttributeError 崩候选收集；None 视同空门、恒过。
