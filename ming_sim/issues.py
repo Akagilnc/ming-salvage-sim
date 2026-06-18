@@ -1579,8 +1579,8 @@ _STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS: Dict[str, Dict[str, frozenset[str]]] = 
         "powers": frozenset({"houjin"}),
     },
     "lindan_xiqian": {
-        "regions": frozenset({"mongol_chahar", "beizhili"}),
-        "armies": frozenset({"mongol_chahar_host", "jizhen", "xuan_da"}),
+        "regions": frozenset({"mongol_chahar"}),
+        "armies": frozenset({"mongol_chahar_host"}),
         "characters": frozenset({"林丹汗"}),
         "powers": frozenset({"mongol", "houjin"}),
     },
@@ -1617,7 +1617,7 @@ _STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS: Dict[str, Dict[str, frozenset[str]]] = 
 }
 _STRATEGIC_FOREIGN_NODE_PERSON_ANCHORS: Dict[str, frozenset[str]] = {
     "jisi_lubian": frozenset({"己巳", "喜峰口", "龙井关", "德胜门", "左安门"}),
-    "dalingghe": frozenset({"大凌河", "祖大寿", "锦州", "辽东"}),
+    "dalingghe": frozenset({"大凌河", "祖大寿"}),
     "lindan_xiqian": frozenset({"林丹汗", "察哈尔", "蒙古", "青海", "漠南"}),
     "wuyin_lubian": frozenset({"戊寅", "墙子岭", "青山口", "巨鹿", "贾庄", "畿南"}),
     "songshan_battle": frozenset({"松锦", "松山", "锦州", "杏山", "塔山", "援锦"}),
@@ -1714,6 +1714,10 @@ def _target_union(event_ids: set[str], target_key: str) -> set[str]:
     for event_id in event_ids:
         targets.update(_strategic_event_outcome_targets(event_id).get(target_key, frozenset()))
     return targets
+
+
+def _unambiguous_unanchored_event_ids(event_ids: set[str]) -> set[str]:
+    return set(event_ids) if len(event_ids) == 1 else set()
 
 
 def _split_mapping_by_keys(
@@ -1853,9 +1857,12 @@ def _entity_deltas_for_strategic_event(
     raw: object,
     target_key: str,
     event_id: str,
+    *,
+    allow_unanchored: bool = True,
 ) -> Dict[str, object]:
     if not isinstance(raw, dict):
         return {}
+    unanchored_event_ids = {event_id} if allow_unanchored else set()
     return {
         entity_id: raw_changes
         for entity_id, raw_changes in raw.items()
@@ -1864,7 +1871,7 @@ def _entity_deltas_for_strategic_event(
             raw_changes,
             target_key,
             {event_id},
-            {event_id},
+            unanchored_event_ids,
         )
     }
 
@@ -1916,13 +1923,16 @@ def _split_strategic_new_armies(
 def _new_armies_for_strategic_event(
     raw: object,
     event_id: str,
+    *,
+    allow_unanchored: bool = True,
 ) -> List[object]:
     if not isinstance(raw, list):
         return []
+    unanchored_event_ids = {event_id} if allow_unanchored else set()
     return [
         item
         for item in raw
-        if event_id in _strategic_new_army_result_event_ids(item, {event_id}, {event_id})
+        if event_id in _strategic_new_army_result_event_ids(item, {event_id}, unanchored_event_ids)
     ]
 
 
@@ -1999,6 +2009,7 @@ def _event_result_delta_event_ids(
     person_changes: List[Dict[str, object]],
     db: GameDB,
 ) -> set[str]:
+    unanchored_event_ids = _unambiguous_unanchored_event_ids(strategic_event_pool_ids)
     region_result_event_ids: set[str] = set()
     if isinstance(extracted.get("region_delta"), dict):
         for region_id, raw_changes in (extracted.get("region_delta") or {}).items():
@@ -2008,7 +2019,7 @@ def _event_result_delta_event_ids(
                     raw_changes,
                     "regions",
                     strategic_event_ids,
-                    strategic_event_pool_ids,
+                    unanchored_event_ids,
                 )
             )
     army_result_event_ids: set[str] = set()
@@ -2020,7 +2031,7 @@ def _event_result_delta_event_ids(
                     raw_changes,
                     "armies",
                     strategic_event_ids,
-                    strategic_event_pool_ids,
+                    unanchored_event_ids,
                 )
             )
     power_result_event_ids: set[str] = set()
@@ -2032,7 +2043,7 @@ def _event_result_delta_event_ids(
                     raw_changes,
                     "powers",
                     strategic_event_ids,
-                    strategic_event_pool_ids,
+                    unanchored_event_ids,
                 )
             )
     person_result_event_ids: set[str] = set()
@@ -2042,7 +2053,7 @@ def _event_result_delta_event_ids(
     if isinstance(extracted.get("new_armies"), list):
         for item in extracted.get("new_armies") or []:
             new_army_result_event_ids.update(
-                _strategic_new_army_result_event_ids(item, strategic_event_ids, strategic_event_pool_ids)
+                _strategic_new_army_result_event_ids(item, strategic_event_ids, unanchored_event_ids)
             )
     result_ids: set[str] = set()
     for event_id in strategic_event_ids:
@@ -4321,6 +4332,7 @@ def apply_score_extraction(
         _strategic_event_outcome_label_or_error(event_id, extracted, runtime_content)
     strategic_event_delta_ids = set(strategic_event_result_delta_event_ids)
     strategic_event_referenced_ids = strategic_event_pool_ids | strategic_event_delta_ids
+    unambiguous_strategic_event_pool_ids = _unambiguous_unanchored_event_ids(strategic_event_pool_ids)
 
     def _split_pre_issue_person_changes(changes: List[Dict[str, object]]) -> tuple[List[Dict[str, object]], List[Dict[str, object]]]:
         pre_issue: List[Dict[str, object]] = []
@@ -4468,24 +4480,24 @@ def apply_score_extraction(
         region_deltas_raw,
         "regions",
         strategic_event_referenced_ids,
-        strategic_event_pool_ids,
+        unambiguous_strategic_event_pool_ids,
     )
     strategic_army_deltas_raw, ordinary_army_deltas_raw = _split_strategic_entity_deltas(
         army_deltas_raw,
         "armies",
         strategic_event_referenced_ids,
-        strategic_event_pool_ids,
+        unambiguous_strategic_event_pool_ids,
     )
     strategic_power_updates_raw, ordinary_power_updates_raw = _split_strategic_entity_deltas(
         power_updates_raw,
         "powers",
         strategic_event_referenced_ids,
-        strategic_event_pool_ids,
+        unambiguous_strategic_event_pool_ids,
     )
     strategic_new_armies_raw, ordinary_new_armies_raw = _split_strategic_new_armies(
         new_armies_raw,
         strategic_event_referenced_ids,
-        strategic_event_pool_ids,
+        unambiguous_strategic_event_pool_ids,
     )
 
     pseudo_event = Event(
@@ -4575,16 +4587,19 @@ def apply_score_extraction(
             strategic_region_deltas_raw,
             "regions",
             event_id,
+            allow_unanchored=event_id in unambiguous_strategic_event_pool_ids,
         )
         event_army_deltas = _entity_deltas_for_strategic_event(
             strategic_army_deltas_raw,
             "armies",
             event_id,
+            allow_unanchored=event_id in unambiguous_strategic_event_pool_ids,
         )
         event_power_updates = _entity_deltas_for_strategic_event(
             strategic_power_updates_raw,
             "powers",
             event_id,
+            allow_unanchored=event_id in unambiguous_strategic_event_pool_ids,
         )
         event_person_changes = [
             item
@@ -4594,6 +4609,7 @@ def apply_score_extraction(
         event_new_armies = _new_armies_for_strategic_event(
             strategic_new_armies_raw,
             event_id,
+            allow_unanchored=event_id in unambiguous_strategic_event_pool_ids,
         )
         reason = reason or f"战略/外敌事件「{event_title or event_id}」未触发，战果不落主账"
         for region_id, raw_changes in event_region_deltas.items():
@@ -4681,16 +4697,19 @@ def apply_score_extraction(
             strategic_region_deltas_raw,
             "regions",
             event_id,
+            allow_unanchored=event_id in unambiguous_strategic_event_pool_ids,
         )
         event_army_deltas = _entity_deltas_for_strategic_event(
             strategic_army_deltas_raw,
             "armies",
             event_id,
+            allow_unanchored=event_id in unambiguous_strategic_event_pool_ids,
         )
         event_power_updates = _entity_deltas_for_strategic_event(
             strategic_power_updates_raw,
             "powers",
             event_id,
+            allow_unanchored=event_id in unambiguous_strategic_event_pool_ids,
         )
         event_person_changes = [
             item
@@ -4700,6 +4719,7 @@ def apply_score_extraction(
         event_new_armies = _new_armies_for_strategic_event(
             strategic_new_armies_raw,
             event_id,
+            allow_unanchored=event_id in unambiguous_strategic_event_pool_ids,
         )
         result_preflight_error = _strategic_event_result_preflight_error(
             db,

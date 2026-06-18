@@ -447,6 +447,20 @@ def test_load_event_rejects_non_boolean_open_window(monkeypatch):
         content_mod.load_event_content("x.json")
 
 
+def test_load_event_rejects_strategic_foreign_situation(monkeypatch):
+    """战略/外敌分类只允许 node/ending，不能被 situation 静默吞掉。"""
+    import pytest
+    import ming_sim.content as content_mod
+    bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
+            "urgency": 1, "severity": 1, "credibility": 1,
+            "interests": [], "audiences": [],
+            "event_type": "situation",
+            "trigger_class": "strategic_foreign"}]
+    monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
+    with pytest.raises(SystemExit, match="strategic_foreign.*situation|node/ending"):
+        content_mod.load_event_content("x.json")
+
+
 def test_load_event_rejects_latest_before_earliest(monkeypatch):
     """最晚时点不能早于最早时点，否则该事件永远无法合法开窗。"""
     import pytest
@@ -1419,6 +1433,82 @@ def test_issue_194_lindan_xiqian_requires_world_state_main_ledger_delta(game):
     assert db.conn.execute(
         "SELECT military_strength FROM powers WHERE id = ?", ("houjin",)
     ).fetchone()["military_strength"] == before_houjin + 5
+
+
+def test_lindan_xiqian_does_not_capture_untriggered_beizhili_border_policy_delta(game):
+    """PR R1：普通北直隶边防政策不能被林丹汗西迁锚点误当成孤儿战果。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1632
+    state.period = 4
+    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (30, "beizhili"))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "region_delta": {
+                "beizhili": {
+                    "military_pressure": -3,
+                    "reason": "修筑蒙古边墙，北直隶军压下降",
+                }
+            }
+        },
+        content=content,
+    )
+
+    assert not db.has_event_triggered("lindan_xiqian")
+    assert db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
+    ).fetchone()["military_pressure"] == 27
+    assert out["region_changes"][0].get("rejected") is not True
+
+
+def test_shared_jinzhou_result_does_not_double_consume_dalingghe_and_songshan(game):
+    """PR R1：大凌河与松锦同池时，泛锦州战果不能同一 delta 双落账。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1641
+    state.period = 8
+    db.conn.execute(
+        "UPDATE regions SET controlled_by = ?, military_pressure = ? WHERE id = ?",
+        ("ming", 20, "liaodong"),
+    )
+    db.conn.execute(
+        "UPDATE armies SET supply = ?, arrears = ?, morale = ? WHERE id = ?",
+        (40, 45, 50, "guanning"),
+    )
+    db.conn.execute("UPDATE powers SET military_strength = ? WHERE id = ?", (75, "houjin"))
+    cands = {ev.id for ev in issues.gather_candidate_events(state, db)}
+    assert {"dalingghe", "songshan_battle"} <= cands
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {"origin_kind": "event_pool", "id": "dalingghe"},
+                {"origin_kind": "event_pool", "id": "songshan_battle"},
+            ],
+            "region_delta": {
+                "liaodong": {
+                    "military_pressure": 8,
+                    "reason": "锦州战事软判辽东军压上升",
+                }
+            },
+        },
+        content=content,
+    )
+
+    assert not db.has_event_triggered("dalingghe")
+    assert db.has_event_triggered("songshan_battle")
+    assert db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id = ?", ("liaodong",)
+    ).fetchone()["military_pressure"] == 28
+    assert any(
+        item["id"] == "dalingghe" and item.get("rejected")
+        for item in out["issue_summary"]["new_issues"]
+    )
 
 
 def test_unrelated_region_delta_does_not_satisfy_strategic_event_result_gate(game):
@@ -2849,7 +2939,11 @@ def test_issue_194_strategic_foreign_events_are_explicitly_classified_and_gated(
     """#194：战略/外敌类事件显式分类，且每条都有结构化 trigger_gate。"""
     raw_by_id = {
         str(item["id"]): item
-        for item in json.loads(Path("content/events.json").read_text())
+        for item in json.loads(
+            (Path(__file__).resolve().parents[1] / "content" / "events.json").read_text(
+                encoding="utf-8"
+            )
+        )
     }
     expected = {
         "jisi_lubian": {},
