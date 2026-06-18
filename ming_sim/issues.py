@@ -3370,10 +3370,12 @@ def apply_score_extraction(
     legacy_person_mode = bool(legacy_person_changes)
     strategic_event_pool_ids = _event_pool_ids_for_strategic_foreign_nodes(extracted, runtime_content)
     strategic_event_result_delta_event_ids = _event_result_delta_event_ids(
-        strategic_event_pool_ids,
+        set(_STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS),
         extracted,
         person_changes,
     )
+    strategic_event_delta_ids = set(strategic_event_result_delta_event_ids)
+    strategic_event_referenced_ids = strategic_event_pool_ids | strategic_event_delta_ids
 
     def _split_pre_issue_person_changes(changes: List[Dict[str, object]]) -> tuple[List[Dict[str, object]], List[Dict[str, object]]]:
         pre_issue: List[Dict[str, object]] = []
@@ -3388,11 +3390,11 @@ def apply_score_extraction(
     pre_issue_person_changes, post_issue_person_changes = _split_pre_issue_person_changes(person_changes)
     strategic_pre_issue_person_changes, pre_issue_person_changes = _split_strategic_person_result_changes(
         pre_issue_person_changes,
-        strategic_event_pool_ids,
+        strategic_event_referenced_ids,
     )
     strategic_post_issue_person_changes, post_issue_person_changes = _split_strategic_person_result_changes(
         post_issue_person_changes,
-        strategic_event_pool_ids,
+        strategic_event_referenced_ids,
     )
     strategic_person_result_changes = strategic_pre_issue_person_changes + strategic_post_issue_person_changes
 
@@ -3466,12 +3468,12 @@ def apply_score_extraction(
     strategic_region_deltas_raw, ordinary_region_deltas_raw = _split_strategic_entity_deltas(
         region_deltas_raw,
         "regions",
-        strategic_event_pool_ids,
+        strategic_event_referenced_ids,
     )
     strategic_army_deltas_raw, ordinary_army_deltas_raw = _split_strategic_entity_deltas(
         army_deltas_raw,
         "armies",
-        strategic_event_pool_ids,
+        strategic_event_referenced_ids,
     )
 
     pseudo_event = Event(
@@ -3590,13 +3592,22 @@ def apply_score_extraction(
                 "item": dict(item),
             })
 
+    strategic_event_issue_ids_seen: set[str] = set()
     for new_issue in (issue_summary.get("new_issues") or []):
+        if isinstance(new_issue, dict):
+            event_id = str(new_issue.get("id") or "").strip()
+            if event_id in strategic_event_referenced_ids:
+                strategic_event_issue_ids_seen.add(event_id)
         if not isinstance(new_issue, dict) or not new_issue.get("rejected"):
             continue
         event_id = str(new_issue.get("id") or "").strip()
-        if event_id not in strategic_event_pool_ids:
+        if event_id not in strategic_event_referenced_ids:
             continue
         _reject_suppressed_strategic_results(event_id, str(new_issue.get("title") or ""))
+
+    for event_id in sorted(strategic_event_delta_ids - strategic_event_issue_ids_seen):
+        ev = runtime_content.event_by_id.get(event_id)
+        _reject_suppressed_strategic_results(event_id, ev.title if ev is not None else event_id)
 
     for new_issue in (issue_summary.get("new_issues") or []):
         if not (

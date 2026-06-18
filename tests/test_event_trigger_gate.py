@@ -494,6 +494,30 @@ def test_strategic_foreign_event_rejects_trigger_without_world_state_delta(game)
     assert not db.has_event_triggered("jisi_lubian")
 
 
+def test_anchored_strategic_result_delta_without_event_trigger_is_rejected(game):
+    """#189 CMR R6：有战役锚点但无 event_pool 触发时，不得只落战果主账。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {"region_delta": {"beizhili": {"military_pressure": 20, "reason": "己巳之变软判敌逼京畿"}}},
+        content=content,
+    )
+
+    assert not db.has_event_triggered("jisi_lubian")
+    assert db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
+    ).fetchone()["military_pressure"] == 20
+    assert out["region_changes"][0]["rejected"] is True
+    assert out["region_changes"][0]["category"] == "event_rejected"
+    assert "未触发" in out["region_changes"][0]["reason"]
+
+
 def test_non_battle_foreign_node_can_trigger_without_battle_ledger_delta(game):
     """#189 CMR R2：外族 node 不等于战略战事；称帝类事件不应被战果主账门误挡。"""
     db, state, content = game
