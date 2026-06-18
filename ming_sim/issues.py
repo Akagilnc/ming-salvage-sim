@@ -1631,8 +1631,8 @@ _STRATEGIC_FOREIGN_NODE_DIRECT_EVENT_ANCHORS: Dict[str, frozenset[str]] = {
     "lindan_xiqian": frozenset({"林丹汗", "察哈尔"}),
     "wuyin_lubian": frozenset({"戊寅"}),
     "songshan_battle": frozenset({"松锦", "援锦"}),
-    "luoyang_fallen": frozenset({"洛阳陷", "洛阳"}),
-    "kaifeng_siege": frozenset({"开封三围", "开封"}),
+    "luoyang_fallen": frozenset({"洛阳陷"}),
+    "kaifeng_siege": frozenset({"开封三围"}),
     "beijing_fallen": frozenset({"甲申", "北京陷", "李自成攻北京"}),
 }
 _STRATEGIC_FOREIGN_NODE_BATTLE_CONTEXT_ANCHORS = frozenset({

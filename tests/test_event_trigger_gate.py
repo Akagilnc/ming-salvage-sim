@@ -457,7 +457,7 @@ def test_load_event_rejects_strategic_foreign_situation(monkeypatch):
             "event_type": "situation",
             "trigger_class": "strategic_foreign"}]
     monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
-    with pytest.raises(SystemExit, match="strategic_foreign.*situation|node/ending"):
+    with pytest.raises(SystemExit, match=r"strategic_foreign.*situation|node/ending"):
         content_mod.load_event_content("x.json")
 
 
@@ -1509,6 +1509,40 @@ def test_shared_jinzhou_result_does_not_double_consume_dalingghe_and_songshan(ga
         item["id"] == "dalingghe" and item.get("rejected")
         for item in out["issue_summary"]["new_issues"]
     )
+
+
+@pytest.mark.parametrize("reason", [
+    "修筑洛阳城防，河南军压下降",
+    "赈济开封灾民，河南军压下降",
+])
+def test_henan_place_policy_delta_does_not_capture_untriggered_fall_events(game, reason):
+    """PR R2：普通河南治理不能因洛阳/开封地名被误当成孤儿城陷战果。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1642
+    state.period = 9
+    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (30, "henan"))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "region_delta": {
+                "henan": {
+                    "military_pressure": -4,
+                    "reason": reason,
+                }
+            }
+        },
+        content=content,
+    )
+
+    assert not db.has_event_triggered("luoyang_fallen")
+    assert not db.has_event_triggered("kaifeng_siege")
+    assert db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id = ?", ("henan",)
+    ).fetchone()["military_pressure"] == 26
+    assert out["region_changes"][0].get("rejected") is not True
 
 
 def test_unrelated_region_delta_does_not_satisfy_strategic_event_result_gate(game):
