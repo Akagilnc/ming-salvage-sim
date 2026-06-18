@@ -304,6 +304,7 @@ def test_new_issue_event_pool_rejects_expired_event(game):
 
     rej = _rejected(out)
     assert len(rej) == 1, out
+    assert rej[0]["id"] == eid
     assert "过期" in rej[0]["reason"] or "终态" in rej[0]["reason"]
     assert db.find_any_issue_by_origin("event_pool", eid) is None
 

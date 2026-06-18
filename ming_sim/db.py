@@ -6224,7 +6224,7 @@ class GameDB:
             "SELECT terminal_state FROM event_triggers WHERE event_id=? LIMIT 1",
             (event_id,),
         ).fetchone()
-        return str(row["terminal_state"]) if row is not None else None
+        return row["terminal_state"] if row is not None else None
 
     def has_event_terminal_state(self, event_id: str, terminal_state: str) -> bool:
         row = self.conn.execute(

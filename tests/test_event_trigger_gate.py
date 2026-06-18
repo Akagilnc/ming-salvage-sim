@@ -2783,6 +2783,23 @@ def test_historical_auto_trigger_core_effect_is_applied_once(game):
     ).fetchone()[0] == 1
 
 
+def test_auto_trigger_historical_events_use_preloaded_terminal_refs(game, monkeypatch):
+    """PR review：历史 auto_trigger 去重应批量读 event_triggers，避免每事件查 terminal_state。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1633
+    state.period = 7
+
+    def _unexpected_per_event_probe(*_args, **_kwargs):
+        raise AssertionError("auto_trigger historical loop must not call event_terminal_state per event")
+
+    monkeypatch.setattr(type(db), "event_terminal_state", _unexpected_per_event_probe)
+
+    triggered = issues.auto_trigger_seed_issues(state, db)
+
+    assert any(item["id"] == "huabei_plague" for item in triggered)
+
+
 def test_historical_auto_trigger_event_expires_after_latest_window(game):
     """#188：历史 auto_trigger 也须尊重最晚窗口，过期后不能硬触发。"""
     db, state, content = game
@@ -2806,6 +2823,32 @@ def test_historical_auto_trigger_event_expires_after_latest_window(game):
         assert db.find_any_issue_by_origin("event_pool", "__test_expiring_historical_auto__") is None
     finally:
         content.events.remove(ev)
+
+
+def test_gated_auto_trigger_seed_event_can_recur_after_previous_issue_resolved(game):
+    """PR review：seed auto_trigger 带 gate 时，旧 resolved issue 不应永久压住再触发。"""
+    db, state, content = game
+    issues.bind_content(content)
+    ev = _hist_event("__test_recurring_auto_seed__", {"民心": "<=5"})
+    ev.auto_trigger = True
+    ev.event_type = "situation"
+    content.seed_events.append(ev)
+    try:
+        state.metrics["民心"] = 3
+        first = issues.auto_trigger_seed_issues(state, db)
+        first_item = next(item for item in first if item["id"] == "__test_recurring_auto_seed__")
+        db.conn.execute(
+            "UPDATE issues SET status='resolved' WHERE id=?",
+            (first_item["issue_id"],),
+        )
+        db.conn.commit()
+
+        second = issues.auto_trigger_seed_issues(state, db)
+
+        second_item = next(item for item in second if item["id"] == "__test_recurring_auto_seed__")
+        assert second_item["issue_id"] != first_item["issue_id"]
+    finally:
+        content.seed_events.remove(ev)
 
 
 def test_huabei_plague_keeps_soft_degree_axis_as_situation_issue(game):
