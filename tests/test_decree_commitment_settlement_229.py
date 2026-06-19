@@ -291,6 +291,33 @@ def test_commitment_expiry_respects_outer_transaction_rollback(game):
     ).fetchone()[0] == 0
 
 
+def test_commitment_monthly_ongoing_respects_outer_transaction_rollback(game):
+    db, state, _content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="事务内月度兑现承诺",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:ongoing-rollback",
+        bar_value=0,
+        inertia=0,
+        ongoing_effects={"metrics": {"皇威": 1}},
+        end_turn=state.turn + 2,
+        commitment_kind="until_stop",
+    )
+    db.conn.commit()
+
+    db.conn.execute("BEGIN")
+    apply_issue_inertia_and_ongoing(db, state)
+    db.conn.rollback()
+
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM issue_advances WHERE issue_id=? AND trigger_kind='ongoing'",
+        (issue_id,),
+    ).fetchone()[0] == 0
+
+
 def test_commitment_progress_skips_non_numeric_gate_values(game):
     db, state, _content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
