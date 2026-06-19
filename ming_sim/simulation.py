@@ -20,6 +20,7 @@ from ming_sim.issues import (
     normalize_event_outcome_labels_or_error,
 )
 from ming_sim.models import GameState, loads_effect_dict
+from ming_sim.settlement_payload import augment_secret_orders_with_due_commitments
 from ming_sim.token_stats import tlog
 
 
@@ -373,10 +374,10 @@ def build_simulator_payload(
         "deaths_this_turn": deaths_this_turn or [],
         "debuts_this_turn": debuts_this_turn or [],
         "relevant_memories": relevant_memories or [],
-        "secret_orders": secret_orders or {},
+        "secret_orders": augment_secret_orders_with_due_commitments(secret_orders, db, state),
         # HITL：本回合 simulator 至少应产出的重大决策点数（全局玩法设置，0=不强制）。
         "hitl_min_decisions": _load_hitl_min_decisions(),
-        "data_note": "盘面表（buildings/court_roster/armies/regions）在本输入的开头以 TSV 文本块给出（首行列名、tab 分隔、每行一条记录），不在本 JSON 内；本 JSON 只含其余字段（含 powers_brief/factions_brief/classes_brief 叙述串、active_issues 等）。secret_orders 为皇帝密令分组对象（两组：在办=承办中、待核议=待本回合核议裁决），独立于 relevant_memories；每组条目含 id/minister_name/title/content/turn_issued/due_turn/progress/sim_note。",
+        "data_note": "盘面表（buildings/court_roster/armies/regions）在本输入的开头以 TSV 文本块给出（首行列名、tab 分隔、每行一条记录），不在本 JSON 内；本 JSON 只含其余字段（含 powers_brief/factions_brief/classes_brief 叙述串、active_issues 等）。secret_orders 为皇帝密令/到期待裁承诺分组对象（两组：在办=承办中、待核议=待本回合核议裁决），独立于 relevant_memories；真实密令条目含 id/minister_name/title/content/turn_issued/due_turn/progress/sim_note；到期待裁承诺条目带 entry_kind=due_commitment 与 issue_id。",
     }
 
 
@@ -604,7 +605,7 @@ def _extractor_context_payload(
         "power_ids": [str(r["id"]) for r in db.conn.execute("SELECT id FROM powers").fetchall()],
         "fiscal_config": db.get_fiscal_config(),
         "relevant_memories": relevant_memories or [],
-        "secret_orders": secret_orders or {},
+        "secret_orders": augment_secret_orders_with_due_commitments(secret_orders, db, state),
         "_format_note": "offstage_ministers（及未剔除时的盘面表）为 header+二维数组（cols 列名 + rows 数据）。",
     }
 

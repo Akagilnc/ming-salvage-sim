@@ -68,6 +68,7 @@ from ming_sim.settlement_payload import (  # noqa: E402
     _recovered_grouped,
     _select_secret_orders_for_sim,
     _strip_player_internal_fields,
+    augment_secret_orders_with_due_commitments,
     group_secret_orders_for_sim,
     parse_decision_blocks,
 )
@@ -249,6 +250,7 @@ def resolve_directives(
         active_orders = _select_secret_orders_for_sim(db)  # pending_review 全进，不被 active 饿死（#108）
         # 分组承载、剥英文 status：simulator/extractor 收到的密令零英文 enum（#48）。
         secret_orders_for_sim = group_secret_orders_for_sim(active_orders)
+        secret_orders_for_sim = augment_secret_orders_with_due_commitments(secret_orders_for_sim, db, state)
         n_active = len(secret_orders_for_sim["在办"])
         n_pending = len(secret_orders_for_sim["待核议"])
         tlog(f"[secret_order] 注入推演 在办={n_active} 待核议={n_pending}"
