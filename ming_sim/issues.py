@@ -22,6 +22,7 @@ from ming_sim.constants import (
 from ming_sim.content import GameContent
 from ming_sim.context import victory_status
 from ming_sim.db import GameDB, infer_office_type_from_office, normalize_office
+from ming_sim.exceptions import SettlementAbort
 from ming_sim.flows import (
     ISSUE_METRIC_KEYS,
     ISSUE_METRIC_LOCK_CAPS,
@@ -193,6 +194,173 @@ def _event_terminal_states(db: GameDB) -> Dict[str, str]:
         if r["event_id"]:
             states[str(r["event_id"])] = str(r["terminal_state"] or "")
     return states
+
+
+def _event_terminal_records(db: GameDB) -> Dict[str, Dict[str, str]]:
+    records: Dict[str, Dict[str, str]] = {}
+    for r in db.conn.execute(
+        "SELECT event_id, terminal_state, terminal_reason FROM event_triggers"
+    ).fetchall():
+        if r["event_id"]:
+            records[str(r["event_id"])] = {
+                "terminal_state": str(r["terminal_state"] or ""),
+                "terminal_reason": str(r["terminal_reason"] or ""),
+            }
+    return records
+
+
+_EVENT_GATE_KEY_RE = re.compile(r"^event\.([^.]+)\.(triggered|terminal_state|terminal_reason)$")
+
+
+def _event_dependency_ids(ev: Event) -> set[str]:
+    ids: set[str] = set()
+    for key in (ev.trigger_gate or {}):
+        m = _EVENT_GATE_KEY_RE.match(str(key))
+        if m:
+            ids.add(m.group(1))
+    return ids
+
+
+def _validate_event_dependency_graph_acyclic(content: GameContent, state: GameState) -> None:
+    graph: Dict[str, set[str]] = {
+        ev.id: _event_dependency_ids(ev)
+        for ev in [*content.events, *content.seed_events]
+        if getattr(ev, "id", "")
+    }
+    graph = {eid: {dep for dep in deps if dep in graph} for eid, deps in graph.items() if deps}
+    visiting: set[str] = set()
+    visited: set[str] = set()
+    stack: List[str] = []
+
+    def dfs(eid: str) -> None:
+        if eid in visiting:
+            cycle = stack[stack.index(eid):] + [eid] if eid in stack else [eid, eid]
+            raise SettlementAbort(
+                f"事件链依赖存在环：{' -> '.join(cycle)}",
+                turn=state.turn,
+                stage="event_chain_config",
+            )
+        if eid in visited:
+            return
+        visiting.add(eid)
+        stack.append(eid)
+        for dep in sorted(graph.get(eid, set())):
+            dfs(dep)
+        stack.pop()
+        visiting.remove(eid)
+        visited.add(eid)
+
+    for eid in sorted(graph):
+        dfs(eid)
+
+
+def _event_chain_impossible_reason(ev: Event, terminal_records: Dict[str, Dict[str, str]]) -> str:
+    positive_trigger_required: Dict[str, bool] = {}
+    negative_trigger_required: Dict[str, bool] = {}
+    allowed_outcomes: Dict[str, set[str]] = {}
+    forbidden_outcomes: Dict[str, set[str]] = {}
+
+    for raw_key, raw_cond in (ev.trigger_gate or {}).items():
+        m = _EVENT_GATE_KEY_RE.match(str(raw_key))
+        if not m:
+            continue
+        upstream_id, field = m.group(1), m.group(2)
+        cond = str(raw_cond).strip()
+        if field == "triggered":
+            num = re.match(r"^(>=|<=|>|<|==)\s*(-?\d+)$", cond)
+            if not num:
+                continue
+            op, value = num.group(1), int(num.group(2))
+            if op in (">=", ">", "==") and value >= 1:
+                positive_trigger_required[upstream_id] = True
+            elif op in ("<=", "==") and value <= 0:
+                negative_trigger_required[upstream_id] = True
+            continue
+        text = re.match(r"^(==|!=|in=)\s*(.+)$", cond)
+        if not text:
+            continue
+        op, value = text.group(1), text.group(2).strip()
+        values = {part.strip() for part in value.split("|") if part.strip()}
+        if field == "terminal_state":
+            if op == "==" and value == "triggered":
+                positive_trigger_required[upstream_id] = True
+            elif op == "!=" and value == "triggered":
+                negative_trigger_required[upstream_id] = True
+            elif op == "in=" and "triggered" in values:
+                positive_trigger_required[upstream_id] = True
+        elif field == "terminal_reason":
+            if op in ("==", "in="):
+                allowed_outcomes.setdefault(upstream_id, set()).update(values)
+            elif op == "!=":
+                forbidden_outcomes.setdefault(upstream_id, set()).update(values)
+
+    for upstream_id in sorted(_event_dependency_ids(ev)):
+        record = terminal_records.get(upstream_id)
+        if not record:
+            continue
+        state_val = record["terminal_state"]
+        outcome = record["terminal_reason"]
+        if positive_trigger_required.get(upstream_id) or upstream_id in allowed_outcomes:
+            allowed = allowed_outcomes.get(upstream_id, set())
+            if state_val != "triggered":
+                return f"上游事件 {upstream_id} 已入非触发终态：{state_val}"
+            if allowed and outcome and outcome not in allowed:
+                return f"上游事件 {upstream_id} 已发其他结局：{outcome}"
+        if negative_trigger_required.get(upstream_id):
+            if state_val == "triggered":
+                return f"上游事件 {upstream_id} 已触发"
+        forbidden = forbidden_outcomes.get(upstream_id, set())
+        if forbidden and state_val == "triggered" and outcome in forbidden:
+            return f"上游事件 {upstream_id} 已发禁用结局：{outcome}"
+    return ""
+
+
+def apply_event_cascading_invalidations(
+    state: GameState,
+    db: GameDB,
+    *,
+    commit: bool = True,
+) -> List[Dict[str, object]]:
+    """Invalidate downstream historical events whose event-chain gates are now impossible.
+
+    Only frozen event terminal/outcome ledger facts are invalidation grounds.  Other
+    trigger_gate clauses (regions, locations, offices, etc.) remain soft gates and
+    are deliberately ignored here because they may flip later.
+    """
+    content = _ctx()
+    _validate_event_dependency_graph_acyclic(content, state)
+    should_commit = commit and not db.conn.in_transaction
+    terminalized: List[Dict[str, object]] = []
+    while True:
+        terminal_records = _event_terminal_records(db)
+        changed = False
+        for ev in [*content.events, *content.seed_events]:
+            if not getattr(ev, "id", "") or ev.id in terminal_records:
+                continue
+            if not _event_dependency_ids(ev):
+                continue
+            reason = _event_chain_impossible_reason(ev, terminal_records)
+            if not reason:
+                continue
+            db.mark_event_obsolete(
+                state,
+                ev.id,
+                reason=reason,
+                source="event_chain_invalidated",
+                commit=False,
+            )
+            row = db.find_active_issue_by_origin("event_pool", ev.id)
+            if row is not None:
+                db.cancel_issue(state, int(row["id"]), narrative=f"事件链作废：{reason}", commit=False)
+            item: Dict[str, object] = {"id": ev.id, "title": ev.title, "terminal_state": "obsolete", "reason": reason}
+            terminalized.append(item)
+            terminal_records[ev.id] = {"terminal_state": "obsolete", "terminal_reason": reason}
+            changed = True
+        if not changed:
+            break
+    if should_commit and terminalized:
+        db.conn.commit()
+    return terminalized
 
 
 def _spawned_event_refs(db: GameDB) -> set:
@@ -579,6 +747,8 @@ def apply_event_terminal_states(
             terminal_refs.add(ev.id)
             terminalized.append({"id": ev.id, "title": ev.title, "terminal_state": "expired"})
 
+    terminalized.extend(apply_event_cascading_invalidations(state, db, commit=False))
+
     if should_commit and terminalized:
         db.conn.commit()
     return terminalized
@@ -657,6 +827,7 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
             triggered.append({"id": ev.id, "title": ev.title, "issue_id": issue_id})
             action = "硬立项" if created_issue else "补记"
             print(f"[AUTO-TRIGGER] gate 达标{action} #{issue_id} {ev.title}（{ev.trigger_gate}）")
+    apply_event_cascading_invalidations(state, db, commit=False)
     return triggered
 
 
@@ -814,6 +985,7 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
         commit=False,
     )
     db.mark_event_triggered(state, ev.id, source="event_pool", commit=False)
+    apply_event_cascading_invalidations(state, db, commit=False)
     if commit:
         db.conn.commit()
     return issue_id
@@ -2964,6 +3136,7 @@ def apply_issue_tracker_output(
                         )
                     )
                 db.mark_event_triggered(state, ev.id, commit=not external_transaction)
+                apply_event_cascading_invalidations(state, db, commit=not external_transaction)
                 consumed_event_ids.add(ev.id)
                 candidates_dirty = True
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 为 {ev.event_type}，不转 issue。")
@@ -4885,6 +5058,7 @@ def apply_score_extraction(
         )
         if any(_strategic_result_item_has_material_world_state(item) for item in result_items):
             db.mark_event_triggered(state, event_id, terminal_reason=outcome_label, commit=commit_now)
+            apply_event_cascading_invalidations(state, db, commit=commit_now)
             new_issue["reason"] = "事件已记为触发，软判结果已落主账"
         else:
             new_issue["rejected"] = True
