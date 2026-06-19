@@ -977,7 +977,7 @@ def show_active_issues(db: GameDB) -> None:
         return
     initiatives = [i for i in issues if i["kind"] == "initiative"]
     situations = [i for i in issues if i["kind"] == "situation"][:12]
-    print(f"─── 待办事项 (系统 {len(situations)}/12  玩家 {len(initiatives)}/10) ───")
+    print(f"─── 待办事项 (系统 {len(situations)}/12  玩家 {len(initiatives)}/{INITIATIVE_ACTIVE_CAP}) ───")
 
     def _print_row(row, label: str) -> None:
         bar = _bar_ascii(int(row["bar_value"]))
