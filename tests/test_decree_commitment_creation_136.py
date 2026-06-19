@@ -334,6 +334,44 @@ def test_until_stop_commitment_rejects_direct_resolved_close(game, monkeypatch):
     assert after["status"] == "active"
 
 
+def test_until_stop_commitment_advance_to_full_stays_active(game, monkeypatch):
+    db, state, content = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    I.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "origin_ref": "decree:turn-1:pay-liao-advance-guard",
+                    "kind": "initiative",
+                    "title": "每月补辽饷直到补齐防推进误结案",
+                    "bar_value": 90,
+                    "ongoing_effects": {"economy": [{"account": "国库", "delta": -50, "reason": "每月补饷"}]},
+                    "stop_condition": {"army.guanning.arrears": "<=0"},
+                    "commitment_kind": "until_stop",
+                }
+            ]
+        },
+        content=content,
+    )
+    row = _issue_by_title(db, "每月补辽饷直到补齐防推进误结案")
+
+    advanced = db.advance_issue(
+        state,
+        row["id"],
+        trigger_kind="decree",
+        delta_bar=20,
+        narrative="承诺履行有进展，但停止条件尚未由专门闭环判定。",
+    )
+
+    assert advanced["bar_value"] == 100
+    assert advanced["status"] == "active"
+    assert advanced["closed_turn"] is None
+
+
 def test_commitment_skips_cli_resolve_effect_enrich(game, monkeypatch):
     import ming_sim.cli_backend as _cb
 
