@@ -1922,6 +1922,45 @@ def test_rejected_strategic_event_does_not_land_substitute_commander_person_delt
     assert "战果不落" in out["applied_person_changes"][0]["reason"]
 
 
+def test_strategic_event_invalid_controlled_by_suppresses_sibling_deltas(game):
+    """Codex P1：战略事件 controlled_by 脏值须整组预拒，不能靠兄弟字段触发终态。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1638
+    state.period = 9
+    before = db.conn.execute(
+        "SELECT controlled_by, military_pressure FROM regions WHERE id = ?",
+        ("beizhili",),
+    ).fetchone()
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
+            "region_delta": {
+                "beizhili": {
+                    "controlled_by": "not_a_real_power",
+                    "military_pressure": 5,
+                    "reason": "戊寅虏变软判北直隶陷落但势力 id 脏",
+                }
+            },
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert "controlled_by" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert "整组战果不落主账" in out["region_changes"][0]["reason"]
+    assert not db.has_event_triggered("wuyin_lubian")
+    after = db.conn.execute(
+        "SELECT controlled_by, military_pressure FROM regions WHERE id = ?",
+        ("beizhili",),
+    ).fetchone()
+    assert after["controlled_by"] == before["controlled_by"]
+    assert after["military_pressure"] == before["military_pressure"]
+
+
 def test_invalid_strategic_event_result_delta_does_not_mark_event_triggered(game):
     """#189 CMR R2：战果 delta 被逐项拒收时，不得只落 event_triggers 空壳。"""
     db, state, content = game
