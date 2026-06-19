@@ -606,7 +606,13 @@ def _apply_monthly_ongoing_entities(
     return applied, rejections
 
 
-def _resolve_commitment_issue(db: GameDB, state: GameState, row: sqlite3.Row) -> None:
+def _resolve_commitment_issue(
+    db: GameDB,
+    state: GameState,
+    row: sqlite3.Row,
+    *,
+    commit: bool = True,
+) -> None:
     issue_id = int(row["id"])
     from_value = int(row["bar_value"])
     progress = commitment_progress_payload(db, state, row) or {}
@@ -642,10 +648,17 @@ def _resolve_commitment_issue(db: GameDB, state: GameState, row: sqlite3.Row) ->
             json.dumps(metric_delta, ensure_ascii=False),
         ),
     )
-    db.conn.commit()
+    if commit:
+        db.conn.commit()
 
 
-def _expire_commitment_issue(db: GameDB, state: GameState, row: sqlite3.Row) -> None:
+def _expire_commitment_issue(
+    db: GameDB,
+    state: GameState,
+    row: sqlite3.Row,
+    *,
+    commit: bool = True,
+) -> None:
     issue_id = int(row["id"])
     from_value = int(row["bar_value"])
     progress = commitment_progress_payload(db, state, row) or {}
@@ -680,7 +693,8 @@ def _expire_commitment_issue(db: GameDB, state: GameState, row: sqlite3.Row) -> 
             json.dumps(metric_delta, ensure_ascii=False),
         ),
     )
-    db.conn.commit()
+    if commit:
+        db.conn.commit()
 
 
 def _ack_due_commitment_issue(
@@ -6359,6 +6373,7 @@ def apply_issue_inertia_and_ongoing(
     _ = touched_ids  # 保留入参不破坏调用方；inertia 漂移不再按它跳过
     inertia_rejections: List[Dict[str, object]] = []
     active = db.list_active_issues()
+    commit_local = not bool(getattr(db.conn, "in_transaction", False))
     # 累计单月 metric 落账，用于上限 clamp
     period_metric_acc: Dict[str, int] = {}
 
@@ -6430,11 +6445,11 @@ def apply_issue_inertia_and_ongoing(
         if is_commitment:
             stop_gate = _commitment_stop_gate(row)
             if stop_gate and _gate_passed(stop_gate, state.metrics, db):
-                _resolve_commitment_issue(db, state, row)
+                _resolve_commitment_issue(db, state, row, commit=commit_local)
                 continue
             end_turn = int(row["end_turn"] or 0)
             if ongoing_has_work and end_turn > 0 and end_turn <= state.turn:
-                _expire_commitment_issue(db, state, row)
+                _expire_commitment_issue(db, state, row, commit=commit_local)
                 continue
 
         # 2) ongoing_effects：bar 高时折扣。经 loads_effect_dict 统一守（非 dict→{}，#117）。
@@ -6570,7 +6585,7 @@ def apply_issue_inertia_and_ongoing(
             continue
         stop_gate = _commitment_stop_gate(row) if is_commitment else {}
         if stop_gate and _gate_passed(stop_gate, state.metrics, db):
-            _resolve_commitment_issue(db, state, row)
+            _resolve_commitment_issue(db, state, row, commit=commit_local)
             continue
 
     state.clamp()

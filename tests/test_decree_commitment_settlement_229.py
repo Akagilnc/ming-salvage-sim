@@ -1,7 +1,12 @@
 import json
 
 from ming_sim.decree import settle_with_delta
-from ming_sim.issues import apply_score_extraction, commitment_progress_payload, show_active_issues
+from ming_sim.issues import (
+    apply_issue_inertia_and_ongoing,
+    apply_score_extraction,
+    commitment_progress_payload,
+    show_active_issues,
+)
 from ming_sim.simulation import _extractor_context_payload, build_simulator_payload
 
 
@@ -223,6 +228,67 @@ def test_commitment_ongoing_malformed_entity_payloads_are_rejected_without_crash
     assert any("region_delta.beizhili" in row["reason"] for row in rows)
     assert any("army_delta.guanning" in row["reason"] for row in rows)
     assert any("power_updates.houjin" in row["reason"] for row in rows)
+
+
+def test_commitment_stop_gate_resolve_respects_outer_transaction_rollback(game):
+    db, state, _content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
+    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="事务内自动结清承诺",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:resolve-rollback",
+        bar_value=0,
+        inertia=0,
+        ongoing_effects={"economy": []},
+        stop_condition=json.dumps({"army.guanning.arrears": "<=0"}, ensure_ascii=False),
+        commitment_kind="until_stop",
+    )
+    db.conn.commit()
+
+    db.conn.execute("BEGIN")
+    apply_issue_inertia_and_ongoing(db, state)
+    db.conn.rollback()
+
+    row = _issue_row(db, issue_id)
+    assert row["status"] == "active"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM issue_advances WHERE issue_id=? AND trigger_kind='commitment_resolve'",
+        (issue_id,),
+    ).fetchone()[0] == 0
+
+
+def test_commitment_expiry_respects_outer_transaction_rollback(game):
+    db, state, _content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="事务内到期停账承诺",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:expire-rollback",
+        bar_value=0,
+        inertia=0,
+        ongoing_effects={"metrics": {"皇威": -1}},
+        end_turn=state.turn,
+        commitment_kind="until_stop",
+    )
+    db.conn.commit()
+
+    db.conn.execute("BEGIN")
+    apply_issue_inertia_and_ongoing(db, state)
+    db.conn.rollback()
+
+    row = _issue_row(db, issue_id)
+    assert row["status"] == "active"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM issue_advances WHERE issue_id=? AND trigger_kind='expire'",
+        (issue_id,),
+    ).fetchone()[0] == 0
 
 
 def test_region_cannon_commitment_ongoing_applies_monthly_when_counted(game):
