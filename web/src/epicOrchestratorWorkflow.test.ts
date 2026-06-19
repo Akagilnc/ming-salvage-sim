@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { layerEpicIssues, type TopologyInput } from "./orchestratorKernel";
 // @ts-ignore Workflow scripts are plain JavaScript outside the web src TypeScript program.
-import { inlineLayerEpicIssues, normalizeWorkflowArgs, runEpicDiscoveryWorkflow } from "../orchestrator/epicOrchestrator.workflow.js";
+import { inlineLayerEpicIssues, normalizeWorkflowArgs, runEpicDiscoveryWorkflow, runEpicSingleSlicePipeline } from "../orchestrator/epicOrchestrator.workflow.js";
 
 const representativeTopologyInputs: TopologyInput[] = [
   {
@@ -229,5 +229,100 @@ describe("epic orchestrator workflow spine", () => {
       },
       outOfScope: ["review", "worktree", "merge"]
     });
+  });
+});
+
+describe("epic orchestrator S2 single-slice pipeline", () => {
+  it("runs exactly one planned slice through worktree implementation, local verify, codex+agy review, and family merge", async () => {
+    const calls: string[] = [];
+    const agentCalls: unknown[] = [];
+
+    const result: any = await runEpicSingleSlicePipeline({
+      args: { epicIssueNumber: 217, familyBranch: "family/217", verifyCommands: ["npm --prefix web test"] },
+      log: () => undefined,
+      agent: async (request: unknown) => {
+        agentCalls.push(request);
+        return {
+          commit: "abc123",
+          worktreePath: "/repo/.worktrees/issue-220",
+          observabilityEvidence: { loudFailure: true, locatorLogs: true, notApplicableReason: "tooling slice" }
+        };
+      },
+      Bash: async (command: string) => {
+        calls.push(command);
+        if (command.includes("/sub_issues")) {
+          return JSON.stringify({
+            epicId: 217,
+            issues: [
+              { id: 219, epicId: 217, state: "closed", title: "S1", url: "https://example.test/219" },
+              { id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" },
+              { id: 221, epicId: 217, state: "open", title: "S3", url: "https://example.test/221" }
+            ],
+            blockedBy: [
+              { issueId: 220, blockedByIssueId: 219 },
+              { issueId: 221, blockedByIssueId: 220 }
+            ]
+          });
+        }
+        if (command.includes("reviewer=codex")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [], diffOnly: true });
+        if (command.includes("merge reviewed commit")) return JSON.stringify({ mergeCommit: "def456" });
+        return JSON.stringify({ status: "passed" });
+      }
+    });
+
+    expect(result.plannedSlice).toMatchObject({ issueNumber: 220, isolation: "worktree" });
+    expect(result.implementation).toMatchObject({ commit: "abc123", worktreePath: "/repo/.worktrees/issue-220" });
+    expect(result.verification).toMatchObject({ status: "passed" });
+    expect(result.verification.commands).toEqual(["npm --prefix web run typecheck:orch", "npm --prefix web test", "npm --prefix web run build"]);
+    expect(result.review).toMatchObject({
+      status: "passed",
+      reviewers: [
+        { model: "codex", status: "passed", groundingFallback: true },
+        { model: "agy", status: "passed", diffOnly: true, hiddenWorktree: true }
+      ]
+    });
+    expect(result.merge).toEqual({ status: "merged", familyBranch: "family/217", reviewedCommit: "abc123", mergeCommit: "def456" });
+    expect(result.i7).toEqual({ sliceCommit: "abc123", amendmentsForbidden: true, reviewFixesRequireNewCommits: true });
+    expect(result.i8).toMatchObject({ required: true, loudFailure: true, locatorLogs: true });
+    expect(agentCalls).toHaveLength(1);
+    expect(JSON.stringify(agentCalls[0])).toContain("isolation");
+    expect(JSON.stringify(agentCalls[0])).toContain("worktree");
+    expect(calls.join("\n")).toContain("reviewer=codex");
+    expect(calls.join("\n")).toContain("codex exec --skip-git-repo-check --ephemeral -");
+    expect(calls.join("\n")).toContain("reviewer=agy");
+    expect(calls.join("\n")).toContain("--diff-only");
+  });
+
+  it("stops before review and merge when local verification fails", async () => {
+    const calls: string[] = [];
+
+    const result: any = await runEpicSingleSlicePipeline({
+      args: { epicIssueNumber: 217, verifyCommands: ["npm --prefix web test"] },
+      log: () => undefined,
+      agent: async () => ({
+        commit: "abc123",
+        worktreePath: "/repo/.worktrees/issue-220",
+        observabilityEvidence: { loudFailure: true, locatorLogs: true, notApplicableReason: "tooling slice" }
+      }),
+      Bash: async (command: string) => {
+        calls.push(command);
+        if (command.includes("/sub_issues")) {
+          return JSON.stringify({
+            epicId: 217,
+            issues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }],
+            blockedBy: []
+          });
+        }
+        if (command.includes("npm --prefix web test")) return JSON.stringify({ status: "failed", output: "red" });
+        return JSON.stringify({ status: "passed" });
+      }
+    });
+
+    expect(result.status).toBe("verify_failed");
+    expect(result.review).toBeUndefined();
+    expect(result.merge).toBeUndefined();
+    expect(calls.join("\n")).not.toContain("reviewer=codex");
+    expect(calls.join("\n")).not.toContain("merge reviewed commit");
   });
 });

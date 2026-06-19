@@ -1,10 +1,14 @@
 export const meta = {
   name: 'epic-orchestrator',
-  description: 'Discover native GitHub sub-issues plus blocked_by edges for an epic and return the thinnest ordered execution plan.',
-  whenToUse: 'Issue #219 S1: parent epic issue number -> GitHub native sub-issues + native blocked_by -> S0 topology plan. Does not implement review/worktree/merge.',
+  description: 'Discover native GitHub sub-issues plus blocked_by edges, plan one open slice, implement it in a worktree, verify, run per-slice codex+agy review, and merge the reviewed commit to the family branch.',
+  whenToUse: 'Issue #220 S2: parent epic issue number -> one planned slice -> isolation:worktree implementation -> local verify -> per-slice codex+agy review -> family branch merge. Parallelism and family 5a/5b remain out of scope.',
   phases: [
     { title: 'Discover', detail: 'Read native sub-issues and native blocked_by edges with gh' },
-    { title: 'Plan', detail: 'Run the drift-guarded inline S0 topology copy and return an ordered plan' }
+    { title: 'Plan', detail: 'Run the drift-guarded inline S0 topology copy and choose the first ready slice only' },
+    { title: 'Implement', detail: 'Run the implementation leg with isolation:"worktree" and I7/I8 instructions' },
+    { title: 'Verify', detail: 'Run local verification commands before any review' },
+    { title: 'Review', detail: 'Run per-slice codex + agy via Bash; agy uses diff-only for hidden worktrees and codex has grounding fallback' },
+    { title: 'Merge', detail: 'Merge the reviewed commit to the family branch serially' }
   ]
 };
 
@@ -265,6 +269,190 @@ PY`)
   return result;
 }
 
+export async function runEpicSingleSlicePipeline({ args, Bash, agent: agentRunner, log }) {
+  const discovery = await runEpicDiscoveryWorkflow({ args, Bash, log });
+  if (discovery.topology.status !== 'ready') {
+    return { ...discovery, status: discovery.boundaryHandling.action };
+  }
+
+  const plannedIssue = discovery.orderedPlan[0]?.issues[0];
+  if (!plannedIssue) {
+    throw new Error('S2 single-slice pipeline requires at least one planned open slice.');
+  }
+
+  const normalizedArgs = normalizePipelineArgs(args, discovery.epicIssueNumber);
+  const plannedSlice = {
+    ...plannedIssue,
+    isolation: 'worktree'
+  };
+
+  phaseIfAvailable('Implement');
+  log?.(`Implementing one slice with worktree isolation: #${plannedSlice.issueNumber} ${plannedSlice.title ?? ''}`.trim());
+  const runner = agentRunner ?? (typeof agent !== 'undefined' ? agent : undefined);
+  if (typeof runner !== 'function') {
+    throw new Error('S2 single-slice pipeline requires an agent runner for the implementation leg.');
+  }
+  const implementation = await runner({
+    isolation: 'worktree',
+    issueNumber: plannedSlice.issueNumber,
+    issue: plannedSlice,
+    prompt: buildImplementationPrompt(discovery.epicIssueNumber, plannedSlice)
+  });
+  const implementedCommit = implementation?.commit ?? implementation?.commitSha ?? implementation?.sha;
+  const worktreePath = implementation?.worktreePath ?? implementation?.path;
+  if (!implementedCommit || !worktreePath) {
+    throw new Error('Implementation leg must return a commit and worktreePath.');
+  }
+  if (!isHiddenWorktreePath(worktreePath)) {
+    throw new Error('Implementation worktree must be under a hidden-dot path so agy review is explicitly diff-only.');
+  }
+  const observabilityEvidence = validateObservabilityEvidence(implementation?.observabilityEvidence);
+
+  await Bash(`set -euo pipefail\n# enforce I7 commit discipline for slice ${shellQuote(plannedSlice.issueNumber)}\ngit -C ${shellQuote(worktreePath)} cat-file -e ${shellQuote(implementedCommit)}^{commit}\ngit -C ${shellQuote(worktreePath)} rev-list --parents -n 1 ${shellQuote(implementedCommit)} | awk 'NF >= 2 { ok=1 } END { exit ok ? 0 : 1 }'\ngit -C ${shellQuote(worktreePath)} diff --quiet`);
+
+  phaseIfAvailable('Verify');
+  const verification = await runVerification({ Bash, worktreePath, verifyCommands: normalizedArgs.verifyCommands });
+  if (verification.status !== 'passed') {
+    return {
+      ...discovery,
+      outOfScope: ['parallelism', 'family_5a_5b', 'online_pr_review_loop'],
+      status: 'verify_failed',
+      plannedSlice,
+      implementation: { commit: implementedCommit, worktreePath },
+      verification,
+      i7: i7Evidence(implementedCommit),
+      i8: i8Evidence(observabilityEvidence)
+    };
+  }
+
+  phaseIfAvailable('Review');
+  const review = await runPerSliceReview({ Bash, worktreePath, commit: implementedCommit, plannedSlice });
+  if (review.status !== 'passed') {
+    return {
+      ...discovery,
+      outOfScope: ['parallelism', 'family_5a_5b', 'online_pr_review_loop'],
+      status: 'review_failed',
+      plannedSlice,
+      implementation: { commit: implementedCommit, worktreePath },
+      verification,
+      review,
+      i7: i7Evidence(implementedCommit),
+      i8: i8Evidence(observabilityEvidence)
+    };
+  }
+
+  phaseIfAvailable('Merge');
+  const mergeResult = parseBashJson(
+    await Bash(`set -euo pipefail\n# merge reviewed commit into family branch; reviewer=merge reviewed commit\ngit -C ${shellQuote(worktreePath)} fetch origin ${shellQuote(normalizedArgs.familyBranch)} || true\ngit -C ${shellQuote(worktreePath)} switch -C ${shellQuote(normalizedArgs.familyBranch)}\ngit -C ${shellQuote(worktreePath)} merge --no-ff ${shellQuote(implementedCommit)} -m ${shellQuote(`merge reviewed slice #${plannedSlice.issueNumber}`)}\nprintf '{"mergeCommit":"'\ngit -C ${shellQuote(worktreePath)} rev-parse HEAD | tr -d '\\n'\nprintf '"}'`)
+  );
+
+  return {
+    ...discovery,
+    outOfScope: ['parallelism', 'family_5a_5b', 'online_pr_review_loop'],
+    status: 'merged',
+    plannedSlice,
+    implementation: { commit: implementedCommit, worktreePath },
+    verification,
+    review,
+    merge: {
+      status: 'merged',
+      familyBranch: normalizedArgs.familyBranch,
+      reviewedCommit: implementedCommit,
+      mergeCommit: mergeResult.mergeCommit
+    },
+    i7: i7Evidence(implementedCommit),
+    i8: i8Evidence(observabilityEvidence)
+  };
+}
+
+function normalizePipelineArgs(rawArgs, epicIssueNumber) {
+  const objectArgs = typeof rawArgs === 'object' && rawArgs !== null ? rawArgs : {};
+  const requiredVerifyCommands = ['npm --prefix web run typecheck:orch', 'npm --prefix web test', 'npm --prefix web run build'];
+  const extraVerifyCommands = Array.isArray(objectArgs.verifyCommands) ? objectArgs.verifyCommands.map((command) => String(command)) : [];
+  const verifyCommands = [...new Set([...requiredVerifyCommands, ...extraVerifyCommands])];
+  return {
+    familyBranch: String(objectArgs.familyBranch ?? `family/epic-${epicIssueNumber}`),
+    verifyCommands
+  };
+}
+
+function buildImplementationPrompt(epicIssueNumber, plannedSlice) {
+  return [
+    `Implement epic #${epicIssueNumber} slice #${plannedSlice.issueNumber}: ${plannedSlice.title ?? ''}`,
+    'Use isolation:"worktree". Produce exactly one slice commit for the initial implementation.',
+    'I7: every review-fix round must be a new commit; never amend or squash review history.',
+    'I8: enforce loud failures, locator logs, and gameplay DB consequences when applicable; for read-only/UI/tooling slices include substitute observability evidence.',
+    'Return JSON-like data containing commit and worktreePath.'
+  ].join('\n');
+}
+
+async function runVerification({ Bash, worktreePath, verifyCommands }) {
+  const results = [];
+  for (const command of verifyCommands) {
+    const parsed = parseBashJson(
+      await Bash(`set -euo pipefail\ncd ${shellQuote(worktreePath)}\nout=$(mktemp)\nset +e\n( ${command} ) >"$out" 2>&1\nrc=$?\npython3 - "$rc" "$out" <<'PY'\nimport json, sys\nrc = int(sys.argv[1])\nwith open(sys.argv[2], encoding='utf-8', errors='replace') as handle:\n    output = handle.read()\nprint(json.dumps({"status": "passed" if rc == 0 else "failed", "exitCode": rc, "output": output}))\nPY`)
+    );
+    results.push({ command, ...parsed });
+    if (parsed.status && parsed.status !== 'passed') {
+      return { status: 'failed', commands: verifyCommands, results };
+    }
+  }
+  return { status: 'passed', commands: verifyCommands, results };
+}
+
+async function runPerSliceReview({ Bash, worktreePath, commit, plannedSlice }) {
+  const codex = parseBashJson(
+    await Bash(`set -euo pipefail\ncd ${shellQuote(worktreePath)}\n# reviewer=codex; full grounding fallback enabled: inspect repo files if diff alone is insufficient\ngit diff --stat ${shellQuote(`${commit}^`)} ${shellQuote(commit)}\ngit diff ${shellQuote(`${commit}^`)} ${shellQuote(commit)} | codex exec --skip-git-repo-check --ephemeral -`)
+  );
+  const agy = parseBashJson(
+    await Bash(`set -euo pipefail\ncd ${shellQuote(worktreePath)}\n# reviewer=agy; hidden worktree path forces diff-only review\ngit diff ${shellQuote(`${commit}^`)} ${shellQuote(commit)} | agy -p --sandbox --diff-only`)
+  );
+  const reviewers = [
+    { model: 'codex', status: reviewStatus(codex), groundingFallback: true, findings: codex.findings ?? [] },
+    { model: 'agy', status: reviewStatus(agy), diffOnly: true, hiddenWorktree: true, findings: agy.findings ?? [] }
+  ];
+  const failed = reviewers.find((reviewer) => reviewer.status !== 'passed');
+  return {
+    status: failed ? 'failed' : 'passed',
+    sliceIssueNumber: plannedSlice.issueNumber,
+    reviewers,
+    flags: ['per-slice review uses codex+agy via Bash', 'agy is diff-only for hidden-dot worktrees', 'codex has full grounding fallback']
+  };
+}
+
+function reviewStatus(reviewResult) {
+  if (Array.isArray(reviewResult.findings) && reviewResult.findings.length > 0) return 'failed';
+  return reviewResult.status === 'passed' ? 'passed' : 'failed';
+}
+
+function isHiddenWorktreePath(worktreePath) {
+  return String(worktreePath).split('/').some((part) => part.startsWith('.') && part.length > 1);
+}
+
+function i7Evidence(commit) {
+  return { sliceCommit: commit, amendmentsForbidden: true, reviewFixesRequireNewCommits: true };
+}
+
+function validateObservabilityEvidence(evidence) {
+  if (!evidence || evidence.loudFailure !== true || evidence.locatorLogs !== true) {
+    throw new Error('I8 observability evidence must include loudFailure:true and locatorLogs:true.');
+  }
+  if (!evidence.gameplayDbConsequences && !evidence.notApplicableReason) {
+    throw new Error('I8 observability evidence must include gameplayDbConsequences or a notApplicableReason for read-only/UI/tooling slices.');
+  }
+  return evidence;
+}
+
+function i8Evidence(evidence) {
+  return {
+    required: true,
+    loudFailure: evidence.loudFailure,
+    locatorLogs: evidence.locatorLogs,
+    gameplayDbConsequences: evidence.gameplayDbConsequences ?? 'N/A',
+    notApplicableReason: evidence.notApplicableReason
+  };
+}
+
 function buildOrderedExecutionPlan(topology, issueMetadata) {
   if (topology.status !== 'ready') return [];
   return topology.layers.map((layer, index) => ({
@@ -305,5 +493,10 @@ function shellQuote(value) {
 }
 
 if (typeof args !== 'undefined') {
-  await runEpicDiscoveryWorkflow({ args, Bash, log });
+  await runEpicSingleSlicePipeline({
+    args,
+    Bash,
+    agent: typeof agent !== 'undefined' ? agent : undefined,
+    log
+  });
 }
