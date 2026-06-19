@@ -3537,6 +3537,26 @@ class GameDB:
                     log_delta = actual_delta
                 else:  # REGION_TEXT_FIELDS
                     text_value = str(value).strip()[:160]
+                    if field == "controlled_by":
+                        if (
+                            value is None
+                            or not text_value
+                            or text_value.lower() == "null"
+                            or self.conn.execute(
+                                "SELECT 1 FROM powers WHERE id = ? LIMIT 1",
+                                (text_value,),
+                            ).fetchone() is None
+                        ):
+                            changes.append({
+                                "region": row["name"], "field": field,
+                                "rejected": True, "category": "invalid_enum",
+                                "reason": (
+                                    f"region_delta 'controlled_by'（地区 '{region_id}'）"
+                                    f"必须是 powers.id 中的非空真实势力 id：{value!r}"
+                                ),
+                                "item": {"region_id": region_id, "field": field, "value": value},
+                            })
+                            continue
                     if not text_value or text_value == str(old_value):
                         continue
                     stored_new = text_value
