@@ -838,6 +838,7 @@ class GameDB:
                 fail_condition TEXT NOT NULL DEFAULT '',
                 end_turn INTEGER NOT NULL DEFAULT 0,
                 stop_condition TEXT NOT NULL DEFAULT '',
+                commitment_kind TEXT NOT NULL DEFAULT '',
                 resolution_summary TEXT NOT NULL DEFAULT '',
                 last_advance_turn INTEGER NOT NULL DEFAULT 0,
                 closed_turn INTEGER,
@@ -992,6 +993,7 @@ class GameDB:
         self.ensure_column("issues", "fail_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "end_turn", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("issues", "stop_condition", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("issues", "commitment_kind", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "birth_year", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "historical_death_year", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "historical_death_month", "INTEGER NOT NULL DEFAULT 0")
@@ -6340,6 +6342,7 @@ class GameDB:
         fail_condition: str = "",
         end_turn: int = 0,
         stop_condition: str = "",
+        commitment_kind: str = "",
         commit: bool = True,
     ) -> int:
         if kind not in ("situation", "initiative"):
@@ -6361,8 +6364,8 @@ class GameDB:
                 phase, stage_text, status, severity, region_hint, faction_hint,
                 tags, ongoing_effects, cancellable, cancel_cost,
                 effect_on_resolve, effect_on_fail, resolve_condition, fail_condition,
-                end_turn, stop_condition, last_advance_turn
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                end_turn, stop_condition, commitment_kind, last_advance_turn
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 kind, title, origin_kind, origin_ref, state.turn,
@@ -6375,7 +6378,7 @@ class GameDB:
                 json.dumps(effect_on_resolve or {}, ensure_ascii=False),
                 json.dumps(effect_on_fail or {}, ensure_ascii=False),
                 resolve_condition, fail_condition,
-                int(end_turn), str(stop_condition or ""),
+                int(end_turn), str(stop_condition or ""), str(commitment_kind or ""),
                 state.turn,
             ),
         )
