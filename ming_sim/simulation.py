@@ -521,20 +521,28 @@ def _extractor_context_payload(
             })
         return out
 
-    issues_brief = [
-        {
+    issues_brief: List[Dict[str, object]] = []
+    for r in active:
+        keys = r.keys() if hasattr(r, "keys") else []
+        resolve_cond = (r["resolve_condition"] if "resolve_condition" in keys else "") or ""
+        commitment_kind = (r["commitment_kind"] if "commitment_kind" in keys else "") or ""
+        stop_condition = (r["stop_condition"] if "stop_condition" in keys else "") or ""
+        issue = {
             "issue_id": int(r["id"]),
             "title": r["title"],
             "bar_value": int(r["bar_value"]),
             "inertia": int(r["inertia"]),
             "stage_text": r["stage_text"],
             "cancellable": r["cancellable"],
-            "resolve_condition": (r["resolve_condition"] if "resolve_condition" in r.keys() else "") or "(未填)",
-            "fail_condition": (r["fail_condition"] if "fail_condition" in r.keys() else "") or "(未填)",
-            **commitment_condition_role(r["resolve_condition"] if "resolve_condition" in r.keys() else ""),
+            "resolve_condition": resolve_cond or "(未填)",
+            "fail_condition": (r["fail_condition"] if "fail_condition" in keys else "") or "(未填)",
+            **commitment_condition_role(resolve_cond, commitment_kind),
         }
-        for r in active
-    ]
+        if commitment_kind:
+            issue["commitment_kind"] = commitment_kind
+        if stop_condition:
+            issue["stop_condition"] = stop_condition
+        issues_brief.append(issue)
     # 局势自动月支汇总（独立顶层字段，不随 active_issues 一起被 _MODULE_DROP_FIELDS 剔除）。
     # extractor 据此判重：邸报提到的局势常态月支若在此清单，是程序自动落账项，勿写 钱粮收支。
     issue_auto_economy: List[Dict[str, object]] = []
