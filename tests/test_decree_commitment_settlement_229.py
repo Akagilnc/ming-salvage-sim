@@ -160,6 +160,93 @@ def test_commitment_progress_contexts_are_structured(game, capsys):
     assert "直到补齐" in output
 
 
+def test_commitment_progress_text_splits_by_commitment_shape_and_gate(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
+    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET arrears=30 WHERE id='guanning'")
+    db.conn.commit()
+
+    arrears_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="补饷承诺文案",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:arrears-text",
+        bar_value=0,
+        inertia=0,
+        ongoing_effects={"economy": [{"account": "国库", "delta": -10, "reason": "补饷", "purpose": "补饷"}]},
+        stop_condition=json.dumps({"army.guanning.arrears": "<=0"}, ensure_ascii=False),
+        commitment_kind="until_stop",
+    )
+    limited_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="时限承诺文案",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:limited-text",
+        bar_value=0,
+        inertia=0,
+        ongoing_effects={"metrics": {"皇威": 1}},
+        end_turn=state.turn + 3,
+        commitment_kind="until_stop",
+    )
+    due_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="复核承诺文案",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:due-text",
+        bar_value=0,
+        inertia=0,
+        ongoing_effects={},
+        end_turn=state.turn,
+        commitment_kind="until_stop",
+    )
+    character_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="人物承诺文案",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:character-text",
+        bar_value=0,
+        inertia=0,
+        ongoing_effects={"metrics": {"皇威": -1}},
+        stop_condition=json.dumps({"character.毛文龙.loyalty": ">=101"}, ensure_ascii=False),
+        commitment_kind="until_stop",
+    )
+
+    _settle_empty_month(db, state, content)
+    issues = {
+        item["issue_id"]: item
+        for item in build_simulator_payload(state, db, "", "")["active_issues"]
+    }
+
+    arrears_text = issues[arrears_id]["待办未解进度"]
+    assert "尚欠" in arrears_text
+    assert "万两" in arrears_text
+    assert "直到补齐" in arrears_text
+
+    limited_text = issues[limited_id]["待办未解进度"]
+    assert "已履行1月" in limited_text
+    assert "限至第" in limited_text
+    assert "补齐" not in limited_text
+
+    due_text = issues[due_id]["待办未解进度"]
+    assert "到期待裁" in due_text
+    assert "补齐" not in due_text
+    assert "万两" not in due_text
+
+    character_progress = issues[character_id]["commitment_progress"]
+    assert "remaining_to_goal" in character_progress
+    assert "remaining_arrears" not in character_progress
+    character_text = issues[character_id]["待办未解进度"]
+    assert "直到达标" in character_text
+    assert "补齐" not in character_text
+    assert "万两" not in character_text
+
+
 def test_commitment_ongoing_economy_not_scaled_by_bar_discount(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -572,3 +659,86 @@ def test_one_shot_end_turn_commitment_surfaces_in_existing_review_channel(game):
         "SELECT COUNT(*) FROM issue_advances WHERE issue_id=? AND trigger_kind='expire'",
         (issue_id,),
     ).fetchone()[0] == 0
+
+
+def test_due_one_shot_commitment_ack_closes_review_loop_without_effects(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
+    db.conn.commit()
+    starting_turn = state.turn
+    starting_popular_support = int(state.metrics["民心"])
+
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="孙承宗三月后复试收尾",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:sun-review-ack",
+        bar_value=0,
+        inertia=0,
+        stage_text="孙承宗暂听候政，三月后复试。",
+        ongoing_effects={},
+        effect_on_resolve={"metrics": {"民心": 9}},
+        effect_on_fail={"metrics": {"民心": -7}},
+        stop_condition="",
+        end_turn=starting_turn + 1,
+        commitment_kind="until_stop",
+        cancellable="decree",
+    )
+
+    before_due = build_simulator_payload(state, db, "", "")
+    assert [
+        item for item in before_due["secret_orders"].get("待核议", [])
+        if item.get("entry_kind") == "due_commitment" and item.get("issue_id") == issue_id
+    ] == []
+
+    _settle_empty_month(db, state, content)
+    due_payload = build_simulator_payload(state, db, "", "")
+    assert [
+        item for item in due_payload["secret_orders"]["待核议"]
+        if item.get("entry_kind") == "due_commitment" and item.get("issue_id") == issue_id
+    ]
+
+    out = apply_score_extraction(
+        db,
+        state,
+        {
+            "close_issues": [
+                {
+                    "issue_id": issue_id,
+                    "reason": "acknowledged",
+                    "narrative": "皇帝已复试孙承宗，此承诺已由圣裁处理。",
+                }
+            ]
+        },
+        content=content,
+    )
+
+    close = out["issue_summary"]["closes"][0]
+    assert close["rejected"] is False
+    row = _issue_row(db, issue_id)
+    assert row["status"] == "dropped"
+    assert row["closed_turn"] == state.turn
+    assert "圣裁处理" in row["resolution_summary"]
+    assert int(state.metrics["民心"]) == starting_popular_support
+    advances = db.conn.execute(
+        "SELECT trigger_kind, metric_delta FROM issue_advances WHERE issue_id=? ORDER BY id",
+        (issue_id,),
+    ).fetchall()
+    assert [(row["trigger_kind"], json.loads(row["metric_delta"])) for row in advances] == [
+        ("commitment_ack", {}),
+    ]
+
+    after_ack = build_simulator_payload(state, db, "", "")
+    assert [
+        item for item in after_ack["secret_orders"].get("待核议", [])
+        if item.get("entry_kind") == "due_commitment" and item.get("issue_id") == issue_id
+    ] == []
+
+    _settle_empty_month(db, state, content)
+    next_month = build_simulator_payload(state, db, "", "")
+    assert [
+        item for item in next_month["secret_orders"].get("待核议", [])
+        if item.get("entry_kind") == "due_commitment" and item.get("issue_id") == issue_id
+    ] == []

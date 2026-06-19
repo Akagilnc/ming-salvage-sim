@@ -187,6 +187,10 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 
 「连续 N 月 / 半年为限」这类时限承诺也必须建 `kind="initiative"` 的承诺 issue：带 `commitment_kind="until_stop"`、`ongoing_effects`、`end_turn`。立项公式是 `end_turn = turn + N`，半年按 6 个回合计。若同时要求「直到补齐」，同时写 `stop_condition`；`stop_condition` 或 `end_turn` 谁先到谁停。时限到期由结算写 `issue_advances.trigger_kind="expire"` 并标 `dropped`，不要在 delta 里伪造成 `close_issues resolved/failed`，也不要给承诺补普通 resolve/fail 效果。
 
+开放式经常性承诺必须显式带 `commitment_kind="until_stop"` 和非空 `ongoing_effects`；可以没有 `stop_condition` 与 `end_turn`，表示皇帝主动撤销前长期挂账。缺 `commitment_kind` 的同形状会拒收，避免把承诺误落成普通 initiative。
+
+「三月后复试 / 期满复核」这类未来一次性 form③ 承诺带 `commitment_kind="until_stop"`、`end_turn`，`ongoing_effects` 可为空。到期后程序会把它顶到待核议；皇帝/邸报明确裁决或确认已处理后，`close_issues` 可写 `reason="acknowledged"` 作 ACK 收尾，状态标 `dropped`、`issue_advances.trigger_kind="commitment_ack"`，不运行 `effect_on_resolve` / `effect_on_fail`。普通承诺不得用 `close_issues resolved/failed` 绕过专门闭环。
+
 人物承诺型事项也属 `initiative`：如皇帝命臣安抚毛文龙，应立标题类似 `安抚毛文龙·进行中` 的玩家可见 issue，并用 `stop_condition` 表达意图阈值。本字段只存停止/达成意图；自动按条件完成/关闭不在本片。一次性赏赐、抚恤、拨银若当回合办完，不立 issue，只走 `economy_moves` 与必要的 `人物变更`。
 
 ### `cancels` — 撤销 issue
@@ -194,8 +198,8 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 - 仅 `cancellable in (decree, by_progress)` 的 issue 可撤；预设 `never` 撤不动。
 
 ### `close_issues` — 结案 issue
-- `issue_id` int + `result` 文本（描述 done/failed 的实况）
-- 一般由 issue bar=100/0 自动了结；这里用于强行结案。
+- `issue_id` int + `reason`（`resolved` / `failed` / `acknowledged`）+ `narrative` 文本。
+- 一般由 issue bar=100/0 自动了结；这里用于强行结案。`acknowledged` 只用于已到期 form③ 承诺被皇帝明确裁决/确认处理后的 ACK 收尾。
 
 ### `人物变更` — 人事档案单一入口
 每条必须带 `name`（必须在 `characters` 名册）和 `动作`。`动作` 只收八个值：`任命` / `罢黜` / `调任` / `处置` / `易主` / `册封` / `行止` / `评定`。未知动作、查无此人、缺必填字段、非法枚举或非法状态迁移都会逐项拒收留痕。
