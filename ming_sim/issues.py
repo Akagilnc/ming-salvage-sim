@@ -6585,7 +6585,8 @@ def apply_issue_inertia_and_ongoing(
                     json.dumps(metric_delta, ensure_ascii=False),
                 ),
             )
-            db.conn.commit()
+            if commit_local:
+                db.conn.commit()
 
         row = db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
         if row is None or row["status"] != "active":
