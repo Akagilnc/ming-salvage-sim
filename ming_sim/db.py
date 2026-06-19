@@ -4927,19 +4927,28 @@ class GameDB:
         ]
         # write_decree() の commit_pending_actions(kind_filter="directive") が生成した
         # turn_directives(status='draft') はスナップショット外なので rollback_items に入らない。
-        # 削除前に、本召対が commit した pending_actions(kind='directive') 行から
+        # 削除前に、本召対が触った pending_actions(kind='directive') 行から
         # committed_directive_id を読み、その draft 行【だけ】を後で削除する（BUG 3：旧実装は
         # (turn,actor) で削っていたため、同 actor 同回合の【無関係】draft も巻き込んでいた）。
+        # BUG（補充パス）：初回拟旨は INSERT(delete_inserted_row)だが、補充（2 回目の拟旨）は
+        # 既存 pending 行を UPDATE するため diff が restore_row になる。strategy で絞ると
+        # この補充→颁诏→撤回フローで committed_directive_id を取り逃し、orphan draft が残って
+        # 颁诏汚染を起こす。よって strategy に依らず、行が kind=='directive' なら回収する。
         draft_ids_to_delete: List[int] = []
         for item in items:
             if str(item["target_table"]) != "pending_actions":
                 continue
-            if str(item["rollback_strategy"]) != "delete_inserted_row":
-                continue
+            # restore_row では after が補充後の状態、before が補充前。どちらにも id があり、
+            # kind は両側同一なので、ある方から拾えばよい。delete_inserted_row は after のみ、
+            # restore_deleted_row は before のみが非空。
             after_data = self._json_load_row(item["after_json"])
-            if str(after_data.get("kind") or "") != "directive":
+            before_data = self._json_load_row(item["before_json"])
+            kind = str(after_data.get("kind") or before_data.get("kind") or "")
+            if kind != "directive":
                 continue
             pa_id = after_data.get("id")
+            if pa_id is None:
+                pa_id = before_data.get("id")
             if pa_id is None:
                 continue
             live = self.conn.execute(
