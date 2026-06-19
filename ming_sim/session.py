@@ -1109,6 +1109,13 @@ class GameSession:
             # （web 映射 400 / terminal 打印拟诏失败）。幂等返回决策点的守门在 resolve_turn。
             raise ValueError("当前在月末亲裁阶段，请先裁决已存决策点，不能拟诏。")
         self._refuse_if_settling()
+        # "不回=默认同意"（ADR 0006）：先把对话式拟旨暂存（pending_actions kind=directive）
+        # 提交为 draft，使 list_directives(status='draft') 能拾取——这是 web「拟诏」按钮
+        # 的真实入口路径，不经过 resolve_turn 的 auto-commit。幂等，无副作用。
+        self.db.commit_pending_actions(
+            self.state, kind_filter="directive",
+            content=getattr(self, "content", None),
+            registry=getattr(self, "registry", None))
         if self.pending_count() > 0:
             raise ValueError(f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
         directives = self.db.list_directives(self.state, statuses=("draft",))
