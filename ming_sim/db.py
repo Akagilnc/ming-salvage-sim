@@ -5656,6 +5656,29 @@ class GameDB:
         self.conn.commit()
         return int(cur.lastrowid)
 
+    def upsert_pending_directive(
+        self, turn: int, minister_name: str, payload: Dict[str, object],
+    ) -> int:
+        """暂存或原地更新(last-write-wins)一条 kind=directive 拟旨意图(ADR 0006)。
+        同一回合同一大臣至多一条 pending directive——新意图覆盖旧(补充=原地更新,非新增态)。
+        返回行 id。"""
+        row = self.conn.execute(
+            "SELECT id FROM pending_actions "
+            "WHERE turn=? AND minister_name=? AND kind='directive' AND status='pending'",
+            (int(turn), str(minister_name)),
+        ).fetchone()
+        if row is not None:
+            self.conn.execute(
+                "UPDATE pending_actions SET payload_json=? WHERE id=?",
+                (json.dumps(payload or {}, ensure_ascii=False), int(row["id"])),
+            )
+            self.conn.commit()
+            return int(row["id"])
+        return self.stage_pending_action(
+            turn, kind="directive", action="拟旨",
+            minister_name=minister_name, target_id=None, payload=payload,
+        )
+
     def list_pending_actions(
         self, turn: int, status: str = "pending", minister_name: Optional[str] = None,
     ) -> List[Dict[str, object]]:
@@ -5771,6 +5794,16 @@ class GameDB:
             # 颁诏路在回合末、次回合本就重建,刷一下无害。
             if registry is not None:
                 registry.refresh(name)
+            return True
+        if pa["kind"] == "directive" and pa["action"] == "拟旨":
+            text = str(payload.get("text") or "").strip()
+            actor = str(payload.get("actor") or pa["minister_name"] or "")
+            if not text:
+                return False
+            self.add_directive(
+                state, None, text, "大臣拟旨",
+                actor=actor, notes=f"由{actor}拟旨入档", status="pending",
+            )
             return True
         return False
 

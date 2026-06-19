@@ -324,6 +324,9 @@ def _pending_action_brief(pa: Dict[str, Any]) -> str:
         return f"{action}「{who}」" + (f"为「{office}」" if office else "")
     if kind == "consort":
         return f"调教「{payload.get('name') or ''}」"
+    if kind == "directive":
+        text = str(payload.get("text") or "")
+        return f"草拟圣旨：{text[:30]}"
     return f"{action}密令"
 
 
@@ -737,7 +740,7 @@ class GameSession:
         返回 {"directive": {id,text,status,notes}|None, "secret_order_id": int|None}。"""
         from ming_sim.cli_backend import (
             cli_backend_from_env, resolve_minister_actions, extract_minister_actions,
-            extract_appointment_action, extract_confirmation_intent,
+            extract_appointment_action, extract_confirmation_intent, extract_draft_intent,
         )
         out: Dict[str, Any] = {"directive": None, "secret_order_id": secret_order_id}
         channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
@@ -872,6 +875,18 @@ class GameSession:
                 minister_name=minister_name, target_id=None,
                 payload={"name": appt["name"], "office": appt["office"],
                          "appointer": minister_name})
+        # 对话式拟旨意图(ADR 0006 自然语言路径)：非显式前缀、尚无 draft、且本轮未 stage 其他动作时，
+        # 判皇帝是否口头请拟旨；检测到则 upsert pending directive（last-write-wins，同大臣同回合至多一条）。
+        # 挂在任免之后、以"无其他 pending 动作"为守门：前缀/密令更新/任免等已处理的情形语义上
+        # 与拟旨互斥，跳过可省一次 LLM 调用；余下的才是真正口头请拟旨的情形。
+        if not explicit_prefixed and not has_directive and not out.get("pending_action_id"):
+            draft_res = extract_draft_intent(player_message, reply, llm_config=llm_config)
+            if draft_res["draft_action"] == "拟旨" and draft_res["draft_text"]:
+                pid = self.db.upsert_pending_directive(
+                    self.state.turn, minister_name,
+                    payload={"text": draft_res["draft_text"], "actor": minister_name},
+                )
+                out["pending_action_id"] = pid
         return out
 
     def _cli_backend_fallback_actions(

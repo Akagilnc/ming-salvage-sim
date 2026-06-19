@@ -663,6 +663,41 @@ def extract_minister_actions(
     }
 
 
+# 对话式拟旨意图抽取（ADR 0006 自然语言路径）：玩家口头「拟旨吧/帮我拟一道旨」时，
+# 无显式前缀（_DRAFT_PREFIXES）→ LLM 判出意图 → 进 pending_actions(kind=directive)暂存；
+# 大臣回话即草案文本，commit 时再建 turn_directives 条目。
+def extract_draft_intent(
+    player_message: str,
+    minister_reply: str,
+    llm_config: Any = None,
+) -> Dict[str, Any]:
+    """LLM 判皇帝本轮是否在口头请大臣拟旨（非显式前缀），返回拟旨意图与草案文本。
+    失败/无 → {"draft_action": "无", "draft_text": ""}。"""
+    prompt = (
+        "你是信息抽取器，不扮演、不写圣旨。读皇帝这句话 + 大臣回话，判断皇帝**本轮**"
+        "是否在口头请大臣拟旨（如「拟旨吧」「你拟一道旨」「帮我起草」「草拟圣旨」等）。"
+        "只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
+        "{\n"
+        '  "拟旨意图": "无|拟旨"  // 皇帝明确请拟旨/起草圣旨=拟旨；闲谈/议事/问询/密令/任免=无\n'
+        "}\n"
+        "判定要点：皇帝明确让大臣拟旨/起草圣旨→拟旨；仅商议/问询/催办/评论不算。语义判断，别拘字面。\n\n"
+        "【皇帝】" + (player_message or "（无）") + "\n"
+        "【大臣回话】" + (minister_reply or "（无）") + "\n"
+    )
+    raw = ""
+    try:
+        raw, _ = _run_backend_for_config(prompt, llm_config, tag="draft_intent")
+    except Exception as exc:
+        _log(f"拟旨意图抽取失败：{exc}")
+    obj = _loads_lenient(raw) or {}
+    _raw = str(obj.get("拟旨意图") or "无").strip()
+    _action = _raw if _raw in {"无", "拟旨"} else "无"
+    return {
+        "draft_action": _action,
+        "draft_text": (minister_reply or "").strip(),
+    }
+
+
 # 任免(office)会话动作抽取：与密令【完全独立】——任免和密令无关，故另起一函数，
 # 不并进 extract_minister_actions、不挂密令那个 active gate。随召对触发（任何召对都
 # 可能口头派官/罢官，含跟太监说），ungated；过判由「应允才落、拒绝就丢」兜底。
