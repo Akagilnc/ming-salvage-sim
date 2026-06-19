@@ -369,3 +369,59 @@ def test_write_decree_commits_pending_directive(game, monkeypatch):
 
     # 返回值是 decree 文本
     assert result == canned_decree
+
+
+# ── ⑦ state_payload 暴露 pending_directive_count（codex r3 finding [high]）────
+#
+# 对话式「拟旨吧」触发 pending_actions kind=directive 后，前端 EdictModal 的「拟诏」
+# 按钮的 disabled 条件依赖 state.pending_directive_count > 0 来启用——若该字段没有
+# 从 state_payload 正确下发，Web UI 的「不回=默认同意」路径就彻底断路。
+# 本组测试验证 db 端的计数源（list_pending_actions filtered by kind）行为正确，
+# 是 web_app.py state_payload 的 pending_directive_count 计算逻辑的单元锚。
+
+def test_pending_directive_count_nonzero_after_conversational_draft(game):
+    """对话式草案暂存后，过滤 kind=directive 的 list_pending_actions 计数 > 0。
+    这是 state_payload 计算 pending_directive_count 的直接数据源。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+
+    db.upsert_pending_directive(
+        state.turn, name,
+        payload={"text": "草稿", "actor": name},
+    )
+
+    directive_pending = [
+        a for a in db.list_pending_actions(state.turn)
+        if a["kind"] == "directive"
+    ]
+    assert len(directive_pending) == 1, "state_payload 的 pending_directive_count 应为 1"
+
+
+def test_pending_directive_count_zero_after_commit(game):
+    """commit 后 kind=directive 暂存清空，state_payload.pending_directive_count 应变回 0，
+    前端「拟诏」按钮依赖 draftDirectives.length（commit 落进 turn_directives）决定可用。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+
+    db.upsert_pending_directive(
+        state.turn, name,
+        payload={"text": "草稿", "actor": name},
+    )
+    db.commit_pending_actions(state, kind_filter="directive")
+
+    directive_pending = [
+        a for a in db.list_pending_actions(state.turn)
+        if a["kind"] == "directive"
+    ]
+    assert directive_pending == [], "commit 后 pending_directive_count 应为 0"
+
+
+def test_pending_directive_count_zero_without_any_draft(game):
+    """无对话式草案时 pending_directive_count 为 0，
+    state_payload 不误触发「拟诏」按钮。"""
+    db, state, content = game
+    directive_pending = [
+        a for a in db.list_pending_actions(state.turn)
+        if a["kind"] == "directive"
+    ]
+    assert directive_pending == []
