@@ -949,3 +949,68 @@ def test_undo_chat_turn_preserves_unrelated_same_actor_draft(game):
     surviving_ids = {int(r["id"]) for r in surviving}
     assert unrelated_id in surviving_ids, "撤回对话召对不得删掉无关的同 actor draft"
     assert len(surviving_ids) == 1, "只应剩无关 draft（本轮自产 draft 被回滚）"
+
+
+def test_undo_supplement_turn_removes_committed_draft(game):
+    """BUG（data-integrity）：补充轮（第 2 次拟旨）走 UPDATE → restore_row 路径，
+    其后 write_decree() commit 出 draft。撤回该补充轮时，旧实现只从 delete_inserted_row
+    诊断单收 committed_directive_id，漏掉 restore_row 这条，导致 orphan draft 残留 +
+    复活的 pending 行再次 commit 出含被撤回文本的 draft → 颁诏污染。
+
+    时序（web 每条聊天消息各为一个 chat turn）：
+      turn1：首拟「v1」→ INSERT pending（delete_inserted_row）
+      turn2：补充「v2」→ UPDATE 同一 pending 行（restore_row，before=v1/after=v2）
+      write_decree：commit pending → turn_directives draft（text=v2）+ pending.committed_directive_id
+      undo turn2（全局最后一轮）→ 应删 orphan draft、复活 pending 回 v1
+    撤回后：本 actor/turn 的 draft 必须为 0；再 commit 不得产出含 v2 的 draft。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+
+    # turn1：首拟 v1（INSERT pending）—— 在快照外建立 pending 行
+    ct1 = db.create_chat_turn(state, name, "sess-suppl-1", 0)
+    before1 = db.capture_chat_rollback_snapshot()
+    db.upsert_pending_directive(
+        state.turn, name, payload={"text": "草案 v1", "actor": name})
+    after1 = db.capture_chat_rollback_snapshot()
+    db.record_chat_turn_rollback_diffs(ct1, before1, after1)
+
+    # turn2：补充 v2（UPDATE 同一 pending 行 → restore_row diff）
+    ct2 = db.create_chat_turn(state, name, "sess-suppl-2", 0)
+    before2 = db.capture_chat_rollback_snapshot()
+    db.upsert_pending_directive(
+        state.turn, name, payload={"text": "草案 v2（将被撤回）", "actor": name})
+    after2 = db.capture_chat_rollback_snapshot()
+    db.record_chat_turn_rollback_diffs(ct2, before2, after2)
+
+    # write_decree() 提前 commit：pending → turn_directives draft（text=v2）
+    db.commit_pending_actions(state, kind_filter="directive")
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM turn_directives WHERE turn=? AND status='draft'",
+        (state.turn,)).fetchone()[0] == 1, "write_decree 应已建 draft 行"
+
+    # 撤回补充轮（turn2 是全局最后一轮 active）
+    db.undo_chat_turn(ct2)
+
+    # orphan committed draft 必须被删（修复点）
+    remaining = db.conn.execute(
+        "SELECT COUNT(*) FROM turn_directives WHERE turn=? AND status='draft'",
+        (state.turn,)).fetchone()[0]
+    assert remaining == 0, (
+        f"撤回补充轮后 turn_directives draft 应被删，但仍有 {remaining} 行（orphan）"
+    )
+
+    # 复活的 pending 行须回到 v1（restore_row 还原），且不带残留 committed_directive_id
+    pending = db.list_pending_actions(state.turn)
+    assert len(pending) == 1, "撤回补充轮应复活 v1 的 pending 行"
+    payload = json.loads(pending[0]["payload_json"])
+    assert payload["text"] == "草案 v1", "复活的 pending 应是补充前的 v1"
+
+    # 再次 commit（模拟下一次拟诏）不得产出含被撤回 v2 文本的 draft
+    db.commit_pending_actions(state, kind_filter="directive")
+    drafts = db.conn.execute(
+        "SELECT text FROM turn_directives WHERE turn=? AND status='draft'",
+        (state.turn,)).fetchall()
+    texts = [str(r["text"]) for r in drafts]
+    assert all("v2" not in t for t in texts), (
+        f"再次拟诏不得含被撤回的 v2 文本，但得到 {texts}"
+    )
