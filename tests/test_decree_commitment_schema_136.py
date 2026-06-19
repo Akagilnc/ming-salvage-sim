@@ -78,6 +78,31 @@ def test_new_issue_persists_commitment_columns_from_tracker_output(game):
     assert row["commitment_kind"] == "until_stop"
 
 
+def test_decree_commitment_shape_with_string_stop_condition_requires_marker(game):
+    db, state, _ = game
+
+    out = I.apply_issue_tracker_output(db, state, {
+        "new_issues": [{
+            "origin_kind": "decree",
+            "origin_ref": "decree:turn-1:appease-mao",
+            "kind": "initiative",
+            "title": "安抚毛文龙直到效顺",
+            "ongoing_effects": {
+                "character": [{"name": "毛文龙", "loyalty": 2, "reason": "每月安抚"}],
+            },
+            "stop_condition": "character.毛文龙.loyalty >= 65",
+        }],
+    })
+
+    rejected = [item for item in out["new_issues"] if item.get("rejected")]
+    assert len(rejected) == 1, out
+    assert "commitment_kind 必填" in rejected[0]["reason"]
+    row = db.conn.execute(
+        "SELECT id FROM issues WHERE title=?", ("安抚毛文龙直到效顺",)
+    ).fetchone()
+    assert row is None
+
+
 def test_canonicalize_new_issue_preserves_commitment_columns():
     out = canonicalize_extraction({
         "new_issues": [{
