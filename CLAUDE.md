@@ -48,7 +48,6 @@ hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`�
 
 > **完整流程文档（Matt Pocock 整套，严格按 Matt 试水）→ [docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md)**（canonical 顺序 / decision-mapping 大目标推雾 / to-prd 两层设计 / 设计六层阶梯 / triage 入口匝道 / 全 skill 速查 / 追踪模型 / 切片并行全在那）。
 > **标签 Matt 纯化（2026-06-17）**：全仓删掉 `priority/*` `area/*` `type/*` 那套，**只剩 7 个** —— `bug`/`enhancement`（category）+ `needs-triage`/`needs-info`/`ready-for-agent`/`ready-for-human`/`wontfix`（state）。
-> **🔀 并行编排入口（强触发，别凭记忆，2026-06-19 立）**：用户说「并行推进 issue / 分子代理跑 / 多 issue 同步开工 / 编排 issue #N / `[$ming-issue-orchestrator] #N`」时，**第一动作调用 `ming-issue-orchestrator` skill**——它强制加载真源（`docs/DEV_WORKFLOW.md` + wiki `tdd-autonomous-dev`/`cross-model-review`/`dev-conventions`）、按固定 pipeline（orchestrator→code→tester→5a→5b→ship→loop→merge）执行、**测试/结论前先核 `git rev-parse HEAD` + fetch**、handoff 带精确 commit SHA、issue 号≠PR 号、只有 PR 实测 merged 才算 complete、不重新发明流程。默认 spawn Codex worker 并行，主 session 只做调度/集成/ship。入口规则不靠记忆——这条钉住「听到什么话→加载哪些真源」。
 
 **贯穿原则**：持久件做小做单一（一条 ADR 一个不可逆决策、一个 issue 一个切片）；**设计分层落（六层阶梯见 DEV_WORKFLOW.md）**——不可逆决策→ADR、架构级（模块/接口/契约/schema）→`to-prd` 的 Implementation Decisions、**只有代码级实现（真函数/文件结构）才留 `/tdd` 现场长**（「最后责任时刻」：可逆→写码时长；设计时「忽然难受」=越线信号）。⚠️ 别把「详设留 TDD 长」误读成「to-prd 之后到代码之间无设计」——架构级早在 `to-prd` 钉了。跨 session 靠文档 + 你本人 re-seed，**handoff ≠ 交接**（同一个你驱动）；session 边界画在「上下文满/脏」处、不钉死在某步，小功能可一个 session 连做。
 
