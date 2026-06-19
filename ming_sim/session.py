@@ -754,8 +754,14 @@ class GameSession:
         # 只在该大臣有 outstanding 暂存时才判(省 token)，commit/drop 按该大臣过滤、不波及他人。
         pend_for_minister = self.db.list_pending_actions(
             self.state.turn, minister_name=minister_name)
-        if pend_for_minister:
-            summaries = [_pending_action_brief(p) for p in pend_for_minister]
+        # 召对确认闸门只管【召对期】暂存（密令/任免/调教）；kind=directive 拟旨的接受/搁置是
+        # 颁诏期语义（不回=颁诏默认同意，ADR 0006），不能被召对期的应允/拒绝裹挟（BUG 1）：
+        # 否则同大臣后一轮对【别的】暂存的应允会把对话草案提前 commit 成 draft，拒绝会静默删草案。
+        # 故确认闸门用排除 directive 的视图，且 commit/drop 都带 kind_filter 排除 directive，
+        # 让对话式拟旨穿过本闸门、活到颁诏。
+        confirm_targets = [p for p in pend_for_minister if p["kind"] != "directive"]
+        if confirm_targets:
+            summaries = [_pending_action_brief(p) for p in confirm_targets]
             confirm = extract_confirmation_intent(
                 player_message, reply, summaries, llm_config=llm_config)
             if confirm == "应允":
@@ -766,10 +772,12 @@ class GameSession:
                 else:
                     self.db.commit_pending_actions(
                         self.state, minister_name=minister_name,
+                        kind_filter_exclude="directive",
                         content=getattr(self, "content", None),
                         registry=getattr(self, "registry", None))
             elif confirm == "拒绝":
-                self.db.drop_pending_actions_for_minister(self.state.turn, minister_name)
+                self.db.drop_pending_actions_for_minister(
+                    self.state.turn, minister_name, kind_filter_exclude="directive")
             if confirm in ("应允", "拒绝"):
                 # 本轮是对暂存的确认：大臣回话已【复述】该动作(领命 prompt 所致),若继续走下面的
                 # 抽取,会把刚 commit 的动作从复述里重抽成新暂存→颁诏二次落库,或重建刚拒的动作。
@@ -1130,15 +1138,17 @@ class GameSession:
             # （web 映射 400 / terminal 打印拟诏失败）。幂等返回决策点的守门在 resolve_turn。
             raise ValueError("当前在月末亲裁阶段，请先裁决已存决策点，不能拟诏。")
         self._refuse_if_settling()
-        # "不回=默认同意"（ADR 0006）：先把对话式拟旨暂存（pending_actions kind=directive）
+        # 守门须早于 commit（BUG 2）：有未核定的显式 pending directive 时，先响亮拒绝，
+        # 再 commit 对话式拟旨——否则被拒的调用已把对话草案落成 draft 副作用、无回滚。
+        if self.pending_count() > 0:
+            raise ValueError(f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
+        # "不回=默认同意"（ADR 0006）：把对话式拟旨暂存（pending_actions kind=directive）
         # 提交为 draft，使 list_directives(status='draft') 能拾取——这是 web「拟诏」按钮
         # 的真实入口路径，不经过 resolve_turn 的 auto-commit。幂等，无副作用。
         self.db.commit_pending_actions(
             self.state, kind_filter="directive",
             content=getattr(self, "content", None),
             registry=getattr(self, "registry", None))
-        if self.pending_count() > 0:
-            raise ValueError(f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
         directives = self.db.list_directives(self.state, statuses=("draft",))
         if not directives:
             raise ValueError("无草案不能拟诏。")
@@ -1218,15 +1228,17 @@ class GameSession:
                     stored = str(ctx.get("decree_text") or "").strip()
                     if stored:
                         self.last_decree = stored
+        # 守门须早于 commit（BUG 2）：有未核定的显式 pending directive 时先响亮拒绝，
+        # 再 commit 对话式拟旨——否则被拒的颁诏已把对话草案落成 draft 副作用、无回滚。
+        # draft 不计入 pending_count（后者只计 turn_directives.status='pending'），守门只看显式 pending。
+        if self.pending_count() > 0:
+            raise ValueError(f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
         # "不回=默认同意"（ADR 0006）：颁诏前先把对话式拟旨暂存（pending_actions kind=directive）
         # 提交为 draft，使 list_directives(status='draft') 能拾取、进入本次诏书。
-        # draft 不计入 pending_count（后者只计 turn_directives.status='pending'），守门不受影响。
         self.db.commit_pending_actions(
             self.state, kind_filter="directive",
             content=getattr(self, "content", None),
             registry=getattr(self, "registry", None))
-        if self.pending_count() > 0:
-            raise ValueError(f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
         directives = self.db.list_directives(self.state, statuses=("draft",))
         if not directives:
             # 恢复态且有存诏：免草案要求（零草案 settling=driver 档/逃生口降级后是真实态，

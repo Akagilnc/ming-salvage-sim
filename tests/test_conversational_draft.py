@@ -224,18 +224,23 @@ def test_pending_directive_commit_creates_turn_directive(game):
     assert any(a["kind"] == "directive" for a in applied)
 
 
-def test_dialogue_affirm_commits_pending_directive(game, monkeypatch):
-    """皇帝应允 → 当场 commit kind=directive → turn_directives 立即建档；暂存清空。"""
+def test_dialogue_affirm_does_not_commit_pending_directive(game, monkeypatch):
+    """召对确认闸门只管召对期暂存（密令/任免/调教），不裹挟 kind=directive（BUG 1 修订）：
+    拟旨的接受/搁置是颁诏期语义（不回=颁诏默认同意，ADR 0006「确认形态修订」）。
+
+    旧契约（应允→当场 commit 拟旨成 draft）已被红队评审推翻：召对确认无法把「应允拟旨」
+    与「应允同回合的密令/任免」或 LLM 误判区分开，会误把拟旨提前 commit。故只有 directive
+    暂存时，应允不得提前落 draft——拟旨留 pending、活到颁诏。"""
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
 
     draft_text = "奉天承运皇帝诏曰，着兵部整饬三边，钦此。"
-    db.upsert_pending_directive(state.turn, name,
-                                payload={"text": draft_text, "actor": name})
+    did = db.upsert_pending_directive(state.turn, name,
+                                      payload={"text": draft_text, "actor": name})
     assert len(db.list_pending_actions(state.turn)) == 1
 
-    # 皇帝应允
+    # 皇帝「应允」：只有 directive 暂存时，确认闸门空转（无非 directive 目标）→ 不 commit。
     monkeypatch.setattr(cb, "_run_backend_for_config",
                         lambda prompt, llm_config=None, tag="": (json.dumps(
                             {"确认": "应允"}, ensure_ascii=False), 1))
@@ -245,23 +250,24 @@ def test_dialogue_affirm_commits_pending_directive(game, monkeypatch):
         answer="臣即遵行，拟旨入档。",
         has_directive=False, secret_order_id=None)
 
-    row = db.conn.execute(
-        "SELECT text, status FROM turn_directives WHERE turn=? ORDER BY id DESC",
-        (state.turn,)).fetchone()
-    assert row is not None
-    assert row["text"] == draft_text
-    assert row["status"] == "draft"
-    assert db.list_pending_actions(state.turn) == []
+    # 拟旨未被提前落进 turn_directives
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM turn_directives WHERE turn=? AND status='draft'",
+        (state.turn,)).fetchone()[0] == 0
+    # 拟旨仍 pending，活到颁诏
+    pend = db.list_pending_actions(state.turn)
+    assert len(pend) == 1 and pend[0]["id"] == did
 
 
-def test_dialogue_reject_drops_pending_directive(game, monkeypatch):
-    """皇帝拒绝 → 暂存 kind=directive 被丢；turn_directives 始终不动。"""
+def test_dialogue_reject_does_not_drop_pending_directive(game, monkeypatch):
+    """召对「拒绝」不得删掉 kind=directive 拟旨暂存（BUG 1 修订）：拟旨的搁置是颁诏期语义，
+    召对期拒绝（针对密令/任免）不能静默删玩家草案。"""
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
 
-    db.upsert_pending_directive(state.turn, name,
-                                payload={"text": "草稿文", "actor": name})
+    did = db.upsert_pending_directive(state.turn, name,
+                                      payload={"text": "草稿文", "actor": name})
     assert len(db.list_pending_actions(state.turn)) == 1
 
     monkeypatch.setattr(cb, "_run_backend_for_config",
@@ -273,7 +279,9 @@ def test_dialogue_reject_drops_pending_directive(game, monkeypatch):
         answer="臣遵旨，撤回草稿。",
         has_directive=False, secret_order_id=None)
 
-    assert db.list_pending_actions(state.turn) == []
+    # 拟旨暂存仍在（未被召对期拒绝删除）
+    pend = db.list_pending_actions(state.turn)
+    assert len(pend) == 1 and pend[0]["id"] == did
     assert db.conn.execute(
         "SELECT COUNT(*) FROM turn_directives WHERE turn=?", (state.turn,)).fetchone()[0] == 0
 
@@ -798,3 +806,146 @@ def test_commit_directive_actor_falls_back_to_minister_name(game):
     assert row["status"] == "draft"
     # actor 回退到 minister_name
     assert row["actor"] == name
+
+
+# ── ⑮ BUG 1 — 召对确认闸门必须放过 kind=directive ───────────────────────────
+
+def test_confirm_gate_does_not_sweep_conversational_directive(game, monkeypatch):
+    """BUG 1（CRITICAL）：对话式拟旨（kind=directive）暂存后，同一大臣的后一轮若被判为
+    「应允/拒绝」（针对另一条非 directive 暂存，或 LLM 误判任意话语），不得波及 directive。
+
+    召对确认闸门的应允/拒绝语义只属于召对期暂存（密令/任免/调教）——拟旨的接受/搁置是
+    颁诏期语义（不回=默认同意）。故 directive 必须存活：应允不得提前 commit 成 draft，
+    拒绝不得静默删除玩家草案。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+
+    # 同一大臣：一条对话式拟旨 + 一条非 directive 暂存（office 任免，确认闸门的真正对象）
+    did = db.upsert_pending_directive(
+        state.turn, name, payload={"text": "草案：着户部清查三边粮饷。", "actor": name})
+    db.stage_pending_action(
+        state.turn, kind="office", action="任命", minister_name=name, target_id=None,
+        payload={"name": "某新臣", "office": "兵部主事", "appointer": name})
+    assert len(db.list_pending_actions(state.turn)) == 2
+
+    # 后一轮被判「应允」（语义针对 office 暂存）：directive 必须存活、不被提前 commit
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                            {"确认": "应允"}, ensure_ascii=False), 1))
+    sess = _fake_session(db, state)
+    GameSession.apply_cli_conversation_actions(
+        sess, ch, player_message="准了", answer="臣遵旨。",
+        has_directive=False, secret_order_id=None)
+
+    pend = db.list_pending_actions(state.turn)
+    surviving = [p for p in pend if p["kind"] == "directive"]
+    assert len(surviving) == 1, "应允轮不得提前 commit 对话式拟旨"
+    assert surviving[0]["id"] == did
+    # directive 未被提前落进 turn_directives（颁诏期才落）
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM turn_directives WHERE turn=? AND status='draft'",
+        (state.turn,)).fetchone()[0] == 0, "应允轮不得提前建 draft"
+
+
+def test_confirm_reject_does_not_delete_conversational_directive(game, monkeypatch):
+    """BUG 1（CRITICAL）拒绝侧：后一轮被判「拒绝」时，drop_pending_actions_for_minister
+    不得连带删掉玩家的对话式拟旨草案。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+
+    did = db.upsert_pending_directive(
+        state.turn, name, payload={"text": "草案：着兵部整饬三边。", "actor": name})
+    db.stage_pending_action(
+        state.turn, kind="office", action="任命", minister_name=name, target_id=None,
+        payload={"name": "某新臣", "office": "兵部主事", "appointer": name})
+
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                            {"确认": "拒绝"}, ensure_ascii=False), 1))
+    sess = _fake_session(db, state)
+    GameSession.apply_cli_conversation_actions(
+        sess, ch, player_message="不必了", answer="臣遵旨，撤回。",
+        has_directive=False, secret_order_id=None)
+
+    pend = db.list_pending_actions(state.turn)
+    surviving = [p for p in pend if p["kind"] == "directive"]
+    assert len(surviving) == 1, "拒绝轮不得删除玩家的对话式拟旨草案"
+    assert surviving[0]["id"] == did
+
+
+# ── ⑯ BUG 2 — write_decree 的 pending_count 守门须早于 commit ─────────────────
+
+def test_write_decree_rejects_before_committing_conversational_directive(game):
+    """BUG 2（CRITICAL）：存在未核定的显式 pending directive（pending_count>0）时，
+    write_decree 必须在 commit 对话式拟旨【之前】响亮拒绝，不得先把对话草案落成 draft
+    再 raise——否则被拒的调用仍留下副作用、无回滚。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+
+    # 显式 pending directive（待准/驳）→ pending_count>0
+    db.add_directive(state, None, "显式拟旨：着户部议屯田。", "大臣拟旨",
+                     actor=name, notes="显式", status="pending")
+    assert db.count_pending_directives(state) > 0
+    # 同时有一条对话式拟旨暂存
+    db.upsert_pending_directive(
+        state.turn, name, payload={"text": "对话草案：着兵部整饬。", "actor": name})
+
+    fake_sess = types.SimpleNamespace(
+        db=db, state=state, content=None, registry=None,
+        llm_config=types.SimpleNamespace(channel="cli"),
+        agno_db=None, last_decree="")
+    fake_sess._refuse_if_settling = lambda: None
+    fake_sess.pending_count = lambda: db.count_pending_directives(state)
+
+    with pytest.raises(ValueError):
+        GameSession.write_decree(fake_sess)
+
+    # 关键：对话式拟旨未被提前 commit —— 仍是 pending、未生成 draft
+    pend = db.list_pending_actions(state.turn)
+    assert any(p["kind"] == "directive" for p in pend), "被拒时对话式拟旨不得已被 commit"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM turn_directives WHERE turn=? AND status='draft'",
+        (state.turn,)).fetchone()[0] == 0, "被拒时不得已落下 draft 副作用"
+
+
+# ── ⑰ BUG 3 — undo_chat_turn 只删本轮自己产生的 draft ────────────────────────
+
+def test_undo_chat_turn_preserves_unrelated_same_actor_draft(game):
+    """BUG 3（data-loss）：撤回一轮对话式召对，不得连带删掉同一 actor、同回合的【无关】
+    draft（如本回合早些时候经显式准驳确认的 directive draft）。
+
+    旧实现按 (turn, actor, status='draft') 删，会过度删除；修复后须只删本 undo 自己 commit
+    产生的那条 draft。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+
+    # 先有一条无关的同 actor draft（模拟早先显式准驳后落的 draft）
+    unrelated_id = db.add_directive(
+        state, None, "无关草案：着工部修河。", "大臣拟旨",
+        actor=name, notes="早先确认", status="draft")
+
+    # 一轮对话式召对：stage 对话草案 → 快照 → write_decree 式 commit 成 draft
+    ctid = db.create_chat_turn(state, name, "sess-undo-scope", 0)
+    before = db.capture_chat_rollback_snapshot()
+    db.upsert_pending_directive(
+        state.turn, name, payload={"text": "对话草案（将被撤回）。", "actor": name})
+    after = db.capture_chat_rollback_snapshot()
+    db.record_chat_turn_rollback_diffs(ctid, before, after)
+    db.commit_pending_actions(state, kind_filter="directive")
+
+    # 此刻两条 draft
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM turn_directives WHERE turn=? AND status='draft'",
+        (state.turn,)).fetchone()[0] == 2
+
+    db.undo_chat_turn(ctid)
+
+    # 无关 draft 必须存活
+    surviving = db.conn.execute(
+        "SELECT id FROM turn_directives WHERE turn=? AND status='draft'",
+        (state.turn,)).fetchall()
+    surviving_ids = {int(r["id"]) for r in surviving}
+    assert unrelated_id in surviving_ids, "撤回对话召对不得删掉无关的同 actor draft"
+    assert len(surviving_ids) == 1, "只应剩无关 draft（本轮自产 draft 被回滚）"
