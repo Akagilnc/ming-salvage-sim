@@ -61,6 +61,16 @@ def _parse_sqlite_id(raw: object) -> int:
         raise ValueError("id 超出 SQLite 64-bit 范围")
     return val
 
+
+def _issue_condition_text(raw: object) -> str:
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        return raw.strip()
+    if isinstance(raw, (dict, list)):
+        return json.dumps(raw, ensure_ascii=False, separators=(",", ":"))
+    return str(raw).strip()
+
 # 给建筑/地区落库做 event 关联用的占位事件（issue 结案触发的副作用无真实 event）。
 _ISSUE_PSEUDO_EVENT = Event(
     id="issue_resolution", title="局势结案", kind="月末", summary="",
@@ -3325,6 +3335,8 @@ def apply_issue_tracker_output(
             bar_value = _strict_int(25 if _bv is None else _bv)
             _sv = ni.get("severity", 50)
             severity = _strict_int(50 if _sv is None else _sv)
+            _et = ni.get("end_turn", 0)
+            end_turn = _strict_int(0 if _et in (None, "") else _et)
             # cancel_cost 已在 try 外随 effect 字段走 _eff_dict 容忍归 {}（cmr ni r9）——不在此强转、
             # 不进 except 拒收路。
             # tags 严格化（cmr ni r8 codex medium，与上方 int 字段同一字段校验 class）：缺省/null/
@@ -3345,13 +3357,14 @@ def apply_issue_tracker_output(
             # float（含 inf/nan）归 ValueError，OverflowError 兜超大 int 等残余路（cmr ni r3 codex）。
             applied_new.append({
                 "rejected": True, "category": "invalid_enum",
-                "reason": f"new_issue 字段强转失败（bar_value/severity/tags/inertia 脏数据）：{exc}",
+                "reason": f"new_issue 字段强转失败（bar_value/severity/end_turn/tags/inertia 脏数据）：{exc}",
                 "item": ni, "title": title,
             })
             continue
-        resolve_condition = str(ni.get("resolve_condition") or "").strip()
-        if not resolve_condition:
-            resolve_condition = str(ni.get("stop_condition") or "").strip()
+        stop_condition = _issue_condition_text(ni.get("stop_condition"))
+        resolve_condition = _issue_condition_text(ni.get("resolve_condition"))
+        if not resolve_condition and isinstance(ni.get("stop_condition"), str):
+            resolve_condition = stop_condition
         # insert_issue 不再裹 broad except：代码/DB 异常上抛 → SettlementAbort（ADR 0005 fail-loud），
         # 不再当 WARN 吞（那会半落库 + 丢决策，违 P1 铁律）。
         # 注：字符串字段含孤代理（JSON 解析出的 "\ud800"）会在 SQLite bind 抛 UnicodeEncodeError——
@@ -3381,6 +3394,8 @@ def apply_issue_tracker_output(
             effect_on_fail=fail_eff,
             resolve_condition=resolve_condition[:300],
             fail_condition=str(ni.get("fail_condition") or "")[:300],
+            end_turn=end_turn,
+            stop_condition=stop_condition,
             commit=commit_now,
         )
         if kind == "initiative":

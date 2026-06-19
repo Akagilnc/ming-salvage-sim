@@ -169,7 +169,9 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 | `title` | ≤60 字 |
 | `bar_value` | int，默认 25 |
 | `expected_months` | int |
-| `resolve_condition` / `stop_condition` | 文本；`stop_condition` 是别名，落库到 `resolve_condition` |
+| `end_turn` | int，硬时限承诺到期回合；默认 0 |
+| `resolve_condition` | 文本；旧结案条件 / 兼容字段 |
+| `stop_condition` | 文本或 dict；落库到 `issues.stop_condition`，dict 以 JSON 字符串保存 |
 | `bar_good_meaning` / `bar_bad_meaning` | 文案 |
 | `ongoing_effects` / `effect_on_resolve` / `effect_on_fail` | dict，月度持续/结案/失败效果 |
 | `cancellable` | "decree" / "never" / "by_progress" |
