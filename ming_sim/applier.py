@@ -14,6 +14,32 @@ from dataclasses import dataclass, field
 from typing import Any, Iterator, List
 
 
+def sanitize_sqlite_text(value: Any) -> Any:
+    """Return value with strings safe to bind into SQLite UTF-8 TEXT.
+
+    Python can hold lone surrogate codepoints produced by permissive JSON
+    parsing, but sqlite3 refuses to UTF-8 encode them at bind time. Preserve
+    normal text (including Chinese) and escape only unencodable codepoints.
+    """
+    if isinstance(value, str):
+        return value.encode("utf-8", "backslashreplace").decode("utf-8")
+    if isinstance(value, list):
+        return [sanitize_sqlite_text(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(sanitize_sqlite_text(item) for item in value)
+    if isinstance(value, dict):
+        return {
+            sanitize_sqlite_text(key): sanitize_sqlite_text(val)
+            for key, val in value.items()
+        }
+    return value
+
+
+def safe_json_dumps(value: Any, **kwargs: Any) -> str:
+    """json.dumps that preserves readable UTF-8 while escaping bad codepoints."""
+    return json.dumps(sanitize_sqlite_text(value), **kwargs)
+
+
 # ---------------------------------------------------------------------------
 # 决定 2/8：事务边界 —— commit 暂停连接 + atomic 包裹
 # ---------------------------------------------------------------------------
@@ -246,6 +272,7 @@ CREATE TABLE IF NOT EXISTS rejection_reports (
     category TEXT    NOT NULL,
     source   TEXT    NOT NULL,
     attempt  INTEGER NOT NULL DEFAULT 1,
+    resimulation_invalidated INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 """
@@ -278,7 +305,7 @@ class RejectionCollector:
         self._buffer.append({
             "turn": turn,
             "section": section,
-            "item_json": json.dumps(rejected_item.item, ensure_ascii=False),
+            "item_json": safe_json_dumps(rejected_item.item, ensure_ascii=False),
             "reason": rejected_item.reason,
             "category": rejected_item.category,
             "source": Provenance(rejected_item.source).value,
@@ -292,6 +319,14 @@ class RejectionCollector:
         空缓冲时直接返回（幂等）。
         """
         db.conn.execute(_CREATE_REJECTION_REPORTS)
+        cols = {
+            str(row[1]) for row in db.conn.execute("PRAGMA table_info(rejection_reports)").fetchall()
+        }
+        if "resimulation_invalidated" not in cols:
+            db.conn.execute(
+                "ALTER TABLE rejection_reports "
+                "ADD COLUMN resimulation_invalidated INTEGER NOT NULL DEFAULT 0"
+            )
         if not self._buffer:
             return
         db.conn.executemany(
@@ -312,7 +347,7 @@ class RejectionCollector:
             return
         with open(path, "a", encoding="utf-8") as fh:
             for row in self._flushed:
-                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+                fh.write(safe_json_dumps(row, ensure_ascii=False) + "\n")
         self._flushed.clear()
 
     def reset(self) -> None:
