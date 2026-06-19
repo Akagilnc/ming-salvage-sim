@@ -3355,8 +3355,7 @@ def apply_issue_tracker_output(
         commitment_shape_without_marker = (
             not commitment_kind
             and kind == "initiative"
-            and isinstance(stop_condition_raw, dict)
-            and bool(stop_condition_raw)
+            and bool(stop_condition)
             and bool(ongoing_eff)
         )
         if commitment_shape_without_marker:
