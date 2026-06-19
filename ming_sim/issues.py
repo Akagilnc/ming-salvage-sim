@@ -356,11 +356,41 @@ def _commitment_ongoing_effects_for_settlement(row: sqlite3.Row, ongoing: Dict[s
                 delta = 0
             if delta < 0:
                 item["purpose"] = "补饷"
-                item.pop("target_kind", None)
-                item.pop("target_id", None)
             normalized_economy.append(item)
         normalized[key] = normalized_economy
     return normalized
+
+
+def _invalid_monthly_mapping_shape(
+    field: str,
+    entity_id: object,
+    raw_value: object,
+) -> Dict[str, object]:
+    return {
+        "rejected": True,
+        "category": "invalid_shape",
+        "reason": f"{field}.{entity_id} 须为对象(dict)",
+        "item": {"field": field, "id": entity_id, "value": raw_value},
+        "issue_strict": False,
+    }
+
+
+def _monthly_mapping_effect(
+    effect: Dict[str, object],
+    *keys: str,
+) -> tuple[Dict[str, Dict[str, object]], List[Dict[str, object]]]:
+    merged: Dict[str, Dict[str, object]] = {}
+    rejections: List[Dict[str, object]] = []
+    for key in keys:
+        raw = effect.get(key)
+        if not isinstance(raw, dict):
+            continue
+        for entity_id, raw_changes in raw.items():
+            if isinstance(raw_changes, dict):
+                merged[entity_id] = raw_changes
+                continue
+            rejections.append(_invalid_monthly_mapping_shape(key, entity_id, raw_changes))
+    return merged, rejections
 
 
 def _merged_mapping_effect(effect: Dict[str, object], *keys: str) -> Dict[str, object]:
@@ -507,21 +537,31 @@ def _apply_monthly_ongoing_entities(
     applied: Dict[str, object] = {}
     rejections: List[Dict[str, object]] = []
 
-    factions = _merged_mapping_effect(effect, "factions", "faction_delta")
+    factions, faction_shape_rejections = _monthly_mapping_effect(effect, "factions", "faction_delta")
+    classes, class_shape_rejections = _monthly_mapping_effect(effect, "classes", "class_delta")
+    region_delta, region_shape_rejections = _monthly_mapping_effect(effect, "region_delta", "regions")
+    army_delta, army_shape_rejections = _monthly_mapping_effect(effect, "army_delta", "armies")
+    power_updates, power_shape_rejections = _monthly_mapping_effect(effect, "power_updates")
+    rejections.extend(
+        faction_shape_rejections
+        + class_shape_rejections
+        + region_shape_rejections
+        + army_shape_rejections
+        + power_shape_rejections
+    )
+
     if factions:
         faction_result = _apply_faction_dict(db, factions)
         if faction_result.applied:
             applied["factions"] = faction_result.applied
         rejections.extend(faction_result.rejections)
 
-    classes = _merged_mapping_effect(effect, "classes", "class_delta")
     if classes:
         class_result = _apply_class_dict(db, classes)
         if class_result.applied:
             applied["class_delta"] = class_result.applied
         rejections.extend(class_result.rejections)
 
-    region_delta = _merged_mapping_effect(effect, "region_delta", "regions")
     if region_delta:
         region_changes = db.apply_region_deltas(state, _ISSUE_PSEUDO_EVENT, None, label, region_delta)
         applied_region = [item for item in region_changes if not item.get("rejected")]
@@ -529,7 +569,6 @@ def _apply_monthly_ongoing_entities(
             applied["region_delta"] = applied_region
         rejections.extend(item for item in region_changes if item.get("rejected"))
 
-    army_delta = _merged_mapping_effect(effect, "army_delta", "armies")
     if army_delta:
         army_changes = db.apply_army_deltas(state, _ISSUE_PSEUDO_EVENT, None, label, army_delta)
         applied_army = [item for item in army_changes if not item.get("rejected")]
@@ -537,8 +576,7 @@ def _apply_monthly_ongoing_entities(
             applied["army_delta"] = applied_army
         rejections.extend(item for item in army_changes if item.get("rejected"))
 
-    power_updates = effect.get("power_updates")
-    if isinstance(power_updates, dict) and power_updates:
+    if power_updates:
         power_changes = db.apply_power_deltas(state, power_updates)
         applied_power = [item for item in power_changes if not item.get("rejected")]
         if applied_power:
