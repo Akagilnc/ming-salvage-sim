@@ -51,6 +51,38 @@ def _duty_location(office: str, office_type: str, status: str) -> str:
     return "按现职任事，具体地点需看官衔所辖。"
 
 
+def _compact_json_text(raw: object) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return "（未填）"
+    try:
+        return json.dumps(json.loads(text), ensure_ascii=False, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return text
+
+
+def _commitment_tool_fields(db, state, row) -> str:
+    keys = row.keys() if hasattr(row, "keys") else []
+    commitment_kind = str(row["commitment_kind"] if "commitment_kind" in keys else "").strip()
+    if not commitment_kind:
+        return ""
+    from ming_sim.issues import commitment_display_text, commitment_progress_payload
+
+    progress = commitment_progress_payload(db, state, row) or {}
+    progress_text = commitment_display_text(progress, row) if progress else "（暂无进展）"
+    stop_condition = _compact_json_text(row["stop_condition"] if "stop_condition" in keys else "")
+    try:
+        end_turn = int(row["end_turn"] if "end_turn" in keys else 0)
+    except (TypeError, ValueError):
+        end_turn = 0
+    return (
+        f"commitment_kind={commitment_kind}；"
+        f"stop_condition={stop_condition}；"
+        f"end_turn={end_turn}；"
+        f"progress={progress_text}"
+    )
+
+
 def build_minister_tools(character: Character, context: CourtContext,
                          use_roster_tool: bool = False, use_army_tool: bool = False):
     def query_court_roster(names: List[str] = []) -> str:
@@ -91,9 +123,11 @@ def build_minister_tools(character: Character, context: CourtContext,
         lines = []
         for idx, row in enumerate(rows, 1):
             kind_tag = "系统" if row["kind"] == "situation" else "皇帝推动"
+            commitment_fields = _commitment_tool_fields(context.db, context.state, row)
+            commitment_suffix = f"，{commitment_fields}" if commitment_fields else ""
             lines.append(
                 f"{idx}. #{row['id']}[{kind_tag}]{row['title']}"
-                f"（bar {int(row['bar_value'])}/{row['bar_good_meaning']}，{row['stage_text']}）"
+                f"（bar {int(row['bar_value'])}/{row['bar_good_meaning']}，{row['stage_text']}{commitment_suffix}）"
             )
         return "\n".join(lines)
 
@@ -107,10 +141,13 @@ def build_minister_tools(character: Character, context: CourtContext,
         if n < 1 or n > len(rows):
             return f"slot 越界 {n}。本{TURN_UNIT}有 {len(rows)} 条在办事项。"
         row = rows[n - 1]
+        commitment_fields = _commitment_tool_fields(context.db, context.state, row)
+        commitment_text = f"承诺字段：{commitment_fields}。" if commitment_fields else ""
         return (
             f"#{row['id']} {row['title']}（bar {int(row['bar_value'])}，{row['bar_bad_meaning']}↔{row['bar_good_meaning']}）。"
             f"阶段：{row['stage_text']}。牵涉：{row['faction_hint'] or '—'}。"
             f"结案条件：{row['resolve_condition'] or '（未填）'}。失败条件：{row['fail_condition'] or '（未填）'}。"
+            f"{commitment_text}"
         )
 
     def list_regions() -> str:
@@ -613,12 +650,15 @@ def build_board_query_tools(context: CourtContext):
         row = next((r for r in rows if int(r["id"]) == n), None)
         if row is None:
             return f"未找到在办事项 #{n}。可先调 list_issues 看清单。"
+        commitment_fields = _commitment_tool_fields(context.db, context.state, row)
+        commitment_text = f"\n承诺字段：{commitment_fields}。" if commitment_fields else ""
         return (
             f"#{row['id']} {row['title']} bar={int(row['bar_value'])} "
             f"inertia={row['inertia']} kind={row['kind']} cancellable={row['cancellable']}\n"
             f"阶段：{row['stage_text']}。牵涉：{row['faction_hint'] or '—'}。\n"
             f"结案条件：{row['resolve_condition'] or '（未填）'}。"
             f"失败条件：{row['fail_condition'] or '（未填）'}。"
+            f"{commitment_text}"
         )
 
     def get_active_ministers() -> str:

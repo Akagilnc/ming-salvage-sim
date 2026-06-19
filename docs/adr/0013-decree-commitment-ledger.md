@@ -30,7 +30,7 @@ Status: Accepted（2026-06-15；**务实版**——用户拍板：复用 issue �
 - **`end_turn INTEGER DEFAULT 0`**（仅「连续 N 月/半年为限」硬时限用；立项 `end_turn = turn + N`，到期停账）。
 - **`stop_condition TEXT DEFAULT ''`**（「直到补齐」用；存 `_gate_passed` 的 **dict JSON `{寻址key: "比较式"}`、算符在 value**，同 `legacies.clear_gate`）。⚠️ **三处坑（线上三 bot concur）**：① 算符在 **value 不嵌进 key**——`{"army.<id>.arrears": "<=0"}`、多军 `{"army.guanning|jizhen.arrears.sum": "<=0"}`；写成扁平串 `army...<=0` 会解析失败→永不停。② key 须**带表前缀**（裸 `arrears` → `_eval_gate_key` 判 None→恒不过）。③ id 是**英文 slug**（`guanning`/`jizhen`/`xuan_da`… 非中文「关宁军/蓟镇」）。`_eval_gate_key` 按 `armies.id` 查、支持 id 列表 + sum/max/min/avg；创建端须把诏书「边军」映射到 `armies.id` 英文集合。
 - **收尾区分不另加列**：用既有 `resolution_summary`（叙事）+ `issue_advances.trigger_kind`（`expire` vs `cancel`）区分「到期收尾」与「玩家撤销」（R3-medium：避免与 `resolution_summary` 重叠造冗余列）。〔撤回上一版加的 `close_reason` 列。〕
-- **bar = 履行/补齐进度**，立项 **`inertia=0`（显式；`expected_months` 省略即回落 inertia=0）**，bar 由 `stop_condition`/真进度推、不靠 random inertia 自漂——免得假性了结。漂到 100（补齐）=真了结，与 `stop_condition` 一致。〔取代 R1 误加的「bar-exempt」：bar 不剥离、当进度用。〕**注：`ongoing_effects` 的 bar 折扣只折 metrics、不折 economy（`issues.py:2820` `_apply_economy_list` 传原始 economy，已三次核实）→ 补饷（economy）额恒定、无「越补越少」（codex R2/Claude R3 该处过度声明，纠）。**
+- **bar = 履行/补齐进度**，立项 **`inertia=0`（显式；`expected_months` 省略即回落 inertia=0）**，bar 由 `stop_condition`/真进度推、不靠 random inertia 自漂——免得假性了结。漂到 100（补齐）=真了结，与 `stop_condition` 一致。〔取代 R1 误加的「bar-exempt」：bar 不剥离、当进度用。〕**注：承诺 `ongoing_effects` 是月度承诺账，metrics 与 economy 都不得被普通 issue 的 bar 折扣抹成 0；补饷（economy）额恒定、无「越补越少」。**
 - **承诺 issue 须 `cancellable='decree'`**（皇帝可无损撤自己的承诺）——否则落 `_normalize_cancellable` 默认 `by_progress`、撤回走「此事非诏可消」+皇威 −2，语义荒谬（R3-high）。创建端写死，不靠 LLM 默认。
 
 ### D3 三形态 → 载体落点
@@ -69,7 +69,7 @@ Status: Accepted（2026-06-15；**务实版**——用户拍板：复用 issue �
 - **resolve-effect enrich 跳过**：`apply_issue_tracker_output` 对缺 `effect_on_resolve` 的 initiative 会兜底补效果——承诺（只该有 `ongoing_effects`）结案时被补全会附**无关民心/建筑/实体效果污染**（codex P2 线上）；承诺路径须跳过该 enrich。
 - **空 `stop_condition` 不跑 `_gate_passed`**（D6，否则空 gate 返 True 假性收尾）。
 - **`cancellable='decree'`**（D2，皇帝可无损撤自己的承诺）。
-- **bar 折扣只折 metrics、不折 economy**（`issues.py:2820`，补饷额恒定，已三验）。
+- **承诺月度效果不套普通 issue bar 折扣**：metrics 与 economy 都按承诺账面落月度效果；若有效月度 work 因本月数值 cap 等原因没有实际改盘，仍须写显式履约进展，避免 active dead shell。
 - **form②/③ 到期分流**（Gemini/CodeRabbit 线上）：扫到 `end_turn<=turn` 时——**有 `ongoing_effects`=form②**（停账收尾 close）；**无 `ongoing_effects`（光 end_turn）=form③**（**fire 顶为「本回合到期待裁」喂 simulator、非 close**，D3）。按 `ongoing_effects` 空否分流。
 
 **实现期待细化（线上 R3 codex/Gemini 提示，归编码 session、非 ADR 级阻塞）**：① `stop_condition` 多 id 不带聚合后缀时 `_eval_gate_key` 的默认聚合行为要确认（用 `.sum` 显式更稳）；② bar=补齐进度需持久一个**基线**（如立项时 arrears 总额）才能算「补齐 %」；③ #45/#46 pairing（`_initiative_resolve_pairing_warnings`）与承诺逐月/到期后果的对接细节。落地时核。

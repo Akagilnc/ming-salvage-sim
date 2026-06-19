@@ -6391,7 +6391,9 @@ def apply_issue_inertia_and_ongoing(
             else:
                 scale = 1.0
 
-            # metrics
+            # metrics. Commitment issues represent a concrete monthly promise;
+            # do not let the ordinary issue health discount erase it into a no-op.
+            metric_scale = 1.0 if is_commitment else scale
             _om = ongoing.get("metrics")  # #117 同类：stored ongoing 的 metrics 真值非 dict 守卫
             for k, v in (_om if isinstance(_om, dict) else {}).items():
                 if k not in ISSUE_METRIC_KEYS:
@@ -6400,7 +6402,7 @@ def apply_issue_inertia_and_ongoing(
                     raw = int(v)
                 except (TypeError, ValueError):
                     continue
-                scaled = int(round(raw * scale))
+                scaled = int(round(raw * metric_scale))
                 if scaled == 0:
                     continue
                 cap = ISSUE_METRIC_LOCK_CAPS.get(k, 5)
@@ -6419,8 +6421,11 @@ def apply_issue_inertia_and_ongoing(
                 metric_part[k] = allowed
 
             # economy
+            issue_monthly_rejections: List[Dict[str, object]] = []
             _eco_out = _apply_economy_list(db, state, _monthly_economy_items(ongoing))
-            inertia_rejections.extend(r for r in _eco_out if r.get("rejected"))  # economy 拒收不蒸发（#14）
+            economy_rejections = [r for r in _eco_out if r.get("rejected")]
+            issue_monthly_rejections.extend(economy_rejections)
+            inertia_rejections.extend(economy_rejections)  # economy 拒收不蒸发（#14）
             economy_part = [r for r in _eco_out if not r.get("rejected")]
 
             applied_monthly_parts, monthly_rejections = _apply_monthly_ongoing_entities(
@@ -6430,12 +6435,21 @@ def apply_issue_inertia_and_ongoing(
                 f"局势#{issue_id}持续效果",
                 applied_person_changes=applied_person_changes,
             )
+            issue_monthly_rejections.extend(monthly_rejections)
             inertia_rejections.extend(monthly_rejections)
+        else:
+            issue_monthly_rejections = []
 
         paid_this_month = sum(
             abs(int(r.get("delta") or 0))
             for r in economy_part
             if int(r.get("delta") or 0) < 0
+        )
+        record_commitment_attempt = (
+            is_commitment
+            and ongoing_has_work
+            and not (metric_part or economy_part or applied_monthly_parts)
+            and not issue_monthly_rejections
         )
         commitment_progress = (
             commitment_progress_payload(
@@ -6443,14 +6457,14 @@ def apply_issue_inertia_and_ongoing(
                 state,
                 row,
                 paid_this_month=paid_this_month,
-                include_current_month=bool(metric_part or economy_part or applied_monthly_parts),
+                include_current_month=bool(metric_part or economy_part or applied_monthly_parts or record_commitment_attempt),
             )
             if is_commitment
             else None
         )
         commitment_bar = _commitment_bar_value(commitment_progress) if commitment_progress else None
 
-        if metric_part or economy_part or applied_monthly_parts:
+        if metric_part or economy_part or applied_monthly_parts or record_commitment_attempt:
             from_bar = bar
             to_bar = commitment_bar if commitment_bar is not None else bar
             actual_bar = int(to_bar) - int(from_bar)
@@ -6465,6 +6479,15 @@ def apply_issue_inertia_and_ongoing(
             metric_delta.update(applied_monthly_parts)
             if commitment_progress is not None:
                 metric_delta["commitment_progress"] = commitment_progress
+            narrative = (
+                "承诺持续效果本月核销；未产生额外数值变动。"
+                if record_commitment_attempt
+                else (
+                    "承诺持续效果落账"
+                    if is_commitment
+                    else f"持续效果落账 (折扣 {int(scale*100)}%)"
+                )
+            )
             db.conn.execute(
                 """
                     INSERT INTO issue_advances (
@@ -6474,7 +6497,7 @@ def apply_issue_inertia_and_ongoing(
                 """,
                 (
                     issue_id, state.turn, actual_bar, from_bar, int(to_bar),
-                    f"持续效果落账 (折扣 {int(scale*100)}%)",
+                    narrative,
                     json.dumps(metric_delta, ensure_ascii=False),
                 ),
             )
