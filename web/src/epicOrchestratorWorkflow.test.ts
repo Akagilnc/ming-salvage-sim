@@ -642,6 +642,56 @@ describe("epic orchestrator S2 single-slice pipeline", () => {
 });
 
 describe("epic orchestrator S3 layered parallel pipeline", () => {
+  it("passes the merged family base to dependent-layer slice agents after blockers merge", async () => {
+    const agentCalls: any[] = [];
+
+    const result: any = await runEpicLayeredPipeline({
+      args: { epicIssueNumber: 217, familyBranch: "family/217", verifyCommands: ["npm --prefix web test"] },
+      log: () => undefined,
+      agent: async (request: any) => {
+        agentCalls.push(request);
+        return {
+          commit: `commit-${request.issueNumber}`,
+          worktreePath: `/repo/.worktrees/issue-${request.issueNumber}`,
+          observabilityEvidence: { loudFailure: true, locatorLogs: true, notApplicableReason: "tooling slice" }
+        };
+      },
+      Bash: async (command: string) => {
+        if (command.includes("/sub_issues")) {
+          return JSON.stringify({
+            epicId: 217,
+            issues: [
+              { id: 220, epicId: 217, state: "open", title: "S2-blocker", url: "https://example.test/220" },
+              { id: 221, epicId: 217, state: "open", title: "S3-dependent", url: "https://example.test/221" }
+            ],
+            blockedBy: [{ issueId: 221, blockedByIssueId: 220 }]
+          });
+        }
+        if (command.includes("为切片执行 I7 commit 纪律检查")) return JSON.stringify({ status: "passed" });
+        if (command.includes("npm --prefix web test")) return JSON.stringify({ status: "passed" });
+        if (command.includes("reviewer=codex")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("merge reviewed commit")) {
+          const reviewedCommit = command.match(/implementedCommit='([^']+)'/)?.[1] ?? "unknown";
+          return JSON.stringify({ mergeCommit: `merge-${reviewedCommit}` });
+        }
+        return JSON.stringify({ status: "passed" });
+      }
+    });
+
+    expect(result.status).toBe("merged");
+    expect(agentCalls.map((call) => call.issueNumber)).toEqual([220, 221]);
+    expect(agentCalls[0]).not.toHaveProperty("baseRef");
+    expect(agentCalls[1]).toMatchObject({
+      familyBranch: "family/217",
+      baseBranch: "family/217",
+      baseRef: "merge-commit-220",
+      lastMergeCommit: "merge-commit-220",
+      mergeQueue: [{ familyBranch: "family/217", reviewedCommit: "commit-220", mergeCommit: "merge-commit-220" }]
+    });
+    expect(agentCalls[1].prompt).toContain("Base this worktree on family branch family/217 at merge-commit-220");
+  });
+
   it("runs same-layer slices concurrently, waits at layer barriers, then merges reviewed commits serially", async () => {
     const events: string[] = [];
     const release: Record<string, () => void> = {};
