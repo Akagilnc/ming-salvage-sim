@@ -3903,6 +3903,15 @@ def apply_issue_tracker_output(
                     raise ValueError("origin_ref 必填，须指回诏书")
                 _et_raw = ni.get("end_turn", 0)
                 end_turn_for_commitment = _strict_int(0 if _et_raw in (None, "") else _et_raw)
+                if (
+                    ongoing_has_work
+                    and end_turn_for_commitment > 0
+                    and end_turn_for_commitment <= int(state.turn)
+                ):
+                    raise ValueError(
+                        f"end_turn 必须大于当前 turn（{state.turn}）；"
+                        "有月度持续动作的承诺不能立项即到期"
+                    )
                 invalid_person_rating = _invalid_monthly_person_rating_reason(ongoing_eff)
                 if invalid_person_rating:
                     raise ValueError(f"ongoing_effects {invalid_person_rating}")

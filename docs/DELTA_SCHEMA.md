@@ -186,7 +186,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 
 「每月 X 直到补齐」这类旨意承诺必须建 `kind="initiative"` 的承诺 issue：带 `commitment_kind="until_stop"`、`ongoing_effects`、`stop_condition`，落库时会按承诺路径处理为 `inertia=0`、`cancellable="decree"`，并跳过普通国策的 resolve-effect 补全。多军合计可写 `{"army.xuan_da|jizhen.arrears.sum":"<=0"}`，人物阈值可写 `{"character.毛文龙.loyalty":">=65"}`。
 
-「连续 N 月 / 半年为限」这类时限承诺也必须建 `kind="initiative"` 的承诺 issue：带 `commitment_kind="until_stop"`、`ongoing_effects`、`end_turn`。立项公式是 `end_turn = turn + N`，半年按 6 个回合计。若同时要求「直到补齐」，同时写 `stop_condition`；`stop_condition` 或 `end_turn` 谁先到谁停。时限到期由结算写 `issue_advances.trigger_kind="expire"` 并标 `dropped`，不要在 delta 里伪造成 `close_issues resolved/failed`，也不要给承诺补普通 resolve/fail 效果。
+「连续 N 月 / 半年为限」这类时限承诺也必须建 `kind="initiative"` 的承诺 issue：带 `commitment_kind="until_stop"`、`ongoing_effects`、`end_turn`。立项公式是 `end_turn = turn + N`，且 `end_turn` 必须严格大于当前 turn；当前回合或过去回合会被拒收，避免立项即过期的持续承诺空壳。半年按 6 个回合计。若同时要求「直到补齐」，同时写 `stop_condition`；`stop_condition` 或 `end_turn` 谁先到谁停。时限到期由结算写 `issue_advances.trigger_kind="expire"` 并标 `dropped`，不要在 delta 里伪造成 `close_issues resolved/failed`，也不要给承诺补普通 resolve/fail 效果。
 
 开放式经常性承诺必须显式带 `commitment_kind="until_stop"` 和非空 `ongoing_effects`；可以没有 `stop_condition` 与 `end_turn`，表示皇帝主动撤销前长期挂账。缺 `commitment_kind` 的同形状会拒收，避免把承诺误落成普通 initiative。
 
