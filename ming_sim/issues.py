@@ -3173,6 +3173,21 @@ def _strategic_event_result_preflight_error(
                 err = _int_delta_error("region", region_id, raw_field, value)
                 if err:
                     return err
+            if field == "controlled_by":
+                controller = str(value).strip()[:160] if value is not None else ""
+                if (
+                    value is None
+                    or not controller
+                    or controller.lower() == "null"
+                    or db.conn.execute(
+                        "SELECT 1 FROM powers WHERE id = ? LIMIT 1",
+                        (controller,),
+                    ).fetchone() is None
+                ):
+                    return (
+                        f"战略/外敌事件「{event_title or event_id}」地区战果 controlled_by "
+                        f"必须是 powers.id 中的非空真实势力 id：{value!r}"
+                    )
             err = _region_noop_error(region_id, row, raw_field, value)
             if err:
                 return err

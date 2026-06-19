@@ -80,7 +80,8 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
   - score（0-100，int）：`public_support` `unrest` `gentry_resistance` `military_pressure`
   - quantity（int）：`population` `registered_land` `hidden_land` `tax_per_turn` `grain_security`
   - special quantity（int 增量）：`cannon`（城防炮，落库时按 `city_level×8` 上限 clamp 并留痕）
-  - text：`natural_disaster` `human_disaster` `status` `controlled_by`
+  - text：`natural_disaster` `human_disaster` `status`
+  - `controlled_by`：必须是 `powers.id` 中存在的非空势力 id（`null`/空白/未知 id 逐项拒收留痕）
 - 中文别名都吃：`动乱`→unrest、`士绅`→gentry_resistance、`粮食`→grain_security 等
 
 ### `fiscal_changes` — 改月度收支额度
