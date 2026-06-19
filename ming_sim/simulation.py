@@ -13,6 +13,8 @@ from ming_sim.context import historical_anchor_for_month, victory_status
 from ming_sim.db import GameDB
 from ming_sim.issues import (
     commitment_condition_role,
+    commitment_display_text,
+    commitment_progress_payload,
     gather_candidate_events,
     issue_to_payload,
     normalize_event_outcome_labels_or_error,
@@ -301,7 +303,7 @@ def build_simulator_payload(
 ) -> Dict[str, object]:
     active = db.list_active_issues()
     issues_payload = [
-        issue_to_payload(row, db.list_recent_issue_advances(int(row["id"]), 1))
+        issue_to_payload(row, db.list_recent_issue_advances(int(row["id"]), 1), db=db, state=state)
         for row in active
     ]
     # 帝国修正不进 simulator payload：它是纯机械的百分比修正符，由落账层自动放大/缩小增量，不进叙事。
@@ -542,6 +544,10 @@ def _extractor_context_payload(
             issue["commitment_kind"] = commitment_kind
         if stop_condition:
             issue["stop_condition"] = stop_condition
+        progress = commitment_progress_payload(db, state, r)
+        if progress is not None:
+            issue["commitment_progress"] = progress
+            issue["待办未解进度"] = commitment_display_text(progress, r)
         issues_brief.append(issue)
     # 局势自动月支汇总（独立顶层字段，不随 active_issues 一起被 _MODULE_DROP_FIELDS 剔除）。
     # extractor 据此判重：邸报提到的局势常态月支若在此清单，是程序自动落账项，勿写 钱粮收支。
