@@ -440,6 +440,86 @@ def test_commitment_ongoing_economy_not_scaled_by_bar_discount(game):
     assert paid == -50
 
 
+def test_high_bar_metric_only_commitment_applies_and_records_monthly_progress(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
+    state.metrics["皇威"] = 50
+    db.save_state(state)
+
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="高进度皇威月度承诺",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:imperial-prestige",
+        bar_value=90,
+        inertia=0,
+        ongoing_effects={"metrics": {"皇威": 1}},
+        stop_condition="",
+        commitment_kind="until_stop",
+        cancellable="decree",
+    )
+
+    _settle_empty_month(db, state, content)
+
+    assert state.metrics["皇威"] == 51
+    assert _issue_row(db, issue_id)["status"] == "active"
+    advances = db.conn.execute(
+        "SELECT trigger_kind, metric_delta FROM issue_advances WHERE issue_id=? ORDER BY id",
+        (issue_id,),
+    ).fetchall()
+    assert [row["trigger_kind"] for row in advances] == ["ongoing"]
+    payload = json.loads(advances[0]["metric_delta"])
+    assert payload["metrics"] == {"皇威": 1}
+    assert payload["commitment_progress"]["months_elapsed"] == 1
+
+
+def test_metric_commitment_records_progress_when_monthly_cap_blocks_effect(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
+    state.metrics["皇威"] = 50
+    db.save_state(state)
+
+    db.insert_issue(
+        state,
+        kind="initiative",
+        title="先占满本月皇威变动",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:cap-first",
+        bar_value=0,
+        inertia=0,
+        ongoing_effects={"metrics": {"皇威": 5}},
+        cancellable="decree",
+    )
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="皇威月度承诺被 cap 阻挡",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:cap-commitment",
+        bar_value=90,
+        inertia=0,
+        ongoing_effects={"metrics": {"皇威": 1}},
+        commitment_kind="until_stop",
+        cancellable="decree",
+    )
+
+    _settle_empty_month(db, state, content)
+
+    assert state.metrics["皇威"] == 55
+    advances = db.conn.execute(
+        "SELECT trigger_kind, narrative, metric_delta FROM issue_advances WHERE issue_id=? ORDER BY id",
+        (issue_id,),
+    ).fetchall()
+    assert [row["trigger_kind"] for row in advances] == ["ongoing"]
+    assert "未产生额外数值变动" in advances[0]["narrative"]
+    payload = json.loads(advances[0]["metric_delta"])
+    assert payload["metrics"] == {}
+    assert payload["commitment_progress"]["months_elapsed"] == 1
+
+
 def test_commitment_end_turn_expires_without_resolve_effects(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
