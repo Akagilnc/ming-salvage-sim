@@ -325,4 +325,92 @@ describe("epic orchestrator S2 single-slice pipeline", () => {
     expect(calls.join("\n")).not.toContain("reviewer=codex");
     expect(calls.join("\n")).not.toContain("merge reviewed commit");
   });
+
+  it("reruns the same slice after review failure, re-verifies, re-reviews, and merges the new reviewed commit", async () => {
+    const calls: string[] = [];
+    const agentCalls: any[] = [];
+
+    const result: any = await runEpicSingleSlicePipeline({
+      args: { epicIssueNumber: 217, familyBranch: "family/217", verifyCommands: ["npm --prefix web test"], maxReviewRounds: 2 },
+      log: () => undefined,
+      agent: async (request: any) => {
+        agentCalls.push(request);
+        const commit = agentCalls.length === 1 ? "abc123" : "fix456";
+        return {
+          commit,
+          worktreePath: "/repo/.worktrees/issue-220",
+          observabilityEvidence: { loudFailure: true, locatorLogs: true, notApplicableReason: "tooling slice" }
+        };
+      },
+      Bash: async (command: string) => {
+        calls.push(command);
+        if (command.includes("/sub_issues")) {
+          return JSON.stringify({
+            epicId: 217,
+            issues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }],
+            blockedBy: []
+          });
+        }
+        if (command.includes("reviewer=codex") && command.includes("abc123")) return JSON.stringify({ status: "failed", findings: [{ severity: "P1", issue: "missing retry" }] });
+        if (command.includes("reviewer=agy") && command.includes("abc123")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("reviewer=codex")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [], diffOnly: true });
+        if (command.includes("merge reviewed commit")) return JSON.stringify({ mergeCommit: "merge789" });
+        return JSON.stringify({ status: "passed" });
+      }
+    });
+
+    expect(result.status).toBe("merged");
+    expect(agentCalls).toHaveLength(2);
+    expect(agentCalls[1]).toMatchObject({
+      isolation: "worktree",
+      issueNumber: 220,
+      reviewFix: { failedCommit: "abc123" }
+    });
+    expect(JSON.stringify(agentCalls[1])).toContain("missing retry");
+    expect(result.implementation).toEqual({ commit: "fix456", worktreePath: "/repo/.worktrees/issue-220" });
+    expect(result.reviewAttempts.map((attempt: any) => attempt.commit)).toEqual(["abc123", "fix456"]);
+    expect(result.verificationAttempts.map((attempt: any) => attempt.commit)).toEqual(["abc123", "fix456"]);
+    expect(result.merge).toEqual({ status: "merged", familyBranch: "family/217", reviewedCommit: "fix456", mergeCommit: "merge789" });
+    expect(result.i7).toEqual({ sliceCommit: "fix456", amendmentsForbidden: true, reviewFixesRequireNewCommits: true, reviewFixCommits: ["fix456"] });
+    expect(calls.join("\n")).toContain("fix456");
+  });
+
+  it("aborts loudly without merge when review failures exhaust the bounded same-slice retry budget", async () => {
+    const calls: string[] = [];
+    const agentCalls: unknown[] = [];
+
+    const result: any = await runEpicSingleSlicePipeline({
+      args: { epicIssueNumber: 217, familyBranch: "family/217", verifyCommands: ["npm --prefix web test"], maxReviewRounds: 2 },
+      log: () => undefined,
+      agent: async (request: unknown) => {
+        agentCalls.push(request);
+        return {
+          commit: agentCalls.length === 1 ? "abc123" : "fix456",
+          worktreePath: "/repo/.worktrees/issue-220",
+          observabilityEvidence: { loudFailure: true, locatorLogs: true, notApplicableReason: "tooling slice" }
+        };
+      },
+      Bash: async (command: string) => {
+        calls.push(command);
+        if (command.includes("/sub_issues")) {
+          return JSON.stringify({
+            epicId: 217,
+            issues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }],
+            blockedBy: []
+          });
+        }
+        if (command.includes("reviewer=codex")) return JSON.stringify({ status: "failed", findings: [{ severity: "P1", issue: "still failing" }] });
+        if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [] });
+        return JSON.stringify({ status: "passed" });
+      }
+    });
+
+    expect(result.status).toBe("review_failed");
+    expect(result.i1).toEqual({ status: "aborted", reason: "max_review_rounds", maxReviewRounds: 2 });
+    expect(agentCalls).toHaveLength(2);
+    expect(result.reviewAttempts.map((attempt: any) => attempt.commit)).toEqual(["abc123", "fix456"]);
+    expect(result.merge).toBeUndefined();
+    expect(calls.join("\n")).not.toContain("merge reviewed commit");
+  });
 });

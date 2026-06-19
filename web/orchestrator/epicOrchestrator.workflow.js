@@ -292,53 +292,97 @@ export async function runEpicSingleSlicePipeline({ args, Bash, agent: agentRunne
   if (typeof runner !== 'function') {
     throw new Error('S2 single-slice pipeline requires an agent runner for the implementation leg.');
   }
-  const implementation = await runner({
-    isolation: 'worktree',
-    issueNumber: plannedSlice.issueNumber,
-    issue: plannedSlice,
-    prompt: buildImplementationPrompt(discovery.epicIssueNumber, plannedSlice)
-  });
-  const implementedCommit = implementation?.commit ?? implementation?.commitSha ?? implementation?.sha;
-  const worktreePath = implementation?.worktreePath ?? implementation?.path;
-  if (!implementedCommit || !worktreePath) {
-    throw new Error('Implementation leg must return a commit and worktreePath.');
-  }
-  if (!isHiddenWorktreePath(worktreePath)) {
-    throw new Error('Implementation worktree must be under a hidden-dot path so agy review is explicitly diff-only.');
-  }
-  const observabilityEvidence = validateObservabilityEvidence(implementation?.observabilityEvidence);
 
-  await Bash(`set -euo pipefail\n# enforce I7 commit discipline for slice ${shellQuote(plannedSlice.issueNumber)}\ngit -C ${shellQuote(worktreePath)} cat-file -e ${shellQuote(implementedCommit)}^{commit}\ngit -C ${shellQuote(worktreePath)} rev-list --parents -n 1 ${shellQuote(implementedCommit)} | awk 'NF >= 2 { ok=1 } END { exit ok ? 0 : 1 }'\ngit -C ${shellQuote(worktreePath)} diff --quiet`);
+  const implementations = [];
+  const verificationAttempts = [];
+  const reviewAttempts = [];
+  const reviewFixCommits = [];
+  let implementation;
+  let implementedCommit;
+  let worktreePath;
+  let verification;
+  let review;
+  let observabilityEvidence;
 
-  phaseIfAvailable('Verify');
-  const verification = await runVerification({ Bash, worktreePath, verifyCommands: normalizedArgs.verifyCommands });
-  if (verification.status !== 'passed') {
-    return {
-      ...discovery,
-      outOfScope: ['parallelism', 'family_5a_5b', 'online_pr_review_loop'],
-      status: 'verify_failed',
-      plannedSlice,
-      implementation: { commit: implementedCommit, worktreePath },
-      verification,
-      i7: i7Evidence(implementedCommit),
-      i8: i8Evidence(observabilityEvidence)
-    };
-  }
+  for (let round = 1; round <= normalizedArgs.maxReviewRounds; round += 1) {
+    implementation = await runner({
+      isolation: 'worktree',
+      issueNumber: plannedSlice.issueNumber,
+      issue: plannedSlice,
+      prompt:
+        round === 1
+          ? buildImplementationPrompt(discovery.epicIssueNumber, plannedSlice)
+          : buildReviewFixPrompt(discovery.epicIssueNumber, plannedSlice, implementations.at(-1)?.commit, review, round, normalizedArgs.maxReviewRounds),
+      ...(round === 1
+        ? {}
+        : {
+            reviewFix: {
+              failedCommit: implementations.at(-1)?.commit,
+              failedReview: review,
+              round,
+              maxReviewRounds: normalizedArgs.maxReviewRounds
+            }
+          })
+    });
+    implementedCommit = implementation?.commit ?? implementation?.commitSha ?? implementation?.sha;
+    worktreePath = implementation?.worktreePath ?? implementation?.path;
+    if (!implementedCommit || !worktreePath) {
+      throw new Error('Implementation leg must return a commit and worktreePath.');
+    }
+    if (implementations.length > 0 && implementedCommit === implementations.at(-1)?.commit) {
+      throw new Error('I7 requires each review-fix round to return a new commit, not the failed commit.');
+    }
+    if (!isHiddenWorktreePath(worktreePath)) {
+      throw new Error('Implementation worktree must be under a hidden-dot path so agy review is explicitly diff-only.');
+    }
+    observabilityEvidence = validateObservabilityEvidence(implementation?.observabilityEvidence);
+    implementations.push({ commit: implementedCommit, worktreePath });
+    if (round > 1) reviewFixCommits.push(implementedCommit);
 
-  phaseIfAvailable('Review');
-  const review = await runPerSliceReview({ Bash, worktreePath, commit: implementedCommit, plannedSlice });
-  if (review.status !== 'passed') {
-    return {
-      ...discovery,
-      outOfScope: ['parallelism', 'family_5a_5b', 'online_pr_review_loop'],
-      status: 'review_failed',
-      plannedSlice,
-      implementation: { commit: implementedCommit, worktreePath },
-      verification,
-      review,
-      i7: i7Evidence(implementedCommit),
-      i8: i8Evidence(observabilityEvidence)
-    };
+    await Bash(`set -euo pipefail\n# enforce I7 commit discipline for slice ${shellQuote(plannedSlice.issueNumber)} round ${shellQuote(round)}\ngit -C ${shellQuote(worktreePath)} cat-file -e ${shellQuote(implementedCommit)}^{commit}\ngit -C ${shellQuote(worktreePath)} rev-list --parents -n 1 ${shellQuote(implementedCommit)} | awk 'NF >= 2 { ok=1 } END { exit ok ? 0 : 1 }'\ngit -C ${shellQuote(worktreePath)} diff --quiet`);
+
+    phaseIfAvailable('Verify');
+    verification = await runVerification({ Bash, worktreePath, verifyCommands: normalizedArgs.verifyCommands });
+    verificationAttempts.push({ commit: implementedCommit, ...verification });
+    if (verification.status !== 'passed') {
+      return {
+        ...discovery,
+        outOfScope: ['parallelism', 'family_5a_5b', 'online_pr_review_loop'],
+        status: 'verify_failed',
+        plannedSlice,
+        implementation: { commit: implementedCommit, worktreePath },
+        implementations,
+        verification,
+        verificationAttempts,
+        i7: i7Evidence(implementedCommit, reviewFixCommits),
+        i8: i8Evidence(observabilityEvidence)
+      };
+    }
+
+    phaseIfAvailable('Review');
+    review = await runPerSliceReview({ Bash, worktreePath, commit: implementedCommit, plannedSlice });
+    reviewAttempts.push({ commit: implementedCommit, ...review });
+    if (review.status === 'passed') break;
+
+    if (round >= normalizedArgs.maxReviewRounds) {
+      return {
+        ...discovery,
+        outOfScope: ['parallelism', 'family_5a_5b', 'online_pr_review_loop'],
+        status: 'review_failed',
+        plannedSlice,
+        implementation: { commit: implementedCommit, worktreePath },
+        implementations,
+        verification,
+        verificationAttempts,
+        review,
+        reviewAttempts,
+        i1: { status: 'aborted', reason: 'max_review_rounds', maxReviewRounds: normalizedArgs.maxReviewRounds },
+        i7: i7Evidence(implementedCommit, reviewFixCommits),
+        i8: i8Evidence(observabilityEvidence)
+      };
+    }
+
+    log?.(`Per-slice review failed for #${plannedSlice.issueNumber}; starting same-slice review-fix round ${round + 1}/${normalizedArgs.maxReviewRounds}.`);
   }
 
   phaseIfAvailable('Merge');
@@ -352,15 +396,18 @@ export async function runEpicSingleSlicePipeline({ args, Bash, agent: agentRunne
     status: 'merged',
     plannedSlice,
     implementation: { commit: implementedCommit, worktreePath },
+    implementations,
     verification,
+    verificationAttempts,
     review,
+    reviewAttempts,
     merge: {
       status: 'merged',
       familyBranch: normalizedArgs.familyBranch,
       reviewedCommit: implementedCommit,
       mergeCommit: mergeResult.mergeCommit
     },
-    i7: i7Evidence(implementedCommit),
+    i7: i7Evidence(implementedCommit, reviewFixCommits),
     i8: i8Evidence(observabilityEvidence)
   };
 }
@@ -372,8 +419,18 @@ function normalizePipelineArgs(rawArgs, epicIssueNumber) {
   const verifyCommands = [...new Set([...requiredVerifyCommands, ...extraVerifyCommands])];
   return {
     familyBranch: String(objectArgs.familyBranch ?? `family/epic-${epicIssueNumber}`),
-    verifyCommands
+    verifyCommands,
+    maxReviewRounds: normalizePositiveInteger(objectArgs.maxReviewRounds, 3, 'maxReviewRounds')
   };
+}
+
+function normalizePositiveInteger(value, fallback, name) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer.`);
+  }
+  return parsed;
 }
 
 function buildImplementationPrompt(epicIssueNumber, plannedSlice) {
@@ -383,6 +440,18 @@ function buildImplementationPrompt(epicIssueNumber, plannedSlice) {
     'I7: every review-fix round must be a new commit; never amend or squash review history.',
     'I8: enforce loud failures, locator logs, and gameplay DB consequences when applicable; for read-only/UI/tooling slices include substitute observability evidence.',
     'Return JSON-like data containing commit and worktreePath.'
+  ].join('\n');
+}
+
+function buildReviewFixPrompt(epicIssueNumber, plannedSlice, failedCommit, failedReview, round, maxReviewRounds) {
+  return [
+    `Fix epic #${epicIssueNumber} slice #${plannedSlice.issueNumber}: ${plannedSlice.title ?? ''}`,
+    `Same-slice review-fix round ${round}/${maxReviewRounds}; previous reviewed commit ${failedCommit} did not pass per-slice review.`,
+    `Review findings: ${JSON.stringify(failedReview)}`,
+    'Use the same isolation:"worktree" and fix only this slice.',
+    'I7: create a NEW commit for this fix round; never amend, squash, or reuse the failed commit.',
+    'After the fix the orchestrator will rerun local verify and codex+agy review.',
+    'Return JSON-like data containing the new commit and worktreePath.'
   ].join('\n');
 }
 
@@ -429,8 +498,10 @@ function isHiddenWorktreePath(worktreePath) {
   return String(worktreePath).split('/').some((part) => part.startsWith('.') && part.length > 1);
 }
 
-function i7Evidence(commit) {
-  return { sliceCommit: commit, amendmentsForbidden: true, reviewFixesRequireNewCommits: true };
+function i7Evidence(commit, reviewFixCommits = []) {
+  const evidence = { sliceCommit: commit, amendmentsForbidden: true, reviewFixesRequireNewCommits: true };
+  if (reviewFixCommits.length > 0) evidence.reviewFixCommits = reviewFixCommits;
+  return evidence;
 }
 
 function validateObservabilityEvidence(evidence) {
