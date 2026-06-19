@@ -82,6 +82,38 @@ def test_driver_validate_rejection_mirrors_jsonl_after_outer_atomic(game, tmp_pa
     assert json.loads(mirrored[0]["item_json"]) == {"raw_value": None}
 
 
+def test_validate_and_module_rejections_do_not_leak_into_player_visible_extraction(game, tmp_path, monkeypatch):
+    """ADR 0015/P4：shape/module 拒收桶是内部信号，不写进玩家可见 extractor_output。"""
+    from driver import run_settle
+
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    db, state, content = game
+    turn = state.turn
+
+    run_settle(
+        db,
+        state,
+        content,
+        {
+            "economy_moves": [None],
+            "_module_rejections": [
+                {
+                    "rejected": True,
+                    "item": {"field": "army_delta", "owner_module": "military_external", "value": {}},
+                    "reason": "misrouted",
+                    "category": "module_misroute",
+                }
+            ],
+        },
+        narrative="本月邸报。",
+        decree_text="诏",
+    )
+
+    visible = db.get_turn_extraction(turn)["extractor_output"]
+    assert "validate_shape_rejections" not in visible
+    assert "module_misroute_rejections" not in visible
+
+
 def test_player_visible_rejection_aggregates_durable_rows_across_attempts_and_resimulation(game, tmp_path, monkeypatch):
     from ming_sim.applier import Provenance
     from ming_sim.decree import persist_resolve_context, settle_with_delta
@@ -126,7 +158,9 @@ def test_player_visible_rejection_aggregates_durable_rows_across_attempts_and_re
     db.save_resolve_context(turn, "诏", "本月邸报。", {}, extracted={})
     clear_for_resimulation(db, turn)
     assert _reports(db)  # audit rows preserved
-    assert all(int(r["resimulation_invalidated"] if "resimulation_invalidated" in r else 1) for r in db.conn.execute("SELECT resimulation_invalidated FROM rejection_reports"))
+    rows = db.conn.execute("SELECT resimulation_invalidated FROM rejection_reports").fetchall()
+    assert rows
+    assert all(int(r["resimulation_invalidated"]) == 1 for r in rows)
 
 
 def test_utf8_safe_serialization_preserves_chinese_and_escapes_lone_surrogate(game):
