@@ -879,8 +879,15 @@ class GameSession:
         # 判皇帝是否口头请拟旨；检测到则 upsert pending directive（last-write-wins，同大臣同回合至多一条）。
         # 挂在任免之后、以"无其他 pending 动作"为守门：前缀/密令更新/任免等已处理的情形语义上
         # 与拟旨互斥，跳过可省一次 LLM 调用；余下的才是真正口头请拟旨的情形。
+        # _has_pending_draft：此大臣本回合已有 kind=directive 暂存时为 True（confirm=="无"後仍在）。
+        # pend_for_minister snapshot 此处仍有效：confirm=="应允"/"拒绝"会在上方提前 return，
+        # 能到这里说明 directive 未 commit/drop，snapshot 与 DB 一致（codex r5 F1 修复）。
         if not explicit_prefixed and not has_directive and not out.get("pending_action_id"):
-            draft_res = extract_draft_intent(player_message, reply, llm_config=llm_config)
+            _has_pending_draft = any(p["kind"] == "directive" for p in pend_for_minister)
+            draft_res = extract_draft_intent(
+                player_message, reply, llm_config=llm_config,
+                has_pending_draft=_has_pending_draft,
+            )
             if draft_res["draft_action"] == "拟旨" and draft_res["draft_text"]:
                 pid = self.db.upsert_pending_directive(
                     self.state.turn, minister_name,

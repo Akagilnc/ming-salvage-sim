@@ -5893,6 +5893,18 @@ class GameDB:
         self.conn.commit()
         return cur.rowcount
 
+    def discard_pending_directives(self, turn: int) -> int:
+        """退朝无诏时丢弃本回合尚未落库的对话式拟旨暂存（kind=directive, status=pending）。
+        须在 commit_pending_actions 之前调用，防止 commit 把草案插成孤儿 turn_directives
+        行——退朝路不颁诏，孤儿 draft 永不经 extractor、不可见（codex r5 F2）。
+        返回删除条数。"""
+        cur = self.conn.execute(
+            "DELETE FROM pending_actions WHERE turn=? AND kind='directive' AND status='pending'",
+            (int(turn),),
+        )
+        self.conn.commit()
+        return cur.rowcount
+
     def save_resolve_context(
         self, turn: int, decree_text: str, narrative: str,
         simulator_payload: Dict[str, object],

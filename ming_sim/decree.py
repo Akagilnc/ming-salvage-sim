@@ -148,6 +148,11 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
     # atomic + 最外层回滚后从 DB 重载刷净内存（state.metrics 直加 / next_period / turn_phase
     # 留脏）：公共内核见 atomic_and_reload（ADR 0008 决定 3，reload 再炸链上抛 cmr S5 r2）。
     with atomic_and_reload(db, state, content=content, registry=registry):
+        # 退朝无诏：对话式拟旨草案须先丢弃，再 commit 其余 pending 动作。
+        # commit_pending_actions 会把 kind=directive 插成 turn_directives(draft)，
+        # 但无诏路径不走 extractor / mark_directives_issued → 孤儿 draft 既不颁诏也不可见。
+        # 先 discard 确保 commit 时 directive pending 为空（codex r5 F2）。
+        db.discard_pending_directives(state.turn)
         db.commit_pending_actions(state, content=content, registry=registry)
         apply_fixed_period_flows(db, state)
         message = f"本{TURN_UNIT}退朝未下正式圣旨，诸事仍待来{TURN_UNIT}处置。"

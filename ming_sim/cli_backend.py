@@ -670,13 +670,21 @@ def extract_draft_intent(
     player_message: str,
     minister_reply: str,
     llm_config: Any = None,
+    has_pending_draft: bool = False,
 ) -> Dict[str, Any]:
     """LLM 判皇帝本轮是否在口头请大臣拟旨（非显式前缀），返回拟旨意图与草案文本。
-    失败/无 → {"draft_action": "无", "draft_text": ""}。"""
+    失败/无 → {"draft_action": "无", "draft_text": ""}。
+    has_pending_draft=True：本回合已有草案暂存，皇帝「补充/修改当前草稿」也归拟旨。"""
+    supplement_hint = (
+        "本回合已有草案暂存；如果皇帝是在补充/修改/扩充当前草稿"
+        "（如「再补一条」「加上」「改成」「把…去掉」等），也归拟旨。\n"
+        if has_pending_draft else ""
+    )
     prompt = (
         "你是信息抽取器，不扮演、不写圣旨。读皇帝这句话 + 大臣回话，判断皇帝**本轮**"
         "是否在口头请大臣拟旨（如「拟旨吧」「你拟一道旨」「帮我起草」「草拟圣旨」等）。"
-        "只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
+        + supplement_hint
+        + "只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
         "{\n"
         '  "拟旨意图": "无|拟旨"  // 皇帝明确请拟旨/起草圣旨=拟旨；闲谈/议事/问询/密令/任免=无\n'
         "}\n"
