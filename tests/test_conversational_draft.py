@@ -1014,3 +1014,128 @@ def test_undo_supplement_turn_removes_committed_draft(game):
     assert all("v2" not in t for t in texts), (
         f"再次拟诏不得含被撤回的 v2 文本，但得到 {texts}"
     )
+
+
+# ── 陈旧诏书不得颁发（P1：生成稿与 draft 状态不同步）─────────────────────────
+
+def _decree_session(db, state, content):
+    """轻量 GameSession（__new__ 跳过重型 init）供拟诏/颁诏流程用。"""
+    from ming_sim.session import GameSession
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = None
+    sess.llm_config = None
+    sess.agno_db = None
+    sess.last_decree = ""
+    sess.last_report = ""
+    sess.deaths_this_turn = []
+    sess.debuts_this_turn = []
+    return sess
+
+
+def test_stale_decree_not_issued_when_new_draft_created_after_generation(game, monkeypatch):
+    """P1-1：拟诏（write_decree 产生稿）后，玩家又新建一条对话式草案（新 draft）。
+    resolve_turn 时，陈旧的 last_decree 仅覆盖旧 draft——必须强制重生成、纳入新 draft，
+    不许把新 draft 标记为已颁却不进诏书正文。
+
+    断言：颁诏用的 decree 文本必须由新 draft 集重新生成（含新草案），而非沿用旧稿。"""
+    import ming_sim.session as session_mod
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    sess = _decree_session(db, state, content)
+    from ming_sim.models import TurnPhase
+    state.turn_phase = TurnPhase.SUMMONING.value
+
+    # 草案 A：先 stage + write_decree（生成稿只覆盖 A）
+    db.upsert_pending_directive(state.turn, name, payload={"text": "草案A：清查粮饷", "actor": name})
+
+    gen_calls = []
+
+    def fake_write(llm_config, agno_db, st, directives, db=None):
+        ids = sorted(int(d["id"]) for d in directives)
+        gen_calls.append(ids)
+        texts = "；".join(str(d["text"]) for d in directives)
+        return f"诏书[{texts}]"
+
+    monkeypatch.setattr(session_mod, "write_decree_with_agno", fake_write)
+
+    decree_v1 = sess.write_decree()
+    assert "草案A" in decree_v1
+    assert "草案B" not in decree_v1  # 此刻还没 B
+
+    # 玩家回到对话，新建草案 B（新 pending directive，未纳入已生成的 decree_v1）
+    db.upsert_pending_directive(state.turn, name + "·乙",
+                                payload={"text": "草案B：调将镇辽", "actor": name})
+
+    # 颁诏：必须重生成，纳入 B，不能沿用只含 A 的陈旧稿
+    captured = {}
+
+    def fake_resolve(st, gdb, agno, llm, directives, decree_text, **kw):
+        captured["decree_text"] = decree_text
+        captured["directive_texts"] = [str(d["text"]) for d in directives]
+        from ming_sim.session import ResolveResult
+        return ResolveResult(awaiting=False, report="ok")
+
+    monkeypatch.setattr(session_mod, "resolve_directives", fake_resolve)
+
+    sess.resolve_turn()
+
+    assert "草案B" in captured["decree_text"], (
+        f"颁诏诏书正文必须纳入颁诏前新建的草案B，但得到：{captured['decree_text']!r}"
+    )
+    assert any("草案B" in t for t in captured["directive_texts"]), "新 draft B 须进 directives"
+
+
+def test_undo_clears_generated_decree_when_committed_draft_deleted(game, monkeypatch):
+    """P1-2：write_decree() commit 了对话草案后撤回该召对（删了 committed draft），
+    生成的诏书正文（last_decree）含被撤回的指令——必须随之清空，不能再原样颁出。
+
+    undo_chat_turn 报告删了哪些 committed draft；session 据此让生成稿失效。"""
+    import ming_sim.session as session_mod
+    from ming_sim.models import TurnPhase
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    sess = _decree_session(db, state, content)
+    state.turn_phase = TurnPhase.SUMMONING.value
+
+    # 一个召对内 stage 对话草案
+    ctid = db.create_chat_turn(state, name, "sess-undo-decree", 0)
+    before = db.capture_chat_rollback_snapshot()
+    db.upsert_pending_directive(
+        state.turn, name, payload={"text": "草案X：将被撤回的指令", "actor": name})
+    after = db.capture_chat_rollback_snapshot()
+    db.record_chat_turn_rollback_diffs(ctid, before, after)
+
+    monkeypatch.setattr(
+        session_mod, "write_decree_with_agno",
+        lambda llm, agno, st, directives, db=None:
+            "诏书：" + "；".join(str(d["text"]) for d in directives))
+
+    decree = sess.write_decree()
+    assert "草案X" in sess.last_decree and "草案X" in decree
+
+    # 撤回该召对：undo_chat_turn 删 committed draft 并报告之；session 失效生成稿。
+    undone = db.undo_chat_turn(ctid)
+    deleted = undone.get("deleted_committed_draft_ids") or []
+    assert deleted, "undo_chat_turn 应报告删除了 committed draft id"
+    sess.note_chat_rollback(deleted_committed_draft_ids=deleted)
+
+    assert not (sess.last_decree or "").strip(), (
+        f"撤回 committed draft 后生成的诏书正文必须被清空，但仍有：{sess.last_decree!r}"
+    )
+
+
+def test_normal_undo_keeps_valid_decree(game, monkeypatch):
+    """P1-2 反面：普通撤回（没删 committed draft）不得无谓清空一份有效生成稿。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    sess = _decree_session(db, state, content)
+    sess.last_decree = "诏书：保留有效稿"
+
+    # 没有 committed draft 被删
+    sess.note_chat_rollback(deleted_committed_draft_ids=[])
+    assert sess.last_decree == "诏书：保留有效稿", "普通撤回不得清掉有效诏书稿"

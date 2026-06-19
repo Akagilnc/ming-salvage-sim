@@ -5013,6 +5013,10 @@ class GameDB:
                 str(turn_row.get("agno_session_id") or ""),
                 int(turn_row.get("agno_runs_before") or 0),
             )
+        # P1-2：报告本召对删除了哪些 committed draft（write_decree 已 commit 的对话草案行）。
+        # 上层据此让已生成的诏书正文（last_decree）失效——否则若另有 draft 残留，玩家仍能
+        # 原样颁出含被撤回指令的陈旧诏书。无删除则为空，普通撤回不触发上层清稿。
+        turn_row["deleted_committed_draft_ids"] = list(draft_ids_to_delete)
         return turn_row
 
     # ----- event memories（渐进式记忆：摘要卡 + 来源摘录） -----

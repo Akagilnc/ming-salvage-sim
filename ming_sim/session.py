@@ -448,6 +448,8 @@ class GameSession:
         self.temporary_characters: Dict[str, Character] = {}
         self.last_decree = ""
         self.last_report = ""
+        # P1-1：last_decree 所覆盖的 draft id 指纹（write_decree 时记，颁诏时校验是否已陈旧）。
+        self._decree_draft_ids: Tuple[int, ...] = ()
         self._begun = False
 
     # ── 回合生命周期 ──────────────────────────────────────────────────────
@@ -471,6 +473,7 @@ class GameSession:
         tlog(f"[接档] begin_turn 大臣 registry 重建 {time.monotonic() - _t:.1f}s")
         self.last_decree = ""
         self.last_report = ""
+        self._decree_draft_ids = ()
         # awaiting_decision 必须保活：刷新页时仍要弹决策点续跑结算，不可重置成 summoning。
         # settling 同样保活（ADR 0008 S4）：pre_settle 前半段已提交，重载若被重置回 summoning，
         # 守门失效=恢复入口认不出「前半段已完成」会二次重跑前半段（白名单外即被重置）。
@@ -506,6 +509,14 @@ class GameSession:
         """回合结束（resolve 已推进 state.turn）；阶段回 summoning。"""
         self.state.turn_phase = TurnPhase.SUMMONING.value
         self.db.save_state(self.state)
+
+    def note_chat_rollback(self, deleted_committed_draft_ids: Optional[List[int]] = None) -> None:
+        """P1-2：撤回召对若删了 write_decree 已 commit 的对话草案（committed draft），
+        本份生成的诏书正文（last_decree）含被撤回的指令——必须作废，使颁诏须重生成，
+        不能原样颁出。普通撤回（未删 committed draft）不动有效生成稿。"""
+        if deleted_committed_draft_ids:
+            self.last_decree = ""
+            self._decree_draft_ids = ()
 
     def refresh_runtime_after_chat_rollback(self) -> None:
         """撤回召对副作用后，用 DB 真相刷新内存人物表和本回合 Agent registry。"""
@@ -1154,6 +1165,10 @@ class GameSession:
             raise ValueError("无草案不能拟诏。")
         decree = write_decree_with_agno(self.llm_config, self.agno_db, self.state, directives, db=self.db)
         self.last_decree = decree
+        # P1-1：记下本份生成稿覆盖的 draft 集指纹。颁诏时若 draft 集已变（玩家拟诏后又新建
+        # 草案），凭此判定 last_decree 已陈旧、强制重生成纳入新 draft，不许把新 draft 标记
+        # 为已颁却不进诏书正文。
+        self._decree_draft_ids = tuple(sorted(int(d["id"]) for d in directives))
         return decree
 
     def set_decree(self, text: str) -> str:
@@ -1248,6 +1263,15 @@ class GameSession:
                 directives = [{"text": self.last_decree}]
             else:
                 raise ValueError("网页/CLI 端不允许跳过回合：至少一条草案才能颁诏。")
+        # P1-1（不变式：不许颁发早于尚未纳入草案的生成稿）：玩家拟诏后又回对话新建草案时，
+        # last_decree 只覆盖旧 draft 集，会把新 draft 标记为已颁却不进诏书正文。此处比对
+        # 当前 draft 集与 last_decree 覆盖的指纹——不一致则作废陈旧生成稿，强制下方重生成
+        # 纳入全部 draft。recovered_source 恢复路用存档真源、不在此列（指纹空、不触发）。
+        if recovered_source is None and (self.last_decree or "").strip():
+            current_ids = tuple(sorted(int(d["id"]) for d in directives if "id" in d.keys()))
+            if current_ids and current_ids != getattr(self, "_decree_draft_ids", ()):
+                self.last_decree = ""
+                self._decree_draft_ids = ()
         # 结算前先存一份：LLM 推演有可能崩，留个回滚锚点
         self.auto_save("preresolve")
         # 注：上方的 commit_pending_actions(kind_filter='directive') 已提前把对话式拟旨
