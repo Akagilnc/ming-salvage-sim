@@ -267,6 +267,7 @@ def test_limited_duration_commitment_ticks_until_end_turn_then_expires(game):
         stop_condition="",
         end_turn=start_turn + 2,
         commitment_kind="until_stop",
+        cancellable="decree",
     )
 
     _settle_empty_month(db, state, content)
@@ -316,6 +317,7 @@ def test_until_stop_condition_beats_later_end_turn_for_stacked_commitment(game):
         stop_condition=json.dumps({"army.guanning.arrears": "<=0"}, ensure_ascii=False),
         end_turn=state.turn + 3,
         commitment_kind="until_stop",
+        cancellable="decree",
     )
 
     _settle_empty_month(db, state, content)
