@@ -10,7 +10,25 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List
 
-from ming_sim.constants import ECONOMY_ACCOUNTS
+from ming_sim.constants import (
+    ARMY_FIELD_ALIASES,
+    ARMY_QUANTITY_FIELDS,
+    ARMY_SCORE_FIELDS,
+    ARMY_TEXT_FIELDS,
+    BUILDING_CATEGORIES,
+    BUILDING_FIELD_ALIASES,
+    BUILDING_QUANTITY_FIELDS,
+    BUILDING_SCORE_FIELDS,
+    BUILDING_TEXT_FIELDS,
+    ECONOMY_ACCOUNTS,
+    FISCAL_SCORE_FIELDS,
+    POWER_FIELD_ALIASES,
+    REGION_FIELD_ALIASES,
+    REGION_QUANTITY_FIELDS,
+    REGION_SCORE_FIELDS,
+    REGION_TEXT_FIELDS,
+    SCORE_METRICS,
+)
 
 
 def loads_effect_dict(raw: object) -> Dict[str, object]:
@@ -30,23 +48,262 @@ def loads_effect_dict(raw: object) -> Dict[str, object]:
     return v if isinstance(v, dict) else {}
 
 
-def _effect_value_has_work(value: object) -> bool:
-    if isinstance(value, dict):
-        return any(_effect_value_has_work(item) for item in value.values())
-    if isinstance(value, (list, tuple)):
-        return any(_effect_value_has_work(item) for item in value)
-    if value is None:
+def _nonzero_int(raw: object) -> bool:
+    if raw in (None, "") or isinstance(raw, (bool, float)):
         return False
-    if isinstance(value, str):
-        return bool(value.strip())
-    if isinstance(value, (int, float)):
-        return value != 0
-    return bool(value)
+    try:
+        return int(raw) != 0  # type: ignore[arg-type]
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
+def _nonempty_text(raw: object) -> bool:
+    return isinstance(raw, str) and bool(raw.strip())
+
+
+def _metric_effect_has_work(raw: object) -> bool:
+    if not isinstance(raw, dict):
+        return False
+    return any(key in SCORE_METRICS and _nonzero_int(value) for key, value in raw.items())
+
+
+def _economy_effect_has_work(raw: object) -> bool:
+    if not isinstance(raw, list):
+        return False
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        account = str(item.get("account") or "").strip()
+        if account in ECONOMY_ACCOUNTS and _nonzero_int(item.get("delta")):
+            return True
+    return False
+
+
+def _faction_effect_has_work(raw: object) -> bool:
+    if not isinstance(raw, dict):
+        return False
+    for value in raw.values():
+        if isinstance(value, dict):
+            if any(
+                field in ("satisfaction", "leverage") and _nonzero_int(delta)
+                for field, delta in value.items()
+            ):
+                return True
+        elif _nonzero_int(value):
+            return True
+    return False
+
+
+def _class_effect_has_work(raw: object) -> bool:
+    if not isinstance(raw, dict):
+        return False
+    for value in raw.values():
+        if not isinstance(value, dict):
+            continue
+        if any(
+            field in ("satisfaction", "leverage") and _nonzero_int(delta)
+            for field, delta in value.items()
+        ):
+            return True
+    return False
+
+
+def _entity_delta_has_work(
+    raw: object,
+    *,
+    aliases: Dict[str, str],
+    numeric_fields: tuple[str, ...],
+    text_fields: tuple[str, ...] = (),
+) -> bool:
+    if not isinstance(raw, dict):
+        return False
+    numeric = set(numeric_fields)
+    text = set(text_fields)
+    for changes in raw.values():
+        if not isinstance(changes, dict):
+            continue
+        for raw_field, value in changes.items():
+            field = aliases.get(str(raw_field).strip(), str(raw_field).strip())
+            if field in numeric and _nonzero_int(value):
+                return True
+            if field in text and _nonempty_text(value):
+                return True
+    return False
+
+
+def _building_effect_has_work(raw: object) -> bool:
+    if not isinstance(raw, list):
+        return False
+    numeric = set(BUILDING_SCORE_FIELDS + BUILDING_QUANTITY_FIELDS)
+    text = set(BUILDING_TEXT_FIELDS)
+    for op in raw:
+        if not isinstance(op, dict):
+            continue
+        action = str(op.get("action") or "").strip().lower()
+        if action == "create":
+            category = str(op.get("category") or "").strip()
+            if category in BUILDING_CATEGORIES and _nonempty_text(op.get("region_id")):
+                return True
+            continue
+        if action == "remove":
+            if _nonempty_text(op.get("building_id")):
+                return True
+            continue
+        if action != "modify" or not _nonempty_text(op.get("building_id")):
+            continue
+        for raw_field, value in op.items():
+            field = BUILDING_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
+            if field in numeric and _nonzero_int(value):
+                return True
+            if field in text and _nonempty_text(value):
+                return True
+    return False
+
+
+def _new_armies_effect_has_work(raw: object) -> bool:
+    if not isinstance(raw, list):
+        return False
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        mapped = {ARMY_FIELD_ALIASES.get(str(k).strip(), str(k).strip()): v for k, v in item.items()}
+        if _nonempty_text(mapped.get("id")) and _nonzero_int(mapped.get("manpower")):
+            return True
+    return False
+
+
+def _person_effect_has_work(raw: object) -> bool:
+    if not isinstance(raw, list):
+        return False
+    action_fields = {
+        "任命", "罢黜", "调任", "处置", "易主", "册封", "行止", "评定",
+    }
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or item.get("人物") or "").strip()
+        action = str(item.get("动作") or item.get("action") or "").strip()
+        if not name or action not in action_fields:
+            continue
+        if action == "评定":
+            if _nonzero_int(item.get("loyalty")):
+                return True
+            continue
+        return True
+    return False
+
+
+def _character_effect_has_work(raw: object) -> bool:
+    if not isinstance(raw, list):
+        return False
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        if not _nonempty_text(item.get("name")):
+            continue
+        if _nonzero_int(item.get("loyalty")):
+            return True
+    return False
+
+
+def _character_status_effect_has_work(raw: object) -> bool:
+    if not isinstance(raw, list):
+        return False
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        if _nonempty_text(item.get("name")) and _nonempty_text(item.get("status")):
+            return True
+    return False
+
+
+def _character_power_effect_has_work(raw: object) -> bool:
+    if not isinstance(raw, list):
+        return False
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        if _nonempty_text(item.get("name")) and (
+            _nonempty_text(item.get("new_power")) or _nonempty_text(item.get("power_id"))
+        ):
+            return True
+    return False
+
+
+def _power_renames_effect_has_work(raw: object) -> bool:
+    if not isinstance(raw, list):
+        return False
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        if _nonempty_text(item.get("power_id")) and _nonempty_text(item.get("new_name")):
+            return True
+    return False
+
+
+def _legacy_effect_has_work(raw: object) -> bool:
+    if not isinstance(raw, dict):
+        return False
+    modifiers = raw.get("modifiers")
+    if not isinstance(modifiers, dict):
+        return False
+    for key in ("国库", "内库", "民心", "皇威"):
+        if _nonzero_int(modifiers.get(key)):
+            return True
+    if _entity_delta_has_work(
+        modifiers.get("regions"),
+        aliases=REGION_FIELD_ALIASES,
+        numeric_fields=REGION_SCORE_FIELDS + FISCAL_SCORE_FIELDS,
+    ):
+        return True
+    return _entity_delta_has_work(
+        modifiers.get("armies"),
+        aliases=ARMY_FIELD_ALIASES,
+        numeric_fields=ARMY_SCORE_FIELDS,
+    )
 
 
 def effect_dict_has_work(raw: object) -> bool:
     """Return whether an effect/ongoing payload has semantic work, not just a non-empty shell."""
-    return _effect_value_has_work(loads_effect_dict(raw))
+    effect = loads_effect_dict(raw)
+    if not effect:
+        return False
+    checks = (
+        _metric_effect_has_work(effect.get("metrics")),
+        _economy_effect_has_work(effect.get("economy")),
+        _economy_effect_has_work(effect.get("economy_moves")),
+        _faction_effect_has_work(effect.get("factions")),
+        _faction_effect_has_work(effect.get("faction_delta")),
+        _class_effect_has_work(effect.get("classes")),
+        _class_effect_has_work(effect.get("class_delta")),
+        _entity_delta_has_work(
+            effect.get("region_delta") or effect.get("regions"),
+            aliases=REGION_FIELD_ALIASES,
+            numeric_fields=REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + FISCAL_SCORE_FIELDS,
+            text_fields=REGION_TEXT_FIELDS,
+        ),
+        _entity_delta_has_work(
+            effect.get("army_delta") or effect.get("armies"),
+            aliases=ARMY_FIELD_ALIASES,
+            numeric_fields=ARMY_SCORE_FIELDS + ARMY_QUANTITY_FIELDS,
+            text_fields=ARMY_TEXT_FIELDS,
+        ),
+        _entity_delta_has_work(
+            effect.get("power_updates"),
+            aliases=POWER_FIELD_ALIASES,
+            numeric_fields=("leverage", "military_strength", "supply"),
+        ),
+        _building_effect_has_work(effect.get("buildings")),
+        _new_armies_effect_has_work(effect.get("new_armies")),
+        _person_effect_has_work(effect.get("人物变更")),
+        _person_effect_has_work(effect.get("person_changes")),
+        _character_effect_has_work(effect.get("character")),
+        _character_status_effect_has_work(effect.get("character_status_changes")),
+        _character_power_effect_has_work(effect.get("character_power_changes")),
+        _power_renames_effect_has_work(effect.get("power_renames")),
+        _legacy_effect_has_work(effect.get("legacy")),
+    )
+    return any(checks)
 
 
 class TurnPhase(str, Enum):

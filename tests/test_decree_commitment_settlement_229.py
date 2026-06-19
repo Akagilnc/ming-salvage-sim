@@ -685,7 +685,7 @@ def test_semantically_empty_one_shot_commitment_surfaces_and_acks_once(game):
 
     due_payload = build_simulator_payload(state, db, "", "")
     assert [
-        item for item in due_payload["secret_orders"]["待核议"]
+        item for item in due_payload["secret_orders"].get("待核议", [])
         if item.get("entry_kind") == "due_commitment" and item.get("issue_id") == issue_id
     ]
 
@@ -724,6 +724,70 @@ def test_semantically_empty_one_shot_commitment_surfaces_and_acks_once(game):
     next_month = build_simulator_payload(state, db, "", "")
     assert [
         item for item in next_month["secret_orders"].get("待核议", [])
+        if item.get("entry_kind") == "due_commitment" and item.get("issue_id") == issue_id
+    ] == []
+
+
+def test_metadata_only_one_shot_commitment_surfaces_and_acks_once(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
+    db.conn.commit()
+
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="占位持续效果的复试承诺",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:placeholder-review",
+        bar_value=0,
+        inertia=0,
+        stage_text="三月后复试，占位字段不代表月度动作。",
+        ongoing_effects={
+            "economy": [
+                {"account": "国库", "delta": 0, "reason": "占位"},
+            ],
+        },
+        stop_condition="",
+        end_turn=state.turn,
+        commitment_kind="until_stop",
+        cancellable="decree",
+    )
+
+    due_payload = build_simulator_payload(state, db, "", "")
+    assert [
+        item for item in due_payload["secret_orders"].get("待核议", [])
+        if item.get("entry_kind") == "due_commitment" and item.get("issue_id") == issue_id
+    ]
+
+    _settle_empty_month(db, state, content)
+    row = _issue_row(db, issue_id)
+    assert row["status"] == "active"
+    assert row["closed_turn"] is None
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM issue_advances WHERE issue_id=? AND trigger_kind='expire'",
+        (issue_id,),
+    ).fetchone()[0] == 0
+
+    out = apply_score_extraction(
+        db,
+        state,
+        {
+            "close_issues": [
+                {
+                    "issue_id": issue_id,
+                    "reason": "acknowledged",
+                    "narrative": "皇帝已复试，此占位承诺已由圣裁收尾。",
+                }
+            ]
+        },
+        content=content,
+    )
+    assert out["issue_summary"]["closes"][0]["rejected"] is False
+    assert _issue_row(db, issue_id)["status"] == "dropped"
+    after_ack = build_simulator_payload(state, db, "", "")
+    assert [
+        item for item in after_ack["secret_orders"].get("待核议", [])
         if item.get("entry_kind") == "due_commitment" and item.get("issue_id") == issue_id
     ] == []
 
