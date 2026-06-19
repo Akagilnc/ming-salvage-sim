@@ -1,7 +1,7 @@
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
-import { IssueGroup, SituationDetailModal } from "./situation";
+import { IssueGroup, SituationDetailModal, SituationRow } from "./situation";
 import type { Issue } from "../types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -56,6 +56,32 @@ describe("commitment progress display", () => {
     const cleanup = render(
       <SituationDetailModal issue={makeIssue()} onClose={() => undefined} />
     );
+    expect(document.body.textContent).toContain(commitmentText);
+    cleanup();
+  });
+
+  it("shows commitment progress in the situation hover tooltip", () => {
+    const cleanup = render(<SituationRow issue={makeIssue()} />);
+    const row = document.querySelector(".situation-row") as HTMLDivElement;
+    row.getBoundingClientRect = () => ({
+      x: 10,
+      y: 20,
+      width: 200,
+      height: 48,
+      top: 20,
+      right: 210,
+      bottom: 68,
+      left: 10,
+      toJSON: () => ({}),
+    });
+
+    act(() => {
+      row.dispatchEvent(
+        new MouseEvent("mouseover", { bubbles: true, relatedTarget: document.body })
+      );
+    });
+
+    expect(document.body.textContent).toContain("承诺进度");
     expect(document.body.textContent).toContain(commitmentText);
     cleanup();
   });
