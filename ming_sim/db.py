@@ -5712,6 +5712,7 @@ class GameDB:
 
     def commit_pending_actions(
         self, state: GameState, *, content=None, registry=None, minister_name=None,
+        kind_filter: Optional[str] = None,
     ) -> List[Dict[str, object]]:
         """颁诏:把本回合 pending 暂存的结构化写动作批量落到真实表(不拒绝即允许),
         按 id 序(=操作发生序)apply。落得了标 committed、落不了标 failed(都不留 pending,
@@ -5720,10 +5721,15 @@ class GameDB:
         content/registry 仅 office(任免)落库需要(注册新臣 Agent);密令/后宫不需,故可选——
         探针 driver 路径无聊天暂存,传 None 即 no-op。
         minister_name 非空=对话确认当场 commit:只落该召对对象的暂存(应允即落,不波及他人);
-        默认 None=颁诏批量落全回合。返回已落库动作摘要。"""
+        默认 None=颁诏批量落全回合。
+        kind_filter 非空=只 commit 指定 kind(如 'directive')的暂存,跳过其余 kind。
+        返回已落库动作摘要。"""
         applied: List[Dict[str, object]] = []
-        for pa in self.list_pending_actions(
-                int(state.turn), status="pending", minister_name=minister_name):
+        rows = self.list_pending_actions(
+            int(state.turn), status="pending", minister_name=minister_name)
+        if kind_filter is not None:
+            rows = [r for r in rows if r["kind"] == kind_filter]
+        for pa in rows:
             try:
                 payload = json.loads(pa["payload_json"] or "{}")
             except (ValueError, TypeError):
@@ -5800,9 +5806,12 @@ class GameDB:
             actor = str(payload.get("actor") or pa["minister_name"] or "")
             if not text:
                 return False
+            # 直接建档为 draft：对话式拟旨经由「应允」或「不回=颁诏默认同意」两路提交，
+            # 玩家意图已在 pending_actions 确认阶段表达；无需再经 turn_directives pending 状态
+            # 走一轮 web UI 准驳（pending 态是给显式前缀大臣拟旨留的，见 confirm_directive）。
             self.add_directive(
                 state, None, text, "大臣拟旨",
-                actor=actor, notes=f"由{actor}拟旨入档", status="pending",
+                actor=actor, notes=f"由{actor}拟旨入档", status="draft",
             )
             return True
         return False

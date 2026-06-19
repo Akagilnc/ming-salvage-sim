@@ -1190,6 +1190,13 @@ class GameSession:
                     stored = str(ctx.get("decree_text") or "").strip()
                     if stored:
                         self.last_decree = stored
+        # "不回=默认同意"（ADR 0006）：颁诏前先把对话式拟旨暂存（pending_actions kind=directive）
+        # 提交为 draft，使 list_directives(status='draft') 能拾取、进入本次诏书。
+        # draft 不计入 pending_count（后者只计 turn_directives.status='pending'），守门不受影响。
+        self.db.commit_pending_actions(
+            self.state, kind_filter="directive",
+            content=getattr(self, "content", None),
+            registry=getattr(self, "registry", None))
         if self.pending_count() > 0:
             raise ValueError(f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
         directives = self.db.list_directives(self.state, statuses=("draft",))
@@ -1203,6 +1210,9 @@ class GameSession:
                 raise ValueError("网页/CLI 端不允许跳过回合：至少一条草案才能颁诏。")
         # 结算前先存一份：LLM 推演有可能崩，留个回滚锚点
         self.auto_save("preresolve")
+        # 注：上方的 commit_pending_actions(kind_filter='directive') 已提前把对话式拟旨
+        # 提交为 draft；下方 resolve_directives 内的 commit_pending_actions 再次调用时
+        # 对已 committed 行是幂等 no-op，不重复落库。
         decree_text = decree or self.last_decree or write_decree_with_agno(
             self.llm_config, self.agno_db, self.state, directives, db=self.db
         )
