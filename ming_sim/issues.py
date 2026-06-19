@@ -3352,18 +3352,18 @@ def apply_issue_tracker_output(
         stop_condition_raw = ni.get("stop_condition")
         stop_condition = _issue_condition_text(stop_condition_raw)
         commitment_kind = _normalize_commitment_kind(ni.get("commitment_kind"))
-        if not commitment_kind and kind == "initiative" and isinstance(stop_condition_raw, dict) and stop_condition_raw and ongoing_eff:
-            commitment_kind = COMMITMENT_KIND_UNTIL_STOP
         is_commitment = bool(commitment_kind)
         if is_commitment:
             try:
                 if not origin_ref:
                     raise ValueError("origin_ref 必填，须指回诏书")
+                if not ongoing_eff:
+                    raise ValueError("ongoing_effects 必填，须记录每月固定动作")
                 stop_condition = _validate_commitment_stop_condition(stop_condition_raw, state, db)
             except (TypeError, ValueError, OverflowError) as exc:
                 applied_new.append({
                     "rejected": True, "category": "invalid_enum",
-                    "reason": f"new_issue commitment 字段非法（origin_ref/stop_condition）：{exc}",
+                    "reason": f"new_issue commitment 字段非法（origin_ref/ongoing_effects/stop_condition）：{exc}",
                     "item": ni, "title": title,
                 })
                 continue
@@ -3504,19 +3504,22 @@ def apply_issue_tracker_output(
             continue
         narrative = str(cl.get("narrative") or "")[:400]
         chk = db.conn.execute(
-            "SELECT status, resolve_condition FROM issues WHERE id=?", (issue_id,)
+            "SELECT status, resolve_condition, commitment_kind FROM issues WHERE id=?", (issue_id,)
         ).fetchone()
         if (
             reason == "resolved"
             and chk is not None
             and chk["status"] == "active"
-            and commitment_condition_role(chk["resolve_condition"] or "").get("condition_role")
-            == "commitment_stop_condition"
+            and (
+                chk["commitment_kind"]
+                or commitment_condition_role(chk["resolve_condition"] or "").get("condition_role")
+                == "commitment_stop_condition"
+            )
         ):
             applied_closes.append({
                 "rejected": True,
                 "category": "invalid_enum",
-                "reason": f"close_issues 对人物承诺型 stop_condition issue {issue_id} 误判 resolved（须走专门完成闭环）",
+                "reason": f"close_issues 对承诺型 issue {issue_id} 误判 resolved（须走专门完成闭环）",
                 "item": cl,
             })
             continue
