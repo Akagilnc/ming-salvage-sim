@@ -19,7 +19,9 @@ export function groupIssues(issues: Issue[]) {
 }
 
 function commitmentProgressText(issue: Issue) {
-  return issue.commitment_progress_text?.trim() || "";
+  const text = issue.commitment_progress_text?.trim();
+  if (text) return text;
+  return issue.commitment_progress ? "未知进度" : "";
 }
 
 export function SituationPanel({ issues, closedIssues, hasLegacies }: {
@@ -121,7 +123,7 @@ export function SituationTip({ issue, pos }: { issue: Issue; pos: { x: number; y
         {progressText ? (
           <div className="situation-tip-row">
             <span>承诺进度</span>
-            <b>{progressText}</b>
+            <b className="issue-commitment-progress">{progressText}</b>
           </div>
         ) : null}
         <p className="situation-tip-stage">{issue.stage_text}</p>
@@ -157,7 +159,7 @@ export function SituationDetailModal({ issue, onClose }: { issue: Issue; onClose
         {progressText ? (
           <div className="situation-tip-row">
             <span>承诺进度</span>
-            <b>{progressText}</b>
+            <b className="issue-commitment-progress">{progressText}</b>
           </div>
         ) : null}
         <p className="situation-tip-stage">{issue.stage_text}</p>
@@ -204,7 +206,7 @@ export function IssueGroup({ title, issues }: { title: string; issues: Issue[] }
                 </div>
                 <span>{issue.bar_good_meaning}</span>
               </div>
-              {progressText ? <p>{progressText}</p> : null}
+              {progressText ? <p className="issue-commitment-progress">{progressText}</p> : null}
               <p>{issue.stage_text}</p>
               {issue.tags.length ? (
                 <div className="issue-tags">

@@ -225,17 +225,21 @@ def _commitment_remaining_from_gate(
         val = _eval_gate_key(str(key), state.metrics, db)
         if val is None:
             continue
+        try:
+            val_int = int(val)
+        except (TypeError, ValueError):
+            continue
         op, target = m.group(1), int(m.group(2))
         if op == "<=":
-            need = max(0, int(val) - target)
+            need = max(0, val_int - target)
         elif op == "<":
-            need = max(0, int(val) - target + 1)
+            need = max(0, val_int - target + 1)
         elif op == ">=":
-            need = max(0, target - int(val))
+            need = max(0, target - val_int)
         elif op == ">":
-            need = max(0, target - int(val) + 1)
+            need = max(0, target - val_int + 1)
         else:
-            need = abs(int(val) - target)
+            need = abs(val_int - target)
         remaining += need
         found = True
     return remaining if found else None
@@ -1205,7 +1209,10 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
     """
     if "." not in key:
         if key in metrics:
-            return int(metrics[key])
+            try:
+                return int(metrics[key])
+            except (TypeError, ValueError):
+                return None
         return None
     parts = key.split(".")
     table = parts[0]

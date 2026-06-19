@@ -291,6 +291,28 @@ def test_commitment_expiry_respects_outer_transaction_rollback(game):
     ).fetchone()[0] == 0
 
 
+def test_commitment_progress_skips_non_numeric_gate_values(game):
+    db, state, _content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="坏数值门槛承诺",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:bad-progress-value",
+        bar_value=0,
+        inertia=0,
+        ongoing_effects={"metrics": {"皇威": 1}},
+        stop_condition=json.dumps({"皇威": ">=10"}, ensure_ascii=False),
+        commitment_kind="until_stop",
+    )
+    state.metrics["皇威"] = "非数字"
+
+    progress = commitment_progress_payload(db, state, _issue_row(db, issue_id))
+
+    assert progress == {"months_elapsed": 0, "paid_total": 0}
+
+
 def test_region_cannon_commitment_ongoing_applies_monthly_when_counted(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
