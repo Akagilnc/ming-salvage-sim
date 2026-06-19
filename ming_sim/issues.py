@@ -45,6 +45,9 @@ from ming_sim.token_stats import tlog
 
 _content: Optional[GameContent] = None
 
+INITIATIVE_ACTIVE_CAP = 15
+INITIATIVE_ACTIVE_CAP_LABEL = "十五"
+
 # SQLite 有符号 64-bit 整数边界：超界 int 绑进 SQLite 会抛 OverflowError。
 _SQLITE_INT_MIN, _SQLITE_INT_MAX = -(2 ** 63), 2 ** 63 - 1
 
@@ -3273,8 +3276,12 @@ def apply_issue_tracker_output(
                 "item": ni, "title": title,
             })
             continue
-        if kind == "initiative" and initiative_active >= 10:
-            applied_new.append({"title": title, "rejected": True, "reason": "已有十事在办，朝廷分身乏术，难再添新工。"})
+        if kind == "initiative" and initiative_active >= INITIATIVE_ACTIVE_CAP:
+            applied_new.append({
+                "title": title,
+                "rejected": True,
+                "reason": f"已有{INITIATIVE_ACTIVE_CAP_LABEL}事在办，朝廷分身乏术，难再添新工。",
+            })
             continue
         # LLM 可能把效果字段给成非 dict（字符串/数组）；isinstance 守门归 {}，
         # 不让 dict("乱填") 抛 ValueError 越过单条拒绝、崩整月落库（codexB-P1）。
