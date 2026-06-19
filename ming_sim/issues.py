@@ -415,6 +415,35 @@ def _monthly_person_rating_changes(effect: Dict[str, object]) -> List[Dict[str, 
     return changes
 
 
+def _invalid_monthly_person_rating_reason(effect: Dict[str, object]) -> str:
+    for key in ("人物变更", "person_changes"):
+        raw = effect.get(key)
+        if not isinstance(raw, list):
+            continue
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or item.get("人物") or "").strip()
+            action = str(item.get("动作") or item.get("action") or "").strip()
+            if not name or action != "评定":
+                continue
+            loyalty = item.get("loyalty")
+            if isinstance(loyalty, bool) or not isinstance(loyalty, int) or loyalty == 0:
+                return f"{key}.评定 loyalty 须为非零整数增量"
+    raw_character = effect.get("character")
+    if isinstance(raw_character, list):
+        for item in raw_character:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or item.get("人物") or "").strip()
+            if not name or "loyalty" not in item:
+                continue
+            loyalty = item.get("loyalty")
+            if isinstance(loyalty, bool) or not isinstance(loyalty, int) or loyalty == 0:
+                return "character.loyalty 须为非零整数增量"
+    return ""
+
+
 def _person_change_has_unsupported_monthly_work(raw: object) -> bool:
     if not isinstance(raw, list):
         return False
@@ -3832,11 +3861,19 @@ def apply_issue_tracker_output(
             ) > 0
         except (TypeError, ValueError, OverflowError):
             end_turn_marker_shape = False
+        legacy_resolve_text = _issue_condition_text(ni.get("resolve_condition"))
+        if not legacy_resolve_text and isinstance(stop_condition_raw, str):
+            legacy_resolve_text = stop_condition
+        legacy_resolve_commitment_shape = (
+            commitment_condition_role(legacy_resolve_text).get("condition_role")
+            == "commitment_stop_condition"
+        )
         commitment_shape_without_marker = (
             not commitment_kind
             and kind == "initiative"
             and (
                 end_turn_marker_shape
+                or legacy_resolve_commitment_shape
                 or (isinstance(stop_condition_raw, (dict, list)) and bool(stop_condition))
                 or (
                     isinstance(stop_condition_raw, str)
@@ -3866,6 +3903,9 @@ def apply_issue_tracker_output(
                     raise ValueError("origin_ref 必填，须指回诏书")
                 _et_raw = ni.get("end_turn", 0)
                 end_turn_for_commitment = _strict_int(0 if _et_raw in (None, "") else _et_raw)
+                invalid_person_rating = _invalid_monthly_person_rating_reason(ongoing_eff)
+                if invalid_person_rating:
+                    raise ValueError(f"ongoing_effects {invalid_person_rating}")
                 if unsupported_ongoing_fields:
                     raise ValueError(
                         "ongoing_effects 含非月度持续字段："

@@ -1,5 +1,7 @@
 """ADR 0009 person delta normalization behavior."""
 
+import json
+
 import pytest
 
 import ming_sim.issues as issues
@@ -224,14 +226,23 @@ def test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_d
             "new_issues": [
                 {
                     "origin_kind": "decree",
+                    "origin_ref": "decree:turn-1:appease-mao",
                     "kind": "initiative",
                     "title": "安抚毛文龙·进行中",
                     "bar_value": 20,
-                    "expected_months": 3,
                     "stage_text": "遣臣持诏赴皮岛，安抚东江镇",
-                    "stop_condition": "character.毛文龙.loyalty >= 65",
-                    "effect_on_resolve": {"metrics": {"皇威": 1}},
-                    "cancellable": "decree",
+                    "ongoing_effects": {
+                        "人物变更": [
+                            {
+                                "name": "毛文龙",
+                                "动作": "评定",
+                                "loyalty": 2,
+                                "reason": "奉旨持续安抚",
+                            }
+                        ]
+                    },
+                    "stop_condition": {"character.毛文龙.loyalty": ">=65"},
+                    "commitment_kind": "until_stop",
                 }
             ],
             "人物变更": [
@@ -248,13 +259,14 @@ def test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_d
 
     assert applied["issue_summary"]["new_issues"][0]["title"] == "安抚毛文龙·进行中"
     issue_row = db.conn.execute(
-        "SELECT title, resolve_condition, status FROM issues WHERE title='安抚毛文龙·进行中'"
+        "SELECT title, resolve_condition, stop_condition, commitment_kind, status "
+        "FROM issues WHERE title='安抚毛文龙·进行中'"
     ).fetchone()
-    assert dict(issue_row) == {
-        "title": "安抚毛文龙·进行中",
-        "resolve_condition": "character.毛文龙.loyalty >= 65",
-        "status": "active",
-    }
+    assert issue_row["title"] == "安抚毛文龙·进行中"
+    assert issue_row["resolve_condition"] == ""
+    assert json.loads(issue_row["stop_condition"]) == {"character.毛文龙.loyalty": ">=65"}
+    assert issue_row["commitment_kind"] == "until_stop"
+    assert issue_row["status"] == "active"
     after = db.conn.execute(
         "SELECT loyalty FROM characters WHERE name='毛文龙'"
     ).fetchone()["loyalty"]
