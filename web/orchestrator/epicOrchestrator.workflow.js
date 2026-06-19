@@ -387,7 +387,7 @@ export async function runEpicSingleSlicePipeline({ args, Bash, agent: agentRunne
 
   phaseIfAvailable('Merge');
   const mergeResult = parseBashJson(
-    await Bash(`set -euo pipefail\n# merge reviewed commit into family branch; reviewer=merge reviewed commit\ngit -C ${shellQuote(worktreePath)} fetch origin ${shellQuote(normalizedArgs.familyBranch)} || true\ngit -C ${shellQuote(worktreePath)} switch -C ${shellQuote(normalizedArgs.familyBranch)}\ngit -C ${shellQuote(worktreePath)} merge --no-ff ${shellQuote(implementedCommit)} -m ${shellQuote(`merge reviewed slice #${plannedSlice.issueNumber}`)}\nprintf '{"mergeCommit":"'\ngit -C ${shellQuote(worktreePath)} rev-parse HEAD | tr -d '\\n'\nprintf '"}'`)
+    await Bash(`set -euo pipefail\n# merge reviewed commit into family branch; reviewer=merge reviewed commit\nworktreePath=${shellQuote(worktreePath)}\nfamilyBranch=${shellQuote(normalizedArgs.familyBranch)}\nimplementedCommit=${shellQuote(implementedCommit)}\ngit -C "$worktreePath" fetch origin "$familyBranch" || true\nif git -C "$worktreePath" show-ref --verify --quiet refs/heads/\${familyBranch}; then\n  git -C "$worktreePath" switch \${familyBranch}\nelif git -C "$worktreePath" show-ref --verify --quiet refs/remotes/origin/\${familyBranch}; then\n  git -C "$worktreePath" switch -c \${familyBranch} --track origin/\${familyBranch}\nelse\n  git -C "$worktreePath" switch -c \${familyBranch} \${implementedCommit}^\nfi\ngit -C "$worktreePath" merge --no-ff "$implementedCommit" -m ${shellQuote(`merge reviewed slice #${plannedSlice.issueNumber}`)}\nprintf '{"mergeCommit":"'\ngit -C "$worktreePath" rev-parse HEAD | tr -d '\\n'\nprintf '"}'`)
   );
 
   return {
@@ -470,11 +470,13 @@ async function runVerification({ Bash, worktreePath, verifyCommands }) {
 }
 
 async function runPerSliceReview({ Bash, worktreePath, commit, plannedSlice }) {
-  const codex = parseBashJson(
-    await Bash(`set -euo pipefail\ncd ${shellQuote(worktreePath)}\n# reviewer=codex; full grounding fallback enabled: inspect repo files if diff alone is insufficient\ngit diff --stat ${shellQuote(`${commit}^`)} ${shellQuote(commit)}\ngit diff ${shellQuote(`${commit}^`)} ${shellQuote(commit)} | codex exec --skip-git-repo-check --ephemeral -`)
+  const codex = parseReviewerJson(
+    await Bash(`set -euo pipefail\ncd ${shellQuote(worktreePath)}\n# reviewer=codex; full grounding fallback enabled: inspect repo files if diff alone is insufficient\n{\n  printf '%s\\n' 'Review the following git diff for correctness regressions.'\n  printf '%s\\n' 'Return only one JSON object on stdout with shape {"status":"passed"|"failed","findings":[...]}. Do not include markdown, prose, or diff-stat text outside the JSON object.'\n  printf '%s\\n' 'Diff stat for human context:'\n  git diff --stat ${shellQuote(`${commit}^`)} ${shellQuote(commit)}\n  printf '%s\\n' 'Full diff:'\n  git diff ${shellQuote(`${commit}^`)} ${shellQuote(commit)}\n} | codex exec --skip-git-repo-check --ephemeral -`),
+    'codex'
   );
-  const agy = parseBashJson(
-    await Bash(`set -euo pipefail\ncd ${shellQuote(worktreePath)}\n# reviewer=agy; hidden worktree path forces diff-only review\ngit diff ${shellQuote(`${commit}^`)} ${shellQuote(commit)} | agy -p --sandbox --diff-only`)
+  const agy = parseReviewerJson(
+    await Bash(`set -euo pipefail\ncd ${shellQuote(worktreePath)}\n# reviewer=agy; hidden worktree path forces diff-only review\ngit diff ${shellQuote(`${commit}^`)} ${shellQuote(commit)} | agy -p --sandbox --diff-only`),
+    'agy'
   );
   const reviewers = [
     { model: 'codex', status: reviewStatus(codex), groundingFallback: true, findings: codex.findings ?? [] },
@@ -549,10 +551,44 @@ function describeBoundaryHandling(topology) {
 }
 
 function parseBashJson(raw) {
-  if (typeof raw === 'string') return JSON.parse(raw);
-  if (raw && typeof raw.output === 'string') return JSON.parse(raw.output);
-  if (raw && typeof raw.stdout === 'string') return JSON.parse(raw.stdout);
+  const output = bashText(raw);
+  if (output !== null) return JSON.parse(output);
   throw new Error('Bash did not return JSON output.');
+}
+
+function parseReviewerJson(raw, reviewerName) {
+  const output = bashText(raw);
+  if (output === null) throw new Error(`${reviewerName} review did not return output.`);
+
+  try {
+    return JSON.parse(output);
+  } catch (fullOutputError) {
+    const trimmed = output.trim();
+    for (let index = trimmed.lastIndexOf('{'); index >= 0; index = trimmed.lastIndexOf('{', index - 1)) {
+      try {
+        return JSON.parse(trimmed.slice(index));
+      } catch {
+        // Keep scanning for a trailing reviewer JSON object after human context.
+      }
+    }
+    const lines = trimmed.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).reverse();
+    for (const line of lines) {
+      if (!line.startsWith('{') || !line.endsWith('}')) continue;
+      try {
+        return JSON.parse(line);
+      } catch {
+        // Keep scanning for the explicit reviewer JSON object.
+      }
+    }
+    throw new Error(`${reviewerName} review did not return parseable reviewer JSON: ${fullOutputError.message}`);
+  }
+}
+
+function bashText(raw) {
+  if (typeof raw === 'string') return raw;
+  if (raw && typeof raw.output === 'string') return raw.output;
+  if (raw && typeof raw.stdout === 'string') return raw.stdout;
+  return null;
 }
 
 function phaseIfAvailable(title) {

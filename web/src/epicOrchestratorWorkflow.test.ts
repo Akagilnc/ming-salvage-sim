@@ -294,6 +294,73 @@ describe("epic orchestrator S2 single-slice pipeline", () => {
     expect(calls.join("\n")).toContain("--diff-only");
   });
 
+  it("parses reviewer JSON when codex stdout includes diff stat context before the machine result", async () => {
+    const calls: string[] = [];
+
+    const result: any = await runEpicSingleSlicePipeline({
+      args: { epicIssueNumber: 217, familyBranch: "family/217", verifyCommands: ["npm --prefix web test"] },
+      log: () => undefined,
+      agent: async () => ({
+        commit: "abc123",
+        worktreePath: "/repo/.worktrees/issue-220",
+        observabilityEvidence: { loudFailure: true, locatorLogs: true, notApplicableReason: "tooling slice" }
+      }),
+      Bash: async (command: string) => {
+        calls.push(command);
+        if (command.includes("/sub_issues")) {
+          return JSON.stringify({
+            epicId: 217,
+            issues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }],
+            blockedBy: []
+          });
+        }
+        if (command.includes("reviewer=codex")) return " web/orchestrator/epicOrchestrator.workflow.js | 1 +\n{\"status\":\"passed\",\"findings\":[]}";
+        if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("merge reviewed commit")) return JSON.stringify({ mergeCommit: "def456" });
+        return JSON.stringify({ status: "passed" });
+      }
+    });
+
+    expect(result.review.reviewers[0]).toMatchObject({ model: "codex", status: "passed", findings: [] });
+    expect(calls.find((command) => command.includes("reviewer=codex"))).toContain("Return only one JSON object");
+  });
+
+  it("merges reviewed commits into an existing family branch without resetting that branch", async () => {
+    let mergeCommand = "";
+
+    await runEpicSingleSlicePipeline({
+      args: { epicIssueNumber: 217, familyBranch: "family/217", verifyCommands: ["npm --prefix web test"] },
+      log: () => undefined,
+      agent: async () => ({
+        commit: "abc123",
+        worktreePath: "/repo/.worktrees/issue-220",
+        observabilityEvidence: { loudFailure: true, locatorLogs: true, notApplicableReason: "tooling slice" }
+      }),
+      Bash: async (command: string) => {
+        if (command.includes("/sub_issues")) {
+          return JSON.stringify({
+            epicId: 217,
+            issues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }],
+            blockedBy: []
+          });
+        }
+        if (command.includes("reviewer=codex")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("merge reviewed commit")) {
+          mergeCommand = command;
+          return JSON.stringify({ mergeCommit: "def456" });
+        }
+        return JSON.stringify({ status: "passed" });
+      }
+    });
+
+    expect(mergeCommand).toContain("show-ref --verify --quiet refs/heads/${familyBranch}");
+    expect(mergeCommand).toContain("switch ${familyBranch}");
+    expect(mergeCommand).toContain("switch -c ${familyBranch} --track origin/${familyBranch}");
+    expect(mergeCommand).toContain("switch -c ${familyBranch} ${implementedCommit}^");
+    expect(mergeCommand).not.toContain("switch -C ${familyBranch}");
+  });
+
   it("stops before review and merge when local verification fails", async () => {
     const calls: string[] = [];
 
