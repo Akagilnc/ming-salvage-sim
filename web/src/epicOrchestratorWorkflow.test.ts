@@ -478,6 +478,40 @@ describe("epic orchestrator S2 single-slice pipeline", () => {
     expect(calls.join("\n")).not.toContain("merge reviewed commit");
   });
 
+  it("verifies the exact clean worktree commit before local verification", async () => {
+    const calls: string[] = [];
+
+    await runEpicSingleSlicePipeline({
+      args: { epicIssueNumber: 217, familyBranch: "family/217", verifyCommands: ["npm --prefix web test"] },
+      log: () => undefined,
+      agent: async () => ({
+        commit: "abc123",
+        worktreePath: "/repo/.worktrees/issue-220",
+        observabilityEvidence: { loudFailure: true, locatorLogs: true, notApplicableReason: "tooling slice" }
+      }),
+      Bash: async (command: string) => {
+        calls.push(command);
+        if (command.includes("/sub_issues")) {
+          return JSON.stringify({
+            epicId: 217,
+            issues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }],
+            blockedBy: []
+          });
+        }
+        if (command.includes("reviewer=codex")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("merge reviewed commit")) return JSON.stringify({ mergeCommit: "merge789" });
+        return JSON.stringify({ status: "passed" });
+      }
+    });
+
+    const guardCommand = calls.find((command) => command.includes("enforce I7 commit discipline"));
+    expect(guardCommand).toContain("rev-parse HEAD");
+    expect(guardCommand).toContain("implementedCommit");
+    expect(guardCommand).toContain("status --porcelain");
+    expect(guardCommand).not.toContain("diff --quiet");
+  });
+
   it("reruns the same slice after review failure, re-verifies, re-reviews, and merges the new reviewed commit", async () => {
     const calls: string[] = [];
     const agentCalls: any[] = [];
@@ -526,6 +560,45 @@ describe("epic orchestrator S2 single-slice pipeline", () => {
     expect(result.merge).toEqual({ status: "merged", familyBranch: "family/217", reviewedCommit: "fix456", mergeCommit: "merge789" });
     expect(result.i7).toEqual({ sliceCommit: "fix456", amendmentsForbidden: true, reviewFixesRequireNewCommits: true, reviewFixCommits: ["fix456"] });
     expect(calls.join("\n")).toContain("fix456");
+  });
+
+  it("requires each review-fix commit to descend from the failed reviewed commit", async () => {
+    const calls: string[] = [];
+    const agentCalls: any[] = [];
+
+    await runEpicSingleSlicePipeline({
+      args: { epicIssueNumber: 217, familyBranch: "family/217", verifyCommands: ["npm --prefix web test"], maxReviewRounds: 2 },
+      log: () => undefined,
+      agent: async (request: any) => {
+        agentCalls.push(request);
+        return {
+          commit: agentCalls.length === 1 ? "abc123" : "fix456",
+          worktreePath: "/repo/.worktrees/issue-220",
+          observabilityEvidence: { loudFailure: true, locatorLogs: true, notApplicableReason: "tooling slice" }
+        };
+      },
+      Bash: async (command: string) => {
+        calls.push(command);
+        if (command.includes("/sub_issues")) {
+          return JSON.stringify({
+            epicId: 217,
+            issues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }],
+            blockedBy: []
+          });
+        }
+        if (command.includes("reviewer=codex") && command.includes("abc123")) return JSON.stringify({ status: "failed", findings: [{ severity: "P1", issue: "missing retry" }] });
+        if (command.includes("reviewer=agy") && command.includes("abc123")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("reviewer=codex")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("merge reviewed commit")) return JSON.stringify({ mergeCommit: "merge789" });
+        return JSON.stringify({ status: "passed" });
+      }
+    });
+
+    const secondGuardCommand = calls.filter((command) => command.includes("enforce I7 commit discipline"))[1];
+    expect(secondGuardCommand).toContain("merge-base --is-ancestor");
+    expect(secondGuardCommand).toContain("abc123");
+    expect(secondGuardCommand).toContain("fix456");
   });
 
   it("aborts loudly without merge when review failures exhaust the bounded same-slice retry budget", async () => {
