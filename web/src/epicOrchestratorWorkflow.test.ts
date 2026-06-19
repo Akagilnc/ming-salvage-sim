@@ -506,7 +506,7 @@ describe("epic orchestrator S2 single-slice pipeline", () => {
       }
     });
 
-    const guardCommand = calls.find((command) => command.includes("enforce I7 commit discipline"));
+    const guardCommand = calls.find((command) => command.includes("为切片执行 I7 commit 纪律检查"));
     expect(guardCommand).toContain("rev-parse HEAD");
     expect(guardCommand).toContain("implementedCommit");
     expect(guardCommand).toContain("status --porcelain");
@@ -596,7 +596,7 @@ describe("epic orchestrator S2 single-slice pipeline", () => {
       }
     });
 
-    const secondGuardCommand = calls.filter((command) => command.includes("enforce I7 commit discipline"))[1];
+    const secondGuardCommand = calls.filter((command) => command.includes("为切片执行 I7 commit 纪律检查"))[1];
     expect(secondGuardCommand).toContain("merge-base --is-ancestor");
     expect(secondGuardCommand).toContain("abc123");
     expect(secondGuardCommand).toContain("fix456");
@@ -678,7 +678,7 @@ describe("epic orchestrator S3 layered parallel pipeline", () => {
             ]
           });
         }
-        if (command.includes("enforce I7 commit discipline")) return JSON.stringify({ status: "passed" });
+        if (command.includes("为切片执行 I7 commit 纪律检查")) return JSON.stringify({ status: "passed" });
         if (command.includes("npm --prefix web test")) return JSON.stringify({ status: "passed" });
         if (command.includes("reviewer=codex")) return JSON.stringify({ status: "passed", findings: [] });
         if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [] });
@@ -755,7 +755,7 @@ describe("epic orchestrator S3 layered parallel pipeline", () => {
           }
           if (command.includes("reviewer=codex")) return JSON.stringify({ status: "passed", findings: [] });
           if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [] });
-          if (command.includes("enforce I7 commit discipline") || command.includes("merge reviewed commit")) {
+          if (command.includes("为切片执行 I7 commit 纪律检查") || command.includes("merge reviewed commit")) {
             return execFileSync("bash", ["-l", "-c", command], { encoding: "utf8" });
           }
           return JSON.stringify({ status: "passed" });
