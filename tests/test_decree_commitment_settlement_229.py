@@ -50,6 +50,52 @@ def _settle_empty_month(db, state, content):
     assert state.turn == before + 1
 
 
+def test_created_future_limited_duration_commitment_applies_first_month(game, monkeypatch):
+    db, state, content = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
+    db.conn.commit()
+    starting_authority = int(state.metrics["皇威"])
+    expected_end_turn = state.turn + 2
+
+    out = apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "origin_ref": "decree:turn-1:future-monthly-authority",
+                    "kind": "initiative",
+                    "title": "连续两月宣示皇威",
+                    "stage_text": "连续两月遣使宣示皇威。",
+                    "ongoing_effects": {"metrics": {"皇威": -1}},
+                    "end_turn": expected_end_turn,
+                    "commitment_kind": "until_stop",
+                }
+            ]
+        },
+        content=content,
+    )
+
+    created = out["issue_summary"]["new_issues"][0]
+    assert created["rejected"] is False
+    issue_id = created["issue_id"]
+
+    _settle_empty_month(db, state, content)
+
+    assert int(state.metrics["皇威"]) == starting_authority - 1
+    row = _issue_row(db, issue_id)
+    assert row["status"] == "active"
+    assert row["end_turn"] == expected_end_turn
+    advances = db.conn.execute(
+        "SELECT trigger_kind FROM issue_advances WHERE issue_id=? ORDER BY id",
+        (issue_id,),
+    ).fetchall()
+    assert [row["trigger_kind"] for row in advances] == ["ongoing"]
+
+
 def test_character_loyalty_commitment_ongoing_applies_monthly_and_records_progress(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")

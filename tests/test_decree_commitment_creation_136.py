@@ -193,6 +193,90 @@ def test_limited_duration_commitment_shape_rejects_without_explicit_marker(game,
     assert _issue_by_title(db, "连续两月补饷但缺承诺标记") is None
 
 
+def test_limited_duration_ongoing_commitment_rejects_current_turn_end_turn(game, monkeypatch):
+    db, state, content = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    out = I.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "origin_ref": "decree:turn-1:current-turn-expired-pay",
+                    "kind": "initiative",
+                    "title": "本回合即到期的每月补饷承诺",
+                    "stage_text": "户部按月拨银补饷，但 end_turn 错落在当前回合。",
+                    "ongoing_effects": {
+                        "economy": [
+                            {
+                                "account": "国库",
+                                "delta": -50,
+                                "category": "补饷承诺",
+                                "reason": "每月补饷",
+                                "purpose": "补饷",
+                            }
+                        ]
+                    },
+                    "end_turn": state.turn,
+                    "commitment_kind": "until_stop",
+                }
+            ]
+        },
+        content=content,
+    )
+
+    rejected = out["issue_summary"]["new_issues"][0]
+    assert rejected["rejected"] is True
+    assert rejected["category"] == "invalid_enum"
+    assert "end_turn" in rejected["reason"]
+    assert _issue_by_title(db, "本回合即到期的每月补饷承诺") is None
+
+
+def test_limited_duration_ongoing_commitment_rejects_past_end_turn(game, monkeypatch):
+    db, state, content = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    state.turn = 4
+    db.save_state(state)
+
+    out = I.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "origin_ref": "decree:turn-4:past-expired-pay",
+                    "kind": "initiative",
+                    "title": "过去回合已到期的每月补饷承诺",
+                    "stage_text": "户部按月拨银补饷，但 end_turn 错落在过去回合。",
+                    "ongoing_effects": {
+                        "economy": [
+                            {
+                                "account": "国库",
+                                "delta": -50,
+                                "category": "补饷承诺",
+                                "reason": "每月补饷",
+                                "purpose": "补饷",
+                            }
+                        ]
+                    },
+                    "end_turn": state.turn - 1,
+                    "commitment_kind": "until_stop",
+                }
+            ]
+        },
+        content=content,
+    )
+
+    rejected = out["issue_summary"]["new_issues"][0]
+    assert rejected["rejected"] is True
+    assert rejected["category"] == "invalid_enum"
+    assert "end_turn" in rejected["reason"]
+    assert _issue_by_title(db, "过去回合已到期的每月补饷承诺") is None
+
+
 def test_future_one_shot_commitment_issue_is_created_with_deadline_only(game, monkeypatch):
     db, state, content = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
