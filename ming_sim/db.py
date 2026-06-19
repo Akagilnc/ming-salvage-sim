@@ -12,6 +12,7 @@ import re
 import sqlite3
 from typing import Any, Dict, List, Optional, Tuple
 
+from ming_sim.applier import safe_json_dumps, sanitize_sqlite_text
 from ming_sim.assets import format_money, format_money_delta
 from ming_sim.constants import (
     ARMY_FIELD_ALIASES, ARMY_FIELD_LABELS, ARMY_QUANTITY_FIELDS, ARMY_SCORE_FIELDS, ARMY_TEXT_FIELDS,
@@ -5391,7 +5392,7 @@ class GameDB:
                 period = excluded.period,
                 report = excluded.report
             """,
-            (state.turn, state.year, state.period, report),
+            (state.turn, state.year, state.period, sanitize_sqlite_text(report)),
         )
         self.conn.commit()
 
@@ -5604,8 +5605,9 @@ class GameDB:
                 extractor_input = excluded.extractor_input,
                 extractor_output = excluded.extractor_output
             """,
-            (state.turn, state.year, state.period, decree_text, narrative,
-             extractor_input, extractor_output),
+            (state.turn, state.year, state.period,
+             sanitize_sqlite_text(decree_text), sanitize_sqlite_text(narrative),
+             sanitize_sqlite_text(extractor_input), sanitize_sqlite_text(extractor_output)),
         )
         self.conn.commit()
 
@@ -5909,13 +5911,13 @@ class GameDB:
                    extracted_ready = excluded.extracted_ready,
                    source = excluded.source""",
             (
-                int(turn), decree_text, narrative,
-                json.dumps(simulator_payload or {}, ensure_ascii=False),
+                int(turn), sanitize_sqlite_text(decree_text), sanitize_sqlite_text(narrative),
+                safe_json_dumps(simulator_payload or {}, ensure_ascii=False),
                 # #48：分组承载是 dict；空 dict 也按 dict 存（`or []` 会把 {} 退成 []，
                 # 与 Dict 契约不符）。显式传 list（旧档/占位）仍原样存，None→{}。
-                json.dumps(secret_orders if secret_orders is not None else {}, ensure_ascii=False),
-                json.dumps(relevant_memories or [], ensure_ascii=False),
-                json.dumps(extracted if extracted is not None else {}, ensure_ascii=False),
+                safe_json_dumps(secret_orders if secret_orders is not None else {}, ensure_ascii=False),
+                safe_json_dumps(relevant_memories or [], ensure_ascii=False),
+                safe_json_dumps(extracted if extracted is not None else {}, ensure_ascii=False),
                 1 if extracted is not None else 0,
                 # source 显式归一为枚举「值」字符串：Provenance 是 (str, Enum)，str(member) 在多数
                 # Python 版本落 'Provenance.player_decree' 而非 'player_decree'——重抽时
@@ -6388,17 +6390,20 @@ class GameDB:
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                kind, title, origin_kind, origin_ref, state.turn,
-                bar_value, bar_good_meaning, bar_bad_meaning, int(inertia),
-                phase, stage_text, severity, region_hint, faction_hint,
-                json.dumps(tags or [], ensure_ascii=False),
-                json.dumps(ongoing_effects or {}, ensure_ascii=False),
-                cancellable,
-                json.dumps(cancel_cost or {}, ensure_ascii=False),
-                json.dumps(effect_on_resolve or {}, ensure_ascii=False),
-                json.dumps(effect_on_fail or {}, ensure_ascii=False),
-                resolve_condition, fail_condition,
-                int(end_turn), str(stop_condition or ""), str(commitment_kind or ""),
+                sanitize_sqlite_text(kind), sanitize_sqlite_text(title),
+                sanitize_sqlite_text(origin_kind), sanitize_sqlite_text(origin_ref), state.turn,
+                bar_value, sanitize_sqlite_text(bar_good_meaning), sanitize_sqlite_text(bar_bad_meaning), int(inertia),
+                phase, sanitize_sqlite_text(stage_text), severity,
+                sanitize_sqlite_text(region_hint), sanitize_sqlite_text(faction_hint),
+                safe_json_dumps(tags or [], ensure_ascii=False),
+                safe_json_dumps(ongoing_effects or {}, ensure_ascii=False),
+                sanitize_sqlite_text(cancellable),
+                safe_json_dumps(cancel_cost or {}, ensure_ascii=False),
+                safe_json_dumps(effect_on_resolve or {}, ensure_ascii=False),
+                safe_json_dumps(effect_on_fail or {}, ensure_ascii=False),
+                sanitize_sqlite_text(resolve_condition), sanitize_sqlite_text(fail_condition),
+                int(end_turn), sanitize_sqlite_text(str(stop_condition or "")),
+                sanitize_sqlite_text(str(commitment_kind or "")),
                 state.turn,
             ),
         )
@@ -6454,7 +6459,7 @@ class GameDB:
                               closed_turn=?, last_advance_turn=?, updated_at=CURRENT_TIMESTAMP
             WHERE id=?
             """,
-            (to_value, new_phase, to_stage_text, new_status, new_inertia, closed_turn, state.turn, issue_id),
+            (to_value, new_phase, sanitize_sqlite_text(to_stage_text), new_status, new_inertia, closed_turn, state.turn, issue_id),
         )
         self.conn.execute(
             """
@@ -6465,10 +6470,12 @@ class GameDB:
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                issue_id, state.turn, trigger_kind, trigger_ref,
+                issue_id, state.turn,
+                sanitize_sqlite_text(trigger_kind), sanitize_sqlite_text(trigger_ref),
                 actual_delta, from_value, to_value,
-                from_stage_text, to_stage_text, narrative,
-                json.dumps(metric_delta or {}, ensure_ascii=False),
+                sanitize_sqlite_text(from_stage_text), sanitize_sqlite_text(to_stage_text),
+                sanitize_sqlite_text(narrative),
+                safe_json_dumps(metric_delta or {}, ensure_ascii=False),
             ),
         )
         if commit:
@@ -6508,7 +6515,7 @@ class GameDB:
                               closed_turn=?, last_advance_turn=?, updated_at=CURRENT_TIMESTAMP
             WHERE id=?
             """,
-            (to_value, new_phase, to_stage_text, reason, state.turn, state.turn, issue_id),
+            (to_value, new_phase, sanitize_sqlite_text(to_stage_text), reason, state.turn, state.turn, issue_id),
         )
         self.conn.execute(
             """
@@ -6519,9 +6526,10 @@ class GameDB:
             ) VALUES (?, ?, 'close', ?, ?, ?, ?, ?, ?, ?, '{}')
             """,
             (
-                issue_id, state.turn, reason,
+                issue_id, state.turn, sanitize_sqlite_text(reason),
                 actual_delta, from_value, to_value,
-                from_stage_text, to_stage_text, narrative,
+                sanitize_sqlite_text(from_stage_text), sanitize_sqlite_text(to_stage_text),
+                sanitize_sqlite_text(narrative),
             ),
         )
         if commit:
