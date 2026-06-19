@@ -1015,6 +1015,11 @@ class GameDB:
         self.ensure_column("secret_orders", "sim_note", "TEXT NOT NULL DEFAULT ''")
         # 密令期限：0=无硬期限；到 due_turn 时自动转入待核议，由推演当月判 done/failed。
         self.ensure_column("secret_orders", "due_turn", "INTEGER NOT NULL DEFAULT 0")
+        # BUG 3：directive 暂存 commit 成 turn_directives draft 时回填该 draft 行 id，
+        # 使 undo_chat_turn 能精确删本轮自产的那条 draft（旧实现按 (turn,actor) 删，
+        # 会连带删掉同 actor 同回合的无关 draft）。0=未 commit / 非 directive。
+        self.ensure_column(
+            "pending_actions", "committed_directive_id", "INTEGER NOT NULL DEFAULT 0")
         # fiscal_config 科目元数据列（数据驱动预算目录）：budget_role=fixed 的 base 项靠
         # account/direction/display 由 flows.compute_budget_lines 动态生成预算行；
         # dynamic 项（田赋/辽饷/盐税/商税/皇庄）走省级公式/皇庄专路，这三列留空。
@@ -4920,6 +4925,29 @@ class GameDB:
             for mid in (turn_row.get("user_message_id"), turn_row.get("minister_message_id"))
             if mid
         ]
+        # write_decree() の commit_pending_actions(kind_filter="directive") が生成した
+        # turn_directives(status='draft') はスナップショット外なので rollback_items に入らない。
+        # 削除前に、本召対が commit した pending_actions(kind='directive') 行から
+        # committed_directive_id を読み、その draft 行【だけ】を後で削除する（BUG 3：旧実装は
+        # (turn,actor) で削っていたため、同 actor 同回合の【無関係】draft も巻き込んでいた）。
+        draft_ids_to_delete: List[int] = []
+        for item in items:
+            if str(item["target_table"]) != "pending_actions":
+                continue
+            if str(item["rollback_strategy"]) != "delete_inserted_row":
+                continue
+            after_data = self._json_load_row(item["after_json"])
+            if str(after_data.get("kind") or "") != "directive":
+                continue
+            pa_id = after_data.get("id")
+            if pa_id is None:
+                continue
+            live = self.conn.execute(
+                "SELECT committed_directive_id FROM pending_actions WHERE id=?",
+                (int(pa_id),),
+            ).fetchone()
+            if live is not None and int(live["committed_directive_id"] or 0) > 0:
+                draft_ids_to_delete.append(int(live["committed_directive_id"]))
         with self.conn:
             for item in items:
                 table = str(item["target_table"])
@@ -4932,24 +4960,12 @@ class GameDB:
                     self._restore_row_in_tx(table, before_row)
                 else:
                     raise ValueError(f"不支持的回滚策略：{strategy}")
-            # write_decree() が commit_pending_actions(kind_filter="directive") で
-            # 生成した turn_directives(status='draft') はスナップショット外なので rollback_items
-            # に入らない。削除した pending_actions(kind='directive') と対応する draft 行を
-            # 明示削除してUNDO保証を完全にする（codex r6 F2）。
-            game_turn = int(turn_row.get("turn") or 0)
-            for item in items:
-                if str(item["target_table"]) != "pending_actions":
-                    continue
-                if str(item["rollback_strategy"]) != "delete_inserted_row":
-                    continue
-                after_data = self._json_load_row(item["after_json"])
-                if str(after_data.get("kind") or "") == "directive":
-                    mn = str(after_data.get("minister_name") or "")
-                    if mn and game_turn:
-                        self.conn.execute(
-                            "DELETE FROM turn_directives WHERE turn=? AND actor=? AND status='draft'",
-                            (game_turn, mn),
-                        )
+            # 本召対が commit した draft 行だけを精確削除（同 actor の無関係 draft は温存）。
+            for draft_id in draft_ids_to_delete:
+                self.conn.execute(
+                    "DELETE FROM turn_directives WHERE id=? AND status='draft'",
+                    (int(draft_id),),
+                )
             if message_ids:
                 placeholders = ",".join("?" for _ in message_ids)
                 self.conn.execute(
@@ -5730,7 +5746,7 @@ class GameDB:
 
     def commit_pending_actions(
         self, state: GameState, *, content=None, registry=None, minister_name=None,
-        kind_filter: Optional[str] = None,
+        kind_filter: Optional[str] = None, kind_filter_exclude: Optional[str] = None,
     ) -> List[Dict[str, object]]:
         """颁诏:把本回合 pending 暂存的结构化写动作批量落到真实表(不拒绝即允许),
         按 id 序(=操作发生序)apply。落得了标 committed、落不了标 failed(都不留 pending,
@@ -5741,12 +5757,15 @@ class GameDB:
         minister_name 非空=对话确认当场 commit:只落该召对对象的暂存(应允即落,不波及他人);
         默认 None=颁诏批量落全回合。
         kind_filter 非空=只 commit 指定 kind(如 'directive')的暂存,跳过其余 kind。
+        kind_filter_exclude 非空=只 commit 该 kind 以外的暂存(召对确认应允放过 directive,BUG 1)。
         返回已落库动作摘要。"""
         applied: List[Dict[str, object]] = []
         rows = self.list_pending_actions(
             int(state.turn), status="pending", minister_name=minister_name)
         if kind_filter is not None:
             rows = [r for r in rows if r["kind"] == kind_filter]
+        if kind_filter_exclude is not None:
+            rows = [r for r in rows if r["kind"] != kind_filter_exclude]
         for pa in rows:
             try:
                 payload = json.loads(pa["payload_json"] or "{}")
@@ -5827,9 +5846,15 @@ class GameDB:
             # 直接建档为 draft：对话式拟旨经由「应允」或「不回=颁诏默认同意」两路提交，
             # 玩家意图已在 pending_actions 确认阶段表达；无需再经 turn_directives pending 状态
             # 走一轮 web UI 准驳（pending 态是给显式前缀大臣拟旨留的，见 confirm_directive）。
-            self.add_directive(
+            did = self.add_directive(
                 state, None, text, "大臣拟旨",
                 actor=actor, notes=f"由{actor}拟旨入档", status="draft",
+            )
+            # 回填本暂存产生的 draft 行 id，供 undo_chat_turn 精确删除（BUG 3）；turn_directives
+            # 行时序晚于 chat 快照、不在 rollback_items，需此 id 才能只删本轮自产的草案。
+            self.conn.execute(
+                "UPDATE pending_actions SET committed_directive_id=? WHERE id=?",
+                (int(did), int(pa["id"])),
             )
             return True
         return False
@@ -5901,13 +5926,24 @@ class GameDB:
         self.conn.commit()
         return cur.rowcount > 0
 
-    def drop_pending_actions_for_minister(self, turn: int, minister_name: str) -> int:
+    def drop_pending_actions_for_minister(
+        self, turn: int, minister_name: str, kind_filter_exclude: Optional[str] = None,
+    ) -> int:
         """对话确认皇帝拒绝:丢弃该召对对象本回合尚未落库的暂存动作(删 pending 行)。
-        返回删除条数。只动该大臣、只动 pending(已 committed 不动)。"""
-        cur = self.conn.execute(
-            "DELETE FROM pending_actions WHERE turn=? AND minister_name=? AND status='pending'",
-            (int(turn), str(minister_name)),
-        )
+        返回删除条数。只动该大臣、只动 pending(已 committed 不动)。
+        kind_filter_exclude 非空=不删该 kind(召对确认拒绝须放过 directive,BUG 1:拟旨搁置
+        是颁诏期语义,不能被召对期拒绝静默删掉玩家草案)。"""
+        if kind_filter_exclude is not None:
+            cur = self.conn.execute(
+                "DELETE FROM pending_actions "
+                "WHERE turn=? AND minister_name=? AND status='pending' AND kind<>?",
+                (int(turn), str(minister_name), str(kind_filter_exclude)),
+            )
+        else:
+            cur = self.conn.execute(
+                "DELETE FROM pending_actions WHERE turn=? AND minister_name=? AND status='pending'",
+                (int(turn), str(minister_name)),
+            )
         self.conn.commit()
         return cur.rowcount
 
