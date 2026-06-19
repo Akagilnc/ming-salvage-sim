@@ -6363,7 +6363,7 @@ class GameDB:
         resolve_condition: str = "",
         fail_condition: str = "",
         end_turn: int = 0,
-        stop_condition: str = "",
+        stop_condition: Dict[str, object] | str = "",
         commitment_kind: str = "",
         commit: bool = True,
     ) -> int:
@@ -6402,7 +6402,12 @@ class GameDB:
                 safe_json_dumps(effect_on_resolve or {}, ensure_ascii=False),
                 safe_json_dumps(effect_on_fail or {}, ensure_ascii=False),
                 sanitize_sqlite_text(resolve_condition), sanitize_sqlite_text(fail_condition),
-                int(end_turn), sanitize_sqlite_text(str(stop_condition or "")),
+                int(end_turn),
+                (
+                    safe_json_dumps(stop_condition, ensure_ascii=False, separators=(",", ":"))
+                    if isinstance(stop_condition, dict)
+                    else sanitize_sqlite_text(str(stop_condition or ""))
+                ),
                 sanitize_sqlite_text(str(commitment_kind or "")),
                 state.turn,
             ),
