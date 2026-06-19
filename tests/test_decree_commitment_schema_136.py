@@ -53,6 +53,7 @@ def test_effect_dict_has_work_ignores_metadata_only_payloads(payload):
         {"economy": [{"account": "国库", "delta": -1, "reason": "补饷"}]},
         {"metrics": {"皇威": 1}},
         {"region_delta": {"shaanxi": {"status": "灾荒稍解"}}},
+        {"region_delta": {"beizhili": {"cannon": 2}}},
         {"army_delta": {"guanning": {"commander": "孙承宗"}}},
         {"factions": {"阉党": {"leverage": -1}}},
         {"class_delta": {"农民": {"satisfaction": 1}}},
@@ -287,3 +288,6 @@ def test_delta_schema_pitfall_table_documents_fifteen_initiative_cap():
     assert "end_turn = turn + N" in text
     assert "`commitment_kind`" in text
     assert "`stop_condition` 是别名" not in text
+    assert "`stop_condition` | dict" in text
+    assert "文本或 dict" not in text
+    assert "`cannon`" in text

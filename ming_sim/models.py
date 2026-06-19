@@ -279,7 +279,7 @@ def effect_dict_has_work(raw: object) -> bool:
         _entity_delta_has_work(
             effect.get("region_delta") or effect.get("regions"),
             aliases=REGION_FIELD_ALIASES,
-            numeric_fields=REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + FISCAL_SCORE_FIELDS,
+            numeric_fields=REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + FISCAL_SCORE_FIELDS + ("cannon",),
             text_fields=REGION_TEXT_FIELDS,
         ),
         _entity_delta_has_work(
