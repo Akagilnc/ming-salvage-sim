@@ -125,6 +125,31 @@ describe("epic orchestrator workflow spine", () => {
     expect(discoveryCommand).not.toContain('REPO = "Akagilnc/ming-salvage-sim"');
   });
 
+  it("requests paginated gh api discovery for sub-issues and blockers", async () => {
+    let discoveryCommand = "";
+
+    await runEpicDiscoveryWorkflow({
+      args: 217,
+      log: () => undefined,
+      Bash: async (command: string) => {
+        discoveryCommand = command;
+        return JSON.stringify({
+          epicId: 217,
+          issues: [{ id: 219, epicId: 217, state: "open", title: "S1", url: "https://example.test/219" }],
+          blockedBy: []
+        });
+      }
+    });
+
+    expect(discoveryCommand).toContain('"--paginate"');
+    expect(discoveryCommand).toContain('"--slurp"');
+    expect(discoveryCommand).toContain('"--method", "GET"');
+    expect(discoveryCommand).toContain('"-f", "per_page=100"');
+    expect(discoveryCommand).toContain('return [item for page in pages for item in page]');
+    expect(discoveryCommand).toContain('gh_json(f"/repos/{REPO}/issues/{epic}/sub_issues")');
+    expect(discoveryCommand).toContain('gh_json(f"/repos/{REPO}/issues/{child_number}/dependencies/blocked_by")');
+  });
+
   it("returns a structured ordered execution plan and boundary copy from discovered gh JSON", async () => {
     const result = await runEpicDiscoveryWorkflow({
       args: 217,

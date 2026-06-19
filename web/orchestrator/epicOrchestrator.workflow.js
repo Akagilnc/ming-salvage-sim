@@ -192,8 +192,19 @@ REPO = resolve_repo()
 
 
 def gh_json(path):
-    payload = run_gh(["api", "-H", "Accept: application/vnd.github+json", path], f"api {path}")
-    return json.loads(payload) if payload else []
+    payload = run_gh([
+        "api",
+        "--paginate",
+        "--slurp",
+        "--method", "GET",
+        "-H", "Accept: application/vnd.github+json",
+        "-f", "per_page=100",
+        path,
+    ], f"api {path}")
+    pages = json.loads(payload) if payload else []
+    if all(isinstance(page, list) for page in pages):
+        return [item for page in pages for item in page]
+    return pages
 
 children = gh_json(f"/repos/{REPO}/issues/{epic}/sub_issues")
 child_numbers = {str(child["number"]) for child in children}
