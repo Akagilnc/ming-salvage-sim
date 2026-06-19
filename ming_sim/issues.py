@@ -3352,9 +3352,27 @@ def apply_issue_tracker_output(
         stop_condition_raw = ni.get("stop_condition")
         stop_condition = _issue_condition_text(stop_condition_raw)
         commitment_kind = _normalize_commitment_kind(ni.get("commitment_kind"))
+        commitment_shape_without_marker = (
+            not commitment_kind
+            and kind == "initiative"
+            and isinstance(stop_condition_raw, dict)
+            and bool(stop_condition_raw)
+            and bool(ongoing_eff)
+        )
+        if commitment_shape_without_marker:
+            applied_new.append({
+                "rejected": True,
+                "category": "invalid_enum",
+                "reason": "new_issue commitment_kind 必填（承诺形态不得靠 origin_kind/字段形状推断）",
+                "item": ni,
+                "title": title,
+            })
+            continue
         is_commitment = bool(commitment_kind)
         if is_commitment:
             try:
+                if kind != "initiative":
+                    raise ValueError("kind 须为 initiative")
                 if not origin_ref:
                     raise ValueError("origin_ref 必填，须指回诏书")
                 if not ongoing_eff:
