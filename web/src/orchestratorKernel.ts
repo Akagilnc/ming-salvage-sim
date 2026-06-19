@@ -241,7 +241,10 @@ export function judgeReviewDegradation(input: DegradationInput): DegradationJudg
 function compareIssueKeys(left: string, right: string): number {
   const leftIsDecimal = isDecimalIssueKey(left);
   const rightIsDecimal = isDecimalIssueKey(right);
-  if (leftIsDecimal && rightIsDecimal) return Number(left) - Number(right);
+  if (leftIsDecimal && rightIsDecimal) {
+    const numericOrder = Number(left) - Number(right);
+    return numericOrder || left.localeCompare(right);
+  }
   if (leftIsDecimal) return -1;
   if (rightIsDecimal) return 1;
   return left.localeCompare(right);
