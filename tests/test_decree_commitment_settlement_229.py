@@ -262,8 +262,6 @@ def test_limited_duration_commitment_ticks_until_end_turn_then_expires(game):
                 {"account": "国库", "delta": -40, "reason": "连续两月补饷", "purpose": "补饷"}
             ]
         },
-        effect_on_resolve={"metrics": {"民心": 9}},
-        effect_on_fail={"metrics": {"民心": -9}},
         stop_condition="",
         end_turn=start_turn + 2,
         commitment_kind="until_stop",
