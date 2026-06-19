@@ -183,7 +183,12 @@ def _apply_issue_buildings(
     return applied
 
 
-def commitment_condition_role(resolve_condition: object) -> Dict[str, str]:
+def commitment_condition_role(resolve_condition: object, commitment_kind: object = "") -> Dict[str, str]:
+    if str(commitment_kind or "").strip():
+        return {
+            "condition_role": "commitment_stop_condition",
+            "condition_note": "承诺停止条件；不要按 resolve_condition 达标自动结案，自动完成属于 #136。",
+        }
     text = str(resolve_condition or "").strip()
     if re.fullmatch(r"character\.[^.]+\.loyalty\s*(?:>=|>)\s*\d+", text):
         return {
@@ -221,7 +226,7 @@ def issue_to_payload(row: sqlite3.Row, recent_advances: List[sqlite3.Row]) -> Di
             }
             if recent_advances else None
         ),
-        **commitment_condition_role(resolve_cond),
+        **commitment_condition_role(resolve_cond, commitment_kind),
     }
     if commitment_kind:
         payload["commitment_kind"] = commitment_kind
