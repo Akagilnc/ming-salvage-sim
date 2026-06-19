@@ -212,6 +212,33 @@ def _event_terminal_records(db: GameDB) -> Dict[str, Dict[str, str]]:
 _EVENT_GATE_KEY_RE = re.compile(r"^event\.([^.]+)\.(triggered|terminal_state|terminal_reason)$")
 
 
+def _numeric_predicate_accepts(op: str, candidate: int, value: int) -> bool:
+    if op == ">=":
+        return candidate >= value
+    if op == "<=":
+        return candidate <= value
+    if op == ">":
+        return candidate > value
+    if op == "<":
+        return candidate < value
+    if op == "==":
+        return candidate == value
+    return False
+
+
+def _event_triggered_numeric_dependency_kind(op: str, value: int) -> str:
+    """Classify event.<id>.triggered predicates over the boolean ledger domain {0, 1}."""
+    accepts_false = _numeric_predicate_accepts(op, 0, value)
+    accepts_true = _numeric_predicate_accepts(op, 1, value)
+    if accepts_true and not accepts_false:
+        return "positive"
+    if accepts_false and not accepts_true:
+        return "negative"
+    if accepts_false and accepts_true:
+        return "both"
+    return "neither"
+
+
 def _event_dependency_ids(ev: Event) -> set[str]:
     ids: set[str] = set()
     for key in (ev.trigger_gate or {}):
@@ -254,7 +281,7 @@ def _validate_event_dependency_graph_acyclic(content: GameContent, state: GameSt
         dfs(eid)
 
 
-def _event_chain_impossible_reason(ev: Event, terminal_records: Dict[str, Dict[str, str]]) -> str:
+def _event_chain_impossible_reason(ev: Event, terminal_records: Dict[str, Dict[str, str]], state: GameState) -> str:
     positive_trigger_required: Dict[str, bool] = {}
     negative_trigger_required: Dict[str, bool] = {}
     allowed_outcomes: Dict[str, set[str]] = {}
@@ -271,10 +298,17 @@ def _event_chain_impossible_reason(ev: Event, terminal_records: Dict[str, Dict[s
             if not num:
                 continue
             op, value = num.group(1), int(num.group(2))
-            if op in (">=", ">", "==") and value >= 1:
+            dependency_kind = _event_triggered_numeric_dependency_kind(op, value)
+            if dependency_kind == "positive":
                 positive_trigger_required[upstream_id] = True
-            elif op in ("<=", "==") and value <= 0:
+            elif dependency_kind == "negative":
                 negative_trigger_required[upstream_id] = True
+            elif dependency_kind == "neither":
+                raise SettlementAbort(
+                    f"事件链 triggered 门在布尔域 {{0,1}} 上永不满足：{raw_key} {cond}",
+                    turn=state.turn,
+                    stage="event_chain_config",
+                )
             continue
         text = re.match(r"^(==|!=|in=)\s*(.+)$", cond)
         if not text:
@@ -339,7 +373,7 @@ def apply_event_cascading_invalidations(
                 continue
             if not _event_dependency_ids(ev):
                 continue
-            reason = _event_chain_impossible_reason(ev, terminal_records)
+            reason = _event_chain_impossible_reason(ev, terminal_records, state)
             if not reason:
                 continue
             db.mark_event_obsolete(

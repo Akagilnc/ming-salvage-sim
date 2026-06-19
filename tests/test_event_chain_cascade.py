@@ -80,6 +80,38 @@ def test_positive_dependency_invalidates_when_upstream_expires(game):
         assert _terminal_state(db, downstream.id)[0] == "obsolete"
 
 
+def test_numeric_triggered_gt_zero_dependency_invalidates_when_upstream_expires(game):
+    db, state, content = game
+    issues.bind_content(content)
+    upstream = _hist_event("__chain_upstream_numeric_gt0_expired__")
+    downstream = _hist_event("__chain_downstream_numeric_gt0__", {
+        "event.__chain_upstream_numeric_gt0_expired__.triggered": ">0",
+    })
+    with _TempEvents(content, upstream, downstream):
+        db.mark_event_expired(state, upstream.id)
+
+        terminalized = issues.apply_event_cascading_invalidations(state, db)
+
+        assert any(item["id"] == downstream.id and item["terminal_state"] == "obsolete" for item in terminalized)
+        assert _terminal_state(db, downstream.id) == ("obsolete", "上游事件 __chain_upstream_numeric_gt0_expired__ 已入非触发终态：expired")
+
+
+def test_numeric_triggered_lt_one_dependency_invalidates_when_upstream_triggers(game):
+    db, state, content = game
+    issues.bind_content(content)
+    upstream = _hist_event("__chain_upstream_numeric_lt1_triggered__")
+    downstream = _hist_event("__chain_downstream_numeric_lt1__", {
+        "event.__chain_upstream_numeric_lt1_triggered__.triggered": "<1",
+    })
+    with _TempEvents(content, upstream, downstream):
+        db.mark_event_triggered(state, upstream.id)
+
+        terminalized = issues.apply_event_cascading_invalidations(state, db)
+
+        assert any(item["id"] == downstream.id and item["terminal_state"] == "obsolete" for item in terminalized)
+        assert _terminal_state(db, downstream.id) == ("obsolete", "上游事件 __chain_upstream_numeric_lt1_triggered__ 已触发")
+
+
 def test_positive_outcome_dependency_waits_for_frozen_outcome_label(game):
     db, state, content = game
     issues.bind_content(content)
