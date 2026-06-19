@@ -155,6 +155,24 @@ describe("layerEpicIssues", () => {
       externalPrerequisites: []
     });
   });
+
+  it("keeps numeric-equivalent decimal ids in deterministic lexical order", () => {
+    const plan = layerEpicIssues({
+      epicId: 217,
+      issues: [
+        { id: "123", epicId: 217, state: "open" },
+        { id: "0123", epicId: 217, state: "open" }
+      ],
+      blockedBy: []
+    });
+
+    expect(plan).toEqual({
+      status: "ready",
+      layers: [["0123", "123"]],
+      skippedClosedIssueIds: [],
+      externalPrerequisites: []
+    });
+  });
 });
 
 describe("routeFindings", () => {
