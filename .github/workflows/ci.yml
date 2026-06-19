@@ -1,0 +1,51 @@
+name: CI
+
+# 基础质量门:PR 和并入 main 时跑 Python 引擎测试 + web 构建/类型检查。
+# 之前仓库无任何 test/typecheck CI(只有 release-win 打包),codex 的 PR 零自动门。
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# 同一分支新 push 取消旧跑,省 runner。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python 引擎测试 (pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: 安装依赖
+        # pytest 不在 requirements.txt(dev-only),单独装。
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+      - name: 跑 pytest（tests/ 从仓库根,ming_sim 可导入）
+        run: python -m pytest tests/ -q
+
+  web:
+    name: Web 构建 + 类型检查 (tsc + vite)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      # build = `tsc -b && vite build`:类型检查 + 构建一并把关(web 无单测)。
+      - run: npm run build
