@@ -258,7 +258,7 @@ export function NewIssuesBlock({ data }: { data: any }) {
   return (
     <ul className="extraction-list">
       {data.map((it: any, i: number) => {
-        // 逐项拒收项（rejected）：new_issues 段对 event_pool 非预设 / 已触发 / 满十事等会拒收
+        // 逐项拒收项（rejected）：new_issues 段对 event_pool 非预设 / 已触发 / 满十五事等会拒收
         // 留痕——不能当成功新立局势渲染。同 CloseIssuesBlock 范式标「（未落地）」+ 显原因（#63）。
         if (pickItem(it, "rejected", "rejected")) {
           return (

@@ -6338,6 +6338,8 @@ class GameDB:
         effect_on_fail: Dict[str, object] | None = None,
         resolve_condition: str = "",
         fail_condition: str = "",
+        end_turn: int = 0,
+        stop_condition: str = "",
         commit: bool = True,
     ) -> int:
         if kind not in ("situation", "initiative"):
@@ -6359,8 +6361,8 @@ class GameDB:
                 phase, stage_text, status, severity, region_hint, faction_hint,
                 tags, ongoing_effects, cancellable, cancel_cost,
                 effect_on_resolve, effect_on_fail, resolve_condition, fail_condition,
-                last_advance_turn
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                end_turn, stop_condition, last_advance_turn
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 kind, title, origin_kind, origin_ref, state.turn,
@@ -6373,6 +6375,7 @@ class GameDB:
                 json.dumps(effect_on_resolve or {}, ensure_ascii=False),
                 json.dumps(effect_on_fail or {}, ensure_ascii=False),
                 resolve_condition, fail_condition,
+                int(end_turn), str(stop_condition or ""),
                 state.turn,
             ),
         )
