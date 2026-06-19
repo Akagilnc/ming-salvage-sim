@@ -329,7 +329,8 @@ export async function runEpicSingleSlicePipeline({ args, Bash, agent: agentRunne
     if (!implementedCommit || !worktreePath) {
       throw new Error('Implementation leg must return a commit and worktreePath.');
     }
-    if (implementations.length > 0 && implementedCommit === implementations.at(-1)?.commit) {
+    const previousFailedCommit = implementations.at(-1)?.commit;
+    if (implementations.length > 0 && implementedCommit === previousFailedCommit) {
       throw new Error('I7 requires each review-fix round to return a new commit, not the failed commit.');
     }
     if (!isHiddenWorktreePath(worktreePath)) {
@@ -339,7 +340,7 @@ export async function runEpicSingleSlicePipeline({ args, Bash, agent: agentRunne
     implementations.push({ commit: implementedCommit, worktreePath });
     if (round > 1) reviewFixCommits.push(implementedCommit);
 
-    await Bash(`set -euo pipefail\n# enforce I7 commit discipline for slice ${shellQuote(plannedSlice.issueNumber)} round ${shellQuote(round)}\ngit -C ${shellQuote(worktreePath)} cat-file -e ${shellQuote(implementedCommit)}^{commit}\ngit -C ${shellQuote(worktreePath)} rev-list --parents -n 1 ${shellQuote(implementedCommit)} | awk 'NF >= 2 { ok=1 } END { exit ok ? 0 : 1 }'\ngit -C ${shellQuote(worktreePath)} diff --quiet`);
+    await Bash(`set -euo pipefail\n# enforce I7 commit discipline for slice ${shellQuote(plannedSlice.issueNumber)} round ${shellQuote(round)}\nworktreePath=${shellQuote(worktreePath)}\nimplementedCommit=$(git -C "$worktreePath" rev-parse ${shellQuote(`${implementedCommit}^{commit}`)})\nexpectedHead=$(git -C "$worktreePath" rev-parse HEAD)\nif [ "$expectedHead" != "$implementedCommit" ]; then\n  printf 'implementation worktree HEAD %s does not match implementedCommit %s\\n' "$expectedHead" "$implementedCommit" >&2\n  exit 1\nfi\ngit -C "$worktreePath" rev-list --parents -n 1 "$implementedCommit" | awk 'NF >= 2 { ok=1 } END { exit ok ? 0 : 1 }'${previousFailedCommit ? `\nfailedCommit=$(git -C "$worktreePath" rev-parse ${shellQuote(`${previousFailedCommit}^{commit}`)})\ngit -C "$worktreePath" merge-base --is-ancestor "$failedCommit" "$implementedCommit"` : ''}\nstatus=$(git -C "$worktreePath" status --porcelain)\nif [ -n "$status" ]; then\n  printf 'implementation worktree is not clean after implementedCommit %s:\\n%s\\n' "$implementedCommit" "$status" >&2\n  exit 1\nfi`);
 
     phaseIfAvailable('Verify');
     verification = await runVerification({ Bash, worktreePath, verifyCommands: normalizedArgs.verifyCommands });
