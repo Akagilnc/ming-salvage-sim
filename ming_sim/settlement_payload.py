@@ -15,7 +15,7 @@ import json
 import re
 from typing import TYPE_CHECKING, Dict, List
 
-from ming_sim.models import loads_effect_dict
+from ming_sim.models import effect_dict_has_work
 
 if TYPE_CHECKING:  # GameDB 仅用于 _select_secret_orders_for_sim 的类型注解（已 `from __future__ annotations`
     from ming_sim.db import GameDB  # 惰性字符串）；不在运行时 import db，使本模块运行时零 db 依赖（线上 sourcery）
@@ -173,7 +173,7 @@ def augment_secret_orders_with_due_commitments(
     ).fetchall()
     due_commitments: List[Dict[str, object]] = []
     for row in rows:
-        if loads_effect_dict(row["ongoing_effects"]):
+        if effect_dict_has_work(row["ongoing_effects"]):
             continue
         due_commitments.append({
             "entry_kind": "due_commitment",
