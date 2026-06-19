@@ -11,7 +11,12 @@ from agno.agent import Agent
 from ming_sim.agents import parse_agent_json, run_agent_stream_text, run_agent_text
 from ming_sim.context import historical_anchor_for_month, victory_status
 from ming_sim.db import GameDB
-from ming_sim.issues import commitment_condition_role, gather_candidate_events, issue_to_payload
+from ming_sim.issues import (
+    commitment_condition_role,
+    gather_candidate_events,
+    issue_to_payload,
+    normalize_event_outcome_labels_or_error,
+)
 from ming_sim.models import GameState, loads_effect_dict
 from ming_sim.token_stats import tlog
 
@@ -955,6 +960,7 @@ def extract_scores_by_modules_with_agno(
     relevant_memories: Optional[List[Dict[str, object]]] = None,
     secret_orders: Optional[Dict[str, object]] = None,
     parallel: bool = False,
+    event_outcome_retry_limit: int = 1,
 ) -> tuple[Dict[str, object], str, str]:
     """四模块结算 extractor：内政财政、军务外势、局势、人事密令。
 
@@ -1011,7 +1017,32 @@ def extract_scores_by_modules_with_agno(
         # 的旧时机，行为字节级不变（cmr #83 codex：并行不改串行路径）。
         for module in EXTRACTION_MODULES:
             module_outputs[module] = _parse_module(module, _run_raw(module))
-    merged = _merge_module_outputs(module_outputs)
+
+    retry_attempt = 0
+    while True:
+        merged = _merge_module_outputs(module_outputs)
+        try:
+            normalize_event_outcome_labels_or_error(merged, db.content, db=db, state=state)
+            break
+        except ValueError as outcome_err:
+            if retry_attempt >= max(0, event_outcome_retry_limit):
+                raise
+            retry_attempt += 1
+            retry_hint = (
+                "ADR0014 事件结局标签校验失败，请只重做 issues 模块抽取并返回完整 issues 模块 JSON；"
+                "不要重写邸报叙事，不要重跑其它 extractor 模块。"
+            )
+            payload = dict(module_inputs["issues"])
+            payload["event_outcome_retry"] = {
+                "attempt": retry_attempt,
+                "max_retries": event_outcome_retry_limit,
+                "previous_error": str(outcome_err),
+                "instruction": retry_hint,
+            }
+            module_inputs["issues"] = payload
+            module_payload_json["issues"] = json.dumps(payload, ensure_ascii=False, sort_keys=False)
+            tlog(f"[extractor/issues] 事件结局标签校验失败，局部重试 {retry_attempt}/{event_outcome_retry_limit}: {outcome_err}")
+            module_outputs["issues"] = _parse_module("issues", _run_raw("issues"))
     localized_merged = _localized_extraction(merged)
     trace_input = {
         "mode": "modular",
