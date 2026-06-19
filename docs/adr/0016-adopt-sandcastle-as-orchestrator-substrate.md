@@ -36,4 +36,9 @@ Status: Proposed（2026-06-19；spike 实证「底座可行 + 并行编排可行
 - **依赖**：colima Docker 在跑（~8GB RAM）；订阅 auth 经 bind-mount 进容器，凭据副本用完即删（铁律）。CI-native AFK + 订阅大概率卡（runner 无登录无 key），编排仅本机可行。
 - **spike 发现 3（parallel-planner 的两处与 #217 真差异，均 prompt 级可调，非架构缺口）**：① **依赖是 LLM 推断**（planner 读 issue 文本 + 文件重叠猜 blocked-by），#217 要读 **GitHub native blocked_by**（确定性）——改 plan-prompt 用 `gh` 读原生依赖即可；② **merge 是 LLM agent 解冲突 + 跑 npm test**（merge-prompt），#217 要**确定性串行 merge 队列**（切片返 reviewed hash、编排器逐个合）——可换成脚本侧 git 合、把 LLM merge 退化为兜底。③ merge 阶段 close issue（同 simple-loop 的 close 语义冲突）。
 - **质量层确认仍是净增量**：parallel-planner 的 plan/execute/merge **三阶段全程零 cross-model 评审 / 无 findings 分流 / 无独立家族整体闸**（merge agent 只跑自己的 npm test）。两个模板都证实：评审承重闸 = Sandcastle 没有、#217 要自叠的那层。
-- **未决（剩唯一项）**：设计评审闭环（本地 cmr + 线上 bot）未跑——本 ADR Proposed → Accepted 的最后一道。并行编排证据已补齐（发现 3）。
+- **spike 发现 4（skill 注入缺口，叠质量/纪律层时必处理）**：Sandcastle 只 bind-mount git worktree（被加工物），agent 跑在**干净容器**——host 的 `~/.claude`（skills / 全局 CLAUDE.md / MCP）**故意不带进去**（Sandcastle 的 clean-room 取向：防 host 状态污染、保可复现）。后果:容器里的 Sonnet/codex 只有**项目级 CLAUDE.md**（在 workspace 内、被自动读）+ 纯净 CLI + prompt,**没有项目 slice-dev 那组纪律 skill**。
+  - **slice 开发真正用的 skill 组**（CLAUDE.md 步骤6 + DEV_WORKFLOW 速查,全非 gstack、全在 `~/.claude/skills/<name>/`、纯 markdown 无 host 二进制依赖）:`tdd`(主) + **`codebase-design`(被 tdd/improve 挂用、是 tdd 子 skill)** + `review` + `diagnosing-bugs` + `improve-codebase-architecture`;编排器 family 合并那步还需 `resolving-merge-conflicts`。**skill 间有依赖（tdd→codebase-design）,故须整组注入、不能 cherry-pick 一两个。**
+  - **gstack 与 slice 开发无关**:gstack 是 ship/存档/编排 ceremony,不进实现腿——别把它列进注入清单。
+  - **cross-model 评审不靠注入 cmr skill**:`ak-cross-m-review` 是单 session 扇出工具,编排器在 **pipeline 层**用不同模型的 `run()` 实现评审(本 spike 已证:codex run() 评 Sonnet run()),不往容器里塞 cmr skill。
+  - 落地 = 实现腿容器 bind-mount 那组 dev skill 到 `/home/agent/.claude/skills`（+ 视需要全局 CLAUDE.md）;待「注入 vs 不注入」A/B 实测(同一 issue 对照)定收益。
+- **未决（剩唯一项）**：设计评审闭环（本地 cmr + 线上 bot）未跑——本 ADR Proposed → Accepted 的最后一道。并行编排证据已补齐（发现 3）；skill 注入收益待 A/B（发现 4）。
