@@ -629,3 +629,172 @@ def test_undo_chat_turn_removes_write_decree_draft(game):
     assert remaining == 0, (
         f"undo 后 turn_directives draft 应被删，但仍有 {remaining} 行"
     )
+
+
+# ── ⑫ extract_draft_intent 降级分支（issue #137 覆盖补缺）──────────────────────
+
+def test_supplement_mode_falls_back_to_minister_reply_when_merged_empty(monkeypatch):
+    """补充模式（has_pending_draft + existing_draft_text）拟旨，但 LLM 未填「合并草案」：
+    draft_text 应 fallback 到 minister_reply（cli_backend.py:719-722 的空合并草案路径）。"""
+    def _canned(prompt, llm_config=None, tag=""):
+        # 拟旨意图=拟旨，但故意不带「合并草案」字段
+        return (json.dumps({"拟旨意图": "拟旨"}, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _canned)
+    result = cb.extract_draft_intent(
+        "再补一条，加上监察御史同行",
+        "臣即补入，着监察御史随行督查。",
+        has_pending_draft=True,
+        existing_draft_text="原始草稿：着户部清查三边粮饷。",
+    )
+    assert result["draft_action"] == "拟旨"
+    # merged 空 → 退回大臣回话
+    assert result["draft_text"] == "臣即补入，着监察御史随行督查。"
+
+
+def test_supplement_mode_prefers_merged_when_present(monkeypatch):
+    """对照组：补充模式 LLM 填了「合并草案」时，draft_text 取合并草案而非大臣回话。
+    锚定 719-722 分支两侧（merged 非空走 merged）。"""
+    def _canned(prompt, llm_config=None, tag=""):
+        return (json.dumps(
+            {"拟旨意图": "拟旨", "合并草案": "合并：着户部及监察御史同查三边粮饷。"},
+            ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _canned)
+    result = cb.extract_draft_intent(
+        "加上监察御史", "好的，臣即补入。",
+        has_pending_draft=True,
+        existing_draft_text="原始草稿：着户部清查三边粮饷。",
+    )
+    assert result["draft_text"] == "合并：着户部及监察御史同查三边粮饷。"
+    assert "好的，臣即补入" not in result["draft_text"]
+
+
+def test_extract_draft_intent_backend_exception_degrades_to_none(monkeypatch):
+    """_run_backend_for_config 抛异常 → _log 兜底、raw 保持空串 → 归一为「无」、空草稿
+    （cli_backend.py:714-715 异常路径 + 723-724 默认 draft_text）。"""
+    def _boom(prompt, llm_config=None, tag=""):
+        raise RuntimeError("backend down")
+
+    logged = []
+    monkeypatch.setattr(cb, "_run_backend_for_config", _boom)
+    monkeypatch.setattr(cb, "_log", lambda msg: logged.append(msg))
+
+    result = cb.extract_draft_intent("拟旨吧", "奉天承运皇帝诏曰，特谕户部清查。")
+    # 异常 → raw 空 → obj 空 → 拟旨意图归一为「无」（不触发草案 stage）
+    assert result["draft_action"] == "无"
+    # _log 被调用记录失败
+    assert any("拟旨意图抽取失败" in m for m in logged)
+
+
+def test_extract_draft_intent_dirty_action_normalized_to_none(monkeypatch):
+    """LLM 返回非 {无,拟旨} 的脏「拟旨意图」值 → 归一为「无」（cli_backend.py:718）。
+    脏动作不得误触发草案 stage。"""
+    def _dirty(prompt, llm_config=None, tag=""):
+        return (json.dumps({"拟旨意图": "也许吧"}, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _dirty)
+    result = cb.extract_draft_intent("拟旨吧", "臣遵旨。")
+    assert result["draft_action"] == "无"
+
+
+# ── ⑬ session.py 补充模式 existing_draft_text 提取的 JSON 兜底（894-899）─────────
+
+def test_supplement_existing_draft_text_swallows_malformed_payload_json(game, monkeypatch):
+    """补充轮提取 existing_draft_text 时，pending directive 的 payload_json 是坏 JSON：
+    json.loads 抛 ValueError → except 兜底（session.py:894-899），_existing_draft_text
+    保持空串，不阻断后续 extract_draft_intent 调用、仍能 last-write-wins 更新草案。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+
+    # stage 一条 directive，然后把 payload_json 损坏成非法 JSON
+    pid = db.upsert_pending_directive(
+        state.turn, name, payload={"text": "原始草稿", "actor": name})
+    db.conn.execute(
+        "UPDATE pending_actions SET payload_json=? WHERE id=?",
+        ("{这不是合法JSON", int(pid)))
+    db.conn.commit()
+
+    captured = {}
+
+    def _capture(prompt, llm_config=None, tag=""):
+        if "待皇帝定夺" in prompt or "应允" in prompt:
+            return (json.dumps({"确认": "无"}, ensure_ascii=False), 1)
+        captured["draft_prompt"] = prompt
+        return (json.dumps({"拟旨意图": "拟旨"}, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _capture)
+    sess = _fake_session(db, state)
+    # 不应抛异常（坏 JSON 被 except 吞掉）
+    GameSession.apply_cli_conversation_actions(
+        sess, ch, player_message="再补一条", answer="新草稿：着户部及兵部同查。",
+        has_directive=False, secret_order_id=None,
+    )
+
+    # draft_intent 仍被调用（兜底没有提前 return）
+    assert "draft_prompt" in captured
+    # 坏 JSON → existing_draft_text 为空 → prompt 不含【现有草案】注入段
+    assert "【现有草案】" not in captured["draft_prompt"]
+
+    # 草案仍被 last-write-wins 更新为新回话（同一行）
+    pend = db.list_pending_actions(state.turn)
+    assert len(pend) == 1
+    assert pend[0]["id"] == pid
+    assert json.loads(pend[0]["payload_json"])["text"] == "新草稿：着户部及兵部同查。"
+
+
+# ── ⑭ db.py _apply_pending_action directive 落库降级分支（5824-5826）────────────
+
+def test_commit_directive_with_empty_text_returns_false_no_archive(game):
+    """kind=directive 暂存 payload.text 为空串 → 落库返回 False、不建 turn_directives 行
+    （db.py:5825-5826），pending 行被标 failed（不留 pending）。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+
+    # 直接 stage 一条 text 为空的 directive（绕开 upsert 的语义）
+    db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨",
+        minister_name=name, target_id=None,
+        payload={"text": "   ", "actor": name})
+
+    assert len(db.list_pending_actions(state.turn)) == 1
+
+    applied = db.commit_pending_actions(state, kind_filter="directive")
+
+    # 空 text → 不建档
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM turn_directives WHERE turn=?", (state.turn,)).fetchone()[0] == 0
+    # 未进 applied（落库 False）
+    assert not any(a["kind"] == "directive" for a in applied)
+    # pending 行不再 pending（标 failed）
+    assert db.list_pending_actions(state.turn) == []
+    failed = db.conn.execute(
+        "SELECT COUNT(*) FROM pending_actions WHERE turn=? AND status='failed'",
+        (state.turn,)).fetchone()[0]
+    assert failed == 1
+
+
+def test_commit_directive_actor_falls_back_to_minister_name(game):
+    """payload 无 actor 字段 → actor 回退到 pa['minister_name']（db.py:5824）。
+    turn_directives.actor 应等于 stage 时的 minister_name。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+
+    draft_text = "奉天承运皇帝诏曰，着户部清查三边粮饷，钦此。"
+    # payload 故意不带 actor 键
+    db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨",
+        minister_name=name, target_id=None,
+        payload={"text": draft_text})
+
+    db.commit_pending_actions(state, kind_filter="directive")
+
+    row = db.conn.execute(
+        "SELECT text, status, actor FROM turn_directives WHERE turn=? ORDER BY id DESC",
+        (state.turn,)).fetchone()
+    assert row is not None
+    assert row["text"] == draft_text
+    assert row["status"] == "draft"
+    # actor 回退到 minister_name
+    assert row["actor"] == name
