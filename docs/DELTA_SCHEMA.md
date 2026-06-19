@@ -79,6 +79,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 - value：dict，字段（来自 `REGION_*` 常量）：
   - score（0-100，int）：`public_support` `unrest` `gentry_resistance` `military_pressure`
   - quantity（int）：`population` `registered_land` `hidden_land` `tax_per_turn` `grain_security`
+  - special quantity（int 增量）：`cannon`（城防炮，落库时按 `city_level×8` 上限 clamp 并留痕）
   - text：`natural_disaster` `human_disaster` `status` `controlled_by`
 - 中文别名都吃：`动乱`→unrest、`士绅`→gentry_resistance、`粮食`→grain_security 等
 
@@ -173,7 +174,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 | `end_turn` | int，硬时限承诺到期回合；默认 0 |
 | `commitment_kind` | 空或 `"until_stop"`；承诺 issue 专用标记，不能只靠 `origin_kind=decree` 区分 |
 | `resolve_condition` | 文本；旧结案条件 / 兼容字段 |
-| `stop_condition` | 文本或 dict；落库到 `issues.stop_condition`，dict 以 JSON 字符串保存。条件 dict 用 `{"army.guanning.arrears":"<=0"}` 这种形态：key 带表/对象/字段，operator 写在 value 内 |
+| `stop_condition` | dict；落库到 `issues.stop_condition` 时以 JSON 字符串保存。条件 dict 用 `{"army.guanning.arrears":"<=0"}` 这种形态：key 带表/对象/字段，operator 写在 value 内 |
 | `bar_good_meaning` / `bar_bad_meaning` | 文案 |
 | `ongoing_effects` / `effect_on_resolve` / `effect_on_fail` | dict，月度持续/结案/失败效果 |
 | `cancellable` | "decree" / "never" / "by_progress" |
@@ -191,7 +192,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 
 「三月后复试 / 期满复核」这类未来一次性 form③ 承诺带 `commitment_kind="until_stop"`、`end_turn`，`ongoing_effects` 可为空。到期后程序会把它顶到待核议；皇帝/邸报明确裁决或确认已处理后，`close_issues` 可写 `reason="acknowledged"` 作 ACK 收尾，状态标 `dropped`、`issue_advances.trigger_kind="commitment_ack"`，不运行 `effect_on_resolve` / `effect_on_fail`。普通承诺不得用 `close_issues resolved/failed` 绕过专门闭环。
 
-人物承诺型事项也属 `initiative`：如皇帝命臣安抚毛文龙，应立标题类似 `安抚毛文龙·进行中` 的玩家可见 issue，并用 `stop_condition` 表达意图阈值。本字段只存停止/达成意图；自动按条件完成/关闭不在本片。一次性赏赐、抚恤、拨银若当回合办完，不立 issue，只走 `economy_moves` 与必要的 `人物变更`。
+人物承诺型事项也属 `initiative`：如皇帝命臣安抚毛文龙，应立标题类似 `安抚毛文龙·进行中` 的玩家可见 issue，并同时写两件事：`stop_condition` 表达意图阈值（如 `{"character.毛文龙.loyalty":">=65"}`），`ongoing_effects` 表达每月持续动作（如 `{"人物变更":[{"name":"毛文龙","动作":"评定","loyalty":2,"reason":"奉旨持续安抚"}]}`）。只写 `stop_condition`、没有月度动作的载体会被拒收；一次性赏赐、抚恤、拨银若当回合办完，不立 issue，只走 `economy_moves` 与必要的 `人物变更`。
 
 ### `cancels` — 撤销 issue
 - `issue_id` int + `reason` 文本

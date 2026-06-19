@@ -778,6 +778,7 @@ def build_extractor_tools(context: CourtContext):
                             圣旨承诺(#136)固定 kind:"initiative" 且必须有
                               origin_ref(指回诏书),commitment_kind:"until_stop"；
                               直到补齐/达标：ongoing_effects 语义非空 + stop_condition(dict)
+                              人物安抚类 ongoing_effects 写 {"人物变更":[{"name":"毛文龙","动作":"评定","loyalty":2}]}
                               连续N月/半年为限：ongoing_effects 语义非空 + end_turn(turn+N)
                               未来一次性复试/复核：end_turn，ongoing_effects 可为空/语义空
                               stop_condition 只收 dict，如 {"army.guanning.arrears":"<=0"}；

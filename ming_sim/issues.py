@@ -299,7 +299,7 @@ def commitment_display_text(progress: Dict[str, int], row: sqlite3.Row) -> str:
     stop_gate = _commitment_stop_gate(row)
     months = int(progress.get("months_elapsed") or 0)
 
-    if not effect_dict_has_work(ongoing) and end_turn > 0:
+    if not _monthly_ongoing_effects_has_work(ongoing) and end_turn > 0:
         return f"限至第{end_turn}月·到期待裁"
 
     if stop_gate and _commitment_gate_references_arrears(row):
@@ -339,27 +339,204 @@ def _commitment_gate_references_arrears(row: sqlite3.Row) -> bool:
 def _commitment_ongoing_effects_for_settlement(row: sqlite3.Row, ongoing: Dict[str, object]) -> Dict[str, object]:
     if not _commitment_gate_references_arrears(row):
         return ongoing
-    economy = ongoing.get("economy")
-    if not isinstance(economy, list):
-        return ongoing
     normalized = dict(ongoing)
-    normalized_economy: List[object] = []
-    for move in economy:
-        if not isinstance(move, dict):
-            normalized_economy.append(move)
+    for key in ("economy", "economy_moves"):
+        economy = ongoing.get(key)
+        if not isinstance(economy, list):
             continue
-        item = dict(move)
-        try:
-            delta = _strict_int(item.get("delta"))
-        except (TypeError, ValueError):
-            delta = 0
-        if delta < 0:
-            item["purpose"] = "补饷"
-            item.pop("target_kind", None)
-            item.pop("target_id", None)
-        normalized_economy.append(item)
-    normalized["economy"] = normalized_economy
+        normalized_economy: List[object] = []
+        for move in economy:
+            if not isinstance(move, dict):
+                normalized_economy.append(move)
+                continue
+            item = dict(move)
+            try:
+                delta = _strict_int(item.get("delta"))
+            except (TypeError, ValueError):
+                delta = 0
+            if delta < 0:
+                item["purpose"] = "补饷"
+                item.pop("target_kind", None)
+                item.pop("target_id", None)
+            normalized_economy.append(item)
+        normalized[key] = normalized_economy
     return normalized
+
+
+def _merged_mapping_effect(effect: Dict[str, object], *keys: str) -> Dict[str, object]:
+    merged: Dict[str, object] = {}
+    for key in keys:
+        raw = effect.get(key)
+        if isinstance(raw, dict):
+            merged.update(raw)
+    return merged
+
+
+def _monthly_economy_items(effect: Dict[str, object]) -> List[Dict[str, object]]:
+    items: List[Dict[str, object]] = []
+    for key in ("economy", "economy_moves"):
+        raw = effect.get(key)
+        if not isinstance(raw, list):
+            continue
+        items.extend(item for item in raw if isinstance(item, dict))
+    return items
+
+
+def _monthly_person_rating_changes(effect: Dict[str, object]) -> List[Dict[str, object]]:
+    raw_changes: List[Dict[str, object]] = []
+    for key in ("人物变更", "person_changes"):
+        raw = effect.get(key)
+        if isinstance(raw, list):
+            raw_changes.extend(item for item in raw if isinstance(item, dict))
+    changes = [
+        item
+        for item in normalize_person_changes({"人物变更": raw_changes})
+        if isinstance(item, dict)
+        and str(item.get("动作") or "").strip() == "评定"
+        and not isinstance(item.get("loyalty"), bool)
+        and isinstance(item.get("loyalty"), int)
+        and int(item.get("loyalty") or 0) != 0
+    ]
+    raw_character = effect.get("character")
+    if isinstance(raw_character, list):
+        for item in raw_character:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or item.get("人物") or "").strip()
+            loyalty = item.get("loyalty")
+            if not name or isinstance(loyalty, bool) or not isinstance(loyalty, int) or loyalty == 0:
+                continue
+            changes.append({
+                "name": name,
+                "动作": "评定",
+                "loyalty": loyalty,
+                "reason": str(item.get("reason") or item.get("原因") or ""),
+            })
+    return changes
+
+
+def _person_change_has_unsupported_monthly_work(raw: object) -> bool:
+    if not isinstance(raw, list):
+        return False
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or item.get("人物") or "").strip()
+        action = str(item.get("动作") or item.get("action") or "").strip()
+        if name and action and action != "评定":
+            return True
+    return False
+
+
+def _unsupported_monthly_ongoing_fields(effect: Dict[str, object]) -> List[str]:
+    unsupported: List[str] = []
+    for key in (
+        "buildings",
+        "new_armies",
+        "character_status_changes",
+        "character_power_changes",
+        "power_renames",
+        "legacy",
+    ):
+        if effect_dict_has_work({key: effect.get(key)}):
+            unsupported.append(key)
+    for key in ("人物变更", "person_changes"):
+        if _person_change_has_unsupported_monthly_work(effect.get(key)):
+            unsupported.append(f"{key}(月度仅支持评定)")
+    return unsupported
+
+
+def _monthly_ongoing_effects_has_work(raw: object) -> bool:
+    effect = loads_effect_dict(raw)
+    if not effect:
+        return False
+    checks = (
+        effect_dict_has_work({"metrics": effect.get("metrics")}),
+        effect_dict_has_work({"economy": effect.get("economy")}),
+        effect_dict_has_work({"economy_moves": effect.get("economy_moves")}),
+        effect_dict_has_work({"factions": _merged_mapping_effect(effect, "factions", "faction_delta")}),
+        effect_dict_has_work({"class_delta": _merged_mapping_effect(effect, "classes", "class_delta")}),
+        effect_dict_has_work({"region_delta": _merged_mapping_effect(effect, "region_delta", "regions")}),
+        effect_dict_has_work({"army_delta": _merged_mapping_effect(effect, "army_delta", "armies")}),
+        effect_dict_has_work({"power_updates": effect.get("power_updates")}),
+        bool(_monthly_person_rating_changes(effect)),
+    )
+    return any(checks)
+
+
+def _apply_monthly_ongoing_entities(
+    db: GameDB,
+    state: GameState,
+    effect: Dict[str, object],
+    label: str,
+    *,
+    content=None,
+    registry=None,
+    llm_config: Any = None,
+    applied_person_changes: Optional[List[Dict[str, object]]] = None,
+) -> tuple[Dict[str, object], List[Dict[str, object]]]:
+    applied: Dict[str, object] = {}
+    rejections: List[Dict[str, object]] = []
+
+    factions = _merged_mapping_effect(effect, "factions", "faction_delta")
+    if factions:
+        faction_result = _apply_faction_dict(db, factions)
+        if faction_result.applied:
+            applied["factions"] = faction_result.applied
+        rejections.extend(faction_result.rejections)
+
+    classes = _merged_mapping_effect(effect, "classes", "class_delta")
+    if classes:
+        class_result = _apply_class_dict(db, classes)
+        if class_result.applied:
+            applied["class_delta"] = class_result.applied
+        rejections.extend(class_result.rejections)
+
+    region_delta = _merged_mapping_effect(effect, "region_delta", "regions")
+    if region_delta:
+        region_changes = db.apply_region_deltas(state, _ISSUE_PSEUDO_EVENT, None, label, region_delta)
+        applied_region = [item for item in region_changes if not item.get("rejected")]
+        if applied_region:
+            applied["region_delta"] = applied_region
+        rejections.extend(item for item in region_changes if item.get("rejected"))
+
+    army_delta = _merged_mapping_effect(effect, "army_delta", "armies")
+    if army_delta:
+        army_changes = db.apply_army_deltas(state, _ISSUE_PSEUDO_EVENT, None, label, army_delta)
+        applied_army = [item for item in army_changes if not item.get("rejected")]
+        if applied_army:
+            applied["army_delta"] = applied_army
+        rejections.extend(item for item in army_changes if item.get("rejected"))
+
+    power_updates = effect.get("power_updates")
+    if isinstance(power_updates, dict) and power_updates:
+        power_changes = db.apply_power_deltas(state, power_updates)
+        applied_power = [item for item in power_changes if not item.get("rejected")]
+        if applied_power:
+            applied["power_updates"] = applied_power
+        rejections.extend(item for item in power_changes if item.get("rejected"))
+
+    person_changes = _monthly_person_rating_changes(effect)
+    if person_changes:
+        effective_content = content if content is not None else _ctx()
+        results = _apply_person_changes(
+            db,
+            state,
+            person_changes,
+            content=effective_content,
+            registry=registry,
+            llm_config=llm_config,
+            source="system_simulation",
+            derived_from=label,
+        )
+        applied_people = [item for item in results if not item.get("rejected")]
+        if applied_people:
+            applied["人物变更"] = applied_people
+        rejections.extend(item for item in results if item.get("rejected"))
+        if applied_person_changes is not None:
+            applied_person_changes.extend(results)
+
+    return applied, rejections
 
 
 def _resolve_commitment_issue(db: GameDB, state: GameState, row: sqlite3.Row) -> None:
@@ -3637,7 +3814,9 @@ def apply_issue_tracker_output(
         ongoing_eff = _eff_dict(ni.get("ongoing_effects"))
         resolve_eff = _eff_dict(ni.get("effect_on_resolve"))
         fail_eff = _eff_dict(ni.get("effect_on_fail"))
-        ongoing_has_work = effect_dict_has_work(ongoing_eff)
+        semantic_ongoing_has_work = effect_dict_has_work(ongoing_eff)
+        ongoing_has_work = _monthly_ongoing_effects_has_work(ongoing_eff)
+        unsupported_ongoing_fields = _unsupported_monthly_ongoing_fields(ongoing_eff)
         # cancel_cost 同属 dict 字段，与上 3 个统一走 _eff_dict 容忍归 {}（cmr ni r9 codex medium）：
         # 旧 `dict(ni.get("cancel_cost") or {})` 对 list-of-pairs 静默 garble（dict([["民心",-5]])=
         # {'民心':-5}、dict(["ab"])={'a':'b'}）、对标量串 raise 拒整项——而 cancel_cost 是次要字段，
@@ -3658,8 +3837,15 @@ def apply_issue_tracker_output(
             and kind == "initiative"
             and (
                 end_turn_marker_shape
-                or (bool(stop_condition) and ongoing_has_work)
-                or (ongoing_has_work and not resolve_eff and not fail_eff and bool(origin_ref))
+                or (isinstance(stop_condition_raw, (dict, list)) and bool(stop_condition))
+                or (
+                    isinstance(stop_condition_raw, str)
+                    and bool(stop_condition)
+                    and bool(origin_ref)
+                    and not resolve_eff
+                    and not fail_eff
+                )
+                or (semantic_ongoing_has_work and not resolve_eff and not fail_eff and bool(origin_ref))
             )
         )
         if commitment_shape_without_marker:
@@ -3680,6 +3866,11 @@ def apply_issue_tracker_output(
                     raise ValueError("origin_ref 必填，须指回诏书")
                 _et_raw = ni.get("end_turn", 0)
                 end_turn_for_commitment = _strict_int(0 if _et_raw in (None, "") else _et_raw)
+                if unsupported_ongoing_fields:
+                    raise ValueError(
+                        "ongoing_effects 含非月度持续字段："
+                        + ", ".join(unsupported_ongoing_fields)
+                    )
                 if not ongoing_has_work and end_turn_for_commitment <= 0:
                     raise ValueError("ongoing_effects 或 end_turn 至少一项必填")
                 if stop_condition_raw in (None, "", {}):
@@ -6133,7 +6324,7 @@ def apply_issue_inertia_and_ongoing(
                 bar = int(row["bar_value"])
 
         ongoing = loads_effect_dict(row["ongoing_effects"])
-        ongoing_has_work = effect_dict_has_work(ongoing)
+        ongoing_has_work = _monthly_ongoing_effects_has_work(ongoing)
         if is_commitment:
             stop_gate = _commitment_stop_gate(row)
             if stop_gate and _gate_passed(stop_gate, state.metrics, db):
@@ -6149,7 +6340,8 @@ def apply_issue_inertia_and_ongoing(
             ongoing = _commitment_ongoing_effects_for_settlement(row, ongoing)
         metric_part: Dict[str, int] = {}
         economy_part: List[Dict[str, object]] = []
-        if effect_dict_has_work(ongoing):
+        applied_monthly_parts: Dict[str, object] = {}
+        if _monthly_ongoing_effects_has_work(ongoing):
             # 折扣系数：bar 越高（越好）越少扣
             # bar=0~40 → 100%, bar=40~80 → 60%, bar=80~100 → 30%
             if bar >= 80:
@@ -6187,9 +6379,18 @@ def apply_issue_inertia_and_ongoing(
                 metric_part[k] = allowed
 
             # economy
-            _eco_out = _apply_economy_list(db, state, ongoing.get("economy") or [])
+            _eco_out = _apply_economy_list(db, state, _monthly_economy_items(ongoing))
             inertia_rejections.extend(r for r in _eco_out if r.get("rejected"))  # economy 拒收不蒸发（#14）
             economy_part = [r for r in _eco_out if not r.get("rejected")]
+
+            applied_monthly_parts, monthly_rejections = _apply_monthly_ongoing_entities(
+                db,
+                state,
+                ongoing,
+                f"局势#{issue_id}持续效果",
+                applied_person_changes=applied_person_changes,
+            )
+            inertia_rejections.extend(monthly_rejections)
 
         paid_this_month = sum(
             abs(int(r.get("delta") or 0))
@@ -6202,14 +6403,14 @@ def apply_issue_inertia_and_ongoing(
                 state,
                 row,
                 paid_this_month=paid_this_month,
-                include_current_month=bool(metric_part or economy_part),
+                include_current_month=bool(metric_part or economy_part or applied_monthly_parts),
             )
             if is_commitment
             else None
         )
         commitment_bar = _commitment_bar_value(commitment_progress) if commitment_progress else None
 
-        if metric_part or economy_part:
+        if metric_part or economy_part or applied_monthly_parts:
             from_bar = bar
             to_bar = commitment_bar if commitment_bar is not None else bar
             actual_bar = int(to_bar) - int(from_bar)
@@ -6221,6 +6422,7 @@ def apply_issue_inertia_and_ongoing(
                 )
                 bar = int(commitment_bar)
             metric_delta: Dict[str, object] = {"metrics": metric_part, "economy": economy_part}
+            metric_delta.update(applied_monthly_parts)
             if commitment_progress is not None:
                 metric_delta["commitment_progress"] = commitment_progress
             db.conn.execute(
