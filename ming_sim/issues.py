@@ -47,6 +47,7 @@ _content: Optional[GameContent] = None
 
 INITIATIVE_ACTIVE_CAP = 15
 INITIATIVE_ACTIVE_CAP_LABEL = "十五"
+COMMITMENT_KIND_UNTIL_STOP = "until_stop"
 
 # SQLite 有符号 64-bit 整数边界：超界 int 绑进 SQLite 会抛 OverflowError。
 _SQLITE_INT_MIN, _SQLITE_INT_MAX = -(2 ** 63), 2 ** 63 - 1
@@ -70,6 +71,14 @@ def _issue_condition_text(raw: object) -> str:
     if isinstance(raw, (dict, list)):
         return json.dumps(raw, ensure_ascii=False, separators=(",", ":"))
     return str(raw).strip()
+
+
+def _normalize_commitment_kind(raw: object) -> str:
+    value = str(raw or "").strip().lower()
+    if value in {COMMITMENT_KIND_UNTIL_STOP, "until_condition", "recurring_until", "commitment"}:
+        return COMMITMENT_KIND_UNTIL_STOP
+    return ""
+
 
 # 给建筑/地区落库做 event 关联用的占位事件（issue 结案触发的副作用无真实 event）。
 _ISSUE_PSEUDO_EVENT = Event(
@@ -165,7 +174,10 @@ def issue_to_payload(row: sqlite3.Row, recent_advances: List[sqlite3.Row]) -> Di
     keys = row.keys() if hasattr(row, "keys") else []
     resolve_cond = row["resolve_condition"] if "resolve_condition" in keys else ""
     fail_cond = row["fail_condition"] if "fail_condition" in keys else ""
-    return {
+    commitment_kind = row["commitment_kind"] if "commitment_kind" in keys else ""
+    stop_condition = row["stop_condition"] if "stop_condition" in keys else ""
+    end_turn = int(row["end_turn"]) if "end_turn" in keys else 0
+    payload = {
         "issue_id": int(row["id"]),
         "kind": row["kind"],
         "title": row["title"],
@@ -187,6 +199,13 @@ def issue_to_payload(row: sqlite3.Row, recent_advances: List[sqlite3.Row]) -> Di
         ),
         **commitment_condition_role(resolve_cond),
     }
+    if commitment_kind:
+        payload["commitment_kind"] = commitment_kind
+    if stop_condition:
+        payload["stop_condition"] = stop_condition
+    if end_turn:
+        payload["end_turn"] = end_turn
+    return payload
 
 
 def _event_issue_refs(db: GameDB) -> set:
@@ -3305,9 +3324,14 @@ def apply_issue_tracker_output(
         # {'民心':-5}、dict(["ab"])={'a':'b'}）、对标量串 raise 拒整项——而 cancel_cost 是次要字段，
         # 脏不该丢掉整个 issue 决策后果（违 P1 落库铁律）。容忍归 {} 既不 garble、又保 issue 主体。
         cancel_cost = _eff_dict(ni.get("cancel_cost"))
+        stop_condition = _issue_condition_text(ni.get("stop_condition"))
+        commitment_kind = _normalize_commitment_kind(ni.get("commitment_kind"))
+        if not commitment_kind and kind == "initiative" and stop_condition and ongoing_eff:
+            commitment_kind = COMMITMENT_KIND_UNTIL_STOP
+        is_commitment = bool(commitment_kind)
         # 校验：国策必须有「办成回报」。CLI 后端(agy)一贯不填效果字段（实测 0/4），
         # 空则聚焦补全，保证「国策跑完有实质后果」(A 方案)；floor 兜底，绝不入空壳。
-        if kind == "initiative" and not resolve_eff:
+        if kind == "initiative" and not resolve_eff and not is_commitment:
             from ming_sim.cli_backend import cli_backend_active, enrich_initiative_effects
             if cli_backend_active(llm_config):
                 try:
@@ -3352,6 +3376,8 @@ def apply_issue_tracker_output(
             else:
                 raise ValueError(f"tags 须为字符串列表（拒标量串拆字 / 非串元素）：{_tags_raw!r}")
             inertia = _compute_inertia(ni)
+            if is_commitment:
+                inertia = 0
         except (TypeError, ValueError, OverflowError) as exc:
             # OverflowError：JSON 里 1e309 解析成 float('inf')，超界 int 绑定亦抛；_strict_int 已把
             # float（含 inf/nan）归 ValueError，OverflowError 兜超大 int 等残余路（cmr ni r3 codex）。
@@ -3361,7 +3387,6 @@ def apply_issue_tracker_output(
                 "item": ni, "title": title,
             })
             continue
-        stop_condition = _issue_condition_text(ni.get("stop_condition"))
         resolve_condition = _issue_condition_text(ni.get("resolve_condition"))
         if not resolve_condition and isinstance(ni.get("stop_condition"), str):
             resolve_condition = stop_condition
@@ -3388,7 +3413,7 @@ def apply_issue_tracker_output(
             faction_hint=str(ni.get("faction_hint") or ""),
             tags=tags,
             ongoing_effects=ongoing_eff,
-            cancellable=_normalize_cancellable(ni.get("cancellable")),
+            cancellable="decree" if is_commitment else _normalize_cancellable(ni.get("cancellable")),
             cancel_cost=cancel_cost,
             effect_on_resolve=resolve_eff,
             effect_on_fail=fail_eff,
@@ -3396,11 +3421,15 @@ def apply_issue_tracker_output(
             fail_condition=str(ni.get("fail_condition") or "")[:300],
             end_turn=end_turn,
             stop_condition=stop_condition,
+            commitment_kind=commitment_kind,
             commit=commit_now,
         )
         if kind == "initiative":
             initiative_active += 1
-        applied_new.append({"issue_id": issue_id, "kind": kind, "title": title, "rejected": False})
+        applied_item = {"issue_id": issue_id, "kind": kind, "title": title, "rejected": False}
+        if commitment_kind:
+            applied_item["commitment_kind"] = commitment_kind
+        applied_new.append(applied_item)
 
     # 3) closes（LLM 主动结案/失败，不看 bar 门槛）
     applied_closes: List[Dict[str, object]] = []

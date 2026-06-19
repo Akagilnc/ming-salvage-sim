@@ -20,8 +20,10 @@ def test_issues_schema_has_commitment_deadline_columns(game):
 
     assert "end_turn" in cols
     assert "stop_condition" in cols
+    assert "commitment_kind" in cols
     assert cols["end_turn"]["dflt_value"] == "0"
     assert cols["stop_condition"]["dflt_value"] == "''"
+    assert cols["commitment_kind"]["dflt_value"] == "''"
 
 
 def test_insert_issue_persists_commitment_deadline_columns(game):
@@ -33,29 +35,23 @@ def test_insert_issue_persists_commitment_deadline_columns(game):
         title="补辽饷直到补齐",
         origin_kind="decree",
         end_turn=state.turn + 6,
-        stop_condition='{"_gate_passed":true}',
+        stop_condition='{"army.guanning.arrears":"<=0"}',
+        commitment_kind="until_stop",
     )
 
     row = db.conn.execute(
-        "SELECT end_turn, stop_condition FROM issues WHERE id=?", (issue_id,)
+        "SELECT end_turn, stop_condition, commitment_kind FROM issues WHERE id=?", (issue_id,)
     ).fetchone()
     assert dict(row) == {
         "end_turn": state.turn + 6,
-        "stop_condition": '{"_gate_passed":true}',
+        "stop_condition": '{"army.guanning.arrears":"<=0"}',
+        "commitment_kind": "until_stop",
     }
 
 
 def test_new_issue_persists_commitment_columns_from_tracker_output(game):
     db, state, _ = game
-    stop_condition = {
-        "_gate_passed": {
-            "table": "armies",
-            "id": "guanning",
-            "field": "arrears",
-            "op": "<=",
-            "value": 0,
-        }
-    }
+    stop_condition = {"army.guanning.arrears": "<=0"}
 
     out = I.apply_issue_tracker_output(db, state, {
         "new_issues": [{
@@ -64,32 +60,34 @@ def test_new_issue_persists_commitment_columns_from_tracker_output(game):
             "title": "每月补辽饷直到补齐",
             "end_turn": state.turn + 4,
             "stop_condition": stop_condition,
+            "commitment_kind": "until_stop",
         }],
     })
 
     created = [item for item in out["new_issues"] if item.get("issue_id")]
     assert len(created) == 1, out
     row = db.conn.execute(
-        "SELECT end_turn, stop_condition, resolve_condition FROM issues WHERE id=?",
+        "SELECT end_turn, stop_condition, resolve_condition, commitment_kind FROM issues WHERE id=?",
         (created[0]["issue_id"],),
     ).fetchone()
     assert row["end_turn"] == state.turn + 4
-    assert row["stop_condition"] == (
-        '{"_gate_passed":{"table":"armies","id":"guanning","field":"arrears","op":"<=","value":0}}'
-    )
+    assert row["stop_condition"] == '{"army.guanning.arrears":"<=0"}'
     assert row["resolve_condition"] == ""
+    assert row["commitment_kind"] == "until_stop"
 
 
 def test_canonicalize_new_issue_preserves_commitment_columns():
     out = canonicalize_extraction({
         "new_issues": [{
             "标题": "每月补饷直到补齐",
-            "停止条件": {"_gate_passed": True},
+            "停止条件": {"army.guanning.arrears": "<=0"},
+            "承诺标记": "until_stop",
             "end_turn": 9,
         }],
     })
 
-    assert out["new_issues"][0]["stop_condition"] == {"_gate_passed": True}
+    assert out["new_issues"][0]["stop_condition"] == {"army.guanning.arrears": "<=0"}
+    assert out["new_issues"][0]["commitment_kind"] == "until_stop"
     assert out["new_issues"][0]["end_turn"] == 9
     assert "resolve_condition" not in out["new_issues"][0]
 
@@ -178,6 +176,7 @@ def test_existing_issues_table_gets_commitment_columns_idempotently(tmp_path, co
         cols = _table_columns(db, "issues")
         assert cols["end_turn"]["dflt_value"] == "0"
         assert cols["stop_condition"]["dflt_value"] == "''"
+        assert cols["commitment_kind"]["dflt_value"] == "''"
     finally:
         db.close()
 
@@ -214,4 +213,5 @@ def test_delta_schema_pitfall_table_documents_fifteen_initiative_cap():
     assert "active `initiative` ≤15" in text
     assert "active `initiative` ≤10" not in text
     assert "`end_turn`" in text
+    assert "`commitment_kind`" in text
     assert "`stop_condition` 是别名" not in text
