@@ -38,7 +38,7 @@ from ming_sim.error_pack import (
 )
 from ming_sim.exceptions import LLMContractError, LLMUnavailable, SettlementAbort
 from ming_sim.flows import apply_fixed_period_flows
-from ming_sim.issues import apply_event_terminal_states, apply_issue_inertia_and_ongoing, apply_score_extraction, auto_trigger_seed_issues, clear_gated_legacies, validate_delta_shape
+from ming_sim.issues import apply_event_terminal_states, apply_issue_inertia_and_ongoing, apply_score_extraction, auto_trigger_seed_issues, clear_gated_legacies, sanitize_delta_shape, validate_delta_shape
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import FRONT_HALF_DONE_PHASES, GameState, LLMConfig, TurnPhase
 from ming_sim.memories import build_timeline, record_chapter_memory
@@ -494,7 +494,7 @@ def persist_resolve_context(
     secret_orders: Dict[str, object],
     relevant_memories: List[Dict],
     source: Provenance = Provenance.system_simulation,
-) -> None:
+) -> Dict[str, object]:
     """ADR 0008 S2：每回合进入结算后半段前无条件持久化 resolve_context（extractor delta + 叙事）。
 
     source（#144）：拒收 provenance 一并持久化，崩溃恢复重放（resolve_settling_recovery）据此还原
@@ -507,12 +507,37 @@ def persist_resolve_context(
     必炸的 payload（如 new_armies 项里非数值兵力）由 ADR 0008 决定 6 的「重新推演」
     逃生口兜底（清 context 重产 delta），S4 恢复入口不得假设 ready=1 即重放安全。
     """
-    validate_delta_shape(extracted)  # 抛 → save 不执行，毒 payload 不钉进真源
-    db.save_resolve_context(
-        turn, decree_text, narrative, simulator_payload,
-        secret_orders=secret_orders, relevant_memories=relevant_memories,
-        extracted=extracted, source=Provenance(source).value,
-    )
+    cleaned, rejections = sanitize_delta_shape(extracted)
+    validate_delta_shape(cleaned)  # sanitized ready context must itself satisfy the shape gate
+    try:
+        attempt = _next_attempt(turn)
+    except Exception:
+        attempt = 1
+    collector = RejectionCollector(attempt=attempt)
+    with atomic(db):
+        for section, item, reason in rejections:
+            collector.record(
+                section,
+                RejectedItem(
+                    item=item,
+                    reason=reason,
+                    category="invalid_shape",
+                    source=Provenance(source),
+                ),
+                turn,
+            )
+        collector.flush_to_db(db)
+        db.save_resolve_context(
+            turn, decree_text, narrative, simulator_payload,
+            secret_orders=secret_orders, relevant_memories=relevant_memories,
+            extracted=cleaned, source=Provenance(source).value,
+        )
+    if getattr(db.conn, "_atomic_depth", 0) == 0:
+        try:
+            collector.mirror_to_jsonl(rejections_jsonl_path())
+        except Exception as mirror_exc:
+            tlog(f"[rejection] jsonl 镜像失败（DB 行已落，仅副本丢失）：{mirror_exc}")
+    return cleaned
 
 
 def _settle_after_narrative(
@@ -582,10 +607,9 @@ def _settle_after_narrative(
             secret_orders=secret_orders_for_sim,
             parallel=cli_backend_parallel_safe(llm_config),
         )
-        # shape 垃圾的 extractor 产物 = extractor 失败：在 try 内验形，让它走同一条
-        # pack+SettlementAbort 路（ship-pre r4）——留给 persist 的裸 ValueError 没有
-        # 用户边界接（CLI 原始 traceback 崩出、无错误包）。persist 自身仍二次验形
-        # （driver 路防线，幂等）。
+        # 拆不出 section 的 extractor 产物（顶层非 dict / 未知顶层 key）仍属 extractor 失败：
+        # 在 try 内验形，让它走 pack+SettlementAbort 路。ADR0015 下可拆 section/list/entity
+        # 坏项不在这里 abort；persist_resolve_context 会逐项净化并留痕后二次校验净化版。
         validate_delta_shape(extracted)
     except Exception as exc:
         # ADR 0008 决定 3/6（S6）：extractor 失败响亮中止——不再 extracted={} 静默续跑
@@ -611,10 +635,11 @@ def _settle_after_narrative(
 
     # ADR 0008 S2：进入结算后半段（settle_with_delta 动 DB）前，持久化 resolve_context
     # （extractor delta + 叙事）作重跑真源——跨进程恢复从它重灌，不重跑贵的 simulator/extractor。
-    # 持久化前过 validate_delta_shape：畸形 delta 响亮抛错且绝不入真源（防毒钉死锁，见 persist_resolve_context）。
+    # ADR0015：持久化会先把可拆坏项逐项拒收留痕、仅把净化版写入 resolve_context；
+    # 净化版再过 validate_delta_shape，防毒 payload 钉进重试真源。
     # before_turn == state.turn（next_period 尚未执行），与 settle 内 clear 同键。
-    # 走到这里 = extractor 真成功（失败已在上方响亮中止，S6）——失败产物永不入真源。
-    persist_resolve_context(
+    # 走到这里 = extractor 至少可拆 section（不可拆失败已在上方响亮中止）。
+    extracted = persist_resolve_context(
         db, before_turn, extracted,
         decree_text=decree_text, narrative=narrative,
         simulator_payload=simulator_payload,
@@ -996,6 +1021,37 @@ def _collect_inline_rejections(
                     _scan(f"{section}.{subkey}", subvalue)
 
 
+def _has_durable_player_visible_rejection(db: GameDB, turn: int) -> bool:
+    """True when any non-resimulation-invalidated player-source rejection exists for turn."""
+    db.conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS rejection_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            turn INTEGER NOT NULL,
+            section TEXT NOT NULL,
+            item_json TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            category TEXT NOT NULL,
+            source TEXT NOT NULL,
+            attempt INTEGER NOT NULL DEFAULT 1,
+            resimulation_invalidated INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    cols = {str(row[1]) for row in db.conn.execute("PRAGMA table_info(rejection_reports)").fetchall()}
+    invalidated_expr = "resimulation_invalidated = 0" if "resimulation_invalidated" in cols else "1=1"
+    row = db.conn.execute(
+        f"""
+        SELECT 1 FROM rejection_reports
+        WHERE turn=? AND source IN (?, ?) AND {invalidated_expr}
+        LIMIT 1
+        """,
+        (int(turn), Provenance.player_decree.value, Provenance.hitl_decision.value),
+    ).fetchone()
+    return row is not None
+
+
 def _settle_after_extract_body(
     state: GameState,
     db: GameDB,
@@ -1075,7 +1131,7 @@ def _settle_after_extract_body(
     # 落库拒收 → 邸报附一句 in-world 提示，并**持久化进 turn_report**（web/history/重读都见，非仅即时
     # 返回串；涵盖 inertia-only 拒收，codex R1 P2 + CodeRabbit Major）。system_simulation 来源静默。
     # record_log(sim 下月前文)在 inertia 前已跑、不带此提示噪声。提示极简、不暴露明细（明细落 DB/jsonl）。
-    if collector is not None and collector.has_player_visible_rejection():
+    if _has_durable_player_visible_rejection(db, before_turn):
         narrative = narrative + "\n\n有司奏：所拟之事有窒碍未行者，已录档待酌。"
     db.save_turn_report(state, narrative)
 

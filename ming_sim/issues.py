@@ -3362,11 +3362,9 @@ def apply_issue_tracker_output(
             resolve_condition = str(ni.get("stop_condition") or "").strip()
         # insert_issue 不再裹 broad except：代码/DB 异常上抛 → SettlementAbort（ADR 0005 fail-loud），
         # 不再当 WARN 吞（那会半落库 + 丢决策，违 P1 铁律）。
-        # 注：字符串字段含孤代理（JSON 解析出的 "\ud800"）会在 SQLite bind 抛 UnicodeEncodeError——
-        # 这是**跨段通用**序列化层问题（不仅 insert，连拒收行/turn_extraction 的 json.dumps 绑定也中毒），
-        # 且 ensure_ascii=True 全局翻转会破坏 DB 中文可读性，需「保中文、净孤代理」helper 统一治理；
-        # section 级兜 except 会因拒收行回写原值而把 abort 挪到 rejection flush（cmr ni r5 codex 实证），
-        # 故本刀不在此 piecemeal 处理，整体归 #63 通用切片。
+        # 注：字符串字段含孤代理（JSON 解析出的 "\\ud800"）会在 SQLite bind 抛 UnicodeEncodeError。
+        # #63 已在 SQLite-bind 序列化点统一用「保中文、净孤代理」helper 治理；本段不局部吞
+        # UnicodeEncodeError，仍让非编码类代码/DB 异常按 ADR 0005 fail-loud 上抛。
         issue_id = db.insert_issue(
             state,
             kind=kind,
@@ -3801,45 +3799,60 @@ def _restore_person_write_state(
 _NESTED_DICT_FIELDS = frozenset({"region_delta", "army_delta", "power_updates"})
 
 
-def validate_delta_shape(extracted: dict) -> None:
-    """canonical delta 各顶层字段容器类型必须匹配 schema(dict/list),实体模块二级值必须是 dict,
-    否则**任何 DB 改动前**抛 ValueError——畸形值直送 apply 会在结算中途崩 `.items()`,叠加非
-    原子结算 = 半落库(违反 P1 落库铁律;cmr RT-1 / Gemini PR#50 R2)。driver 在 pre_settle 前
-    调一次防 pre_settle 半改;落库核 apply_score_extraction 自身也调一次防 apply 内部半落库。
-    彻底原子化的事务边界(原 issue #3)已由 ADR 0008 落地(v0.8.0.0,见 applier.atomic):结算写
-    序列整体包单事务、崩则全回滚。本校验仍保留为廉价**前置**防线——在动 DB 前就拦畸形 delta,
-    省去事务回滚成本并给出更精确的字段级报错。"""
+def sanitize_delta_shape(extracted: dict) -> tuple[dict, list[tuple[str, dict, str]]]:
+    """Return (cleaned_delta, validate-layer rejections) per ADR 0015.
+
+    Unknown top-level keys / non-dict top-level payloads still fail loud because
+    no section can be safely split. Split-capable section/list/entity shape
+    defects are removed item-by-item and returned as rejection records.
+    """
     from ming_sim.simulation import EMPTY_EXTRACTION  # 懒 import 避 issues↔simulation 循环
-    for key, value in extracted.items():
+
+    if not isinstance(extracted, dict):
+        raise ValueError(f"delta 必须是 object(dict)，实得 {type(extracted).__name__}")
+    cleaned = dict(extracted)
+    rejections: list[tuple[str, dict, str]] = []
+    for key, value in list(extracted.items()):
+        if key == "_module_rejections":
+            continue
         if key not in EMPTY_EXTRACTION:
             raise ValueError(
                 f"未知 delta 顶层字段「{key}」(canonicalize 后)；疑拼写错(如 地区变更↔地区变化)，"
                 "apply 不会消费它 = 静默无效。请改用合法 key。"
             )
         if value is None:
-            # None = 字段缺省/LLM 输出 null;apply 用 `.get(key) or {}`/`or []` 当空 no-op,
-            # 校验同样放行(别比 apply 更严,否则合法 null 会被误拒,Gemini R1)。
             continue
         expected = EMPTY_EXTRACTION[key]
-        if isinstance(expected, dict) and not isinstance(value, dict):
-            raise ValueError(f"delta 字段 {key} 必须是 object(dict)，实得 {type(value).__name__}")
-        if isinstance(expected, list):
+        if isinstance(expected, dict):
+            if not isinstance(value, dict):
+                cleaned[key] = {}
+                rejections.append((key, {"raw_value": value}, f"delta 字段 {key} 必须是 object(dict)，实得 {type(value).__name__}"))
+                continue
+            if key in _NESTED_DICT_FIELDS:
+                section_clean = dict(value)
+                for ent, sub in value.items():
+                    if not isinstance(sub, dict):
+                        section_clean.pop(ent, None)
+                        rejections.append((key, {"entity_id": str(ent), "raw_value": sub}, f"delta 字段 {key}.{ent} 必须是 object(dict)，实得 {type(sub).__name__}"))
+                cleaned[key] = section_clean
+        elif isinstance(expected, list):
             if not isinstance(value, list):
-                raise ValueError(f"delta 字段 {key} 必须是 array(list)，实得 {type(value).__name__}")
-            # schema 里所有 list 字段都是 list-of-dict(economy_moves/new_armies/fiscal_*/issue_*/
-            # appointments/character_*/secret_order_* 等);apply 逐项 item.get() 落库,非 dict 项会
-            # 中途崩 → 部分已写半落库。落库前校验每项是 dict(CMR R3 gemini)。
+                cleaned[key] = []
+                rejections.append((key, {"raw_value": value}, f"delta 字段 {key} 必须是 array(list)，实得 {type(value).__name__}"))
+                continue
+            section_clean = []
             for i, item in enumerate(value):
                 if not isinstance(item, dict):
-                    raise ValueError(
-                        f"delta 字段 {key}[{i}] 必须是 object(dict)，实得 {type(item).__name__}"
-                    )
-        if key in _NESTED_DICT_FIELDS:
-            for ent, sub in value.items():
-                if not isinstance(sub, dict):
-                    raise ValueError(
-                        f"delta 字段 {key}.{ent} 必须是 object(dict)，实得 {type(sub).__name__}"
-                    )
+                    rejections.append((key, {"raw_value": item}, f"delta 字段 {key}[{i}] 必须是 object(dict)，实得 {type(item).__name__}"))
+                else:
+                    section_clean.append(item)
+            cleaned[key] = section_clean
+    return cleaned, rejections
+
+
+def validate_delta_shape(extracted: dict) -> None:
+    """Validate unsplittable delta shape; split-capable bad items are ADR0015 rejections."""
+    sanitize_delta_shape(extracted)
 
 
 def apply_office_appointment(
@@ -4668,8 +4681,8 @@ def apply_score_extraction(
     commit_now = not caller_transaction
     if caller_transaction:
         _register_runtime_rollback_snapshot(db, state, content, registry)
-    # 0) 落库前校验容器/二级类型,畸形值崩前拦住,不让前面字段半落库(#57)。
-    validate_delta_shape(extracted)
+    # 0) 落库前校验/净化容器与可拆项；ADR0015 下可拆坏项逐项拒收，不再整批 abort。
+    extracted, validate_rejections = sanitize_delta_shape(extracted)
     runtime_content = content if content is not None else _ctx()
     candidate_event_ids_at_input = {candidate.id for candidate in gather_candidate_events(state, db)}
     new_person_changes = normalize_person_changes({"人物变更": extracted.get("人物变更") or []})
@@ -5568,9 +5581,25 @@ def apply_score_extraction(
         except Exception as exc:
             applied_secret_closes.append({"order_id": real_id, "rejected": True, "reason": str(exc)})
 
+    validate_rejection_items = [
+        {
+            "rejected": True,
+            "item": item,
+            "reason": reason,
+            "category": "invalid_shape",
+        }
+        for _section, item, reason in validate_rejections
+    ]
+    raw_module_rejections = extracted.get("_module_rejections")
+    module_rejections = [
+        item for item in raw_module_rejections if isinstance(item, dict)
+    ] if isinstance(raw_module_rejections, list) else []
+
     state.clamp()
     return {
         "metric_delta": applied_metric,
+        "validate_shape_rejections": validate_rejection_items,
+        "module_misroute_rejections": module_rejections,
         "economy_moves": applied_economy,
         "economy_moves_rejections": economy_rejections,  # 拒收独立段（#14 cmr r1）；玩家可见输出会 pop
         "faction_delta": applied_factions,

@@ -748,6 +748,15 @@ def _sanitize_module_output(module: str, data: Dict[str, object]) -> Dict[str, o
     }
     if misrouted:
         tlog(f"[extractor/{module}] 字段错放进本模块、已按白名单剔除（misroute，应属对应模块）：{misrouted}")  # #63 surface
+        cleaned["_module_rejections"] = [
+            {
+                "rejected": True,
+                "item": {"field": key, "owner_module": owner, "value": data.get(key)},
+                "reason": f"字段 {key} 属于 {owner} 模块，不能由 {module} 模块落库；已拒收且不猜测改路由",
+                "category": "misrouted_field",
+            }
+            for key, owner in sorted(misrouted.items())
+        ]
     if module == "internal":
         cleaned["economy_moves"] = _clean_economy_moves(cleaned.get("economy_moves"))
         cleaned["fiscal_changes"] = _clean_fiscal_changes(cleaned.get("fiscal_changes"))
@@ -944,9 +953,15 @@ def _clean_fiscal_removes(raw: object) -> List[Dict[str, object]]:
 
 def _merge_module_outputs(outputs: Dict[str, Dict[str, object]]) -> Dict[str, object]:
     merged = dict(EMPTY_EXTRACTION)
+    module_rejections: List[Dict[str, object]] = []
     for module in EXTRACTION_MODULES:
         for key, val in outputs.get(module, {}).items():
+            if key == "_module_rejections" and isinstance(val, list):
+                module_rejections.extend(item for item in val if isinstance(item, dict))
+                continue
             merged[key] = val
+    if module_rejections:
+        merged["_module_rejections"] = module_rejections
     return merged
 
 
