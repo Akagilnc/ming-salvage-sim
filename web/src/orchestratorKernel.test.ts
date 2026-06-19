@@ -35,7 +35,7 @@ describe("layerEpicIssues", () => {
   it("throws loudly for an empty epic", () => {
     expect(() =>
       layerEpicIssues({ epicId: 217, issues: [], blockedBy: [] })
-    ).toThrowError(new TopologyError("empty_epic", "Epic 217 has no native sub-issues."));
+    ).toThrowError(new TopologyError("empty_epic", "Epic 217 没有原生子 issue。"));
   });
 
   it("throws loudly when open in-epic children form a cycle", () => {

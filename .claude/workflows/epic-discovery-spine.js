@@ -1,10 +1,10 @@
 export const meta = {
   name: 'epic-discovery-spine',
-  description: 'Discover an epic native sub-issue graph and return the thinnest ordered execution plan',
-  whenToUse: 'Use for issue #219 S1: parent epic issue number -> gh native sub-issues + native blocked_by -> S0 topology plan. Does not implement review/worktree/merge.',
+  description: '发现 epic 原生子 issue 图并返回最薄有序执行计划',
+  whenToUse: '用于 issue #219 S1：父 epic issue 号 -> gh 读取原生 sub-issues + native blocked_by -> S0 拓扑计划。不实现 review/worktree/merge。',
   phases: [
-    { title: 'Discover', detail: 'Read native sub-issues and native blocked_by edges with gh' },
-    { title: 'Plan', detail: 'Run the inline S0 topology copy and log the ordered plan plus boundary handling' }
+    { title: '发现', detail: '用 gh 读取原生 sub-issues 与 native blocked_by 边' },
+    { title: '计划', detail: '运行内联 S0 拓扑副本并记录有序计划与边界处理' }
   ]
 };
 
@@ -27,7 +27,7 @@ const byIssueIds = (left, right) =>
 export function inlineLayerEpicIssues(input) {
   const epicChildren = input.issues.filter((issue) => sameId(issue.epicId, input.epicId));
   if (epicChildren.length === 0) {
-    throw new InlineTopologyError('empty_epic', `Epic ${input.epicId} has no native sub-issues.`);
+    throw new InlineTopologyError('empty_epic', `Epic ${input.epicId} 没有原生子 issue。`);
   }
 
   const byKey = new Map(input.issues.map((issue) => [idKey(issue.id), issue]));
@@ -107,7 +107,7 @@ export function inlineLayerEpicIssues(input) {
       .map(([key]) => key)
       .sort(compareIssueKeys)
       .join(', ');
-    throw new InlineTopologyError('cycle', `Open epic children contain a blocked_by cycle: ${cycleIssueIds}.`);
+    throw new InlineTopologyError('cycle', `打开的 epic 子 issue 存在 blocked_by 环: ${cycleIssueIds}。`);
   }
 
   return {
@@ -138,7 +138,7 @@ export function normalizeWorkflowArgs(rawArgs) {
   const rawEpic = typeof rawArgs === 'object' && rawArgs !== null && 'epicIssueNumber' in rawArgs ? rawArgs.epicIssueNumber : rawArgs;
   const epicIssueNumber = String(rawEpic ?? '').trim();
   if (!/^[0-9]+$/.test(epicIssueNumber)) {
-    throw new Error('epic-discovery-spine requires args to be a parent epic issue number, e.g. 217 or {"epicIssueNumber":217}.');
+    throw new Error('epic-discovery-spine 需要 args 是父 epic issue 号，例如 217 或 {"epicIssueNumber":217}。');
   }
   return epicIssueNumber;
 }
@@ -146,8 +146,8 @@ export function normalizeWorkflowArgs(rawArgs) {
 export async function runEpicDiscoveryWorkflow({ args, Bash, log }) {
   const epicIssueNumber = normalizeWorkflowArgs(args);
 
-  phaseIfAvailable('Discover');
-  log?.(`discovering native sub-issues and native blocked_by for epic #${epicIssueNumber}`);
+  phaseIfAvailable('发现');
+  log?.(`正在发现 epic #${epicIssueNumber} 的原生 sub-issues 与 native blocked_by`);
   const discovered = parseBashJson(
     await Bash(`python3 - ${shellQuote(epicIssueNumber)} <<'PY'
 import json
@@ -211,7 +211,7 @@ PY`)
     blockedBy: discovered.blockedBy
   };
 
-  phaseIfAvailable('Plan');
+  phaseIfAvailable('计划');
   const topology = inlineLayerEpicIssues(topologyInput);
   const issueMetadata = Object.fromEntries(discovered.issues.map((issue) => [idKey(issue.id), { title: issue.title, state: issue.state, url: issue.url }]));
   const orderedPlan = buildOrderedExecutionPlan(topology, issueMetadata);
@@ -224,8 +224,8 @@ PY`)
     outOfScope: ['review', 'worktree', 'merge']
   };
 
-  log?.(`ordered execution plan: ${JSON.stringify(orderedPlan)}`);
-  log?.(`boundary handling: ${JSON.stringify(boundaryHandling)}`);
+  log?.(`有序执行计划: ${JSON.stringify(orderedPlan)}`);
+  log?.(`边界处理: ${JSON.stringify(boundaryHandling)}`);
   return result;
 }
 
@@ -242,14 +242,14 @@ function describeBoundaryHandling(topology) {
   if (topology.status === 'external_prerequisite') {
     return {
       action: 'return_to_main_session',
-      reason: 'one or more open blockers are outside this epic',
+      reason: '存在一个或多个未关闭 blocker 位于本 epic 外，需要回主 session',
       externalPrerequisites: topology.externalPrerequisites
     };
   }
   return {
     action: 'continue',
     skippedClosedIssueIds: topology.skippedClosedIssueIds,
-    note: 'empty epic and cycles throw TopologyError; closed children are skipped; closed blockers are treated as satisfied'
+    note: '空 epic 与成环会抛出 TopologyError；已关闭子 issue 会跳过；已关闭 blocker 视为已满足'
   };
 }
 
@@ -257,7 +257,7 @@ function parseBashJson(raw) {
   if (typeof raw === 'string') return JSON.parse(raw);
   if (raw && typeof raw.output === 'string') return JSON.parse(raw.output);
   if (raw && typeof raw.stdout === 'string') return JSON.parse(raw.stdout);
-  throw new Error('Bash did not return JSON output.');
+  throw new Error('Bash 没有返回 JSON 输出。');
 }
 
 function phaseIfAvailable(title) {

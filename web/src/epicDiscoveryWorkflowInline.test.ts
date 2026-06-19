@@ -27,6 +27,19 @@ const cases: TopologyInput[] = [
   }
 ];
 
+function captureTopologyError(fn: () => unknown) {
+  try {
+    fn();
+  } catch (error) {
+    return {
+      name: (error as { name?: string }).name,
+      code: (error as { code?: string }).code,
+      message: (error as { message?: string }).message
+    };
+  }
+  throw new Error("Expected topology call to throw");
+}
+
 describe("epic discovery workflow inline kernel drift guard", () => {
   it("matches the S0 topology authority for representative boundary inputs", () => {
     for (const input of cases) {
@@ -34,37 +47,25 @@ describe("epic discovery workflow inline kernel drift guard", () => {
     }
   });
 
-  it("throws the same topology error codes as S0 authority", () => {
-    const cycle: TopologyInput = {
-      epicId: 217,
-      issues: [
-        { id: "A", epicId: 217, state: "open" },
-        { id: "B", epicId: 217, state: "open" }
-      ],
-      blockedBy: [
-        { issueId: "A", blockedByIssueId: "B" },
-        { issueId: "B", blockedByIssueId: "A" }
-      ]
-    };
+  it("throws the same topology errors as S0 authority for empty epic and cycle boundaries", () => {
+    const boundaryInputs: TopologyInput[] = [
+      { epicId: 217, issues: [], blockedBy: [] },
+      {
+        epicId: 217,
+        issues: [
+          { id: "A", epicId: 217, state: "open" },
+          { id: "B", epicId: 217, state: "open" }
+        ],
+        blockedBy: [
+          { issueId: "A", blockedByIssueId: "B" },
+          { issueId: "B", blockedByIssueId: "A" }
+        ]
+      }
+    ];
 
-    let authorityCode: string | undefined;
-    try {
-      layerEpicIssues(cycle);
-    } catch (error) {
-      authorityCode = (error as { code?: string }).code;
+    for (const input of boundaryInputs) {
+      expect(captureTopologyError(() => inlineLayerEpicIssues(input))).toEqual(captureTopologyError(() => layerEpicIssues(input)));
     }
-
-    let inlineCode: string | undefined;
-    let inlineName: string | undefined;
-    try {
-      inlineLayerEpicIssues(cycle);
-    } catch (error) {
-      inlineCode = (error as { code?: string }).code;
-      inlineName = (error as { name?: string }).name;
-    }
-
-    expect(inlineName).toBe("TopologyError");
-    expect(inlineCode).toBe(authorityCode);
   });
 
   it("returns a structured ordered execution plan and boundary copy from discovered gh JSON", async () => {
@@ -109,7 +110,7 @@ describe("epic discovery workflow inline kernel drift guard", () => {
       boundaryHandling: {
         action: "continue",
         skippedClosedIssueIds: [218],
-        note: "empty epic and cycles throw TopologyError; closed children are skipped; closed blockers are treated as satisfied"
+        note: "空 epic 与成环会抛出 TopologyError；已关闭子 issue 会跳过；已关闭 blocker 视为已满足"
       },
       outOfScope: ["review", "worktree", "merge"]
     });
