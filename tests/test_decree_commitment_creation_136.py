@@ -45,6 +45,8 @@ def test_issue_extractor_prompt_routes_future_one_shot_decree_commitments():
     assert "end_turn" in prompt
     assert "commitment_kind" in prompt
     assert "ongoing_effects 可留空" in prompt
+    assert "acknowledged" in prompt
+    assert "ACK 收尾" in prompt
 
 
 def test_until_stop_commitment_issue_is_created_with_carrier_fields(game, monkeypatch):
@@ -227,6 +229,69 @@ def test_future_one_shot_commitment_issue_is_created_with_deadline_only(game, mo
     payload = I.issue_to_payload(row, [])
     assert payload["end_turn"] == state.turn + 3
     assert payload["commitment_kind"] == "until_stop"
+
+
+def test_open_ended_ongoing_commitment_issue_is_created_with_explicit_marker(game, monkeypatch):
+    db, state, content = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    out = I.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "origin_ref": "decree:turn-1:open-ended-appeasement",
+                    "kind": "initiative",
+                    "title": "长期安抚毛文龙",
+                    "stage_text": "遣臣常驻皮岛安抚，未设硬时限。",
+                    "ongoing_effects": {"metrics": {"皇威": -1}},
+                    "commitment_kind": "until_stop",
+                }
+            ]
+        },
+        content=content,
+    )
+
+    created = out["issue_summary"]["new_issues"][0]
+    assert created["rejected"] is False
+    row = _issue_by_title(db, "长期安抚毛文龙")
+    assert row is not None
+    assert row["commitment_kind"] == "until_stop"
+    assert row["end_turn"] == 0
+    assert row["stop_condition"] == ""
+    assert json.loads(row["ongoing_effects"]) == {"metrics": {"皇威": -1}}
+    assert row["cancellable"] == "decree"
+
+
+def test_open_ended_ongoing_commitment_shape_rejects_without_explicit_marker(game, monkeypatch):
+    db, state, content = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    out = I.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "origin_ref": "decree:turn-1:open-ended-without-marker",
+                    "kind": "initiative",
+                    "title": "长期安抚毛文龙但缺承诺标记",
+                    "stage_text": "遣臣常驻皮岛安抚，未设硬时限。",
+                    "ongoing_effects": {"metrics": {"皇威": -1}},
+                }
+            ]
+        },
+        content=content,
+    )
+
+    created = out["issue_summary"]["new_issues"][0]
+    assert created["rejected"] is True
+    assert created["category"] == "invalid_enum"
+    assert "commitment_kind" in created["reason"]
+    assert _issue_by_title(db, "长期安抚毛文龙但缺承诺标记") is None
 
 
 def test_future_one_shot_commitment_shape_rejects_without_explicit_marker(game, monkeypatch):
@@ -471,6 +536,51 @@ def test_until_stop_commitment_rejects_direct_resolved_close(game, monkeypatch):
     assert "承诺" in close["reason"]
     after = db.conn.execute("SELECT status FROM issues WHERE id=?", (row["id"],)).fetchone()
     assert after["status"] == "active"
+
+
+def test_until_stop_commitment_rejects_direct_failed_close_without_effects(game, monkeypatch):
+    db, state, content = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    starting_popular_support = int(state.metrics["民心"])
+
+    I.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "origin_ref": "decree:turn-1:pay-liao-fail-guard",
+                    "kind": "initiative",
+                    "title": "每月补辽饷直到补齐防失败误结案",
+                    "ongoing_effects": {"economy": [{"account": "国库", "delta": -50, "reason": "每月补饷"}]},
+                    "effect_on_fail": {"metrics": {"民心": -7}},
+                    "stop_condition": {"army.guanning.arrears": "<=0"},
+                    "commitment_kind": "until_stop",
+                }
+            ]
+        },
+        content=content,
+    )
+    row = _issue_by_title(db, "每月补辽饷直到补齐防失败误结案")
+
+    out = I.apply_issue_tracker_output(
+        db,
+        state,
+        {"close_issues": [{"issue_id": row["id"], "reason": "failed", "narrative": "误按承诺失败结案"}]},
+    )
+
+    close = out["closes"][0]
+    assert close["rejected"] is True
+    assert close["category"] == "invalid_enum"
+    assert "承诺" in close["reason"]
+    after = db.conn.execute("SELECT status FROM issues WHERE id=?", (row["id"],)).fetchone()
+    assert after["status"] == "active"
+    assert int(state.metrics["民心"]) == starting_popular_support
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM issue_advances WHERE issue_id=? AND trigger_kind='close'",
+        (row["id"],),
+    ).fetchone()[0] == 0
 
 
 def test_until_stop_commitment_advance_to_full_stays_active(game, monkeypatch):

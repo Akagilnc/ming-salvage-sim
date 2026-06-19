@@ -285,17 +285,39 @@ def commitment_progress_payload(
         "paid_total": int(paid_total),
     }
     if remaining is not None:
-        payload["remaining_arrears"] = int(remaining)
+        if _commitment_gate_references_arrears(row):
+            payload["remaining_arrears"] = int(remaining)
+        else:
+            payload["remaining_to_goal"] = int(remaining)
     return payload
 
 
 def commitment_display_text(progress: Dict[str, int], row: sqlite3.Row) -> str:
-    parts = [f"已第{int(progress.get('months_elapsed') or 0)}月"]
-    if "remaining_arrears" in progress:
-        parts.append(f"尚欠{int(progress['remaining_arrears'])}万两")
     keys = row.keys() if hasattr(row, "keys") else []
-    if str(row["commitment_kind"] if "commitment_kind" in keys else "") == COMMITMENT_KIND_UNTIL_STOP:
+    ongoing = loads_effect_dict(row["ongoing_effects"] if "ongoing_effects" in keys else {})
+    end_turn = int(row["end_turn"] or 0) if "end_turn" in keys else 0
+    stop_gate = _commitment_stop_gate(row)
+    months = int(progress.get("months_elapsed") or 0)
+
+    if not ongoing and end_turn > 0:
+        return f"限至第{end_turn}月·到期待裁"
+
+    if stop_gate and _commitment_gate_references_arrears(row):
+        parts = [f"已第{months}月"]
+        if "remaining_arrears" in progress:
+            parts.append(f"尚欠{int(progress['remaining_arrears'])}万两")
         parts.append("直到补齐")
+        return "·".join(parts)
+
+    parts = [f"已履行{months}月"]
+    if "remaining_to_goal" in progress:
+        parts.append(f"距达标尚差{int(progress['remaining_to_goal'])}")
+    if stop_gate:
+        parts.append("直到达标")
+    elif end_turn > 0:
+        parts.append(f"限至第{end_turn}月")
+    else:
+        parts.append("开放承诺")
     return "·".join(parts)
 
 
@@ -415,6 +437,40 @@ def _expire_commitment_issue(db: GameDB, state: GameState, row: sqlite3.Row) -> 
         ),
     )
     db.conn.commit()
+
+
+def _ack_due_commitment_issue(
+    db: GameDB,
+    state: GameState,
+    row: sqlite3.Row,
+    *,
+    narrative: str = "",
+    commit: bool = True,
+) -> sqlite3.Row:
+    issue_id = int(row["id"])
+    from_value = int(row["bar_value"])
+    summary = narrative or "到期待裁承诺已由皇帝裁决确认。"
+    db.conn.execute(
+        """
+        UPDATE issues SET status='dropped', resolution_summary=?,
+                          closed_turn=?, last_advance_turn=?,
+                          updated_at=CURRENT_TIMESTAMP
+        WHERE id=?
+        """,
+        (summary, state.turn, state.turn, issue_id),
+    )
+    db.conn.execute(
+        """
+        INSERT INTO issue_advances (
+            issue_id, turn, trigger_kind, delta_bar,
+            from_value, to_value, narrative, metric_delta
+        ) VALUES (?, ?, 'commitment_ack', 0, ?, ?, ?, '{}')
+        """,
+        (issue_id, state.turn, from_value, from_value, summary),
+    )
+    if commit:
+        db.conn.commit()
+    return db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
 
 
 def issue_to_payload(
@@ -3602,6 +3658,7 @@ def apply_issue_tracker_output(
             and (
                 end_turn_marker_shape
                 or (bool(stop_condition) and bool(ongoing_eff))
+                or (bool(ongoing_eff) and not resolve_eff and not fail_eff and bool(origin_ref))
             )
         )
         if commitment_shape_without_marker:
@@ -3625,7 +3682,7 @@ def apply_issue_tracker_output(
                 if not ongoing_eff and end_turn_for_commitment <= 0:
                     raise ValueError("ongoing_effects 或 end_turn 至少一项必填")
                 if stop_condition_raw in (None, "", {}):
-                    if end_turn_for_commitment <= 0:
+                    if end_turn_for_commitment <= 0 and not ongoing_eff:
                         raise ValueError("stop_condition 须为非空 dict，除非承诺带 end_turn")
                     stop_condition = ""
                 else:
@@ -3765,19 +3822,54 @@ def apply_issue_tracker_output(
             })
             continue
         reason = str(cl.get("reason") or "").strip().lower()
-        if reason not in ("resolved", "failed"):
+        if reason not in ("resolved", "failed", "acknowledged"):
             applied_closes.append({
                 "rejected": True, "category": "invalid_enum",
-                "reason": f"close_issues reason 非法 '{reason}'（须 resolved/failed），issue {issue_id}",
+                "reason": f"close_issues reason 非法 '{reason}'（须 resolved/failed/acknowledged），issue {issue_id}",
                 "item": cl,
             })
             continue
         narrative = str(cl.get("narrative") or "")[:400]
         chk = db.conn.execute(
-            "SELECT status, resolve_condition, commitment_kind FROM issues WHERE id=?", (issue_id,)
+            "SELECT * FROM issues WHERE id=?", (issue_id,)
         ).fetchone()
+        if reason == "acknowledged":
+            if chk is None:
+                category, why = "missing_ref", f"close_issues 引用未找到的 issue {issue_id}"
+            elif chk["status"] != "active":
+                category, why = "missing_ref", f"close_issues 引用已非 active（{chk['status']}）的 issue {issue_id}"
+            elif not str(chk["commitment_kind"] or "").strip():
+                category, why = "invalid_enum", f"close_issues acknowledged 只允许到期待裁承诺 issue {issue_id}"
+            elif loads_effect_dict(chk["ongoing_effects"]):
+                category, why = "invalid_enum", f"close_issues acknowledged 不允许收尾持续承诺 issue {issue_id}"
+            elif int(chk["end_turn"] or 0) <= 0 or int(chk["end_turn"] or 0) > int(state.turn):
+                category, why = "invalid_enum", f"close_issues acknowledged 只允许已到期承诺 issue {issue_id}"
+            else:
+                new_row = _ack_due_commitment_issue(
+                    db,
+                    state,
+                    chk,
+                    narrative=narrative,
+                    commit=not external_transaction,
+                )
+                touched_ids.add(issue_id)
+                applied_closes.append({
+                    "issue_id": issue_id,
+                    "title": new_row["title"],
+                    "reason": reason,
+                    "narrative": narrative,
+                    "rejected": False,
+                })
+                continue
+            applied_closes.append({
+                "rejected": True,
+                "category": category,
+                "reason": why,
+                "item": cl,
+            })
+            continue
         if (
-            reason == "resolved"
+            reason in ("resolved", "failed")
             and chk is not None
             and chk["status"] == "active"
             and (
@@ -3789,7 +3881,7 @@ def apply_issue_tracker_output(
             applied_closes.append({
                 "rejected": True,
                 "category": "invalid_enum",
-                "reason": f"close_issues 对承诺型 issue {issue_id} 误判 resolved（须走专门完成闭环）",
+                "reason": f"close_issues 对承诺型 issue {issue_id} 误判 {reason}（须走专门完成闭环）",
                 "item": cl,
             })
             continue

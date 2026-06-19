@@ -778,9 +778,10 @@ def build_extractor_tools(context: CourtContext):
                             来源(b) origin_kind:"event_pool"——只两字段：origin_kind+"id"(从candidate_events选)
                             一锤子事（当回合即办结）不立局势，直接落metric_delta等
         cancels             撤销局势 [{issue_id,applied_cost,narrative}]
-        close_issues        结案/失败 [{issue_id,reason(resolved/failed),narrative}]
+        close_issues        结案/失败/到期待裁承诺ACK [{issue_id,reason(resolved/failed/acknowledged),narrative}]
                             对照resolve_condition/fail_condition判，条件命中即报
                             不可崩坏局势（天灾/大旱等effect_on_fail为空）禁止reason=failed
+                            acknowledged仅用于无ongoing且已到期的圣旨承诺已由皇帝裁决确认
         fiscal_changes      制度性财政系数变化 [{key,delta,reason}]
                             key只从财政系数表选：田赋_rate/辽饷_base/辽饷_rate/盐税_base/盐税_rate/
                             商税_base/商税_rate/皇庄_base/皇庄_rate/织造_base/织造_rate/矿税_base/矿税_rate/

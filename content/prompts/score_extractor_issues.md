@@ -62,7 +62,7 @@
 - `end_turn`：未来到期回合；立项公式是 `end_turn = turn + N`。
 - `ongoing_effects 可留空` / `持续效果` 可留 `{}`：form③ 无每{{TURN_UNIT}}固定动作，只是到期待裁。
 - `stop_condition` 可留空；`解决效果`/`失败效果`仍留空 `{}`。
-到期后程序会把这条 active 承诺顶到「到期待裁」输入，请皇帝复试/复核；本档房不得提前写 `结案局势`，也不得自造 firing payload。
+到期后程序会把这条 active 承诺顶到「到期待裁」输入，请皇帝复试/复核；本档房不得提前写 `结案局势`，也不得自造 firing payload。若本{{TURN_UNIT}}邸报/圣意已明确写出皇帝对该到期待裁承诺完成复试、复核、裁断或确认已处理，则写 `结案局势`，`原因:"acknowledged"`，只作承诺 ACK 收尾；不得写成 `resolved`/`failed`。
 
 **战略/外敌战事 node**（如己巳之变、戊寅虏变、松锦决战）不能只写 `新立局势` 空触发；必须和同一信封的军务/人事档世界状态主账一起出现。局势档只写 `来源类型:"event_pool"` + `编号`；若该候选事件已声明闭合结局标签集，还要在顶层 `事件结局` 写标签。当前只有己巳之变 `jisi_lubian` 声明三档：`挡于边墙` / `入塞被遏` / `长驱直入`；不要给戊寅虏变、松锦决战等尚未声明标签集的事件自造标签。还要确认邸报已有可抽取的哪城、哪军、谁死、谁退等主账事实。缺主账时宁可不写。世界状态主账由军务/人事等字段承接，本模块不要自己输出这些字段。
 
@@ -127,7 +127,7 @@
 
 ## 结案与撤销
 
-- `结案局势`：对照 active issue 的 `resolve_condition` / `fail_condition`。满足解决写 `原因:"resolved"`，彻底失败写 `原因:"failed"`。人物承诺型 `stop_condition` 不套用 `resolve_condition` 达标即结案规则；若 active issue 带 `condition_role:"commitment_stop_condition"`，即使当前 loyalty 已达阈值，也不要写 `结案局势`；自动按条件完成属于 #136。
+- `结案局势`：对照 active issue 的 `resolve_condition` / `fail_condition`。满足解决写 `原因:"resolved"`，彻底失败写 `原因:"failed"`。人物承诺型 `stop_condition` 不套用 `resolve_condition` 达标即结案规则；若 active issue 带 `condition_role:"commitment_stop_condition"`，即使当前 loyalty 已达阈值，也不要写 `结案局势 resolved/failed`；自动按条件完成属于 #136。唯一例外：到期待裁 form③ 承诺若已被皇帝明确裁决/确认处理，写 `原因:"acknowledged"` 作 ACK 收尾。
 - **判结案以 input 盘面数值为准，不被邸报措辞影响**：`resolve_condition` 若含可量化阈值（如「民心>60」「unrest<30」「国库转正」「欠饷补过半」），直接拿 input 里 `active_issues`/`regions`/`armies`/`current_state` 的**当前数值**对照——阈值已达标就必须写 `结案局势 resolved`，**即使邸报只写「近结案」「暂稳」「初见成效」等进行时措辞也照样结案**。邸报叙事偏保守是常态，不要因为邸报没明说「已结案」就只推进不结案。盘面达标=结案，这是硬规则。
 - 不可崩坏局势（`effect_on_fail` 为空的天灾/水患/瘟疫/饥荒本身）禁止写 `reason:"failed"`，只能 resolved 或不结案。
 - **结案项可带 `解决效果` / `失败效果`**：结案时若这桩大事会落下长期国运影响，就在该结案项里写一个 `解决效果`（resolved）或 `失败效果`（failed），内含 `帝国修正` 段（格式见上「帝国修正」节）。**这是把帝国修正落地的唯一时机**——尤其阉党荡平、辽饷裁撤、九边整军成制、国家级科技突破、决定性军事胜负这类大结案。寻常结案不带。

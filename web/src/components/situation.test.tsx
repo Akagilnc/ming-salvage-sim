@@ -6,7 +6,7 @@ import type { Issue } from "../types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const commitmentText = "已第3月·尚欠100万两·直到补齐";
+const commitmentText = "限至第4月·到期待裁";
 
 function makeIssue(): Issue & { commitment_progress_text: string } {
   return {
