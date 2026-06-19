@@ -525,3 +525,50 @@ def test_end_turn_without_ongoing_is_not_expired_by_settlement_tick(game):
         "SELECT COUNT(*) FROM issue_advances WHERE issue_id=? AND trigger_kind='expire'",
         (issue_id,),
     ).fetchone()[0] == 0
+
+
+def test_one_shot_end_turn_commitment_surfaces_in_existing_review_channel(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
+    db.conn.commit()
+
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="孙承宗三月后复试",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:sun-review",
+        bar_value=0,
+        inertia=0,
+        stage_text="孙承宗暂听候政，三月后复试。",
+        ongoing_effects={},
+        stop_condition="",
+        end_turn=state.turn,
+        commitment_kind="until_stop",
+        cancellable="decree",
+    )
+
+    payload = build_simulator_payload(state, db, "", "")
+
+    assert "due_commitments" not in payload
+    due_items = [
+        item for item in payload["secret_orders"]["待核议"]
+        if item.get("entry_kind") == "due_commitment"
+    ]
+    assert len(due_items) == 1
+    due = due_items[0]
+    assert due["issue_id"] == issue_id
+    assert due["title"] == "孙承宗三月后复试"
+    assert due["content"] == "孙承宗暂听候政，三月后复试。"
+    assert due["due_turn"] == state.turn
+    assert "到期待裁" in due["review_reason"]
+
+    _settle_empty_month(db, state, content)
+    row = _issue_row(db, issue_id)
+    assert row["status"] == "active"
+    assert row["closed_turn"] is None
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM issue_advances WHERE issue_id=? AND trigger_kind='expire'",
+        (issue_id,),
+    ).fetchone()[0] == 0
