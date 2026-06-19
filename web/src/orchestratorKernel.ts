@@ -1,5 +1,5 @@
 export type IssueId = string | number;
-export type IssueState = "open" | "closed" | "OPEN" | "CLOSED";
+export type IssueState = "open" | "closed" | "OPEN" | "CLOSED" | null | undefined;
 
 export interface EpicIssue {
   id: IssueId;
@@ -77,9 +77,11 @@ export interface DegradationJudgment {
   flags: string[];
 }
 
-const isClosed = (state: IssueState): boolean => state.toLowerCase() === "closed";
+const isClosed = (state: IssueState): boolean => state?.toLowerCase() === "closed";
 const sameId = (left: IssueId, right: IssueId): boolean => String(left) === String(right);
 const idKey = (id: IssueId): string => String(id);
+const byIssueIds = (left: BlockedByEdge, right: BlockedByEdge): number =>
+  compareIssueKeys(idKey(left.issueId), idKey(right.issueId)) || compareIssueKeys(idKey(left.blockedByIssueId), idKey(right.blockedByIssueId));
 
 export function layerEpicIssues(input: TopologyInput): TopologyPlan {
   const epicChildren = input.issues.filter((issue) => sameId(issue.epicId, input.epicId));
@@ -90,15 +92,20 @@ export function layerEpicIssues(input: TopologyInput): TopologyPlan {
   const byKey = new Map(input.issues.map((issue) => [idKey(issue.id), issue]));
   const openChildren = epicChildren.filter((issue) => !isClosed(issue.state));
   const openChildKeys = new Set(openChildren.map((issue) => idKey(issue.id)));
-  const skippedClosedIssueIds = epicChildren.filter((issue) => isClosed(issue.state)).map((issue) => issue.id);
+  const skippedClosedIssueIds = epicChildren
+    .filter((issue) => isClosed(issue.state))
+    .map((issue) => issue.id)
+    .sort((left, right) => compareIssueKeys(idKey(left), idKey(right)));
 
-  const externalPrerequisites = input.blockedBy.filter((edge) => {
-    if (!openChildKeys.has(idKey(edge.issueId))) return false;
-    if (openChildKeys.has(idKey(edge.blockedByIssueId))) return false;
+  const externalPrerequisites = input.blockedBy
+    .filter((edge) => {
+      if (!openChildKeys.has(idKey(edge.issueId))) return false;
+      if (openChildKeys.has(idKey(edge.blockedByIssueId))) return false;
 
-    const blocker = byKey.get(idKey(edge.blockedByIssueId));
-    return blocker === undefined || !isClosed(blocker.state);
-  });
+      const blocker = byKey.get(idKey(edge.blockedByIssueId));
+      return blocker === undefined || !isClosed(blocker.state);
+    })
+    .sort(byIssueIds);
 
   if (externalPrerequisites.length > 0) {
     return {
@@ -192,16 +199,16 @@ export function routeFindings(findings: Finding[]): FindingRoute {
 }
 
 export function judgeReviewDegradation(input: DegradationInput): DegradationJudgment {
-  const availableModels = input.results.filter((result) => result.available).map((result) => result.model);
-  const missingResults = input.results.filter((result) => !result.available);
+  const availableModels = uniqueModels(input.results.filter((result) => result.available).map((result) => result.model));
+  const missingResults = uniqueResultsByModel(input.results.filter((result) => !result.available));
   const missingModels = missingResults.map((result) => result.model);
 
-  if (input.stage === "per_slice" && availableModels.length === 1 && availableModels[0] === "codex" && missingModels.includes("agy")) {
+  if (input.stage === "per_slice" && availableModels.length === 1 && availableModels[0] === "codex") {
     return {
       status: "continue",
       availableModels,
       missingModels,
-      flags: ["per-slice agy unavailable; proceeding codex-only"]
+      flags: missingModels.includes("agy") ? ["per-slice agy unavailable; proceeding codex-only"] : ["per-slice codex-only review"]
     };
   }
 
@@ -232,8 +239,26 @@ export function judgeReviewDegradation(input: DegradationInput): DegradationJudg
 }
 
 function compareIssueKeys(left: string, right: string): number {
-  const leftNumber = Number(left);
-  const rightNumber = Number(right);
-  if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) return leftNumber - rightNumber;
+  const leftIsDecimal = isDecimalIssueKey(left);
+  const rightIsDecimal = isDecimalIssueKey(right);
+  if (leftIsDecimal && rightIsDecimal) return Number(left) - Number(right);
+  if (leftIsDecimal) return -1;
+  if (rightIsDecimal) return 1;
   return left.localeCompare(right);
+}
+
+function isDecimalIssueKey(key: string): boolean {
+  return /^[0-9]+$/.test(key);
+}
+
+function uniqueModels(models: string[]): string[] {
+  return [...new Set(models)];
+}
+
+function uniqueResultsByModel(results: ModelReviewResult[]): ModelReviewResult[] {
+  const byModel = new Map<string, ModelReviewResult>();
+  for (const result of results) {
+    if (!byModel.has(result.model)) byModel.set(result.model, result);
+  }
+  return [...byModel.values()];
 }

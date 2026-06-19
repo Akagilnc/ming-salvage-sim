@@ -89,9 +89,83 @@ describe("layerEpicIssues", () => {
       externalPrerequisites: []
     });
   });
+
+  it("treats nullish child state as open instead of throwing", () => {
+    const plan = layerEpicIssues({
+      epicId: 217,
+      issues: [
+        { id: 218, epicId: 217, state: undefined },
+        { id: 219, epicId: 217, state: null }
+      ],
+      blockedBy: [{ issueId: 219, blockedByIssueId: 218 }]
+    });
+
+    expect(plan).toEqual({
+      status: "ready",
+      layers: [[218], [219]],
+      skippedClosedIssueIds: [],
+      externalPrerequisites: []
+    });
+  });
+
+  it("returns stable sorted closed skips and external prerequisites", () => {
+    const plan = layerEpicIssues({
+      epicId: 217,
+      issues: [
+        { id: 4, epicId: 217, state: "closed" },
+        { id: 2, epicId: 217, state: "open" },
+        { id: 10, epicId: 217, state: "closed" },
+        { id: 900, epicId: 999, state: "open" },
+        { id: 800, epicId: 999, state: "open" }
+      ],
+      blockedBy: [
+        { issueId: 2, blockedByIssueId: 900 },
+        { issueId: 2, blockedByIssueId: 800 }
+      ]
+    });
+
+    expect(plan).toEqual({
+      status: "external_prerequisite",
+      layers: [],
+      skippedClosedIssueIds: [4, 10],
+      externalPrerequisites: [
+        { issueId: 2, blockedByIssueId: 800 },
+        { issueId: 2, blockedByIssueId: 900 }
+      ]
+    });
+  });
+
+  it("sorts decimal ids numerically and non-decimal ids lexically without numeric coercion", () => {
+    const plan = layerEpicIssues({
+      epicId: 217,
+      issues: [
+        { id: "0x10", epicId: 217, state: "open" },
+        { id: " 2", epicId: 217, state: "open" },
+        { id: "10", epicId: 217, state: "open" },
+        { id: "2", epicId: 217, state: "open" },
+        { id: "A", epicId: 217, state: "open" }
+      ],
+      blockedBy: []
+    });
+
+    expect(plan).toEqual({
+      status: "ready",
+      layers: [["2", "10", " 2", "0x10", "A"]],
+      skippedClosedIssueIds: [],
+      externalPrerequisites: []
+    });
+  });
 });
 
 describe("routeFindings", () => {
+  it("returns no_findings for an empty review result", () => {
+    expect(routeFindings([])).toEqual({
+      status: "no_findings",
+      autonomousBugFindings: [],
+      decisionFindings: []
+    });
+  });
+
   it("escalates when any finding is a choice", () => {
     const findings: Finding[] = [
       { id: "F1", classification: "mechanical_bug" },
@@ -158,6 +232,24 @@ describe("judgeReviewDegradation", () => {
         results: [ok("codex"), down("agy")]
       })
     ).toEqual({ status: "continue", availableModels: ["codex"], missingModels: ["agy"], flags: ["per-slice agy unavailable; proceeding codex-only"] });
+  });
+
+  it("allows per-slice review to proceed on codex alone even when agy is omitted", () => {
+    expect(
+      judgeReviewDegradation({
+        stage: "per_slice",
+        results: [ok("codex")]
+      })
+    ).toEqual({ status: "continue", availableModels: ["codex"], missingModels: [], flags: ["per-slice codex-only review"] });
+  });
+
+  it("counts distinct model names for availability thresholds", () => {
+    expect(
+      judgeReviewDegradation({
+        stage: "family_5a_5b",
+        results: [ok("codex"), ok("codex"), down("agy"), down("agy")]
+      })
+    ).toEqual({ status: "halt", availableModels: ["codex"], missingModels: ["agy"], flags: ["family 5a/5b requires at least two available models"] });
   });
 
   it("halts per-slice review when fewer than two models are available and the codex-only exception does not apply", () => {
