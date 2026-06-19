@@ -425,3 +425,117 @@ def test_pending_directive_count_zero_without_any_draft(game):
         if a["kind"] == "directive"
     ]
     assert directive_pending == []
+
+
+# ── ⑧ codex r5 F1 — 「补充」须进拟旨抽取契约（has_pending_draft 路径） ──────────
+
+def test_extract_draft_intent_prompt_includes_supplement_hint_when_has_pending(monkeypatch):
+    """has_pending_draft=True 时，extract_draft_intent 送给 LLM 的 prompt 包含「补充」提示，
+    使「再补一条」之类的玩家话语被 LLM 正确归为拟旨意图（codex r5 F1）。"""
+    prompts_seen = []
+
+    def _capture(prompt, llm_config=None, tag=""):
+        prompts_seen.append(prompt)
+        return (json.dumps({"拟旨意图": "拟旨"}, ensure_ascii=False), 1)
+
+    import ming_sim.cli_backend as cb_mod
+    monkeypatch.setattr(cb_mod, "_run_backend_for_config", _capture)
+
+    result = cb.extract_draft_intent(
+        "再补一条，加上监察御史同行",
+        "好的，臣即补充。",
+        has_pending_draft=True,
+    )
+    assert result["draft_action"] == "拟旨"
+    assert prompts_seen, "应调用 LLM"
+    prompt = prompts_seen[0]
+    assert "补充" in prompt, "prompt 应包含「补充」提示，以引导 LLM 正确判补充意图"
+
+
+def test_extract_draft_intent_no_supplement_hint_when_no_pending(monkeypatch):
+    """has_pending_draft=False（默认）时，prompt 不含补充提示（保持原行为不变）。"""
+    prompts_seen = []
+
+    def _capture(prompt, llm_config=None, tag=""):
+        prompts_seen.append(prompt)
+        return (json.dumps({"拟旨意图": "无"}, ensure_ascii=False), 1)
+
+    import ming_sim.cli_backend as cb_mod
+    monkeypatch.setattr(cb_mod, "_run_backend_for_config", _capture)
+
+    cb.extract_draft_intent("今天天气不错", "是啊。", has_pending_draft=False)
+    assert prompts_seen
+    assert "本回合已有草案暂存" not in prompts_seen[0], "无 pending draft 时不应注入补充提示"
+
+
+def test_last_write_wins_uses_has_pending_draft_flag(game, monkeypatch):
+    """second-round 补充调用走 apply_cli_conversation_actions：
+    已有 pending directive 时应以 has_pending_draft=True 调 extract_draft_intent，
+    即 prompt 中含「补充」提示（覆盖 codex r5 F1 的"真实路径"）。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+
+    # 先 stage 一条 pending directive
+    db.upsert_pending_directive(state.turn, name,
+                                payload={"text": "第一版草稿", "actor": name})
+
+    prompts_seen = []
+
+    def _capture(prompt, llm_config=None, tag=""):
+        prompts_seen.append((tag, prompt))
+        # 确认意图=无；拟旨意图=拟旨
+        if "待皇帝定夺" in prompt or "应允" in prompt:
+            return (json.dumps({"确认": "无"}, ensure_ascii=False), 1)
+        return (json.dumps({"拟旨意图": "拟旨"}, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _capture)
+    sess = _fake_session(db, state)
+    GameSession.apply_cli_conversation_actions(
+        sess, ch, player_message="再补一条，加上监察御史同行",
+        answer="好的，加上监察御史随行。",
+        has_directive=False, secret_order_id=None,
+    )
+
+    # 找 draft_intent 那次调用，确认 prompt 里有「补充」
+    draft_calls = [(tag, p) for tag, p in prompts_seen if tag == "draft_intent"]
+    assert draft_calls, "应调用 extract_draft_intent"
+    _, draft_prompt = draft_calls[0]
+    assert "补充" in draft_prompt, (
+        "has_pending_draft=True 时 prompt 应含补充提示（codex r5 F1）"
+    )
+
+
+# ── ⑨ codex r5 F2 — advance_without_edict 不产生孤儿 draft ────────────────────
+
+def test_advance_without_edict_discards_pending_directive(game):
+    """退朝无诏时，advance_without_edict 必须丢弃 kind=directive pending，
+    不得把它 commit 成 turn_directives(draft) 孤儿（codex r5 F2）。
+    孤儿 draft 永不经 extractor、不可见；本测试确认退朝后 turn_directives 为空。"""
+    from ming_sim.decree import advance_without_edict
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    turn_before = state.turn
+
+    db.upsert_pending_directive(state.turn, name,
+                                payload={"text": "孤儿草稿", "actor": name})
+    assert len(db.list_pending_actions(state.turn)) == 1
+
+    advance_without_edict(state, db, content=content)
+
+    # 退朝后回合推进
+    assert state.turn == turn_before + 1
+
+    # 旧回合 pending_actions 全部清空（directive 已被 discard，不留 pending）
+    old_pa = db.conn.execute(
+        "SELECT * FROM pending_actions WHERE turn=? AND status='pending'",
+        (turn_before,)).fetchall()
+    assert old_pa == [], "退朝后旧回合不得有 pending 行残留"
+
+    # 旧回合 turn_directives 不应有任何行（directive 被丢弃，不插成孤儿 draft）
+    orphan_drafts = db.conn.execute(
+        "SELECT COUNT(*) FROM turn_directives WHERE turn=?", (turn_before,)).fetchone()[0]
+    assert orphan_drafts == 0, (
+        f"退朝无诏不应在旧回合建 turn_directives 行，找到 {orphan_drafts} 行（codex r5 F2）"
+    )
