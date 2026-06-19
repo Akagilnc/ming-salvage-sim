@@ -198,16 +198,25 @@ def commitment_condition_role(resolve_condition: object, commitment_kind: object
     return {}
 
 
+def _legacy_commitment_stop_gate(resolve_condition: object) -> Dict[str, str]:
+    text = str(resolve_condition or "").strip()
+    match = re.fullmatch(r"(character\.[^.]+\.loyalty)\s*((?:>=|>)\s*\d+)", text)
+    if not match:
+        return {}
+    return {match.group(1): match.group(2).replace(" ", "")}
+
+
 def _commitment_stop_gate(row: sqlite3.Row) -> Dict[str, str]:
     keys = row.keys() if hasattr(row, "keys") else []
     raw = row["stop_condition"] if "stop_condition" in keys else ""
-    if not raw:
-        return {}
-    try:
-        gate = json.loads(str(raw))
-    except (TypeError, ValueError):
-        return {}
-    return gate if isinstance(gate, dict) else {}
+    if raw:
+        try:
+            gate = json.loads(str(raw))
+        except (TypeError, ValueError):
+            gate = {}
+        if isinstance(gate, dict) and gate:
+            return gate
+    return _legacy_commitment_stop_gate(row["resolve_condition"] if "resolve_condition" in keys else "")
 
 
 def _commitment_remaining_from_gate(
@@ -6417,7 +6426,9 @@ def apply_issue_inertia_and_ongoing(
         issue_id = int(row["id"])
         bar = int(row["bar_value"])
         inertia = int(row["inertia"])
-        is_commitment = bool(str(row["commitment_kind"] if "commitment_kind" in row.keys() else "").strip())
+        commitment_kind = str(row["commitment_kind"] if "commitment_kind" in row.keys() else "").strip()
+        commitment_stop_gate = _commitment_stop_gate(row)
+        is_commitment = bool(commitment_kind or commitment_stop_gate)
 
         # 1) inertia 漂移：每月对所有进行中 issue 都走一格
         if inertia != 0 and not is_commitment:

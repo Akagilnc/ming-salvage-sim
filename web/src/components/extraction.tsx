@@ -296,10 +296,13 @@ export function CloseIssuesBlock({ data }: { data: any }) {
           );
         }
         const reason = pickItem(it, "原因", "reason");
+        const acknowledged = reason === "acknowledged";
+        const successful = reason === "resolved" || acknowledged;
+        const reasonLabel = acknowledged ? "确认" : reason === "resolved" ? "结案" : "失败";
         return (
           <li key={i}>
-            <b className={reason === "resolved" ? "good" : "bad"}>
-              {labelIssue(pickItem(it, "局势编号", "issue_id"))} {reason === "resolved" ? "结案" : "失败"}
+            <b className={successful ? "good" : "bad"}>
+              {labelIssue(pickItem(it, "局势编号", "issue_id"))} {reasonLabel}
             </b>
             {pickItem(it, "叙述", "narrative") ? <span>{pickItem(it, "叙述", "narrative")}</span> : null}
           </li>
