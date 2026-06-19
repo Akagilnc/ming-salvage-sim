@@ -358,11 +358,34 @@ describe("epic orchestrator S2 single-slice pipeline", () => {
       }
     });
 
-    expect(mergeCommand).toContain("show-ref --verify --quiet refs/heads/${familyBranch}");
-    expect(mergeCommand).toContain("switch ${familyBranch}");
-    expect(mergeCommand).toContain("switch -c ${familyBranch} --track origin/${familyBranch}");
-    expect(mergeCommand).toContain("switch -c ${familyBranch} ${implementedCommit}^");
+    expect(mergeCommand).toContain('show-ref --verify --quiet "refs/heads/${familyBranch}"');
+    expect(mergeCommand).toContain('switch "$familyBranch"');
+    expect(mergeCommand).toContain('switch -c "$familyBranch" --track "origin/${familyBranch}"');
+    expect(mergeCommand).toContain('switch -c "$familyBranch" "${implementedCommit}^"');
     expect(mergeCommand).not.toContain("switch -C ${familyBranch}");
+  });
+
+  it("fails fast when reviewer output starts with an invalid JSON object", async () => {
+    await expect(runEpicSingleSlicePipeline({
+      args: { epicIssueNumber: 217, verifyCommands: ["npm --prefix web test"] },
+      log: () => undefined,
+      agent: async () => ({
+        commit: "abc123",
+        worktreePath: "/repo/.worktrees/issue-220",
+        observabilityEvidence: { loudFailure: true, locatorLogs: true, notApplicableReason: "tooling slice" }
+      }),
+      Bash: async (command: string) => {
+        if (command.includes("/sub_issues")) {
+          return JSON.stringify({
+            epicId: 217,
+            issues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }],
+            blockedBy: []
+          });
+        }
+        if (command.includes("reviewer=codex")) return "{not reviewer json";
+        return JSON.stringify({ status: "passed" });
+      }
+    })).rejects.toThrow("codex review did not return parseable reviewer JSON");
   });
 
   it("returns structured merge JSON when a real git merge writes status lines", async () => {
@@ -409,7 +432,7 @@ describe("epic orchestrator S2 single-slice pipeline", () => {
           if (command.includes("reviewer=codex")) return JSON.stringify({ status: "passed", findings: [] });
           if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [] });
           if (command.includes("merge reviewed commit")) {
-            return execFileSync("bash", ["-lc", command], { encoding: "utf8" });
+            return execFileSync("bash", ["-l", "-c", command], { encoding: "utf8" });
           }
           return JSON.stringify({ status: "passed" });
         }
