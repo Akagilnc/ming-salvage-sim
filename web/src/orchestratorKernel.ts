@@ -86,7 +86,7 @@ const byIssueIds = (left: BlockedByEdge, right: BlockedByEdge): number =>
 export function layerEpicIssues(input: TopologyInput): TopologyPlan {
   const epicChildren = input.issues.filter((issue) => sameId(issue.epicId, input.epicId));
   if (epicChildren.length === 0) {
-    throw new TopologyError("empty_epic", `Epic ${input.epicId} has no native sub-issues.`);
+    throw new TopologyError("empty_epic", `Epic ${input.epicId} 没有原生子 issue。`);
   }
 
   const byKey = new Map(input.issues.map((issue) => [idKey(issue.id), issue]));
@@ -166,7 +166,7 @@ export function layerEpicIssues(input: TopologyInput): TopologyPlan {
       .map(([key]) => key)
       .sort(compareIssueKeys)
       .join(", ");
-    throw new TopologyError("cycle", `Open epic children contain a blocked_by cycle: ${cycleIssueIds}.`);
+    throw new TopologyError("cycle", `打开的 epic 子 issue 存在 blocked_by 环: ${cycleIssueIds}。`);
   }
 
   return {
