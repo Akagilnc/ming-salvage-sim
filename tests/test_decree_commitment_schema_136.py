@@ -1,7 +1,10 @@
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from ming_sim.db import GameDB
+from ming_sim.models import effect_dict_has_work
 import ming_sim.issues as I
 from ming_sim.simulation import canonicalize_extraction
 
@@ -24,6 +27,44 @@ def test_issues_schema_has_commitment_deadline_columns(game):
     assert cols["end_turn"]["dflt_value"] == "0"
     assert cols["stop_condition"]["dflt_value"] == "''"
     assert cols["commitment_kind"]["dflt_value"] == "''"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"economy": []},
+        {"economy": [{}]},
+        {"economy": [{"account": "国库", "delta": 0, "reason": "占位"}]},
+        {"economy": [{"account": "国库", "delta": 0, "category": "", "reason": ""}]},
+        {"economy": [{"target_id": "guanning", "reason": "占位"}]},
+        {"metrics": {}},
+        {"metrics": {"民心": 0}},
+        {"metrics": {"民心": 0}, "note": "无月度动作"},
+    ],
+)
+def test_effect_dict_has_work_ignores_metadata_only_payloads(payload):
+    assert effect_dict_has_work(payload) is False
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"economy": [{"account": "国库", "delta": -1, "reason": "补饷"}]},
+        {"metrics": {"皇威": 1}},
+        {"region_delta": {"shaanxi": {"status": "灾荒稍解"}}},
+        {"army_delta": {"guanning": {"commander": "孙承宗"}}},
+        {"factions": {"阉党": {"leverage": -1}}},
+        {"class_delta": {"农民": {"satisfaction": 1}}},
+        {"buildings": [{"action": "remove", "building_id": "beizhili_b1"}]},
+        {"new_armies": [{"id": "tianxiong", "manpower": 1000}]},
+        {"人物变更": [{"name": "毛文龙", "动作": "评定", "loyalty": 1}]},
+        {"character": [{"name": "毛文龙", "loyalty": 1, "reason": "每月安抚"}]},
+        {"legacy": {"modifiers": {"民心": 1}}},
+    ],
+)
+def test_effect_dict_has_work_recognizes_schema_effects(payload):
+    assert effect_dict_has_work(payload) is True
 
 
 def test_insert_issue_persists_commitment_deadline_columns(game):
