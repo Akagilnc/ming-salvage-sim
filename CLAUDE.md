@@ -46,24 +46,28 @@ hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`�
 
 ## 开发流程（想法 → merge，2026-06-17 定，本项目试行）
 
-> **完整流程文档（Matt Pocock 整套，验证中）→ [docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md)**（triage 状态机 / agent brief / 追踪模型 / 切片并行全在那）。
+> **完整流程文档（Matt Pocock 整套，严格按 Matt 试水）→ [docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md)**（canonical 顺序 / decision-mapping 大目标推雾 / to-prd 两层设计 / 设计六层阶梯 / triage 入口匝道 / 全 skill 速查 / 追踪模型 / 切片并行全在那）。
 > **标签 Matt 纯化（2026-06-17）**：全仓删掉 `priority/*` `area/*` `type/*` 那套，**只剩 7 个** —— `bug`/`enhancement`（category）+ `needs-triage`/`needs-info`/`ready-for-agent`/`ready-for-human`/`wontfix`（state）。
 
-**贯穿原则**：持久件做小做单一（一条 ADR 一个不可逆决策、一个 issue 一个切片）；可逆细节不提前设计、留 `/tdd` 现场长（「最后责任时刻」：不可逆→设计时定，可逆→写码时长；设计时「忽然难受」=越线信号）。跨 session 靠文档 + 你本人 re-seed，**handoff ≠ 交接**（同一个你驱动）；session 边界画在「上下文满/脏」处、不钉死在某步，小功能可一个 session 连做。
+**贯穿原则**：持久件做小做单一（一条 ADR 一个不可逆决策、一个 issue 一个切片）；**设计分层落（六层阶梯见 DEV_WORKFLOW.md）**——不可逆决策→ADR、架构级（模块/接口/契约/schema）→`to-prd` 的 Implementation Decisions、**只有代码级实现（真函数/文件结构）才留 `/tdd` 现场长**（「最后责任时刻」：可逆→写码时长；设计时「忽然难受」=越线信号）。⚠️ 别把「详设留 TDD 长」误读成「to-prd 之后到代码之间无设计」——架构级早在 `to-prd` 钉了。跨 session 靠文档 + 你本人 re-seed，**handoff ≠ 交接**（同一个你驱动）；session 边界画在「上下文满/脏」处、不钉死在某步，小功能可一个 session 连做。
 
-**流水线 + skill**：
-1. 想法 → 父 issue（`to-prd` 或手开薄 issue）= 一句说明 + **北极星/用户案例**（验收形状，不写 spec/文件路径）。
-2. （可选）`prototype` 去风险（状态/UI 开放问题）。
-3. `grill-with-docs`（+`grill-me`）→ **tiny 单决策 ADR** + `CONTEXT.md` 词表，挂回父 issue。**止于不可逆决策。**
-4. 设计评审：`ak-cross-m-review`（本地 cmr）+ 线上 4 bot → 合 ADR、Status→Accepted。〈设计侧到此结束〉
-5. `to-issues` 切 thin vertical-slice 子 issue（带 Parent + 验收 + HITL/AFK + blocked-by）。**⚠️ 切完必做原生补救**（Matt skill 还没跟上 GitHub 新功能）：① 子挂父 **native sub-issue**（`POST issues/<父>/sub_issues`，父自动出子列表+进度条）② 子↔子 **native blocked_by**（`POST issues/<blocked>/dependencies/blocked_by`，原生依赖）③ **撤父的工作态标签**变 tracker（防别的 agent 误抓父一口气全做，Matt #292）。命令 + 为什么见 [DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md)「to-issues 后的原生补救」。
-6. 逐切片 `tdd`（详设在 Planning 现场涌现、你在场拍）；硬 bug → `diagnose`、架构清理 → `improve-codebase-architecture`。
-7. 代码评审：per-slice `ak-cross-m-review` + ship-pre 双闸 + 线上 bot；`gstack-ship` 收尾。
+**流水线 + skill（Matt canonical 顺序；标〔项目加〕的是 Matt 之外本项目的闸）**：
+1. 想法 → **`grill-with-docs`**（有 codebase）/ `grill-me`（无）→ 逼问（核心引擎 `/grilling`），决策结晶**当场**写 **tiny 单决策 ADR** + `CONTEXT.md` 词表。**逼问那一步在这、不在 to-prd；止于不可逆决策。** 大/模糊、一次 session 定不完的，先 **`decision-mapping`** 建决策图逐票推雾、路清再往下。
+2. （可选）`prototype` 去风险（状态/UI 开放问题）——`handoff` 出/回桥接（原型在独立 session 跑），答案落 ADR/issue/NOTES、原型删。
+3. **`to-prd`** → **完整 PRD**（不访谈，只综合 grill 的结论）：详尽 user stories + **Implementation Decisions + Testing Decisions（两层设计）** + Out of Scope；发 issue tracker 当父/epic、贴 `ready-for-agent`。**禁文件路径/代码片段。**
+4. 〔项目加〕设计评审：`ak-cross-m-review`（本地 cmr）+ 线上 bot → 合 ADR、Status→Accepted。〈设计侧到此结束〉
+5. **`to-issues`** 切 thin vertical-slice 子 issue（带 Parent + 验收 + HITL/AFK + blocked-by）。**⚠️ 切完必做原生补救**：① 子挂父 **native sub-issue**（`POST issues/<父>/sub_issues`）② 子↔子 **native blocked_by**（`POST issues/<blocked>/dependencies/blocked_by`）③ **撤父工作态标签**变 tracker（Matt #292）。命令见 [DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md)。
+6. **逐切片各开新 session `implement`**（canonical 构建步）：约定 seam 调 `/tdd`（never refactor while RED）→ 跑 typecheck/单测/全量 → 调 `/review` → commit；**代码级实现现场长**（架构级早在 to-prd 钉了）。硬 bug → `diagnosing-bugs`、架构清理 → `improve-codebase-architecture`。
+7. 〔项目加〕代码评审：per-slice `ak-cross-m-review` + ship-pre 双闸 + 线上 bot；`gstack-ship` 收尾。
 8. merge commit（不 squash）→ 关子 issue；全完 → 关父 issue。
+
+> **分叉**：步骤 3→5（`to-prd`→`to-issues`）只在「多 session 大活」才走；**单 session 能完的小活直接在同一窗口 implement、跳过 3-5**。步骤 1→3→5 留**同一不间断上下文窗口**（别中途 compact）；每个子 issue **开新 session** 做 6。`triage` 不在这条主线上——它是**入口匝道**，只处理你没创建的外来 issue；`to-issues` 的产出已是 `ready-for-agent`、不再 triage。
 
 **两层分工（2026-06-16 定）**：策划+架构 session 出 ADR，开发 session 读 ADR 做（同一 agent 可兼策划/架构两角，但当下分清在哪层、别拿字段/schema/现有代码卡玩法设计）。
 **文档三层（采 Matt Pocock grill-with-docs DDD）**：① `CONTEXT.md`=领域词表（是什么、零实现）；② `docs/adr/`=非显然决策的为什么（**ADR-FORMAT：1-3 句、单决策、稀有**，hard-to-reverse / surprising / real-tradeoff 才建，不是 spec；大模板会把可逆细节吸进来＝过度设计，避开）；③ 详设/代码任务 → issue；④ 实现 → 代码。给 AI 最薄一层。
 **评审强度跟反悔成本走**：设计审狠（反悔贵）、代码审正确性。
+**真 user story（2026-06-18 立，实证栽过）**：user story 必须**从真实用户的需求**写——「谁真在用这东西、要达成什么价值」，不是把 Implementation Decision 套成「作为 X，我希望〔那条决定〕」凑数。**actor = 被造之物的真实用户**：游戏 → 皇帝/玩家（+ 试玩者/我：抓 bug、要错误包、读拒收数据找规律）；**开发者只在「开发者本就是产品真实用户」时才当 actor**（dev 工具/SDK——实证 Matt 的 `sandcastle` PRD 全「As a developer」、`course-video-manager` PRD 全「As a course creator」，actor 跟产品真实用户走）。**判据**：剥掉「作为 X 我希望…以便…」的壳，剩的是「用户可感知的价值」还是「内部怎么实现」？后者＝假 story，挪 Implementation Decisions。别为凑「extensive」机械批量造、被质疑再事后补说辞——extensive 是把真实用户各面写全，非换壳堆量。
+**学框架学精神、非照搬（2026-06-18 立）**：跑流程框架（如严格按 Matt 试水）是学它的**精神/原理**（为何这么设计、解决什么真问题），不是邯郸学步照搬条文；最终大概率**魔改成适合本项目的形态**。照搬到「不合理/难受」处先问「这条原理在解决什么、我这场景还成立吗」——成立就守，不成立就改 + 记下为什么，别因「Matt 这么写」就硬套。
 
 ## 规则
 - 所有 user-facing 输出用中文。
