@@ -1,6 +1,6 @@
 # 采用 Sandcastle 作为 epic 编排器底座；#217 收缩为叠加在其上的「质量层」
 
-Status: Proposed（2026-06-19；spike 实证「底座可行 + 缺质量层」两面。**尚未 Accepted**——待 ① parallel-planner 并行编排证据（#217 S3 的「依赖感知并行 + 串行 merge 队列」是承重需求，须确认 Sandcastle 原语离它多远）② 设计评审闭环（本地 cmr + 线上 bot）。在此之前 #217 PRD 的「整套自建」描述不作数、以本 ADR 方向为准。）
+Status: Proposed（2026-06-19；spike 实证「底座可行 + 并行编排可行 + 缺质量层」三面。**尚未 Accepted**——待设计评审闭环（本地 cmr + 线上 bot）。parallel-planner 并行编排证据已补（见 Spike 证据 4）。在此之前 #217 PRD 的「整套自建」描述不作数、以本 ADR 方向为准。）
 
 ## 背景
 
@@ -20,6 +20,7 @@ Status: Proposed（2026-06-19；spike 实证「底座可行 + 缺质量层」两
 1. **核心原语跑通**：`@ai-hero/sandcastle@0.10.0` install → init → build 镜像（补 `ca-certificates`）→ `run({agent:codex, sandbox:docker})` 在容器里**用订阅 auth（零 OPENAI_KEY，仅 bind-mount `~/.codex` 副本）**改文件 + 提交 + merge-to-head 合回。订阅接法 = `docker({ mounts:[{hostPath, sandboxPath:'/home/agent/.codex'}] })`，比上一场手动那套干净。
 2. **真 issue 实测（#137，meaty 切片，非一行 fix）**：在 Ming_LLM 隔离 worktree 上跑（护栏：不跑测试/不 close/不 push）。codex 自己读了 `cli_backend.py / session.py / db.py / web_app.py` + 三个测试、**定位真实调用点**、新增 `extract_draft_action` **完全对齐既有抽取器写法**、接进 pending 流复用 `add_directive(status="pending")`，44 行、改在对的地方、符合项目惯例。**外人模型、零项目上下文喂入 → 产出像样且地道的改动**，底座质量出乎意料地强。
 3. **同一份 diff 同时坐实「无评审闸 = 真缺陷直接 ship」**：Ralph 改完即 commit+close，而该 diff 至少 5 个真问题、Sandcastle 默认循环一个不拦：① **漏 issue 硬要求**（没实现「pending 原地更新 last-write-wins」，issue 白纸黑字「唯一新增要求」）② 草案文本 = 大臣整段回话（含闲聊前缀，未剥）③ 无测试（违项目 TDD 铁律）④ 每条无前缀对话多一次 LLM 抽取、延迟叠加无人审 ⑤ 称对齐 ADR 0006 但没真打开该 ADR。**这 5 个缺陷全落在「质量层」该拦的范围内**——即本决定要自叠的那层。
+4. **parallel-planner 端到端跑通（并行编排）**：`plan → 并行 implement → merge` 三阶段、编排本体是**固定可复现的 TS 代码**（main.mts），仅每轮「选哪些 issue」是 LLM 读 issue 图产结构化 JSON（zod 校验）。真跑：plan 出 2 个独立任务 → **两个 implementer 容器真并发**（各在 `sandcastle/issue-{id}` 隔离分支、各 1 commit）→ merge agent 把两分支并回 master（git graph 真菱形、`alpha.js`+`beta.js` 落地）。**依赖感知**经「每轮只取当前未阻塞、阻塞者下轮 merge 后再取」实现 = #217 的「依赖按层 barrier」。**确定性分支名**（`sandcastle/issue-{id}`）= 重规划保留已积累进度（#217 的 git-skip 续跑）。
 
 ## Considered Options
 
@@ -33,4 +34,6 @@ Status: Proposed（2026-06-19；spike 实证「底座可行 + 缺质量层」两
 - **spike 发现 1（RALPH prompt 假设 JS 项目）**：scaffold 的 `simple-loop` prompt 硬写 `npm run typecheck && npm run test`；Ming_LLM 是 Python（pytest）为主、`web/package.json` 还缺 test/typecheck 脚本。叠层时 verify 命令须按本项目重写（prompt 级，易）。
 - **spike 发现 2（镜像须带项目工具链才能 verify）**：spike 镜像是 `node:22-bookworm`，无 python → 容器内跑不了 pytest（本次靠护栏跳过 verify）。真用于 Ming_LLM 须预设镜像带 python + 项目 deps（呼应 #217 PRD 的「预设 image 摊薄启动」）。
 - **依赖**：colima Docker 在跑（~8GB RAM）；订阅 auth 经 bind-mount 进容器，凭据副本用完即删（铁律）。CI-native AFK + 订阅大概率卡（runner 无登录无 key），编排仅本机可行。
-- **未决**：并行编排（parallel-planner）是否满足「依赖感知并行 + 串行 merge 队列」尚未实证（本 ADR Proposed 的主要待补证据）。
+- **spike 发现 3（parallel-planner 的两处与 #217 真差异，均 prompt 级可调，非架构缺口）**：① **依赖是 LLM 推断**（planner 读 issue 文本 + 文件重叠猜 blocked-by），#217 要读 **GitHub native blocked_by**（确定性）——改 plan-prompt 用 `gh` 读原生依赖即可；② **merge 是 LLM agent 解冲突 + 跑 npm test**（merge-prompt），#217 要**确定性串行 merge 队列**（切片返 reviewed hash、编排器逐个合）——可换成脚本侧 git 合、把 LLM merge 退化为兜底。③ merge 阶段 close issue（同 simple-loop 的 close 语义冲突）。
+- **质量层确认仍是净增量**：parallel-planner 的 plan/execute/merge **三阶段全程零 cross-model 评审 / 无 findings 分流 / 无独立家族整体闸**（merge agent 只跑自己的 npm test）。两个模板都证实：评审承重闸 = Sandcastle 没有、#217 要自叠的那层。
+- **未决（剩唯一项）**：设计评审闭环（本地 cmr + 线上 bot）未跑——本 ADR Proposed → Accepted 的最后一道。并行编排证据已补齐（发现 3）。
