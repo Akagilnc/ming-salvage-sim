@@ -2532,6 +2532,11 @@ select:focus-visible {
   color: #6b5d46;
 }
 
+.issue-commitment-progress {
+  color: #5b4d35;
+  font-weight: 700;
+}
+
 .issue-tags {
   display: flex;
   flex-wrap: wrap;

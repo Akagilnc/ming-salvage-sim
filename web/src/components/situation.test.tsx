@@ -30,6 +30,25 @@ function makeIssue(): Issue & { commitment_progress_text: string } {
   };
 }
 
+function makeCommitmentWithoutProgressText(): Issue {
+  const issue: Issue = { ...makeIssue() };
+  delete issue.commitment_progress_text;
+  return {
+    ...issue,
+    commitment_progress: { months_elapsed: 1 },
+  };
+}
+
+function makeOrdinaryIssueWithoutProgressText(): Issue {
+  const issue: Issue = { ...makeIssue() };
+  delete issue.commitment_progress;
+  delete issue.commitment_progress_text;
+  return {
+    ...issue,
+    tags: [],
+  };
+}
+
 function render(element: React.ReactNode) {
   const host = document.createElement("div");
   document.body.appendChild(host);
@@ -49,6 +68,20 @@ describe("commitment progress display", () => {
   it("shows commitment progress in the issue board", () => {
     const cleanup = render(<IssueGroup title="待办" issues={[makeIssue()]} />);
     expect(document.body.textContent).toContain(commitmentText);
+    cleanup();
+  });
+
+  it("uses a styled fallback when a commitment has progress but no text", () => {
+    const cleanup = render(<IssueGroup title="待办" issues={[makeCommitmentWithoutProgressText()]} />);
+    const progress = document.querySelector(".issue-commitment-progress");
+    expect(progress?.textContent).toBe("未知进度");
+    cleanup();
+  });
+
+  it("does not show fallback progress for ordinary issues", () => {
+    const cleanup = render(<IssueGroup title="待办" issues={[makeOrdinaryIssueWithoutProgressText()]} />);
+    expect(document.body.textContent).not.toContain("未知进度");
+    expect(document.querySelector(".issue-commitment-progress")).toBeNull();
     cleanup();
   });
 
