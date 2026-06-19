@@ -178,6 +178,8 @@ def _player_visible_extractor_output(applied: object) -> object:
     visible.pop("faction_delta_rejections", None)
     visible.pop("class_delta_rejections", None)
     visible.pop("economy_moves_rejections", None)
+    visible.pop("validate_shape_rejections", None)
+    visible.pop("module_misroute_rejections", None)
     issue_summary = visible.get("issue_summary")
     if isinstance(issue_summary, dict):
         issue_person_changes = issue_summary.get("applied_person_changes")
