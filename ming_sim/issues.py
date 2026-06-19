@@ -3599,8 +3599,10 @@ def apply_issue_tracker_output(
         commitment_shape_without_marker = (
             not commitment_kind
             and kind == "initiative"
-            and (bool(stop_condition) or end_turn_marker_shape)
-            and bool(ongoing_eff)
+            and (
+                end_turn_marker_shape
+                or (bool(stop_condition) and bool(ongoing_eff))
+            )
         )
         if commitment_shape_without_marker:
             applied_new.append({

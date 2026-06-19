@@ -34,6 +34,19 @@ def test_issue_extractor_prompt_routes_limited_duration_decree_commitments():
     assert "stop_condition" in prompt
 
 
+def test_issue_extractor_prompt_routes_future_one_shot_decree_commitments():
+    prompt = (ROOT / "content/prompts/score_extractor_issues.md").read_text(encoding="utf-8")
+
+    assert "圣旨承诺 form③" in prompt
+    assert "未来一次性" in prompt
+    assert "X 月后复试/复核" in prompt
+    assert "三月后复试" in prompt
+    assert "到期待裁" in prompt
+    assert "end_turn" in prompt
+    assert "commitment_kind" in prompt
+    assert "ongoing_effects 可留空" in prompt
+
+
 def test_until_stop_commitment_issue_is_created_with_carrier_fields(game, monkeypatch):
     db, state, content = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
@@ -176,6 +189,73 @@ def test_limited_duration_commitment_shape_rejects_without_explicit_marker(game,
     assert created["category"] == "invalid_enum"
     assert "commitment_kind" in created["reason"]
     assert _issue_by_title(db, "连续两月补饷但缺承诺标记") is None
+
+
+def test_future_one_shot_commitment_issue_is_created_with_deadline_only(game, monkeypatch):
+    db, state, content = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    out = I.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "origin_ref": "decree:turn-1:sunchengzong-review",
+                    "kind": "initiative",
+                    "title": "三月后复试孙承宗",
+                    "stage_text": "孙承宗暂听候政，三月后复试军国大计。",
+                    "end_turn": state.turn + 3,
+                    "commitment_kind": "until_stop",
+                }
+            ]
+        },
+        content=content,
+    )
+
+    created = out["issue_summary"]["new_issues"][0]
+    assert created["rejected"] is False
+    row = _issue_by_title(db, "三月后复试孙承宗")
+    assert row is not None
+    assert row["commitment_kind"] == "until_stop"
+    assert row["end_turn"] == state.turn + 3
+    assert row["stop_condition"] == ""
+    assert json.loads(row["ongoing_effects"]) == {}
+    assert row["inertia"] == 0
+    assert row["cancellable"] == "decree"
+    payload = I.issue_to_payload(row, [])
+    assert payload["end_turn"] == state.turn + 3
+    assert payload["commitment_kind"] == "until_stop"
+
+
+def test_future_one_shot_commitment_shape_rejects_without_explicit_marker(game, monkeypatch):
+    db, state, content = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    out = I.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "origin_ref": "decree:turn-1:sunchengzong-review-without-marker",
+                    "kind": "initiative",
+                    "title": "三月后复核孙承宗但缺承诺标记",
+                    "stage_text": "孙承宗暂听候政，三月后复核。",
+                    "end_turn": state.turn + 3,
+                }
+            ]
+        },
+        content=content,
+    )
+
+    created = out["issue_summary"]["new_issues"][0]
+    assert created["rejected"] is True
+    assert created["category"] == "invalid_enum"
+    assert "commitment_kind" in created["reason"]
+    assert _issue_by_title(db, "三月后复核孙承宗但缺承诺标记") is None
 
 
 def test_until_stop_commitment_requires_initiative_kind(game, monkeypatch):
