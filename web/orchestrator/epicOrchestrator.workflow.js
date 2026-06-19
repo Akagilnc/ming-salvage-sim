@@ -139,7 +139,10 @@ export function normalizeWorkflowArgs(rawArgs) {
   const rawEpic = typeof rawArgs === 'object' && rawArgs !== null && 'epicIssueNumber' in rawArgs ? rawArgs.epicIssueNumber : rawArgs;
   const epicIssueNumber = String(rawEpic ?? '').trim();
   if (!/^[0-9]+$/.test(epicIssueNumber)) {
-    throw new Error('epic-orchestrator requires args to be a parent epic issue number, e.g. 217 or {"epicIssueNumber":217}.');
+    throw new Error('epic-orchestrator requires args to be a positive parent epic issue number, e.g. 217 or {"epicIssueNumber":217}.');
+  }
+  if (Number(epicIssueNumber) <= 0) {
+    throw new Error('epic-orchestrator requires args to be a positive parent epic issue number, e.g. 217 or {"epicIssueNumber":217}.');
   }
   return epicIssueNumber;
 }
@@ -152,23 +155,44 @@ export async function runEpicDiscoveryWorkflow({ args, Bash, log }) {
   const discovered = parseBashJson(
     await Bash(`python3 - ${shellQuote(epicIssueNumber)} <<'PY'
 import json
+import os
 import subprocess
 import sys
 
-REPO = "Akagilnc/ming-salvage-sim"
+GH_TIMEOUT_SECONDS = 30
 epic = sys.argv[1]
 
 
-def gh_json(path):
-    completed = subprocess.run(
-        ["gh", "api", "-H", "Accept: application/vnd.github+json", path],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+def run_gh(args, context):
+    try:
+        completed = subprocess.run(
+            ["gh", *args],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise SystemExit(f"gh {context} timed out after {GH_TIMEOUT_SECONDS}s") from exc
     if completed.returncode != 0:
-        raise SystemExit(f"gh api failed for {path}: {completed.stderr.strip() or completed.stdout.strip()}")
-    payload = completed.stdout.strip()
+        raise SystemExit(f"gh {context} failed: {completed.stderr.strip() or completed.stdout.strip()}")
+    return completed.stdout.strip()
+
+
+def resolve_repo():
+    repo = os.environ.get("GITHUB_REPOSITORY", "").strip()
+    if not repo:
+        repo = run_gh(["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], "repo view")
+    if not repo or "/" not in repo:
+        raise SystemExit("Could not resolve GitHub repository. Set GITHUB_REPOSITORY or run inside a gh-linked repository.")
+    return repo
+
+
+REPO = resolve_repo()
+
+
+def gh_json(path):
+    payload = run_gh(["api", "-H", "Accept: application/vnd.github+json", path], f"api {path}")
     return json.loads(payload) if payload else []
 
 children = gh_json(f"/repos/{REPO}/issues/{epic}/sub_issues")

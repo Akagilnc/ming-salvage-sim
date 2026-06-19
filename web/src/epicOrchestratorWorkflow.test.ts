@@ -93,11 +93,36 @@ describe("epic orchestrator workflow inline kernel drift guard", () => {
 });
 
 describe("epic orchestrator workflow spine", () => {
-  it("normalizes numeric epic args and rejects missing or non-numeric args", () => {
+  it("normalizes positive numeric epic args and rejects missing, non-numeric, or non-positive args", () => {
     expect(normalizeWorkflowArgs(217)).toBe("217");
     expect(normalizeWorkflowArgs({ epicIssueNumber: " 217 " })).toBe("217");
     expect(() => normalizeWorkflowArgs({})).toThrow("epic-orchestrator requires args");
     expect(() => normalizeWorkflowArgs("217x")).toThrow("epic-orchestrator requires args");
+    expect(() => normalizeWorkflowArgs(0)).toThrow("positive parent epic issue number");
+    expect(() => normalizeWorkflowArgs("000")).toThrow("positive parent epic issue number");
+  });
+
+  it("uses a bounded gh discovery script that resolves the repository at runtime", async () => {
+    let discoveryCommand = "";
+
+    await runEpicDiscoveryWorkflow({
+      args: 217,
+      log: () => undefined,
+      Bash: async (command: string) => {
+        discoveryCommand = command;
+        return JSON.stringify({
+          epicId: 217,
+          issues: [{ id: 219, epicId: 217, state: "open", title: "S1", url: "https://example.test/219" }],
+          blockedBy: []
+        });
+      }
+    });
+
+    expect(discoveryCommand).toContain("GITHUB_REPOSITORY");
+    expect(discoveryCommand).toContain('["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"]');
+    expect(discoveryCommand).toContain("timeout=30");
+    expect(discoveryCommand).toContain("TimeoutExpired");
+    expect(discoveryCommand).not.toContain('REPO = "Akagilnc/ming-salvage-sim"');
   });
 
   it("returns a structured ordered execution plan and boundary copy from discovered gh JSON", async () => {
