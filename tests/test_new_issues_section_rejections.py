@@ -122,7 +122,7 @@ def test_new_issue_whitespace_resolve_condition_falls_back_to_stop_condition(gam
             "kind": "initiative",
             "title": "测试·stop_condition fallback",
             "resolve_condition": "   ",
-            "stop_condition": "character.毛文龙.loyalty >= 65",
+            "stop_condition": "region.shaanxi.unrest <= 30",
         }],
     })
 
@@ -130,7 +130,7 @@ def test_new_issue_whitespace_resolve_condition_falls_back_to_stop_condition(gam
     assert len(created) == 1, out
     iid = int(created[0]["issue_id"])
     row = db.conn.execute("SELECT resolve_condition FROM issues WHERE id=?", (iid,)).fetchone()
-    assert row["resolve_condition"] == "character.毛文龙.loyalty >= 65"
+    assert row["resolve_condition"] == "region.shaanxi.unrest <= 30"
 
 
 def test_new_issue_infinity_field_rejected_not_abort(game):

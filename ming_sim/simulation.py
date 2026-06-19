@@ -13,11 +13,14 @@ from ming_sim.context import historical_anchor_for_month, victory_status
 from ming_sim.db import GameDB
 from ming_sim.issues import (
     commitment_condition_role,
+    commitment_display_text,
+    commitment_progress_payload,
     gather_candidate_events,
     issue_to_payload,
     normalize_event_outcome_labels_or_error,
 )
 from ming_sim.models import GameState, loads_effect_dict
+from ming_sim.settlement_payload import augment_secret_orders_with_due_commitments
 from ming_sim.token_stats import tlog
 
 
@@ -81,13 +84,16 @@ ITEM_FIELD_ALIASES = {
     "narrative": "narrative", "叙述": "narrative",
     "inertia_delta": "inertia_delta", "惯性增量": "inertia_delta",
     "origin_kind": "origin_kind", "来源类型": "origin_kind",
+    "origin_ref": "origin_ref", "来源引用": "origin_ref", "诏书引用": "origin_ref",
     "id": "id", "编号": "id",
     "kind": "kind", "类型": "kind",
     "title": "title", "标题": "title",
     "bar_value": "bar_value", "当前进度": "bar_value",
     "expected_months": "expected_months", "预计月数": "expected_months",
+    "end_turn": "end_turn", "到期回合": "end_turn", "到期月": "end_turn",
+    "commitment_kind": "commitment_kind", "承诺类型": "commitment_kind", "承诺标记": "commitment_kind",
     "resolve_condition": "resolve_condition", "解决条件": "resolve_condition",
-    "stop_condition": "resolve_condition", "停止条件": "resolve_condition",
+    "stop_condition": "stop_condition", "停止条件": "stop_condition",
     "fail_condition": "fail_condition", "失败条件": "fail_condition",
     "ongoing_effects": "ongoing_effects", "持续效果": "ongoing_effects",
     "effect_on_resolve": "effect_on_resolve", "解决效果": "effect_on_resolve",
@@ -163,12 +169,16 @@ ITEM_FIELD_LABELS = {
     "narrative": "叙述",
     "inertia_delta": "惯性增量",
     "origin_kind": "来源类型",
+    "origin_ref": "来源引用",
     "id": "编号",
     "kind": "类型",
     "title": "标题",
     "bar_value": "当前进度",
     "expected_months": "预计月数",
+    "end_turn": "到期回合",
+    "commitment_kind": "承诺类型",
     "resolve_condition": "解决条件",
+    "stop_condition": "停止条件",
     "fail_condition": "失败条件",
     "ongoing_effects": "持续效果",
     "effect_on_resolve": "解决效果",
@@ -294,7 +304,7 @@ def build_simulator_payload(
 ) -> Dict[str, object]:
     active = db.list_active_issues()
     issues_payload = [
-        issue_to_payload(row, db.list_recent_issue_advances(int(row["id"]), 1))
+        issue_to_payload(row, db.list_recent_issue_advances(int(row["id"]), 1), db=db, state=state)
         for row in active
     ]
     # 帝国修正不进 simulator payload：它是纯机械的百分比修正符，由落账层自动放大/缩小增量，不进叙事。
@@ -364,10 +374,10 @@ def build_simulator_payload(
         "deaths_this_turn": deaths_this_turn or [],
         "debuts_this_turn": debuts_this_turn or [],
         "relevant_memories": relevant_memories or [],
-        "secret_orders": secret_orders or {},
+        "secret_orders": augment_secret_orders_with_due_commitments(secret_orders, db, state),
         # HITL：本回合 simulator 至少应产出的重大决策点数（全局玩法设置，0=不强制）。
         "hitl_min_decisions": _load_hitl_min_decisions(),
-        "data_note": "盘面表（buildings/court_roster/armies/regions）在本输入的开头以 TSV 文本块给出（首行列名、tab 分隔、每行一条记录），不在本 JSON 内；本 JSON 只含其余字段（含 powers_brief/factions_brief/classes_brief 叙述串、active_issues 等）。secret_orders 为皇帝密令分组对象（两组：在办=承办中、待核议=待本回合核议裁决），独立于 relevant_memories；每组条目含 id/minister_name/title/content/turn_issued/due_turn/progress/sim_note。",
+        "data_note": "盘面表（buildings/court_roster/armies/regions）在本输入的开头以 TSV 文本块给出（首行列名、tab 分隔、每行一条记录），不在本 JSON 内；本 JSON 只含其余字段（含 powers_brief/factions_brief/classes_brief 叙述串、active_issues 等）。secret_orders 为皇帝密令/到期待裁承诺分组对象（两组：在办=承办中、待核议=待本回合核议裁决），独立于 relevant_memories；真实密令条目含 id/minister_name/title/content/turn_issued/due_turn/progress/sim_note；到期待裁承诺条目带 entry_kind=due_commitment 与 issue_id。",
     }
 
 
@@ -514,20 +524,32 @@ def _extractor_context_payload(
             })
         return out
 
-    issues_brief = [
-        {
+    issues_brief: List[Dict[str, object]] = []
+    for r in active:
+        keys = r.keys() if hasattr(r, "keys") else []
+        resolve_cond = (r["resolve_condition"] if "resolve_condition" in keys else "") or ""
+        commitment_kind = (r["commitment_kind"] if "commitment_kind" in keys else "") or ""
+        stop_condition = (r["stop_condition"] if "stop_condition" in keys else "") or ""
+        issue = {
             "issue_id": int(r["id"]),
             "title": r["title"],
             "bar_value": int(r["bar_value"]),
             "inertia": int(r["inertia"]),
             "stage_text": r["stage_text"],
             "cancellable": r["cancellable"],
-            "resolve_condition": (r["resolve_condition"] if "resolve_condition" in r.keys() else "") or "(未填)",
-            "fail_condition": (r["fail_condition"] if "fail_condition" in r.keys() else "") or "(未填)",
-            **commitment_condition_role(r["resolve_condition"] if "resolve_condition" in r.keys() else ""),
+            "resolve_condition": resolve_cond or "(未填)",
+            "fail_condition": (r["fail_condition"] if "fail_condition" in keys else "") or "(未填)",
+            **commitment_condition_role(resolve_cond, commitment_kind),
         }
-        for r in active
-    ]
+        if commitment_kind:
+            issue["commitment_kind"] = commitment_kind
+        if stop_condition:
+            issue["stop_condition"] = stop_condition
+        progress = commitment_progress_payload(db, state, r)
+        if progress is not None:
+            issue["commitment_progress"] = progress
+            issue["待办未解进度"] = commitment_display_text(progress, r)
+        issues_brief.append(issue)
     # 局势自动月支汇总（独立顶层字段，不随 active_issues 一起被 _MODULE_DROP_FIELDS 剔除）。
     # extractor 据此判重：邸报提到的局势常态月支若在此清单，是程序自动落账项，勿写 钱粮收支。
     issue_auto_economy: List[Dict[str, object]] = []
@@ -583,7 +605,7 @@ def _extractor_context_payload(
         "power_ids": [str(r["id"]) for r in db.conn.execute("SELECT id FROM powers").fetchall()],
         "fiscal_config": db.get_fiscal_config(),
         "relevant_memories": relevant_memories or [],
-        "secret_orders": secret_orders or {},
+        "secret_orders": augment_secret_orders_with_due_commitments(secret_orders, db, state),
         "_format_note": "offstage_ministers（及未剔除时的盘面表）为 header+二维数组（cols 列名 + rows 数据）。",
     }
 

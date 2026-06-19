@@ -837,6 +837,9 @@ class GameDB:
                 effect_on_fail TEXT NOT NULL DEFAULT '{}',
                 resolve_condition TEXT NOT NULL DEFAULT '',
                 fail_condition TEXT NOT NULL DEFAULT '',
+                end_turn INTEGER NOT NULL DEFAULT 0,
+                stop_condition TEXT NOT NULL DEFAULT '',
+                commitment_kind TEXT NOT NULL DEFAULT '',
                 resolution_summary TEXT NOT NULL DEFAULT '',
                 last_advance_turn INTEGER NOT NULL DEFAULT 0,
                 closed_turn INTEGER,
@@ -989,6 +992,9 @@ class GameDB:
         self.ensure_column("characters", "transit_to", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "resolve_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "fail_condition", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("issues", "end_turn", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column("issues", "stop_condition", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("issues", "commitment_kind", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "birth_year", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "historical_death_year", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "historical_death_month", "INTEGER NOT NULL DEFAULT 0")
@@ -6356,6 +6362,9 @@ class GameDB:
         effect_on_fail: Dict[str, object] | None = None,
         resolve_condition: str = "",
         fail_condition: str = "",
+        end_turn: int = 0,
+        stop_condition: str = "",
+        commitment_kind: str = "",
         commit: bool = True,
     ) -> int:
         if kind not in ("situation", "initiative"):
@@ -6377,8 +6386,8 @@ class GameDB:
                 phase, stage_text, status, severity, region_hint, faction_hint,
                 tags, ongoing_effects, cancellable, cancel_cost,
                 effect_on_resolve, effect_on_fail, resolve_condition, fail_condition,
-                last_advance_turn
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                end_turn, stop_condition, commitment_kind, last_advance_turn
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 sanitize_sqlite_text(kind), sanitize_sqlite_text(title),
@@ -6393,6 +6402,8 @@ class GameDB:
                 safe_json_dumps(effect_on_resolve or {}, ensure_ascii=False),
                 safe_json_dumps(effect_on_fail or {}, ensure_ascii=False),
                 sanitize_sqlite_text(resolve_condition), sanitize_sqlite_text(fail_condition),
+                int(end_turn), sanitize_sqlite_text(str(stop_condition or "")),
+                sanitize_sqlite_text(str(commitment_kind or "")),
                 state.turn,
             ),
         )
@@ -6432,7 +6443,7 @@ class GameDB:
         new_phase = self._derive_issue_phase(to_value)
         new_status = row["status"]
         closed_turn = row["closed_turn"]
-        commitment_stop_condition = _is_commitment_stop_condition(row["resolve_condition"])
+        commitment_stop_condition = bool(row["commitment_kind"]) or _is_commitment_stop_condition(row["resolve_condition"])
         if to_value >= 100 and not commitment_stop_condition:
             new_status = "resolved"
             closed_turn = state.turn

@@ -15,8 +15,11 @@ import json
 import re
 from typing import TYPE_CHECKING, Dict, List
 
+from ming_sim.models import effect_dict_has_work
+
 if TYPE_CHECKING:  # GameDB 仅用于 _select_secret_orders_for_sim 的类型注解（已 `from __future__ annotations`
     from ming_sim.db import GameDB  # 惰性字符串）；不在运行时 import db，使本模块运行时零 db 依赖（线上 sourcery）
+    from ming_sim.models import GameState
 
 CHEAT_NARRATIVE_PREFIX = (
     "【天命强制·结算优先】以下为既成事实，最高优先级，先于一切规则与档位上限。"
@@ -144,6 +147,64 @@ def _select_secret_orders_for_sim(db: GameDB, cap: int = 20) -> List[Dict[str, o
     pending = db.list_secret_orders(status="pending_review")
     active = db.list_secret_orders(status="active")
     return pending + active[: max(0, cap - len(pending))]
+
+
+def augment_secret_orders_with_due_commitments(
+    secret_orders: object,
+    db: GameDB,
+    state: GameState,
+) -> Dict[str, List[Dict[str, object]]]:
+    """复用密令待核议 payload 通道，追加 form③ 到期待裁承诺。
+
+    ADR 0013 D3/D9 要求：无 ongoing_effects、仅 end_turn 的未来一次性承诺，到期不 close，
+    但要从 active_issues 背景顶成本回合显式待裁输入。这里不建 due_commitments 顶层结构，
+    只在既有 `secret_orders["待核议"]` 通道里追加带 entry_kind 的条目。
+    """
+    rows = db.conn.execute(
+        """
+        SELECT * FROM issues
+        WHERE status='active'
+          AND commitment_kind != ''
+          AND end_turn > 0
+          AND end_turn <= ?
+        ORDER BY id
+        """,
+        (int(state.turn),),
+    ).fetchall()
+    due_commitments: List[Dict[str, object]] = []
+    for row in rows:
+        if effect_dict_has_work(row["ongoing_effects"]):
+            continue
+        due_commitments.append({
+            "entry_kind": "due_commitment",
+            "issue_id": int(row["id"]),
+            "title": str(row["title"] or ""),
+            "content": str(row["stage_text"] or row["title"] or "")[:120],
+            "origin_ref": str(row["origin_ref"] or ""),
+            "turn_issued": int(row["origin_turn"] or 0),
+            "due_turn": int(row["end_turn"] or 0),
+            "progress": "无持续效果，期限届满。",
+            "review_reason": "到期待裁：未来一次性承诺已到期，请提到皇帝面前定夺，不得自动结案。",
+        })
+    if not due_commitments:
+        return secret_orders if isinstance(secret_orders, dict) else {}
+
+    groups: Dict[str, List[Dict[str, object]]] = {"在办": [], "待核议": []}
+    if isinstance(secret_orders, dict):
+        for key, value in secret_orders.items():
+            if isinstance(value, list):
+                groups[key] = [item for item in value if isinstance(item, dict)]
+    pending = groups.setdefault("待核议", [])
+    existing_due_ids = {
+        int(item["issue_id"])
+        for item in pending
+        if item.get("entry_kind") == "due_commitment" and item.get("issue_id") is not None
+    }
+    for item in due_commitments:
+        if int(item["issue_id"]) not in existing_due_ids:
+            pending.append(item)
+    groups.setdefault("在办", [])
+    return groups
 
 
 def _format_decision_directive(decisions: List[Dict[str, object]]) -> str:
