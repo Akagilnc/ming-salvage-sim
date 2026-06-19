@@ -884,9 +884,23 @@ class GameSession:
         # 能到这里说明 directive 未 commit/drop，snapshot 与 DB 一致（codex r5 F1 修复）。
         if not explicit_prefixed and not has_directive and not out.get("pending_action_id"):
             _has_pending_draft = any(p["kind"] == "directive" for p in pend_for_minister)
+            # 补充模式：提取现有草案文本喂给 extract_draft_intent，让 LLM 合并新旧草案；
+            # 直接用大臣回话（可能是确认语）会覆盖原草案（codex r6 F1）。
+            _existing_draft_text = ""
+            if _has_pending_draft:
+                _pdir = next((p for p in pend_for_minister if p["kind"] == "directive"), None)
+                if _pdir:
+                    import json as _json
+                    try:
+                        _existing_draft_text = str(
+                            _json.loads(_pdir.get("payload_json") or "{}").get("text") or ""
+                        )
+                    except (ValueError, TypeError):
+                        pass
             draft_res = extract_draft_intent(
                 player_message, reply, llm_config=llm_config,
                 has_pending_draft=_has_pending_draft,
+                existing_draft_text=_existing_draft_text,
             )
             if draft_res["draft_action"] == "拟旨" and draft_res["draft_text"]:
                 pid = self.db.upsert_pending_directive(

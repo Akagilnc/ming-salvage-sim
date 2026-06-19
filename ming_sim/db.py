@@ -4932,6 +4932,24 @@ class GameDB:
                     self._restore_row_in_tx(table, before_row)
                 else:
                     raise ValueError(f"不支持的回滚策略：{strategy}")
+            # write_decree() が commit_pending_actions(kind_filter="directive") で
+            # 生成した turn_directives(status='draft') はスナップショット外なので rollback_items
+            # に入らない。削除した pending_actions(kind='directive') と対応する draft 行を
+            # 明示削除してUNDO保証を完全にする（codex r6 F2）。
+            game_turn = int(turn_row.get("turn") or 0)
+            for item in items:
+                if str(item["target_table"]) != "pending_actions":
+                    continue
+                if str(item["rollback_strategy"]) != "delete_inserted_row":
+                    continue
+                after_data = self._json_load_row(item["after_json"])
+                if str(after_data.get("kind") or "") == "directive":
+                    mn = str(after_data.get("minister_name") or "")
+                    if mn and game_turn:
+                        self.conn.execute(
+                            "DELETE FROM turn_directives WHERE turn=? AND actor=? AND status='draft'",
+                            (game_turn, mn),
+                        )
             if message_ids:
                 placeholders = ",".join("?" for _ in message_ids)
                 self.conn.execute(

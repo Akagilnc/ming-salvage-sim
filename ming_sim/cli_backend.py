@@ -671,14 +671,28 @@ def extract_draft_intent(
     minister_reply: str,
     llm_config: Any = None,
     has_pending_draft: bool = False,
+    existing_draft_text: str = "",
 ) -> Dict[str, Any]:
     """LLM 判皇帝本轮是否在口头请大臣拟旨（非显式前缀），返回拟旨意图与草案文本。
     失败/无 → {"draft_action": "无", "draft_text": ""}。
-    has_pending_draft=True：本回合已有草案暂存，皇帝「补充/修改当前草稿」也归拟旨。"""
+    has_pending_draft=True：本回合已有草案暂存，皇帝「补充/修改当前草稿」也归拟旨。
+    existing_draft_text 非空时（补充模式）：LLM 输出合并草案，payload 存合并后全文；
+    不能用大臣确认回话（「好的，加上…」）覆盖原草案。"""
     supplement_hint = (
         "本回合已有草案暂存；如果皇帝是在补充/修改/扩充当前草稿"
         "（如「再补一条」「加上」「改成」「把…去掉」等），也归拟旨。\n"
         if has_pending_draft else ""
+    )
+    # 补充模式（has_pending_draft + existing_draft_text）：注入现有草案，要求 LLM 输出合并草案。
+    # 直接用大臣回话（可能是「好的，加上…」等确认语）会覆盖原草案——须由 LLM 合并。
+    _supplement_mode = has_pending_draft and bool(existing_draft_text.strip())
+    merge_schema_line = (
+        '  "合并草案": ""   // 仅拟旨时必填：把【现有草案】与本轮新增/修改指令合并成完整草案；无拟旨意图时留空\n'
+        if _supplement_mode else ""
+    )
+    draft_context = (
+        f"【现有草案】{existing_draft_text.strip()}\n"
+        if _supplement_mode else ""
     )
     prompt = (
         "你是信息抽取器，不扮演、不写圣旨。读皇帝这句话 + 大臣回话，判断皇帝**本轮**"
@@ -687,9 +701,11 @@ def extract_draft_intent(
         + "只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
         "{\n"
         '  "拟旨意图": "无|拟旨"  // 皇帝明确请拟旨/起草圣旨=拟旨；闲谈/议事/问询/密令/任免=无\n'
-        "}\n"
+        + merge_schema_line
+        + "}\n"
         "判定要点：皇帝明确让大臣拟旨/起草圣旨→拟旨；仅商议/问询/催办/评论不算。语义判断，别拘字面。\n\n"
-        "【皇帝】" + (player_message or "（无）") + "\n"
+        + draft_context
+        + "【皇帝】" + (player_message or "（无）") + "\n"
         "【大臣回话】" + (minister_reply or "（无）") + "\n"
     )
     raw = ""
@@ -700,9 +716,15 @@ def extract_draft_intent(
     obj = _loads_lenient(raw) or {}
     _raw = str(obj.get("拟旨意图") or "无").strip()
     _action = _raw if _raw in {"无", "拟旨"} else "无"
+    # 补充模式：优先用 LLM 输出的合并草案；LLM 未填时 fallback 到 minister_reply。
+    if _supplement_mode and _action == "拟旨":
+        merged = str(obj.get("合并草案") or "").strip()
+        draft_text = merged if merged else (minister_reply or "").strip()
+    else:
+        draft_text = (minister_reply or "").strip()
     return {
         "draft_action": _action,
-        "draft_text": (minister_reply or "").strip(),
+        "draft_text": draft_text,
     }
 
 
