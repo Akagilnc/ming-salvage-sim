@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
+    "test": "vitest run",
     "electron": "npm run build && electron electron/main.cjs",
     "electron:dev": "npm run build && electron electron/main.cjs",
     "preview": "vite preview --host 127.0.0.1"
@@ -24,6 +25,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "electron": "^42.3.2",
-    "electron-builder": "^26.8.1"
+    "electron-builder": "^26.8.1",
+    "vitest": "^4.1.9"
   }
 }
