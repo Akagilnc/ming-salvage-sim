@@ -447,6 +447,20 @@ def test_load_event_rejects_non_boolean_open_window(monkeypatch):
         content_mod.load_event_content("x.json")
 
 
+def test_load_event_rejects_strategic_foreign_situation(monkeypatch):
+    """战略/外敌分类只允许 node/ending，不能被 situation 静默吞掉。"""
+    import pytest
+    import ming_sim.content as content_mod
+    bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
+            "urgency": 1, "severity": 1, "credibility": 1,
+            "interests": [], "audiences": [],
+            "event_type": "situation",
+            "trigger_class": "strategic_foreign"}]
+    monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
+    with pytest.raises(SystemExit, match=r"strategic_foreign.*situation|node/ending"):
+        content_mod.load_event_content("x.json")
+
+
 def test_load_event_rejects_latest_before_earliest(monkeypatch):
     """最晚时点不能早于最早时点，否则该事件永远无法合法开窗。"""
     import pytest
@@ -1395,14 +1409,20 @@ def test_ordinary_army_station_delta_with_strategic_place_anchor_is_not_rejected
     assert out["army_changes"][0].get("rejected") is not True
 
 
-def test_non_battle_foreign_node_can_trigger_without_battle_ledger_delta(game):
-    """#189 CMR R2：外族 node 不等于战略战事；非战斗节点不应被战果主账门误挡。"""
+def test_issue_194_lindan_xiqian_requires_world_state_main_ledger_delta(game):
+    """#194：林丹汗西迁已归战略/外敌类，必须落势力或世界主账才算触发。"""
     db, state, content = game
     issues.bind_content(content)
     state.year = 1632
     state.period = 4
 
     assert any(ev.id == "lindan_xiqian" for ev in issues.gather_candidate_events(state, db))
+    before_mongol = db.conn.execute(
+        "SELECT military_strength FROM powers WHERE id = ?", ("mongol",)
+    ).fetchone()["military_strength"]
+    before_houjin = db.conn.execute(
+        "SELECT military_strength FROM powers WHERE id = ?", ("houjin",)
+    ).fetchone()["military_strength"]
 
     out = issues.apply_score_extraction(
         db,
@@ -1411,8 +1431,173 @@ def test_non_battle_foreign_node_can_trigger_without_battle_ledger_delta(game):
         content=content,
     )
 
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert "主账" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert not db.has_event_triggered("lindan_xiqian")
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "lindan_xiqian"}],
+            "power_updates": {
+                "mongol": {"military_strength": -8, "reason": "林丹汗西迁青海，察哈尔诸部离散"},
+                "houjin": {"military_strength": 5, "reason": "林丹汗西迁后后金收拢蒙古右翼"},
+            },
+        },
+        content=content,
+    )
+
     assert out["issue_summary"]["new_issues"][0]["rejected"] is False
     assert db.has_event_triggered("lindan_xiqian")
+    assert db.conn.execute(
+        "SELECT military_strength FROM powers WHERE id = ?", ("mongol",)
+    ).fetchone()["military_strength"] == before_mongol - 8
+    assert db.conn.execute(
+        "SELECT military_strength FROM powers WHERE id = ?", ("houjin",)
+    ).fetchone()["military_strength"] == before_houjin + 5
+
+
+def test_lindan_xiqian_does_not_capture_untriggered_beizhili_border_policy_delta(game):
+    """PR R1：普通北直隶边防政策不能被林丹汗西迁锚点误当成孤儿战果。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1632
+    state.period = 4
+    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (30, "beizhili"))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "region_delta": {
+                "beizhili": {
+                    "military_pressure": -3,
+                    "reason": "修筑蒙古边墙，北直隶军压下降",
+                }
+            }
+        },
+        content=content,
+    )
+
+    assert not db.has_event_triggered("lindan_xiqian")
+    assert db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
+    ).fetchone()["military_pressure"] == 27
+    assert out["region_changes"][0].get("rejected") is not True
+
+
+def test_shared_jinzhou_result_does_not_double_consume_dalingghe_and_songshan(game):
+    """PR R1：大凌河与松锦同池时，泛锦州战果不能同一 delta 双落账。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1641
+    state.period = 8
+    db.conn.execute(
+        "UPDATE regions SET controlled_by = ?, military_pressure = ? WHERE id = ?",
+        ("ming", 20, "liaodong"),
+    )
+    db.conn.execute(
+        "UPDATE armies SET supply = ?, arrears = ?, morale = ? WHERE id = ?",
+        (40, 45, 50, "guanning"),
+    )
+    db.conn.execute("UPDATE powers SET military_strength = ? WHERE id = ?", (75, "houjin"))
+    cands = {ev.id for ev in issues.gather_candidate_events(state, db)}
+    assert {"dalingghe", "songshan_battle"} <= cands
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {"origin_kind": "event_pool", "id": "dalingghe"},
+                {"origin_kind": "event_pool", "id": "songshan_battle"},
+            ],
+            "region_delta": {
+                "liaodong": {
+                    "military_pressure": 8,
+                    "reason": "锦州战事软判辽东军压上升",
+                }
+            },
+        },
+        content=content,
+    )
+
+    assert not db.has_event_triggered("dalingghe")
+    assert db.has_event_triggered("songshan_battle")
+    assert db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id = ?", ("liaodong",)
+    ).fetchone()["military_pressure"] == 28
+    assert any(
+        item["id"] == "dalingghe" and item.get("rejected")
+        for item in out["issue_summary"]["new_issues"]
+    )
+
+
+@pytest.mark.parametrize("reason", [
+    "修筑洛阳城防，河南军压下降",
+    "赈济开封灾民，河南军压下降",
+])
+def test_henan_place_policy_delta_does_not_capture_untriggered_fall_events(game, reason):
+    """PR R2：普通河南治理不能因洛阳/开封地名被误当成孤儿城陷战果。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1642
+    state.period = 9
+    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (30, "henan"))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "region_delta": {
+                "henan": {
+                    "military_pressure": -4,
+                    "reason": reason,
+                }
+            }
+        },
+        content=content,
+    )
+
+    assert not db.has_event_triggered("luoyang_fallen")
+    assert not db.has_event_triggered("kaifeng_siege")
+    assert db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id = ?", ("henan",)
+    ).fetchone()["military_pressure"] == 26
+    assert out["region_changes"][0].get("rejected") is not True
+
+
+def test_henan_bandit_policy_delta_does_not_capture_untriggered_luoyang_event(game):
+    """PR R3：普通李自成势力变化不能因河南+流寇泛锚点被误当成洛阳陷落战果。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1642
+    state.period = 9
+    db.conn.execute(
+        "UPDATE powers SET military_strength = ? WHERE id = ?",
+        (52, "bandit_li_zicheng"),
+    )
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "power_updates": {
+                "bandit_li_zicheng": {
+                    "military_strength": -3,
+                    "reason": "河南流寇被围剿，声势稍挫",
+                }
+            }
+        },
+        content=content,
+    )
+
+    assert not db.has_event_triggered("luoyang_fallen")
+    assert db.conn.execute(
+        "SELECT military_strength FROM powers WHERE id = ?", ("bandit_li_zicheng",)
+    ).fetchone()["military_strength"] == 49
+    assert out["power_changes"][0].get("rejected") is not True
 
 
 def test_unrelated_region_delta_does_not_satisfy_strategic_event_result_gate(game):
@@ -2872,6 +3057,145 @@ def test_issue_191_person_core_events_are_explicitly_classified(content):
         event_id for event_id in not_person_core
         if content.event_by_id[event_id].person_core_subjects
     }
+
+
+def test_issue_194_strategic_foreign_events_are_explicitly_classified_and_gated(content):
+    """#194：战略/外敌类事件显式分类，且每条都有结构化 trigger_gate。"""
+    raw_by_id = {
+        str(item["id"]): item
+        for item in json.loads(
+            (Path(__file__).resolve().parents[1] / "content" / "events.json").read_text(
+                encoding="utf-8"
+            )
+        )
+    }
+    expected = {
+        "jisi_lubian": {},
+        "dalingghe": {
+            "region.liaodong.controlled_by": "==ming",
+            "army.guanning.supply": "<=45",
+            "army.guanning.arrears": ">=40",
+            "power.houjin.military_strength": ">=70",
+        },
+        "lindan_xiqian": {
+            "region.mongol_chahar.controlled_by": "==mongol",
+            "army.mongol_chahar_host.loyalty": "<=45",
+            "power.mongol.military_strength": "<=55",
+            "power.houjin.military_strength": ">=70",
+        },
+        "wuyin_lubian": {
+            "army.jizhen.arrears": ">=10",
+            "army.xuan_da.morale": "<=55",
+            "power.mongol.military_strength": "<=55",
+            "power.houjin.military_strength": ">=75",
+        },
+        "songshan_battle": {
+            "region.liaodong.controlled_by": "==ming",
+            "army.guanning.supply": "<=45",
+            "army.guanning.morale": "<=55",
+            "power.houjin.military_strength": ">=70",
+        },
+        "luoyang_fallen": {
+            "region.henan.controlled_by": "==ming",
+            "region.henan.unrest": ">=60",
+            "power.bandit_li_zicheng.military_strength": ">=45",
+        },
+        "kaifeng_siege": {
+            "event.luoyang_fallen.terminal_state": "==triggered",
+            "region.henan.controlled_by": "==ming",
+            "region.henan.military_pressure": ">=70",
+            "power.bandit_li_zicheng.military_strength": ">=55",
+        },
+        "beijing_fallen": {
+            "region.beizhili.controlled_by": "==ming",
+            "region.beizhili.military_pressure": ">=85",
+            "army.jingying.morale": "<=40",
+            "army.jingying.loyalty": "<=45",
+            "power.bandit_li_zicheng.military_strength": ">=65",
+        },
+    }
+
+    for event_id, trigger_gate in expected.items():
+        raw = raw_by_id[event_id]
+        ev = content.event_by_id[event_id]
+        assert raw["trigger_class"] == "strategic_foreign"
+        assert raw["trigger_gate"] == trigger_gate
+        assert ev.trigger_class == "strategic_foreign"
+        assert ev.event_type in {"node", "ending"}
+        assert ev.trigger_gate == trigger_gate
+        assert ev.person_core_subjects == []
+
+
+def test_strategic_foreign_classification_requires_outcome_targets(content, monkeypatch):
+    """PR R3：trigger_class 是内容真源，消费者 target map 漏项必须启动期 fail-loud。"""
+    targets = dict(issues._STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS)
+    targets.pop("luoyang_fallen")
+    monkeypatch.setattr(issues, "_STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS", targets)
+
+    with pytest.raises(SystemExit, match="luoyang_fallen.*outcome target"):
+        issues.bind_content(content)
+
+
+def test_issue_194_dead_named_general_does_not_obsolete_strategic_foreign_event(game):
+    """#194：战略/外敌事件点名将是席位/软判对象，不因该将死亡作废。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 8
+    db.set_character_status(state, "祖大寿", "dead", reason="测试：大凌河前已阵亡")
+
+    terminalized = issues.apply_event_terminal_states(state, db)
+    cands = issues.gather_candidate_events(state, db)
+
+    assert all(item["id"] != "dalingghe" for item in terminalized)
+    assert any(ev.id == "dalingghe" for ev in cands)
+    row = db.conn.execute(
+        "SELECT terminal_state FROM event_triggers WHERE event_id=?",
+        ("dalingghe",),
+    ).fetchone()
+    assert row is None
+
+
+def test_issue_194_dalingghe_requires_world_state_main_ledger_result(game):
+    """#194：新增战略/外敌事件复用 S3，同信封缺主账则拒收，有主账才记触发。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 8
+    assert any(ev.id == "dalingghe" for ev in issues.gather_candidate_events(state, db))
+
+    missing = issues.apply_score_extraction(
+        db,
+        state,
+        {"new_issues": [{"origin_kind": "event_pool", "id": "dalingghe"}]},
+        content=content,
+    )
+
+    assert missing["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert "主账" in missing["issue_summary"]["new_issues"][0]["reason"]
+    assert not db.has_event_triggered("dalingghe")
+
+    applied = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "dalingghe"}],
+            "region_delta": {
+                "liaodong": {
+                    "military_pressure": 8,
+                    "reason": "大凌河之围软判：后金围城，辽东军压上升",
+                }
+            },
+        },
+        content=content,
+    )
+
+    assert applied["issue_summary"]["new_issues"][0]["rejected"] is False
+    row = db.conn.execute(
+        "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id=?",
+        ("dalingghe",),
+    ).fetchone()
+    assert dict(row) == {"terminal_state": "triggered", "terminal_reason": ""}
 
 
 def test_huabei_plague_auto_triggers_with_deterministic_core_effect(game):
