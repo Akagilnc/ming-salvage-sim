@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { layerEpicIssues, type TopologyInput } from "./orchestratorKernel";
 // @ts-ignore Workflow scripts are plain JavaScript outside the web src TypeScript program.
-import { inlineLayerEpicIssues, normalizeWorkflowArgs, runEpicDiscoveryWorkflow, runEpicSingleSlicePipeline } from "../orchestrator/epicOrchestrator.workflow.js";
+import { inlineLayerEpicIssues, normalizeWorkflowArgs, runEpicDiscoveryWorkflow, runEpicLayeredPipeline, runEpicSingleSlicePipeline } from "../orchestrator/epicOrchestrator.workflow.js";
 
 const representativeTopologyInputs: TopologyInput[] = [
   {
@@ -359,10 +359,11 @@ describe("epic orchestrator S2 single-slice pipeline", () => {
     });
 
     expect(mergeCommand).toContain('show-ref --verify --quiet "refs/heads/${familyBranch}"');
-    expect(mergeCommand).toContain('switch "$familyBranch"');
-    expect(mergeCommand).toContain('switch -c "$familyBranch" --track "origin/${familyBranch}"');
-    expect(mergeCommand).toContain('switch -c "$familyBranch" "${implementedCommit}^"');
+    expect(mergeCommand).toContain('worktree add "$mergeWorktree" "$familyBranch"');
+    expect(mergeCommand).toContain('worktree add -b "$familyBranch" "$mergeWorktree" "origin/${familyBranch}"');
+    expect(mergeCommand).toContain('worktree add -b "$familyBranch" "$mergeWorktree" "${implementedCommit}^"');
     expect(mergeCommand).not.toContain("switch -C ${familyBranch}");
+    expect(mergeCommand).not.toContain('switch "$familyBranch"');
   });
 
   it("fails fast when reviewer output starts with an invalid JSON object", async () => {
@@ -505,7 +506,7 @@ describe("epic orchestrator S2 single-slice pipeline", () => {
       }
     });
 
-    const guardCommand = calls.find((command) => command.includes("enforce I7 commit discipline"));
+    const guardCommand = calls.find((command) => command.includes("为切片执行 I7 commit 纪律检查"));
     expect(guardCommand).toContain("rev-parse HEAD");
     expect(guardCommand).toContain("implementedCommit");
     expect(guardCommand).toContain("status --porcelain");
@@ -595,7 +596,7 @@ describe("epic orchestrator S2 single-slice pipeline", () => {
       }
     });
 
-    const secondGuardCommand = calls.filter((command) => command.includes("enforce I7 commit discipline"))[1];
+    const secondGuardCommand = calls.filter((command) => command.includes("为切片执行 I7 commit 纪律检查"))[1];
     expect(secondGuardCommand).toContain("merge-base --is-ancestor");
     expect(secondGuardCommand).toContain("abc123");
     expect(secondGuardCommand).toContain("fix456");
@@ -637,5 +638,288 @@ describe("epic orchestrator S2 single-slice pipeline", () => {
     expect(result.reviewAttempts.map((attempt: any) => attempt.commit)).toEqual(["abc123", "fix456"]);
     expect(result.merge).toBeUndefined();
     expect(calls.join("\n")).not.toContain("merge reviewed commit");
+  });
+});
+
+describe("epic orchestrator S3 layered parallel pipeline", () => {
+  it("passes the merged family base to dependent-layer slice agents after blockers merge", async () => {
+    const calls: string[] = [];
+    const agentCalls: any[] = [];
+
+    const result: any = await runEpicLayeredPipeline({
+      args: { epicIssueNumber: 217, familyBranch: "family/217", verifyCommands: ["npm --prefix web test"] },
+      log: () => undefined,
+      agent: async (request: any) => {
+        agentCalls.push(request);
+        return {
+          commit: `commit-${request.issueNumber}`,
+          worktreePath: `/repo/.worktrees/issue-${request.issueNumber}`,
+          observabilityEvidence: { loudFailure: true, locatorLogs: true, notApplicableReason: "tooling slice" }
+        };
+      },
+      Bash: async (command: string) => {
+        calls.push(command);
+        if (command.includes("/sub_issues")) {
+          return JSON.stringify({
+            epicId: 217,
+            issues: [
+              { id: 220, epicId: 217, state: "open", title: "S2-blocker", url: "https://example.test/220" },
+              { id: 221, epicId: 217, state: "open", title: "S3-dependent", url: "https://example.test/221" }
+            ],
+            blockedBy: [{ issueId: 221, blockedByIssueId: 220 }]
+          });
+        }
+        if (command.includes("为切片执行 I7 commit 纪律检查")) return JSON.stringify({ status: "passed" });
+        if (command.includes("npm --prefix web test")) return JSON.stringify({ status: "passed" });
+        if (command.includes("reviewer=codex")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("merge reviewed commit")) {
+          const reviewedCommit = command.match(/implementedCommit='([^']+)'/)?.[1] ?? "unknown";
+          return JSON.stringify({ mergeCommit: `merge-${reviewedCommit}` });
+        }
+        return JSON.stringify({ status: "passed" });
+      }
+    });
+
+    expect(result.status).toBe("merged");
+    expect(agentCalls.map((call) => call.issueNumber)).toEqual([220, 221]);
+    expect(agentCalls[0]).not.toHaveProperty("baseRef");
+    expect(agentCalls[1]).toMatchObject({
+      familyBranch: "family/217",
+      baseBranch: "family/217",
+      baseRef: "merge-commit-220",
+      lastMergeCommit: "merge-commit-220",
+      mergeQueue: [{ familyBranch: "family/217", reviewedCommit: "commit-220", mergeCommit: "merge-commit-220" }]
+    });
+    expect(agentCalls[1].prompt).toContain("Base this worktree on family branch family/217 at merge-commit-220");
+    const dependentGuardCommand = calls.filter((command) => command.includes("为切片执行 I7 commit 纪律检查"))[1];
+    expect(dependentGuardCommand).toContain("baseRef=");
+    expect(dependentGuardCommand).toContain("merge-commit-220");
+    expect(dependentGuardCommand).toContain("merge-base --is-ancestor \"$baseRef\" \"$implementedCommit\"");
+  });
+
+  it("rejects non-positive maxReviewRounds before a layered slice loop can return undefined", async () => {
+    await expect(runEpicLayeredPipeline({
+      args: { epicIssueNumber: 217, familyBranch: "family/217", verifyCommands: ["npm --prefix web test"], maxReviewRounds: 0 },
+      log: () => undefined,
+      agent: async () => ({
+        commit: "commit-220",
+        worktreePath: "/repo/.worktrees/issue-220",
+        observabilityEvidence: { loudFailure: true, locatorLogs: true, notApplicableReason: "tooling slice" }
+      }),
+      Bash: async (command: string) => {
+        if (command.includes("/sub_issues")) {
+          return JSON.stringify({
+            epicId: 217,
+            issues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }],
+            blockedBy: []
+          });
+        }
+        return JSON.stringify({ status: "passed" });
+      }
+    })).rejects.toThrow("maxReviewRounds 必须是正整数");
+  });
+
+  it("runs same-layer slices concurrently, waits at layer barriers, then merges reviewed commits serially", async () => {
+    const events: string[] = [];
+    const release: Record<string, () => void> = {};
+
+    const resultPromise: Promise<any> = runEpicLayeredPipeline({
+      args: { epicIssueNumber: 217, familyBranch: "family/217", verifyCommands: ["npm --prefix web test"] },
+      log: () => undefined,
+      agent: async (request: any) => {
+        events.push(`agent-start-${request.issueNumber}`);
+        if (request.issueNumber === 220 || request.issueNumber === 221) {
+          await new Promise<void>((resolve) => {
+            release[String(request.issueNumber)] = resolve;
+          });
+        }
+        events.push(`agent-end-${request.issueNumber}`);
+        return {
+          commit: `commit-${request.issueNumber}`,
+          worktreePath: `/repo/.worktrees/issue-${request.issueNumber}`,
+          observabilityEvidence: { loudFailure: true, locatorLogs: true, notApplicableReason: "tooling slice" }
+        };
+      },
+      Bash: async (command: string) => {
+        if (command.includes("/sub_issues")) {
+          return JSON.stringify({
+            epicId: 217,
+            issues: [
+              { id: 220, epicId: 217, state: "open", title: "S2-A", url: "https://example.test/220" },
+              { id: 221, epicId: 217, state: "open", title: "S2-B", url: "https://example.test/221" },
+              { id: 222, epicId: 217, state: "open", title: "S2-dependent", url: "https://example.test/222" }
+            ],
+            blockedBy: [
+              { issueId: 222, blockedByIssueId: 220 },
+              { issueId: 222, blockedByIssueId: 221 }
+            ]
+          });
+        }
+        if (command.includes("为切片执行 I7 commit 纪律检查")) return JSON.stringify({ status: "passed" });
+        if (command.includes("npm --prefix web test")) return JSON.stringify({ status: "passed" });
+        if (command.includes("reviewer=codex")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("merge reviewed commit")) {
+          const reviewedCommit = command.match(/implementedCommit='([^']+)'/)?.[1] ?? "unknown";
+          events.push(`merge-${reviewedCommit}`);
+          return JSON.stringify({ mergeCommit: `merge-${reviewedCommit}` });
+        }
+        return JSON.stringify({ status: "passed" });
+      }
+    });
+
+    while (!release["220"] || !release["221"]) await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(events).toEqual(["agent-start-220", "agent-start-221"]);
+    release["221"]();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(events).not.toContain("agent-start-222");
+    release["220"]();
+
+    const result = await resultPromise;
+
+    expect(events.indexOf("agent-start-222")).toBeGreaterThan(events.indexOf("agent-end-220"));
+    expect(events.indexOf("agent-start-222")).toBeGreaterThan(events.indexOf("agent-end-221"));
+    expect(events.filter((event) => event.startsWith("merge-"))).toEqual(["merge-commit-220", "merge-commit-221", "merge-commit-222"]);
+    expect(result.status).toBe("merged");
+    expect(result.layers.map((layer: any) => layer.issueNumbers)).toEqual([[220, 221], [222]]);
+    expect(result.mergeQueue.map((entry: any) => entry.reviewedCommit)).toEqual(["commit-220", "commit-221", "commit-222"]);
+  });
+
+  it("merges reviewed commits from different slice worktrees through one dedicated family worktree", async () => {
+    const repoPath = mkdtempSync(join(tmpdir(), ".epic-orchestrator-s3-"));
+    const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+
+    try {
+      git(repoPath, "init");
+      git(repoPath, "config", "user.email", "orchestrator@example.test");
+      git(repoPath, "config", "user.name", "Epic Orchestrator Test");
+      writeFileSync(join(repoPath, "base.txt"), "base\n");
+      git(repoPath, "add", ".");
+      git(repoPath, "commit", "-m", "base");
+      const baseCommit = git(repoPath, "rev-parse", "HEAD");
+
+      const issue220Path = join(repoPath, ".worktrees", "issue-220");
+      const issue221Path = join(repoPath, ".worktrees", "issue-221");
+      git(repoPath, "worktree", "add", "-b", "slice-220", issue220Path, baseCommit);
+      git(repoPath, "worktree", "add", "-b", "slice-221", issue221Path, baseCommit);
+      writeFileSync(join(issue220Path, "slice-220.txt"), "slice 220\n");
+      git(issue220Path, "add", ".");
+      git(issue220Path, "commit", "-m", "slice 220");
+      const commit220 = git(issue220Path, "rev-parse", "HEAD");
+      writeFileSync(join(issue221Path, "slice-221.txt"), "slice 221\n");
+      git(issue221Path, "add", ".");
+      git(issue221Path, "commit", "-m", "slice 221");
+      const commit221 = git(issue221Path, "rev-parse", "HEAD");
+
+      const result: any = await runEpicLayeredPipeline({
+        args: { epicIssueNumber: 217, familyBranch: "family/217", verifyCommands: ["npm --prefix web test"] },
+        log: () => undefined,
+        agent: async (request: any) => ({
+          commit: request.issueNumber === 220 ? commit220 : commit221,
+          worktreePath: request.issueNumber === 220 ? issue220Path : issue221Path,
+          observabilityEvidence: { loudFailure: true, locatorLogs: true, notApplicableReason: "tooling slice" }
+        }),
+        Bash: async (command: string) => {
+          if (command.includes("/sub_issues")) {
+            return JSON.stringify({
+              epicId: 217,
+              issues: [
+                { id: 220, epicId: 217, state: "open", title: "S2-A", url: "https://example.test/220" },
+                { id: 221, epicId: 217, state: "open", title: "S2-B", url: "https://example.test/221" }
+              ],
+              blockedBy: []
+            });
+          }
+          if (command.includes("reviewer=codex")) return JSON.stringify({ status: "passed", findings: [] });
+          if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [] });
+          if (command.includes("为切片执行 I7 commit 纪律检查") || command.includes("merge reviewed commit")) {
+            return execFileSync("bash", ["-l", "-c", command], { encoding: "utf8" });
+          }
+          return JSON.stringify({ status: "passed" });
+        }
+      });
+
+      expect(result.status).toBe("merged");
+      const mergeWorktrees = result.mergeQueue.map((entry: any) => entry.mergeWorktree);
+      expect(mergeWorktrees[0]).toBeTruthy();
+      expect(mergeWorktrees[1]).toBe(mergeWorktrees[0]);
+      expect(mergeWorktrees[0].startsWith(repoPath)).toBe(false);
+      const familyWorktrees = git(repoPath, "worktree", "list", "--porcelain").split("\n").filter((line: string) => line === "branch refs/heads/family/217");
+      expect(familyWorktrees).toHaveLength(1);
+      const finalParents = git(repoPath, "rev-list", "--parents", "-n", "1", result.mergeQueue.at(-1).mergeCommit).split(" ").slice(1);
+      expect(finalParents).toContain(commit221);
+      expect(git(repoPath, "merge-base", "--is-ancestor", commit220, result.mergeQueue.at(-1).mergeCommit)).toBe("");
+    } finally {
+      rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
+
+  it("uses Python 3.8-compatible worktree porcelain parsing in the merge script", async () => {
+    let mergeCommand = "";
+
+    await runEpicLayeredPipeline({
+      args: { epicIssueNumber: 217, familyBranch: "family/217", verifyCommands: ["npm --prefix web test"] },
+      log: () => undefined,
+      agent: async () => ({
+        commit: "commit-220",
+        worktreePath: "/repo/.worktrees/issue-220",
+        observabilityEvidence: { loudFailure: true, locatorLogs: true, notApplicableReason: "tooling slice" }
+      }),
+      Bash: async (command: string) => {
+        if (command.includes("/sub_issues")) {
+          return JSON.stringify({
+            epicId: 217,
+            issues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }],
+            blockedBy: []
+          });
+        }
+        if (command.includes("reviewer=codex")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("merge reviewed commit")) {
+          mergeCommand = command;
+          return JSON.stringify({ mergeCommit: "merge-commit-220" });
+        }
+        return JSON.stringify({ status: "passed" });
+      }
+    });
+
+    expect(mergeCommand).toContain("current = line[9:]");
+    expect(mergeCommand).not.toContain("removeprefix");
+  });
+
+  it("returns to the main session when the serial merge queue hits an unresolved conflict", async () => {
+    const result: any = await runEpicLayeredPipeline({
+      args: { epicIssueNumber: 217, familyBranch: "family/217", verifyCommands: ["npm --prefix web test"] },
+      log: () => undefined,
+      agent: async (request: any) => ({
+        commit: `commit-${request.issueNumber}`,
+        worktreePath: `/repo/.worktrees/issue-${request.issueNumber}`,
+        observabilityEvidence: { loudFailure: true, locatorLogs: true, notApplicableReason: "tooling slice" }
+      }),
+      Bash: async (command: string) => {
+        if (command.includes("/sub_issues")) {
+          return JSON.stringify({
+            epicId: 217,
+            issues: [
+              { id: 220, epicId: 217, state: "open", title: "S2-A", url: "https://example.test/220" },
+              { id: 221, epicId: 217, state: "open", title: "S2-B", url: "https://example.test/221" }
+            ],
+            blockedBy: []
+          });
+        }
+        if (command.includes("reviewer=codex")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("merge reviewed commit") && command.includes("commit-221")) {
+          return JSON.stringify({ status: "conflict", reason: "merge conflict", output: "CONFLICT (content): file.txt" });
+        }
+        if (command.includes("merge reviewed commit")) return JSON.stringify({ mergeCommit: "merge-ok" });
+        return JSON.stringify({ status: "passed" });
+      }
+    });
+
+    expect(result.status).toBe("return_to_main_session");
+    expect(result.i4).toEqual({ status: "aborted", reason: "merge_conflict" });
+    expect(result.mergeQueue.map((entry: any) => entry.status)).toEqual(["merged", "conflict"]);
   });
 });
