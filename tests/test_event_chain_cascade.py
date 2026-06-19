@@ -184,6 +184,73 @@ def test_terminal_state_including_triggered_preserves_expired_alternative(game):
         assert any(candidate.id == downstream.id for candidate in issues.gather_candidate_events(state, db))
 
 
+def test_conjunctive_positive_terminal_state_predicates_are_intersected(game):
+    db, state, content = game
+    issues.bind_content(content)
+    upstream = _hist_event("__chain_upstream_intersection_expired__")
+    downstream = _hist_event("__chain_downstream_intersection_requires_triggered__", {
+        "event.__chain_upstream_intersection_expired__.terminal_state": "in=triggered|expired",
+        "event.__chain_upstream_intersection_expired__.terminal_reason": "in=胜利|惨胜",
+    })
+    with _TempEvents(content, upstream, downstream):
+        db.mark_event_expired(state, upstream.id)
+
+        terminalized = issues.apply_event_cascading_invalidations(state, db)
+
+        assert any(item["id"] == downstream.id and item["terminal_state"] == "obsolete" for item in terminalized)
+        assert _terminal_state(db, downstream.id) == (
+            "obsolete",
+            "上游事件 __chain_upstream_intersection_expired__ 已入非触发终态：expired",
+        )
+
+
+def test_contradictory_positive_terminal_state_gate_fails_loud(game):
+    db, state, content = game
+    issues.bind_content(content)
+    upstream = _hist_event("__chain_upstream_contradictory__")
+    downstream = _hist_event("__chain_downstream_contradictory__", {
+        "event.__chain_upstream_contradictory__.triggered": ">0",
+        "event.__chain_upstream_contradictory__.terminal_state": "==expired",
+    })
+    with _TempEvents(content, upstream, downstream):
+        db.mark_event_expired(state, upstream.id)
+
+        with pytest.raises(SettlementAbort, match="正向终态门互相矛盾"):
+            issues.apply_event_cascading_invalidations(state, db)
+
+
+def test_cascade_rolls_back_owned_transaction_on_later_write_failure(game, monkeypatch):
+    db, state, content = game
+    issues.bind_content(content)
+    upstream = _hist_event("__chain_upstream_atomic_expired__")
+    downstream = _hist_event("__chain_downstream_atomic_rollback__", {
+        "event.__chain_upstream_atomic_expired__.terminal_state": "==triggered",
+    })
+    with _TempEvents(content, upstream, downstream):
+        db.mark_event_expired(state, upstream.id)
+        db.insert_issue(
+            state,
+            kind="situation",
+            title="测试事件事项",
+            origin_kind="event_pool",
+            origin_ref=downstream.id,
+        )
+
+        def fail_cancel(*args, **kwargs):
+            raise RuntimeError("injected cancel failure")
+
+        monkeypatch.setattr(db, "cancel_issue", fail_cancel)
+
+        with pytest.raises(RuntimeError, match="injected cancel failure"):
+            issues.apply_event_cascading_invalidations(state, db)
+
+        db.conn.commit()
+        assert db.conn.execute(
+            "SELECT 1 FROM event_triggers WHERE event_id=?",
+            (downstream.id,),
+        ).fetchone() is None
+
+
 def test_negative_dependency_is_satisfied_by_upstream_expiry_not_invalidated(game):
     db, state, content = game
     issues.bind_content(content)

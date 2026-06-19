@@ -295,8 +295,47 @@ def _event_chain_impossible_reason(ev: Event, terminal_records: Dict[str, Dict[s
     allowed_outcomes: Dict[str, set[str]] = {}
     forbidden_outcomes: Dict[str, set[str]] = {}
 
-    def allow_state(upstream_id: str, state_name: str) -> None:
-        allowed_states.setdefault(upstream_id, set()).add(state_name)
+    def _format_values(values: set[str]) -> str:
+        return "|".join(sorted(values))
+
+    def allow_states(upstream_id: str, state_names: set[str], *, raw_key: object, raw_cond: str) -> None:
+        if not state_names:
+            return
+        existing = allowed_states.get(upstream_id)
+        if existing is None:
+            allowed_states[upstream_id] = set(state_names)
+            return
+        narrowed = existing & state_names
+        if not narrowed:
+            raise SettlementAbort(
+                "事件链正向终态门互相矛盾："
+                f"{upstream_id} 已要求 {{{_format_values(existing)}}}，"
+                f"又要求 {{{_format_values(state_names)}}}（{raw_key} {raw_cond}）",
+                turn=state.turn,
+                stage="event_chain_config",
+            )
+        allowed_states[upstream_id] = narrowed
+
+    def allow_state(upstream_id: str, state_name: str, *, raw_key: object, raw_cond: str) -> None:
+        allow_states(upstream_id, {state_name}, raw_key=raw_key, raw_cond=raw_cond)
+
+    def allow_outcomes(upstream_id: str, outcomes: set[str], *, raw_key: object, raw_cond: str) -> None:
+        if not outcomes:
+            return
+        existing = allowed_outcomes.get(upstream_id)
+        if existing is None:
+            allowed_outcomes[upstream_id] = set(outcomes)
+            return
+        narrowed = existing & outcomes
+        if not narrowed:
+            raise SettlementAbort(
+                "事件链正向结局门互相矛盾："
+                f"{upstream_id} 已要求 {{{_format_values(existing)}}}，"
+                f"又要求 {{{_format_values(outcomes)}}}（{raw_key} {raw_cond}）",
+                turn=state.turn,
+                stage="event_chain_config",
+            )
+        allowed_outcomes[upstream_id] = narrowed
 
     def forbid_state(upstream_id: str, state_name: str) -> None:
         forbidden_states.setdefault(upstream_id, set()).add(state_name)
@@ -314,7 +353,7 @@ def _event_chain_impossible_reason(ev: Event, terminal_records: Dict[str, Dict[s
             op, value = num.group(1), int(num.group(2))
             dependency_kind = _event_triggered_numeric_dependency_kind(op, value)
             if dependency_kind == "positive":
-                allow_state(upstream_id, "triggered")
+                allow_state(upstream_id, "triggered", raw_key=raw_key, raw_cond=cond)
             elif dependency_kind == "negative":
                 forbid_state(upstream_id, "triggered")
             elif dependency_kind == "neither":
@@ -331,15 +370,15 @@ def _event_chain_impossible_reason(ev: Event, terminal_records: Dict[str, Dict[s
         values = {part.strip() for part in value.split("|") if part.strip()}
         if field == "terminal_state":
             if op in ("==", "in="):
-                allowed_states.setdefault(upstream_id, set()).update(values)
+                allow_states(upstream_id, values, raw_key=raw_key, raw_cond=cond)
             elif op == "!=":
                 forbidden_states.setdefault(upstream_id, set()).update(values)
         elif field == "terminal_reason":
             # Outcome labels are frozen only for triggered events; a positive outcome
             # predicate therefore implies terminal_state == triggered.
             if op in ("==", "in="):
-                allow_state(upstream_id, "triggered")
-                allowed_outcomes.setdefault(upstream_id, set()).update(values)
+                allow_state(upstream_id, "triggered", raw_key=raw_key, raw_cond=cond)
+                allow_outcomes(upstream_id, values, raw_key=raw_key, raw_cond=cond)
             elif op == "!=":
                 forbidden_outcomes.setdefault(upstream_id, set()).update(values)
 
@@ -385,34 +424,40 @@ def apply_event_cascading_invalidations(
     should_commit = commit and not db.conn.in_transaction
     terminalized: List[Dict[str, object]] = []
     terminal_records = _event_terminal_records(db)
-    while True:
-        changed = False
-        for ev in [*content.events, *content.seed_events]:
-            if not getattr(ev, "id", "") or ev.id in terminal_records:
-                continue
-            if not _event_dependency_ids(ev):
-                continue
-            reason = _event_chain_impossible_reason(ev, terminal_records, state)
-            if not reason:
-                continue
-            db.mark_event_obsolete(
-                state,
-                ev.id,
-                reason=reason,
-                source="event_chain_invalidated",
-                commit=False,
-            )
-            row = db.find_active_issue_by_origin("event_pool", ev.id)
-            if row is not None:
-                db.cancel_issue(state, int(row["id"]), narrative=f"事件链作废：{reason}", commit=False)
-            item: Dict[str, object] = {"id": ev.id, "title": ev.title, "terminal_state": "obsolete", "reason": reason}
-            terminalized.append(item)
-            terminal_records[ev.id] = {"terminal_state": "obsolete", "terminal_reason": reason}
-            changed = True
-        if not changed:
-            break
-    if should_commit and terminalized:
-        db.conn.commit()
+
+    def run_cascade() -> None:
+        while True:
+            changed = False
+            for ev in [*content.events, *content.seed_events]:
+                if not getattr(ev, "id", "") or ev.id in terminal_records:
+                    continue
+                if not _event_dependency_ids(ev):
+                    continue
+                reason = _event_chain_impossible_reason(ev, terminal_records, state)
+                if not reason:
+                    continue
+                db.mark_event_obsolete(
+                    state,
+                    ev.id,
+                    reason=reason,
+                    source="event_chain_invalidated",
+                    commit=False,
+                )
+                row = db.find_active_issue_by_origin("event_pool", ev.id)
+                if row is not None:
+                    db.cancel_issue(state, int(row["id"]), narrative=f"事件链作废：{reason}", commit=False)
+                item: Dict[str, object] = {"id": ev.id, "title": ev.title, "terminal_state": "obsolete", "reason": reason}
+                terminalized.append(item)
+                terminal_records[ev.id] = {"terminal_state": "obsolete", "terminal_reason": reason}
+                changed = True
+            if not changed:
+                break
+
+    if should_commit:
+        with atomic(db):
+            run_cascade()
+    else:
+        run_cascade()
     return terminalized
 
 
@@ -768,42 +813,46 @@ def apply_event_terminal_states(
     terminal_refs = _event_trigger_refs(db)
     terminalized: List[Dict[str, object]] = []
 
-    for ev in c.events:
-        if ev.id in terminal_refs or ev.trigger_year <= 0:
-            continue
-        if _event_window_expired(ev, state):
-            db.mark_event_expired(state, ev.id, commit=False)
-            terminal_refs.add(ev.id)
-            terminalized.append({"id": ev.id, "title": ev.title, "terminal_state": "expired"})
-            continue
-        dead_subjects = _dead_person_core_subjects(ev, db)
-        if dead_subjects:
-            reason = f"人物核心主体永久死亡：{', '.join(dead_subjects)}"
-            db.mark_event_obsolete(state, ev.id, reason=reason, commit=False)
-            terminal_refs.add(ev.id)
-            terminalized.append({"id": ev.id, "title": ev.title, "terminal_state": "obsolete"})
-            continue
-        if not _event_window_open(ev, state):
-            continue
-        if not _gate_passed(ev.trigger_gate, state.metrics, db):
-            avoided_reason = _person_core_avoided_reason(ev, state, db)
-            if avoided_reason:
-                db.mark_event_avoided(state, ev.id, reason=avoided_reason, commit=False)
+    def run_terminal_state_pass() -> None:
+        for ev in c.events:
+            if ev.id in terminal_refs or ev.trigger_year <= 0:
+                continue
+            if _event_window_expired(ev, state):
+                db.mark_event_expired(state, ev.id, commit=False)
                 terminal_refs.add(ev.id)
-                terminalized.append({"id": ev.id, "title": ev.title, "terminal_state": "avoided"})
+                terminalized.append({"id": ev.id, "title": ev.title, "terminal_state": "expired"})
+                continue
+            dead_subjects = _dead_person_core_subjects(ev, db)
+            if dead_subjects:
+                reason = f"人物核心主体永久死亡：{', '.join(dead_subjects)}"
+                db.mark_event_obsolete(state, ev.id, reason=reason, commit=False)
+                terminal_refs.add(ev.id)
+                terminalized.append({"id": ev.id, "title": ev.title, "terminal_state": "obsolete"})
+                continue
+            if not _event_window_open(ev, state):
+                continue
+            if not _gate_passed(ev.trigger_gate, state.metrics, db):
+                avoided_reason = _person_core_avoided_reason(ev, state, db)
+                if avoided_reason:
+                    db.mark_event_avoided(state, ev.id, reason=avoided_reason, commit=False)
+                    terminal_refs.add(ev.id)
+                    terminalized.append({"id": ev.id, "title": ev.title, "terminal_state": "avoided"})
 
-    for ev in c.seed_events:
-        if ev.id in terminal_refs:
-            continue
-        if _event_window_expired(ev, state):
-            db.mark_event_expired(state, ev.id, commit=False)
-            terminal_refs.add(ev.id)
-            terminalized.append({"id": ev.id, "title": ev.title, "terminal_state": "expired"})
+        for ev in c.seed_events:
+            if ev.id in terminal_refs:
+                continue
+            if _event_window_expired(ev, state):
+                db.mark_event_expired(state, ev.id, commit=False)
+                terminal_refs.add(ev.id)
+                terminalized.append({"id": ev.id, "title": ev.title, "terminal_state": "expired"})
 
-    terminalized.extend(apply_event_cascading_invalidations(state, db, commit=False))
+        terminalized.extend(apply_event_cascading_invalidations(state, db, commit=False))
 
-    if should_commit and terminalized:
-        db.conn.commit()
+    if should_commit:
+        with atomic(db):
+            run_terminal_state_pass()
+    else:
+        run_terminal_state_pass()
     return terminalized
 
 
