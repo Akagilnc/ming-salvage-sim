@@ -18,6 +18,10 @@ export function groupIssues(issues: Issue[]) {
   };
 }
 
+function commitmentProgressText(issue: Issue) {
+  return issue.commitment_progress_text?.trim() || "";
+}
+
 export function SituationPanel({ issues, closedIssues, hasLegacies }: {
   issues: Issue[];
   closedIssues: ClosedIssue[];
@@ -99,6 +103,7 @@ export function SituationTip({ issue, pos }: { issue: Issue; pos: { x: number; y
   const W = 280, vw = window.innerWidth, vh = window.innerHeight;
   const left = pos.x + W > vw ? Math.max(8, pos.x - W - 24) : pos.x;
   const top = Math.min(pos.y, vh - 200);
+  const progressText = commitmentProgressText(issue);
   return createPortal(
     <div className="situation-tip-float" style={{ left, top: Math.max(8, top) }}>
         <div className="situation-tip-float-head">#{issue.id} {issue.title}</div>
@@ -113,6 +118,12 @@ export function SituationTip({ issue, pos }: { issue: Issue; pos: { x: number; y
           <span>当前影响</span>
           <b>{issue.ongoing_text || "无"}</b>
         </div>
+        {progressText ? (
+          <div className="situation-tip-row">
+            <span>承诺进度</span>
+            <b>{progressText}</b>
+          </div>
+        ) : null}
         <p className="situation-tip-stage">{issue.stage_text}</p>
         <div className="situation-tip-more">点击查看达成 / 失败条件</div>
         </div>
@@ -124,6 +135,7 @@ export function SituationTip({ issue, pos }: { issue: Issue; pos: { x: number; y
 
 // 局势详情弹窗（点击）：完整达成/失败条件 + 标签。居中模态，Portal 脱离梯形
 export function SituationDetailModal({ issue, onClose }: { issue: Issue; onClose: () => void }) {
+  const progressText = commitmentProgressText(issue);
   return createPortal(
     <div className="situation-detail-backdrop" onClick={onClose}>
       <div className="situation-detail" onClick={(e) => e.stopPropagation()}>
@@ -142,6 +154,12 @@ export function SituationDetailModal({ issue, onClose }: { issue: Issue; onClose
           <span>当前影响</span>
           <b>{issue.ongoing_text || "无"}</b>
         </div>
+        {progressText ? (
+          <div className="situation-tip-row">
+            <span>承诺进度</span>
+            <b>{progressText}</b>
+          </div>
+        ) : null}
         <p className="situation-tip-stage">{issue.stage_text}</p>
         <div className="situation-tip-outcome good">
           <div className="situation-tip-outcome-head">达成（{issue.bar_good_meaning}）</div>
@@ -171,27 +189,31 @@ export function IssueGroup({ title, issues }: { title: string; issues: Issue[] }
     <div className="issue-group">
       <h3>{title}</h3>
       <div className="issue-list">
-        {issues.map((issue) => (
-          <article className={`issue-line ${issueTone(issue.bar_value)}`} key={issue.id}>
-            <div className="issue-head">
-              <b>#{issue.id} {issue.title}</b>
-              <span>{issue.phase} · {issue.bar_value}</span>
-            </div>
-            <div className="issue-progress" aria-label={`${issue.title}进度 ${issue.bar_value}`}>
-              <span>{issue.bar_bad_meaning}</span>
-              <div>
-                <i style={{ width: `${Math.max(0, Math.min(100, issue.bar_value))}%` }} />
+        {issues.map((issue) => {
+          const progressText = commitmentProgressText(issue);
+          return (
+            <article className={`issue-line ${issueTone(issue.bar_value)}`} key={issue.id}>
+              <div className="issue-head">
+                <b>#{issue.id} {issue.title}</b>
+                <span>{issue.phase} · {issue.bar_value}</span>
               </div>
-              <span>{issue.bar_good_meaning}</span>
-            </div>
-            <p>{issue.stage_text}</p>
-            {issue.tags.length ? (
-              <div className="issue-tags">
-                {issue.tags.map((tag) => <small key={tag}>{tag}</small>)}
+              <div className="issue-progress" aria-label={`${issue.title}进度 ${issue.bar_value}`}>
+                <span>{issue.bar_bad_meaning}</span>
+                <div>
+                  <i style={{ width: `${Math.max(0, Math.min(100, issue.bar_value))}%` }} />
+                </div>
+                <span>{issue.bar_good_meaning}</span>
               </div>
-            ) : null}
-          </article>
-        ))}
+              {progressText ? <p>{progressText}</p> : null}
+              <p>{issue.stage_text}</p>
+              {issue.tags.length ? (
+                <div className="issue-tags">
+                  {issue.tags.map((tag) => <small key={tag}>{tag}</small>)}
+                </div>
+              ) : null}
+            </article>
+          );
+        })}
       </div>
     </div>
   );
