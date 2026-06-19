@@ -242,5 +242,7 @@ def test_delta_schema_pitfall_table_documents_fifteen_initiative_cap():
     assert "active `initiative` ≤15" in text
     assert "active `initiative` ≤10" not in text
     assert "`end_turn`" in text
+    assert "连续 N 月" in text
+    assert "end_turn = turn + N" in text
     assert "`commitment_kind`" in text
     assert "`stop_condition` 是别名" not in text

@@ -24,6 +24,16 @@ def test_issue_extractor_prompt_routes_until_stop_decree_commitments():
     assert '{"army.guanning.arrears":"<=0"}' in prompt
 
 
+def test_issue_extractor_prompt_routes_limited_duration_decree_commitments():
+    prompt = (ROOT / "content/prompts/score_extractor_issues.md").read_text(encoding="utf-8")
+
+    assert "连续 N 月" in prompt
+    assert "半年为限" in prompt
+    assert "end_turn = turn + N" in prompt
+    assert "ongoing_effects" in prompt
+    assert "stop_condition" in prompt
+
+
 def test_until_stop_commitment_issue_is_created_with_carrier_fields(game, monkeypatch):
     db, state, content = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
