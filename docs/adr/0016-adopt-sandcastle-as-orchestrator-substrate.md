@@ -1,0 +1,36 @@
+# 采用 Sandcastle 作为 epic 编排器底座；#217 收缩为叠加在其上的「质量层」
+
+Status: Proposed（2026-06-19；spike 实证「底座可行 + 缺质量层」两面。**尚未 Accepted**——待 ① parallel-planner 并行编排证据（#217 S3 的「依赖感知并行 + 串行 merge 队列」是承重需求，须确认 Sandcastle 原语离它多远）② 设计评审闭环（本地 cmr + 线上 bot）。在此之前 #217 PRD 的「整套自建」描述不作数、以本 ADR 方向为准。）
+
+## 背景
+
+#217 把「喂父 epic → AFK 跑到待 PR」的编排器**整套自建**（PRD + wiki [[epic-orchestration]] + 切片 #218–225 + prototype），收敛后才发现 `mattpocock/sandcastle`（6.1k⭐，MIT，TS）很可能就是被重新发明的东西（见 memory `prior-art-search-before-building-tool`）。本 ADR 记录「自建 vs 引入」分叉的 spike 实证与方向决定。
+
+衡量标尺 = #217 北极星：谁更快把人（用户 + 主 session）从盯开发里解放出来。
+
+## 决定（方向）
+
+**不二选一。Sandcastle 当底座，#217 收缩为叠在它 `run()` 上的薄「质量层」。**
+
+- **底座（直接用 Sandcastle）**：容器/podman/vercel 沙箱隔离、codex/claude 订阅 auth、worktree、分支策略（merge-to-head）、Ralph 循环（`simple-loop`）、并行（`parallel-planner`）、issue 输入（`github-issues` tracker）。这些是 #217 想自建、而 Sandcastle 已有且经 6.1k⭐ 验证的硬基建。
+- **质量层（#217 的真增值，Sandcastle 没有，须自叠）**：① 多模型评审承重闸（per-slice codex+agy、5a/5b codex+Claude+agy）② findings 分流 + 选择类回主 session 升级 ③ 家族集成 verify + 整体闸（gstack-ship）④ 决定经主 session 段间传递的拓扑。
+
+## Spike 证据（2026-06-19，本机 colima Docker + codex ChatGPT 订阅，端到端真跑）
+
+1. **核心原语跑通**：`@ai-hero/sandcastle@0.10.0` install → init → build 镜像（补 `ca-certificates`）→ `run({agent:codex, sandbox:docker})` 在容器里**用订阅 auth（零 OPENAI_KEY，仅 bind-mount `~/.codex` 副本）**改文件 + 提交 + merge-to-head 合回。订阅接法 = `docker({ mounts:[{hostPath, sandboxPath:'/home/agent/.codex'}] })`，比上一场手动那套干净。
+2. **真 issue 实测（#137，meaty 切片，非一行 fix）**：在 Ming_LLM 隔离 worktree 上跑（护栏：不跑测试/不 close/不 push）。codex 自己读了 `cli_backend.py / session.py / db.py / web_app.py` + 三个测试、**定位真实调用点**、新增 `extract_draft_action` **完全对齐既有抽取器写法**、接进 pending 流复用 `add_directive(status="pending")`，44 行、改在对的地方、符合项目惯例。**外人模型、零项目上下文喂入 → 产出像样且地道的改动**，底座质量出乎意料地强。
+3. **同一份 diff 同时坐实「无评审闸 = 真缺陷直接 ship」**：Ralph 改完即 commit+close，而该 diff 至少 5 个真问题、Sandcastle 默认循环一个不拦：① **漏 issue 硬要求**（没实现「pending 原地更新 last-write-wins」，issue 白纸黑字「唯一新增要求」）② 草案文本 = 大臣整段回话（含闲聊前缀，未剥）③ 无测试（违项目 TDD 铁律）④ 每条无前缀对话多一次 LLM 抽取、延迟叠加无人审 ⑤ 称对齐 ADR 0006 但没真打开该 ADR。**这 5 个缺陷全落在「质量层」该拦的范围内**——即本决定要自叠的那层。
+
+## Considered Options
+
+- **整套自建（#217 原 PRD）**：重新发明容器/订阅/worktree/分支合并/Ralph 循环这些 Sandcastle 已验证的硬基建。否决——重复造轮子，违 prior-art 教训。
+- **直接照搬 Sandcastle（不叠）**：开箱即用，但 spike 证据 #3 显示其默认循环**零 cross-model 评审 / 无 findings 升级 / 无家族整体闸**，会把漏需求+无测试的改动 commit+close。否决——丢掉 #217 唯一真正想要的承重质量闸（用户看不了 diff，merge 前的多模型评审是唯一可信关卡）。
+- **Sandcastle 底座 + 薄质量层（本决定）**：硬基建复用、质量层自叠。最省、且保住 #217 真增值。
+
+## Consequences
+
+- **#218–225 切片须重定向**：S0「JS 测试基建」「决策核」、S2「单切片流水线」、S3「并行 + 串行 merge 队列」等不再「从零搭机器」，而是「在 Sandcastle `run()` 之上接质量层」。具体重切待本 ADR Accepted 后做（含可能改 #217 PRD / wiki [[epic-orchestration]] 的执行拓扑章节）。
+- **spike 发现 1（RALPH prompt 假设 JS 项目）**：scaffold 的 `simple-loop` prompt 硬写 `npm run typecheck && npm run test`；Ming_LLM 是 Python（pytest）为主、`web/package.json` 还缺 test/typecheck 脚本。叠层时 verify 命令须按本项目重写（prompt 级，易）。
+- **spike 发现 2（镜像须带项目工具链才能 verify）**：spike 镜像是 `node:22-bookworm`，无 python → 容器内跑不了 pytest（本次靠护栏跳过 verify）。真用于 Ming_LLM 须预设镜像带 python + 项目 deps（呼应 #217 PRD 的「预设 image 摊薄启动」）。
+- **依赖**：colima Docker 在跑（~8GB RAM）；订阅 auth 经 bind-mount 进容器，凭据副本用完即删（铁律）。CI-native AFK + 订阅大概率卡（runner 无登录无 key），编排仅本机可行。
+- **未决**：并行编排（parallel-planner）是否满足「依赖感知并行 + 串行 merge 队列」尚未实证（本 ADR Proposed 的主要待补证据）。
