@@ -30,6 +30,25 @@ def loads_effect_dict(raw: object) -> Dict[str, object]:
     return v if isinstance(v, dict) else {}
 
 
+def _effect_value_has_work(value: object) -> bool:
+    if isinstance(value, dict):
+        return any(_effect_value_has_work(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_effect_value_has_work(item) for item in value)
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (int, float)):
+        return value != 0
+    return bool(value)
+
+
+def effect_dict_has_work(raw: object) -> bool:
+    """Return whether an effect/ongoing payload has semantic work, not just a non-empty shell."""
+    return _effect_value_has_work(loads_effect_dict(raw))
+
+
 class TurnPhase(str, Enum):
     """回合相位单一真源（原住 session.py；decree 也要用，session import decree 会循环，
     故下沉至此，session 保持 re-export 兼容旧 import 路径）。"""

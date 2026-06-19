@@ -500,6 +500,36 @@ def test_until_stop_commitment_requires_ongoing_effects(game, monkeypatch):
     assert _issue_by_title(db, "每月补辽饷但没有月度动作") is None
 
 
+def test_until_stop_commitment_rejects_semantically_empty_ongoing_effects(game, monkeypatch):
+    db, state, content = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    out = I.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "origin_ref": "decree:turn-1:empty-shell-monthly-action",
+                    "kind": "initiative",
+                    "title": "每月补辽饷但月度动作只是空壳",
+                    "ongoing_effects": {"economy": [], "metrics": {}},
+                    "stop_condition": {"army.guanning.arrears": "<=0"},
+                    "commitment_kind": "until_stop",
+                }
+            ]
+        },
+        content=content,
+    )
+
+    rejected = out["issue_summary"]["new_issues"][0]
+    assert rejected["rejected"] is True
+    assert rejected["category"] == "invalid_enum"
+    assert "ongoing_effects" in rejected["reason"]
+    assert _issue_by_title(db, "每月补辽饷但月度动作只是空壳") is None
+
+
 def test_until_stop_commitment_rejects_direct_resolved_close(game, monkeypatch):
     db, state, content = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)

@@ -200,7 +200,7 @@ def test_commitment_progress_text_splits_by_commitment_shape_and_gate(game):
         origin_ref="decree:turn-1:due-text",
         bar_value=0,
         inertia=0,
-        ongoing_effects={},
+        ongoing_effects={"economy": [], "metrics": {}},
         end_turn=state.turn,
         commitment_kind="until_stop",
     )
@@ -659,6 +659,73 @@ def test_one_shot_end_turn_commitment_surfaces_in_existing_review_channel(game):
         "SELECT COUNT(*) FROM issue_advances WHERE issue_id=? AND trigger_kind='expire'",
         (issue_id,),
     ).fetchone()[0] == 0
+
+
+def test_semantically_empty_one_shot_commitment_surfaces_and_acks_once(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
+    db.conn.commit()
+
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="语义空持续效果的复试承诺",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:semantic-empty-review",
+        bar_value=0,
+        inertia=0,
+        stage_text="三月后复试，不设月度动作。",
+        ongoing_effects={"economy": []},
+        stop_condition="",
+        end_turn=state.turn,
+        commitment_kind="until_stop",
+        cancellable="decree",
+    )
+
+    due_payload = build_simulator_payload(state, db, "", "")
+    assert [
+        item for item in due_payload["secret_orders"]["待核议"]
+        if item.get("entry_kind") == "due_commitment" and item.get("issue_id") == issue_id
+    ]
+
+    _settle_empty_month(db, state, content)
+    row = _issue_row(db, issue_id)
+    assert row["status"] == "active"
+    assert row["closed_turn"] is None
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM issue_advances WHERE issue_id=? AND trigger_kind='expire'",
+        (issue_id,),
+    ).fetchone()[0] == 0
+
+    out = apply_score_extraction(
+        db,
+        state,
+        {
+            "close_issues": [
+                {
+                    "issue_id": issue_id,
+                    "reason": "acknowledged",
+                    "narrative": "皇帝已复试，此承诺已由圣裁收尾。",
+                }
+            ]
+        },
+        content=content,
+    )
+    assert out["issue_summary"]["closes"][0]["rejected"] is False
+    assert _issue_row(db, issue_id)["status"] == "dropped"
+    after_ack = build_simulator_payload(state, db, "", "")
+    assert [
+        item for item in after_ack["secret_orders"].get("待核议", [])
+        if item.get("entry_kind") == "due_commitment" and item.get("issue_id") == issue_id
+    ] == []
+
+    _settle_empty_month(db, state, content)
+    next_month = build_simulator_payload(state, db, "", "")
+    assert [
+        item for item in next_month["secret_orders"].get("待核议", [])
+        if item.get("entry_kind") == "due_commitment" and item.get("issue_id") == issue_id
+    ] == []
 
 
 def test_due_one_shot_commitment_ack_closes_review_loop_without_effects(game):

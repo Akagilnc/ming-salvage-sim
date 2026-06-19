@@ -32,7 +32,7 @@ from ming_sim.flows import (
     _apply_metric_dict,
     _strict_int,
 )
-from ming_sim.models import Event, GameState, is_vassal_prince, loads_effect_dict
+from ming_sim.models import Event, GameState, effect_dict_has_work, is_vassal_prince, loads_effect_dict
 from ming_sim.person_archive_contract import (
     PERSON_ALLEGIANCE_CHANGE_WAYS,
     PERSON_IDENTITY_TITLES,
@@ -299,7 +299,7 @@ def commitment_display_text(progress: Dict[str, int], row: sqlite3.Row) -> str:
     stop_gate = _commitment_stop_gate(row)
     months = int(progress.get("months_elapsed") or 0)
 
-    if not ongoing and end_turn > 0:
+    if not effect_dict_has_work(ongoing) and end_turn > 0:
         return f"限至第{end_turn}月·到期待裁"
 
     if stop_gate and _commitment_gate_references_arrears(row):
@@ -3637,6 +3637,7 @@ def apply_issue_tracker_output(
         ongoing_eff = _eff_dict(ni.get("ongoing_effects"))
         resolve_eff = _eff_dict(ni.get("effect_on_resolve"))
         fail_eff = _eff_dict(ni.get("effect_on_fail"))
+        ongoing_has_work = effect_dict_has_work(ongoing_eff)
         # cancel_cost 同属 dict 字段，与上 3 个统一走 _eff_dict 容忍归 {}（cmr ni r9 codex medium）：
         # 旧 `dict(ni.get("cancel_cost") or {})` 对 list-of-pairs 静默 garble（dict([["民心",-5]])=
         # {'民心':-5}、dict(["ab"])={'a':'b'}）、对标量串 raise 拒整项——而 cancel_cost 是次要字段，
@@ -3657,8 +3658,8 @@ def apply_issue_tracker_output(
             and kind == "initiative"
             and (
                 end_turn_marker_shape
-                or (bool(stop_condition) and bool(ongoing_eff))
-                or (bool(ongoing_eff) and not resolve_eff and not fail_eff and bool(origin_ref))
+                or (bool(stop_condition) and ongoing_has_work)
+                or (ongoing_has_work and not resolve_eff and not fail_eff and bool(origin_ref))
             )
         )
         if commitment_shape_without_marker:
@@ -3679,10 +3680,10 @@ def apply_issue_tracker_output(
                     raise ValueError("origin_ref 必填，须指回诏书")
                 _et_raw = ni.get("end_turn", 0)
                 end_turn_for_commitment = _strict_int(0 if _et_raw in (None, "") else _et_raw)
-                if not ongoing_eff and end_turn_for_commitment <= 0:
+                if not ongoing_has_work and end_turn_for_commitment <= 0:
                     raise ValueError("ongoing_effects 或 end_turn 至少一项必填")
                 if stop_condition_raw in (None, "", {}):
-                    if end_turn_for_commitment <= 0 and not ongoing_eff:
+                    if end_turn_for_commitment <= 0 and not ongoing_has_work:
                         raise ValueError("stop_condition 须为非空 dict，除非承诺带 end_turn")
                     stop_condition = ""
                 else:
@@ -3840,7 +3841,7 @@ def apply_issue_tracker_output(
                 category, why = "missing_ref", f"close_issues 引用已非 active（{chk['status']}）的 issue {issue_id}"
             elif not str(chk["commitment_kind"] or "").strip():
                 category, why = "invalid_enum", f"close_issues acknowledged 只允许到期待裁承诺 issue {issue_id}"
-            elif loads_effect_dict(chk["ongoing_effects"]):
+            elif effect_dict_has_work(chk["ongoing_effects"]):
                 category, why = "invalid_enum", f"close_issues acknowledged 不允许收尾持续承诺 issue {issue_id}"
             elif int(chk["end_turn"] or 0) <= 0 or int(chk["end_turn"] or 0) > int(state.turn):
                 category, why = "invalid_enum", f"close_issues acknowledged 只允许已到期承诺 issue {issue_id}"
@@ -6132,22 +6133,23 @@ def apply_issue_inertia_and_ongoing(
                 bar = int(row["bar_value"])
 
         ongoing = loads_effect_dict(row["ongoing_effects"])
+        ongoing_has_work = effect_dict_has_work(ongoing)
         if is_commitment:
             stop_gate = _commitment_stop_gate(row)
             if stop_gate and _gate_passed(stop_gate, state.metrics, db):
                 _resolve_commitment_issue(db, state, row)
                 continue
             end_turn = int(row["end_turn"] or 0)
-            if ongoing and end_turn > 0 and end_turn <= state.turn:
+            if ongoing_has_work and end_turn > 0 and end_turn <= state.turn:
                 _expire_commitment_issue(db, state, row)
                 continue
 
         # 2) ongoing_effects：bar 高时折扣。经 loads_effect_dict 统一守（非 dict→{}，#117）。
-        if is_commitment and ongoing:
+        if is_commitment and ongoing_has_work:
             ongoing = _commitment_ongoing_effects_for_settlement(row, ongoing)
         metric_part: Dict[str, int] = {}
         economy_part: List[Dict[str, object]] = []
-        if ongoing:
+        if effect_dict_has_work(ongoing):
             # 折扣系数：bar 越高（越好）越少扣
             # bar=0~40 → 100%, bar=40~80 → 60%, bar=80~100 → 30%
             if bar >= 80:

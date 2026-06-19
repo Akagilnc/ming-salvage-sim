@@ -767,21 +767,28 @@ def build_extractor_tools(context: CourtContext):
                             delta_bar=皇帝实旨推动量（不含自然漂移inertia，系统自动算）
                             档位：极端±40~50、重大±20~35、中等±8~15、轻度±1~5
                             本月未被实旨推动的填delta_bar:0（靠inertia自然漂）
-        new_issues          本月新立局势
-                            来源(a) origin_kind:"decree"——诏书明文长期工程/改革，需全字段：
+        new_issues          本月新立局势/圣旨承诺
+                            来源(a) origin_kind:"decree"——诏书明文长期工程/改革，需：
                               kind(initiative/situation),title,origin_kind,bar_value(0-100),
                               expected_months(整数),stage_text,resolve_condition,fail_condition,
                               ongoing_effects,effect_on_resolve,effect_on_fail,
                               cancellable(decree/never/by_progress)
                               effect_on_resolve/fail 可含 metrics/economy/factions/buildings
                               buildings每项：{action:create/modify/remove,...}
+                            圣旨承诺(#136)固定 kind:"initiative" 且必须有
+                              origin_ref(指回诏书),commitment_kind:"until_stop"；
+                              直到补齐/达标：ongoing_effects 语义非空 + stop_condition(dict)
+                              连续N月/半年为限：ongoing_effects 语义非空 + end_turn(turn+N)
+                              未来一次性复试/复核：end_turn，ongoing_effects 可为空/语义空
+                              stop_condition 只收 dict，如 {"army.guanning.arrears":"<=0"}；
+                              承诺落库后自动 inertia=0,cancellable="decree"
                             来源(b) origin_kind:"event_pool"——只两字段：origin_kind+"id"(从candidate_events选)
                             一锤子事（当回合即办结）不立局势，直接落metric_delta等
         cancels             撤销局势 [{issue_id,applied_cost,narrative}]
         close_issues        结案/失败/到期待裁承诺ACK [{issue_id,reason(resolved/failed/acknowledged),narrative}]
                             对照resolve_condition/fail_condition判，条件命中即报
                             不可崩坏局势（天灾/大旱等effect_on_fail为空）禁止reason=failed
-                            acknowledged仅用于无ongoing且已到期的圣旨承诺已由皇帝裁决确认
+                            acknowledged仅用于无语义 ongoing 且已到期的圣旨承诺已由皇帝裁决确认
         fiscal_changes      制度性财政系数变化 [{key,delta,reason}]
                             key只从财政系数表选：田赋_rate/辽饷_base/辽饷_rate/盐税_base/盐税_rate/
                             商税_base/商税_rate/皇庄_base/皇庄_rate/织造_base/织造_rate/矿税_base/矿税_rate/
@@ -818,7 +825,8 @@ def build_extractor_tools(context: CourtContext):
           "power_updates": {"houjin": {"威望": -4, "实力": -3, "经济": -2}},
           "world_advance": {"后金": "敌对", "蒙古": "摇摆", "朝鲜": "倾明"},
           "issue_advances": [{"issue_id":12,"delta_bar":15,"stage_text":"户部主事至苏州","narrative":"..."}],
-          "new_issues": [{"kind":"initiative","title":"火器营试设","origin_kind":"decree","bar_value":20,"expected_months":10,"stage_text":"...","resolve_condition":"...","fail_condition":"...","ongoing_effects":{},"effect_on_resolve":{"metrics":{"皇威":3}},"effect_on_fail":{"metrics":{"皇威":-4}},"cancellable":"by_progress"}],
+          "new_issues": [{"kind":"initiative","title":"火器营试设","origin_kind":"decree","bar_value":20,"expected_months":10,"stage_text":"...","resolve_condition":"...","fail_condition":"...","ongoing_effects":{},"effect_on_resolve":{"metrics":{"皇威":3}},"effect_on_fail":{"metrics":{"皇威":-4}},"cancellable":"by_progress"},
+                         {"kind":"initiative","title":"三月后复试孙承宗","origin_kind":"decree","origin_ref":"decree:turn-1:sun-review","commitment_kind":"until_stop","end_turn":4,"ongoing_effects":{}}],
           "cancels": [],
           "close_issues": [{"issue_id":9,"reason":"resolved","narrative":"..."}],
           "fiscal_changes": [],
