@@ -60,6 +60,7 @@ def test_new_issue_persists_commitment_columns_from_tracker_output(game):
             "kind": "initiative",
             "title": "每月补辽饷直到补齐",
             "end_turn": state.turn + 4,
+            "ongoing_effects": {"economy": [{"account": "国库", "delta": -50, "reason": "每月补辽饷"}]},
             "stop_condition": stop_condition,
             "commitment_kind": "until_stop",
         }],
