@@ -132,6 +132,58 @@ def test_positive_outcome_dependency_waits_for_frozen_outcome_label(game):
         ).fetchone() is None
 
 
+def test_terminal_state_expired_dependency_invalidates_when_upstream_obsolete(game):
+    db, state, content = game
+    issues.bind_content(content)
+    upstream = _hist_event("__chain_upstream_obsolete_for_expired__")
+    downstream = _hist_event("__chain_downstream_requires_expired__", {
+        "event.__chain_upstream_obsolete_for_expired__.terminal_state": "==expired",
+    })
+    with _TempEvents(content, upstream, downstream):
+        db.mark_event_obsolete(state, upstream.id, reason="测试作废")
+
+        terminalized = issues.apply_event_cascading_invalidations(state, db)
+
+        assert any(item["id"] == downstream.id and item["terminal_state"] == "obsolete" for item in terminalized)
+        assert _terminal_state(db, downstream.id) == ("obsolete", "上游事件 __chain_upstream_obsolete_for_expired__ 终态不满足门：obsolete")
+
+
+def test_terminal_state_in_expired_or_obsolete_invalidates_when_upstream_triggered(game):
+    db, state, content = game
+    issues.bind_content(content)
+    upstream = _hist_event("__chain_upstream_triggered_for_nontriggered__")
+    downstream = _hist_event("__chain_downstream_requires_nontriggered_terminal__", {
+        "event.__chain_upstream_triggered_for_nontriggered__.terminal_state": "in=expired|obsolete",
+    })
+    with _TempEvents(content, upstream, downstream):
+        db.mark_event_triggered(state, upstream.id)
+
+        terminalized = issues.apply_event_cascading_invalidations(state, db)
+
+        assert any(item["id"] == downstream.id and item["terminal_state"] == "obsolete" for item in terminalized)
+        assert _terminal_state(db, downstream.id) == ("obsolete", "上游事件 __chain_upstream_triggered_for_nontriggered__ 终态不满足门：triggered")
+
+
+def test_terminal_state_including_triggered_preserves_expired_alternative(game):
+    db, state, content = game
+    issues.bind_content(content)
+    upstream = _hist_event("__chain_upstream_expired_alternative__")
+    downstream = _hist_event("__chain_downstream_accepts_triggered_or_expired__", {
+        "event.__chain_upstream_expired_alternative__.terminal_state": "in=triggered|expired",
+    })
+    with _TempEvents(content, upstream, downstream):
+        db.mark_event_expired(state, upstream.id)
+
+        terminalized = issues.apply_event_cascading_invalidations(state, db)
+
+        assert all(item["id"] != downstream.id for item in terminalized)
+        assert db.conn.execute(
+            "SELECT 1 FROM event_triggers WHERE event_id=?",
+            (downstream.id,),
+        ).fetchone() is None
+        assert any(candidate.id == downstream.id for candidate in issues.gather_candidate_events(state, db))
+
+
 def test_negative_dependency_is_satisfied_by_upstream_expiry_not_invalidated(game):
     db, state, content = game
     issues.bind_content(content)

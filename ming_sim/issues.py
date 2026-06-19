@@ -248,13 +248,20 @@ def _event_dependency_ids(ev: Event) -> set[str]:
     return ids
 
 
+_EVENT_DEPENDENCY_GRAPH_VALIDATION_CACHE: set[tuple[tuple[str, tuple[str, ...]], ...]] = set()
+
+
 def _validate_event_dependency_graph_acyclic(content: GameContent, state: GameState) -> None:
-    graph: Dict[str, set[str]] = {
+    raw_graph: Dict[str, set[str]] = {
         ev.id: _event_dependency_ids(ev)
         for ev in [*content.events, *content.seed_events]
         if getattr(ev, "id", "")
     }
-    graph = {eid: {dep for dep in deps if dep in graph} for eid, deps in graph.items() if deps}
+    graph = {eid: {dep for dep in deps if dep in raw_graph} for eid, deps in raw_graph.items() if deps}
+    cache_key = tuple(sorted((eid, tuple(sorted(deps))) for eid, deps in graph.items()))
+    if cache_key in _EVENT_DEPENDENCY_GRAPH_VALIDATION_CACHE:
+        return
+
     visiting: set[str] = set()
     visited: set[str] = set()
     stack: List[str] = []
@@ -279,13 +286,20 @@ def _validate_event_dependency_graph_acyclic(content: GameContent, state: GameSt
 
     for eid in sorted(graph):
         dfs(eid)
+    _EVENT_DEPENDENCY_GRAPH_VALIDATION_CACHE.add(cache_key)
 
 
 def _event_chain_impossible_reason(ev: Event, terminal_records: Dict[str, Dict[str, str]], state: GameState) -> str:
-    positive_trigger_required: Dict[str, bool] = {}
-    negative_trigger_required: Dict[str, bool] = {}
+    allowed_states: Dict[str, set[str]] = {}
+    forbidden_states: Dict[str, set[str]] = {}
     allowed_outcomes: Dict[str, set[str]] = {}
     forbidden_outcomes: Dict[str, set[str]] = {}
+
+    def allow_state(upstream_id: str, state_name: str) -> None:
+        allowed_states.setdefault(upstream_id, set()).add(state_name)
+
+    def forbid_state(upstream_id: str, state_name: str) -> None:
+        forbidden_states.setdefault(upstream_id, set()).add(state_name)
 
     for raw_key, raw_cond in (ev.trigger_gate or {}).items():
         m = _EVENT_GATE_KEY_RE.match(str(raw_key))
@@ -300,9 +314,9 @@ def _event_chain_impossible_reason(ev: Event, terminal_records: Dict[str, Dict[s
             op, value = num.group(1), int(num.group(2))
             dependency_kind = _event_triggered_numeric_dependency_kind(op, value)
             if dependency_kind == "positive":
-                positive_trigger_required[upstream_id] = True
+                allow_state(upstream_id, "triggered")
             elif dependency_kind == "negative":
-                negative_trigger_required[upstream_id] = True
+                forbid_state(upstream_id, "triggered")
             elif dependency_kind == "neither":
                 raise SettlementAbort(
                     f"事件链 triggered 门在布尔域 {{0,1}} 上永不满足：{raw_key} {cond}",
@@ -316,14 +330,15 @@ def _event_chain_impossible_reason(ev: Event, terminal_records: Dict[str, Dict[s
         op, value = text.group(1), text.group(2).strip()
         values = {part.strip() for part in value.split("|") if part.strip()}
         if field == "terminal_state":
-            if op == "==" and value == "triggered":
-                positive_trigger_required[upstream_id] = True
-            elif op == "!=" and value == "triggered":
-                negative_trigger_required[upstream_id] = True
-            elif op == "in=" and "triggered" in values:
-                positive_trigger_required[upstream_id] = True
-        elif field == "terminal_reason":
             if op in ("==", "in="):
+                allowed_states.setdefault(upstream_id, set()).update(values)
+            elif op == "!=":
+                forbidden_states.setdefault(upstream_id, set()).update(values)
+        elif field == "terminal_reason":
+            # Outcome labels are frozen only for triggered events; a positive outcome
+            # predicate therefore implies terminal_state == triggered.
+            if op in ("==", "in="):
+                allow_state(upstream_id, "triggered")
                 allowed_outcomes.setdefault(upstream_id, set()).update(values)
             elif op == "!=":
                 forbidden_outcomes.setdefault(upstream_id, set()).update(values)
@@ -334,15 +349,19 @@ def _event_chain_impossible_reason(ev: Event, terminal_records: Dict[str, Dict[s
             continue
         state_val = record["terminal_state"]
         outcome = record["terminal_reason"]
-        if positive_trigger_required.get(upstream_id) or upstream_id in allowed_outcomes:
-            allowed = allowed_outcomes.get(upstream_id, set())
-            if state_val != "triggered":
+        allowed = allowed_states.get(upstream_id, set())
+        if allowed and state_val not in allowed:
+            if allowed == {"triggered"}:
                 return f"上游事件 {upstream_id} 已入非触发终态：{state_val}"
-            if allowed and outcome and outcome not in allowed:
-                return f"上游事件 {upstream_id} 已发其他结局：{outcome}"
-        if negative_trigger_required.get(upstream_id):
-            if state_val == "triggered":
+            return f"上游事件 {upstream_id} 终态不满足门：{state_val}"
+        forbidden_states_for_upstream = forbidden_states.get(upstream_id, set())
+        if state_val in forbidden_states_for_upstream:
+            if forbidden_states_for_upstream == {"triggered"}:
                 return f"上游事件 {upstream_id} 已触发"
+            return f"上游事件 {upstream_id} 已入禁用终态：{state_val}"
+        allowed_outcome_values = allowed_outcomes.get(upstream_id, set())
+        if allowed_outcome_values and outcome and outcome not in allowed_outcome_values:
+            return f"上游事件 {upstream_id} 已发其他结局：{outcome}"
         forbidden = forbidden_outcomes.get(upstream_id, set())
         if forbidden and state_val == "triggered" and outcome in forbidden:
             return f"上游事件 {upstream_id} 已发禁用结局：{outcome}"
@@ -365,8 +384,8 @@ def apply_event_cascading_invalidations(
     _validate_event_dependency_graph_acyclic(content, state)
     should_commit = commit and not db.conn.in_transaction
     terminalized: List[Dict[str, object]] = []
+    terminal_records = _event_terminal_records(db)
     while True:
-        terminal_records = _event_terminal_records(db)
         changed = False
         for ev in [*content.events, *content.seed_events]:
             if not getattr(ev, "id", "") or ev.id in terminal_records:
