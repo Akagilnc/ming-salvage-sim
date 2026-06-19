@@ -5,9 +5,10 @@
   (kind=directive) 暂存；turn_directives 此刻不动。
 - 同一回合同一大臣再次触发拟旨意图（补充/改草） → 同一条 pending 行原地更新（last-write-wins），
   不新增行；确认流仍 3 态（应允/拒绝/不回）。
-- 对话应允 → commit → turn_directives 建档 status=pending 待准驳；
-  或颁诏时 commit_pending_actions 批量落（不回路径）。
-- 显式前缀「拟旨如下：」仍走旧路（add_directive 直接建档），不触发此自然语言闸门。
+- 对话应允 / 颁诏时「不回=默认同意」→ commit → turn_directives 建档 status=draft
+  （直接进颁诏候选池，无需再经 web UI 准驳；pending 态保留给显式前缀大臣拟旨用）；
+  commit_pending_actions 幂等，两路最终落同一状态。
+- 显式前缀「拟旨如下：」仍走旧路（add_directive 直接建档 status=pending），不触发此自然语言闸门。
 """
 
 from __future__ import annotations
@@ -188,8 +189,9 @@ def test_pending_directive_last_write_wins(game, monkeypatch):
 # ── ③ commit 时在 turn_directives 建档 ───────────────────────────────────
 
 def test_pending_directive_commit_creates_turn_directive(game):
-    """commit_pending_actions 把 kind=directive 暂存落进 turn_directives(status=pending 待准驳)；
-    暂存标 committed，不留 pending。"""
+    """commit_pending_actions 把 kind=directive 暂存落进 turn_directives(status=draft)；
+    暂存标 committed，不留 pending。
+    status=draft（而非 pending）使其直接进颁诏候选池，无需再经 web UI 准驳。"""
     db, state, content = game
     name = _active_minister_name(db, content)
 
@@ -206,13 +208,13 @@ def test_pending_directive_commit_creates_turn_directive(game):
 
     applied = db.commit_pending_actions(state)
 
-    # turn_directives 建档，status=pending
+    # turn_directives 建档，status=draft（直接进颁诏候选池）
     row = db.conn.execute(
         "SELECT text, status, actor FROM turn_directives WHERE turn=? ORDER BY id DESC",
         (state.turn,)).fetchone()
     assert row is not None
     assert row["text"] == draft_text
-    assert row["status"] == "pending"
+    assert row["status"] == "draft"
     assert row["actor"] == name
 
     # pending_actions 标 committed，不留 pending
@@ -246,7 +248,7 @@ def test_dialogue_affirm_commits_pending_directive(game, monkeypatch):
         (state.turn,)).fetchone()
     assert row is not None
     assert row["text"] == draft_text
-    assert row["status"] == "pending"
+    assert row["status"] == "draft"
     assert db.list_pending_actions(state.turn) == []
 
 
@@ -272,3 +274,35 @@ def test_dialogue_reject_drops_pending_directive(game, monkeypatch):
     assert db.list_pending_actions(state.turn) == []
     assert db.conn.execute(
         "SELECT COUNT(*) FROM turn_directives WHERE turn=?", (state.turn,)).fetchone()[0] == 0
+
+
+# ── ⑤ "不回=颁诏默认同意"真实入口覆盖（ADR 0006 bugfix）────────────────────
+
+def test_no_reply_path_directive_reachable_by_list_directives(game):
+    """「不回」路径（不显式应允/拒绝，直接颁诏）：
+    commit_pending_actions(kind_filter='directive') 把暂存提交为 draft，
+    list_directives(status='draft') 能拾取 → resolve_turn 的"至少一条草案"守门不触发。
+    这是 codex r1 finding [high] 的回归测试，覆盖颁诏前的 auto-commit 逻辑。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+
+    draft_text = "奉天承运皇帝诏曰，着户部速清三边粮饷，钦此。"
+    db.upsert_pending_directive(
+        state.turn, name,
+        payload={"text": draft_text, "actor": name},
+    )
+
+    # 颁诏前 list_directives 返回空（暂存还在 pending_actions）
+    assert db.list_directives(state, statuses=("draft",)) == []
+
+    # 模拟 resolve_turn 的 auto-commit 步骤：kind_filter='directive'
+    db.commit_pending_actions(state, kind_filter="directive")
+
+    # 提交后 list_directives 能拾取 → "至少一条草案才能颁诏"守门不触发
+    drafts = db.list_directives(state, statuses=("draft",))
+    assert len(drafts) == 1
+    assert drafts[0]["text"] == draft_text
+    assert drafts[0]["status"] == "draft"
+
+    # pending_count（计 turn_directives.status='pending'）仍为 0 → pending_count 守门不触发
+    assert db.count_pending_directives(state) == 0
