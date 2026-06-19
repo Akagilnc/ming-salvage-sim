@@ -154,6 +154,50 @@ def test_character_loyalty_commitment_ongoing_applies_monthly_and_records_progre
     assert "直到达标" in sim_issue["待办未解进度"]
 
 
+def test_legacy_character_resolve_condition_commitment_settles_when_threshold_reached(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
+    db.conn.execute("UPDATE characters SET loyalty=64 WHERE name='毛文龙'")
+    content.characters["毛文龙"].loyalty = 64
+    db.conn.commit()
+
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="旧档安抚毛文龙·持续承诺",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:legacy-appease-mao",
+        bar_value=0,
+        inertia=0,
+        stage_text="遣臣常驻皮岛安抚毛文龙，逐月消解其观望。",
+        resolve_condition="character.毛文龙.loyalty >= 65",
+        ongoing_effects={
+            "人物变更": [
+                {
+                    "name": "毛文龙",
+                    "动作": "评定",
+                    "loyalty": 2,
+                    "reason": "奉旨持续安抚，观望稍解",
+                }
+            ]
+        },
+        cancellable="decree",
+    )
+
+    _settle_empty_month(db, state, content)
+
+    assert _character_loyalty(db, "毛文龙") == 66
+    row = _issue_row(db, issue_id)
+    assert row["status"] == "resolved"
+    assert row["bar_value"] == 100
+    advances = db.conn.execute(
+        "SELECT trigger_kind FROM issue_advances WHERE issue_id=? ORDER BY id",
+        (issue_id,),
+    ).fetchall()
+    assert [row["trigger_kind"] for row in advances] == ["ongoing", "commitment_resolve"]
+
+
 def test_faction_class_commitment_ongoing_applies_monthly_when_counted(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
