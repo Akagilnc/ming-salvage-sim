@@ -836,6 +836,8 @@ class GameDB:
                 effect_on_fail TEXT NOT NULL DEFAULT '{}',
                 resolve_condition TEXT NOT NULL DEFAULT '',
                 fail_condition TEXT NOT NULL DEFAULT '',
+                end_turn INTEGER NOT NULL DEFAULT 0,
+                stop_condition TEXT NOT NULL DEFAULT '',
                 resolution_summary TEXT NOT NULL DEFAULT '',
                 last_advance_turn INTEGER NOT NULL DEFAULT 0,
                 closed_turn INTEGER,
@@ -988,6 +990,8 @@ class GameDB:
         self.ensure_column("characters", "transit_to", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "resolve_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "fail_condition", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("issues", "end_turn", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column("issues", "stop_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "birth_year", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "historical_death_year", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "historical_death_month", "INTEGER NOT NULL DEFAULT 0")

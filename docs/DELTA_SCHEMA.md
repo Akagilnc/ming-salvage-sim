@@ -177,7 +177,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 
 ⚠️ **kind 白名单**：落库时 `kind` 不在 `(situation, initiative)` 内会被拒。**第二次踩的坑**：`kind="reform"` 被拒（应改 `initiative`）。
 
-⚠️ **数量上限**：active `kind=initiative` 的 issue **总数不超过 10**，超过新立直接拒（"已有十事在办，朝廷分身乏术"）。
+⚠️ **数量上限**：active `kind=initiative` 的 issue **总数不超过 15**，超过新立直接拒（"已有十五事在办，朝廷分身乏术"）。
 
 人物承诺型事项也属 `initiative`：如皇帝命臣安抚毛文龙，应立标题类似 `安抚毛文龙·进行中` 的玩家可见 issue，并用 `stop_condition` 表达意图阈值（例：`character.毛文龙.loyalty >= 65`）。本字段只存停止/达成意图；自动按条件完成/关闭不在本片。一次性赏赐、抚恤、拨银若当回合办完，不立 issue，只走 `economy_moves` 与必要的 `人物变更`。
 
