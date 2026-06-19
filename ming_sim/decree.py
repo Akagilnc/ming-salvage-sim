@@ -483,6 +483,30 @@ def _replay_settle(
     return report
 
 
+def _mirror_rejections_after_commit(db: GameDB, collector: RejectionCollector) -> None:
+    """Mirror flushed rejection rows only after the owning transaction commits.
+
+    validate-layer collectors in persist_resolve_context may run under an outer
+    atomic owner (driver.run_settle). In that case the local collector would go
+    out of scope before _atomic_depth returns to 0, so register a post-commit
+    callback on the shared connection instead of mirroring early.
+    """
+    def _mirror() -> None:
+        try:
+            collector.mirror_to_jsonl(rejections_jsonl_path())
+        except Exception as mirror_exc:
+            tlog(f"[rejection] jsonl 镜像失败（DB 行已落，仅副本丢失）：{mirror_exc}")
+
+    if getattr(db.conn, "_atomic_depth", 0) == 0:
+        _mirror()
+        return
+    callbacks = getattr(db.conn, "_runtime_commit_callbacks", None)
+    if callbacks is None:
+        callbacks = []
+        db.conn._runtime_commit_callbacks = callbacks
+    callbacks.append(_mirror)
+
+
 def persist_resolve_context(
     db: GameDB,
     turn: int,
@@ -532,11 +556,7 @@ def persist_resolve_context(
             secret_orders=secret_orders, relevant_memories=relevant_memories,
             extracted=cleaned, source=Provenance(source).value,
         )
-    if getattr(db.conn, "_atomic_depth", 0) == 0:
-        try:
-            collector.mirror_to_jsonl(rejections_jsonl_path())
-        except Exception as mirror_exc:
-            tlog(f"[rejection] jsonl 镜像失败（DB 行已落，仅副本丢失）：{mirror_exc}")
+    _mirror_rejections_after_commit(db, collector)
     return cleaned
 
 
