@@ -80,6 +80,30 @@ def _normalize_commitment_kind(raw: object) -> str:
     return ""
 
 
+def _validate_commitment_stop_condition(raw: object, state: GameState, db: GameDB) -> str:
+    if not isinstance(raw, dict) or not raw:
+        raise ValueError("stop_condition 须为非空 dict")
+    for key, cond in raw.items():
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError(f"stop_condition key 非法：{key!r}")
+        key = key.strip()
+        if "." not in key or key.split(".", 1)[0] not in GATE_TABLES:
+            raise ValueError(f"stop_condition key 须带表前缀：{key!r}")
+        if not isinstance(cond, str) or not cond.strip():
+            raise ValueError(f"stop_condition value 须把比较算符写在字符串 value 内：{cond!r}")
+        cond_text = cond.strip()
+        sm = re.match(r"^(==|!=|in=)\s*(.+)$", cond_text)
+        if sm and (sm.group(1) == "in=" or not re.match(r"^-?\d+$", sm.group(2).strip())):
+            if _eval_gate_key_str(key, db) is None:
+                raise ValueError(f"stop_condition key 无法寻址：{key!r}")
+            continue
+        if not re.match(r"^(>=|<=|>|<|==)\s*-?\d+$", cond_text):
+            raise ValueError(f"stop_condition value 非法：{cond!r}")
+        if _eval_gate_key(key, state.metrics, db) is None:
+            raise ValueError(f"stop_condition key 无法寻址：{key!r}")
+    return _issue_condition_text(raw)
+
+
 # 给建筑/地区落库做 event 关联用的占位事件（issue 结案触发的副作用无真实 event）。
 _ISSUE_PSEUDO_EVENT = Event(
     id="issue_resolution", title="局势结案", kind="月末", summary="",
@@ -3324,11 +3348,25 @@ def apply_issue_tracker_output(
         # {'民心':-5}、dict(["ab"])={'a':'b'}）、对标量串 raise 拒整项——而 cancel_cost 是次要字段，
         # 脏不该丢掉整个 issue 决策后果（违 P1 落库铁律）。容忍归 {} 既不 garble、又保 issue 主体。
         cancel_cost = _eff_dict(ni.get("cancel_cost"))
-        stop_condition = _issue_condition_text(ni.get("stop_condition"))
+        origin_ref = str(ni.get("origin_ref") or "").strip()
+        stop_condition_raw = ni.get("stop_condition")
+        stop_condition = _issue_condition_text(stop_condition_raw)
         commitment_kind = _normalize_commitment_kind(ni.get("commitment_kind"))
-        if not commitment_kind and kind == "initiative" and stop_condition and ongoing_eff:
+        if not commitment_kind and kind == "initiative" and isinstance(stop_condition_raw, dict) and stop_condition_raw and ongoing_eff:
             commitment_kind = COMMITMENT_KIND_UNTIL_STOP
         is_commitment = bool(commitment_kind)
+        if is_commitment:
+            try:
+                if not origin_ref:
+                    raise ValueError("origin_ref 必填，须指回诏书")
+                stop_condition = _validate_commitment_stop_condition(stop_condition_raw, state, db)
+            except (TypeError, ValueError, OverflowError) as exc:
+                applied_new.append({
+                    "rejected": True, "category": "invalid_enum",
+                    "reason": f"new_issue commitment 字段非法（origin_ref/stop_condition）：{exc}",
+                    "item": ni, "title": title,
+                })
+                continue
         # 校验：国策必须有「办成回报」。CLI 后端(agy)一贯不填效果字段（实测 0/4），
         # 空则聚焦补全，保证「国策跑完有实质后果」(A 方案)；floor 兜底，绝不入空壳。
         if kind == "initiative" and not resolve_eff and not is_commitment:
@@ -3402,7 +3440,7 @@ def apply_issue_tracker_output(
             kind=kind,
             title=title[:60] or "无名事项",
             origin_kind="decree",
-            origin_ref=str(ni.get("origin_ref") or ""),
+            origin_ref=origin_ref,
             bar_value=bar_value,
             bar_good_meaning=str(ni.get("bar_good_meaning") or "已成"),
             bar_bad_meaning=str(ni.get("bar_bad_meaning") or "废止"),

@@ -165,6 +165,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 | 字段 | 约束 |
 |---|---|
 | `origin_kind` | **必须** `"decree"` |
+| `origin_ref` | 承诺 issue 必填，指回诏书 / 旨意来源 |
 | `kind` | 默认 `initiative`；若用 `situation` 则按系统危机走 |
 | `title` | ≤60 字 |
 | `bar_value` | int，默认 25 |

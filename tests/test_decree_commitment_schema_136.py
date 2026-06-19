@@ -56,6 +56,7 @@ def test_new_issue_persists_commitment_columns_from_tracker_output(game):
     out = I.apply_issue_tracker_output(db, state, {
         "new_issues": [{
             "origin_kind": "decree",
+            "origin_ref": "decree:turn-1:pay-liao-arrears",
             "kind": "initiative",
             "title": "每月补辽饷直到补齐",
             "end_turn": state.turn + 4,
@@ -80,12 +81,14 @@ def test_canonicalize_new_issue_preserves_commitment_columns():
     out = canonicalize_extraction({
         "new_issues": [{
             "标题": "每月补饷直到补齐",
+            "来源引用": "decree:turn-1:pay-arrears",
             "停止条件": {"army.guanning.arrears": "<=0"},
             "承诺标记": "until_stop",
             "end_turn": 9,
         }],
     })
 
+    assert out["new_issues"][0]["origin_ref"] == "decree:turn-1:pay-arrears"
     assert out["new_issues"][0]["stop_condition"] == {"army.guanning.arrears": "<=0"}
     assert out["new_issues"][0]["commitment_kind"] == "until_stop"
     assert out["new_issues"][0]["end_turn"] == 9
