@@ -115,6 +115,94 @@ def test_dirty_region_value_rejected_sibling_lands(game, bad_value):
     assert after != before  # 兄弟好字段照落
 
 
+@pytest.mark.parametrize("bad_controller", [None, "", "   ", "null", " NULL ", "not_a_real_power"])
+def test_region_controlled_by_rejects_non_power_id_and_preserves_region(game, bad_controller):
+    """region_delta.controlled_by 不是普通 text：必须是 powers.id 里真实、非空 power id。
+    None/空白/null 文本/未知 id 都逐项拒收留痕，且不改地区控制权。"""
+    db, state, content = game
+    turn = state.turn
+    good = _a_region(db)
+    before = db.conn.execute(
+        "SELECT controlled_by FROM regions WHERE id=?", (good,)
+    ).fetchone()[0]
+
+    run_settle(db, state, content, {
+        "region_delta": {good: {"controlled_by": bad_controller}},
+    }, narrative="x", decree_text="y")
+
+    rows = _rejection_rows(db, turn, "region_changes")
+    assert len(rows) == 1
+    _, reason, category, _ = rows[0]
+    assert category == "invalid_enum"
+    assert "controlled_by" in reason
+    after = db.conn.execute(
+        "SELECT controlled_by FROM regions WHERE id=?", (good,)
+    ).fetchone()[0]
+    assert after == before
+
+
+def test_region_controlled_by_accepts_existing_power_ids_and_restore_hook(game):
+    """合法 powers.id 仍可落库；非 ming→ming 收复时原 on_restore 覆盖逻辑仍触发。"""
+    db, state, content = game
+    rid = "jianzhou"
+    region = db.conn.execute(
+        "SELECT id, public_support FROM regions WHERE id=?", (rid,)
+    ).fetchone()
+    assert region is not None
+    before_support = int(region["public_support"])
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "region_delta": {rid: {"controlled_by": "ming"}},
+    }, narrative="x", decree_text="y")
+
+    row = db.conn.execute(
+        "SELECT controlled_by, public_support FROM regions WHERE id=?", (rid,)
+    ).fetchone()
+    assert row["controlled_by"] == "ming"
+    assert int(row["public_support"]) != before_support  # on_restore 覆盖仍生效
+    log_fields = [
+        r[0] for r in db.conn.execute(
+            "SELECT field FROM region_logs WHERE turn=? AND region_id=? ORDER BY id",
+            (turn, rid),
+        ).fetchall()
+    ]
+    assert "controlled_by" in log_fields
+    assert "public_support" in log_fields
+
+
+def test_region_controlled_by_mixed_invalid_and_valid_siblings_apply(game):
+    """坏 controlled_by 只拒该字段，不阻断同地区好字段和同批其它地区合法控制权变更。"""
+    db, state, content = game
+    turn = state.turn
+    good = _a_region(db)
+    other = db.conn.execute(
+        "SELECT id FROM regions WHERE id <> ? LIMIT 1", (good,)
+    ).fetchone()[0]
+    before_unrest = db.conn.execute(
+        "SELECT unrest FROM regions WHERE id=?", (good,)
+    ).fetchone()[0]
+
+    run_settle(db, state, content, {
+        "region_delta": {
+            good: {"controlled_by": "not_a_real_power", "unrest": 2},
+            other: {"controlled_by": "houjin"},
+        },
+    }, narrative="x", decree_text="y")
+
+    rows = _rejection_rows(db, turn, "region_changes")
+    assert len(rows) == 1
+    assert rows[0][2] == "invalid_enum"
+    after_unrest = db.conn.execute(
+        "SELECT unrest FROM regions WHERE id=?", (good,)
+    ).fetchone()[0]
+    other_controller = db.conn.execute(
+        "SELECT controlled_by FROM regions WHERE id=?", (other,)
+    ).fetchone()[0]
+    assert after_unrest != before_unrest
+    assert other_controller == "houjin"
+
+
 # ---- army_delta：查无此军 ----
 
 def test_unknown_army_rejected_good_item_lands(game):
