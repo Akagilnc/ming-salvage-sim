@@ -102,6 +102,24 @@ def test_insert_issue_persists_commitment_deadline_columns(game):
     }
 
 
+def test_insert_issue_serializes_structured_stop_condition_as_json(game):
+    db, state, _ = game
+
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="补饷结构化停止条件",
+        origin_kind="decree",
+        stop_condition={"army.guanning.arrears": "<=0"},
+        commitment_kind="until_stop",
+    )
+
+    row = db.conn.execute(
+        "SELECT stop_condition FROM issues WHERE id=?", (issue_id,)
+    ).fetchone()
+    assert row["stop_condition"] == '{"army.guanning.arrears":"<=0"}'
+
+
 def test_new_issue_persists_commitment_columns_from_tracker_output(game):
     db, state, _ = game
     stop_condition = {"army.guanning.arrears": "<=0"}
