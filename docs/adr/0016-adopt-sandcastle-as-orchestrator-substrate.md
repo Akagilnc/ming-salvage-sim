@@ -40,5 +40,6 @@ Status: Proposed（2026-06-19；spike 实证「底座可行 + 并行编排可行
   - **slice 开发真正用的 skill 组**（CLAUDE.md 步骤6 + DEV_WORKFLOW 速查,全非 gstack、全在 `~/.claude/skills/<name>/`、纯 markdown 无 host 二进制依赖）:`tdd`(主) + **`codebase-design`(被 tdd/improve 挂用、是 tdd 子 skill)** + `review` + `diagnosing-bugs` + `improve-codebase-architecture`;编排器 family 合并那步还需 `resolving-merge-conflicts`。**skill 间有依赖（tdd→codebase-design）,故须整组注入、不能 cherry-pick 一两个。**
   - **gstack 与 slice 开发无关**:gstack 是 ship/存档/编排 ceremony,不进实现腿——别把它列进注入清单。
   - **cross-model 评审不靠注入 cmr skill**:`ak-cross-m-review` 是单 session 扇出工具,编排器在 **pipeline 层**用不同模型的 `run()` 实现评审(本 spike 已证:codex run() 评 Sonnet run()),不往容器里塞 cmr skill。
-  - 落地 = 实现腿容器 bind-mount 那组 dev skill 到 `/home/agent/.claude/skills`（+ 视需要全局 CLAUDE.md）;待「注入 vs 不注入」A/B 实测(同一 issue 对照)定收益。
+  - **关键 SE 原则:纪律文档化、prompt 收薄(否则可复现性破功)**。光把 skill 文件挂进去≠agent 会用——必须有**文档喊它用**;而那个「喊」不能写在编排器 prompt 里(= 我每次即兴发挥 = 退回 hermes「运行时临场建卡不可复现」,正是 #217 要弄死的)。纪律必须**进版本库**:① **仓库 CLAUDE.md 补机器可执行的「## Skill routing」段**(实现切片→`/tdd`;末尾→`/review`;硬 bug→`diagnosing-bugs`;架构清理→`improve`),in-container agent 自动读 workspace CLAUDE.md 即按它走;② 编排器 prompt **收薄**到「实现 issue #N,按本仓 CLAUDE.md dev 流程做」,不复述方法论。**现状缺口:本仓 CLAUDE.md 只有叙事 `## 开发流程`(给人读)+ `## Agent skills`(指针),无机器可执行 Skill routing 段——叠纪律层前要补。**
+  - 落地三件套 = **skills 在场**(容器 bind-mount `cp -RL` 实体化那组 dev skill 到 `/home/agent/.claude/skills`)+ **CLAUDE.md 路由**(在 git、机器可执行)+ **thin prompt**;待「注入+路由 vs 不注入」A/B 实测(同一 issue #137 对照)定收益。
 - **未决（剩唯一项）**：设计评审闭环（本地 cmr + 线上 bot）未跑——本 ADR Proposed → Accepted 的最后一道。并行编排证据已补齐（发现 3）；skill 注入收益待 A/B（发现 4）。
