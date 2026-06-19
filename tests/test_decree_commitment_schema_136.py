@@ -68,6 +68,17 @@ def test_effect_dict_has_work_recognizes_schema_effects(payload):
     assert effect_dict_has_work(payload) is True
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"人物变更": [{"name": "毛文龙", "动作": "评定", "loyalty": "2"}]},
+        {"character": [{"name": "毛文龙", "loyalty": "2", "reason": "每月安抚"}]},
+    ],
+)
+def test_effect_dict_has_work_ignores_malformed_person_loyalty(payload):
+    assert effect_dict_has_work(payload) is False
+
+
 def test_insert_issue_persists_commitment_deadline_columns(game):
     db, state, _ = game
 

@@ -186,7 +186,12 @@ def _person_effect_has_work(raw: object) -> bool:
         if not name or action not in action_fields:
             continue
         if action == "评定":
-            if _nonzero_int(item.get("loyalty")):
+            loyalty = item.get("loyalty")
+            if (
+                not isinstance(loyalty, bool)
+                and isinstance(loyalty, int)
+                and loyalty != 0
+            ):
                 return True
             continue
         return True
@@ -201,7 +206,12 @@ def _character_effect_has_work(raw: object) -> bool:
             continue
         if not _nonempty_text(item.get("name")):
             continue
-        if _nonzero_int(item.get("loyalty")):
+        loyalty = item.get("loyalty")
+        if (
+            not isinstance(loyalty, bool)
+            and isinstance(loyalty, int)
+            and loyalty != 0
+        ):
             return True
     return False
 
