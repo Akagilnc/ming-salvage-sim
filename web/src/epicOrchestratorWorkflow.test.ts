@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { layerEpicIssues, type TopologyInput } from "./orchestratorKernel";
 // @ts-ignore Workflow scripts are plain JavaScript outside the web src TypeScript program.
@@ -359,6 +363,64 @@ describe("epic orchestrator S2 single-slice pipeline", () => {
     expect(mergeCommand).toContain("switch -c ${familyBranch} --track origin/${familyBranch}");
     expect(mergeCommand).toContain("switch -c ${familyBranch} ${implementedCommit}^");
     expect(mergeCommand).not.toContain("switch -C ${familyBranch}");
+  });
+
+  it("returns structured merge JSON when a real git merge writes status lines", async () => {
+    const repoPath = mkdtempSync(join(tmpdir(), ".epic-orchestrator-merge-"));
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: repoPath, encoding: "utf8" }).trim();
+
+    try {
+      git("init");
+      git("config", "user.email", "orchestrator@example.test");
+      git("config", "user.name", "Epic Orchestrator Test");
+      writeFileSync(join(repoPath, "base.txt"), "base\n");
+      git("add", ".");
+      git("commit", "-m", "base");
+      const baseCommit = git("rev-parse", "HEAD");
+
+      git("switch", "-c", "family/217");
+      writeFileSync(join(repoPath, "family.txt"), "family\n");
+      git("add", ".");
+      git("commit", "-m", "family progress");
+      const familyHead = git("rev-parse", "HEAD");
+
+      git("switch", "-c", "slice-220", baseCommit);
+      writeFileSync(join(repoPath, "slice.txt"), "slice\n");
+      git("add", ".");
+      git("commit", "-m", "slice implementation");
+      const sliceCommit = git("rev-parse", "HEAD");
+
+      const result: any = await runEpicSingleSlicePipeline({
+        args: { epicIssueNumber: 217, familyBranch: "family/217", verifyCommands: ["npm --prefix web test"] },
+        log: () => undefined,
+        agent: async () => ({
+          commit: sliceCommit,
+          worktreePath: repoPath,
+          observabilityEvidence: { loudFailure: true, locatorLogs: true, notApplicableReason: "tooling slice" }
+        }),
+        Bash: async (command: string) => {
+          if (command.includes("/sub_issues")) {
+            return JSON.stringify({
+              epicId: 217,
+              issues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }],
+              blockedBy: []
+            });
+          }
+          if (command.includes("reviewer=codex")) return JSON.stringify({ status: "passed", findings: [] });
+          if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [] });
+          if (command.includes("merge reviewed commit")) {
+            return execFileSync("bash", ["-lc", command], { encoding: "utf8" });
+          }
+          return JSON.stringify({ status: "passed" });
+        }
+      });
+
+      expect(result.merge).toMatchObject({ status: "merged", familyBranch: "family/217", reviewedCommit: sliceCommit });
+      const mergeParents = git("rev-list", "--parents", "-n", "1", result.merge.mergeCommit).split(" ").slice(1);
+      expect(mergeParents).toEqual([familyHead, sliceCommit]);
+    } finally {
+      rmSync(repoPath, { recursive: true, force: true });
+    }
   });
 
   it("stops before review and merge when local verification fails", async () => {
