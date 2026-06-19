@@ -59,21 +59,22 @@ def test_persist_resolve_context_source_defaults_system_simulation(game):
     assert db.get_resolve_context(turn)["source"] == "system_simulation"
 
 
-def test_persist_rejects_malformed_delta_and_writes_nothing(game):
-    """畸形 delta（region_delta 应为 dict 实得 list）→ 响亮抛 ValueError，
-    且 resolve_context **未被写入**（防毒 payload 钉进重试真源）。"""
+def test_persist_sanitizes_malformed_delta_and_records_rejection(game):
+    """ADR0015：可拆 section 畸形逐项/逐段拒收，净化后写入 resolve_context。"""
     db, state, content = game
     turn = state.turn
     bad = {"region_delta": ["not", "a", "dict"]}  # validate_delta_shape 要求 dict 容器
 
-    with pytest.raises(ValueError):
-        persist_resolve_context(
-            db, turn, bad,
-            decree_text="x", narrative="y",
-            simulator_payload={}, secret_orders=[], relevant_memories=[],
-        )
+    persist_resolve_context(
+        db, turn, bad,
+        decree_text="d", narrative="n",
+        simulator_payload={}, secret_orders=[], relevant_memories=[],
+    )
 
-    assert db.get_resolve_context(turn) is None
+    assert db.get_resolve_context(turn)["extracted"]["region_delta"] == {}
+    row = db.conn.execute("SELECT section, item_json FROM rejection_reports").fetchone()
+    assert row["section"] == "region_delta"
+    assert '"raw_value"' in row["item_json"]
 
 
 def test_persist_accepts_person_change_delta_after_applier_is_wired(game):
