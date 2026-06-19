@@ -48,6 +48,40 @@ def test_persist_resolve_context_rejects_bad_items_and_saves_sanitized_delta(gam
     assert {r["source"] for r in rows} == {"player_decree"}
 
 
+def test_driver_validate_rejection_mirrors_jsonl_after_outer_atomic(game, tmp_path, monkeypatch):
+    """driver.run_settle 的外层事务提交后也要镜像 validate 层拒收 jsonl。"""
+    from pathlib import Path
+
+    from driver import run_settle
+
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    db, state, content = game
+    turn = state.turn
+
+    report = run_settle(
+        db,
+        state,
+        content,
+        {"economy_moves": [None]},
+        narrative="本月邸报。",
+        decree_text="诏",
+    )
+
+    assert "窒碍未行" in report
+    rows = _reports(db)
+    assert [(r["section"], json.loads(r["item_json"])) for r in rows] == [
+        ("economy_moves", {"raw_value": None}),
+    ]
+    assert rows[0]["turn"] == turn
+    jsonl = Path(tmp_path) / "error_packs" / "rejections.jsonl"
+    assert jsonl.exists()
+    mirrored = [json.loads(line) for line in jsonl.read_text(encoding="utf-8").splitlines()]
+    assert len(mirrored) == 1
+    assert mirrored[0]["turn"] == turn
+    assert mirrored[0]["section"] == "economy_moves"
+    assert json.loads(mirrored[0]["item_json"]) == {"raw_value": None}
+
+
 def test_player_visible_rejection_aggregates_durable_rows_across_attempts_and_resimulation(game, tmp_path, monkeypatch):
     from ming_sim.applier import Provenance
     from ming_sim.decree import persist_resolve_context, settle_with_delta

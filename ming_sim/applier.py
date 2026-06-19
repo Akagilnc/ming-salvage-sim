@@ -67,13 +67,18 @@ class _SuspendableConnection(sqlite3.Connection):
     def commit(self) -> None:
         if self._commit_suspended:
             return
+        callbacks = list(getattr(self, "_runtime_commit_callbacks", []))
+        self._runtime_commit_callbacks = []
         super().commit()
         self._runtime_rollback_callbacks = []
+        for callback in callbacks:
+            callback()
 
     def rollback(self) -> None:
         super().rollback()
         callbacks = list(getattr(self, "_runtime_rollback_callbacks", []))
         self._runtime_rollback_callbacks = []
+        self._runtime_commit_callbacks = []
         callback_errors = []
         try:
             for callback in reversed(callbacks):
