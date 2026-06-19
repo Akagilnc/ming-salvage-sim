@@ -387,7 +387,7 @@ export async function runEpicSingleSlicePipeline({ args, Bash, agent: agentRunne
 
   phaseIfAvailable('Merge');
   const mergeResult = parseBashJson(
-    await Bash(`set -euo pipefail\n# merge reviewed commit into family branch; reviewer=merge reviewed commit\nworktreePath=${shellQuote(worktreePath)}\nfamilyBranch=${shellQuote(normalizedArgs.familyBranch)}\nimplementedCommit=${shellQuote(implementedCommit)}\ngit -C "$worktreePath" fetch origin "$familyBranch" || true\nif git -C "$worktreePath" show-ref --verify --quiet refs/heads/\${familyBranch}; then\n  git -C "$worktreePath" switch \${familyBranch}\nelif git -C "$worktreePath" show-ref --verify --quiet refs/remotes/origin/\${familyBranch}; then\n  git -C "$worktreePath" switch -c \${familyBranch} --track origin/\${familyBranch}\nelse\n  git -C "$worktreePath" switch -c \${familyBranch} \${implementedCommit}^\nfi\ngit -C "$worktreePath" merge --no-ff "$implementedCommit" -m ${shellQuote(`merge reviewed slice #${plannedSlice.issueNumber}`)} >&2\nprintf '{"mergeCommit":"'\ngit -C "$worktreePath" rev-parse HEAD | tr -d '\\n'\nprintf '"}'`)
+    await Bash(`set -euo pipefail\n# merge reviewed commit into family branch; reviewer=merge reviewed commit\nworktreePath=${shellQuote(worktreePath)}\nfamilyBranch=${shellQuote(normalizedArgs.familyBranch)}\nimplementedCommit=${shellQuote(implementedCommit)}\ngit -C "$worktreePath" fetch origin "$familyBranch" || true\nif git -C "$worktreePath" show-ref --verify --quiet "refs/heads/\${familyBranch}"; then\n  git -C "$worktreePath" switch "$familyBranch"\nelif git -C "$worktreePath" show-ref --verify --quiet "refs/remotes/origin/\${familyBranch}"; then\n  git -C "$worktreePath" switch -c "$familyBranch" --track "origin/\${familyBranch}"\nelse\n  git -C "$worktreePath" switch -c "$familyBranch" "\${implementedCommit}^"\nfi\ngit -C "$worktreePath" merge --no-ff "$implementedCommit" -m ${shellQuote(`merge reviewed slice #${plannedSlice.issueNumber}`)} >&2\nprintf '{"mergeCommit":"'\ngit -C "$worktreePath" rev-parse HEAD | tr -d '\\n'\nprintf '"}'`)
   );
 
   return {
@@ -459,7 +459,7 @@ async function runVerification({ Bash, worktreePath, verifyCommands }) {
   const results = [];
   for (const command of verifyCommands) {
     const parsed = parseBashJson(
-      await Bash(`set -euo pipefail\ncd ${shellQuote(worktreePath)}\nout=$(mktemp)\nset +e\n( ${command} ) >"$out" 2>&1\nrc=$?\npython3 - "$rc" "$out" <<'PY'\nimport json, sys\nrc = int(sys.argv[1])\nwith open(sys.argv[2], encoding='utf-8', errors='replace') as handle:\n    output = handle.read()\nprint(json.dumps({"status": "passed" if rc == 0 else "failed", "exitCode": rc, "output": output}))\nPY`)
+      await Bash(`set -euo pipefail\ncd ${shellQuote(worktreePath)}\nout=$(mktemp)\ntrap 'rm -f "$out"' EXIT\nset +e\n( ${command} ) >"$out" 2>&1\nrc=$?\npython3 - "$rc" "$out" <<'PY'\nimport json, sys\nrc = int(sys.argv[1])\nwith open(sys.argv[2], encoding='utf-8', errors='replace') as handle:\n    output = handle.read()\nprint(json.dumps({"status": "passed" if rc == 0 else "failed", "exitCode": rc, "output": output}))\nPY`)
     );
     results.push({ command, ...parsed });
     if (parsed.status && parsed.status !== 'passed') {
@@ -564,7 +564,7 @@ function parseReviewerJson(raw, reviewerName) {
     return JSON.parse(output);
   } catch (fullOutputError) {
     const trimmed = output.trim();
-    for (let index = trimmed.lastIndexOf('{'); index >= 0; index = trimmed.lastIndexOf('{', index - 1)) {
+    for (let index = trimmed.lastIndexOf('{'); index >= 0; index = index === 0 ? -1 : trimmed.lastIndexOf('{', index - 1)) {
       try {
         return JSON.parse(trimmed.slice(index));
       } catch {
