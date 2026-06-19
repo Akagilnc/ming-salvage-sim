@@ -539,3 +539,93 @@ def test_advance_without_edict_discards_pending_directive(game):
     assert orphan_drafts == 0, (
         f"退朝无诏不应在旧回合建 turn_directives 行，找到 {orphan_drafts} 行（codex r5 F2）"
     )
+
+
+# ── ⑩ codex r6 F1 — 补充轮增量合并而非回话覆盖 ──────────────────────────────
+
+def test_supplement_stores_merged_draft_not_raw_reply(game, monkeypatch):
+    """补充轮产生的 pending directive payload 应为 LLM 合并后的草案，
+    不能是大臣的确认回话（「好的，加上…」）覆盖原草案（codex r6 F1）。
+
+    LLM 返回 {"拟旨意图": "拟旨", "合并草案": "<merged>"} 时，
+    payload["text"] 应等于 merged，而非 minister_reply（确认语）。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+
+    original_text = "原始草稿：着户部清查三边粮饷，限三月完报。"
+    confirmation_reply = "好的，臣即补入，着监察御史随行。"
+    merged_draft = "合并草稿：着户部清查三边粮饷，监察御史随行，限三月完报。"
+
+    db.upsert_pending_directive(state.turn, name,
+                                payload={"text": original_text, "actor": name})
+
+    def _capture(prompt, llm_config=None, tag=""):
+        if tag == "draft_intent":
+            return (json.dumps(
+                {"拟旨意图": "拟旨", "合并草案": merged_draft}, ensure_ascii=False), 1)
+        # 确认意图：无（不提前 commit/drop）
+        return (json.dumps({"确认": "无"}, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _capture)
+    sess = _fake_session(db, state)
+    GameSession.apply_cli_conversation_actions(
+        sess, ch, player_message="再补一条，监察御史随行",
+        answer=confirmation_reply,
+        has_directive=False, secret_order_id=None,
+    )
+
+    pend = db.list_pending_actions(state.turn)
+    assert len(pend) == 1, "仍应只有一条 pending directive（last-write-wins）"
+    payload = json.loads(pend[0]["payload_json"])
+    assert payload["text"] == merged_draft, (
+        f"补充轮应存 LLM 合并草案，实际得到: {payload['text']!r}"
+    )
+    assert confirmation_reply not in payload["text"], (
+        "payload 不能是大臣确认回话（会丢失原草案）"
+    )
+    assert original_text not in payload["text"], (
+        "payload 应是合并后的完整草案，不是原始草案"
+    )
+
+
+# ── ⑪ codex r6 F2 — undo_chat_turn 也回滚 write_decree 产生的 draft ──────────
+
+def test_undo_chat_turn_removes_write_decree_draft(game):
+    """stage 对话式草案 → write_decree() 提前 commit 成 draft → undo_chat_turn()：
+    撤回后 pending_actions 被删、turn_directives draft 也必须被删（codex r6 F2）。
+
+    turn_directives 行由 write_decree() 产生，时序晚于快照故不在 rollback_items；
+    undo 须显式按 (turn, actor) 删除对应 draft，否则撤回后草案仍可颁诏。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+
+    ctid = db.create_chat_turn(state, name, "sess-undo-draft-r6", 0)
+    before = db.capture_chat_rollback_snapshot()
+    db.upsert_pending_directive(
+        state.turn, name,
+        payload={"text": "草案文本（将被撤回）", "actor": name},
+    )
+    after = db.capture_chat_rollback_snapshot()
+    db.record_chat_turn_rollback_diffs(ctid, before, after)
+
+    # 模拟 write_decree() 把 pending directive commit 成 turn_directives draft
+    db.commit_pending_actions(state, kind_filter="directive")
+
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM turn_directives WHERE turn=? AND status='draft'",
+        (state.turn,)).fetchone()[0] == 1, "write_decree 应已建 draft 行"
+
+    # 撤回召对
+    db.undo_chat_turn(ctid)
+
+    # pending_actions 被删（正常回滚）
+    assert db.list_pending_actions(state.turn) == [], "撤回后 pending_actions 应为空"
+
+    # turn_directives draft 也必须被删（codex r6 F2 修复）
+    remaining = db.conn.execute(
+        "SELECT COUNT(*) FROM turn_directives WHERE turn=? AND status='draft'",
+        (state.turn,)).fetchone()[0]
+    assert remaining == 0, (
+        f"undo 后 turn_directives draft 应被删，但仍有 {remaining} 行"
+    )
