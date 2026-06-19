@@ -327,20 +327,20 @@ export async function runEpicSingleSlicePipeline({ args, Bash, agent: agentRunne
     implementedCommit = implementation?.commit ?? implementation?.commitSha ?? implementation?.sha;
     worktreePath = implementation?.worktreePath ?? implementation?.path;
     if (!implementedCommit || !worktreePath) {
-      throw new Error('Implementation leg must return a commit and worktreePath.');
+      throw new Error('实现腿必须返回 commit 和 worktreePath。');
     }
     const previousFailedCommit = implementations.at(-1)?.commit;
     if (implementations.length > 0 && implementedCommit === previousFailedCommit) {
-      throw new Error('I7 requires each review-fix round to return a new commit, not the failed commit.');
+      throw new Error('I7 要求每一轮 review-fix 返回新 commit，不能复用未通过评审的 commit。');
     }
     if (!isHiddenWorktreePath(worktreePath)) {
-      throw new Error('Implementation worktree must be under a hidden-dot path so agy review is explicitly diff-only.');
+      throw new Error('实现 worktree 必须位于隐藏点目录下，以便 agy 评审明确只看 diff。');
     }
     observabilityEvidence = validateObservabilityEvidence(implementation?.observabilityEvidence);
     implementations.push({ commit: implementedCommit, worktreePath });
     if (round > 1) reviewFixCommits.push(implementedCommit);
 
-    await Bash(`set -euo pipefail\n# enforce I7 commit discipline for slice ${shellQuote(plannedSlice.issueNumber)} round ${shellQuote(round)}\nworktreePath=${shellQuote(worktreePath)}\nimplementedCommit=$(git -C "$worktreePath" rev-parse ${shellQuote(`${implementedCommit}^{commit}`)})\nexpectedHead=$(git -C "$worktreePath" rev-parse HEAD)\nif [ "$expectedHead" != "$implementedCommit" ]; then\n  printf 'implementation worktree HEAD %s does not match implementedCommit %s\\n' "$expectedHead" "$implementedCommit" >&2\n  exit 1\nfi\ngit -C "$worktreePath" rev-list --parents -n 1 "$implementedCommit" | awk 'NF >= 2 { ok=1 } END { exit ok ? 0 : 1 }'${previousFailedCommit ? `\nfailedCommit=$(git -C "$worktreePath" rev-parse ${shellQuote(`${previousFailedCommit}^{commit}`)})\ngit -C "$worktreePath" merge-base --is-ancestor "$failedCommit" "$implementedCommit"` : ''}\nstatus=$(git -C "$worktreePath" status --porcelain)\nif [ -n "$status" ]; then\n  printf 'implementation worktree is not clean after implementedCommit %s:\\n%s\\n' "$implementedCommit" "$status" >&2\n  exit 1\nfi`);
+    await Bash(`set -euo pipefail\n# 为切片执行 I7 commit 纪律检查 ${shellQuote(plannedSlice.issueNumber)} round ${shellQuote(round)}\nworktreePath=${shellQuote(worktreePath)}\nimplementedCommit=$(git -C "$worktreePath" rev-parse ${shellQuote(`${implementedCommit}^{commit}`)})\nexpectedHead=$(git -C "$worktreePath" rev-parse HEAD)\nif [ "$expectedHead" != "$implementedCommit" ]; then\n  printf '实现 worktree HEAD %s 与 implementedCommit %s 不一致\\n' "$expectedHead" "$implementedCommit" >&2\n  exit 1\nfi\ngit -C "$worktreePath" rev-list --parents -n 1 "$implementedCommit" | awk 'NF >= 2 { ok=1 } END { exit ok ? 0 : 1 }'${previousFailedCommit ? `\nfailedCommit=$(git -C "$worktreePath" rev-parse ${shellQuote(`${previousFailedCommit}^{commit}`)})\ngit -C "$worktreePath" merge-base --is-ancestor "$failedCommit" "$implementedCommit"` : ''}\nstatus=$(git -C "$worktreePath" status --porcelain)\nif [ -n "$status" ]; then\n  printf 'implementedCommit %s 之后实现 worktree 仍不干净：\\n%s\\n' "$implementedCommit" "$status" >&2\n  exit 1\nfi`);
 
     phaseIfAvailable('Verify');
     verification = await runVerification({ Bash, worktreePath, verifyCommands: normalizedArgs.verifyCommands });
@@ -383,7 +383,7 @@ export async function runEpicSingleSlicePipeline({ args, Bash, agent: agentRunne
       };
     }
 
-    log?.(`Per-slice review failed for #${plannedSlice.issueNumber}; starting same-slice review-fix round ${round + 1}/${normalizedArgs.maxReviewRounds}.`);
+    log?.(`#${plannedSlice.issueNumber} 单切片评审未通过；开始同切片 review-fix 第 ${round + 1}/${normalizedArgs.maxReviewRounds} 轮。`);
   }
 
   phaseIfAvailable('Merge');
@@ -562,20 +562,20 @@ async function runSliceReviewLoop({ discovery, normalizedArgs, plannedIssue, Bas
     implementedCommit = implementation?.commit ?? implementation?.commitSha ?? implementation?.sha;
     worktreePath = implementation?.worktreePath ?? implementation?.path;
     if (!implementedCommit || !worktreePath) {
-      throw new Error('Implementation leg must return a commit and worktreePath.');
+      throw new Error('实现腿必须返回 commit 和 worktreePath。');
     }
     const previousFailedCommit = implementations.at(-1)?.commit;
     if (implementations.length > 0 && implementedCommit === previousFailedCommit) {
-      throw new Error('I7 requires each review-fix round to return a new commit, not the failed commit.');
+      throw new Error('I7 要求每一轮 review-fix 返回新 commit，不能复用未通过评审的 commit。');
     }
     if (!isHiddenWorktreePath(worktreePath)) {
-      throw new Error('Implementation worktree must be under a hidden-dot path so agy review is explicitly diff-only.');
+      throw new Error('实现 worktree 必须位于隐藏点目录下，以便 agy 评审明确只看 diff。');
     }
     observabilityEvidence = validateObservabilityEvidence(implementation?.observabilityEvidence);
     implementations.push({ commit: implementedCommit, worktreePath });
     if (round > 1) reviewFixCommits.push(implementedCommit);
 
-    await Bash(`set -euo pipefail\n# enforce I7 commit discipline for slice ${shellQuote(plannedSlice.issueNumber)} round ${shellQuote(round)}\nworktreePath=${shellQuote(worktreePath)}\nimplementedCommit=$(git -C "$worktreePath" rev-parse ${shellQuote(`${implementedCommit}^{commit}`)})\nexpectedHead=$(git -C "$worktreePath" rev-parse HEAD)\nif [ "$expectedHead" != "$implementedCommit" ]; then\n  printf 'implementation worktree HEAD %s does not match implementedCommit %s\\n' "$expectedHead" "$implementedCommit" >&2\n  exit 1\nfi\ngit -C "$worktreePath" rev-list --parents -n 1 "$implementedCommit" | awk 'NF >= 2 { ok=1 } END { exit ok ? 0 : 1 }'${previousFailedCommit ? `\nfailedCommit=$(git -C "$worktreePath" rev-parse ${shellQuote(`${previousFailedCommit}^{commit}`)})\ngit -C "$worktreePath" merge-base --is-ancestor "$failedCommit" "$implementedCommit"` : ''}\nstatus=$(git -C "$worktreePath" status --porcelain)\nif [ -n "$status" ]; then\n  printf 'implementation worktree is not clean after implementedCommit %s:\\n%s\\n' "$implementedCommit" "$status" >&2\n  exit 1\nfi`);
+    await Bash(`set -euo pipefail\n# 为切片执行 I7 commit 纪律检查 ${shellQuote(plannedSlice.issueNumber)} round ${shellQuote(round)}\nworktreePath=${shellQuote(worktreePath)}\nimplementedCommit=$(git -C "$worktreePath" rev-parse ${shellQuote(`${implementedCommit}^{commit}`)})\nexpectedHead=$(git -C "$worktreePath" rev-parse HEAD)\nif [ "$expectedHead" != "$implementedCommit" ]; then\n  printf '实现 worktree HEAD %s 与 implementedCommit %s 不一致\\n' "$expectedHead" "$implementedCommit" >&2\n  exit 1\nfi\ngit -C "$worktreePath" rev-list --parents -n 1 "$implementedCommit" | awk 'NF >= 2 { ok=1 } END { exit ok ? 0 : 1 }'${previousFailedCommit ? `\nfailedCommit=$(git -C "$worktreePath" rev-parse ${shellQuote(`${previousFailedCommit}^{commit}`)})\ngit -C "$worktreePath" merge-base --is-ancestor "$failedCommit" "$implementedCommit"` : ''}\nstatus=$(git -C "$worktreePath" status --porcelain)\nif [ -n "$status" ]; then\n  printf 'implementedCommit %s 之后实现 worktree 仍不干净：\\n%s\\n' "$implementedCommit" "$status" >&2\n  exit 1\nfi`);
 
     phaseIfAvailable('Verify');
     verification = await runVerification({ Bash, worktreePath, verifyCommands: normalizedArgs.verifyCommands });
@@ -627,13 +627,13 @@ async function runSliceReviewLoop({ discovery, normalizedArgs, plannedIssue, Bas
       };
     }
 
-    log?.(`Per-slice review failed for #${plannedSlice.issueNumber}; starting same-slice review-fix round ${round + 1}/${normalizedArgs.maxReviewRounds}.`);
+    log?.(`#${plannedSlice.issueNumber} 单切片评审未通过；开始同切片 review-fix 第 ${round + 1}/${normalizedArgs.maxReviewRounds} 轮。`);
   }
 }
 
 async function mergeReviewedCommit({ Bash, worktreePath, familyBranch, implementedCommit, plannedSlice }) {
   return parseBashJson(
-    await Bash(`set -euo pipefail\n# merge reviewed commit into family branch; reviewer=merge reviewed commit\nsourceWorktreePath=${shellQuote(worktreePath)}\nfamilyBranch=${shellQuote(familyBranch)}\nimplementedCommit=${shellQuote(implementedCommit)}\ncommonDir=$(git -C "$sourceWorktreePath" rev-parse --path-format=absolute --git-common-dir)\nmergeRoot="$commonDir/../.epic-orchestrator"\nsafeBranch=$(printf '%s' "$familyBranch" | tr -c 'A-Za-z0-9._-' '_')\ndefaultMergeWorktree="$mergeRoot/family-$safeBranch"\nexistingMergeWorktree=$(python3 - "$sourceWorktreePath" "$familyBranch" <<'PY'\nimport subprocess, sys\nsource, branch = sys.argv[1], sys.argv[2]\ncurrent = None\nfor line in subprocess.check_output(['git', '-C', source, 'worktree', 'list', '--porcelain'], text=True).splitlines():\n    if line.startswith('worktree '):\n        current = line.removeprefix('worktree ')\n    elif line == f'branch refs/heads/{branch}' and current:\n        print(current)\n        break\nPY\n)\nif [ -n "$existingMergeWorktree" ]; then\n  mergeWorktree="$existingMergeWorktree"\nelse\n  mergeWorktree="$defaultMergeWorktree"\n  mkdir -p "$mergeRoot"\n  if [ -e "$mergeWorktree" ] && [ ! -d "$mergeWorktree/.git" ]; then\n    printf 'merge worktree path exists but is not a git worktree: %s\\n' "$mergeWorktree" >&2\n    exit 1\n  fi\n  if [ ! -d "$mergeWorktree/.git" ]; then\n    git -C "$sourceWorktreePath" fetch origin "$familyBranch" || true\n    if git -C "$sourceWorktreePath" show-ref --verify --quiet "refs/heads/\${familyBranch}"; then\n      git -C "$sourceWorktreePath" worktree add "$mergeWorktree" "$familyBranch" >&2\n    elif git -C "$sourceWorktreePath" show-ref --verify --quiet "refs/remotes/origin/\${familyBranch}"; then\n      git -C "$sourceWorktreePath" worktree add -b "$familyBranch" "$mergeWorktree" "origin/\${familyBranch}" >&2\n    else\n      git -C "$sourceWorktreePath" worktree add -b "$familyBranch" "$mergeWorktree" "\${implementedCommit}^" >&2\n    fi\n  fi\nfi\nout=$(mktemp)\ntrap 'rm -f "$out"' EXIT\nset +e\ngit -C "$mergeWorktree" merge --no-ff "$implementedCommit" -m ${shellQuote(`merge reviewed slice #${plannedSlice.issueNumber}`)} >"$out" 2>&1\nrc=$?\nset -e\nif [ "$rc" -ne 0 ]; then\n  git -C "$mergeWorktree" merge --abort >/dev/null 2>&1 || true\n  python3 - "$rc" "$out" <<'PY'\nimport json, sys\nwith open(sys.argv[2], encoding='utf-8', errors='replace') as handle:\n    output = handle.read()\nprint(json.dumps({"status":"conflict", "reason":"merge conflict", "exitCode": int(sys.argv[1]), "output": output}))\nPY\n  exit 0\nfi\nprintf '{"status":"merged","mergeCommit":"'\ngit -C "$mergeWorktree" rev-parse HEAD | tr -d '\\n'\nprintf '","mergeWorktree":"'\ngit -C "$mergeWorktree" rev-parse --show-toplevel | tr -d '\\n' | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read())[1:-1], end="")'\nprintf '"}'`)
+    await Bash(`set -euo pipefail\n# 将已评审 commit 合入家族分支；reviewer=merge reviewed commit\nsourceWorktreePath=${shellQuote(worktreePath)}\nfamilyBranch=${shellQuote(familyBranch)}\nimplementedCommit=${shellQuote(implementedCommit)}\ncommonDir=$(git -C "$sourceWorktreePath" rev-parse --path-format=absolute --git-common-dir)\nmergeRoot="$commonDir/../.epic-orchestrator"\nsafeBranch=$(printf '%s' "$familyBranch" | tr -c 'A-Za-z0-9._-' '_')\ndefaultMergeWorktree="$mergeRoot/family-$safeBranch"\nexistingMergeWorktree=$(python3 - "$sourceWorktreePath" "$familyBranch" <<'PY'\nimport subprocess, sys\nsource, branch = sys.argv[1], sys.argv[2]\ncurrent = None\nfor line in subprocess.check_output(['git', '-C', source, 'worktree', 'list', '--porcelain'], text=True).splitlines():\n    if line.startswith('worktree '):\n        current = line.removeprefix('worktree ')\n    elif line == f'branch refs/heads/{branch}' and current:\n        print(current)\n        break\nPY\n)\nif [ -n "$existingMergeWorktree" ]; then\n  mergeWorktree="$existingMergeWorktree"\nelse\n  mergeWorktree="$defaultMergeWorktree"\n  mkdir -p "$mergeRoot"\n  if [ -e "$mergeWorktree" ] && [ ! -d "$mergeWorktree/.git" ]; then\n    printf 'merge worktree 路径已存在但不是 git worktree：%s\\n' "$mergeWorktree" >&2\n    exit 1\n  fi\n  if [ ! -d "$mergeWorktree/.git" ]; then\n    git -C "$sourceWorktreePath" fetch origin "$familyBranch" || true\n    if git -C "$sourceWorktreePath" show-ref --verify --quiet "refs/heads/\${familyBranch}"; then\n      git -C "$sourceWorktreePath" worktree add "$mergeWorktree" "$familyBranch" >&2\n    elif git -C "$sourceWorktreePath" show-ref --verify --quiet "refs/remotes/origin/\${familyBranch}"; then\n      git -C "$sourceWorktreePath" worktree add -b "$familyBranch" "$mergeWorktree" "origin/\${familyBranch}" >&2\n    else\n      git -C "$sourceWorktreePath" worktree add -b "$familyBranch" "$mergeWorktree" "\${implementedCommit}^" >&2\n    fi\n  fi\nfi\nout=$(mktemp)\ntrap 'rm -f "$out"' EXIT\nset +e\ngit -C "$mergeWorktree" merge --no-ff "$implementedCommit" -m ${shellQuote(`合并已评审切片 #${plannedSlice.issueNumber}`)} >"$out" 2>&1\nrc=$?\nset -e\nif [ "$rc" -ne 0 ]; then\n  git -C "$mergeWorktree" merge --abort >/dev/null 2>&1 || true\n  python3 - "$rc" "$out" <<'PY'\nimport json, sys\nwith open(sys.argv[2], encoding='utf-8', errors='replace') as handle:\n    output = handle.read()\nprint(json.dumps({"status":"conflict", "reason":"merge_conflict", "exitCode": int(sys.argv[1]), "output": output}))\nPY\n  exit 0\nfi\nprintf '{"status":"merged","mergeCommit":"'\ngit -C "$mergeWorktree" rev-parse HEAD | tr -d '\\n'\nprintf '","mergeWorktree":"'\ngit -C "$mergeWorktree" rev-parse --show-toplevel | tr -d '\\n' | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read())[1:-1], end="")'\nprintf '"}'`)
   );
 }
 
@@ -653,7 +653,7 @@ function normalizePositiveInteger(value, fallback, name) {
   if (value === undefined || value === null || value === '') return fallback;
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error(`${name} must be a positive integer.`);
+    throw new Error(`${name} 必须是正整数。`);
   }
   return parsed;
 }
@@ -733,10 +733,10 @@ function i7Evidence(commit, reviewFixCommits = []) {
 
 function validateObservabilityEvidence(evidence) {
   if (!evidence || evidence.loudFailure !== true || evidence.locatorLogs !== true) {
-    throw new Error('I8 observability evidence must include loudFailure:true and locatorLogs:true.');
+    throw new Error('I8 可观测性证据必须包含 loudFailure:true 和 locatorLogs:true。');
   }
   if (!evidence.gameplayDbConsequences && !evidence.notApplicableReason) {
-    throw new Error('I8 observability evidence must include gameplayDbConsequences or a notApplicableReason for read-only/UI/tooling slices.');
+    throw new Error('I8 可观测性证据必须包含 gameplayDbConsequences；只读/UI/工具切片可改填 notApplicableReason。');
   }
   return evidence;
 }
