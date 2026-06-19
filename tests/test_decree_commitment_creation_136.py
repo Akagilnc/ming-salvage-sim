@@ -139,6 +139,45 @@ def test_until_stop_commitment_shape_rejects_without_explicit_marker(game, monke
     assert _issue_by_title(db, "每月补宣大蓟镇直到补齐") is None
 
 
+def test_limited_duration_commitment_shape_rejects_without_explicit_marker(game, monkeypatch):
+    db, state, content = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    out = I.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "origin_ref": "decree:turn-1:two-month-pay",
+                    "kind": "initiative",
+                    "title": "连续两月补饷但缺承诺标记",
+                    "ongoing_effects": {
+                        "economy": [
+                            {
+                                "account": "国库",
+                                "delta": -40,
+                                "category": "补饷承诺",
+                                "reason": "连续两月补饷",
+                                "purpose": "补饷",
+                            }
+                        ]
+                    },
+                    "end_turn": state.turn + 2,
+                }
+            ]
+        },
+        content=content,
+    )
+
+    created = out["issue_summary"]["new_issues"][0]
+    assert created["rejected"] is True
+    assert created["category"] == "invalid_enum"
+    assert "commitment_kind" in created["reason"]
+    assert _issue_by_title(db, "连续两月补饷但缺承诺标记") is None
+
+
 def test_until_stop_commitment_requires_initiative_kind(game, monkeypatch):
     db, state, content = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)

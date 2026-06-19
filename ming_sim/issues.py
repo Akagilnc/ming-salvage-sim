@@ -3590,10 +3590,16 @@ def apply_issue_tracker_output(
         stop_condition_raw = ni.get("stop_condition")
         stop_condition = _issue_condition_text(stop_condition_raw)
         commitment_kind = _normalize_commitment_kind(ni.get("commitment_kind"))
+        try:
+            end_turn_marker_shape = _strict_int(
+                0 if ni.get("end_turn", 0) in (None, "") else ni.get("end_turn", 0)
+            ) > 0
+        except (TypeError, ValueError, OverflowError):
+            end_turn_marker_shape = False
         commitment_shape_without_marker = (
             not commitment_kind
             and kind == "initiative"
-            and bool(stop_condition)
+            and (bool(stop_condition) or end_turn_marker_shape)
             and bool(ongoing_eff)
         )
         if commitment_shape_without_marker:
