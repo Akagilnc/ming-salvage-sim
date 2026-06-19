@@ -269,6 +269,7 @@ export type GameState = {
   talent_pool?: Minister[];  // 在野人才池：可起复的罢居/致仕前臣（offstage，#120）
   directives: Directive[];
   pending_count: number;
+  pending_directive_count?: number;  // 对话式拟旨暂存数（pending_actions kind=directive）
   pending_decisions?: PendingDecision[];
   last_decree: string;
   last_report: string;
