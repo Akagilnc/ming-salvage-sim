@@ -15,10 +15,12 @@ from __future__ import annotations
 
 import json
 import types
+from unittest.mock import patch
 
 import pytest
 
 import ming_sim.cli_backend as cb
+from ming_sim.models import FRONT_HALF_DONE_PHASES, TurnPhase
 from ming_sim.session import GameSession
 
 
@@ -306,3 +308,64 @@ def test_no_reply_path_directive_reachable_by_list_directives(game):
 
     # pending_count（计 turn_directives.status='pending'）仍为 0 → pending_count 守门不触发
     assert db.count_pending_directives(state) == 0
+
+
+# ── ⑥ write_decree() 真实入口覆盖（codex r2 finding [high]）─────────────────
+
+def test_write_decree_commits_pending_directive(game, monkeypatch):
+    """web「拟诏」按钮路径覆盖（codex r2 finding [high]）：
+    玩家口头「拟旨吧」后不显式应允，直接点「拟诏」按钮触发 write_decree()。
+    write_decree() 必须先 commit_pending_actions(kind_filter='directive')，
+    再 list_directives(status='draft')——否则 drafts 为空，raise "无草案不能拟诏"。
+
+    此测试直接调 GameSession.write_decree()（而非只调 db.commit_pending_actions），
+    覆盖 r1 测试照不到的 web 按钮入口。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+
+    draft_text = "奉天承运皇帝诏曰，着兵部整饬三边军务，期三月内完报，钦此。"
+    db.upsert_pending_directive(
+        state.turn, name,
+        payload={"text": draft_text, "actor": name},
+    )
+
+    # write_decree 调用前：turn_directives 为空，pending_actions 有一条
+    assert db.list_directives(state, statuses=("draft",)) == []
+    assert len(db.list_pending_actions(state.turn)) == 1
+
+    # 构造最小 fake session（委派真实 db/state；_refuse_if_settling 直接实现）
+    fake_sess = types.SimpleNamespace(
+        db=db,
+        state=state,
+        content=None,
+        registry=None,
+        llm_config=types.SimpleNamespace(channel="cli"),
+        agno_db=None,
+        last_decree="",
+    )
+
+    def _refuse_if_settling():
+        if state.turn_phase in FRONT_HALF_DONE_PHASES:
+            raise ValueError("月末结算进行中（恢复态），请先完成结算再改诏稿。")
+
+    def _pending_count():
+        return db.count_pending_directives(state)
+
+    fake_sess._refuse_if_settling = _refuse_if_settling
+    fake_sess.pending_count = _pending_count
+
+    canned_decree = "奉天承运皇帝诏曰，着兵部整饬三边军务，期三月内完报，钦此。"
+    with patch("ming_sim.session.write_decree_with_agno", return_value=canned_decree):
+        result = GameSession.write_decree(fake_sess)
+
+    # write_decree 内 commit_pending_actions 已把暂存升级为 draft
+    drafts = db.list_directives(state, statuses=("draft",))
+    assert len(drafts) == 1
+    assert drafts[0]["text"] == draft_text
+    assert drafts[0]["status"] == "draft"
+
+    # pending_actions 已清空（标 committed）
+    assert db.list_pending_actions(state.turn) == []
+
+    # 返回值是 decree 文本
+    assert result == canned_decree
