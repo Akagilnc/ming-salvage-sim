@@ -453,11 +453,13 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
 
   for (const layerPlan of discovery.orderedPlan) {
     log?.(`开始第 ${layerPlan.layer} 层：${layerPlan.issueNumbers.join(', ')}`);
+    const sliceBaseContext = buildSliceBaseContext(normalizedArgs, mergeQueue);
     const layerResults = await Promise.all(
       layerPlan.issues.map((plannedIssue) =>
         runSliceReviewLoop({
           discovery,
           normalizedArgs,
+          sliceBaseContext,
           plannedIssue,
           Bash,
           runner,
@@ -523,7 +525,7 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
   };
 }
 
-async function runSliceReviewLoop({ discovery, normalizedArgs, plannedIssue, Bash, runner, log }) {
+async function runSliceReviewLoop({ discovery, normalizedArgs, sliceBaseContext, plannedIssue, Bash, runner, log }) {
   const plannedSlice = {
     ...plannedIssue,
     isolation: 'worktree'
@@ -544,10 +546,11 @@ async function runSliceReviewLoop({ discovery, normalizedArgs, plannedIssue, Bas
       isolation: 'worktree',
       issueNumber: plannedSlice.issueNumber,
       issue: plannedSlice,
+      ...(sliceBaseContext ?? {}),
       prompt:
         round === 1
-          ? buildImplementationPrompt(discovery.epicIssueNumber, plannedSlice)
-          : buildReviewFixPrompt(discovery.epicIssueNumber, plannedSlice, implementations.at(-1)?.commit, review, round, normalizedArgs.maxReviewRounds),
+          ? buildImplementationPrompt(discovery.epicIssueNumber, plannedSlice, sliceBaseContext)
+          : buildReviewFixPrompt(discovery.epicIssueNumber, plannedSlice, implementations.at(-1)?.commit, review, round, normalizedArgs.maxReviewRounds, sliceBaseContext),
       ...(round === 1
         ? {}
         : {
@@ -631,6 +634,24 @@ async function runSliceReviewLoop({ discovery, normalizedArgs, plannedIssue, Bas
   }
 }
 
+function buildSliceBaseContext(normalizedArgs, mergeQueue) {
+  const lastMerged = mergeQueue.at(-1);
+  if (!lastMerged?.mergeCommit) return undefined;
+  return {
+    familyBranch: normalizedArgs.familyBranch,
+    baseBranch: normalizedArgs.familyBranch,
+    baseRef: lastMerged.mergeCommit,
+    lastMergeCommit: lastMerged.mergeCommit,
+    mergeQueue: mergeQueue.map((entry) => ({
+      status: entry.status,
+      familyBranch: entry.familyBranch,
+      reviewedCommit: entry.reviewedCommit,
+      mergeCommit: entry.mergeCommit,
+      mergeWorktree: entry.mergeWorktree
+    }))
+  };
+}
+
 async function mergeReviewedCommit({ Bash, worktreePath, familyBranch, implementedCommit, plannedSlice }) {
   return parseBashJson(
     await Bash(`set -euo pipefail\n# 将已评审 commit 合入家族分支；reviewer=merge reviewed commit\nsourceWorktreePath=${shellQuote(worktreePath)}\nfamilyBranch=${shellQuote(familyBranch)}\nimplementedCommit=${shellQuote(implementedCommit)}\ncommonDir=$(git -C "$sourceWorktreePath" rev-parse --path-format=absolute --git-common-dir)\nmergeRoot="$commonDir/../.epic-orchestrator"\nsafeBranch=$(printf '%s' "$familyBranch" | tr -c 'A-Za-z0-9._-' '_')\ndefaultMergeWorktree="$mergeRoot/family-$safeBranch"\nexistingMergeWorktree=$(python3 - "$sourceWorktreePath" "$familyBranch" <<'PY'\nimport subprocess, sys\nsource, branch = sys.argv[1], sys.argv[2]\ncurrent = None\nfor line in subprocess.check_output(['git', '-C', source, 'worktree', 'list', '--porcelain'], text=True).splitlines():\n    if line.startswith('worktree '):\n        current = line.removeprefix('worktree ')\n    elif line == f'branch refs/heads/{branch}' and current:\n        print(current)\n        break\nPY\n)\nif [ -n "$existingMergeWorktree" ]; then\n  mergeWorktree="$existingMergeWorktree"\nelse\n  mergeWorktree="$defaultMergeWorktree"\n  mkdir -p "$mergeRoot"\n  if [ -e "$mergeWorktree" ] && [ ! -d "$mergeWorktree/.git" ]; then\n    printf 'merge worktree 路径已存在但不是 git worktree：%s\\n' "$mergeWorktree" >&2\n    exit 1\n  fi\n  if [ ! -d "$mergeWorktree/.git" ]; then\n    git -C "$sourceWorktreePath" fetch origin "$familyBranch" || true\n    if git -C "$sourceWorktreePath" show-ref --verify --quiet "refs/heads/\${familyBranch}"; then\n      git -C "$sourceWorktreePath" worktree add "$mergeWorktree" "$familyBranch" >&2\n    elif git -C "$sourceWorktreePath" show-ref --verify --quiet "refs/remotes/origin/\${familyBranch}"; then\n      git -C "$sourceWorktreePath" worktree add -b "$familyBranch" "$mergeWorktree" "origin/\${familyBranch}" >&2\n    else\n      git -C "$sourceWorktreePath" worktree add -b "$familyBranch" "$mergeWorktree" "\${implementedCommit}^" >&2\n    fi\n  fi\nfi\nout=$(mktemp)\ntrap 'rm -f "$out"' EXIT\nset +e\ngit -C "$mergeWorktree" merge --no-ff "$implementedCommit" -m ${shellQuote(`合并已评审切片 #${plannedSlice.issueNumber}`)} >"$out" 2>&1\nrc=$?\nset -e\nif [ "$rc" -ne 0 ]; then\n  git -C "$mergeWorktree" merge --abort >/dev/null 2>&1 || true\n  python3 - "$rc" "$out" <<'PY'\nimport json, sys\nwith open(sys.argv[2], encoding='utf-8', errors='replace') as handle:\n    output = handle.read()\nprint(json.dumps({"status":"conflict", "reason":"merge_conflict", "exitCode": int(sys.argv[1]), "output": output}))\nPY\n  exit 0\nfi\nprintf '{"status":"merged","mergeCommit":"'\ngit -C "$mergeWorktree" rev-parse HEAD | tr -d '\\n'\nprintf '","mergeWorktree":"'\ngit -C "$mergeWorktree" rev-parse --show-toplevel | tr -d '\\n' | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read())[1:-1], end="")'\nprintf '"}'`)
@@ -658,26 +679,37 @@ function normalizePositiveInteger(value, fallback, name) {
   return parsed;
 }
 
-function buildImplementationPrompt(epicIssueNumber, plannedSlice) {
+function buildImplementationPrompt(epicIssueNumber, plannedSlice, sliceBaseContext) {
   return [
     `Implement epic #${epicIssueNumber} slice #${plannedSlice.issueNumber}: ${plannedSlice.title ?? ''}`,
     'Use isolation:"worktree". Produce exactly one slice commit for the initial implementation.',
+    ...baseContextPromptLines(sliceBaseContext),
     'I7: every review-fix round must be a new commit; never amend or squash review history.',
     'I8: enforce loud failures, locator logs, and gameplay DB consequences when applicable; for read-only/UI/tooling slices include substitute observability evidence.',
     'Return JSON-like data containing commit and worktreePath.'
   ].join('\n');
 }
 
-function buildReviewFixPrompt(epicIssueNumber, plannedSlice, failedCommit, failedReview, round, maxReviewRounds) {
+function buildReviewFixPrompt(epicIssueNumber, plannedSlice, failedCommit, failedReview, round, maxReviewRounds, sliceBaseContext) {
   return [
     `Fix epic #${epicIssueNumber} slice #${plannedSlice.issueNumber}: ${plannedSlice.title ?? ''}`,
     `Same-slice review-fix round ${round}/${maxReviewRounds}; previous reviewed commit ${failedCommit} did not pass per-slice review.`,
     `Review findings: ${JSON.stringify(failedReview)}`,
     'Use the same isolation:"worktree" and fix only this slice.',
+    ...baseContextPromptLines(sliceBaseContext),
     'I7: create a NEW commit for this fix round; never amend, squash, or reuse the failed commit.',
     'After the fix the orchestrator will rerun local verify and codex+agy review.',
     'Return JSON-like data containing the new commit and worktreePath.'
   ].join('\n');
+}
+
+function baseContextPromptLines(sliceBaseContext) {
+  if (!sliceBaseContext?.baseRef) return [];
+  return [
+    `Base this worktree on family branch ${sliceBaseContext.familyBranch} at ${sliceBaseContext.baseRef} before implementing; this includes all blockers merged in earlier dependency layers.`,
+    'Do not start from the stale original epic base for this dependent-layer slice.',
+    `Merged prerequisite queue: ${JSON.stringify(sliceBaseContext.mergeQueue)}`
+  ];
 }
 
 async function runVerification({ Bash, worktreePath, verifyCommands }) {
