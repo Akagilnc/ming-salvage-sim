@@ -462,6 +462,50 @@ function normalizeFindingsKey(findings: ReadonlyArray<Finding>): string {
 }
 
 /**
+ * The ACTIVE suffix of a persisted ledger — the entries that belong to the
+ * still-live attempt, with any SUPERSEDED escalation attempt dropped
+ * (integ-cmr m2 r5, cross-slice seam #255 × #254 × #251).
+ *
+ * The disk ledger is append-only (types.ts: writeLedger appends a JSONL record).
+ * Escalate-resume re-opens the escalated step: planResume Case 2 truncates the
+ * IN-MEMORY priorLedger to slice(0, escalatedIdx), but the DISK ledger keeps the
+ * old escalated step entry AND its S8(escalate) — then the resumed continuation
+ * APPENDS fresh entries after them. So after a double-resume
+ * (escalate → answer-resume → crash → re-resume) the disk holds:
+ *
+ *   …S3(F), S4, S5, S6(escalate)(F), S8(escalate),   ← SUPERSEDED attempt
+ *   S6(resumed)(F), S4, …                             ← ACTIVE suffix (reopened)
+ *
+ * A terminal S8 entry that is NOT the last record was superseded by exactly such
+ * a reopen (a finished run is never continued — Case 3a/3b reports its status and
+ * stops; only a re-opened escalation appends past its S8). So the boundary is the
+ * LAST non-final S8: everything at-and-before it is the superseded prior attempt,
+ * everything after it is the active suffix the live loop actually continued.
+ *
+ * Returning only the active suffix makes reconstructProgressState mirror the live
+ * loop exactly: each escalate-resume starts a FRESH no-progress streak from the
+ * resumed step (the human just answered — the loop is making progress, not stuck),
+ * so the prior escalated attempt's reviewer outputs must NOT seed/score the streak.
+ * Without this, the superseded attempt's repeated findings inflate noProgressStreak
+ * and trip the K-consecutive stuck guard prematurely → a false S8(error) deadlock.
+ *
+ * A ledger with no non-final S8 (a normal crash-resume mid-run) is returned
+ * unchanged — there is no superseded boundary to drop.
+ */
+function activeSuffix(
+  ledger: ReadonlyArray<LedgerEntry>,
+): ReadonlyArray<LedgerEntry> {
+  // Find the LAST S8 entry that is not the final record. Any S8 followed by more
+  // entries terminated a superseded attempt (only a re-opened escalation appends
+  // past its own S8 handoff). The active suffix begins right after it.
+  let boundary = -1;
+  for (let i = 0; i < ledger.length - 1; i++) {
+    if (ledger[i]!.step === "S8") boundary = i;
+  }
+  return boundary >= 0 ? ledger.slice(boundary + 1) : ledger;
+}
+
+/**
  * Reconstruct the no-progress guard state from a persisted ledger on resume
  * (integ-cmr m2 r1, Finding 3).
  *
@@ -480,6 +524,15 @@ function normalizeFindingsKey(findings: ReadonlyArray<Finding>): string {
  * sequencing exactly (seed at S3, advance + score at each S6). Reviewer entries
  * are read IN ORDER; the first reviewer output seeds the baseline (no streak
  * change), and each later one scores progress/no-progress against it.
+ *
+ * integ-cmr m2 r5 (cross-slice seam #255 × #254 × #251): the fold runs over the
+ * ACTIVE suffix only, NOT the full append-only disk ledger. A reopened escalation
+ * leaves its superseded attempt's reviewer outputs on disk (append-only); folding
+ * over them would count the prior attempt's repeated findings as no-progress rounds
+ * of the live loop and inflate the streak past K → a false stuck S8(error). The
+ * live loop's streak resets at each escalate-resume (the resumed step is fresh
+ * progress), so reconstruction must score only the active suffix after the last
+ * superseded escalation boundary — see activeSuffix().
  */
 function reconstructProgressState(
   ledger: ReadonlyArray<LedgerEntry>,
@@ -488,7 +541,7 @@ function reconstructProgressState(
   let noProgressStreak = 0;
   let seenBaseline = false;
 
-  for (const e of ledger) {
+  for (const e of activeSuffix(ledger)) {
     const out = e.output;
     // integ-cmr m2 r4 (self-check, same class as the defer-rebuild hole): use
     // isValidReviewerOutput, NOT a bare `kind === "reviewer"` check. The persisted
