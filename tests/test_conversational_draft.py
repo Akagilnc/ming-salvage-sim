@@ -361,6 +361,8 @@ def test_write_decree_commits_pending_directive(game, monkeypatch):
 
     fake_sess._refuse_if_settling = _refuse_if_settling
     fake_sess.pending_count = _pending_count
+    fake_sess._draft_fingerprint = lambda directives: GameSession._draft_fingerprint(
+        fake_sess, directives)
 
     canned_decree = "奉天承运皇帝诏曰，着兵部整饬三边军务，期三月内完报，钦此。"
     with patch("ming_sim.session.write_decree_with_agno", return_value=canned_decree):
@@ -571,6 +573,32 @@ def test_draft_request_with_appointment_content_stages_directive_not_office(game
     pending = db.list_pending_actions(state.turn)
     assert [p["kind"] for p in pending] == ["directive"]
     assert "史可法" in json.loads(pending[0]["payload_json"])["text"]
+
+
+def test_none_player_message_does_not_crash_draft_probe(game, monkeypatch):
+    """系统生成/空消息路径可能传 player_message=None；拟旨关键词探针必须兜底为无请求。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+
+    def _none_actions(prompt, llm_config=None, tag=""):
+        if tag == "appointment":
+            return (json.dumps({"任免动作": "无"}, ensure_ascii=False), 1)
+        if tag == "draft_intent":
+            return (json.dumps({"拟旨意图": "无"}, ensure_ascii=False), 1)
+        return ("{}", 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _none_actions)
+    sess = _fake_session(db, state)
+
+    GameSession.apply_cli_conversation_actions(
+        sess, ch,
+        player_message=None,
+        answer="臣谨奏，今日并无可拟之旨。",
+        has_directive=False, secret_order_id=None,
+    )
+
+    assert db.list_pending_actions(state.turn) == []
 
 
 # ── ⑨ codex r5 F2 — advance_without_edict 不产生孤儿 draft ────────────────────
