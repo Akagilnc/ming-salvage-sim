@@ -4962,6 +4962,7 @@ class GameDB:
         # この補充→颁诏→撤回フローで committed_directive_id を取り逃し、orphan draft が残って
         # 颁诏汚染を起こす。よって strategy に依らず、行が kind=='directive' なら回収する。
         draft_ids_to_delete: List[int] = []
+        seen_draft_ids: set[int] = set()
         for item in items:
             if str(item["target_table"]) != "pending_actions":
                 continue
@@ -4983,7 +4984,10 @@ class GameDB:
                 (int(pa_id),),
             ).fetchone()
             if live is not None and int(live["committed_directive_id"] or 0) > 0:
-                draft_ids_to_delete.append(int(live["committed_directive_id"]))
+                did = int(live["committed_directive_id"])
+                if did not in seen_draft_ids:
+                    seen_draft_ids.add(did)
+                    draft_ids_to_delete.append(did)
         with self.conn:
             for item in items:
                 table = str(item["target_table"])
@@ -5817,29 +5821,10 @@ class GameDB:
             if not isinstance(payload, dict):   # 坏 payload(JSON 数组/串)→ 当空,apply 必 False 标 failed
                 payload = {}
             if pa["kind"] == "directive" and pa["action"] == "拟旨":
-                try:
-                    with self.conn:
-                        ok = self._apply_pending_action(
-                            state, pa, payload, content=content, registry=registry)
-                        if ok:
-                            self.conn.execute(
-                                "UPDATE pending_actions SET status='committed' WHERE id=?",
-                                (int(pa["id"]),),
-                            )
-                            applied.append({"id": pa["id"], "kind": pa["kind"],
-                                            "action": pa["action"], "target_id": pa["target_id"]})
-                        else:
-                            self.conn.execute(
-                                "UPDATE pending_actions SET status='failed' WHERE id=?",
-                                (int(pa["id"]),),
-                            )
-                except Exception as exc:
-                    tlog(f"[pending_actions] 落库失败 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
-                    with self.conn:
-                        self.conn.execute(
-                            "UPDATE pending_actions SET status='failed' WHERE id=?",
-                            (int(pa["id"]),),
-                        )
+                committed = self._commit_conversational_draft(
+                    state, pa, payload, content=content, registry=registry)
+                if committed is not None:
+                    applied.append(committed)
                 continue
             # apply 抛错(如 催办 对已转 pending_review 的密令)= 当 False:下面标 failed、
             # 不中断本轮其余动作、更不能崩整个结算(CMR P0)。
@@ -5863,6 +5848,35 @@ class GameDB:
             # 否则崩在循环中途会让"真实表已改但状态未 committed"→重跑重复落库(pr-loop gemini)。
             self.conn.commit()
         return applied
+
+    def _commit_conversational_draft(
+        self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
+        *, content=None, registry=None,
+    ) -> Optional[Dict[str, object]]:
+        """提交一条对话式拟旨暂存，并让 draft 行与 pending 状态同事务落定。"""
+        try:
+            with self.conn:
+                ok = self._apply_pending_action(
+                    state, pa, payload, content=content, registry=registry)
+                if ok:
+                    self.conn.execute(
+                        "UPDATE pending_actions SET status='committed' WHERE id=?",
+                        (int(pa["id"]),),
+                    )
+                    return {"id": pa["id"], "kind": pa["kind"],
+                            "action": pa["action"], "target_id": pa["target_id"]}
+                self.conn.execute(
+                    "UPDATE pending_actions SET status='failed' WHERE id=?",
+                    (int(pa["id"]),),
+                )
+        except Exception as exc:
+            tlog(f"[pending_actions] 落库失败 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
+            with self.conn:
+                self.conn.execute(
+                    "UPDATE pending_actions SET status='failed' WHERE id=?",
+                    (int(pa["id"]),),
+                )
+        return None
 
     def _apply_pending_action(
         self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
