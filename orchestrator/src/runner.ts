@@ -364,11 +364,34 @@ function planResume(
     // resumeSession and gets a fresh in-memory entry, so keeping the old one
     // here would duplicate it.
     const escalatedIdx = ledger.lastIndexOf(agentEntry);
+    const priorLedger = ledger.slice(0, escalatedIdx);
+    // integ-cmr 256 r6 (US#13 fix_loop_context, escalate-resume face): when the
+    // re-opened step is the S5 coder_fix, `lastOutput` must be the round's
+    // REVIEWER output — NOT the escalated coder's own output. The loop's S5
+    // dispatch derives the fix_now findings via selectFixNowFindings(lastOutput),
+    // which only recovers them from a reviewer output (a coder output fails
+    // isValidReviewerOutput → undefined). With the coder's own output here the
+    // resumed coder ran blind AND resumeSession(..., undefined) drove
+    // writeFixFindings's rmSync branch, DELETING the on-disk findings file the
+    // coder reads. Walking back to the most recent reviewer (the S3/S6 that
+    // produced the fix_now findings) makes the escalate-resume seam deliver the
+    // SAME findings a fresh S5 dispatch does. Reviewer escalations (S3/S6) and
+    // crash/legacy ledgers with no prior reviewer fall back to the escalated
+    // entry's own output unchanged (the defer-rebuild + route() already handle a
+    // reviewer lastOutput; a non-reviewer fallback leaves both untouched).
+    const lastReviewer = priorLedger
+      .slice()
+      .reverse()
+      .find((e) => e.output?.kind === "reviewer")?.output;
+    const lastOutput =
+      agentEntry.output?.kind === "coder"
+        ? lastReviewer ?? agentEntry.output
+        : agentEntry.output;
     return {
       resumeStep: agentEntry.step,
       resumeSessionId: agentEntry.sessionId,
-      lastOutput: agentEntry.output,
-      priorLedger: ledger.slice(0, escalatedIdx) as ReadonlyArray<LedgerEntry>,
+      lastOutput,
+      priorLedger: priorLedger as ReadonlyArray<LedgerEntry>,
     };
   }
 
