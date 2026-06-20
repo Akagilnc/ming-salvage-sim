@@ -1691,4 +1691,17 @@ describe("epic orchestrator S5 Ship phase (gstack-ship + terminal states + hando
       runToShip({ ship: { asked: false, gatesPassed: true, prCreated: true, prUrl: "https://example.test/pr/9" } })
     ).rejects.toThrow(/missing load-bearing field familyHead/);
   });
+
+  it("fails loudly when a parseable gstack-ship report violates the boolean contract", async () => {
+    // a truthy non-boolean (string "false") would misclassify as ready under JS truthiness; reject it.
+    await expect(
+      runToShip({ ship: { asked: false, gatesPassed: "false", prCreated: true, prUrl: "https://example.test/pr/1", familyHead: "h" } as any })
+    ).rejects.toThrow(/field "gatesPassed" must be a boolean/);
+  });
+
+  it("fails loudly when a parseable gstack-ship report is missing a required boolean", async () => {
+    await expect(
+      runToShip({ ship: { asked: false, gatesPassed: true } as any })
+    ).rejects.toThrow(/field "prCreated" must be a boolean/);
+  });
 });

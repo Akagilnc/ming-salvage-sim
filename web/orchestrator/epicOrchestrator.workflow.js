@@ -938,11 +938,29 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
 // the ship does not stop on the same question is S6's continuation concern — see #225 — and needs a
 // real gstack-ship input channel; it is deliberately NOT faked here.)
 async function runFamilyShip({ Bash, familyWorktree, familyBranch, targetBranch }) {
-  return parseShipJson(
+  return assertShipReport(parseShipJson(
     await Bash(
       `set -euo pipefail\ncd ${shellQuote(familyWorktree)}\n# reviewer=gstack-ship-family; run gstack-ship FULL on the merged family branch ${shellQuote(familyBranch)} (coverage/specialist/RedTeam gates + push + create family PR, base=${shellQuote(targetBranch)}; gates non-skippable). ASSUMED contract — see runFamilyShip comment.\n# gstack-ship exits nonzero on a failed gate / internal ASK but still prints its JSON report on\n# stdout — those ARE the needs-user / unconverged outcomes — so capture stdout under set +e rather\n# than letting pipefail abort before parseShipJson. A missing / unparseable report stays a loud\n# failure (parseShipJson throws), so a wrong assumed command still fails loud at dogfood time.\nset +e\nshipReport=$(gstack-ship --json --base ${shellQuote(targetBranch)} 2>/dev/null)\nset -e\nprintf '%s' "$shipReport"`
     )
-  );
+  ));
+}
+
+// gstack-ship reports arbitrary external JSON; the outcome classifier (shipOutcome) keys on three
+// booleans, so a malformed-but-parseable report (e.g. gatesPassed:"false" — a truthy string — or a
+// missing boolean) would silently misclassify. Validate the contract loudly before classifying.
+function assertShipReport(report) {
+  if (report === null || typeof report !== 'object' || Array.isArray(report)) {
+    throw new Error('epic-orchestrator Ship phase: gstack-ship report is not a JSON object — cannot classify the ship outcome.');
+  }
+  for (const field of ['asked', 'gatesPassed', 'prCreated']) {
+    if (typeof report[field] !== 'boolean') {
+      throw new Error(
+        `epic-orchestrator Ship phase: gstack-ship report field "${field}" must be a boolean (got ${typeof report[field]}) — ` +
+          `refusing to classify the ship outcome on a malformed report. Fix the gstack-ship parse/output and rerun.`
+      );
+    }
+  }
+  return report;
 }
 
 async function runSliceReviewLoop({ discovery, normalizedArgs, sliceBaseContext, plannedIssue, Bash, runner, log }) {
