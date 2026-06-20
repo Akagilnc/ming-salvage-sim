@@ -215,7 +215,7 @@ _Avoid_: system prompt、人设、persona(太泛)
 _Avoid_: caller、上游、parent(太泛)
 
 **step(编排步)**:
-runner 控的一个外层 wiki 步骤。一个 step = 一个 StepSpec = 一次 `sandbox.run()`。step 的序由 runner 推,不由 agent。
+runner 控的一个外层 wiki 步骤。**agent step**(S2/S3/S5/S6)= 一个 StepSpec = 一次 `sandbox.run()`;**runner 动作步**(S0/S1/S4/S7/S8:闸/取数/路由/push/handoff)是纯 TS、不跑 agent。step 的序由 runner 推,不由 agent。
 _Avoid_: 阶段、stage(太泛)、iteration(那是步内的)
 
 **StepSpec**:
