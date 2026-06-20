@@ -28,10 +28,12 @@ import { route } from "./route.js";
 import type {
   ErrorPackage,
   Finding,
+  HandoffStatus,
   IssueMeta,
   IssueSnapshot,
   LedgerEntry,
   PersistentLedgerEntry,
+  ResumeState,
   RunInput,
   RunResult,
   StepId,
@@ -102,8 +104,10 @@ function buildPersistentEntry(opts: {
   prompt_hash: string;
   branchHEAD: string;
   ts: string;
+  /** Terminal status — set only for the S8 handoff entry (#255). */
+  handoffStatus?: HandoffStatus;
 }): PersistentLedgerEntry {
-  const entry: PersistentLedgerEntry = {
+  let entry: PersistentLedgerEntry = {
     step: opts.step,
     sessionId: opts.sessionId,
     prompt_hash: opts.prompt_hash,
@@ -112,13 +116,186 @@ function buildPersistentEntry(opts: {
   };
   // Only add output if defined — keeps the runner-action shape clean.
   if (opts.output !== undefined) {
-    return { ...entry, output: opts.output };
+    entry = { ...entry, output: opts.output };
+  }
+  // Tag the terminal S8 entry with its handoff status so a resuming run can
+  // tell success / escalate / error apart (#255).
+  if (opts.handoffStatus !== undefined) {
+    entry = { ...entry, handoffStatus: opts.handoffStatus };
   }
   return entry;
 }
 
 /** v0.1 base for a single slice: always main (ADR 0017 §2). */
 const SLICE_BASE = "main";
+
+// ─── #255 resume planning ──────────────────────────────────────────────────
+
+/**
+ * The recovery plan derived from a persisted ledger (#255).
+ *
+ * Crash-resume and escalate-resume share this ONE derivation: read the ledger
+ * (the resume truth — NOT LLM memory), and decide where to continue.
+ *
+ *   - `terminalStatus` — set when the prior run already reached a terminal
+ *                      handoff that is NOT being re-opened. Re-feeding is a
+ *                      no-op; the runner returns this exact status (success /
+ *                      error / escalate), NOT a hardcoded success. A prior
+ *                      ERROR or ESCALATE that the human has not re-opened must
+ *                      not masquerade as success.
+ *   - `resumeStep`   — the step to continue from (only when terminalStatus is
+ *                      undefined).
+ *   - `resumeSessionId` — set when the step must be resumed in its ORIGINAL
+ *                      agent session (Sandcastle `resumeSession`): the prior run
+ *                      ESCALATED at this step and a human has since answered, so
+ *                      the coder finishes in the same session rather than a
+ *                      fresh `run()`. Undefined ⇒ continue with a fresh dispatch
+ *                      (crash-resume: the next step is brand new work).
+ *   - `lastOutput`   — the most recent agent-step output (drives `route()` for
+ *                      the non-escalate resume case).
+ *   - `priorLedger`  — the prior in-memory ledger entries to seed the run with,
+ *                      so committed progress is preserved and not re-run.
+ */
+interface ResumePlan {
+  readonly terminalStatus?: HandoffStatus;
+  readonly resumeStep: StepId;
+  readonly resumeSessionId?: string;
+  readonly lastOutput?: StepOutput;
+  readonly priorLedger: ReadonlyArray<LedgerEntry>;
+}
+
+/**
+ * Find the most recent ledger entry that carries an agent output. The S8
+ * handoff entry never has an output, so this skips it to recover the real
+ * last agent result (which `route()` and escalate detection act on).
+ */
+function lastAgentEntry(
+  ledger: ReadonlyArray<PersistentLedgerEntry>,
+): PersistentLedgerEntry | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    if (ledger[i]!.output !== undefined) return ledger[i];
+  }
+  return undefined;
+}
+
+/**
+ * The StepId of the most recent agent step in a (possibly minimal) ledger —
+ * used to label the `failedStep` of an error package when re-feeding a prior
+ * error-terminated run. Returns undefined when no agent step is present.
+ */
+function lastAgentStep(
+  ledger: ReadonlyArray<LedgerEntry>,
+): StepId | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    if (ledger[i]!.output !== undefined) return ledger[i]!.step;
+  }
+  return undefined;
+}
+
+/**
+ * The StepId of the most recent NON-S8 entry. Used to recover the deciding
+ * step when an untagged (legacy) S8 entry is the last ledger record: route()
+ * is terminal at S8, so we infer the handoff from the step that produced it.
+ */
+function lastNonTerminalStep(
+  ledger: ReadonlyArray<PersistentLedgerEntry>,
+): StepId | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    if (ledger[i]!.step !== "S8") return ledger[i]!.step;
+  }
+  return undefined;
+}
+
+/**
+ * Derive the resume plan from a persisted ledger.
+ *
+ * The decision is made purely from the ledger contents (resume truth), never
+ * from any in-memory/LLM state (PRD #244 US#22 / #255 AC4):
+ *
+ *   1. Empty ledger              → resume from S0 (treat as a fresh run).
+ *   2. The last agent output escalated → the human has answered; resume THAT
+ *      step in its original session (resumeSession + sessionId). This takes
+ *      precedence over a trailing S8(escalate) entry — re-feeding an escalation
+ *      means "the human answered, continue", not "report escalate again".
+ *   3. The prior run reached a terminal handoff that is NOT being re-opened
+ *      (S8 entry, or the last step routes straight to a handoff) → report that
+ *      handoff's TRUE status (success / error / escalate) — never a hardcoded
+ *      success. The S8 entry carries `handoffStatus` (#255); when the terminal
+ *      status must be inferred (a crash before the S8 write), route() gives it.
+ *   4. Otherwise (crash mid-run) → continue from `route()`'s successor of the
+ *      last recorded step, with a fresh dispatch.
+ */
+function planResume(
+  ledger: ReadonlyArray<PersistentLedgerEntry>,
+): ResumePlan {
+  if (ledger.length === 0) {
+    return { resumeStep: "S0", priorLedger: [] };
+  }
+
+  const lastEntry = ledger[ledger.length - 1]!;
+  const agentEntry = lastAgentEntry(ledger);
+
+  // Case 2: escalate residue — the last agent output carries an escalation.
+  // The human has answered; resume THAT step in its original agent session.
+  // Checked before the terminal-handoff case so a trailing S8(escalate) entry
+  // does not short-circuit into "report escalate again".
+  if (agentEntry?.output?.escalate != null) {
+    // Drop the prior terminal handoff (and any entries after the escalated
+    // step): we are re-opening that step, so the prior boundary is superseded.
+    // The slice is EXCLUSIVE of the escalated step itself — it is re-run via
+    // resumeSession and gets a fresh in-memory entry, so keeping the old one
+    // here would duplicate it.
+    const escalatedIdx = ledger.lastIndexOf(agentEntry);
+    return {
+      resumeStep: agentEntry.step,
+      resumeSessionId: agentEntry.sessionId,
+      lastOutput: agentEntry.output,
+      priorLedger: ledger.slice(0, escalatedIdx) as ReadonlyArray<LedgerEntry>,
+    };
+  }
+
+  // Case 3a: the prior run wrote a terminal S8 entry. Report its TRUE status
+  // (recorded in handoffStatus, #255) — a prior error/escalate must not be
+  // re-reported as success. If an older ledger lacks the tag, fall back to
+  // inferring via route() below.
+  if (lastEntry.step === "S8" && lastEntry.handoffStatus !== undefined) {
+    return {
+      terminalStatus: lastEntry.handoffStatus,
+      resumeStep: "S8",
+      lastOutput: agentEntry?.output,
+      priorLedger: ledger as ReadonlyArray<LedgerEntry>,
+    };
+  }
+
+  // Case 3b / 4: no escalation, no tagged terminal entry. Ask route() what the
+  // last recorded step leads to (route() reads the recorded output, not LLM
+  // memory). A handoff → the prior run terminated (crash after the deciding
+  // step but before the S8 write, or an untagged legacy S8) → report that
+  // status. A next step → crash mid-run → continue from there.
+  //
+  // route() never routes OUT of S8 (it is terminal — calling it throws). When
+  // the last entry is an untagged S8 (a legacy ledger written before #255 added
+  // the handoffStatus tag), route from the last NON-S8 step instead so we can
+  // still infer the terminal status.
+  const routeFrom =
+    lastEntry.step === "S8"
+      ? lastNonTerminalStep(ledger) ?? lastEntry.step
+      : lastEntry.step;
+  const decision = route({ from: routeFrom, output: agentEntry?.output });
+  if (decision.kind === "handoff") {
+    return {
+      terminalStatus: decision.status,
+      resumeStep: "S8",
+      lastOutput: agentEntry?.output,
+      priorLedger: ledger as ReadonlyArray<LedgerEntry>,
+    };
+  }
+  return {
+    resumeStep: decision.step,
+    lastOutput: agentEntry?.output,
+    priorLedger: ledger as ReadonlyArray<LedgerEntry>,
+  };
+}
 
 /**
  * Project tool-chain declared on the image (#253 AC-6, US #29).
@@ -266,6 +443,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     s: StepId,
     output: StepOutput | undefined,
     promptFile: string | undefined,
+    handoffStatus?: HandoffStatus,
   ): Promise<void> {
     const ph = await hashPrompt(promptFile, s);
     const entry = buildPersistentEntry({
@@ -275,6 +453,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       prompt_hash: ph,
       branchHEAD: worktree?.branch ?? "",
       ts: new Date().toISOString(),
+      handoffStatus,
     });
 
     if (stateDir === undefined) {
@@ -294,8 +473,98 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   }
   // ─────────────────────────────────────────────────────────────────────────
 
+  // ── #255: idempotent resume ───────────────────────────────────────────────
+  // Before anything else, check whether this issue has resume residue (an
+  // existing resident worktree + persisted ledger from a crash or an escalate).
+  // Crash-resume and escalate-resume share this ONE machine: read the ledger
+  // (resume truth), reuse the worktree, clean uncommitted residue, and continue
+  // from the recorded breakpoint — no re-cut from S0, no re-running done steps.
+  //
+  // findResumeState is consulted FIRST: a resumed run already passed the S0
+  // gate on its first pass, so it must not re-gate. A backend transport failure
+  // here becomes an error handoff (consistent with #252).
+  let resumeState: ResumeState | undefined;
+  try {
+    resumeState = await backend.findResumeState(issueNumber);
+  } catch (err) {
+    return errorHandoff("S0", err, ledger, worktree);
+  }
+
   // The runner drives the sequence; the agent never picks the next step.
   let step: StepId = "S0";
+
+  // When set, the next dispatch of `resumeFor.step` must use the original agent
+  // session (Sandcastle `resumeSession`) rather than a fresh `run()`. Used for
+  // the escalate-resume case (the human answered; the coder finishes in-session).
+  // Cleared after the step is dispatched once.
+  let resumeFor: { step: StepId; sessionId: string } | undefined;
+
+  if (resumeState !== undefined && resumeState.ledger.length > 0) {
+    const plan = planResume(resumeState.ledger);
+
+    // Reuse the resident worktree (NO re-cut) and fix the sibling stateDir.
+    worktree = resumeState.worktree;
+    stateDir = resumeState.stateDir;
+
+    // Seed the in-memory ledger with prior progress so committed work is
+    // preserved and the prior steps are NOT re-run.
+    for (const e of plan.priorLedger) ledger.push(e);
+    lastOutput = plan.lastOutput;
+
+    // Re-derive the defer list from the prior reviewer output, if any, so a
+    // resume that lands after S4 still surfaces the deferred findings (US#25).
+    if (plan.lastOutput?.kind === "reviewer") {
+      deferredFindings = plan.lastOutput.findings
+        .filter((f) => f.action === "defer")
+        .slice();
+    }
+
+    if (plan.terminalStatus !== undefined) {
+      // The prior run already reached a terminal handoff that is NOT being
+      // re-opened. Re-feeding is a pure status report — no worktree mutation,
+      // so cleanResidue is intentionally NOT run here (a residue-clean failure
+      // must not flip an already-finished run's reported status). Report the
+      // TRUE terminal status (success / error / escalate), never a hardcoded
+      // success (#255: a prior error/escalate must not masquerade as success).
+      if (plan.terminalStatus === "error") {
+        const reason =
+          "prior run terminated with an error handoff (re-fed after completion)";
+        const errorPackage: ErrorPackage = {
+          failedStep: lastAgentStep(plan.priorLedger) ?? "S8",
+          reason,
+          branchHead: worktree.branch,
+        };
+        return {
+          status: "error",
+          errorPackage,
+          stepLedger: ledger,
+          deferredFindings,
+        };
+      }
+      return {
+        status: plan.terminalStatus,
+        branch: plan.terminalStatus === "success" ? worktree.branch : undefined,
+        stepLedger: ledger,
+        deferredFindings,
+      };
+    }
+
+    // Continuing from a breakpoint: clean uncommitted residue before reuse
+    // (reset --hard / clean -fd / prune). Committed progress (the resident
+    // branch HEAD) is preserved; the ledger lives outside the worktree so
+    // `clean -fd` cannot touch the resume truth.
+    try {
+      await backend.cleanResidue(worktree);
+    } catch (err) {
+      return errorHandoff(plan.resumeStep, err, ledger, worktree);
+    }
+
+    // Continue from the recorded breakpoint.
+    step = plan.resumeStep;
+    if (plan.resumeSessionId !== undefined) {
+      resumeFor = { step: plan.resumeStep, sessionId: plan.resumeSessionId };
+    }
+  }
 
   // Defensive runaway guard against a route() bug spinning the step machine
   // forever (happy path visits 7 steps; the cap is generous). This is NOT the
@@ -397,8 +666,24 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           throw new Error(`runner: ${step} reached before worktree prepared`);
         }
         promptFile = STEP_SPECS[step].promptFile;
+        // #255 escalate-resume: if this step is the one we are resuming in its
+        // original agent session (the human answered an escalation), dispatch
+        // via Sandcastle-native resumeSession carrying the recorded sessionId —
+        // SAME machine as crash-resume, but continuing the existing session
+        // rather than a fresh run(). Crash-resume's NEXT step is brand-new work
+        // → normal runStep. resumeFor is consumed once, then cleared.
         try {
-          output = await backend.runStep(STEP_SPECS[step], worktree);
+          if (resumeFor !== undefined && resumeFor.step === step) {
+            const sid = resumeFor.sessionId;
+            resumeFor = undefined;
+            output = await backend.resumeSession(
+              STEP_SPECS[step],
+              worktree,
+              sid,
+            );
+          } else {
+            output = await backend.runStep(STEP_SPECS[step], worktree);
+          }
         } catch (err) {
           return errorHandoff(step, err, ledger, worktree);
         }
@@ -459,7 +744,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     if (decision.kind === "handoff") {
       ledger.push({ step: "S8" });
       // #249: persist the S8 handoff entry too.
-      await emitLedger("S8", undefined, undefined);
+      // #255: tag it with the terminal status so a resuming run can tell a
+      // prior success / escalate / error apart (the S8 entry is otherwise
+      // identical for all three).
+      await emitLedger("S8", undefined, undefined, decision.status);
 
       if (decision.status === "error") {
         // Build an error package from the current step context so the developer
