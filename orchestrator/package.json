@@ -10,7 +10,12 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@types/node": "^26.0.0",
     "typescript": "^5.9.3",
     "vitest": "^4.1.9"
+  },
+  "dependencies": {
+    "@ai-hero/sandcastle": "^0.10.0",
+    "zod": "^4.4.3"
   }
 }

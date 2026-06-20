@@ -21,6 +21,7 @@ export type {
   RunResult,
   StepId,
   StepOutput,
+  StepResult,
   StepRole,
   StepSoul,
   StepSpec,
