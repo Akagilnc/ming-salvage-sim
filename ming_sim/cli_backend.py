@@ -663,6 +663,83 @@ def extract_minister_actions(
     }
 
 
+# 对话式拟旨意图抽取（ADR 0006 自然语言路径）：玩家口头「拟旨吧/帮我拟一道旨」时，
+# 无显式前缀（_DRAFT_PREFIXES）→ LLM 判出意图 → 进 pending_actions(kind=directive)暂存；
+# 大臣回话即草案文本，commit 时再建 turn_directives 条目。
+def extract_draft_intent(
+    player_message: Optional[str],
+    minister_reply: str,
+    llm_config: Any = None,
+    has_pending_draft: bool = False,
+    existing_draft_text: str = "",
+) -> Dict[str, Any]:
+    """LLM 判皇帝本轮是否在口头请大臣拟旨（非显式前缀），返回拟旨意图与草案文本。
+    失败/无 → {"draft_action": "无", "draft_text": ""}。
+    has_pending_draft=True：本回合已有草案暂存，皇帝「补充/修改当前草稿」也归拟旨。
+    existing_draft_text 非空时（补充模式）：LLM 输出合并草案，payload 存合并后全文；
+    不能用大臣确认回话（「好的，加上…」）覆盖原草案。"""
+    supplement_hint = (
+        "本回合已有草案暂存；如果皇帝是在补充/修改/扩充当前草稿"
+        "（如「再补一条」「加上」「改成」「把…去掉」等），也归拟旨。\n"
+        if has_pending_draft else ""
+    )
+    # 补充模式（has_pending_draft + existing_draft_text）：注入现有草案，要求 LLM 输出合并草案。
+    # 直接用大臣回话（可能是「好的，加上…」等确认语）会覆盖原草案——须由 LLM 合并。
+    _existing_draft_text = (
+        "" if existing_draft_text is None else str(existing_draft_text)
+    ).strip()
+    _supplement_mode = has_pending_draft and bool(_existing_draft_text)
+    intent_schema_line = (
+        '  "拟旨意图": "无|拟旨",  // 皇帝明确请拟旨/起草圣旨=拟旨；闲谈/议事/问询/密令/任免=无\n'
+        if _supplement_mode else
+        '  "拟旨意图": "无|拟旨"  // 皇帝明确请拟旨/起草圣旨=拟旨；闲谈/议事/问询/密令/任免=无\n'
+    )
+    merge_schema_line = (
+        '  "合并草案": ""   // 仅拟旨时必填：把【现有草案】与本轮新增/修改指令合并成完整草案；无拟旨意图时留空\n'
+        if _supplement_mode else ""
+    )
+    draft_context = (
+        f"【现有草案】{_existing_draft_text}\n"
+        if _supplement_mode else ""
+    )
+    prompt = (
+        "你是信息抽取器，不扮演、不写圣旨。读皇帝这句话 + 大臣回话，判断皇帝**本轮**"
+        "是否在口头请大臣拟旨（如「拟旨吧」「你拟一道旨」「帮我起草」「草拟圣旨」等）。"
+        + supplement_hint
+        + "只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
+        "{\n"
+        + intent_schema_line
+        + merge_schema_line
+        + "}\n"
+        "判定要点：皇帝明确让大臣拟旨/起草圣旨→拟旨；仅商议/问询/催办/评论不算。语义判断，别拘字面。\n\n"
+        + draft_context
+        + "【皇帝】" + (player_message or "（无）") + "\n"
+        "【大臣回话】" + (minister_reply or "（无）") + "\n"
+    )
+    raw = ""
+    try:
+        raw, _ = _run_backend_for_config(prompt, llm_config, tag="draft_intent")
+    except Exception as exc:
+        _log(f"拟旨意图抽取失败：{exc}")
+    obj = _loads_lenient(raw) or {}
+    if not isinstance(obj, dict):
+        obj = {}
+    _raw = str(obj.get("拟旨意图") or "无").strip()
+    _action = _raw if _raw in {"无", "拟旨"} else "无"
+    # 无意图时保持空草案；补充模式优先用 LLM 输出的合并草案，未填时保留现有草案。
+    if _action == "无":
+        draft_text = ""
+    elif _supplement_mode:
+        merged = str(obj.get("合并草案") or "").strip()
+        draft_text = merged if merged else _existing_draft_text
+    else:
+        draft_text = (minister_reply or "").strip()
+    return {
+        "draft_action": _action,
+        "draft_text": draft_text,
+    }
+
+
 # 任免(office)会话动作抽取：与密令【完全独立】——任免和密令无关，故另起一函数，
 # 不并进 extract_minister_actions、不挂密令那个 active gate。随召对触发（任何召对都
 # 可能口头派官/罢官，含跟太监说），ungated；过判由「应允才落、拒绝就丢」兜底。

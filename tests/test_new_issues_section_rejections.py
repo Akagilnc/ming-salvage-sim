@@ -121,6 +121,7 @@ def test_new_issue_whitespace_resolve_condition_falls_back_to_stop_condition(gam
             "origin_kind": "decree",
             "kind": "initiative",
             "title": "测试·stop_condition fallback",
+            "bar_value": 90,
             "resolve_condition": "   ",
             "stop_condition": "region.shaanxi.unrest <= 30",
         }],
@@ -129,8 +130,16 @@ def test_new_issue_whitespace_resolve_condition_falls_back_to_stop_condition(gam
     created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
     assert len(created) == 1, out
     iid = int(created[0]["issue_id"])
-    row = db.conn.execute("SELECT resolve_condition FROM issues WHERE id=?", (iid,)).fetchone()
+    row = db.conn.execute(
+        "SELECT resolve_condition, stop_condition FROM issues WHERE id=?", (iid,)).fetchone()
     assert row["resolve_condition"] == "region.shaanxi.unrest <= 30"
+    assert row["stop_condition"] == "region.shaanxi.unrest <= 30"
+
+    advanced = db.advance_issue(
+        state, iid, trigger_kind="decree", delta_bar=20,
+        narrative="legacy fallback 普通推进到满值。")
+    assert advanced["bar_value"] == 100
+    assert advanced["status"] == "resolved"
 
 
 def test_new_issue_infinity_field_rejected_not_abort(game):

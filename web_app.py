@@ -1195,6 +1195,9 @@ class WebGame:
             ],
             "directives": directives,
             "pending_count": self.session.pending_count(),
+            "pending_directive_count": sum(
+                1 for a in self.db.list_pending_actions(int(self.state.turn))
+                if a["kind"] == "directive"),
             "pending_decisions": (
                 self.session.pending_decisions()
                 if self.state.turn_phase == TurnPhase.AWAITING_DECISION.value else []
@@ -1258,6 +1261,10 @@ class WebGame:
             undone = self.db.undo_chat_turn(int(row["id"]))
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
+        # P1-2：撤回若删了已 commit 的对话草案，作废已生成的诏书正文（last_decree），
+        # 不让玩家原样颁出含被撤回指令的陈旧诏书。
+        self.session.note_chat_rollback(
+            deleted_committed_draft_ids=undone.get("deleted_committed_draft_ids"))
         self.session.refresh_runtime_after_chat_rollback()
         self.chat_history = {name: [] for name in self.session.content.characters}
         for name, msgs in self.db.load_all_chat_history().items():

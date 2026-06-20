@@ -745,6 +745,7 @@ export function EdictModal({
   const pendingDirectives = state.directives.filter((d) => d.status === "pending");
   const draftDirectives = state.directives.filter((d) => d.status !== "pending");
   const hasPending = pendingDirectives.length > 0;
+  const hasPendingConversationalDraft = (state.pending_directive_count ?? 0) > 0;
   const [decreeDraft, setDecreeDraft] = React.useState(decree);
   React.useEffect(() => {
     setDecreeDraft(decree);
@@ -856,7 +857,8 @@ export function EdictModal({
                 )}
               </div>
             ))}
-            {!draftDirectives.length && !hasPending && <div className="empty-note">本月不可空过。请先召见大臣，或在右侧御笔自拟一道指令。</div>}
+            {!draftDirectives.length && !hasPending && !hasPendingConversationalDraft && <div className="empty-note">本月不可空过。请先召见大臣，或在右侧御笔自拟一道指令。</div>}
+            {!draftDirectives.length && !hasPending && hasPendingConversationalDraft && <div className="empty-note pending-draft-hint">大臣已奉旨起草，点「拟诏」即可正式成稿。</div>}
           </div>
         </section>
 
@@ -880,7 +882,7 @@ export function EdictModal({
         <button
           className="seal-btn-compose"
           onClick={onWriteDecree}
-          disabled={!!busy || !draftDirectives.length || hasPending}
+          disabled={!!busy || (!draftDirectives.length && !hasPendingConversationalDraft) || hasPending}
         >
           拟诏 →
         </button>

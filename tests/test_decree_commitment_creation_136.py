@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import ming_sim.issues as I
+from ming_sim.db import _has_stop_condition
 from ming_sim.simulation import _extractor_context_payload
 
 
@@ -904,6 +905,69 @@ def test_until_stop_commitment_advance_to_full_stays_active(game, monkeypatch):
     assert advanced["bar_value"] == 100
     assert advanced["status"] == "active"
     assert advanced["closed_turn"] is None
+
+
+def test_stop_condition_without_commitment_kind_advance_to_full_stays_active(game):
+    """insert_issue 可直接持久化 stop_condition；即便 commitment_kind 为空，
+    advance_issue 也不能仅因 bar_value 到 100 自动 resolved，必须等停止条件闭环判定。"""
+    db, state, _content = game
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="直接插入停止条件防推进误结案",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:direct-stop",
+        bar_value=90,
+        stop_condition={"army.guanning.arrears": "<=0"},
+    )
+
+    advanced = db.advance_issue(
+        state,
+        issue_id,
+        trigger_kind="decree",
+        delta_bar=20,
+        narrative="进度满值，但停止条件尚未由专门闭环判定。",
+    )
+
+    assert advanced["bar_value"] == 100
+    assert advanced["status"] == "active"
+    assert advanced["closed_turn"] is None
+
+
+def test_has_stop_condition_handles_preparsed_and_json_whitespace():
+    assert _has_stop_condition({"army.guanning.arrears": "<=0"}) is True
+    assert _has_stop_condition(["legacy"]) is True
+    assert _has_stop_condition({}) is False
+    assert _has_stop_condition(" { } ") is False
+    assert _has_stop_condition("\n[]\n") is False
+    # legacy fallback 条件串属于 resolve_condition，不是结构化 commitment stop gate。
+    assert _has_stop_condition("character.毛文龙.loyalty >= 65") is False
+
+
+def test_empty_json_stop_condition_allows_advance_to_resolved(game):
+    """stop_condition 里若只是带空白的空 JSON 对象，不应被误判为承诺停止条件。"""
+    db, state, _content = game
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="空停止条件不阻止结案",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:empty-stop",
+        bar_value=90,
+        stop_condition=" { } ",
+    )
+
+    advanced = db.advance_issue(
+        state,
+        issue_id,
+        trigger_kind="decree",
+        delta_bar=20,
+        narrative="进度满值且没有真实停止条件。",
+    )
+
+    assert advanced["bar_value"] == 100
+    assert advanced["status"] == "resolved"
+    assert advanced["closed_turn"] == state.turn
 
 
 def test_commitment_skips_cli_resolve_effect_enrich(game, monkeypatch):
