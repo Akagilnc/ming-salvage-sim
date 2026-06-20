@@ -75,13 +75,15 @@ def test_run_settle_no_chapter_skip_audit_when_settle_aborts(game, capsys, monke
     assert "跳过章节记忆" not in out  # 失败回合不留误导审计
 
 
-def test_run_settle_rejects_non_dict_nested_value(game):
-    """实体→{字段}模块(如 地区变化)的二级值非 dict 时结算前响亮报错、不半落库(Gemini R1 G2)。"""
+def test_run_settle_records_non_dict_nested_value(game):
+    """ADR0015：实体→{字段}模块二级值非 dict 时逐实体拒收，回合仍推进。"""
     db, state, content = game
     before = state.turn
-    with pytest.raises(ValueError):
-        run_settle(db, state, content, {"地区变化": {"shanxi": "动乱+5"}})
-    assert state.turn == before
+    run_settle(db, state, content, {"地区变化": {"shanxi": "动乱+5"}})
+    assert state.turn == before + 1
+    row = db.conn.execute("SELECT section, item_json FROM rejection_reports WHERE turn=?", (before,)).fetchone()
+    assert row["section"] == "region_delta"
+    assert '"entity_id": "shanxi"' in row["item_json"]
 
 
 def test_run_settle_rejects_unknown_toplevel_key(game):
@@ -93,13 +95,15 @@ def test_run_settle_rejects_unknown_toplevel_key(game):
     assert state.turn == before
 
 
-def test_run_settle_rejects_non_dict_module_value(game):
-    """畸形模块值(国势变化="foo"→metric_delta 非 dict)在 pre_settle 动 DB 前响亮报错,回合不半推进。"""
+def test_run_settle_records_non_dict_module_value(game):
+    """ADR0015：畸形 section 值按 section 拒收，非整月 abort。"""
     db, state, content = game
     before = state.turn
-    with pytest.raises(ValueError):
-        run_settle(db, state, content, {"国势变化": "foo"})
-    assert state.turn == before  # 崩前拦住,未推进、未半落库
+    run_settle(db, state, content, {"国势变化": "foo"})
+    assert state.turn == before + 1
+    row = db.conn.execute("SELECT section, item_json FROM rejection_reports WHERE turn=?", (before,)).fetchone()
+    assert row["section"] == "metric_delta"
+    assert '"raw_value": "foo"' in row["item_json"]
 
 
 def test_open_game_loads_board(tmp_path):

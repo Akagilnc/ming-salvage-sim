@@ -32,7 +32,7 @@ from ming_sim.flows import (
     _apply_metric_dict,
     _strict_int,
 )
-from ming_sim.models import Event, GameState, is_vassal_prince, loads_effect_dict
+from ming_sim.models import Event, GameState, effect_dict_has_work, is_vassal_prince, loads_effect_dict
 from ming_sim.person_archive_contract import (
     PERSON_ALLEGIANCE_CHANGE_WAYS,
     PERSON_IDENTITY_TITLES,
@@ -44,6 +44,10 @@ from ming_sim.person_delta_adapter import normalize_person_changes
 from ming_sim.token_stats import tlog
 
 _content: Optional[GameContent] = None
+
+INITIATIVE_ACTIVE_CAP = 15
+INITIATIVE_ACTIVE_CAP_LABEL = "十五"
+COMMITMENT_KIND_UNTIL_STOP = "until_stop"
 
 # SQLite 有符号 64-bit 整数边界：超界 int 绑进 SQLite 会抛 OverflowError。
 _SQLITE_INT_MIN, _SQLITE_INT_MAX = -(2 ** 63), 2 ** 63 - 1
@@ -57,6 +61,48 @@ def _parse_sqlite_id(raw: object) -> int:
     if not (_SQLITE_INT_MIN <= val <= _SQLITE_INT_MAX):
         raise ValueError("id 超出 SQLite 64-bit 范围")
     return val
+
+
+def _issue_condition_text(raw: object) -> str:
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        return raw.strip()
+    if isinstance(raw, (dict, list)):
+        return json.dumps(raw, ensure_ascii=False, separators=(",", ":"))
+    return str(raw).strip()
+
+
+def _normalize_commitment_kind(raw: object) -> str:
+    value = str(raw or "").strip().lower()
+    if value in {COMMITMENT_KIND_UNTIL_STOP, "until_condition", "recurring_until", "commitment"}:
+        return COMMITMENT_KIND_UNTIL_STOP
+    return ""
+
+
+def _validate_commitment_stop_condition(raw: object, state: GameState, db: GameDB) -> str:
+    if not isinstance(raw, dict) or not raw:
+        raise ValueError("stop_condition 须为非空 dict")
+    for key, cond in raw.items():
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError(f"stop_condition key 非法：{key!r}")
+        key = key.strip()
+        if "." not in key or key.split(".", 1)[0] not in GATE_TABLES:
+            raise ValueError(f"stop_condition key 须带表前缀：{key!r}")
+        if not isinstance(cond, str) or not cond.strip():
+            raise ValueError(f"stop_condition value 须把比较算符写在字符串 value 内：{cond!r}")
+        cond_text = cond.strip()
+        sm = re.match(r"^(==|!=|in=)\s*(.+)$", cond_text)
+        if sm and (sm.group(1) == "in=" or not re.match(r"^-?\d+$", sm.group(2).strip())):
+            if _eval_gate_key_str(key, db) is None:
+                raise ValueError(f"stop_condition key 无法寻址：{key!r}")
+            continue
+        if not re.match(r"^(>=|<=|>|<|==)\s*-?\d+$", cond_text):
+            raise ValueError(f"stop_condition value 非法：{cond!r}")
+        if _eval_gate_key(key, state.metrics, db) is None:
+            raise ValueError(f"stop_condition key 无法寻址：{key!r}")
+    return _issue_condition_text(raw)
+
 
 # 给建筑/地区落库做 event 关联用的占位事件（issue 结案触发的副作用无真实 event）。
 _ISSUE_PSEUDO_EVENT = Event(
@@ -137,7 +183,12 @@ def _apply_issue_buildings(
     return applied
 
 
-def commitment_condition_role(resolve_condition: object) -> Dict[str, str]:
+def commitment_condition_role(resolve_condition: object, commitment_kind: object = "") -> Dict[str, str]:
+    if str(commitment_kind or "").strip():
+        return {
+            "condition_role": "commitment_stop_condition",
+            "condition_note": "承诺停止条件；不要按 resolve_condition 达标自动结案，自动完成属于 #136。",
+        }
     text = str(resolve_condition or "").strip()
     if re.fullmatch(r"character\.[^.]+\.loyalty\s*(?:>=|>)\s*\d+", text):
         return {
@@ -147,12 +198,566 @@ def commitment_condition_role(resolve_condition: object) -> Dict[str, str]:
     return {}
 
 
-def issue_to_payload(row: sqlite3.Row, recent_advances: List[sqlite3.Row]) -> Dict[str, object]:
+def _legacy_commitment_stop_gate(resolve_condition: object) -> Dict[str, str]:
+    text = str(resolve_condition or "").strip()
+    match = re.fullmatch(r"(character\.[^.]+\.loyalty)\s*((?:>=|>)\s*\d+)", text)
+    if not match:
+        return {}
+    return {match.group(1): match.group(2).replace(" ", "")}
+
+
+def _commitment_stop_gate(row: sqlite3.Row) -> Dict[str, str]:
+    keys = row.keys() if hasattr(row, "keys") else []
+    raw = row["stop_condition"] if "stop_condition" in keys else ""
+    if raw:
+        try:
+            gate = json.loads(str(raw))
+        except (TypeError, ValueError):
+            gate = {}
+        if isinstance(gate, dict) and gate:
+            return gate
+    return _legacy_commitment_stop_gate(row["resolve_condition"] if "resolve_condition" in keys else "")
+
+
+def _commitment_remaining_from_gate(
+    gate: Dict[str, str],
+    state: GameState,
+    db: GameDB,
+) -> Optional[int]:
+    remaining = 0
+    found = False
+    for key, cond in gate.items():
+        cond_text = str(cond or "").strip()
+        m = re.match(r"^(>=|<=|>|<|==)\s*(-?\d+)$", cond_text)
+        if not m:
+            continue
+        val = _eval_gate_key(str(key), state.metrics, db)
+        if val is None:
+            continue
+        try:
+            val_int = int(val)
+        except (TypeError, ValueError):
+            continue
+        op, target = m.group(1), int(m.group(2))
+        if op == "<=":
+            need = max(0, val_int - target)
+        elif op == "<":
+            need = max(0, val_int - target + 1)
+        elif op == ">=":
+            need = max(0, target - val_int)
+        elif op == ">":
+            need = max(0, target - val_int + 1)
+        else:
+            need = abs(val_int - target)
+        remaining += need
+        found = True
+    return remaining if found else None
+
+
+def _latest_commitment_paid_total(db: GameDB, issue_id: int) -> int:
+    rows = db.conn.execute(
+        "SELECT metric_delta FROM issue_advances WHERE issue_id=? ORDER BY id DESC",
+        (issue_id,),
+    ).fetchall()
+    for row in rows:
+        try:
+            payload = json.loads(str(row["metric_delta"] or "{}"))
+        except (TypeError, ValueError):
+            continue
+        progress = payload.get("commitment_progress") if isinstance(payload, dict) else None
+        if isinstance(progress, dict):
+            try:
+                return int(progress.get("paid_total") or 0)
+            except (TypeError, ValueError):
+                return 0
+    return 0
+
+
+def commitment_progress_payload(
+    db: GameDB,
+    state: GameState,
+    row: sqlite3.Row,
+    *,
+    paid_this_month: int = 0,
+    include_current_month: bool = False,
+) -> Optional[Dict[str, int]]:
+    keys = row.keys() if hasattr(row, "keys") else []
+    if not str(row["commitment_kind"] if "commitment_kind" in keys else "").strip():
+        return None
+    gate = _commitment_stop_gate(row)
+    remaining = _commitment_remaining_from_gate(gate, state, db) if gate else None
+    paid_total = _latest_commitment_paid_total(db, int(row["id"])) + max(0, int(paid_this_month))
+    months_elapsed = db.conn.execute(
+        "SELECT COUNT(*) FROM issue_advances WHERE issue_id=? AND trigger_kind='ongoing'",
+        (int(row["id"]),),
+    ).fetchone()[0]
+    if include_current_month:
+        months_elapsed = int(months_elapsed) + 1
+    payload: Dict[str, int] = {
+        "months_elapsed": int(months_elapsed),
+        "paid_total": int(paid_total),
+    }
+    if remaining is not None:
+        if _commitment_gate_references_arrears(row):
+            payload["remaining_arrears"] = int(remaining)
+        else:
+            payload["remaining_to_goal"] = int(remaining)
+    return payload
+
+
+def commitment_display_text(progress: Dict[str, int], row: sqlite3.Row) -> str:
+    keys = row.keys() if hasattr(row, "keys") else []
+    ongoing = loads_effect_dict(row["ongoing_effects"] if "ongoing_effects" in keys else {})
+    end_turn = int(row["end_turn"] or 0) if "end_turn" in keys else 0
+    stop_gate = _commitment_stop_gate(row)
+    months = int(progress.get("months_elapsed") or 0)
+
+    if not _monthly_ongoing_effects_has_work(ongoing) and end_turn > 0:
+        return f"限至第{end_turn}月·到期待裁"
+
+    if stop_gate and _commitment_gate_references_arrears(row):
+        parts = [f"已第{months}月"]
+        if "remaining_arrears" in progress:
+            parts.append(f"尚欠{int(progress['remaining_arrears'])}万两")
+        parts.append("直到补齐")
+        return "·".join(parts)
+
+    parts = [f"已履行{months}月"]
+    if "remaining_to_goal" in progress:
+        parts.append(f"距达标尚差{int(progress['remaining_to_goal'])}")
+    if stop_gate:
+        parts.append("直到达标")
+    elif end_turn > 0:
+        parts.append(f"限至第{end_turn}月")
+    else:
+        parts.append("开放承诺")
+    return "·".join(parts)
+
+
+def _commitment_bar_value(progress: Dict[str, int]) -> Optional[int]:
+    if "remaining_arrears" not in progress:
+        return None
+    paid = max(0, int(progress.get("paid_total") or 0))
+    remaining = max(0, int(progress.get("remaining_arrears") or 0))
+    total = paid + remaining
+    if total <= 0:
+        return 100
+    return max(0, min(100, int(round(paid * 100 / total))))
+
+
+def _commitment_gate_references_arrears(row: sqlite3.Row) -> bool:
+    return any(".arrears" in str(key) for key in _commitment_stop_gate(row))
+
+
+def _commitment_ongoing_effects_for_settlement(row: sqlite3.Row, ongoing: Dict[str, object]) -> Dict[str, object]:
+    if not _commitment_gate_references_arrears(row):
+        return ongoing
+    normalized = dict(ongoing)
+    for key in ("economy", "economy_moves"):
+        economy = ongoing.get(key)
+        if not isinstance(economy, list):
+            continue
+        normalized_economy: List[object] = []
+        for move in economy:
+            if not isinstance(move, dict):
+                normalized_economy.append(move)
+                continue
+            item = dict(move)
+            try:
+                delta = _strict_int(item.get("delta"))
+            except (TypeError, ValueError):
+                delta = 0
+            if delta < 0:
+                item["purpose"] = "补饷"
+            normalized_economy.append(item)
+        normalized[key] = normalized_economy
+    return normalized
+
+
+def _invalid_monthly_mapping_shape(
+    field: str,
+    entity_id: object,
+    raw_value: object,
+) -> Dict[str, object]:
+    return {
+        "rejected": True,
+        "category": "invalid_shape",
+        "reason": f"{field}.{entity_id} 须为对象(dict)",
+        "item": {"field": field, "id": entity_id, "value": raw_value},
+        "issue_strict": False,
+    }
+
+
+def _monthly_mapping_effect(
+    effect: Dict[str, object],
+    *keys: str,
+) -> tuple[Dict[str, Dict[str, object]], List[Dict[str, object]]]:
+    merged: Dict[str, Dict[str, object]] = {}
+    rejections: List[Dict[str, object]] = []
+    for key in keys:
+        raw = effect.get(key)
+        if not isinstance(raw, dict):
+            continue
+        for entity_id, raw_changes in raw.items():
+            if isinstance(raw_changes, dict):
+                merged[entity_id] = raw_changes
+                continue
+            rejections.append(_invalid_monthly_mapping_shape(key, entity_id, raw_changes))
+    return merged, rejections
+
+
+def _merged_mapping_effect(effect: Dict[str, object], *keys: str) -> Dict[str, object]:
+    merged: Dict[str, object] = {}
+    for key in keys:
+        raw = effect.get(key)
+        if isinstance(raw, dict):
+            merged.update(raw)
+    return merged
+
+
+def _monthly_economy_items(effect: Dict[str, object]) -> List[Dict[str, object]]:
+    items: List[Dict[str, object]] = []
+    for key in ("economy", "economy_moves"):
+        raw = effect.get(key)
+        if not isinstance(raw, list):
+            continue
+        items.extend(item for item in raw if isinstance(item, dict))
+    return items
+
+
+def _monthly_person_rating_changes(effect: Dict[str, object]) -> List[Dict[str, object]]:
+    raw_changes: List[Dict[str, object]] = []
+    for key in ("人物变更", "person_changes"):
+        raw = effect.get(key)
+        if isinstance(raw, list):
+            raw_changes.extend(item for item in raw if isinstance(item, dict))
+    changes = [
+        item
+        for item in normalize_person_changes({"人物变更": raw_changes})
+        if isinstance(item, dict)
+        and str(item.get("动作") or "").strip() == "评定"
+        and not isinstance(item.get("loyalty"), bool)
+        and isinstance(item.get("loyalty"), int)
+        and int(item.get("loyalty") or 0) != 0
+    ]
+    raw_character = effect.get("character")
+    if isinstance(raw_character, list):
+        for item in raw_character:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or item.get("人物") or "").strip()
+            loyalty = item.get("loyalty")
+            if not name or isinstance(loyalty, bool) or not isinstance(loyalty, int) or loyalty == 0:
+                continue
+            changes.append({
+                "name": name,
+                "动作": "评定",
+                "loyalty": loyalty,
+                "reason": str(item.get("reason") or item.get("原因") or ""),
+            })
+    return changes
+
+
+def _invalid_monthly_person_rating_reason(effect: Dict[str, object]) -> str:
+    for key in ("人物变更", "person_changes"):
+        raw = effect.get(key)
+        if not isinstance(raw, list):
+            continue
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or item.get("人物") or "").strip()
+            action = str(item.get("动作") or item.get("action") or "").strip()
+            if not name or action != "评定":
+                continue
+            loyalty = item.get("loyalty")
+            if isinstance(loyalty, bool) or not isinstance(loyalty, int) or loyalty == 0:
+                return f"{key}.评定 loyalty 须为非零整数增量"
+    raw_character = effect.get("character")
+    if isinstance(raw_character, list):
+        for item in raw_character:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or item.get("人物") or "").strip()
+            if not name or "loyalty" not in item:
+                continue
+            loyalty = item.get("loyalty")
+            if isinstance(loyalty, bool) or not isinstance(loyalty, int) or loyalty == 0:
+                return "character.loyalty 须为非零整数增量"
+    return ""
+
+
+def _person_change_has_unsupported_monthly_work(raw: object) -> bool:
+    if not isinstance(raw, list):
+        return False
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or item.get("人物") or "").strip()
+        action = str(item.get("动作") or item.get("action") or "").strip()
+        if name and action and action != "评定":
+            return True
+    return False
+
+
+def _unsupported_monthly_ongoing_fields(effect: Dict[str, object]) -> List[str]:
+    unsupported: List[str] = []
+    for key in (
+        "buildings",
+        "new_armies",
+        "character_status_changes",
+        "character_power_changes",
+        "power_renames",
+        "legacy",
+    ):
+        if effect_dict_has_work({key: effect.get(key)}):
+            unsupported.append(key)
+    for key in ("人物变更", "person_changes"):
+        if _person_change_has_unsupported_monthly_work(effect.get(key)):
+            unsupported.append(f"{key}(月度仅支持评定)")
+    return unsupported
+
+
+def _monthly_ongoing_effects_has_work(raw: object) -> bool:
+    effect = loads_effect_dict(raw)
+    if not effect:
+        return False
+    checks = (
+        effect_dict_has_work({"metrics": effect.get("metrics")}),
+        effect_dict_has_work({"economy": effect.get("economy")}),
+        effect_dict_has_work({"economy_moves": effect.get("economy_moves")}),
+        effect_dict_has_work({"factions": _merged_mapping_effect(effect, "factions", "faction_delta")}),
+        effect_dict_has_work({"class_delta": _merged_mapping_effect(effect, "classes", "class_delta")}),
+        effect_dict_has_work({"region_delta": _merged_mapping_effect(effect, "region_delta", "regions")}),
+        effect_dict_has_work({"army_delta": _merged_mapping_effect(effect, "army_delta", "armies")}),
+        effect_dict_has_work({"power_updates": effect.get("power_updates")}),
+        bool(_monthly_person_rating_changes(effect)),
+    )
+    return any(checks)
+
+
+def _apply_monthly_ongoing_entities(
+    db: GameDB,
+    state: GameState,
+    effect: Dict[str, object],
+    label: str,
+    *,
+    content=None,
+    registry=None,
+    llm_config: Any = None,
+    applied_person_changes: Optional[List[Dict[str, object]]] = None,
+) -> tuple[Dict[str, object], List[Dict[str, object]]]:
+    applied: Dict[str, object] = {}
+    rejections: List[Dict[str, object]] = []
+
+    factions, faction_shape_rejections = _monthly_mapping_effect(effect, "factions", "faction_delta")
+    classes, class_shape_rejections = _monthly_mapping_effect(effect, "classes", "class_delta")
+    region_delta, region_shape_rejections = _monthly_mapping_effect(effect, "region_delta", "regions")
+    army_delta, army_shape_rejections = _monthly_mapping_effect(effect, "army_delta", "armies")
+    power_updates, power_shape_rejections = _monthly_mapping_effect(effect, "power_updates")
+    rejections.extend(
+        faction_shape_rejections
+        + class_shape_rejections
+        + region_shape_rejections
+        + army_shape_rejections
+        + power_shape_rejections
+    )
+
+    if factions:
+        faction_result = _apply_faction_dict(db, factions)
+        if faction_result.applied:
+            applied["factions"] = faction_result.applied
+        rejections.extend(faction_result.rejections)
+
+    if classes:
+        class_result = _apply_class_dict(db, classes)
+        if class_result.applied:
+            applied["class_delta"] = class_result.applied
+        rejections.extend(class_result.rejections)
+
+    if region_delta:
+        region_changes = db.apply_region_deltas(state, _ISSUE_PSEUDO_EVENT, None, label, region_delta)
+        applied_region = [item for item in region_changes if not item.get("rejected")]
+        if applied_region:
+            applied["region_delta"] = applied_region
+        rejections.extend(item for item in region_changes if item.get("rejected"))
+
+    if army_delta:
+        army_changes = db.apply_army_deltas(state, _ISSUE_PSEUDO_EVENT, None, label, army_delta)
+        applied_army = [item for item in army_changes if not item.get("rejected")]
+        if applied_army:
+            applied["army_delta"] = applied_army
+        rejections.extend(item for item in army_changes if item.get("rejected"))
+
+    if power_updates:
+        power_changes = db.apply_power_deltas(state, power_updates)
+        applied_power = [item for item in power_changes if not item.get("rejected")]
+        if applied_power:
+            applied["power_updates"] = applied_power
+        rejections.extend(item for item in power_changes if item.get("rejected"))
+
+    person_changes = _monthly_person_rating_changes(effect)
+    if person_changes:
+        effective_content = content if content is not None else _ctx()
+        results = _apply_person_changes(
+            db,
+            state,
+            person_changes,
+            content=effective_content,
+            registry=registry,
+            llm_config=llm_config,
+            source="system_simulation",
+            derived_from=label,
+        )
+        applied_people = [item for item in results if not item.get("rejected")]
+        if applied_people:
+            applied["人物变更"] = applied_people
+        rejections.extend(item for item in results if item.get("rejected"))
+        if applied_person_changes is not None:
+            applied_person_changes.extend(results)
+
+    return applied, rejections
+
+
+def _resolve_commitment_issue(
+    db: GameDB,
+    state: GameState,
+    row: sqlite3.Row,
+    *,
+    commit: bool = True,
+) -> None:
+    issue_id = int(row["id"])
+    from_value = int(row["bar_value"])
+    progress = commitment_progress_payload(db, state, row) or {}
+    metric_delta = {"commitment_progress": progress} if progress else {}
+    db.conn.execute(
+        """
+        UPDATE issues SET bar_value=100, phase=?, status='resolved',
+                          resolution_summary=?, closed_turn=?,
+                          last_advance_turn=?, updated_at=CURRENT_TIMESTAMP
+        WHERE id=?
+        """,
+        (
+            db._derive_issue_phase(100),
+            "承诺停止条件已达成，自动结清。",
+            state.turn,
+            state.turn,
+            issue_id,
+        ),
+    )
+    db.conn.execute(
+        """
+        INSERT INTO issue_advances (
+            issue_id, turn, trigger_kind, delta_bar,
+            from_value, to_value, narrative, metric_delta
+        ) VALUES (?, ?, 'commitment_resolve', ?, ?, 100, ?, ?)
+        """,
+        (
+            issue_id,
+            state.turn,
+            100 - from_value,
+            from_value,
+            "承诺停止条件已达成，自动结清。",
+            json.dumps(metric_delta, ensure_ascii=False),
+        ),
+    )
+    if commit:
+        db.conn.commit()
+
+
+def _expire_commitment_issue(
+    db: GameDB,
+    state: GameState,
+    row: sqlite3.Row,
+    *,
+    commit: bool = True,
+) -> None:
+    issue_id = int(row["id"])
+    from_value = int(row["bar_value"])
+    progress = commitment_progress_payload(db, state, row) or {}
+    metric_delta = {"commitment_progress": progress} if progress else {}
+    db.conn.execute(
+        """
+        UPDATE issues SET status='dropped', resolution_summary=?,
+                          closed_turn=?, last_advance_turn=?,
+                          updated_at=CURRENT_TIMESTAMP
+        WHERE id=?
+        """,
+        (
+            "承诺期限已至，停账收尾。",
+            state.turn,
+            state.turn,
+            issue_id,
+        ),
+    )
+    db.conn.execute(
+        """
+        INSERT INTO issue_advances (
+            issue_id, turn, trigger_kind, delta_bar,
+            from_value, to_value, narrative, metric_delta
+        ) VALUES (?, ?, 'expire', 0, ?, ?, ?, ?)
+        """,
+        (
+            issue_id,
+            state.turn,
+            from_value,
+            from_value,
+            "承诺期限已至，停账收尾。",
+            json.dumps(metric_delta, ensure_ascii=False),
+        ),
+    )
+    if commit:
+        db.conn.commit()
+
+
+def _ack_due_commitment_issue(
+    db: GameDB,
+    state: GameState,
+    row: sqlite3.Row,
+    *,
+    narrative: str = "",
+    commit: bool = True,
+) -> sqlite3.Row:
+    issue_id = int(row["id"])
+    from_value = int(row["bar_value"])
+    summary = narrative or "到期待裁承诺已由皇帝裁决确认。"
+    db.conn.execute(
+        """
+        UPDATE issues SET status='dropped', resolution_summary=?,
+                          closed_turn=?, last_advance_turn=?,
+                          updated_at=CURRENT_TIMESTAMP
+        WHERE id=?
+        """,
+        (summary, state.turn, state.turn, issue_id),
+    )
+    db.conn.execute(
+        """
+        INSERT INTO issue_advances (
+            issue_id, turn, trigger_kind, delta_bar,
+            from_value, to_value, narrative, metric_delta
+        ) VALUES (?, ?, 'commitment_ack', 0, ?, ?, ?, '{}')
+        """,
+        (issue_id, state.turn, from_value, from_value, summary),
+    )
+    if commit:
+        db.conn.commit()
+    return db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
+
+
+def issue_to_payload(
+    row: sqlite3.Row,
+    recent_advances: List[sqlite3.Row],
+    db: Optional[GameDB] = None,
+    state: Optional[GameState] = None,
+) -> Dict[str, object]:
     """喂给推演 agent 的事项精简视图：状态、进度、效果、最近一次推进。"""
     keys = row.keys() if hasattr(row, "keys") else []
     resolve_cond = row["resolve_condition"] if "resolve_condition" in keys else ""
     fail_cond = row["fail_condition"] if "fail_condition" in keys else ""
-    return {
+    commitment_kind = row["commitment_kind"] if "commitment_kind" in keys else ""
+    stop_condition = row["stop_condition"] if "stop_condition" in keys else ""
+    end_turn = int(row["end_turn"]) if "end_turn" in keys else 0
+    payload = {
         "issue_id": int(row["id"]),
         "kind": row["kind"],
         "title": row["title"],
@@ -172,8 +777,20 @@ def issue_to_payload(row: sqlite3.Row, recent_advances: List[sqlite3.Row]) -> Di
             }
             if recent_advances else None
         ),
-        **commitment_condition_role(resolve_cond),
+        **commitment_condition_role(resolve_cond, commitment_kind),
     }
+    if commitment_kind:
+        payload["commitment_kind"] = commitment_kind
+    if stop_condition:
+        payload["stop_condition"] = stop_condition
+    if end_turn:
+        payload["end_turn"] = end_turn
+    if db is not None and state is not None:
+        progress = commitment_progress_payload(db, state, row)
+        if progress is not None:
+            payload["commitment_progress"] = progress
+            payload["待办未解进度"] = commitment_display_text(progress, row)
+    return payload
 
 
 def _event_issue_refs(db: GameDB) -> set:
@@ -601,7 +1218,10 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[in
     """
     if "." not in key:
         if key in metrics:
-            return int(metrics[key])
+            try:
+                return int(metrics[key])
+            except (TypeError, ValueError):
+                return None
         return None
     parts = key.split(".")
     table = parts[0]
@@ -972,9 +1592,10 @@ def show_active_issues(db: GameDB) -> None:
     issues = db.list_active_issues()
     if not issues:
         return
+    state = db.load_state()
     initiatives = [i for i in issues if i["kind"] == "initiative"]
     situations = [i for i in issues if i["kind"] == "situation"][:12]
-    print(f"─── 待办事项 (系统 {len(situations)}/12  玩家 {len(initiatives)}/10) ───")
+    print(f"─── 待办事项 (系统 {len(situations)}/12  玩家 {len(initiatives)}/{INITIATIVE_ACTIVE_CAP}) ───")
 
     def _print_row(row, label: str) -> None:
         bar = _bar_ascii(int(row["bar_value"]))
@@ -983,6 +1604,9 @@ def show_active_issues(db: GameDB) -> None:
         inertia = int(row["inertia"])
         ongoing_txt = _format_issue_ongoing(row["ongoing_effects"] or "{}")
         line_parts = [_format_inertia(inertia)]
+        progress = commitment_progress_payload(db, state, row)
+        if progress is not None:
+            line_parts.append(commitment_display_text(progress, row))
         if ongoing_txt:
             line_parts.append(f"每{TURN_UNIT}固定：{ongoing_txt}")
         print(f"  {' | '.join(line_parts)}")
@@ -3288,8 +3912,12 @@ def apply_issue_tracker_output(
                 "item": ni, "title": title,
             })
             continue
-        if kind == "initiative" and initiative_active >= 10:
-            applied_new.append({"title": title, "rejected": True, "reason": "已有十事在办，朝廷分身乏术，难再添新工。"})
+        if kind == "initiative" and initiative_active >= INITIATIVE_ACTIVE_CAP:
+            applied_new.append({
+                "title": title,
+                "rejected": True,
+                "reason": f"已有{INITIATIVE_ACTIVE_CAP_LABEL}事在办，朝廷分身乏术，难再添新工。",
+            })
             continue
         # LLM 可能把效果字段给成非 dict（字符串/数组）；isinstance 守门归 {}，
         # 不让 dict("乱填") 抛 ValueError 越过单条拒绝、崩整月落库（codexB-P1）。
@@ -3298,14 +3926,101 @@ def apply_issue_tracker_output(
         ongoing_eff = _eff_dict(ni.get("ongoing_effects"))
         resolve_eff = _eff_dict(ni.get("effect_on_resolve"))
         fail_eff = _eff_dict(ni.get("effect_on_fail"))
+        semantic_ongoing_has_work = effect_dict_has_work(ongoing_eff)
+        ongoing_has_work = _monthly_ongoing_effects_has_work(ongoing_eff)
+        unsupported_ongoing_fields = _unsupported_monthly_ongoing_fields(ongoing_eff)
         # cancel_cost 同属 dict 字段，与上 3 个统一走 _eff_dict 容忍归 {}（cmr ni r9 codex medium）：
         # 旧 `dict(ni.get("cancel_cost") or {})` 对 list-of-pairs 静默 garble（dict([["民心",-5]])=
         # {'民心':-5}、dict(["ab"])={'a':'b'}）、对标量串 raise 拒整项——而 cancel_cost 是次要字段，
         # 脏不该丢掉整个 issue 决策后果（违 P1 落库铁律）。容忍归 {} 既不 garble、又保 issue 主体。
         cancel_cost = _eff_dict(ni.get("cancel_cost"))
+        origin_ref = str(ni.get("origin_ref") or "").strip()
+        stop_condition_raw = ni.get("stop_condition")
+        stop_condition = _issue_condition_text(stop_condition_raw)
+        commitment_kind = _normalize_commitment_kind(ni.get("commitment_kind"))
+        try:
+            end_turn_marker_shape = _strict_int(
+                0 if ni.get("end_turn", 0) in (None, "") else ni.get("end_turn", 0)
+            ) > 0
+        except (TypeError, ValueError, OverflowError):
+            end_turn_marker_shape = False
+        legacy_resolve_text = _issue_condition_text(ni.get("resolve_condition"))
+        if not legacy_resolve_text and isinstance(stop_condition_raw, str):
+            legacy_resolve_text = stop_condition
+        legacy_resolve_commitment_shape = (
+            commitment_condition_role(legacy_resolve_text).get("condition_role")
+            == "commitment_stop_condition"
+        )
+        commitment_shape_without_marker = (
+            not commitment_kind
+            and kind == "initiative"
+            and (
+                end_turn_marker_shape
+                or legacy_resolve_commitment_shape
+                or (isinstance(stop_condition_raw, (dict, list)) and bool(stop_condition))
+                or (
+                    isinstance(stop_condition_raw, str)
+                    and bool(stop_condition)
+                    and bool(origin_ref)
+                    and not resolve_eff
+                    and not fail_eff
+                )
+                or (semantic_ongoing_has_work and not resolve_eff and not fail_eff and bool(origin_ref))
+            )
+        )
+        if commitment_shape_without_marker:
+            applied_new.append({
+                "rejected": True,
+                "category": "invalid_enum",
+                "reason": "new_issue commitment_kind 必填（承诺形态不得靠 origin_kind/字段形状推断）",
+                "item": ni,
+                "title": title,
+            })
+            continue
+        is_commitment = bool(commitment_kind)
+        if is_commitment:
+            try:
+                if kind != "initiative":
+                    raise ValueError("kind 须为 initiative")
+                if not origin_ref:
+                    raise ValueError("origin_ref 必填，须指回诏书")
+                _et_raw = ni.get("end_turn", 0)
+                end_turn_for_commitment = _strict_int(0 if _et_raw in (None, "") else _et_raw)
+                if (
+                    ongoing_has_work
+                    and end_turn_for_commitment > 0
+                    and end_turn_for_commitment <= int(state.turn)
+                ):
+                    raise ValueError(
+                        f"end_turn 必须大于当前 turn（{state.turn}）；"
+                        "有月度持续动作的承诺不能立项即到期"
+                    )
+                invalid_person_rating = _invalid_monthly_person_rating_reason(ongoing_eff)
+                if invalid_person_rating:
+                    raise ValueError(f"ongoing_effects {invalid_person_rating}")
+                if unsupported_ongoing_fields:
+                    raise ValueError(
+                        "ongoing_effects 含非月度持续字段："
+                        + ", ".join(unsupported_ongoing_fields)
+                    )
+                if not ongoing_has_work and end_turn_for_commitment <= 0:
+                    raise ValueError("ongoing_effects 或 end_turn 至少一项必填")
+                if stop_condition_raw in (None, "", {}):
+                    if end_turn_for_commitment <= 0 and not ongoing_has_work:
+                        raise ValueError("stop_condition 须为非空 dict，除非承诺带 end_turn")
+                    stop_condition = ""
+                else:
+                    stop_condition = _validate_commitment_stop_condition(stop_condition_raw, state, db)
+            except (TypeError, ValueError, OverflowError) as exc:
+                applied_new.append({
+                    "rejected": True, "category": "invalid_enum",
+                    "reason": f"new_issue commitment 字段非法（origin_ref/ongoing_effects/stop_condition）：{exc}",
+                    "item": ni, "title": title,
+                })
+                continue
         # 校验：国策必须有「办成回报」。CLI 后端(agy)一贯不填效果字段（实测 0/4），
         # 空则聚焦补全，保证「国策跑完有实质后果」(A 方案)；floor 兜底，绝不入空壳。
-        if kind == "initiative" and not resolve_eff:
+        if kind == "initiative" and not resolve_eff and not is_commitment:
             from ming_sim.cli_backend import cli_backend_active, enrich_initiative_effects
             if cli_backend_active(llm_config):
                 try:
@@ -3333,6 +4048,8 @@ def apply_issue_tracker_output(
             bar_value = _strict_int(25 if _bv is None else _bv)
             _sv = ni.get("severity", 50)
             severity = _strict_int(50 if _sv is None else _sv)
+            _et = ni.get("end_turn", 0)
+            end_turn = _strict_int(0 if _et in (None, "") else _et)
             # cancel_cost 已在 try 外随 effect 字段走 _eff_dict 容忍归 {}（cmr ni r9）——不在此强转、
             # 不进 except 拒收路。
             # tags 严格化（cmr ni r8 codex medium，与上方 int 字段同一字段校验 class）：缺省/null/
@@ -3348,31 +4065,31 @@ def apply_issue_tracker_output(
             else:
                 raise ValueError(f"tags 须为字符串列表（拒标量串拆字 / 非串元素）：{_tags_raw!r}")
             inertia = _compute_inertia(ni)
+            if is_commitment:
+                inertia = 0
         except (TypeError, ValueError, OverflowError) as exc:
             # OverflowError：JSON 里 1e309 解析成 float('inf')，超界 int 绑定亦抛；_strict_int 已把
             # float（含 inf/nan）归 ValueError，OverflowError 兜超大 int 等残余路（cmr ni r3 codex）。
             applied_new.append({
                 "rejected": True, "category": "invalid_enum",
-                "reason": f"new_issue 字段强转失败（bar_value/severity/tags/inertia 脏数据）：{exc}",
+                "reason": f"new_issue 字段强转失败（bar_value/severity/end_turn/tags/inertia 脏数据）：{exc}",
                 "item": ni, "title": title,
             })
             continue
-        resolve_condition = str(ni.get("resolve_condition") or "").strip()
-        if not resolve_condition:
-            resolve_condition = str(ni.get("stop_condition") or "").strip()
+        resolve_condition = _issue_condition_text(ni.get("resolve_condition"))
+        if not resolve_condition and isinstance(ni.get("stop_condition"), str):
+            resolve_condition = stop_condition
         # insert_issue 不再裹 broad except：代码/DB 异常上抛 → SettlementAbort（ADR 0005 fail-loud），
         # 不再当 WARN 吞（那会半落库 + 丢决策，违 P1 铁律）。
-        # 注：字符串字段含孤代理（JSON 解析出的 "\ud800"）会在 SQLite bind 抛 UnicodeEncodeError——
-        # 这是**跨段通用**序列化层问题（不仅 insert，连拒收行/turn_extraction 的 json.dumps 绑定也中毒），
-        # 且 ensure_ascii=True 全局翻转会破坏 DB 中文可读性，需「保中文、净孤代理」helper 统一治理；
-        # section 级兜 except 会因拒收行回写原值而把 abort 挪到 rejection flush（cmr ni r5 codex 实证），
-        # 故本刀不在此 piecemeal 处理，整体归 #63 通用切片。
+        # 注：字符串字段含孤代理（JSON 解析出的 "\\ud800"）会在 SQLite bind 抛 UnicodeEncodeError。
+        # #63 已在 SQLite-bind 序列化点统一用「保中文、净孤代理」helper 治理；本段不局部吞
+        # UnicodeEncodeError，仍让非编码类代码/DB 异常按 ADR 0005 fail-loud 上抛。
         issue_id = db.insert_issue(
             state,
             kind=kind,
             title=title[:60] or "无名事项",
             origin_kind="decree",
-            origin_ref=str(ni.get("origin_ref") or ""),
+            origin_ref=origin_ref,
             bar_value=bar_value,
             bar_good_meaning=str(ni.get("bar_good_meaning") or "已成"),
             bar_bad_meaning=str(ni.get("bar_bad_meaning") or "废止"),
@@ -3383,17 +4100,23 @@ def apply_issue_tracker_output(
             faction_hint=str(ni.get("faction_hint") or ""),
             tags=tags,
             ongoing_effects=ongoing_eff,
-            cancellable=_normalize_cancellable(ni.get("cancellable")),
+            cancellable="decree" if is_commitment else _normalize_cancellable(ni.get("cancellable")),
             cancel_cost=cancel_cost,
             effect_on_resolve=resolve_eff,
             effect_on_fail=fail_eff,
             resolve_condition=resolve_condition[:300],
             fail_condition=str(ni.get("fail_condition") or "")[:300],
+            end_turn=end_turn,
+            stop_condition=stop_condition,
+            commitment_kind=commitment_kind,
             commit=commit_now,
         )
         if kind == "initiative":
             initiative_active += 1
-        applied_new.append({"issue_id": issue_id, "kind": kind, "title": title, "rejected": False})
+        applied_item = {"issue_id": issue_id, "kind": kind, "title": title, "rejected": False}
+        if commitment_kind:
+            applied_item["commitment_kind"] = commitment_kind
+        applied_new.append(applied_item)
 
     # 3) closes（LLM 主动结案/失败，不看 bar 门槛）
     applied_closes: List[Dict[str, object]] = []
@@ -3421,28 +4144,66 @@ def apply_issue_tracker_output(
             })
             continue
         reason = str(cl.get("reason") or "").strip().lower()
-        if reason not in ("resolved", "failed"):
+        if reason not in ("resolved", "failed", "acknowledged"):
             applied_closes.append({
                 "rejected": True, "category": "invalid_enum",
-                "reason": f"close_issues reason 非法 '{reason}'（须 resolved/failed），issue {issue_id}",
+                "reason": f"close_issues reason 非法 '{reason}'（须 resolved/failed/acknowledged），issue {issue_id}",
                 "item": cl,
             })
             continue
         narrative = str(cl.get("narrative") or "")[:400]
         chk = db.conn.execute(
-            "SELECT status, resolve_condition FROM issues WHERE id=?", (issue_id,)
+            "SELECT * FROM issues WHERE id=?", (issue_id,)
         ).fetchone()
+        if reason == "acknowledged":
+            if chk is None:
+                category, why = "missing_ref", f"close_issues 引用未找到的 issue {issue_id}"
+            elif chk["status"] != "active":
+                category, why = "missing_ref", f"close_issues 引用已非 active（{chk['status']}）的 issue {issue_id}"
+            elif not str(chk["commitment_kind"] or "").strip():
+                category, why = "invalid_enum", f"close_issues acknowledged 只允许到期待裁承诺 issue {issue_id}"
+            elif effect_dict_has_work(chk["ongoing_effects"]):
+                category, why = "invalid_enum", f"close_issues acknowledged 不允许收尾持续承诺 issue {issue_id}"
+            elif int(chk["end_turn"] or 0) <= 0 or int(chk["end_turn"] or 0) > int(state.turn):
+                category, why = "invalid_enum", f"close_issues acknowledged 只允许已到期承诺 issue {issue_id}"
+            else:
+                new_row = _ack_due_commitment_issue(
+                    db,
+                    state,
+                    chk,
+                    narrative=narrative,
+                    commit=not external_transaction,
+                )
+                touched_ids.add(issue_id)
+                applied_closes.append({
+                    "issue_id": issue_id,
+                    "title": new_row["title"],
+                    "reason": reason,
+                    "narrative": narrative,
+                    "rejected": False,
+                })
+                continue
+            applied_closes.append({
+                "rejected": True,
+                "category": category,
+                "reason": why,
+                "item": cl,
+            })
+            continue
         if (
-            reason == "resolved"
+            reason in ("resolved", "failed")
             and chk is not None
             and chk["status"] == "active"
-            and commitment_condition_role(chk["resolve_condition"] or "").get("condition_role")
-            == "commitment_stop_condition"
+            and (
+                chk["commitment_kind"]
+                or commitment_condition_role(chk["resolve_condition"] or "").get("condition_role")
+                == "commitment_stop_condition"
+            )
         ):
             applied_closes.append({
                 "rejected": True,
                 "category": "invalid_enum",
-                "reason": f"close_issues 对人物承诺型 stop_condition issue {issue_id} 误判 resolved（须走专门完成闭环）",
+                "reason": f"close_issues 对承诺型 issue {issue_id} 误判 {reason}（须走专门完成闭环）",
                 "item": cl,
             })
             continue
@@ -3801,45 +4562,60 @@ def _restore_person_write_state(
 _NESTED_DICT_FIELDS = frozenset({"region_delta", "army_delta", "power_updates"})
 
 
-def validate_delta_shape(extracted: dict) -> None:
-    """canonical delta 各顶层字段容器类型必须匹配 schema(dict/list),实体模块二级值必须是 dict,
-    否则**任何 DB 改动前**抛 ValueError——畸形值直送 apply 会在结算中途崩 `.items()`,叠加非
-    原子结算 = 半落库(违反 P1 落库铁律;cmr RT-1 / Gemini PR#50 R2)。driver 在 pre_settle 前
-    调一次防 pre_settle 半改;落库核 apply_score_extraction 自身也调一次防 apply 内部半落库。
-    彻底原子化的事务边界(原 issue #3)已由 ADR 0008 落地(v0.8.0.0,见 applier.atomic):结算写
-    序列整体包单事务、崩则全回滚。本校验仍保留为廉价**前置**防线——在动 DB 前就拦畸形 delta,
-    省去事务回滚成本并给出更精确的字段级报错。"""
+def sanitize_delta_shape(extracted: dict) -> tuple[dict, list[tuple[str, dict, str]]]:
+    """Return (cleaned_delta, validate-layer rejections) per ADR 0015.
+
+    Unknown top-level keys / non-dict top-level payloads still fail loud because
+    no section can be safely split. Split-capable section/list/entity shape
+    defects are removed item-by-item and returned as rejection records.
+    """
     from ming_sim.simulation import EMPTY_EXTRACTION  # 懒 import 避 issues↔simulation 循环
-    for key, value in extracted.items():
+
+    if not isinstance(extracted, dict):
+        raise ValueError(f"delta 必须是 object(dict)，实得 {type(extracted).__name__}")
+    cleaned = dict(extracted)
+    rejections: list[tuple[str, dict, str]] = []
+    for key, value in list(extracted.items()):
+        if key == "_module_rejections":
+            continue
         if key not in EMPTY_EXTRACTION:
             raise ValueError(
                 f"未知 delta 顶层字段「{key}」(canonicalize 后)；疑拼写错(如 地区变更↔地区变化)，"
                 "apply 不会消费它 = 静默无效。请改用合法 key。"
             )
         if value is None:
-            # None = 字段缺省/LLM 输出 null;apply 用 `.get(key) or {}`/`or []` 当空 no-op,
-            # 校验同样放行(别比 apply 更严,否则合法 null 会被误拒,Gemini R1)。
             continue
         expected = EMPTY_EXTRACTION[key]
-        if isinstance(expected, dict) and not isinstance(value, dict):
-            raise ValueError(f"delta 字段 {key} 必须是 object(dict)，实得 {type(value).__name__}")
-        if isinstance(expected, list):
+        if isinstance(expected, dict):
+            if not isinstance(value, dict):
+                cleaned[key] = {}
+                rejections.append((key, {"raw_value": value}, f"delta 字段 {key} 必须是 object(dict)，实得 {type(value).__name__}"))
+                continue
+            if key in _NESTED_DICT_FIELDS:
+                section_clean = dict(value)
+                for ent, sub in value.items():
+                    if not isinstance(sub, dict):
+                        section_clean.pop(ent, None)
+                        rejections.append((key, {"entity_id": str(ent), "raw_value": sub}, f"delta 字段 {key}.{ent} 必须是 object(dict)，实得 {type(sub).__name__}"))
+                cleaned[key] = section_clean
+        elif isinstance(expected, list):
             if not isinstance(value, list):
-                raise ValueError(f"delta 字段 {key} 必须是 array(list)，实得 {type(value).__name__}")
-            # schema 里所有 list 字段都是 list-of-dict(economy_moves/new_armies/fiscal_*/issue_*/
-            # appointments/character_*/secret_order_* 等);apply 逐项 item.get() 落库,非 dict 项会
-            # 中途崩 → 部分已写半落库。落库前校验每项是 dict(CMR R3 gemini)。
+                cleaned[key] = []
+                rejections.append((key, {"raw_value": value}, f"delta 字段 {key} 必须是 array(list)，实得 {type(value).__name__}"))
+                continue
+            section_clean = []
             for i, item in enumerate(value):
                 if not isinstance(item, dict):
-                    raise ValueError(
-                        f"delta 字段 {key}[{i}] 必须是 object(dict)，实得 {type(item).__name__}"
-                    )
-        if key in _NESTED_DICT_FIELDS:
-            for ent, sub in value.items():
-                if not isinstance(sub, dict):
-                    raise ValueError(
-                        f"delta 字段 {key}.{ent} 必须是 object(dict)，实得 {type(sub).__name__}"
-                    )
+                    rejections.append((key, {"raw_value": item}, f"delta 字段 {key}[{i}] 必须是 object(dict)，实得 {type(item).__name__}"))
+                else:
+                    section_clean.append(item)
+            cleaned[key] = section_clean
+    return cleaned, rejections
+
+
+def validate_delta_shape(extracted: dict) -> None:
+    """Validate unsplittable delta shape; split-capable bad items are ADR0015 rejections."""
+    sanitize_delta_shape(extracted)
 
 
 def apply_office_appointment(
@@ -4668,8 +5444,8 @@ def apply_score_extraction(
     commit_now = not caller_transaction
     if caller_transaction:
         _register_runtime_rollback_snapshot(db, state, content, registry)
-    # 0) 落库前校验容器/二级类型,畸形值崩前拦住,不让前面字段半落库(#57)。
-    validate_delta_shape(extracted)
+    # 0) 落库前校验/净化容器与可拆项；ADR0015 下可拆坏项逐项拒收，不再整批 abort。
+    extracted, validate_rejections = sanitize_delta_shape(extracted)
     runtime_content = content if content is not None else _ctx()
     candidate_event_ids_at_input = {candidate.id for candidate in gather_candidate_events(state, db)}
     new_person_changes = normalize_person_changes({"人物变更": extracted.get("人物变更") or []})
@@ -5568,9 +6344,25 @@ def apply_score_extraction(
         except Exception as exc:
             applied_secret_closes.append({"order_id": real_id, "rejected": True, "reason": str(exc)})
 
+    validate_rejection_items = [
+        {
+            "rejected": True,
+            "item": item,
+            "reason": reason,
+            "category": "invalid_shape",
+        }
+        for _section, item, reason in validate_rejections
+    ]
+    raw_module_rejections = extracted.get("_module_rejections")
+    module_rejections = [
+        item for item in raw_module_rejections if isinstance(item, dict)
+    ] if isinstance(raw_module_rejections, list) else []
+
     state.clamp()
     return {
         "metric_delta": applied_metric,
+        "validate_shape_rejections": validate_rejection_items,
+        "module_misroute_rejections": module_rejections,
         "economy_moves": applied_economy,
         "economy_moves_rejections": economy_rejections,  # 拒收独立段（#14 cmr r1）；玩家可见输出会 pop
         "faction_delta": applied_factions,
@@ -5626,6 +6418,7 @@ def apply_issue_inertia_and_ongoing(
     _ = touched_ids  # 保留入参不破坏调用方；inertia 漂移不再按它跳过
     inertia_rejections: List[Dict[str, object]] = []
     active = db.list_active_issues()
+    commit_local = not bool(getattr(db.conn, "in_transaction", False))
     # 累计单月 metric 落账，用于上限 clamp
     period_metric_acc: Dict[str, int] = {}
 
@@ -5633,9 +6426,12 @@ def apply_issue_inertia_and_ongoing(
         issue_id = int(row["id"])
         bar = int(row["bar_value"])
         inertia = int(row["inertia"])
+        commitment_kind = str(row["commitment_kind"] if "commitment_kind" in row.keys() else "").strip()
+        commitment_stop_gate = _commitment_stop_gate(row)
+        is_commitment = bool(commitment_kind or commitment_stop_gate)
 
         # 1) inertia 漂移：每月对所有进行中 issue 都走一格
-        if inertia != 0:
+        if inertia != 0 and not is_commitment:
             new_bar = max(0, min(100, bar + inertia))
             actual = new_bar - bar
             if actual != 0:
@@ -5691,67 +6487,154 @@ def apply_issue_inertia_and_ongoing(
                     continue
                 bar = int(row["bar_value"])
 
-        # 2) ongoing_effects：bar 高时折扣。经 loads_effect_dict 统一守（非 dict→{}，#117）。
         ongoing = loads_effect_dict(row["ongoing_effects"])
-        if not ongoing:
-            continue
-        # 折扣系数：bar 越高（越好）越少扣
-        # bar=0~40 → 100%, bar=40~80 → 60%, bar=80~100 → 30%
-        if bar >= 80:
-            scale = 0.3
-        elif bar >= 40:
-            scale = 0.6
-        else:
-            scale = 1.0
+        ongoing_has_work = _monthly_ongoing_effects_has_work(ongoing)
+        if is_commitment:
+            stop_gate = _commitment_stop_gate(row)
+            if stop_gate and _gate_passed(stop_gate, state.metrics, db):
+                _resolve_commitment_issue(db, state, row, commit=commit_local)
+                continue
+            end_turn = int(row["end_turn"] or 0)
+            if ongoing_has_work and end_turn > 0 and end_turn <= state.turn:
+                _expire_commitment_issue(db, state, row, commit=commit_local)
+                continue
 
-        # metrics
+        # 2) ongoing_effects：bar 高时折扣。经 loads_effect_dict 统一守（非 dict→{}，#117）。
+        if is_commitment and ongoing_has_work:
+            ongoing = _commitment_ongoing_effects_for_settlement(row, ongoing)
         metric_part: Dict[str, int] = {}
-        _om = ongoing.get("metrics")  # #117 同类：stored ongoing 的 metrics 真值非 dict 守卫
-        for k, v in (_om if isinstance(_om, dict) else {}).items():
-            if k not in ISSUE_METRIC_KEYS:
-                continue
-            try:
-                raw = int(v)
-            except (TypeError, ValueError):
-                continue
-            scaled = int(round(raw * scale))
-            if scaled == 0:
-                continue
-            cap = ISSUE_METRIC_LOCK_CAPS.get(k, 5)
-            already = period_metric_acc.get(k, 0)
-            remaining = cap - abs(already)
-            if remaining <= 0:
-                continue
-            if scaled > 0:
-                allowed = min(scaled, remaining)
+        economy_part: List[Dict[str, object]] = []
+        applied_monthly_parts: Dict[str, object] = {}
+        if _monthly_ongoing_effects_has_work(ongoing):
+            # 折扣系数：bar 越高（越好）越少扣
+            # bar=0~40 → 100%, bar=40~80 → 60%, bar=80~100 → 30%
+            if bar >= 80:
+                scale = 0.3
+            elif bar >= 40:
+                scale = 0.6
             else:
-                allowed = max(scaled, -remaining)
-            if allowed == 0:
-                continue
-            state.metrics[k] = int(state.metrics.get(k, 0)) + allowed
-            period_metric_acc[k] = already + allowed
-            metric_part[k] = allowed
+                scale = 1.0
 
-        # economy
-        _eco_out = _apply_economy_list(db, state, ongoing.get("economy") or [])
-        inertia_rejections.extend(r for r in _eco_out if r.get("rejected"))  # economy 拒收不蒸发（#14）
-        economy_part = [r for r in _eco_out if not r.get("rejected")]
+            # metrics. Commitment issues represent a concrete monthly promise;
+            # do not let the ordinary issue health discount erase it into a no-op.
+            metric_scale = 1.0 if is_commitment else scale
+            _om = ongoing.get("metrics")  # #117 同类：stored ongoing 的 metrics 真值非 dict 守卫
+            for k, v in (_om if isinstance(_om, dict) else {}).items():
+                if k not in ISSUE_METRIC_KEYS:
+                    continue
+                try:
+                    raw = int(v)
+                except (TypeError, ValueError):
+                    continue
+                scaled = int(round(raw * metric_scale))
+                if scaled == 0:
+                    continue
+                cap = ISSUE_METRIC_LOCK_CAPS.get(k, 5)
+                already = period_metric_acc.get(k, 0)
+                remaining = cap - abs(already)
+                if remaining <= 0:
+                    continue
+                if scaled > 0:
+                    allowed = min(scaled, remaining)
+                else:
+                    allowed = max(scaled, -remaining)
+                if allowed == 0:
+                    continue
+                state.metrics[k] = int(state.metrics.get(k, 0)) + allowed
+                period_metric_acc[k] = already + allowed
+                metric_part[k] = allowed
 
-        if metric_part or economy_part:
+            # economy
+            issue_monthly_rejections: List[Dict[str, object]] = []
+            _eco_out = _apply_economy_list(db, state, _monthly_economy_items(ongoing))
+            economy_rejections = [r for r in _eco_out if r.get("rejected")]
+            issue_monthly_rejections.extend(economy_rejections)
+            inertia_rejections.extend(economy_rejections)  # economy 拒收不蒸发（#14）
+            economy_part = [r for r in _eco_out if not r.get("rejected")]
+
+            applied_monthly_parts, monthly_rejections = _apply_monthly_ongoing_entities(
+                db,
+                state,
+                ongoing,
+                f"局势#{issue_id}持续效果",
+                applied_person_changes=applied_person_changes,
+            )
+            issue_monthly_rejections.extend(monthly_rejections)
+            inertia_rejections.extend(monthly_rejections)
+        else:
+            issue_monthly_rejections = []
+
+        paid_this_month = sum(
+            abs(int(r.get("delta") or 0))
+            for r in economy_part
+            if int(r.get("delta") or 0) < 0
+        )
+        record_commitment_attempt = (
+            is_commitment
+            and ongoing_has_work
+            and not (metric_part or economy_part or applied_monthly_parts)
+            and not issue_monthly_rejections
+        )
+        commitment_progress = (
+            commitment_progress_payload(
+                db,
+                state,
+                row,
+                paid_this_month=paid_this_month,
+                include_current_month=bool(metric_part or economy_part or applied_monthly_parts or record_commitment_attempt),
+            )
+            if is_commitment
+            else None
+        )
+        commitment_bar = _commitment_bar_value(commitment_progress) if commitment_progress else None
+
+        if metric_part or economy_part or applied_monthly_parts or record_commitment_attempt:
+            from_bar = bar
+            to_bar = commitment_bar if commitment_bar is not None else bar
+            actual_bar = int(to_bar) - int(from_bar)
+            if commitment_bar is not None and actual_bar != 0:
+                db.conn.execute(
+                    "UPDATE issues SET bar_value=?, phase=?, last_advance_turn=?, updated_at=CURRENT_TIMESTAMP "
+                    "WHERE id=?",
+                    (int(commitment_bar), db._derive_issue_phase(int(commitment_bar)), state.turn, issue_id),
+                )
+                bar = int(commitment_bar)
+            metric_delta: Dict[str, object] = {"metrics": metric_part, "economy": economy_part}
+            metric_delta.update(applied_monthly_parts)
+            if commitment_progress is not None:
+                metric_delta["commitment_progress"] = commitment_progress
+            narrative = (
+                "承诺持续效果本月核销；未产生额外数值变动。"
+                if record_commitment_attempt
+                else (
+                    "承诺持续效果落账"
+                    if is_commitment
+                    else f"持续效果落账 (折扣 {int(scale*100)}%)"
+                )
+            )
             db.conn.execute(
                 """
-                INSERT INTO issue_advances (
-                    issue_id, turn, trigger_kind, delta_bar,
-                    from_value, to_value, narrative, metric_delta
-                ) VALUES (?, ?, 'ongoing', 0, ?, ?, ?, ?)
+                    INSERT INTO issue_advances (
+                        issue_id, turn, trigger_kind, delta_bar,
+                        from_value, to_value, narrative, metric_delta
+                    ) VALUES (?, ?, 'ongoing', ?, ?, ?, ?, ?)
                 """,
                 (
-                    issue_id, state.turn, bar, bar,
-                    f"持续效果落账 (折扣 {int(scale*100)}%)",
-                    json.dumps({"metrics": metric_part, "economy": economy_part}, ensure_ascii=False),
+                    issue_id, state.turn, actual_bar, from_bar, int(to_bar),
+                    narrative,
+                    json.dumps(metric_delta, ensure_ascii=False),
                 ),
             )
-            db.conn.commit()
+            if commit_local:
+                db.conn.commit()
+
+        row = db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
+        if row is None or row["status"] != "active":
+            continue
+        stop_gate = _commitment_stop_gate(row) if is_commitment else {}
+        if stop_gate and _gate_passed(stop_gate, state.metrics, db):
+            _resolve_commitment_issue(db, state, row, commit=commit_local)
+            continue
 
     state.clamp()
     return inertia_rejections

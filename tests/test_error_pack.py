@@ -364,13 +364,8 @@ def test_web_directive_endpoints_409_when_frozen(monkeypatch):
     assert "结算" in str(ei.value.detail)
 
 
-def test_shape_garbage_extractor_product_aborts_loudly(game, monkeypatch, tmp_path):
-    """shape 垃圾的 extractor 产物走 S6 中止机制（pack+SettlementAbort），不裸抛 ValueError（ship-pre r4）。
-
-    裸 ValueError 没人接：CLI 原始 traceback 崩出、无错误包——validate 的 docstring
-    引过的真实战例（RT-1/Gemini R2）正是这类。
-    """
-    from ming_sim.exceptions import SettlementAbort
+def test_shape_garbage_extractor_product_is_sanitized_and_recorded(game, monkeypatch, tmp_path):
+    """ADR0015：可拆 shape 垃圾不再中止整月，拒收留痕后净化落库。"""
     from tests.test_resolve_context_recovery import _drive_settle_after_narrative
     import ming_sim.decree as dm
 
@@ -384,15 +379,18 @@ def test_shape_garbage_extractor_product_aborts_loudly(game, monkeypatch, tmp_pa
     monkeypatch.setattr(dm, "extract_scores_by_modules_with_agno",
                         lambda *a, **k: ({"region_delta": ["garbage"]}, "o", "i"))
 
-    with pytest.raises(SettlementAbort) as ei:
-        dm._settle_after_narrative(
-            state, db, None, None,
-            "诏", "邸报", {}, [], [],
-            state.turn, lambda *a: None,
-            content=content, registry=None,
-        )
-    assert ei.value.stage == "extract"
-    assert db.get_resolve_context(state.turn) is None  # 垃圾未入真源
+    turn = state.turn
+    report = dm._settle_after_narrative(
+        state, db, None, None,
+        "诏", "邸报", {}, [], [],
+        turn, lambda *a: None,
+        content=content, registry=None,
+    )
+    assert "邸报" in report
+    assert db.get_resolve_context(turn) is None  # 成功推进后清理真源
+    row = db.conn.execute("SELECT section, item_json FROM rejection_reports WHERE turn=?", (turn,)).fetchone()
+    assert row["section"] == "region_delta"
+    assert '"raw_value"' in row["item_json"]
 
 
 def test_next_attempt_skips_malformed_and_foreign_entries(game, monkeypatch, tmp_path):
