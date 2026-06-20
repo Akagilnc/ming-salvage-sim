@@ -7,6 +7,7 @@ CLI 和 Web 各自只做 I/O 包装。
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -916,9 +917,12 @@ class GameSession:
             if _has_pending_draft:
                 _pdir = next((p for p in pend_for_minister if p["kind"] == "directive"), None)
                 if _pdir:
-                    import json as _json
                     try:
-                        _payload = _json.loads(_pdir["payload_json"] or "{}")
+                        _val = _pdir["payload_json"] or "{}"
+                        _payload = (
+                            _val if isinstance(_val, (list, dict))
+                            else json.loads(_val)
+                        )
                     except (ValueError, TypeError):
                         _payload = {}
                     if isinstance(_payload, dict):
