@@ -46,6 +46,9 @@
 
   4. chapter_memories = db.list_chapter_memories(upto_turn=state.turn, recent=6)
      secret_orders = group_secret_orders_for_sim(active + pending_review 行)  # 分中文键两组{在办,待核议}、剥英文 status（#48 防 enum 泄漏邸报）
+     secret_orders = augment_secret_orders_with_due_commitments(secret_orders, db, state)
+       ↳ form③ 承诺（有 end_turn、无 ongoing_effects）到期时复用「待核议」通道顶给 simulator；
+         不另起 due_commitments 结构，不在 active_issues 背景里等 LLM 自己想起。
      previous_summary = db.previous_turn_summary(state.turn)
 
   5. [我产邸报 narrative]  ← 季末讲官身份，照 season_simulator.md 的章法
@@ -91,6 +94,9 @@
                                       applied_person_changes=inertia_person_changes)
       ↳ 全部 active issue 走惯性漂 / ongoing_effects 月支（touched_ids 入参保留但已不按它跳过——
         见 issues.py `_ = touched_ids`；本月被推进的 issue 也吃惯性，避免漏算）
+      ↳ 承诺 issue 跳过普通 inertia：按 `commitment_kind` 走 stop_condition / end_turn / ongoing_effects
+        专用闭环；补饷类月度效果喂 arrears 还款池，form② 到期写 expire，form③ 到期待裁后
+        通过 close_issues(reason=acknowledged) ACK 收尾。
       ↳ inertia 追加的玩家可见人物变更并进 applied.issue_summary.applied_person_changes
         （下方 12 留痕 + 13 chapter memory 都读 applied，须先合并再存/记，否则两者漏 inertia 人物变更）
 

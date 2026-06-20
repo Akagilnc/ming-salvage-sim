@@ -258,7 +258,7 @@ export function NewIssuesBlock({ data }: { data: any }) {
   return (
     <ul className="extraction-list">
       {data.map((it: any, i: number) => {
-        // 逐项拒收项（rejected）：new_issues 段对 event_pool 非预设 / 已触发 / 满十事等会拒收
+        // 逐项拒收项（rejected）：new_issues 段对 event_pool 非预设 / 已触发 / 满十五事等会拒收
         // 留痕——不能当成功新立局势渲染。同 CloseIssuesBlock 范式标「（未落地）」+ 显原因（#63）。
         if (pickItem(it, "rejected", "rejected")) {
           return (
@@ -296,10 +296,13 @@ export function CloseIssuesBlock({ data }: { data: any }) {
           );
         }
         const reason = pickItem(it, "原因", "reason");
+        const acknowledged = reason === "acknowledged";
+        const successful = reason === "resolved" || acknowledged;
+        const reasonLabel = acknowledged ? "确认" : reason === "resolved" ? "结案" : "失败";
         return (
           <li key={i}>
-            <b className={reason === "resolved" ? "good" : "bad"}>
-              {labelIssue(pickItem(it, "局势编号", "issue_id"))} {reason === "resolved" ? "结案" : "失败"}
+            <b className={successful ? "good" : "bad"}>
+              {labelIssue(pickItem(it, "局势编号", "issue_id"))} {reasonLabel}
             </b>
             {pickItem(it, "叙述", "narrative") ? <span>{pickItem(it, "叙述", "narrative")}</span> : null}
           </li>

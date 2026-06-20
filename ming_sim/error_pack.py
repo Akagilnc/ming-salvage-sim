@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from ming_sim.applier import safe_json_dumps
 from ming_sim.paths import bundled_path, user_data_dir
 
 
@@ -131,12 +132,12 @@ def write_error_pack(
     else:
         delta_payload = extracted
     (pack_dir / "delta.json").write_text(
-        json.dumps(delta_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        safe_json_dumps(delta_payload, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
     # resolve_context.json（无则 null）
     (pack_dir / "resolve_context.json").write_text(
-        json.dumps(resolve_ctx, ensure_ascii=False, indent=2), encoding="utf-8"
+        safe_json_dumps(resolve_ctx, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
     # save_backup.db（仅 conn.backup() API；atomic 内会被 backup_to 拒绝）
@@ -155,7 +156,7 @@ def write_error_pack(
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     (pack_dir / "manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+        safe_json_dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
     return str(pack_dir)
@@ -175,6 +176,31 @@ def clear_for_resimulation(db: Any, turn: int) -> None:
     只重跑 LLM 段，前半段不可重跑（否则二次 tick）。
     """
     ctx = db.get_resolve_context(int(turn))
+    db.conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS rejection_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            turn INTEGER NOT NULL,
+            section TEXT NOT NULL,
+            item_json TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            category TEXT NOT NULL,
+            source TEXT NOT NULL,
+            attempt INTEGER NOT NULL DEFAULT 1,
+            resimulation_invalidated INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    cols = {str(row[1]) for row in db.conn.execute("PRAGMA table_info(rejection_reports)").fetchall()}
+    if "resimulation_invalidated" not in cols:
+        db.conn.execute(
+            "ALTER TABLE rejection_reports ADD COLUMN resimulation_invalidated INTEGER NOT NULL DEFAULT 0"
+        )
+    db.conn.execute(
+        "UPDATE rejection_reports SET resimulation_invalidated=1 WHERE turn=?",
+        (int(turn),),
+    )
     if ctx is None:
         return
     db.save_resolve_context(

@@ -79,7 +79,9 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 - value：dict，字段（来自 `REGION_*` 常量）：
   - score（0-100，int）：`public_support` `unrest` `gentry_resistance` `military_pressure`
   - quantity（int）：`population` `registered_land` `hidden_land` `tax_per_turn` `grain_security`
-  - text：`natural_disaster` `human_disaster` `status`; `controlled_by` 必须是 `powers.id` 中存在的非空势力 id（`null`/空白/未知 id 逐项拒收留痕）
+  - special quantity（int 增量）：`cannon`（城防炮，落库时按 `city_level×8` 上限 clamp 并留痕）
+  - text：`natural_disaster` `human_disaster` `status`
+  - `controlled_by`：必须是 `powers.id` 中存在的非空势力 id（`null`/空白/未知 id 逐项拒收留痕）
 - 中文别名都吃：`动乱`→unrest、`士绅`→gentry_resistance、`粮食`→grain_security 等
 
 ### `fiscal_changes` — 改月度收支额度
@@ -165,11 +167,15 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 | 字段 | 约束 |
 |---|---|
 | `origin_kind` | **必须** `"decree"` |
+| `origin_ref` | 承诺 issue 必填，指回诏书 / 旨意来源 |
 | `kind` | 默认 `initiative`；若用 `situation` 则按系统危机走 |
 | `title` | ≤60 字 |
 | `bar_value` | int，默认 25 |
 | `expected_months` | int |
-| `resolve_condition` / `stop_condition` | 文本；`stop_condition` 是别名，落库到 `resolve_condition` |
+| `end_turn` | int，硬时限承诺到期回合；默认 0 |
+| `commitment_kind` | 空或 `"until_stop"`；承诺 issue 专用标记，不能只靠 `origin_kind=decree` 区分 |
+| `resolve_condition` | 文本；旧结案条件 / 兼容字段 |
+| `stop_condition` | dict；落库到 `issues.stop_condition` 时以 JSON 字符串保存。条件 dict 用 `{"army.guanning.arrears":"<=0"}` 这种形态：key 带表/对象/字段，operator 写在 value 内 |
 | `bar_good_meaning` / `bar_bad_meaning` | 文案 |
 | `ongoing_effects` / `effect_on_resolve` / `effect_on_fail` | dict，月度持续/结案/失败效果 |
 | `cancellable` | "decree" / "never" / "by_progress" |
@@ -177,17 +183,25 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 
 ⚠️ **kind 白名单**：落库时 `kind` 不在 `(situation, initiative)` 内会被拒。**第二次踩的坑**：`kind="reform"` 被拒（应改 `initiative`）。
 
-⚠️ **数量上限**：active `kind=initiative` 的 issue **总数不超过 10**，超过新立直接拒（"已有十事在办，朝廷分身乏术"）。
+⚠️ **数量上限**：active `kind=initiative` 的 issue **总数不超过 15**，超过新立直接拒（"已有十五事在办，朝廷分身乏术"）。
 
-人物承诺型事项也属 `initiative`：如皇帝命臣安抚毛文龙，应立标题类似 `安抚毛文龙·进行中` 的玩家可见 issue，并用 `stop_condition` 表达意图阈值（例：`character.毛文龙.loyalty >= 65`）。本字段只存停止/达成意图；自动按条件完成/关闭不在本片。一次性赏赐、抚恤、拨银若当回合办完，不立 issue，只走 `economy_moves` 与必要的 `人物变更`。
+「每月 X 直到补齐」这类旨意承诺必须建 `kind="initiative"` 的承诺 issue：带 `commitment_kind="until_stop"`、`ongoing_effects`、`stop_condition`，落库时会按承诺路径处理为 `inertia=0`、`cancellable="decree"`，并跳过普通国策的 resolve-effect 补全。多军合计可写 `{"army.xuan_da|jizhen.arrears.sum":"<=0"}`，人物阈值可写 `{"character.毛文龙.loyalty":">=65"}`。
+
+「连续 N 月 / 半年为限」这类时限承诺也必须建 `kind="initiative"` 的承诺 issue：带 `commitment_kind="until_stop"`、`ongoing_effects`、`end_turn`。立项公式是 `end_turn = turn + N`，且 `end_turn` 必须严格大于当前 turn；当前回合或过去回合会被拒收，避免立项即过期的持续承诺空壳。半年按 6 个回合计。若同时要求「直到补齐」，同时写 `stop_condition`；`stop_condition` 或 `end_turn` 谁先到谁停。时限到期由结算写 `issue_advances.trigger_kind="expire"` 并标 `dropped`，不要在 delta 里伪造成 `close_issues resolved/failed`，也不要给承诺补普通 resolve/fail 效果。
+
+开放式经常性承诺必须显式带 `commitment_kind="until_stop"` 和非空 `ongoing_effects`；可以没有 `stop_condition` 与 `end_turn`，表示皇帝主动撤销前长期挂账。缺 `commitment_kind` 的同形状会拒收，避免把承诺误落成普通 initiative。
+
+「三月后复试 / 期满复核」这类未来一次性 form③ 承诺带 `commitment_kind="until_stop"`、`end_turn`，`ongoing_effects` 可为空。到期后程序会把它顶到待核议；皇帝/邸报明确裁决或确认已处理后，`close_issues` 可写 `reason="acknowledged"` 作 ACK 收尾，状态标 `dropped`、`issue_advances.trigger_kind="commitment_ack"`，不运行 `effect_on_resolve` / `effect_on_fail`。普通承诺不得用 `close_issues resolved/failed` 绕过专门闭环。
+
+人物承诺型事项也属 `initiative`：如皇帝命臣安抚毛文龙，应立标题类似 `安抚毛文龙·进行中` 的玩家可见 issue，并同时写两件事：`stop_condition` 表达意图阈值（如 `{"character.毛文龙.loyalty":">=65"}`），`ongoing_effects` 表达每月持续动作（如 `{"人物变更":[{"name":"毛文龙","动作":"评定","loyalty":2,"reason":"奉旨持续安抚"}]}`）。只写 `stop_condition`、没有月度动作的载体会被拒收；一次性赏赐、抚恤、拨银若当回合办完，不立 issue，只走 `economy_moves` 与必要的 `人物变更`。
 
 ### `cancels` — 撤销 issue
 - `issue_id` int + `reason` 文本
 - 仅 `cancellable in (decree, by_progress)` 的 issue 可撤；预设 `never` 撤不动。
 
 ### `close_issues` — 结案 issue
-- `issue_id` int + `result` 文本（描述 done/failed 的实况）
-- 一般由 issue bar=100/0 自动了结；这里用于强行结案。
+- `issue_id` int + `reason`（`resolved` / `failed` / `acknowledged`）+ `narrative` 文本。
+- 一般由 issue bar=100/0 自动了结；这里用于强行结案。`acknowledged` 只用于已到期 form③ 承诺被皇帝明确裁决/确认处理后的 ACK 收尾。
 
 ### `人物变更` — 人事档案单一入口
 每条必须带 `name`（必须在 `characters` 名册）和 `动作`。`动作` 只收八个值：`任命` / `罢黜` / `调任` / `处置` / `易主` / `册封` / `行止` / `评定`。未知动作、查无此人、缺必填字段、非法枚举或非法状态迁移都会逐项拒收留痕。
@@ -246,7 +260,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 | `new_issues[].origin_kind` | 不填 | **必填** `decree` 或 `event_pool` |
 | `new_issues[].kind` | 写 `reform` | 白名单 `situation` / `initiative`；改革/试点都用 `initiative` |
 | `new_issues[].title` | — | ≤60 字 |
-| `new_issues` 总数 | — | active `initiative` ≤10 |
+| `new_issues` 总数 | — | active `initiative` ≤15 |
 | `close_issues[].reason` | 填了 `result` 没填 `reason` | close_issues 要 **`reason`** 字段（不是 result），空则整条被跳过。注：若同时用 `issue_advances` 把 bar 推满（≥100），issue 会**自动 resolved**，不依赖 close_issues |
 | `power_updates` 字段 | 写 `{"stance":...}` 或 `{"satisfaction":...}` | **实际守门只收三个字段：`威望`(leverage) / `实力`(military_strength) / `经济`(supply——英文 canonical 是 supply,别名表把 经济 映到它;写 `economy` 不被认会拒)。** 连 `satisfaction` / `cohesion` / `stance` / `leader` / `agenda` 全被拒，逐项拒收留痕落 `rejection_reports`（不再 print WARN——v0.8.x PR2-S1;supply 一直在白名单内,旧坑表把它列进被拒名单是 doc 错误）。改外势态度文用 `world_advance`（≤40字）；改归附倾向只能动 leverage/military_strength/supply。本文档上方 `power_updates` 段已按运行时守门收敛。〔崇祯二年五、六月结算实测，turn 8/9〕|
 
