@@ -44,6 +44,14 @@ const WORKTREE: WorktreeHandle = {
 
 /** Base Backend that satisfies all methods with happy defaults (override per test). */
 class BaseBackend implements Backend {
+  // #255: fresh-run defaults (this suite tests error edges, not resume).
+  async findResumeState(): Promise<undefined> {
+    return undefined;
+  }
+  async cleanResidue(): Promise<void> {}
+  async resumeSession(spec: StepSpec): Promise<StepOutput> {
+    return this.runStep(spec);
+  }
   async fetchIssueMeta(_n: number): Promise<IssueMeta> {
     return COMPLIANT_META;
   }

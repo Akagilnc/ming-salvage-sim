@@ -52,6 +52,17 @@ class ConfigurableBackend implements Backend {
     private readonly runStepOutputs: Map<string, StepOutput> = new Map(),
   ) {}
 
+  // #255: fresh-run defaults (this suite tests escalate routing, not resume).
+  async findResumeState(): Promise<undefined> {
+    return undefined;
+  }
+  async cleanResidue(): Promise<void> {
+    // no-op
+  }
+  async resumeSession(spec: StepSpec): Promise<StepOutput> {
+    return this.runStep(spec);
+  }
+
   async fetchIssueMeta(_issueNumber: number): Promise<IssueMeta> {
     this.calls.push("fetchIssueMeta");
     return COMPLIANT_META;

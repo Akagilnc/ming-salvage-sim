@@ -32,6 +32,19 @@ class GateTestBackend implements Backend {
     this.meta = meta;
   }
 
+  // #255: fresh-run defaults (no resume residue). Not recorded in `calls` so
+  // the exact gate call-sequence assertions in this suite stay intact.
+  async findResumeState(): Promise<undefined> {
+    return undefined;
+  }
+  async cleanResidue(): Promise<void> {
+    // no-op
+  }
+  async resumeSession(spec: StepSpec): Promise<StepOutput> {
+    this.calls.push(`resumeSession(${spec.id})`);
+    return { kind: "coder", committed: false, commitsAdded: 0 };
+  }
+
   async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
     this.calls.push(`fetchIssueMeta(${issueNumber})`);
     return this.meta;

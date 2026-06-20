@@ -36,6 +36,20 @@ class RecordingBackend implements Backend {
     path: "/resident/worktrees/issue-253",
   };
 
+  // #255: fresh-run defaults (this suite asserts StepSpec shape, not resume).
+  async findResumeState(): Promise<undefined> {
+    return undefined;
+  }
+  async cleanResidue(): Promise<void> {
+    // no-op
+  }
+  async resumeSession(spec: StepSpec): Promise<StepOutput> {
+    if (spec.role === "coder") {
+      return { kind: "coder", committed: true, commitsAdded: 1 };
+    }
+    return { kind: "reviewer", findings: [] };
+  }
+
   async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
     return {
       number: issueNumber,
