@@ -822,6 +822,15 @@ describe("epic orchestrator S3 layered parallel pipeline", () => {
     expect(result.status).toBe("ready");
     expect(result.layers.map((layer: any) => layer.issueNumbers)).toEqual([[220, 221], [222]]);
     expect(result.mergeQueue.map((entry: any) => entry.reviewedCommit)).toEqual(["commit-220", "commit-221", "commit-222"]);
+    // §段间交接: the handoff maps EVERY slice (not just mergeQueue.at(-1)) to its OWN stable per-slice
+    // reviewed commit — these never go stale on a family rebase/fix because they are not the rewritten
+    // family-branch hash. The current family tip is reported once as familyHead.
+    expect(result.handoff.merged).toEqual([
+      { number: 220, reviewedCommit: "commit-220" },
+      { number: 221, reviewedCommit: "commit-221" },
+      { number: 222, reviewedCommit: "commit-222" }
+    ]);
+    expect(result.handoff.familyHead).toBe("merge-commit-222");
   });
 
   it("merges reviewed commits from different slice worktrees through one dedicated family worktree", async () => {
@@ -1341,8 +1350,8 @@ describe("epic orchestrator workflow inline familyReviewGate drift guard", () =>
 
   it("matches the S5 buildHandoffPayload authority across the three terminal states + field mixes", () => {
     const battery: HandoffInput[] = [
-      { status: "ready", epic: 217, familyBranch: "family/217", baseAtStart: "b", merged: [{ number: 220, commitHash: "c220" }], dirty: [], flags: [], prUrl: "https://example.test/pr/1" },
-      { status: "needs-user", epic: 217, familyBranch: "family/217", baseAtStart: "b", merged: [{ number: 220, commitHash: "c220" }], reason: "gstack-ship-ask", question: "MINOR or MAJOR?" },
+      { status: "ready", epic: 217, familyBranch: "family/217", baseAtStart: "b", familyHead: "tip", merged: [{ number: 220, reviewedCommit: "c220" }], dirty: [], flags: [], prUrl: "https://example.test/pr/1" },
+      { status: "needs-user", epic: 217, familyBranch: "family/217", baseAtStart: "b", merged: [{ number: 220, reviewedCommit: "c220" }], reason: "gstack-ship-ask", question: "MINOR or MAJOR?" },
       { status: "unconverged", epic: 217, familyBranch: "family/217", baseAtStart: "b", reason: "gstack-ship-failed", detail: "RedTeam failed", flags: ["agy down"], dirty: [{ number: 221, decision: "rework" }] },
       // optional collections omitted -> both copies must default to the same empty arrays / nulls.
       { status: "ready", epic: "E1", familyBranch: "family/E1", baseAtStart: "deadbeef", prUrl: "https://example.test/pr/2" }
@@ -1604,7 +1613,8 @@ describe("epic orchestrator S5 Ship phase (gstack-ship + terminal states + hando
       dirty: [],
       flags: []
     });
-    expect(result.handoff.merged).toEqual([{ number: 220, commitHash: "merge-220" }]);
+    expect(result.handoff.merged).toEqual([{ number: 220, reviewedCommit: "commit-220" }]);
+    expect(result.handoff.familyHead).toBe("merge-220");
   });
 
   it("needs-user: gstack-ship internal ASK fires -> needs-user terminal state + handoff carries the ASK question", async () => {
@@ -1622,7 +1632,8 @@ describe("epic orchestrator S5 Ship phase (gstack-ship + terminal states + hando
       detail: null,
       prUrl: null
     });
-    expect(result.handoff.merged).toEqual([{ number: 220, commitHash: "merge-220" }]);
+    expect(result.handoff.merged).toEqual([{ number: 220, reviewedCommit: "commit-220" }]);
+    expect(result.handoff.familyHead).toBe("merge-220");
   });
 
   it("unconverged: gstack-ship gates fail (non-ASK) -> unconverged terminal state + handoff carries the blocking detail", async () => {
@@ -1640,7 +1651,8 @@ describe("epic orchestrator S5 Ship phase (gstack-ship + terminal states + hando
       question: null,
       prUrl: null
     });
-    expect(result.handoff.merged).toEqual([{ number: 220, commitHash: "merge-220" }]);
+    expect(result.handoff.merged).toEqual([{ number: 220, reviewedCommit: "commit-220" }]);
+    expect(result.handoff.familyHead).toBe("merge-220");
   });
 
   it("none of the three terminal states triggers the online bot / pr-review-loop (online_pr_review_loop stays out of scope)", async () => {

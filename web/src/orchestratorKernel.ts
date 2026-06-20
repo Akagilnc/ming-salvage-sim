@@ -236,11 +236,15 @@ export function shipOutcome(input: ShipOutcomeInput): ShipOutcome {
   return input.gatesPassed && input.prCreated ? "ready" : "unconverged";
 }
 
-// A merged slice's identity in the handoff: the slice (sub-issue) number and the commit hash it
-// landed on the family branch (S6 git-skip probes by commit, the handoff reports it for the human).
+// A merged slice's identity in the handoff: the slice (sub-issue) number and its per-slice REVIEWED
+// commit (the stable commit produced by per-slice review in the slice's own worktree). The reviewed
+// commit is NOT rewritten by an I10 family rebase / family-review fix (those rewrite the FAMILY
+// branch commits), so it is a stable identifier of what each slice contributed. The current family
+// branch tip is the top-level handoff `familyHead`; S6 git-skip probes the family branch
+// (baseAtStart..familyHead) against these rather than trusting a per-slice family-branch hash.
 export interface HandoffMergedSlice {
   number: IssueId;
-  commitHash: string;
+  reviewedCommit: string;
 }
 
 // A dirty slice carries the user's decision text ("rework X") so the next run knows HOW to redo it,
@@ -255,7 +259,8 @@ export interface HandoffInput {
   epic: IssueId; // parent epic issue
   familyBranch: string; // family branch name
   baseAtStart: string; // base SHA (the I10-verified startup target HEAD)
-  merged?: HandoffMergedSlice[]; // merged slices + their family-branch commit hashes
+  familyHead?: string; // current family branch tip (refreshed post rebase / post family-review fix)
+  merged?: HandoffMergedSlice[]; // merged slices + their stable per-slice reviewed commits
   dirty?: HandoffDirtySlice[]; // dirty slices not yet reworked (I5)
   flags?: string[]; // degradation / absent-voice flags from the load-bearing family gate
   prUrl?: string; // ready: the family PR gstack-ship created
@@ -269,6 +274,7 @@ export interface HandoffPayload {
   epic: IssueId;
   familyBranch: string;
   baseAtStart: string;
+  familyHead: string | null;
   merged: HandoffMergedSlice[];
   dirty: HandoffDirtySlice[];
   question: string | null;
@@ -289,6 +295,7 @@ export function buildHandoffPayload(input: HandoffInput): HandoffPayload {
     epic: input.epic,
     familyBranch: input.familyBranch,
     baseAtStart: input.baseAtStart,
+    familyHead: input.familyHead ?? null,
     merged: input.merged ?? [],
     dirty: input.dirty ?? [],
     question: input.question ?? null,
