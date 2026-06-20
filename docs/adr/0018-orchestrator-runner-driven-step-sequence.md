@@ -14,7 +14,7 @@ Status: Proposed（2026-06-20；grill-with-docs 第二轮收敛，整合 gpt-5.5
 2. **`/tdd` 内层红绿留给 skill，v1 不机器验**（步内执行很少错，机器化代价不划算）。
 3. **每步写 step ledger** = 防跳步真源（事后看跳没跳）+ 续跑真源（下一步只读 ledger，不靠 LLM 记忆）。
 4. **prompt 注入权归 runner**（版本化 promptFile + promptArgs 只填变量），不临场拼大 prompt、不「参考 wiki 那套做一下」。
-5. **fix loop 收敛 = runner 确定性路由**（看 reviewer JSON 的 P0/P1：有→修、无→push）；不收敛靠**模型发 escalate 信号**（不数轮数）→ 人判 → `resumeSession` 续跑——不造自动 drift 诊断机器。
+5. **fix loop 收敛 = runner 确定性路由**（看 reviewer JSON：有 P0/P1 **或 `action:'fix_now'` 的 P2/P3** → 修；否则 → push，与 PRD #244 S4 路由表一致）；不收敛靠**模型发 escalate 信号**（不数轮数）→ 人判 → `resumeSession` 续跑——不造自动 drift 诊断机器。
 
 > 具体步骤表（S0–S8）/ StepSpec 字段 / ledger schema / 路由细节 / maxIter 分配 / 结构化输出容错 = **实现 spec，见 PRD #244 Implementation Decisions**（ADR 只记决定、不记 spec）。
 
