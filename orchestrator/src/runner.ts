@@ -32,13 +32,52 @@ import type {
 const SLICE_BASE = "main";
 
 /**
+ * Project tool-chain declared on the image (#253 AC-6, US #29).
+ * Must include Python + frontend stack so both game-backend and web slices can
+ * run their tests inside the same image.
+ */
+const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
+  "python",
+  "node",
+  "npm",
+  "typescript",
+] as const;
+
+/**
  * The fixed StepSpec for each agent step. Versioned promptFiles, never
- * assembled inline (ADR 0018 §4). #247 sets id/role/promptFile; model /
- * completionSignal / maxIter are seams for later slices.
+ * assembled inline (ADR 0018 决定#4).
+ *
+ * #247 wired id/role/promptFile. #253 fills the contract:
+ *   model           — short slug the runtime maps to a baked-in CLI
+ *   completionSignal — signal the sandbox watches for (Sandcastle run() API)
+ *   maxIter         — coder >1 (iterates), reviewer =1 (single pass)
+ *   soul            — which soul to inject (coder / READ-ONLY)
+ *   toolchain       — image tool-chain declaration
+ *
+ * Swapping models = change the `model` slug here; no image rebuild, no
+ * structural StepSpec change (PRD #244 Implementation Decisions).
  */
 const STEP_SPECS: Readonly<Record<"S2" | "S3", StepSpec>> = {
-  S2: { id: "S2", role: "coder", promptFile: "coder_implement.md" },
-  S3: { id: "S3", role: "reviewer", promptFile: "reviewer_full_review.md" },
+  S2: {
+    id: "S2",
+    role: "coder",
+    promptFile: "coder_implement.md",
+    model: "sonnet",
+    completionSignal: "CODER_STEP_COMPLETE",
+    maxIter: 5,
+    soul: "coder",
+    toolchain: IMAGE_TOOLCHAIN,
+  },
+  S3: {
+    id: "S3",
+    role: "reviewer",
+    promptFile: "reviewer_full_review.md",
+    model: "opus",
+    completionSignal: "REVIEWER_STEP_COMPLETE",
+    maxIter: 1,
+    soul: "READ-ONLY",
+    toolchain: IMAGE_TOOLCHAIN,
+  },
 };
 
 export async function runOrchestrator(input: RunInput): Promise<RunResult> {

@@ -44,27 +44,67 @@ export type HandoffStatus = "success" | "escalate" | "error";
 // ───────────────────────────── step spec ─────────────────────────────
 
 /**
+ * Soul identifier injected into the sandbox for a step.
+ *
+ * - `"coder"`: full dev-discipline soul (wiki TDD flow, /review, self-check).
+ * - `"READ-ONLY"`: reviewer soul with READ-ONLY soft constraint baked in
+ *   (prompt-level, not an OS-level mount — same image, separate `run()`).
+ */
+export type StepSoul = "coder" | "READ-ONLY";
+
+/**
+ * Project tool-chain entry. Each entry is a short, lower-case technology slug
+ * (e.g. `"python"`, `"node"`, `"typescript"`). The full list is declared on
+ * the image and asserted by #253 tests to include Python + frontend stack.
+ */
+export type ToolchainEntry = string;
+
+/**
  * A single agent step (ADR 0018): one `sandbox.run()` driven entirely by the
  * runner. `role` selects which soul to inject (v0.1 one image, two roles);
  * `promptFile` is a versioned file — prompts are never assembled inline.
  *
- * #247 uses `id`, `role`, `promptFile`. The remaining fields are seams for
- * later slices and may be undefined until then.
+ * #247 wired `id`, `role`, `promptFile`. #253 fills the remaining fields:
+ * `model`, `completionSignal`, `maxIter`, `soul`, `toolchain`.
  */
 export interface StepSpec {
   /** Which step in the S0–S8 sequence this spec drives (agent steps only). */
   readonly id: StepId;
   /** Selects the soul to inject. */
   readonly role: StepRole;
-  /** Versioned prompt file; prompts are never assembled ad-hoc (ADR 0018 §4). */
+  /** Versioned prompt file; prompts are never assembled ad-hoc (ADR 0018 决定#4). */
   readonly promptFile: string;
-  // ── seams for later slices (#251/#253 etc.) — shape only, unset in #247 ──
-  /** Which model CLI to drive (runtime picks the baked-in CLI). */
-  readonly model?: string;
-  /** Signal the agent emits to mark the step complete (Sandcastle API). */
-  readonly completionSignal?: string;
-  /** Per-step iteration cap (coder/fix >1, reviewer 1). */
-  readonly maxIter?: number;
+  /**
+   * Short model slug the runtime maps to a baked-in CLI.
+   * Changing the slug is all it takes to swap models — no image rebuild, no
+   * StepSpec shape change (PRD #244 Implementation Decisions).
+   * `"sonnet"` → coder CLI; `"opus"` → reviewer CLI.
+   */
+  readonly model: string;
+  /**
+   * Signal the agent emits to mark the step complete (Sandcastle `run()` API).
+   * Required so the sandbox knows when to stop and collect structured output.
+   */
+  readonly completionSignal: string;
+  /**
+   * Per-step iteration cap.
+   * - coder / fix steps: > 1 (they loop until done or escalate).
+   * - reviewer steps: exactly 1 (single pass — reviewer never self-edits).
+   */
+  readonly maxIter: number;
+  /**
+   * Which soul to inject into the sandbox for this step (#253).
+   * `"coder"` = full dev-discipline soul;
+   * `"READ-ONLY"` = reviewer soul, soft-constraint READ-ONLY baked into soul
+   * (not an OS-level readonly mount — same image, separate `run()` context).
+   */
+  readonly soul: StepSoul;
+  /**
+   * Project tool-chain the image declares (#253, US #29).
+   * Must include Python + a frontend entry (node/npm/typescript).
+   * Carried on every StepSpec so the runner can assert completeness.
+   */
+  readonly toolchain: ReadonlyArray<ToolchainEntry>;
 }
 
 // ──────────────────────────── step outputs ────────────────────────────
