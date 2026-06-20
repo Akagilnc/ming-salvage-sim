@@ -460,6 +460,34 @@ def test_extract_draft_intent_prompt_includes_supplement_hint_when_has_pending(m
     assert "补充" in prompt, "prompt 应包含「补充」提示，以引导 LLM 正确判补充意图"
 
 
+def test_extract_draft_intent_supplement_schema_keeps_valid_json_comma(monkeypatch):
+    """补充模式的 JSON 示例要在「拟旨意图」后保留逗号；
+    否则「合并草案」紧跟上一字段会诱导模型输出坏 JSON。"""
+    prompts_seen = []
+
+    def _capture(prompt, llm_config=None, tag=""):
+        prompts_seen.append(prompt)
+        return (json.dumps(
+            {"拟旨意图": "拟旨", "合并草案": "合并后的完整草案"},
+            ensure_ascii=False,
+        ), 1)
+
+    import ming_sim.cli_backend as cb_mod
+    monkeypatch.setattr(cb_mod, "_run_backend_for_config", _capture)
+
+    cb.extract_draft_intent(
+        "再补一条",
+        "臣遵旨补入。",
+        has_pending_draft=True,
+        existing_draft_text="原始草案：清查粮饷。",
+    )
+
+    assert prompts_seen
+    prompt = prompts_seen[0]
+    assert '"拟旨意图": "无|拟旨",' in prompt
+    assert '"拟旨意图": "无|拟旨"  // 皇帝' not in prompt
+
+
 def test_extract_draft_intent_no_supplement_hint_when_no_pending(monkeypatch):
     """has_pending_draft=False（默认）时，prompt 不含补充提示（保持原行为不变）。"""
     prompts_seen = []
@@ -512,6 +540,37 @@ def test_last_write_wins_uses_has_pending_draft_flag(game, monkeypatch):
     assert "补充" in draft_prompt, (
         "has_pending_draft=True 时 prompt 应含补充提示（codex r5 F1）"
     )
+
+
+def test_draft_request_with_appointment_content_stages_directive_not_office(game, monkeypatch):
+    """「帮我拟旨，授某人为某官」是拟旨请求，任免内容应留在草案里走 extractor，
+    不能先被口头任免抽取抢成 kind=office pending。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+
+    def _capture(prompt, llm_config=None, tag=""):
+        if tag == "appointment":
+            return (json.dumps(
+                {"任免动作": "任命", "姓名": "史可法", "官职": "兵部尚书"},
+                ensure_ascii=False,
+            ), 1)
+        if tag == "draft_intent":
+            return (json.dumps({"拟旨意图": "拟旨"}, ensure_ascii=False), 1)
+        return ("{}", 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _capture)
+    sess = _fake_session(db, state)
+    GameSession.apply_cli_conversation_actions(
+        sess, ch,
+        player_message="帮我拟一道旨，授史可法为兵部尚书。",
+        answer="奉天承运皇帝诏曰，授史可法为兵部尚书，总理部务，钦此。",
+        has_directive=False, secret_order_id=None,
+    )
+
+    pending = db.list_pending_actions(state.turn)
+    assert [p["kind"] for p in pending] == ["directive"]
+    assert "史可法" in json.loads(pending[0]["payload_json"])["text"]
 
 
 # ── ⑨ codex r5 F2 — advance_without_edict 不产生孤儿 draft ────────────────────
@@ -1229,6 +1288,42 @@ def test_stale_decree_not_issued_when_existing_draft_text_changes_after_generati
     assert "加派监察御史" in captured["decree_text"], (
         f"draft 文本变更后必须重生成诏书，但得到：{captured['decree_text']!r}"
     )
+
+
+def test_supplied_decree_not_used_after_pending_directive_auto_commit(game, monkeypatch):
+    """resolve_turn(decree=...) 外部传入旧诏书时，若本次调用先 auto-commit 了口头草案，
+    传入文本不包含新 draft；必须重拟/重取当前 draft 集，不能把未入正文的 draft 标 issued。"""
+    import ming_sim.session as session_mod
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    sess = _decree_session(db, state, content)
+    state.turn_phase = TurnPhase.SUMMONING.value
+
+    db.upsert_pending_directive(
+        state.turn, name, payload={"text": "口头草案：调辽饷三万。", "actor": name})
+
+    def fake_write(llm_config, agno_db, st, directives, db=None):
+        texts = "；".join(str(d["text"]) for d in directives)
+        return f"重拟诏书[{texts}]"
+
+    captured = {}
+
+    def fake_resolve(st, gdb, agno, llm, directives, decree_text, **kw):
+        captured["decree_text"] = decree_text
+        captured["directive_texts"] = [str(d["text"]) for d in directives]
+        from ming_sim.session import ResolveResult
+        return ResolveResult(awaiting=False, report="ok")
+
+    monkeypatch.setattr(session_mod, "write_decree_with_agno", fake_write)
+    monkeypatch.setattr(session_mod, "resolve_directives", fake_resolve)
+
+    sess.resolve_turn(decree="外部旧诏书：只含旧稿。")
+
+    assert "口头草案" in captured["decree_text"], (
+        f"auto-commit 的口头草案必须进入本次诏书正文，但得到：{captured['decree_text']!r}"
+    )
+    assert any("口头草案" in t for t in captured["directive_texts"])
 
 
 def test_undo_clears_generated_decree_when_committed_draft_deleted(game, monkeypatch):

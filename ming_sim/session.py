@@ -892,31 +892,21 @@ class GameSession:
                         minister_name=character.name, target_id=None,
                         payload={"name": character.name,
                                  "skill": act["cultivate_skill"], "trait": act["cultivate_trait"]})
-        # 任免(office)独立检测：与密令无关，随召对触发(ungated)，覆盖大臣+太监。
-        # 口头任命/罢免 → 暂存 kind=office；颁诏前不动 characters 表。
-        # 显式前缀(拟旨/密令)是皇帝已明示的动作，按既定例外直接走(拟旨里的任免随诏书
-        # 走 extractor 的 office_changes)，不在此自然语言路径重复 stage。
         explicit_prefixed = bool(acts["decree_text"] or acts["secret_order"])
-        appt = (
-            {"appoint_action": "无"} if explicit_prefixed
-            else extract_appointment_action(player_message, reply, llm_config=llm_config)
-        )
-        if appt["appoint_action"] in ("任命", "罢免") and appt["name"]:
-            # minister_name = 召对对象(发起这道任免的大臣/太监),非被任者——对话确认按召对的
-            # 大臣过滤暂存,故须以召对对象为键;被任者姓名在 payload["name"]。
-            out["pending_action_id"] = self.db.stage_pending_action(
-                self.state.turn, kind="office", action=appt["appoint_action"],
-                minister_name=minister_name, target_id=None,
-                payload={"name": appt["name"], "office": appt["office"],
-                         "appointer": minister_name})
-        # 对话式拟旨意图(ADR 0006 自然语言路径)：非显式前缀、尚无 draft、且本轮未 stage 其他动作时，
-        # 判皇帝是否口头请拟旨；检测到则 upsert pending directive（last-write-wins，同大臣同回合至多一条）。
-        # 挂在任免之后、以"无其他 pending 动作"为守门：前缀/密令更新/任免等已处理的情形语义上
-        # 与拟旨互斥，跳过可省一次 LLM 调用；余下的才是真正口头请拟旨的情形。
-        # _has_pending_draft：此大臣本回合已有 kind=directive 暂存时为 True（confirm=="无"後仍在）。
-        # pend_for_minister snapshot 此处仍有效：confirm=="应允"/"拒绝"会在上方提前 return，
-        # 能到这里说明 directive 未 commit/drop，snapshot 与 DB 一致（codex r5 F1 修复）。
-        if not explicit_prefixed and not has_directive and not out.get("pending_action_id"):
+        draft_probe_done = False
+        draft_staged = False
+
+        def _mentions_draft_request(text: str) -> bool:
+            return any(
+                token in text
+                for token in ("拟旨", "拟一道旨", "起草", "草拟", "拟诏", "圣旨")
+            )
+
+        def _stage_conversational_draft() -> bool:
+            nonlocal draft_probe_done
+            draft_probe_done = True
+            if explicit_prefixed or has_directive or out.get("pending_action_id"):
+                return False
             _has_pending_draft = any(p["kind"] == "directive" for p in pend_for_minister)
             # 补充模式：提取现有草案文本喂给 extract_draft_intent，让 LLM 合并新旧草案；
             # 直接用大臣回话（可能是确认语）会覆盖原草案（codex r6 F1）。
@@ -942,6 +932,40 @@ class GameSession:
                     payload={"text": draft_res["draft_text"], "actor": minister_name},
                 )
                 out["pending_action_id"] = pid
+                return True
+            return False
+
+        # 若皇帝话里已明确「拟旨/起草/圣旨」，先让拟旨抽取器判；否则「帮我拟旨，
+        # 授某人为某官」会被任免抽取抢成 office pending，丢失诏书草案路径。
+        if _mentions_draft_request(player_message) or any(
+            p["kind"] == "directive" for p in pend_for_minister
+        ):
+            draft_staged = _stage_conversational_draft()
+
+        # 任免(office)独立检测：与密令无关，随召对触发(ungated)，覆盖大臣+太监。
+        # 口头任命/罢免 → 暂存 kind=office；颁诏前不动 characters 表。
+        # 显式前缀(拟旨/密令)是皇帝已明示的动作，按既定例外直接走(拟旨里的任免随诏书
+        # 走 extractor 的 office_changes)，不在此自然语言路径重复 stage。
+        appt = {"appoint_action": "无"}
+        if not explicit_prefixed and not draft_staged:
+            appt = extract_appointment_action(player_message, reply, llm_config=llm_config)
+        if appt["appoint_action"] in ("任命", "罢免") and appt["name"]:
+            # minister_name = 召对对象(发起这道任免的大臣/太监),非被任者——对话确认按召对的
+            # 大臣过滤暂存,故须以召对对象为键;被任者姓名在 payload["name"]。
+            out["pending_action_id"] = self.db.stage_pending_action(
+                self.state.turn, kind="office", action=appt["appoint_action"],
+                minister_name=minister_name, target_id=None,
+                payload={"name": appt["name"], "office": appt["office"],
+                         "appointer": minister_name})
+        # 对话式拟旨意图(ADR 0006 自然语言路径)：非显式前缀、尚无 draft、且本轮未 stage 其他动作时，
+        # 判皇帝是否口头请拟旨；检测到则 upsert pending directive（last-write-wins，同大臣同回合至多一条）。
+        # 挂在任免之后、以"无其他 pending 动作"为守门：前缀/密令更新/任免等已处理的情形语义上
+        # 与拟旨互斥，跳过可省一次 LLM 调用；余下的才是真正口头请拟旨的情形。
+        # _has_pending_draft：此大臣本回合已有 kind=directive 暂存时为 True（confirm=="无"後仍在）。
+        # pend_for_minister snapshot 此处仍有效：confirm=="应允"/"拒绝"会在上方提前 return，
+        # 能到这里说明 directive 未 commit/drop，snapshot 与 DB 一致（codex r5 F1 修复）。
+        if not draft_probe_done:
+            _stage_conversational_draft()
         return out
 
     def _cli_backend_fallback_actions(
@@ -1265,10 +1289,16 @@ class GameSession:
             raise ValueError(f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
         # "不回=默认同意"（ADR 0006）：颁诏前先把对话式拟旨暂存（pending_actions kind=directive）
         # 提交为 draft，使 list_directives(status='draft') 能拾取、进入本次诏书。
-        self.db.commit_pending_actions(
+        committed_directives = self.db.commit_pending_actions(
             self.state, kind_filter="directive",
             content=getattr(self, "content", None),
             registry=getattr(self, "registry", None))
+        if committed_directives and recovered_source is None and (decree or "").strip():
+            # 外部传入的 decree 早于本次 auto-commit 出来的对话草案；若继续使用，会把新 draft
+            # 标为 issued 却不进诏书正文/extractor 输入。强制按当前 draft 集重拟。
+            decree = ""
+            self.last_decree = ""
+            self._decree_draft_fingerprint = ()
         directives = self.db.list_directives(self.state, statuses=("draft",))
         if not directives:
             # 恢复态且有存诏：免草案要求（零草案 settling=driver 档/逃生口降级后是真实态，
