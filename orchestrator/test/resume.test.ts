@@ -543,6 +543,119 @@ describe("re-feeding a terminated run reports its TRUE status (#255 review fix)"
     expect(backend.pushCount).toBe(0);
   });
 
+  it("prior crash with last entry = MALFORMED S6 reviewer (no findings array) → status error, never re-run / push / reject", async () => {
+    // The prior run crashed AFTER persisting a malformed S6 reviewer output
+    // ({kind:'reviewer'} with NO findings array — a contract violation) but
+    // BEFORE the S8 write. planResume drives route({from:'S6', output: thatEntry}),
+    // and the resume path then rebuilds the defer list from plan.lastOutput. Both
+    // seams must treat the malformed reviewer as a contract violation → S8(error):
+    //   • route()'s S6 edge must NOT blindly route to S4 (defense-in-depth).
+    //   • the resume defer-rebuild must NOT call `.findings.filter(...)` on a
+    //     missing/garbage findings field and throw a raw TypeError (the MAIN hole:
+    //     that TypeError escaped before any try/catch and rejected the promise,
+    //     bypassing the malformed→S8(error) decision + US#30 error package).
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S3", { kind: "reviewer", findings: [] }),
+        entry("S4"),
+        entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S6", { kind: "reviewer" } as unknown as StepOutput),
+      ],
+    };
+    const backend = new ResumeBackend(resumeState);
+
+    // Must RESOLVE to error — never reject with a raw TypeError.
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("error");
+    expect(result.branch).toBeUndefined();
+    expect(result.errorPackage).toBeDefined();
+    // No agent step re-run, and push never called.
+    expect(backend.runStepIds).toEqual([]);
+    expect(backend.resumeSessionCalls).toHaveLength(0);
+    expect(backend.pushCount).toBe(0);
+    // The defer list is NOT rebuilt from a malformed reviewer output.
+    expect(result.deferredFindings).toEqual([]);
+  });
+
+  it("prior crash with last entry = MALFORMED S6 reviewer (findings NON-array) → status error, never re-run / push / reject", async () => {
+    // Same seam, second malformed shape: `findings` present but not an array.
+    // `{kind:'reviewer'}` passes the discriminant check; `.findings.filter(...)`
+    // throws on a non-array. Must still resolve to S8(error), not reject.
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S3", { kind: "reviewer", findings: [] }),
+        entry("S4"),
+        entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S6", {
+          kind: "reviewer",
+          findings: "not-an-array",
+        } as unknown as StepOutput),
+      ],
+    };
+    const backend = new ResumeBackend(resumeState);
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("error");
+    expect(result.branch).toBeUndefined();
+    expect(result.errorPackage).toBeDefined();
+    expect(backend.runStepIds).toEqual([]);
+    expect(backend.resumeSessionCalls).toHaveLength(0);
+    expect(backend.pushCount).toBe(0);
+    expect(result.deferredFindings).toEqual([]);
+  });
+
+  it("MALFORMED reviewer entry MID-ledger (not last) → progress reconstruction does not raw-throw; resume continues", async () => {
+    // Same-class as the defer-rebuild hole (integ-cmr m2 r4 self-check): the
+    // resume path's no-progress reconstruction folds over EVERY persisted
+    // reviewer entry, not just the last one. A malformed reviewer entry EARLIER
+    // in the ledger (findings missing / non-array) made `normalizeFindingsKey`
+    // call `.map(...)` on a non-array and throw a raw TypeError — rejecting the
+    // promise instead of continuing the resume. The live loop never scores a
+    // malformed reviewer (it bails to S8), so reconstruction must likewise SKIP
+    // malformed reviewer entries (validate-then-score), not crash on them.
+    //
+    // Shape: last entry is a coder S5 (valid) so the defer-rebuild guard does
+    // NOT fire and terminalStatus is undefined — execution reaches the
+    // reconstruction. An S6 mid-ledger is malformed.
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S3", { kind: "reviewer", findings: [] }),
+        entry("S4"),
+        entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S6", { kind: "reviewer" } as unknown as StepOutput),
+        entry("S4"),
+        entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
+      ],
+    };
+    const backend = new ResumeBackend(resumeState);
+
+    // Must NOT reject with a raw TypeError. The resume continues from S6 (the
+    // route() successor of the last S5); the fake reviewer returns empty findings
+    // → S4 approve → S7 push → success.
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("success");
+    // Reconstruction did not crash and the resume reached the push.
+    expect(backend.pushCount).toBe(1);
+  });
+
   it("a terminal-status resume does NOT run cleanResidue (a clean failure must not flip a finished run's status)", async () => {
     // Re-feeding a completed run is a pure status report — no worktree mutation.
     // cleanResidue must NOT be invoked, so a transient git failure during clean

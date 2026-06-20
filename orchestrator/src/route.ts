@@ -113,6 +113,18 @@ export function route(ctx: RouteContext): RouteDecision {
 
     case "S3":
       // S3 reviewer_full_review done → route findings.
+      // integ-cmr m2 r4 (defense-in-depth, symmetric with S2/S5): a malformed
+      // reviewer output (wrong kind / undefined / missing or non-array findings /
+      // malformed finding element) is a contract violation → S8(error). The
+      // runner pre-route isValidStepOutput guard already catches the live path,
+      // but route() must be safe at the seam regardless of caller — the resume
+      // path drives route() off a recorded ledger output with no pre-route check.
+      // Mirrors the S2/S5 isValidCoderOutput edges; the next case (S4) ALSO
+      // re-validates, but routing garbage to S4 here would only re-discover the
+      // same violation a step later — reject it at the producing seam.
+      if (!isValidReviewerOutput(ctx.output)) {
+        return { kind: "handoff", status: "error" };
+      }
       return { kind: "next", step: "S4" };
 
     case "S4": {
@@ -192,6 +204,18 @@ export function route(ctx: RouteContext): RouteDecision {
       // fix_now) re-enters S5; empty / defer-only converges to S7 push. The
       // loop is NOT S6→S7 direct: every fix is re-reviewed before push.
       // Escalate from S6 is handled by the global stop edge above this switch.
+      //
+      // integ-cmr m2 r4 (defense-in-depth, symmetric with S2/S5): a malformed
+      // re-review output (wrong kind / undefined / missing or non-array
+      // findings) is a contract violation → S8(error). The resume path drives
+      // route({from:'S6', output: ledgerEntry}) off a recorded ledger output with
+      // NO pre-route isValidStepOutput re-check — so without this guard a residual
+      // ledger stopped at a malformed S6 would route back to S4 and re-discover
+      // the violation only after the resume defer-rebuild had already crashed on
+      // it. Reject it at the producing seam (the cross-slice #255 × #254 seam).
+      if (!isValidReviewerOutput(ctx.output)) {
+        return { kind: "handoff", status: "error" };
+      }
       return { kind: "next", step: "S4" };
 
     case "S7":
