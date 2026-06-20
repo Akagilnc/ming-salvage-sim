@@ -940,7 +940,7 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
 async function runFamilyShip({ Bash, familyWorktree, familyBranch, targetBranch }) {
   return parseShipJson(
     await Bash(
-      `set -euo pipefail\ncd ${shellQuote(familyWorktree)}\n# reviewer=gstack-ship-family; run gstack-ship FULL on the merged family branch ${shellQuote(familyBranch)} (coverage/specialist/RedTeam gates + push + create family PR, base=${shellQuote(targetBranch)}; gates non-skippable). ASSUMED contract — see runFamilyShip comment.\ngstack-ship --json --base ${shellQuote(targetBranch)}`
+      `set -euo pipefail\ncd ${shellQuote(familyWorktree)}\n# reviewer=gstack-ship-family; run gstack-ship FULL on the merged family branch ${shellQuote(familyBranch)} (coverage/specialist/RedTeam gates + push + create family PR, base=${shellQuote(targetBranch)}; gates non-skippable). ASSUMED contract — see runFamilyShip comment.\n# gstack-ship exits nonzero on a failed gate / internal ASK but still prints its JSON report on\n# stdout — those ARE the needs-user / unconverged outcomes — so capture stdout under set +e rather\n# than letting pipefail abort before parseShipJson. A missing / unparseable report stays a loud\n# failure (parseShipJson throws), so a wrong assumed command still fails loud at dogfood time.\nset +e\nshipReport=$(gstack-ship --json --base ${shellQuote(targetBranch)} 2>/dev/null)\nset -e\nprintf '%s' "$shipReport"`
     )
   );
 }

@@ -1602,6 +1602,10 @@ describe("epic orchestrator S5 Ship phase (gstack-ship + terminal states + hando
     const shipCall = bashCalls.find((command) => command.includes("reviewer=gstack-ship-family")) ?? "";
     expect(shipCall).toContain("cd '/repo/.epic-orchestrator/family'");
     expect(shipCall).toContain("gstack-ship --json --base 'origin/main'");
+    // gstack-ship exits nonzero on a failed gate / internal ASK but still prints its report; the leg
+    // must capture stdout under `set +e` so pipefail doesn't abort the needs-user/unconverged paths.
+    expect(shipCall).toContain("set +e");
+    expect(shipCall).toMatch(/shipReport=\$\(gstack-ship --json --base 'origin\/main' 2>\/dev\/null\)/);
     // full §段间交接 handoff payload.
     expect(result.handoff).toMatchObject({
       status: "ready",
