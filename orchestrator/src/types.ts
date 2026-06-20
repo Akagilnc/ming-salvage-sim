@@ -150,6 +150,31 @@ export interface LedgerEntry {
   readonly output?: StepOutput;
 }
 
+/**
+ * Full persisted ledger entry (#249). Extends {@link LedgerEntry} with the
+ * audit and resume fields required by ADR 0018 §3:
+ *   - `sessionId`   — which sandbox session produced this step (resume truth).
+ *   - `prompt_hash` — SHA-256 of the versioned promptFile content (anti-tampering audit).
+ *   - `branchHEAD`  — git commit SHA at the worktree HEAD when the step was recorded.
+ *   - `ts`          — ISO-8601 timestamp when this entry was written.
+ *
+ * The runner hands this to {@link Backend.writeLedger}, which persists it to the
+ * sibling state directory (outside the worktree so `git clean -fd` cannot remove it).
+ */
+export interface PersistentLedgerEntry extends LedgerEntry {
+  /** Sandbox session identifier (resume truth). For runner-action steps: "runner". */
+  readonly sessionId: string;
+  /**
+   * SHA-256 (hex) of the versioned promptFile for agent steps.
+   * For runner-action steps (no promptFile): SHA-256 of the step id string.
+   */
+  readonly prompt_hash: string;
+  /** git commit SHA at worktree HEAD when this entry was written ("" before any commit). */
+  readonly branchHEAD: string;
+  /** ISO-8601 timestamp when this entry was persisted. */
+  readonly ts: string;
+}
+
 // ──────────────────────────── Backend seam ────────────────────────────
 
 /**
@@ -174,6 +199,19 @@ export interface Backend {
   runStep(spec: StepSpec, worktree: WorktreeHandle): Promise<StepOutput>;
   /** S7: push the resident slice branch (no PR, no merge). */
   push(worktree: WorktreeHandle): Promise<void>;
+  /**
+   * Write one persisted ledger entry to the sibling state directory (#249).
+   *
+   * The `stateDir` is derived by the runner from the worktree path: it is a
+   * SIBLING of the worktree root (not a child), so `git clean -fd` on the
+   * worktree cannot remove it. Naming convention:
+   *   `<worktree-parent>/.ledger-<issueNumber>/`
+   *
+   * The Backend implementation appends the entry as a JSON-Lines record to
+   * `<stateDir>/steps.jsonl`.  The runner calls this once per step, including
+   * the S8 handoff entry, BEFORE returning the final result.
+   */
+  writeLedger(entry: PersistentLedgerEntry, stateDir: string): Promise<void>;
 }
 
 // ──────────────────────────── run result ────────────────────────────
