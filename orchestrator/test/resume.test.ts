@@ -507,6 +507,42 @@ describe("re-feeding a terminated run reports its TRUE status (#255 review fix)"
     expect(backend.runStepIds).toEqual([]);
   });
 
+  it("prior crash with last entry = MALFORMED S5 (committed:true, commitsAdded:0) → status error, never re-run S6/push", async () => {
+    // The prior run crashed AFTER persisting a malformed S5 coder output
+    // (committed:true but 0 commits — a contract violation) but BEFORE the S8
+    // write. planResume drives route({from:'S5', output: thatEntry}); route() is
+    // the resume path's ONLY guard on this recorded shape (no isValidStepOutput
+    // re-check). It must judge the malformed S5 → S8(error), NOT fall through to
+    // S6 and re-review / push unvalidated code.
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S3", { kind: "reviewer", findings: [] }),
+        entry("S4"),
+        entry("S5", {
+          kind: "coder",
+          committed: true,
+          commitsAdded: 0,
+        } as unknown as StepOutput),
+      ],
+    };
+    const backend = new ResumeBackend(resumeState);
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("error");
+    expect(result.branch).toBeUndefined();
+    expect(result.errorPackage).toBeDefined();
+    // No agent step re-run: S6 must NEVER be dispatched, and push never called.
+    expect(backend.runStepIds).toEqual([]);
+    expect(backend.resumeSessionCalls).toHaveLength(0);
+    expect(backend.pushCount).toBe(0);
+  });
+
   it("a terminal-status resume does NOT run cleanResidue (a clean failure must not flip a finished run's status)", async () => {
     // Re-feeding a completed run is a pure status report — no worktree mutation.
     // cleanResidue must NOT be invoked, so a transient git failure during clean

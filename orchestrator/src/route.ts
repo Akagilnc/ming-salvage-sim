@@ -160,10 +160,24 @@ export function route(ctx: RouteContext): RouteDecision {
 
     case "S5": {
       // S5 coder_fix done — the fix-loop's coder leg (#254).
+      // #5 (integ-cmr m2 r3): a malformed coder output (wrong kind / undefined /
+      // garbage / inconsistent commitsAdded — e.g. {committed:true,
+      // commitsAdded:0}) is a contract violation → S8(error). This MUST be
+      // symmetric with S2: route() is the resume path's ONLY guard on the
+      // recorded S5 output — planResume (runner.ts) drives route({from:'S5',
+      // output: ledgerEntry}) without the runner's isValidStepOutput re-check, so
+      // a residual/legacy ledger stopped at a malformed S5 would otherwise fall
+      // through to S6 here and re-review / push UNVALIDATED code. route() must be
+      // safe at the seam regardless of caller. The old guard
+      // (kind==='coder' && !committed) saw committed===true on a 0-commit garbage
+      // output and silently routed to S6 — this front guard closes that.
+      if (!isValidCoderOutput(ctx.output)) {
+        return { kind: "handoff", status: "error" };
+      }
       // #252 error edge (mirrors S2): a fix that commits nothing has made no
       // progress → S8(error: fix produced nothing). Routing on to S6 would
       // re-review an unchanged diff and spin the loop forever.
-      if (ctx.output?.kind === "coder" && !ctx.output.committed) {
+      if (!ctx.output.committed) {
         return { kind: "handoff", status: "error" };
       }
       // Fix committed → re-review the full current diff (not a narrow check of

@@ -247,6 +247,61 @@ describe("S2 route — malformed output → handoff(error), never silent → S3"
   });
 });
 
+describe("S5 route — malformed coder output → handoff(error), never silent → S6", () => {
+  // route() is the resume path's ONLY guard on the recorded S5 output
+  // (planResume → route({from:'S5', output: ledgerOutput}) bypasses the runner's
+  // isValidStepOutput). So the S5 case must be symmetric with S2: a malformed
+  // coder output is a contract violation → handoff(error), NEVER a silent
+  // fall-through to S6 (which would re-review / push UNVALIDATED code).
+
+  it("S5 with undefined output → handoff(error)", () => {
+    const decision = route({ from: "S5", output: undefined });
+    expect(decision).toEqual({ kind: "handoff", status: "error" });
+  });
+
+  it("S5 with a reviewer output (wrong kind) → handoff(error)", () => {
+    const decision = route({
+      from: "S5",
+      output: reviewerOutput([]) as StepOutput,
+    });
+    expect(decision).toEqual({ kind: "handoff", status: "error" });
+  });
+
+  it("S5 with garbage output (no kind) → handoff(error)", () => {
+    const decision = route({
+      from: "S5",
+      output: { foo: "bar" } as unknown as StepOutput,
+    });
+    expect(decision).toEqual({ kind: "handoff", status: "error" });
+  });
+
+  it("S5 with inconsistent commitsAdded (committed:true, commitsAdded:0) → handoff(error)", () => {
+    // The exact bug from the contract: committed:true but 0 commits is a garbage
+    // coder output. The old S5 guard (kind==='coder' && !committed) saw
+    // committed===true → fell through to S6. It must be rejected as invalid.
+    const decision = route({
+      from: "S5",
+      output: {
+        kind: "coder",
+        committed: true,
+        commitsAdded: 0,
+      } as unknown as StepOutput,
+    });
+    // Crucially NOT { kind: "next", step: "S6" } — that re-reviews unvalidated code.
+    expect(decision).toEqual({ kind: "handoff", status: "error" });
+  });
+
+  it("S5 with a well-formed 0-commit coder output → handoff(error) (no progress, mirrors S2)", () => {
+    const decision = route({ from: "S5", output: coderOutput(false) });
+    expect(decision).toEqual({ kind: "handoff", status: "error" });
+  });
+
+  it("S5 with a well-formed committed coder output → S6 (regression)", () => {
+    const decision = route({ from: "S5", output: coderOutput(true) });
+    expect(decision).toEqual({ kind: "next", step: "S6" });
+  });
+});
+
 describe("S4 route — non-reviewer output → handoff(error), NEVER coerced to empty findings + push", () => {
   it("S4 with a coder output (wrong kind) → handoff(error), not push", () => {
     const decision = route({
