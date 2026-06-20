@@ -5,11 +5,14 @@
  * consumes the structured step output and returns the next StepId. This is the
  * state-machine edge table from PRD #244's contract layer.
  *
- * Slice #247 implements ONLY the happy-path edges:
- *   S0 → S1 → S2 → S3 → S4 → S7 → S8
- * Every other edge (fix loop S5/S6, escalate stop, error handoff, full
- * severity+action routing) is a labelled TODO seam left for its owning slice.
- * Do not implement those here — they are out of #247 scope.
+ * Slice #247: happy-path edges S0→S1→S2→S3→S4→S7→S8 (empty findings = approve).
+ * Slice #250: S4 severity+action fan-out (P0/P1 or fix_now → S5; defer → S7).
+ *
+ * Remaining TODOs (each labelled inline):
+ *   #248 — S0 real gate (rfa ∧ Agent Brief ∧ no sub-issues ∧ blocked_by closed)
+ *   #251 — escalate global stop edge (checked FIRST, before the switch)
+ *   #252 — S2/S5 0-commit→error, S7 push-failure→error
+ *   #254 — S5→S6→S4 fix-loop back-edge
  */
 
 import type { StepId, StepOutput } from "./types.js";
@@ -33,11 +36,9 @@ export interface RouteContext {
 }
 
 /**
- * Decide the next step. #247 = happy-path edges only.
- *
- * NOTE: escalate handling, S2/S5 0-commit→error, S4 severity+action fan-out,
- * the S5→S6→S4 fix loop, and push-failure→error are intentionally NOT here.
- * Each is owned by a later slice (see inline TODOs).
+ * Decide the next step.
+ * #247: happy-path edges. #250: S4 severity+action fan-out.
+ * Remaining edges (escalate/#251, error/#252, fix-loop/#254) are inline TODOs.
  */
 export function route(ctx: RouteContext): RouteDecision {
   // TODO(#251 escalate stop edge): if any agent step output carries
@@ -67,14 +68,34 @@ export function route(ctx: RouteContext): RouteDecision {
       // S3 reviewer_full_review done → route findings.
       return { kind: "next", step: "S4" };
 
-    case "S4":
-      // S4 route_findings: happy path = no findings → approve → push.
-      // TODO(#250 severity+action fan-out): real S4 routes to S5 coder_fix
-      // when there is any P0/P1 OR any P2/P3 with action:'fix_now'; defer-only
-      // P2/P3 go to the defer list and do not block. #247 only handles the
-      // empty-findings (approve) edge.
-      // TODO(#254 fix loop): the S5→S6→S4 fix-loop back-edge lands here.
-      return { kind: "next", step: "S7" };
+    case "S4": {
+      // S4 route_findings — runner reads severity+action JSON; the agent never
+      // decides the next step (ADR 0018 §1 / PRD #244 Implementation Decision).
+      //
+      // Route to S5 coder_fix when:
+      //   • any P0/P1 (severity critical or high) is present, OR
+      //   • any P2/P3 (medium / low / clarity) with action:'fix_now' is present
+      // Otherwise → S7 push (approve). action:'defer' findings do not block;
+      // they surface via the defer list on S8 handoff (PRD #244 US#25).
+      //
+      // Escalate is handled globally above this switch.
+      //
+      // TODO(#254 fix loop): the S5→S6→S4 back-edge lands here (no change
+      // needed in the routing logic itself; the loop just re-enters S4).
+      const findings =
+        ctx.output?.kind === "reviewer" ? ctx.output.findings : [];
+
+      const needsFix = findings.some(
+        (f) =>
+          f.severity === "critical" ||
+          f.severity === "high" ||
+          f.action === "fix_now",
+      );
+
+      return needsFix
+        ? { kind: "next", step: "S5" }
+        : { kind: "next", step: "S7" };
+    }
 
     case "S7":
       // S7 push succeeded → success handoff.
