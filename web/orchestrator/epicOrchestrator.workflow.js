@@ -823,7 +823,6 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
   const ship = await runFamilyShip({
     Bash,
     familyWorktree,
-    familyBranch: normalizedArgs.familyBranch,
     targetBranch: normalizedArgs.targetBranch
   });
 
@@ -937,10 +936,10 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
 // wiring; it does NOT actually run gstack-ship here. (Carrying a prior ASK decision across a rerun so
 // the ship does not stop on the same question is S6's continuation concern — see #225 — and needs a
 // real gstack-ship input channel; it is deliberately NOT faked here.)
-async function runFamilyShip({ Bash, familyWorktree, familyBranch, targetBranch }) {
+async function runFamilyShip({ Bash, familyWorktree, targetBranch }) {
   return assertShipReport(parseShipJson(
     await Bash(
-      `set -euo pipefail\ncd ${shellQuote(familyWorktree)}\n# reviewer=gstack-ship-family; run gstack-ship FULL on the merged family branch ${shellQuote(familyBranch)} (coverage/specialist/RedTeam gates + push + create family PR, base=${shellQuote(targetBranch)}; gates non-skippable). ASSUMED contract — see runFamilyShip comment.\n# gstack-ship exits nonzero on a failed gate / internal ASK but still prints its JSON report on\n# stdout — those ARE the needs-user / unconverged outcomes — so capture stdout under set +e rather\n# than letting pipefail abort before parseShipJson. A missing / unparseable report stays a loud\n# failure (parseShipJson throws), so a wrong assumed command still fails loud at dogfood time.\nset +e\nshipReport=$(gstack-ship --json --base ${shellQuote(targetBranch)} 2>/dev/null)\nset -e\nprintf '%s' "$shipReport"`
+      `set -euo pipefail\ncd ${shellQuote(familyWorktree)}\n# reviewer=gstack-ship-family; run gstack-ship FULL on the merged family branch (coverage/specialist/RedTeam gates + push + create family PR; gates non-skippable). ASSUMED contract — see runFamilyShip comment. (branch/base are NOT interpolated into this comment — a newline would break out of it; base rides the command line via shellQuote below.)\n# gstack-ship exits nonzero on a failed gate / internal ASK but still prints its JSON report on\n# stdout — those ARE the needs-user / unconverged outcomes — so capture stdout under set +e rather\n# than letting pipefail abort before parseShipJson. A missing / unparseable report stays a loud\n# failure (parseShipJson throws), so a wrong assumed command still fails loud at dogfood time.\nset +e\nshipReport=$(gstack-ship --json --base ${shellQuote(targetBranch)} 2>/dev/null)\nset -e\nprintf '%s' "$shipReport"`
     )
   ));
 }
@@ -1116,12 +1115,26 @@ function normalizePipelineArgs(rawArgs, epicIssueNumber) {
   const extraVerifyCommands = Array.isArray(objectArgs.verifyCommands) ? objectArgs.verifyCommands.map((command) => String(command)) : [];
   const verifyCommands = [...new Set([...requiredVerifyCommands, ...extraVerifyCommands])];
   return {
-    familyBranch: String(objectArgs.familyBranch ?? `family/epic-${epicIssueNumber}`),
-    targetBranch: String(objectArgs.targetBranch ?? 'origin/main'),
-    startupTargetHead: objectArgs.startupTargetHead === undefined ? undefined : String(objectArgs.startupTargetHead),
+    familyBranch: assertShellSafeRef(String(objectArgs.familyBranch ?? `family/epic-${epicIssueNumber}`), 'familyBranch'),
+    targetBranch: assertShellSafeRef(String(objectArgs.targetBranch ?? 'origin/main'), 'targetBranch'),
+    startupTargetHead: objectArgs.startupTargetHead === undefined ? undefined : assertShellSafeRef(String(objectArgs.startupTargetHead), 'startupTargetHead'),
     verifyCommands,
     maxReviewRounds: normalizePositiveInteger(objectArgs.maxReviewRounds, 3, 'maxReviewRounds')
   };
+}
+
+// git refs / branch names / SHAs are interpolated into Bash commands and Bash COMMENTS. shellQuote's
+// single-quote escaping protects command args but NOT a comment (a POSIX `#` comment runs to the next
+// newline, so a newline in the value would break out of the comment into executable shell). git
+// refnames forbid newlines/control chars anyway, so reject them loudly at the source for every site.
+function assertShellSafeRef(value, name) {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 0x20 || code === 0x7f) {
+      throw new Error(`epic-orchestrator: ${name} contains a control character or newline — refusing (it would break Bash quoting/comment safety).`);
+    }
+  }
+  return value;
 }
 
 function normalizePositiveInteger(value, fallback, name) {

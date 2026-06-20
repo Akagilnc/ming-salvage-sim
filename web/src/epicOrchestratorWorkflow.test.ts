@@ -106,6 +106,25 @@ describe("epic orchestrator workflow spine", () => {
     expect(() => normalizeWorkflowArgs("000")).toThrow("positive parent epic issue number");
   });
 
+  it("rejects a familyBranch / targetBranch carrying a newline or control char (Bash comment-injection guard)", async () => {
+    // discovery (gh sub_issues) runs first; the ref guard fires in normalizePipelineArgs right after,
+    // before any ref reaches a Bash command. Mock discovery so the run reaches the guard.
+    const harness = {
+      log: () => undefined,
+      agent: async () => ({}),
+      Bash: async (command: string) =>
+        command.includes("/sub_issues")
+          ? JSON.stringify({ epicId: 217, issues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }], blockedBy: [] })
+          : "{}"
+    };
+    await expect(
+      runEpicLayeredPipeline({ args: { epicIssueNumber: 217, familyBranch: "family/217\nrm -rf /" }, ...harness })
+    ).rejects.toThrow(/familyBranch contains a control character or newline/);
+    await expect(
+      runEpicLayeredPipeline({ args: { epicIssueNumber: 217, targetBranch: "origin/main\n# evil" }, ...harness })
+    ).rejects.toThrow(/targetBranch contains a control character or newline/);
+  });
+
   it("uses a bounded gh discovery script that resolves the repository at runtime", async () => {
     let discoveryCommand = "";
 
