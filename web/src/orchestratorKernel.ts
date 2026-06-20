@@ -50,6 +50,7 @@ export interface Finding {
   id: string;
   classification?: FindingClassification;
   claim_quote?: string;
+  claimQuote?: string;
   location?: string;
 }
 
@@ -74,6 +75,35 @@ export interface ShipOutcomeInput {
   asked: boolean;
   gatesPassed: boolean;
   prCreated: boolean;
+}
+
+export interface ContinuationInput {
+  layers: IssueId[][]; // the ordered topology layers (this epic's planned layers/slices)
+  mergedNumbers: IssueId[]; // slices the family branch already has a commit for (by git state, NOT sub-issue open/close)
+  dirty?: IssueId[]; // slices ruled "rework" that touch an already-merged slice -> redo even if a commit exists
+}
+
+export interface ContinuationLayer {
+  todo: IssueId[]; // slices to run this segment (family branch lacks them OR they are dirty)
+  skipped: IssueId[]; // git-skipped slices (merged and not dirty)
+  dirty: IssueId[]; // slices in this layer flagged dirty (merged but to be redone; ⊂ todo)
+}
+
+export interface ContinuationResult {
+  layers: ContinuationLayer[];
+  todoTotal: number; // total todo across layers (0 = nothing to do; the whole epic is merged with no dirty)
+}
+
+export interface Dismissal {
+  id?: string;
+  claimQuote?: string;
+  claim_quote?: string;
+  location?: string;
+}
+
+export interface DismissalGateInput {
+  finding: Finding;
+  dismissed: Dismissal[];
 }
 
 export interface ModelReviewResult {
@@ -234,6 +264,56 @@ export function familyReviewGate(input: FamilyReviewGateInput): FamilyReviewDeci
 export function shipOutcome(input: ShipOutcomeInput): ShipOutcome {
   if (input.asked) return "needs-user";
   return input.gatesPassed && input.prCreated ? "ready" : "unconverged";
+}
+
+// S6 cross-segment continuation. Skip a slice iff the family branch already has its commit AND it is
+// not dirty; run it iff it is missing OR dirty. "Merged" is judged by family-branch git state (passed
+// in as mergedNumbers), NOT sub-issue open/close — sub-issues only close on main merge, while the
+// family PR is still open. A dirty slice (ruled "rework") is redone even if a commit exists. Membership
+// is compared via idKey so a string id and a numeric id for the same slice match.
+export function continuationPlan(input: ContinuationInput): ContinuationResult {
+  const merged = new Set(input.mergedNumbers.map(idKey));
+  const dirtyKeys = new Set((input.dirty ?? []).map(idKey));
+  const layers: ContinuationLayer[] = input.layers.map((layer) => {
+    const todo: IssueId[] = [];
+    const skipped: IssueId[] = [];
+    const layerDirty: IssueId[] = [];
+    for (const slice of layer) {
+      const key = idKey(slice);
+      const isDirty = dirtyKeys.has(key);
+      if (isDirty) layerDirty.push(slice);
+      if (!merged.has(key) || isDirty) todo.push(slice);
+      else skipped.push(slice);
+    }
+    return { todo, skipped, dirty: layerDirty };
+  });
+  const todoTotal = layers.reduce((sum, layer) => sum + layer.todo.length, 0);
+  return { layers, todoTotal };
+}
+
+// S6 dismissal gate (I5 false-positive non-loop). A finding the user already ruled "doesn't count"
+// (via the main session) is recorded by (id / claim / location) into the dismissal list. This does NOT
+// remove it from the next segment's review (the full re-review discipline holds); it only answers
+// "if this is re-raised, does it still HALT?" — matched → false (already ruled, don't HALT); unmatched
+// → true (route normally, may escalate/HALT). Match on id, claim (claimQuote/claim_quote unified), or
+// location — any one (cmr finding ids can drift across segments; claim has two casings).
+export function dismissalGate(input: DismissalGateInput): boolean {
+  const { finding, dismissed } = input;
+  const findingClaim = claimOf(finding);
+  const matched = dismissed.some((entry) => {
+    if (entry.id !== undefined && finding.id !== undefined && entry.id === finding.id) return true;
+    const entryClaim = claimOf(entry);
+    if (entryClaim !== undefined && findingClaim !== undefined && entryClaim === findingClaim) return true;
+    if (entry.location !== undefined && finding.location !== undefined && entry.location === finding.location) return true;
+    return false;
+  });
+  return !matched;
+}
+
+// Unify a claim's two casings: camelCase claimQuote takes precedence, else snake_case claim_quote
+// (the cmr finding JSON's native form). They are synonyms.
+function claimOf(value: { claimQuote?: string; claim_quote?: string }): string | undefined {
+  return value.claimQuote !== undefined ? value.claimQuote : value.claim_quote;
 }
 
 // A merged slice's identity in the handoff: the slice (sub-issue) number and its per-slice REVIEWED
