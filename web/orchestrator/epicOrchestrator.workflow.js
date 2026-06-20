@@ -809,14 +809,16 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
   // Degradation / absent-voice flags from the load-bearing family gate's converged round.
   const convergedRound = Array.isArray(familyReview.rounds) ? familyReview.rounds.at(-1) : undefined;
   const shipFlags = convergedRound?.degradation?.flags ?? [];
-  const baseAtStart = baseManagement.rebaseHead ?? startupTargetHead;
+  // baseAtStart = the I10-verified startup target HEAD the family branched from (not the family's
+  // own tip). rebaseHead is the family HEAD after an I10 rebase — a tip, not a base — so it must
+  // NOT populate this field; the post-rebase family HEAD is already carried per-slice in `merged`.
+  const baseAtStart = startupTargetHead;
 
   const ship = await runFamilyShip({
     Bash,
     familyWorktree,
     familyBranch: normalizedArgs.familyBranch,
-    targetBranch: normalizedArgs.targetBranch,
-    shipDecision: normalizedArgs.shipDecision
+    targetBranch: normalizedArgs.targetBranch
   });
 
   const outcome = inlineShipOutcome({ asked: ship.asked, gatesPassed: ship.gatesPassed, prCreated: ship.prCreated });
@@ -915,17 +917,13 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
 //   state mapping (inlineShipOutcome) and handoff assembly (inlineBuildHandoffPayload) are契约-stable.
 //
 // This is an orchestration shell (dogfood-not-run): it writes the "orchestrator invokes gstack-ship"
-// wiring; it does NOT actually run gstack-ship here. The shipDecision arg (set when a prior run's
-// gstack-ship ASK was answered by the user) is threaded into the prompt so the rerun does not stop on
-// the same question again.
-async function runFamilyShip({ Bash, familyWorktree, familyBranch, targetBranch, shipDecision }) {
-  const decisionNote = typeof shipDecision === 'string' && shipDecision.trim() ? shipDecision.trim() : null;
-  const decisionExport = decisionNote
-    ? `\n# A prior gstack-ship internal ASK was answered by the user; continue per this decision without re-asking the same question:\n# ${decisionNote.replace(/\n/g, ' ')}`
-    : '';
+// wiring; it does NOT actually run gstack-ship here. (Carrying a prior ASK decision across a rerun so
+// the ship does not stop on the same question is S6's continuation concern — see #225 — and needs a
+// real gstack-ship input channel; it is deliberately NOT faked here.)
+async function runFamilyShip({ Bash, familyWorktree, familyBranch, targetBranch }) {
   return parseShipJson(
     await Bash(
-      `set -euo pipefail\ncd ${shellQuote(familyWorktree)}\n# reviewer=gstack-ship-family; run gstack-ship FULL on the merged family branch ${shellQuote(familyBranch)} (coverage/specialist/RedTeam gates + push + create family PR, base=${shellQuote(targetBranch)}; gates non-skippable). ASSUMED contract — see runFamilyShip comment.${decisionExport}\ngstack-ship --json --base ${shellQuote(targetBranch)}`
+      `set -euo pipefail\ncd ${shellQuote(familyWorktree)}\n# reviewer=gstack-ship-family; run gstack-ship FULL on the merged family branch ${shellQuote(familyBranch)} (coverage/specialist/RedTeam gates + push + create family PR, base=${shellQuote(targetBranch)}; gates non-skippable). ASSUMED contract — see runFamilyShip comment.\ngstack-ship --json --base ${shellQuote(targetBranch)}`
     )
   );
 }
@@ -1086,9 +1084,6 @@ function normalizePipelineArgs(rawArgs, epicIssueNumber) {
     familyBranch: String(objectArgs.familyBranch ?? `family/epic-${epicIssueNumber}`),
     targetBranch: String(objectArgs.targetBranch ?? 'origin/main'),
     startupTargetHead: objectArgs.startupTargetHead === undefined ? undefined : String(objectArgs.startupTargetHead),
-    // S5: a prior run's gstack-ship internal ASK, answered by the user and threaded back to continue
-    // the rerun without stopping on the same question. Optional (only set when continuing past a ship ASK).
-    shipDecision: typeof objectArgs.shipDecision === 'string' && objectArgs.shipDecision.trim() ? objectArgs.shipDecision : undefined,
     verifyCommands,
     maxReviewRounds: normalizePositiveInteger(objectArgs.maxReviewRounds, 3, 'maxReviewRounds')
   };
