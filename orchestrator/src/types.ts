@@ -190,6 +190,44 @@ export interface LedgerEntry {
   readonly output?: StepOutput;
 }
 
+/**
+ * Full persisted ledger entry (#249). Extends {@link LedgerEntry} with the
+ * audit and resume fields required by ADR 0018 §3:
+ *   - `sessionId`   — which sandbox session produced this step (resume truth).
+ *   - `prompt_hash` — SHA-256 of the versioned promptFile content (anti-tampering audit).
+ *   - `branchHEAD`  — git commit SHA at the worktree HEAD when the step was recorded.
+ *   - `ts`          — ISO-8601 timestamp when this entry was written.
+ *
+ * The runner hands this to {@link Backend.writeLedger}, which persists it to the
+ * sibling state directory (outside the worktree so `git clean -fd` cannot remove it).
+ */
+export interface PersistentLedgerEntry extends LedgerEntry {
+  /**
+   * Sandbox session identifier (resume truth).
+   *
+   * TODO(#256): v0.1 placeholder — stores a run-level UUID shared by all
+   * steps in a single runOrchestrator invocation.  The real per-step sandbox
+   * session id (required for resumeSession) is available only when the real
+   * Backend's runStep returns it; wire in #256.
+   */
+  readonly sessionId: string;
+  /**
+   * SHA-256 (hex) of the versioned promptFile for agent steps.
+   * For runner-action steps (no promptFile): SHA-256 of the step id string.
+   */
+  readonly prompt_hash: string;
+  /**
+   * Worktree branch reference when this entry was recorded.
+   *
+   * TODO(#256): v0.1 placeholder — stores the branch name (e.g.
+   * "feat/244-s249-ledger") rather than a git commit SHA.  The real git SHA
+   * (from `git rev-parse HEAD`) requires the real Backend; wire in #256.
+   */
+  readonly branchHEAD: string;
+  /** ISO-8601 timestamp when this entry was persisted. */
+  readonly ts: string;
+}
+
 // ──────────────────────────── Backend seam ────────────────────────────
 
 /**
@@ -214,6 +252,19 @@ export interface Backend {
   runStep(spec: StepSpec, worktree: WorktreeHandle): Promise<StepOutput>;
   /** S7: push the resident slice branch (no PR, no merge). */
   push(worktree: WorktreeHandle): Promise<void>;
+  /**
+   * Write one persisted ledger entry to the sibling state directory (#249).
+   *
+   * The `stateDir` is derived by the runner from the worktree path: it is a
+   * SIBLING of the worktree root (not a child), so `git clean -fd` on the
+   * worktree cannot remove it. Naming convention:
+   *   `<worktree-parent>/.ledger-<issueNumber>/`
+   *
+   * The Backend implementation appends the entry as a JSON-Lines record to
+   * `<stateDir>/steps.jsonl`.  The runner calls this once per step, including
+   * the S8 handoff entry, BEFORE returning the final result.
+   */
+  writeLedger(entry: PersistentLedgerEntry, stateDir: string): Promise<void>;
 }
 
 // ──────────────────────────── run result ────────────────────────────

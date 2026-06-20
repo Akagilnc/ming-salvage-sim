@@ -4,6 +4,7 @@ import type {
   Backend,
   IssueMeta,
   IssueSnapshot,
+  PersistentLedgerEntry,
   StepOutput,
   StepSpec,
   WorktreeHandle,
@@ -83,6 +84,15 @@ class HappyPathBackend implements Backend {
   async push(worktree: WorktreeHandle): Promise<void> {
     this.calls.push(`push(${worktree.branch})`);
     this.pushCount += 1;
+  }
+
+  // #249: writeLedger is part of the Backend seam; the happy-path fake is a
+  // no-op stub so existing tests keep passing without asserting ledger details.
+  async writeLedger(
+    _entry: PersistentLedgerEntry,
+    _stateDir: string,
+  ): Promise<void> {
+    // no-op in the #247 happy-path fake
   }
 }
 
