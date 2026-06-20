@@ -442,6 +442,18 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
   if (discovery.topology.status !== 'ready') {
     return { ...discovery, status: discovery.boundaryHandling.action };
   }
+  if (discovery.orderedPlan.length === 0) {
+    return {
+      ...discovery,
+      outOfScope: ['family_5a_5b', 'online_pr_review_loop'],
+      status: 'return_to_main_session',
+      reason: 'no_open_subissues',
+      layers: [],
+      reviewedSlices: [],
+      mergeQueue: [],
+      i9: { status: 'aborted', reason: 'no_open_subissues' }
+    };
+  }
 
   const normalizedArgs = normalizePipelineArgs(args, discovery.epicIssueNumber);
   const startupTargetHead = await captureStartupTargetHead({ Bash, normalizedArgs });
@@ -498,6 +510,7 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
         familyBranch: normalizedArgs.familyBranch,
         reviewedCommit: slice.implementation.commit,
         mergeCommit: mergeResult.mergeCommit,
+        familyHead: mergeResult.mergeCommit,
         mergeWorktree: mergeResult.mergeWorktree,
         conflict: mergeResult.status === 'conflict' ? mergeResult : undefined
       };
@@ -598,7 +611,10 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
     const rebasedFamilyHead = baseManagement.rebaseHead;
     if (rebasedFamilyHead) {
       const finalMergeEntry = mergeQueue.at(-1);
-      if (finalMergeEntry) finalMergeEntry.mergeCommit = rebasedFamilyHead;
+      if (finalMergeEntry) {
+        finalMergeEntry.mergeCommit = rebasedFamilyHead;
+        finalMergeEntry.familyHead = rebasedFamilyHead;
+      }
     }
   }
 
