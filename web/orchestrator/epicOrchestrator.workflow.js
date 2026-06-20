@@ -1381,6 +1381,13 @@ function assertShellSafeRef(value, name) {
   if (/[:*?\[~^\\ ]/.test(value) || value.includes('..') || value.includes('@{')) {
     throw new Error(`epic-orchestrator: ${name} contains a git ref/refspec metacharacter (one of : * ? [ ~ ^ \\ space, or '..' / '@{') — refusing (it could turn a git fetch/push into an unintended refspec or glob).`);
   }
+  // git resolves a bare '@' to HEAD (gitrevisions) — '@' as a ref arg would silently diff against the
+  // current worktree HEAD (empty/wrong base). A leading '-' would be parsed as a git option (option
+  // injection). Neither is a legitimate branch name, ref, or SHA (git even forbids a refname starting
+  // with '-'); reject both.
+  if (value === '@' || value.startsWith('-')) {
+    throw new Error(`epic-orchestrator: ${name} is a git-special value ('@' resolves to HEAD; a leading '-' is parsed as a git option) — refusing.`);
+  }
   return value;
 }
 
