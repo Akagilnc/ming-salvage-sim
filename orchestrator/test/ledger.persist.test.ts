@@ -229,7 +229,7 @@ describe("persisted step ledger (#249)", () => {
 
   // ── F4: drain-on-write — buffered entries survive a writeLedger failure ──────
 
-  it("F4: if writeLedger throws on the first buffered entry, the entry remains in the buffer (never silently dropped)", async () => {
+  it("F4: if writeLedger throws on the first buffered entry, that entry is not dropped before the throw", async () => {
     /**
      * Regression: the old implementation called `pendingEntries.splice(0)`
      * BEFORE awaiting writeLedger.  If writeLedger threw, the buffer was
@@ -238,11 +238,16 @@ describe("persisted step ledger (#249)", () => {
      * The fixed implementation shifts each entry out of the buffer ONLY after
      * its write succeeds.  We verify this by using a Backend that rejects the
      * very first writeLedger call (the S0 buffered flush that happens at S1
-     * completion) and asserting that runOrchestrator propagates the rejection
-     * instead of silently swallowing it (the entry was not dropped before the
-     * throw).
+     * completion).
+     *
+     * #6 (integ-cmr): a writeLedger failure is a backend-call exception — it
+     * must NOT raw-reject out of runOrchestrator.  Per the PRD route table,
+     * any runner-action / backend call that throws converges to S8(error) with
+     * an error package.  So we assert the run terminates with status=error
+     * (not a raw rejection), and that the first buffered entry was never
+     * silently dropped (the write was attempted, which is what threw).
      */
-    let callCount = 0;
+    let writeAttempts = 0;
     const failFirstWriteBackend: Backend = {
       async fetchIssueMeta(n) {
         return { number: n, isReadyForAgent: true, hasAgentBrief: true, hasSubIssues: false, openBlockedBy: [] };
@@ -260,17 +265,26 @@ describe("persisted step ledger (#249)", () => {
       },
       async push() { /* no-op */ },
       async writeLedger() {
-        callCount += 1;
-        if (callCount === 1) {
+        writeAttempts += 1;
+        if (writeAttempts === 1) {
           throw new Error("writeLedger: simulated I/O failure on first write");
         }
       },
     };
 
-    // The runner must propagate the rejection (not swallow it).
-    await expect(
-      runOrchestrator({ issueNumber: 249, backend: failFirstWriteBackend }),
-    ).rejects.toThrow("writeLedger: simulated I/O failure on first write");
+    // The runner must convert the writeLedger failure into S8(error), NOT
+    // raw-reject (#6).
+    const result = await runOrchestrator({
+      issueNumber: 249,
+      backend: failFirstWriteBackend,
+    });
+    expect(result.status).toBe("error");
+    expect(result.errorPackage).toBeDefined();
+    // The failed write was attempted (so the buffered entry was not dropped
+    // before the throw — drain-on-write shifts only AFTER a successful write).
+    // (The error termination then best-effort-persists S8, so attempts may be
+    // >1; the load-bearing assertion is that the first write WAS attempted.)
+    expect(writeAttempts).toBeGreaterThanOrEqual(1);
   });
 
   // ── F5: trailing-slash invariant ─────────────────────────────────────────────

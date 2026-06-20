@@ -26,11 +26,13 @@
 
 import { route } from "./route.js";
 import type {
+  CoderOutput,
   ErrorPackage,
   Finding,
   IssueMeta,
   IssueSnapshot,
   LedgerEntry,
+  ReviewerOutput,
   PersistentLedgerEntry,
   RunInput,
   RunResult,
@@ -143,6 +145,14 @@ const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
  *   soul            — which soul to inject (coder / READ-ONLY)
  *   toolchain       — image tool-chain declaration
  *
+ * maxIter SEMANTICS (lazy field in v0.1 — the runner does NOT enforce it):
+ * it is the WITHIN-STEP agent (Ralph) retry budget for one `sandbox.run()`,
+ * NOT a fix-loop give-up counter. Hitting it = that step ends normally and the
+ * outer route() loop continues; it is NEVER the orchestrator giving up (that
+ * only happens on a MODEL escalate signal — US#18/US#19, never by counting).
+ * When #256 wires Sandcastle, maxIter must be implemented with this semantics
+ * and must NOT become a "count-to-N-then-give-up" cap. See StepSpec.maxIter.
+ *
  * Swapping models = change the `model` slug here; no image rebuild, no
  * structural StepSpec change (PRD #244 Implementation Decisions).
  *
@@ -209,24 +219,32 @@ function buildErrorReason(step: StepId, output: StepOutput | undefined): string 
   return `step ${step} routed to error handoff`;
 }
 
-/** Build an S8(error) handoff from the failing step and caught error. */
-function errorHandoff(
-  failedStep: StepId,
-  err: unknown,
-  ledger: LedgerEntry[],
-  worktree: WorktreeHandle | undefined,
-): RunResult {
-  const reason =
-    err instanceof Error ? err.message : String(err);
-  const errorPackage: ErrorPackage = {
-    failedStep,
-    reason,
-    branchHead: worktree?.branch,
-  };
-  ledger.push({ step: "S8" });
-  // An error abort surfaces no defer list (S4 defer collection never completed);
-  // deferredFindings is required on RunResult (#250), so return it empty here.
-  return { status: "error", errorPackage, stepLedger: ledger, deferredFindings: [] };
+/**
+ * #5: validate that an agent-step output matches the step's role contract.
+ * A coder step must yield {kind:'coder', committed:boolean}; a reviewer step
+ * must yield {kind:'reviewer', findings:Array}. Anything else (undefined, wrong
+ * kind, missing/garbage fields) is a contract violation that must NEVER be
+ * silently routed (it could bypass the P0/P1 fix gate).
+ */
+function isValidStepOutput(
+  output: StepOutput | undefined,
+  expectedKind: "coder" | "reviewer",
+): boolean {
+  if (output == null || typeof output !== "object") return false;
+  if (output.kind !== expectedKind) return false;
+  if (expectedKind === "coder") {
+    return typeof (output as CoderOutput).committed === "boolean";
+  }
+  return Array.isArray((output as ReviewerOutput).findings);
+}
+
+/** Compact, safe description of a (possibly malformed) step output for errors. */
+function describeOutput(output: StepOutput | undefined): string {
+  if (output === undefined) return "undefined";
+  if (output === null) return "null";
+  if (typeof output !== "object") return String(output);
+  const kind = (output as { kind?: unknown }).kind;
+  return `object with kind=${JSON.stringify(kind)}`;
 }
 
 export async function runOrchestrator(input: RunInput): Promise<RunResult> {
@@ -292,6 +310,71 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     }
     await backend.writeLedger(entry, stateDir);
   }
+
+  /**
+   * Best-effort persist for the error path (#3). Unlike emitLedger, a
+   * writeLedger failure HERE is swallowed: we are already terminating with an
+   * error, so a secondary persistence failure must not mask the original cause
+   * nor raw-reject. The in-memory ledger still records the step regardless.
+   */
+  async function persistBestEffort(
+    s: StepId,
+    output: StepOutput | undefined,
+    promptFile: string | undefined,
+  ): Promise<void> {
+    try {
+      await emitLedger(s, output, promptFile);
+    } catch {
+      // Swallow: error termination must not be derailed by a ledger I/O fault.
+    }
+  }
+
+  /**
+   * Build an S8(status=error) termination from the failing step + caught error.
+   *
+   * #3: records BOTH the failing step and the terminal S8 in the in-memory
+   * ledger AND persists them (best-effort) to the sibling state dir, so a
+   * resume reading the PERSISTED ledger sees the error termination instead of
+   * the failing step + S8 vanishing.
+   *
+   * Pre-worktree failures (S0 fetch throw) have no stateDir yet → persistence
+   * is impossible (inherent: the resume contract needs a worktree sibling dir);
+   * the in-memory ledger still records S8 and the run still returns S8(error).
+   */
+  async function errorTermination(
+    failedStep: StepId,
+    err: unknown,
+    opts?: { recordFailingStep?: boolean },
+  ): Promise<RunResult> {
+    const recordFailingStep = opts?.recordFailingStep ?? true;
+    const reason = err instanceof Error ? err.message : String(err);
+    const errorPackage: ErrorPackage = {
+      failedStep,
+      reason,
+      branchHead: worktree?.branch,
+    };
+
+    // Record the failing step (in-memory + persisted), unless the caller
+    // already recorded it (recordFailingStep:false) or it is S8 itself.
+    // Runner-action / error entries carry no output.
+    if (recordFailingStep && failedStep !== "S8") {
+      ledger.push({ step: failedStep });
+      await persistBestEffort(failedStep, undefined, undefined);
+    }
+
+    // Terminal S8 entry — in-memory + persisted.
+    ledger.push({ step: "S8" });
+    await persistBestEffort("S8", undefined, undefined);
+
+    // An error abort surfaces whatever defers were collected before the fault
+    // (empty if S4 never ran).
+    return {
+      status: "error",
+      errorPackage,
+      stepLedger: ledger,
+      deferredFindings,
+    };
+  }
   // ─────────────────────────────────────────────────────────────────────────
 
   // The runner drives the sequence; the agent never picks the next step.
@@ -325,7 +408,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         try {
           meta = await backend.fetchIssueMeta(issueNumber);
         } catch (err) {
-          return errorHandoff("S0", err, ledger, worktree);
+          // No worktree yet → no sibling stateDir → cannot persist (inherent:
+          // the resume contract needs a worktree's sibling dir). errorTermination
+          // records the in-memory S8 and persists only if stateDir is resolved.
+          return await errorTermination("S0", err);
         }
 
         if (!meta.isReadyForAgent) {
@@ -367,22 +453,23 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         try {
           snapshot = await backend.fetchIssueSnapshot(issueNumber);
         } catch (err) {
-          return errorHandoff("S1", err, ledger, worktree);
+          return await errorTermination("S1", err);
         }
         try {
           worktree = await backend.prepareWorktree(issueNumber, SLICE_BASE);
         } catch (err) {
-          return errorHandoff("S1", err, ledger, worktree);
+          return await errorTermination("S1", err);
         }
+        // Fix the stateDir to be a true sibling of the worktree root (#249) as
+        // soon as the worktree exists — BEFORE writeSnapshot — so that even a
+        // writeSnapshot failure can persist its error termination to the ledger
+        // (#3: error paths must persist, not vanish on resume).
+        stateDir = deriveStateDir(worktree.path, issueNumber);
         try {
           await backend.writeSnapshot(worktree, snapshot);
         } catch (err) {
-          return errorHandoff("S1", err, ledger, worktree);
+          return await errorTermination("S1", err);
         }
-        // Now that the worktree is prepared, fix the stateDir to be a true
-        // sibling of the worktree root (#249), so ledger writes land outside
-        // the worktree where `git clean -fd` cannot remove them.
-        stateDir = deriveStateDir(worktree.path, issueNumber);
         break;
       }
 
@@ -400,7 +487,26 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         try {
           output = await backend.runStep(STEP_SPECS[step], worktree);
         } catch (err) {
-          return errorHandoff(step, err, ledger, worktree);
+          return await errorTermination(step, err);
+        }
+        // #5: the step output must match the step's role. A coder step that
+        // returns a reviewer/undefined/garbage output (or vice-versa) is a
+        // contract violation — NEVER pass it silently to route() where it could
+        // be coerced into a success and bypass the P0/P1 fix gate (e.g. a
+        // malformed reviewer output becoming empty findings → push unreviewed
+        // code). Report S8(error) instead.
+        const expectedKind =
+          STEP_SPECS[step].role === "coder" ? "coder" : "reviewer";
+        if (!isValidStepOutput(output, expectedKind)) {
+          return await errorTermination(
+            step,
+            new Error(
+              `${step}: step output does not match the ${STEP_SPECS[step].role} ` +
+                `contract (expected kind:'${expectedKind}'). Got: ` +
+                `${describeOutput(output)}. Refusing to route a malformed output ` +
+                `(would risk bypassing the P0/P1 fix gate).`,
+            ),
+          );
         }
         lastOutput = output;
         break;
@@ -429,8 +535,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         } catch (err) {
           // Push failure → S8(error) with branch head so dev can diagnose
           // without losing the commits already on the resident branch (#252).
-          ledger.push({ step: "S7" });
-          return errorHandoff("S7", err, ledger, worktree);
+          // errorTermination records + persists both the S7 and S8 entries (#3).
+          return await errorTermination("S7", err);
         }
         break;
       }
@@ -451,7 +557,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // Record this step in the ledger (anti-skip + resume truth, ADR 0018 §3).
     // #249: also persist via backend.writeLedger (sibling state dir).
     ledger.push(output === undefined ? { step } : { step, output });
-    await emitLedger(step, output, promptFile);
+    // #6: a writeLedger failure here is a backend-call exception → it must
+    // converge to S8(error) with an error package, NOT raw-reject out of
+    // runOrchestrator (PRD route table: any backend call throwing → S8(error)).
+    // The step is already recorded in-memory above, so don't double-record it.
+    try {
+      await emitLedger(step, output, promptFile);
+    } catch (err) {
+      return await errorTermination(step, err, { recordFailingStep: false });
+    }
 
     // The runner — not the agent — decides the next step.
     const decision = route({ from: step, output: lastOutput });
@@ -459,7 +573,23 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     if (decision.kind === "handoff") {
       ledger.push({ step: "S8" });
       // #249: persist the S8 handoff entry too.
-      await emitLedger("S8", undefined, undefined);
+      // #6: same as above — a writeLedger failure on the S8 entry → S8(error),
+      // not a raw rejection. (deferredFindings stays whatever was collected.)
+      try {
+        await emitLedger("S8", undefined, undefined);
+      } catch (err) {
+        const errorPackage: ErrorPackage = {
+          failedStep: "S7",
+          reason: err instanceof Error ? err.message : String(err),
+          branchHead: worktree?.branch,
+        };
+        return {
+          status: "error",
+          errorPackage,
+          stepLedger: ledger,
+          deferredFindings,
+        };
+      }
 
       if (decision.status === "error") {
         // Build an error package from the current step context so the developer
