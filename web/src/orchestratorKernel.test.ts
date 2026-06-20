@@ -4,6 +4,7 @@ import {
   judgeReviewDegradation,
   layerEpicIssues,
   routeFindings,
+  shipOutcome,
   TopologyError,
   type Finding,
   type ModelReviewResult
@@ -322,5 +323,31 @@ describe("familyReviewGate", () => {
 
   it("aborts defensively if the round somehow exceeds the cap", () => {
     expect(familyReviewGate({ escalateCount: 0, mechanicalCount: 1, round: 4, maxRounds: 3 })).toBe("abort");
+  });
+});
+
+describe("shipOutcome", () => {
+  it("is ready when gstack-ship gates passed and the family PR was created", () => {
+    expect(shipOutcome({ asked: false, gatesPassed: true, prCreated: true })).toBe("ready");
+  });
+
+  it("needs the user when gstack-ship raised an internal ASK", () => {
+    expect(shipOutcome({ asked: true, gatesPassed: false, prCreated: false })).toBe("needs-user");
+  });
+
+  it("is unconverged when the ship gates did not pass", () => {
+    expect(shipOutcome({ asked: false, gatesPassed: false, prCreated: false })).toBe("unconverged");
+  });
+
+  it("is unconverged when gates passed but no PR was created (guards the && prCreated)", () => {
+    expect(shipOutcome({ asked: false, gatesPassed: true, prCreated: false })).toBe("unconverged");
+  });
+
+  it("prioritizes the ASK over passed gates (asked is checked first)", () => {
+    expect(shipOutcome({ asked: true, gatesPassed: true, prCreated: false })).toBe("needs-user");
+  });
+
+  it("prioritizes the ASK even when every ready condition is also satisfied", () => {
+    expect(shipOutcome({ asked: true, gatesPassed: true, prCreated: true })).toBe("needs-user");
   });
 });
