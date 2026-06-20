@@ -54,7 +54,7 @@ from ming_sim.llm_config import (
 from ming_sim.agents import _dump_llm_messages
 from ming_sim.llm_model import extract_agent_text, verify_llm_available
 from ming_sim.llm_contract import fail_if_llm_error
-from ming_sim.issues import _format_issue_ongoing
+from ming_sim.issues import _format_issue_ongoing, commitment_display_text, commitment_progress_payload
 from ming_sim.session import GameSession
 from ming_sim.session import AUTO_SAVE_PREFIX
 from ming_sim.skills import available_skill_ids, skill_display_name, skill_source_labels
@@ -1031,7 +1031,8 @@ class WebGame:
     def issue_payloads(self) -> List[Dict[str, Any]]:
         payloads: List[Dict[str, Any]] = []
         for row in self.db.list_active_issues():
-            payloads.append({
+            commitment_progress = commitment_progress_payload(self.db, self.state, row)
+            payload = {
                 "id": int(row["id"]),
                 "kind": row["kind"],
                 "title": row["title"],
@@ -1048,7 +1049,11 @@ class WebGame:
                 "ongoing_text": _format_issue_ongoing(str(row["ongoing_effects"] or "{}")),
                 "effect_on_resolve": loads_effect_dict(row["effect_on_resolve"]),
                 "effect_on_fail": loads_effect_dict(row["effect_on_fail"]),
-            })
+            }
+            if commitment_progress is not None:
+                payload["commitment_progress"] = commitment_progress
+                payload["commitment_progress_text"] = commitment_display_text(commitment_progress, row)
+            payloads.append(payload)
         return payloads
 
     def legacies_payload(self) -> List[Dict[str, Any]]:

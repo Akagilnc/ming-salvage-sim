@@ -51,6 +51,38 @@ def _duty_location(office: str, office_type: str, status: str) -> str:
     return "按现职任事，具体地点需看官衔所辖。"
 
 
+def _compact_json_text(raw: object) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return "（未填）"
+    try:
+        return json.dumps(json.loads(text), ensure_ascii=False, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return text
+
+
+def _commitment_tool_fields(db, state, row) -> str:
+    keys = row.keys() if hasattr(row, "keys") else []
+    commitment_kind = str(row["commitment_kind"] if "commitment_kind" in keys else "").strip()
+    if not commitment_kind:
+        return ""
+    from ming_sim.issues import commitment_display_text, commitment_progress_payload
+
+    progress = commitment_progress_payload(db, state, row) or {}
+    progress_text = commitment_display_text(progress, row) if progress else "（暂无进展）"
+    stop_condition = _compact_json_text(row["stop_condition"] if "stop_condition" in keys else "")
+    try:
+        end_turn = int(row["end_turn"] if "end_turn" in keys else 0)
+    except (TypeError, ValueError):
+        end_turn = 0
+    return (
+        f"commitment_kind={commitment_kind}；"
+        f"stop_condition={stop_condition}；"
+        f"end_turn={end_turn}；"
+        f"progress={progress_text}"
+    )
+
+
 def build_minister_tools(character: Character, context: CourtContext,
                          use_roster_tool: bool = False, use_army_tool: bool = False):
     def query_court_roster(names: List[str] = []) -> str:
@@ -91,9 +123,11 @@ def build_minister_tools(character: Character, context: CourtContext,
         lines = []
         for idx, row in enumerate(rows, 1):
             kind_tag = "系统" if row["kind"] == "situation" else "皇帝推动"
+            commitment_fields = _commitment_tool_fields(context.db, context.state, row)
+            commitment_suffix = f"，{commitment_fields}" if commitment_fields else ""
             lines.append(
                 f"{idx}. #{row['id']}[{kind_tag}]{row['title']}"
-                f"（bar {int(row['bar_value'])}/{row['bar_good_meaning']}，{row['stage_text']}）"
+                f"（bar {int(row['bar_value'])}/{row['bar_good_meaning']}，{row['stage_text']}{commitment_suffix}）"
             )
         return "\n".join(lines)
 
@@ -107,10 +141,13 @@ def build_minister_tools(character: Character, context: CourtContext,
         if n < 1 or n > len(rows):
             return f"slot 越界 {n}。本{TURN_UNIT}有 {len(rows)} 条在办事项。"
         row = rows[n - 1]
+        commitment_fields = _commitment_tool_fields(context.db, context.state, row)
+        commitment_text = f"承诺字段：{commitment_fields}。" if commitment_fields else ""
         return (
             f"#{row['id']} {row['title']}（bar {int(row['bar_value'])}，{row['bar_bad_meaning']}↔{row['bar_good_meaning']}）。"
             f"阶段：{row['stage_text']}。牵涉：{row['faction_hint'] or '—'}。"
             f"结案条件：{row['resolve_condition'] or '（未填）'}。失败条件：{row['fail_condition'] or '（未填）'}。"
+            f"{commitment_text}"
         )
 
     def list_regions() -> str:
@@ -613,12 +650,15 @@ def build_board_query_tools(context: CourtContext):
         row = next((r for r in rows if int(r["id"]) == n), None)
         if row is None:
             return f"未找到在办事项 #{n}。可先调 list_issues 看清单。"
+        commitment_fields = _commitment_tool_fields(context.db, context.state, row)
+        commitment_text = f"\n承诺字段：{commitment_fields}。" if commitment_fields else ""
         return (
             f"#{row['id']} {row['title']} bar={int(row['bar_value'])} "
             f"inertia={row['inertia']} kind={row['kind']} cancellable={row['cancellable']}\n"
             f"阶段：{row['stage_text']}。牵涉：{row['faction_hint'] or '—'}。\n"
             f"结案条件：{row['resolve_condition'] or '（未填）'}。"
             f"失败条件：{row['fail_condition'] or '（未填）'}。"
+            f"{commitment_text}"
         )
 
     def get_active_ministers() -> str:
@@ -767,20 +807,29 @@ def build_extractor_tools(context: CourtContext):
                             delta_bar=皇帝实旨推动量（不含自然漂移inertia，系统自动算）
                             档位：极端±40~50、重大±20~35、中等±8~15、轻度±1~5
                             本月未被实旨推动的填delta_bar:0（靠inertia自然漂）
-        new_issues          本月新立局势
-                            来源(a) origin_kind:"decree"——诏书明文长期工程/改革，需全字段：
+        new_issues          本月新立局势/圣旨承诺
+                            来源(a) origin_kind:"decree"——诏书明文长期工程/改革，需：
                               kind(initiative/situation),title,origin_kind,bar_value(0-100),
                               expected_months(整数),stage_text,resolve_condition,fail_condition,
                               ongoing_effects,effect_on_resolve,effect_on_fail,
                               cancellable(decree/never/by_progress)
                               effect_on_resolve/fail 可含 metrics/economy/factions/buildings
                               buildings每项：{action:create/modify/remove,...}
+                            圣旨承诺(#136)固定 kind:"initiative" 且必须有
+                              origin_ref(指回诏书),commitment_kind:"until_stop"；
+                              直到补齐/达标：ongoing_effects 语义非空 + stop_condition(dict)
+                              人物安抚类 ongoing_effects 写 {"人物变更":[{"name":"毛文龙","动作":"评定","loyalty":2}]}
+                              连续N月/半年为限：ongoing_effects 语义非空 + end_turn(turn+N，且必须大于当前turn)
+                              未来一次性复试/复核：end_turn，ongoing_effects 可为空/语义空
+                              stop_condition 只收 dict，如 {"army.guanning.arrears":"<=0"}；
+                              承诺落库后自动 inertia=0,cancellable="decree"
                             来源(b) origin_kind:"event_pool"——只两字段：origin_kind+"id"(从candidate_events选)
                             一锤子事（当回合即办结）不立局势，直接落metric_delta等
         cancels             撤销局势 [{issue_id,applied_cost,narrative}]
-        close_issues        结案/失败 [{issue_id,reason(resolved/failed),narrative}]
+        close_issues        结案/失败/到期待裁承诺ACK [{issue_id,reason(resolved/failed/acknowledged),narrative}]
                             对照resolve_condition/fail_condition判，条件命中即报
                             不可崩坏局势（天灾/大旱等effect_on_fail为空）禁止reason=failed
+                            acknowledged仅用于无语义 ongoing 且已到期的圣旨承诺已由皇帝裁决确认
         fiscal_changes      制度性财政系数变化 [{key,delta,reason}]
                             key只从财政系数表选：田赋_rate/辽饷_base/辽饷_rate/盐税_base/盐税_rate/
                             商税_base/商税_rate/皇庄_base/皇庄_rate/织造_base/织造_rate/矿税_base/矿税_rate/
@@ -817,7 +866,8 @@ def build_extractor_tools(context: CourtContext):
           "power_updates": {"houjin": {"威望": -4, "实力": -3, "经济": -2}},
           "world_advance": {"后金": "敌对", "蒙古": "摇摆", "朝鲜": "倾明"},
           "issue_advances": [{"issue_id":12,"delta_bar":15,"stage_text":"户部主事至苏州","narrative":"..."}],
-          "new_issues": [{"kind":"initiative","title":"火器营试设","origin_kind":"decree","bar_value":20,"expected_months":10,"stage_text":"...","resolve_condition":"...","fail_condition":"...","ongoing_effects":{},"effect_on_resolve":{"metrics":{"皇威":3}},"effect_on_fail":{"metrics":{"皇威":-4}},"cancellable":"by_progress"}],
+          "new_issues": [{"kind":"initiative","title":"火器营试设","origin_kind":"decree","bar_value":20,"expected_months":10,"stage_text":"...","resolve_condition":"...","fail_condition":"...","ongoing_effects":{},"effect_on_resolve":{"metrics":{"皇威":3}},"effect_on_fail":{"metrics":{"皇威":-4}},"cancellable":"by_progress"},
+                         {"kind":"initiative","title":"三月后复试孙承宗","origin_kind":"decree","origin_ref":"decree:turn-1:sun-review","commitment_kind":"until_stop","end_turn":4,"ongoing_effects":{}}],
           "cancels": [],
           "close_issues": [{"issue_id":9,"reason":"resolved","narrative":"..."}],
           "fiscal_changes": [],

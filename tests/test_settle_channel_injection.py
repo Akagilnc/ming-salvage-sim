@@ -109,18 +109,17 @@ def test_settle_none_branch_legacy_env_enriches(game, monkeypatch):
     assert _j.loads(row["effect_on_resolve"]) == {"metrics": {"民心": 1}}
 
 
-def test_driver_run_settle_rejects_malformed_delta_before_write(game):
-    """Sourcery:driver.run_settle 对畸形 delta(region_delta 二级非 dict)在 pre_settle/落库前
-    抛 ValueError,不半写——validate 在 driver 路径跑在 pre_settle 之前。"""
+def test_driver_run_settle_records_malformed_delta(game):
+    """ADR0015：driver.run_settle 对可拆畸形 delta 逐项拒收留痕，净化后继续。"""
     import driver
     db, state, content = game
-    treasury_before = state.metrics.get("国库")
-    with pytest.raises(ValueError):
-        driver.run_settle(db, state, content, {
-            "metric_delta": {"国库": 50},
-            "region_delta": {"shanxi": "not-a-dict"},
-        })
-    assert state.metrics.get("国库") == treasury_before   # 校验在落库前,metric 未落
+    turn = state.turn
+    driver.run_settle(db, state, content, {
+        "metric_delta": {"国库": 50},
+        "region_delta": {"shanxi": "not-a-dict"},
+    })
+    rows = db.conn.execute("SELECT section, item_json FROM rejection_reports WHERE turn=?", (turn,)).fetchall()
+    assert any(r["section"] == "region_delta" and '"entity_id": "shanxi"' in r["item_json"] for r in rows)
 
 
 def test_driver_run_settle_deterministic_under_legacy_env(game, monkeypatch):

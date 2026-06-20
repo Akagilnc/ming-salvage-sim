@@ -12,6 +12,7 @@ import re
 import sqlite3
 from typing import Any, Dict, List, Optional, Tuple
 
+from ming_sim.applier import safe_json_dumps, sanitize_sqlite_text
 from ming_sim.assets import format_money, format_money_delta
 from ming_sim.constants import (
     ARMY_FIELD_ALIASES, ARMY_FIELD_LABELS, ARMY_QUANTITY_FIELDS, ARMY_SCORE_FIELDS, ARMY_TEXT_FIELDS,
@@ -836,6 +837,9 @@ class GameDB:
                 effect_on_fail TEXT NOT NULL DEFAULT '{}',
                 resolve_condition TEXT NOT NULL DEFAULT '',
                 fail_condition TEXT NOT NULL DEFAULT '',
+                end_turn INTEGER NOT NULL DEFAULT 0,
+                stop_condition TEXT NOT NULL DEFAULT '',
+                commitment_kind TEXT NOT NULL DEFAULT '',
                 resolution_summary TEXT NOT NULL DEFAULT '',
                 last_advance_turn INTEGER NOT NULL DEFAULT 0,
                 closed_turn INTEGER,
@@ -988,6 +992,9 @@ class GameDB:
         self.ensure_column("characters", "transit_to", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "resolve_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "fail_condition", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("issues", "end_turn", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column("issues", "stop_condition", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("issues", "commitment_kind", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "birth_year", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "historical_death_year", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "historical_death_month", "INTEGER NOT NULL DEFAULT 0")
@@ -3537,6 +3544,26 @@ class GameDB:
                     log_delta = actual_delta
                 else:  # REGION_TEXT_FIELDS
                     text_value = str(value).strip()[:160]
+                    if field == "controlled_by":
+                        if (
+                            value is None
+                            or not text_value
+                            or text_value.lower() == "null"
+                            or self.conn.execute(
+                                "SELECT 1 FROM powers WHERE id = ? LIMIT 1",
+                                (text_value,),
+                            ).fetchone() is None
+                        ):
+                            changes.append({
+                                "region": row["name"], "field": field,
+                                "rejected": True, "category": "invalid_enum",
+                                "reason": (
+                                    f"region_delta 'controlled_by'（地区 '{region_id}'）"
+                                    f"必须是 powers.id 中的非空真实势力 id：{value!r}"
+                                ),
+                                "item": {"region_id": region_id, "field": field, "value": value},
+                            })
+                            continue
                     if not text_value or text_value == str(old_value):
                         continue
                     stored_new = text_value
@@ -5365,7 +5392,7 @@ class GameDB:
                 period = excluded.period,
                 report = excluded.report
             """,
-            (state.turn, state.year, state.period, report),
+            (state.turn, state.year, state.period, sanitize_sqlite_text(report)),
         )
         self.conn.commit()
 
@@ -5578,8 +5605,9 @@ class GameDB:
                 extractor_input = excluded.extractor_input,
                 extractor_output = excluded.extractor_output
             """,
-            (state.turn, state.year, state.period, decree_text, narrative,
-             extractor_input, extractor_output),
+            (state.turn, state.year, state.period,
+             sanitize_sqlite_text(decree_text), sanitize_sqlite_text(narrative),
+             sanitize_sqlite_text(extractor_input), sanitize_sqlite_text(extractor_output)),
         )
         self.conn.commit()
 
@@ -5883,13 +5911,13 @@ class GameDB:
                    extracted_ready = excluded.extracted_ready,
                    source = excluded.source""",
             (
-                int(turn), decree_text, narrative,
-                json.dumps(simulator_payload or {}, ensure_ascii=False),
+                int(turn), sanitize_sqlite_text(decree_text), sanitize_sqlite_text(narrative),
+                safe_json_dumps(simulator_payload or {}, ensure_ascii=False),
                 # #48：分组承载是 dict；空 dict 也按 dict 存（`or []` 会把 {} 退成 []，
                 # 与 Dict 契约不符）。显式传 list（旧档/占位）仍原样存，None→{}。
-                json.dumps(secret_orders if secret_orders is not None else {}, ensure_ascii=False),
-                json.dumps(relevant_memories or [], ensure_ascii=False),
-                json.dumps(extracted if extracted is not None else {}, ensure_ascii=False),
+                safe_json_dumps(secret_orders if secret_orders is not None else {}, ensure_ascii=False),
+                safe_json_dumps(relevant_memories or [], ensure_ascii=False),
+                safe_json_dumps(extracted if extracted is not None else {}, ensure_ascii=False),
                 1 if extracted is not None else 0,
                 # source 显式归一为枚举「值」字符串：Provenance 是 (str, Enum)，str(member) 在多数
                 # Python 版本落 'Provenance.player_decree' 而非 'player_decree'——重抽时
@@ -6334,6 +6362,9 @@ class GameDB:
         effect_on_fail: Dict[str, object] | None = None,
         resolve_condition: str = "",
         fail_condition: str = "",
+        end_turn: int = 0,
+        stop_condition: Dict[str, object] | str = "",
+        commitment_kind: str = "",
         commit: bool = True,
     ) -> int:
         if kind not in ("situation", "initiative"):
@@ -6355,20 +6386,29 @@ class GameDB:
                 phase, stage_text, status, severity, region_hint, faction_hint,
                 tags, ongoing_effects, cancellable, cancel_cost,
                 effect_on_resolve, effect_on_fail, resolve_condition, fail_condition,
-                last_advance_turn
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                end_turn, stop_condition, commitment_kind, last_advance_turn
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                kind, title, origin_kind, origin_ref, state.turn,
-                bar_value, bar_good_meaning, bar_bad_meaning, int(inertia),
-                phase, stage_text, severity, region_hint, faction_hint,
-                json.dumps(tags or [], ensure_ascii=False),
-                json.dumps(ongoing_effects or {}, ensure_ascii=False),
-                cancellable,
-                json.dumps(cancel_cost or {}, ensure_ascii=False),
-                json.dumps(effect_on_resolve or {}, ensure_ascii=False),
-                json.dumps(effect_on_fail or {}, ensure_ascii=False),
-                resolve_condition, fail_condition,
+                sanitize_sqlite_text(kind), sanitize_sqlite_text(title),
+                sanitize_sqlite_text(origin_kind), sanitize_sqlite_text(origin_ref), state.turn,
+                bar_value, sanitize_sqlite_text(bar_good_meaning), sanitize_sqlite_text(bar_bad_meaning), int(inertia),
+                phase, sanitize_sqlite_text(stage_text), severity,
+                sanitize_sqlite_text(region_hint), sanitize_sqlite_text(faction_hint),
+                safe_json_dumps(tags or [], ensure_ascii=False),
+                safe_json_dumps(ongoing_effects or {}, ensure_ascii=False),
+                sanitize_sqlite_text(cancellable),
+                safe_json_dumps(cancel_cost or {}, ensure_ascii=False),
+                safe_json_dumps(effect_on_resolve or {}, ensure_ascii=False),
+                safe_json_dumps(effect_on_fail or {}, ensure_ascii=False),
+                sanitize_sqlite_text(resolve_condition), sanitize_sqlite_text(fail_condition),
+                int(end_turn),
+                (
+                    safe_json_dumps(stop_condition, ensure_ascii=False, separators=(",", ":"))
+                    if isinstance(stop_condition, dict)
+                    else sanitize_sqlite_text(str(stop_condition or ""))
+                ),
+                sanitize_sqlite_text(str(commitment_kind or "")),
                 state.turn,
             ),
         )
@@ -6408,7 +6448,7 @@ class GameDB:
         new_phase = self._derive_issue_phase(to_value)
         new_status = row["status"]
         closed_turn = row["closed_turn"]
-        commitment_stop_condition = _is_commitment_stop_condition(row["resolve_condition"])
+        commitment_stop_condition = bool(row["commitment_kind"]) or _is_commitment_stop_condition(row["resolve_condition"])
         if to_value >= 100 and not commitment_stop_condition:
             new_status = "resolved"
             closed_turn = state.turn
@@ -6424,7 +6464,7 @@ class GameDB:
                               closed_turn=?, last_advance_turn=?, updated_at=CURRENT_TIMESTAMP
             WHERE id=?
             """,
-            (to_value, new_phase, to_stage_text, new_status, new_inertia, closed_turn, state.turn, issue_id),
+            (to_value, new_phase, sanitize_sqlite_text(to_stage_text), new_status, new_inertia, closed_turn, state.turn, issue_id),
         )
         self.conn.execute(
             """
@@ -6435,10 +6475,12 @@ class GameDB:
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                issue_id, state.turn, trigger_kind, trigger_ref,
+                issue_id, state.turn,
+                sanitize_sqlite_text(trigger_kind), sanitize_sqlite_text(trigger_ref),
                 actual_delta, from_value, to_value,
-                from_stage_text, to_stage_text, narrative,
-                json.dumps(metric_delta or {}, ensure_ascii=False),
+                sanitize_sqlite_text(from_stage_text), sanitize_sqlite_text(to_stage_text),
+                sanitize_sqlite_text(narrative),
+                safe_json_dumps(metric_delta or {}, ensure_ascii=False),
             ),
         )
         if commit:
@@ -6478,7 +6520,7 @@ class GameDB:
                               closed_turn=?, last_advance_turn=?, updated_at=CURRENT_TIMESTAMP
             WHERE id=?
             """,
-            (to_value, new_phase, to_stage_text, reason, state.turn, state.turn, issue_id),
+            (to_value, new_phase, sanitize_sqlite_text(to_stage_text), reason, state.turn, state.turn, issue_id),
         )
         self.conn.execute(
             """
@@ -6489,9 +6531,10 @@ class GameDB:
             ) VALUES (?, ?, 'close', ?, ?, ?, ?, ?, ?, ?, '{}')
             """,
             (
-                issue_id, state.turn, reason,
+                issue_id, state.turn, sanitize_sqlite_text(reason),
                 actual_delta, from_value, to_value,
-                from_stage_text, to_stage_text, narrative,
+                sanitize_sqlite_text(from_stage_text), sanitize_sqlite_text(to_stage_text),
+                sanitize_sqlite_text(narrative),
             ),
         )
         if commit:

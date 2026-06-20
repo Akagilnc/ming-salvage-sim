@@ -13,6 +13,9 @@ def test_appease_mao_extractor_contract_documents_commitment_boundary():
 
     assert "安抚毛文龙" in issue_prompt
     assert "stop_condition" in issue_prompt
+    assert "ongoing_effects" in issue_prompt
+    assert "人物变更" in issue_prompt
+    assert "奉旨持续安抚" in issue_prompt
     assert "一次性赏赐" in issue_prompt
     assert "不立局势" in issue_prompt
     assert "评定" in personnel_prompt

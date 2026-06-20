@@ -169,6 +169,8 @@ export type Issue = {
   resolve_condition: string;
   fail_condition: string;
   ongoing_text: string;
+  commitment_progress?: Record<string, unknown>;
+  commitment_progress_text?: string;
   effect_on_resolve: Record<string, number>;
   effect_on_fail: Record<string, number>;
 };
