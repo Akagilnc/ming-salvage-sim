@@ -299,6 +299,7 @@ export function continuationPlan(input: ContinuationInput): ContinuationResult {
 // location — any one (cmr finding ids can drift across segments; claim has two casings).
 export function dismissalGate(input: DismissalGateInput): boolean {
   const { finding, dismissed } = input;
+  if (!finding) return true; // a null/garbage finding cannot match a dismissal -> not dismissed (still HALT-eligible)
   const findingClaim = claimOf(finding);
   const matched = dismissed.some((entry) => {
     if (entry.id !== undefined && finding.id !== undefined && entry.id === finding.id) return true;
@@ -312,7 +313,8 @@ export function dismissalGate(input: DismissalGateInput): boolean {
 
 // Unify a claim's two casings: camelCase claimQuote takes precedence, else snake_case claim_quote
 // (the cmr finding JSON's native form). They are synonyms.
-function claimOf(value: { claimQuote?: string; claim_quote?: string }): string | undefined {
+function claimOf(value: { claimQuote?: string; claim_quote?: string } | null | undefined): string | undefined {
+  if (!value) return undefined;
   return value.claimQuote !== undefined ? value.claimQuote : value.claim_quote;
 }
 
