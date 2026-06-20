@@ -3,9 +3,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildHandoffPayload, familyReviewGate, judgeReviewDegradation, layerEpicIssues, routeFindings, shipOutcome, type FamilyReviewGateInput, type Finding, type HandoffInput, type ModelReviewResult, type ShipOutcomeInput, type TopologyInput } from "./orchestratorKernel";
+import { buildHandoffPayload, continuationPlan, dismissalGate, familyReviewGate, judgeReviewDegradation, layerEpicIssues, routeFindings, shipOutcome, type ContinuationInput, type DismissalGateInput, type FamilyReviewGateInput, type Finding, type HandoffInput, type ModelReviewResult, type ShipOutcomeInput, type TopologyInput } from "./orchestratorKernel";
 // @ts-ignore Workflow scripts are plain JavaScript outside the web src TypeScript program.
-import { inlineBuildHandoffPayload, inlineFamilyReviewGate, inlineJudgeFamilyDegradation, inlineLayerEpicIssues, inlineRouteFindings, inlineShipOutcome, normalizeWorkflowArgs, runEpicDiscoveryWorkflow, runEpicLayeredPipeline, runEpicSingleSlicePipeline } from "../orchestrator/epicOrchestrator.workflow.js";
+import { inlineBuildHandoffPayload, inlineContinuationPlan, inlineDismissalGate, inlineFamilyReviewGate, inlineJudgeFamilyDegradation, inlineLayerEpicIssues, inlineRouteFindings, inlineShipOutcome, normalizeWorkflowArgs, runEpicDiscoveryWorkflow, runEpicLayeredPipeline, runEpicSingleSlicePipeline } from "../orchestrator/epicOrchestrator.workflow.js";
 
 const representativeTopologyInputs: TopologyInput[] = [
   {
@@ -1381,6 +1381,41 @@ describe("epic orchestrator workflow inline familyReviewGate drift guard", () =>
       expect(inlineBuildHandoffPayload(input)).toEqual(buildHandoffPayload(input));
     }
   });
+
+  it("matches the S6 continuationPlan authority across merged/dirty/multi-layer/id-coercion mixes", () => {
+    const battery: ContinuationInput[] = [
+      { layers: [[218]], mergedNumbers: [218], dirty: [] },
+      { layers: [[218, 219]], mergedNumbers: [218], dirty: [] },
+      { layers: [[218, 219]], mergedNumbers: [218, 219], dirty: [218] },
+      { layers: [[218, 219], [220, 221]], mergedNumbers: [218, 219, 221], dirty: [219] },
+      { layers: [[218], [219]], mergedNumbers: [218, 219], dirty: [] },
+      { layers: [[218]], mergedNumbers: [] },
+      { layers: [[218, 219]], mergedNumbers: [218], dirty: [219] },
+      { layers: [["218", 219]], mergedNumbers: [218], dirty: ["219"] }
+    ];
+
+    for (const input of battery) {
+      expect(inlineContinuationPlan(input)).toEqual(continuationPlan(input));
+    }
+  });
+
+  it("matches the S6 dismissalGate authority across id/claim/location/casing mixes", () => {
+    const battery: DismissalGateInput[] = [
+      { finding: { id: "F1" }, dismissed: [{ id: "F1" }] },
+      { finding: { id: "F2" }, dismissed: [{ id: "F1" }] },
+      { finding: { id: "NEW-3", claimQuote: "此处 throw 缺测试" }, dismissed: [{ id: "OLD-7", claimQuote: "此处 throw 缺测试" }] },
+      { finding: { id: "X", location: "decisionCore.ts:42" }, dismissed: [{ location: "decisionCore.ts:42" }] },
+      { finding: { id: "F1", claimQuote: "q", location: "l" }, dismissed: [] },
+      { finding: { id: "B" }, dismissed: [{ claimQuote: undefined, location: undefined, id: "A" }] },
+      { finding: { id: "Z", location: "core.ts:9" }, dismissed: [{ id: "F1" }, { location: "core.ts:9" }] },
+      { finding: { id: "NEW", claimQuote: "此处 throw 缺测试" }, dismissed: [{ claim_quote: "此处 throw 缺测试" }] },
+      { finding: { id: "X", claim_quote: "q" }, dismissed: [{ claimQuote: "q" }] }
+    ];
+
+    for (const input of battery) {
+      expect(inlineDismissalGate(input)).toBe(dismissalGate(input));
+    }
+  });
 });
 
 describe("epic orchestrator S4b family 5a/5b CMR", () => {
@@ -1722,5 +1757,175 @@ describe("epic orchestrator S5 Ship phase (gstack-ship + terminal states + hando
     await expect(
       runToShip({ ship: { asked: false, gatesPassed: true } as any })
     ).rejects.toThrow(/field "prCreated" must be a boolean/);
+  });
+});
+
+describe("epic orchestrator S6 cross-segment continuation (relaunch + git-skip + dirty + dismissal)", () => {
+  // Drives the layered pipeline through a full clean ready run, but the harness lets each test set
+  // S6 args (mergedNumbers / dirty / dismissals / decisions) and a per-round familyReview script,
+  // then asserts which slices' implement legs ran (git-skip), which re-ran (dirty), and whether a
+  // dismissed decision finding still halts (it must not) while staying in the reviewers output.
+  async function runContinuation({
+    subIssues,
+    blockedBy = [],
+    args,
+    familyReview,
+    ship
+  }: {
+    subIssues: any[];
+    blockedBy?: any[];
+    args: any;
+    familyReview?: (round: number) => any;
+    ship?: any;
+  }) {
+    const agentCalls: any[] = [];
+    const bashCalls: string[] = [];
+    let cmrRound = 0;
+    const passClean = () => ({ codex: { status: "passed", findings: [] }, agy: { status: "passed", findings: [] }, claude: { findings: [] } });
+    const review = familyReview ?? (() => passClean());
+    const shipReport = ship ?? { asked: false, gatesPassed: true, prCreated: true, prUrl: "https://example.test/pr/1", familyHead: "shipped-head" };
+
+    const result: any = await runEpicLayeredPipeline({
+      args: { epicIssueNumber: 217, familyBranch: "family/217", verifyCommands: ["npm --prefix web test"], startupTargetHead: "base-start", targetBranch: "origin/main", maxReviewRounds: 3, ...args },
+      log: () => undefined,
+      agent: async (request: any) => {
+        agentCalls.push(request);
+        if (request.role === "family_review") return review(request.round).claude ?? { findings: [] };
+        if (request.role === "family_review_fix") return { fixed: true };
+        return {
+          commit: `commit-${request.issueNumber}`,
+          worktreePath: `/repo/.worktrees/issue-${request.issueNumber}`,
+          observabilityEvidence: { loudFailure: true, locatorLogs: true, notApplicableReason: "tooling slice" }
+        };
+      },
+      Bash: async (command: string) => {
+        bashCalls.push(command);
+        if (command.includes("family-review pre-fix HEAD")) return "pre-fix-head";
+        if (command.includes("family-review I7 fix-commit discipline")) return "";
+        if (command.includes("family-review reviewed HEAD")) return "reviewed-head-sha";
+        if (command.includes("/sub_issues")) return JSON.stringify({ epicId: 217, issues: subIssues, blockedBy });
+        if (command.includes("reviewer=codex-family")) return JSON.stringify(review(cmrRound + 1).codex ?? { status: "passed", findings: [] });
+        if (command.includes("reviewer=agy-family")) { const reply = JSON.stringify(review(cmrRound + 1).agy ?? { status: "passed", findings: [] }); cmrRound += 1; return reply; }
+        if (command.includes("reviewer=codex")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("merge reviewed commit")) {
+          const reviewedCommit = command.match(/implementedCommit='([^']+)'/)?.[1] ?? "unknown";
+          return JSON.stringify({ status: "merged", mergeCommit: `merge-${reviewedCommit}`, mergeWorktree: "/repo/.epic-orchestrator/family" });
+        }
+        if (command.includes("resolve existing family worktree")) return JSON.stringify({ status: "resolved", familyWorktree: "/repo/.epic-orchestrator/family" });
+        if (command.includes("家族集成 verify")) return JSON.stringify({ status: "passed", exitCode: 0, output: "family ok" });
+        if (command.includes("base management")) return JSON.stringify({ status: "no_drift", startupTargetHead: "base-start", currentTargetHead: "base-start" });
+        if (command.includes("reviewer=gstack-ship-family")) return JSON.stringify(shipReport);
+        return JSON.stringify({ status: "passed" });
+      }
+    });
+
+    const implementedIssues = agentCalls.filter((call) => call.role === undefined).map((call) => call.issueNumber);
+    return { result, agentCalls, bashCalls, implementedIssues };
+  }
+
+  it("relaunch git-skips an already-merged slice: only the not-yet-merged slice implements + merges", async () => {
+    const { result, implementedIssues, bashCalls } = await runContinuation({
+      subIssues: [
+        { id: 220, epicId: 217, state: "open", title: "S2-A", url: "https://example.test/220" },
+        { id: 221, epicId: 217, state: "open", title: "S2-B", url: "https://example.test/221" }
+      ],
+      args: { mergedNumbers: [220] }
+    });
+
+    expect(result.status).toBe("ready");
+    // 220 is on the family branch already (git state) -> no implement leg, no merge for it.
+    expect(implementedIssues).toEqual([221]);
+    expect(bashCalls.join("\n")).toContain("implementedCommit='commit-221'");
+    expect(bashCalls.join("\n")).not.toContain("implementedCommit='commit-220'");
+    // the continuation plan is reported for the handoff/observability.
+    expect(result.continuation.todoTotal).toBe(1);
+    expect(result.continuation.layers[0]).toMatchObject({ todo: [221], skipped: [220] });
+  });
+
+  it("dirty: a merged slice flagged dirty re-runs impl+verify even though the family branch has its commit", async () => {
+    const { result, implementedIssues } = await runContinuation({
+      subIssues: [
+        { id: 220, epicId: 217, state: "open", title: "S2-A", url: "https://example.test/220" },
+        { id: 221, epicId: 217, state: "open", title: "S2-B", url: "https://example.test/221" }
+      ],
+      args: { mergedNumbers: [220, 221], dirty: [220] }
+    });
+
+    expect(result.status).toBe("ready");
+    // both merged, but 220 is dirty -> 220 re-implements; 221 is git-skipped.
+    expect(implementedIssues).toEqual([220]);
+    expect(result.continuation.todoTotal).toBe(1);
+    expect(result.continuation.layers[0]).toMatchObject({ todo: [220], skipped: [221], dirty: [220] });
+  });
+
+  it("todoTotal 0: every slice merged and none dirty -> no implement legs, straight to family review + ship", async () => {
+    const { result, implementedIssues, bashCalls } = await runContinuation({
+      subIssues: [
+        { id: 220, epicId: 217, state: "open", title: "S2-A", url: "https://example.test/220" },
+        { id: 221, epicId: 217, state: "open", title: "S2-B", url: "https://example.test/221" }
+      ],
+      args: { mergedNumbers: [220, 221] }
+    });
+
+    expect(result.status).toBe("ready");
+    expect(implementedIssues).toEqual([]);
+    expect(bashCalls.join("\n")).not.toContain("merge reviewed commit");
+    // family review + ship still ran on the existing merged family branch.
+    expect(result.familyReview).toMatchObject({ status: "converged" });
+    expect(result.continuation.todoTotal).toBe(0);
+  });
+
+  it("dismissal: a dismissed decision finding no longer halts (converges) but stays in the reviewers output (full re-review)", async () => {
+    const { result, agentCalls } = await runContinuation({
+      subIssues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }],
+      args: { mergedNumbers: [220], dismissals: [{ id: "DEC-1", claimQuote: "design choice X" }] },
+      familyReview: () => ({
+        codex: { status: "failed", findings: [{ id: "DEC-1", classification: "choice", claim_quote: "design choice X", location: "a.ts" }] },
+        agy: { status: "passed", findings: [] },
+        claude: { findings: [] }
+      })
+    });
+
+    // dismissed decision finding does not escalate -> the run converges to ready instead of returning for a decision.
+    expect(result.status).toBe("ready");
+    expect(result.familyReview.status).toBe("converged");
+    expect(agentCalls.some((call) => call.role === "family_review_fix")).toBe(false);
+    // full re-review discipline: the dismissed finding is STILL present in the converged round's reviewers output.
+    const convergedRound = result.familyReview.rounds.at(-1);
+    const allFindings = convergedRound.reviewers.flatMap((reviewer: any) => reviewer.findings ?? []);
+    expect(allFindings).toContainEqual({ id: "DEC-1", classification: "choice", claim_quote: "design choice X", location: "a.ts" });
+  });
+
+  it("a NON-dismissed decision finding still escalates to the main session", async () => {
+    const { result } = await runContinuation({
+      subIssues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }],
+      args: { mergedNumbers: [220], dismissals: [{ id: "DEC-OTHER" }] },
+      familyReview: () => ({
+        codex: { status: "failed", findings: [{ id: "DEC-1", classification: "choice", claim_quote: "still unresolved" }] },
+        agy: { status: "passed", findings: [] },
+        claude: { findings: [] }
+      })
+    });
+
+    expect(result.status).toBe("return_to_main_session");
+    expect(result.reason).toBe("family_review_needs_decision");
+    expect(result.decisionFindings).toContainEqual({ id: "DEC-1", classification: "choice", claim_quote: "still unresolved" });
+  });
+
+  it("normalizes mergedNumbers / dirty / dismissals / decisions args (arrays + element coercion + shell-safety)", async () => {
+    // mixed string/number ids must coerce; non-array fields default to empty; decisions passes through.
+    const { result, implementedIssues } = await runContinuation({
+      subIssues: [
+        { id: 220, epicId: 217, state: "open", title: "S2-A", url: "https://example.test/220" },
+        { id: 221, epicId: 217, state: "open", title: "S2-B", url: "https://example.test/221" }
+      ],
+      args: { mergedNumbers: ["220"], dirty: [], dismissals: undefined, decisions: "用户裁定：DEC-1 不算" }
+    });
+
+    expect(result.status).toBe("ready");
+    // "220" (string) coerces and matches numeric 220 from topology -> git-skip; only 221 implements.
+    expect(implementedIssues).toEqual([221]);
+    expect(result.continuation.layers[0]).toMatchObject({ todo: [221], skipped: [220] });
   });
 });
