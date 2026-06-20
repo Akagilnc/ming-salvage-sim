@@ -384,12 +384,21 @@ export function isLikelySha(s: string): boolean {
 }
 
 /**
- * The most recent recorded `branchHEAD` SHA in a persisted ledger (codex#2
- * resume reconciliation). Scans from the end so the latest step's SHA wins, and
- * skips entries that carry no SHA (none recorded yet, or the v0.1 branch-name
- * fallback is still a value — {@link checkBranchHeadConsistency} ignores
- * non-SHA values, so they never raise a false mismatch). Returns undefined when
- * no entry carries a value — the consistency check then has nothing to
+ * The most recent recorded `branchHEAD` **SHA** in a persisted ledger (codex#2
+ * resume reconciliation). Scans from the end and returns the FIRST value that
+ * passes {@link isLikelySha} — i.e. skips branch-name fallbacks ENTIRELY, not
+ * just empty entries.
+ *
+ * Why SHA-only (integ-cmr 256 r2, F1): `resolveBranchHEAD` records the branch
+ * NAME whenever `worktreeHead()` returns undefined / throws (a transient git
+ * read fault), so a ledger can interleave `[realSha, branchNameFallback]` — a
+ * later name fallback masking an earlier REAL SHA. If this returned the latest
+ * non-empty value, that name would flow into {@link checkBranchHeadConsistency},
+ * which sees a non-SHA and returns `{ok:true}` — SKIPPING a real divergence and
+ * defeating the entire codex#2 guard (resume could continue on a divergent
+ * base). Returning the last REAL recorded SHA makes the consistency check always
+ * reconcile against the true base. Returns undefined when no entry carries a SHA
+ * (fresh / name-only ledger) — the consistency check then has nothing to
  * contradict.
  *
  * Pure (array scan) so the resume reconciliation decision is unit-tested
@@ -402,7 +411,10 @@ export function lastLedgerBranchHead(
 ): string | undefined {
   for (let i = ledger.length - 1; i >= 0; i--) {
     const head = ledger[i]?.branchHEAD;
-    if (typeof head === "string" && head.length > 0) return head;
+    // Only a real SHA counts: a branch-name fallback (later git read fault) must
+    // NOT mask an earlier real SHA, or the consistency check would short-circuit
+    // to {ok:true} and skip a genuine divergence (F1).
+    if (typeof head === "string" && isLikelySha(head)) return head;
   }
   return undefined;
 }
