@@ -27,7 +27,7 @@
 import { route } from "./route.js";
 // Shared seam guards — single source of truth, also used by route(), so the
 // finding-element (A) / commitsAdded (B) rules can never drift.
-import { isValidStepOutput } from "./validate.js";
+import { isValidEscalation, isValidStepOutput } from "./validate.js";
 import type {
   ErrorPackage,
   Finding,
@@ -335,7 +335,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   async function errorTermination(
     failedStep: StepId,
     err: unknown,
-    opts?: { recordInMemory?: boolean },
+    opts?: { recordInMemory?: boolean; output?: StepOutput },
   ): Promise<RunResult> {
     // integ-cmr base r2 (D): split the two concerns the old single
     // `recordFailingStep` flag conflated. `recordInMemory` controls only the
@@ -344,6 +344,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // step is UNCONDITIONAL: a transient ledger write fault must not leave the
     // persisted ledger missing the failing step (resume reads the persisted
     // ledger, so disk and memory must agree on the error path).
+    //
+    // integ-cmr base r1 (F3): the best-effort re-persist must carry the failing
+    // step's OUTPUT. The old call passed output=undefined, so on a writeLedger
+    // fault the DISK ledger entry for an agent step lost its output (in-memory
+    // kept it) — and resume reads the disk ledger, so a crash there would resume
+    // from an output-less step (e.g. a reviewer S3 with no findings). The
+    // caller threads the in-flight output through `opts.output` so disk and
+    // memory agree on the error path.
     const recordInMemory = opts?.recordInMemory ?? true;
     const reason = err instanceof Error ? err.message : String(err);
     const errorPackage: ErrorPackage = {
@@ -354,12 +362,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
     // Record the failing step. The in-memory push is skipped when the caller
     // already pushed it (recordInMemory:false) or it is S8 itself; the
-    // best-effort persist is still attempted so disk and memory agree (D).
+    // best-effort persist is still attempted so disk and memory agree (D),
+    // carrying the failing step's output (F3).
     if (failedStep !== "S8") {
       if (recordInMemory) {
-        ledger.push({ step: failedStep });
+        ledger.push(
+          opts?.output === undefined
+            ? { step: failedStep }
+            : { step: failedStep, output: opts.output },
+        );
       }
-      await persistBestEffort(failedStep, undefined, undefined);
+      await persistBestEffort(failedStep, opts?.output, undefined);
     }
 
     // Terminal S8 entry — in-memory + persisted.
@@ -497,28 +510,51 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         } catch (err) {
           return await errorTermination(step, err);
         }
-        // #5 + integ-cmr base r2 (A, B): the step output must satisfy the full
-        // role contract — not just kind. A coder step must yield a CONSISTENT
-        // {committed, commitsAdded} (B: committed=true⇒≥1, false⇒0, non-negative
-        // integer); a reviewer step must yield findings whose every ELEMENT is
-        // valid (A: exact severity/action enums + required string fields). A
-        // wrong-kind / undefined / garbage output, an inconsistent commitsAdded,
-        // or any malformed finding element is a contract violation — NEVER pass
-        // it silently to route() where it could bypass the P0/P1 fix gate (e.g.
-        // a "critical " severity slips the exact-string test → push). Report
-        // S8(error) instead. The runner and route() share one guard (validate.ts).
+        // ── escalate precedence (integ-cmr base r1, F2) ───────────────────
+        // escalate is the GLOBAL stop edge (ADR 0018 / PRD route table:
+        // "checked FIRST, any agent step can carry it"). A step can get stuck
+        // mid-work and emit a VALID escalate while its happy-path schema is
+        // incomplete (coder missing committed, reviewer missing findings). The
+        // full role-schema check (isValidStepOutput) below would judge that
+        // false → S8(error) and SWALLOW the escalate diagnosis. So if the output
+        // carries a VALID escalate, hand it straight to route() (which takes the
+        // escalate edge) WITHOUT demanding the rest of the happy-path schema.
+        // A NON-NULL but MALFORMED escalate is itself a contract violation —
+        // route()'s escalate edge maps it to S8(error) (F1); we let it through
+        // to route() unchanged (do NOT also fail it on the role schema, so the
+        // error is attributed to the escalate edge, the real fault).
         const expectedKind =
           STEP_SPECS[step].role === "coder" ? "coder" : "reviewer";
-        if (!isValidStepOutput(output, expectedKind)) {
-          return await errorTermination(
-            step,
-            new Error(
-              `${step}: step output does not match the ${STEP_SPECS[step].role} ` +
-                `contract (expected kind:'${expectedKind}'). Got: ` +
-                `${describeOutput(output)}. Refusing to route a malformed output ` +
-                `(would risk bypassing the P0/P1 fix gate).`,
-            ),
-          );
+        const carriesEscalate = output != null && output.escalate != null;
+        if (!carriesEscalate) {
+          // #5 + integ-cmr base r2 (A, B): only when there is NO escalate does
+          // the output have to satisfy the full role contract — not just kind.
+          // A coder step must yield a CONSISTENT {committed, commitsAdded}
+          // (B: committed=true⇒≥1, false⇒0, non-negative integer); a reviewer
+          // step must yield findings whose every ELEMENT is valid (A: exact
+          // severity/action enums + required string fields). A wrong-kind /
+          // undefined / garbage output, an inconsistent commitsAdded, or any
+          // malformed finding element is a contract violation — NEVER pass it
+          // silently to route() where it could bypass the P0/P1 fix gate (e.g.
+          // a "critical " severity slips the exact-string test → push). Report
+          // S8(error) instead. Runner and route() share one guard (validate.ts).
+          if (!isValidStepOutput(output, expectedKind)) {
+            return await errorTermination(
+              step,
+              new Error(
+                `${step}: step output does not match the ${STEP_SPECS[step].role} ` +
+                  `contract (expected kind:'${expectedKind}'). Got: ` +
+                  `${describeOutput(output)}. Refusing to route a malformed output ` +
+                  `(would risk bypassing the P0/P1 fix gate).`,
+              ),
+            );
+          }
+        } else if (!isValidEscalation(output.escalate)) {
+          // Carries a non-null but malformed escalate: do not run the role
+          // schema (so attribution lands on the escalate edge). route() will
+          // map it to S8(error) (F1). Still record it as the in-flight output.
+          lastOutput = output;
+          break;
         }
         lastOutput = output;
         break;
@@ -580,7 +616,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       // (pushed above), so skip the in-memory push — but STILL best-effort
       // re-persist the failing step so the persisted ledger is not left missing
       // it on a transient write fault.
-      return await errorTermination(step, err, { recordInMemory: false });
+      // integ-cmr base r1 (F3): pass the in-flight `output` so the re-persisted
+      // disk entry carries it (resume reads the disk ledger; an output-less
+      // re-persist would resume from a step missing its findings/commit count).
+      return await errorTermination(step, err, {
+        recordInMemory: false,
+        output,
+      });
     }
 
     // The runner — not the agent — decides the next step.

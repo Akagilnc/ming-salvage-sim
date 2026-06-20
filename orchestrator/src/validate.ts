@@ -15,6 +15,7 @@
 
 import type {
   CoderOutput,
+  Escalation,
   Finding,
   ReviewerOutput,
   StepOutput,
@@ -42,6 +43,36 @@ const FINDING_STRING_FIELDS = [
 
 function isNonEmptyString(v: unknown): v is string {
   return typeof v === "string";
+}
+
+/** A genuinely non-empty string (rejects "" and whitespace-only). */
+function isFilledString(v: unknown): v is string {
+  return typeof v === "string" && v.trim().length > 0;
+}
+
+/**
+ * Validate the `escalate` field on an agent-step output.
+ *
+ * `escalate` is part of the step-output schema contract (PRD #244 contract
+ * layer: `{ escalate?: { reason, diagnosis } }`). It is the GLOBAL stop edge —
+ * route() takes it before every other edge. So a NON-NULL escalate is a real
+ * human-escalation stop signal whose `reason`/`diagnosis` the caller reads
+ * verbatim; a garbage escalate (empty `{}`, wrong types, blank strings) must NOT
+ * be accepted as a legitimate stop signal — that is the malformed-output
+ * coercion hole (integ-cmr base r1, F1). route() must judge such a step
+ * S8(error), not S8(escalate).
+ *
+ * Rules:
+ *   - absent / undefined / null → NO escalate (valid: the step simply did not
+ *     escalate; real backends emit `escalate: null` for the unset field).
+ *   - present (non-null) → MUST be `{ reason: non-empty string,
+ *     diagnosis: non-empty string }`; anything else is invalid.
+ */
+export function isValidEscalation(e: unknown): e is Escalation | null | undefined {
+  if (e == null) return true; // absent / undefined / null = no escalate.
+  if (typeof e !== "object") return false;
+  const obj = e as Record<string, unknown>;
+  return isFilledString(obj.reason) && isFilledString(obj.diagnosis);
 }
 
 /**
@@ -85,6 +116,10 @@ export function isValidCoderOutput(o: StepOutput | undefined): o is CoderOutput 
   if (o == null || typeof o !== "object") return false;
   if (o.kind !== "coder") return false;
   const c = o as CoderOutput;
+  // F1: a non-null escalate must be a well-shaped Escalation (reason+diagnosis,
+  // both non-empty strings). A garbage escalate is a contract violation even if
+  // the happy-path fields are present.
+  if (!isValidEscalation(c.escalate)) return false;
   if (typeof c.committed !== "boolean") return false;
   if (
     typeof c.commitsAdded !== "number" ||
@@ -109,6 +144,8 @@ export function isValidReviewerOutput(
   if (o == null || typeof o !== "object") return false;
   if (o.kind !== "reviewer") return false;
   const r = o as ReviewerOutput;
+  // F1: same escalate-shape contract as the coder output.
+  if (!isValidEscalation(r.escalate)) return false;
   if (!Array.isArray(r.findings)) return false;
   return r.findings.every(isValidFinding);
 }
