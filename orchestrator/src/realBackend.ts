@@ -363,6 +363,24 @@ export function matchWorktreeForBranch(
   return undefined;
 }
 
+/**
+ * Recover the issue number from a resident branch name. Prefer the `issue-<n>`
+ * token (not anchored to end — a branch may carry a trailing suffix such as
+ * `…issue-256-fix`); only when no such token exists fall back to the LAST digit
+ * run in the branch.
+ *
+ * Anchoring `/issue-(\d+)$/` and falling back to the FIRST digit run mis-reads a
+ * suffixed branch's epic prefix (e.g. `feat/244-…-issue-256-fix` → 244, not 256)
+ * → wrong issue metadata / wrong `.ledger-<n>` dir (gemini R2, high). Pure so
+ * the extraction is unit-tested without git. Returns 0 when no digits exist.
+ */
+export function issueNumberFromBranch(branch: string): number {
+  const m = branch.match(/issue-(\d+)/);
+  if (m) return Number(m[1]);
+  const all = branch.match(/\d+/g);
+  return all ? Number(all[all.length - 1]) : 0;
+}
+
 // ── auth-mount path construction (spike contract) ───────────────────────────
 
 /** Where Sandcastle mounts the codex auth dir inside the container. */
@@ -864,7 +882,15 @@ export function attributeFailure(
   phase: string,
   err: unknown,
 ): Error {
-  const cause = err instanceof Error ? err.message : String(err);
+  let cause = err instanceof Error ? err.message : String(err);
+  // execFileSync throws an Error whose `.message` is just "Command failed: …";
+  // the actionable detail (gh GraphQL error, git reject/conflict) lives on
+  // `.stderr`. Append it so the S8(error) package shows the real cause rather
+  // than an opaque "Command failed" (gemini R2).
+  if (err && typeof err === "object" && "stderr" in err) {
+    const stderr = String((err as { stderr: unknown }).stderr).trim();
+    if (stderr) cause += `\nstderr: ${stderr}`;
+  }
   return new Error(`${step}:${phase} — ${cause}`);
 }
 
@@ -1318,7 +1344,10 @@ export class RealBackend implements Backend {
   } {
     const paths = buildAuthPaths(issueNumber, this.opts.home);
     rmSync(paths.hostCodexAuthDir, { recursive: true, force: true });
-    mkdirSync(paths.hostCodexAuthDir, { recursive: true });
+    // Owner-only dir: this holds copied credential material (auth.json /
+    // config.toml). 0o700 keeps it off world-readable multi-user hosts
+    // (coderabbit R2, major).
+    mkdirSync(paths.hostCodexAuthDir, { recursive: true, mode: 0o700 });
     copyFileSync(
       paths.srcCodexAuth,
       join(paths.hostCodexAuthDir, "auth.json"),
@@ -1328,10 +1357,13 @@ export class RealBackend implements Backend {
         paths.srcCodexConfig,
         join(paths.hostCodexAuthDir, "config.toml"),
       );
+      // config.toml can carry credentials too — owner-only.
+      chmodSync(join(paths.hostCodexAuthDir, "config.toml"), 0o600);
     } catch {
       // config.toml is optional.
     }
-    chmodSync(join(paths.hostCodexAuthDir, "auth.json"), 0o644);
+    // Copied credential file → owner-only (was world-readable 0o644).
+    chmodSync(join(paths.hostCodexAuthDir, "auth.json"), 0o600);
     const claudeToken = readFileSync(paths.claudeTokenFile, "utf8").trim();
     return { authDir: paths.hostCodexAuthDir, claudeToken };
   }
@@ -1701,10 +1733,6 @@ export class RealBackend implements Backend {
 
   /** Recover the issue number from the resident branch name. */
   private issueOf(worktree: WorktreeHandle): number {
-    const m = worktree.branch.match(/issue-(\d+)$/);
-    if (m) return Number(m[1]);
-    // Fall back to any trailing digits in the branch.
-    const m2 = worktree.branch.match(/(\d+)/);
-    return m2 ? Number(m2[1]) : 0;
+    return issueNumberFromBranch(worktree.branch);
   }
 }

@@ -29,7 +29,7 @@ For each issue, decide `action`:
 Emit EXACTLY ONE `<review>` tag containing a single JSON object, then the
 completion signal on its own line.
 
-```
+```text
 <review>{"findings": [{"severity": "high", "category": "correctness", "claim_quote": "<exact quoted code/claim under review>", "location": "<file>:<line>", "suggested_fix": "<concrete fix>", "action": "fix_now"}]}</review>
 REVIEWER_STEP_COMPLETE
 ```
@@ -45,7 +45,7 @@ Each finding object MUST have all of:
 
 If the work is clean, emit an empty findings array:
 
-```
+```text
 <review>{"findings": []}</review>
 REVIEWER_STEP_COMPLETE
 ```
@@ -53,7 +53,7 @@ REVIEWER_STEP_COMPLETE
 If you cannot review (e.g. the diff is incoherent / the Brief is contradictory),
 add an `escalate` object:
 
-```
+```text
 <review>{"findings": [], "escalate": {"reason": "<short>", "diagnosis": "<what blocks review>"}}</review>
 REVIEWER_STEP_COMPLETE
 ```
