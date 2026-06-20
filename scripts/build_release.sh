@@ -3,7 +3,7 @@
 #
 # 前置（在干净 clone 里跑一次）：
 #   python -m venv .venv && . .venv/bin/activate
-#   pip install -e . pyinstaller pywebview tiktoken
+#   pip install -r requirements.txt pyinstaller pywebview tiktoken   # 本仓无 pyproject/setup.py，用 requirements.txt（非 -e .）
 # 然后：
 #   scripts/build_release.sh
 #
@@ -24,6 +24,12 @@ else
   PY="python3"
 fi
 echo "[build] 用 python: $PY ($("$PY" --version 2>&1))"
+
+# fail-fast：Linux 用 zip 打包（mac 用 ditto），精简镜像/CI 可能没装 zip——慢构建前先拦，别跑到最后一步才挂。
+if [ "$(uname -s)" = "Linux" ] && ! command -v zip >/dev/null 2>&1; then
+  echo "[build] ✗ Linux 需要 zip 但未安装。先装：apt-get install zip / dnf install zip" >&2
+  exit 1
+fi
 
 echo "[build] 1/3 构建前端 web/dist ..."
 ( cd web && npm install && npm run build )
