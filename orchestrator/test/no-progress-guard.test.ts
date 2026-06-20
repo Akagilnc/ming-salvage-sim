@@ -94,6 +94,17 @@ class ScriptedBackend implements Backend {
     private readonly coderOutput?: (callIndex: number) => StepOutput,
   ) {}
 
+  // #255 resume seam: fresh-run fake → no residue (runner consults this first).
+  async findResumeState(): Promise<undefined> {
+    return undefined;
+  }
+  async cleanResidue(): Promise<void> {
+    // no-op
+  }
+  async resumeSession(spec: StepSpec): Promise<StepOutput> {
+    return this.runStep(spec);
+  }
+
   async fetchIssueMeta(n: number): Promise<IssueMeta> {
     return { ...COMPLIANT_META, number: n };
   }

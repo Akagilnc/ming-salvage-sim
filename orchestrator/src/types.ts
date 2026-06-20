@@ -254,6 +254,48 @@ export interface PersistentLedgerEntry extends LedgerEntry {
   readonly branchHEAD: string;
   /** ISO-8601 timestamp when this entry was persisted. */
   readonly ts: string;
+  /**
+   * Terminal handoff status — set ONLY on the S8 entry (#255).
+   *
+   * Both success and error handoffs previously wrote an identical `{step:"S8"}`
+   * entry, making them indistinguishable to a resuming run reading the ledger.
+   * Recording the status here lets {@link ResumeState} recovery report the TRUE
+   * terminal outcome (success / escalate / error) instead of inferring it — and
+   * lets a re-fed run tell a prior SUCCESS apart from a prior ERROR.
+   * Undefined for every non-S8 (in-flight) entry.
+   */
+  readonly handoffStatus?: HandoffStatus;
+}
+
+// ──────────────────────────── resume state ────────────────────────────
+
+/**
+ * Residue discovered for an issue at the start of a run (#255).
+ *
+ * When the same issue is re-fed and a resident slice worktree + persisted
+ * ledger already exist (crash residue OR escalate residue), the Backend's
+ * {@link Backend.findResumeState} returns this so the runner can RESUME from
+ * the recorded breakpoint instead of re-cutting from S0.
+ *
+ * Crash-resume and escalate-resume share ONE machine: both read this state,
+ * reuse the worktree, clean uncommitted residue, and continue from the step
+ * the ledger says is next (decided by `route()`, not LLM memory).
+ *
+ * `ledger` is the persisted step ledger read from the sibling state dir
+ * (`<stateDir>/steps.jsonl`) — the resume truth. The last entry's step + output
+ * drive the next-step decision; a recorded `sessionId` lets the runner resume
+ * the prior agent session via {@link Backend.resumeSession}.
+ */
+export interface ResumeState {
+  /** The existing resident slice worktree to reuse (not re-cut). */
+  readonly worktree: WorktreeHandle;
+  /** The sibling state directory holding the persisted ledger. */
+  readonly stateDir: string;
+  /**
+   * The persisted ledger read back from disk, in execution order.
+   * Empty array ⇒ no usable progress (treated as a fresh run by the runner).
+   */
+  readonly ledger: ReadonlyArray<PersistentLedgerEntry>;
 }
 
 // ──────────────────────────── Backend seam ────────────────────────────
@@ -265,6 +307,43 @@ export interface PersistentLedgerEntry extends LedgerEntry {
  * separately. Keep this minimal and stable — 9 slices layer on it.
  */
 export interface Backend {
+  /**
+   * #255: detect resume residue for this issue at the very start of a run.
+   *
+   * The host-side implementation checks whether a resident slice worktree +
+   * persisted ledger already exist (crash or escalate residue). Returns the
+   * {@link ResumeState} when residue is found, or `undefined` for a fresh run.
+   *
+   * This is consulted BEFORE the S0 gate: a resumed run already passed the gate
+   * on its first pass, so it must not re-gate/re-cut.
+   */
+  findResumeState(issueNumber: number): Promise<ResumeState | undefined>;
+  /**
+   * #255: clean uncommitted residue on the resident worktree before reuse.
+   *
+   * Real implementation: `git reset --hard HEAD` + `git clean -fd` +
+   * `git worktree prune` reconciliation. Committed progress (the resident
+   * branch HEAD) is PRESERVED; only uncommitted/untracked residue from the
+   * interrupted run is discarded. The ledger lives in the sibling state dir
+   * (outside the worktree), so `clean -fd` cannot remove the resume truth.
+   */
+  cleanResidue(worktree: WorktreeHandle): Promise<void>;
+  /**
+   * #255: resume the prior agent session for a step (Sandcastle-native).
+   *
+   * Carries the `sessionId` recorded in the ledger so the SAME agent session
+   * continues from the breakpoint — used for both crash-resume and
+   * escalate-resume (e.g. after a human answers a design blocker, the coder
+   * finishes in its original session rather than a fresh `run()`).
+   *
+   * v0.1 fake: records the call and returns a default output. The real
+   * Sandcastle `resumeSession` wiring (incl. dead-session fallback) is #256.
+   */
+  resumeSession(
+    spec: StepSpec,
+    worktree: WorktreeHandle,
+    sessionId: string,
+  ): Promise<StepOutput>;
   /** S0: lightweight metadata for the input gate (host-side `gh`). */
   fetchIssueMeta(issueNumber: number): Promise<IssueMeta>;
   /** S1: full snapshot (body + comments + Agent Brief) for the coder. */

@@ -103,6 +103,17 @@ class SpyBackend implements Backend {
   readonly runStepIds: string[] = [];
   pushed = false;
 
+  // #255 resume seam: fresh-run fake → no residue (runner consults this first).
+  async findResumeState(): Promise<undefined> {
+    return undefined;
+  }
+  async cleanResidue(): Promise<void> {
+    // no-op
+  }
+  async resumeSession(spec: StepSpec): Promise<StepOutput> {
+    return this.runStep(spec);
+  }
+
   async fetchIssueMeta(_n: number): Promise<IssueMeta> {
     return COMPLIANT_META;
   }
