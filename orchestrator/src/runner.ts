@@ -6,21 +6,21 @@
  * entry, then calls route() to pick the next step. The agent never decides
  * the next step — route() does.
  *
- * Slice #247 = the thinnest happy path:
- *   S0 input_gate (fake = compliant) → S1 load_context → S2 coder_implement
- *   → S3 reviewer_full_review → S4 route_findings (no findings = approve)
- *   → S7 push → S8 handoff(status=success).
+ * Slice #247: happy path S0–S3–S4(approve)–S7–S8.
+ * Slice #249: persisted step ledger — every step is written via
+ *   backend.writeLedger() to the sibling state dir (outside the worktree).
+ * Slice #250: S4 severity+action fan-out; S5/S6 step bodies stubbed so the
+ *   fan-out is exercisable end-to-end (fix-loop back-edge remains #254).
+ * Slice #251: global escalate stop edge (in route()).
+ * Slice #253: StepSpec contract — model/completionSignal/maxIter/soul/toolchain.
  *
- * Slice #249 adds persisted step ledger: every step is written via
- * backend.writeLedger() to the sibling state dir (outside the worktree).
- *
- * No fix loop (#254), no escalate stop (#251), no error edges (#252), no full
- * severity routing (#250), no soul injection (#253). Those layer onto these
- * seams without reshaping them.
+ * Remaining seams: #248 (real S0 gate), #252 (error edges), #254 (fix-loop
+ * back-edge). Those layer onto these seams.
  */
 
 import { route } from "./route.js";
 import type {
+  Finding,
   IssueSnapshot,
   LedgerEntry,
   PersistentLedgerEntry,
@@ -137,8 +137,12 @@ const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
  *
  * Swapping models = change the `model` slug here; no image rebuild, no
  * structural StepSpec change (PRD #244 Implementation Decisions).
+ *
+ * S5/S6 added in #250 (fix-loop stubs so the S4 fan-out is exercisable
+ * end-to-end; the real S5→S6→S4 loop control is #254). They carry the same
+ * full StepSpec contract as S2/S3: S5 mirrors the coder spec, S6 the reviewer.
  */
-const STEP_SPECS: Readonly<Record<"S2" | "S3", StepSpec>> = {
+const STEP_SPECS: Readonly<Record<"S2" | "S3" | "S5" | "S6", StepSpec>> = {
   S2: {
     id: "S2",
     role: "coder",
@@ -159,6 +163,28 @@ const STEP_SPECS: Readonly<Record<"S2" | "S3", StepSpec>> = {
     soul: "READ-ONLY",
     toolchain: IMAGE_TOOLCHAIN,
   },
+  // S5/S6: fix-loop stubs so S4 fan-out can be tested end-to-end (#250).
+  // The fix-loop back-edge S5→S6→S4 is wired by #254 — not here.
+  S5: {
+    id: "S5",
+    role: "coder",
+    promptFile: "coder_fix.md",
+    model: "sonnet",
+    completionSignal: "CODER_STEP_COMPLETE",
+    maxIter: 5,
+    soul: "coder",
+    toolchain: IMAGE_TOOLCHAIN,
+  },
+  S6: {
+    id: "S6",
+    role: "reviewer",
+    promptFile: "reviewer_rereview.md",
+    model: "opus",
+    completionSignal: "REVIEWER_STEP_COMPLETE",
+    maxIter: 1,
+    soul: "READ-ONLY",
+    toolchain: IMAGE_TOOLCHAIN,
+  },
 };
 
 export async function runOrchestrator(input: RunInput): Promise<RunResult> {
@@ -168,6 +194,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // State threaded across steps within this run.
   let worktree: WorktreeHandle | undefined;
   let lastOutput: StepOutput | undefined;
+  // Collected at S4: reviewer findings with action:'defer' (PRD #244 US#25).
+  // Surfaced in RunResult.deferredFindings so the caller can act on them.
+  let deferredFindings: Finding[] = [];
 
   // ── #249: per-run session id + sibling state dir ──────────────────────────
   // sessionId: a stable identifier for this orchestrator invocation.
@@ -260,8 +289,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
 
       case "S2":
-      case "S3": {
+      case "S3":
+      case "S5":
+      case "S6": {
         // Agent step — one sandbox.run() driven by its fixed StepSpec.
+        // S5/S6 are fix-loop stubs added in #250; full loop control is #254.
         if (worktree === undefined) {
           throw new Error(`runner: ${step} reached before worktree prepared`);
         }
@@ -272,8 +304,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
 
       case "S4": {
-        // S4 route_findings — pure TS, no agent. route() (below) consumes the
-        // reviewer output; nothing to do in the step body itself.
+        // S4 route_findings — pure TS, no agent. Collect defer findings here
+        // so they can be surfaced in RunResult.deferredFindings (PRD #244 US#25).
+        // route() (below) consumes the reviewer output to decide S5 vs S7.
+        if (lastOutput?.kind === "reviewer") {
+          deferredFindings = lastOutput.findings
+            .filter((f) => f.action === "defer")
+            .slice(); // defensive copy
+        }
         break;
       }
 
@@ -294,8 +332,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
 
       default: {
-        // S5/S6 are fix-loop steps not wired in #247.
-        throw new Error(`runner: step ${step} not implemented in #247`);
+        // Exhaustiveness guard: any unrecognised step is a routing bug.
+        const never: never = step;
+        throw new Error(`runner: step ${String(never)} not handled`);
       }
     }
 
@@ -315,6 +354,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         status: decision.status,
         branch: decision.status === "success" ? worktree?.branch : undefined,
         stepLedger: ledger,
+        deferredFindings,
       };
     }
 

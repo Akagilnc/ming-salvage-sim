@@ -282,4 +282,10 @@ export interface RunResult {
   readonly branch?: string;
   /** The step ledger — anti-skip + resume truth. */
   readonly stepLedger: ReadonlyArray<LedgerEntry>;
+  /**
+   * Reviewer findings with action:'defer' collected at S4 (PRD #244 US#25).
+   * Present on success handoff so the caller can surface them (e.g. as a
+   * follow-up issue list). Empty array when no defer findings exist.
+   */
+  readonly deferredFindings: ReadonlyArray<Finding>;
 }
