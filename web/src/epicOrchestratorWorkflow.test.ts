@@ -1978,4 +1978,40 @@ describe("epic orchestrator S6 cross-segment continuation (relaunch + git-skip +
     expect(result.status).toBe("needs-user");
     expect(result.handoff.familyHead).toBe("family-head-sha");
   });
+
+  it("handoff.merged is cumulative: it carries prior-segment merged slices plus this segment's", async () => {
+    // The handoff feeds the next relaunch's mergedNumbers, so a slice merged in a prior segment
+    // (git-skipped now) must still appear — else the next relaunch re-runs it.
+    const { result } = await runContinuation({
+      subIssues: [
+        { id: 220, epicId: 217, state: "open", title: "S2-A", url: "https://example.test/220" },
+        { id: 221, epicId: 217, state: "open", title: "S2-B", url: "https://example.test/221" }
+      ],
+      args: { mergedNumbers: [220] }
+    });
+
+    expect(result.status).toBe("ready");
+    const mergedNumbers = result.handoff.merged.map((entry: any) => entry.number);
+    expect(mergedNumbers).toContain(220); // prior-segment, git-skipped this segment
+    expect(mergedNumbers).toContain(221); // ran this segment
+    expect(result.handoff.merged).toContainEqual({ number: 221, reviewedCommit: "commit-221" });
+  });
+
+  it("a no-fresh-merge continuation whose family review fixes a bug reports the POST-fix family HEAD", async () => {
+    // todoTotal=0 + a family_review_fix advances the existing family HEAD; currentFamilyHead must
+    // track that so the needs-user handoff reports the post-fix tip, not the stale pre-resolve HEAD.
+    const { result } = await runContinuation({
+      subIssues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }],
+      args: { mergedNumbers: [220] },
+      familyReview: (round: number) =>
+        round === 1
+          ? { codex: { status: "failed", findings: [{ id: "M1", classification: "mechanical_bug", location: "a.ts" }] }, agy: { status: "passed", findings: [] }, claude: { findings: [] } }
+          : { codex: { status: "passed", findings: [] }, agy: { status: "passed", findings: [] }, claude: { findings: [] } },
+      ship: { asked: true, gatesPassed: false, prCreated: false, askDetail: "pre-landing ASK" }
+    });
+
+    expect(result.status).toBe("needs-user");
+    // pre-resolve HEAD was family-head-sha; the fix advanced it to reviewed-head-sha.
+    expect(result.handoff.familyHead).toBe("reviewed-head-sha");
+  });
 });
