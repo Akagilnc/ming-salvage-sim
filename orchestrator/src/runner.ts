@@ -37,7 +37,11 @@
 import { route } from "./route.js";
 // Shared seam guards — single source of truth, also used by route(), so the
 // finding-element (A) / commitsAdded (B) rules can never drift.
-import { isValidEscalation, isValidStepOutput } from "./validate.js";
+import {
+  isValidEscalation,
+  isValidReviewerOutput,
+  isValidStepOutput,
+} from "./validate.js";
 import type {
   ErrorPackage,
   Finding,
@@ -486,7 +490,15 @@ function reconstructProgressState(
 
   for (const e of ledger) {
     const out = e.output;
-    if (out?.kind !== "reviewer") continue;
+    // integ-cmr m2 r4 (self-check, same class as the defer-rebuild hole): use
+    // isValidReviewerOutput, NOT a bare `kind === "reviewer"` check. The persisted
+    // ledger is untyped on disk, so a malformed reviewer entry (missing or
+    // non-array findings) would pass the discriminant and make normalizeFindingsKey
+    // call `.map(...)` on a non-array → raw TypeError, rejecting the resume. The
+    // live loop only ever SCORES validated reviewer outputs (a malformed one bails
+    // to S8 and never reaches the no-progress bookkeeping), so faithfully skipping
+    // malformed reviewer entries here mirrors the live loop exactly.
+    if (!isValidReviewerOutput(out)) continue;
     const key = normalizeFindingsKey(out.findings);
     if (!seenBaseline) {
       // First reviewer output (the S3 round-0 baseline): seed only, no scoring —
@@ -783,7 +795,35 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
     // Re-derive the defer list from the prior reviewer output, if any, so a
     // resume that lands after S4 still surfaces the deferred findings (US#25).
+    //
+    // integ-cmr m2 r4 (cross-slice seam #255 × defer-rebuild): a bare
+    // `kind === "reviewer"` discriminant check is NOT enough — the persisted
+    // ledger is untyped on disk, so a malformed S6/S3 reviewer entry
+    // (`{kind:'reviewer'}` with NO findings, or `findings` non-array) passes the
+    // discriminant yet `.findings.filter(...)` throws a raw TypeError. That
+    // TypeError escaped HERE, before the try/catch around cleanResidue (below)
+    // and before any route(), so runOrchestrator REJECTED instead of returning
+    // S8(error) — bypassing the "malformed step output → S8(error)" decision and
+    // the US#30 error package. The resume path drives off the recorded
+    // lastOutput and runs BEFORE the live path's pre-route isValidStepOutput
+    // guard, so it must validate the shape itself. Gate on isValidReviewerOutput:
+    //   • valid reviewer → rebuild the defer list as before;
+    //   • malformed reviewer-kind → contract violation → S8(error) (via
+    //     errorTermination, tagged + best-effort persisted, NEVER a raw reject),
+    //     mirroring route()'s S2/S5 isValidCoderOutput edges and the new S3/S6
+    //     isValidReviewerOutput edges. The defer list is NOT rebuilt from garbage.
+    //   • non-reviewer (coder/undefined) → leave the defer list untouched.
     if (plan.lastOutput?.kind === "reviewer") {
+      if (!isValidReviewerOutput(plan.lastOutput)) {
+        return await errorTermination(
+          lastAgentStep(plan.priorLedger) ?? "S6",
+          new Error(
+            "resume: recorded reviewer output is malformed (missing or " +
+              "non-array findings) — cannot rebuild the defer list; a " +
+              "malformed step output terminates as S8(error)",
+          ),
+        );
+      }
       deferredFindings = plan.lastOutput.findings
         .filter((f) => f.action === "defer")
         .slice();

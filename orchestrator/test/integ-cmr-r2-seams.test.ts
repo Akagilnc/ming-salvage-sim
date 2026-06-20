@@ -331,6 +331,74 @@ describe("A: finding element validation at the route() seam (defense in depth)",
   });
 });
 
+describe("integ-cmr m2 r4: S3/S6 reviewer-output validation at the route() seam (defense in depth, symmetric with S2/S5)", () => {
+  // The reviewer-output edges (S3→S4, S6→S4) must reject a malformed reviewer
+  // output at the producing seam — symmetric with the S2/S5 isValidCoderOutput
+  // edges. The resume path drives route({from:'S3'|'S6', output: ledgerEntry})
+  // off a recorded ledger output with NO runner pre-route re-check, so route()
+  // must be self-defending. Without this, a malformed S6 routed blindly to S4
+  // and the violation was only re-discovered a step later (after the resume
+  // defer-rebuild had already crashed on the same garbage).
+
+  it("S3 with {kind:'reviewer'} (no findings array) → handoff(error), not S4", () => {
+    const decision = route({
+      from: "S3",
+      output: { kind: "reviewer" } as unknown as StepOutput,
+    });
+    expect(decision).toEqual({ kind: "handoff", status: "error" });
+  });
+
+  it("S3 with findings NON-array → handoff(error), not S4", () => {
+    const decision = route({
+      from: "S3",
+      output: { kind: "reviewer", findings: "nope" } as unknown as StepOutput,
+    });
+    expect(decision).toEqual({ kind: "handoff", status: "error" });
+  });
+
+  it("S3 with a malformed finding element → handoff(error), not S4", () => {
+    const bad = { ...goodFinding() } as Record<string, unknown>;
+    delete bad.action;
+    const decision = route({
+      from: "S3",
+      output: { kind: "reviewer", findings: [bad] } as unknown as StepOutput,
+    });
+    expect(decision).toEqual({ kind: "handoff", status: "error" });
+  });
+
+  it("S3 with well-formed (empty) findings → next S4 (regression)", () => {
+    const decision = route({
+      from: "S3",
+      output: { kind: "reviewer", findings: [] },
+    });
+    expect(decision).toEqual({ kind: "next", step: "S4" });
+  });
+
+  it("S6 with {kind:'reviewer'} (no findings array) → handoff(error), not S4", () => {
+    const decision = route({
+      from: "S6",
+      output: { kind: "reviewer" } as unknown as StepOutput,
+    });
+    expect(decision).toEqual({ kind: "handoff", status: "error" });
+  });
+
+  it("S6 with findings NON-array → handoff(error), not S4", () => {
+    const decision = route({
+      from: "S6",
+      output: { kind: "reviewer", findings: 7 } as unknown as StepOutput,
+    });
+    expect(decision).toEqual({ kind: "handoff", status: "error" });
+  });
+
+  it("S6 with well-formed findings → next S4 (regression, loop closure intact)", () => {
+    const decision = route({
+      from: "S6",
+      output: { kind: "reviewer", findings: [goodFinding({ action: "defer" })] },
+    });
+    expect(decision).toEqual({ kind: "next", step: "S4" });
+  });
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // B [High] — coder commitsAdded validation.
 // ═══════════════════════════════════════════════════════════════════════════
