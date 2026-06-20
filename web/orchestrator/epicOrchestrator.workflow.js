@@ -11,7 +11,7 @@ export const meta = {
     { title: 'Merge', detail: '编排器用单写者 worktree 串行合并 reviewed commit 到家族分支' },
     { title: 'Family Verify', detail: '全片落地后在合并后的家族 worktree 上整体跑 I9 typecheck/unit/full verify' },
     { title: 'Base Management', detail: '进入家族 CMR/gstack-ship 前按 I10 比对启动 target HEAD；base 前进则 rebase 并重跑 I9' },
-    { title: 'Family Review', detail: '在合并后家族分支跑 5a/5b cmr（codex+Claude+agy，agy 全 grounding）；findings 分流（I5：机械 bug 自治修重过 5a/5b、选择回主 session 升级）；不收敛 abort（I1）/可用模型 <2 降级回主 session（I2）' }
+    { title: 'Family Review', detail: '在合并后家族分支跑 5a/5b cmr（codex+Claude+agy；家族 worktree 在隐藏 .epic-orchestrator 下，agy 只看 diff）；findings 分流（I5：机械 bug 自治修重过 5a/5b、选择回主 session 升级）；不收敛 abort（I1）/可用模型 <2 降级回主 session（I2）' }
   ]
 };
 
@@ -1004,7 +1004,8 @@ async function manageFamilyBase({ Bash, familyWorktree, normalizedArgs, startupT
 }
 
 // 5a/5b family CMR (I2 squad + I5 routing + I1 abort). Runs codex + Claude + agy on the
-// MERGED family worktree (non-hidden path → agy gets full grounding, no --diff-only).
+// MERGED family worktree (under the hidden .epic-orchestrator path → agy reviews the diff
+// only, no repo grounding; codex reads the repo via codex exec regardless).
 // codex + agy run via Bash; the Claude leg runs via the workflow agent() runner (a sibling
 // review subagent). Mechanical-only findings drive an autonomous fix (re-run family verify +
 // re-run 5a/5b) until a round with no new finding; decision findings escalate to the main
@@ -1036,7 +1037,9 @@ async function runFamilyReview({ Bash, runner, familyWorktree, familyBranch, epi
       return { status: 'abort', round, rounds, maxReviewRounds };
     }
 
-    // gate === 'fix': autonomously repair mechanical bugs, then re-run family integration verify.
+    // gate === 'fix': capture HEAD, autonomously repair mechanical bugs, then enforce the I7
+    // commit discipline (a new descendant commit + clean worktree) before re-running family verify.
+    const preFixHead = (await Bash(`set -euo pipefail\n# family-review pre-fix HEAD\ngit -C ${shellQuote(familyWorktree)} rev-parse HEAD`)).trim();
     await runner({
       role: 'family_review_fix',
       familyWorktree,
@@ -1047,6 +1050,7 @@ async function runFamilyReview({ Bash, runner, familyWorktree, familyBranch, epi
       autonomousBugFindings: route.autonomousBugFindings,
       prompt: buildFamilyReviewFixPrompt(epicIssueNumber, familyBranch, route.autonomousBugFindings, round, maxReviewRounds)
     });
+    await Bash(`set -euo pipefail\n# family-review I7 fix-commit discipline round ${shellQuote(String(round))}\nworktree=${shellQuote(familyWorktree)}\npreFixHead=$(git -C "$worktree" rev-parse ${shellQuote(`${preFixHead}^{commit}`)})\npostFixHead=$(git -C "$worktree" rev-parse HEAD)\nif [ "$postFixHead" = "$preFixHead" ]; then\n  printf 'family_review_fix round %s produced no new commit (HEAD still %s)\\n' ${shellQuote(String(round))} "$postFixHead" >&2\n  exit 1\nfi\ngit -C "$worktree" merge-base --is-ancestor "$preFixHead" "$postFixHead"\ndirty=$(git -C "$worktree" status --porcelain)\nif [ -n "$dirty" ]; then\n  printf 'family worktree not clean after family_review_fix round %s:\\n%s\\n' ${shellQuote(String(round))} "$dirty" >&2\n  exit 1\nfi`);
     const fixVerification = await runFamilyIntegrationVerify({
       Bash,
       familyWorktree,
@@ -1057,13 +1061,15 @@ async function runFamilyReview({ Bash, runner, familyWorktree, familyBranch, epi
       return { status: 'fix_verify_failed', round, rounds, fixVerification };
     }
   }
-  return { status: 'abort', round: maxReviewRounds, rounds, maxReviewRounds };
+  // Unreachable: the final round (round === maxReviewRounds) always resolves to converged/escalate/
+  // abort inside the loop, because the gate never returns 'fix' once round === maxRounds (round < max is false).
+  throw new Error('family review loop exited without a terminal decision');
 }
 
 async function runFamilyCmrRound({ Bash, runner, familyWorktree, familyBranch, epicIssueNumber, round, diffBase }) {
   const codex = await runFamilyCodexLeg({ Bash, familyWorktree, familyBranch, diffBase });
   const agy = await runFamilyAgyLeg({ Bash, familyWorktree, familyBranch, diffBase });
-  const claude = await runFamilyClaudeLeg({ runner, familyWorktree, familyBranch, epicIssueNumber, round });
+  const claude = await runFamilyClaudeLeg({ runner, familyWorktree, familyBranch, epicIssueNumber, round, diffBase });
 
   const reviewers = [
     { model: 'codex', available: codex.available, reason: codex.reason, fullGrounding: true, findings: codex.findings },
@@ -1106,7 +1112,7 @@ async function runFamilyAgyLeg({ Bash, familyWorktree, familyBranch, diffBase })
   const baseExpr = familyDiffBaseExpr(diffBase);
   try {
     const parsed = parseReviewerJson(
-      await Bash(`set -euo pipefail\ncd ${shellQuote(familyWorktree)}\n# reviewer=agy-family; diff-based review only (agy refuses the hidden .epic-orchestrator worktree, so no repo grounding). Review instructions + JSON schema go on stdin; agy is agentic, so a hard read-only constraint is mandatory.\n{\n  printf '%s\\n' 'REVIEW ONLY — HARD CONSTRAINT. Do NOT modify, create, rename, or delete any file; do NOT run commands. Output only the review.'\n  printf '%s\\n' 'Review the merged family branch diff for cross-slice completeness (5a) and correctness regressions (5b).'\n  printf '%s\\n' 'Return only one JSON object on stdout with shape {"status":"passed"|"failed","findings":[{"id":...,"classification":"mechanical_bug"|"choice","claim_quote":...,"location":...}]}. Do not include markdown or prose outside the JSON object.'\n  printf '%s\\n' 'Diff stat for context:'\n  git diff --stat ${baseExpr} HEAD\n  printf '%s\\n' 'Full diff:'\n  git diff ${baseExpr} HEAD\n} | agy --sandbox --print ''`),
+      await Bash(`set -euo pipefail\ncd ${shellQuote(familyWorktree)}\n# reviewer=agy-family; diff-based review only (agy refuses the hidden .epic-orchestrator worktree, so no repo grounding). Review instructions + JSON schema go on stdin; agy is agentic, so a hard read-only constraint is mandatory.\n{\n  printf '%s\\n' 'REVIEW ONLY — HARD CONSTRAINT. Do NOT modify, create, rename, or delete any file; do NOT run commands. Output only the review.'\n  printf '%s\\n' 'Review the merged family branch diff for cross-slice completeness (5a) and correctness regressions (5b).'\n  printf '%s\\n' 'Return only one JSON object on stdout with shape {"status":"passed"|"failed","findings":[{"id":...,"classification":"mechanical_bug"|"choice","claim_quote":...,"location":...}]}. Do not include markdown or prose outside the JSON object.'\n  printf '%s\\n' 'Diff stat for context:'\n  git diff --stat ${baseExpr} HEAD\n  printf '%s\\n' 'Full diff:'\n  git diff ${baseExpr} HEAD\n} | agy --sandbox --diff-only --print ''`),
       'agy-family'
     );
     return { available: true, findings: parsed.findings ?? [] };
@@ -1115,7 +1121,7 @@ async function runFamilyAgyLeg({ Bash, familyWorktree, familyBranch, diffBase })
   }
 }
 
-async function runFamilyClaudeLeg({ runner, familyWorktree, familyBranch, epicIssueNumber, round }) {
+async function runFamilyClaudeLeg({ runner, familyWorktree, familyBranch, epicIssueNumber, round, diffBase }) {
   try {
     const review = await runner({
       role: 'family_review',
@@ -1123,7 +1129,8 @@ async function runFamilyClaudeLeg({ runner, familyWorktree, familyBranch, epicIs
       familyBranch,
       issueNumber: epicIssueNumber,
       round,
-      prompt: buildFamilyReviewPrompt(epicIssueNumber, familyBranch, round)
+      diffBase,
+      prompt: buildFamilyReviewPrompt(epicIssueNumber, familyBranch, round, diffBase)
     });
     if (!review || review.available === false) {
       return { available: false, reason: review?.reason ?? 'claude family review leg unavailable', findings: [] };
@@ -1134,9 +1141,10 @@ async function runFamilyClaudeLeg({ runner, familyWorktree, familyBranch, epicIs
   }
 }
 
-function buildFamilyReviewPrompt(epicIssueNumber, familyBranch, round) {
+function buildFamilyReviewPrompt(epicIssueNumber, familyBranch, round, diffBase) {
   return [
     `Family 5a/5b CMR (round ${round}) for epic #${epicIssueNumber} on merged family branch ${familyBranch}.`,
+    diffBase ? `Review the cumulative diff of the family branch against its startup target base ${diffBase} (git diff ${diffBase} HEAD).` : 'Review the cumulative diff of the family branch against its startup target base (git merge-base origin/main HEAD).',
     'You are the Claude review leg. Review the merged family branch for cross-slice completeness (5a) and correctness regressions (5b).',
     'Classify each finding: mechanical_bug (one correct fix) vs choice (design/architecture/ADR — escalate). Ambiguous defaults to choice.',
     'Return data containing findings:[{id, classification, claim_quote, location}]; empty findings means no new issue this round.'

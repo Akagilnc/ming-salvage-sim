@@ -1343,6 +1343,8 @@ describe("epic orchestrator S4b family 5a/5b CMR", () => {
       },
       Bash: async (command: string) => {
         bashCalls.push(command);
+        if (command.includes("family-review pre-fix HEAD")) return "pre-fix-head";
+        if (command.includes("family-review I7 fix-commit discipline")) return "";
         if (command.includes("family-review reviewed HEAD")) return "reviewed-head-sha";
         if (command.includes("/sub_issues")) return JSON.stringify({ epicId: 217, issues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }], blockedBy: [] });
         if (command.includes("reviewer=codex-family")) return JSON.stringify(familyReview(cmrRound + 1).codex ?? { status: "passed", findings: [] });
@@ -1378,7 +1380,8 @@ describe("epic orchestrator S4b family 5a/5b CMR", () => {
     expect(codexFamily).toContain("cd '/repo/.epic-orchestrator/family'");
     expect(codexFamily).toContain("codex exec --skip-git-repo-check --ephemeral -");
     expect(agyFamily).toContain("cd '/repo/.epic-orchestrator/family'");
-    expect(agyFamily).toContain("agy --sandbox --print ''");
+    // hidden worktree -> agy must be explicit diff-only (matches the per-slice agy pattern).
+    expect(agyFamily).toContain("agy --sandbox --diff-only --print ''");
     // agy gets real review instructions + JSON schema on stdin (not a bare diff) and a hard read-only constraint.
     expect(agyFamily).toContain("REVIEW ONLY");
     expect(agyFamily).toContain("Return only one JSON object");
@@ -1390,6 +1393,9 @@ describe("epic orchestrator S4b family 5a/5b CMR", () => {
     const claudeReviewCall = agentCalls.find((call) => call.role === "family_review");
     expect(claudeReviewCall).toBeTruthy();
     expect(claudeReviewCall.familyBranch).toBe("family/217");
+    // the Claude leg must also receive the diff base so it diffs against the startup target, not a guess.
+    expect(claudeReviewCall.diffBase).toBe("base-start");
+    expect(claudeReviewCall.prompt).toContain("base-start");
   });
 
   it("autonomously fixes a mechanical bug then converges on the next clean round and merges", async () => {
