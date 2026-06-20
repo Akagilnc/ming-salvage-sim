@@ -47,6 +47,23 @@
 1. `来源类型:"decree"`：诏书明文启动的长期工程、改革、案、清丈、招抚等多回合事项。必须给全字段：`类型`/`标题`/`来源类型`/`当前进度`/`预计月数`/`阶段`/`解决条件`/`失败条件`/`持续效果`/`解决效果`/`失败效果`/`可撤销`。
 2. `来源类型:"event_pool"`：邸报写明已浮现的候选事件。只填 `来源类型` 和 `编号`，且 `编号` 必须来自 input 的 `candidate_events`。
 
+**圣旨承诺 form①（每月 X 直到补齐）必须立承诺 issue**：若诏书含「今后每月/按月/逐月拨付 X，直到补齐欠饷/补足某条件」这类持续承诺，不要写成一次性钱粮，也不要只推进旧 issue；写 `新立局势` 的 `来源类型:"decree"`、`类型:"initiative"`，并显式带承诺字段：
+- `origin_ref`：指回本条诏书/旨意（如 `decree:turn-1:pay-guanning-arrears`），不能为空。
+- `commitment_kind:"until_stop"`（或中文 `承诺标记:"until_stop"`）：这是承诺专门标记，不能只靠 `来源类型:"decree"`。
+- `ongoing_effects`/`持续效果`：每{{TURN_UNIT}}固定动作，例如每{{TURN_UNIT}}从国库拨银补某军欠饷；人物安抚类承诺必须写每{{TURN_UNIT}}的 `人物变更.评定` 忠诚增量，不能只写停止条件。
+- `stop_condition`/`停止条件`：必须是 dict JSON，不要写成扁平字符串；key 带表前缀和英文 slug，比较算符写在 value 内，例如 `{"army.guanning.arrears":"<=0"}`，多军合计写 `{"army.xuan_da|jizhen.arrears.sum":"<=0"}`，人物忠诚写 `{"character.毛文龙.loyalty":">=65"}`。
+- 承诺 issue 的 `可撤销` 写 `decree`；`解决效果` 留空 `{}`，不要给承诺补普通国策的 resolve-effect。
+
+**圣旨承诺 form②（连续 N 月 / 半年为限）同样必须立承诺 issue**：若诏书含「连续 N 月」「连支 N 月」「半年为限」「暂拨 N 月」等硬时限持续承诺，写 `新立局势` 的承诺字段，并额外写 `end_turn`。立项公式是 `end_turn = turn + N`，必须严格大于当前 turn，不能写当前回合或过去回合；半年按 6 个{{TURN_UNIT}}计。form② 必须有 `ongoing_effects`，`stop_condition` 可留空；若同时含「直到补齐」条件，则 `stop_condition` 与 `end_turn` 都写，谁先到谁停。`解决效果`/`失败效果`仍留空 `{}`，到期由结算自动 expire 收尾，不由本档房写 `结案局势 resolved/failed`。
+
+**圣旨承诺 form③（未来一次性，X 月后复试/复核）也必须立承诺 issue**：若诏书含「三月后复试」「X 月后复核」「期满再议」「到期交皇帝裁断」等未来一次性承诺，不要写成普通 issue，也不要只写在人事备注里；写 `新立局势` 的 `来源类型:"decree"`、`类型:"initiative"`，显式带：
+- `origin_ref`：指回本条诏书/旨意，不能为空。
+- `commitment_kind:"until_stop"`（或中文 `承诺标记:"until_stop"`）：复用承诺专门 marker，让到期扫描识别为到期待裁承诺。
+- `end_turn`：未来到期回合；立项公式是 `end_turn = turn + N`。
+- `ongoing_effects 可留空` / `持续效果` 可留 `{}`：form③ 无每{{TURN_UNIT}}固定动作，只是到期待裁。
+- `stop_condition` 可留空；`解决效果`/`失败效果`仍留空 `{}`。
+到期后程序会把这条 active 承诺顶到「到期待裁」输入，请皇帝复试/复核；本档房不得提前写 `结案局势`，也不得自造 firing payload。若本{{TURN_UNIT}}邸报/圣意已明确写出皇帝对该到期待裁承诺完成复试、复核、裁断或确认已处理，则写 `结案局势`，`原因:"acknowledged"`，只作承诺 ACK 收尾；不得写成 `resolved`/`failed`。
+
 **战略/外敌战事 node**（如己巳之变、戊寅虏变、松锦决战）不能只写 `新立局势` 空触发；必须和同一信封的军务/人事档世界状态主账一起出现。局势档只写 `来源类型:"event_pool"` + `编号`；若该候选事件已声明闭合结局标签集，还要在顶层 `事件结局` 写标签。当前只有己巳之变 `jisi_lubian` 声明三档：`挡于边墙` / `入塞被遏` / `长驱直入`；不要给戊寅虏变、松锦决战等尚未声明标签集的事件自造标签。还要确认邸报已有可抽取的哪城、哪军、谁死、谁退等主账事实。缺主账时宁可不写。世界状态主账由军务/人事等字段承接，本模块不要自己输出这些字段。
 
 `类型` 只能填内部枚举 `initiative` 或 `situation`：诏书主动启动的事项一律填 `initiative`；预设候选事件由系统按 `event_pool` 转为 `situation`，不要自己给全字段。严禁把题材词填进 `类型`，如 `军事` / `财政` / `民政` / `工程` / `科技` / `查案` 等。
@@ -67,7 +84,10 @@
 
 不要把一锤子事立成局势：拿人下狱、罢官、准拨银、申饬、当月办完的查抄，都不立。
 
-**人物承诺型事项要立局势**：若诏书明文要求“安抚/羁縻/招抚/稳住”某个关键人物，且结果取决于后续奏对、承办、回信、观望变化，就立 `initiative`。例如“安抚毛文龙”应立标题类似 `安抚毛文龙·进行中` 的局势，`stop_condition` 写意图阈值 `character.毛文龙.loyalty >= 65`，供后续系统/裁判读取；本模块只记录承诺，不自动结案。**人物承诺型 `stop_condition` 不套用 `resolve_condition` 达标即结案规则**：即使当前 `loyalty` 已达阈值，本片也只记录/推进承诺，不要写 `结案局势`；自动按条件完成属于 #136。若只是一次性赏赐、抚恤、给银给物，当{{TURN_UNIT}}即办完，则不立局势，交内政财政档房写一次性 `钱粮收支`，人物态度变化交人事密令档房写 `人物变更`。
+**人物承诺型事项要立局势**：若诏书明文要求“安抚/羁縻/招抚/稳住”某个关键人物，且结果取决于后续奏对、承办、回信、观望变化，就立 `initiative`。例如“安抚毛文龙”应立标题类似 `安抚毛文龙·进行中` 的局势，并同时写：
+- `stop_condition`：dict，例 `{"character.毛文龙.loyalty":">=65"}`，供系统判断何时达标。
+- `ongoing_effects`：每{{TURN_UNIT}}的真实持续动作，例 `{"人物变更":[{"name":"毛文龙","动作":"评定","loyalty":2,"reason":"奉旨持续安抚，观望稍解"}]}`。
+只写 `stop_condition`、没有 `ongoing_effects` 的安抚承诺会被拒收，因为它看似有目标但每{{TURN_UNIT}}不做事。**人物承诺型 `stop_condition` 不套用 `resolve_condition` 达标即结案规则**：即使当前 `loyalty` 已达阈值，本片也只记录/推进承诺，不要写 `结案局势`；自动按条件完成属于 #136。若只是一次性赏赐、抚恤、给银给物，当{{TURN_UNIT}}即办完，则不立局势，交内政财政档房写一次性 `钱粮收支`，人物态度变化交人事密令档房写 `人物变更`。
 
 **实体营建 / 科技新法强制单立**：诏书明文推动下列两类，**各必须单立一条 `来源类型:"decree"` 工程 issue**：
 - **实体营建**——新建/设立一座建筑（设局/办厂/开矿/筑堡/设仓/建坞/立学堂等，含 category=科技 的译算学堂/火器局/铜矿厂）：单立的 issue 其 `解决效果` **必带 `buildings:create`**。
@@ -110,7 +130,7 @@
 
 ## 结案与撤销
 
-- `结案局势`：对照 active issue 的 `resolve_condition` / `fail_condition`。满足解决写 `原因:"resolved"`，彻底失败写 `原因:"failed"`。人物承诺型 `stop_condition` 不套用 `resolve_condition` 达标即结案规则；若 active issue 带 `condition_role:"commitment_stop_condition"`，即使当前 loyalty 已达阈值，也不要写 `结案局势`；自动按条件完成属于 #136。
+- `结案局势`：对照 active issue 的 `resolve_condition` / `fail_condition`。满足解决写 `原因:"resolved"`，彻底失败写 `原因:"failed"`。人物承诺型 `stop_condition` 不套用 `resolve_condition` 达标即结案规则；若 active issue 带 `condition_role:"commitment_stop_condition"`，即使当前 loyalty 已达阈值，也不要写 `结案局势 resolved/failed`；自动按条件完成属于 #136。唯一例外：到期待裁 form③ 承诺若已被皇帝明确裁决/确认处理，写 `原因:"acknowledged"` 作 ACK 收尾。
 - **判结案以 input 盘面数值为准，不被邸报措辞影响**：`resolve_condition` 若含可量化阈值（如「民心>60」「unrest<30」「国库转正」「欠饷补过半」），直接拿 input 里 `active_issues`/`regions`/`armies`/`current_state` 的**当前数值**对照——阈值已达标就必须写 `结案局势 resolved`，**即使邸报只写「近结案」「暂稳」「初见成效」等进行时措辞也照样结案**。邸报叙事偏保守是常态，不要因为邸报没明说「已结案」就只推进不结案。盘面达标=结案，这是硬规则。
 - 不可崩坏局势（`effect_on_fail` 为空的天灾/水患/瘟疫/饥荒本身）禁止写 `reason:"failed"`，只能 resolved 或不结案。
 - **结案项可带 `解决效果` / `失败效果`**：结案时若这桩大事会落下长期国运影响，就在该结案项里写一个 `解决效果`（resolved）或 `失败效果`（failed），内含 `帝国修正` 段（格式见上「帝国修正」节）。**这是把帝国修正落地的唯一时机**——尤其阉党荡平、辽饷裁撤、九边整军成制、国家级科技突破、决定性军事胜负这类大结案。寻常结案不带。

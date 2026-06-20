@@ -294,20 +294,14 @@ def test_empty_effect_noop(game):
     assert _army_count(db) == before
 
 
-def test_apply_score_extraction_validates_before_half_apply(game):
-    """#57:apply_score_extraction 在任何 DB 改动前校验 delta 容器/二级类型——畸形二级 dict
-    不让前面的 metric/economy 先落库再在 region apply 崩(half-落库,违反 P1 落库铁律)。
-    真实流此前只有 driver 侧 _validate_delta_shape;现在落库核自身也守。"""
+def test_apply_score_extraction_splits_bad_nested_entity(game):
+    """ADR0015：嵌套实体坏值逐实体拒收，不带走同批好字段。"""
     db, state, _ = game
-    treasury_before = state.metrics.get("国库")
     bad = {
-        "metric_delta": {"国库": 50},                 # 合法,排在 region 之前处理
-        "region_delta": {"shanxi": "not-a-dict"},     # 二级非 dict → 落库前应抛 ValueError
+        "region_delta": {"shanxi": "not-a-dict", "henan": {"unrest": 1}},
     }
-    with pytest.raises(ValueError):
-        I.apply_score_extraction(db, state, bad)
-    # 校验在 apply 之前 → metric 不该已落库
-    assert state.metrics.get("国库") == treasury_before
+    applied = I.apply_score_extraction(db, state, bad)
+    assert applied["validate_shape_rejections"][0]["item"] == {"entity_id": "shanxi", "raw_value": "not-a-dict"}
 
 
 def test_apply_score_extraction_accepts_flat_faction_scalar(game):
@@ -322,20 +316,18 @@ def test_apply_score_extraction_accepts_flat_faction_scalar(game):
     })
 
 
-def test_apply_score_extraction_rejects_nondict_power_second_level(game):
-    """CMR R2(codex):power_updates 二级非 dict 必须落库前抛——apply_power_deltas 逐 power 写,
-    坏项崩前已写的 power 行会被后续 commit 落库 = 半落库(try/except 接住异常但不回滚)。
-    prompt 里 power_updates 恒嵌套 dict,标量=真畸形。"""
+def test_apply_score_extraction_rejects_nondict_power_second_level_per_entity(game):
+    """ADR0015：power_updates 二级非 dict 逐 power 拒收。"""
     db, state, _ = game
-    with pytest.raises(ValueError):
-        I.apply_score_extraction(db, state, {"power_updates": {"houjin": {"leverage": 1}, "mongol": "bad"}})
+    applied = I.apply_score_extraction(db, state, {"power_updates": {"houjin": {"leverage": 1}, "mongol": "bad"}})
+    assert applied["validate_shape_rejections"][0]["item"] == {"entity_id": "mongol", "raw_value": "bad"}
 
 
-def test_apply_score_extraction_rejects_nondict_list_item(game):
-    """CMR R3(gemini):list 字段含非 dict 项 → 落库前抛,不半写(apply 逐项 item.get() 会中途崩)。"""
+def test_apply_score_extraction_rejects_nondict_list_item_per_item(game):
+    """ADR0015：list 字段含非 dict 项 → 逐项拒收。"""
     db, state, _ = game
-    with pytest.raises(ValueError):
-        I.apply_score_extraction(db, state, {"fiscal_creates": [{"key": "x"}, "bad-scalar"]})
+    applied = I.apply_score_extraction(db, state, {"fiscal_creates": [{"key": "x"}, "bad-scalar"]})
+    assert applied["validate_shape_rejections"][0]["item"] == {"raw_value": "bad-scalar"}
 
 
 def test_apply_score_extraction_tolerates_null_field(game):

@@ -6,7 +6,7 @@
 
 奏章写给皇帝，不是给玩家看日志。要让皇帝知道：朕本{{TURN_UNIT}}的旨意落到京师、边镇、地方、朝堂后，究竟发生了什么。
 
-**本{{TURN_UNIT}}唯一可执行的新动作来自 `decree_text`、待核议密旨、本{{TURN_UNIT}}触发的 `candidate_events`。** `relevant_memories`、`previous_narrative_tail`、`active_issues.stage` 都是背景，不是新诏书——只能写既有政策的执行结果或自然后果，不能凭旧记忆新任命、新抓人、新立未立项工程。
+**本{{TURN_UNIT}}唯一可执行的新动作来自 `decree_text`、待核议密旨/到期待裁承诺、本{{TURN_UNIT}}触发的 `candidate_events`。** `relevant_memories`、`previous_narrative_tail`、`active_issues.stage` 都是背景，不是新诏书——只能写既有政策的执行结果或自然后果，不能凭旧记忆新任命、新抓人、新立未立项工程。
 
 ## 输入真值
 
@@ -18,7 +18,7 @@ input 含本{{TURN_UNIT}}全量盘面，不另查。**盘面表（buildings/cour
 - `current_state`、`treasury_brief`、`factions_brief`、`classes_brief`、`powers_brief`：钱粮、国势、派系、阶级、外部势力。月度固定收支已由程序落账，叙事只写现象。
 - `active_issues`：在办事项。`stage` 是当前卡点背景，不是本{{TURN_UNIT}}待办命令。
 - `candidate_events`：本{{TURN_UNIT}}可浮现的候选情势，不能自创清单外情势。
-- `secret_orders`：密旨分组对象，两组——`在办`（承办中）、`待核议`（本{{TURN_UNIT}}待裁决）。`relevant_memories`：过往事件/承诺/情报，用于连续性与避错。
+- `secret_orders`：密旨/待裁承诺分组对象，两组——`在办`（承办中）、`待核议`（本{{TURN_UNIT}}待裁决）。`待核议` 中 `entry_kind:"due_commitment"` 的条目不是密旨结案，而是到期待裁的一次性承诺。`relevant_memories`：过往事件/承诺/情报，用于连续性与避错。
 - `historical_anchor` / `victory_status` / `deaths_this_turn` / `debuts_this_turn`：历史锚点、终局状态、讣闻、史实登场。
 
 ## 落笔流程：逐章判案，每判一步即落对应章节
@@ -74,11 +74,12 @@ N+6、诏书核销               ← 有 decree_text 必写
 
 **军备两轴（判战据实软判，非硬算）**：军表含 `firearm_equipment`（火器装备：鸟铳/三眼铳之属，野战齐射与守城皆得力）与 `cannon_equipment`（大炮装备：红夷炮之属，守城拒敌、攻坚破城之利器，然笨重移转难，**不利野战机动/遭遇追击**）。评野战、守城、攻城胜负时，这两轴与士气、训练、补给、兵额同为关键因子，据当下数值合常理权衡：火器足则野战守城俱壮；大炮足则倚城轰敌、破坚拔寨犀利，野战浪战却难恃。据此写叙事与「军队变化」。**城防炮**另看地区表的 `cannon`（城头红夷炮门数，上限随 `city_level` 城市等级）：守城/攻城时这是关键——城高炮多则后金顿兵坚城之下（如宁远），城防空虚则一鼓而下。随军炮利攻、城防炮利守，分开看。
 
-### 密旨动向（有在办或待核议密旨才写）
+### 密旨动向（有在办密旨、待核议密旨或到期待裁承诺才写）
 
 `secret_orders` 分两组承载，各组写法不同：
 - `在办` 组（`secret_orders.在办`）：写承办人动态与副作用——风声、警觉、牵连、暴露风险。可从推演视角**推进一步实况**（承办人本月实际查到/办到何处、下一步指向谁），与其口头自报互为印证或纠偏；但**不写办结**（办结只在待核议组裁决）。
 - `待核议` 组（`secret_orders.待核议`）：本章末**逐条核议**给出 `done` 或 `failed`，不存在退回/续查/待复核。核议看五项：任务可行性、承办人能力忠诚、目标实力反制、风声暴露、承办人陈词真伪。够皇帝据以拿人治罪则 done；证据残缺、虚报、不可行、事泄则 failed。
+- `待核议` 组里若条目带 `entry_kind:"due_commitment"`：这是圣旨承诺到期待裁，**不得写成密令 done/failed**，也不得自行 close；只把它顶到皇帝面前，写明原承诺、期限已至、现在须复试/复核/裁断什么。若确需皇帝拍板，在奏章末尾追加一个现有 `<<DECISION>>` 决策块。
 - 判 done 者：result 是可信事实，可写后续影响。判 failed 者：写铩羽、事泄、线索断裂或反扑。
 
 ### 陛下未知者
