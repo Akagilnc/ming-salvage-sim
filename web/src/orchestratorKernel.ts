@@ -68,6 +68,14 @@ export interface FamilyReviewGateInput {
   maxRounds: number;
 }
 
+export type ShipOutcome = "ready" | "needs-user" | "unconverged";
+
+export interface ShipOutcomeInput {
+  asked: boolean;
+  gatesPassed: boolean;
+  prCreated: boolean;
+}
+
 export interface ModelReviewResult {
   model: string;
   available: boolean;
@@ -217,6 +225,15 @@ export function familyReviewGate(input: FamilyReviewGateInput): FamilyReviewDeci
   if (escalateCount > 0) return "escalate";
   if (mechanicalCount === 0) return "converged";
   return round < maxRounds ? "fix" : "abort";
+}
+
+// Maps a gstack-ship report to the orchestrator's terminal ship state (S5). An internal ASK
+// (version-bump MINOR/MAJOR, pre-landing ASK, coverage hard gate) always returns the run to the
+// user and is checked first; otherwise the run is ready only when the ship gates passed AND the
+// family PR was created — anything else is unconverged.
+export function shipOutcome(input: ShipOutcomeInput): ShipOutcome {
+  if (input.asked) return "needs-user";
+  return input.gatesPassed && input.prCreated ? "ready" : "unconverged";
 }
 
 export function judgeReviewDegradation(input: DegradationInput): DegradationJudgment {
