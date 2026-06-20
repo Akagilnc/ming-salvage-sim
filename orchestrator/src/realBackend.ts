@@ -48,6 +48,7 @@
 
 import { execFileSync } from "node:child_process";
 import {
+  appendFileSync,
   chmodSync,
   copyFileSync,
   existsSync,
@@ -70,6 +71,7 @@ import type {
   IssueMeta,
   IssueSnapshot,
   IssueSnapshotMeta,
+  PersistentLedgerEntry,
   ResumeState,
   StepId,
   StepOutput,
@@ -334,6 +336,31 @@ export function ensureExcluded(existing: string, pattern: string): string {
  */
 export function cutRefFor(base: string, fetchedOk: boolean): string {
   return fetchedOk ? `origin/${base}` : base;
+}
+
+/**
+ * Find the worktree path bound to `branch` in `git worktree list --porcelain`
+ * output. Porcelain blocks are blank-line-separated; the branch line is exactly
+ * `branch refs/heads/<ref>`.
+ *
+ * Match the branch line EXACTLY — a substring `includes` would let a query for
+ * `…issue-12` reuse the worktree of `…issue-123` (shared prefix), causing
+ * wrong-worktree reuse and state pollution (gemini R1, high). Pure (string
+ * parsing) so the matching is unit-tested without git.
+ */
+export function matchWorktreeForBranch(
+  porcelainOut: string,
+  branch: string,
+): string | undefined {
+  const wanted = `branch refs/heads/${branch}`;
+  for (const block of porcelainOut.split("\n\n")) {
+    const lines = block.split("\n");
+    if (lines.some((l) => l === wanted)) {
+      const wt = lines.find((l) => l.startsWith("worktree "));
+      if (wt) return wt.slice("worktree ".length).trim();
+    }
+  }
+  return undefined;
 }
 
 // ── auth-mount path construction (spike contract) ───────────────────────────
@@ -1187,17 +1214,11 @@ export class RealBackend implements Backend {
   private findExistingWorktree(branch: string): string | undefined {
     try {
       const out = this.sh("git", ["worktree", "list", "--porcelain"], this.opts.mainRepo);
-      const blocks = out.split("\n\n");
-      for (const block of blocks) {
-        if (block.includes(`branch refs/heads/${branch}`)) {
-          const line = block.split("\n").find((l) => l.startsWith("worktree "));
-          if (line) return line.slice("worktree ".length).trim();
-        }
-      }
+      return matchWorktreeForBranch(out, branch);
     } catch {
       // no worktrees / git error ⇒ none existing.
+      return undefined;
     }
-    return undefined;
   }
 
   // ── S1: write the snapshot into the worktree (clean-room) ──────────────────
@@ -1650,11 +1671,10 @@ export class RealBackend implements Backend {
 
   // ── #249: ledger persistence (sibling JSONL) ───────────────────────────────
   async writeLedger(
-    entry: import("./types.js").PersistentLedgerEntry,
+    entry: PersistentLedgerEntry,
     stateDir: string,
   ): Promise<void> {
-    const { appendFileSync, mkdirSync: mkd } = await import("node:fs");
-    mkd(stateDir, { recursive: true });
+    mkdirSync(stateDir, { recursive: true });
     appendFileSync(
       join(stateDir, "steps.jsonl"),
       JSON.stringify(entry) + "\n",
