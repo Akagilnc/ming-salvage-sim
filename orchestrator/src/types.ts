@@ -162,14 +162,27 @@ export interface LedgerEntry {
  * sibling state directory (outside the worktree so `git clean -fd` cannot remove it).
  */
 export interface PersistentLedgerEntry extends LedgerEntry {
-  /** Sandbox session identifier (resume truth). For runner-action steps: "runner". */
+  /**
+   * Sandbox session identifier (resume truth).
+   *
+   * TODO(#256): v0.1 placeholder — stores a run-level UUID shared by all
+   * steps in a single runOrchestrator invocation.  The real per-step sandbox
+   * session id (required for resumeSession) is available only when the real
+   * Backend's runStep returns it; wire in #256.
+   */
   readonly sessionId: string;
   /**
    * SHA-256 (hex) of the versioned promptFile for agent steps.
    * For runner-action steps (no promptFile): SHA-256 of the step id string.
    */
   readonly prompt_hash: string;
-  /** git commit SHA at worktree HEAD when this entry was written ("" before any commit). */
+  /**
+   * Worktree branch reference when this entry was recorded.
+   *
+   * TODO(#256): v0.1 placeholder — stores the branch name (e.g.
+   * "feat/244-s249-ledger") rather than a git commit SHA.  The real git SHA
+   * (from `git rev-parse HEAD`) requires the real Backend; wire in #256.
+   */
   readonly branchHEAD: string;
   /** ISO-8601 timestamp when this entry was persisted. */
   readonly ts: string;

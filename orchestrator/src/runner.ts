@@ -41,21 +41,27 @@ import type {
  * on the worktree cannot remove it.
  */
 function deriveStateDir(worktreePath: string, issueNumber: number): string {
+  // Trim any trailing path separators before computing the parent, so a path
+  // like "/foo/bar/" does not regress to the worktree itself ("/foo/bar") as
+  // parent — which would place `.ledger-N` INSIDE the worktree root and let
+  // `git clean -fd` remove it (breaking the core invariant).
+  const trimmed = worktreePath.replace(/[/\\]+$/, "");
   // Find the parent by stripping everything at and after the last separator.
   // Using a simple string split keeps this dependency-free (no `path` module).
   const lastSep = Math.max(
-    worktreePath.lastIndexOf("/"),
-    worktreePath.lastIndexOf("\\"),
+    trimmed.lastIndexOf("/"),
+    trimmed.lastIndexOf("\\"),
   );
-  const parent = lastSep >= 0 ? worktreePath.slice(0, lastSep) : ".";
+  const parent = lastSep >= 0 ? trimmed.slice(0, lastSep) : ".";
   return `${parent}/.ledger-${issueNumber}`;
 }
 
 /**
  * Stable SHA-256 hash for the ledger's `prompt_hash` field.
  *
- * For agent steps: hash of the promptFile name (v0.1 placeholder; a real
- * implementation would hash the resolved file content).
+ * TODO(#256): v0.1 placeholder — hashes the promptFile *name* (not its
+ * content).  Real anti-tampering requires hashing the resolved file content;
+ * wire in #256 when the real Backend reads the prompt file.
  * For runner-action steps (no promptFile): hash of the step id string.
  *
  * Uses the Web Crypto API (globalThis.crypto) available in Node ≥ 18 / ES2022,
@@ -75,8 +81,11 @@ async function hashPrompt(
 
 /**
  * Build a PersistentLedgerEntry from the in-flight step context.
- * `sessionId` is stable per `runOrchestrator` invocation (set once at run start).
- * `branchHEAD` is the worktree branch ref when known; empty string before S1.
+ *
+ * TODO(#256): `sessionId` is a run-level UUID placeholder (shared across all
+ * steps); the real per-step sandbox session id is wired in #256.
+ * TODO(#256): `branchHEAD` stores the branch name placeholder; the real git
+ * commit SHA (git rev-parse HEAD) is wired in #256.
  */
 function buildPersistentEntry(opts: {
   step: StepId;
@@ -123,8 +132,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
   // ── #249: per-run session id + sibling state dir ──────────────────────────
   // sessionId: a stable identifier for this orchestrator invocation.
-  // Using crypto.randomUUID() (Node ≥ 14.17) — no external deps.
-  const sessionId = crypto.randomUUID();
+  // Using globalThis.crypto.randomUUID() — consistent with the rest of this
+  // file's use of globalThis.crypto (e.g. globalThis.crypto.subtle.digest).
+  const sessionId = globalThis.crypto.randomUUID();
 
   // stateDir is resolved once the worktree is prepared (S1 sets it).
   // Until then, ledger entries for pre-S1 steps are buffered and flushed to
@@ -163,9 +173,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       return;
     }
 
-    // stateDir is now known: flush buffered entries first (in order), then write.
-    for (const pending of pendingEntries.splice(0)) {
-      await backend.writeLedger(pending, stateDir);
+    // stateDir is now known: drain the buffer one entry at a time, removing
+    // each item ONLY AFTER its write succeeds.  If writeLedger rejects, the
+    // remaining entries stay in the buffer — they are never silently dropped.
+    while (pendingEntries.length > 0) {
+      await backend.writeLedger(pendingEntries[0]!, stateDir);
+      pendingEntries.shift();
     }
     await backend.writeLedger(entry, stateDir);
   }
