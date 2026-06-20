@@ -18,15 +18,17 @@
  *   - any backend call throws → S8(error) + error package  [runner catch]
  *   - any agent output carries escalate → S8(escalate) [route() detects]
  * Slice #253: StepSpec contract — model/completionSignal/maxIter/soul/toolchain.
+ * Slice #248: S0 input gate — four-way accept condition (rfa ∧ Agent Brief ∧
+ *   no sub-issues ∧ blocked_by all closed); violations throw, stopping at S0.
  *
- * Remaining seams: #248 (real S0 gate), #254 (fix-loop back-edge).
- * Those layer onto these seams.
+ * Remaining seam: #254 (fix-loop back-edge) layers onto these.
  */
 
 import { route } from "./route.js";
 import type {
   ErrorPackage,
   Finding,
+  IssueMeta,
   IssueSnapshot,
   LedgerEntry,
   PersistentLedgerEntry,
@@ -308,14 +310,53 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
     switch (step) {
       case "S0": {
-        // S0 input_gate — runner action. #247: fetch lightweight metadata; the
-        // real gate validation (rfa / Agent Brief / sub-issues / blocked_by)
-        // is #248. Here we read it (proving the seam) and pass through.
+        // S0 input_gate — runner action. Read lightweight metadata (the backend
+        // `gh` call is wrapped so a transport failure becomes an error handoff,
+        // #252), then enforce the four-way accept condition (ADR 0018 / #248):
+        //   (a) ready-for-agent label
+        //   (b) has ## Agent Brief comment
+        //   (c) no sub-issues (leaf slice, not a parent/epic)
+        //   (d) all blocked_by dependencies are closed
+        // A gate violation throws immediately — the runner stops here, no
+        // worktree is prepared, no agent step is dispatched. Gate throws are
+        // intentionally NOT converted to an error handoff (they are a caller
+        // input fault, not a pipeline error); only the backend fetch is.
+        let meta: IssueMeta;
         try {
-          await backend.fetchIssueMeta(issueNumber);
+          meta = await backend.fetchIssueMeta(issueNumber);
         } catch (err) {
           return errorHandoff("S0", err, ledger, worktree);
         }
+
+        if (!meta.isReadyForAgent) {
+          throw new Error(
+            `S0 input gate: issue #${issueNumber} is not labelled ready-for-agent. ` +
+              `Triage the issue and apply the label before running the orchestrator.`,
+          );
+        }
+
+        if (!meta.hasAgentBrief) {
+          throw new Error(
+            `S0 input gate: issue #${issueNumber} has no "## Agent Brief" section. ` +
+              `Add an Agent Brief (the authoritative implementation contract) before running.`,
+          );
+        }
+
+        if (meta.hasSubIssues) {
+          throw new Error(
+            `S0 input gate: issue #${issueNumber} is a parent issue (it has sub-issues). ` +
+              `Feed a leaf slice issue, not a parent/epic.`,
+          );
+        }
+
+        if (meta.openBlockedBy.length > 0) {
+          const blockers = meta.openBlockedBy.map((n) => `#${n}`).join(", ");
+          throw new Error(
+            `S0 input gate: issue #${issueNumber} is blocked by upstream issues that are still open: ${blockers}. ` +
+              `Merge the upstream changes before running.`,
+          );
+        }
+
         break;
       }
 
