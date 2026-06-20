@@ -43,6 +43,7 @@ import {
   isValidStepOutput,
 } from "./validate.js";
 import type {
+  Backend,
   ErrorPackage,
   Finding,
   HandoffStatus,
@@ -55,9 +56,40 @@ import type {
   RunResult,
   StepId,
   StepOutput,
+  StepResult,
   StepSpec,
   WorktreeHandle,
 } from "./types.js";
+
+// ─── #256 seam-extension normalisation ───────────────────────────────────────
+
+/**
+ * Normalise an agent-step return into `{ output, sessionId }`.
+ *
+ * #256 widened {@link Backend.runStep} / {@link Backend.resumeSession} from
+ * `StepOutput` to `StepOutput | StepResult` (the seam extension). The two shapes
+ * are distinguished purely by the `kind` discriminant: a {@link StepOutput} (a
+ * CoderOutput / ReviewerOutput) always carries `kind:'coder'|'reviewer'`; a
+ * {@link StepResult} wraps the output under `.output` and has NO top-level
+ * `kind`. So:
+ *   - a value with `kind` → a bare StepOutput (the zero-container fake path) →
+ *     `sessionId: undefined` (the ledger falls back to the run-level UUID);
+ *   - a value without `kind` → a StepResult (the real Backend) → carries the
+ *     real per-step sandbox `sessionId`.
+ *
+ * Keeping this normalisation OUTSIDE the route()/error control flow is what makes
+ * the runner identical for fake and real Backends (#256 "控制流零改动").
+ */
+function normalizeStepResult(
+  ret: StepOutput | StepResult,
+): { output: StepOutput; sessionId?: string } {
+  // A StepResult has no top-level `kind`; a StepOutput always does.
+  if (ret != null && typeof ret === "object" && !("kind" in ret)) {
+    const r = ret as StepResult;
+    return { output: r.output, sessionId: r.sessionId };
+  }
+  return { output: ret as StepOutput, sessionId: undefined };
+}
 
 // ─── ledger helpers ────────────────────────────────────────────────────────
 
@@ -83,22 +115,8 @@ function deriveStateDir(worktreePath: string, issueNumber: number): string {
   return `${parent}/.ledger-${issueNumber}`;
 }
 
-/**
- * Stable SHA-256 hash for the ledger's `prompt_hash` field.
- *
- * TODO(#256): v0.1 placeholder — hashes the promptFile *name* (not its
- * content).  Real anti-tampering requires hashing the resolved file content;
- * wire in #256 when the real Backend reads the prompt file.
- * For runner-action steps (no promptFile): hash of the step id string.
- *
- * Uses the Web Crypto API (globalThis.crypto) available in Node ≥ 18 / ES2022,
- * so no `@types/node` dependency is needed.
- */
-async function hashPrompt(
-  promptFile: string | undefined,
-  stepId: StepId,
-): Promise<string> {
-  const input = promptFile ?? stepId;
+/** SHA-256 hex of an arbitrary string, via Web Crypto (no @types/node dep). */
+async function sha256Hex(input: string): Promise<string> {
   const encoded = new TextEncoder().encode(input);
   const buffer = await globalThis.crypto.subtle.digest("SHA-256", encoded);
   return Array.from(new Uint8Array(buffer))
@@ -107,12 +125,53 @@ async function hashPrompt(
 }
 
 /**
+ * Stable SHA-256 hash for the ledger's `prompt_hash` field.
+ *
+ * #256 (DONE): for an agent step the runner asks the Backend to resolve the
+ * promptFile to its raw CONTENT (`backend.readPromptContent`) and hashes the
+ * CONTENT — the real anti-tampering audit. The hash is prefixed `content:` so a
+ * content hash is never confused with the legacy name hash.
+ *
+ * Fallbacks (keep the v0.1 behaviour so the zero-container fake path is
+ * unchanged): when there is no promptFile (runner-action step), no
+ * `readPromptContent` on the Backend, or it returns `undefined` (prompt not
+ * resolvable), hash the promptFile NAME (or the step id) prefixed `name:`.
+ *
+ * Uses the Web Crypto API (globalThis.crypto) available in Node ≥ 18 / ES2022,
+ * so no `@types/node` dependency is needed.
+ */
+async function hashPrompt(
+  promptFile: string | undefined,
+  stepId: StepId,
+  backend: Pick<Backend, "readPromptContent">,
+): Promise<string> {
+  if (promptFile !== undefined && backend.readPromptContent !== undefined) {
+    let content: string | undefined;
+    try {
+      content = await backend.readPromptContent(promptFile);
+    } catch {
+      // A prompt-resolution fault must NOT abort ledgering — fall back to the
+      // name hash so the step is still recorded (the resume truth survives).
+      content = undefined;
+    }
+    if (content !== undefined) {
+      return `content:${await sha256Hex(content)}`;
+    }
+  }
+  // Fallback: hash the promptFile NAME (agent step) or the step id
+  // (runner-action step), as in v0.1.
+  return `name:${await sha256Hex(promptFile ?? stepId)}`;
+}
+
+/**
  * Build a PersistentLedgerEntry from the in-flight step context.
  *
- * TODO(#256): `sessionId` is a run-level UUID placeholder (shared across all
- * steps); the real per-step sandbox session id is wired in #256.
- * TODO(#256): `branchHEAD` stores the branch name placeholder; the real git
- * commit SHA (git rev-parse HEAD) is wired in #256.
+ * #256 (DONE): the caller (`emitLedger`) now supplies the TRUE values it
+ * receives from the seam extension / optional Backend helpers — `sessionId` is
+ * the real per-step sandbox session id for agent steps (run-level UUID fallback
+ * otherwise), `branchHEAD` the real `git rev-parse HEAD` SHA (branch-name
+ * fallback otherwise), `prompt_hash` the content hash (name-hash fallback). This
+ * builder just assembles the entry; value resolution lives in `emitLedger`.
  */
 function buildPersistentEntry(opts: {
   step: StepId;
@@ -608,7 +667,35 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // sessionId: a stable identifier for this orchestrator invocation.
   // Using globalThis.crypto.randomUUID() — consistent with the rest of this
   // file's use of globalThis.crypto (e.g. globalThis.crypto.subtle.digest).
+  //
+  // #256: this is the run-level FALLBACK id. Agent steps record their REAL
+  // per-step sandbox session id (surfaced by the seam extension, see
+  // normalizeStepResult); runner-action steps (S0/S1/S4/S7/S8) and the
+  // zero-container fake path — which carry no per-step sandbox session — fall
+  // back to this run-level id.
   const sessionId = globalThis.crypto.randomUUID();
+
+  /**
+   * Resolve the ledger's `branchHEAD` value (#256).
+   *
+   * Real Backend: the worktree HEAD commit SHA (`git rev-parse HEAD`) via the
+   * optional `backend.worktreeHead`. Fallback (no worktree yet / no
+   * `worktreeHead` on the Backend / it returns undefined / it throws): the
+   * branch NAME, as in v0.1 — a ledger I/O helper must never abort the run on a
+   * git read fault.
+   */
+  async function resolveBranchHEAD(): Promise<string> {
+    if (worktree === undefined) return "";
+    if (backend.worktreeHead !== undefined) {
+      try {
+        const sha = await backend.worktreeHead(worktree);
+        if (sha !== undefined && sha.length > 0) return sha;
+      } catch {
+        // fall through to the branch-name fallback
+      }
+    }
+    return worktree.branch;
+  }
 
   // stateDir is resolved once the worktree is prepared (S1 sets it).
   // Until then, ledger entries for pre-S1 steps are buffered and flushed to
@@ -631,14 +718,21 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     output: StepOutput | undefined,
     promptFile: string | undefined,
     handoffStatus?: HandoffStatus,
+    /**
+     * #256: the REAL per-step sandbox session id for an agent step (from the
+     * seam extension). When undefined, the run-level UUID fallback is recorded
+     * (runner-action steps, or a fake Backend that returns a bare StepOutput).
+     */
+    stepSessionId?: string,
   ): Promise<void> {
-    const ph = await hashPrompt(promptFile, s);
+    const ph = await hashPrompt(promptFile, s, backend);
+    const branchHEAD = await resolveBranchHEAD();
     const entry = buildPersistentEntry({
       step: s,
       output,
-      sessionId,
+      sessionId: stepSessionId ?? sessionId,
       prompt_hash: ph,
-      branchHEAD: worktree?.branch ?? "",
+      branchHEAD,
       ts: new Date().toISOString(),
       handoffStatus,
     });
@@ -975,6 +1069,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     let output: StepOutput | undefined;
     // promptFile for the current step (agent steps only; undefined for runner actions).
     let promptFile: string | undefined;
+    // #256: the REAL per-step sandbox session id, captured from the seam
+    // extension (runStep/resumeSession → StepResult). Undefined for runner
+    // actions and for a fake Backend that returns a bare StepOutput → the ledger
+    // records the run-level UUID fallback for those.
+    let stepSessionId: string | undefined;
 
     switch (step) {
       case "S0": {
@@ -1084,17 +1183,20 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // rather than a fresh run(). Crash-resume's NEXT step is brand-new work
         // → normal runStep. resumeFor is consumed once, then cleared.
         try {
+          // #256: normalise the seam return (StepOutput | StepResult). The real
+          // Backend yields a StepResult carrying the real per-step sandbox
+          // session id; a fake yields a bare StepOutput (sessionId undefined).
+          let ret: StepOutput | StepResult;
           if (resumeFor !== undefined && resumeFor.step === step) {
             const sid = resumeFor.sessionId;
             resumeFor = undefined;
-            output = await backend.resumeSession(
-              STEP_SPECS[step],
-              worktree,
-              sid,
-            );
+            ret = await backend.resumeSession(STEP_SPECS[step], worktree, sid);
           } else {
-            output = await backend.runStep(STEP_SPECS[step], worktree);
+            ret = await backend.runStep(STEP_SPECS[step], worktree);
           }
+          const normalized = normalizeStepResult(ret);
+          output = normalized.output;
+          stepSessionId = normalized.sessionId;
         } catch (err) {
           return await errorTermination(step, err);
         }
@@ -1218,7 +1320,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // runOrchestrator (PRD route table: any backend call throwing → S8(error)).
     // The step is already recorded in-memory above, so don't double-record it.
     try {
-      await emitLedger(step, output, promptFile);
+      // #256: pass the real per-step sandbox session id (captured from the seam
+      // extension) so the ledger records the true id resumeSession will resume.
+      await emitLedger(step, output, promptFile, undefined, stepSessionId);
     } catch (err) {
       // integ-cmr base r2 (D): the step is already in the in-memory ledger
       // (pushed above), so skip the in-memory push — but STILL best-effort

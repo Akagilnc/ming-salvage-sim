@@ -160,6 +160,40 @@ export interface Escalation {
 /** The structured output of any agent step. */
 export type StepOutput = CoderOutput | ReviewerOutput;
 
+/**
+ * Result of dispatching one agent step — the #256 seam extension.
+ *
+ * v0.1 (#247–#255) had {@link Backend.runStep} / {@link Backend.resumeSession}
+ * return only the bare {@link StepOutput}, with the ledger's per-step `sessionId`
+ * carrying a single run-level UUID placeholder shared by every step (see
+ * {@link PersistentLedgerEntry}). #256 (types.ts:361, authorised seam extension)
+ * lets the Backend ALSO surface the real per-step sandbox session id, so the
+ * ledger records the true id that {@link Backend.resumeSession} resumes.
+ *
+ * BACKWARD-COMPATIBLE by construction: the seam return type is widened to
+ * `StepOutput | StepResult`, NOT replaced. A `StepResult` is distinguished from a
+ * `StepOutput` purely by the absence of the `kind` discriminant (a `StepOutput`
+ * always carries `kind:'coder'|'reviewer'`; a `StepResult` wraps the output under
+ * `.output` and has no top-level `kind`). The fake Backends in the step
+ * control-flow tests keep returning a bare `StepOutput` UNCHANGED — the runner
+ * normalises both shapes (real Backend yields `StepResult` with the real id; a
+ * bare `StepOutput` yields `sessionId: undefined` → run-level UUID fallback). The
+ * runner control flow is identical for both, satisfying #256's "真假 Backend 同
+ * 签名、控制流零改动" acceptance criterion.
+ */
+export interface StepResult {
+  /** The structured agent output `route()` consumes. */
+  readonly output: StepOutput;
+  /**
+   * The real per-step sandbox session id (Sandcastle
+   * `RunResult.iterations[].sessionId`), or `undefined` when the agent/provider
+   * did not surface one (e.g. a non-Claude provider, or capture disabled). The
+   * runner records this as the ledger entry's `sessionId` (resume truth);
+   * `undefined` falls back to the run-level UUID.
+   */
+  readonly sessionId?: string;
+}
+
 // ──────────────────────────── snapshots ────────────────────────────
 
 /**
@@ -207,18 +241,21 @@ export interface LedgerEntry {
  * Full persisted ledger entry (#249). Extends {@link LedgerEntry} with the
  * audit and resume fields required by ADR 0018 §3.
  *
- * ⚠️ v0.1 PLACEHOLDERS (real values + seam extension = #256). Three of these
- * fields carry placeholder values in v0.1 — do NOT rely on them as their
- * eventual real meaning yet:
- *   - `sessionId`   — v0.1: a run-level UUID shared by ALL steps in one run.
- *                     Real (#256): the per-step sandbox session id from
- *                     `resumeSession` — requires the seam extension that has
- *                     `runStep` RETURN the real session id.
- *   - `prompt_hash` — v0.1: SHA-256 of the promptFile NAME (or step id for
- *                     runner-action steps). Real (#256): SHA-256 of the
- *                     resolved promptFile CONTENT (real anti-tampering audit).
- *   - `branchHEAD`  — v0.1: the branch NAME. Real (#256): the git commit SHA
- *                     (`git rev-parse HEAD`) at the worktree HEAD.
+ * #256 TRUTHIFIED these three formerly-placeholder fields. The REAL Backend now
+ * supplies real values; the FAKE Backends in the step control-flow tests still
+ * pass the v0.1 placeholders (those tests are zero-container and never exercise
+ * the real Backend), so both meanings co-exist depending on which Backend ran:
+ *   - `sessionId`   — Real (#256): the per-step sandbox session id surfaced by
+ *                     the seam extension (runStep/resumeSession return a
+ *                     {@link StepResult}). Fake/runner-action steps: a run-level
+ *                     UUID fallback (no real per-step session).
+ *   - `prompt_hash` — Real (#256): SHA-256 of the resolved promptFile CONTENT
+ *                     (real anti-tampering audit). When the content is
+ *                     unavailable (fake path / runner-action step) the runner
+ *                     falls back to hashing the promptFile NAME (or step id).
+ *   - `branchHEAD`  — Real (#256): the git commit SHA (`git rev-parse HEAD`) at
+ *                     the worktree HEAD, read via the Backend. Fallback (no
+ *                     Backend SHA available): the branch NAME, as in v0.1.
  *   - `ts`          — ISO-8601 timestamp when this entry was written (real).
  *
  * The runner hands this to {@link Backend.writeLedger}, which persists it to the
@@ -228,28 +265,30 @@ export interface PersistentLedgerEntry extends LedgerEntry {
   /**
    * Sandbox session identifier (resume truth).
    *
-   * TODO(#256): v0.1 PLACEHOLDER — stores a run-level UUID shared by all
-   * steps in a single runOrchestrator invocation. This is NOT a per-step
-   * sandbox session id. The real per-step session id (required for
-   * `resumeSession`) needs the seam extension where `runStep` RETURNS the real
-   * session id; wire in #256.
+   * #256 (DONE): the real Backend's seam extension surfaces the per-step sandbox
+   * session id (via {@link StepResult}); the runner records it here so
+   * {@link Backend.resumeSession} resumes the exact session that produced the
+   * step. Runner-action steps (S0/S1/S4/S7/S8) and the zero-container fake path
+   * fall back to a run-level UUID (no per-step sandbox session exists for them).
    */
   readonly sessionId: string;
   /**
    * Prompt hash for the anti-tampering audit.
    *
-   * TODO(#256): v0.1 PLACEHOLDER — SHA-256 of the promptFile NAME for agent
-   * steps (or of the step id string for runner-action steps), NOT of the file
-   * CONTENT. The real content hash (true anti-tampering) requires the real
-   * Backend reading the resolved promptFile; wire in #256.
+   * #256 (DONE): for agent steps the real Backend reads the resolved promptFile
+   * and the runner hashes its CONTENT (real anti-tampering). When the content is
+   * unavailable (the zero-container fake path, or a runner-action step with no
+   * promptFile) the runner falls back to SHA-256 of the promptFile NAME (or the
+   * step id string), as in v0.1.
    */
   readonly prompt_hash: string;
   /**
    * Worktree branch reference when this entry was recorded.
    *
-   * TODO(#256): v0.1 PLACEHOLDER — stores the branch NAME (e.g.
-   * "feat/244-s249-ledger"), NOT a git commit SHA. The real git SHA (from
-   * `git rev-parse HEAD`) requires the real Backend; wire in #256.
+   * #256 (DONE): the real Backend exposes the worktree HEAD SHA
+   * (`git rev-parse HEAD`); the runner records that real commit SHA here. When
+   * no Backend SHA is available (the zero-container fake path) the runner falls
+   * back to the branch NAME (e.g. "feat/244-s249-ledger"), as in v0.1.
    */
   readonly branchHEAD: string;
   /** ISO-8601 timestamp when this entry was persisted. */
@@ -338,12 +377,17 @@ export interface Backend {
    *
    * v0.1 fake: records the call and returns a default output. The real
    * Sandcastle `resumeSession` wiring (incl. dead-session fallback) is #256.
+   *
+   * #256 seam extension: may return a {@link StepResult} carrying the real
+   * per-step sandbox session id alongside the output (so the resumed session's
+   * id is recorded in the ledger). A bare {@link StepOutput} return is still
+   * accepted (no real id → run-level UUID fallback); the runner normalises both.
    */
   resumeSession(
     spec: StepSpec,
     worktree: WorktreeHandle,
     sessionId: string,
-  ): Promise<StepOutput>;
+  ): Promise<StepOutput | StepResult>;
   /** S0: lightweight metadata for the input gate (host-side `gh`). */
   fetchIssueMeta(issueNumber: number): Promise<IssueMeta>;
   /** S1: full snapshot (body + comments + Agent Brief) for the coder. */
@@ -358,14 +402,45 @@ export interface Backend {
   /**
    * S2/S3/S5/S6: one `sandbox.run()` for an agent step.
    *
-   * v0.1 returns only the structured {@link StepOutput}. The real per-step
-   * sandbox session id (needed for `resumeSession` and the ledger's real
-   * `sessionId`) is NOT carried here yet — extending this return to include
-   * the session id is the #256 seam extension (see PersistentLedgerEntry).
+   * #256 seam extension (DONE): the return is widened from `StepOutput` to
+   * `StepOutput | StepResult`. The real Backend returns a {@link StepResult}
+   * carrying the real per-step sandbox session id
+   * (`RunResult.iterations.at(-1).sessionId`) alongside the structured output,
+   * so the ledger records the true per-step session id (`resumeSession` truth)
+   * instead of a shared run-level UUID. A bare {@link StepOutput} is still a
+   * valid return (the fake Backends use it unchanged) → the runner falls back to
+   * the run-level UUID. The runner normalises both shapes, so its control flow is
+   * identical for fake and real Backends (#256 "控制流零改动").
    */
-  runStep(spec: StepSpec, worktree: WorktreeHandle): Promise<StepOutput>;
+  runStep(
+    spec: StepSpec,
+    worktree: WorktreeHandle,
+  ): Promise<StepOutput | StepResult>;
   /** S7: push the resident slice branch (no PR, no merge). */
   push(worktree: WorktreeHandle): Promise<void>;
+  /**
+   * #256 (optional, ledger true-value): resolve a step's promptFile to its raw
+   * CONTENT so the runner can hash the content (real anti-tampering audit)
+   * instead of the file name. Returns `undefined` when the prompt cannot be
+   * resolved (the runner then falls back to hashing the name).
+   *
+   * OPTIONAL so the zero-container fake Backends need no change: when absent the
+   * runner keeps the v0.1 name-hash. The real Backend implements it by reading
+   * the baked-in prompt file from disk.
+   */
+  readPromptContent?(promptFile: string): Promise<string | undefined>;
+  /**
+   * #256 (optional, ledger true-value): the worktree HEAD commit SHA
+   * (`git rev-parse HEAD`) so the ledger's `branchHEAD` records the real SHA
+   * instead of the branch name. Returns `undefined` when unavailable (the runner
+   * then falls back to the branch name).
+   *
+   * OPTIONAL so the zero-container fake Backends need no change: when absent the
+   * runner keeps the v0.1 branch-name value. codex#2 consistency check
+   * (ledger.branchHEAD vs the live worktree HEAD) is built on this in the real
+   * Backend.
+   */
+  worktreeHead?(worktree: WorktreeHandle): Promise<string | undefined>;
   /**
    * Write one persisted ledger entry to the sibling state directory (#249).
    *
