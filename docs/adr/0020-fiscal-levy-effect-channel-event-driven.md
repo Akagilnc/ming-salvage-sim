@@ -19,7 +19,7 @@ Status: Proposed（2026-06-20 grill 结晶；2026-06-21 设计 cmr R1 折叠引�
 
 3. **（D4b）军费危机触发门 = 天定。** 军费窟窿如期出现（根因不在 #259 范围），皇帝杠杆是「加这道饷 vs 另寻财源/硬扛民变」；**破局不在让战争消失**（越界战略线），在上行软判（追赃/挪借/招抚/清丈，#260/软判）。
 
-4. **（D3）升降通吃 + ADR 0014 事件链门（读事件账，非活财政软读）。** 既生成开征/升率，也生成议停。**议停剿饷的触发门 = `剿饷开征.结局 == 已准 ∧ ¬剿饷议停已发`**——纯 ADR 0014 事件账寻址（`event.<id>.terminal_state/结局`，cmr-β 化解：不再读 `settle.p` 里的活态）。剿饷开征未达已准（未触发/已驳）→ 议停按 ADR 0014 级联**作废**、不空弹。准奏议停 → 剿饷议停.结局 = 已停 → 在征集去掉剿饷 → 效果回退其分量、起运回落。
+4. **（D3）升降通吃 + ADR 0014 事件链门（读事件账，非活财政软读）。** 既生成开征/升率，也生成议停。**议停剿饷的触发门 = `剿饷开征.结局 == 已准`**（+ 天定时窗）——纯 ADR 0014 事件账寻址（`event.剿饷开征.terminal_reason`）。**门里不加 `¬剿饷议停已发` 自指**（线上 codex 实证：`event.<id>.*` gate-key 被 `_event_dependency_ids` 当依赖、自指成环 → `_validate_event_dependency_graph_acyclic` 抛 `SettlementAbort`）；「至多一次/不重弹」靠 **ADR 0014 内建终态 skip**、不靠 trigger_gate。剿饷开征未达已准（未触发/已驳）→ 议停按 ADR 0014 级联**作废**、不空弹。准奏议停 → 剿饷议停.结局 = 已停 → 在征集去掉剿饷（在征谓词在**效果侧**读 `剿饷议停.结局`，非 trigger_gate）→ 效果回退其分量、起运回落。
 
 5. **（D2）起运 = 通道基线（正赋基线 + Σ在征三饷），不是最终定额的硬下界。** 通道把 `settle.p` 起运定额设为**通道基线 = 正赋起运基线 + Σ(在征三饷分量)**（正赋基线 seed 定、由月初 applier 读 `settle._meta`/seed——**非 `settle_tick` 读**，cmr-P2 化解）。**这是通道自己的基线贡献，不是最终起运定额的硬下界**：玩家的缓起运/截留（#260/软判破局）在基线之上**另施偏移、可下压**——能否压穿「正赋解京」是 **#260/ADR 0011 的产品判断、scope 出 #259**（cmr-γ 化解：基线与玩家偏移不在同一层，无矛盾）。**通道不变式 = 「通道基线 == 正赋基线 + Σ在征三饷」**（守三饷全解 + 通道自身不抹正赋基线）。不拆三饷-正赋为对外字段（#261 hub 才消费），内部留正赋基线。
 
@@ -51,14 +51,14 @@ Status: Proposed（2026-06-20 grill 结晶；2026-06-21 设计 cmr R1 折叠引�
 
 R3 三腿在「事件结局即决策」架构已认可的前提下，点出几处接口/字段须在**设计级**钉死（否则 /tdd 实现期撞洞）：
 
-1. **结局承载 + 封闭标签集（δ/ε）**：事件结局落 ADR 0014 `event.<id>.terminal_reason`（「结局」是其语义名）；**声明封闭结局标签集**——开征/升率事件 `{已准, 已驳}`、议停事件 `{已停, 仍征}`（走 ADR 0014 结局标签机制 + extractor 白名单校验）。**议停门**读 `event.剿饷议停.triggered`（¬已发 = 未触发，只管不重复弹）；**在征**读 `terminal_reason`（结局值）——两谓词不同源、不混用。
+1. **结局承载 + 封闭标签集（δ/ε）**：事件结局落 ADR 0014 `event.<id>.terminal_reason`（「结局」是其语义名）；**声明封闭结局标签集**——开征/升率事件 `{已准, 已驳}`、议停事件 `{已停, 仍征}`（走 ADR 0014 结局标签机制 + extractor 白名单校验）。**议停门**只读 `event.剿饷开征.terminal_reason==已准`（+天定时窗）；**不重弹靠 ADR 0014 内建终态 skip、门里不自指 `event.剿饷议停.*`**（自指成环 → SettlementAbort，线上 codex 实证，见决定 4）；**在征**（**效果侧、非 trigger_gate**）读 `剿饷议停.terminal_reason≠已停`——门与在征两谓词不同源、不混用。
 
-2. **在征谓词（显式 per-饷，η）**：辽饷默认在征（`辽饷升.结局==已准` 则升至一分二厘、否则九厘）；练饷在征 iff `练饷开征.结局==已准`；剿饷在征 iff `剿饷开征.结局==已准 ∧ 剿饷议停.结局≠已停`。**无议停事件 / 无结局记录 ⇒ 第二合取项恒真**（vacuously not-stopped）。
+2. **在征谓词（显式 per-饷，η）**：辽饷默认在征（`辽饷升.结局==已准` 则升至一分二厘、否则九厘）；练饷在征 iff `练饷开征.结局==已准`；剿饷在征 iff `剿饷开征.结局==已准 ∧ 剿饷议停.结局≠已停`。**无议停事件 / DB 查无该事件记录 ⇒ 第二合取项恒真**（vacuously not-stopped）——实现须**防御性**：查不到记录时安全返回「未停」默认、**不 raise**（线上 gemini：防 KeyError/NoResultFound 崩引擎）。
 
 3. **shadow stub 默认 + 时序（ζ）**：stub 在天定门触发的**同 tick 原子**置结局（不留 triggered-but-outcomeless 的中间 tick → 那一 tick 会误判不在征）；史实默认——开征/升率 → 已准、剿饷议停 → 已停（驳则仍征）。#260 落地换真圣旨置结局、保同语义 + 同时序。
 
-4. **起运 baseline / offset 分键（δ / cmr-γ 落实）**：**正赋起运基线**存独立键（如 `settle._meta.正赋起运基线`，seed 值 = `seed 起运定额 − 开局辽饷`，确切键名 /tdd）；通道写 `settle.p.起运定额 = 正赋起运基线 + Σ在征三饷`；**玩家缓起运/截留（#260）是另一个量（offset），最终解送 = 通道基线 + #260 偏移、组合在 #260**——#259 只写通道基线、不碰 offset，#260 接口 = 读基线 + 施偏移。
+4. **起运 baseline / offset 分键（δ / cmr-γ 落实）**：**正赋起运基线**存独立键（如 `settle._meta.正赋起运基线`，seed 值 = `max(0, seed 起运定额 − 开局辽饷)`，确切键名 /tdd）——**`max(0,·)` 必须**（线上 gemini：高存留/低起运省 `seed 起运定额` 可能 < 开局辽饷 → 负基线 → 负起运定额 → 撞 `settle_tick` 非负校验崩）。通道写 `settle.p.起运定额 = 正赋起运基线 + Σ在征三饷`（基线已 ≥0 → 该值 ≥ Σ三饷：三饷全解 + 非负双保）；**玩家缓起运/截留（#260）是另一个量（offset），最终解送 = 通道基线 + #260 偏移、组合在 #260**——#259 只写通道基线、不碰 offset，#260 接口 = 读基线 + 施偏移。
 
 5. **applier 写/保集（θ）**：月初 applier 的 set-to-target **仅 UPDATE `{三饷应征, 起运定额}`**，**保留** `{正赋应征/正赋亩额, Due, 火耗率, 逋赋率}` 不动（火耗应派在 `settle_tick` 内派生、不存 `p`）。
 
-6. **pre_settle 顺序 = 饷率先于 fiscal tick、同月生效不滞后（ι，cmr R4）**：`SETTLEMENT_FLOW.md` 现序是 `apply_fixed_period_flows`（内含 `settle_province_tick` 推进财政基座）→ `apply_event_terminal_states`（写事件结局）→ `auto_trigger_seed_issues`，即**事件结局在 fiscal tick 之后才写**，本月 tick 读不到 → 饷率效果滞后一月。**#259 硬序要求**：饷率事件结局置定（stub/#260）+ 读结局的 set-to-target applier **必须先于** `settle_province_tick`（同 pre_settle tick），让本月旨意当月生效、不 off-by-one。这动 `SETTLEMENT_FLOW.md` 的 pre_settle 编排（把「饷率结局 + applier」插到 fiscal 基座推进之前），确切插点留 #259 实现期落，但本 ADR 钉死「饷率先于 fiscal tick、同月生效」不变式。
+6. **pre_settle 顺序 = 饷率先于 fiscal tick、同月生效不滞后（ι，cmr R4）**：`SETTLEMENT_FLOW.md` 现序是 `apply_fixed_period_flows`（内含 `settle_province_tick` 推进财政基座）→ `apply_event_terminal_states`（写事件结局）→ `auto_trigger_seed_issues`，即**事件结局在 fiscal tick 之后才写**，本月 tick 读不到 → 饷率效果滞后一月。**#259 硬序要求**：饷率事件结局置定（stub/#260）+ 读结局的 set-to-target applier **必须先于** `settle_province_tick`（同 pre_settle tick），让本月旨意当月生效、不 off-by-one。**只前移饷率特化事件的结局置定 + applier、不整体前移 `apply_event_terminal_states`**（线上 gemini/CodeRabbit：整体前移会让其它依赖当月财政结算的非饷率历史事件读到上月旧数据；故饷率走特化前置、其余事件终态 pass 留原位）。这动 `SETTLEMENT_FLOW.md` 的 pre_settle 编排，确切插点留 #259 实现期落，但本 ADR 钉死「饷率先于 fiscal tick、同月生效、且不扰其它事件」不变式。
