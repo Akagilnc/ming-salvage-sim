@@ -24,6 +24,11 @@
  *   pass, so the loop iterates with no runner change. Co-exists with the
  *   escalate stop (#251) and error edges (#252): S5 0-commit → S8(error),
  *   any S5/S6 escalate → S8(escalate).
+ * cmr S254: removed the round-counting MAX_STEPS cap (it limited fix rounds to
+ *   ~8, violating US#18 "不因数到某个轮数就停") and replaced it with a
+ *   no-progress stuck guard: the loop runs unbounded while it makes progress
+ *   (new commit OR changed findings each round) and bails cleanly to
+ *   S8(status=error) only after K consecutive no-progress rounds.
  */
 
 import { route } from "./route.js";
@@ -241,6 +246,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // Collected at S4: reviewer findings with action:'defer' (PRD #244 US#25).
   // Surfaced in RunResult.deferredFindings so the caller can act on them.
   let deferredFindings: Finding[] = [];
+  // commitsAdded reported by the most recent S5 fix step — half of the
+  // no-progress signal evaluated when the matching S6 re-review completes.
+  let lastFixCommits = 0;
 
   // ── #249: per-run session id + sibling state dir ──────────────────────────
   // sessionId: a stable identifier for this orchestrator invocation.
@@ -299,13 +307,33 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // The runner drives the sequence; the agent never picks the next step.
   let step: StepId = "S0";
 
-  // Defensive runaway guard against a route() bug spinning the step machine
-  // forever (happy path visits 7 steps; the cap is generous). This is NOT the
-  // convergence safety-valve / round-cap — that is findings-driven and
-  // deferred (PRD #244 G2, US#18/19). Do not repurpose it for fix-loop limits.
-  const MAX_STEPS = 32;
+  // ── No-progress stuck guard (cmr S254, US#18) ──────────────────────────────
+  // The runner must NEVER stop because a round counter hit a number — US#18:
+  // "我不想它因为数到某个轮数就停，这样它不会还在进展时就放弃" — and the PRD
+  // defers any round-cap (轮数上限策略 deferred). So this is NOT a round/step
+  // cap: it is a *no-progress* detector that fires only when the fix loop is
+  // genuinely stuck (a route bug or a fix that changes nothing the reviewer
+  // sees). As long as the loop makes progress every round, it runs unbounded —
+  // a converging review of 20, 50, 100+ rounds is never truncated.
+  //
+  // A "fix round" = one S5(fix)→S6(re-review) pass. PROGRESS in a round means:
+  //   • the S5 coder step added a new commit (commitsAdded > 0), OR
+  //   • the S6 reviewer findings changed vs the previous round's findings.
+  // Progress resets the streak; only K *consecutive* no-progress rounds bail.
+  // K is a small constant (a stuck loop dies fast — this逮 real deadlock/route
+  // bugs, not "many rounds"). On bail: a clean S8(status=error) + errorPackage
+  // (reason names the stuck guard) — never an uncaught throw / promise reject.
+  const NO_PROGRESS_LIMIT = 3;
+  let noProgressStreak = 0;
+  // Findings of the previous fix round's re-review, serialised for comparison.
+  // undefined until the first re-review (S6) completes.
+  let prevFindingsKey: string | undefined;
 
-  for (let i = 0; i < MAX_STEPS; i++) {
+  // The step machine has no fixed bound: route() always terminates the run via
+  // a handoff (success/escalate/error), and the no-progress guard above breaks
+  // any genuine stuck loop. A `while (true)` makes the absence of a round cap
+  // explicit (US#18) — there is no "数到 N 就停" anywhere.
+  for (;;) {
     let output: StepOutput | undefined;
     // promptFile for the current step (agent steps only; undefined for runner actions).
     let promptFile: string | undefined;
@@ -405,6 +433,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           return errorHandoff(step, err, ledger, worktree);
         }
         lastOutput = output;
+        // Capture the fix step's commit count: it is one half of the
+        // no-progress signal, paired with the S6 re-review findings below.
+        if (step === "S5" && output.kind === "coder") {
+          lastFixCommits = output.commitsAdded;
+        }
         break;
       }
 
@@ -458,6 +491,51 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // The runner — not the agent — decides the next step.
     const decision = route({ from: step, output: lastOutput });
 
+    // ── No-progress stuck guard (cmr S254, US#18) ────────────────────────────
+    // A fix round completes when the S6 re-review finishes. Evaluate progress
+    // ONLY when route() would continue the loop (decision.kind === "next"); if
+    // route() already hands off (escalate / S5-0-commit error / success) that
+    // takes precedence — a stuck bail never pre-empts a legitimate handoff.
+    // Progress = this round's S5 added a commit (lastFixCommits > 0) OR the S6
+    // findings changed vs the previous round. No counting of rounds anywhere:
+    // progress resets the streak, so a converging review of any length runs on.
+    if (step === "S6" && decision.kind === "next") {
+      const findingsKey =
+        lastOutput?.kind === "reviewer"
+          ? JSON.stringify(lastOutput.findings)
+          : "";
+      const findingsChanged =
+        prevFindingsKey === undefined || findingsKey !== prevFindingsKey;
+      const madeProgress = lastFixCommits > 0 || findingsChanged;
+      prevFindingsKey = findingsKey;
+
+      noProgressStreak = madeProgress ? 0 : noProgressStreak + 1;
+
+      if (noProgressStreak >= NO_PROGRESS_LIMIT) {
+        // Stuck: K consecutive rounds with no new commit AND no findings change
+        // — a real deadlock / route bug, not "too many rounds". Bail cleanly to
+        // S8(status=error); never throw / reject. Surface the defers collected
+        // so far, consistent with the other in-loop error handoffs.
+        ledger.push({ step: "S8" });
+        await emitLedger("S8", undefined, undefined);
+        const errorPackage: ErrorPackage = {
+          failedStep: "S6",
+          reason:
+            `fix loop stuck: ${NO_PROGRESS_LIMIT} consecutive rounds with no ` +
+            `progress (no new commit and unchanged reviewer findings). The fix ` +
+            `loop is not converging — likely a route bug or a fix that changes ` +
+            `nothing the reviewer sees; a human is needed.`,
+          branchHead: worktree?.branch,
+        };
+        return {
+          status: "error",
+          errorPackage,
+          stepLedger: ledger,
+          deferredFindings,
+        };
+      }
+    }
+
     if (decision.kind === "handoff") {
       ledger.push({ step: "S8" });
       // #249: persist the S8 handoff entry too.
@@ -490,8 +568,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
     step = decision.step;
   }
-
-  throw new Error(
-    `runner: exceeded ${MAX_STEPS} steps without reaching handoff (routing bug)`,
-  );
+  // Unreachable: the `for (;;)` loop exits only via a `return` above — every
+  // route() handoff returns and the no-progress guard returns. There is no
+  // round/step cap to fall out of (US#18: no "数到 N 就停").
 }
