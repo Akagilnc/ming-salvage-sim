@@ -29,6 +29,14 @@
  * NOTE on Sandcastle imports: `@ai-hero/sandcastle` is a real dependency, but
  * the heavy container code only runs on the manual-smoke path. The pure logic is
  * importable and testable without ever starting Docker.
+ *
+ * ── Manual-smoke checklist additions (integ-cmr 256 r2) ─────────────────────
+ *   - F3 clean-room snapshot leak: after S1 `writeSnapshot`, assert the snapshot
+ *     is git-ignored in the resident worktree — run, inside the worktree:
+ *       `git check-ignore .orchestrator-snapshot.json`  → must print the path
+ *       (exit 0). A `git status --porcelain` must NOT list it as untracked, and a
+ *       coder's `git add -A` must leave it unstaged. Covered by both the checked-in
+ *       root `.gitignore` belt AND the per-worktree `.git/info/exclude` suspenders.
  */
 
 import { execFileSync } from "node:child_process";
@@ -38,6 +46,7 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -210,6 +219,36 @@ export function buildIssueSnapshot(
     comments: (json.comments ?? []).map((c) => c.body ?? ""),
     agentBrief: extractAgentBrief(json),
   };
+}
+
+// ── clean-room snapshot leak guard (integ-cmr 256 r2, F3) ───────────────────
+
+/**
+ * The host-fetched clean-room snapshot file, written into the resident worktree
+ * as read-only context for the agent. It must NEVER be committed: with
+ * `branchStrategy:{type:'head'}` a coder's `git add -A` would otherwise stage it
+ * into the reviewed/pushed branch (polluting the shipped artifact). The Backend
+ * git-ignores it (per-worktree `.git/info/exclude`) before any agent run (F3).
+ */
+export const SNAPSHOT_FILENAME = ".orchestrator-snapshot.json";
+
+/**
+ * Idempotently ensure `pattern` is present as its own line in a git
+ * `info/exclude` file's content. Returns the new content (existing + the pattern
+ * appended on a fresh line) when absent, or the input UNCHANGED when the pattern
+ * is already an exact line (so repeated S1 resume writes never duplicate it).
+ *
+ * Pure (string assembly) so the leak-guard decision is unit-tested without git.
+ */
+export function ensureExcluded(existing: string, pattern: string): string {
+  const lines = existing.split("\n").map((l) => l.trim());
+  if (lines.includes(pattern)) return existing;
+  // Append on its own line; preserve a trailing newline so the file stays
+  // newline-terminated regardless of the prior content's shape.
+  const base = existing.length === 0 || existing.endsWith("\n")
+    ? existing
+    : existing + "\n";
+  return `${base}${pattern}\n`;
 }
 
 // ── auth-mount path construction (spike contract) ───────────────────────────
@@ -728,10 +767,56 @@ export class RealBackend implements Backend {
     worktree: WorktreeHandle,
     snapshot: IssueSnapshot,
   ): Promise<void> {
-    const target = join(worktree.path, ".orchestrator-snapshot.json");
-    // Use the fs writeFile via execFile-free path: write atomically.
-    const { writeFileSync } = await import("node:fs");
+    // F3 — git-ignore the snapshot BEFORE writing it, so a coder's `git add -A`
+    // can never stage the host-fetched clean-room snapshot into the reviewed /
+    // pushed branch (branchStrategy:{type:'head'} commits in place). The
+    // per-worktree info/exclude is the right scope: it is local to this resident
+    // worktree, needs no checked-in change to the target repo, and survives the
+    // agent run. Best-effort: an exclude failure must not block the (still
+    // useful) snapshot write — but it is attempted first so the common path is
+    // always covered.
+    this.excludeFromGit(worktree, SNAPSHOT_FILENAME);
+    const target = join(worktree.path, SNAPSHOT_FILENAME);
     writeFileSync(target, JSON.stringify(snapshot, null, 2), "utf8");
+  }
+
+  /**
+   * Add `pattern` to the repo's git `info/exclude` (idempotent via
+   * {@link ensureExcluded}), so a `git add -A`/`git add .` in the resident
+   * worktree never stages it (F3). `git rev-parse --git-path info/exclude` run
+   * inside a linked worktree resolves to the SHARED common-dir exclude
+   * (git keeps `info/exclude` in the common git dir, not per-worktree) — that is
+   * fine and intended here: every slice excludes the SAME snapshot filename, and
+   * {@link ensureExcluded} is idempotent, so concurrent slices appending the same
+   * pattern never duplicate or conflict. Best-effort: a git/fs fault here must
+   * not block the snapshot write itself (the checked-in root `.gitignore` belt
+   * still covers the common case).
+   */
+  private excludeFromGit(worktree: WorktreeHandle, pattern: string): void {
+    try {
+      const excludePath = this.sh(
+        "git",
+        ["rev-parse", "--git-path", "info/exclude"],
+        worktree.path,
+      );
+      const abs = excludePath.startsWith("/")
+        ? excludePath
+        : join(worktree.path, excludePath);
+      let existing = "";
+      try {
+        existing = readFileSync(abs, "utf8");
+      } catch {
+        // No exclude file yet (or info/ missing) — start from empty + mkdir.
+      }
+      const next = ensureExcluded(existing, pattern);
+      if (next !== existing) {
+        mkdirSync(join(abs, ".."), { recursive: true });
+        writeFileSync(abs, next, "utf8");
+      }
+    } catch {
+      // Best-effort: a divergent git layout must not block the snapshot write.
+      // The root .gitignore (checked-in belt) still covers the common case.
+    }
   }
 
   // ── auth mount (spike contract) ────────────────────────────────────────────
