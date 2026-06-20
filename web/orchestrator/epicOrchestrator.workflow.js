@@ -1257,7 +1257,13 @@ function normalizePipelineArgs(rawArgs, epicIssueNumber) {
   return {
     familyBranch: assertShellSafeRef(String(objectArgs.familyBranch ?? `family/epic-${epicIssueNumber}`), 'familyBranch'),
     targetBranch: assertShellSafeRef(String(objectArgs.targetBranch ?? 'origin/main'), 'targetBranch'),
-    startupTargetHead: objectArgs.startupTargetHead === undefined ? undefined : assertShellSafeRef(String(objectArgs.startupTargetHead), 'startupTargetHead'),
+    // accept the prior handoff's `baseAtStart` as the continuation alias for startupTargetHead, so a
+    // relaunch that passes the handoff back keeps the original startup base (else captureStartupTargetHead
+    // re-captures the advanced target and manageFamilyBase hits family_missing_startup_target_head).
+    startupTargetHead: (() => {
+      const sth = objectArgs.startupTargetHead ?? objectArgs.baseAtStart;
+      return sth === undefined || sth === null ? undefined : assertShellSafeRef(String(sth), 'startupTargetHead');
+    })(),
     verifyCommands,
     maxReviewRounds: normalizePositiveInteger(objectArgs.maxReviewRounds, 3, 'maxReviewRounds'),
     // S6 cross-segment continuation args, threaded back from the prior segment's handoff by the main
@@ -1293,8 +1299,8 @@ function normalizeMergedEntries(value) {
       throw new Error(`epic-orchestrator: mergedNumbers object element must carry a 'number' field (got keys: ${Object.keys(element).join(', ')}).`);
     }
     const raw = isObject ? element.number : element;
-    if (raw === null || raw === undefined || String(raw).trim() === '') {
-      throw new Error('epic-orchestrator: mergedNumbers element has a null / undefined / empty slice id.');
+    if (raw === null || raw === undefined || typeof raw === 'object' || String(raw).trim() === '') {
+      throw new Error('epic-orchestrator: mergedNumbers element has a null / undefined / non-primitive / empty slice id.');
     }
     const number = typeof raw === 'number' ? raw : String(raw);
     assertShellSafeRef(String(number), 'mergedNumbers element');
@@ -1319,8 +1325,8 @@ function normalizeIssueNumberList(value, name) {
       throw new Error(`epic-orchestrator: ${name} object element must carry a 'number' field (got keys: ${Object.keys(element).join(', ')}) — refusing to coerce it to '[object Object]'.`);
     }
     const raw = element !== null && typeof element === 'object' ? element.number : element;
-    if (raw === null || raw === undefined || String(raw).trim() === '') {
-      throw new Error(`epic-orchestrator: ${name} element has a null / undefined / empty slice id.`);
+    if (raw === null || raw === undefined || typeof raw === 'object' || String(raw).trim() === '') {
+      throw new Error(`epic-orchestrator: ${name} element has a null / undefined / non-primitive / empty slice id.`);
     }
     const normalized = typeof raw === 'number' ? raw : String(raw);
     assertShellSafeRef(String(normalized), `${name} element`);
@@ -1565,7 +1571,7 @@ async function runFamilyCodexLeg({ Bash, familyWorktree, familyBranch, diffBase 
   const baseExpr = familyDiffBaseExpr(diffBase);
   try {
     const parsed = parseReviewerJson(
-      await Bash(`set -euo pipefail\ncd ${shellQuote(familyWorktree)}\n# reviewer=codex-family; 5a/5b family CMR on merged family branch (codex reads the repo via codex exec, unaffected by the hidden worktree path)\n{\n  printf '%s\\n' 'Review the merged family branch diff for cross-slice completeness (5a) and correctness regressions (5b).'\n  printf '%s\\n' 'Return only one JSON object on stdout with shape {"status":"passed"|"failed","findings":[{"id":...,"classification":"mechanical_bug"|"choice","claim_quote":...,"location":...}]}. Do not include markdown or prose outside the JSON object.'\n  printf '%s\\n' 'Diff stat against the startup target base for human context:'\n  git diff --stat ${baseExpr} HEAD\n  printf '%s\\n' 'Full diff:'\n  git diff ${baseExpr} HEAD\n} | codex exec --skip-git-repo-check --ephemeral -`),
+      await Bash(`set -euo pipefail\ncd ${shellQuote(familyWorktree)}\n# reviewer=codex-family; 5a/5b family CMR on merged family branch (codex reads the repo via codex exec, unaffected by the hidden worktree path)\n{\n  printf '%s\\n' 'REVIEW ONLY — HARD CONSTRAINT. Do NOT modify, create, rename, or delete any file; do NOT commit or run commands that change the repo. Output only the review JSON.'\n  printf '%s\\n' 'Review the merged family branch diff for cross-slice completeness (5a) and correctness regressions (5b).'\n  printf '%s\\n' 'Return only one JSON object on stdout with shape {"status":"passed"|"failed","findings":[{"id":...,"classification":"mechanical_bug"|"choice","claim_quote":...,"location":...}]}. Do not include markdown or prose outside the JSON object.'\n  printf '%s\\n' 'Diff stat against the startup target base for human context:'\n  git diff --stat ${baseExpr} HEAD\n  printf '%s\\n' 'Full diff:'\n  git diff ${baseExpr} HEAD\n} | codex exec --skip-git-repo-check --ephemeral -`),
       'codex-family'
     );
     return { available: true, findings: familyReviewFindings(parsed, 'codex-family', true) };
@@ -1610,6 +1616,7 @@ async function runFamilyClaudeLeg({ runner, familyWorktree, familyBranch, epicIs
 function buildFamilyReviewPrompt(epicIssueNumber, familyBranch, round, diffBase) {
   return [
     `Family 5a/5b CMR (round ${round}) for epic #${epicIssueNumber} on merged family branch ${familyBranch}.`,
+    'REVIEW ONLY — HARD CONSTRAINT. Do NOT modify, create, rename, or delete any file in the family worktree; do NOT commit or run commands that change the repo. Return findings only.',
     diffBase ? `Review the cumulative diff of the family branch against its startup target base ${diffBase} (git diff ${diffBase} HEAD).` : 'Review the cumulative diff of the family branch against its startup target base (git merge-base origin/main HEAD).',
     'You are the Claude review leg. Review the merged family branch for cross-slice completeness (5a) and correctness regressions (5b).',
     'Classify each finding: mechanical_bug (one correct fix) vs choice (design/architecture/ADR — escalate). Ambiguous defaults to choice.',
