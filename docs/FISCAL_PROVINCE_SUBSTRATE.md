@@ -1,6 +1,6 @@
 # 省级财政基座 · 草表 v23(spike G1–G22 · 三饷计火耗)
 
-> **范围:仅锁单省 spine(陕西);跨省 hub deferred;`拨付net/gross` 为 tick 外部入参(测试默认 0)。**
+> **范围:spike 草表锚单省(陕西)验证;#70 全省 seed 扩 **17 明直辖省**、真 cutover 全省一起翻(见 [ADR 0019](adr/0019-fiscal-cutover-all-province-seed-hub-split.md));跨省 hub 独立项(#261);`拨付net/gross` 为 tick 外部入参(测试默认 0)。**
 > **对账方法学(r13–r15 逐层返工锤定)**:三类断言(现金守恒/债务 per-account/C per-account)的期望值**全用独立 oracle**——只从 tick 输入(`st` 开账快照 + `p` params + `actions`)重算,**绝不读 settlement 的任何中间量**(火耗应派/起运池/实征/k/省内可支)。否则校验项与被校验项同源=tautology,一致 relabel 照样过(opus 逐层逮到三层:per-account 流水→上游 param→力度系数 k)。
 > spike **G1–G22 全 PASS**(5层断言+输入校验面完整[action字段/rate/param量纲/开账stock 负值全 fail-loud];r21 补 param/stock 负值校验,防负Due/负起运/负拨付凭空生钱);自变异实证:中饱→省库、火耗→省库、军饷新债→官俸欠、虚增火耗×2、起运去 clamp、k 砍半、漏三饷火耗、三饷火耗×2、清丈两侧同搬税基(官民田_o 重放咬)、NaN Due 吞池(入口非有限拦) —— **现金/总量守恒全 PASS,但独立 oracle/入口校验当场 FAIL**。残留仅 `o_pool` 读省内可支(C-oracle 兜底,已注释;v23.1 起 `正赋_o` 改用 st+actions 独立重放的 `官民田_o`,堵清丈两侧同搬税基——此前第二处同源残留,ship 对抗评审 Claude+Codex 双源点名)。
 > 评审 r1–r15(panel=codex/agy/opus/sonnet)。决策见 [ADR 0007](adr/0007-province-fiscal-substrate-ai-judged.md)。⚠️=待精验。
@@ -75,15 +75,21 @@ k=action力度系数(ΣCost仅含action银,Due不入;Cost>0 action其 delta/scal
 
 **#70 史实重标 + 全省 seed(2026-06-14 陕西表 / 2026-06-20 grill 扩全省,见 [ADR 0019](adr/0019-fiscal-cutover-all-province-seed-hub-split.md)):**
 
-> **范围(2026-06-20 grill 收敛)**:#70 = 给 **16 个明直辖省**(15 布政司/两京 + 辽东)各建 `settle` 块,非仅陕西。单省 cutover 会造 split-brain 世界(陕西新基座 vs 其余 calc_province_fiscal),不可玩,故单省仅作 shadow 验证;真 cutover 全省一起翻(hub 另列,见 ADR 0019)。外域/藩属/后金(controlled_by≠ming)不入 seed。
+> **范围(2026-06-20 grill 收敛 + 跨模型评审 R1/R2 修订)**:#70 = 给 **17 个明直辖省**(15 布政司/两京 + 辽东 + 皮岛)各建 `settle` 块,**成员按显式 canonical id 清单、不拿 `controlled_by=ming` 谓词判**(实测 ming 区有 17 个,谓词与「16 名单」曾自相矛盾)。单省 cutover 会造 split-brain 世界、不可玩,故单省仅作 shadow 验证;真 cutover 全省一起翻(hub 另列,见 ADR 0019)。外域/藩属/后金不入 seed(收复走 on_restore)。**失地冻结**:spine 与 `settle_province_tick` 前查 `controlled_by`,≠ming 则跳过该省 tick(v0.x 简化——substrate 是明朝口径、建模不了后金财政)。
 >
-> **方法(一条:查史料填,无公式瞎猜)**:每省 `settle` = 输入半 + 义务半。**输入半**(官民田/辽饷/盐/商/藩王田/腐败)直接从 regions.json 现有字段映(guan_min_tian→官民田、liao_xiang→三饷、corruption→火耗/逋赋率基)。**义务半**(Due 军饷/官俸/宗禄、起运定额、拨付gross 京运补、漂没/中饱率、开局欠账)regions.json 没有,**查《万历会计录》等史料逐省填**(下表陕西 = 模板/锚,其余 15 同法);查不到逐省直接数的用「史料国总 × 该省田亩占比」折算(仍源自史料)。
+> **方法(一条:查史料填;折算法只限田亩量、其余 carve-out)**:每省 `settle` = 输入半 + 义务半。
+>  - **田亩量(正赋/官民田/隐田)**:查《会计录》田亩;**官民田用史实田亩、≠ regions.json 的 `guan_min_tian`**(后者是较小游戏字段,与 settle 田亩 ~10× 不同量)。查不到逐省数时**仅对田亩量**用「史料国总 × 该省田亩占比」折算。
+>  - **义务半(查史料、不随田亩)**:`军饷 Due`/`拨付gross 京运补` 按 `military_pressure`/边镇 + 京运年例(Src[2]);`宗禄 Due` 按 `wang_tian` + 宗藩禄粮;率(逋赋/火耗/漂没/中饱)按 posture/史料直接定(corruption 作率基),**绝不按田亩占比缩**(会压向 0,引擎只 clamp 不拦)。
+>  - **不进 settle**:`salt_tax`/`commerce_tax`(settle_tick 不消费;盐/商是独立税源、本 issue out-of-scope)。
+>  - **posture 叠加式**:省份累加每个命中 posture 的结构特征(湖广=江南盈余基+楚藩重宗禄;山西=边镇军饷+晋藩宗禄),非单 posture 覆盖。
 >
-> **精度(grill 定 = 量级定稿)**:web 查得到的量级值即定稿(陕西同标准、逐条可驳),虚字段挂 `# provisional·待一手会计录核`;一手逐项核降级成日后单独小刀、不阻塞 #70。
+> **起运(对齐引擎 cap 模型)**:`起运池=min(实征,起运定额)` 是收入侧 cap、**不是「余额起运」**(ADR 0007 旧措辞与此矛盾,由 ADR 0019 一并对齐)。`起运定额` 按 posture 构造:江南高到起运池≈实征大份额(使「江南正起运」可测)、边镇低。开局静态 seed,注释标「#259 后由饷率通道动态接管、此值届时失效」防超额三饷困省内池。
 >
-> **静态开局(grill 定)**:三饷只 seed 辽饷九厘(剿饷1637/练饷1639 不进 seed);1631/1637/1639 时间线注入 + 起运定额↔三饷联动选型 **移出到「饷率 effect 通道」项**,#70 只在起运定额留护栏注释「后续动态接管」。
+> **精度 = 量级定稿**:web 量级值即定稿(陕西同标准、逐条可驳);虚字段(宗禄/起运存留比/田亩逐项)的 provisional 标记走 **`settle._meta`**(如 `_meta.provisional:[...]`)或 `_comment` 键,**不写裸 `#`/`//` 注释**(json.loads 崩);一手核降级日后小刀。
+>
+> **静态开局**:三饷只 seed 辽饷九厘(剿饷1637/练饷1639 不进 seed);时间线注入 + 起运定额联动选型移出 → 饷率 effect 通道 #259。
 
-下表 = **陕西模板/锚**(其余 15 省同法查史料填;靠谱源料锚定,逐条可驳,精确两数待一手会计录表核):
+下表 = **陕西模板/锚**(其余 16 省同法查史料填;靠谱源料锚定,逐条可驳,精确两数待一手会计录表核):
 
 | 字段 | 旧占位 | 真实锚(源) | 重标值 |
 |---|---|---|---|
