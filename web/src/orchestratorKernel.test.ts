@@ -606,4 +606,10 @@ describe("dismissalGate", () => {
   it("matches when both sides use snake_case claim_quote", () => {
     expect(dismissalGate({ finding: { id: "X", claim_quote: "q" }, dismissed: [{ claim_quote: "q" }] })).toBe(false);
   });
+
+  it("tolerates a null/undefined finding without crashing (treats it as not-dismissed)", () => {
+    const dismissed = [{ id: "F1" }];
+    expect(dismissalGate({ finding: null as unknown as Finding, dismissed })).toBe(true);
+    expect(dismissalGate({ finding: undefined as unknown as Finding, dismissed })).toBe(true);
+  });
 });

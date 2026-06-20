@@ -1813,6 +1813,7 @@ describe("epic orchestrator S6 cross-segment continuation (relaunch + git-skip +
           return JSON.stringify({ status: "merged", mergeCommit: `merge-${reviewedCommit}`, mergeWorktree: "/repo/.epic-orchestrator/family" });
         }
         if (command.includes("resolve existing family worktree")) return JSON.stringify({ status: "resolved", familyWorktree: "/repo/.epic-orchestrator/family" });
+        if (command.includes("resolve existing family HEAD")) return "family-head-sha";
         if (command.includes("家族集成 verify")) return JSON.stringify({ status: "passed", exitCode: 0, output: "family ok" });
         if (command.includes("base management")) return JSON.stringify({ status: "no_drift", startupTargetHead: "base-start", currentTargetHead: "base-start" });
         if (command.includes("reviewer=gstack-ship-family")) return JSON.stringify(shipReport);
@@ -1927,5 +1928,54 @@ describe("epic orchestrator S6 cross-segment continuation (relaunch + git-skip +
     // "220" (string) coerces and matches numeric 220 from topology -> git-skip; only 221 implements.
     expect(implementedIssues).toEqual([221]);
     expect(result.continuation.layers[0]).toMatchObject({ todo: [221], skipped: [220] });
+  });
+
+  it("relaunch with a merged blocker (layer 1 skipped) bases the dependent (layer 2 todo) on the family HEAD, not the startup target", async () => {
+    // The dependency-preserving fix: with mergeQueue empty (the blocker was git-skipped, not merged
+    // this segment), the dependent must still base on the existing family branch HEAD (which contains
+    // the blocker), NOT startupTargetHead — else 221 is built without 220's changes.
+    const { result, agentCalls } = await runContinuation({
+      subIssues: [
+        { id: 220, epicId: 217, state: "open", title: "S2-blocker", url: "https://example.test/220" },
+        { id: 221, epicId: 217, state: "open", title: "S2-dependent", url: "https://example.test/221" }
+      ],
+      blockedBy: [{ issueId: 221, blockedByIssueId: 220 }],
+      args: { mergedNumbers: [220] }
+    });
+
+    expect(result.status).toBe("ready");
+    const dependentCall = agentCalls.find((call) => call.role === undefined && call.issueNumber === 221);
+    expect(dependentCall).toBeTruthy();
+    expect(dependentCall.baseRef).toBe("family-head-sha");
+    expect(dependentCall.baseRef).not.toBe("base-start");
+  });
+
+  it("accepts dirty as the handoff's {number, decision} object shape (round-trips without unwrapping)", async () => {
+    // The prior segment's handoff carries dirty as [{number, decision}]; passing it straight back as
+    // args.dirty must still flag the slice (else it stringifies to '[object Object]' and never matches).
+    const { result, implementedIssues } = await runContinuation({
+      subIssues: [
+        { id: 220, epicId: 217, state: "open", title: "S2-A", url: "https://example.test/220" },
+        { id: 221, epicId: 217, state: "open", title: "S2-B", url: "https://example.test/221" }
+      ],
+      args: { mergedNumbers: [{ number: 220, reviewedCommit: "c220" }, { number: 221, reviewedCommit: "c221" }], dirty: [{ number: 220, decision: "rework auth" }] }
+    });
+
+    expect(result.status).toBe("ready");
+    expect(implementedIssues).toEqual([220]);
+    expect(result.continuation.layers[0]).toMatchObject({ todo: [220], skipped: [221], dirty: [220] });
+  });
+
+  it("a no-fresh-merge continuation that hits a gstack-ship ASK still reports the existing family HEAD (not null)", async () => {
+    // todoTotal=0 means mergeQueue is empty; the needs-user handoff familyHead must come from the
+    // resolved existing family worktree, not fall through to null and break the next continuation.
+    const { result } = await runContinuation({
+      subIssues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }],
+      args: { mergedNumbers: [220] },
+      ship: { asked: true, gatesPassed: false, prCreated: false, askDetail: "Version bump MINOR or MAJOR?" }
+    });
+
+    expect(result.status).toBe("needs-user");
+    expect(result.handoff.familyHead).toBe("family-head-sha");
   });
 });

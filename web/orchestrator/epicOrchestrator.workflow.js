@@ -245,6 +245,7 @@ export function inlineContinuationPlan(input) {
 // escalate count. Match on id, claim (claimQuote/claim_quote unified), or location — any one.
 export function inlineDismissalGate(input) {
   const { finding, dismissed } = input;
+  if (!finding) return true; // a null/garbage finding cannot match a dismissal -> not dismissed (still HALT-eligible)
   const findingClaim = inlineClaimOf(finding);
   const matched = dismissed.some((entry) => {
     if (entry.id !== undefined && finding.id !== undefined && entry.id === finding.id) return true;
@@ -257,6 +258,7 @@ export function inlineDismissalGate(input) {
 }
 
 function inlineClaimOf(value) {
+  if (!value) return undefined;
   return value.claimQuote !== undefined ? value.claimQuote : value.claim_quote;
 }
 
@@ -610,6 +612,19 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
   });
   const todoByLayer = continuation.layers.map((layer) => new Set(layer.todo.map(idKey)));
 
+  // S6 continuation: when a prior segment already merged slices, the family branch + worktree exist.
+  // Resolve them up front so (a) the first todo slice in this segment bases on the family HEAD (which
+  // contains the already-merged blockers) instead of the startup target — preserving topological
+  // dependency across a relaunch — and (b) a no-fresh-merge segment (todoTotal===0, or every layer
+  // git-skipped) still has the family worktree + HEAD for Family Verify / Review / Ship and the handoff.
+  let existingFamily = null;
+  if (normalizedArgs.mergedNumbers.length > 0) {
+    const resolved = await resolveExistingFamilyWorktree({ Bash, familyBranch: normalizedArgs.familyBranch });
+    const head = (await Bash(`set -euo pipefail\n# resolve existing family HEAD (S6 continuation)\ngit -C ${shellQuote(resolved.familyWorktree)} rev-parse HEAD`)).trim();
+    existingFamily = { familyWorktree: resolved.familyWorktree, familyHead: head || null };
+  }
+  const continuationBaseRef = existingFamily?.familyHead || startupTargetHead;
+
   const layers = [];
   const reviewedSlices = [];
   const mergeQueue = [];
@@ -623,7 +638,7 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
       continue;
     }
     log?.(`开始第 ${layerPlan.layer} 层：${todoIssues.map((issue) => issue.issueNumber).join(', ')}`);
-    const sliceBaseContext = buildSliceBaseContext(normalizedArgs, mergeQueue, startupTargetHead);
+    const sliceBaseContext = buildSliceBaseContext(normalizedArgs, mergeQueue, continuationBaseRef);
     const layerResults = await Promise.all(
       todoIssues.map((plannedIssue) =>
         runSliceReviewLoop({
@@ -685,15 +700,11 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
     }
   }
 
-  // S6 continuation: when no slice merged this segment (todoTotal===0 — the family branch already has
-  // every slice and none are dirty), there is no fresh merge entry to read the worktree from, so
-  // resolve the EXISTING family-branch worktree to run Family Verify / Family Review / Ship on the
-  // already-assembled family branch. When slices did merge, use the merge queue's worktree as before.
-  let familyWorktree = mergeQueue.at(-1)?.mergeWorktree;
-  if (!familyWorktree && continuation.todoTotal === 0) {
-    const resolved = await resolveExistingFamilyWorktree({ Bash, familyBranch: normalizedArgs.familyBranch });
-    familyWorktree = resolved.familyWorktree;
-  }
+  // S6 continuation: when this segment merged no fresh slice (todoTotal===0, or every layer was
+  // git-skipped), there is no merge entry to read the worktree from — fall back to the existing
+  // family worktree resolved up front, so Family Verify / Review / Ship run on the already-assembled
+  // family branch. When slices did merge this segment, use the merge queue's worktree as before.
+  const familyWorktree = mergeQueue.at(-1)?.mergeWorktree ?? existingFamily?.familyWorktree;
   if (!familyWorktree) {
     return {
       ...discovery,
@@ -910,7 +921,7 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
   // correct family HEAD for the no-commit outcomes (needs-user / unconverged). On the READY path
   // gstack-ship bumps VERSION/CHANGELOG and commits, advancing HEAD past this, so ready requires
   // gstack-ship's reported post-ship head loudly (below) rather than silently accepting this stale tip.
-  const mergeTip = mergeQueue.at(-1)?.familyHead || mergeQueue.at(-1)?.mergeCommit || null;
+  const mergeTip = mergeQueue.at(-1)?.familyHead || mergeQueue.at(-1)?.mergeCommit || existingFamily?.familyHead || null;
 
   const outcome = inlineShipOutcome({ asked: ship.asked, gatesPassed: ship.gatesPassed, prCreated: ship.prCreated });
 
@@ -1196,7 +1207,7 @@ async function mergeReviewedCommit({ Bash, worktreePath, familyBranch, implement
 // a merge — there is nothing new to merge, only the already-assembled family branch to verify/review/ship.
 async function resolveExistingFamilyWorktree({ Bash, familyBranch }) {
   return parseBashJson(
-    await Bash(`set -euo pipefail\n# resolve existing family worktree (S6 todoTotal=0 continuation)\nfamilyBranch=${shellQuote(familyBranch)}\nrepoRoot=$(git rev-parse --show-toplevel)\nparentRoot=$(dirname "$repoRoot")\nmergeRoot="$parentRoot/.epic-orchestrator"\nsafeBranch=$(printf '%s' "$familyBranch" | tr -c 'A-Za-z0-9._-' '_')\ndefaultMergeWorktree="$mergeRoot/family-$safeBranch"\nexistingMergeWorktree=$(python3 - "$repoRoot" "$familyBranch" <<'PY'\nimport subprocess, sys\nsource, branch = sys.argv[1], sys.argv[2]\ncurrent = None\nfor line in subprocess.check_output(['git', '-C', source, 'worktree', 'list', '--porcelain'], text=True).splitlines():\n    if line.startswith('worktree '):\n        current = line[9:]\n    elif line == f'branch refs/heads/{branch}' and current:\n        print(current)\n        break\nPY\n)\nif [ -n "$existingMergeWorktree" ]; then\n  mergeWorktree="$existingMergeWorktree"\nelse\n  mergeWorktree="$defaultMergeWorktree"\n  mkdir -p "$mergeRoot"\n  isOwnGitWorktree() { [ -e "$1/.git" ] && git -C "$1" rev-parse --path-format=absolute --git-common-dir >/dev/null 2>&1; }\n  if [ -e "$mergeWorktree" ] && ! isOwnGitWorktree "$mergeWorktree"; then\n    rm -rf "$mergeWorktree"\n  fi\n  if ! isOwnGitWorktree "$mergeWorktree"; then\n    git -C "$repoRoot" fetch origin "$familyBranch" || true\n    if git -C "$repoRoot" show-ref --verify --quiet "refs/heads/\${familyBranch}"; then\n      git -C "$repoRoot" worktree add "$mergeWorktree" "$familyBranch" >&2\n    elif git -C "$repoRoot" show-ref --verify --quiet "refs/remotes/origin/\${familyBranch}"; then\n      git -C "$repoRoot" worktree add -b "$familyBranch" "$mergeWorktree" "origin/\${familyBranch}" >&2\n    else\n      printf 'family branch %s not found locally or on origin — cannot resolve an existing family worktree for a todoTotal=0 continuation\\n' "$familyBranch" >&2\n      exit 1\n    fi\n  fi\nfi\nprintf '{"status":"resolved","familyWorktree":"'\ngit -C "$mergeWorktree" rev-parse --show-toplevel | tr -d '\\n' | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read())[1:-1], end="")'\nprintf '"}'`)
+    await Bash(`set -euo pipefail\n# resolve existing family worktree (S6 todoTotal=0 continuation)\nfamilyBranch=${shellQuote(familyBranch)}\nrepoRoot=$(git rev-parse --show-toplevel)\nparentRoot=$(dirname "$repoRoot")\nmergeRoot="$parentRoot/.epic-orchestrator"\nsafeBranch=$(printf '%s' "$familyBranch" | tr -c 'A-Za-z0-9._-' '_')\ndefaultMergeWorktree="$mergeRoot/family-$safeBranch"\nexistingMergeWorktree=$(python3 - "$repoRoot" "$familyBranch" <<'PY'\nimport subprocess, sys\nsource, branch = sys.argv[1], sys.argv[2]\ncurrent = None\nfor line in subprocess.check_output(['git', '-C', source, 'worktree', 'list', '--porcelain'], text=True).splitlines():\n    if line.startswith('worktree '):\n        current = line[9:]\n    elif line == f'branch refs/heads/{branch}' and current and current != source:\n        print(current)\n        break\nPY\n)\nif [ -n "$existingMergeWorktree" ]; then\n  mergeWorktree="$existingMergeWorktree"\nelse\n  mergeWorktree="$defaultMergeWorktree"\n  mkdir -p "$mergeRoot"\n  isOwnGitWorktree() { [ -e "$1/.git" ] && git -C "$1" rev-parse --path-format=absolute --git-common-dir >/dev/null 2>&1 && [ "$(git -C "$1" symbolic-ref --quiet --short HEAD 2>/dev/null)" = "$familyBranch" ]; }\n  if [ -e "$mergeWorktree" ] && ! isOwnGitWorktree "$mergeWorktree"; then\n    git -C "$repoRoot" worktree remove --force "$mergeWorktree" >/dev/null 2>&1 || rm -rf "$mergeWorktree"\n    git -C "$repoRoot" worktree prune >/dev/null 2>&1 || true\n  fi\n  if ! isOwnGitWorktree "$mergeWorktree"; then\n    git -C "$repoRoot" fetch origin "$familyBranch" || true\n    if git -C "$repoRoot" show-ref --verify --quiet "refs/heads/\${familyBranch}"; then\n      git -C "$repoRoot" worktree add "$mergeWorktree" "$familyBranch" >&2\n    elif git -C "$repoRoot" show-ref --verify --quiet "refs/remotes/origin/\${familyBranch}"; then\n      git -C "$repoRoot" worktree add -b "$familyBranch" "$mergeWorktree" "origin/\${familyBranch}" >&2\n    else\n      printf 'family branch %s not found locally or on origin — cannot resolve an existing family worktree for a todoTotal=0 continuation\\n' "$familyBranch" >&2\n      exit 1\n    fi\n  fi\nfi\nprintf '{"status":"resolved","familyWorktree":"'\ngit -C "$mergeWorktree" rev-parse --show-toplevel | tr -d '\\n' | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read())[1:-1], end="")'\nprintf '"}'`)
   );
 }
 
@@ -1234,7 +1245,12 @@ function normalizeIssueNumberList(value, name) {
     throw new Error(`epic-orchestrator: ${name} must be an array of slice issue numbers.`);
   }
   return value.map((element) => {
-    const normalized = typeof element === 'number' ? element : String(element);
+    // Accept both a raw id and the handoff's {number, ...} entry shape, so the prior segment's
+    // handoff merged[] ({number, reviewedCommit}) / dirty[] ({number, decision}) round-trip directly
+    // as mergedNumbers / dirty without the caller having to unwrap them (else they'd stringify to
+    // '[object Object]' and silently never match a slice id).
+    const raw = element !== null && typeof element === 'object' && 'number' in element ? element.number : element;
+    const normalized = typeof raw === 'number' ? raw : String(raw);
     assertShellSafeRef(String(normalized), `${name} element`);
     return normalized;
   });
