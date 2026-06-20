@@ -248,11 +248,24 @@ function planResume(
   const lastEntry = ledger[ledger.length - 1]!;
   const agentEntry = lastAgentEntry(ledger);
 
-  // Case 2: escalate residue — the last agent output carries an escalation.
-  // The human has answered; resume THAT step in its original agent session.
-  // Checked before the terminal-handoff case so a trailing S8(escalate) entry
-  // does not short-circuit into "report escalate again".
-  if (agentEntry?.output?.escalate != null) {
+  // Case 2: escalate residue — the last agent output carries a WELL-FORMED
+  // escalation. The human has answered; resume THAT step in its original agent
+  // session. Checked before the terminal-handoff case so a trailing S8(escalate)
+  // entry does not short-circuit into "report escalate again".
+  //
+  // integ-cmr m2 r1 (Finding 2): the guard is isValidEscalation, NOT a bare
+  // non-null check. route.ts:81 / validate.ts treat a MALFORMED escalate (e.g.
+  // `{}`, blank reason/diagnosis) as a contract violation → S8(status=error),
+  // and the runner tags that S8 handoffStatus:'error'. With a bare `!= null`
+  // check, Case 2 would fire on the garbage escalate BEFORE Case 3a's
+  // terminal-status report, silently re-running the step via resumeSession
+  // instead of reporting the true tagged error. Gating on isValidEscalation lets
+  // a malformed escalate fall through to Case 3a — only a well-shaped escalate
+  // (a real "human answered an escalation" signal) triggers escalate-resume.
+  if (
+    agentEntry?.output?.escalate != null &&
+    isValidEscalation(agentEntry.output.escalate)
+  ) {
     // Drop the prior terminal handoff (and any entries after the escalated
     // step): we are re-opening that step, so the prior boundary is superseded.
     // The slice is EXCLUSIVE of the escalated step itself — it is re-run via
@@ -433,6 +446,54 @@ function normalizeFindingsKey(findings: ReadonlyArray<Finding>): string {
 }
 
 /**
+ * Reconstruct the no-progress guard state from a persisted ledger on resume
+ * (integ-cmr m2 r1, Finding 3).
+ *
+ * The live loop maintains two pieces of state for the K-consecutive-no-progress
+ * stuck contract (US#18/19): `prevFindingsKey` (the previous reviewer step's
+ * normalised findings, the baseline the next S6 compares against) and
+ * `noProgressStreak` (consecutive S6 rounds whose findings did not change). On a
+ * crash/escalate-resume mid-fix-loop these were NOT reconstructed, so the first
+ * S6 after resume scored a free "progress" pass and erased the prior streak — a
+ * genuinely-stuck loop could evade the contract indefinitely across resume
+ * boundaries. This folds the same findings-change signal over the persisted
+ * reviewer outputs to rebuild both, so the contract holds through resume.
+ *
+ * The baseline is the S3 full review (round-0); each subsequent S6 re-review is
+ * compared against the running `prevFindingsKey`, mirroring the live loop's
+ * sequencing exactly (seed at S3, advance + score at each S6). Reviewer entries
+ * are read IN ORDER; the first reviewer output seeds the baseline (no streak
+ * change), and each later one scores progress/no-progress against it.
+ */
+function reconstructProgressState(
+  ledger: ReadonlyArray<LedgerEntry>,
+): { prevFindingsKey: string | undefined; noProgressStreak: number } {
+  let prevFindingsKey: string | undefined;
+  let noProgressStreak = 0;
+  let seenBaseline = false;
+
+  for (const e of ledger) {
+    const out = e.output;
+    if (out?.kind !== "reviewer") continue;
+    const key = normalizeFindingsKey(out.findings);
+    if (!seenBaseline) {
+      // First reviewer output (the S3 round-0 baseline): seed only, no scoring —
+      // matches the live loop, which seeds prevFindingsKey from S3 and scores
+      // progress only at S6.
+      prevFindingsKey = key;
+      seenBaseline = true;
+      continue;
+    }
+    // A re-review round (S6): score progress against the running baseline.
+    const madeProgress = key !== prevFindingsKey;
+    noProgressStreak = madeProgress ? 0 : noProgressStreak + 1;
+    prevFindingsKey = key;
+  }
+
+  return { prevFindingsKey, noProgressStreak };
+}
+
+/**
  * Synthesise a human-readable reason string for route()-detected error edges
  * (e.g. 0-commit). Backend-throw errors use the caught message directly.
  */
@@ -526,14 +587,24 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
    * writeLedger failure HERE is swallowed: we are already terminating with an
    * error, so a secondary persistence failure must not mask the original cause
    * nor raw-reject. The in-memory ledger still records the step regardless.
+   *
+   * integ-cmr m2 r1 (Finding 1): `handoffStatus` is threaded through so the
+   * error-path terminal S8 is persisted TAGGED (handoffStatus:'error'). Without
+   * the tag, planResume Case 3a (which only reports a terminal status when
+   * lastEntry.handoffStatus !== undefined) falls through to Case 3b/4 and routes
+   * from the prior NON-S8 step — re-entering the fix loop on a no-progress bail,
+   * or reporting SUCCESS for a push-fail. The terminal status must be recorded
+   * on disk, not inferred. Non-terminal best-effort persists (the failing step)
+   * pass handoffStatus=undefined, matching emitLedger's "undefined for non-S8".
    */
   async function persistBestEffort(
     s: StepId,
     output: StepOutput | undefined,
     promptFile: string | undefined,
+    handoffStatus?: HandoffStatus,
   ): Promise<void> {
     try {
-      await emitLedger(s, output, promptFile);
+      await emitLedger(s, output, promptFile, handoffStatus);
     } catch {
       // Swallow: error termination must not be derailed by a ledger I/O fault.
     }
@@ -603,9 +674,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       await persistBestEffort(failedStep, opts?.output, undefined);
     }
 
-    // Terminal S8 entry — in-memory + persisted.
+    // Terminal S8 entry — in-memory + persisted. The PERSISTED entry is TAGGED
+    // with the terminal status (integ-cmr m2 r1, Finding 1): errorTermination is
+    // always an ERROR handoff, so the disk S8 must carry handoffStatus:'error';
+    // a re-feed then reports the true error via planResume Case 3a instead of
+    // falling through to Case 3b/4 (which would re-route from the prior NON-S8
+    // step — re-entering the fix loop or reporting a spurious success). The
+    // in-memory entry stays untagged, matching the normal handoff path (only the
+    // disk ledger is the resume truth; the in-memory ledger is the live result).
     ledger.push({ step: "S8" });
-    await persistBestEffort("S8", undefined, undefined);
+    await persistBestEffort("S8", undefined, undefined, "error");
 
     // An error abort surfaces whatever defers were collected before the fault
     // (empty if S4 never ran).
@@ -739,6 +817,42 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       await backend.cleanResidue(worktree);
     } catch (err) {
       return await errorTermination(plan.resumeStep, err);
+    }
+
+    // ── Reconstruct the no-progress guard state (integ-cmr m2 r1, Finding 3) ──
+    // The fix-loop stuck contract (US#18/19) lives in prevFindingsKey +
+    // noProgressStreak, maintained at each S6. A crash/escalate-resume mid-loop
+    // must NOT start with a clean streak: that would grant the first S6 after
+    // resume a free "progress" pass and erase the prior streak, letting a
+    // genuinely-stuck loop evade the K-consecutive contract across the resume
+    // boundary. Fold the same findings-change signal over the persisted reviewer
+    // outputs to rebuild both pieces of state.
+    const resumed = reconstructProgressState(plan.priorLedger);
+    prevFindingsKey = resumed.prevFindingsKey;
+    noProgressStreak = resumed.noProgressStreak;
+
+    // If the persisted history is ALREADY at K consecutive no-progress rounds,
+    // the prior run was stuck at the contract limit before it crashed — do not
+    // continue it. Bail immediately to S8(status=error), mirroring the in-loop
+    // no-progress bail (tagged + best-effort persisted, never a raw reject).
+    if (noProgressStreak >= NO_PROGRESS_LIMIT) {
+      ledger.push({ step: "S8" });
+      await persistBestEffort("S8", undefined, undefined, "error");
+      const errorPackage: ErrorPackage = {
+        failedStep: "S6",
+        reason:
+          `fix loop stuck: ${NO_PROGRESS_LIMIT} consecutive rounds with no ` +
+          `progress (unchanged reviewer findings) in the resumed history. The ` +
+          `fix loop is not converging — likely a route bug or a fix that ` +
+          `changes nothing the reviewer sees; a human is needed.`,
+        branchHead: worktree.branch,
+      };
+      return {
+        status: "error",
+        errorPackage,
+        stepLedger: ledger,
+        deferredFindings,
+      };
     }
 
     // Continue from the recorded breakpoint.
@@ -1063,8 +1177,22 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // that changes nothing the reviewer sees), not "too many rounds". Bail
         // cleanly to S8(status=error); never throw / reject. Surface the defers
         // collected so far, consistent with the other in-loop error handoffs.
+        //
+        // integ-cmr m2 r1 (Findings 1 & 4): persist via persistBestEffort with
+        // handoffStatus:'error', mirroring errorTermination. Two merge-seam bugs
+        // fixed at once:
+        //   - Finding 1: the old emitLedger('S8', undefined, undefined) wrote the
+        //     terminal S8 UNTAGGED, so a re-feed routed S6→S4 and RE-ENTERED the
+        //     fix loop instead of reporting the stuck error. Tagging it 'error'
+        //     makes planResume Case 3a report the true terminal status.
+        //   - Finding 4: the old emitLedger here was UNGUARDED (unlike the normal
+        //     handoff path's try/catch). A writeLedger throw on this S8 persist
+        //     raw-rejected out of runOrchestrator, violating the #252 invariant
+        //     "any backend call throwing → S8(error) + error package".
+        //     persistBestEffort swallows the write fault so we still return the
+        //     original stuck S8(error) package rather than rejecting.
         ledger.push({ step: "S8" });
-        await emitLedger("S8", undefined, undefined);
+        await persistBestEffort("S8", undefined, undefined, "error");
         const errorPackage: ErrorPackage = {
           failedStep: "S6",
           reason:
