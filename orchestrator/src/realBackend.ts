@@ -392,6 +392,21 @@ export function lastSessionId(
   return undefined;
 }
 
+/**
+ * The number of commits Sandcastle observed on the resident branch during a run
+ * = `result.commits.length` (#256 commit-truth). This is the SINGLE SOURCE OF
+ * TRUTH the coder path reconciles its self-reported `commitsAdded` against (see
+ * {@link reconcileCoderCommits}), reading the {@link RunResultLike.commits} field
+ * the Backend previously declared but never consumed. Mirrors
+ * {@link lastSessionId}: a tiny accessor so the wiring is unit-tested without a
+ * container.
+ */
+export function realCommitCount(
+  result: Pick<RunResultLike, "commits">,
+): number {
+  return result.commits.length;
+}
+
 // ── coder structured output from stdout (integ-cmr 256 r1) ──────────────────
 
 /**
@@ -443,6 +458,69 @@ export function stripJsonFence(s: string): string {
   const fence = /^```(?:json)?\s*\n?([\s\S]*?)\n?```$/;
   const m = fence.exec(s.trim());
   return m ? m[1].trim() : s;
+}
+
+// ── coder commit truth from git (#256 truthification) ───────────────────────
+
+/** The self-reported coder JSON a step emits (already shape-validated). */
+export interface SelfReportedCoder {
+  readonly committed: boolean;
+  readonly commitsAdded: number;
+  readonly escalate?: { readonly reason: string; readonly diagnosis: string };
+}
+
+/**
+ * Reconcile a coder step's SELF-REPORTED `{committed, commitsAdded}` against the
+ * REAL number of commits Sandcastle observed on the resident branch
+ * (`result.commits.length`), and return a git-TRUTHED coder output.
+ *
+ * WHY (integ-cmr 256 r4, real-backend-wiring / commit-truth): the coder reports
+ * `committed` / `commitsAdded` in its `<coder>` tag, but a model can claim a
+ * commit it never made (`{committed:true, commitsAdded:1}` with ZERO real
+ * commits). Trusting the self-report routes that step to S2/S5 SUCCESS, slipping
+ * the #252 0-commit edge and defeating the very truthification this slice was
+ * assigned (the in-tree `validate.ts` note: "deriving the real count from git is
+ * #256"). The single source of truth is git — `result.commits.length` — so:
+ *
+ *   - committed   ← realCommitCount > 0
+ *   - commitsAdded ← realCommitCount
+ *
+ * The self-report is kept only as a CROSS-CHECK: a self-report that contradicts
+ * git (claims a commit git did not see, or miscounts) is a contract violation →
+ * THROW. The caller (runStep / resumeSession) lets that propagate to the runner's
+ * error edge = S8(error) + error package, never a silently-trusted success.
+ *
+ * `escalate` is a MODEL signal (not derivable from git), so it is preserved from
+ * the self-report verbatim — but it does NOT suppress a commit-count
+ * contradiction (an escalating coder that miscounts its commits still throws).
+ *
+ * Pure (no I/O): the caller supplies the real commit count from `result.commits`,
+ * so the reconciliation is unit-tested without a container.
+ */
+export function reconcileCoderCommits(
+  selfReported: SelfReportedCoder,
+  gitCommitCount: number,
+): SelfReportedCoder {
+  const committed = gitCommitCount > 0;
+  // Cross-check the self-report against git truth; a contradiction is a contract
+  // violation (the model claimed a commit count git does not back).
+  if (
+    selfReported.committed !== committed ||
+    selfReported.commitsAdded !== gitCommitCount
+  ) {
+    throw new Error(
+      `realBackend: coder self-report {committed:${selfReported.committed}, ` +
+        `commitsAdded:${selfReported.commitsAdded}} contradicts git ` +
+        `(${gitCommitCount} real commit${gitCommitCount === 1 ? "" : "s"} on ` +
+        `the resident branch). The commit count is derived from git, not the ` +
+        `model's claim (#256 truthification); a divergent self-report is a ` +
+        `contract violation → S8(error).`,
+    );
+  }
+  const base = { committed, commitsAdded: gitCommitCount };
+  return selfReported.escalate !== undefined
+    ? { ...base, escalate: selfReported.escalate }
+    : base;
 }
 
 // ── branchHEAD consistency (codex#2) ────────────────────────────────────────
@@ -1077,8 +1155,33 @@ export class RealBackend implements Backend {
     return extractCoderTag(result.stdout);
   }
 
-  /** Decode a Sandcastle structured output into a domain StepOutput. */
-  private decodeOutput(spec: StepSpec, raw: unknown): StepOutput {
+  /**
+   * Decode a Sandcastle structured output into a domain StepOutput.
+   *
+   * `gitCommitCount` is `result.commits.length` (via {@link realCommitCount}) —
+   * the number of commits Sandcastle observed THIS run. For a coder step on the
+   * NORMAL completion path it is the SINGLE SOURCE OF TRUTH for `committed` /
+   * `commitsAdded` (#256 truthification): the self-reported `<coder>` tag is
+   * reconciled against git via {@link reconcileCoderCommits}, which derives the
+   * count from git and throws on a contradiction (a model claiming a commit it
+   * never made) — the caller propagates that to the runner's S8(error) edge.
+   *
+   * `gitCommitCount === undefined` skips git-truthing and trusts the self-report
+   * (used ONLY on the resume path): a `resumeSession` re-runs ONE iteration that
+   * may just re-emit corrected structured output WITHOUT a new commit, so its
+   * per-run `result.commits.length` is NOT a reliable cumulative truth (the
+   * original run's commits already live on the branch and are not re-counted).
+   * Git-truthing there would falsely flag `committed:true` as a 0-commit
+   * contradiction. The normal `runStep` completion path the finding targets
+   * always passes the real count.
+   *
+   * Ignored for the reviewer role (commits are not part of a review's contract).
+   */
+  private decodeOutput(
+    spec: StepSpec,
+    raw: unknown,
+    gitCommitCount: number | undefined,
+  ): StepOutput {
     if (spec.role === "reviewer") {
       const r = reviewerOutputSchema.parse(raw);
       const findings: Finding[] = r.findings.map((f) => ({ ...f }));
@@ -1086,15 +1189,27 @@ export class RealBackend implements Backend {
         ? { kind: "reviewer", findings, escalate: r.escalate }
         : { kind: "reviewer", findings };
     }
+    // Coder: parse the self-report for shape, then (normal path) TRUTH the commit
+    // count from git (result.commits.length). reconcileCoderCommits throws on a
+    // self-report that contradicts git → S8(error) at the runner (never a
+    // trusted success). On the resume path (undefined) trust the self-report.
     const c = coderOutputSchema.parse(raw);
-    return c.escalate
+    const out =
+      gitCommitCount === undefined
+        ? c
+        : reconcileCoderCommits(c, gitCommitCount);
+    return out.escalate
       ? {
           kind: "coder",
-          committed: c.committed,
-          commitsAdded: c.commitsAdded,
-          escalate: c.escalate,
+          committed: out.committed,
+          commitsAdded: out.commitsAdded,
+          escalate: out.escalate,
         }
-      : { kind: "coder", committed: c.committed, commitsAdded: c.commitsAdded };
+      : {
+          kind: "coder",
+          committed: out.committed,
+          commitsAdded: out.commitsAdded,
+        };
   }
 
   // ── S2/S3/S5/S6: one sandbox.run() (#256 seam extension returns StepResult) ─
@@ -1129,7 +1244,9 @@ export class RealBackend implements Backend {
     });
     const typedOutputUsed = spec.maxIter === 1;
     const raw = this.rawOutputFor(result, typedOutputUsed);
-    const output = this.decodeOutput(spec, raw);
+    // #256 commit-truth: the coder's committed/commitsAdded is derived from the
+    // REAL commits Sandcastle observed (result.commits), not the self-report.
+    const output = this.decodeOutput(spec, raw, realCommitCount(result));
     return { output, sessionId: lastSessionId(result) };
   }
 
@@ -1167,9 +1284,14 @@ export class RealBackend implements Backend {
         // for both roles (no <coder> stdout fallback needed at maxIter:1).
         output: this.outputFor(spec),
       });
+      // Resume path: trust the self-report (undefined realCommitCount). A resume
+      // re-runs ONE iteration that may re-emit corrected output with no new
+      // commit, so its per-run commits.length is not a cumulative truth (#256
+      // git-truthing applies to the normal runStep completion path only).
       const output = this.decodeOutput(
         spec,
         this.rawOutputFor(result, /*typedOutputUsed*/ true),
+        /*realCommitCount (skip git-truth on resume)*/ undefined,
       );
       return { output, sessionId: lastSessionId(result) ?? sessionId };
     } catch (err) {
@@ -1192,9 +1314,13 @@ export class RealBackend implements Backend {
           // maxIterations:1 ⇒ typed output valid for both roles (F4, as above).
           output: this.outputFor(spec),
         });
+        // Resume-retry path: trust the self-report (undefined), same rationale as
+        // the resume path above — a per-run commit count is not a cumulative
+        // truth here (#256 git-truthing is the normal runStep path).
         const output = this.decodeOutput(
           spec,
           this.rawOutputFor(result, /*typedOutputUsed*/ true),
+          /*realCommitCount (skip git-truth on resume)*/ undefined,
         );
         return { output, sessionId: lastSessionId(result) ?? recovery.sessionId };
       }
