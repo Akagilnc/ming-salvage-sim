@@ -87,9 +87,22 @@ export interface StepSpec {
    */
   readonly completionSignal: string;
   /**
-   * Per-step iteration cap.
-   * - coder / fix steps: > 1 (they loop until done or escalate).
+   * Per-step iteration cap = the WITHIN-STEP agent (Ralph) retry budget for a
+   * single `sandbox.run()`. NOT the fix-loop convergence round limit.
+   *
+   * - coder / fix steps: > 1 (the agent iterates within the one step until the
+   *   step's work is done or it escalates).
    * - reviewer steps: exactly 1 (single pass — reviewer never self-edits).
+   *
+   * SEMANTICS (堵 #256 misuse): hitting maxIter means THAT step ends normally —
+   * the outer `route()` loop then continues as usual. It is NEVER "the
+   * orchestrator gives up": the orchestrator only stops when the MODEL emits an
+   * `escalate` signal (US#18/US#19), never by counting iterations/rounds.
+   *
+   * v0.1: the runner does NOT enforce maxIter (lazy field — see STEP_SPECS).
+   * When #256 wires Sandcastle, maxIter MUST be implemented with exactly this
+   * semantics (within-step retry budget) and MUST NOT degrade into a
+   * "count-to-N-then-give-up" fix-loop cap, which would violate US#18.
    */
   readonly maxIter: number;
   /**
@@ -192,11 +205,21 @@ export interface LedgerEntry {
 
 /**
  * Full persisted ledger entry (#249). Extends {@link LedgerEntry} with the
- * audit and resume fields required by ADR 0018 §3:
- *   - `sessionId`   — which sandbox session produced this step (resume truth).
- *   - `prompt_hash` — SHA-256 of the versioned promptFile content (anti-tampering audit).
- *   - `branchHEAD`  — git commit SHA at the worktree HEAD when the step was recorded.
- *   - `ts`          — ISO-8601 timestamp when this entry was written.
+ * audit and resume fields required by ADR 0018 §3.
+ *
+ * ⚠️ v0.1 PLACEHOLDERS (real values + seam extension = #256). Three of these
+ * fields carry placeholder values in v0.1 — do NOT rely on them as their
+ * eventual real meaning yet:
+ *   - `sessionId`   — v0.1: a run-level UUID shared by ALL steps in one run.
+ *                     Real (#256): the per-step sandbox session id from
+ *                     `resumeSession` — requires the seam extension that has
+ *                     `runStep` RETURN the real session id.
+ *   - `prompt_hash` — v0.1: SHA-256 of the promptFile NAME (or step id for
+ *                     runner-action steps). Real (#256): SHA-256 of the
+ *                     resolved promptFile CONTENT (real anti-tampering audit).
+ *   - `branchHEAD`  — v0.1: the branch NAME. Real (#256): the git commit SHA
+ *                     (`git rev-parse HEAD`) at the worktree HEAD.
+ *   - `ts`          — ISO-8601 timestamp when this entry was written (real).
  *
  * The runner hands this to {@link Backend.writeLedger}, which persists it to the
  * sibling state directory (outside the worktree so `git clean -fd` cannot remove it).
@@ -205,23 +228,28 @@ export interface PersistentLedgerEntry extends LedgerEntry {
   /**
    * Sandbox session identifier (resume truth).
    *
-   * TODO(#256): v0.1 placeholder — stores a run-level UUID shared by all
-   * steps in a single runOrchestrator invocation.  The real per-step sandbox
-   * session id (required for resumeSession) is available only when the real
-   * Backend's runStep returns it; wire in #256.
+   * TODO(#256): v0.1 PLACEHOLDER — stores a run-level UUID shared by all
+   * steps in a single runOrchestrator invocation. This is NOT a per-step
+   * sandbox session id. The real per-step session id (required for
+   * `resumeSession`) needs the seam extension where `runStep` RETURNS the real
+   * session id; wire in #256.
    */
   readonly sessionId: string;
   /**
-   * SHA-256 (hex) of the versioned promptFile for agent steps.
-   * For runner-action steps (no promptFile): SHA-256 of the step id string.
+   * Prompt hash for the anti-tampering audit.
+   *
+   * TODO(#256): v0.1 PLACEHOLDER — SHA-256 of the promptFile NAME for agent
+   * steps (or of the step id string for runner-action steps), NOT of the file
+   * CONTENT. The real content hash (true anti-tampering) requires the real
+   * Backend reading the resolved promptFile; wire in #256.
    */
   readonly prompt_hash: string;
   /**
    * Worktree branch reference when this entry was recorded.
    *
-   * TODO(#256): v0.1 placeholder — stores the branch name (e.g.
-   * "feat/244-s249-ledger") rather than a git commit SHA.  The real git SHA
-   * (from `git rev-parse HEAD`) requires the real Backend; wire in #256.
+   * TODO(#256): v0.1 PLACEHOLDER — stores the branch NAME (e.g.
+   * "feat/244-s249-ledger"), NOT a git commit SHA. The real git SHA (from
+   * `git rev-parse HEAD`) requires the real Backend; wire in #256.
    */
   readonly branchHEAD: string;
   /** ISO-8601 timestamp when this entry was persisted. */
@@ -248,7 +276,14 @@ export interface Backend {
     worktree: WorktreeHandle,
     snapshot: IssueSnapshot,
   ): Promise<void>;
-  /** S2/S3/S5/S6: one `sandbox.run()` for an agent step. */
+  /**
+   * S2/S3/S5/S6: one `sandbox.run()` for an agent step.
+   *
+   * v0.1 returns only the structured {@link StepOutput}. The real per-step
+   * sandbox session id (needed for `resumeSession` and the ledger's real
+   * `sessionId`) is NOT carried here yet — extending this return to include
+   * the session id is the #256 seam extension (see PersistentLedgerEntry).
+   */
   runStep(spec: StepSpec, worktree: WorktreeHandle): Promise<StepOutput>;
   /** S7: push the resident slice branch (no PR, no merge). */
   push(worktree: WorktreeHandle): Promise<void>;
