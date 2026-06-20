@@ -3,7 +3,7 @@ REM 一键打 zip 分发包（#186，Windows）。onedir 形态：解压后根�
 REM
 REM 前置（在干净 clone 里跑一次）：
 REM   python -m venv .venv ^&^& .venv\Scripts\activate
-REM   pip install -e . pyinstaller pywebview tiktoken
+REM   pip install -r requirements.txt pyinstaller pywebview tiktoken   REM 本仓无 pyproject/setup.py，用 requirements.txt（非 -e .）
 REM 然后：
 REM   scripts\build_release.bat
 REM
@@ -38,8 +38,9 @@ if not exist "dist\MingSalvageSim\MingSalvageSim.exe" (
 del /q "dist\MingSalvageSim-windows.zip" 2>nul
 REM 打 onedir 目录内容（dist\MingSalvageSim\*）：解压后根目录 = MingSalvageSim.exe + _internal\
 REM $ErrorActionPreference='Stop'：Compress-Archive 的非终止错误默认不置非零退出码，不加这句 || goto :err 抓不到（静默坏包）。
-REM 反斜杠路径：Windows PowerShell 5.1 的 Compress-Archive 对正斜杠通配路径可能解析失败。
-powershell -NoProfile -Command "$ErrorActionPreference='Stop'; Compress-Archive -Path 'dist\MingSalvageSim\*' -DestinationPath 'dist\MingSalvageSim-windows.zip' -Force" || goto :err
+REM Get-ChildItem | Compress-Archive（非 -Path 'dir\*' 通配）：PS 5.1 的 Compress-Archive 用通配符路径打含子目录（如 _internal）的目录
+REM 会触发已知 bug（"An item with the same key has already been added"）；管道传顶层项更稳，且保持 exe + _internal\ 在 zip 根。
+powershell -NoProfile -Command "$ErrorActionPreference='Stop'; Get-ChildItem -Path 'dist\MingSalvageSim' | Compress-Archive -DestinationPath 'dist\MingSalvageSim-windows.zip' -Force" || goto :err
 echo [build] OK dist\MingSalvageSim-windows.zip
 echo [build]    unzip -^> root: MingSalvageSim.exe + _internal\, zero config files.
 goto :eof
