@@ -44,29 +44,15 @@ Status: Proposed（2026-06-19；spike 实证「底座可行 + 并行编排可行
   - 落地三件套 = **skills 在场**(容器 bind-mount `cp -RL` 实体化那组 dev skill 到 `/home/agent/.claude/skills`)+ **CLAUDE.md 路由**(在 git、机器可执行)+ **thin prompt**;待「注入+路由 vs 不注入」A/B 实测(同一 issue #137 对照)定收益。
 - **未决（剩唯一项）**：设计评审闭环（本地 cmr + 线上 bot）未跑——本 ADR Proposed → Accepted 的最后一道。并行编排证据已补齐（发现 3）；skill 注入收益待 A/B（发现 4，**下方 v1 具体化已改向「按 profile 预烤镜像」，A/B 作废**）。
 
-## v1 具体化（2026-06-20 grill-with-docs 收敛；薄质量层落到「单个独立 issue」的最小形态）
+## v1 具体化（2026-06-20 grill-with-docs 收敛；薄质量层落到「单个实现切片」的最小形态）
 
 > **历史说明（#217 → #244）**：本 ADR 上半部（背景 / 决定 / Considered / Consequences）以 **#217** 为语境记录「编排器自建 vs 采 Sandcastle」的决定——那是当时的 epic 编号。**v1 实际 build 已 spin 成独立新 epic #244、与 #217 无关**（不隶属、不取代、升级链不含 #217）。上半部及别处的 #217 仅作历史 / 对照出现，v1 设计不依赖、不修改 #217。
 
-衡量标尺仍是北极星。v1 = wiki [[tdd-autonomous-dev]] 流程的**一小段**（单切片 implement + per-slice review/fix → push），不含 ship / 家族 / 线上评审。
+衡量标尺仍是北极星。v1 = wiki [[tdd-autonomous-dev]] 流程的**一小段**（单切片 implement + per-slice review/fix → push）；**流程编排由 ADR 0018 的 runner-driven step 序列控**（取代「coder 一个 run 跑完整流程、自判完成」）。ship / 家族 / 线上评审全 deferred；家族 base 当前置见 ADR 0017。
 
-**1. scope 与输入闸**
-- v1 收**单个实现切片 issue**（不分独立 / 有父——「喂父报错、子不报错」）。输入校验（ADR 0018 S0 input_gate）：**是父 issue（底下挂子 issue）/ 未切 epic、或没有 `## Agent Brief` comment、或 label 不是 `ready-for-agent` → 报错打回调用者**，只放行「**rfa ∧ 有 `## Agent Brief` ∧ 自身不挂子 issue**」。`## Agent Brief` = ready-for-agent 的权威实现契约（DEV_WORKFLOW），既挡未切 PRD epic（没 brief、没子也照挡），又收常见的 `to-issues` 子片（有父无妨）。
-- 家族（planner/merger 角色）、ship、线上评审 loop **全 deferred**。家族 base 当前置（见 ADR 0017）。
-- **传话筒**：调用端（主 session）只传 issue 数字，编排 + prompt 全在代码里（堵即兴 prompt、保可复现）。**本 epic 全新、与 #217 无关**：不隶属、不取代、升级链不含 #217。
+本 ADR 只记 v1 几个 hard-to-reverse 决定；**完整 spec（scope / 输入闸 / 角色 roster / 步骤表 S0–S8 / 角色流程 / profile 镜像内容 / defer / 产出 / Backend seam）= 实现 spec，见 PRD #244 Implementation Decisions**。
 
-**2. 万物皆角色**：管线拆成角色，每角色 = 一段固定流程 + 一个 profile 镜像 + 一份 soul。roster = planner / coder / reviewer / ship / online-review / merger；**v1 = coder + reviewer**。
-
-**3. 角色流程（步内内容；步序由 ADR 0018 runner-driven step 序列控、不由 agent，取代「coder 一个 run 跑完整流程、自判完成」）**——细节真源 = [[tdd-autonomous-dev]] §切片内纪律 + [[cross-model-review]] §每轮全量复审 + §修复。下面是各角色在自己那一步（S2 coder / S3·S6 reviewer / S5 fix）里做什么：
-- **coder（Sonnet）**：`invoke /tdd`（红绿重构，vertical tracer bullet）→ branch coverage → typecheck → 全量 test → `/review` → 窄自查二连 → commit 到常驻 slice worktree。
-- **reviewer（Opus 4.8）**：**每一轮都对当前 full diff 全量复审**（不窄化成「上轮 P0/P1 关没关」点检，上轮验收只是尾挂项）；grounded（读源码 Read/Grep）；`review only, do not modify`。
-- **fix（coder 侧）**：default non-trivial → 第一动作 `invoke /diagnosing-bugs`（mechanical 须显式声明 + 举证）；P0/P1 必修、不可私降 P2；**每轮 fix 后强制自查二连**（① 同类型 ② 引入 bug）。
-- **fix loop 收敛（runner 确定性路由，ADR 0018 S4）**：runner 按 reviewer findings JSON 路由——有 P0/P1 → coder_fix；无 → push（余 P2/P3 进 defer 清单上浮、不挡）。**严重度由模型判，runner 按 JSON 路由**（既模型判断、又不靠 agent 自己决定下一步）。
-- **不收敛（历史仅 1–2 次，v1 不造自动 drift 诊断机器）**：模型自判 stuck 时发 **escalate 信号**（不数轮数、不自动分类 impl-vs-design）→ runner 停、落 ledger（含 sessionId）→ 返回调用端（**切片 ← 主 session ← 用户，不含 #217**）→ **tester（人）判**怎么办 → Sandcastle 原生 **`resumeSession`** 续跑（与崩溃续跑同一套机器，见 ADR 0017 §状态落盘 / ADR 0018）。容器从不需「活着挂起」——fresh `run()` 模型下两次 run 间无在飞推理可保（§4）。
-- **per-slice 无 Claude 的省额度规矩（[[cross-model-review]]）v1 暂搁置**：那条因 claude -p credit 紧；v1 走订阅 auth 容器、Opus 担得起，主动选 **Sonnet 写 / Opus 4.8 单审**（已是跨模型），代价是 code+review 都烧 Claude 额度。以后换 codex 即回省额度路线；per-slice 升多模型 cmr 时再用 `ak-cross-m-review`。
-
-**4. profile 镜像**（**取代发现 4 的 cp -RL bind-mount 注入**，later-doc-wins）：
-- 按角色预烤镜像，**烤进** = 全栈工具链（python + `.venv` + node + web deps）、`gh` CLI（调用端只传 issue 数字 → 容器自读 issue）、多个模型 CLI（runtime 按额度选，不重烤）、dev skills、角色 soul；**runtime 才挂** = 被加工 worktree + auth token（secret）。
-- **v1 = 一个镜像、双角色**：coder/reviewer 跑在同一常驻 sandbox（共享 worktree），靠 **`run()` 级 fresh context** 保上下文隔离（reviewer 看不到 coder 的「我刚写的」推理）。承重假设「run() 间上下文不继承」实现期实测确认。可逆：reviewer 真需独立（换工具/后端/强隔离）再拆两镜像。
-
-**5. defer findings**：不进 PR body（PR body 没人事后看，[[tdd-autonomous-dev]] §deferred-work）；顺返回链上浮成**一份合并清单**给主 session，由主 session triage 决定哪些建 issue。
+- **v1 模型 = Sonnet 写 / Opus 4.8 评**，暂搁置 wiki per-slice「不用 Claude 省额度」规矩（claude -p credit 紧；v1 走订阅 auth 容器、Opus 担得起，代价是烧 Claude 额度）；以后换 codex 回省额度、per-slice 升多模型时再用 `ak-cross-m-review`。
+- **v1 = 一个镜像、双角色**：coder/reviewer 同一常驻 sandbox（共享 worktree），靠 `run()` 级 fresh context 保上下文隔离（reviewer 看不到 coder「我刚写的」推理）。**可逆**：reviewer 真需独立再拆两镜像。
+- **dev skills + 角色 soul 烤进 profile 镜像**（**取代发现 4 的 cp -RL bind-mount 注入**，later-doc-wins）。
+- **输入只收单个实现切片**（「喂父报错、子不报错」，凭 `## Agent Brief` 判）；**调用端只传 issue 数字**，编排 + prompt 全在代码里（保可复现）。**本 epic 全新、与 #217 无关**。
