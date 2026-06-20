@@ -917,6 +917,48 @@ def test_supplement_existing_draft_text_ignores_non_object_payload_json(
     assert json.loads(pend[0]["payload_json"])["text"] == "新草稿：着户部及兵部同查。"
 
 
+def test_supplement_existing_draft_text_accepts_preparsed_payload_json(game, monkeypatch):
+    """测试/替身可能把 payload_json 预解析为 dict；补充模式应直接读取 text，不应丢上下文。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+
+    db.upsert_pending_directive(
+        state.turn, name, payload={"text": "原始草稿：清查粮饷。", "actor": name})
+
+    original_list_pending_actions = db.list_pending_actions
+
+    def _list_with_preparsed_payload(*args, **kwargs):
+        rows = original_list_pending_actions(*args, **kwargs)
+        out = []
+        for row in rows:
+            row = dict(row)
+            if row["kind"] == "directive":
+                row["payload_json"] = {"text": "原始草稿：清查粮饷。", "actor": name}
+            out.append(row)
+        return out
+
+    monkeypatch.setattr(db, "list_pending_actions", _list_with_preparsed_payload)
+
+    captured = {}
+
+    def _capture(prompt, llm_config=None, tag=""):
+        if "待皇帝定夺" in prompt or "应允" in prompt:
+            return (json.dumps({"确认": "无"}, ensure_ascii=False), 1)
+        captured["draft_prompt"] = prompt
+        return (json.dumps({"拟旨意图": "拟旨", "合并草案": "合并草稿"}, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _capture)
+    sess = _fake_session(db, state)
+
+    GameSession.apply_cli_conversation_actions(
+        sess, ch, player_message="再补一条", answer="加上监察御史同行。",
+        has_directive=False, secret_order_id=None,
+    )
+
+    assert "【现有草案】原始草稿：清查粮饷。" in captured["draft_prompt"]
+
+
 # ── ⑭ db.py _apply_pending_action directive 落库降级分支（5824-5826）────────────
 
 def test_commit_directive_with_empty_text_returns_false_no_archive(game):
