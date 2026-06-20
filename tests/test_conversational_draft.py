@@ -807,6 +807,19 @@ def test_extract_draft_intent_backend_exception_degrades_to_none(monkeypatch):
     assert any("拟旨意图抽取失败" in m for m in logged)
 
 
+def test_extract_draft_intent_non_object_json_degrades_to_none(monkeypatch):
+    """LLM 若返回合法但非对象的 JSON（如数组），也不能在 .get() 处崩；
+    应按无拟旨意图降级。"""
+    def _array_payload(prompt, llm_config=None, tag=""):
+        return (json.dumps(["拟旨"], ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _array_payload)
+
+    result = cb.extract_draft_intent("拟旨吧", "臣遵旨。")
+
+    assert result == {"draft_action": "无", "draft_text": ""}
+
+
 def test_extract_draft_intent_dirty_action_normalized_to_none(monkeypatch):
     """LLM 返回非 {无,拟旨} 的脏「拟旨意图」值 → 归一为「无」（cli_backend.py:718）。
     脏动作不得误触发草案 stage。"""

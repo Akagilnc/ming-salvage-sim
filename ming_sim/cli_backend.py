@@ -722,6 +722,8 @@ def extract_draft_intent(
     except Exception as exc:
         _log(f"拟旨意图抽取失败：{exc}")
     obj = _loads_lenient(raw) or {}
+    if not isinstance(obj, dict):
+        obj = {}
     _raw = str(obj.get("拟旨意图") or "无").strip()
     _action = _raw if _raw in {"无", "拟旨"} else "无"
     # 无意图时保持空草案；补充模式优先用 LLM 输出的合并草案，未填时 fallback 到 minister_reply。
