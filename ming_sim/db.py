@@ -6601,7 +6601,13 @@ class GameDB:
         new_phase = self._derive_issue_phase(to_value)
         new_status = row["status"]
         closed_turn = row["closed_turn"]
-        commitment_stop_condition = bool(row["commitment_kind"]) or _is_commitment_stop_condition(row["resolve_condition"])
+        stop_condition_raw = str(row["stop_condition"] or "").strip()
+        has_stop_condition = bool(stop_condition_raw and stop_condition_raw != "{}")
+        commitment_stop_condition = (
+            bool(row["commitment_kind"])
+            or has_stop_condition
+            or _is_commitment_stop_condition(row["resolve_condition"])
+        )
         if to_value >= 100 and not commitment_stop_condition:
             new_status = "resolved"
             closed_turn = state.turn
