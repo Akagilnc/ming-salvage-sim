@@ -940,8 +940,8 @@ def test_has_stop_condition_handles_preparsed_and_json_whitespace():
     assert _has_stop_condition({}) is False
     assert _has_stop_condition(" { } ") is False
     assert _has_stop_condition("\n[]\n") is False
-    # 兼容旧档/直插的非 JSON 条件串：旧逻辑把非空字符串视为有停止条件。
-    assert _has_stop_condition("character.毛文龙.loyalty >= 65") is True
+    # legacy fallback 条件串属于 resolve_condition，不是结构化 commitment stop gate。
+    assert _has_stop_condition("character.毛文龙.loyalty >= 65") is False
 
 
 def test_empty_json_stop_condition_allows_advance_to_resolved(game):
