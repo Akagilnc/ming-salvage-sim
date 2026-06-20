@@ -63,10 +63,45 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
     switch (step) {
       case "S0": {
-        // S0 input_gate — runner action. #247: fetch lightweight metadata; the
-        // real gate validation (rfa / Agent Brief / sub-issues / blocked_by)
-        // is #248. Here we read it (proving the seam) and pass through.
-        await backend.fetchIssueMeta(issueNumber);
+        // S0 input_gate — runner action. Read lightweight metadata and enforce
+        // the four-way accept condition (ADR 0018 / #248):
+        //   (a) ready-for-agent label
+        //   (b) has ## Agent Brief comment
+        //   (c) no sub-issues (leaf slice, not a parent/epic)
+        //   (d) all blocked_by dependencies are closed
+        // Any violation throws immediately — the runner stops here, no worktree
+        // is prepared, no agent step is dispatched.
+        const meta = await backend.fetchIssueMeta(issueNumber);
+
+        if (!meta.isReadyForAgent) {
+          throw new Error(
+            `S0 input gate: issue #${issueNumber} is not labelled ready-for-agent. ` +
+              `Triage the issue and apply the label before running the orchestrator.`,
+          );
+        }
+
+        if (!meta.hasAgentBrief) {
+          throw new Error(
+            `S0 input gate: issue #${issueNumber} has no "## Agent Brief" section. ` +
+              `Add an Agent Brief (the authoritative implementation contract) before running.`,
+          );
+        }
+
+        if (meta.hasSubIssues) {
+          throw new Error(
+            `S0 input gate: issue #${issueNumber} is a parent issue (it has sub-issues). ` +
+              `Feed a leaf slice issue, not a parent/epic.`,
+          );
+        }
+
+        if (meta.openBlockedBy.length > 0) {
+          const blockers = meta.openBlockedBy.map((n) => `#${n}`).join(", ");
+          throw new Error(
+            `S0 input gate: issue #${issueNumber} is blocked by upstream issues that are still open: ${blockers}. ` +
+              `Merge the upstream changes before running.`,
+          );
+        }
+
         break;
       }
 
