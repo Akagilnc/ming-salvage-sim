@@ -249,6 +249,42 @@ describe("realBackend resume HEAD reconciliation (codex#2 wiring, F5)", () => {
     ).toBe(sha);
   });
 
+  it("lastLedgerBranchHead returns the last REAL SHA when a later branch-name fallback follows it (r2 F1)", () => {
+    // The dangerous interleave: an agent step recorded a real SHA, then a LATER
+    // step's resolveBranchHEAD hit a transient worktreeHead() fault and recorded
+    // the branch NAME fallback. Returning the latest non-empty value would yield
+    // the NAME — checkBranchHeadConsistency then sees a non-SHA and returns
+    // {ok:true}, SKIPPING a real divergence. Scanning backward for the first
+    // value that is a SHA reconciles against the last REAL recorded base instead.
+    expect(
+      lastLedgerBranchHead([
+        { branchHEAD: sha }, // real SHA (earlier)
+        { branchHEAD: "feat/244-orchestrator-issue-256" }, // later NAME fallback
+      ]),
+    ).toBe(sha);
+  });
+
+  it("lastLedgerBranchHead skips multiple trailing name fallbacks back to the real SHA (r2 F1)", () => {
+    expect(
+      lastLedgerBranchHead([
+        { branchHEAD: other }, // older SHA
+        { branchHEAD: sha }, // latest real SHA — the one to reconcile against
+        { branchHEAD: "feat/244-orchestrator-issue-256" }, // name fallback
+        { branchHEAD: "feat/244-orchestrator-issue-256" }, // name fallback
+      ]),
+    ).toBe(sha);
+  });
+
+  it("lastLedgerBranchHead returns undefined when only name fallbacks were recorded (r2 F1)", () => {
+    // No real SHA anywhere ⇒ nothing for the consistency check to contradict.
+    expect(
+      lastLedgerBranchHead([
+        { branchHEAD: "feat/244-orchestrator-issue-256" },
+        { branchHEAD: "feat/244-orchestrator-issue-256" },
+      ]),
+    ).toBeUndefined();
+  });
+
   it("returns undefined when no entry recorded a value (fresh / pre-SHA ledger)", () => {
     expect(lastLedgerBranchHead([{}, {}])).toBeUndefined();
     expect(lastLedgerBranchHead([])).toBeUndefined();
