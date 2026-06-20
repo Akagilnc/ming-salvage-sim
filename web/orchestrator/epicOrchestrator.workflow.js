@@ -811,15 +811,13 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
     number: slice.plannedSlice.issueNumber,
     reviewedCommit: mergeQueue[index]?.reviewedCommit ?? null
   }));
-  // Current family branch tip (refreshed post rebase / post family-review fix); the single
-  // authoritative "where the family is now" for the handoff and S6's git-skip probe.
-  const familyHead = mergeQueue.at(-1)?.familyHead ?? mergeQueue.at(-1)?.mergeCommit ?? null;
   // Degradation / absent-voice flags from the load-bearing family gate's converged round.
   const convergedRound = Array.isArray(familyReview.rounds) ? familyReview.rounds.at(-1) : undefined;
   const shipFlags = convergedRound?.degradation?.flags ?? [];
   // baseAtStart = the I10-verified startup target HEAD the family branched from (not the family's
-  // own tip). rebaseHead is the family HEAD after an I10 rebase — a tip, not a base — so it must
-  // NOT populate this field; the post-rebase family HEAD is already carried per-slice in `merged`.
+  // own tip). rebaseHead is the family HEAD after an I10 rebase — a tip, not a base — so it must NOT
+  // populate this field. The current family tip is reported separately as the top-level handoff
+  // familyHead (captured AFTER gstack-ship below, since gstack-ship's version bump advances HEAD).
   const baseAtStart = startupTargetHead;
 
   const ship = await runFamilyShip({
@@ -828,6 +826,12 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
     familyBranch: normalizedArgs.familyBranch,
     targetBranch: normalizedArgs.targetBranch
   });
+
+  // Current family branch tip for the handoff + S6 git-skip probe. Taken from gstack-ship's reported
+  // post-ship head: on the ready path gstack-ship bumps VERSION/CHANGELOG and commits, advancing HEAD
+  // past the last slice merge, so the pre-ship merge tip would be stale. On needs-user / unconverged
+  // gstack-ship made no commit and reports no head, so this falls back to the last slice-merge tip.
+  const familyHead = ship.familyHead || mergeQueue.at(-1)?.familyHead || mergeQueue.at(-1)?.mergeCommit || null;
 
   const outcome = inlineShipOutcome({ asked: ship.asked, gatesPassed: ship.gatesPassed, prCreated: ship.prCreated });
 
@@ -920,6 +924,8 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
 //       "gatesPassed": bool,    // coverage + specialist + RedTeam gates all passed (non-skippable)
 //       "prCreated": bool,      // family PR was created by gstack-ship
 //       "prUrl": string,        // (ready) the family PR link
+//       "familyHead": string,   // (ready) the post-ship family HEAD after gstack-ship's version-bump
+//                               //   commit (advances past the last slice merge; absent when no commit)
 //       "askDetail": string,    // (asked) what is being asked (version / pre-landing / coverage)
 //       "shipDetail": string }  // (gates failed / non-ASK ship failure) the blocking detail
 //   If the assumed command/shape is wrong at dogfood time, only this function changes — the terminal-

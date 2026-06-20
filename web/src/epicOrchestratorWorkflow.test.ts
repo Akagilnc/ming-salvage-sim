@@ -1593,7 +1593,7 @@ describe("epic orchestrator S5 Ship phase (gstack-ship + terminal states + hando
 
   it("ready: gstack-ship gates pass + family PR created -> ready terminal state + full handoff", async () => {
     const { result, bashCalls } = await runToShip({
-      ship: { asked: false, gatesPassed: true, prCreated: true, prUrl: "https://github.com/Akagilnc/ming-salvage-sim/pull/777" }
+      ship: { asked: false, gatesPassed: true, prCreated: true, prUrl: "https://github.com/Akagilnc/ming-salvage-sim/pull/777", familyHead: "post-ship-head" }
     });
 
     expect(result.status).toBe("ready");
@@ -1614,7 +1614,8 @@ describe("epic orchestrator S5 Ship phase (gstack-ship + terminal states + hando
       flags: []
     });
     expect(result.handoff.merged).toEqual([{ number: 220, reviewedCommit: "commit-220" }]);
-    expect(result.handoff.familyHead).toBe("merge-220");
+    // gstack-ship's version-bump commit advanced the family HEAD; the handoff reports the post-ship tip.
+    expect(result.handoff.familyHead).toBe("post-ship-head");
   });
 
   it("needs-user: gstack-ship internal ASK fires -> needs-user terminal state + handoff carries the ASK question", async () => {
