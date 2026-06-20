@@ -279,7 +279,9 @@ function isDecimalIssueKey(key) {
 }
 
 export function normalizeWorkflowArgs(rawArgs) {
-  const rawEpic = typeof rawArgs === 'object' && rawArgs !== null && 'epicIssueNumber' in rawArgs ? rawArgs.epicIssueNumber : rawArgs;
+  // Accept a scalar (217), {epicIssueNumber}, or the prior handoff's {epic} field so the whole handoff
+  // object round-trips as relaunch args (with merged->mergedNumbers + baseAtStart->startupTargetHead).
+  const rawEpic = typeof rawArgs === 'object' && rawArgs !== null ? rawArgs.epicIssueNumber ?? rawArgs.epic : rawArgs;
   const epicIssueNumber = String(rawEpic ?? '').trim();
   if (!/^[0-9]+$/.test(epicIssueNumber)) {
     throw new Error('epic-orchestrator requires args to be a positive parent epic issue number, e.g. 217 or {"epicIssueNumber":217}.');
@@ -605,6 +607,7 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
   // back into todo even when merged so it re-runs impl+verify (+ re-passes 5a/5b). todoTotal===0 means
   // the whole epic is already merged with no dirty -> skip implement/merge entirely and run the family
   // branch straight through Family Verify / Family Review / Ship (it is already fully assembled).
+  phaseIfAvailable('Continuation Filter');
   const continuation = inlineContinuationPlan({
     layers: discovery.orderedPlan.map((layerPlan) => layerPlan.issueNumbers),
     mergedNumbers: normalizedArgs.mergedNumbers,
@@ -1589,7 +1592,7 @@ async function runFamilyAgyLeg({ Bash, familyWorktree, familyBranch, diffBase })
   const baseExpr = familyDiffBaseExpr(diffBase);
   try {
     const parsed = parseReviewerJson(
-      await Bash(`set -euo pipefail\ncd ${shellQuote(familyWorktree)}\n# reviewer=agy-family; diff-based review only (agy refuses the hidden .epic-orchestrator worktree, so no repo grounding). Review instructions + JSON schema go on stdin; agy is agentic, so a hard read-only constraint is mandatory.\n{\n  printf '%s\\n' 'REVIEW ONLY — HARD CONSTRAINT. Do NOT modify, create, rename, or delete any file; do NOT run commands. Output only the review.'\n  printf '%s\\n' 'Review the merged family branch diff for cross-slice completeness (5a) and correctness regressions (5b).'\n  printf '%s\\n' 'Return only one JSON object on stdout with shape {"status":"passed"|"failed","findings":[{"id":...,"classification":"mechanical_bug"|"choice","claim_quote":...,"location":...}]}. Do not include markdown or prose outside the JSON object.'\n  printf '%s\\n' 'Diff stat for context:'\n  git diff --stat ${baseExpr} HEAD\n  printf '%s\\n' 'Full diff:'\n  git diff ${baseExpr} HEAD\n} | agy --sandbox --diff-only --print ''`),
+      await Bash(`set -euo pipefail\ncd ${shellQuote(familyWorktree)}\n# reviewer=agy-family; diff-based review only (agy refuses the hidden .epic-orchestrator worktree, so no repo grounding). Review instructions + JSON schema go on stdin; agy is agentic, so a hard read-only constraint is mandatory.\n{\n  printf '%s\\n' 'REVIEW ONLY — HARD CONSTRAINT. Do NOT modify, create, rename, or delete any file; do NOT run commands. Output only the review.'\n  printf '%s\\n' 'Review the merged family branch diff for cross-slice completeness (5a) and correctness regressions (5b).'\n  printf '%s\\n' 'Return only one JSON object on stdout with shape {"status":"passed"|"failed","findings":[{"id":...,"classification":"mechanical_bug"|"choice","claim_quote":...,"location":...}]}. Do not include markdown or prose outside the JSON object.'\n  printf '%s\\n' 'Diff stat for context:'\n  git diff --stat ${baseExpr} HEAD\n  printf '%s\\n' 'Full diff:'\n  git diff ${baseExpr} HEAD\n} | agy --sandbox --print ''`),
       'agy-family'
     );
     return { available: true, findings: familyReviewFindings(parsed, 'agy-family', true) };

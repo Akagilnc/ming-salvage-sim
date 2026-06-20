@@ -104,6 +104,11 @@ describe("epic orchestrator workflow spine", () => {
     expect(() => normalizeWorkflowArgs("217x")).toThrow("epic-orchestrator requires args");
     expect(() => normalizeWorkflowArgs(0)).toThrow("positive parent epic issue number");
     expect(() => normalizeWorkflowArgs("000")).toThrow("positive parent epic issue number");
+    // the prior handoff object uses `epic` (not `epicIssueNumber`) — accept it so the whole handoff
+    // round-trips as relaunch args (alongside merged->mergedNumbers + baseAtStart->startupTargetHead).
+    expect(normalizeWorkflowArgs({ epic: 217 })).toBe("217");
+    expect(normalizeWorkflowArgs({ epic: 217, merged: [{ number: 220, reviewedCommit: "c220" }], baseAtStart: "sha", familyBranch: "family/217" })).toBe("217");
+    expect(() => normalizeWorkflowArgs({ familyBranch: "family/217" })).toThrow("positive parent epic issue number"); // object with neither epic nor epicIssueNumber
   });
 
   it("rejects a familyBranch / targetBranch carrying a newline or control char (Bash comment-injection guard)", async () => {
@@ -1487,8 +1492,10 @@ describe("epic orchestrator S4b family 5a/5b CMR", () => {
     expect(codexFamily).toContain("cd '/repo/.epic-orchestrator/family'");
     expect(codexFamily).toContain("codex exec --skip-git-repo-check --ephemeral -");
     expect(agyFamily).toContain("cd '/repo/.epic-orchestrator/family'");
-    // hidden worktree -> agy must be explicit diff-only (matches the per-slice agy pattern).
-    expect(agyFamily).toContain("agy --sandbox --diff-only --print ''");
+    // canonical agy invocation (no --diff-only — that is not a real agy flag; agy auto-degrades to
+    // diff-only on the hidden .epic-orchestrator worktree). Prompt + diff ride stdin.
+    expect(agyFamily).toContain("agy --sandbox --print ''");
+    expect(agyFamily).not.toContain("--diff-only");
     // agy gets real review instructions + JSON schema on stdin (not a bare diff) and a hard read-only constraint.
     expect(agyFamily).toContain("REVIEW ONLY");
     expect(agyFamily).toContain("Return only one JSON object");
