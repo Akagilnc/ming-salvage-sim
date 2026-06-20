@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildHandoffPayload,
+  continuationPlan,
+  dismissalGate,
   familyReviewGate,
   judgeReviewDegradation,
   layerEpicIssues,
@@ -483,5 +485,125 @@ describe("buildHandoffPayload", () => {
     expect(payload.question).toBeNull();
     expect(payload.detail).toBeNull();
     expect(payload.familyHead).toBeNull();
+  });
+});
+
+describe("continuationPlan", () => {
+  it("skips a merged, non-dirty slice (git already has its commit on the family branch)", () => {
+    expect(continuationPlan({ layers: [[218]], mergedNumbers: [218], dirty: [] })).toEqual({
+      layers: [{ todo: [], skipped: [218], dirty: [] }],
+      todoTotal: 0
+    });
+  });
+
+  it("runs only slices the family branch does not yet have", () => {
+    expect(continuationPlan({ layers: [[218, 219]], mergedNumbers: [218], dirty: [] })).toEqual({
+      layers: [{ todo: [219], skipped: [218], dirty: [] }],
+      todoTotal: 1
+    });
+  });
+
+  it("re-runs a merged-but-dirty slice (into todo + dirty, not git-skipped)", () => {
+    expect(continuationPlan({ layers: [[218, 219]], mergedNumbers: [218, 219], dirty: [218] })).toEqual({
+      layers: [{ todo: [218], skipped: [219], dirty: [218] }],
+      todoTotal: 1
+    });
+  });
+
+  it("buckets a multi-layer mix per layer and accumulates todoTotal across layers", () => {
+    expect(
+      continuationPlan({ layers: [[218, 219], [220, 221]], mergedNumbers: [218, 219, 221], dirty: [219] })
+    ).toEqual({
+      layers: [
+        { todo: [219], skipped: [218], dirty: [219] },
+        { todo: [220], skipped: [221], dirty: [] }
+      ],
+      todoTotal: 2
+    });
+  });
+
+  it("reports todoTotal 0 when every slice is merged and none are dirty", () => {
+    const plan = continuationPlan({ layers: [[218], [219]], mergedNumbers: [218, 219], dirty: [] });
+    expect(plan.todoTotal).toBe(0);
+    expect(plan.layers.every((layer) => layer.todo.length === 0)).toBe(true);
+  });
+
+  it("treats an omitted dirty list as the empty set (first segment has no dirty concept)", () => {
+    expect(continuationPlan({ layers: [[218]], mergedNumbers: [] })).toEqual({
+      layers: [{ todo: [218], skipped: [], dirty: [] }],
+      todoTotal: 1
+    });
+  });
+
+  it("records a dirty slice that is not yet merged in the dirty bucket while still running it", () => {
+    expect(continuationPlan({ layers: [[218, 219]], mergedNumbers: [218], dirty: [219] })).toEqual({
+      layers: [{ todo: [219], skipped: [218], dirty: [219] }],
+      todoTotal: 1
+    });
+  });
+
+  it("does not mutate its input arrays", () => {
+    const layers = [[218, 219]];
+    const mergedNumbers = [218];
+    const dirty = [219];
+    continuationPlan({ layers, mergedNumbers, dirty });
+    expect(layers).toEqual([[218, 219]]);
+    expect(mergedNumbers).toEqual([218]);
+    expect(dirty).toEqual([219]);
+  });
+
+  it("matches merged/dirty membership across string and number issue ids", () => {
+    expect(continuationPlan({ layers: [["218", 219]], mergedNumbers: [218], dirty: ["219"] })).toEqual({
+      layers: [{ todo: [219], skipped: ["218"], dirty: [219] }],
+      todoTotal: 1
+    });
+  });
+});
+
+describe("dismissalGate", () => {
+  it("does not HALT when the finding id matches a dismissed entry", () => {
+    expect(dismissalGate({ finding: { id: "F1" }, dismissed: [{ id: "F1" }] })).toBe(false);
+  });
+
+  it("HALTs when the finding id does not match", () => {
+    expect(dismissalGate({ finding: { id: "F2" }, dismissed: [{ id: "F1" }] })).toBe(true);
+  });
+
+  it("matches by claimQuote even when the id drifted across segments", () => {
+    expect(
+      dismissalGate({ finding: { id: "NEW-3", claimQuote: "此处 throw 缺测试" }, dismissed: [{ id: "OLD-7", claimQuote: "此处 throw 缺测试" }] })
+    ).toBe(false);
+  });
+
+  it("matches by location even when the claim wording changed", () => {
+    expect(
+      dismissalGate({ finding: { id: "X", location: "decisionCore.ts:42" }, dismissed: [{ location: "decisionCore.ts:42" }] })
+    ).toBe(false);
+  });
+
+  it("HALTs against an empty dismissal list", () => {
+    expect(dismissalGate({ finding: { id: "F1", claimQuote: "q", location: "l" }, dismissed: [] })).toBe(true);
+  });
+
+  it("does not vacuously match when a dimension is undefined on both sides", () => {
+    expect(dismissalGate({ finding: { id: "B" }, dismissed: [{ claimQuote: undefined, location: undefined, id: "A" }] })).toBe(true);
+  });
+
+  it("does not HALT when any one of multiple dismissals matches", () => {
+    expect(dismissalGate({ finding: { id: "Z", location: "core.ts:9" }, dismissed: [{ id: "F1" }, { location: "core.ts:9" }] })).toBe(false);
+  });
+
+  it("matches a canonical snake_case claim_quote dismissal against a camelCase finding claimQuote", () => {
+    expect(
+      dismissalGate({ finding: { id: "NEW", claimQuote: "此处 throw 缺测试" }, dismissed: [{ claim_quote: "此处 throw 缺测试" }] })
+    ).toBe(false);
+  });
+
+  it("matches a camelCase dismissal against a snake_case finding claim_quote", () => {
+    expect(dismissalGate({ finding: { id: "X", claim_quote: "q" }, dismissed: [{ claimQuote: "q" }] })).toBe(false);
+  });
+
+  it("matches when both sides use snake_case claim_quote", () => {
+    expect(dismissalGate({ finding: { id: "X", claim_quote: "q" }, dismissed: [{ claim_quote: "q" }] })).toBe(false);
   });
 });
