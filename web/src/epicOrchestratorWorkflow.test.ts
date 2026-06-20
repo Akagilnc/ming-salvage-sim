@@ -2077,7 +2077,16 @@ describe("epic orchestrator S6 cross-segment continuation (relaunch + git-skip +
         subIssues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }],
         args: { mergedNumbers: [{ number: null }] }
       })
-    ).rejects.toThrow(/null \/ undefined \/ empty slice id/);
+    ).rejects.toThrow(/null \/ undefined \/ non-primitive \/ empty slice id/);
+  });
+
+  it("rejects a mergedNumbers/dirty entry whose number value is a nested object (no silent '[object Object]')", async () => {
+    await expect(
+      runContinuation({
+        subIssues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }],
+        args: { mergedNumbers: [{ number: { id: 220 } }] }
+      })
+    ).rejects.toThrow(/non-primitive \/ empty slice id/);
   });
 
   it("a family reviewer returning a non-array findings field is treated as an unavailable (degraded) leg, not silently empty", async () => {
