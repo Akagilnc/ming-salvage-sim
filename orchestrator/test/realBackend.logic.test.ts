@@ -25,6 +25,8 @@ import {
   classifyResumeError,
   ensureExcluded,
   extractAgentBrief,
+  FIX_FINDINGS_FILENAME,
+  serializeFixFindings,
   extractCoderTag,
   hasAgentBrief,
   isLikelySha,
@@ -172,6 +174,36 @@ describe("realBackend ensureExcluded (snapshot leak guard, F3)", () => {
 
   it("the snapshot filename is the dot-prefixed clean-room artifact", () => {
     expect(SNAPSHOT_FILENAME).toBe(".orchestrator-snapshot.json");
+  });
+});
+
+// ─── fix-loop findings file (integ-cmr 256 r3, fix_loop_context) ─────────────
+
+describe("realBackend serializeFixFindings (fix_loop_context, r3)", () => {
+  const f = {
+    severity: "critical" as const,
+    category: "correctness",
+    claim_quote: "the loop never converges",
+    location: "src/foo.ts:10",
+    suggested_fix: "add a guard",
+    action: "fix_now" as const,
+  };
+
+  it("emits a self-describing { fix_now: [...] } object the coder reads", () => {
+    const json = JSON.parse(serializeFixFindings([f]));
+    expect(json).toEqual({ fix_now: [f] });
+  });
+
+  it("serialises an empty list as an empty fix_now array (never undefined)", () => {
+    expect(JSON.parse(serializeFixFindings([]))).toEqual({ fix_now: [] });
+  });
+
+  it("the findings filename is the dot-prefixed clean-room artifact", () => {
+    expect(FIX_FINDINGS_FILENAME).toBe(".orchestrator-fix-findings.json");
+  });
+
+  it("is git-ignorable alongside the snapshot (distinct clean-room file)", () => {
+    expect(FIX_FINDINGS_FILENAME).not.toBe(SNAPSHOT_FILENAME);
   });
 });
 

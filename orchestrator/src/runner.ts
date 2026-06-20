@@ -91,6 +91,23 @@ function normalizeStepResult(
   return { output: ret as StepOutput, sessionId: undefined };
 }
 
+/**
+ * The reviewer findings with `action:'fix_now'` from the immediately preceding
+ * reviewer step, for delivery to the S5 coder_fix step (integ-cmr 256 r3,
+ * fix_loop_context). `lastOutput` at an S5 dispatch is always the preceding
+ * reviewer output (S3 for round 1, the prior S6 thereafter); a malformed /
+ * non-reviewer output (which the runner/route guards would already have routed
+ * to S8(error) before reaching here) yields `undefined` so the seam never
+ * delivers garbage. Only fix_now findings are handed over — defer findings do
+ * not drive a fix.
+ */
+function selectFixNowFindings(
+  output: StepOutput | undefined,
+): ReadonlyArray<Finding> | undefined {
+  if (!isValidReviewerOutput(output)) return undefined;
+  return output.findings.filter((f) => f.action === "fix_now");
+}
+
 // ─── ledger helpers ────────────────────────────────────────────────────────
 
 /**
@@ -1187,12 +1204,29 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // Backend yields a StepResult carrying the real per-step sandbox
           // session id; a fake yields a bare StepOutput (sessionId undefined).
           let ret: StepOutput | StepResult;
+          // integ-cmr 256 r3 (fix_loop_context): the S5 coder_fix step must
+          // RECEIVE the round's reviewer fix_now findings so the coder knows what
+          // to fix (US#13). The findings live in lastOutput — the immediately
+          // preceding reviewer step (S3 for round 1, the prior S6 thereafter). We
+          // hand ONLY the fix_now subset (defer findings do not drive a fix) to
+          // the S5 dispatch; every other step gets undefined (unchanged seam).
+          const fixNowFindings =
+            step === "S5" ? selectFixNowFindings(lastOutput) : undefined;
           if (resumeFor !== undefined && resumeFor.step === step) {
             const sid = resumeFor.sessionId;
             resumeFor = undefined;
-            ret = await backend.resumeSession(STEP_SPECS[step], worktree, sid);
+            ret = await backend.resumeSession(
+              STEP_SPECS[step],
+              worktree,
+              sid,
+              fixNowFindings,
+            );
           } else {
-            ret = await backend.runStep(STEP_SPECS[step], worktree);
+            ret = await backend.runStep(
+              STEP_SPECS[step],
+              worktree,
+              fixNowFindings,
+            );
           }
           const normalized = normalizeStepResult(ret);
           output = normalized.output;
