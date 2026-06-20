@@ -712,7 +712,7 @@ describe("epic orchestrator S3 layered parallel pipeline", () => {
           const reviewedCommit = command.match(/implementedCommit='([^']+)'/)?.[1] ?? "unknown";
           return JSON.stringify({ mergeCommit: `merge-${reviewedCommit}`, mergeWorktree: "/repo/.epic-orchestrator/family" });
         }
-        if (command.includes("reviewer=gstack-ship-family")) return JSON.stringify({ asked: false, gatesPassed: true, prCreated: true, prUrl: "https://example.test/pr/1" });
+        if (command.includes("reviewer=gstack-ship-family")) return JSON.stringify({ asked: false, gatesPassed: true, prCreated: true, prUrl: "https://example.test/pr/1", familyHead: "shipped-head" });
         return JSON.stringify({ status: "passed" });
       }
     });
@@ -802,7 +802,7 @@ describe("epic orchestrator S3 layered parallel pipeline", () => {
           events.push(`merge-${reviewedCommit}`);
           return JSON.stringify({ mergeCommit: `merge-${reviewedCommit}`, mergeWorktree: "/repo/.epic-orchestrator/family" });
         }
-        if (command.includes("reviewer=gstack-ship-family")) return JSON.stringify({ asked: false, gatesPassed: true, prCreated: true, prUrl: "https://example.test/pr/1" });
+        if (command.includes("reviewer=gstack-ship-family")) return JSON.stringify({ asked: false, gatesPassed: true, prCreated: true, prUrl: "https://example.test/pr/1", familyHead: "shipped-head" });
         return JSON.stringify({ status: "passed" });
       }
     });
@@ -830,7 +830,7 @@ describe("epic orchestrator S3 layered parallel pipeline", () => {
       { number: 221, reviewedCommit: "commit-221" },
       { number: 222, reviewedCommit: "commit-222" }
     ]);
-    expect(result.handoff.familyHead).toBe("merge-commit-222");
+    expect(result.handoff.familyHead).toBe("shipped-head");
   });
 
   it("merges reviewed commits from different slice worktrees through one dedicated family worktree", async () => {
@@ -880,7 +880,7 @@ describe("epic orchestrator S3 layered parallel pipeline", () => {
           }
           if (command.includes("reviewer=codex")) return JSON.stringify({ status: "passed", findings: [] });
           if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [] });
-          if (command.includes("reviewer=gstack-ship-family")) return JSON.stringify({ asked: false, gatesPassed: true, prCreated: true, prUrl: "https://example.test/pr/1" });
+          if (command.includes("reviewer=gstack-ship-family")) return JSON.stringify({ asked: false, gatesPassed: true, prCreated: true, prUrl: "https://example.test/pr/1", familyHead: "shipped-head" });
           if (command.includes("为切片执行 I7 commit 纪律检查") || command.includes("merge reviewed commit")) {
             return execFileSync("bash", ["-l", "-c", command], { encoding: "utf8" });
           }
@@ -940,7 +940,7 @@ describe("epic orchestrator S3 layered parallel pipeline", () => {
           if (command.includes("/sub_issues")) return JSON.stringify({ epicId: 217, issues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }], blockedBy: [] });
           if (command.includes("reviewer=codex")) return JSON.stringify({ status: "passed", findings: [] });
           if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [] });
-          if (command.includes("reviewer=gstack-ship-family")) return JSON.stringify({ asked: false, gatesPassed: true, prCreated: true, prUrl: "https://example.test/pr/1" });
+          if (command.includes("reviewer=gstack-ship-family")) return JSON.stringify({ asked: false, gatesPassed: true, prCreated: true, prUrl: "https://example.test/pr/1", familyHead: "shipped-head" });
           if (command.includes("为切片执行 I7 commit 纪律检查") || command.includes("merge reviewed commit")) {
             return execFileSync("bash", ["-l", "-c", command], { encoding: "utf8" });
           }
@@ -1132,7 +1132,7 @@ describe("epic orchestrator S3 layered parallel pipeline", () => {
           return JSON.stringify({ status: "passed", exitCode: 0, output: "family ok" });
         }
         if (command.includes("base management")) return JSON.stringify({ status: "no_drift", startupTargetHead: "base-start", currentTargetHead: "base-start" });
-        if (command.includes("reviewer=gstack-ship-family")) return JSON.stringify({ asked: false, gatesPassed: true, prCreated: true, prUrl: "https://example.test/pr/1" });
+        if (command.includes("reviewer=gstack-ship-family")) return JSON.stringify({ asked: false, gatesPassed: true, prCreated: true, prUrl: "https://example.test/pr/1", familyHead: "shipped-head" });
         return JSON.stringify({ status: "passed" });
       }
     });
@@ -1199,14 +1199,15 @@ describe("epic orchestrator S3 layered parallel pipeline", () => {
           expect(command).toContain("rebase \"$currentTargetHead\"");
           return JSON.stringify({ status: "rebased", startupTargetHead: "base-start", currentTargetHead: "base-new", rebaseHead: "rebased-family" });
         }
-        if (command.includes("reviewer=gstack-ship-family")) return JSON.stringify({ asked: false, gatesPassed: true, prCreated: true, prUrl: "https://example.test/pr/1" });
+        if (command.includes("reviewer=gstack-ship-family")) return JSON.stringify({ asked: false, gatesPassed: true, prCreated: true, prUrl: "https://example.test/pr/1", familyHead: "shipped-head" });
         return JSON.stringify({ status: "passed" });
       }
     });
 
     expect(result.status).toBe("ready");
     // §段间交接: baseAtStart is the I10-verified startup target the family branched from, NOT the
-    // family tip — even after a rebase. The post-rebase family HEAD is carried per-slice in `merged`.
+    // family tip — even after a rebase. The current family tip is the top-level handoff familyHead;
+    // `merged` carries only stable per-slice reviewedCommit values.
     expect(result.handoff.baseAtStart).toBe("base-start");
     expect(events).toEqual(["verify", "verify", "verify", "rebase", "verify", "verify", "verify"]);
     expect(result.baseManagement).toMatchObject({ status: "rebased", currentTargetHead: "base-new" });
@@ -1373,7 +1374,7 @@ describe("epic orchestrator S4b family 5a/5b CMR", () => {
     const bashCalls: string[] = [];
     let cmrRound = 0;
     // Default: gstack-ship runs clean — gates pass + family PR created -> ready terminal state.
-    const shipReport = ship ?? { asked: false, gatesPassed: true, prCreated: true, prUrl: "https://example.test/pr/1" };
+    const shipReport = ship ?? { asked: false, gatesPassed: true, prCreated: true, prUrl: "https://example.test/pr/1", familyHead: "shipped-head" };
 
     const result: any = await runEpicLayeredPipeline({
       args: { epicIssueNumber: 217, familyBranch: "family/217", verifyCommands: ["npm --prefix web test"], startupTargetHead: "base-start", targetBranch: "origin/main", maxReviewRounds: 3 },
@@ -1658,7 +1659,7 @@ describe("epic orchestrator S5 Ship phase (gstack-ship + terminal states + hando
 
   it("none of the three terminal states triggers the online bot / pr-review-loop (online_pr_review_loop stays out of scope)", async () => {
     for (const ship of [
-      { asked: false, gatesPassed: true, prCreated: true, prUrl: "https://example.test/pr/1" },
+      { asked: false, gatesPassed: true, prCreated: true, prUrl: "https://example.test/pr/1", familyHead: "shipped-head" },
       { asked: true, gatesPassed: false, prCreated: false, askDetail: "pre-landing ASK" },
       { asked: false, gatesPassed: false, prCreated: false, shipDetail: "coverage hard gate below threshold" }
     ]) {
@@ -1677,5 +1678,13 @@ describe("epic orchestrator S5 Ship phase (gstack-ship + terminal states + hando
   it("fails loudly when gstack-ship omits the load-bearing detail field for its terminal state", async () => {
     // ready outcome but no prUrl -> the handoff would carry prUrl:null, so the Ship phase must throw.
     await expect(runToShip({ ship: { asked: false, gatesPassed: true, prCreated: true } })).rejects.toThrow(/missing load-bearing field prUrl/);
+  });
+
+  it("fails loudly on the ready path when gstack-ship omits its post-ship familyHead", async () => {
+    // ready means gstack-ship committed a version bump; a missing post-ship head must NOT silently
+    // fall back to the stale pre-ship merge tip — the Ship phase fails loud instead.
+    await expect(
+      runToShip({ ship: { asked: false, gatesPassed: true, prCreated: true, prUrl: "https://example.test/pr/9" } })
+    ).rejects.toThrow(/missing load-bearing field familyHead/);
   });
 });
