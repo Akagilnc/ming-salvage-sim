@@ -26,14 +26,14 @@ completion signal on its own line.
 
 Clean — ready to ship:
 
-```
+```text
 <review>{"findings": []}</review>
 REVIEWER_STEP_COMPLETE
 ```
 
 Still has blocking issues:
 
-```
+```text
 <review>{"findings": [{"severity": "high", "category": "correctness", "claim_quote": "<exact quote>", "location": "<file>:<line>", "suggested_fix": "<concrete fix>", "action": "fix_now"}]}</review>
 REVIEWER_STEP_COMPLETE
 ```

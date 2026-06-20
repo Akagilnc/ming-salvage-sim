@@ -33,6 +33,7 @@ import {
   hasAgentBrief,
   isLikelySha,
   isReadyForAgent,
+  issueNumberFromBranch,
   lastLedgerBranchHead,
   lastSessionId,
   matchWorktreeForBranch,
@@ -298,6 +299,32 @@ describe("realBackend matchWorktreeForBranch (prefix-collision safety)", () => {
       "\n",
     );
     expect(matchWorktreeForBranch(detached, "feat/x")).toBeUndefined();
+  });
+});
+
+// ─── issue number from branch name (gemini R2, high) ─────────────────────────
+
+describe("realBackend issueNumberFromBranch (suffix-safe extraction)", () => {
+  it("extracts the issue number from a plain issue-suffixed branch", () => {
+    expect(issueNumberFromBranch("feat/244-orchestrator-issue-256")).toBe(256);
+    expect(issueNumberFromBranch("issue-12")).toBe(12);
+  });
+
+  it("extracts the issue number even when the branch has a trailing suffix", () => {
+    // The bug: `/issue-(\d+)$/` fails here, then the fallback `/(\d+)/` grabs the
+    // FIRST digit run (244, the epic) instead of the real issue number (256).
+    expect(issueNumberFromBranch("feat/244-orchestrator-issue-256-fix")).toBe(
+      256,
+    );
+    expect(issueNumberFromBranch("feat/244-issue-71-followup-v2")).toBe(71);
+  });
+
+  it("falls back to the LAST digit run when there is no issue- token", () => {
+    expect(issueNumberFromBranch("feat/epic-244-slice-99")).toBe(99);
+  });
+
+  it("returns 0 when the branch carries no digits", () => {
+    expect(issueNumberFromBranch("feat/no-number-here")).toBe(0);
   });
 });
 
@@ -634,6 +661,23 @@ describe("realBackend attributeFailure (codex#3)", () => {
   it("stringifies a non-Error cause", () => {
     const e = attributeFailure("S7", "push", "denied");
     expect(e.message).toBe("S7:push — denied");
+  });
+  it("appends execFileSync stderr so the S8 package shows the real cause (gemini R2)", () => {
+    // execFileSync throws an Error whose `.message` is just "Command failed: gh …"
+    // but the actionable detail (gh GraphQL error, git reject) lives on `.stderr`.
+    const err = Object.assign(new Error("Command failed: gh api …"), {
+      stderr: Buffer.from("GraphQL: Could not resolve to a node (issue #999)\n"),
+    });
+    const e = attributeFailure("S7", "push", err);
+    expect(e.message).toContain("S7:push — Command failed: gh api …");
+    expect(e.message).toContain(
+      "GraphQL: Could not resolve to a node (issue #999)",
+    );
+  });
+  it("does not append a blank stderr line when stderr is empty", () => {
+    const err = Object.assign(new Error("boom"), { stderr: "   " });
+    const e = attributeFailure("S1", "prepareWorktree", err);
+    expect(e.message).toBe("S1:prepareWorktree — boom");
   });
 });
 

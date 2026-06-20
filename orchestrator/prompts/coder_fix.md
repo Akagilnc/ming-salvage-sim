@@ -34,7 +34,7 @@ completion signal on its own line.
 
 Normal completion:
 
-```
+```text
 <coder>{"committed": true, "commitsAdded": 1}</coder>
 CODER_STEP_COMPLETE
 ```
@@ -44,7 +44,7 @@ CODER_STEP_COMPLETE
 
 Escalation:
 
-```
+```text
 <coder>{"committed": false, "commitsAdded": 0, "escalate": {"reason": "<short>", "diagnosis": "<why the finding cannot be fixed as stated>"}}</coder>
 CODER_STEP_COMPLETE
 ```

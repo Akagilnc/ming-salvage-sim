@@ -27,7 +27,7 @@ containing a single JSON object, then print the completion signal on its own lin
 
 Success / normal completion:
 
-```
+```text
 <coder>{"committed": true, "commitsAdded": 2}</coder>
 CODER_STEP_COMPLETE
 ```
@@ -37,7 +37,7 @@ CODER_STEP_COMPLETE
 
 Escalation (a real blocker the orchestrator must surface to a human):
 
-```
+```text
 <coder>{"committed": false, "commitsAdded": 0, "escalate": {"reason": "<short>", "diagnosis": "<what is wrong and why you cannot proceed>"}}</coder>
 CODER_STEP_COMPLETE
 ```

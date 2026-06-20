@@ -156,8 +156,9 @@ function reviewerWith(findings: Finding[]): StepOutput {
  * Run the orchestrator with the given reviewer output.
  * Returns { backend } so callers can inspect calls/runStepIds.
  *
- * When S4 routes to S5, route(S5) will throw (fix-loop is #254 scope).
- * Callers that expect S5 routing should use `runExpectingS5` below.
+ * S4 routes to S5 when a fix_now finding is present; the #254 fix-loop then
+ * runs the fix + S6 re-review and converges to push. Callers that exercise the
+ * S5 fix-loop path use `runExpectingS5` below.
  */
 async function runWith(reviewerOutput: StepOutput): Promise<{
   backend: ConfigurableBackend;
