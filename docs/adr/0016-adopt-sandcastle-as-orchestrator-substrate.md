@@ -42,4 +42,28 @@ Status: Proposed（2026-06-19；spike 实证「底座可行 + 并行编排可行
   - **cross-model 评审不靠注入 cmr skill**:`ak-cross-m-review` 是单 session 扇出工具,编排器在 **pipeline 层**用不同模型的 `run()` 实现评审(本 spike 已证:codex run() 评 Sonnet run()),不往容器里塞 cmr skill。
   - **关键 SE 原则:纪律文档化、prompt 收薄(否则可复现性破功)**。光把 skill 文件挂进去≠agent 会用——必须有**文档喊它用**;而那个「喊」不能写在编排器 prompt 里(= 我每次即兴发挥 = 退回 hermes「运行时临场建卡不可复现」,正是 #217 要弄死的)。纪律必须**进版本库**:① **仓库 CLAUDE.md 补机器可执行的「## Skill routing」段**(实现切片→`/tdd`;末尾→`/review`;硬 bug→`diagnosing-bugs`;架构清理→`improve`),in-container agent 自动读 workspace CLAUDE.md 即按它走;② 编排器 prompt **收薄**到「实现 issue #N,按本仓 CLAUDE.md dev 流程做」,不复述方法论。**现状缺口:本仓 CLAUDE.md 只有叙事 `## 开发流程`(给人读)+ `## Agent skills`(指针),无机器可执行 Skill routing 段——叠纪律层前要补。**
   - 落地三件套 = **skills 在场**(容器 bind-mount `cp -RL` 实体化那组 dev skill 到 `/home/agent/.claude/skills`)+ **CLAUDE.md 路由**(在 git、机器可执行)+ **thin prompt**;待「注入+路由 vs 不注入」A/B 实测(同一 issue #137 对照)定收益。
-- **未决（剩唯一项）**：设计评审闭环（本地 cmr + 线上 bot）未跑——本 ADR Proposed → Accepted 的最后一道。并行编排证据已补齐（发现 3）；skill 注入收益待 A/B（发现 4）。
+- **未决（剩唯一项）**：设计评审闭环（本地 cmr + 线上 bot）未跑——本 ADR Proposed → Accepted 的最后一道。并行编排证据已补齐（发现 3）；skill 注入收益待 A/B（发现 4，**下方 v1 具体化已改向「按 profile 预烤镜像」，A/B 作废**）。
+
+## v1 具体化（2026-06-20 grill-with-docs 收敛；薄质量层落到「单个独立 issue」的最小形态）
+
+衡量标尺仍是北极星。v1 = wiki [[tdd-autonomous-dev]] 流程的**一小段**（单切片 implement + per-slice review/fix → push），不含 ship / 家族 / 线上评审。
+
+**1. scope 与输入闸**
+- v1 **只收单个独立子 issue**。输入校验：**是父 issue（底下挂子 issue）或 label 不是 `ready-for-agent` → 报错打回调用者**，只放行「leaf + rfa」。
+- 家族（planner/merger 角色）、ship、线上评审 loop **全 deferred**。家族 base 当前置（见 ADR 0017）。
+- **#217 = 传话筒**：只传 issue 数字，编排 + prompt 全在代码里（堵即兴 prompt、保可复现）。
+
+**2. 万物皆角色**：管线拆成角色，每角色 = 一段固定流程 + 一个 profile 镜像 + 一份 soul。roster = planner / coder / reviewer / ship / online-review / merger；**v1 = coder + reviewer**。
+
+**3. 角色流程（照搬 wiki，不自创）**——细节真源 = [[tdd-autonomous-dev]] §切片内纪律 + [[cross-model-review]] §每轮全量复审 + §修复：
+- **coder（Sonnet）**：`invoke /tdd`（红绿重构，vertical tracer bullet）→ branch coverage → typecheck → 全量 test → `/review` → 窄自查二连 → commit 到常驻 slice worktree。
+- **reviewer（Opus 4.8）**：**每一轮都对当前 full diff 全量复审**（不窄化成「上轮 P0/P1 关没关」点检，上轮验收只是尾挂项）；grounded（读源码 Read/Grep）；`review only, do not modify`。
+- **fix（coder 侧）**：default non-trivial → 第一动作 `invoke /diagnosing-bugs`（mechanical 须显式声明 + 举证）；P0/P1 必修、不可私降 P2；**每轮 fix 后强制自查二连**（① 同类型 ② 引入 bug）。
+- **收敛**：无 P0/P1 + reviewer 标通过 + 当轮合适 P2/P3 已修 + 自查二连 done。**不收敛不数轮数** —— drift 三联（数量/类别/target）命中 → 实现方法或架构层诊断；能自治（如 coverage drift→集中引用）就自治，设计层解不了 → **返回调用端**（切片←#217←主 session←用户），**活容器挂起**等决断回注。
+- **per-slice 无 Claude 的省额度规矩（[[cross-model-review]]）v1 暂搁置**：那条因 claude -p credit 紧；v1 走订阅 auth 容器、Opus 担得起，主动选 **Sonnet 写 / Opus 4.8 单审**（已是跨模型），代价是 code+review 都烧 Claude 额度。以后换 codex 即回省额度路线；per-slice 升多模型 cmr 时再用 `ak-cross-m-review`。
+
+**4. profile 镜像**（**取代发现 4 的 cp -RL bind-mount 注入**，later-doc-wins）：
+- 按角色预烤镜像，**烤进** = 全栈工具链（python + `.venv` + node + web deps）、`gh` CLI（#217 只传数字 → 容器自读 issue）、多个模型 CLI（runtime 按额度选，不重烤）、dev skills、角色 soul；**runtime 才挂** = 被加工 worktree + auth token（secret）。
+- **v1 = 一个镜像、双角色**：coder/reviewer 跑在同一常驻 sandbox（共享 worktree），靠 **`run()` 级 fresh context** 保上下文隔离（reviewer 看不到 coder 的「我刚写的」推理）。承重假设「run() 间上下文不继承」实现期实测确认。可逆：reviewer 真需独立（换工具/后端/强隔离）再拆两镜像。
+
+**5. defer findings**：不进 PR body（PR body 没人事后看，[[tdd-autonomous-dev]] §deferred-work）；顺返回链上浮成**一份合并清单**给主 session，由主 session triage 决定哪些建 issue。
