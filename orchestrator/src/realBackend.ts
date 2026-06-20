@@ -69,6 +69,7 @@ import type {
   Finding,
   IssueMeta,
   IssueSnapshot,
+  IssueSnapshotMeta,
   ResumeState,
   StepId,
   StepOutput,
@@ -94,6 +95,8 @@ const READY_FOR_AGENT_LABEL = "ready-for-agent";
  */
 export interface GhIssueJson {
   readonly number?: number;
+  readonly title?: string | null;
+  readonly state?: string | null;
   readonly body?: string | null;
   readonly labels?: ReadonlyArray<{ readonly name?: string }> | null;
   readonly comments?: ReadonlyArray<{ readonly body?: string }> | null;
@@ -217,16 +220,45 @@ export function parseBlockedBy(parsed: unknown): GhBlockedBy[] {
     .map((d) => ({ number: d.number, state: d.state }));
 }
 
-/** Build the S1 {@link IssueSnapshot} (body + comments + Agent Brief). */
+/**
+ * Build the native metadata block #244 S1 names ("body + comments + 最新 Agent
+ * Brief 正文 + native metadata") — title/state/labels + the native sub-issue +
+ * blocked_by summaries. S0 already reads these via gh; passing them through into
+ * the snapshot (rather than re-fetching) keeps the clean-room snapshot the single
+ * source the container reads (it does NOT gh-fetch inside the box).
+ */
+export function buildIssueSnapshotMeta(
+  json: GhIssueJson,
+  blockedBy: ReadonlyArray<GhBlockedBy>,
+  subIssueCount: number,
+): IssueSnapshotMeta {
+  return {
+    title: json.title ?? "",
+    state: json.state ?? "",
+    labels: (json.labels ?? []).map((l) => l.name ?? "").filter((n) => n !== ""),
+    subIssueCount,
+    blockedBy: blockedBy.map((d) => ({ number: d.number, state: d.state })),
+  };
+}
+
+/**
+ * Build the S1 {@link IssueSnapshot}: body + comments + Agent Brief + the
+ * #244-named native metadata. The native sub-issue count + blocked_by list S0
+ * fetched are threaded in here (not re-queried) so the snapshot the coder reads
+ * is contract-complete (#244 S1 names native metadata as a snapshot element).
+ */
 export function buildIssueSnapshot(
   issueNumber: number,
   json: GhIssueJson,
+  blockedBy: ReadonlyArray<GhBlockedBy>,
+  subIssueCount: number,
 ): IssueSnapshot {
   return {
     number: json.number ?? issueNumber,
     body: json.body ?? "",
     comments: (json.comments ?? []).map((c) => c.body ?? ""),
     agentBrief: extractAgentBrief(json),
+    nativeMeta: buildIssueSnapshotMeta(json, blockedBy, subIssueCount),
   };
 }
 
@@ -914,8 +946,8 @@ export class RealBackend implements Backend {
    * `parseSubIssueCount` still returns 0 for a CONFIRMED empty/absent field (the
    * genuinely-absent case), distinct from a failed query.
    */
-  private fetchSubIssueCount(issueNumber: number): number {
-    return this.phase("S0", "fetchSubIssueCount", () => {
+  private fetchSubIssueCount(issueNumber: number, step: StepId = "S0"): number {
+    return this.phase(step, "fetchSubIssueCount", () => {
       const raw = this.sh("gh", [
         "issue",
         "view",
@@ -940,8 +972,8 @@ export class RealBackend implements Backend {
    * base missing upstream changes. `parseBlockedBy` still returns [] for a
    * CONFIRMED empty/non-array response (the genuinely-empty case).
    */
-  private fetchBlockedBy(issueNumber: number): GhBlockedBy[] {
-    return this.phase("S0", "fetchBlockedBy", () => {
+  private fetchBlockedBy(issueNumber: number, step: StepId = "S0"): GhBlockedBy[] {
+    return this.phase(step, "fetchBlockedBy", () => {
       const raw = this.sh("gh", [
         "api",
         `repos/${this.opts.repo}/issues/${issueNumber}/dependencies/blocked_by`,
@@ -952,17 +984,29 @@ export class RealBackend implements Backend {
 
   // ── S1: full snapshot (host gh) ────────────────────────────────────────────
   async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    const raw = this.sh("gh", [
-      "issue",
-      "view",
-      String(issueNumber),
-      "--repo",
-      this.opts.repo,
-      "--json",
-      "number,body,comments",
-    ]);
-    const json = JSON.parse(raw) as GhIssueJson;
-    return buildIssueSnapshot(issueNumber, json);
+    // Widen the field list to carry the #244-named native metadata
+    // (title/state/labels) into the clean-room snapshot, not just the body —
+    // the container reads this LOCAL snapshot and does NOT gh-fetch inside the
+    // box (#244 S1: "body + comments + 最新 Agent Brief 正文 + native metadata").
+    const json = this.phase("S1", "fetchIssueView", () => {
+      const raw = this.sh("gh", [
+        "issue",
+        "view",
+        String(issueNumber),
+        "--repo",
+        this.opts.repo,
+        "--json",
+        "number,title,state,body,labels,comments",
+      ]);
+      return JSON.parse(raw) as GhIssueJson;
+    });
+    // The native sub-issue + blocked_by summaries (the same ones S0 reads via the
+    // GraphQL/REST API) complete the snapshot's native metadata. A thrown
+    // gh/transport/parse error propagates → the runner's S1 error termination,
+    // attributed to S1 (not S0) for the US#30 error package.
+    const subIssueCount = this.fetchSubIssueCount(issueNumber, "S1");
+    const blockedBy = this.fetchBlockedBy(issueNumber, "S1");
+    return buildIssueSnapshot(issueNumber, json, blockedBy, subIssueCount);
   }
 
   // ── S1: resident slice worktree (Sandcastle native createWorktree) ─────────
@@ -1119,8 +1163,12 @@ export class RealBackend implements Backend {
    * from a previous round is removed, so a non-fix step / a later round can never
    * read another round's findings. Best-effort on the exclude + remove (a git/fs
    * fault must not block the still-useful write); the write itself surfaces.
+   *
+   * `protected` so a zero-container test subclass can drive the real on-disk
+   * write/delete decision (integ-cmr 256 confirm r2) without a real container —
+   * the same seam-exposure rationale as {@link sh}.
    */
-  private writeFixFindings(
+  protected writeFixFindings(
     worktree: WorktreeHandle,
     findings: ReadonlyArray<Finding> | undefined,
   ): void {
