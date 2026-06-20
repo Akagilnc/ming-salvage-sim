@@ -1293,6 +1293,9 @@ function normalizeMergedEntries(value) {
       throw new Error(`epic-orchestrator: mergedNumbers object element must carry a 'number' field (got keys: ${Object.keys(element).join(', ')}).`);
     }
     const raw = isObject ? element.number : element;
+    if (raw === null || raw === undefined || String(raw).trim() === '') {
+      throw new Error('epic-orchestrator: mergedNumbers element has a null / undefined / empty slice id.');
+    }
     const number = typeof raw === 'number' ? raw : String(raw);
     assertShellSafeRef(String(number), 'mergedNumbers element');
     const reviewedCommit = isObject && element.reviewedCommit !== undefined && element.reviewedCommit !== null ? String(element.reviewedCommit) : null;
@@ -1316,6 +1319,9 @@ function normalizeIssueNumberList(value, name) {
       throw new Error(`epic-orchestrator: ${name} object element must carry a 'number' field (got keys: ${Object.keys(element).join(', ')}) — refusing to coerce it to '[object Object]'.`);
     }
     const raw = element !== null && typeof element === 'object' ? element.number : element;
+    if (raw === null || raw === undefined || String(raw).trim() === '') {
+      throw new Error(`epic-orchestrator: ${name} element has a null / undefined / empty slice id.`);
+    }
     const normalized = typeof raw === 'number' ? raw : String(raw);
     assertShellSafeRef(String(normalized), `${name} element`);
     return normalized;
@@ -1535,14 +1541,22 @@ function familyDiffBaseExpr(diffBase) {
 // A non-array `findings` field is malformed -> fail loud. A non-pass `status` with no findings list is
 // a contradiction (the reviewer flagged a problem but listed nothing) -> surface it as an escalatable
 // decision finding rather than silently coercing to [] (which would let the gate falsely converge).
-function familyReviewFindings(report, reviewerName) {
+// statusRequired = the leg follows the {status, findings} JSON contract (codex/agy). The Claude leg
+// runs via the agent runner and returns just {findings} (no status field), so statusRequired=false.
+function familyReviewFindings(report, reviewerName, statusRequired) {
   if (report && report.findings !== undefined && !Array.isArray(report.findings)) {
     throw new Error(`epic-orchestrator family review: ${reviewerName} returned a non-array findings field — malformed reviewer report.`);
   }
-  if (Array.isArray(report?.findings)) return report.findings;
+  const findings = Array.isArray(report?.findings) ? report.findings : [];
+  if (findings.length > 0) return findings; // real findings always route (even with a failed status)
   const status = report?.status;
-  if (status !== undefined && status !== 'passed') {
-    return [{ id: `${reviewerName}-status-${String(status)}`, classification: 'choice', claim_quote: `${reviewerName} reported status="${String(status)}" without a findings list`, location: reviewerName }];
+  // No findings. A status-contract leg (codex/agy) must report status:"passed" to count as clean — a
+  // "failed", missing, or unknown status with no findings is a contradiction and must NOT silently
+  // converge the load-bearing gate -> escalatable. The Claude leg has no status field, so an absent
+  // status with no findings is a normal clean review; only an explicit non-pass status escalates.
+  const isContradiction = statusRequired ? status !== 'passed' : status !== undefined && status !== 'passed';
+  if (isContradiction) {
+    return [{ id: `${reviewerName}-status-${String(status ?? 'missing')}`, classification: 'choice', claim_quote: `${reviewerName} did not report status="passed" and listed no findings`, location: reviewerName }];
   }
   return [];
 }
@@ -1554,7 +1568,7 @@ async function runFamilyCodexLeg({ Bash, familyWorktree, familyBranch, diffBase 
       await Bash(`set -euo pipefail\ncd ${shellQuote(familyWorktree)}\n# reviewer=codex-family; 5a/5b family CMR on merged family branch (codex reads the repo via codex exec, unaffected by the hidden worktree path)\n{\n  printf '%s\\n' 'Review the merged family branch diff for cross-slice completeness (5a) and correctness regressions (5b).'\n  printf '%s\\n' 'Return only one JSON object on stdout with shape {"status":"passed"|"failed","findings":[{"id":...,"classification":"mechanical_bug"|"choice","claim_quote":...,"location":...}]}. Do not include markdown or prose outside the JSON object.'\n  printf '%s\\n' 'Diff stat against the startup target base for human context:'\n  git diff --stat ${baseExpr} HEAD\n  printf '%s\\n' 'Full diff:'\n  git diff ${baseExpr} HEAD\n} | codex exec --skip-git-repo-check --ephemeral -`),
       'codex-family'
     );
-    return { available: true, findings: familyReviewFindings(parsed, 'codex-family') };
+    return { available: true, findings: familyReviewFindings(parsed, 'codex-family', true) };
   } catch (error) {
     return { available: false, reason: error?.message ?? 'codex family leg unavailable', findings: [] };
   }
@@ -1567,7 +1581,7 @@ async function runFamilyAgyLeg({ Bash, familyWorktree, familyBranch, diffBase })
       await Bash(`set -euo pipefail\ncd ${shellQuote(familyWorktree)}\n# reviewer=agy-family; diff-based review only (agy refuses the hidden .epic-orchestrator worktree, so no repo grounding). Review instructions + JSON schema go on stdin; agy is agentic, so a hard read-only constraint is mandatory.\n{\n  printf '%s\\n' 'REVIEW ONLY — HARD CONSTRAINT. Do NOT modify, create, rename, or delete any file; do NOT run commands. Output only the review.'\n  printf '%s\\n' 'Review the merged family branch diff for cross-slice completeness (5a) and correctness regressions (5b).'\n  printf '%s\\n' 'Return only one JSON object on stdout with shape {"status":"passed"|"failed","findings":[{"id":...,"classification":"mechanical_bug"|"choice","claim_quote":...,"location":...}]}. Do not include markdown or prose outside the JSON object.'\n  printf '%s\\n' 'Diff stat for context:'\n  git diff --stat ${baseExpr} HEAD\n  printf '%s\\n' 'Full diff:'\n  git diff ${baseExpr} HEAD\n} | agy --sandbox --diff-only --print ''`),
       'agy-family'
     );
-    return { available: true, findings: familyReviewFindings(parsed, 'agy-family') };
+    return { available: true, findings: familyReviewFindings(parsed, 'agy-family', true) };
   } catch (error) {
     return { available: false, reason: error?.message ?? 'agy family leg unavailable', findings: [] };
   }
@@ -1587,7 +1601,7 @@ async function runFamilyClaudeLeg({ runner, familyWorktree, familyBranch, epicIs
     if (!review || review.available === false) {
       return { available: false, reason: review?.reason ?? 'claude family review leg unavailable', findings: [] };
     }
-    return { available: true, findings: familyReviewFindings(review, 'claude-family') };
+    return { available: true, findings: familyReviewFindings(review, 'claude-family', false) };
   } catch (error) {
     return { available: false, reason: error?.message ?? 'claude family review leg unavailable', findings: [] };
   }
