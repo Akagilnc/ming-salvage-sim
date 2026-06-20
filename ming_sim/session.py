@@ -448,8 +448,8 @@ class GameSession:
         self.temporary_characters: Dict[str, Character] = {}
         self.last_decree = ""
         self.last_report = ""
-        # P1-1：last_decree 所覆盖的 draft id 指纹（write_decree 时记，颁诏时校验是否已陈旧）。
-        self._decree_draft_ids: Tuple[int, ...] = ()
+        # P1-1：last_decree 所覆盖的 draft 指纹（write_decree 时记，颁诏时校验是否已陈旧）。
+        self._decree_draft_fingerprint: Tuple[Tuple[int, str], ...] = ()
         self._begun = False
 
     # ── 回合生命周期 ──────────────────────────────────────────────────────
@@ -473,7 +473,7 @@ class GameSession:
         tlog(f"[接档] begin_turn 大臣 registry 重建 {time.monotonic() - _t:.1f}s")
         self.last_decree = ""
         self.last_report = ""
-        self._decree_draft_ids = ()
+        self._decree_draft_fingerprint = ()
         # awaiting_decision 必须保活：刷新页时仍要弹决策点续跑结算，不可重置成 summoning。
         # settling 同样保活（ADR 0008 S4）：pre_settle 前半段已提交，重载若被重置回 summoning，
         # 守门失效=恢复入口认不出「前半段已完成」会二次重跑前半段（白名单外即被重置）。
@@ -516,7 +516,16 @@ class GameSession:
         不能原样颁出。普通撤回（未删 committed draft）不动有效生成稿。"""
         if deleted_committed_draft_ids:
             self.last_decree = ""
-            self._decree_draft_ids = ()
+            self._decree_draft_fingerprint = ()
+
+    def _draft_fingerprint(self, directives) -> Tuple[Tuple[int, str], ...]:
+        return tuple(
+            sorted(
+                (int(d["id"]), str(d["text"] or ""))
+                for d in directives
+                if "id" in d.keys()
+            )
+        )
 
     def refresh_runtime_after_chat_rollback(self) -> None:
         """撤回召对副作用后，用 DB 真相刷新内存人物表和本回合 Agent registry。"""
@@ -1168,7 +1177,7 @@ class GameSession:
         # P1-1：记下本份生成稿覆盖的 draft 集指纹。颁诏时若 draft 集已变（玩家拟诏后又新建
         # 草案），凭此判定 last_decree 已陈旧、强制重生成纳入新 draft，不许把新 draft 标记
         # 为已颁却不进诏书正文。
-        self._decree_draft_ids = tuple(sorted(int(d["id"]) for d in directives))
+        self._decree_draft_fingerprint = GameSession._draft_fingerprint(self, directives)
         return decree
 
     def set_decree(self, text: str) -> str:
@@ -1268,10 +1277,11 @@ class GameSession:
         # 当前 draft 集与 last_decree 覆盖的指纹——不一致则作废陈旧生成稿，强制下方重生成
         # 纳入全部 draft。recovered_source 恢复路用存档真源、不在此列（指纹空、不触发）。
         if recovered_source is None and (self.last_decree or "").strip():
-            current_ids = tuple(sorted(int(d["id"]) for d in directives if "id" in d.keys()))
-            if current_ids and current_ids != getattr(self, "_decree_draft_ids", ()):
+            current_fingerprint = GameSession._draft_fingerprint(self, directives)
+            if (current_fingerprint
+                    and current_fingerprint != getattr(self, "_decree_draft_fingerprint", ())):
                 self.last_decree = ""
-                self._decree_draft_ids = ()
+                self._decree_draft_fingerprint = ()
         # 结算前先存一份：LLM 推演有可能崩，留个回滚锚点
         self.auto_save("preresolve")
         # 注：上方的 commit_pending_actions(kind_filter='directive') 已提前把对话式拟旨

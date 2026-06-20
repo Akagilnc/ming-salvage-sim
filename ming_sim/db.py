@@ -4968,8 +4968,8 @@ class GameDB:
             # restore_row では after が補充後の状態、before が補充前。どちらにも id があり、
             # kind は両側同一なので、ある方から拾えばよい。delete_inserted_row は after のみ、
             # restore_deleted_row は before のみが非空。
-            after_data = self._json_load_row(item["after_json"])
-            before_data = self._json_load_row(item["before_json"])
+            after_data = self._json_load_row(item["after_json"] or "") or {}
+            before_data = self._json_load_row(item["before_json"] or "") or {}
             kind = str(after_data.get("kind") or before_data.get("kind") or "")
             if kind != "directive":
                 continue
@@ -5800,6 +5800,8 @@ class GameDB:
         kind_filter 非空=只 commit 指定 kind(如 'directive')的暂存,跳过其余 kind。
         kind_filter_exclude 非空=只 commit 该 kind 以外的暂存(召对确认应允放过 directive,BUG 1)。
         返回已落库动作摘要。"""
+        if kind_filter is not None and kind_filter_exclude is not None:
+            raise ValueError("kind_filter and kind_filter_exclude are mutually exclusive")
         applied: List[Dict[str, object]] = []
         rows = self.list_pending_actions(
             int(state.turn), status="pending", minister_name=minister_name)
@@ -5814,6 +5816,31 @@ class GameDB:
                 payload = {}
             if not isinstance(payload, dict):   # 坏 payload(JSON 数组/串)→ 当空,apply 必 False 标 failed
                 payload = {}
+            if pa["kind"] == "directive" and pa["action"] == "拟旨":
+                try:
+                    with self.conn:
+                        ok = self._apply_pending_action(
+                            state, pa, payload, content=content, registry=registry)
+                        if ok:
+                            self.conn.execute(
+                                "UPDATE pending_actions SET status='committed' WHERE id=?",
+                                (int(pa["id"]),),
+                            )
+                            applied.append({"id": pa["id"], "kind": pa["kind"],
+                                            "action": pa["action"], "target_id": pa["target_id"]})
+                        else:
+                            self.conn.execute(
+                                "UPDATE pending_actions SET status='failed' WHERE id=?",
+                                (int(pa["id"]),),
+                            )
+                except Exception as exc:
+                    tlog(f"[pending_actions] 落库失败 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
+                    with self.conn:
+                        self.conn.execute(
+                            "UPDATE pending_actions SET status='failed' WHERE id=?",
+                            (int(pa["id"]),),
+                        )
+                continue
             # apply 抛错(如 催办 对已转 pending_review 的密令)= 当 False:下面标 failed、
             # 不中断本轮其余动作、更不能崩整个结算(CMR P0)。
             try:
@@ -5887,10 +5914,15 @@ class GameDB:
             # 直接建档为 draft：对话式拟旨经由「应允」或「不回=颁诏默认同意」两路提交，
             # 玩家意图已在 pending_actions 确认阶段表达；无需再经 turn_directives pending 状态
             # 走一轮 web UI 准驳（pending 态是给显式前缀大臣拟旨留的，见 confirm_directive）。
-            did = self.add_directive(
-                state, None, text, "大臣拟旨",
-                actor=actor, notes=f"由{actor}拟旨入档", status="draft",
+            cur = self.conn.execute(
+                """
+                INSERT INTO turn_directives
+                (turn, year, period, event_id, actor, skill_id, text, source, status, notes)
+                VALUES (?, ?, ?, '', ?, '', ?, '大臣拟旨', 'draft', ?)
+                """,
+                (state.turn, state.year, state.period, actor, text, f"由{actor}拟旨入档"),
             )
+            did = int(cur.lastrowid)
             # 回填本暂存产生的 draft 行 id，供 undo_chat_turn 精确删除（BUG 3）；turn_directives
             # 行时序晚于 chat 快照、不在 rollback_items，需此 id 才能只删本轮自产的草案。
             self.conn.execute(
