@@ -50,11 +50,8 @@ def _has_stop_condition(stop_condition: object) -> bool:
     try:
         parsed = json.loads(raw)
     except (TypeError, ValueError):
-        # 兼容旧档/直插的非 JSON 条件串：旧逻辑把非空字符串视为有停止条件。
-        return True
-    if isinstance(parsed, (dict, list)):
-        return bool(parsed)
-    return bool(parsed)
+        return False
+    return isinstance(parsed, (dict, list)) and bool(parsed)
 
 
 def _new_army_historically_applied(it: dict) -> bool:
