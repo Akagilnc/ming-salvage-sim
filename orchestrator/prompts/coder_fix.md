@@ -5,7 +5,11 @@ You are the **coder** in the fix-loop. The reviewer flagged findings with
 ALL of them on the resident branch.
 
 The clean-room issue context is in `.orchestrator-snapshot.json` at the repo
-root of this worktree; the findings to fix were handed to you for this step. You
+root of this worktree. The reviewer findings to fix for THIS step are in
+`.orchestrator-fix-findings.json` at the same root — a JSON object whose
+`fix_now` array holds each finding (`severity`, `category`, `claim_quote`,
+`location`, `suggested_fix`). Read that file first; it is the authoritative list
+of what to fix this round. Both files are git-ignored — never commit them. You
 have no network.
 
 ## Your job

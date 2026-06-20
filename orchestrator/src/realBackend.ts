@@ -235,6 +235,29 @@ export function buildIssueSnapshot(
 export const SNAPSHOT_FILENAME = ".orchestrator-snapshot.json";
 
 /**
+ * The host-written fix-loop findings file (integ-cmr 256 r3, fix_loop_context).
+ * The runner hands the S5 coder_fix step the round's reviewer `fix_now`
+ * findings; the Backend writes them here for the coder to read (coder_fix.md
+ * points at this name). Like {@link SNAPSHOT_FILENAME} it is a clean-room
+ * artifact that must NEVER be committed — git-ignored (per-worktree
+ * `.git/info/exclude` + root `.gitignore`) before any agent run.
+ */
+export const FIX_FINDINGS_FILENAME = ".orchestrator-fix-findings.json";
+
+/**
+ * Serialise the S5 fix_now findings to the on-disk JSON the coder reads
+ * (integ-cmr 256 r3). Pure (string assembly) so the contract is unit-testable
+ * without a worktree. The shape is a stable top-level object so the file is
+ * self-describing and future fields (round index, etc.) extend it without
+ * breaking the coder's reader.
+ */
+export function serializeFixFindings(
+  findings: ReadonlyArray<Finding>,
+): string {
+  return JSON.stringify({ fix_now: findings }, null, 2);
+}
+
+/**
  * Idempotently ensure `pattern` is present as its own line in a git
  * `info/exclude` file's content. Returns the new content (existing + the pattern
  * appended on a fresh line) when absent, or the input UNCHANGED when the pattern
@@ -904,6 +927,35 @@ export class RealBackend implements Backend {
     }
   }
 
+  /**
+   * Write (or clear) the fix-loop findings file the S5 coder reads (integ-cmr
+   * 256 r3, fix_loop_context). When `findings` is present (an S5 dispatch), the
+   * file is git-ignored first (same belt-and-suspenders as the clean-room
+   * snapshot — a coder `git add -A` must never stage host-written context into
+   * the pushed branch) then written. When `findings` is undefined (S2/S3/S6, or a
+   * fix round whose findings somehow did not survive the seam), any STALE file
+   * from a previous round is removed, so a non-fix step / a later round can never
+   * read another round's findings. Best-effort on the exclude + remove (a git/fs
+   * fault must not block the still-useful write); the write itself surfaces.
+   */
+  private writeFixFindings(
+    worktree: WorktreeHandle,
+    findings: ReadonlyArray<Finding> | undefined,
+  ): void {
+    const target = join(worktree.path, FIX_FINDINGS_FILENAME);
+    if (findings === undefined) {
+      // Non-S5 step (or no findings): clear any stale file so it cannot leak.
+      try {
+        rmSync(target, { force: true });
+      } catch {
+        // best-effort cleanup
+      }
+      return;
+    }
+    this.excludeFromGit(worktree, FIX_FINDINGS_FILENAME);
+    writeFileSync(target, serializeFixFindings(findings), "utf8");
+  }
+
   // ── auth mount (spike contract) ────────────────────────────────────────────
   private mountAuth(issueNumber: number): {
     authDir: string;
@@ -992,8 +1044,13 @@ export class RealBackend implements Backend {
   async runStep(
     spec: StepSpec,
     worktree: WorktreeHandle,
+    fixNowFindings?: ReadonlyArray<Finding>,
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
+    // integ-cmr 256 r3 (fix_loop_context): deliver the round's fix_now findings
+    // to the S5 coder_fix step by writing them into the (git-ignored) worktree
+    // file the coder reads. Set only on S5; other steps pass undefined.
+    this.writeFixFindings(worktree, fixNowFindings);
     const result = await sc.run({
       name: `${spec.id}-${spec.role}`,
       cwd: worktree.path,
@@ -1024,8 +1081,14 @@ export class RealBackend implements Backend {
     spec: StepSpec,
     worktree: WorktreeHandle,
     sessionId: string,
+    fixNowFindings?: ReadonlyArray<Finding>,
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
+    // integ-cmr 256 r3 (fix_loop_context): a RESUMED S5 coder_fix step sees the
+    // same fix_now findings a fresh S5 would (escalate-resume). Write them BEFORE
+    // resuming; the dead-session fallback below re-runs runStep, which writes
+    // them again from its own param, so a fresh-run recovery is also covered.
+    this.writeFixFindings(worktree, fixNowFindings);
     try {
       const result = await sc.run({
         name: `${spec.id}-${spec.role}-resume`,
@@ -1078,8 +1141,9 @@ export class RealBackend implements Backend {
         );
         return { output, sessionId: lastSessionId(result) ?? recovery.sessionId };
       }
-      // fresh-run fallback.
-      return await this.runStep(spec, worktree);
+      // fresh-run fallback. Re-thread the fix_now findings (r3 fix_loop_context)
+      // so the fresh S5 coder still receives them (runStep rewrites the file).
+      return await this.runStep(spec, worktree, fixNowFindings);
     }
   }
 

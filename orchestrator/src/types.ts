@@ -382,11 +382,19 @@ export interface Backend {
    * per-step sandbox session id alongside the output (so the resumed session's
    * id is recorded in the ledger). A bare {@link StepOutput} return is still
    * accepted (no real id → run-level UUID fallback); the runner normalises both.
+   *
+   * integ-cmr 256 r3 (fix_loop_context): the optional `fixNowFindings` carries
+   * the round's reviewer fix_now findings to a RESUMED S5 coder_fix step (the
+   * escalate-resume case — a human answered, the coder finishes in its original
+   * session), so the resumed coder sees the same findings a fresh S5 would. Set
+   * only on the S5 resume; undefined otherwise. The real Backend writes them into
+   * the git-ignored worktree file before resuming; the fakes ignore the argument.
    */
   resumeSession(
     spec: StepSpec,
     worktree: WorktreeHandle,
     sessionId: string,
+    fixNowFindings?: ReadonlyArray<Finding>,
   ): Promise<StepOutput | StepResult>;
   /** S0: lightweight metadata for the input gate (host-side `gh`). */
   fetchIssueMeta(issueNumber: number): Promise<IssueMeta>;
@@ -411,10 +419,21 @@ export interface Backend {
    * valid return (the fake Backends use it unchanged) → the runner falls back to
    * the run-level UUID. The runner normalises both shapes, so its control flow is
    * identical for fake and real Backends (#256 "控制流零改动").
+   *
+   * integ-cmr 256 r3 (fix_loop_context) seam extension: the optional third
+   * argument `fixNowFindings` delivers the CURRENT round's reviewer findings with
+   * `action:'fix_now'` to the S5 coder_fix step, so the fix-loop coder knows WHAT
+   * to fix (US#13 "findings 回喂 coder 在原地修"). It is set ONLY on the S5
+   * dispatch (the runner extracts it from the preceding reviewer output);
+   * undefined for S2 implement and S3/S6 reviewer steps. The real Backend writes
+   * the findings into a git-ignored worktree file the coder reads; the fake
+   * Backends ignore the argument — same backward-compatibility as the StepResult
+   * widening, so the runner's control flow is unchanged for both.
    */
   runStep(
     spec: StepSpec,
     worktree: WorktreeHandle,
+    fixNowFindings?: ReadonlyArray<Finding>,
   ): Promise<StepOutput | StepResult>;
   /** S7: push the resident slice branch (no PR, no merge). */
   push(worktree: WorktreeHandle): Promise<void>;

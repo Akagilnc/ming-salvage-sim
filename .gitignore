@@ -67,3 +67,6 @@ docs/IMPERIAL_NOTES.md
 # reviewed/pushed branch (a coder's `git add -A` would otherwise stage it). The
 # Backend also adds it to the per-worktree .git/info/exclude as a suspenders belt.
 .orchestrator-snapshot.json
+# Orchestrator (integ-cmr 256 r3) fix-loop findings — host-written read-only
+# context handed to the S5 coder_fix step; same clean-room rule as the snapshot.
+.orchestrator-fix-findings.json
