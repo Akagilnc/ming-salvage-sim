@@ -244,7 +244,7 @@ export function inlineContinuationPlan(input) {
 // it is NOT removed from the review (full re-review discipline holds), only excluded from the
 // escalate count. Match on id, claim (claimQuote/claim_quote unified), or location — any one.
 export function inlineDismissalGate(input) {
-  const { finding, dismissed } = input;
+  const { finding, dismissed = [] } = input;
   if (!finding) return true; // a null/garbage finding cannot match a dismissal -> not dismissed (still HALT-eligible)
   const findingClaim = inlineClaimOf(finding);
   const matched = dismissed.some((entry) => {
@@ -918,9 +918,9 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
   // carry reviewedCommit:null (the relaunch passed numbers, not the original review commits). Without
   // this, the next relaunch would re-run already-merged slices.
   const thisSegmentKeys = new Set(thisSegmentMerged.map((entry) => idKey(entry.number)));
-  const priorMerged = normalizedArgs.mergedNumbers
-    .filter((number) => !thisSegmentKeys.has(idKey(number)))
-    .map((number) => ({ number, reviewedCommit: null }));
+  const priorMerged = normalizedArgs.mergedEntries
+    .filter((entry) => !thisSegmentKeys.has(idKey(entry.number)))
+    .map((entry) => ({ number: entry.number, reviewedCommit: entry.reviewedCommit }));
   const mergedSlices = [...priorMerged, ...thisSegmentMerged];
   // Degradation / absent-voice flags from the load-bearing family gate's converged round.
   const convergedRound = Array.isArray(familyReview.rounds) ? familyReview.rounds.at(-1) : undefined;
@@ -1227,7 +1227,7 @@ async function mergeReviewedCommit({ Bash, worktreePath, familyBranch, implement
 // a merge — there is nothing new to merge, only the already-assembled family branch to verify/review/ship.
 async function resolveExistingFamilyWorktree({ Bash, familyBranch }) {
   return parseBashJson(
-    await Bash(`set -euo pipefail\n# resolve existing family worktree (S6 todoTotal=0 continuation)\nfamilyBranch=${shellQuote(familyBranch)}\nrepoRoot=$(git rev-parse --show-toplevel)\nparentRoot=$(dirname "$repoRoot")\nmergeRoot="$parentRoot/.epic-orchestrator"\nsafeBranch=$(printf '%s' "$familyBranch" | tr -c 'A-Za-z0-9._-' '_')\ndefaultMergeWorktree="$mergeRoot/family-$safeBranch"\nexistingMergeWorktree=$(python3 - "$repoRoot" "$familyBranch" <<'PY'\nimport subprocess, sys\nsource, branch = sys.argv[1], sys.argv[2]\ncurrent = None\nfor line in subprocess.check_output(['git', '-C', source, 'worktree', 'list', '--porcelain'], text=True).splitlines():\n    if line.startswith('worktree '):\n        current = line[9:]\n    elif line == f'branch refs/heads/{branch}' and current and current != source:\n        print(current)\n        break\nPY\n)\nif [ -n "$existingMergeWorktree" ]; then\n  mergeWorktree="$existingMergeWorktree"\nelse\n  mergeWorktree="$defaultMergeWorktree"\n  mkdir -p "$mergeRoot"\n  isOwnGitWorktree() { [ -e "$1/.git" ] && git -C "$1" rev-parse --path-format=absolute --git-common-dir >/dev/null 2>&1 && [ "$(git -C "$1" symbolic-ref --quiet --short HEAD 2>/dev/null)" = "$familyBranch" ]; }\n  if [ -e "$mergeWorktree" ] && ! isOwnGitWorktree "$mergeWorktree"; then\n    git -C "$repoRoot" worktree remove --force "$mergeWorktree" >/dev/null 2>&1 || rm -rf "$mergeWorktree"\n    git -C "$repoRoot" worktree prune >/dev/null 2>&1 || true\n  fi\n  if ! isOwnGitWorktree "$mergeWorktree"; then\n    git -C "$repoRoot" fetch origin "$familyBranch" || true\n    if git -C "$repoRoot" show-ref --verify --quiet "refs/heads/\${familyBranch}"; then\n      git -C "$repoRoot" worktree add "$mergeWorktree" "$familyBranch" >&2\n    elif git -C "$repoRoot" show-ref --verify --quiet "refs/remotes/origin/\${familyBranch}"; then\n      git -C "$repoRoot" worktree add -b "$familyBranch" "$mergeWorktree" "origin/\${familyBranch}" >&2\n    else\n      printf 'family branch %s not found locally or on origin — cannot resolve an existing family worktree for a continuation relaunch\\n' "$familyBranch" >&2\n      exit 1\n    fi\n  fi\nfi\nprintf '{"status":"resolved","familyWorktree":"'\ngit -C "$mergeWorktree" rev-parse --show-toplevel | tr -d '\\n' | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read())[1:-1], end="")'\nprintf '"}'`)
+    await Bash(`set -euo pipefail\n# resolve existing family worktree (S6 todoTotal=0 continuation)\nfamilyBranch=${shellQuote(familyBranch)}\nrepoRoot=$(git rev-parse --show-toplevel)\nparentRoot=$(dirname "$repoRoot")\nmergeRoot="$parentRoot/.epic-orchestrator"\nsafeBranch=$(printf '%s' "$familyBranch" | tr -c 'A-Za-z0-9._-' '_')\ndefaultMergeWorktree="$mergeRoot/family-$safeBranch"\nexistingMergeWorktree=$(python3 - "$repoRoot" "$familyBranch" <<'PY'\nimport subprocess, sys\nsource, branch = sys.argv[1], sys.argv[2]\ncurrent = None\nfor line in subprocess.check_output(['git', '-C', source, 'worktree', 'list', '--porcelain'], text=True).splitlines():\n    if line.startswith('worktree '):\n        current = line[9:]\n    elif line == f'branch refs/heads/{branch}' and current and current != source:\n        print(current)\n        break\nPY\n)\nif [ -n "$existingMergeWorktree" ]; then\n  mergeWorktree="$existingMergeWorktree"\nelse\n  mergeWorktree="$defaultMergeWorktree"\n  mkdir -p "$mergeRoot"\n  repoCommonDir=$(git -C "$repoRoot" rev-parse --path-format=absolute --git-common-dir)\n  isOwnGitWorktree() { [ -e "$1/.git" ] && [ "$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" = "$repoCommonDir" ] && [ "$(git -C "$1" symbolic-ref --quiet --short HEAD 2>/dev/null)" = "$familyBranch" ]; }\n  if [ -e "$mergeWorktree" ] && ! isOwnGitWorktree "$mergeWorktree"; then\n    git -C "$repoRoot" worktree remove --force "$mergeWorktree" >/dev/null 2>&1 || rm -rf "$mergeWorktree"\n  fi\n  git -C "$repoRoot" worktree prune >/dev/null 2>&1 || true\n  if ! isOwnGitWorktree "$mergeWorktree"; then\n    git -C "$repoRoot" fetch origin "$familyBranch" || true\n    if git -C "$repoRoot" show-ref --verify --quiet "refs/heads/\${familyBranch}"; then\n      git -C "$repoRoot" worktree add "$mergeWorktree" "$familyBranch" >&2\n    elif git -C "$repoRoot" show-ref --verify --quiet "refs/remotes/origin/\${familyBranch}"; then\n      git -C "$repoRoot" worktree add -b "$familyBranch" "$mergeWorktree" "origin/\${familyBranch}" >&2\n    else\n      printf 'family branch %s not found locally or on origin — cannot resolve an existing family worktree for a continuation relaunch\\n' "$familyBranch" >&2\n      exit 1\n    fi\n  fi\nfi\nprintf '{"status":"resolved","familyWorktree":"'\ngit -C "$mergeWorktree" rev-parse --show-toplevel | tr -d '\\n' | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read())[1:-1], end="")'\nprintf '"}'`)
   );
 }
 
@@ -1236,6 +1236,7 @@ function normalizePipelineArgs(rawArgs, epicIssueNumber) {
   const requiredVerifyCommands = ['npm --prefix web run typecheck:orch', 'npm --prefix web test', 'npm --prefix web run build'];
   const extraVerifyCommands = Array.isArray(objectArgs.verifyCommands) ? objectArgs.verifyCommands.map((command) => String(command)) : [];
   const verifyCommands = [...new Set([...requiredVerifyCommands, ...extraVerifyCommands])];
+  const mergedEntries = normalizeMergedEntries(objectArgs.mergedNumbers);
   return {
     familyBranch: assertShellSafeRef(String(objectArgs.familyBranch ?? `family/epic-${epicIssueNumber}`), 'familyBranch'),
     targetBranch: assertShellSafeRef(String(objectArgs.targetBranch ?? 'origin/main'), 'targetBranch'),
@@ -1250,11 +1251,36 @@ function normalizePipelineArgs(rawArgs, epicIssueNumber) {
     // KEY DECISION (settled): mergedNumbers is passed in by the main session (NOT git-probed here) —
     // git probing the family branch as a self-verification backstop is a possible future addition
     // (blueprint risk #7) but is deliberately NOT the primary path.
-    mergedNumbers: normalizeIssueNumberList(objectArgs.mergedNumbers, 'mergedNumbers'),
+    // mergedEntries preserves the prior handoff's {number, reviewedCommit} so the stable per-slice
+    // reviewed commit survives a relaunch round-trip; mergedNumbers is derived for continuationPlan
+    // membership. (A raw id carries reviewedCommit:null.)
+    mergedEntries,
+    mergedNumbers: mergedEntries.map((entry) => entry.number),
     dirty: normalizeIssueNumberList(objectArgs.dirty, 'dirty'),
     dismissals: normalizeDismissals(objectArgs.dismissals),
     decisions: objectArgs.decisions === undefined || objectArgs.decisions === null ? undefined : String(objectArgs.decisions)
   };
+}
+
+// Normalize the prior segment's merged ledger: accept raw ids OR handoff {number, reviewedCommit}
+// entries, returning {number, reviewedCommit} (reviewedCommit:null for a raw id). Preserves the
+// stable per-slice reviewed commit across a relaunch round-trip (handoff.merged -> mergedNumbers).
+function normalizeMergedEntries(value) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw new Error("epic-orchestrator: mergedNumbers must be an array of slice ids or handoff {number, reviewedCommit} entries.");
+  }
+  return value.map((element) => {
+    const isObject = element !== null && typeof element === 'object';
+    if (isObject && !('number' in element)) {
+      throw new Error(`epic-orchestrator: mergedNumbers object element must carry a 'number' field (got keys: ${Object.keys(element).join(', ')}).`);
+    }
+    const raw = isObject ? element.number : element;
+    const number = typeof raw === 'number' ? raw : String(raw);
+    assertShellSafeRef(String(number), 'mergedNumbers element');
+    const reviewedCommit = isObject && element.reviewedCommit !== undefined && element.reviewedCommit !== null ? String(element.reviewedCommit) : null;
+    return { number, reviewedCommit };
+  });
 }
 
 // S6 continuation issue-number lists (mergedNumbers / dirty). Each element is coerced to String/number
@@ -1269,7 +1295,10 @@ function normalizeIssueNumberList(value, name) {
     // handoff merged[] ({number, reviewedCommit}) / dirty[] ({number, decision}) round-trip directly
     // as mergedNumbers / dirty without the caller having to unwrap them (else they'd stringify to
     // '[object Object]' and silently never match a slice id).
-    const raw = element !== null && typeof element === 'object' && 'number' in element ? element.number : element;
+    if (element !== null && typeof element === 'object' && !('number' in element)) {
+      throw new Error(`epic-orchestrator: ${name} object element must carry a 'number' field (got keys: ${Object.keys(element).join(', ')}) — refusing to coerce it to '[object Object]'.`);
+    }
+    const raw = element !== null && typeof element === 'object' ? element.number : element;
     const normalized = typeof raw === 'number' ? raw : String(raw);
     assertShellSafeRef(String(normalized), `${name} element`);
     return normalized;

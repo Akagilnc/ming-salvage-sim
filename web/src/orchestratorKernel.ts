@@ -298,7 +298,7 @@ export function continuationPlan(input: ContinuationInput): ContinuationResult {
 // → true (route normally, may escalate/HALT). Match on id, claim (claimQuote/claim_quote unified), or
 // location — any one (cmr finding ids can drift across segments; claim has two casings).
 export function dismissalGate(input: DismissalGateInput): boolean {
-  const { finding, dismissed } = input;
+  const { finding, dismissed = [] } = input;
   if (!finding) return true; // a null/garbage finding cannot match a dismissal -> not dismissed (still HALT-eligible)
   const findingClaim = claimOf(finding);
   const matched = dismissed.some((entry) => {
