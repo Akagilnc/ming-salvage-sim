@@ -1,6 +1,6 @@
 # v1 编排器 = runner 驱动外层步骤序列；agent 只在步内执行，不决定下一步
 
-Status: Proposed（2026-06-20；grill-with-docs 第二轮收敛，整合 gpt-5.5-pro stepper 方向 + Sandcastle 原生原语实证（`createSandbox` 容器保活多 run、`resumeSession`/`fork`、`createWorktree`、`completionSignal`、`Output.object`）。**尚未 Accepted** —— 待设计评审闭环。**取代 ADR 0016 v1 §3「coder 一个 run 跑完整 wiki 流程、自己判完成」**。）
+Status: Accepted（2026-06-20；grill-with-docs 第二轮收敛，整合 gpt-5.5-pro stepper 方向 + Sandcastle 原生原语实证（`createSandbox` 容器保活多 run、`resumeSession`/`fork`、`createWorktree`、`completionSignal`、`Output.object`）。**评审闭环完成**：本地 cmr 6 轮收敛 + 线上 bot（PR #246）。**取代 ADR 0016 v1 §3「coder 一个 run 跑完整 wiki 流程、自己判完成」**。）
 
 ## 背景
 

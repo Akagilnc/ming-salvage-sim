@@ -1,6 +1,6 @@
 # 编排器的 commit 真源 = 一条常驻 slice worktree;Sandcastle sandbox 只当隔离壳;家族 base 当前置
 
-Status: Proposed（2026-06-20；grill-with-docs 收敛 v1 编排器设计。**尚未 Accepted** —— 待设计评审闭环（本地 cmr + 线上 bot）。本 ADR 是 ADR 0016「薄质量层」的 worktree 维度具体化，收口 0016 当时含糊的 worktree 模型。）
+Status: Accepted（2026-06-20；grill-with-docs 收敛 v1 编排器设计。**评审闭环完成**：本地 cmr 6 轮收敛 + 线上 bot（PR #246）。本 ADR 是 ADR 0016「薄质量层」的 worktree 维度具体化，收口 0016 当时含糊的 worktree 模型。）
 
 ## 背景
 
