@@ -319,7 +319,10 @@ describe("epic orchestrator S2 single-slice pipeline", () => {
     expect(calls.join("\n")).toContain("reviewer=codex");
     expect(calls.join("\n")).toContain("codex exec --skip-git-repo-check --ephemeral -");
     expect(calls.join("\n")).toContain("reviewer=agy");
-    expect(calls.join("\n")).toContain("--diff-only");
+    // canonical agy invocation (no -p/--diff-only — both break the leg; agy auto-degrades to diff-only
+    // on the hidden worktree). Matches the family agy leg.
+    expect(calls.join("\n")).toContain("agy --sandbox --print ''");
+    expect(calls.join("\n")).not.toContain("--diff-only");
   });
 
   it("parses reviewer JSON when codex stdout includes diff stat context before the machine result", async () => {
@@ -1595,6 +1598,39 @@ describe("epic orchestrator S4b family 5a/5b CMR", () => {
     expect(result.i2.availableModels).toEqual(["codex"]);
     // halt = the gate never ran (degraded before review), so family_5a_5b stays out of scope.
     expect(result.outOfScope).toContain("family_5a_5b");
+  });
+
+  it("rejects a malformed Claude family reply ({} with no findings array) as unavailable, not a clean review (I2)", async () => {
+    // The Claude leg carries no status field, so a reply with no findings array is malformed (not clean).
+    // With agy down, a malformed Claude must NOT be counted toward the >=2-model gate — only codex is real -> halt.
+    const result: any = await runEpicLayeredPipeline({
+      args: { epicIssueNumber: 217, familyBranch: "family/217", verifyCommands: ["npm --prefix web test"], startupTargetHead: "base-start", targetBranch: "origin/main", maxReviewRounds: 3 },
+      log: () => undefined,
+      agent: async (request: any) => {
+        if (request.role === "family_review") return {}; // truthy, available!==false, but no findings array -> malformed
+        if (request.role === "family_review_fix") return { fixed: true };
+        return {
+          commit: `commit-${request.issueNumber}`,
+          worktreePath: `/repo/.worktrees/issue-${request.issueNumber}`,
+          observabilityEvidence: { loudFailure: true, locatorLogs: true, notApplicableReason: "tooling slice" }
+        };
+      },
+      Bash: async (command: string) => {
+        if (command.includes("/sub_issues")) return JSON.stringify({ epicId: 217, issues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }], blockedBy: [] });
+        if (command.includes("reviewer=codex-family")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("reviewer=agy-family")) throw new Error("agy not logged in");
+        if (command.includes("reviewer=codex")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("merge reviewed commit")) return JSON.stringify({ status: "merged", mergeCommit: "merge-220", mergeWorktree: "/repo/.epic-orchestrator/family" });
+        if (command.includes("家族集成 verify")) return JSON.stringify({ status: "passed", exitCode: 0, output: "family ok" });
+        if (command.includes("base management")) return JSON.stringify({ status: "no_drift", startupTargetHead: "base-start", currentTargetHead: "base-start" });
+        return JSON.stringify({ status: "passed" });
+      }
+    });
+
+    expect(result.status).toBe("return_to_main_session");
+    expect(result.i2).toMatchObject({ status: "halt", stage: "family_5a_5b" });
+    expect(result.i2.availableModels).toEqual(["codex"]); // malformed Claude rejected, agy down
   });
 
   it("never triggers the online PR review loop on a converged family review (online_pr_review_loop stays out of scope)", async () => {
