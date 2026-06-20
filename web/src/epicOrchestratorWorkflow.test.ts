@@ -328,6 +328,14 @@ describe("epic orchestrator S2 single-slice pipeline", () => {
     const agyCall = calls.find((c) => c.includes("reviewer=agy")) ?? "";
     expect(agyCall).toContain("Return only one JSON object");
     expect(agyCall).toContain("REVIEW ONLY");
+
+    // the merge command prunes stale worktree registrations BEFORE scanning the worktree list (symmetric
+    // with resolveExistingFamilyWorktree), so a registered-but-missing path is never selected for the merge.
+    const mergeCall = calls.find((c) => c.includes("merge reviewed commit")) ?? "";
+    expect(mergeCall).toContain("worktree prune");
+    // prune runs before the worktree-list scan (the existingMergeWorktree assignment).
+    expect(mergeCall.indexOf("worktree prune")).toBeLessThan(mergeCall.indexOf("existingMergeWorktree="));
+    expect(mergeCall).toContain("current != main_repo"); // main-repo exclusion (r10)
   });
 
   it("parses reviewer JSON when codex stdout includes diff stat context before the machine result", async () => {
