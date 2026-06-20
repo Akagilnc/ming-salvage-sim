@@ -191,7 +191,7 @@ export function routeFindings(findings: Finding[]): FindingRoute {
   const decisionFindings: Finding[] = [];
 
   for (const finding of findings) {
-    if (finding.classification === "mechanical_bug") {
+    if (finding && finding.classification === "mechanical_bug") {
       autonomousBugFindings.push(finding);
     } else {
       decisionFindings.push(finding);

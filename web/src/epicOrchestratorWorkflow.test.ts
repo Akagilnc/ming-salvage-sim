@@ -1293,6 +1293,10 @@ describe("epic orchestrator workflow inline familyReviewGate drift guard", () =>
     for (const findings of battery) {
       expect(inlineRouteFindings(findings)).toEqual(routeFindings(findings));
     }
+
+    // null/undefined entries must be handled identically by both copies (kernel had no guard before).
+    const withNulls = [null, { id: "F1", classification: "mechanical_bug" }, undefined] as unknown as Finding[];
+    expect(inlineRouteFindings(withNulls)).toEqual(routeFindings(withNulls));
   });
 
   it("matches the family_5a_5b judgeReviewDegradation authority across availability mixes", () => {
@@ -1339,6 +1343,7 @@ describe("epic orchestrator S4b family 5a/5b CMR", () => {
       },
       Bash: async (command: string) => {
         bashCalls.push(command);
+        if (command.includes("family-review reviewed HEAD")) return "reviewed-head-sha";
         if (command.includes("/sub_issues")) return JSON.stringify({ epicId: 217, issues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }], blockedBy: [] });
         if (command.includes("reviewer=codex-family")) return JSON.stringify(familyReview(cmrRound + 1).codex ?? { status: "passed", findings: [] });
         if (command.includes("reviewer=agy-family")) {
@@ -1358,7 +1363,7 @@ describe("epic orchestrator S4b family 5a/5b CMR", () => {
     return { result, agentCalls, bashCalls };
   }
 
-  it("runs codex+Claude+agy on the merged family branch with agy full grounding (no --diff-only) and converges clean", async () => {
+  it("runs codex+Claude+agy on the merged family branch (agy diff-based with review instructions) and converges clean", async () => {
     const { result, agentCalls, bashCalls } = await runToFamilyReview({
       familyReview: () => ({ codex: { status: "passed", findings: [] }, agy: { status: "passed", findings: [] }, claude: { findings: [] } })
     });
@@ -1374,7 +1379,13 @@ describe("epic orchestrator S4b family 5a/5b CMR", () => {
     expect(codexFamily).toContain("codex exec --skip-git-repo-check --ephemeral -");
     expect(agyFamily).toContain("cd '/repo/.epic-orchestrator/family'");
     expect(agyFamily).toContain("agy --sandbox --print ''");
-    expect(agyFamily).not.toContain("--diff-only");
+    // agy gets real review instructions + JSON schema on stdin (not a bare diff) and a hard read-only constraint.
+    expect(agyFamily).toContain("REVIEW ONLY");
+    expect(agyFamily).toContain("Return only one JSON object");
+    expect(agyFamily).toContain("cross-slice completeness (5a)");
+    // both legs diff against the I10 startup target base (base-start), not a hardcoded origin/main.
+    expect(codexFamily).toContain("git rev-parse 'base-start^{commit}'");
+    expect(agyFamily).toContain("git rev-parse 'base-start^{commit}'");
 
     const claudeReviewCall = agentCalls.find((call) => call.role === "family_review");
     expect(claudeReviewCall).toBeTruthy();
@@ -1396,6 +1407,9 @@ describe("epic orchestrator S4b family 5a/5b CMR", () => {
     const fixCall = agentCalls.find((call) => call.role === "family_review_fix");
     expect(fixCall).toBeTruthy();
     expect(fixCall.autonomousBugFindings).toEqual([{ id: "F1", classification: "mechanical_bug", location: "a.ts" }]);
+    // a fix round advanced the family HEAD, so the merge entry must report the reviewed HEAD, not the stale pre-review commit.
+    expect(result.merge.familyHead).toBe("reviewed-head-sha");
+    expect(result.merge.mergeCommit).toBe("reviewed-head-sha");
   });
 
   it("escalates to the main session when a decision finding appears (ambiguous defaults to choice)", async () => {
@@ -1459,6 +1473,8 @@ describe("epic orchestrator S4b family 5a/5b CMR", () => {
     expect(result.reason).toBe("review_degraded");
     expect(result.i2).toMatchObject({ status: "halt", stage: "family_5a_5b" });
     expect(result.i2.availableModels).toEqual(["codex"]);
+    // halt = the gate never ran (degraded before review), so family_5a_5b stays out of scope.
+    expect(result.outOfScope).toContain("family_5a_5b");
   });
 
   it("never triggers the online PR review loop on a converged family review (online_pr_review_loop stays out of scope)", async () => {
