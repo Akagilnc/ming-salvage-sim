@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  familyReviewGate,
   judgeReviewDegradation,
   layerEpicIssues,
   routeFindings,
@@ -277,5 +278,39 @@ describe("judgeReviewDegradation", () => {
         results: [down("codex"), ok("agy")]
       })
     ).toEqual({ status: "halt", availableModels: ["agy"], missingModels: ["codex"], flags: ["review requires at least two available models unless the per-slice codex-only exception applies"] });
+  });
+});
+
+describe("familyReviewGate", () => {
+  it("escalates as soon as any decision finding is present", () => {
+    expect(familyReviewGate({ escalateCount: 1, mechanicalCount: 0, round: 1, maxRounds: 3 })).toBe("escalate");
+  });
+
+  it("escalates even when mechanical bugs also exist (escalation takes priority)", () => {
+    expect(familyReviewGate({ escalateCount: 1, mechanicalCount: 5, round: 1, maxRounds: 3 })).toBe("escalate");
+  });
+
+  it("escalates regardless of round, ignoring the fix budget", () => {
+    expect(familyReviewGate({ escalateCount: 1, mechanicalCount: 0, round: 3, maxRounds: 3 })).toBe("escalate");
+  });
+
+  it("converges when there are no findings at all", () => {
+    expect(familyReviewGate({ escalateCount: 0, mechanicalCount: 0, round: 1, maxRounds: 3 })).toBe("converged");
+  });
+
+  it("requests an autonomous fix when only mechanical bugs remain and rounds are left", () => {
+    expect(familyReviewGate({ escalateCount: 0, mechanicalCount: 2, round: 1, maxRounds: 3 })).toBe("fix");
+  });
+
+  it("keeps fixing on intermediate rounds below the cap", () => {
+    expect(familyReviewGate({ escalateCount: 0, mechanicalCount: 1, round: 2, maxRounds: 3 })).toBe("fix");
+  });
+
+  it("aborts (I1) when mechanical bugs persist at the final round", () => {
+    expect(familyReviewGate({ escalateCount: 0, mechanicalCount: 1, round: 3, maxRounds: 3 })).toBe("abort");
+  });
+
+  it("aborts defensively if the round somehow exceeds the cap", () => {
+    expect(familyReviewGate({ escalateCount: 0, mechanicalCount: 1, round: 4, maxRounds: 3 })).toBe("abort");
   });
 });
