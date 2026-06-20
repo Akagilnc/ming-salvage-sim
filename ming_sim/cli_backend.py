@@ -686,6 +686,11 @@ def extract_draft_intent(
     # 补充模式（has_pending_draft + existing_draft_text）：注入现有草案，要求 LLM 输出合并草案。
     # 直接用大臣回话（可能是「好的，加上…」等确认语）会覆盖原草案——须由 LLM 合并。
     _supplement_mode = has_pending_draft and bool(existing_draft_text.strip())
+    intent_schema_line = (
+        '  "拟旨意图": "无|拟旨",  // 皇帝明确请拟旨/起草圣旨=拟旨；闲谈/议事/问询/密令/任免=无\n'
+        if _supplement_mode else
+        '  "拟旨意图": "无|拟旨"  // 皇帝明确请拟旨/起草圣旨=拟旨；闲谈/议事/问询/密令/任免=无\n'
+    )
     merge_schema_line = (
         '  "合并草案": ""   // 仅拟旨时必填：把【现有草案】与本轮新增/修改指令合并成完整草案；无拟旨意图时留空\n'
         if _supplement_mode else ""
@@ -700,7 +705,7 @@ def extract_draft_intent(
         + supplement_hint
         + "只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
         "{\n"
-        '  "拟旨意图": "无|拟旨"  // 皇帝明确请拟旨/起草圣旨=拟旨；闲谈/议事/问询/密令/任免=无\n'
+        + intent_schema_line
         + merge_schema_line
         + "}\n"
         "判定要点：皇帝明确让大臣拟旨/起草圣旨→拟旨；仅商议/问询/催办/评论不算。语义判断，别拘字面。\n\n"
