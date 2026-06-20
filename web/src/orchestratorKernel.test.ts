@@ -226,13 +226,22 @@ describe("routeFindings", () => {
     });
   });
 
-  it("tolerates null/undefined entries without crashing (routes them to the decision bucket)", () => {
+  it("drops null/undefined entries (a null is not an actionable finding — must not escalate with a null payload)", () => {
     const findings = [null, { id: "F1", classification: "mechanical_bug" }, undefined] as unknown as Finding[];
 
+    // null/undefined are dropped, not routed to the decision bucket (else they would escalate carrying a
+    // null element into the handoff decisionFindings and risk an NPE in the main session).
     expect(routeFindings(findings)).toEqual({
-      status: "needs_decision",
+      status: "autonomous_repair",
       autonomousBugFindings: [{ id: "F1", classification: "mechanical_bug" }],
-      decisionFindings: [null, undefined]
+      decisionFindings: []
+    });
+
+    // an all-null findings array converges to no_findings rather than a spurious needs_decision.
+    expect(routeFindings([null, undefined] as unknown as Finding[])).toEqual({
+      status: "no_findings",
+      autonomousBugFindings: [],
+      decisionFindings: []
     });
   });
 });
@@ -394,7 +403,9 @@ describe("buildHandoffPayload", () => {
       question: null,
       detail: null,
       flags: [],
-      prUrl: "https://github.com/Akagilnc/ming-salvage-sim/pull/999"
+      prUrl: "https://github.com/Akagilnc/ming-salvage-sim/pull/999",
+      dismissals: [],
+      decisions: null
     });
   });
 
@@ -421,7 +432,9 @@ describe("buildHandoffPayload", () => {
       detail: null,
       flags: [],
       reason: "gstack-ship-ask",
-      prUrl: null
+      prUrl: null,
+      dismissals: [],
+      decisions: null
     });
   });
 
@@ -448,7 +461,9 @@ describe("buildHandoffPayload", () => {
       detail: "RedTeam gate failed",
       flags: [],
       reason: "gstack-ship-failed",
-      prUrl: null
+      prUrl: null,
+      dismissals: [],
+      decisions: null
     });
   });
 
@@ -468,6 +483,27 @@ describe("buildHandoffPayload", () => {
     expect(payload.dirty).toEqual([{ number: 221, decision: "rework auth gate" }]);
     expect(payload.flags).toEqual(["family 5a/5b degraded: agy unavailable (quota)"]);
     expect(payload.question).toBeNull();
+  });
+
+  it("carries cumulative dismissals + decisions so the whole handoff round-trips as relaunch args", () => {
+    const payload = buildHandoffPayload({
+      ...base,
+      status: "needs-user",
+      reason: "gstack-ship-ask",
+      question: "MINOR or MAJOR?",
+      dismissals: [{ id: "agy-family-status-failed", claimQuote: "false positive", location: "agy-family" }],
+      decisions: "rework slice 221 auth gate"
+    });
+
+    // a needs-user relaunch must not lose the prior user rulings (else the same dismissed finding re-HALTs).
+    expect(payload.dismissals).toEqual([{ id: "agy-family-status-failed", claimQuote: "false positive", location: "agy-family" }]);
+    expect(payload.decisions).toBe("rework slice 221 auth gate");
+  });
+
+  it("defaults dismissals/decisions to a stable empty array / null when absent", () => {
+    const payload = buildHandoffPayload({ ...base, status: "ready", prUrl: "https://example.test/pr/1" });
+    expect(payload.dismissals).toEqual([]);
+    expect(payload.decisions).toBeNull();
   });
 
   it("defaults optional collections (merged / dirty / flags) to stable empty arrays", () => {

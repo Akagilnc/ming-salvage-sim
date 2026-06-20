@@ -323,6 +323,11 @@ describe("epic orchestrator S2 single-slice pipeline", () => {
     // on the hidden worktree). Matches the family agy leg.
     expect(calls.join("\n")).toContain("agy --sandbox --print ''");
     expect(calls.join("\n")).not.toContain("--diff-only");
+    // per-slice agy gets review instructions + JSON schema on stdin (not a bare diff) so parseReviewerJson
+    // gets parseable output, mirroring the family agy leg.
+    const agyCall = calls.find((c) => c.includes("reviewer=agy")) ?? "";
+    expect(agyCall).toContain("Return only one JSON object");
+    expect(agyCall).toContain("REVIEW ONLY");
   });
 
   it("parses reviewer JSON when codex stdout includes diff stat context before the machine result", async () => {

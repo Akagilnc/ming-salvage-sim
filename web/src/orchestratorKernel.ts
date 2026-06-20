@@ -229,7 +229,9 @@ export function routeFindings(findings: Finding[]): FindingRoute {
   const decisionFindings: Finding[] = [];
 
   for (const finding of findings) {
-    if (finding && finding.classification === "mechanical_bug") {
+    if (!finding) continue; // drop null/garbage elements — a null is not an actionable finding and must
+                            // not flow into decisionFindings (it would escalate with a null in the payload).
+    if (finding.classification === "mechanical_bug") {
       autonomousBugFindings.push(finding);
     } else {
       decisionFindings.push(finding);
@@ -352,6 +354,8 @@ export interface HandoffInput {
   question?: string; // needs-user: the gstack-ship ASK question
   detail?: string; // unconverged: the blocking detail
   reason?: string; // terminal-state-specific reason code (gstack-ship-ask / gstack-ship-failed / ...)
+  dismissals?: Dismissal[]; // cumulative user-dismissed decision findings, carried across relaunch segments
+  decisions?: string; // cumulative cross-segment decision text, carried across relaunch segments
 }
 
 export interface HandoffPayload {
@@ -367,6 +371,8 @@ export interface HandoffPayload {
   flags: string[];
   prUrl: string | null;
   reason?: string;
+  dismissals: Dismissal[];
+  decisions: string | null;
 }
 
 // §段间交接 — assembles the stable handoff payload every run returns to the main session.
@@ -386,7 +392,11 @@ export function buildHandoffPayload(input: HandoffInput): HandoffPayload {
     question: input.question ?? null,
     detail: input.detail ?? null,
     flags: input.flags ?? [],
-    prUrl: input.prUrl ?? null
+    prUrl: input.prUrl ?? null,
+    // Cumulative user rulings carried across relaunch segments (round-trip completeness): dismissed
+    // decision findings (no longer HALT) + the cross-segment decision text.
+    dismissals: input.dismissals ?? [],
+    decisions: input.decisions ?? null
   };
   if (input.reason !== undefined) payload.reason = input.reason;
   return payload;
