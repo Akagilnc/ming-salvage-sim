@@ -1034,6 +1034,33 @@ describe("epic orchestrator S3 layered parallel pipeline", () => {
     }
   });
 
+  it("fails closed before slice execution when discovery has no open sub-issues", async () => {
+    const commands: string[] = [];
+
+    const result: any = await runEpicLayeredPipeline({
+      args: { epicIssueNumber: 217, familyBranch: "family/217", verifyCommands: ["npm --prefix web test"], startupTargetHead: "base-start", targetBranch: "origin/main" },
+      log: () => undefined,
+      agent: async () => {
+        throw new Error("must not run slice agents without open sub-issues");
+      },
+      Bash: async (command: string) => {
+        commands.push(command);
+        if (command.includes("/sub_issues")) return JSON.stringify({ epicId: 217, issues: [{ id: 220, epicId: 217, state: "closed", title: "S2", url: "https://example.test/220" }], blockedBy: [] });
+        if (command.includes("merge reviewed commit")) throw new Error("must not merge without open sub-issues");
+        if (command.includes("家族集成 verify") || command.includes("base management")) throw new Error("must not run I9/I10 without a family worktree");
+        return JSON.stringify({ status: "passed" });
+      }
+    });
+
+    expect(result.status).toBe("return_to_main_session");
+    expect(result.reason).toBe("no_open_subissues");
+    expect(result.i9).toEqual({ status: "aborted", reason: "no_open_subissues" });
+    expect(result.merge).toBeUndefined();
+    expect(commands.join("\n")).not.toContain("merge reviewed commit");
+    expect(commands.join("\n")).not.toContain("家族集成 verify");
+    expect(commands.join("\n")).not.toContain("base management");
+  });
+
   it("returns to the main session instead of running family verify when no merge worktree is available", async () => {
     const commands: string[] = [];
 
@@ -1164,7 +1191,9 @@ describe("epic orchestrator S3 layered parallel pipeline", () => {
     expect(events).toEqual(["verify", "verify", "verify", "rebase", "verify", "verify", "verify"]);
     expect(result.baseManagement).toMatchObject({ status: "rebased", currentTargetHead: "base-new" });
     expect(result.mergeQueue.at(-1).mergeCommit).toBe("rebased-family");
+    expect(result.mergeQueue.at(-1).familyHead).toBe("rebased-family");
     expect(result.merge?.mergeCommit).toBe("rebased-family");
+    expect(result.merge?.familyHead).toBe("rebased-family");
     expect(result.familyVerificationAfterRebase).toMatchObject({ status: "passed" });
   });
 
