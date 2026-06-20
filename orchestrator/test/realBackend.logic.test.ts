@@ -133,15 +133,61 @@ describe("realBackend gh parsing", () => {
   });
 
   it("buildIssueSnapshot carries body + comments + brief", () => {
-    const snap = buildIssueSnapshot(256, {
-      number: 256,
-      body: "the body",
-      comments: [{ body: "c1" }, briefComment],
-    });
+    const snap = buildIssueSnapshot(
+      256,
+      {
+        number: 256,
+        body: "the body",
+        comments: [{ body: "c1" }, briefComment],
+      },
+      [],
+      0,
+    );
     expect(snap.number).toBe(256);
     expect(snap.body).toBe("the body");
     expect(snap.comments).toEqual(["c1", briefComment.body]);
     expect(snap.agentBrief).toContain("## Agent Brief");
+  });
+
+  it("buildIssueSnapshot embeds the #244-named native metadata (title/state/labels + sub-issue + blocked_by summaries)", () => {
+    // #244 S1: the full snapshot is "body + comments + 最新 Agent Brief 正文 +
+    // native metadata". The native metadata S0 reads via gh must travel into the
+    // clean-room snapshot, or the container's LOCAL context is missing a
+    // contract-named element (it does NOT gh-fetch inside the box).
+    const json: GhIssueJson = {
+      number: 256,
+      title: "Slice: real Backend",
+      state: "open",
+      body: "the body",
+      labels: [{ name: "ready-for-agent" }, { name: "enhancement" }],
+      comments: [briefComment],
+    };
+    const blockedBy: GhBlockedBy[] = [
+      { number: 248, state: "closed" },
+      { number: 254, state: "open" },
+    ];
+    const snap = buildIssueSnapshot(256, json, blockedBy, /*subIssueCount*/ 3);
+    expect(snap.nativeMeta).toEqual({
+      title: "Slice: real Backend",
+      state: "open",
+      labels: ["ready-for-agent", "enhancement"],
+      subIssueCount: 3,
+      blockedBy: [
+        { number: 248, state: "closed" },
+        { number: 254, state: "open" },
+      ],
+    });
+  });
+
+  it("buildIssueSnapshot tolerates missing title/state/labels (empty native metadata)", () => {
+    const snap = buildIssueSnapshot(99, {}, [], 0);
+    expect(snap.nativeMeta).toEqual({
+      title: "",
+      state: "",
+      labels: [],
+      subIssueCount: 0,
+      blockedBy: [],
+    });
   });
 });
 

@@ -209,12 +209,38 @@ export interface IssueMeta {
   readonly openBlockedBy: ReadonlyArray<number>;
 }
 
-/** Full issue snapshot read by S1 (body + comments + Agent Brief). */
+/**
+ * The native metadata #244 S1 names as part of the full snapshot ("body +
+ * comments + 最新 Agent Brief 正文 + native metadata"). S0 reads these via `gh`;
+ * S1 writes them into the clean-room snapshot so the container's LOCAL context
+ * (it does NOT gh-fetch inside the box) carries the issue's title/state/labels +
+ * the native sub-issue + blocked_by summaries the coder needs — not just the body.
+ */
+export interface IssueSnapshotMeta {
+  readonly title: string;
+  /** "open" | "closed" (whatever `gh` reports; kept as a free string). */
+  readonly state: string;
+  readonly labels: ReadonlyArray<string>;
+  /** Native sub-issue count (`gh issue view --json subIssues` → totalCount). */
+  readonly subIssueCount: number;
+  /** Native blocked_by dependency summary (number + state per dependency). */
+  readonly blockedBy: ReadonlyArray<{ readonly number: number; readonly state: string }>;
+}
+
+/**
+ * Full issue snapshot read by S1 (body + comments + Agent Brief + native
+ * metadata). `nativeMeta` carries the #244-named native metadata; the REAL
+ * Backend always populates it (`buildIssueSnapshot`), so the snapshot fed to
+ * the coder is contract-complete. It is OPTIONAL on the type only so the
+ * zero-container fake Backends in the step control-flow tests (which never
+ * exercise the coder's local context) can omit it.
+ */
 export interface IssueSnapshot {
   readonly number: number;
   readonly body: string;
   readonly comments: ReadonlyArray<string>;
   readonly agentBrief: string;
+  readonly nativeMeta?: IssueSnapshotMeta;
 }
 
 /** Handle to the resident slice worktree (ADR 0017). */

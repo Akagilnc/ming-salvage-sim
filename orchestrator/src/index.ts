@@ -14,6 +14,7 @@ export type {
   HandoffStatus,
   IssueMeta,
   IssueSnapshot,
+  IssueSnapshotMeta,
   LedgerEntry,
   PersistentLedgerEntry,
   ReviewerOutput,
