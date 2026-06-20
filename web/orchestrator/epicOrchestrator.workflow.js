@@ -1561,6 +1561,13 @@ function familyReviewFindings(report, reviewerName, statusRequired) {
   if (report && report.findings !== undefined && !Array.isArray(report.findings)) {
     throw new Error(`epic-orchestrator family review: ${reviewerName} returned a non-array findings field — malformed reviewer report.`);
   }
+  // The Claude leg carries NO status field, so its only clean/dirty signal is the findings array. A reply
+  // with no findings array at all ({} or an implementation-shaped object) is not a clean review — it is a
+  // malformed report and must fail loud (else the leg is wrongly marked available and the I2 >=2-model gate
+  // counts it as a real reviewer). Status-contract legs (codex/agy) stay status-driven (passed == clean).
+  if (!statusRequired && !Array.isArray(report?.findings)) {
+    throw new Error(`epic-orchestrator family review: ${reviewerName} returned no findings array — malformed reviewer report (the Claude leg must return {findings:[...]}).`);
+  }
   const findings = Array.isArray(report?.findings) ? report.findings : [];
   if (findings.length > 0) return findings; // real findings always route (even with a failed status)
   const status = report?.status;
@@ -1661,7 +1668,7 @@ async function runPerSliceReview({ Bash, worktreePath, commit, plannedSlice }) {
     'codex'
   );
   const agy = parseReviewerJson(
-    await Bash(`set -euo pipefail\ncd ${shellQuote(worktreePath)}\n# reviewer=agy; hidden worktree path forces diff-only review\ngit diff ${shellQuote(`${commit}^`)} ${shellQuote(commit)} | agy -p --sandbox --diff-only`),
+    await Bash(`set -euo pipefail\ncd ${shellQuote(worktreePath)}\n# reviewer=agy; canonical invocation — '-p --sandbox' swallows --sandbox as the print value and the old diff-only flag is not a real agy option; both would break the leg. agy auto-degrades to diff-based review on the hidden .epic-orchestrator worktree.\ngit diff ${shellQuote(`${commit}^`)} ${shellQuote(commit)} | agy --sandbox --print ''`),
     'agy'
   );
   const reviewers = [
