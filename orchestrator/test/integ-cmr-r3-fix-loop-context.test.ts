@@ -184,6 +184,31 @@ describe("integ-cmr 256 r3 — S5 coder_fix receives the round's fix_now finding
     expect(s5[1]!.findings).toEqual([round2]);
   });
 
+  it("a P0/P1 (critical/high) with action:'defer' is STILL delivered to the coder", async () => {
+    // integ-cmr 256 confirm r1: route() S4 routes ANY critical/high finding to
+    // S5 regardless of action (severity trumps — a reviewer cannot defer a
+    // P0/P1, per #244's "P0/P1 必修不许私自降级"). The S5 delivery seam MUST
+    // match: selectFixNowFindings is blocking-finding-based, not action-only, so
+    // the coder actually receives the finding it was routed to fix — never an
+    // empty set on a P0/P1 mislabelled `defer`.
+    const criticalDefer = finding("critical", "defer", "src/p0.ts:1");
+    const highDefer = finding("high", "defer", "src/p1.ts:2");
+    const backend = new FindingRecordingBackend([
+      reviewerWith([criticalDefer, highDefer]), // S3 → routes to S5
+      reviewerWith([]), // S6 → approve
+    ]);
+
+    const result = await runOrchestrator({ issueNumber: 256, backend });
+    expect(result.status).toBe("success");
+
+    const s5 = backend.stepFindings.filter((c) => c.id === "S5");
+    expect(s5).toHaveLength(1);
+    // Both P0/P1 findings reach the coder even though they are labelled defer.
+    expect(s5[0]!.findings).toEqual([criticalDefer, highDefer]);
+    expect(s5[0]!.findings).not.toBeUndefined();
+    expect(s5[0]!.findings).not.toHaveLength(0);
+  });
+
   it("non-fix steps (S2 implement, S3/S6 reviewer) receive no fixNowFindings", async () => {
     const backend = new FindingRecordingBackend([
       reviewerWith([finding("critical", "fix_now", "src/x.ts:1")]), // S3

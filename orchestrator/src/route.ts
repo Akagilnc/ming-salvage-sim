@@ -28,6 +28,7 @@ import type { StepId, StepOutput } from "./types.js";
 // integ-cmr base r2 (B): a coder output with an inconsistent/garbage
 // commitsAdded is invalid.
 import {
+  isBlockingFinding,
   isValidCoderOutput,
   isValidEscalation,
   isValidReviewerOutput,
@@ -158,12 +159,10 @@ export function route(ctx: RouteContext): RouteDecision {
       }
       const findings = ctx.output.findings;
 
-      const needsFix = findings.some(
-        (f) =>
-          f.severity === "critical" ||
-          f.severity === "high" ||
-          f.action === "fix_now",
-      );
+      // Shared blocking predicate (validate.isBlockingFinding) — the SAME source
+      // of truth the S5 delivery seam (selectFixNowFindings) uses, so routing
+      // and delivery cannot drift (integ-cmr 256 confirm r1).
+      const needsFix = findings.some(isBlockingFinding);
 
       return needsFix
         ? { kind: "next", step: "S5" }
