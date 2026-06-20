@@ -2089,6 +2089,31 @@ describe("epic orchestrator S6 cross-segment continuation (relaunch + git-skip +
     ).rejects.toThrow(/non-primitive \/ empty slice id/);
   });
 
+  it("accepts the handoff's `merged` field as the mergedNumbers alias (whole handoff round-trips as relaunch args)", async () => {
+    // Passing the prior handoff object straight back (it carries `merged`, not `mergedNumbers`) must
+    // still git-skip already-merged slices.
+    const { result, implementedIssues } = await runContinuation({
+      subIssues: [
+        { id: 220, epicId: 217, state: "open", title: "S2-A", url: "https://example.test/220" },
+        { id: 221, epicId: 217, state: "open", title: "S2-B", url: "https://example.test/221" }
+      ],
+      args: { merged: [{ number: 220, reviewedCommit: "c220" }] }
+    });
+
+    expect(result.status).toBe("ready");
+    expect(implementedIssues).toEqual([221]); // 220 git-skipped via the `merged` alias
+    expect(result.continuation.layers[0]).toMatchObject({ skipped: [220], todo: [221] });
+  });
+
+  it("rejects an empty / whitespace-only familyBranch (would reach git as an empty ref)", async () => {
+    await expect(
+      runContinuation({
+        subIssues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }],
+        args: { familyBranch: "   " }
+      })
+    ).rejects.toThrow(/familyBranch must not be empty/);
+  });
+
   it("a family reviewer returning a non-array findings field is treated as an unavailable (degraded) leg, not silently empty", async () => {
     // A malformed (non-array findings) report must NOT be coerced to [] findings (which could converge);
     // the leg's guard throws, the leg catch marks it unavailable, and the round degrades (with codex
