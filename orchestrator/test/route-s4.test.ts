@@ -171,3 +171,39 @@ describe("S4 route_findings — determinism contract", () => {
     expect(route({ from: "S4", output })).toEqual({ kind: "next", step: "S5" });
   });
 });
+
+// ─── P0/P1 severity branch independently locked (#250 fix2) ──────────────────
+//
+// These cases have severity=critical/high but action='defer'. The action-based
+// branch alone (|| action==='fix_now') would NOT send them to S5. Only the
+// severity branch (severity==='critical' || severity==='high') catches them.
+// This test locks that branch independently so it cannot be deleted silently.
+
+describe("S4 route_findings — P0/P1 severity branch (action=defer, severity locks)", () => {
+  it("critical (P0) + action:defer → S5 (severity branch, not action branch)", () => {
+    const decision = route({
+      from: "S4",
+      output: reviewerOutput([finding("critical", "defer")]),
+    });
+    expect(decision).toEqual({ kind: "next", step: "S5" });
+  });
+
+  it("high (P1) + action:defer → S5 (severity branch, not action branch)", () => {
+    const decision = route({
+      from: "S4",
+      output: reviewerOutput([finding("high", "defer")]),
+    });
+    expect(decision).toEqual({ kind: "next", step: "S5" });
+  });
+
+  it("critical+defer alongside medium+defer → S5 (P0 still trumps even when all deferred)", () => {
+    const decision = route({
+      from: "S4",
+      output: reviewerOutput([
+        finding("critical", "defer"),
+        finding("medium", "defer"),
+      ]),
+    });
+    expect(decision).toEqual({ kind: "next", step: "S5" });
+  });
+});

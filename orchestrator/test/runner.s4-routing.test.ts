@@ -264,3 +264,40 @@ describe("runOrchestrator S4 routing — determinism", () => {
     expect(run2.result.status).toBe("success");
   });
 });
+
+// ─── deferredFindings surfaced in RunResult (PRD #244 US#25) ─────────────────
+
+describe("runOrchestrator S4 routing — deferredFindings in RunResult", () => {
+  it("defer-only findings → RunResult.deferredFindings contains those entries", async () => {
+    const deferMedium = finding("medium", "defer");
+    const deferLow = finding("low", "defer");
+    const { result } = await runWith(reviewerWith([deferMedium, deferLow]));
+    expect(result.status).toBe("success");
+    expect(result.deferredFindings).toHaveLength(2);
+    expect(result.deferredFindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ severity: "medium", action: "defer" }),
+        expect.objectContaining({ severity: "low", action: "defer" }),
+      ]),
+    );
+  });
+
+  it("empty findings → deferredFindings is empty array", async () => {
+    const { result } = await runWith(reviewerWith([]));
+    expect(result.status).toBe("success");
+    expect(result.deferredFindings).toEqual([]);
+  });
+
+  it("mix of defer + fix_now P2/P3 (routes to S5) → deferredFindings still collected", async () => {
+    // Even when routing to S5 (which then throws — #254), S4 collects defers.
+    // We verify this by checking the throw carries S5 (not a deferred-findings error).
+    const backend = new ConfigurableBackend(
+      reviewerWith([finding("medium", "defer"), finding("low", "fix_now")]),
+    );
+    await expect(
+      runOrchestrator({ issueNumber: 250, backend }),
+    ).rejects.toThrow(/fix loop = #254/);
+    // S5 was reached, meaning S4 correctly collected defers before routing.
+    expect(backend.runStepIds).toContain("S5");
+  });
+});

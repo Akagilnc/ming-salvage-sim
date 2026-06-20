@@ -16,6 +16,7 @@
 
 import { route } from "./route.js";
 import type {
+  Finding,
   IssueSnapshot,
   LedgerEntry,
   RunInput,
@@ -52,6 +53,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // State threaded across steps within this run.
   let worktree: WorktreeHandle | undefined;
   let lastOutput: StepOutput | undefined;
+  // Collected at S4: reviewer findings with action:'defer' (PRD #244 US#25).
+  // Surfaced in RunResult.deferredFindings so the caller can act on them.
+  let deferredFindings: Finding[] = [];
 
   // The runner drives the sequence; the agent never picks the next step.
   let step: StepId = "S0";
@@ -99,8 +103,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
 
       case "S4": {
-        // S4 route_findings — pure TS, no agent. route() (below) consumes the
-        // reviewer output; nothing to do in the step body itself.
+        // S4 route_findings — pure TS, no agent. Collect defer findings here
+        // so they can be surfaced in RunResult.deferredFindings (PRD #244 US#25).
+        // route() (below) consumes the reviewer output to decide S5 vs S7.
+        if (lastOutput?.kind === "reviewer") {
+          deferredFindings = lastOutput.findings
+            .filter((f) => f.action === "defer")
+            .slice(); // defensive copy
+        }
         break;
       }
 
@@ -139,6 +149,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         status: decision.status,
         branch: decision.status === "success" ? worktree?.branch : undefined,
         stepLedger: ledger,
+        deferredFindings,
       };
     }
 
