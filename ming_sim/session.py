@@ -897,6 +897,8 @@ class GameSession:
         draft_staged = False
 
         def _mentions_draft_request(text: str) -> bool:
+            if not text:
+                return False
             return any(
                 token in text
                 for token in ("拟旨", "拟一道旨", "起草", "草拟", "拟诏", "圣旨")
@@ -916,7 +918,7 @@ class GameSession:
                 if _pdir:
                     import json as _json
                     try:
-                        _payload = _json.loads(_pdir.get("payload_json") or "{}")
+                        _payload = _json.loads(_pdir["payload_json"] or "{}")
                     except (ValueError, TypeError):
                         _payload = {}
                     if isinstance(_payload, dict):
@@ -1207,7 +1209,7 @@ class GameSession:
         # P1-1：记下本份生成稿覆盖的 draft 集指纹。颁诏时若 draft 集已变（玩家拟诏后又新建
         # 草案），凭此判定 last_decree 已陈旧、强制重生成纳入新 draft，不许把新 draft 标记
         # 为已颁却不进诏书正文。
-        self._decree_draft_fingerprint = GameSession._draft_fingerprint(self, directives)
+        self._decree_draft_fingerprint = self._draft_fingerprint(directives)
         return decree
 
     def set_decree(self, text: str) -> str:
@@ -1313,7 +1315,7 @@ class GameSession:
         # 当前 draft 集与 last_decree 覆盖的指纹——不一致则作废陈旧生成稿，强制下方重生成
         # 纳入全部 draft。recovered_source 恢复路用存档真源、不在此列（指纹空、不触发）。
         if recovered_source is None and (self.last_decree or "").strip():
-            current_fingerprint = GameSession._draft_fingerprint(self, directives)
+            current_fingerprint = self._draft_fingerprint(directives)
             if (current_fingerprint
                     and current_fingerprint != getattr(self, "_decree_draft_fingerprint", ())):
                 self.last_decree = ""
