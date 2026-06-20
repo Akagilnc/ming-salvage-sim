@@ -101,6 +101,28 @@ export function isValidFinding(f: unknown): f is Finding {
 }
 
 /**
+ * The SINGLE blocking-finding predicate — the one source of truth for "this
+ * finding forces an S5 coder_fix". Both route()'s S4 routing decision (does the
+ * review send code to S5 or push?) AND the S5 delivery seam (which findings does
+ * selectFixNowFindings hand the coder?) MUST consult THIS, so the routing side
+ * and the delivery side can never drift.
+ *
+ * integ-cmr 256 confirm r1 (high, #244 铁律): a finding is blocking iff it is a
+ * P0/P1 (`severity` critical or high) OR a reviewer-judged `fix_now`. Severity
+ * trumps action — a reviewer CANNOT defer a P0/P1 ("P0/P1 必修不许私自降级",
+ * route-s4.test.ts "P0 still trumps even when all deferred"). The earlier
+ * delivery seam filtered on `action === 'fix_now'` ALONE, so a
+ * `{severity:'critical'|'high', action:'defer'}` finding routed to S5 (severity
+ * branch) yet reached the coder as an EMPTY set — silently re-deferring a P0/P1
+ * on the coder side. Sharing this predicate closes that gap.
+ */
+export function isBlockingFinding(f: Finding): boolean {
+  return (
+    f.severity === "critical" || f.severity === "high" || f.action === "fix_now"
+  );
+}
+
+/**
  * A coder step output is valid iff it is `{kind:'coder', committed:boolean,
  * commitsAdded:number}` AND `commitsAdded` is a non-negative integer CONSISTENT
  * with `committed`:

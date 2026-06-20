@@ -238,6 +238,30 @@ describe("integ-cmr 256 r6 — S5 escalate-resume delivers the round's fix_now f
     expect(result.status).toBe("success");
   });
 
+  it("a P0/P1 (critical/high) with action:'defer' is STILL delivered on escalate-resume", async () => {
+    // integ-cmr 256 confirm r1: same blocking-finding parity as the fresh S5
+    // path, but on the escalate→answer→resume face. The S3 review carried a
+    // critical+defer finding; route() S4 routed it to S5 (severity trumps), the
+    // S5 escalated, the human re-feeds. The resumed coder MUST receive that
+    // critical/defer finding — not an empty set (which would also delete the
+    // on-disk findings file via writeFixFindings's rmSync branch).
+    const criticalDefer = finding("critical", "defer", "src/p0.ts:1");
+    const otherDefer = finding("low", "defer", "src/p3.ts:9");
+    const backend = new SeamRecordingBackend(
+      s5EscalateResumeState(criticalDefer, otherDefer),
+    );
+
+    const result = await runOrchestrator({ issueNumber: 256, backend });
+
+    const s5 = backend.dispatches.filter((d) => d.id === "S5");
+    expect(s5).toHaveLength(1);
+    expect(s5[0]!.via).toBe("resumeSession");
+    // The P0/P1 defer finding is delivered; the P3 defer is not blocking.
+    expect(s5[0]!.findings).toEqual([criticalDefer]);
+    expect(s5[0]!.findings).not.toContainEqual(otherDefer);
+    expect(result.status).toBe("success");
+  });
+
   it("the resumed S5 finding set survives even when the fix_now finding came from a prior S6 round", async () => {
     // Two fix rounds happened before the escalate: S3 raised r1, the round-1 S6
     // re-review raised r2, and the round-2 S5 escalated. The re-opened S5 must

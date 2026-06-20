@@ -38,6 +38,7 @@ import { route } from "./route.js";
 // Shared seam guards — single source of truth, also used by route(), so the
 // finding-element (A) / commitsAdded (B) rules can never drift.
 import {
+  isBlockingFinding,
   isValidEscalation,
   isValidReviewerOutput,
   isValidStepOutput,
@@ -92,20 +93,29 @@ function normalizeStepResult(
 }
 
 /**
- * The reviewer findings with `action:'fix_now'` from the immediately preceding
- * reviewer step, for delivery to the S5 coder_fix step (integ-cmr 256 r3,
- * fix_loop_context). `lastOutput` at an S5 dispatch is always the preceding
- * reviewer output (S3 for round 1, the prior S6 thereafter); a malformed /
- * non-reviewer output (which the runner/route guards would already have routed
- * to S8(error) before reaching here) yields `undefined` so the seam never
- * delivers garbage. Only fix_now findings are handed over — defer findings do
- * not drive a fix.
+ * The BLOCKING reviewer findings from the immediately preceding reviewer step,
+ * for delivery to the S5 coder_fix step (integ-cmr 256 r3, fix_loop_context).
+ * `lastOutput` at an S5 dispatch is always the preceding reviewer output (S3 for
+ * round 1, the prior S6 thereafter); a malformed / non-reviewer output (which
+ * the runner/route guards would already have routed to S8(error) before reaching
+ * here) yields `undefined` so the seam never delivers garbage.
+ *
+ * integ-cmr 256 confirm r1 (high, #244 铁律): the filter is the SHARED
+ * isBlockingFinding predicate — the exact one route()'s S4 needsFix uses — NOT a
+ * bare `action === 'fix_now'`. route() routes ANY P0/P1 (critical/high) to S5
+ * regardless of action (severity trumps: a reviewer cannot defer a P0/P1). The
+ * old action-only filter meant a `{severity:'critical'|'high', action:'defer'}`
+ * finding routed to S5 yet reached the coder as an EMPTY set — silently
+ * re-deferring a P0/P1 on the coder side (writeFixFindings then wrote an empty
+ * findings file, leaving the coder to fix a blank slate on a routed P0/P1).
+ * Sharing the predicate guarantees every finding routed to S5 is also delivered.
+ * P2/P3 defer findings remain non-blocking and are still not handed over.
  */
 function selectFixNowFindings(
   output: StepOutput | undefined,
 ): ReadonlyArray<Finding> | undefined {
   if (!isValidReviewerOutput(output)) return undefined;
-  return output.findings.filter((f) => f.action === "fix_now");
+  return output.findings.filter(isBlockingFinding);
 }
 
 // ─── ledger helpers ────────────────────────────────────────────────────────
