@@ -888,6 +888,133 @@ describe("epic orchestrator S3 layered parallel pipeline", () => {
     expect(mergeCommand).not.toContain("removeprefix");
   });
 
+  it("runs whole-family integration verify on the merged family worktree after all slices merge", async () => {
+    const familyVerifyCommands: string[] = [];
+
+    const result: any = await runEpicLayeredPipeline({
+      args: { epicIssueNumber: 217, familyBranch: "family/217", verifyCommands: ["npm --prefix web test"], startupTargetHead: "base-start", targetBranch: "origin/main" },
+      log: () => undefined,
+      agent: async (request: any) => ({
+        commit: `commit-${request.issueNumber}`,
+        worktreePath: `/repo/.worktrees/issue-${request.issueNumber}`,
+        observabilityEvidence: { loudFailure: true, locatorLogs: true, notApplicableReason: "tooling slice" }
+      }),
+      Bash: async (command: string) => {
+        if (command.includes("/sub_issues")) {
+          return JSON.stringify({
+            epicId: 217,
+            issues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }],
+            blockedBy: []
+          });
+        }
+        if (command.includes("reviewer=codex")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("merge reviewed commit")) return JSON.stringify({ status: "merged", mergeCommit: "merge-220", mergeWorktree: "/repo/.epic-orchestrator/family" });
+        if (command.includes("家族集成 verify")) {
+          familyVerifyCommands.push(command);
+          expect(command).toContain("cd '/repo/.epic-orchestrator/family'");
+          return JSON.stringify({ status: "passed", exitCode: 0, output: "family ok" });
+        }
+        if (command.includes("base management")) return JSON.stringify({ status: "no_drift", startupTargetHead: "base-start", currentTargetHead: "base-start" });
+        return JSON.stringify({ status: "passed" });
+      }
+    });
+
+    expect(result.status).toBe("merged");
+    expect(result.familyVerification).toMatchObject({ status: "passed" });
+    expect(result.baseManagement).toMatchObject({ status: "no_drift" });
+    expect(familyVerifyCommands).toHaveLength(3);
+  });
+
+  it("stops before base management when whole-family integration verify fails", async () => {
+    const commands: string[] = [];
+
+    const result: any = await runEpicLayeredPipeline({
+      args: { epicIssueNumber: 217, familyBranch: "family/217", verifyCommands: ["npm --prefix web test"], startupTargetHead: "base-start", targetBranch: "origin/main" },
+      log: () => undefined,
+      agent: async (request: any) => ({
+        commit: `commit-${request.issueNumber}`,
+        worktreePath: `/repo/.worktrees/issue-${request.issueNumber}`,
+        observabilityEvidence: { loudFailure: true, locatorLogs: true, notApplicableReason: "tooling slice" }
+      }),
+      Bash: async (command: string) => {
+        commands.push(command);
+        if (command.includes("/sub_issues")) return JSON.stringify({ epicId: 217, issues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }], blockedBy: [] });
+        if (command.includes("reviewer=codex")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("merge reviewed commit")) return JSON.stringify({ status: "merged", mergeCommit: "merge-220", mergeWorktree: "/repo/.epic-orchestrator/family" });
+        if (command.includes("家族集成 verify") && command.includes("npm --prefix web test")) return JSON.stringify({ status: "failed", exitCode: 1, output: "cross-slice failure" });
+        if (command.includes("家族集成 verify")) return JSON.stringify({ status: "passed", exitCode: 0, output: "family ok" });
+        if (command.includes("base management")) return JSON.stringify({ status: "no_drift" });
+        return JSON.stringify({ status: "passed" });
+      }
+    });
+
+    expect(result.status).toBe("family_verify_failed");
+    expect(result.i9).toEqual({ status: "failed", reason: "family_integration_verify_failed" });
+    expect(commands.join("\n")).not.toContain("base management");
+  });
+
+  it("rebases the family worktree when the startup target branch advanced and reruns family integration verify", async () => {
+    const events: string[] = [];
+
+    const result: any = await runEpicLayeredPipeline({
+      args: { epicIssueNumber: 217, familyBranch: "family/217", verifyCommands: ["npm --prefix web test"], startupTargetHead: "base-start", targetBranch: "origin/main" },
+      log: () => undefined,
+      agent: async (request: any) => ({
+        commit: `commit-${request.issueNumber}`,
+        worktreePath: `/repo/.worktrees/issue-${request.issueNumber}`,
+        observabilityEvidence: { loudFailure: true, locatorLogs: true, notApplicableReason: "tooling slice" }
+      }),
+      Bash: async (command: string) => {
+        if (command.includes("/sub_issues")) {
+          return JSON.stringify({ epicId: 217, issues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }], blockedBy: [] });
+        }
+        if (command.includes("reviewer=codex")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("merge reviewed commit")) return JSON.stringify({ status: "merged", mergeCommit: "merge-220", mergeWorktree: "/repo/.epic-orchestrator/family" });
+        if (command.includes("家族集成 verify")) {
+          events.push("verify");
+          return JSON.stringify({ status: "passed", exitCode: 0, output: "family ok" });
+        }
+        if (command.includes("base management")) {
+          events.push("rebase");
+          expect(command).toContain("rebase \"$currentTargetHead\"");
+          return JSON.stringify({ status: "rebased", startupTargetHead: "base-start", currentTargetHead: "base-new", rebaseHead: "rebased-family" });
+        }
+        return JSON.stringify({ status: "passed" });
+      }
+    });
+
+    expect(events).toEqual(["verify", "verify", "verify", "rebase", "verify", "verify", "verify"]);
+    expect(result.baseManagement).toMatchObject({ status: "rebased", currentTargetHead: "base-new" });
+    expect(result.familyVerificationAfterRebase).toMatchObject({ status: "passed" });
+  });
+
+  it("returns to the main session when base rebase conflicts before family CMR", async () => {
+    const result: any = await runEpicLayeredPipeline({
+      args: { epicIssueNumber: 217, familyBranch: "family/217", verifyCommands: ["npm --prefix web test"], startupTargetHead: "base-start", targetBranch: "origin/main" },
+      log: () => undefined,
+      agent: async (request: any) => ({
+        commit: `commit-${request.issueNumber}`,
+        worktreePath: `/repo/.worktrees/issue-${request.issueNumber}`,
+        observabilityEvidence: { loudFailure: true, locatorLogs: true, notApplicableReason: "tooling slice" }
+      }),
+      Bash: async (command: string) => {
+        if (command.includes("/sub_issues")) return JSON.stringify({ epicId: 217, issues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }], blockedBy: [] });
+        if (command.includes("reviewer=codex")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("merge reviewed commit")) return JSON.stringify({ status: "merged", mergeCommit: "merge-220", mergeWorktree: "/repo/.epic-orchestrator/family" });
+        if (command.includes("家族集成 verify")) return JSON.stringify({ status: "passed", exitCode: 0, output: "family ok" });
+        if (command.includes("base management")) return JSON.stringify({ status: "conflict", reason: "base_rebase_conflict", output: "CONFLICT" });
+        return JSON.stringify({ status: "passed" });
+      }
+    });
+
+    expect(result.status).toBe("return_to_main_session");
+    expect(result.reason).toBe("base_rebase_conflict");
+    expect(result.i10).toEqual({ status: "aborted", reason: "base_rebase_conflict" });
+  });
   it("returns to the main session when the serial merge queue hits an unresolved conflict", async () => {
     const result: any = await runEpicLayeredPipeline({
       args: { epicIssueNumber: 217, familyBranch: "family/217", verifyCommands: ["npm --prefix web test"] },
