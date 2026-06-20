@@ -177,6 +177,28 @@ export function parseSubIssueCount(parsed: { subIssues?: unknown }): number {
   return 0;
 }
 
+/**
+ * Parse the native `blocked_by` dependency list from a CONFIRMED API response
+ * (`gh api repos/.../issues/N/dependencies/blocked_by`, a JSON array). Keeps only
+ * entries with a numeric `number` + string `state`; tolerates a non-array /
+ * malformed value by returning `[]` (a future/odd shape must not crash the gate).
+ *
+ * IMPORTANT (integ-cmr 256 r2, F2): this is the CONFIRMED-empty path only. The
+ * caller does NOT swallow a thrown `gh`/transport error into `[]` — a failed
+ * query fails CLOSED (routes to S0 backend error → S8(error)), because returning
+ * `[]` on a transient failure would let a blocked-by-open issue slip past the S0
+ * gate and run from a stale base missing upstream changes.
+ */
+export function parseBlockedBy(parsed: unknown): GhBlockedBy[] {
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter(
+      (d): d is { number: number; state: string } =>
+        typeof d?.number === "number" && typeof d?.state === "string",
+    )
+    .map((d) => ({ number: d.number, state: d.state }));
+}
+
 /** Build the S1 {@link IssueSnapshot} (body + comments + Agent Brief). */
 export function buildIssueSnapshot(
   issueNumber: number,
@@ -529,9 +551,13 @@ export class RealBackend implements Backend {
   // ── S0: lightweight metadata (host gh) ─────────────────────────────────────
   async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
     // Multi-phase step: the first failing sub-op names the failure for the US#30
-    // error package (codex#3 attributeFailure — integ-cmr 256 r1, F6). The two
-    // native sub-counts are best-effort (caught internally, default to leaf), so
-    // only the gh-view + parse can throw here.
+    // error package (codex#3 attributeFailure — integ-cmr 256 r1, F6). ALL three
+    // sub-ops (view, sub-issue count, blocked_by) FAIL CLOSED: a thrown gh /
+    // transport / parse error routes via phase("S0", …) → the runner's S8(error)
+    // package, NOT a leaf/no-blockers default (integ-cmr 256 r2, F2). Failing
+    // open would let a parent epic (sub-issue query fault → 0 → leaf → allow) or
+    // a blocked-by-open issue (blocked_by query fault → [] → no blockers → allow)
+    // slip past the pinned S0 four-way gate and run from a stale base.
     const json = this.phase("S0", "fetchIssueView", () => {
       const raw = this.sh("gh", [
         "issue",
@@ -544,7 +570,7 @@ export class RealBackend implements Backend {
       ]);
       return JSON.parse(raw) as GhIssueJson;
     });
-    // Native sub-issue + blocked_by via the GraphQL/REST API.
+    // Native sub-issue + blocked_by via the GraphQL/REST API — each fails closed.
     const subIssueCount = this.fetchSubIssueCount(issueNumber);
     const blockedBy = this.fetchBlockedBy(issueNumber);
     return buildIssueMeta(issueNumber, json, blockedBy, subIssueCount);
@@ -577,8 +603,16 @@ export class RealBackend implements Backend {
     }
   }
 
+  /**
+   * Native sub-issue count, FAIL-CLOSED (integ-cmr 256 r2, F2). A thrown gh /
+   * transport / JSON-parse error propagates via `phase("S0", …)` → the runner's
+   * S8(error) package, NOT a leaf (0) default — failing open would let a parent
+   * epic slip past the S0 gate (sub-issue query fault → 0 → leaf → allow).
+   * `parseSubIssueCount` still returns 0 for a CONFIRMED empty/absent field (the
+   * genuinely-absent case), distinct from a failed query.
+   */
   private fetchSubIssueCount(issueNumber: number): number {
-    try {
+    return this.phase("S0", "fetchSubIssueCount", () => {
       const raw = this.sh("gh", [
         "issue",
         "view",
@@ -592,30 +626,25 @@ export class RealBackend implements Backend {
       // `gh issue view --json subIssues` returns {nodes,totalCount} (an OBJECT),
       // not an array — read the count off that shape (integ-cmr 256 r1, F1).
       return parseSubIssueCount(parsed);
-    } catch {
-      // `subIssues` is a newer gh field; absence ⇒ treat as a leaf.
-      return 0;
-    }
+    });
   }
 
+  /**
+   * Native blocked_by list, FAIL-CLOSED (integ-cmr 256 r2, F2). A thrown gh /
+   * transport / JSON-parse error propagates via `phase("S0", …)` → S8(error),
+   * NOT a no-blockers ([]) default — failing open is the riskier leak: it would
+   * let a blocked-by-OPEN issue (the pinned S0 four-way reject) run from a stale
+   * base missing upstream changes. `parseBlockedBy` still returns [] for a
+   * CONFIRMED empty/non-array response (the genuinely-empty case).
+   */
   private fetchBlockedBy(issueNumber: number): GhBlockedBy[] {
-    try {
+    return this.phase("S0", "fetchBlockedBy", () => {
       const raw = this.sh("gh", [
         "api",
         `repos/${this.opts.repo}/issues/${issueNumber}/dependencies/blocked_by`,
       ]);
-      const parsed = JSON.parse(raw) as Array<{
-        number?: number;
-        state?: string;
-      }>;
-      return parsed
-        .filter((d): d is { number: number; state: string } =>
-          typeof d.number === "number" && typeof d.state === "string",
-        )
-        .map((d) => ({ number: d.number, state: d.state }));
-    } catch {
-      return [];
-    }
+      return parseBlockedBy(JSON.parse(raw));
+    });
   }
 
   // ── S1: full snapshot (host gh) ────────────────────────────────────────────
