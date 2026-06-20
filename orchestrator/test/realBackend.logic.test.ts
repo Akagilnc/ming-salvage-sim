@@ -38,6 +38,8 @@ import {
   parseBlockedBy,
   parseSubIssueCount,
   promptsDirError,
+  realCommitCount,
+  reconcileCoderCommits,
   REFERENCED_PROMPT_FILES,
   RealBackend,
   SANDBOX_CODEX_DIR,
@@ -284,6 +286,17 @@ describe("realBackend lastSessionId", () => {
   it("returns undefined when no iteration carries a sessionId", () => {
     expect(lastSessionId({ iterations: [{}, {}] })).toBeUndefined();
     expect(lastSessionId({ iterations: [] })).toBeUndefined();
+  });
+});
+
+describe("realBackend realCommitCount (#256 commit-truth)", () => {
+  it("reads the real commit count from result.commits.length", () => {
+    expect(
+      realCommitCount({ commits: [{ sha: "a1" }, { sha: "b2" }] }),
+    ).toBe(2);
+  });
+  it("returns 0 when the agent made no commits", () => {
+    expect(realCommitCount({ commits: [] })).toBe(0);
   });
 });
 
@@ -654,5 +667,74 @@ describe("realBackend extractCoderTag", () => {
 
   it("throws when the tag body is not valid JSON", () => {
     expect(() => extractCoderTag("<coder>not json</coder>")).toThrow();
+  });
+});
+
+// ─── reconcileCoderCommits (#256 commit-truth) ───────────────────────────────
+
+describe("realBackend reconcileCoderCommits", () => {
+  it("derives committed+commitsAdded from the real git commit count, not the self-report", () => {
+    // git truth: 2 real commits. The derived output reflects git, even though the
+    // function is also handed the (here matching) self-report.
+    const out = reconcileCoderCommits({ committed: true, commitsAdded: 2 }, 2);
+    expect(out).toEqual({ committed: true, commitsAdded: 2 });
+  });
+
+  it("derives committed:false / commitsAdded:0 when git shows zero commits", () => {
+    const out = reconcileCoderCommits({ committed: false, commitsAdded: 0 }, 0);
+    expect(out).toEqual({ committed: false, commitsAdded: 0 });
+  });
+
+  it("preserves a self-reported escalate (a model signal, not git-derivable)", () => {
+    const out = reconcileCoderCommits(
+      {
+        committed: false,
+        commitsAdded: 0,
+        escalate: { reason: "blocked", diagnosis: "design gap" },
+      },
+      0,
+    );
+    expect(out).toEqual({
+      committed: false,
+      commitsAdded: 0,
+      escalate: { reason: "blocked", diagnosis: "design gap" },
+    });
+  });
+
+  it("throws when the coder self-reports committed:true,commitsAdded:1 but git made ZERO commits", () => {
+    // The exact truthification bug #256 targets: a coder claims a commit it never
+    // made. Without git-derivation this routed to S2/S5 success, bypassing the
+    // #252 0-commit edge. Now it is a loud contradiction → S8(error) at the runner.
+    expect(() =>
+      reconcileCoderCommits({ committed: true, commitsAdded: 1 }, 0),
+    ).toThrow(/self-report/i);
+  });
+
+  it("throws when the self-reported commitsAdded count disagrees with git", () => {
+    // Self-report says 3 commits; git made 1. A miscount is a contract violation.
+    expect(() =>
+      reconcileCoderCommits({ committed: true, commitsAdded: 3 }, 1),
+    ).toThrow(/git/i);
+  });
+
+  it("throws when the coder self-reports committed:false but git DID make commits", () => {
+    expect(() =>
+      reconcileCoderCommits({ committed: false, commitsAdded: 0 }, 1),
+    ).toThrow(/self-report/i);
+  });
+
+  it("escalate does not suppress a commit-count contradiction", () => {
+    // An escalate is orthogonal to commit truth: a self-report that escalates yet
+    // miscounts its commits is still a contradiction.
+    expect(() =>
+      reconcileCoderCommits(
+        {
+          committed: true,
+          commitsAdded: 2,
+          escalate: { reason: "blocked", diagnosis: "design gap" },
+        },
+        0,
+      ),
+    ).toThrow(/self-report/i);
   });
 });
