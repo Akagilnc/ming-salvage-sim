@@ -906,6 +906,33 @@ def test_until_stop_commitment_advance_to_full_stays_active(game, monkeypatch):
     assert advanced["closed_turn"] is None
 
 
+def test_stop_condition_without_commitment_kind_advance_to_full_stays_active(game):
+    """insert_issue 可直接持久化 stop_condition；即便 commitment_kind 为空，
+    advance_issue 也不能仅因 bar_value 到 100 自动 resolved，必须等停止条件闭环判定。"""
+    db, state, _content = game
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="直接插入停止条件防推进误结案",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:direct-stop",
+        bar_value=90,
+        stop_condition={"army.guanning.arrears": "<=0"},
+    )
+
+    advanced = db.advance_issue(
+        state,
+        issue_id,
+        trigger_kind="decree",
+        delta_bar=20,
+        narrative="进度满值，但停止条件尚未由专门闭环判定。",
+    )
+
+    assert advanced["bar_value"] == 100
+    assert advanced["status"] == "active"
+    assert advanced["closed_turn"] is None
+
+
 def test_commitment_skips_cli_resolve_effect_enrich(game, monkeypatch):
     import ming_sim.cli_backend as _cb
 
