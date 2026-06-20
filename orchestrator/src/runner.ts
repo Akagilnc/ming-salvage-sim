@@ -12,14 +12,20 @@
  * Slice #250: S4 severity+action fan-out; S5/S6 step bodies stubbed so the
  *   fan-out is exercisable end-to-end (fix-loop back-edge remains #254).
  * Slice #251: global escalate stop edge (in route()).
+ * Slice #252: error edges —
+ *   - S2 committed:false → S8(error)  [route() detects]
+ *   - S7 push() throws  → S8(error)   [runner catch]
+ *   - any backend call throws → S8(error) + error package  [runner catch]
+ *   - any agent output carries escalate → S8(escalate) [route() detects]
  * Slice #253: StepSpec contract — model/completionSignal/maxIter/soul/toolchain.
  *
- * Remaining seams: #248 (real S0 gate), #252 (error edges), #254 (fix-loop
- * back-edge). Those layer onto these seams.
+ * Remaining seams: #248 (real S0 gate), #254 (fix-loop back-edge).
+ * Those layer onto these seams.
  */
 
 import { route } from "./route.js";
 import type {
+  ErrorPackage,
   Finding,
   IssueSnapshot,
   LedgerEntry,
@@ -187,6 +193,40 @@ const STEP_SPECS: Readonly<Record<"S2" | "S3" | "S5" | "S6", StepSpec>> = {
   },
 };
 
+/**
+ * Synthesise a human-readable reason string for route()-detected error edges
+ * (e.g. 0-commit). Backend-throw errors use the caught message directly.
+ */
+function buildErrorReason(step: StepId, output: StepOutput | undefined): string {
+  if (step === "S2" && output?.kind === "coder" && !output.committed) {
+    return "coder produced no commits (committed:false) — nothing to review";
+  }
+  if (step === "S5" && output?.kind === "coder" && !output.committed) {
+    return "fix step produced no commits (committed:false) — unable to proceed";
+  }
+  return `step ${step} routed to error handoff`;
+}
+
+/** Build an S8(error) handoff from the failing step and caught error. */
+function errorHandoff(
+  failedStep: StepId,
+  err: unknown,
+  ledger: LedgerEntry[],
+  worktree: WorktreeHandle | undefined,
+): RunResult {
+  const reason =
+    err instanceof Error ? err.message : String(err);
+  const errorPackage: ErrorPackage = {
+    failedStep,
+    reason,
+    branchHead: worktree?.branch,
+  };
+  ledger.push({ step: "S8" });
+  // An error abort surfaces no defer list (S4 defer collection never completed);
+  // deferredFindings is required on RunResult (#250), so return it empty here.
+  return { status: "error", errorPackage, stepLedger: ledger, deferredFindings: [] };
+}
+
 export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const { issueNumber, backend } = input;
   const ledger: LedgerEntry[] = [];
@@ -271,19 +311,36 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // S0 input_gate — runner action. #247: fetch lightweight metadata; the
         // real gate validation (rfa / Agent Brief / sub-issues / blocked_by)
         // is #248. Here we read it (proving the seam) and pass through.
-        await backend.fetchIssueMeta(issueNumber);
+        try {
+          await backend.fetchIssueMeta(issueNumber);
+        } catch (err) {
+          return errorHandoff("S0", err, ledger, worktree);
+        }
         break;
       }
 
       case "S1": {
         // S1 load_context — runner action: full snapshot → resident worktree
         // (base=main) → write snapshot in (clean-room).
-        const snapshot: IssueSnapshot =
-          await backend.fetchIssueSnapshot(issueNumber);
-        worktree = await backend.prepareWorktree(issueNumber, SLICE_BASE);
-        await backend.writeSnapshot(worktree, snapshot);
+        let snapshot: IssueSnapshot;
+        try {
+          snapshot = await backend.fetchIssueSnapshot(issueNumber);
+        } catch (err) {
+          return errorHandoff("S1", err, ledger, worktree);
+        }
+        try {
+          worktree = await backend.prepareWorktree(issueNumber, SLICE_BASE);
+        } catch (err) {
+          return errorHandoff("S1", err, ledger, worktree);
+        }
+        try {
+          await backend.writeSnapshot(worktree, snapshot);
+        } catch (err) {
+          return errorHandoff("S1", err, ledger, worktree);
+        }
         // Now that the worktree is prepared, fix the stateDir to be a true
-        // sibling of the worktree root (not the provisional cwd-based one).
+        // sibling of the worktree root (#249), so ledger writes land outside
+        // the worktree where `git clean -fd` cannot remove them.
         stateDir = deriveStateDir(worktree.path, issueNumber);
         break;
       }
@@ -295,10 +352,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // Agent step — one sandbox.run() driven by its fixed StepSpec.
         // S5/S6 are fix-loop stubs added in #250; full loop control is #254.
         if (worktree === undefined) {
+          // Programming error: the runner sequenced wrong.
           throw new Error(`runner: ${step} reached before worktree prepared`);
         }
         promptFile = STEP_SPECS[step].promptFile;
-        output = await backend.runStep(STEP_SPECS[step], worktree);
+        try {
+          output = await backend.runStep(STEP_SPECS[step], worktree);
+        } catch (err) {
+          return errorHandoff(step, err, ledger, worktree);
+        }
         lastOutput = output;
         break;
       }
@@ -321,7 +383,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         if (worktree === undefined) {
           throw new Error("runner: S7 push reached before worktree prepared");
         }
-        await backend.push(worktree);
+        try {
+          await backend.push(worktree);
+        } catch (err) {
+          // Push failure → S8(error) with branch head so dev can diagnose
+          // without losing the commits already on the resident branch (#252).
+          ledger.push({ step: "S7" });
+          return errorHandoff("S7", err, ledger, worktree);
+        }
         break;
       }
 
@@ -350,6 +419,24 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       ledger.push({ step: "S8" });
       // #249: persist the S8 handoff entry too.
       await emitLedger("S8", undefined, undefined);
+
+      if (decision.status === "error") {
+        // Build an error package from the current step context so the developer
+        // can diagnose without re-running the pipeline (#252 / US#30).
+        const reason = buildErrorReason(step, lastOutput);
+        const errorPackage: ErrorPackage = {
+          failedStep: step,
+          reason,
+          branchHead: worktree?.branch,
+        };
+        return {
+          status: "error",
+          errorPackage,
+          stepLedger: ledger,
+          deferredFindings,
+        };
+      }
+
       return {
         status: decision.status,
         branch: decision.status === "success" ? worktree?.branch : undefined,

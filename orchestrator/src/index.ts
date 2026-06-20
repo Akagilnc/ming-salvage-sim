@@ -8,6 +8,7 @@ export type { RouteContext, RouteDecision } from "./route.js";
 export type {
   Backend,
   CoderOutput,
+  ErrorPackage,
   Escalation,
   Finding,
   HandoffStatus,
