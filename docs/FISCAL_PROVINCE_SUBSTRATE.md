@@ -135,7 +135,7 @@ k=action力度系数(ΣCost仅含action银,Due不入;Cost>0 action其 delta/scal
 >
 > **精度沿用 #70(D5)+ 万两国总口径(cmr-F)**:量级定稿、田亩占比折算、`_meta.provisional`、一手《会计录》#272 deferred;月份锚正月 provisional;全 17 省。加饷估算用**国总加征所得 vs 国总军费缺口**(全国一道旨意),非对单省缺口比。
 >
-> **落位契约(cmr R3 钉,设计级最小契约,确切键名/schema 留 /tdd)**:① 结局落 `event.<id>.terminal_reason` + 封闭标签集(开征/升率 {已准/已驳}、议停 {已停/仍征});议停门读 `triggered`、在征读 `terminal_reason`,两谓词不同源。② 在征显式 per-饷:辽默认在征(辽饷升已准则升率)、练 iff 练饷开征已准、剿 iff 剿饷开征已准 ∧ 剿饷议停结局≠已停;**无议停事件 ⇒ 该项恒真**。③ stub 同 tick 原子置结局(不留 outcomeless 中间 tick)+ 史实默认(开征/升率→已准、剿饷议停→已停)。④ 正赋起运基线存独立键(seed = seed起运定额−开局辽饷),通道写 `起运定额=正赋基线+Σ在征三饷`、玩家偏移(#260)另算组合。⑤ applier 仅写 `{三饷应征,起运定额}`、保 `{正赋应征,Due,火耗率,逋赋率}` 不动。
+> **落位契约(cmr R3 钉,设计级最小契约,确切键名/schema 留 /tdd)**:① 结局落 `event.<id>.terminal_reason` + 封闭标签集(开征/升率 {已准/已驳}、议停 {已停/仍征});议停门读 `triggered`、在征读 `terminal_reason`,两谓词不同源。② 在征显式 per-饷:辽默认在征(辽饷升已准则升率)、练 iff 练饷开征已准、剿 iff 剿饷开征已准 ∧ 剿饷议停结局≠已停;**无议停事件 ⇒ 该项恒真**。③ stub 同 tick 原子置结局(不留 outcomeless 中间 tick)+ 史实默认(开征/升率→已准、剿饷议停→已停)。④ 正赋起运基线存独立键(seed = seed起运定额−开局辽饷),通道写 `起运定额=正赋基线+Σ在征三饷`、玩家偏移(#260)另算组合。⑤ applier 仅写 `{三饷应征,起运定额}`、保 `{正赋应征,Due,火耗率,逋赋率}` 不动。⑥ **pre_settle 顺序**:饷率结局置定 + set-to-target applier **先于** `settle_province_tick`(同 tick),否则滞后一月——现 `SETTLEMENT_FLOW` 序是 fiscal-then-events,#259 需把饷率插到 fiscal 推进前(同月生效不滞后)。
 >
 > **boundary**:#259 全程 shadow(起运到京只算/打印=hub #261);**结局的置定(圣旨准/驳)+ 玩家起运偏移 = #260/#150/ADR 0011**;#259 只定义事件+结局集+读结局确定性增量。详设(各饷各省目标值、事件文案)进 #259 PRD。
 ## 待精验
