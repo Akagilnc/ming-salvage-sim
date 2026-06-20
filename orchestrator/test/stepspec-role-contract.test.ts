@@ -20,6 +20,7 @@ import type {
   Backend,
   IssueMeta,
   IssueSnapshot,
+  PersistentLedgerEntry,
   StepOutput,
   StepSpec,
   WorktreeHandle,
@@ -74,6 +75,15 @@ class RecordingBackend implements Backend {
   }
 
   async push(_worktree: WorktreeHandle): Promise<void> {
+    // no-op
+  }
+
+  // #249 integration: writeLedger is part of the Backend seam; this fake only
+  // asserts StepSpec shape, so the ledger write is a no-op.
+  async writeLedger(
+    _entry: PersistentLedgerEntry,
+    _stateDir: string,
+  ): Promise<void> {
     // no-op
   }
 }

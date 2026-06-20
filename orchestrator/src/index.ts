@@ -14,6 +14,7 @@ export type {
   IssueMeta,
   IssueSnapshot,
   LedgerEntry,
+  PersistentLedgerEntry,
   ReviewerOutput,
   RunInput,
   RunResult,
