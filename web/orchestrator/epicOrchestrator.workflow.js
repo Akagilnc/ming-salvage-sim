@@ -827,11 +827,11 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
     targetBranch: normalizedArgs.targetBranch
   });
 
-  // Current family branch tip for the handoff + S6 git-skip probe. Taken from gstack-ship's reported
-  // post-ship head: on the ready path gstack-ship bumps VERSION/CHANGELOG and commits, advancing HEAD
-  // past the last slice merge, so the pre-ship merge tip would be stale. On needs-user / unconverged
-  // gstack-ship made no commit and reports no head, so this falls back to the last slice-merge tip.
-  const familyHead = ship.familyHead || mergeQueue.at(-1)?.familyHead || mergeQueue.at(-1)?.mergeCommit || null;
+  // The last slice-merge tip (already refreshed post I10 rebase / family-review fix). This is the
+  // correct family HEAD for the no-commit outcomes (needs-user / unconverged). On the READY path
+  // gstack-ship bumps VERSION/CHANGELOG and commits, advancing HEAD past this, so ready requires
+  // gstack-ship's reported post-ship head loudly (below) rather than silently accepting this stale tip.
+  const mergeTip = mergeQueue.at(-1)?.familyHead || mergeQueue.at(-1)?.mergeCommit || null;
 
   const outcome = inlineShipOutcome({ asked: ship.asked, gatesPassed: ship.gatesPassed, prCreated: ship.prCreated });
 
@@ -856,7 +856,6 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
     epic: discovery.epicIssueNumber,
     familyBranch: normalizedArgs.familyBranch,
     baseAtStart,
-    familyHead,
     merged: mergedSlices,
     dirty: [],
     flags: shipFlags
@@ -867,6 +866,9 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
     // the online bot review loop (pr-review-loop, NOT in this script). The orchestrator ends the run
     // here: it does not create a PR itself (gstack-ship already did) and does not drive online review.
     const prUrl = requireShipDetail('prUrl', ship.prUrl, '家族 PR 链接');
+    // ready means gstack-ship committed a version bump, so its post-ship HEAD is load-bearing — fail
+    // loud if missing rather than silently reporting the stale pre-ship merge tip.
+    const readyFamilyHead = requireShipDetail('familyHead', ship.familyHead, '家族 HEAD（gstack-ship 提交后）');
     log?.(`Ship ready: gstack-ship gates passed + family PR created (${prUrl}) -> end run, return to main session`);
     return {
       ...discovery,
@@ -875,7 +877,7 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
       ...familyPipelineTail,
       familyReview: { status: 'converged', rounds: familyReview.rounds, round: familyReview.round },
       ship,
-      handoff: inlineBuildHandoffPayload({ ...handoffBase, status: 'ready', prUrl })
+      handoff: inlineBuildHandoffPayload({ ...handoffBase, status: 'ready', prUrl, familyHead: readyFamilyHead })
     };
   }
 
@@ -891,7 +893,7 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
       ...familyPipelineTail,
       familyReview: { status: 'converged', rounds: familyReview.rounds, round: familyReview.round },
       ship,
-      handoff: inlineBuildHandoffPayload({ ...handoffBase, status: 'needs-user', reason: 'gstack-ship-ask', question })
+      handoff: inlineBuildHandoffPayload({ ...handoffBase, status: 'needs-user', reason: 'gstack-ship-ask', question, familyHead: mergeTip })
     };
   }
 
@@ -906,7 +908,7 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
     ...familyPipelineTail,
     familyReview: { status: 'converged', rounds: familyReview.rounds, round: familyReview.round },
     ship,
-    handoff: inlineBuildHandoffPayload({ ...handoffBase, status: 'unconverged', reason: 'gstack-ship-failed', detail })
+    handoff: inlineBuildHandoffPayload({ ...handoffBase, status: 'unconverged', reason: 'gstack-ship-failed', detail, familyHead: mergeTip })
   };
 }
 
