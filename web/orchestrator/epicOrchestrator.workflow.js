@@ -1,10 +1,11 @@
 export const meta = {
   name: 'epic-orchestrator',
   description: '读取 GitHub 原生子 issue 与 blocked_by 边，按依赖层并行跑各切片 worktree，自检/评审后通过串行队列合入家族分支。',
-  whenToUse: 'Issue #224 S5：父 epic issue 号 -> 层 barrier 并行切片实现 -> 本地 verify -> per-slice codex+agy review -> 串行家族分支 merge 队列 -> 家族集成 verify + base 管理 -> 5a/5b 家族 cmr（codex+Claude+agy，findings 分流 + abort）-> 收敛后 gstack-ship 跑完整（coverage/specialist/RedTeam 闸 + push + 建家族 PR）-> 三结束态（ready / needs-user / unconverged）带 handoff payload 回主 session。编排器始终停在线上 PR 评审前交回主 session。',
+  whenToUse: 'Issue #225 S6：父 epic issue 号（可带上一段回传的 mergedNumbers / dirty / dismissals / decisions 做段间续跑）-> 层 barrier 并行切片实现 -> 本地 verify -> per-slice codex+agy review -> 串行家族分支 merge 队列 -> 家族集成 verify + base 管理 -> 5a/5b 家族 cmr（codex+Claude+agy，findings 分流 + abort；已裁定 decision finding 不再 HALT 但照旧全量复审）-> 收敛后 gstack-ship 跑完整（coverage/specialist/RedTeam 闸 + push + 建家族 PR）-> 三结束态（ready / needs-user / unconverged）带 handoff payload 回主 session。relaunch 时按 mergedNumbers git 跳过已合片、dirty 片即便已合也重做；编排器始终停在线上 PR 评审前交回主 session。',
   phases: [
     { title: 'Discover', detail: '读取 gh 原生子 issue 与 blocked_by 边' },
     { title: 'Plan', detail: '运行 drift-guarded 的 S0 拓扑内联副本，把 open 切片分组为依赖层' },
+    { title: 'Continuation Filter', detail: '运行 drift-guarded 的 S6 continuationPlan 内联副本：按 mergedNumbers git 跳过已合片、dirty 片即便已合也强制进 todo 重做；todoTotal=0 则跳过实现/合并直达 Family Verify/Review/Ship' },
     { title: 'Implement', detail: '同层实现腿并发运行，使用 isolation:"worktree" 并遵守 I7/I8' },
     { title: 'Verify', detail: '任何 review 前先跑本地验证命令' },
     { title: 'Review', detail: '通过 Bash 跑 per-slice codex + agy；隐藏 worktree 下 agy 只看 diff，codex 可完整 grounding' },
@@ -211,6 +212,52 @@ export function inlineBuildHandoffPayload(input) {
   };
   if (input.reason !== undefined) payload.reason = input.reason;
   return payload;
+}
+
+// Thin inline copy of web/src/orchestratorKernel.ts continuationPlan (S6 segment continuation).
+// Workflow sandboxes cannot import the TS authority; the drift guard in
+// web/src/epicOrchestratorWorkflow.test.ts behavior-diffs this copy against the kernel.
+// Skip a slice iff the family branch already has its commit AND it is not dirty; run it iff it is
+// missing OR dirty. Membership is compared via idKey so string/number ids for the same slice match.
+export function inlineContinuationPlan(input) {
+  const merged = new Set(input.mergedNumbers.map(idKey));
+  const dirtyKeys = new Set((input.dirty ?? []).map(idKey));
+  const layers = input.layers.map((layer) => {
+    const todo = [];
+    const skipped = [];
+    const layerDirty = [];
+    for (const slice of layer) {
+      const key = idKey(slice);
+      const isDirty = dirtyKeys.has(key);
+      if (isDirty) layerDirty.push(slice);
+      if (!merged.has(key) || isDirty) todo.push(slice);
+      else skipped.push(slice);
+    }
+    return { todo, skipped, dirty: layerDirty };
+  });
+  const todoTotal = layers.reduce((sum, layer) => sum + layer.todo.length, 0);
+  return { layers, todoTotal };
+}
+
+// Thin inline copy of web/src/orchestratorKernel.ts dismissalGate (S6 false-positive non-loop).
+// A finding the user already ruled "doesn't count" (id / claim / location) no longer HALTs the run;
+// it is NOT removed from the review (full re-review discipline holds), only excluded from the
+// escalate count. Match on id, claim (claimQuote/claim_quote unified), or location — any one.
+export function inlineDismissalGate(input) {
+  const { finding, dismissed } = input;
+  const findingClaim = inlineClaimOf(finding);
+  const matched = dismissed.some((entry) => {
+    if (entry.id !== undefined && finding.id !== undefined && entry.id === finding.id) return true;
+    const entryClaim = inlineClaimOf(entry);
+    if (entryClaim !== undefined && findingClaim !== undefined && entryClaim === findingClaim) return true;
+    if (entry.location !== undefined && finding.location !== undefined && entry.location === finding.location) return true;
+    return false;
+  });
+  return !matched;
+}
+
+function inlineClaimOf(value) {
+  return value.claimQuote !== undefined ? value.claimQuote : value.claim_quote;
 }
 
 function compareIssueKeys(left, right) {
@@ -550,15 +597,35 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
     throw new Error('S3 分层流水线需要 agent runner 执行实现腿。');
   }
 
+  // ── S6 continuation filter: drop git-skipped slices (family branch already has their commit AND
+  // they are not dirty) from this segment's execution set; dirty slices stay in todo (re-impl). This
+  // uses the drift-guarded inline copy of the S6 continuationPlan authority. A dirty slice is forced
+  // back into todo even when merged so it re-runs impl+verify (+ re-passes 5a/5b). todoTotal===0 means
+  // the whole epic is already merged with no dirty -> skip implement/merge entirely and run the family
+  // branch straight through Family Verify / Family Review / Ship (it is already fully assembled).
+  const continuation = inlineContinuationPlan({
+    layers: discovery.orderedPlan.map((layerPlan) => layerPlan.issueNumbers),
+    mergedNumbers: normalizedArgs.mergedNumbers,
+    dirty: normalizedArgs.dirty
+  });
+  const todoByLayer = continuation.layers.map((layer) => new Set(layer.todo.map(idKey)));
+
   const layers = [];
   const reviewedSlices = [];
   const mergeQueue = [];
 
-  for (const layerPlan of discovery.orderedPlan) {
-    log?.(`开始第 ${layerPlan.layer} 层：${layerPlan.issueNumbers.join(', ')}`);
+  for (const [layerIndex, layerPlan] of discovery.orderedPlan.entries()) {
+    const layerTodo = todoByLayer[layerIndex] ?? new Set(layerPlan.issueNumbers.map(idKey));
+    const todoIssues = layerPlan.issues.filter((plannedIssue) => layerTodo.has(idKey(plannedIssue.issueNumber)));
+    if (todoIssues.length === 0) {
+      log?.(`第 ${layerPlan.layer} 层全部已合且无 dirty，git 跳过：${layerPlan.issueNumbers.join(', ')}`);
+      layers.push({ layer: layerPlan.layer, issueNumbers: layerPlan.issueNumbers, slices: [], skippedAllMerged: true });
+      continue;
+    }
+    log?.(`开始第 ${layerPlan.layer} 层：${todoIssues.map((issue) => issue.issueNumber).join(', ')}`);
     const sliceBaseContext = buildSliceBaseContext(normalizedArgs, mergeQueue, startupTargetHead);
     const layerResults = await Promise.all(
-      layerPlan.issues.map((plannedIssue) =>
+      todoIssues.map((plannedIssue) =>
         runSliceReviewLoop({
           discovery,
           normalizedArgs,
@@ -618,7 +685,15 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
     }
   }
 
-  const familyWorktree = mergeQueue.at(-1)?.mergeWorktree;
+  // S6 continuation: when no slice merged this segment (todoTotal===0 — the family branch already has
+  // every slice and none are dirty), there is no fresh merge entry to read the worktree from, so
+  // resolve the EXISTING family-branch worktree to run Family Verify / Family Review / Ship on the
+  // already-assembled family branch. When slices did merge, use the merge queue's worktree as before.
+  let familyWorktree = mergeQueue.at(-1)?.mergeWorktree;
+  if (!familyWorktree && continuation.todoTotal === 0) {
+    const resolved = await resolveExistingFamilyWorktree({ Bash, familyBranch: normalizedArgs.familyBranch });
+    familyWorktree = resolved.familyWorktree;
+  }
   if (!familyWorktree) {
     return {
       ...discovery,
@@ -715,7 +790,10 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
     epicIssueNumber: discovery.epicIssueNumber,
     maxReviewRounds: normalizedArgs.maxReviewRounds,
     verifyCommands: normalizedArgs.verifyCommands,
-    diffBase: startupTargetHead
+    diffBase: startupTargetHead,
+    // S6: decision findings the user already ruled "doesn't count" (threaded from the prior segment's
+    // handoff). They are excluded from the escalate count (no HALT) but remain in the full re-review.
+    dismissed: normalizedArgs.dismissals
   });
   // Family review fix rounds add autonomous-fix commits that advance the family worktree HEAD.
   // Only then refresh the final merge entry so every exit reports the reviewed HEAD rather than
@@ -737,6 +815,8 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
     familyVerification,
     baseManagement,
     ...(familyVerificationAfterRebase ? { familyVerificationAfterRebase } : {}),
+    // S6 continuation ledger (which slices this segment ran vs git-skipped vs re-ran dirty).
+    continuation,
     i9: { status: 'passed', commands: normalizedArgs.verifyCommands },
     i10: { status: baseManagement.status, startupTargetHead, targetBranch: normalizedArgs.targetBranch }
   };
@@ -1109,6 +1189,17 @@ async function mergeReviewedCommit({ Bash, worktreePath, familyBranch, implement
   );
 }
 
+// S6 continuation: resolve the EXISTING family-branch worktree when no slice merged this segment
+// (todoTotal===0 — every slice is already on the family branch, none dirty). Mirrors the worktree
+// resolution in mergeReviewedCommit (existing worktree for the branch, else create one under
+// <parent>/.epic-orchestrator/family-<safeBranch> from the local/remote family branch) but WITHOUT
+// a merge — there is nothing new to merge, only the already-assembled family branch to verify/review/ship.
+async function resolveExistingFamilyWorktree({ Bash, familyBranch }) {
+  return parseBashJson(
+    await Bash(`set -euo pipefail\n# resolve existing family worktree (S6 todoTotal=0 continuation)\nfamilyBranch=${shellQuote(familyBranch)}\nrepoRoot=$(git rev-parse --show-toplevel)\nparentRoot=$(dirname "$repoRoot")\nmergeRoot="$parentRoot/.epic-orchestrator"\nsafeBranch=$(printf '%s' "$familyBranch" | tr -c 'A-Za-z0-9._-' '_')\ndefaultMergeWorktree="$mergeRoot/family-$safeBranch"\nexistingMergeWorktree=$(python3 - "$repoRoot" "$familyBranch" <<'PY'\nimport subprocess, sys\nsource, branch = sys.argv[1], sys.argv[2]\ncurrent = None\nfor line in subprocess.check_output(['git', '-C', source, 'worktree', 'list', '--porcelain'], text=True).splitlines():\n    if line.startswith('worktree '):\n        current = line[9:]\n    elif line == f'branch refs/heads/{branch}' and current:\n        print(current)\n        break\nPY\n)\nif [ -n "$existingMergeWorktree" ]; then\n  mergeWorktree="$existingMergeWorktree"\nelse\n  mergeWorktree="$defaultMergeWorktree"\n  mkdir -p "$mergeRoot"\n  isOwnGitWorktree() { [ -e "$1/.git" ] && git -C "$1" rev-parse --path-format=absolute --git-common-dir >/dev/null 2>&1; }\n  if [ -e "$mergeWorktree" ] && ! isOwnGitWorktree "$mergeWorktree"; then\n    rm -rf "$mergeWorktree"\n  fi\n  if ! isOwnGitWorktree "$mergeWorktree"; then\n    git -C "$repoRoot" fetch origin "$familyBranch" || true\n    if git -C "$repoRoot" show-ref --verify --quiet "refs/heads/\${familyBranch}"; then\n      git -C "$repoRoot" worktree add "$mergeWorktree" "$familyBranch" >&2\n    elif git -C "$repoRoot" show-ref --verify --quiet "refs/remotes/origin/\${familyBranch}"; then\n      git -C "$repoRoot" worktree add -b "$familyBranch" "$mergeWorktree" "origin/\${familyBranch}" >&2\n    else\n      printf 'family branch %s not found locally or on origin — cannot resolve an existing family worktree for a todoTotal=0 continuation\\n' "$familyBranch" >&2\n      exit 1\n    fi\n  fi\nfi\nprintf '{"status":"resolved","familyWorktree":"'\ngit -C "$mergeWorktree" rev-parse --show-toplevel | tr -d '\\n' | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read())[1:-1], end="")'\nprintf '"}'`)
+  );
+}
+
 function normalizePipelineArgs(rawArgs, epicIssueNumber) {
   const objectArgs = typeof rawArgs === 'object' && rawArgs !== null ? rawArgs : {};
   const requiredVerifyCommands = ['npm --prefix web run typecheck:orch', 'npm --prefix web test', 'npm --prefix web run build'];
@@ -1119,8 +1210,55 @@ function normalizePipelineArgs(rawArgs, epicIssueNumber) {
     targetBranch: assertShellSafeRef(String(objectArgs.targetBranch ?? 'origin/main'), 'targetBranch'),
     startupTargetHead: objectArgs.startupTargetHead === undefined ? undefined : assertShellSafeRef(String(objectArgs.startupTargetHead), 'startupTargetHead'),
     verifyCommands,
-    maxReviewRounds: normalizePositiveInteger(objectArgs.maxReviewRounds, 3, 'maxReviewRounds')
+    maxReviewRounds: normalizePositiveInteger(objectArgs.maxReviewRounds, 3, 'maxReviewRounds'),
+    // S6 cross-segment continuation args, threaded back from the prior segment's handoff by the main
+    // session. mergedNumbers = slices the family branch already has a commit for (relaunch git-skip);
+    // dirty = merged slices ruled "rework" -> redo even with a commit; dismissals = decision findings
+    // the user already ruled "doesn't count" -> no longer HALT (but still fully re-reviewed); decisions
+    // = the user's cross-segment decision text (passed through for prompts/observability).
+    // KEY DECISION (settled): mergedNumbers is passed in by the main session (NOT git-probed here) —
+    // git probing the family branch as a self-verification backstop is a possible future addition
+    // (blueprint risk #7) but is deliberately NOT the primary path.
+    mergedNumbers: normalizeIssueNumberList(objectArgs.mergedNumbers, 'mergedNumbers'),
+    dirty: normalizeIssueNumberList(objectArgs.dirty, 'dirty'),
+    dismissals: normalizeDismissals(objectArgs.dismissals),
+    decisions: objectArgs.decisions === undefined || objectArgs.decisions === null ? undefined : String(objectArgs.decisions)
   };
+}
+
+// S6 continuation issue-number lists (mergedNumbers / dirty). Each element is coerced to String/number
+// and shell-safety-checked (refnames forbid newlines/control chars; these can flow into git/comments).
+function normalizeIssueNumberList(value, name) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw new Error(`epic-orchestrator: ${name} must be an array of slice issue numbers.`);
+  }
+  return value.map((element) => {
+    const normalized = typeof element === 'number' ? element : String(element);
+    assertShellSafeRef(String(normalized), `${name} element`);
+    return normalized;
+  });
+}
+
+// S6 dismissal list — each entry is {id?, claimQuote?, claim_quote?, location?} (the user's "doesn't
+// count" ruling, matched by any one dimension). Only the four known fields are retained; the match
+// happens in dismissalGate so no shell interpolation occurs, but they are stringified for safety.
+function normalizeDismissals(value) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw new Error('epic-orchestrator: dismissals must be an array of {id?, claimQuote?, claim_quote?, location?} entries.');
+  }
+  return value.map((entry) => {
+    if (entry === null || typeof entry !== 'object') {
+      throw new Error('epic-orchestrator: each dismissal must be an object with id / claimQuote / claim_quote / location.');
+    }
+    const normalized = {};
+    if (entry.id !== undefined) normalized.id = String(entry.id);
+    if (entry.claimQuote !== undefined) normalized.claimQuote = String(entry.claimQuote);
+    if (entry.claim_quote !== undefined) normalized.claim_quote = String(entry.claim_quote);
+    if (entry.location !== undefined) normalized.location = String(entry.location);
+    return normalized;
+  });
 }
 
 // git refs / branch names / SHAs are interpolated into Bash commands and Bash COMMENTS. shellQuote's
@@ -1221,7 +1359,7 @@ async function manageFamilyBase({ Bash, familyWorktree, normalizedArgs, startupT
 // review subagent). Mechanical-only findings drive an autonomous fix (re-run family verify +
 // re-run 5a/5b) until a round with no new finding; decision findings escalate to the main
 // session; the fix budget is bounded by maxReviewRounds (I1 abort).
-async function runFamilyReview({ Bash, runner, familyWorktree, familyBranch, epicIssueNumber, maxReviewRounds, verifyCommands, diffBase }) {
+async function runFamilyReview({ Bash, runner, familyWorktree, familyBranch, epicIssueNumber, maxReviewRounds, verifyCommands, diffBase, dismissed = [] }) {
   const rounds = [];
   for (let round = 1; round <= maxReviewRounds; round += 1) {
     const cmr = await runFamilyCmrRound({ Bash, runner, familyWorktree, familyBranch, epicIssueNumber, round, diffBase });
@@ -1230,8 +1368,13 @@ async function runFamilyReview({ Bash, runner, familyWorktree, familyBranch, epi
     }
 
     const route = inlineRouteFindings(cmr.findings);
+    // S6 dismissal gate (I5 false-positive non-loop): a decision finding the user already ruled
+    // "doesn't count" no longer drives escalation. The finding stays in route.decisionFindings AND in
+    // cmr.reviewers (full re-review discipline — we do not delete it); it is only filtered out of the
+    // escalate count, so a previously-ruled decision can no longer HALT the run on re-raise.
+    const escalatableDecisionFindings = route.decisionFindings.filter((finding) => inlineDismissalGate({ finding, dismissed }));
     const gate = inlineFamilyReviewGate({
-      escalateCount: route.decisionFindings.length,
+      escalateCount: escalatableDecisionFindings.length,
       mechanicalCount: route.autonomousBugFindings.length,
       round,
       maxRounds: maxReviewRounds
@@ -1242,7 +1385,7 @@ async function runFamilyReview({ Bash, runner, familyWorktree, familyBranch, epi
       return { status: 'converged', round, rounds };
     }
     if (gate === 'escalate') {
-      return { status: 'escalate', round, rounds, decisionFindings: route.decisionFindings };
+      return { status: 'escalate', round, rounds, decisionFindings: escalatableDecisionFindings };
     }
     if (gate === 'abort') {
       return { status: 'abort', round, rounds, maxReviewRounds };
