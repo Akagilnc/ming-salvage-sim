@@ -1,7 +1,7 @@
 export const meta = {
   name: 'epic-orchestrator',
   description: '读取 GitHub 原生子 issue 与 blocked_by 边，按依赖层并行跑各切片 worktree，自检/评审后通过串行队列合入家族分支。',
-  whenToUse: 'Issue #222 S4a：父 epic issue 号 -> 层 barrier 并行切片实现 -> 本地 verify -> per-slice codex+agy review -> 串行家族分支 merge 队列 -> 家族集成 verify + base 管理。家族 5a/5b 仍不在本期。',
+  whenToUse: 'Issue #223 S4b：父 epic issue 号 -> 层 barrier 并行切片实现 -> 本地 verify -> per-slice codex+agy review -> 串行家族分支 merge 队列 -> 家族集成 verify + base 管理 -> 5a/5b 家族 cmr（codex+Claude+agy，findings 分流 + abort）。编排器始终停在线上 PR 评审前交回主 session。',
   phases: [
     { title: 'Discover', detail: '读取 gh 原生子 issue 与 blocked_by 边' },
     { title: 'Plan', detail: '运行 drift-guarded 的 S0 拓扑内联副本，把 open 切片分组为依赖层' },
@@ -10,7 +10,8 @@ export const meta = {
     { title: 'Review', detail: '通过 Bash 跑 per-slice codex + agy；隐藏 worktree 下 agy 只看 diff，codex 可完整 grounding' },
     { title: 'Merge', detail: '编排器用单写者 worktree 串行合并 reviewed commit 到家族分支' },
     { title: 'Family Verify', detail: '全片落地后在合并后的家族 worktree 上整体跑 I9 typecheck/unit/full verify' },
-    { title: 'Base Management', detail: '进入家族 CMR/gstack-ship 前按 I10 比对启动 target HEAD；base 前进则 rebase 并重跑 I9' }
+    { title: 'Base Management', detail: '进入家族 CMR/gstack-ship 前按 I10 比对启动 target HEAD；base 前进则 rebase 并重跑 I9' },
+    { title: 'Family Review', detail: '在合并后家族分支跑 5a/5b cmr（codex+Claude+agy，agy 全 grounding）；findings 分流（I5：机械 bug 自治修重过 5a/5b、选择回主 session 升级）；不收敛 abort（I1）/可用模型 <2 降级回主 session（I2）' }
   ]
 };
 
@@ -122,6 +123,61 @@ export function inlineLayerEpicIssues(input) {
     layers,
     skippedClosedIssueIds,
     externalPrerequisites: []
+  };
+}
+
+// Thin inline copy of web/src/orchestratorKernel.ts familyReviewGate (I5 routing + I1 abort).
+// Workflow sandboxes cannot import the TS authority; the drift guard in
+// web/src/epicOrchestratorWorkflow.test.ts behavior-diffs this copy against the kernel.
+export function inlineFamilyReviewGate(input) {
+  const { escalateCount, mechanicalCount, round, maxRounds } = input;
+  if (escalateCount > 0) return 'escalate';
+  if (mechanicalCount === 0) return 'converged';
+  return round < maxRounds ? 'fix' : 'abort';
+}
+
+// Thin inline copy of web/src/orchestratorKernel.ts routeFindings (I5 classification bucketing).
+export function inlineRouteFindings(findings) {
+  const autonomousBugFindings = [];
+  const decisionFindings = [];
+  for (const finding of findings) {
+    if (finding && finding.classification === 'mechanical_bug') {
+      autonomousBugFindings.push(finding);
+    } else {
+      decisionFindings.push(finding);
+    }
+  }
+  if (decisionFindings.length > 0) {
+    return { status: 'needs_decision', autonomousBugFindings, decisionFindings };
+  }
+  if (autonomousBugFindings.length > 0) {
+    return { status: 'autonomous_repair', autonomousBugFindings, decisionFindings };
+  }
+  return { status: 'no_findings', autonomousBugFindings, decisionFindings };
+}
+
+// Thin inline copy of the family_5a_5b branch of judgeReviewDegradation (I2):
+// the family CMR is the load-bearing gate, so <2 distinct available models halts the run.
+export function inlineJudgeFamilyDegradation(results) {
+  const availableModels = [...new Set(results.filter((result) => result.available).map((result) => result.model))];
+  const missingByModel = new Map();
+  for (const result of results) {
+    if (!result.available && !missingByModel.has(result.model)) missingByModel.set(result.model, result);
+  }
+  const missingModels = [...missingByModel.keys()];
+  if (availableModels.length < 2) {
+    return {
+      status: 'halt',
+      availableModels,
+      missingModels,
+      flags: ['family 5a/5b requires at least two available models']
+    };
+  }
+  return {
+    status: 'continue',
+    availableModels,
+    missingModels,
+    flags: [...missingByModel.values()].map((result) => `review degraded: ${result.model} unavailable${result.reason ? ` (${result.reason})` : ''}`)
   };
 }
 
@@ -618,10 +674,17 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
     }
   }
 
-  return {
-    ...discovery,
-    outOfScope: ['family_5a_5b', 'online_pr_review_loop'],
-    status: 'merged',
+  phaseIfAvailable('Family Review');
+  const familyReview = await runFamilyReview({
+    Bash,
+    runner,
+    familyWorktree,
+    familyBranch: normalizedArgs.familyBranch,
+    epicIssueNumber: discovery.epicIssueNumber,
+    maxReviewRounds: normalizedArgs.maxReviewRounds,
+    verifyCommands: normalizedArgs.verifyCommands
+  });
+  const familyPipelineTail = {
     layers,
     reviewedSlices,
     mergeQueue,
@@ -631,6 +694,59 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
     ...(familyVerificationAfterRebase ? { familyVerificationAfterRebase } : {}),
     i9: { status: 'passed', commands: normalizedArgs.verifyCommands },
     i10: { status: baseManagement.status, startupTargetHead, targetBranch: normalizedArgs.targetBranch }
+  };
+
+  if (familyReview.status === 'halt') {
+    return {
+      ...discovery,
+      outOfScope: ['online_pr_review_loop'],
+      status: 'return_to_main_session',
+      reason: 'review_degraded',
+      ...familyPipelineTail,
+      familyReview,
+      i2: { status: 'halt', stage: 'family_5a_5b', availableModels: familyReview.degradation.availableModels, missingModels: familyReview.degradation.missingModels }
+    };
+  }
+  if (familyReview.status === 'escalate') {
+    return {
+      ...discovery,
+      outOfScope: ['online_pr_review_loop'],
+      status: 'return_to_main_session',
+      reason: 'family_review_needs_decision',
+      ...familyPipelineTail,
+      familyReview,
+      decisionFindings: familyReview.decisionFindings,
+      i5: { status: 'escalated', reason: 'decision_findings', decisionFindings: familyReview.decisionFindings }
+    };
+  }
+  if (familyReview.status === 'abort') {
+    return {
+      ...discovery,
+      outOfScope: ['online_pr_review_loop'],
+      status: 'return_to_main_session',
+      reason: 'family_review_unconverged',
+      ...familyPipelineTail,
+      familyReview,
+      i1: { status: 'aborted', reason: 'max_review_rounds', maxReviewRounds: normalizedArgs.maxReviewRounds }
+    };
+  }
+  if (familyReview.status === 'fix_verify_failed') {
+    return {
+      ...discovery,
+      outOfScope: ['online_pr_review_loop'],
+      status: 'family_verify_failed',
+      ...familyPipelineTail,
+      familyReview,
+      i9: { status: 'failed', reason: 'family_integration_verify_failed_after_review_fix' }
+    };
+  }
+
+  return {
+    ...discovery,
+    outOfScope: ['online_pr_review_loop'],
+    status: 'merged',
+    ...familyPipelineTail,
+    familyReview: { status: 'converged', rounds: familyReview.rounds, round: familyReview.round }
   };
 }
 
@@ -870,6 +986,143 @@ async function manageFamilyBase({ Bash, familyWorktree, normalizedArgs, startupT
   return parseBashJson(
     await Bash(`set -euo pipefail\n# base management (I10): compare startup target HEAD before family CMR/gstack-ship\nfamilyWorktree=${shellQuote(familyWorktree)}\ntargetBranch=${shellQuote(normalizedArgs.targetBranch)}\nstartupTargetHead=${shellQuote(startupTargetHead)}\ntargetRemote=\${targetBranch%%/*}\ntargetRemoteBranch=\${targetBranch#*/}\nif [ "$targetRemote" != "$targetBranch" ] && [ -n "$targetRemote" ] && [ -n "$targetRemoteBranch" ]; then\n  git -C "$familyWorktree" fetch "$targetRemote" "+refs/heads/$targetRemoteBranch:refs/remotes/$targetRemote/$targetRemoteBranch" >/dev/null 2>&1 || true\nfi\ncurrentTargetHead=$(git -C "$familyWorktree" rev-parse "\${targetBranch}^{commit}")\nfamilyHead=$(git -C "$familyWorktree" rev-parse HEAD)\nif [ "$startupTargetHead" = "unknown" ]; then\n  printf '{"status":"conflict","reason":"startup_target_head_unresolved","currentTargetHead":"%s","familyHead":"%s"}' "$currentTargetHead" "$familyHead"\n  exit 0\nfi\nif [ "$startupTargetHead" != "unknown" ] && ! git -C "$familyWorktree" merge-base --is-ancestor "$startupTargetHead" "$familyHead"; then\n  printf '{"status":"conflict","reason":"family_missing_startup_target_head","startupTargetHead":"%s","currentTargetHead":"%s","familyHead":"%s"}' "$startupTargetHead" "$currentTargetHead" "$familyHead"\n  exit 0\nfi\nif [ "$startupTargetHead" = "unknown" ] || [ "$currentTargetHead" = "$startupTargetHead" ]; then\n  printf '{"status":"no_drift","startupTargetHead":"%s","currentTargetHead":"%s","familyHead":"%s"}' "$startupTargetHead" "$currentTargetHead" "$familyHead"\n  exit 0\nfi\nif ! git -C "$familyWorktree" merge-base --is-ancestor "$startupTargetHead" "$currentTargetHead"; then\n  printf '{"status":"conflict","reason":"target_base_not_fast_forward","startupTargetHead":"%s","currentTargetHead":"%s","familyHead":"%s"}' "$startupTargetHead" "$currentTargetHead" "$familyHead"\n  exit 0\nfi\nout=$(mktemp)\ntrap 'rm -f "$out"' EXIT\nset +e\ngit -C "$familyWorktree" rebase "$currentTargetHead" >"$out" 2>&1\nrc=$?\nset -e\nif [ "$rc" -ne 0 ]; then\n  git -C "$familyWorktree" rebase --abort >/dev/null 2>&1 || true\n  python3 - "$rc" "$out" "$startupTargetHead" "$currentTargetHead" <<'PY'\nimport json, sys\nwith open(sys.argv[2], encoding='utf-8', errors='replace') as handle:\n    output = handle.read()\nprint(json.dumps({"status": "conflict", "reason": "base_rebase_conflict", "exitCode": int(sys.argv[1]), "output": output, "startupTargetHead": sys.argv[3], "currentTargetHead": sys.argv[4]}))\nPY\n  exit 0\nfi\nrebaseHead=$(git -C "$familyWorktree" rev-parse HEAD)\nprintf '{"status":"rebased","startupTargetHead":"%s","currentTargetHead":"%s","rebaseHead":"%s"}' "$startupTargetHead" "$currentTargetHead" "$rebaseHead"`)
   );
+}
+
+// 5a/5b family CMR (I2 squad + I5 routing + I1 abort). Runs codex + Claude + agy on the
+// MERGED family worktree (non-hidden path → agy gets full grounding, no --diff-only).
+// codex + agy run via Bash; the Claude leg runs via the workflow agent() runner (a sibling
+// review subagent). Mechanical-only findings drive an autonomous fix (re-run family verify +
+// re-run 5a/5b) until a round with no new finding; decision findings escalate to the main
+// session; the fix budget is bounded by maxReviewRounds (I1 abort).
+async function runFamilyReview({ Bash, runner, familyWorktree, familyBranch, epicIssueNumber, maxReviewRounds, verifyCommands }) {
+  const rounds = [];
+  for (let round = 1; round <= maxReviewRounds; round += 1) {
+    const cmr = await runFamilyCmrRound({ Bash, runner, familyWorktree, familyBranch, epicIssueNumber, round });
+    if (cmr.degradation.status === 'halt') {
+      return { status: 'halt', round, rounds, degradation: cmr.degradation, reviewers: cmr.reviewers };
+    }
+
+    const route = inlineRouteFindings(cmr.findings);
+    const gate = inlineFamilyReviewGate({
+      escalateCount: route.decisionFindings.length,
+      mechanicalCount: route.autonomousBugFindings.length,
+      round,
+      maxRounds: maxReviewRounds
+    });
+    rounds.push({ round, reviewers: cmr.reviewers, route, gate, degradation: cmr.degradation });
+
+    if (gate === 'converged') {
+      return { status: 'converged', round, rounds };
+    }
+    if (gate === 'escalate') {
+      return { status: 'escalate', round, rounds, decisionFindings: route.decisionFindings };
+    }
+    if (gate === 'abort') {
+      return { status: 'abort', round, rounds, maxReviewRounds };
+    }
+
+    // gate === 'fix': autonomously repair mechanical bugs, then re-run family integration verify.
+    await runner({
+      role: 'family_review_fix',
+      familyWorktree,
+      familyBranch,
+      issueNumber: epicIssueNumber,
+      round,
+      maxReviewRounds,
+      autonomousBugFindings: route.autonomousBugFindings,
+      prompt: buildFamilyReviewFixPrompt(epicIssueNumber, familyBranch, route.autonomousBugFindings, round, maxReviewRounds)
+    });
+    const fixVerification = await runFamilyIntegrationVerify({
+      Bash,
+      familyWorktree,
+      verifyCommands
+    });
+    rounds.at(-1).fixVerification = fixVerification;
+    if (fixVerification.status !== 'passed') {
+      return { status: 'fix_verify_failed', round, rounds, fixVerification };
+    }
+  }
+  return { status: 'abort', round: maxReviewRounds, rounds, maxReviewRounds };
+}
+
+async function runFamilyCmrRound({ Bash, runner, familyWorktree, familyBranch, epicIssueNumber, round }) {
+  const codex = await runFamilyCodexLeg({ Bash, familyWorktree, familyBranch });
+  const agy = await runFamilyAgyLeg({ Bash, familyWorktree, familyBranch });
+  const claude = await runFamilyClaudeLeg({ runner, familyWorktree, familyBranch, epicIssueNumber, round });
+
+  const reviewers = [
+    { model: 'codex', available: codex.available, reason: codex.reason, fullGrounding: true, findings: codex.findings },
+    { model: 'claude', available: claude.available, reason: claude.reason, findings: claude.findings },
+    { model: 'agy', available: agy.available, reason: agy.reason, fullGrounding: true, diffOnly: false, findings: agy.findings }
+  ];
+  const degradation = inlineJudgeFamilyDegradation(
+    reviewers.map((reviewer) => ({ model: reviewer.model, available: reviewer.available, reason: reviewer.reason }))
+  );
+  const findings = reviewers
+    .filter((reviewer) => reviewer.available)
+    .flatMap((reviewer) => (Array.isArray(reviewer.findings) ? reviewer.findings : []));
+  return { reviewers, degradation, findings };
+}
+
+async function runFamilyCodexLeg({ Bash, familyWorktree, familyBranch }) {
+  try {
+    const parsed = parseReviewerJson(
+      await Bash(`set -euo pipefail\ncd ${shellQuote(familyWorktree)}\n# reviewer=codex-family; 5a/5b family CMR on merged family branch, full grounding (non-hidden path)\n{\n  printf '%s\\n' 'Review the merged family branch diff for cross-slice completeness (5a) and correctness regressions (5b).'\n  printf '%s\\n' 'Return only one JSON object on stdout with shape {"status":"passed"|"failed","findings":[{"id":...,"classification":"mechanical_bug"|"choice","claim_quote":...,"location":...}]}. Do not include markdown or prose outside the JSON object.'\n  printf '%s\\n' 'Diff stat against the startup target base for human context:'\n  git diff --stat $(git merge-base origin/main HEAD 2>/dev/null || git rev-parse HEAD^ 2>/dev/null || git rev-parse HEAD) HEAD\n  printf '%s\\n' 'Full diff:'\n  git diff $(git merge-base origin/main HEAD 2>/dev/null || git rev-parse HEAD^ 2>/dev/null || git rev-parse HEAD) HEAD\n} | codex exec --skip-git-repo-check --ephemeral -`),
+      'codex-family'
+    );
+    return { available: true, findings: parsed.findings ?? [] };
+  } catch (error) {
+    return { available: false, reason: error?.message ?? 'codex family leg unavailable', findings: [] };
+  }
+}
+
+async function runFamilyAgyLeg({ Bash, familyWorktree, familyBranch }) {
+  try {
+    const parsed = parseReviewerJson(
+      await Bash(`set -euo pipefail\ncd ${shellQuote(familyWorktree)}\n# reviewer=agy-family; full grounding on merged family worktree (non-hidden path; full repo grounding, not restricted to diff)\ngit diff $(git merge-base origin/main HEAD 2>/dev/null || git rev-parse HEAD^ 2>/dev/null || git rev-parse HEAD) HEAD | agy --sandbox --print ''`),
+      'agy-family'
+    );
+    return { available: true, findings: parsed.findings ?? [] };
+  } catch (error) {
+    return { available: false, reason: error?.message ?? 'agy family leg unavailable', findings: [] };
+  }
+}
+
+async function runFamilyClaudeLeg({ runner, familyWorktree, familyBranch, epicIssueNumber, round }) {
+  try {
+    const review = await runner({
+      role: 'family_review',
+      familyWorktree,
+      familyBranch,
+      issueNumber: epicIssueNumber,
+      round,
+      prompt: buildFamilyReviewPrompt(epicIssueNumber, familyBranch, round)
+    });
+    if (!review || review.available === false) {
+      return { available: false, reason: review?.reason ?? 'claude family review leg unavailable', findings: [] };
+    }
+    return { available: true, findings: review.findings ?? [] };
+  } catch (error) {
+    return { available: false, reason: error?.message ?? 'claude family review leg unavailable', findings: [] };
+  }
+}
+
+function buildFamilyReviewPrompt(epicIssueNumber, familyBranch, round) {
+  return [
+    `Family 5a/5b CMR (round ${round}) for epic #${epicIssueNumber} on merged family branch ${familyBranch}.`,
+    'You are the Claude review leg. Review the merged family branch for cross-slice completeness (5a) and correctness regressions (5b).',
+    'Classify each finding: mechanical_bug (one correct fix) vs choice (design/architecture/ADR — escalate). Ambiguous defaults to choice.',
+    'Return data containing findings:[{id, classification, claim_quote, location}]; empty findings means no new issue this round.'
+  ].join('\n');
+}
+
+function buildFamilyReviewFixPrompt(epicIssueNumber, familyBranch, autonomousBugFindings, round, maxReviewRounds) {
+  return [
+    `Autonomously fix mechanical bugs on family branch ${familyBranch} for epic #${epicIssueNumber} (fix round ${round}/${maxReviewRounds}).`,
+    `Mechanical bug findings: ${JSON.stringify(autonomousBugFindings)}`,
+    'Fix only these mechanical bugs in the merged family worktree; the orchestrator will rerun family integration verify and re-run 5a/5b.',
+    'I7: each fix round is a new commit; never amend or squash family review history.'
+  ].join('\n');
 }
 
 async function runVerification({ Bash, worktreePath, verifyCommands }) {

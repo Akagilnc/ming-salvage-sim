@@ -3,9 +3,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { layerEpicIssues, type TopologyInput } from "./orchestratorKernel";
+import { familyReviewGate, judgeReviewDegradation, layerEpicIssues, routeFindings, type FamilyReviewGateInput, type Finding, type ModelReviewResult, type TopologyInput } from "./orchestratorKernel";
 // @ts-ignore Workflow scripts are plain JavaScript outside the web src TypeScript program.
-import { inlineLayerEpicIssues, normalizeWorkflowArgs, runEpicDiscoveryWorkflow, runEpicLayeredPipeline, runEpicSingleSlicePipeline } from "../orchestrator/epicOrchestrator.workflow.js";
+import { inlineFamilyReviewGate, inlineJudgeFamilyDegradation, inlineLayerEpicIssues, inlineRouteFindings, normalizeWorkflowArgs, runEpicDiscoveryWorkflow, runEpicLayeredPipeline, runEpicSingleSlicePipeline } from "../orchestrator/epicOrchestrator.workflow.js";
 
 const representativeTopologyInputs: TopologyInput[] = [
   {
@@ -717,16 +717,17 @@ describe("epic orchestrator S3 layered parallel pipeline", () => {
     });
 
     expect(result.status).toBe("merged");
-    expect(agentCalls.map((call) => call.issueNumber)).toEqual([220, 221]);
-    expect(agentCalls[0]).not.toHaveProperty("baseRef");
-    expect(agentCalls[1]).toMatchObject({
+    const implementationCalls = agentCalls.filter((call) => call.role === undefined);
+    expect(implementationCalls.map((call) => call.issueNumber)).toEqual([220, 221]);
+    expect(implementationCalls[0]).not.toHaveProperty("baseRef");
+    expect(implementationCalls[1]).toMatchObject({
       familyBranch: "family/217",
       baseBranch: "family/217",
       baseRef: "merge-commit-220",
       lastMergeCommit: "merge-commit-220",
       mergeQueue: [{ familyBranch: "family/217", reviewedCommit: "commit-220", mergeCommit: "merge-commit-220" }]
     });
-    expect(agentCalls[1].prompt).toContain("Base this worktree on family branch family/217 at merge-commit-220");
+    expect(implementationCalls[1].prompt).toContain("Base this worktree on family branch family/217 at merge-commit-220");
     const dependentGuardCommand = calls.filter((command) => command.includes("为切片执行 I7 commit 纪律检查"))[1];
     expect(dependentGuardCommand).toContain("baseRef=");
     expect(dependentGuardCommand).toContain("merge-commit-220");
@@ -1254,5 +1255,221 @@ describe("epic orchestrator S3 layered parallel pipeline", () => {
     expect(result.status).toBe("return_to_main_session");
     expect(result.i4).toEqual({ status: "aborted", reason: "merge_conflict" });
     expect(result.mergeQueue.map((entry: any) => entry.status)).toEqual(["merged", "conflict"]);
+  });
+});
+
+describe("epic orchestrator workflow inline familyReviewGate drift guard", () => {
+  it("matches the S4b familyReviewGate authority across the full decision battery", () => {
+    const battery: FamilyReviewGateInput[] = [
+      { escalateCount: 1, mechanicalCount: 0, round: 1, maxRounds: 3 },
+      { escalateCount: 1, mechanicalCount: 5, round: 1, maxRounds: 3 },
+      { escalateCount: 1, mechanicalCount: 0, round: 3, maxRounds: 3 },
+      { escalateCount: 0, mechanicalCount: 0, round: 1, maxRounds: 3 },
+      { escalateCount: 0, mechanicalCount: 2, round: 1, maxRounds: 3 },
+      { escalateCount: 0, mechanicalCount: 1, round: 2, maxRounds: 3 },
+      { escalateCount: 0, mechanicalCount: 1, round: 3, maxRounds: 3 },
+      { escalateCount: 0, mechanicalCount: 1, round: 4, maxRounds: 3 },
+      { escalateCount: 0, mechanicalCount: 0, round: 3, maxRounds: 3 },
+      { escalateCount: 2, mechanicalCount: 2, round: 3, maxRounds: 3 },
+      { escalateCount: 0, mechanicalCount: 7, round: 1, maxRounds: 1 }
+    ];
+
+    for (const input of battery) {
+      expect(inlineFamilyReviewGate(input)).toBe(familyReviewGate(input));
+    }
+  });
+
+  it("matches the routeFindings authority across classification mixes", () => {
+    const battery: Finding[][] = [
+      [],
+      [{ id: "F1", classification: "mechanical_bug" }],
+      [{ id: "F1", classification: "choice" }],
+      [{ id: "F1", classification: "ambiguous" }],
+      [{ id: "F1" }],
+      [{ id: "F1", classification: "mechanical_bug" }, { id: "F2", classification: "choice" }],
+      [{ id: "F1", classification: "mechanical_bug" }, { id: "F2", classification: "mechanical_bug" }]
+    ];
+
+    for (const findings of battery) {
+      expect(inlineRouteFindings(findings)).toEqual(routeFindings(findings));
+    }
+  });
+
+  it("matches the family_5a_5b judgeReviewDegradation authority across availability mixes", () => {
+    const battery: ModelReviewResult[][] = [
+      [{ model: "codex", available: true }, { model: "claude", available: true }, { model: "agy", available: true }],
+      [{ model: "codex", available: true }, { model: "claude", available: true }, { model: "agy", available: false, reason: "quota" }],
+      [{ model: "codex", available: true }, { model: "claude", available: false }, { model: "agy", available: false }],
+      [{ model: "codex", available: false }, { model: "claude", available: false }, { model: "agy", available: false }],
+      [{ model: "codex", available: true }, { model: "codex", available: true }, { model: "agy", available: false }]
+    ];
+
+    for (const results of battery) {
+      expect(inlineJudgeFamilyDegradation(results)).toEqual(judgeReviewDegradation({ stage: "family_5a_5b", results }));
+    }
+  });
+});
+
+describe("epic orchestrator S4b family 5a/5b CMR", () => {
+  // Drives the layered pipeline straight through to the family-review phase: every slice
+  // implements, verifies, per-slice reviews, merges; family integration verify + base
+  // management pass; then the 5a/5b family CMR runs. The familyReview hook lets each test
+  // script the codex-family / agy-family Bash legs and the Claude review/fix agent legs.
+  async function runToFamilyReview({ familyReview }: { familyReview: (round: number) => any }) {
+    const agentCalls: any[] = [];
+    const bashCalls: string[] = [];
+    let cmrRound = 0;
+
+    const result: any = await runEpicLayeredPipeline({
+      args: { epicIssueNumber: 217, familyBranch: "family/217", verifyCommands: ["npm --prefix web test"], startupTargetHead: "base-start", targetBranch: "origin/main", maxReviewRounds: 3 },
+      log: () => undefined,
+      agent: async (request: any) => {
+        agentCalls.push(request);
+        if (request.role === "family_review") {
+          return familyReview(request.round).claude ?? { findings: [] };
+        }
+        if (request.role === "family_review_fix") {
+          return { fixed: true };
+        }
+        return {
+          commit: `commit-${request.issueNumber}`,
+          worktreePath: `/repo/.worktrees/issue-${request.issueNumber}`,
+          observabilityEvidence: { loudFailure: true, locatorLogs: true, notApplicableReason: "tooling slice" }
+        };
+      },
+      Bash: async (command: string) => {
+        bashCalls.push(command);
+        if (command.includes("/sub_issues")) return JSON.stringify({ epicId: 217, issues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }], blockedBy: [] });
+        if (command.includes("reviewer=codex-family")) return JSON.stringify(familyReview(cmrRound + 1).codex ?? { status: "passed", findings: [] });
+        if (command.includes("reviewer=agy-family")) {
+          const reply = JSON.stringify(familyReview(cmrRound + 1).agy ?? { status: "passed", findings: [] });
+          cmrRound += 1;
+          return reply;
+        }
+        if (command.includes("reviewer=codex")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("merge reviewed commit")) return JSON.stringify({ status: "merged", mergeCommit: "merge-220", mergeWorktree: "/repo/.epic-orchestrator/family" });
+        if (command.includes("家族集成 verify")) return JSON.stringify({ status: "passed", exitCode: 0, output: "family ok" });
+        if (command.includes("base management")) return JSON.stringify({ status: "no_drift", startupTargetHead: "base-start", currentTargetHead: "base-start" });
+        return JSON.stringify({ status: "passed" });
+      }
+    });
+
+    return { result, agentCalls, bashCalls };
+  }
+
+  it("runs codex+Claude+agy on the merged family branch with agy full grounding (no --diff-only) and converges clean", async () => {
+    const { result, agentCalls, bashCalls } = await runToFamilyReview({
+      familyReview: () => ({ codex: { status: "passed", findings: [] }, agy: { status: "passed", findings: [] }, claude: { findings: [] } })
+    });
+
+    expect(result.status).toBe("merged");
+    expect(result.familyReview).toMatchObject({ status: "converged", round: 1 });
+    expect(result.outOfScope).toEqual(["online_pr_review_loop"]);
+    expect(result.outOfScope).not.toContain("family_5a_5b");
+
+    const codexFamily = bashCalls.find((command) => command.includes("reviewer=codex-family")) ?? "";
+    const agyFamily = bashCalls.find((command) => command.includes("reviewer=agy-family")) ?? "";
+    expect(codexFamily).toContain("cd '/repo/.epic-orchestrator/family'");
+    expect(codexFamily).toContain("codex exec --skip-git-repo-check --ephemeral -");
+    expect(agyFamily).toContain("cd '/repo/.epic-orchestrator/family'");
+    expect(agyFamily).toContain("agy --sandbox --print ''");
+    expect(agyFamily).not.toContain("--diff-only");
+
+    const claudeReviewCall = agentCalls.find((call) => call.role === "family_review");
+    expect(claudeReviewCall).toBeTruthy();
+    expect(claudeReviewCall.familyBranch).toBe("family/217");
+  });
+
+  it("autonomously fixes a mechanical bug then converges on the next clean round and merges", async () => {
+    const { result, agentCalls } = await runToFamilyReview({
+      familyReview: (round: number) =>
+        round === 1
+          ? { codex: { status: "failed", findings: [{ id: "F1", classification: "mechanical_bug", location: "a.ts" }] }, agy: { status: "passed", findings: [] }, claude: { findings: [] } }
+          : { codex: { status: "passed", findings: [] }, agy: { status: "passed", findings: [] }, claude: { findings: [] } }
+    });
+
+    expect(result.status).toBe("merged");
+    expect(result.familyReview.status).toBe("converged");
+    expect(result.familyReview.round).toBe(2);
+    expect(result.outOfScope).not.toContain("family_5a_5b");
+    const fixCall = agentCalls.find((call) => call.role === "family_review_fix");
+    expect(fixCall).toBeTruthy();
+    expect(fixCall.autonomousBugFindings).toEqual([{ id: "F1", classification: "mechanical_bug", location: "a.ts" }]);
+  });
+
+  it("escalates to the main session when a decision finding appears (ambiguous defaults to choice)", async () => {
+    const { result, agentCalls } = await runToFamilyReview({
+      familyReview: () => ({
+        codex: { status: "failed", findings: [{ id: "F1", classification: "mechanical_bug" }] },
+        agy: { status: "failed", findings: [{ id: "F2", classification: "ambiguous", claim_quote: "unclear contract" }] },
+        claude: { findings: [] }
+      })
+    });
+
+    expect(result.status).toBe("return_to_main_session");
+    expect(result.reason).toBe("family_review_needs_decision");
+    expect(result.decisionFindings).toEqual([{ id: "F2", classification: "ambiguous", claim_quote: "unclear contract" }]);
+    expect(result.i5).toMatchObject({ status: "escalated", reason: "decision_findings" });
+    expect(result.outOfScope).toContain("online_pr_review_loop");
+    expect(agentCalls.some((call) => call.role === "family_review_fix")).toBe(false);
+  });
+
+  it("aborts (I1) when mechanical bugs never converge before maxReviewRounds", async () => {
+    const { result } = await runToFamilyReview({
+      familyReview: () => ({
+        codex: { status: "failed", findings: [{ id: "F1", classification: "mechanical_bug" }] },
+        agy: { status: "passed", findings: [] },
+        claude: { findings: [] }
+      })
+    });
+
+    expect(result.status).toBe("return_to_main_session");
+    expect(result.reason).toBe("family_review_unconverged");
+    expect(result.i1).toEqual({ status: "aborted", reason: "max_review_rounds", maxReviewRounds: 3 });
+  });
+
+  it("halts and returns to the main session when fewer than two family models are available (I2)", async () => {
+    const result: any = await runEpicLayeredPipeline({
+      args: { epicIssueNumber: 217, familyBranch: "family/217", verifyCommands: ["npm --prefix web test"], startupTargetHead: "base-start", targetBranch: "origin/main", maxReviewRounds: 3 },
+      log: () => undefined,
+      agent: async (request: any) => {
+        if (request.role === "family_review") return { available: false, reason: "claude quota", findings: [] };
+        if (request.role === "family_review_fix") return { fixed: true };
+        return {
+          commit: `commit-${request.issueNumber}`,
+          worktreePath: `/repo/.worktrees/issue-${request.issueNumber}`,
+          observabilityEvidence: { loudFailure: true, locatorLogs: true, notApplicableReason: "tooling slice" }
+        };
+      },
+      Bash: async (command: string) => {
+        if (command.includes("/sub_issues")) return JSON.stringify({ epicId: 217, issues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }], blockedBy: [] });
+        if (command.includes("reviewer=codex-family")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("reviewer=agy-family")) throw new Error("agy not logged in");
+        if (command.includes("reviewer=codex")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("merge reviewed commit")) return JSON.stringify({ status: "merged", mergeCommit: "merge-220", mergeWorktree: "/repo/.epic-orchestrator/family" });
+        if (command.includes("家族集成 verify")) return JSON.stringify({ status: "passed", exitCode: 0, output: "family ok" });
+        if (command.includes("base management")) return JSON.stringify({ status: "no_drift", startupTargetHead: "base-start", currentTargetHead: "base-start" });
+        return JSON.stringify({ status: "passed" });
+      }
+    });
+
+    expect(result.status).toBe("return_to_main_session");
+    expect(result.reason).toBe("review_degraded");
+    expect(result.i2).toMatchObject({ status: "halt", stage: "family_5a_5b" });
+    expect(result.i2.availableModels).toEqual(["codex"]);
+  });
+
+  it("never triggers the online PR review loop on a converged family review (online_pr_review_loop stays out of scope)", async () => {
+    const { result, bashCalls, agentCalls } = await runToFamilyReview({
+      familyReview: () => ({ codex: { status: "passed", findings: [] }, agy: { status: "passed", findings: [] }, claude: { findings: [] } })
+    });
+
+    expect(result.status).toBe("merged");
+    expect(result.outOfScope).toContain("online_pr_review_loop");
+    expect(bashCalls.join("\n")).not.toContain("gh pr create");
+    expect(bashCalls.join("\n")).not.toContain("pr-review-loop");
+    expect(agentCalls.some((call) => call.role === "online_review" || call.role === "pr_review_loop")).toBe(false);
   });
 });
