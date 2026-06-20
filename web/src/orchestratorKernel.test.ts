@@ -243,6 +243,14 @@ describe("routeFindings", () => {
       autonomousBugFindings: [],
       decisionFindings: []
     });
+
+    // truthy garbage (string / number / array) is ALSO dropped — only a real object Finding is actionable;
+    // a string must not be routed as a decision finding (malformed payload).
+    expect(routeFindings(["bad", 7, [1, 2]] as unknown as Finding[])).toEqual({
+      status: "no_findings",
+      autonomousBugFindings: [],
+      decisionFindings: []
+    });
   });
 });
 

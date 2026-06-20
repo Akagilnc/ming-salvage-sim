@@ -229,8 +229,10 @@ export function routeFindings(findings: Finding[]): FindingRoute {
   const decisionFindings: Finding[] = [];
 
   for (const finding of findings) {
-    if (!finding) continue; // drop null/garbage elements — a null is not an actionable finding and must
-                            // not flow into decisionFindings (it would escalate with a null in the payload).
+    // drop null/garbage elements — only a real object Finding is actionable. A falsy value OR truthy
+    // garbage (string/number/array) is not a finding and must not flow into decisionFindings (it would
+    // escalate carrying a malformed element into the handoff and risk an NPE in the main session).
+    if (!finding || typeof finding !== "object" || Array.isArray(finding)) continue;
     if (finding.classification === "mechanical_bug") {
       autonomousBugFindings.push(finding);
     } else {
