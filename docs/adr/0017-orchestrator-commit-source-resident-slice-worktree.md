@@ -13,7 +13,7 @@ ADR 0016 采 Sandcastle 当底座，但其默认 `run()` + merge-to-head 模型�
 1. **一 issue 一条常驻 worktree**：从 base 切出 slice 分支后起一条 worktree，coder 的 impl + 历轮 fix 全 commit 进它（不是每个 agent run 开新 throwaway sandbox）。**幂等**：若该 issue 的 slice 分支/worktree 已存在（崩溃残留或升级续跑）→ 复用、从既有 HEAD 续跑，不重切（见 Consequences §状态落盘）。
 2. **base 按 issue 类型**：独立子 issue → 从默认分支（main）派生。（家族子片 → 从家族 base 派生 = 家族层的事；v1 输入闸直接打回家族子片、不处理，见 ADR 0016 v1 §1。）
 3. **家族 base 是前置条件，不由单片编排创建**：父 epic 立项时就有；单片编排只消费它（从它切、reviewed 后 push 子片分支）。创建 / 管理家族 base + 把子片合回它 = 后面「家族集成」层（planner / merger 角色）的事，不在单片目标内。
-4. **sandbox = 隔离壳**：agent 跑在容器沙箱里，沙箱挂那条 host 侧常驻 worktree；沙箱可随 run 起落，worktree 上的 commit 不随沙箱蒸发。**v1 一镜像下 coder 与 reviewer 跑在同一 sandbox／同一 worktree mount，reviewer 的「只读」靠 reviewer prompt/soul 软约束（`cmr-reviewer.md` READ-ONLY 硬约束）强制，不是 OS 级只读挂**；OS 级 coder-rw／reviewer-ro 分挂只在 reviewer 拆成独立镜像／独立 sandbox 时才成立（可逆，见 ADR 0016 v1 §4）。
+4. **sandbox = 隔离壳**：agent 跑在容器沙箱里，沙箱挂那条 host 侧常驻 worktree；沙箱可随 run 起落，worktree 上的 commit 不随沙箱蒸发。**v1 一镜像下 coder 与 reviewer 跑在同一 sandbox／同一 worktree mount，reviewer 的「只读」靠 reviewer soul 软约束（烤进镜像的 reviewer soul 里写 READ-ONLY 硬约束；**不引用 cmr skill 的 `cmr-reviewer.md`**——那在 ak-cross-m-review skill 里、不在编排器仓库）强制，不是 OS 级只读挂**；OS 级 coder-rw／reviewer-ro 分挂只在 reviewer 拆成独立镜像／独立 sandbox 时才成立（可逆，见 ADR 0016 v1 §4）。
 
 ## Considered Options
 
@@ -23,6 +23,6 @@ ADR 0016 采 Sandcastle 当底座，但其默认 `run()` + merge-to-head 模型�
 ## Consequences
 
 - 单片编排不碰家族 base 的创建 / 合并；那是家族层（deferred）。
-- Sandcastle 具体怎么让沙箱挂 host 侧既有 worktree（而非它自己创建的那条），是实现期要验的接法。
+- worktree 用 Sandcastle 原生 `createWorktree()`（first-class、持久跨 `run/interactive/createSandbox`）；coder/reviewer 经 `Worktree.createSandbox()` 在同一持久 worktree 上跑——常驻 worktree 模型 Sandcastle 原生支持，不用自定义接线。
 - reviewer 与 coder 共享被评物（同一 worktree），各自 fresh `run()` 上下文独立（评审独立性来自上下文、非容器边界，见 ADR 0016 v1 §4）；v1 reviewer 只读靠 prompt/soul（决定 4），非 OS 挂载。
-- **状态落盘 + 续跑（与崩溃续跑同一套机器）**：编排器的循环账本（issue 号、分支 HEAD、各轮 findings + drift 指标、当前阶段、升级时的待决设计问题 + 诊断）落在 slice worktree 旁的状态文件。容器无状态、可随时死；恢复 = 读状态文件 + 分支 HEAD 重起 `run()`。**升级续跑**（设计卡点 → 返回调用端 → 用户拍 → 重起注入答案）与 **崩溃续跑**（重喂 issue）走同一条「读状态 + 重起」路径——容器从不需要「活着挂起」（fresh `run()` 模型下两次 run 间无在飞推理可保，决定 4）。
+- **状态落盘 + 续跑（与崩溃续跑同一套机器）**：编排器的循环账本（issue 号、分支 HEAD、各步 findings、当前 step、升级时的待决设计问题 + 诊断、每步 sessionId）= ADR 0018 的 **step ledger**（同一份），落在 slice worktree 旁。容器无状态、可随时死；恢复 = 读 ledger + 分支 HEAD，用 Sandcastle 原生 **`resumeSession`**（持 ledger 里的 sessionId）续跑——resume 的是 agent 真会话、不只 git 末态，sessionId 落盘 = 跨编排器重启也能续。**升级续跑**（设计卡点 → 返回调用端 → tester 拍 → `resumeSession` 注入答案）与 **崩溃续跑**（重喂 issue）同一套。容器从不需「活着挂起」（fresh `run()` 模型下两次 run 间无在飞推理可保，决定 4）。
