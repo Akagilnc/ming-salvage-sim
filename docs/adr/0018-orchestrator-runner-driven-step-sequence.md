@@ -10,7 +10,7 @@ Status: Proposed（2026-06-20；grill-with-docs 第二轮收敛，整合 gpt-5.5
 
 **外层 wiki 步骤由 runner（TS 代码）逐步推进；agent 只在单步内执行，永不决定下一步。**
 
-1. **一个外层步骤 = 一次 `sandbox.run()`**（固定 promptFile + agent + completionSignal + output schema）；**下一步由 runner 的 `route()` 定、不由 agent**——agent 在步内再想跳别处也没用。
+1. **一个 agent 步 = 一次 `sandbox.run()`**（固定 promptFile + agent + completionSignal + output schema）；runner 动作步（input_gate / load_context / route / push / handoff）是纯 TS、不跑 agent；**下一步由 runner 的 `route()` 定、不由 agent**——agent 在步内再想跳别处也没用。
 2. **`/tdd` 内层红绿留给 skill，v1 不机器验**（步内执行很少错，机器化代价不划算）。
 3. **每步写 step ledger** = 防跳步真源（事后看跳没跳）+ 续跑真源（下一步只读 ledger，不靠 LLM 记忆）。
 4. **prompt 注入权归 runner**（版本化 promptFile + promptArgs 只填变量），不临场拼大 prompt、不「参考 wiki 那套做一下」。
