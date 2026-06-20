@@ -74,6 +74,7 @@ import type {
   StepId,
   StepOutput,
   StepResult,
+  StepSoul,
   StepSpec,
   WorktreeHandle,
 } from "./types.js";
@@ -341,6 +342,14 @@ export function cutRefFor(base: string, fetchedOk: boolean): string {
 export const SANDBOX_CODEX_DIR = "/home/agent/.codex";
 /** Where the baked dev skills are mounted inside the container. */
 export const SANDBOX_SKILLS_DIR = "/home/agent/.claude/skills";
+/**
+ * Env var the v0.1 one-image-two-roles profile reads to ACTIVATE the role's
+ * baked soul (ship-pre 256 r1). Both souls are baked into the single image; this
+ * tells the entrypoint which one this `run()` is under (#244 "role 决定注哪份
+ * soul"). NOT an OS-level readonly mount — the reviewer's READ-ONLY stays a
+ * prompt/soul soft constraint (ADR 0017 §4).
+ */
+export const SANDBOX_SOUL_ENV = "ORCHESTRATOR_SOUL";
 
 /**
  * Host paths for the per-issue codex auth copy + the claude token (spike
@@ -400,12 +409,61 @@ export function modelIdForSlug(slug: string): string {
   }
 }
 
+// ── role → baked soul selection (ship-pre 256 r1) ───────────────────────────
+
+/**
+ * Select the soul a step runs under, consuming {@link StepSpec.soul} so the
+ * contract field is NOT dead (ship-pre 256 r1, role-soul wiring).
+ *
+ * v0.1 = ONE image, TWO roles (ADR 0017 §4 + PRD #244): BOTH the coder soul and
+ * the READ-ONLY reviewer soul are BAKED INTO the single profile image
+ * ("烤进镜像的 reviewer soul 里写 READ-ONLY 硬约束"), and the soul is SELECTED
+ * AT RUNTIME by `role` ("role 决定注哪份 soul ... runner 凭 StepSpec.role 选
+ * coder/reviewer soul", issue body). The reviewer's READ-ONLY is a prompt/soul
+ * SOFT constraint, NOT an OS-level readonly mount — same image, separate fresh
+ * `run()` context (ADR 0017 §4 + Consequences; the runtime hard read-only mount
+ * is explicitly deferred to a two-image split, issue body line 108).
+ *
+ * So the soul is `role`-derived: `coder` → the `"coder"` soul, `reviewer` → the
+ * `"READ-ONLY"` soul. The StepSpec ALSO carries an explicit `spec.soul`; this
+ * helper VALIDATES the two agree (a reviewer step carrying the coder soul is a
+ * misconfigured spec, mirroring how {@link modelIdForSlug} throws on a bad slug
+ * and {@link assertCompletionSignal} throws on a missing signal). The mismatch
+ * throws → the runner's S8(error) edge, never a silently-mis-souled run.
+ *
+ * Why this closes the finding: previously `spec.soul` was declared in the
+ * StepSpec contract and populated in STEP_SPECS but NEVER consumed by the real
+ * Backend (`grep spec.soul` = no hit) — a dead contract field. Now it is read
+ * and asserted at the step's run-setup, so the v0.1 "role 决定注哪份 soul"
+ * selection is realised and the field can no longer drift unnoticed.
+ *
+ * Pure (a check on the role/soul pair): unit-tested without a container.
+ */
+export function soulForStep(spec: Pick<StepSpec, "role" | "soul">): StepSoul {
+  const expected: StepSoul = spec.role === "reviewer" ? "READ-ONLY" : "coder";
+  if (spec.soul !== expected) {
+    throw new Error(
+      `realBackend: step role "${spec.role}" requires the "${expected}" soul ` +
+        `but the StepSpec carries "${spec.soul}". v0.1 selects the baked soul ` +
+        `by role (#244 "role 决定注哪份 soul"; ADR 0017 §4 one-image-two-roles); ` +
+        `a spec.soul that contradicts its role is misconfigured.`,
+    );
+  }
+  return expected;
+}
+
 // ── per-step session id extraction (#256 seam extension) ─────────────────────
 
 /** Minimal slice of Sandcastle's RunResult this Backend reads. */
 export interface RunResultLike {
   readonly iterations: ReadonlyArray<{ readonly sessionId?: string }>;
   readonly commits: ReadonlyArray<{ readonly sha: string }>;
+  /**
+   * The matched completion signal, or `undefined` if no signal fired before the
+   * iteration limit (Sandcastle d.ts). The step-advance gate keys off this — see
+   * {@link assertCompletionSignal}.
+   */
+  readonly completionSignal?: string;
 }
 
 /**
@@ -437,6 +495,52 @@ export function realCommitCount(
   result: Pick<RunResultLike, "commits">,
 ): number {
   return result.commits.length;
+}
+
+// ── completion-signal gate (ship-pre 256 r1) ────────────────────────────────
+
+/**
+ * Assert a step's run fired the EXACT completion signal its {@link StepSpec}
+ * declared, BEFORE the caller decodes the output and advances the step.
+ *
+ * WHY (ship-pre 256 r1, design-compliance / real-Backend wiring): Sandcastle's
+ * `RunResult.completionSignal` is "`undefined` if no signal fired before the
+ * iteration limit" (sandcastle d.ts). Passing `completionSignal: spec.…` into
+ * `run()` only tells the sandbox WHICH string ends the step early — it does NOT
+ * make the run fail when the signal never fires. So an agent that emits a
+ * complete, schema-valid `<coder>`/`<review>` tag but hits `maxIter` mid-work
+ * WITHOUT firing `CODER_STEP_COMPLETE` / `REVIEWER_STEP_COMPLETE` would have its
+ * output decoded and the step advanced — violating #244's gate "agent emit
+ * completionSignal 才进下一步" (issue body; StepSpec.completionSignal doc
+ * "Required so the sandbox knows when to stop"). A totally-missing output
+ * already throws (extractCoderTag / schema.parse → S8(error)); this closes the
+ * complete-but-UNSIGNALED leak the missing-output throw does not cover.
+ *
+ * On mismatch/undefined: THROW. The caller (runStep / resumeSession /
+ * resume-retry) lets it propagate to the runner's error edge = S8(error) +
+ * error package, never a silently-trusted advance. `stepName` is woven into the
+ * message so the runner attributes the failure to the right step.
+ *
+ * Pure (a check on the RunResultLike shape): unit-tested without a container.
+ */
+export function assertCompletionSignal(
+  result: Pick<RunResultLike, "completionSignal">,
+  expected: string,
+  stepName: string,
+): void {
+  if (result.completionSignal !== expected) {
+    const actual =
+      result.completionSignal === undefined
+        ? "none (no signal fired before the iteration limit)"
+        : `"${result.completionSignal}"`;
+    throw new Error(
+      `realBackend: step ${stepName} did not fire its required completion ` +
+        `signal — expected "${expected}", got ${actual}. The agent must emit ` +
+        `the completion signal to advance the step (#244 "agent emit ` +
+        `completionSignal 才进下一步"); a complete-but-unsignaled run (e.g. ` +
+        `maxIter hit mid-work) does NOT advance.`,
+    );
+  }
 }
 
 // ── coder structured output from stdout (integ-cmr 256 r1) ──────────────────
@@ -1211,11 +1315,20 @@ export class RealBackend implements Backend {
     return { authDir: paths.hostCodexAuthDir, claudeToken };
   }
 
-  private box(issueNumber: number): sc.SandboxProvider {
+  private box(issueNumber: number, spec: StepSpec): sc.SandboxProvider {
     const { authDir, claudeToken } = this.mountAuth(issueNumber);
+    // ship-pre 256 r1: select the role's baked soul and inject it so the v0.1
+    // one-image-two-roles profile activates the right one (#244 "role 决定注哪份
+    // soul"). soulForStep CONSUMES spec.soul (no longer a dead contract field)
+    // and throws if it contradicts the role → S8(error). Still a soul ENV signal,
+    // not an OS readonly mount (reviewer READ-ONLY stays soft, ADR 0017 §4).
+    const soul = soulForStep(spec);
     return docker({
       imageName: this.opts.imageName,
-      env: { CLAUDE_CODE_OAUTH_TOKEN: claudeToken },
+      env: {
+        CLAUDE_CODE_OAUTH_TOKEN: claudeToken,
+        [SANDBOX_SOUL_ENV]: soul,
+      },
       mounts: [
         { hostPath: authDir, sandboxPath: SANDBOX_CODEX_DIR },
         { hostPath: this.opts.skillsMount, sandboxPath: SANDBOX_SKILLS_DIR },
@@ -1321,7 +1434,7 @@ export class RealBackend implements Backend {
     const result = await sc.run({
       name: `${spec.id}-${spec.role}`,
       cwd: worktree.path,
-      sandbox: this.box(issueNumber),
+      sandbox: this.box(issueNumber, spec),
       agent: sc.claudeCode(modelIdForSlug(spec.model)),
       // #7 maxIter: enforce the WITHIN-STEP Ralph retry budget = StepSpec.maxIter
       // (reviewer = 1 single pass; coder/fix > 1). Hitting it ends THE STEP
@@ -1337,6 +1450,10 @@ export class RealBackend implements Backend {
       // (rawOutputFor) instead — Sandcastle's typed `output` is forbidden there.
       ...(spec.maxIter === 1 ? { output: this.outputFor(spec) } : {}),
     });
+    // #244 step-advance gate: the step only advances if the agent fired its
+    // declared completionSignal. A complete-but-unsignaled run (e.g. maxIter hit
+    // mid-work) throws here → S8(error), before any output is decoded.
+    assertCompletionSignal(result, spec.completionSignal, `${spec.id}-${spec.role}`);
     const typedOutputUsed = spec.maxIter === 1;
     const raw = this.rawOutputFor(result, typedOutputUsed);
     // #256 commit-truth: the coder's committed/commitsAdded is derived from the
@@ -1362,7 +1479,7 @@ export class RealBackend implements Backend {
       const result = await sc.run({
         name: `${spec.id}-${spec.role}-resume`,
         cwd: worktree.path,
-        sandbox: this.box(issueNumber),
+        sandbox: this.box(issueNumber, spec),
         agent: sc.claudeCode(modelIdForSlug(spec.model)),
         // resumeSession requires maxIterations:1 (Sandcastle constraint).
         maxIterations: 1,
@@ -1379,6 +1496,13 @@ export class RealBackend implements Backend {
         // for both roles (no <coder> stdout fallback needed at maxIter:1).
         output: this.outputFor(spec),
       });
+      // #244 step-advance gate (resume path): a resumed step still only advances
+      // on its declared completionSignal — an unsignaled resume throws → S8(error).
+      assertCompletionSignal(
+        result,
+        spec.completionSignal,
+        `${spec.id}-${spec.role}-resume`,
+      );
       // Resume path: trust the self-report (undefined realCommitCount). A resume
       // re-runs ONE iteration that may re-emit corrected output with no new
       // commit, so its per-run commits.length is not a cumulative truth (#256
@@ -1399,7 +1523,7 @@ export class RealBackend implements Backend {
         const result = await sc.run({
           name: `${spec.id}-${spec.role}-resume-retry`,
           cwd: worktree.path,
-          sandbox: this.box(issueNumber),
+          sandbox: this.box(issueNumber, spec),
           agent: sc.claudeCode(modelIdForSlug(spec.model)),
           maxIterations: 1,
           completionSignal: spec.completionSignal,
@@ -1409,6 +1533,13 @@ export class RealBackend implements Backend {
           // maxIterations:1 ⇒ typed output valid for both roles (F4, as above).
           output: this.outputFor(spec),
         });
+        // #244 step-advance gate (resume-retry path): same gate as the fresh and
+        // native-resume runs — no signal, no advance (throws → S8(error)).
+        assertCompletionSignal(
+          result,
+          spec.completionSignal,
+          `${spec.id}-${spec.role}-resume-retry`,
+        );
         // Resume-retry path: trust the self-report (undefined), same rationale as
         // the resume path above — a per-run commit count is not a cumulative
         // truth here (#256 git-truthing is the normal runStep path).

@@ -17,6 +17,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  assertCompletionSignal,
   attributeFailure,
   buildAuthPaths,
   buildIssueMeta,
@@ -40,6 +41,7 @@ import {
   promptsDirError,
   realCommitCount,
   reconcileCoderCommits,
+  soulForStep,
   REFERENCED_PROMPT_FILES,
   RealBackend,
   SANDBOX_CODEX_DIR,
@@ -314,6 +316,34 @@ describe("realBackend modelIdForSlug", () => {
   });
 });
 
+// ─── soulForStep (ship-pre 256 r1, role→soul selection / contract fidelity) ───
+
+describe("realBackend soulForStep", () => {
+  it("selects the coder soul for a coder step (#244 'role 决定注哪份 soul')", () => {
+    expect(
+      soulForStep({ role: "coder", soul: "coder" }),
+    ).toBe("coder");
+  });
+
+  it("selects the READ-ONLY reviewer soul for a reviewer step", () => {
+    expect(
+      soulForStep({ role: "reviewer", soul: "READ-ONLY" }),
+    ).toBe("READ-ONLY");
+  });
+
+  it("throws when spec.soul contradicts the role's baked soul (dead-field guard)", () => {
+    // The StepSpec.soul field is consumed (not dangling): a reviewer step that
+    // carries the coder soul is a misconfigured spec — the baked reviewer image
+    // soul is selected by role, so a contradicting soul must not be shipped.
+    expect(() =>
+      soulForStep({ role: "reviewer", soul: "coder" }),
+    ).toThrow(/soul/i);
+    expect(() =>
+      soulForStep({ role: "coder", soul: "READ-ONLY" }),
+    ).toThrow(/soul/i);
+  });
+});
+
 // ─── per-step sessionId extraction (#256 seam extension) ─────────────────────
 
 describe("realBackend lastSessionId", () => {
@@ -343,6 +373,50 @@ describe("realBackend realCommitCount (#256 commit-truth)", () => {
   });
   it("returns 0 when the agent made no commits", () => {
     expect(realCommitCount({ commits: [] })).toBe(0);
+  });
+});
+
+// ─── assertCompletionSignal (ship-pre 256 r1, completionSignal gate) ──────────
+
+describe("realBackend assertCompletionSignal", () => {
+  it("passes when the fired signal matches the spec's completionSignal", () => {
+    expect(() =>
+      assertCompletionSignal(
+        { completionSignal: "CODER_STEP_COMPLETE" },
+        "CODER_STEP_COMPLETE",
+        "S2-coder",
+      ),
+    ).not.toThrow();
+  });
+
+  it("throws when no signal fired before the iteration limit (undefined)", () => {
+    // RunResult.completionSignal is "undefined if no signal fired before the
+    // iteration limit" (sandcastle d.ts). An agent that emitted a complete,
+    // schema-valid tag but hit maxIter mid-work without firing the signal must
+    // NOT advance the step (#244 "agent emit completionSignal 才进下一步").
+    expect(() =>
+      assertCompletionSignal(
+        { completionSignal: undefined },
+        "CODER_STEP_COMPLETE",
+        "S2-coder",
+      ),
+    ).toThrow(/completion signal/i);
+  });
+
+  it("throws and names the expected + actual signal on a mismatch", () => {
+    expect(() =>
+      assertCompletionSignal(
+        { completionSignal: "REVIEWER_STEP_COMPLETE" },
+        "CODER_STEP_COMPLETE",
+        "S2-coder",
+      ),
+    ).toThrow(/CODER_STEP_COMPLETE/);
+  });
+
+  it("names the step in the thrown error (runner attributes the failure)", () => {
+    expect(() =>
+      assertCompletionSignal({ completionSignal: undefined }, "X", "S5-coder"),
+    ).toThrow(/S5-coder/);
   });
 });
 
