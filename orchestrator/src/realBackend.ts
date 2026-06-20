@@ -575,6 +575,53 @@ export function isLikelySha(s: string): boolean {
 }
 
 /**
+ * Parse a persisted JSONL ledger (`steps.jsonl` contents) into entries —
+ * FAIL-CLOSED on corruption (integ-cmr 256 r5, high).
+ *
+ * The ledger is the #244 resume truth, so its truncation-recovery rule must be
+ * explicit and bounded, NOT an implicit "skip whatever doesn't parse":
+ *
+ *   - Blank / whitespace-only lines (trailing newline, an interior empty line)
+ *     carry no record and are skipped — the ONLY tolerated drift. A file that is
+ *     empty or all-blank yields `[]`: a legitimately EMPTY ledger (the documented
+ *     `ResumeState.ledger = []` ⇒ fresh-run case), NOT corruption.
+ *   - Any NON-EMPTY line that does not `JSON.parse` means the ledger is CORRUPT.
+ *     We throw rather than skip the line, because skipping silently rewrites the
+ *     resume decision: a dropped tagged S8(error) leaves S7 as the surviving last
+ *     entry → planResume routes S7→{handoff,success} → an ERROR run is re-reported
+ *     as SUCCESS; and an all-corrupt file collapsing to `[]` would be read as "no
+ *     progress" and re-run fresh-from-S0 over a RESIDENT branch that still carries
+ *     prior commits. Both are wrong terminal-state / branch-progress rebuilds.
+ *
+ * The throw propagates out of {@link RealBackend.findResumeState} to the same
+ * S8(error) bail the codex#2 HEAD-mismatch uses — fail closed, exactly as the
+ * r2 F2 rule (a completeness failure must not become a lenient default) requires.
+ *
+ * Pure (string scan) so the corrupt-ledger boundary is unit-tested without the
+ * filesystem.
+ */
+export function parseLedgerJsonl(raw: string): ResumeState["ledger"] {
+  const entries: Array<ResumeState["ledger"][number]> = [];
+  for (const line of raw.split("\n")) {
+    if (line.trim().length === 0) continue; // blank line: no record, tolerated.
+    try {
+      entries.push(JSON.parse(line) as ResumeState["ledger"][number]);
+    } catch {
+      // A non-empty line that does not parse = corrupt ledger. Fail closed:
+      // never skip it (would silently change the resume terminal state / branch
+      // progress) and never collapse to an empty ledger.
+      throw new Error(
+        "corrupt ledger: a non-empty steps.jsonl line failed to parse — " +
+          "refusing to resume on a partially-readable ledger (fail closed). " +
+          "Skipping the line could re-report an ERROR run as SUCCESS or " +
+          "re-run a resident branch fresh-from-S0; bailing to S8(error) instead.",
+      );
+    }
+  }
+  return entries;
+}
+
+/**
  * The most recent recorded `branchHEAD` **SHA** in a persisted ledger (codex#2
  * resume reconciliation). Scans from the end and returns the FIRST value that
  * passes {@link isLikelySha} — i.e. skips branch-name fallbacks ENTIRELY, not
@@ -1402,24 +1449,24 @@ export class RealBackend implements Backend {
   private readLedger(stateDir: string):
     | ResumeState["ledger"]
     | undefined {
+    let raw: string;
     try {
-      const raw = readFileSync(join(stateDir, "steps.jsonl"), "utf8");
-      const lines = raw.split("\n").filter((l) => l.trim().length > 0);
-      // reconstructProgressState / planResume defend against corrupted lines;
-      // skip lines that don't parse rather than abort the whole resume.
-      const entries = [] as Array<ResumeState["ledger"][number]>;
-      for (const line of lines) {
-        try {
-          entries.push(JSON.parse(line));
-        } catch {
-          // corrupted-ledger line — skip it (the runner's reconstruct guards
-          // tolerate gaps; a hard parse abort here would lose ALL progress).
-        }
-      }
-      return entries;
+      raw = readFileSync(join(stateDir, "steps.jsonl"), "utf8");
     } catch {
+      // The ledger file is missing / unreadable: there is NO resume truth, so
+      // there is nothing to resume. Returning undefined (vs []) makes
+      // findResumeState treat it as "no ledger" — distinct from an empty-but-
+      // valid ledger ([]) and distinct from a CORRUPT ledger (parse throws).
       return undefined;
     }
+    // The ledger file EXISTS: parse it fail-closed. A non-empty line that does
+    // not parse means the ledger is CORRUPT — parseLedgerJsonl throws, which
+    // propagates out of findResumeState to the same S8(error) bail path as the
+    // codex#2 HEAD-mismatch. We must NOT skip corrupt lines (256 r5): a skipped
+    // tagged S8(error) would re-report ERROR as SUCCESS, and an all-corrupt file
+    // collapsing to [] would be reinterpreted as "no progress" over a resident
+    // branch that still carries prior commits.
+    return parseLedgerJsonl(raw);
   }
 
   // ── #249: ledger persistence (sibling JSONL) ───────────────────────────────
