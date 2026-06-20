@@ -1,14 +1,16 @@
 export const meta = {
   name: 'epic-orchestrator',
   description: '读取 GitHub 原生子 issue 与 blocked_by 边，按依赖层并行跑各切片 worktree，自检/评审后通过串行队列合入家族分支。',
-  whenToUse: 'Issue #221 S3：父 epic issue 号 -> 层 barrier 并行切片实现 -> 本地 verify -> per-slice codex+agy review -> 串行家族分支 merge 队列。家族 5a/5b 仍不在本期。',
+  whenToUse: 'Issue #222 S4a：父 epic issue 号 -> 层 barrier 并行切片实现 -> 本地 verify -> per-slice codex+agy review -> 串行家族分支 merge 队列 -> 家族集成 verify + base 管理。家族 5a/5b 仍不在本期。',
   phases: [
     { title: 'Discover', detail: '读取 gh 原生子 issue 与 blocked_by 边' },
     { title: 'Plan', detail: '运行 drift-guarded 的 S0 拓扑内联副本，把 open 切片分组为依赖层' },
     { title: 'Implement', detail: '同层实现腿并发运行，使用 isolation:"worktree" 并遵守 I7/I8' },
     { title: 'Verify', detail: '任何 review 前先跑本地验证命令' },
     { title: 'Review', detail: '通过 Bash 跑 per-slice codex + agy；隐藏 worktree 下 agy 只看 diff，codex 可完整 grounding' },
-    { title: 'Merge', detail: '编排器用单写者 worktree 串行合并 reviewed commit 到家族分支' }
+    { title: 'Merge', detail: '编排器用单写者 worktree 串行合并 reviewed commit 到家族分支' },
+    { title: 'Family Verify', detail: '全片落地后在合并后的家族 worktree 上整体跑 I9 typecheck/unit/full verify' },
+    { title: 'Base Management', detail: '进入家族 CMR/gstack-ship 前按 I10 比对启动 target HEAD；base 前进则 rebase 并重跑 I9' }
   ]
 };
 
@@ -442,6 +444,7 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
   }
 
   const normalizedArgs = normalizePipelineArgs(args, discovery.epicIssueNumber);
+  const startupTargetHead = await captureStartupTargetHead({ Bash, normalizedArgs });
   const runner = agentRunner ?? (typeof agent !== 'undefined' ? agent : undefined);
   if (typeof runner !== 'function') {
     throw new Error('S3 分层流水线需要 agent runner 执行实现腿。');
@@ -514,6 +517,72 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
     }
   }
 
+  const familyWorktree = mergeQueue.at(-1)?.mergeWorktree;
+  const familyVerification = await runFamilyIntegrationVerify({
+    Bash,
+    familyWorktree,
+    verifyCommands: normalizedArgs.verifyCommands
+  });
+  if (familyVerification.status !== 'passed') {
+    return {
+      ...discovery,
+      outOfScope: ['family_5a_5b', 'online_pr_review_loop'],
+      status: 'family_verify_failed',
+      layers,
+      reviewedSlices,
+      mergeQueue,
+      merge: mergeQueue.at(-1),
+      familyVerification,
+      i9: { status: 'failed', reason: 'family_integration_verify_failed' }
+    };
+  }
+
+  const baseManagement = await manageFamilyBase({
+    Bash,
+    familyWorktree,
+    normalizedArgs,
+    startupTargetHead
+  });
+  if (baseManagement.status === 'conflict') {
+    return {
+      ...discovery,
+      outOfScope: ['family_5a_5b', 'online_pr_review_loop'],
+      status: 'return_to_main_session',
+      reason: baseManagement.reason ?? 'base_rebase_conflict',
+      layers,
+      reviewedSlices,
+      mergeQueue,
+      merge: mergeQueue.at(-1),
+      familyVerification,
+      baseManagement,
+      i10: { status: 'aborted', reason: baseManagement.reason ?? 'base_rebase_conflict' }
+    };
+  }
+
+  let familyVerificationAfterRebase;
+  if (baseManagement.status === 'rebased') {
+    familyVerificationAfterRebase = await runFamilyIntegrationVerify({
+      Bash,
+      familyWorktree,
+      verifyCommands: normalizedArgs.verifyCommands
+    });
+    if (familyVerificationAfterRebase.status !== 'passed') {
+      return {
+        ...discovery,
+        outOfScope: ['family_5a_5b', 'online_pr_review_loop'],
+        status: 'family_verify_failed',
+        layers,
+        reviewedSlices,
+        mergeQueue,
+        merge: mergeQueue.at(-1),
+        familyVerification,
+        baseManagement,
+        familyVerificationAfterRebase,
+        i9: { status: 'failed', reason: 'family_integration_verify_failed_after_rebase' }
+      };
+    }
+  }
+
   return {
     ...discovery,
     outOfScope: ['family_5a_5b', 'online_pr_review_loop'],
@@ -521,7 +590,12 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
     layers,
     reviewedSlices,
     mergeQueue,
-    merge: mergeQueue.at(-1)
+    merge: mergeQueue.at(-1),
+    familyVerification,
+    baseManagement,
+    ...(familyVerificationAfterRebase ? { familyVerificationAfterRebase } : {}),
+    i9: { status: 'passed', commands: normalizedArgs.verifyCommands },
+    i10: { status: baseManagement.status, startupTargetHead, targetBranch: normalizedArgs.targetBranch }
   };
 }
 
@@ -656,7 +730,7 @@ function buildSliceBaseContext(normalizedArgs, mergeQueue) {
 
 async function mergeReviewedCommit({ Bash, worktreePath, familyBranch, implementedCommit, plannedSlice }) {
   return parseBashJson(
-    await Bash(`set -euo pipefail\n# 将已评审 commit 合入家族分支；reviewer=merge reviewed commit\nsourceWorktreePath=${shellQuote(worktreePath)}\nfamilyBranch=${shellQuote(familyBranch)}\nimplementedCommit=${shellQuote(implementedCommit)}\ncommonDir=$(git -C "$sourceWorktreePath" rev-parse --path-format=absolute --git-common-dir)\nrepoRoot=$(git -C "$sourceWorktreePath" rev-parse --show-toplevel)\nparentRoot=$(dirname "$repoRoot")\nmergeRoot="$parentRoot/.epic-orchestrator"\nsafeBranch=$(printf '%s' "$familyBranch" | tr -c 'A-Za-z0-9._-' '_')\ndefaultMergeWorktree="$mergeRoot/family-$safeBranch"\nexistingMergeWorktree=$(python3 - "$sourceWorktreePath" "$familyBranch" <<'PY'\nimport subprocess, sys\nsource, branch = sys.argv[1], sys.argv[2]\ncurrent = None\nfor line in subprocess.check_output(['git', '-C', source, 'worktree', 'list', '--porcelain'], text=True).splitlines():\n    if line.startswith('worktree '):\n        current = line[9:]\n    elif line == f'branch refs/heads/{branch}' and current:\n        print(current)\n        break\nPY\n)\nif [ -n "$existingMergeWorktree" ]; then\n  mergeWorktree="$existingMergeWorktree"\nelse\n  mergeWorktree="$defaultMergeWorktree"\n  mkdir -p "$mergeRoot"\n  if [ -e "$mergeWorktree" ] && [ ! -d "$mergeWorktree/.git" ]; then\n    printf 'merge worktree 路径已存在但不是 git worktree：%s\\n' "$mergeWorktree" >&2\n    exit 1\n  fi\n  if [ ! -d "$mergeWorktree/.git" ]; then\n    git -C "$sourceWorktreePath" fetch origin "$familyBranch" || true\n    if git -C "$sourceWorktreePath" show-ref --verify --quiet "refs/heads/\${familyBranch}"; then\n      git -C "$sourceWorktreePath" worktree add "$mergeWorktree" "$familyBranch" >&2\n    elif git -C "$sourceWorktreePath" show-ref --verify --quiet "refs/remotes/origin/\${familyBranch}"; then\n      git -C "$sourceWorktreePath" worktree add -b "$familyBranch" "$mergeWorktree" "origin/\${familyBranch}" >&2\n    else\n      git -C "$sourceWorktreePath" worktree add -b "$familyBranch" "$mergeWorktree" "\${implementedCommit}^" >&2\n    fi\n  fi\nfi\nout=$(mktemp)\ntrap 'rm -f "$out"' EXIT\nset +e\ngit -C "$mergeWorktree" merge --no-ff "$implementedCommit" -m ${shellQuote(`合并已评审切片 #${plannedSlice.issueNumber}`)} >"$out" 2>&1\nrc=$?\nset -e\nif [ "$rc" -ne 0 ]; then\n  git -C "$mergeWorktree" merge --abort >/dev/null 2>&1 || true\n  python3 - "$rc" "$out" <<'PY'\nimport json, sys\nwith open(sys.argv[2], encoding='utf-8', errors='replace') as handle:\n    output = handle.read()\nprint(json.dumps({"status":"conflict", "reason":"merge_conflict", "exitCode": int(sys.argv[1]), "output": output}))\nPY\n  exit 0\nfi\nprintf '{"status":"merged","mergeCommit":"'\ngit -C "$mergeWorktree" rev-parse HEAD | tr -d '\\n'\nprintf '","mergeWorktree":"'\ngit -C "$mergeWorktree" rev-parse --show-toplevel | tr -d '\\n' | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read())[1:-1], end="")'\nprintf '"}'`)
+    await Bash(`set -euo pipefail\n# 将已评审 commit 合入家族分支；reviewer=merge reviewed commit\nsourceWorktreePath=${shellQuote(worktreePath)}\nfamilyBranch=${shellQuote(familyBranch)}\nimplementedCommit=${shellQuote(implementedCommit)}\ncommonDir=$(git -C "$sourceWorktreePath" rev-parse --path-format=absolute --git-common-dir)\nrepoRoot=$(git -C "$sourceWorktreePath" rev-parse --show-toplevel)\nparentRoot=$(dirname "$repoRoot")\nmergeRoot="$parentRoot/.epic-orchestrator"\nsafeBranch=$(printf '%s' "$familyBranch" | tr -c 'A-Za-z0-9._-' '_')\ndefaultMergeWorktree="$mergeRoot/family-$safeBranch"\nexistingMergeWorktree=$(python3 - "$sourceWorktreePath" "$familyBranch" <<'PY'\nimport subprocess, sys\nsource, branch = sys.argv[1], sys.argv[2]\ncurrent = None\nfor line in subprocess.check_output(['git', '-C', source, 'worktree', 'list', '--porcelain'], text=True).splitlines():\n    if line.startswith('worktree '):\n        current = line[9:]\n    elif line == f'branch refs/heads/{branch}' and current:\n        print(current)\n        break\nPY\n)\nif [ -n "$existingMergeWorktree" ]; then\n  mergeWorktree="$existingMergeWorktree"\nelse\n  mergeWorktree="$defaultMergeWorktree"\n  mkdir -p "$mergeRoot"\n  isGitWorktree() { git -C "$1" rev-parse --is-inside-work-tree >/dev/null 2>&1; }\n  if [ -e "$mergeWorktree" ] && ! isGitWorktree "$mergeWorktree"; then\n    rm -rf "$mergeWorktree"\n  fi\n  if ! isGitWorktree "$mergeWorktree"; then\n    git -C "$sourceWorktreePath" fetch origin "$familyBranch" || true\n    if git -C "$sourceWorktreePath" show-ref --verify --quiet "refs/heads/\${familyBranch}"; then\n      git -C "$sourceWorktreePath" worktree add "$mergeWorktree" "$familyBranch" >&2\n    elif git -C "$sourceWorktreePath" show-ref --verify --quiet "refs/remotes/origin/\${familyBranch}"; then\n      git -C "$sourceWorktreePath" worktree add -b "$familyBranch" "$mergeWorktree" "origin/\${familyBranch}" >&2\n    else\n      git -C "$sourceWorktreePath" worktree add -b "$familyBranch" "$mergeWorktree" "\${implementedCommit}^" >&2\n    fi\n  fi\nfi\nout=$(mktemp)\ntrap 'rm -f "$out"' EXIT\nset +e\ngit -C "$mergeWorktree" merge --no-ff "$implementedCommit" -m ${shellQuote(`合并已评审切片 #${plannedSlice.issueNumber}`)} >"$out" 2>&1\nrc=$?\nset -e\nif [ "$rc" -ne 0 ]; then\n  git -C "$mergeWorktree" merge --abort >/dev/null 2>&1 || true\n  python3 - "$rc" "$out" <<'PY'\nimport json, sys\nwith open(sys.argv[2], encoding='utf-8', errors='replace') as handle:\n    output = handle.read()\nprint(json.dumps({"status":"conflict", "reason":"merge_conflict", "exitCode": int(sys.argv[1]), "output": output}))\nPY\n  exit 0\nfi\nprintf '{"status":"merged","mergeCommit":"'\ngit -C "$mergeWorktree" rev-parse HEAD | tr -d '\\n'\nprintf '","mergeWorktree":"'\ngit -C "$mergeWorktree" rev-parse --show-toplevel | tr -d '\\n' | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read())[1:-1], end="")'\nprintf '"}'`)
   );
 }
 
@@ -667,6 +741,8 @@ function normalizePipelineArgs(rawArgs, epicIssueNumber) {
   const verifyCommands = [...new Set([...requiredVerifyCommands, ...extraVerifyCommands])];
   return {
     familyBranch: String(objectArgs.familyBranch ?? `family/epic-${epicIssueNumber}`),
+    targetBranch: String(objectArgs.targetBranch ?? 'origin/main'),
+    startupTargetHead: objectArgs.startupTargetHead === undefined ? undefined : String(objectArgs.startupTargetHead),
     verifyCommands,
     maxReviewRounds: normalizePositiveInteger(objectArgs.maxReviewRounds, 3, 'maxReviewRounds')
   };
@@ -712,6 +788,34 @@ function baseContextPromptLines(sliceBaseContext) {
     'Do not start from the stale original epic base for this dependent-layer slice.',
     `Merged prerequisite queue: ${JSON.stringify(sliceBaseContext.mergeQueue)}`
   ];
+}
+
+async function captureStartupTargetHead({ Bash, normalizedArgs }) {
+  if (normalizedArgs.startupTargetHead) return normalizedArgs.startupTargetHead;
+  const parsed = parseBashJson(
+    await Bash(`set -euo pipefail\n# orchestrator base target HEAD capture\ntargetBranch=${shellQuote(normalizedArgs.targetBranch)}\nif [ "$targetBranch" = "origin/main" ]; then git fetch origin main >/dev/null 2>&1 || true; fi\nhead=$(git rev-parse "\${targetBranch}^{commit}")\nprintf '{"status":"captured","targetBranch":'\nprintf '%s' "$targetBranch" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()), end="")'\nprintf ',"head":"%s"}' "$head"`)
+  );
+  return parsed.head ?? parsed.targetHead ?? 'unknown';
+}
+
+async function runFamilyIntegrationVerify({ Bash, familyWorktree, verifyCommands }) {
+  const results = [];
+  for (const command of verifyCommands) {
+    const parsed = parseBashJson(
+      await Bash(`set -euo pipefail\n# 家族集成 verify (I9): merged family branch whole-repo verification\ncd ${shellQuote(familyWorktree ?? '.')}\nout=$(mktemp)\ntrap 'rm -f "$out"' EXIT\nset +e\n( ${command} ) >"$out" 2>&1\nrc=$?\npython3 - "$rc" "$out" <<'PY'\nimport json, sys\nrc = int(sys.argv[1])\nwith open(sys.argv[2], encoding='utf-8', errors='replace') as handle:\n    output = handle.read()\nprint(json.dumps({"status": "passed" if rc == 0 else "failed", "exitCode": rc, "output": output}))\nPY`)
+    );
+    results.push({ command, ...parsed });
+    if (parsed.status && parsed.status !== 'passed') {
+      return { status: 'failed', commands: verifyCommands, results };
+    }
+  }
+  return { status: 'passed', commands: verifyCommands, results };
+}
+
+async function manageFamilyBase({ Bash, familyWorktree, normalizedArgs, startupTargetHead }) {
+  return parseBashJson(
+    await Bash(`set -euo pipefail\n# base management (I10): compare startup target HEAD before family CMR/gstack-ship\nfamilyWorktree=${shellQuote(familyWorktree ?? '.')}\ntargetBranch=${shellQuote(normalizedArgs.targetBranch)}\nstartupTargetHead=${shellQuote(startupTargetHead)}\nif [ "$targetBranch" = "origin/main" ]; then git -C "$familyWorktree" fetch origin main >/dev/null 2>&1 || true; fi\ncurrentTargetHead=$(git -C "$familyWorktree" rev-parse "\${targetBranch}^{commit}")\nif [ "$startupTargetHead" = "unknown" ] || [ "$currentTargetHead" = "$startupTargetHead" ]; then\n  printf '{"status":"no_drift","startupTargetHead":"%s","currentTargetHead":"%s"}' "$startupTargetHead" "$currentTargetHead"\n  exit 0\nfi\nif ! git -C "$familyWorktree" merge-base --is-ancestor "$startupTargetHead" "$currentTargetHead"; then\n  printf '{"status":"conflict","reason":"target_base_not_fast_forward","startupTargetHead":"%s","currentTargetHead":"%s"}' "$startupTargetHead" "$currentTargetHead"\n  exit 0\nfi\nout=$(mktemp)\ntrap 'rm -f "$out"' EXIT\nset +e\ngit -C "$familyWorktree" rebase "$currentTargetHead" >"$out" 2>&1\nrc=$?\nset -e\nif [ "$rc" -ne 0 ]; then\n  git -C "$familyWorktree" rebase --abort >/dev/null 2>&1 || true\n  python3 - "$rc" "$out" "$startupTargetHead" "$currentTargetHead" <<'PY'\nimport json, sys\nwith open(sys.argv[2], encoding='utf-8', errors='replace') as handle:\n    output = handle.read()\nprint(json.dumps({"status": "conflict", "reason": "base_rebase_conflict", "exitCode": int(sys.argv[1]), "output": output, "startupTargetHead": sys.argv[3], "currentTargetHead": sys.argv[4]}))\nPY\n  exit 0\nfi\nrebaseHead=$(git -C "$familyWorktree" rev-parse HEAD)\nprintf '{"status":"rebased","startupTargetHead":"%s","currentTargetHead":"%s","rebaseHead":"%s"}' "$startupTargetHead" "$currentTargetHead" "$rebaseHead"`)
+  );
 }
 
 async function runVerification({ Bash, worktreePath, verifyCommands }) {
