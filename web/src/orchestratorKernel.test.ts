@@ -362,9 +362,10 @@ describe("buildHandoffPayload", () => {
     epic: 217,
     familyBranch: "family/217",
     baseAtStart: "base-sha-aaa",
+    familyHead: "family-tip-zzz",
     merged: [
-      { number: 220, commitHash: "c220" },
-      { number: 221, commitHash: "c221" }
+      { number: 220, reviewedCommit: "c220" },
+      { number: 221, reviewedCommit: "c221" }
     ],
     dirty: [],
     flags: []
@@ -382,9 +383,10 @@ describe("buildHandoffPayload", () => {
       epic: 217,
       familyBranch: "family/217",
       baseAtStart: "base-sha-aaa",
+      familyHead: "family-tip-zzz",
       merged: [
-        { number: 220, commitHash: "c220" },
-        { number: 221, commitHash: "c221" }
+        { number: 220, reviewedCommit: "c220" },
+        { number: 221, reviewedCommit: "c221" }
       ],
       dirty: [],
       question: null,
@@ -407,9 +409,10 @@ describe("buildHandoffPayload", () => {
       epic: 217,
       familyBranch: "family/217",
       baseAtStart: "base-sha-aaa",
+      familyHead: "family-tip-zzz",
       merged: [
-        { number: 220, commitHash: "c220" },
-        { number: 221, commitHash: "c221" }
+        { number: 220, reviewedCommit: "c220" },
+        { number: 221, reviewedCommit: "c221" }
       ],
       dirty: [],
       question: "Version bump is MINOR or MAJOR?",
@@ -433,9 +436,10 @@ describe("buildHandoffPayload", () => {
       epic: 217,
       familyBranch: "family/217",
       baseAtStart: "base-sha-aaa",
+      familyHead: "family-tip-zzz",
       merged: [
-        { number: 220, commitHash: "c220" },
-        { number: 221, commitHash: "c221" }
+        { number: 220, reviewedCommit: "c220" },
+        { number: 221, reviewedCommit: "c221" }
       ],
       dirty: [],
       question: null,
@@ -452,7 +456,7 @@ describe("buildHandoffPayload", () => {
       epic: 217,
       familyBranch: "family/217",
       baseAtStart: "base-sha-bbb",
-      merged: [{ number: 220, commitHash: "c220" }],
+      merged: [{ number: 220, reviewedCommit: "c220" }],
       dirty: [{ number: 221, decision: "rework auth gate" }],
       flags: ["family 5a/5b degraded: agy unavailable (quota)"],
       reason: "gstack-ship-failed",
@@ -478,5 +482,6 @@ describe("buildHandoffPayload", () => {
     expect(payload.flags).toEqual([]);
     expect(payload.question).toBeNull();
     expect(payload.detail).toBeNull();
+    expect(payload.familyHead).toBeNull();
   });
 });

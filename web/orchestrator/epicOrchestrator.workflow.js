@@ -201,6 +201,7 @@ export function inlineBuildHandoffPayload(input) {
     epic: input.epic,
     familyBranch: input.familyBranch,
     baseAtStart: input.baseAtStart,
+    familyHead: input.familyHead ?? null,
     merged: input.merged ?? [],
     dirty: input.dirty ?? [],
     question: input.question ?? null,
@@ -800,12 +801,19 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
   phaseIfAvailable('Ship');
 
   // The merged-slice ledger for the handoff: reviewedSlices and mergeQueue are pushed in lockstep,
-  // so zip slice issue number <-> the commit it landed on the family branch (familyHead is refreshed
-  // post rebase / post family-review fix above, so it reflects the reviewed HEAD, not a stale commit).
+  // so zip slice issue number <-> its STABLE per-slice reviewed commit. We deliberately do NOT report
+  // a per-slice family-branch hash here: an I10 rebase / family-review fix rewrites the family-branch
+  // commits and only mergeQueue.at(-1) is refreshed, so per-slice family hashes go stale for every
+  // non-final slice. The reviewedCommit (the slice's own review commit) is never rewritten by a family
+  // rebase, and the current family tip is reported once as familyHead below — S6 probes
+  // baseAtStart..familyHead against these reviewed commits.
   const mergedSlices = reviewedSlices.map((slice, index) => ({
     number: slice.plannedSlice.issueNumber,
-    commitHash: mergeQueue[index]?.familyHead ?? mergeQueue[index]?.mergeCommit ?? null
+    reviewedCommit: mergeQueue[index]?.reviewedCommit ?? null
   }));
+  // Current family branch tip (refreshed post rebase / post family-review fix); the single
+  // authoritative "where the family is now" for the handoff and S6's git-skip probe.
+  const familyHead = mergeQueue.at(-1)?.familyHead ?? mergeQueue.at(-1)?.mergeCommit ?? null;
   // Degradation / absent-voice flags from the load-bearing family gate's converged round.
   const convergedRound = Array.isArray(familyReview.rounds) ? familyReview.rounds.at(-1) : undefined;
   const shipFlags = convergedRound?.degradation?.flags ?? [];
@@ -844,6 +852,7 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
     epic: discovery.epicIssueNumber,
     familyBranch: normalizedArgs.familyBranch,
     baseAtStart,
+    familyHead,
     merged: mergedSlices,
     dirty: [],
     flags: shipFlags
