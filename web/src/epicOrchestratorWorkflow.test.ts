@@ -2044,7 +2044,40 @@ describe("epic orchestrator S6 cross-segment continuation (relaunch + git-skip +
 
     expect(result.status).toBe("return_to_main_session");
     expect(result.reason).toBe("family_review_needs_decision");
-    expect(result.decisionFindings.some((f: any) => /codex-family reported status="failed"/.test(f.claim_quote ?? ""))).toBe(true);
+    expect(result.decisionFindings.some((f: any) => /codex-family did not report status="passed"/.test(f.claim_quote ?? ""))).toBe(true);
+  });
+
+  it("a status-contract leg reporting status:failed with an EMPTY findings array still escalates (no false converge)", async () => {
+    // ship-pre gap: an explicit empty findings array with a non-pass status must not be returned as []
+    // (which would converge). Distinct from the missing-findings-field case above.
+    const { result } = await runContinuation({
+      subIssues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }],
+      args: { mergedNumbers: [220] },
+      familyReview: () => ({ codex: { status: "failed", findings: [] }, agy: { status: "passed", findings: [] }, claude: { findings: [] } })
+    });
+
+    expect(result.status).toBe("return_to_main_session");
+    expect(result.reason).toBe("family_review_needs_decision");
+  });
+
+  it("a status-contract leg returning an empty object {} (no status, no findings) escalates, not converges", async () => {
+    const { result } = await runContinuation({
+      subIssues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }],
+      args: { mergedNumbers: [220] },
+      familyReview: () => ({ codex: {}, agy: { status: "passed", findings: [] }, claude: { findings: [] } })
+    });
+
+    expect(result.status).toBe("return_to_main_session");
+    expect(result.reason).toBe("family_review_needs_decision");
+  });
+
+  it("rejects a mergedNumbers entry with a null/undefined number value (fails loud, not silent miss)", async () => {
+    await expect(
+      runContinuation({
+        subIssues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }],
+        args: { mergedNumbers: [{ number: null }] }
+      })
+    ).rejects.toThrow(/null \/ undefined \/ empty slice id/);
   });
 
   it("a family reviewer returning a non-array findings field is treated as an unavailable (degraded) leg, not silently empty", async () => {
