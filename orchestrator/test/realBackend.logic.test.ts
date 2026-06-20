@@ -21,6 +21,7 @@ import {
   buildIssueSnapshot,
   checkBranchHeadConsistency,
   classifyResumeError,
+  ensureExcluded,
   extractAgentBrief,
   extractCoderTag,
   hasAgentBrief,
@@ -33,6 +34,7 @@ import {
   parseSubIssueCount,
   SANDBOX_CODEX_DIR,
   SANDBOX_SKILLS_DIR,
+  SNAPSHOT_FILENAME,
   type GhBlockedBy,
   type GhIssueJson,
 } from "../src/realBackend.js";
@@ -130,6 +132,41 @@ describe("realBackend gh parsing", () => {
     expect(snap.body).toBe("the body");
     expect(snap.comments).toEqual(["c1", briefComment.body]);
     expect(snap.agentBrief).toContain("## Agent Brief");
+  });
+});
+
+// ─── clean-room snapshot leak guard (integ-cmr 256 r2, F3) ───────────────────
+
+describe("realBackend ensureExcluded (snapshot leak guard, F3)", () => {
+  it("appends the pattern on its own newline-terminated line when absent", () => {
+    expect(ensureExcluded("node_modules/\n", SNAPSHOT_FILENAME)).toBe(
+      `node_modules/\n${SNAPSHOT_FILENAME}\n`,
+    );
+  });
+
+  it("is idempotent — an already-present exact line is left unchanged", () => {
+    const existing = `node_modules/\n${SNAPSHOT_FILENAME}\n`;
+    expect(ensureExcluded(existing, SNAPSHOT_FILENAME)).toBe(existing);
+  });
+
+  it("handles an empty exclude file (fresh worktree)", () => {
+    expect(ensureExcluded("", SNAPSHOT_FILENAME)).toBe(`${SNAPSHOT_FILENAME}\n`);
+  });
+
+  it("normalises a missing trailing newline before appending", () => {
+    // A prior exclude line with no trailing newline must not merge with ours.
+    expect(ensureExcluded("foo", SNAPSHOT_FILENAME)).toBe(
+      `foo\n${SNAPSHOT_FILENAME}\n`,
+    );
+  });
+
+  it("matches a present line even with surrounding whitespace (trim)", () => {
+    const existing = `  ${SNAPSHOT_FILENAME}  \n`;
+    expect(ensureExcluded(existing, SNAPSHOT_FILENAME)).toBe(existing);
+  });
+
+  it("the snapshot filename is the dot-prefixed clean-room artifact", () => {
+    expect(SNAPSHOT_FILENAME).toBe(".orchestrator-snapshot.json");
   });
 });
 
