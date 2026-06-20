@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -886,6 +886,64 @@ describe("epic orchestrator S3 layered parallel pipeline", () => {
 
     expect(mergeCommand).toContain("current = line[9:]");
     expect(mergeCommand).not.toContain("removeprefix");
+  });
+
+  it("rejects a first-layer slice whose commit does not descend from the startup target head", async () => {
+    const parentPath = mkdtempSync(join(tmpdir(), ".epic-orchestrator-stale-base-"));
+    const repoPath = join(parentPath, "repo");
+    mkdirSync(repoPath);
+    const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+    const agentCalls: any[] = [];
+
+    try {
+      git(repoPath, "init");
+      git(repoPath, "config", "user.email", "orchestrator@example.test");
+      git(repoPath, "config", "user.name", "Epic Orchestrator Test");
+      git(repoPath, "branch", "-M", "main");
+      writeFileSync(join(repoPath, "base.txt"), "old target\n");
+      git(repoPath, "add", ".");
+      git(repoPath, "commit", "-m", "old target");
+      const oldTargetHead = git(repoPath, "rev-parse", "HEAD");
+
+      writeFileSync(join(repoPath, "target.txt"), "startup target\n");
+      git(repoPath, "add", ".");
+      git(repoPath, "commit", "-m", "startup target");
+      const startupTargetHead = git(repoPath, "rev-parse", "HEAD");
+
+      const slicePath = join(repoPath, ".worktrees", "issue-220");
+      git(repoPath, "worktree", "add", "-b", "slice-220", slicePath, oldTargetHead);
+      writeFileSync(join(slicePath, "slice.txt"), "stale first-layer slice\n");
+      git(slicePath, "add", ".");
+      git(slicePath, "commit", "-m", "stale slice");
+      const staleSliceCommit = git(slicePath, "rev-parse", "HEAD");
+
+      await expect(runEpicLayeredPipeline({
+        args: { epicIssueNumber: 217, familyBranch: "family/217", verifyCommands: ["true"], startupTargetHead, targetBranch: "main" },
+        log: () => undefined,
+        agent: async (request: any) => {
+          agentCalls.push(request);
+          return {
+            commit: staleSliceCommit,
+            worktreePath: slicePath,
+            observabilityEvidence: { loudFailure: true, locatorLogs: true, notApplicableReason: "tooling slice" }
+          };
+        },
+        Bash: async (command: string) => {
+          if (command.includes("/sub_issues")) return JSON.stringify({ epicId: 217, issues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }], blockedBy: [] });
+          if (command.includes("reviewer=codex")) return JSON.stringify({ status: "passed", findings: [] });
+          if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [] });
+          if (command.includes("家族集成 verify") || command.includes("npm --prefix web") || command.includes("\n( true )")) {
+            return JSON.stringify({ status: "passed", exitCode: 0, output: "ok" });
+          }
+          return execFileSync("bash", ["-l", "-c", command], { encoding: "utf8" });
+        }
+      })).rejects.toThrow();
+
+      expect(agentCalls[0]).toMatchObject({ baseRef: startupTargetHead, targetBranch: "main" });
+      expect(agentCalls[0].prompt).toContain(startupTargetHead);
+    } finally {
+      rmSync(parentPath, { recursive: true, force: true });
+    }
   });
 
   it("runs whole-family integration verify on the merged family worktree after all slices merge", async () => {

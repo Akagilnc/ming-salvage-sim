@@ -456,7 +456,7 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
 
   for (const layerPlan of discovery.orderedPlan) {
     log?.(`开始第 ${layerPlan.layer} 层：${layerPlan.issueNumbers.join(', ')}`);
-    const sliceBaseContext = buildSliceBaseContext(normalizedArgs, mergeQueue);
+    const sliceBaseContext = buildSliceBaseContext(normalizedArgs, mergeQueue, startupTargetHead);
     const layerResults = await Promise.all(
       layerPlan.issues.map((plannedIssue) =>
         runSliceReviewLoop({
@@ -710,14 +710,26 @@ async function runSliceReviewLoop({ discovery, normalizedArgs, sliceBaseContext,
   throw new Error(`runSliceReviewLoop exhausted without returning a reviewed or failed result for slice #${plannedSlice.issueNumber}; maxReviewRounds=${normalizedArgs.maxReviewRounds}.`);
 }
 
-function buildSliceBaseContext(normalizedArgs, mergeQueue) {
+function buildSliceBaseContext(normalizedArgs, mergeQueue, startupTargetHead) {
   const lastMerged = mergeQueue.at(-1);
-  if (!lastMerged?.mergeCommit) return undefined;
+  if (!lastMerged?.mergeCommit) {
+    if (!startupTargetHead || startupTargetHead === 'unknown') return undefined;
+    return {
+      familyBranch: normalizedArgs.familyBranch,
+      baseBranch: normalizedArgs.targetBranch,
+      baseRef: startupTargetHead,
+      startupTargetHead,
+      targetBranch: normalizedArgs.targetBranch,
+      mergeQueue: []
+    };
+  }
   return {
     familyBranch: normalizedArgs.familyBranch,
     baseBranch: normalizedArgs.familyBranch,
     baseRef: lastMerged.mergeCommit,
     lastMergeCommit: lastMerged.mergeCommit,
+    startupTargetHead,
+    targetBranch: normalizedArgs.targetBranch,
     mergeQueue: mergeQueue.map((entry) => ({
       status: entry.status,
       familyBranch: entry.familyBranch,
@@ -783,6 +795,13 @@ function buildReviewFixPrompt(epicIssueNumber, plannedSlice, failedCommit, faile
 
 function baseContextPromptLines(sliceBaseContext) {
   if (!sliceBaseContext?.baseRef) return [];
+  if ((sliceBaseContext.mergeQueue?.length ?? 0) === 0 && sliceBaseContext.startupTargetHead === sliceBaseContext.baseRef) {
+    return [
+      `Base this first-layer worktree on target branch ${sliceBaseContext.targetBranch} at orchestrator startup HEAD ${sliceBaseContext.baseRef} before implementing.`,
+      'Do not start from a stale original epic base or any parent that does not contain the startup target HEAD.',
+      `Family branch to be created/updated after review: ${sliceBaseContext.familyBranch}`
+    ];
+  }
   return [
     `Base this worktree on family branch ${sliceBaseContext.familyBranch} at ${sliceBaseContext.baseRef} before implementing; this includes all blockers merged in earlier dependency layers.`,
     'Do not start from the stale original epic base for this dependent-layer slice.',
@@ -814,7 +833,7 @@ async function runFamilyIntegrationVerify({ Bash, familyWorktree, verifyCommands
 
 async function manageFamilyBase({ Bash, familyWorktree, normalizedArgs, startupTargetHead }) {
   return parseBashJson(
-    await Bash(`set -euo pipefail\n# base management (I10): compare startup target HEAD before family CMR/gstack-ship\nfamilyWorktree=${shellQuote(familyWorktree ?? '.')}\ntargetBranch=${shellQuote(normalizedArgs.targetBranch)}\nstartupTargetHead=${shellQuote(startupTargetHead)}\nif [ "$targetBranch" = "origin/main" ]; then git -C "$familyWorktree" fetch origin main >/dev/null 2>&1 || true; fi\ncurrentTargetHead=$(git -C "$familyWorktree" rev-parse "\${targetBranch}^{commit}")\nif [ "$startupTargetHead" = "unknown" ] || [ "$currentTargetHead" = "$startupTargetHead" ]; then\n  printf '{"status":"no_drift","startupTargetHead":"%s","currentTargetHead":"%s"}' "$startupTargetHead" "$currentTargetHead"\n  exit 0\nfi\nif ! git -C "$familyWorktree" merge-base --is-ancestor "$startupTargetHead" "$currentTargetHead"; then\n  printf '{"status":"conflict","reason":"target_base_not_fast_forward","startupTargetHead":"%s","currentTargetHead":"%s"}' "$startupTargetHead" "$currentTargetHead"\n  exit 0\nfi\nout=$(mktemp)\ntrap 'rm -f "$out"' EXIT\nset +e\ngit -C "$familyWorktree" rebase "$currentTargetHead" >"$out" 2>&1\nrc=$?\nset -e\nif [ "$rc" -ne 0 ]; then\n  git -C "$familyWorktree" rebase --abort >/dev/null 2>&1 || true\n  python3 - "$rc" "$out" "$startupTargetHead" "$currentTargetHead" <<'PY'\nimport json, sys\nwith open(sys.argv[2], encoding='utf-8', errors='replace') as handle:\n    output = handle.read()\nprint(json.dumps({"status": "conflict", "reason": "base_rebase_conflict", "exitCode": int(sys.argv[1]), "output": output, "startupTargetHead": sys.argv[3], "currentTargetHead": sys.argv[4]}))\nPY\n  exit 0\nfi\nrebaseHead=$(git -C "$familyWorktree" rev-parse HEAD)\nprintf '{"status":"rebased","startupTargetHead":"%s","currentTargetHead":"%s","rebaseHead":"%s"}' "$startupTargetHead" "$currentTargetHead" "$rebaseHead"`)
+    await Bash(`set -euo pipefail\n# base management (I10): compare startup target HEAD before family CMR/gstack-ship\nfamilyWorktree=${shellQuote(familyWorktree ?? '.')}\ntargetBranch=${shellQuote(normalizedArgs.targetBranch)}\nstartupTargetHead=${shellQuote(startupTargetHead)}\nif [ "$targetBranch" = "origin/main" ]; then git -C "$familyWorktree" fetch origin main >/dev/null 2>&1 || true; fi\ncurrentTargetHead=$(git -C "$familyWorktree" rev-parse "\${targetBranch}^{commit}")\nfamilyHead=$(git -C "$familyWorktree" rev-parse HEAD)\nif [ "$startupTargetHead" != "unknown" ] && ! git -C "$familyWorktree" merge-base --is-ancestor "$startupTargetHead" "$familyHead"; then\n  printf '{"status":"conflict","reason":"family_missing_startup_target_head","startupTargetHead":"%s","currentTargetHead":"%s","familyHead":"%s"}' "$startupTargetHead" "$currentTargetHead" "$familyHead"\n  exit 0\nfi\nif [ "$startupTargetHead" = "unknown" ] || [ "$currentTargetHead" = "$startupTargetHead" ]; then\n  printf '{"status":"no_drift","startupTargetHead":"%s","currentTargetHead":"%s","familyHead":"%s"}' "$startupTargetHead" "$currentTargetHead" "$familyHead"\n  exit 0\nfi\nif ! git -C "$familyWorktree" merge-base --is-ancestor "$startupTargetHead" "$currentTargetHead"; then\n  printf '{"status":"conflict","reason":"target_base_not_fast_forward","startupTargetHead":"%s","currentTargetHead":"%s","familyHead":"%s"}' "$startupTargetHead" "$currentTargetHead" "$familyHead"\n  exit 0\nfi\nout=$(mktemp)\ntrap 'rm -f "$out"' EXIT\nset +e\ngit -C "$familyWorktree" rebase "$currentTargetHead" >"$out" 2>&1\nrc=$?\nset -e\nif [ "$rc" -ne 0 ]; then\n  git -C "$familyWorktree" rebase --abort >/dev/null 2>&1 || true\n  python3 - "$rc" "$out" "$startupTargetHead" "$currentTargetHead" <<'PY'\nimport json, sys\nwith open(sys.argv[2], encoding='utf-8', errors='replace') as handle:\n    output = handle.read()\nprint(json.dumps({"status": "conflict", "reason": "base_rebase_conflict", "exitCode": int(sys.argv[1]), "output": output, "startupTargetHead": sys.argv[3], "currentTargetHead": sys.argv[4]}))\nPY\n  exit 0\nfi\nrebaseHead=$(git -C "$familyWorktree" rev-parse HEAD)\nprintf '{"status":"rebased","startupTargetHead":"%s","currentTargetHead":"%s","rebaseHead":"%s"}' "$startupTargetHead" "$currentTargetHead" "$rebaseHead"`)
   );
 }
 
