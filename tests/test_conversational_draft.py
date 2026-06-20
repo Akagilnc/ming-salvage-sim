@@ -1575,6 +1575,68 @@ def test_supplement_after_write_decree_updates_committed_draft_not_new_pending(g
     assert prompts and "【现有草案】草案A：清查粮饷" in prompts[0]
 
 
+def test_undo_supplement_after_write_decree_restores_committed_draft_text(game, monkeypatch):
+    """已成稿 draft 的后续补充是 turn_directives UPDATE；撤回该召对应恢复旧 draft 文本。"""
+    import ming_sim.session as session_mod
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    sess = _decree_session(db, state, content)
+    sess.llm_config = types.SimpleNamespace(channel="cli")
+    state.turn_phase = TurnPhase.SUMMONING.value
+
+    original = "草案A：清查粮饷"
+    merged = "草案A修订：清查粮饷，并加派监察御史随行。"
+
+    db.upsert_pending_directive(
+        state.turn, name, payload={"text": original, "actor": name})
+
+    monkeypatch.setattr(
+        session_mod, "write_decree_with_agno",
+        lambda llm, agno, st, directives, db=None:
+            "初拟诏书：" + "；".join(str(d["text"]) for d in directives),
+    )
+    sess.write_decree()
+
+    ctid = db.create_chat_turn(state, name, "sess-undo-committed-draft-supplement", 0)
+    before = db.capture_chat_rollback_snapshot()
+
+    def _canned(prompt, llm_config=None, tag=""):
+        if tag == "draft_intent":
+            return (json.dumps({"拟旨意图": "拟旨", "合并草案": merged},
+                               ensure_ascii=False), 1)
+        return (json.dumps({"密令动作": "无"}, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _canned)
+
+    GameSession.apply_cli_conversation_actions(
+        sess, ch,
+        player_message="这道旨再补一条，加派监察御史随行",
+        answer="臣遵旨，谨当添入。",
+        has_directive=False,
+        secret_order_id=None,
+    )
+
+    after = db.capture_chat_rollback_snapshot()
+    db.record_chat_turn_rollback_diffs(ctid, before, after)
+
+    assert db.conn.execute(
+        "SELECT text FROM turn_directives WHERE turn=? AND status='draft'",
+        (state.turn,),
+    ).fetchone()["text"] == merged
+
+    db.undo_chat_turn(ctid)
+
+    rows = db.conn.execute(
+        "SELECT text, status FROM turn_directives WHERE turn=?",
+        (state.turn,),
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["status"] == "draft"
+    assert rows[0]["text"] == original
+
+
 def test_supplied_decree_not_used_after_pending_directive_auto_commit(game, monkeypatch):
     """resolve_turn(decree=...) 外部传入旧诏书时，若本次调用先 auto-commit 了口头草案，
     传入文本不包含新 draft；必须重拟/重取当前 draft 集，不能把未入正文的 draft 标 issued。"""
