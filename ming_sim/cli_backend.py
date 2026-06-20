@@ -726,12 +726,12 @@ def extract_draft_intent(
         obj = {}
     _raw = str(obj.get("拟旨意图") or "无").strip()
     _action = _raw if _raw in {"无", "拟旨"} else "无"
-    # 无意图时保持空草案；补充模式优先用 LLM 输出的合并草案，未填时 fallback 到 minister_reply。
+    # 无意图时保持空草案；补充模式优先用 LLM 输出的合并草案，未填时保留现有草案。
     if _action == "无":
         draft_text = ""
     elif _supplement_mode:
         merged = str(obj.get("合并草案") or "").strip()
-        draft_text = merged if merged else (minister_reply or "").strip()
+        draft_text = merged if merged else _existing_draft_text
     else:
         draft_text = (minister_reply or "").strip()
     return {

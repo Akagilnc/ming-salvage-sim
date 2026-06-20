@@ -164,14 +164,17 @@ def test_pending_directive_last_write_wins(game, monkeypatch):
     first_id = pend_after_first[0]["id"]
     assert first_reply in json.loads(pend_after_first[0]["payload_json"])["text"]
 
-    # 第二次：皇帝「补充一下」→ 同意图，新草稿
+    # 第二次：皇帝「补充一下」→ LLM 返回合并后新草稿。
     # 注：LLM 判确认（extraction_confirmation_intent）先被调，返回「无」，然后才进草案检测
     # 两次调用都 canned 成 {"拟旨意图": "拟旨"}（确认判断时会调但结果被丢弃）
     def canned_second(prompt, llm_config=None, tag=""):
         # 确认意图抽取 → 无（别应允/拒绝，只补充草稿）
         if "应允" in prompt or "拒绝" in prompt or "待皇帝定夺" in prompt:
             return (json.dumps({"确认": "无"}, ensure_ascii=False), 1)
-        return (json.dumps({"拟旨意图": "拟旨"}, ensure_ascii=False), 1)
+        return (json.dumps(
+            {"拟旨意图": "拟旨", "合并草案": second_reply},
+            ensure_ascii=False,
+        ), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", canned_second)
     GameSession.apply_cli_conversation_actions(
@@ -818,9 +821,9 @@ def test_undo_chat_turn_removes_write_decree_draft(game):
 
 # ── ⑫ extract_draft_intent 降级分支（issue #137 覆盖补缺）──────────────────────
 
-def test_supplement_mode_falls_back_to_minister_reply_when_merged_empty(monkeypatch):
+def test_supplement_mode_falls_back_to_existing_draft_when_merged_empty(monkeypatch):
     """补充模式（has_pending_draft + existing_draft_text）拟旨，但 LLM 未填「合并草案」：
-    draft_text 应 fallback 到 minister_reply（cli_backend.py:719-722 的空合并草案路径）。"""
+    draft_text 应保留 existing_draft_text，避免用确认回话覆盖旧草案。"""
     def _canned(prompt, llm_config=None, tag=""):
         # 拟旨意图=拟旨，但故意不带「合并草案」字段
         return (json.dumps({"拟旨意图": "拟旨"}, ensure_ascii=False), 1)
@@ -833,8 +836,8 @@ def test_supplement_mode_falls_back_to_minister_reply_when_merged_empty(monkeypa
         existing_draft_text="原始草稿：着户部清查三边粮饷。",
     )
     assert result["draft_action"] == "拟旨"
-    # merged 空 → 退回大臣回话
-    assert result["draft_text"] == "臣即补入，着监察御史随行督查。"
+    assert result["draft_text"] == "原始草稿：着户部清查三边粮饷。"
+    assert "臣即补入" not in result["draft_text"]
 
 
 def test_supplement_mode_prefers_merged_when_present(monkeypatch):
