@@ -13,7 +13,7 @@ ADR 0016 采 Sandcastle 当底座，但其默认 `run()` + merge-to-head 模型�
 1. **一 issue 一条常驻 worktree**：从 base 切出 slice 分支后起一条 worktree，coder 的 impl + 历轮 fix 全 commit 进它（不是每个 agent run 开新 throwaway sandbox）。**幂等**：若该 issue 的 slice 分支/worktree 已存在（崩溃残留或升级续跑）→ 复用、从既有 HEAD 续跑，不重切（见 Consequences §状态落盘）。
 2. **base 按 issue 类型**：独立子 issue → 从默认分支（main）派生。**v0.1 对放行的「有父」叶子也一律当独立片处理：从 main 派生（v0.1 传话筒只传 issue 号、不接 base 参数），不按有无父区分 base**（「父 = 多个子，做通一个子即做父的一部分」；家族 base 派生 + 子片合回家族 = 家族层 deferred，见 ADR 0016 v1「输入只收单个实现切片」bullet + PRD #244 输入闸）。v0.1 输入闸只挡父 issue（有子）/ 未切 PRD epic / 非 rfa / **有未关 blocked_by 依赖**，不挡「有父叶子」。
 3. **家族 base = 家族层（v0.1 deferred）不变式，v0.1 单片编排不消费它**：v0.1 单片**从 main 切**（§2），此刻**不从家族 base 派生、不读它**；家族 base 的创建 / 管理 + 把子片合回 = 后面「家族集成」层（planner / merger 角色）的事，不在单片目标内（与 §2「从 main 派生」一致——不再写「单片只消费家族 base」）。
-4. **sandbox = 隔离壳**：agent 跑在容器沙箱里，沙箱挂那条 host 侧常驻 worktree；沙箱可随 run 起落，worktree 上的 commit 不随沙箱蒸发。**v1 一镜像下 coder 与 reviewer 跑在同一 sandbox／同一 worktree mount，reviewer 的「只读」靠 reviewer soul 软约束（烤进镜像的 reviewer soul 里写 READ-ONLY 硬约束；**不引用 cmr skill 的 `cmr-reviewer.md`**——那在 ak-cross-m-review skill 里、不在编排器仓库）强制，不是 OS 级只读挂**；OS 级 coder-rw／reviewer-ro 分挂只在 reviewer 拆成独立镜像／独立 sandbox 时才成立（可逆，见 ADR 0016 v1「一个镜像、双角色」bullet）。
+4. **sandbox = 隔离壳**：agent 跑在容器沙箱里，沙箱挂那条 host 侧常驻 worktree；沙箱可随 run 起落，worktree 上的 commit 不随沙箱蒸发。**v1 一镜像下 coder 与 reviewer 跑在同一 sandbox／同一 worktree mount，reviewer 的「只读」靠 reviewer soul 软约束（烤进镜像的 reviewer soul 里写 READ-ONLY 硬约束；不引用 cmr skill 的 `cmr-reviewer.md`——那在 ak-cross-m-review skill 里、不在编排器仓库）强制，不是 OS 级只读挂**；OS 级 coder-rw／reviewer-ro 分挂只在 reviewer 拆成独立镜像／独立 sandbox 时才成立（可逆，见 ADR 0016 v1「一个镜像、双角色」bullet）。
 
 ## Considered Options
 
