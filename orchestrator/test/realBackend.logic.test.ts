@@ -22,11 +22,14 @@ import {
   checkBranchHeadConsistency,
   classifyResumeError,
   extractAgentBrief,
+  extractCoderTag,
   hasAgentBrief,
   isLikelySha,
   isReadyForAgent,
+  lastLedgerBranchHead,
   lastSessionId,
   modelIdForSlug,
+  parseSubIssueCount,
   SANDBOX_CODEX_DIR,
   SANDBOX_SKILLS_DIR,
   type GhBlockedBy,
@@ -229,6 +232,45 @@ describe("realBackend checkBranchHeadConsistency (codex#2)", () => {
   });
 });
 
+// ─── resume HEAD reconciliation: mismatch → bail (integ-cmr 256 r1, F5) ───────
+
+describe("realBackend resume HEAD reconciliation (codex#2 wiring, F5)", () => {
+  const sha = "a".repeat(40);
+  const other = "b".repeat(40);
+
+  it("lastLedgerBranchHead picks the latest recorded SHA, skipping name fallbacks", () => {
+    // Earliest entries used the v0.1 branch-NAME fallback; the latest agent step
+    // recorded a real SHA — that is the base the resume must reconcile against.
+    expect(
+      lastLedgerBranchHead([
+        { branchHEAD: "feat/244-orchestrator-issue-256" }, // v0.1 name
+        { branchHEAD: sha }, // real SHA (latest)
+      ]),
+    ).toBe(sha);
+  });
+
+  it("returns undefined when no entry recorded a value (fresh / pre-SHA ledger)", () => {
+    expect(lastLedgerBranchHead([{}, {}])).toBeUndefined();
+    expect(lastLedgerBranchHead([])).toBeUndefined();
+  });
+
+  it("mismatch → bail: a moved branch (live HEAD ≠ last ledger SHA) is a hard error", () => {
+    // The reconciliation findResumeState runs: read the last recorded SHA, read
+    // the live worktree HEAD, compare. A divergence (stray commit / wrong-
+    // worktree reuse / corrupted ledger) must NOT be resumed — it bails to a
+    // clean error (S8(error) at the runner). This asserts the decision the wiring
+    // feeds to `throw`.
+    const ledgerHead = lastLedgerBranchHead([{ branchHEAD: sha }]);
+    const verdict = checkBranchHeadConsistency(ledgerHead, /*liveHead*/ other);
+    expect(verdict).toEqual({ ok: false, ledgerHead: sha, liveHead: other });
+  });
+
+  it("agreement → resume proceeds (live HEAD == last ledger SHA)", () => {
+    const ledgerHead = lastLedgerBranchHead([{ branchHEAD: sha }]);
+    expect(checkBranchHeadConsistency(ledgerHead, sha)).toEqual({ ok: true });
+  });
+});
+
 // ─── StructuredOutputError dead-session classification (#256) ─────────────────
 
 describe("realBackend classifyResumeError", () => {
@@ -274,5 +316,96 @@ describe("realBackend attributeFailure (codex#3)", () => {
   it("stringifies a non-Error cause", () => {
     const e = attributeFailure("S7", "push", "denied");
     expect(e.message).toBe("S7:push — denied");
+  });
+});
+
+// ─── gh subIssues count parsing (integ-cmr 256 r1, Finding 1) ────────────────
+
+describe("realBackend parseSubIssueCount", () => {
+  it("reads totalCount from the real gh {nodes,totalCount} object shape", () => {
+    // `gh issue view --json subIssues` returns an OBJECT, not an array:
+    // {"subIssues":{"nodes":[...],"totalCount":10}}. The old Array.isArray
+    // check was always false → count always 0 → the S0 parent-epic gate never
+    // fired. (Verified against the live #244: totalCount:10.)
+    expect(
+      parseSubIssueCount({
+        subIssues: {
+          nodes: [{ number: 247 }, { number: 248 }],
+          totalCount: 10,
+        },
+      }),
+    ).toBe(10);
+  });
+
+  it("falls back to nodes.length when totalCount is absent", () => {
+    expect(
+      parseSubIssueCount({ subIssues: { nodes: [{ number: 1 }, { number: 2 }] } }),
+    ).toBe(2);
+  });
+
+  it("returns 0 for a leaf issue (empty sub-issues)", () => {
+    expect(parseSubIssueCount({ subIssues: { nodes: [], totalCount: 0 } })).toBe(0);
+  });
+
+  it("returns 0 when the subIssues field is missing entirely", () => {
+    expect(parseSubIssueCount({})).toBe(0);
+    expect(parseSubIssueCount({ subIssues: undefined })).toBe(0);
+  });
+
+  it("returns 0 (never NaN/throw) for a malformed subIssues value", () => {
+    // A future/odd gh shape must never crash the S0 gate.
+    expect(parseSubIssueCount({ subIssues: "weird" })).toBe(0);
+    expect(parseSubIssueCount({ subIssues: 5 })).toBe(0);
+    expect(parseSubIssueCount({ subIssues: { nodes: "x" } })).toBe(0);
+  });
+});
+
+// ─── coder stdout <coder> tag decode (integ-cmr 256 r1, Finding 2) ───────────
+
+describe("realBackend extractCoderTag", () => {
+  it("extracts + JSON-parses the <coder> tag from coder stdout", () => {
+    // coder steps run maxIter>1, so Sandcastle's typed `output` (which requires
+    // maxIterations:1) is unavailable; the structured coder result is carried in
+    // a <coder> tag in stdout instead.
+    const stdout =
+      "some agent chatter\n<coder>{\"committed\": true, \"commitsAdded\": 2}</coder>\nCODER_STEP_COMPLETE";
+    expect(extractCoderTag(stdout)).toEqual({ committed: true, commitsAdded: 2 });
+  });
+
+  it("unwraps a fenced JSON code block inside the tag", () => {
+    const stdout =
+      '<coder>\n```json\n{"committed": false, "commitsAdded": 0}\n```\n</coder>';
+    expect(extractCoderTag(stdout)).toEqual({
+      committed: false,
+      commitsAdded: 0,
+    });
+  });
+
+  it("takes the LAST <coder> tag when several iterations each emit one", () => {
+    const stdout =
+      '<coder>{"committed": true, "commitsAdded": 1}</coder>\n' +
+      'iterating…\n' +
+      '<coder>{"committed": true, "commitsAdded": 3}</coder>';
+    expect(extractCoderTag(stdout)).toEqual({ committed: true, commitsAdded: 3 });
+  });
+
+  it("returns an escalate payload when the coder tag carries one", () => {
+    const stdout =
+      '<coder>{"committed": false, "commitsAdded": 0, "escalate": {"reason": "blocked", "diagnosis": "design gap"}}</coder>';
+    expect(extractCoderTag(stdout)).toEqual({
+      committed: false,
+      commitsAdded: 0,
+      escalate: { reason: "blocked", diagnosis: "design gap" },
+    });
+  });
+
+  it("throws a clear error when no <coder> tag is present", () => {
+    expect(() => extractCoderTag("no tag here\nCODER_STEP_COMPLETE")).toThrow(
+      /<coder>/,
+    );
+  });
+
+  it("throws when the tag body is not valid JSON", () => {
+    expect(() => extractCoderTag("<coder>not json</coder>")).toThrow();
   });
 });

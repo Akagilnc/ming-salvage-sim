@@ -154,6 +154,29 @@ export function extractAgentBrief(json: GhIssueJson): string {
   return brief;
 }
 
+/**
+ * Real shape of `gh issue view --json subIssues`:
+ * `{"subIssues":{"nodes":[…],"totalCount":N}}` — an OBJECT, not an array
+ * (verified against the live #244: `totalCount:10`). The S0 input gate uses this
+ * count to reject a parent epic (`hasSubIssues`), so reading it correctly is
+ * load-bearing: an array check on the object is always false → count always 0 →
+ * the parent-epic gate never fires (PRD #244 US#3 / S0 four-way condition).
+ *
+ * Prefers `totalCount`, falls back to `nodes.length`, and returns 0 for any
+ * missing/malformed value (never NaN/throw — a future gh shape must not crash
+ * the gate).
+ */
+export function parseSubIssueCount(parsed: { subIssues?: unknown }): number {
+  const sub = parsed.subIssues;
+  if (sub === null || typeof sub !== "object") return 0;
+  const obj = sub as { totalCount?: unknown; nodes?: unknown };
+  if (typeof obj.totalCount === "number" && Number.isFinite(obj.totalCount)) {
+    return obj.totalCount;
+  }
+  if (Array.isArray(obj.nodes)) return obj.nodes.length;
+  return 0;
+}
+
 /** Build the S1 {@link IssueSnapshot} (body + comments + Agent Brief). */
 export function buildIssueSnapshot(
   issueNumber: number,
@@ -256,6 +279,59 @@ export function lastSessionId(
   return undefined;
 }
 
+// ── coder structured output from stdout (integ-cmr 256 r1) ──────────────────
+
+/**
+ * Extract + JSON-parse the LAST `<coder>…</coder>` tag from a coder step's
+ * stdout.
+ *
+ * WHY a stdout tag (not Sandcastle's typed `output`): a coder step runs with
+ * `maxIterations = StepSpec.maxIter > 1` (the within-step Ralph retry budget),
+ * but Sandcastle's `output` definition REQUIRES `maxIterations === 1`
+ * (d.ts: "maxIterations must be 1"). So the coder step cannot use the typed
+ * `output` path — `result.output` is `undefined` and `coderOutputSchema.parse`
+ * would throw a ZodError on every coder step (the wiring bug this fixes). The
+ * coder instead emits its structured result in a `<coder>` tag in stdout, mirroring
+ * Sandcastle's own tag-in-stdout extraction (fence-aware JSON unwrapping).
+ *
+ * The LAST tag wins so a multi-iteration coder reports its FINAL state.
+ *
+ * Pure: parses a string only — unit-tested without a container. Returns the raw
+ * parsed object for {@link RealBackend}'s `decodeOutput` (coderOutputSchema) to
+ * validate; throws a clear error when the tag is missing (the caller turns that
+ * into the runner's S8(error) edge, same as a malformed structured output).
+ */
+export function extractCoderTag(stdout: string): unknown {
+  // Scan for ALL <coder>…</coder> blocks; the last one is the final iteration's
+  // result. `[\s\S]` so the body may span newlines; non-greedy so adjacent tags
+  // don't merge.
+  const re = /<coder>([\s\S]*?)<\/coder>/g;
+  let last: string | undefined;
+  for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) {
+    last = m[1];
+  }
+  if (last === undefined) {
+    throw new Error(
+      "realBackend: coder step stdout carried no <coder>…</coder> tag — the " +
+        "coder must emit its structured result in a <coder> tag (maxIter>1 " +
+        "steps cannot use Sandcastle's typed output, which requires " +
+        "maxIterations:1).",
+    );
+  }
+  return JSON.parse(stripJsonFence(last.trim()));
+}
+
+/**
+ * Unwrap a ```json … ``` (or bare ``` … ```) fenced code block to its inner
+ * payload, mirroring Sandcastle's fence-aware tag extraction. Returns the input
+ * unchanged when it is not fenced.
+ */
+export function stripJsonFence(s: string): string {
+  const fence = /^```(?:json)?\s*\n?([\s\S]*?)\n?```$/;
+  const m = fence.exec(s.trim());
+  return m ? m[1].trim() : s;
+}
+
 // ── branchHEAD consistency (codex#2) ────────────────────────────────────────
 
 /**
@@ -305,6 +381,30 @@ export function checkBranchHeadConsistency(
 /** A git SHA / abbreviation: only lower-case hex, length 7–40. */
 export function isLikelySha(s: string): boolean {
   return /^[0-9a-f]{7,40}$/.test(s);
+}
+
+/**
+ * The most recent recorded `branchHEAD` SHA in a persisted ledger (codex#2
+ * resume reconciliation). Scans from the end so the latest step's SHA wins, and
+ * skips entries that carry no SHA (none recorded yet, or the v0.1 branch-name
+ * fallback is still a value — {@link checkBranchHeadConsistency} ignores
+ * non-SHA values, so they never raise a false mismatch). Returns undefined when
+ * no entry carries a value — the consistency check then has nothing to
+ * contradict.
+ *
+ * Pure (array scan) so the resume reconciliation decision is unit-tested
+ * without git: `lastLedgerBranchHead(ledger)` feeds
+ * {@link checkBranchHeadConsistency} against the live HEAD, and a mismatch bails
+ * `findResumeState` to a clean error (S8(error) at the runner).
+ */
+export function lastLedgerBranchHead(
+  ledger: ReadonlyArray<{ readonly branchHEAD?: string }>,
+): string | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const head = ledger[i]?.branchHEAD;
+    if (typeof head === "string" && head.length > 0) return head;
+  }
+  return undefined;
 }
 
 // ── StructuredOutputError dead-session fallback decision (#256) ──────────────
@@ -416,20 +516,53 @@ export class RealBackend implements Backend {
 
   // ── S0: lightweight metadata (host gh) ─────────────────────────────────────
   async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
-    const raw = this.sh("gh", [
-      "issue",
-      "view",
-      String(issueNumber),
-      "--repo",
-      this.opts.repo,
-      "--json",
-      "number,body,labels,comments",
-    ]);
-    const json = JSON.parse(raw) as GhIssueJson;
+    // Multi-phase step: the first failing sub-op names the failure for the US#30
+    // error package (codex#3 attributeFailure — integ-cmr 256 r1, F6). The two
+    // native sub-counts are best-effort (caught internally, default to leaf), so
+    // only the gh-view + parse can throw here.
+    const json = this.phase("S0", "fetchIssueView", () => {
+      const raw = this.sh("gh", [
+        "issue",
+        "view",
+        String(issueNumber),
+        "--repo",
+        this.opts.repo,
+        "--json",
+        "number,body,labels,comments",
+      ]);
+      return JSON.parse(raw) as GhIssueJson;
+    });
     // Native sub-issue + blocked_by via the GraphQL/REST API.
     const subIssueCount = this.fetchSubIssueCount(issueNumber);
     const blockedBy = this.fetchBlockedBy(issueNumber);
     return buildIssueMeta(issueNumber, json, blockedBy, subIssueCount);
+  }
+
+  /**
+   * Run a multi-phase step's sub-operation, attributing any throw to
+   * `step:phase` via {@link attributeFailure} (codex#3). The runner's outer
+   * switch labels the STEP; this refines it to the failing sub-op (e.g.
+   * "S1: createWorktree") for the US#30 error package.
+   */
+  private phase<T>(step: StepId, phase: string, op: () => T): T {
+    try {
+      return op();
+    } catch (err) {
+      throw attributeFailure(step, phase, err);
+    }
+  }
+
+  /** Async sibling of {@link phase}: attribute an awaited sub-op's throw. */
+  private async phaseAsync<T>(
+    step: StepId,
+    phase: string,
+    op: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await op();
+    } catch (err) {
+      throw attributeFailure(step, phase, err);
+    }
   }
 
   private fetchSubIssueCount(issueNumber: number): number {
@@ -443,8 +576,10 @@ export class RealBackend implements Backend {
         "--json",
         "subIssues",
       ]);
-      const parsed = JSON.parse(raw) as { subIssues?: unknown[] };
-      return Array.isArray(parsed.subIssues) ? parsed.subIssues.length : 0;
+      const parsed = JSON.parse(raw) as { subIssues?: unknown };
+      // `gh issue view --json subIssues` returns {nodes,totalCount} (an OBJECT),
+      // not an array — read the count off that shape (integ-cmr 256 r1, F1).
+      return parseSubIssueCount(parsed);
     } catch {
       // `subIssues` is a newer gh field; absence ⇒ treat as a leaf.
       return 0;
@@ -498,11 +633,37 @@ export class RealBackend implements Backend {
     if (existing !== undefined) {
       return { branch, base, path: existing };
     }
-    const wt = await sc.createWorktree({
-      branchStrategy: { type: "branch", branch },
-      cwd: this.opts.mainRepo,
-    });
+    // Cut the slice branch from `base` (= "main", runner.ts SLICE_BASE), NOT the
+    // mainRepo's current HEAD. NamedBranchStrategy.baseBranch defaults to HEAD
+    // when omitted (Sandcastle d.ts:213), so omitting it silently derived the
+    // slice from whatever the mainRepo happened to be checked out on — the #244
+    // "从 main 派生" invariant only held by accident (integ-cmr 256 r1, F3).
+    // Sandcastle notes the caller owns currency of the ref, so refresh `base`
+    // first (best-effort: a fetch failure must not block a local-only base).
+    this.ensureBaseRef(base);
+    // Multi-phase S1: attribute a createWorktree throw as "S1: createWorktree"
+    // for the US#30 error package (codex#3 attributeFailure — F6).
+    const wt = await this.phaseAsync("S1", "createWorktree", () =>
+      sc.createWorktree({
+        branchStrategy: { type: "branch", branch, baseBranch: base },
+        cwd: this.opts.mainRepo,
+      }),
+    );
     return { branch, base, path: wt.worktreePath };
+  }
+
+  /**
+   * Refresh the base ref so the slice is cut from an up-to-date `base`.
+   * Sandcastle notes the caller is responsible for the ref's currency
+   * (d.ts:211); a `git fetch` failure (offline / local-only base) must NOT block
+   * worktree creation, so this is best-effort.
+   */
+  private ensureBaseRef(base: string): void {
+    try {
+      this.sh("git", ["fetch", "origin", base], this.opts.mainRepo);
+    } catch {
+      // offline or a local-only base ⇒ proceed with the local ref.
+    }
   }
 
   private findExistingWorktree(branch: string): string | undefined {
@@ -576,6 +737,26 @@ export class RealBackend implements Backend {
       : sc.Output.object({ tag: "coder", schema: coderOutputSchema });
   }
 
+  /**
+   * Resolve the raw structured payload to decode for a step.
+   *
+   * - `typedOutputUsed` (reviewer single-pass, OR any resume — both run
+   *   maxIterations:1): Sandcastle parsed the tag into `result.output`, so read
+   *   it directly.
+   * - otherwise (a coder step with maxIter>1, where Sandcastle's typed `output`
+   *   is forbidden): extract the `<coder>` tag from `result.stdout` ourselves
+   *   (integ-cmr 256 r1, F2 — the coder path produced no `result.output`, so the
+   *   old `coderOutputSchema.parse(undefined)` threw on EVERY coder step).
+   */
+  private rawOutputFor(
+    result: { output?: unknown; stdout: string },
+    typedOutputUsed: boolean,
+  ): unknown {
+    if (typedOutputUsed) return result.output;
+    // Untyped coder path: structured result lives in a <coder> tag in stdout.
+    return extractCoderTag(result.stdout);
+  }
+
   /** Decode a Sandcastle structured output into a domain StepOutput. */
   private decodeOutput(spec: StepSpec, raw: unknown): StepOutput {
     if (spec.role === "reviewer") {
@@ -616,11 +797,14 @@ export class RealBackend implements Backend {
       branchStrategy: { type: "head" }, // commit on the resident branch in place
       promptFile: join(this.opts.promptsDir, spec.promptFile),
       // Structured output only on reviewer single-pass steps (Sandcastle
-      // requires maxIterations:1 with output); coder steps iterate, so their
-      // output is collected from the completion-signalled final tag.
+      // requires maxIterations:1 with output); coder steps iterate (maxIter>1),
+      // so their structured result is collected from a <coder> tag in stdout
+      // (rawOutputFor) instead — Sandcastle's typed `output` is forbidden there.
       ...(spec.maxIter === 1 ? { output: this.outputFor(spec) } : {}),
     });
-    const output = this.decodeOutput(spec, (result as { output?: unknown }).output);
+    const typedOutputUsed = spec.maxIter === 1;
+    const raw = this.rawOutputFor(result, typedOutputUsed);
+    const output = this.decodeOutput(spec, raw);
     return { output, sessionId: lastSessionId(result) };
   }
 
@@ -643,11 +827,18 @@ export class RealBackend implements Backend {
         branchStrategy: { type: "head" },
         resumeSession: sessionId,
         promptFile: join(this.opts.promptsDir, spec.promptFile),
-        ...(spec.maxIter === 1 ? { output: this.outputFor(spec) } : {}),
+        // A resume ALWAYS runs maxIterations:1, so Sandcastle's typed `output`
+        // is valid for BOTH roles here (it only forbids maxIter>1). Pass it by
+        // role unconditionally — the old `spec.maxIter===1` gate left a resumed
+        // CODER step (spec.maxIter>1) with no `output`, so decodeOutput parsed
+        // `undefined` and threw a ZodError on every resumed coder step
+        // (integ-cmr 256 r1, F4). Typed output ⇒ read `result.output` directly
+        // for both roles (no <coder> stdout fallback needed at maxIter:1).
+        output: this.outputFor(spec),
       });
       const output = this.decodeOutput(
         spec,
-        (result as { output?: unknown }).output,
+        this.rawOutputFor(result, /*typedOutputUsed*/ true),
       );
       return { output, sessionId: lastSessionId(result) ?? sessionId };
     } catch (err) {
@@ -667,11 +858,12 @@ export class RealBackend implements Backend {
           branchStrategy: { type: "head" },
           resumeSession: recovery.sessionId,
           promptFile: join(this.opts.promptsDir, spec.promptFile),
-          ...(spec.maxIter === 1 ? { output: this.outputFor(spec) } : {}),
+          // maxIterations:1 ⇒ typed output valid for both roles (F4, as above).
+          output: this.outputFor(spec),
         });
         const output = this.decodeOutput(
           spec,
-          (result as { output?: unknown }).output,
+          this.rawOutputFor(result, /*typedOutputUsed*/ true),
         );
         return { output, sessionId: lastSessionId(result) ?? recovery.sessionId };
       }
@@ -705,11 +897,30 @@ export class RealBackend implements Backend {
     const stateDir = this.stateDirFor(wtPath, issueNumber);
     const ledger = this.readLedger(stateDir);
     if (ledger === undefined) return undefined;
-    return {
-      worktree: { branch, base: "main", path: wtPath },
-      stateDir,
-      ledger,
-    };
+    const worktree = { branch, base: "main", path: wtPath };
+
+    // codex#2 — before reusing the resident branch, verify the LAST recorded
+    // branchHEAD SHA still matches the live worktree HEAD (integ-cmr 256 r1,
+    // F5). A mismatch means the branch moved out from under the ledger (a stray
+    // external commit, a wrong-worktree reuse, a corrupted ledger), so resuming
+    // would attribute new work to a base the ledger never saw — log + bail to a
+    // clean error rather than silently continuing on a divergent base. The
+    // runner catches this `findResumeState` throw and turns it into S8(error).
+    const ledgerHead = lastLedgerBranchHead(ledger);
+    const liveHead = await this.worktreeHead(worktree);
+    const verdict = checkBranchHeadConsistency(ledgerHead, liveHead);
+    if (!verdict.ok) {
+      const msg =
+        `resume aborted for issue #${issueNumber}: the resident branch HEAD ` +
+        `(${verdict.liveHead}) diverged from the last recorded ledger SHA ` +
+        `(${verdict.ledgerHead}). The branch moved out from under the ledger ` +
+        `(stray commit / wrong-worktree reuse / corrupted ledger); continuing ` +
+        `would attribute new work to a base the ledger never saw.`;
+      console.error(`[realBackend] ${msg}`);
+      throw new Error(msg);
+    }
+
+    return { worktree, stateDir, ledger };
   }
 
   private stateDirFor(wtPath: string, issueNumber: number): string {
