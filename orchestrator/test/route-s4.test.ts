@@ -16,7 +16,7 @@
 
 import { describe, expect, it } from "vitest";
 import { route } from "../src/route.js";
-import type { Finding, ReviewerOutput } from "../src/types.js";
+import type { CoderOutput, Finding, ReviewerOutput, StepOutput } from "../src/types.js";
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -205,5 +205,68 @@ describe("S4 route_findings — P0/P1 severity branch (action=defer, severity lo
       ]),
     });
     expect(decision).toEqual({ kind: "next", step: "S5" });
+  });
+});
+
+// ─── #5 route() defense-in-depth: malformed step output → handoff(error) ─────
+//
+// route() is the agent↔runner seam. Even though the runner now guards malformed
+// output before route() is called, route() itself must NEVER silently coerce a
+// non-conforming output into a success edge — that could bypass the P0/P1 fix
+// gate (e.g. a non-reviewer output at S4 becoming empty findings → push).
+
+function coderOutput(committed: boolean): CoderOutput {
+  return { kind: "coder", committed, commitsAdded: committed ? 1 : 0 };
+}
+
+describe("S2 route — malformed output → handoff(error), never silent → S3", () => {
+  it("S2 with a reviewer output (wrong kind) → handoff(error)", () => {
+    const decision = route({
+      from: "S2",
+      output: reviewerOutput([]) as StepOutput,
+    });
+    expect(decision).toEqual({ kind: "handoff", status: "error" });
+  });
+
+  it("S2 with undefined output → handoff(error)", () => {
+    const decision = route({ from: "S2", output: undefined });
+    expect(decision).toEqual({ kind: "handoff", status: "error" });
+  });
+
+  it("S2 with garbage output (no kind) → handoff(error)", () => {
+    const decision = route({
+      from: "S2",
+      output: { foo: "bar" } as unknown as StepOutput,
+    });
+    expect(decision).toEqual({ kind: "handoff", status: "error" });
+  });
+
+  it("S2 with a well-formed committed coder output → S3 (regression)", () => {
+    const decision = route({ from: "S2", output: coderOutput(true) });
+    expect(decision).toEqual({ kind: "next", step: "S3" });
+  });
+});
+
+describe("S4 route — non-reviewer output → handoff(error), NEVER coerced to empty findings + push", () => {
+  it("S4 with a coder output (wrong kind) → handoff(error), not push", () => {
+    const decision = route({
+      from: "S4",
+      output: coderOutput(true) as StepOutput,
+    });
+    // Crucially NOT { kind: "next", step: "S7" } — that would ship unreviewed.
+    expect(decision).toEqual({ kind: "handoff", status: "error" });
+  });
+
+  it("S4 with undefined output → handoff(error)", () => {
+    const decision = route({ from: "S4", output: undefined });
+    expect(decision).toEqual({ kind: "handoff", status: "error" });
+  });
+
+  it("S4 with garbage output (no kind) → handoff(error)", () => {
+    const decision = route({
+      from: "S4",
+      output: { findings: "nope" } as unknown as StepOutput,
+    });
+    expect(decision).toEqual({ kind: "handoff", status: "error" });
   });
 });
