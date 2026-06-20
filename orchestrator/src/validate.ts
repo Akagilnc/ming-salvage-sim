@@ -41,7 +41,14 @@ const FINDING_STRING_FIELDS = [
   "suggested_fix",
 ] as const;
 
-function isNonEmptyString(v: unknown): v is string {
+/**
+ * Type-only string guard (intentionally does NOT reject `""`): a Finding's
+ * required string fields must be PRESENT strings per the #244 contract, but the
+ * contract does not forbid empty values here. For a genuinely non-empty check
+ * (used by `escalate`), see `isFilledString` below. The name is `isString`, not
+ * `isNonEmptyString`, so the type-only intent is not misread (gemini R1).
+ */
+function isString(v: unknown): v is string {
   return typeof v === "string";
 }
 
@@ -95,7 +102,7 @@ export function isValidFinding(f: unknown): f is Finding {
     return false;
   }
   for (const field of FINDING_STRING_FIELDS) {
-    if (!isNonEmptyString(obj[field])) return false;
+    if (!isString(obj[field])) return false;
   }
   return true;
 }

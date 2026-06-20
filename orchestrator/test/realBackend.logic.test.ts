@@ -35,6 +35,7 @@ import {
   isReadyForAgent,
   lastLedgerBranchHead,
   lastSessionId,
+  matchWorktreeForBranch,
   modelIdForSlug,
   parseBlockedBy,
   parseSubIssueCount,
@@ -247,6 +248,56 @@ describe("realBackend cutRefFor (worktree_base_stale, r3)", () => {
   it("preserves a non-default base name in both branches", () => {
     expect(cutRefFor("release-1.x", true)).toBe("origin/release-1.x");
     expect(cutRefFor("release-1.x", false)).toBe("release-1.x");
+  });
+});
+
+// ─── worktree reuse: exact branch-line match (gemini R1, high) ───────────────
+
+describe("realBackend matchWorktreeForBranch (prefix-collision safety)", () => {
+  // `git worktree list --porcelain` emits blank-line-separated blocks, each a
+  // set of `key value` lines; the branch line is exactly `branch refs/heads/<ref>`.
+  const porcelain = [
+    "worktree /repo/.worktrees/issue-12",
+    "HEAD aaaa",
+    "branch refs/heads/feat/244-orchestrator-issue-12",
+    "",
+    "worktree /repo/.worktrees/issue-123",
+    "HEAD bbbb",
+    "branch refs/heads/feat/244-orchestrator-issue-123",
+  ].join("\n");
+
+  it("returns the exact worktree for the queried branch", () => {
+    expect(
+      matchWorktreeForBranch(porcelain, "feat/244-orchestrator-issue-12"),
+    ).toBe("/repo/.worktrees/issue-12");
+    expect(
+      matchWorktreeForBranch(porcelain, "feat/244-orchestrator-issue-123"),
+    ).toBe("/repo/.worktrees/issue-123");
+  });
+
+  it("does NOT substring-match a longer same-prefix branch", () => {
+    // The bug: `block.includes('branch refs/heads/' + branch)` matches the
+    // issue-123 block when querying issue-12. Exact line match must not.
+    const single = [
+      "worktree /repo/.worktrees/issue-123",
+      "HEAD bbbb",
+      "branch refs/heads/feat/244-orchestrator-issue-123",
+    ].join("\n");
+    expect(
+      matchWorktreeForBranch(single, "feat/244-orchestrator-issue-12"),
+    ).toBeUndefined();
+  });
+
+  it("returns undefined when no block carries the branch", () => {
+    expect(matchWorktreeForBranch(porcelain, "feat/other")).toBeUndefined();
+    expect(matchWorktreeForBranch("", "feat/x")).toBeUndefined();
+  });
+
+  it("ignores a detached / branchless worktree block", () => {
+    const detached = ["worktree /repo/.worktrees/detached", "HEAD cccc", "detached"].join(
+      "\n",
+    );
+    expect(matchWorktreeForBranch(detached, "feat/x")).toBeUndefined();
   });
 });
 
