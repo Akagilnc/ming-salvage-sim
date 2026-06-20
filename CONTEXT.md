@@ -195,7 +195,7 @@ _Avoid_: 单 issue、孤儿 issue
 _Avoid_: 子任务、subtask(太泛,不区分独立与否)
 
 **家族 base**:
-同一父 epic 下所有家族子片共享的基线分支。子片从它派生、reviewed 后各自 push 子片分支,由家族集成层把子片合回它。它在父 epic 立项时就存在,是编排单片时的前置条件。
+同一父 epic 下所有家族子片共享的基线分支,由家族集成层把子片合回它。**家族层(v0.1 deferred)的不变式**;**v0.1 单片编排从 main 切、此刻不消费家族 base**(不从它派生),家族 base 的派生/合回是家族集成层的事。
 _Avoid_: 主干、main、集成分支(太泛)
 
 **角色**:
@@ -219,7 +219,7 @@ runner 控的一个外层 wiki 步骤。**agent step**(S2/S3/S5/S6)= 一个 Step
 _Avoid_: 阶段、stage(太泛)、iteration(那是步内的)
 
 **StepSpec**:
-一个 step 的固定规格——固定 promptFile + agent/model + completionSignal + output schema + maxIterations。存在代码里,不临场生成。
+一个 step 的固定规格——固定 role + promptFile + agent/model + completionSignal + output schema + maxIterations。存在代码里,不临场生成。(role 决定注哪份 soul:v0.1 一镜像双角色,runner 凭 role 选 coder/reviewer soul。)
 _Avoid_: 配置、config(太泛)
 
 **runner**:
