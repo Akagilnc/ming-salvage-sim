@@ -1196,8 +1196,9 @@ describe("epic orchestrator S3 layered parallel pipeline", () => {
     });
 
     expect(result.status).toBe("ready");
-    // §段间交接: after a rebase, baseAtStart in the handoff is the rebased family HEAD, not the stale startup target.
-    expect(result.handoff.baseAtStart).toBe("rebased-family");
+    // §段间交接: baseAtStart is the I10-verified startup target the family branched from, NOT the
+    // family tip — even after a rebase. The post-rebase family HEAD is carried per-slice in `merged`.
+    expect(result.handoff.baseAtStart).toBe("base-start");
     expect(events).toEqual(["verify", "verify", "verify", "rebase", "verify", "verify", "verify"]);
     expect(result.baseManagement).toMatchObject({ status: "rebased", currentTargetHead: "base-new" });
     expect(result.mergeQueue.at(-1).mergeCommit).toBe("rebased-family");
