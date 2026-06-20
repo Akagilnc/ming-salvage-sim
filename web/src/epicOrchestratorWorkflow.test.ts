@@ -1659,7 +1659,9 @@ describe("epic orchestrator S5 Ship phase (gstack-ship + terminal states + hando
     // gstack-ship exits nonzero on a failed gate / internal ASK but still prints its report; the leg
     // must capture stdout under `set +e` so pipefail doesn't abort the needs-user/unconverged paths.
     expect(shipCall).toContain("set +e");
-    expect(shipCall).toMatch(/shipReport=\$\(gstack-ship --json --base 'origin\/main' 2>\/dev\/null\)/);
+    expect(shipCall).toMatch(/shipReport=\$\(gstack-ship --json --base 'origin\/main'\)/);
+    // stderr is NOT suppressed -> gstack-ship diagnostics flow to the orchestrator on failure.
+    expect(shipCall).not.toContain("2>/dev/null");
     // full §段间交接 handoff payload.
     expect(result.handoff).toMatchObject({
       status: "ready",
@@ -2029,5 +2031,49 @@ describe("epic orchestrator S6 cross-segment continuation (relaunch + git-skip +
     expect(result.status).toBe("needs-user");
     // pre-resolve HEAD was family-head-sha; the fix advanced it to reviewed-head-sha.
     expect(result.handoff.familyHead).toBe("reviewed-head-sha");
+  });
+
+  it("a family reviewer reporting status:failed with NO findings list escalates (does not falsely converge)", async () => {
+    // The load-bearing family CMR must not silently treat a "failed, no findings" report as []
+    // findings (which would converge). It is surfaced as an escalatable decision finding.
+    const { result } = await runContinuation({
+      subIssues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }],
+      args: { mergedNumbers: [220] },
+      familyReview: () => ({ codex: { status: "failed" }, agy: { status: "passed", findings: [] }, claude: { findings: [] } })
+    });
+
+    expect(result.status).toBe("return_to_main_session");
+    expect(result.reason).toBe("family_review_needs_decision");
+    expect(result.decisionFindings.some((f: any) => /codex-family reported status="failed"/.test(f.claim_quote ?? ""))).toBe(true);
+  });
+
+  it("a family reviewer returning a non-array findings field is treated as an unavailable (degraded) leg, not silently empty", async () => {
+    // A malformed (non-array findings) report must NOT be coerced to [] findings (which could converge);
+    // the leg's guard throws, the leg catch marks it unavailable, and the round degrades (with codex
+    // missing) rather than trusting the malformed output.
+    const { result } = await runContinuation({
+      subIssues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }],
+      args: { mergedNumbers: [220] },
+      familyReview: () => ({ codex: { status: "failed", findings: { not: "an array" } }, agy: { status: "passed", findings: [] }, claude: { findings: [] } })
+    });
+
+    const round = result.familyReview.rounds?.at(-1) ?? result.rounds?.at(-1);
+    expect(round.degradation.missingModels).toContain("codex");
+    const codexReviewer = round.reviewers.find((r: any) => r.model === "codex");
+    expect(codexReviewer.available).toBe(false);
+    expect(codexReviewer.reason).toMatch(/non-array findings field/);
+  });
+
+  it("a raw-id prior merged entry surfaces in the cumulative handoff with reviewedCommit:null (contract allows null)", async () => {
+    const { result } = await runContinuation({
+      subIssues: [
+        { id: 220, epicId: 217, state: "open", title: "S2-A", url: "https://example.test/220" },
+        { id: 221, epicId: 217, state: "open", title: "S2-B", url: "https://example.test/221" }
+      ],
+      args: { mergedNumbers: [220] } // raw id -> no commit identity
+    });
+
+    expect(result.status).toBe("ready");
+    expect(result.handoff.merged).toContainEqual({ number: 220, reviewedCommit: null });
   });
 });
