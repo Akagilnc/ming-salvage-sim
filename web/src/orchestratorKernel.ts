@@ -302,7 +302,7 @@ export function dismissalGate(input: DismissalGateInput): boolean {
   if (!finding) return true; // a null/garbage finding cannot match a dismissal -> not dismissed (still HALT-eligible)
   const findingClaim = claimOf(finding);
   const matched = dismissed.some((entry) => {
-    if (entry.id !== undefined && finding.id !== undefined && entry.id === finding.id) return true;
+    if (entry.id !== undefined && finding.id !== undefined && String(entry.id) === String(finding.id)) return true;
     const entryClaim = claimOf(entry);
     if (entryClaim !== undefined && findingClaim !== undefined && entryClaim === findingClaim) return true;
     if (entry.location !== undefined && finding.location !== undefined && entry.location === finding.location) return true;
