@@ -4965,23 +4965,23 @@ class GameDB:
             for mid in (turn_row.get("user_message_id"), turn_row.get("minister_message_id"))
             if mid
         ]
-        # write_decree() の commit_pending_actions(kind_filter="directive") が生成した
-        # turn_directives(status='draft') はスナップショット外なので rollback_items に入らない。
-        # 削除前に、本召対が触った pending_actions(kind='directive') 行から
-        # committed_directive_id を読み、その draft 行【だけ】を後で削除する（BUG 3：旧実装は
-        # (turn,actor) で削っていたため、同 actor 同回合の【無関係】draft も巻き込んでいた）。
-        # BUG（補充パス）：初回拟旨は INSERT(delete_inserted_row)だが、補充（2 回目の拟旨）は
-        # 既存 pending 行を UPDATE するため diff が restore_row になる。strategy で絞ると
-        # この補充→颁诏→撤回フローで committed_directive_id を取り逃し、orphan draft が残って
-        # 颁诏汚染を起こす。よって strategy に依らず、行が kind=='directive' なら回収する。
+        # write_decree() 的 commit_pending_actions(kind_filter="directive") 生成的
+        # turn_directives(status='draft') 在快照之外，因此不会进入 rollback_items。
+        # 删除前，从本召对触碰过的 pending_actions(kind='directive') 行读取
+        # committed_directive_id，并且只删除那条 draft 行（BUG 3：旧实现按
+        # (turn,actor) 删除，会连同同 actor 同回合的无关 draft 一起删掉）。
+        # BUG（补充路径）：首次拟旨是 INSERT(delete_inserted_row)，补充（第 2 次拟旨）
+        # 是 UPDATE 既有 pending 行，因此 diff 会变成 restore_row。若按 strategy 过滤，
+        # 补充→颁诏→撤回流程会漏掉 committed_directive_id，残留 orphan draft 污染颁诏。
+        # 所以不依赖 strategy，只要该行 kind=='directive' 就回收。
         draft_ids_to_delete: List[int] = []
         seen_draft_ids: set[int] = set()
         for item in items:
             if str(item["target_table"]) != "pending_actions":
                 continue
-            # restore_row では after が補充後の状態、before が補充前。どちらにも id があり、
-            # kind は両側同一なので、ある方から拾えばよい。delete_inserted_row は after のみ、
-            # restore_deleted_row は before のみが非空。
+            # restore_row 中 after 是补充后的状态，before 是补充前的状态。两侧都有 id，
+            # kind 也相同，取任一侧即可。delete_inserted_row 只有 after，
+            # restore_deleted_row 只有 before。
             after_data = self._json_load_row(item["after_json"] or "") or {}
             before_data = self._json_load_row(item["before_json"] or "") or {}
             kind = str(after_data.get("kind") or before_data.get("kind") or "")
@@ -5013,7 +5013,7 @@ class GameDB:
                     self._restore_row_in_tx(table, before_row)
                 else:
                     raise ValueError(f"不支持的回滚策略：{strategy}")
-            # 本召対が commit した draft 行だけを精確削除（同 actor の無関係 draft は温存）。
+            # 只精确删除本召对 commit 出来的 draft 行（保留同 actor 的无关 draft）。
             for draft_id in draft_ids_to_delete:
                 self.conn.execute(
                     "DELETE FROM turn_directives WHERE id=? AND status='draft'",
