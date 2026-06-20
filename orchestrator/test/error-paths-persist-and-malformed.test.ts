@@ -350,10 +350,14 @@ describe("#5 malformed step output → S8(error), never silent bypass", () => {
       };
     };
 
-    // A P0 routes to S5; the S5 exit-edge is #254 scope and throws.
-    await expect(
-      runOrchestrator({ issueNumber: 244, backend }),
-    ).rejects.toThrow(/fix loop = #254/);
+    // A P0 routes to S5 (fix). Post-#254 the fix loop is wired (S5→S6→S4), so
+    // S5 no longer throws — instead this backend re-raises the SAME P0 every
+    // re-review while the coder commits, so the loop never converges and the
+    // no-progress guard bails cleanly to S8(error) after K rounds. The point of
+    // this regression remains: the P0 gate sent us to S5 (fix), NOT to push.
+    const result = await runOrchestrator({ issueNumber: 244, backend });
+    expect(result.status).toBe("error");
+    expect(result.errorPackage?.reason.toLowerCase()).toContain("stuck");
     // The P0 gate sent us to S5 (fix), NOT to push.
     expect(backend.runStepIds).toContain("S5");
     expect(pushed).toBe(false);

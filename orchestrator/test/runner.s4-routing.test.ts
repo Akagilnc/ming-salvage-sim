@@ -5,11 +5,15 @@
  * different reviewer outputs and asserting what the runner does — which step
  * it reaches, whether it pushes, and which Backend calls are made.
  *
- * S5/S6 fix-loop edges are owned by #254; when route() is asked to leave S5,
- * it throws (the seam is labelled — that's expected). These tests assert the
- * runner *reaches* S5 (via Backend.runStep being called with S5) before the
- * unimplemented route(S5) throws. That is the #250 acceptance criterion:
- * "route转S5，不直接push".
+ * #254 wired the S5→S6→S4 fix-loop back-edge, so route(S5) no longer throws.
+ * These tests now assert the #250 contract under the working loop: a P0/P1 (or
+ * fix_now) finding from the initial review (S3) routes to S5 coder_fix — i.e.
+ * S5 is dispatched and push is NOT reached during that fix decision. To keep
+ * each test focused on the *single* S4 fan-out decision (not multi-round loop
+ * mechanics, which #254's fix-loop.test.ts owns), the fake reviewer returns the
+ * configured finding once (S3) and then empty (the S6 re-review) so the loop
+ * converges to push after exactly one fix round. The #250 assertion stands:
+ * "route转S5，不直接push" — S5 ran before any push.
  *
  * Regression: the happy-path (empty findings) must still reach push → success.
  */
@@ -82,15 +86,24 @@ class ConfigurableBackend implements Backend {
     this.calls.push(`writeSnapshot(${worktree.branch}, #${snapshot.number})`);
   }
 
+  /** Count of reviewer (S3/S6) dispatches so the loop can converge after S3. */
+  private reviewerCalls = 0;
+
   async runStep(spec: StepSpec): Promise<StepOutput> {
     this.calls.push(`runStep(${spec.id}:${spec.role})`);
     this.runStepIds.push(spec.id);
     if (spec.role === "coder") {
-      // Both S2 and S5 (fix stub) return a successful coder output.
+      // Both S2 and S5 (fix) return a successful coder output.
       return { kind: "coder", committed: true, commitsAdded: 1 };
     }
-    // reviewer (S3 / S6)
-    return this.reviewerOutput;
+    // reviewer (S3 / S6): the *first* review (S3) returns the configured
+    // output (the S4 decision under test); any later S6 re-review returns empty
+    // so the fix loop converges to push after one round. This keeps each test
+    // on the single S4 fan-out decision rather than multi-round loop mechanics
+    // (which #254's fix-loop.test.ts covers). Empty findings always approve.
+    this.reviewerCalls += 1;
+    if (this.reviewerCalls === 1) return this.reviewerOutput;
+    return { kind: "reviewer", findings: [] };
   }
 
   async push(worktree: WorktreeHandle): Promise<void> {
@@ -145,18 +158,30 @@ async function runWith(reviewerOutput: StepOutput): Promise<{
 }
 
 /**
- * Run the orchestrator expecting it to route to S5 and then throw (because
- * the S5 exit-edge is #254 scope). Returns the backend so callers can assert
- * on runStepIds to confirm S5 was dispatched.
+ * Run the orchestrator expecting the initial review (S3) to route to S5
+ * coder_fix (the #250 S4 fan-out under test). With #254's fix loop wired, the
+ * fake converges after one fix round (S6 re-review returns empty), so the run
+ * succeeds. The surviving #250 invariant: S5 was dispatched, and it ran BEFORE
+ * any push — i.e. the finding drove a fix, not a direct S3→S7 push.
+ *
+ * Returns the backend and the helper-computed "did push happen before S5?"
+ * flag so callers can assert fix-before-push without coupling to the now-
+ * converging push count.
  */
 async function runExpectingS5(reviewerOutput: StepOutput): Promise<{
   backend: ConfigurableBackend;
+  result: Awaited<ReturnType<typeof runOrchestrator>>;
 }> {
   const backend = new ConfigurableBackend(reviewerOutput);
-  await expect(
-    runOrchestrator({ issueNumber: 250, backend }),
-  ).rejects.toThrow(/fix loop = #254/);
-  return { backend };
+  const result = await runOrchestrator({ issueNumber: 250, backend });
+  return { backend, result };
+}
+
+/** True iff S5 was dispatched strictly before the first push in the timeline. */
+function s5RanBeforePush(backend: ConfigurableBackend): boolean {
+  const s5At = backend.calls.findIndex((c) => c.startsWith("runStep(S5"));
+  const pushAt = backend.calls.findIndex((c) => c.startsWith("push("));
+  return s5At >= 0 && (pushAt === -1 || s5At < pushAt);
 }
 
 // ─── Regression: empty findings → push ───────────────────────────────────────
@@ -174,20 +199,20 @@ describe("runOrchestrator S4 routing — empty findings regression", () => {
 // ─── P0/P1 present → S5 (not push) ──────────────────────────────────────────
 
 describe("runOrchestrator S4 routing — P0/P1 routes to S5", () => {
-  it("critical (P0) finding → S5 dispatched, push NOT reached", async () => {
+  it("critical (P0) finding → S5 dispatched before any push", async () => {
     const { backend } = await runExpectingS5(
       reviewerWith([finding("critical", "fix_now")]),
     );
     expect(backend.runStepIds).toContain("S5");
-    expect(backend.pushCount).toBe(0);
+    expect(s5RanBeforePush(backend)).toBe(true);
   });
 
-  it("high (P1) finding → S5 dispatched, push NOT reached", async () => {
+  it("high (P1) finding → S5 dispatched before any push", async () => {
     const { backend } = await runExpectingS5(
       reviewerWith([finding("high", "fix_now")]),
     );
     expect(backend.runStepIds).toContain("S5");
-    expect(backend.pushCount).toBe(0);
+    expect(s5RanBeforePush(backend)).toBe(true);
   });
 
   it("P1 + defer P2/P3 → S5 dispatched (P1 trumps defer list)", async () => {
@@ -195,19 +220,19 @@ describe("runOrchestrator S4 routing — P0/P1 routes to S5", () => {
       reviewerWith([finding("high", "fix_now"), finding("low", "defer")]),
     );
     expect(backend.runStepIds).toContain("S5");
-    expect(backend.pushCount).toBe(0);
+    expect(s5RanBeforePush(backend)).toBe(true);
   });
 });
 
 // ─── fix_now P2/P3 (no P0/P1) → S5 ─────────────────────────────────────────
 
 describe("runOrchestrator S4 routing — fix_now P2/P3 routes to S5", () => {
-  it("medium fix_now → S5 dispatched, push NOT reached", async () => {
+  it("medium fix_now → S5 dispatched before any push", async () => {
     const { backend } = await runExpectingS5(
       reviewerWith([finding("medium", "fix_now")]),
     );
     expect(backend.runStepIds).toContain("S5");
-    expect(backend.pushCount).toBe(0);
+    expect(s5RanBeforePush(backend)).toBe(true);
   });
 
   it("low fix_now → S5 dispatched", async () => {
@@ -215,7 +240,7 @@ describe("runOrchestrator S4 routing — fix_now P2/P3 routes to S5", () => {
       reviewerWith([finding("low", "fix_now")]),
     );
     expect(backend.runStepIds).toContain("S5");
-    expect(backend.pushCount).toBe(0);
+    expect(s5RanBeforePush(backend)).toBe(true);
   });
 
   it("clarity fix_now → S5 dispatched", async () => {
@@ -223,7 +248,7 @@ describe("runOrchestrator S4 routing — fix_now P2/P3 routes to S5", () => {
       reviewerWith([finding("clarity", "fix_now")]),
     );
     expect(backend.runStepIds).toContain("S5");
-    expect(backend.pushCount).toBe(0);
+    expect(s5RanBeforePush(backend)).toBe(true);
   });
 
   it("mix fix_now + defer P2/P3 (no P0/P1) → S5 dispatched", async () => {
@@ -231,7 +256,7 @@ describe("runOrchestrator S4 routing — fix_now P2/P3 routes to S5", () => {
       reviewerWith([finding("medium", "fix_now"), finding("low", "defer")]),
     );
     expect(backend.runStepIds).toContain("S5");
-    expect(backend.pushCount).toBe(0);
+    expect(s5RanBeforePush(backend)).toBe(true);
   });
 });
 
@@ -298,16 +323,25 @@ describe("runOrchestrator S4 routing — deferredFindings in RunResult", () => {
     expect(result.deferredFindings).toEqual([]);
   });
 
-  it("mix of defer + fix_now P2/P3 (routes to S5) → deferredFindings still collected", async () => {
-    // Even when routing to S5 (which then throws — #254), S4 collects defers.
-    // We verify this by checking the throw carries S5 (not a deferred-findings error).
+  it("mix of defer + fix_now P2/P3 → routes to S5; defers from the final review surface", async () => {
+    // S3: [defer medium, fix_now low] → S4 routes to S5 (fix_now present). The
+    // fix runs, then the S6 re-review (this fake's 2nd reviewer call) returns a
+    // lone defer-low → converge to push. The #254 contract: deferredFindings
+    // reflects the FINAL review before push (S4 re-collects each loop pass), so
+    // the surviving defer is the S6 one. The key #250 fact still holds: a
+    // fix_now finding routed to S5 (a fix happened, not a direct push).
     const backend = new ConfigurableBackend(
       reviewerWith([finding("medium", "defer"), finding("low", "fix_now")]),
     );
-    await expect(
-      runOrchestrator({ issueNumber: 250, backend }),
-    ).rejects.toThrow(/fix loop = #254/);
-    // S5 was reached, meaning S4 correctly collected defers before routing.
+    const result = await runOrchestrator({ issueNumber: 250, backend });
+
+    // S5 was dispatched — S4 routed to fix, not straight to push.
     expect(backend.runStepIds).toContain("S5");
+    expect(s5RanBeforePush(backend)).toBe(true);
+    // Converged to success after the fix round.
+    expect(result.status).toBe("success");
+    // The empty S6 re-review carries no defers → deferredFindings empty (it
+    // reflects the last review, not an accumulation across rounds).
+    expect(result.deferredFindings).toEqual([]);
   });
 });
