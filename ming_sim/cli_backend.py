@@ -667,7 +667,7 @@ def extract_minister_actions(
 # 无显式前缀（_DRAFT_PREFIXES）→ LLM 判出意图 → 进 pending_actions(kind=directive)暂存；
 # 大臣回话即草案文本，commit 时再建 turn_directives 条目。
 def extract_draft_intent(
-    player_message: str,
+    player_message: Optional[str],
     minister_reply: str,
     llm_config: Any = None,
     has_pending_draft: bool = False,
