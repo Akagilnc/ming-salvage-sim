@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import types
 from unittest.mock import patch
 
@@ -222,6 +223,48 @@ def test_pending_directive_commit_creates_turn_directive(game):
     # pending_actions 标 committed，不留 pending
     assert db.list_pending_actions(state.turn) == []
     assert any(a["kind"] == "directive" for a in applied)
+    other = sqlite3.connect(db.path)
+    try:
+        persisted = other.execute(
+            "SELECT COUNT(*) FROM turn_directives WHERE turn=? AND status='draft'",
+            (state.turn,),
+        ).fetchone()[0]
+    finally:
+        other.close()
+    assert persisted == 1
+
+
+def test_pending_directive_commit_failure_propagates_and_rolls_back_outer_atomic(game, monkeypatch):
+    """外层 atomic 中提交对话式拟旨若中途异常，异常必须冒泡，draft 与 pending 回填一起回滚。"""
+    from ming_sim.applier import atomic
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    db.upsert_pending_directive(
+        state.turn, name,
+        payload={"text": "外层事务回滚草稿", "actor": name},
+    )
+    original_apply = db._apply_pending_action
+
+    def _boom_after_draft(state_arg, pa, payload, *, content=None, registry=None):
+        assert original_apply(
+            state_arg, pa, payload, content=content, registry=registry) is True
+        raise RuntimeError("directive commit boom")
+
+    monkeypatch.setattr(db, "_apply_pending_action", _boom_after_draft)
+
+    with pytest.raises(RuntimeError, match="directive commit boom"):
+        with atomic(db):
+            db.commit_pending_actions(state, kind_filter="directive")
+
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM turn_directives WHERE turn=?", (state.turn,)).fetchone()[0] == 0
+    row = db.conn.execute(
+        "SELECT status, committed_directive_id FROM pending_actions WHERE turn=?",
+        (state.turn,),
+    ).fetchone()
+    assert row["status"] == "pending"
+    assert int(row["committed_directive_id"] or 0) == 0
 
 
 def test_dialogue_affirm_does_not_commit_pending_directive(game, monkeypatch):
@@ -1082,9 +1125,9 @@ def test_commit_directive_rolls_back_draft_when_bookkeeping_update_fails(game):
     )
     db.conn.commit()
 
-    applied = db.commit_pending_actions(state, kind_filter="directive")
+    with pytest.raises(sqlite3.IntegrityError, match="simulated committed_directive_id failure"):
+        db.commit_pending_actions(state, kind_filter="directive")
 
-    assert applied == []
     assert db.conn.execute(
         "SELECT COUNT(*) FROM turn_directives WHERE turn=?", (state.turn,)
     ).fetchone()[0] == 0
@@ -1092,8 +1135,8 @@ def test_commit_directive_rolls_back_draft_when_bookkeeping_update_fails(game):
         "SELECT status, committed_directive_id FROM pending_actions WHERE turn=?",
         (state.turn,),
     ).fetchone()
-    assert status["status"] == "failed"
-    assert status["committed_directive_id"] in (None, 0)
+    assert status["status"] == "pending"
+    assert int(status["committed_directive_id"] or 0) == 0
 
 
 # ── ⑮ BUG 1 — 召对确认闸门必须放过 kind=directive ───────────────────────────

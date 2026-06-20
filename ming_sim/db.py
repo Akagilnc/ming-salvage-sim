@@ -5867,28 +5867,33 @@ class GameDB:
         *, content=None, registry=None,
     ) -> Optional[Dict[str, object]]:
         """提交一条对话式拟旨暂存，并让 draft 行与 pending 状态同事务落定。"""
+        owns_transaction = not (
+            bool(getattr(self.conn, "_commit_suspended", False))
+            or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
+        )
         try:
-            with self.conn:
-                ok = self._apply_pending_action(
-                    state, pa, payload, content=content, registry=registry)
-                if ok:
-                    self.conn.execute(
-                        "UPDATE pending_actions SET status='committed' WHERE id=?",
-                        (int(pa["id"]),),
-                    )
-                    return {"id": pa["id"], "kind": pa["kind"],
-                            "action": pa["action"], "target_id": pa["target_id"]}
+            ok = self._apply_pending_action(
+                state, pa, payload, content=content, registry=registry)
+            if ok:
                 self.conn.execute(
-                    "UPDATE pending_actions SET status='failed' WHERE id=?",
+                    "UPDATE pending_actions SET status='committed' WHERE id=?",
                     (int(pa["id"]),),
                 )
+                if owns_transaction:
+                    self.conn.commit()
+                return {"id": pa["id"], "kind": pa["kind"],
+                        "action": pa["action"], "target_id": pa["target_id"]}
+            self.conn.execute(
+                "UPDATE pending_actions SET status='failed' WHERE id=?",
+                (int(pa["id"]),),
+            )
+            if owns_transaction:
+                self.conn.commit()
         except Exception as exc:
-            tlog(f"[pending_actions] 落库失败 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
-            with self.conn:
-                self.conn.execute(
-                    "UPDATE pending_actions SET status='failed' WHERE id=?",
-                    (int(pa["id"]),),
-                )
+            if owns_transaction:
+                self.conn.rollback()
+            tlog(f"[pending_actions] 落库异常 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
+            raise
         return None
 
     def _apply_pending_action(
