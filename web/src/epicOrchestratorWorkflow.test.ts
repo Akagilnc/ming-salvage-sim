@@ -1948,6 +1948,10 @@ describe("epic orchestrator S6 cross-segment continuation (relaunch + git-skip +
     expect(dependentCall).toBeTruthy();
     expect(dependentCall.baseRef).toBe("family-head-sha");
     expect(dependentCall.baseRef).not.toBe("base-start");
+    // and it must base on the FAMILY branch (not the target branch) — the prompt/base-branch path too.
+    expect(dependentCall.baseBranch).toBe("family/217");
+    expect(dependentCall.baseBranch).not.toBe("origin/main");
+    expect(dependentCall.startupTargetHead).toBe("base-start"); // baseAtStart/diffBase keep the real startup target
   });
 
   it("accepts dirty as the handoff's {number, decision} object shape (round-trips without unwrapping)", async () => {
