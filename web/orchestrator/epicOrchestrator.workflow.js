@@ -624,6 +624,12 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
     existingFamily = { familyWorktree: resolved.familyWorktree, familyHead: head || null };
   }
   const continuationBaseRef = existingFamily?.familyHead || startupTargetHead;
+  // Single source of truth for the current family branch tip. Initialized from the existing family
+  // HEAD (continuation) and updated at EVERY point that advances it — each slice merge, an I10 rebase,
+  // and a family-review fix — so the handoff familyHead / mergeTip is always current even on a
+  // no-fresh-merge continuation (where mergeQueue stays empty). Avoids the recurring "stale HEAD on
+  // path X" class by tracking it once instead of re-deriving from mergeQueue.at(-1) at each exit.
+  let currentFamilyHead = existingFamily?.familyHead ?? null;
 
   const layers = [];
   const reviewedSlices = [];
@@ -685,6 +691,7 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
         conflict: mergeResult.status === 'conflict' ? mergeResult : undefined
       };
       mergeQueue.push(mergeEntry);
+      if (mergeResult.status !== 'conflict') currentFamilyHead = mergeEntry.familyHead;
       if (mergeResult.status === 'conflict') {
         return {
           ...discovery,
@@ -784,6 +791,7 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
     }
     const rebasedFamilyHead = baseManagement.rebaseHead;
     if (rebasedFamilyHead) {
+      currentFamilyHead = rebasedFamilyHead;
       const finalMergeEntry = mergeQueue.at(-1);
       if (finalMergeEntry) {
         finalMergeEntry.mergeCommit = rebasedFamilyHead;
@@ -812,6 +820,7 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
   const hadFixRound = Array.isArray(familyReview.rounds) && familyReview.rounds.some((entry) => entry.gate === 'fix');
   if (hadFixRound) {
     const reviewedFamilyHead = (await Bash(`set -euo pipefail\n# family-review reviewed HEAD\ngit -C ${shellQuote(familyWorktree)} rev-parse HEAD`)).trim();
+    if (reviewedFamilyHead) currentFamilyHead = reviewedFamilyHead;
     const finalMergeEntry = mergeQueue.at(-1);
     if (finalMergeEntry && reviewedFamilyHead && finalMergeEntry.familyHead !== reviewedFamilyHead) {
       finalMergeEntry.mergeCommit = reviewedFamilyHead;
@@ -898,10 +907,21 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
   // non-final slice. The reviewedCommit (the slice's own review commit) is never rewritten by a family
   // rebase, and the current family tip is reported once as familyHead below — S6 probes
   // baseAtStart..familyHead against these reviewed commits.
-  const mergedSlices = reviewedSlices.map((slice, index) => ({
+  // This segment's freshly merged slices, zipped to their stable per-slice reviewed commit.
+  const thisSegmentMerged = reviewedSlices.map((slice, index) => ({
     number: slice.plannedSlice.issueNumber,
     reviewedCommit: mergeQueue[index]?.reviewedCommit ?? null
   }));
+  // CUMULATIVE ledger: the handoff feeds the NEXT relaunch's mergedNumbers, so it must carry every
+  // slice already on the family branch — prior segments' merged slices (git-skipped this segment) PLUS
+  // this segment's. A slice re-run this segment (dirty) is superseded by its fresh entry. Prior entries
+  // carry reviewedCommit:null (the relaunch passed numbers, not the original review commits). Without
+  // this, the next relaunch would re-run already-merged slices.
+  const thisSegmentKeys = new Set(thisSegmentMerged.map((entry) => idKey(entry.number)));
+  const priorMerged = normalizedArgs.mergedNumbers
+    .filter((number) => !thisSegmentKeys.has(idKey(number)))
+    .map((number) => ({ number, reviewedCommit: null }));
+  const mergedSlices = [...priorMerged, ...thisSegmentMerged];
   // Degradation / absent-voice flags from the load-bearing family gate's converged round.
   const convergedRound = Array.isArray(familyReview.rounds) ? familyReview.rounds.at(-1) : undefined;
   const shipFlags = convergedRound?.degradation?.flags ?? [];
@@ -921,7 +941,7 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
   // correct family HEAD for the no-commit outcomes (needs-user / unconverged). On the READY path
   // gstack-ship bumps VERSION/CHANGELOG and commits, advancing HEAD past this, so ready requires
   // gstack-ship's reported post-ship head loudly (below) rather than silently accepting this stale tip.
-  const mergeTip = mergeQueue.at(-1)?.familyHead || mergeQueue.at(-1)?.mergeCommit || existingFamily?.familyHead || null;
+  const mergeTip = currentFamilyHead;
 
   const outcome = inlineShipOutcome({ asked: ship.asked, gatesPassed: ship.gatesPassed, prCreated: ship.prCreated });
 
@@ -1207,7 +1227,7 @@ async function mergeReviewedCommit({ Bash, worktreePath, familyBranch, implement
 // a merge — there is nothing new to merge, only the already-assembled family branch to verify/review/ship.
 async function resolveExistingFamilyWorktree({ Bash, familyBranch }) {
   return parseBashJson(
-    await Bash(`set -euo pipefail\n# resolve existing family worktree (S6 todoTotal=0 continuation)\nfamilyBranch=${shellQuote(familyBranch)}\nrepoRoot=$(git rev-parse --show-toplevel)\nparentRoot=$(dirname "$repoRoot")\nmergeRoot="$parentRoot/.epic-orchestrator"\nsafeBranch=$(printf '%s' "$familyBranch" | tr -c 'A-Za-z0-9._-' '_')\ndefaultMergeWorktree="$mergeRoot/family-$safeBranch"\nexistingMergeWorktree=$(python3 - "$repoRoot" "$familyBranch" <<'PY'\nimport subprocess, sys\nsource, branch = sys.argv[1], sys.argv[2]\ncurrent = None\nfor line in subprocess.check_output(['git', '-C', source, 'worktree', 'list', '--porcelain'], text=True).splitlines():\n    if line.startswith('worktree '):\n        current = line[9:]\n    elif line == f'branch refs/heads/{branch}' and current and current != source:\n        print(current)\n        break\nPY\n)\nif [ -n "$existingMergeWorktree" ]; then\n  mergeWorktree="$existingMergeWorktree"\nelse\n  mergeWorktree="$defaultMergeWorktree"\n  mkdir -p "$mergeRoot"\n  isOwnGitWorktree() { [ -e "$1/.git" ] && git -C "$1" rev-parse --path-format=absolute --git-common-dir >/dev/null 2>&1 && [ "$(git -C "$1" symbolic-ref --quiet --short HEAD 2>/dev/null)" = "$familyBranch" ]; }\n  if [ -e "$mergeWorktree" ] && ! isOwnGitWorktree "$mergeWorktree"; then\n    git -C "$repoRoot" worktree remove --force "$mergeWorktree" >/dev/null 2>&1 || rm -rf "$mergeWorktree"\n    git -C "$repoRoot" worktree prune >/dev/null 2>&1 || true\n  fi\n  if ! isOwnGitWorktree "$mergeWorktree"; then\n    git -C "$repoRoot" fetch origin "$familyBranch" || true\n    if git -C "$repoRoot" show-ref --verify --quiet "refs/heads/\${familyBranch}"; then\n      git -C "$repoRoot" worktree add "$mergeWorktree" "$familyBranch" >&2\n    elif git -C "$repoRoot" show-ref --verify --quiet "refs/remotes/origin/\${familyBranch}"; then\n      git -C "$repoRoot" worktree add -b "$familyBranch" "$mergeWorktree" "origin/\${familyBranch}" >&2\n    else\n      printf 'family branch %s not found locally or on origin — cannot resolve an existing family worktree for a todoTotal=0 continuation\\n' "$familyBranch" >&2\n      exit 1\n    fi\n  fi\nfi\nprintf '{"status":"resolved","familyWorktree":"'\ngit -C "$mergeWorktree" rev-parse --show-toplevel | tr -d '\\n' | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read())[1:-1], end="")'\nprintf '"}'`)
+    await Bash(`set -euo pipefail\n# resolve existing family worktree (S6 todoTotal=0 continuation)\nfamilyBranch=${shellQuote(familyBranch)}\nrepoRoot=$(git rev-parse --show-toplevel)\nparentRoot=$(dirname "$repoRoot")\nmergeRoot="$parentRoot/.epic-orchestrator"\nsafeBranch=$(printf '%s' "$familyBranch" | tr -c 'A-Za-z0-9._-' '_')\ndefaultMergeWorktree="$mergeRoot/family-$safeBranch"\nexistingMergeWorktree=$(python3 - "$repoRoot" "$familyBranch" <<'PY'\nimport subprocess, sys\nsource, branch = sys.argv[1], sys.argv[2]\ncurrent = None\nfor line in subprocess.check_output(['git', '-C', source, 'worktree', 'list', '--porcelain'], text=True).splitlines():\n    if line.startswith('worktree '):\n        current = line[9:]\n    elif line == f'branch refs/heads/{branch}' and current and current != source:\n        print(current)\n        break\nPY\n)\nif [ -n "$existingMergeWorktree" ]; then\n  mergeWorktree="$existingMergeWorktree"\nelse\n  mergeWorktree="$defaultMergeWorktree"\n  mkdir -p "$mergeRoot"\n  isOwnGitWorktree() { [ -e "$1/.git" ] && git -C "$1" rev-parse --path-format=absolute --git-common-dir >/dev/null 2>&1 && [ "$(git -C "$1" symbolic-ref --quiet --short HEAD 2>/dev/null)" = "$familyBranch" ]; }\n  if [ -e "$mergeWorktree" ] && ! isOwnGitWorktree "$mergeWorktree"; then\n    git -C "$repoRoot" worktree remove --force "$mergeWorktree" >/dev/null 2>&1 || rm -rf "$mergeWorktree"\n    git -C "$repoRoot" worktree prune >/dev/null 2>&1 || true\n  fi\n  if ! isOwnGitWorktree "$mergeWorktree"; then\n    git -C "$repoRoot" fetch origin "$familyBranch" || true\n    if git -C "$repoRoot" show-ref --verify --quiet "refs/heads/\${familyBranch}"; then\n      git -C "$repoRoot" worktree add "$mergeWorktree" "$familyBranch" >&2\n    elif git -C "$repoRoot" show-ref --verify --quiet "refs/remotes/origin/\${familyBranch}"; then\n      git -C "$repoRoot" worktree add -b "$familyBranch" "$mergeWorktree" "origin/\${familyBranch}" >&2\n    else\n      printf 'family branch %s not found locally or on origin — cannot resolve an existing family worktree for a continuation relaunch\\n' "$familyBranch" >&2\n      exit 1\n    fi\n  fi\nfi\nprintf '{"status":"resolved","familyWorktree":"'\ngit -C "$mergeWorktree" rev-parse --show-toplevel | tr -d '\\n' | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read())[1:-1], end="")'\nprintf '"}'`)
   );
 }
 
