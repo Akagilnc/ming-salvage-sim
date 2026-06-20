@@ -2166,6 +2166,21 @@ describe("epic orchestrator S6 cross-segment continuation (relaunch + git-skip +
     ).rejects.toThrow(/git ref\/refspec metacharacter/);
   });
 
+  it("rejects a git-special targetBranch ('@' resolves to HEAD; leading '-' is an option)", async () => {
+    await expect(
+      runContinuation({
+        subIssues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }],
+        args: { targetBranch: "@" }
+      })
+    ).rejects.toThrow(/git-special value/);
+    await expect(
+      runContinuation({
+        subIssues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }],
+        args: { startupTargetHead: "--upload-pack=evil" }
+      })
+    ).rejects.toThrow(/git-special value/);
+  });
+
   it("a family reviewer returning a non-array findings field is treated as an unavailable (degraded) leg, not silently empty", async () => {
     // A malformed (non-array findings) report must NOT be coerced to [] findings (which could converge);
     // the leg's guard throws, the leg catch marks it unavailable, and the round degrades (with codex
