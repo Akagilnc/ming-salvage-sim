@@ -685,7 +685,10 @@ def extract_draft_intent(
     )
     # 补充模式（has_pending_draft + existing_draft_text）：注入现有草案，要求 LLM 输出合并草案。
     # 直接用大臣回话（可能是「好的，加上…」等确认语）会覆盖原草案——须由 LLM 合并。
-    _supplement_mode = has_pending_draft and bool(existing_draft_text.strip())
+    _existing_draft_text = (
+        "" if existing_draft_text is None else str(existing_draft_text)
+    ).strip()
+    _supplement_mode = has_pending_draft and bool(_existing_draft_text)
     intent_schema_line = (
         '  "拟旨意图": "无|拟旨",  // 皇帝明确请拟旨/起草圣旨=拟旨；闲谈/议事/问询/密令/任免=无\n'
         if _supplement_mode else
@@ -696,7 +699,7 @@ def extract_draft_intent(
         if _supplement_mode else ""
     )
     draft_context = (
-        f"【现有草案】{existing_draft_text.strip()}\n"
+        f"【现有草案】{_existing_draft_text}\n"
         if _supplement_mode else ""
     )
     prompt = (
