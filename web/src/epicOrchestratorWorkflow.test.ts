@@ -1979,22 +1979,34 @@ describe("epic orchestrator S6 cross-segment continuation (relaunch + git-skip +
     expect(result.handoff.familyHead).toBe("family-head-sha");
   });
 
-  it("handoff.merged is cumulative: it carries prior-segment merged slices plus this segment's", async () => {
+  it("handoff.merged is cumulative and preserves the prior segment's reviewedCommit across the relaunch round-trip", async () => {
     // The handoff feeds the next relaunch's mergedNumbers, so a slice merged in a prior segment
-    // (git-skipped now) must still appear — else the next relaunch re-runs it.
+    // (git-skipped now) must still appear AND keep its stable reviewedCommit when the prior
+    // handoff's {number, reviewedCommit} entry is passed straight back — else the next relaunch
+    // re-runs it or loses the commit identity.
     const { result } = await runContinuation({
       subIssues: [
         { id: 220, epicId: 217, state: "open", title: "S2-A", url: "https://example.test/220" },
         { id: 221, epicId: 217, state: "open", title: "S2-B", url: "https://example.test/221" }
       ],
-      args: { mergedNumbers: [220] }
+      args: { mergedNumbers: [{ number: 220, reviewedCommit: "c220-prior" }] }
     });
 
     expect(result.status).toBe("ready");
     const mergedNumbers = result.handoff.merged.map((entry: any) => entry.number);
     expect(mergedNumbers).toContain(220); // prior-segment, git-skipped this segment
     expect(mergedNumbers).toContain(221); // ran this segment
+    expect(result.handoff.merged).toContainEqual({ number: 220, reviewedCommit: "c220-prior" }); // preserved
     expect(result.handoff.merged).toContainEqual({ number: 221, reviewedCommit: "commit-221" });
+  });
+
+  it("rejects a mergedNumbers object element that lacks a 'number' field (fails loud, not '[object Object]')", async () => {
+    await expect(
+      runContinuation({
+        subIssues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }],
+        args: { mergedNumbers: [{ issueNumber: 220 }] }
+      })
+    ).rejects.toThrow(/object element must carry a 'number' field/);
   });
 
   it("a no-fresh-merge continuation whose family review fixes a bug reports the POST-fix family HEAD", async () => {
