@@ -83,10 +83,6 @@ const COMPLIANT_META: IssueMeta = {
   openBlockedBy: [],
 };
 
-function downstreamCallCount(calls: string[]): number {
-  // Any call other than fetchIssueMeta is "downstream of S0".
-  return calls.filter((c) => !c.startsWith("fetchIssueMeta")).length;
-}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Reject cases — four distinct non-compliant IssueMeta shapes
