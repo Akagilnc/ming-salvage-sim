@@ -524,3 +524,172 @@ describe("Finding 4: no-progress S8 writeLedger throw → S8(error), not raw rej
     expect(result.errorPackage?.reason).toMatch(/stuck|no progress|converging/i);
   });
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// integ-cmr m2 r2 — NORMAL-handoff S8 writeLedger throw must persist a TAGGED
+// error S8 (same class as Finding 1, but the normal handoff path #252 ⋈ #255)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// The error-termination paths (push-fail S7 catch, no-progress bail, backend
+// throw) all persist a TAGGED 'error' S8 best-effort (Finding 1 / Finding 4).
+// But the NORMAL handoff path (runner.ts decision.kind==='handoff') used a
+// re-throwing emitLedger whose catch returned status:error in memory WITHOUT
+// re-persisting a tagged S8. So on an S8-write fault the disk ledger stopped at
+// the last successful step:
+//   - success handoff → disk ends at S7 (untagged) → re-feed routes S7→success
+//     → reports SUCCESS for a run that actually errored.
+//   - escalate handoff → disk ends at the escalating agent step (valid escalate)
+//     → re-feed Case 2 → resumeSession RE-RUNS the step (escalate already
+//     reported once / human may not have answered).
+// Both violate "#244 S8 status fidelity / a prior error must never masquerade as
+// success" and re-run an errored run. The catch must best-effort persist a
+// tagged 'error' S8 (like the error paths) so a re-feed reports the true error
+// via planResume Case 3a.
+
+describe("normal-handoff S8 writeLedger throw persists a tagged error S8 (#252 ⋈ #255)", () => {
+  /**
+   * Backend that captures every NON-S8 ledger write but throws on the S8 entry.
+   * The success handoff reaches S7 (push succeeds) then the S8 handoff write
+   * throws — exercising the runner.ts decision.kind==='handoff' catch.
+   */
+  class SuccessHandoffS8ThrowsBackend extends SeamBackend {
+    threwOnS8 = false;
+    override async writeLedger(
+      e: PersistentLedgerEntry,
+      stateDir: string,
+    ): Promise<void> {
+      if (e.step === "S8" && !this.threwOnS8) {
+        // Throw on the FIRST S8 write (the re-throwing emitLedger entry). A
+        // best-effort re-persist (the fix) writes a SECOND S8 — let that one
+        // through so the disk ledger ends with a tagged 'error' S8.
+        this.threwOnS8 = true;
+        throw new Error("disk full: cannot persist S8 handoff ledger entry");
+      }
+      await super.writeLedger(e, stateDir);
+    }
+  }
+
+  it("success handoff: the S8 write throws → disk persists a tagged 'error' S8 (not untagged S7-terminal)", async () => {
+    const backend = new SuccessHandoffS8ThrowsBackend();
+
+    // Must NOT reject — resolves to a clean error package.
+    const result = await runOrchestrator({ issueNumber: 244, backend });
+
+    expect(backend.threwOnS8).toBe(true);
+    expect(result.status).toBe("error");
+    // A best-effort tagged 'error' S8 must reach disk so a re-feed reports the
+    // true error (Case 3a) — NOT fall through to Case 3b/4 and route S7→success.
+    const s8Writes = backend.written.filter((e) => e.step === "S8");
+    expect(s8Writes.length).toBeGreaterThan(0);
+    for (const w of s8Writes) expect(w.handoffStatus).toBe("error");
+  });
+
+  it("RESUME: re-feeding a success-handoff-with-S8-write-fault ledger reports ERROR, not SUCCESS", async () => {
+    // Prior run: …S7 (push ok) then the S8 handoff write faulted → the fix
+    // best-effort persisted S8(error). The disk ledger ends …S7 + S8(error).
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S3", { kind: "reviewer", findings: [] }),
+        entry("S4"),
+        entry("S7"),
+        s8("error"),
+      ],
+    };
+    const backend = new SeamBackend(resumeState);
+
+    const result = await runOrchestrator({ issueNumber: 244, backend });
+
+    // Must report the prior ERROR — NOT route S7→success and report SUCCESS.
+    expect(result.status).toBe("error");
+    expect(result.errorPackage).toBeDefined();
+    // Pure status report — no re-run.
+    expect(backend.runStepIds).toEqual([]);
+    expect(backend.pushCount).toBe(0);
+  });
+
+  it("escalate handoff: the S8 write throws → disk persists a tagged 'error' S8", async () => {
+    // A coder S2 emits a VALID escalate → route takes the escalate edge →
+    // decision.kind==='handoff', status='escalate'. The S8 handoff write throws.
+    class EscalateHandoffS8ThrowsBackend extends SeamBackend {
+      threwOnS8 = false;
+      override async runStep(spec: StepSpec): Promise<StepOutput> {
+        this.calls.push(`runStep(${spec.id})`);
+        this.runStepIds.push(spec.id);
+        if (spec.role === "coder") {
+          return {
+            kind: "coder",
+            committed: false,
+            commitsAdded: 0,
+            escalate: {
+              reason: "design ambiguity",
+              diagnosis: "needs product decision on field X",
+            },
+          };
+        }
+        return { kind: "reviewer", findings: [] };
+      }
+      override async writeLedger(
+        e: PersistentLedgerEntry,
+        stateDir: string,
+      ): Promise<void> {
+        if (e.step === "S8" && !this.threwOnS8) {
+          this.threwOnS8 = true;
+          throw new Error("disk full: cannot persist S8 handoff ledger entry");
+        }
+        await super.writeLedger(e, stateDir);
+      }
+    }
+
+    const backend = new EscalateHandoffS8ThrowsBackend();
+    const result = await runOrchestrator({ issueNumber: 244, backend });
+
+    expect(backend.threwOnS8).toBe(true);
+    expect(result.status).toBe("error");
+    const s8Writes = backend.written.filter((e) => e.step === "S8");
+    expect(s8Writes.length).toBeGreaterThan(0);
+    for (const w of s8Writes) expect(w.handoffStatus).toBe("error");
+  });
+
+  it("RESUME: re-feeding an escalate-handoff-with-S8-write-fault ledger reports ERROR, does NOT resumeSession", async () => {
+    // Prior run: S2 emitted a VALID escalate, then the S8 handoff write faulted
+    // → the fix best-effort persisted S8(error). On re-feed, the tagged error
+    // (Case 3a) must win over Case 2's escalate-resume: the run errored on the
+    // S8 write, it is NOT a "human answered the escalation" resume.
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry(
+          "S2",
+          {
+            kind: "coder",
+            committed: false,
+            commitsAdded: 0,
+            escalate: {
+              reason: "design ambiguity",
+              diagnosis: "needs product decision on field X",
+            },
+          },
+          "session-escalated-S2",
+        ),
+        s8("error"),
+      ],
+    };
+    const backend = new SeamBackend(resumeState);
+
+    const result = await runOrchestrator({ issueNumber: 244, backend });
+
+    expect(result.status).toBe("error");
+    expect(result.errorPackage).toBeDefined();
+    // Crucially: the errored run must NOT be re-run via resumeSession.
+    expect(backend.resumeSessionCalls).toHaveLength(0);
+    expect(backend.runStepIds).toEqual([]);
+  });
+});

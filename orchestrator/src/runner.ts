@@ -262,7 +262,19 @@ function planResume(
   // instead of reporting the true tagged error. Gating on isValidEscalation lets
   // a malformed escalate fall through to Case 3a — only a well-shaped escalate
   // (a real "human answered an escalation" signal) triggers escalate-resume.
+  //
+  // integ-cmr m2 r2 (#252 ⋈ #255): a tagged terminal S8(error) ALSO supersedes
+  // escalate-resume, even when the escalate is WELL-FORMED. An escalate handoff
+  // whose S8 write faulted returns status:error in-run and best-effort persists
+  // a tagged 'error' S8 — the disk then holds a valid-escalate agent entry AND a
+  // trailing S8(error). The run errored; re-feeding must report that ERROR (Case
+  // 3a), NOT re-run the escalating step via resumeSession. So Case 2 yields when
+  // the last entry is a tagged terminal-error S8. (A legitimate human-answered
+  // escalate ends with S8(escalate) — NOT error — so it still resumes here.)
+  const lastIsTaggedError =
+    lastEntry.step === "S8" && lastEntry.handoffStatus === "error";
   if (
+    !lastIsTaggedError &&
     agentEntry?.output?.escalate != null &&
     isValidEscalation(agentEntry.output.escalate)
   ) {
@@ -1230,6 +1242,19 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // never ran. Attribute to the REAL failing step (the S8 write) and name
         // the operation in the reason so the dev sees what actually failed.
         const cause = err instanceof Error ? err.message : String(err);
+        // integ-cmr m2 r2 (cross-slice seam #252 ⋈ #255): the FIRST emitLedger
+        // re-threw, so the disk ledger still stops at the last SUCCESSFUL step
+        // (S7 on a success handoff; the escalating agent step on an escalate
+        // handoff) — there is NO tagged terminal S8. A re-feed would then
+        // mis-report: planResume routes S7→{handoff,success}→SUCCESS (a run that
+        // actually errored masquerading as success), or Case 2 re-runs the
+        // escalating step via resumeSession (the errored run silently re-run).
+        // Mirror the error paths (errorTermination / no-progress bail): best-
+        // effort persist a TAGGED 'error' S8 so the disk carries the true
+        // terminal status and a re-feed reports ERROR via planResume Case 3a.
+        // persistBestEffort swallows a secondary write fault — we already return
+        // status:error, a second ledger fault must not mask the original cause.
+        await persistBestEffort("S8", undefined, undefined, "error");
         const errorPackage: ErrorPackage = {
           failedStep: "S8",
           reason: `writeLedger(S8) failed while persisting the handoff entry: ${cause}`,
