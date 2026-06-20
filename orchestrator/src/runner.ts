@@ -6,18 +6,20 @@
  * entry, then calls route() to pick the next step. The agent never decides
  * the next step — route() does.
  *
- * Slice #247 = the thinnest happy path:
- *   S0 input_gate (fake = compliant) → S1 load_context → S2 coder_implement
- *   → S3 reviewer_full_review → S4 route_findings (no findings = approve)
- *   → S7 push → S8 handoff(status=success).
+ * Slice #247 = the thinnest happy path.
+ * Slice #252 adds error edges:
+ *   - S2 committed:false → S8(error)  [route() detects]
+ *   - S7 push() throws  → S8(error)   [runner catch]
+ *   - any backend call throws          → S8(error) + error package  [runner catch]
+ *   - any agent output carries escalate → S8(escalate) [route() detects]
  *
- * No fix loop (#254), no escalate stop (#251), no error edges (#252), no full
- * severity routing (#250), no persisted ledger (#249), no soul injection
- * (#253). Those layer onto these seams without reshaping them.
+ * No fix loop (#254), no full severity routing (#250), no persisted
+ * ledger (#249), no soul injection (#253). Those layer onto these seams.
  */
 
 import { route } from "./route.js";
 import type {
+  ErrorPackage,
   IssueSnapshot,
   LedgerEntry,
   RunInput,
@@ -40,6 +42,38 @@ const STEP_SPECS: Readonly<Record<"S2" | "S3", StepSpec>> = {
   S2: { id: "S2", role: "coder", promptFile: "coder_implement.md" },
   S3: { id: "S3", role: "reviewer", promptFile: "reviewer_full_review.md" },
 };
+
+/**
+ * Synthesise a human-readable reason string for route()-detected error edges
+ * (e.g. 0-commit). Backend-throw errors use the caught message directly.
+ */
+function buildErrorReason(step: StepId, output: StepOutput | undefined): string {
+  if (step === "S2" && output?.kind === "coder" && !output.committed) {
+    return "coder produced no commits (committed:false) — nothing to review";
+  }
+  if (step === "S5" && output?.kind === "coder" && !output.committed) {
+    return "fix step produced no commits (committed:false) — unable to proceed";
+  }
+  return `step ${step} routed to error handoff`;
+}
+
+/** Build an S8(error) handoff from the failing step and caught error. */
+function errorHandoff(
+  failedStep: StepId,
+  err: unknown,
+  ledger: LedgerEntry[],
+  worktree: WorktreeHandle | undefined,
+): RunResult {
+  const reason =
+    err instanceof Error ? err.message : String(err);
+  const errorPackage: ErrorPackage = {
+    failedStep,
+    reason,
+    branchHead: worktree?.branch,
+  };
+  ledger.push({ step: "S8" });
+  return { status: "error", errorPackage, stepLedger: ledger };
+}
 
 export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const { issueNumber, backend } = input;
@@ -66,17 +100,33 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // S0 input_gate — runner action. #247: fetch lightweight metadata; the
         // real gate validation (rfa / Agent Brief / sub-issues / blocked_by)
         // is #248. Here we read it (proving the seam) and pass through.
-        await backend.fetchIssueMeta(issueNumber);
+        try {
+          await backend.fetchIssueMeta(issueNumber);
+        } catch (err) {
+          return errorHandoff("S0", err, ledger, worktree);
+        }
         break;
       }
 
       case "S1": {
         // S1 load_context — runner action: full snapshot → resident worktree
         // (base=main) → write snapshot in (clean-room).
-        const snapshot: IssueSnapshot =
-          await backend.fetchIssueSnapshot(issueNumber);
-        worktree = await backend.prepareWorktree(issueNumber, SLICE_BASE);
-        await backend.writeSnapshot(worktree, snapshot);
+        let snapshot: IssueSnapshot;
+        try {
+          snapshot = await backend.fetchIssueSnapshot(issueNumber);
+        } catch (err) {
+          return errorHandoff("S1", err, ledger, worktree);
+        }
+        try {
+          worktree = await backend.prepareWorktree(issueNumber, SLICE_BASE);
+        } catch (err) {
+          return errorHandoff("S1", err, ledger, worktree);
+        }
+        try {
+          await backend.writeSnapshot(worktree, snapshot);
+        } catch (err) {
+          return errorHandoff("S1", err, ledger, worktree);
+        }
         break;
       }
 
@@ -84,9 +134,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       case "S3": {
         // Agent step — one sandbox.run() driven by its fixed StepSpec.
         if (worktree === undefined) {
+          // Programming error: the runner sequenced wrong.
           throw new Error(`runner: ${step} reached before worktree prepared`);
         }
-        output = await backend.runStep(STEP_SPECS[step], worktree);
+        try {
+          output = await backend.runStep(STEP_SPECS[step], worktree);
+        } catch (err) {
+          return errorHandoff(step, err, ledger, worktree);
+        }
         lastOutput = output;
         break;
       }
@@ -103,7 +158,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         if (worktree === undefined) {
           throw new Error("runner: S7 push reached before worktree prepared");
         }
-        await backend.push(worktree);
+        try {
+          await backend.push(worktree);
+        } catch (err) {
+          // Push failure → S8(error) with branch head so dev can diagnose
+          // without losing the commits already on the resident branch (#252).
+          ledger.push({ step: "S7" });
+          return errorHandoff("S7", err, ledger, worktree);
+        }
         break;
       }
 
@@ -127,6 +189,19 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
     if (decision.kind === "handoff") {
       ledger.push({ step: "S8" });
+
+      if (decision.status === "error") {
+        // Build an error package from the current step context so the developer
+        // can diagnose without re-running the pipeline (#252 / US#30).
+        const reason = buildErrorReason(step, lastOutput);
+        const errorPackage: ErrorPackage = {
+          failedStep: step,
+          reason,
+          branchHead: worktree?.branch,
+        };
+        return { status: "error", errorPackage, stepLedger: ledger };
+      }
+
       return {
         status: decision.status,
         branch: decision.status === "success" ? worktree?.branch : undefined,

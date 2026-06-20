@@ -33,16 +33,24 @@ export interface RouteContext {
 }
 
 /**
- * Decide the next step. #247 = happy-path edges only.
+ * Decide the next step. #247 = happy-path edges; #252 adds error edges.
  *
- * NOTE: escalate handling, S2/S5 0-commit→error, S4 severity+action fan-out,
- * the S5→S6→S4 fix loop, and push-failure→error are intentionally NOT here.
- * Each is owned by a later slice (see inline TODOs).
+ * Error edges wired in #252:
+ *   - Global escalate stop: any agent output with `escalate` → S8(escalate)
+ *     (type seam owned by #251; route() detects it here so the runner loop
+ *     does not need to inspect outputs directly)
+ *   - S2 committed:false → S8(error: coder produced nothing)
+ *
+ * NOTE: S4 severity+action fan-out and the S5→S6→S4 fix loop are #250/#254.
+ *       Push failure is handled in runner.ts (backend call, not route output).
  */
 export function route(ctx: RouteContext): RouteDecision {
-  // TODO(#251 escalate stop edge): if any agent step output carries
-  // `escalate`, this is the GLOBAL stop edge — it must be checked FIRST,
-  // ahead of every edge below, and route to S8 handoff(status=escalate).
+  // ── Global stop edge (#252 / #251 seam): escalate checked FIRST ──────────
+  // Any agent step output that carries `escalate` overrides all per-step edges
+  // below. route() detects it here so the runner loop handles it uniformly.
+  if (ctx.output?.escalate) {
+    return { kind: "handoff", status: "escalate" };
+  }
 
   switch (ctx.from) {
     case "S0":
@@ -56,12 +64,15 @@ export function route(ctx: RouteContext): RouteDecision {
       // S1 load_context done → coder implements.
       return { kind: "next", step: "S2" };
 
-    case "S2":
-      // S2 coder_implement done → reviewer reviews.
-      // TODO(#252 error edge): if coder committed:false (0 commits) → S8
-      // handoff(status=error: coder produced nothing). #247 happy path
-      // assumes committed:true.
+    case "S2": {
+      // S2 coder_implement done.
+      // #252 error edge: 0 commits → S8(error: coder produced nothing).
+      if (ctx.output?.kind === "coder" && !ctx.output.committed) {
+        return { kind: "handoff", status: "error" };
+      }
+      // Happy path: committed → reviewer reviews.
       return { kind: "next", step: "S3" };
+    }
 
     case "S3":
       // S3 reviewer_full_review done → route findings.
@@ -78,7 +89,9 @@ export function route(ctx: RouteContext): RouteDecision {
 
     case "S7":
       // S7 push succeeded → success handoff.
-      // TODO(#252 error edge): push failure → S8 handoff(status=error).
+      // NOTE: push failure is caught in runner.ts (backend.push() throws) and
+      // converted to S8(error) there — it does not flow through route() because
+      // route() is only called after a successful step body.
       return { kind: "handoff", status: "success" };
 
     // S5 coder_fix / S6 reviewer_rereview: fix-loop steps — owned by #254.
