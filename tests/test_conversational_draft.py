@@ -691,6 +691,7 @@ def test_extract_draft_intent_backend_exception_degrades_to_none(monkeypatch):
     result = cb.extract_draft_intent("拟旨吧", "奉天承运皇帝诏曰，特谕户部清查。")
     # 异常 → raw 空 → obj 空 → 拟旨意图归一为「无」（不触发草案 stage）
     assert result["draft_action"] == "无"
+    assert result["draft_text"] == ""
     # _log 被调用记录失败
     assert any("拟旨意图抽取失败" in m for m in logged)
 
@@ -704,6 +705,18 @@ def test_extract_draft_intent_dirty_action_normalized_to_none(monkeypatch):
     monkeypatch.setattr(cb, "_run_backend_for_config", _dirty)
     result = cb.extract_draft_intent("拟旨吧", "臣遵旨。")
     assert result["draft_action"] == "无"
+    assert result["draft_text"] == ""
+
+
+def test_extract_draft_intent_no_intent_returns_empty_draft_text(monkeypatch):
+    """LLM 明确判「无」时，draft_text 必须为空串而不是大臣回话。
+    调用方当前也看 draft_action，但 helper 契约写的是无意图→空草稿。"""
+    def _no_intent(prompt, llm_config=None, tag=""):
+        return (json.dumps({"拟旨意图": "无"}, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _no_intent)
+    result = cb.extract_draft_intent("今日只是问策。", "臣以为当暂缓。")
+    assert result == {"draft_action": "无", "draft_text": ""}
 
 
 # ── ⑬ session.py 补充模式 existing_draft_text 提取的 JSON 兜底（894-899）─────────
@@ -783,6 +796,18 @@ def test_commit_directive_with_empty_text_returns_false_no_archive(game):
     assert failed == 1
 
 
+def test_commit_pending_actions_rejects_conflicting_kind_filters(game):
+    """kind_filter 与 kind_filter_exclude 互斥；同时传入是调用方错误，必须响亮拒绝。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    db.upsert_pending_directive(
+        state.turn, name, payload={"text": "草案：清查钱粮", "actor": name})
+
+    with pytest.raises(ValueError, match="kind_filter.*kind_filter_exclude"):
+        db.commit_pending_actions(
+            state, kind_filter="directive", kind_filter_exclude="secret_order")
+
+
 def test_commit_directive_actor_falls_back_to_minister_name(game):
     """payload 无 actor 字段 → actor 回退到 pa['minister_name']（db.py:5824）。
     turn_directives.actor 应等于 stage 时的 minister_name。"""
@@ -806,6 +831,39 @@ def test_commit_directive_actor_falls_back_to_minister_name(game):
     assert row["status"] == "draft"
     # actor 回退到 minister_name
     assert row["actor"] == name
+
+
+def test_commit_directive_rolls_back_draft_when_bookkeeping_update_fails(game):
+    """directive commit 要么同时完成 draft insert + committed_directive_id + status，
+    要么全部不落。用触发器模拟 committed_directive_id 回填失败，不能留下 orphan draft。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    db.upsert_pending_directive(
+        state.turn, name, payload={"text": "草案：清查三边粮饷", "actor": name})
+    db.conn.execute(
+        """
+        CREATE TEMP TRIGGER fail_committed_directive_id
+        BEFORE UPDATE OF committed_directive_id ON pending_actions
+        WHEN NEW.committed_directive_id IS NOT NULL
+        BEGIN
+            SELECT RAISE(ABORT, 'simulated committed_directive_id failure');
+        END;
+        """
+    )
+    db.conn.commit()
+
+    applied = db.commit_pending_actions(state, kind_filter="directive")
+
+    assert applied == []
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM turn_directives WHERE turn=?", (state.turn,)
+    ).fetchone()[0] == 0
+    status = db.conn.execute(
+        "SELECT status, committed_directive_id FROM pending_actions WHERE turn=?",
+        (state.turn,),
+    ).fetchone()
+    assert status["status"] == "failed"
+    assert status["committed_directive_id"] in (None, 0)
 
 
 # ── ⑮ BUG 1 — 召对确认闸门必须放过 kind=directive ───────────────────────────
@@ -1087,6 +1145,49 @@ def test_stale_decree_not_issued_when_new_draft_created_after_generation(game, m
         f"颁诏诏书正文必须纳入颁诏前新建的草案B，但得到：{captured['decree_text']!r}"
     )
     assert any("草案B" in t for t in captured["directive_texts"]), "新 draft B 须进 directives"
+
+
+def test_stale_decree_not_issued_when_existing_draft_text_changes_after_generation(game, monkeypatch):
+    """拟诏后如果同一 draft id 的文本被改动，指纹也必须失效。
+    只比对 id 会误用旧 last_decree，下发不含修订内容的诏书。"""
+    import ming_sim.session as session_mod
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    sess = _decree_session(db, state, content)
+    state.turn_phase = TurnPhase.SUMMONING.value
+
+    db.upsert_pending_directive(
+        state.turn, name, payload={"text": "草案A：清查粮饷", "actor": name})
+
+    def fake_write(llm_config, agno_db, st, directives, db=None):
+        texts = "；".join(str(d["text"]) for d in directives)
+        return f"诏书[{texts}]"
+
+    monkeypatch.setattr(session_mod, "write_decree_with_agno", fake_write)
+    decree_v1 = sess.write_decree()
+    assert "清查粮饷" in decree_v1
+    assert "加派监察御史" not in decree_v1
+
+    directive_id = db.conn.execute(
+        "SELECT id FROM turn_directives WHERE turn=? AND status='draft'",
+        (state.turn,),
+    ).fetchone()["id"]
+    db.update_directive_text(int(directive_id), "草案A修订：清查粮饷，并加派监察御史。")
+
+    captured = {}
+
+    def fake_resolve(st, gdb, agno, llm, directives, decree_text, **kw):
+        captured["decree_text"] = decree_text
+        from ming_sim.session import ResolveResult
+        return ResolveResult(awaiting=False, report="ok")
+
+    monkeypatch.setattr(session_mod, "resolve_directives", fake_resolve)
+    sess.resolve_turn()
+
+    assert "加派监察御史" in captured["decree_text"], (
+        f"draft 文本变更后必须重生成诏书，但得到：{captured['decree_text']!r}"
+    )
 
 
 def test_undo_clears_generated_decree_when_committed_draft_deleted(game, monkeypatch):
