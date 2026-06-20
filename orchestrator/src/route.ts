@@ -33,16 +33,22 @@ export interface RouteContext {
 }
 
 /**
- * Decide the next step. #247 = happy-path edges only.
+ * Decide the next step. #247 = happy-path edges; #251 adds global escalate.
  *
- * NOTE: escalate handling, S2/S5 0-commit→error, S4 severity+action fan-out,
- * the S5→S6→S4 fix loop, and push-failure→error are intentionally NOT here.
- * Each is owned by a later slice (see inline TODOs).
+ * NOTE: S2/S5 0-commit→error, S4 severity+action fan-out, the S5→S6→S4 fix
+ * loop, and push-failure→error are intentionally NOT here. Each is owned by
+ * a later slice (see inline TODOs).
  */
 export function route(ctx: RouteContext): RouteDecision {
-  // TODO(#251 escalate stop edge): if any agent step output carries
-  // `escalate`, this is the GLOBAL stop edge — it must be checked FIRST,
-  // ahead of every edge below, and route to S8 handoff(status=escalate).
+  // ── Global escalate stop edge (#251) ────────────────────────────────────
+  // Check FIRST, ahead of every other edge (PRD #244 contract layer).
+  // Any agent step (S2/S3/S5/S6) can carry `escalate`; when present the
+  // runner stops immediately, records the output in the ledger, and returns
+  // S8 handoff(status=escalate).  The model supplies reason+diagnosis; the
+  // runner does NOT reclassify (impl vs design is the model's call — US#20).
+  if (ctx.output?.escalate != null) {
+    return { kind: "handoff", status: "escalate" };
+  }
 
   switch (ctx.from) {
     case "S0":

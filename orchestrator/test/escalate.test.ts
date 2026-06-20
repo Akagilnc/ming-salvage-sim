@@ -1,0 +1,378 @@
+import { describe, expect, it } from "vitest";
+import { runOrchestrator } from "../src/runner.js";
+import type {
+  Backend,
+  CoderOutput,
+  Escalation,
+  IssueMeta,
+  IssueSnapshot,
+  ReviewerOutput,
+  StepOutput,
+  StepSpec,
+  WorktreeHandle,
+} from "../src/types.js";
+
+/**
+ * Shared compliant issue metadata (gate always passes in this suite —
+ * the focus is escalate stop, not gate validation).
+ */
+const COMPLIANT_META: IssueMeta = {
+  number: 251,
+  isReadyForAgent: true,
+  hasAgentBrief: true,
+  hasSubIssues: false,
+  openBlockedBy: [],
+};
+
+const COMPLIANT_SNAPSHOT: IssueSnapshot = {
+  number: 251,
+  body: "escalate test issue body",
+  comments: [],
+  agentBrief: "## Agent Brief\nimplement the escalate stop edge",
+};
+
+const WORKTREE: WorktreeHandle = {
+  branch: "feat/orchestrator/issue-251",
+  base: "main",
+  path: "/resident/worktrees/issue-251",
+};
+
+/**
+ * Configurable fake Backend.  `runStepOutputs` is a map from StepId → the
+ * StepOutput that call should return.  Any unspecified step falls back to a
+ * sane default (coder committed:true / reviewer empty findings).
+ */
+class ConfigurableBackend implements Backend {
+  readonly calls: string[] = [];
+  readonly runStepIds: string[] = [];
+  pushCount = 0;
+
+  constructor(
+    private readonly runStepOutputs: Map<string, StepOutput> = new Map(),
+  ) {}
+
+  async fetchIssueMeta(_issueNumber: number): Promise<IssueMeta> {
+    this.calls.push("fetchIssueMeta");
+    return COMPLIANT_META;
+  }
+
+  async fetchIssueSnapshot(_issueNumber: number): Promise<IssueSnapshot> {
+    this.calls.push("fetchIssueSnapshot");
+    return COMPLIANT_SNAPSHOT;
+  }
+
+  async prepareWorktree(
+    _issueNumber: number,
+    _base: string,
+  ): Promise<WorktreeHandle> {
+    this.calls.push("prepareWorktree");
+    return WORKTREE;
+  }
+
+  async writeSnapshot(
+    _worktree: WorktreeHandle,
+    _snapshot: IssueSnapshot,
+  ): Promise<void> {
+    this.calls.push("writeSnapshot");
+  }
+
+  async runStep(spec: StepSpec): Promise<StepOutput> {
+    this.calls.push(`runStep(${spec.id})`);
+    this.runStepIds.push(spec.id);
+
+    const override = this.runStepOutputs.get(spec.id);
+    if (override !== undefined) return override;
+
+    // Default outputs that let the run proceed without stopping.
+    if (spec.role === "coder") {
+      return { kind: "coder", committed: true, commitsAdded: 1 };
+    }
+    return { kind: "reviewer", findings: [] };
+  }
+
+  async push(_worktree: WorktreeHandle): Promise<void> {
+    this.calls.push("push");
+    this.pushCount += 1;
+  }
+}
+
+// ─────────────────────── helper factories ───────────────────────
+
+function coderWithEscalate(escalation: Escalation): CoderOutput {
+  return {
+    kind: "coder",
+    committed: false,
+    commitsAdded: 0,
+    escalate: escalation,
+  };
+}
+
+function reviewerWithEscalate(escalation: Escalation): ReviewerOutput {
+  return {
+    kind: "reviewer",
+    findings: [],
+    escalate: escalation,
+  };
+}
+
+const STUCK: Escalation = {
+  reason: "Design-level ambiguity: unclear whether field X should be optional",
+  diagnosis: "The spec says 'optional' in one place but 'required' in another; this requires product decision before implementation can proceed.",
+};
+
+// ─────────────────────── tests ───────────────────────
+
+describe("escalate stop edge (#251)", () => {
+  // ── coder step (S2) escalates ──────────────────────────────────
+
+  describe("coder S2 escalates", () => {
+    it("routes to S8 handoff(status=escalate), not S3", async () => {
+      const backend = new ConfigurableBackend(
+        new Map([["S2", coderWithEscalate(STUCK)]]),
+      );
+
+      const result = await runOrchestrator({ issueNumber: 251, backend });
+
+      expect(result.status).toBe("escalate");
+    });
+
+    it("does NOT proceed to S3 reviewer (runner stops immediately)", async () => {
+      const backend = new ConfigurableBackend(
+        new Map([["S2", coderWithEscalate(STUCK)]]),
+      );
+
+      await runOrchestrator({ issueNumber: 251, backend });
+
+      // S3 should never have been dispatched.
+      expect(backend.runStepIds).not.toContain("S3");
+      // Consequently no push either.
+      expect(backend.pushCount).toBe(0);
+    });
+
+    it("records S2 escalate output in ledger", async () => {
+      const backend = new ConfigurableBackend(
+        new Map([["S2", coderWithEscalate(STUCK)]]),
+      );
+
+      const result = await runOrchestrator({ issueNumber: 251, backend });
+
+      const s2entry = result.stepLedger.find((e) => e.step === "S2");
+      expect(s2entry).toBeDefined();
+      expect((s2entry?.output as CoderOutput | undefined)?.escalate).toEqual(STUCK);
+    });
+
+    it("records S8 terminal entry in ledger", async () => {
+      const backend = new ConfigurableBackend(
+        new Map([["S2", coderWithEscalate(STUCK)]]),
+      );
+
+      const result = await runOrchestrator({ issueNumber: 251, backend });
+
+      expect(result.stepLedger.map((e) => e.step)).toContain("S8");
+    });
+
+    it("returns no branch on escalate (branch is undefined)", async () => {
+      const backend = new ConfigurableBackend(
+        new Map([["S2", coderWithEscalate(STUCK)]]),
+      );
+
+      const result = await runOrchestrator({ issueNumber: 251, backend });
+
+      expect(result.branch).toBeUndefined();
+    });
+  });
+
+  // ── reviewer step (S3) escalates ──────────────────────────────
+
+  describe("reviewer S3 escalates", () => {
+    it("routes to S8 handoff(status=escalate), not S4", async () => {
+      const backend = new ConfigurableBackend(
+        new Map([["S3", reviewerWithEscalate(STUCK)]]),
+      );
+
+      const result = await runOrchestrator({ issueNumber: 251, backend });
+
+      expect(result.status).toBe("escalate");
+    });
+
+    it("does NOT proceed to S4 route_findings (runner stops immediately)", async () => {
+      const backend = new ConfigurableBackend(
+        new Map([["S3", reviewerWithEscalate(STUCK)]]),
+      );
+
+      const result = await runOrchestrator({ issueNumber: 251, backend });
+
+      // Ledger must not contain S4.
+      expect(result.stepLedger.map((e) => e.step)).not.toContain("S4");
+      expect(backend.pushCount).toBe(0);
+    });
+
+    it("records S3 escalate output in ledger", async () => {
+      const backend = new ConfigurableBackend(
+        new Map([["S3", reviewerWithEscalate(STUCK)]]),
+      );
+
+      const result = await runOrchestrator({ issueNumber: 251, backend });
+
+      const s3entry = result.stepLedger.find((e) => e.step === "S3");
+      expect(s3entry).toBeDefined();
+      expect((s3entry?.output as ReviewerOutput | undefined)?.escalate).toEqual(STUCK);
+    });
+  });
+
+  // ── escalate overrides co-present findings ─────────────────────
+
+  describe("escalate is prioritised over co-present findings/committed", () => {
+    it("escalate on reviewer output overrides non-empty findings → still escalate, not S4", async () => {
+      const outputWithBoth: ReviewerOutput = {
+        kind: "reviewer",
+        findings: [
+          {
+            severity: "critical",
+            category: "correctness",
+            claim_quote: "null deref on line 42",
+            location: "src/foo.ts:42",
+            suggested_fix: "add null check",
+            action: "fix_now",
+          },
+        ],
+        escalate: STUCK,
+      };
+
+      const backend = new ConfigurableBackend(
+        new Map([["S3", outputWithBoth]]),
+      );
+
+      const result = await runOrchestrator({ issueNumber: 251, backend });
+
+      // escalate wins over the critical finding.
+      expect(result.status).toBe("escalate");
+      expect(result.stepLedger.map((e) => e.step)).not.toContain("S4");
+    });
+
+    it("escalate on coder output overrides committed:true → still escalate, not S3", async () => {
+      const outputWithBoth: CoderOutput = {
+        kind: "coder",
+        committed: true,
+        commitsAdded: 1,
+        escalate: STUCK,
+      };
+
+      const backend = new ConfigurableBackend(
+        new Map([["S2", outputWithBoth]]),
+      );
+
+      const result = await runOrchestrator({ issueNumber: 251, backend });
+
+      // escalate wins over the committed:true edge.
+      expect(result.status).toBe("escalate");
+      expect(backend.runStepIds).not.toContain("S3");
+    });
+  });
+
+  // ── no-escalate = no change to happy path ──────────────────────
+
+  describe("no escalate signal = happy path unchanged", () => {
+    it("normal coder output (no escalate) still reaches S3 reviewer", async () => {
+      // Default backend: no overrides → coder committed:true, reviewer empty.
+      const backend = new ConfigurableBackend();
+
+      const result = await runOrchestrator({ issueNumber: 251, backend });
+
+      expect(result.status).toBe("success");
+      expect(backend.runStepIds).toContain("S3");
+      expect(backend.pushCount).toBe(1);
+    });
+
+    it("undefined escalate field on coder output is not treated as escalate", async () => {
+      // Explicitly undefined escalate (same as absent field after spread).
+      const noEscalate: CoderOutput = {
+        kind: "coder",
+        committed: true,
+        commitsAdded: 1,
+        escalate: undefined,
+      };
+      const backend = new ConfigurableBackend(new Map([["S2", noEscalate]]));
+
+      const result = await runOrchestrator({ issueNumber: 251, backend });
+
+      expect(result.status).toBe("success");
+    });
+
+    it("undefined escalate field on reviewer output is not treated as escalate", async () => {
+      const noEscalate: ReviewerOutput = {
+        kind: "reviewer",
+        findings: [],
+        escalate: undefined,
+      };
+      const backend = new ConfigurableBackend(new Map([["S3", noEscalate]]));
+
+      const result = await runOrchestrator({ issueNumber: 251, backend });
+
+      expect(result.status).toBe("success");
+    });
+
+    it("null escalate field on coder output (real backend JSON) is not treated as escalate", async () => {
+      // Real backends may return JSON with `escalate: null` when the model
+      // outputs the field but sets it to null. This must NOT trigger the
+      // escalate stop edge — only a truthy Escalation object should.
+      const nullEscalate: CoderOutput = {
+        kind: "coder",
+        committed: true,
+        commitsAdded: 1,
+        escalate: null as unknown as undefined,
+      };
+      const backend = new ConfigurableBackend(new Map([["S2", nullEscalate]]));
+
+      const result = await runOrchestrator({ issueNumber: 251, backend });
+
+      // null escalate must not divert to handoff(status=escalate).
+      expect(result.status).toBe("success");
+      // The normal next step (S3) must still have been dispatched.
+      expect(backend.runStepIds).toContain("S3");
+    });
+  });
+
+  // ── diagnosis field carries to ledger / result ─────────────────
+
+  describe("diagnosis field from model reaches ledger (US#20 / US#22)", () => {
+    it("full escalation object (reason + diagnosis) is preserved in ledger entry", async () => {
+      const detailedEscalation: Escalation = {
+        reason: "Implementation blocker: missing seam for auth token injection",
+        diagnosis:
+          "This is a design-level gap (not an implementation path choice): " +
+          "the Backend interface has no provision for passing auth; " +
+          "requires product/arch decision on whether to add a method or use env.",
+      };
+
+      const backend = new ConfigurableBackend(
+        new Map([["S2", coderWithEscalate(detailedEscalation)]]),
+      );
+
+      const result = await runOrchestrator({ issueNumber: 251, backend });
+
+      const s2entry = result.stepLedger.find((e) => e.step === "S2");
+      const escalate = (s2entry?.output as CoderOutput | undefined)?.escalate;
+      expect(escalate?.reason).toBe(detailedEscalation.reason);
+      expect(escalate?.diagnosis).toBe(detailedEscalation.diagnosis);
+    });
+
+    it("runner does NOT reclassify diagnosis (impl vs design is the model's call)", async () => {
+      // The runner just stops and records; it doesn't set a 'kind' field
+      // of its own or try to parse the diagnosis string.
+      const backend = new ConfigurableBackend(
+        new Map([["S2", coderWithEscalate(STUCK)]]),
+      );
+
+      const result = await runOrchestrator({ issueNumber: 251, backend });
+
+      // The only escalation data in the result comes from the model output
+      // verbatim — the runner adds nothing beyond status=escalate.
+      expect(result.status).toBe("escalate");
+      // No extra classification key added by runner.
+      const resultKeys = Object.keys(result);
+      expect(resultKeys).not.toContain("escalateKind");
+      expect(resultKeys).not.toContain("escalateClassification");
+    });
+  });
+});
