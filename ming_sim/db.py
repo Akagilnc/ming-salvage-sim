@@ -41,6 +41,22 @@ def _is_commitment_stop_condition(resolve_condition: object) -> bool:
     return bool(_COMMITMENT_STOP_CONDITION_RE.fullmatch(str(resolve_condition or "").strip()))
 
 
+def _has_stop_condition(stop_condition: object) -> bool:
+    if isinstance(stop_condition, (dict, list)):
+        return bool(stop_condition)
+    raw = str(stop_condition or "").strip()
+    if not raw:
+        return False
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        # 兼容旧档/直插的非 JSON 条件串：旧逻辑把非空字符串视为有停止条件。
+        return True
+    if isinstance(parsed, (dict, list)):
+        return bool(parsed)
+    return bool(parsed)
+
+
 def _new_army_historically_applied(it: dict) -> bool:
     """建军必填字段（#173 PR2 后仅剩 manpower——维护费退役、不再必填）：manpower int() 成功
     = 历史可活（cmr S2 r4 整项谓词；模块级——避免每个 new_armies 项重定义，PR2 R1 gemini perf）。"""
@@ -6614,8 +6630,7 @@ class GameDB:
         new_phase = self._derive_issue_phase(to_value)
         new_status = row["status"]
         closed_turn = row["closed_turn"]
-        stop_condition_raw = str(row["stop_condition"] or "").strip()
-        has_stop_condition = bool(stop_condition_raw and stop_condition_raw != "{}")
+        has_stop_condition = _has_stop_condition(row["stop_condition"])
         commitment_stop_condition = (
             bool(row["commitment_kind"])
             or has_stop_condition
