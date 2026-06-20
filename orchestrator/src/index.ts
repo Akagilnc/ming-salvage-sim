@@ -20,6 +20,8 @@ export type {
   StepId,
   StepOutput,
   StepRole,
+  StepSoul,
   StepSpec,
+  ToolchainEntry,
   WorktreeHandle,
 } from "./types.js";
