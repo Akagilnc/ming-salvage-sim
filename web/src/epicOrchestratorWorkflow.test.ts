@@ -3,9 +3,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { familyReviewGate, judgeReviewDegradation, layerEpicIssues, routeFindings, type FamilyReviewGateInput, type Finding, type ModelReviewResult, type TopologyInput } from "./orchestratorKernel";
+import { buildHandoffPayload, familyReviewGate, judgeReviewDegradation, layerEpicIssues, routeFindings, shipOutcome, type FamilyReviewGateInput, type Finding, type HandoffInput, type ModelReviewResult, type ShipOutcomeInput, type TopologyInput } from "./orchestratorKernel";
 // @ts-ignore Workflow scripts are plain JavaScript outside the web src TypeScript program.
-import { inlineFamilyReviewGate, inlineJudgeFamilyDegradation, inlineLayerEpicIssues, inlineRouteFindings, normalizeWorkflowArgs, runEpicDiscoveryWorkflow, runEpicLayeredPipeline, runEpicSingleSlicePipeline } from "../orchestrator/epicOrchestrator.workflow.js";
+import { inlineBuildHandoffPayload, inlineFamilyReviewGate, inlineJudgeFamilyDegradation, inlineLayerEpicIssues, inlineRouteFindings, inlineShipOutcome, normalizeWorkflowArgs, runEpicDiscoveryWorkflow, runEpicLayeredPipeline, runEpicSingleSlicePipeline } from "../orchestrator/epicOrchestrator.workflow.js";
 
 const representativeTopologyInputs: TopologyInput[] = [
   {
@@ -712,11 +712,12 @@ describe("epic orchestrator S3 layered parallel pipeline", () => {
           const reviewedCommit = command.match(/implementedCommit='([^']+)'/)?.[1] ?? "unknown";
           return JSON.stringify({ mergeCommit: `merge-${reviewedCommit}`, mergeWorktree: "/repo/.epic-orchestrator/family" });
         }
+        if (command.includes("reviewer=gstack-ship-family")) return JSON.stringify({ asked: false, gatesPassed: true, prCreated: true, prUrl: "https://example.test/pr/1" });
         return JSON.stringify({ status: "passed" });
       }
     });
 
-    expect(result.status).toBe("merged");
+    expect(result.status).toBe("ready");
     const implementationCalls = agentCalls.filter((call) => call.role === undefined);
     expect(implementationCalls.map((call) => call.issueNumber)).toEqual([220, 221]);
     expect(implementationCalls[0]).not.toHaveProperty("baseRef");
@@ -801,6 +802,7 @@ describe("epic orchestrator S3 layered parallel pipeline", () => {
           events.push(`merge-${reviewedCommit}`);
           return JSON.stringify({ mergeCommit: `merge-${reviewedCommit}`, mergeWorktree: "/repo/.epic-orchestrator/family" });
         }
+        if (command.includes("reviewer=gstack-ship-family")) return JSON.stringify({ asked: false, gatesPassed: true, prCreated: true, prUrl: "https://example.test/pr/1" });
         return JSON.stringify({ status: "passed" });
       }
     });
@@ -817,7 +819,7 @@ describe("epic orchestrator S3 layered parallel pipeline", () => {
     expect(events.indexOf("agent-start-222")).toBeGreaterThan(events.indexOf("agent-end-220"));
     expect(events.indexOf("agent-start-222")).toBeGreaterThan(events.indexOf("agent-end-221"));
     expect(events.filter((event) => event.startsWith("merge-"))).toEqual(["merge-commit-220", "merge-commit-221", "merge-commit-222"]);
-    expect(result.status).toBe("merged");
+    expect(result.status).toBe("ready");
     expect(result.layers.map((layer: any) => layer.issueNumbers)).toEqual([[220, 221], [222]]);
     expect(result.mergeQueue.map((entry: any) => entry.reviewedCommit)).toEqual(["commit-220", "commit-221", "commit-222"]);
   });
@@ -869,6 +871,7 @@ describe("epic orchestrator S3 layered parallel pipeline", () => {
           }
           if (command.includes("reviewer=codex")) return JSON.stringify({ status: "passed", findings: [] });
           if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [] });
+          if (command.includes("reviewer=gstack-ship-family")) return JSON.stringify({ asked: false, gatesPassed: true, prCreated: true, prUrl: "https://example.test/pr/1" });
           if (command.includes("为切片执行 I7 commit 纪律检查") || command.includes("merge reviewed commit")) {
             return execFileSync("bash", ["-l", "-c", command], { encoding: "utf8" });
           }
@@ -876,7 +879,7 @@ describe("epic orchestrator S3 layered parallel pipeline", () => {
         }
       });
 
-      expect(result.status).toBe("merged");
+      expect(result.status).toBe("ready");
       const mergeWorktrees = result.mergeQueue.map((entry: any) => entry.mergeWorktree);
       expect(mergeWorktrees[0]).toBeTruthy();
       expect(mergeWorktrees[1]).toBe(mergeWorktrees[0]);
@@ -928,6 +931,7 @@ describe("epic orchestrator S3 layered parallel pipeline", () => {
           if (command.includes("/sub_issues")) return JSON.stringify({ epicId: 217, issues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }], blockedBy: [] });
           if (command.includes("reviewer=codex")) return JSON.stringify({ status: "passed", findings: [] });
           if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [] });
+          if (command.includes("reviewer=gstack-ship-family")) return JSON.stringify({ asked: false, gatesPassed: true, prCreated: true, prUrl: "https://example.test/pr/1" });
           if (command.includes("为切片执行 I7 commit 纪律检查") || command.includes("merge reviewed commit")) {
             return execFileSync("bash", ["-l", "-c", command], { encoding: "utf8" });
           }
@@ -935,7 +939,7 @@ describe("epic orchestrator S3 layered parallel pipeline", () => {
         }
       });
 
-      expect(result.status).toBe("merged");
+      expect(result.status).toBe("ready");
       expect(result.mergeQueue[0].mergeWorktree).toBe(expectedMergeWorktree);
       expect(git(expectedMergeWorktree, "rev-parse", "--abbrev-ref", "HEAD")).toBe("family/217");
       expect(git(repoPath, "rev-parse", "HEAD")).toBe(baseCommit);
@@ -1119,11 +1123,12 @@ describe("epic orchestrator S3 layered parallel pipeline", () => {
           return JSON.stringify({ status: "passed", exitCode: 0, output: "family ok" });
         }
         if (command.includes("base management")) return JSON.stringify({ status: "no_drift", startupTargetHead: "base-start", currentTargetHead: "base-start" });
+        if (command.includes("reviewer=gstack-ship-family")) return JSON.stringify({ asked: false, gatesPassed: true, prCreated: true, prUrl: "https://example.test/pr/1" });
         return JSON.stringify({ status: "passed" });
       }
     });
 
-    expect(result.status).toBe("merged");
+    expect(result.status).toBe("ready");
     expect(result.familyVerification).toMatchObject({ status: "passed" });
     expect(result.baseManagement).toMatchObject({ status: "no_drift" });
     expect(familyVerifyCommands).toHaveLength(3);
@@ -1185,10 +1190,14 @@ describe("epic orchestrator S3 layered parallel pipeline", () => {
           expect(command).toContain("rebase \"$currentTargetHead\"");
           return JSON.stringify({ status: "rebased", startupTargetHead: "base-start", currentTargetHead: "base-new", rebaseHead: "rebased-family" });
         }
+        if (command.includes("reviewer=gstack-ship-family")) return JSON.stringify({ asked: false, gatesPassed: true, prCreated: true, prUrl: "https://example.test/pr/1" });
         return JSON.stringify({ status: "passed" });
       }
     });
 
+    expect(result.status).toBe("ready");
+    // §段间交接: after a rebase, baseAtStart in the handoff is the rebased family HEAD, not the stale startup target.
+    expect(result.handoff.baseAtStart).toBe("rebased-family");
     expect(events).toEqual(["verify", "verify", "verify", "rebase", "verify", "verify", "verify"]);
     expect(result.baseManagement).toMatchObject({ status: "rebased", currentTargetHead: "base-new" });
     expect(result.mergeQueue.at(-1).mergeCommit).toBe("rebased-family");
@@ -1312,6 +1321,36 @@ describe("epic orchestrator workflow inline familyReviewGate drift guard", () =>
       expect(inlineJudgeFamilyDegradation(results)).toEqual(judgeReviewDegradation({ stage: "family_5a_5b", results }));
     }
   });
+
+  it("matches the S5 shipOutcome authority across the full asked/gates/pr battery", () => {
+    const battery: ShipOutcomeInput[] = [
+      { asked: false, gatesPassed: true, prCreated: true },
+      { asked: false, gatesPassed: false, prCreated: false },
+      { asked: false, gatesPassed: true, prCreated: false },
+      { asked: false, gatesPassed: false, prCreated: true },
+      { asked: true, gatesPassed: false, prCreated: false },
+      { asked: true, gatesPassed: true, prCreated: true },
+      { asked: true, gatesPassed: true, prCreated: false }
+    ];
+
+    for (const input of battery) {
+      expect(inlineShipOutcome(input)).toBe(shipOutcome(input));
+    }
+  });
+
+  it("matches the S5 buildHandoffPayload authority across the three terminal states + field mixes", () => {
+    const battery: HandoffInput[] = [
+      { status: "ready", epic: 217, familyBranch: "family/217", baseAtStart: "b", merged: [{ number: 220, commitHash: "c220" }], dirty: [], flags: [], prUrl: "https://example.test/pr/1" },
+      { status: "needs-user", epic: 217, familyBranch: "family/217", baseAtStart: "b", merged: [{ number: 220, commitHash: "c220" }], reason: "gstack-ship-ask", question: "MINOR or MAJOR?" },
+      { status: "unconverged", epic: 217, familyBranch: "family/217", baseAtStart: "b", reason: "gstack-ship-failed", detail: "RedTeam failed", flags: ["agy down"], dirty: [{ number: 221, decision: "rework" }] },
+      // optional collections omitted -> both copies must default to the same empty arrays / nulls.
+      { status: "ready", epic: "E1", familyBranch: "family/E1", baseAtStart: "deadbeef", prUrl: "https://example.test/pr/2" }
+    ];
+
+    for (const input of battery) {
+      expect(inlineBuildHandoffPayload(input)).toEqual(buildHandoffPayload(input));
+    }
+  });
 });
 
 describe("epic orchestrator S4b family 5a/5b CMR", () => {
@@ -1319,10 +1358,12 @@ describe("epic orchestrator S4b family 5a/5b CMR", () => {
   // implements, verifies, per-slice reviews, merges; family integration verify + base
   // management pass; then the 5a/5b family CMR runs. The familyReview hook lets each test
   // script the codex-family / agy-family Bash legs and the Claude review/fix agent legs.
-  async function runToFamilyReview({ familyReview }: { familyReview: (round: number) => any }) {
+  async function runToFamilyReview({ familyReview, ship }: { familyReview: (round: number) => any; ship?: any }) {
     const agentCalls: any[] = [];
     const bashCalls: string[] = [];
     let cmrRound = 0;
+    // Default: gstack-ship runs clean — gates pass + family PR created -> ready terminal state.
+    const shipReport = ship ?? { asked: false, gatesPassed: true, prCreated: true, prUrl: "https://example.test/pr/1" };
 
     const result: any = await runEpicLayeredPipeline({
       args: { epicIssueNumber: 217, familyBranch: "family/217", verifyCommands: ["npm --prefix web test"], startupTargetHead: "base-start", targetBranch: "origin/main", maxReviewRounds: 3 },
@@ -1358,6 +1399,7 @@ describe("epic orchestrator S4b family 5a/5b CMR", () => {
         if (command.includes("merge reviewed commit")) return JSON.stringify({ status: "merged", mergeCommit: "merge-220", mergeWorktree: "/repo/.epic-orchestrator/family" });
         if (command.includes("家族集成 verify")) return JSON.stringify({ status: "passed", exitCode: 0, output: "family ok" });
         if (command.includes("base management")) return JSON.stringify({ status: "no_drift", startupTargetHead: "base-start", currentTargetHead: "base-start" });
+        if (command.includes("reviewer=gstack-ship-family")) return JSON.stringify(shipReport);
         return JSON.stringify({ status: "passed" });
       }
     });
@@ -1370,7 +1412,7 @@ describe("epic orchestrator S4b family 5a/5b CMR", () => {
       familyReview: () => ({ codex: { status: "passed", findings: [] }, agy: { status: "passed", findings: [] }, claude: { findings: [] } })
     });
 
-    expect(result.status).toBe("merged");
+    expect(result.status).toBe("ready");
     expect(result.familyReview).toMatchObject({ status: "converged", round: 1 });
     expect(result.outOfScope).toEqual(["online_pr_review_loop"]);
     expect(result.outOfScope).not.toContain("family_5a_5b");
@@ -1406,7 +1448,7 @@ describe("epic orchestrator S4b family 5a/5b CMR", () => {
           : { codex: { status: "passed", findings: [] }, agy: { status: "passed", findings: [] }, claude: { findings: [] } }
     });
 
-    expect(result.status).toBe("merged");
+    expect(result.status).toBe("ready");
     expect(result.familyReview.status).toBe("converged");
     expect(result.familyReview.round).toBe(2);
     expect(result.outOfScope).not.toContain("family_5a_5b");
@@ -1488,10 +1530,138 @@ describe("epic orchestrator S4b family 5a/5b CMR", () => {
       familyReview: () => ({ codex: { status: "passed", findings: [] }, agy: { status: "passed", findings: [] }, claude: { findings: [] } })
     });
 
-    expect(result.status).toBe("merged");
+    expect(result.status).toBe("ready");
     expect(result.outOfScope).toContain("online_pr_review_loop");
     expect(bashCalls.join("\n")).not.toContain("gh pr create");
     expect(bashCalls.join("\n")).not.toContain("pr-review-loop");
     expect(agentCalls.some((call) => call.role === "online_review" || call.role === "pr_review_loop")).toBe(false);
+  });
+});
+
+describe("epic orchestrator S5 Ship phase (gstack-ship + terminal states + handoff)", () => {
+  // Reuses the S4b runToFamilyReview harness (real-ish layered pipeline through a converged family
+  // review), then scripts the gstack-ship Bash leg via the `ship` hook to exercise each terminal state.
+  async function runToShip({ ship }: { ship: any }) {
+    const agentCalls: any[] = [];
+    const bashCalls: string[] = [];
+    let cmrRound = 0;
+    const passClean = () => ({ codex: { status: "passed", findings: [] }, agy: { status: "passed", findings: [] }, claude: { findings: [] } });
+
+    const result: any = await runEpicLayeredPipeline({
+      args: { epicIssueNumber: 217, familyBranch: "family/217", verifyCommands: ["npm --prefix web test"], startupTargetHead: "base-start", targetBranch: "origin/main", maxReviewRounds: 3 },
+      log: () => undefined,
+      agent: async (request: any) => {
+        agentCalls.push(request);
+        if (request.role === "family_review") return passClean().claude;
+        if (request.role === "family_review_fix") return { fixed: true };
+        return {
+          commit: `commit-${request.issueNumber}`,
+          worktreePath: `/repo/.worktrees/issue-${request.issueNumber}`,
+          observabilityEvidence: { loudFailure: true, locatorLogs: true, notApplicableReason: "tooling slice" }
+        };
+      },
+      Bash: async (command: string) => {
+        bashCalls.push(command);
+        if (command.includes("family-review pre-fix HEAD")) return "pre-fix-head";
+        if (command.includes("family-review I7 fix-commit discipline")) return "";
+        if (command.includes("family-review reviewed HEAD")) return "reviewed-head-sha";
+        if (command.includes("/sub_issues")) return JSON.stringify({ epicId: 217, issues: [{ id: 220, epicId: 217, state: "open", title: "S2", url: "https://example.test/220" }], blockedBy: [] });
+        if (command.includes("reviewer=codex-family")) return JSON.stringify(passClean().codex);
+        if (command.includes("reviewer=agy-family")) { cmrRound += 1; return JSON.stringify(passClean().agy); }
+        if (command.includes("reviewer=codex")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("reviewer=agy")) return JSON.stringify({ status: "passed", findings: [] });
+        if (command.includes("merge reviewed commit")) return JSON.stringify({ status: "merged", mergeCommit: "merge-220", mergeWorktree: "/repo/.epic-orchestrator/family" });
+        if (command.includes("家族集成 verify")) return JSON.stringify({ status: "passed", exitCode: 0, output: "family ok" });
+        if (command.includes("base management")) return JSON.stringify({ status: "no_drift", startupTargetHead: "base-start", currentTargetHead: "base-start" });
+        if (command.includes("reviewer=gstack-ship-family")) return JSON.stringify(ship);
+        return JSON.stringify({ status: "passed" });
+      }
+    });
+
+    return { result, agentCalls, bashCalls };
+  }
+
+  it("ready: gstack-ship gates pass + family PR created -> ready terminal state + full handoff", async () => {
+    const { result, bashCalls } = await runToShip({
+      ship: { asked: false, gatesPassed: true, prCreated: true, prUrl: "https://github.com/Akagilnc/ming-salvage-sim/pull/777" }
+    });
+
+    expect(result.status).toBe("ready");
+    // gstack-ship is driven FULL on the merged family worktree against the startup target base.
+    const shipCall = bashCalls.find((command) => command.includes("reviewer=gstack-ship-family")) ?? "";
+    expect(shipCall).toContain("cd '/repo/.epic-orchestrator/family'");
+    expect(shipCall).toContain("gstack-ship --json --base 'origin/main'");
+    // full §段间交接 handoff payload.
+    expect(result.handoff).toMatchObject({
+      status: "ready",
+      epic: 217,
+      familyBranch: "family/217",
+      baseAtStart: "base-start",
+      prUrl: "https://github.com/Akagilnc/ming-salvage-sim/pull/777",
+      question: null,
+      detail: null,
+      dirty: [],
+      flags: []
+    });
+    expect(result.handoff.merged).toEqual([{ number: 220, commitHash: "merge-220" }]);
+  });
+
+  it("needs-user: gstack-ship internal ASK fires -> needs-user terminal state + handoff carries the ASK question", async () => {
+    const { result } = await runToShip({
+      ship: { asked: true, gatesPassed: false, prCreated: false, askDetail: "Version bump is MINOR or MAJOR?" }
+    });
+
+    expect(result.status).toBe("needs-user");
+    expect(result.handoff).toMatchObject({
+      status: "needs-user",
+      epic: 217,
+      familyBranch: "family/217",
+      reason: "gstack-ship-ask",
+      question: "Version bump is MINOR or MAJOR?",
+      detail: null,
+      prUrl: null
+    });
+    expect(result.handoff.merged).toEqual([{ number: 220, commitHash: "merge-220" }]);
+  });
+
+  it("unconverged: gstack-ship gates fail (non-ASK) -> unconverged terminal state + handoff carries the blocking detail", async () => {
+    const { result } = await runToShip({
+      ship: { asked: false, gatesPassed: false, prCreated: false, shipDetail: "RedTeam gate failed: unsafe shell injection" }
+    });
+
+    expect(result.status).toBe("unconverged");
+    expect(result.handoff).toMatchObject({
+      status: "unconverged",
+      epic: 217,
+      familyBranch: "family/217",
+      reason: "gstack-ship-failed",
+      detail: "RedTeam gate failed: unsafe shell injection",
+      question: null,
+      prUrl: null
+    });
+    expect(result.handoff.merged).toEqual([{ number: 220, commitHash: "merge-220" }]);
+  });
+
+  it("none of the three terminal states triggers the online bot / pr-review-loop (online_pr_review_loop stays out of scope)", async () => {
+    for (const ship of [
+      { asked: false, gatesPassed: true, prCreated: true, prUrl: "https://example.test/pr/1" },
+      { asked: true, gatesPassed: false, prCreated: false, askDetail: "pre-landing ASK" },
+      { asked: false, gatesPassed: false, prCreated: false, shipDetail: "coverage hard gate below threshold" }
+    ]) {
+      const { result, bashCalls, agentCalls } = await runToShip({ ship });
+
+      expect(["ready", "needs-user", "unconverged"]).toContain(result.status);
+      expect(result.outOfScope).toContain("online_pr_review_loop");
+      // ship is the last step: create the PR, never drive the online bot loop.
+      expect(bashCalls.join("\n")).not.toContain("pr-review-loop");
+      expect(bashCalls.join("\n")).not.toContain("gh pr review");
+      expect(bashCalls.join("\n")).not.toContain("--resolve");
+      expect(agentCalls.some((call) => call.role === "online_review" || call.role === "pr_review_loop")).toBe(false);
+    }
+  });
+
+  it("fails loudly when gstack-ship omits the load-bearing detail field for its terminal state", async () => {
+    // ready outcome but no prUrl -> the handoff would carry prUrl:null, so the Ship phase must throw.
+    await expect(runToShip({ ship: { asked: false, gatesPassed: true, prCreated: true } })).rejects.toThrow(/missing load-bearing field prUrl/);
   });
 });

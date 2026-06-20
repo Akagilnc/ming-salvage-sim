@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildHandoffPayload,
   familyReviewGate,
   judgeReviewDegradation,
   layerEpicIssues,
@@ -7,6 +8,7 @@ import {
   shipOutcome,
   TopologyError,
   type Finding,
+  type HandoffInput,
   type ModelReviewResult
 } from "./orchestratorKernel";
 
@@ -349,5 +351,132 @@ describe("shipOutcome", () => {
 
   it("prioritizes the ASK even when every ready condition is also satisfied", () => {
     expect(shipOutcome({ asked: true, gatesPassed: true, prCreated: true })).toBe("needs-user");
+  });
+});
+
+describe("buildHandoffPayload", () => {
+  // wiki §段间交接 fixed field set: terminal state / parent epic / family branch + base SHA /
+  // merged slices + commit hashes / dirty slices / pending question / degradation flags.
+  const base: HandoffInput = {
+    status: "ready",
+    epic: 217,
+    familyBranch: "family/217",
+    baseAtStart: "base-sha-aaa",
+    merged: [
+      { number: 220, commitHash: "c220" },
+      { number: 221, commitHash: "c221" }
+    ],
+    dirty: [],
+    flags: []
+  };
+
+  it("assembles the full §段间交接 field set for the ready terminal state", () => {
+    const payload = buildHandoffPayload({
+      ...base,
+      status: "ready",
+      prUrl: "https://github.com/Akagilnc/ming-salvage-sim/pull/999"
+    });
+
+    expect(payload).toEqual({
+      status: "ready",
+      epic: 217,
+      familyBranch: "family/217",
+      baseAtStart: "base-sha-aaa",
+      merged: [
+        { number: 220, commitHash: "c220" },
+        { number: 221, commitHash: "c221" }
+      ],
+      dirty: [],
+      question: null,
+      detail: null,
+      flags: [],
+      prUrl: "https://github.com/Akagilnc/ming-salvage-sim/pull/999"
+    });
+  });
+
+  it("carries the gstack-ship ASK question for the needs-user terminal state", () => {
+    const payload = buildHandoffPayload({
+      ...base,
+      status: "needs-user",
+      reason: "gstack-ship-ask",
+      question: "Version bump is MINOR or MAJOR?"
+    });
+
+    expect(payload).toEqual({
+      status: "needs-user",
+      epic: 217,
+      familyBranch: "family/217",
+      baseAtStart: "base-sha-aaa",
+      merged: [
+        { number: 220, commitHash: "c220" },
+        { number: 221, commitHash: "c221" }
+      ],
+      dirty: [],
+      question: "Version bump is MINOR or MAJOR?",
+      detail: null,
+      flags: [],
+      reason: "gstack-ship-ask",
+      prUrl: null
+    });
+  });
+
+  it("carries the blocking detail for the unconverged terminal state", () => {
+    const payload = buildHandoffPayload({
+      ...base,
+      status: "unconverged",
+      reason: "gstack-ship-failed",
+      detail: "RedTeam gate failed"
+    });
+
+    expect(payload).toEqual({
+      status: "unconverged",
+      epic: 217,
+      familyBranch: "family/217",
+      baseAtStart: "base-sha-aaa",
+      merged: [
+        { number: 220, commitHash: "c220" },
+        { number: 221, commitHash: "c221" }
+      ],
+      dirty: [],
+      question: null,
+      detail: "RedTeam gate failed",
+      flags: [],
+      reason: "gstack-ship-failed",
+      prUrl: null
+    });
+  });
+
+  it("preserves dirty slices and degradation flags across every terminal state", () => {
+    const payload = buildHandoffPayload({
+      status: "unconverged",
+      epic: 217,
+      familyBranch: "family/217",
+      baseAtStart: "base-sha-bbb",
+      merged: [{ number: 220, commitHash: "c220" }],
+      dirty: [{ number: 221, decision: "rework auth gate" }],
+      flags: ["family 5a/5b degraded: agy unavailable (quota)"],
+      reason: "gstack-ship-failed",
+      detail: "coverage hard gate below threshold"
+    });
+
+    expect(payload.dirty).toEqual([{ number: 221, decision: "rework auth gate" }]);
+    expect(payload.flags).toEqual(["family 5a/5b degraded: agy unavailable (quota)"]);
+    expect(payload.question).toBeNull();
+  });
+
+  it("defaults optional collections (merged / dirty / flags) to stable empty arrays", () => {
+    const payload = buildHandoffPayload({
+      status: "ready",
+      epic: 217,
+      familyBranch: "family/217",
+      baseAtStart: "base-sha-aaa",
+      prUrl: "https://example.test/pr/1"
+    });
+
+    expect(payload.merged).toEqual([]);
+    expect(payload.dirty).toEqual([]);
+    expect(payload.flags).toEqual([]);
+    expect(payload.question).toBeNull();
+    expect(payload.detail).toBeNull();
   });
 });

@@ -236,6 +236,70 @@ export function shipOutcome(input: ShipOutcomeInput): ShipOutcome {
   return input.gatesPassed && input.prCreated ? "ready" : "unconverged";
 }
 
+// A merged slice's identity in the handoff: the slice (sub-issue) number and the commit hash it
+// landed on the family branch (S6 git-skip probes by commit, the handoff reports it for the human).
+export interface HandoffMergedSlice {
+  number: IssueId;
+  commitHash: string;
+}
+
+// A dirty slice carries the user's decision text ("rework X") so the next run knows HOW to redo it,
+// not just THAT it must (a bare number loses the decision; see I5 dirty vs dismissal).
+export interface HandoffDirtySlice {
+  number: IssueId;
+  decision?: string;
+}
+
+export interface HandoffInput {
+  status: ShipOutcome; // terminal state: 'ready' | 'needs-user' | 'unconverged'
+  epic: IssueId; // parent epic issue
+  familyBranch: string; // family branch name
+  baseAtStart: string; // base SHA (the I10-verified startup target HEAD)
+  merged?: HandoffMergedSlice[]; // merged slices + their family-branch commit hashes
+  dirty?: HandoffDirtySlice[]; // dirty slices not yet reworked (I5)
+  flags?: string[]; // degradation / absent-voice flags from the load-bearing family gate
+  prUrl?: string; // ready: the family PR gstack-ship created
+  question?: string; // needs-user: the gstack-ship ASK question
+  detail?: string; // unconverged: the blocking detail
+  reason?: string; // terminal-state-specific reason code (gstack-ship-ask / gstack-ship-failed / ...)
+}
+
+export interface HandoffPayload {
+  status: ShipOutcome;
+  epic: IssueId;
+  familyBranch: string;
+  baseAtStart: string;
+  merged: HandoffMergedSlice[];
+  dirty: HandoffDirtySlice[];
+  question: string | null;
+  detail: string | null;
+  flags: string[];
+  prUrl: string | null;
+  reason?: string;
+}
+
+// §段间交接 — assembles the stable handoff payload every run returns to the main session.
+// All three terminal states share one shape (missing fields filled with stable nulls/empty arrays)
+// so the main session can consume it uniformly: terminal state / parent epic / family branch +
+// base SHA / merged slices + commit hashes / dirty slices / pending question / blocking detail /
+// degradation flags / ready PR URL. Pure: no IO, no project imports.
+export function buildHandoffPayload(input: HandoffInput): HandoffPayload {
+  const payload: HandoffPayload = {
+    status: input.status,
+    epic: input.epic,
+    familyBranch: input.familyBranch,
+    baseAtStart: input.baseAtStart,
+    merged: input.merged ?? [],
+    dirty: input.dirty ?? [],
+    question: input.question ?? null,
+    detail: input.detail ?? null,
+    flags: input.flags ?? [],
+    prUrl: input.prUrl ?? null
+  };
+  if (input.reason !== undefined) payload.reason = input.reason;
+  return payload;
+}
+
 export function judgeReviewDegradation(input: DegradationInput): DegradationJudgment {
   const availableModels = uniqueModels(input.results.filter((result) => result.available).map((result) => result.model));
   const missingResults = uniqueResultsByModel(input.results.filter((result) => !result.available));

@@ -1,7 +1,7 @@
 export const meta = {
   name: 'epic-orchestrator',
   description: '读取 GitHub 原生子 issue 与 blocked_by 边，按依赖层并行跑各切片 worktree，自检/评审后通过串行队列合入家族分支。',
-  whenToUse: 'Issue #223 S4b：父 epic issue 号 -> 层 barrier 并行切片实现 -> 本地 verify -> per-slice codex+agy review -> 串行家族分支 merge 队列 -> 家族集成 verify + base 管理 -> 5a/5b 家族 cmr（codex+Claude+agy，findings 分流 + abort）。编排器始终停在线上 PR 评审前交回主 session。',
+  whenToUse: 'Issue #224 S5：父 epic issue 号 -> 层 barrier 并行切片实现 -> 本地 verify -> per-slice codex+agy review -> 串行家族分支 merge 队列 -> 家族集成 verify + base 管理 -> 5a/5b 家族 cmr（codex+Claude+agy，findings 分流 + abort）-> 收敛后 gstack-ship 跑完整（coverage/specialist/RedTeam 闸 + push + 建家族 PR）-> 三结束态（ready / needs-user / unconverged）带 handoff payload 回主 session。编排器始终停在线上 PR 评审前交回主 session。',
   phases: [
     { title: 'Discover', detail: '读取 gh 原生子 issue 与 blocked_by 边' },
     { title: 'Plan', detail: '运行 drift-guarded 的 S0 拓扑内联副本，把 open 切片分组为依赖层' },
@@ -11,7 +11,8 @@ export const meta = {
     { title: 'Merge', detail: '编排器用单写者 worktree 串行合并 reviewed commit 到家族分支' },
     { title: 'Family Verify', detail: '全片落地后在合并后的家族 worktree 上整体跑 I9 typecheck/unit/full verify' },
     { title: 'Base Management', detail: '进入家族 CMR/gstack-ship 前按 I10 比对启动 target HEAD；base 前进则 rebase 并重跑 I9' },
-    { title: 'Family Review', detail: '在合并后家族分支跑 5a/5b cmr（codex+Claude+agy；家族 worktree 在隐藏 .epic-orchestrator 下，agy 只看 diff）；findings 分流（I5：机械 bug 自治修重过 5a/5b、选择回主 session 升级）；不收敛 abort（I1）/可用模型 <2 降级回主 session（I2）' }
+    { title: 'Family Review', detail: '在合并后家族分支跑 5a/5b cmr（codex+Claude+agy；家族 worktree 在隐藏 .epic-orchestrator 下，agy 只看 diff）；findings 分流（I5：机械 bug 自治修重过 5a/5b、选择回主 session 升级）；不收敛 abort（I1）/可用模型 <2 降级回主 session（I2）' },
+    { title: 'Ship', detail: '家族承重闸收敛后调 gstack-ship 跑完整（coverage/specialist/RedTeam 闸 + push + 建家族 PR；闸不可跳）-> inlineShipOutcome 三结束态（ready / needs-user / unconverged）+ inlineBuildHandoffPayload 组 §段间交接 handoff，停在线上评审前（绝不驱动线上 bot 循环）' }
   ]
 };
 
@@ -179,6 +180,36 @@ export function inlineJudgeFamilyDegradation(results) {
     missingModels,
     flags: [...missingByModel.values()].map((result) => `review degraded: ${result.model} unavailable${result.reason ? ` (${result.reason})` : ''}`)
   };
+}
+
+// Thin inline copy of web/src/orchestratorKernel.ts shipOutcome (S5 exit contract).
+// Workflow sandboxes cannot import the TS authority; the drift guard in
+// web/src/epicOrchestratorWorkflow.test.ts behavior-diffs this copy against the kernel.
+// asked (gstack-ship internal ASK gate) wins first -> needs-user; else gates passed AND PR
+// created -> ready; anything else -> unconverged.
+export function inlineShipOutcome(input) {
+  if (input.asked) return 'needs-user';
+  return input.gatesPassed && input.prCreated ? 'ready' : 'unconverged';
+}
+
+// Thin inline copy of web/src/orchestratorKernel.ts buildHandoffPayload (§段间交接).
+// Assembles the stable handoff payload every run returns to the main session; all three terminal
+// states share one shape (missing fields filled with stable nulls / empty arrays). Drift-guarded.
+export function inlineBuildHandoffPayload(input) {
+  const payload = {
+    status: input.status,
+    epic: input.epic,
+    familyBranch: input.familyBranch,
+    baseAtStart: input.baseAtStart,
+    merged: input.merged ?? [],
+    dirty: input.dirty ?? [],
+    question: input.question ?? null,
+    detail: input.detail ?? null,
+    flags: input.flags ?? [],
+    prUrl: input.prUrl ?? null
+  };
+  if (input.reason !== undefined) payload.reason = input.reason;
+  return payload;
 }
 
 function compareIssueKeys(left, right) {
@@ -756,13 +787,147 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
     };
   }
 
+  // ── S5 Ship phase: gstack-ship (full) -> inlineShipOutcome (3 terminal states) -> handoff ──────
+  // Reached only once the load-bearing family 5a/5b CMR has converged. The orchestrator drives
+  // gstack-ship to completion (coverage/specialist/RedTeam gates + push + create the family PR; the
+  // gates are non-skippable). gstack-ship has an internal ASK gate (version bump MINOR/MAJOR,
+  // pre-landing ASK, coverage hard gate) -> on trigger the ship pauses for the user, no PR is built
+  // -> terminal state needs-user. All three terminal states return to the main session with the
+  // §段间交接 handoff payload (assembled via the drift-guarded inlineBuildHandoffPayload).
+  // IRON RULE: "stop before online review" = the orchestrator NEVER drives the online bot multi-round
+  // loop; creating the PR is the ship's last step (bots auto-arrive once the PR exists), the loop is
+  // the main session's job. online_pr_review_loop stays out of scope on every Ship exit.
+  phaseIfAvailable('Ship');
+
+  // The merged-slice ledger for the handoff: reviewedSlices and mergeQueue are pushed in lockstep,
+  // so zip slice issue number <-> the commit it landed on the family branch (familyHead is refreshed
+  // post rebase / post family-review fix above, so it reflects the reviewed HEAD, not a stale commit).
+  const mergedSlices = reviewedSlices.map((slice, index) => ({
+    number: slice.plannedSlice.issueNumber,
+    commitHash: mergeQueue[index]?.familyHead ?? mergeQueue[index]?.mergeCommit ?? null
+  }));
+  // Degradation / absent-voice flags from the load-bearing family gate's converged round.
+  const convergedRound = Array.isArray(familyReview.rounds) ? familyReview.rounds.at(-1) : undefined;
+  const shipFlags = convergedRound?.degradation?.flags ?? [];
+  const baseAtStart = baseManagement.rebaseHead ?? startupTargetHead;
+
+  const ship = await runFamilyShip({
+    Bash,
+    familyWorktree,
+    familyBranch: normalizedArgs.familyBranch,
+    targetBranch: normalizedArgs.targetBranch,
+    shipDecision: normalizedArgs.shipDecision
+  });
+
+  const outcome = inlineShipOutcome({ asked: ship.asked, gatesPassed: ship.gatesPassed, prCreated: ship.prCreated });
+
+  // I8 observability + §段间交接: each terminal state's load-bearing detail field is its hard
+  // acceptance — it must not silently go missing. gstack-ship report field -> handoff key:
+  //   ready:      ship.prUrl     -> payload.prUrl     (family PR link)
+  //   needs-user: ship.askDetail -> payload.question  (pending decision)
+  //   unconverged:ship.shipDetail-> payload.detail    (blocking detail)
+  // The terminal-detail field is conditional on the outcome, so validate it here and fail LOUDLY
+  // (ADR 0005 / CLAUDE.md "fail loud") rather than handing back a null-load handoff to the main session.
+  const requireShipDetail = (field, value, label) => {
+    if (typeof value !== 'string' || value.trim() === '') {
+      throw new Error(
+        `epic-orchestrator Ship phase: terminal state "${outcome}" is missing load-bearing field ${field} (${label}) — ` +
+          `gstack-ship report did not carry that payload, handoff incomplete. Fix the gstack-ship parse/output and rerun.`
+      );
+    }
+    return value;
+  };
+
+  const handoffBase = {
+    epic: discovery.epicIssueNumber,
+    familyBranch: normalizedArgs.familyBranch,
+    baseAtStart,
+    merged: mergedSlices,
+    dirty: [],
+    flags: shipFlags
+  };
+
+  if (outcome === 'ready') {
+    // ready: gates passed + family PR built by gstack-ship -> return to main session, which takes over
+    // the online bot review loop (pr-review-loop, NOT in this script). The orchestrator ends the run
+    // here: it does not create a PR itself (gstack-ship already did) and does not drive online review.
+    const prUrl = requireShipDetail('prUrl', ship.prUrl, '家族 PR 链接');
+    log?.(`Ship ready: gstack-ship gates passed + family PR created (${prUrl}) -> end run, return to main session`);
+    return {
+      ...discovery,
+      outOfScope: ['online_pr_review_loop'],
+      status: 'ready',
+      ...familyPipelineTail,
+      familyReview: { status: 'converged', rounds: familyReview.rounds, round: familyReview.round },
+      ship,
+      handoff: inlineBuildHandoffPayload({ ...handoffBase, status: 'ready', prUrl })
+    };
+  }
+
+  if (outcome === 'needs-user') {
+    // needs-user: gstack-ship internal ASK gate fired (version / pre-landing / coverage hard gate),
+    // the ship paused for the user, no PR -> end run, return to main session with the pending question.
+    const question = requireShipDetail('askDetail', ship.askDetail, '待拍问题');
+    log?.(`Ship needs-user: gstack-ship internal ASK fired (${question}) -> end run, return to main session`);
+    return {
+      ...discovery,
+      outOfScope: ['online_pr_review_loop'],
+      status: 'needs-user',
+      ...familyPipelineTail,
+      familyReview: { status: 'converged', rounds: familyReview.rounds, round: familyReview.round },
+      ship,
+      handoff: inlineBuildHandoffPayload({ ...handoffBase, status: 'needs-user', reason: 'gstack-ship-ask', question })
+    };
+  }
+
+  // unconverged: gates not passed / no PR and not an ASK -> stuck or unconverged (suspected
+  // implementation/architecture problem) -> end run, return to main session with the blocking detail.
+  const detail = requireShipDetail('shipDetail', ship.shipDetail, '卡点细节');
+  log?.(`Ship unconverged: gstack-ship gates not passed or PR not created (${detail}) -> end run, return to main session`);
   return {
     ...discovery,
     outOfScope: ['online_pr_review_loop'],
-    status: 'merged',
+    status: 'unconverged',
     ...familyPipelineTail,
-    familyReview: { status: 'converged', rounds: familyReview.rounds, round: familyReview.round }
+    familyReview: { status: 'converged', rounds: familyReview.rounds, round: familyReview.round },
+    ship,
+    handoff: inlineBuildHandoffPayload({ ...handoffBase, status: 'unconverged', reason: 'gstack-ship-failed', detail })
   };
+}
+
+// ── runFamilyShip: drive gstack-ship (full) on the family worktree and parse its three-gate result ──
+//
+// ⚠️ ASSUMED gstack-ship CONTRACT (NOT固化 in the repo — flagged unknown in the epic-orchestration
+// blueprint; surface this to the user for confirmation / future dogfood verification):
+//   Assumed COMMAND (run from the family worktree):
+//     `gstack-ship --json --base <targetBranch>`  (a single non-interactive headless invocation that
+//     runs the coverage/specialist/RedTeam gates, bumps VERSION/CHANGELOG, commits, pushes, and
+//     creates the family PR — the gates are non-skippable; a rerun-on-prompt is auto-confirmed, not asked).
+//   Assumed OUTPUT (one JSON object on stdout, human logs on stderr — same convention as codex exec):
+//     { "asked": bool,          // gstack-ship internal ASK gate fired (version MINOR/MAJOR, pre-landing
+//                               //   ASK, coverage hard gate) — ship paused for the user, PR not built
+//       "gatesPassed": bool,    // coverage + specialist + RedTeam gates all passed (non-skippable)
+//       "prCreated": bool,      // family PR was created by gstack-ship
+//       "prUrl": string,        // (ready) the family PR link
+//       "askDetail": string,    // (asked) what is being asked (version / pre-landing / coverage)
+//       "shipDetail": string }  // (gates failed / non-ASK ship failure) the blocking detail
+//   If the assumed command/shape is wrong at dogfood time, only this function changes — the terminal-
+//   state mapping (inlineShipOutcome) and handoff assembly (inlineBuildHandoffPayload) are契约-stable.
+//
+// This is an orchestration shell (dogfood-not-run): it writes the "orchestrator invokes gstack-ship"
+// wiring; it does NOT actually run gstack-ship here. The shipDecision arg (set when a prior run's
+// gstack-ship ASK was answered by the user) is threaded into the prompt so the rerun does not stop on
+// the same question again.
+async function runFamilyShip({ Bash, familyWorktree, familyBranch, targetBranch, shipDecision }) {
+  const decisionNote = typeof shipDecision === 'string' && shipDecision.trim() ? shipDecision.trim() : null;
+  const decisionExport = decisionNote
+    ? `\n# A prior gstack-ship internal ASK was answered by the user; continue per this decision without re-asking the same question:\n# ${decisionNote.replace(/\n/g, ' ')}`
+    : '';
+  return parseShipJson(
+    await Bash(
+      `set -euo pipefail\ncd ${shellQuote(familyWorktree)}\n# reviewer=gstack-ship-family; run gstack-ship FULL on the merged family branch ${shellQuote(familyBranch)} (coverage/specialist/RedTeam gates + push + create family PR, base=${shellQuote(targetBranch)}; gates non-skippable). ASSUMED contract — see runFamilyShip comment.${decisionExport}\ngstack-ship --json --base ${shellQuote(targetBranch)}`
+    )
+  );
 }
 
 async function runSliceReviewLoop({ discovery, normalizedArgs, sliceBaseContext, plannedIssue, Bash, runner, log }) {
@@ -921,6 +1086,9 @@ function normalizePipelineArgs(rawArgs, epicIssueNumber) {
     familyBranch: String(objectArgs.familyBranch ?? `family/epic-${epicIssueNumber}`),
     targetBranch: String(objectArgs.targetBranch ?? 'origin/main'),
     startupTargetHead: objectArgs.startupTargetHead === undefined ? undefined : String(objectArgs.startupTargetHead),
+    // S5: a prior run's gstack-ship internal ASK, answered by the user and threaded back to continue
+    // the rerun without stopping on the same question. Optional (only set when continuing past a ship ASK).
+    shipDecision: typeof objectArgs.shipDecision === 'string' && objectArgs.shipDecision.trim() ? objectArgs.shipDecision : undefined,
     verifyCommands,
     maxReviewRounds: normalizePositiveInteger(objectArgs.maxReviewRounds, 3, 'maxReviewRounds')
   };
@@ -1286,6 +1454,37 @@ function parseReviewerJson(raw, reviewerName) {
       }
     }
     throw new Error(`${reviewerName} review did not return parseable reviewer JSON: ${fullOutputError.message}`);
+  }
+}
+
+// Parse gstack-ship's JSON report off stdout. gstack-ship is assumed (see runFamilyShip) to print
+// human progress on stderr and one JSON object on stdout, but the exact stdout framing is an assumed
+// contract — so scan for a trailing JSON object the same way parseReviewerJson does, tolerating any
+// preceding human context, and fail loudly when nothing parses (ADR 0005 — never swallow a bad report).
+function parseShipJson(raw) {
+  const output = bashText(raw);
+  if (output === null) throw new Error('gstack-ship did not return output.');
+  try {
+    return JSON.parse(output);
+  } catch (fullOutputError) {
+    const trimmed = output.trim();
+    for (let index = trimmed.lastIndexOf('{'); index >= 0; index = index === 0 ? -1 : trimmed.lastIndexOf('{', index - 1)) {
+      try {
+        return JSON.parse(trimmed.slice(index));
+      } catch {
+        // Keep scanning for a trailing gstack-ship JSON object after human context.
+      }
+    }
+    const lines = trimmed.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).reverse();
+    for (const line of lines) {
+      if (!line.startsWith('{') || !line.endsWith('}')) continue;
+      try {
+        return JSON.parse(line);
+      } catch {
+        // Keep scanning for the explicit gstack-ship JSON object.
+      }
+    }
+    throw new Error(`gstack-ship did not return parseable JSON: ${fullOutputError.message}`);
   }
 }
 
