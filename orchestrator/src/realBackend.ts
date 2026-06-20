@@ -43,13 +43,15 @@ import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   copyFileSync,
+  existsSync,
   mkdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
@@ -528,6 +530,61 @@ export function attributeFailure(
   return new Error(`${step}:${phase} — ${cause}`);
 }
 
+// ── promptsDir validation (integ-cmr 256 r2, F4) ─────────────────────────────
+
+/**
+ * Every versioned promptFile the runner's STEP_SPECS reference (S2/S3/S5/S6).
+ * The real Backend resolves each as `join(promptsDir, promptFile)`, so all four
+ * must exist under `promptsDir` or the real path cannot run end-to-end (#256 AC
+ * "对一个真叶子 issue 端到端跑通"). Kept in lock-step with `runner.ts` STEP_SPECS.
+ */
+export const REFERENCED_PROMPT_FILES = [
+  "coder_implement.md",
+  "reviewer_full_review.md",
+  "coder_fix.md",
+  "reviewer_rereview.md",
+] as const;
+
+/**
+ * Build the construction-time `promptsDir` validation error message, or
+ * `undefined` when the dir is valid (integ-cmr 256 r2, F4).
+ *
+ * `promptsDir` MUST be absolute: Sandcastle resolves `promptFile` against
+ * `process.cwd()`, NOT the run's `cwd` option (index.d.ts), so a relative
+ * `promptsDir` would silently resolve the prompt against the wrong directory at
+ * run time — a latent footgun. It must also exist and contain every
+ * {@link REFERENCED_PROMPT_FILES} entry, so the real path can actually run
+ * end-to-end instead of throwing deep in the first `sandbox.run()`.
+ *
+ * Pure: the caller supplies the absoluteness verdict + the list of missing
+ * files (from fs), so the message assembly is unit-tested without any I/O.
+ */
+export function promptsDirError(
+  promptsDir: string,
+  isAbsolute: boolean,
+  dirExists: boolean,
+  missingFiles: ReadonlyArray<string>,
+): string | undefined {
+  if (!isAbsolute) {
+    return (
+      `RealBackend: promptsDir must be an ABSOLUTE path (got "${promptsDir}"). ` +
+      `Sandcastle resolves promptFile against process.cwd(), not the run cwd, ` +
+      `so a relative promptsDir would resolve prompts against the wrong dir.`
+    );
+  }
+  if (!dirExists) {
+    return `RealBackend: promptsDir "${promptsDir}" does not exist.`;
+  }
+  if (missingFiles.length > 0) {
+    return (
+      `RealBackend: promptsDir "${promptsDir}" is missing required promptFile(s): ` +
+      `${missingFiles.join(", ")}. All of [${REFERENCED_PROMPT_FILES.join(", ")}] ` +
+      `must be present (the runner's S2/S3/S5/S6 reference them).`
+    );
+  }
+  return undefined;
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Container glue (MANUAL smoke; not in the zero-container automated suite)
 // ════════════════════════════════════════════════════════════════════════════
@@ -542,7 +599,16 @@ export interface RealBackendOptions {
   readonly imageName: string;
   /** Host dir holding the baked dev skills to bind-mount (spike). */
   readonly skillsMount: string;
-  /** Dir holding the versioned promptFiles (coder_implement.md, …). */
+  /**
+   * Dir holding the versioned promptFiles (`coder_implement.md`,
+   * `reviewer_full_review.md`, `coder_fix.md`, `reviewer_rereview.md`).
+   *
+   * MUST be an ABSOLUTE path (validated at construction, F4): Sandcastle
+   * resolves `promptFile` against `process.cwd()`, NOT the run `cwd` option
+   * (index.d.ts), so a relative `promptsDir` would silently resolve the prompt
+   * against the wrong directory at run time. The dir must exist and contain all
+   * four referenced files, or the constructor throws.
+   */
   readonly promptsDir: string;
   /** Override $HOME for auth path construction (tests). */
   readonly home?: string;
@@ -576,6 +642,25 @@ export class RealBackend implements Backend {
 
   constructor(opts: RealBackendOptions) {
     this.opts = opts;
+    this.validatePromptsDir();
+  }
+
+  /**
+   * Fail fast at construction if `promptsDir` is not an absolute, existing dir
+   * containing every referenced promptFile (integ-cmr 256 r2, F4) — so a
+   * misconfiguration surfaces here, not deep inside the first `sandbox.run()`
+   * (or, worse, silently against the wrong dir via Sandcastle's process.cwd()
+   * resolution). The pure {@link promptsDirError} builds the message; this thin
+   * wrapper supplies the fs verdicts.
+   */
+  private validatePromptsDir(): void {
+    const dir = this.opts.promptsDir;
+    const dirExists = isAbsolute(dir) && existsSync(dir) && statSync(dir).isDirectory();
+    const missing = dirExists
+      ? REFERENCED_PROMPT_FILES.filter((f) => !existsSync(join(dir, f)))
+      : [];
+    const err = promptsDirError(dir, isAbsolute(dir), dirExists, missing);
+    if (err !== undefined) throw new Error(err);
   }
 
   /** Run a host `gh`/`git` command, returning trimmed stdout. */
