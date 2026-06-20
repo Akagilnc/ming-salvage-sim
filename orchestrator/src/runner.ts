@@ -6,14 +6,12 @@
  * entry, then calls route() to pick the next step. The agent never decides
  * the next step — route() does.
  *
- * Slice #247 = the thinnest happy path:
- *   S0 input_gate (fake = compliant) → S1 load_context → S2 coder_implement
- *   → S3 reviewer_full_review → S4 route_findings (no findings = approve)
- *   → S7 push → S8 handoff(status=success).
+ * Slice #247: happy path S0–S3–S4(approve)–S7–S8.
+ * Slice #250: S4 severity+action fan-out; S5/S6 step bodies stubbed so the
+ *   fan-out is exercisable end-to-end (fix-loop back-edge remains #254).
  *
- * No fix loop (#254), no escalate stop (#251), no error edges (#252), no full
- * severity routing (#250), no persisted ledger (#249), no soul injection
- * (#253). Those layer onto these seams without reshaping them.
+ * Remaining seams: #248 (real S0 gate), #249 (persisted ledger), #251
+ * (escalate stop), #252 (error edges), #253 (soul injection), #254 (fix loop).
  */
 
 import { route } from "./route.js";
@@ -35,10 +33,16 @@ const SLICE_BASE = "main";
  * The fixed StepSpec for each agent step. Versioned promptFiles, never
  * assembled inline (ADR 0018 §4). #247 sets id/role/promptFile; model /
  * completionSignal / maxIter are seams for later slices.
+ *
+ * S5/S6 added in #250 (fix loop stubs — the real loop control is #254).
  */
-const STEP_SPECS: Readonly<Record<"S2" | "S3", StepSpec>> = {
+const STEP_SPECS: Readonly<Record<"S2" | "S3" | "S5" | "S6", StepSpec>> = {
   S2: { id: "S2", role: "coder", promptFile: "coder_implement.md" },
   S3: { id: "S3", role: "reviewer", promptFile: "reviewer_full_review.md" },
+  // S5/S6: stubs so S4 fan-out can be tested end-to-end (#250).
+  // The fix-loop back-edge S5→S6→S4 is wired by #254 — not here.
+  S5: { id: "S5", role: "coder", promptFile: "coder_fix.md" },
+  S6: { id: "S6", role: "reviewer", promptFile: "reviewer_rereview.md" },
 };
 
 export async function runOrchestrator(input: RunInput): Promise<RunResult> {
@@ -81,8 +85,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
 
       case "S2":
-      case "S3": {
+      case "S3":
+      case "S5":
+      case "S6": {
         // Agent step — one sandbox.run() driven by its fixed StepSpec.
+        // S5/S6 are fix-loop stubs added in #250; full loop control is #254.
         if (worktree === undefined) {
           throw new Error(`runner: ${step} reached before worktree prepared`);
         }
@@ -114,8 +121,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
 
       default: {
-        // S5/S6 are fix-loop steps not wired in #247.
-        throw new Error(`runner: step ${step} not implemented in #247`);
+        // Exhaustiveness guard: any unrecognised step is a routing bug.
+        const never: never = step;
+        throw new Error(`runner: step ${String(never)} not handled`);
       }
     }
 
