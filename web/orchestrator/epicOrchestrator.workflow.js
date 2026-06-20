@@ -682,8 +682,21 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
     familyBranch: normalizedArgs.familyBranch,
     epicIssueNumber: discovery.epicIssueNumber,
     maxReviewRounds: normalizedArgs.maxReviewRounds,
-    verifyCommands: normalizedArgs.verifyCommands
+    verifyCommands: normalizedArgs.verifyCommands,
+    diffBase: startupTargetHead
   });
+  // Family review fix rounds add autonomous-fix commits that advance the family worktree HEAD.
+  // Only then refresh the final merge entry so every exit reports the reviewed HEAD rather than
+  // the stale pre-review merge commit (no fix round -> HEAD unchanged -> skip the rev-parse).
+  const hadFixRound = Array.isArray(familyReview.rounds) && familyReview.rounds.some((entry) => entry.gate === 'fix');
+  if (hadFixRound) {
+    const reviewedFamilyHead = (await Bash(`set -euo pipefail\n# family-review reviewed HEAD\ngit -C ${shellQuote(familyWorktree)} rev-parse HEAD`)).trim();
+    const finalMergeEntry = mergeQueue.at(-1);
+    if (finalMergeEntry && reviewedFamilyHead && finalMergeEntry.familyHead !== reviewedFamilyHead) {
+      finalMergeEntry.mergeCommit = reviewedFamilyHead;
+      finalMergeEntry.familyHead = reviewedFamilyHead;
+    }
+  }
   const familyPipelineTail = {
     layers,
     reviewedSlices,
@@ -699,7 +712,9 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
   if (familyReview.status === 'halt') {
     return {
       ...discovery,
-      outOfScope: ['online_pr_review_loop'],
+      // halt = degradation before the gate ran, so family 5a/5b was NOT performed -> stays out of scope.
+      // (escalate/abort/fix_verify_failed below DID run the gate, so they correctly drop it.)
+      outOfScope: ['family_5a_5b', 'online_pr_review_loop'],
       status: 'return_to_main_session',
       reason: 'review_degraded',
       ...familyPipelineTail,
@@ -994,10 +1009,10 @@ async function manageFamilyBase({ Bash, familyWorktree, normalizedArgs, startupT
 // review subagent). Mechanical-only findings drive an autonomous fix (re-run family verify +
 // re-run 5a/5b) until a round with no new finding; decision findings escalate to the main
 // session; the fix budget is bounded by maxReviewRounds (I1 abort).
-async function runFamilyReview({ Bash, runner, familyWorktree, familyBranch, epicIssueNumber, maxReviewRounds, verifyCommands }) {
+async function runFamilyReview({ Bash, runner, familyWorktree, familyBranch, epicIssueNumber, maxReviewRounds, verifyCommands, diffBase }) {
   const rounds = [];
   for (let round = 1; round <= maxReviewRounds; round += 1) {
-    const cmr = await runFamilyCmrRound({ Bash, runner, familyWorktree, familyBranch, epicIssueNumber, round });
+    const cmr = await runFamilyCmrRound({ Bash, runner, familyWorktree, familyBranch, epicIssueNumber, round, diffBase });
     if (cmr.degradation.status === 'halt') {
       return { status: 'halt', round, rounds, degradation: cmr.degradation, reviewers: cmr.reviewers };
     }
@@ -1045,15 +1060,17 @@ async function runFamilyReview({ Bash, runner, familyWorktree, familyBranch, epi
   return { status: 'abort', round: maxReviewRounds, rounds, maxReviewRounds };
 }
 
-async function runFamilyCmrRound({ Bash, runner, familyWorktree, familyBranch, epicIssueNumber, round }) {
-  const codex = await runFamilyCodexLeg({ Bash, familyWorktree, familyBranch });
-  const agy = await runFamilyAgyLeg({ Bash, familyWorktree, familyBranch });
+async function runFamilyCmrRound({ Bash, runner, familyWorktree, familyBranch, epicIssueNumber, round, diffBase }) {
+  const codex = await runFamilyCodexLeg({ Bash, familyWorktree, familyBranch, diffBase });
+  const agy = await runFamilyAgyLeg({ Bash, familyWorktree, familyBranch, diffBase });
   const claude = await runFamilyClaudeLeg({ runner, familyWorktree, familyBranch, epicIssueNumber, round });
 
   const reviewers = [
     { model: 'codex', available: codex.available, reason: codex.reason, fullGrounding: true, findings: codex.findings },
     { model: 'claude', available: claude.available, reason: claude.reason, findings: claude.findings },
-    { model: 'agy', available: agy.available, reason: agy.reason, fullGrounding: true, diffOnly: false, findings: agy.findings }
+    // agy refuses hidden (dot-path) workspaces and the family worktree lives under .epic-orchestrator,
+    // so the agy leg reviews the diff only (no repo grounding).
+    { model: 'agy', available: agy.available, reason: agy.reason, fullGrounding: false, diffOnly: true, findings: agy.findings }
   ];
   const degradation = inlineJudgeFamilyDegradation(
     reviewers.map((reviewer) => ({ model: reviewer.model, available: reviewer.available, reason: reviewer.reason }))
@@ -1064,10 +1081,19 @@ async function runFamilyCmrRound({ Bash, runner, familyWorktree, familyBranch, e
   return { reviewers, degradation, findings };
 }
 
-async function runFamilyCodexLeg({ Bash, familyWorktree, familyBranch }) {
+// Shell expr for the family CMR diff base: prefer the I10 startup target HEAD threaded in,
+// falling back to merge-base origin/main (then HEAD^/HEAD) only when no base was provided.
+function familyDiffBaseExpr(diffBase) {
+  const fallback = 'git merge-base origin/main HEAD 2>/dev/null || git rev-parse HEAD^ 2>/dev/null || git rev-parse HEAD';
+  if (!diffBase) return `$(${fallback})`;
+  return `$(git rev-parse ${shellQuote(`${diffBase}^{commit}`)} 2>/dev/null || ${fallback})`;
+}
+
+async function runFamilyCodexLeg({ Bash, familyWorktree, familyBranch, diffBase }) {
+  const baseExpr = familyDiffBaseExpr(diffBase);
   try {
     const parsed = parseReviewerJson(
-      await Bash(`set -euo pipefail\ncd ${shellQuote(familyWorktree)}\n# reviewer=codex-family; 5a/5b family CMR on merged family branch, full grounding (non-hidden path)\n{\n  printf '%s\\n' 'Review the merged family branch diff for cross-slice completeness (5a) and correctness regressions (5b).'\n  printf '%s\\n' 'Return only one JSON object on stdout with shape {"status":"passed"|"failed","findings":[{"id":...,"classification":"mechanical_bug"|"choice","claim_quote":...,"location":...}]}. Do not include markdown or prose outside the JSON object.'\n  printf '%s\\n' 'Diff stat against the startup target base for human context:'\n  git diff --stat $(git merge-base origin/main HEAD 2>/dev/null || git rev-parse HEAD^ 2>/dev/null || git rev-parse HEAD) HEAD\n  printf '%s\\n' 'Full diff:'\n  git diff $(git merge-base origin/main HEAD 2>/dev/null || git rev-parse HEAD^ 2>/dev/null || git rev-parse HEAD) HEAD\n} | codex exec --skip-git-repo-check --ephemeral -`),
+      await Bash(`set -euo pipefail\ncd ${shellQuote(familyWorktree)}\n# reviewer=codex-family; 5a/5b family CMR on merged family branch (codex reads the repo via codex exec, unaffected by the hidden worktree path)\n{\n  printf '%s\\n' 'Review the merged family branch diff for cross-slice completeness (5a) and correctness regressions (5b).'\n  printf '%s\\n' 'Return only one JSON object on stdout with shape {"status":"passed"|"failed","findings":[{"id":...,"classification":"mechanical_bug"|"choice","claim_quote":...,"location":...}]}. Do not include markdown or prose outside the JSON object.'\n  printf '%s\\n' 'Diff stat against the startup target base for human context:'\n  git diff --stat ${baseExpr} HEAD\n  printf '%s\\n' 'Full diff:'\n  git diff ${baseExpr} HEAD\n} | codex exec --skip-git-repo-check --ephemeral -`),
       'codex-family'
     );
     return { available: true, findings: parsed.findings ?? [] };
@@ -1076,10 +1102,11 @@ async function runFamilyCodexLeg({ Bash, familyWorktree, familyBranch }) {
   }
 }
 
-async function runFamilyAgyLeg({ Bash, familyWorktree, familyBranch }) {
+async function runFamilyAgyLeg({ Bash, familyWorktree, familyBranch, diffBase }) {
+  const baseExpr = familyDiffBaseExpr(diffBase);
   try {
     const parsed = parseReviewerJson(
-      await Bash(`set -euo pipefail\ncd ${shellQuote(familyWorktree)}\n# reviewer=agy-family; full grounding on merged family worktree (non-hidden path; full repo grounding, not restricted to diff)\ngit diff $(git merge-base origin/main HEAD 2>/dev/null || git rev-parse HEAD^ 2>/dev/null || git rev-parse HEAD) HEAD | agy --sandbox --print ''`),
+      await Bash(`set -euo pipefail\ncd ${shellQuote(familyWorktree)}\n# reviewer=agy-family; diff-based review only (agy refuses the hidden .epic-orchestrator worktree, so no repo grounding). Review instructions + JSON schema go on stdin; agy is agentic, so a hard read-only constraint is mandatory.\n{\n  printf '%s\\n' 'REVIEW ONLY — HARD CONSTRAINT. Do NOT modify, create, rename, or delete any file; do NOT run commands. Output only the review.'\n  printf '%s\\n' 'Review the merged family branch diff for cross-slice completeness (5a) and correctness regressions (5b).'\n  printf '%s\\n' 'Return only one JSON object on stdout with shape {"status":"passed"|"failed","findings":[{"id":...,"classification":"mechanical_bug"|"choice","claim_quote":...,"location":...}]}. Do not include markdown or prose outside the JSON object.'\n  printf '%s\\n' 'Diff stat for context:'\n  git diff --stat ${baseExpr} HEAD\n  printf '%s\\n' 'Full diff:'\n  git diff ${baseExpr} HEAD\n} | agy --sandbox --print ''`),
       'agy-family'
     );
     return { available: true, findings: parsed.findings ?? [] };

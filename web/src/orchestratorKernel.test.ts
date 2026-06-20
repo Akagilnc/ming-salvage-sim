@@ -220,6 +220,16 @@ describe("routeFindings", () => {
       decisionFindings: []
     });
   });
+
+  it("tolerates null/undefined entries without crashing (routes them to the decision bucket)", () => {
+    const findings = [null, { id: "F1", classification: "mechanical_bug" }, undefined] as unknown as Finding[];
+
+    expect(routeFindings(findings)).toEqual({
+      status: "needs_decision",
+      autonomousBugFindings: [{ id: "F1", classification: "mechanical_bug" }],
+      decisionFindings: [null, undefined]
+    });
+  });
 });
 
 describe("judgeReviewDegradation", () => {
