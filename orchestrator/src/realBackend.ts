@@ -713,8 +713,12 @@ export class RealBackend implements Backend {
     if (err !== undefined) throw new Error(err);
   }
 
-  /** Run a host `gh`/`git` command, returning trimmed stdout. */
-  private sh(file: string, args: string[], cwd?: string): string {
+  /**
+   * Run a host `gh`/`git` command, returning trimmed stdout. `protected` so a
+   * test subclass can intercept the git/gh seam without a real container or repo
+   * (integ-cmr 256 r3 reuse-fail-closed test).
+   */
+  protected sh(file: string, args: string[], cwd?: string): string {
     return execFileSync(file, args, {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
@@ -844,8 +848,18 @@ export class RealBackend implements Backend {
     const branch = `feat/244-orchestrator-issue-${issueNumber}`;
     // Idempotent reuse: if the resident worktree exists, reuse it (the runner's
     // #255 resume path drives this); else cut a fresh one from `base` (main).
+    //
+    // integ-cmr 256 r3 (idempotent_reuse_dirty): reuse is FAIL-CLOSED. The runner
+    // reaches this fresh path even for an existing worktree when the ledger is
+    // missing/unreadable (findResumeState → undefined ⇒ no resume ⇒ no
+    // cleanResidue). Returning the dir AS-IS would reuse a prior crash's
+    // uncommitted residue / stale commits as a "fresh" start (ADR0017: 复用前清
+    // 未提留残留). So clean residue (reset --hard HEAD → clean -fd → prune) BEFORE
+    // returning, so a no-ledger old branch can never masquerade as a clean fresh
+    // cut and leak residue into the pushed branch.
     const existing = this.findExistingWorktree(branch);
     if (existing !== undefined) {
+      this.cleanResidueAt(existing);
       return { branch, base, path: existing };
     }
     // Cut the slice branch from `base` (= "main", runner.ts SLICE_BASE), NOT the
@@ -1201,8 +1215,19 @@ export class RealBackend implements Backend {
 
   // ── #255: clean uncommitted residue before reuse ───────────────────────────
   async cleanResidue(worktree: WorktreeHandle): Promise<void> {
-    this.sh("git", ["reset", "--hard", "HEAD"], worktree.path);
-    this.sh("git", ["clean", "-fd"], worktree.path);
+    this.cleanResidueAt(worktree.path);
+  }
+
+  /**
+   * The ADR0017 residue-clean applied to a worktree path before it is reused:
+   * `git reset --hard HEAD` (drop uncommitted tracked changes) → `git clean -fd`
+   * (drop untracked files/dirs) → `git worktree prune` (clear stale admin refs).
+   * Factored out so BOTH the #255 resume path (cleanResidue) and the r3
+   * fail-closed reuse path (prepareWorktree, no-ledger reuse) share one sequence.
+   */
+  private cleanResidueAt(wtPath: string): void {
+    this.sh("git", ["reset", "--hard", "HEAD"], wtPath);
+    this.sh("git", ["clean", "-fd"], wtPath);
     // prune is repo-level; run from the main repo.
     this.sh("git", ["worktree", "prune"], this.opts.mainRepo);
   }
