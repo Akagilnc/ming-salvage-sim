@@ -541,6 +541,9 @@ function App() {
     try {
       const data = await api<{ decree: string }>("/api/decree/write", { method: "POST" });
       setDecree(data.decree);
+      // write_decree 内部会运行 commit_pending_actions，pending 随之消失；
+      // 因此重新获取包含 directives / pending_directive_count 的完整 state。
+      await loadState();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

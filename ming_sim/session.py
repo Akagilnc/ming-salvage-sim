@@ -7,6 +7,7 @@ CLI 和 Web 各自只做 I/O 包装。
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -324,6 +325,9 @@ def _pending_action_brief(pa: Dict[str, Any]) -> str:
         return f"{action}「{who}」" + (f"为「{office}」" if office else "")
     if kind == "consort":
         return f"调教「{payload.get('name') or ''}」"
+    if kind == "directive":
+        text = str(payload.get("text") or "")
+        return f"草拟圣旨：{text[:30]}"
     return f"{action}密令"
 
 
@@ -445,6 +449,8 @@ class GameSession:
         self.temporary_characters: Dict[str, Character] = {}
         self.last_decree = ""
         self.last_report = ""
+        # P1-1：last_decree 所覆盖的 draft 指纹（write_decree 时记，颁诏时校验是否已陈旧）。
+        self._decree_draft_fingerprint: Tuple[Tuple[int, str], ...] = ()
         self._begun = False
 
     # ── 回合生命周期 ──────────────────────────────────────────────────────
@@ -468,6 +474,7 @@ class GameSession:
         tlog(f"[接档] begin_turn 大臣 registry 重建 {time.monotonic() - _t:.1f}s")
         self.last_decree = ""
         self.last_report = ""
+        self._decree_draft_fingerprint = ()
         # awaiting_decision 必须保活：刷新页时仍要弹决策点续跑结算，不可重置成 summoning。
         # settling 同样保活（ADR 0008 S4）：pre_settle 前半段已提交，重载若被重置回 summoning，
         # 守门失效=恢复入口认不出「前半段已完成」会二次重跑前半段（白名单外即被重置）。
@@ -503,6 +510,34 @@ class GameSession:
         """回合结束（resolve 已推进 state.turn）；阶段回 summoning。"""
         self.state.turn_phase = TurnPhase.SUMMONING.value
         self.db.save_state(self.state)
+
+    def note_chat_rollback(self, deleted_committed_draft_ids: Optional[List[int]] = None) -> None:
+        """P1-2：撤回召对若删了 write_decree 已 commit 的对话草案（committed draft），
+        本份生成的诏书正文（last_decree）含被撤回的指令——必须作废，使颁诏须重生成，
+        不能原样颁出。普通撤回（未删 committed draft）不动有效生成稿。"""
+        if deleted_committed_draft_ids:
+            self.last_decree = ""
+            self._decree_draft_fingerprint = ()
+
+    def _draft_fingerprint(self, directives) -> Tuple[Tuple[int, str], ...]:
+        def _has_mapping_key(row, key: str) -> bool:
+            if isinstance(row, dict):
+                return key in row
+            keys = getattr(row, "keys", None)
+            return callable(keys) and key in keys()
+
+        def _mapping_get(row, key: str, default=None):
+            if isinstance(row, dict):
+                return row.get(key, default)
+            return row[key] if _has_mapping_key(row, key) else default
+
+        return tuple(
+            sorted(
+                (int(_mapping_get(d, "id")), str(_mapping_get(d, "text", "") or ""))
+                for d in directives
+                if _has_mapping_key(d, "id") and _mapping_get(d, "id") is not None
+            )
+        )
 
     def refresh_runtime_after_chat_rollback(self) -> None:
         """撤回召对副作用后，用 DB 真相刷新内存人物表和本回合 Agent registry。"""
@@ -737,7 +772,7 @@ class GameSession:
         返回 {"directive": {id,text,status,notes}|None, "secret_order_id": int|None}。"""
         from ming_sim.cli_backend import (
             cli_backend_from_env, resolve_minister_actions, extract_minister_actions,
-            extract_appointment_action, extract_confirmation_intent,
+            extract_appointment_action, extract_confirmation_intent, extract_draft_intent,
         )
         out: Dict[str, Any] = {"directive": None, "secret_order_id": secret_order_id}
         channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
@@ -751,8 +786,14 @@ class GameSession:
         # 只在该大臣有 outstanding 暂存时才判(省 token)，commit/drop 按该大臣过滤、不波及他人。
         pend_for_minister = self.db.list_pending_actions(
             self.state.turn, minister_name=minister_name)
-        if pend_for_minister:
-            summaries = [_pending_action_brief(p) for p in pend_for_minister]
+        # 召对确认闸门只管【召对期】暂存（密令/任免/调教）；kind=directive 拟旨的接受/搁置是
+        # 颁诏期语义（不回=颁诏默认同意，ADR 0006），不能被召对期的应允/拒绝裹挟（BUG 1）：
+        # 否则同大臣后一轮对【别的】暂存的应允会把对话草案提前 commit 成 draft，拒绝会静默删草案。
+        # 故确认闸门用排除 directive 的视图，且 commit/drop 都带 kind_filter 排除 directive，
+        # 让对话式拟旨穿过本闸门、活到颁诏。
+        confirm_targets = [p for p in pend_for_minister if p["kind"] != "directive"]
+        if confirm_targets:
+            summaries = [_pending_action_brief(p) for p in confirm_targets]
             confirm = extract_confirmation_intent(
                 player_message, reply, summaries, llm_config=llm_config)
             if confirm == "应允":
@@ -763,10 +804,12 @@ class GameSession:
                 else:
                     self.db.commit_pending_actions(
                         self.state, minister_name=minister_name,
+                        kind_filter_exclude="directive",
                         content=getattr(self, "content", None),
                         registry=getattr(self, "registry", None))
             elif confirm == "拒绝":
-                self.db.drop_pending_actions_for_minister(self.state.turn, minister_name)
+                self.db.drop_pending_actions_for_minister(
+                    self.state.turn, minister_name, kind_filter_exclude="directive")
             if confirm in ("应允", "拒绝"):
                 # 本轮是对暂存的确认：大臣回话已【复述】该动作(领命 prompt 所致),若继续走下面的
                 # 抽取,会把刚 commit 的动作从复述里重抽成新暂存→颁诏二次落库,或重建刚拒的动作。
@@ -855,15 +898,87 @@ class GameSession:
                         minister_name=character.name, target_id=None,
                         payload={"name": character.name,
                                  "skill": act["cultivate_skill"], "trait": act["cultivate_trait"]})
+        explicit_prefixed = bool(acts["decree_text"] or acts["secret_order"])
+        draft_probe_done = False
+        draft_staged = False
+
+        def _mentions_draft_request(text: str) -> bool:
+            if not text:
+                return False
+            return any(
+                token in text
+                for token in ("拟旨", "拟一道旨", "起草", "草拟", "拟诏", "圣旨")
+            )
+
+        def _stage_conversational_draft() -> bool:
+            nonlocal draft_probe_done
+            draft_probe_done = True
+            if explicit_prefixed or has_directive or out.get("pending_action_id"):
+                return False
+            _has_pending_draft = any(p["kind"] == "directive" for p in pend_for_minister)
+            _committed_draft = None
+            if not _has_pending_draft:
+                for _directive in reversed(self.db.list_directives(self.state, statuses=("draft",))):
+                    if str(_directive["actor"] or "") == minister_name:
+                        _committed_draft = _directive
+                        break
+            _has_existing_draft = _has_pending_draft or _committed_draft is not None
+            # 补充模式：提取现有草案文本喂给 extract_draft_intent，让 LLM 合并新旧草案；
+            # 直接用大臣回话（可能是确认语）会覆盖原草案（codex r6 F1）。
+            _existing_draft_text = ""
+            if _has_pending_draft:
+                _pdir = next((p for p in pend_for_minister if p["kind"] == "directive"), None)
+                if _pdir:
+                    try:
+                        _val = _pdir["payload_json"] or "{}"
+                        _payload = (
+                            _val if isinstance(_val, (list, dict))
+                            else json.loads(_val)
+                        )
+                    except (ValueError, TypeError):
+                        _payload = {}
+                    if isinstance(_payload, dict):
+                        _existing_draft_text = str(_payload.get("text") or "")
+            elif _committed_draft is not None:
+                _existing_draft_text = str(_committed_draft["text"] or "")
+            draft_res = extract_draft_intent(
+                player_message, reply, llm_config=llm_config,
+                has_pending_draft=_has_existing_draft,
+                existing_draft_text=_existing_draft_text,
+            )
+            if draft_res["draft_action"] == "拟旨" and draft_res["draft_text"]:
+                if _committed_draft is not None and not _has_pending_draft:
+                    did = int(_committed_draft["id"])
+                    self.db.update_directive_text(did, draft_res["draft_text"])
+                    out["directive"] = {
+                        "id": did,
+                        "text": draft_res["draft_text"],
+                        "status": "draft",
+                        "notes": f"由{minister_name}拟旨入档",
+                    }
+                else:
+                    pid = self.db.upsert_pending_directive(
+                        self.state.turn, minister_name,
+                        payload={"text": draft_res["draft_text"], "actor": minister_name},
+                    )
+                    out["pending_action_id"] = pid
+                return True
+            return False
+
+        # 若皇帝话里已明确「拟旨/起草/圣旨」，先让拟旨抽取器判；否则「帮我拟旨，
+        # 授某人为某官」会被任免抽取抢成 office pending，丢失诏书草案路径。
+        if _mentions_draft_request(player_message) or any(
+            p["kind"] == "directive" for p in pend_for_minister
+        ):
+            draft_staged = _stage_conversational_draft()
+
         # 任免(office)独立检测：与密令无关，随召对触发(ungated)，覆盖大臣+太监。
         # 口头任命/罢免 → 暂存 kind=office；颁诏前不动 characters 表。
         # 显式前缀(拟旨/密令)是皇帝已明示的动作，按既定例外直接走(拟旨里的任免随诏书
         # 走 extractor 的 office_changes)，不在此自然语言路径重复 stage。
-        explicit_prefixed = bool(acts["decree_text"] or acts["secret_order"])
-        appt = (
-            {"appoint_action": "无"} if explicit_prefixed
-            else extract_appointment_action(player_message, reply, llm_config=llm_config)
-        )
+        appt = {"appoint_action": "无"}
+        if not explicit_prefixed and not draft_staged:
+            appt = extract_appointment_action(player_message, reply, llm_config=llm_config)
         if appt["appoint_action"] in ("任命", "罢免") and appt["name"]:
             # minister_name = 召对对象(发起这道任免的大臣/太监),非被任者——对话确认按召对的
             # 大臣过滤暂存,故须以召对对象为键;被任者姓名在 payload["name"]。
@@ -872,6 +987,15 @@ class GameSession:
                 minister_name=minister_name, target_id=None,
                 payload={"name": appt["name"], "office": appt["office"],
                          "appointer": minister_name})
+        # 对话式拟旨意图(ADR 0006 自然语言路径)：非显式前缀、尚无 draft、且本轮未 stage 其他动作时，
+        # 判皇帝是否口头请拟旨；检测到则 upsert pending directive（last-write-wins，同大臣同回合至多一条）。
+        # 挂在任免之后、以"无其他 pending 动作"为守门：前缀/密令更新/任免等已处理的情形语义上
+        # 与拟旨互斥，跳过可省一次 LLM 调用；余下的才是真正口头请拟旨的情形。
+        # _has_pending_draft：此大臣本回合已有 kind=directive 暂存时为 True（confirm=="无"後仍在）。
+        # pend_for_minister snapshot 此处仍有效：confirm=="应允"/"拒绝"会在上方提前 return，
+        # 能到这里说明 directive 未 commit/drop，snapshot 与 DB 一致（codex r5 F1 修复）。
+        if not draft_probe_done:
+            _stage_conversational_draft()
         return out
 
     def _cli_backend_fallback_actions(
@@ -1094,13 +1218,26 @@ class GameSession:
             # （web 映射 400 / terminal 打印拟诏失败）。幂等返回决策点的守门在 resolve_turn。
             raise ValueError("当前在月末亲裁阶段，请先裁决已存决策点，不能拟诏。")
         self._refuse_if_settling()
+        # 守门须早于 commit（BUG 2）：有未核定的显式 pending directive 时，先响亮拒绝，
+        # 再 commit 对话式拟旨——否则被拒的调用已把对话草案落成 draft 副作用、无回滚。
         if self.pending_count() > 0:
             raise ValueError(f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
+        # "不回=默认同意"（ADR 0006）：把对话式拟旨暂存（pending_actions kind=directive）
+        # 提交为 draft，使 list_directives(status='draft') 能拾取——这是 web「拟诏」按钮
+        # 的真实入口路径，不经过 resolve_turn 的 auto-commit。幂等，无副作用。
+        self.db.commit_pending_actions(
+            self.state, kind_filter="directive",
+            content=getattr(self, "content", None),
+            registry=getattr(self, "registry", None))
         directives = self.db.list_directives(self.state, statuses=("draft",))
         if not directives:
             raise ValueError("无草案不能拟诏。")
         decree = write_decree_with_agno(self.llm_config, self.agno_db, self.state, directives, db=self.db)
         self.last_decree = decree
+        # P1-1：记下本份生成稿覆盖的 draft 集指纹。颁诏时若 draft 集已变（玩家拟诏后又新建
+        # 草案），凭此判定 last_decree 已陈旧、强制重生成纳入新 draft，不许把新 draft 标记
+        # 为已颁却不进诏书正文。
+        self._decree_draft_fingerprint = self._draft_fingerprint(directives)
         return decree
 
     def set_decree(self, text: str) -> str:
@@ -1110,6 +1247,8 @@ class GameSession:
         if not text:
             raise ValueError("诏书正文不能为空。")
         self.last_decree = text
+        directives = self.db.list_directives(self.state, statuses=("draft",))
+        self._decree_draft_fingerprint = self._draft_fingerprint(directives)
         return self.last_decree
 
     def resolve_turn(self, decree: str = "", on_event=None, cheat_directive: str = "") -> ResolveResult:
@@ -1175,8 +1314,23 @@ class GameSession:
                     stored = str(ctx.get("decree_text") or "").strip()
                     if stored:
                         self.last_decree = stored
+        # 守门须早于 commit（BUG 2）：有未核定的显式 pending directive 时先响亮拒绝，
+        # 再 commit 对话式拟旨——否则被拒的颁诏已把对话草案落成 draft 副作用、无回滚。
+        # draft 不计入 pending_count（后者只计 turn_directives.status='pending'），守门只看显式 pending。
         if self.pending_count() > 0:
             raise ValueError(f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
+        # "不回=默认同意"（ADR 0006）：颁诏前先把对话式拟旨暂存（pending_actions kind=directive）
+        # 提交为 draft，使 list_directives(status='draft') 能拾取、进入本次诏书。
+        committed_directives = self.db.commit_pending_actions(
+            self.state, kind_filter="directive",
+            content=getattr(self, "content", None),
+            registry=getattr(self, "registry", None))
+        if committed_directives and recovered_source is None and (decree or "").strip():
+            # 外部传入的 decree 早于本次 auto-commit 出来的对话草案；若继续使用，会把新 draft
+            # 标为 issued 却不进诏书正文/extractor 输入。强制按当前 draft 集重拟。
+            decree = ""
+            self.last_decree = ""
+            self._decree_draft_fingerprint = ()
         directives = self.db.list_directives(self.state, statuses=("draft",))
         if not directives:
             # 恢复态且有存诏：免草案要求（零草案 settling=driver 档/逃生口降级后是真实态，
@@ -1186,8 +1340,21 @@ class GameSession:
                 directives = [{"text": self.last_decree}]
             else:
                 raise ValueError("网页/CLI 端不允许跳过回合：至少一条草案才能颁诏。")
+        # P1-1（不变式：不许颁发早于尚未纳入草案的生成稿）：玩家拟诏后又回对话新建草案时，
+        # last_decree 只覆盖旧 draft 集，会把新 draft 标记为已颁却不进诏书正文。此处比对
+        # 当前 draft 集与 last_decree 覆盖的指纹——不一致则作废陈旧生成稿，强制下方重生成
+        # 纳入全部 draft。recovered_source 恢复路用存档真源、不在此列（指纹空、不触发）。
+        if recovered_source is None and (self.last_decree or "").strip():
+            current_fingerprint = self._draft_fingerprint(directives)
+            if (current_fingerprint
+                    and current_fingerprint != getattr(self, "_decree_draft_fingerprint", ())):
+                self.last_decree = ""
+                self._decree_draft_fingerprint = ()
         # 结算前先存一份：LLM 推演有可能崩，留个回滚锚点
         self.auto_save("preresolve")
+        # 注：上方的 commit_pending_actions(kind_filter='directive') 已提前把对话式拟旨
+        # 提交为 draft；下方 resolve_directives 内的 commit_pending_actions 再次调用时
+        # 对已 committed 行是幂等 no-op，不重复落库。
         decree_text = decree or self.last_decree or write_decree_with_agno(
             self.llm_config, self.agno_db, self.state, directives, db=self.db
         )
