@@ -29,6 +29,7 @@ import {
   lastLedgerBranchHead,
   lastSessionId,
   modelIdForSlug,
+  parseBlockedBy,
   parseSubIssueCount,
   SANDBOX_CODEX_DIR,
   SANDBOX_SKILLS_DIR,
@@ -393,6 +394,48 @@ describe("realBackend parseSubIssueCount", () => {
     expect(parseSubIssueCount({ subIssues: "weird" })).toBe(0);
     expect(parseSubIssueCount({ subIssues: 5 })).toBe(0);
     expect(parseSubIssueCount({ subIssues: { nodes: "x" } })).toBe(0);
+  });
+});
+
+// ─── blocked_by parse: CONFIRMED-empty only (integ-cmr 256 r2, F2) ────────────
+
+describe("realBackend parseBlockedBy", () => {
+  it("keeps entries with numeric number + string state", () => {
+    expect(
+      parseBlockedBy([
+        { number: 248, state: "closed" },
+        { number: 254, state: "open" },
+      ]),
+    ).toEqual([
+      { number: 248, state: "closed" },
+      { number: 254, state: "open" },
+    ]);
+  });
+
+  it("returns [] for a CONFIRMED empty array (no dependencies)", () => {
+    expect(parseBlockedBy([])).toEqual([]);
+  });
+
+  it("drops malformed entries (missing/typed-wrong number or state)", () => {
+    expect(
+      parseBlockedBy([
+        { number: 1, state: "open" },
+        { number: "2", state: "open" }, // number wrong type → dropped
+        { number: 3 }, // missing state → dropped
+        { state: "open" }, // missing number → dropped
+        null,
+      ]),
+    ).toEqual([{ number: 1, state: "open" }]);
+  });
+
+  it("returns [] for a non-array response (future/odd shape, never throws)", () => {
+    // NOTE: this is the CONFIRMED-response empty path. A THROWN gh/transport
+    // error is NOT routed here — fetchBlockedBy fails CLOSED (S8 error) on a
+    // throw; only a confirmed non-array response degrades to [].
+    expect(parseBlockedBy({})).toEqual([]);
+    expect(parseBlockedBy("weird")).toEqual([]);
+    expect(parseBlockedBy(undefined)).toEqual([]);
+    expect(parseBlockedBy(null)).toEqual([]);
   });
 });
 
