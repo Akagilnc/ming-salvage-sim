@@ -59,6 +59,15 @@ export interface FindingRoute {
   decisionFindings: Finding[];
 }
 
+export type FamilyReviewDecision = "converged" | "fix" | "escalate" | "abort";
+
+export interface FamilyReviewGateInput {
+  escalateCount: number;
+  mechanicalCount: number;
+  round: number;
+  maxRounds: number;
+}
+
 export interface ModelReviewResult {
   model: string;
   available: boolean;
@@ -196,6 +205,18 @@ export function routeFindings(findings: Finding[]): FindingRoute {
     return { status: "autonomous_repair", autonomousBugFindings, decisionFindings };
   }
   return { status: "no_findings", autonomousBugFindings, decisionFindings };
+}
+
+// Drives the family 5a/5b cmr loop (I5 routing + I1 abort). Counts come from a
+// FindingRoute: escalateCount = decisionFindings.length, mechanicalCount =
+// autonomousBugFindings.length. Escalation wins over an autonomous fix even when
+// mechanical bugs coexist — a decision finding always returns the run to the
+// main session. Only mechanical-only rounds consume the fix budget.
+export function familyReviewGate(input: FamilyReviewGateInput): FamilyReviewDecision {
+  const { escalateCount, mechanicalCount, round, maxRounds } = input;
+  if (escalateCount > 0) return "escalate";
+  if (mechanicalCount === 0) return "converged";
+  return round < maxRounds ? "fix" : "abort";
 }
 
 export function judgeReviewDegradation(input: DegradationInput): DegradationJudgment {
