@@ -13,6 +13,8 @@
  * step control-flow tests.
  */
 
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   attributeFailure,
@@ -32,6 +34,9 @@ import {
   modelIdForSlug,
   parseBlockedBy,
   parseSubIssueCount,
+  promptsDirError,
+  REFERENCED_PROMPT_FILES,
+  RealBackend,
   SANDBOX_CODEX_DIR,
   SANDBOX_SKILLS_DIR,
   SNAPSHOT_FILENAME,
@@ -390,6 +395,77 @@ describe("realBackend attributeFailure (codex#3)", () => {
   it("stringifies a non-Error cause", () => {
     const e = attributeFailure("S7", "push", "denied");
     expect(e.message).toBe("S7:push — denied");
+  });
+});
+
+// ─── promptsDir validation (integ-cmr 256 r2, F4) ────────────────────────────
+
+describe("realBackend promptsDirError (F4)", () => {
+  const abs = "/abs/prompts";
+
+  it("rejects a relative promptsDir (Sandcastle resolves against process.cwd())", () => {
+    const err = promptsDirError("./prompts", false, true, []);
+    expect(err).toMatch(/must be an ABSOLUTE path/);
+    expect(err).toMatch(/process\.cwd/);
+  });
+
+  it("rejects a non-existent absolute promptsDir", () => {
+    expect(promptsDirError(abs, true, false, [])).toMatch(/does not exist/);
+  });
+
+  it("rejects an absolute existing dir missing referenced promptFiles", () => {
+    const err = promptsDirError(abs, true, true, ["coder_fix.md"]);
+    expect(err).toMatch(/missing required promptFile/);
+    expect(err).toMatch(/coder_fix\.md/);
+  });
+
+  it("accepts an absolute, existing dir with all referenced files (undefined)", () => {
+    expect(promptsDirError(abs, true, true, [])).toBeUndefined();
+  });
+
+  it("REFERENCED_PROMPT_FILES lists exactly the four S2/S3/S5/S6 prompts", () => {
+    expect([...REFERENCED_PROMPT_FILES]).toEqual([
+      "coder_implement.md",
+      "reviewer_full_review.md",
+      "coder_fix.md",
+      "reviewer_rereview.md",
+    ]);
+  });
+});
+
+describe("RealBackend construction validates promptsDir (F4)", () => {
+  // The checked-in prompts/ dir lives next to src/ — resolve it from this test
+  // file's location so the assertion is path-independent.
+  const here = dirname(fileURLToPath(import.meta.url));
+  const realPromptsDir = join(here, "..", "prompts");
+
+  const baseOpts = {
+    mainRepo: "/tmp/main",
+    repo: "owner/name",
+    imageName: "img",
+    skillsMount: "/tmp/skills",
+  };
+
+  it("constructs successfully against the checked-in absolute prompts/ dir", () => {
+    expect(
+      () => new RealBackend({ ...baseOpts, promptsDir: realPromptsDir }),
+    ).not.toThrow();
+  });
+
+  it("throws on a relative promptsDir", () => {
+    expect(
+      () => new RealBackend({ ...baseOpts, promptsDir: "prompts" }),
+    ).toThrow(/must be an ABSOLUTE path/);
+  });
+
+  it("throws on an absolute promptsDir that does not exist", () => {
+    expect(
+      () =>
+        new RealBackend({
+          ...baseOpts,
+          promptsDir: "/definitely/not/a/real/dir/xyz",
+        }),
+    ).toThrow(/does not exist/);
   });
 });
 
