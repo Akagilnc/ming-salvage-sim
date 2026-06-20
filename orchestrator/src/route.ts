@@ -15,45 +15,24 @@
  *   #254 — S5→S6→S4 fix-loop back-edge
  */
 
-import type {
-  CoderOutput,
-  ReviewerOutput,
-  StepId,
-  StepOutput,
-} from "./types.js";
+import type { StepId, StepOutput } from "./types.js";
+// Shared seam guards — the SINGLE source of truth, also used by the runner, so
+// the finding-element / commitsAdded rules can never drift between two copies.
+//
+// #5: a coder step output must be a real coder output and a reviewer output a
+// real reviewer output; anything else is a contract violation route() must NOT
+// route as a success.
+// integ-cmr base r2 (A): a reviewer output with any malformed finding ELEMENT
+// (severity with trailing space / uppercase action / missing field) is invalid,
+// so route() can never coerce it into a push past the P0/P1 gate.
+// integ-cmr base r2 (B): a coder output with an inconsistent/garbage
+// commitsAdded is invalid.
+import { isValidCoderOutput, isValidReviewerOutput } from "./validate.js";
 
 /** What route() decides: the next step to run, or a terminal handoff. */
 export type RouteDecision =
   | { kind: "next"; step: StepId }
   | { kind: "handoff"; status: "success" | "escalate" | "error" };
-
-/**
- * #5: a coder step output must be a real coder output (kind:'coder' with a
- * boolean `committed`). Anything else (wrong kind / undefined / garbage) is a
- * contract violation that must NOT be routed as a success.
- */
-function isCoderOutput(o: StepOutput | undefined): o is CoderOutput {
-  return (
-    o != null &&
-    typeof o === "object" &&
-    o.kind === "coder" &&
-    typeof (o as CoderOutput).committed === "boolean"
-  );
-}
-
-/**
- * #5: a reviewer step output must be a real reviewer output (kind:'reviewer'
- * with a `findings` array). route() must NEVER coerce a non-reviewer output
- * into empty findings — that would push unreviewed code past the P0/P1 gate.
- */
-function isReviewerOutput(o: StepOutput | undefined): o is ReviewerOutput {
-  return (
-    o != null &&
-    typeof o === "object" &&
-    o.kind === "reviewer" &&
-    Array.isArray((o as ReviewerOutput).findings)
-  );
-}
 
 /** Inputs route() needs to decide the edge out of `from`. */
 export interface RouteContext {
@@ -104,7 +83,7 @@ export function route(ctx: RouteContext): RouteDecision {
       // contract violation → S8(error). NEVER fall through to S3 on a malformed
       // output (the runner also guards this, but route() must be safe at the
       // seam regardless of caller).
-      if (!isCoderOutput(ctx.output)) {
+      if (!isValidCoderOutput(ctx.output)) {
         return { kind: "handoff", status: "error" };
       }
       // #252 error edge: 0 commits → S8(error: coder produced nothing).
@@ -137,8 +116,12 @@ export function route(ctx: RouteContext): RouteDecision {
       // #5: S4 routes ONLY on a real reviewer output. A non-reviewer output
       // (wrong kind / undefined / garbage) must NOT be coerced into empty
       // findings → push — that would ship UNREVIEWED code past the P0/P1 gate.
-      // It is a contract violation → S8(error).
-      if (!isReviewerOutput(ctx.output)) {
+      // It is a contract violation → S8(error). This now also rejects a
+      // reviewer output whose findings array contains any MALFORMED element
+      // (severity with trailing space / uppercase action / missing field),
+      // which the exact-string severity/action test below would otherwise miss
+      // → push a real P0 (integ-cmr base r2, finding A).
+      if (!isValidReviewerOutput(ctx.output)) {
         return { kind: "handoff", status: "error" };
       }
       const findings = ctx.output.findings;
