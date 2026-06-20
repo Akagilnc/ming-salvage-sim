@@ -180,6 +180,60 @@ _Avoid_: 用「那回合没触发」隐式表达避过；终态不落账导致�
 **记忆**:
 游戏事实用数据库状态或场景历史承载。Agent memory 只是对话上下文，不足以承载玩家决策。
 
+### Epic Orchestration
+
+**Epic 编排器**:
+把一个 issue 喂进去、AFK 跑到「待评审/待合」状态的本地自动化。它复用 Sandcastle 底座(容器隔离、订阅 auth、分支、Ralph 循环),自叠本 epic 的质量层(多模型评审承重闸、findings 升级、家族整体闸)。
+_Avoid_: CI、流水线(太泛)、hermes(那是一个具体后端不是编排器)
+
+**独立子 issue**:
+本身就是一个自足交付物的 issue,没有父 epic 罩着,自身底下也不挂子 issue(leaf)。
+_Avoid_: 单 issue、孤儿 issue
+
+**家族子片**:
+挂在某个父 issue/epic 下的一个 vertical slice;不是自足交付物。同一父下的子片共享一条家族 base。
+_Avoid_: 子任务、subtask(太泛,不区分独立与否)
+
+**家族 base**:
+同一父 epic 下所有家族子片共享的基线分支,由家族集成层把子片合回它。**家族层(v0.1 deferred)的不变式**;**v0.1 单片编排从 main 切、此刻不消费家族 base**(不从它派生),家族 base 的派生/合回是家族集成层的事。
+_Avoid_: 主干、main、集成分支(太泛)
+
+**角色**:
+编排管线里一个定义好的职能单元(如 planner、coder、reviewer、ship、merger)。每个角色有自己的一段固定流程、一个 profile 镜像、一份 soul。同一条切片由不同角色接力(coder 写、reviewer 评),它们靠各自独立的 agent 上下文保持判断独立。
+_Avoid_: agent(太泛)、stage、阶段(混淆流程步与职能)
+
+**profile / 角色镜像**:
+为某个角色预烤好的容器镜像,带齐该角色要的工具链、依赖、模型 CLI、skills、soul。换模型靠 runtime 选已烤进的 CLI、不重烤镜像;auth token 与被加工的 worktree 是 runtime 才挂、不烤进。
+_Avoid_: 环境、env、容器(太泛)
+
+**soul**:
+烤进角色镜像、定义该角色身份与纪律的文档(coder soul = test-first 不跳步;reviewer soul = 怀疑者往死里挑)。不同身份判断不同,纪律就写在 soul 里。
+_Avoid_: system prompt、人设、persona(太泛)
+
+**调用端**:
+发起某层编排的上一层。某层解不了的问题(尤其设计层、实现解不了的)向它的调用端上浮,逐层直到能决断的那层。
+_Avoid_: caller、上游、parent(太泛)
+
+**step(编排步)**:
+runner 控的一个外层 wiki 步骤。**agent step**(S2/S3/S5/S6)= 一个 StepSpec = 一次 `sandbox.run()`;**runner 动作步**(S0/S1/S4/S7/S8:闸/取数/路由/push/handoff)是纯 TS、不跑 agent。step 的序由 runner 推,不由 agent。
+_Avoid_: 阶段、stage(太泛)、iteration(那是步内的)
+
+**StepSpec**:
+一个 step 的固定规格——固定 role + promptFile + agent/model + completionSignal + output schema + maxIterations。存在代码里,不临场生成。(role 决定注哪份 soul:v0.1 一镜像双角色,runner 凭 role 选 coder/reviewer soul。)
+_Avoid_: 配置、config(太泛)
+
+**runner**:
+驱动 step 序列的 TS 代码。它逐步推进、由 `route()` 定下一步;agent 永不决定下一步、不跳步、不改流程。
+_Avoid_: 编排器(指整个系统,runner 只是它控流程那部分)、调度器
+
+**completionSignal**:
+一个 step 完成时 agent 必须 emit 的固定串(如 `AK_STEP_COMPLETE:coder_implement`)。runner 靠它确认该步真跑完。
+_Avoid_: 结束标记、done(太泛)
+
+**step ledger**:
+每步落一条的账本(step / promptFile / prompt_hash / agent / model / commits before-after / sessionId 等)。防跳步的事后真源 + 续跑真源(下一步只读 ledger,不靠 LLM 记忆)。同 ADR 0017 的「状态文件」是同一份。
+_Avoid_: 日志、log(太泛)、history
+
 ## Example Dialogue
 
 开发者：“玩家说‘拟旨如下’时，CLI 通道能不能直接把诏书写进库？”
