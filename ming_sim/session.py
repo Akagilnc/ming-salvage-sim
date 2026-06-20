@@ -519,11 +519,17 @@ class GameSession:
             self._decree_draft_fingerprint = ()
 
     def _draft_fingerprint(self, directives) -> Tuple[Tuple[int, str], ...]:
+        def _has_mapping_key(row, key: str) -> bool:
+            if isinstance(row, dict):
+                return key in row
+            keys = getattr(row, "keys", None)
+            return callable(keys) and key in keys()
+
         return tuple(
             sorted(
                 (int(d["id"]), str(d["text"] or ""))
                 for d in directives
-                if "id" in d.keys()
+                if _has_mapping_key(d, "id")
             )
         )
 
@@ -920,11 +926,11 @@ class GameSession:
                 if _pdir:
                     import json as _json
                     try:
-                        _existing_draft_text = str(
-                            _json.loads(_pdir.get("payload_json") or "{}").get("text") or ""
-                        )
+                        _payload = _json.loads(_pdir.get("payload_json") or "{}")
                     except (ValueError, TypeError):
-                        pass
+                        _payload = {}
+                    if isinstance(_payload, dict):
+                        _existing_draft_text = str(_payload.get("text") or "")
             draft_res = extract_draft_intent(
                 player_message, reply, llm_config=llm_config,
                 has_pending_draft=_has_pending_draft,
