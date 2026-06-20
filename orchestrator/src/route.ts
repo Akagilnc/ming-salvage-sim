@@ -7,12 +7,12 @@
  *
  * Slice #247: happy-path edges S0→S1→S2→S3→S4→S7→S8 (empty findings = approve).
  * Slice #250: S4 severity+action fan-out (P0/P1 or fix_now → S5; defer → S7).
+ * Slice #254: S5→S6→S4 fix-loop back-edge (S5 0-commit→error mirrors S2).
  *
  * Remaining TODOs (each labelled inline):
  *   #248 — S0 real gate (rfa ∧ Agent Brief ∧ no sub-issues ∧ blocked_by closed)
  *   #251 — escalate global stop edge (checked FIRST, before the switch)
  *   #252 — S2/S5 0-commit→error, S7 push-failure→error
- *   #254 — S5→S6→S4 fix-loop back-edge
  */
 
 import type { StepId, StepOutput } from "./types.js";
@@ -55,9 +55,10 @@ export interface RouteContext {
  * Decide the next step.
  * #247: happy-path edges. #251: global escalate stop (checked FIRST).
  * #250: S4 severity+action fan-out (P0/P1 or fix_now → S5; defer → S7).
- * #252: error edges — S2 committed:false → S8(error). Push failure is handled
- *   in runner.ts (a backend throw, not a route output).
- * Remaining edge: fix-loop back-edge (#254) is an inline TODO.
+ * #252: error edges — S2/S5 committed:false → S8(error). Push failure is
+ *   handled in runner.ts (a backend throw, not a route output).
+ * #254: fix-loop back-edge — S5→S6 (re-review), S6→S4 (re-route). The loop
+ *   = S5→S6→S4→(S5 | S7), closed here; it is never S6→S7 direct.
  */
 export function route(ctx: RouteContext): RouteDecision {
   // ── Global escalate stop edge (#251) ────────────────────────────────────
@@ -126,8 +127,10 @@ export function route(ctx: RouteContext): RouteDecision {
       //
       // Escalate is handled globally above this switch.
       //
-      // TODO(#254 fix loop): the S5→S6→S4 back-edge lands here (no change
-      // needed in the routing logic itself; the loop just re-enters S4).
+      // Fix loop (#254): the S5→S6→S4 back-edge re-enters this case each round.
+      // The routing logic is unchanged — S4 re-applies the same fan-out to the
+      // re-review's findings: another P0/P1 (or fix_now) → S5 again; empty /
+      // defer-only → S7 push. The loop converges here.
       //
       // #5: S4 routes ONLY on a real reviewer output. A non-reviewer output
       // (wrong kind / undefined / garbage) must NOT be coerced into empty
@@ -136,7 +139,8 @@ export function route(ctx: RouteContext): RouteDecision {
       // reviewer output whose findings array contains any MALFORMED element
       // (severity with trailing space / uppercase action / missing field),
       // which the exact-string severity/action test below would otherwise miss
-      // → push a real P0 (integ-cmr base r2, finding A).
+      // → push a real P0 (integ-cmr base r2, finding A). The re-review's
+      // findings flow through this same guard each fix-loop pass.
       if (!isValidReviewerOutput(ctx.output)) {
         return { kind: "handoff", status: "error" };
       }
@@ -154,19 +158,34 @@ export function route(ctx: RouteContext): RouteDecision {
         : { kind: "next", step: "S7" };
     }
 
+    case "S5": {
+      // S5 coder_fix done — the fix-loop's coder leg (#254).
+      // #252 error edge (mirrors S2): a fix that commits nothing has made no
+      // progress → S8(error: fix produced nothing). Routing on to S6 would
+      // re-review an unchanged diff and spin the loop forever.
+      if (ctx.output?.kind === "coder" && !ctx.output.committed) {
+        return { kind: "handoff", status: "error" };
+      }
+      // Fix committed → re-review the full current diff (not a narrow check of
+      // the last bug). This is the S5→S6 edge of the fix loop.
+      return { kind: "next", step: "S6" };
+    }
+
+    case "S6":
+      // S6 reviewer_rereview done → BACK-EDGE to S4 route_findings (#254).
+      // This is the loop closure: S5→S6→S4→(S5 | S7). S4 re-applies the same
+      // severity+action fan-out on the re-review's findings — another P0/P1 (or
+      // fix_now) re-enters S5; empty / defer-only converges to S7 push. The
+      // loop is NOT S6→S7 direct: every fix is re-reviewed before push.
+      // Escalate from S6 is handled by the global stop edge above this switch.
+      return { kind: "next", step: "S4" };
+
     case "S7":
       // S7 push succeeded → success handoff.
       // NOTE: push failure is caught in runner.ts (backend.push() throws) and
       // converted to S8(error) there — it does not flow through route() because
       // route() is only called after a successful step body.
       return { kind: "handoff", status: "success" };
-
-    // S5 coder_fix / S6 reviewer_rereview: fix-loop steps — owned by #254.
-    case "S5":
-    case "S6":
-      throw new Error(
-        `route: edge out of ${ctx.from} not implemented in #247 (fix loop = #254)`,
-      );
 
     case "S8":
       // S8 is terminal — route() is never called to leave it.

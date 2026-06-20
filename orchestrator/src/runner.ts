@@ -9,8 +9,7 @@
  * Slice #247: happy path S0–S3–S4(approve)–S7–S8.
  * Slice #249: persisted step ledger — every step is written via
  *   backend.writeLedger() to the sibling state dir (outside the worktree).
- * Slice #250: S4 severity+action fan-out; S5/S6 step bodies stubbed so the
- *   fan-out is exercisable end-to-end (fix-loop back-edge remains #254).
+ * Slice #250: S4 severity+action fan-out (P0/P1 or fix_now → S5; defer → S7).
  * Slice #251: global escalate stop edge (in route()).
  * Slice #252: error edges —
  *   - S2 committed:false → S8(error)  [route() detects]
@@ -20,8 +19,19 @@
  * Slice #253: StepSpec contract — model/completionSignal/maxIter/soul/toolchain.
  * Slice #248: S0 input gate — four-way accept condition (rfa ∧ Agent Brief ∧
  *   no sub-issues ∧ blocked_by all closed); violations throw, stopping at S0.
- *
- * Remaining seam: #254 (fix-loop back-edge) layers onto these.
+ * Slice #254: fix-loop back-edge — route() wires S5→S6→S4→(S5|S7); the runner
+ *   already dispatches S5/S6 as agent steps and re-collects defers at S4 each
+ *   pass, so the loop iterates with no runner change. Co-exists with the
+ *   escalate stop (#251) and error edges (#252): S5 0-commit → S8(error),
+ *   any S5/S6 escalate → S8(escalate).
+ * cmr S254: removed the round-counting MAX_STEPS cap (it limited fix rounds to
+ *   ~8, violating US#18 "不因数到某个轮数就停") and replaced it with a
+ *   no-progress stuck guard: the loop runs unbounded while it makes progress
+ *   (the reviewer findings change each round) and bails cleanly to
+ *   S8(status=error) only after K consecutive no-progress rounds. (Integ
+ *   reconcile with base rule B: the original commit-leg of the progress signal
+ *   is degenerate under the committed⟺commitsAdded≥1 contract, so progress is
+ *   findings-change only — see the guard block for the full rationale.)
  */
 
 import { route } from "./route.js";
@@ -157,9 +167,10 @@ const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
  * Swapping models = change the `model` slug here; no image rebuild, no
  * structural StepSpec change (PRD #244 Implementation Decisions).
  *
- * S5/S6 added in #250 (fix-loop stubs so the S4 fan-out is exercisable
- * end-to-end; the real S5→S6→S4 loop control is #254). They carry the same
- * full StepSpec contract as S2/S3: S5 mirrors the coder spec, S6 the reviewer.
+ * S5/S6 are the fix-loop agent steps (route() wires S5→S6→S4→(S5|S7) in #254).
+ * They carry the same full StepSpec contract as S2/S3: S5 mirrors the coder
+ * spec (coder_fix prompt), S6 the reviewer (reviewer_rereview prompt, same
+ * READ-ONLY soul + maxIter:1 single-pass full re-review as S3).
  */
 const STEP_SPECS: Readonly<Record<"S2" | "S3" | "S5" | "S6", StepSpec>> = {
   S2: {
@@ -182,8 +193,7 @@ const STEP_SPECS: Readonly<Record<"S2" | "S3" | "S5" | "S6", StepSpec>> = {
     soul: "READ-ONLY",
     toolchain: IMAGE_TOOLCHAIN,
   },
-  // S5/S6: fix-loop stubs so S4 fan-out can be tested end-to-end (#250).
-  // The fix-loop back-edge S5→S6→S4 is wired by #254 — not here.
+  // S5/S6: the fix-loop agent steps. route() wires S5→S6→S4→(S5|S7) (#254).
   S5: {
     id: "S5",
     role: "coder",
@@ -205,6 +215,45 @@ const STEP_SPECS: Readonly<Record<"S2" | "S3" | "S5" | "S6", StepSpec>> = {
     toolchain: IMAGE_TOOLCHAIN,
   },
 };
+
+/**
+ * Order-independent serialisation of a reviewer's findings, for the
+ * no-progress signal (cmr S254).
+ *
+ * The raw `JSON.stringify(findings)` is fragile: it is sensitive to BOTH the
+ * object key order within each Finding AND the array element order. The real
+ * path (#256 parses LLM-emitted JSON) may legitimately reorder keys/elements
+ * between rounds while the logical findings are unchanged — that would make
+ * `findingsChanged` permanently true, so a genuinely stuck loop (0 commit +
+ * same findings) would never accumulate to K and the stuck guard would be
+ * bypassed (the very deadlock it exists to catch).
+ *
+ * Normalisation: project each Finding onto its fixed declared fields in a
+ * canonical key order, stably sort the projected findings, then stringify. The
+ * same logical set of findings serialises identically regardless of incoming
+ * key/array order; a real content change (add/remove/edit a field) still
+ * changes the string, so true progress is preserved.
+ */
+function normalizeFindingsKey(findings: ReadonlyArray<Finding>): string {
+  // Project to the fixed Finding fields in a stable key order. This both
+  // canonicalises key order and drops any stray keys, so the comparison
+  // depends only on the contractual fields.
+  const projected = findings.map((f) => ({
+    action: f.action,
+    category: f.category,
+    claim_quote: f.claim_quote,
+    location: f.location,
+    severity: f.severity,
+    suggested_fix: f.suggested_fix,
+  }));
+  // Stable sort by the projected fields so array element order does not matter.
+  // Each element is already in canonical key order, so stringifying one element
+  // yields a stable per-element key to sort on.
+  projected.sort((a, b) =>
+    JSON.stringify(a) < JSON.stringify(b) ? -1 : JSON.stringify(a) > JSON.stringify(b) ? 1 : 0,
+  );
+  return JSON.stringify(projected);
+}
 
 /**
  * Synthesise a human-readable reason string for route()-detected error edges
@@ -393,13 +442,42 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // The runner drives the sequence; the agent never picks the next step.
   let step: StepId = "S0";
 
-  // Defensive runaway guard against a route() bug spinning the step machine
-  // forever (happy path visits 7 steps; the cap is generous). This is NOT the
-  // convergence safety-valve / round-cap — that is findings-driven and
-  // deferred (PRD #244 G2, US#18/19). Do not repurpose it for fix-loop limits.
-  const MAX_STEPS = 32;
+  // ── No-progress stuck guard (cmr S254, US#18) ──────────────────────────────
+  // The runner must NEVER stop because a round counter hit a number — US#18:
+  // "我不想它因为数到某个轮数就停，这样它不会还在进展时就放弃" — and the PRD
+  // defers any round-cap (轮数上限策略 deferred). So this is NOT a round/step
+  // cap: it is a *no-progress* detector that fires only when the fix loop is
+  // genuinely stuck (a route bug or a fix that changes nothing the reviewer
+  // sees). As long as the loop makes progress every round, it runs unbounded —
+  // a converging review of 20, 50, 100+ rounds is never truncated.
+  //
+  // A "fix round" = one S5(fix)→S6(re-review) pass. PROGRESS in a round means
+  // the S6 reviewer findings changed vs the previous round's findings. (The
+  // original #254 progress signal also OR-ed in "the S5 step added a new commit
+  // (commitsAdded > 0)"; that leg is degenerate under base rule B — every
+  // committed fix reaching S6 has commitsAdded ≥ 1, and a 0-commit fix already
+  // bails at the S5 0-commit error edge — so it is dropped here. Full rationale
+  // at the guard block below.)
+  // Progress resets the streak; only K *consecutive* no-progress rounds bail.
+  // K is a small constant (a stuck loop dies fast — this逮 real deadlock/route
+  // bugs, not "many rounds"). On bail: a clean S8(status=error) + errorPackage
+  // (reason names the stuck guard) — never an uncaught throw / promise reject.
+  const NO_PROGRESS_LIMIT = 3;
+  let noProgressStreak = 0;
+  // Normalised key of the PREVIOUS reviewer step's findings — the baseline the
+  // next S6 re-review compares against. SEEDED from the S3 full review (the
+  // round-0 baseline) so the FIRST S6 round is a genuine comparison, not a free
+  // "progress" pass (off-by-one fix, cmr S254): without seeding, the first S6
+  // would compare against `undefined` and always score progress, slipping the
+  // bail to K+1 rounds. It is then maintained at each S6 inside the no-progress
+  // block. Stays undefined only if no reviewer step has run yet.
+  let prevFindingsKey: string | undefined;
 
-  for (let i = 0; i < MAX_STEPS; i++) {
+  // The step machine has no fixed bound: route() always terminates the run via
+  // a handoff (success/escalate/error), and the no-progress guard above breaks
+  // any genuine stuck loop. A `while (true)` makes the absence of a round cap
+  // explicit (US#18) — there is no "数到 N 就停" anywhere.
+  for (;;) {
     let output: StepOutput | undefined;
     // promptFile for the current step (agent steps only; undefined for runner actions).
     let promptFile: string | undefined;
@@ -499,7 +577,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       case "S5":
       case "S6": {
         // Agent step — one sandbox.run() driven by its fixed StepSpec.
-        // S5/S6 are fix-loop stubs added in #250; full loop control is #254.
+        // S5/S6 are the fix-loop steps; route() drives S5→S6→S4→(S5|S7) (#254).
         if (worktree === undefined) {
           // Programming error: the runner sequenced wrong.
           throw new Error(`runner: ${step} reached before worktree prepared`);
@@ -548,6 +626,26 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   `(would risk bypassing the P0/P1 fix gate).`,
               ),
             );
+          }
+          // ── No-progress signal capture (cmr S254) ──────────────────────────
+          // Only a NON-escalate output that PASSED isValidStepOutput reaches
+          // here, so commitsAdded (coder) / findings (reviewer) are guaranteed
+          // present and well-shaped. A valid-escalate output skips this block
+          // (route() takes the escalate edge before the no-progress check ever
+          // runs) — and would otherwise crash here on its missing happy-path
+          // fields (e.g. an S3 escalate has no findings → normalizeFindingsKey
+          // of undefined). So the seed is scoped to the validated path.
+          //
+          // Seed the no-progress baseline from the S3 full review (off-by-one
+          // fix, cmr S254): the first S6 re-review compares against the S3
+          // findings, so a first-round repeat of the same finding is correctly
+          // scored as no-progress (not a free pass). Only S3 seeds; S6 maintains
+          // the key inside the no-progress block below to avoid a double-update.
+          // (The commit count is no longer captured here: under base rule B the
+          // commit-leg of the no-progress signal is degenerate — see the guard
+          // block below — so progress is findings-change only.)
+          if (step === "S3" && output.kind === "reviewer") {
+            prevFindingsKey = normalizeFindingsKey(output.findings);
           }
         } else if (!isValidEscalation(output.escalate)) {
           // Carries a non-null but malformed escalate: do not run the role
@@ -628,6 +726,72 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // The runner — not the agent — decides the next step.
     const decision = route({ from: step, output: lastOutput });
 
+    // ── No-progress stuck guard (cmr S254, US#18) ────────────────────────────
+    // A fix round completes when the S6 re-review finishes. Evaluate progress
+    // ONLY when route() would continue the loop (decision.kind === "next"); if
+    // route() already hands off (escalate / S5-0-commit error / success) that
+    // takes precedence — a stuck bail never pre-empts a legitimate handoff.
+    //
+    // PROGRESS = the S6 re-review findings CHANGED vs the previous round.
+    //
+    // Integ reconcile (#254 ⋈ base rule B): the original #254 guard also OR-ed
+    // in "this round's S5 added a new commit (commitsAdded > 0)". Under base's
+    // commitsAdded contract (validate.ts rule B: committed:true ⟺ commitsAdded
+    // ≥ 1, committed:false ⟺ 0) that leg is degenerate: any committed fix that
+    // reaches S6 has commitsAdded ≥ 1 (always "progress"), and a 0-commit fix is
+    // committed:false → route()'s S5 edge already bails it to S8(error) BEFORE
+    // this guard runs. So the commit-leg is permanently true for every fix that
+    // reaches here — keeping it would mask the one stuck shape this guard exists
+    // to catch: the coder commits a real new commit every round but the reviewer
+    // raises the SAME findings forever (the fix never moves the review). That is
+    // genuine non-convergence (US#19: "在打磨次要的 / findings 不动"), so the
+    // contract-faithful signal is findings-change alone. (#254's "0 commit +
+    // same findings" stuck case is subsumed: under rule B it is committed:false
+    // → S5 0-commit error edge, a louder + earlier bail.) No round counting
+    // anywhere (US#18): progress resets the streak, so a converging review of
+    // any length runs on; only K CONSECUTIVE no-progress rounds bail.
+    if (step === "S6" && decision.kind === "next") {
+      // Normalised so that a reorder of keys/elements between rounds (which the
+      // real LLM-JSON path can emit) is NOT mistaken for a findings change
+      // (cmr S254). prevFindingsKey was seeded from the S3 review, so on the
+      // first S6 this is a real comparison against the round-0 baseline, not a
+      // free "progress" pass (off-by-one fix).
+      const findingsKey =
+        lastOutput?.kind === "reviewer"
+          ? normalizeFindingsKey(lastOutput.findings)
+          : "";
+      const madeProgress =
+        prevFindingsKey === undefined || findingsKey !== prevFindingsKey;
+      prevFindingsKey = findingsKey;
+
+      noProgressStreak = madeProgress ? 0 : noProgressStreak + 1;
+
+      if (noProgressStreak >= NO_PROGRESS_LIMIT) {
+        // Stuck: K consecutive rounds whose reviewer findings did not change —
+        // the fix loop is not converging (a real deadlock / route bug / a fix
+        // that changes nothing the reviewer sees), not "too many rounds". Bail
+        // cleanly to S8(status=error); never throw / reject. Surface the defers
+        // collected so far, consistent with the other in-loop error handoffs.
+        ledger.push({ step: "S8" });
+        await emitLedger("S8", undefined, undefined);
+        const errorPackage: ErrorPackage = {
+          failedStep: "S6",
+          reason:
+            `fix loop stuck: ${NO_PROGRESS_LIMIT} consecutive rounds with no ` +
+            `progress (unchanged reviewer findings). The fix loop is not ` +
+            `converging — likely a route bug or a fix that changes nothing the ` +
+            `reviewer sees; a human is needed.`,
+          branchHead: worktree?.branch,
+        };
+        return {
+          status: "error",
+          errorPackage,
+          stepLedger: ledger,
+          deferredFindings,
+        };
+      }
+    }
+
     if (decision.kind === "handoff") {
       ledger.push({ step: "S8" });
       // #249: persist the S8 handoff entry too.
@@ -683,8 +847,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
     step = decision.step;
   }
-
-  throw new Error(
-    `runner: exceeded ${MAX_STEPS} steps without reaching handoff (routing bug)`,
-  );
+  // Unreachable: the `for (;;)` loop exits only via a `return` above — every
+  // route() handoff returns and the no-progress guard returns. There is no
+  // round/step cap to fall out of (US#18: no "数到 N 就停").
 }
