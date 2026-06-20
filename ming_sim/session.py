@@ -526,11 +526,16 @@ class GameSession:
             keys = getattr(row, "keys", None)
             return callable(keys) and key in keys()
 
+        def _mapping_get(row, key: str, default=None):
+            if isinstance(row, dict):
+                return row.get(key, default)
+            return row[key] if _has_mapping_key(row, key) else default
+
         return tuple(
             sorted(
-                (int(d["id"]), str(d["text"] or ""))
+                (int(_mapping_get(d, "id")), str(_mapping_get(d, "text", "") or ""))
                 for d in directives
-                if _has_mapping_key(d, "id")
+                if _has_mapping_key(d, "id") and _mapping_get(d, "id") is not None
             )
         )
 
@@ -911,6 +916,13 @@ class GameSession:
             if explicit_prefixed or has_directive or out.get("pending_action_id"):
                 return False
             _has_pending_draft = any(p["kind"] == "directive" for p in pend_for_minister)
+            _committed_draft = None
+            if not _has_pending_draft:
+                for _directive in reversed(self.db.list_directives(self.state, statuses=("draft",))):
+                    if str(_directive["actor"] or "") == minister_name:
+                        _committed_draft = _directive
+                        break
+            _has_existing_draft = _has_pending_draft or _committed_draft is not None
             # 补充模式：提取现有草案文本喂给 extract_draft_intent，让 LLM 合并新旧草案；
             # 直接用大臣回话（可能是确认语）会覆盖原草案（codex r6 F1）。
             _existing_draft_text = ""
@@ -927,17 +939,29 @@ class GameSession:
                         _payload = {}
                     if isinstance(_payload, dict):
                         _existing_draft_text = str(_payload.get("text") or "")
+            elif _committed_draft is not None:
+                _existing_draft_text = str(_committed_draft["text"] or "")
             draft_res = extract_draft_intent(
                 player_message, reply, llm_config=llm_config,
-                has_pending_draft=_has_pending_draft,
+                has_pending_draft=_has_existing_draft,
                 existing_draft_text=_existing_draft_text,
             )
             if draft_res["draft_action"] == "拟旨" and draft_res["draft_text"]:
-                pid = self.db.upsert_pending_directive(
-                    self.state.turn, minister_name,
-                    payload={"text": draft_res["draft_text"], "actor": minister_name},
-                )
-                out["pending_action_id"] = pid
+                if _committed_draft is not None and not _has_pending_draft:
+                    did = int(_committed_draft["id"])
+                    self.db.update_directive_text(did, draft_res["draft_text"])
+                    out["directive"] = {
+                        "id": did,
+                        "text": draft_res["draft_text"],
+                        "status": "draft",
+                        "notes": f"由{minister_name}拟旨入档",
+                    }
+                else:
+                    pid = self.db.upsert_pending_directive(
+                        self.state.turn, minister_name,
+                        payload={"text": draft_res["draft_text"], "actor": minister_name},
+                    )
+                    out["pending_action_id"] = pid
                 return True
             return False
 
@@ -1223,6 +1247,8 @@ class GameSession:
         if not text:
             raise ValueError("诏书正文不能为空。")
         self.last_decree = text
+        directives = self.db.list_directives(self.state, statuses=("draft",))
+        self._decree_draft_fingerprint = self._draft_fingerprint(directives)
         return self.last_decree
 
     def resolve_turn(self, decree: str = "", on_event=None, cheat_directive: str = "") -> ResolveResult:

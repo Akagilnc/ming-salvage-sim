@@ -1466,6 +1466,115 @@ def test_stale_decree_not_issued_when_existing_draft_text_changes_after_generati
     )
 
 
+def test_manual_saved_decree_survives_after_draft_text_change(game, monkeypatch):
+    """玩家改过 draft 后又手工保存诏书正文时，set_decree 必须刷新 draft 指纹。
+    否则颁诏时会把玩家手改稿误判为陈旧稿并重生成，导致手工编辑丢失。"""
+    import ming_sim.session as session_mod
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    sess = _decree_session(db, state, content)
+    state.turn_phase = TurnPhase.SUMMONING.value
+
+    db.upsert_pending_directive(
+        state.turn, name, payload={"text": "草案A：清查粮饷", "actor": name})
+
+    monkeypatch.setattr(
+        session_mod, "write_decree_with_agno",
+        lambda llm, agno, st, directives, db=None:
+            "初拟诏书：" + "；".join(str(d["text"]) for d in directives),
+    )
+    assert "草案A" in sess.write_decree()
+
+    directive_id = db.conn.execute(
+        "SELECT id FROM turn_directives WHERE turn=? AND status='draft'",
+        (state.turn,),
+    ).fetchone()["id"]
+    db.update_directive_text(int(directive_id), "草案A修订：清查粮饷，并加派监察御史。")
+
+    manual_decree = sess.set_decree("手改诏书：清查粮饷，并加派监察御史。")
+
+    def _must_not_regenerate(*args, **kwargs):
+        raise AssertionError("手工保存后的诏书不应因旧 fingerprint 被重生成")
+
+    captured = {}
+
+    def fake_resolve(st, gdb, agno, llm, directives, decree_text, **kw):
+        captured["decree_text"] = decree_text
+        from ming_sim.session import ResolveResult
+        return ResolveResult(awaiting=False, report="ok")
+
+    monkeypatch.setattr(session_mod, "write_decree_with_agno", _must_not_regenerate)
+    monkeypatch.setattr(session_mod, "resolve_directives", fake_resolve)
+
+    sess.resolve_turn()
+
+    assert captured["decree_text"] == manual_decree
+
+
+def test_supplement_after_write_decree_updates_committed_draft_not_new_pending(game, monkeypatch):
+    """write_decree 已把口头草案提交成 draft 后，同大臣后续「再补一条」
+    应把该 draft 当作现有草案合并更新，而不是再建第二条 pending directive。"""
+    import ming_sim.session as session_mod
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    sess = _decree_session(db, state, content)
+    sess.llm_config = types.SimpleNamespace(channel="cli")
+    state.turn_phase = TurnPhase.SUMMONING.value
+
+    db.upsert_pending_directive(
+        state.turn, name, payload={"text": "草案A：清查粮饷", "actor": name})
+
+    monkeypatch.setattr(
+        session_mod, "write_decree_with_agno",
+        lambda llm, agno, st, directives, db=None:
+            "初拟诏书：" + "；".join(str(d["text"]) for d in directives),
+    )
+    sess.write_decree()
+
+    row = db.conn.execute(
+        "SELECT id, text FROM turn_directives WHERE turn=? AND status='draft'",
+        (state.turn,),
+    ).fetchone()
+    directive_id = int(row["id"])
+    assert "草案A" in row["text"]
+    assert db.list_pending_actions(state.turn) == []
+
+    merged = "草案A修订：清查粮饷，并加派监察御史随行。"
+    prompts = []
+
+    def _canned(prompt, llm_config=None, tag=""):
+        if tag == "draft_intent":
+            prompts.append(prompt)
+            return (json.dumps({"拟旨意图": "拟旨", "合并草案": merged},
+                               ensure_ascii=False), 1)
+        return (json.dumps({"密令动作": "无"}, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _canned)
+
+    out = GameSession.apply_cli_conversation_actions(
+        sess, ch,
+        player_message="这道旨再补一条，加派监察御史随行",
+        answer="臣遵旨，谨当添入。",
+        has_directive=False,
+        secret_order_id=None,
+    )
+
+    rows = db.conn.execute(
+        "SELECT id, text FROM turn_directives WHERE turn=? AND status='draft'",
+        (state.turn,),
+    ).fetchall()
+    assert len(rows) == 1
+    assert int(rows[0]["id"]) == directive_id
+    assert rows[0]["text"] == merged
+    assert db.list_pending_actions(state.turn) == []
+    assert out["directive"]["id"] == directive_id
+    assert not out.get("pending_action_id")
+    assert prompts and "【现有草案】草案A：清查粮饷" in prompts[0]
+
+
 def test_supplied_decree_not_used_after_pending_directive_auto_commit(game, monkeypatch):
     """resolve_turn(decree=...) 外部传入旧诏书时，若本次调用先 auto-commit 了口头草案，
     传入文本不包含新 draft；必须重拟/重取当前 draft 集，不能把未入正文的 draft 标 issued。"""
