@@ -326,7 +326,10 @@ function claimOf(value: { claimQuote?: string; claim_quote?: string } | null | u
 // (baseAtStart..familyHead) against these rather than trusting a per-slice family-branch hash.
 export interface HandoffMergedSlice {
   number: IssueId;
-  reviewedCommit: string;
+  // The stable per-slice reviewed commit when known. NULL for a prior-segment entry whose relaunch
+  // passed a raw id (numbers carry no commit identity) rather than the handoff's {number, reviewedCommit}
+  // object — the cumulative ledger still records the slice number so the next relaunch git-skips it.
+  reviewedCommit: string | null;
 }
 
 // A dirty slice carries the user's decision text ("rework X") so the next run knows HOW to redo it,

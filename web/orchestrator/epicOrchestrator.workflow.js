@@ -808,7 +808,10 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
     epicIssueNumber: discovery.epicIssueNumber,
     maxReviewRounds: normalizedArgs.maxReviewRounds,
     verifyCommands: normalizedArgs.verifyCommands,
-    diffBase: startupTargetHead,
+    // diff the family 5a/5b review against the CURRENT target base — after an I10 rebase the family
+    // sits on currentTargetHead, so diffing against the stale startup head would pull in drifted
+    // upstream commits. Falls back to the startup head when base management reports no current head.
+    diffBase: baseManagement.currentTargetHead ?? startupTargetHead,
     // S6: decision findings the user already ruled "doesn't count" (threaded from the prior segment's
     // handoff). They are excluded from the escalate count (no HALT) but remain in the full re-review.
     dismissed: normalizedArgs.dismissals
@@ -1049,7 +1052,7 @@ export async function runEpicLayeredPipeline({ args, Bash, agent: agentRunner, l
 async function runFamilyShip({ Bash, familyWorktree, targetBranch }) {
   return assertShipReport(parseShipJson(
     await Bash(
-      `set -euo pipefail\ncd ${shellQuote(familyWorktree)}\n# reviewer=gstack-ship-family; run gstack-ship FULL on the merged family branch (coverage/specialist/RedTeam gates + push + create family PR; gates non-skippable). ASSUMED contract — see runFamilyShip comment. (branch/base are NOT interpolated into this comment — a newline would break out of it; base rides the command line via shellQuote below.)\n# gstack-ship exits nonzero on a failed gate / internal ASK but still prints its JSON report on\n# stdout — those ARE the needs-user / unconverged outcomes — so capture stdout under set +e rather\n# than letting pipefail abort before parseShipJson. A missing / unparseable report stays a loud\n# failure (parseShipJson throws), so a wrong assumed command still fails loud at dogfood time.\nset +e\nshipReport=$(gstack-ship --json --base ${shellQuote(targetBranch)} 2>/dev/null)\nset -e\nprintf '%s' "$shipReport"`
+      `set -euo pipefail\ncd ${shellQuote(familyWorktree)}\n# reviewer=gstack-ship-family; run gstack-ship FULL on the merged family branch (coverage/specialist/RedTeam gates + push + create family PR; gates non-skippable). ASSUMED contract — see runFamilyShip comment. (branch/base are NOT interpolated into this comment — a newline would break out of it; base rides the command line via shellQuote below.)\n# gstack-ship exits nonzero on a failed gate / internal ASK but still prints its JSON report on\n# stdout — those ARE the needs-user / unconverged outcomes — so capture stdout under set +e rather\n# than letting pipefail abort before parseShipJson. A missing / unparseable report stays a loud\n# failure (parseShipJson throws), so a wrong assumed command still fails loud at dogfood time.\nset +e\nshipReport=$(gstack-ship --json --base ${shellQuote(targetBranch)})\nset -e\nprintf '%s' "$shipReport"`
     )
   ));
 }
@@ -1230,7 +1233,7 @@ function buildSliceBaseContext(normalizedArgs, mergeQueue, startupTargetHead, co
 
 async function mergeReviewedCommit({ Bash, worktreePath, familyBranch, implementedCommit, plannedSlice }) {
   return parseBashJson(
-    await Bash(`set -euo pipefail\n# 将已评审 commit 合入家族分支；reviewer=merge reviewed commit\nsourceWorktreePath=${shellQuote(worktreePath)}\nfamilyBranch=${shellQuote(familyBranch)}\nimplementedCommit=${shellQuote(implementedCommit)}\ncommonDir=$(git -C "$sourceWorktreePath" rev-parse --path-format=absolute --git-common-dir)\nrepoRoot=$(git -C "$sourceWorktreePath" rev-parse --show-toplevel)\nparentRoot=$(dirname "$repoRoot")\nmergeRoot="$parentRoot/.epic-orchestrator"\nsafeBranch=$(printf '%s' "$familyBranch" | tr -c 'A-Za-z0-9._-' '_')\ndefaultMergeWorktree="$mergeRoot/family-$safeBranch"\nexistingMergeWorktree=$(python3 - "$sourceWorktreePath" "$familyBranch" <<'PY'\nimport subprocess, sys\nsource, branch = sys.argv[1], sys.argv[2]\ncurrent = None\nfor line in subprocess.check_output(['git', '-C', source, 'worktree', 'list', '--porcelain'], text=True).splitlines():\n    if line.startswith('worktree '):\n        current = line[9:]\n    elif line == f'branch refs/heads/{branch}' and current:\n        print(current)\n        break\nPY\n)\nif [ -n "$existingMergeWorktree" ]; then\n  mergeWorktree="$existingMergeWorktree"\nelse\n  mergeWorktree="$defaultMergeWorktree"\n  mkdir -p "$mergeRoot"\n  isOwnGitWorktree() { [ -e "$1/.git" ] && git -C "$1" rev-parse --path-format=absolute --git-common-dir >/dev/null 2>&1; }\nisExpectedFamilyWorktree() {\n  [ -e "$1/.git" ] || return 1\n  actualCommonDir=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir) || return 1\n  actualBranch=$(git -C "$1" symbolic-ref --quiet --short HEAD) || return 1\n  [ "$actualCommonDir" = "$commonDir" ] && [ "$actualBranch" = "$familyBranch" ]\n}\n  if [ -e "$mergeWorktree" ] && ! isOwnGitWorktree "$mergeWorktree"; then\n    rm -rf "$mergeWorktree"\n  fi\n  if ! isOwnGitWorktree "$mergeWorktree"; then\n    git -C "$sourceWorktreePath" fetch origin "$familyBranch" || true\n    if git -C "$sourceWorktreePath" show-ref --verify --quiet "refs/heads/\${familyBranch}"; then\n      git -C "$sourceWorktreePath" worktree add "$mergeWorktree" "$familyBranch" >&2\n    elif git -C "$sourceWorktreePath" show-ref --verify --quiet "refs/remotes/origin/\${familyBranch}"; then\n      git -C "$sourceWorktreePath" worktree add -b "$familyBranch" "$mergeWorktree" "origin/\${familyBranch}" >&2\n    else\n      git -C "$sourceWorktreePath" worktree add -b "$familyBranch" "$mergeWorktree" "\${implementedCommit}^" >&2\n    fi\n  fi\nfi\nout=$(mktemp)\ntrap 'rm -f "$out"' EXIT\nset +e\ngit -C "$mergeWorktree" merge --no-ff "$implementedCommit" -m ${shellQuote(`合并已评审切片 #${plannedSlice.issueNumber}`)} >"$out" 2>&1\nrc=$?\nset -e\nif [ "$rc" -ne 0 ]; then\n  git -C "$mergeWorktree" merge --abort >/dev/null 2>&1 || true\n  python3 - "$rc" "$out" <<'PY'\nimport json, sys\nwith open(sys.argv[2], encoding='utf-8', errors='replace') as handle:\n    output = handle.read()\nprint(json.dumps({"status":"conflict", "reason":"merge_conflict", "exitCode": int(sys.argv[1]), "output": output}))\nPY\n  exit 0\nfi\nprintf '{"status":"merged","mergeCommit":"'\ngit -C "$mergeWorktree" rev-parse HEAD | tr -d '\\n'\nprintf '","mergeWorktree":"'\ngit -C "$mergeWorktree" rev-parse --show-toplevel | tr -d '\\n' | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read())[1:-1], end="")'\nprintf '"}'`)
+    await Bash(`set -euo pipefail\n# 将已评审 commit 合入家族分支；reviewer=merge reviewed commit\nsourceWorktreePath=${shellQuote(worktreePath)}\nfamilyBranch=${shellQuote(familyBranch)}\nimplementedCommit=${shellQuote(implementedCommit)}\ncommonDir=$(git -C "$sourceWorktreePath" rev-parse --path-format=absolute --git-common-dir)\nrepoRoot=$(git -C "$sourceWorktreePath" rev-parse --show-toplevel)\nparentRoot=$(dirname "$repoRoot")\nmergeRoot="$parentRoot/.epic-orchestrator"\nsafeBranch=$(printf '%s' "$familyBranch" | tr -c 'A-Za-z0-9._-' '_')\ndefaultMergeWorktree="$mergeRoot/family-$safeBranch"\nexistingMergeWorktree=$(python3 - "$sourceWorktreePath" "$familyBranch" <<'PY'\nimport subprocess, sys\nsource, branch = sys.argv[1], sys.argv[2]\ncurrent = None\nfor line in subprocess.check_output(['git', '-C', source, 'worktree', 'list', '--porcelain'], text=True).splitlines():\n    if line.startswith('worktree '):\n        current = line[9:]\n    elif line == f'branch refs/heads/{branch}' and current:\n        print(current)\n        break\nPY\n)\nif [ -n "$existingMergeWorktree" ]; then\n  mergeWorktree="$existingMergeWorktree"\nelse\n  mergeWorktree="$defaultMergeWorktree"\n  mkdir -p "$mergeRoot"\n  isOwnGitWorktree() { [ -e "$1/.git" ] && git -C "$1" rev-parse --path-format=absolute --git-common-dir >/dev/null 2>&1; }\nisExpectedFamilyWorktree() {\n  [ -e "$1/.git" ] || return 1\n  actualCommonDir=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir) || return 1\n  actualBranch=$(git -C "$1" symbolic-ref --quiet --short HEAD) || return 1\n  [ "$actualCommonDir" = "$commonDir" ] && [ "$actualBranch" = "$familyBranch" ]\n}\n  if [ -e "$mergeWorktree" ] && ! isExpectedFamilyWorktree "$mergeWorktree"; then\n    git -C "$sourceWorktreePath" worktree remove --force "$mergeWorktree" >/dev/null 2>&1 || rm -rf "$mergeWorktree"\n  fi\n  git -C "$sourceWorktreePath" worktree prune >/dev/null 2>&1 || true\n  if ! isExpectedFamilyWorktree "$mergeWorktree"; then\n    git -C "$sourceWorktreePath" fetch origin "$familyBranch" || true\n    if git -C "$sourceWorktreePath" show-ref --verify --quiet "refs/heads/\${familyBranch}"; then\n      git -C "$sourceWorktreePath" worktree add "$mergeWorktree" "$familyBranch" >&2\n    elif git -C "$sourceWorktreePath" show-ref --verify --quiet "refs/remotes/origin/\${familyBranch}"; then\n      git -C "$sourceWorktreePath" worktree add -b "$familyBranch" "$mergeWorktree" "origin/\${familyBranch}" >&2\n    else\n      git -C "$sourceWorktreePath" worktree add -b "$familyBranch" "$mergeWorktree" "\${implementedCommit}^" >&2\n    fi\n  fi\nfi\nout=$(mktemp)\ntrap 'rm -f "$out"' EXIT\nset +e\ngit -C "$mergeWorktree" merge --no-ff "$implementedCommit" -m ${shellQuote(`合并已评审切片 #${plannedSlice.issueNumber}`)} >"$out" 2>&1\nrc=$?\nset -e\nif [ "$rc" -ne 0 ]; then\n  git -C "$mergeWorktree" merge --abort >/dev/null 2>&1 || true\n  python3 - "$rc" "$out" <<'PY'\nimport json, sys\nwith open(sys.argv[2], encoding='utf-8', errors='replace') as handle:\n    output = handle.read()\nprint(json.dumps({"status":"conflict", "reason":"merge_conflict", "exitCode": int(sys.argv[1]), "output": output}))\nPY\n  exit 0\nfi\nprintf '{"status":"merged","mergeCommit":"'\ngit -C "$mergeWorktree" rev-parse HEAD | tr -d '\\n'\nprintf '","mergeWorktree":"'\ngit -C "$mergeWorktree" rev-parse --show-toplevel | tr -d '\\n' | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read())[1:-1], end="")'\nprintf '"}'`)
   );
 }
 
@@ -1528,6 +1531,22 @@ function familyDiffBaseExpr(diffBase) {
   return `$(git rev-parse ${shellQuote(`${diffBase}^{commit}`)} 2>/dev/null || ${fallback})`;
 }
 
+// Validate a family reviewer's parsed report before its findings drive the load-bearing 5a/5b gate.
+// A non-array `findings` field is malformed -> fail loud. A non-pass `status` with no findings list is
+// a contradiction (the reviewer flagged a problem but listed nothing) -> surface it as an escalatable
+// decision finding rather than silently coercing to [] (which would let the gate falsely converge).
+function familyReviewFindings(report, reviewerName) {
+  if (report && report.findings !== undefined && !Array.isArray(report.findings)) {
+    throw new Error(`epic-orchestrator family review: ${reviewerName} returned a non-array findings field — malformed reviewer report.`);
+  }
+  if (Array.isArray(report?.findings)) return report.findings;
+  const status = report?.status;
+  if (status !== undefined && status !== 'passed') {
+    return [{ id: `${reviewerName}-status-${String(status)}`, classification: 'choice', claim_quote: `${reviewerName} reported status="${String(status)}" without a findings list`, location: reviewerName }];
+  }
+  return [];
+}
+
 async function runFamilyCodexLeg({ Bash, familyWorktree, familyBranch, diffBase }) {
   const baseExpr = familyDiffBaseExpr(diffBase);
   try {
@@ -1535,7 +1554,7 @@ async function runFamilyCodexLeg({ Bash, familyWorktree, familyBranch, diffBase 
       await Bash(`set -euo pipefail\ncd ${shellQuote(familyWorktree)}\n# reviewer=codex-family; 5a/5b family CMR on merged family branch (codex reads the repo via codex exec, unaffected by the hidden worktree path)\n{\n  printf '%s\\n' 'Review the merged family branch diff for cross-slice completeness (5a) and correctness regressions (5b).'\n  printf '%s\\n' 'Return only one JSON object on stdout with shape {"status":"passed"|"failed","findings":[{"id":...,"classification":"mechanical_bug"|"choice","claim_quote":...,"location":...}]}. Do not include markdown or prose outside the JSON object.'\n  printf '%s\\n' 'Diff stat against the startup target base for human context:'\n  git diff --stat ${baseExpr} HEAD\n  printf '%s\\n' 'Full diff:'\n  git diff ${baseExpr} HEAD\n} | codex exec --skip-git-repo-check --ephemeral -`),
       'codex-family'
     );
-    return { available: true, findings: parsed.findings ?? [] };
+    return { available: true, findings: familyReviewFindings(parsed, 'codex-family') };
   } catch (error) {
     return { available: false, reason: error?.message ?? 'codex family leg unavailable', findings: [] };
   }
@@ -1548,7 +1567,7 @@ async function runFamilyAgyLeg({ Bash, familyWorktree, familyBranch, diffBase })
       await Bash(`set -euo pipefail\ncd ${shellQuote(familyWorktree)}\n# reviewer=agy-family; diff-based review only (agy refuses the hidden .epic-orchestrator worktree, so no repo grounding). Review instructions + JSON schema go on stdin; agy is agentic, so a hard read-only constraint is mandatory.\n{\n  printf '%s\\n' 'REVIEW ONLY — HARD CONSTRAINT. Do NOT modify, create, rename, or delete any file; do NOT run commands. Output only the review.'\n  printf '%s\\n' 'Review the merged family branch diff for cross-slice completeness (5a) and correctness regressions (5b).'\n  printf '%s\\n' 'Return only one JSON object on stdout with shape {"status":"passed"|"failed","findings":[{"id":...,"classification":"mechanical_bug"|"choice","claim_quote":...,"location":...}]}. Do not include markdown or prose outside the JSON object.'\n  printf '%s\\n' 'Diff stat for context:'\n  git diff --stat ${baseExpr} HEAD\n  printf '%s\\n' 'Full diff:'\n  git diff ${baseExpr} HEAD\n} | agy --sandbox --diff-only --print ''`),
       'agy-family'
     );
-    return { available: true, findings: parsed.findings ?? [] };
+    return { available: true, findings: familyReviewFindings(parsed, 'agy-family') };
   } catch (error) {
     return { available: false, reason: error?.message ?? 'agy family leg unavailable', findings: [] };
   }
@@ -1568,7 +1587,7 @@ async function runFamilyClaudeLeg({ runner, familyWorktree, familyBranch, epicIs
     if (!review || review.available === false) {
       return { available: false, reason: review?.reason ?? 'claude family review leg unavailable', findings: [] };
     }
-    return { available: true, findings: review.findings ?? [] };
+    return { available: true, findings: familyReviewFindings(review, 'claude-family') };
   } catch (error) {
     return { available: false, reason: error?.message ?? 'claude family review leg unavailable', findings: [] };
   }
