@@ -1557,6 +1557,24 @@ describe("epic orchestrator S4b family 5a/5b CMR", () => {
     expect(agentCalls.some((call) => call.role === "family_review_fix")).toBe(false);
   });
 
+  it("does NOT converge a status:failed family leg whose only findings are garbage (sanitize-before-length)", async () => {
+    // A {status:"failed", findings:[null]} report must not short-circuit as "has findings" (then have the
+    // null silently dropped downstream by routeFindings) and converge — the failed status is a contradiction.
+    const { result } = await runToFamilyReview({
+      familyReview: () => ({
+        codex: { status: "failed", findings: [null] },
+        agy: { status: "passed", findings: [] },
+        claude: { findings: [] }
+      })
+    });
+
+    expect(result.status).toBe("return_to_main_session");
+    expect(result.reason).toBe("family_review_needs_decision");
+    expect(result.decisionFindings).toEqual([
+      expect.objectContaining({ id: "codex-family-status-failed", classification: "choice" })
+    ]);
+  });
+
   it("aborts (I1) when mechanical bugs never converge before maxReviewRounds", async () => {
     const { result } = await runToFamilyReview({
       familyReview: () => ({
