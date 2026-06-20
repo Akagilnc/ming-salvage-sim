@@ -1,4 +1,4 @@
-# 采用 Sandcastle 作为 epic 编排器底座；#217 收缩为叠加在其上的「质量层」
+# 采用 Sandcastle 作为 epic 编排器底座；编排器收缩为叠加在其上的「质量层」
 
 Status: Proposed（2026-06-19；spike 实证「底座可行 + 并行编排可行 + 缺质量层」三面。**尚未 Accepted**——待设计评审闭环（本地 cmr + 线上 bot）。parallel-planner 并行编排证据已补（见 Spike 证据 4）。在此之前 #217 PRD 的「整套自建」描述不作数、以本 ADR 方向为准。）
 
@@ -51,18 +51,18 @@ Status: Proposed（2026-06-19；spike 实证「底座可行 + 并行编排可行
 衡量标尺仍是北极星。v1 = wiki [[tdd-autonomous-dev]] 流程的**一小段**（单切片 implement + per-slice review/fix → push），不含 ship / 家族 / 线上评审。
 
 **1. scope 与输入闸**
-- v1 **只收单个真独立子 issue**。输入校验：**是父 issue（底下挂子 issue）、或有父 epic（家族子片）、或 label 不是 `ready-for-agent` → 报错打回调用者**，只放行「**leaf ∧ 无父 ∧ rfa**」= 真独立子 issue。「有无父」用 `gh` native sub-issue 关系判，与「有无子」对称；家族子片（有父）v1 一并打回（家族层 deferred，避免被从 main 切而违反「家族 base 当前置」）。
+- v1 收**单个实现切片 issue**（不分独立 / 有父——「喂父报错、子不报错」）。输入校验（ADR 0018 S0 input_gate）：**是父 issue（底下挂子 issue）/ 未切 epic、或没有 `## Agent Brief` comment、或 label 不是 `ready-for-agent` → 报错打回调用者**，只放行「**rfa ∧ 有 `## Agent Brief` ∧ 自身不挂子 issue**」。`## Agent Brief` = ready-for-agent 的权威实现契约（DEV_WORKFLOW），既挡未切 PRD epic（没 brief、没子也照挡），又收常见的 `to-issues` 子片（有父无妨）。
 - 家族（planner/merger 角色）、ship、线上评审 loop **全 deferred**。家族 base 当前置（见 ADR 0017）。
 - **传话筒**：调用端（主 session）只传 issue 数字，编排 + prompt 全在代码里（堵即兴 prompt、保可复现）。**本 epic 全新、与 #217 无关**：不隶属、不取代、升级链不含 #217。
 
 **2. 万物皆角色**：管线拆成角色，每角色 = 一段固定流程 + 一个 profile 镜像 + 一份 soul。roster = planner / coder / reviewer / ship / online-review / merger；**v1 = coder + reviewer**。
 
-**3. 角色流程（照搬 wiki，不自创）**——细节真源 = [[tdd-autonomous-dev]] §切片内纪律 + [[cross-model-review]] §每轮全量复审 + §修复：
+**3. 角色流程（步内内容；步序由 ADR 0018 runner-driven step 序列控、不由 agent，取代「coder 一个 run 跑完整流程、自判完成」）**——细节真源 = [[tdd-autonomous-dev]] §切片内纪律 + [[cross-model-review]] §每轮全量复审 + §修复。下面是各角色在自己那一步（S2 coder / S3·S6 reviewer / S5 fix）里做什么：
 - **coder（Sonnet）**：`invoke /tdd`（红绿重构，vertical tracer bullet）→ branch coverage → typecheck → 全量 test → `/review` → 窄自查二连 → commit 到常驻 slice worktree。
 - **reviewer（Opus 4.8）**：**每一轮都对当前 full diff 全量复审**（不窄化成「上轮 P0/P1 关没关」点检，上轮验收只是尾挂项）；grounded（读源码 Read/Grep）；`review only, do not modify`。
 - **fix（coder 侧）**：default non-trivial → 第一动作 `invoke /diagnosing-bugs`（mechanical 须显式声明 + 举证）；P0/P1 必修、不可私降 P2；**每轮 fix 后强制自查二连**（① 同类型 ② 引入 bug）。
-- **收敛 = 模型判断，不写死阈值**（遵 [[cross-model-review]] 的 drift/judgment 框架）：reviewer 判切片已达质量底线（无 P0/P1，余 P2/P3 是可 defer 的打磨）→ 把余 P2/P3 defer 上浮 + 收敛；P2/P3 该修还是 defer 也由模型判（不机械全 defer、也不强求清零）——堵住「reviewer 每轮在新 surface 冒等量新 P2 → 永不收敛」那条软死锁缝。**不收敛不数轮数** —— drift 三联（数量/类别/target）命中 → 判实现方法或架构层问题；能自治（如 coverage drift→集中引用）就自治。
-- **设计层解不了 → 返回调用端 + 落盘续跑（option 2）**：调用端链 = **切片 ← 主 session ← 用户（不含 #217）**。编排器把卡点状态（诊断 + 分支 HEAD + 轮次/drift 历史 + 待决设计问题）写进状态文件、**容器拆掉**（不留活进程）、返回调用端；用户拍决定后重起编排器，读状态 + 答案、起新容器从分支 HEAD 续跑。**与崩溃续跑同一套「读状态 + 重起」机器**（见 ADR 0017 Consequences §状态落盘）；容器从不需「活着挂起」——fresh `run()` 模型下两次 run 间无在飞推理可保（§4）。
+- **fix loop 收敛（runner 确定性路由，ADR 0018 S4）**：runner 按 reviewer findings JSON 路由——有 P0/P1 → coder_fix；无 → push（余 P2/P3 进 defer 清单上浮、不挡）。**严重度由模型判，runner 按 JSON 路由**（既模型判断、又不靠 agent 自己决定下一步）。
+- **不收敛（历史仅 1–2 次，v1 不造自动 drift 诊断机器）**：模型自判 stuck 时发 **escalate 信号**（不数轮数、不自动分类 impl-vs-design）→ runner 停、落 ledger（含 sessionId）→ 返回调用端（**切片 ← 主 session ← 用户，不含 #217**）→ **tester（人）判**怎么办 → Sandcastle 原生 **`resumeSession`** 续跑（与崩溃续跑同一套机器，见 ADR 0017 §状态落盘 / ADR 0018）。容器从不需「活着挂起」——fresh `run()` 模型下两次 run 间无在飞推理可保（§4）。
 - **per-slice 无 Claude 的省额度规矩（[[cross-model-review]]）v1 暂搁置**：那条因 claude -p credit 紧；v1 走订阅 auth 容器、Opus 担得起，主动选 **Sonnet 写 / Opus 4.8 单审**（已是跨模型），代价是 code+review 都烧 Claude 额度。以后换 codex 即回省额度路线；per-slice 升多模型 cmr 时再用 `ak-cross-m-review`。
 
 **4. profile 镜像**（**取代发现 4 的 cp -RL bind-mount 注入**，later-doc-wins）：
