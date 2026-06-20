@@ -490,6 +490,30 @@ def test_extract_draft_intent_supplement_schema_keeps_valid_json_comma(monkeypat
     assert '"拟旨意图": "无|拟旨"  // 皇帝' not in prompt
 
 
+def test_extract_draft_intent_coerces_non_string_existing_draft_text(monkeypatch):
+    """防御性兜底：existing_draft_text 若被传入非字符串，也不能在 .strip() 处崩。"""
+    prompts_seen = []
+
+    def _capture(prompt, llm_config=None, tag=""):
+        prompts_seen.append(prompt)
+        return (json.dumps(
+            {"拟旨意图": "拟旨", "合并草案": "合并后的完整草案"},
+            ensure_ascii=False,
+        ), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _capture)
+
+    result = cb.extract_draft_intent(
+        "再补一条",
+        "臣遵旨补入。",
+        has_pending_draft=True,
+        existing_draft_text=123,
+    )
+
+    assert result["draft_action"] == "拟旨"
+    assert "【现有草案】123" in prompts_seen[0]
+
+
 def test_extract_draft_intent_no_supplement_hint_when_no_pending(monkeypatch):
     """has_pending_draft=False（默认）时，prompt 不含补充提示（保持原行为不变）。"""
     prompts_seen = []
