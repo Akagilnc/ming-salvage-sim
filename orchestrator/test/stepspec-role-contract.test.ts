@@ -36,6 +36,20 @@ class RecordingBackend implements Backend {
     path: "/resident/worktrees/issue-253",
   };
 
+  // #255: fresh-run defaults (this suite asserts StepSpec shape, not resume).
+  async findResumeState(): Promise<undefined> {
+    return undefined;
+  }
+  async cleanResidue(): Promise<void> {
+    // no-op
+  }
+  async resumeSession(spec: StepSpec): Promise<StepOutput> {
+    if (spec.role === "coder") {
+      return { kind: "coder", committed: true, commitsAdded: 1 };
+    }
+    return { kind: "reviewer", findings: [] };
+  }
+
   async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
     return {
       number: issueNumber,
@@ -186,8 +200,8 @@ describe("StepSpec role contract + soul injection (#253)", () => {
     const s3 = specs.find((s) => s.id === "S3")!;
     expect(s3.soul).toBe("READ-ONLY");
     // No OS-level readonly mount field: StepSpec has no such key
-    expect((s3 as Record<string, unknown>)["readOnlyMount"]).toBeUndefined();
-    expect((s3 as Record<string, unknown>)["mountReadOnly"]).toBeUndefined();
+    expect((s3 as unknown as Record<string, unknown>)["readOnlyMount"]).toBeUndefined();
+    expect((s3 as unknown as Record<string, unknown>)["mountReadOnly"]).toBeUndefined();
   });
 
   // ── AC-6: tool-chain declaration carried in StepSpec ──

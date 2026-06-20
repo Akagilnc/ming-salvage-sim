@@ -50,6 +50,17 @@ class ConfigurableBackend implements Backend {
     private readonly reviewerOutput: StepOutput,
   ) {}
 
+  // #255: fresh-run defaults (this suite tests S4 routing, not resume).
+  async findResumeState(): Promise<undefined> {
+    return undefined;
+  }
+  async cleanResidue(): Promise<void> {
+    // no-op
+  }
+  async resumeSession(spec: StepSpec): Promise<StepOutput> {
+    return this.runStep(spec);
+  }
+
   async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
     this.calls.push(`fetchIssueMeta(${issueNumber})`);
     return {

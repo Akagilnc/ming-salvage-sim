@@ -114,6 +114,19 @@ class ScriptedBackend implements Backend {
     private readonly coderOutput?: (callIndex: number) => StepOutput,
   ) {}
 
+  // #255 resume seam: this fake is for fresh (non-resume) runs, so it reports
+  // no residue. The runner consults findResumeState at the very start of every
+  // run, so all fakes must implement it (returning undefined = fresh run).
+  async findResumeState(): Promise<undefined> {
+    return undefined;
+  }
+  async cleanResidue(): Promise<void> {
+    // no-op (no resume residue in these tests)
+  }
+  async resumeSession(spec: StepSpec): Promise<StepOutput> {
+    return this.runStep(spec);
+  }
+
   async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
     this.calls.push(`fetchIssueMeta(${issueNumber})`);
     return { ...COMPLIANT_META, number: issueNumber };

@@ -52,6 +52,17 @@ class LedgerBackend implements Backend {
     stateDir: string;
   }> = [];
 
+  // #255: fresh-run defaults (this suite tests ledger persistence, not resume).
+  async findResumeState(): Promise<undefined> {
+    return undefined;
+  }
+  async cleanResidue(): Promise<void> {
+    // no-op
+  }
+  async resumeSession(spec: StepSpec): Promise<StepOutput> {
+    return this.runStep(spec);
+  }
+
   async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
     this.calls.push(`fetchIssueMeta(${issueNumber})`);
     return {
@@ -249,6 +260,12 @@ describe("persisted step ledger (#249)", () => {
      */
     let writeAttempts = 0;
     const failFirstWriteBackend: Backend = {
+      async findResumeState() { return undefined; },
+      async cleanResidue() { /* no-op */ },
+      async resumeSession(spec) {
+        if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
+        return { kind: "reviewer", findings: [] };
+      },
       async fetchIssueMeta(n) {
         return { number: n, isReadyForAgent: true, hasAgentBrief: true, hasSubIssues: false, openBlockedBy: [] };
       },
@@ -308,6 +325,12 @@ describe("persisted step ledger (#249)", () => {
 
     const capturedStateDirs: string[] = [];
     const trailingSlashBackend: Backend = {
+      async findResumeState() { return undefined; },
+      async cleanResidue() { /* no-op */ },
+      async resumeSession(spec) {
+        if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
+        return { kind: "reviewer", findings: [] };
+      },
       async fetchIssueMeta(n) {
         return { number: n, isReadyForAgent: true, hasAgentBrief: true, hasSubIssues: false, openBlockedBy: [] };
       },

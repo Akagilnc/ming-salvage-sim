@@ -35,6 +35,17 @@ class HappyPathBackend implements Backend {
     path: "/resident/worktrees/issue-247",
   };
 
+  // #255: fresh-run defaults (this suite is the #247 happy-path regression).
+  async findResumeState(): Promise<undefined> {
+    return undefined;
+  }
+  async cleanResidue(): Promise<void> {
+    // no-op
+  }
+  async resumeSession(spec: StepSpec): Promise<StepOutput> {
+    return this.runStep(spec);
+  }
+
   async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
     this.calls.push(`fetchIssueMeta(${issueNumber})`);
     return {
