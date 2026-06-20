@@ -27,7 +27,11 @@ import type { StepId, StepOutput } from "./types.js";
 // so route() can never coerce it into a push past the P0/P1 gate.
 // integ-cmr base r2 (B): a coder output with an inconsistent/garbage
 // commitsAdded is invalid.
-import { isValidCoderOutput, isValidReviewerOutput } from "./validate.js";
+import {
+  isValidCoderOutput,
+  isValidEscalation,
+  isValidReviewerOutput,
+} from "./validate.js";
 
 /** What route() decides: the next step to run, or a terminal handoff. */
 export type RouteDecision =
@@ -62,8 +66,20 @@ export function route(ctx: RouteContext): RouteDecision {
   // runner stops immediately, records the output in the ledger, and returns
   // S8 handoff(status=escalate).  The model supplies reason+diagnosis; the
   // runner does NOT reclassify (impl vs design is the model's call — US#20).
-  if (ctx.output?.escalate != null) {
-    return { kind: "handoff", status: "escalate" };
+  //
+  // integ-cmr base r1 (F1): a NON-NULL escalate is only a legitimate stop
+  // signal if it is a well-shaped Escalation ({reason, diagnosis} non-empty
+  // strings). A garbage escalate (`{}`, wrong types, blank strings) must NOT be
+  // coerced into S8(escalate) — the caller would read reason/diagnosis as
+  // undefined/wrong-type. A malformed escalate is a contract violation →
+  // S8(error). (A valid escalate still wins over every happy-path edge, incl.
+  // an incomplete role schema — that is F2, handled in the runner: it lets the
+  // escalate edge fire without first demanding the full role schema.)
+  const escalate = ctx.output?.escalate;
+  if (escalate != null) {
+    return isValidEscalation(escalate)
+      ? { kind: "handoff", status: "escalate" }
+      : { kind: "handoff", status: "error" };
   }
 
   switch (ctx.from) {
