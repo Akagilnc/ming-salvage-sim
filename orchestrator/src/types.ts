@@ -72,12 +72,12 @@ export interface StepSpec {
   readonly id: StepId;
   /** Selects the soul to inject. */
   readonly role: StepRole;
-  /** Versioned prompt file; prompts are never assembled ad-hoc (ADR 0018 §4). */
+  /** Versioned prompt file; prompts are never assembled ad-hoc (ADR 0018 决定#4). */
   readonly promptFile: string;
   /**
    * Short model slug the runtime maps to a baked-in CLI.
    * Changing the slug is all it takes to swap models — no image rebuild, no
-   * StepSpec shape change (ADR 0018 §6, US #28).
+   * StepSpec shape change (PRD #244 Implementation Decisions).
    * `"sonnet"` → coder CLI; `"opus"` → reviewer CLI.
    */
   readonly model: string;

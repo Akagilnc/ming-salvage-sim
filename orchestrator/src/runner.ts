@@ -45,7 +45,7 @@ const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
 
 /**
  * The fixed StepSpec for each agent step. Versioned promptFiles, never
- * assembled inline (ADR 0018 §4).
+ * assembled inline (ADR 0018 决定#4).
  *
  * #247 wired id/role/promptFile. #253 fills the contract:
  *   model           — short slug the runtime maps to a baked-in CLI
@@ -55,7 +55,7 @@ const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
  *   toolchain       — image tool-chain declaration
  *
  * Swapping models = change the `model` slug here; no image rebuild, no
- * structural StepSpec change (ADR 0018 §6, US #28).
+ * structural StepSpec change (PRD #244 Implementation Decisions).
  */
 const STEP_SPECS: Readonly<Record<"S2" | "S3", StepSpec>> = {
   S2: {
