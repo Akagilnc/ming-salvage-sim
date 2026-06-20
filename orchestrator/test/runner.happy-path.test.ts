@@ -1,0 +1,186 @@
+import { describe, expect, it } from "vitest";
+import { runOrchestrator } from "../src/runner.js";
+import type {
+  Backend,
+  IssueMeta,
+  IssueSnapshot,
+  StepOutput,
+  StepSpec,
+  WorktreeHandle,
+} from "../src/types.js";
+
+/**
+ * Happy-path fake Backend: records every call in order, returns canned
+ * outputs that drive the runner straight down S0→S1→S2→S3→S4→S7→S8.
+ *
+ *   - S0/S1 read a compliant issue (rfa ∧ Agent Brief ∧ no sub-issues ∧
+ *     no open blocked_by) → gate passes.
+ *   - S2 coder step → { committed: true, commitsAdded: 1 }
+ *   - S3 reviewer step → { findings: [] } (= approve)
+ *   - S4 route_findings sees no P0/P1 and no fix_now → S7 push
+ *   - S7 push succeeds → S8 handoff(status=success)
+ */
+class HappyPathBackend implements Backend {
+  /** Ordered log of every Backend method invoked (the call timeline). */
+  readonly calls: string[] = [];
+  /** Ordered log of every agent step actually dispatched to a sandbox. */
+  readonly runStepIds: string[] = [];
+  /** Number of times push() was invoked. */
+  pushCount = 0;
+  /** The single resident worktree handed out (asserts persistence/reuse). */
+  readonly worktree: WorktreeHandle = {
+    branch: "feat/orchestrator/issue-247",
+    base: "main",
+    path: "/resident/worktrees/issue-247",
+  };
+
+  async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
+    this.calls.push(`fetchIssueMeta(${issueNumber})`);
+    return {
+      number: issueNumber,
+      isReadyForAgent: true,
+      hasAgentBrief: true,
+      hasSubIssues: false,
+      openBlockedBy: [],
+    };
+  }
+
+  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
+    this.calls.push(`fetchIssueSnapshot(${issueNumber})`);
+    return {
+      number: issueNumber,
+      body: "issue body",
+      comments: [],
+      agentBrief: "## Agent Brief\nimplement the thing",
+    };
+  }
+
+  async prepareWorktree(
+    issueNumber: number,
+    base: string,
+  ): Promise<WorktreeHandle> {
+    this.calls.push(`prepareWorktree(${issueNumber}, ${base})`);
+    return this.worktree;
+  }
+
+  async writeSnapshot(
+    worktree: WorktreeHandle,
+    snapshot: IssueSnapshot,
+  ): Promise<void> {
+    this.calls.push(`writeSnapshot(${worktree.branch}, #${snapshot.number})`);
+  }
+
+  async runStep(spec: StepSpec): Promise<StepOutput> {
+    this.calls.push(`runStep(${spec.id}:${spec.role}:${spec.promptFile})`);
+    this.runStepIds.push(spec.id);
+    if (spec.role === "coder") {
+      return { kind: "coder", committed: true, commitsAdded: 1 };
+    }
+    // reviewer
+    return { kind: "reviewer", findings: [] };
+  }
+
+  async push(worktree: WorktreeHandle): Promise<void> {
+    this.calls.push(`push(${worktree.branch})`);
+    this.pushCount += 1;
+  }
+}
+
+describe("runOrchestrator — happy path skeleton (#247)", () => {
+  it("runs S0→S1→S2→S3→S4→S7→S8 in order and hands off status=success", async () => {
+    const backend = new HappyPathBackend();
+
+    const result = await runOrchestrator({ issueNumber: 247, backend });
+
+    // Final state: success handoff pointing at the pushed resident branch.
+    expect(result.status).toBe("success");
+    expect(result.branch).toBe("feat/orchestrator/issue-247");
+
+    // Exactly one push, no PR / no merge (the fake exposes neither — proving
+    // the runner never reaches for those actions).
+    expect(backend.pushCount).toBe(1);
+
+    // The step ledger records the runner's decisions in canonical order.
+    expect(result.stepLedger.map((e) => e.step)).toEqual([
+      "S0",
+      "S1",
+      "S2",
+      "S3",
+      "S4",
+      "S7",
+      "S8",
+    ]);
+  });
+
+  it("dispatches only the agent steps S2/S3 to the sandbox, in order", async () => {
+    const backend = new HappyPathBackend();
+
+    await runOrchestrator({ issueNumber: 247, backend });
+
+    // Runner-action steps (S0/S1/S4/S7/S8) never call runStep; only the
+    // agent steps (S2 coder, S3 reviewer) do.
+    expect(backend.runStepIds).toEqual(["S2", "S3"]);
+  });
+
+  it("calls Backend actions in the canonical S0→S8 sequence", async () => {
+    const backend = new HappyPathBackend();
+
+    await runOrchestrator({ issueNumber: 247, backend });
+
+    expect(backend.calls).toEqual([
+      "fetchIssueMeta(247)", // S0 input_gate (lightweight metadata)
+      "fetchIssueSnapshot(247)", // S1 load_context (full snapshot)
+      "prepareWorktree(247, main)", // S1 resident worktree, base=main
+      "writeSnapshot(feat/orchestrator/issue-247, #247)", // S1 clean-room snapshot
+      "runStep(S2:coder:coder_implement.md)", // S2 coder_implement
+      "runStep(S3:reviewer:reviewer_full_review.md)", // S3 reviewer_full_review
+      // S4 route_findings, S7 push, S8 handoff below — S4/S8 are pure TS.
+      "push(feat/orchestrator/issue-247)", // S7 push
+    ]);
+  });
+
+  it("the coder output is {committed,commitsAdded} and empty reviewer findings route to push (approve)", async () => {
+    const backend = new HappyPathBackend();
+
+    const result = await runOrchestrator({ issueNumber: 247, backend });
+
+    // The ledger captures the structured step outputs route() consumed.
+    const s2 = result.stepLedger.find((e) => e.step === "S2");
+    const s3 = result.stepLedger.find((e) => e.step === "S3");
+    expect(s2?.output).toEqual({ kind: "coder", committed: true, commitsAdded: 1 });
+    expect(s3?.output).toEqual({ kind: "reviewer", findings: [] });
+
+    // Empty findings → approve → push reached, success.
+    expect(result.status).toBe("success");
+    expect(backend.pushCount).toBe(1);
+  });
+
+  it("only takes an issue number as input and uses versioned promptFiles (no ad-hoc prompts)", async () => {
+    const backend = new HappyPathBackend();
+
+    await runOrchestrator({ issueNumber: 247, backend });
+
+    // Every agent step dispatched a fixed, versioned promptFile (recorded in
+    // the call log) — no step assembled an inline prompt string.
+    const runCalls = backend.calls.filter((c) => c.startsWith("runStep("));
+    expect(runCalls).toEqual([
+      "runStep(S2:coder:coder_implement.md)",
+      "runStep(S3:reviewer:reviewer_full_review.md)",
+    ]);
+  });
+
+  it("commits accumulate on a single resident worktree/branch (base=main), not a throwaway sandbox", async () => {
+    const backend = new HappyPathBackend();
+
+    const result = await runOrchestrator({ issueNumber: 247, backend });
+
+    // prepareWorktree was called exactly once → one resident worktree reused
+    // across the whole run; its base is main; the pushed branch is that same
+    // resident branch.
+    const prepareCalls = backend.calls.filter((c) =>
+      c.startsWith("prepareWorktree("),
+    );
+    expect(prepareCalls).toEqual(["prepareWorktree(247, main)"]);
+    expect(result.branch).toBe(backend.worktree.branch);
+  });
+});
