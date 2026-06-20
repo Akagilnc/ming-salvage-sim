@@ -660,6 +660,29 @@ def test_advance_without_edict_discards_pending_directive(game):
     )
 
 
+def test_discard_pending_directives_does_not_commit_outer_transaction(game):
+    """discard_pending_directives 只做删除，不拥有 commit；
+    外层事务若回滚，被丢弃的 directive pending 必须恢复。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+
+    db.upsert_pending_directive(state.turn, name,
+                                payload={"text": "可回滚草稿", "actor": name})
+    assert len(db.list_pending_actions(state.turn)) == 1
+
+    db.conn.execute("BEGIN")
+    try:
+        deleted = db.discard_pending_directives(state.turn)
+        assert deleted == 1
+        assert db.list_pending_actions(state.turn) == []
+    finally:
+        db.conn.rollback()
+
+    rows = db.list_pending_actions(state.turn)
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "directive"
+
+
 # ── ⑩ codex r6 F1 — 补充轮增量合并而非回话覆盖 ──────────────────────────────
 
 def test_supplement_stores_merged_draft_not_raw_reply(game, monkeypatch):

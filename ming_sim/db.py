@@ -6029,7 +6029,6 @@ class GameDB:
             "DELETE FROM pending_actions WHERE turn=? AND kind='directive' AND status='pending'",
             (int(turn),),
         )
-        self.conn.commit()
         return cur.rowcount
 
     def save_resolve_context(
