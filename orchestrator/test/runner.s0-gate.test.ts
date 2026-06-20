@@ -103,8 +103,8 @@ describe("S0 input gate — reject cases (#248)", () => {
       runOrchestrator({ issueNumber: 248, backend }),
     ).rejects.toThrow(/ready-for-agent/i);
 
-    // Gate must fire before any downstream step.
-    expect(downstreamCallCount(backend.calls)).toBe(0);
+    // Gate must fire exactly once (fetchIssueMeta) with no downstream calls.
+    expect(backend.calls).toEqual(["fetchIssueMeta(248)"]);
   });
 
   it("(b) no Agent Brief: rejects and stops at S0 with a clear error", async () => {
@@ -117,7 +117,7 @@ describe("S0 input gate — reject cases (#248)", () => {
       runOrchestrator({ issueNumber: 248, backend }),
     ).rejects.toThrow(/agent brief/i);
 
-    expect(downstreamCallCount(backend.calls)).toBe(0);
+    expect(backend.calls).toEqual(["fetchIssueMeta(248)"]);
   });
 
   it("(c) parent issue (has sub-issues): rejects and stops at S0 with a clear error", async () => {
@@ -130,23 +130,25 @@ describe("S0 input gate — reject cases (#248)", () => {
       runOrchestrator({ issueNumber: 248, backend }),
     ).rejects.toThrow(/leaf|sub.?issue|child/i);
 
-    expect(downstreamCallCount(backend.calls)).toBe(0);
+    expect(backend.calls).toEqual(["fetchIssueMeta(248)"]);
   });
 
-  it("(d) open blocked_by: rejects and stops at S0 naming the blocking issue number", async () => {
+  it("(d) open blocked_by: rejects at S0 naming the blocking issue number AND 'blocked'/'upstream'", async () => {
     const backend = new GateTestBackend({
       ...COMPLIANT_META,
       openBlockedBy: [247],
     });
 
+    // Single assertion: error must simultaneously name the blocking issue AND
+    // carry 'blocked'/'upstream' semantics — ensures both are present together.
     await expect(
       runOrchestrator({ issueNumber: 248, backend }),
-    ).rejects.toThrow(/#?247/);
+    ).rejects.toThrow(/(?=.*#?247)(?=.*(?:blocked|upstream))/i);
 
-    expect(downstreamCallCount(backend.calls)).toBe(0);
+    expect(backend.calls).toEqual(["fetchIssueMeta(248)"]);
   });
 
-  it("(d) open blocked_by: error message mentions 'blocked' or 'upstream'", async () => {
+  it("(d) open blocked_by (multiple): error names all blocking issues AND 'blocked'/'upstream'", async () => {
     const backend = new GateTestBackend({
       ...COMPLIANT_META,
       openBlockedBy: [100, 200],
@@ -154,7 +156,9 @@ describe("S0 input gate — reject cases (#248)", () => {
 
     await expect(
       runOrchestrator({ issueNumber: 248, backend }),
-    ).rejects.toThrow(/blocked|upstream/i);
+    ).rejects.toThrow(/(?=.*#?100)(?=.*#?200)(?=.*(?:blocked|upstream))/i);
+
+    expect(backend.calls).toEqual(["fetchIssueMeta(248)"]);
   });
 
   it("each reject case produces a DIFFERENT error message (distinguishable)", async () => {
@@ -217,12 +221,14 @@ describe("S0 input gate — pass case (#248)", () => {
     expect(result.status).toBe("success");
   });
 
-  it("leaf with a parent (v0.1: treated identically to standalone leaf) passes S0", async () => {
-    // A leaf issue that happens to have a parent in GitHub (hasSubIssues: false
-    // on the issue itself — it has no *children*; having a parent is fine).
+  it("compliant meta passes S0 and calls S0 then S1 in order (gate-to-context sequencing)", async () => {
+    // leafWithParentMeta is byte-identical to COMPLIANT_META: IssueMeta has no
+    // parent field, so this test cannot verify parent mapping. What it actually
+    // pins is that S0 calls fetchIssueMeta first, then S1 calls fetchIssueSnapshot —
+    // i.e. the gate-to-context call ordering is correct.
     const leafWithParentMeta: IssueMeta = {
       ...COMPLIANT_META,
-      number: 248, // has parent #244 in real GH but no sub-issues of its own
+      number: 248, // same shape as COMPLIANT_META; parent-in-GitHub is outside IssueMeta
     };
 
     class LeafBackend extends GateTestBackend {

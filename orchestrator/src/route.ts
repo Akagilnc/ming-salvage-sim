@@ -47,9 +47,8 @@ export function route(ctx: RouteContext): RouteDecision {
   switch (ctx.from) {
     case "S0":
       // S0 input_gate passed → load context.
-      // TODO(#248): the real S0 gate (rfa ∧ Agent Brief ∧ no sub-issues ∧
-      // blocked_by all closed) rejects non-compliant issues before reaching
-      // here; #247's fake feeds a compliant issue so the gate is a pass-through.
+      // Gate is implemented in runner.ts: rejects non-compliant issues before
+      // reaching this edge (rfa ∧ Agent Brief ∧ no sub-issues ∧ blocked_by closed).
       return { kind: "next", step: "S1" };
 
     case "S1":
