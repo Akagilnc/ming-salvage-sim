@@ -203,6 +203,45 @@ const STEP_SPECS: Readonly<Record<"S2" | "S3" | "S5" | "S6", StepSpec>> = {
 };
 
 /**
+ * Order-independent serialisation of a reviewer's findings, for the
+ * no-progress signal (cmr S254).
+ *
+ * The raw `JSON.stringify(findings)` is fragile: it is sensitive to BOTH the
+ * object key order within each Finding AND the array element order. The real
+ * path (#256 parses LLM-emitted JSON) may legitimately reorder keys/elements
+ * between rounds while the logical findings are unchanged — that would make
+ * `findingsChanged` permanently true, so a genuinely stuck loop (0 commit +
+ * same findings) would never accumulate to K and the stuck guard would be
+ * bypassed (the very deadlock it exists to catch).
+ *
+ * Normalisation: project each Finding onto its fixed declared fields in a
+ * canonical key order, stably sort the projected findings, then stringify. The
+ * same logical set of findings serialises identically regardless of incoming
+ * key/array order; a real content change (add/remove/edit a field) still
+ * changes the string, so true progress is preserved.
+ */
+function normalizeFindingsKey(findings: ReadonlyArray<Finding>): string {
+  // Project to the fixed Finding fields in a stable key order. This both
+  // canonicalises key order and drops any stray keys, so the comparison
+  // depends only on the contractual fields.
+  const projected = findings.map((f) => ({
+    action: f.action,
+    category: f.category,
+    claim_quote: f.claim_quote,
+    location: f.location,
+    severity: f.severity,
+    suggested_fix: f.suggested_fix,
+  }));
+  // Stable sort by the projected fields so array element order does not matter.
+  // Each element is already in canonical key order, so stringifying one element
+  // yields a stable per-element key to sort on.
+  projected.sort((a, b) =>
+    JSON.stringify(a) < JSON.stringify(b) ? -1 : JSON.stringify(a) > JSON.stringify(b) ? 1 : 0,
+  );
+  return JSON.stringify(projected);
+}
+
+/**
  * Synthesise a human-readable reason string for route()-detected error edges
  * (e.g. 0-commit). Backend-throw errors use the caught message directly.
  */
@@ -325,8 +364,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // (reason names the stuck guard) — never an uncaught throw / promise reject.
   const NO_PROGRESS_LIMIT = 3;
   let noProgressStreak = 0;
-  // Findings of the previous fix round's re-review, serialised for comparison.
-  // undefined until the first re-review (S6) completes.
+  // Normalised key of the PREVIOUS reviewer step's findings — the baseline the
+  // next S6 re-review compares against. SEEDED from the S3 full review (the
+  // round-0 baseline) so the FIRST S6 round is a genuine comparison, not a free
+  // "progress" pass (off-by-one fix, cmr S254): without seeding, the first S6
+  // would compare against `undefined` and always score progress, slipping the
+  // bail to K+1 rounds. It is then maintained at each S6 inside the no-progress
+  // block. Stays undefined only if no reviewer step has run yet.
   let prevFindingsKey: string | undefined;
 
   // The step machine has no fixed bound: route() always terminates the run via
@@ -438,6 +482,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         if (step === "S5" && output.kind === "coder") {
           lastFixCommits = output.commitsAdded;
         }
+        // Seed the no-progress baseline from the S3 full review (off-by-one fix,
+        // cmr S254): the first S6 re-review compares against the S3 findings, so
+        // a first-round repeat of the same finding is correctly scored as
+        // no-progress (not a free pass). Only S3 seeds; S6 maintains the key
+        // inside the no-progress block below to avoid a double-update.
+        if (step === "S3" && output.kind === "reviewer") {
+          prevFindingsKey = normalizeFindingsKey(output.findings);
+        }
         break;
       }
 
@@ -500,9 +552,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // findings changed vs the previous round. No counting of rounds anywhere:
     // progress resets the streak, so a converging review of any length runs on.
     if (step === "S6" && decision.kind === "next") {
+      // Normalised so that a reorder of keys/elements between rounds (which the
+      // real LLM-JSON path can emit) is NOT mistaken for a findings change
+      // (cmr S254). prevFindingsKey was seeded from the S3 review, so on the
+      // first S6 this is a real comparison against the round-0 baseline, not a
+      // free "progress" pass (off-by-one fix).
       const findingsKey =
         lastOutput?.kind === "reviewer"
-          ? JSON.stringify(lastOutput.findings)
+          ? normalizeFindingsKey(lastOutput.findings)
           : "";
       const findingsChanged =
         prevFindingsKey === undefined || findingsKey !== prevFindingsKey;

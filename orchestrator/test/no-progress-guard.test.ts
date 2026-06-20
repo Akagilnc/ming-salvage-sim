@@ -291,3 +291,133 @@ describe("no-progress guard — progress in any round resets the no-progress str
     expect(backend.pushCount).toBe(1);
   });
 });
+
+// ─── findings-change signal must be normalized (序变 ≠ 进展) ─────────────────
+
+/**
+ * Build a Finding whose object keys are inserted in a DIFFERENT order than the
+ * canonical `finding()` helper. `JSON.stringify` serialises keys in insertion
+ * order, so a naive stringify would treat this as a different string even
+ * though the field VALUES are identical. A correct normalised comparison must
+ * treat it as the SAME finding.
+ */
+function findingScrambledKeys(
+  severity: Finding["severity"],
+  action: Finding["action"],
+  location = "src/foo.ts:1",
+): Finding {
+  // Keys deliberately out of declaration order, with values matching finding().
+  return {
+    suggested_fix: "fix it",
+    location,
+    claim_quote: "some quote",
+    action,
+    category: "test",
+    severity,
+  } as Finding;
+}
+
+describe("no-progress guard — findings-change signal is normalized (序变不算进展)", () => {
+  it("same findings every round but key/array order shuffled + 0 commit → still bails (no false progress)", async () => {
+    // The reviewer reports the SAME logical findings every round, but each round
+    // the object key order AND the array element order are permuted. A raw
+    // JSON.stringify would see an ever-changing string → findingsChanged always
+    // true → the true-stuck loop would never accumulate to K and the guard is
+    // bypassed (exactly the bug it should catch). With normalization, the
+    // serialised key must be identical across rounds → the loop bails after K.
+    const A = finding("critical", "fix_now", "src/a.ts:1");
+    const B = finding("high", "fix_now", "src/b.ts:2");
+    const Ascr = findingScrambledKeys("critical", "fix_now", "src/a.ts:1");
+    const Bscr = findingScrambledKeys("high", "fix_now", "src/b.ts:2");
+
+    // S3 then S6×N: the SAME two findings, but the order of the pair AND the key
+    // order inside each finding flip-flops every round. Logical content is
+    // constant; only serialisation order changes.
+    const seq: ReviewerOutput[] = [];
+    for (let r = 0; r < 200; r++) {
+      seq.push(
+        r % 2 === 0
+          ? reviewerWith([A, B]) // canonical order, canonical keys
+          : reviewerWith([Bscr, Ascr]), // reversed array + scrambled keys
+      );
+    }
+
+    // 0 new commit every round (commitsAdded:0) so the ONLY possible progress
+    // signal is findings-change. With normalization that signal is false →
+    // K consecutive no-progress rounds → clean S8(error).
+    const backend = new ScriptedBackend(seq, () => ({
+      kind: "coder",
+      committed: true,
+      commitsAdded: 0,
+    }));
+
+    const result = await runOrchestrator({ issueNumber: 254, backend });
+
+    expect(result.status).toBe("error");
+    expect(result.errorPackage?.reason.toLowerCase()).toContain("stuck");
+    expect(backend.pushCount).toBe(0);
+    // Stuck loop dies fast — a small constant, NOT spinning indefinitely.
+    const s5 = backend.coderRunIds.filter((id) => id === "S5").length;
+    expect(s5).toBeLessThanOrEqual(5);
+  });
+
+  it("a real findings content change (add/remove/edit a finding) is still progress (not masked by normalization)", async () => {
+    // Guard against over-normalization: the normalised key must still DIFFER
+    // when the actual finding content changes. Each round changes a real field
+    // (location), so every round is genuine progress → never trips K → converge.
+    const seq: ReviewerOutput[] = [];
+    for (let r = 0; r < 12; r++) {
+      // genuinely different finding content each round (different location).
+      seq.push(reviewerWith([finding("critical", "fix_now", `src/real.ts:${r}`)]));
+    }
+    seq.push(reviewerWith([])); // converge
+
+    // 0 commit, so the change must be detected purely from findings content.
+    const backend = new ScriptedBackend(seq, () => ({
+      kind: "coder",
+      committed: true,
+      commitsAdded: 0,
+    }));
+
+    const result = await runOrchestrator({ issueNumber: 254, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.pushCount).toBe(1);
+  });
+});
+
+// ─── off-by-one: a true-stuck loop bails at EXACTLY round K, not K+1 ─────────
+
+describe("no-progress guard — bails at exactly K=3 no-progress rounds (off-by-one)", () => {
+  it("S3 finding seeds the baseline so the FIRST S6 round counts, bail on the Kth round", async () => {
+    // The genuine-stuck shape: identical finding from S3 onward, 0 new commit.
+    // The contract is K=3 — the loop must bail after exactly 3 consecutive
+    // no-progress fix rounds. Because prevFindingsKey is seeded from the S3
+    // review, the first S6 round (which repeats the S3 finding) ALREADY counts
+    // as a no-progress round; without seeding it would be a false "progress"
+    // round and the bail would slip to the 4th round (off-by-one).
+    //
+    // Expected exact S5 count = K = 3:
+    //   round 1 (S6 #1): findings == S3 → no-progress, streak 1
+    //   round 2 (S6 #2): no-progress, streak 2
+    //   round 3 (S6 #3): no-progress, streak 3 == K → bail
+    const SAME = finding("critical", "fix_now", "src/stuck.ts:1");
+    const seq: ReviewerOutput[] = Array.from({ length: 200 }, () =>
+      reviewerWith([SAME]),
+    );
+    const backend = new ScriptedBackend(seq, () => ({
+      kind: "coder",
+      committed: true,
+      commitsAdded: 0,
+    }));
+
+    const result = await runOrchestrator({ issueNumber: 254, backend });
+
+    expect(result.status).toBe("error");
+    expect(result.errorPackage?.reason.toLowerCase()).toContain("stuck");
+    // EXACTLY K=3 fix rounds before the bail — proves the off-by-one fix:
+    // S5 ran once per no-progress round, and there were exactly 3 of them.
+    const s5 = backend.coderRunIds.filter((id) => id === "S5").length;
+    expect(s5).toBe(3);
+  });
+});
