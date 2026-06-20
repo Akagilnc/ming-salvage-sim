@@ -1374,6 +1374,13 @@ function assertShellSafeRef(value, name) {
       throw new Error(`epic-orchestrator: ${name} contains a control character or newline — refusing (it would break Bash quoting/comment safety).`);
     }
   }
+  // Reject git ref/refspec metacharacters that are shell-safe but git-dangerous: ':' makes
+  // `git fetch origin <familyBranch>` a `<src>:<dst>` refspec (would write an unintended local ref);
+  // '*' '?' '[' are globs, '~' '^' are rev-parse operators, space/'\\' are forbidden in refnames, and
+  // '..'/'@{' are forbidden sequences. None appear in a legitimate branch name, ref, or SHA arg.
+  if (/[:*?\[~^\\ ]/.test(value) || value.includes('..') || value.includes('@{')) {
+    throw new Error(`epic-orchestrator: ${name} contains a git ref/refspec metacharacter (one of : * ? [ ~ ^ \\ space, or '..' / '@{') — refusing (it could turn a git fetch/push into an unintended refspec or glob).`);
+  }
   return value;
 }
 
