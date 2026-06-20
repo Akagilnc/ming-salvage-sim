@@ -60,3 +60,5 @@ R3 三腿在「事件结局即决策」架构已认可的前提下，点出几�
 4. **起运 baseline / offset 分键（δ / cmr-γ 落实）**：**正赋起运基线**存独立键（如 `settle._meta.正赋起运基线`，seed 值 = `seed 起运定额 − 开局辽饷`，确切键名 /tdd）；通道写 `settle.p.起运定额 = 正赋起运基线 + Σ在征三饷`；**玩家缓起运/截留（#260）是另一个量（offset），最终解送 = 通道基线 + #260 偏移、组合在 #260**——#259 只写通道基线、不碰 offset，#260 接口 = 读基线 + 施偏移。
 
 5. **applier 写/保集（θ）**：月初 applier 的 set-to-target **仅 UPDATE `{三饷应征, 起运定额}`**，**保留** `{正赋应征/正赋亩额, Due, 火耗率, 逋赋率}` 不动（火耗应派在 `settle_tick` 内派生、不存 `p`）。
+
+6. **pre_settle 顺序 = 饷率先于 fiscal tick、同月生效不滞后（ι，cmr R4）**：`SETTLEMENT_FLOW.md` 现序是 `apply_fixed_period_flows`（内含 `settle_province_tick` 推进财政基座）→ `apply_event_terminal_states`（写事件结局）→ `auto_trigger_seed_issues`，即**事件结局在 fiscal tick 之后才写**，本月 tick 读不到 → 饷率效果滞后一月。**#259 硬序要求**：饷率事件结局置定（stub/#260）+ 读结局的 set-to-target applier **必须先于** `settle_province_tick`（同 pre_settle tick），让本月旨意当月生效、不 off-by-one。这动 `SETTLEMENT_FLOW.md` 的 pre_settle 编排（把「饷率结局 + applier」插到 fiscal 基座推进之前），确切插点留 #259 实现期落，但本 ADR 钉死「饷率先于 fiscal tick、同月生效」不变式。
