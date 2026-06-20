@@ -9,8 +9,7 @@
  * Slice #247: happy path S0–S3–S4(approve)–S7–S8.
  * Slice #249: persisted step ledger — every step is written via
  *   backend.writeLedger() to the sibling state dir (outside the worktree).
- * Slice #250: S4 severity+action fan-out; S5/S6 step bodies stubbed so the
- *   fan-out is exercisable end-to-end (fix-loop back-edge remains #254).
+ * Slice #250: S4 severity+action fan-out (P0/P1 or fix_now → S5; defer → S7).
  * Slice #251: global escalate stop edge (in route()).
  * Slice #252: error edges —
  *   - S2 committed:false → S8(error)  [route() detects]
@@ -20,8 +19,11 @@
  * Slice #253: StepSpec contract — model/completionSignal/maxIter/soul/toolchain.
  * Slice #248: S0 input gate — four-way accept condition (rfa ∧ Agent Brief ∧
  *   no sub-issues ∧ blocked_by all closed); violations throw, stopping at S0.
- *
- * Remaining seam: #254 (fix-loop back-edge) layers onto these.
+ * Slice #254: fix-loop back-edge — route() wires S5→S6→S4→(S5|S7); the runner
+ *   already dispatches S5/S6 as agent steps and re-collects defers at S4 each
+ *   pass, so the loop iterates with no runner change. Co-exists with the
+ *   escalate stop (#251) and error edges (#252): S5 0-commit → S8(error),
+ *   any S5/S6 escalate → S8(escalate).
  */
 
 import { route } from "./route.js";
@@ -146,9 +148,10 @@ const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
  * Swapping models = change the `model` slug here; no image rebuild, no
  * structural StepSpec change (PRD #244 Implementation Decisions).
  *
- * S5/S6 added in #250 (fix-loop stubs so the S4 fan-out is exercisable
- * end-to-end; the real S5→S6→S4 loop control is #254). They carry the same
- * full StepSpec contract as S2/S3: S5 mirrors the coder spec, S6 the reviewer.
+ * S5/S6 are the fix-loop agent steps (route() wires S5→S6→S4→(S5|S7) in #254).
+ * They carry the same full StepSpec contract as S2/S3: S5 mirrors the coder
+ * spec (coder_fix prompt), S6 the reviewer (reviewer_rereview prompt, same
+ * READ-ONLY soul + maxIter:1 single-pass full re-review as S3).
  */
 const STEP_SPECS: Readonly<Record<"S2" | "S3" | "S5" | "S6", StepSpec>> = {
   S2: {
@@ -171,8 +174,7 @@ const STEP_SPECS: Readonly<Record<"S2" | "S3" | "S5" | "S6", StepSpec>> = {
     soul: "READ-ONLY",
     toolchain: IMAGE_TOOLCHAIN,
   },
-  // S5/S6: fix-loop stubs so S4 fan-out can be tested end-to-end (#250).
-  // The fix-loop back-edge S5→S6→S4 is wired by #254 — not here.
+  // S5/S6: the fix-loop agent steps. route() wires S5→S6→S4→(S5|S7) (#254).
   S5: {
     id: "S5",
     role: "coder",
@@ -391,7 +393,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       case "S5":
       case "S6": {
         // Agent step — one sandbox.run() driven by its fixed StepSpec.
-        // S5/S6 are fix-loop stubs added in #250; full loop control is #254.
+        // S5/S6 are the fix-loop steps; route() drives S5→S6→S4→(S5|S7) (#254).
         if (worktree === undefined) {
           // Programming error: the runner sequenced wrong.
           throw new Error(`runner: ${step} reached before worktree prepared`);
