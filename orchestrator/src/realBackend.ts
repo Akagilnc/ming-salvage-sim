@@ -37,6 +37,13 @@
  *       (exit 0). A `git status --porcelain` must NOT list it as untracked, and a
  *       coder's `git add -A` must leave it unstaged. Covered by both the checked-in
  *       root `.gitignore` belt AND the per-worktree `.git/info/exclude` suspenders.
+ *   - r3 worktree_base_stale: with the local `main` deliberately behind
+ *     `origin/main` (e.g. `git reset --hard origin/main~1` on the mainRepo's
+ *     main), run S1 and assert the fresh slice's base SHA equals the LATEST
+ *     `origin/main` SHA (`git rev-parse origin/main`), not the stale local one —
+ *     proving the cut derives from the just-fetched remote ref (cutRefFor).
+ *   - r3 fix-loop findings leak: same git-ignore check for
+ *     `.orchestrator-fix-findings.json` written before an S5 coder_fix run.
  */
 
 import { execFileSync } from "node:child_process";
@@ -274,6 +281,26 @@ export function ensureExcluded(existing: string, pattern: string): string {
     ? existing
     : existing + "\n";
   return `${base}${pattern}\n`;
+}
+
+/**
+ * The git ref to cut a fresh slice worktree FROM (integ-cmr 256 r3,
+ * worktree_base_stale).
+ *
+ * `ensureBaseRef` runs `git fetch origin <base>`, which updates
+ * `refs/remotes/origin/<base>` (and FETCH_HEAD) but does NOT move the local
+ * `refs/heads/<base>`. So deriving with the bare local `<base>` could cut from a
+ * stale local branch behind upstream — violating #244's "从 main 派生 =
+ * up-to-date" invariant and diverging from the spike's explicit
+ * `git worktree add … origin/main`. When the fetch succeeded, cut from
+ * `origin/<base>` (the just-refreshed remote-tracking ref); only when the fetch
+ * failed (offline / a local-only base with no remote) fall back to the local
+ * `<base>` so the cut is never blocked.
+ *
+ * Pure (string assembly) so the ref-selection decision is unit-tested without git.
+ */
+export function cutRefFor(base: string, fetchedOk: boolean): string {
+  return fetchedOk ? `origin/${base}` : base;
 }
 
 // ── auth-mount path construction (spike contract) ───────────────────────────
@@ -828,12 +855,23 @@ export class RealBackend implements Backend {
     // "从 main 派生" invariant only held by accident (integ-cmr 256 r1, F3).
     // Sandcastle notes the caller owns currency of the ref, so refresh `base`
     // first (best-effort: a fetch failure must not block a local-only base).
-    this.ensureBaseRef(base);
+    //
+    // integ-cmr 256 r3 (worktree_base_stale): `git fetch origin <base>` updates
+    // refs/remotes/origin/<base>, NOT the local refs/heads/<base>. Deriving with
+    // the bare local `<base>` after a fetch could still cut from a stale local
+    // branch behind upstream. So when the fetch refreshed the remote ref, cut
+    // from `origin/<base>` (matching the spike's `git worktree add … origin/main`
+    // and the up-to-date invariant); fall back to the local `<base>` only when
+    // the fetch failed (offline / local-only base). The WorktreeHandle.base field
+    // still records the LOGICAL base ("main"), not the cut ref, for ledger
+    // consistency.
+    const fetchedOk = this.ensureBaseRef(base);
+    const cutRef = cutRefFor(base, fetchedOk);
     // Multi-phase S1: attribute a createWorktree throw as "S1: createWorktree"
     // for the US#30 error package (codex#3 attributeFailure — F6).
     const wt = await this.phaseAsync("S1", "createWorktree", () =>
       sc.createWorktree({
-        branchStrategy: { type: "branch", branch, baseBranch: base },
+        branchStrategy: { type: "branch", branch, baseBranch: cutRef },
         cwd: this.opts.mainRepo,
       }),
     );
@@ -841,16 +879,21 @@ export class RealBackend implements Backend {
   }
 
   /**
-   * Refresh the base ref so the slice is cut from an up-to-date `base`.
-   * Sandcastle notes the caller is responsible for the ref's currency
-   * (d.ts:211); a `git fetch` failure (offline / local-only base) must NOT block
-   * worktree creation, so this is best-effort.
+   * Refresh the base ref so the slice is cut from an up-to-date `base`, and
+   * REPORT whether the fetch succeeded so {@link cutRefFor} can choose the
+   * origin/<base> remote-tracking ref vs the local fallback (integ-cmr 256 r3,
+   * worktree_base_stale). Sandcastle notes the caller is responsible for the
+   * ref's currency (d.ts:211); a `git fetch` failure (offline / local-only base)
+   * must NOT block worktree creation, so this is best-effort and returns false
+   * on any fault (the caller then derives from the local `<base>`).
    */
-  private ensureBaseRef(base: string): void {
+  private ensureBaseRef(base: string): boolean {
     try {
       this.sh("git", ["fetch", "origin", base], this.opts.mainRepo);
+      return true;
     } catch {
       // offline or a local-only base ⇒ proceed with the local ref.
+      return false;
     }
   }
 

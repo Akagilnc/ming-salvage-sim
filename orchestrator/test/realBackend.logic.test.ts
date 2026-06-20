@@ -23,6 +23,7 @@ import {
   buildIssueSnapshot,
   checkBranchHeadConsistency,
   classifyResumeError,
+  cutRefFor,
   ensureExcluded,
   extractAgentBrief,
   FIX_FINDINGS_FILENAME,
@@ -174,6 +175,28 @@ describe("realBackend ensureExcluded (snapshot leak guard, F3)", () => {
 
   it("the snapshot filename is the dot-prefixed clean-room artifact", () => {
     expect(SNAPSHOT_FILENAME).toBe(".orchestrator-snapshot.json");
+  });
+});
+
+// ─── fresh-cut base ref (integ-cmr 256 r3, worktree_base_stale) ──────────────
+
+describe("realBackend cutRefFor (worktree_base_stale, r3)", () => {
+  it("cuts from origin/<base> when the fetch refreshed the remote ref", () => {
+    // After a successful `git fetch origin main`, refs/remotes/origin/main is
+    // the up-to-date base — derive the slice from THAT (matches the spike's
+    // `git worktree add … origin/main`), NOT the possibly-stale local main.
+    expect(cutRefFor("main", /*fetchedOk*/ true)).toBe("origin/main");
+  });
+
+  it("falls back to the local <base> when the fetch failed (offline / local-only)", () => {
+    // A fetch failure (offline, or a local-only base with no remote) must not
+    // block the cut — fall back to the local ref rather than a missing origin/.
+    expect(cutRefFor("main", /*fetchedOk*/ false)).toBe("main");
+  });
+
+  it("preserves a non-default base name in both branches", () => {
+    expect(cutRefFor("release-1.x", true)).toBe("origin/release-1.x");
+    expect(cutRefFor("release-1.x", false)).toBe("release-1.x");
   });
 });
 
