@@ -1,6 +1,6 @@
 # 饷率 effect 通道 = 史实时间线事件（结局即决策）+ 读事件结局算确定性增量；结局由圣旨（#260）/shadow stub 置；起运 = 通道基线（正赋基线 + Σ在征三饷）、玩家偏移归 #260
 
-Status: Proposed（2026-06-20 grill 结晶；2026-06-21 设计 cmr R1 折叠引入「饷别决策态」字段；**同日 cmr R2 折叠：单独决策态字段引出粒度/寻址/截留三洞 → 改为「事件结局即决策」回归纯 ADR 0014**，见决定 1–2 + Considered Options。**本地 cmr R1–R5 已收敛（2026-06-21，R5 三腿 3/3 concur、零降级；逐轮 fold A–G / α–γ / δ–θ / ι）；线上三 bot pending → 线上收敛后转 Accepted。**）
+Status: Accepted（2026-06-20 grill 结晶 → 2026-06-21 设计评审闭环收敛。R1 引入「饷别决策态」字段 → R2 三腿判出其粒度/寻址/截留三洞 → **改为「事件结局即决策」回归纯 ADR 0014**（见决定 1–2 + Considered Options）。**本地 cmr R1–R5**（R5 三腿 3/3 concur 零降级；fold A–G / α–γ / δ–θ / ι）+ **线上三 bot R1–R3**（PR #274 merged；fold 自指环/负起运/白名单/category tag/pre_settle 顺序/玩家亲裁时序=#260 seam 等）双闸收敛。余项均 #260（玩家决策路由/亲裁时序）/ #265（on_restore 补基线）-scoped，已标依赖。）
 
 ## 背景
 
