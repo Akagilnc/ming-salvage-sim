@@ -39,7 +39,9 @@ export interface RouteContext {
  * Decide the next step.
  * #247: happy-path edges. #251: global escalate stop (checked FIRST).
  * #250: S4 severity+action fan-out (P0/P1 or fix_now → S5; defer → S7).
- * Remaining edges (error/#252, fix-loop/#254) are inline TODOs.
+ * #252: error edges — S2 committed:false → S8(error). Push failure is handled
+ *   in runner.ts (a backend throw, not a route output).
+ * Remaining edge: fix-loop back-edge (#254) is an inline TODO.
  */
 export function route(ctx: RouteContext): RouteDecision {
   // ── Global escalate stop edge (#251) ────────────────────────────────────
@@ -64,12 +66,15 @@ export function route(ctx: RouteContext): RouteDecision {
       // S1 load_context done → coder implements.
       return { kind: "next", step: "S2" };
 
-    case "S2":
-      // S2 coder_implement done → reviewer reviews.
-      // TODO(#252 error edge): if coder committed:false (0 commits) → S8
-      // handoff(status=error: coder produced nothing). #247 happy path
-      // assumes committed:true.
+    case "S2": {
+      // S2 coder_implement done.
+      // #252 error edge: 0 commits → S8(error: coder produced nothing).
+      if (ctx.output?.kind === "coder" && !ctx.output.committed) {
+        return { kind: "handoff", status: "error" };
+      }
+      // Happy path: committed → reviewer reviews.
       return { kind: "next", step: "S3" };
+    }
 
     case "S3":
       // S3 reviewer_full_review done → route findings.
@@ -106,7 +111,9 @@ export function route(ctx: RouteContext): RouteDecision {
 
     case "S7":
       // S7 push succeeded → success handoff.
-      // TODO(#252 error edge): push failure → S8 handoff(status=error).
+      // NOTE: push failure is caught in runner.ts (backend.push() throws) and
+      // converted to S8(error) there — it does not flow through route() because
+      // route() is only called after a successful step body.
       return { kind: "handoff", status: "success" };
 
     // S5 coder_fix / S6 reviewer_rereview: fix-loop steps — owned by #254.

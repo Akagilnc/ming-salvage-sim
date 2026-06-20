@@ -275,11 +275,33 @@ export interface RunInput {
   readonly backend: Backend;
 }
 
+/**
+ * Diagnostic payload for S8(status=error) (US#30, #252).
+ * Lets the developer pinpoint the failing step without re-running the whole pipeline.
+ */
+export interface ErrorPackage {
+  /** The step at which the run failed. */
+  readonly failedStep: StepId;
+  /** Human-readable explanation of what went wrong. */
+  readonly reason: string;
+  /**
+   * Resident slice branch name at the time of failure.
+   * Set whenever the worktree was already prepared (S1 completed), so commits
+   * made before the failure are locatable without re-running the pipeline.
+   */
+  readonly branchHead?: string;
+}
+
 /** Final handoff (S8). `status` lets the caller tell the three outcomes apart. */
 export interface RunResult {
   readonly status: HandoffStatus;
   /** The reviewed, pushed slice branch (set on success). */
   readonly branch?: string;
+  /**
+   * Diagnostic error payload — set when status=error (#252).
+   * Undefined for success and escalate outcomes.
+   */
+  readonly errorPackage?: ErrorPackage;
   /** The step ledger — anti-skip + resume truth. */
   readonly stepLedger: ReadonlyArray<LedgerEntry>;
   /**
