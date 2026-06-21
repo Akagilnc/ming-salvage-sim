@@ -35,6 +35,16 @@ export type {
   MergeResult,
   ReconcileGit,
   ReconcilePlan,
+  // #296 verify-cmr seam I/O (ADR 0022 decision 3④/⑤/⑥/4).
+  FamilyVerifyRequest,
+  FamilyVerifyResult,
+  FamilyVerifyErrorPackage,
+  IntegratedCmrRequest,
+  IntegratedCmrResult,
+  OpenFamilyPrRequest,
+  OpenFamilyPrResult,
+  FamilyAbortedEvent,
+  FamilyEscalation,
 } from "./family/types.js";
 export type {
   Backend,
