@@ -1,6 +1,6 @@
 # 家族集成层：commander 确定性波次调度（读现成子片）+ distinct-branch fan-out + merger 薄编排器
 
-Status: Proposed（2026-06-21；grill-with-docs 收敛 + 设计 cmr R1 修订。评审待 to-prd 之后，按 review-gate-after-to-prd 流程。前置：ADR 0021 仓库隔离、0016/0017/0018。）
+Status: Proposed（2026-06-21；grill-with-docs 收敛 + 设计 cmr R1 修订。评审待 to-prd 之后，按 review-gate-after-to-prd 流程。前置：ADR 0024 仓库隔离、0016/0017/0018。）
 
 ## 背景
 
@@ -17,7 +17,7 @@ Sandcastle 原生（文档/issues 优先核过、代码验证）：
 
 1. **commander = 确定性波次调度（runner 步，非 LLM 分解器）**：父 epic 的子片由 `to-issues` 在**编排器外**切好、发成 GitHub native sub-issues + 显式 `blocked_by`（单一真相）。commander 读这些现成子片 + 显式 `blocked_by` DAG → 拓扑分波（未阻塞者并发为一波、被阻塞者下波）→ fan-out。**不自分解、不用原生 Plan 的 LLM 依赖推断**（我们有显式 `blocked_by`，无需 LLM 再猜，且原生 Plan 只是 selector、会重推已有的边）。切片质量由切片那一步（design session 带 PRD/ADR 上下文）保证，非编排器职责。
 
-2. **fan-out = Sandcastle 原生 fork + 每子片 distinct branch**，跑在该 invocation 的独立 clone（ADR 0021）内故安全。每子片**复用单片 S0-S8 流程，但家族模式下 S7 的 `backend.push` 替换为本地 no-op**（子片只本地提交到自己分支、不 push 远端——共享 clone 内多个子片并发 push 会撞 `.git/refs/remotes` 引用锁；codex R3 指出「完整复用 S0-S8」含强制 S7 push、与「不 push」矛盾，故此处显式碰 S7）；只有家族 base 在末尾开 PR 时 push 一次。**家族 context（parentIssue / family ledger 引用）经 RunnerOptions 传入子片 runner**，使其 S0 走 ledger 口径（决定 6③）+ S7 走 no-op（agy R3）。base 从家族 base 切（家族模式闸适配见决定 6、base 取值见决定 7）。
+2. **fan-out = Sandcastle 原生 fork + 每子片 distinct branch**，跑在该 invocation 的独立 clone（ADR 0024）内故安全。每子片**复用单片 S0-S8 流程，但家族模式下 S7 的 `backend.push` 替换为本地 no-op**（子片只本地提交到自己分支、不 push 远端——共享 clone 内多个子片并发 push 会撞 `.git/refs/remotes` 引用锁；codex R3 指出「完整复用 S0-S8」含强制 S7 push、与「不 push」矛盾，故此处显式碰 S7）；只有家族 base 在末尾开 PR 时 push 一次。**家族 context（parentIssue / family ledger 引用）经 RunnerOptions 传入子片 runner**，使其 S0 走 ledger 口径（决定 6③）+ S7 走 no-op（agy R3）。base 从家族 base 切（家族模式闸适配见决定 6、base 取值见决定 7）。
 
 3. **merger = 薄编排器（确定性骨架 + 点状 LLM）**，与原生「整段 LLM」相反，**分两层时序**：
    - **每波（fan-out barrier）**：① **cycle-check**：排波前对 `blocked_by` 图做无环校验，有环 → fail-closed 升级（不死锁）；② 把**本波**已过审子片分支**串行 `git merge --no-ff`** 落家族 base——家族整合是**已提交分支间的 branch-to-branch 合并**，库无此原语 → Backend seam 后的**确定性 `git merge`**，**不是 `merge-to-head`**（后者是 slice/run 级回灌、已在单片 coder run 用）；冲突才上 LLM（`resolving-merge-conflicts` soul），原生一上来就 LLM、本设计确定性优先；③ 每合一片即写 family ledger（决定 5）；④ **本波合完跑一次 family verify（typecheck + 单测）fail-fast**——红即中止、不再排下一波（避免白跑下游波，agy R2）。下一波从**更新后的家族 base** 切（拿到上波依赖）。
@@ -41,11 +41,11 @@ Sandcastle 原生（文档/issues 优先核过、代码验证）：
 
 ## Consequences
 
-- 家族 base 必须 clone-rooted（ADR 0021，每 invocation 独立 clone）；否则 fork 波次原样重踩 prune 跨 session/invocation 互毁。
+- 家族 base 必须 clone-rooted（ADR 0024，每 invocation 独立 clone）；否则 fork 波次原样重踩 prune 跨 session/invocation 互毁。
 - 新增持久件：**family ledger**（append-only + 幂等不变式见决定 5；字段级 JSON 留 TDD）。
 - 家族整合 = 确定性 `git merge`（库无 branch-to-branch 原语）；`merge-to-head` 仅 slice 级回灌、在单片 coder run 内——两者不混。
 - 切片在外部 design session 做（带上下文、质量较稳）；下游闸（merger 冲突 / family verify / 整合 cmr）兜的是 **conflicting + seam-broken** 错切，**coherent-but-wrong（自洽但分错）的错切仍可能漏过下游**，靠切片那步的判断 + post-merge 游玩兜（honest caveat，非下游全兜）。
 - 角色 roster = coder + reviewer（沿用）+ merger（冲突 fallback soul）；**commander 是 runner 确定性调度步、无 soul**（非 LLM）。
-- 删 `cleanResidueAt` 的 repo 级 prune（ADR 0021）还须更新 `Backend.cleanResidue` 的 JSDoc 契约（types.ts 现把 prune 列为 sequence 一部分），且 #255 resume 路径受影响是有意的。
+- 删 `cleanResidueAt` 的 repo 级 prune（ADR 0024）还须更新 `Backend.cleanResidue` 的 JSDoc 契约（types.ts 现把 prune 列为 sequence 一部分），且 #255 resume 路径受影响是有意的。
 - base 参数化：Backend seam 已收 base 参数（ADR 0017 §2），但 runner 现硬编码 `SLICE_BASE='main'`，须扩成从家族 base 取（非只翻常量）。
 - 编排器成熟后单独立项；现 co-located 在 `orchestrator/`。
