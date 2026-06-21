@@ -121,7 +121,7 @@ describe("#291 cutFamilyBase (real local clone)", () => {
 
   it("cuts the LOCAL family base from origin/main and returns its start head", () => {
     const clone = makeClone();
-    const head = cutFamilyBase(clone, "family/291-base", realSh);
+    const head = cutFamilyBase(clone, "family/291-base", "main", realSh);
     expect(head).toBe(git(clone, "rev-parse", "origin/main"));
     // the local branch exists now.
     expect(git(clone, "rev-parse", "family/291-base")).toBe(head);
@@ -129,7 +129,7 @@ describe("#291 cutFamilyBase (real local clone)", () => {
 
   it("is idempotent on resume: an existing family base is reused (its current head)", () => {
     const clone = makeClone();
-    const first = cutFamilyBase(clone, "family/291-base", realSh);
+    const first = cutFamilyBase(clone, "family/291-base", "main", realSh);
     // advance the family base with a commit (a prior wave's merge).
     git(clone, "checkout", "-q", "family/291-base");
     execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "wave1"], { cwd: clone });
@@ -137,7 +137,34 @@ describe("#291 cutFamilyBase (real local clone)", () => {
     expect(advanced).not.toBe(first);
     // a second cut REUSES the branch and returns its CURRENT (advanced) head — it
     // does NOT re-cut from main (no lost waves).
-    expect(cutFamilyBase(clone, "family/291-base", realSh)).toBe(advanced);
+    expect(cutFamilyBase(clone, "family/291-base", "main", realSh)).toBe(advanced);
+  });
+
+  it("cuts from the CONFIGURED base (not hardcoded main) when the PR target differs", () => {
+    // agy R1: the driver advertises a configurable target base (options.base), but a
+    // hardcoded "main" would cut the family base off the WRONG branch when the PR
+    // targets e.g. "develop" — and familyBaseDiff (`base...familyBase`) would then
+    // emit a wrong/polluted diff. Prove the cut honors the passed base.
+    const src = mkdtempSync(join(tmpdir(), "cfb-dev-src-"));
+    cleanups.push(src);
+    git(src, "init", "-q", "-b", "main");
+    git(src, "config", "user.email", "t@t.t");
+    git(src, "config", "user.name", "t");
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: src });
+    // A "develop" branch that DIVERGES from main (a unique commit), so cutting from
+    // the wrong branch is observable (different head than origin/main).
+    git(src, "checkout", "-q", "-b", "develop");
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "develop-only"], { cwd: src });
+    git(src, "checkout", "-q", "main");
+    const clone = mkdtempSync(join(tmpdir(), "cfb-dev-clone-"));
+    cleanups.push(clone);
+    const dir = join(clone, "repo");
+    git(clone, "clone", "-q", src, dir);
+
+    const head = cutFamilyBase(dir, "family/291-base", "develop", realSh);
+    // The family base head is origin/develop's head, NOT origin/main's.
+    expect(head).toBe(git(dir, "rev-parse", "origin/develop"));
+    expect(head).not.toBe(git(dir, "rev-parse", "origin/main"));
   });
 });
 

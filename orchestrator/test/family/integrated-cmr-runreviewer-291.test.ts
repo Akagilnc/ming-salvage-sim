@@ -75,6 +75,30 @@ describe("#291 parseReviewerVerdict — prose verdict, no sentinel-JSON gate", (
     const v = parseReviewerVerdict("claude", "This is not converged: there is a seam bug.");
     expect(v.pass).toBe(false);
   });
+  it("the affix form 'non-converged' is NOT a pass (the `-` must not let \\bconverged\\b match through)", () => {
+    // codex R1: `-` is a non-word char, so a naive `\bconverged\b` matches the
+    // `converged` inside `non-converged` → a fabricated pass. Fail-closed: this is
+    // a negated verdict, so it is findings.
+    const v = parseReviewerVerdict("codex", "This change is non-converged: a seam bug remains.");
+    expect(v.pass).toBe(false);
+  });
+  it("an interposed adverb ('not yet/fully converged') is NOT a pass", () => {
+    // agy R1: an adverb between the negator and `converge` breaks a `\s+`-adjacency
+    // guard, so the positive `\bconverged\b` fallback fires → a fabricated pass.
+    expect(parseReviewerVerdict("agy", "The slices are not yet converged.").pass).toBe(false);
+    expect(parseReviewerVerdict("codex", "This is not fully converged.").pass).toBe(false);
+    expect(parseReviewerVerdict("claude", "Not completely converged — one seam left.").pass).toBe(false);
+  });
+  it("'failed to converge' / 'did not converge' are NOT a pass", () => {
+    expect(parseReviewerVerdict("codex", "The review failed to converge.").pass).toBe(false);
+    expect(parseReviewerVerdict("agy", "It did not converge cleanly.").pass).toBe(false);
+  });
+  it("a genuine positive verdict still passes (the broadened negation must not over-trip)", () => {
+    // Guard against the fix over-tripping: real convergence prose must still pass.
+    expect(parseReviewerVerdict("codex", "All slices are converged. No findings.").pass).toBe(true);
+    expect(parseReviewerVerdict("agy", "Reviewed the diff. No findings.").pass).toBe(true);
+    expect(parseReviewerVerdict("claude", "CMR-VERDICT: converged").pass).toBe(true);
+  });
 });
 
 // ═══════════════════════ 2. aggregateCmr (3-leg + degradation) ═══════════════════════
