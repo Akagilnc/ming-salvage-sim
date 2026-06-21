@@ -151,6 +151,24 @@ describe("reconcileFamilyLedger — branch ③ inconsistent → fail-closed esca
   });
 });
 
+describe("reconcileFamilyLedger — thin (#293-style) entries degrade SAFELY", () => {
+  it("a thin merged entry (no familyHeadAfter) → conservative clean-start, no escalate, no double-merge", async () => {
+    // If the happy-path merge wrote only the thin {childIssue, status:"merged"}
+    // (no familyHeadAfter baseline), reconcile cannot compute the crash window —
+    // it must DEGRADE SAFELY: no escalate (not corruption), and the already-merged
+    // child is still counted merged (so it is NOT re-run / re-merged). A
+    // never-recorded child is simply left to the wave loop. No corruption either
+    // way.
+    const ledger: FamilyLedgerEntry[] = [{ childIssue: 10, status: "merged" }];
+    const git = new FakeReconcileGit("base1", { 10: "c10" }, new Set(["c10"]));
+    const plan = await reconcileFamilyLedger(ledger, children, git);
+    expect(plan.escalate).toBe(false);
+    expect(plan.reconciled).toEqual([]);
+    // 10 is still counted merged (from the thin ledger entry) → not double-merged.
+    expect([...plan.merged].sort()).toEqual([10]);
+  });
+});
+
 describe("reconcileFamilyLedger — empty ledger (fresh resume)", () => {
   it("an empty ledger is not a crash window: nothing merged, nothing to escalate", async () => {
     // Nothing recorded yet — live HEAD is just the family base itself; treat as a
