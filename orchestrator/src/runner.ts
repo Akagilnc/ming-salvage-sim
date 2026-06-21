@@ -1178,8 +1178,26 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           );
         }
 
-        if (meta.openBlockedBy.length > 0) {
-          const blockers = meta.openBlockedBy.map((n) => `#${n}`).join(", ");
+        // #294 / ADR 0022 decision 6③: the blocked_by gate's OPEN set. In a
+        // FAMILY run the child's blockers are merged into the LOCAL family base by
+        // the commander, but the blocker's GitHub issue need not be `closed` — so
+        // a blocker GitHub still reports OPEN may already be ledger-merged. The
+        // commander hands that ledger-merged set down via `family.mergedBlockers`;
+        // those are SATISFIED, so a just-released child is not re-rejected by its
+        // own S0 (the agy R2实锤 deadlock). This is an ADDED family-mode derivation
+        // that ONLY narrows the set: standalone runs (no `family`) have an empty
+        // `mergedBlockers`, so `openBlockedBy` below is byte-for-byte
+        // `meta.openBlockedBy` and the original GitHub-closed gate is unchanged. A
+        // blocker NOT ledger-merged (e.g. an external dependency) stays open and
+        // still rejects.
+        const ledgerMergedBlockers = new Set(family?.mergedBlockers ?? []);
+        const openBlockedBy =
+          ledgerMergedBlockers.size === 0
+            ? meta.openBlockedBy
+            : meta.openBlockedBy.filter((n) => !ledgerMergedBlockers.has(n));
+
+        if (openBlockedBy.length > 0) {
+          const blockers = openBlockedBy.map((n) => `#${n}`).join(", ");
           throw new Error(
             `S0 input gate: issue #${issueNumber} is blocked by upstream issues that are still open: ${blockers}. ` +
               `Merge the upstream changes before running.`,

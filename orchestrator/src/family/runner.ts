@@ -25,7 +25,7 @@
 
 import { runOrchestrator } from "../runner.js";
 import type { Backend } from "../types.js";
-import { selectWave } from "./commander.js";
+import { assertAcyclic, selectWave } from "./commander.js";
 import { mergedSet } from "./ledger.js";
 import { mergeChild } from "./merger.js";
 import { runVerifyCmr } from "./verifyCmr.js";
@@ -57,7 +57,21 @@ async function runChild(
   const result = await runOrchestrator({
     issueNumber: child.issue,
     backend: singleSliceBackend,
-    family: { parentIssue, familyBase, noPush: true },
+    // #294 (ADR 0022 decision 6③): hand the child its ledger-merged blockers so
+    // its OWN single-slice S0 `blocked_by` gate uses the ledger-merged口径, not
+    // GitHub `closed`. runChild only runs a child the commander released — i.e.
+    // selectWave already confirmed every `child.blockedBy` is in the merged set —
+    // so the whole `child.blockedBy` IS the set of family-base-merged blockers
+    // for this child. Passing it makes the child's S0 treat a still-open-on-GitHub
+    // blocker as satisfied, so a just-released child is not re-rejected (the agy R2
+    // deadlock). A truly-open external blocker (not in child.blockedBy) is absent
+    // here, so the child S0 still rejects it.
+    family: {
+      parentIssue,
+      familyBase,
+      noPush: true,
+      mergedBlockers: child.blockedBy,
+    },
   });
   if (result.status === "success" && result.branch !== undefined) {
     // The single-slice run succeeded and produced a reviewed branch — but it is
@@ -94,6 +108,14 @@ export async function runFamily(
   input: FamilyRunInput,
 ): Promise<FamilyRunResult> {
   const { epic, familyBackend, singleSliceBackend, familyBase } = input;
+  // ── #294: fail-closed cycle guard (ADR 0022 decisions 3①/4) ────────────────
+  // BEFORE any scheduling: validate the children's intra-family `blocked_by`
+  // graph is acyclic. A cycle makes selectWave return an empty wave forever (a
+  // SILENT deadlock — the members never unblock), so the commander throws a
+  // DependencyCycleError here and runFamily fails closed (the caller escalates to
+  // a human per decision 4, who fixes the to-issues edges and re-runs). This runs
+  // up front so nothing is fanned out / merged before the deadlock is caught.
+  assertAcyclic(epic.children);
   // The verify-cmr hook: the injected impl (#296 / tests) or the #293 no-op module
   // default. The spine's call sites + fail-fast on `ok===false` are identical
   // either way (ADR 0022 decision 3④/⑤/⑥; acceptance-4 seam boundary).
