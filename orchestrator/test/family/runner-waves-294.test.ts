@@ -26,6 +26,7 @@ import type {
   IssueMeta,
   IssueSnapshot,
   PersistentLedgerEntry,
+  RunInput,
   StepOutput,
   StepSpec,
   WorktreeHandle,

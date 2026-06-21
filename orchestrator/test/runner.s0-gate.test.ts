@@ -277,6 +277,92 @@ describe("S0 input gate — pass case (#248)", () => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
+// #294 / ADR 0022 decision 6③: family-mode blocked_by gate口径.
+//
+// In a family run the child's single-slice S0 blocked_by gate treats a
+// still-open-on-GitHub blocker as SATISFIED iff it is in family.mergedBlockers
+// (the commander's ledger-merged set), NOT by GitHub `closed`. The load-bearing
+// soundness guarantee (decision 6③, last sentence): a blocker NOT in that set —
+// e.g. an EXTERNAL dependency the commander never ledger-merged — is STILL a
+// genuine open blocker the gate rejects. These pin S0's consumption contract,
+// which the runChild fix (pass ONLY the intra-family subset as mergedBlockers,
+// never an external `blocked_by`) relies on to keep external blockers rejected.
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("S0 gate — #294 family-mode ledger-merged blocked_by (decision 6③)", () => {
+  const FAMILY = { parentIssue: 291, familyBase: "family/291-base", noPush: true };
+
+  it("family mode: a still-open-on-GitHub blocker that IS in mergedBlockers is excused (S0 passes)", async () => {
+    // The commander released this child because #247 is ledger-merged into the
+    // family base, even though GitHub still lists #247 as an open blocked_by.
+    class PassBackend extends GateTestBackend {
+      constructor() {
+        super({ ...COMPLIANT_META, openBlockedBy: [247] });
+      }
+      override async runStep(spec: StepSpec): Promise<StepOutput> {
+        this.calls.push(`runStep(${spec.id})`);
+        if (spec.role === "coder") {
+          return { kind: "coder", committed: true, commitsAdded: 1 };
+        }
+        return { kind: "reviewer", findings: [] };
+      }
+    }
+    const backend = new PassBackend();
+    const result = await runOrchestrator({
+      issueNumber: 248,
+      backend,
+      family: { ...FAMILY, mergedBlockers: [247] },
+    });
+    // The ledger-merged口径 excused #247, so the gate did NOT throw — S1 ran and
+    // the run reached success (no re-rejection of a just-released child).
+    expect(backend.calls).toContain("fetchIssueSnapshot(248)");
+    expect(result.status).toBe("success");
+  });
+
+  it("family mode: an open blocker NOT in mergedBlockers (external dependency) is STILL rejected at S0", async () => {
+    // Decision 6③ soundness guard: #999 is an EXTERNAL open blocker the commander
+    // never ledger-merged, so it is absent from mergedBlockers. The family-mode
+    // gate must NOT blanket-skip the blocked_by check — #999 stays a genuine open
+    // blocker. (#247 IS ledger-merged and excused; #999 is not and rejects.)
+    const backend = new GateTestBackend({
+      ...COMPLIANT_META,
+      openBlockedBy: [247, 999],
+    });
+    await expect(
+      runOrchestrator({
+        issueNumber: 248,
+        backend,
+        family: { ...FAMILY, mergedBlockers: [247] },
+      }),
+    ).rejects.toThrow(/(?=.*#?999)(?=.*(?:blocked|upstream))/i);
+    // Stopped at S0 — nothing downstream ran (the external blocker rejected it).
+    expect(backend.calls).toEqual(["fetchIssueMeta(248)"]);
+  });
+
+  it("family mode: error excludes the excused ledger-merged blocker, names only the genuine open one", async () => {
+    // Sharper guard: when #247 is excused but #999 rejects, the thrown message
+    // must name #999 and NOT #247 — the excused blocker is gone from openBlockedBy,
+    // not merely outnumbered.
+    const backend = new GateTestBackend({
+      ...COMPLIANT_META,
+      openBlockedBy: [247, 999],
+    });
+    let msg = "";
+    try {
+      await runOrchestrator({
+        issueNumber: 248,
+        backend,
+        family: { ...FAMILY, mergedBlockers: [247] },
+      });
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    expect(msg).toMatch(/#?999/);
+    expect(msg).not.toMatch(/#247/);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
 // #247 happy-path regression: compliant run still reaches success
 // ──────────────────────────────────────────────────────────────────────────────
 
