@@ -22,6 +22,7 @@ export type {
 } from "./family/verifyCmr.js";
 export type {
   ChildSlice,
+  ConflictResolveRequest,
   FamilyBackend,
   FamilyChildResult,
   FamilyChildStatus,

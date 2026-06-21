@@ -79,6 +79,9 @@ class FakeFamilyBackend implements FamilyBackend {
     this.head = `+${child.childIssue}`;
     return { familyHead: this.head };
   }
+  // #295 conflict-fallback seam `resolveMergeConflict` is OPTIONAL — these spine
+  // tests use the deterministic (no-conflict) merge path and never reach it, so
+  // the fake omits it.
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }
