@@ -9,6 +9,15 @@ export type { RouteContext, RouteDecision } from "./route.js";
 // ── family integration layer (ADR 0022, #293) ──────────────────────────────
 // The four independent extension modules + the spine that only CALLS them.
 export { runFamily } from "./family/runner.js";
+// The production family driver (#291 Unit B): the end-to-end assembly entry point.
+export {
+  runFamilyDriver,
+  readFamilyEpic,
+  buildFamilyEpic,
+  parseSubIssueNumbers,
+  cutFamilyBase,
+} from "./familyDriver.js";
+export type { FamilyDriverOptions, Sh } from "./familyDriver.js";
 export { selectWave } from "./family/commander.js";
 export { mergeChild } from "./family/merger.js";
 export { recordMerged, recordAborted, mergedSet } from "./family/ledger.js";
