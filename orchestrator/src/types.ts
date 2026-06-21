@@ -542,6 +542,20 @@ export interface FamilyContext {
   readonly familyBase: string;
   /** When true, S7 push is a LOCAL no-op (ADR 0022 decision 2). */
   readonly noPush: boolean;
+  /**
+   * #294 (ADR 0022 decision 6③): the child's `blocked_by` issue numbers the
+   * family commander has confirmed MERGED into the family base (the ledger-merged
+   *口径). In family mode the child's own single-slice S0 `blocked_by` gate treats
+   * a still-open-on-GitHub blocker as SATISFIED iff it is in this set — because
+   * the commander only fans a child out once every blocker is ledger-merged, but
+   * the blocker's GitHub issue need not be `closed`. Without this, a child the
+   * commander just released would be re-rejected by its own S0 ("blocked by #N
+   * still open") → deadlock (agy R2's实锤 regression). A blocker NOT in this set
+   * (e.g. an external dependency, never merged into the family base) is still a
+   * genuine open blocker the S0 gate rejects. Absent/empty ⇒ no merged blockers
+   * to excuse (the v0.1 GitHub-closed check applies unchanged).
+   */
+  readonly mergedBlockers?: ReadonlyArray<number>;
 }
 
 /** Input to the orchestrator: an issue number + the Backend seam (+ optional family context). */
