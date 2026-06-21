@@ -199,6 +199,46 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
   });
 });
 
+describe("#296 spine integration — fail-safe: verify-green but a required final-barrier capability missing must NOT be success", () => {
+  it("a real backend that verifies green but lacks runIntegratedCmr leaves the run verify_failed (NOT a false success)", async () => {
+    // The 承重闸 (integrated cmr, decision 3⑥) cannot run, so the run must NOT report
+    // success — that would ship code the integrated cmr never reviewed. The spine
+    // ignores the hook's `ran` flag and acts on `ok`, so the hook must fail-safe to
+    // ok:false (verify_failed at the final phase) rather than the nothing-ran no-op.
+    class VerifyOnlySpineBackend implements FamilyBackend {
+      readonly ledger: FamilyLedgerEntry[] = [];
+      readonly verifyCalls: FamilyVerifyRequest[] = [];
+      async mergeChildIntoFamilyBase(c: MergeRequest): Promise<{ familyHead: string }> {
+        return { familyHead: `+${c.childIssue}` };
+      }
+      async appendFamilyLedger(e: FamilyLedgerEntry): Promise<void> {
+        this.ledger.push(e);
+      }
+      async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+        return this.ledger;
+      }
+      async runFamilyVerify(req: FamilyVerifyRequest): Promise<FamilyVerifyResult> {
+        this.verifyCalls.push(req);
+        return { ok: true };
+      }
+      // NO runIntegratedCmr / openFamilyPr (a real-but-incomplete backend).
+    }
+    const backend = new VerifyOnlySpineBackend();
+    const result = await runFamily({
+      epic: epicWith(294),
+      familyBackend: backend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/291-base",
+      // NO verifyCmr injection → the spine uses #296's real runVerifyCmr.
+    });
+    // Both verify barriers ran green; the child merged; but the final barrier is red
+    // because the 承重闸 cmr could not run — observably verify_failed, never success.
+    expect(backend.verifyCalls.map((v) => v.phase)).toEqual(["wave", "final"]);
+    expect(result.status).toBe("verify_failed");
+    expect(result.failedPhase).toBe("final");
+  });
+});
+
 describe("#296 spine integration — acceptance 3: all green → open PR, stop, no merge-to-main", () => {
   it("green verify + converged cmr ⇒ the family PR is opened and the run is success (止于 PR)", async () => {
     const backend = new CapableFamilyBackend({

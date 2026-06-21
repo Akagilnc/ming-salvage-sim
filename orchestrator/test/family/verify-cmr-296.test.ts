@@ -220,10 +220,12 @@ describe("#296 verify-cmr hook body — graceful no-op when the backend lacks th
     expect(result).toEqual({ ok: true, ran: false });
   });
 
-  it("a backend with verify but WITHOUT cmr (final phase) still does not throw — degrades to no-op cmr after green verify", async () => {
+  it("a backend with verify but WITHOUT cmr (final phase) FAILS-SAFE to ok:false — it does NOT report a pass the 承重闸 never ran", async () => {
     // verify present, cmr absent: green verify, then the cmr capability is missing
-    // → #296 must not throw; with no cmr gate it cannot claim a converged review,
-    // so it degrades to ran:false rather than fabricating a pass.
+    // → #296 must not throw AND must not fabricate a pass. A real verify ran, so the
+    // hook cannot return the nothing-ran no-op {ok:true}; that would make the spine
+    // call the run "success" with the load-bearing integrated cmr never executed
+    // (decision 3⑥). It fails-safe to {ok:false, ran:true} (verify_failed at final).
     class VerifyOnlyBackend extends BareFamilyBackend {
       readonly verifyCalls: FamilyVerifyRequest[] = [];
       async runFamilyVerify(req: FamilyVerifyRequest): Promise<FamilyVerifyResult> {
@@ -237,8 +239,30 @@ describe("#296 verify-cmr hook body — graceful no-op when the backend lacks th
       familyBase: "family/291-base",
       familyBackend: backend,
     });
-    // Verify ran; with no cmr/PR capability the hook does not pretend a full pass.
+    // Verify ran (ran:true), but with no cmr capability the hook reports a red
+    // final barrier (ok:false) — NOT a false success.
     expect(backend.verifyCalls).toHaveLength(1);
-    expect(result.ran).toBe(false);
+    expect(result).toEqual({ ok: false, ran: true });
+  });
+
+  it("a backend with verify + cmr but WITHOUT openFamilyPr (final phase) FAILS-SAFE to ok:false — the terminal 止于-PR step could not run", async () => {
+    // verify green + cmr converged, but the PR capability is missing → the terminal
+    // action (decision 4, 止于 PR) cannot run. {ok:true} would report "success" for a
+    // run whose PR never opened; fail-safe to {ok:false, ran:true} instead.
+    class VerifyAndCmrBackend extends BareFamilyBackend {
+      async runFamilyVerify(): Promise<FamilyVerifyResult> {
+        return { ok: true };
+      }
+      async runIntegratedCmr(): Promise<IntegratedCmrResult> {
+        return { converged: true };
+      }
+    }
+    const backend = new VerifyAndCmrBackend();
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+    });
+    expect(result).toEqual({ ok: false, ran: true });
   });
 });
