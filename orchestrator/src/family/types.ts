@@ -246,6 +246,17 @@ export interface FamilyRunInput {
    * spine's fail-fast branch is testable now (the repo's injected-seam idiom).
    */
   readonly verifyCmr?: (input: VerifyCmrInput) => Promise<VerifyCmrResult>;
+  /**
+   * The crash-window reconcile git seam (ADR 0022 decision 5, #298). When
+   * present, the spine runs {@link reconcileFamilyLedger} BEFORE the wave loop
+   * (the resume entry): it compares the ledger末条 head to the live family-base
+   * HEAD, appends reconcile補账条 for merges that landed but whose `merged` write
+   * crashed (so the wave loop skips them — no double-merge), and escalates
+   * fail-closed on an inconsistent live HEAD. Absent ⇒ a fresh run (no
+   * reconcile), the #293 behaviour unchanged. Injectable so the三分支 are
+   * testable zero-container (the repo's injected-seam idiom).
+   */
+  readonly reconcileGit?: ReconcileGit;
 }
 
 /**
@@ -295,10 +306,21 @@ export interface FamilyChildResult {
  *   "不静默吞"); the caller MUST NOT treat it as fully closed. (#293's happy path
  *   never produces this — all children merge; it guards the honest result.)
  *
- * Precedence when more than one applies: `"verify_failed"` (most urgent) >
- * `"incomplete"` > `"success"`.
+ * - `"escalated"` — (#298) the crash-window reconcile found the live family-base
+ *   HEAD INCONSISTENT with the ledger末条 (diverged / behind / unrelated — ADR
+ *   0022 decision 5 branch ③) and bailed fail-closed BEFORE the wave loop. The
+ *   run did not merge anything this invocation; a human must triage / answer (the
+ *   escalate-resume mechanism, decision 4). Distinct from `verify_failed` (a red
+ *   barrier mid-run) — escalation is the resume-entry fail-closed.
+ *
+ * Precedence when more than one applies: `"escalated"` (resume-entry, most
+ * urgent) > `"verify_failed"` > `"incomplete"` > `"success"`.
  */
-export type FamilyRunStatus = "success" | "verify_failed" | "incomplete";
+export type FamilyRunStatus =
+  | "success"
+  | "verify_failed"
+  | "incomplete"
+  | "escalated";
 
 /** The family run result. */
 export interface FamilyRunResult {
