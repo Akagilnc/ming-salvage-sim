@@ -29,12 +29,15 @@
  *
  * The verify / cmr / PR / abort / escalate capabilities are reached as OPTIONAL
  * methods on the injected `FamilyBackend` (the frozen spine input is `{phase,
- * familyBase, familyBackend}`). A backend that does NOT implement them — the #293
- * no-op default, the existing fakes — yields the no-op `{ok:true, ran:false}`, so
- * the spine's existing default path stays untouched. The `aborted`/escalate
- * SCHEMA (`FamilyLedgerEntry` widening + the escalate/resume machine) is #298's
- * (decision 5 "字段级 JSON 留 TDD"); #296 only CALLS those seams. THAT is the seam
- * boundary.
+ * familyBase, familyBackend}`). A backend that implements NONE of them — the #293
+ * no-op default, the existing fakes — has no `runFamilyVerify`, so the hook returns
+ * the nothing-ran no-op `{ok:true, ran:false}` and the spine's existing default
+ * path stays untouched (zero regression). A backend that CAN verify but is missing
+ * a required downstream final-barrier capability (cmr / PR) is the DIFFERENT case:
+ * a real verify ran, so the hook fails-safe to `{ok:false, ran:true}` rather than a
+ * false `success` — see `INCOMPLETE_GATE` below. The `aborted`/escalate SCHEMA
+ * (`FamilyLedgerEntry` widening + the escalate/resume machine) is #298's (decision
+ * 5 "字段级 JSON 留 TDD"); #296 only CALLS those seams. THAT is the seam boundary.
  */
 
 import type {
@@ -63,7 +66,9 @@ export interface VerifyCmrInput {
   /**
    * The family seam #296 reaches the verify / integrated-cmr / open-PR / aborted
    * / escalate capabilities through (all OPTIONAL `FamilyBackend` methods). A
-   * backend missing them yields the no-op `{ok:true, ran:false}`. The CONCRETE
+   * backend with NO `runFamilyVerify` yields the nothing-ran no-op `{ok:true,
+   * ran:false}`; one that verifies green but lacks a required downstream capability
+   * fails-safe to `{ok:false, ran:true}` (see `INCOMPLETE_GATE`). The CONCRETE
    * `aborted`/escalate schema (`FamilyLedgerEntry` widening + the escalate/resume
    * machine) is #298's (ADR 0022 decision 5, "字段级 JSON 留 TDD"); #296 only CALLS
    * `recordAborted` / `escalateFamily`.
@@ -91,12 +96,28 @@ export interface VerifyCmrResult {
 const NOOP: VerifyCmrResult = { ok: true, ran: false };
 
 /**
+ * The fail-safe verdict for a backend that DID verify (green) but is missing a
+ * REQUIRED downstream final-barrier capability (the integrated cmr 承重闸, or the
+ * 止于-PR step after a converged cmr). It is NOT the #293 no-op: a real verify
+ * already ran, so reporting `{ok:true}` would make the spine's `finalize()` treat
+ * the final barrier as PASSED and the run as `"success"` — shipping code the
+ * load-bearing integrated cmr never reviewed (decision 3⑥) / a run whose terminal
+ * PR (decision 4) never opened. The spine ignores `ran` and acts on `ok` alone, so
+ * the only fail-safe is `ok:false` (the run surfaces `verify_failed`/`failedPhase:
+ * "final"`, never a false `success` — decision 3⑤ "不静默吞"). `ran:true` records
+ * that real verify work DID happen (this is not the nothing-ran no-op).
+ */
+const INCOMPLETE_GATE: VerifyCmrResult = { ok: false, ran: true };
+
+/**
  * Run the family verify against the family base, then (on the `"final"` phase)
  * the integrated cmr 承重闸 and the open-PR step (ADR 0022 decision 3④/⑤/⑥/4).
  *
  * Reaches verify / cmr / PR / abort / escalate as OPTIONAL `FamilyBackend`
- * methods, so a backend without them degrades to the no-op `NOOP` (the spine's
- * #293 default path stays green). Surfaces a red barrier purely via the returned
+ * methods: a backend with NO verify capability degrades to the nothing-ran `NOOP`
+ * (the spine's #293 default path stays green); one that verifies green but lacks a
+ * required downstream capability fails-safe to `INCOMPLETE_GATE` (never a false
+ * success). Surfaces a red barrier purely via the returned
  * `ok`; the spine acts on it (it is never rewritten here).
  */
 export async function runVerifyCmr(
@@ -125,9 +146,11 @@ export async function runVerifyCmr(
   if (phase === "wave") return { ok: true, ran: true };
 
   // ── integrated cmr 承重闸 (decision 3⑥): only AFTER a green full verify. No cmr
-  //    capability ⇒ the hook cannot claim a converged review — degrade to no-op
-  //    rather than fabricate a pass (the verify still ran). ──
-  if (familyBackend.runIntegratedCmr === undefined) return NOOP;
+  //    capability ⇒ the hook CANNOT run the load-bearing review, so it must NOT
+  //    report a pass: a real verify already ran, and `{ok:true}` here would make
+  //    the spine's finalize() call the run `"success"` with the 承重闸 never run.
+  //    Fail-safe to `ok:false` (verify_failed) — NOT the #293 nothing-ran no-op. ──
+  if (familyBackend.runIntegratedCmr === undefined) return INCOMPLETE_GATE;
   const cmr: IntegratedCmrResult = await familyBackend.runIntegratedCmr({ familyBase });
   if (!cmr.converged) {
     // NOT converged ⇒ escalate续跑 (#298 seam); do NOT open a PR. (decision 3⑥/4)
@@ -139,8 +162,10 @@ export async function runVerifyCmr(
 
   // ── 止于 PR (decision 4): green verify + converged cmr ⇒ open the family PR and
   //    STOP. Online bot cmr + merge to main are the separate pr-review-loop stage,
-  //    NOT this layer (this never merges). No PR capability ⇒ no-op (nothing opened). ──
-  if (familyBackend.openFamilyPr === undefined) return NOOP;
+  //    NOT this layer (this never merges). No PR capability ⇒ the terminal action
+  //    cannot run; verify + cmr already ran, so `{ok:true}` would report `"success"`
+  //    for a run whose PR never opened — fail-safe to `ok:false` (NOT the no-op). ──
+  if (familyBackend.openFamilyPr === undefined) return INCOMPLETE_GATE;
   await familyBackend.openFamilyPr({ familyBase });
   return { ok: true, ran: true };
 }
