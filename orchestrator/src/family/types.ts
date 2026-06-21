@@ -119,6 +119,20 @@ export interface ReconcileGit {
   /** The live family-base HEAD commit SHA right now (`git rev-parse <familyBase>`). */
   liveFamilyHead(): Promise<string>;
   /**
+   * The family-base HEAD commit SHA BEFORE any child merged — the head the family
+   * base was at when the run was set up (the RealBackend records it at family-base
+   * creation; in git terms the point the family base branch was cut at). This is
+   * the ONLY baseline available when the ledger is EMPTY: if the very first merge
+   * landed but its `merged` write crashed (the merger lands the merge THEN writes
+   * the ledger), the ledger is empty yet the live HEAD has moved PAST this start
+   * head. Comparing live HEAD to the start head distinguishes a genuine fresh
+   * start (live === start → clean) from a first-merge crash window (live moved,
+   * empty ledger → fail-closed escalate; cmr R3: codex-s1) — without it an empty
+   * ledger would unconditionally clean-start and re-merge the already-landed first
+   * child (a double-merge).
+   */
+  familyBaseStartHead(): Promise<string>;
+  /**
    * Whether a child's branch/HEAD exists in the clone, and if so its HEAD SHA.
    * `exists:false` ⇒ the run crashed before that child produced ANY commit
    * (branch absent) → reconcile treats it as never-merged, reruns it (no error).

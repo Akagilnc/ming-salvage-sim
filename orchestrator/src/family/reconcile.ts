@@ -96,13 +96,25 @@ export async function reconcileFamilyLedger(
     return { escalate: false, reconciled: [], merged: ledgerMerged, liveHead };
   }
 
-  // ── empty / headless ledger: a clean start, nothing to reconcile ───────────
-  // No recorded head means nothing was merged-and-recorded yet. There is no
-  // crash window to reconcile (the merger writes the head with every merged
-  // entry); the run just starts/continues the wave loop with whatever the ledger
-  // already says is merged (possibly nothing).
+  // ── empty / headless ledger: distinguish a fresh start from a FIRST-merge
+  //    crash window ────────────────────────────────────────────────────────────
+  // No entry records a head. That is EITHER a genuine fresh start (nothing
+  // merged yet) OR the very-first-merge crash window: the merger lands the merge
+  // on the family base THEN writes the ledger, so a crash in between leaves the
+  // ledger EMPTY while the family base HAS moved (cmr R3: codex-s1). With no
+  // ledger末条 baseline we cannot attribute the landed merge to a child, so we
+  // fall back to the family-base START head:
+  //   - live HEAD === start head → nothing landed → genuine fresh start (clean).
+  //   - live HEAD !== start head → a merge landed but was never recorded →
+  //     fail-closed escalate (decision 5 真有未落/不一致 → 升级). An unconditional
+  //     clean-start here would re-run + re-merge the already-landed first child
+  //     (a double-merge), violating acceptance-2 不双合.
   if (baseline === undefined) {
-    return { escalate: false, reconciled: [], merged: ledgerMerged, liveHead };
+    const startHead = await git.familyBaseStartHead();
+    if (liveHead === startHead) {
+      return { escalate: false, reconciled: [], merged: ledgerMerged, liveHead };
+    }
+    return { escalate: true, reconciled: [], merged: ledgerMerged, liveHead };
   }
 
   // ── branch ② vs ③: is the live HEAD a DESCENDANT of the ledger末条? ─────────

@@ -45,9 +45,17 @@ class FakeReconcileGit implements ReconcileGit {
     private readonly live: string,
     private readonly heads: Record<number, string>,
     private readonly ancestors: ReadonlySet<string>,
+    // The family base head BEFORE any child merged. Defaults to `live` so a
+    // fresh resume (nothing landed) reads start === live → clean start; the
+    // empty-ledger-first-merge-crash scenario passes a DIFFERENT start (live
+    // moved past it with an empty ledger → fail-closed escalate).
+    private readonly start: string = live,
   ) {}
   async liveFamilyHead(): Promise<string> {
     return this.live;
+  }
+  async familyBaseStartHead(): Promise<string> {
+    return this.start;
   }
   async childHeadExists(
     childIssue: number,
@@ -176,14 +184,34 @@ describe("reconcileFamilyLedger — thin (#293-style) entries degrade SAFELY", (
 });
 
 describe("reconcileFamilyLedger — empty ledger (fresh resume)", () => {
-  it("an empty ledger is not a crash window: nothing merged, nothing to escalate", async () => {
-    // Nothing recorded yet — live HEAD is just the family base itself; treat as a
-    // clean start (no merges to reconcile).
-    const git = new FakeReconcileGit("base0", {}, new Set());
+  it("an empty ledger with live HEAD AT the base start is not a crash window: clean start", async () => {
+    // Nothing recorded yet AND the live family-base HEAD is still the start head
+    // (no merge landed) — a genuine fresh start, nothing to reconcile.
+    const git = new FakeReconcileGit("base0", {}, new Set()); // start defaults to live
     const plan = await reconcileFamilyLedger([], children, git);
     expect(plan.escalate).toBe(false);
     expect(plan.reconciled).toEqual([]);
     expect(plan.merged.size).toBe(0);
+  });
+
+  it("an empty ledger but live HEAD MOVED past the base start → fail-closed escalate (first-merge crash window)", async () => {
+    // The crash window can hit the VERY FIRST merge: mergeChild lands the merge
+    // on the family base THEN writes the ledger. A crash in between leaves the
+    // ledger EMPTY while the family base HAS moved. Without a ledger末条 baseline
+    // we cannot attribute the landed merge to a child — but an UNCONDITIONAL
+    // clean-start would re-run + re-merge the already-landed first child (a
+    // double-merge, cmr R3: codex-s1). Fail-closed escalate instead: live HEAD
+    // (base1) != the base start (base0) with an empty ledger ⇒ a merge landed
+    // unrecorded ⇒ a human must triage (decision 5 真有未落/不一致 → 升级).
+    const git = new FakeReconcileGit(
+      "base1", // live HEAD has moved...
+      { 10: "c10" },
+      new Set(["base0", "c10"]),
+      "base0", // ...past the base start head, with an EMPTY ledger
+    );
+    const plan = await reconcileFamilyLedger([], children, git);
+    expect(plan.escalate).toBe(true);
+    expect(plan.reconciled).toEqual([]);
   });
 });
 
