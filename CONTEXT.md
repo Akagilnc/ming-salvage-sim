@@ -257,7 +257,7 @@ _Avoid_: 子任务、subtask(太泛,不区分独立与否)
 _Avoid_: 主干、main、集成分支(太泛)
 
 **角色**:
-编排管线里一个定义好的职能单元(如 planner、coder、reviewer、ship、merger)。每个角色有自己的一段固定流程、一个 profile 镜像、一份 soul。同一条切片由不同角色接力(coder 写、reviewer 评),它们靠各自独立的 agent 上下文保持判断独立。
+编排管线里一个定义好的职能单元(如 coder、reviewer、ship、merger)。每个角色有自己的一段固定流程、一个 profile 镜像、一份 soul。(commander 不是角色——它无 soul、是 runner 的确定性调度步,见 commander 词条。)同一条切片由不同角色接力(coder 写、reviewer 评),它们靠各自独立的 agent 上下文保持判断独立。
 _Avoid_: agent(太泛)、stage、阶段(混淆流程步与职能)
 
 **profile / 角色镜像**:
@@ -291,6 +291,18 @@ _Avoid_: 结束标记、done(太泛)
 **step ledger**:
 每步落一条的账本(step / promptFile / prompt_hash / agent / model / commits before-after / sessionId 等)。防跳步的事后真源 + 续跑真源(下一步只读 ledger,不靠 LLM 记忆)。同 ADR 0017 的「状态文件」是同一份。
 _Avoid_: 日志、log(太泛)、history
+
+**commander**:
+家族集成层的**确定性波次调度步**(runner 动作步、无 soul、非 LLM)。读父 epic 现成的 GitHub native sub-issues + 显式 blocked_by DAG → 拓扑分波(未阻塞者并发为一波、被阻塞者下波)→ fan-out。**不分解 epic、不建 sub-issue**——切片由 to-issues 在编排器外(design session)切好发布,commander 只调度现成片。区别于原生 parallel-planner Plan stage(那是 LLM「选 unblocked」的选择器、且会重推我们已有的显式 blocked_by,故不采用)。
+_Avoid_: 分解器 / planner(它不分解)、原生 Plan stage(它 LLM 选片、本 commander 确定性读现成)
+
+**波次 / wave**:
+commander 一次并发放出的一组互不阻塞子片。被 blocked_by 阻塞者,等其阻塞者合回家族 base 后入下一波。波内并行、波间 barrier。
+_Avoid_: 批次、轮(混淆评审轮)
+
+**family ledger**:
+家族集成层的账本(家族 base worktree 的 sibling、worktree 外),记已合子片 hash / 当前波次 / 家族 base HEAD,供 merger 幂等续跑(崩溃重启跳过已合)。区别于单片的 step ledger。
+_Avoid_: step ledger(那是单片的)、状态文件(太泛)
 
 ## Example Dialogue
 
