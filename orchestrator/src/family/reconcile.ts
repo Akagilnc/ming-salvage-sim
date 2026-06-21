@@ -93,7 +93,7 @@ export async function reconcileFamilyLedger(
   // trust the merged set, no补账, no escalate. (An empty ledger with no recorded
   // head is the degenerate clean-start case handled below.)
   if (baseline !== undefined && baseline === liveHead) {
-    return { escalate: false, reconciled: [], merged: ledgerMerged };
+    return { escalate: false, reconciled: [], merged: ledgerMerged, liveHead };
   }
 
   // ── empty / headless ledger: a clean start, nothing to reconcile ───────────
@@ -102,7 +102,7 @@ export async function reconcileFamilyLedger(
   // entry); the run just starts/continues the wave loop with whatever the ledger
   // already says is merged (possibly nothing).
   if (baseline === undefined) {
-    return { escalate: false, reconciled: [], merged: ledgerMerged };
+    return { escalate: false, reconciled: [], merged: ledgerMerged, liveHead };
   }
 
   // ── branch ② vs ③: is the live HEAD a DESCENDANT of the ledger末条? ─────────
@@ -112,7 +112,7 @@ export async function reconcileFamilyLedger(
   // fail-closed escalate (do not guess which merges are real).
   const liveLeads = await git.isAncestor(baseline, liveHead);
   if (!liveLeads) {
-    return { escalate: true, reconciled: [], merged: ledgerMerged };
+    return { escalate: true, reconciled: [], merged: ledgerMerged, liveHead };
   }
 
   // ── branch ②: reconcile each not-yet-accounted child against the live HEAD ──
@@ -139,5 +139,5 @@ export async function reconcileFamilyLedger(
     // corruption.
   }
 
-  return { escalate: false, reconciled, merged };
+  return { escalate: false, reconciled, merged, liveHead };
 }
