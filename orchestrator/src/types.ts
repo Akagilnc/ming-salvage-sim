@@ -517,10 +517,43 @@ export interface Backend {
 
 // ──────────────────────────── run result ────────────────────────────
 
-/** Input to the orchestrator: only an issue number + the Backend seam. */
+/**
+ * Family-run context carried into a CHILD slice's single-slice runner (ADR 0022
+ * decision 2: the RunnerOptions seam through which the family layer passes its
+ * context down to the reused single-slice runner).
+ *
+ * When present, the child slice runs in FAMILY MODE — three differences from a
+ * standalone single-slice run (ADR 0022 decision 2/6/7):
+ *   - `familyBase` replaces "main" as the cut base (children cut from the LOCAL
+ *     family base the merger accumulates onto — decision 7);
+ *   - `noPush` makes S7 a LOCAL NO-OP (decision 2: a shared-clone concurrent
+ *     remote push would clash on `.git/refs/remotes`; only the family base PRs
+ *     once at the end);
+ *   - `parentIssue` is the family run key (ADR 0024) the child reuses for its
+ *     clone + the ledger口径 (decision 6③) — carried for #294/#298 to read.
+ *
+ * Absent ⇒ a normal standalone single-slice run (base=main, S7 pushes) — the
+ * existing single-slice tests pass `RunInput` without this field, unchanged.
+ */
+export interface FamilyContext {
+  /** The parent epic issue number (the family run key, ADR 0024). */
+  readonly parentIssue: number;
+  /** The local family base branch the child cuts from (ADR 0022 decision 7). */
+  readonly familyBase: string;
+  /** When true, S7 push is a LOCAL no-op (ADR 0022 decision 2). */
+  readonly noPush: boolean;
+}
+
+/** Input to the orchestrator: an issue number + the Backend seam (+ optional family context). */
 export interface RunInput {
   readonly issueNumber: number;
   readonly backend: Backend;
+  /**
+   * Family-run context (ADR 0022 decision 2). Present ⇒ this is a CHILD slice of
+   * a family run (family base + no-op push). Absent ⇒ a standalone single-slice
+   * run (the v0.1 behaviour — base=main, S7 pushes).
+   */
+  readonly family?: FamilyContext;
 }
 
 /**
