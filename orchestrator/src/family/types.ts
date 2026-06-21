@@ -155,13 +155,17 @@ export interface ReconcilePlan {
   readonly reconciled: ReadonlyArray<{ childIssue: number; childHead: string }>;
   /**
    * The VERIFIED live family-base HEAD this plan was computed against. The spine
-   * stamps each reconcile補账条 with `familyHeadAfter: liveHead`, so a SUBSEQUENT
-   * resume's `lastRecordedHead` advances to the post-reconcile head rather than
-   * the stale pre-crash baseline (cmr R1: codex + agy). Without it, `lastRecordedHead`
-   * would keep returning the old baseline after a crash-then-reconcile, and a
-   * later rewind/divergence that branch ③ must fail-closed escalate would be
-   * silently trusted (the補账条 doc in `reconcile.ts` lastRecordedHead promises
-   * "reconcile補账条 carry one too" — this is the value it carries).
+   * stamps the LAST reconcile補账条 with `familyHeadAfter: liveHead` (only the
+   * last — the append loop is itself a crash window, so the intermediate補账条
+   * omit the head; cmr R2: agy), so a SUBSEQUENT clean resume's `lastRecordedHead`
+   * advances to the post-reconcile head rather than the stale pre-crash baseline
+   * (cmr R1: codex + agy), while a mid-append-loop crash falls back to the prior
+   * real baseline and branch ② re-reconciles the remainder idempotently. Without
+   * `liveHead`, `lastRecordedHead` would keep returning the old baseline after a
+   * crash-then-reconcile, and a later rewind/divergence that branch ③ must
+   * fail-closed escalate would be silently trusted (the補账条 doc in `reconcile.ts`
+   * lastRecordedHead promises "reconcile補账条 carry one too" — this is the value
+   * the baseline-advancing last entry carries).
    */
   readonly liveHead: string;
   /**

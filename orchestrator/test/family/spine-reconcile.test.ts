@@ -174,6 +174,56 @@ describe("spine reconcile — branch ② childHead absent (rerun, no error)", ()
   });
 });
 
+describe("spine reconcile — append-loop crash idempotency (no double-merge mid-reconcile)", () => {
+  it("only the LAST reconcile補账条 advances the baseline, so a mid-loop crash re-reconciles safely", async () => {
+    // Two crash-window children (11, 12) both LANDED (live HEAD=base2, both
+    // ancestors) but their `merged` writes crashed. Reconcile补账s BOTH. If EVERY
+    // 補账条 stamped `familyHeadAfter: liveHead`, a crash AFTER writing 11 but
+    // BEFORE 12 would leave the ledger末条 = {11, familyHeadAfter: base2}; the next
+    // resume's `lastRecordedHead` returns base2 === live → branch ① → trusts the
+    // INCOMPLETE merged set (11 only) → 12 (already landed) gets re-run + re-merged
+    // = double-merge (cmr R2: agy). Guard: only the LAST補账条 carries
+    // `familyHeadAfter`; the intermediate ones omit it, so a mid-loop-crash residue
+    // falls back to the PRIOR real baseline (base1), live still leads → branch ②
+    // re-reconciles 12 idempotently (11 already status:merged → skipped).
+    const epic3: FamilyEpic = {
+      issue: 291,
+      children: [
+        { issue: 10, blockedBy: [] },
+        { issue: 11, blockedBy: [] },
+        { issue: 12, blockedBy: [] },
+      ],
+    };
+    const familyBackend = new SeededFamilyBackend([
+      { childIssue: 10, status: "merged", childHead: "c10", familyHeadAfter: "base1" },
+    ]);
+    const childBackend = new ChildBackend();
+    const result = await runFamily({
+      epic: epic3,
+      familyBackend,
+      singleSliceBackend: childBackend,
+      familyBase: "family/291-base",
+      reconcileGit: new FakeReconcileGit(
+        "base2",
+        { 10: "c10", 11: "c11", 12: "c12" },
+        new Set(["base1", "c10", "c11", "c12"]),
+      ),
+    });
+
+    // Both 11 and 12 are reconciled (补账), NEVER re-merged or re-run.
+    expect(familyBackend.merges.map((m) => m.childIssue)).toEqual([]);
+    expect(childBackend.ran).toEqual([]);
+    const recon = familyBackend.ledger.filter((e) => e.event === "reconciled");
+    expect(recon.map((e) => e.childIssue)).toEqual([11, 12]);
+    // The write-shape guard: the INTERMEDIATE補账条 (11) carries NO familyHeadAfter
+    // (so a crash after it falls back to the prior baseline), only the LAST (12)
+    // advances the baseline to the verified live HEAD.
+    expect(recon.find((e) => e.childIssue === 11)?.familyHeadAfter).toBeUndefined();
+    expect(recon.find((e) => e.childIssue === 12)?.familyHeadAfter).toBe("base2");
+    expect(result.status).toBe("success");
+  });
+});
+
 describe("spine reconcile — branch ③ inconsistent (fail-closed escalate)", () => {
   it("an inconsistent live HEAD returns status:'escalated' and does NOT merge", async () => {
     const familyBackend = new SeededFamilyBackend([
