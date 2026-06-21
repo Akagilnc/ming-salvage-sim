@@ -23,11 +23,8 @@ class FakeFamilyBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(): Promise<{ familyHead: string }> {
     return { familyHead: "head" };
   }
-  // #295 conflict-fallback seam: ledger tests never merge with a conflict. Stub
-  // it to satisfy FamilyBackend.
-  async resolveMergeConflict(): Promise<{ familyHead: string }> {
-    throw new Error("resolveMergeConflict not used in this ledger test");
-  }
+  // #295 conflict-fallback seam `resolveMergeConflict` is OPTIONAL — this ledger
+  // test never merges with a conflict, so the fake omits it entirely.
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.appended.push(entry);
   }

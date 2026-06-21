@@ -115,10 +115,19 @@ export interface FamilyBackend {
    * to审 ("不静默吞"). The fake injects a synthetic resolved head.
    *
    * Returns the family base HEAD after the LLM-resolved merge commit lands. If the
-   * resolver CANNOT resolve (it throws / rejects), the merger does NOT write a
-   * `merged` ledger entry — an unresolved conflict must never look clean.
+   * resolver CANNOT resolve (it throws / rejects, OR returns a still-`conflicted`
+   * result), the merger does NOT write a `merged` ledger entry — an unresolved
+   * conflict must never look clean.
+   *
+   * OPTIONAL: a #293-era backend (the no-op default, the existing zero-container
+   * fakes) does not implement it — it is reached ONLY on the conflict path, which
+   * those backends never take. If a conflict IS hit on a backend without this
+   * method, the merger fails loud (throws a descriptive error) rather than writing
+   * a `merged` ledger entry — the conflict is surfaced, never swallowed. (Same
+   * optional-capability pattern the sibling verify-cmr seams use, so existing
+   * fakes need no throwing stub.)
    */
-  resolveMergeConflict(req: ConflictResolveRequest): Promise<MergeResult>;
+  resolveMergeConflict?(req: ConflictResolveRequest): Promise<MergeResult>;
   /**
    * family-ledger seam (ADR 0022 decision 5, #298 extends): append one event to
    * the append-only family ledger (a sibling of the family base worktree, OUTSIDE

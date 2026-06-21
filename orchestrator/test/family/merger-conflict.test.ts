@@ -15,8 +15,9 @@
  *     (#296) can see this merge was LLM-resolved;
  *   - the merged ledger entry is written ONLY AFTER a clean OR an LLM-RESOLVED
  *     merge lands (ADR 0022 decision 5 ordering preserved). If resolution itself
- *     fails (throws, or returns still-conflicted), the ledger is NOT written and
- *     the failure is surfaced — not swallowed.
+ *     fails (throws, OR returns still-conflicted), the ledger is NOT written and
+ *     the failure is surfaced — not swallowed. The resolver seam is OPTIONAL: a
+ *     conflict on a backend that does not implement it fails loud too.
  *
  * Acceptance evidence:
  *  1. no-conflict child → deterministic `git merge`, resolver NEVER touched;
@@ -55,6 +56,14 @@ class ConflictingFamilyBackend implements FamilyBackend {
     private readonly conflictIssues: ReadonlySet<number> = new Set(),
     /** If set, `resolveMergeConflict` rejects for these issues (resolution fails). */
     private readonly resolveFailures: ReadonlySet<number> = new Set(),
+    /**
+     * If set, `resolveMergeConflict` RESOLVES (does not throw) but returns a
+     * result that is STILL `conflicted: true` — a misbehaving / escalating
+     * backend that did not actually clear the conflict. The merger must treat
+     * this as a failed resolution (not a clean merge), per the invariant
+     * "an unresolved conflict must never look clean".
+     */
+    private readonly stillConflictedAfterResolve: ReadonlySet<number> = new Set(),
   ) {}
 
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<MergeResult> {
@@ -73,11 +82,40 @@ class ConflictingFamilyBackend implements FamilyBackend {
     if (this.resolveFailures.has(req.childIssue)) {
       throw new Error(`resolver could not resolve #${req.childIssue}`);
     }
+    if (this.stillConflictedAfterResolve.has(req.childIssue)) {
+      // The resolver returned WITHOUT throwing but did NOT clear the conflict
+      // (e.g. an escalation the backend failed to convert into a throw). The
+      // head is NOT advanced and `conflicted` is still true.
+      return { familyHead: this.head, conflicted: true };
+    }
     // The LLM (resolving-merge-conflicts soul) resolved + committed → head moves.
     this.head = `resolved-${req.childIssue}`;
     return { familyHead: this.head };
   }
 
+  async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+    this.appended.push(entry);
+  }
+  async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+    return this.appended;
+  }
+}
+
+/**
+ * A family backend that NEVER implements the optional conflict-fallback seam
+ * `resolveMergeConflict` — the #293-era shape. Used to prove the merger
+ * fails-loud (rather than crashing on an undefined call) if a conflict is hit
+ * on a backend that cannot resolve it.
+ */
+class NoResolverFamilyBackend implements FamilyBackend {
+  readonly appended: FamilyLedgerEntry[] = [];
+  constructor(private readonly conflictIssues: ReadonlySet<number> = new Set()) {}
+  async mergeChildIntoFamilyBase(child: MergeRequest): Promise<MergeResult> {
+    if (this.conflictIssues.has(child.childIssue)) {
+      return { familyHead: "base0", conflicted: true };
+    }
+    return { familyHead: `merged-${child.childIssue}` };
+  }
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.appended.push(entry);
   }
@@ -155,5 +193,46 @@ describe("merger conflict fallback — a FAILED resolution is not silently swall
     // But NO merged ledger entry was written — an unresolved conflict must never
     // look like a clean merge (decision 5: ledger only after the merge lands).
     expect(backend.appended).toEqual([]);
+  });
+
+  it("throws and does NOT write a merged ledger entry when the resolver returns STILL-conflicted", async () => {
+    // The resolver returns WITHOUT throwing but its result is still
+    // `conflicted: true` (a misbehaving / escalating backend that did not
+    // actually clear the conflict). The merger must NOT treat this as a clean
+    // LLM-resolved merge — it must surface it, never record it as merged.
+    const backend = new ConflictingFamilyBackend(
+      new Set([14]),
+      /* resolveFailures */ new Set(),
+      /* stillConflictedAfterResolve */ new Set([14]),
+    );
+    await expect(
+      mergeChild(backend, { childIssue: 14, childBranch: "feat/child-14" }),
+    ).rejects.toThrow(/still-conflicted/i);
+    // The resolver WAS attempted.
+    expect(backend.resolves.map((r) => r.childIssue)).toEqual([14]);
+    // NO merged ledger entry — a still-conflicted resolution must never look clean.
+    expect(backend.appended).toEqual([]);
+  });
+});
+
+describe("merger conflict fallback — a backend without the optional resolver fails loud (#295 acc. 3)", () => {
+  it("throws a descriptive error (not an undefined-call crash) and writes NO ledger entry when a conflict hits a resolver-less backend", async () => {
+    const backend = new NoResolverFamilyBackend(new Set([15]));
+    await expect(
+      mergeChild(backend, { childIssue: 15, childBranch: "feat/child-15" }),
+    ).rejects.toThrow(/resolveMergeConflict/);
+    // No merged ledger entry — an unresolvable conflict must never look clean.
+    expect(backend.appended).toEqual([]);
+  });
+
+  it("a resolver-less backend still merges a NO-conflict child cleanly (the resolver is never needed)", async () => {
+    const backend = new NoResolverFamilyBackend(/* no conflicts */);
+    const result = await mergeChild(backend, {
+      childIssue: 16,
+      childBranch: "feat/child-16",
+    });
+    expect(result.familyHead).toBe("merged-16");
+    expect(result.conflictResolvedByLlm ?? false).toBe(false);
+    expect(backend.appended).toEqual([{ childIssue: 16, status: "merged" }]);
   });
 });

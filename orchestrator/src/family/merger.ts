@@ -27,10 +27,13 @@
  *      `conflictResolvedByLlm` so the downstream family verify + integrated cmr
  *      (#296) can审 it ("不静默吞", acceptance 3). The merged ledger entry is
  *      written ONLY AFTER a clean OR an LLM-resolved merge lands (decision 5).
- *   4. If the resolver CANNOT resolve (throws), the error propagates and NO
- *      `merged` ledger entry is written — an unresolved conflict must never look
+ *   4. If the resolver CANNOT resolve — it throws, OR returns a result that is
+ *      still `conflicted` — the merger surfaces it (propagates / throws) and NO
+ *      `merged` ledger entry is written; an unresolved conflict must never look
  *      like a clean merge. The conflicting merge is left on the family base +
- *      ledger for triage, not swallowed.
+ *      ledger for triage, not swallowed. The resolver seam is OPTIONAL: a
+ *      backend that never conflicts need not implement it, and a conflict on a
+ *      resolver-less backend fails loud (never silently merges) too.
  */
 
 import { recordMerged } from "./ledger.js";
@@ -58,13 +61,32 @@ export async function mergeChild(
 
   let result: MergeResult;
   if (deterministic.conflicted === true) {
-    // 2. CONFLICT → point-LLM resolver (仅冲突才上 LLM). A throw here propagates
-    //    out of mergeChild BEFORE the ledger write — an unresolved conflict is
-    //    surfaced, never recorded as `merged` (acceptance 3, "不静默吞").
+    // 2. CONFLICT → point-LLM resolver (仅冲突才上 LLM). The resolver seam is
+    //    OPTIONAL (a #293-era backend never reaches here). If a conflict IS hit
+    //    on a backend without it, fail LOUD here — BEFORE the ledger write — so
+    //    the conflict is surfaced, never recorded as `merged` ("不静默吞").
+    if (typeof backend.resolveMergeConflict !== "function") {
+      throw new Error(
+        `merge conflict on child #${request.childIssue} but the family backend has no resolveMergeConflict resolver`,
+      );
+    }
+    // A throw from the resolver propagates out of mergeChild BEFORE the ledger
+    // write — an unresolved conflict is surfaced, never recorded as `merged`
+    // (acceptance 3, "不静默吞").
     const resolved = await backend.resolveMergeConflict({
       childIssue: request.childIssue,
       childBranch: request.childBranch,
     });
+    // The resolver returned WITHOUT throwing, but it may not have actually
+    // cleared the conflict (a misbehaving / escalating backend). A still-
+    // `conflicted` result MUST NOT look like a clean LLM resolution — surface it
+    // BEFORE the ledger write, never record it as `merged` (invariant: "an
+    // unresolved conflict must never look clean").
+    if (resolved.conflicted === true) {
+      throw new Error(
+        `resolveMergeConflict returned a still-conflicted result for child #${request.childIssue}`,
+      );
+    }
     // 3. Flag the resolution so the downstream verify + cmr (#296) sees it.
     result = { ...resolved, conflictResolvedByLlm: true };
   } else {
