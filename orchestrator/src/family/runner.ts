@@ -308,28 +308,46 @@ export async function runFamily(
     // wave-level fan-out POLICY — how the wave's children are run relative to each
     // other — lives in THIS loop, not in the Backend (the Backend interface is
     // per-child: prepareWorktree / runStep / push; it has no whole-wave method).
-    // #293 runs the wave SERIALLY in the zero-container spine; #294 makes it
-    // concurrent by turning this `for…await` into a `Promise.allSettled(wave.map(…))`
-    // HERE — a local change to this fan-out loop, NOT a rewrite of the wave/merge/
-    // verify structure around it. (Distinct child branches isolate the LOGICAL
-    // work, but NOT git-level locks: concurrent `git worktree add` / ref updates on
-    // the one shared clone contend on `.git/index.lock` / ref locks, so #294 must
-    // serialize the git-mutating steps — a RealBackend concern, not the spine's.)
-    // The spine's contract (one wave's children fanned out, then serially merged)
-    // is identical either way.
-    const ran: FamilyChildResult[] = [];
-    for (const child of wave) {
-      attempted.add(child.issue);
-      ran.push(
-        await runChild(
+    //
+    // #291 B7 (the deferred US7 work this comment foretold): the wave's children
+    // run CONCURRENTLY — `Promise.allSettled(wave.map(runChild))` — so their LLM
+    // work overlaps instead of串行. This is the local fan-out change the seam
+    // boundary anticipated: the wave/MERGE/verify structure around it is unchanged
+    // (the merge loop below is still serial + in wave order). Distinct child
+    // branches isolate the LOGICAL work but NOT git-level locks; concurrent
+    // `git worktree add` / ref updates on the one shared clone contend on
+    // `.git/index.lock`, so the git-MUTATING critical sections are serialised by a
+    // per-clone mutex INSIDE the RealBackend (gitMutex, NOT the spine) — LLM
+    // concurrent, git临界区 serial. `allSettled` preserves input order, so `ran` is
+    // still in wave order for the serial merge.
+    //
+    // FAIL-CLOSED preservation: a child whose single-slice run THROWS (e.g. its own
+    // S0 rejects an externally-blocked child — decision 6③ soundness) must still
+    // fail the whole run, exactly as the prior `for…await` let the throw propagate.
+    // So after settling we RE-THROW the first rejection before recording any wave
+    // result (nothing is merged on a thrown wave — the cycle/external-blocker
+    // guards stay fail-closed).
+    for (const child of wave) attempted.add(child.issue);
+    const settled = await Promise.allSettled(
+      wave.map((child) =>
+        runChild(
           child,
           singleSliceBackend,
           epic.issue,
           familyBase,
           familyChildIssues,
         ),
-      );
+      ),
+    );
+    const firstRejected = settled.find((s) => s.status === "rejected");
+    if (firstRejected !== undefined && firstRejected.status === "rejected") {
+      throw firstRejected.reason;
     }
+    const ran: FamilyChildResult[] = settled.map((s) => {
+      // Every entry is fulfilled here (a rejection re-threw above); the cast is
+      // narrowing for TS, not a runtime assumption.
+      return (s as PromiseFulfilledResult<FamilyChildResult>).value;
+    });
 
     // ── serial merge: each reviewed child branch into the family base ──────────
     // merger.mergeChild does the `git merge --no-ff` (via the FamilyBackend seam)

@@ -49,6 +49,7 @@ import { join } from "node:path";
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 
+import { runExclusive } from "../gitMutex.js";
 import type {
   ConflictResolveRequest,
   FamilyAbortedEvent,
@@ -174,6 +175,18 @@ export class RealFamilyBackend implements FamilyBackend {
   // ─────────────────────────── merge ───────────────────────────
 
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<MergeResult> {
+    // #291 B7: serialise this git-MUTATING merge under the SAME per-clone mutex the
+    // single-slice prepareWorktree uses (keyed on the dedicated clone). The spine
+    // already merges serially, but a wave's children still run their cuts
+    // concurrently — a `git worktree add` racing a `git checkout <familyBase>` +
+    // `git merge` on the one clone would contend on `.git/index.lock` / HEAD. Keying
+    // both critical sections on `workingRepo` makes a child cut and a family merge
+    // never touch the shared `.git` at once (a different clone never blocks).
+    return runExclusive(this.opts.workingRepo, () => this.mergeChildLocked(child));
+  }
+
+  /** The git-mutating body of {@link mergeChildIntoFamilyBase}, under the per-clone mutex. */
+  private async mergeChildLocked(child: MergeRequest): Promise<MergeResult> {
     const repo = this.opts.workingRepo;
     // Pin the SHAs BEFORE the merge: the family base HEAD before, and the child
     // branch HEAD being merged in (the ancestor reconcile branch ② confirms).

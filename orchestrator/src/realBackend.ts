@@ -66,6 +66,7 @@ import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
 
+import { runExclusive } from "./gitMutex.js";
 import type {
   Backend,
   Finding,
@@ -1468,6 +1469,25 @@ export class RealBackend implements Backend {
 
   // ── S1: resident slice worktree (Sandcastle native createWorktree) ─────────
   async prepareWorktree(
+    issueNumber: number,
+    base: string,
+  ): Promise<WorktreeHandle> {
+    // #291 B7: the family spine fans a wave out CONCURRENTLY, and every child in
+    // the wave shares THIS one dedicated clone (ADR 0024). The worktree-list scan,
+    // the best-effort `git fetch`, the residue clean, and the `git worktree add`
+    // cut all MUTATE the shared `.git` — concurrent ones race on `.git/index.lock`
+    // / per-ref locks (distinct child BRANCHES isolate the logical work, NOT the
+    // git locks). So the whole git-mutating section runs under a per-clone mutex
+    // keyed on the working repo: same-clone children serialise their cuts, while a
+    // DIFFERENT clone (another run in the same process) never blocks. A standalone
+    // single-slice run is the degenerate single-holder case (no contention).
+    return runExclusive(this.workingRepo, () =>
+      this.prepareWorktreeLocked(issueNumber, base),
+    );
+  }
+
+  /** The git-mutating body of {@link prepareWorktree}, run under the per-clone mutex. */
+  private async prepareWorktreeLocked(
     issueNumber: number,
     base: string,
   ): Promise<WorktreeHandle> {
