@@ -70,4 +70,45 @@ describe("parseLedgerJsonl — corrupt-line fail-closed (256 r5)", () => {
     const raw = ["@@@", goodLine("S0"), goodLine("S1")].join("\n");
     expect(() => parseLedgerJsonl(raw)).toThrow(/corrupt/i);
   });
+
+  // ── shape validation (online codex P2): a line can JSON.parse yet not be a
+  // valid ledger entry. `planResume` dereferences `lastEntry.step` OUTSIDE any
+  // catch, so a `null` / `{}` / wrong-typed `step` would crash raw or route
+  // invalidly instead of failing closed to S8(error). Same corruption class as
+  // an unparseable line → same throw.
+  it("a syntactically-valid `null` record is corrupt (would crash lastEntry.step)", () => {
+    const raw = [goodLine("S0"), "null"].join("\n");
+    expect(() => parseLedgerJsonl(raw)).toThrow(/corrupt/i);
+  });
+
+  it("a non-object JSON primitive is corrupt (number / string / boolean / array)", () => {
+    for (const bad of ["42", '"S7"', "true", "[]", '["S7"]']) {
+      const raw = [goodLine("S0"), bad].join("\n");
+      expect(() => parseLedgerJsonl(raw), `bad=${bad}`).toThrow(/corrupt/i);
+    }
+  });
+
+  it("an object missing `step` is corrupt (e.g. `{}` → lastEntry.step undefined)", () => {
+    const raw = [goodLine("S0"), "{}"].join("\n");
+    expect(() => parseLedgerJsonl(raw)).toThrow(/corrupt/i);
+  });
+
+  it("an object whose `step` is not a valid StepId is corrupt", () => {
+    // A typo'd / out-of-range step would route invalidly in planResume.
+    const raw = [goodLine("S0"), goodLine("S9"), goodLine("FOO")].join("\n");
+    expect(() => parseLedgerJsonl(raw)).toThrow(/corrupt/i);
+  });
+
+  it("an object whose `step` is a non-string is corrupt", () => {
+    const raw = [goodLine("S0"), JSON.stringify({ step: 7 })].join("\n");
+    expect(() => parseLedgerJsonl(raw)).toThrow(/corrupt/i);
+  });
+
+  it("a shape-valid entry with only the required `step` still parses (output optional)", () => {
+    // The minimal LedgerEntry is `{step}` — output/handoffStatus are optional, so
+    // a bare valid-step record must NOT be rejected.
+    const raw = [JSON.stringify({ step: "S0" }), JSON.stringify({ step: "S8" })].join("\n");
+    const entries = parseLedgerJsonl(raw);
+    expect(entries.map((e) => e.step)).toEqual(["S0", "S8"]);
+  });
 });
