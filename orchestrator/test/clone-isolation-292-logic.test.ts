@@ -89,6 +89,29 @@ describe("#292 repoSlug — collision-free slug for the clone path", () => {
     ).toBe("Akagilnc_ming-salvage-sim");
   });
 
+  // ADR 0024 dec.1 (r2 codex): a NON-github remote that merely embeds
+  // `@github.com` / `/github.com` in its PATH must NOT be slugged as a github
+  // owner_repo — that would let it collide with the genuine github repo of the
+  // same owner/name. github.com must be the actual HOST, not a path substring.
+  it("a non-github remote with @github.com in its path does NOT slug as github", () => {
+    const spoof = repoSlug(
+      "/x",
+      "https://evil.example/path@github.com/Akagilnc/ming-salvage-sim.git",
+    );
+    const real = repoSlug(
+      "/x",
+      "https://github.com/Akagilnc/ming-salvage-sim.git",
+    );
+    expect(spoof).not.toBe(real);
+    expect(spoof).not.toBe("Akagilnc_ming-salvage-sim");
+  });
+
+  it("a non-github remote with /@github.com in its path does NOT slug as github", () => {
+    const spoof = repoSlug("/x", "https://example.com/@github.com/sub/repo.git");
+    expect(spoof).not.toBe("sub_repo");
+    expect(spoof).toMatch(/^[0-9a-f]+$/); // hashed full remote
+  });
+
   // D (P1, ADR + JSDoc): a no-remote LOCAL source must hash its ABSOLUTE path,
   // so the same repo referenced relatively (from any cwd) maps to one stable
   // clone — otherwise crash-resume lands on a different clone and breaks

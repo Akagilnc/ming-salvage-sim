@@ -479,16 +479,25 @@ export function repoSlug(sourceRepo: string, remote: string | undefined): string
 function parseOwnerRepo(
   remote: string,
 ): { owner: string; repo: string } | undefined {
-  // https://github.com/owner/repo(.git)(/)  |  git@github.com:owner/repo(.git)(/)
-  // (also ssh://git@github.com[:port]/owner/repo.git) — host pinned to github.com.
-  const m = remote.match(
-    /(?:^|@|\/\/)github\.com(?::\d+)?[/:]([^/:\s]+)\/([^/\s]+?)(?:\.git)?\/?$/,
-  );
-  if (m === null) return undefined;
-  const owner = m[1];
-  const repo = m[2];
-  if (owner === "" || repo === "") return undefined;
-  return { owner, repo };
+  // github.com must be the actual HOST, not a path substring — else a non-github
+  // remote that merely embeds `@github.com` / `/github.com` in its PATH (e.g.
+  // `https://evil.example/path@github.com/owner/repo.git`) would falsely slug as
+  // the genuine github repo and COLLIDE with it (ADR 0024 dec.1, r2 codex). So we
+  // anchor the host position in each accepted form, never a loose substring:
+  const trailer = "([^/:\\s]+)\\/([^/\\s]+?)(?:\\.git)?\\/?$"; // owner / repo
+  const patterns = [
+    // scheme://[user[:pass]@]github.com[:port]/owner/repo  (https / ssh / git)
+    new RegExp(`^[a-z][a-z0-9+.-]*:\\/\\/(?:[^/@\\s]+@)?github\\.com(?::\\d+)?\\/${trailer}`),
+    // scp-like:  [user@]github.com:owner/repo  (no scheme, ':' separates host)
+    new RegExp(`^(?:[^/@\\s]+@)?github\\.com:${trailer}`),
+  ];
+  for (const re of patterns) {
+    const m = remote.match(re);
+    if (m !== null && m[1] !== "" && m[2] !== "") {
+      return { owner: m[1], repo: m[2] };
+    }
+  }
+  return undefined;
 }
 
 /**
