@@ -28,10 +28,23 @@ class FakeFamilyBackend implements FamilyBackend {
 
   async mergeChildIntoFamilyBase(
     child: MergeRequest,
-  ): Promise<{ familyHead: string }> {
+  ): Promise<{
+    familyHead: string;
+    familyHeadBefore: string;
+    childHead: string;
+  }> {
     this.merges.push(child);
+    const before = this.head;
     this.head = `merged-${child.childIssue}`;
-    return { familyHead: this.head };
+    // The Backend (which runs the real `git merge --no-ff`) is the only place
+    // that knows the actual SHAs the ledger must record (#298 acceptance-1):
+    // the family base HEAD before this merge, the child branch HEAD it merged,
+    // and the family base HEAD after.
+    return {
+      familyHead: this.head,
+      familyHeadBefore: before,
+      childHead: `child-head-${child.childIssue}`,
+    };
   }
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.appended.push(entry);
@@ -54,11 +67,26 @@ describe("merger.mergeChild (#293 seam 2)", () => {
     expect(result.familyHead).toBe("merged-10");
   });
 
-  it("records a merged ledger entry AFTER the merge lands (ADR 0022 decision 5 order)", async () => {
+  it("records a FULL-field merged ledger entry AFTER the merge lands (ADR 0022 decision 5 order + #298 acceptance-1)", async () => {
     const backend = new FakeFamilyBackend();
     await mergeChild(backend, { childIssue: 10, childBranch: "feat/child-10" });
-    // The merged entry is written through the Backend seam.
-    expect(backend.appended).toEqual([{ childIssue: 10, status: "merged" }]);
+    // #298 acceptance-1: "每合一片即写一条 {childIssue, childBranch, childHead,
+    // ..., familyHeadBefore, familyHeadAfter, status}". The OLD thin
+    // {childIssue, status:"merged"} write (cmr R1: codex-s1 + agy) left the
+    // ledger末条 WITHOUT a `familyHeadAfter` baseline → reconcile's branch ② (补账)
+    // was UNREACHABLE in production → a crash-window child got RE-merged (a
+    // double-merge, violating acceptance-2 "不双合"). The merger now forwards the
+    // full fields the Backend reports (childHead / familyHeadBefore / familyHeadAfter).
+    expect(backend.appended).toEqual([
+      {
+        childIssue: 10,
+        status: "merged",
+        childBranch: "feat/child-10",
+        childHead: "child-head-10",
+        familyHeadBefore: "base0",
+        familyHeadAfter: "merged-10",
+      },
+    ]);
   });
 
   it("merges children serially in call order", async () => {

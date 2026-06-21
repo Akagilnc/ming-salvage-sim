@@ -101,6 +101,12 @@ describe("reconcileFamilyLedger — branch ② live HEAD LEADS (the crash window
     // Both count as merged now (10 from ledger, 11 from reconcile) — 11 will NOT
     // be re-merged (no double-merge).
     expect([...plan.merged].sort()).toEqual([10, 11]);
+    // The plan carries the VERIFIED live HEAD, so the caller can stamp the
+    // reconcile補账条 with `familyHeadAfter: liveHead` — else `lastRecordedHead`
+    // on the NEXT resume returns the STALE pre-reconcile baseline and a later
+    // rewind that should branch-③ escalate is silently trusted (cmr R1: codex
+    // + agy, the missing-familyHeadAfter stale-baseline defect).
+    expect(plan.liveHead).toBe("base2");
   });
 
   it("childHead does NOT exist → skip merge-base, treat as UNMERGED (rerun), no error", async () => {
@@ -178,5 +184,29 @@ describe("reconcileFamilyLedger — empty ledger (fresh resume)", () => {
     expect(plan.escalate).toBe(false);
     expect(plan.reconciled).toEqual([]);
     expect(plan.merged.size).toBe(0);
+  });
+});
+
+describe("reconcileFamilyLedger — full-field merged entries reach branch ② (the prod path)", () => {
+  it("a FULL-field ledger (as the prod merger now writes) makes branch ②补账 REACHABLE", async () => {
+    // The crux of the thin-bar gap (cmr R1: codex-s1 + agy): branch ② only fires
+    // when the LAST merged entry carries `familyHeadAfter` (a baseline). The
+    // production merger must therefore write FULL fields, NOT the thin
+    // {childIssue, status:"merged"}. With full fields, the crash window — child
+    // 11's merge landed (live HEAD=base2, c11 ancestor) but its `merged` write
+    // crashed → no `11` entry — is correctly补账, NOT re-run/re-merged.
+    const ledger: FamilyLedgerEntry[] = [
+      { childIssue: 10, status: "merged", childHead: "c10", familyHeadAfter: "base1" },
+    ];
+    const git = new FakeReconcileGit(
+      "base2",
+      { 10: "c10", 11: "c11" },
+      new Set(["base1", "c10", "c11"]),
+    );
+    const plan = await reconcileFamilyLedger(ledger, children, git);
+    expect(plan.escalate).toBe(false);
+    expect(plan.reconciled).toEqual([{ childIssue: 11, childHead: "c11" }]);
+    expect([...plan.merged].sort()).toEqual([10, 11]);
+    expect(plan.liveHead).toBe("base2");
   });
 });

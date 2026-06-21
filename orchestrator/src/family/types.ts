@@ -154,6 +154,17 @@ export interface ReconcilePlan {
    */
   readonly reconciled: ReadonlyArray<{ childIssue: number; childHead: string }>;
   /**
+   * The VERIFIED live family-base HEAD this plan was computed against. The spine
+   * stamps each reconcile補账条 with `familyHeadAfter: liveHead`, so a SUBSEQUENT
+   * resume's `lastRecordedHead` advances to the post-reconcile head rather than
+   * the stale pre-crash baseline (cmr R1: codex + agy). Without it, `lastRecordedHead`
+   * would keep returning the old baseline after a crash-then-reconcile, and a
+   * later rewind/divergence that branch ③ must fail-closed escalate would be
+   * silently trusted (the補账条 doc in `reconcile.ts` lastRecordedHead promises
+   * "reconcile補账条 carry one too" — this is the value it carries).
+   */
+  readonly liveHead: string;
+  /**
    * The full merged set AFTER reconcile = ledger-merged ∪ reconciled. The wave
    * loop selects from this, so an already-merged / reconciled child is skipped
    * (no double-merge) and a never-merged child (childHead absent / not an
@@ -208,8 +219,24 @@ export interface MergeRequest {
 
 /** The merger's result for one child merge. */
 export interface MergeResult {
-  /** The family base HEAD commit after this merge landed. */
+  /** The family base HEAD commit after this merge landed (= `familyHeadAfter`). */
   readonly familyHead: string;
+  /**
+   * The family base HEAD commit BEFORE this merge — the `familyHeadBefore` the
+   * full-schema ledger entry records (#298 acceptance-1). Optional so a #293-era
+   * Backend that does not report it still type-checks; when absent the ledger
+   * entry simply omits the field (the thin-entry back-compat path).
+   */
+  readonly familyHeadBefore?: string;
+  /**
+   * The child branch HEAD commit that was merged — the `childHead` the
+   * full-schema ledger entry records (#298 acceptance-1), and the ancestor the
+   * crash-window reconcile branch ② confirms against the live HEAD. Without it
+   * in the ledger, reconcile's branch ② (补账) is unreachable in production and a
+   * crash-window child gets RE-merged (cmr R1: codex-s1 + agy). Optional for the
+   * same #293 back-compat reason as `familyHeadBefore`.
+   */
+  readonly childHead?: string;
 }
 
 // ─────────────────────────── family run I/O ───────────────────────────

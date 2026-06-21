@@ -158,10 +158,15 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
       familyBase: "family/293-base",
     });
 
+    // #298 acceptance-1: each merged child is recorded with the FULL schema
+    // (childBranch + familyHeadAfter here; this fake reports no
+    // familyHeadBefore/childHead, so compact drops those — the back-compat path).
+    // The `familyHeadAfter` baseline is what makes the crash-window reconcile
+    // branch ② reachable in production (cmr R1: codex-s1 + agy).
     expect(familyBackend.ledger).toEqual([
-      { childIssue: 10, status: "merged" },
-      { childIssue: 11, status: "merged" },
-      { childIssue: 12, status: "merged" },
+      { childIssue: 10, status: "merged", childBranch: "feat/child-10", familyHeadAfter: "+10" },
+      { childIssue: 11, status: "merged", childBranch: "feat/child-11", familyHeadAfter: "+11" },
+      { childIssue: 12, status: "merged", childBranch: "feat/child-12", familyHeadAfter: "+12" },
     ]);
   });
 

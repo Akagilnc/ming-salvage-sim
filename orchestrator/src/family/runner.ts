@@ -192,11 +192,16 @@ export async function runFamily(
     }
     // Append each reconcile補账条 (status:"merged" + event:"reconciled") through
     // the ledger seam so the wave loop's `currentMerged` counts it (codex R3) and
-    // never re-merges the already-landed child.
+    // never re-merges the already-landed child. Stamp `familyHeadAfter` with the
+    // verified live HEAD the plan was computed against, so a SUBSEQUENT resume's
+    // `lastRecordedHead` advances to the post-reconcile head — NOT the stale
+    // pre-crash baseline — and a later rewind that branch ③ must escalate is not
+    // silently trusted (cmr R1: codex + agy).
     for (const r of plan.reconciled) {
       await recordMerged(familyBackend, {
         childIssue: r.childIssue,
         childHead: r.childHead,
+        familyHeadAfter: plan.liveHead,
         event: "reconciled",
       });
     }
