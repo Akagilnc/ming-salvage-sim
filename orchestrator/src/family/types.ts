@@ -14,6 +14,7 @@
  */
 
 import type { Backend } from "../types.js";
+import type { VerifyCmrInput, VerifyCmrResult } from "./verifyCmr.js";
 
 // ─────────────────────────── child slice ───────────────────────────
 
@@ -148,10 +149,34 @@ export interface FamilyRunInput {
    * from (ADR 0022 decision 7). Children are cut from THIS, not `origin/<base>`.
    */
   readonly familyBase: string;
+  /**
+   * The verify-cmr hook (ADR 0022 decision 3④/⑤/⑥) — the family verify (per-wave
+   * fail-fast) + end-of-run integrated cmr. Optional: defaults to the #293 no-op
+   * {@link runVerifyCmr} module export. #296 fills the module body OR injects a
+   * real impl here; either way the spine's call sites + fail-fast on `ok===false`
+   * are already wired, so #296 does not rewrite the spine. Injectable so the
+   * spine's fail-fast branch is testable now (the repo's injected-seam idiom).
+   */
+  readonly verifyCmr?: (input: VerifyCmrInput) => Promise<VerifyCmrResult>;
 }
 
-/** The status of one child within a family run. */
-export type FamilyChildStatus = "merged" | "skipped" | "failed";
+/**
+ * The status of one child within a family run.
+ *
+ * - `"ran"` — the child's single-slice run reached S8(success) and produced a
+ *   reviewed branch, but it has NOT yet been merged into the family base. This is
+ *   the transient state runChild returns; the spine flips it to `"merged"` only
+ *   after the merge commit lands (ADR 0022 decision 5). A future #295 merge
+ *   failure can leave a child as `"ran"` rather than a stale `"merged"`.
+ * - `"merged"` — the child's reviewed branch is merged into the family base (a
+ *   `status:"merged"` ledger entry exists, decision 5).
+ * - `"failed"` — the child's single-slice run did not reach success (it cannot
+ *   merge); recorded honestly rather than silently dropped.
+ * - `"skipped"` — the child was never schedulable (a blocker never merged, so it
+ *   stayed blocked when the wave loop terminated). Recorded so the family result
+ *   accounts for every child (#294's richer wave/cycle logic refines this).
+ */
+export type FamilyChildStatus = "ran" | "merged" | "skipped" | "failed";
 
 /** Per-child outcome record in the family result. */
 export interface FamilyChildResult {

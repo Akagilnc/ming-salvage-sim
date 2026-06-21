@@ -10,10 +10,17 @@
  *   2. S7 push = a LOCAL NO-OP → backend.push is NOT called (ADR 0022 decision 2:
  *      shared-clone concurrent push would clash on .git/refs/remotes; only the
  *      family base PRs once at the end). The run still reaches S8 success.
- *   3. (dec.6③, ledger口径) the child's own S0 blocked_by-closed check is the
- *      family ledger-merged predicate, not GitHub `closed`. #293's thinnest wave
- *      is all-unblocked children (empty blocked_by), so this is exercised by the
- *      spine test; here we pin the base + no-op-push adaptations.
+ *   3. (dec.6③, ledger口径) — NOT yet wired in #293. ADR 0022 decision 6③ says a
+ *      child's OWN single-slice S0 `blocked_by`-closed check SHOULD become the
+ *      family ledger-merged predicate in family mode. #293 does NOT replace it:
+ *      runOrchestrator's S0 gate still throws on a non-empty `meta.openBlockedBy`
+ *      (from GitHub), unchanged. This is sound for #293 ONLY because its thinnest
+ *      wave is strictly all-unblocked children (every `blockedBy` is `[]` AND
+ *      every fake's `openBlockedBy` is `[]`), so the gate's blocked_by branch is
+ *      never reached. The ledger-merged S0 substitution is deferred to #294 (where
+ *      a real blocked child appears); here we pin only the base + no-op-push
+ *      adaptations. (See spine.test.ts: even the "11 blocked_by 10" commander case
+ *      keeps the fake's `openBlockedBy:[]`, so no #293 test trips the real gate.)
  *
  * Regression guard: a run with NO `family` context behaves EXACTLY as before
  * (base=main, push called) — the existing 404 tests must not break.

@@ -202,9 +202,15 @@ describe("runFamily — family entry accepts the epic; each child passes its OWN
     expect(result.children.map((c) => c.status)).toEqual(["merged", "merged"]);
   });
 
-  it("a child that FAILS its own rfa/Agent-Brief gate is recorded failed, not merged", async () => {
-    // One child is not ready-for-agent → its single-slice S0 gate throws. The
-    // spine records it as failed (it cannot merge) and does NOT fabricate a merge.
+  it("a child that FAILS its own S0 rfa/Agent-Brief gate makes the whole family run REJECT (gate throw propagates), not a fabricated merge", async () => {
+    // One child is not ready-for-agent → its single-slice S0 gate THROWS (a caller
+    // input fault, same as the single-slice contract — not converted to a returned
+    // "failed" RunResult). #293 thinnest: the spine does not catch that throw, so it
+    // propagates out and the whole runFamily rejects. The spine never fabricates a
+    // partial merge for the bad child. (A child that fails LATER — e.g. review never
+    // approves — returns a non-success RunResult and IS recorded "failed"; only S0
+    // gate violations throw. Catching gate throws into a per-child "failed" is a
+    // downstream choice, not #293.)
     class GateRejectChildBackend extends ChildBackend {
       override async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
         // Child 11 is missing the Agent Brief → its S0 gate throws.

@@ -58,7 +58,11 @@ async function runChild(
     family: { parentIssue, familyBase, noPush: true },
   });
   if (result.status === "success" && result.branch !== undefined) {
-    return { issue: child.issue, status: "merged", branch: result.branch };
+    // The single-slice run succeeded and produced a reviewed branch — but it is
+    // NOT merged yet (the spine's serial-merge step does that, then flips this to
+    // "merged" once the merge commit lands — ADR 0022 decision 5). So runChild
+    // returns the transient "ran", never a premature "merged".
+    return { issue: child.issue, status: "ran", branch: result.branch };
   }
   // #293 thinnest: a non-success child does not merge. (Richer per-child
   // failure / escalate handling is downstream; the spine records it as failed
@@ -88,8 +92,26 @@ export async function runFamily(
   input: FamilyRunInput,
 ): Promise<FamilyRunResult> {
   const { epic, familyBackend, singleSliceBackend, familyBase } = input;
+  // The verify-cmr hook: the injected impl (#296 / tests) or the #293 no-op module
+  // default. The spine's call sites + fail-fast on `ok===false` are identical
+  // either way (ADR 0022 decision 3④/⑤/⑥; acceptance-4 seam boundary).
+  const verifyCmr = input.verifyCmr ?? runVerifyCmr;
   const childResults: FamilyChildResult[] = [];
   let familyHead: string | undefined;
+
+  // Build the family result, accounting for EVERY epic child. A child the wave
+  // loop never scheduled (a blocker never merged, so it stayed blocked when the
+  // loop terminated — or a fail-fast wave aborted before it ran) is recorded
+  // `"skipped"`, never silently dropped from the result (decision 3⑤ "不静默吞").
+  // #294's richer wave/cycle logic refines the skipped reason; #293 just keeps
+  // the result honest.
+  const finalize = (): FamilyRunResult => {
+    const recorded = new Set(childResults.map((c) => c.issue));
+    const skipped: FamilyChildResult[] = epic.children
+      .filter((c) => !recorded.has(c.issue))
+      .map((c) => ({ issue: c.issue, status: "skipped" as const }));
+    return { familyBase, familyHead, children: [...childResults, ...skipped] };
+  };
 
   // The wave loop. Re-select from the merged set after each wave so a future
   // multi-wave epic (#294) advances as blockers merge; #293's all-unblocked
@@ -106,10 +128,16 @@ export async function runFamily(
 
     // ── fan out the wave: each child through the reused single-slice runner ──
     // ADR 0022 decision 2 (native fork + distinct branch) is the RealBackend's
-    // job; the spine just runs each child's runner. #293 runs them sequentially
-    // in the zero-container spine; the real parallel fan-out is the RealBackend's
-    // Promise.allSettled — the spine's contract (one wave's children, then merge)
-    // is identical either way.
+    // job (each child run cuts its own distinct branch in the shared clone). The
+    // wave-level fan-out POLICY — how the wave's children are run relative to each
+    // other — lives in THIS loop, not in the Backend (the Backend interface is
+    // per-child: prepareWorktree / runStep / push; it has no whole-wave method).
+    // #293 runs the wave SERIALLY in the zero-container spine; #294 makes it
+    // concurrent by turning this `for…await` into a `Promise.allSettled(wave.map(…))`
+    // HERE (the children are already branch-isolated, so that is safe) — a local
+    // change to this fan-out loop, NOT a rewrite of the wave/merge/verify
+    // structure around it. The spine's contract (one wave's children fanned out,
+    // then serially merged) is identical either way.
     const ran: FamilyChildResult[] = [];
     for (const child of wave) {
       attempted.add(child.issue);
@@ -119,23 +147,57 @@ export async function runFamily(
     // ── serial merge: each reviewed child branch into the family base ──────────
     // merger.mergeChild does the `git merge --no-ff` (via the FamilyBackend seam)
     // AND writes the merged ledger entry (decision 5 order). The spine never does
-    // the merge itself — that is the #295 seam boundary.
+    // the merge itself — that is the #295 seam boundary. A child is recorded
+    // `"merged"` ONLY AFTER its merge commit lands (decision 5): runChild returns
+    // `"ran"` (single-slice success, not yet merged), and we flip it to `"merged"`
+    // here once mergeChild resolves — so a future #295 merge failure can leave the
+    // child as `"ran"`/`"failed"` instead of a stale `"merged"`.
     for (const r of ran) {
-      if (r.status === "merged" && r.branch !== undefined) {
+      if (r.status === "ran" && r.branch !== undefined) {
         const mergeResult = await mergeChild(familyBackend, {
           childIssue: r.issue,
           childBranch: r.branch,
         });
         familyHead = mergeResult.familyHead;
+        childResults.push({ issue: r.issue, status: "merged", branch: r.branch });
+      } else {
+        childResults.push({ issue: r.issue, status: r.status, branch: r.branch });
       }
-      childResults.push(r);
     }
 
-    // ── verify-cmr hook (#293 no-op seam, #296 fills) ──────────────────────────
-    // Called at the wave barrier so #296 plugs the per-wave family verify
-    // (fail-fast) in here without a spine rewrite.
-    await runVerifyCmr();
+    // ── verify-cmr hook: per-wave barrier (#293 no-op seam, #296 fills) ─────────
+    // Decision 3④: a red wave fails-fast — abort BEFORE selecting the next wave.
+    // #293's no-op returns ok:true so the loop continues; the spine ALREADY acts
+    // on `ok` and passes the phase + context, so #296 fills only the hook body
+    // (run typecheck + tests in the family base) without touching this loop.
+    const waveVerify = await verifyCmr({
+      phase: "wave",
+      familyBase,
+      familyBackend,
+    });
+    if (!waveVerify.ok) {
+      // Fail-fast (decision 3④): do not排下一波. #296's red wave lands here; the
+      // family base + ledger are left for triage (decision 3⑤ "不静默吞"). Children
+      // not yet run are recorded "skipped" by finalize().
+      return finalize();
+    }
   }
 
-  return { familyBase, familyHead, children: childResults };
+  // ── verify-cmr hook: end-of-run barrier (#293 no-op seam, #296 fills) ─────────
+  // Decision 3⑤/⑥: after all waves merge, run the 全量 verify + the load-bearing
+  // integrated cross-model cmr (catches 跨片接缝). #293 no-op; the call site is
+  // wired now so #296 fills only the "final" hook body, not the spine.
+  const finalVerify = await verifyCmr({
+    phase: "final",
+    familyBase,
+    familyBackend,
+  });
+  if (!finalVerify.ok) {
+    // #296's failing integrated cmr lands here. #293 no-op never trips it; the
+    // result still carries the merged children for the caller (decision 3⑤
+    // "不静默吞" — the family base + ledger are left for triage / the PR step).
+    return finalize();
+  }
+
+  return finalize();
 }
