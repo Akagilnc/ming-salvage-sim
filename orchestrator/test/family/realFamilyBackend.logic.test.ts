@@ -269,6 +269,16 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     const recon = new RealFamilyBackend(opts(repo, { familyBaseStartHead: start })).reconcileGit();
     expect(await recon.familyBaseStartHead()).toBe(start);
   });
+
+  it("familyBaseStartHead THROWS when no start head was recorded — never falls back to the live head (codex R3)", async () => {
+    // The empty-ledger crash-window net compares liveHead to startHead. Falling back
+    // to the CURRENT live head would make them trivially equal → the net is silently
+    // disabled (fail-open). With no recorded start head it must throw, not degrade.
+    const repo = trackRepo();
+    git(repo, "checkout", "-q", "-b", "family/293-base");
+    const recon = new RealFamilyBackend(opts(repo)).reconcileGit(); // no familyBaseStartHead
+    await expect(recon.familyBaseStartHead()).rejects.toThrow(/no familyBaseStartHead was recorded/);
+  });
 });
 
 // ═══════════════════ 4. resolveMergeConflict (sc.run seam) ═══════════════════
@@ -283,16 +293,24 @@ class FakeSeamsBackend extends RealFamilyBackend {
   cmrCalls: IntegratedCmrRequest[] = [];
   shCalls: Array<{ file: string; args: string[] }> = [];
   mergeInProgressFake = false;
-  // Distinct SHAs so the resolve postcondition (HEAD moved past familyHeadBefore +
-  // childHead ancestor of HEAD) is exercised realistically: by default a LANDED
-  // resolve (HEAD = "resolved-head" ≠ familyBase "base-head", child IS an ancestor).
-  familyBaseHeadFake = "base-head"; // rev-parse <familyBase>
-  resolvedHeadFake = "resolved-head"; // rev-parse HEAD after the resolve
+  // STATEFUL fake of the family-base ref so the resolve postcondition (the family
+  // base ref moved past familyHeadBefore + child is its ancestor) is exercised
+  // realistically. `rev-parse <familyBase>` returns familyBaseHeadFake; running the
+  // merger ADVANCES it to resolvedHeadFake (a landed merge moves the family base
+  // ref). The default models a clean LANDED resolve.
+  familyBaseHeadFake = "base-head"; // rev-parse <familyBase> — current value (mutated by the merger)
+  resolvedHeadFake = "resolved-head"; // what the family base ref advances to on a landed resolve
   childHeadFake = "child-head"; // rev-parse <childBranch>
-  childLandedFake = true; // isAncestorOf(childHead, HEAD)
+  childLandedFake = true; // isAncestorOf(childHead, familyBase ref)
+  mergerLandsOnFamilyBase = true; // does running the merger advance the family base ref?
 
   protected override async runMergerAgent(req: ConflictResolveRequest) {
     this.mergerCalls.push(req);
+    // A real landed resolve advances the family base ref; a misbehaving agent that
+    // aborted/reset (mergerLandsOnFamilyBase=false) leaves it unmoved.
+    if (this.mergerOutcome.resolved && this.mergerLandsOnFamilyBase) {
+      this.familyBaseHeadFake = this.resolvedHeadFake;
+    }
     return this.mergerOutcome;
   }
   protected override runVerifyCommands(req: FamilyVerifyRequest): void {
@@ -315,10 +333,13 @@ class FakeSeamsBackend extends RealFamilyBackend {
   protected override sh(file: string, args: string[], _cwd?: string): string {
     this.shCalls.push({ file, args });
     if (file === "git" && args[0] === "rev-parse") {
-      // rev-parse HEAD → the post-resolve head; rev-parse <familyBase>/<branch> →
-      // the base / child head, so the resolve postcondition sees distinct SHAs.
-      if (args[1] === "HEAD") return this.resolvedHeadFake;
+      // rev-parse <familyBase> → the (stateful) family base ref; rev-parse HEAD →
+      // wherever HEAD is; rev-parse <childBranch> → the child head. The resolve
+      // postcondition reads the FAMILY BASE REF (codex R3), so familyHeadBefore and
+      // the post-resolve familyHead both come from familyBaseHeadFake — which the
+      // merger advances only on a landed resolve.
       if (args[1] === this.familyBase) return this.familyBaseHeadFake;
+      if (args[1] === "HEAD") return this.resolvedHeadFake;
       return this.childHeadFake;
     }
     if (file === "gh" && args[0] === "pr" && args[1] === "create") {
@@ -361,29 +382,44 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
     expect(res.conflicted).toBe(true);
   });
 
-  it("agent CLAIMED resolved but the merge did NOT land (no MERGE_HEAD, HEAD unmoved) → still-conflicted (codex R2)", async () => {
+  it("agent CLAIMED resolved but the merge did NOT land on the family base (abort/reset) → still-conflicted (codex R2)", async () => {
     // The dangerous false-clean: the agent says resolved:true and there is no
-    // MERGE_HEAD, but it actually aborted/reset — HEAD never moved past
-    // familyHeadBefore and the child never landed. The old postcondition (only
+    // MERGE_HEAD, but it actually aborted/reset — the FAMILY BASE REF never moved
+    // past familyHeadBefore and the child never landed. The old postcondition (only
     // !mergeInProgress) would return a CLEAN result → merger records a `merged`
     // ledger entry for a child that was never merged. The fix verifies git truth.
     const b = new FakeSeamsBackend(opts(trackRepo()));
     b.mergerOutcome = { resolved: true };
     b.mergeInProgressFake = false; // no MERGE_HEAD…
-    b.resolvedHeadFake = "base-head"; // …but HEAD == familyHeadBefore (unmoved)
+    b.mergerLandsOnFamilyBase = false; // …but the family base ref stays at familyHeadBefore
     const res = await b.resolveMergeConflict({ childIssue: 13, childBranch: "feat/child-13" });
     expect(res.conflicted).toBe(true);
   });
 
-  it("agent CLAIMED resolved, HEAD moved, but the child is NOT an ancestor of HEAD → still-conflicted (codex R2)", async () => {
-    // HEAD moved (some commit landed) but it is NOT this child's merge — the child
-    // head is not an ancestor of the new HEAD. Must not look clean.
+  it("agent CLAIMED resolved, family base moved, but the child is NOT its ancestor → still-conflicted (codex R2)", async () => {
+    // The family base moved (some commit landed) but it is NOT this child's merge —
+    // the child head is not an ancestor of the new family base. Must not look clean.
     const b = new FakeSeamsBackend(opts(trackRepo()));
     b.mergerOutcome = { resolved: true };
     b.mergeInProgressFake = false;
-    b.resolvedHeadFake = "some-other-head"; // HEAD moved…
-    b.childLandedFake = false; // …but the child is not an ancestor of it
+    b.childLandedFake = false; // family base moved, but the child is not an ancestor
     const res = await b.resolveMergeConflict({ childIssue: 14, childBranch: "feat/child-14" });
+    expect(res.conflicted).toBe(true);
+  });
+
+  it("agent landed the child on the WRONG ref (HEAD moved, but the FAMILY BASE is unmoved) → still-conflicted (codex R3)", async () => {
+    // A misbehaving agent checked out another branch / detached HEAD and committed
+    // the child THERE: HEAD moved and the child is an ancestor of HEAD, but the
+    // family base ref the next verify checks out is unmoved. Reading the post-state
+    // off HEAD (the old fix) would look clean → phantom `merged`. Pinning to the
+    // FAMILY BASE REF catches it: the family base did not move → conflicted.
+    const b = new FakeSeamsBackend(opts(trackRepo()));
+    b.mergerOutcome = { resolved: true };
+    b.mergeInProgressFake = false;
+    b.mergerLandsOnFamilyBase = false; // family base ref stays put…
+    b.resolvedHeadFake = "landed-on-some-other-ref"; // …even though HEAD moved elsewhere
+    b.childLandedFake = true; // and the child IS an ancestor of that wrong HEAD
+    const res = await b.resolveMergeConflict({ childIssue: 15, childBranch: "feat/child-15" });
     expect(res.conflicted).toBe(true);
   });
 });
@@ -491,6 +527,29 @@ describe("RealFamilyBackend runFamilyVerify (#291 tsc + vitest)", () => {
     expect(res.ok).toBe(false);
     // the actual compiler error (from .stderr) is in the ledger reason, not lost.
     expect(res.errorPackage?.reason).toMatch(/TS2322/);
+  });
+
+  it("captures BOTH stderr AND stdout — the failure body on stdout is not dropped when stderr has noise (codex R3)", async () => {
+    // Some tools put warnings on stderr and the real failure body on stdout (vitest
+    // prints the failing assertions to stdout). Taking stderr-OR-stdout would drop
+    // the stdout reason; summarizeError must append both.
+    class BothStreamsRed extends FakeSeamsBackend {
+      protected override runVerifyCommands(): void {
+        const e = new Error("Command failed: npx vitest run") as Error & {
+          stderr?: string;
+          stdout?: string;
+        };
+        e.stderr = "warning: deprecated flag"; // noise
+        e.stdout = "FAIL test/x.test.ts > the real assertion that failed"; // the body
+        throw e;
+      }
+    }
+    const b = new BothStreamsRed(opts(trackRepo()));
+    const res = await b.runFamilyVerify({ phase: "final", familyBase: "family/293-base" });
+    expect(res.ok).toBe(false);
+    // BOTH the stderr noise and the stdout failure body are present.
+    expect(res.errorPackage?.reason).toMatch(/the real assertion that failed/);
+    expect(res.errorPackage?.reason).toMatch(/deprecated flag/);
   });
 });
 
