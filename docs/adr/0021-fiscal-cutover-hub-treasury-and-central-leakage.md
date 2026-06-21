@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # 财政 cutover hub：国库入账口径、京运补/边军军饷源、中央漏损与退役 calc_province_fiscal 的并轨边界
@@ -50,4 +50,4 @@ status: proposed
 - **单一预算源**：国库收入走「唯一预算源」契约，内部税源换为「Σ起运 + 盐商旁路 − 中央漏损」；落账 / UI 预算表 / 存档摘要三处同源、不各自重算；P4：收入明细以定性叙事呈现、不暴露裸数值。**月中预算表基于上月静态投影**（当月决策的预算影响下月可见；不做月中 dry-run，避免月中跑全省 settle 的相位复杂度）。
 - **前置 `blocked_by`**：**#287**（边军军饷 ↔ 省级基座并轨——本 ADR 拆出的硬子设计，cmr R1–R3 收不敛者）；**#265**（收复省补 settle 基座，须一并 seed 收复边镇的京运补史实年例基线，同 ADR 0020 收复省须重建正赋起运基线，否则注入撞空，#265 修法留其实现期）；**#70**（全省 seed）。
 - **实现留 `/tdd`**：确切键名 / schema / 管线落步 / 中央 C_ 账户名 / k 计算落点 / oracle 写法本 ADR 不展开。
-- **状态**：`proposed`（cmr R1–R3 已收口：军饷并轨拆 #287、其余 hub 设计收敛；待 R4 全量复审收敛 → 线上 bot → `accepted`），再 `to-issues` 切片。
+- **状态**：`accepted`（2026-06-21）。双闸收敛：① 本地 cmr 5 轮、3 腿（Claude/codex/agy）R5 **3/3 converged**（军饷并轨拆 #287、其余 hub 设计收敛）；② 线上 PR #288 — Codex `+1` approved + CodeRabbit 零 finding（Sourcery/Gemini 本轮配额死、flag）。下一步：#287 grill（#261 implement 前置）→ #261 `to-issues` 切片。
