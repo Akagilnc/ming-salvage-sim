@@ -215,7 +215,9 @@ describe("runFamily — family entry accepts the epic; each child passes its OWN
     // downstream choice, not #293.)
     class GateRejectChildBackend extends ChildBackend {
       override async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
-        // Child 11 is missing the Agent Brief → its S0 gate throws.
+        // Child 11 is NOT ready-for-agent (isReadyForAgent:false) → its S0 gate
+        // throws on the rfa check. (It DOES have an Agent Brief — the rfa gate is
+        // the one that fires; the assertion below matches /ready-for-agent/i.)
         return {
           number: issueNumber,
           isReadyForAgent: issueNumber !== 11,

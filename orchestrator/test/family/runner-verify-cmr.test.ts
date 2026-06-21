@@ -184,4 +184,62 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     // The no-op default passes → the run is observably "success".
     expect(result.status).toBe("success");
   });
+
+  it("INCOMPLETE: a child whose single-slice run does not succeed makes the family status 'incomplete' (NOT a false 'success')", async () => {
+    // Child 11's coder never commits → its single-slice run ends S8(error), so
+    // runChild records it "failed". Verify passes (no-op), but the run did NOT
+    // fully close: status must be "incomplete", never "success".
+    class OneChildFailsBackend extends ChildBackend {
+      override async runStep(spec: StepSpec): Promise<StepOutput> {
+        // The failing child is dispatched on its own runner; we fail the coder for
+        // EVERY run here and pair it with a single-failing-child epic below.
+        if (spec.role === "coder") {
+          return { kind: "coder", committed: false, commitsAdded: 0 };
+        }
+        return { kind: "reviewer", findings: [] };
+      }
+    }
+    const familyBackend = new FakeFamilyBackend();
+    const result = await runFamily({
+      epic: epicWith(11),
+      familyBackend,
+      singleSliceBackend: new OneChildFailsBackend(),
+      familyBase: "family/293-base",
+    });
+    // The child failed → it never merged → the family run is "incomplete".
+    expect(result.status).toBe("incomplete");
+    expect(result.failedPhase).toBeUndefined();
+    expect(result.children).toEqual([{ issue: 11, status: "failed" }]);
+    // No merge / ledger write for a failed child.
+    expect(familyBackend.merges).toEqual([]);
+    expect(familyBackend.ledger).toEqual([]);
+  });
+
+  it("LEDGER-AWARE finalize: a child already merged in the ledger is reported 'merged', not 'skipped'", async () => {
+    // Pre-seed the family ledger with child 10 already merged (e.g. a prior
+    // invocation — #298's resume truth). The commander excludes 10 (already
+    // merged), so it is never run THIS invocation; finalize must report it
+    // "merged" (FamilyChildStatus contract: "merged" ⇔ a merged ledger entry
+    // exists), NOT "skipped".
+    class PreSeededFamilyBackend extends FakeFamilyBackend {
+      constructor() {
+        super();
+        this.ledger.push({ childIssue: 10, status: "merged" });
+      }
+    }
+    const familyBackend = new PreSeededFamilyBackend();
+    const result = await runFamily({
+      epic: epicWith(10, 11),
+      familyBackend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/293-base",
+    });
+    // Only 11 actually runs + merges this invocation; 10 is already-merged truth.
+    expect(familyBackend.merges.map((m) => m.childIssue)).toEqual([11]);
+    const byIssue = new Map(result.children.map((c) => [c.issue, c.status]));
+    expect(byIssue.get(10)).toBe("merged"); // from the ledger, not "skipped"
+    expect(byIssue.get(11)).toBe("merged");
+    // Every child merged (one via ledger, one this run) → "success".
+    expect(result.status).toBe("success");
+  });
 });

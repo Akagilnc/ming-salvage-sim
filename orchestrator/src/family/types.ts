@@ -198,14 +198,23 @@ export interface FamilyChildResult {
 /**
  * The family-run outcome (ADR 0022 decision 3④/⑤/⑥).
  *
- * - `"success"` — every wave verified and the end-of-run verify + integrated cmr
- *   passed (in #293 the no-op always passes, so a complete run is `"success"`).
+ * - `"success"` — every verify barrier passed AND every epic child is merged into
+ *   the family base. Only a fully-closed family run is `"success"` (in #293 the
+ *   no-op verify always passes, so N independent children that all merge ⇒
+ *   `"success"`).
  * - `"verify_failed"` — a verify-cmr barrier returned `ok:false`; `failedPhase`
  *   says which. The spine fails-fast (decision 3④) and returns this so the caller
- *   can distinguish a red run from a clean one — it does NOT silently look like
- *   success (decision 3⑤ "不静默吞"). The family base + ledger are left for triage.
+ *   can distinguish a red run from a clean one (decision 3⑤ "不静默吞").
+ * - `"incomplete"` — every verify barrier passed but NOT every child merged: a
+ *   child's single-slice run did not succeed (`"failed"`) or stayed blocked
+ *   (`"skipped"`). The run did not silently look like success (decision 3⑤
+ *   "不静默吞"); the caller MUST NOT treat it as fully closed. (#293's happy path
+ *   never produces this — all children merge; it guards the honest result.)
+ *
+ * Precedence when more than one applies: `"verify_failed"` (most urgent) >
+ * `"incomplete"` > `"success"`.
  */
-export type FamilyRunStatus = "success" | "verify_failed";
+export type FamilyRunStatus = "success" | "verify_failed" | "incomplete";
 
 /** The family run result. */
 export interface FamilyRunResult {
