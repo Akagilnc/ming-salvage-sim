@@ -28,6 +28,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  mergerOutcomeFromResult,
   parseMergerOutcome,
   RealFamilyBackend,
   type RealFamilyBackendOptions,
@@ -162,6 +163,30 @@ describe("RealFamilyBackend mergeChildIntoFamilyBase (#291 git merge --no-ff)", 
     // in-progress merge with MERGE_HEAD present).
     expect(git(repo, "rev-parse", "-q", "--verify", "MERGE_HEAD")).toBeTruthy();
   });
+
+  it("a NON-conflict git merge failure (dirty worktree, no MERGE_HEAD) RETHROWS — never reported as conflicted", async () => {
+    // Catching ALL non-zero `git merge` exits as `conflicted:true` would route a
+    // broken/dirty repo into the LLM resolver (codex R1 + agy R1). Here the child
+    // branch EXISTS (so the pre-merge rev-parse succeeds), but the family-base
+    // worktree has an uncommitted edit to the SAME file the merge would touch →
+    // `git merge` refuses ("local changes would be overwritten") and exits non-zero
+    // WITHOUT creating a MERGE_HEAD. That must rethrow the git error and abort the
+    // wave loudly — not be misreported as a content conflict.
+    const repo = trackRepo();
+    git(repo, "checkout", "-q", "-b", "family/293-base");
+    commitFile(repo, "shared.txt", "BASE");
+    git(repo, "checkout", "-q", "-b", "feat/child-13", "family/293-base");
+    commitFile(repo, "shared.txt", "CHILD EDIT");
+    git(repo, "checkout", "-q", "family/293-base");
+    // dirty the family-base worktree: an uncommitted edit to the file the merge touches.
+    execFileSync("bash", ["-c", `printf '%s' 'UNCOMMITTED' > '${join(repo, "shared.txt")}'`]);
+    const b = new RealFamilyBackend(opts(repo));
+    await expect(
+      b.mergeChildIntoFamilyBase({ childIssue: 13, childBranch: "feat/child-13" }),
+    ).rejects.toThrow();
+    // and the repo was NOT left mid-merge (no MERGE_HEAD → not a false "conflicted").
+    expect(() => git(repo, "rev-parse", "-q", "--verify", "MERGE_HEAD")).toThrow();
+  });
 });
 
 // ═══════════════════════════════ 3. ReconcileGit ════════════════════════════
@@ -200,6 +225,23 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     const r = await recon.childHeadExists(99, "feat/child-99");
     expect(r.exists).toBe(false);
     expect(r.childHead).toBeUndefined();
+  });
+
+  it("childHeadExists with NO branch derives it from the issue (the production call shape) — the 补账 predicate is not dead", async () => {
+    // The production reconcile caller passes only the ISSUE (reconcile.ts:
+    // `git.childHeadExists(child.issue)`), no branch. Before the fix this returned
+    // `{exists:false}` → every already-landed child read as absent → re-merge
+    // (double-merge, codex R1). It must instead derive the runner branch
+    // `feat/244-orchestrator-issue-<n>` and find the real head.
+    const repo = trackRepo();
+    git(repo, "checkout", "-q", "-b", "family/293-base");
+    git(repo, "checkout", "-q", "-b", "feat/244-orchestrator-issue-77", "family/293-base");
+    const childHead = commitFile(repo, "c77.txt", "x");
+    git(repo, "checkout", "-q", "family/293-base");
+    const recon = new RealFamilyBackend(opts(repo)).reconcileGit();
+    const r = await recon.childHeadExists(77); // NO branch — derived from the issue
+    expect(r.exists).toBe(true);
+    expect(r.childHead).toBe(childHead);
   });
 
   it("familyBaseStartHead returns the recorded start head", async () => {
@@ -303,6 +345,46 @@ describe("parseMergerOutcome (#291 pure)", () => {
     );
     expect(out).toEqual({ resolved: true });
   });
+  it("a non-object JSON payload (null / true / number) is unresolved, NOT a crash", () => {
+    // `JSON.parse("null")` succeeds and returns null; the old code then read
+    // `parsed.resolved` → TypeError OUTSIDE the try/catch, crashing the parent
+    // (agy R1). Any non-object payload must be a safe unresolved-with-reason.
+    expect(parseMergerOutcome("<merger>null</merger>")).toEqual({
+      resolved: false,
+      reason: "merger agent <merger> tag was not a JSON object",
+    });
+    expect(parseMergerOutcome("<merger>true</merger>").resolved).toBe(false);
+    expect(parseMergerOutcome("<merger>42</merger>").resolved).toBe(false);
+  });
+});
+
+describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {
+  it("a signaled run delegates to parseMergerOutcome (resolved)", () => {
+    expect(
+      mergerOutcomeFromResult({
+        completionSignal: "MERGER_STEP_COMPLETE",
+        stdout: '<merger>{"resolved": true}</merger>',
+      }),
+    ).toEqual({ resolved: true });
+  });
+  it("an UNSIGNALED run is unresolved even when stdout claims resolved (codex R1)", () => {
+    // maxIterations hit mid-resolution: no completion signal, but an earlier
+    // `<merger>{"resolved":true}</merger>` rode in. The gate must NOT accept it.
+    const out = mergerOutcomeFromResult({
+      completionSignal: undefined,
+      stdout: '<merger>{"resolved": true}</merger>',
+    });
+    expect(out.resolved).toBe(false);
+    expect(out.reason).toMatch(/did not fire its completion signal/);
+  });
+  it("a wrong completion signal is unresolved", () => {
+    expect(
+      mergerOutcomeFromResult({
+        completionSignal: "SOME_OTHER_SIGNAL",
+        stdout: '<merger>{"resolved": true}</merger>',
+      }).resolved,
+    ).toBe(false);
+  });
 });
 
 // ═══════════════════════════ 5. runFamilyVerify ═════════════════════════════
@@ -322,6 +404,27 @@ describe("RealFamilyBackend runFamilyVerify (#291 tsc + vitest)", () => {
     expect(res.ok).toBe(false);
     expect(res.errorPackage?.reason).toMatch(/final/);
     expect(res.errorPackage?.reason).toMatch(/vitest|failed/);
+  });
+
+  it("RED via an execFileSync-style error captures err.stderr (the real failure reason), not just err.message", async () => {
+    // execFileSync on a non-zero exit throws an Error whose `.message` is only the
+    // status line ("Command failed: npx tsc --noEmit"); the ACTUAL tsc/test output
+    // is on `.stderr` (string or Buffer). Reading only `.message` would drop the
+    // locatable reason from the ledger (agy R1). summarizeError must append it.
+    class StderrRed extends FakeSeamsBackend {
+      protected override runVerifyCommands(): void {
+        const e = new Error("Command failed: npx tsc --noEmit") as Error & {
+          stderr?: Buffer;
+        };
+        e.stderr = Buffer.from("src/region.ts(42,7): error TS2322: Type 'number' is not assignable");
+        throw e;
+      }
+    }
+    const b = new StderrRed(opts(trackRepo()));
+    const res = await b.runFamilyVerify({ phase: "wave", familyBase: "family/293-base" });
+    expect(res.ok).toBe(false);
+    // the actual compiler error (from .stderr) is in the ledger reason, not lost.
+    expect(res.errorPackage?.reason).toMatch(/TS2322/);
   });
 });
 
@@ -358,8 +461,14 @@ describe("RealFamilyBackend openFamilyPr (#291 push + gh pr create, 止于 PR)",
 
 // ═══════════════════════════ 8. recordAborted / escalate ════════════════════
 
-describe("RealFamilyBackend recordAborted (#291 phase-level aborted ledger)", () => {
-  it("appends a phase-level aborted entry (no childIssue) carrying reason + head", async () => {
+describe("RealFamilyBackend recordAborted (#291 in-memory seam, NOT the durable writer)", () => {
+  it("does NOT append to the durable ledger — the durable abort is recordDurableAbort's job (no double-write)", async () => {
+    // verifyCmr.ts records a red verify by calling BOTH `recordAborted?` AND
+    // `recordDurableAbort` (ledger.ts). Only the latter appends the PHASE-LEVEL
+    // durable entry; wiring-aborted-durable-291 fixes the contract at exactly ONE
+    // durable aborted entry per red verify. If RealFamilyBackend.recordAborted ALSO
+    // appended (the pre-fix behaviour), the real spine wrote TWO duplicate aborted
+    // entries (codex R1). So this seam must be a durable no-op.
     const b = new RealFamilyBackend(opts(trackRepo()));
     await b.recordAborted({
       phase: "wave",
@@ -367,18 +476,8 @@ describe("RealFamilyBackend recordAborted (#291 phase-level aborted ledger)", ()
       errorPackage: { reason: "tsc: TS2322 in regionApply" },
       familyHeadAfter: "headAfter",
     });
-    const ledger = await b.readFamilyLedger();
-    expect(ledger).toEqual([
-      {
-        status: "aborted",
-        event: "aborted",
-        phase: "wave",
-        reason: "tsc: TS2322 in regionApply",
-        familyHeadAfter: "headAfter",
-      },
-    ]);
-    // An aborted entry has NO childIssue → it never unblocks a downstream slice.
-    expect(ledger[0]?.childIssue).toBeUndefined();
+    // The seam wrote NOTHING durable on its own — no double-write against the spine.
+    expect(await b.readFamilyLedger()).toEqual([]);
   });
 });
 
