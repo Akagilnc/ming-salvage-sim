@@ -781,12 +781,52 @@ export function isLikelySha(s: string): boolean {
  * Pure (string scan) so the corrupt-ledger boundary is unit-tested without the
  * filesystem.
  */
+/**
+ * Valid step ids (S0–S8). A persisted ledger record must carry one of these in
+ * `step`: {@link planResume} dereferences `lastEntry.step` to route the resume,
+ * so a record whose `step` is missing / non-string / out-of-range is unusable.
+ */
+const STEP_IDS: ReadonlySet<string> = new Set([
+  "S0",
+  "S1",
+  "S2",
+  "S3",
+  "S4",
+  "S5",
+  "S6",
+  "S7",
+  "S8",
+]);
+
+/**
+ * A parsed JSONL record is a usable ledger entry only if it is a non-null object
+ * whose `step` is a valid {@link StepId}. (`output` / `handoffStatus` are
+ * optional, so the minimal valid entry is `{step}`.)
+ *
+ * Online codex P2: a line such as `null`, `{}`, `42`, or `{"step":"S9"}`
+ * `JSON.parse`s fine yet is NOT a ledger entry. Without this guard such a record
+ * flows into `findResumeState` → `planResume`, where `lastEntry.step` is read
+ * OUTSIDE any catch — a `null`/`{}` last entry crashes raw (TypeError /
+ * undefined route) instead of the promised fail-closed S8(error). A
+ * shape-invalid record is the same corruption class as an unparseable line.
+ */
+function isLedgerEntryShape(
+  value: unknown,
+): value is ResumeState["ledger"][number] {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const step = (value as { step?: unknown }).step;
+  return typeof step === "string" && STEP_IDS.has(step);
+}
+
 export function parseLedgerJsonl(raw: string): ResumeState["ledger"] {
   const entries: Array<ResumeState["ledger"][number]> = [];
   for (const line of raw.split("\n")) {
     if (line.trim().length === 0) continue; // blank line: no record, tolerated.
+    let parsed: unknown;
     try {
-      entries.push(JSON.parse(line) as ResumeState["ledger"][number]);
+      parsed = JSON.parse(line);
     } catch {
       // A non-empty line that does not parse = corrupt ledger. Fail closed:
       // never skip it (would silently change the resume terminal state / branch
@@ -798,6 +838,20 @@ export function parseLedgerJsonl(raw: string): ResumeState["ledger"] {
           "re-run a resident branch fresh-from-S0; bailing to S8(error) instead.",
       );
     }
+    // A line can JSON.parse yet not be a usable ledger entry (null / {} / a
+    // primitive / a bad step id). Treat it as the SAME corruption: skipping or
+    // accepting it would let planResume deref `lastEntry.step` on a non-entry
+    // (raw crash) or route on an invalid step instead of failing to S8(error).
+    if (!isLedgerEntryShape(parsed)) {
+      throw new Error(
+        "corrupt ledger: a steps.jsonl line parsed but is not a valid ledger " +
+          "entry (must be an object with a valid step S0–S8) — refusing to " +
+          "resume on a malformed ledger (fail closed). Accepting it could crash " +
+          "the resume route or re-report the wrong terminal state; bailing to " +
+          "S8(error) instead.",
+      );
+    }
+    entries.push(parsed);
   }
   return entries;
 }
