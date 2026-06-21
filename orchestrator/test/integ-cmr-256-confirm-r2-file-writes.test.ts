@@ -44,6 +44,18 @@ const realPromptsDir = join(here, "..", "prompts");
  * real on-disk write/delete decision is drivable without a container.
  */
 class FileWriteBackend extends RealBackend {
+  // #292: stub the clone seams so construction never touches real git (this test
+  // exercises only the on-disk write helpers, not the clone build).
+  protected override cloneDirExists(): boolean {
+    return true;
+  }
+  protected override sh(file: string, args: string[]): string {
+    if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
+      return ".git";
+    }
+    return "";
+  }
+
   callWriteFixFindings(
     worktree: WorktreeHandle,
     findings: ReadonlyArray<Finding> | undefined,
@@ -54,7 +66,9 @@ class FileWriteBackend extends RealBackend {
 
 function newBackend(home: string): FileWriteBackend {
   return new FileWriteBackend({
-    mainRepo: "/tmp/main",
+    sourceRepo: "/tmp/source",
+    remote: "https://github.com/owner/name.git",
+    runKey: 256,
     repo: "owner/name",
     imageName: "img",
     skillsMount: "/tmp/skills",
