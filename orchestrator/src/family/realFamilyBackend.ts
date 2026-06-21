@@ -116,7 +116,10 @@ export interface RealFamilyBackendOptions {
   /**
    * The family base HEAD at run setup — the baseline {@link ReconcileGit.familyBaseStartHead}
    * returns (the spine provides it; the only baseline available when the ledger is
-   * empty). When omitted, falls back to the current family base HEAD.
+   * empty). Optional at construction, but REQUIRED before `reconcileGit()` is used
+   * for the empty-ledger crash-window net: that predicate THROWS when it is absent
+   * rather than falling back to the live head (which would silently disable the net
+   * — codex R3). A backend that never drives reconcile may omit it.
    */
   readonly familyBaseStartHead?: string;
 }
@@ -239,18 +242,23 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     // The agent claims it committed the merge — but VERIFY git truth before
     // returning clean (the prompt's "resolve → add → commit, never --abort" is a
-    // soft LLM instruction, not a postcondition). Two failure modes a clean return
-    // would otherwise wave through into a durable `merged` ledger entry (codex R2):
+    // soft LLM instruction, not a postcondition). Failure modes a clean return
+    // would otherwise wave through into a durable `merged` ledger entry:
     //   (a) the merge is still in progress (MERGE_HEAD present) — the agent never
-    //       committed;
-    //   (b) the agent aborted/reset instead of committing — MERGE_HEAD is GONE but
-    //       HEAD is back at (or before) familyHeadBefore and the child never landed.
-    // Only a real landing (HEAD moved AND childHead is now an ancestor of HEAD)
-    // counts as resolved; anything else returns `conflicted:true` so the merger
-    // refuses to record `merged` (invariant: "an unresolved conflict never looks
-    // clean").
+    //       committed; (codex R2)
+    //   (b) the agent aborted/reset instead of committing — the family base ref is
+    //       back at (or before) familyHeadBefore and the child never landed; (codex R2)
+    //   (c) the agent landed the child on the WRONG ref (a detached HEAD or another
+    //       branch) — HEAD moved + child is an ancestor of HEAD, but the FAMILY BASE
+    //       ref is unmoved; the next verify checks out familyBase and sees no merge,
+    //       yet the ledger said merged (codex R3).
+    // So the post-state is read off the FAMILY BASE REF (not HEAD): only when the
+    // family base ref itself moved past familyHeadBefore AND childHead is now its
+    // ancestor does the merge count as landed. Anything else → `conflicted:true` so
+    // the merger refuses to record `merged` (invariant: "an unresolved conflict
+    // never looks clean").
     const stillInProgress = this.mergeInProgress(repo);
-    const familyHead = this.sh("git", ["rev-parse", "HEAD"], repo);
+    const familyHead = this.sh("git", ["rev-parse", this.opts.familyBase], repo);
     const childLanded =
       !stillInProgress &&
       familyHead !== familyHeadBefore &&
@@ -467,8 +475,24 @@ export class RealFamilyBackend implements FamilyBackend {
     const startHead = this.opts.familyBaseStartHead;
     return {
       liveFamilyHead: async () => sh(["rev-parse", familyBase]),
-      familyBaseStartHead: async () =>
-        startHead ?? sh(["rev-parse", familyBase]),
+      // The empty-ledger crash-window safety net (reconcile.ts) compares the live
+      // family head to this start head: if the base moved past it yet no child
+      // explains the move, fail-closed escalate. Falling back to the CURRENT live
+      // head when no start head was recorded would make `liveHead !== startHead`
+      // trivially false and SILENTLY DISABLE that net — a fail-open (codex R3). So
+      // require the recorded setup head: throw when it is absent rather than
+      // returning a value that defeats the check.
+      familyBaseStartHead: async () => {
+        if (startHead === undefined) {
+          throw new Error(
+            "reconcileGit.familyBaseStartHead: no familyBaseStartHead was recorded " +
+              "at run setup — it is the only baseline for the empty-ledger crash-window " +
+              "net; refusing to fall back to the live head (which would silently disable " +
+              "the net). Provide RealFamilyBackendOptions.familyBaseStartHead.",
+          );
+        }
+        return startHead;
+      },
       childHeadExists: async (childIssue: number, childBranch?: string) => {
         // The production reconcile caller (reconcile.ts) is handed only the child
         // ISSUE — `ChildSlice` carries no branch — so it calls `childHeadExists(issue)`
@@ -601,8 +625,15 @@ function summarizeError(phase: "wave" | "final", err: unknown): string {
   let detail = err instanceof Error ? err.message : String(err);
   if (err !== null && typeof err === "object") {
     const e = err as { stderr?: unknown; stdout?: unknown };
-    const out = decodeChildOutput(e.stderr) || decodeChildOutput(e.stdout);
-    if (out.length > 0) detail += `\n${out}`;
+    // Append BOTH streams (labeled), not just the first non-empty one: some tools
+    // put warnings/noise on stderr and the actual failure body on stdout (tsc/
+    // vitest do), so taking stderr-OR-stdout would drop the locatable reason
+    // (codex R3). The 600-char tail below keeps the trailing end where the real
+    // failure lands.
+    const stderr = decodeChildOutput(e.stderr);
+    const stdout = decodeChildOutput(e.stdout);
+    if (stderr.length > 0) detail += `\nstderr: ${stderr}`;
+    if (stdout.length > 0) detail += `\nstdout: ${stdout}`;
   }
   const tail = detail.length > 600 ? detail.slice(-600) : detail;
   return `family verify (${phase}) failed: ${tail}`;
