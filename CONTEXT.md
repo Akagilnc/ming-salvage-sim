@@ -233,7 +233,7 @@ _Avoid_: 子任务、subtask(太泛,不区分独立与否)
 _Avoid_: 主干、main、集成分支(太泛)
 
 **角色**:
-编排管线里一个定义好的职能单元(如 planner、coder、reviewer、ship、merger)。每个角色有自己的一段固定流程、一个 profile 镜像、一份 soul。同一条切片由不同角色接力(coder 写、reviewer 评),它们靠各自独立的 agent 上下文保持判断独立。
+编排管线里一个定义好的职能单元(如 coder、reviewer、ship、merger)。每个角色有自己的一段固定流程、一个 profile 镜像、一份 soul。(commander 不是角色——它无 soul、是 runner 的确定性调度步,见 commander 词条。)同一条切片由不同角色接力(coder 写、reviewer 评),它们靠各自独立的 agent 上下文保持判断独立。
 _Avoid_: agent(太泛)、stage、阶段(混淆流程步与职能)
 
 **profile / 角色镜像**:
