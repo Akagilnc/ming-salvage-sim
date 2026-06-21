@@ -33,18 +33,23 @@
  * injected {@link ReconcileGit} seam (no real git here) so the spine stays a thin
  * caller and the三分支 are zero-container testable.
  *
- * INTEGRATION SEAM (full-field happy-path write). Branch ① / ② key off the ledger
- * 末条 `familyHeadAfter` (and branch ② confirms a landed child via its `childHead`).
- * For reconcile to be fully effective in production, the happy-path `merged` write
- * must carry `familyHeadAfter` + `childHead` (the full schema {@link recordMerged}
- * now ACCEPTS). #293's merger still writes the thin `{childIssue, status:"merged"}`
- * — that line lives in the shared `merger.ts` (#295 territory), so forwarding the
- * full fields through it is the one wiring left to the RealBackend integration.
- * Until then, reconcile DEGRADES SAFELY on thin entries: a thin ledger has no
- * baseline → the clean-start branch returns (no escalate, no double-merge; an
- * already-merged child is still counted from `status:"merged"` and never re-run, a
- * never-recorded child is re-run by the wave loop). No corruption either way —
- * thin entries make reconcile conservative (rerun) rather than optimal (补账).
+ * FULL-FIELD HAPPY-PATH WRITE. Branch ① / ② key off the ledger末条
+ * `familyHeadAfter` (and branch ② confirms a landed child via its `childHead`).
+ * The happy-path `merged` write now carries the full schema (`familyHeadAfter` +
+ * `childHead` + …) — `merger.ts` forwards the SHAs the {@link MergeResult} reports
+ * (that full-field write is #298's own acceptance-1, not #295; #295 owns only the
+ * `--no-ff` conflict fallback). So in production reconcile branch ② is reachable.
+ *
+ * BACK-COMPAT WITH #293 THIN ENTRIES. A pre-#298 thin entry `{childIssue,
+ * status:"merged"}` (no `familyHeadAfter`) stays a VALID ledger entry, and a
+ * NON-EMPTY thin ledger DEGRADES SAFELY on resume: it has no `familyHeadAfter`
+ * baseline → reconcile trusts the recorded merged set (those entries DO account
+ * for their merged children), no补账, NO escalate — even though the live base has
+ * moved past the start head (that move is the recorded merges, not a lost one). A
+ * never-recorded child is left to the wave loop. The family-base-start-head
+ * first-merge-crash check (below) applies ONLY to a TRULY EMPTY ledger, so a
+ * non-empty thin ledger is never false-escalated (cmr R4). No corruption / no
+ * double-merge either way.
  */
 
 import { mergedSet } from "./ledger.js";
@@ -96,25 +101,35 @@ export async function reconcileFamilyLedger(
     return { escalate: false, reconciled: [], merged: ledgerMerged, liveHead };
   }
 
-  // ── empty / headless ledger: distinguish a fresh start from a FIRST-merge
-  //    crash window ────────────────────────────────────────────────────────────
-  // No entry records a head. That is EITHER a genuine fresh start (nothing
-  // merged yet) OR the very-first-merge crash window: the merger lands the merge
-  // on the family base THEN writes the ledger, so a crash in between leaves the
-  // ledger EMPTY while the family base HAS moved (cmr R3: codex-s1). With no
-  // ledger末条 baseline we cannot attribute the landed merge to a child, so we
-  // fall back to the family-base START head:
-  //   - live HEAD === start head → nothing landed → genuine fresh start (clean).
-  //   - live HEAD !== start head → a merge landed but was never recorded →
-  //     fail-closed escalate (decision 5 真有未落/不一致 → 升级). An unconditional
-  //     clean-start here would re-run + re-merge the already-landed first child
-  //     (a double-merge), violating acceptance-2 不双合.
+  // ── headless ledger (no familyHeadAfter on any entry) ──────────────────────
+  // No entry records a head. Two DISTINCT cases, split on whether the ledger has
+  // ANY entry (cmr R4: codex-s2 + agy — conflating them broke #293 back-compat):
+  //
+  //   • TRULY EMPTY (ledger.length === 0): EITHER a genuine fresh start (nothing
+  //     merged) OR the very-first-merge crash window — the merger lands the merge
+  //     on the family base THEN writes the ledger, so a crash in between leaves
+  //     the ledger EMPTY while the family base HAS moved (cmr R3: codex-s1). With
+  //     no entry at all we cannot attribute a landed merge to a child, so we fall
+  //     back to the family-base START head:
+  //       - live === start → nothing landed → genuine fresh start (clean);
+  //       - live !== start → a merge landed but was never recorded → fail-closed
+  //         escalate (decision 5 真有未落/不一致 → 升级); an unconditional clean-start
+  //         would re-run + re-merge the already-landed first child (double-merge).
+  //
+  //   • NON-EMPTY but headless (a #293 thin ledger: entries carry `status:"merged"`
+  //     but no `familyHeadAfter`): the recorded entries DO account for their
+  //     merged children, so live having moved past the base start is EXPECTED, not
+  //     a lost merge. DEGRADE SAFELY (the documented #293 back-compat, header
+  //     above): trust the recorded merged set, no补账, no escalate. Escalating here
+  //     would false-alarm every legacy thin-ledger resume (cmr R4: codex-s2 + agy).
   if (baseline === undefined) {
-    const startHead = await git.familyBaseStartHead();
-    if (liveHead === startHead) {
-      return { escalate: false, reconciled: [], merged: ledgerMerged, liveHead };
+    if (ledger.length === 0) {
+      const startHead = await git.familyBaseStartHead();
+      if (liveHead !== startHead) {
+        return { escalate: true, reconciled: [], merged: ledgerMerged, liveHead };
+      }
     }
-    return { escalate: true, reconciled: [], merged: ledgerMerged, liveHead };
+    return { escalate: false, reconciled: [], merged: ledgerMerged, liveHead };
   }
 
   // ── branch ② vs ③: is the live HEAD a DESCENDANT of the ledger末条? ─────────

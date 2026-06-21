@@ -179,6 +179,9 @@ describe("spine re-entry — refetch the dependency graph from live GitHub (deci
         async liveFamilyHead() {
           return "base1"; // == ledger末条 → branch ①
         },
+        async familyBaseStartHead() {
+          return "base1"; // unused on branch ① (non-empty ledger w/ familyHeadAfter)
+        },
         async childHeadExists() {
           return { exists: true, childHead: "c10" };
         },
