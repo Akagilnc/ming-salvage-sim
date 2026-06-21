@@ -192,16 +192,30 @@ export async function runFamily(
     }
     // Append each reconcile補账条 (status:"merged" + event:"reconciled") through
     // the ledger seam so the wave loop's `currentMerged` counts it (codex R3) and
-    // never re-merges the already-landed child. Stamp `familyHeadAfter` with the
-    // verified live HEAD the plan was computed against, so a SUBSEQUENT resume's
-    // `lastRecordedHead` advances to the post-reconcile head — NOT the stale
-    // pre-crash baseline — and a later rewind that branch ③ must escalate is not
-    // silently trusted (cmr R1: codex + agy).
-    for (const r of plan.reconciled) {
+    // never re-merges the already-landed child.
+    //
+    // Baseline-advance only on the LAST補账条 (cmr R2: agy). The append loop is
+    // itself a crash window: if EVERY補账条 stamped `familyHeadAfter: plan.liveHead`
+    // and the process died after writing補账条 i but before i+1, the next resume's
+    // `lastRecordedHead` would return liveHead (from补账条 i) → reconcile branch ①
+    // (baseline === liveHead) → it would TRUST the incomplete merged set and the
+    // un-appended landed children (i+1 …) would be re-run + re-merged (a
+    // double-merge). By stamping `familyHeadAfter` ONLY on the final補账条, a
+    // mid-loop-crash residue ends in a补账条 WITHOUT a head → `lastRecordedHead`
+    // falls back to the PRIOR real baseline → live still LEADS it → branch ②
+    // re-reconciles the remaining landed children idempotently (the already-written
+    // ones are `status:"merged"` → skipped, the missing ones re-补账ed), no
+    // double-merge. The final補账条 advances the baseline to the verified live HEAD
+    // so a clean (non-crashed) resume's `lastRecordedHead` is correct (cmr R1).
+    const lastReconciledIdx = plan.reconciled.length - 1;
+    for (let i = 0; i < plan.reconciled.length; i++) {
+      const r = plan.reconciled[i]!;
       await recordMerged(familyBackend, {
         childIssue: r.childIssue,
         childHead: r.childHead,
-        familyHeadAfter: plan.liveHead,
+        ...(i === lastReconciledIdx
+          ? { familyHeadAfter: plan.liveHead }
+          : {}),
         event: "reconciled",
       });
     }
