@@ -33,6 +33,12 @@ class FakeFamilyBackend implements FamilyBackend {
     this.head = `merged-${child.childIssue}`;
     return { familyHead: this.head };
   }
+  // #295 conflict-fallback seam: this #293 no-conflict test merges cleanly, so
+  // the LLM resolver is never reached. The #295 conflict path has its own
+  // coverage in merger-conflict.test.ts. Stub it to satisfy FamilyBackend.
+  async resolveMergeConflict(): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this no-conflict test");
+  }
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.appended.push(entry);
   }

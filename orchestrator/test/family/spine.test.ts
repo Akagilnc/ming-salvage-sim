@@ -79,6 +79,13 @@ class FakeFamilyBackend implements FamilyBackend {
     this.head = `+${child.childIssue}`;
     return { familyHead: this.head };
   }
+  // #295 conflict-fallback seam: these spine tests use the deterministic
+  // (no-conflict) merge path, so the LLM resolver is never reached. Stub it so
+  // the fake still satisfies FamilyBackend; a call would mean an unexpected
+  // conflict in a clean-path test.
+  async resolveMergeConflict(): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this no-conflict test");
+  }
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }

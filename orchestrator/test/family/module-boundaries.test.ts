@@ -119,6 +119,11 @@ describe("acceptance 4 — the spine routes through each module's injected seam"
       async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
         return { familyHead: `CUSTOM-${child.childIssue}` };
       }
+      // #295 conflict-fallback seam: this boundary test merges cleanly, so the
+      // LLM resolver is never reached. Stub it to satisfy FamilyBackend.
+      async resolveMergeConflict(): Promise<{ familyHead: string }> {
+        throw new Error("resolveMergeConflict not used in this no-conflict test");
+      }
       async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
         this.ledger.push(entry);
       }
@@ -148,6 +153,11 @@ describe("acceptance 4 — the spine routes through each module's injected seam"
       async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
         this.mergeOrder.push(child.childIssue);
         return { familyHead: `h${child.childIssue}` };
+      }
+      // #295 conflict-fallback seam: this seam-wiring test merges cleanly, so the
+      // LLM resolver is never reached. Stub it to satisfy FamilyBackend.
+      async resolveMergeConflict(): Promise<{ familyHead: string }> {
+        throw new Error("resolveMergeConflict not used in this no-conflict test");
       }
       async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
         this.ledger.push(entry);
