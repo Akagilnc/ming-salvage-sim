@@ -53,6 +53,7 @@ async function runChild(
   singleSliceBackend: Backend,
   parentIssue: number,
   familyBase: string,
+  familyChildIssues: ReadonlySet<number>,
 ): Promise<FamilyChildResult> {
   const result = await runOrchestrator({
     issueNumber: child.issue,
@@ -61,16 +62,25 @@ async function runChild(
     // its OWN single-slice S0 `blocked_by` gate uses the ledger-merged口径, not
     // GitHub `closed`. runChild only runs a child the commander released — i.e.
     // selectWave already confirmed every `child.blockedBy` is in the merged set —
-    // so the whole `child.blockedBy` IS the set of family-base-merged blockers
-    // for this child. Passing it makes the child's S0 treat a still-open-on-GitHub
-    // blocker as satisfied, so a just-released child is not re-rejected (the agy R2
-    // deadlock). A truly-open external blocker (not in child.blockedBy) is absent
-    // here, so the child S0 still rejects it.
+    // so each INTRA-FAMILY blocker IS merged into the family base for this child.
+    // We pass ONLY the intra-family subset (a `blocked_by` issue that is itself a
+    // family sibling): those are the blockers the commander can possibly have
+    // ledger-merged. An EXTERNAL `blocked_by` (not a family child) is never in the
+    // family ledger and so can never be excused here — decision 6③ requires it to
+    // stay a genuine open blocker the child's S0 rejects. (selectWave already
+    // blocks an externally-blocked child from being released, so today this filter
+    // only narrows the value to match its documented invariant; it also keeps S0
+    // sound if a future selector change let such a child through — never excusing
+    // an external open blocker. Passing the WHOLE `child.blockedBy` would instead
+    // hand S0 a non-family number it has no ledger evidence for.) For an
+    // intra-family blocker that IS ledger-merged, the child's S0 treats a
+    // still-open-on-GitHub blocker as satisfied, so a just-released child is not
+    // re-rejected (the agy R2 deadlock).
     family: {
       parentIssue,
       familyBase,
       noPush: true,
-      mergedBlockers: child.blockedBy,
+      mergedBlockers: child.blockedBy.filter((b) => familyChildIssues.has(b)),
     },
   });
   if (result.status === "success" && result.branch !== undefined) {
@@ -116,6 +126,11 @@ export async function runFamily(
   // a human per decision 4, who fixes the to-issues edges and re-runs). This runs
   // up front so nothing is fanned out / merged before the deadlock is caught.
   assertAcyclic(epic.children);
+  // The set of THIS family's child issue numbers — used to split a child's
+  // `blocked_by` into intra-family blockers (the commander can ledger-merge them)
+  // vs external blockers (never in the family ledger; stay genuine S0 blockers per
+  // decision 6③). Invariant for the run (epic.children is fixed), so computed once.
+  const familyChildIssues = new Set(epic.children.map((c) => c.issue));
   // The verify-cmr hook: the injected impl (#296 / tests) or the #293 no-op module
   // default. The spine's call sites + fail-fast on `ok===false` are identical
   // either way (ADR 0022 decision 3④/⑤/⑥; acceptance-4 seam boundary).
@@ -201,7 +216,15 @@ export async function runFamily(
     const ran: FamilyChildResult[] = [];
     for (const child of wave) {
       attempted.add(child.issue);
-      ran.push(await runChild(child, singleSliceBackend, epic.issue, familyBase));
+      ran.push(
+        await runChild(
+          child,
+          singleSliceBackend,
+          epic.issue,
+          familyBase,
+          familyChildIssues,
+        ),
+      );
     }
 
     // ── serial merge: each reviewed child branch into the family base ──────────
