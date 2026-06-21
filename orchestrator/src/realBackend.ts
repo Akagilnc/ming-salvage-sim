@@ -101,8 +101,14 @@ export interface GhIssueJson {
   readonly title?: string | null;
   readonly state?: string | null;
   readonly body?: string | null;
+  /** Author of the issue itself. Added for #283 owner-trust filter. */
+  readonly user?: { readonly login?: string | null } | null;
   readonly labels?: ReadonlyArray<{ readonly name?: string }> | null;
-  readonly comments?: ReadonlyArray<{ readonly body?: string }> | null;
+  readonly comments?: ReadonlyArray<{
+    readonly body?: string;
+    /** Author of the comment. Added for #283 owner-trust filter. */
+    readonly user?: { readonly login?: string | null } | null;
+  }> | null;
 }
 
 /** Native blocked_by dependency summary from `gh api .../dependencies`. */
@@ -112,13 +118,21 @@ export interface GhBlockedBy {
 }
 
 /**
- * Does any comment (or the body) carry a `## Agent Brief` section?
- * The brief is the authoritative spec (DEV_WORKFLOW); S0 requires it.
+ * Does any comment (or the body) carry a `## Agent Brief` section, written
+ * by a trusted author?
+ *
+ * When `ownerLogin` is supplied (#283 author-trust filter), only carriers
+ * whose `user.login` matches are considered — preventing strangers on a
+ * public repo from injecting a fake brief into comments or issues they open.
+ * When `ownerLogin` is omitted the filter is skipped (backward-compatible).
  */
-export function hasAgentBrief(json: GhIssueJson): boolean {
-  const inBody = (json.body ?? "").includes(AGENT_BRIEF_HEADING);
-  const inComments = (json.comments ?? []).some((c) =>
-    (c.body ?? "").includes(AGENT_BRIEF_HEADING),
+export function hasAgentBrief(json: GhIssueJson, ownerLogin?: string): boolean {
+  const trusted = (login: string | null | undefined) =>
+    ownerLogin === undefined || login === ownerLogin;
+  const inBody =
+    trusted(json.user?.login) && (json.body ?? "").includes(AGENT_BRIEF_HEADING);
+  const inComments = (json.comments ?? []).some(
+    (c) => trusted(c.user?.login) && (c.body ?? "").includes(AGENT_BRIEF_HEADING),
   );
   return inBody || inComments;
 }
@@ -137,17 +151,20 @@ export function isReadyForAgent(json: GhIssueJson): boolean {
  * `openBlockedBy` = the numbers of blocked_by dependencies whose state is not
  * "closed" (an open upstream the slice would otherwise be cut from a stale base
  * against — PRD #244 S0).
+ *
+ * `ownerLogin` is threaded to {@link hasAgentBrief} (#283 author-trust filter).
  */
 export function buildIssueMeta(
   issueNumber: number,
   json: GhIssueJson,
   blockedBy: ReadonlyArray<GhBlockedBy>,
   subIssueCount: number,
+  ownerLogin?: string,
 ): IssueMeta {
   return {
     number: json.number ?? issueNumber,
     isReadyForAgent: isReadyForAgent(json),
-    hasAgentBrief: hasAgentBrief(json),
+    hasAgentBrief: hasAgentBrief(json, ownerLogin),
     hasSubIssues: subIssueCount > 0,
     openBlockedBy: blockedBy
       .filter((d) => d.state !== "closed")
@@ -160,16 +177,25 @@ export function buildIssueMeta(
  * back to the issue body). The brief is the authoritative spec; the LAST comment
  * carrying it wins (a re-issued brief supersedes earlier ones). Returns "" when
  * no brief is present (S0 would have already rejected such an issue).
+ *
+ * When `ownerLogin` is supplied (#283 author-trust filter), only carriers whose
+ * `user.login` matches are eligible — non-owner carriers are silently skipped so
+ * a stranger cannot inject a fake brief into a public repo. When omitted the
+ * filter is skipped (backward-compatible).
  */
-export function extractAgentBrief(json: GhIssueJson): string {
+export function extractAgentBrief(json: GhIssueJson, ownerLogin?: string): string {
+  const trusted = (login: string | null | undefined) =>
+    ownerLogin === undefined || login === ownerLogin;
   // Priority order, LOWEST first: the issue body is the fallback, then comments
   // in order (newest last). A later carrier overwrites an earlier one, so the
   // LAST brief-bearing COMMENT wins over both earlier comments and the body
   // (a re-issued brief supersedes the original) — the body only stands when no
   // comment carries a brief.
-  const carriers = [
-    json.body ?? "",
-    ...(json.comments ?? []).map((c) => c.body ?? ""),
+  const carriers: string[] = [
+    trusted(json.user?.login) ? (json.body ?? "") : "",
+    ...(json.comments ?? []).map((c) =>
+      trusted(c.user?.login) ? (c.body ?? "") : "",
+    ),
   ];
   let brief = "";
   for (const text of carriers) {
@@ -249,18 +275,21 @@ export function buildIssueSnapshotMeta(
  * #244-named native metadata. The native sub-issue count + blocked_by list S0
  * fetched are threaded in here (not re-queried) so the snapshot the coder reads
  * is contract-complete (#244 S1 names native metadata as a snapshot element).
+ *
+ * `ownerLogin` is threaded to {@link extractAgentBrief} (#283 author-trust filter).
  */
 export function buildIssueSnapshot(
   issueNumber: number,
   json: GhIssueJson,
   blockedBy: ReadonlyArray<GhBlockedBy>,
   subIssueCount: number,
+  ownerLogin?: string,
 ): IssueSnapshot {
   return {
     number: json.number ?? issueNumber,
     body: json.body ?? "",
     comments: (json.comments ?? []).map((c) => c.body ?? ""),
-    agentBrief: extractAgentBrief(json),
+    agentBrief: extractAgentBrief(json, ownerLogin),
     nativeMeta: buildIssueSnapshotMeta(json, blockedBy, subIssueCount),
   };
 }
@@ -1030,6 +1059,13 @@ export interface RealBackendOptions {
   readonly promptsDir: string;
   /** Override $HOME for auth path construction (tests). */
   readonly home?: string;
+  /**
+   * GitHub login of the trusted author whose `## Agent Brief` the S0 input
+   * gate accepts (#283 author-trust filter). Defaults to the repo owner
+   * (the first segment of `repo`, i.e. `owner` from `owner/name`).
+   *留成可后续扩 allowlist 的形状 — a future allowlist would widen this to a set.
+   */
+  readonly ownerLogin?: string;
 }
 
 /** zod schema for the reviewer step's structured output (route() consumes it). */
@@ -1057,9 +1093,13 @@ const coderOutputSchema = z.object({
 
 export class RealBackend implements Backend {
   private readonly opts: RealBackendOptions;
+  /** Trusted author login for the S0 Agent Brief filter (#283). */
+  private readonly ownerLogin: string;
 
   constructor(opts: RealBackendOptions) {
     this.opts = opts;
+    // Default: extract the owner from "owner/name" (the first "/" segment).
+    this.ownerLogin = opts.ownerLogin ?? opts.repo.split("/")[0] ?? "";
     this.validatePromptsDir();
   }
 
@@ -1104,6 +1144,9 @@ export class RealBackend implements Backend {
     // open would let a parent epic (sub-issue query fault → 0 → leaf → allow) or
     // a blocked-by-open issue (blocked_by query fault → [] → no blockers → allow)
     // slip past the pinned S0 four-way gate and run from a stale base.
+    //
+    // #283: "user" is now fetched so hasAgentBrief can apply the owner-trust
+    // filter (non-owner Agent Brief is ignored on public repos).
     const json = this.phase("S0", "fetchIssueView", () => {
       const raw = this.sh("gh", [
         "issue",
@@ -1112,14 +1155,14 @@ export class RealBackend implements Backend {
         "--repo",
         this.opts.repo,
         "--json",
-        "number,body,labels,comments",
+        "number,body,labels,comments,user",
       ]);
       return JSON.parse(raw) as GhIssueJson;
     });
     // Native sub-issue + blocked_by via the GraphQL/REST API — each fails closed.
     const subIssueCount = this.fetchSubIssueCount(issueNumber);
     const blockedBy = this.fetchBlockedBy(issueNumber);
-    return buildIssueMeta(issueNumber, json, blockedBy, subIssueCount);
+    return buildIssueMeta(issueNumber, json, blockedBy, subIssueCount, this.ownerLogin);
   }
 
   /**
@@ -1199,6 +1242,9 @@ export class RealBackend implements Backend {
     // (title/state/labels) into the clean-room snapshot, not just the body —
     // the container reads this LOCAL snapshot and does NOT gh-fetch inside the
     // box (#244 S1: "body + comments + 最新 Agent Brief 正文 + native metadata").
+    //
+    // #283: "user" is now fetched so extractAgentBrief can apply the owner-trust
+    // filter when selecting the authoritative Agent Brief.
     const json = this.phase("S1", "fetchIssueView", () => {
       const raw = this.sh("gh", [
         "issue",
@@ -1207,7 +1253,7 @@ export class RealBackend implements Backend {
         "--repo",
         this.opts.repo,
         "--json",
-        "number,title,state,body,labels,comments",
+        "number,title,state,body,labels,comments,user",
       ]);
       return JSON.parse(raw) as GhIssueJson;
     });
@@ -1217,7 +1263,7 @@ export class RealBackend implements Backend {
     // attributed to S1 (not S0) for the US#30 error package.
     const subIssueCount = this.fetchSubIssueCount(issueNumber, "S1");
     const blockedBy = this.fetchBlockedBy(issueNumber, "S1");
-    return buildIssueSnapshot(issueNumber, json, blockedBy, subIssueCount);
+    return buildIssueSnapshot(issueNumber, json, blockedBy, subIssueCount, this.ownerLogin);
   }
 
   // ── S1: resident slice worktree (Sandcastle native createWorktree) ─────────
