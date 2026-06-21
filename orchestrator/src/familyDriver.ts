@@ -429,7 +429,12 @@ export async function runFamilyDriver(
   // 3. Cut the LOCAL family base branch from main on the family clone, recording
   //    its start HEAD (the reconcile baseline when the ledger is empty). The base
   //    is a LOCAL branch the merger accumulates onto, with no remote counterpart.
-  const familyBaseStartHead = cutFamilyBase(workingRepo, options.familyBase, sh);
+  const familyBaseStartHead = cutFamilyBase(
+    workingRepo,
+    options.familyBase,
+    options.base,
+    sh,
+  );
 
   // 4. The single-slice Backend each child fan-out actually uses: the real
   //    RealBackend in production (the `sc.run` child container path), or the e2e's
@@ -479,26 +484,35 @@ export async function runFamilyDriver(
 }
 
 /**
- * Cut the LOCAL family base branch from the just-fetched `origin/main` on the
- * family clone and return its start HEAD (the reconcile baseline). Idempotent: if
- * the branch already exists (a crash-resume re-entry on the same clone), reuse it
- * and read its current HEAD instead of re-cutting. The base is LOCAL (no
- * `git push`), accumulated onto by the merger.
+ * Cut the LOCAL family base branch from the just-fetched `origin/<base>` on the
+ * family clone and return its start HEAD (the reconcile baseline). `base` is the
+ * PR TARGET branch the family run was configured with (`options.base`) — NOT a
+ * hardcoded "main": the family base must be cut from the SAME ref `familyBaseDiff`
+ * diffs against (`base...familyBase`), else a non-`main` target would both cut from
+ * the wrong branch AND show the target's own commits as spurious family additions
+ * (agy cmr R1). Idempotent: if the branch already exists (a crash-resume re-entry
+ * on the same clone), reuse it and read its current HEAD instead of re-cutting. The
+ * base is LOCAL (no `git push`), accumulated onto by the merger.
  */
-export function cutFamilyBase(workingRepo: string, familyBase: string, sh: Sh): string {
+export function cutFamilyBase(
+  workingRepo: string,
+  familyBase: string,
+  base: string,
+  sh: Sh,
+): string {
   const git = (...args: string[]): string => sh("git", ["-C", workingRepo, ...args]);
   // Already present (resume) ⇒ reuse; read its current HEAD as the baseline.
   if (branchExists(workingRepo, familyBase, sh)) {
     return git("rev-parse", familyBase);
   }
-  // Fresh cut: refresh origin/main, then branch the local family base from it.
+  // Fresh cut: refresh origin/<base>, then branch the local family base from it.
   // Best-effort fetch (an offline / local-only source must not block the cut).
   try {
-    git("fetch", "origin", "main");
-    git("branch", familyBase, "origin/main");
+    git("fetch", "origin", base);
+    git("branch", familyBase, `origin/${base}`);
   } catch {
-    // No remote main (a local-only source) ⇒ cut from the local main.
-    git("branch", familyBase, "main");
+    // No remote <base> (a local-only source) ⇒ cut from the local <base>.
+    git("branch", familyBase, base);
   }
   return git("rev-parse", familyBase);
 }
@@ -612,9 +626,23 @@ export function parseReviewerVerdict(vendor: ReviewerVendor, prose: string): Rev
   if (/cmr-verdict:\s*converged/.test(lower)) {
     return { vendor, pass: true };
   }
-  // No sentinel ⇒ read the prose. An explicit negation ("not converged",
-  // "did not converge") is a finding, even if "converged" appears as a substring.
-  const negated = /\b(not|n't|no)\s+converge/.test(lower) || /did\s+not\s+converge/.test(lower);
+  // No sentinel ⇒ read the prose. An explicit NEGATED convergence is a finding,
+  // even though "converged" appears as a substring — so it must be caught BEFORE the
+  // positive `\bconverged\b` fallback below (else the negation false-passes). The
+  // naive `\b(not|no)\s+converge` missed two real forms (cmr R1):
+  //   - the AFFIX form `non-converged` / `unconverged`: `-` is a non-word char, so a
+  //     plain `\bconverged\b` matches the `converged` inside `non-converged` (codex);
+  //   - an INTERPOSED adverb `not yet/fully/completely converged`: the adverb breaks
+  //     a `\s+`-adjacency guard, so the positive fallback fires (agy).
+  // So allow up to 3 interposed words between the negator and `converg`, plus the
+  // affix and `fail(ed) to converge` forms. The interposed gap uses `(?:\s+\w+)`
+  // (whitespace-then-word), so punctuation (a comma / period / semicolon) breaks the
+  // chain — a separate clause like "no findings; converged" does NOT trip it.
+  const negated =
+    /\b(?:non|un)-?converg/.test(lower) || // non-converged / unconverged
+    /\b(?:not|never|cannot)\b(?:\s+\w+){0,3}\s+converg/.test(lower) || // not [adv]{0,3} converge
+    /n't\b(?:\s+\w+){0,3}\s+converg/.test(lower) || // didn't / doesn't / can't … converge
+    /\bfail(?:s|ed|ing)?\s+to\s+converg/.test(lower); // fail(ed/s) to converge
   if (negated) {
     return { vendor, pass: false, reason: text };
   }
