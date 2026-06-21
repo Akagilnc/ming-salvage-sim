@@ -101,35 +101,43 @@ export async function reconcileFamilyLedger(
     return { escalate: false, reconciled: [], merged: ledgerMerged, liveHead };
   }
 
-  // ── headless ledger (no familyHeadAfter on any entry) ──────────────────────
-  // No entry records a head. Two DISTINCT cases, split on whether the ledger has
-  // ANY entry (cmr R4: codex-s2 + agy — conflating them broke #293 back-compat):
-  //
-  //   • TRULY EMPTY (ledger.length === 0): EITHER a genuine fresh start (nothing
-  //     merged) OR the very-first-merge crash window — the merger lands the merge
-  //     on the family base THEN writes the ledger, so a crash in between leaves
-  //     the ledger EMPTY while the family base HAS moved (cmr R3: codex-s1). With
-  //     no entry at all we cannot attribute a landed merge to a child, so we fall
-  //     back to the family-base START head:
-  //       - live === start → nothing landed → genuine fresh start (clean);
-  //       - live !== start → a merge landed but was never recorded → fail-closed
-  //         escalate (decision 5 真有未落/不一致 → 升级); an unconditional clean-start
-  //         would re-run + re-merge the already-landed first child (double-merge).
-  //
-  //   • NON-EMPTY but headless (a #293 thin ledger: entries carry `status:"merged"`
-  //     but no `familyHeadAfter`): the recorded entries DO account for their
-  //     merged children, so live having moved past the base start is EXPECTED, not
-  //     a lost merge. DEGRADE SAFELY (the documented #293 back-compat, header
-  //     above): trust the recorded merged set, no补账, no escalate. Escalating here
-  //     would false-alarm every legacy thin-ledger resume (cmr R4: codex-s2 + agy).
+  // ── headless ledger (no entry records a familyHeadAfter) ───────────────────
+  // No `familyHeadAfter` baseline exists — EITHER a truly empty ledger OR a #293
+  // thin ledger (`{childIssue, status:"merged"}` without a head). In BOTH cases a
+  // merge can have landed but its `merged` write crashed (the merger lands the
+  // merge THEN writes the ledger), and the absent baseline means we cannot run
+  // the branch-②/③ consistency check (`isAncestor(baseline, liveHead)`). BUT the
+  // PER-CHILD ancestor check is SELF-SUFFICIENT — `isAncestor(childHead, liveHead)`
+  // is a direct fact about whether a child's commit is in live's history, needing
+  // no baseline (cmr R5: codex-s1 + codex-s2 + agy ×3). So we run the SAME
+  // per-child reconcile loop branch ② uses: every landed child is补账ed (NOT
+  // re-merged — no double-merge), every unaccounted-and-unlanded child is left to
+  // the wave loop. This closes the thin/empty crash-window double-merge WITHOUT
+  // false-escalating a legitimately-completed thin ledger (the R3↔R4 oscillation:
+  // neither "always escalate" nor "blindly trust" was right — RECONCILE PER CHILD
+  // is).
   if (baseline === undefined) {
-    if (ledger.length === 0) {
+    const { reconciled, merged } = await reconcileLandedChildren(
+      children,
+      ledgerMerged,
+      liveHead,
+      git,
+    );
+    // Safety net for the TRULY EMPTY ledger: if the family base moved past its
+    // start head yet NO child explains the move (nothing补账ed), a merge landed
+    // that we cannot attribute to any known child → fail-closed escalate (decision
+    // 5 真有未落/不一致 → 升级) rather than silently proceed. A non-empty thin ledger
+    // whose recorded children explain the position never trips this. (For a
+    // non-empty ledger the recorded entries account for the base position, so the
+    // start-head check is unnecessary and would false-alarm — it is gated on
+    // ledger.length === 0.)
+    if (ledger.length === 0 && reconciled.length === 0) {
       const startHead = await git.familyBaseStartHead();
       if (liveHead !== startHead) {
         return { escalate: true, reconciled: [], merged: ledgerMerged, liveHead };
       }
     }
-    return { escalate: false, reconciled: [], merged: ledgerMerged, liveHead };
+    return { escalate: false, reconciled, merged, liveHead };
   }
 
   // ── branch ② vs ③: is the live HEAD a DESCENDANT of the ledger末条? ─────────
@@ -143,28 +151,50 @@ export async function reconcileFamilyLedger(
   }
 
   // ── branch ②: reconcile each not-yet-accounted child against the live HEAD ──
+  const { reconciled, merged } = await reconcileLandedChildren(
+    children,
+    ledgerMerged,
+    liveHead,
+    git,
+  );
+  return { escalate: false, reconciled, merged, liveHead };
+}
+
+/**
+ * The per-child crash-window reconcile, shared by branch ② AND the headless-ledger
+ * path. For each child NOT already accounted in `ledgerMerged`, ask git whether its
+ * branch HEAD landed on the live family base (`isAncestor(childHead, liveHead)`):
+ *
+ *   - landed (ancestor-confirmed) → 补 a reconciled entry + count it merged (no
+ *     double-merge). The caller writes the補账条 `status:"merged"` + `event:"reconciled"`
+ *     so the unblock predicate counts it (codex R3);
+ *   - childHead/branch absent (crashed before any commit) → never merged → leave
+ *     OUT of `merged`, the wave loop reruns it (no error, agy R4);
+ *   - childHead exists but is NOT an ancestor → genuinely unmerged → rerun.
+ *
+ * The check is self-sufficient (no baseline needed), which is why the headless
+ * path can reuse it to recover a thin/empty-ledger crash window (cmr R5).
+ */
+async function reconcileLandedChildren(
+  children: ReadonlyArray<ChildSlice>,
+  ledgerMerged: ReadonlySet<number>,
+  liveHead: string,
+  git: ReconcileGit,
+): Promise<{
+  reconciled: Array<{ childIssue: number; childHead: string }>;
+  merged: Set<number>;
+}> {
   const merged = new Set(ledgerMerged);
   const reconciled: Array<{ childIssue: number; childHead: string }> = [];
   for (const child of children) {
     if (merged.has(child.issue)) continue; // already accounted (ledger-merged)
     const { exists, childHead } = await git.childHeadExists(child.issue);
-    if (!exists || childHead === undefined) {
-      // Crashed before any commit for this child → never merged → rerun from
-      // scratch (leave it OUT of `merged`). No error (agy R4).
-      continue;
-    }
+    if (!exists || childHead === undefined) continue; // crashed pre-commit → rerun
     if (await git.isAncestor(childHead, liveHead)) {
-      // Its merge LANDED before the crash →补 a reconciled entry + count merged
-      // (no double-merge). The补账条 is written status:"merged" by the caller via
-      // recordMerged({..., event:"reconciled"}) so the unblock predicate counts
-      // it (codex R3).
       reconciled.push({ childIssue: child.issue, childHead });
       merged.add(child.issue);
     }
-    // else: childHead exists but its merge did not land (not an ancestor) →
-    // genuinely unmerged → rerun (leave it OUT of `merged`). Normal, not
-    // corruption.
+    // else: head exists but not an ancestor → genuinely unmerged → rerun.
   }
-
-  return { escalate: false, reconciled, merged, liveHead };
+  return { reconciled, merged };
 }
