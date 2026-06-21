@@ -106,6 +106,19 @@ describe("reconcileFamilyLedger — branch ① ledger末条 === live HEAD", () =
     expect(plan.escalate).toBe(true);
   });
 
+  it("escalates when a HEADLESS merged tail entry has NO childHead (unverifiable) → fail-closed", async () => {
+    // Defensive branch (cmr R7: agy): a headless `status:"merged"` tail entry past
+    // the baseline that carries NO childHead cannot be re-verified against live at
+    // all. Branch ① must NOT trust it (that would risk漏合) — fail-closed escalate.
+    const ledger: FamilyLedgerEntry[] = [
+      { childIssue: 10, status: "merged", childHead: "c10", familyHeadAfter: "base1" },
+      { childIssue: 11, status: "merged", event: "reconciled" }, // headless AND no childHead
+    ];
+    const git = new FakeReconcileGit("base1", { 10: "c10" }, new Set(["c10"]));
+    const plan = await reconcileFamilyLedger(ledger, children, git);
+    expect(plan.escalate).toBe(true);
+  });
+
   it("trusts a HEADLESS reconciled tail entry when its childHead IS still an ancestor of live (normal branch ①)", async () => {
     // Same shape, but the base was NOT rewound — c11 IS still an ancestor of the
     // live base1 (the intermediate補账条's merge is intact). Branch ① re-verifies
