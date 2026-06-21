@@ -184,6 +184,30 @@ describe("reconcileFamilyLedger — thin (#293-style) entries degrade SAFELY", (
     // 10 is still counted merged (from the thin ledger entry) → not double-merged.
     expect([...plan.merged].sort()).toEqual([10]);
   });
+
+  it("a NON-empty thin ledger where an UNRECORDED child already landed →补账 it, NOT escalate, NOT double-merge", async () => {
+    // The thin-ledger crash window (cmr R5: codex-s1 + codex-s2 + agy ×3): a #293
+    // thin ledger records child 10 (status:"merged", no familyHeadAfter); then child
+    // 11's merge LANDED on the live family base (live="base2", c11 ancestor) but the
+    // process crashed before 11's ledger write. Blindly trusting ledgerMerged={10}
+    // would let the wave loop re-run + re-merge the already-landed 11 (a
+    // double-merge). The per-child reconcile must run for a headless ledger too:
+    // 11's childHead is an ancestor of live ⇒ it landed ⇒ 补账 (status:"merged" +
+    // event:"reconciled"), counted merged, NOT re-merged. The per-child
+    // isAncestor(childHead, liveHead) check is self-sufficient — it needs no
+    // baseline.
+    const ledger: FamilyLedgerEntry[] = [{ childIssue: 10, status: "merged" }];
+    const git = new FakeReconcileGit(
+      "base2",
+      { 10: "c10", 11: "c11" },
+      new Set(["base0", "c10", "c11"]),
+      "base0",
+    );
+    const plan = await reconcileFamilyLedger(ledger, children, git);
+    expect(plan.escalate).toBe(false);
+    expect(plan.reconciled).toEqual([{ childIssue: 11, childHead: "c11" }]);
+    expect([...plan.merged].sort()).toEqual([10, 11]);
+  });
 });
 
 describe("reconcileFamilyLedger — empty ledger (fresh resume)", () => {
@@ -197,20 +221,38 @@ describe("reconcileFamilyLedger — empty ledger (fresh resume)", () => {
     expect(plan.merged.size).toBe(0);
   });
 
-  it("an empty ledger but live HEAD MOVED past the base start → fail-closed escalate (first-merge crash window)", async () => {
+  it("an empty ledger + first merge LANDED (childHead ancestor of live) →补账 it, no escalate (first-merge crash recovered)", async () => {
     // The crash window can hit the VERY FIRST merge: mergeChild lands the merge
     // on the family base THEN writes the ledger. A crash in between leaves the
-    // ledger EMPTY while the family base HAS moved. Without a ledger末条 baseline
-    // we cannot attribute the landed merge to a child — but an UNCONDITIONAL
-    // clean-start would re-run + re-merge the already-landed first child (a
-    // double-merge, cmr R3: codex-s1). Fail-closed escalate instead: live HEAD
-    // (base1) != the base start (base0) with an empty ledger ⇒ a merge landed
-    // unrecorded ⇒ a human must triage (decision 5 真有未落/不一致 → 升级).
+    // ledger EMPTY while the family base HAS moved. The per-child reconcile loop
+    // runs for the headless ledger too (cmr R5), so if the landed child's head is
+    // an ancestor of live we CAN attribute the move and补账 it — NO double-merge,
+    // NO needless escalate. Here child 10 landed (c10 ancestor of live base1).
     const git = new FakeReconcileGit(
-      "base1", // live HEAD has moved...
+      "base1", // live HEAD has moved past the base start...
       { 10: "c10" },
-      new Set(["base0", "c10"]),
-      "base0", // ...past the base start head, with an EMPTY ledger
+      new Set(["base0", "c10"]), // ...because child 10's merge (c10) landed
+      "base0",
+    );
+    const plan = await reconcileFamilyLedger([], children, git);
+    expect(plan.escalate).toBe(false);
+    expect(plan.reconciled).toEqual([{ childIssue: 10, childHead: "c10" }]);
+    expect([...plan.merged].sort()).toEqual([10]);
+  });
+
+  it("an empty ledger + live MOVED but NO child explains it → fail-closed escalate (unattributable landed merge)", async () => {
+    // The base moved past its start head, but NO known child's head is an ancestor
+    // of live (here child 10's branch doesn't even exist, child 11's neither) — a
+    // merge landed that we cannot attribute to any epic child. With nothing to补账
+    // and an empty ledger, fail-closed escalate (decision 5 真有未落/不一致 → 升级)
+    // rather than silently proceed (which would let the wave loop re-run children
+    // onto a base that already contains an unknown merge). This is the safety net
+    // gated on ledger.length === 0 + nothing reconciled.
+    const git = new FakeReconcileGit(
+      "base1", // live moved past start base0...
+      {}, // ...but no child branch exists to attribute it to
+      new Set(["base0"]),
+      "base0",
     );
     const plan = await reconcileFamilyLedger([], children, git);
     expect(plan.escalate).toBe(true);
