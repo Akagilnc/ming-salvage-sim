@@ -36,6 +36,8 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { RealBackend } from "./realBackend.js";
 import { parseBlockedBy, type GhBlockedBy } from "./realBackend.js";
@@ -212,23 +214,177 @@ export interface FamilyDriverOptions {
 }
 
 /**
- * A {@link RealFamilyBackend} whose integrated-cmr seam can be INJECTED by the
- * driver (the main orchestrator pins the real `ak-cross-m-review` bridge; the e2e
- * pins a controlled one). Everything else is the real implementation.
+ * A {@link RealFamilyBackend} whose integrated-cmr 承重闸 is a REAL autonomous
+ * 3-leg reviewer-CLI orchestration (#291 last gap).
+ *
+ * The integrated cmr is ship-pre-grade: it must catch the 跨片接缝 (field-name /
+ * type / 阈值口径 / 组合 e2e) that per-slice cmr cannot see. `ak-cross-m-review`
+ * is a Claude *skill* orchestrated through the agent harness, NOT stably invocable
+ * from inside this runtime — so the thin封装 that IS right here is to spawn the
+ * three reviewer CLIs DIRECTLY (`claude` + `codex` + `agy`, 1+1+1), each reviewing
+ * the family base diff independently, and parse their convergence verdicts.
+ *
+ * KEY: the parse is over PROSE, NOT a sentinel-JSON format gate. codex is a prose
+ * reviewer; demanding a sentinel-JSON envelope would synthesise an empty verdict
+ * and throw away the strongest leg (the `codex-no-sentinel-is-prose-not-empty`
+ * lesson). So each leg's stdout is read as prose and classified by
+ * {@link parseReviewerVerdict}.
+ *
+ * DEGRADATION: a leg whose CLI exits non-zero / emits empty output / is auth/quota
+ * down (agy is commonly down on this host) is FLAGGED missing and the verdict is
+ * judged from the remaining legs — a missing reviewer is NOT a finding (the cmr
+ * 降级链). This is ONE pass: a non-convergence is handed to the spine's escalate
+ * seam, not looped here.
+ *
+ * The driver may still INJECT a `cmrImpl` (the e2e pins a controlled one); when
+ * absent, the real 3-leg path runs.
  */
-class DriverFamilyBackend extends RealFamilyBackend {
+export class DriverFamilyBackend extends RealFamilyBackend {
   constructor(
     opts: ConstructorParameters<typeof RealFamilyBackend>[0],
     private readonly cmrImpl?: (req: IntegratedCmrRequest) => Promise<IntegratedCmrResult>,
   ) {
     super(opts);
   }
+
+  /**
+   * The integrated cmr 承重闸: pin the family base diff, fan it out to the three
+   * reviewer legs, and aggregate their prose verdicts (all pass → converged; any
+   * findings → red + reason; a down leg degrades; never a fabricated pass).
+   */
   protected override async runCmr(req: IntegratedCmrRequest): Promise<IntegratedCmrResult> {
+    // An injected impl (the e2e's controlled cmr) wins — the assembly stays
+    // exercisable without spawning the real squad.
     if (this.cmrImpl !== undefined) return this.cmrImpl(req);
-    // No injected cmr ⇒ the real `ak-cross-m-review` skill-bridge is unset; defer
-    // to the base seam, which throws a precise "must be pinned by the driver /
-    // manual-smoke path" message (never a fabricated convergence).
-    return super.runCmr(req);
+
+    // 1. Pin the family base diff vs the PR target (`git diff <base>...<familyBase>`,
+    //    the symmetric-difference form: the commits on the family base since it
+    //    diverged from the target). This is what every leg reviews.
+    const diff = this.familyBaseDiff(req.familyBase);
+
+    // 2. Fan the SAME diff out to all three reviewer legs concurrently, each through
+    //    the protected `runReviewer` seam (fixtured in unit tests; the real CLIs on
+    //    the driver / manual-smoke path). A leg that throws/dies is caught into a
+    //    down output (degrade, never crash the whole gate).
+    const vendors: ReviewerVendor[] = ["codex", "claude", "agy"];
+    const outputs = await Promise.all(
+      vendors.map(async (vendor): Promise<ReviewerLeg> => {
+        let out: ReviewerOutput;
+        try {
+          out = await this.runReviewer(vendor, diff);
+        } catch (err) {
+          out = { ok: false, reason: err instanceof Error ? err.message : String(err) };
+        }
+        return reviewerLegFromOutput(vendor, out);
+      }),
+    );
+
+    // 3. Aggregate the three prose verdicts into the load-bearing converged/red gate.
+    return aggregateCmr(outputs);
+  }
+
+  /**
+   * The family base diff every reviewer leg reviews — `git diff <base>...<familyBase>`
+   * (the symmetric-difference: the commits the family base added since it diverged
+   * from the PR target). `protected` so a unit test pins it without a real repo.
+   */
+  protected familyBaseDiff(familyBase: string): string {
+    return this.sh("git", ["diff", `${this.opts.base}...${familyBase}`]);
+  }
+
+  /**
+   * Spawn ONE reviewer CLI over the family base diff and return its prose output.
+   * `protected` so a unit test fixtures the prose without a real claude/codex/agy
+   * (the real CLIs only run on the driver / manual-smoke path). The三个 invocations
+   * mirror the per-slice cmr reviewer legs:
+   *   - codex (承重, xhigh): `codex exec --ephemeral -c model_reasoning_effort=xhigh
+   *     --model gpt-5.5 -o <file>` — read the last-message散文 off `<file>`;
+   *   - claude:             `claude -p --model <最强> --output-format json` — read
+   *     the `.result`散文 off the JSON;
+   *   - agy:                `agy --sandbox --print '' --print-timeout 15m --log-file
+   *     <log>` — read the printed散文.
+   * Each prompt = "review THIS family base diff, 专抓跨片接缝, review only, 收敛就出
+   * `CMR-VERDICT: converged`". A non-zero exit / empty output / auth-quota death
+   * returns `{ok:false}` so the leg degrades (a missing reviewer ≠ a finding).
+   */
+  protected async runReviewer(vendor: ReviewerVendor, diff: string): Promise<ReviewerOutput> {
+    const prompt = reviewerPrompt(diff);
+    try {
+      const prose = await this.spawnReviewer(vendor, prompt);
+      return { ok: true, prose };
+    } catch (err) {
+      // CLI non-zero exit / spawn failure / auth-quota death ⇒ this leg is down
+      // (degrade, never a finding). Carry the reason for the audit trail.
+      return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /**
+   * Spawn the concrete reviewer CLI for one vendor and return its prose verdict.
+   * `protected` so the wiring is overridable; the default forms mirror the
+   * per-slice cmr legs. Reads the vendor's natural prose sink (codex's `-o`
+   * last-message file, claude's `.result`, agy's printed stdout).
+   */
+  protected async spawnReviewer(vendor: ReviewerVendor, prompt: string): Promise<string> {
+    const repo = this.opts.workingRepo;
+    if (vendor === "codex") {
+      // codex (承重, xhigh): the prompt is piped in; the last-message散文 is written
+      // to `-o <file>` (the clean output; logs go to stderr).
+      const outFile = join(this.opts.ledgerDir, `cmr-codex-${Date.now()}.txt`);
+      this.shStdin(
+        "codex",
+        [
+          "exec",
+          "--ephemeral",
+          "--skip-git-repo-check",
+          "-c",
+          "model_reasoning_effort=xhigh",
+          "--model",
+          "gpt-5.5",
+          "-o",
+          outFile,
+        ],
+        prompt,
+        repo,
+      );
+      return readFileSync(outFile, "utf8").trim();
+    }
+    if (vendor === "claude") {
+      // claude: `-p --output-format json`; the散文 is the `.result` field.
+      const raw = this.shStdin(
+        "claude",
+        ["-p", "--model", CMR_CLAUDE_MODEL, "--output-format", "json"],
+        prompt,
+        repo,
+      );
+      const parsed = JSON.parse(raw) as { result?: unknown };
+      return typeof parsed.result === "string" ? parsed.result.trim() : "";
+    }
+    // agy: `--sandbox --print '' --print-timeout 15m --log-file <log>`; the散文 is
+    // the printed stdout (logs go to the log file).
+    const logFile = join(this.opts.ledgerDir, `cmr-agy-${Date.now()}.log`);
+    return this.shStdin(
+      "agy",
+      ["--sandbox", "--print", "", "--print-timeout", "15m", "--log-file", logFile],
+      prompt,
+      repo,
+    ).trim();
+  }
+
+  /**
+   * Run a host command feeding `stdin`, returning trimmed stdout. The reviewer
+   * prompt (which carries the whole diff) goes on STDIN, not argv — too large /
+   * unsafe for an argument. `protected` so a unit test intercepts the spawn (the
+   * fixtured backend overrides `runReviewer`/`spawnReviewer` above this层 anyway).
+   */
+  protected shStdin(file: string, args: string[], input: string, cwd?: string): string {
+    return execFileSync(file, args, {
+      cwd: cwd ?? this.opts.workingRepo,
+      input,
+      stdio: ["pipe", "pipe", "pipe"],
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    }).trim();
   }
 }
 
@@ -355,4 +511,152 @@ function branchExists(workingRepo: string, branch: string, sh: Sh): boolean {
   } catch {
     return false;
   }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// integrated cmr 承重闸 — the 3-leg reviewer-CLI orchestration (#291 last gap)
+// ════════════════════════════════════════════════════════════════════════════
+
+/** The reviewer the integrated cmr spawns (one CLI per vendor, 1+1+1). */
+export type ReviewerVendor = "codex" | "claude" | "agy";
+
+/** The claude reviewer leg runs on the strongest reviewer model. */
+const CMR_CLAUDE_MODEL = "claude-opus-4-8";
+
+/**
+ * One reviewer CLI's raw outcome. `ok:false` ⇒ the CLI died (non-zero exit /
+ * spawn failure / auth-quota death) — the leg degrades, it is NOT a finding.
+ */
+export interface ReviewerOutput {
+  /** Did the reviewer CLI run and produce output? `false` ⇒ down (degrade). */
+  readonly ok: boolean;
+  /** The reviewer's PROSE verdict (read off its natural sink). */
+  readonly prose?: string;
+  /** Why the leg is down (a CLI error message), for the audit trail. */
+  readonly reason?: string;
+}
+
+/** One reviewer leg's classified verdict after parsing its prose. */
+export interface ReviewerLeg {
+  readonly vendor: ReviewerVendor;
+  /**
+   * - `"pass"`     — the leg converged / found nothing (counts toward convergence);
+   * - `"findings"` — the leg flagged a cross-slice seam issue (blocks convergence);
+   * - `"down"`     — the CLI did not run / emitted nothing (degrade, never a finding).
+   */
+  readonly status: "pass" | "findings" | "down";
+  /** The finding prose (on `"findings"`) or the down reason (on `"down"`). */
+  readonly reason?: string;
+}
+
+/** The integrated cmr reviewer prompt for one family base diff. */
+export function reviewerPrompt(diff: string): string {
+  return (
+    "You are an independent integrated cross-model reviewer (ship-pre 承重闸) for a " +
+    "FAMILY base branch — the accumulation of several reviewed vertical-slice child " +
+    "branches merged together.\n\n" +
+    "REVIEW ONLY — do not edit any file. Focus on the CROSS-SLICE SEAMS that " +
+    "per-slice review cannot see: field-name / type mismatches between slices, " +
+    "inconsistent thresholds / units, contract drift, and behaviour that only " +
+    "emerges once the slices are combined (e2e).\n\n" +
+    "When you are done, end with EXACTLY ONE verdict line:\n" +
+    "  `CMR-VERDICT: converged`      — if you found NO blocking cross-slice issue;\n" +
+    "  `CMR-VERDICT: not converged`  — followed by your findings, if you did.\n\n" +
+    "Here is the family base diff to review:\n\n" +
+    "```diff\n" +
+    diff +
+    "\n```\n"
+  );
+}
+
+/**
+ * Classify ONE reviewer leg from its raw CLI output. A down CLI (`ok:false`) or an
+ * empty-prose run degrades to `"down"` (a missing reviewer is NEVER a finding —
+ * the cmr 降级链); otherwise the prose is read by {@link parseReviewerVerdict}.
+ * Pure so the degrade vs parse split is unit-tested without a CLI.
+ */
+export function reviewerLegFromOutput(vendor: ReviewerVendor, out: ReviewerOutput): ReviewerLeg {
+  if (!out.ok || out.prose === undefined || out.prose.trim().length === 0) {
+    return { vendor, status: "down", reason: out.reason ?? "reviewer produced no output" };
+  }
+  const v = parseReviewerVerdict(vendor, out.prose);
+  return v.pass
+    ? { vendor, status: "pass" }
+    : { vendor, status: "findings", reason: v.reason };
+}
+
+/** One reviewer leg's parsed prose verdict. */
+export interface ReviewerVerdict {
+  readonly vendor: ReviewerVendor;
+  /** Did the leg converge (no blocking finding)? */
+  readonly pass: boolean;
+  /** The finding prose when `pass` is false. */
+  readonly reason?: string;
+}
+
+/**
+ * Parse a reviewer's PROSE verdict (NOT a sentinel-JSON gate — codex is a prose
+ * reviewer; demanding sentinel-JSON would throw the strongest leg away). A leg is
+ * a PASS iff it explicitly converged: the `CMR-VERDICT: converged` sentinel, or —
+ * absent the sentinel — a "converged" / "no findings" signal that is NOT negated.
+ * An explicit `not converged` / `no[t] converged` always wins over an incidental
+ * "converged" substring. Pure so the verdict口径 is unit-tested without a CLI.
+ */
+export function parseReviewerVerdict(vendor: ReviewerVendor, prose: string): ReviewerVerdict {
+  const text = prose.trim();
+  const lower = text.toLowerCase();
+  // The explicit sentinel is authoritative when present.
+  if (/cmr-verdict:\s*not\s+converged/.test(lower)) {
+    return { vendor, pass: false, reason: text };
+  }
+  if (/cmr-verdict:\s*converged/.test(lower)) {
+    return { vendor, pass: true };
+  }
+  // No sentinel ⇒ read the prose. An explicit negation ("not converged",
+  // "did not converge") is a finding, even if "converged" appears as a substring.
+  const negated = /\b(not|n't|no)\s+converge/.test(lower) || /did\s+not\s+converge/.test(lower);
+  if (negated) {
+    return { vendor, pass: false, reason: text };
+  }
+  if (/\bconverged\b/.test(lower) || /\bno findings?\b/.test(lower)) {
+    return { vendor, pass: true };
+  }
+  // Neither converged nor an explicit no-findings signal ⇒ treat the prose as
+  // findings (fail-closed: an ambiguous reviewer is not waved through).
+  return { vendor, pass: false, reason: text };
+}
+
+/**
+ * Aggregate the three reviewer legs into the load-bearing converged/red gate
+ * (decision 3⑥). RULES:
+ *   - ANY leg with `"findings"` ⇒ NOT converged, reason = the findings legs joined;
+ *   - else if at least one leg `"pass"`ed (the rest down) ⇒ converged (degrade: a
+ *     missing reviewer is not a finding);
+ *   - else (ALL legs down) ⇒ NOT converged FAIL-CLOSED — no reviewer ran, so the
+ *     gate must never fabricate a pass.
+ * One pass only: a non-convergence is handed to the spine's escalate seam, not
+ * looped here. Pure so the口径 is unit-tested without spawning the squad.
+ */
+export function aggregateCmr(legs: ReadonlyArray<ReviewerLeg>): IntegratedCmrResult {
+  const findings = legs.filter((l) => l.status === "findings");
+  if (findings.length > 0) {
+    const reason = findings
+      .map((l) => `[${l.vendor}] ${l.reason ?? "findings"}`)
+      .join("\n\n");
+    return { converged: false, reason };
+  }
+  const passed = legs.filter((l) => l.status === "pass");
+  if (passed.length > 0) {
+    // At least one reviewer ran and converged; any down legs degraded (the
+    // 降级链). The remaining-leg verdict converges.
+    return { converged: true };
+  }
+  // Every leg is down — no reviewer ran. Fail-closed: never a fabricated pass.
+  const downReasons = legs
+    .map((l) => `[${l.vendor}] ${l.reason ?? "down"}`)
+    .join("; ");
+  return {
+    converged: false,
+    reason: `integrated cmr could not run: all reviewer legs were down (no reviewer ran) — ${downReasons}`,
+  };
 }
