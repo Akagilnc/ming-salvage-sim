@@ -1,0 +1,226 @@
+/**
+ * #296 — the verify-cmr hook body driven through the REAL spine (no injected
+ * `verifyCmr`), against a capable `FamilyBackend` (ADR 0022 decision 3④/⑤/⑥/4).
+ *
+ * `runner-verify-cmr.test.ts` (#293) proves the spine WIRING with an injected
+ * fake hook. Here the spine uses the DEFAULT `runVerifyCmr` module export (#296's
+ * filled body) and a `FamilyBackend` that supplies the verify/cmr/PR/abort/
+ * escalate capabilities — so the three acceptance criteria are proven end-to-end
+ * through the actual family loop, not just the hook in isolation:
+ *
+ *   1. a red WAVE verify aborts before the next wave + writes `aborted` + leaves
+ *      the run observably `verify_failed` (NOT a false success);
+ *   2. a NOT-converged integrated cmr at the final barrier escalates续跑 (#298) +
+ *      `verify_failed`;
+ *   3. all green ⇒ the family PR is OPENED (止于 PR) and the run is `success` —
+ *      and the spine never merges to main (no merge-to-main call exists).
+ *
+ * Zero container: the single-slice child runs on a fake Backend, the family
+ * verify/cmr/PR all on a scriptable fake FamilyBackend — no real codex / push.
+ */
+
+import { describe, expect, it } from "vitest";
+import { runFamily } from "../../src/family/runner.js";
+import type {
+  Backend,
+  IssueMeta,
+  IssueSnapshot,
+  PersistentLedgerEntry,
+  StepOutput,
+  StepSpec,
+  WorktreeHandle,
+} from "../../src/types.js";
+import type {
+  FamilyAbortedEvent,
+  FamilyBackend,
+  FamilyEpic,
+  FamilyEscalation,
+  FamilyLedgerEntry,
+  FamilyVerifyRequest,
+  FamilyVerifyResult,
+  IntegratedCmrRequest,
+  IntegratedCmrResult,
+  MergeRequest,
+  OpenFamilyPrRequest,
+  OpenFamilyPrResult,
+} from "../../src/family/types.js";
+
+/** A single-slice Backend that drives every child to S8(success). */
+class ChildBackend implements Backend {
+  async findResumeState(): Promise<undefined> {
+    return undefined;
+  }
+  async cleanResidue(): Promise<void> {}
+  async resumeSession(spec: StepSpec): Promise<StepOutput> {
+    return this.runStep(spec);
+  }
+  async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
+    return {
+      number: issueNumber,
+      isReadyForAgent: true,
+      hasAgentBrief: true,
+      hasSubIssues: false,
+      openBlockedBy: [],
+    };
+  }
+  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
+    return { number: issueNumber, body: "b", comments: [], agentBrief: "## Agent Brief" };
+  }
+  async prepareWorktree(issueNumber: number, base: string): Promise<WorktreeHandle> {
+    return { branch: `feat/child-${issueNumber}`, base, path: `/wt/${issueNumber}` };
+  }
+  async writeSnapshot(): Promise<void> {}
+  async runStep(spec: StepSpec): Promise<StepOutput> {
+    if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
+    return { kind: "reviewer", findings: [] };
+  }
+  async push(): Promise<void> {}
+  async writeLedger(_e: PersistentLedgerEntry, _d: string): Promise<void> {}
+}
+
+/** A family backend with the #296 verify/cmr/PR/abort/escalate capabilities. */
+class CapableFamilyBackend implements FamilyBackend {
+  readonly ledger: FamilyLedgerEntry[] = [];
+  readonly merges: MergeRequest[] = [];
+  readonly verifyCalls: FamilyVerifyRequest[] = [];
+  readonly cmrCalls: IntegratedCmrRequest[] = [];
+  readonly aborted: FamilyAbortedEvent[] = [];
+  readonly escalations: FamilyEscalation[] = [];
+  readonly prCalls: OpenFamilyPrRequest[] = [];
+
+  constructor(
+    private readonly script: {
+      verify?: (req: FamilyVerifyRequest) => FamilyVerifyResult;
+      cmr?: (req: IntegratedCmrRequest) => IntegratedCmrResult;
+    } = {},
+  ) {}
+
+  async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
+    this.merges.push(child);
+    return { familyHead: `+${child.childIssue}` };
+  }
+  async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+    this.ledger.push(entry);
+  }
+  async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+    return this.ledger;
+  }
+  async runFamilyVerify(req: FamilyVerifyRequest): Promise<FamilyVerifyResult> {
+    this.verifyCalls.push(req);
+    return this.script.verify?.(req) ?? { ok: true };
+  }
+  async runIntegratedCmr(req: IntegratedCmrRequest): Promise<IntegratedCmrResult> {
+    this.cmrCalls.push(req);
+    return this.script.cmr?.(req) ?? { converged: true };
+  }
+  async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
+    this.prCalls.push(req);
+    return { url: `pr://${req.familyBase}` };
+  }
+  async recordAborted(event: FamilyAbortedEvent): Promise<void> {
+    this.aborted.push(event);
+  }
+  async escalateFamily(esc: FamilyEscalation): Promise<void> {
+    this.escalations.push(esc);
+  }
+}
+
+const TWO_WAVES: FamilyEpic = {
+  issue: 291,
+  children: [
+    { issue: 294, blockedBy: [] },
+    { issue: 296, blockedBy: [294] },
+  ],
+};
+
+function epicWith(...issues: number[]): FamilyEpic {
+  return { issue: 291, children: issues.map((issue) => ({ issue, blockedBy: [] })) };
+}
+
+describe("#296 spine integration — acceptance 1: per-wave fail-fast verify", () => {
+  it("a RED wave verify aborts before the next wave, writes `aborted`, leaves the run verify_failed", async () => {
+    // Wave 1 = {294}; wave 2 = {296} (blocked_by 294). Verify fails on the WAVE
+    // phase → after wave 1 merges 294, the wave barrier is red → no wave 2.
+    const backend = new CapableFamilyBackend({
+      verify: (req) =>
+        req.phase === "wave"
+          ? { ok: false, errorPackage: { reason: "tsc: TS2345 cross-slice type" } }
+          : { ok: true },
+    });
+    const result = await runFamily({
+      epic: TWO_WAVES,
+      familyBackend: backend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/291-base",
+      // NO verifyCmr injection → the spine uses #296's real runVerifyCmr.
+    });
+    // Wave 1 merged 294; the red wave verify aborted before wave 2 (296 never ran).
+    expect(backend.merges.map((m) => m.childIssue)).toEqual([294]);
+    expect(backend.verifyCalls.map((v) => v.phase)).toEqual(["wave"]); // no "final"
+    // `aborted` event written (decision 3④/5), carrying the error package.
+    expect(backend.aborted).toHaveLength(1);
+    expect(backend.aborted[0]?.errorPackage.reason).toContain("TS2345");
+    // Observably verify_failed at the wave phase — NOT a false success.
+    expect(result.status).toBe("verify_failed");
+    expect(result.failedPhase).toBe("wave");
+    const byIssue = new Map(result.children.map((c) => [c.issue, c.status]));
+    expect(byIssue.get(294)).toBe("merged");
+    expect(byIssue.get(296)).toBe("skipped");
+    // No PR opened on a red run.
+    expect(backend.prCalls).toEqual([]);
+  });
+});
+
+describe("#296 spine integration — acceptance 2: integrated cmr gate → escalate续跑", () => {
+  it("green verify but NOT-converged final cmr → escalate (#298), verify_failed, NO PR", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({
+        converged: false,
+        reason: "阈值口径 mismatch: slice A clamps at 100, slice B at 99",
+      }),
+    });
+    const result = await runFamily({
+      epic: epicWith(294, 295),
+      familyBackend: backend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/291-base",
+    });
+    // Both children merged; wave verify green; final verify green; cmr ran + red.
+    expect(backend.merges.map((m) => m.childIssue)).toEqual([294, 295]);
+    expect(backend.cmrCalls).toEqual([{ familyBase: "family/291-base" }]);
+    // Escalate续跑 (#298) carrying the cross-slice-seam reason; NO PR.
+    expect(backend.escalations).toHaveLength(1);
+    expect(backend.escalations[0]?.reason).toContain("阈值口径");
+    expect(backend.prCalls).toEqual([]);
+    // Observably verify_failed at the final phase.
+    expect(result.status).toBe("verify_failed");
+    expect(result.failedPhase).toBe("final");
+  });
+});
+
+describe("#296 spine integration — acceptance 3: all green → open PR, stop, no merge-to-main", () => {
+  it("green verify + converged cmr ⇒ the family PR is opened and the run is success (止于 PR)", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({ converged: true }),
+    });
+    const result = await runFamily({
+      epic: epicWith(294, 295, 298),
+      familyBackend: backend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/291-base",
+    });
+    // One wave (all independent): wave verify (green) then final verify (green) →
+    // cmr (converged) → PR opened ONCE from the family base.
+    expect(backend.verifyCalls.map((v) => v.phase)).toEqual(["wave", "final"]);
+    expect(backend.cmrCalls).toEqual([{ familyBase: "family/291-base" }]);
+    expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
+    // 止于 PR: a PR was opened, but the run STOPS here — every child merged into the
+    // family base, status success, no escalate. (No merge-to-main seam exists on
+    // FamilyBackend at all — the family layer cannot merge to main by construction.)
+    expect(result.status).toBe("success");
+    expect(result.children.every((c) => c.status === "merged")).toBe(true);
+    expect(backend.escalations).toEqual([]);
+  });
+});
