@@ -1191,7 +1191,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
       case "S1": {
         // S1 load_context — runner action: full snapshot → resident worktree
-        // (base=main) → write snapshot in (clean-room).
+        // (base=`sliceBase`: "main" standalone, the family base in family mode —
+        // ADR 0022 decision 7) → write snapshot in (clean-room).
         //
         // integ-cmr base r2 (C): the first two S1 sub-steps run BEFORE the
         // worktree exists, so there is no sibling stateDir yet — their error
