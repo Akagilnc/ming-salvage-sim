@@ -106,6 +106,62 @@ export interface FamilyLedgerEntry {
   readonly familyHeadAfter?: string;
 }
 
+// ─────────────────────────── reconcile git seam ───────────────────────────
+
+/**
+ * The git seam crash-window reconcile (ADR 0022 decision 5, #298) reaches git
+ * through — injected so {@link reconcileFamilyLedger} is verifiable zero-container
+ * (a fake scripts live HEAD / childHead existence / ancestor results; no real git,
+ * no killed process). The RealBackend implements it with `git rev-parse` +
+ * `git rev-parse --verify <branch>` + `git merge-base --is-ancestor`.
+ */
+export interface ReconcileGit {
+  /** The live family-base HEAD commit SHA right now (`git rev-parse <familyBase>`). */
+  liveFamilyHead(): Promise<string>;
+  /**
+   * Whether a child's branch/HEAD exists in the clone, and if so its HEAD SHA.
+   * `exists:false` ⇒ the run crashed before that child produced ANY commit
+   * (branch absent) → reconcile treats it as never-merged, reruns it (no error).
+   */
+  childHeadExists(
+    childIssue: number,
+    childBranch?: string,
+  ): Promise<{ exists: boolean; childHead?: string }>;
+  /**
+   * `git merge-base --is-ancestor <childHead> <liveHead>` — true iff the child's
+   * merge ALREADY landed on the live family base (so reconcile补账 instead of
+   * re-merging — no double-merge).
+   */
+  isAncestor(childHead: string, liveHead: string): Promise<boolean>;
+}
+
+/**
+ * The plan {@link reconcileFamilyLedger} produces from the ledger + live HEAD
+ * (ADR 0022 decision 5). The spine acts on it BEFORE continuing the wave loop.
+ */
+export interface ReconcilePlan {
+  /**
+   * Fail-closed (branch ③): the live HEAD is inconsistent with the ledger末条
+   * (diverged / behind / unrelated — neither equal nor a descendant). The spine
+   * must escalate (return to the caller for a human) rather than guess.
+   */
+  readonly escalate: boolean;
+  /**
+   * The crash-window补账条 to append (branch ②): children whose merge LANDED
+   * (ancestor-confirmed) but whose `merged` write crashed. Each is appended as a
+   * `status:"merged"` + `event:"reconciled"` ledger entry (so the unblock
+   * predicate counts it — codex R3) and is NOT re-merged (no double-merge).
+   */
+  readonly reconciled: ReadonlyArray<{ childIssue: number; childHead: string }>;
+  /**
+   * The full merged set AFTER reconcile = ledger-merged ∪ reconciled. The wave
+   * loop selects from this, so an already-merged / reconciled child is skipped
+   * (no double-merge) and a never-merged child (childHead absent / not an
+   * ancestor) is re-run (no漏合).
+   */
+  readonly merged: ReadonlySet<number>;
+}
+
 // ─────────────────────────── family backend seam ───────────────────────────
 
 /**
