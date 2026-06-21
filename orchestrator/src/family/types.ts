@@ -104,6 +104,17 @@ export interface FamilyLedgerEntry {
   readonly familyHeadBefore?: string;
   /** The family base HEAD AFTER this child's merge (or, for `aborted`, at failure). */
   readonly familyHeadAfter?: string;
+  /**
+   * Did this child's merge get LLM-resolved (the `resolving-merge-conflicts` soul
+   * ran, #295) rather than land as a clean deterministic merge? Forwarded by the
+   * merger from {@link MergeResult.conflictResolvedByLlm} onto the DURABLE ledger
+   * entry (#291 缺口 1), so the integrated cmr 承重闸 — which after a context
+   * compaction reads only the ledger, not in-memory state — can see WHICH children
+   * a machine touched its merge of (decision 3②/3⑥ "不静默吞"). Absent/`false` ⇒ a
+   * clean deterministic merge. Only set on `status:"merged"` live-merge entries; a
+   * reconcile補账条 / `aborted` event omits it.
+   */
+  readonly conflictResolvedByLlm?: boolean;
 }
 
 // ─────────────────────────── reconcile git seam ───────────────────────────
@@ -338,6 +349,16 @@ export interface FamilyVerifyErrorPackage {
 export interface IntegratedCmrRequest {
   /** The merged family base branch the integrated cmr reviews. */
   readonly familyBase: string;
+  /**
+   * The child issue numbers whose merge into the family base was LLM-resolved
+   * (`conflictResolvedByLlm:true` in the family ledger, #295). The spine derives
+   * this from the durable ledger BEFORE the final-phase integrated cmr (#291 缺口
+   * 1) so the 承机闸 can focus its cross-slice review on the merges a machine
+   * touched ("不静默吞" — an LLM-resolved merge is never silently shipped). OMITTED
+   * (not `[]`) when no child was LLM-resolved, so a conflict-free run's request is
+   * the back-compatible `{familyBase}`-only shape.
+   */
+  readonly llmResolvedChildren?: readonly number[];
 }
 
 /** The integrated-cmr outcome (the load-bearing cross-slice-seam gate). */

@@ -212,13 +212,16 @@ describe("merger conflict fallback — conflicting path routes to the LLM resolv
     // Ledger written ONLY AFTER the resolved merge landed (decision 5). #298
     // full-schema write forwards the POST-resolve head (familyHeadAfter =
     // result.familyHead = "resolved-11"), proving the #295 conflict path and
-    // #298 ledger field set compose correctly.
+    // #298 ledger field set compose correctly. #291 缺口 1: the LLM-resolved signal
+    // is also forwarded onto the DURABLE entry (`conflictResolvedByLlm:true`) so the
+    // integrated cmr 承重闸 can read it off the ledger after a context compaction.
     expect(backend.appended).toEqual([
       {
         childIssue: 11,
         childBranch: "feat/child-11",
         status: "merged",
         familyHeadAfter: "resolved-11",
+        conflictResolvedByLlm: true,
       },
     ]);
   });

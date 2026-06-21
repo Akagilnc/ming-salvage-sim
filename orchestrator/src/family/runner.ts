@@ -109,6 +109,29 @@ async function currentMerged(
 }
 
 /**
+ * Derive the child issue numbers whose merge into the family base was LLM-resolved
+ * (#291 缺口 1), read from the DURABLE family ledger — the only truth that survives
+ * a context compaction. The spine hands this to the final-phase integrated cmr 承重闸
+ * so it can focus its cross-slice review on the merges a machine touched
+ * ("不静默吞"). Reads `conflictResolvedByLlm===true` `merged` entries; a clean merge
+ * / reconcile補账条 / aborted event is excluded. In ledger write order, deduped.
+ */
+async function llmResolvedChildren(
+  familyBackend: FamilyBackend,
+): Promise<readonly number[]> {
+  const ledger = await familyBackend.readFamilyLedger();
+  const seen = new Set<number>();
+  const out: number[] = [];
+  for (const e of ledger) {
+    if (e.status === "merged" && e.conflictResolvedByLlm === true && !seen.has(e.childIssue)) {
+      seen.add(e.childIssue);
+      out.push(e.childIssue);
+    }
+  }
+  return out;
+}
+
+/**
  * The family spine entry point (#293).
  *
  * @returns the family base branch + its HEAD after all merges + per-child
@@ -352,6 +375,12 @@ export async function runFamily(
     phase: "final",
     familyBase,
     familyBackend,
+    // #291 缺口 1: derive the LLM-resolved children from the durable ledger and
+    // hand them to the final-phase integrated cmr 承重闸 (via runVerifyCmr →
+    // IntegratedCmrRequest.llmResolvedChildren), so it sees which merges a machine
+    // touched. The wave barrier is verify-only (no cmr), so only the final call
+    // needs it; an empty list ⇒ the cmr request omits the field.
+    llmResolvedChildren: await llmResolvedChildren(familyBackend),
   });
   if (!finalVerify.ok) {
     // #296's failing integrated cmr lands here. #293 no-op never trips it. The
