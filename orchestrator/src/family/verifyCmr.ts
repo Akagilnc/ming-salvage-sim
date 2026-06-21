@@ -40,6 +40,7 @@
  * 5 "字段级 JSON 留 TDD"); #296 only CALLS those seams. THAT is the seam boundary.
  */
 
+import { recordAborted as recordDurableAbort } from "./ledger.js";
 import type {
   FamilyBackend,
   FamilyVerifyResult,
@@ -83,6 +84,15 @@ export interface VerifyCmrInput {
    * resolution this run; the cmr request omits the field (the back-compat shape).
    */
   readonly llmResolvedChildren?: readonly number[];
+  /**
+   * The family base HEAD at the time the hook runs (#291 缺口 2), supplied by the
+   * spine. On a RED barrier the hook forwards it onto BOTH the in-memory seam
+   * {@link FamilyAbortedEvent.familyHeadAfter} AND the PHASE-LEVEL durable `aborted`
+   * ledger entry's `familyHeadAfter`, so reconcile's "read末条 familyHeadAfter"
+   * baseline covers an abort. Absent ⇒ no merge landed yet (a fresh run's first
+   * barrier); the durable entry omits the head.
+   */
+  readonly familyHeadAfter?: string;
 }
 
 /** The verify-cmr hook result. */
@@ -132,21 +142,28 @@ const INCOMPLETE_GATE: VerifyCmrResult = { ok: false, ran: true };
 export async function runVerifyCmr(
   input: VerifyCmrInput,
 ): Promise<VerifyCmrResult> {
-  const { phase, familyBase, familyBackend, llmResolvedChildren } = input;
+  const { phase, familyBase, familyBackend, llmResolvedChildren, familyHeadAfter } =
+    input;
 
   // No verify capability ⇒ the #293 no-op path (nothing to verify; do not pretend).
   if (familyBackend.runFamilyVerify === undefined) return NOOP;
 
   // ── verify (both phases; "final" runs the FULL suite — a RealBackend scopes it
-  //    off `phase`). RED ⇒ fail-fast: record the `aborted` event (#298 seam) so the
-  //    failure is not silently dropped, and return `{ok:false}` (decision 3④/5). ──
+  //    off `phase`). RED ⇒ fail-fast: record the `aborted` event so the failure is
+  //    not silently dropped, and return `{ok:false}` (decision 3④/5). ──
   const verify: FamilyVerifyResult = await familyBackend.runFamilyVerify({ phase, familyBase });
   if (!verify.ok) {
+    const reason = verify.errorPackage?.reason ?? "family verify failed";
+    // (a) in-memory seam (back-compat, #296) — enriched with the abort-time head.
     await familyBackend.recordAborted?.({
       phase,
       familyBase,
-      errorPackage: verify.errorPackage ?? { reason: "family verify failed" },
+      errorPackage: verify.errorPackage ?? { reason },
+      familyHeadAfter,
     });
+    // (b) PHASE-LEVEL DURABLE ledger entry (#291 缺口 2): so the abort reaches the
+    //     ledger reconcile reads末条 familyHeadAfter from, not only the seam array.
+    await recordDurableAbort(familyBackend, { phase, reason, familyHeadAfter });
     return { ok: false, ran: true };
   }
 

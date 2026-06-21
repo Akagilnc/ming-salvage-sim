@@ -123,7 +123,12 @@ async function llmResolvedChildren(
   const seen = new Set<number>();
   const out: number[] = [];
   for (const e of ledger) {
-    if (e.status === "merged" && e.conflictResolvedByLlm === true && !seen.has(e.childIssue)) {
+    if (
+      e.status === "merged" &&
+      e.conflictResolvedByLlm === true &&
+      e.childIssue !== undefined &&
+      !seen.has(e.childIssue)
+    ) {
       seen.add(e.childIssue);
       out.push(e.childIssue);
     }
@@ -356,6 +361,11 @@ export async function runFamily(
       phase: "wave",
       familyBase,
       familyBackend,
+      // #291 缺口 2: hand the abort-time family head to the hook so a RED wave verify
+      // records it on the PHASE-LEVEL durable aborted entry's `familyHeadAfter`
+      // (reconcile's baseline read covers the abort). `familyHead` is the head after
+      // this wave's last merge — undefined only if nothing merged this run.
+      familyHeadAfter: familyHead,
     });
     if (!waveVerify.ok) {
       // Fail-fast (decision 3④): do not排下一波. #296's red wave lands here; the
@@ -381,6 +391,8 @@ export async function runFamily(
     // touched. The wave barrier is verify-only (no cmr), so only the final call
     // needs it; an empty list ⇒ the cmr request omits the field.
     llmResolvedChildren: await llmResolvedChildren(familyBackend),
+    // #291 缺口 2: the abort-time head for a RED final verify's durable aborted entry.
+    familyHeadAfter: familyHead,
   });
   if (!finalVerify.ok) {
     // #296's failing integrated cmr lands here. #293 no-op never trips it. The

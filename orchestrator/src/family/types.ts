@@ -77,23 +77,46 @@ export interface FamilyEpic {
  * the unblock truth.
  */
 export interface FamilyLedgerEntry {
-  /** The child slice issue number this event is about. */
-  readonly childIssue: number;
+  /**
+   * The child slice issue number this event is about — for `merged` /
+   * `reconciled` events (a per-child merge). OPTIONAL because a PHASE-LEVEL
+   * `aborted` event (#291 缺口 2) is a verify/cmr failure of a whole PHASE, not a
+   * single child, so it carries NO `childIssue` (it carries `phase` instead). The
+   * unblock predicate `mergedSet` only reads `childIssue` on `status:"merged"`
+   * entries, which always supply it, so optionality never weakens the merged truth.
+   */
+  readonly childIssue?: number;
   /**
    * Merge status — the UNBLOCK-PREDICATE field (ADR 0022 decision 6②).
    *   - `"merged"`  — the child's branch is merged into the family base (a live
    *     merge OR a reconcile補账条; both COUNT as merged).
-   *   - `"aborted"` — a verify/cmr barrier failed; this event carries the family
-   *     head at the time (`familyHeadAfter`) for triage. NOT counted as merged.
+   *   - `"aborted"` — a verify/cmr barrier failed; this PHASE-LEVEL event carries
+   *     the family head at the time (`familyHeadAfter`) + the `phase` + a `reason`
+   *     for triage (#291 缺口 2). NOT counted as merged.
    */
   readonly status: "merged" | "aborted";
   /**
-   * Event tag distinguishing a crash-window reconcile補账条 (`"reconciled"`) from
-   * a live merge. Set ONLY by reconcile. The entry still carries
-   * `status:"merged"` so the unblock predicate counts it (decision 5, codex R3);
-   * the tag is for observability / audit, NOT the unblock truth.
+   * Event tag.
+   *   - `"reconciled"` — a crash-window補账条 (decision 5); carries
+   *     `status:"merged"` so the unblock predicate counts it (codex R3), the tag is
+   *     for audit. Set ONLY by reconcile.
+   *   - `"aborted"` — a PHASE-LEVEL verify/cmr-failure durable entry (#291 缺口 2),
+   *     paired with `status:"aborted"`; written by the verify-cmr hook so the abort
+   *     reaches the durable ledger reconcile reads (not just the in-memory seam).
+   * Not the unblock truth (that is `status`); the tag is for observability.
    */
-  readonly event?: "reconciled";
+  readonly event?: "reconciled" | "aborted";
+  /**
+   * Which verify barrier was red — ONLY on a PHASE-LEVEL `aborted` entry (#291 缺口
+   * 2). A `merged` / `reconciled` entry omits it (it is per-child, not per-phase).
+   */
+  readonly phase?: "wave" | "final";
+  /**
+   * Human-readable abort reason — ONLY on a PHASE-LEVEL `aborted` entry (#291 缺口
+   * 2), forwarded from the verify error package / cmr non-convergence reason so the
+   * failure is locatable from the ledger alone (decision 3④/5 "不静默吞").
+   */
+  readonly reason?: string;
   /** The child branch that was merged (full schema, #298). */
   readonly childBranch?: string;
   /** The child branch HEAD commit that was merged (the ancestor reconcile checks). */
@@ -393,6 +416,14 @@ export interface FamilyAbortedEvent {
   readonly familyBase: string;
   /** The verify error package (decision 3④/5). */
   readonly errorPackage: FamilyVerifyErrorPackage;
+  /**
+   * The family base HEAD at the time of the abort (#291 缺口 2), supplied by the
+   * spine via {@link VerifyCmrInput} and forwarded onto the PHASE-LEVEL durable
+   * `aborted` ledger entry's `familyHeadAfter` — so reconcile's "read末条
+   * familyHeadAfter" baseline logic covers merged AND aborted entries uniformly.
+   * Optional: a fresh run whose abort precedes any merge has no head yet.
+   */
+  readonly familyHeadAfter?: string;
 }
 
 /**

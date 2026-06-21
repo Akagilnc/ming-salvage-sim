@@ -71,22 +71,42 @@ describe("recordMerged — full-schema event (#298)", () => {
   });
 });
 
-describe("recordAborted — verify/cmr failure event (#298)", () => {
-  it("writes an aborted event carrying the family head at the time", async () => {
+describe("recordAborted — PHASE-LEVEL verify/cmr failure event (#291 缺口 2)", () => {
+  it("writes a phase-level aborted event carrying phase / reason / family head (no childIssue)", async () => {
     const backend = new FakeFamilyBackend();
-    await recordAborted(backend, { childIssue: 13, familyHeadAfter: "baseX", wave: 2 });
+    await recordAborted(backend, {
+      phase: "wave",
+      reason: "tsc: TS2345 cross-slice",
+      familyHeadAfter: "baseX",
+    });
     expect(backend.appended).toEqual([
-      { childIssue: 13, status: "aborted", familyHeadAfter: "baseX", wave: 2 },
+      {
+        status: "aborted",
+        event: "aborted",
+        phase: "wave",
+        reason: "tsc: TS2345 cross-slice",
+        familyHeadAfter: "baseX",
+      },
     ]);
+    // PHASE-LEVEL: an abort is not a single child's failure → no childIssue.
+    expect("childIssue" in backend.appended[0]!).toBe(false);
+  });
+
+  it("omits undefined optional fields (reason / familyHeadAfter)", async () => {
+    const backend = new FakeFamilyBackend();
+    await recordAborted(backend, { phase: "final" });
+    expect(backend.appended[0]).toEqual({ status: "aborted", event: "aborted", phase: "final" });
+    expect("reason" in backend.appended[0]!).toBe(false);
+    expect("familyHeadAfter" in backend.appended[0]!).toBe(false);
   });
 
   it("an aborted event is NOT counted as merged by the unblock predicate", async () => {
     const backend = new FakeFamilyBackend();
     await recordMerged(backend, 10);
-    await recordAborted(backend, { childIssue: 11, familyHeadAfter: "baseY" });
+    await recordAborted(backend, { phase: "wave", familyHeadAfter: "baseY" });
     const set = mergedSet(await backend.readFamilyLedger());
     expect(set.has(10)).toBe(true);
-    expect(set.has(11)).toBe(false); // aborted ≠ merged
+    expect(set.size).toBe(1); // only the real merge — the aborted phase entry never counts
   });
 });
 

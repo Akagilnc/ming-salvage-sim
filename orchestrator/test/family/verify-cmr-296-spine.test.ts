@@ -157,9 +157,20 @@ describe("#296 spine integration — acceptance 1: per-wave fail-fast verify", (
     // Wave 1 merged 294; the red wave verify aborted before wave 2 (296 never ran).
     expect(backend.merges.map((m) => m.childIssue)).toEqual([294]);
     expect(backend.verifyCalls.map((v) => v.phase)).toEqual(["wave"]); // no "final"
-    // `aborted` event written (decision 3④/5), carrying the error package.
+    // `aborted` event written to the in-memory seam (decision 3④/5), carrying the
+    // error package + (#291 缺口 2) the abort-time family head.
     expect(backend.aborted).toHaveLength(1);
     expect(backend.aborted[0]?.errorPackage.reason).toContain("TS2345");
+    expect(backend.aborted[0]?.familyHeadAfter).toBe("+294"); // head after wave 1's merge
+    // #291 缺口 2: the abort ALSO reaches the DURABLE ledger reconcile reads — a
+    // PHASE-LEVEL entry (no childIssue), carrying phase + reason + familyHeadAfter.
+    const durableAborts = backend.ledger.filter((e) => e.status === "aborted");
+    expect(durableAborts).toHaveLength(1);
+    expect(durableAborts[0]?.event).toBe("aborted");
+    expect(durableAborts[0]?.phase).toBe("wave");
+    expect("childIssue" in durableAborts[0]!).toBe(false);
+    expect(durableAborts[0]?.familyHeadAfter).toBe("+294");
+    expect(durableAborts[0]?.reason).toContain("TS2345");
     // Observably verify_failed at the wave phase — NOT a false success.
     expect(result.status).toBe("verify_failed");
     expect(result.failedPhase).toBe("wave");
