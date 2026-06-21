@@ -165,9 +165,19 @@ export class RealFamilyBackend implements FamilyBackend {
     let raw: string;
     try {
       raw = readFileSync(join(this.opts.ledgerDir, FAMILY_LEDGER_FILENAME), "utf8");
-    } catch {
-      // No ledger yet ⇒ no merges recorded — an empty set (NOT an error).
-      return [];
+    } catch (err) {
+      // ONLY "file does not exist yet" (ENOENT) means an empty ledger. Any OTHER
+      // read failure (EACCES, EISDIR, transient IO, path corruption) must FAIL
+      // CLOSED — the ledger is the durable resume/unblock truth reconcile reads,
+      // and silently returning [] on an unreadable-but-PRESENT ledger would make
+      // reconcile think no child ever merged → re-merge already-landed children
+      // (codex R2; decision 5 "不静默吞"). Rethrow with path context.
+      if (isFileNotFound(err)) return [];
+      throw new Error(
+        `readFamilyLedger: failed to read the family ledger at ` +
+          `${join(this.opts.ledgerDir, FAMILY_LEDGER_FILENAME)} — ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
     }
     return raw
       .split("\n")
@@ -227,15 +237,37 @@ export class RealFamilyBackend implements FamilyBackend {
           (outcome.reason !== undefined ? ` — ${outcome.reason}` : ""),
       );
     }
-    // The agent committed the merge on the family base; read the resolved head.
-    // If a misbehaving agent claimed resolved but left the merge in-progress
-    // (MERGE_HEAD still present), surface a still-`conflicted` result so the merger
-    // refuses to record it as `merged`.
+    // The agent claims it committed the merge — but VERIFY git truth before
+    // returning clean (the prompt's "resolve → add → commit, never --abort" is a
+    // soft LLM instruction, not a postcondition). Two failure modes a clean return
+    // would otherwise wave through into a durable `merged` ledger entry (codex R2):
+    //   (a) the merge is still in progress (MERGE_HEAD present) — the agent never
+    //       committed;
+    //   (b) the agent aborted/reset instead of committing — MERGE_HEAD is GONE but
+    //       HEAD is back at (or before) familyHeadBefore and the child never landed.
+    // Only a real landing (HEAD moved AND childHead is now an ancestor of HEAD)
+    // counts as resolved; anything else returns `conflicted:true` so the merger
+    // refuses to record `merged` (invariant: "an unresolved conflict never looks
+    // clean").
     const stillInProgress = this.mergeInProgress(repo);
     const familyHead = this.sh("git", ["rev-parse", "HEAD"], repo);
-    return stillInProgress
-      ? { familyHead, familyHeadBefore, childHead, conflicted: true }
-      : { familyHead, familyHeadBefore, childHead };
+    const childLanded =
+      !stillInProgress &&
+      familyHead !== familyHeadBefore &&
+      this.isAncestorOf(childHead, familyHead, repo);
+    return childLanded
+      ? { familyHead, familyHeadBefore, childHead }
+      : { familyHead, familyHeadBefore, childHead, conflicted: true };
+  }
+
+  /** True iff `ancestor` is an ancestor of `descendant` (`git merge-base --is-ancestor`). */
+  protected isAncestorOf(ancestor: string, descendant: string, repo: string): boolean {
+    try {
+      this.sh("git", ["merge-base", "--is-ancestor", ancestor, descendant], repo);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -403,8 +435,17 @@ export class RealFamilyBackend implements FamilyBackend {
     let raw: string;
     try {
       raw = readFileSync(join(this.opts.ledgerDir, FAMILY_ESCALATION_FILENAME), "utf8");
-    } catch {
-      return [];
+    } catch (err) {
+      // Same fail-closed rule as readFamilyLedger (codex R2): a missing file
+      // (ENOENT) is an empty set, but an unreadable-but-PRESENT escalation log
+      // (EACCES / EISDIR / IO error) must rethrow — hiding a stuck-point read
+      // failure as "no escalations" would lose the durable卡点 a re-entry surfaces.
+      if (isFileNotFound(err)) return [];
+      throw new Error(
+        `readEscalations: failed to read the escalation log at ` +
+          `${join(this.opts.ledgerDir, FAMILY_ESCALATION_FILENAME)} — ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
     }
     return raw
       .split("\n")
@@ -534,6 +575,20 @@ export function parseMergerOutcome(stdout: string): {
   const reason =
     parsed.escalate?.reason ?? parsed.escalate?.diagnosis ?? "merger did not resolve";
   return { resolved: false, reason };
+}
+
+/**
+ * Is this read error a "file does not exist yet" (ENOENT)? Used to keep the
+ * ledger/escalation reads fail-CLOSED: only a missing file maps to an empty set;
+ * any other read failure (EACCES / EISDIR / IO / corruption) must rethrow so an
+ * unreadable-but-present durable file is never silently read as empty (codex R2).
+ */
+function isFileNotFound(err: unknown): boolean {
+  return (
+    err !== null &&
+    typeof err === "object" &&
+    (err as { code?: unknown }).code === "ENOENT"
+  );
 }
 
 /** A one-line human-readable summary of a failed verify command (phase + error). */
