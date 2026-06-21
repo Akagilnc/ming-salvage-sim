@@ -7,10 +7,18 @@
  * Proven two ways:
  *   1. each module is independently importable with its own public export(s) and
  *      a stable interface seam (a module boundary that exists, not inlined prose);
- *   2. the spine DELEGATES to each module rather than inlining its logic — so
- *      swapping a module's behaviour (its injected seam) changes the family run
- *      without touching the spine. This is the structural guarantee a downstream
- *      slice relies on: it grows its module, the spine is untouched.
+ *   2. the spine routes its side effects THROUGH the injected `FamilyBackend` seam
+ *      (the merge + ledger I/O the merger/ledger modules wrap) and RE-READS the
+ *      ledger between waves — so a downstream slice that changes a module's
+ *      behaviour through that seam changes the family run without touching the
+ *      spine. (This proves the seam-via-injection guarantee, which is what a
+ *      downstream slice relies on. It does NOT, by itself, prove the spine literally
+ *      calls `mergeChild`/`mergedSet` rather than an inlined equivalent of the same
+ *      backend calls — that distinction would need module mocking, a pattern this
+ *      repo deliberately avoids in favour of injected fakes; the spine's source
+ *      does import + call the modules, verified by reading runner.ts, and the
+ *      acceptance-4 boundary holds because every downstream extension lands behind
+ *      THIS injected seam.)
  */
 
 import { describe, expect, it } from "vitest";
@@ -92,16 +100,20 @@ describe("acceptance 4 — four independent module seams", () => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// 2) Delegation: the spine routes through the modules' seams, not inlined logic.
-//    Substituting a module's injected behaviour changes the run — proving the
-//    spine does NOT carry its own copy of that logic.
+// 2) Seam routing: the spine routes its side effects through the injected
+//    `FamilyBackend` seam (which the merger/ledger modules wrap). Substituting the
+//    injected behaviour changes the run — proving the spine does not carry a
+//    hardcoded copy of the merge head / ledger truth. (This proves the
+//    seam-via-injection guarantee a downstream slice extends behind; it does not,
+//    alone, prove the spine literally calls `mergeChild` vs an inlined equivalent
+//    of the same backend calls — see the file header.)
 // ════════════════════════════════════════════════════════════════════════════
 
-describe("acceptance 4 — the spine delegates to (does not inline) each module", () => {
+describe("acceptance 4 — the spine routes through each module's injected seam", () => {
   it("merger seam: a FamilyBackend whose merge head differs flows straight through the spine", async () => {
-    // If the spine inlined the merge, the family head couldn't be steered by the
-    // injected merger seam. Here the seam stamps a custom head per child; the
-    // spine's result must reflect it verbatim → the spine delegates to merger.
+    // If the spine hardcoded the merge head, it couldn't be steered by the injected
+    // merger seam. Here the seam stamps a custom head per child; the spine's result
+    // must reflect it verbatim → the spine routes the merge through the seam.
     class CustomHeadFamilyBackend implements FamilyBackend {
       readonly ledger: FamilyLedgerEntry[] = [];
       async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {

@@ -13,7 +13,11 @@ export { selectWave } from "./family/commander.js";
 export { mergeChild } from "./family/merger.js";
 export { recordMerged, mergedSet } from "./family/ledger.js";
 export { runVerifyCmr } from "./family/verifyCmr.js";
-export type { VerifyCmrResult } from "./family/verifyCmr.js";
+export type {
+  VerifyCmrInput,
+  VerifyCmrPhase,
+  VerifyCmrResult,
+} from "./family/verifyCmr.js";
 export type {
   ChildSlice,
   FamilyBackend,
