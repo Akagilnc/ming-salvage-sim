@@ -250,6 +250,28 @@ describe("realBackend cutRefFor (worktree_base_stale, r3)", () => {
     expect(cutRefFor("release-1.x", true)).toBe("origin/release-1.x");
     expect(cutRefFor("release-1.x", false)).toBe("release-1.x");
   });
+
+  // #291: a family base is a LOCAL branch on the dedicated clone (ADR 0022
+  // decision 7) — children cut from it, NOT origin/<family-base>. cutRefFor's
+  // `localOnly` flag forces the LOCAL ref regardless of `fetchedOk`, so a stale
+  // `origin/<family-base>` (e.g. a prior PR's remote branch) can never shadow the
+  // local family base the merger accumulated this run's waves onto (agy R1).
+  describe("localOnly (family base, #291)", () => {
+    it("forces the LOCAL ref even when a fetch 'succeeded' (never origin/<family-base>)", () => {
+      expect(cutRefFor("family/293-base", /*fetchedOk*/ true, /*localOnly*/ true)).toBe(
+        "family/293-base",
+      );
+    });
+    it("is the LOCAL ref when no fetch ran either", () => {
+      expect(cutRefFor("family/293-base", /*fetchedOk*/ false, /*localOnly*/ true)).toBe(
+        "family/293-base",
+      );
+    });
+    it("standalone (localOnly omitted/false) keeps the origin/ behaviour — zero regression", () => {
+      expect(cutRefFor("main", true)).toBe("origin/main");
+      expect(cutRefFor("main", true, false)).toBe("origin/main");
+    });
+  });
 });
 
 // ─── worktree reuse: exact branch-line match (gemini R1, high) ───────────────

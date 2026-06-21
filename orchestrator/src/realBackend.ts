@@ -333,9 +333,24 @@ export function ensureExcluded(existing: string, pattern: string): string {
  * failed (offline / a local-only base with no remote) fall back to the local
  * `<base>` so the cut is never blocked.
  *
+ * #291 family base: a family base is a LOCAL branch on the dedicated clone (ADR
+ * 0022 decision 7) — the merger accumulates each wave's merges onto it, and the
+ * next wave's children cut from THAT local branch, NOT `origin/<family-base>`.
+ * `localOnly` forces the bare local ref REGARDLESS of `fetchedOk`, so a stale
+ * `origin/<family-base>` (e.g. a prior PR's remote branch that still exists, or
+ * a `fetch` that happened to resolve it) can never shadow the local family base
+ * carrying this run's accumulated waves (agy R1). A standalone single-slice run
+ * leaves `localOnly` false, so its `main` cut is byte-identical to before
+ * (`origin/main` when fetched, local fallback otherwise).
+ *
  * Pure (string assembly) so the ref-selection decision is unit-tested without git.
  */
-export function cutRefFor(base: string, fetchedOk: boolean): string {
+export function cutRefFor(
+  base: string,
+  fetchedOk: boolean,
+  localOnly = false,
+): string {
+  if (localOnly) return base;
   return fetchedOk ? `origin/${base}` : base;
 }
 
@@ -1174,6 +1189,17 @@ export interface RealBackendOptions {
   readonly promptsDir: string;
   /** Override $HOME for auth path construction (tests). */
   readonly home?: string;
+  /**
+   * #291: the LOCAL family base branch on this clone (ADR 0022 decision 7), set
+   * ONLY when this Backend drives a family run's CHILD slices. When a child's
+   * `prepareWorktree` base equals this, the slice is cut from the LOCAL family
+   * base (no `git fetch origin`, no `origin/` prefix) — because the family base
+   * is a local branch the merger accumulates onto, with no remote counterpart;
+   * deriving it as `origin/<family-base>` would cut from a stale/absent remote ref
+   * missing the prior waves (agy R1). Absent ⇒ a standalone single-slice run: the
+   * cut base is "main", fetched + cut as `origin/main` exactly as before.
+   */
+  readonly familyBase?: string;
 }
 
 /** zod schema for the reviewer step's structured output (route() consumes it). */
@@ -1480,8 +1506,15 @@ export class RealBackend implements Backend {
     // the fetch failed (offline / local-only base). The WorktreeHandle.base field
     // still records the LOGICAL base ("main"), not the cut ref, for ledger
     // consistency.
-    const fetchedOk = this.ensureBaseRef(base);
-    const cutRef = cutRefFor(base, fetchedOk);
+    // #291: a family-base cut is LOCAL-only (ADR 0022 decision 7) — the family
+    // base is a local branch the merger accumulates onto, with no remote
+    // counterpart. So skip `git fetch origin <family-base>` (it would fail or, worse,
+    // resolve a stale remote branch) and force the bare local ref. A standalone
+    // single-slice run (base="main", no `familyBase` option) keeps the fetch +
+    // `origin/main` derivation byte-identical.
+    const localOnly = base === this.opts.familyBase;
+    const fetchedOk = localOnly ? false : this.ensureBaseRef(base);
+    const cutRef = cutRefFor(base, fetchedOk, localOnly);
     // Multi-phase S1: attribute a createWorktree throw as "S1: createWorktree"
     // for the US#30 error package (codex#3 attributeFailure — F6).
     const wt = await this.phaseAsync("S1", "createWorktree", () =>
