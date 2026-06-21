@@ -94,7 +94,16 @@ async function currentMerged(
 export async function runFamily(
   input: FamilyRunInput,
 ): Promise<FamilyRunResult> {
-  const { epic, familyBackend, singleSliceBackend, familyBase } = input;
+  const { familyBackend, singleSliceBackend, familyBase } = input;
+  // ── #298 escalate-resume dependency-graph rebuild (ADR 0022 decision 4) ─────
+  // APPEND-ONLY resume entry: when a `refetchEpic` hook is injected (a re-entry
+  // after escalation — cmr non-convergence / a cycle a human edited in GitHub),
+  // REBUILD the dependency graph from LIVE GitHub metadata, NOT the cached epic
+  // (decision 4 不信缓存; else a stale cycle re-escalates, agy R2). Absent ⇒ the
+  // passed `epic` is used unchanged (a fresh run). The commander then schedules
+  // off the live graph below.
+  const epic =
+    input.refetchEpic !== undefined ? await input.refetchEpic() : input.epic;
   // The verify-cmr hook: the injected impl (#296 / tests) or the #293 no-op module
   // default. The spine's call sites + fail-fast on `ok===false` are identical
   // either way (ADR 0022 decision 3④/⑤/⑥; acceptance-4 seam boundary).

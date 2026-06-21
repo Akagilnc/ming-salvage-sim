@@ -257,6 +257,21 @@ export interface FamilyRunInput {
    * testable zero-container (the repo's injected-seam idiom).
    */
   readonly reconcileGit?: ReconcileGit;
+  /**
+   * Escalate-resume dependency-graph rebuild hook (ADR 0022 decision 4, #298).
+   *
+   * When a family run escalates (cmr non-convergence / a cycle) and a human
+   * answers — possibly by editing the `blocked_by` edges in GitHub to break a
+   * cycle — RE-ENTRY must REBUILD the dependency graph from LIVE GitHub metadata,
+   * NOT trust the cached {@link FamilyEpic} (decision 4: "重抓 live GitHub
+   * metadata 重建依赖图，不信缓存"; else the stale cycle/edges persist and it
+   * re-escalates — agy R2). When this hook is present (a re-entry), the spine
+   * calls it FIRST and schedules off the LIVE graph it returns, overriding the
+   * passed-in `epic`. Absent ⇒ the passed `epic` is used (a fresh run, no
+   * re-fetch). Injectable so the rebuild is testable zero-container; the real
+   * impl re-reads the epic's sub-issues + `blocked_by` via `gh`.
+   */
+  readonly refetchEpic?: () => Promise<FamilyEpic>;
 }
 
 /**
