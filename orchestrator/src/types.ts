@@ -394,11 +394,17 @@ export interface Backend {
   /**
    * #255: clean uncommitted residue on the resident worktree before reuse.
    *
-   * Real implementation: `git reset --hard HEAD` + `git clean -fd` +
-   * `git worktree prune` reconciliation. Committed progress (the resident
-   * branch HEAD) is PRESERVED; only uncommitted/untracked residue from the
-   * interrupted run is discarded. The ledger lives in the sibling state dir
-   * (outside the worktree), so `clean -fd` cannot remove the resume truth.
+   * Real implementation: `git reset --hard HEAD` + `git clean -fd` ONLY —
+   * a per-worktree residue clean, scoped to the worktree path. Committed progress
+   * (the resident branch HEAD) is PRESERVED; only uncommitted/untracked residue
+   * from the interrupted run is discarded. The ledger lives in the sibling state
+   * dir (outside the worktree), so `clean -fd` cannot remove the resume truth.
+   *
+   * ADR 0024 decision 2: this does NOT run a repo-level `git worktree prune`.
+   * Worktree admin pruning is Sandcastle's responsibility (its per-acquire
+   * pruneStale); with each invocation owning a dedicated clone, that prune is
+   * scoped to the clone and can never reach another session's worktree admin
+   * namespace. `cleanResidue` must stay confined to the worktree path.
    */
   cleanResidue(worktree: WorktreeHandle): Promise<void>;
   /**
