@@ -75,6 +75,9 @@ class FakeFamilyBackend implements FamilyBackend {
     this.merges.push(child);
     return { familyHead: `+${child.childIssue}` };
   }
+  // #295 conflict-fallback seam `resolveMergeConflict` is OPTIONAL — this
+  // verify-cmr test uses the deterministic (no-conflict) merge path and never
+  // reaches it, so the fake omits it.
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }

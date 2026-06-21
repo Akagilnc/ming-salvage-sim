@@ -119,6 +119,8 @@ describe("acceptance 4 — the spine routes through each module's injected seam"
       async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
         return { familyHead: `CUSTOM-${child.childIssue}` };
       }
+      // #295 conflict-fallback seam `resolveMergeConflict` is OPTIONAL — this
+      // boundary test merges cleanly and never reaches it, so the fake omits it.
       async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
         this.ledger.push(entry);
       }
@@ -149,6 +151,8 @@ describe("acceptance 4 — the spine routes through each module's injected seam"
         this.mergeOrder.push(child.childIssue);
         return { familyHead: `h${child.childIssue}` };
       }
+      // #295 conflict-fallback seam `resolveMergeConflict` is OPTIONAL — this
+      // seam-wiring test merges cleanly and never reaches it, so the fake omits it.
       async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
         this.ledger.push(entry);
       }

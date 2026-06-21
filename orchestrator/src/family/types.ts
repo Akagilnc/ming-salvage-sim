@@ -215,6 +215,33 @@ export interface FamilyBackend {
    */
   mergeChildIntoFamilyBase(child: MergeRequest): Promise<MergeResult>;
   /**
+   * merger CONFLICT-fallback seam (ADR 0022 decision 3② "冲突才上 LLM", #295).
+   *
+   * Invoked by the merger ONLY when {@link mergeChildIntoFamilyBase} reports a
+   * conflict ({@link MergeResult.conflicted}) — the "确定性优先、仅冲突上 LLM"
+   * inversion of Sandcastle's native "一上来就整段 LLM" merge. The real Backend
+   * starts ONE agent under the `merger` soul + the `resolving-merge-conflicts`
+   * skill, scoped to THIS one in-progress conflicting merge: it resolves each
+   * hunk (preserving both intents where possible; never inventing behaviour;
+   * never `--abort`), stages, and commits the merge — leaving the resolved result
+   * on the family base for the downstream family verify + integrated cmr (#296)
+   * to审 ("不静默吞"). The fake injects a synthetic resolved head.
+   *
+   * Returns the family base HEAD after the LLM-resolved merge commit lands. If the
+   * resolver CANNOT resolve (it throws / rejects, OR returns a still-`conflicted`
+   * result), the merger does NOT write a `merged` ledger entry — an unresolved
+   * conflict must never look clean.
+   *
+   * OPTIONAL: a #293-era backend (the no-op default, the existing zero-container
+   * fakes) does not implement it — it is reached ONLY on the conflict path, which
+   * those backends never take. If a conflict IS hit on a backend without this
+   * method, the merger fails loud (throws a descriptive error) rather than writing
+   * a `merged` ledger entry — the conflict is surfaced, never swallowed. (Same
+   * optional-capability pattern the sibling verify-cmr seams use, so existing
+   * fakes need no throwing stub.)
+   */
+  resolveMergeConflict?(req: ConflictResolveRequest): Promise<MergeResult>;
+  /**
    * family-ledger seam (ADR 0022 decision 5, #298 extends): append one event to
    * the append-only family ledger (a sibling of the family base worktree, OUTSIDE
    * it). #293 writes only the thin entry; #298 extends the entry + adds reconcile.
@@ -232,6 +259,20 @@ export interface MergeRequest {
   /** The child slice issue number (for the `--no-ff` merge message + ledger). */
   readonly childIssue: number;
   /** The child slice branch to merge (the reviewed, locally-committed branch). */
+  readonly childBranch: string;
+}
+
+/**
+ * What the merger's conflict-fallback resolver needs (ADR 0022 decision 3②,
+ * #295). The same child identity as the original {@link MergeRequest} — the
+ * resolver works on the in-progress conflicting merge of THIS child branch into
+ * the family base, so it needs the issue (for the merge message + ledger) and the
+ * branch (the side being merged in).
+ */
+export interface ConflictResolveRequest {
+  /** The child slice issue number whose deterministic merge conflicted. */
+  readonly childIssue: number;
+  /** The child slice branch whose merge into the family base conflicted. */
   readonly childBranch: string;
 }
 
@@ -255,6 +296,23 @@ export interface MergeResult {
    * same #293 back-compat reason as `familyHeadBefore`.
    */
   readonly childHead?: string;
+  /**
+   * Did the deterministic `git merge --no-ff` hit a conflict? (#295.) Set by the
+   * Backend's {@link FamilyBackend.mergeChildIntoFamilyBase} when the merge could
+   * not complete cleanly. The merger reads THIS to decide whether to route to the
+   * point-LLM resolver — "仅冲突才上 LLM". Absent / `false` ⇒ a clean deterministic
+   * merge (the #293 happy path); the LLM resolver is never touched.
+   */
+  readonly conflicted?: boolean;
+  /**
+   * Was this merge LLM-resolved (the `resolving-merge-conflicts` soul ran) rather
+   * than a clean deterministic merge? (#295.) Set by the merger AFTER a successful
+   * {@link FamilyBackend.resolveMergeConflict}. It makes the LLM resolution
+   * OBSERVABLE to the downstream family verify + integrated cmr (#296) — an
+   * LLM-resolved merge is NEVER silently swallowed (ADR 0022 decision 3⑤
+   * "不静默吞"). Absent / `false` ⇒ the merge was a clean deterministic merge.
+   */
+  readonly conflictResolvedByLlm?: boolean;
 }
 
 // ─────────────────────────── family run I/O ───────────────────────────
