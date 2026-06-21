@@ -140,8 +140,18 @@ describe("merger conflict fallback — no-conflict path stays deterministic (#29
     expect(backend.resolves).toEqual([]);
     // Clean merge ⇒ not LLM-resolved (no false positive downstream).
     expect(result.conflictResolvedByLlm ?? false).toBe(false);
-    // Ledger written after the clean merge (decision 5 order preserved).
-    expect(backend.appended).toEqual([{ childIssue: 10, status: "merged" }]);
+    // Ledger written after the clean merge (decision 5 order preserved). #298
+    // landed the FULL-schema ledger write in this same family base, so the
+    // entry carries childBranch + familyHeadAfter (childHead/familyHeadBefore
+    // are undefined on this fake's MergeResult → compacted out).
+    expect(backend.appended).toEqual([
+      {
+        childIssue: 10,
+        childBranch: "feat/child-10",
+        status: "merged",
+        familyHeadAfter: "merged-10",
+      },
+    ]);
   });
 
   it("pins conflictResolvedByLlm to false on a clean merge even if the backend stamped it true", async () => {
@@ -167,7 +177,16 @@ describe("merger conflict fallback — no-conflict path stays deterministic (#29
     });
     // The merger overrides the backend's bogus flag → clean merge reads false.
     expect(result.conflictResolvedByLlm).toBe(false);
-    expect(backend.appended).toEqual([{ childIssue: 17, status: "merged" }]);
+    // #298 full-schema ledger write (this fake's MergeResult only carries
+    // familyHead, so childBranch + familyHeadAfter land; the rest compact out).
+    expect(backend.appended).toEqual([
+      {
+        childIssue: 17,
+        childBranch: "feat/child-17",
+        status: "merged",
+        familyHeadAfter: "merged-17",
+      },
+    ]);
   });
 });
 
@@ -190,8 +209,18 @@ describe("merger conflict fallback — conflicting path routes to the LLM resolv
     expect(result.familyHead).toBe("resolved-11");
     // Observable downstream: this merge was LLM-resolved (not silently swallowed).
     expect(result.conflictResolvedByLlm).toBe(true);
-    // Ledger written ONLY AFTER the resolved merge landed (decision 5).
-    expect(backend.appended).toEqual([{ childIssue: 11, status: "merged" }]);
+    // Ledger written ONLY AFTER the resolved merge landed (decision 5). #298
+    // full-schema write forwards the POST-resolve head (familyHeadAfter =
+    // result.familyHead = "resolved-11"), proving the #295 conflict path and
+    // #298 ledger field set compose correctly.
+    expect(backend.appended).toEqual([
+      {
+        childIssue: 11,
+        childBranch: "feat/child-11",
+        status: "merged",
+        familyHeadAfter: "resolved-11",
+      },
+    ]);
   });
 
   it("resolves ONLY the conflicting child in a serial run — clean children skip the LLM", async () => {
@@ -259,6 +288,14 @@ describe("merger conflict fallback — a backend without the optional resolver f
     });
     expect(result.familyHead).toBe("merged-16");
     expect(result.conflictResolvedByLlm ?? false).toBe(false);
-    expect(backend.appended).toEqual([{ childIssue: 16, status: "merged" }]);
+    // #298 full-schema ledger write (childBranch + familyHeadAfter land).
+    expect(backend.appended).toEqual([
+      {
+        childIssue: 16,
+        childBranch: "feat/child-16",
+        status: "merged",
+        familyHeadAfter: "merged-16",
+      },
+    ]);
   });
 });
