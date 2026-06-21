@@ -60,7 +60,8 @@ MERGER_STEP_COMPLETE
 Rules:
 
 - The JSON must be valid and match the shape above exactly.
-- Emit the `<merger>` tag LAST (after all other output); if you iterate, the LAST
-  `<merger>` tag is the one that counts.
-- Always print `MERGER_STEP_COMPLETE` on its own line at the very end.
+- The `<merger>` tag is the LAST thing you emit before the completion signal:
+  put it after all your other output / iteration, then print `MERGER_STEP_COMPLETE`
+  on its own line as the final line (exactly the two-line order shown in the
+  examples above). If you iterate, the LAST `<merger>` tag is the one that counts.
 - Never `git merge --abort`. Never invent behaviour. Resolve or escalate.

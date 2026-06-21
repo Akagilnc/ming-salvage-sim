@@ -143,6 +143,32 @@ describe("merger conflict fallback — no-conflict path stays deterministic (#29
     // Ledger written after the clean merge (decision 5 order preserved).
     expect(backend.appended).toEqual([{ childIssue: 10, status: "merged" }]);
   });
+
+  it("pins conflictResolvedByLlm to false on a clean merge even if the backend stamped it true", async () => {
+    // A misbehaving backend that stamps `conflictResolvedByLlm: true` on a CLEAN
+    // (no-conflict) deterministic merge must NOT leak a false LLM-resolved signal
+    // downstream — the merger is the sole source of truth for the flag.
+    class FlagStampingFamilyBackend implements FamilyBackend {
+      readonly appended: FamilyLedgerEntry[] = [];
+      async mergeChildIntoFamilyBase(child: MergeRequest): Promise<MergeResult> {
+        return { familyHead: `merged-${child.childIssue}`, conflictResolvedByLlm: true };
+      }
+      async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+        this.appended.push(entry);
+      }
+      async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+        return this.appended;
+      }
+    }
+    const backend = new FlagStampingFamilyBackend();
+    const result = await mergeChild(backend, {
+      childIssue: 17,
+      childBranch: "feat/child-17",
+    });
+    // The merger overrides the backend's bogus flag → clean merge reads false.
+    expect(result.conflictResolvedByLlm).toBe(false);
+    expect(backend.appended).toEqual([{ childIssue: 17, status: "merged" }]);
+  });
 });
 
 describe("merger conflict fallback — conflicting path routes to the LLM resolver (#295 acc. 1/2/3)", () => {

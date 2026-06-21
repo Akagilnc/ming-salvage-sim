@@ -90,7 +90,12 @@ export async function mergeChild(
     // 3. Flag the resolution so the downstream verify + cmr (#296) sees it.
     result = { ...resolved, conflictResolvedByLlm: true };
   } else {
-    result = deterministic;
+    // Clean deterministic merge. The merger is the SOLE source of truth for
+    // `conflictResolvedByLlm` (the type's contract: "Set by the merger AFTER a
+    // successful resolve") — so a backend that accidentally stamped the flag on
+    // a clean `mergeChildIntoFamilyBase` result must NOT leak a false
+    // LLM-resolved signal downstream. Pin it to false here.
+    result = { ...deterministic, conflictResolvedByLlm: false };
   }
 
   // 4. Ledger AFTER a clean OR LLM-resolved merge commit is on the base
