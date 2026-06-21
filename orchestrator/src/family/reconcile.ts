@@ -120,6 +120,13 @@ async function headlessTailIsConsistent(
  *
  * @param ledger    the append-only family-ledger entries, in write order.
  * @param children  the epic's child slices (to know which children to account).
+ *                  INTENTIONALLY the spine's POST-refetch `epic.children` (ADR 0022
+ *                  decision 4 重抓 live GitHub metadata 重建依赖图): reconcile
+ *                  accounts only children that exist in the LIVE epic — the live
+ *                  truth is deliberately coupled here (#291 缺口 4, codex2 LOW). So
+ *                  if a refetch DROPPED a child (a human removed it from the epic
+ *                  while escalated), reconcile does NOT补账 / re-run that child — it
+ *                  is no longer part of the family, by design. No deeper change.
  * @param git       the injected git seam (live HEAD / childHead existence /
  *                  ancestor) — a fake in tests, the RealBackend in production.
  */

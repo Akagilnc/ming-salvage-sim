@@ -46,11 +46,19 @@ export interface MergedRecord {
   readonly conflictResolvedByLlm?: boolean;
 }
 
-/** The fields a #298 `aborted` event (verify/cmr failure) carries. */
+/**
+ * The fields a PHASE-LEVEL `aborted` event (verify/cmr failure) carries (#291 缺口
+ * 2). An abort is a failure of a whole verify PHASE, not a single child — so it
+ * carries the `phase` (and `reason`), NOT a `childIssue`. `familyHeadAfter` is the
+ * family base head at the time the barrier failed, REUSED so reconcile's "read末条
+ * familyHeadAfter" baseline logic treats merged AND aborted entries uniformly.
+ */
 export interface AbortedRecord {
-  readonly childIssue: number;
-  readonly wave?: number;
-  /** The family base HEAD at the time the barrier failed (for triage). */
+  /** Which verify barrier was red. */
+  readonly phase: "wave" | "final";
+  /** Human-readable abort reason (the verify error / cmr non-convergence). */
+  readonly reason?: string;
+  /** The family base HEAD at the time the barrier failed (for triage + baseline). */
   readonly familyHeadAfter?: string;
 }
 
@@ -100,13 +108,19 @@ export async function recordMerged(
 }
 
 /**
- * Append one `aborted` event to the family ledger (ADR 0022 decision 5: "verify/
- * cmr 失败写 aborted 事件，携带当时 family head").
+ * Append one PHASE-LEVEL `aborted` event to the family ledger (ADR 0022 decision
+ * 5: "verify/cmr 失败写 aborted 事件，携带当时 family head"; #291 缺口 2 unifies it
+ * to phase-level).
  *
- * #296 calls this when a verify/cmr barrier returns red, so the family base is
- * left observably aborted (not silently a success). An `aborted` event is NOT
- * counted as merged by {@link mergedSet} — a failed child stays blocked, never
- * unblocking downstream slices off a red barrier.
+ * The verify-cmr hook calls this when a verify/cmr barrier returns red, so the
+ * family base is left observably aborted ON THE DURABLE LEDGER (not only the
+ * in-memory seam, and not silently a success). An abort is a failure of a whole
+ * verify PHASE, not one child — so the durable entry carries `phase` + `reason` +
+ * `familyHeadAfter` (the abort-time head, REUSING the field so reconcile's "read末条
+ * familyHeadAfter" baseline covers merged AND aborted uniformly), and NO
+ * `childIssue`. An `aborted` event is NOT counted as merged by {@link mergedSet}
+ * (it has no `childIssue` and the wrong `status`), so it never unblocks a
+ * downstream slice off a red barrier.
  */
 export async function recordAborted(
   backend: FamilyBackend,
@@ -114,9 +128,10 @@ export async function recordAborted(
 ): Promise<void> {
   await backend.appendFamilyLedger(
     compact({
-      childIssue: record.childIssue,
       status: "aborted",
-      wave: record.wave,
+      event: "aborted",
+      phase: record.phase,
+      reason: record.reason,
       familyHeadAfter: record.familyHeadAfter,
     }) as FamilyLedgerEntry,
   );
@@ -138,7 +153,12 @@ export async function recordAborted(
 export function mergedSet(
   entries: ReadonlyArray<FamilyLedgerEntry>,
 ): ReadonlySet<number> {
-  return new Set(
-    entries.filter((e) => e.status === "merged").map((e) => e.childIssue),
-  );
+  const out = new Set<number>();
+  for (const e of entries) {
+    // Only `status:"merged"` entries count, and only via their `childIssue`. A
+    // PHASE-LEVEL `aborted` entry (#291 缺口 2) has the wrong status AND no
+    // `childIssue`; the `childIssue !== undefined` guard makes optionality explicit.
+    if (e.status === "merged" && e.childIssue !== undefined) out.add(e.childIssue);
+  }
+  return out;
 }
