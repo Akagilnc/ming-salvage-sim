@@ -84,6 +84,42 @@ describe("reconcileFamilyLedger — branch ① ledger末条 === live HEAD", () =
     expect(plan.reconciled).toEqual([]); // nothing to补
     expect([...plan.merged].sort()).toEqual([10]); // 10 already merged
   });
+
+  it("does NOT blindly trust a HEADLESS reconciled tail entry past the baseline if the base was rewound → escalate (no漏合)", async () => {
+    // The R2 mid-append crash residue: an intermediate reconcile補账条 (11) carries
+    // a childHead but NO familyHeadAfter (only the LAST補账条 advances the baseline),
+    // sitting AFTER the baseline-bearing entry (10, familyHeadAfter:base1). If the
+    // family base is then EXTERNALLY rewound to base1 (c11 no longer in live
+    // history), lastRecordedHead skips 11 (no head) → returns base1 → baseline ===
+    // liveHead → branch ①. Blindly returning mergedSet={10,11} would count 11 as
+    // merged though its merge is GONE → 漏合 (the wave loop skips it). Branch ① must
+    // re-verify each HEADLESS merged tail entry's childHead is still an ancestor of
+    // live; 11's c11 is NOT an ancestor of the rewound base1 → fail-closed escalate
+    // (cmr R6: codex-s1). Acceptance-2 不漏合.
+    const ledger: FamilyLedgerEntry[] = [
+      { childIssue: 10, status: "merged", childHead: "c10", familyHeadAfter: "base1" },
+      { childIssue: 11, status: "merged", event: "reconciled", childHead: "c11" }, // no familyHeadAfter
+    ];
+    // live HEAD rewound to base1; c11 is NOT an ancestor of base1 (its merge is gone).
+    const git = new FakeReconcileGit("base1", { 10: "c10", 11: "c11" }, new Set(["c10"]));
+    const plan = await reconcileFamilyLedger(ledger, children, git);
+    expect(plan.escalate).toBe(true);
+  });
+
+  it("trusts a HEADLESS reconciled tail entry when its childHead IS still an ancestor of live (normal branch ①)", async () => {
+    // Same shape, but the base was NOT rewound — c11 IS still an ancestor of the
+    // live base1 (the intermediate補账条's merge is intact). Branch ① re-verifies
+    // and finds it landed → trust the merged set, no escalate (the R2 mid-append
+    // crash, then a clean resume where live still contains 11).
+    const ledger: FamilyLedgerEntry[] = [
+      { childIssue: 10, status: "merged", childHead: "c10", familyHeadAfter: "base1" },
+      { childIssue: 11, status: "merged", event: "reconciled", childHead: "c11" },
+    ];
+    const git = new FakeReconcileGit("base1", { 10: "c10", 11: "c11" }, new Set(["c10", "c11"]));
+    const plan = await reconcileFamilyLedger(ledger, children, git);
+    expect(plan.escalate).toBe(false);
+    expect([...plan.merged].sort()).toEqual([10, 11]);
+  });
 });
 
 describe("reconcileFamilyLedger — branch ② live HEAD LEADS (the crash window)", () => {

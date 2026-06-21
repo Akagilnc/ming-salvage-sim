@@ -62,18 +62,57 @@ import type {
 
 /**
  * Find the most recent `familyHeadAfter` recorded in the ledger — the baseline
- * the live HEAD is compared against. The LAST entry that carries one (a `merged`
- * or `aborted` event with a head); reconcile補账条 carry one too. Undefined when
- * no entry records a head (an empty ledger, or only #293-thin entries).
+ * the live HEAD is compared against — AND its index. The LAST entry that carries
+ * one (a `merged` or `aborted` event with a head); the baseline-advancing reconcile
+ * 補账条 carries one too. Returns `{head: undefined, index: -1}` when no entry
+ * records a head (an empty ledger, or only #293-thin entries).
+ *
+ * The INDEX matters because the reconcile-append loop advances the baseline only on
+ * the LAST補账条 (cmr R2): a mid-loop crash can leave HEADLESS `status:"merged"` tail
+ * entries (carrying a `childHead` but no `familyHeadAfter`) AFTER this baseline. Those
+ * tail entries are NOT covered by the baseline, so branch ① must re-verify them
+ * against live before trusting them (cmr R6).
  */
-function lastRecordedHead(
-  ledger: ReadonlyArray<FamilyLedgerEntry>,
-): string | undefined {
+function lastRecordedHead(ledger: ReadonlyArray<FamilyLedgerEntry>): {
+  head: string | undefined;
+  index: number;
+} {
   for (let i = ledger.length - 1; i >= 0; i--) {
     const after = ledger[i]!.familyHeadAfter;
-    if (after !== undefined) return after;
+    if (after !== undefined) return { head: after, index: i };
   }
-  return undefined;
+  return { head: undefined, index: -1 };
+}
+
+/**
+ * Branch ① guard (cmr R6): when the baseline-bearing entry's head equals live, the
+ * baseline itself is consistent — but HEADLESS `status:"merged"` entries recorded
+ * AFTER it (intermediate reconcile補账条 from a mid-append crash: a `childHead`, no
+ * `familyHeadAfter`) are NOT covered by that equality. If the family base was rewound
+ * to the baseline, such a tail entry's merge is no longer in live history, and
+ * trusting it would漏合. Re-verify each such tail entry's `childHead` is still an
+ * ancestor of live. Returns false (→ caller escalates) if any headless merged tail
+ * entry lacks a `childHead` or whose `childHead` is no longer an ancestor of live.
+ * Entries up to and including `baselineIndex`, and any `aborted` entries, are not
+ * re-checked (the baseline equality already vouches for the base position).
+ */
+async function headlessTailIsConsistent(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+  baselineIndex: number,
+  liveHead: string,
+  git: ReconcileGit,
+): Promise<boolean> {
+  for (let i = baselineIndex + 1; i < ledger.length; i++) {
+    const entry = ledger[i]!;
+    // Only merged entries that lack their own familyHeadAfter are "uncovered" by
+    // the baseline. (An aborted tail entry does not count as merged; a tail entry
+    // that DOES carry familyHeadAfter would have been the baseline.)
+    if (entry.status !== "merged" || entry.familyHeadAfter !== undefined) continue;
+    // A headless merged entry with no childHead cannot be verified → fail-closed.
+    if (entry.childHead === undefined) return false;
+    if (!(await git.isAncestor(entry.childHead, liveHead))) return false;
+  }
+  return true;
 }
 
 /**
@@ -90,15 +129,24 @@ export async function reconcileFamilyLedger(
   git: ReconcileGit,
 ): Promise<ReconcilePlan> {
   const ledgerMerged = mergedSet(ledger);
-  const baseline = lastRecordedHead(ledger);
+  const { head: baseline, index: baselineIndex } = lastRecordedHead(ledger);
   const liveHead = await git.liveFamilyHead();
 
   // ── branch ① ledger末条 === live HEAD ──────────────────────────────────────
-  // The last recorded head IS the live head: no merge landed past the ledger →
-  // trust the merged set, no补账, no escalate. (An empty ledger with no recorded
-  // head is the degenerate clean-start case handled below.)
+  // The baseline-bearing entry's head IS the live head: no merge landed past it.
+  // Trust the merged set — BUT first re-verify any HEADLESS `status:"merged"` tail
+  // entries recorded AFTER the baseline (intermediate reconcile補账条 from a mid-
+  // append crash carry a `childHead` but no `familyHeadAfter`, so they sit past the
+  // baseline and are NOT covered by `baseline === liveHead`). If the family base was
+  // externally rewound to this baseline, such a tail entry's merge is no longer in
+  // live history; blindly trusting it would漏合 (cmr R6: codex-s1). Re-check each
+  // tail entry's `childHead` is still an ancestor of live; any missing or non-ancestor
+  // → fail-closed escalate (do not silently skip a child whose merge is gone).
   if (baseline !== undefined && baseline === liveHead) {
-    return { escalate: false, reconciled: [], merged: ledgerMerged, liveHead };
+    if (await headlessTailIsConsistent(ledger, baselineIndex, liveHead, git)) {
+      return { escalate: false, reconciled: [], merged: ledgerMerged, liveHead };
+    }
+    return { escalate: true, reconciled: [], merged: ledgerMerged, liveHead };
   }
 
   // ── headless ledger (no entry records a familyHeadAfter) ───────────────────
