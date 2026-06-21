@@ -5,6 +5,32 @@
 export { runOrchestrator } from "./runner.js";
 export { route } from "./route.js";
 export type { RouteContext, RouteDecision } from "./route.js";
+
+// ── family integration layer (ADR 0022, #293) ──────────────────────────────
+// The four independent extension modules + the spine that only CALLS them.
+export { runFamily } from "./family/runner.js";
+export { selectWave } from "./family/commander.js";
+export { mergeChild } from "./family/merger.js";
+export { recordMerged, mergedSet } from "./family/ledger.js";
+export { runVerifyCmr } from "./family/verifyCmr.js";
+export type {
+  VerifyCmrInput,
+  VerifyCmrPhase,
+  VerifyCmrResult,
+} from "./family/verifyCmr.js";
+export type {
+  ChildSlice,
+  FamilyBackend,
+  FamilyChildResult,
+  FamilyChildStatus,
+  FamilyEpic,
+  FamilyLedgerEntry,
+  FamilyRunInput,
+  FamilyRunResult,
+  FamilyRunStatus,
+  MergeRequest,
+  MergeResult,
+} from "./family/types.js";
 export type {
   Backend,
   CoderOutput,
