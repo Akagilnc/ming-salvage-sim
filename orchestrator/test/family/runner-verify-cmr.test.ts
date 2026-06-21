@@ -94,7 +94,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       calls.push(input);
       return { ok: true, ran: false };
     };
-    await runFamily({
+    const result = await runFamily({
       epic: epicWith(10, 11),
       familyBackend: new FakeFamilyBackend(),
       singleSliceBackend: new ChildBackend(),
@@ -108,6 +108,9 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     expect(calls.every((c) => typeof c.familyBackend.appendFamilyLedger === "function")).toBe(
       true,
     );
+    // A clean run is observably "success", with no failedPhase.
+    expect(result.status).toBe("success");
+    expect(result.failedPhase).toBeUndefined();
   });
 
   it("FAIL-FAST: a red wave verify aborts the loop (no end-of-run call, no further waves)", async () => {
@@ -135,6 +138,10 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     });
     // Only the first wave's barrier ran; no second wave, no "final".
     expect(phases).toEqual(["wave"]);
+    // The red wave is OBSERVABLE in the result — NOT indistinguishable from a
+    // clean run (the core of the round-2 finding): status + the failing phase.
+    expect(result.status).toBe("verify_failed");
+    expect(result.failedPhase).toBe("wave");
     // Wave 1 merged 10; 11 was never scheduled → recorded "skipped", not dropped.
     expect(familyBackend.merges.map((m) => m.childIssue)).toEqual([10]);
     const byIssue = new Map(result.children.map((c) => [c.issue, c.status]));
@@ -142,7 +149,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     expect(byIssue.get(11)).toBe("skipped");
   });
 
-  it("a red end-of-run verify returns the merged children (does not throw / fabricate success)", async () => {
+  it("a red end-of-run verify is OBSERVABLY verify_failed (NOT indistinguishable from success), keeping the merged children", async () => {
     const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> =>
       input.phase === "final" ? { ok: false, ran: true } : { ok: true, ran: true };
     const familyBackend = new FakeFamilyBackend();
@@ -153,8 +160,13 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       familyBase: "family/293-base",
       verifyCmr,
     });
-    // Both merged (the wave passed); the final red verify just returns the result
-    // honestly for the caller / PR step (decision 3⑤ "不静默吞").
+    // The red FINAL verify must be observable — a clean run and this run both have
+    // all children "merged", so the per-child statuses alone CANNOT distinguish
+    // them; the family-level status is what makes the failure visible (round-2
+    // finding: a red final verify cannot look like success).
+    expect(result.status).toBe("verify_failed");
+    expect(result.failedPhase).toBe("final");
+    // The merged children are still returned honestly (decision 3⑤ "不静默吞").
     expect(result.children.map((c) => c.status)).toEqual(["merged", "merged"]);
   });
 
@@ -169,5 +181,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       familyBase: "family/293-base",
     });
     expect(result.children.map((c) => c.status)).toEqual(["merged"]);
+    // The no-op default passes → the run is observably "success".
+    expect(result.status).toBe("success");
   });
 });

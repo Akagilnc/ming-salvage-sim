@@ -123,6 +123,8 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
       "merged",
       "merged",
     ]);
+    // A complete clean run is observably "success" (#293 no-op verify passes).
+    expect(result.status).toBe("success");
   });
 
   it("each child is cut from the FAMILY base (not main) and does NOT push remotely", async () => {

@@ -14,7 +14,11 @@
  */
 
 import type { Backend } from "../types.js";
-import type { VerifyCmrInput, VerifyCmrResult } from "./verifyCmr.js";
+import type {
+  VerifyCmrInput,
+  VerifyCmrPhase,
+  VerifyCmrResult,
+} from "./verifyCmr.js";
 
 // ─────────────────────────── child slice ───────────────────────────
 
@@ -166,8 +170,13 @@ export interface FamilyRunInput {
  * - `"ran"` — the child's single-slice run reached S8(success) and produced a
  *   reviewed branch, but it has NOT yet been merged into the family base. This is
  *   the transient state runChild returns; the spine flips it to `"merged"` only
- *   after the merge commit lands (ADR 0022 decision 5). A future #295 merge
- *   failure can leave a child as `"ran"` rather than a stale `"merged"`.
+ *   AFTER the merge commit lands (ADR 0022 decision 5), so a premature `"merged"`
+ *   is impossible. In #293 the merge is the no-conflict happy path and always
+ *   resolves, so a `"ran"` child always becomes `"merged"`. #295 (the conflict
+ *   fallback) is what introduces a merge that can FAIL: it extends the merge step
+ *   — `MergeResult` / the merger — to signal a failed/aborted merge, and the spine
+ *   then leaves that child `"ran"` (or marks `"failed"`) instead of `"merged"`.
+ *   So `"ran"` is the seam state #295 needs; #293 only ever transits through it.
  * - `"merged"` — the child's reviewed branch is merged into the family base (a
  *   `status:"merged"` ledger entry exists, decision 5).
  * - `"failed"` — the child's single-slice run did not reach success (it cannot
@@ -186,8 +195,29 @@ export interface FamilyChildResult {
   readonly branch?: string;
 }
 
+/**
+ * The family-run outcome (ADR 0022 decision 3④/⑤/⑥).
+ *
+ * - `"success"` — every wave verified and the end-of-run verify + integrated cmr
+ *   passed (in #293 the no-op always passes, so a complete run is `"success"`).
+ * - `"verify_failed"` — a verify-cmr barrier returned `ok:false`; `failedPhase`
+ *   says which. The spine fails-fast (decision 3④) and returns this so the caller
+ *   can distinguish a red run from a clean one — it does NOT silently look like
+ *   success (decision 3⑤ "不静默吞"). The family base + ledger are left for triage.
+ */
+export type FamilyRunStatus = "success" | "verify_failed";
+
 /** The family run result. */
 export interface FamilyRunResult {
+  /**
+   * The family-run outcome. `"verify_failed"` ⇒ a verify-cmr barrier was red (see
+   * `failedPhase`); the caller MUST NOT treat the run as shippable. #293's no-op
+   * verify always passes, so a complete #293 run is `"success"`; the failure path
+   * is wired + tested (via an injected `verifyCmr`) for #296.
+   */
+  readonly status: FamilyRunStatus;
+  /** Which verify-cmr barrier was red (only set when `status==="verify_failed"`). */
+  readonly failedPhase?: VerifyCmrPhase;
   /** The family base branch the children were merged onto. */
   readonly familyBase: string;
   /** The family base HEAD after all merges (undefined if nothing merged). */

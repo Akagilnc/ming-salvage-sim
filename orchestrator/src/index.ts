@@ -27,6 +27,7 @@ export type {
   FamilyLedgerEntry,
   FamilyRunInput,
   FamilyRunResult,
+  FamilyRunStatus,
   MergeRequest,
   MergeResult,
 } from "./family/types.js";
