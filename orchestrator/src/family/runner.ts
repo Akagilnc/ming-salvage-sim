@@ -101,32 +101,50 @@ export async function runFamily(
   const childResults: FamilyChildResult[] = [];
   let familyHead: string | undefined;
 
-  // Build the family result, accounting for EVERY epic child. A child the wave
-  // loop never scheduled (a blocker never merged, so it stayed blocked when the
-  // loop terminated — or a fail-fast wave aborted before it ran) is recorded
-  // `"skipped"`, never silently dropped from the result (decision 3⑤ "不静默吞").
-  // #294's richer wave/cycle logic refines the skipped reason; #293 just keeps
-  // the result honest.
+  // Build the family result, accounting for EVERY epic child, and deriving an
+  // HONEST family status (decision 3⑤ "不静默吞" — the result must not silently
+  // look like success):
   //
-  // `status` makes the verify-cmr outcome OBSERVABLE (decision 3⑤ "不静默吞"): a
-  // red barrier returns `status:"verify_failed"` + `failedPhase`, so the caller
-  // can tell a red run from a clean `"success"` (a red final-verify must NOT look
-  // like success). #293's no-op verify always passes, so a complete run is
-  // `"success"`; the failure path is reached only via an injected `verifyCmr`.
-  const finalize = (
-    status: FamilyRunStatus,
-    failedPhase?: VerifyCmrPhase,
-  ): FamilyRunResult => {
+  //   - every epic child gets a record. A child not run this invocation is
+  //     LEDGER-AWARE: if it has a `merged` ledger entry (e.g. merged in a prior
+  //     invocation — #298's resume truth), it is `"merged"` (per the
+  //     FamilyChildStatus contract: "merged" ⇔ a merged ledger entry exists), NOT
+  //     `"skipped"`. Only a child absent from BOTH this run's results AND the
+  //     merged ledger (a blocker never merged / a fail-fast wave aborted before
+  //     it ran) is `"skipped"`.
+  //   - `status` is the verify outcome ONLY when a barrier was red
+  //     (`verify_failed`, the most urgent). Otherwise the run is `"success"` iff
+  //     EVERY child is merged, else `"incomplete"` (a child `failed`/`skipped` —
+  //     the run did not fully close; the caller must not treat it as shippable).
+  //
+  // #293's happy path (all independent children merge, no-op verify passes) is
+  // always `"success"`; the `incomplete`/`verify_failed`/ledger-merged branches
+  // guard honesty for the failure + #294/#298 paths.
+  const finalize = async (
+    verifyFailedPhase?: VerifyCmrPhase,
+  ): Promise<FamilyRunResult> => {
     const recorded = new Set(childResults.map((c) => c.issue));
-    const skipped: FamilyChildResult[] = epic.children
+    const ledgerMerged = await currentMerged(familyBackend);
+    const extra: FamilyChildResult[] = epic.children
       .filter((c) => !recorded.has(c.issue))
-      .map((c) => ({ issue: c.issue, status: "skipped" as const }));
+      .map((c) =>
+        ledgerMerged.has(c.issue)
+          ? { issue: c.issue, status: "merged" as const }
+          : { issue: c.issue, status: "skipped" as const },
+      );
+    const children = [...childResults, ...extra];
+    const status: FamilyRunStatus =
+      verifyFailedPhase !== undefined
+        ? "verify_failed"
+        : children.every((c) => c.status === "merged")
+          ? "success"
+          : "incomplete";
     return {
       status,
-      ...(failedPhase !== undefined ? { failedPhase } : {}),
+      ...(verifyFailedPhase !== undefined ? { failedPhase: verifyFailedPhase } : {}),
       familyBase,
       familyHead,
-      children: [...childResults, ...skipped],
+      children,
     };
   };
 
@@ -198,9 +216,10 @@ export async function runFamily(
     if (!waveVerify.ok) {
       // Fail-fast (decision 3④): do not排下一波. #296's red wave lands here; the
       // family base + ledger are left for triage (decision 3⑤ "不静默吞"). Children
-      // not yet run are recorded "skipped" by finalize(); the run is observably
-      // `verify_failed` at the "wave" phase (NOT an indistinguishable success).
-      return finalize("verify_failed", "wave");
+      // not yet run are recorded "skipped"/"merged" by finalize(); the run is
+      // observably `verify_failed` at the "wave" phase (NOT an indistinguishable
+      // success).
+      return await finalize("wave");
     }
   }
 
@@ -219,8 +238,10 @@ export async function runFamily(
     // "final"` so a red final verify is OBSERVABLY distinct from success — the
     // caller / PR step must NOT ship it (decision 3⑤ "不静默吞"); the family base +
     // ledger are left for triage.
-    return finalize("verify_failed", "final");
+    return await finalize("final");
   }
 
-  return finalize("success");
+  // Every barrier passed. finalize() derives "success" only if EVERY child
+  // merged, else "incomplete" (a child failed / stayed blocked — not shippable).
+  return await finalize();
 }
