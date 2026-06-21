@@ -269,8 +269,8 @@ _Avoid_: 结束标记、done(太泛)
 _Avoid_: 日志、log(太泛)、history
 
 **commander**:
-家族集成层的 **Plan 分解步**(LLM agent step,采 Sandcastle 原生 parallel-planner Plan stage)。喂父 epic → 分解成子片 + 依赖 → 发成 GitHub native sub-issues + blocked_by → 按波次 fan-out。**纯 AFK**:分解完不停、无 fan-out 前人闸,切片质量靠下游 merger/cmr/verify 兜。read-existing = 父 epic 已有现成 sub-issues 则跳过 Plan 的兜底模式。
-_Avoid_: 调度器(它分解、不只调度)、确定性 runner 步(它是 LLM agent step)
+家族集成层的**确定性波次调度步**(runner 动作步、无 soul、非 LLM)。读父 epic 现成的 GitHub native sub-issues + 显式 blocked_by DAG → 拓扑分波(未阻塞者并发为一波、被阻塞者下波)→ fan-out。**不分解 epic、不建 sub-issue**——切片由 to-issues 在编排器外(design session)切好发布,commander 只调度现成片。区别于原生 parallel-planner Plan stage(那是 LLM「选 unblocked」的选择器、且会重推我们已有的显式 blocked_by,故不采用)。
+_Avoid_: 分解器 / planner(它不分解)、原生 Plan stage(它 LLM 选片、本 commander 确定性读现成)
 
 **波次 / wave**:
 commander 一次并发放出的一组互不阻塞子片。被 blocked_by 阻塞者,等其阻塞者合回家族 base 后入下一波。波内并行、波间 barrier。
