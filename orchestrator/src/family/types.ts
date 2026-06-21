@@ -59,23 +59,51 @@ export interface FamilyEpic {
 // ─────────────────────────── family ledger ───────────────────────────
 
 /**
- * One append-only family-ledger event (ADR 0022 decision 5, #293 thinnest form).
+ * One append-only family-ledger event (ADR 0022 decision 5).
  *
- * #293 records only the minimal `{childIssue, status:"merged"}` per merged
- * child. #298 extends the schema (childBranch / childHead / wave /
- * familyHeadBefore / familyHeadAfter / aborted events + reconcile) by adding
- * fields HERE and writing them in the merger — without re-shaping the spine.
+ * #293 recorded only the minimal `{childIssue, status:"merged"}` per merged
+ * child. #298 widens the schema to the FULL event (childBranch / childHead /
+ * wave / familyHeadBefore / familyHeadAfter) + the `"aborted"` status (verify /
+ * cmr failure, carrying the family head at the time) + the `"reconciled"` event
+ * tag (a crash-window補账条). All #298 fields are OPTIONAL so #293's thin write
+ * — `{childIssue, status:"merged"}` — remains a valid entry (back-compatible).
+ *
+ * INVARIANT KEPT BY THE UNBLOCK PREDICATE: the commander's unblock check (ADR
+ * 0022 decision 6②) reads `status === "merged"` ONLY. A reconcile補账条 carries
+ * `status:"merged"` (so it COUNTS as merged — decision 5 / codex R3:補成
+ * `status:"reconciled"` would死锁) and is distinguished from a live merge by the
+ * separate `event: "reconciled"` tag — NOT by the `status` field. So `mergedSet`
+ * filters on `status`, and the reconcile tag rides alongside it without changing
+ * the unblock truth.
  */
 export interface FamilyLedgerEntry {
-  /** The child slice issue number that was merged into the family base. */
+  /** The child slice issue number this event is about. */
   readonly childIssue: number;
   /**
-   * Merge status. #293 only ever writes `"merged"` (the happy, no-conflict
-   * path). #298 adds `"aborted"` and reconcile events; the `status==="merged"`
-   * predicate the commander's unblock check uses (ADR 0022 decision 6②) reads
-   * THIS field, so reconcile補账条 must also be `"merged"`.
+   * Merge status — the UNBLOCK-PREDICATE field (ADR 0022 decision 6②).
+   *   - `"merged"`  — the child's branch is merged into the family base (a live
+   *     merge OR a reconcile補账条; both COUNT as merged).
+   *   - `"aborted"` — a verify/cmr barrier failed; this event carries the family
+   *     head at the time (`familyHeadAfter`) for triage. NOT counted as merged.
    */
-  readonly status: "merged";
+  readonly status: "merged" | "aborted";
+  /**
+   * Event tag distinguishing a crash-window reconcile補账条 (`"reconciled"`) from
+   * a live merge. Set ONLY by reconcile. The entry still carries
+   * `status:"merged"` so the unblock predicate counts it (decision 5, codex R3);
+   * the tag is for observability / audit, NOT the unblock truth.
+   */
+  readonly event?: "reconciled";
+  /** The child branch that was merged (full schema, #298). */
+  readonly childBranch?: string;
+  /** The child branch HEAD commit that was merged (the ancestor reconcile checks). */
+  readonly childHead?: string;
+  /** The wave number this child was scheduled in (#294's wave numbering). */
+  readonly wave?: number;
+  /** The family base HEAD BEFORE this child's merge. */
+  readonly familyHeadBefore?: string;
+  /** The family base HEAD AFTER this child's merge (or, for `aborted`, at failure). */
+  readonly familyHeadAfter?: string;
 }
 
 // ─────────────────────────── family backend seam ───────────────────────────
