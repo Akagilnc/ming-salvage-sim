@@ -1,0 +1,21 @@
+{
+  "name": "@ming/orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Ming LLM Epic Orchestrator — runner for AFK TDD dev loop (#244)",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.9"
+  },
+  "dependencies": {
+    "@ai-hero/sandcastle": "^0.10.0",
+    "zod": "^4.4.3"
+  }
+}
