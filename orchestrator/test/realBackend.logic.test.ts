@@ -722,8 +722,26 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
   const here = dirname(fileURLToPath(import.meta.url));
   const realPromptsDir = join(here, "..", "prompts");
 
+  // #292: the driver now feeds sourceRepo (+remote) + a deterministic runKey;
+  // RealBackend builds its own dedicated clone. Stub the clone seams so these
+  // promptsDir-validation tests never touch real git (the build/guard logic has
+  // its own dedicated tests in clone-isolation-292-build.test.ts).
+  class StubCloneBackend extends RealBackend {
+    protected override cloneDirExists(): boolean {
+      return true; // pretend the clone already exists ⇒ no `git clone`
+    }
+    protected override sh(file: string, args: string[]): string {
+      if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
+        return ".git"; // own .git ⇒ fail-closed guard passes
+      }
+      return "";
+    }
+  }
+
   const baseOpts = {
-    mainRepo: "/tmp/main",
+    sourceRepo: "/tmp/source",
+    remote: "https://github.com/owner/name.git",
+    runKey: 999,
     repo: "owner/name",
     imageName: "img",
     skillsMount: "/tmp/skills",
@@ -731,20 +749,20 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
 
   it("constructs successfully against the checked-in absolute prompts/ dir", () => {
     expect(
-      () => new RealBackend({ ...baseOpts, promptsDir: realPromptsDir }),
+      () => new StubCloneBackend({ ...baseOpts, promptsDir: realPromptsDir }),
     ).not.toThrow();
   });
 
   it("throws on a relative promptsDir", () => {
     expect(
-      () => new RealBackend({ ...baseOpts, promptsDir: "prompts" }),
+      () => new StubCloneBackend({ ...baseOpts, promptsDir: "prompts" }),
     ).toThrow(/must be an ABSOLUTE path/);
   });
 
   it("throws on an absolute promptsDir that does not exist", () => {
     expect(
       () =>
-        new RealBackend({
+        new StubCloneBackend({
           ...baseOpts,
           promptsDir: "/definitely/not/a/real/dir/xyz",
         }),
