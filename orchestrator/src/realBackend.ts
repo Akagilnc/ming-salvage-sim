@@ -60,7 +60,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
@@ -441,29 +441,48 @@ function shortHash(input: string): string {
  *
  * Preference order, so two distinct sources can never collide on one clone dir:
  *   1. A parseable GitHub remote (https or ssh) → `<owner>_<repo>` (human-readable,
- *      and same-named repos under different owners stay distinct).
- *   2. A remote that isn't parseable as `owner/repo` → a stable hash of the remote.
+ *      and same-named repos under different owners stay distinct). Restricted to
+ *      github.com hosts — for that host the 2-segment `owner/repo` IS the whole
+ *      identity, so collision is impossible; any OTHER host (e.g. a GitLab nested
+ *      group `groupA/sub/repo` vs `groupB/sub/repo`) shares its last two segments,
+ *      so it must hash the FULL remote instead (case 2), never the tail.
+ *   2. A remote that isn't a github.com `owner/repo` → a stable hash of the FULL
+ *      (trimmed) remote — preserves every distinguishing segment, no collision.
  *   3. NO remote (a local-only source) → a stable hash of the source ABSOLUTE path
- *      (ADR 0024 "无 remote 的本地 source → 退化为 source 绝对路径的 hash").
+ *      (ADR 0024 "无 remote 的本地 source → 退化为 source 绝对路径的 hash"). The
+ *      source is resolved to an absolute path FIRST, so the same repo referenced
+ *      relatively (from any cwd) maps to one stable clone — crash-resume idempotency.
  *
  * Pure: derives the slug only — no file I/O.
  */
 export function repoSlug(sourceRepo: string, remote: string | undefined): string {
   if (remote !== undefined && remote.trim() !== "") {
-    const parsed = parseOwnerRepo(remote);
+    const trimmed = remote.trim();
+    const parsed = parseOwnerRepo(trimmed);
     if (parsed !== undefined) return `${parsed.owner}_${parsed.repo}`;
-    return shortHash(remote.trim());
+    return shortHash(trimmed);
   }
-  return shortHash(sourceRepo);
+  // Resolve to absolute so `../repo` and `/abs/repo` (same repo, different cwd)
+  // hash identically (ADR 0024 dec.1: hash of the source ABSOLUTE path).
+  return shortHash(resolve(sourceRepo));
 }
 
-/** Extract `{owner, repo}` from an https or ssh GitHub remote, or undefined. */
+/**
+ * Extract `{owner, repo}` from an https or ssh **github.com** remote, or
+ * undefined for any non-github.com remote. Restricted to github.com on purpose:
+ * only there is the 2-segment `owner/repo` the repo's whole identity, so the
+ * human-readable `owner_repo` slug is collision-free. A non-github host can carry
+ * deeper namespaces (GitLab subgroups: `groupA/sub/repo` vs `groupB/sub/repo`)
+ * that share their last two segments — those must NOT slug here; the caller hashes
+ * the full remote for them instead.
+ */
 function parseOwnerRepo(
   remote: string,
 ): { owner: string; repo: string } | undefined {
-  // https://github.com/owner/repo(.git)  |  git@github.com:owner/repo(.git)
+  // https://github.com/owner/repo(.git)(/)  |  git@github.com:owner/repo(.git)(/)
+  // (also ssh://git@github.com[:port]/owner/repo.git) — host pinned to github.com.
   const m = remote.match(
-    /(?:[/:])([^/:\s]+)\/([^/\s]+?)(?:\.git)?\/?$/,
+    /(?:^|@|\/\/)github\.com(?::\d+)?[/:]([^/:\s]+)\/([^/\s]+?)(?:\.git)?\/?$/,
   );
   if (m === null) return undefined;
   const owner = m[1];

@@ -61,6 +61,43 @@ describe("#292 repoSlug — collision-free slug for the clone path", () => {
     const b = repoSlug("/Users/me/repoB", undefined);
     expect(a).not.toBe(b);
   });
+
+  // ADR 0024 dec.1: "two distinct sources can never collide on one clone dir".
+  // A non-GitHub nested-group remote must NOT slug down to its last two path
+  // segments (which would collide groupA/sub/repo with groupB/sub/repo).
+  it("distinct nested-group remotes under different top-level groups do NOT collide", () => {
+    const a = repoSlug("/x", "https://gitlab.com/groupA/sub/repo.git");
+    const b = repoSlug("/x", "https://gitlab.com/groupB/sub/repo.git");
+    expect(a).not.toBe(b);
+  });
+
+  // The human-readable owner_repo slug is reserved for GitHub remotes (the only
+  // host whose 2-segment owner/repo is the whole identity); anything else hashes
+  // the FULL remote so no two distinct remotes can share a slug.
+  it("a non-github 2-segment remote still does not collide with a same-tail github repo", () => {
+    const gh = repoSlug("/x", "https://github.com/sub/repo.git");
+    const gl = repoSlug("/x", "https://gitlab.com/sub/repo.git");
+    expect(gh).not.toBe(gl);
+  });
+
+  // E (P3): a remote with trailing whitespace must still yield the human-readable
+  // owner_repo slug, not silently fall back to a hash (repoSlug gates on trim()
+  // but must also parse the trimmed value).
+  it("a github remote with trailing whitespace still yields owner_repo", () => {
+    expect(
+      repoSlug("/x", "https://github.com/Akagilnc/ming-salvage-sim.git \n"),
+    ).toBe("Akagilnc_ming-salvage-sim");
+  });
+
+  // D (P1, ADR + JSDoc): a no-remote LOCAL source must hash its ABSOLUTE path,
+  // so the same repo referenced relatively (from any cwd) maps to one stable
+  // clone — otherwise crash-resume lands on a different clone and breaks
+  // idempotency (ADR 0024 dec.1 "退化为 source 绝对路径的 hash").
+  it("a relative no-remote source hashes the same as its absolute form", () => {
+    const abs = repoSlug(`${process.cwd()}/some-local-repo`, undefined);
+    const rel = repoSlug("some-local-repo", undefined);
+    expect(rel).toBe(abs);
+  });
 });
 
 describe("#292 clonePathFor — dedicated clone path is run-key-addressed", () => {
