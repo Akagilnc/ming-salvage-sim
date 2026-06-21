@@ -38,6 +38,12 @@ export interface MergedRecord {
    * (codex R3); the tag is for audit. Normal merges leave this undefined.
    */
   readonly event?: "reconciled";
+  /**
+   * Did this child's merge get LLM-resolved (#295)? Forwarded by the merger from
+   * {@link MergeResult.conflictResolvedByLlm} so the integrated cmr 承重闸 can read
+   * it off the durable ledger (#291 缺口 1). Omitted on a clean merge.
+   */
+  readonly conflictResolvedByLlm?: boolean;
 }
 
 /** The fields a #298 `aborted` event (verify/cmr failure) carries. */
@@ -88,6 +94,7 @@ export async function recordMerged(
       wave: r.wave,
       familyHeadBefore: r.familyHeadBefore,
       familyHeadAfter: r.familyHeadAfter,
+      conflictResolvedByLlm: r.conflictResolvedByLlm,
     }) as FamilyLedgerEntry,
   );
 }

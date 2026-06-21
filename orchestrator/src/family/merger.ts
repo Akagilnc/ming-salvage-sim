@@ -121,6 +121,15 @@ export async function mergeChild(
     childHead: result.childHead,
     familyHeadBefore: result.familyHeadBefore,
     familyHeadAfter: result.familyHead,
+    // #291 缺口 1: forward the LLM-resolved signal onto the DURABLE ledger entry so
+    // the integrated cmr 承重闸 (which reads only the ledger after a context
+    // compaction) sees WHICH children a machine touched its merge of. Only stamp it
+    // on the LLM-resolved path; a clean deterministic merge omits it (back-compat
+    // with the thin #293 entry + the existing recordMerged shape tests). `compact`
+    // drops the field when undefined.
+    ...(result.conflictResolvedByLlm === true
+      ? { conflictResolvedByLlm: true }
+      : {}),
   });
   return result;
 }

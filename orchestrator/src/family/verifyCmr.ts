@@ -43,6 +43,7 @@
 import type {
   FamilyBackend,
   FamilyVerifyResult,
+  IntegratedCmrRequest,
   IntegratedCmrResult,
 } from "./types.js";
 
@@ -74,6 +75,14 @@ export interface VerifyCmrInput {
    * `recordAborted` / `escalateFamily`.
    */
   readonly familyBackend: FamilyBackend;
+  /**
+   * The child issue numbers whose merge into the family base was LLM-resolved
+   * (#295), derived by the spine from the durable family ledger (#291 缺口 1). The
+   * `"final"` phase forwards it to {@link IntegratedCmrRequest.llmResolvedChildren}
+   * so the 承重闸 sees which merges a machine touched. Absent/empty ⇒ no LLM
+   * resolution this run; the cmr request omits the field (the back-compat shape).
+   */
+  readonly llmResolvedChildren?: readonly number[];
 }
 
 /** The verify-cmr hook result. */
@@ -123,7 +132,7 @@ const INCOMPLETE_GATE: VerifyCmrResult = { ok: false, ran: true };
 export async function runVerifyCmr(
   input: VerifyCmrInput,
 ): Promise<VerifyCmrResult> {
-  const { phase, familyBase, familyBackend } = input;
+  const { phase, familyBase, familyBackend, llmResolvedChildren } = input;
 
   // No verify capability ⇒ the #293 no-op path (nothing to verify; do not pretend).
   if (familyBackend.runFamilyVerify === undefined) return NOOP;
@@ -151,7 +160,16 @@ export async function runVerifyCmr(
   //    the spine's finalize() call the run `"success"` with the 承重闸 never run.
   //    Fail-safe to `ok:false` (verify_failed) — NOT the #293 nothing-ran no-op. ──
   if (familyBackend.runIntegratedCmr === undefined) return INCOMPLETE_GATE;
-  const cmr: IntegratedCmrResult = await familyBackend.runIntegratedCmr({ familyBase });
+  // #291 缺口 1: surface the LLM-resolved children to the 承重闸. OMIT the field
+  // (keep the back-compat `{familyBase}`-only request) when none was LLM-resolved,
+  // so a conflict-free run's cmr request shape is unchanged.
+  const cmrRequest: IntegratedCmrRequest = {
+    familyBase,
+    ...(llmResolvedChildren !== undefined && llmResolvedChildren.length > 0
+      ? { llmResolvedChildren }
+      : {}),
+  };
+  const cmr: IntegratedCmrResult = await familyBackend.runIntegratedCmr(cmrRequest);
   if (!cmr.converged) {
     // NOT converged ⇒ escalate续跑 (#298 seam); do NOT open a PR. (decision 3⑥/4)
     await familyBackend.escalateFamily?.({
