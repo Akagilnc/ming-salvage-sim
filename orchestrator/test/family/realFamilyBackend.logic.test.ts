@@ -22,12 +22,13 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  mergerOutcomeFromResult,
   parseMergerOutcome,
   RealFamilyBackend,
   type RealFamilyBackendOptions,
@@ -116,6 +117,24 @@ describe("RealFamilyBackend appendFamilyLedger / readFamilyLedger (#291 sibling 
     const b = new RealFamilyBackend(opts(trackRepo()));
     expect(await b.readFamilyLedger()).toEqual([]);
   });
+
+  it("readFamilyLedger FAILS CLOSED on a present-but-unreadable ledger (NOT silently []) (codex R2)", async () => {
+    // ENOENT (no file) → []. But a present-but-unreadable ledger (here: the path is
+    // a DIRECTORY → EISDIR) must rethrow, never read as "no children merged" — that
+    // would make reconcile re-merge already-landed children (decision 5 "不静默吞").
+    const o = opts(trackRepo());
+    // make the ledger path a directory so readFileSync throws EISDIR (not ENOENT).
+    mkdirSync(join(o.ledgerDir, "family-ledger.jsonl"), { recursive: true });
+    const b = new RealFamilyBackend(o);
+    await expect(b.readFamilyLedger()).rejects.toThrow(/failed to read the family ledger/);
+  });
+
+  it("readEscalations FAILS CLOSED on a present-but-unreadable escalation log (codex R2)", async () => {
+    const o = opts(trackRepo());
+    mkdirSync(join(o.ledgerDir, "family-escalations.jsonl"), { recursive: true });
+    const b = new RealFamilyBackend(o);
+    await expect(b.readEscalations()).rejects.toThrow(/failed to read the escalation log/);
+  });
 });
 
 // ═══════════════════════════════ 2. merge ═══════════════════════════════════
@@ -162,6 +181,30 @@ describe("RealFamilyBackend mergeChildIntoFamilyBase (#291 git merge --no-ff)", 
     // in-progress merge with MERGE_HEAD present).
     expect(git(repo, "rev-parse", "-q", "--verify", "MERGE_HEAD")).toBeTruthy();
   });
+
+  it("a NON-conflict git merge failure (dirty worktree, no MERGE_HEAD) RETHROWS — never reported as conflicted", async () => {
+    // Catching ALL non-zero `git merge` exits as `conflicted:true` would route a
+    // broken/dirty repo into the LLM resolver (codex R1 + agy R1). Here the child
+    // branch EXISTS (so the pre-merge rev-parse succeeds), but the family-base
+    // worktree has an uncommitted edit to the SAME file the merge would touch →
+    // `git merge` refuses ("local changes would be overwritten") and exits non-zero
+    // WITHOUT creating a MERGE_HEAD. That must rethrow the git error and abort the
+    // wave loudly — not be misreported as a content conflict.
+    const repo = trackRepo();
+    git(repo, "checkout", "-q", "-b", "family/293-base");
+    commitFile(repo, "shared.txt", "BASE");
+    git(repo, "checkout", "-q", "-b", "feat/child-13", "family/293-base");
+    commitFile(repo, "shared.txt", "CHILD EDIT");
+    git(repo, "checkout", "-q", "family/293-base");
+    // dirty the family-base worktree: an uncommitted edit to the file the merge touches.
+    execFileSync("bash", ["-c", `printf '%s' 'UNCOMMITTED' > '${join(repo, "shared.txt")}'`]);
+    const b = new RealFamilyBackend(opts(repo));
+    await expect(
+      b.mergeChildIntoFamilyBase({ childIssue: 13, childBranch: "feat/child-13" }),
+    ).rejects.toThrow();
+    // and the repo was NOT left mid-merge (no MERGE_HEAD → not a false "conflicted").
+    expect(() => git(repo, "rev-parse", "-q", "--verify", "MERGE_HEAD")).toThrow();
+  });
 });
 
 // ═══════════════════════════════ 3. ReconcileGit ════════════════════════════
@@ -202,12 +245,39 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     expect(r.childHead).toBeUndefined();
   });
 
+  it("childHeadExists with NO branch derives it from the issue (the production call shape) — the 补账 predicate is not dead", async () => {
+    // The production reconcile caller passes only the ISSUE (reconcile.ts:
+    // `git.childHeadExists(child.issue)`), no branch. Before the fix this returned
+    // `{exists:false}` → every already-landed child read as absent → re-merge
+    // (double-merge, codex R1). It must instead derive the runner branch
+    // `feat/244-orchestrator-issue-<n>` and find the real head.
+    const repo = trackRepo();
+    git(repo, "checkout", "-q", "-b", "family/293-base");
+    git(repo, "checkout", "-q", "-b", "feat/244-orchestrator-issue-77", "family/293-base");
+    const childHead = commitFile(repo, "c77.txt", "x");
+    git(repo, "checkout", "-q", "family/293-base");
+    const recon = new RealFamilyBackend(opts(repo)).reconcileGit();
+    const r = await recon.childHeadExists(77); // NO branch — derived from the issue
+    expect(r.exists).toBe(true);
+    expect(r.childHead).toBe(childHead);
+  });
+
   it("familyBaseStartHead returns the recorded start head", async () => {
     const repo = trackRepo();
     git(repo, "checkout", "-q", "-b", "family/293-base");
     const start = git(repo, "rev-parse", "HEAD");
     const recon = new RealFamilyBackend(opts(repo, { familyBaseStartHead: start })).reconcileGit();
     expect(await recon.familyBaseStartHead()).toBe(start);
+  });
+
+  it("familyBaseStartHead THROWS when no start head was recorded — never falls back to the live head (codex R3)", async () => {
+    // The empty-ledger crash-window net compares liveHead to startHead. Falling back
+    // to the CURRENT live head would make them trivially equal → the net is silently
+    // disabled (fail-open). With no recorded start head it must throw, not degrade.
+    const repo = trackRepo();
+    git(repo, "checkout", "-q", "-b", "family/293-base");
+    const recon = new RealFamilyBackend(opts(repo)).reconcileGit(); // no familyBaseStartHead
+    await expect(recon.familyBaseStartHead()).rejects.toThrow(/no familyBaseStartHead was recorded/);
   });
 });
 
@@ -223,9 +293,24 @@ class FakeSeamsBackend extends RealFamilyBackend {
   cmrCalls: IntegratedCmrRequest[] = [];
   shCalls: Array<{ file: string; args: string[] }> = [];
   mergeInProgressFake = false;
+  // STATEFUL fake of the family-base ref so the resolve postcondition (the family
+  // base ref moved past familyHeadBefore + child is its ancestor) is exercised
+  // realistically. `rev-parse <familyBase>` returns familyBaseHeadFake; running the
+  // merger ADVANCES it to resolvedHeadFake (a landed merge moves the family base
+  // ref). The default models a clean LANDED resolve.
+  familyBaseHeadFake = "base-head"; // rev-parse <familyBase> — current value (mutated by the merger)
+  resolvedHeadFake = "resolved-head"; // what the family base ref advances to on a landed resolve
+  childHeadFake = "child-head"; // rev-parse <childBranch>
+  childLandedFake = true; // isAncestorOf(childHead, familyBase ref)
+  mergerLandsOnFamilyBase = true; // does running the merger advance the family base ref?
 
   protected override async runMergerAgent(req: ConflictResolveRequest) {
     this.mergerCalls.push(req);
+    // A real landed resolve advances the family base ref; a misbehaving agent that
+    // aborted/reset (mergerLandsOnFamilyBase=false) leaves it unmoved.
+    if (this.mergerOutcome.resolved && this.mergerLandsOnFamilyBase) {
+      this.familyBaseHeadFake = this.resolvedHeadFake;
+    }
     return this.mergerOutcome;
   }
   protected override runVerifyCommands(req: FamilyVerifyRequest): void {
@@ -241,14 +326,31 @@ class FakeSeamsBackend extends RealFamilyBackend {
   protected override mergeInProgress(_repo: string): boolean {
     return this.mergeInProgressFake;
   }
+  protected override isAncestorOf(_ancestor: string, _descendant: string, _repo: string): boolean {
+    return this.childLandedFake;
+  }
   // Intercept the git/gh/npx subprocess seam so no real command runs.
   protected override sh(file: string, args: string[], _cwd?: string): string {
     this.shCalls.push({ file, args });
-    if (file === "git" && args[0] === "rev-parse") return "deadbeef";
+    if (file === "git" && args[0] === "rev-parse") {
+      // rev-parse <familyBase> → the (stateful) family base ref; rev-parse HEAD →
+      // wherever HEAD is; rev-parse <childBranch> → the child head. The resolve
+      // postcondition reads the FAMILY BASE REF (codex R3), so familyHeadBefore and
+      // the post-resolve familyHead both come from familyBaseHeadFake — which the
+      // merger advances only on a landed resolve.
+      if (args[1] === this.familyBase) return this.familyBaseHeadFake;
+      if (args[1] === "HEAD") return this.resolvedHeadFake;
+      return this.childHeadFake;
+    }
     if (file === "gh" && args[0] === "pr" && args[1] === "create") {
       return "https://github.com/Akagilnc/ming-salvage-sim/pull/777";
     }
     return "";
+  }
+
+  // the configured family base (RealFamilyBackend.opts is protected → accessible).
+  private get familyBase(): string {
+    return this.opts.familyBase;
   }
 }
 
@@ -257,10 +359,11 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
     const b = new FakeSeamsBackend(opts(trackRepo()));
     b.mergerOutcome = { resolved: true };
     b.mergeInProgressFake = false; // the agent committed the merge
+    // landed state: HEAD moved past familyHeadBefore + child is an ancestor (defaults).
     const res = await b.resolveMergeConflict({ childIssue: 10, childBranch: "feat/child-10" });
     expect(b.mergerCalls).toEqual([{ childIssue: 10, childBranch: "feat/child-10" }]);
     expect(res.conflicted ?? false).toBe(false);
-    expect(res.familyHead).toBe("deadbeef");
+    expect(res.familyHead).toBe("resolved-head");
   });
 
   it("agent escalated/failed → THROWS (the merger never records `merged`)", async () => {
@@ -276,6 +379,47 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
     b.mergerOutcome = { resolved: true };
     b.mergeInProgressFake = true; // MERGE_HEAD still present
     const res = await b.resolveMergeConflict({ childIssue: 12, childBranch: "feat/child-12" });
+    expect(res.conflicted).toBe(true);
+  });
+
+  it("agent CLAIMED resolved but the merge did NOT land on the family base (abort/reset) → still-conflicted (codex R2)", async () => {
+    // The dangerous false-clean: the agent says resolved:true and there is no
+    // MERGE_HEAD, but it actually aborted/reset — the FAMILY BASE REF never moved
+    // past familyHeadBefore and the child never landed. The old postcondition (only
+    // !mergeInProgress) would return a CLEAN result → merger records a `merged`
+    // ledger entry for a child that was never merged. The fix verifies git truth.
+    const b = new FakeSeamsBackend(opts(trackRepo()));
+    b.mergerOutcome = { resolved: true };
+    b.mergeInProgressFake = false; // no MERGE_HEAD…
+    b.mergerLandsOnFamilyBase = false; // …but the family base ref stays at familyHeadBefore
+    const res = await b.resolveMergeConflict({ childIssue: 13, childBranch: "feat/child-13" });
+    expect(res.conflicted).toBe(true);
+  });
+
+  it("agent CLAIMED resolved, family base moved, but the child is NOT its ancestor → still-conflicted (codex R2)", async () => {
+    // The family base moved (some commit landed) but it is NOT this child's merge —
+    // the child head is not an ancestor of the new family base. Must not look clean.
+    const b = new FakeSeamsBackend(opts(trackRepo()));
+    b.mergerOutcome = { resolved: true };
+    b.mergeInProgressFake = false;
+    b.childLandedFake = false; // family base moved, but the child is not an ancestor
+    const res = await b.resolveMergeConflict({ childIssue: 14, childBranch: "feat/child-14" });
+    expect(res.conflicted).toBe(true);
+  });
+
+  it("agent landed the child on the WRONG ref (HEAD moved, but the FAMILY BASE is unmoved) → still-conflicted (codex R3)", async () => {
+    // A misbehaving agent checked out another branch / detached HEAD and committed
+    // the child THERE: HEAD moved and the child is an ancestor of HEAD, but the
+    // family base ref the next verify checks out is unmoved. Reading the post-state
+    // off HEAD (the old fix) would look clean → phantom `merged`. Pinning to the
+    // FAMILY BASE REF catches it: the family base did not move → conflicted.
+    const b = new FakeSeamsBackend(opts(trackRepo()));
+    b.mergerOutcome = { resolved: true };
+    b.mergeInProgressFake = false;
+    b.mergerLandsOnFamilyBase = false; // family base ref stays put…
+    b.resolvedHeadFake = "landed-on-some-other-ref"; // …even though HEAD moved elsewhere
+    b.childLandedFake = true; // and the child IS an ancestor of that wrong HEAD
+    const res = await b.resolveMergeConflict({ childIssue: 15, childBranch: "feat/child-15" });
     expect(res.conflicted).toBe(true);
   });
 });
@@ -303,6 +447,46 @@ describe("parseMergerOutcome (#291 pure)", () => {
     );
     expect(out).toEqual({ resolved: true });
   });
+  it("a non-object JSON payload (null / true / number) is unresolved, NOT a crash", () => {
+    // `JSON.parse("null")` succeeds and returns null; the old code then read
+    // `parsed.resolved` → TypeError OUTSIDE the try/catch, crashing the parent
+    // (agy R1). Any non-object payload must be a safe unresolved-with-reason.
+    expect(parseMergerOutcome("<merger>null</merger>")).toEqual({
+      resolved: false,
+      reason: "merger agent <merger> tag was not a JSON object",
+    });
+    expect(parseMergerOutcome("<merger>true</merger>").resolved).toBe(false);
+    expect(parseMergerOutcome("<merger>42</merger>").resolved).toBe(false);
+  });
+});
+
+describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {
+  it("a signaled run delegates to parseMergerOutcome (resolved)", () => {
+    expect(
+      mergerOutcomeFromResult({
+        completionSignal: "MERGER_STEP_COMPLETE",
+        stdout: '<merger>{"resolved": true}</merger>',
+      }),
+    ).toEqual({ resolved: true });
+  });
+  it("an UNSIGNALED run is unresolved even when stdout claims resolved (codex R1)", () => {
+    // maxIterations hit mid-resolution: no completion signal, but an earlier
+    // `<merger>{"resolved":true}</merger>` rode in. The gate must NOT accept it.
+    const out = mergerOutcomeFromResult({
+      completionSignal: undefined,
+      stdout: '<merger>{"resolved": true}</merger>',
+    });
+    expect(out.resolved).toBe(false);
+    expect(out.reason).toMatch(/did not fire its completion signal/);
+  });
+  it("a wrong completion signal is unresolved", () => {
+    expect(
+      mergerOutcomeFromResult({
+        completionSignal: "SOME_OTHER_SIGNAL",
+        stdout: '<merger>{"resolved": true}</merger>',
+      }).resolved,
+    ).toBe(false);
+  });
 });
 
 // ═══════════════════════════ 5. runFamilyVerify ═════════════════════════════
@@ -322,6 +506,50 @@ describe("RealFamilyBackend runFamilyVerify (#291 tsc + vitest)", () => {
     expect(res.ok).toBe(false);
     expect(res.errorPackage?.reason).toMatch(/final/);
     expect(res.errorPackage?.reason).toMatch(/vitest|failed/);
+  });
+
+  it("RED via an execFileSync-style error captures err.stderr (the real failure reason), not just err.message", async () => {
+    // execFileSync on a non-zero exit throws an Error whose `.message` is only the
+    // status line ("Command failed: npx tsc --noEmit"); the ACTUAL tsc/test output
+    // is on `.stderr` (string or Buffer). Reading only `.message` would drop the
+    // locatable reason from the ledger (agy R1). summarizeError must append it.
+    class StderrRed extends FakeSeamsBackend {
+      protected override runVerifyCommands(): void {
+        const e = new Error("Command failed: npx tsc --noEmit") as Error & {
+          stderr?: Buffer;
+        };
+        e.stderr = Buffer.from("src/region.ts(42,7): error TS2322: Type 'number' is not assignable");
+        throw e;
+      }
+    }
+    const b = new StderrRed(opts(trackRepo()));
+    const res = await b.runFamilyVerify({ phase: "wave", familyBase: "family/293-base" });
+    expect(res.ok).toBe(false);
+    // the actual compiler error (from .stderr) is in the ledger reason, not lost.
+    expect(res.errorPackage?.reason).toMatch(/TS2322/);
+  });
+
+  it("captures BOTH stderr AND stdout — the failure body on stdout is not dropped when stderr has noise (codex R3)", async () => {
+    // Some tools put warnings on stderr and the real failure body on stdout (vitest
+    // prints the failing assertions to stdout). Taking stderr-OR-stdout would drop
+    // the stdout reason; summarizeError must append both.
+    class BothStreamsRed extends FakeSeamsBackend {
+      protected override runVerifyCommands(): void {
+        const e = new Error("Command failed: npx vitest run") as Error & {
+          stderr?: string;
+          stdout?: string;
+        };
+        e.stderr = "warning: deprecated flag"; // noise
+        e.stdout = "FAIL test/x.test.ts > the real assertion that failed"; // the body
+        throw e;
+      }
+    }
+    const b = new BothStreamsRed(opts(trackRepo()));
+    const res = await b.runFamilyVerify({ phase: "final", familyBase: "family/293-base" });
+    expect(res.ok).toBe(false);
+    // BOTH the stderr noise and the stdout failure body are present.
+    expect(res.errorPackage?.reason).toMatch(/the real assertion that failed/);
+    expect(res.errorPackage?.reason).toMatch(/deprecated flag/);
   });
 });
 
@@ -358,8 +586,14 @@ describe("RealFamilyBackend openFamilyPr (#291 push + gh pr create, 止于 PR)",
 
 // ═══════════════════════════ 8. recordAborted / escalate ════════════════════
 
-describe("RealFamilyBackend recordAborted (#291 phase-level aborted ledger)", () => {
-  it("appends a phase-level aborted entry (no childIssue) carrying reason + head", async () => {
+describe("RealFamilyBackend recordAborted (#291 in-memory seam, NOT the durable writer)", () => {
+  it("does NOT append to the durable ledger — the durable abort is recordDurableAbort's job (no double-write)", async () => {
+    // verifyCmr.ts records a red verify by calling BOTH `recordAborted?` AND
+    // `recordDurableAbort` (ledger.ts). Only the latter appends the PHASE-LEVEL
+    // durable entry; wiring-aborted-durable-291 fixes the contract at exactly ONE
+    // durable aborted entry per red verify. If RealFamilyBackend.recordAborted ALSO
+    // appended (the pre-fix behaviour), the real spine wrote TWO duplicate aborted
+    // entries (codex R1). So this seam must be a durable no-op.
     const b = new RealFamilyBackend(opts(trackRepo()));
     await b.recordAborted({
       phase: "wave",
@@ -367,18 +601,8 @@ describe("RealFamilyBackend recordAborted (#291 phase-level aborted ledger)", ()
       errorPackage: { reason: "tsc: TS2322 in regionApply" },
       familyHeadAfter: "headAfter",
     });
-    const ledger = await b.readFamilyLedger();
-    expect(ledger).toEqual([
-      {
-        status: "aborted",
-        event: "aborted",
-        phase: "wave",
-        reason: "tsc: TS2322 in regionApply",
-        familyHeadAfter: "headAfter",
-      },
-    ]);
-    // An aborted entry has NO childIssue → it never unblocks a downstream slice.
-    expect(ledger[0]?.childIssue).toBeUndefined();
+    // The seam wrote NOTHING durable on its own — no double-write against the spine.
+    expect(await b.readFamilyLedger()).toEqual([]);
   });
 });
 

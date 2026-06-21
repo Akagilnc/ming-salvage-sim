@@ -391,6 +391,17 @@ export function matchWorktreeForBranch(
  * → wrong issue metadata / wrong `.ledger-<n>` dir (gemini R2, high). Pure so
  * the extraction is unit-tested without git. Returns 0 when no digits exist.
  */
+/**
+ * The resident slice branch name for an issue — the single source of the
+ * `feat/244-orchestrator-issue-<n>` convention `prepareWorktree` cuts under, and
+ * the inverse of {@link issueNumberFromBranch}. Exported so the family layer can
+ * recover a child's branch from its issue when reconcile is handed only the issue
+ * number (#291, agy/codex R1). Pure → unit-tested without git.
+ */
+export function branchForIssue(issueNumber: number): string {
+  return `feat/244-orchestrator-issue-${issueNumber}`;
+}
+
 export function issueNumberFromBranch(branch: string): number {
   const m = branch.match(/issue-(\d+)/);
   if (m) return Number(m[1]);
@@ -1491,7 +1502,7 @@ export class RealBackend implements Backend {
     issueNumber: number,
     base: string,
   ): Promise<WorktreeHandle> {
-    const branch = `feat/244-orchestrator-issue-${issueNumber}`;
+    const branch = branchForIssue(issueNumber);
     // Idempotent reuse: if the resident worktree exists, reuse it (the runner's
     // #255 resume path drives this); else cut a fresh one from `base` (main).
     //
@@ -1991,7 +2002,7 @@ export class RealBackend implements Backend {
 
   // ── #255: detect resume residue ────────────────────────────────────────────
   async findResumeState(issueNumber: number): Promise<ResumeState | undefined> {
-    const branch = `feat/244-orchestrator-issue-${issueNumber}`;
+    const branch = branchForIssue(issueNumber);
     const wtPath = this.findExistingWorktree(branch);
     if (wtPath === undefined) return undefined;
     const stateDir = this.stateDirFor(wtPath, issueNumber);
