@@ -1,6 +1,6 @@
 # 家族集成层：commander 确定性波次调度（读现成子片）+ distinct-branch fan-out + merger 薄编排器
 
-Status: Proposed（2026-06-21；grill-with-docs 收敛 + 设计 cmr R1 修订。评审待 to-prd 之后，按 review-gate-after-to-prd 流程。前置：ADR 0024 仓库隔离、0016/0017/0018。）
+Status: Accepted（2026-06-21；grill-with-docs 收敛 + 设计 cmr 5 轮 + 线上 bot 收敛 → PR #290 合入 main。前置：ADR 0024 仓库隔离、0016/0017/0018。）
 
 ## 背景
 
