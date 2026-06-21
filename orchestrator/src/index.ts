@@ -11,7 +11,9 @@ export type { RouteContext, RouteDecision } from "./route.js";
 export { runFamily } from "./family/runner.js";
 export { selectWave } from "./family/commander.js";
 export { mergeChild } from "./family/merger.js";
-export { recordMerged, mergedSet } from "./family/ledger.js";
+export { recordMerged, recordAborted, mergedSet } from "./family/ledger.js";
+export type { MergedRecord, AbortedRecord } from "./family/ledger.js";
+export { reconcileFamilyLedger } from "./family/reconcile.js";
 export { runVerifyCmr } from "./family/verifyCmr.js";
 export type {
   VerifyCmrInput,
@@ -30,6 +32,8 @@ export type {
   FamilyRunStatus,
   MergeRequest,
   MergeResult,
+  ReconcileGit,
+  ReconcilePlan,
 } from "./family/types.js";
 export type {
   Backend,
