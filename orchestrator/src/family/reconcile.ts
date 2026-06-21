@@ -32,6 +32,19 @@
  * 续合" the family layer needs (agy/codex R2). The function is PURE over the
  * injected {@link ReconcileGit} seam (no real git here) so the spine stays a thin
  * caller and the三分支 are zero-container testable.
+ *
+ * INTEGRATION SEAM (full-field happy-path write). Branch ① / ② key off the ledger
+ * 末条 `familyHeadAfter` (and branch ② confirms a landed child via its `childHead`).
+ * For reconcile to be fully effective in production, the happy-path `merged` write
+ * must carry `familyHeadAfter` + `childHead` (the full schema {@link recordMerged}
+ * now ACCEPTS). #293's merger still writes the thin `{childIssue, status:"merged"}`
+ * — that line lives in the shared `merger.ts` (#295 territory), so forwarding the
+ * full fields through it is the one wiring left to the RealBackend integration.
+ * Until then, reconcile DEGRADES SAFELY on thin entries: a thin ledger has no
+ * baseline → the clean-start branch returns (no escalate, no double-merge; an
+ * already-merged child is still counted from `status:"merged"` and never re-run, a
+ * never-recorded child is re-run by the wave loop). No corruption either way —
+ * thin entries make reconcile conservative (rerun) rather than optimal (补账).
  */
 
 import { mergedSet } from "./ledger.js";
