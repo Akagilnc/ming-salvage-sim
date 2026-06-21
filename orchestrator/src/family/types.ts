@@ -112,6 +112,137 @@ export interface FamilyBackend {
    * order. The commander's unblock predicate reads the merged set from here.
    */
   readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>>;
+
+  // ─── #296 verify-cmr seam capabilities (ADR 0022 decision 3④/⑤/⑥/4) ───────
+  // ALL OPTIONAL: a #293-era backend (the no-op default, the existing fakes)
+  // does NOT implement them, so the verify-cmr hook degrades to the no-op
+  // `{ok:true, ran:false}` and the spine's existing default path is untouched.
+  // The verify-cmr module ({@link runVerifyCmr}) reaches these off the
+  // `familyBackend` it is handed by the frozen spine input `{phase, familyBase,
+  // familyBackend}`; a RealBackend supplies them (run typecheck+tests in the
+  // family base / dispatch the integrated cmr / open the PR / record the
+  // aborted+escalate events).
+
+  /**
+   * #296 verify seam (ADR 0022 decision 3④/⑤): run the family verify (typecheck
+   * + unit tests; the FULL suite on the `"final"` phase) against the family base.
+   * The verify-cmr hook fails-fast on `{ok:false}` at the wave barrier. Reads the
+   * `phase` so a RealBackend can scope the wave verify vs the end-of-run 全量
+   * verify. NOT塞进 LLM prompt — a deterministic command run (decision 3⑤).
+   */
+  runFamilyVerify?(request: FamilyVerifyRequest): Promise<FamilyVerifyResult>;
+  /**
+   * #296 integrated-cmr seam (ADR 0022 decision 3⑥): run the integrated
+   * cross-model cmr 承重闸 over the merged family base AFTER a green full verify,
+   * to catch 跨片接缝 (field-name / type / 阈值口径 / 组合 e2e) that per-slice cmr
+   * cannot see. `{converged:false}` is the load-bearing red — the hook escalates
+   * 续跑 (#298) rather than opening a PR. Mechanically reuses the local
+   * `ak-cross-m-review` pipeline (a薄封装 behind this seam).
+   */
+  runIntegratedCmr?(request: IntegratedCmrRequest): Promise<IntegratedCmrResult>;
+  /**
+   * #296 止于 PR seam (ADR 0022 decision 4): after a green verify + converged
+   * cmr, open the family-base PR and STOP — the family orchestrator's autonomy
+   * ends here. Online bot cmr + merge to main are the separate pr-review-loop
+   * stage, NOT this layer (so this seam never merges).
+   */
+  openFamilyPr?(request: OpenFamilyPrRequest): Promise<OpenFamilyPrResult>;
+  /**
+   * #298-OWNED aborted-event seam — #296 only CALLS it. A red verify writes an
+   * `aborted` event (携带错误包 + the family base at the time) so a failed wave is
+   * NOT silently dropped (decision 3④/5 "不静默吞"). The CONCRETE ledger schema
+   * widening (`FamilyLedgerEntry.status` → `"aborted"` + the event fields) is
+   * #298's (decision 5 "字段级 JSON 留 TDD"); #296 depends on this minimal method
+   * existing. Optional ⇒ a backend without it just skips the abort record (the
+   * `{ok:false}` the spine acts on still fails-fast).
+   */
+  recordAborted?(event: FamilyAbortedEvent): Promise<void>;
+  /**
+   * #298-OWNED escalate seam — #296 only CALLS it. A NOT-converged integrated cmr
+   * (decision 3⑥) escalates续跑 (复用 ADR 0017/0018 的升级续跑: 卡点 → 返回调用端
+   * → 拍 → resumeSession 注入). #296 does NOT build the escalate machine — it
+   * hands the non-convergence reason to #298's seam. Optional ⇒ a backend without
+   * it surfaces the red purely via the returned `{ok:false}`.
+   */
+  escalateFamily?(escalation: FamilyEscalation): Promise<void>;
+}
+
+// ─────────────────────────── #296 verify-cmr I/O ───────────────────────────
+
+/** What the family verify needs: which phase, and the family base to verify. */
+export interface FamilyVerifyRequest {
+  /** Wave barrier (decision 3④, fail-fast) vs end-of-run 全量 (decision 3⑤). */
+  readonly phase: "wave" | "final";
+  /** The family base branch verify runs against. */
+  readonly familyBase: string;
+}
+
+/** The family verify outcome (typecheck + tests). */
+export interface FamilyVerifyResult {
+  /** Green ⇒ true. A red `ok:false` fails-fast the wave / gates the final cmr. */
+  readonly ok: boolean;
+  /**
+   * The error package on a red verify — handed to the `aborted` ledger event so
+   * the failure is locatable without re-running (decision 3④/5).
+   */
+  readonly errorPackage?: FamilyVerifyErrorPackage;
+}
+
+/** Diagnostic payload for a red family verify (decision 3④/5). */
+export interface FamilyVerifyErrorPackage {
+  /** Human-readable reason (e.g. the failing tsc / vitest summary). */
+  readonly reason: string;
+}
+
+/** What the integrated cmr needs: the merged family base to review. */
+export interface IntegratedCmrRequest {
+  /** The merged family base branch the integrated cmr reviews. */
+  readonly familyBase: string;
+}
+
+/** The integrated-cmr outcome (the load-bearing cross-slice-seam gate). */
+export interface IntegratedCmrResult {
+  /** Converged (all reviewers empty / agreed) ⇒ true; else the gate is red. */
+  readonly converged: boolean;
+  /** Why it did not converge (handed to the escalate seam) — set when red. */
+  readonly reason?: string;
+}
+
+/** What opening the family PR needs (decision 4, 止于 PR). */
+export interface OpenFamilyPrRequest {
+  /** The family base branch the PR is opened FROM. */
+  readonly familyBase: string;
+}
+
+/** The opened-PR result. */
+export interface OpenFamilyPrResult {
+  /** The opened PR's URL (or a synthetic handle in the fake). */
+  readonly url: string;
+}
+
+/**
+ * An `aborted` event #296 hands to #298's `recordAborted` seam on a red verify
+ * (ADR 0022 decision 3④/5). The CONCRETE ledger schema (`FamilyLedgerEntry`
+ * widening) is #298's; this is the minimal call shape #296 depends on.
+ */
+export interface FamilyAbortedEvent {
+  /** Which verify barrier was red. */
+  readonly phase: "wave" | "final";
+  /** The family base at the time of the abort (so the failure is locatable). */
+  readonly familyBase: string;
+  /** The verify error package (decision 3④/5). */
+  readonly errorPackage: FamilyVerifyErrorPackage;
+}
+
+/**
+ * The escalation #296 hands to #298's `escalateFamily` seam when the integrated
+ * cmr does not converge (ADR 0022 decision 3⑥/4 → 升级续跑). The CONCRETE
+ * escalate/resume machine is #298's (复用 ADR 0017/0018); this is the minimal
+ * call shape #296 depends on.
+ */
+export interface FamilyEscalation {
+  /** Why the integrated cmr did not converge (the cross-slice-seam finding). */
+  readonly reason: string;
 }
 
 /** What the merger needs to merge one child branch into the family base. */
