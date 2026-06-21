@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # 边军军饷并轨：按军 per-source 记欠（省份额欠 + 中央份额欠）× 饷源比例分账 × 派生军饷欠容器 —— Due.军饷 动态化
@@ -66,4 +66,4 @@ status: proposed
 - **呈现契约（D10、细化 P4）**：军饷欠（真钱万两）可 approximate 奏报数呈现、非裸数值表；玩家见总欠饷、不见省/中央分账；未来挂报者忠诚 / 派系 / 实力。**注**：CLAUDE.md 的 P4 措辞或可补一句「财政钱数 vs 抽象 stat」澄清——属用户原则、留用户决定、本 ADR 不擅改。
 - **依赖**：#265（收复省 seed settle 基座 + 驻军，否则省份额军撞空 fail-loud）；#260（玩家改饷源 action）；#70（全省 seed）。#261 `blocked_by` #287。
 - **实现留 `/tdd`**：饷源比例精确值（会计录校准）、累加器 / 容器键名 / schema、分账·偿还·核销算术、相位确切插点、reconcile / 分账 / 守恒 / restore oracle、army→饷源省 解析 + 可写字段 schema。
-- **状态**：`proposed`（`grill-with-docs` 结晶 + 设计 cmr 进行中；收敛后 → `accepted`）。
+- **状态**：`accepted`（2026-06-21）。双闸收敛：① 本地 cmr（ak-cross-m-review，doc 模式，3 腿 Claude/codex/agy）**8 轮 → R8 3/3 converged**（`high` 轨迹 5→2→3→2→0→0→0→0）；② 线上 PR [#301](https://github.com/Akagilnc/ming-salvage-sim/pull/301) — gemini 4 守门 + codex P1（phase1 收尾容器重算）+ CodeRabbit（CONTEXT 收口 + MD037）全收口、3 轮 threads 全 resolved、CI 绿（Sourcery 本周配额死、flag）。下一步：#287 `to-issues` 切片 → implement。
