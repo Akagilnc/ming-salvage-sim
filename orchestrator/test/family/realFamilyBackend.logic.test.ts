@@ -22,7 +22,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -116,6 +116,24 @@ describe("RealFamilyBackend appendFamilyLedger / readFamilyLedger (#291 sibling 
   it("readFamilyLedger returns [] when no ledger exists yet", async () => {
     const b = new RealFamilyBackend(opts(trackRepo()));
     expect(await b.readFamilyLedger()).toEqual([]);
+  });
+
+  it("readFamilyLedger FAILS CLOSED on a present-but-unreadable ledger (NOT silently []) (codex R2)", async () => {
+    // ENOENT (no file) → []. But a present-but-unreadable ledger (here: the path is
+    // a DIRECTORY → EISDIR) must rethrow, never read as "no children merged" — that
+    // would make reconcile re-merge already-landed children (decision 5 "不静默吞").
+    const o = opts(trackRepo());
+    // make the ledger path a directory so readFileSync throws EISDIR (not ENOENT).
+    mkdirSync(join(o.ledgerDir, "family-ledger.jsonl"), { recursive: true });
+    const b = new RealFamilyBackend(o);
+    await expect(b.readFamilyLedger()).rejects.toThrow(/failed to read the family ledger/);
+  });
+
+  it("readEscalations FAILS CLOSED on a present-but-unreadable escalation log (codex R2)", async () => {
+    const o = opts(trackRepo());
+    mkdirSync(join(o.ledgerDir, "family-escalations.jsonl"), { recursive: true });
+    const b = new RealFamilyBackend(o);
+    await expect(b.readEscalations()).rejects.toThrow(/failed to read the escalation log/);
   });
 });
 
@@ -265,6 +283,13 @@ class FakeSeamsBackend extends RealFamilyBackend {
   cmrCalls: IntegratedCmrRequest[] = [];
   shCalls: Array<{ file: string; args: string[] }> = [];
   mergeInProgressFake = false;
+  // Distinct SHAs so the resolve postcondition (HEAD moved past familyHeadBefore +
+  // childHead ancestor of HEAD) is exercised realistically: by default a LANDED
+  // resolve (HEAD = "resolved-head" ≠ familyBase "base-head", child IS an ancestor).
+  familyBaseHeadFake = "base-head"; // rev-parse <familyBase>
+  resolvedHeadFake = "resolved-head"; // rev-parse HEAD after the resolve
+  childHeadFake = "child-head"; // rev-parse <childBranch>
+  childLandedFake = true; // isAncestorOf(childHead, HEAD)
 
   protected override async runMergerAgent(req: ConflictResolveRequest) {
     this.mergerCalls.push(req);
@@ -283,14 +308,28 @@ class FakeSeamsBackend extends RealFamilyBackend {
   protected override mergeInProgress(_repo: string): boolean {
     return this.mergeInProgressFake;
   }
+  protected override isAncestorOf(_ancestor: string, _descendant: string, _repo: string): boolean {
+    return this.childLandedFake;
+  }
   // Intercept the git/gh/npx subprocess seam so no real command runs.
   protected override sh(file: string, args: string[], _cwd?: string): string {
     this.shCalls.push({ file, args });
-    if (file === "git" && args[0] === "rev-parse") return "deadbeef";
+    if (file === "git" && args[0] === "rev-parse") {
+      // rev-parse HEAD → the post-resolve head; rev-parse <familyBase>/<branch> →
+      // the base / child head, so the resolve postcondition sees distinct SHAs.
+      if (args[1] === "HEAD") return this.resolvedHeadFake;
+      if (args[1] === this.familyBase) return this.familyBaseHeadFake;
+      return this.childHeadFake;
+    }
     if (file === "gh" && args[0] === "pr" && args[1] === "create") {
       return "https://github.com/Akagilnc/ming-salvage-sim/pull/777";
     }
     return "";
+  }
+
+  // the configured family base (RealFamilyBackend.opts is protected → accessible).
+  private get familyBase(): string {
+    return this.opts.familyBase;
   }
 }
 
@@ -299,10 +338,11 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
     const b = new FakeSeamsBackend(opts(trackRepo()));
     b.mergerOutcome = { resolved: true };
     b.mergeInProgressFake = false; // the agent committed the merge
+    // landed state: HEAD moved past familyHeadBefore + child is an ancestor (defaults).
     const res = await b.resolveMergeConflict({ childIssue: 10, childBranch: "feat/child-10" });
     expect(b.mergerCalls).toEqual([{ childIssue: 10, childBranch: "feat/child-10" }]);
     expect(res.conflicted ?? false).toBe(false);
-    expect(res.familyHead).toBe("deadbeef");
+    expect(res.familyHead).toBe("resolved-head");
   });
 
   it("agent escalated/failed → THROWS (the merger never records `merged`)", async () => {
@@ -318,6 +358,32 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
     b.mergerOutcome = { resolved: true };
     b.mergeInProgressFake = true; // MERGE_HEAD still present
     const res = await b.resolveMergeConflict({ childIssue: 12, childBranch: "feat/child-12" });
+    expect(res.conflicted).toBe(true);
+  });
+
+  it("agent CLAIMED resolved but the merge did NOT land (no MERGE_HEAD, HEAD unmoved) → still-conflicted (codex R2)", async () => {
+    // The dangerous false-clean: the agent says resolved:true and there is no
+    // MERGE_HEAD, but it actually aborted/reset — HEAD never moved past
+    // familyHeadBefore and the child never landed. The old postcondition (only
+    // !mergeInProgress) would return a CLEAN result → merger records a `merged`
+    // ledger entry for a child that was never merged. The fix verifies git truth.
+    const b = new FakeSeamsBackend(opts(trackRepo()));
+    b.mergerOutcome = { resolved: true };
+    b.mergeInProgressFake = false; // no MERGE_HEAD…
+    b.resolvedHeadFake = "base-head"; // …but HEAD == familyHeadBefore (unmoved)
+    const res = await b.resolveMergeConflict({ childIssue: 13, childBranch: "feat/child-13" });
+    expect(res.conflicted).toBe(true);
+  });
+
+  it("agent CLAIMED resolved, HEAD moved, but the child is NOT an ancestor of HEAD → still-conflicted (codex R2)", async () => {
+    // HEAD moved (some commit landed) but it is NOT this child's merge — the child
+    // head is not an ancestor of the new HEAD. Must not look clean.
+    const b = new FakeSeamsBackend(opts(trackRepo()));
+    b.mergerOutcome = { resolved: true };
+    b.mergeInProgressFake = false;
+    b.resolvedHeadFake = "some-other-head"; // HEAD moved…
+    b.childLandedFake = false; // …but the child is not an ancestor of it
+    const res = await b.resolveMergeConflict({ childIssue: 14, childBranch: "feat/child-14" });
     expect(res.conflicted).toBe(true);
   });
 });
