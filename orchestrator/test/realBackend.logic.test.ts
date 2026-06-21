@@ -1074,4 +1074,45 @@ describe("realBackend hasAgentBrief + extractAgentBrief — ownerLogin author fi
       expect(snap.agentBrief).toBe("");
     });
   });
+
+  describe("case-insensitive login comparison (#283 fix)", () => {
+    // opts.repo.split("/")[0] may yield "Akagilnc" (user-supplied casing) while
+    // the GitHub API returns the canonical lowercase "akagilnc" in user.login.
+    // The owner must not be locked out of their own repo.
+
+    const ownerLoginUppercase = "Akagilnc"; // user-supplied casing
+    const apiLoginLowercase = "akagilnc";   // GitHub API canonical casing
+
+    const bodyBriefByApiLogin: GhIssueJson = {
+      user: { login: apiLoginLowercase },
+      body: "## Agent Brief\ncase-insensitive body brief",
+      comments: [],
+    };
+
+    const commentBriefByApiLogin: GhIssueJson = {
+      user: { login: "stranger" },
+      body: "issue body",
+      comments: [
+        { body: "## Agent Brief\ncase-insensitive comment brief", user: { login: apiLoginLowercase } },
+      ],
+    };
+
+    it("hasAgentBrief accepts a brief when ownerLogin casing differs from user.login", () => {
+      expect(hasAgentBrief(bodyBriefByApiLogin, ownerLoginUppercase)).toBe(true);
+      expect(hasAgentBrief(commentBriefByApiLogin, ownerLoginUppercase)).toBe(true);
+    });
+
+    it("extractAgentBrief returns the brief when ownerLogin casing differs from user.login", () => {
+      expect(extractAgentBrief(bodyBriefByApiLogin, ownerLoginUppercase)).toContain(
+        "case-insensitive body brief",
+      );
+      expect(extractAgentBrief(commentBriefByApiLogin, ownerLoginUppercase)).toContain(
+        "case-insensitive comment brief",
+      );
+    });
+
+    it("still rejects a brief when the login is genuinely a different user (not just casing)", () => {
+      expect(hasAgentBrief(nonOwnerBodyJson, ownerLoginUppercase)).toBe(false);
+    });
+  });
 });

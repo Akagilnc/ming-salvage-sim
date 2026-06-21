@@ -127,8 +127,9 @@ export interface GhBlockedBy {
  * When `ownerLogin` is omitted the filter is skipped (backward-compatible).
  */
 export function hasAgentBrief(json: GhIssueJson, ownerLogin?: string): boolean {
+  const norm = (s: string | null | undefined) => (s ?? "").toLowerCase();
   const trusted = (login: string | null | undefined) =>
-    ownerLogin === undefined || login === ownerLogin;
+    ownerLogin === undefined || norm(login) === norm(ownerLogin);
   const inBody =
     trusted(json.user?.login) && (json.body ?? "").includes(AGENT_BRIEF_HEADING);
   const inComments = (json.comments ?? []).some(
@@ -184,8 +185,9 @@ export function buildIssueMeta(
  * filter is skipped (backward-compatible).
  */
 export function extractAgentBrief(json: GhIssueJson, ownerLogin?: string): string {
+  const norm = (s: string | null | undefined) => (s ?? "").toLowerCase();
   const trusted = (login: string | null | undefined) =>
-    ownerLogin === undefined || login === ownerLogin;
+    ownerLogin === undefined || norm(login) === norm(ownerLogin);
   // Priority order, LOWEST first: the issue body is the fallback, then comments
   // in order (newest last). A later carrier overwrites an earlier one, so the
   // LAST brief-bearing COMMENT wins over both earlier comments and the body
