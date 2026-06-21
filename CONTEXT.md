@@ -268,6 +268,18 @@ _Avoid_: 结束标记、done(太泛)
 每步落一条的账本(step / promptFile / prompt_hash / agent / model / commits before-after / sessionId 等)。防跳步的事后真源 + 续跑真源(下一步只读 ledger,不靠 LLM 记忆)。同 ADR 0017 的「状态文件」是同一份。
 _Avoid_: 日志、log(太泛)、history
 
+**commander**:
+家族集成层里读现成 sub-issue DAG、按 blocked_by 排波次、确定性 fan-out 调度的 **runner 动作步**(无 soul、非 LLM 角色)。本家族层**不用 LLM 分解切片**——切片由 design session 的 to-issues 在编排器外切,commander 只读现成。
+_Avoid_: planner(那是 LLM 分解角色,本家族层不采用)、调度器(太泛)
+
+**波次 / wave**:
+commander 一次并发放出的一组互不阻塞子片。被 blocked_by 阻塞者,等其阻塞者合回家族 base 后入下一波。波内并行、波间 barrier。
+_Avoid_: 批次、轮(混淆评审轮)
+
+**family ledger**:
+家族集成层的账本(家族 base worktree 的 sibling、worktree 外),记已合子片 hash / 当前波次 / 家族 base HEAD,供 merger 幂等续跑(崩溃重启跳过已合)。区别于单片的 step ledger。
+_Avoid_: step ledger(那是单片的)、状态文件(太泛)
+
 ## Example Dialogue
 
 开发者：“玩家说‘拟旨如下’时，CLI 通道能不能直接把诏书写进库？”
