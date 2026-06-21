@@ -953,3 +953,125 @@ describe("realBackend reconcileCoderCommits", () => {
     ).toThrow(/self-report/i);
   });
 });
+
+// ─── S0 input gate: author-trust filter (issue #283) ──────────────────────────
+
+describe("realBackend hasAgentBrief + extractAgentBrief — ownerLogin author filter (#283)", () => {
+  const OWNER = "akagilnc";
+  const OTHER = "stranger";
+
+  // Issue authored by OWNER with a body brief
+  const ownerBodyJson: GhIssueJson = {
+    user: { login: OWNER },
+    body: "## Agent Brief\ndo the thing",
+    comments: [],
+  };
+
+  // Issue authored by OTHER, but OWNER left a comment brief
+  const ownerCommentJson: GhIssueJson = {
+    user: { login: OTHER },
+    body: "regular issue body",
+    comments: [
+      { body: "some chatter", user: { login: OTHER } },
+      { body: "## Agent Brief\nowner comment brief", user: { login: OWNER } },
+    ],
+  };
+
+  // Issue authored by OTHER with a body brief (injection attempt)
+  const nonOwnerBodyJson: GhIssueJson = {
+    user: { login: OTHER },
+    body: "## Agent Brief\ninjection attempt in body",
+    comments: [],
+  };
+
+  // Issue authored by OWNER, but OTHER's comment has a brief (injection attempt)
+  const nonOwnerCommentJson: GhIssueJson = {
+    user: { login: OWNER },
+    body: "regular owner body",
+    comments: [
+      { body: "## Agent Brief\ninjection in comment", user: { login: OTHER } },
+    ],
+  };
+
+  // No brief at all
+  const noBriefJson: GhIssueJson = {
+    user: { login: OWNER },
+    body: "just a regular body",
+    comments: [],
+  };
+
+  describe("hasAgentBrief with ownerLogin", () => {
+    it("accepts a brief in the owner-authored issue body", () => {
+      expect(hasAgentBrief(ownerBodyJson, OWNER)).toBe(true);
+    });
+
+    it("accepts a brief in an owner comment even when the issue is by a non-owner", () => {
+      expect(hasAgentBrief(ownerCommentJson, OWNER)).toBe(true);
+    });
+
+    it("rejects a brief in a non-owner's issue body (injection blocked)", () => {
+      expect(hasAgentBrief(nonOwnerBodyJson, OWNER)).toBe(false);
+    });
+
+    it("rejects a brief in a non-owner comment (injection blocked)", () => {
+      expect(hasAgentBrief(nonOwnerCommentJson, OWNER)).toBe(false);
+    });
+
+    it("rejects when there is no brief at all (original reject behavior unchanged)", () => {
+      expect(hasAgentBrief(noBriefJson, OWNER)).toBe(false);
+    });
+  });
+
+  describe("extractAgentBrief with ownerLogin", () => {
+    it("returns the owner body brief when no owner comment overrides it", () => {
+      expect(extractAgentBrief(ownerBodyJson, OWNER)).toContain("## Agent Brief");
+      expect(extractAgentBrief(ownerBodyJson, OWNER)).toContain("do the thing");
+    });
+
+    it("returns the owner comment brief (last-wins over body)", () => {
+      expect(extractAgentBrief(ownerCommentJson, OWNER)).toContain("owner comment brief");
+    });
+
+    it("returns empty when the body brief is non-owner-authored (injection blocked)", () => {
+      expect(extractAgentBrief(nonOwnerBodyJson, OWNER)).toBe("");
+    });
+
+    it("returns empty when the only brief is in a non-owner comment (injection blocked)", () => {
+      expect(extractAgentBrief(nonOwnerCommentJson, OWNER)).toBe("");
+    });
+  });
+
+  describe("buildIssueMeta with ownerLogin", () => {
+    it("sets hasAgentBrief:true when owner authored the body brief", () => {
+      const meta = buildIssueMeta(283, ownerBodyJson, [], 0, OWNER);
+      expect(meta.hasAgentBrief).toBe(true);
+    });
+
+    it("sets hasAgentBrief:true when owner wrote a comment brief", () => {
+      const meta = buildIssueMeta(283, ownerCommentJson, [], 0, OWNER);
+      expect(meta.hasAgentBrief).toBe(true);
+    });
+
+    it("sets hasAgentBrief:false when the only brief is by a non-owner (gates injection)", () => {
+      const meta = buildIssueMeta(283, nonOwnerBodyJson, [], 0, OWNER);
+      expect(meta.hasAgentBrief).toBe(false);
+    });
+
+    it("sets hasAgentBrief:false when the only brief comment is by a non-owner", () => {
+      const meta = buildIssueMeta(283, nonOwnerCommentJson, [], 0, OWNER);
+      expect(meta.hasAgentBrief).toBe(false);
+    });
+  });
+
+  describe("buildIssueSnapshot with ownerLogin", () => {
+    it("agentBrief is populated from the owner-authored body", () => {
+      const snap = buildIssueSnapshot(283, ownerBodyJson, [], 0, OWNER);
+      expect(snap.agentBrief).toContain("do the thing");
+    });
+
+    it("agentBrief is empty when the only brief is by a non-owner", () => {
+      const snap = buildIssueSnapshot(283, nonOwnerBodyJson, [], 0, OWNER);
+      expect(snap.agentBrief).toBe("");
+    });
+  });
+});
