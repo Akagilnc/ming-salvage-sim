@@ -27,7 +27,9 @@
  *   - openFamilyPr             → push the family base + `gh pr create` and STOP
  *     (the family orchestrator's autonomy ends at the PR; online bot cmr + merge
  *     are the separate pr-review-loop stage).
- *   - recordAborted            → one PHASE-LEVEL `aborted` ledger append.
+ *   - recordAborted            → the #296 in-memory back-compat seam (a no-op
+ *     here): the durable PHASE-LEVEL `aborted` entry is `recordDurableAbort`'s job
+ *     (verifyCmr.ts calls both; only the durable writer appends — exactly one entry).
  *   - escalateFamily           → a durable stuck-point record (ADR 0017/0018 升级
  *     续跑: 卡点 → 返回调用端 → resumeSession 注入; the卡点 must survive the process,
  *     so it is persisted alongside the ledger).
@@ -48,6 +50,8 @@ import { join } from "node:path";
 
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
+
+import { branchForIssue } from "../realBackend.js";
 
 import type {
   ConflictResolveRequest,
@@ -183,12 +187,22 @@ export class RealFamilyBackend implements FamilyBackend {
     const msg = `Merge child #${child.childIssue} (${child.childBranch}) into ${this.opts.familyBase}`;
     try {
       this.sh("git", ["merge", "--no-ff", "-m", msg, child.childBranch], repo);
-    } catch {
-      // git exit ≠ 0 ⇒ a conflict (or an empty merge). LEAVE the conflict state
-      // (do NOT `--abort`) so the point-LLM resolver can resolve it in place. The
-      // merger reads `conflicted` to route to resolveMergeConflict ("仅冲突才上
-      // LLM"); it never writes a `merged` ledger entry on a conflicted result.
-      return { familyHead: familyHeadBefore, familyHeadBefore, childHead, conflicted: true };
+    } catch (err) {
+      // git exit ≠ 0 is NOT always a content conflict: a bad ref, index/lock
+      // error, dirty worktree, hook/config failure all exit non-zero too, and
+      // leave NO in-progress merge (no MERGE_HEAD). Reporting THOSE as
+      // `conflicted:true` would route a broken/locked repo into the LLM resolver
+      // — spinning up the merger agent on a state it cannot resolve (codex R1 +
+      // agy R1). So only a REAL conflict (MERGE_HEAD present) becomes
+      // `conflicted:true`; we LEAVE that state (do NOT `--abort`) so the point-LLM
+      // resolver can resolve it in place. The merger reads `conflicted` to route to
+      // resolveMergeConflict ("仅冲突才上 LLM"); it never writes a `merged` ledger
+      // entry on a conflicted result. A non-conflict git failure RETHROWS so the
+      // wave aborts loudly with the original git error (decision 3④/5 "不静默吞").
+      if (this.mergeInProgress(repo)) {
+        return { familyHead: familyHeadBefore, familyHeadBefore, childHead, conflicted: true };
+      }
+      throw err;
     }
     const familyHead = this.sh("git", ["rev-parse", "HEAD"], repo);
     return { familyHead, familyHeadBefore, childHead };
@@ -244,7 +258,7 @@ export class RealFamilyBackend implements FamilyBackend {
       branchStrategy: { type: "head" }, // commit the resolved merge in place
       promptFile: join(this.opts.promptsDir, MERGER_CONFLICT_PROMPT),
     });
-    return parseMergerOutcome(result.stdout);
+    return mergerOutcomeFromResult(result);
   }
 
   /** The merger agent's sandbox (souls + skills baked into the image). */
@@ -352,19 +366,19 @@ export class RealFamilyBackend implements FamilyBackend {
 
   // ─────────────────────────── aborted / escalate ───────────────────────────
 
-  async recordAborted(event: FamilyAbortedEvent): Promise<void> {
-    // A PHASE-LEVEL `aborted` ledger entry (#291 缺口 2): the whole verify PHASE
-    // failed, carrying the family head at the time + the reason, so a failed wave
-    // is never silently dropped (decision 3④/5 "不静默吞"). NOT counted as merged.
-    await this.appendFamilyLedger({
-      status: "aborted",
-      event: "aborted",
-      phase: event.phase,
-      reason: event.errorPackage.reason,
-      ...(event.familyHeadAfter !== undefined
-        ? { familyHeadAfter: event.familyHeadAfter }
-        : {}),
-    });
+  async recordAborted(_event: FamilyAbortedEvent): Promise<void> {
+    // The `recordAborted` SEAM is the #296 in-memory back-compat event hook — NOT
+    // the durable writer. The verify/cmr hook (verifyCmr.ts) records a red verify
+    // by calling BOTH this seam AND `recordDurableAbort` (ledger.ts), and ONLY the
+    // latter appends the PHASE-LEVEL durable `aborted` entry through
+    // `appendFamilyLedger`. The contract is fixed by wiring-aborted-durable-291:
+    // exactly ONE durable aborted entry per red verify, from `recordDurableAbort`.
+    // An earlier version of this method ALSO appended durably, so against the real
+    // spine one red verify wrote TWO identical aborted entries (codex R1). This is
+    // therefore a deliberate no-op: the durable truth is `recordDurableAbort`'s,
+    // and this seam only exists so a #296-era caller that depends on the hook still
+    // type-checks. (A RealFamilyBackend has no in-memory consumer, so there is
+    // nothing to push — the durable ledger is the single source of truth.)
   }
 
   async escalateFamily(escalation: FamilyEscalation): Promise<void> {
@@ -414,10 +428,20 @@ export class RealFamilyBackend implements FamilyBackend {
       liveFamilyHead: async () => sh(["rev-parse", familyBase]),
       familyBaseStartHead: async () =>
         startHead ?? sh(["rev-parse", familyBase]),
-      childHeadExists: async (_childIssue: number, childBranch?: string) => {
-        if (childBranch === undefined) return { exists: false };
+      childHeadExists: async (childIssue: number, childBranch?: string) => {
+        // The production reconcile caller (reconcile.ts) is handed only the child
+        // ISSUE — `ChildSlice` carries no branch — so it calls `childHeadExists(issue)`
+        // with NO `childBranch`. Returning `{exists:false}` on a missing branch would
+        // make the crash-window 补账 predicate dead in production: every already-landed
+        // child would read as absent → reconcile re-merges it (a double-merge — the
+        // exact failure MergeResult.childHead's contract exists to prevent — codex R1).
+        // So derive the branch from the issue via the single-slice runner's own
+        // `feat/244-orchestrator-issue-<n>` convention when no explicit branch is given.
+        // (The proper end-state is to thread `childBranch` through ChildSlice/reconcile
+        // — flagged to the driver unit; this fallback makes the seam WORK meanwhile.)
+        const branch = childBranch ?? branchForIssue(childIssue);
         try {
-          const childHead = sh(["rev-parse", "--verify", `${childBranch}^{commit}`]);
+          const childHead = sh(["rev-parse", "--verify", `${branch}^{commit}`]);
           return { exists: true, childHead };
         } catch {
           return { exists: false };
@@ -434,6 +458,44 @@ export class RealFamilyBackend implements FamilyBackend {
       },
     };
   }
+}
+
+/**
+ * Decide the merger outcome from a Sandcastle run result: gate on the completion
+ * signal FIRST, then parse the `<merger>` tag. Pure (a check on the run-result
+ * shape) so the gate is unit-tested without a container.
+ *
+ * The completion-signal gate mirrors the single-slice RealBackend's
+ * `assertCompletionSignal` invariant ("#244 agent emit completionSignal 才进下一步"):
+ * a complete-but-unsignaled run (e.g. `maxIterations` hit mid-resolution) can still
+ * carry an EARLIER `<merger>{"resolved":true}</merger>` in its stdout; without this
+ * gate {@link parseMergerOutcome} would accept that as resolved and record a merge
+ * the agent never signaled done (codex R1). An unsignaled run is treated as
+ * UNRESOLVED (escalate), never resolved — the safe direction; the caller surfaces
+ * it rather than recording a phantom-clean merge.
+ */
+export function mergerOutcomeFromResult(result: {
+  completionSignal?: string | string[];
+  stdout: string;
+}): { resolved: boolean; reason?: string } {
+  const signal = result.completionSignal;
+  const signaled = Array.isArray(signal)
+    ? signal.includes(MERGER_COMPLETION_SIGNAL)
+    : signal === MERGER_COMPLETION_SIGNAL;
+  if (!signaled) {
+    const actual =
+      signal === undefined
+        ? "none (no signal fired before the iteration limit)"
+        : `"${String(signal)}"`;
+    return {
+      resolved: false,
+      reason:
+        `merger agent did not fire its completion signal — expected ` +
+        `"${MERGER_COMPLETION_SIGNAL}", got ${actual} (a complete-but-unsignaled ` +
+        `run does not count as resolved)`,
+    };
+  }
+  return parseMergerOutcome(result.stdout);
 }
 
 /**
@@ -460,6 +522,14 @@ export function parseMergerOutcome(stdout: string): {
   } catch {
     return { resolved: false, reason: "merger agent <merger> tag was not valid JSON" };
   }
+  // `JSON.parse` succeeds on the bare literals `null` / `true` / `5` / `"x"` — a
+  // misbehaving agent emitting `<merger>null</merger>` parses to `null`, and the
+  // `parsed.resolved` read below would then throw a TypeError OUTSIDE this
+  // try/catch and crash the parent (agy R1). Treat any non-object payload as an
+  // unresolved-with-reason, never resolved (the safe direction).
+  if (parsed === null || typeof parsed !== "object") {
+    return { resolved: false, reason: "merger agent <merger> tag was not a JSON object" };
+  }
   if (parsed.resolved === true) return { resolved: true };
   const reason =
     parsed.escalate?.reason ?? parsed.escalate?.diagnosis ?? "merger did not resolve";
@@ -468,9 +538,24 @@ export function parseMergerOutcome(stdout: string): {
 
 /** A one-line human-readable summary of a failed verify command (phase + error). */
 function summarizeError(phase: "wave" | "final", err: unknown): string {
-  const msg = err instanceof Error ? err.message : String(err);
-  // execFileSync packs the failing command's stderr/stdout onto the error; keep a
-  // tail so the reason is locatable from the ledger alone (decision 3④/5).
-  const tail = msg.length > 600 ? msg.slice(-600) : msg;
+  // execFileSync on a non-zero exit throws an Error whose `.message` is only the
+  // status line ("Command failed: npx tsc --noEmit") — the ACTUAL compiler / test
+  // output (the locatable reason) is on `.stderr` / `.stdout`. Reading only
+  // `.message` drops it, so the ledger could not name WHY verify went red,
+  // breaking decision 3④/5 "reason locatable from the ledger alone" (agy R1).
+  let detail = err instanceof Error ? err.message : String(err);
+  if (err !== null && typeof err === "object") {
+    const e = err as { stderr?: unknown; stdout?: unknown };
+    const out = decodeChildOutput(e.stderr) || decodeChildOutput(e.stdout);
+    if (out.length > 0) detail += `\n${out}`;
+  }
+  const tail = detail.length > 600 ? detail.slice(-600) : detail;
   return `family verify (${phase}) failed: ${tail}`;
+}
+
+/** Decode an execFileSync `stderr`/`stdout` field (string | Buffer | undefined) to trimmed text. */
+function decodeChildOutput(v: unknown): string {
+  if (typeof v === "string") return v.trim();
+  if (v instanceof Buffer) return v.toString("utf8").trim();
+  return "";
 }
