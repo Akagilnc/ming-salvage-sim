@@ -26,8 +26,9 @@
 import { runOrchestrator } from "../runner.js";
 import type { Backend } from "../types.js";
 import { selectWave } from "./commander.js";
-import { mergedSet } from "./ledger.js";
+import { mergedSet, recordMerged } from "./ledger.js";
 import { mergeChild } from "./merger.js";
+import { reconcileFamilyLedger } from "./reconcile.js";
 import { runVerifyCmr } from "./verifyCmr.js";
 import type {
   ChildSlice,
@@ -147,6 +148,50 @@ export async function runFamily(
       children,
     };
   };
+
+  // ── #298 crash-window reconcile (the RESUME ENTRY, ADR 0022 decision 5) ─────
+  // APPEND-ONLY into the spine: this runs BEFORE the wave loop and does NOT touch
+  // its structure. When a `reconcileGit` seam is injected (a resume), compare the
+  // ledger末条 head to the live family-base HEAD and:
+  //   - branch ② (live HEAD leads — a merge landed but its `merged` write
+  //     crashed): APPEND a reconcile補账条 (`status:"merged"` + `event:"reconciled"`)
+  //     for each ancestor-confirmed child, so `currentMerged` (re-read each wave)
+  //     skips it (no double-merge); a never-merged child (childHead absent / not an
+  //     ancestor) is left OUT and the existing wave loop re-runs it (no漏合);
+  //   - branch ③ (inconsistent live HEAD): bail fail-closed to `status:"escalated"`
+  //     BEFORE any merge (decision 5 真有未落/不一致 → 升级; decision 4 escalate).
+  // Absent ⇒ a fresh run, the #293 behaviour unchanged. The reconcile LOGIC lives
+  // in reconcile.ts; the spine only CALLS it + appends its补账条 (acceptance-4
+  // seam boundary — the spine never carries the reconcile algorithm).
+  if (input.reconcileGit !== undefined) {
+    const ledger = await familyBackend.readFamilyLedger();
+    const plan = await reconcileFamilyLedger(
+      ledger,
+      epic.children,
+      input.reconcileGit,
+    );
+    if (plan.escalate) {
+      // Fail-closed (decision 5 branch ③): do not proceed to the wave loop. The
+      // family base + ledger are left for human triage (decision 3⑤ 不静默吞);
+      // the run is observably `escalated`, NOT a fabricated success.
+      const children: FamilyChildResult[] = epic.children.map((c) =>
+        plan.merged.has(c.issue)
+          ? { issue: c.issue, status: "merged" as const }
+          : { issue: c.issue, status: "skipped" as const },
+      );
+      return { status: "escalated", familyBase, familyHead, children };
+    }
+    // Append each reconcile補账条 (status:"merged" + event:"reconciled") through
+    // the ledger seam so the wave loop's `currentMerged` counts it (codex R3) and
+    // never re-merges the already-landed child.
+    for (const r of plan.reconciled) {
+      await recordMerged(familyBackend, {
+        childIssue: r.childIssue,
+        childHead: r.childHead,
+        event: "reconciled",
+      });
+    }
+  }
 
   // The wave loop. Re-select from the merged set after each wave so a future
   // multi-wave epic (#294) advances as blockers merge; #293's all-unblocked
