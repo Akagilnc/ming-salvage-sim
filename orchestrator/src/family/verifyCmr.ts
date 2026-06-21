@@ -17,11 +17,16 @@
  * scope (#293 = the four seams, not their behaviour).
  *
  * #296 EXTENSION POINT: this module grows the real verify (run typecheck + tests
- * in the family base — needs `familyBase` + `familyBackend` to read/write the
- * ledger's `aborted` event) and the integrated cmr trigger, behind this SAME
- * signature. Because the spine already (a) passes the phase + context and (b)
- * fails-fast on `ok === false` at the wave barrier, #296 fills only the hook
- * body — it never rewrites the family main loop. THAT is the seam boundary.
+ * in the family base — reads `familyBase` + `familyBackend`) and the integrated
+ * cmr trigger, behind this SAME signature. A red barrier is surfaced via the
+ * returned `ok` (the spine sets `status:"verify_failed"`). The `aborted` LEDGER
+ * event a red verify implies is NOT this module's to write through the current
+ * seam — `FamilyLedgerEntry.status` is `"merged"` only; widening to `"aborted"`
+ * is #298's schema extension (decision 5, "字段级 JSON 留 TDD"). Because the spine
+ * already (a) passes the phase + context, (b) fails-fast on `ok === false` at the
+ * wave barrier, and (c) makes the failure observable in the result, #296 fills
+ * only the hook body — it never rewrites the family main loop. THAT is the seam
+ * boundary.
  */
 
 import type { FamilyBackend } from "./types.js";
@@ -33,15 +38,25 @@ export type VerifyCmrPhase = "wave" | "final";
  * The context the verify-cmr hook needs to do its (eventual #296) work.
  *
  * #293 passes it but ignores it (no-op). #296 reads `familyBase` to run verify in
- * the family base worktree and `familyBackend` to append the `aborted` ledger
- * event (decision 5) when a wave is red.
+ * the family base worktree and `familyBackend` to inspect the ledger; it surfaces
+ * a red wave via the returned `ok` (the spine fails-fast on it). The `aborted`
+ * ledger event itself is #298's schema (the seam's `status` is `"merged"`-only
+ * today — see the `familyBackend` field note).
  */
 export interface VerifyCmrInput {
   /** Wave barrier (decision 3④, fail-fast) vs end-of-run (decision 3⑤/⑥). */
   readonly phase: VerifyCmrPhase;
   /** The family base branch verify runs against / cmr reviews. */
   readonly familyBase: string;
-  /** The family seam (#296 writes the `aborted` ledger event through it). */
+  /**
+   * The family seam #296 reads through to run verify against the family base /
+   * inspect the ledger. NOTE: the `aborted` ledger event a red verify implies is
+   * NOT writable through this seam yet — `FamilyLedgerEntry.status` is `"merged"`
+   * only; widening it to `"aborted"` is #298's schema extension (ADR 0022
+   * decision 5, "字段级 JSON 留 TDD"). #296 surfaces a red barrier via the
+   * `VerifyCmrResult.ok` the spine already acts on (`status:"verify_failed"`);
+   * the aborted-ledger record lands when #298 owns the schema.
+   */
   readonly familyBackend: FamilyBackend;
 }
 
