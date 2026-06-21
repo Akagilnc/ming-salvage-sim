@@ -93,9 +93,17 @@ class FakeReconcileGit implements ReconcileGit {
     private readonly live: string,
     private readonly heads: Record<number, string>,
     private readonly ancestors: ReadonlySet<string>,
+    // The family base head before any child merged. Defaults to `live` (a fresh
+    // resume: nothing landed → start === live → clean start). These spine tests
+    // all seed a NON-empty ledger, so reconcile never reaches the empty-ledger
+    // start-head check — the default keeps them on their existing branch.
+    private readonly start: string = live,
   ) {}
   async liveFamilyHead(): Promise<string> {
     return this.live;
+  }
+  async familyBaseStartHead(): Promise<string> {
+    return this.start;
   }
   async childHeadExists(childIssue: number): Promise<{ exists: boolean; childHead?: string }> {
     const head = this.heads[childIssue];
