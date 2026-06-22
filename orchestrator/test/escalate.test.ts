@@ -20,7 +20,6 @@ import type {
 const COMPLIANT_META: IssueMeta = {
   number: 251,
   isReadyForAgent: true,
-  hasAgentBrief: true,
   hasSubIssues: false,
   openBlockedBy: [],
 };

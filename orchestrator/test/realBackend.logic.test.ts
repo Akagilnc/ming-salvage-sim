@@ -30,7 +30,6 @@ import {
   FIX_FINDINGS_FILENAME,
   serializeFixFindings,
   extractCoderTag,
-  hasAgentBrief,
   isLikelySha,
   isReadyForAgent,
   issueNumberFromBranch,
@@ -52,6 +51,8 @@ import {
   type GhBlockedBy,
   type GhIssueJson,
 } from "../src/realBackend.js";
+// NOTE: `hasAgentBrief` was removed in #329 (vestigial after #328 de-gated the
+// brief); S1's `extractAgentBrief` is the surviving brief reader.
 import { StructuredOutputError } from "@ai-hero/sandcastle";
 
 // ─── gh JSON → IssueMeta / IssueSnapshot ─────────────────────────────────────
@@ -69,21 +70,10 @@ describe("realBackend gh parsing", () => {
     expect(isReadyForAgent({})).toBe(false);
   });
 
-  it("hasAgentBrief finds the brief in a comment OR the body", () => {
-    expect(hasAgentBrief({ comments: [briefComment] })).toBe(true);
-    expect(hasAgentBrief({ body: "## Agent Brief\n…" })).toBe(true);
-    expect(hasAgentBrief({ body: "no brief", comments: [{ body: "hi" }] })).toBe(
-      false,
-    );
-    expect(hasAgentBrief({})).toBe(false);
-  });
-
-  it("buildIssueMeta derives the S0 meta fields (three-way gate + hasAgentBrief metadata)", () => {
+  it("buildIssueMeta derives the S0 gate fields (rfa ∧ no sub-issues ∧ blocked_by)", () => {
     const json: GhIssueJson = {
       number: 256,
       labels: [{ name: "ready-for-agent" }, { name: "enhancement" }],
-      body: "body",
-      comments: [briefComment],
     };
     const blockedBy: GhBlockedBy[] = [
       { number: 248, state: "closed" },
@@ -94,7 +84,6 @@ describe("realBackend gh parsing", () => {
     expect(meta).toEqual({
       number: 256,
       isReadyForAgent: true,
-      hasAgentBrief: true,
       hasSubIssues: false,
       openBlockedBy: [254], // only the open one
     });
@@ -110,7 +99,6 @@ describe("realBackend gh parsing", () => {
     expect(meta).toEqual({
       number: 99,
       isReadyForAgent: false,
-      hasAgentBrief: false,
       hasSubIssues: false,
       openBlockedBy: [],
     });
@@ -872,6 +860,91 @@ describe("realBackend parseBlockedBy", () => {
     expect(parseBlockedBy("weird")).toEqual([]);
     expect(parseBlockedBy(undefined)).toEqual([]);
     expect(parseBlockedBy(null)).toEqual([]);
+  });
+});
+
+// ─── S0 fetchIssueMeta does not over-fetch comments (#329) ───────────────────
+
+describe("realBackend fetchIssueMeta S0 perf (#329)", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const realPromptsDir = join(here, "..", "prompts");
+
+  // Records every gh/git invocation and serves canned JSON so fetchIssueMeta
+  // runs without touching the network. The clone seams are stubbed (same as the
+  // promptsDir suite) so construction never shells out to git.
+  class RecordingMetaBackend extends RealBackend {
+    // Lazily initialised: the base constructor calls sh() (clone guard) before a
+    // field initialiser would have run, so default it inside sh() itself.
+    public calls?: string[][];
+    protected override cloneDirExists(): boolean {
+      return true;
+    }
+    protected override sh(file: string, args: string[]): string {
+      (this.calls ??= []).push([file, ...args]);
+      if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
+        return ".git";
+      }
+      if (file === "gh" && args[0] === "issue" && args[1] === "view") {
+        const fields = args[args.indexOf("--json") + 1] ?? "";
+        if (fields.includes("subIssues")) {
+          return JSON.stringify({ subIssues: { nodes: [], totalCount: 0 } });
+        }
+        return JSON.stringify({
+          number: 329,
+          labels: [{ name: "ready-for-agent" }],
+        });
+      }
+      if (file === "gh" && args[0] === "api") {
+        return JSON.stringify([]); // blocked_by → none
+      }
+      return "";
+    }
+  }
+
+  function makeBackend(): RecordingMetaBackend {
+    return new RecordingMetaBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 999,
+      repo: "owner/name",
+      imageName: "img",
+      skillsMount: "/tmp/skills",
+      promptsDir: realPromptsDir,
+    });
+  }
+
+  it("S0 issue-view requests only the gate fields — no body/comments", async () => {
+    const backend = makeBackend();
+    await backend.fetchIssueMeta(329);
+
+    // The lightweight S0 view (the one that does NOT ask for subIssues).
+    const issueView = (backend.calls ?? []).find(
+      (c) =>
+        c[0] === "gh" &&
+        c[1] === "issue" &&
+        c[2] === "view" &&
+        !(c[c.indexOf("--json") + 1] ?? "").includes("subIssues"),
+    );
+    expect(issueView).toBeDefined();
+    const fields = issueView![issueView!.indexOf("--json") + 1] ?? "";
+    // The S0 gate only reads labels (rfa) — sub-issues + blocked_by come from
+    // dedicated queries. Pulling `comments` triggers gh's paginated
+    // preloadIssueComments; `body` is dead weight too now that the Agent Brief
+    // is no longer an S0 gate (#328/#329). S1's full snapshot still fetches both.
+    expect(fields).not.toContain("comments");
+    expect(fields).not.toContain("body");
+    expect(fields).toContain("labels");
+  });
+
+  it("S0 meta is still derivable from the slim view (gate fields intact)", async () => {
+    const backend = makeBackend();
+    const meta = await backend.fetchIssueMeta(329);
+    expect(meta).toEqual({
+      number: 329,
+      isReadyForAgent: true,
+      hasSubIssues: false,
+      openBlockedBy: [],
+    });
   });
 });
 
