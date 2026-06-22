@@ -52,8 +52,8 @@ If the work is clean, emit an empty findings array:
 REVIEWER_STEP_COMPLETE
 ```
 
-If you cannot review (e.g. the diff is incoherent / the Brief is contradictory),
-add an `escalate` object:
+If you cannot review (e.g. the diff is incoherent / the issue spec is
+contradictory), add an `escalate` object:
 
 ```text
 <review>{"findings": [], "escalate": {"reason": "<short>", "diagnosis": "<what blocks review>"}}</review>
