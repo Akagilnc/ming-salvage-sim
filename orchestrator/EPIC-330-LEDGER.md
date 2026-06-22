@@ -5,6 +5,7 @@ one family PR to main at the END (per family-slices-merge-to-base). Dependency
 unblocking keys off THIS ledger (merged), NOT GitHub-closed.
 
 ## Merged
+- **#334** coder→/tdd + reviewer→/review workers via seam; dropped runtime skillsMount — `feat/330-s334` @ d18fcd0 — tsc clean + 656 pass. e2e: container coder invoked /tdd. per-slice cmr: agy converged; codex 1 finding **deferred P2** → reviewer prompt/CLAUDE.md/baked-soul still say human "two passes per slice"; orchestrator decomposition = per-slice /review (loop) + ak-cross-m-review = integrated cmr (#335). Align prompt+CLAUDE.md+soul (+image rebuild) in #337 收口.
 - **#333** 2b full-pack worker image — `feat/330-s333` @ 1a41f33 — extends 2a; baked full dev-skill pack + closures (tdd/codebase-design/diagnosing-bugs/improve-codebase-architecture/resolving-merge-conflicts/ak-cross-m-review/gstack-ship) + all souls (coder/reviewer/merger) + agy(Linux)/gh/bun; CLAUDE.md /review route active. e2e VERIFIED: ak-cross-m-review fanned out (codex rc=0 + agy file-token both caught injected bug), gstack-ship resolves+runs. codex review converged. image ming-orchestrator-coder:latest 3.52GB reproducible.
 - **#329** S0 fetchIssueMeta slim view — `feat/330-s329` @ 0af2b56 — narrowed gh issue-view to number,labels (drop body/comments double-fetch); removed vestigial hasAgentBrief field; per-slice cmr codex+agy both converged R1. tests green.
 - **#322** integrated cmr consumes llmResolvedChildren — `feat/330-s322` @ df14696 — additive FOCUS段 (names machine-touched children, full diff still reviewed; omit ⇒ back-compat). per-slice cmr: codex+agy both converged R1 (no findings; agy recovered). 644 pass.
@@ -18,6 +19,9 @@ unblocking keys off THIS ledger (merged), NOT GitHub-closed.
   - **codex userns** — codex's bundled bwrap can't make a userns in a non-privileged container → codex grounds on the hunk only (still caught the injected bug in #333 e2e). For full-repo codex grounding the worker's `docker(...)` launch needs userns enabled (`--security-opt seccomp=unconfined` + host `unprivileged_userns_clone=1`, or `--privileged`) OR codex's own sandbox disabled. Documented in #333 Containerfile.
   - **review-only cmr entrypoint** (nice-to-have): the reviewer worker runs `ak-cross-m-review` for findings only (the skill itself "does not commit — caller decides"; fix is the runner's fork per ADR 0026). A dedicated review-only cmr mode would make that explicit at the skill level.
 - → **#332** (2a, retroactive): #333 closed a chain that was DANGLING in 2a — `diagnosing-bugs → improve-codebase-architecture` (improve wasn't baked in 2a). 2b bakes the full closure incl. `improve → {codebase-design, grilling, domain-modeling}`.
+
+## Deferred (P2, address before family PR)
+- review-decomposition consistency (#334 codex): per-slice /review vs human two-pass — align prompt/CLAUDE.md/reviewer-soul to the orchestrator split (per-slice /review + integrated ak-cross-m-review) + rebuild 2b image; do in #337.
 
 ## Pending
 - #322/#329 (follow-ups, off #331 seam) running.
