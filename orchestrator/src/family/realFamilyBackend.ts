@@ -52,9 +52,10 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
@@ -109,6 +110,14 @@ export const FAMILY_ESCALATION_FILENAME = "family-escalations.jsonl";
 export const SANDBOX_AGY_DIR = "/home/agent/.gemini/antigravity-cli";
 /** The agy OAuth token filename inside {@link SANDBOX_AGY_DIR}. */
 export const AGY_TOKEN_FILENAME = "antigravity-oauth-token";
+
+/**
+ * The git-ignored cmr FOCUS file written into the family-base worktree (#335): it
+ * pins the EXACT review-scope diff command (on the recorded cut SHA) + the
+ * machine-resolved-child focus, so the in-container `ak-cross-m-review` scopes the
+ * family diff correctly and prioritises machine-touched merges (#291 缺口 1).
+ */
+export const CMR_FOCUS_FILENAME = ".cmr-focus.md";
 
 /** The cmr worker's completion signal (matches prompts/integrated_cmr.md). */
 const CMR_COMPLETION_SIGNAL = "CMR_STEP_COMPLETE";
@@ -581,12 +590,14 @@ export class RealFamilyBackend implements FamilyBackend {
     // already asserted it is present). The cmr worker runs as the container's
     // top-level claude over THIS checked-out base.
     this.sh("git", ["checkout", ctx.familyBase!], this.opts.workingRepo);
-    // NOTE (#291 缺口 1, ctx.llmResolvedChildren): the LLM-resolved-child FOCUS
-    // signal rides on the DispatchContext but is not yet threaded into the
-    // container prompt — the cmr worker reviews the WHOLE base diff (the
-    // conservative superset), so OMITTING the focus only loses prioritisation, not
-    // coverage. Threading it via the spec's `promptArgs` is a follow-up (the
-    // promptArgs→container substitution is not wired in this runtime yet).
+    // codex cmr R1 (F3+F2): thread the EXACT review scope + the LLM-resolved-child
+    // FOCUS into the worker via a git-ignored focus file the prompt reads — the
+    // skill can't reliably scope the family diff on its own (a stale local base
+    // ref pollutes `main...HEAD`; non-`main` targets diff the wrong ref), and the
+    // #291 缺口-1 focus signal must not be silently dropped. The focus file pins the
+    // exact `git diff <familyBaseStartHead>...<familyBase>` scope command + the
+    // baseline SHA + the machine-resolved children.
+    this.writeCmrFocusFile(ctx);
     const result = await sc.run({
       name: "family-cmr",
       cwd: this.opts.workingRepo,
@@ -605,6 +616,65 @@ export class RealFamilyBackend implements FamilyBackend {
     return cmrOutcomeFromResult(result);
   }
 
+  /**
+   * Write the git-ignored cmr FOCUS file into the family-base worktree (codex cmr
+   * R1 F2+F3): the EXACT review scope + the machine-resolved-child focus. The
+   * worker's prompt reads it so the in-container `ak-cross-m-review` scopes the
+   * family diff on the recorded cut SHA (`familyBaseStartHead`) — not a
+   * possibly-stale `main...HEAD` — and prioritises the merges a machine touched
+   * (#291 缺口 1). `protected` so a unit test can fixture it without a real worktree.
+   */
+  protected writeCmrFocusFile(ctx: DispatchContext): void {
+    const familyBase = ctx.familyBase!;
+    const startHead = this.opts.familyBaseStartHead;
+    const scope =
+      startHead !== undefined
+        ? `git diff ${startHead}...${familyBase}`
+        : `git diff ${this.opts.base}...${familyBase}  (no recorded cut SHA; this is the fallback — the local "${this.opts.base}" ref may be stale)`;
+    const focusLine =
+      ctx.llmResolvedChildren !== undefined && ctx.llmResolvedChildren.length > 0
+        ? `Machine-resolved child merges (a machine resolved a conflict — review their merge seams with SPECIAL care): ${ctx.llmResolvedChildren
+            .map((n) => `#${n}`)
+            .join(", ")}.`
+        : "No machine-resolved child merges this run.";
+    const body =
+      `# Integrated cmr — review scope + focus (machine-generated; #335)\n\n` +
+      `Review THIS exact family-base diff (the commits the family base added since it\n` +
+      `was cut from its target):\n\n    ${scope}\n\n${focusLine}\n`;
+    // Git-ignore it (it is a transient runtime artifact, never committed) then write.
+    const target = join(this.opts.workingRepo, CMR_FOCUS_FILENAME);
+    this.excludeCmrFocusFromGit();
+    writeFileSync(target, body, "utf8");
+  }
+
+  /** Add the cmr focus file to the worktree's local git excludes (never committed). */
+  protected excludeCmrFocusFromGit(): void {
+    try {
+      const excludePath = join(
+        this.sh("git", ["rev-parse", "--git-dir"], this.opts.workingRepo),
+        "info",
+        "exclude",
+      );
+      const abs = isAbsolute(excludePath)
+        ? excludePath
+        : join(this.opts.workingRepo, excludePath);
+      let existing = "";
+      try {
+        existing = readFileSync(abs, "utf8");
+      } catch {
+        // no exclude file yet
+      }
+      if (!existing.split("\n").includes(CMR_FOCUS_FILENAME)) {
+        mkdirSync(join(abs, ".."), { recursive: true });
+        appendFileSync(abs, (existing.endsWith("\n") || existing === "" ? "" : "\n") + CMR_FOCUS_FILENAME + "\n", "utf8");
+      }
+    } catch {
+      // Best-effort: if excludes can't be written the file is still produced; the
+      // review never commits (branchStrategy head + READ-ONLY soul), so a stray
+      // untracked file is harmless.
+    }
+  }
+
   /** The cmr worker's sandbox (souls + skills + CLIs baked into the 2b image). */
   protected cmrSandbox(): sc.SandboxProvider {
     return docker(this.cmrSandboxConfig(this.mountCmrAuth()));
@@ -617,37 +687,58 @@ export class RealFamilyBackend implements FamilyBackend {
    * `RealBackend.mountAuth`. The agy token is copied into a per-run dir mounted
    * WRITABLE (the agy CLI writes runtime state under its config dir — #333 gotcha).
    */
-  protected mountCmrAuth(): {
-    codexAuthDir: string;
-    agyDir: string;
-    claudeToken: string;
-  } {
+  protected mountCmrAuth(): CmrAuth {
     const home = this.opts.home ?? homedir();
     const root = join(home, ".sc-orchestrator");
 
+    // codex cmr R1 (high): EACH leg's auth is BEST-EFFORT. The cmr contract is a
+    // 降级链 — a leg whose auth is absent must let that leg DEGRADE (the skill drops
+    // it; a missing reviewer is not a finding), NOT crash the whole gate. A hard
+    // `copyFileSync` throw here would propagate out of `dispatchWorker` (verifyCmr
+    // does not convert a thrown error into a structured WorkerResult), failing the
+    // gate even when the OTHER legs could review. So a missing source ⇒ omit that
+    // leg's auth (undefined) and let it degrade in-container.
+
     // codex auth.json (+ optional config.toml) → a per-run owner-only dir.
-    const codexAuthDir = join(root, "cmr-codex-auth");
-    rmSync(codexAuthDir, { recursive: true, force: true });
-    mkdirSync(codexAuthDir, { recursive: true, mode: 0o700 });
-    copyFileSync(join(home, ".codex", "auth.json"), join(codexAuthDir, "auth.json"));
-    chmodSync(join(codexAuthDir, "auth.json"), 0o600);
+    let codexAuthDir: string | undefined;
     try {
-      copyFileSync(join(home, ".codex", "config.toml"), join(codexAuthDir, "config.toml"));
-      chmodSync(join(codexAuthDir, "config.toml"), 0o600);
+      const dir = join(root, "cmr-codex-auth");
+      rmSync(dir, { recursive: true, force: true });
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      copyFileSync(join(home, ".codex", "auth.json"), join(dir, "auth.json"));
+      chmodSync(join(dir, "auth.json"), 0o600);
+      try {
+        copyFileSync(join(home, ".codex", "config.toml"), join(dir, "config.toml"));
+        chmodSync(join(dir, "config.toml"), 0o600);
+      } catch {
+        // config.toml is optional.
+      }
+      codexAuthDir = dir;
     } catch {
-      // config.toml is optional.
+      // codex auth absent ⇒ the codex leg degrades (no mount).
     }
 
     // agy OAuth token → a per-run WRITABLE dir mounted at the antigravity config
     // path (the agy CLI writes cache/log under its config dir, so it must NOT be
     // read-only — #333 gotcha).
-    const agyDir = join(root, "cmr-agy");
-    rmSync(agyDir, { recursive: true, force: true });
-    mkdirSync(agyDir, { recursive: true, mode: 0o700 });
-    copyFileSync(join(home, ".sc-agy-oauth-token"), join(agyDir, AGY_TOKEN_FILENAME));
-    chmodSync(join(agyDir, AGY_TOKEN_FILENAME), 0o600);
+    let agyDir: string | undefined;
+    try {
+      const dir = join(root, "cmr-agy");
+      rmSync(dir, { recursive: true, force: true });
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      copyFileSync(join(home, ".sc-agy-oauth-token"), join(dir, AGY_TOKEN_FILENAME));
+      chmodSync(join(dir, AGY_TOKEN_FILENAME), 0o600);
+      agyDir = dir;
+    } catch {
+      // agy token absent ⇒ the agy leg degrades (no mount); cmr falls to the rest.
+    }
 
-    const claudeToken = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
+    let claudeToken: string | undefined;
+    try {
+      claudeToken = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
+    } catch {
+      // claude token absent ⇒ the Claude Agent leg degrades (no env var).
+    }
     return { codexAuthDir, agyDir, claudeToken };
   }
 
@@ -665,28 +756,24 @@ export class RealFamilyBackend implements FamilyBackend {
    * image BAKES ak-cross-m-review + its closure (#333) — a runtime mount would
    * SHADOW the baked skill (#334). READ-ONLY soul (the cmr worker is a reviewer).
    */
-  protected cmrSandboxConfig(auth: {
-    codexAuthDir: string;
-    agyDir: string;
-    claudeToken: string;
-  }): {
+  protected cmrSandboxConfig(auth: CmrAuth): {
     imageName: string;
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
-    return {
-      imageName: this.opts.imageName,
-      env: {
-        CLAUDE_CODE_OAUTH_TOKEN: auth.claudeToken,
-        [SANDBOX_SOUL_ENV]: CMR_SOUL,
-      },
-      // The agy dir is WRITABLE (default, no `readonly`); codex auth likewise. No
-      // skills mount — the baked image wins (#334).
-      mounts: [
-        { hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR },
-        { hostPath: auth.agyDir, sandboxPath: SANDBOX_AGY_DIR },
-      ],
-    };
+    const env: Record<string, string> = { [SANDBOX_SOUL_ENV]: CMR_SOUL };
+    if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
+    const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
+    // Each leg's auth is mounted only when present (the 降级链 — a missing leg
+    // degrades, the rest still review). The agy dir is WRITABLE (default, no
+    // `readonly`); codex auth likewise. No skills mount — the baked image wins (#334).
+    if (auth.codexAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
+    }
+    if (auth.agyDir !== undefined) {
+      mounts.push({ hostPath: auth.agyDir, sandboxPath: SANDBOX_AGY_DIR });
+    }
+    return { imageName: this.opts.imageName, env, mounts };
   }
 
   // ─────────────────────────── open PR (止于 PR) ───────────────────────────
@@ -862,6 +949,20 @@ export type CmrWorkerOutcome =
   | { readonly kind: "verdict"; readonly converged: boolean; readonly reason?: string }
   | { readonly kind: "escalate"; readonly reason: string; readonly diagnosis: string }
   | { readonly kind: "malformed"; readonly reason: string };
+
+/**
+ * The cmr worker's reviewer-leg auth, each leg BEST-EFFORT (codex cmr R1): a leg
+ * whose host credential is absent is `undefined` so it degrades (the 降级链 — the
+ * skill drops that leg, the rest still review), never crashing the whole gate.
+ */
+export interface CmrAuth {
+  /** Per-run codex auth dir (host-mirrored `~/.codex`), or undefined if absent. */
+  readonly codexAuthDir?: string;
+  /** Per-run agy token dir (host-mirrored antigravity config), or undefined. */
+  readonly agyDir?: string;
+  /** The claude OAuth token (env var), or undefined if absent. */
+  readonly claudeToken?: string;
+}
 
 /**
  * Decide the cmr worker outcome from a Sandcastle run result: gate on the

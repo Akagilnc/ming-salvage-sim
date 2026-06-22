@@ -16,14 +16,18 @@ or re-litigate any prior round's findings.
 
 ## Your job
 
-1. Invoke `/ak-cross-m-review` (the wiki cross-model review) scoped to the family
-   base diff (the commits the family base added since it was cut from its target).
-2. Let the skill fan out all available legs and converge a verdict. A leg that is
+1. **Read `.cmr-focus.md`** at the repo root FIRST. It is machine-generated and
+   pins (a) the EXACT review-scope diff command — the commits the family base added
+   since it was cut from its target (use that command, do not guess `main...HEAD`,
+   which can be polluted by a stale base ref), and (b) which child merges were
+   **machine-resolved** (review their merge seams with special care).
+2. Invoke `/ak-cross-m-review` (the wiki cross-model review) scoped to that exact
+   family-base diff.
+3. Let the skill fan out all available legs and converge a verdict. A leg that is
    auth/quota-down degrades (a missing reviewer is **not** a finding) — but if **no**
    leg can run at all, that is an escalate, not a pass.
-3. Pay special attention to any child merges that were **machine-resolved** (a
-   conflict an LLM merged) — that is where a silent cross-slice regression most
-   easily hides.
+4. Pay special attention to any child merges `.cmr-focus.md` names as
+   machine-resolved — that is where a silent cross-slice regression most easily hides.
 
 ## Required output
 
