@@ -46,6 +46,7 @@ import {
   familyShipWorkerSpec,
 } from "./dispatchFamilyWorker.js";
 import { recordAborted as recordDurableAbort } from "./ledger.js";
+import { isFilledString } from "../shipOutcome.js";
 import type {
   FamilyBackend,
   FamilyVerifyResult,
@@ -257,6 +258,25 @@ export async function runVerifyCmr(
     return { ok: false, ran: true };
   }
   if (shipResult.kind !== "completed" || shipResult.output.kind !== "ship") {
+    return INCOMPLETE_GATE;
+  }
+  // ── cmr S336 r4 (P1): the terminal family gate must NOT trust the discriminant
+  // alone. verifyCmr explicitly allows ANY FamilyBackend to implement the unified
+  // dispatchWorker seam — a backend that implements the seam but skips the success
+  // contract (the real RealFamilyBackend.dispatchShipWorker enforces it, but a
+  // minimal seam-only backend need not) could return a `completed {kind:"ship"}`
+  // that never opened the family PR (status:"pushed", missing/blank pr) or opened
+  // it on the WRONG branch. Re-assert the family-ship contract here, fail-CLOSED
+  // (defense-in-depth, independent of which backend produced the payload; mirrors
+  // the non-completed/non-ship fail-safe just above). 止于 PR (decision 4) means a
+  // REAL family PR on the family base: branch === familyBase, status === "pr_opened",
+  // pr a non-empty string — anything else did not open the PR → INCOMPLETE_GATE.
+  const ship = shipResult.output;
+  if (
+    ship.branch !== familyBase ||
+    ship.status !== "pr_opened" ||
+    !isFilledString(ship.pr)
+  ) {
     return INCOMPLETE_GATE;
   }
   return { ok: true, ran: true };
