@@ -1,6 +1,6 @@
 # 编排器 mainRepo 必须是独立 clone，回归 Sandcastle 原生 worktree 生命周期
 
-Status: Proposed（2026-06-21；grill-with-docs 收敛。评审待 to-prd 之后，按 review-gate-after-to-prd 流程。）
+Status: Accepted（2026-06-21；grill-with-docs 收敛 → 设计 cmr 5 轮 + 线上 bot 收敛 → PR #290 合入 main；改号 PR #300 由 0021→0024 避撞 fiscal 0021。）
 
 ## 背景
 

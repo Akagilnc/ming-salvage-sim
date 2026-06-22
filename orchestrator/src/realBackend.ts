@@ -38,7 +38,7 @@
  *       coder's `git add -A` must leave it unstaged. Covered by both the checked-in
  *       root `.gitignore` belt AND the per-worktree `.git/info/exclude` suspenders.
  *   - r3 worktree_base_stale: with the local `main` deliberately behind
- *     `origin/main` (e.g. `git reset --hard origin/main~1` on the mainRepo's
+ *     `origin/main` (e.g. `git reset --hard origin/main~1` on the working clone's
  *     main), run S1 and assert the fresh slice's base SHA equals the LATEST
  *     `origin/main` SHA (`git rev-parse origin/main`), not the stale local one —
  *     proving the cut derives from the just-fetched remote ref (cutRefFor).
@@ -47,6 +47,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   appendFileSync,
   chmodSync,
@@ -59,12 +60,13 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
 
+import { runExclusive } from "./gitMutex.js";
 import type {
   Backend,
   Finding,
@@ -332,9 +334,24 @@ export function ensureExcluded(existing: string, pattern: string): string {
  * failed (offline / a local-only base with no remote) fall back to the local
  * `<base>` so the cut is never blocked.
  *
+ * #291 family base: a family base is a LOCAL branch on the dedicated clone (ADR
+ * 0022 decision 7) — the merger accumulates each wave's merges onto it, and the
+ * next wave's children cut from THAT local branch, NOT `origin/<family-base>`.
+ * `localOnly` forces the bare local ref REGARDLESS of `fetchedOk`, so a stale
+ * `origin/<family-base>` (e.g. a prior PR's remote branch that still exists, or
+ * a `fetch` that happened to resolve it) can never shadow the local family base
+ * carrying this run's accumulated waves (agy R1). A standalone single-slice run
+ * leaves `localOnly` false, so its `main` cut is byte-identical to before
+ * (`origin/main` when fetched, local fallback otherwise).
+ *
  * Pure (string assembly) so the ref-selection decision is unit-tested without git.
  */
-export function cutRefFor(base: string, fetchedOk: boolean): string {
+export function cutRefFor(
+  base: string,
+  fetchedOk: boolean,
+  localOnly = false,
+): string {
+  if (localOnly) return base;
   return fetchedOk ? `origin/${base}` : base;
 }
 
@@ -374,6 +391,17 @@ export function matchWorktreeForBranch(
  * → wrong issue metadata / wrong `.ledger-<n>` dir (gemini R2, high). Pure so
  * the extraction is unit-tested without git. Returns 0 when no digits exist.
  */
+/**
+ * The resident slice branch name for an issue — the single source of the
+ * `feat/244-orchestrator-issue-<n>` convention `prepareWorktree` cuts under, and
+ * the inverse of {@link issueNumberFromBranch}. Exported so the family layer can
+ * recover a child's branch from its issue when reconcile is handed only the issue
+ * number (#291, agy/codex R1). Pure → unit-tested without git.
+ */
+export function branchForIssue(issueNumber: number): string {
+  return `feat/244-orchestrator-issue-${issueNumber}`;
+}
+
 export function issueNumberFromBranch(branch: string): number {
   const m = branch.match(/issue-(\d+)/);
   if (m) return Number(m[1]);
@@ -426,6 +454,123 @@ export function buildAuthPaths(
     srcCodexConfig: join(home, ".codex", "config.toml"),
     claudeTokenFile: join(home, ".sc-claude-token"),
   };
+}
+
+// ── #292: dedicated-clone isolation (ADR 0024) path/guard pure logic ─────────
+
+/** Short, stable hex digest used when a clean `owner_repo` slug isn't derivable. */
+function shortHash(input: string): string {
+  return createHash("sha1").update(input).digest("hex").slice(0, 16);
+}
+
+/**
+ * Build the repo-slug component of the dedicated-clone path (ADR 0024 decision 1).
+ *
+ * Preference order, so two distinct sources can never collide on one clone dir:
+ *   1. A parseable GitHub remote (https or ssh) → `<owner>_<repo>` (human-readable,
+ *      and same-named repos under different owners stay distinct). Restricted to
+ *      github.com hosts — for that host the 2-segment `owner/repo` IS the whole
+ *      identity, so collision is impossible; any OTHER host (e.g. a GitLab nested
+ *      group `groupA/sub/repo` vs `groupB/sub/repo`) shares its last two segments,
+ *      so it must hash the FULL remote instead (case 2), never the tail.
+ *   2. A remote that isn't a github.com `owner/repo` → a stable hash of the FULL
+ *      (trimmed) remote — preserves every distinguishing segment, no collision.
+ *   3. NO remote (a local-only source) → a stable hash of the source ABSOLUTE path
+ *      (ADR 0024 "无 remote 的本地 source → 退化为 source 绝对路径的 hash"). The
+ *      source is resolved to an absolute path FIRST, so the same repo referenced
+ *      relatively (from any cwd) maps to one stable clone — crash-resume idempotency.
+ *
+ * Pure: derives the slug only — no file I/O.
+ */
+export function repoSlug(sourceRepo: string, remote: string | undefined): string {
+  if (remote !== undefined && remote.trim() !== "") {
+    const trimmed = remote.trim();
+    const parsed = parseOwnerRepo(trimmed);
+    if (parsed !== undefined) return `${parsed.owner}_${parsed.repo}`;
+    return shortHash(trimmed);
+  }
+  // Resolve to absolute so `../repo` and `/abs/repo` (same repo, different cwd)
+  // hash identically (ADR 0024 dec.1: hash of the source ABSOLUTE path).
+  return shortHash(resolve(sourceRepo));
+}
+
+/**
+ * Extract `{owner, repo}` from an https or ssh **github.com** remote, or
+ * undefined for any non-github.com remote. Restricted to github.com on purpose:
+ * only there is the 2-segment `owner/repo` the repo's whole identity, so the
+ * human-readable `owner_repo` slug is collision-free. A non-github host can carry
+ * deeper namespaces (GitLab subgroups: `groupA/sub/repo` vs `groupB/sub/repo`)
+ * that share their last two segments — those must NOT slug here; the caller hashes
+ * the full remote for them instead.
+ */
+function parseOwnerRepo(
+  remote: string,
+): { owner: string; repo: string } | undefined {
+  // github.com must be the actual HOST, not a path substring — else a non-github
+  // remote that merely embeds `@github.com` / `/github.com` in its PATH (e.g.
+  // `https://evil.example/path@github.com/owner/repo.git`) would falsely slug as
+  // the genuine github repo and COLLIDE with it (ADR 0024 dec.1, r2 codex). So we
+  // anchor the host position in each accepted form, never a loose substring:
+  const trailer = "([^/:\\s]+)\\/([^/\\s]+?)(?:\\.git)?\\/?$"; // owner / repo
+  const patterns = [
+    // scheme://[user[:pass]@]github.com[:port]/owner/repo  (https / ssh / git)
+    new RegExp(`^[a-z][a-z0-9+.-]*:\\/\\/(?:[^/@\\s]+@)?github\\.com(?::\\d+)?\\/${trailer}`),
+    // scp-like:  [user@]github.com:owner/repo  (no scheme, ':' separates host)
+    new RegExp(`^(?:[^/@\\s]+@)?github\\.com:${trailer}`),
+  ];
+  for (const re of patterns) {
+    const m = remote.match(re);
+    if (m !== null && m[1] !== "" && m[2] !== "") {
+      return { owner: m[1], repo: m[2] };
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The dedicated-clone path for one orchestrator invocation (ADR 0024 decision 1):
+ * `<home>/.sc-orchestrator/<repo-slug>-iso-<runKey>`. Run-key-addressed so the
+ * SAME key resumes the SAME clone (idempotent) and DIFFERENT invocations get
+ * physically separate clones (their own `.git` ⇒ a prune can't reach across).
+ *
+ * Pure: composes the path only.
+ */
+export function clonePathFor(
+  home: string,
+  slug: string,
+  runKey: number,
+): string {
+  return join(home, ".sc-orchestrator", `${slug}-iso-${runKey}`);
+}
+
+/** Verdict for the fail-closed guard (ADR 0024 decision 1 / 3). */
+export interface OwnGitDirVerdict {
+  readonly ok: boolean;
+  /** The raw `git rev-parse --git-common-dir` output, for the error message. */
+  readonly commonDir: string;
+}
+
+/**
+ * Decide whether `git rev-parse --git-common-dir` (run inside the clone) proves
+ * the clone owns its `.git` — i.e. is a real clone, NOT a linked worktree sharing
+ * another repo's `.git` (ADR 0024 decision 1: 断言作业仓库非 linked worktree).
+ *
+ * A normal clone's common dir is its own `.git` — git prints it as the literal
+ * relative `.git` (run from the repo root) or as the absolute `<clone>/.git`.
+ * A linked worktree's common dir points at the SHARED parent repo's `.git`
+ * (e.g. `<other>/.git` or `<other>/.git/worktrees/<name>`), which is the topology
+ * #292 must reject. Pure: compares strings only.
+ */
+export function checkOwnGitDir(
+  commonDir: string,
+  clonePath: string,
+): OwnGitDirVerdict {
+  const trimmed = commonDir.trim();
+  const own =
+    trimmed === ".git" ||
+    trimmed === join(clonePath, ".git") ||
+    trimmed === clonePath; // bare-repo edge: common dir is the repo dir itself
+  return { ok: own, commonDir: trimmed };
 }
 
 // ── model slug → agent provider selection (role decides soul/CLI) ───────────
@@ -1009,8 +1154,34 @@ export function promptsDirError(
 
 /** Tunables for the real Backend (host paths + the profile image). */
 export interface RealBackendOptions {
-  /** The host repo the resident slice worktrees are cut from (ADR 0017). */
-  readonly mainRepo: string;
+  /**
+   * The SOURCE repo the orchestrator clones from (ADR 0024 decision 1). The
+   * driver feeds the source — NOT a ready-made working repo. RealBackend builds
+   * and holds its OWN dedicated clone keyed by {@link RealBackendOptions.runKey},
+   * and that clone (not this source) is what the resident slice worktrees are cut
+   * from. May be a path to a local repo (the common case) or any `git clone`-able
+   * URL. The clone is what isolates one orchestrator invocation from every other
+   * (its own `.git` ⇒ a worktree prune can't reach across sessions).
+   */
+  readonly sourceRepo: string;
+  /**
+   * The repo's git remote URL, used ONLY to derive a collision-free clone-path
+   * slug (`<owner>_<repo>` for a GitHub remote; a hash otherwise). When absent
+   * (a local-only source with no remote), the slug degrades to a hash of the
+   * source absolute path (ADR 0024: 无 remote 的本地 source → source 绝对路径 hash).
+   */
+  readonly remote?: string;
+  /**
+   * The DETERMINISTIC run key that addresses this invocation's dedicated clone
+   * (ADR 0024 decision 1). Family run = the parent epic issue number; single-slice
+   * run = the slice's own issue number. MUST be deterministic (never random): a
+   * crash-resume re-derives the SAME clone path from the same key, so the prior
+   * ledger + resident worktree are found. A family run's child slices REUSE the
+   * family clone by passing the parent epic# here (they only differ in the issue#
+   * they cut a worktree for), so their local commits live in the one family clone
+   * the merger later reads.
+   */
+  readonly runKey: number;
   /** GitHub repo slug for `gh` (`owner/name`). */
   readonly repo: string;
   /** The profile image (#253): toolchain + souls + model CLIs baked in. */
@@ -1030,6 +1201,17 @@ export interface RealBackendOptions {
   readonly promptsDir: string;
   /** Override $HOME for auth path construction (tests). */
   readonly home?: string;
+  /**
+   * #291: the LOCAL family base branch on this clone (ADR 0022 decision 7), set
+   * ONLY when this Backend drives a family run's CHILD slices. When a child's
+   * `prepareWorktree` base equals this, the slice is cut from the LOCAL family
+   * base (no `git fetch origin`, no `origin/` prefix) — because the family base
+   * is a local branch the merger accumulates onto, with no remote counterpart;
+   * deriving it as `origin/<family-base>` would cut from a stale/absent remote ref
+   * missing the prior waves (agy R1). Absent ⇒ a standalone single-slice run: the
+   * cut base is "main", fetched + cut as `origin/main` exactly as before.
+   */
+  readonly familyBase?: string;
 }
 
 /** zod schema for the reviewer step's structured output (route() consumes it). */
@@ -1057,10 +1239,86 @@ const coderOutputSchema = z.object({
 
 export class RealBackend implements Backend {
   private readonly opts: RealBackendOptions;
+  /**
+   * The dedicated clone this invocation owns (ADR 0024). All resident slice
+   * worktrees are cut from HERE, and every internal git/Sandcastle op anchors on
+   * it — NOT on {@link RealBackendOptions.sourceRepo}. Derived in the constructor
+   * from `<home>/.sc-orchestrator/<repo-slug>-iso-<runKey>`, built (or reused) on
+   * disk, and guarded to be an independent `.git` before construction succeeds.
+   */
+  private readonly workingRepo: string;
 
   constructor(opts: RealBackendOptions) {
     this.opts = opts;
     this.validatePromptsDir();
+    this.workingRepo = this.buildOrReuseClone();
+    this.assertIndependentClone();
+  }
+
+  /**
+   * The dedicated-clone path this invocation works in (ADR 0024). Exposed so the
+   * driver / tests can see WHERE the resident worktrees are cut from; internally
+   * every git op anchors on it instead of the driver-supplied source.
+   */
+  workingRepoPath(): string {
+    return this.workingRepo;
+  }
+
+  /**
+   * Build (or reuse) the dedicated clone for this invocation (ADR 0024 dec. 1).
+   *
+   * Path = `<home>/.sc-orchestrator/<repo-slug>-iso-<runKey>`, addressed by the
+   * deterministic run key so a crash-resume lands on the SAME clone + ledger
+   * (idempotent). When the clone dir is already present we reuse it (no re-clone);
+   * otherwise we `git clone <sourceRepo> <clonePath>`. The fail-closed guard runs
+   * separately, AFTER the clone exists.
+   */
+  private buildOrReuseClone(): string {
+    const home = this.opts.home ?? homedir();
+    const slug = repoSlug(this.opts.sourceRepo, this.opts.remote);
+    const clonePath = clonePathFor(home, slug, this.opts.runKey);
+    if (!this.cloneDirExists(clonePath)) {
+      // Multi-phase S1-adjacent: a clone failure must abort construction loudly
+      // (不启动), not silently leave a half-built or missing working repo.
+      this.sh("git", ["clone", this.opts.sourceRepo, clonePath]);
+    }
+    return clonePath;
+  }
+
+  /**
+   * Does the dedicated clone dir already exist on disk? `protected` so a test
+   * subclass can drive the reuse-vs-clone branch without a real filesystem
+   * (mirrors the {@link RealBackend.sh} seam). Checks the clone's `.git` so a
+   * stray empty dir is not mistaken for a built clone.
+   */
+  protected cloneDirExists(clonePath: string): boolean {
+    return existsSync(join(clonePath, ".git"));
+  }
+
+  /**
+   * Fail-closed guard (ADR 0024 decision 1/3): after the clone exists, assert it
+   * owns its `.git` — i.e. `git rev-parse --git-common-dir` resolves to the
+   * clone's OWN `.git`, not a shared parent repo's `.git` (a linked worktree).
+   * If the working repo is a linked worktree, a Sandcastle/`cleanResidue` prune
+   * could reach across the shared `.git` into other sessions' admin namespace
+   * (the #292 bug). So we refuse to start: throw at construction (不启动).
+   */
+  private assertIndependentClone(): void {
+    const commonDir = this.sh(
+      "git",
+      ["rev-parse", "--git-common-dir"],
+      this.workingRepo,
+    );
+    const verdict = checkOwnGitDir(commonDir, this.workingRepo);
+    if (!verdict.ok) {
+      throw new Error(
+        `RealBackend: working repo "${this.workingRepo}" is not an independent ` +
+          `clone — git --git-common-dir resolved to "${verdict.commonDir}", which ` +
+          `is NOT this clone's own .git. It is a linked worktree sharing another ` +
+          `repo's .git; a worktree prune there would corrupt other sessions' ` +
+          `worktree admin entries (ADR 0024). Refusing to start.`,
+      );
+    }
   }
 
   /**
@@ -1225,7 +1483,26 @@ export class RealBackend implements Backend {
     issueNumber: number,
     base: string,
   ): Promise<WorktreeHandle> {
-    const branch = `feat/244-orchestrator-issue-${issueNumber}`;
+    // #291 B7: the family spine fans a wave out CONCURRENTLY, and every child in
+    // the wave shares THIS one dedicated clone (ADR 0024). The worktree-list scan,
+    // the best-effort `git fetch`, the residue clean, and the `git worktree add`
+    // cut all MUTATE the shared `.git` — concurrent ones race on `.git/index.lock`
+    // / per-ref locks (distinct child BRANCHES isolate the logical work, NOT the
+    // git locks). So the whole git-mutating section runs under a per-clone mutex
+    // keyed on the working repo: same-clone children serialise their cuts, while a
+    // DIFFERENT clone (another run in the same process) never blocks. A standalone
+    // single-slice run is the degenerate single-holder case (no contention).
+    return runExclusive(this.workingRepo, () =>
+      this.prepareWorktreeLocked(issueNumber, base),
+    );
+  }
+
+  /** The git-mutating body of {@link prepareWorktree}, run under the per-clone mutex. */
+  private async prepareWorktreeLocked(
+    issueNumber: number,
+    base: string,
+  ): Promise<WorktreeHandle> {
+    const branch = branchForIssue(issueNumber);
     // Idempotent reuse: if the resident worktree exists, reuse it (the runner's
     // #255 resume path drives this); else cut a fresh one from `base` (main).
     //
@@ -1234,18 +1511,19 @@ export class RealBackend implements Backend {
     // missing/unreadable (findResumeState → undefined ⇒ no resume ⇒ no
     // cleanResidue). Returning the dir AS-IS would reuse a prior crash's
     // uncommitted residue / stale commits as a "fresh" start (ADR0017: 复用前清
-    // 未提留残留). So clean residue (reset --hard HEAD → clean -fd → prune) BEFORE
+    // 未提留残留). So clean residue (reset --hard HEAD → clean -fd) BEFORE
     // returning, so a no-ledger old branch can never masquerade as a clean fresh
-    // cut and leak residue into the pushed branch.
+    // cut and leak residue into the pushed branch. (Repo-level prune handed back
+    // to Sandcastle — ADR 0024 dec. 2.)
     const existing = this.findExistingWorktree(branch);
     if (existing !== undefined) {
       this.cleanResidueAt(existing);
       return { branch, base, path: existing };
     }
     // Cut the slice branch from `base` (= "main", runner.ts SLICE_BASE), NOT the
-    // mainRepo's current HEAD. NamedBranchStrategy.baseBranch defaults to HEAD
+    // working clone's current HEAD. NamedBranchStrategy.baseBranch defaults to HEAD
     // when omitted (Sandcastle d.ts:213), so omitting it silently derived the
-    // slice from whatever the mainRepo happened to be checked out on — the #244
+    // slice from whatever the clone happened to be checked out on — the #244
     // "从 main 派生" invariant only held by accident (integ-cmr 256 r1, F3).
     // Sandcastle notes the caller owns currency of the ref, so refresh `base`
     // first (best-effort: a fetch failure must not block a local-only base).
@@ -1259,17 +1537,43 @@ export class RealBackend implements Backend {
     // the fetch failed (offline / local-only base). The WorktreeHandle.base field
     // still records the LOGICAL base ("main"), not the cut ref, for ledger
     // consistency.
-    const fetchedOk = this.ensureBaseRef(base);
-    const cutRef = cutRefFor(base, fetchedOk);
+    // #291: a family-base cut is LOCAL-only (ADR 0022 decision 7) — the family
+    // base is a local branch the merger accumulates onto, with no remote
+    // counterpart. So skip `git fetch origin <family-base>` (it would fail or, worse,
+    // resolve a stale remote branch) and force the bare local ref. A standalone
+    // single-slice run (base="main", no `familyBase` option) keeps the fetch +
+    // `origin/main` derivation byte-identical.
+    const localOnly = base === this.opts.familyBase;
+    const fetchedOk = localOnly ? false : this.ensureBaseRef(base);
+    const cutRef = cutRefFor(base, fetchedOk, localOnly);
     // Multi-phase S1: attribute a createWorktree throw as "S1: createWorktree"
     // for the US#30 error package (codex#3 attributeFailure — F6).
     const wt = await this.phaseAsync("S1", "createWorktree", () =>
-      sc.createWorktree({
-        branchStrategy: { type: "branch", branch, baseBranch: cutRef },
-        cwd: this.opts.mainRepo,
-      }),
+      this.createResidentWorktree(branch, cutRef),
     );
+    // ADR 0024 dec. 2 (second half): the resident worktree is the commit source +
+    // crash-resume source (ADR 0017), so we keep ONLY its path and deliberately
+    // do NOT dispose the handle — no `.close()`, no `await using`. Sandcastle's
+    // close() removes a clean worktree, which would delete the resume truth. The
+    // resident worktree is reaped only by an explicit terminal-success GC, never
+    // by normal-path disposal.
     return { branch, base, path: wt.worktreePath };
+  }
+
+  /**
+   * Cut the resident slice worktree via Sandcastle (`createWorktree`). `protected`
+   * so a test subclass can intercept this seam without a real container (mirrors
+   * the {@link RealBackend.sh} seam rationale), e.g. to assert ADR 0024's "do not
+   * dispose the resident worktree" invariant.
+   */
+  protected async createResidentWorktree(
+    branch: string,
+    baseBranch: string,
+  ): Promise<sc.Worktree> {
+    return sc.createWorktree({
+      branchStrategy: { type: "branch", branch, baseBranch },
+      cwd: this.workingRepo,
+    });
   }
 
   /**
@@ -1283,7 +1587,7 @@ export class RealBackend implements Backend {
    */
   private ensureBaseRef(base: string): boolean {
     try {
-      this.sh("git", ["fetch", "origin", base], this.opts.mainRepo);
+      this.sh("git", ["fetch", "origin", base], this.workingRepo);
       return true;
     } catch {
       // offline or a local-only base ⇒ proceed with the local ref.
@@ -1293,7 +1597,7 @@ export class RealBackend implements Backend {
 
   private findExistingWorktree(branch: string): string | undefined {
     try {
-      const out = this.sh("git", ["worktree", "list", "--porcelain"], this.opts.mainRepo);
+      const out = this.sh("git", ["worktree", "list", "--porcelain"], this.workingRepo);
       return matchWorktreeForBranch(out, branch);
     } catch {
       // no worktrees / git error ⇒ none existing.
@@ -1680,20 +1984,25 @@ export class RealBackend implements Backend {
   /**
    * The ADR0017 residue-clean applied to a worktree path before it is reused:
    * `git reset --hard HEAD` (drop uncommitted tracked changes) → `git clean -fd`
-   * (drop untracked files/dirs) → `git worktree prune` (clear stale admin refs).
-   * Factored out so BOTH the #255 resume path (cleanResidue) and the r3
-   * fail-closed reuse path (prepareWorktree, no-ledger reuse) share one sequence.
+   * (drop untracked files/dirs). Factored out so BOTH the #255 resume path
+   * (cleanResidue) and the r3 fail-closed reuse path (prepareWorktree, no-ledger
+   * reuse) share one sequence.
+   *
+   * ADR 0024 decision 2: the repo-level `git worktree prune` that used to run here
+   * is REMOVED. It both duplicated Sandcastle's own per-acquire `pruneStale` AND
+   * was the cross-session reaper of #292 — with a dedicated clone (decision 1)
+   * pruning is Sandcastle's job and physically can't reach another session's
+   * worktree admin namespace. This method now ONLY does the per-worktree residue
+   * clean; it must not touch repo-level admin state.
    */
   private cleanResidueAt(wtPath: string): void {
     this.sh("git", ["reset", "--hard", "HEAD"], wtPath);
     this.sh("git", ["clean", "-fd"], wtPath);
-    // prune is repo-level; run from the main repo.
-    this.sh("git", ["worktree", "prune"], this.opts.mainRepo);
   }
 
   // ── #255: detect resume residue ────────────────────────────────────────────
   async findResumeState(issueNumber: number): Promise<ResumeState | undefined> {
-    const branch = `feat/244-orchestrator-issue-${issueNumber}`;
+    const branch = branchForIssue(issueNumber);
     const wtPath = this.findExistingWorktree(branch);
     if (wtPath === undefined) return undefined;
     const stateDir = this.stateDirFor(wtPath, issueNumber);

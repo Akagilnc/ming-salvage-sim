@@ -394,11 +394,17 @@ export interface Backend {
   /**
    * #255: clean uncommitted residue on the resident worktree before reuse.
    *
-   * Real implementation: `git reset --hard HEAD` + `git clean -fd` +
-   * `git worktree prune` reconciliation. Committed progress (the resident
-   * branch HEAD) is PRESERVED; only uncommitted/untracked residue from the
-   * interrupted run is discarded. The ledger lives in the sibling state dir
-   * (outside the worktree), so `clean -fd` cannot remove the resume truth.
+   * Real implementation: `git reset --hard HEAD` + `git clean -fd` ONLY —
+   * a per-worktree residue clean, scoped to the worktree path. Committed progress
+   * (the resident branch HEAD) is PRESERVED; only uncommitted/untracked residue
+   * from the interrupted run is discarded. The ledger lives in the sibling state
+   * dir (outside the worktree), so `clean -fd` cannot remove the resume truth.
+   *
+   * ADR 0024 decision 2: this does NOT run a repo-level `git worktree prune`.
+   * Worktree admin pruning is Sandcastle's responsibility (its per-acquire
+   * pruneStale); with each invocation owning a dedicated clone, that prune is
+   * scoped to the clone and can never reach another session's worktree admin
+   * namespace. `cleanResidue` must stay confined to the worktree path.
    */
   cleanResidue(worktree: WorktreeHandle): Promise<void>;
   /**
@@ -511,10 +517,57 @@ export interface Backend {
 
 // ──────────────────────────── run result ────────────────────────────
 
-/** Input to the orchestrator: only an issue number + the Backend seam. */
+/**
+ * Family-run context carried into a CHILD slice's single-slice runner (ADR 0022
+ * decision 2: the RunnerOptions seam through which the family layer passes its
+ * context down to the reused single-slice runner).
+ *
+ * When present, the child slice runs in FAMILY MODE — three differences from a
+ * standalone single-slice run (ADR 0022 decision 2/6/7):
+ *   - `familyBase` replaces "main" as the cut base (children cut from the LOCAL
+ *     family base the merger accumulates onto — decision 7);
+ *   - `noPush` makes S7 a LOCAL NO-OP (decision 2: a shared-clone concurrent
+ *     remote push would clash on `.git/refs/remotes`; only the family base PRs
+ *     once at the end);
+ *   - `parentIssue` is the family run key (ADR 0024) the child reuses for its
+ *     clone + the ledger口径 (decision 6③) — carried for #294/#298 to read.
+ *
+ * Absent ⇒ a normal standalone single-slice run (base=main, S7 pushes) — the
+ * existing single-slice tests pass `RunInput` without this field, unchanged.
+ */
+export interface FamilyContext {
+  /** The parent epic issue number (the family run key, ADR 0024). */
+  readonly parentIssue: number;
+  /** The local family base branch the child cuts from (ADR 0022 decision 7). */
+  readonly familyBase: string;
+  /** When true, S7 push is a LOCAL no-op (ADR 0022 decision 2). */
+  readonly noPush: boolean;
+  /**
+   * #294 (ADR 0022 decision 6③): the child's `blocked_by` issue numbers the
+   * family commander has confirmed MERGED into the family base (the ledger-merged
+   *口径). In family mode the child's own single-slice S0 `blocked_by` gate treats
+   * a still-open-on-GitHub blocker as SATISFIED iff it is in this set — because
+   * the commander only fans a child out once every blocker is ledger-merged, but
+   * the blocker's GitHub issue need not be `closed`. Without this, a child the
+   * commander just released would be re-rejected by its own S0 ("blocked by #N
+   * still open") → deadlock (agy R2's实锤 regression). A blocker NOT in this set
+   * (e.g. an external dependency, never merged into the family base) is still a
+   * genuine open blocker the S0 gate rejects. Absent/empty ⇒ no merged blockers
+   * to excuse (the v0.1 GitHub-closed check applies unchanged).
+   */
+  readonly mergedBlockers?: ReadonlyArray<number>;
+}
+
+/** Input to the orchestrator: an issue number + the Backend seam (+ optional family context). */
 export interface RunInput {
   readonly issueNumber: number;
   readonly backend: Backend;
+  /**
+   * Family-run context (ADR 0022 decision 2). Present ⇒ this is a CHILD slice of
+   * a family run (family base + no-op push). Absent ⇒ a standalone single-slice
+   * run (the v0.1 behaviour — base=main, S7 pushes).
+   */
+  readonly family?: FamilyContext;
 }
 
 /**
