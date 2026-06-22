@@ -605,6 +605,29 @@ export class RealFamilyBackend implements FamilyBackend {
           "RealFamilyBackendOptions.familyBaseStartHead.",
       };
     }
+    // FAIL-CLOSED on the WORKER's OWN auth (codex cmr R4): the cmr worker is the
+    // container's TOP-LEVEL claude (`agent: sc.claudeCode` below), so the Claude
+    // OAuth token is NOT a mere reviewer leg — it is THIS worker's auth. Absent, the
+    // worker cannot start and never emits a `<cmr>` verdict; that failure would
+    // throw out of `sc.run` (NOT a structured escalate), bypassing verifyCmr's
+    // escalate routing (a fail-open — the gate is crashed, not honestly escalated).
+    // codex/agy auth stay best-effort reviewer LEGS (they degrade in-container); the
+    // Claude token alone is load-bearing for the worker itself. Mount once and reuse
+    // for the sandbox (no double-mount). The cut-SHA guard above runs first; this is
+    // the second fail-closed precondition, both BEFORE any container work.
+    const auth = this.mountCmrAuth();
+    if (auth.claudeToken === undefined) {
+      return {
+        kind: "escalate",
+        reason: "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the cmr worker cannot start",
+        diagnosis:
+          "the integrated cmr worker is the container's top-level claude (sc.claudeCode); " +
+          "its OAuth token (~/.sc-claude-token → CLAUDE_CODE_OAUTH_TOKEN) is the worker's " +
+          "OWN auth, not a degradable reviewer leg. Without it the worker fails to start " +
+          "and never emits a verdict; escalating here keeps the escalate续跑 semantics " +
+          "(a thrown sc.run startup error would bypass verifyCmr's structured routing).",
+      };
+    }
     // Check out the family base so the in-container ak-cross-m-review reviews the
     // RIGHT base diff (ctx.familyBase is the contract input — dispatchWorker
     // already asserted it is present). The cmr worker runs as the container's
@@ -621,7 +644,7 @@ export class RealFamilyBackend implements FamilyBackend {
     const result = await sc.run({
       name: "family-cmr",
       cwd: this.opts.workingRepo,
-      sandbox: this.cmrSandbox(),
+      sandbox: this.cmrSandbox(auth),
       agent: sc.claudeCode(CMR_MODEL),
       // The cmr worker is a single review pass (ADR 0026: review = clean eyes, one
       // pass; a non-convergence is the runner's escalate fork, not a within-worker
@@ -708,9 +731,14 @@ export class RealFamilyBackend implements FamilyBackend {
     }
   }
 
-  /** The cmr worker's sandbox (souls + skills + CLIs baked into the 2b image). */
-  protected cmrSandbox(): sc.SandboxProvider {
-    return docker(this.cmrSandboxConfig(this.mountCmrAuth()));
+  /**
+   * The cmr worker's sandbox (souls + skills + CLIs baked into the 2b image).
+   * `runCmrWorker` mounts the auth ONCE up-front (so it can fail-closed on the
+   * worker's own Claude token — codex cmr R4) and passes it here, avoiding a
+   * double-mount; the arg defaults to a fresh mount for any other caller.
+   */
+  protected cmrSandbox(auth: CmrAuth = this.mountCmrAuth()): sc.SandboxProvider {
+    return docker(this.cmrSandboxConfig(auth));
   }
 
   /**

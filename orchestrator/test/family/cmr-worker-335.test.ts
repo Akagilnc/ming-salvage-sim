@@ -509,6 +509,70 @@ describe("#335 runCmrWorker — fail-closed when no cut SHA was recorded", () =>
   });
 });
 
+// ═══════ 4e. runCmrWorker fail-closed on a missing Claude WORKER auth (codex R4) ═══════
+
+describe("#335 runCmrWorker — fail-closed when the top-level Claude worker has no auth", () => {
+  /**
+   * The CMR worker is the container's TOP-LEVEL claude (`agent: sc.claudeCode`), so
+   * the Claude OAuth token is not a mere reviewer leg — it is the worker's OWN auth.
+   * A missing token means the worker cannot start and never emits a `<cmr>` verdict;
+   * letting it through would crash out of `sc.run` (NOT a structured escalate),
+   * bypassing verifyCmr's escalate routing. So `runCmrWorker` must escalate BEFORE
+   * spinning the container when `mountCmrAuth().claudeToken` is absent.
+   */
+  class NoClaudeAuthBackend extends RealFamilyBackend {
+    scRunReached = false;
+    public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
+      return this.runCmrWorker(spec, ctx);
+    }
+    // The cut SHA IS recorded (we isolate the Claude-auth guard from the R3 guard).
+    protected override mountCmrAuth(): CmrAuth {
+      // codex/agy present, claude token ABSENT (the worker's own auth missing).
+      return { codexAuthDir: "/x/codex", agyDir: "/x/agy" };
+    }
+    protected override writeCmrFocusFile(): void {
+      this.scRunReached = true;
+      throw new Error("writeCmrFocusFile should not run when the worker has no auth");
+    }
+  }
+
+  it("no Claude worker token ⇒ escalate, never spins the container", async () => {
+    const repo = realRepo335();
+    const be = new NoClaudeAuthBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+    const outcome = await be.run(cmrWorkerSpec(), { familyBase: "fb" });
+    expect(outcome.kind).toBe("escalate");
+    if (outcome.kind === "escalate") {
+      expect(outcome.reason).toMatch(/claude|token|auth/i);
+    }
+    expect(be.scRunReached).toBe(false);
+  });
+
+  it("dispatchWorker routes the no-auth escalate to a not-passed WorkerResult", async () => {
+    const repo = realRepo335();
+    const be = new NoClaudeAuthBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+    const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb" });
+    expect(res.kind).toBe("escalated");
+  });
+});
+
 function realRepo335(): string {
   const repo = mkDir("cmr-guard-repo-");
   execFileSync("git", ["init", "-q"], { cwd: repo });
