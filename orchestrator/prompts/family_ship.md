@@ -13,12 +13,20 @@ push + PR yourself.
 
 ## Your job
 
-1. Read `.ship-focus.md` at the repo root FIRST (if present). It is machine-generated
-   and pins the family base branch + the PR target base.
+1. Read `.ship-focus.md` at the repo root FIRST — it is **REQUIRED** (the runner
+   writes it before launching you). It is machine-generated and pins the family base
+   branch + the **PR target base** + the GitHub repo. If it is absent, that is a
+   setup fault → `failed` (do NOT guess a base).
 2. Invoke the **`gstack-ship`** skill on the family base branch (already checked out).
 3. Let the skill run its pipeline (base detection, tests, diff review, VERSION /
    CHANGELOG, commit, push, `gh pr create`) — and **STOP at the PR**. Do NOT merge
    the PR; do NOT push to the target base.
+   - **OVERRIDE gstack-ship's base inference with the `PR target base` from
+     `.ship-focus.md`.** gstack-ship infers the base from the repo default branch
+     (main); the family run may target a non-main integration branch, so the PR MUST
+     open against the pinned `PR target base`
+     (`gh pr create --base <PR target base> --head <family base>`), NOT the inferred
+     default.
 4. **Self-rerun where the skill offers a rerun** (per the user's note): a flaky test
    the skill loops on, a review pass it re-attempts — **rerun it yourself**; do NOT
    stop for a human on a rerun-able step.

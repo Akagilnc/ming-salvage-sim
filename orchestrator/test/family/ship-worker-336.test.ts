@@ -16,13 +16,14 @@
  * at the seam.
  */
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { RealFamilyBackend } from "../../src/family/realFamilyBackend.js";
+import { RealFamilyBackend, SHIP_FOCUS_FILENAME } from "../../src/family/realFamilyBackend.js";
 import { SANDBOX_CODEX_DIR, SANDBOX_SOUL_ENV } from "../../src/realBackend.js";
 import { cmrWorkerSpec, familyShipWorkerSpec } from "../../src/family/dispatchFamilyWorker.js";
 import type { ShipWorkerOutcome } from "../../src/shipOutcome.js";
@@ -231,5 +232,102 @@ describe("#336 family shipSandboxConfig — the WRITE-soul ship sandbox", () => 
     const c = cfg().config({ claudeToken: "tok" });
     expect(c.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(false);
     expect(c.env[SANDBOX_SOUL_ENV]).toBe("coder");
+  });
+});
+
+// ═══════════════════ writeShipFocusFile — pins the CONFIGURED PR target base (cmr S336 r5) ═══════════════════
+
+describe("#336 writeShipFocusFile — threads the configured PR target base into the ship worker", () => {
+  /** Expose the focus-file seam over a REAL temp git repo (so the exclude path resolves). */
+  class FocusShipBackend extends RealFamilyBackend {
+    public focus(ctx: { familyBase: string }): void {
+      this.writeShipFocusFile(ctx as never);
+    }
+  }
+  function realRepo(): string {
+    const repo = mkDir("ship-focus-repo-");
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    return repo;
+  }
+  function be(over: Partial<{ base: string; repo: string }> = {}): FocusShipBackend {
+    return new FocusShipBackend({
+      workingRepo: realRepo(),
+      familyBase: FAMILY_BASE,
+      ledgerDir: mkDir("ship-focus-ledger-"),
+      repo: over.repo ?? "Akagilnc/ming-salvage-sim",
+      base: over.base ?? "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+    });
+  }
+
+  it("pins the configured non-main PR target base (the openFamilyPr --base contract)", () => {
+    // The legacy openFamilyPr opened the PR with `gh pr create --base this.opts.base`.
+    // gstack-ship instead INFERS the base from the repo default branch (main), so a
+    // configured non-main target (an integration branch) would silently regress to a
+    // main-targeted PR. The focus file MUST pin the configured base so the worker
+    // overrides gstack-ship's inference.
+    const backend = be({ base: "integ/291-wave3" });
+    backend.focus({ familyBase: FAMILY_BASE });
+    const body = readFileSync(join(backend["opts"].workingRepo, SHIP_FOCUS_FILENAME), "utf8");
+    expect(body).toContain("integ/291-wave3");
+    expect(body).toContain(FAMILY_BASE);
+  });
+
+  it("pins a 'develop' configured base + the family base branch + the repo slug", () => {
+    const backend = be({ base: "develop", repo: "Akagilnc/ming-salvage-sim" });
+    backend.focus({ familyBase: FAMILY_BASE });
+    const body = readFileSync(join(backend["opts"].workingRepo, SHIP_FOCUS_FILENAME), "utf8");
+    expect(body).toContain("develop");
+    expect(body).toContain(FAMILY_BASE);
+    expect(body).toContain("Akagilnc/ming-salvage-sim");
+  });
+
+  it("git-ignores the focus file (info/exclude) so the ship never commits it", () => {
+    const backend = be({ base: "integ/291-wave3" });
+    backend.focus({ familyBase: FAMILY_BASE });
+    const exclude = readFileSync(join(backend["opts"].workingRepo, ".git", "info", "exclude"), "utf8");
+    expect(exclude.split("\n")).toContain(SHIP_FOCUS_FILENAME);
+  });
+
+  it("runShipWorker writes the focus file BEFORE the container runs (so the worker can read it)", async () => {
+    // The worker reads .ship-focus.md FIRST (family_ship.md). Prove runShipWorker
+    // produces it before the container spins — trap the container call with a
+    // sentinel and assert the focus file is ALREADY on disk when it fires (and that
+    // the family base was checked out, i.e. the focus write did not displace the
+    // existing checkout contract).
+    let focusBodyAtRun: string | undefined;
+    class SeamBackend extends RealFamilyBackend {
+      // Stub the only real-I/O dependency runShipWorker has besides the focus write:
+      // the git checkout (the temp repo has no `integ/291-wave3` ref) and sc.run.
+      protected override sh(): string {
+        return "";
+      }
+      protected override async shipContainerRun(): Promise<never> {
+        // Capture the focus-file state at the moment the container would launch.
+        focusBodyAtRun = readFileSync(
+          join(this["opts"].workingRepo, SHIP_FOCUS_FILENAME),
+          "utf8",
+        );
+        throw new Error("SENTINEL: container reached");
+      }
+    }
+    const b = new SeamBackend({
+      workingRepo: realRepo(),
+      familyBase: FAMILY_BASE,
+      ledgerDir: mkDir("ship-focus-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "integ/291-wave3",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+    });
+    await expect(
+      (b as unknown as { runShipWorker(s: WorkerSpec, c: DispatchContext): Promise<unknown> }).runShipWorker(
+        familyShipWorkerSpec(),
+        { familyBase: FAMILY_BASE },
+      ),
+    ).rejects.toThrow(/SENTINEL/);
+    expect(focusBodyAtRun).toBeDefined();
+    expect(focusBodyAtRun).toContain("integ/291-wave3");
   });
 });
