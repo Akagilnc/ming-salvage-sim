@@ -973,6 +973,26 @@ export class RealFamilyBackend implements FamilyBackend {
     spec: WorkerSpec,
     ctx: DispatchContext,
   ): Promise<ShipWorkerOutcome> {
+    // FAIL-CLOSED on the WORKER's OWN auth (cmr S336 r8, mirroring the cmr worker's
+    // preflight ~645-666): the ship worker is the container's TOP-LEVEL claude
+    // (`agent: sc.claudeCode` in shipContainerRun), so the Claude OAuth token is NOT
+    // a degradable codex/gh LEG — it is THIS worker's auth. Absent, the worker cannot
+    // start and never emits a `<ship>` verdict; that failure would throw out of
+    // `sc.run` (NOT a structured escalate), bypassing the WorkerResult routing
+    // (dispatchShipWorker → verifyCmr only handle the RETURNED result, never a thrown
+    // startup error — a fail-open that crashes the gate rather than honestly
+    // escalating). codex/gh auth stays best-effort (it only degrades the push/PR
+    // creds, not the worker's ability to start). Preflight BEFORE any container work
+    // (the checkout + focus write below) so a no-token host escalates cleanly. Mount
+    // once and reuse for the sandbox (no double-mount).
+    const auth = this.mountShipAuth();
+    if (auth.claudeToken === undefined) {
+      return {
+        kind: "escalate",
+        reason: "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the ship worker cannot start",
+        diagnosis: "ship worker cannot start without CLAUDE_CODE_OAUTH_TOKEN",
+      };
+    }
     // Check out the family base so gstack-ship delivers the RIGHT branch.
     this.sh("git", ["checkout", ctx.familyBase!], this.opts.workingRepo);
     // cmr S336 r5: thread the CONFIGURED PR target base into the worker via a
@@ -982,7 +1002,7 @@ export class RealFamilyBackend implements FamilyBackend {
     // target. Written AFTER the checkout (the file lives in the family-base
     // worktree) and BEFORE the container so the worker can read it.
     this.writeShipFocusFile(ctx);
-    const result = await this.shipContainerRun(spec);
+    const result = await this.shipContainerRun(spec, auth);
     return shipOutcomeFromResult(result);
   }
 
@@ -994,11 +1014,12 @@ export class RealFamilyBackend implements FamilyBackend {
    */
   protected async shipContainerRun(
     spec: WorkerSpec,
+    auth: ShipAuth = this.mountShipAuth(),
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
     return sc.run({
       name: "family-ship",
       cwd: this.opts.workingRepo,
-      sandbox: this.shipSandbox(),
+      sandbox: this.shipSandbox(auth),
       // Derive the model from the spec via the SAME validated mapping the
       // single-slice ship path uses (realBackend.ts:2122) — NOT a hardcoded id.
       // A hardcoded family model bypassed `modelIdForSlug` AND pinned a DIFFERENT

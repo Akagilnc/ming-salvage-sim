@@ -2115,10 +2115,31 @@ export class RealBackend implements Backend {
     ctx: DispatchContext,
   ): Promise<ShipWorkerOutcome> {
     const worktree = ctx.worktree!;
+    // FAIL-CLOSED on the WORKER's OWN auth (cmr S336 r8, mirroring the family ship
+    // preflight + the cmr worker's claude-token guard): the ship worker is the
+    // container's TOP-LEVEL claude (`agent: sc.claudeCode` below), so the Claude
+    // OAuth token is NOT a degradable codex/gh LEG — it is THIS worker's auth.
+    // Absent, the worker cannot start and never emits a `<ship>` verdict; that would
+    // throw out of `sc.run` (NOT a structured escalate). runner S7 DOES wrap this
+    // dispatch in a try/catch → errorTermination (so a thrown start would not
+    // crash the host outright), but an UNCAUGHT start-error is read as S8(error), not
+    // the cleaner escalate续跑 the missing-auth case deserves (a human must supply the
+    // token, not "the ship command failed"). So preflight and return a structured
+    // escalate BEFORE the container — symmetric with the family path. codex/gh auth
+    // stays best-effort (it only degrades the push/PR creds). Mount once and reuse
+    // for the sandbox (no double-mount).
+    const auth = this.mountShipAuth(this.issueOf(worktree));
+    if (auth.claudeToken === undefined) {
+      return {
+        kind: "escalate",
+        reason: "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the ship worker cannot start",
+        diagnosis: "ship worker cannot start without CLAUDE_CODE_OAUTH_TOKEN",
+      };
+    }
     const result = await sc.run({
       name: `${spec.id}-ship`,
       cwd: worktree.path,
-      sandbox: this.shipSandbox(worktree),
+      sandbox: this.shipSandbox(auth),
       agent: sc.claudeCode(modelIdForSlug(spec.model)),
       // The ship worker self-reruns gstack-ship's rerun-able steps INSIDE the
       // container (用户 note); maxIter is the within-worker budget. A genuine block
@@ -2134,13 +2155,15 @@ export class RealBackend implements Backend {
 
   /**
    * The ship worker's sandbox: the 2b image (gstack-ship + gh + bun baked in,
-   * #333) under the WRITE (`coder`) soul, with the per-issue codex auth + claude
-   * token mounted (the SAME auth wiring `box()` uses — the ship worker pushes +
-   * `gh pr create`, so it needs the live credentials). `protected` so a unit test
-   * asserts the mounts + soul without a real container.
+   * #333) under the WRITE (`coder`) soul, with the codex auth + claude token mounted
+   * (the SAME auth wiring `box()` uses — the ship worker pushes + `gh pr create`, so
+   * it needs the live credentials). Takes the ALREADY-mounted {@link ShipAuth}
+   * (mirrors the family `shipSandbox`) so `runShipWorker` mounts once: preflight the
+   * claude token THEN build the sandbox from the same auth (no double-mount).
+   * `protected` so a unit test asserts the mounts + soul without a real container.
    */
-  protected shipSandbox(worktree: WorktreeHandle): sc.SandboxProvider {
-    return docker(this.shipSandboxConfig(this.mountShipAuth(this.issueOf(worktree))));
+  protected shipSandbox(auth: ShipAuth): sc.SandboxProvider {
+    return docker(this.shipSandboxConfig(auth));
   }
 
   /**
