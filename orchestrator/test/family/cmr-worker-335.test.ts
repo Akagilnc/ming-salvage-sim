@@ -135,6 +135,55 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
   it("a <cmr> object with no boolean converged and no escalate ⇒ malformed", () => {
     expect(parseCmrOutcome('<cmr>{"foo": 1}</cmr>').kind).toBe("malformed");
   });
+
+  // ── Finding A (integ-cmr int-r1): STRICT shape, mirroring shipOutcome ─────────
+  // integrated_cmr.md: "must match one of the shapes above exactly". A mixed /
+  // extra-key / garbage payload must NOT coerce into a pass — fail-CLOSED.
+  describe("Finding A — strict shape (no extra/mixed keys, non-empty verdict fields)", () => {
+    it("a mixed converged+escalate payload ⇒ malformed (not a pass)", () => {
+      // A success key carried ALONGSIDE an escalate verdict is off-contract — it
+      // must NOT slip through to a converged pass.
+      expect(
+        parseCmrOutcome(
+          '<cmr>{"converged": true, "escalate": {"reason": "r", "diagnosis": "d"}}</cmr>',
+        ).kind,
+      ).toBe("malformed");
+    });
+
+    it("converged:true carrying an EXTRA key ⇒ malformed (strict)", () => {
+      expect(parseCmrOutcome('<cmr>{"converged": true, "junk": 1}</cmr>').kind).toBe(
+        "malformed",
+      );
+    });
+
+    it("converged:false WITHOUT a reason ⇒ malformed (the contract requires the one-line reason)", () => {
+      expect(parseCmrOutcome('<cmr>{"converged": false}</cmr>').kind).toBe("malformed");
+    });
+
+    it("converged:false with a BLANK reason ⇒ malformed (non-empty required)", () => {
+      expect(parseCmrOutcome('<cmr>{"converged": false, "reason": "  "}</cmr>').kind).toBe(
+        "malformed",
+      );
+    });
+
+    it("a garbage escalate (blank reason/diagnosis) ⇒ malformed (not a coerced escalate)", () => {
+      expect(
+        parseCmrOutcome('<cmr>{"escalate": {"reason": "", "diagnosis": ""}}</cmr>').kind,
+      ).toBe("malformed");
+      expect(parseCmrOutcome('<cmr>{"escalate": {}}</cmr>').kind).toBe("malformed");
+    });
+
+    it("converged with a NON-boolean value ⇒ malformed", () => {
+      expect(parseCmrOutcome('<cmr>{"converged": "true"}</cmr>').kind).toBe("malformed");
+    });
+
+    it("still accepts the two LEGAL shapes (regression)", () => {
+      expect(parseCmrOutcome('<cmr>{"converged": true}</cmr>').kind).toBe("verdict");
+      expect(
+        parseCmrOutcome('<cmr>{"converged": false, "reason": "seam mismatch"}</cmr>').kind,
+      ).toBe("verdict");
+    });
+  });
 });
 
 // ═══════════════════════ 2. cmrOutcomeFromResult (signal gate) ═══════════════════════

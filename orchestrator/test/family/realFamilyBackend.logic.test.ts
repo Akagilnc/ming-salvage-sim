@@ -542,6 +542,48 @@ describe("parseMergerOutcome (#291 pure)", () => {
     expect(parseMergerOutcome("<merger>true</merger>").resolved).toBe(false);
     expect(parseMergerOutcome("<merger>42</merger>").resolved).toBe(false);
   });
+
+  // ── Finding A (integ-cmr int-r1): STRICT shape, mirroring shipOutcome ─────────
+  // merger_resolve_conflict.md: "must match the shape above exactly". A
+  // resolved:true carrying extra/mixed keys (e.g. an escalate verdict) must NOT
+  // count as a clean resolve — fail-CLOSED to unresolved.
+  describe("Finding A — strict shape (resolved:true rejects extra/mixed keys)", () => {
+    it("resolved:true carrying an escalate ⇒ NOT resolved (mixed payload)", () => {
+      const out = parseMergerOutcome(
+        '<merger>{"resolved": true, "escalate": {"reason": "r", "diagnosis": "d"}}</merger>',
+      );
+      expect(out.resolved).toBe(false);
+    });
+
+    it("resolved:true carrying an unknown EXTRA key ⇒ NOT resolved (strict)", () => {
+      expect(
+        parseMergerOutcome('<merger>{"resolved": true, "junk": 1}</merger>').resolved,
+      ).toBe(false);
+    });
+
+    it("resolved as a NON-boolean ⇒ NOT resolved", () => {
+      expect(parseMergerOutcome('<merger>{"resolved": "true"}</merger>').resolved).toBe(
+        false,
+      );
+    });
+
+    it("still accepts the LEGAL success shapes (regression: with/without tradeoffs)", () => {
+      expect(parseMergerOutcome('<merger>{"resolved": true}</merger>')).toEqual({
+        resolved: true,
+      });
+      expect(
+        parseMergerOutcome('<merger>{"resolved": true, "tradeoffs": "picked left"}</merger>'),
+      ).toEqual({ resolved: true });
+    });
+
+    it("still surfaces a legal escalate (regression)", () => {
+      const out = parseMergerOutcome(
+        '<merger>{"resolved": false, "escalate": {"reason": "ambiguous", "diagnosis": "needs decision"}}</merger>',
+      );
+      expect(out.resolved).toBe(false);
+      expect(out.reason).toContain("ambiguous");
+    });
+  });
 });
 
 describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {

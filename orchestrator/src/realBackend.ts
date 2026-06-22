@@ -68,7 +68,8 @@ import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
 
 import { runExclusive } from "./gitMutex.js";
-import { legacyDispatchWorker } from "./dispatchWorker.js";
+import { legacyDispatchWorker, shipWorkerSpec } from "./dispatchWorker.js";
+import { STEP_SPECS } from "./runner.js";
 import {
   SHIP_COMPLETION_SIGNAL,
   shipOutcomeFromResult,
@@ -1131,17 +1132,24 @@ export function attributeFailure(
 // ── promptsDir validation (integ-cmr 256 r2, F4) ─────────────────────────────
 
 /**
- * Every versioned promptFile the runner's STEP_SPECS reference (S2/S3/S5/S6).
- * The real Backend resolves each as `join(promptsDir, promptFile)`, so all four
- * must exist under `promptsDir` or the real path cannot run end-to-end (#256 AC
- * "对一个真叶子 issue 端到端跑通"). Kept in lock-step with `runner.ts` STEP_SPECS.
+ * Every versioned promptFile a single-slice WORKER the runner dispatches resolves
+ * at run time. The real Backend resolves each as `join(promptsDir, promptFile)`,
+ * so all must exist under `promptsDir` or the real path cannot run end-to-end
+ * (#256 AC "对一个真叶子 issue 端到端跑通").
+ *
+ * integ-cmr int-r1 (C-3): DERIVED from the actual worker specs — STEP_SPECS
+ * (S2/S3/S5/S6 coder/reviewer) + shipWorkerSpec() (S7 ship, ship.md) — rather than
+ * a hand-maintained literal. The hand-kept list omitted ship.md, so promptsDir
+ * validation passed yet S7 crashed at run time looking for the absent prompt. By
+ * reading the prompt off every dispatched spec, a new/changed worker step can
+ * never silently drift out of the validation list again. De-duped (S2 and S5 may
+ * share a prompt across versions; the set collapses repeats).
  */
-export const REFERENCED_PROMPT_FILES = [
-  "coder_implement.md",
-  "reviewer_full_review.md",
-  "coder_fix.md",
-  "reviewer_rereview.md",
-] as const;
+export const REFERENCED_PROMPT_FILES: ReadonlyArray<string> = [
+  ...new Set(
+    [...Object.values(STEP_SPECS), shipWorkerSpec()].map((s) => s.promptFile),
+  ),
+];
 
 /**
  * Build the construction-time `promptsDir` validation error message, or

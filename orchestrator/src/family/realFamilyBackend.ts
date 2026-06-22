@@ -57,6 +57,8 @@ import {
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
+import { z } from "zod";
+
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 
@@ -1451,14 +1453,38 @@ export function cmrOutcomeFromResult(result: {
   return parseCmrOutcome(result.stdout);
 }
 
+/** A trimmed, non-empty string at the schema layer (mirrors shipOutcome.ts). */
+const nonEmpty = z.string().trim().min(1);
+
+/**
+ * The three — and ONLY three — `<cmr>` shapes (integ-cmr int-r1, Finding A;
+ * mirrors shipOutcome.ts `.strict()` union). Each is `.strict()` so any EXTRA /
+ * mixed key (a converged success carrying an `escalate` verdict, an off-contract
+ * field) is rejected → malformed, closing the same "too-lax shape leaks the pass
+ * branch" fail-open the ship parser was already hardened against. The contract is
+ * prompts/integrated_cmr.md "must match one of the shapes above exactly":
+ *   1. `{converged:true}`                          — converged (no other key);
+ *   2. `{converged:false, reason}`                 — not converged (reason REQUIRED, non-empty);
+ *   3. `{escalate:{reason, diagnosis}}`            — could not run the review.
+ * Escalate is tried FIRST (a stuck worker carries no usable verdict).
+ */
+const cmrConvergedSchema = z.object({ converged: z.literal(true) }).strict();
+const cmrRedSchema = z
+  .object({ converged: z.literal(false), reason: nonEmpty })
+  .strict();
+const cmrEscalateSchema = z
+  .object({ escalate: z.object({ reason: nonEmpty, diagnosis: nonEmpty }).strict() })
+  .strict();
+
 /**
  * Parse the cmr worker's `<cmr>{…}</cmr>` outcome from its stdout (#335). Pure so
- * it is unit-tested without a container. The shape mirrors
- * prompts/integrated_cmr.md:
- *   - `{"converged": boolean, "reason"?: string}`               → a verdict;
- *   - `{"escalate": {"reason": string, "diagnosis": string}}`   → escalate.
- * Anything else (no tag / invalid JSON / non-object / neither shape) → malformed
- * (fail-closed: the gate must never read an ambiguous run as a pass). Only the LAST
+ * it is unit-tested without a container.
+ *
+ * integ-cmr int-r1 (Finding A): classification is centralized into three
+ * `.strict()` zod schemas (mirroring shipOutcome.ts). `safeParse` rejects every
+ * EXTRA / mixed key, a NON-boolean `converged`, a blank `reason`, and a garbage
+ * escalate (blank reason/diagnosis) → all map to malformed (fail-CLOSED: the gate
+ * must NEVER read an ambiguous or off-contract run as a pass). Only the LAST
  * `<cmr>` tag is read (the worker may iterate).
  */
 export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
@@ -1474,35 +1500,33 @@ export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
   } catch {
     return { kind: "malformed", reason: "cmr worker <cmr> tag was not valid JSON" };
   }
-  // `JSON.parse` succeeds on bare literals (`null` / `true` / `5`) — guard so the
-  // property reads below cannot throw (mirrors parseMergerOutcome).
+  // `JSON.parse` succeeds on bare literals (`null` / `true` / `5`); the strict
+  // schemas reject every non-object, but guard explicitly so the malformed
+  // message stays specific (mirrors parseShipOutcome / parseMergerOutcome).
   if (parsed === null || typeof parsed !== "object") {
     return { kind: "malformed", reason: "cmr worker <cmr> tag was not a JSON object" };
   }
-  const obj = parsed as {
-    converged?: unknown;
-    reason?: unknown;
-    escalate?: { reason?: unknown; diagnosis?: unknown };
-  };
-  if (obj.escalate !== null && typeof obj.escalate === "object") {
-    const reason =
-      typeof obj.escalate.reason === "string" ? obj.escalate.reason : "cmr worker escalated";
-    const diagnosis =
-      typeof obj.escalate.diagnosis === "string" ? obj.escalate.diagnosis : reason;
-    return { kind: "escalate", reason, diagnosis };
+  // Escalate FIRST — a model-stuck worker never carries a usable verdict.
+  const escalate = cmrEscalateSchema.safeParse(parsed);
+  if (escalate.success) {
+    return {
+      kind: "escalate",
+      reason: escalate.data.escalate.reason,
+      diagnosis: escalate.data.escalate.diagnosis,
+    };
   }
-  if (typeof obj.converged === "boolean") {
-    return obj.converged
-      ? { kind: "verdict", converged: true }
-      : {
-          kind: "verdict",
-          converged: false,
-          reason: typeof obj.reason === "string" ? obj.reason : "integrated cmr did not converge",
-        };
+  if (cmrConvergedSchema.safeParse(parsed).success) {
+    return { kind: "verdict", converged: true };
+  }
+  const red = cmrRedSchema.safeParse(parsed);
+  if (red.success) {
+    return { kind: "verdict", converged: false, reason: red.data.reason };
   }
   return {
     kind: "malformed",
-    reason: "cmr worker <cmr> tag had no boolean `converged` and no `escalate`",
+    reason:
+      'cmr worker <cmr> tag matched no valid shape (expected one of: {converged:true}, ' +
+      "{converged:false,reason}, {escalate:{reason,diagnosis}} — non-empty strings, no extra keys)",
   };
 }
 
@@ -1545,9 +1569,39 @@ export function mergerOutcomeFromResult(result: {
 }
 
 /**
+ * The two — and ONLY two — `<merger>` shapes (integ-cmr int-r1, Finding A; mirrors
+ * shipOutcome.ts `.strict()` union). Each is `.strict()` so a resolved:true carrying
+ * an EXTRA / mixed key (e.g. an `escalate` verdict, an off-contract field) is
+ * rejected → NOT a clean resolve (fail-CLOSED). The contract is
+ * prompts/merger_resolve_conflict.md "must match the shape above exactly":
+ *   1. `{resolved:true, tradeoffs?}`               — resolved (tradeoffs OPTIONAL note);
+ *   2. `{resolved:false, escalate:{reason, diagnosis}}` — escalate (could not resolve).
+ * `tradeoffs` is optional (the prompt allows an empty/absent note); the escalate
+ * `diagnosis` is optional at the schema layer to keep surfacing a reason-only legacy
+ * escalate, but a blank `reason` no longer coerces into a resolve.
+ */
+const mergerResolvedSchema = z
+  .object({ resolved: z.literal(true), tradeoffs: z.string().optional() })
+  .strict();
+const mergerEscalateSchema = z
+  .object({
+    resolved: z.literal(false),
+    escalate: z
+      .object({ reason: nonEmpty, diagnosis: nonEmpty.optional() })
+      .strict(),
+  })
+  .strict();
+
+/**
  * Parse the merger agent's `<merger>{…}</merger>` outcome from its stdout (the
  * shape in prompts/merger_resolve_conflict.md). Pure so it is unit-tested without
  * a container. Returns whether it resolved + an optional escalate reason.
+ *
+ * integ-cmr int-r1 (Finding A): classification is centralized into two `.strict()`
+ * zod schemas (mirroring shipOutcome.ts). A resolved:true carrying any extra/mixed
+ * key (the dangerous false-clean: a success payload smuggling an escalate) no
+ * longer counts as resolved → fail-CLOSED to unresolved. Only the LAST `<merger>`
+ * tag is read (the agent may iterate).
  */
 export function parseMergerOutcome(stdout: string): {
   resolved: boolean;
@@ -1559,27 +1613,31 @@ export function parseMergerOutcome(stdout: string): {
   if (last === undefined) {
     return { resolved: false, reason: "merger agent emitted no <merger> tag" };
   }
-  let parsed: {
-    resolved?: boolean;
-    escalate?: { reason?: string; diagnosis?: string };
-  };
+  let parsed: unknown;
   try {
     parsed = JSON.parse(last.trim());
   } catch {
     return { resolved: false, reason: "merger agent <merger> tag was not valid JSON" };
   }
-  // `JSON.parse` succeeds on the bare literals `null` / `true` / `5` / `"x"` — a
-  // misbehaving agent emitting `<merger>null</merger>` parses to `null`, and the
-  // `parsed.resolved` read below would then throw a TypeError OUTSIDE this
-  // try/catch and crash the parent (agy R1). Treat any non-object payload as an
-  // unresolved-with-reason, never resolved (the safe direction).
+  // `JSON.parse` succeeds on the bare literals `null` / `true` / `5` / `"x"`; the
+  // strict schemas reject every non-object, but guard explicitly so the message
+  // stays specific (agy R1: a non-object must never crash or coerce to resolved).
   if (parsed === null || typeof parsed !== "object") {
     return { resolved: false, reason: "merger agent <merger> tag was not a JSON object" };
   }
-  if (parsed.resolved === true) return { resolved: true };
-  const reason =
-    parsed.escalate?.reason ?? parsed.escalate?.diagnosis ?? "merger did not resolve";
-  return { resolved: false, reason };
+  if (mergerResolvedSchema.safeParse(parsed).success) {
+    return { resolved: true };
+  }
+  const escalate = mergerEscalateSchema.safeParse(parsed);
+  if (escalate.success) {
+    return {
+      resolved: false,
+      reason: escalate.data.escalate.reason ?? escalate.data.escalate.diagnosis,
+    };
+  }
+  // No strict schema matched → off-contract (mixed payload, extra key, blank
+  // reason, unknown shape). Fail-CLOSED: never read as a clean resolve.
+  return { resolved: false, reason: "merger did not resolve" };
 }
 
 /**
