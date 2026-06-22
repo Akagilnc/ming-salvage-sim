@@ -63,11 +63,18 @@ import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { runExclusive } from "../gitMutex.js";
 import {
   branchForIssue,
+  modelIdForSlug,
   SANDBOX_CODEX_DIR,
+  SANDBOX_GH_TOKEN_ENV,
   SANDBOX_SKILLS_DIR,
   SANDBOX_SOUL_ENV,
 } from "../realBackend.js";
 import { legacyDispatchFamilyWorker } from "./dispatchFamilyWorker.js";
+import {
+  isFilledString,
+  shipOutcomeFromResult,
+  type ShipWorkerOutcome,
+} from "../shipOutcome.js";
 
 import type {
   DispatchContext,
@@ -119,12 +126,24 @@ export const AGY_TOKEN_FILENAME = "antigravity-oauth-token";
  */
 export const CMR_FOCUS_FILENAME = ".cmr-focus.md";
 
+/**
+ * The git-ignored SHIP FOCUS file written into the family-base worktree before the
+ * family ship worker runs (cmr S336 r5): it pins the family base branch + the
+ * CONFIGURED PR target base (`opts.base`) + the repo slug, so the in-container
+ * `gstack-ship` opens the family PR against the RIGHT base. Without it gstack-ship
+ * INFERS the base from the repo default branch (main) — silently regressing the
+ * legacy `openFamilyPr` `gh pr create --base this.opts.base` contract whenever the
+ * family run targets a non-main integration branch (e.g. `integ/291-wave3`).
+ */
+export const SHIP_FOCUS_FILENAME = ".ship-focus.md";
+
 /** The cmr worker's completion signal (matches prompts/integrated_cmr.md). */
 const CMR_COMPLETION_SIGNAL = "CMR_STEP_COMPLETE";
-/** The cmr worker runs on the strongest reviewer model (the ship-pre 承重闸). */
-const CMR_MODEL = "claude-opus-4-8";
 /** The READ-ONLY soul the cmr worker (a reviewer) runs under (ADR 0017 §4). */
 const CMR_SOUL = "READ-ONLY";
+
+/** The WRITE soul the ship worker runs under (it commits the bump + pushes). */
+const SHIP_SOUL = "coder";
 
 /**
  * One durable escalate stuck-point (ADR 0022 decision 4: 卡点 → 返回调用端 → 拍 →
@@ -239,6 +258,21 @@ export class RealFamilyBackend implements FamilyBackend {
       stdio: ["ignore", "pipe", "pipe"],
       encoding: "utf8",
     }).trim();
+  }
+
+  /**
+   * Build the container agent for a {@link WorkerSpec}: the top-level claude on the
+   * model the spec declares, resolved through the SAME validated `modelIdForSlug`
+   * mapping the single-slice ship path uses (realBackend.ts:2122). The lone seam
+   * that turns `spec.model` into an `sc.claudeCode(...)` agent for BOTH family
+   * WorkerSpec-driven runs (ship + cmr) — so neither can hardcode a model id that
+   * bypasses validation or drifts from the slug the runner declares (cmr S336 r7
+   * P1). `protected` + pure (no container/I/O) so a unit test asserts the resolved
+   * model without spinning a real `sc.run` — mirroring how `modelIdForSlug` /
+   * `soulForStep` are the testable seams on the single-slice path.
+   */
+  protected agentForSpec(spec: WorkerSpec): ReturnType<typeof sc.claudeCode> {
+    return sc.claudeCode(modelIdForSlug(spec.model));
   }
 
   // ─────────────────────────── family ledger ───────────────────────────
@@ -504,10 +538,13 @@ export class RealFamilyBackend implements FamilyBackend {
     spec: WorkerSpec,
     ctx: DispatchContext,
   ): Promise<WorkerResult> {
+    if (spec.kind === "ship") {
+      // #336: the family ship step (止于 PR) is a CONTAINER ship WORKER invoking
+      // `gstack-ship` (replacing the inline `openFamilyPr`).
+      return this.dispatchShipWorker(spec, ctx);
+    }
     if (spec.kind !== "cmr") {
-      // #336 wires the family ship worker; until then forward to the legacy seam
-      // (which already gates on `openFamilyPr` and throws a precise message when
-      // the capability is absent).
+      // Any other family worker kind (merge — B 段) forwards to the legacy seam.
       return legacyDispatchFamilyWorker(this, spec, ctx);
     }
     if (ctx.familyBase === undefined) {
@@ -645,7 +682,11 @@ export class RealFamilyBackend implements FamilyBackend {
       name: "family-cmr",
       cwd: this.opts.workingRepo,
       sandbox: this.cmrSandbox(auth),
-      agent: sc.claudeCode(CMR_MODEL),
+      // Derive the model from the spec via the shared validated seam (cmr S336 r7
+      // symmetry): `cmrWorkerSpec().model === "opus"` resolves to claude-opus-4-8.
+      // Same途径 the single-slice + family ship paths use — no constant that could
+      // silently drift from the spec the runner declares.
+      agent: this.agentForSpec(spec),
       // The cmr worker is a single review pass (ADR 0026: review = clean eyes, one
       // pass; a non-convergence is the runner's escalate fork, not a within-worker
       // loop).
@@ -841,8 +882,336 @@ export class RealFamilyBackend implements FamilyBackend {
     return { imageName: this.opts.imageName, env, mounts };
   }
 
-  // ─────────────────────────── open PR (止于 PR) ───────────────────────────
+  // ─────────────────────────── ship WORKER (止于 PR) ───────────────────────────
 
+  /**
+   * Dispatch the FAMILY ship WORKER (#336): a CONTAINER ship worker invoking
+   * `gstack-ship` over the family base, 止于 PR (the online bot cmr + merge are the
+   * separate pr-review-loop stage). Maps the {@link ShipWorkerOutcome} to the full
+   * {@link WorkerResult} union (PRD #330 R2): shipped → `completed` ShipResult; a
+   * genuine block → `escalated`; a hard ship/test failure → `failed`; unparseable →
+   * `malformed`. A rerun-able flake is NOT escalated — the worker reruns it itself.
+   */
+  protected async dispatchShipWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<WorkerResult> {
+    if (ctx.familyBase === undefined) {
+      throw new Error(
+        "dispatchWorker(ship): a family ship worker requires ctx.familyBase (the " +
+          "merged base gstack-ship delivers as the family PR).",
+      );
+    }
+    const outcome = await this.runShipWorker(spec, ctx);
+    if (outcome.kind === "escalate") {
+      // A genuine block (merge conflict / review ASK / hard defect a human must
+      // decide) — the family escalate续跑 path (verifyCmr calls escalateFamily).
+      return {
+        kind: "escalated",
+        escalation: { reason: outcome.reason, diagnosis: outcome.diagnosis },
+      };
+    }
+    if (outcome.kind === "failed") {
+      // A hard ship/test failure no rerun cleared → the family PR could not open
+      // (verifyCmr fail-safes a non-ship/non-completed result to INCOMPLETE_GATE).
+      return { kind: "failed", reason: `${outcome.reason} — ${outcome.diagnosis}` };
+    }
+    if (outcome.kind === "malformed") {
+      return { kind: "malformed", reason: outcome.reason };
+    }
+    // Branch-identity check (cmr S336 r3 F1): the worker self-reports `branch`, and
+    // a worker that ships some OTHER branch (e.g. the PR target base) but reports it
+    // as a success must NOT be read as the family delivery → verifyCmr would return
+    // ok:true on a PR for the wrong branch. prompts/family_ship.md pins the family
+    // base (the worker `git checkout`s ctx.familyBase, `branchStrategy:{type:"head"}`)
+    // and asks it to report THE family base branch — no legitimate rename path — so an
+    // `outcome.branch` ≠ `ctx.familyBase` is off-contract → malformed.
+    if (outcome.branch !== ctx.familyBase) {
+      return {
+        kind: "malformed",
+        reason: `family ship worker reported branch "${outcome.branch}" but was asked to deliver the family base "${ctx.familyBase}" (a ship of a different branch is not the family delivery)`,
+      };
+    }
+    // Fail-CLOSED on the FAMILY contract (prompts/family_ship.md): a family ship
+    // delivery is a family PR — the ONLY accepted shipped status is "pr_opened"
+    // with a `pr` URL. The shared parser also accepts "pushed" (legal for a SINGLE
+    // slice, prompts/ship.md), so a family worker that pushed-but-opened-no-PR
+    // would otherwise be read as a completed family delivery → verifyCmr ok:true on
+    // a PHANTOM family PR (cmr S336 r2 F1). The single-slice consumer keeps "pushed"
+    // (legal there); only THIS family consumer narrows it (verifyCmr never reads
+    // success on a non-PR family ship). The `pr` belt uses isFilledString as
+    // defense-in-depth (the parser already enforces non-empty pr — cmr S336 r3).
+    if (outcome.status !== "pr_opened" || !isFilledString(outcome.pr)) {
+      return {
+        kind: "malformed",
+        reason: `family ship worker reported status "${outcome.status}" — the family delivery must be "pr_opened" with a \`pr\` URL (family_ship.md allows only pr_opened; "pushed" is single-slice only)`,
+      };
+    }
+    return {
+      kind: "completed",
+      output: {
+        kind: "ship",
+        branch: outcome.branch,
+        status: outcome.status,
+        pr: outcome.pr,
+      },
+    };
+  }
+
+  /**
+   * Run the family ship WORKER: ONE `sc.run` of the 2b container's top-level claude
+   * invoking `gstack-ship` over the checked-out family base (#336). `protected` so a
+   * unit test fixtures the outcome without a real container (the real container only
+   * runs on the driver / manual-smoke / e2e path).
+   *
+   * The worker is the container's TOP-LEVEL agent (gstack-ship's pipeline + any
+   * rerun loops run inside it — ADR 0026), under the WRITE (`coder`) soul (it
+   * commits the VERSION/CHANGELOG bump + pushes + opens the PR).
+   * `branchStrategy:{type:"head"}` keeps it on the checked-out family base. Its
+   * `<ship>` tag is gated on the completion signal then classified.
+   */
+  protected async runShipWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<ShipWorkerOutcome> {
+    // FAIL-CLOSED on the WORKER's OWN auth (cmr S336 r8, mirroring the cmr worker's
+    // preflight ~645-666): the ship worker is the container's TOP-LEVEL claude
+    // (`agent: sc.claudeCode` in shipContainerRun), so the Claude OAuth token is NOT
+    // a degradable codex/gh LEG — it is THIS worker's auth. Absent, the worker cannot
+    // start and never emits a `<ship>` verdict; that failure would throw out of
+    // `sc.run` (NOT a structured escalate), bypassing the WorkerResult routing
+    // (dispatchShipWorker → verifyCmr only handle the RETURNED result, never a thrown
+    // startup error — a fail-open that crashes the gate rather than honestly
+    // escalating). gh auth is ALSO preflighted below (cmr S336 r10): it is
+    // load-bearing for `gh pr create` (the family delivery), NOT a degradable leg.
+    // Only codex auth stays best-effort (in-container diff review). Preflight BEFORE
+    // any container work (the checkout + focus write below) so a no-token host
+    // escalates cleanly. Mount once and reuse for the sandbox (no double-mount).
+    const auth = this.mountShipAuth();
+    if (auth.claudeToken === undefined) {
+      return {
+        kind: "escalate",
+        reason: "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the ship worker cannot start",
+        diagnosis: "ship worker cannot start without CLAUDE_CODE_OAUTH_TOKEN",
+      };
+    }
+    // FAIL-CLOSED on gh auth (cmr S336 r10): the family delivery's ONLY accepted
+    // outcome is "pr_opened" (family_ship.md) — gstack-ship reaches it via `gh pr
+    // create --base`. The 2b image bakes the gh CLI but no gh auth, so a no-gh host
+    // would run the whole pipeline only to fail at `gh pr create` (an opaque late
+    // failure, not the cleaner escalate续跑). codex auth stays best-effort. Preflight
+    // BEFORE the checkout / focus write / container — symmetric with the single-slice
+    // path. The token is read via `gh auth token` (OS keyring, not a portable file)
+    // and injected as GH_TOKEN by shipSandboxConfig.
+    if (auth.ghToken === undefined) {
+      return {
+        kind: "escalate",
+        reason: "no gh auth (GH_TOKEN) — the family ship worker cannot `gh pr create`",
+        diagnosis:
+          "the family ship worker invokes gstack-ship, whose family delivery is a PR " +
+          "(`gh pr create --base`); the 2b image bakes the gh CLI but no gh auth. " +
+          "Provide a host gh login (`gh auth login`) so `gh auth token` yields a token " +
+          "to inject as GH_TOKEN. Escalating here keeps the escalate续跑 semantics (a " +
+          "late in-container `gh pr create` failure would surface as an opaque error).",
+      };
+    }
+    // Check out the family base so gstack-ship delivers the RIGHT branch.
+    this.sh("git", ["checkout", ctx.familyBase!], this.opts.workingRepo);
+    // cmr S336 r5: thread the CONFIGURED PR target base into the worker via a
+    // git-ignored focus file the prompt reads FIRST. gstack-ship otherwise INFERS
+    // the base from the repo default branch (main), regressing the legacy
+    // `openFamilyPr` `gh pr create --base this.opts.base` contract on a non-main
+    // target. Written AFTER the checkout (the file lives in the family-base
+    // worktree) and BEFORE the container so the worker can read it.
+    this.writeShipFocusFile(ctx);
+    const result = await this.shipContainerRun(spec, auth);
+    return shipOutcomeFromResult(result);
+  }
+
+  /**
+   * The single `sc.run` that spins the family ship container (gstack-ship over the
+   * checked-out family base). `protected` so a unit test traps the container launch
+   * (asserting the focus file is already on disk) without a real docker run.
+   * `branchStrategy:{type:"head"}` keeps it on the checked-out family base.
+   */
+  protected async shipContainerRun(
+    spec: WorkerSpec,
+    auth: ShipAuth = this.mountShipAuth(),
+  ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+    return sc.run({
+      name: "family-ship",
+      cwd: this.opts.workingRepo,
+      sandbox: this.shipSandbox(auth),
+      // Derive the model from the spec via the SAME validated mapping the
+      // single-slice ship path uses (realBackend.ts:2122) — NOT a hardcoded id.
+      // A hardcoded family model bypassed `modelIdForSlug` AND pinned a DIFFERENT
+      // id (claude-sonnet-4-5) than the verified `sonnet → claude-sonnet-4-6`
+      // mapping `familyShipWorkerSpec().model` resolves to (cmr S336 r7 P1).
+      agent: this.agentForSpec(spec),
+      maxIterations: spec.maxIter,
+      completionSignal: spec.completionSignal,
+      branchStrategy: { type: "head" },
+      promptFile: join(this.opts.promptsDir, spec.promptFile),
+    });
+  }
+
+  /**
+   * Write the git-ignored SHIP FOCUS file into the family-base worktree (cmr S336
+   * r5): the family base branch + the CONFIGURED PR target base (`opts.base`) + the
+   * repo slug. The worker's prompt reads it FIRST so the in-container `gstack-ship`
+   * opens the family PR against the configured base instead of its inferred repo
+   * default — preserving the legacy `openFamilyPr` `--base this.opts.base` contract
+   * (the lone load-bearing item gstack-ship cannot infer: `--head` = the checked-out
+   * branch, `--repo` = the clone's origin, title/body/CHANGELOG = the skill's own,
+   * push = the skill's; ONLY the non-default target base is unknowable to it).
+   * `protected` so a unit test can fixture it without a real worktree.
+   */
+  protected writeShipFocusFile(ctx: DispatchContext): void {
+    const familyBase = ctx.familyBase!;
+    const body =
+      `# Family ship — PR target (machine-generated; cmr S336 r5)\n\n` +
+      `Ship the family base **${familyBase}** and open ONE PR — 止于 PR.\n\n` +
+      `Open the PR against THIS exact target base (do NOT let gstack-ship infer the\n` +
+      `repo default branch — the family run may target a non-main integration branch):\n\n` +
+      `    PR target base: ${this.opts.base}\n` +
+      `    PR head branch: ${familyBase}\n` +
+      `    GitHub repo:    ${this.opts.repo}\n\n` +
+      `When gstack-ship detects the base branch, OVERRIDE its inference with the\n` +
+      `\`PR target base\` above (\`gh pr create --base ${this.opts.base} --head ${familyBase}\`).\n`;
+    // Git-ignore it (it is a transient runtime artifact, never committed) then write.
+    const target = join(this.opts.workingRepo, SHIP_FOCUS_FILENAME);
+    this.excludeShipFocusFromGit();
+    writeFileSync(target, body, "utf8");
+  }
+
+  /** Add the ship focus file to the worktree's local git excludes (never committed). */
+  protected excludeShipFocusFromGit(): void {
+    try {
+      const excludePath = join(
+        this.sh("git", ["rev-parse", "--git-dir"], this.opts.workingRepo),
+        "info",
+        "exclude",
+      );
+      const abs = isAbsolute(excludePath)
+        ? excludePath
+        : join(this.opts.workingRepo, excludePath);
+      let existing = "";
+      try {
+        existing = readFileSync(abs, "utf8");
+      } catch {
+        // no exclude file yet
+      }
+      if (!existing.split("\n").includes(SHIP_FOCUS_FILENAME)) {
+        mkdirSync(join(abs, ".."), { recursive: true });
+        appendFileSync(
+          abs,
+          (existing.endsWith("\n") || existing === "" ? "" : "\n") + SHIP_FOCUS_FILENAME + "\n",
+          "utf8",
+        );
+      }
+    } catch {
+      // Best-effort: if excludes can't be written the file is still produced; the
+      // ship worker delivers the family base, and a stray untracked focus file is
+      // harmless (gstack-ship ships the family base's TRACKED commits).
+    }
+  }
+
+  /** The family ship worker's sandbox (souls + skills + CLIs baked into the 2b image). */
+  protected shipSandbox(auth: ShipAuth = this.mountShipAuth()): sc.SandboxProvider {
+    return docker(this.shipSandboxConfig(auth));
+  }
+
+  /**
+   * Gather the ship worker's host credentials (#336): the codex auth dir (mounted),
+   * the claude OAuth token (env), and the gh OAuth token (`gh auth token` → GH_TOKEN
+   * env, cmr S336 r10 — `gh pr create` needs it; the 2b image bakes gh but no gh
+   * auth). The worker is the container's TOP-LEVEL claude (so the claude token is its
+   * OWN auth). Gathering is fail-soft per source (a missing one ⇒ undefined); the
+   * REQUIRE gates (claude + gh) live in `runShipWorker`'s preflight, the codex leg
+   * degrades silently.
+   */
+  protected mountShipAuth(): ShipAuth {
+    const home = this.opts.home ?? homedir();
+    const root = join(home, ".sc-orchestrator");
+    let codexAuthDir: string | undefined;
+    try {
+      mkdirSync(root, { recursive: true, mode: 0o700 });
+      const dir = mkdtempSync(join(root, "ship-codex-auth-"));
+      copyFileSync(join(home, ".codex", "auth.json"), join(dir, "auth.json"));
+      chmodSync(join(dir, "auth.json"), 0o600);
+      try {
+        copyFileSync(join(home, ".codex", "config.toml"), join(dir, "config.toml"));
+        chmodSync(join(dir, "config.toml"), 0o600);
+      } catch {
+        // config.toml is optional.
+      }
+      codexAuthDir = dir;
+    } catch {
+      // codex auth absent ⇒ the codex leg degrades (no mount). gh is NOT here — it is
+      // the separate, preflighted ghToken (cmr S336 r10).
+    }
+    let claudeToken: string | undefined;
+    try {
+      claudeToken = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
+    } catch {
+      // claude token absent ⇒ the top-level claude worker degrades (no env var).
+    }
+    return { codexAuthDir, claudeToken, ghToken: this.readGhToken() };
+  }
+
+  /**
+   * Read the host's gh OAuth token via `gh auth token` (cmr S336 r10) — the same
+   * extraction the single-slice ship uses (`RealBackend.readGhToken`). The token
+   * lives in the host's OS keyring (not a portable hosts.yml), so we extract it with
+   * gh itself and inject it as {@link SANDBOX_GH_TOKEN_ENV}. Returns undefined when gh
+   * is unauthenticated / absent (the `runShipWorker` preflight then escalates — gh is
+   * a hard requirement for the family PR). `protected` so a unit test stubs it.
+   */
+  protected readGhToken(): string | undefined {
+    try {
+      const tok = this.sh("gh", ["auth", "token"]).trim();
+      return tok === "" ? undefined : tok;
+    } catch {
+      // gh unauthenticated / absent ⇒ no token; runShipWorker escalates.
+      return undefined;
+    }
+  }
+
+  /**
+   * The docker options the family ship sandbox runs under — the pure SANDBOX-CONFIG
+   * seam (mirrors `cmrSandboxConfig` / `RealBackend.shipSandboxConfig`). No
+   * container, no I/O: a unit test asserts the mounts + soul env. The ship worker
+   * runs under the WRITE (`coder`) soul (it commits the bump + pushes), with codex
+   * auth + the claude token + the gh token (GH_TOKEN, cmr S336 r10), NO skills mount
+   * (the 2b image BAKES gstack-ship — a runtime mount would SHADOW it, #334).
+   */
+  protected shipSandboxConfig(auth: ShipAuth): {
+    imageName: string;
+    env: Record<string, string>;
+    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
+  } {
+    const env: Record<string, string> = { [SANDBOX_SOUL_ENV]: SHIP_SOUL };
+    if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
+    // cmr S336 r10: the in-container `gh pr create` (the family delivery) reads
+    // GH_TOKEN. Set only when present (the pure seam stays tolerant; the REQUIRE-gh
+    // gate is the runShipWorker preflight — symmetric with the single-slice path).
+    if (auth.ghToken !== undefined) env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
+    const mounts: { hostPath: string; sandboxPath: string }[] = [];
+    if (auth.codexAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
+    }
+    return { imageName: this.opts.imageName, env, mounts };
+  }
+
+  // ─────────────────────────── open PR (止于 PR) — legacy inline ───────────────
+
+  /**
+   * LEGACY inline 止于 PR (push family base + `gh pr create`). RETAINED as a
+   * `protected`-style fallback the production seam no longer reaches: ADR 0026 /
+   * #336 makes 止于 PR a ship WORKER (gstack-ship via {@link dispatchShipWorker}).
+   * A direct caller (a test / a back-compat path bypassing the unified seam) may
+   * still reach it; verifyCmr always dispatches through dispatchFamilyWorker.
+   */
   async openFamilyPr(request: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
     const repo = this.opts.workingRepo;
     // ONLY here do we push the family base + open the PR — and STOP (the family
@@ -1027,6 +1396,27 @@ export interface CmrAuth {
   readonly agyDir?: string;
   /** The claude OAuth token (env var), or undefined if absent. */
   readonly claudeToken?: string;
+}
+
+/**
+ * The family ship worker's auth (#336). The codex dir is BEST-EFFORT (mirrors
+ * {@link CmrAuth} — it only feeds the in-container diff review); the claude token
+ * (the top-level worker's own auth) and the gh token (the `gh pr create` the family
+ * delivery requires) are LOAD-BEARING — `runShipWorker` preflights both and escalates
+ * when either is absent (cmr S336 r8 + r10). A missing codex source degrades that
+ * mount rather than crashing the gate.
+ */
+export interface ShipAuth {
+  /** Per-run codex auth dir (host-mirrored `~/.codex`), or undefined if absent. */
+  readonly codexAuthDir?: string;
+  /** The claude OAuth token (env var), or undefined if absent. */
+  readonly claudeToken?: string;
+  /**
+   * The gh OAuth token (`gh auth token` on the host → {@link SANDBOX_GH_TOKEN_ENV}
+   * env), or undefined if absent. NOT best-effort: the family delivery is a PR
+   * (`gh pr create`), so `runShipWorker` preflights it and escalates when absent.
+   */
+  readonly ghToken?: string;
 }
 
 /**
