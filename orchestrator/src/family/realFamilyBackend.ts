@@ -108,6 +108,14 @@ export interface RealFamilyBackendOptions {
    * never touches the resume / unblock truth. Created on first write.
    */
   readonly ledgerDir: string;
+  /**
+   * Where the deterministic verify commands (`npx tsc` / `npx vitest`) run. The
+   * `workingRepo` clone is the FULL repo, but the Node project (package.json /
+   * tsconfig / vitest config) lives in a subdir, so verify must run THERE, not at
+   * the clone root (online R2 Codex P1: a root-cwd verify finds no project → a real
+   * family run always returns verify_failed). Defaults to `workingRepo`.
+   */
+  readonly verifyCwd?: string;
   /** GitHub repo slug for `gh` (`owner/name`) — for openFamilyPr. */
   readonly repo: string;
   /** The base branch the family PR targets (e.g. an integration branch or "main"). */
@@ -406,8 +414,11 @@ export class RealFamilyBackend implements FamilyBackend {
    * `npx tsc` / `npx vitest` run. A non-zero exit throws (the caller packages it).
    */
   protected runVerifyCommands(_request: FamilyVerifyRequest): void {
-    this.sh("npx", ["tsc", "--noEmit"], this.opts.workingRepo);
-    this.sh("npx", ["vitest", "run"], this.opts.workingRepo);
+    // Run where the Node project lives (verifyCwd), NOT the clone root — else npx
+    // finds no package.json/config (online R2 Codex P1).
+    const cwd = this.opts.verifyCwd ?? this.opts.workingRepo;
+    this.sh("npx", ["tsc", "--noEmit"], cwd);
+    this.sh("npx", ["vitest", "run"], cwd);
   }
 
   // ─────────────────────────── integrated cmr ───────────────────────────

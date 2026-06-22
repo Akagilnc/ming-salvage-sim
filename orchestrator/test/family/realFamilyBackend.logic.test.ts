@@ -289,6 +289,27 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     expect(r.childHead).toBe(childHead);
   });
 
+  it("runFamilyVerify runs tsc/vitest from verifyCwd (the orchestrator project dir), NOT the clone root (online R2 Codex P1)", async () => {
+    // The clone is the FULL repo; the orchestrator's package.json/tsconfig/vitest
+    // config live under `<clone>/orchestrator`. Running `npx tsc/vitest` from the
+    // clone root finds no project → a real family run's verify always fails. The
+    // verify commands must run from `verifyCwd`.
+    const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
+    class SpyBackend extends RealFamilyBackend {
+      protected override sh(file: string, args: string[], cwd?: string): string {
+        calls.push({ file, args, cwd });
+        return "";
+      }
+      runVerifyForTest(): void {
+        this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
+      }
+    }
+    new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" })).runVerifyForTest();
+    const npx = calls.filter((c) => c.file === "npx");
+    expect(npx.map((c) => c.args[0])).toEqual(["tsc", "vitest"]);
+    expect(npx.every((c) => c.cwd === "/clone/root/orchestrator")).toBe(true);
+  });
+
   it("familyBaseStartHead returns the recorded start head", async () => {
     const repo = trackRepo();
     git(repo, "checkout", "-q", "-b", "family/293-base");
