@@ -5,6 +5,56 @@
 export { runOrchestrator } from "./runner.js";
 export { route } from "./route.js";
 export type { RouteContext, RouteDecision } from "./route.js";
+
+// ── family integration layer (ADR 0022, #293) ──────────────────────────────
+// The four independent extension modules + the spine that only CALLS them.
+export { runFamily } from "./family/runner.js";
+// The production family driver (#291 Unit B): the end-to-end assembly entry point.
+export {
+  runFamilyDriver,
+  readFamilyEpic,
+  buildFamilyEpic,
+  parseSubIssueNumbers,
+  cutFamilyBase,
+} from "./familyDriver.js";
+export type { FamilyDriverOptions, Sh } from "./familyDriver.js";
+export { selectWave } from "./family/commander.js";
+export { mergeChild } from "./family/merger.js";
+export { recordMerged, recordAborted, mergedSet } from "./family/ledger.js";
+export type { MergedRecord, AbortedRecord } from "./family/ledger.js";
+export { reconcileFamilyLedger } from "./family/reconcile.js";
+export { runVerifyCmr } from "./family/verifyCmr.js";
+export type {
+  VerifyCmrInput,
+  VerifyCmrPhase,
+  VerifyCmrResult,
+} from "./family/verifyCmr.js";
+export type {
+  ChildSlice,
+  ConflictResolveRequest,
+  FamilyBackend,
+  FamilyChildResult,
+  FamilyChildStatus,
+  FamilyEpic,
+  FamilyLedgerEntry,
+  FamilyRunInput,
+  FamilyRunResult,
+  FamilyRunStatus,
+  MergeRequest,
+  MergeResult,
+  ReconcileGit,
+  ReconcilePlan,
+  // #296 verify-cmr seam I/O (ADR 0022 decision 3④/⑤/⑥/4).
+  FamilyVerifyRequest,
+  FamilyVerifyResult,
+  FamilyVerifyErrorPackage,
+  IntegratedCmrRequest,
+  IntegratedCmrResult,
+  OpenFamilyPrRequest,
+  OpenFamilyPrResult,
+  FamilyAbortedEvent,
+  FamilyEscalation,
+} from "./family/types.js";
 export type {
   Backend,
   CoderOutput,

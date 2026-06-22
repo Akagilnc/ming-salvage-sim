@@ -250,6 +250,28 @@ describe("realBackend cutRefFor (worktree_base_stale, r3)", () => {
     expect(cutRefFor("release-1.x", true)).toBe("origin/release-1.x");
     expect(cutRefFor("release-1.x", false)).toBe("release-1.x");
   });
+
+  // #291: a family base is a LOCAL branch on the dedicated clone (ADR 0022
+  // decision 7) — children cut from it, NOT origin/<family-base>. cutRefFor's
+  // `localOnly` flag forces the LOCAL ref regardless of `fetchedOk`, so a stale
+  // `origin/<family-base>` (e.g. a prior PR's remote branch) can never shadow the
+  // local family base the merger accumulated this run's waves onto (agy R1).
+  describe("localOnly (family base, #291)", () => {
+    it("forces the LOCAL ref even when a fetch 'succeeded' (never origin/<family-base>)", () => {
+      expect(cutRefFor("family/293-base", /*fetchedOk*/ true, /*localOnly*/ true)).toBe(
+        "family/293-base",
+      );
+    });
+    it("is the LOCAL ref when no fetch ran either", () => {
+      expect(cutRefFor("family/293-base", /*fetchedOk*/ false, /*localOnly*/ true)).toBe(
+        "family/293-base",
+      );
+    });
+    it("standalone (localOnly omitted/false) keeps the origin/ behaviour — zero regression", () => {
+      expect(cutRefFor("main", true)).toBe("origin/main");
+      expect(cutRefFor("main", true, false)).toBe("origin/main");
+    });
+  });
 });
 
 // ─── worktree reuse: exact branch-line match (gemini R1, high) ───────────────
@@ -722,8 +744,26 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
   const here = dirname(fileURLToPath(import.meta.url));
   const realPromptsDir = join(here, "..", "prompts");
 
+  // #292: the driver now feeds sourceRepo (+remote) + a deterministic runKey;
+  // RealBackend builds its own dedicated clone. Stub the clone seams so these
+  // promptsDir-validation tests never touch real git (the build/guard logic has
+  // its own dedicated tests in clone-isolation-292-build.test.ts).
+  class StubCloneBackend extends RealBackend {
+    protected override cloneDirExists(): boolean {
+      return true; // pretend the clone already exists ⇒ no `git clone`
+    }
+    protected override sh(file: string, args: string[]): string {
+      if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
+        return ".git"; // own .git ⇒ fail-closed guard passes
+      }
+      return "";
+    }
+  }
+
   const baseOpts = {
-    mainRepo: "/tmp/main",
+    sourceRepo: "/tmp/source",
+    remote: "https://github.com/owner/name.git",
+    runKey: 999,
     repo: "owner/name",
     imageName: "img",
     skillsMount: "/tmp/skills",
@@ -731,20 +771,20 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
 
   it("constructs successfully against the checked-in absolute prompts/ dir", () => {
     expect(
-      () => new RealBackend({ ...baseOpts, promptsDir: realPromptsDir }),
+      () => new StubCloneBackend({ ...baseOpts, promptsDir: realPromptsDir }),
     ).not.toThrow();
   });
 
   it("throws on a relative promptsDir", () => {
     expect(
-      () => new RealBackend({ ...baseOpts, promptsDir: "prompts" }),
+      () => new StubCloneBackend({ ...baseOpts, promptsDir: "prompts" }),
     ).toThrow(/must be an ABSOLUTE path/);
   });
 
   it("throws on an absolute promptsDir that does not exist", () => {
     expect(
       () =>
-        new RealBackend({
+        new StubCloneBackend({
           ...baseOpts,
           promptsDir: "/definitely/not/a/real/dir/xyz",
         }),
