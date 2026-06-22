@@ -303,16 +303,23 @@ _Avoid_: system prompt、人设、persona(太泛)
 _Avoid_: caller、上游、parent(太泛)
 
 **step(编排步)**:
-runner 控的一个外层 wiki 步骤。**agent step**(S2/S3/S5/S6)= 一个 StepSpec = 一次 `sandbox.run()`;**runner 动作步**(S0/S1/S4/S7/S8:闸/取数/路由/push/handoff)是纯 TS、不跑 agent。step 的序由 runner 推,不由 agent。
+runner 控的一个外层 wiki 步骤,两类:**worker 步**(产出工作——写码/评审/cmr/ship/merge——一个顶层 agent/执行器跑在自己容器里,见 worker / ADR 0026)与 **runner 调度决策**(gate / route / 排序 / ledger / 续跑——纯 TS、不跑 agent)。step 的序由 runner 推,不由 agent。(ADR 0026 把 push/cmr/ship 从原「runner 动作」改成 worker 步;runner 只剩调度决策。)
 _Avoid_: 阶段、stage(太泛)、iteration(那是步内的)
 
 **StepSpec**:
 一个 step 的固定规格——固定 role + promptFile + agent/model + completionSignal + output schema + maxIterations。存在代码里,不临场生成。(role 决定注哪份 soul:v0.1 一镜像双角色,runner 凭 role 选 coder/reviewer soul。)
 _Avoid_: 配置、config(太泛)
 
-**runner**:
-驱动 step 序列的 TS 代码。它逐步推进、由 `route()` 定下一步;agent 永不决定下一步、不跳步、不改流程。
-_Avoid_: 编排器(指整个系统,runner 只是它控流程那部分)、调度器
+**runner**(纯调度器):
+驱动 step 序列的 TS 代码,**只做调度**——step 之间的流程决策(input gate / route / 排序 / step ledger / 续跑);由 `route()` 定下一步,agent 永不决定下一步、不跳步、不改流程。它**派 worker 步、收结果、据此路由,自己不干任何具体活**(具体纪律活在 worker invoke 的 skill 里,见 worker / ADR 0026)。
+_Avoid_: 编排器(指整个系统,runner 只是它控调度那部分)、把它当干活的(它只调度)。
+
+**worker**:
+wiki 流程里的**一步**(可大可小),由 runner 派出去执行。判据 = **步内没有需要调度的东西**(调度只发生在步与步之间,是 runner 的活)。每个 worker 跑在自己的容器/上下文里,里面的 agent 是该容器的**顶层**(Claude 或 Codex,非 runner 的 sub),故能起自己的 sub + CLI(例:cmr worker 起 1 Agent + 2 CLI 跑三腿)。worker **不一定用 skill**(如 merge 可能就不用);用时 Claude=`Skill` invoke、Codex=加载 SKILL.md 当 skill item 传入 prompt。
+_Avoid_: 把 worker 等同「invoke skill 的步」(用不用 skill 不是 worker 的判据)、subagent(worker 是顶层容器、不是 runner 的子代理)。
+
+**smart zoom**(步的粒度):
+选一个 worker/step 该多大的权衡(Matt)。大步省调度、但一个上下文塞太多会到上限;小步上下文清爽、但调度多。判据 = 步内无需调度 + 上下文预算。大步不一定好。
 
 **completionSignal**:
 一个 step 完成时 agent 必须 emit 的固定串(如 `AK_STEP_COMPLETE:coder_implement`)。runner 靠它确认该步真跑完。
