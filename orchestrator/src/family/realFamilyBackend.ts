@@ -45,7 +45,15 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import {
+  appendFileSync,
+  chmodSync,
+  copyFileSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 import * as sc from "@ai-hero/sandcastle";
@@ -54,10 +62,17 @@ import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { runExclusive } from "../gitMutex.js";
 import {
   branchForIssue,
+  SANDBOX_CODEX_DIR,
   SANDBOX_SKILLS_DIR,
   SANDBOX_SOUL_ENV,
 } from "../realBackend.js";
+import { legacyDispatchFamilyWorker } from "./dispatchFamilyWorker.js";
 
+import type {
+  DispatchContext,
+  WorkerResult,
+  WorkerSpec,
+} from "../types.js";
 import type {
   ConflictResolveRequest,
   FamilyAbortedEvent,
@@ -79,6 +94,28 @@ import type {
 export const FAMILY_LEDGER_FILENAME = "family-ledger.jsonl";
 /** The durable escalate stuck-point filename (a sibling of the family ledger). */
 export const FAMILY_ESCALATION_FILENAME = "family-escalations.jsonl";
+
+/**
+ * Where the agy (antigravity / gemini) CLI reads its OAuth token + writes its
+ * runtime config INSIDE the cmr worker container (#335 / #333 gotcha). The host
+ * file `~/.sc-agy-oauth-token` is copied into a per-run dir mounted HERE as
+ * `antigravity-oauth-token`. It is a WRITABLE dir (NOT read-only): the agy CLI
+ * writes cache/log/state under its config dir, so a read-only mount would make the
+ * agy cmr leg fail at startup and degrade the cmr to codex-only (the #333 spike's
+ * agy leg only caught the injected bug WITH its file token mounted writable). The
+ * path mirrors the host `~/.gemini/antigravity-cli/` exactly, the same
+ * host-mirrored auth-mount pattern codex (`SANDBOX_CODEX_DIR`) uses.
+ */
+export const SANDBOX_AGY_DIR = "/home/agent/.gemini/antigravity-cli";
+/** The agy OAuth token filename inside {@link SANDBOX_AGY_DIR}. */
+export const AGY_TOKEN_FILENAME = "antigravity-oauth-token";
+
+/** The cmr worker's completion signal (matches prompts/integrated_cmr.md). */
+const CMR_COMPLETION_SIGNAL = "CMR_STEP_COMPLETE";
+/** The cmr worker runs on the strongest reviewer model (the ship-pre 承重闸). */
+const CMR_MODEL = "claude-opus-4-8";
+/** The READ-ONLY soul the cmr worker (a reviewer) runs under (ADR 0017 §4). */
+const CMR_SOUL = "READ-ONLY";
 
 /**
  * One durable escalate stuck-point (ADR 0022 decision 4: 卡点 → 返回调用端 → 拍 →
@@ -140,6 +177,13 @@ export interface RealFamilyBackendOptions {
    * — codex R3). A backend that never drives reconcile may omit it.
    */
   readonly familyBaseStartHead?: string;
+  /**
+   * Override $HOME for the cmr worker's auth-source paths (`~/.codex/auth.json`,
+   * `~/.sc-agy-oauth-token`, `~/.sc-claude-token`). Defaults to {@link homedir}.
+   * Tests inject a fixture home so the auth copy/mount is exercised without the
+   * real host credentials.
+   */
+  readonly home?: string;
 }
 
 /** The merger-agent prompt the conflict resolver runs (under the `merger` soul). */
@@ -430,29 +474,219 @@ export class RealFamilyBackend implements FamilyBackend {
     this.sh("npx", ["vitest", "run"], cwd);
   }
 
+  // ─────────────────────── unified worker dispatch (#335) ───────────────────────
+
+  /**
+   * THE family worker-dispatch seam (ADR 0026 / #331 / #335). For the integrated
+   * cmr step it dispatches a real CONTAINER cmr WORKER that invokes
+   * `ak-cross-m-review` (this slice, #335). Every other family worker kind (the
+   * family ship/PR, #336) is forwarded to the legacy wrapper until its own slice
+   * wires it — so this method takes over ONLY the cmr leg now (the legacy
+   * `openFamilyPr` still backs the ship leg until #336).
+   *
+   * The cmr worker (`cmrWorkerSpec`) = the 2b container's TOP-LEVEL claude; it
+   * `Skill`-invokes ak-cross-m-review (1 Agent + 2 CLI legs in-container, #333),
+   * FRESH each round (cross-model independence — ADR 0026). It returns a BARE
+   * `{converged, reason?}` verdict: the consumer (`verifyCmr.ts`) is escalate-on-red,
+   * NO fix-loop at this layer (PRD #330 R2), so NO findings array is needed. A red
+   * verdict is `WorkerResult.completed` (a CmrResult payload), NOT `failed`.
+   */
+  async dispatchWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<WorkerResult> {
+    if (spec.kind !== "cmr") {
+      // #336 wires the family ship worker; until then forward to the legacy seam
+      // (which already gates on `openFamilyPr` and throws a precise message when
+      // the capability is absent).
+      return legacyDispatchFamilyWorker(this, spec, ctx);
+    }
+    if (ctx.familyBase === undefined) {
+      throw new Error(
+        "dispatchWorker(cmr): a family cmr worker requires ctx.familyBase (the " +
+          "merged base whose diff the cross-model review audits).",
+      );
+    }
+    const outcome = await this.runCmrWorker(spec, ctx);
+    if (outcome.kind === "escalate") {
+      // A model-stuck cmr worker (missing skill / no leg ran / could not produce a
+      // verdict) is the WorkerResult-level escalate (續跑 path), NOT a fabricated
+      // pass — verifyCmr.ts calls escalateFamily with this reason.
+      return {
+        kind: "escalated",
+        escalation: { reason: outcome.reason, diagnosis: outcome.diagnosis },
+      };
+    }
+    if (outcome.kind === "malformed") {
+      // No parseable verdict ⇒ malformed (the gate must never read it as a pass).
+      return { kind: "malformed", reason: outcome.reason };
+    }
+    return {
+      kind: "completed",
+      output: {
+        kind: "cmr",
+        converged: outcome.converged,
+        ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
+      },
+    };
+  }
+
   // ─────────────────────────── integrated cmr ───────────────────────────
 
+  /**
+   * LEGACY per-method integrated-cmr seam (#331 capability gate). #335 routes the
+   * real cmr through `dispatchWorker` (the container worker), so this default
+   * THROWS — it is reached only if a caller bypasses the unified seam, and the
+   * assembly test pins the throw to prove the bypass is not a silent fabricated
+   * pass. (Kept so a #296-era consumer that reaches `runIntegratedCmr` directly
+   * still type-checks; `dispatchFamilyWorker` prefers `dispatchWorker`.)
+   */
   async runIntegratedCmr(request: IntegratedCmrRequest): Promise<IntegratedCmrResult> {
     return this.runCmr(request);
   }
 
   /**
-   * Thin wrap of the local `ak-cross-m-review` pipeline over the merged family
-   * base (ADR 0022 decision 3⑥). `protected` so a unit test fakes convergence
-   * without spawning the real cross-model squad. The real path invokes the local
-   * cmr runner (a subprocess) and parses its convergence verdict.
+   * The default `runIntegratedCmr` body: THROW. The real `ak-cross-m-review` runs
+   * as the container cmr WORKER via `dispatchWorker` (#335), not this per-method
+   * path. `protected` so the e2e / a unit test may still override it for the legacy
+   * gate, but the production path no longer reaches it.
    */
   protected async runCmr(request: IntegratedCmrRequest): Promise<IntegratedCmrResult> {
-    // The local cmr pipeline is a subprocess; the REAL invocation + verdict parse
-    // is the driver / manual-smoke path (it spawns the cross-model squad). Here we
-    // delegate to the seam so the unit test verifies the call contract; a default
-    // real impl would run `ak-cross-m-review` against `request.familyBase` and
-    // surface its converged / non-converged verdict + reason.
     void request;
     throw new Error(
-      "runIntegratedCmr: the real ak-cross-m-review invocation is the driver / " +
-        "manual-smoke path; unit tests override runCmr to verify the call contract.",
+      "runIntegratedCmr: the real ak-cross-m-review is dispatched as the container " +
+        "cmr WORKER via dispatchWorker (#335); this per-method seam is no longer " +
+        "the production path. Dispatch through dispatchFamilyWorker.",
     );
+  }
+
+  /**
+   * Run the integrated cmr WORKER: ONE `sc.run` of the 2b container's top-level
+   * claude invoking `ak-cross-m-review` over the merged family base diff (#335).
+   * `protected` so a unit test fixtures the outcome without a real container (the
+   * real container only runs on the driver / manual-smoke / e2e path).
+   *
+   * The worker is the container's TOP-LEVEL agent (so it can start its own Agent +
+   * CLI legs — ADR 0026), FRESH (`branchStrategy: head` keeps it on the resident
+   * family base; review never commits), under the READ-ONLY soul. Its `<cmr>` tag
+   * verdict is gated on the completion signal then parsed into a
+   * {@link CmrWorkerOutcome}.
+   */
+  protected async runCmrWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<CmrWorkerOutcome> {
+    // Check out the family base so the in-container ak-cross-m-review reviews the
+    // RIGHT base diff (ctx.familyBase is the contract input — dispatchWorker
+    // already asserted it is present). The cmr worker runs as the container's
+    // top-level claude over THIS checked-out base.
+    this.sh("git", ["checkout", ctx.familyBase!], this.opts.workingRepo);
+    // NOTE (#291 缺口 1, ctx.llmResolvedChildren): the LLM-resolved-child FOCUS
+    // signal rides on the DispatchContext but is not yet threaded into the
+    // container prompt — the cmr worker reviews the WHOLE base diff (the
+    // conservative superset), so OMITTING the focus only loses prioritisation, not
+    // coverage. Threading it via the spec's `promptArgs` is a follow-up (the
+    // promptArgs→container substitution is not wired in this runtime yet).
+    const result = await sc.run({
+      name: "family-cmr",
+      cwd: this.opts.workingRepo,
+      sandbox: this.cmrSandbox(),
+      agent: sc.claudeCode(CMR_MODEL),
+      // The cmr worker is a single review pass (ADR 0026: review = clean eyes, one
+      // pass; a non-convergence is the runner's escalate fork, not a within-worker
+      // loop).
+      maxIterations: spec.maxIter,
+      completionSignal: spec.completionSignal,
+      // FRESH but on the resident family base — review must never commit (the
+      // worktree is read; `head` keeps it in place, no detached temp checkout).
+      branchStrategy: { type: "head" },
+      promptFile: join(this.opts.promptsDir, spec.promptFile),
+    });
+    return cmrOutcomeFromResult(result);
+  }
+
+  /** The cmr worker's sandbox (souls + skills + CLIs baked into the 2b image). */
+  protected cmrSandbox(): sc.SandboxProvider {
+    return docker(this.cmrSandboxConfig(this.mountCmrAuth()));
+  }
+
+  /**
+   * Copy the three reviewer legs' host credentials into per-run dirs the cmr
+   * sandbox mounts (#335). codex auth + the agy OAuth token are file/dir mounts;
+   * the claude leg uses the durable OAuth token env var. Mirrors
+   * `RealBackend.mountAuth`. The agy token is copied into a per-run dir mounted
+   * WRITABLE (the agy CLI writes runtime state under its config dir — #333 gotcha).
+   */
+  protected mountCmrAuth(): {
+    codexAuthDir: string;
+    agyDir: string;
+    claudeToken: string;
+  } {
+    const home = this.opts.home ?? homedir();
+    const root = join(home, ".sc-orchestrator");
+
+    // codex auth.json (+ optional config.toml) → a per-run owner-only dir.
+    const codexAuthDir = join(root, "cmr-codex-auth");
+    rmSync(codexAuthDir, { recursive: true, force: true });
+    mkdirSync(codexAuthDir, { recursive: true, mode: 0o700 });
+    copyFileSync(join(home, ".codex", "auth.json"), join(codexAuthDir, "auth.json"));
+    chmodSync(join(codexAuthDir, "auth.json"), 0o600);
+    try {
+      copyFileSync(join(home, ".codex", "config.toml"), join(codexAuthDir, "config.toml"));
+      chmodSync(join(codexAuthDir, "config.toml"), 0o600);
+    } catch {
+      // config.toml is optional.
+    }
+
+    // agy OAuth token → a per-run WRITABLE dir mounted at the antigravity config
+    // path (the agy CLI writes cache/log under its config dir, so it must NOT be
+    // read-only — #333 gotcha).
+    const agyDir = join(root, "cmr-agy");
+    rmSync(agyDir, { recursive: true, force: true });
+    mkdirSync(agyDir, { recursive: true, mode: 0o700 });
+    copyFileSync(join(home, ".sc-agy-oauth-token"), join(agyDir, AGY_TOKEN_FILENAME));
+    chmodSync(join(agyDir, AGY_TOKEN_FILENAME), 0o600);
+
+    const claudeToken = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
+    return { codexAuthDir, agyDir, claudeToken };
+  }
+
+  /**
+   * The docker options the cmr worker sandbox runs under — the pure SANDBOX-CONFIG
+   * seam (mirrors `mergerSandboxConfig` / `RealBackend.boxConfig` testability). No
+   * container, no I/O: a unit test asserts the mounts + soul env without a real
+   * sandbox.
+   *
+   * Wires ALL THREE reviewer legs' auth (#335 / #333 gotcha): the codex auth dir
+   * (host-mirrored `~/.codex`), the agy OAuth token (host-mirrored
+   * `~/.gemini/antigravity-cli`, mounted WRITABLE — the leg writes runtime state
+   * there), and the claude OAuth token (env var). Without the agy mount the agy
+   * cmr leg has no auth and the cmr degrades to codex-only. NO skills mount: the 2b
+   * image BAKES ak-cross-m-review + its closure (#333) — a runtime mount would
+   * SHADOW the baked skill (#334). READ-ONLY soul (the cmr worker is a reviewer).
+   */
+  protected cmrSandboxConfig(auth: {
+    codexAuthDir: string;
+    agyDir: string;
+    claudeToken: string;
+  }): {
+    imageName: string;
+    env: Record<string, string>;
+    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
+  } {
+    return {
+      imageName: this.opts.imageName,
+      env: {
+        CLAUDE_CODE_OAUTH_TOKEN: auth.claudeToken,
+        [SANDBOX_SOUL_ENV]: CMR_SOUL,
+      },
+      // The agy dir is WRITABLE (default, no `readonly`); codex auth likewise. No
+      // skills mount — the baked image wins (#334).
+      mounts: [
+        { hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR },
+        { hostPath: auth.agyDir, sandboxPath: SANDBOX_AGY_DIR },
+      ],
+    };
   }
 
   // ─────────────────────────── open PR (止于 PR) ───────────────────────────
@@ -609,6 +843,111 @@ export class RealFamilyBackend implements FamilyBackend {
       },
     };
   }
+}
+
+// ─────────────────────────── cmr worker outcome (#335) ───────────────────────────
+
+/**
+ * The classified outcome of the integrated cmr WORKER's run (#335). One of:
+ *   - `verdict`   — the worker produced a bare `{converged, reason?}` cross-model
+ *     verdict (the normal case; `verifyCmr.ts` reads `converged`);
+ *   - `escalate`  — the worker is model-stuck (skill missing / no leg ran / it
+ *     could not produce a verdict) ⇒ the runner's escalate续跑 fork, NOT a pass;
+ *   - `malformed` — the run emitted no parseable `<cmr>` tag ⇒ the gate must never
+ *     read it as a pass (fail-closed).
+ * Deliberately NOT the bare {@link IntegratedCmrResult}: a cmr worker also has the
+ * escalate / malformed WorkerResult-level cases the bare verdict cannot carry.
+ */
+export type CmrWorkerOutcome =
+  | { readonly kind: "verdict"; readonly converged: boolean; readonly reason?: string }
+  | { readonly kind: "escalate"; readonly reason: string; readonly diagnosis: string }
+  | { readonly kind: "malformed"; readonly reason: string };
+
+/**
+ * Decide the cmr worker outcome from a Sandcastle run result: gate on the
+ * completion signal FIRST (mirrors the merger gate / `assertCompletionSignal`),
+ * then parse the `<cmr>` tag. Pure (a check on the run-result shape) so the gate is
+ * unit-tested without a container. A complete-but-UNSIGNALED run (e.g.
+ * `maxIterations` hit mid-review) is treated as ESCALATE (the safe direction — the
+ * worker did not declare it finished, so its verdict is not trusted as a pass).
+ */
+export function cmrOutcomeFromResult(result: {
+  completionSignal?: string | string[];
+  stdout: string;
+}): CmrWorkerOutcome {
+  const signal = result.completionSignal;
+  const signaled = Array.isArray(signal)
+    ? signal.includes(CMR_COMPLETION_SIGNAL)
+    : signal === CMR_COMPLETION_SIGNAL;
+  if (!signaled) {
+    const actual =
+      signal === undefined
+        ? "none (no signal fired before the iteration limit)"
+        : `"${String(signal)}"`;
+    return {
+      kind: "escalate",
+      reason: "cmr worker did not fire its completion signal",
+      diagnosis:
+        `expected "${CMR_COMPLETION_SIGNAL}", got ${actual} (a complete-but-unsignaled ` +
+        `cmr run is not trusted as a verdict — escalate, never a fabricated pass)`,
+    };
+  }
+  return parseCmrOutcome(result.stdout);
+}
+
+/**
+ * Parse the cmr worker's `<cmr>{…}</cmr>` outcome from its stdout (#335). Pure so
+ * it is unit-tested without a container. The shape mirrors
+ * prompts/integrated_cmr.md:
+ *   - `{"converged": boolean, "reason"?: string}`               → a verdict;
+ *   - `{"escalate": {"reason": string, "diagnosis": string}}`   → escalate.
+ * Anything else (no tag / invalid JSON / non-object / neither shape) → malformed
+ * (fail-closed: the gate must never read an ambiguous run as a pass). Only the LAST
+ * `<cmr>` tag is read (the worker may iterate).
+ */
+export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
+  const re = /<cmr>([\s\S]*?)<\/cmr>/g;
+  let last: string | undefined;
+  for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) last = m[1];
+  if (last === undefined) {
+    return { kind: "malformed", reason: "cmr worker emitted no <cmr> tag" };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(last.trim());
+  } catch {
+    return { kind: "malformed", reason: "cmr worker <cmr> tag was not valid JSON" };
+  }
+  // `JSON.parse` succeeds on bare literals (`null` / `true` / `5`) — guard so the
+  // property reads below cannot throw (mirrors parseMergerOutcome).
+  if (parsed === null || typeof parsed !== "object") {
+    return { kind: "malformed", reason: "cmr worker <cmr> tag was not a JSON object" };
+  }
+  const obj = parsed as {
+    converged?: unknown;
+    reason?: unknown;
+    escalate?: { reason?: unknown; diagnosis?: unknown };
+  };
+  if (obj.escalate !== null && typeof obj.escalate === "object") {
+    const reason =
+      typeof obj.escalate.reason === "string" ? obj.escalate.reason : "cmr worker escalated";
+    const diagnosis =
+      typeof obj.escalate.diagnosis === "string" ? obj.escalate.diagnosis : reason;
+    return { kind: "escalate", reason, diagnosis };
+  }
+  if (typeof obj.converged === "boolean") {
+    return obj.converged
+      ? { kind: "verdict", converged: true }
+      : {
+          kind: "verdict",
+          converged: false,
+          reason: typeof obj.reason === "string" ? obj.reason : "integrated cmr did not converge",
+        };
+  }
+  return {
+    kind: "malformed",
+    reason: "cmr worker <cmr> tag had no boolean `converged` and no `escalate`",
+  };
 }
 
 /**
