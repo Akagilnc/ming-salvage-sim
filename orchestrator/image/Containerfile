@@ -1,0 +1,52 @@
+# Ming orchestrator coder-worker image (#332, ADR 0026 / ADR 0016 bake).
+#
+# 2a minimal reproducible image: bake enough to run the coder worker's /tdd path.
+# FROM the existing sc-pipeline base (claude + codex CLIs + node + python already
+# baked); this layer ADDS the dev-skill closure for /tdd + the coder soul, so the
+# in-container top-level agent can `Skill`-invoke /tdd WITHOUT runtime-mounting
+# skills (the gap ADR 0026 / #330 calls out: skills were bind-mounted, not baked).
+#
+# Build context is a STAGING dir prepared by build.sh, NOT this directory: build.sh
+# `cp -RL`-resolves the host skill symlinks (tdd, codebase-design, diagnosing-bugs)
+# into staging/skills/, copies the coder soul, and copies the repo-root CLAUDE.md
+# (which carries the machine-executable `## Skill routing` section #332 added). Run
+# via `image/build.sh`, never `docker build image/` directly.
+#
+# Reproducibility: pin the base by digest in CI; locally we ride sc-pipeline:latest.
+ARG BASE_IMAGE=sc-pipeline:latest
+FROM ${BASE_IMAGE}
+
+USER root
+
+# ── Bake the /tdd skill closure into the agent's skills dir ──────────────────
+# Closure traced from SKILL.md cross-references (#332):
+#   tdd            → (refactor step) invokes codebase-design   [baked]
+#   codebase-design → leaf (no further skill invocation)        [baked]
+#   diagnosing-bugs → routing target in CLAUDE.md ## Skill routing (hard bug)
+#                     so the route is not dangling               [baked]
+# These are the only dev skills the coder/fix worker's routing reaches; cmr/ship/
+# review skills belong to other workers / later slices (#333 2b full pack).
+COPY skills/ /home/agent/.claude/skills/
+# Bake the content manifest of exactly what was baked, so a built image is
+# auditable (skill source is mutable host state — build.sh pins it via a sha256;
+# CI can fail-closed via EXPECTED_SKILLS_SHA). #332 reproducibility hardening.
+COPY skills-manifest.txt skills-manifest.sha256 /home/agent/.orchestrator/
+
+# ── Bake the coder role soul ─────────────────────────────────────────────────
+# The orchestrator selects the role's soul at runtime (ORCHESTRATOR_SOUL env);
+# baking the soul TEXT here makes the coder discipline reproducible (no runtime
+# bind-mount of the soul). The entrypoint / prompt can read this file.
+COPY souls/ /home/agent/.orchestrator/souls/
+
+# ── Bake the workspace skill-routing CLAUDE.md as a fallback reference ────────
+# The live worktree CLAUDE.md (mounted at runtime) is what the agent reads in
+# normal operation; baking a copy here documents the routing the image was built
+# against and lets a bare `docker run` demo route without a mounted worktree.
+COPY CLAUDE.routing.md /home/agent/.orchestrator/CLAUDE.routing.md
+
+RUN chmod -R a+rX /home/agent/.claude/skills /home/agent/.orchestrator \
+ && find /home/agent/.claude/skills -type f -name '*.sh' -exec chmod +x {} + 2>/dev/null \
+ ; (id agent >/dev/null 2>&1 \
+      && chown -R agent /home/agent/.claude /home/agent/.orchestrator || true)
+
+USER agent

@@ -79,6 +79,19 @@ hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`�
 - **进 ship-pre / CMR 评审循环前必须确认 feature 全闭环完成，不是「核心写路径接通」就进（对所有 agent：Claude / codex / 其它，2026-06-13 立）**：Definition of Done = 所有闭环面都齐——**写入端 + 读取端 + 恢复端 + 真实 extractor 输出 + UI/呈现端 + 文档契约**，缺一面都不算 ship-ready。把「核心写路径接通 + 单元测试绿 + 前几轮 CMR 收敛」误当成「全闭环完成」两头亏：(1) 在不完整目标上启动昂贵的 ship-pre 评审循环，(2) CMR 一轮轮真抓闭环缺口、滚到离谱轮数才被外人判出「功能不足」。**判据**：进 ship-pre 前对着 plan 逐面点检 DoD，任一面（尤其读取/恢复/呈现这些最容易被「写路径接了」盖过的隐性面）未落 = 早了，先补完再进。注意这是 **ship-gate / DoD 判断**，不是编码能力——写路径接了、测试绿都可能为真，错在把「核心接通」当「全闭环完成」。实证：codex 跑 ADR 0009 person，写路径已接 + 25 单测绿、前几轮 CMR 收敛，但读取端（`offstage_ministers` 人才池）/恢复端/extractor/UI/文档闭环未齐，误进 ship-pre CMR 滚到 **r20** 才被旁路 session 判出「功能不足」（2026-06-13）。**且即便 DoD 齐、进了 ship-pre，装起来跑的整体 cmr 仍是独立一道闸——别当走过场**：per-slice cmr 各自全绿 ≠ feature 完成，整体闸基本仍会抓出 per-slice 照不到的**跨片接缝**（字段名/类型对不对、阈值口径一不一致、组合后才出现的 e2e 行为），要预期它有料、按真闸认真跑。实证：#187 三子片（#201 读 → #202 写 → #203 判）同一数据路径，「已安抚 → 不触发」的 e2e 行为只在三片拼上后才出现，per-slice 各自全绿照不到（见 memory `per-slice-cmr-not-integrated-cmr`）。
 - **任何代码工作先开分支再动手**，main 工作区保持干净（多 session 并行，脏 main 影响别人）；**纯文档工作除外，可直接在 main 改并提交**（TODOS/README/docs 叙事类；用户 2026-06-11 明示。注意：ADR/契约/spec 类设计文档虽可在 main 直改，评审要求见上条不豁免）；常驻例外 = `content/buildings.json` 金手指。
 
+## Skill routing
+
+> Machine-executable routing for an agent working a slice in a worktree (esp. the orchestrator's in-container coder/fix/reviewer worker — ADR 0016 「现状缺口」, ADR 0026). The narrative `## 开发流程` above is for humans; THIS section is the in-container agent's routing table. Routing is by the task at hand, not by ceremony.
+
+When you are an agent assigned a single slice issue in this worktree, route by what the task is:
+
+- **Implement a slice / build a feature / fix a bug test-first** → invoke the `tdd` skill (Claude: `Skill` tool with skill `tdd`; Codex: load `~/.claude/skills/tdd/SKILL.md` and follow it as the active skill). Drive red → green → refactor: the FIRST write must be a failing test, then the smallest change to pass. `tdd` internally calls `codebase-design` (deep-module vocabulary + testability checks) during the refactor step — that skill is present alongside.
+- **A hard bug / something throwing / failing / slow that needs root-cause diagnosis before a fix** → invoke the `diagnosing-bugs` skill first to find root cause, then return to `tdd` to fix it test-first.
+- **Designing or improving a module's interface / deciding where a seam goes / making code more testable** → invoke the `codebase-design` skill for the deep-module vocabulary.
+- **Slice-end review of the diff** → this is the **reviewer worker's** job (a separate worker invoking `/review`, ADR 0026 / PRD #330 R2), NOT the coder worker's. A coder/fix worker does NOT self-review at slice end — it commits and reports; the runner dispatches a fresh reviewer worker. (The reviewer worker + its `/review` skill ride the 2b full-pack image, #333/#334; the 2a coder image bakes only the `/tdd` closure above.)
+
+Do NOT hand-write the methodology in your reasoning — invoke the skill so the discipline comes from the versioned skill, not from improvisation. Stay strictly inside the slice's scope; if the slice cannot be implemented as specified (real design gap, missing dependency, spec contradiction), do not guess — escalate per your worker output contract.
+
 ## Agent skills
 
 ### Issue tracker
