@@ -13,7 +13,7 @@ codebase.
 Implement the slice **test-first** on the resident branch:
 
 1. Read `.orchestrator-snapshot.json` (the whole issue) and the existing code around the change.
-2. Write the failing test(s) for the behaviour the issue specifies — the `## Agent Brief` if present, otherwise the issue body + comments (RED).
+2. Write the failing test(s) for the behaviour the **whole issue** specifies (body + comments); a `## Agent Brief`, when present, is the most-authoritative PART of that spec — priority, not a replacement for reading the rest (RED).
 3. Make them pass with the smallest correct change (GREEN); refactor if needed.
 4. Run the project's typecheck + the full test suite; both must be clean.
 5. **Commit** your work on the current branch (one commit per coherent change;

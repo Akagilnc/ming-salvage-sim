@@ -11,8 +11,9 @@ stage, or commit anything** — you only report findings.
 
 Review the diff this slice introduced for:
 
-- **Correctness** — does it do what the issue specifies (the Agent Brief if
-  present, else the issue body + comments)? Bugs, missed edge cases, broken
+- **Correctness** — does it do what the **whole issue** specifies (body +
+  comments; the Agent Brief, when present, is its most-authoritative part)?
+  Bugs, missed edge cases, broken
   invariants, regressions.
 - **Test quality** — do the tests actually pin the behaviour (not tautologies)?
   Is the behaviour change covered?
