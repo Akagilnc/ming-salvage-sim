@@ -47,7 +47,8 @@ import {
   SANDBOX_SOUL_ENV,
 } from "../../src/realBackend.js";
 import { cmrWorkerSpec, familyShipWorkerSpec } from "../../src/family/dispatchFamilyWorker.js";
-import type { DispatchContext } from "../../src/types.js";
+import type { ShipWorkerOutcome } from "../../src/shipOutcome.js";
+import type { DispatchContext, WorkerSpec } from "../../src/types.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "prompts");
@@ -173,6 +174,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
   /** A backend whose container `runCmrWorker` seam is fixtured (no real sc.run). */
   class FixturedCmrBackend extends RealFamilyBackend {
     runCmrCalls: { spec: ReturnType<typeof cmrWorkerSpec>; ctx: DispatchContext }[] = [];
+    runShipCalls: { spec: WorkerSpec; ctx: DispatchContext }[] = [];
     outcome: CmrWorkerOutcome = { kind: "verdict", converged: true };
     protected override async runCmrWorker(
       spec: ReturnType<typeof cmrWorkerSpec>,
@@ -180,6 +182,17 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     ): Promise<CmrWorkerOutcome> {
       this.runCmrCalls.push({ spec, ctx });
       return this.outcome;
+    }
+    // #336: a ship spec routes to the ship worker seam (NOT the cmr seam). Fixture it
+    // so this test asserts the routing without a real container / host claude token
+    // (the pre-#336 version relied on the legacy openFamilyPr `git push` throwing,
+    // which is now both stale and host-fragile — cmr S336 r9).
+    protected override async runShipWorker(
+      spec: WorkerSpec,
+      ctx: DispatchContext,
+    ): Promise<ShipWorkerOutcome> {
+      this.runShipCalls.push({ spec, ctx });
+      return { kind: "shipped", branch: ctx.familyBase!, status: "pr_opened", pr: "https://gh/pr/9" };
     }
   }
 
@@ -263,18 +276,17 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     await expect(be.dispatchWorker(cmrWorkerSpec(), {})).rejects.toThrow(/familyBase/);
   });
 
-  it("the ship worker is NOT handled by the cmr path — forwarded to legacy openFamilyPr (#336)", async () => {
-    // This slice owns cmr only. A ship worker is forwarded to the legacy wrapper,
-    // which calls RealFamilyBackend.openFamilyPr → a real `git push` on the (empty
-    // fixture) clone. The push failing (not a repo) proves it reached the legacy
-    // ship path rather than being routed through runCmrWorker.
+  it("the ship worker is NOT handled by the cmr path — routed to the ship worker seam (#336)", async () => {
+    // This slice (#335) owns cmr only. A ship spec routes to the ship worker seam
+    // (dispatchShipWorker → runShipWorker, #336), NOT through runCmrWorker. (The full
+    // ship contract — gstack-ship routing, pr_opened narrowing, branch identity — is
+    // covered by ship-worker-336.test.ts; here we only assert the cmr seam is untouched.)
     const be = fixtured();
     be.outcome = { kind: "verdict", converged: true };
-    await expect(
-      be.dispatchWorker(familyShipWorkerSpec(), { familyBase: "fb" }),
-    ).rejects.toThrow(/git|push|repository/i);
-    // The cmr worker seam was NOT touched by the ship dispatch.
-    expect(be.runCmrCalls.length).toBe(0);
+    const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: "fb" });
+    expect(res.kind).toBe("completed"); // the fixtured ship outcome, not the cmr path
+    expect(be.runShipCalls.length).toBe(1); // reached the ship worker seam
+    expect(be.runCmrCalls.length).toBe(0); // the cmr worker seam was NOT touched
   });
 });
 
