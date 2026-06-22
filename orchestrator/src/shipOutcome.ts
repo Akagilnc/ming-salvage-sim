@@ -44,6 +44,17 @@ export type ShipWorkerOutcome =
 export const SHIP_COMPLETION_SIGNAL = "SHIP_STEP_COMPLETE";
 
 /**
+ * A genuinely non-empty string (rejects `""` and whitespace-only). Mirrors
+ * validate.ts `isFilledString` — the escalate/failed contract (both prompts) is
+ * `{reason: non-empty string, diagnosis: non-empty string}`, so a garbage
+ * escalate/failed (`{}`, wrong types, blank strings) is NOT a real verdict and
+ * must NOT be coerced into a structured escalate/failed (cmr S336 r2, F2).
+ */
+function isFilledString(v: unknown): v is string {
+  return typeof v === "string" && v.trim().length > 0;
+}
+
+/**
  * Decide the ship worker outcome from a Sandcastle run result: gate on the
  * completion signal FIRST (mirrors the cmr / merger gate), then parse the `<ship>`
  * tag. Pure (a check on the run-result shape) so the gate is unit-tested without a
@@ -115,19 +126,30 @@ export function parseShipOutcome(stdout: string): ShipWorkerOutcome {
     failed?: { reason?: unknown; diagnosis?: unknown };
   };
   // escalate / failed FIRST — a stuck/failed ship never carries a usable status.
+  // A non-null escalate/failed MUST carry both `reason` and `diagnosis` as
+  // non-empty strings (the prompt contract); a garbage escalate/failed (`{}`,
+  // wrong types, blank strings) is NOT coerced into a verdict — it is malformed
+  // (cmr S336 r2 F2; mirrors validate.ts isValidEscalation — never fabricate a
+  // stop signal / a failure verdict the worker did not actually emit).
   if (obj.escalate !== null && typeof obj.escalate === "object") {
-    const reason =
-      typeof obj.escalate.reason === "string" ? obj.escalate.reason : "ship worker escalated";
-    const diagnosis =
-      typeof obj.escalate.diagnosis === "string" ? obj.escalate.diagnosis : reason;
-    return { kind: "escalate", reason, diagnosis };
+    if (!isFilledString(obj.escalate.reason) || !isFilledString(obj.escalate.diagnosis)) {
+      return {
+        kind: "malformed",
+        reason:
+          "ship worker `escalate` had no non-empty {reason, diagnosis} (an off-contract escalate is not a real stop signal)",
+      };
+    }
+    return { kind: "escalate", reason: obj.escalate.reason, diagnosis: obj.escalate.diagnosis };
   }
   if (obj.failed !== null && typeof obj.failed === "object") {
-    const reason =
-      typeof obj.failed.reason === "string" ? obj.failed.reason : "ship worker failed";
-    const diagnosis =
-      typeof obj.failed.diagnosis === "string" ? obj.failed.diagnosis : reason;
-    return { kind: "failed", reason, diagnosis };
+    if (!isFilledString(obj.failed.reason) || !isFilledString(obj.failed.diagnosis)) {
+      return {
+        kind: "malformed",
+        reason:
+          "ship worker `failed` had no non-empty {reason, diagnosis} (an off-contract failed is not a real failure verdict)",
+      };
+    }
+    return { kind: "failed", reason: obj.failed.reason, diagnosis: obj.failed.diagnosis };
   }
   // A successful ship MUST carry a branch (a PR / push with no branch is unusable).
   if (typeof obj.branch !== "string") {
