@@ -117,27 +117,56 @@ describe("#291 cutFamilyBase (real local clone)", () => {
     git(clone, "clone", "-q", src, dir);
     return dir;
   }
+  function makeLedgerDir(): string {
+    const d = mkdtempSync(join(tmpdir(), "cfb-ledger-"));
+    cleanups.push(d);
+    return d;
+  }
   const realSh: Sh = (file, args) => execFileSync(file, args, { encoding: "utf8" }).trim();
 
   it("cuts the LOCAL family base from origin/main and returns its start head", () => {
     const clone = makeClone();
-    const head = cutFamilyBase(clone, "family/291-base", "main", realSh);
+    const head = cutFamilyBase(clone, "family/291-base", "main", realSh, makeLedgerDir());
     expect(head).toBe(git(clone, "rev-parse", "origin/main"));
     // the local branch exists now.
     expect(git(clone, "rev-parse", "family/291-base")).toBe(head);
   });
 
-  it("is idempotent on resume: an existing family base is reused (its current head)", () => {
+  it("persists the cut SHA so resume returns the ORIGINAL start head, NOT the advanced HEAD (cmr R2 #2)", () => {
+    // cmr R2 #2: the empty-ledger crash-window net (reconcile.ts) compares the live
+    // family head to the recorded START head; if cutFamilyBase returned the CURRENT
+    // (advanced) HEAD on resume, `liveHead === startHead` trivially → the net is
+    // silently disabled (fail-OPEN). The cut SHA must be PERSISTED at first cut and
+    // re-READ on resume, so the start head stays the divergence point even after the
+    // base has accumulated merges.
     const clone = makeClone();
-    const first = cutFamilyBase(clone, "family/291-base", "main", realSh);
+    const ledgerDir = makeLedgerDir();
+    const first = cutFamilyBase(clone, "family/291-base", "main", realSh, ledgerDir);
     // advance the family base with a commit (a prior wave's merge).
     git(clone, "checkout", "-q", "family/291-base");
     execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "wave1"], { cwd: clone });
     const advanced = git(clone, "rev-parse", "family/291-base");
     expect(advanced).not.toBe(first);
-    // a second cut REUSES the branch and returns its CURRENT (advanced) head — it
-    // does NOT re-cut from main (no lost waves).
-    expect(cutFamilyBase(clone, "family/291-base", "main", realSh)).toBe(advanced);
+    // a second cut REUSES the branch (no re-cut, no lost waves) but returns the
+    // PERSISTED ORIGINAL start head — NOT the advanced HEAD.
+    const resumed = cutFamilyBase(clone, "family/291-base", "main", realSh, ledgerDir);
+    expect(resumed).toBe(first);
+    expect(resumed).not.toBe(advanced);
+  });
+
+  it("fails CLOSED on resume when the persisted start head is missing/unreadable (no fall-back to live HEAD)", () => {
+    // If the branch already exists (resume) but the persisted start-head file is
+    // gone (manual deletion / corruption), cutFamilyBase must NOT silently fall back
+    // to the live HEAD (which defeats the crash-window net) — it must throw so the
+    // caller fails closed.
+    const clone = makeClone();
+    const ledgerDir = makeLedgerDir(); // empty: branch will exist but no persisted head
+    // Create the branch WITHOUT going through cutFamilyBase (simulate a stale resume
+    // where the branch survives but the persisted start head does not).
+    git(clone, "branch", "family/291-base", "origin/main");
+    expect(() => cutFamilyBase(clone, "family/291-base", "main", realSh, ledgerDir)).toThrow(
+      /start head|persist|fail.?closed/i,
+    );
   });
 
   it("cuts from the CONFIGURED base (not hardcoded main) when the PR target differs", () => {
@@ -161,7 +190,7 @@ describe("#291 cutFamilyBase (real local clone)", () => {
     const dir = join(clone, "repo");
     git(clone, "clone", "-q", src, dir);
 
-    const head = cutFamilyBase(dir, "family/291-base", "develop", realSh);
+    const head = cutFamilyBase(dir, "family/291-base", "develop", realSh, makeLedgerDir());
     // The family base head is origin/develop's head, NOT origin/main's.
     expect(head).toBe(git(dir, "rev-parse", "origin/develop"));
     expect(head).not.toBe(git(dir, "rev-parse", "origin/main"));

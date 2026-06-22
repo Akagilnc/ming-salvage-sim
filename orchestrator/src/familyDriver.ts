@@ -37,7 +37,7 @@
 
 import { execFile, execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { RealBackend } from "./realBackend.js";
@@ -475,11 +475,15 @@ export async function runFamilyDriver(
   // 3. Cut the LOCAL family base branch from main on the family clone, recording
   //    its start HEAD (the reconcile baseline when the ledger is empty). The base
   //    is a LOCAL branch the merger accumulates onto, with no remote counterpart.
+  //    The cut SHA is PERSISTED in the ledgerDir (a sibling of the family ledger,
+  //    OUTSIDE the worktree) so a RESUME reads back the ORIGINAL start head, not the
+  //    (advanced) live HEAD — the empty-ledger crash-window net depends on it (#2).
   const familyBaseStartHead = cutFamilyBase(
     workingRepo,
     options.familyBase,
     options.base,
     sh,
+    options.ledgerDir,
   );
 
   // 4. The single-slice Backend each child fan-out actually uses: the real
@@ -530,26 +534,62 @@ export async function runFamilyDriver(
 }
 
 /**
+ * The persisted family-base start-head filename (under the `ledgerDir`, a sibling of
+ * the family ledger and OUTSIDE the worktree, so a worktree clean cannot touch it —
+ * the ADR 0022 decision-5 resume-truth location).
+ */
+export const FAMILY_BASE_START_HEAD_FILENAME = "family-base-start-head";
+
+/**
  * Cut the LOCAL family base branch from the just-fetched `origin/<base>` on the
- * family clone and return its start HEAD (the reconcile baseline). `base` is the
+ * family clone and return its START HEAD (the reconcile baseline). `base` is the
  * PR TARGET branch the family run was configured with (`options.base`) — NOT a
  * hardcoded "main": the family base must be cut from the SAME ref `familyBaseDiff`
- * diffs against (`base...familyBase`), else a non-`main` target would both cut from
- * the wrong branch AND show the target's own commits as spurious family additions
- * (agy cmr R1). Idempotent: if the branch already exists (a crash-resume re-entry
- * on the same clone), reuse it and read its current HEAD instead of re-cutting. The
- * base is LOCAL (no `git push`), accumulated onto by the merger.
+ * diffs against, else a non-`main` target would both cut from the wrong branch AND
+ * show the target's own commits as spurious family additions (agy cmr R1). The base
+ * is LOCAL (no `git push`), accumulated onto by the merger.
+ *
+ * The start HEAD is PERSISTED in `ledgerDir` on the FRESH cut and RE-READ on RESUME
+ * (cmr R2 #2). The earlier code returned `git rev-parse <familyBase>` on resume —
+ * i.e. the CURRENT (post-merge, advanced) HEAD — so the empty-ledger crash-window
+ * net (reconcile.ts: escalate iff `liveHead !== startHead`) saw `liveHead ===
+ * startHead` trivially and was SILENTLY DISABLED (fail-OPEN: a base that moved with
+ * no child to explain it would not escalate). The persisted SHA keeps the start head
+ * pinned to the divergence point across resumes. Idempotent on the branch itself: an
+ * existing family base is REUSED (no re-cut, no lost waves). Fail-CLOSED if the
+ * branch exists but the persisted head is gone (no fall-back to the live HEAD).
  */
 export function cutFamilyBase(
   workingRepo: string,
   familyBase: string,
   base: string,
   sh: Sh,
+  ledgerDir: string,
 ): string {
   const git = (...args: string[]): string => sh("git", ["-C", workingRepo, ...args]);
-  // Already present (resume) ⇒ reuse; read its current HEAD as the baseline.
+  const startHeadFile = join(ledgerDir, FAMILY_BASE_START_HEAD_FILENAME);
+  // Already present (resume) ⇒ reuse the branch (no re-cut), but return the PERSISTED
+  // original start head, NOT the advanced HEAD. Missing/unreadable persisted head ⇒
+  // fail closed (do not fall back to the live HEAD, which defeats the crash net).
   if (branchExists(workingRepo, familyBase, sh)) {
-    return git("rev-parse", familyBase);
+    let persisted: string;
+    try {
+      persisted = readFileSync(startHeadFile, "utf8").trim();
+    } catch (err) {
+      throw new Error(
+        `cutFamilyBase: the family base "${familyBase}" already exists (resume) but the ` +
+          `persisted start head at ${startHeadFile} is missing/unreadable — refusing to ` +
+          `fall back to the live HEAD (which would silently disable the empty-ledger ` +
+          `crash-window net). Fail-closed. (${err instanceof Error ? err.message : String(err)})`,
+      );
+    }
+    if (persisted.length === 0) {
+      throw new Error(
+        `cutFamilyBase: the persisted start head at ${startHeadFile} is empty — ` +
+          `fail-closed (cannot trust an empty baseline).`,
+      );
+    }
+    return persisted;
   }
   // Fresh cut: refresh origin/<base>, then branch the local family base from it.
   // Best-effort fetch (an offline / local-only source must not block the cut).
@@ -560,7 +600,11 @@ export function cutFamilyBase(
     // No remote <base> (a local-only source) ⇒ cut from the local <base>.
     git("branch", familyBase, base);
   }
-  return git("rev-parse", familyBase);
+  const startHead = git("rev-parse", familyBase);
+  // Persist the cut SHA durably (outside the worktree) so a resume reads it back.
+  mkdirSync(ledgerDir, { recursive: true });
+  writeFileSync(startHeadFile, startHead + "\n", "utf8");
+  return startHead;
 }
 
 /** Does a local branch exist on the clone? (`-q`: no stderr noise when absent.) */
