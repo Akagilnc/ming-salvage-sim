@@ -49,9 +49,11 @@ import {
   appendFileSync,
   chmodSync,
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -71,7 +73,11 @@ import {
   SANDBOX_SKILLS_DIR,
   SANDBOX_SOUL_ENV,
 } from "../realBackend.js";
-import { legacyDispatchFamilyWorker } from "./dispatchFamilyWorker.js";
+import {
+  cmrWorkerSpec,
+  familyShipWorkerSpec,
+  legacyDispatchFamilyWorker,
+} from "./dispatchFamilyWorker.js";
 import {
   isFilledString,
   shipOutcomeFromResult,
@@ -218,6 +224,23 @@ export interface RealFamilyBackendOptions {
 
 /** The merger-agent prompt the conflict resolver runs (under the `merger` soul). */
 const MERGER_CONFLICT_PROMPT = "merger_resolve_conflict.md";
+
+/**
+ * Every promptFile the family layer can dispatch — DERIVED from the worker specs
+ * (the cmr / family-ship workers) + the local merger-conflict prompt, exactly the
+ * way the single-slice {@link REFERENCED_PROMPT_FILES} (realBackend.ts) derives
+ * its list from STEP_SPECS + shipWorkerSpec() (integ-cmr int-r1 C-3 / gap g). By
+ * reading the prompt off the dispatched specs, a new/changed family worker step
+ * can never silently drift out of the construction-time validation list. De-duped
+ * (a Set) in case two specs share a promptFile across versions.
+ */
+export const REFERENCED_FAMILY_PROMPT_FILES: ReadonlyArray<string> = [
+  ...new Set([
+    cmrWorkerSpec().promptFile,
+    familyShipWorkerSpec().promptFile,
+    MERGER_CONFLICT_PROMPT,
+  ]),
+];
 /** The merger agent's completion signal (matches prompts/merger_resolve_conflict.md). */
 const MERGER_COMPLETION_SIGNAL = "MERGER_STEP_COMPLETE";
 /** The merger resolver runs on the higher-skill model (the conflict-resolution role). */
@@ -245,6 +268,44 @@ export class RealFamilyBackend implements FamilyBackend {
 
   constructor(opts: RealFamilyBackendOptions) {
     this.opts = opts;
+    this.validateFamilyPromptsDir();
+  }
+
+  /**
+   * Fail fast at construction if `promptsDir` is not an absolute, existing dir
+   * containing every {@link REFERENCED_FAMILY_PROMPT_FILES} entry (integ-cmr
+   * int-r1 gap g, same-type as the single-slice C-3) — so a misconfiguration
+   * surfaces HERE, not deep inside the first family worker dispatch (or, worse,
+   * silently against the wrong dir via Sandcastle's process.cwd() resolution of
+   * promptFile). `promptsDir` MUST be ABSOLUTE: Sandcastle resolves promptFile
+   * against `process.cwd()`, NOT the run cwd, so a relative promptsDir would
+   * silently resolve the family prompts against the wrong directory at run time.
+   */
+  private validateFamilyPromptsDir(): void {
+    const dir = this.opts.promptsDir;
+    if (!isAbsolute(dir)) {
+      throw new Error(
+        `RealFamilyBackend: promptsDir must be an ABSOLUTE path (got "${dir}"). ` +
+          `Sandcastle resolves promptFile against process.cwd(), not the run cwd, ` +
+          `so a relative promptsDir would resolve family prompts against the wrong dir.`,
+      );
+    }
+    if (!(existsSync(dir) && statSync(dir).isDirectory())) {
+      throw new Error(
+        `RealFamilyBackend: promptsDir "${dir}" does not exist (or is not a directory).`,
+      );
+    }
+    const missing = REFERENCED_FAMILY_PROMPT_FILES.filter(
+      (f) => !existsSync(join(dir, f)),
+    );
+    if (missing.length > 0) {
+      throw new Error(
+        `RealFamilyBackend: promptsDir "${dir}" is missing required family ` +
+          `promptFile(s): ${missing.join(", ")}. All of ` +
+          `[${REFERENCED_FAMILY_PROMPT_FILES.join(", ")}] must be present (the ` +
+          `family cmr / ship / merger workers reference them).`,
+      );
+    }
   }
 
   /**
