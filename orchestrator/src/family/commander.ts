@@ -57,8 +57,17 @@ export class DependencyCycleError extends Error {
  *
  * A child is in the wave iff:
  *   - it is NOT already merged (`!merged.has(child.issue)`), AND
- *   - every issue it is `blocked_by` is in the merged set
- *     (`child.blockedBy.every((b) => merged.has(b))`).
+ *   - every INTRA-FAMILY issue it is `blocked_by` is in the merged set
+ *     (`c.blockedBy.every((b) => !family.has(b) || merged.has(b))`).
+ *
+ * online R1 #1 (Gemini + Codex, user 2026-06-22): the predicate gates ONLY on
+ * intra-family blockers. An EXTERNAL `blocked_by` (an issue that is not one of this
+ * epic's children) can NEVER enter the family `merged` set, so requiring it would
+ * strand the child forever (silently skipped) — wrong even when that external issue
+ * is already closed/satisfied. External blockers are instead validated EXPLICITLY,
+ * fail-closed, at family admission (`assertExternalBlockersCleared`, familyDriver):
+ * the run never starts with an open external blocker, so by the time selectWave runs
+ * every external blocker is satisfied and must NOT gate scheduling.
  *
  * Input order is preserved (deterministic scheduling — no sorting/shuffling).
  * An empty result means every child is either merged or still blocked; the
@@ -72,8 +81,11 @@ export function selectWave(
   children: ReadonlyArray<ChildSlice>,
   merged: ReadonlySet<number>,
 ): ReadonlyArray<ChildSlice> {
+  const family = new Set(children.map((c) => c.issue));
   return children.filter(
-    (c) => !merged.has(c.issue) && c.blockedBy.every((b) => merged.has(b)),
+    (c) =>
+      !merged.has(c.issue) &&
+      c.blockedBy.every((b) => !family.has(b) || merged.has(b)),
   );
 }
 

@@ -89,6 +89,17 @@ describe("#291 parseReviewerVerdict — prose verdict, no sentinel-JSON gate", (
     expect(parseReviewerVerdict("codex", "This is not fully converged.").pass).toBe(false);
     expect(parseReviewerVerdict("claude", "Not completely converged — one seam left.").pass).toBe(false);
   });
+  it("a HYPHENATED interposed adverb ('not fully-converged') is NOT a pass (online R1 Gemini)", () => {
+    // online R1 (Gemini high): the interposed-adverb guard uses `\s+converg`, which
+    // requires WHITESPACE right before `converg`. A hyphen joins the adverb to the
+    // word — `not fully-converged` — so `\s+converg` cannot match (the separator is
+    // `-`, not space), the negation falls through, and the positive `\bconverged\b`
+    // matches the `converged` inside `fully-converged` → a FABRICATED pass. The
+    // separator before `converg` must allow a hyphen too (`[\s-]+`).
+    expect(parseReviewerVerdict("gemini", "This is not fully-converged.").pass).toBe(false);
+    expect(parseReviewerVerdict("agy", "The slices are not yet-converged.").pass).toBe(false);
+    expect(parseReviewerVerdict("codex", "It doesn't fully-converge here.").pass).toBe(false);
+  });
   it("'failed to converge' / 'did not converge' are NOT a pass", () => {
     expect(parseReviewerVerdict("codex", "The review failed to converge.").pass).toBe(false);
     expect(parseReviewerVerdict("agy", "It did not converge cleanly.").pass).toBe(false);

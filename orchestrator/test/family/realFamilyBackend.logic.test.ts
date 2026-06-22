@@ -70,6 +70,9 @@ function commitFile(repo: string, file: string, content: string): string {
 }
 
 let repos: string[] = [];
+// online R1 CodeRabbit: `opts()` mints a temp ledger dir per call — track them too,
+// else they leak across the suite and accumulate over a long CI run.
+let ledgerDirs: string[] = [];
 function trackRepo(): string {
   const r = makeRepo();
   repos.push(r);
@@ -77,15 +80,19 @@ function trackRepo(): string {
 }
 afterEach(() => {
   for (const r of repos) rmSync(r, { recursive: true, force: true });
+  for (const d of ledgerDirs) rmSync(d, { recursive: true, force: true });
   repos = [];
+  ledgerDirs = [];
 });
 
 /** Default options pointing the Backend at a real repo + the real prompts dir. */
 function opts(workingRepo: string, over: Partial<RealFamilyBackendOptions> = {}): RealFamilyBackendOptions {
+  const ledgerDir = mkdtempSync(join(tmpdir(), "rfb-ledger-"));
+  ledgerDirs.push(ledgerDir);
   return {
     workingRepo,
     familyBase: "family/293-base",
-    ledgerDir: mkdtempSync(join(tmpdir(), "rfb-ledger-")),
+    ledgerDir,
     repo: "Akagilnc/ming-salvage-sim",
     base: "main",
     promptsDir: realPromptsDir,
@@ -245,6 +252,24 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     const r = await recon.childHeadExists(99, "feat/child-99");
     expect(r.exists).toBe(false);
     expect(r.childHead).toBeUndefined();
+  });
+
+  it("isAncestor RE-THROWS an operational git error (bad object → exit 128), never silent false (online R1 CodeRabbit)", async () => {
+    // `git merge-base --is-ancestor` exits 1 for a legit NOT-ancestor but 128 for an
+    // OPERATIONAL failure (a bad/unknown object, a broken repo). The catch must
+    // distinguish: exit 1 → false (the predicate), anything else → re-throw. Else a
+    // bad SHA / broken repo reads as "not an ancestor" → reconcile mis-judges the
+    // crash window (could re-merge an already-landed child, or trust a stale base).
+    const repo = trackRepo();
+    git(repo, "checkout", "-q", "-b", "family/293-base");
+    const recon = new RealFamilyBackend(opts(repo)).reconcileGit();
+    const live = git(repo, "rev-parse", "HEAD");
+    // an all-zero (null) object never resolves → `--is-ancestor` exits 128 (fatal).
+    await expect(recon.isAncestor("0".repeat(40), live)).rejects.toThrow();
+    // a REAL not-ancestor (a fresh sibling commit) still returns false (exit 1).
+    git(repo, "checkout", "-q", "-b", "feat/child-88", "family/293-base");
+    const sibling = commitFile(repo, "c88.txt", "z");
+    expect(await recon.isAncestor(sibling, live)).toBe(false);
   });
 
   it("childHeadExists with NO branch derives it from the issue (the production call shape) — the 补账 predicate is not dead", async () => {
