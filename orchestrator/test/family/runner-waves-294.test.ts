@@ -59,7 +59,6 @@ class RecordingChildBackend implements Backend {
     return {
       number: issueNumber,
       isReadyForAgent: true,
-      hasAgentBrief: true,
       hasSubIssues: false,
       openBlockedBy: [],
     };
@@ -172,7 +171,6 @@ describe("#294 acceptance 2 — unblock is ledger-merged, incl. the child's own 
         return {
           number: issueNumber,
           isReadyForAgent: true,
-          hasAgentBrief: true,
           hasSubIssues: false,
           openBlockedBy: issueNumber === 11 ? [10] : [],
         };
@@ -211,7 +209,6 @@ describe("#294 acceptance 2 — unblock is ledger-merged, incl. the child's own 
         return {
           number: issueNumber,
           isReadyForAgent: true,
-          hasAgentBrief: true,
           hasSubIssues: false,
           openBlockedBy: issueNumber === 10 ? [999] : [],
         };
