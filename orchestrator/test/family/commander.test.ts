@@ -66,4 +66,21 @@ describe("commander.selectWave (#293 seam 1)", () => {
     const wave = selectWave(children, new Set());
     expect(wave.map((c) => c.issue)).toEqual([30, 10, 20]);
   });
+
+  it("ignores an EXTERNAL blocker (not a family child) — those are cleared at family admission, not the scheduler (online R1 #1)", () => {
+    // 999 is NOT a family child, so it can NEVER enter the family `merged` set. The
+    // family-admission gate (`assertExternalBlockersCleared`) already guaranteed it is
+    // CLOSED before the run started; requiring it in `merged` here would strand 10
+    // forever (silently skipped). selectWave must gate ONLY on intra-family blockers.
+    const children = [child(10, [999])];
+    expect(selectWave(children, new Set()).map((c) => c.issue)).toEqual([10]);
+  });
+
+  it("gates on the intra-family blocker while ignoring an external one in the same child", () => {
+    const children = [child(10), child(11, [10, 999])];
+    // 10 (family) not merged → 11 still blocked; external 999 is irrelevant here.
+    expect(selectWave(children, new Set()).map((c) => c.issue)).toEqual([10]);
+    // 10 merged → 11 unblocks (999 never required of the family scheduler).
+    expect(selectWave(children, new Set([10])).map((c) => c.issue)).toEqual([11]);
+  });
 });

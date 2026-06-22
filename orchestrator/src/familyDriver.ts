@@ -106,6 +106,54 @@ export function buildFamilyEpic(
   return { issue: epicIssue, children };
 }
 
+/** A family child blocked by an EXTERNAL (non-family) issue still open at admission. */
+export interface OpenExternalBlocker {
+  readonly child: number;
+  readonly blocker: number;
+}
+
+/** Fail-closed family admission: one or more external blockers are still open. */
+export class FamilyExternalBlockerError extends Error {
+  constructor(readonly openBlockers: ReadonlyArray<OpenExternalBlocker>) {
+    super(
+      `family admission rejected: ${openBlockers.length} external blocker(s) still open — ` +
+        openBlockers.map((b) => `child #${b.child} blocked_by #${b.blocker}`).join("; "),
+    );
+    this.name = "FamilyExternalBlockerError";
+  }
+}
+
+/**
+ * Family-admission external-blocker gate (online R1 #1; user 2026-06-22, refines ADR
+ * 0022 dec6③). An EXTERNAL `blocked_by` (an issue that is NOT one of this epic's
+ * children) is never merged into the family ledger, so the commander's wave scheduler
+ * cannot clear it. We do NOT lean on each child's family-mode S0 to reject an open
+ * external blocker: dec6③ REWIRED the S0 `blocked_by`-closed check to the
+ * ledger-merged口径, so an external open blocker is NOT reliably caught at S0 (and
+ * relying on that indirection is fragile). Instead, validate them EXPLICITLY here,
+ * up front, against the live `state` GitHub returned: ANY external blocker still open
+ * fails-closed the WHOLE family run with the concrete offending list (which child,
+ * which external issue) so the rejection is actionable. Closed (satisfied) external
+ * blockers drop out, and the scheduler (selectWave) then gates ONLY on intra-family
+ * blockers — those are the ones the family base can actually merge. A child's S0 still
+ * runs against live GitHub as a backstop if an external blocker re-opens mid-run.
+ */
+export function assertExternalBlockersCleared(
+  childNumbers: ReadonlyArray<number>,
+  blockedByByChild: ReadonlyMap<number, ReadonlyArray<GhBlockedBy>>,
+): void {
+  const family = new Set(childNumbers);
+  const openBlockers: OpenExternalBlocker[] = [];
+  for (const child of childNumbers) {
+    for (const b of blockedByByChild.get(child) ?? []) {
+      if (!family.has(b.number) && b.state !== "closed") {
+        openBlockers.push({ child, blocker: b.number });
+      }
+    }
+  }
+  if (openBlockers.length > 0) throw new FamilyExternalBlockerError(openBlockers);
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // gh reader (a thin injectable subprocess seam)
 // ════════════════════════════════════════════════════════════════════════════
@@ -147,6 +195,10 @@ export function readFamilyEpic(epicIssue: number, repo: string, sh: Sh): FamilyE
     ]);
     blockedByByChild.set(child, parseBlockedBy(JSON.parse(depRaw)));
   }
+  // Family-admission gate (online R1 #1): fail-closed up front if any EXTERNAL blocker
+  // is still open — runs on the initial admission AND on every resume refetch, so a
+  // re-opened external blocker re-rejects on re-entry.
+  assertExternalBlockersCleared(childNumbers, blockedByByChild);
   return buildFamilyEpic(epicIssue, childNumbers, blockedByByChild);
 }
 
@@ -730,8 +782,8 @@ export function parseReviewerVerdict(vendor: ReviewerVendor, prose: string): Rev
   // chain — a separate clause like "no findings; converged" does NOT trip it.
   const negated =
     /\b(?:non|un)-?converg/.test(lower) || // non-converged / unconverged
-    /\b(?:not|never|cannot)\b(?:\s+\w+){0,3}\s+converg/.test(lower) || // not [adv]{0,3} converge
-    /n't\b(?:\s+\w+){0,3}\s+converg/.test(lower) || // didn't / doesn't / can't … converge
+    /\b(?:not|never|cannot)\b(?:\s+\w+){0,3}[\s-]+converg/.test(lower) || // not [adv]{0,3} converge (online R1 Gemini: a HYPHEN-joined adverb `not fully-converged` must also negate)
+    /n't\b(?:\s+\w+){0,3}[\s-]+converg/.test(lower) || // didn't / doesn't / can't … converge
     /\bfail(?:s|ed|ing|ure)?\s+to\s+converg/.test(lower); // fail(ed/s/ure) to converge
   if (negated) {
     return { vendor, pass: false, reason: text };

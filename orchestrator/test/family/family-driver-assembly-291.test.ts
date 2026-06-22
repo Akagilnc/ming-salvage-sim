@@ -22,8 +22,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "prompts");
 
 import {
+  assertExternalBlockersCleared,
   buildFamilyEpic,
   cutFamilyBase,
+  FamilyExternalBlockerError,
   parseSubIssueNumbers,
   readFamilyEpic,
   type Sh,
@@ -78,6 +80,63 @@ describe("#291 buildFamilyEpic", () => {
   it("a child with no blocked_by entry gets an empty blockedBy", () => {
     const epic = buildFamilyEpic(291, [11], new Map());
     expect(epic.children).toEqual([{ issue: 11, blockedBy: [] }]);
+  });
+});
+
+describe("#291 assertExternalBlockersCleared — family-admission external-blocker gate (online R1 #1; user 2026-06-22, ADR 0022 dec6③)", () => {
+  // An EXTERNAL blocked_by (an issue NOT among this epic's children) is never merged
+  // into the family ledger, so the scheduler cannot clear it. Rather than leaning on
+  // each child's family-mode S0 (which dec6③ rewired to a ledger-merged criterion, so
+  // it does NOT reliably reject an open external blocker), validate them EXPLICITLY at
+  // admission against the live GitHub `state`: any external blocker still open fails
+  // the WHOLE family run up front, with the concrete offending list.
+  it("throws FamilyExternalBlockerError with the concrete list when an external blocker is still OPEN", () => {
+    const blockedBy = new Map<number, GhBlockedBy[]>([
+      [11, []],
+      [12, [{ number: 11, state: "open" }, { number: 999, state: "open" }]], // 11 intra-family, 999 external+open
+    ]);
+    let err: unknown;
+    try {
+      assertExternalBlockersCleared([11, 12], blockedBy);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(FamilyExternalBlockerError);
+    expect((err as FamilyExternalBlockerError).openBlockers).toEqual([{ child: 12, blocker: 999 }]);
+    // the message names the concrete child + external issue so the rejection is actionable
+    expect((err as Error).message).toContain("#12");
+    expect((err as Error).message).toContain("#999");
+  });
+  it("a CLOSED external blocker is satisfied ⇒ no throw (the child may schedule)", () => {
+    const blockedBy = new Map<number, GhBlockedBy[]>([
+      [12, [{ number: 999, state: "closed" }]],
+    ]);
+    expect(() => assertExternalBlockersCleared([11, 12], blockedBy)).not.toThrow();
+  });
+  it("an INTRA-family blocker (even open) is NOT an external blocker ⇒ no throw (the scheduler clears it)", () => {
+    const blockedBy = new Map<number, GhBlockedBy[]>([
+      [12, [{ number: 11, state: "open" }]], // 11 IS a family child
+    ]);
+    expect(() => assertExternalBlockersCleared([11, 12], blockedBy)).not.toThrow();
+  });
+  it("no blocked_by at all ⇒ no throw", () => {
+    expect(() => assertExternalBlockersCleared([11, 12], new Map())).not.toThrow();
+  });
+  it("collects EVERY open external blocker across children (the list is complete, not first-only)", () => {
+    const blockedBy = new Map<number, GhBlockedBy[]>([
+      [11, [{ number: 900, state: "open" }]],
+      [12, [{ number: 901, state: "open" }, { number: 11, state: "open" }]],
+    ]);
+    let err: FamilyExternalBlockerError | undefined;
+    try {
+      assertExternalBlockersCleared([11, 12], blockedBy);
+    } catch (e) {
+      err = e as FamilyExternalBlockerError;
+    }
+    expect(err?.openBlockers).toEqual([
+      { child: 11, blocker: 900 },
+      { child: 12, blocker: 901 },
+    ]);
   });
 });
 

@@ -275,3 +275,41 @@ describe("#296 spine integration — acceptance 3: all green → open PR, stop, 
     expect(backend.escalations).toEqual([]);
   });
 });
+
+describe("#291 spine — the final barrier (verify + cmr + 止于 PR) is GATED on a COMPLETE family base (online R1 Codex P1)", () => {
+  // A child whose single-slice run does NOT succeed (coder commits nothing → S2
+  // routes to S8 error → a non-throwing "failed") leaves the family base PARTIAL:
+  // the wave loop exits with that child unmerged and finalize() marks the run
+  // "incomplete". The final barrier (full verify → integrated cmr → openFamilyPr) is
+  // meaningful ONLY for a COMPLETE base — running it on a partial base would open a
+  // family PR missing slices, even though the returned status is not shippable. So
+  // the spine must SKIP the final barrier (no final verify / cmr / PR) when not every
+  // epic child is ledger-merged, and return "incomplete" honestly.
+  class FailingCoderChildBackend extends ChildBackend {
+    override async runStep(spec: StepSpec): Promise<StepOutput> {
+      if (spec.role === "coder") return { kind: "coder", committed: false, commitsAdded: 0 };
+      return { kind: "reviewer", findings: [] };
+    }
+  }
+  it("a child that fails its single-slice run ⇒ NO final verify / cmr / PR, status incomplete", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({ converged: true }),
+    });
+    const result = await runFamily({
+      epic: epicWith(294, 295),
+      familyBackend: backend,
+      singleSliceBackend: new FailingCoderChildBackend(),
+      familyBase: "family/291-base",
+    });
+    // Both children failed their coder step → neither merged → the family base is partial.
+    expect(backend.merges).toEqual([]);
+    // The final barrier is GATED: NO "final" verify, NO cmr, NO PR on a partial base.
+    expect(backend.verifyCalls.map((v) => v.phase)).not.toContain("final");
+    expect(backend.cmrCalls).toEqual([]);
+    expect(backend.prCalls).toEqual([]);
+    // Honest: observably incomplete (decision 3⑤ 不静默吞), NOT a fabricated success.
+    expect(result.status).toBe("incomplete");
+    expect(result.children.every((c) => c.status === "failed")).toBe(true);
+  });
+});

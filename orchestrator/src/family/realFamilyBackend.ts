@@ -307,8 +307,11 @@ export class RealFamilyBackend implements FamilyBackend {
     try {
       this.sh("git", ["merge-base", "--is-ancestor", ancestor, descendant], repo);
       return true;
-    } catch {
-      return false;
+    } catch (err) {
+      // exit 1 = a legit "not an ancestor"; anything else (128 bad object / broken
+      // repo) is OPERATIONAL and must propagate, not read as a false predicate.
+      if (gitExitStatus(err) === 1) return false;
+      throw err;
     }
   }
 
@@ -563,6 +566,12 @@ export class RealFamilyBackend implements FamilyBackend {
           const childHead = sh(["rev-parse", "--verify", `${branch}^{commit}`]);
           return { exists: true, childHead };
         } catch {
+          // NOTE (online R1 CodeRabbit): unlike the `--is-ancestor` predicates below,
+          // `rev-parse --verify` exits 128 for BOTH a missing ref AND an operational
+          // failure — the exit code cannot tell them apart. An absent child branch is
+          // the EXPECTED reconcile case (ADR 0022 dec5 agy R4: "branch尚不存在 → 当未合
+          // 从头跑"), so we keep the swallow → `{exists:false}`; a genuine repo fault
+          // then surfaces loudly when the re-run child operates on the broken repo.
           return { exists: false };
         }
       },
@@ -571,8 +580,11 @@ export class RealFamilyBackend implements FamilyBackend {
           // `--is-ancestor` exits 0 iff childHead is an ancestor of liveHead.
           this.sh("git", ["merge-base", "--is-ancestor", childHead, liveHead], repo);
           return true;
-        } catch {
-          return false;
+        } catch (err) {
+          // exit 1 = legit "not an ancestor"; exit 128 (bad object / broken repo) is
+          // OPERATIONAL and must propagate, not read as "not merged" (online R1 CR).
+          if (gitExitStatus(err) === 1) return false;
+          throw err;
         }
       },
     };
@@ -698,4 +710,16 @@ function decodeChildOutput(v: unknown): string {
   if (typeof v === "string") return v.trim();
   if (v instanceof Buffer) return v.toString("utf8").trim();
   return "";
+}
+
+/**
+ * The process exit status carried by an `execFileSync` throw (`err.status`), or
+ * `undefined` if the error is not an exit-code failure (e.g. ENOENT spawning git).
+ * Lets a git predicate tell a LEGIT non-zero (`merge-base --is-ancestor` exits 1 for
+ * "not an ancestor") from an OPERATIONAL failure (exit 128: bad object / broken repo)
+ * that must propagate rather than read as a false predicate (online R1 CodeRabbit).
+ */
+function gitExitStatus(err: unknown): number | undefined {
+  const status = (err as { status?: unknown } | null)?.status;
+  return typeof status === "number" ? status : undefined;
 }

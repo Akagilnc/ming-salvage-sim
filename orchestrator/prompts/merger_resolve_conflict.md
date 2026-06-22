@@ -36,8 +36,9 @@ behaviour or making a product decision, do NOT guess — **escalate** (see below
 
 ## Required output
 
-When you are done (or are escalating), emit EXACTLY ONE `<merger>` tag on its own,
+When you are done (or are escalating), emit a single `<merger>` tag on its own,
 containing a single JSON object, then print the completion signal on its own line.
+(If you do iterate, only the LAST `<merger>` tag is read — see Rules below.)
 
 Success / resolved:
 
