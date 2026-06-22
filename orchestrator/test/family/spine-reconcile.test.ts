@@ -31,6 +31,8 @@ import type {
   FamilyBackend,
   FamilyEpic,
   FamilyLedgerEntry,
+  FamilyVerifyRequest,
+  FamilyVerifyResult,
   MergeRequest,
   ReconcileGit,
 } from "../../src/family/types.js";
@@ -251,6 +253,84 @@ describe("spine reconcile — branch ③ inconsistent (fail-closed escalate)", (
     // Fail-closed: no child run, no merge attempted.
     expect(childBackend.ran).toEqual([]);
     expect(familyBackend.merges).toEqual([]);
+  });
+});
+
+describe("spine reconcile — familyHead reflects the reconcile live head on a resume with NO new merge (#291 Step6 cmr: codex #3 + Claude)", () => {
+  // The cross-slice seam bug: `familyHead` is assigned ONLY inside the wave merge
+  // loop (mergeChild → familyHead = result). On a resume where reconcile補账s EVERY
+  // remaining child as already-landed, `currentMerged` skips them all → the wave
+  // loop breaks on its first iteration with NO merge → `familyHead` leaks
+  // `undefined`, even though the family base demonstrably leads at the reconcile's
+  // verified `liveHead`. reconcile (#298) knows the head; the spine (#293/#296)
+  // must backfill it. per-slice cmr can't see this — only #298-resume ⨉ #293-result
+  // composed exposes it.
+  it("returns the reconcile liveHead, not undefined, when every child is already merged/reconciled", async () => {
+    // Prior run merged 10 (ledger) + 11 landed-but-unwritten (reconciled here).
+    // No wave merge runs this invocation — the ONLY head source is reconcile.
+    const familyBackend = new SeededFamilyBackend([
+      { childIssue: 10, status: "merged", childHead: "c10", familyHeadAfter: "base1" },
+    ]);
+    const childBackend = new ChildBackend();
+    const result = await runFamily({
+      epic,
+      familyBackend,
+      singleSliceBackend: childBackend,
+      familyBase: "family/291-base",
+      reconcileGit: new FakeReconcileGit(
+        "base2",
+        { 10: "c10", 11: "c11" },
+        new Set(["base1", "c10", "c11"]),
+      ),
+    });
+
+    // No new merge ran (both already merged), yet the family base leads at base2.
+    expect(familyBackend.merges).toEqual([]);
+    expect(result.status).toBe("success");
+    // The bug: this was `undefined`. The result must report the real live head.
+    expect(result.familyHead).toBe("base2");
+  });
+});
+
+describe("spine reconcile — a RED final barrier on a no-new-merge resume records the live head on the durable aborted entry (#291 Step6 cmr: codex #3 + Claude)", () => {
+  // The deeper half of the same seam bug: the final barrier hands `familyHeadAfter:
+  // familyHead` to the durable PHASE-LEVEL `aborted` entry (reconcile's baseline is
+  // read off末条 `familyHeadAfter`, merged AND aborted uniformly). If `familyHead`
+  // leaked `undefined`, a RED final verify writes an aborted entry with NO head →
+  // the NEXT resume's baseline read silently falls back to an earlier entry,
+  // weakening the crash-window判定 — the exact unification #291 缺口 2 promised.
+  class FinalVerifyRedBackend extends SeededFamilyBackend {
+    async runFamilyVerify(req: FamilyVerifyRequest): Promise<FamilyVerifyResult> {
+      // No wave runs here; the FINAL full-suite barrier is red.
+      return req.phase === "final"
+        ? { ok: false, errorPackage: { reason: "final verify red" } }
+        : { ok: true };
+    }
+  }
+  it("stamps familyHeadAfter=liveHead (not undefined) on the aborted entry", async () => {
+    const familyBackend = new FinalVerifyRedBackend([
+      { childIssue: 10, status: "merged", childHead: "c10", familyHeadAfter: "base1" },
+    ]);
+    const childBackend = new ChildBackend();
+    const result = await runFamily({
+      epic,
+      familyBackend,
+      singleSliceBackend: childBackend,
+      familyBase: "family/291-base",
+      reconcileGit: new FakeReconcileGit(
+        "base2",
+        { 10: "c10", 11: "c11" },
+        new Set(["base1", "c10", "c11"]),
+      ),
+    });
+
+    // RED final barrier → the run is observably verify_failed (不静默吞).
+    expect(result.status).toBe("verify_failed");
+    // The durable aborted entry must carry the reconcile live head as the abort-time
+    // head — without the backfill it is `undefined` (dropped by `compact`).
+    const aborted = familyBackend.ledger.find((e) => e.status === "aborted");
+    expect(aborted).toBeDefined();
+    expect(aborted?.familyHeadAfter).toBe("base2");
   });
 });
 

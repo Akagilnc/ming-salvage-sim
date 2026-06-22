@@ -287,6 +287,18 @@ export async function runFamily(
         event: "reconciled",
       });
     }
+    // Step6 cmr (codex #3 + Claude): `familyHead` is otherwise assigned ONLY inside
+    // the wave merge loop. On a resume where reconcile accounts for EVERY remaining
+    // child (its补账 + the prior ledger cover the whole epic), `currentMerged` skips
+    // them all → the wave loop runs NO merge → `familyHead` would leak `undefined`,
+    // even though the family base真实 leads at the reconcile-verified `liveHead`.
+    // Seed it from `plan.liveHead` whenever the base already has merges (`merged`
+    // non-empty), so a no-new-merge resume's FINAL-barrier durable `aborted`
+    // familyHeadAfter baseline (#291 缺口 2) AND the returned `FamilyRunResult`
+    // report the真实 head; a later wave merge (:familyHead = mergeResult.familyHead)
+    // overwrites it. A truly fresh run (empty ledger, nothing merged) leaves it
+    // `undefined` — `plan.merged` is empty there, so the guard does not fire.
+    if (plan.merged.size > 0) familyHead = plan.liveHead;
   }
 
   // The wave loop. Re-select from the merged set after each wave so a future
