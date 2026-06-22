@@ -52,7 +52,11 @@ import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 
 import { runExclusive } from "../gitMutex.js";
-import { branchForIssue } from "../realBackend.js";
+import {
+  branchForIssue,
+  SANDBOX_SKILLS_DIR,
+  SANDBOX_SOUL_ENV,
+} from "../realBackend.js";
 
 import type {
   ConflictResolveRequest,
@@ -131,6 +135,23 @@ const MERGER_CONFLICT_PROMPT = "merger_resolve_conflict.md";
 const MERGER_COMPLETION_SIGNAL = "MERGER_STEP_COMPLETE";
 /** The merger resolver runs on the higher-skill model (the conflict-resolution role). */
 const MERGER_MODEL = "claude-opus-4-8";
+
+/**
+ * The baked soul the merger agent runs under (F28 / ADR 0022: the conflict
+ * fallback follows the "one mirror new soul" model). This is a THIRD baked soul
+ * value alongside the step souls — it is deliberately NOT a {@link StepSoul},
+ * because the merger is not an S0–S8 single-slice step driven by `soulForStep`
+ * (which maps a step's `role` → "coder"/"READ-ONLY"). The merger has its own
+ * activation path: it is injected into the sandbox via {@link SANDBOX_SOUL_ENV}
+ * (`ORCHESTRATOR_SOUL`), the SAME env mechanism `RealBackend.box()` uses for
+ * coder/reviewer — same image, same env var, a new soul value — so the v0.1
+ * profile entrypoint activates the merger soul (with the `resolving-merge-conflicts`
+ * skill), not whatever default soul it would otherwise pick. The merger soul's
+ * CONTENT (the baked profile + `prompts/merger_resolve_conflict.md` behaviour) is
+ * a production-image concern (it must be baked into the profile image); this
+ * constant is the code-side selector that activates it.
+ */
+export const MERGER_SOUL = "merger";
 
 export class RealFamilyBackend implements FamilyBackend {
   protected readonly opts: RealFamilyBackendOptions;
@@ -316,14 +337,34 @@ export class RealFamilyBackend implements FamilyBackend {
 
   /** The merger agent's sandbox (souls + skills baked into the image). */
   protected mergerSandbox(): sc.SandboxProvider {
-    // The merger soul is selected by the agent's prompt + the baked profile; the
-    // skills mount carries `resolving-merge-conflicts`. Auth / env wiring matches
-    // RealBackend.box on the real path; kept minimal here — the driver passes the
-    // real image + mounts.
-    return docker({
+    return docker(this.mergerSandboxConfig());
+  }
+
+  /**
+   * The docker options the merger sandbox runs under — the SOUL-SELECTION seam
+   * (F28 / ADR 0022). Pure (no container, no I/O) so a unit test asserts the
+   * baked-soul env + skills-mount path without spinning a real sandbox, mirroring
+   * how {@link soulForStep} is the testable seam on the single-slice path.
+   *
+   * The merger soul is activated the SAME way coder/reviewer are in
+   * `RealBackend.box()`: by injecting {@link SANDBOX_SOUL_ENV} (`ORCHESTRATOR_SOUL`)
+   * — same env var, same image, a new soul value ({@link MERGER_SOUL}) — NOT by the
+   * prompt alone. Before this the sandbox set no env, so `ORCHESTRATOR_SOUL` was
+   * never set and the merger ran under the image's default soul (the F28 PARTIAL).
+   * The `resolving-merge-conflicts` skill is mounted at {@link SANDBOX_SKILLS_DIR}
+   * (`/home/agent/.claude/skills`, the path the agent's soul/skill discovery scans
+   * — the same one `RealBackend.box()` uses), so the merger soul can find it.
+   */
+  protected mergerSandboxConfig(): {
+    imageName: string;
+    env: Record<string, string>;
+    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
+  } {
+    return {
       imageName: this.opts.imageName,
-      mounts: [{ hostPath: this.opts.skillsMount, sandboxPath: "/skills" }],
-    });
+      env: { [SANDBOX_SOUL_ENV]: MERGER_SOUL },
+      mounts: [{ hostPath: this.opts.skillsMount, sandboxPath: SANDBOX_SKILLS_DIR }],
+    };
   }
 
   /** Is a git merge in progress (MERGE_HEAD present)? */

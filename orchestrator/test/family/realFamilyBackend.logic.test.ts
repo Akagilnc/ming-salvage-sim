@@ -28,11 +28,13 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  MERGER_SOUL,
   mergerOutcomeFromResult,
   parseMergerOutcome,
   RealFamilyBackend,
   type RealFamilyBackendOptions,
 } from "../../src/family/realFamilyBackend.js";
+import { SANDBOX_SKILLS_DIR, SANDBOX_SOUL_ENV } from "../../src/realBackend.js";
 import type {
   ConflictResolveRequest,
   FamilyVerifyRequest,
@@ -352,6 +354,12 @@ class FakeSeamsBackend extends RealFamilyBackend {
   private get familyBase(): string {
     return this.opts.familyBase;
   }
+
+  // Expose the protected sandbox-config seam so the merger soul injection +
+  // skills-mount path are unit-testable without a real container.
+  public sandboxConfig() {
+    return this.mergerSandboxConfig();
+  }
 }
 
 describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () => {
@@ -421,6 +429,36 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
     b.childLandedFake = true; // and the child IS an ancestor of that wrong HEAD
     const res = await b.resolveMergeConflict({ childIssue: 15, childBranch: "feat/child-15" });
     expect(res.conflicted).toBe(true);
+  });
+});
+
+describe("RealFamilyBackend mergerSandbox baked-soul injection (#291 F28 / ADR 0022)", () => {
+  // F28: the merger conflict fallback follows the "one mirror new soul" model —
+  // the merger soul must be selected the SAME way coder/reviewer are: a baked soul
+  // ACTIVATED via the ORCHESTRATOR_SOUL env (RealBackend.box), NOT a prompt-only
+  // role. Before the fix mergerSandbox() injected NO env, so ORCHESTRATOR_SOUL was
+  // never set → the merger ran under whatever default soul the image entrypoint
+  // picked, not the merger soul.
+  it("injects ORCHESTRATOR_SOUL=merger via the same env mechanism as coder/reviewer", () => {
+    const b = new FakeSeamsBackend(opts(trackRepo()));
+    const cfg = b.sandboxConfig();
+    expect(cfg.env?.[SANDBOX_SOUL_ENV]).toBe(MERGER_SOUL);
+    expect(MERGER_SOUL).toBe("merger");
+  });
+
+  it("uses the profile image and mounts the baked dev skills at the soul-discovery path", () => {
+    // The skills must mount where the agent's soul/skill discovery looks
+    // (SANDBOX_SKILLS_DIR = /home/agent/.claude/skills, the same path RealBackend.box
+    // uses) so the `resolving-merge-conflicts` skill is found — not at an arbitrary
+    // path the agent never scans.
+    const o = opts(trackRepo(), { imageName: "profile-img", skillsMount: "/host/skills" });
+    const b = new FakeSeamsBackend(o);
+    const cfg = b.sandboxConfig();
+    expect(cfg.imageName).toBe("profile-img");
+    expect(cfg.mounts).toContainEqual({
+      hostPath: "/host/skills",
+      sandboxPath: SANDBOX_SKILLS_DIR,
+    });
   });
 });
 
