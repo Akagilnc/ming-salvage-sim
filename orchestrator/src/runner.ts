@@ -25,6 +25,13 @@
  *   pass, so the loop iterates with no runner change. Co-exists with the
  *   escalate stop (#251) and error edges (#252): S5 0-commit → S8(error),
  *   any S5/S6 escalate → S8(escalate).
+ * #331 (ADR 0026 / PRD #330): the runner dispatches every WORKER step
+ *   (S2/S3/S5/S6 agent steps + S7 ship) through the single unified seam
+ *   `dispatchWorker(backend, spec, ctx)` (dispatchWorker.ts) instead of reaching
+ *   for `runStep` / `resumeSession` / `push` directly. PREFACTOR: the seam is a
+ *   thin legacy wrapper forwarding to those methods, so sequence / routing /
+ *   fix-loop behaviour is UNCHANGED (regression green). S7 is now a ship worker
+ *   step, not an inline `git push` (the real `gstack-ship` worker is #336).
  * cmr S254: removed the round-counting MAX_STEPS cap (it limited fix rounds to
  *   ~8, violating US#18 "不因数到某个轮数就停") and replaced it with a
  *   no-progress stuck guard: the loop runs unbounded while it makes progress
@@ -36,9 +43,19 @@
  */
 
 import { route } from "./route.js";
+// The unified worker-dispatch seam (ADR 0026 / PRD #330 #331): the runner
+// dispatches EVERY worker step (S2/S3/S5/S6 agent steps, S7 ship) through ONE
+// free function instead of reaching for runStep/resumeSession/push directly.
+import {
+  dispatchWorker,
+  shipWorkerSpec,
+  stepSpecToWorkerSpec,
+  workerResultToStep,
+} from "./dispatchWorker.js";
 // Shared seam guards — single source of truth, also used by route(), so the
 // finding-element (A) / commitsAdded (B) rules can never drift.
 import {
+  escalateOf,
   isBlockingFinding,
   isValidEscalation,
   isValidReviewerOutput,
@@ -47,6 +64,7 @@ import {
 import type {
   Backend,
   ErrorPackage,
+  Escalation,
   Finding,
   HandoffStatus,
   IssueMeta,
@@ -58,40 +76,17 @@ import type {
   RunResult,
   StepId,
   StepOutput,
-  StepResult,
   StepSpec,
   WorktreeHandle,
 } from "./types.js";
 
 // ─── #256 seam-extension normalisation ───────────────────────────────────────
-
-/**
- * Normalise an agent-step return into `{ output, sessionId }`.
- *
- * #256 widened {@link Backend.runStep} / {@link Backend.resumeSession} from
- * `StepOutput` to `StepOutput | StepResult` (the seam extension). The two shapes
- * are distinguished purely by the `kind` discriminant: a {@link StepOutput} (a
- * CoderOutput / ReviewerOutput) always carries `kind:'coder'|'reviewer'`; a
- * {@link StepResult} wraps the output under `.output` and has NO top-level
- * `kind`. So:
- *   - a value with `kind` → a bare StepOutput (the zero-container fake path) →
- *     `sessionId: undefined` (the ledger falls back to the run-level UUID);
- *   - a value without `kind` → a StepResult (the real Backend) → carries the
- *     real per-step sandbox `sessionId`.
- *
- * Keeping this normalisation OUTSIDE the route()/error control flow is what makes
- * the runner identical for fake and real Backends (#256 "控制流零改动").
- */
-function normalizeStepResult(
-  ret: StepOutput | StepResult,
-): { output: StepOutput; sessionId?: string } {
-  // A StepResult has no top-level `kind`; a StepOutput always does.
-  if (ret != null && typeof ret === "object" && !("kind" in ret)) {
-    const r = ret as StepResult;
-    return { output: r.output, sessionId: r.sessionId };
-  }
-  return { output: ret as StepOutput, sessionId: undefined };
-}
+//
+// #331 (ADR 0026): the runner-local `normalizeStepResult` was removed. The agent
+// dispatch now goes through `dispatchWorker` (dispatchWorker.ts), which normalises
+// the legacy `StepOutput | StepResult` return internally and hands back a
+// discriminated WorkerResult (the runner unwraps `completed` → output + sessionId
+// at the call site). One normalisation, no drift.
 
 /**
  * The BLOCKING reviewer findings from the immediately preceding reviewer step,
@@ -364,10 +359,12 @@ function planResume(
   // escalate ends with S8(escalate) — NOT error — so it still resumes here.)
   const lastIsTaggedError =
     lastEntry.step === "S8" && lastEntry.handoffStatus === "error";
+  const agentEscalate = escalateOf(agentEntry?.output);
   if (
     !lastIsTaggedError &&
-    agentEntry?.output?.escalate != null &&
-    isValidEscalation(agentEntry.output.escalate)
+    agentEntry !== undefined &&
+    agentEscalate != null &&
+    isValidEscalation(agentEscalate)
   ) {
     // Drop the prior terminal handoff (and any entries after the escalated
     // step): we are re-opening that step, so the prior boundary is superseded.
@@ -833,9 +830,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     output: StepOutput | undefined,
     promptFile: string | undefined,
     handoffStatus?: HandoffStatus,
+    /**
+     * #331: the real per-step worker session id, threaded to emitLedger's 5th
+     * arg so an escalated worker's session id is persisted as the ledger
+     * `sessionId` (resume truth) — NOT lost (codex cmr R6 finding). Undefined for
+     * the normal error path (run-level UUID fallback applies, as before).
+     */
+    stepSessionId?: string,
   ): Promise<void> {
     try {
-      await emitLedger(s, output, promptFile, handoffStatus);
+      await emitLedger(s, output, promptFile, handoffStatus, stepSessionId);
     } catch {
       // Swallow: error termination must not be derailed by a ledger I/O fault.
     }
@@ -921,6 +925,54 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     return {
       status: "error",
       errorPackage,
+      stepLedger: ledger,
+      deferredFindings,
+    };
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Terminal ESCALATE handoff for a NON-agent worker step (S7 ship).
+   *
+   * Agent steps (S2/S3/S5/S6) route their `escalated` worker result through
+   * route()'s global escalate edge (via `workerResultToStep` → output.escalate).
+   * S7 is a runner-action boundary route() always maps to success, so a SHIP
+   * worker that escalates (gstack-ship STOP/HITL) must be turned into an
+   * S8(escalate) handoff HERE — not S8(error) (codex cmr R4 finding: a worker
+   * `{kind:"escalated"}` must keep escalate semantics). Mirrors errorTermination's
+   * ledger discipline but tags the S8 entry 'escalate', so a re-feed's planResume
+   * Case 3a reports `terminalStatus:"escalate"` (an honest escalate handoff).
+   *
+   * The worker `sessionId` is PERSISTED on the failing-step entry (resume truth)
+   * so the data for a future human-answer RESUME exists. #331 scope: a re-feed
+   * reports the escalate cleanly; REOPENING the S7 ship worker in its session
+   * (S7 escalate-resume) is #336's concern (the real gstack-ship STOP/HITL with
+   * resume指引) — the legacy ship wrapper never escalates, so #331 needs only the
+   * honest terminal + the recorded session id, not a new S7 resume entry path.
+   */
+  async function escalateTermination(
+    failedStep: StepId,
+    escalation: Escalation,
+    sessionId?: string,
+  ): Promise<RunResult> {
+    if (failedStep !== "S8") {
+      ledger.push({ step: failedStep });
+      // Persist the failing step carrying its REAL worker session id (5th arg —
+      // NOT the promptFile slot; codex cmr R6 finding), so a re-feed reading the
+      // persisted ledger has the true session id for the human-answer resume.
+      await persistBestEffort(failedStep, undefined, undefined, undefined, sessionId);
+    }
+    ledger.push({ step: "S8" });
+    await persistBestEffort("S8", undefined, undefined, "escalate");
+    return {
+      status: "escalate",
+      // Surface the escalation as the error package so the caller can read the
+      // reason/diagnosis (resume指引) — same diagnostic channel, escalate status.
+      errorPackage: {
+        failedStep,
+        reason: `${failedStep} worker escalated: ${escalation.reason} — ${escalation.diagnosis}`,
+        branchHead: worktree?.branch,
+      },
       stepLedger: ledger,
       deferredFindings,
     };
@@ -1259,35 +1311,77 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // rather than a fresh run(). Crash-resume's NEXT step is brand-new work
         // → normal runStep. resumeFor is consumed once, then cleared.
         try {
-          // #256: normalise the seam return (StepOutput | StepResult). The real
-          // Backend yields a StepResult carrying the real per-step sandbox
-          // session id; a fake yields a bare StepOutput (sessionId undefined).
-          let ret: StepOutput | StepResult;
-          // integ-cmr 256 r3 (fix_loop_context): the S5 coder_fix step must
+          // ADR 0026 / #331: dispatch the agent worker through the UNIFIED seam.
+          // The runner no longer reaches for runStep / resumeSession directly —
+          // it hands a WorkerSpec (skill / fresh|resume / soul, derived from the
+          // fixed StepSpec) + a DispatchContext (worktree, the resumed session id,
+          // the round's fix_now findings) to dispatchWorker, and routes by the
+          // discriminated WorkerResult. #331 prefactor: dispatchWorker forwards to
+          // the legacy runStep/resumeSession (behaviour unchanged).
+          //
+          // integ-cmr 256 r3 (fix_loop_context): the S5 coder_fix worker must
           // RECEIVE the round's reviewer fix_now findings so the coder knows what
           // to fix (US#13). The findings live in lastOutput — the immediately
           // preceding reviewer step (S3 for round 1, the prior S6 thereafter). We
-          // hand ONLY the fix_now subset (defer findings do not drive a fix) to
-          // the S5 dispatch; every other step gets undefined (unchanged seam).
+          // hand ONLY the fix_now subset (defer findings do not drive a fix); every
+          // other step passes undefined.
           const fixNowFindings =
             step === "S5" ? selectFixNowFindings(lastOutput) : undefined;
+          // Escalate-resume (#255): when resuming this step in its original agent
+          // session (a human answered an escalation), thread the recorded
+          // sessionId into the DispatchContext (session:"resume" worker). Crash-
+          // resume's NEXT step is brand-new work → no resumeSessionId. resumeFor is
+          // consumed once, then cleared.
+          let resumeSessionId: string | undefined;
           if (resumeFor !== undefined && resumeFor.step === step) {
-            const sid = resumeFor.sessionId;
+            resumeSessionId = resumeFor.sessionId;
             resumeFor = undefined;
-            ret = await backend.resumeSession(
+          }
+          // The dispatch mode is `resume` ONLY when actually threading a recorded
+          // sessionId (the crash/escalate-resume path); a normal S2/S5 round is
+          // `fresh` (ADR 0026 — a normal fix keeps git-truthing, never the resume
+          // path). Context retention for the coder is a SEPARATE spec field.
+          const result = await dispatchWorker(
+            backend,
+            stepSpecToWorkerSpec(
               STEP_SPECS[step],
+              resumeSessionId !== undefined ? "resume" : "fresh",
+            ),
+            {
               worktree,
-              sid,
-              fixNowFindings,
-            );
-          } else {
-            ret = await backend.runStep(
-              STEP_SPECS[step],
-              worktree,
-              fixNowFindings,
+              ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
+              ...(fixNowFindings !== undefined
+                ? { prevFindings: fixNowFindings }
+                : {}),
+            },
+          );
+          // Unwrap the discriminated WorkerResult into the StepOutput the existing
+          // #256/route/validate flow consumes (workerResultToStep):
+          //   - completed → the structured output (+ real per-step sessionId);
+          //   - escalated → a role-shaped output carrying the escalate, so route()
+          //     takes the GLOBAL escalate edge → S8(escalate) (NOT swallowed as an
+          //     error — the ADR 0018 escalate semantics are preserved);
+          //   - failed / malformed → undefined output + a reason → S8(error).
+          // #331 prefactor: the legacy wrapper only ever yields `completed`; the
+          // escalated/failed/malformed mappings are exercised by the real workers
+          // (#334). Wiring them HERE (not a flat errorTermination) keeps the
+          // escalate edge correct for the dependent slices.
+          const { unwrapped, reason } = workerResultToStep(
+            result,
+            STEP_SPECS[step].role === "coder" ? "coder" : "reviewer",
+          );
+          if (unwrapped === undefined) {
+            return await errorTermination(
+              step,
+              new Error(
+                `worker ${step} returned ${result.kind}: ${reason ?? "no reason"}`,
+              ),
             );
           }
-          const normalized = normalizeStepResult(ret);
+          const normalized =
+            "output" in unwrapped && !("kind" in unwrapped)
+              ? { output: unwrapped.output, sessionId: unwrapped.sessionId }
+              : { output: unwrapped as StepOutput, sessionId: undefined };
           output = normalized.output;
           stepSessionId = normalized.sessionId;
         } catch (err) {
@@ -1308,7 +1402,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // error is attributed to the escalate edge, the real fault).
         const expectedKind =
           STEP_SPECS[step].role === "coder" ? "coder" : "reviewer";
-        const carriesEscalate = output != null && output.escalate != null;
+        const stepEscalate = escalateOf(output);
+        const carriesEscalate = stepEscalate != null;
         if (!carriesEscalate) {
           // #5 + integ-cmr base r2 (A, B): only when there is NO escalate does
           // the output have to satisfy the full role contract — not just kind.
@@ -1352,7 +1447,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           if (step === "S3" && output.kind === "reviewer") {
             prevFindingsKey = normalizeFindingsKey(output.findings);
           }
-        } else if (!isValidEscalation(output.escalate)) {
+        } else if (!isValidEscalation(stepEscalate)) {
           // Carries a non-null but malformed escalate: do not run the role
           // schema (so attribution lands on the escalate edge). route() will
           // map it to S8(error) (F1). Still record it as the in-flight output.
@@ -1392,7 +1487,40 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           break;
         }
         try {
-          await backend.push(worktree);
+          // ADR 0026 / #331: S7 is now a SHIP worker dispatched through the
+          // unified seam (no longer an inline `backend.push`). #331 prefactor: the
+          // legacy wrapper forwards the ship worker to `backend.push` (behaviour
+          // unchanged); #336 makes it invoke `gstack-ship`.
+          const shipResult = await dispatchWorker(backend, shipWorkerSpec(), {
+            worktree,
+          });
+          // A ship worker that ESCALATES (gstack-ship STOP/HITL) is an
+          // S8(escalate) handoff, NOT an error — keep the escalate semantics so
+          // the human-answer resume re-opens it (codex cmr R4 finding). #331's
+          // legacy wrapper never escalates; the real ship worker (#336) does.
+          if (shipResult.kind === "escalated") {
+            return await escalateTermination(
+              "S7",
+              shipResult.escalation,
+              shipResult.sessionId,
+            );
+          }
+          // Otherwise the ship worker must return a `completed` result carrying a
+          // SHIP payload — a `completed` result whose output is some other kind (a
+          // mis-wired new-seam backend) or a failed/malformed result is NOT a
+          // successful ship and must not route to S8(success) (codex cmr R2:
+          // guard the output kind, as the agent steps + family cmr stage do).
+          if (shipResult.kind !== "completed" || shipResult.output.kind !== "ship") {
+            return await errorTermination(
+              "S7",
+              new Error(
+                `ship worker returned ${shipResult.kind}` +
+                  (shipResult.kind === "completed"
+                    ? ` with non-ship output kind '${shipResult.output.kind}'`
+                    : ` (${"reason" in shipResult ? shipResult.reason : "unknown"})`),
+              ),
+            );
+          }
         } catch (err) {
           // Push failure → S8(error) with branch head so dev can diagnose
           // without losing the commits already on the resident branch (#252).
