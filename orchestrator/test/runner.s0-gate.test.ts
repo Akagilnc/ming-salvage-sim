@@ -1,9 +1,12 @@
 /**
- * S0 input gate tests (#248).
+ * S0 input gate tests (#248; relaxed per the design decision — the Agent Brief is
+ * NOT a gate).
  *
- * Verifies the four-way reject logic: each non-compliant IssueMeta triggers
- * a distinct error and stops at S0 — no downstream Backend methods are called.
- * A fully compliant issue (including a leaf with a parent) passes through to S1.
+ * Verifies the THREE-way reject logic: a non-rfa issue, a parent (has sub-issues),
+ * or an open blocked_by each triggers a distinct error and stops at S0 with no
+ * downstream Backend calls. A MISSING `## Agent Brief` does NOT gate — the run
+ * proceeds to S1 (the coder reads the whole issue). A fully compliant issue
+ * (including a leaf with a parent) passes through to S1.
  */
 
 import { describe, expect, it } from "vitest";
@@ -110,7 +113,7 @@ const COMPLIANT_META: IssueMeta = {
 
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Reject cases — four distinct non-compliant IssueMeta shapes
+// Reject cases — three distinct non-compliant IssueMeta shapes
 // ──────────────────────────────────────────────────────────────────────────────
 
 describe("S0 input gate — reject cases (#248)", () => {
@@ -128,17 +131,25 @@ describe("S0 input gate — reject cases (#248)", () => {
     expect(backend.calls).toEqual(["fetchIssueMeta(248)"]);
   });
 
-  it("(b) no Agent Brief: rejects and stops at S0 with a clear error", async () => {
+  it("(b) no Agent Brief: PASSES S0 — a slice need not carry the brief (design: to-issues 切片未必有这段; 工具不能这么死板; coder 读整个 issue)", async () => {
+    // DESIGN DECISION (user, 设计 session): the Agent Brief is NOT an S0 gate. A
+    // `to-issues` slice may not carry a `## Agent Brief` section, and the gate must
+    // not be rigid about it — the coder reads the WHOLE issue (body + comments), not
+    // one section. So a missing brief must NOT stop the run at S0; it proceeds to S1.
     const backend = new GateTestBackend({
       ...COMPLIANT_META,
       hasAgentBrief: false,
     });
 
-    await expect(
-      runOrchestrator({ issueNumber: 248, backend }),
-    ).rejects.toThrow(/agent brief/i);
-
-    expect(backend.calls).toEqual(["fetchIssueMeta(248)"]);
+    // S0 does NOT reject on a missing brief — it advances to S1 (fetchIssueSnapshot).
+    // It resolves (the stub coder's committed:false routes to an S8 error RESULT,
+    // never a throw), so `await` it directly — NO `.catch` (online R1 Gemini): a
+    // bare `.catch(()=>{})` would swallow a real reject (e.g. an S0/S1 runtime crash,
+    // or a regression that re-adds the brief throw), masking the very failure this
+    // test guards against.
+    await runOrchestrator({ issueNumber: 248, backend });
+    expect(backend.calls).toContain("fetchIssueSnapshot(248)");
+    expect(backend.calls.length).toBeGreaterThan(1); // not stopped at the gate
   });
 
   it("(c) parent issue (has sub-issues): rejects and stops at S0 with a clear error", async () => {
@@ -185,7 +196,6 @@ describe("S0 input gate — reject cases (#248)", () => {
   it("each reject case produces a DIFFERENT error message (distinguishable)", async () => {
     const cases: [string, IssueMeta][] = [
       ["non-rfa", { ...COMPLIANT_META, isReadyForAgent: false }],
-      ["no-brief", { ...COMPLIANT_META, hasAgentBrief: false }],
       ["has-sub-issues", { ...COMPLIANT_META, hasSubIssues: true }],
       ["blocked", { ...COMPLIANT_META, openBlockedBy: [99] }],
     ];
@@ -202,10 +212,10 @@ describe("S0 input gate — reject cases (#248)", () => {
       messages.push(msg);
     }
 
-    // All four messages are non-empty and mutually distinct.
+    // All three messages are non-empty and mutually distinct.
     expect(messages.every((m) => m.length > 0)).toBe(true);
     const unique = new Set(messages);
-    expect(unique.size).toBe(4);
+    expect(unique.size).toBe(3);
   });
 });
 

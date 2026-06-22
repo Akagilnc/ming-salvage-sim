@@ -10,7 +10,7 @@
  * Slice #254: S5→S6→S4 fix-loop back-edge (S5 0-commit→error mirrors S2).
  *
  * Remaining TODOs (each labelled inline):
- *   #248 — S0 real gate (rfa ∧ Agent Brief ∧ no sub-issues ∧ blocked_by closed)
+ *   #248 — S0 real gate (rfa ∧ no sub-issues ∧ blocked_by closed)
  *   #251 — escalate global stop edge (checked FIRST, before the switch)
  *   #252 — S2/S5 0-commit→error, S7 push-failure→error
  */
@@ -88,7 +88,7 @@ export function route(ctx: RouteContext): RouteDecision {
     case "S0":
       // S0 input_gate passed → load context.
       // Gate is implemented in runner.ts: rejects non-compliant issues before
-      // reaching this edge (rfa ∧ Agent Brief ∧ no sub-issues ∧ blocked_by closed).
+      // reaching this edge (rfa ∧ no sub-issues ∧ blocked_by closed).
       return { kind: "next", step: "S1" };
 
     case "S1":

@@ -133,8 +133,8 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 
 ### agent brief —— ready-for-agent 的契约
 
-> [!important] brief 是契约，原 issue body + 讨论只是 context
-> issue 移到 `ready-for-agent` 时发一条结构化评论，那才是 AFK agent 工作的权威规格。
+> [!important] brief（存在时）是最权威契约；**可选**——无 brief 则以整个 issue（body + 讨论）为准
+> issue 移到 `ready-for-agent` 时若发一条结构化 `## Agent Brief` 评论，那是 AFK agent 工作的最权威规格。但 brief **不是强制**（用户 2026-06-22 拍：`to-issues` 切片未必带它、工具不能这么死板）：编排器 S0 闸不因缺 brief 拒收，coder **读整个 issue**（body + 全部 comments）实现，brief 在则为其中最权威、durable 的那部分。
 
 **四原则**：① **durability over precision**——不写文件路径/行号（会过时），写接口/类型/行为契约、点名 symbol；② **behavioral not procedural**——写做什么不写怎么改；③ 完整可测验收；④ 显式 out-of-scope 防镀金。
 
@@ -188,7 +188,7 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 
 - **为什么状态活 label 不挂散文进度**：散文 checkbox（带 #N 链接但非 tracked task）GitHub 不自动滚、必过时，得人手维护 = treadmill。**实证**：本项目 release 清单 #96 全是散文状态（「设计待定/开发待接」），必然过时、靠人重写同步。改用 label + open/close（或纯 `- [ ] #N` tracked）后，关 issue 即更新、永不 stale。**body 放稳定 spec，状态交给 label/开关。**
 
-- **为什么 brief 是契约、不是 body**：issue 在 `ready-for-agent` 可能躺几天几周，代码同时在变；body 引文件路径/行号会过时。brief 写成 durable（behavioral、点 symbol 不点路径）= agent fresh 探码也接得住的合同。
+- **为什么 brief（存在时）最权威——但可选、不替代整个 issue**：issue 在 `ready-for-agent` 可能躺几天几周，代码同时在变；body 引文件路径/行号会过时。brief 写成 durable（behavioral、点 symbol 不点路径）= agent fresh 探码也接得住的合同，所以**有 brief 时它是最权威的那部分**。但 brief **不强制**——`to-issues` 切片未必带它；没 brief 时 agent 读**整个 issue**（body + 全部讨论）实现，工具不因缺它而死板拒收。
 
 - **为什么薄、独立、垂直切片**：这是**并行的前提**。横切（先全层）互相依赖、并行不起来；薄独立垂直 + issue 化 → 多 session 各抓不同 issue 真并行。**实证**：本项目脊柱写着「默认全部并行」却从没并行过——根因不是机制坏，是**从没切出多个独立切片**（粗块单功能 + 自跑例外吃掉大半 + 没 issue 化跨 session 无抓手）。**切得碎不碎是设计侧的活，是「能不能并行」的总开关。**
 
