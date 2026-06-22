@@ -8,7 +8,8 @@ this worktree. You have no network. **Do not modify, stage, or commit anything.*
 ## Your job
 
 This is a FULL re-review, not a diff-of-the-fix: judge the slice as it now
-stands against the `## Agent Brief`.
+stands against the issue's spec — the whole issue (body + comments); the
+`## Agent Brief`, when present, is the most-authoritative part (it is optional).
 
 - Confirm each prior `fix_now` finding is genuinely resolved (not papered over).
 - Catch any NEW issue the fix introduced (a regression, a new scope leak).
