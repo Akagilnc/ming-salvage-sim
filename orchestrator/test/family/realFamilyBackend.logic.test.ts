@@ -329,6 +329,55 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
   });
 });
 
+// ════════ 3b. construction-time prompt validation (gap g, same-type C-3) ═══════
+//
+// RealBackend (single slice) validates promptsDir at construction (C-3): every
+// REFERENCED_PROMPT_FILES entry, derived from the worker specs, must exist or the
+// constructor throws — a missing prompt surfaces THERE, not deep in the first
+// sandbox.run(). RealFamilyBackend lazily resolves its 3 family prompts
+// (integrated_cmr.md / family_ship.md / merger_resolve_conflict.md) at dispatch
+// time, so a missing one would only blow up at run time. These tests pin the
+// SAME construction-time net at the family layer.
+describe("RealFamilyBackend construction-time prompt validation (gap g, same-type C-3)", () => {
+  /** A promptsDir holding exactly the named family prompt files. */
+  function promptsDirWith(files: string[]): string {
+    const dir = mkdtempSync(join(tmpdir(), "rfb-prompts-"));
+    ledgerDirs.push(dir); // reuse the afterEach cleanup list
+    for (const f of files) {
+      execFileSync("bash", ["-c", `printf '%s' 'x' > '${join(dir, f)}'`]);
+    }
+    return dir;
+  }
+
+  it("throws when the family promptsDir is missing a family prompt file", () => {
+    const repo = trackRepo();
+    // Has integrated_cmr.md + merger_resolve_conflict.md but NOT family_ship.md.
+    const dir = promptsDirWith(["integrated_cmr.md", "merger_resolve_conflict.md"]);
+    expect(() => new RealFamilyBackend(opts(repo, { promptsDir: dir }))).toThrow(
+      /family_ship\.md/,
+    );
+  });
+
+  it("throws when promptsDir is a relative path (Sandcastle resolves promptFile against process.cwd())", () => {
+    const repo = trackRepo();
+    expect(() => new RealFamilyBackend(opts(repo, { promptsDir: "prompts" }))).toThrow(
+      /ABSOLUTE/,
+    );
+  });
+
+  it("throws when promptsDir does not exist", () => {
+    const repo = trackRepo();
+    expect(() =>
+      new RealFamilyBackend(opts(repo, { promptsDir: join(tmpdir(), "rfb-does-not-exist-xyz") })),
+    ).toThrow(/does not exist/);
+  });
+
+  it("constructs cleanly when all 3 family prompts are present (the real prompts dir)", () => {
+    const repo = trackRepo();
+    expect(() => new RealFamilyBackend(opts(repo))).not.toThrow();
+  });
+});
+
 // ═══════════════════ 4. resolveMergeConflict (sc.run seam) ═══════════════════
 
 /** A subclass that fakes the external seams (merger agent / verify / cmr / sh). */
