@@ -65,6 +65,7 @@ import {
   branchForIssue,
   modelIdForSlug,
   SANDBOX_CODEX_DIR,
+  SANDBOX_GH_TOKEN_ENV,
   SANDBOX_SKILLS_DIR,
   SANDBOX_SOUL_ENV,
 } from "../realBackend.js";
@@ -981,16 +982,37 @@ export class RealFamilyBackend implements FamilyBackend {
     // `sc.run` (NOT a structured escalate), bypassing the WorkerResult routing
     // (dispatchShipWorker → verifyCmr only handle the RETURNED result, never a thrown
     // startup error — a fail-open that crashes the gate rather than honestly
-    // escalating). codex/gh auth stays best-effort (it only degrades the push/PR
-    // creds, not the worker's ability to start). Preflight BEFORE any container work
-    // (the checkout + focus write below) so a no-token host escalates cleanly. Mount
-    // once and reuse for the sandbox (no double-mount).
+    // escalating). gh auth is ALSO preflighted below (cmr S336 r10): it is
+    // load-bearing for `gh pr create` (the family delivery), NOT a degradable leg.
+    // Only codex auth stays best-effort (in-container diff review). Preflight BEFORE
+    // any container work (the checkout + focus write below) so a no-token host
+    // escalates cleanly. Mount once and reuse for the sandbox (no double-mount).
     const auth = this.mountShipAuth();
     if (auth.claudeToken === undefined) {
       return {
         kind: "escalate",
         reason: "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the ship worker cannot start",
         diagnosis: "ship worker cannot start without CLAUDE_CODE_OAUTH_TOKEN",
+      };
+    }
+    // FAIL-CLOSED on gh auth (cmr S336 r10): the family delivery's ONLY accepted
+    // outcome is "pr_opened" (family_ship.md) — gstack-ship reaches it via `gh pr
+    // create --base`. The 2b image bakes the gh CLI but no gh auth, so a no-gh host
+    // would run the whole pipeline only to fail at `gh pr create` (an opaque late
+    // failure, not the cleaner escalate续跑). codex auth stays best-effort. Preflight
+    // BEFORE the checkout / focus write / container — symmetric with the single-slice
+    // path. The token is read via `gh auth token` (OS keyring, not a portable file)
+    // and injected as GH_TOKEN by shipSandboxConfig.
+    if (auth.ghToken === undefined) {
+      return {
+        kind: "escalate",
+        reason: "no gh auth (GH_TOKEN) — the family ship worker cannot `gh pr create`",
+        diagnosis:
+          "the family ship worker invokes gstack-ship, whose family delivery is a PR " +
+          "(`gh pr create --base`); the 2b image bakes the gh CLI but no gh auth. " +
+          "Provide a host gh login (`gh auth login`) so `gh auth token` yields a token " +
+          "to inject as GH_TOKEN. Escalating here keeps the escalate续跑 semantics (a " +
+          "late in-container `gh pr create` failure would surface as an opaque error).",
       };
     }
     // Check out the family base so gstack-ship delivers the RIGHT branch.
@@ -1100,11 +1122,13 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
-   * Copy the ship worker's host credentials into a per-run dir the ship sandbox
-   * mounts (#336): the codex auth dir + the claude OAuth token. The ship worker is
-   * the container's TOP-LEVEL claude (so the claude token is its OWN auth) and
-   * pushes + `gh pr create` (so it needs codex/gh creds). Best-effort per source
-   * (mirrors `mountCmrAuth`): a missing source degrades that mount, never crashes.
+   * Gather the ship worker's host credentials (#336): the codex auth dir (mounted),
+   * the claude OAuth token (env), and the gh OAuth token (`gh auth token` → GH_TOKEN
+   * env, cmr S336 r10 — `gh pr create` needs it; the 2b image bakes gh but no gh
+   * auth). The worker is the container's TOP-LEVEL claude (so the claude token is its
+   * OWN auth). Gathering is fail-soft per source (a missing one ⇒ undefined); the
+   * REQUIRE gates (claude + gh) live in `runShipWorker`'s preflight, the codex leg
+   * degrades silently.
    */
   protected mountShipAuth(): ShipAuth {
     const home = this.opts.home ?? homedir();
@@ -1123,7 +1147,8 @@ export class RealFamilyBackend implements FamilyBackend {
       }
       codexAuthDir = dir;
     } catch {
-      // codex auth absent ⇒ the codex/gh leg degrades (no mount).
+      // codex auth absent ⇒ the codex leg degrades (no mount). gh is NOT here — it is
+      // the separate, preflighted ghToken (cmr S336 r10).
     }
     let claudeToken: string | undefined;
     try {
@@ -1131,7 +1156,25 @@ export class RealFamilyBackend implements FamilyBackend {
     } catch {
       // claude token absent ⇒ the top-level claude worker degrades (no env var).
     }
-    return { codexAuthDir, claudeToken };
+    return { codexAuthDir, claudeToken, ghToken: this.readGhToken() };
+  }
+
+  /**
+   * Read the host's gh OAuth token via `gh auth token` (cmr S336 r10) — the same
+   * extraction the single-slice ship uses (`RealBackend.readGhToken`). The token
+   * lives in the host's OS keyring (not a portable hosts.yml), so we extract it with
+   * gh itself and inject it as {@link SANDBOX_GH_TOKEN_ENV}. Returns undefined when gh
+   * is unauthenticated / absent (the `runShipWorker` preflight then escalates — gh is
+   * a hard requirement for the family PR). `protected` so a unit test stubs it.
+   */
+  protected readGhToken(): string | undefined {
+    try {
+      const tok = this.sh("gh", ["auth", "token"]).trim();
+      return tok === "" ? undefined : tok;
+    } catch {
+      // gh unauthenticated / absent ⇒ no token; runShipWorker escalates.
+      return undefined;
+    }
   }
 
   /**
@@ -1139,8 +1182,8 @@ export class RealFamilyBackend implements FamilyBackend {
    * seam (mirrors `cmrSandboxConfig` / `RealBackend.shipSandboxConfig`). No
    * container, no I/O: a unit test asserts the mounts + soul env. The ship worker
    * runs under the WRITE (`coder`) soul (it commits the bump + pushes), with codex
-   * auth + the claude token, NO skills mount (the 2b image BAKES gstack-ship — a
-   * runtime mount would SHADOW it, #334).
+   * auth + the claude token + the gh token (GH_TOKEN, cmr S336 r10), NO skills mount
+   * (the 2b image BAKES gstack-ship — a runtime mount would SHADOW it, #334).
    */
   protected shipSandboxConfig(auth: ShipAuth): {
     imageName: string;
@@ -1149,6 +1192,10 @@ export class RealFamilyBackend implements FamilyBackend {
   } {
     const env: Record<string, string> = { [SANDBOX_SOUL_ENV]: SHIP_SOUL };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
+    // cmr S336 r10: the in-container `gh pr create` (the family delivery) reads
+    // GH_TOKEN. Set only when present (the pure seam stays tolerant; the REQUIRE-gh
+    // gate is the runShipWorker preflight — symmetric with the single-slice path).
+    if (auth.ghToken !== undefined) env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
     const mounts: { hostPath: string; sandboxPath: string }[] = [];
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
@@ -1352,16 +1399,24 @@ export interface CmrAuth {
 }
 
 /**
- * The family ship worker's auth (#336), each source BEST-EFFORT (mirrors
- * {@link CmrAuth}): the codex auth dir (codex/gh credentials for the push + PR) and
- * the claude OAuth token (the top-level claude worker's own auth). A missing source
- * degrades that mount/env rather than crashing the ship gate.
+ * The family ship worker's auth (#336). The codex dir is BEST-EFFORT (mirrors
+ * {@link CmrAuth} — it only feeds the in-container diff review); the claude token
+ * (the top-level worker's own auth) and the gh token (the `gh pr create` the family
+ * delivery requires) are LOAD-BEARING — `runShipWorker` preflights both and escalates
+ * when either is absent (cmr S336 r8 + r10). A missing codex source degrades that
+ * mount rather than crashing the gate.
  */
 export interface ShipAuth {
   /** Per-run codex auth dir (host-mirrored `~/.codex`), or undefined if absent. */
   readonly codexAuthDir?: string;
   /** The claude OAuth token (env var), or undefined if absent. */
   readonly claudeToken?: string;
+  /**
+   * The gh OAuth token (`gh auth token` on the host → {@link SANDBOX_GH_TOKEN_ENV}
+   * env), or undefined if absent. NOT best-effort: the family delivery is a PR
+   * (`gh pr create`), so `runShipWorker` preflights it and escalates when absent.
+   */
+  readonly ghToken?: string;
 }
 
 /**

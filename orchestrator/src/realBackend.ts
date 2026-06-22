@@ -427,6 +427,17 @@ export const SANDBOX_SKILLS_DIR = "/home/agent/.claude/skills";
 export const SANDBOX_SOUL_ENV = "ORCHESTRATOR_SOUL";
 
 /**
+ * The env var the ship worker's in-container `gh` reads for auth (cmr S336 r10).
+ * The 2b image BAKES the gh CLI but NO gh auth (a live OAuth secret). gstack-ship
+ * Step 17 pushes over https (gh credential helper) + Step 19 runs `gh pr create`,
+ * both of which gh authenticates from `GH_TOKEN`. We inject the host token (read via
+ * `gh auth token`) as this env var rather than mounting `~/.config/gh`: the host
+ * stores its token in the OS keyring, so `hosts.yml` is TOKENLESS and a config-dir
+ * mount would carry no usable credential — `GH_TOKEN` is gh's portable env-auth path.
+ */
+export const SANDBOX_GH_TOKEN_ENV = "GH_TOKEN";
+
+/**
  * Host paths for the per-issue codex auth copy + the claude token (spike
  * contract). codex auth MUST live under $HOME (colima shares $HOME into the
  * Docker VM; $TMPDIR is NOT shared → a tmp copy mounts root-owned/empty →
@@ -459,6 +470,13 @@ export interface ShipAuth {
   readonly codexAuthDir?: string;
   /** The claude OAuth token (env var), or undefined if absent. */
   readonly claudeToken?: string;
+  /**
+   * The gh OAuth token (`gh auth token` on the host → {@link SANDBOX_GH_TOKEN_ENV}
+   * env), or undefined if absent. Unlike the codex leg this is NOT best-effort: the
+   * ship worker's happy path pushes + `gh pr create`, both of which need it — so
+   * `runShipWorker` preflights it and escalates when absent (cmr S336 r10).
+   */
+  readonly ghToken?: string;
 }
 
 export function buildAuthPaths(
@@ -2118,22 +2136,46 @@ export class RealBackend implements Backend {
     // FAIL-CLOSED on the WORKER's OWN auth (cmr S336 r8, mirroring the family ship
     // preflight + the cmr worker's claude-token guard): the ship worker is the
     // container's TOP-LEVEL claude (`agent: sc.claudeCode` below), so the Claude
-    // OAuth token is NOT a degradable codex/gh LEG — it is THIS worker's auth.
+    // OAuth token is NOT a degradable codex LEG — it is THIS worker's auth.
     // Absent, the worker cannot start and never emits a `<ship>` verdict; that would
     // throw out of `sc.run` (NOT a structured escalate). runner S7 DOES wrap this
     // dispatch in a try/catch → errorTermination (so a thrown start would not
     // crash the host outright), but an UNCAUGHT start-error is read as S8(error), not
     // the cleaner escalate续跑 the missing-auth case deserves (a human must supply the
     // token, not "the ship command failed"). So preflight and return a structured
-    // escalate BEFORE the container — symmetric with the family path. codex/gh auth
-    // stays best-effort (it only degrades the push/PR creds). Mount once and reuse
-    // for the sandbox (no double-mount).
+    // escalate BEFORE the container — symmetric with the family path. The gh token is
+    // ALSO preflighted below (cmr S336 r10): it is load-bearing for the push +
+    // `gh pr create`, NOT a degradable leg — the 2b image bakes the gh CLI but no gh
+    // auth, so a no-gh host must escalate, not fail late in-container. Only codex auth
+    // stays best-effort (it merely degrades the in-container diff review). Mount once
+    // and reuse for the sandbox (no double-mount).
     const auth = this.mountShipAuth(this.issueOf(worktree));
     if (auth.claudeToken === undefined) {
       return {
         kind: "escalate",
         reason: "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the ship worker cannot start",
         diagnosis: "ship worker cannot start without CLAUDE_CODE_OAUTH_TOKEN",
+      };
+    }
+    // FAIL-CLOSED on gh auth (cmr S336 r10): UNLIKE the codex leg (best-effort — it
+    // only degrades the in-container diff review), gh auth is LOAD-BEARING for the
+    // ship itself — gstack-ship Step 17 pushes over https (gh credential helper) and
+    // Step 19 runs `gh pr create`. The 2b image bakes the gh CLI but no gh auth, so a
+    // no-gh host would run the whole pipeline only to fail at push / `gh pr create` —
+    // an opaque late failure, not the cleaner escalate续跑 (a human must supply gh
+    // creds). So preflight it like the claude token (r8) and escalate BEFORE the
+    // container. The host token is read via `gh auth token` (it lives in the OS
+    // keyring, not a portable file) and injected as GH_TOKEN by shipSandboxConfig.
+    if (auth.ghToken === undefined) {
+      return {
+        kind: "escalate",
+        reason: "no gh auth (GH_TOKEN) — the ship worker cannot push / `gh pr create`",
+        diagnosis:
+          "the ship worker invokes gstack-ship, which pushes over https + runs " +
+          "`gh pr create`; the 2b image bakes the gh CLI but no gh auth. Provide a " +
+          "host gh login (`gh auth login`) so `gh auth token` yields a token to inject " +
+          "as GH_TOKEN. Escalating here keeps the escalate续跑 semantics (a late " +
+          "in-container `gh pr create` failure would surface as an opaque S8 error).",
       };
     }
     const result = await sc.run({
@@ -2155,11 +2197,11 @@ export class RealBackend implements Backend {
 
   /**
    * The ship worker's sandbox: the 2b image (gstack-ship + gh + bun baked in,
-   * #333) under the WRITE (`coder`) soul, with the codex auth + claude token mounted
-   * (the SAME auth wiring `box()` uses — the ship worker pushes + `gh pr create`, so
-   * it needs the live credentials). Takes the ALREADY-mounted {@link ShipAuth}
-   * (mirrors the family `shipSandbox`) so `runShipWorker` mounts once: preflight the
-   * claude token THEN build the sandbox from the same auth (no double-mount).
+   * #333) under the WRITE (`coder`) soul, with the codex auth mounted + the claude
+   * and gh tokens injected as env (the ship worker pushes + `gh pr create`, so it
+   * needs the live credentials). Takes the ALREADY-gathered {@link ShipAuth} (mirrors
+   * the family `shipSandbox`) so `runShipWorker` gathers once: preflight the claude +
+   * gh tokens THEN build the sandbox from the same auth (no double-gather).
    * `protected` so a unit test asserts the mounts + soul without a real container.
    */
   protected shipSandbox(auth: ShipAuth): sc.SandboxProvider {
@@ -2167,16 +2209,17 @@ export class RealBackend implements Backend {
   }
 
   /**
-   * Copy the ship worker's host credentials into per-run material the ship sandbox
-   * mounts (#336 cmr S336 r1) — BEST-EFFORT per source (mirrors the family
-   * `mountShipAuth`): the codex auth dir + the claude OAuth token, each in its OWN
-   * try/catch so a MISSING source degrades only that leg and never crashes the ship.
+   * Gather the ship worker's host credentials (#336 cmr S336 r1): the codex auth dir
+   * (mounted), the claude OAuth token (env), and the gh OAuth token (`gh auth token`
+   * → GH_TOKEN env, cmr S336 r10). Gathering is fail-soft per source (each in its OWN
+   * try/catch ⇒ a missing source is undefined, never a crash here).
    *
    * Unlike the agent-step `mountAuth` (which THROWS on any missing credential), the
-   * ship path is fail-soft: a degraded-auth host can still attempt the ship (the
-   * worker reports the real outcome via its `<ship>` tag) rather than being blocked
-   * before it starts. NOT keyed by issue here for the codex dir — a fresh temp dir
-   * per call keeps it self-contained; the claude token is read straight off the host.
+   * GATHER is tolerant; the REQUIRE gates (claude + gh — both load-bearing for the
+   * ship) live in `runShipWorker`'s preflight, the codex leg degrades silently. NOT
+   * keyed by issue here for the codex dir — a fresh temp dir per call keeps it
+   * self-contained; the claude token is read straight off the host, the gh token via
+   * the gh CLI (it lives in the OS keyring, not a portable file).
    */
   protected mountShipAuth(issueNumber: number): ShipAuth {
     const paths = buildAuthPaths(issueNumber, this.opts.home);
@@ -2195,7 +2238,8 @@ export class RealBackend implements Backend {
       }
       codexAuthDir = dir;
     } catch {
-      // codex auth absent ⇒ the codex/gh leg degrades (no mount), no crash.
+      // codex auth absent ⇒ the codex leg degrades (no mount), no crash. gh is NOT
+      // here — it is the separate, preflighted ghToken (cmr S336 r10).
     }
     let claudeToken: string | undefined;
     try {
@@ -2203,7 +2247,25 @@ export class RealBackend implements Backend {
     } catch {
       // claude token absent ⇒ the top-level claude worker degrades (no env var).
     }
-    return { codexAuthDir, claudeToken };
+    return { codexAuthDir, claudeToken, ghToken: this.readGhToken() };
+  }
+
+  /**
+   * Read the host's gh OAuth token via `gh auth token` (cmr S336 r10). The token
+   * lives in the host's OS keyring (not a portable hosts.yml), so we extract it with
+   * gh itself and inject it as {@link SANDBOX_GH_TOKEN_ENV} into the container.
+   * Returns undefined when gh is unauthenticated / not installed (the `runShipWorker`
+   * preflight then escalates — gh is a hard ship requirement). `protected` so a unit
+   * test stubs it without spawning gh.
+   */
+  protected readGhToken(): string | undefined {
+    try {
+      const tok = this.sh("gh", ["auth", "token"]).trim();
+      return tok === "" ? undefined : tok;
+    } catch {
+      // gh unauthenticated / absent ⇒ no token; runShipWorker escalates.
+      return undefined;
+    }
   }
 
   /**
@@ -2211,9 +2273,10 @@ export class RealBackend implements Backend {
    * SANDBOX-CONFIG seam (mirrors `boxConfig` / the family `shipSandboxConfig`
    * testability). No container, no I/O: a unit test asserts the mounts + soul env
    * without a real sandbox. The ship worker runs under the `coder` (WRITE) soul
-   * (it commits the bump + pushes) with BEST-EFFORT codex auth + claude token (each
-   * set only when present, #336 cmr S336 r1), NO skills mount (the 2b image BAKES
-   * gstack-ship — a runtime mount would SHADOW it, #334).
+   * (it commits the bump + pushes) with codex auth + the claude token + the gh token
+   * (GH_TOKEN — push over https + `gh pr create`, cmr S336 r10), each set only when
+   * present (#336 cmr S336 r1), NO skills mount (the 2b image BAKES gstack-ship — a
+   * runtime mount would SHADOW it, #334).
    */
   protected shipSandboxConfig(auth: ShipAuth): {
     imageName: string;
@@ -2223,6 +2286,10 @@ export class RealBackend implements Backend {
     // The ship worker is a WRITE worker (commits + pushes) → the coder soul.
     const env: Record<string, string> = { [SANDBOX_SOUL_ENV]: "coder" };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
+    // cmr S336 r10: the in-container `gh` (push over https + `gh pr create`)
+    // authenticates from GH_TOKEN. Set only when present (the pure seam stays
+    // tolerant; the REQUIRE-gh gate is the runShipWorker preflight).
+    if (auth.ghToken !== undefined) env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
     const mounts: { hostPath: string; sandboxPath: string }[] = [];
     // #334: codex auth ONLY — baked skills win (no host skills mount).
     if (auth.codexAuthDir !== undefined) {
