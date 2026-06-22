@@ -330,7 +330,7 @@ _Avoid_: 结束标记、done(太泛)
 _Avoid_: 日志、log(太泛)、history
 
 **commander**:
-家族集成层的**确定性波次调度步**(runner 动作步、无 soul、非 LLM)。读父 epic 现成的 GitHub native sub-issues + 显式 blocked_by DAG → 拓扑分波(未阻塞者并发为一波、被阻塞者下波)→ fan-out。**不分解 epic、不建 sub-issue**——切片由 to-issues 在编排器外(design session)切好发布,commander 只调度现成片。区别于原生 parallel-planner Plan stage(那是 LLM「选 unblocked」的选择器、且会重推我们已有的显式 blocked_by,故不采用)。
+家族集成层的**确定性波次调度步**(runner 调度决策、无 soul、非 LLM)。读父 epic 现成的 GitHub native sub-issues + 显式 blocked_by DAG → 拓扑分波(未阻塞者并发为一波、被阻塞者下波)→ fan-out。**不分解 epic、不建 sub-issue**——切片由 to-issues 在编排器外(design session)切好发布,commander 只调度现成片。区别于原生 parallel-planner Plan stage(那是 LLM「选 unblocked」的选择器、且会重推我们已有的显式 blocked_by,故不采用)。
 _Avoid_: 分解器 / planner(它不分解)、原生 Plan stage(它 LLM 选片、本 commander 确定性读现成)
 
 **波次 / wave**:
