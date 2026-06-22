@@ -131,9 +131,11 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
       if (spec.kind === "cmr") {
         return { kind: "completed", output: { kind: "cmr", converged: true } };
       }
+      // Ship the family base branch (the gate re-asserts branch === familyBase,
+      // cmr S336 r4) with a real pr_opened + pr URL.
       return {
         kind: "completed",
-        output: { kind: "ship", branch: "fb", pr: "u", status: "pr_opened" },
+        output: { kind: "ship", branch: "feat/330", pr: "u", status: "pr_opened" },
       };
     }
   }
@@ -180,6 +182,87 @@ describe("#331 the family ship worker must return a SHIP payload (codex R2 guard
       familyBackend: be,
     });
     expect(res).toEqual({ ok: false, ran: true });
+  });
+});
+
+describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship success contract", () => {
+  /**
+   * A new-seam-only backend whose ship worker returns a `completed {kind:"ship"}`
+   * payload that the consumer would (pre-r4) trust on the discriminant ALONE. The
+   * terminal family gate must independently re-assert the family ship contract
+   * (branch === familyBase, status === "pr_opened", pr a non-empty string) — a
+   * backend that implements the seam but ships an off-contract success is a false
+   * family delivery (the PR never opened / opened on the wrong branch).
+   */
+  class OffContractShipFamilyBackend implements FamilyBackend {
+    shipOutput: WorkerResult;
+    constructor(shipOutput: WorkerResult) {
+      this.shipOutput = shipOutput;
+    }
+    async mergeChildIntoFamilyBase(): Promise<never> {
+      throw new Error("not used");
+    }
+    async appendFamilyLedger(): Promise<void> {}
+    async readFamilyLedger(): Promise<[]> {
+      return [];
+    }
+    async runFamilyVerify(): Promise<FamilyVerifyResult> {
+      return { ok: true };
+    }
+    async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+      if (spec.kind === "cmr") {
+        return { kind: "completed", output: { kind: "cmr", converged: true } };
+      }
+      return this.shipOutput;
+    }
+  }
+
+  async function gate(shipOutput: WorkerResult): Promise<FamilyVerifyResult> {
+    return runVerifyCmr({
+      phase: "final",
+      familyBase: "feat/330",
+      familyBackend: new OffContractShipFamilyBackend(shipOutput),
+    });
+  }
+
+  it("a completed ship with status 'pushed' (not pr_opened) ⇒ INCOMPLETE_GATE", async () => {
+    const res = await gate({
+      kind: "completed",
+      output: { kind: "ship", branch: "feat/330", status: "pushed" },
+    });
+    expect(res).toEqual({ ok: false, ran: true });
+  });
+
+  it("a completed ship missing its pr URL ⇒ INCOMPLETE_GATE", async () => {
+    const res = await gate({
+      kind: "completed",
+      output: { kind: "ship", branch: "feat/330", status: "pr_opened" },
+    });
+    expect(res).toEqual({ ok: false, ran: true });
+  });
+
+  it("a completed ship with a blank pr URL ⇒ INCOMPLETE_GATE", async () => {
+    const res = await gate({
+      kind: "completed",
+      output: { kind: "ship", branch: "feat/330", status: "pr_opened", pr: "   " },
+    });
+    expect(res).toEqual({ ok: false, ran: true });
+  });
+
+  it("a completed ship on the WRONG branch (≠ familyBase) ⇒ INCOMPLETE_GATE", async () => {
+    const res = await gate({
+      kind: "completed",
+      output: { kind: "ship", branch: "main", status: "pr_opened", pr: "u" },
+    });
+    expect(res).toEqual({ ok: false, ran: true });
+  });
+
+  it("a completed pr_opened ship on familyBase with a real pr ⇒ ok (the contract holds)", async () => {
+    const res = await gate({
+      kind: "completed",
+      output: { kind: "ship", branch: "feat/330", status: "pr_opened", pr: "https://gh/pr/1" },
+    });
+    expect(res).toEqual({ ok: true, ran: true });
   });
 });
 
