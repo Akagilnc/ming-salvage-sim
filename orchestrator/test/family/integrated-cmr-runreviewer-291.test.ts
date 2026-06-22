@@ -18,10 +18,10 @@
  *     aggregates — converged / findings / a down leg degrade / all-down.
  */
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   DriverFamilyBackend,
@@ -305,5 +305,89 @@ describe("#291 DriverFamilyBackend.runCmr — real 3-leg reviewer orchestration"
     };
     const res = await b.runCmrPublic({ familyBase: "family/291-base" });
     expect(res.converged).toBe(false);
+  });
+});
+
+// ═══════════════════════ 4. spawnReviewer temp-file uniqueness (#291 r2 #5) ═══════════════════════
+
+/**
+ * A DriverFamilyBackend that captures the temp-file path each `spawnReviewer`
+ * picks (the codex `-o <file>` arg and the agy `--log-file` arg), without a real
+ * CLI: `shStdin` records the argv + writes a stub at the codex `-o` file so the
+ * codex `readFileSync` succeeds. Exposes `spawnReviewer` for the test.
+ */
+class TempfileSpyBackend extends DriverFamilyBackend {
+  shStdinArgs: string[][] = [];
+  protected override shStdin(_file: string, args: string[], _input: string, _cwd?: string): string {
+    this.shStdinArgs.push(args);
+    const oIdx = args.indexOf("-o");
+    if (oIdx >= 0 && args[oIdx + 1] !== undefined) {
+      writeFileSync(args[oIdx + 1]!, "CMR-VERDICT: converged");
+    }
+    return "CMR-VERDICT: converged";
+  }
+  async spawnReviewerPublic(vendor: "codex" | "claude" | "agy", prompt: string): Promise<string> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (this as any).spawnReviewer(vendor, prompt);
+  }
+}
+
+function makeTempfileSpy(): TempfileSpyBackend {
+  return new TempfileSpyBackend(
+    {
+      workingRepo: mkDir("cmr-repo-"),
+      familyBase: "family/291-base",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: mkDir("cmr-prompts-"),
+      imageName: "img",
+      skillsMount: "/tmp/skills",
+      familyBaseStartHead: "cut0sha",
+    },
+    undefined,
+  );
+}
+
+describe("#291 spawnReviewer temp-file uniqueness (r2 #5)", () => {
+  it("two codex reviewer spawns in the SAME millisecond pick DISTINCT -o files (no Date.now() collision)", async () => {
+    // r2 #5: the codex out-file was `cmr-codex-${Date.now()}.txt`; two legs spawned
+    // in the SAME millisecond (the real path runs all three concurrently) would
+    // pick the SAME path and clobber each other's last-message file. Pin Date.now to
+    // a constant so the collision is deterministic — the name must carry a per-spawn
+    // unique token beyond the timestamp.
+    const spy = vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    try {
+      const b = makeTempfileSpy();
+      await Promise.all([
+        b.spawnReviewerPublic("codex", "p"),
+        b.spawnReviewerPublic("codex", "p"),
+      ]);
+      const oFiles = b.shStdinArgs
+        .map((a) => a[a.indexOf("-o") + 1])
+        .filter((f): f is string => f !== undefined);
+      expect(oFiles.length).toBe(2);
+      expect(new Set(oFiles).size).toBe(2); // distinct despite identical Date.now()
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("two agy reviewer spawns in the SAME millisecond pick DISTINCT --log-file files", async () => {
+    const spy = vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    try {
+      const b = makeTempfileSpy();
+      await Promise.all([
+        b.spawnReviewerPublic("agy", "p"),
+        b.spawnReviewerPublic("agy", "p"),
+      ]);
+      const logFiles = b.shStdinArgs
+        .map((a) => a[a.indexOf("--log-file") + 1])
+        .filter((f): f is string => f !== undefined);
+      expect(logFiles.length).toBe(2);
+      expect(new Set(logFiles).size).toBe(2);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
