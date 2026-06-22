@@ -114,21 +114,6 @@ export interface GhBlockedBy {
   readonly state: string; // "open" | "closed"
 }
 
-/**
- * Does any comment (or the body) carry a `## Agent Brief` section? The brief is
- * the most-authoritative part of the spec (DEV_WORKFLOW) WHEN present, but it is
- * NOT an S0 gate (design decision — a `to-issues` slice may not carry it). This
- * stays exported so `IssueMeta.hasAgentBrief` can still report its presence; the
- * S0 gate no longer rejects on its absence.
- */
-export function hasAgentBrief(json: GhIssueJson): boolean {
-  const inBody = (json.body ?? "").includes(AGENT_BRIEF_HEADING);
-  const inComments = (json.comments ?? []).some((c) =>
-    (c.body ?? "").includes(AGENT_BRIEF_HEADING),
-  );
-  return inBody || inComments;
-}
-
 /** Is the issue labelled ready-for-agent? */
 export function isReadyForAgent(json: GhIssueJson): boolean {
   return (json.labels ?? []).some((l) => l.name === READY_FOR_AGENT_LABEL);
@@ -138,8 +123,9 @@ export function isReadyForAgent(json: GhIssueJson): boolean {
  * Build the S0 {@link IssueMeta} from the gh JSON + the native blocked_by list +
  * the native sub-issue count. The three-way accept condition the runner enforces
  * is derived from these fields (rfa ∧ no sub-issues ∧ all blocked_by closed).
- * `hasAgentBrief` is still derived here as REPORTED metadata, but it is no longer
- * a gate (design correction — the coder reads the whole issue).
+ * The Agent Brief is NOT read here — it is no longer an S0 gate (#328) and the
+ * vestigial `hasAgentBrief` metadata was dropped (#329); the coder reads the
+ * whole issue from S1's full snapshot (which still carries `extractAgentBrief`).
  *
  * `openBlockedBy` = the numbers of blocked_by dependencies whose state is not
  * "closed" (an open upstream the slice would otherwise be cut from a stale base
@@ -154,7 +140,6 @@ export function buildIssueMeta(
   return {
     number: json.number ?? issueNumber,
     isReadyForAgent: isReadyForAgent(json),
-    hasAgentBrief: hasAgentBrief(json),
     hasSubIssues: subIssueCount > 0,
     openBlockedBy: blockedBy
       .filter((d) => d.state !== "closed")
@@ -1370,6 +1355,11 @@ export class RealBackend implements Backend {
     // a blocked-by-open issue (blocked_by query fault → [] → no blockers → allow)
     // slip past the pinned S0 three-way gate and run from a stale base.
     const json = this.phase("S0", "fetchIssueView", () => {
+      // S0 reads ONLY the gate fields: labels (ready-for-agent) here, plus the
+      // native sub-issue count + blocked_by from their own queries below. It does
+      // NOT pull body/comments — the Agent Brief is no longer an S0 gate (#328),
+      // so `comments` would only trigger gh's paginated preloadIssueComments for
+      // no consumer, and S1's full snapshot re-fetches both anyway (#329 perf).
       const raw = this.sh("gh", [
         "issue",
         "view",
@@ -1377,7 +1367,7 @@ export class RealBackend implements Backend {
         "--repo",
         this.opts.repo,
         "--json",
-        "number,body,labels,comments",
+        "number,labels",
       ]);
       return JSON.parse(raw) as GhIssueJson;
     });

@@ -156,7 +156,6 @@ class SeamRecordingBackend implements Backend {
     return {
       number: n,
       isReadyForAgent: true,
-      hasAgentBrief: true,
       hasSubIssues: false,
       openBlockedBy: [],
     };
