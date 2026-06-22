@@ -48,6 +48,40 @@ describe("#336 parseShipOutcome — the <ship> verdict tag", () => {
     }
   });
 
+  it("status pushed (no pr) + branch — pushed never needs a pr", () => {
+    const o = parseShipOutcome('<ship>{"status": "pushed", "branch": "feat/z"}</ship>');
+    expect(o.kind).toBe("shipped");
+    if (o.kind === "shipped") {
+      expect(o.status).toBe("pushed");
+      expect(o.branch).toBe("feat/z");
+      expect(o.pr).toBeUndefined();
+    }
+  });
+
+  it("status pr_opened + branch + pr ⇒ shipped (the only valid pr_opened shape)", () => {
+    const o = parseShipOutcome(
+      '<ship>{"status": "pr_opened", "branch": "feat/p", "pr": "https://gh/pr/7"}</ship>',
+    );
+    expect(o.kind).toBe("shipped");
+    if (o.kind === "shipped") {
+      expect(o.status).toBe("pr_opened");
+      expect(o.branch).toBe("feat/p");
+      expect(o.pr).toBe("https://gh/pr/7");
+    }
+  });
+
+  it("an UNKNOWN status (with branch) ⇒ malformed (fail-closed, contract is {pr_opened|pushed})", () => {
+    const o = parseShipOutcome('<ship>{"status": "blocked", "branch": "feat/x"}</ship>');
+    expect(o.kind).toBe("malformed");
+    if (o.kind === "malformed") expect(o.reason).toContain("status");
+  });
+
+  it("pr_opened MISSING pr (with branch) ⇒ malformed (a PR opened with no URL is unusable)", () => {
+    const o = parseShipOutcome('<ship>{"status": "pr_opened", "branch": "feat/x"}</ship>');
+    expect(o.kind).toBe("malformed");
+    if (o.kind === "malformed") expect(o.reason).toContain("pr");
+  });
+
   it("an escalate object ⇒ an escalate outcome (a genuine block, not a rerun)", () => {
     const o = parseShipOutcome(
       '<ship>{"escalate": {"reason": "merge conflict", "diagnosis": "cannot auto-resolve base merge"}}</ship>',
