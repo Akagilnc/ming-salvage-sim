@@ -26,6 +26,7 @@
  *     familyDriver module.
  */
 
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -33,10 +34,12 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  CMR_FOCUS_FILENAME,
   cmrOutcomeFromResult,
   parseCmrOutcome,
   RealFamilyBackend,
   SANDBOX_AGY_DIR,
+  type CmrAuth,
   type CmrWorkerOutcome,
 } from "../../src/family/realFamilyBackend.js";
 import {
@@ -280,11 +283,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
 describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable dir)", () => {
   /** Expose the protected pure config seam + a canned-auth path. */
   class ConfigBackend extends RealFamilyBackend {
-    public config(auth: {
-      codexAuthDir: string;
-      agyDir: string;
-      claudeToken: string;
-    }): {
+    public config(auth: CmrAuth): {
       imageName: string;
       env: Record<string, string>;
       mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
@@ -329,6 +328,122 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
 
   it("the antigravity token path is the host-mirrored gemini path (#333 contract)", () => {
     expect(SANDBOX_AGY_DIR).toBe("/home/agent/.gemini/antigravity-cli");
+  });
+
+  it("a leg whose auth is ABSENT degrades — no mount/env, never a crash (codex cmr R1)", () => {
+    // agy token absent ⇒ no agy mount, but the rest still mount (the 降级链).
+    const noAgy = cfgBackend().config({
+      codexAuthDir: "/tmp/cmr-codex-auth",
+      claudeToken: "tok",
+    });
+    expect(noAgy.mounts.some((m) => m.sandboxPath === SANDBOX_AGY_DIR)).toBe(false);
+    expect(noAgy.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
+    expect(noAgy.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok");
+
+    // claude token absent ⇒ no env var (the Claude Agent leg degrades).
+    const noClaude = cfgBackend().config({ codexAuthDir: "/tmp/c", agyDir: "/tmp/a" });
+    expect(noClaude.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    expect(noClaude.env[SANDBOX_SOUL_ENV]).toBe("READ-ONLY");
+
+    // ALL auth absent ⇒ zero mounts, only the soul env — still no throw (the skill
+    // runs and will degrade/escalate in-container, never a host crash).
+    const none = cfgBackend().config({});
+    expect(none.mounts.length).toBe(0);
+    expect(none.env[SANDBOX_SOUL_ENV]).toBe("READ-ONLY");
+  });
+});
+
+// ═══════════════════ 4b. mountCmrAuth — best-effort per leg (codex cmr R1) ═══════════════════
+
+describe("#335 mountCmrAuth — a missing host credential degrades, never throws", () => {
+  /** Expose the protected auth-mount seam, with $HOME pointed at an EMPTY dir. */
+  class AuthBackend extends RealFamilyBackend {
+    public auth(): CmrAuth {
+      return this.mountCmrAuth();
+    }
+  }
+
+  it("an empty $HOME (no codex/agy/claude creds) ⇒ all-undefined auth, no throw", () => {
+    const emptyHome = mkDir("cmr-empty-home-");
+    const be = new AuthBackend({
+      workingRepo: mkDir("cmr-repo-"),
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "ming-orchestrator-coder:latest",
+      home: emptyHome,
+    });
+    let auth: CmrAuth | undefined;
+    expect(() => {
+      auth = be.auth();
+    }).not.toThrow();
+    expect(auth).toEqual({
+      codexAuthDir: undefined,
+      agyDir: undefined,
+      claudeToken: undefined,
+    });
+  });
+});
+
+// ═══════════════════ 4c. writeCmrFocusFile — exact scope + focus (codex cmr R1 F2/F3) ═══════════════════
+
+describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-resolved focus", () => {
+  /** Expose the focus-file seam over a REAL temp git repo (so the exclude path resolves). */
+  class FocusBackend extends RealFamilyBackend {
+    public focus(ctx: { familyBase: string; llmResolvedChildren?: readonly number[] }): void {
+      this.writeCmrFocusFile(ctx as never);
+    }
+  }
+
+  function realRepo(): string {
+    const repo = mkDir("cmr-focus-repo-");
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    return repo;
+  }
+
+  it("pins the cut-SHA scope command + names the machine-resolved children", () => {
+    const repo = realRepo();
+    const be = new FocusBackend({
+      workingRepo: repo,
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+    be.focus({ familyBase: "feat/330-pure-scheduler", llmResolvedChildren: [42, 43] });
+    const body = readFileSync(join(repo, CMR_FOCUS_FILENAME), "utf8");
+    // F3: the exact scope diff is on the recorded cut SHA, NOT main...HEAD.
+    expect(body).toContain("git diff abc123...feat/330-pure-scheduler");
+    // F2: the machine-resolved children are named.
+    expect(body).toContain("#42");
+    expect(body).toContain("#43");
+    // It is git-ignored (info/exclude), so the review never accidentally commits it.
+    const exclude = readFileSync(join(repo, ".git", "info", "exclude"), "utf8");
+    expect(exclude.split("\n")).toContain(CMR_FOCUS_FILENAME);
+  });
+
+  it("no recorded cut SHA ⇒ a fallback scope that flags the stale-base risk", () => {
+    const repo = realRepo();
+    const be = new FocusBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+      // no familyBaseStartHead
+    });
+    be.focus({ familyBase: "fb" });
+    const body = readFileSync(join(repo, CMR_FOCUS_FILENAME), "utf8");
+    expect(body).toContain("git diff main...fb");
+    expect(body.toLowerCase()).toContain("stale");
+    expect(body).toContain("No machine-resolved child merges this run.");
   });
 });
 
