@@ -89,7 +89,8 @@ import type {
 
 // ── gh issue → IssueMeta / IssueSnapshot parsing ────────────────────────────
 
-/** The `## Agent Brief` heading marks the authoritative implementation spec. */
+/** The heading that marks an (optional) `## Agent Brief` section — the
+ *  most-authoritative part of the spec when present, but not required. */
 const AGENT_BRIEF_HEADING = "## Agent Brief";
 /** The label that gates S0 (a triaged, agent-ready slice). */
 const READY_FOR_AGENT_LABEL = "ready-for-agent";
