@@ -328,6 +328,16 @@ export class DriverFamilyBackend extends RealFamilyBackend {
     //    diverged from the target). This is what every leg reviews.
     const diff = this.familyBaseDiff(req.familyBase);
 
+    // #322: CONSUME req.llmResolvedChildren — was plumbed-but-dead. The spine derives
+    // it from the durable ledger so the 承重闸 can FOCUS the legs on the cross-slice
+    // merge seams a machine touched (#291 缺口 1). It rides through `runReviewer` into
+    // `reviewerPrompt` as an ADDITIVE focus section (the full diff is still reviewed —
+    // the conservative superset is preserved). OMITTED/empty ⇒ no focus (back-compat).
+    const llmResolvedChildren =
+      req.llmResolvedChildren !== undefined && req.llmResolvedChildren.length > 0
+        ? req.llmResolvedChildren
+        : undefined;
+
     // 2. Fan the SAME diff out to all three reviewer legs concurrently, each through
     //    the protected `runReviewer` seam (fixtured in unit tests; the real CLIs on
     //    the driver / manual-smoke path). A leg that throws/dies is caught into a
@@ -337,7 +347,7 @@ export class DriverFamilyBackend extends RealFamilyBackend {
       vendors.map(async (vendor): Promise<ReviewerLeg> => {
         let out: ReviewerOutput;
         try {
-          out = await this.runReviewer(vendor, diff);
+          out = await this.runReviewer(vendor, diff, llmResolvedChildren);
         } catch (err) {
           out = { ok: false, reason: err instanceof Error ? err.message : String(err) };
         }
@@ -391,9 +401,17 @@ export class DriverFamilyBackend extends RealFamilyBackend {
    * Each prompt = "review THIS family base diff, 专抓跨片接缝, review only, 收敛就出
    * `CMR-VERDICT: converged`". A non-zero exit / empty output / auth-quota death
    * returns `{ok:false}` so the leg degrades (a missing reviewer ≠ a finding).
+   *
+   * #322: `llmResolvedChildren` (the machine-resolved child merges, derived by the
+   * spine from the durable ledger) rides into `reviewerPrompt` as an additive focus
+   * section so the leg prioritises those merge seams; OMITTED ⇒ the back-compat prompt.
    */
-  protected async runReviewer(vendor: ReviewerVendor, diff: string): Promise<ReviewerOutput> {
-    const prompt = reviewerPrompt(diff);
+  protected async runReviewer(
+    vendor: ReviewerVendor,
+    diff: string,
+    llmResolvedChildren?: readonly number[],
+  ): Promise<ReviewerOutput> {
+    const prompt = reviewerPrompt(diff, llmResolvedChildren);
     try {
       const prose = await this.spawnReviewer(vendor, prompt);
       return { ok: true, prose };
@@ -728,8 +746,34 @@ export interface ReviewerLeg {
   readonly reason?: string;
 }
 
-/** The integrated cmr reviewer prompt for one family base diff. */
-export function reviewerPrompt(diff: string): string {
+/**
+ * The integrated cmr reviewer prompt for one family base diff.
+ *
+ * #322: when the spine derives that some child merges into the family base were
+ * LLM-RESOLVED (`conflictResolvedByLlm:true` in the durable ledger, #295), it
+ * forwards their issue numbers here (#291 缺口 1). The prompt then surfaces a FOCUS
+ * section naming those children so the three reviewer legs prioritise the
+ * cross-slice merge seams a MACHINE touched — an LLM-resolved merge is exactly
+ * where a silent cross-slice regression hides, and "不静默吞" means it must never
+ * ship un-scrutinised. The focus is ADDITIVE (review the whole diff, but pay
+ * special attention to these): it never narrows the diff a leg sees, so the
+ * conservative full-diff superset is preserved. OMITTED/empty ⇒ no LLM resolution
+ * this run ⇒ the back-compat prompt (no focus section).
+ */
+export function reviewerPrompt(
+  diff: string,
+  llmResolvedChildren?: readonly number[],
+): string {
+  const focus =
+    llmResolvedChildren !== undefined && llmResolvedChildren.length > 0
+      ? "FOCUS — the merge of the following child slice(s) into this family base was " +
+        "LLM-RESOLVED (a machine resolved a merge conflict), so pay SPECIAL attention " +
+        "to their merge seams (a machine-resolved conflict is where a silent " +
+        "cross-slice regression most easily hides): " +
+        llmResolvedChildren.map((n) => `#${n}`).join(", ") +
+        ". Still review the WHOLE diff below — this focus is additive, not a " +
+        "narrowing.\n\n"
+      : "";
   return (
     "You are an independent integrated cross-model reviewer (ship-pre 承重闸) for a " +
     "FAMILY base branch — the accumulation of several reviewed vertical-slice child " +
@@ -738,6 +782,7 @@ export function reviewerPrompt(diff: string): string {
     "per-slice review cannot see: field-name / type mismatches between slices, " +
     "inconsistent thresholds / units, contract drift, and behaviour that only " +
     "emerges once the slices are combined (e2e).\n\n" +
+    focus +
     "When you are done, end with EXACTLY ONE verdict line:\n" +
     "  `CMR-VERDICT: converged`      — if you found NO blocking cross-slice issue;\n" +
     "  `CMR-VERDICT: not converged`  — followed by your findings, if you did.\n\n" +
