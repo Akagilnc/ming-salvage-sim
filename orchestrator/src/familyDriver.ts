@@ -284,12 +284,31 @@ export class DriverFamilyBackend extends RealFamilyBackend {
   }
 
   /**
-   * The family base diff every reviewer leg reviews — `git diff <base>...<familyBase>`
-   * (the symmetric-difference: the commits the family base added since it diverged
-   * from the PR target). `protected` so a unit test pins it without a real repo.
+   * The family base diff every reviewer leg reviews — `git diff
+   * <familyBaseStartHead>...<familyBase>` (the symmetric-difference: the commits the
+   * family base added since it was CUT). `protected` so a unit test pins it without a
+   * real repo.
+   *
+   * cmr R2 #1: this used `<opts.base>...<familyBase>`, the LOCAL `base` ref — but the
+   * family base is cut from the just-fetched `origin/<base>` while the local `base`
+   * ref is NOT refreshed, so a stale local base shows the upstream's own commits as
+   * spurious family additions and the reviewers审 upstream code as family changes. The
+   * recorded cut SHA (`familyBaseStartHead`) is the exact point the family base
+   * diverged — the cleanest, drift-proof left side. Fail-closed when it is absent: a
+   * cmr 承重闸 must not silently fall back to a ref that pollutes the reviewed diff.
    */
   protected familyBaseDiff(familyBase: string): string {
-    return this.sh("git", ["diff", `${this.opts.base}...${familyBase}`]);
+    const startHead = this.opts.familyBaseStartHead;
+    if (startHead === undefined) {
+      throw new Error(
+        "familyBaseDiff: no familyBaseStartHead was recorded at run setup — it is " +
+          "the cut point the integrated cmr diffs the family base against; refusing " +
+          "to fall back to the local base ref (which can be stale and would pollute " +
+          "the reviewed diff with upstream commits). Provide " +
+          "RealFamilyBackendOptions.familyBaseStartHead.",
+      );
+    }
+    return this.sh("git", ["diff", `${startHead}...${familyBase}`]);
   }
 
   /**
