@@ -404,6 +404,35 @@ function planResume(
     };
   }
 
+  // Case 2b (integ-cmr int-r1, C-1): S7 SHIP escalate-resume. ship.md promises a
+  // ship `escalate` (gstack-ship STOP/HITL) is a real blocker the human answers →
+  // the runner RE-OPENS S7. But S7 is a runner-ACTION step, and ship outputs
+  // deliberately carry NO `escalate` field (escalateOf returns undefined for
+  // them — validate.ts), so escalateTermination("S7", …) records the failing S7
+  // entry WITHOUT an escalate output, then a trailing S8 tagged 'escalate'. Case 2
+  // (agent escalate-resume) therefore never fires for S7, and Case 3a below would
+  // report the escalate as a terminal status — leaving the slice permanently stuck
+  // (#331 left this to #336; integ-cmr judged it the real S7-escalate-resume gap).
+  //
+  // Recognise the pattern — last entry is S8(escalate) AND the deciding step is S7
+  // — and RE-DISPATCH S7 (re-run the ship worker fresh; ship is a clean-session
+  // runner action, so there is no agent session to resumeSession into). Drop the
+  // trailing S8 boundary: we are re-opening, so the prior terminal is superseded.
+  // Only the SHIP step re-opens this way; an agent escalate (S2/S3/S5/S6) is caught
+  // by Case 2 above (it has a well-formed escalate output) and never reaches here.
+  if (
+    lastEntry.step === "S8" &&
+    lastEntry.handoffStatus === "escalate" &&
+    lastNonTerminalStep(ledger) === "S7"
+  ) {
+    const s8Idx = ledger.lastIndexOf(lastEntry);
+    return {
+      resumeStep: "S7",
+      lastOutput: agentEntry?.output,
+      priorLedger: ledger.slice(0, s8Idx) as ReadonlyArray<LedgerEntry>,
+    };
+  }
+
   // Case 3a: the prior run wrote a terminal S8 entry. Report its TRUE status
   // (recorded in handoffStatus, #255) — a prior error/escalate must not be
   // re-reported as success. If an older ledger lacks the tag, fall back to
@@ -486,7 +515,7 @@ const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
  * spec (coder_fix prompt), S6 the reviewer (reviewer_rereview prompt, same
  * READ-ONLY soul + maxIter:1 single-pass full re-review as S3).
  */
-const STEP_SPECS: Readonly<Record<"S2" | "S3" | "S5" | "S6", StepSpec>> = {
+export const STEP_SPECS: Readonly<Record<"S2" | "S3" | "S5" | "S6", StepSpec>> = {
   S2: {
     id: "S2",
     role: "coder",

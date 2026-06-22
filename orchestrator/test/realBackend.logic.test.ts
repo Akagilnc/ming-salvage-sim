@@ -716,13 +716,28 @@ describe("realBackend promptsDirError (F4)", () => {
     expect(promptsDirError(abs, true, true, [])).toBeUndefined();
   });
 
-  it("REFERENCED_PROMPT_FILES lists exactly the four S2/S3/S5/S6 prompts", () => {
-    expect([...REFERENCED_PROMPT_FILES]).toEqual([
-      "coder_implement.md",
-      "reviewer_full_review.md",
-      "coder_fix.md",
-      "reviewer_rereview.md",
-    ]);
+  it("REFERENCED_PROMPT_FILES covers every dispatched worker prompt incl. ship.md (integ-cmr int-r1 C-3)", () => {
+    // The list is DERIVED from the actual worker specs (STEP_SPECS S2/S3/S5/S6 +
+    // shipWorkerSpec S7), so it can never drift out-of-sync with the workers the
+    // runner dispatches. The S7 ship worker's ship.md was previously missing —
+    // promptsDir validation passed but S7 then crashed at run time looking for it.
+    const files = [...REFERENCED_PROMPT_FILES];
+    expect(files).toContain("coder_implement.md");
+    expect(files).toContain("reviewer_full_review.md");
+    expect(files).toContain("coder_fix.md");
+    expect(files).toContain("reviewer_rereview.md");
+    // The previously-missing S7 ship prompt MUST now be validated.
+    expect(files).toContain("ship.md");
+    // No duplicates.
+    expect(new Set(files).size).toBe(files.length);
+  });
+
+  it("promptsDirError reports a dir missing ship.md as invalid (integ-cmr int-r1 C-3)", () => {
+    // A promptsDir that has the four agent prompts but no ship.md must FAIL
+    // construction validation — not pass and crash at S7 run time.
+    const err = promptsDirError(abs, true, true, ["ship.md"]);
+    expect(err).toMatch(/missing required promptFile/);
+    expect(err).toMatch(/ship\.md/);
   });
 });
 
