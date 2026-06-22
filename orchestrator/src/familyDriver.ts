@@ -70,7 +70,10 @@ import type {
  * future/odd shape must not crash the assembly); de-dupes, preserving first-seen
  * order. Pure (parses a value only) so it is unit-tested without `gh`.
  */
-export function parseSubIssueNumbers(parsed: { subIssues?: unknown }): number[] {
+export function parseSubIssueNumbers(parsed: { subIssues?: unknown } | null | undefined): number[] {
+  // online R2 (Gemini): `JSON.parse` can yield null/undefined/a non-object — guard
+  // before the property read so a malformed `gh` payload returns [] not a TypeError.
+  if (parsed === null || typeof parsed !== "object") return [];
   const sub = parsed.subIssues;
   if (sub === null || typeof sub !== "object") return [];
   const nodes = (sub as { nodes?: unknown }).nodes;
@@ -177,16 +180,7 @@ const defaultSh: Sh = (file, args) =>
  * S0 path uses (`gh issue view --json subIssues`, `gh api …/dependencies/blocked_by`).
  */
 export function readFamilyEpic(epicIssue: number, repo: string, sh: Sh): FamilyEpic {
-  const subRaw = sh("gh", [
-    "issue",
-    "view",
-    String(epicIssue),
-    "--repo",
-    repo,
-    "--json",
-    "subIssues",
-  ]);
-  const childNumbers = parseSubIssueNumbers(JSON.parse(subRaw) as { subIssues?: unknown });
+  const childNumbers = readChildNumbers(epicIssue, repo, sh);
   const blockedByByChild = new Map<number, GhBlockedBy[]>();
   for (const child of childNumbers) {
     const depRaw = sh("gh", [
@@ -200,6 +194,25 @@ export function readFamilyEpic(epicIssue: number, repo: string, sh: Sh): FamilyE
   // re-opened external blocker re-rejects on re-entry.
   assertExternalBlockersCleared(childNumbers, blockedByByChild);
   return buildFamilyEpic(epicIssue, childNumbers, blockedByByChild);
+}
+
+/**
+ * Read the epic's child issues, failing closed if there are NONE (online R2 Codex
+ * P2): a leaf issue mis-passed as an epic — or an empty/odd `subIssues` payload —
+ * yields zero children, which `runFamily` would treat as already-complete (`every`
+ * over `[]` is vacuously true) → a final verify/cmr on a base with no slices → an
+ * empty PR. Reject it at admission with a concrete message.
+ */
+function readChildNumbers(epicIssue: number, repo: string, sh: Sh): number[] {
+  const subRaw = sh("gh", ["issue", "view", String(epicIssue), "--repo", repo, "--json", "subIssues"]);
+  const childNumbers = parseSubIssueNumbers(JSON.parse(subRaw) as { subIssues?: unknown });
+  if (childNumbers.length === 0) {
+    throw new Error(
+      `family admission rejected: epic #${epicIssue} has no child issues ` +
+        `(not an epic, or its native sub-issues are empty) — nothing to orchestrate`,
+    );
+  }
+  return childNumbers;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -557,6 +570,10 @@ export async function runFamilyDriver(
       : new DriverFamilyBackend(
           {
             workingRepo,
+            // The orchestrator Node project (package.json / vitest config) is the
+            // `orchestrator/` subdir of the full-repo clone — verify runs THERE,
+            // not the clone root (online R2 Codex P1).
+            verifyCwd: join(workingRepo, "orchestrator"),
             familyBase: options.familyBase,
             ledgerDir: options.ledgerDir,
             repo: options.repo,

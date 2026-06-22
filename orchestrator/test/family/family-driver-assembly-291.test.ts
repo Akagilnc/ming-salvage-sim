@@ -60,6 +60,10 @@ describe("#291 parseSubIssueNumbers", () => {
     expect(parseSubIssueNumbers({ subIssues: null })).toEqual([]);
     expect(parseSubIssueNumbers({ subIssues: { nodes: "nope" } })).toEqual([]);
   });
+  it("a null / undefined `parsed` (e.g. JSON.parse returned null) ⇒ [] (never a TypeError) (online R2 Gemini)", () => {
+    expect(parseSubIssueNumbers(null)).toEqual([]);
+    expect(parseSubIssueNumbers(undefined)).toEqual([]);
+  });
 });
 
 describe("#291 buildFamilyEpic", () => {
@@ -159,6 +163,14 @@ describe("#291 readFamilyEpic (injected gh sh)", () => {
         { issue: 12, blockedBy: [11] },
       ],
     });
+  });
+  it("fails closed when the epic has NO child issues (a leaf issue / empty-or-odd subIssues) (online R2 Codex P2)", () => {
+    // An epic with zero children would let `runFamily` treat the empty set as
+    // already-complete (`every` over [] is vacuously true) → final verify/cmr on a
+    // base with no slices → an empty PR. Admission must reject it.
+    const sh: Sh = (file, args) =>
+      args[0] === "issue" ? JSON.stringify({ subIssues: { nodes: [] } }) : "[]";
+    expect(() => readFamilyEpic(404, "Akagilnc/ming-salvage-sim", sh)).toThrow(/no child issues|child/i);
   });
 });
 
