@@ -1,0 +1,192 @@
+/**
+ * #336 — the FAMILY ship step (止于 PR) is a CONTAINER ship WORKER that invokes
+ * `gstack-ship`, replacing the inline `RealFamilyBackend.openFamilyPr` (a bare
+ * `git push` + `gh pr create`).
+ *
+ * The family ship worker = the 2b container's TOP-LEVEL claude; it `Skill`-invokes
+ * `gstack-ship` over the family base and STOPS at the PR (止于 PR — the online bot
+ * cmr + merge are the separate pr-review-loop stage). Its `<ship>` tag is gated on
+ * the completion signal then classified into a {@link ShipWorkerOutcome}, which
+ * `dispatchWorker` maps to the full {@link WorkerResult} union (PRD #330 R2):
+ *   shipped → completed ShipResult; escalate → escalated; failed → failed;
+ *   malformed → malformed.
+ *
+ * Tested WITHOUT a real container (mirrors #335's cmr-worker test): the
+ * `runShipWorker` seam is fixtured; the `dispatchWorker(ship)` routing is asserted
+ * at the seam.
+ */
+
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { RealFamilyBackend } from "../../src/family/realFamilyBackend.js";
+import { SANDBOX_CODEX_DIR, SANDBOX_SOUL_ENV } from "../../src/realBackend.js";
+import { cmrWorkerSpec, familyShipWorkerSpec } from "../../src/family/dispatchFamilyWorker.js";
+import type { ShipWorkerOutcome } from "../../src/shipOutcome.js";
+import type { DispatchContext, WorkerSpec } from "../../src/types.js";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const realPromptsDir = join(here, "..", "..", "prompts");
+
+const cleanups: string[] = [];
+afterEach(() => {
+  while (cleanups.length > 0) {
+    const p = cleanups.pop();
+    if (p !== undefined) rmSync(p, { recursive: true, force: true });
+  }
+});
+function mkDir(prefix: string): string {
+  const d = mkdtempSync(join(tmpdir(), prefix));
+  cleanups.push(d);
+  return d;
+}
+
+const FAMILY_BASE = "feat/330-pure-scheduler";
+
+/** A family backend whose container `runShipWorker` seam is fixtured (no sc.run). */
+class FixturedShipBackend extends RealFamilyBackend {
+  runShipCalls: { spec: WorkerSpec; ctx: DispatchContext }[] = [];
+  outcome: ShipWorkerOutcome = {
+    kind: "shipped",
+    branch: FAMILY_BASE,
+    status: "pr_opened",
+    pr: "https://gh/pr/9",
+  };
+  openFamilyPrCount = 0;
+  protected override async runShipWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<ShipWorkerOutcome> {
+    this.runShipCalls.push({ spec, ctx });
+    return this.outcome;
+  }
+  // The inline openFamilyPr must NEVER back the ship worker path (#336 replaces it).
+  override async openFamilyPr(): Promise<{ url: string }> {
+    this.openFamilyPrCount += 1;
+    throw new Error("openFamilyPr must not be reached — family ship via gstack-ship (#336)");
+  }
+}
+
+function fixtured(): FixturedShipBackend {
+  return new FixturedShipBackend({
+    workingRepo: mkDir("ship-repo-"),
+    familyBase: FAMILY_BASE,
+    ledgerDir: mkDir("ship-ledger-"),
+    repo: "Akagilnc/ming-salvage-sim",
+    base: "main",
+    promptsDir: realPromptsDir,
+    imageName: "ming-orchestrator-coder:latest",
+  });
+}
+
+describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () => {
+  it("dispatches the family ship spec to runShipWorker — gstack-ship, 止于 PR", async () => {
+    const be = fixtured();
+    await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
+    expect(be.runShipCalls.length).toBe(1);
+    const spec = be.runShipCalls[0]!.spec;
+    expect(spec.kind).toBe("ship");
+    expect(spec.skill).toBe("gstack-ship");
+    expect(be.openFamilyPrCount).toBe(0); // never the inline openFamilyPr
+  });
+
+  it("a shipped outcome ⇒ WorkerResult.completed with a ShipResult payload", async () => {
+    const be = fixtured();
+    be.outcome = { kind: "shipped", branch: FAMILY_BASE, status: "pr_opened", pr: "u" };
+    const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
+    expect(res.kind).toBe("completed");
+    if (res.kind === "completed" && res.output.kind === "ship") {
+      expect(res.output.branch).toBe(FAMILY_BASE);
+      expect(res.output.pr).toBe("u");
+      expect(res.output.status).toBe("pr_opened");
+    } else {
+      throw new Error("expected a completed ship payload");
+    }
+  });
+
+  it("an escalate outcome ⇒ WorkerResult.escalated (a genuine block)", async () => {
+    const be = fixtured();
+    be.outcome = { kind: "escalate", reason: "review ASK", diagnosis: "human must decide scope" };
+    const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
+    expect(res.kind).toBe("escalated");
+    if (res.kind === "escalated") expect(res.escalation.reason).toContain("review ASK");
+  });
+
+  it("a failed outcome ⇒ WorkerResult.failed (a hard ship/test failure)", async () => {
+    const be = fixtured();
+    be.outcome = { kind: "failed", reason: "tests red", diagnosis: "vitest exited 1" };
+    const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
+    expect(res.kind).toBe("failed");
+  });
+
+  it("a malformed outcome ⇒ WorkerResult.malformed (never silently a success)", async () => {
+    const be = fixtured();
+    be.outcome = { kind: "malformed", reason: "no <ship> tag" };
+    const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
+    expect(res.kind).toBe("malformed");
+  });
+
+  it("a family ship worker without familyBase throws (the worker ships the base)", async () => {
+    const be = fixtured();
+    await expect(be.dispatchWorker(familyShipWorkerSpec(), {})).rejects.toThrow(/familyBase/);
+  });
+
+  it("the cmr worker is still routed to its own (cmr) path, NOT the ship seam", async () => {
+    // #336 owns ship; a cmr worker must still go through runCmrWorker, not runShipWorker.
+    const be = fixtured();
+    // No familyBaseStartHead → the cmr fail-closed escalate proves it took the cmr
+    // path (runCmrWorker), not the ship seam.
+    const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase: FAMILY_BASE });
+    expect(res.kind).toBe("escalated");
+    expect(be.runShipCalls.length).toBe(0);
+  });
+});
+
+describe("#336 the inline family openFamilyPr is no longer the ship path", () => {
+  it("a family ship dispatch never calls openFamilyPr (gstack-ship replaces it)", async () => {
+    const be = fixtured();
+    await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
+    expect(be.openFamilyPrCount).toBe(0);
+  });
+});
+
+// ═══════════════════ shipSandboxConfig — coder soul + codex auth + claude token ═══════════════════
+
+describe("#336 family shipSandboxConfig — the WRITE-soul ship sandbox", () => {
+  class ConfigBackend extends RealFamilyBackend {
+    public config(auth: { codexAuthDir?: string; claudeToken?: string }): {
+      imageName: string;
+      env: Record<string, string>;
+      mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
+    } {
+      return this.shipSandboxConfig(auth);
+    }
+  }
+  function cfg(): ConfigBackend {
+    return new ConfigBackend({
+      workingRepo: mkDir("ship-repo-"),
+      familyBase: FAMILY_BASE,
+      ledgerDir: mkDir("ship-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "ming-orchestrator-coder:latest",
+    });
+  }
+
+  it("mounts codex auth + the claude token under the WRITE (coder) soul", () => {
+    const c = cfg().config({ codexAuthDir: "/tmp/codex", claudeToken: "tok" });
+    expect(c.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
+    expect(c.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok");
+    expect(c.env[SANDBOX_SOUL_ENV]).toBe("coder");
+  });
+
+  it("a missing codex auth degrades the mount but still ships under the coder soul", () => {
+    const c = cfg().config({ claudeToken: "tok" });
+    expect(c.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(false);
+    expect(c.env[SANDBOX_SOUL_ENV]).toBe("coder");
+  });
+});
