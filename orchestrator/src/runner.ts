@@ -1138,15 +1138,19 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       case "S0": {
         // S0 input_gate — runner action. Read lightweight metadata (the backend
         // `gh` call is wrapped so a transport failure becomes an error handoff,
-        // #252), then enforce the four-way accept condition (ADR 0018 / #248):
+        // #252), then enforce the accept condition (ADR 0018 / #248):
         //   (a) ready-for-agent label
-        //   (b) has ## Agent Brief comment
-        //   (c) no sub-issues (leaf slice, not a parent/epic)
-        //   (d) all blocked_by dependencies are closed
+        //   (b) no sub-issues (leaf slice, not a parent/epic)
+        //   (c) all blocked_by dependencies are closed
         // A gate violation throws immediately — the runner stops here, no
         // worktree is prepared, no agent step is dispatched. Gate throws are
         // intentionally NOT converted to an error handoff (they are a caller
         // input fault, not a pipeline error); only the backend fetch is.
+        //
+        // NOTE: a `## Agent Brief` is deliberately NOT a gate (design decision —
+        // a `to-issues` slice may not carry that section, and the tool must not be
+        // rigid about it). S1 loads the WHOLE issue (body + comments) for the coder;
+        // the brief, when present, is just the most-authoritative part of that.
         let meta: IssueMeta;
         try {
           meta = await backend.fetchIssueMeta(issueNumber);
@@ -1161,13 +1165,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           throw new Error(
             `S0 input gate: issue #${issueNumber} is not labelled ready-for-agent. ` +
               `Triage the issue and apply the label before running the orchestrator.`,
-          );
-        }
-
-        if (!meta.hasAgentBrief) {
-          throw new Error(
-            `S0 input gate: issue #${issueNumber} has no "## Agent Brief" section. ` +
-              `Add an Agent Brief (the authoritative implementation contract) before running.`,
           );
         }
 

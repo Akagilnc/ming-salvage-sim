@@ -114,8 +114,11 @@ export interface GhBlockedBy {
 }
 
 /**
- * Does any comment (or the body) carry a `## Agent Brief` section?
- * The brief is the authoritative spec (DEV_WORKFLOW); S0 requires it.
+ * Does any comment (or the body) carry a `## Agent Brief` section? The brief is
+ * the most-authoritative part of the spec (DEV_WORKFLOW) WHEN present, but it is
+ * NOT an S0 gate (design decision — a `to-issues` slice may not carry it). This
+ * stays exported so `IssueMeta.hasAgentBrief` can still report its presence; the
+ * S0 gate no longer rejects on its absence.
  */
 export function hasAgentBrief(json: GhIssueJson): boolean {
   const inBody = (json.body ?? "").includes(AGENT_BRIEF_HEADING);
@@ -159,9 +162,11 @@ export function buildIssueMeta(
 
 /**
  * Extract the latest `## Agent Brief` body from the issue's comments (falling
- * back to the issue body). The brief is the authoritative spec; the LAST comment
- * carrying it wins (a re-issued brief supersedes earlier ones). Returns "" when
- * no brief is present (S0 would have already rejected such an issue).
+ * back to the issue body). The brief is the most-authoritative part of the spec
+ * WHEN present; the LAST comment carrying it wins (a re-issued brief supersedes
+ * earlier ones). Returns "" when no brief is present — that is a VALID slice (the
+ * brief is not an S0 gate, design decision); the coder then works from the whole
+ * issue (body + comments) carried in the snapshot.
  */
 export function extractAgentBrief(json: GhIssueJson): string {
   // Priority order, LOWEST first: the issue body is the fallback, then comments
