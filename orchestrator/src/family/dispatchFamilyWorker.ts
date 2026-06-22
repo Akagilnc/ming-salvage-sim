@@ -65,7 +65,10 @@ export function familyShipWorkerSpec(): WorkerSpec {
     skill: "gstack-ship",
     promptFile: "family_ship.md",
     completionSignal: "SHIP_STEP_COMPLETE",
-    maxIter: 1,
+    // A WRITE/coder ship worker must self-rerun gstack-ship's rerun-able failures
+    // (family_ship.md: "rerun it yourself") → an iterative budget like coder/fix
+    // (runner STEP_SPECS use 5), NOT the cmr reviewer's single-pass 1 (#336 cmr r6).
+    maxIter: 5,
     model: "sonnet",
     soul: "coder",
     toolchain: [],

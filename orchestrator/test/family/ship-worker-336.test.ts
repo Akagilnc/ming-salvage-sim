@@ -94,6 +94,15 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
     expect(be.openFamilyPrCount).toBe(0); // never the inline openFamilyPr
   });
 
+  it("the family ship spec is a WRITE/coder worker with an iterative budget (maxIter>1) — gstack-ship must self-rerun rerun-able failures (family_ship.md), NOT a single-pass reviewer (#336 cmr r6)", () => {
+    const spec = familyShipWorkerSpec();
+    expect(spec.role).toBe("coder");
+    expect(spec.maxIter).toBeGreaterThan(1);
+    // The cmr worker, by contrast, IS a single-pass reviewer (maxIter:1) — the
+    // ship/reviewer distinction is the whole point (a ship self-reruns, a cmr doesn't).
+    expect(cmrWorkerSpec().maxIter).toBe(1);
+  });
+
   it("a shipped outcome ⇒ WorkerResult.completed with a ShipResult payload", async () => {
     const be = fixtured();
     be.outcome = { kind: "shipped", branch: FAMILY_BASE, status: "pr_opened", pr: "u" };

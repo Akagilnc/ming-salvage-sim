@@ -108,6 +108,12 @@ describe("#336 RealBackend.dispatchWorker — the single-slice ship worker", () 
     expect(be.pushCount).toBe(0); // never the inline push
   });
 
+  it("the ship spec is a WRITE/coder worker with an iterative budget (maxIter>1) — gstack-ship must self-rerun rerun-able failures (ship.md), NOT a single-pass reviewer (#336 cmr r6)", () => {
+    const spec = shipWorkerSpec();
+    expect(spec.role).toBe("coder");
+    expect(spec.maxIter).toBeGreaterThan(1);
+  });
+
   it("a shipped outcome ⇒ WorkerResult.completed with a ShipResult payload", async () => {
     const be = fixtured();
     be.outcome = { kind: "shipped", branch: worktree.branch, status: "pr_opened", pr: "u" };
