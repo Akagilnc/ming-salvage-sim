@@ -318,7 +318,12 @@ describe("#291 DriverFamilyBackend.runCmr — real 3-leg reviewer orchestration"
  */
 class TempfileSpyBackend extends DriverFamilyBackend {
   shStdinArgs: string[][] = [];
-  protected override shStdin(_file: string, args: string[], _input: string, _cwd?: string): string {
+  protected override async shStdin(
+    _file: string,
+    args: string[],
+    _input: string,
+    _cwd?: string,
+  ): Promise<string> {
     this.shStdinArgs.push(args);
     const oIdx = args.indexOf("-o");
     if (oIdx >= 0 && args[oIdx + 1] !== undefined) {
@@ -348,6 +353,74 @@ function makeTempfileSpy(): TempfileSpyBackend {
     undefined,
   );
 }
+
+// ═══════════════════════ 5. runCmr真并发 — shStdin is async (#291 r2 #3) ═══════════════════════
+
+/**
+ * A backend whose `shStdin` is the only spawn seam — it records how many legs are
+ * IN-FLIGHT at once and blocks each leg on a barrier that only resolves once ALL
+ * THREE legs have entered. If `shStdin` were synchronous (`execFileSync`,
+ * event-loop-blocking), the first leg could never observe the other two enter →
+ * the barrier would never resolve → timeout (the假并发). With a truly async
+ * `shStdin`, all three enter, the barrier resolves, peak concurrency is 3.
+ */
+class ConcurrencySpyBackend extends DriverFamilyBackend {
+  inflight = 0;
+  peak = 0;
+  private entered = 0;
+  private releaseAll!: () => void;
+  private readonly gate = new Promise<void>((r) => (this.releaseAll = r));
+  protected override async shStdin(
+    _file: string,
+    args: string[],
+    _input: string,
+    _cwd?: string,
+  ): Promise<string> {
+    this.inflight += 1;
+    this.peak = Math.max(this.peak, this.inflight);
+    this.entered += 1;
+    if (this.entered === 3) this.releaseAll(); // all three legs are concurrently in-flight
+    await this.gate;
+    const oIdx = args.indexOf("-o");
+    if (oIdx >= 0 && args[oIdx + 1] !== undefined) {
+      writeFileSync(args[oIdx + 1]!, "CMR-VERDICT: converged");
+    }
+    this.inflight -= 1;
+    return "CMR-VERDICT: converged";
+  }
+  async runCmrPublic(req: IntegratedCmrRequest) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (this as any).runCmr(req);
+  }
+  protected override sh(file: string, args: string[]): string {
+    if (file === "git" && args[0] === "diff") return "diff";
+    return "";
+  }
+}
+
+describe("#291 runCmr真并发 — the three reviewer legs run concurrently (r2 #3)", () => {
+  it("fans the three legs out CONCURRENTLY (shStdin async, not event-loop-blocking)", async () => {
+    const b = new ConcurrencySpyBackend(
+      {
+        workingRepo: mkDir("cmr-repo-"),
+        familyBase: "family/291-base",
+        ledgerDir: mkDir("cmr-ledger-"),
+        repo: "Akagilnc/ming-salvage-sim",
+        base: "main",
+        promptsDir: mkDir("cmr-prompts-"),
+        imageName: "img",
+        skillsMount: "/tmp/skills",
+        familyBaseStartHead: "cut0sha",
+      },
+      undefined,
+    );
+    // If shStdin blocked the event loop (the bug), this would deadlock — the test
+    // timeout (5s default) catches it as a failure. With真并发 it resolves at once.
+    const res = await b.runCmrPublic({ familyBase: "family/291-base" });
+    expect(res).toEqual({ converged: true });
+    expect(b.peak).toBe(3); // all three legs were in-flight simultaneously
+  });
+});
 
 describe("#291 spawnReviewer temp-file uniqueness (r2 #5)", () => {
   it("two codex reviewer spawns in the SAME millisecond pick DISTINCT -o files (no Date.now() collision)", async () => {
