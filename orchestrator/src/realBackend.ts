@@ -135,9 +135,10 @@ export function isReadyForAgent(json: GhIssueJson): boolean {
 
 /**
  * Build the S0 {@link IssueMeta} from the gh JSON + the native blocked_by list +
- * the native sub-issue count. The four-way accept condition the runner enforces
- * is derived from these fields (rfa ∧ Agent Brief ∧ no sub-issues ∧ all
- * blocked_by closed).
+ * the native sub-issue count. The three-way accept condition the runner enforces
+ * is derived from these fields (rfa ∧ no sub-issues ∧ all blocked_by closed).
+ * `hasAgentBrief` is still derived here as REPORTED metadata, but it is no longer
+ * a gate (design correction — the coder reads the whole issue).
  *
  * `openBlockedBy` = the numbers of blocked_by dependencies whose state is not
  * "closed" (an open upstream the slice would otherwise be cut from a stale base
@@ -191,7 +192,7 @@ export function extractAgentBrief(json: GhIssueJson): string {
  * (verified against the live #244: `totalCount:10`). The S0 input gate uses this
  * count to reject a parent epic (`hasSubIssues`), so reading it correctly is
  * load-bearing: an array check on the object is always false → count always 0 →
- * the parent-epic gate never fires (PRD #244 US#3 / S0 four-way condition).
+ * the parent-epic gate never fires (PRD #244 US#3 / S0 three-way condition).
  *
  * Prefers `totalCount`, falls back to `nodes.length`, and returns 0 for any
  * missing/malformed value (never NaN/throw — a future gh shape must not crash
@@ -1366,7 +1367,7 @@ export class RealBackend implements Backend {
     // package, NOT a leaf/no-blockers default (integ-cmr 256 r2, F2). Failing
     // open would let a parent epic (sub-issue query fault → 0 → leaf → allow) or
     // a blocked-by-open issue (blocked_by query fault → [] → no blockers → allow)
-    // slip past the pinned S0 four-way gate and run from a stale base.
+    // slip past the pinned S0 three-way gate and run from a stale base.
     const json = this.phase("S0", "fetchIssueView", () => {
       const raw = this.sh("gh", [
         "issue",
@@ -1442,7 +1443,7 @@ export class RealBackend implements Backend {
    * Native blocked_by list, FAIL-CLOSED (integ-cmr 256 r2, F2). A thrown gh /
    * transport / JSON-parse error propagates via `phase("S0", …)` → S8(error),
    * NOT a no-blockers ([]) default — failing open is the riskier leak: it would
-   * let a blocked-by-OPEN issue (the pinned S0 four-way reject) run from a stale
+   * let a blocked-by-OPEN issue (the pinned S0 three-way reject) run from a stale
    * base missing upstream changes. `parseBlockedBy` still returns [] for a
    * CONFIRMED empty/non-array response (the genuinely-empty case).
    */

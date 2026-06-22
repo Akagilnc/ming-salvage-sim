@@ -17,8 +17,9 @@
  *   - any backend call throws → S8(error) + error package  [runner catch]
  *   - any agent output carries escalate → S8(escalate) [route() detects]
  * Slice #253: StepSpec contract — model/completionSignal/maxIter/soul/toolchain.
- * Slice #248: S0 input gate — four-way accept condition (rfa ∧ Agent Brief ∧
- *   no sub-issues ∧ blocked_by all closed); violations throw, stopping at S0.
+ * Slice #248: S0 input gate — three-way accept condition (rfa ∧ no sub-issues ∧
+ *   blocked_by all closed); violations throw, stopping at S0. (Agent Brief was
+ *   removed as a gate — design correction; the coder reads the whole issue.)
  * Slice #254: fix-loop back-edge — route() wires S5→S6→S4→(S5|S7); the runner
  *   already dispatches S5/S6 as agent steps and re-collects defers at S4 each
  *   pass, so the loop iterates with no runner change. Co-exists with the
