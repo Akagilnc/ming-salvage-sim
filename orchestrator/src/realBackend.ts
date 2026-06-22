@@ -1178,8 +1178,15 @@ export interface RealBackendOptions {
   readonly repo: string;
   /** The profile image (#253): toolchain + souls + model CLIs baked in. */
   readonly imageName: string;
-  /** Host dir holding the baked dev skills to bind-mount (spike). */
-  readonly skillsMount: string;
+  /**
+   * DEPRECATED (#334): host dir of dev skills to bind-mount. The 2b worker image
+   * (#333) BAKES the dev-skill closure, so `box()` no longer mounts host skills at
+   * runtime (a runtime mount would SHADOW the baked skills — the ADR 0026
+   * reproducibility regression). Kept OPTIONAL only for back-compat with callers
+   * still passing it; it is no longer read. Remove the field entirely once all
+   * callers drop it (#336/#337 cleanup).
+   */
+  readonly skillsMount?: string;
   /**
    * Dir holding the versioned promptFiles (`coder_implement.md`,
    * `reviewer_full_review.md`, `coder_fix.md`, `reviewer_rereview.md`).
@@ -1724,24 +1731,49 @@ export class RealBackend implements Backend {
   }
 
   private box(issueNumber: number, spec: StepSpec): sc.SandboxProvider {
-    const { authDir, claudeToken } = this.mountAuth(issueNumber);
-    // ship-pre 256 r1: select the role's baked soul and inject it so the v0.1
-    // one-image-two-roles profile activates the right one (#244 "role 决定注哪份
-    // soul"). soulForStep CONSUMES spec.soul (no longer a dead contract field)
-    // and throws if it contradicts the role → S8(error). Still a soul ENV signal,
-    // not an OS readonly mount (reviewer READ-ONLY stays soft, ADR 0017 §4).
+    const auth = this.mountAuth(issueNumber);
+    return docker(this.boxConfig(auth, spec));
+  }
+
+  /**
+   * The docker options the agent sandbox runs under — the pure SANDBOX-CONFIG
+   * seam (mirrors the family `mergerSandboxConfig()` testability pattern). No
+   * container, no I/O: a unit test asserts the mounts + soul env without spinning
+   * a real sandbox (#334 — so the dropped-skillsMount behaviour is regression-
+   * guarded the same way the family merger's mount is).
+   *
+   * #334 (ADR 0026 / cross-slice note from #332/#333): the runtime host
+   * `skillsMount` bind-mount onto {@link SANDBOX_SKILLS_DIR} is DROPPED. The 2b
+   * worker image (#333) BAKES the full dev-skill closure at that exact path, so
+   * mounting host skills there at runtime would SHADOW the baked skills — pulling
+   * the worker back to host state (the ADR 0026 reproducibility regression). The
+   * baked image is now the single source of skills; the only mount left is the
+   * per-issue codex auth dir (a live secret, not bakeable).
+   *
+   * ship-pre 256 r1: `soulForStep(spec)` selects the role's baked soul and
+   * injects it via {@link SANDBOX_SOUL_ENV} so the v0.1 one-image-two-roles
+   * profile activates the right one (#244 "role 决定注哪份 soul"); it throws on a
+   * spec whose `soul` contradicts its `role` → S8(error). Still a soul ENV
+   * signal, not an OS readonly mount (reviewer READ-ONLY stays soft, ADR 0017 §4).
+   */
+  protected boxConfig(
+    auth: { authDir: string; claudeToken: string },
+    spec: StepSpec,
+  ): {
+    imageName: string;
+    env: Record<string, string>;
+    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
+  } {
     const soul = soulForStep(spec);
-    return docker({
+    return {
       imageName: this.opts.imageName,
       env: {
-        CLAUDE_CODE_OAUTH_TOKEN: claudeToken,
+        CLAUDE_CODE_OAUTH_TOKEN: auth.claudeToken,
         [SANDBOX_SOUL_ENV]: soul,
       },
-      mounts: [
-        { hostPath: authDir, sandboxPath: SANDBOX_CODEX_DIR },
-        { hostPath: this.opts.skillsMount, sandboxPath: SANDBOX_SKILLS_DIR },
-      ],
-    });
+      // #334: codex auth ONLY — the skills mount is dropped (baked skills win).
+      mounts: [{ hostPath: auth.authDir, sandboxPath: SANDBOX_CODEX_DIR }],
+    };
   }
 
   /** Build the output definition for a step's role. */
