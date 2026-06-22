@@ -63,6 +63,7 @@ import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { runExclusive } from "../gitMutex.js";
 import {
   branchForIssue,
+  modelIdForSlug,
   SANDBOX_CODEX_DIR,
   SANDBOX_SKILLS_DIR,
   SANDBOX_SOUL_ENV,
@@ -137,13 +138,9 @@ export const SHIP_FOCUS_FILENAME = ".ship-focus.md";
 
 /** The cmr worker's completion signal (matches prompts/integrated_cmr.md). */
 const CMR_COMPLETION_SIGNAL = "CMR_STEP_COMPLETE";
-/** The cmr worker runs on the strongest reviewer model (the ship-pre 承重闸). */
-const CMR_MODEL = "claude-opus-4-8";
 /** The READ-ONLY soul the cmr worker (a reviewer) runs under (ADR 0017 §4). */
 const CMR_SOUL = "READ-ONLY";
 
-/** The family ship worker's model (gstack-ship is mechanical delivery, not review). */
-const SHIP_MODEL = "claude-sonnet-4-5";
 /** The WRITE soul the ship worker runs under (it commits the bump + pushes). */
 const SHIP_SOUL = "coder";
 
@@ -260,6 +257,21 @@ export class RealFamilyBackend implements FamilyBackend {
       stdio: ["ignore", "pipe", "pipe"],
       encoding: "utf8",
     }).trim();
+  }
+
+  /**
+   * Build the container agent for a {@link WorkerSpec}: the top-level claude on the
+   * model the spec declares, resolved through the SAME validated `modelIdForSlug`
+   * mapping the single-slice ship path uses (realBackend.ts:2122). The lone seam
+   * that turns `spec.model` into an `sc.claudeCode(...)` agent for BOTH family
+   * WorkerSpec-driven runs (ship + cmr) — so neither can hardcode a model id that
+   * bypasses validation or drifts from the slug the runner declares (cmr S336 r7
+   * P1). `protected` + pure (no container/I/O) so a unit test asserts the resolved
+   * model without spinning a real `sc.run` — mirroring how `modelIdForSlug` /
+   * `soulForStep` are the testable seams on the single-slice path.
+   */
+  protected agentForSpec(spec: WorkerSpec): ReturnType<typeof sc.claudeCode> {
+    return sc.claudeCode(modelIdForSlug(spec.model));
   }
 
   // ─────────────────────────── family ledger ───────────────────────────
@@ -669,7 +681,11 @@ export class RealFamilyBackend implements FamilyBackend {
       name: "family-cmr",
       cwd: this.opts.workingRepo,
       sandbox: this.cmrSandbox(auth),
-      agent: sc.claudeCode(CMR_MODEL),
+      // Derive the model from the spec via the shared validated seam (cmr S336 r7
+      // symmetry): `cmrWorkerSpec().model === "opus"` resolves to claude-opus-4-8.
+      // Same途径 the single-slice + family ship paths use — no constant that could
+      // silently drift from the spec the runner declares.
+      agent: this.agentForSpec(spec),
       // The cmr worker is a single review pass (ADR 0026: review = clean eyes, one
       // pass; a non-convergence is the runner's escalate fork, not a within-worker
       // loop).
@@ -983,7 +999,12 @@ export class RealFamilyBackend implements FamilyBackend {
       name: "family-ship",
       cwd: this.opts.workingRepo,
       sandbox: this.shipSandbox(),
-      agent: sc.claudeCode(SHIP_MODEL),
+      // Derive the model from the spec via the SAME validated mapping the
+      // single-slice ship path uses (realBackend.ts:2122) — NOT a hardcoded id.
+      // A hardcoded family model bypassed `modelIdForSlug` AND pinned a DIFFERENT
+      // id (claude-sonnet-4-5) than the verified `sonnet → claude-sonnet-4-6`
+      // mapping `familyShipWorkerSpec().model` resolves to (cmr S336 r7 P1).
+      agent: this.agentForSpec(spec),
       maxIterations: spec.maxIter,
       completionSignal: spec.completionSignal,
       branchStrategy: { type: "head" },

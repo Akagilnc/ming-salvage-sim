@@ -24,10 +24,24 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { RealFamilyBackend, SHIP_FOCUS_FILENAME } from "../../src/family/realFamilyBackend.js";
-import { SANDBOX_CODEX_DIR, SANDBOX_SOUL_ENV } from "../../src/realBackend.js";
+import { modelIdForSlug, SANDBOX_CODEX_DIR, SANDBOX_SOUL_ENV } from "../../src/realBackend.js";
 import { cmrWorkerSpec, familyShipWorkerSpec } from "../../src/family/dispatchFamilyWorker.js";
 import type { ShipWorkerOutcome } from "../../src/shipOutcome.js";
 import type { DispatchContext, WorkerSpec } from "../../src/types.js";
+
+/**
+ * Read the model id `sc.claudeCode(...)` was built with off an agent — the agent's
+ * `--model '<id>'` print flag is the only externally-observable proof of the model
+ * (the agent object exposes no scalar model field).
+ */
+function modelOfAgent(agent: unknown): string {
+  const build = (agent as { buildPrintCommand?: (p: string) => { command: string } })
+    .buildPrintCommand;
+  if (typeof build !== "function") throw new Error("agent has no buildPrintCommand");
+  const m = /--model '([^']+)'/.exec(build("x").command);
+  if (m === null) throw new Error(`no --model in: ${build("x").command}`);
+  return m[1]!;
+}
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "prompts");
@@ -338,5 +352,53 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
     ).rejects.toThrow(/SENTINEL/);
     expect(focusBodyAtRun).toBeDefined();
     expect(focusBodyAtRun).toContain("integ/291-wave3");
+  });
+});
+
+// ═══════════════════ model-id contract (cmr S336 r7 P1) — family ship + cmr workers
+// derive the model from the spec via the SAME validated `modelIdForSlug` mapping the
+// single-slice ship path uses, NOT a hardcoded id. The pre-fix family ship path pinned
+// `claude-sonnet-4-5` (a hardcoded constant), bypassing modelIdForSlug AND diverging
+// from the verified `sonnet → claude-sonnet-4-6` mapping `familyShipWorkerSpec().model`
+// resolves to. The pure `agentForSpec` seam is the load-bearing point both runs build
+// their agent through — assert it directly (mirrors how modelIdForSlug/soulForStep are
+// the testable seams on the single-slice path).
+describe("#336 family workers — model id is spec-derived via modelIdForSlug (cmr S336 r7 P1)", () => {
+  class SeamBackend extends RealFamilyBackend {
+    public agent(spec: WorkerSpec): unknown {
+      return (this as unknown as { agentForSpec(s: WorkerSpec): unknown }).agentForSpec(spec);
+    }
+  }
+  function seam(): SeamBackend {
+    return new SeamBackend({
+      workingRepo: mkDir("model-repo-"),
+      familyBase: FAMILY_BASE,
+      ledgerDir: mkDir("model-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+    });
+  }
+
+  it("the family SHIP worker resolves to claude-sonnet-4-6 (the 'sonnet' slug), NOT a hardcoded claude-sonnet-4-5", () => {
+    const spec = familyShipWorkerSpec();
+    expect(spec.model).toBe("sonnet");
+    const model = modelOfAgent(seam().agent(spec));
+    expect(model).toBe(modelIdForSlug("sonnet"));
+    expect(model).toBe("claude-sonnet-4-6");
+    // Regression guard for the r7 bug: never the old hardcoded id.
+    expect(model).not.toBe("claude-sonnet-4-5");
+  });
+
+  // Symmetry: the family CMR worker (the OTHER family WorkerSpec-driven sc.run in this
+  // class) must likewise derive its model from the spec via the same seam — not a
+  // standalone constant that could drift from `cmrWorkerSpec().model`.
+  it("the family CMR worker resolves to claude-opus-4-8 (the 'opus' slug) via the same seam", () => {
+    const spec = cmrWorkerSpec();
+    expect(spec.model).toBe("opus");
+    const model = modelOfAgent(seam().agent(spec));
+    expect(model).toBe(modelIdForSlug("opus"));
+    expect(model).toBe("claude-opus-4-8");
   });
 });
