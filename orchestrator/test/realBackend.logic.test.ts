@@ -78,7 +78,7 @@ describe("realBackend gh parsing", () => {
     expect(hasAgentBrief({})).toBe(false);
   });
 
-  it("buildIssueMeta derives the four-way gate fields", () => {
+  it("buildIssueMeta derives the S0 meta fields (three-way gate + hasAgentBrief metadata)", () => {
     const json: GhIssueJson = {
       number: 256,
       labels: [{ name: "ready-for-agent" }, { name: "enhancement" }],

@@ -89,7 +89,8 @@ import type {
 
 // ── gh issue → IssueMeta / IssueSnapshot parsing ────────────────────────────
 
-/** The `## Agent Brief` heading marks the authoritative implementation spec. */
+/** The heading that marks an (optional) `## Agent Brief` section — the
+ *  most-authoritative part of the spec when present, but not required. */
 const AGENT_BRIEF_HEADING = "## Agent Brief";
 /** The label that gates S0 (a triaged, agent-ready slice). */
 const READY_FOR_AGENT_LABEL = "ready-for-agent";
@@ -114,8 +115,11 @@ export interface GhBlockedBy {
 }
 
 /**
- * Does any comment (or the body) carry a `## Agent Brief` section?
- * The brief is the authoritative spec (DEV_WORKFLOW); S0 requires it.
+ * Does any comment (or the body) carry a `## Agent Brief` section? The brief is
+ * the most-authoritative part of the spec (DEV_WORKFLOW) WHEN present, but it is
+ * NOT an S0 gate (design decision — a `to-issues` slice may not carry it). This
+ * stays exported so `IssueMeta.hasAgentBrief` can still report its presence; the
+ * S0 gate no longer rejects on its absence.
  */
 export function hasAgentBrief(json: GhIssueJson): boolean {
   const inBody = (json.body ?? "").includes(AGENT_BRIEF_HEADING);
@@ -132,9 +136,10 @@ export function isReadyForAgent(json: GhIssueJson): boolean {
 
 /**
  * Build the S0 {@link IssueMeta} from the gh JSON + the native blocked_by list +
- * the native sub-issue count. The four-way accept condition the runner enforces
- * is derived from these fields (rfa ∧ Agent Brief ∧ no sub-issues ∧ all
- * blocked_by closed).
+ * the native sub-issue count. The three-way accept condition the runner enforces
+ * is derived from these fields (rfa ∧ no sub-issues ∧ all blocked_by closed).
+ * `hasAgentBrief` is still derived here as REPORTED metadata, but it is no longer
+ * a gate (design correction — the coder reads the whole issue).
  *
  * `openBlockedBy` = the numbers of blocked_by dependencies whose state is not
  * "closed" (an open upstream the slice would otherwise be cut from a stale base
@@ -159,9 +164,11 @@ export function buildIssueMeta(
 
 /**
  * Extract the latest `## Agent Brief` body from the issue's comments (falling
- * back to the issue body). The brief is the authoritative spec; the LAST comment
- * carrying it wins (a re-issued brief supersedes earlier ones). Returns "" when
- * no brief is present (S0 would have already rejected such an issue).
+ * back to the issue body). The brief is the most-authoritative part of the spec
+ * WHEN present; the LAST comment carrying it wins (a re-issued brief supersedes
+ * earlier ones). Returns "" when no brief is present — that is a VALID slice (the
+ * brief is not an S0 gate, design decision); the coder then works from the whole
+ * issue (body + comments) carried in the snapshot.
  */
 export function extractAgentBrief(json: GhIssueJson): string {
   // Priority order, LOWEST first: the issue body is the fallback, then comments
@@ -186,7 +193,7 @@ export function extractAgentBrief(json: GhIssueJson): string {
  * (verified against the live #244: `totalCount:10`). The S0 input gate uses this
  * count to reject a parent epic (`hasSubIssues`), so reading it correctly is
  * load-bearing: an array check on the object is always false → count always 0 →
- * the parent-epic gate never fires (PRD #244 US#3 / S0 four-way condition).
+ * the parent-epic gate never fires (PRD #244 US#3 / S0 three-way condition).
  *
  * Prefers `totalCount`, falls back to `nodes.length`, and returns 0 for any
  * missing/malformed value (never NaN/throw — a future gh shape must not crash
@@ -1361,7 +1368,7 @@ export class RealBackend implements Backend {
     // package, NOT a leaf/no-blockers default (integ-cmr 256 r2, F2). Failing
     // open would let a parent epic (sub-issue query fault → 0 → leaf → allow) or
     // a blocked-by-open issue (blocked_by query fault → [] → no blockers → allow)
-    // slip past the pinned S0 four-way gate and run from a stale base.
+    // slip past the pinned S0 three-way gate and run from a stale base.
     const json = this.phase("S0", "fetchIssueView", () => {
       const raw = this.sh("gh", [
         "issue",
@@ -1437,7 +1444,7 @@ export class RealBackend implements Backend {
    * Native blocked_by list, FAIL-CLOSED (integ-cmr 256 r2, F2). A thrown gh /
    * transport / JSON-parse error propagates via `phase("S0", …)` → S8(error),
    * NOT a no-blockers ([]) default — failing open is the riskier leak: it would
-   * let a blocked-by-OPEN issue (the pinned S0 four-way reject) run from a stale
+   * let a blocked-by-OPEN issue (the pinned S0 three-way reject) run from a stale
    * base missing upstream changes. `parseBlockedBy` still returns [] for a
    * CONFIRMED empty/non-array response (the genuinely-empty case).
    */

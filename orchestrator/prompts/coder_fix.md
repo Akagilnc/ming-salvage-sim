@@ -25,7 +25,9 @@ For each `fix_now` finding:
 
 Fix only what the findings call for plus any regression they expose. Do not
 expand scope. If a finding cannot be addressed as stated (it conflicts with the
-Brief, or rests on a real design gap), **escalate** rather than guess.
+issue's spec — the whole issue; a `## Agent Brief`, when present, is its
+most-authoritative part — or rests on a real design gap), **escalate** rather
+than guess.
 
 ## Required output
 
