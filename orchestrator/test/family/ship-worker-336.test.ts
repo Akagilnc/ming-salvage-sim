@@ -24,7 +24,12 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { RealFamilyBackend, SHIP_FOCUS_FILENAME } from "../../src/family/realFamilyBackend.js";
-import { modelIdForSlug, SANDBOX_CODEX_DIR, SANDBOX_SOUL_ENV } from "../../src/realBackend.js";
+import {
+  modelIdForSlug,
+  SANDBOX_CODEX_DIR,
+  SANDBOX_GH_TOKEN_ENV,
+  SANDBOX_SOUL_ENV,
+} from "../../src/realBackend.js";
 import { cmrWorkerSpec, familyShipWorkerSpec } from "../../src/family/dispatchFamilyWorker.js";
 import type { ShipAuth } from "../../src/realBackend.js";
 import type { ShipWorkerOutcome } from "../../src/shipOutcome.js";
@@ -225,7 +230,7 @@ describe("#336 the inline family openFamilyPr is no longer the ship path", () =>
 
 describe("#336 family shipSandboxConfig — the WRITE-soul ship sandbox", () => {
   class ConfigBackend extends RealFamilyBackend {
-    public config(auth: { codexAuthDir?: string; claudeToken?: string }): {
+    public config(auth: ShipAuth): {
       imageName: string;
       env: Record<string, string>;
       mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
@@ -256,6 +261,19 @@ describe("#336 family shipSandboxConfig — the WRITE-soul ship sandbox", () => 
     const c = cfg().config({ claudeToken: "tok" });
     expect(c.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(false);
     expect(c.env[SANDBOX_SOUL_ENV]).toBe("coder");
+  });
+
+  it("exports the gh token as GH_TOKEN so the in-container family `gh pr create` is authenticated (cmr S336 r10 P1)", () => {
+    // The family ship worker's happy path is a family PR (`gh pr create --base`). The
+    // 2b image bakes gh but no gh AUTH; the host token (keyring, not portable
+    // hosts.yml) is injected as the standard GH_TOKEN env var.
+    const c = cfg().config({ codexAuthDir: "/tmp/codex", claudeToken: "tok", ghToken: "gho_fam" });
+    expect(c.env[SANDBOX_GH_TOKEN_ENV]).toBe("gho_fam");
+  });
+
+  it("omits GH_TOKEN when no gh token is present (the pure seam stays tolerant; the REQUIRE-gh preflight lives upstream in runShipWorker)", () => {
+    const c = cfg().config({ codexAuthDir: "/tmp/codex", claudeToken: "tok" });
+    expect(c.env[SANDBOX_GH_TOKEN_ENV]).toBeUndefined();
   });
 });
 
@@ -329,6 +347,75 @@ describe("#336 family runShipWorker — fail-closed when the top-level Claude wo
   });
 });
 
+// ═══════════════════ runShipWorker fail-closed on a missing gh auth (cmr S336 r10 P1) ═══════════════════
+
+describe("#336 family runShipWorker — fail-closed when gh auth is missing", () => {
+  /**
+   * gh auth is a HARD requirement for the family delivery: the family ship's ONLY
+   * accepted outcome is "pr_opened" (family_ship.md), which gstack-ship reaches via
+   * `gh pr create --base`. The 2b image bakes the gh CLI but NO gh auth. Without it the
+   * worker would run the whole pipeline only to fail at `gh pr create` — an opaque late
+   * failure, not the cleaner escalate续跑. So runShipWorker preflights the gh token
+   * (like the claude token, cmr S336 r8) BEFORE the checkout / focus write / container.
+   * codex auth stays best-effort (in-container diff review only).
+   */
+  class NoGhAuthBackend extends RealFamilyBackend {
+    containerReached = false;
+    checkoutReached = false;
+    public run(spec: WorkerSpec, ctx: DispatchContext): Promise<ShipWorkerOutcome> {
+      return (
+        this as unknown as {
+          runShipWorker(s: WorkerSpec, c: DispatchContext): Promise<ShipWorkerOutcome>;
+        }
+      ).runShipWorker(spec, ctx);
+    }
+    // claude + codex present, gh token ABSENT (the family PR cannot be opened).
+    protected override mountShipAuth(): ShipAuth {
+      return { codexAuthDir: "/x/codex", claudeToken: "tok" };
+    }
+    protected override sh(): string {
+      this.checkoutReached = true;
+      throw new Error("git checkout should not run when gh auth is missing");
+    }
+    protected override async shipContainerRun(): Promise<never> {
+      this.containerReached = true;
+      throw new Error("shipContainerRun should not run when gh auth is missing");
+    }
+  }
+  function noGh(): NoGhAuthBackend {
+    return new NoGhAuthBackend({
+      workingRepo: mkDir("ship-nogh-repo-"),
+      familyBase: FAMILY_BASE,
+      ledgerDir: mkDir("ship-nogh-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+    });
+  }
+
+  it("no gh token ⇒ escalate, never checks out / spins the container", async () => {
+    const be = noGh();
+    const outcome = await be.run(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
+    expect(outcome.kind).toBe("escalate");
+    if (outcome.kind === "escalate") {
+      expect(outcome.reason).toMatch(/gh|github/i);
+      expect(outcome.diagnosis).toMatch(/gh auth|GH_TOKEN|gh pr create/i);
+    }
+    expect(be.checkoutReached).toBe(false);
+    expect(be.containerReached).toBe(false);
+  });
+
+  it("dispatchWorker routes the missing-gh escalate to a not-passed (escalated) WorkerResult", async () => {
+    const be = noGh();
+    const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
+    expect(res.kind).toBe("escalated");
+    if (res.kind === "escalated") {
+      expect(res.escalation.reason).toMatch(/gh|github/i);
+    }
+  });
+});
+
 // ═══════════════════ writeShipFocusFile — pins the CONFIGURED PR target base (cmr S336 r5) ═══════════════════
 
 describe("#336 writeShipFocusFile — threads the configured PR target base into the ship worker", () => {
@@ -397,11 +484,11 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
       protected override sh(): string {
         return "";
       }
-      // The worker's OWN claude token IS present (cmr S336 r8) — this test isolates
-      // the focus-write ordering from the auth preflight, so provide the token so
-      // runShipWorker proceeds past the preflight to the focus write + container.
+      // The worker's OWN claude token + gh auth ARE present (cmr S336 r8 + r10) — this
+      // test isolates the focus-write ordering from the auth preflights, so provide
+      // BOTH so runShipWorker proceeds past the preflights to the focus write + container.
       protected override mountShipAuth(): ShipAuth {
-        return { claudeToken: "tok", codexAuthDir: "/x/codex" };
+        return { claudeToken: "tok", codexAuthDir: "/x/codex", ghToken: "gho_ok" };
       }
       protected override async shipContainerRun(): Promise<never> {
         // Capture the focus-file state at the moment the container would launch.

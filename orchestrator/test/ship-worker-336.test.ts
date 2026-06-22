@@ -21,7 +21,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { RealBackend, SANDBOX_CODEX_DIR, SANDBOX_SOUL_ENV } from "../src/realBackend.js";
+import {
+  RealBackend,
+  SANDBOX_CODEX_DIR,
+  SANDBOX_GH_TOKEN_ENV,
+  SANDBOX_SOUL_ENV,
+} from "../src/realBackend.js";
 import type { ShipAuth } from "../src/realBackend.js";
 import { shipWorkerSpec } from "../src/dispatchWorker.js";
 import type { ShipWorkerOutcome } from "../src/shipOutcome.js";
@@ -234,6 +239,21 @@ describe("#336 single-slice shipSandboxConfig — best-effort ship auth", () => 
     expect(c.env[SANDBOX_SOUL_ENV]).toBe("coder");
   });
 
+  it("exports the gh token as GH_TOKEN so the in-container `gh pr create` / push over https is authenticated (cmr S336 r10 P1)", () => {
+    // The 2b image BAKES the gh CLI but no gh AUTH (a live OAuth secret). gstack-ship
+    // Step 17 `git push` (https → gh credential helper) + Step 19 `gh pr create`
+    // both need it. The host token (`gh auth token`) lives in the macOS keyring, NOT
+    // in a portable hosts.yml, so we inject it as the GH_TOKEN env var (gh's standard
+    // env-token auth) rather than mounting ~/.config/gh (which would be tokenless).
+    const c = cfg().config({ codexAuthDir: "/tmp/codex", claudeToken: "tok", ghToken: "gho_xyz" });
+    expect(c.env[SANDBOX_GH_TOKEN_ENV]).toBe("gho_xyz");
+  });
+
+  it("omits GH_TOKEN when no gh token is present (the pure seam stays tolerant; the REQUIRE-gh preflight lives upstream in runShipWorker)", () => {
+    const c = cfg().config({ codexAuthDir: "/tmp/codex", claudeToken: "tok" });
+    expect(c.env[SANDBOX_GH_TOKEN_ENV]).toBeUndefined();
+  });
+
   it("a missing codex auth degrades the mount but still ships under the coder soul", () => {
     const c = cfg().config({ claudeToken: "tok" });
     expect(c.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(false);
@@ -323,5 +343,98 @@ describe("#336 single-slice runShipWorker — fail-closed when the top-level Cla
     if (res.kind === "escalated") {
       expect(res.escalation.reason).toMatch(/claude|token|auth/i);
     }
+  });
+});
+
+// ═══════════════ runShipWorker fail-closed on a missing gh auth (cmr S336 r10 P1) ═══════════════
+
+describe("#336 single-slice runShipWorker — fail-closed when gh auth is missing", () => {
+  /**
+   * gh auth is a HARD requirement for the ship worker's happy path: gstack-ship
+   * Step 17 pushes over https (gh credential helper) and Step 19 runs `gh pr create`.
+   * The 2b image bakes the gh CLI but NO gh auth (a live OAuth secret). Without it the
+   * worker would run the whole pipeline only to fail at `git push` / `gh pr create` —
+   * an opaque late failure, NOT the cleaner escalate续跑 a human can act on. So
+   * runShipWorker preflights the gh token (like the claude token, cmr S336 r8) and
+   * escalates BEFORE the container. codex auth stays best-effort (it only degrades the
+   * in-container diff review, not push/PR).
+   */
+  class NoGhAuthBackend extends RealBackend {
+    sandboxReached = false;
+    protected override buildOrReuseClone(): string {
+      return mkDir("ship-noghauth-clone-");
+    }
+    protected override assertIndependentClone(): void {
+      // pure preflight under test, not a real clone.
+    }
+    public run(spec: WorkerSpec, ctx: DispatchContext): Promise<ShipWorkerOutcome> {
+      return (
+        this as unknown as {
+          runShipWorker(s: WorkerSpec, c: DispatchContext): Promise<ShipWorkerOutcome>;
+        }
+      ).runShipWorker(spec, ctx);
+    }
+    // claude + codex present, gh token ABSENT (push/PR cannot authenticate).
+    protected override mountShipAuth(): ShipAuth {
+      return { codexAuthDir: "/x/codex", claudeToken: "tok" };
+    }
+    protected override shipSandbox(): never {
+      this.sandboxReached = true;
+      throw new Error("shipSandbox should not be built when gh auth is missing");
+    }
+  }
+  function noGh(): NoGhAuthBackend {
+    return new NoGhAuthBackend({
+      sourceRepo: mkDir("ship-noghauth-src-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "ming-orchestrator-coder:latest",
+      runKey: "k336nogh",
+    });
+  }
+
+  it("no gh token ⇒ escalate, never builds the sandbox / starts the container", async () => {
+    const be = noGh();
+    const outcome = await be.run(shipWorkerSpec(), { worktree });
+    expect(outcome.kind).toBe("escalate");
+    if (outcome.kind === "escalate") {
+      expect(outcome.reason).toMatch(/gh|github/i);
+      expect(outcome.diagnosis).toMatch(/gh auth|GH_TOKEN|gh pr create|push/i);
+    }
+    expect(be.sandboxReached).toBe(false);
+  });
+
+  it("dispatchWorker routes the missing-gh escalate to a not-passed (escalated) WorkerResult", async () => {
+    const be = noGh();
+    const res = await be.dispatchWorker(shipWorkerSpec(), { worktree });
+    expect(res.kind).toBe("escalated");
+    if (res.kind === "escalated") {
+      expect(res.escalation.reason).toMatch(/gh|github/i);
+    }
+  });
+
+  it("a present gh token passes the preflight (the sandbox IS reached — the gh gate does not over-reject a fully-authenticated host)", async () => {
+    // gh + claude present ⇒ both preflights pass and the worker proceeds to build the
+    // sandbox (here the stub `shipSandbox` throws on reach, which is how we OBSERVE the
+    // preflight let it through — the gate did not stop early). Asserts the gh preflight
+    // is not over-eager.
+    class GhPresentBackend extends NoGhAuthBackend {
+      protected override mountShipAuth(): ShipAuth {
+        return { codexAuthDir: "/x/codex", claudeToken: "tok", ghToken: "gho_ok" };
+      }
+    }
+    const be = new GhPresentBackend({
+      sourceRepo: mkDir("ship-ghok-src-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "ming-orchestrator-coder:latest",
+      runKey: "k336ghok",
+    });
+    await expect(be.run(shipWorkerSpec(), { worktree })).rejects.toThrow(
+      /shipSandbox should not be built/,
+    );
+    expect(be.sandboxReached).toBe(true);
   });
 });
