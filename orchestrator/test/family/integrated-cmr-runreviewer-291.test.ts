@@ -93,6 +93,23 @@ describe("#291 parseReviewerVerdict — prose verdict, no sentinel-JSON gate", (
     expect(parseReviewerVerdict("codex", "The review failed to converge.").pass).toBe(false);
     expect(parseReviewerVerdict("agy", "It did not converge cleanly.").pass).toBe(false);
   });
+  it("the NOUN form 'failure to converge' is NOT a pass even when 'converged' also appears (cmr R2: `ure` suffix missed)", () => {
+    // cmr R2: the negated form `failure to converge` was not matched by
+    // `\bfail(?:s|ed|ing)?\s+to\s+converg` (it lacks `ure`). When the prose ALSO
+    // contains the word `converged` (a reviewer describing why the diff is a
+    // failure to converge despite some slices being converged), the unmatched
+    // negation falls through to the positive `\bconverged\b` fallback → a
+    // FABRICATED pass. The negation must catch the noun form so the negative wins.
+    expect(
+      parseReviewerVerdict(
+        "codex",
+        "Most slices are converged, but overall this is a failure to converge: the cannon/cannons seam still mismatches.",
+      ).pass,
+    ).toBe(false);
+    expect(
+      parseReviewerVerdict("agy", "Two slices converged; net result: failure to converge.").pass,
+    ).toBe(false);
+  });
   it("a genuine positive verdict still passes (the broadened negation must not over-trip)", () => {
     // Guard against the fix over-tripping: real convergence prose must still pass.
     expect(parseReviewerVerdict("codex", "All slices are converged. No findings.").pass).toBe(true);

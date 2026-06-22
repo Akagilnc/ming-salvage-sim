@@ -642,7 +642,7 @@ export function parseReviewerVerdict(vendor: ReviewerVendor, prose: string): Rev
     /\b(?:non|un)-?converg/.test(lower) || // non-converged / unconverged
     /\b(?:not|never|cannot)\b(?:\s+\w+){0,3}\s+converg/.test(lower) || // not [adv]{0,3} converge
     /n't\b(?:\s+\w+){0,3}\s+converg/.test(lower) || // didn't / doesn't / can't … converge
-    /\bfail(?:s|ed|ing)?\s+to\s+converg/.test(lower); // fail(ed/s) to converge
+    /\bfail(?:s|ed|ing|ure)?\s+to\s+converg/.test(lower); // fail(ed/s/ure) to converge
   if (negated) {
     return { vendor, pass: false, reason: text };
   }
