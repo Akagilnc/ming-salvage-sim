@@ -124,8 +124,13 @@ export interface RealFamilyBackendOptions {
   readonly promptsDir: string;
   /** The profile image (souls + CLIs baked in) for the merger agent sandbox. */
   readonly imageName: string;
-  /** Host dir holding the baked dev skills to bind-mount for the merger agent. */
-  readonly skillsMount: string;
+  /**
+   * DEPRECATED (#334): host dir of dev skills to bind-mount for the merger. The
+   * 2b image bakes `resolving-merge-conflicts`; `mergerSandboxConfig()` no longer
+   * mounts host skills (a runtime mount would SHADOW the baked skill). Kept
+   * OPTIONAL for back-compat; no longer read. Remove once callers drop it.
+   */
+  readonly skillsMount?: string;
   /**
    * The family base HEAD at run setup — the baseline {@link ReconcileGit.familyBaseStartHead}
    * returns (the spine provides it; the only baseline available when the ledger is
@@ -362,9 +367,12 @@ export class RealFamilyBackend implements FamilyBackend {
    * — same env var, same image, a new soul value ({@link MERGER_SOUL}) — NOT by the
    * prompt alone. Before this the sandbox set no env, so `ORCHESTRATOR_SOUL` was
    * never set and the merger ran under the image's default soul (the F28 PARTIAL).
-   * The `resolving-merge-conflicts` skill is mounted at {@link SANDBOX_SKILLS_DIR}
-   * (`/home/agent/.claude/skills`, the path the agent's soul/skill discovery scans
-   * — the same one `RealBackend.box()` uses), so the merger soul can find it.
+   *
+   * #334 (ADR 0026 / cross-slice note): the runtime host skills bind-mount onto
+   * {@link SANDBOX_SKILLS_DIR} is DROPPED here too — the 2b image BAKES
+   * `resolving-merge-conflicts` (+ its closure), so a runtime mount would SHADOW
+   * the baked skill. The merger soul finds the skill in the IMAGE, not a host
+   * mount; the sandbox now sets only the soul env (auth is wired by #335/#336).
    */
   protected mergerSandboxConfig(): {
     imageName: string;
@@ -374,7 +382,8 @@ export class RealFamilyBackend implements FamilyBackend {
     return {
       imageName: this.opts.imageName,
       env: { [SANDBOX_SOUL_ENV]: MERGER_SOUL },
-      mounts: [{ hostPath: this.opts.skillsMount, sandboxPath: SANDBOX_SKILLS_DIR }],
+      // #334: no skills mount — the baked image provides the merger skill.
+      mounts: [],
     };
   }
 
