@@ -494,7 +494,6 @@ export type WorkerResult =
 export interface IssueMeta {
   readonly number: number;
   readonly isReadyForAgent: boolean;
-  readonly hasAgentBrief: boolean;
   readonly hasSubIssues: boolean;
   /** Issue numbers of still-open blocked_by dependencies. */
   readonly openBlockedBy: ReadonlyArray<number>;

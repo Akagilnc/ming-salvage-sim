@@ -46,7 +46,6 @@ class ChildBackend implements Backend {
     return {
       number: issueNumber,
       isReadyForAgent: true,
-      hasAgentBrief: true,
       hasSubIssues: false,
       openBlockedBy: [],
     };
@@ -228,7 +227,6 @@ describe("runFamily — family entry accepts the epic; each child passes its OWN
         return {
           number: issueNumber,
           isReadyForAgent: issueNumber !== 11,
-          hasAgentBrief: true,
           hasSubIssues: false,
           openBlockedBy: [],
         };

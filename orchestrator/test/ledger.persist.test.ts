@@ -68,7 +68,6 @@ class LedgerBackend implements Backend {
     return {
       number: issueNumber,
       isReadyForAgent: true,
-      hasAgentBrief: true,
       hasSubIssues: false,
       openBlockedBy: [],
     };
@@ -267,7 +266,7 @@ describe("persisted step ledger (#249)", () => {
         return { kind: "reviewer", findings: [] };
       },
       async fetchIssueMeta(n) {
-        return { number: n, isReadyForAgent: true, hasAgentBrief: true, hasSubIssues: false, openBlockedBy: [] };
+        return { number: n, isReadyForAgent: true, hasSubIssues: false, openBlockedBy: [] };
       },
       async fetchIssueSnapshot(n) {
         return { number: n, body: "b", comments: [], agentBrief: "brief" };
@@ -332,7 +331,7 @@ describe("persisted step ledger (#249)", () => {
         return { kind: "reviewer", findings: [] };
       },
       async fetchIssueMeta(n) {
-        return { number: n, isReadyForAgent: true, hasAgentBrief: true, hasSubIssues: false, openBlockedBy: [] };
+        return { number: n, isReadyForAgent: true, hasSubIssues: false, openBlockedBy: [] };
       },
       async fetchIssueSnapshot(n) {
         return { number: n, body: "b", comments: [], agentBrief: "brief" };
