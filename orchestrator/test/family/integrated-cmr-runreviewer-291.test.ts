@@ -192,13 +192,17 @@ describe("#291 aggregateCmr — all-pass converge, any-findings red, down-leg de
 class FixturedDriverBackend extends DriverFamilyBackend {
   reviewerOutputs: Record<string, ReviewerOutput> = {};
   reviewerCalls: Array<{ vendor: string; diff: string }> = [];
+  diffArgs: string[] | undefined;
   diffFake = "diff --git a/x b/x\n+seam";
   protected override async runReviewer(vendor: string, diff: string): Promise<ReviewerOutput> {
     this.reviewerCalls.push({ vendor, diff });
     return this.reviewerOutputs[vendor] ?? { ok: false };
   }
   protected override sh(file: string, args: string[], _cwd?: string): string {
-    if (file === "git" && args[0] === "diff") return this.diffFake;
+    if (file === "git" && args[0] === "diff") {
+      this.diffArgs = args;
+      return this.diffFake;
+    }
     return "";
   }
   // expose the protected runCmr for the test
@@ -208,7 +212,7 @@ class FixturedDriverBackend extends DriverFamilyBackend {
   }
 }
 
-function makeBackend(): FixturedDriverBackend {
+function makeBackend(over: { familyBaseStartHead?: string } = {}): FixturedDriverBackend {
   return new FixturedDriverBackend(
     {
       workingRepo: mkDir("cmr-repo-"),
@@ -219,6 +223,7 @@ function makeBackend(): FixturedDriverBackend {
       promptsDir: mkDir("cmr-prompts-"),
       imageName: "img",
       skillsMount: "/tmp/skills",
+      familyBaseStartHead: over.familyBaseStartHead ?? "cut0sha",
     },
     undefined, // no injected cmrImpl ⇒ the REAL 3-leg path runs
   );
@@ -237,6 +242,22 @@ describe("#291 DriverFamilyBackend.runCmr — real 3-leg reviewer orchestration"
     expect(b.reviewerCalls.map((c) => c.vendor).sort()).toEqual(["agy", "claude", "codex"]);
     // every leg got the SAME pinned diff
     expect(b.reviewerCalls.every((c) => c.diff === b.diffFake)).toBe(true);
+  });
+
+  it("pins the diff from the REAL cut SHA (familyBaseStartHead), NOT the possibly-stale local base ref (cmr R2)", async () => {
+    // cmr R2 #1: `familyBaseDiff` diffed `<opts.base>...<familyBase>`, but the
+    // family base was cut from `origin/<base>` while the LOCAL `base` ref can be
+    // stale — so a stale local base would show upstream commits as spurious family
+    // additions in the reviewed diff. Diff from the recorded cut SHA instead, the
+    // exact point the family base diverged.
+    const b = makeBackend({ familyBaseStartHead: "cutsha123" });
+    b.reviewerOutputs = {
+      codex: { ok: true, prose: "converged" },
+      claude: { ok: true, prose: "converged" },
+      agy: { ok: true, prose: "converged" },
+    };
+    await b.runCmrPublic({ familyBase: "family/291-base" });
+    expect(b.diffArgs).toEqual(["diff", "cutsha123...family/291-base"]);
   });
 
   it("one leg reports findings ⇒ NOT converged, reason names the leg", async () => {
