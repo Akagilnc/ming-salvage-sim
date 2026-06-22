@@ -67,8 +67,15 @@ import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
 
 import { runExclusive } from "./gitMutex.js";
+import { legacyDispatchWorker } from "./dispatchWorker.js";
+import {
+  SHIP_COMPLETION_SIGNAL,
+  shipOutcomeFromResult,
+  type ShipWorkerOutcome,
+} from "./shipOutcome.js";
 import type {
   Backend,
+  DispatchContext,
   Finding,
   IssueMeta,
   IssueSnapshot,
@@ -80,6 +87,8 @@ import type {
   StepResult,
   StepSoul,
   StepSpec,
+  WorkerResult,
+  WorkerSpec,
   WorktreeHandle,
 } from "./types.js";
 
@@ -1272,7 +1281,7 @@ export class RealBackend implements Backend {
    * otherwise we `git clone <sourceRepo> <clonePath>`. The fail-closed guard runs
    * separately, AFTER the clone exists.
    */
-  private buildOrReuseClone(): string {
+  protected buildOrReuseClone(): string {
     const home = this.opts.home ?? homedir();
     const slug = repoSlug(this.opts.sourceRepo, this.opts.remote);
     const clonePath = clonePathFor(home, slug, this.opts.runKey);
@@ -1302,7 +1311,7 @@ export class RealBackend implements Backend {
    * could reach across the shared `.git` into other sessions' admin namespace
    * (the #292 bug). So we refuse to start: throw at construction (不启动).
    */
-  private assertIndependentClone(): void {
+  protected assertIndependentClone(): void {
     const commonDir = this.sh(
       "git",
       ["rev-parse", "--git-common-dir"],
@@ -1996,7 +2005,148 @@ export class RealBackend implements Backend {
     }
   }
 
-  // ── S7: push (git) ─────────────────────────────────────────────────────────
+  // ── S7: ship WORKER (invoke gstack-ship) ────────────────────────────────────
+
+  /**
+   * THE single-slice worker-dispatch seam (ADR 0026 / #331 / #336). The S7 ship
+   * step is dispatched here as a CONTAINER ship WORKER that invokes `gstack-ship`
+   * (#336) — replacing the inline `push` (a bare `git push`). Every OTHER worker
+   * kind (coder / reviewer agent steps) is forwarded to {@link legacyDispatchWorker}
+   * (runStep / resumeSession), which #334 already routes to the real `/tdd` /
+   * `/review` workers — so THIS method takes over ONLY the ship leg.
+   *
+   * The ship worker (`shipWorkerSpec`) = the 2b container's TOP-LEVEL claude; it
+   * `Skill`-invokes gstack-ship (base merge / tests / diff review / VERSION /
+   * CHANGELOG / commit / push / `gh pr create`). It returns the full
+   * {@link WorkerResult} mapping (PRD #330 R2): shipped → `completed` ShipResult;
+   * a genuine block (merge conflict / review ASK / hard defect) → `escalated`; a
+   * hard ship/test failure → `failed`; an unparseable run → `malformed`. A
+   * rerun-able flake is NOT escalated — the worker reruns it itself (用户 note).
+   */
+  async dispatchWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<WorkerResult> {
+    if (spec.kind !== "ship") {
+      // #336 owns the ship leg; coder/reviewer agent workers stay on the existing
+      // runStep/resumeSession seam (#334 routes them to /tdd / /review).
+      return legacyDispatchWorker(this, spec, ctx);
+    }
+    if (ctx.worktree === undefined) {
+      throw new Error(
+        "dispatchWorker(ship): a ship worker requires ctx.worktree (the resident " +
+          "slice branch gstack-ship delivers).",
+      );
+    }
+    const outcome = await this.runShipWorker(spec, ctx);
+    if (outcome.kind === "escalate") {
+      // A GENUINE block (merge conflict the skill can't resolve / a review ASK / a
+      // hard defect needing a human decision) — the WorkerResult-level escalate
+      // (续跑 path; runner.ts S7 takes the S8(escalate) handoff). NOT a rerun-able
+      // flake (the worker reruns those itself) and NOT a fabricated PR.
+      return {
+        kind: "escalated",
+        escalation: { reason: outcome.reason, diagnosis: outcome.diagnosis },
+      };
+    }
+    if (outcome.kind === "failed") {
+      // A hard ship command / test failure no rerun cleared → the delivery could
+      // not complete (runner.ts S7 maps non-completed to S8(error)).
+      return { kind: "failed", reason: `${outcome.reason} — ${outcome.diagnosis}` };
+    }
+    if (outcome.kind === "malformed") {
+      // No parseable verdict / no completion signal ⇒ malformed (never a success).
+      return { kind: "malformed", reason: outcome.reason };
+    }
+    return {
+      kind: "completed",
+      output: {
+        kind: "ship",
+        branch: outcome.branch,
+        status: outcome.status,
+        ...(outcome.pr !== undefined ? { pr: outcome.pr } : {}),
+      },
+    };
+  }
+
+  /**
+   * Run the ship WORKER: ONE `sc.run` of the 2b container's top-level claude
+   * invoking `gstack-ship` over the resident slice worktree (#336). `protected` so
+   * a unit test fixtures the outcome without a real container (the real container
+   * only runs on the driver / manual-smoke / e2e path).
+   *
+   * The worker is the container's TOP-LEVEL agent (so gstack-ship's own pipeline +
+   * any rerun loops run inside it — ADR 0026), under the WRITE (`coder`) soul (it
+   * commits the VERSION/CHANGELOG bump + pushes). `branchStrategy:{type:"head"}`
+   * keeps it on the resident branch (the ADR 0017 commit真源). Its `<ship>` tag is
+   * gated on the completion signal then classified by {@link shipOutcomeFromResult}.
+   */
+  protected async runShipWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<ShipWorkerOutcome> {
+    const worktree = ctx.worktree!;
+    const result = await sc.run({
+      name: `${spec.id}-ship`,
+      cwd: worktree.path,
+      sandbox: this.shipSandbox(worktree),
+      agent: sc.claudeCode(modelIdForSlug(spec.model)),
+      // The ship worker self-reruns gstack-ship's rerun-able steps INSIDE the
+      // container (用户 note); maxIter is the within-worker budget. A genuine block
+      // is the worker's `<ship>` escalate verdict, not the iteration limit.
+      maxIterations: spec.maxIter,
+      completionSignal: spec.completionSignal,
+      // Commit the VERSION/CHANGELOG bump + push on the resident branch in place.
+      branchStrategy: { type: "head" },
+      promptFile: join(this.opts.promptsDir, spec.promptFile),
+    });
+    return shipOutcomeFromResult(result);
+  }
+
+  /**
+   * The ship worker's sandbox: the 2b image (gstack-ship + gh + bun baked in,
+   * #333) under the WRITE (`coder`) soul, with the per-issue codex auth + claude
+   * token mounted (the SAME auth wiring `box()` uses — the ship worker pushes +
+   * `gh pr create`, so it needs the live credentials). `protected` so a unit test
+   * asserts the mounts + soul without a real container.
+   */
+  protected shipSandbox(worktree: WorktreeHandle): sc.SandboxProvider {
+    const auth = this.mountAuth(this.issueOf(worktree));
+    return docker(this.shipSandboxConfig(auth));
+  }
+
+  /**
+   * The docker options the ship worker sandbox runs under — the pure
+   * SANDBOX-CONFIG seam (mirrors `boxConfig` / the family `cmrSandboxConfig`
+   * testability). No container, no I/O: a unit test asserts the mounts + soul env
+   * without a real sandbox. The ship worker runs under the `coder` (WRITE) soul
+   * (it commits the bump + pushes) with codex auth + the claude token, NO skills
+   * mount (the 2b image BAKES gstack-ship — a runtime mount would SHADOW it, #334).
+   */
+  protected shipSandboxConfig(auth: { authDir: string; claudeToken: string }): {
+    imageName: string;
+    env: Record<string, string>;
+    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
+  } {
+    return {
+      imageName: this.opts.imageName,
+      env: {
+        CLAUDE_CODE_OAUTH_TOKEN: auth.claudeToken,
+        // The ship worker is a WRITE worker (commits + pushes) → the coder soul.
+        [SANDBOX_SOUL_ENV]: "coder",
+      },
+      // #334: codex auth ONLY — baked skills win (no host skills mount).
+      mounts: [{ hostPath: auth.authDir, sandboxPath: SANDBOX_CODEX_DIR }],
+    };
+  }
+
+  /**
+   * The legacy inline push (#252 escalate-residue path). RETAINED as a `protected`
+   * fallback the seam no longer reaches on the production path: ADR 0026 / #336
+   * makes S7 a ship WORKER (gstack-ship via {@link dispatchWorker}). A direct
+   * caller (a test / a legacy back-compat path that bypasses the unified seam) may
+   * still reach it; the runner never does (it always goes through dispatchWorker).
+   */
   async push(worktree: WorktreeHandle): Promise<void> {
     this.sh(
       "git",
