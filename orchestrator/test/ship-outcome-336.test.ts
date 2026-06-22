@@ -129,6 +129,53 @@ describe("#336 parseShipOutcome — the <ship> verdict tag", () => {
   it("a <ship> object with no status, escalate or failed ⇒ malformed", () => {
     expect(parseShipOutcome('<ship>{"foo": 1}</ship>').kind).toBe("malformed");
   });
+
+  // ── Finding 2 (cmr S336 r2): a garbage escalate/failed must NOT be coerced into
+  // a structured result — both `reason` AND `diagnosis` MUST be non-empty strings
+  // (prompts/ship.md + family_ship.md require both). Mirrors the既有 escalate
+  // invariant (validate.ts isValidEscalation / integ-cmr-base-r1-seams F1): an
+  // off-contract escalate/failed → malformed, never a fabricated stop signal.
+  describe("Finding 2: a malformed escalate is never coerced into an escalate", () => {
+    it("escalate:{} (empty) ⇒ malformed", () => {
+      expect(parseShipOutcome('<ship>{"escalate": {}}</ship>').kind).toBe("malformed");
+    });
+    it("escalate with non-string reason ⇒ malformed", () => {
+      expect(
+        parseShipOutcome('<ship>{"escalate": {"reason": 123, "diagnosis": "x"}}</ship>').kind,
+      ).toBe("malformed");
+    });
+    it("escalate missing diagnosis ⇒ malformed", () => {
+      expect(parseShipOutcome('<ship>{"escalate": {"reason": "stuck"}}</ship>').kind).toBe(
+        "malformed",
+      );
+    });
+    it("escalate with empty-string fields ⇒ malformed", () => {
+      expect(
+        parseShipOutcome('<ship>{"escalate": {"reason": "", "diagnosis": "   "}}</ship>').kind,
+      ).toBe("malformed");
+    });
+  });
+
+  describe("Finding 2: a malformed failed is never coerced into a failed", () => {
+    it("failed:{} (empty) ⇒ malformed", () => {
+      expect(parseShipOutcome('<ship>{"failed": {}}</ship>').kind).toBe("malformed");
+    });
+    it("failed with non-string diagnosis ⇒ malformed", () => {
+      expect(
+        parseShipOutcome('<ship>{"failed": {"reason": "tests red", "diagnosis": 5}}</ship>').kind,
+      ).toBe("malformed");
+    });
+    it("failed missing diagnosis ⇒ malformed", () => {
+      expect(parseShipOutcome('<ship>{"failed": {"reason": "tests red"}}</ship>').kind).toBe(
+        "malformed",
+      );
+    });
+    it("failed with empty-string fields ⇒ malformed", () => {
+      expect(
+        parseShipOutcome('<ship>{"failed": {"reason": "  ", "diagnosis": ""}}</ship>').kind,
+      ).toBe("malformed");
+    });
+  });
 });
 
 // ═══════════════════ shipOutcomeFromResult (completion-signal gate) ═══════════════════

@@ -890,13 +890,27 @@ export class RealFamilyBackend implements FamilyBackend {
     if (outcome.kind === "malformed") {
       return { kind: "malformed", reason: outcome.reason };
     }
+    // Fail-CLOSED on the FAMILY contract (prompts/family_ship.md): a family ship
+    // delivery is a family PR — the ONLY accepted shipped status is "pr_opened"
+    // with a `pr` URL. The shared parser also accepts "pushed" (legal for a SINGLE
+    // slice, prompts/ship.md), so a family worker that pushed-but-opened-no-PR
+    // would otherwise be read as a completed family delivery → verifyCmr ok:true on
+    // a PHANTOM family PR (cmr S336 r2 F1). The single-slice consumer keeps "pushed"
+    // (legal there); only THIS family consumer narrows it (verifyCmr never reads
+    // success on a non-PR family ship).
+    if (outcome.status !== "pr_opened" || typeof outcome.pr !== "string") {
+      return {
+        kind: "malformed",
+        reason: `family ship worker reported status "${outcome.status}" — the family delivery must be "pr_opened" with a \`pr\` URL (family_ship.md allows only pr_opened; "pushed" is single-slice only)`,
+      };
+    }
     return {
       kind: "completed",
       output: {
         kind: "ship",
         branch: outcome.branch,
         status: outcome.status,
-        ...(outcome.pr !== undefined ? { pr: outcome.pr } : {}),
+        pr: outcome.pr,
       },
     };
   }

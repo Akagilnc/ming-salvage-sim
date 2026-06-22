@@ -129,6 +129,28 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
     expect(res.kind).toBe("malformed");
   });
 
+  // ── Finding 1 (cmr S336 r2): family_ship.md allows ONLY `pr_opened`; the shared
+  // parser also accepts `pushed` (legal for a SINGLE slice). A family worker that
+  // pushed-but-opened-no-PR must NOT be read as a family delivery — fail-closed to
+  // malformed so verifyCmr never returns ok:true on a phantom family PR.
+  it('a shipped outcome with status "pushed" (no PR) ⇒ malformed (family needs pr_opened)', async () => {
+    const be = fixtured();
+    be.outcome = { kind: "shipped", branch: FAMILY_BASE, status: "pushed" };
+    const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
+    expect(res.kind).toBe("malformed");
+    if (res.kind === "malformed") expect(res.reason).toMatch(/pr_opened|pushed|PR/);
+  });
+
+  it('a shipped "pr_opened" with no `pr` URL ⇒ malformed (family PR must carry a URL)', async () => {
+    const be = fixtured();
+    // The shared parser already rejects pr_opened-without-pr at parse time; the
+    // family consumer is the defense-in-depth belt — a fixtured off-contract
+    // shipped (pr missing) must still fail-closed, never completed.
+    be.outcome = { kind: "shipped", branch: FAMILY_BASE, status: "pr_opened" };
+    const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
+    expect(res.kind).toBe("malformed");
+  });
+
   it("a family ship worker without familyBase throws (the worker ships the base)", async () => {
     const be = fixtured();
     await expect(be.dispatchWorker(familyShipWorkerSpec(), {})).rejects.toThrow(/familyBase/);
