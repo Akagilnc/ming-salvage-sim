@@ -6,6 +6,21 @@ export { runOrchestrator } from "./runner.js";
 export { route } from "./route.js";
 export type { RouteContext, RouteDecision } from "./route.js";
 
+// ── unified worker-dispatch seam (ADR 0026 / PRD #330, #331) ────────────────
+export {
+  dispatchWorker,
+  legacyDispatchWorker,
+  workerResultToStep,
+  stepSpecToWorkerSpec,
+  shipWorkerSpec,
+} from "./dispatchWorker.js";
+export {
+  dispatchFamilyWorker,
+  legacyDispatchFamilyWorker,
+  cmrWorkerSpec,
+  familyShipWorkerSpec,
+} from "./family/dispatchFamilyWorker.js";
+
 // ── family integration layer (ADR 0022, #293) ──────────────────────────────
 // The four independent extension modules + the spine that only CALLS them.
 export { runFamily } from "./family/runner.js";
@@ -78,4 +93,18 @@ export type {
   StepSpec,
   ToolchainEntry,
   WorktreeHandle,
+  // unified worker-dispatch seam (ADR 0026 / PRD #330, #331)
+  WorkerSpec,
+  WorkerKind,
+  WorkerHost,
+  WorkerSessionMode,
+  WorkerContextRetention,
+  DispatchContext,
+  WorkerResult,
+  WorkerOutput,
+  CoderResult,
+  ReviewerResult,
+  CmrResult,
+  ShipResult,
+  MergeWorkerResult,
 } from "./types.js";
