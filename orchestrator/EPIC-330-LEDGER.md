@@ -5,6 +5,7 @@ one family PR to main at the END (per family-slices-merge-to-base). Dependency
 unblocking keys off THIS ledger (merged), NOT GitHub-closed.
 
 ## Merged
+- **#329** S0 fetchIssueMeta slim view — `feat/330-s329` @ 0af2b56 — narrowed gh issue-view to number,labels (drop body/comments double-fetch); removed vestigial hasAgentBrief field; per-slice cmr codex+agy both converged R1. tests green.
 - **#322** integrated cmr consumes llmResolvedChildren — `feat/330-s322` @ df14696 — additive FOCUS段 (names machine-touched children, full diff still reviewed; omit ⇒ back-compat). per-slice cmr: codex+agy both converged R1 (no findings; agy recovered). 644 pass.
 - **#331** unified dispatchWorker seam (prefactor) — `feat/330-s331` @ f197d99 — per-slice cmr: codex R1→R7 converged; 本轮缺 gemini (agy down, codex-solo). tsc clean + 639 tests pass on merged base. Behavior unchanged (legacy wrapper); WorkerResult union + per-worker schemas + DispatchContext + ledger widened + all call-sites routed; ADR 0026 invariant enforced (normal fix never takes resumeSession).
 - **#332** 2a minimal coder image — `feat/330-s332` @ 5013fea — per-slice cmr: codex 3 findings (2 fixed, 1 deferred-downstream). Built `ming-orchestrator-coder:latest`; baked /tdd closure (tdd→codebase-design + diagnosing-bugs) + coder soul + CLAUDE.md `## Skill routing`. Demo verified: container agent Skill-invoked /tdd, test-first, RED→GREEN.
