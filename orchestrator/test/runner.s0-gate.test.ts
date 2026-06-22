@@ -142,9 +142,12 @@ describe("S0 input gate — reject cases (#248)", () => {
     });
 
     // S0 does NOT reject on a missing brief — it advances to S1 (fetchIssueSnapshot).
-    // The run may end later for unrelated stub reasons; the point is the gate let it
-    // through (so it never throws the "no Agent Brief" S0 error).
-    await runOrchestrator({ issueNumber: 248, backend }).catch(() => {});
+    // It resolves (the stub coder's committed:false routes to an S8 error RESULT,
+    // never a throw), so `await` it directly — NO `.catch` (online R1 Gemini): a
+    // bare `.catch(()=>{})` would swallow a real reject (e.g. an S0/S1 runtime crash,
+    // or a regression that re-adds the brief throw), masking the very failure this
+    // test guards against.
+    await runOrchestrator({ issueNumber: 248, backend });
     expect(backend.calls).toContain("fetchIssueSnapshot(248)");
     expect(backend.calls.length).toBeGreaterThan(1); // not stopped at the gate
   });

@@ -55,4 +55,4 @@ Status: Accepted（2026-06-19 提出 / 2026-06-20 Accepted；spike 实证「底�
 - **v1 模型 = Sonnet 写 / Opus 4.8 评**，暂搁置 wiki per-slice「不用 Claude 省额度」规矩（claude -p credit 紧；v1 走订阅 auth 容器、Opus 担得起，代价是烧 Claude 额度）；以后换 codex 回省额度、per-slice 升多模型时再用 `ak-cross-m-review`。
 - **v1 = 一个镜像、双角色**：coder/reviewer 同一常驻 sandbox（共享 worktree），靠 `run()` 级 fresh context 保上下文隔离（reviewer 看不到 coder「我刚写的」推理）。**可逆**：reviewer 真需独立再拆两镜像。
 - **dev skills + 角色 soul 烤进 profile 镜像**（**取代发现 4 的 cp -RL bind-mount 注入**，later-doc-wins）。
-- **输入只收单个实现切片**（「喂父报错、子不报错」，凭 `## Agent Brief` 判）；**调用端只传 issue 数字**，编排 + prompt 全在代码里（保可复现）。**本 epic 全新、与 #217 无关**。
+- **输入只收单个实现切片**（「喂父报错、子不报错」，凭 **native sub-issues** 判：有子 = 父 epic、拒；无子 = 叶子切片、放行）；**调用端只传 issue 数字**，编排 + prompt 全在代码里（保可复现）。`## Agent Brief` **不是闸**（可选；用户 2026-06-22 拍——`to-issues` 切片未必带它，coder 读整个 issue；S0 闸 = rfa ∧ 无 sub-issues ∧ blocked_by 全 closed）。**本 epic 全新、与 #217 无关**。
