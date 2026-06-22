@@ -307,7 +307,7 @@ runner 控的一个外层 wiki 步骤,两类:**worker 步**(产出工作——�
 _Avoid_: 阶段、stage(太泛)、iteration(那是步内的)
 
 **StepSpec**:
-一个 step 的固定规格——固定 role + promptFile + agent/model + completionSignal + output schema + maxIterations。存在代码里,不临场生成。(role 决定注哪份 soul:v0.1 一镜像双角色,runner 凭 role 选 coder/reviewer soul。)
+一个 **worker 步**的固定规格——固定 role + promptFile + agent/model + completionSignal + output schema + maxIterations。存在代码里,不临场生成。(role 决定注哪份 soul:v0.1 一镜像双角色,runner 凭 role 选 coder/reviewer soul。)**仅 worker 步有**——runner 调度决策(gate/route/排序/ledger/续跑)不跑 agent、无 StepSpec。
 _Avoid_: 配置、config(太泛)
 
 **runner**(纯调度器):
@@ -326,7 +326,7 @@ _Avoid_: 把 worker 等同「invoke skill 的步」(用不用 skill 不是 worke
 _Avoid_: 结束标记、done(太泛)
 
 **step ledger**:
-每步落一条的账本(step / promptFile / prompt_hash / agent / model / commits before-after / sessionId 等)。防跳步的事后真源 + 续跑真源(下一步只读 ledger,不靠 LLM 记忆)。同 ADR 0017 的「状态文件」是同一份。
+每个 **worker 步**落一条的账本(step / promptFile / prompt_hash / agent / model / commits before-after / sessionId 等)。防跳步的事后真源 + 续跑真源(下一步只读 ledger,不靠 LLM 记忆)。同 ADR 0017 的「状态文件」是同一份。(runner 的纯调度决策不产 worker 制品、不落 StepSpec 字段,但其路由结果仍记入 ledger 供续跑。)
 _Avoid_: 日志、log(太泛)、history
 
 **commander**:

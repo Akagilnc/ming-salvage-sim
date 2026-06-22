@@ -1,6 +1,6 @@
 ---
 status: proposed
-supersedes-part-of: ADR 0018 (step 分类); ADR 0016 (spike 发现4 的 cmr/gstack 不进容器排除)
+supersedes-part-of: ADR 0018 (step 分类 + 生产类步「步间 fresh context」改 resumeSession); ADR 0016 (spike 发现4 的 cmr/gstack 不进容器排除)
 ---
 
 # 编排器 runner = 纯调度器；每个具体 wiki 步是 worker
@@ -17,7 +17,6 @@ supersedes-part-of: ADR 0018 (step 分类); ADR 0016 (spike 发现4 的 cmr/gsta
 
 - **supersede ADR 0018 的 step 分类**：`push / cmr / ship` 从「runner 动作」改成「worker 步」；runner 只剩纯调度决策（gate / route / 排序 / ledger / 续跑）。
 - **supersede ADR 0016 的 cmr/gstack 排除**：`ak-cross-m-review` / `gstack-ship` 改为烤进镜像、由容器 worker invoke（取代 0016 的「pipeline 层 run() / 不进容器」）。三腿容器内实证可行（#333）；agy 走文件 token（`~/.gemini/antigravity-cli/antigravity-oauth-token`，runtime 挂载，同 codex/claude auth 模式）。
-- **fresh vs resume 按活类型**：生产类（coder/fix）`resumeSession`（留上下文）；评审类（cmr）每轮 fresh（cross-model 独立性，不复查自己旧 finding）。沙堡原生 resume 撑住 fix-loop。**fresh ≠ 新 checkout**：cmr/ship 的 fresh worker 容器仍挂同一条 host 常驻 slice worktree（ADR 0017：提交真源 = 常驻 worktree），fresh 只是 run()/上下文 fresh，提交绝不落进临时 checkout。
-- **落实 ADR 0016 的 bake**：每个 worker = 从**一个预制镜像**起的容器，工具链 + 多模型 CLI + dev skills + 角色 soul **全烤进镜像**（不 runtime bind-mount，可复现）。
-- **scope = A（自治 implement→ship）先建**；grill / to-prd / to-issues（带上下文 + HITL 的 worker）= B，模型已通用装得下、以后再做、不为它现在特殊化。
-- **留 to-prd / 实现**：A 段切成哪几个 worker（对到现 S0–S8）、worker↔runner 结果契约、容器启动成本 vs 步粒度。
+- **fresh vs resume 按活类型**：生产类（coder/fix）`resumeSession`（留上下文）；评审类（cmr）每轮 fresh（cross-model 独立性，不复查自己旧 finding）。沙堡原生 resume 撑住 fix-loop。**这 narrows ADR 0018「步间 fresh context」对生产类步,并把 ADR 0017 的 `resumeSession` 从「仅崩溃/escalate 续跑」扩到 fix-loop 上下文保留**（reviewer/cmr 步仍 fresh）。**fresh ≠ 新 checkout**：fresh worker 容器仍挂同一条 host 常驻 slice worktree（ADR 0017：提交真源 = 常驻 worktree），fresh 只是 run()/上下文 fresh，提交绝不落进临时 checkout。
+- **落实 ADR 0016 的 bake**：每个 worker = 从**一个预制镜像**起的容器，工具链 + 多模型 CLI + dev skills + 角色 soul **全烤进镜像**。**「不 runtime bind-mount」只指这些工具/技能/soul/资产**（故可复现）;runtime 仍挂 = 被加工的常驻 slice worktree（ADR 0017 提交真源,见上条）+ auth token —— 必要例外、非矛盾。
+- **scope = A（自治 implement→ship）先建,B（grill/to-prd/to-issues 带上下文+HITL）以后**；worker 清单 / worker↔runner 结果契约 / 容器粒度等实现细节见 PRD #330。
