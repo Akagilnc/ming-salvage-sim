@@ -50,8 +50,8 @@ import {
   chmodSync,
   copyFileSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
-  rmSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -702,9 +702,11 @@ export class RealFamilyBackend implements FamilyBackend {
     // codex auth.json (+ optional config.toml) → a per-run owner-only dir.
     let codexAuthDir: string | undefined;
     try {
-      const dir = join(root, "cmr-codex-auth");
-      rmSync(dir, { recursive: true, force: true });
-      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      // Per-INVOCATION unique dir (codex cmr R2): a fixed path would be rmSync'd
+      // + rebuilt under a concurrent family CMR worker, deleting the dir it has
+      // mounted. mkdtempSync gives each invocation its own owner-only (0700) dir.
+      mkdirSync(root, { recursive: true, mode: 0o700 });
+      const dir = mkdtempSync(join(root, "cmr-codex-auth-"));
       copyFileSync(join(home, ".codex", "auth.json"), join(dir, "auth.json"));
       chmodSync(join(dir, "auth.json"), 0o600);
       try {
@@ -723,9 +725,11 @@ export class RealFamilyBackend implements FamilyBackend {
     // read-only — #333 gotcha).
     let agyDir: string | undefined;
     try {
-      const dir = join(root, "cmr-agy");
-      rmSync(dir, { recursive: true, force: true });
-      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      // Per-INVOCATION unique dir (codex cmr R2): same concurrency hazard as the
+      // codex dir above — and the agy dir is mounted WRITABLE, so a shared path
+      // would also cross-talk runtime state between concurrent workers.
+      mkdirSync(root, { recursive: true, mode: 0o700 });
+      const dir = mkdtempSync(join(root, "cmr-agy-"));
       copyFileSync(join(home, ".sc-agy-oauth-token"), join(dir, AGY_TOKEN_FILENAME));
       chmodSync(join(dir, AGY_TOKEN_FILENAME), 0o600);
       agyDir = dir;
