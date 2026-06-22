@@ -32,7 +32,6 @@ import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { runOrchestrator } from "../src/runner.js";
-import { stepSpecToWorkerSpec } from "../src/dispatchWorker.js";
 import type {
   Backend,
   DispatchContext,
@@ -40,7 +39,6 @@ import type {
   IssueMeta,
   IssueSnapshot,
   StepOutput,
-  StepSpec,
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
@@ -203,24 +201,19 @@ describe("#337 the S5 fix step is a worker the runner dispatches", () => {
     expect(s5Ctx.resumeSessionId).toBeUndefined();
   });
 
-  it("the fix worker spec carries the iterative maxIter (>1), not a reviewer's single pass", () => {
-    // The fix worker (S5 coder) keeps the within-step iterative budget — the
-    // ADR 0026 invariant 'normal fix keeps … maxIter'.
-    const s5Spec: StepSpec = {
-      id: "S5",
-      role: "coder",
-      promptFile: "coder_fix.md",
-      model: "sonnet",
-      completionSignal: "CODER_STEP_COMPLETE",
-      maxIter: 5,
-      soul: "coder",
-      toolchain: ["python"],
-    };
-    const w: WorkerSpec = stepSpecToWorkerSpec(s5Spec);
-    expect(w.maxIter).toBeGreaterThan(1);
-    expect(w.session).toBe("fresh");
-    expect(w.contextRetention).toBe("retain"); // production worker retains context
-    expect(w.skill).toBe("/tdd");
+  it("the fix worker spec carries the iterative maxIter (>1), not a reviewer's single pass", async () => {
+    // Assert on the spec the RUNNER ACTUALLY DISPATCHES (STEP_SPECS.S5 → the fix
+    // worker), not a hand-built local spec — so a regression of the real S5 maxIter
+    // to a reviewer's 1 is caught (cmr S337 r2). The fix worker keeps the within-step
+    // iterative budget — the ADR 0026 invariant 'normal fix keeps … maxIter'.
+    const backend = new SeamOnlyBackend();
+    await runOrchestrator({ issueNumber: 337, backend });
+    const s5 = backend.specs.find((s) => s.id === "S5");
+    expect(s5).toBeDefined();
+    expect(s5!.maxIter).toBeGreaterThan(1);
+    expect(s5!.session).toBe("fresh");
+    expect(s5!.contextRetention).toBe("retain"); // production worker retains context
+    expect(s5!.skill).toBe("/tdd");
   });
 });
 
