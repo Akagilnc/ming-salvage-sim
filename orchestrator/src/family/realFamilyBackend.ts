@@ -488,10 +488,34 @@ export class RealFamilyBackend implements FamilyBackend {
   protected async runMergerAgent(
     req: ConflictResolveRequest,
   ): Promise<{ resolved: boolean; reason?: string }> {
+    // FAIL-CLOSED on the WORKER's OWN auth (integ-cmr int-r2 A-1, mirroring the
+    // cmr/ship worker preflight): the merger is the container's TOP-LEVEL claude
+    // (`agent: sc.claudeCode(MERGER_MODEL)`), so the Claude OAuth token is THIS
+    // worker's auth, not a degradable leg. Absent, the worker cannot start and never
+    // fires its completion signal; that failure would throw out of `sc.run` (NOT a
+    // structured non-resolve), and the thrown startup error would surface as an opaque
+    // wave abort instead of the merger's honest "did not resolve" → escalate path
+    // (`resolveMergeConflict` turns a non-resolve into a loud, locatable throw; the
+    // ledger never records a phantom `merged`). So return a STRUCTURED unresolved
+    // BEFORE spinning the container when the token is absent. Mount once and reuse for
+    // the sandbox (no double-mount).
+    const auth = this.mountMergerAuth();
+    if (auth.claudeToken === undefined) {
+      return {
+        resolved: false,
+        reason:
+          "merger worker cannot start without CLAUDE_CODE_OAUTH_TOKEN — the merger is " +
+          "the container's top-level claude (sc.claudeCode); its OAuth token " +
+          "(~/.sc-claude-token → CLAUDE_CODE_OAUTH_TOKEN) is the worker's OWN auth. " +
+          "Without it the worker fails to start and never resolves; returning a " +
+          "structured non-resolve here keeps resolveMergeConflict's loud-throw " +
+          "semantics (a thrown sc.run startup error would surface as an opaque wave abort).",
+      };
+    }
     const result = await sc.run({
       name: `merger-resolve-${req.childIssue}`,
       cwd: this.opts.workingRepo,
-      sandbox: this.mergerSandbox(),
+      sandbox: this.mergerSandbox(auth),
       agent: sc.claudeCode(MERGER_MODEL),
       maxIterations: 1,
       completionSignal: MERGER_COMPLETION_SIGNAL,
@@ -501,9 +525,28 @@ export class RealFamilyBackend implements FamilyBackend {
     return mergerOutcomeFromResult(result);
   }
 
-  /** The merger agent's sandbox (souls + skills baked into the image). */
-  protected mergerSandbox(): sc.SandboxProvider {
-    return docker(this.mergerSandboxConfig());
+  /** The merger agent's sandbox (souls + skills baked into the image + the claude token). */
+  protected mergerSandbox(auth: MergerAuth = this.mountMergerAuth()): sc.SandboxProvider {
+    return docker(this.mergerSandboxConfig(auth));
+  }
+
+  /**
+   * Gather the merger worker's host credential (integ-cmr int-r2 A-1): the claude
+   * OAuth token (env), mirroring the claude-token leg of `mountCmrAuth` / `mountShipAuth`.
+   * The merger needs NO codex/gh (it resolves + commits in place, never pushes/PRs).
+   * Fail-soft: a missing token ⇒ undefined (the REQUIRE gate is `runMergerAgent`'s
+   * preflight). `protected` so a unit test points $HOME at an empty dir.
+   */
+  protected mountMergerAuth(): MergerAuth {
+    const home = this.opts.home ?? homedir();
+    let claudeToken: string | undefined;
+    try {
+      claudeToken = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
+    } catch {
+      // claude token absent ⇒ the top-level merger worker degrades; the
+      // runMergerAgent preflight returns a structured non-resolve.
+    }
+    return { claudeToken };
   }
 
   /**
@@ -521,17 +564,26 @@ export class RealFamilyBackend implements FamilyBackend {
    * #334 (ADR 0026 / cross-slice note): the runtime host skills bind-mount onto
    * {@link SANDBOX_SKILLS_DIR} is DROPPED here too — the 2b image BAKES
    * `resolving-merge-conflicts` (+ its closure), so a runtime mount would SHADOW
-   * the baked skill. The merger soul finds the skill in the IMAGE, not a host
-   * mount; the sandbox now sets only the soul env (auth is wired by #335/#336).
+   * the baked skill. The merger soul finds the skill in the IMAGE, not a host mount.
+   *
+   * integ-cmr int-r2 (A-1): the merger is a TOP-LEVEL claude worker, so its claude
+   * OAuth token is injected here as CLAUDE_CODE_OAUTH_TOKEN (symmetric with
+   * `cmrSandboxConfig` / `shipSandboxConfig`) — #335/#336 wired the cmr/ship workers'
+   * auth but the merger's was missing (the worker spun unauthenticated). The token is
+   * set only when present (this pure seam stays tolerant; the REQUIRE gate is
+   * `runMergerAgent`'s preflight). The merger needs NO codex/gh mount — it resolves +
+   * commits in place, never pushes / opens a PR.
    */
-  protected mergerSandboxConfig(): {
+  protected mergerSandboxConfig(auth: MergerAuth = this.mountMergerAuth()): {
     imageName: string;
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
   } {
+    const env: Record<string, string> = { [SANDBOX_SOUL_ENV]: MERGER_SOUL };
+    if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     return {
       imageName: this.opts.imageName,
-      env: { [SANDBOX_SOUL_ENV]: MERGER_SOUL },
+      env,
       // #334: no skills mount — the baked image provides the merger skill.
       mounts: [],
     };
@@ -1480,6 +1532,21 @@ export interface ShipAuth {
    * (`gh pr create`), so `runShipWorker` preflights it and escalates when absent.
    */
   readonly ghToken?: string;
+}
+
+/**
+ * The merger worker's auth (integ-cmr int-r2 A-1). The merger is a TOP-LEVEL claude
+ * worker (`sc.claudeCode(MERGER_MODEL)` under `resolving-merge-conflicts`), so the
+ * claude OAuth token is its OWN auth (LOAD-BEARING) — `runMergerAgent` preflights it
+ * and returns a structured non-resolve when absent (never spins an unauthenticated
+ * container). Unlike the cmr/ship workers the merger needs NO codex/gh: it resolves +
+ * commits the merge IN PLACE (`branchStrategy:{type:"head"}`); it never pushes or
+ * opens a PR (the runner owns the merge queue / ledger), so the claude token is the
+ * sole credential.
+ */
+export interface MergerAuth {
+  /** The claude OAuth token (env var), or undefined if absent. */
+  readonly claudeToken?: string;
 }
 
 /**

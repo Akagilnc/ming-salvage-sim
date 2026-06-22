@@ -990,7 +990,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       // Persist the failing step carrying its REAL worker session id (5th arg —
       // NOT the promptFile slot; codex cmr R6 finding), so a re-feed reading the
       // persisted ledger has the true session id for the human-answer resume.
-      await persistBestEffort(failedStep, undefined, undefined, undefined, sessionId);
+      //
+      // integ-cmr int-r2 (C-int2-1): for an escalating S7 the failing-step entry
+      // must ALSO carry the ship.md CONTENT hash (the same anti-tampering audit the
+      // happy S7 entry carries), not the degraded step-name hash. S7 is the only
+      // runner-action step dispatched via a WorkerSpec (shipWorkerSpec); agent
+      // steps already escalate through their own dispatch path, so deriving the
+      // ship promptFile only for S7 keeps every other failing step's persist
+      // unchanged (promptFile undefined → step-name hash, as before).
+      const failedPromptFile =
+        failedStep === "S7" ? shipWorkerSpec().promptFile : undefined;
+      await persistBestEffort(failedStep, undefined, failedPromptFile, undefined, sessionId);
     }
     ledger.push({ step: "S8" });
     await persistBestEffort("S8", undefined, undefined, "escalate");
@@ -1521,7 +1531,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // unified seam (no longer an inline `backend.push`). #331 prefactor: the
           // legacy wrapper forwards the ship worker to `backend.push` (behaviour
           // unchanged); #336 makes it invoke `gstack-ship`.
-          const shipResult = await dispatchWorker(backend, shipWorkerSpec(), {
+          //
+          // integ-cmr int-r2 (C-int2-1): bind the ship spec FIRST and thread its
+          // versioned promptFile ("ship.md") into the loop-scoped `promptFile` so the
+          // S7 ledger entry hashes the ship.md CONTENT (the WorkerSpec anti-tampering
+          // contract, types.ts:"promptFile CONTENT is hashed into the ledger") — NOT
+          // the degraded step-name hash (`name:<sha("S7")>`) the missing assignment
+          // produced. The escalateTermination path below ALSO uses it (resume truth).
+          const shipSpec = shipWorkerSpec();
+          promptFile = shipSpec.promptFile;
+          const shipResult = await dispatchWorker(backend, shipSpec, {
             worktree,
           });
           // A ship worker that ESCALATES (gstack-ship STOP/HITL) is an
