@@ -28,6 +28,7 @@ import type { StepId, StepOutput } from "./types.js";
 // integ-cmr base r2 (B): a coder output with an inconsistent/garbage
 // commitsAdded is invalid.
 import {
+  escalateOf,
   isBlockingFinding,
   isValidCoderOutput,
   isValidEscalation,
@@ -77,7 +78,7 @@ export function route(ctx: RouteContext): RouteDecision {
   // S8(error). (A valid escalate still wins over every happy-path edge, incl.
   // an incomplete role schema — that is F2, handled in the runner: it lets the
   // escalate edge fire without first demanding the full role schema.)
-  const escalate = ctx.output?.escalate;
+  const escalate = escalateOf(ctx.output);
   if (escalate != null) {
     return isValidEscalation(escalate)
       ? { kind: "handoff", status: "escalate" }
