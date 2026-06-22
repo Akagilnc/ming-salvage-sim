@@ -35,7 +35,7 @@
  *     RealFamilyBackend's protected seams (unchanged); the driver only assembles.
  */
 
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -354,7 +354,7 @@ export class DriverFamilyBackend extends RealFamilyBackend {
       // concurrently, so two same-millisecond codex spawns would otherwise pick the
       // SAME out-file and clobber each other's last-message散文 (cmr R2 #5).
       const outFile = join(this.opts.ledgerDir, `cmr-codex-${Date.now()}-${randomUUID()}.txt`);
-      this.shStdin(
+      await this.shStdin(
         "codex",
         [
           "exec",
@@ -374,7 +374,7 @@ export class DriverFamilyBackend extends RealFamilyBackend {
     }
     if (vendor === "claude") {
       // claude: `-p --output-format json`; the散文 is the `.result` field.
-      const raw = this.shStdin(
+      const raw = await this.shStdin(
         "claude",
         ["-p", "--model", CMR_CLAUDE_MODEL, "--output-format", "json"],
         prompt,
@@ -386,28 +386,51 @@ export class DriverFamilyBackend extends RealFamilyBackend {
     // agy: `--sandbox --print '' --print-timeout 15m --log-file <log>`; the散文 is
     // the printed stdout (logs go to the log file).
     const logFile = join(this.opts.ledgerDir, `cmr-agy-${Date.now()}-${randomUUID()}.log`);
-    return this.shStdin(
-      "agy",
-      ["--sandbox", "--print", "", "--print-timeout", "15m", "--log-file", logFile],
-      prompt,
-      repo,
+    return (
+      await this.shStdin(
+        "agy",
+        ["--sandbox", "--print", "", "--print-timeout", "15m", "--log-file", logFile],
+        prompt,
+        repo,
+      )
     ).trim();
   }
 
   /**
-   * Run a host command feeding `stdin`, returning trimmed stdout. The reviewer
-   * prompt (which carries the whole diff) goes on STDIN, not argv — too large /
-   * unsafe for an argument. `protected` so a unit test intercepts the spawn (the
-   * fixtured backend overrides `runReviewer`/`spawnReviewer` above this层 anyway).
+   * Run a host command feeding `stdin`, returning trimmed stdout — ASYNCHRONOUSLY
+   * (cmr R2 #3). The reviewer prompt (which carries the whole diff) goes on STDIN,
+   * not argv — too large / unsafe for an argument. `protected` so a unit test
+   * intercepts the spawn (the fixtured backend overrides `runReviewer` /
+   * `spawnReviewer` above this层 anyway).
+   *
+   * It MUST be async: `runCmr` fans the three legs out with `Promise.all`, but a
+   * synchronous `execFileSync` would BLOCK the event loop for the whole CLI run, so
+   * the three "concurrent" legs ran strictly SERIALLY (total = sum, not max — a
+   * 3× latency hit on the ship-pre 承重闸). `promisify(execFile)` lets the three
+   * child processes run truly concurrently.
    */
-  protected shStdin(file: string, args: string[], input: string, cwd?: string): string {
-    return execFileSync(file, args, {
-      cwd: cwd ?? this.opts.workingRepo,
-      input,
-      stdio: ["pipe", "pipe", "pipe"],
-      encoding: "utf8",
-      maxBuffer: 64 * 1024 * 1024,
-    }).trim();
+  protected async shStdin(file: string, args: string[], input: string, cwd?: string): Promise<string> {
+    return new Promise<string>((resolve, reject) => {
+      // `execFile` (callback form) returns the ChildProcess SYNCHRONOUSLY, so we can
+      // feed the prompt on stdin (it is too large / unsafe for argv) AND get the
+      // async completion — unlike `promisify(execFile)`, which loses the stdin
+      // handle, and unlike `execFileSync`, which blocks the event loop (the假并发).
+      const child = execFile(
+        file,
+        args,
+        { cwd: cwd ?? this.opts.workingRepo, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+        (err, stdout) => {
+          if (err !== null) reject(err);
+          else resolve(stdout.trim());
+        },
+      );
+      // Write the prompt to stdin and close it so the CLI sees EOF. A child that
+      // failed to spawn has no stdin — guard so we surface the spawn error (via the
+      // callback), not an unrelated "write after end".
+      if (child.stdin !== null) {
+        child.stdin.end(input);
+      }
+    });
   }
 }
 
