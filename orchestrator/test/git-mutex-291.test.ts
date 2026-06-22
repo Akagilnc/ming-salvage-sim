@@ -10,7 +10,7 @@
  */
 
 import { afterEach, describe, expect, it } from "vitest";
-import { _resetGitMutex, runExclusive } from "../src/gitMutex.js";
+import { _mutexKeyCount, _resetGitMutex, runExclusive } from "../src/gitMutex.js";
 
 afterEach(() => _resetGitMutex());
 
@@ -67,5 +67,43 @@ describe("#291 B7 gitMutex", () => {
   it("returns the section's resolved value to its caller", async () => {
     const v = await runExclusive("cloneA", async () => 42);
     expect(v).toBe(42);
+  });
+
+  it("does NOT leak settled keys — the tails Map is emptied once a key's sections all settle (#291 r2)", async () => {
+    // The Map is per-clone keyed; a long family run touches many keys but each
+    // clone's git ops eventually settle. A settled key must be DELETED, else the
+    // Map grows without bound across the run. After both keys settle, the live key
+    // count is 0.
+    await Promise.all([
+      runExclusive("cloneA", async () => undefined),
+      runExclusive("cloneB", async () => undefined),
+    ]);
+    // Let the bookkeeping `.then`/`.finally` microtasks flush.
+    await Promise.resolve();
+    expect(_mutexKeyCount()).toBe(0);
+  });
+
+  it("a THROWING section's key is also cleaned up (no leak on the error path)", async () => {
+    await runExclusive("cloneA", async () => {
+      throw new Error("boom");
+    }).catch(() => undefined);
+    await Promise.resolve();
+    expect(_mutexKeyCount()).toBe(0);
+  });
+
+  it("does NOT delete a key that still has a QUEUED section behind the settled one", async () => {
+    // The cleanup must only fire when THIS section is still the tail; a later
+    // waiter that re-set the tail must not be wiped when the earlier one settles.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const first = runExclusive("cloneA", () => gate); // holds the lock open
+    const second = runExclusive("cloneA", async () => undefined); // queued behind it
+    // While the first is still in-flight, the key is live.
+    expect(_mutexKeyCount()).toBe(1);
+    release();
+    await Promise.all([first, second]);
+    await Promise.resolve();
+    // Both settled now → key removed.
+    expect(_mutexKeyCount()).toBe(0);
   });
 });
