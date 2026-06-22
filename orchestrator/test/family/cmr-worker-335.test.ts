@@ -427,7 +427,14 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
     expect(exclude.split("\n")).toContain(CMR_FOCUS_FILENAME);
   });
 
-  it("no recorded cut SHA ⇒ a fallback scope that flags the stale-base risk", () => {
+  it("no recorded cut SHA ⇒ FAIL-CLOSED throw, never a stale-base fallback scope (codex R3)", () => {
+    // The focus file pins the EXACT cut-SHA review-scope diff (prompt contract
+    // integrated_cmr.md:19-24: do NOT guess main...HEAD). Emitting a
+    // `main...familyBase` fallback when no cut SHA was recorded would silently
+    // disable that load-bearing scope — the same fail-open the reconcile
+    // `familyBaseStartHead()` predicate refuses (realFamilyBackend.ts:887-895). So
+    // a missing cut SHA must THROW (the gate converts it to not-passed / escalate),
+    // never write a stale-base diff command.
     const repo = realRepo();
     const be = new FocusBackend({
       workingRepo: repo,
@@ -439,13 +446,74 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
       imageName: "img",
       // no familyBaseStartHead
     });
-    be.focus({ familyBase: "fb" });
-    const body = readFileSync(join(repo, CMR_FOCUS_FILENAME), "utf8");
-    expect(body).toContain("git diff main...fb");
-    expect(body.toLowerCase()).toContain("stale");
-    expect(body).toContain("No machine-resolved child merges this run.");
+    expect(() => be.focus({ familyBase: "fb" })).toThrow(/familyBaseStartHead|cut SHA/i);
+    // And it did NOT write a stale-base fallback file.
+    expect(() => readFileSync(join(repo, CMR_FOCUS_FILENAME), "utf8")).toThrow();
   });
 });
+
+// ═══════════════════ 4d. runCmrWorker fail-closed on a missing cut SHA (codex R3) ═══════════════════
+
+describe("#335 runCmrWorker — fail-closed when no cut SHA was recorded", () => {
+  /** Exposes runCmrWorker and traps sc.run so we can prove it is NEVER reached. */
+  class GuardBackend extends RealFamilyBackend {
+    scRunReached = false;
+    public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
+      return this.runCmrWorker(spec, ctx);
+    }
+    protected override writeCmrFocusFile(): void {
+      // If the guard is correct this is never reached; flag it if it is.
+      this.scRunReached = true;
+      throw new Error("writeCmrFocusFile should not run when fail-closed");
+    }
+  }
+
+  it("a cmr worker with NO familyBaseStartHead ⇒ escalate, never spins the container", async () => {
+    const repo = realRepo335();
+    const be = new GuardBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+      // no familyBaseStartHead
+    });
+    const outcome = await be.run(cmrWorkerSpec(), { familyBase: "fb" });
+    expect(outcome.kind).toBe("escalate");
+    if (outcome.kind === "escalate") {
+      expect(outcome.reason).toMatch(/familyBaseStartHead|cut SHA/i);
+    }
+    // The fail-closed guard returns BEFORE any container / focus-file work.
+    expect(be.scRunReached).toBe(false);
+  });
+
+  it("dispatchWorker routes that fail-closed escalate to a not-passed WorkerResult", async () => {
+    const repo = realRepo335();
+    const be = new GuardBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+      // no familyBaseStartHead
+    });
+    const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb" });
+    expect(res.kind).toBe("escalated");
+    if (res.kind === "escalated") {
+      expect(res.escalation.reason).toMatch(/familyBaseStartHead|cut SHA/i);
+    }
+  });
+});
+
+function realRepo335(): string {
+  const repo = mkDir("cmr-guard-repo-");
+  execFileSync("git", ["init", "-q"], { cwd: repo });
+  return repo;
+}
 
 // ═══════════════════ 5. deleted-fanout regression ═══════════════════
 

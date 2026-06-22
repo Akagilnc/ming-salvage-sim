@@ -9,11 +9,13 @@
  * It builds a real git repo with a family base whose diff carries an INJECTED
  * cross-slice bug, then drives `RealFamilyBackend.dispatchWorker(cmrWorkerSpec())`
  * — the container's top-level claude invokes ak-cross-m-review (1 Agent + 2 CLI
- * legs) over the base diff and returns a verdict. We assert the worker RAN and
- * produced a structured WorkerResult (completed verdict / escalate / malformed),
- * proving the fan-out wiring + agy/codex auth mounts work end-to-end. (We log the
- * verdict rather than hard-asserting `converged:false`: the LLM legs' judgement is
- * the system under proof, not deterministic.)
+ * legs) over the base diff and returns a verdict. We require the worker to RUN TO A
+ * VERDICT: `completed` + a `cmr` payload + a boolean `converged` (codex cmr R3 — a
+ * lenient `["completed","escalated","malformed"]` assertion passes even when the
+ * fan-out never happened, so it proves nothing; this path must reach a real verdict).
+ * We log but do NOT hard-assert `converged:false`: the LLM legs' judgement is the
+ * system under proof, not deterministic. An escalate/malformed degradation is a
+ * SEPARATE concern, not counted here as proof the path works.
  */
 
 import { execFileSync } from "node:child_process";
@@ -100,21 +102,21 @@ describe.skipIf(!RUN)("#335 cmr worker e2e — real 2b container fan-out", () =>
         writeFileSync(process.env.CMR_E2E_OUT, JSON.stringify(res, null, 2));
       }
 
-      // The worker RAN and produced a structured result (not a crash). All three
-      // kinds are legitimate proof the fan-out + parse wiring works; a bare verdict
-      // is the expected normal outcome.
-      expect(["completed", "escalated", "malformed"]).toContain(res.kind);
-      if (res.kind === "completed") {
-        expect(res.output.kind).toBe("cmr");
-        if (res.output.kind === "cmr") {
-          expect(typeof res.output.converged).toBe("boolean");
-          // eslint-disable-next-line no-console
-          console.log(
-            `[cmr-e2e] converged=${res.output.converged}`,
-            res.output.reason ?? "",
-          );
-        }
-      }
+      // The path is only PROVEN when the worker fanned out and converged a real
+      // verdict (codex cmr R3): require completed + a cmr payload + a boolean
+      // verdict. A malformed / escalate (no-fan-out) result is NOT proof — it would
+      // pass a lenient `toContain` assertion while proving nothing about the path.
+      // (If a degradation case is wanted, it belongs in its own explicit test.)
+      expect(res.kind).toBe("completed");
+      if (res.kind !== "completed") throw new Error(`cmr e2e: expected completed, got ${res.kind}`);
+      expect(res.output.kind).toBe("cmr");
+      if (res.output.kind !== "cmr") throw new Error("cmr e2e: expected a cmr payload");
+      expect(typeof res.output.converged).toBe("boolean");
+      // eslint-disable-next-line no-console
+      console.log(
+        `[cmr-e2e] converged=${res.output.converged}`,
+        res.output.reason ?? "",
+      );
     },
     20 * 60 * 1000, // up to 20 min: real cross-model fan-out in a container.
   );

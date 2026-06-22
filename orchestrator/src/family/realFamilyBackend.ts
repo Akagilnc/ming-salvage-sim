@@ -585,6 +585,26 @@ export class RealFamilyBackend implements FamilyBackend {
     spec: WorkerSpec,
     ctx: DispatchContext,
   ): Promise<CmrWorkerOutcome> {
+    // FAIL-CLOSED before any container work (codex cmr R3): the focus file pins the
+    // EXACT cut-SHA review-scope diff (prompt contract integrated_cmr.md:19-24 — do
+    // NOT guess main...HEAD). With no recorded cut SHA there is no honest scope to
+    // hand the review, and a `main...familyBase` fallback would silently disable the
+    // load-bearing scope — the same fail-open the reconcile `familyBaseStartHead()`
+    // predicate refuses (this file ~877-895). So escalate (verifyCmr routes it as
+    // not-passed续跑) rather than checking out the base + spinning the container only
+    // to review the wrong scope.
+    if (this.opts.familyBaseStartHead === undefined) {
+      return {
+        kind: "escalate",
+        reason:
+          "no familyBaseStartHead (cut SHA) recorded — cannot pin the cmr review scope",
+        diagnosis:
+          "the integrated cmr focus file must pin the EXACT git diff <cut SHA>...<familyBase> " +
+          "scope (integrated_cmr.md:19-24); refusing to fall back to a possibly-stale " +
+          "main...HEAD scope (a fail-open that would review the wrong diff). Provide " +
+          "RealFamilyBackendOptions.familyBaseStartHead.",
+      };
+    }
     // Check out the family base so the in-container ak-cross-m-review reviews the
     // RIGHT base diff (ctx.familyBase is the contract input — dispatchWorker
     // already asserted it is present). The cmr worker runs as the container's
@@ -623,14 +643,27 @@ export class RealFamilyBackend implements FamilyBackend {
    * family diff on the recorded cut SHA (`familyBaseStartHead`) — not a
    * possibly-stale `main...HEAD` — and prioritises the merges a machine touched
    * (#291 缺口 1). `protected` so a unit test can fixture it without a real worktree.
+   *
+   * FAIL-CLOSED (codex cmr R3): the cut SHA is the ONLY honest review scope, so a
+   * missing `familyBaseStartHead` THROWS rather than emitting a stale-base fallback
+   * scope command — mirrors the reconcile `familyBaseStartHead()` predicate
+   * (~877-895), which refuses to fall back to the live head. The caller
+   * (`runCmrWorker`) already guards this up-front and escalates; this throw is the
+   * load-bearing backstop so the seam can never silently regress to a guessed scope.
    */
   protected writeCmrFocusFile(ctx: DispatchContext): void {
     const familyBase = ctx.familyBase!;
     const startHead = this.opts.familyBaseStartHead;
-    const scope =
-      startHead !== undefined
-        ? `git diff ${startHead}...${familyBase}`
-        : `git diff ${this.opts.base}...${familyBase}  (no recorded cut SHA; this is the fallback — the local "${this.opts.base}" ref may be stale)`;
+    if (startHead === undefined) {
+      throw new Error(
+        "writeCmrFocusFile: no familyBaseStartHead (cut SHA) recorded — the focus " +
+          "file must pin the EXACT git diff <cut SHA>...<familyBase> review scope " +
+          "(integrated_cmr.md:19-24); refusing to emit a stale-base fallback scope " +
+          "(a fail-open that would review the wrong diff). Provide " +
+          "RealFamilyBackendOptions.familyBaseStartHead.",
+      );
+    }
+    const scope = `git diff ${startHead}...${familyBase}`;
     const focusLine =
       ctx.llmResolvedChildren !== undefined && ctx.llmResolvedChildren.length > 0
         ? `Machine-resolved child merges (a machine resolved a conflict — review their merge seams with SPECIAL care): ${ctx.llmResolvedChildren
