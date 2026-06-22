@@ -493,6 +493,12 @@ export class DriverFamilyBackend extends RealFamilyBackend {
       // failed to spawn has no stdin — guard so we surface the spawn error (via the
       // callback), not an unrelated "write after end".
       if (child.stdin !== null) {
+        // online R3 (Gemini): a reviewer CLI that dies mid-write (timeout / crash —
+        // common on the runIntegratedCmr path feeding a large prompt) makes this
+        // write emit `'error'` (EPIPE / ERR_STREAM_WRITE_AFTER_END). An UNHANDLED
+        // stream `'error'` crashes the whole Node process; swallow it here — the real
+        // failure already surfaces via the execFile callback's `err`.
+        child.stdin.on("error", () => {});
         child.stdin.end(input);
       }
     });
