@@ -27,6 +27,7 @@ import {
   DriverFamilyBackend,
   aggregateCmr,
   parseReviewerVerdict,
+  reviewerPrompt,
   type ReviewerLeg,
   type ReviewerOutput,
 } from "../../src/familyDriver.js";
@@ -202,11 +203,19 @@ describe("#291 aggregateCmr — all-pass converge, any-findings red, down-leg de
  */
 class FixturedDriverBackend extends DriverFamilyBackend {
   reviewerOutputs: Record<string, ReviewerOutput> = {};
-  reviewerCalls: Array<{ vendor: string; diff: string }> = [];
+  reviewerCalls: Array<{
+    vendor: string;
+    diff: string;
+    llmResolvedChildren?: readonly number[];
+  }> = [];
   diffArgs: string[] | undefined;
   diffFake = "diff --git a/x b/x\n+seam";
-  protected override async runReviewer(vendor: string, diff: string): Promise<ReviewerOutput> {
-    this.reviewerCalls.push({ vendor, diff });
+  protected override async runReviewer(
+    vendor: string,
+    diff: string,
+    llmResolvedChildren?: readonly number[],
+  ): Promise<ReviewerOutput> {
+    this.reviewerCalls.push({ vendor, diff, llmResolvedChildren });
     return this.reviewerOutputs[vendor] ?? { ok: false };
   }
   protected override sh(file: string, args: string[], _cwd?: string): string {
@@ -473,5 +482,85 @@ describe("#291 spawnReviewer temp-file uniqueness (r2 #5)", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+// ═══════════════════════ 6. #322: the 承重闸 CONSUMES llmResolvedChildren ═══════════════════════
+
+/**
+ * #322 — the integrated cmr 承重闸 must actually CONSUME
+ * `IntegratedCmrRequest.llmResolvedChildren` (was plumbed-but-dead): the field is
+ * derived from the durable ledger so the gate can FOCUS the three reviewer legs on
+ * the cross-slice merge seams a machine touched (#291 缺口 1, option 1 "落实聚焦").
+ * `runCmr` must thread the children through to each `runReviewer` call, and
+ * `reviewerPrompt` must surface them as a focus section. OMITTED/empty ⇒ the
+ * back-compat prompt (no focus section), so a conflict-free run is unchanged.
+ */
+describe("#322 reviewerPrompt — surfaces the LLM-resolved child merges as a focus", () => {
+  it("with no llmResolvedChildren ⇒ the back-compat prompt (no focus section)", () => {
+    const p = reviewerPrompt("diff --git a/x b/x\n+seam");
+    expect(p).toContain("integrated cross-model reviewer");
+    expect(p).toContain("diff --git a/x b/x");
+    // no LLM-resolution this run ⇒ no machine-touched-merge focus section
+    expect(p.toLowerCase()).not.toContain("llm-resolved");
+  });
+
+  it("with an empty llmResolvedChildren array ⇒ still the back-compat prompt", () => {
+    const p = reviewerPrompt("diff", []);
+    expect(p.toLowerCase()).not.toContain("llm-resolved");
+  });
+
+  it("with llmResolvedChildren ⇒ a focus section naming the child issue numbers", () => {
+    const p = reviewerPrompt("diff", [11, 13]);
+    expect(p.toLowerCase()).toContain("llm-resolved");
+    // the specific machine-touched child numbers are named so the reviewer can
+    // focus the cross-slice review on those merge seams
+    expect(p).toContain("#11");
+    expect(p).toContain("#13");
+    // the original review body (diff + verdict contract) is still present
+    expect(p).toContain("diff");
+    expect(p).toContain("CMR-VERDICT");
+  });
+});
+
+describe("#322 DriverFamilyBackend.runCmr — CONSUMES req.llmResolvedChildren", () => {
+  it("forwards req.llmResolvedChildren to EVERY reviewer leg (the gate focuses on machine-touched merges)", async () => {
+    const b = makeBackend();
+    b.reviewerOutputs = {
+      codex: { ok: true, prose: "CMR-VERDICT: converged" },
+      claude: { ok: true, prose: "converged" },
+      agy: { ok: true, prose: "no findings" },
+    };
+    await b.runCmrPublic({
+      familyBase: "family/291-base",
+      llmResolvedChildren: [11, 13],
+    });
+    // the plumbed-but-dead field is now CONSUMED: every leg saw the children
+    expect(b.reviewerCalls).toHaveLength(3);
+    expect(
+      b.reviewerCalls.every(
+        (c) =>
+          c.llmResolvedChildren !== undefined &&
+          c.llmResolvedChildren.includes(11) &&
+          c.llmResolvedChildren.includes(13),
+      ),
+    ).toBe(true);
+  });
+
+  it("omits the focus when req has no llmResolvedChildren (back-compat, conflict-free run)", async () => {
+    const b = makeBackend();
+    b.reviewerOutputs = {
+      codex: { ok: true, prose: "converged" },
+      claude: { ok: true, prose: "converged" },
+      agy: { ok: true, prose: "converged" },
+    };
+    await b.runCmrPublic({ familyBase: "family/291-base" });
+    expect(
+      b.reviewerCalls.every(
+        (c) =>
+          c.llmResolvedChildren === undefined ||
+          c.llmResolvedChildren.length === 0,
+      ),
+    ).toBe(true);
   });
 });
