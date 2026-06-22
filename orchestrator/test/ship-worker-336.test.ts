@@ -241,10 +241,87 @@ describe("#336 single-slice shipSandboxConfig — best-effort ship auth", () => 
     expect(c.env[SANDBOX_SOUL_ENV]).toBe("coder");
   });
 
-  it("a missing claude token degrades the env var but still mounts codex + coder soul", () => {
+  it("the pure config seam tolerates a missing claude token (the preflight that REQUIRES it lives upstream in runShipWorker — cmr S336 r8)", () => {
+    // shipSandboxConfig is a PURE auth→env map (mirrors cmrSandboxConfig): it omits
+    // the env var when the token is absent rather than throwing. The claude token is
+    // NOT optional for the worker, but the gate is the runShipWorker preflight below
+    // (it escalates before this seam is ever built when the token is missing) — so
+    // this seam stays tolerant, exactly as cmrSandboxConfig does.
     const c = cfg().config({ codexAuthDir: "/tmp/codex" });
     expect(c.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
     expect(c.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
     expect(c.env[SANDBOX_SOUL_ENV]).toBe("coder");
+  });
+});
+
+// ═══════════════════ runShipWorker fail-closed on a missing Claude WORKER auth (cmr S336 r8) ═══════════════════
+
+describe("#336 single-slice runShipWorker — fail-closed when the top-level Claude worker has no auth", () => {
+  /**
+   * The single-slice ship worker is the container's TOP-LEVEL claude
+   * (`agent: sc.claudeCode`), so the Claude OAuth token is its OWN auth, not a
+   * degradable codex/gh leg. Absent, the worker cannot start and never emits a
+   * `<ship>` verdict; letting it through would throw out of `sc.run`. runner S7 DOES
+   * wrap the dispatch in try/catch → errorTermination, but a missing token deserves
+   * the cleaner escalate续跑 (a human must supply the token) rather than an opaque
+   * S8(error). So `runShipWorker` preflights the token and escalates BEFORE the
+   * container — symmetric with the family ship + cmr workers. codex/gh stays
+   * best-effort.
+   */
+  class NoClaudeAuthBackend extends RealBackend {
+    sandboxReached = false;
+    protected override buildOrReuseClone(): string {
+      return mkDir("ship-noauth-clone-");
+    }
+    protected override assertIndependentClone(): void {
+      // pure preflight under test, not a real clone.
+    }
+    public run(spec: WorkerSpec, ctx: DispatchContext): Promise<ShipWorkerOutcome> {
+      return (
+        this as unknown as {
+          runShipWorker(s: WorkerSpec, c: DispatchContext): Promise<ShipWorkerOutcome>;
+        }
+      ).runShipWorker(spec, ctx);
+    }
+    // codex/gh present, claude token ABSENT (the worker's own auth missing).
+    protected override mountShipAuth(): ShipAuth {
+      return { codexAuthDir: "/x/codex" };
+    }
+    // If the preflight is honoured this is never built (the sandbox is downstream of
+    // the token gate); reaching it means the worker tried to start unauthenticated.
+    protected override shipSandbox(): never {
+      this.sandboxReached = true;
+      throw new Error("shipSandbox should not be built when the worker has no auth");
+    }
+  }
+  function noAuth(): NoClaudeAuthBackend {
+    return new NoClaudeAuthBackend({
+      sourceRepo: mkDir("ship-noauth-src-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "ming-orchestrator-coder:latest",
+      runKey: "k336noauth",
+    });
+  }
+
+  it("no Claude worker token ⇒ escalate, never builds the sandbox / starts the container", async () => {
+    const be = noAuth();
+    const outcome = await be.run(shipWorkerSpec(), { worktree });
+    expect(outcome.kind).toBe("escalate");
+    if (outcome.kind === "escalate") {
+      expect(outcome.reason).toMatch(/claude|token|auth/i);
+      expect(outcome.diagnosis).toMatch(/cannot start without CLAUDE_CODE_OAUTH_TOKEN/i);
+    }
+    expect(be.sandboxReached).toBe(false);
+  });
+
+  it("dispatchWorker routes the no-auth escalate to a not-passed (escalated) WorkerResult", async () => {
+    const be = noAuth();
+    const res = await be.dispatchWorker(shipWorkerSpec(), { worktree });
+    expect(res.kind).toBe("escalated");
+    if (res.kind === "escalated") {
+      expect(res.escalation.reason).toMatch(/claude|token|auth/i);
+    }
   });
 });

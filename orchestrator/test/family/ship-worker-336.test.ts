@@ -26,6 +26,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { RealFamilyBackend, SHIP_FOCUS_FILENAME } from "../../src/family/realFamilyBackend.js";
 import { modelIdForSlug, SANDBOX_CODEX_DIR, SANDBOX_SOUL_ENV } from "../../src/realBackend.js";
 import { cmrWorkerSpec, familyShipWorkerSpec } from "../../src/family/dispatchFamilyWorker.js";
+import type { ShipAuth } from "../../src/realBackend.js";
 import type { ShipWorkerOutcome } from "../../src/shipOutcome.js";
 import type { DispatchContext, WorkerSpec } from "../../src/types.js";
 
@@ -258,6 +259,76 @@ describe("#336 family shipSandboxConfig — the WRITE-soul ship sandbox", () => 
   });
 });
 
+// ═══════════════════ runShipWorker fail-closed on a missing Claude WORKER auth (cmr S336 r8) ═══════════════════
+
+describe("#336 family runShipWorker — fail-closed when the top-level Claude worker has no auth", () => {
+  /**
+   * The family ship worker is the container's TOP-LEVEL claude (`agent: sc.claudeCode`),
+   * so the Claude OAuth token is its OWN auth, not a degradable codex/gh leg. Absent,
+   * the worker cannot start and never emits a `<ship>` verdict; letting it through
+   * would throw out of `sc.run` (NOT a structured escalate), bypassing the
+   * dispatchShipWorker → verifyCmr WorkerResult routing. So `runShipWorker` must
+   * escalate BEFORE spinning the container (and before the checkout / focus write)
+   * when `mountShipAuth().claudeToken` is absent — matching the cmr worker's claude
+   * preflight (cmr-worker-335.test.ts:512-557). codex/gh auth stays best-effort.
+   */
+  class NoClaudeAuthBackend extends RealFamilyBackend {
+    containerReached = false;
+    checkoutReached = false;
+    public run(spec: WorkerSpec, ctx: DispatchContext): Promise<ShipWorkerOutcome> {
+      return (
+        this as unknown as {
+          runShipWorker(s: WorkerSpec, c: DispatchContext): Promise<ShipWorkerOutcome>;
+        }
+      ).runShipWorker(spec, ctx);
+    }
+    // codex/gh present, claude token ABSENT (the worker's own auth missing).
+    protected override mountShipAuth(): ShipAuth {
+      return { codexAuthDir: "/x/codex" };
+    }
+    protected override sh(): string {
+      this.checkoutReached = true;
+      throw new Error("git checkout should not run when the worker has no auth");
+    }
+    protected override async shipContainerRun(): Promise<never> {
+      this.containerReached = true;
+      throw new Error("shipContainerRun should not run when the worker has no auth");
+    }
+  }
+  function noAuth(): NoClaudeAuthBackend {
+    return new NoClaudeAuthBackend({
+      workingRepo: mkDir("ship-noauth-repo-"),
+      familyBase: FAMILY_BASE,
+      ledgerDir: mkDir("ship-noauth-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+    });
+  }
+
+  it("no Claude worker token ⇒ escalate, never checks out / spins the container", async () => {
+    const be = noAuth();
+    const outcome = await be.run(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
+    expect(outcome.kind).toBe("escalate");
+    if (outcome.kind === "escalate") {
+      expect(outcome.reason).toMatch(/claude|token|auth/i);
+      expect(outcome.diagnosis).toMatch(/cannot start without CLAUDE_CODE_OAUTH_TOKEN/i);
+    }
+    expect(be.checkoutReached).toBe(false);
+    expect(be.containerReached).toBe(false);
+  });
+
+  it("dispatchWorker routes the no-auth escalate to a not-passed (escalated) WorkerResult", async () => {
+    const be = noAuth();
+    const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
+    expect(res.kind).toBe("escalated");
+    if (res.kind === "escalated") {
+      expect(res.escalation.reason).toMatch(/claude|token|auth/i);
+    }
+  });
+});
+
 // ═══════════════════ writeShipFocusFile — pins the CONFIGURED PR target base (cmr S336 r5) ═══════════════════
 
 describe("#336 writeShipFocusFile — threads the configured PR target base into the ship worker", () => {
@@ -325,6 +396,12 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
       // the git checkout (the temp repo has no `integ/291-wave3` ref) and sc.run.
       protected override sh(): string {
         return "";
+      }
+      // The worker's OWN claude token IS present (cmr S336 r8) — this test isolates
+      // the focus-write ordering from the auth preflight, so provide the token so
+      // runShipWorker proceeds past the preflight to the focus write + container.
+      protected override mountShipAuth(): ShipAuth {
+        return { claudeToken: "tok", codexAuthDir: "/x/codex" };
       }
       protected override async shipContainerRun(): Promise<never> {
         // Capture the focus-file state at the moment the container would launch.
