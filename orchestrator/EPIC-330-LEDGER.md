@@ -24,6 +24,9 @@ unblocking keys off THIS ledger (merged), NOT GitHub-closed.
 ## Deferred (P2, address before family PR)
 - review-decomposition consistency (#334 codex): per-slice /review vs human two-pass — align prompt/CLAUDE.md/reviewer-soul to the orchestrator split (per-slice /review + integrated ak-cross-m-review) + rebuild 2b image; do in #337.
 
+## Post-merge dogfood (用户定 2026-06-23)
+**#330 建完 merge 进 main 后,拿 #327 当第一个真实试跑**——「[试玩] dogfound 简单 bug 批次 #1（orchestrator 试跑）」,4 个真实游戏 bug 子 issue:#324(LLM 面板未按执行通道 gate)/ #325(召对 UI 串台)/ #326(主菜单纪年不符)/ #339(P0 decree 拨款双扣)。喂给纯调度器编排器、走开、回来看产出的 reviewed 分支——这是整个 #330 的真效果验证(真 bug、非编排器自身代码)。
+
 ## Pending
 - #322/#329 (follow-ups, off #331 seam) running.
 - #334/#335/#336 await #333 (need #331✓ + #333).
