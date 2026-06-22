@@ -176,6 +176,96 @@ describe("#336 parseShipOutcome — the <ship> verdict tag", () => {
       ).toBe("malformed");
     });
   });
+
+  // ── cmr S336 r3 (architecture centralization via strict zod): the per-slice cmr
+  // kept finding NEW surfaces of the SAME fail-open class (a too-lax shape passes the
+  // success branch). The zod discriminated union closes the whole class at once.
+  //
+  // F2 — empty / whitespace-only branch + pr are NOT a real delivery (a PR/push with a
+  // blank branch or a blank URL is unusable). `isFilledString` existed but only gated
+  // reason/diagnosis; the success shape leaked them.
+  describe("cmr S336 r3 F2: blank branch / blank pr is never a shipped success", () => {
+    it('pushed with empty-string branch ⇒ malformed', () => {
+      expect(parseShipOutcome('<ship>{"status": "pushed", "branch": ""}</ship>').kind).toBe(
+        "malformed",
+      );
+    });
+    it('pushed with whitespace-only branch ⇒ malformed', () => {
+      expect(parseShipOutcome('<ship>{"status": "pushed", "branch": "   "}</ship>').kind).toBe(
+        "malformed",
+      );
+    });
+    it('pr_opened with empty-string branch ⇒ malformed', () => {
+      expect(
+        parseShipOutcome('<ship>{"status": "pr_opened", "branch": "", "pr": "u"}</ship>').kind,
+      ).toBe("malformed");
+    });
+    it('pr_opened with empty-string pr ⇒ malformed (a PR with no URL is unusable)', () => {
+      expect(
+        parseShipOutcome('<ship>{"status": "pr_opened", "branch": "b", "pr": ""}</ship>').kind,
+      ).toBe("malformed");
+    });
+    it('pr_opened with whitespace-only pr ⇒ malformed', () => {
+      expect(
+        parseShipOutcome('<ship>{"status": "pr_opened", "branch": "b", "pr": "   "}</ship>').kind,
+      ).toBe("malformed");
+    });
+  });
+
+  // F3 — a MIXED payload (a success shape carrying an extra verdict key) was落到 the
+  // success branch because the old guard only checked `typeof escalate === "object"`:
+  // a non-object `failed`/`escalate` (a string) was skipped, and an extra verdict key
+  // alongside a valid success was simply ignored → a "failed" run read as shipped.
+  // `.strict()` rejects any object carrying keys outside the matched shape.
+  describe("cmr S336 r3 F3: a mixed / extra-key payload is never coerced to shipped", () => {
+    it('pr_opened carrying a `failed` string key ⇒ malformed (extra verdict key)', () => {
+      expect(
+        parseShipOutcome(
+          '<ship>{"status": "pr_opened", "branch": "b", "pr": "u", "failed": "tests red"}</ship>',
+        ).kind,
+      ).toBe("malformed");
+    });
+    it('pr_opened carrying an `escalate` string key ⇒ malformed (extra verdict key)', () => {
+      expect(
+        parseShipOutcome(
+          '<ship>{"status": "pr_opened", "branch": "b", "pr": "u", "escalate": "stuck"}</ship>',
+        ).kind,
+      ).toBe("malformed");
+    });
+    it('pushed carrying a `pr` key ⇒ malformed (pushed must NOT carry pr)', () => {
+      expect(
+        parseShipOutcome('<ship>{"status": "pushed", "branch": "b", "pr": "u"}</ship>').kind,
+      ).toBe("malformed");
+    });
+    it('pushed carrying an extra `failed` key ⇒ malformed', () => {
+      expect(
+        parseShipOutcome(
+          '<ship>{"status": "pushed", "branch": "b", "failed": {"reason": "x", "diagnosis": "y"}}</ship>',
+        ).kind,
+      ).toBe("malformed");
+    });
+    it('a success shape with an arbitrary extra key ⇒ malformed (.strict)', () => {
+      expect(
+        parseShipOutcome(
+          '<ship>{"status": "pushed", "branch": "b", "junk": 1}</ship>',
+        ).kind,
+      ).toBe("malformed");
+    });
+    it('a non-object `failed` (string) does NOT leak the success branch ⇒ malformed', () => {
+      // No status/branch success either, so this must be malformed (not silently shipped).
+      expect(parseShipOutcome('<ship>{"failed": "tests red"}</ship>').kind).toBe("malformed");
+    });
+    it('a non-object `escalate` (string) ⇒ malformed', () => {
+      expect(parseShipOutcome('<ship>{"escalate": "stuck"}</ship>').kind).toBe("malformed");
+    });
+    it('an escalate object with an extra key ⇒ malformed (.strict on the inner shape)', () => {
+      expect(
+        parseShipOutcome(
+          '<ship>{"escalate": {"reason": "r", "diagnosis": "d", "extra": 1}}</ship>',
+        ).kind,
+      ).toBe("malformed");
+    });
+  });
 });
 
 // ═══════════════════ shipOutcomeFromResult (completion-signal gate) ═══════════════════

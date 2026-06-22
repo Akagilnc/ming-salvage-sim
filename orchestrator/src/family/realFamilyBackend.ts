@@ -69,6 +69,7 @@ import {
 } from "../realBackend.js";
 import { legacyDispatchFamilyWorker } from "./dispatchFamilyWorker.js";
 import {
+  isFilledString,
   shipOutcomeFromResult,
   type ShipWorkerOutcome,
 } from "../shipOutcome.js";
@@ -890,6 +891,19 @@ export class RealFamilyBackend implements FamilyBackend {
     if (outcome.kind === "malformed") {
       return { kind: "malformed", reason: outcome.reason };
     }
+    // Branch-identity check (cmr S336 r3 F1): the worker self-reports `branch`, and
+    // a worker that ships some OTHER branch (e.g. the PR target base) but reports it
+    // as a success must NOT be read as the family delivery → verifyCmr would return
+    // ok:true on a PR for the wrong branch. prompts/family_ship.md pins the family
+    // base (the worker `git checkout`s ctx.familyBase, `branchStrategy:{type:"head"}`)
+    // and asks it to report THE family base branch — no legitimate rename path — so an
+    // `outcome.branch` ≠ `ctx.familyBase` is off-contract → malformed.
+    if (outcome.branch !== ctx.familyBase) {
+      return {
+        kind: "malformed",
+        reason: `family ship worker reported branch "${outcome.branch}" but was asked to deliver the family base "${ctx.familyBase}" (a ship of a different branch is not the family delivery)`,
+      };
+    }
     // Fail-CLOSED on the FAMILY contract (prompts/family_ship.md): a family ship
     // delivery is a family PR — the ONLY accepted shipped status is "pr_opened"
     // with a `pr` URL. The shared parser also accepts "pushed" (legal for a SINGLE
@@ -897,8 +911,9 @@ export class RealFamilyBackend implements FamilyBackend {
     // would otherwise be read as a completed family delivery → verifyCmr ok:true on
     // a PHANTOM family PR (cmr S336 r2 F1). The single-slice consumer keeps "pushed"
     // (legal there); only THIS family consumer narrows it (verifyCmr never reads
-    // success on a non-PR family ship).
-    if (outcome.status !== "pr_opened" || typeof outcome.pr !== "string") {
+    // success on a non-PR family ship). The `pr` belt uses isFilledString as
+    // defense-in-depth (the parser already enforces non-empty pr — cmr S336 r3).
+    if (outcome.status !== "pr_opened" || !isFilledString(outcome.pr)) {
       return {
         kind: "malformed",
         reason: `family ship worker reported status "${outcome.status}" — the family delivery must be "pr_opened" with a \`pr\` URL (family_ship.md allows only pr_opened; "pushed" is single-slice only)`,

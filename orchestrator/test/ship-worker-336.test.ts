@@ -150,6 +150,27 @@ describe("#336 RealBackend.dispatchWorker — the single-slice ship worker", () 
     await expect(be.dispatchWorker!(shipWorkerSpec(), {})).rejects.toThrow(/worktree/);
   });
 
+  // ── cmr S336 r3 F1 (branch-identity check): the worker self-reports `branch`, and
+  // the consumer trusted it. A worker that ships `main` (or any branch ≠ the resident
+  // slice worktree branch it was asked to deliver) but reports it as a success was
+  // read as a completed delivery. ship.md asks the worker to report THE shipped branch
+  // (the slice branch already checked out, branchStrategy:{type:"head"}) — there is no
+  // legitimate rename path, so an outcome.branch ≠ ctx.worktree.branch is off-contract.
+  it("a shipped outcome whose branch ≠ the worktree branch ⇒ malformed (branch identity)", async () => {
+    const be = fixtured();
+    be.outcome = { kind: "shipped", branch: "main", status: "pr_opened", pr: "u" };
+    const res = await be.dispatchWorker!(shipWorkerSpec(), { worktree });
+    expect(res.kind).toBe("malformed");
+    if (res.kind === "malformed") expect(res.reason).toMatch(/branch/);
+  });
+
+  it("a shipped outcome on the correct worktree branch ⇒ completed (identity holds)", async () => {
+    const be = fixtured();
+    be.outcome = { kind: "shipped", branch: worktree.branch, status: "pushed" };
+    const res = await be.dispatchWorker!(shipWorkerSpec(), { worktree });
+    expect(res.kind).toBe("completed");
+  });
+
   it("a NON-ship worker is forwarded to the legacy agent path (not the ship seam)", async () => {
     // dispatchWorker on RealBackend handles ship; other kinds fall back to the
     // existing runStep/resumeSession seam. A coder worker must NOT touch runShipWorker.

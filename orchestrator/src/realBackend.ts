@@ -2074,6 +2074,19 @@ export class RealBackend implements Backend {
       // No parseable verdict / no completion signal ⇒ malformed (never a success).
       return { kind: "malformed", reason: outcome.reason };
     }
+    // Branch-identity check (cmr S336 r3 F1): the worker self-reports `branch`, and
+    // a worker that ships some OTHER branch (e.g. the resident base `main`) but
+    // reports it as a success must NOT be read as a delivery. prompts/ship.md asks
+    // the worker to report THE shipped branch — the resident slice branch already
+    // checked out (`branchStrategy:{type:"head"}`), with no legitimate rename path —
+    // so an `outcome.branch` ≠ the worktree branch it was asked to deliver is
+    // off-contract → malformed (never trust the self-reported branch identity).
+    if (outcome.branch !== ctx.worktree.branch) {
+      return {
+        kind: "malformed",
+        reason: `ship worker reported branch "${outcome.branch}" but was asked to deliver "${ctx.worktree.branch}" (a ship of a different branch is not the slice delivery)`,
+      };
+    }
     return {
       kind: "completed",
       output: {

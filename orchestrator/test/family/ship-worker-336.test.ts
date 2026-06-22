@@ -156,6 +156,27 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
     await expect(be.dispatchWorker(familyShipWorkerSpec(), {})).rejects.toThrow(/familyBase/);
   });
 
+  // ── cmr S336 r3 F1 (branch-identity check): the family worker self-reports `branch`,
+  // and the consumer trusted it. family_ship.md pins the family base (the worker `git
+  // checkout`s ctx.familyBase, branchStrategy:{type:"head"}) and asks it to report THE
+  // family base branch — no legitimate rename path. A worker that ships some other
+  // branch (e.g. the PR target base) but reports a success must NOT be read as a family
+  // delivery (verifyCmr would return ok:true on a PR for the wrong branch).
+  it("a shipped outcome whose branch ≠ familyBase ⇒ malformed (branch identity)", async () => {
+    const be = fixtured();
+    be.outcome = { kind: "shipped", branch: "main", status: "pr_opened", pr: "u" };
+    const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
+    expect(res.kind).toBe("malformed");
+    if (res.kind === "malformed") expect(res.reason).toMatch(/branch/);
+  });
+
+  it("a shipped pr_opened on the correct family base ⇒ completed (identity holds)", async () => {
+    const be = fixtured();
+    be.outcome = { kind: "shipped", branch: FAMILY_BASE, status: "pr_opened", pr: "u" };
+    const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
+    expect(res.kind).toBe("completed");
+  });
+
   it("the cmr worker is still routed to its own (cmr) path, NOT the ship seam", async () => {
     // #336 owns ship; a cmr worker must still go through runCmrWorker, not runShipWorker.
     const be = fixtured();
