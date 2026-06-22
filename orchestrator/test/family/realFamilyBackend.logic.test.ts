@@ -492,19 +492,19 @@ describe("RealFamilyBackend mergerSandbox baked-soul injection (#291 F28 / ADR 0
     expect(MERGER_SOUL).toBe("merger");
   });
 
-  it("uses the profile image and mounts the baked dev skills at the soul-discovery path", () => {
-    // The skills must mount where the agent's soul/skill discovery looks
-    // (SANDBOX_SKILLS_DIR = /home/agent/.claude/skills, the same path RealBackend.box
-    // uses) so the `resolving-merge-conflicts` skill is found — not at an arbitrary
-    // path the agent never scans.
+  it("uses the profile image and does NOT mount host skills (baked skills win, #334)", () => {
+    // #334 (ADR 0026 / cross-slice note): the runtime host skills bind-mount onto
+    // SANDBOX_SKILLS_DIR is DROPPED — the 2b image BAKES `resolving-merge-conflicts`
+    // (+ its closure), so a runtime mount there would SHADOW the baked skill,
+    // pulling the merger back to host state (the reproducibility regression). The
+    // merger soul finds the skill in the IMAGE, not a host mount.
     const o = opts(trackRepo(), { imageName: "profile-img", skillsMount: "/host/skills" });
     const b = new FakeSeamsBackend(o);
     const cfg = b.sandboxConfig();
     expect(cfg.imageName).toBe("profile-img");
-    expect(cfg.mounts).toContainEqual({
-      hostPath: "/host/skills",
-      sandboxPath: SANDBOX_SKILLS_DIR,
-    });
+    expect(
+      cfg.mounts.some((m) => m.sandboxPath === SANDBOX_SKILLS_DIR),
+    ).toBe(false);
   });
 });
 

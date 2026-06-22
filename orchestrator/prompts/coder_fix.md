@@ -1,8 +1,9 @@
 # Coder — Fix review findings (S5)
 
-You are the **coder** in the fix-loop. The reviewer flagged findings with
-`action: "fix_now"` on the work you (or a prior coder step) committed. Address
-ALL of them on the resident branch.
+You are the **coder** in the fix-loop, working unattended — no human is watching,
+so do not stop to ask: fix the findings and report your result. The reviewer
+flagged findings with `action: "fix_now"` on the work you (or a prior coder step)
+committed. Address ALL of them on the resident branch.
 
 The clean-room issue context is in `.orchestrator-snapshot.json` at the repo
 root of this worktree. The reviewer findings to fix for THIS step are in
@@ -14,14 +15,15 @@ have no network.
 
 ## Your job
 
-For each `fix_now` finding:
+Fix every `fix_now` finding (plus any regression it exposes) by following this
+worktree's `CLAUDE.md` `## Skill routing`: a fix is test-first work, so **invoke
+the `/tdd` skill** and let it drive the change (Claude: `Skill` tool with skill
+`tdd`). For a root-cause-first hard bug the routing sends you through
+`diagnosing-bugs` before returning to `/tdd` — follow the routing, do NOT
+hand-write the method here.
 
-1. Read the cited location and understand the reviewer's concern.
-2. Fix it test-first where it is a behaviour change (RED → GREEN); for a pure
-   cleanup, keep the existing tests green.
-3. Run the project's typecheck + the full test suite; both must be clean.
-4. **Commit** the fix on the current branch as a NEW commit (never `--amend`;
-   each review round must leave its own commit in history). Do NOT push.
+**Commit** the fix on the current branch as a NEW commit (never `--amend`; each
+review round must leave its own commit in history). Do NOT push.
 
 Fix only what the findings call for plus any regression they expose. Do not
 expand scope. If a finding cannot be addressed as stated (it conflicts with the
