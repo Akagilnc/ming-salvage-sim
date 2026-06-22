@@ -47,13 +47,19 @@ export async function runExclusive<T>(
   // Advance the tail to THIS section's settle, so the next waiter queues behind
   // it. Swallow the result/throw on the tail copy (the real one goes to `run`),
   // so an unhandled rejection is never raised on the bookkeeping promise.
-  tails.set(
-    key,
-    run.then(
-      () => undefined,
-      () => undefined,
-    ),
+  const tail = run.then(
+    () => undefined,
+    () => undefined,
   );
+  tails.set(key, tail);
+  // Reap the key once THIS section settles — but ONLY when it is still the tail
+  // (no later waiter has queued behind it). Otherwise a long family run accretes a
+  // settled-but-never-removed entry per clone key (the #291 r2 leak). The
+  // `tails.get(key) === tail` identity guard means a section that has a successor
+  // queued behind it does NOT delete the key out from under that successor.
+  void tail.finally(() => {
+    if (tails.get(key) === tail) tails.delete(key);
+  });
   return run;
 }
 
@@ -63,4 +69,13 @@ export async function runExclusive<T>(
  */
 export function _resetGitMutex(): void {
   tails.clear();
+}
+
+/**
+ * The number of LIVE keys currently tracked (tests only). After all sections on a
+ * key have settled, that key must be removed (no unbounded growth across a long
+ * family run) — this lets a test assert the Map does not leak settled keys.
+ */
+export function _mutexKeyCount(): number {
+  return tails.size;
 }
