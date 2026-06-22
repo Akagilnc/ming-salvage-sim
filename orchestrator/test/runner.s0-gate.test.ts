@@ -113,7 +113,7 @@ const COMPLIANT_META: IssueMeta = {
 
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Reject cases — four distinct non-compliant IssueMeta shapes
+// Reject cases — three distinct non-compliant IssueMeta shapes
 // ──────────────────────────────────────────────────────────────────────────────
 
 describe("S0 input gate — reject cases (#248)", () => {

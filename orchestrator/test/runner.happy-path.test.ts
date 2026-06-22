@@ -14,8 +14,8 @@ import type {
  * Happy-path fake Backend: records every call in order, returns canned
  * outputs that drive the runner straight down S0→S1→S2→S3→S4→S7→S8.
  *
- *   - S0/S1 read a compliant issue (rfa ∧ Agent Brief ∧ no sub-issues ∧
- *     no open blocked_by) → gate passes.
+ *   - S0/S1 read a compliant issue (rfa ∧ no sub-issues ∧ no open blocked_by)
+ *     → gate passes.
  *   - S2 coder step → { committed: true, commitsAdded: 1 }
  *   - S3 reviewer step → { findings: [] } (= approve)
  *   - S4 route_findings sees no P0/P1 and no fix_now → S7 push

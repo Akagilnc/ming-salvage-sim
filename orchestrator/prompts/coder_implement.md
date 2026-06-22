@@ -20,8 +20,8 @@ Implement the slice **test-first** on the resident branch:
    never `git commit --amend`). Do NOT push — the orchestrator pushes.
 
 Stay strictly inside the slice's scope. If you discover the slice cannot be
-implemented as briefed (a real design gap, a missing upstream dependency, a
-contradiction in the Brief), do NOT guess — **escalate** (see below).
+implemented as specified (a real design gap, a missing upstream dependency, a
+contradiction in the issue spec), do NOT guess — **escalate** (see below).
 
 ## Required output
 
