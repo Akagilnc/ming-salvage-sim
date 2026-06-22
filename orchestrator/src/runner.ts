@@ -52,6 +52,7 @@ import {
   stepSpecToWorkerSpec,
   workerResultToStep,
 } from "./dispatchWorker.js";
+import { isFilledString } from "./shipOutcome.js";
 // Shared seam guards — single source of truth, also used by route(), so the
 // finding-element (A) / commitsAdded (B) rules can never drift.
 import {
@@ -1518,6 +1519,32 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   (shipResult.kind === "completed"
                     ? ` with non-ship output kind '${shipResult.output.kind}'`
                     : ` (${"reason" in shipResult ? shipResult.reason : "unknown"})`),
+              ),
+            );
+          }
+          // cmr S336 r4 (P1, symmetric to the family terminal gate): do NOT trust
+          // the discriminant alone. The terminal single-slice gate consumes any
+          // injected Backend's dispatchWorker — a backend that implements the seam
+          // but skips the success contract (RealBackend.dispatchWorker enforces it;
+          // a minimal seam-only backend need not) could return a `completed
+          // {kind:"ship"}` carrying an off-contract status, or one that shipped a
+          // DIFFERENT branch than the resident slice. Re-assert here, fail-CLOSED
+          // (defense-in-depth). The single-slice contract (prompts/ship.md) ALLOWS
+          // both `pushed` and `pr_opened` (pr_opened ⇒ a non-empty pr URL), and the
+          // shipped branch MUST be the resident worktree branch.
+          const ship = shipResult.output;
+          if (
+            ship.branch !== worktree.branch ||
+            (ship.status !== "pushed" && ship.status !== "pr_opened") ||
+            (ship.status === "pr_opened" && !isFilledString(ship.pr))
+          ) {
+            return await errorTermination(
+              "S7",
+              new Error(
+                `ship worker reported an off-contract delivery (branch="${ship.branch}", ` +
+                  `status="${ship.status}", pr=${ship.pr === undefined ? "absent" : `"${ship.pr}"`}) ` +
+                  `— expected branch "${worktree.branch}" with status "pushed" or "pr_opened" ` +
+                  `(pr_opened requires a non-empty pr URL); not a trusted slice delivery`,
               ),
             );
           }

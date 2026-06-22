@@ -304,3 +304,95 @@ describe("#334 the reviewer worker routes /review and the fix-loop routes on its
     ]);
   });
 });
+
+describe("#336 cmr S336 r4 — the terminal single-slice S7 gate re-asserts the ship contract", () => {
+  /**
+   * A clean-review backend whose S7 ship worker returns a `completed {kind:"ship"}`
+   * payload with a configurable, possibly off-contract, ShipResult. The terminal
+   * S7 gate must re-assert the single-slice contract independently of the backend
+   * (defense-in-depth, symmetric to the family terminal gate): branch === the
+   * resident worktree branch, status ∈ {pushed, pr_opened}, and pr_opened carries
+   * a non-empty pr URL. An off-contract success must NOT route to S8(success).
+   */
+  class ShipPayloadBackend extends ReviewWorkerBackend {
+    shipOutput: WorkerResult;
+    constructor(shipOutput: WorkerResult) {
+      super();
+      this.shipOutput = shipOutput;
+    }
+    override async dispatchWorker(
+      spec: WorkerSpec,
+      ctx: DispatchContext,
+    ): Promise<WorkerResult> {
+      this.dispatched.push(`${spec.id}:${spec.kind}:${spec.skill ?? "—"}`);
+      this.specs.push(spec);
+      this.ctxs.push(ctx);
+      if (spec.kind === "coder") {
+        return {
+          kind: "completed",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        };
+      }
+      if (spec.kind === "reviewer") {
+        return { kind: "completed", output: { kind: "reviewer", findings: [] } };
+      }
+      return this.shipOutput;
+    }
+  }
+
+  async function run(shipOutput: WorkerResult): Promise<string> {
+    const backend = new ShipPayloadBackend(shipOutput);
+    const result = await runOrchestrator({ issueNumber: 334, backend });
+    return result.status;
+  }
+
+  const wtBranch = "feat/orchestrator/issue-334";
+
+  it("a ship on the WRONG branch (≠ worktree) ⇒ error, not success", async () => {
+    const status = await run({
+      kind: "completed",
+      output: { kind: "ship", branch: "main", status: "pushed" },
+    });
+    expect(status).toBe("error");
+  });
+
+  it("a ship with an unknown status ⇒ error, not success", async () => {
+    const status = await run({
+      kind: "completed",
+      output: { kind: "ship", branch: wtBranch, status: "merged" },
+    });
+    expect(status).toBe("error");
+  });
+
+  it("a pr_opened ship missing its pr URL ⇒ error, not success", async () => {
+    const status = await run({
+      kind: "completed",
+      output: { kind: "ship", branch: wtBranch, status: "pr_opened" },
+    });
+    expect(status).toBe("error");
+  });
+
+  it("a pr_opened ship with a blank pr URL ⇒ error, not success", async () => {
+    const status = await run({
+      kind: "completed",
+      output: { kind: "ship", branch: wtBranch, status: "pr_opened", pr: "  " },
+    });
+    expect(status).toBe("error");
+  });
+
+  it("a legitimate pushed ship on the worktree branch ⇒ success (the contract holds)", async () => {
+    const status = await run({
+      kind: "completed",
+      output: { kind: "ship", branch: wtBranch, status: "pushed" },
+    });
+    expect(status).toBe("success");
+  });
+
+  it("a legitimate pr_opened ship with a real pr URL ⇒ success", async () => {
+    const status = await run({
+      kind: "completed",
+      output: { kind: "ship", branch: wtBranch, status: "pr_opened", pr: "https://gh/pr/1" },
+    });
+    expect(status).toBe("success");
+  });
+});
