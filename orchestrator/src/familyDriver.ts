@@ -36,6 +36,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -349,7 +350,10 @@ export class DriverFamilyBackend extends RealFamilyBackend {
     if (vendor === "codex") {
       // codex (承重, xhigh): the prompt is piped in; the last-message散文 is written
       // to `-o <file>` (the clean output; logs go to stderr).
-      const outFile = join(this.opts.ledgerDir, `cmr-codex-${Date.now()}.txt`);
+      // A per-spawn `randomUUID()` (not just `Date.now()`): the three legs run
+      // concurrently, so two same-millisecond codex spawns would otherwise pick the
+      // SAME out-file and clobber each other's last-message散文 (cmr R2 #5).
+      const outFile = join(this.opts.ledgerDir, `cmr-codex-${Date.now()}-${randomUUID()}.txt`);
       this.shStdin(
         "codex",
         [
@@ -381,7 +385,7 @@ export class DriverFamilyBackend extends RealFamilyBackend {
     }
     // agy: `--sandbox --print '' --print-timeout 15m --log-file <log>`; the散文 is
     // the printed stdout (logs go to the log file).
-    const logFile = join(this.opts.ledgerDir, `cmr-agy-${Date.now()}.log`);
+    const logFile = join(this.opts.ledgerDir, `cmr-agy-${Date.now()}-${randomUUID()}.log`);
     return this.shStdin(
       "agy",
       ["--sandbox", "--print", "", "--print-timeout", "15m", "--log-file", logFile],
