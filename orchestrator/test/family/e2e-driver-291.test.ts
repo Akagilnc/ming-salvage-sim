@@ -36,7 +36,10 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { runFamilyDriver, type Sh } from "../../src/familyDriver.js";
-import { RealFamilyBackend } from "../../src/family/realFamilyBackend.js";
+import {
+  RealFamilyBackend,
+  type CmrWorkerOutcome,
+} from "../../src/family/realFamilyBackend.js";
 import type {
   FamilyVerifyRequest,
   IntegratedCmrRequest,
@@ -44,11 +47,13 @@ import type {
 } from "../../src/family/types.js";
 import type {
   Backend,
+  DispatchContext,
   IssueMeta,
   IssueSnapshot,
   PersistentLedgerEntry,
   StepOutput,
   StepSpec,
+  WorkerSpec,
   WorktreeHandle,
 } from "../../src/types.js";
 
@@ -182,9 +187,16 @@ class E2EFamilyBackend extends RealFamilyBackend {
   protected override runVerifyCommands(req: FamilyVerifyRequest): void {
     this.verifyCalls.push(req); // green: no throw, no real npx.
   }
-  protected override async runCmr(req: IntegratedCmrRequest) {
-    this.cmrCalls.push(req);
-    return { converged: true as const };
+  // #335: the integrated cmr is a CONTAINER cmr worker via dispatchWorker →
+  // runCmrWorker. Override the worker seam (no real container) so the e2e proves
+  // the run reaches the cmr step + STOPS at the PR, recording the family base it
+  // reviewed (no real cross-model squad, no image).
+  protected override async runCmrWorker(
+    _spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<CmrWorkerOutcome> {
+    this.cmrCalls.push({ familyBase: ctx.familyBase! });
+    return { kind: "verdict", converged: true };
   }
   override async openFamilyPr(req: OpenFamilyPrRequest) {
     // Controlled: do NOT push / `gh pr create`. Record the call (the run reached

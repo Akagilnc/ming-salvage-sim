@@ -7,8 +7,10 @@
  *   - readFamilyEpic:       the gh-read end-to-end with an injected `sh`.
  *   - cutFamilyBase:        the LOCAL family-base cut on a real temp clone +
  *                           idempotent resume reuse.
- *   - runIntegratedCmr TODO-seam: the RealFamilyBackend's default throws (the real
- *     `ak-cross-m-review` form is the main orchestrator's decision — documented).
+ *   - runIntegratedCmr legacy seam: the RealFamilyBackend's per-method default
+ *     throws — #335 routes the real `ak-cross-m-review` as the CONTAINER cmr
+ *     WORKER via `dispatchWorker`, so the legacy per-method path is a guarded
+ *     bypass (a throw, never a silent fabricated pass).
  */
 
 import { execFileSync } from "node:child_process";
@@ -268,8 +270,8 @@ describe("#291 cutFamilyBase (real local clone)", () => {
   });
 });
 
-describe("#291 runIntegratedCmr TODO-seam", () => {
-  it("the RealFamilyBackend's default runIntegratedCmr throws (real ak-cross-m-review form is the orchestrator's decision)", async () => {
+describe("#335 runIntegratedCmr legacy per-method seam (the real cmr is the container worker)", () => {
+  it("the RealFamilyBackend's default runIntegratedCmr throws (the production cmr path is dispatchWorker → the container cmr worker, #335)", async () => {
     const repo = mkdtempSync(join(tmpdir(), "cmr-seam-"));
     cleanups.push(repo);
     git(repo, "init", "-q");
