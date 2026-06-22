@@ -58,7 +58,7 @@ hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`�
 4. 〔项目加〕设计评审：`ak-cross-m-review`（本地 cmr）+ 线上 bot → 合 ADR、Status→Accepted。〈设计侧到此结束〉
 5. **`to-issues`** 切 thin vertical-slice 子 issue（带 Parent + 验收 + HITL/AFK + blocked-by）。**⚠️ 切完必做原生补救**：① 子挂父 **native sub-issue**（`POST issues/<父>/sub_issues`）② 子↔子 **native blocked_by**（`POST issues/<blocked>/dependencies/blocked_by`）③ **撤父工作态标签**变 tracker（Matt #292）。命令见 [DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md)。
 6. **逐切片各开新 session `implement`**（canonical 构建步）：约定 seam 调 `/tdd`（never refactor while RED）→ 跑 typecheck/单测/全量 → 调 `/review` → commit；**代码级实现现场长**（架构级早在 to-prd 钉了）。硬 bug → `diagnosing-bugs`、架构清理 → `improve-codebase-architecture`。
-7. 〔项目加〕代码评审：per-slice `ak-cross-m-review` + ship-pre 双闸 + 线上 bot；`gstack-ship` 收尾。
+7. 〔项目加〕代码评审：per-slice `ak-cross-m-review`（**本项目手动多-session 开发流**的逐切片 cmr：codex+agy 跨家族——区别于 `## Skill routing` 里 #330 **编排器容器 worker** 的分解，那里 per-slice 是单 vendor 的 `/review`、`ak-cross-m-review` 仅作整合 cmr）+ ship-pre 双闸 + 线上 bot；`gstack-ship` 收尾。
 8. merge commit（不 squash）→ 关子 issue；全完 → 关父 issue。
 
 > **分叉**：步骤 3→5（`to-prd`→`to-issues`）只在「多 session 大活」才走；**单 session 能完的小活直接在同一窗口 implement、跳过 3-5**。步骤 1→3→5 留**同一不间断上下文窗口**（别中途 compact）；每个子 issue **开新 session** 做 6。`triage` 不在这条主线上——它是**入口匝道**，只处理你没创建的外来 issue；`to-issues` 的产出已是 `ready-for-agent`、不再 triage。
