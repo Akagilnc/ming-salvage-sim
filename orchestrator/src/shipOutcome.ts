@@ -77,14 +77,17 @@ export function shipOutcomeFromResult(result: {
 
 /**
  * Parse the ship worker's `<ship>{…}</ship>` outcome from its stdout (#336). Pure so
- * it is unit-tested without a container. The shape mirrors prompts/ship.md:
- *   - `{"status": "pr_opened"|"pushed", "branch": string, "pr"?: string}` → shipped;
- *   - `{"escalate": {"reason": string, "diagnosis": string}}`             → escalate;
- *   - `{"failed":   {"reason": string, "diagnosis": string}}`             → failed.
- * Anything else (no tag / invalid JSON / non-object / none of the shapes / a shipped
- * object missing `branch`) → malformed (fail-closed: the gate must never read an
- * ambiguous run as a delivery). Only the LAST `<ship>` tag is read (the worker may
- * iterate / self-rerun).
+ * it is unit-tested without a container. The shape mirrors prompts/ship.md +
+ * family_ship.md (the union of the two contracts):
+ *   - `{"status": "pushed",    "branch": string}`              → shipped (no pr);
+ *   - `{"status": "pr_opened", "branch": string, "pr": string}`→ shipped (pr REQUIRED);
+ *   - `{"escalate": {"reason": string, "diagnosis": string}}`  → escalate;
+ *   - `{"failed":   {"reason": string, "diagnosis": string}}`  → failed.
+ * Anything else (no tag / invalid JSON / non-object / missing `branch` / an UNKNOWN
+ * status / `pr_opened` missing its `pr` URL) → malformed (fail-CLOSED: the gate must
+ * never read an ambiguous or off-contract run as a delivery — a bare-string status
+ * guard would fail-OPEN on `blocked` etc., the #336 cmr S336 r1 finding). Only the
+ * LAST `<ship>` tag is read (the worker may iterate / self-rerun).
  */
 export function parseShipOutcome(stdout: string): ShipWorkerOutcome {
   const re = /<ship>([\s\S]*?)<\/ship>/g;
@@ -127,17 +130,31 @@ export function parseShipOutcome(stdout: string): ShipWorkerOutcome {
     return { kind: "failed", reason, diagnosis };
   }
   // A successful ship MUST carry a branch (a PR / push with no branch is unusable).
-  if (typeof obj.status === "string" && typeof obj.branch === "string") {
+  if (typeof obj.branch !== "string") {
     return {
-      kind: "shipped",
-      branch: obj.branch,
-      status: obj.status,
-      ...(typeof obj.pr === "string" ? { pr: obj.pr } : {}),
+      kind: "malformed",
+      reason:
+        "ship worker <ship> tag had no {status,branch} success, no `escalate` and no `failed`",
     };
+  }
+  // Fail-CLOSED on the EXACT contract (prompts/ship.md + family_ship.md): the only
+  // shipped statuses are "pushed" (no pr) and "pr_opened" (pr REQUIRED). Any other
+  // status — or "pr_opened" missing its `pr` URL — is malformed, never a fabricated
+  // success (#336 cmr S336 r1: a bare-string status guard fail-OPENed `blocked` etc.).
+  if (obj.status === "pushed") {
+    return { kind: "shipped", branch: obj.branch, status: "pushed" };
+  }
+  if (obj.status === "pr_opened") {
+    if (typeof obj.pr !== "string") {
+      return {
+        kind: "malformed",
+        reason: 'ship worker reported status "pr_opened" but no `pr` URL (a PR with no URL is unusable)',
+      };
+    }
+    return { kind: "shipped", branch: obj.branch, status: "pr_opened", pr: obj.pr };
   }
   return {
     kind: "malformed",
-    reason:
-      "ship worker <ship> tag had no {status,branch} success, no `escalate` and no `failed`",
+    reason: `ship worker <ship> tag had an unknown status (expected "pushed" | "pr_opened"), or no \`escalate\`/\`failed\``,
   };
 }

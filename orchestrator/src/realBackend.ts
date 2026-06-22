@@ -54,6 +54,7 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   rmSync,
   statSync,
@@ -443,6 +444,21 @@ export interface AuthPaths {
   readonly srcCodexConfig: string;
   /** Host file holding the durable claude OAuth token. */
   readonly claudeTokenFile: string;
+}
+
+/**
+ * The single-slice ship worker's BEST-EFFORT auth (mirrors the family
+ * {@link import("./family/realFamilyBackend.js").ShipAuth}). The ship worker pushes
+ * + `gh pr create` (needs codex/gh creds) AND is the container's top-level claude
+ * (needs its OWN claude token) — but each source is OPTIONAL: a missing source
+ * degrades that leg, it never crashes the ship (#336 cmr S336 r1: the inline
+ * `mountAuth` threw on any missing credential, blocking ship in degraded auth envs).
+ */
+export interface ShipAuth {
+  /** Per-run codex auth dir (host-mirrored `~/.codex`), or undefined if absent. */
+  readonly codexAuthDir?: string;
+  /** The claude OAuth token (env var), or undefined if absent. */
+  readonly claudeToken?: string;
 }
 
 export function buildAuthPaths(
@@ -2111,33 +2127,72 @@ export class RealBackend implements Backend {
    * asserts the mounts + soul without a real container.
    */
   protected shipSandbox(worktree: WorktreeHandle): sc.SandboxProvider {
-    const auth = this.mountAuth(this.issueOf(worktree));
-    return docker(this.shipSandboxConfig(auth));
+    return docker(this.shipSandboxConfig(this.mountShipAuth(this.issueOf(worktree))));
+  }
+
+  /**
+   * Copy the ship worker's host credentials into per-run material the ship sandbox
+   * mounts (#336 cmr S336 r1) — BEST-EFFORT per source (mirrors the family
+   * `mountShipAuth`): the codex auth dir + the claude OAuth token, each in its OWN
+   * try/catch so a MISSING source degrades only that leg and never crashes the ship.
+   *
+   * Unlike the agent-step `mountAuth` (which THROWS on any missing credential), the
+   * ship path is fail-soft: a degraded-auth host can still attempt the ship (the
+   * worker reports the real outcome via its `<ship>` tag) rather than being blocked
+   * before it starts. NOT keyed by issue here for the codex dir — a fresh temp dir
+   * per call keeps it self-contained; the claude token is read straight off the host.
+   */
+  protected mountShipAuth(issueNumber: number): ShipAuth {
+    const paths = buildAuthPaths(issueNumber, this.opts.home);
+    let codexAuthDir: string | undefined;
+    try {
+      const root = join(paths.hostCodexAuthDir, "..");
+      mkdirSync(root, { recursive: true, mode: 0o700 });
+      const dir = mkdtempSync(join(root, `ship-codex-auth-${issueNumber}-`));
+      copyFileSync(paths.srcCodexAuth, join(dir, "auth.json"));
+      chmodSync(join(dir, "auth.json"), 0o600);
+      try {
+        copyFileSync(paths.srcCodexConfig, join(dir, "config.toml"));
+        chmodSync(join(dir, "config.toml"), 0o600);
+      } catch {
+        // config.toml is optional.
+      }
+      codexAuthDir = dir;
+    } catch {
+      // codex auth absent ⇒ the codex/gh leg degrades (no mount), no crash.
+    }
+    let claudeToken: string | undefined;
+    try {
+      claudeToken = readFileSync(paths.claudeTokenFile, "utf8").trim();
+    } catch {
+      // claude token absent ⇒ the top-level claude worker degrades (no env var).
+    }
+    return { codexAuthDir, claudeToken };
   }
 
   /**
    * The docker options the ship worker sandbox runs under — the pure
-   * SANDBOX-CONFIG seam (mirrors `boxConfig` / the family `cmrSandboxConfig`
+   * SANDBOX-CONFIG seam (mirrors `boxConfig` / the family `shipSandboxConfig`
    * testability). No container, no I/O: a unit test asserts the mounts + soul env
    * without a real sandbox. The ship worker runs under the `coder` (WRITE) soul
-   * (it commits the bump + pushes) with codex auth + the claude token, NO skills
-   * mount (the 2b image BAKES gstack-ship — a runtime mount would SHADOW it, #334).
+   * (it commits the bump + pushes) with BEST-EFFORT codex auth + claude token (each
+   * set only when present, #336 cmr S336 r1), NO skills mount (the 2b image BAKES
+   * gstack-ship — a runtime mount would SHADOW it, #334).
    */
-  protected shipSandboxConfig(auth: { authDir: string; claudeToken: string }): {
+  protected shipSandboxConfig(auth: ShipAuth): {
     imageName: string;
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
   } {
-    return {
-      imageName: this.opts.imageName,
-      env: {
-        CLAUDE_CODE_OAUTH_TOKEN: auth.claudeToken,
-        // The ship worker is a WRITE worker (commits + pushes) → the coder soul.
-        [SANDBOX_SOUL_ENV]: "coder",
-      },
-      // #334: codex auth ONLY — baked skills win (no host skills mount).
-      mounts: [{ hostPath: auth.authDir, sandboxPath: SANDBOX_CODEX_DIR }],
-    };
+    // The ship worker is a WRITE worker (commits + pushes) → the coder soul.
+    const env: Record<string, string> = { [SANDBOX_SOUL_ENV]: "coder" };
+    if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
+    const mounts: { hostPath: string; sandboxPath: string }[] = [];
+    // #334: codex auth ONLY — baked skills win (no host skills mount).
+    if (auth.codexAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
+    }
+    return { imageName: this.opts.imageName, env, mounts };
   }
 
   /**

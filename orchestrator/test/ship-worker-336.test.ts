@@ -21,7 +21,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { RealBackend } from "../src/realBackend.js";
+import { RealBackend, SANDBOX_CODEX_DIR, SANDBOX_SOUL_ENV } from "../src/realBackend.js";
+import type { ShipAuth } from "../src/realBackend.js";
 import { shipWorkerSpec } from "../src/dispatchWorker.js";
 import type { ShipWorkerOutcome } from "../src/shipOutcome.js";
 import type { DispatchContext, WorkerSpec, WorktreeHandle } from "../src/types.js";
@@ -166,5 +167,57 @@ describe("#336 the inline single-slice push is no longer the ship path", () => {
     const be = fixtured();
     await be.dispatchWorker!(shipWorkerSpec(), { worktree });
     expect(be.pushCount).toBe(0);
+  });
+});
+
+// ═══════════════ single-slice shipSandboxConfig — best-effort auth (mirrors family) ═══════════════
+
+describe("#336 single-slice shipSandboxConfig — best-effort ship auth", () => {
+  /** A RealBackend exposing the pure config seam, with the clone seams stubbed. */
+  class ConfigBackend extends RealBackend {
+    protected override buildOrReuseClone(): string {
+      return mkDir("ship-clone-");
+    }
+    protected override assertIndependentClone(): void {
+      // pure config seam under test, not a real clone.
+    }
+    public config(auth: ShipAuth): {
+      imageName: string;
+      env: Record<string, string>;
+      mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
+    } {
+      return this.shipSandboxConfig(auth);
+    }
+  }
+  function cfg(): ConfigBackend {
+    return new ConfigBackend({
+      sourceRepo: mkDir("ship-src-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "ming-orchestrator-coder:latest",
+      runKey: "k336cfg",
+    });
+  }
+
+  it("mounts codex auth + the claude token under the WRITE (coder) soul", () => {
+    const c = cfg().config({ codexAuthDir: "/tmp/codex", claudeToken: "tok" });
+    expect(c.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
+    expect(c.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok");
+    expect(c.env[SANDBOX_SOUL_ENV]).toBe("coder");
+  });
+
+  it("a missing codex auth degrades the mount but still ships under the coder soul", () => {
+    const c = cfg().config({ claudeToken: "tok" });
+    expect(c.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(false);
+    expect(c.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok");
+    expect(c.env[SANDBOX_SOUL_ENV]).toBe("coder");
+  });
+
+  it("a missing claude token degrades the env var but still mounts codex + coder soul", () => {
+    const c = cfg().config({ codexAuthDir: "/tmp/codex" });
+    expect(c.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    expect(c.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
+    expect(c.env[SANDBOX_SOUL_ENV]).toBe("coder");
   });
 });
