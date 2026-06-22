@@ -124,6 +124,17 @@ export const AGY_TOKEN_FILENAME = "antigravity-oauth-token";
  */
 export const CMR_FOCUS_FILENAME = ".cmr-focus.md";
 
+/**
+ * The git-ignored SHIP FOCUS file written into the family-base worktree before the
+ * family ship worker runs (cmr S336 r5): it pins the family base branch + the
+ * CONFIGURED PR target base (`opts.base`) + the repo slug, so the in-container
+ * `gstack-ship` opens the family PR against the RIGHT base. Without it gstack-ship
+ * INFERS the base from the repo default branch (main) — silently regressing the
+ * legacy `openFamilyPr` `gh pr create --base this.opts.base` contract whenever the
+ * family run targets a non-main integration branch (e.g. `integ/291-wave3`).
+ */
+export const SHIP_FOCUS_FILENAME = ".ship-focus.md";
+
 /** The cmr worker's completion signal (matches prompts/integrated_cmr.md). */
 const CMR_COMPLETION_SIGNAL = "CMR_STEP_COMPLETE";
 /** The cmr worker runs on the strongest reviewer model (the ship-pre 承重闸). */
@@ -948,7 +959,27 @@ export class RealFamilyBackend implements FamilyBackend {
   ): Promise<ShipWorkerOutcome> {
     // Check out the family base so gstack-ship delivers the RIGHT branch.
     this.sh("git", ["checkout", ctx.familyBase!], this.opts.workingRepo);
-    const result = await sc.run({
+    // cmr S336 r5: thread the CONFIGURED PR target base into the worker via a
+    // git-ignored focus file the prompt reads FIRST. gstack-ship otherwise INFERS
+    // the base from the repo default branch (main), regressing the legacy
+    // `openFamilyPr` `gh pr create --base this.opts.base` contract on a non-main
+    // target. Written AFTER the checkout (the file lives in the family-base
+    // worktree) and BEFORE the container so the worker can read it.
+    this.writeShipFocusFile(ctx);
+    const result = await this.shipContainerRun(spec);
+    return shipOutcomeFromResult(result);
+  }
+
+  /**
+   * The single `sc.run` that spins the family ship container (gstack-ship over the
+   * checked-out family base). `protected` so a unit test traps the container launch
+   * (asserting the focus file is already on disk) without a real docker run.
+   * `branchStrategy:{type:"head"}` keeps it on the checked-out family base.
+   */
+  protected async shipContainerRun(
+    spec: WorkerSpec,
+  ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+    return sc.run({
       name: "family-ship",
       cwd: this.opts.workingRepo,
       sandbox: this.shipSandbox(),
@@ -958,7 +989,67 @@ export class RealFamilyBackend implements FamilyBackend {
       branchStrategy: { type: "head" },
       promptFile: join(this.opts.promptsDir, spec.promptFile),
     });
-    return shipOutcomeFromResult(result);
+  }
+
+  /**
+   * Write the git-ignored SHIP FOCUS file into the family-base worktree (cmr S336
+   * r5): the family base branch + the CONFIGURED PR target base (`opts.base`) + the
+   * repo slug. The worker's prompt reads it FIRST so the in-container `gstack-ship`
+   * opens the family PR against the configured base instead of its inferred repo
+   * default — preserving the legacy `openFamilyPr` `--base this.opts.base` contract
+   * (the lone load-bearing item gstack-ship cannot infer: `--head` = the checked-out
+   * branch, `--repo` = the clone's origin, title/body/CHANGELOG = the skill's own,
+   * push = the skill's; ONLY the non-default target base is unknowable to it).
+   * `protected` so a unit test can fixture it without a real worktree.
+   */
+  protected writeShipFocusFile(ctx: DispatchContext): void {
+    const familyBase = ctx.familyBase!;
+    const body =
+      `# Family ship — PR target (machine-generated; cmr S336 r5)\n\n` +
+      `Ship the family base **${familyBase}** and open ONE PR — 止于 PR.\n\n` +
+      `Open the PR against THIS exact target base (do NOT let gstack-ship infer the\n` +
+      `repo default branch — the family run may target a non-main integration branch):\n\n` +
+      `    PR target base: ${this.opts.base}\n` +
+      `    PR head branch: ${familyBase}\n` +
+      `    GitHub repo:    ${this.opts.repo}\n\n` +
+      `When gstack-ship detects the base branch, OVERRIDE its inference with the\n` +
+      `\`PR target base\` above (\`gh pr create --base ${this.opts.base} --head ${familyBase}\`).\n`;
+    // Git-ignore it (it is a transient runtime artifact, never committed) then write.
+    const target = join(this.opts.workingRepo, SHIP_FOCUS_FILENAME);
+    this.excludeShipFocusFromGit();
+    writeFileSync(target, body, "utf8");
+  }
+
+  /** Add the ship focus file to the worktree's local git excludes (never committed). */
+  protected excludeShipFocusFromGit(): void {
+    try {
+      const excludePath = join(
+        this.sh("git", ["rev-parse", "--git-dir"], this.opts.workingRepo),
+        "info",
+        "exclude",
+      );
+      const abs = isAbsolute(excludePath)
+        ? excludePath
+        : join(this.opts.workingRepo, excludePath);
+      let existing = "";
+      try {
+        existing = readFileSync(abs, "utf8");
+      } catch {
+        // no exclude file yet
+      }
+      if (!existing.split("\n").includes(SHIP_FOCUS_FILENAME)) {
+        mkdirSync(join(abs, ".."), { recursive: true });
+        appendFileSync(
+          abs,
+          (existing.endsWith("\n") || existing === "" ? "" : "\n") + SHIP_FOCUS_FILENAME + "\n",
+          "utf8",
+        );
+      }
+    } catch {
+      // Best-effort: if excludes can't be written the file is still produced; the
+      // ship worker delivers the family base, and a stray untracked focus file is
+      // harmless (gstack-ship ships the family base's TRACKED commits).
+    }
   }
 
   /** The family ship worker's sandbox (souls + skills + CLIs baked into the 2b image). */
