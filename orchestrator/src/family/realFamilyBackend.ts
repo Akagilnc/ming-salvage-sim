@@ -931,40 +931,54 @@ export class RealFamilyBackend implements FamilyBackend {
 
     // codex auth.json (+ optional config.toml) → a per-run owner-only dir.
     let codexAuthDir: string | undefined;
+    let tempCodexDir: string | undefined;
     try {
       // Per-INVOCATION unique dir (codex cmr R2): a fixed path would be rmSync'd
       // + rebuilt under a concurrent family CMR worker, deleting the dir it has
       // mounted. mkdtempSync gives each invocation its own owner-only (0700) dir.
       mkdirSync(root, { recursive: true, mode: 0o700 });
-      const dir = mkdtempSync(join(root, "cmr-codex-auth-"));
-      copyFileSync(join(home, ".codex", "auth.json"), join(dir, "auth.json"));
-      chmodSync(join(dir, "auth.json"), 0o600);
+      tempCodexDir = mkdtempSync(join(root, "cmr-codex-auth-"));
+      copyFileSync(join(home, ".codex", "auth.json"), join(tempCodexDir, "auth.json"));
+      chmodSync(join(tempCodexDir, "auth.json"), 0o600);
       try {
-        copyFileSync(join(home, ".codex", "config.toml"), join(dir, "config.toml"));
-        chmodSync(join(dir, "config.toml"), 0o600);
+        copyFileSync(join(home, ".codex", "config.toml"), join(tempCodexDir, "config.toml"));
+        chmodSync(join(tempCodexDir, "config.toml"), 0o600);
       } catch {
         // config.toml is optional.
       }
-      codexAuthDir = dir;
+      codexAuthDir = tempCodexDir;
     } catch {
-      // codex auth absent ⇒ the codex leg degrades (no mount).
+      // codex auth absent ⇒ the codex leg degrades (no mount). Reclaim the
+      // mkdtemp dir if it was created before copy/chmod threw (online review r2,
+      // gemini): on the degrade path codexAuthDir stays undefined, so the per-
+      // invocation dir would otherwise leak past the caller's finally cleanup.
+      if (codexAuthDir === undefined && tempCodexDir !== undefined) {
+        rmSync(tempCodexDir, { recursive: true, force: true });
+      }
     }
 
     // agy OAuth token → a per-run WRITABLE dir mounted at the antigravity config
     // path (the agy CLI writes cache/log under its config dir, so it must NOT be
     // read-only — #333 gotcha).
     let agyDir: string | undefined;
+    let tempAgyDir: string | undefined;
     try {
       // Per-INVOCATION unique dir (codex cmr R2): same concurrency hazard as the
       // codex dir above — and the agy dir is mounted WRITABLE, so a shared path
       // would also cross-talk runtime state between concurrent workers.
       mkdirSync(root, { recursive: true, mode: 0o700 });
-      const dir = mkdtempSync(join(root, "cmr-agy-"));
-      copyFileSync(join(home, ".sc-agy-oauth-token"), join(dir, AGY_TOKEN_FILENAME));
-      chmodSync(join(dir, AGY_TOKEN_FILENAME), 0o600);
-      agyDir = dir;
+      tempAgyDir = mkdtempSync(join(root, "cmr-agy-"));
+      copyFileSync(join(home, ".sc-agy-oauth-token"), join(tempAgyDir, AGY_TOKEN_FILENAME));
+      chmodSync(join(tempAgyDir, AGY_TOKEN_FILENAME), 0o600);
+      agyDir = tempAgyDir;
     } catch {
       // agy token absent ⇒ the agy leg degrades (no mount); cmr falls to the rest.
+      // Reclaim the mkdtemp dir if it was created before copy/chmod threw (online
+      // review r2, gemini): on the degrade path agyDir stays undefined, so the
+      // per-invocation dir would otherwise leak past the caller's finally cleanup.
+      if (agyDir === undefined && tempAgyDir !== undefined) {
+        rmSync(tempAgyDir, { recursive: true, force: true });
+      }
     }
 
     let claudeToken: string | undefined;
@@ -1293,21 +1307,28 @@ export class RealFamilyBackend implements FamilyBackend {
     const home = this.opts.home ?? homedir();
     const root = join(home, ".sc-orchestrator");
     let codexAuthDir: string | undefined;
+    let tempCodexDir: string | undefined;
     try {
       mkdirSync(root, { recursive: true, mode: 0o700 });
-      const dir = mkdtempSync(join(root, "ship-codex-auth-"));
-      copyFileSync(join(home, ".codex", "auth.json"), join(dir, "auth.json"));
-      chmodSync(join(dir, "auth.json"), 0o600);
+      tempCodexDir = mkdtempSync(join(root, "ship-codex-auth-"));
+      copyFileSync(join(home, ".codex", "auth.json"), join(tempCodexDir, "auth.json"));
+      chmodSync(join(tempCodexDir, "auth.json"), 0o600);
       try {
-        copyFileSync(join(home, ".codex", "config.toml"), join(dir, "config.toml"));
-        chmodSync(join(dir, "config.toml"), 0o600);
+        copyFileSync(join(home, ".codex", "config.toml"), join(tempCodexDir, "config.toml"));
+        chmodSync(join(tempCodexDir, "config.toml"), 0o600);
       } catch {
         // config.toml is optional.
       }
-      codexAuthDir = dir;
+      codexAuthDir = tempCodexDir;
     } catch {
       // codex auth absent ⇒ the codex leg degrades (no mount). gh is NOT here — it is
-      // the separate, preflighted ghToken (cmr S336 r10).
+      // the separate, preflighted ghToken (cmr S336 r10). Reclaim the mkdtemp dir if
+      // it was created before copy/chmod threw (online review r2, gemini): on the
+      // degrade path codexAuthDir stays undefined, so the per-invocation dir would
+      // otherwise leak past the caller's finally cleanup.
+      if (codexAuthDir === undefined && tempCodexDir !== undefined) {
+        rmSync(tempCodexDir, { recursive: true, force: true });
+      }
     }
     let claudeToken: string | undefined;
     try {

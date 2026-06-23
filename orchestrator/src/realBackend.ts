@@ -2248,22 +2248,29 @@ export class RealBackend implements Backend {
   protected mountShipAuth(issueNumber: number): ShipAuth {
     const paths = buildAuthPaths(issueNumber, this.opts.home);
     let codexAuthDir: string | undefined;
+    let tempCodexDir: string | undefined;
     try {
       const root = join(paths.hostCodexAuthDir, "..");
       mkdirSync(root, { recursive: true, mode: 0o700 });
-      const dir = mkdtempSync(join(root, `ship-codex-auth-${issueNumber}-`));
-      copyFileSync(paths.srcCodexAuth, join(dir, "auth.json"));
-      chmodSync(join(dir, "auth.json"), 0o600);
+      tempCodexDir = mkdtempSync(join(root, `ship-codex-auth-${issueNumber}-`));
+      copyFileSync(paths.srcCodexAuth, join(tempCodexDir, "auth.json"));
+      chmodSync(join(tempCodexDir, "auth.json"), 0o600);
       try {
-        copyFileSync(paths.srcCodexConfig, join(dir, "config.toml"));
-        chmodSync(join(dir, "config.toml"), 0o600);
+        copyFileSync(paths.srcCodexConfig, join(tempCodexDir, "config.toml"));
+        chmodSync(join(tempCodexDir, "config.toml"), 0o600);
       } catch {
         // config.toml is optional.
       }
-      codexAuthDir = dir;
+      codexAuthDir = tempCodexDir;
     } catch {
       // codex auth absent ⇒ the codex leg degrades (no mount), no crash. gh is NOT
-      // here — it is the separate, preflighted ghToken (cmr S336 r10).
+      // here — it is the separate, preflighted ghToken (cmr S336 r10). Reclaim the
+      // mkdtemp dir if it was created before copy/chmod threw (online review r2,
+      // gemini): on the degrade path codexAuthDir stays undefined, so the per-
+      // invocation dir would otherwise leak past the caller's finally cleanup.
+      if (codexAuthDir === undefined && tempCodexDir !== undefined) {
+        rmSync(tempCodexDir, { recursive: true, force: true });
+      }
     }
     let claudeToken: string | undefined;
     try {
