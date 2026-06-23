@@ -27,7 +27,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -445,6 +445,34 @@ describe("#335 mountCmrAuth — a missing host credential degrades, never throws
       agyDir: undefined,
       claudeToken: undefined,
     });
+  });
+
+  it("a missing codex/agy source reclaims the mkdtemp dir — no leak on degrade (online review r2, gemini)", () => {
+    // The degrade path leaks pre-fix: mountCmrAuth's mkdtempSync creates the per-run
+    // codex/agy dir, THEN copyFileSync throws ENOENT because the source cred is
+    // absent (the expected degradation, e.g. agy quota-out). codexAuthDir/agyDir
+    // stay undefined, so the caller's finally cleanup never sees the dir — it leaks
+    // under ~/.sc-orchestrator. The catch must rmSync the temp dir it created.
+    const emptyHome = mkDir("cmr-degrade-home-");
+    const be = new AuthBackend({
+      workingRepo: mkDir("cmr-repo-"),
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "ming-orchestrator-coder:latest",
+      home: emptyHome,
+    });
+    const auth = be.auth();
+    expect(auth.codexAuthDir).toBeUndefined();
+    expect(auth.agyDir).toBeUndefined();
+    // The mkdtemp dirs created before the copy threw were reclaimed: no residue.
+    const root = join(emptyHome, ".sc-orchestrator");
+    const residue = existsSync(root) ? readdirSync(root) : [];
+    expect(
+      residue.filter((n) => n.startsWith("cmr-codex-auth-") || n.startsWith("cmr-agy-")),
+    ).toEqual([]);
   });
 });
 
