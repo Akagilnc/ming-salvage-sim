@@ -653,8 +653,40 @@ export class RealFamilyBackend implements FamilyBackend {
     if (!this.depsInstalled(cwd)) {
       this.installDeps(cwd);
     }
-    this.sh("npx", ["tsc", "--noEmit"], cwd);
-    this.sh("npx", ["vitest", "run"], cwd);
+    // #5 (dogfood): run the PROJECT'S OWN package.json scripts, NOT a hardcoded
+    // `npx tsc`/`npx vitest`. web/'s test script is `vitest run --environment jsdom`
+    // — a bare `npx vitest run` DROPS `--environment jsdom`, so every jsdom render
+    // test throws `document is not defined` and verify fails a perfectly good
+    // project. (The orchestrator's own scripts HAPPENED to match `npx tsc`/`vitest`,
+    // which is why this only surfaced on a foreign project — web/.) Run the declared
+    // `typecheck` (when present) + `test` scripts so each project's real flags/config
+    // (jsdom, tsc -b, …) are honoured.
+    const scripts = this.packageScripts(cwd);
+    if (scripts.includes("typecheck")) {
+      this.sh("npm", ["run", "typecheck"], cwd);
+    }
+    if (scripts.includes("test")) {
+      this.sh("npm", ["test"], cwd);
+    }
+  }
+
+  /**
+   * The script names declared in `cwd`'s package.json (`scripts` keys), so
+   * {@link runVerifyCommands} runs the project's OWN `typecheck`/`test` commands
+   * (#5) instead of a hardcoded `npx`. `protected` so a unit test drives the
+   * branches without a real FS. Returns [] on any read/parse failure (a non-Node
+   * dir verifies nothing — the deps install already failed loudly if it WAS a Node
+   * project missing deps).
+   */
+  protected packageScripts(cwd: string): readonly string[] {
+    try {
+      const pkg = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8")) as {
+        scripts?: Record<string, unknown>;
+      };
+      return Object.keys(pkg.scripts ?? {});
+    } catch {
+      return [];
+    }
   }
 
   /**

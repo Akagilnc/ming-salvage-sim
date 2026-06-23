@@ -289,42 +289,50 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     expect(r.childHead).toBe(childHead);
   });
 
-  it("runFamilyVerify runs tsc/vitest from verifyCwd (the orchestrator project dir), NOT the clone root (online R2 Codex P1)", async () => {
-    // The clone is the FULL repo; the orchestrator's package.json/tsconfig/vitest
-    // config live under `<clone>/orchestrator`. Running `npx tsc/vitest` from the
-    // clone root finds no project → a real family run's verify always fails. The
-    // verify commands must run from `verifyCwd`.
+  it("runFamilyVerify runs the project's npm typecheck+test from verifyCwd, NOT the clone root (online R2 Codex P1 / #5)", async () => {
+    // The clone is the FULL repo; a project's package.json/scripts live under a
+    // subdir (e.g. `<clone>/orchestrator`). The verify commands must run from
+    // `verifyCwd`, and (#5) be the PROJECT'S OWN npm scripts, not a hardcoded npx.
     const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
     class SpyBackend extends RealFamilyBackend {
       protected override sh(file: string, args: string[], cwd?: string): string {
         calls.push({ file, args, cwd });
         return "";
+      }
+      protected override depsInstalled(_cwd: string): boolean {
+        return true; // deps present → focus the assertion on the verify commands
+      }
+      protected override packageScripts(_cwd: string): readonly string[] {
+        return ["typecheck", "test"]; // orchestrator's scripts
       }
       runVerifyForTest(): void {
         this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
       }
     }
     new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" })).runVerifyForTest();
-    const npx = calls.filter((c) => c.file === "npx");
-    expect(npx.map((c) => c.args[0])).toEqual(["tsc", "vitest"]);
-    expect(npx.every((c) => c.cwd === "/clone/root/orchestrator")).toBe(true);
+    expect(calls.map((c) => `${c.file} ${c.args.join(" ")}`)).toEqual([
+      "npm run typecheck",
+      "npm test",
+    ]);
+    expect(calls.every((c) => c.cwd === "/clone/root/orchestrator")).toBe(true);
   });
 
-  it("#3: installs deps (npm ci) in verifyCwd BEFORE npx tsc/vitest when node_modules is absent", async () => {
-    // The dogfood death (#3): verify ran `npx tsc` against a FRESH clone with no
-    // node_modules → "This is not the tsc command..." → always verify_failed. The
-    // fix installs deps first. The spy's existsSync override reports node_modules
-    // ABSENT, so a `npm ci` (or install) must precede the two npx commands, in the
-    // SAME cwd.
+  it("#3: installs deps (npm ci) in verifyCwd BEFORE the npm verify scripts when node_modules is absent", async () => {
+    // The dogfood death (#3): verify ran against a FRESH clone with no node_modules
+    // → "This is not the tsc command..." → always verify_failed. The fix installs
+    // deps first. The spy reports node_modules ABSENT, so a `npm ci` (or install)
+    // must precede the project's verify scripts, in the SAME cwd.
     const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
     class SpyBackend extends RealFamilyBackend {
       protected override sh(file: string, args: string[], cwd?: string): string {
         calls.push({ file, args, cwd });
         return "";
       }
-      // node_modules ABSENT in the fresh clone.
       protected override depsInstalled(_cwd: string): boolean {
-        return false;
+        return false; // node_modules ABSENT in the fresh clone
+      }
+      protected override packageScripts(_cwd: string): readonly string[] {
+        return ["typecheck", "test"];
       }
       runVerifyForTest(): void {
         this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
@@ -335,14 +343,12 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     expect(calls[0].file).toBe("npm");
     expect(["ci", "install"]).toContain(calls[0].args[0]);
     expect(calls[0].cwd).toBe("/clone/root/orchestrator");
-    // Then the two npx verify commands, still in verifyCwd.
-    const npx = calls.filter((c) => c.file === "npx");
-    expect(npx.map((c) => c.args[0])).toEqual(["tsc", "vitest"]);
-    expect(npx.every((c) => c.cwd === "/clone/root/orchestrator")).toBe(true);
-    // The install ran before any npx.
-    const firstNpx = calls.findIndex((c) => c.file === "npx");
-    const install = calls.findIndex((c) => c.file === "npm");
-    expect(install).toBeLessThan(firstNpx);
+    // Then the project's verify scripts, still in verifyCwd.
+    expect(calls.slice(1).map((c) => `${c.file} ${c.args.join(" ")}`)).toEqual([
+      "npm run typecheck",
+      "npm test",
+    ]);
+    expect(calls.slice(1).every((c) => c.cwd === "/clone/root/orchestrator")).toBe(true);
   });
 
   it("#3: skips the dep install when node_modules already exists (idempotent, no re-install churn)", async () => {
@@ -355,13 +361,52 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       protected override depsInstalled(_cwd: string): boolean {
         return true; // node_modules present → no install
       }
+      protected override packageScripts(_cwd: string): readonly string[] {
+        return ["typecheck", "test"];
+      }
       runVerifyForTest(): void {
         this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
       }
     }
     new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" })).runVerifyForTest();
-    expect(calls.some((c) => c.file === "npm")).toBe(false);
-    expect(calls.filter((c) => c.file === "npx").map((c) => c.args[0])).toEqual(["tsc", "vitest"]);
+    // No `npm ci`/`npm install` ran — only the project's verify scripts.
+    expect(
+      calls.some((c) => c.file === "npm" && (c.args[0] === "ci" || c.args[0] === "install")),
+    ).toBe(false);
+    expect(calls.map((c) => `${c.file} ${c.args.join(" ")}`)).toEqual([
+      "npm run typecheck",
+      "npm test",
+    ]);
+  });
+
+  it("#5: runs the project's OWN test script (e.g. web's `vitest run --environment jsdom`), skipping typecheck when undeclared", async () => {
+    // The dogfood verify_failed root cause (#5): web/ declares NO `typecheck` script
+    // and its test = `vitest run --environment jsdom`. A hardcoded `npx vitest run`
+    // dropped `--environment jsdom` → every jsdom render test threw `document is not
+    // defined`. Running `npm test` honours the project's real flags; typecheck is
+    // skipped because web/ does not declare it (no spurious failure / wrong command).
+    const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
+    class SpyBackend extends RealFamilyBackend {
+      protected override sh(file: string, args: string[], cwd?: string): string {
+        calls.push({ file, args, cwd });
+        return "";
+      }
+      protected override depsInstalled(_cwd: string): boolean {
+        return true;
+      }
+      protected override packageScripts(_cwd: string): readonly string[] {
+        return ["dev", "build", "test", "preview"]; // web's scripts — NO `typecheck`
+      }
+      runVerifyForTest(): void {
+        this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
+      }
+    }
+    new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/web" })).runVerifyForTest();
+    // Only `npm test` runs (no typecheck script) — and via the npm script, so the
+    // project's own `--environment jsdom` is honoured. NEVER a raw `npx`.
+    expect(calls.map((c) => `${c.file} ${c.args.join(" ")}`)).toEqual(["npm test"]);
+    expect(calls.some((c) => c.file === "npx")).toBe(false);
+    expect(calls.every((c) => c.cwd === "/clone/root/web")).toBe(true);
   });
 
   it("familyBaseStartHead returns the recorded start head", async () => {
