@@ -8,7 +8,6 @@ import {
 import type {
   Backend,
   DispatchContext,
-  Finding,
   IssueMeta,
   IssueSnapshot,
   PersistentLedgerEntry,
@@ -366,7 +365,6 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
     runStepCalls: StepSpec[] = [];
     resumeCalls: string[] = [];
     pushCalls = 0;
-    lastFixFindings?: ReadonlyArray<Finding>;
     worktree: WorktreeHandle = {
       branch: "b",
       base: "main",
@@ -375,10 +373,8 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
     async runStep(
       spec: StepSpec,
       _wt: WorktreeHandle,
-      fixNow?: ReadonlyArray<Finding>,
     ): Promise<StepOutput> {
       this.runStepCalls.push(spec);
-      this.lastFixFindings = fixNow;
       return spec.role === "coder"
         ? { kind: "coder", committed: true, commitsAdded: 1 }
         : { kind: "reviewer", findings: [] };
@@ -387,10 +383,8 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
       _spec: StepSpec,
       _wt: WorktreeHandle,
       sid: string,
-      fixNow?: ReadonlyArray<Finding>,
     ): Promise<StepOutput> {
       this.resumeCalls.push(sid);
-      this.lastFixFindings = fixNow;
       return { kind: "coder", committed: true, commitsAdded: 1 };
     }
     async push(): Promise<void> {
@@ -426,27 +420,17 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
     }
   });
 
-  it("forwards a resume fix worker (resumeSessionId present) to resumeSession with findings", async () => {
+  it("forwards a resume worker (resumeSessionId present) to resumeSession with the recorded session id", async () => {
     const be = new LegacyBackend();
-    const findings: Finding[] = [
-      {
-        severity: "high",
-        category: "c",
-        claim_quote: "q",
-        location: "l",
-        suggested_fix: "s",
-        action: "fix_now",
-      },
-    ];
-    // The resume path is keyed by resumeSessionId, not the step id — keep a valid
-    // single-slice StepId (S2, the build step) now that S5 is gone.
+    // The resume path is keyed by resumeSessionId; the only agent step is the S2
+    // build worker (ADR 0026 — the per-slice fix loop runs inside it, so there is
+    // no separate fix step to thread findings to).
     await legacyDispatchWorker(be as unknown as Backend, { ...coderWorker, id: "S2" }, {
       worktree: be.worktree,
       resumeSessionId: "sess-abc",
-      prevFindings: findings,
     });
     expect(be.resumeCalls).toEqual(["sess-abc"]);
-    expect(be.lastFixFindings).toEqual(findings);
+    expect(be.runStepCalls).toHaveLength(0);
   });
 
   it("forwards a ship worker to push and wraps as completed ShipResult", async () => {
