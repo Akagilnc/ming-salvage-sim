@@ -1,23 +1,27 @@
 /**
- * Family integrated-cmr gate = PURE SCHEDULER (corrected design, 2026-06-23).
+ * Family integrated-cmr gate = PURE SCHEDULER (corrected design, ADR 0026).
  *
- * The runner (`verifyCmr.ts`) is a pure scheduler: it dispatches/resumes the cmr
- * REVIEWER worker, reads its verdict (converged | findings | escalate), and on
- * `findings` dispatches/resumes the coder-FIX worker, then loops back to the
+ * The runner (`verifyCmr.ts`) is a pure scheduler: it dispatches the cmr REVIEWER
+ * worker FRESH each round, reads its verdict (converged | findings | escalate), and
+ * on `findings` dispatches the coder-FIX worker FRESH, then loops back to the
  * reviewer. It contains ZERO drift logic, ZERO round counters, ZERO grade logic —
- * drift/convergence is the WORKER's judgment (the reviewer is RESUMABLE, so across
- * rounds it has continuity and itself emits `escalate` when it cannot converge; the
- * fix worker emits `escalate` when a finding is unfixable as stated).
+ * drift/convergence is the WORKER's judgment (the reviewer re-reviews the WHOLE diff
+ * with fresh eyes each round, informed by the PRIOR round's findings passed as DATA;
+ * it itself emits `escalate` when it cannot converge; the fix worker emits
+ * `escalate` when a finding is unfixable as stated).
  *
  *   - reviewer `converged` round 0 ⇒ ok:true, NO fix dispatched (止于 PR).
- *   - reviewer `findings` ⇒ resume coder-fix ⇒ resume reviewer `converged` ⇒ ok:true.
+ *   - reviewer `findings` ⇒ fresh coder-fix ⇒ fresh reviewer `converged` ⇒ ok:true.
  *   - reviewer `escalate` (the WORKER judged it stuck — NOT a runner round count) ⇒
  *     escalateFamily, ok:false.
  *   - a coder-fix worker that escalates / commits nothing ⇒ escalateFamily, ok:false.
  *
- * The runner threads each worker's `WorkerResult.sessionId` into the SAME worker's
- * next dispatch as a `session:"resume"` + `resumeSessionId` (mirroring the
- * single-slice runner) so both workers resume across rounds.
+ * ADR 0026 (line 20): the reviewer (cmr) and the coder-fix worker dispatch FRESH
+ * each round — NEVER the `resumeSession` (session:"resume") crash/escalate path,
+ * which skips git-truthing. Continuity comes from passing the PRIOR round's cmr
+ * findings/verdict into the NEXT reviewer dispatch as DATA (DispatchContext
+ * `priorFindings`), and the round's non-convergence reason into the coder-fix
+ * dispatch (`cmrReason`). No worker resumes.
  *
  * Driven entirely by a zero-container injected-seam fake (no real codex / container).
  */
@@ -39,12 +43,13 @@ import type {
   WorkerSpec,
 } from "../../src/types.js";
 
-/** One recorded worker dispatch (the kind + the resume sessionId threaded in, if any). */
+/** One recorded worker dispatch (the kind + the DATA threaded in, if any). */
 interface DispatchRecord {
   readonly kind: WorkerSpec["kind"];
   readonly session: WorkerSpec["session"];
   readonly resumeSessionId?: string;
   readonly cmrReason?: string;
+  readonly priorFindings?: string;
 }
 
 /**
@@ -97,6 +102,7 @@ class SchedulerFamilyBackend implements FamilyBackend {
       session: spec.session,
       ...(ctx.resumeSessionId !== undefined ? { resumeSessionId: ctx.resumeSessionId } : {}),
       ...(ctx.cmrReason !== undefined ? { cmrReason: ctx.cmrReason } : {}),
+      ...(ctx.priorFindings !== undefined ? { priorFindings: ctx.priorFindings } : {}),
     });
     if (spec.kind === "cmr") {
       const round = this.cmrRound++;
@@ -150,7 +156,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (worker judges drift, runn
     expect(backend.dispatches.filter((d) => d.kind === "ship")).toHaveLength(1);
   });
 
-  it("reviewer FINDINGS ⇒ resume coder-fix ⇒ resume reviewer CONVERGED ⇒ ok:true (loop ran, fix once)", async () => {
+  it("reviewer FINDINGS ⇒ fresh coder-fix ⇒ fresh reviewer CONVERGED ⇒ ok:true (loop ran, fix once)", async () => {
     const backend = new SchedulerFamilyBackend({
       cmr: (round) =>
         round === 0
@@ -179,11 +185,17 @@ describe("family integrated-cmr gate = PURE SCHEDULER (worker judges drift, runn
     expect(backend.dispatches.find((d) => d.kind === "coder")?.cmrReason).toContain("region.cannon");
     // NO escalate (it is not escalate-on-first-finding).
     expect(backend.escalations).toEqual([]);
-    // RESUME THREADING: the 2nd cmr dispatch resumes the 1st cmr worker's session
-    // (continuity → the worker judges drift), not a fresh one.
+    // ADR 0026: BOTH the cmr reviewer and the coder-fix worker dispatch FRESH each
+    // round — NEVER the session:"resume" crash/escalate path. NO worker resumes.
+    expect(backend.dispatches.every((d) => d.session === "fresh")).toBe(true);
+    expect(backend.dispatches.every((d) => d.resumeSessionId === undefined)).toBe(true);
+    // CONTINUITY-AS-DATA: the 2nd (round-1) cmr dispatch carries the PRIOR round's
+    // findings/verdict as DATA (priorFindings), NOT via a resumed session.
     const cmrDispatches = backend.dispatches.filter((d) => d.kind === "cmr");
-    expect(cmrDispatches[1]?.session).toBe("resume");
-    expect(cmrDispatches[1]?.resumeSessionId).toBe("cmr-A");
+    expect(cmrDispatches[1]?.session).toBe("fresh");
+    expect(cmrDispatches[1]?.priorFindings).toContain("region.cannon");
+    // The round-0 cmr dispatch has NO prior findings (it is the first review).
+    expect(cmrDispatches[0]?.priorFindings).toBeUndefined();
   });
 
   it("reviewer ESCALATE (the WORKER judged it cannot converge) ⇒ escalateFamily, ok:false — the runner did NOT count rounds", async () => {
@@ -283,10 +295,17 @@ describe("family integrated-cmr gate = PURE SCHEDULER (worker judges drift, runn
     expect(backend.dispatches.filter((d) => d.kind === "cmr")).toHaveLength(3);
     expect(backend.dispatches.filter((d) => d.kind === "coder")).toHaveLength(2);
     expect(backend.escalations).toEqual([]);
-    // BOTH workers resume their own session across rounds (continuity).
+    // ADR 0026: every dispatch is FRESH — NO worker resumes across rounds.
+    expect(backend.dispatches.every((d) => d.session === "fresh")).toBe(true);
+    expect(backend.dispatches.every((d) => d.resumeSessionId === undefined)).toBe(true);
+    // CONTINUITY-AS-DATA: each later reviewer round carries the prior round's
+    // findings (seam A then seam B) as DATA; each fix round carries its reason.
+    const cmrDispatches = backend.dispatches.filter((d) => d.kind === "cmr");
+    expect(cmrDispatches[1]?.priorFindings).toContain("seam A");
+    expect(cmrDispatches[2]?.priorFindings).toContain("seam B");
     const fixDispatches = backend.dispatches.filter((d) => d.kind === "coder");
-    expect(fixDispatches[1]?.session).toBe("resume");
-    expect(fixDispatches[1]?.resumeSessionId).toBe("fix-0");
+    expect(fixDispatches[0]?.cmrReason).toContain("seam A");
+    expect(fixDispatches[1]?.cmrReason).toContain("seam B");
   });
 });
 
@@ -301,5 +320,31 @@ describe("the runner contains NO drift constant / round-counter / grade logic", 
     expect(src).not.toMatch(/NO_PROGRESS_LIMIT/);
     expect(src).not.toMatch(/noProgressStreak/);
     expect(src).not.toMatch(/prevReasonKey/);
+  });
+});
+
+describe("ADR 0026: the cmr/coder-fix loop dispatches FRESH each round (NO resume)", () => {
+  it("verifyCmr.ts threads NO resumeSessionId / session:'resume' for these two workers", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const src = readFileSync(
+      fileURLToPath(new URL("../../src/family/verifyCmr.ts", import.meta.url)),
+      "utf8",
+    );
+    // The corrected design: NO resume-session plumbing for the cmr reviewer / coder-fix
+    // workers. Continuity is DATA (priorFindings / cmrReason), not a resumed session
+    // (ADR 0026 line 20: 评审类每轮 fresh; resumeSession is for crash/escalate ONLY).
+    expect(src).not.toMatch(/cmrResumeSessionId/);
+    expect(src).not.toMatch(/fixResumeSessionId/);
+    // No resumeSessionId field threaded onto any dispatch context in this file.
+    expect(src).not.toMatch(/resumeSessionId:/);
+    // No worker spec dispatched in the "resume" session mode (both are always fresh).
+    // The specs are constructed with the literal "fresh"; "resume" appears only in
+    // EXPLANATORY comments (describing the path we deliberately do NOT take), never as
+    // a `cmrWorkerSpec(...)` / `familyCoderFixWorkerSpec(...)` argument.
+    expect(src).not.toMatch(/WorkerSpec\([^)]*"resume"/);
+    expect(src).not.toMatch(/\?\s*"resume"\s*:\s*"fresh"/);
+    // Continuity-as-data IS present (the prior round's findings threaded forward).
+    expect(src).toMatch(/priorFindings/);
   });
 });
