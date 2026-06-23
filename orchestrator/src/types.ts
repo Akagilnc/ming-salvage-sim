@@ -389,6 +389,24 @@ export interface DispatchContext {
    * concrete findings from the family-base diff). Undefined for every other worker.
    */
   readonly cmrReason?: string;
+  /**
+   * FAMILY integrated-cmr REVIEWER worker only (ADR 0026 corrected design): the
+   * PRIOR round's cmr findings/verdict, threaded into the NEXT reviewer dispatch as
+   * DATA — NOT via a resumed session. The reviewer is FRESH each round (cross-model
+   * independence — ADR 0026 line 20: 评审类每轮 fresh, never the `resumeSession`
+   * crash/escalate path), so continuity comes from passing the prior verdict as
+   * data, not from a session.
+   *
+   * CRITICAL: this is an EXTRA "confirm-resolved" task layered on top of a FULL
+   * review of the whole diff — it does NOT narrow the review scope. The reviewer
+   * re-reviews the WHOLE family-base diff with fresh eyes every round; the prior
+   * findings (when present) are merely an additional "also verify these earlier
+   * findings are now resolved" task. It must NEVER degenerate into "only check
+   * whether last round's findings got fixed" (see prompts/integrated_cmr.md).
+   *
+   * Undefined on the round-0 dispatch (no prior round) and for every other worker.
+   */
+  readonly priorFindings?: string;
 }
 
 /** A coder/fix worker's output — the existing {@link CoderOutput}. */

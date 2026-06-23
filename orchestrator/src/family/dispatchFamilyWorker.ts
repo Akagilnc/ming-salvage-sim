@@ -36,10 +36,13 @@ import type {
 /**
  * The integrated-cmr family worker spec (#335 invoke `ak-cross-m-review`).
  *
- * `session` defaults to `fresh` (the round-0 dispatch). The verify-cmr scheduler
- * passes `"resume"` on every LATER round so the reviewer worker continues its OWN
- * prior session — that CONTINUITY is what lets the WORKER judge drift / convergence
- * across rounds (the runner never counts rounds; the corrected design, 2026-06-23).
+ * `session` is ALWAYS `fresh` — the cmr reviewer dispatches FRESH every round (ADR
+ * 0026 line 20: 评审类每轮 fresh, cross-model 独立性; the `resumeSession` path is
+ * crash/escalate-ONLY, skipping git-truthing). CONTINUITY across rounds is the PRIOR
+ * round's findings passed as DATA on {@link DispatchContext.priorFindings} — an
+ * EXTRA confirm-resolved task, NOT a narrowed scope (the worker re-reviews the WHOLE
+ * diff fresh each round; the runner never counts rounds). The `session` param is
+ * retained for shape parity but the verify-cmr scheduler always passes `fresh`.
  */
 export function cmrWorkerSpec(session: WorkerSessionMode = "fresh"): WorkerSpec {
   return {
@@ -70,9 +73,12 @@ export function cmrWorkerSpec(session: WorkerSessionMode = "fresh"): WorkerSpec 
  * scheduler. RETAIN context across rounds (a coder接得住 the prior round), iterate
  * budget like the per-slice S5 coder_fix (5).
  *
- * `session` defaults to `fresh` (the round-0 fix dispatch). The verify-cmr scheduler
- * passes `"resume"` on every LATER fix round so the coder worker continues its OWN
- * prior session and接得住 the prior round's fix attempt (continuity across rounds).
+ * `session` is ALWAYS `fresh` — the coder-fix worker dispatches FRESH every round
+ * (ADR 0026 invariant: a normal fix keeps git-truthing + within-step maxIter, NOT
+ * the `resumeSession` crash/escalate path). It接得住 the prior round via DATA: the
+ * cmr's non-convergence reason on {@link DispatchContext.cmrReason} (its fix focus),
+ * NOT a resumed session. The `session` param is retained for shape parity but the
+ * verify-cmr scheduler always passes `fresh`.
  */
 export function familyCoderFixWorkerSpec(session: WorkerSessionMode = "fresh"): WorkerSpec {
   return {

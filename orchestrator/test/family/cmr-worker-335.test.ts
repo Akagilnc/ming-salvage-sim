@@ -481,7 +481,11 @@ describe("#335 mountCmrAuth — a missing host credential degrades, never throws
 describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-resolved focus", () => {
   /** Expose the focus-file seam over a REAL temp git repo (so the exclude path resolves). */
   class FocusBackend extends RealFamilyBackend {
-    public focus(ctx: { familyBase: string; llmResolvedChildren?: readonly number[] }): void {
+    public focus(ctx: {
+      familyBase: string;
+      llmResolvedChildren?: readonly number[];
+      priorFindings?: string;
+    }): void {
       this.writeCmrFocusFile(ctx as never);
     }
   }
@@ -538,6 +542,51 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
     expect(() => be.focus({ familyBase: "fb" })).toThrow(/familyBaseStartHead|cut SHA/i);
     // And it did NOT write a stale-base fallback file.
     expect(() => readFileSync(join(repo, CMR_FOCUS_FILENAME), "utf8")).toThrow();
+  });
+
+  it("prior-round findings ride in as DATA — an EXTRA confirm-resolved task, NOT a narrowed scope (ADR 0026)", () => {
+    // The cmr reviewer dispatches FRESH each round (ADR 0026 line 20), so the prior
+    // round's findings arrive via ctx.priorFindings (DATA), NOT a resumed session.
+    // The focus file surfaces them as an ADDITIONAL confirm-resolved task on top of a
+    // full fresh review — it must NOT narrow the scope.
+    const repo = realRepo();
+    const be = new FocusBackend({
+      workingRepo: repo,
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+    be.focus({
+      familyBase: "feat/330-pure-scheduler",
+      priorFindings: "field-name mismatch: region.cannon vs region.cityCannon",
+    });
+    const body = readFileSync(join(repo, CMR_FOCUS_FILENAME), "utf8");
+    // The FULL review-scope diff is STILL present (the prior finding did not replace it).
+    expect(body).toContain("git diff abc123...feat/330-pure-scheduler");
+    // The prior finding is surfaced as an EXTRA confirm-resolved task (not the scope).
+    expect(body).toContain("region.cannon vs region.cityCannon");
+    expect(body).toMatch(/confirm-resolved|NOT a narrowed scope|do not review only/i);
+  });
+
+  it("round-0 (no prior findings) ⇒ the focus file omits the prior-findings block", () => {
+    const repo = realRepo();
+    const be = new FocusBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+      familyBaseStartHead: "def456",
+    });
+    be.focus({ familyBase: "fb" });
+    const body = readFileSync(join(repo, CMR_FOCUS_FILENAME), "utf8");
+    expect(body).not.toMatch(/Prior round's findings/i);
   });
 });
 

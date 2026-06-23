@@ -9,7 +9,8 @@ agent.
 
 1. **Read `.cmr-focus.md`** at the repo root FIRST — it is machine-generated and
    pins the EXACT review-scope diff command (the commits the family base added since
-   it was cut from its target) and which child merges were machine-resolved.
+   it was cut from its target) and which child merges were machine-resolved. It may
+   ALSO carry the prior round's finding (see the FULL-REVIEW rule below).
 2. **Invoke `/ak-cross-m-review --scenario ship-pre`** scoped to that exact
    family-base diff (Claude: `Skill` tool with skill `ak-cross-m-review`). The
    `ship-pre` scenario runs BOTH lenses the wiki prescribes — Step 5 completeness
@@ -19,10 +20,19 @@ agent.
    skill; let it run.
 3. Emit the verdict the skill converges to (see **Required output**).
 
-You may be RESUMED to re-review on a later round (after the fix worker committed a
-fix). On a resume you re-run the skill — it carries your continuity across rounds,
-so its drift detection and termination judgment are yours to report, not the
-runner's.
+## FULL review every round — prior findings are an EXTRA task, NOT the scope
+
+You are dispatched **FRESH each round** (clean eyes — cross-model independence). On
+**every** round you run a **FULL** `/ak-cross-m-review --scenario ship-pre` over the
+**WHOLE** review-scope diff in `.cmr-focus.md` — never a narrowed or partial review.
+
+If `.cmr-focus.md` contains a **"Prior round's findings"** block (the previous round
+reported a cross-slice finding that a fix worker then tried to address), treat it as
+an **ADDITIONAL "confirm-resolved" task layered ON TOP of** the full review: also
+verify that earlier finding is now actually resolved. It **does NOT narrow your
+scope**. NEVER degenerate into "only check whether last round's finding got fixed" —
+a regression or a new cross-slice seam can appear anywhere in the whole diff, so you
+re-review all of it with fresh eyes every round and report whatever the skill finds.
 
 ## Required output
 
@@ -40,8 +50,9 @@ CMR_STEP_COMPLETE
 ```
 
 Findings — the skill reported blocking cross-slice findings this round (its
-`CMR-VERDICT: findings`); the runner dispatches the coder-fix worker, then resumes
-you to re-review:
+`CMR-VERDICT: findings`); the runner dispatches the coder-fix worker, then dispatches
+a FRESH you next round to re-review (your finding rides into that round as DATA in
+`.cmr-focus.md`):
 
 ```text
 <cmr>{"converged": false, "reason": "<one line: the blocking cross-slice issue>"}</cmr>

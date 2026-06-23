@@ -1007,10 +1007,23 @@ export class RealFamilyBackend implements FamilyBackend {
             .map((n) => `#${n}`)
             .join(", ")}.`
         : "No machine-resolved child merges this run.";
+    // PRIOR-ROUND findings (ADR 0026 corrected design): the cmr reviewer dispatches
+    // FRESH every round, so the prior round's findings/verdict arrive as DATA on
+    // ctx.priorFindings (NOT a resumed session). They are an EXTRA "confirm-resolved"
+    // task layered on a FULL fresh review — NOT a narrowed scope (the prompt makes
+    // this explicit). Omitted on the round-0 dispatch (no prior round).
+    const priorFindingsBlock =
+      ctx.priorFindings !== undefined && ctx.priorFindings.trim() !== ""
+        ? `\n## Prior round's findings — ADDITIONAL confirm-resolved task (NOT the scope)\n\n` +
+          `The previous integrated cmr round reported the cross-slice finding below.\n` +
+          `Do a FULL fresh review of the WHOLE diff above; ON TOP of that, ALSO confirm\n` +
+          `this earlier finding is now resolved. This is an extra check, NOT a narrowed\n` +
+          `scope — do not review only this.\n\n    ${ctx.priorFindings}\n`
+        : "";
     const body =
       `# Integrated cmr — review scope + focus (machine-generated; #335)\n\n` +
       `Review THIS exact family-base diff (the commits the family base added since it\n` +
-      `was cut from its target):\n\n    ${scope}\n\n${focusLine}\n`;
+      `was cut from its target):\n\n    ${scope}\n\n${focusLine}\n${priorFindingsBlock}`;
     // Git-ignore it (it is a transient runtime artifact, never committed) then write.
     const target = join(this.opts.workingRepo, CMR_FOCUS_FILENAME);
     this.excludeCmrFocusFromGit();
