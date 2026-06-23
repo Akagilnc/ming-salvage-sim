@@ -227,8 +227,13 @@ function discoverSubprojects(workingRepo: string): string[] {
 /**
  * The family diff's changed file paths (#4): `git diff --name-only
  * <familyBaseStartHead>...<familyBase>` — the files the merged children added
- * since the base was cut. Run at verify TIME (the children have merged). On any
- * git failure returns [] (the resolver then returns undefined → clone-root fallback).
+ * since the base was cut. Run at verify TIME (the children have merged).
+ *
+ * Does NOT swallow git errors (R1 T3 codex): a clean git run with no diff returns
+ * [] (a legitimate "no changes" the caller treats as nothing-to-verify), but a git
+ * FAILURE (bad ref / repo error) must THROW so the verify FAILS CLOSED — an
+ * inference failure must never be mistaken for "no Node subproject changed" and
+ * silently green-light an un-verified merge.
  */
 function familyDiffFiles(
   workingRepo: string,
@@ -236,18 +241,14 @@ function familyDiffFiles(
   familyBase: string,
   sh: Sh,
 ): string[] {
-  try {
-    const out = sh("git", [
-      "-C",
-      workingRepo,
-      "diff",
-      "--name-only",
-      `${familyBaseStartHead}...${familyBase}`,
-    ]);
-    return out.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
-  } catch {
-    return [];
-  }
+  const out = sh("git", [
+    "-C",
+    workingRepo,
+    "diff",
+    "--name-only",
+    `${familyBaseStartHead}...${familyBase}`,
+  ]);
+  return out.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
