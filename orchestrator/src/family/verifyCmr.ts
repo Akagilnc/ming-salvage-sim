@@ -45,7 +45,7 @@ import {
   dispatchFamilyWorker,
   familyShipWorkerSpec,
 } from "./dispatchFamilyWorker.js";
-import { recordAborted as recordDurableAbort } from "./ledger.js";
+import { recordAborted as recordDurableAbort, recordShipped } from "./ledger.js";
 import { isFilledString } from "../shipOutcome.js";
 import type {
   FamilyBackend,
@@ -326,5 +326,14 @@ export async function runVerifyCmr(
   ) {
     return INCOMPLETE_GATE;
   }
+  // ── Persist the terminal SHIPPED marker before reporting success (online review
+  // r2, codex P1). The family ship commit (VERSION/CHANGELOG bump) advanced the
+  // family base, but nothing durable recorded that the terminal 止于-PR ship ALREADY
+  // ran. On a re-feed/resume, the spine's completeness gate still passes (every
+  // child merged) and it would re-enter this final barrier — re-running the full
+  // verify + integrated cmr and re-invoking the ship worker (a duplicate VERSION
+  // bump / PR attempt). Writing a `shipped` ledger entry makes the delivery durable
+  // resume truth: the spine's `familyAlreadyShipped` guard short-circuits the barrier.
+  await recordShipped(familyBackend, { pr: ship.pr });
   return { ok: true, ran: true };
 }

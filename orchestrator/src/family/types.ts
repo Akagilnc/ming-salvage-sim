@@ -98,8 +98,12 @@ export interface FamilyLedgerEntry {
    *   - `"aborted"` — a verify/cmr barrier failed; this PHASE-LEVEL event carries
    *     the family head at the time (`familyHeadAfter`) + the `phase` + a `reason`
    *     for triage (#291 缺口 2). NOT counted as merged.
+   *   - `"shipped"` — the terminal family ship (止于-PR) SUCCEEDED (online review r2,
+   *     codex P1). A PHASE-LEVEL terminal marker carrying the family `pr` URL; the
+   *     spine's resume guard reads it so an already-delivered family run is NOT
+   *     re-verified / re-cmr'd / re-shipped. NOT counted as merged (no `childIssue`).
    */
-  readonly status: "merged" | "aborted";
+  readonly status: "merged" | "aborted" | "shipped";
   /**
    * Event tag.
    *   - `"reconciled"` — a crash-window補账条 (decision 5); carries
@@ -108,9 +112,12 @@ export interface FamilyLedgerEntry {
    *   - `"aborted"` — a PHASE-LEVEL verify/cmr-failure durable entry (#291 缺口 2),
    *     paired with `status:"aborted"`; written by the verify-cmr hook so the abort
    *     reaches the durable ledger reconcile reads (not just the in-memory seam).
+   *   - `"shipped"` — the terminal family ship succeeded (online review r2, codex
+   *     P1), paired with `status:"shipped"`; written by the verify-cmr hook at the
+   *     止于-PR success so a resume sees the family is already delivered.
    * Not the unblock truth (that is `status`); the tag is for observability.
    */
-  readonly event?: "reconciled" | "aborted";
+  readonly event?: "reconciled" | "aborted" | "shipped";
   /**
    * Which verify barrier was red — ONLY on a PHASE-LEVEL `aborted` entry (#291 缺口
    * 2). A `merged` / `reconciled` entry omits it (it is per-child, not per-phase).
@@ -143,6 +150,12 @@ export interface FamilyLedgerEntry {
    * reconcile補账条 / `aborted` event omits it.
    */
   readonly conflictResolvedByLlm?: boolean;
+  /**
+   * The family PR URL — ONLY on a `status:"shipped"` terminal entry (online review
+   * r2, codex P1). Records WHICH PR the terminal 止于-PR ship opened, so the resume
+   * guard's "already delivered" decision is locatable from the ledger alone.
+   */
+  readonly pr?: string;
 }
 
 // ─────────────────────────── reconcile git seam ───────────────────────────
