@@ -64,7 +64,7 @@ SKILL_CLOSURE=(
 # so it needs its closure subtree baked at that exact path — not a flat cp.
 GSTACK_SRC="${GSTACK_SRC:-$HOME/gstack}"
 # The roles whose souls we bake (all worker roles — ADR 0026 / #333 "全部角色 soul").
-SOUL_ROLES=(coder reviewer merger)
+SOUL_ROLES=(coder reviewer merger cmr)
 
 STAGE="$(mktemp -d "${TMPDIR:-/tmp}/ming-coder-img.XXXXXX")"
 trap 'rm -rf "$STAGE"' EXIT
@@ -226,6 +226,7 @@ fi
 #   role "coder"    → env "coder"     (soulForStep)        → coder.md
 #   role "reviewer" → env "READ-ONLY" (soulForStep)        → reviewer.md + READ-ONLY.md
 #   role "merger"   → env "merger"    (MERGER_SOUL)        → merger.md
+#   (cmr worker)    → env "cmr"       (CMR_SOUL)           → cmr.md (integrated-cmr fixer)
 # (No code reads soul files by NAME yet — the env value is currently a signal
 # string; this just keeps the bake forward-compatible with the documented env
 # contract so the alias is never the thing that breaks activation.)
