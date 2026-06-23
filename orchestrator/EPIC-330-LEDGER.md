@@ -29,8 +29,17 @@ unblocking keys off THIS ledger (merged), NOT GitHub-closed.
 ## Post-merge dogfood (用户定 2026-06-23)
 **#330 建完 merge 进 main 后,拿 #327 当第一个真实试跑**——「[试玩] dogfound 简单 bug 批次 #1（orchestrator 试跑）」,4 个真实游戏 bug 子 issue:#324(LLM 面板未按执行通道 gate)/ #325(召对 UI 串台)/ #326(主菜单纪年不符)/ #339(P0 decree 拨款双扣)。喂给纯调度器编排器、走开、回来看产出的 reviewed 分支——这是整个 #330 的真效果验证(真 bug、非编排器自身代码)。
 
-## Pending — ALL 9 SLICES MERGED ✅
-- **9/9 merged**: #331✓ #332✓ #322✓ #329✓ #333✓ #334✓ #335✓ #336✓ #337✓. epic base HEAD = merge 9626be72 (+ ledger commit). 768 pass+1 skip+0 fail; tsc clean.
-- **NEXT — integrated cmr (ship-pre 后闸, 独立一道)**: 全 9 片在 epic base 上跑 cross-family ak-cross-m-review (scenario ship-pre, whole-epic cumulative diff vs main). **MUST be cross-family** (N codex + Claude Agent leg + agy) — NOT codex-solo. Per-slice cmr ran codex-solo throughout (agy quota-out 全程); the integrated gate needs agy recovered. 预期抓 per-slice 照不到的跨片接缝 (memory per-slice-cmr-not-integrated-cmr). After it converges → family PR → main → close #330 + 9 subs.
+## Integrated cmr (ship-pre 后闸) — PASS ✅
+全 9 片装起来在 epic base 跑 cross-family ak-cross-m-review (scenario ship-pre, whole-epic cumulative diff vs main = #291 family base + #330 9 片). Squad = **N codex (xhigh, 3 段) + Claude Agent leg** = cross-family (OpenAI + Anthropic); **agy quota-out 全程 → 本轮缺 gemini** (codex+Claude 仍 cross-family，Step5 termination 有效).
+- **Step 5 完整性 (spec-delivered lens)**: **PASS** — 7 重点面 + 9 片验收全 CONFORMS, 零 VIOLATES. 唯一 UNVERIFIED-GAP = #336 ship worker 真容器 gstack-ship 路径从未真容器跑过 → 可接受延迟, 兜底「家族 PR 自身经 family ship worker 真开 + dogfood #327」.
+- **Step 6 正确性 (cross-slice defect lens)**: 4 轮收敛 (int-r1→r4), 修 **10 项** + 1 deferred:
+  - int-r1: C-1 S7 escalate-resume (planResume 识别 S8(escalate)+S7→重派); C-3 REFERENCED_PROMPT_FILES 派生 (漏 ship.md); A parseCmr/parseMerger 严格 zod; gap-g family validateFamilyPromptsDir. (C-2 clone mkdir = 实测假阳性, git clone 自建前导目录, 未修.)
+  - int-r2: A-1 merger worker claude-auth preflight + mergerSandboxConfig 注入 token (删假注释); C-int2-1 S7 ship.md prompt-hash 进 ledger. (A-2 reconcile thin-ledger rewind fail-open = #291 ratified reconcile 设计 → 不擅改, 记 **issue #351**.)
+  - int-r3: empty/blank claude-token 全 4 reader 归一化成 undefined (preflight 真 fail-closed, 对齐 readGhToken).
+  - int-r4: 两腿 (codex A + Claude full) 均 **CMR-VERDICT converged**, 零新缺陷.
+- 末态: 796 tests (795 pass + 1 skip) + tsc clean on epic base HEAD.
+
+## Pending — family PR → main
+- **9/9 merged + 整合 cmr PASS** → 家族 PR `feat/330-pure-scheduler → main` (带整个 orchestrator 栈: #291 family base[epic closed, 无独立 PR, riding 本 integration 分支] + #330 9 片; 拓扑强制一起落 main). PR 后线上 bot (gemini-code-assist/sourcery/codex) = Layer 3 独立闸, 收敛才合 (merge commit 不 squash).
 - **THEN — dogfood #327** (用户定 2026-06-23, 试金石): 真跑纯调度器编排器吃 #324/#325/#326/#339 → 修编排器 bug + 重跑 (e2e/330-dogfood-327).
-- **Carried chips** (out-of-epic-scope, tracked): cmr/coder workers 同缺 gh auth = task_3f55b893 (#335 scope, gh degradable there); #335 parseCmrOutcome 同型 fail-open = task_4c9c7c6a.
+- **Deferred / carried (tracked, NOT blocking #330 PR)**: **#351** reconcile thin-ledger rewind fail-open (#291 ratified reconcile); cmr/coder workers 同缺 gh auth = chip task_3f55b893 (#335 scope, gh degradable there); #335 parseCmrOutcome 同型 fail-open = chip task_4c9c7c6a (实际已被 int-r1 A 修).
