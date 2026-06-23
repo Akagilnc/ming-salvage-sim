@@ -17,7 +17,7 @@
 # FROM the existing sc-pipeline base (claude + codex CLIs + node + python + bash +
 # git + curl + jq already baked); this layer ADDS:
 #   - the full dev-skill closure (see SKILL CLOSURE GRAPH below)
-#   - all worker-role souls (coder / reviewer / merger)
+#   - all worker-role souls (coder / reviewer / merger / cmr)
 #   - agy (Gemini CLI, Linux build) + gh + bun (gstack-ship + cmr deps)
 #
 # Build context is a STAGING dir prepared by build.sh, NOT this directory: build.sh
@@ -119,7 +119,7 @@ COPY skills-manifest.txt skills-manifest.sha256 /home/agent/.orchestrator/
 
 # ── Bake all worker-role souls ───────────────────────────────────────────────
 # The orchestrator selects the role's soul at runtime (ORCHESTRATOR_SOUL env:
-# "coder" / "READ-ONLY" reviewer / "merger"); baking the soul TEXT here makes each
+# "coder" / "READ-ONLY" reviewer / "merger" / "cmr" integrated-cmr fixer); baking the soul TEXT here makes each
 # role's discipline reproducible (no runtime bind-mount of the soul). The
 # entrypoint / prompt reads the matching file.
 COPY souls/ /home/agent/.orchestrator/souls/
