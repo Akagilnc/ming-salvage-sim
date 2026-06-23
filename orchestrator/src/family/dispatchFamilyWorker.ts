@@ -23,6 +23,7 @@
 import type {
   DispatchContext,
   WorkerResult,
+  WorkerSessionMode,
   WorkerSpec,
 } from "../types.js";
 import type {
@@ -32,8 +33,15 @@ import type {
   OpenFamilyPrResult,
 } from "./types.js";
 
-/** The integrated-cmr family worker spec (#335 invoke `ak-cross-m-review`, fresh). */
-export function cmrWorkerSpec(): WorkerSpec {
+/**
+ * The integrated-cmr family worker spec (#335 invoke `ak-cross-m-review`).
+ *
+ * `session` defaults to `fresh` (the round-0 dispatch). The verify-cmr scheduler
+ * passes `"resume"` on every LATER round so the reviewer worker continues its OWN
+ * prior session — that CONTINUITY is what lets the WORKER judge drift / convergence
+ * across rounds (the runner never counts rounds; the corrected design, 2026-06-23).
+ */
+export function cmrWorkerSpec(session: WorkerSessionMode = "fresh"): WorkerSpec {
   return {
     id: "S6", // the family integrated cmr maps to the review step kind
     kind: "cmr",
@@ -41,7 +49,7 @@ export function cmrWorkerSpec(): WorkerSpec {
     // The cmr skill fans out a Claude Agent leg + CLI legs → host pinned Claude
     // top-level (PRD #330 [J]).
     host: "claude",
-    session: "fresh",
+    session,
     // Review worker: clean eyes each round (cross-model independence) — ADR 0026.
     contextRetention: "clean",
     skill: "ak-cross-m-review",
@@ -61,14 +69,18 @@ export function cmrWorkerSpec(): WorkerSpec {
  * (+ `/diagnosing-bugs`) under the `coder` soul — the runner stays a pure
  * scheduler. RETAIN context across rounds (a coder接得住 the prior round), iterate
  * budget like the per-slice S5 coder_fix (5).
+ *
+ * `session` defaults to `fresh` (the round-0 fix dispatch). The verify-cmr scheduler
+ * passes `"resume"` on every LATER fix round so the coder worker continues its OWN
+ * prior session and接得住 the prior round's fix attempt (continuity across rounds).
  */
-export function familyCoderFixWorkerSpec(): WorkerSpec {
+export function familyCoderFixWorkerSpec(session: WorkerSessionMode = "fresh"): WorkerSpec {
   return {
     id: "S5", // mirrors the per-slice S5 coder_fix step kind
     kind: "coder",
     role: "coder",
     host: "claude",
-    session: "fresh",
+    session,
     contextRetention: "retain",
     skill: "tdd",
     promptFile: "family_coder_fix.md",
