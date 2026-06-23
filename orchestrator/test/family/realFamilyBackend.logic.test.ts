@@ -277,10 +277,10 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     // `git.childHeadExists(child.issue)`), no branch. Before the fix this returned
     // `{exists:false}` → every already-landed child read as absent → re-merge
     // (double-merge, codex R1). It must instead derive the runner branch
-    // `feat/244-orchestrator-issue-<n>` and find the real head.
+    // `feat/issue-<n>` (#1: neutral prefix, no hardcoded epic) and find the real head.
     const repo = trackRepo();
     git(repo, "checkout", "-q", "-b", "family/293-base");
-    git(repo, "checkout", "-q", "-b", "feat/244-orchestrator-issue-77", "family/293-base");
+    git(repo, "checkout", "-q", "-b", "feat/issue-77", "family/293-base");
     const childHead = commitFile(repo, "c77.txt", "x");
     git(repo, "checkout", "-q", "family/293-base");
     const recon = new RealFamilyBackend(opts(repo)).reconcileGit();
@@ -308,6 +308,60 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     const npx = calls.filter((c) => c.file === "npx");
     expect(npx.map((c) => c.args[0])).toEqual(["tsc", "vitest"]);
     expect(npx.every((c) => c.cwd === "/clone/root/orchestrator")).toBe(true);
+  });
+
+  it("#3: installs deps (npm ci) in verifyCwd BEFORE npx tsc/vitest when node_modules is absent", async () => {
+    // The dogfood death (#3): verify ran `npx tsc` against a FRESH clone with no
+    // node_modules → "This is not the tsc command..." → always verify_failed. The
+    // fix installs deps first. The spy's existsSync override reports node_modules
+    // ABSENT, so a `npm ci` (or install) must precede the two npx commands, in the
+    // SAME cwd.
+    const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
+    class SpyBackend extends RealFamilyBackend {
+      protected override sh(file: string, args: string[], cwd?: string): string {
+        calls.push({ file, args, cwd });
+        return "";
+      }
+      // node_modules ABSENT in the fresh clone.
+      protected override depsInstalled(_cwd: string): boolean {
+        return false;
+      }
+      runVerifyForTest(): void {
+        this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
+      }
+    }
+    new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" })).runVerifyForTest();
+    // First command must be the dep install in verifyCwd.
+    expect(calls[0].file).toBe("npm");
+    expect(["ci", "install"]).toContain(calls[0].args[0]);
+    expect(calls[0].cwd).toBe("/clone/root/orchestrator");
+    // Then the two npx verify commands, still in verifyCwd.
+    const npx = calls.filter((c) => c.file === "npx");
+    expect(npx.map((c) => c.args[0])).toEqual(["tsc", "vitest"]);
+    expect(npx.every((c) => c.cwd === "/clone/root/orchestrator")).toBe(true);
+    // The install ran before any npx.
+    const firstNpx = calls.findIndex((c) => c.file === "npx");
+    const install = calls.findIndex((c) => c.file === "npm");
+    expect(install).toBeLessThan(firstNpx);
+  });
+
+  it("#3: skips the dep install when node_modules already exists (idempotent, no re-install churn)", async () => {
+    const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
+    class SpyBackend extends RealFamilyBackend {
+      protected override sh(file: string, args: string[], cwd?: string): string {
+        calls.push({ file, args, cwd });
+        return "";
+      }
+      protected override depsInstalled(_cwd: string): boolean {
+        return true; // node_modules present → no install
+      }
+      runVerifyForTest(): void {
+        this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
+      }
+    }
+    new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" })).runVerifyForTest();
+    expect(calls.some((c) => c.file === "npm")).toBe(false);
+    expect(calls.filter((c) => c.file === "npx").map((c) => c.args[0])).toEqual(["tsc", "vitest"]);
   });
 
   it("familyBaseStartHead returns the recorded start head", async () => {

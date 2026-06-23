@@ -107,6 +107,7 @@ const COMPLIANT_META: IssueMeta = {
   number: 248,
   isReadyForAgent: true,
   hasSubIssues: false,
+  isClosed: false,
   openBlockedBy: [],
 };
 
@@ -150,6 +151,20 @@ describe("S0 input gate — reject cases (#248)", () => {
     await runOrchestrator({ issueNumber: 248, backend });
     expect(backend.calls).toContain("fetchIssueSnapshot(248)");
     expect(backend.calls.length).toBeGreaterThan(1); // not stopped at the gate
+  });
+
+  it("(closed) issue is CLOSED: rejects and stops at S0 (#2 — a done slice must not run a coder)", async () => {
+    const backend = new GateTestBackend({
+      ...COMPLIANT_META,
+      isClosed: true,
+    });
+
+    await expect(
+      runOrchestrator({ issueNumber: 248, backend }),
+    ).rejects.toThrow(/closed/i);
+
+    // Fail-closed at the gate — no worktree, no coder dispatched.
+    expect(backend.calls).toEqual(["fetchIssueMeta(248)"]);
   });
 
   it("(c) parent issue (has sub-issues): rejects and stops at S0 with a clear error", async () => {

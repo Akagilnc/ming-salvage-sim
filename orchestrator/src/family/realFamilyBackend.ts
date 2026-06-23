@@ -190,6 +190,16 @@ export interface RealFamilyBackendOptions {
    * family run always returns verify_failed). Defaults to `workingRepo`.
    */
   readonly verifyCwd?: string;
+  /**
+   * LAZY verify-cwd resolver (#4): when `verifyCwd` is not set, this is called at
+   * verify TIME (after the children have merged onto the family base) to infer the
+   * cwd from the live family diff — the dominant changed subproject. It runs lazily
+   * because at CONSTRUCTION the family base is freshly cut (an empty diff); the
+   * verifiable change only exists once merges have landed. Returns `undefined` when
+   * nothing maps to a known subproject → verify falls back to `workingRepo`.
+   * Precedence: `verifyCwd` (explicit) > `resolveVerifyCwd()` (inferred) > `workingRepo`.
+   */
+  readonly resolveVerifyCwd?: () => string | undefined;
   /** GitHub repo slug for `gh` (`owner/name`) — for openFamilyPr. */
   readonly repo: string;
   /** The base branch the family PR targets (e.g. an integration branch or "main"). */
@@ -630,11 +640,40 @@ export class RealFamilyBackend implements FamilyBackend {
    * `npx tsc` / `npx vitest` run. A non-zero exit throws (the caller packages it).
    */
   protected runVerifyCommands(_request: FamilyVerifyRequest): void {
-    // Run where the Node project lives (verifyCwd), NOT the clone root — else npx
-    // finds no package.json/config (online R2 Codex P1).
-    const cwd = this.opts.verifyCwd ?? this.opts.workingRepo;
+    // Run where the Node project lives, NOT the clone root — else npx finds no
+    // package.json/config (online R2 Codex P1). Precedence (#4): explicit verifyCwd
+    // > the lazy diff-inferred cwd (the dominant changed subproject) > the clone root.
+    const cwd =
+      this.opts.verifyCwd ?? this.opts.resolveVerifyCwd?.() ?? this.opts.workingRepo;
+    // #3 (dogfood death): the family clone is FRESH — no node_modules. Running
+    // `npx tsc` against a depless project errors with "This is not the tsc
+    // command you are looking for" (npx resolves a stub), so verify ALWAYS failed
+    // on a real run. Install deps FIRST. Idempotent: skip when node_modules is
+    // already present (a resume / re-verify must not re-install on every call).
+    if (!this.depsInstalled(cwd)) {
+      this.installDeps(cwd);
+    }
     this.sh("npx", ["tsc", "--noEmit"], cwd);
     this.sh("npx", ["vitest", "run"], cwd);
+  }
+
+  /**
+   * Is the Node project at `cwd` already installed (a `node_modules` dir present)?
+   * `protected` so a unit test drives the install / skip branch without a real FS.
+   */
+  protected depsInstalled(cwd: string): boolean {
+    return existsSync(join(cwd, "node_modules"));
+  }
+
+  /**
+   * Install the Node project's deps in `cwd` before verify (#3). Prefer `npm ci`
+   * (a lockfile-exact, reproducible install) when a `package-lock.json` is
+   * present; fall back to `npm install` when it is not (`npm ci` REQUIRES a
+   * lockfile). `protected` for the same test-seam reason as {@link depsInstalled}.
+   */
+  protected installDeps(cwd: string): void {
+    const hasLock = existsSync(join(cwd, "package-lock.json"));
+    this.sh("npm", [hasLock ? "ci" : "install"], cwd);
   }
 
   // ─────────────────────── unified worker dispatch (#335) ───────────────────────
@@ -1517,7 +1556,7 @@ export class RealFamilyBackend implements FamilyBackend {
         // child would read as absent → reconcile re-merges it (a double-merge — the
         // exact failure MergeResult.childHead's contract exists to prevent — codex R1).
         // So derive the branch from the issue via the single-slice runner's own
-        // `feat/244-orchestrator-issue-<n>` convention when no explicit branch is given.
+        // `feat/issue-<n>` convention (branchForIssue) when no explicit branch is given.
         // (The proper end-state is to thread `childBranch` through ChildSlice/reconcile
         // — flagged to the driver unit; this fallback makes the seam WORK meanwhile.)
         const branch = childBranch ?? branchForIssue(childIssue);
