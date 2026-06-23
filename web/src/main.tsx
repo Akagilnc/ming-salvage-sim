@@ -83,6 +83,10 @@ function App() {
   // HITL 决策点：颁诏推演若出重大抉择，暂停弹窗逐个亲裁，裁完续跑结算。
   const [pendingDecisions, setPendingDecisions] = React.useState<PendingDecision[]>([]);
 
+  // Tracks the current selected minister across async boundaries.
+  // State closures capture stale values; this ref always reflects the latest.
+  const selectedMinisterRef = React.useRef<string>("");
+
   const loadState = React.useCallback(async () => {
     const data = await api<GameState>("/api/game/state");
     refreshLabelMaps(data);
@@ -207,6 +211,10 @@ function App() {
     setActiveModal("report");
     setGazetteShown(currentTurn);
   }, [state, gazetteShown, endingDismissed]);
+
+  React.useEffect(() => {
+    selectedMinisterRef.current = selectedMinister;
+  }, [selectedMinister]);
 
   React.useEffect(() => {
     if (!selectedMinister) {
@@ -345,6 +353,7 @@ function App() {
       return;
     }
 
+    const targetMinisterName = activeMinister.name;
     const fromComposer = text === input;
     setPendingUserMessage(message);
     setStreamingMinisterMessage("");
@@ -356,9 +365,14 @@ function App() {
       setInput("");
     }
     try {
-      const data = await streamChat(activeMinister.name, message, (delta) => {
-        setStreamingMinisterMessage((current) => current + delta);
+      const data = await streamChat(targetMinisterName, message, (delta) => {
+        if (selectedMinisterRef.current === targetMinisterName) {
+          setStreamingMinisterMessage((current) => current + delta);
+        }
       });
+      // Staleness guard: player switched ministers while the request was in-flight;
+      // discard all minister-specific UI updates to avoid cross-minister notice bleed.
+      if (selectedMinisterRef.current !== targetMinisterName) return;
       setPendingUserMessage("");
       setStreamingMinisterMessage("");
       setChat(data.history);
@@ -371,10 +385,10 @@ function App() {
         .then(({ orders }) => setSecretOrders(orders))
         .catch(() => {});
       if (data.secret_order_id) {
-        setChatNotice(`密令已秘密交付${activeMinister.name}，编号 #${data.secret_order_id}。`);
+        setChatNotice(`密令已秘密交付${targetMinisterName}，编号 #${data.secret_order_id}。`);
       }
       if (data.proposed_directive) {
-        setChatNotice(`${activeMinister.name}已拟旨一道，待陛下在「诏书草案」核定（准/驳）。`);
+        setChatNotice(`${targetMinisterName}已拟旨一道，待陛下在「诏书草案」核定（准/驳）。`);
       }
       if (data.next_minister) {
         setChat([]);
@@ -388,7 +402,7 @@ function App() {
       }
       if (data.court_action === "dismiss") {
         setPendingUserMessage("");
-        setChatNotice(`${activeMinister.name}已退下。请从左侧召见下一位大臣。`);
+        setChatNotice(`${targetMinisterName}已退下。请从左侧召见下一位大臣。`);
       }
     } catch (err) {
       if (fromComposer) {
