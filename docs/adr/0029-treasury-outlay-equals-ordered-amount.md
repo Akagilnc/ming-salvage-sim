@@ -1,30 +1,35 @@
-# 库出账 = 下令额：拨款支出不套任何率，损耗全在下游
+# 库出账 = 下令额：火耗/腐败数字移出 LLM 拨款视野（interim；结构真解见 #360）
 
-Status: Proposed（2026-06-23，grill #341 结晶；评审闸在 to-prd 之后，本 ADR 尚未评审）
+Status: Proposed（2026-06-23，grill #341；真因定位后重写——markup 是「财政盘面把火耗/腐败数字喂进了 LLM」造成的）
 
-## 背景
+## 背景（真因，核代码 + 用户定位）
 
-dogfound F11：玩家下令拨 N，库实扣 ≈ N×1.1（西学令 50 → 扣 56、清丈令 10 → 扣 11、补饷令 60 → 出 67）。
+dogfound F11：玩家下令拨 N，库实扣 ≈ N×1.1（西学令 50 → 扣 56、清丈令 10 → 11、补饷 60 → 67）。核代码：
+- **扣钱代码零 markup**：`flows.py` 解运比/实收率函数都 `return 1.0`，`_apply_economy_list` 精确扣 delta、不乘任何率；`issues.py` 也没给拨款 economy 套火耗。库扣 = extractor 给的数。
+- **simulator prompt 早写对了**：`season_simulator.md:56`「出账一笔银，沿途火耗截留只影响『办成多少事』、不另立截留支出」。
 
-核代码（不信 F11 的「LLM 加的」结论、核真）：
-- **扣钱代码零 markup**：`flows.py` 的解运比/实收率函数都 `return 1.0`（拨款侧无火耗代码），`_apply_economy_list` 精确扣 extractor 产的 delta、不乘任何率；`issues.py` 也没给拨款 economy 套火耗。库扣 = extractor 给的数。
-- **simulator prompt 早写对了**：`season_simulator.md:56`「出账一笔银，沿途火耗截留只影响『办成多少事』、不另立截留支出」+ `:57`「换库等额、不产损耗」。
-- ⇒ 56 是 **LLM（叙事或抽取）无视 prompt、自己给拨款套了 ~火耗率**。又一例 keystone：prompt 写对了也拦不住 LLM。
+**真因（用户 2026-06-23 定位）= 财政基座（ADR 0007）把火耗/腐败数字喂进了 LLM 盘面**：
+- `corruption`（腐败度）喂进 simulator 盘面（`simulation.py:330`）+ extractor 盘面（`:564`）；`content/regions.json:178` 有「火耗率 0.2」；extractor prompt 把腐败度当一个轴（赈银被吞/胥吏盘剥）。
+- LLM 一看见这些数字，就「懂事」地把它摊到拨款上（库出 = 下令额 ×(1+耗)）。**加财政前盘面没这些数 → LLM 没东西可摊 → 库出=下令额自然成立。** 即 markup 不是 LLM 天性，是被喂了数字诱导的。
 
-## 决定
+## 决定（interim 修法）
 
-**库出账 = 玩家下令额（令 N 扣 N），确定性认死。任何环节（LLM / 代码）不准对拨款支出套火耗、差役、解送或任何率。** 圣旨说出 100，库就出 100，绝不出 110。
+**把火耗/腐败的具体数字移出 LLM 的拨款视野**——回归加财政前「LLM 看不见」的状态；LLM 至多**定性知道「有腐败/火耗这回事」、不见具体率/数**。
+- 火耗率 / 腐败度**不作为数字**进 simulator/extractor 的拨款路径；若需 LLM 叙事腐败，给**定性档**（「吏治腐败」）、不给数。
+- 火耗 100% 留引擎征收侧（ADR 0007：引擎算）；LLM 拨款路径里一个率都没有 → 没东西可摊 → **库出=下令额**。
+- 这是接口层 keystone（CLAUDE.md「别让 LLM 自己数数」）：火耗是确定性引擎数学，喂率给 LLM 就是请它数数。
 
-- **损耗全在下游**：拨款的损耗是「收款方到手 < N」（拨付侧中饱），表现为「办成的事打折」，**绝不表现为「库出 > N」**。损耗建模 = cutover / ADR 0007（火耗=征收侧、中饱=拨付侧），不在本票；本票只把「库多出」这个错堵死。
-- **enforcement = 确定性**：拨款额以**玩家下令额为权威**，承诺 / economy 载体认它，LLM 不得 re-inflate。靠 prompt（line 56 已写、被忽略）不够。补饷那条已有 ADR 0023 D7④（economy_moves clamp 到实际欠额）。
-- **一个 issue、不拆**：库出=下令额是单条铁律，不分「补饷 / 承诺 / 火耗侧」多 issue。
+## 结构真解（非本 ADR）
+
+本 ADR 是 **interim**（拿走诱因）。结构真解 = **#360（结算反转：圣旨机械后果代码先确定性落库、simulator 在 committed 盘面推演）**——那时拨款额由代码落、LLM 根本不产，库出=下令额 by construction。本 interim 先把数字从 LLM 拿走，等 #360 架构反转再根治。
 
 ## Considered Options
-- **靠 prompt（season_simulator.md:56）**：否决——已写、LLM 仍套率，prompt 不可靠（keystone）。
-- **拆成多 issue（补饷 / 承诺拨款 / 火耗建模分开）**：否决——库出=下令额是一条规则；下游损耗建模另属 cutover，但「库不多出」不可拆。
-- **把损耗算成单独一笔库出支出**：否决——违背「换库/拨款不产额外库出」（`season_simulator.md:57`），且火耗是征收侧、不属拨款支出。
+- **parse 下令额 + guard LLM 输出**：否决——治标（LLM 已被诱导再去拦），且 NL 解析脆。
+- **靠 prompt（`season_simulator.md:56` 已写、被忽略）**：不够，prompt 拦不住（keystone）。
+- **结算反转（#360）**：是真解，但大、依赖 #150，另立；本 ADR 只做 interim。
 
 ## Consequences
-- 库账可信：玩家下令 N，库账永远扣 N，不再「令 N、扣 N×1.1」。
-- 损耗（到手 < N）的实际建模留 cutover / ADR 0007（拨付侧中饱）；补饷归 ADR 0023。
-- 范围：#341。
+- 库出=下令额恢复（LLM 无率可摊）。
+- 腐败度 extractor 仍可按叙事调（赈银被吞 → 腐败度 +5）——那是它**改**腐败度、非摊到拨款；但拨款路径不给它腐败/火耗的**数字**。
+- 损耗（到手 < N = 中饱/拨付侧）的建模留 cutover / ADR 0007，永不表现成「库出 > N」。
+- 范围：#341（interim）；真解：#360。
