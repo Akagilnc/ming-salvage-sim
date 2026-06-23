@@ -1,0 +1,139 @@
+# Ming orchestrator worker image — 2b full pack (#333, ADR 0026 / ADR 0016 bake).
+#
+# 2a (#332) baked the minimal /tdd closure + coder soul so the coder worker runs.
+# 2b (#333) EXTENDS 2a to the FULL coherent dev-skill pack + all role souls +
+# the multi-model review CLIs (codex already in base, + agy/Gemini installed here),
+# so the cmr / ship / review / fix / merger workers can each invoke their skill
+# from the IMAGE (the bake gap ADR 0026 / #330 calls out).
+#
+# NOTE: the runner currently STILL bind-mounts host skills onto
+# /home/agent/.claude/skills at runtime (realBackend.ts / realFamilyBackend.ts
+# `skillsMount`), which SHADOWS these baked skills until that mount is dropped.
+# Removing it is a behaviour change tracked in #334 (EPIC-330-LEDGER carried note),
+# NOT part of this image slice. #333 makes the skills PRESENT IN THE IMAGE; #334
+# makes the runtime actually use them. Don't read this bake as "runtime already
+# stopped mounting".
+#
+# FROM the existing sc-pipeline base (claude + codex CLIs + node + python + bash +
+# git + curl + jq already baked); this layer ADDS:
+#   - the full dev-skill closure (see SKILL CLOSURE GRAPH below)
+#   - all worker-role souls (coder / reviewer / merger)
+#   - agy (Gemini CLI, Linux build) + gh + bun (gstack-ship + cmr deps)
+#
+# Build context is a STAGING dir prepared by build.sh, NOT this directory: build.sh
+# `cp -RL`-resolves the host skill symlinks into staging/skills/, bakes the gstack
+# closure subtree, copies the souls, and copies the repo-root CLAUDE.md (which
+# carries the machine-executable `## Skill routing` section). Run via
+# `image/build.sh`, never `docker build image/` directly.
+#
+# ── SKILL CLOSURE GRAPH (what is baked + why; closed under internal invocation) ─
+#   tdd                            → codebase-design          (refactor step)
+#   codebase-design                → (leaf)
+#   diagnosing-bugs                → improve-codebase-architecture
+#   improve-codebase-architecture  → codebase-design
+#   resolving-merge-conflicts      → (leaf)                   (merger worker)
+#   ak-cross-m-review              → diagnosing-bugs          (cmr non-trivial fix)
+#                                    + codex CLI + agy CLI + Claude `Agent`/`Task`
+#   gstack-ship                    → ~/.claude/skills/gstack/{bin,scripts,ship,
+#                                       review,...} helper closure (baked subtree)
+#   `review`                       = BUILTIN Claude Code command, NOT a disk skill
+#                                    → nothing to bake; route stays active.
+# The 2a chain `diagnosing-bugs → improve-codebase-architecture` was DANGLING in
+# 2a (improve not baked); 2b closes it. Every internally-invoked skill is present.
+#
+# Reproducibility: pin the base by digest in CI; locally we ride sc-pipeline:latest.
+# Skill content is pinned by build.sh's skills-manifest.sha256 (fail-closed via
+# EXPECTED_SKILLS_SHA).
+ARG BASE_IMAGE=sc-pipeline:latest
+FROM ${BASE_IMAGE}
+
+USER root
+
+# ── Multi-model review CLIs + gstack-ship runtime deps ───────────────────────
+# claude + codex are already in the base (#332 verified). 2b adds:
+#   - gh   : gstack-ship PR creation + cmr native-dependency reads
+#   - bun  : a few gstack helper bin scripts have a `#!/usr/bin/env bun` shebang
+#            (gstack-next-version / gstack-version-bump / gstack-redact); without
+#            bun those degrade to the skill's prose fallback, but baking bun keeps
+#            gstack-ship fully functional.
+#   - agy  : the Gemini review leg (cmr 三腿). Linux build — the macOS host binary
+#            is NOT portable (it is a macOS ELF), so we install the Linux ELF via
+#            the official installer (issue #333 spike: aarch64 Linux agy installs
+#            + runs in-container).
+# agy AUTH is NOT baked: it is a live OAuth secret. The REQUIRED runtime wiring
+# (to be added with the cmr/reviewer worker step, #335/#336 — the runner's
+# `box()` does NOT mount it yet, only codex auth today) is: mount the host token
+# file (host `~/.sc-agy-oauth-token`) to the container path
+#   /home/agent/.gemini/antigravity-cli/antigravity-oauth-token
+# (same runtime-mount pattern as codex/claude auth; refresh token auto-renews).
+# This image + that mount were spike-verified end-to-end (issue #333: agy leg
+# caught the injected bug with a file-mounted token). Until the runner mounts it,
+# the agy leg has no auth and cmr degrades to codex-only.
+# codex AUTH = writable CODEX_HOME: the orchestrator copies ~/.codex into a
+# per-issue writable dir and bind-mounts it to /home/agent/.codex — NOT a ro
+# mount, or codex's first run rc=1 on an unwritable auth dir (spike constraint #2;
+# already implemented in realBackend.ts `mountAuth`). claude AUTH =
+# CLAUDE_CODE_OAUTH_TOKEN env (already wired).
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends gh ca-certificates; \
+    rm -rf /var/lib/apt/lists/*
+
+# bun (system-wide) — used by a handful of gstack-ship helper scripts.
+RUN set -eux; \
+    curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash; \
+    ln -sf /usr/local/bin/bun /usr/local/bin/bunx 2>/dev/null || true; \
+    /usr/local/bin/bun --version
+
+# agy (Gemini CLI, Linux). The installer drops the binary under the INVOKING
+# user's ~/.local/bin, so run it as `agent` and expose it on PATH for all users.
+USER agent
+RUN set -eux; \
+    curl -fsSL https://antigravity.google/cli/install.sh | bash; \
+    test -x "$HOME/.local/bin/agy"
+USER root
+RUN set -eux; \
+    ln -sf /home/agent/.local/bin/agy /usr/local/bin/agy; \
+    agy --version 2>/dev/null || true   # version probe may need auth; presence is the gate
+
+# ── codex sandbox / userns note (spike constraint #3) ────────────────────────
+# codex ships its own bwrap sandbox. In a NON-privileged container bwrap cannot
+# create a user namespace ("No permissions to create a new namespace ... the
+# kernel does not allow non-privileged user namespaces") → codex falls back to
+# hunk-local grounding (can't grep the whole repo). To give codex FULL repo
+# grounding the RUNTIME must either run the container with userns enabled
+# (`--security-opt seccomp=unconfined` + host `kernel.unprivileged_userns_clone=1`,
+# or `--privileged`) OR disable codex's own sandbox. This is a RUNTIME launch
+# concern (orchestrator `docker(...)` opts, #335/#336), not a build-time bake —
+# documented here so the runner slice wires it. cmr still catches in-hunk bugs
+# without it (spike: codex rc=0 + caught the injected bug on hunk grounding).
+
+# ── Bake the full dev-skill closure into the agent's skills dir ──────────────
+# build.sh staged staging/skills/ with the closure graph above (incl. the
+# gstack/ closure subtree at the path gstack-ship hardcodes).
+COPY skills/ /home/agent/.claude/skills/
+# Bake the content manifest of exactly what was baked, so a built image is
+# auditable (skill source is mutable host state — build.sh pins it via a sha256;
+# CI can fail-closed via EXPECTED_SKILLS_SHA).
+COPY skills-manifest.txt skills-manifest.sha256 /home/agent/.orchestrator/
+
+# ── Bake all worker-role souls ───────────────────────────────────────────────
+# The orchestrator selects the role's soul at runtime (ORCHESTRATOR_SOUL env:
+# "coder" / "READ-ONLY" reviewer / "merger"); baking the soul TEXT here makes each
+# role's discipline reproducible (no runtime bind-mount of the soul). The
+# entrypoint / prompt reads the matching file.
+COPY souls/ /home/agent/.orchestrator/souls/
+
+# ── Bake the workspace skill-routing CLAUDE.md as a fallback reference ────────
+# The live worktree CLAUDE.md (mounted at runtime) is what the agent reads in
+# normal operation; baking a copy here documents the routing the image was built
+# against and lets a bare `docker run` demo route without a mounted worktree.
+COPY CLAUDE.routing.md /home/agent/.orchestrator/CLAUDE.routing.md
+
+RUN chmod -R a+rX /home/agent/.claude/skills /home/agent/.orchestrator \
+ && find /home/agent/.claude/skills -type f -name '*.sh' -exec chmod +x {} + 2>/dev/null \
+ ; find /home/agent/.claude/skills/gstack/bin -type f -exec chmod +x {} + 2>/dev/null \
+ ; (id agent >/dev/null 2>&1 \
+      && chown -R agent /home/agent/.claude /home/agent/.orchestrator /home/agent/.local || true)
+
+USER agent

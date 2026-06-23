@@ -26,7 +26,7 @@
 import { runOrchestrator } from "../runner.js";
 import type { Backend } from "../types.js";
 import { assertAcyclic, selectWave } from "./commander.js";
-import { mergedSet, recordMerged } from "./ledger.js";
+import { familyAlreadyShipped, mergedSet, recordMerged } from "./ledger.js";
 import { mergeChild } from "./merger.js";
 import { reconcileFamilyLedger } from "./reconcile.js";
 import { runVerifyCmr } from "./verifyCmr.js";
@@ -418,6 +418,20 @@ export async function runFamily(
   // with NO verify / cmr / PR (decision 3⑤ 不静默吞 + decision 4 止于-PR only when whole).
   const mergedNow = await currentMerged(familyBackend);
   if (!epic.children.every((c) => mergedNow.has(c.issue))) {
+    return await finalize();
+  }
+
+  // ── already-shipped resume guard (online review r2, codex P1) ────────────────
+  // If a prior invocation already ran the terminal 止于-PR family ship (a `shipped`
+  // ledger entry exists), the family PR is open and the base carries the ship
+  // (VERSION/CHANGELOG bump) commit. Re-running the final barrier would re-verify,
+  // re-cmr, and re-invoke the ship worker — a duplicate VERSION bump / PR attempt.
+  // Reconcile already tolerates the ship-commit advance (branch ②, no escalate), so
+  // the run reaches here on resume; the durable `shipped` marker is the terminal
+  // truth. Treat the family as already delivered: finalize WITHOUT re-shipping. Every
+  // child is ledger-merged (completeness gate above), so finalize() returns
+  // "success" with the reconcile-seeded `familyHead`.
+  if (familyAlreadyShipped(await familyBackend.readFamilyLedger())) {
     return await finalize();
   }
 

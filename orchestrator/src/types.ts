@@ -16,13 +16,23 @@
 // ───────────────────────────── step identifiers ─────────────────────────────
 
 /**
- * The fixed wiki step sequence (ADR 0018). Each id is either an *agent step*
- * (runs `sandbox.run()`) or a *runner action* (pure TS, no agent):
+ * The fixed wiki step sequence (ADR 0018, re-classified by ADR 0026 / PRD #330).
  *
- *   agent steps   : S2 coder_implement, S3 reviewer_full_review,
- *                   S5 coder_fix, S6 reviewer_rereview
- *   runner actions: S0 input_gate, S1 load_context, S4 route_findings,
- *                   S7 push, S8 handoff
+ * Under ADR 0026 the runner is a PURE SCHEDULER: every step that produces or
+ * changes the worked artifact is a *worker step* dispatched through the single
+ * {@link Backend.dispatchWorker} seam; the remaining steps are *scheduling
+ * actions* (pure TS, no worker — gate / route / order / ledger / resume).
+ *
+ *   worker steps      : S2 coder_implement, S3 reviewer_full_review,
+ *                       S5 coder_fix, S6 reviewer_rereview, S7 ship
+ *   scheduling actions: S0 input_gate, S1 load_context, S4 route_findings,
+ *                       S8 handoff
+ *
+ * NOTE (ADR 0026 supersedes ADR 0018 step分类): S7 was an inline "runner action"
+ * (a bare `git push`); it is now a SHIP worker step (invoke `gstack-ship`).
+ * #331 is a pure prefactor — S7 still forwards to the legacy `push()` via the
+ * dispatch wrapper, so external behaviour is unchanged; the real ship worker is
+ * #336. cmr/PR (family layer) likewise become worker steps (#335).
  */
 export type StepId =
   | "S0"
@@ -165,8 +175,20 @@ export interface Escalation {
   readonly diagnosis: string;
 }
 
-/** The structured output of any agent step. */
-export type StepOutput = CoderOutput | ReviewerOutput;
+/**
+ * The structured output of any worker step.
+ *
+ * ADR 0026 / PRD #330 [R2-b]: WIDENED from `CoderOutput | ReviewerOutput` to the
+ * full {@link WorkerOutput} union (also carrying {@link ShipResult} /
+ * {@link CmrResult} / {@link MergeWorkerResult}) so a ship/cmr/merge worker's
+ * output can flow through the ledger ({@link LedgerEntry.output}) without a tsc
+ * error. `StepOutput` is kept as the historical name (consumed by route/validate)
+ * and is now an ALIAS of `WorkerOutput` — ONE union, no drift. Every consumer
+ * discriminates on `.kind` behind `isValidStepOutput`, so the widening is safe:
+ * route() acts only on the validated `coder`/`reviewer` cases, and an unknown
+ * kind is rejected by the guard, never silently routed.
+ */
+export type StepOutput = WorkerOutput;
 
 /**
  * Result of dispatching one agent step — the #256 seam extension.
@@ -202,6 +224,267 @@ export interface StepResult {
   readonly sessionId?: string;
 }
 
+// ─────────────────────── unified worker-dispatch seam ───────────────────────
+// ADR 0026 / PRD #330: every step that produces or changes the worked artifact
+// is a WORKER dispatched through ONE seam, `dispatchWorker(spec, ctx)`. #331 is a
+// PURE PREFACTOR: these shapes are defined and the call sites route through the
+// seam, but `dispatchWorker` is a LEGACY WRAPPER forwarding to the existing
+// methods (runStep / resumeSession / push / runIntegratedCmr / openFamilyPr), so
+// external behaviour is unchanged. Per-worker output VALUES land in later slices
+// (#334 coder/reviewer, #335 cmr, #336 ship); #331 only fixes the field shapes.
+
+/**
+ * Which kind of work a worker performs. Drives the {@link WorkerResult} payload
+ * discriminant and (later slices) which skill is invoked:
+ *   - `coder`    → invoke `/tdd` (S2 implement / S5 fix), resume across rounds.
+ *   - `reviewer` → invoke `/review` (S3/S6 per-slice review), fresh each round.
+ *   - `cmr`      → invoke `ak-cross-m-review` (family integrated cmr), fresh.
+ *   - `ship`     → invoke `gstack-ship` (S7 / family PR).
+ *   - `merge`    → family-layer merge (may use NO skill — ADR 0026); B 段, no A-段
+ *                  consumer (shape only).
+ */
+export type WorkerKind = "coder" | "reviewer" | "cmr" | "ship" | "merge";
+
+/** Which container host runs the worker (decides skill-invocation mechanism). */
+export type WorkerHost = "claude" | "codex";
+
+/**
+ * The DISPATCH MODE for this worker invocation:
+ *   - `fresh`  — a brand-new `sandbox.run()`. THE NORMAL CASE for every worker,
+ *     including S2 implement and a normal S5 fix round.
+ *   - `resume` — continue a PRIOR agent session via the Sandcastle-native
+ *     `resumeSession` path (carrying {@link DispatchContext.resumeSessionId}).
+ *
+ * ADR 0026 INVARIANT (do not conflate with context retention): `resume` is the
+ * CRASH/ESCALATE-resume path ONLY — it skips git-truthing (trusts the model's
+ * self-report) and pins maxIter to 1. A normal coder/fix round must NOT use it
+ * (it must keep git-truthing + within-step maxIter). So a worker is `resume`
+ * ONLY when the runner is actually threading a `resumeSessionId`; otherwise
+ * `fresh`. "Retain context across fix rounds" is a SEPARATE concern — see
+ * {@link WorkerSpec.contextRetention} — NOT expressed via `resume`.
+ */
+export type WorkerSessionMode = "fresh" | "resume";
+
+/**
+ * Whether a worker keeps its working context across fix-loop rounds (ADR 0026
+ * "fresh vs resume 按活类型"), DECOUPLED from the {@link WorkerSessionMode}
+ * dispatch path:
+ *   - `retain` — production workers (coder/fix) keep "what I wrote, why" across
+ *     rounds so a fix接得住 findings without re-exploring from scratch. ADR 0026:
+ *     the MECHANISM (e.g. fresh run + prior findings/output fed in, vs a
+ *     fix-loop-capable resume) is left to the worker implementation (#334) — the
+ *     INVARIANT is that a normal fix keeps git-truthing + maxIter, so it is NOT
+ *     the `resume` (crash/escalate) dispatch path.
+ *   - `clean`  — review workers (reviewer/cmr) start each round with clean eyes
+ *     (cross-model independence; never re-checking their own prior findings).
+ */
+export type WorkerContextRetention = "retain" | "clean";
+
+/**
+ * The declarative spec of one worker step — what the runner hands the dispatch
+ * seam so the dispatch decision is EXPLICIT and ASSERTABLE (US#16/#18/#19).
+ *
+ * Prompt权归 runner (ADR 0018 决定#4, kept by PRD #330 [D]): `promptFile` +
+ * `promptArgs` are VERSIONED — the dispatch never assembles a prompt ad-hoc, and
+ * `promptFile` CONTENT is still hashed into the ledger (anti-tampering). The
+ * "thin prompt" of ADR 0026 means the promptFile CONTENT is slim ("implement
+ * issue #N per CLAUDE.md dev flow"), NOT that prompts are built inline.
+ */
+export interface WorkerSpec {
+  /** Which step in the S0–S8 sequence this worker drives. */
+  readonly id: StepId;
+  /** The work kind (drives result payload + skill routing). */
+  readonly kind: WorkerKind;
+  /** Which soul to inject (v0.1 one image, two roles). */
+  readonly role: StepRole;
+  /** Which container host runs it (Claude `Skill` invoke vs Codex SKILL.md item). */
+  readonly host: WorkerHost;
+  /**
+   * The dispatch path for THIS invocation: `fresh` (a new `sandbox.run()`, the
+   * normal case) or `resume` (the crash/escalate-resume path, set ONLY when the
+   * runner threads a {@link DispatchContext.resumeSessionId}). NOT a proxy for
+   * "coder retains context" — see {@link contextRetention} (ADR 0026 invariant:
+   * a normal fix round is `fresh`, never `resume`).
+   */
+  readonly session: WorkerSessionMode;
+  /**
+   * Whether this worker keeps context across fix-loop rounds (`retain` for
+   * coder/fix, `clean` for reviewer/cmr) — ADR 0026, DECOUPLED from {@link session}.
+   */
+  readonly contextRetention: WorkerContextRetention;
+  /**
+   * The wiki skill this worker invokes, or `undefined` for a no-skill worker
+   * (e.g. family merge — ADR 0026 US#9). The "可空" branch has NO A-段 consumer;
+   * it only reserves the shape for B 段 (PRD #330 [E]).
+   */
+  readonly skill?: string;
+  /** Versioned prompt file; never assembled ad-hoc (ADR 0018 决定#4, hashed). */
+  readonly promptFile: string;
+  /** Versioned prompt arguments substituted into the promptFile (still hashed). */
+  readonly promptArgs?: Readonly<Record<string, string>>;
+  /** Signal the worker emits to mark completion (Sandcastle `run()` API). */
+  readonly completionSignal: string;
+  /** Within-step Ralph retry budget (NOT the fix-loop round cap — see {@link StepSpec.maxIter}). */
+  readonly maxIter: number;
+  /** Short model slug the runtime maps to a baked-in CLI (PRD #244). */
+  readonly model: string;
+  /** Soul to inject (`coder` full discipline / `READ-ONLY` reviewer). */
+  readonly soul: StepSoul;
+  /** Project tool-chain the image declares (US #29). */
+  readonly toolchain: ReadonlyArray<ToolchainEntry>;
+}
+
+/**
+ * Everything (besides the {@link WorkerSpec}) the dispatch seam needs to run a
+ * worker — PRD #330 [H]: the inputs are part of the contract.
+ */
+export interface DispatchContext {
+  /**
+   * The resident slice worktree (ADR 0017 commit truth). MANDATORY for
+   * single-slice workers (coder/reviewer/ship S7); OPTIONAL for family-level
+   * workers (cmr / family ship) whose caller only has `familyBase: string` and
+   * lets the backend infer the working repo (PRD #330 R2). When present, asserts
+   * the worker's commits only land on this one worktree.
+   */
+  readonly worktree?: WorktreeHandle;
+  /**
+   * The family base branch — supplied INSTEAD of (or alongside) a `worktree` for
+   * family-level workers (cmr / family ship) whose caller has only the base
+   * string, no worktree path (PRD #330 R2 — `runFamilyVerify`/`runIntegratedCmr`
+   * take `{familyBase}`).
+   */
+  readonly familyBase?: string;
+  /** The sibling state directory holding the persisted ledger (ADR 0018 §3). */
+  readonly stateDir?: string;
+  /**
+   * The prior agent session id to resume — present ONLY for a `session:"resume"`
+   * dispatch, i.e. the CRASH/ESCALATE-resume path where the runner re-opens a
+   * recorded session (ADR 0026 invariant). A NORMAL S2 implement / S5 fix round
+   * is `session:"fresh"` and does NOT carry this — the fix worker keeps its
+   * context via `contextRetention:"retain"` + the round's findings on
+   * {@link prevFindings}, NOT by resuming a session (codex cmr R3/R4 finding:
+   * normal fix must not take the resume path, which skips git-truthing).
+   */
+  readonly resumeSessionId?: string;
+  /**
+   * The previous round's reviewer fix_now findings, delivered to an S5 fix worker
+   * so it knows WHAT to fix (US#13) — the retention mechanism for a `fresh` fix
+   * round. Undefined for non-fix workers.
+   */
+  readonly prevFindings?: ReadonlyArray<Finding>;
+  /** The issue snapshot the worker reads as its local context (S1 clean-room). */
+  readonly issueSnapshot?: IssueSnapshot;
+  /**
+   * FAMILY cmr worker only: the child issue numbers whose merge into the family
+   * base was LLM-resolved (#295) — forwarded to the integrated cmr 承重闸 so it
+   * focuses on the merges a machine touched (PRD #330 / #291 缺口 1). Undefined for
+   * single-slice workers and for a conflict-free family run.
+   */
+  readonly llmResolvedChildren?: ReadonlyArray<number>;
+}
+
+/** A coder/fix worker's output — the existing {@link CoderOutput}. */
+export type CoderResult = CoderOutput;
+
+/**
+ * A per-slice reviewer worker's output (S3/S6). MUST carry structured findings
+ * (PRD #330 [C]) — the runner's fix-loop (`selectFixNowFindings`), no-progress
+ * guard (`normalizeFindingsKey`), and S4 route (`isBlockingFinding`) all consume
+ * `findings`. A bare verdict here would break all three. (= existing
+ * {@link ReviewerOutput}.) #334 fills the values.
+ */
+export type ReviewerResult = ReviewerOutput;
+
+/**
+ * A family integrated-cmr worker's output (#335). A BARE verdict is correct here
+ * (PRD #330 R2): the consumer `verifyCmr.ts` reads `converged`; a `red` verdict
+ * does NOT drive a fix-loop at this layer, so no findings array is required. (=
+ * existing {@link IntegratedCmrResult}, re-exported via family/types — kept as a
+ * separate `kind` payload in the union below.)
+ */
+export interface CmrResult {
+  readonly kind: "cmr";
+  /** Converged (all reviewers agreed) ⇒ true; else the gate is red. */
+  readonly converged: boolean;
+  /** Why it did not converge — set when red (handed to escalate). */
+  readonly reason?: string;
+  // NOTE: a STUCK cmr worker is the WorkerResult-level `{kind:"escalated"}` case,
+  // NOT an `escalate` field on this `completed` payload (codex cmr R3b finding: a
+  // payload-level escalate would be silently ignored by the verifyCmr consumer,
+  // which reads `converged`). `completed` means the worker ran to completion.
+}
+
+/**
+ * A ship worker's output (S7 / family PR, #336). `gstack-ship` does more than
+ * push+PR (merge-base / tests / review gate / VERSION / CHANGELOG + STOP/HITL);
+ * the non-success routing is a #336 concern — the SHAPE is fixed here.
+ */
+export interface ShipResult {
+  readonly kind: "ship";
+  /** The shipped branch. */
+  readonly branch: string;
+  /** The opened PR URL/handle (undefined when ship stopped before a PR). */
+  readonly pr?: string;
+  /** A short status string (e.g. "pushed" | "pr_opened"). Values: #336. */
+  readonly status: string;
+  // NOTE: a ship worker that STOPS for a human (gstack-ship STOP/HITL) is the
+  // WorkerResult-level `{kind:"escalated"}` case (PRD #330 R2), NOT an `escalate`
+  // field on this `completed` payload — a `completed ShipResult` means a PR opened
+  // / push landed. (codex cmr R3b: a payload-level escalate would be ignored by
+  // the S7 / family-ship consumers, which route a completed ship to success.)
+}
+
+/**
+ * A family merge worker's output (B 段 — no A-段 consumer; shape only, PRD #330
+ * [E]). Carries the family base HEAD after the merge landed.
+ */
+export interface MergeWorkerResult {
+  readonly kind: "merge";
+  /** The family base HEAD commit after this merge landed. */
+  readonly familyHead: string;
+  /** Was the merge LLM-resolved (vs a clean deterministic merge)? */
+  readonly conflictResolvedByLlm?: boolean;
+  // NOTE: a stuck merge worker is the WorkerResult-level `{kind:"escalated"}`
+  // case, NOT an `escalate` field on this `completed` payload (codex cmr R3b).
+}
+
+/** The structured payload a worker produces — one per {@link WorkerKind}. */
+export type WorkerOutput =
+  | CoderResult
+  | ReviewerResult
+  | CmrResult
+  | ShipResult
+  | MergeWorkerResult;
+
+/**
+ * The result of dispatching ONE worker — a discriminated union so the runner can
+ * route by case without ever receiving an undefined shape (PRD #330 [B]).
+ *
+ *   - `completed` — the worker ran and produced its structured `output`. NOTE a
+ *     cmr `red` verdict is `completed` (with payload), NOT `failed` (PRD #330
+ *     R2): `red` is a normal review outcome the runner routes on.
+ *   - `failed`    — the worker crashed / its command or tests hard-failed
+ *     (no usable output).
+ *   - `malformed` — the worker produced output the seam could not parse into the
+ *     declared schema (no completion signal / unparseable).
+ *   - `escalated` — the worker (model-judged) signalled it is stuck and a human
+ *     must answer (carries the resume指引). Crash/timeout/missing-skill map to
+ *     `failed`/`malformed`; only a MODEL escalate is `escalated`.
+ *
+ * #331 prefactor: the legacy wrapper always yields `completed` (forwarding the
+ * existing methods' returns); `failed`/`malformed`/`escalated` are wired into the
+ * shape now and exercised by later slices.
+ */
+export type WorkerResult =
+  | { readonly kind: "completed"; readonly output: WorkerOutput; readonly sessionId?: string }
+  | { readonly kind: "failed"; readonly reason: string; readonly sessionId?: string }
+  | { readonly kind: "malformed"; readonly reason: string; readonly sessionId?: string }
+  | {
+      readonly kind: "escalated";
+      readonly escalation: Escalation;
+      readonly sessionId?: string;
+    };
+
 // ──────────────────────────── snapshots ────────────────────────────
 
 /**
@@ -211,7 +494,6 @@ export interface StepResult {
 export interface IssueMeta {
   readonly number: number;
   readonly isReadyForAgent: boolean;
-  readonly hasAgentBrief: boolean;
   readonly hasSubIssues: boolean;
   /** Issue numbers of still-open blocked_by dependencies. */
   readonly openBlockedBy: ReadonlyArray<number>;
@@ -475,6 +757,35 @@ export interface Backend {
     worktree: WorktreeHandle,
     fixNowFindings?: ReadonlyArray<Finding>,
   ): Promise<StepOutput | StepResult>;
+  /**
+   * THE unified worker-dispatch seam (ADR 0026 / PRD #330 #331).
+   *
+   * Every single-slice worker step (S2/S3/S5/S6 agent steps, S7 ship) is
+   * dispatched through this ONE method: the runner hands a {@link WorkerSpec}
+   * (what to invoke, host, fresh|resume, soul, skill) + a {@link DispatchContext}
+   * (worktree, stateDir, resumeSessionId, prev findings, issue snapshot) and gets
+   * back a discriminated {@link WorkerResult}, then routes by case. This replaces
+   * the per-method seam (`runStep` / `resumeSession` / `push`) as the runner's
+   * dispatch entry point.
+   *
+   * #331 PREFACTOR: this is a thin LEGACY WRAPPER. The runner ALWAYS dispatches
+   * through the free function `dispatchWorker(backend, spec, ctx)` (runner.ts),
+   * which calls THIS method when a backend implements it, else falls back to
+   * `legacyDispatchWorker` — forwarding to the existing methods
+   * (`runStep`/`resumeSession` for agent workers, `push` for the S7 ship worker),
+   * so external behaviour is unchanged (regression green) and every existing fake
+   * Backend keeps working without change. The real worker dispatch (invoke
+   * `/tdd` / `/review` / `gstack-ship`) lands in #334/#336. The legacy methods
+   * stay on the seam during the transition.
+   *
+   * OPTIONAL on the interface during the prefactor so the existing zero-container
+   * fakes need no change; new tests inject a fake implementing it to assert the
+   * dispatch SEQUENCE + each {@link WorkerSpec} (the #331 acceptance criterion).
+   */
+  dispatchWorker?(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<WorkerResult>;
   /** S7: push the resident slice branch (no PR, no merge). */
   push(worktree: WorktreeHandle): Promise<void>;
   /**

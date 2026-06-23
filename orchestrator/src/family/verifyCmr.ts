@@ -40,12 +40,16 @@
  * 5 "字段级 JSON 留 TDD"); #296 only CALLS those seams. THAT is the seam boundary.
  */
 
-import { recordAborted as recordDurableAbort } from "./ledger.js";
+import {
+  cmrWorkerSpec,
+  dispatchFamilyWorker,
+  familyShipWorkerSpec,
+} from "./dispatchFamilyWorker.js";
+import { recordAborted as recordDurableAbort, recordShipped } from "./ledger.js";
+import { isFilledString } from "../shipOutcome.js";
 import type {
   FamilyBackend,
   FamilyVerifyResult,
-  IntegratedCmrRequest,
-  IntegratedCmrResult,
 } from "./types.js";
 
 /** Which of the two ADR 0022 decision-3 verify points is running. */
@@ -129,6 +133,45 @@ const NOOP: VerifyCmrResult = { ok: true, ran: false };
 const INCOMPLETE_GATE: VerifyCmrResult = { ok: false, ran: true };
 
 /**
+ * Dispatch a family worker, converting ANY thrown STARTUP error into a documented
+ * gate result instead of letting it escape verifyCmr (cmr S336 r8 — startup/error
+ * path audit). The single-slice runner wraps its S7 ship dispatch in
+ * try/catch → S8(error); the family verifyCmr did NOT, so a worker that threw on
+ * startup — a missing-auth `sc.run` start failure (now preflighted to a structured
+ * escalate, but the worker ALSO `git checkout`s the family base + writes the focus
+ * file + spins docker, any of which can still throw) — would propagate out of
+ * `runVerifyCmr` and reject the WHOLE family run, bypassing the INCOMPLETE_GATE
+ * fail-safe the malformed / non-completed paths already use. So catch it, record an
+ * `aborted` event (decision 3⑤ "不静默吞" — the gate failure stays observable, not a
+ * silent swallow), and hand back the discriminated `failed` WorkerResult the callers
+ * already fail-safe to INCOMPLETE_GATE. A NON-throwing dispatch is returned
+ * unchanged (escalated / completed / malformed are handled by the callers).
+ */
+async function dispatchOrAbort(
+  familyBackend: FamilyBackend,
+  spec: Parameters<typeof dispatchFamilyWorker>[1],
+  ctx: Parameters<typeof dispatchFamilyWorker>[2],
+  phase: VerifyCmrPhase,
+  familyHeadAfter: string | undefined,
+): Promise<Awaited<ReturnType<typeof dispatchFamilyWorker>>> {
+  try {
+    return await dispatchFamilyWorker(familyBackend, spec, ctx);
+  } catch (err) {
+    const reason = `family ${spec.kind} worker threw on startup: ${
+      err instanceof Error ? err.message : String(err)
+    }`;
+    await familyBackend.recordAborted?.({
+      phase,
+      familyBase: ctx.familyBase!,
+      errorPackage: { reason },
+      familyHeadAfter,
+    });
+    await recordDurableAbort(familyBackend, { phase, reason, familyHeadAfter });
+    return { kind: "failed", reason };
+  }
+}
+
+/**
  * Run the family verify against the family base, then (on the `"final"` phase)
  * the integrated cmr 承重闸 and the open-PR step (ADR 0022 decision 3④/⑤/⑥/4).
  *
@@ -176,17 +219,59 @@ export async function runVerifyCmr(
   //    report a pass: a real verify already ran, and `{ok:true}` here would make
   //    the spine's finalize() call the run `"success"` with the 承重闸 never run.
   //    Fail-safe to `ok:false` (verify_failed) — NOT the #293 nothing-ran no-op. ──
-  if (familyBackend.runIntegratedCmr === undefined) return INCOMPLETE_GATE;
-  // #291 缺口 1: surface the LLM-resolved children to the 承重闸. OMIT the field
-  // (keep the back-compat `{familyBase}`-only request) when none was LLM-resolved,
-  // so a conflict-free run's cmr request shape is unchanged.
-  const cmrRequest: IntegratedCmrRequest = {
-    familyBase,
-    ...(llmResolvedChildren !== undefined && llmResolvedChildren.length > 0
-      ? { llmResolvedChildren }
-      : {}),
-  };
-  const cmr: IntegratedCmrResult = await familyBackend.runIntegratedCmr(cmrRequest);
+  // ADR 0026 / #331: the integrated cmr is dispatched as a FAMILY cmr WORKER
+  // through the unified seam (no longer the inline `runIntegratedCmr`). The
+  // capability check stays: NO cmr capability ⇒ INCOMPLETE_GATE (the load-bearing
+  // review cannot run; never a false pass). The capability is satisfied by EITHER
+  // the new unified `dispatchWorker` seam OR the legacy `runIntegratedCmr` (the
+  // dispatch helper prefers the former, forwards to the latter) — gating on the
+  // legacy method ALONE would wrongly fail-safe a backend that implements ONLY the
+  // new seam (codex cmr finding). #291 缺口 1: the LLM-resolved children ride on the
+  // DispatchContext (OMITTED when none, the back-compat request shape).
+  if (
+    familyBackend.dispatchWorker === undefined &&
+    familyBackend.runIntegratedCmr === undefined
+  ) {
+    return INCOMPLETE_GATE;
+  }
+  const cmrResult = await dispatchOrAbort(
+    familyBackend,
+    cmrWorkerSpec(),
+    {
+      familyBase,
+      ...(llmResolvedChildren !== undefined && llmResolvedChildren.length > 0
+        ? { llmResolvedChildren }
+        : {}),
+    },
+    phase,
+    familyHeadAfter,
+  );
+  // An ESCALATED cmr worker (model-judged stuck) is the family escalate续跑 path
+  // (decision 3⑥/4) — call the escalate seam with the worker's reason, NOT a bare
+  // INCOMPLETE_GATE (codex cmr R4 finding: keep escalate semantics). A
+  // crash/malformed result still cannot be reported as a pass — fail-safe to
+  // INCOMPLETE_GATE (decision 3⑤ "不静默吞"). #331's legacy wrapper produces neither.
+  if (cmrResult.kind === "escalated") {
+    await familyBackend.escalateFamily?.({
+      reason: `${cmrResult.escalation.reason} — ${cmrResult.escalation.diagnosis}`,
+    });
+    return { ok: false, ran: true };
+  }
+  if (cmrResult.kind !== "completed" || cmrResult.output.kind !== "cmr") {
+    // The cmr worker ran but returned no valid result (crash / malformed / hard
+    // command failure). Like the red-verify path above, persist a durable `aborted`
+    // event (online review r3, codex P2): otherwise the failed FINAL barrier lives
+    // only in this return value, and a resume sees stale merged state (no shipped
+    // marker, no failure marker) → it re-runs the same failing gate, losing the
+    // phase / reason / family head needed for triage (decision 3⑤ 不静默吞).
+    await recordDurableAbort(familyBackend, {
+      phase,
+      reason: "family integrated cmr worker returned no valid result (crash/malformed)",
+      familyHeadAfter,
+    });
+    return INCOMPLETE_GATE;
+  }
+  const cmr = cmrResult.output;
   if (!cmr.converged) {
     // NOT converged ⇒ escalate续跑 (#298 seam); do NOT open a PR. (decision 3⑥/4)
     await familyBackend.escalateFamily?.({
@@ -200,7 +285,76 @@ export async function runVerifyCmr(
   //    NOT this layer (this never merges). No PR capability ⇒ the terminal action
   //    cannot run; verify + cmr already ran, so `{ok:true}` would report `"success"`
   //    for a run whose PR never opened — fail-safe to `ok:false` (NOT the no-op). ──
-  if (familyBackend.openFamilyPr === undefined) return INCOMPLETE_GATE;
-  await familyBackend.openFamilyPr({ familyBase });
+  // ADR 0026 / #331: 止于 PR is a FAMILY SHIP WORKER through the unified seam (no
+  // longer the inline `openFamilyPr`). Capability check: the terminal action is
+  // runnable via EITHER the new unified `dispatchWorker` seam OR the legacy
+  // `openFamilyPr`; neither ⇒ INCOMPLETE_GATE (the PR cannot open; never a false
+  // success). #331 prefactor: dispatchFamilyWorker forwards to `openFamilyPr`; #336
+  // makes it invoke `gstack-ship`.
+  if (
+    familyBackend.dispatchWorker === undefined &&
+    familyBackend.openFamilyPr === undefined
+  ) {
+    return INCOMPLETE_GATE;
+  }
+  const shipResult = await dispatchOrAbort(
+    familyBackend,
+    familyShipWorkerSpec(),
+    { familyBase },
+    phase,
+    familyHeadAfter,
+  );
+  // An ESCALATED family ship worker (gstack-ship STOP/HITL) is the family
+  // escalate续跑 path, not a false success — call the escalate seam (codex cmr R4
+  // finding: keep escalate semantics). A `completed` non-ship payload / crash /
+  // malformed means the PR did not open → fail-safe INCOMPLETE_GATE (decision 3⑤;
+  // mirrors the cmr-stage guard above). #331's legacy wrapper produces neither.
+  if (shipResult.kind === "escalated") {
+    await familyBackend.escalateFamily?.({
+      reason: `${shipResult.escalation.reason} — ${shipResult.escalation.diagnosis}`,
+    });
+    return { ok: false, ran: true };
+  }
+  if (shipResult.kind !== "completed" || shipResult.output.kind !== "ship") {
+    // The ship worker ran but returned no valid result (crash / malformed / hard
+    // command failure) at the terminal 止于-PR gate. Persist a durable `aborted`
+    // event (online review r3, codex P2): without it a resume sees neither a shipped
+    // marker nor a failure marker and re-runs the whole final verify/cmr/ship,
+    // losing the original failure context (decision 3⑤ 不静默吞).
+    await recordDurableAbort(familyBackend, {
+      phase,
+      reason: "family ship worker returned no valid result (crash/malformed)",
+      familyHeadAfter,
+    });
+    return INCOMPLETE_GATE;
+  }
+  // ── cmr S336 r4 (P1): the terminal family gate must NOT trust the discriminant
+  // alone. verifyCmr explicitly allows ANY FamilyBackend to implement the unified
+  // dispatchWorker seam — a backend that implements the seam but skips the success
+  // contract (the real RealFamilyBackend.dispatchShipWorker enforces it, but a
+  // minimal seam-only backend need not) could return a `completed {kind:"ship"}`
+  // that never opened the family PR (status:"pushed", missing/blank pr) or opened
+  // it on the WRONG branch. Re-assert the family-ship contract here, fail-CLOSED
+  // (defense-in-depth, independent of which backend produced the payload; mirrors
+  // the non-completed/non-ship fail-safe just above). 止于 PR (decision 4) means a
+  // REAL family PR on the family base: branch === familyBase, status === "pr_opened",
+  // pr a non-empty string — anything else did not open the PR → INCOMPLETE_GATE.
+  const ship = shipResult.output;
+  if (
+    ship.branch !== familyBase ||
+    ship.status !== "pr_opened" ||
+    !isFilledString(ship.pr)
+  ) {
+    return INCOMPLETE_GATE;
+  }
+  // ── Persist the terminal SHIPPED marker before reporting success (online review
+  // r2, codex P1). The family ship commit (VERSION/CHANGELOG bump) advanced the
+  // family base, but nothing durable recorded that the terminal 止于-PR ship ALREADY
+  // ran. On a re-feed/resume, the spine's completeness gate still passes (every
+  // child merged) and it would re-enter this final barrier — re-running the full
+  // verify + integrated cmr and re-invoking the ship worker (a duplicate VERSION
+  // bump / PR attempt). Writing a `shipped` ledger entry makes the delivery durable
+  // resume truth: the spine's `familyAlreadyShipped` guard short-circuits the barrier.
+  await recordShipped(familyBackend, { pr: ship.pr });
   return { ok: true, ran: true };
 }
