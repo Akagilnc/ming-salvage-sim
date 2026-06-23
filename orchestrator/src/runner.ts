@@ -425,11 +425,20 @@ function planResume(
     lastEntry.handoffStatus === "escalate" &&
     lastNonTerminalStep(ledger) === "S7"
   ) {
-    const s8Idx = ledger.lastIndexOf(lastEntry);
+    // Re-opening S7 means the OLD S7 entry is superseded — drop BOTH the trailing
+    // S8(escalate) boundary AND the failing S7 entry it terminated. Slicing only at
+    // the S8 (the old `slice(0, s8Idx)`) LEFT the old S7 in the in-memory ledger, so
+    // the re-dispatch appended a SECOND S7 → two consecutive S7 entries (online
+    // review r1, 3 bots). The escalate-resume contract re-opens the step, it does
+    // not keep the superseded one. The S7 entry being re-opened is the last
+    // non-terminal (non-S8) entry; truncate at its index.
+    let reopenIdx = ledger.length - 1;
+    while (reopenIdx >= 0 && ledger[reopenIdx]!.step === "S8") reopenIdx--;
+    // reopenIdx now points at the failing S7 entry (lastNonTerminalStep === "S7").
     return {
       resumeStep: "S7",
       lastOutput: agentEntry?.output,
-      priorLedger: ledger.slice(0, s8Idx) as ReadonlyArray<LedgerEntry>,
+      priorLedger: ledger.slice(0, reopenIdx) as ReadonlyArray<LedgerEntry>,
     };
   }
 
@@ -1596,6 +1605,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               ),
             );
           }
+          // Persist the validated SHIP payload + the worker's session id into the S7
+          // ledger entry (online review r1, 3 bots): the shared record/emitLedger
+          // path below writes `output`/`stepSessionId`, but S7 previously left both
+          // undefined — so the persisted ledger AND RunResult.stepLedger dropped the
+          // shipped branch/status and (for pr_opened) the PR URL, plus the ship
+          // worker's sessionId. Assign them so the delivery is recoverable from
+          // resume truth and surfaced to the caller.
+          output = ship;
+          stepSessionId = shipResult.sessionId;
         } catch (err) {
           // Push failure → S8(error) with branch head so dev can diagnose
           // without losing the commits already on the resident branch (#252).

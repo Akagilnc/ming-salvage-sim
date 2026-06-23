@@ -420,6 +420,26 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
     expect(backend.resumeSessionCalls).toHaveLength(0);
   });
 
+  it("re-opening S7 drops the SUPERSEDED S7 entry — no double-S7 in the ledger (online review r1)", async () => {
+    // The prior escalate left `[…, S7(failing), S8(escalate)]`. Re-opening S7
+    // must truncate BOTH the trailing S8 boundary AND the superseded S7 entry;
+    // otherwise the re-dispatch appends a SECOND S7 → two consecutive S7 entries
+    // (3 bots). The final stepLedger must hold exactly ONE S7.
+    const backend = new ResumeBackend(escalatedAtS7());
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    const s7Entries = result.stepLedger.filter((e) => e.step === "S7");
+    expect(s7Entries).toHaveLength(1);
+    // The single surviving S7 is the FRESH re-dispatch (it carries the ship
+    // payload, #336), not the output-less superseded escalate entry.
+    expect(s7Entries[0]!.output).toBeDefined();
+    // The full re-opened ledger has the clean happy-path shape, no S7 twice.
+    expect(result.stepLedger.map((e) => e.step)).toEqual([
+      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
+    ]);
+  });
+
   it("only S7-escalate re-opens: a prior S2-escalate S8 still reports/resumes the agent step, not S7", async () => {
     // Guard: the new S7-reopen pattern must NOT swallow the existing agent
     // escalate-resume. A prior AGENT escalate (S2) still drives resumeSession on

@@ -2157,14 +2157,19 @@ export class RealBackend implements Backend {
     // auth, so a no-gh host must escalate, not fail late in-container. Only codex auth
     // stays best-effort (it merely degrades the in-container diff review). Mount once
     // and reuse for the sandbox (no double-mount).
+    // `mountShipAuth` creates a per-call temp codex auth dir (mkdtempSync — a unique
+    // name each call) BEFORE the early escalate gates below; the finally reclaims it
+    // on success, exception, AND those early returns (online review r1 — 3 bots:
+    // leaked temp dirs accumulating under the codex-auth root).
     const auth = this.mountShipAuth(this.issueOf(worktree));
-    if (auth.claudeToken === undefined) {
-      return {
-        kind: "escalate",
-        reason: "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the ship worker cannot start",
-        diagnosis: "ship worker cannot start without CLAUDE_CODE_OAUTH_TOKEN",
-      };
-    }
+    try {
+      if (auth.claudeToken === undefined) {
+        return {
+          kind: "escalate",
+          reason: "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the ship worker cannot start",
+          diagnosis: "ship worker cannot start without CLAUDE_CODE_OAUTH_TOKEN",
+        };
+      }
     // FAIL-CLOSED on gh auth (cmr S336 r10): UNLIKE the codex leg (best-effort — it
     // only degrades the in-container diff review), gh auth is LOAD-BEARING for the
     // ship itself — gstack-ship Step 17 pushes over https (gh credential helper) and
@@ -2174,33 +2179,44 @@ export class RealBackend implements Backend {
     // creds). So preflight it like the claude token (r8) and escalate BEFORE the
     // container. The host token is read via `gh auth token` (it lives in the OS
     // keyring, not a portable file) and injected as GH_TOKEN by shipSandboxConfig.
-    if (auth.ghToken === undefined) {
-      return {
-        kind: "escalate",
-        reason: "no gh auth (GH_TOKEN) — the ship worker cannot push / `gh pr create`",
-        diagnosis:
-          "the ship worker invokes gstack-ship, which pushes over https + runs " +
-          "`gh pr create`; the 2b image bakes the gh CLI but no gh auth. Provide a " +
-          "host gh login (`gh auth login`) so `gh auth token` yields a token to inject " +
-          "as GH_TOKEN. Escalating here keeps the escalate续跑 semantics (a late " +
-          "in-container `gh pr create` failure would surface as an opaque S8 error).",
-      };
+      if (auth.ghToken === undefined) {
+        return {
+          kind: "escalate",
+          reason: "no gh auth (GH_TOKEN) — the ship worker cannot push / `gh pr create`",
+          diagnosis:
+            "the ship worker invokes gstack-ship, which pushes over https + runs " +
+            "`gh pr create`; the 2b image bakes the gh CLI but no gh auth. Provide a " +
+            "host gh login (`gh auth login`) so `gh auth token` yields a token to inject " +
+            "as GH_TOKEN. Escalating here keeps the escalate续跑 semantics (a late " +
+            "in-container `gh pr create` failure would surface as an opaque S8 error).",
+        };
+      }
+      const result = await sc.run({
+        name: `${spec.id}-ship`,
+        cwd: worktree.path,
+        sandbox: this.shipSandbox(auth),
+        agent: sc.claudeCode(modelIdForSlug(spec.model)),
+        // The ship worker self-reruns gstack-ship's rerun-able steps INSIDE the
+        // container (用户 note); maxIter is the within-worker budget. A genuine block
+        // is the worker's `<ship>` escalate verdict, not the iteration limit.
+        maxIterations: spec.maxIter,
+        completionSignal: spec.completionSignal,
+        // Commit the VERSION/CHANGELOG bump + push on the resident branch in place.
+        branchStrategy: { type: "head" },
+        promptFile: join(this.opts.promptsDir, spec.promptFile),
+      });
+      return shipOutcomeFromResult(result);
+    } finally {
+      // Reclaim the per-call temp codex auth dir (online review r1, 3 bots):
+      // best-effort — a failed cleanup must never mask the worker's outcome.
+      if (auth.codexAuthDir !== undefined) {
+        try {
+          rmSync(auth.codexAuthDir, { recursive: true, force: true });
+        } catch {
+          // best-effort: the run already returned/threw.
+        }
+      }
     }
-    const result = await sc.run({
-      name: `${spec.id}-ship`,
-      cwd: worktree.path,
-      sandbox: this.shipSandbox(auth),
-      agent: sc.claudeCode(modelIdForSlug(spec.model)),
-      // The ship worker self-reruns gstack-ship's rerun-able steps INSIDE the
-      // container (用户 note); maxIter is the within-worker budget. A genuine block
-      // is the worker's `<ship>` escalate verdict, not the iteration limit.
-      maxIterations: spec.maxIter,
-      completionSignal: spec.completionSignal,
-      // Commit the VERSION/CHANGELOG bump + push on the resident branch in place.
-      branchStrategy: { type: "head" },
-      promptFile: join(this.opts.promptsDir, spec.promptFile),
-    });
-    return shipOutcomeFromResult(result);
   }
 
   /**

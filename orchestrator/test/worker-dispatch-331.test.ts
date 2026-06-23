@@ -536,6 +536,26 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
     }
   });
 
+  it("FAIL-CLOSED: a cmr/merge worker has no legacy path — it throws, never mis-dispatched as coder/reviewer (online review r1)", async () => {
+    // cmr/merge are family-only worker kinds with NO legacy backend method. If one
+    // reached this public seam, the old fall-through coerced it via
+    // workerSpecToStepSpec (dropping kind/skill) and ran it as a plain agent step.
+    // The guard must REJECT it (3 bots).
+    for (const kind of ["cmr", "merge"] as const) {
+      const be = new LegacyBackend();
+      await expect(
+        legacyDispatchWorker(
+          be as unknown as Backend,
+          { ...coderWorker, id: kind === "cmr" ? "Scmr" : "Smerge", kind },
+          { worktree: be.worktree },
+        ),
+      ).rejects.toThrow(/no legacy dispatch path/);
+      // It must NOT have leaked onto the agent-step seam.
+      expect(be.runStepCalls.length).toBe(0);
+      expect(be.resumeCalls.length).toBe(0);
+    }
+  });
+
   it("dispatchWorker prefers backend.dispatchWorker when present", async () => {
     let used = false;
     const be: Partial<Backend> = {
