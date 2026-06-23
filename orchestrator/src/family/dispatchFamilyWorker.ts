@@ -28,7 +28,6 @@ import type {
 } from "../types.js";
 import type {
   FamilyBackend,
-  FamilyCoderFixResult,
   IntegratedCmrResult,
   OpenFamilyPrResult,
 } from "./types.js";
@@ -36,64 +35,38 @@ import type {
 /**
  * The integrated-cmr family worker spec (#335 invoke `ak-cross-m-review`).
  *
- * `session` is ALWAYS `fresh` — the cmr reviewer dispatches FRESH every round (ADR
- * 0026 line 20: 评审类每轮 fresh, cross-model 独立性; the `resumeSession` path is
- * crash/escalate-ONLY, skipping git-truthing). CONTINUITY across rounds is the PRIOR
- * round's findings passed as DATA on {@link DispatchContext.priorFindings} — an
- * EXTRA confirm-resolved task, NOT a narrowed scope (the worker re-reviews the WHOLE
- * diff fresh each round; the runner never counts rounds). The `session` param is
- * retained for shape parity but the verify-cmr scheduler always passes `fresh`.
+ * The corrected design (ADR 0026 2026-06-24): the cmr worker is a SINGLE
+ * memory-bearing `sc.run` session that IS the fixer — it invokes
+ * `ak-cross-m-review` (--scenario ship-pre), which dispatches fresh review legs,
+ * grades, FIXES on the family base, and re-reviews until convergence, the WHOLE
+ * loop INSIDE this one session. Only the 3 review LEGS are fresh each round; the
+ * worker's main session has memory. So:
+ *   - `session: "fresh"` = start a NEW session (not a crash/escalate `resume`,
+ *     which skips git-truthing) — the worker is dispatched ONCE per family run, not
+ *     re-dispatched per round.
+ *   - `soul: "cmr"` = the integrated-cmr fixer soul (WRITE — it commits fixes), NOT
+ *     the READ-ONLY per-slice reviewer soul.
+ *   - `maxIter: 5` = an iterative budget (it absorbs the fix role the old separate
+ *     coder-fix worker had), NOT a single review pass.
  */
 export function cmrWorkerSpec(session: WorkerSessionMode = "fresh"): WorkerSpec {
   return {
-    id: "S6", // the family integrated cmr maps to the review step kind
+    id: "S6", // the family integrated cmr maps to the review/fix step kind
     kind: "cmr",
-    role: "reviewer",
+    role: "coder", // it WRITES (commits cross-slice fixes), not a read-only reviewer
     // The cmr skill fans out a Claude Agent leg + CLI legs → host pinned Claude
     // top-level (PRD #330 [J]).
     host: "claude",
     session,
-    // Review worker: clean eyes each round (cross-model independence) — ADR 0026.
-    contextRetention: "clean",
+    // The worker's main session has MEMORY (it is the fixer, looping internally);
+    // only the review legs are fresh — ADR 0026 2026-06-24.
+    contextRetention: "retain",
     skill: "ak-cross-m-review",
     promptFile: "integrated_cmr.md",
     completionSignal: "CMR_STEP_COMPLETE",
-    maxIter: 1,
-    model: "opus",
-    soul: "READ-ONLY",
-    toolchain: [],
-  };
-}
-
-/**
- * The family integrated-cmr FIX worker spec (wiki Step 6 fix loop). Dispatched by
- * the verify-cmr hook when the integrated cmr returns NOT-converged: it fixes the
- * cross-slice findings ON THE FAMILY BASE (a new commit) by invoking `/tdd`
- * (+ `/diagnosing-bugs`) under the `coder` soul — the runner stays a pure
- * scheduler. RETAIN context across rounds (a coder接得住 the prior round), iterate
- * budget like the per-slice S5 coder_fix (5).
- *
- * `session` is ALWAYS `fresh` — the coder-fix worker dispatches FRESH every round
- * (ADR 0026 invariant: a normal fix keeps git-truthing + within-step maxIter, NOT
- * the `resumeSession` crash/escalate path). It接得住 the prior round via DATA: the
- * cmr's non-convergence reason on {@link DispatchContext.cmrReason} (its fix focus),
- * NOT a resumed session. The `session` param is retained for shape parity but the
- * verify-cmr scheduler always passes `fresh`.
- */
-export function familyCoderFixWorkerSpec(session: WorkerSessionMode = "fresh"): WorkerSpec {
-  return {
-    id: "S5", // mirrors the per-slice S5 coder_fix step kind
-    kind: "coder",
-    role: "coder",
-    host: "claude",
-    session,
-    contextRetention: "retain",
-    skill: "tdd",
-    promptFile: "family_coder_fix.md",
-    completionSignal: "CODER_STEP_COMPLETE",
     maxIter: 5,
-    model: "sonnet",
-    soul: "coder",
+    model: "opus",
+    soul: "cmr",
     toolchain: [],
   };
 }
@@ -185,41 +158,6 @@ export async function legacyDispatchFamilyWorker(
         kind: "cmr",
         converged: cmr.converged,
         ...(cmr.reason !== undefined ? { reason: cmr.reason } : {}),
-      },
-    };
-  }
-
-  if (spec.kind === "coder") {
-    // The family integrated-cmr fix worker (wiki Step 6 fix loop). Forwards to the
-    // legacy per-method `runFamilyCoderFix` seam. The hook only dispatches this
-    // after first checking the capability exists (verifyCmr.ts), so a missing
-    // method here is a wiring fault — throw loud rather than fabricate a fix.
-    if (familyBackend.runFamilyCoderFix === undefined) {
-      throw new Error(
-        "legacyDispatchFamilyWorker: backend has no runFamilyCoderFix capability",
-      );
-    }
-    if (ctx.cmrReason === undefined) {
-      throw new Error(
-        "legacyDispatchFamilyWorker: a family coder-fix worker requires ctx.cmrReason",
-      );
-    }
-    const fix: FamilyCoderFixResult = await familyBackend.runFamilyCoderFix({
-      familyBase,
-      reason: ctx.cmrReason,
-    });
-    // A model-stuck fix (the finding conflicts with the spec / a design gap) is the
-    // WorkerResult-level `escalated` case (PRD #330 R2) — NOT a `completed` coder
-    // payload. The hook reads this to escalate续跑 rather than re-run the cmr.
-    if (fix.escalate !== undefined) {
-      return { kind: "escalated", escalation: fix.escalate };
-    }
-    return {
-      kind: "completed",
-      output: {
-        kind: "coder",
-        committed: fix.committed,
-        commitsAdded: fix.commitsAdded,
       },
     };
   }

@@ -367,22 +367,6 @@ export interface FamilyBackend {
    */
   openFamilyPr?(request: OpenFamilyPrRequest): Promise<OpenFamilyPrResult>;
   /**
-   * Family integrated-cmr FIX-LOOP seam (wiki tdd-autonomous-dev Step 6 = ship-pre
-   * 正确性 cmr, whose discipline is a fix loop to convergence —
-   * cross-model-review.md §修复). When the integrated cmr 承重闸 returns
-   * NOT-converged, the verify-cmr hook dispatches THIS coder-fix worker to fix the
-   * cross-slice findings ON THE FAMILY BASE (committing a new commit — like the
-   * per-slice S5 coder_fix), then RE-RUNS the integrated cmr, looping toward
-   * convergence (ADR 0022 decision 4 "止于 cmr 绿 / cmr 不收敛才叫人" presupposes a
-   * convergence loop, NOT escalate-on-first-finding). The worker invokes `/tdd`
-   * (+ `/diagnosing-bugs`) under the `coder` soul — the runner stays a pure
-   * scheduler. `committed:false` / an `escalate` signal mean it could not make
-   * progress → the hook escalates. OPTIONAL: a backend without it (no fix
-   * capability) cannot run the loop, so the hook escalates on a non-converged cmr
-   * rather than fabricating a pass (the conservative fallback).
-   */
-  runFamilyCoderFix?(request: FamilyCoderFixRequest): Promise<FamilyCoderFixResult>;
-  /**
    * #298-OWNED aborted-event seam — #296 only CALLS it. A red verify writes an
    * `aborted` event (携带错误包 + the family base at the time) so a failed wave is
    * NOT silently dropped (decision 3④/5 "不静默吞"). The CONCRETE ledger schema
@@ -451,35 +435,6 @@ export interface IntegratedCmrResult {
   readonly converged: boolean;
   /** Why it did not converge (handed to the escalate seam) — set when red. */
   readonly reason?: string;
-}
-
-/**
- * What the family integrated-cmr fix worker needs (wiki Step 6 fix loop). The
- * worker fixes the cross-slice findings on the family base; it is focused by the
- * integrated cmr's one-line non-convergence `reason` (the family cmr verdict is a
- * BARE `{converged, reason}` — PRD #330 R2 — so `reason` is the focus we have; the
- * worker re-derives the concrete findings by re-reading the family-base diff +
- * `.cmr-focus.md`, mirroring how the cmr worker itself reviews).
- */
-export interface FamilyCoderFixRequest {
-  /** The family base branch the fix lands on (a new commit). */
-  readonly familyBase: string;
-  /** The integrated cmr's one-line non-convergence reason — the fix focus. */
-  readonly reason: string;
-}
-
-/** The family integrated-cmr fix worker's outcome (mirrors {@link CoderOutput}). */
-export interface FamilyCoderFixResult {
-  /** Did the fix worker create at least one new commit this round? */
-  readonly committed: boolean;
-  /** How many new commits it added this round. */
-  readonly commitsAdded: number;
-  /**
-   * Model-stuck signal: the fix worker judged the finding unfixable as stated (it
-   * conflicts with the epic spec / rests on a real design gap). Present ⇒ the hook
-   * escalates 续跑 rather than re-running the cmr (it cannot make progress).
-   */
-  readonly escalate?: { readonly reason: string; readonly diagnosis: string };
 }
 
 /** What opening the family PR needs (decision 4, 止于 PR). */

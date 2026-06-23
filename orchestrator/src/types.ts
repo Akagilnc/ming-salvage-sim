@@ -59,8 +59,11 @@ export type HandoffStatus = "success" | "escalate" | "error";
  * - `"coder"`: full dev-discipline soul (wiki TDD flow, /review, self-check).
  * - `"READ-ONLY"`: reviewer soul with READ-ONLY soft constraint baked in
  *   (prompt-level, not an OS-level mount — same image, separate `run()`).
+ * - `"cmr"`: the family integrated-cmr fixer soul (ADR 0026 2026-06-24) — a WRITE
+ *   soul: the cmr worker invokes `ak-cross-m-review` and commits its cross-slice
+ *   fixes inside its own memory-bearing session (it is the fixer, not read-only).
  */
-export type StepSoul = "coder" | "READ-ONLY";
+export type StepSoul = "coder" | "READ-ONLY" | "cmr";
 
 /**
  * Project tool-chain entry. Each entry is a short, lower-case technology slug
@@ -381,32 +384,6 @@ export interface DispatchContext {
    * single-slice workers and for a conflict-free family run.
    */
   readonly llmResolvedChildren?: ReadonlyArray<number>;
-  /**
-   * FAMILY coder-fix worker only (wiki Step 6 fix loop): the integrated cmr's
-   * one-line non-convergence reason, forwarded so the fix worker knows WHAT
-   * cross-slice issue to fix on the family base (the family cmr verdict is a bare
-   * `{converged, reason}`, so `reason` is the focus — the worker re-derives the
-   * concrete findings from the family-base diff). Undefined for every other worker.
-   */
-  readonly cmrReason?: string;
-  /**
-   * FAMILY integrated-cmr REVIEWER worker only (ADR 0026 corrected design): the
-   * PRIOR round's cmr findings/verdict, threaded into the NEXT reviewer dispatch as
-   * DATA — NOT via a resumed session. The reviewer is FRESH each round (cross-model
-   * independence — ADR 0026 line 20: 评审类每轮 fresh, never the `resumeSession`
-   * crash/escalate path), so continuity comes from passing the prior verdict as
-   * data, not from a session.
-   *
-   * CRITICAL: this is an EXTRA "confirm-resolved" task layered on top of a FULL
-   * review of the whole diff — it does NOT narrow the review scope. The reviewer
-   * re-reviews the WHOLE family-base diff with fresh eyes every round; the prior
-   * findings (when present) are merely an additional "also verify these earlier
-   * findings are now resolved" task. It must NEVER degenerate into "only check
-   * whether last round's findings got fixed" (see prompts/integrated_cmr.md).
-   *
-   * Undefined on the round-0 dispatch (no prior round) and for every other worker.
-   */
-  readonly priorFindings?: string;
 }
 
 /** A coder/fix worker's output — the existing {@link CoderOutput}. */
