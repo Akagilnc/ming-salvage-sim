@@ -305,6 +305,9 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       protected override packageScripts(_cwd: string): readonly string[] {
         return ["typecheck", "test"]; // orchestrator's scripts
       }
+      protected override isNodeProject(_cwd: string): boolean {
+        return true;
+      }
       runVerifyForTest(): void {
         this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
       }
@@ -333,6 +336,9 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       }
       protected override packageScripts(_cwd: string): readonly string[] {
         return ["typecheck", "test"];
+      }
+      protected override isNodeProject(_cwd: string): boolean {
+        return true;
       }
       runVerifyForTest(): void {
         this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
@@ -364,6 +370,9 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       protected override packageScripts(_cwd: string): readonly string[] {
         return ["typecheck", "test"];
       }
+      protected override isNodeProject(_cwd: string): boolean {
+        return true;
+      }
       runVerifyForTest(): void {
         this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
       }
@@ -379,12 +388,12 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     ]);
   });
 
-  it("#5: runs the project's OWN test script (e.g. web's `vitest run --environment jsdom`), skipping typecheck when undeclared", async () => {
-    // The dogfood verify_failed root cause (#5): web/ declares NO `typecheck` script
-    // and its test = `vitest run --environment jsdom`. A hardcoded `npx vitest run`
-    // dropped `--environment jsdom` → every jsdom render test threw `document is not
-    // defined`. Running `npm test` honours the project's real flags; typecheck is
-    // skipped because web/ does not declare it (no spurious failure / wrong command).
+  it("#5/R1-T3: runs web's OWN scripts — `npm run build` (its tsc check) then `npm test` (jsdom), never raw npx", async () => {
+    // #5: web/'s test = `vitest run --environment jsdom`; a hardcoded `npx vitest run`
+    // dropped `--environment jsdom` → `document is not defined`. R1 T3 (codex): web/
+    // has NO `typecheck` script — its TS check lives in `build` (`tsc -b && vite build`).
+    // So type-check must fall back to `npm run build`, NOT be silently skipped (else a
+    // web change with TS errors passes verify as long as Vitest does).
     const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
     class SpyBackend extends RealFamilyBackend {
       protected override sh(file: string, args: string[], cwd?: string): string {
@@ -397,16 +406,60 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       protected override packageScripts(_cwd: string): readonly string[] {
         return ["dev", "build", "test", "preview"]; // web's scripts — NO `typecheck`
       }
+      protected override isNodeProject(_cwd: string): boolean {
+        return true;
+      }
       runVerifyForTest(): void {
         this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
       }
     }
     new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/web" })).runVerifyForTest();
-    // Only `npm test` runs (no typecheck script) — and via the npm script, so the
-    // project's own `--environment jsdom` is honoured. NEVER a raw `npx`.
-    expect(calls.map((c) => `${c.file} ${c.args.join(" ")}`)).toEqual(["npm test"]);
+    // No `typecheck` script → fall back to `npm run build` (web's tsc check), THEN
+    // `npm test` (its own --environment jsdom). NEVER a raw `npx`.
+    expect(calls.map((c) => `${c.file} ${c.args.join(" ")}`)).toEqual([
+      "npm run build",
+      "npm test",
+    ]);
     expect(calls.some((c) => c.file === "npx")).toBe(false);
     expect(calls.every((c) => c.cwd === "/clone/root/web")).toBe(true);
+  });
+
+  it("R1-T2: a diff touching NO Node subproject (cwd undefined) → verify is a no-op, never npm in the clone root", async () => {
+    // codex R1 T2: `inferVerifyCwd` returns undefined for a docs/content/root-only
+    // diff. The old `?? workingRepo` fallback ran `npm install` + scripts in the clone
+    // ROOT (no package.json) → verify_failed for valid non-code changes. Now: skip.
+    const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
+    class SpyBackend extends RealFamilyBackend {
+      protected override sh(file: string, args: string[], cwd?: string): string {
+        calls.push({ file, args, cwd });
+        return "";
+      }
+      runVerifyForTest(): void {
+        this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
+      }
+    }
+    // No verifyCwd, and resolveVerifyCwd returns undefined (non-Node diff).
+    new SpyBackend(opts("/clone/root", { resolveVerifyCwd: () => undefined })).runVerifyForTest();
+    expect(calls).toEqual([]); // nothing installed, nothing run
+  });
+
+  it("R1-T1: depsInstalled is STALE (reinstall) when a manifest is newer than node_modules", () => {
+    // gemini R1 T1: a bare node_modules-exists check skips installing a dep a child
+    // PR added (package.json/lock newer than the last install) → verify on stale deps.
+    const proj = mkdtempSync(join(tmpdir(), "verify-stale-"));
+    execFileSync("bash", ["-c", `mkdir -p '${join(proj, "node_modules")}'`]);
+    execFileSync("bash", ["-c", `printf '{}' > '${join(proj, "package.json")}'`]);
+    // package.json written AFTER node_modules → stale.
+    class Probe extends RealFamilyBackend {
+      depsInstalledForTest(cwd: string): boolean {
+        return this.depsInstalled(cwd);
+      }
+    }
+    const be = new Probe(opts("/clone/root"));
+    expect(be.depsInstalledForTest(proj)).toBe(false); // stale → reinstall
+    // Touch node_modules newer than the manifest → fresh.
+    execFileSync("bash", ["-c", `sleep 0.05; touch '${join(proj, "node_modules")}'`]);
+    expect(be.depsInstalledForTest(proj)).toBe(true);
   });
 
   it("familyBaseStartHead returns the recorded start head", async () => {
