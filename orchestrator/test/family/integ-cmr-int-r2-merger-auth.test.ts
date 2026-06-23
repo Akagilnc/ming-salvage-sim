@@ -21,7 +21,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -80,6 +80,15 @@ describe("integ-cmr int-r2 A-1 — mountMergerAuth on an empty $HOME degrades, n
       auth = be.auth();
     }).not.toThrow();
     expect(auth?.claudeToken).toBeUndefined();
+  });
+  // cmr int-r3 A: a present-but-EMPTY/blank token file must normalize to undefined
+  // (so the preflight escalates) — NOT pass the `=== undefined` gate as "" and get
+  // injected as CLAUDE_CODE_OAUTH_TOKEN="" (which defeats the gate). Mirrors readGhToken.
+  it("present-but-empty .sc-claude-token ⇒ claudeToken undefined (not an empty string)", () => {
+    const blankHome = mkDir("merger-blank-token-home-");
+    writeFileSync(join(blankHome, ".sc-claude-token"), "   \n");
+    const be = new AuthBackend(baseOpts({ home: blankHome }));
+    expect(be.auth().claudeToken).toBeUndefined();
   });
 });
 

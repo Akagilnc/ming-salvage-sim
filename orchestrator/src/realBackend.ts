@@ -2251,7 +2251,11 @@ export class RealBackend implements Backend {
     }
     let claudeToken: string | undefined;
     try {
-      claudeToken = readFileSync(paths.claudeTokenFile, "utf8").trim();
+      const tok = readFileSync(paths.claudeTokenFile, "utf8").trim();
+      // A present-but-empty/blank token file ⇒ undefined (the ship preflight
+      // escalates), NOT an injected empty CLAUDE_CODE_OAUTH_TOKEN="" that defeats
+      // the gate (cmr int-r3 A; matches readGhToken's empty-string normalization).
+      claudeToken = tok === "" ? undefined : tok;
     } catch {
       // claude token absent ⇒ the top-level claude worker degrades (no env var).
     }
