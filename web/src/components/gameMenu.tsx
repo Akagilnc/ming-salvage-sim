@@ -485,120 +485,124 @@ export function LLMConfigTab() {
           </label>
         </>
       ) : null}
-      <label className="menu-field">
-        <span>Base URL</span>
-        <input
-          className="menu-input"
-          value={baseUrl}
-          onChange={(e) => setBaseUrl(e.target.value)}
-          placeholder="https://api.openai.com/v1"
-        />
-      </label>
-      <label className="menu-field">
-        <span>Model</span>
-        <input
-          className="menu-input"
-          value={model}
-          onChange={(e) => setModel(e.target.value)}
-          placeholder="gpt-4o-mini"
-        />
-      </label>
-      <label className="menu-field">
-        <span>Thinking Level <small className="menu-hint">（空=默认，请填写你的模型支持的值。）</small></span>
-        <input
-          className="menu-input"
-          value={thinkingLevel}
-          onChange={(e) => setThinkingLevel(e.target.value)}
-          placeholder="默认"
-        />
-      </label>
-      <label className="menu-field">
-        <span>Advanced Model <small className="menu-hint">（推演 + 打分专用，空=与 Model 一致）</small></span>
-        <input
-          className="menu-input"
-          value={advancedModel}
-          onChange={(e) => setAdvancedModel(e.target.value)}
-          placeholder="deepseek-reasoner / gpt-5（留空 fallback）"
-        />
-      </label>
-      <label className="menu-field">
-        <span>Advanced Base URL <small className="menu-hint">（advanced 专用网关，空=与 Base URL 一致）</small></span>
-        <input
-          className="menu-input"
-          value={advancedBaseUrl}
-          onChange={(e) => setAdvancedBaseUrl(e.target.value)}
-          placeholder="https://other-gateway/v1（留空复用主 Base URL）"
-        />
-      </label>
-      <label className="menu-field">
-        <span>
-          Advanced API Key{" "}
-          {info?.has_advanced_api_key ? (
-            <small className="ok">（当前已设置）</small>
-          ) : (
-            <small className="menu-hint">（空=复用主 API Key）</small>
-          )}
-        </span>
-        <input
-          className="menu-input"
-          type={show ? "text" : "password"}
-          value={advancedApiKey}
-          onChange={(e) => setAdvancedApiKey(e.target.value)}
-          placeholder="留空=复用主 API Key / 保留当前"
-        />
-      </label>
-      <label className="menu-field">
-        <span>Advanced Thinking Level <small className="menu-hint">（空=默认，请填写你的模型支持的值。）</small></span>
-        <input
-          className="menu-input"
-          value={advancedThinkingLevel}
-          onChange={(e) => setAdvancedThinkingLevel(e.target.value)}
-          placeholder="默认"
-        />
-      </label>
-      <label className="menu-field">
-        <span>Max Tokens</span>
-        <input
-          className="menu-input"
-          type="number"
-          min={256}
-          max={65536}
-          value={maxTokens}
-          onChange={(e) => setMaxTokens(e.target.value)}
-          placeholder="8000"
-        />
-      </label>
-      <label className="menu-field">
-        <span>Timeout Seconds</span>
-        <input
-          className="menu-input"
-          type="number"
-          min={10}
-          max={900}
-          value={timeoutSeconds}
-          onChange={(e) => setTimeoutSeconds(e.target.value)}
-          placeholder="180"
-        />
-      </label>
-      <label className="menu-field">
-        <span>
-          API Key{" "}
-          {info?.has_api_key ? <small className="ok">（当前已设置）</small> : <small className="warn">（未设置）</small>}
-        </span>
-        <div className="menu-row">
-          <input
-            className="menu-input"
-            type={show ? "text" : "password"}
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder={info?.has_api_key ? "留空保留当前" : "请输入"}
-            autoComplete="off"
-          />
-          <button className="menu-btn" type="button" onClick={() => setShow((v) => !v)}>
-            {show ? "隐" : "显"}
-          </button>
-        </div>
-      </label>
+      {channel === "api" ? (
+        <>
+          <label className="menu-field">
+            <span>Base URL</span>
+            <input
+              className="menu-input"
+              value={baseUrl}
+              onChange={(e) => setBaseUrl(e.target.value)}
+              placeholder="https://api.openai.com/v1"
+            />
+          </label>
+          <label className="menu-field">
+            <span>Model</span>
+            <input
+              className="menu-input"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              placeholder="gpt-4o-mini"
+            />
+          </label>
+          <label className="menu-field">
+            <span>Thinking Level <small className="menu-hint">（空=默认，请填写你的模型支持的值。）</small></span>
+            <input
+              className="menu-input"
+              value={thinkingLevel}
+              onChange={(e) => setThinkingLevel(e.target.value)}
+              placeholder="默认"
+            />
+          </label>
+          <label className="menu-field">
+            <span>Advanced Model <small className="menu-hint">（推演 + 打分专用，空=与 Model 一致）</small></span>
+            <input
+              className="menu-input"
+              value={advancedModel}
+              onChange={(e) => setAdvancedModel(e.target.value)}
+              placeholder="deepseek-reasoner / gpt-5（留空 fallback）"
+            />
+          </label>
+          <label className="menu-field">
+            <span>Advanced Base URL <small className="menu-hint">（advanced 专用网关，空=与 Base URL 一致）</small></span>
+            <input
+              className="menu-input"
+              value={advancedBaseUrl}
+              onChange={(e) => setAdvancedBaseUrl(e.target.value)}
+              placeholder="https://other-gateway/v1（留空复用主 Base URL）"
+            />
+          </label>
+          <label className="menu-field">
+            <span>
+              Advanced API Key{" "}
+              {info?.has_advanced_api_key ? (
+                <small className="ok">（当前已设置）</small>
+              ) : (
+                <small className="menu-hint">（空=复用主 API Key）</small>
+              )}
+            </span>
+            <input
+              className="menu-input"
+              type={show ? "text" : "password"}
+              value={advancedApiKey}
+              onChange={(e) => setAdvancedApiKey(e.target.value)}
+              placeholder="留空=复用主 API Key / 保留当前"
+            />
+          </label>
+          <label className="menu-field">
+            <span>Advanced Thinking Level <small className="menu-hint">（空=默认，请填写你的模型支持的值。）</small></span>
+            <input
+              className="menu-input"
+              value={advancedThinkingLevel}
+              onChange={(e) => setAdvancedThinkingLevel(e.target.value)}
+              placeholder="默认"
+            />
+          </label>
+          <label className="menu-field">
+            <span>Max Tokens</span>
+            <input
+              className="menu-input"
+              type="number"
+              min={256}
+              max={65536}
+              value={maxTokens}
+              onChange={(e) => setMaxTokens(e.target.value)}
+              placeholder="8000"
+            />
+          </label>
+          <label className="menu-field">
+            <span>Timeout Seconds</span>
+            <input
+              className="menu-input"
+              type="number"
+              min={10}
+              max={900}
+              value={timeoutSeconds}
+              onChange={(e) => setTimeoutSeconds(e.target.value)}
+              placeholder="180"
+            />
+          </label>
+          <label className="menu-field">
+            <span>
+              API Key{" "}
+              {info?.has_api_key ? <small className="ok">（当前已设置）</small> : <small className="warn">（未设置）</small>}
+            </span>
+            <div className="menu-row">
+              <input
+                className="menu-input"
+                type={show ? "text" : "password"}
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder={info?.has_api_key ? "留空保留当前" : "请输入"}
+                autoComplete="off"
+              />
+              <button className="menu-btn" type="button" onClick={() => setShow((v) => !v)}>
+                {show ? "隐" : "显"}
+              </button>
+            </div>
+          </label>
+        </>
+      ) : null}
       <div className="menu-row">
         <button className="menu-btn primary" onClick={onSave} disabled={busy}>
           {busy ? <Loader2 size={14} className="spin" /> : <Check size={14} />} 保存并应用

@@ -83,6 +83,10 @@ function App() {
   // HITL 决策点：颁诏推演若出重大抉择，暂停弹窗逐个亲裁，裁完续跑结算。
   const [pendingDecisions, setPendingDecisions] = React.useState<PendingDecision[]>([]);
 
+  // Tracks the current selected minister across async boundaries.
+  // State closures capture stale values; this ref always reflects the latest.
+  const selectedMinisterRef = React.useRef<string>("");
+
   const loadState = React.useCallback(async () => {
     const data = await api<GameState>("/api/game/state");
     refreshLabelMaps(data);
@@ -94,6 +98,13 @@ function App() {
 
   const loadMinisterChat = React.useCallback(async (ministerName: string) => {
     const data = await api<{ minister: Minister; history: ChatMessage[]; suggestions: Suggestion[]; can_undo_last_chat: boolean }>(`/api/ministers/${encodeURIComponent(ministerName)}/chat`);
+    // Staleness guard (#325, broad-scope): the player may have switched ministers
+    // while this history fetch was in flight. Dropping the UI write prevents the
+    // late history from bleeding into the now-selected minister's panel — this path
+    // reproduces the bleed WITHOUT sending a message (just switch fast). Same
+    // selectedMinisterRef gate as sendChat. loadMinisterChat writes ONLY
+    // minister-panel state, so a blanket early return is safe (nothing global to skip).
+    if (selectedMinisterRef.current !== ministerName) return;
     const allKnown = [
       ...(state?.ministers || []),
       ...(state?.consorts || []),
@@ -207,6 +218,10 @@ function App() {
     setActiveModal("report");
     setGazetteShown(currentTurn);
   }, [state, gazetteShown, endingDismissed]);
+
+  React.useEffect(() => {
+    selectedMinisterRef.current = selectedMinister;
+  }, [selectedMinister]);
 
   React.useEffect(() => {
     if (!selectedMinister) {
@@ -345,6 +360,7 @@ function App() {
       return;
     }
 
+    const targetMinisterName = activeMinister.name;
     const fromComposer = text === input;
     setPendingUserMessage(message);
     setStreamingMinisterMessage("");
@@ -356,9 +372,14 @@ function App() {
       setInput("");
     }
     try {
-      const data = await streamChat(activeMinister.name, message, (delta) => {
-        setStreamingMinisterMessage((current) => current + delta);
+      const data = await streamChat(targetMinisterName, message, (delta) => {
+        if (selectedMinisterRef.current === targetMinisterName) {
+          setStreamingMinisterMessage((current) => current + delta);
+        }
       });
+      // Staleness guard: player switched ministers while the request was in-flight;
+      // discard all minister-specific UI updates to avoid cross-minister notice bleed.
+      if (selectedMinisterRef.current !== targetMinisterName) return;
       setPendingUserMessage("");
       setStreamingMinisterMessage("");
       setChat(data.history);
@@ -371,10 +392,10 @@ function App() {
         .then(({ orders }) => setSecretOrders(orders))
         .catch(() => {});
       if (data.secret_order_id) {
-        setChatNotice(`密令已秘密交付${activeMinister.name}，编号 #${data.secret_order_id}。`);
+        setChatNotice(`密令已秘密交付${targetMinisterName}，编号 #${data.secret_order_id}。`);
       }
       if (data.proposed_directive) {
-        setChatNotice(`${activeMinister.name}已拟旨一道，待陛下在「诏书草案」核定（准/驳）。`);
+        setChatNotice(`${targetMinisterName}已拟旨一道，待陛下在「诏书草案」核定（准/驳）。`);
       }
       if (data.next_minister) {
         setChat([]);
@@ -388,7 +409,7 @@ function App() {
       }
       if (data.court_action === "dismiss") {
         setPendingUserMessage("");
-        setChatNotice(`${activeMinister.name}已退下。请从左侧召见下一位大臣。`);
+        setChatNotice(`${targetMinisterName}已退下。请从左侧召见下一位大臣。`);
       }
     } catch (err) {
       if (fromComposer) {
@@ -404,6 +425,7 @@ function App() {
 
   const undoLastChat = async () => {
     if (busy || !activeMinister || !canUndoLastChat) return;
+    const targetMinisterName = activeMinister.name;
     const ok = window.confirm("将撤回最近一轮召对及其政务影响，是否继续？");
     if (!ok) return;
     setBusy("撤回召对");
@@ -413,16 +435,26 @@ function App() {
     setPendingUserMessage("");
     setStreamingMinisterMessage("");
     try {
-      const data = await api<ChatUndoResponse>(`/api/ministers/${encodeURIComponent(activeMinister.name)}/chat/undo`, {
+      const data = await api<ChatUndoResponse>(`/api/ministers/${encodeURIComponent(targetMinisterName)}/chat/undo`, {
         method: "POST",
       });
-      setChat(data.history);
-      setSuggestions(data.suggestions);
-      setCanUndoLastChat(!!data.can_undo_last_chat);
+      // Undo's GLOBAL effects (secret orders / directives / full state) apply
+      // regardless — the undo mutated game state, not just the panel. But the
+      // minister-PANEL writes (history / suggestions / undo-availability / notice)
+      // are gated on the staleness guard (#325, broad-scope): openChat does NOT
+      // block on `busy`, so the player can switch ministers during the undo POST;
+      // writing A's post-undo history into B's open panel is the same bleed.
       setSecretOrders(data.secret_orders || []);
       setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count } : current));
       await loadState();
-      setChatNotice("已撤回最近一轮召对。");
+      // Read the ref FRESH at the panel-write point (the minister could switch
+      // during the awaits above), mirroring sendChat's post-await check.
+      if (selectedMinisterRef.current === targetMinisterName) {
+        setChat(data.history);
+        setSuggestions(data.suggestions);
+        setCanUndoLastChat(!!data.can_undo_last_chat);
+        setChatNotice("已撤回最近一轮召对。");
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
