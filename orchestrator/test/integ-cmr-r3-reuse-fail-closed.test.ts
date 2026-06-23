@@ -34,7 +34,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "prompts");
 
 const ISSUE = 256;
-const BRANCH = `feat/244-orchestrator-issue-${ISSUE}`;
+const BRANCH = `feat/issue-${ISSUE}`; // #1: neutral prefix (matches branchForIssue)
 const SOURCE = "/tmp/source";
 const REMOTE = "https://github.com/owner/name.git";
 const HOME = "/tmp/home";

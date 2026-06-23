@@ -69,6 +69,7 @@ class LedgerBackend implements Backend {
       number: issueNumber,
       isReadyForAgent: true,
       hasSubIssues: false,
+      isClosed: false,
       openBlockedBy: [],
     };
   }

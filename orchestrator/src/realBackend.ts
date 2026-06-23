@@ -131,6 +131,15 @@ export function isReadyForAgent(json: GhIssueJson): boolean {
 }
 
 /**
+ * Is the issue itself CLOSED (#2)? gh `--json state` returns "OPEN"/"CLOSED"
+ * (upper-case); judge case-insensitively. A missing/odd state ⇒ not closed (the
+ * S0 gate only rejects a definitively-closed issue, never an unknown state).
+ */
+export function isClosedIssue(json: GhIssueJson): boolean {
+  return (json.state ?? "").toUpperCase() === "CLOSED";
+}
+
+/**
  * Build the S0 {@link IssueMeta} from the gh JSON + the native blocked_by list +
  * the native sub-issue count. The three-way accept condition the runner enforces
  * is derived from these fields (rfa ∧ no sub-issues ∧ all blocked_by closed).
@@ -152,6 +161,7 @@ export function buildIssueMeta(
     number: json.number ?? issueNumber,
     isReadyForAgent: isReadyForAgent(json),
     hasSubIssues: subIssueCount > 0,
+    isClosed: isClosedIssue(json),
     openBlockedBy: blockedBy
       .filter((d) => d.state !== "closed")
       .map((d) => d.number),
@@ -396,13 +406,19 @@ export function matchWorktreeForBranch(
  */
 /**
  * The resident slice branch name for an issue — the single source of the
- * `feat/244-orchestrator-issue-<n>` convention `prepareWorktree` cuts under, and
- * the inverse of {@link issueNumberFromBranch}. Exported so the family layer can
- * recover a child's branch from its issue when reconcile is handed only the issue
- * number (#291, agy/codex R1). Pure → unit-tested without git.
+ * `feat/issue-<n>` convention `prepareWorktree` cuts under, and the inverse of
+ * {@link issueNumberFromBranch}. Exported so the family layer can recover a
+ * child's branch from its issue when reconcile is handed only the issue number
+ * (#291, agy/codex R1). Pure → unit-tested without git.
+ *
+ * NEUTRAL prefix (#1): the earlier `feat/244-orchestrator-issue-<n>` baked in a
+ * hardcoded `244` (the #244 epic) — wrong for every other issue, and
+ * `issueNumberFromBranch`'s fallback could mis-read that leading run as the
+ * issue. The name now carries ONLY the real issue number; the `issue-<n>` token
+ * stays so the inverse parses it unchanged.
  */
 export function branchForIssue(issueNumber: number): string {
-  return `feat/244-orchestrator-issue-${issueNumber}`;
+  return `feat/issue-${issueNumber}`;
 }
 
 export function issueNumberFromBranch(branch: string): number {
@@ -1413,11 +1429,12 @@ export class RealBackend implements Backend {
     // a blocked-by-open issue (blocked_by query fault → [] → no blockers → allow)
     // slip past the pinned S0 three-way gate and run from a stale base.
     const json = this.phase("S0", "fetchIssueView", () => {
-      // S0 reads ONLY the gate fields: labels (ready-for-agent) here, plus the
-      // native sub-issue count + blocked_by from their own queries below. It does
-      // NOT pull body/comments — the Agent Brief is no longer an S0 gate (#328),
-      // so `comments` would only trigger gh's paginated preloadIssueComments for
-      // no consumer, and S1's full snapshot re-fetches both anyway (#329 perf).
+      // S0 reads ONLY the gate fields: labels (ready-for-agent) + state (closed?,
+      // #2) here, plus the native sub-issue count + blocked_by from their own
+      // queries below. It does NOT pull body/comments — the Agent Brief is no
+      // longer an S0 gate (#328), so `comments` would only trigger gh's paginated
+      // preloadIssueComments for no consumer, and S1's full snapshot re-fetches
+      // both anyway (#329 perf).
       const raw = this.sh("gh", [
         "issue",
         "view",
@@ -1425,7 +1442,7 @@ export class RealBackend implements Backend {
         "--repo",
         this.opts.repo,
         "--json",
-        "number,labels",
+        "number,labels,state",
       ]);
       return JSON.parse(raw) as GhIssueJson;
     });
