@@ -495,6 +495,8 @@ export interface IssueMeta {
   readonly number: number;
   readonly isReadyForAgent: boolean;
   readonly hasSubIssues: boolean;
+  /** The issue itself is CLOSED (gh `state` === "CLOSED") — S0 rejects it (#2). */
+  readonly isClosed: boolean;
   /** Issue numbers of still-open blocked_by dependencies. */
   readonly openBlockedBy: ReadonlyArray<number>;
 }

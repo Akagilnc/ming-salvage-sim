@@ -29,7 +29,7 @@ const SOURCE = "/Users/me/WorkSpace/Ming_LLM";
 const REMOTE = "https://github.com/Akagilnc/ming-salvage-sim.git";
 const HOME = "/tmp/home";
 const ISSUE = 256;
-const BRANCH = `feat/244-orchestrator-issue-${ISSUE}`;
+const BRANCH = `feat/issue-${ISSUE}`; // #1: neutral prefix (matches branchForIssue)
 
 const CLONE = clonePathFor(HOME, repoSlug(SOURCE, REMOTE), 291);
 const EXISTING_WT = `${CLONE}/.sandcastle/worktrees/issue-256`;

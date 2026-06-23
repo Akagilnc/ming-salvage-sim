@@ -1263,6 +1263,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           return await errorTermination("S0", err);
         }
 
+        if (meta.isClosed) {
+          // #2: a CLOSED issue is already done — admitting it would spin a coder on
+          // a finished slice (the dogfood pulled closed game issues). Fail-closed,
+          // like the other three gate conditions.
+          throw new Error(
+            `S0 input gate: issue #${issueNumber} is CLOSED. ` +
+              `Feed an open, ready-for-agent slice; a closed issue is already done.`,
+          );
+        }
+
         if (!meta.isReadyForAgent) {
           throw new Error(
             `S0 input gate: issue #${issueNumber} is not labelled ready-for-agent. ` +

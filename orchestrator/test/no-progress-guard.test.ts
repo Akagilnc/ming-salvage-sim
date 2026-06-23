@@ -40,6 +40,7 @@ const COMPLIANT_META: IssueMeta = {
   number: 254,
   isReadyForAgent: true,
   hasSubIssues: false,
+  isClosed: false,
   openBlockedBy: [],
 };
 

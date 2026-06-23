@@ -19,6 +19,7 @@ import { describe, expect, it } from "vitest";
 import {
   assertCompletionSignal,
   attributeFailure,
+  branchForIssue,
   buildAuthPaths,
   buildIssueMeta,
   buildIssueSnapshot,
@@ -85,6 +86,7 @@ describe("realBackend gh parsing", () => {
       number: 256,
       isReadyForAgent: true,
       hasSubIssues: false,
+      isClosed: false,
       openBlockedBy: [254], // only the open one
     });
   });
@@ -94,12 +96,28 @@ describe("realBackend gh parsing", () => {
     expect(meta.hasSubIssues).toBe(true);
   });
 
+  it("buildIssueMeta derives isClosed from gh state (#2: case-insensitive CLOSED)", () => {
+    // gh issue view --json state returns "OPEN"/"CLOSED" (upper). A closed issue
+    // must be admitted-rejected at S0 so a coder is never spun up on a done slice.
+    expect(buildIssueMeta(327, { labels: [], state: "CLOSED" }, [], 0).isClosed).toBe(true);
+    expect(buildIssueMeta(327, { labels: [], state: "closed" }, [], 0).isClosed).toBe(true);
+    expect(buildIssueMeta(327, { labels: [], state: "OPEN" }, [], 0).isClosed).toBe(false);
+    expect(buildIssueMeta(327, { labels: [], state: "open" }, [], 0).isClosed).toBe(false);
+    // Missing state ⇒ not closed (tolerate the empty case, like the other fields).
+    expect(buildIssueMeta(327, { labels: [] }, [], 0).isClosed).toBe(false);
+    // R1 T2 (gemini): a non-string state (malformed/odd mock) must NOT throw on
+    // `.toUpperCase()` — treated as not-closed.
+    expect(buildIssueMeta(327, { labels: [], state: 1 as unknown as string }, [], 0).isClosed).toBe(false);
+    expect(buildIssueMeta(327, { labels: [], state: null }, [], 0).isClosed).toBe(false);
+  });
+
   it("buildIssueMeta tolerates missing gh fields (empty case)", () => {
     const meta = buildIssueMeta(99, {}, [], 0);
     expect(meta).toEqual({
       number: 99,
       isReadyForAgent: false,
       hasSubIssues: false,
+      isClosed: false,
       openBlockedBy: [],
     });
   });
@@ -335,6 +353,25 @@ describe("realBackend issueNumberFromBranch (suffix-safe extraction)", () => {
 
   it("returns 0 when the branch carries no digits", () => {
     expect(issueNumberFromBranch("feat/no-number-here")).toBe(0);
+  });
+});
+
+// ─── branchForIssue (#1: no hardcoded 244-orchestrator epic number) ──────────
+
+describe("realBackend branchForIssue (neutral, no fake epic number)", () => {
+  it("derives a branch name that does NOT bake in a wrong/fixed epic number", () => {
+    const b = branchForIssue(256);
+    // The bug was `feat/244-orchestrator-issue-256` — a hardcoded 244 that is the
+    // wrong epic for every issue except 244. The name must carry ONLY the real
+    // issue number, no spurious leading digit run.
+    expect(b).not.toMatch(/244/);
+    expect(b).toContain("issue-256");
+  });
+
+  it("round-trips through issueNumberFromBranch (the inverse must still parse it)", () => {
+    for (const n of [12, 71, 256, 327]) {
+      expect(issueNumberFromBranch(branchForIssue(n))).toBe(n);
+    }
   });
 });
 
@@ -958,6 +995,7 @@ describe("realBackend fetchIssueMeta S0 perf (#329)", () => {
       number: 329,
       isReadyForAgent: true,
       hasSubIssues: false,
+      isClosed: false,
       openBlockedBy: [],
     });
   });

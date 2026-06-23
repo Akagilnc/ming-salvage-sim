@@ -190,6 +190,16 @@ export interface RealFamilyBackendOptions {
    * family run always returns verify_failed). Defaults to `workingRepo`.
    */
   readonly verifyCwd?: string;
+  /**
+   * LAZY verify-cwd resolver (#4): when `verifyCwd` is not set, this is called at
+   * verify TIME (after the children have merged onto the family base) to infer the
+   * cwd from the live family diff — the dominant changed subproject. It runs lazily
+   * because at CONSTRUCTION the family base is freshly cut (an empty diff); the
+   * verifiable change only exists once merges have landed. Returns `undefined` when
+   * nothing maps to a known subproject → verify falls back to `workingRepo`.
+   * Precedence: `verifyCwd` (explicit) > `resolveVerifyCwd()` (inferred) > `workingRepo`.
+   */
+  readonly resolveVerifyCwd?: () => string | undefined;
   /** GitHub repo slug for `gh` (`owner/name`) — for openFamilyPr. */
   readonly repo: string;
   /** The base branch the family PR targets (e.g. an integration branch or "main"). */
@@ -630,11 +640,127 @@ export class RealFamilyBackend implements FamilyBackend {
    * `npx tsc` / `npx vitest` run. A non-zero exit throws (the caller packages it).
    */
   protected runVerifyCommands(_request: FamilyVerifyRequest): void {
-    // Run where the Node project lives (verifyCwd), NOT the clone root — else npx
-    // finds no package.json/config (online R2 Codex P1).
-    const cwd = this.opts.verifyCwd ?? this.opts.workingRepo;
-    this.sh("npx", ["tsc", "--noEmit"], cwd);
-    this.sh("npx", ["vitest", "run"], cwd);
+    // Run where the Node project lives, NOT the clone root — else npx finds no
+    // package.json/config (online R2 Codex P1). Precedence (#4): explicit verifyCwd
+    // > the lazy diff-inferred cwd (the dominant changed subproject) > the clone root.
+    let cwd: string | undefined;
+    if (this.opts.verifyCwd !== undefined) {
+      // An EXPLICIT verifyCwd that is not a Node project is a caller MISCONFIG —
+      // fail CLOSED (R1 T3 codex), never silent-pass an un-verified merge.
+      cwd = this.opts.verifyCwd;
+      if (!this.isNodeProject(cwd)) {
+        throw new Error(
+          `verifyCwd "${cwd}" is not a Node project (no package.json) — failing ` +
+            `closed rather than passing family verify with nothing installed / ` +
+            `typechecked / tested.`,
+        );
+      }
+    } else {
+      // No explicit cwd → infer from the family diff. A git/diff ERROR in the
+      // resolver THROWS (familyDiffFiles no longer swallows it) → verify_failed, NOT
+      // mistaken for "no Node subproject".
+      cwd = this.opts.resolveVerifyCwd?.();
+      // R3 (gemini high): the resolver is undefined for a SINGLE-project repo too
+      // (package.json at the clone ROOT — no subproject dir matches). Fall back to
+      // workingRepo, but ONLY when the root is ITSELF a Node project — so a single
+      // repo is verified, while a MULTI-project repo's non-Node root (R1 T2) is still
+      // skipped, never `npm install`ed.
+      if (cwd === undefined && this.isNodeProject(this.opts.workingRepo)) {
+        cwd = this.opts.workingRepo;
+      }
+      // Still undefined ⇒ the diff genuinely touches no Node project (multi-project
+      // repo, non-Node-only diff) ⇒ nothing to verify, skip.
+      if (cwd === undefined) return;
+    }
+    // #3 (dogfood death): the family clone is FRESH — no node_modules. Running
+    // `npx tsc` against a depless project errors with "This is not the tsc
+    // command you are looking for" (npx resolves a stub), so verify ALWAYS failed
+    // on a real run. Install deps FIRST. Idempotent: skip when node_modules is
+    // already present (a resume / re-verify must not re-install on every call).
+    if (!this.depsInstalled(cwd)) {
+      this.installDeps(cwd);
+    }
+    // #5 (dogfood): run the PROJECT'S OWN package.json scripts, NOT a hardcoded
+    // `npx tsc`/`npx vitest`. web/'s test script is `vitest run --environment jsdom`
+    // — a bare `npx vitest run` DROPS `--environment jsdom`, so every jsdom render
+    // test throws `document is not defined` and verify fails a perfectly good
+    // project. (The orchestrator's own scripts HAPPENED to match `npx tsc`/`vitest`,
+    // which is why this only surfaced on a foreign project — web/.) Run the declared
+    // `typecheck` (when present) + `test` scripts so each project's real flags/config
+    // (jsdom, tsc -b, …) are honoured.
+    const scripts = this.packageScripts(cwd);
+    // Type-check via the project's OWN command. R1 T3 (codex): web/ has NO `typecheck`
+    // script — its TS check lives in `build` (`tsc -b && vite build`, exactly what the
+    // game CI runs). Skipping it let a web change with TS/build errors pass verify as
+    // long as Vitest passed. Precedence: dedicated `typecheck` > `build` (the project's
+    // real type-checking build) > nothing. So types are NEVER silently skipped.
+    if (scripts.includes("typecheck")) {
+      this.sh("npm", ["run", "typecheck"], cwd);
+    } else if (scripts.includes("build")) {
+      this.sh("npm", ["run", "build"], cwd);
+    }
+    if (scripts.includes("test")) {
+      this.sh("npm", ["test"], cwd);
+    }
+  }
+
+  /**
+   * The script names declared in `cwd`'s package.json (`scripts` keys), so
+   * {@link runVerifyCommands} runs the project's OWN `typecheck`/`test` commands
+   * (#5) instead of a hardcoded `npx`. `protected` so a unit test drives the
+   * branches without a real FS. Returns [] on any read/parse failure (a non-Node
+   * dir verifies nothing — the deps install already failed loudly if it WAS a Node
+   * project missing deps).
+   */
+  /**
+   * Does `cwd` hold a Node project (a `package.json`)? The verify-skip guard (R1 T2)
+   * for non-Node diffs. `protected` so a unit test drives the skip branch without a
+   * real FS.
+   */
+  protected isNodeProject(cwd: string): boolean {
+    return existsSync(join(cwd, "package.json"));
+  }
+
+  protected packageScripts(cwd: string): readonly string[] {
+    try {
+      const pkg = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8")) as {
+        scripts?: Record<string, unknown>;
+      };
+      return Object.keys(pkg.scripts ?? {});
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Is the Node project at `cwd` already installed AND its install fresh? A bare
+   * `node_modules`-exists check (R1 T1, gemini) skips installing when `package.json`
+   * / `package-lock.json` changed AFTER the last install — e.g. a child PR added a
+   * dependency, or a resume after a coder updated deps — so verify would run against
+   * STALE deps and fail on missing/outdated packages. Treat node_modules as stale
+   * (→ reinstall) when either manifest's mtime is newer than node_modules'.
+   * `protected` so a unit test drives the install / skip branch without a real FS.
+   */
+  protected depsInstalled(cwd: string): boolean {
+    const nodeModules = join(cwd, "node_modules");
+    if (!existsSync(nodeModules)) return false;
+    const installedAt = statSync(nodeModules).mtimeMs;
+    for (const manifest of ["package.json", "package-lock.json"]) {
+      const p = join(cwd, manifest);
+      if (existsSync(p) && statSync(p).mtimeMs > installedAt) return false;
+    }
+    return true;
+  }
+
+  /**
+   * Install the Node project's deps in `cwd` before verify (#3). Prefer `npm ci`
+   * (a lockfile-exact, reproducible install) when a `package-lock.json` is
+   * present; fall back to `npm install` when it is not (`npm ci` REQUIRES a
+   * lockfile). `protected` for the same test-seam reason as {@link depsInstalled}.
+   */
+  protected installDeps(cwd: string): void {
+    const hasLock = existsSync(join(cwd, "package-lock.json"));
+    this.sh("npm", [hasLock ? "ci" : "install"], cwd);
   }
 
   // ─────────────────────── unified worker dispatch (#335) ───────────────────────
@@ -1517,7 +1643,7 @@ export class RealFamilyBackend implements FamilyBackend {
         // child would read as absent → reconcile re-merges it (a double-merge — the
         // exact failure MergeResult.childHead's contract exists to prevent — codex R1).
         // So derive the branch from the issue via the single-slice runner's own
-        // `feat/244-orchestrator-issue-<n>` convention when no explicit branch is given.
+        // `feat/issue-<n>` convention (branchForIssue) when no explicit branch is given.
         // (The proper end-state is to thread `childBranch` through ChildSlice/reconcile
         // — flagged to the driver unit; this fallback makes the seam WORK meanwhile.)
         const branch = childBranch ?? branchForIssue(childIssue);

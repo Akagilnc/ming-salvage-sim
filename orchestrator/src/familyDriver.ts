@@ -33,7 +33,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { RealBackend } from "./realBackend.js";
@@ -152,6 +152,106 @@ export function assertExternalBlockersCleared(
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// verifyCwd inference (#4: verify the project the change actually landed in)
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Infer the verify cwd from the family diff (#4). The dogfood verified
+ * `orchestrator/` while the change was in `web/` — verifying the WRONG project.
+ *
+ * `subprojects` is the ordered list of top-level dirs that hold a package.json
+ * (a verifiable Node project), RELATIVE to the clone root — e.g.
+ * `["orchestrator", "web"]`. A changed file is attributed to a subproject when
+ * its path starts with `<subproject>/`. We pick the subproject the MOST changed
+ * files land in (ties resolved by the `subprojects` order — "the first containing
+ * package.json"); a single-project change therefore trivially wins. This first
+ * slice deliberately picks ONE project (the dominant one), not "verify all" (the
+ * user's chosen scope — option 1, not option 2).
+ *
+ * Returns the ABSOLUTE verify cwd (`join(workingRepo, <subproject>)`), or
+ * `undefined` when no changed file maps to a known subproject (or the diff is
+ * empty) — the caller then falls back to the explicit option / the default.
+ * Pure → unit-tested without git.
+ */
+export function inferVerifyCwd(
+  changedFiles: ReadonlyArray<string>,
+  subprojects: ReadonlyArray<string>,
+  workingRepo: string,
+): string | undefined {
+  const counts = new Map<string, number>();
+  for (const file of changedFiles) {
+    for (const sub of subprojects) {
+      if (sub.length > 0 && file.startsWith(sub + "/")) {
+        counts.set(sub, (counts.get(sub) ?? 0) + 1);
+        break; // a file belongs to the first matching subproject only
+      }
+    }
+  }
+  if (counts.size === 0) return undefined;
+  // Most-changed wins; ties broken by the subprojects order (stable: iterate
+  // subprojects, keep the running best only when STRICTLY greater).
+  let best: string | undefined;
+  let bestCount = 0;
+  for (const sub of subprojects) {
+    const c = counts.get(sub) ?? 0;
+    if (c > bestCount) {
+      best = sub;
+      bestCount = c;
+    }
+  }
+  return best === undefined ? undefined : join(workingRepo, best);
+}
+
+/**
+ * Discover the clone's top-level subprojects (#4): every immediate child dir that
+ * holds a `package.json` (a verifiable Node project) — e.g. `["orchestrator",
+ * "web"]`. The root's own package.json (if any) is intentionally NOT included as a
+ * subproject token here: a changed file is attributed to `<subproject>/…`, and a
+ * root project would match everything; the verify default already covers the root.
+ * Best-effort: an unreadable clone dir yields [] (the resolver then returns
+ * undefined and verify falls back to the clone root).
+ */
+function discoverSubprojects(workingRepo: string): string[] {
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = readdirSync(workingRepo, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((e) => e.isDirectory() && existsSync(join(workingRepo, e.name, "package.json")))
+    .map((e) => e.name)
+    .sort();
+}
+
+/**
+ * The family diff's changed file paths (#4): `git diff --name-only
+ * <familyBaseStartHead>...<familyBase>` — the files the merged children added
+ * since the base was cut. Run at verify TIME (the children have merged).
+ *
+ * Does NOT swallow git errors (R1 T3 codex): a clean git run with no diff returns
+ * [] (a legitimate "no changes" the caller treats as nothing-to-verify), but a git
+ * FAILURE (bad ref / repo error) must THROW so the verify FAILS CLOSED — an
+ * inference failure must never be mistaken for "no Node subproject changed" and
+ * silently green-light an un-verified merge.
+ */
+function familyDiffFiles(
+  workingRepo: string,
+  familyBaseStartHead: string,
+  familyBase: string,
+  sh: Sh,
+): string[] {
+  const out = sh("git", [
+    "-C",
+    workingRepo,
+    "diff",
+    "--name-only",
+    `${familyBaseStartHead}...${familyBase}`,
+  ]);
+  return out.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // gh reader (a thin injectable subprocess seam)
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -227,6 +327,13 @@ export interface FamilyDriverOptions {
   readonly familyBase: string;
   /** The branch the family PR targets (e.g. "main"). */
   readonly base: string;
+  /**
+   * EXPLICIT per-run override of the verify cwd (#4) — the absolute dir the family
+   * verify (`npm ci` + `npx tsc`/`vitest`) runs in. When set it WINS over the
+   * diff-based inference and the default. Leave unset to auto-infer from the family
+   * diff (the dominant changed subproject), falling back to the clone root.
+   */
+  readonly verifyCwd?: string;
   /** Dir holding the versioned single-slice promptFiles (absolute). */
   readonly promptsDir: string;
   /** Dir holding the family-layer promptFiles (the merger conflict prompt). */
@@ -338,10 +445,21 @@ export async function runFamilyDriver(
       ? options.familyBackendFactory(workingRepo, familyBaseStartHead)
       : new RealFamilyBackend({
           workingRepo,
-          // The orchestrator Node project (package.json / vitest config) is the
-          // `orchestrator/` subdir of the full-repo clone — verify runs THERE,
-          // not the clone root (online R2 Codex P1).
-          verifyCwd: join(workingRepo, "orchestrator"),
+          // #4: verify the project the change ACTUALLY landed in, not a hardcoded
+          // `orchestrator/`. Precedence: an explicit per-run `verifyCwd` wins;
+          // otherwise infer LAZILY at verify time from the family diff (the
+          // dominant changed subproject), falling back to the clone root. The
+          // dogfood verified orchestrator/ while the change was in web/ — verifying
+          // the WRONG project. (The inference is lazy because at construction the
+          // family base is freshly cut → an empty diff; the change exists only once
+          // children have merged.)
+          verifyCwd: options.verifyCwd,
+          resolveVerifyCwd: () =>
+            inferVerifyCwd(
+              familyDiffFiles(workingRepo, familyBaseStartHead, options.familyBase, sh),
+              discoverSubprojects(workingRepo),
+              workingRepo,
+            ),
           familyBase: options.familyBase,
           ledgerDir: options.ledgerDir,
           repo: options.repo,
