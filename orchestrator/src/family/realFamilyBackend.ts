@@ -541,7 +541,11 @@ export class RealFamilyBackend implements FamilyBackend {
     const home = this.opts.home ?? homedir();
     let claudeToken: string | undefined;
     try {
-      claudeToken = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
+      const tok = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
+      // A present-but-empty/blank token file ⇒ undefined (the preflight escalates),
+      // NOT an injected empty CLAUDE_CODE_OAUTH_TOKEN="" that defeats the gate
+      // (cmr int-r3 A; matches readGhToken's `tok === "" ? undefined` normalization).
+      claudeToken = tok === "" ? undefined : tok;
     } catch {
       // claude token absent ⇒ the top-level merger worker degrades; the
       // runMergerAgent preflight returns a structured non-resolve.
@@ -956,7 +960,11 @@ export class RealFamilyBackend implements FamilyBackend {
 
     let claudeToken: string | undefined;
     try {
-      claudeToken = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
+      const tok = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
+      // A present-but-empty/blank token file ⇒ undefined (the preflight escalates),
+      // NOT an injected empty CLAUDE_CODE_OAUTH_TOKEN="" that defeats the gate
+      // (cmr int-r3 A; matches readGhToken's `tok === "" ? undefined` normalization).
+      claudeToken = tok === "" ? undefined : tok;
     } catch {
       // claude token absent ⇒ the Claude Agent leg degrades (no env var).
     }
@@ -1267,7 +1275,11 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     let claudeToken: string | undefined;
     try {
-      claudeToken = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
+      const tok = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
+      // A present-but-empty/blank token file ⇒ undefined (the preflight escalates),
+      // NOT an injected empty CLAUDE_CODE_OAUTH_TOKEN="" that defeats the gate
+      // (cmr int-r3 A; matches readGhToken's `tok === "" ? undefined` normalization).
+      claudeToken = tok === "" ? undefined : tok;
     } catch {
       // claude token absent ⇒ the top-level claude worker degrades (no env var).
     }
