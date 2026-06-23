@@ -23,12 +23,17 @@
  *   - "wave"  → run the family verify (typecheck + unit tests) against the family
  *     base; RED ⇒ `{ok:false}` (the spine aborts before the next wave) + an
  *     `aborted` ledger event (decision 3④/5).
- *   - "final" → run the FULL verify; green ⇒ run the integrated cross-model cmr
- *     承重闸 (decision 3⑥); converged ⇒ open the family PR (decision 4, 止于 PR) +
- *     `{ok:true}`; NOT-converged ⇒ run the wiki Step-6 FIX LOOP (dispatch a family
- *     coder-fix worker on the family base, re-run the cmr, loop toward convergence);
- *     only a DRIFT / no-progress loop (or a fix worker that itself escalates)
- *     escalates续跑 (#298) + `{ok:false}` — NOT escalate-on-first-finding.
+ *   - "final" → run the FULL verify; green ⇒ SCHEDULE the integrated cross-model cmr
+ *     承重闸 (decision 3⑥). The runner is a PURE SCHEDULER: dispatch/RESUME the cmr
+ *     REVIEWER worker → read its verdict (converged | findings | escalate) → on
+ *     `findings` dispatch/RESUME the coder-FIX worker, then loop back to RESUME the
+ *     reviewer. Converged ⇒ open the family PR (decision 4, 止于 PR) + `{ok:true}`.
+ *     The WORKER judges drift / convergence / termination (it is RESUMABLE, so it has
+ *     continuity across rounds; the discipline lives in the `ak-cross-m-review` skill
+ *     — Step 5 termination + Step 6 drift 三联, never hand-coded here). The runner
+ *     escalates续跑 (#298) + `{ok:false}` ONLY when the WORKER says so — the reviewer
+ *     emits `escalate`, OR the fix worker escalates / commits nothing. There is NO
+ *     drift constant, NO round counter, NO grade logic in this runner.
  *
  * The verify / cmr / PR / abort / escalate capabilities are reached as OPTIONAL
  * methods on the injected `FamilyBackend` (the frozen spine input is `{phase,
@@ -239,56 +244,51 @@ export async function runVerifyCmr(
     return INCOMPLETE_GATE;
   }
 
-  // ── integrated cmr FIX LOOP (wiki tdd-autonomous-dev Step 6 = ship-pre 正确性 cmr,
-  //    whose discipline is a fix loop to convergence — cross-model-review.md §修复).
-  //    ADR 0022 decision 4 ("止于 cmr 绿 / cmr 不收敛才叫人") presupposes a CONVERGENCE
-  //    LOOP: "不收敛" is "tried to fix and could not", NOT "the first round had a
-  //    finding". So: run the cmr; on a non-converged verdict, dispatch a family
-  //    coder-fix worker that fixes the cross-slice findings ON THE FAMILY BASE
-  //    (committing — like the per-slice S5 coder_fix), then RE-RUN the cmr, looping
-  //    toward convergence. The runner stays a PURE SCHEDULER — the fix worker
-  //    invokes `/tdd`, the cmr worker invokes `ak-cross-m-review`; this loop only
-  //    orchestrates cmr → fix → cmr.
+  // ── integrated cmr gate = PURE SCHEDULER (wiki tdd-autonomous-dev Step 6 =
+  //    ship-pre 正确性 cmr; the corrected design, 2026-06-23). The runner does NOT
+  //    judge drift / convergence / round counts — that is the WORKER's judgment,
+  //    住在 the versioned `ak-cross-m-review` skill (Step 5 termination + Step 6 drift
+  //    三联), never hand-coded here (orchestrator CLAUDE.md rule 3). The runner only
+  //    SCHEDULES: dispatch/RESUME the cmr REVIEWER worker → read its verdict
+  //    (converged | findings | escalate) → on `findings`, dispatch/RESUME the
+  //    coder-FIX worker (it invokes `/tdd`, commits a fix on the family base) → loop
+  //    back to RESUME the reviewer. Both workers are RESUMED across rounds (each
+  //    worker's prior sessionId threaded into its next dispatch), so the reviewer has
+  //    CONTINUITY and itself emits `escalate` when it cannot converge (drift) — the
+  //    runner relays that escalate, it never counts rounds. So the loop terminates
+  //    ONLY on the WORKER's verdict: a converged reviewer (→ 止于 PR), an escalated
+  //    reviewer (the worker judged it stuck), or a fix worker that escalates / commits
+  //    nothing (it cannot make progress). There is NO drift constant, NO round
+  //    counter, NO grade logic in this runner.
   //
-  //    TERMINATION (faithful to wiki §失败/升级 — "轮数本身不是停的依据, drift 检测才是",
-  //    no-3-cap): there is NO hard round cap. We escalate ONLY when the loop cannot
-  //    converge — a no-progress / DRIFT guard: the cmr's non-convergence reason did
-  //    not change across NO_PROGRESS_LIMIT consecutive rounds (the fix changed
-  //    nothing the reviewer sees). This mirrors the single-slice runner's
-  //    NO_PROGRESS_LIMIT + normalised-findings-key guard (runner.ts) — the wiki's
-  //    drift detection, not a round counter. A fix worker that itself escalates /
-  //    cannot commit also terminates the loop (it cannot make progress).
-  //
-  //    SIMPLIFICATION (flagged honestly): the wiki §失败/升级 prescribes "升级 model
-  //    重做一次 THEN drift 三联" — a model-upgrade retry BEFORE the drift strong-stop.
-  //    This layer implements the drift/no-progress strong-stop but NOT the
-  //    model-upgrade-once step (the family cmr/fix workers run at fixed model slugs
-  //    via the worker specs; per-round model escalation is not wired at this seam).
-  //    The conservative consequence is we may escalate to a human slightly EARLIER
-  //    than the wiki's full ladder would — never LATER, never a fabricated pass. The
-  //    drift signal itself is the single normalised-reason recurrence (not the full
-  //    "drift 三联"), same simplification the single-slice no-progress guard makes.
-  const NO_PROGRESS_LIMIT = 3;
-  let noProgressStreak = 0;
-  let prevReasonKey: string | undefined;
+  //    RESUME THREADING (mirrors the single-slice runner — src/runner.ts: capture
+  //    `WorkerResult.sessionId`, thread it back as `session:"resume"` +
+  //    `DispatchContext.resumeSessionId` on the SAME worker's next dispatch). A FRESH
+  //    first dispatch carries no resume id; every subsequent dispatch of that worker
+  //    resumes its own prior session so it keeps continuity across rounds.
+  let cmrResumeSessionId: string | undefined;
+  let fixResumeSessionId: string | undefined;
   for (;;) {
+    // Dispatch (round 0) / RESUME (later rounds) the cmr REVIEWER worker. On a resume
+    // round it continues its OWN prior session (continuity → it judges drift itself).
     const cmrResult = await dispatchOrAbort(
       familyBackend,
-      cmrWorkerSpec(),
+      cmrWorkerSpec(cmrResumeSessionId !== undefined ? "resume" : "fresh"),
       {
         familyBase,
         ...(llmResolvedChildren !== undefined && llmResolvedChildren.length > 0
           ? { llmResolvedChildren }
           : {}),
+        ...(cmrResumeSessionId !== undefined ? { resumeSessionId: cmrResumeSessionId } : {}),
       },
       phase,
       familyHeadAfter,
     );
-    // An ESCALATED cmr worker (model-judged stuck) is the family escalate续跑 path
-    // (decision 3⑥/4) — call the escalate seam with the worker's reason, NOT a bare
-    // INCOMPLETE_GATE (codex cmr R4 finding: keep escalate semantics). A
-    // crash/malformed result still cannot be reported as a pass — fail-safe to
-    // INCOMPLETE_GATE (decision 3⑤ "不静默吞"). #331's legacy wrapper produces neither.
+    // An ESCALATED cmr worker is the family escalate续跑 path (decision 3⑥/4): the
+    // worker — RESUMABLE, judging drift across its own rounds — decided it cannot
+    // converge. Relay its reason to the escalate seam (the runner did NOT count
+    // rounds). A crash/malformed result still cannot be reported as a pass —
+    // fail-safe to INCOMPLETE_GATE (decision 3⑤ "不静默吞").
     if (cmrResult.kind === "escalated") {
       await familyBackend.escalateFamily?.({
         reason: `${cmrResult.escalation.reason} — ${cmrResult.escalation.diagnosis}`,
@@ -309,35 +309,17 @@ export async function runVerifyCmr(
       });
       return INCOMPLETE_GATE;
     }
+    // Capture the reviewer's session so the NEXT round resumes it (continuity).
+    cmrResumeSessionId = cmrResult.sessionId ?? cmrResumeSessionId;
     const cmr = cmrResult.output;
-    if (cmr.converged) break; // ← the loop's only convergent exit (止于 PR below).
+    if (cmr.converged) break; // ← the worker's converged verdict → 止于 PR below.
 
-    // NOT converged ⇒ this is the wiki fix loop, NOT escalate-on-first-finding.
+    // `findings` (a non-converged verdict): the worker found a blocking cross-slice
+    // issue. Dispatch the coder-FIX worker to fix it (NOT escalate-on-first-finding).
     const reason = cmr.reason ?? "integrated cmr did not converge";
 
-    // DRIFT / no-progress guard (wiki §失败/升级, no-3-cap): if the SAME
-    // non-convergence reason recurs across NO_PROGRESS_LIMIT consecutive rounds, the
-    // fix is changing nothing the reviewer sees → the loop cannot converge →
-    // escalate续跑 (a human is needed). A reason that CHANGED is progress (resets the
-    // streak): a fresh cross-slice finding each round means the loop is advancing,
-    // and per the wiki it runs unbounded as long as it progresses.
-    const reasonKey = reason.trim().toLowerCase().replace(/\s+/g, " ");
-    if (prevReasonKey !== undefined && reasonKey === prevReasonKey) {
-      noProgressStreak += 1;
-    } else {
-      noProgressStreak = 0;
-    }
-    prevReasonKey = reasonKey;
-    if (noProgressStreak >= NO_PROGRESS_LIMIT - 1) {
-      // The cmr has now returned the SAME reason NO_PROGRESS_LIMIT times running
-      // (streak counts the REPEATS after the first occurrence). The fix loop is
-      // stuck — escalate续跑 (decision 3⑥/4), do NOT open a PR.
-      await familyBackend.escalateFamily?.({ reason });
-      return { ok: false, ran: true };
-    }
-
-    // No fix capability ⇒ the loop cannot run (no way to make progress). Escalate
-    // 续跑 with the cmr's reason — never a fabricated pass (decision 3⑤ 不静默吞).
+    // No fix capability ⇒ the loop cannot make progress → escalate续跑 with the cmr's
+    // reason (never a fabricated pass — decision 3⑤ 不静默吞).
     if (
       familyBackend.dispatchWorker === undefined &&
       familyBackend.runFamilyCoderFix === undefined
@@ -346,14 +328,18 @@ export async function runVerifyCmr(
       return { ok: false, ran: true };
     }
 
-    // Dispatch the family coder-fix worker to fix the cross-slice findings ON THE
-    // FAMILY BASE (a new commit), focused by the cmr's non-convergence `reason`. The
-    // worker invokes `/tdd` under the `coder` soul — the runner stays a pure
-    // scheduler. Then the loop re-runs the cmr to verify the fix.
+    // Dispatch (round 0) / RESUME (later rounds) the family coder-fix worker to fix
+    // the cross-slice findings ON THE FAMILY BASE (a new commit), focused by the
+    // cmr's non-convergence `reason`. It invokes `/tdd` under the `coder` soul — the
+    // runner stays a pure scheduler. Then the loop RESUMES the reviewer to re-review.
     const fixResult = await dispatchOrAbort(
       familyBackend,
-      familyCoderFixWorkerSpec(),
-      { familyBase, cmrReason: reason },
+      familyCoderFixWorkerSpec(fixResumeSessionId !== undefined ? "resume" : "fresh"),
+      {
+        familyBase,
+        cmrReason: reason,
+        ...(fixResumeSessionId !== undefined ? { resumeSessionId: fixResumeSessionId } : {}),
+      },
       phase,
       familyHeadAfter,
     );
@@ -374,14 +360,16 @@ export async function runVerifyCmr(
       });
       return INCOMPLETE_GATE;
     }
+    // Capture the fix worker's session so the NEXT fix round resumes it (continuity).
+    fixResumeSessionId = fixResult.sessionId ?? fixResumeSessionId;
     if (!fixResult.output.committed) {
-      // A 0-commit fix changed nothing on the family base → the next cmr round would
-      // see the identical findings (a guaranteed no-progress round). Escalate续跑
-      // now rather than spin a dead loop (the fix could not address the finding).
+      // A 0-commit fix changed nothing on the family base → no progress possible.
+      // Escalate续跑 now rather than spin a dead loop (the fix could not address the
+      // finding); the WORKER, not the runner, is the one that could not progress.
       await familyBackend.escalateFamily?.({ reason });
       return { ok: false, ran: true };
     }
-    // Committed a fix → loop back and re-run the integrated cmr to verify it.
+    // Committed a fix → loop back and RESUME the integrated cmr to re-review it.
   }
 
   // ── 止于 PR (decision 4): green verify + converged cmr ⇒ open the family PR and

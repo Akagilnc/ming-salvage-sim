@@ -1,21 +1,23 @@
 /**
- * Family integrated-cmr FIX LOOP (wiki tdd-autonomous-dev §执行脊柱 Step 6 +
- * cross-model-review §修复 / §终止信号).
+ * Family integrated-cmr gate = PURE SCHEDULER (corrected design, 2026-06-23).
  *
- * The load-bearing integrated cmr is wiki ship-pre 正确性 cmr, whose discipline is
- * a **fix loop to convergence** — review → fix → re-review → … — NOT escalate on
- * the FIRST non-converged verdict. ADR 0022 decision 4 ("止于 cmr 绿 / cmr 不收敛
- * 才叫人") presupposes a convergence LOOP: "不收敛" is "tried to converge and could
- * not", not "the first round had a finding".
+ * The runner (`verifyCmr.ts`) is a pure scheduler: it dispatches/resumes the cmr
+ * REVIEWER worker, reads its verdict (converged | findings | escalate), and on
+ * `findings` dispatches/resumes the coder-FIX worker, then loops back to the
+ * reviewer. It contains ZERO drift logic, ZERO round counters, ZERO grade logic —
+ * drift/convergence is the WORKER's judgment (the reviewer is RESUMABLE, so across
+ * rounds it has continuity and itself emits `escalate` when it cannot converge; the
+ * fix worker emits `escalate` when a finding is unfixable as stated).
  *
- * The bug being fixed: `verifyCmr.ts` escalated on the FIRST non-converged cmr.
- * The fix: on a non-converged family cmr, dispatch a family coder-fix worker that
- * fixes the findings ON THE FAMILY BASE (committing), then RE-RUN the family cmr,
- * looping toward convergence. Termination is faithful to the wiki §失败/升级:
- *   - converged ⇒ ok:true (proceed to 止于 PR);
- *   - drift / no-progress (the cmr's non-convergence reason does not change across
- *     consecutive rounds) ⇒ escalate (NOT a hard round cap, NOT first-finding);
- *   - a fix worker that itself escalates / fails ⇒ escalate (cannot make progress).
+ *   - reviewer `converged` round 0 ⇒ ok:true, NO fix dispatched (止于 PR).
+ *   - reviewer `findings` ⇒ resume coder-fix ⇒ resume reviewer `converged` ⇒ ok:true.
+ *   - reviewer `escalate` (the WORKER judged it stuck — NOT a runner round count) ⇒
+ *     escalateFamily, ok:false.
+ *   - a coder-fix worker that escalates / commits nothing ⇒ escalateFamily, ok:false.
+ *
+ * The runner threads each worker's `WorkerResult.sessionId` into the SAME worker's
+ * next dispatch as a `session:"resume"` + `resumeSessionId` (mirroring the
+ * single-slice runner) so both workers resume across rounds.
  *
  * Driven entirely by a zero-container injected-seam fake (no real codex / container).
  */
@@ -27,37 +29,46 @@ import type {
   FamilyLedgerEntry,
   FamilyVerifyRequest,
   FamilyVerifyResult,
-  IntegratedCmrRequest,
-  IntegratedCmrResult,
-  FamilyCoderFixRequest,
-  FamilyCoderFixResult,
   FamilyAbortedEvent,
   FamilyEscalation,
-  OpenFamilyPrRequest,
-  OpenFamilyPrResult,
   MergeRequest,
 } from "../../src/family/types.js";
+import type {
+  DispatchContext,
+  WorkerResult,
+  WorkerSpec,
+} from "../../src/types.js";
+
+/** One recorded worker dispatch (the kind + the resume sessionId threaded in, if any). */
+interface DispatchRecord {
+  readonly kind: WorkerSpec["kind"];
+  readonly session: WorkerSpec["session"];
+  readonly resumeSessionId?: string;
+  readonly cmrReason?: string;
+}
 
 /**
- * A scriptable family backend exercising the fix loop via the LEGACY per-method
- * seam (`runIntegratedCmr` / `runFamilyCoderFix` / `openFamilyPr`). Each scripted
- * function is fed the call index so a test can return a different verdict per round
- * (round 0 red → fix → round 1 green, etc.).
+ * A scriptable family backend exercising the PURE-SCHEDULER loop via the unified
+ * `dispatchWorker` seam. Each scripted function is fed the per-kind call index so a
+ * test can return a different verdict per round (round 0 findings → fix → round 1
+ * converged, etc.). Every dispatch is recorded (kind + the resume sessionId the
+ * runner threaded in) so a test can assert the loop scheduled and resumed correctly.
  */
-class LoopFamilyBackend implements FamilyBackend {
+class SchedulerFamilyBackend implements FamilyBackend {
   readonly ledger: FamilyLedgerEntry[] = [];
-  readonly cmrCalls: IntegratedCmrRequest[] = [];
-  readonly fixCalls: FamilyCoderFixRequest[] = [];
-  readonly prCalls: OpenFamilyPrRequest[] = [];
+  readonly dispatches: DispatchRecord[] = [];
   readonly aborted: FamilyAbortedEvent[] = [];
   readonly escalations: FamilyEscalation[] = [];
+  private cmrRound = 0;
+  private fixRound = 0;
+  private shipRound = 0;
 
   constructor(
     private readonly script: {
       verify?: (req: FamilyVerifyRequest) => FamilyVerifyResult;
-      cmr?: (req: IntegratedCmrRequest, round: number) => IntegratedCmrResult;
-      fix?: (req: FamilyCoderFixRequest, round: number) => FamilyCoderFixResult;
-      pr?: (req: OpenFamilyPrRequest) => OpenFamilyPrResult;
+      cmr?: (round: number) => WorkerResult;
+      fix?: (round: number) => WorkerResult;
+      ship?: (round: number) => WorkerResult;
     } = {},
   ) {}
 
@@ -70,23 +81,8 @@ class LoopFamilyBackend implements FamilyBackend {
   async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
     return this.ledger;
   }
-
   async runFamilyVerify(req: FamilyVerifyRequest): Promise<FamilyVerifyResult> {
     return this.script.verify?.(req) ?? { ok: true };
-  }
-  async runIntegratedCmr(req: IntegratedCmrRequest): Promise<IntegratedCmrResult> {
-    const round = this.cmrCalls.length;
-    this.cmrCalls.push(req);
-    return this.script.cmr?.(req, round) ?? { converged: true };
-  }
-  async runFamilyCoderFix(req: FamilyCoderFixRequest): Promise<FamilyCoderFixResult> {
-    const round = this.fixCalls.length;
-    this.fixCalls.push(req);
-    return this.script.fix?.(req, round) ?? { committed: true, commitsAdded: 1 };
-  }
-  async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
-    this.prCalls.push(req);
-    return this.script.pr?.(req) ?? { url: `pr://${req.familyBase}` };
   }
   async recordAborted(event: FamilyAbortedEvent): Promise<void> {
     this.aborted.push(event);
@@ -94,84 +90,139 @@ class LoopFamilyBackend implements FamilyBackend {
   async escalateFamily(esc: FamilyEscalation): Promise<void> {
     this.escalations.push(esc);
   }
+
+  async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    this.dispatches.push({
+      kind: spec.kind,
+      session: spec.session,
+      ...(ctx.resumeSessionId !== undefined ? { resumeSessionId: ctx.resumeSessionId } : {}),
+      ...(ctx.cmrReason !== undefined ? { cmrReason: ctx.cmrReason } : {}),
+    });
+    if (spec.kind === "cmr") {
+      const round = this.cmrRound++;
+      return (
+        this.script.cmr?.(round) ?? {
+          kind: "completed",
+          output: { kind: "cmr", converged: true },
+          sessionId: `cmr-sess-${round}`,
+        }
+      );
+    }
+    if (spec.kind === "coder") {
+      const round = this.fixRound++;
+      return (
+        this.script.fix?.(round) ?? {
+          kind: "completed",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+          sessionId: `fix-sess-${round}`,
+        }
+      );
+    }
+    if (spec.kind === "ship") {
+      const round = this.shipRound++;
+      return (
+        this.script.ship?.(round) ?? {
+          kind: "completed",
+          output: { kind: "ship", branch: ctx.familyBase!, status: "pr_opened", pr: `pr://${ctx.familyBase}` },
+          sessionId: `ship-sess-${round}`,
+        }
+      );
+    }
+    throw new Error(`unexpected worker kind ${spec.kind}`);
+  }
 }
 
-describe("family integrated-cmr FIX LOOP — wiki ship-pre 正确性 (Step 6, fix to converge)", () => {
-  it("a non-converged THEN converged cmr runs the fix loop: cmr → fix → cmr → ok:true, NO escalate", async () => {
-    const backend = new LoopFamilyBackend({
-      // Round 0 red (a cross-slice finding), round 1 green (the fix landed).
-      cmr: (_req, round) =>
+describe("family integrated-cmr gate = PURE SCHEDULER (worker judges drift, runner does not)", () => {
+  it("reviewer CONVERGED round 0 ⇒ ok:true, NO fix dispatched (the happy path)", async () => {
+    const backend = new SchedulerFamilyBackend({
+      cmr: () => ({ kind: "completed", output: { kind: "cmr", converged: true }, sessionId: "c0" }),
+    });
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+    });
+    expect(result).toEqual({ ok: true, ran: true });
+    // Exactly one cmr dispatch, NO coder-fix, NO escalate; then the ship worker.
+    expect(backend.dispatches.filter((d) => d.kind === "cmr")).toHaveLength(1);
+    expect(backend.dispatches.filter((d) => d.kind === "coder")).toHaveLength(0);
+    expect(backend.escalations).toEqual([]);
+    expect(backend.dispatches.filter((d) => d.kind === "ship")).toHaveLength(1);
+  });
+
+  it("reviewer FINDINGS ⇒ resume coder-fix ⇒ resume reviewer CONVERGED ⇒ ok:true (loop ran, fix once)", async () => {
+    const backend = new SchedulerFamilyBackend({
+      cmr: (round) =>
         round === 0
-          ? { converged: false, reason: "field-name mismatch: region.cannon vs region.cityCannon" }
-          : { converged: true },
+          ? {
+              kind: "completed",
+              output: { kind: "cmr", converged: false, reason: "field-name mismatch: region.cannon vs region.cityCannon" },
+              sessionId: "cmr-A",
+            }
+          : { kind: "completed", output: { kind: "cmr", converged: true }, sessionId: "cmr-B" },
+      fix: () => ({
+        kind: "completed",
+        output: { kind: "coder", committed: true, commitsAdded: 1 },
+        sessionId: "fix-A",
+      }),
     });
     const result = await runVerifyCmr({
       phase: "final",
       familyBase: "family/291-base",
       familyBackend: backend,
     });
-
-    // Converged after the fix → the gate is GREEN (止于 PR reached).
     expect(result).toEqual({ ok: true, ran: true });
-    // The loop ran cmr TWICE (round 0 red, round 1 green) with a fix BETWEEN them.
-    expect(backend.cmrCalls).toHaveLength(2);
-    expect(backend.fixCalls).toHaveLength(1);
+    // cmr ran TWICE (round 0 findings, round 1 converged) with a fix BETWEEN them.
+    expect(backend.dispatches.filter((d) => d.kind === "cmr")).toHaveLength(2);
+    expect(backend.dispatches.filter((d) => d.kind === "coder")).toHaveLength(1);
     // The fix worker received the round's non-convergence reason as its focus.
-    expect(backend.fixCalls[0]?.reason).toContain("region.cannon");
-    // It did NOT escalate on the first non-converged verdict (the bug).
+    expect(backend.dispatches.find((d) => d.kind === "coder")?.cmrReason).toContain("region.cannon");
+    // NO escalate (it is not escalate-on-first-finding).
     expect(backend.escalations).toEqual([]);
-    // After convergence the PR opened (止于 PR, decision 4).
-    expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
+    // RESUME THREADING: the 2nd cmr dispatch resumes the 1st cmr worker's session
+    // (continuity → the worker judges drift), not a fresh one.
+    const cmrDispatches = backend.dispatches.filter((d) => d.kind === "cmr");
+    expect(cmrDispatches[1]?.session).toBe("resume");
+    expect(cmrDispatches[1]?.resumeSessionId).toBe("cmr-A");
   });
 
-  it("converges after TWO fix rounds (reason changes each round = progress): cmr → fix → cmr → fix → cmr → ok:true", async () => {
-    const backend = new LoopFamilyBackend({
-      cmr: (_req, round) => {
-        if (round === 0) return { converged: false, reason: "seam A: type mismatch" };
-        if (round === 1) return { converged: false, reason: "seam B: threshold unit drift" };
-        return { converged: true };
-      },
+  it("reviewer ESCALATE (the WORKER judged it cannot converge) ⇒ escalateFamily, ok:false — the runner did NOT count rounds", async () => {
+    const backend = new SchedulerFamilyBackend({
+      // The reviewer worker — RESUMABLE, judging drift across its own rounds —
+      // emits escalate. The runner just relays it; it never counts rounds itself.
+      cmr: () => ({
+        kind: "escalated",
+        escalation: {
+          reason: "field-name mismatch: region.cannon vs region.cityCannon",
+          diagnosis: "the fix has not changed what the reviewers see across rounds — drift",
+        },
+        sessionId: "cmr-stuck",
+      }),
     });
     const result = await runVerifyCmr({
       phase: "final",
       familyBase: "family/291-base",
       familyBackend: backend,
     });
-    expect(result).toEqual({ ok: true, ran: true });
-    expect(backend.cmrCalls).toHaveLength(3);
-    expect(backend.fixCalls).toHaveLength(2);
-    expect(backend.escalations).toEqual([]);
-  });
-
-  it("DRIFT: the SAME non-convergence reason recurs (no progress) ⇒ escalate AFTER the loop, NOT on round 1", async () => {
-    const SAME = "field-name mismatch: region.cannon vs region.cityCannon";
-    const backend = new LoopFamilyBackend({
-      // The fix never changes what the reviewer sees — same reason every round.
-      cmr: () => ({ converged: false, reason: SAME }),
-    });
-    const result = await runVerifyCmr({
-      phase: "final",
-      familyBase: "family/291-base",
-      familyBackend: backend,
-    });
-    // Could not converge → escalate (the existing escalate seam).
     expect(result).toEqual({ ok: false, ran: true });
     expect(backend.escalations).toHaveLength(1);
     expect(backend.escalations[0]?.reason).toContain("region.cannon");
-    // It escalated only AFTER trying to fix — NOT on round 1 (the bug). The loop
-    // dispatched at least one fix worker before judging it stuck.
-    expect(backend.fixCalls.length).toBeGreaterThanOrEqual(1);
-    // No PR while unresolved.
-    expect(backend.prCalls).toEqual([]);
+    // The runner escalated WITHOUT ever dispatching a fix or a ship (the worker's
+    // verdict was escalate on its first return — no runner round counting).
+    expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
   });
 
-  it("a fix worker that itself ESCALATES ⇒ family escalate (cannot make progress), NO PR", async () => {
-    const backend = new LoopFamilyBackend({
-      cmr: () => ({ converged: false, reason: "cross-slice contract drift" }),
+  it("a coder-fix worker that itself ESCALATES ⇒ escalateFamily (cannot make progress), ok:false, NO ship", async () => {
+    const backend = new SchedulerFamilyBackend({
+      cmr: () => ({
+        kind: "completed",
+        output: { kind: "cmr", converged: false, reason: "cross-slice contract drift" },
+        sessionId: "cmr-x",
+      }),
       fix: () => ({
-        committed: false,
-        commitsAdded: 0,
-        escalate: { reason: "finding conflicts with the epic spec", diagnosis: "needs a human design call" },
+        kind: "escalated",
+        escalation: { reason: "finding conflicts with the epic spec", diagnosis: "needs a human design call" },
+        sessionId: "fix-x",
       }),
     });
     const result = await runVerifyCmr({
@@ -182,20 +233,73 @@ describe("family integrated-cmr FIX LOOP — wiki ship-pre 正确性 (Step 6, fi
     expect(result).toEqual({ ok: false, ran: true });
     expect(backend.escalations).toHaveLength(1);
     expect(backend.escalations[0]?.reason).toMatch(/conflicts with the epic spec|human design/i);
-    expect(backend.prCalls).toEqual([]);
+    expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
   });
 
-  it("a CONVERGED-on-round-0 cmr never dispatches a fix worker (the happy path is unchanged)", async () => {
-    const backend = new LoopFamilyBackend({ cmr: () => ({ converged: true }) });
+  it("a coder-fix worker that commits NOTHING ⇒ escalateFamily (no progress possible), ok:false", async () => {
+    const backend = new SchedulerFamilyBackend({
+      cmr: () => ({
+        kind: "completed",
+        output: { kind: "cmr", converged: false, reason: "seam drift" },
+        sessionId: "cmr-y",
+      }),
+      fix: () => ({
+        kind: "completed",
+        output: { kind: "coder", committed: false, commitsAdded: 0 },
+        sessionId: "fix-y",
+      }),
+    });
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+    });
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.escalations).toHaveLength(1);
+    expect(backend.escalations[0]?.reason).toContain("seam drift");
+  });
+
+  it("multi-round: findings → fix → findings → fix → converged ⇒ ok:true (the worker, resuming, decides when it is done)", async () => {
+    const backend = new SchedulerFamilyBackend({
+      cmr: (round) => {
+        if (round === 0)
+          return { kind: "completed", output: { kind: "cmr", converged: false, reason: "seam A" }, sessionId: "ca" };
+        if (round === 1)
+          return { kind: "completed", output: { kind: "cmr", converged: false, reason: "seam B" }, sessionId: "cb" };
+        return { kind: "completed", output: { kind: "cmr", converged: true }, sessionId: "cc" };
+      },
+      fix: (round) => ({
+        kind: "completed",
+        output: { kind: "coder", committed: true, commitsAdded: 1 },
+        sessionId: `fix-${round}`,
+      }),
+    });
     const result = await runVerifyCmr({
       phase: "final",
       familyBase: "family/291-base",
       familyBackend: backend,
     });
     expect(result).toEqual({ ok: true, ran: true });
-    expect(backend.cmrCalls).toHaveLength(1);
-    expect(backend.fixCalls).toEqual([]);
+    expect(backend.dispatches.filter((d) => d.kind === "cmr")).toHaveLength(3);
+    expect(backend.dispatches.filter((d) => d.kind === "coder")).toHaveLength(2);
     expect(backend.escalations).toEqual([]);
-    expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
+    // BOTH workers resume their own session across rounds (continuity).
+    const fixDispatches = backend.dispatches.filter((d) => d.kind === "coder");
+    expect(fixDispatches[1]?.session).toBe("resume");
+    expect(fixDispatches[1]?.resumeSessionId).toBe("fix-0");
+  });
+});
+
+describe("the runner contains NO drift constant / round-counter / grade logic", () => {
+  it("verifyCmr.ts source has no NO_PROGRESS_LIMIT / noProgressStreak / prevReasonKey", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const src = readFileSync(
+      fileURLToPath(new URL("../../src/family/verifyCmr.ts", import.meta.url)),
+      "utf8",
+    );
+    expect(src).not.toMatch(/NO_PROGRESS_LIMIT/);
+    expect(src).not.toMatch(/noProgressStreak/);
+    expect(src).not.toMatch(/prevReasonKey/);
   });
 });
