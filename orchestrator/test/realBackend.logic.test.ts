@@ -105,6 +105,10 @@ describe("realBackend gh parsing", () => {
     expect(buildIssueMeta(327, { labels: [], state: "open" }, [], 0).isClosed).toBe(false);
     // Missing state ⇒ not closed (tolerate the empty case, like the other fields).
     expect(buildIssueMeta(327, { labels: [] }, [], 0).isClosed).toBe(false);
+    // R1 T2 (gemini): a non-string state (malformed/odd mock) must NOT throw on
+    // `.toUpperCase()` — treated as not-closed.
+    expect(buildIssueMeta(327, { labels: [], state: 1 as unknown as string }, [], 0).isClosed).toBe(false);
+    expect(buildIssueMeta(327, { labels: [], state: null }, [], 0).isClosed).toBe(false);
   });
 
   it("buildIssueMeta tolerates missing gh fields (empty case)", () => {

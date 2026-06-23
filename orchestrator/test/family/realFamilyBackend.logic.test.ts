@@ -443,6 +443,28 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     expect(calls).toEqual([]); // nothing installed, nothing run
   });
 
+  it("R1-T3: an EXPLICIT verifyCwd that is NOT a Node project FAILS CLOSED (throws), never silent-passes", () => {
+    // codex R1 T3: a docs/content/root-only diff (inferred-undefined) legitimately
+    // skips, but an EXPLICITLY-set verifyCwd pointing at a non-Node dir is a caller
+    // misconfig — it must NOT be treated like "nothing to verify" and green-light an
+    // un-verified merge. (An inference-FAILURE fails closed via familyDiffFiles, which
+    // no longer swallows git errors.)
+    class SpyBackend extends RealFamilyBackend {
+      protected override sh(): string {
+        return "";
+      }
+      protected override isNodeProject(_cwd: string): boolean {
+        return false; // explicit cwd has no package.json
+      }
+      runVerifyForTest(): void {
+        this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
+      }
+    }
+    expect(() =>
+      new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/not-node" })).runVerifyForTest(),
+    ).toThrow(/not a Node project/i);
+  });
+
   it("R1-T1: depsInstalled is STALE (reinstall) when a manifest is newer than node_modules", () => {
     // gemini R1 T1: a bare node_modules-exists check skips installing a dep a child
     // PR added (package.json/lock newer than the last install) → verify on stale deps.

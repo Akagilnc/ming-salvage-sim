@@ -643,14 +643,27 @@ export class RealFamilyBackend implements FamilyBackend {
     // Run where the Node project lives, NOT the clone root — else npx finds no
     // package.json/config (online R2 Codex P1). Precedence (#4): explicit verifyCwd
     // > the lazy diff-inferred cwd (the dominant changed subproject) > the clone root.
-    const cwd = this.opts.verifyCwd ?? this.opts.resolveVerifyCwd?.();
-    // R1 T2 (codex): a family diff touching NO Node subproject (docs/ content/
-    // root-only) → `inferVerifyCwd` is undefined. The OLD `?? workingRepo` fallback
-    // then ran the dep install + scripts against the CLONE ROOT, which has no
-    // package.json (only orchestrator/ + web/ do) → `npm install` in a non-Node dir
-    // → verify_failed for otherwise-valid non-code changes. A diff with no Node
-    // project has nothing to verify — skip (no-op pass), never npm in a non-Node dir.
-    if (cwd === undefined || !this.isNodeProject(cwd)) return;
+    let cwd: string | undefined;
+    if (this.opts.verifyCwd !== undefined) {
+      // An EXPLICIT verifyCwd that is not a Node project is a caller MISCONFIG —
+      // fail CLOSED (R1 T3 codex), never silent-pass an un-verified merge.
+      cwd = this.opts.verifyCwd;
+      if (!this.isNodeProject(cwd)) {
+        throw new Error(
+          `verifyCwd "${cwd}" is not a Node project (no package.json) — failing ` +
+            `closed rather than passing family verify with nothing installed / ` +
+            `typechecked / tested.`,
+        );
+      }
+    } else {
+      // No explicit cwd → infer from the family diff. undefined ⇒ the diff GENUINELY
+      // touches no Node subproject (docs/content/root-only) ⇒ nothing to verify, skip
+      // (R1 T2 codex: never `npm install` the clone root, which has no package.json).
+      // A git/diff ERROR in the resolver THROWS (familyDiffFiles no longer swallows
+      // it) → propagates as verify_failed, NOT mistaken for "no Node subproject".
+      cwd = this.opts.resolveVerifyCwd?.();
+      if (cwd === undefined) return;
+    }
     // #3 (dogfood death): the family clone is FRESH — no node_modules. Running
     // `npx tsc` against a depless project errors with "This is not the tsc
     // command you are looking for" (npx resolves a stub), so verify ALWAYS failed

@@ -136,7 +136,9 @@ export function isReadyForAgent(json: GhIssueJson): boolean {
  * S0 gate only rejects a definitively-closed issue, never an unknown state).
  */
 export function isClosedIssue(json: GhIssueJson): boolean {
-  return (json.state ?? "").toUpperCase() === "CLOSED";
+  // typeof guard (R1 T2 gemini): a malformed / oddly-mocked `state` (number, object)
+  // would throw on `.toUpperCase()`; treat any non-string as not-closed.
+  return typeof json.state === "string" && json.state.toUpperCase() === "CLOSED";
 }
 
 /**
@@ -411,11 +413,16 @@ export function matchWorktreeForBranch(
  * child's branch from its issue when reconcile is handed only the issue number
  * (#291, agy/codex R1). Pure → unit-tested without git.
  *
- * NEUTRAL prefix (#1): the earlier `feat/244-orchestrator-issue-<n>` baked in a
- * hardcoded `244` (the #244 epic) — wrong for every other issue, and
- * `issueNumberFromBranch`'s fallback could mis-read that leading run as the
- * issue. The name now carries ONLY the real issue number; the `issue-<n>` token
- * stays so the inverse parses it unchanged.
+ * NEUTRAL prefix (dogfood #327 #1): the earlier `feat/244-orchestrator-issue-<n>`
+ * baked in a hardcoded `244` (the #244 epic) — wrong for every other issue, and
+ * `issueNumberFromBranch`'s fallback could mis-read that leading run as the issue.
+ *
+ * RESUME-COMPAT DEFERRED (R1 T2 codex): `findResumeState`/`prepareWorktree` locate
+ * the resident worktree by EXACT branch name, so a run cut under the OLD name and
+ * resumed after this rename would be re-cut fresh (lost ledger/progress). No such
+ * in-flight run exists across this rename (issue numbers are unique; the dogfood's
+ * old-name worktrees are closed), so it does not trigger here — but a migration
+ * old-alias lookup is tracked for if cross-upgrade resume becomes a need.
  */
 export function branchForIssue(issueNumber: number): string {
   return `feat/issue-${issueNumber}`;
