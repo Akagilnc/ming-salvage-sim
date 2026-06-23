@@ -93,18 +93,23 @@ class SeamExtensionBackend implements Backend {
 }
 
 describe("#256 seam extension — real per-step sessionId in the ledger", () => {
-  it("records the real per-step sessionId for agent steps (S2/S3)", async () => {
+  it("records the real per-step sessionId for the agent step (S2)", async () => {
+    // ADR 0026 (2026-06-24): S2 (the whole-slice build worker) is the ONLY agent
+    // step the runner dispatches — the per-slice review→fix→re-review loop runs
+    // INSIDE the S2 worker's session, so there is no separately-dispatched S3
+    // reviewer step to record a distinct per-step session for. We assert the S2
+    // session is the REAL per-step id surfaced by the seam, not the run-level UUID.
     const backend = new SeamExtensionBackend(/*returnStepResult*/ true);
     const result = await runOrchestrator({ issueNumber: 256, backend });
     expect(result.status).toBe("success");
 
     const byStep = (s: string) =>
       backend.persisted.find((e) => e.step === s);
-    // Agent steps carry their REAL per-step session id (not a shared UUID).
+    // The agent step carries its REAL per-step session id (not a shared UUID).
     expect(byStep("S2")?.sessionId).toBe("sess-S2");
-    expect(byStep("S3")?.sessionId).toBe("sess-S3");
-    // The two agent steps have DISTINCT session ids (proves per-step, not run-level).
-    expect(byStep("S2")?.sessionId).not.toBe(byStep("S3")?.sessionId);
+    // It differs from the run-level UUID the runner-action steps share — proving
+    // it is the per-step seam id, not the fallback.
+    expect(byStep("S2")?.sessionId).not.toBe(byStep("S0")?.sessionId);
   });
 
   it("runner-action steps share the run-level UUID fallback (no per-step session)", async () => {

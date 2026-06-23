@@ -51,7 +51,9 @@ import type {
  */
 export function cmrWorkerSpec(session: WorkerSessionMode = "fresh"): WorkerSpec {
   return {
-    id: "S6", // the family integrated cmr maps to the review/fix step kind
+    id: "S2", // the family integrated cmr is a WRITE/work step (ADR 0026: the
+    //           single-slice S3/S5/S6 ids were removed; the cmr worker is a build/
+    //           fix-kind step that runs before the family S7 ship, so it borrows S2).
     kind: "cmr",
     role: "coder", // it WRITES (commits cross-slice fixes), not a read-only reviewer
     // The cmr skill fans out a Claude Agent leg + CLI legs → host pinned Claude

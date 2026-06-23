@@ -164,115 +164,49 @@ describe("#337 runner is a pure scheduler — no inline productive work (BEHAVIO
     const result = await runOrchestrator({ issueNumber: 337, backend });
     // Reached S8(success) without ever touching a throwing legacy method.
     expect(result.status).toBe("success");
-    // Every productive step was a worker dispatch — including the fix loop.
+    // ADR 0026: every productive step is a worker dispatch through the single
+    // seam, and the runner dispatches exactly the whole-slice build coder (S2,
+    // which runs its own per-slice review→fix→cmr loop INSIDE the worker) then the
+    // ship worker (S7) — no runner-driven reviewer/fix steps.
     expect(backend.dispatched).toEqual([
       "S2:coder:/tdd",
-      "S3:reviewer:/review",
-      "S5:coder:/tdd",
-      "S6:reviewer:/review",
       "S7:ship:gstack-ship",
     ]);
   });
 });
 
-// ─── (B) the fix step is a WORKER (dispatched, not inlined) ──────────────────
+// ─── (B) the build step is a WORKER (dispatched, not inlined) — and dispatched ──
+//     exactly ONCE: the fix loop is INSIDE the worker, not a runner re-dispatch.
 
-describe("#337 the S5 fix step is a worker the runner dispatches", () => {
-  it("the S5 fix worker invokes /tdd (which routes through /diagnosing-bugs for a hard bug)", async () => {
+describe("#337 the build step is one worker the runner dispatches, then ship", () => {
+  it("the S2 build worker invokes /tdd and is the only agent dispatch (no runner fix re-dispatch)", async () => {
     const backend = new SeamOnlyBackend();
     await runOrchestrator({ issueNumber: 337, backend });
-    const s5 = backend.specs.find((s) => s.id === "S5");
-    expect(s5?.kind).toBe("coder");
-    expect(s5?.skill).toBe("/tdd");
-    // The fix worker carries the round's fix_now findings (it does not re-derive
-    // them — the runner schedules + delivers them; US#13).
-    const s5Ctx = backend.ctxs[backend.specs.findIndex((s) => s.id === "S5")];
-    expect(s5Ctx.prevFindings?.[0].action).toBe("fix_now");
+    const coderDispatches = backend.specs.filter((s) => s.kind === "coder");
+    // Exactly ONE coder dispatch — the runner never re-dispatches a fix worker
+    // (ADR 0026: the per-slice review→fix→re-review loop lives INSIDE the S2
+    // worker, so the runner sees a single coder dispatch).
+    expect(coderDispatches).toHaveLength(1);
+    const s2 = coderDispatches[0];
+    expect(s2.id).toBe("S2");
+    expect(s2.skill).toBe("/tdd");
   });
 
-  it("a NORMAL fix round is session:'fresh' — NOT the crash/escalate resume path (ADR 0026 invariant)", async () => {
+  it("the build worker spec carries the iterative maxIter (>1) and retains context (it owns the loop)", async () => {
+    // Assert on the spec the RUNNER ACTUALLY DISPATCHES (STEP_SPECS.S2 → the build
+    // worker). The whole-slice build keeps the within-step iterative budget (it
+    // runs /tdd + /review + /ak-cross-m-review internally), is a NORMAL fresh
+    // dispatch (NOT the crash/escalate resume path), and retains context.
     const backend = new SeamOnlyBackend();
     await runOrchestrator({ issueNumber: 337, backend });
-    const s5 = backend.specs.find((s) => s.id === "S5");
-    // Normal fix keeps git-truthing + maxIter (session:"fresh"); resumeSession is
-    // reserved for crash/escalate (resumeSessionId present), never set here.
-    expect(s5?.session).toBe("fresh");
-    const s5Ctx = backend.ctxs[backend.specs.findIndex((s) => s.id === "S5")];
-    expect(s5Ctx.resumeSessionId).toBeUndefined();
-  });
-
-  it("the fix worker spec carries the iterative maxIter (>1), not a reviewer's single pass", async () => {
-    // Assert on the spec the RUNNER ACTUALLY DISPATCHES (STEP_SPECS.S5 → the fix
-    // worker), not a hand-built local spec — so a regression of the real S5 maxIter
-    // to a reviewer's 1 is caught (cmr S337 r2). The fix worker keeps the within-step
-    // iterative budget — the ADR 0026 invariant 'normal fix keeps … maxIter'.
-    const backend = new SeamOnlyBackend();
-    await runOrchestrator({ issueNumber: 337, backend });
-    const s5 = backend.specs.find((s) => s.id === "S5");
-    expect(s5).toBeDefined();
-    expect(s5!.maxIter).toBeGreaterThan(1);
-    expect(s5!.session).toBe("fresh");
-    expect(s5!.contextRetention).toBe("retain"); // production worker retains context
-    expect(s5!.skill).toBe("/tdd");
-  });
-});
-
-describe("#337 the fix-loop fork lives in the runner, not inside a worker", () => {
-  it("the runner re-dispatches S5(fix)→S6(re-review) and routes on the S6 verdict", async () => {
-    // A backend that needs TWO fix rounds before the reviewer approves. If the
-    // fork (fix-or-proceed) were inside a worker, the runner would see one
-    // worker; instead it dispatches each S5/S6 itself and routes each verdict.
-    class TwoRoundBackend extends SeamOnlyBackend {
-      private rc = 0;
-      override async dispatchWorker(
-        spec: WorkerSpec,
-        ctx: DispatchContext,
-      ): Promise<WorkerResult> {
-        this.dispatched.push(`${spec.id}:${spec.kind}:${spec.skill ?? "—"}`);
-        this.specs.push(spec);
-        this.ctxs.push(ctx);
-        if (spec.kind === "coder") {
-          return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
-        }
-        if (spec.kind === "reviewer") {
-          this.rc += 1;
-          // Round 1 (S3) + round 2 (first S6) raise a changing fix_now finding;
-          // the 3rd reviewer pass (second S6) approves. Distinct findings each
-          // round so the no-progress guard sees real progress.
-          const findings: Finding[] =
-            this.rc <= 2
-              ? [
-                  {
-                    severity: "high",
-                    category: "correctness",
-                    claim_quote: `round-${this.rc}`,
-                    location: `f.ts:${this.rc}`,
-                    suggested_fix: "fix it",
-                    action: "fix_now",
-                  },
-                ]
-              : [];
-          return { kind: "completed", output: { kind: "reviewer", findings } };
-        }
-        return {
-          kind: "completed",
-          output: { kind: "ship", branch: this.worktree.branch, status: "pushed" },
-        };
-      }
-    }
-    const backend = new TwoRoundBackend();
-    const result = await runOrchestrator({ issueNumber: 337, backend });
-    expect(result.status).toBe("success");
-    // Two fix rounds, each an independent runner-dispatched S5→S6, then ship.
-    expect(backend.dispatched).toEqual([
-      "S2:coder:/tdd",
-      "S3:reviewer:/review",
-      "S5:coder:/tdd",
-      "S6:reviewer:/review",
-      "S5:coder:/tdd",
-      "S6:reviewer:/review",
-      "S7:ship:gstack-ship",
-    ]);
+    const s2 = backend.specs.find((s) => s.id === "S2");
+    expect(s2).toBeDefined();
+    expect(s2!.maxIter).toBeGreaterThan(1);
+    expect(s2!.session).toBe("fresh");
+    expect(s2!.contextRetention).toBe("retain"); // production worker retains context
+    expect(s2!.skill).toBe("/tdd");
+    const s2Ctx = backend.ctxs[backend.specs.findIndex((s) => s.id === "S2")];
+    expect(s2Ctx.resumeSessionId).toBeUndefined();
   });
 });
 
