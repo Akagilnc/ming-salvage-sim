@@ -13,7 +13,12 @@
  * #294–#298 fill behaviour in, not re-shape these.
  */
 
-import type { Backend } from "../types.js";
+import type {
+  Backend,
+  DispatchContext,
+  WorkerResult,
+  WorkerSpec,
+} from "../types.js";
 import type {
   VerifyCmrInput,
   VerifyCmrPhase,
@@ -93,8 +98,12 @@ export interface FamilyLedgerEntry {
    *   - `"aborted"` — a verify/cmr barrier failed; this PHASE-LEVEL event carries
    *     the family head at the time (`familyHeadAfter`) + the `phase` + a `reason`
    *     for triage (#291 缺口 2). NOT counted as merged.
+   *   - `"shipped"` — the terminal family ship (止于-PR) SUCCEEDED (online review r2,
+   *     codex P1). A PHASE-LEVEL terminal marker carrying the family `pr` URL; the
+   *     spine's resume guard reads it so an already-delivered family run is NOT
+   *     re-verified / re-cmr'd / re-shipped. NOT counted as merged (no `childIssue`).
    */
-  readonly status: "merged" | "aborted";
+  readonly status: "merged" | "aborted" | "shipped";
   /**
    * Event tag.
    *   - `"reconciled"` — a crash-window補账条 (decision 5); carries
@@ -103,9 +112,12 @@ export interface FamilyLedgerEntry {
    *   - `"aborted"` — a PHASE-LEVEL verify/cmr-failure durable entry (#291 缺口 2),
    *     paired with `status:"aborted"`; written by the verify-cmr hook so the abort
    *     reaches the durable ledger reconcile reads (not just the in-memory seam).
+   *   - `"shipped"` — the terminal family ship succeeded (online review r2, codex
+   *     P1), paired with `status:"shipped"`; written by the verify-cmr hook at the
+   *     止于-PR success so a resume sees the family is already delivered.
    * Not the unblock truth (that is `status`); the tag is for observability.
    */
-  readonly event?: "reconciled" | "aborted";
+  readonly event?: "reconciled" | "aborted" | "shipped";
   /**
    * Which verify barrier was red — ONLY on a PHASE-LEVEL `aborted` entry (#291 缺口
    * 2). A `merged` / `reconciled` entry omits it (it is per-child, not per-phase).
@@ -138,6 +150,12 @@ export interface FamilyLedgerEntry {
    * reconcile補账条 / `aborted` event omits it.
    */
   readonly conflictResolvedByLlm?: boolean;
+  /**
+   * The family PR URL — ONLY on a `status:"shipped"` terminal entry (online review
+   * r2, codex P1). Records WHICH PR the terminal 止于-PR ship opened, so the resume
+   * guard's "already delivered" decision is locatable from the ledger alone.
+   */
+  readonly pr?: string;
 }
 
 // ─────────────────────────── reconcile git seam ───────────────────────────
@@ -286,6 +304,33 @@ export interface FamilyBackend {
    * order. The commander's unblock predicate reads the merged set from here.
    */
   readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>>;
+
+  /**
+   * THE unified worker-dispatch seam at the FAMILY layer (ADR 0026 / PRD #330
+   * #331) — parallel to {@link Backend.dispatchWorker}. The family-LEVEL worker
+   * steps (integrated cmr over the merged family base, the family-base ship/PR)
+   * are dispatched through this ONE method instead of the per-method seam
+   * (`runIntegratedCmr` / `openFamilyPr`).
+   *
+   * The {@link DispatchContext} for a family worker carries `familyBase` (the
+   * caller has only the base string, no single-slice worktree path — PRD #330 R2);
+   * `worktree` is optional / backend-inferred. The {@link WorkerResult} is the
+   * same discriminated union: a cmr `red` verdict is `completed` (with a
+   * {@link CmrResult} payload), NOT `failed`.
+   *
+   * #331 PREFACTOR: the runner's family verify-cmr hook ALWAYS dispatches through
+   * the free function `dispatchFamilyWorker(familyBackend, spec, ctx)`
+   * (verifyCmr.ts), which calls THIS method when implemented, else forwards to the
+   * legacy `runIntegratedCmr` / `openFamilyPr` — external behaviour unchanged. The
+   * real container cmr worker (#335) and family ship worker land later.
+   *
+   * OPTIONAL during the prefactor so the existing fakes need no change; new tests
+   * inject it to assert the family dispatch sequence + spec.
+   */
+  dispatchWorker?(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<WorkerResult>;
 
   // ─── #296 verify-cmr seam capabilities (ADR 0022 decision 3④/⑤/⑥/4) ───────
   // ALL OPTIONAL: a #293-era backend (the no-op default, the existing fakes)

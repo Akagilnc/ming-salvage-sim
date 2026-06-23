@@ -329,6 +329,55 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
   });
 });
 
+// ════════ 3b. construction-time prompt validation (gap g, same-type C-3) ═══════
+//
+// RealBackend (single slice) validates promptsDir at construction (C-3): every
+// REFERENCED_PROMPT_FILES entry, derived from the worker specs, must exist or the
+// constructor throws — a missing prompt surfaces THERE, not deep in the first
+// sandbox.run(). RealFamilyBackend lazily resolves its 3 family prompts
+// (integrated_cmr.md / family_ship.md / merger_resolve_conflict.md) at dispatch
+// time, so a missing one would only blow up at run time. These tests pin the
+// SAME construction-time net at the family layer.
+describe("RealFamilyBackend construction-time prompt validation (gap g, same-type C-3)", () => {
+  /** A promptsDir holding exactly the named family prompt files. */
+  function promptsDirWith(files: string[]): string {
+    const dir = mkdtempSync(join(tmpdir(), "rfb-prompts-"));
+    ledgerDirs.push(dir); // reuse the afterEach cleanup list
+    for (const f of files) {
+      execFileSync("bash", ["-c", `printf '%s' 'x' > '${join(dir, f)}'`]);
+    }
+    return dir;
+  }
+
+  it("throws when the family promptsDir is missing a family prompt file", () => {
+    const repo = trackRepo();
+    // Has integrated_cmr.md + merger_resolve_conflict.md but NOT family_ship.md.
+    const dir = promptsDirWith(["integrated_cmr.md", "merger_resolve_conflict.md"]);
+    expect(() => new RealFamilyBackend(opts(repo, { promptsDir: dir }))).toThrow(
+      /family_ship\.md/,
+    );
+  });
+
+  it("throws when promptsDir is a relative path (Sandcastle resolves promptFile against process.cwd())", () => {
+    const repo = trackRepo();
+    expect(() => new RealFamilyBackend(opts(repo, { promptsDir: "prompts" }))).toThrow(
+      /ABSOLUTE/,
+    );
+  });
+
+  it("throws when promptsDir does not exist", () => {
+    const repo = trackRepo();
+    expect(() =>
+      new RealFamilyBackend(opts(repo, { promptsDir: join(tmpdir(), "rfb-does-not-exist-xyz") })),
+    ).toThrow(/does not exist/);
+  });
+
+  it("constructs cleanly when all 3 family prompts are present (the real prompts dir)", () => {
+    const repo = trackRepo();
+    expect(() => new RealFamilyBackend(opts(repo))).not.toThrow();
+  });
+});
+
 // ═══════════════════ 4. resolveMergeConflict (sc.run seam) ═══════════════════
 
 /** A subclass that fakes the external seams (merger agent / verify / cmr / sh). */
@@ -492,19 +541,19 @@ describe("RealFamilyBackend mergerSandbox baked-soul injection (#291 F28 / ADR 0
     expect(MERGER_SOUL).toBe("merger");
   });
 
-  it("uses the profile image and mounts the baked dev skills at the soul-discovery path", () => {
-    // The skills must mount where the agent's soul/skill discovery looks
-    // (SANDBOX_SKILLS_DIR = /home/agent/.claude/skills, the same path RealBackend.box
-    // uses) so the `resolving-merge-conflicts` skill is found — not at an arbitrary
-    // path the agent never scans.
+  it("uses the profile image and does NOT mount host skills (baked skills win, #334)", () => {
+    // #334 (ADR 0026 / cross-slice note): the runtime host skills bind-mount onto
+    // SANDBOX_SKILLS_DIR is DROPPED — the 2b image BAKES `resolving-merge-conflicts`
+    // (+ its closure), so a runtime mount there would SHADOW the baked skill,
+    // pulling the merger back to host state (the reproducibility regression). The
+    // merger soul finds the skill in the IMAGE, not a host mount.
     const o = opts(trackRepo(), { imageName: "profile-img", skillsMount: "/host/skills" });
     const b = new FakeSeamsBackend(o);
     const cfg = b.sandboxConfig();
     expect(cfg.imageName).toBe("profile-img");
-    expect(cfg.mounts).toContainEqual({
-      hostPath: "/host/skills",
-      sandboxPath: SANDBOX_SKILLS_DIR,
-    });
+    expect(
+      cfg.mounts.some((m) => m.sandboxPath === SANDBOX_SKILLS_DIR),
+    ).toBe(false);
   });
 });
 
@@ -541,6 +590,48 @@ describe("parseMergerOutcome (#291 pure)", () => {
     });
     expect(parseMergerOutcome("<merger>true</merger>").resolved).toBe(false);
     expect(parseMergerOutcome("<merger>42</merger>").resolved).toBe(false);
+  });
+
+  // ── Finding A (integ-cmr int-r1): STRICT shape, mirroring shipOutcome ─────────
+  // merger_resolve_conflict.md: "must match the shape above exactly". A
+  // resolved:true carrying extra/mixed keys (e.g. an escalate verdict) must NOT
+  // count as a clean resolve — fail-CLOSED to unresolved.
+  describe("Finding A — strict shape (resolved:true rejects extra/mixed keys)", () => {
+    it("resolved:true carrying an escalate ⇒ NOT resolved (mixed payload)", () => {
+      const out = parseMergerOutcome(
+        '<merger>{"resolved": true, "escalate": {"reason": "r", "diagnosis": "d"}}</merger>',
+      );
+      expect(out.resolved).toBe(false);
+    });
+
+    it("resolved:true carrying an unknown EXTRA key ⇒ NOT resolved (strict)", () => {
+      expect(
+        parseMergerOutcome('<merger>{"resolved": true, "junk": 1}</merger>').resolved,
+      ).toBe(false);
+    });
+
+    it("resolved as a NON-boolean ⇒ NOT resolved", () => {
+      expect(parseMergerOutcome('<merger>{"resolved": "true"}</merger>').resolved).toBe(
+        false,
+      );
+    });
+
+    it("still accepts the LEGAL success shapes (regression: with/without tradeoffs)", () => {
+      expect(parseMergerOutcome('<merger>{"resolved": true}</merger>')).toEqual({
+        resolved: true,
+      });
+      expect(
+        parseMergerOutcome('<merger>{"resolved": true, "tradeoffs": "picked left"}</merger>'),
+      ).toEqual({ resolved: true });
+    });
+
+    it("still surfaces a legal escalate (regression)", () => {
+      const out = parseMergerOutcome(
+        '<merger>{"resolved": false, "escalate": {"reason": "ambiguous", "diagnosis": "needs decision"}}</merger>',
+      );
+      expect(out.resolved).toBe(false);
+      expect(out.reason).toContain("ambiguous");
+    });
   });
 });
 

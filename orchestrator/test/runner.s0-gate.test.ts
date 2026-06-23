@@ -106,7 +106,6 @@ class GateTestBackend implements Backend {
 const COMPLIANT_META: IssueMeta = {
   number: 248,
   isReadyForAgent: true,
-  hasAgentBrief: true,
   hasSubIssues: false,
   openBlockedBy: [],
 };
@@ -136,10 +135,11 @@ describe("S0 input gate — reject cases (#248)", () => {
     // `to-issues` slice may not carry a `## Agent Brief` section, and the gate must
     // not be rigid about it — the coder reads the WHOLE issue (body + comments), not
     // one section. So a missing brief must NOT stop the run at S0; it proceeds to S1.
-    const backend = new GateTestBackend({
-      ...COMPLIANT_META,
-      hasAgentBrief: false,
-    });
+    // #329 went further: the vestigial `hasAgentBrief` metadata was dropped from
+    // IssueMeta entirely (S0 no longer even fetches comments to derive it). A
+    // fully-compliant meta therefore inherently lacks any brief signal, which is
+    // exactly the "no brief" case — S0 still advances to S1.
+    const backend = new GateTestBackend({ ...COMPLIANT_META });
 
     // S0 does NOT reject on a missing brief — it advances to S1 (fetchIssueSnapshot).
     // It resolves (the stub coder's committed:false routes to an S8 error RESULT,

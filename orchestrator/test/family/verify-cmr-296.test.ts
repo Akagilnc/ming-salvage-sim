@@ -36,6 +36,7 @@ import type {
   OpenFamilyPrResult,
   MergeRequest,
 } from "../../src/family/types.js";
+import type { DispatchContext, WorkerResult, WorkerSpec } from "../../src/types.js";
 
 /**
  * A full family backend fake with the #296 verify/cmr/PR/abort/escalate
@@ -164,6 +165,15 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     // 止于 PR: the PR is opened (decision 4) — but NOT merged (no merge call here).
     expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
     expect(backend.escalations).toEqual([]);
+    // online review r2 (codex P1): a durable `shipped` terminal marker is persisted
+    // carrying the family PR URL, so a resume sees the family is already delivered
+    // and the spine's guard does not re-run the barrier / re-ship.
+    expect(backend.ledger).toContainEqual({
+      status: "shipped",
+      event: "shipped",
+      phase: "final",
+      pr: "pr://family/291-base",
+    });
   });
 
   it("RED full verify → ok:false, ran:true, aborted event, and NO cmr / NO PR (verify gates cmr)", async () => {
@@ -182,6 +192,9 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     // cmr only runs on GREEN verify; a red final verify never reaches cmr or PR.
     expect(backend.cmrCalls).toEqual([]);
     expect(backend.prCalls).toEqual([]);
+    // online review r2 (codex P1): NO `shipped` marker on a failed barrier — only a
+    // real opened PR persists it, so a resume re-runs the barrier (does not skip).
+    expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
   });
 
   it("GREEN verify but NOT-CONVERGED cmr → escalate续跑 (#298), ok:false, ran:true, NO PR", async () => {
@@ -264,5 +277,63 @@ describe("#296 verify-cmr hook body — graceful no-op when the backend lacks th
       familyBackend: backend,
     });
     expect(result).toEqual({ ok: false, ran: true });
+  });
+});
+
+// ═══════════════════ defensive catch around the family worker dispatch (cmr S336 r8) ═══════════════════
+
+describe("cmr S336 r8 — a family worker that THROWS on startup is a documented gate result, not an escaped exception", () => {
+  /**
+   * The single-slice runner wraps its S7 ship dispatch in try/catch → S8(error);
+   * verifyCmr did NOT wrap its cmr / ship dispatch. The token preflight (cmr S336 r8)
+   * removes the missing-auth throw, but the worker ALSO `git checkout`s the family
+   * base + writes the focus file + spins docker — any of which can still throw out of
+   * `dispatchWorker` and reject the WHOLE family run, bypassing the INCOMPLETE_GATE
+   * fail-safe. So verifyCmr must catch a thrown startup error, record it (observable),
+   * and fail-safe to {ok:false, ran:true}.
+   */
+  class ThrowingDispatchBackend extends BareFamilyBackend {
+    readonly aborted: FamilyAbortedEvent[] = [];
+    constructor(private readonly throwOnKind: "cmr" | "ship") {
+      super();
+    }
+    async runFamilyVerify(): Promise<FamilyVerifyResult> {
+      return { ok: true };
+    }
+    async recordAborted(event: FamilyAbortedEvent): Promise<void> {
+      this.aborted.push(event);
+    }
+    async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+      if (spec.kind === this.throwOnKind) {
+        throw new Error(`${spec.kind} worker: git checkout ${ctx.familyBase} failed (no such ref)`);
+      }
+      // The cmr worker converges so the run reaches the ship stage (for the ship case).
+      return { kind: "completed", output: { kind: "cmr", converged: true } };
+    }
+  }
+
+  it("a cmr worker that throws on startup ⇒ INCOMPLETE_GATE (ok:false, ran:true), abort recorded — never an escaped throw", async () => {
+    const backend = new ThrowingDispatchBackend("cmr");
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+    });
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.aborted).toHaveLength(1);
+    expect(backend.aborted[0]?.errorPackage.reason).toMatch(/cmr worker threw on startup/i);
+    expect(backend.aborted[0]?.errorPackage.reason).toMatch(/no such ref/i);
+  });
+
+  it("a ship worker that throws on startup (after a converged cmr) ⇒ INCOMPLETE_GATE, abort recorded — never an escaped throw", async () => {
+    const backend = new ThrowingDispatchBackend("ship");
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+    });
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.aborted).toHaveLength(1);
+    expect(backend.aborted[0]?.errorPackage.reason).toMatch(/ship worker threw on startup/i);
   });
 });

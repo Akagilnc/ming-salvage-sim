@@ -135,7 +135,6 @@ class ResumeBackend implements Backend {
     return {
       number: issueNumber,
       isReadyForAgent: true,
-      hasAgentBrief: true,
       hasSubIssues: false,
       openBlockedBy: [],
     };
@@ -366,6 +365,108 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     // for that step (resume reads disk, not in-memory LLM state).
     const [, sessionId] = backend.resumeSessionCalls[0]!;
     expect(sessionId).toBe("session-escalated-S2");
+  });
+});
+
+// ─── C-1 (integ-cmr int-r1): S7 SHIP escalate-resume re-dispatches the ship worker
+//
+// ship.md promises ship `escalate` = a real blocker the human answers → the
+// runner RE-OPENS S7. S7 is a runner-ACTION step, not an agent step, and ship
+// outputs deliberately do NOT carry an `escalate` field (escalateOf returns
+// undefined for them) — so the agent escalate-resume path (Case 2) cannot fire.
+// Instead, a prior S7 escalate leaves the ledger ending with an UNTAGGED-output
+// S7 entry + a trailing tagged S8(escalate). Recovery must recognise this pattern
+// and RE-DISPATCH the S7 ship worker (re-run the push/ship), NOT report the prior
+// escalate as a terminal status (which would leave the slice permanently stuck).
+
+describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r1 C-1)", () => {
+  /**
+   * Prior run reached S7, the ship worker escalated (gstack-ship STOP/HITL). The
+   * ledger ends with an S7 entry (no output — escalateTermination records the
+   * failing step without one) and a trailing S8 tagged 'escalate'. The human has
+   * answered the blocker and re-feeds the issue.
+   */
+  function escalatedAtS7(): ResumeState {
+    return {
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S3", { kind: "reviewer", findings: [] }),
+        entry("S4"),
+        entry("S7"), // failing step recorded without an output (escalateTermination)
+        s8("escalate"),
+      ],
+    };
+  }
+
+  it("re-opens S7: re-runs the ship worker (push) instead of reporting the prior escalate", async () => {
+    const backend = new ResumeBackend(escalatedAtS7());
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    // The ship worker is re-dispatched (legacy seam → push) — the slice ships.
+    expect(backend.pushCount).toBe(1);
+    // The re-opened run completes (the human answer unblocked the ship).
+    expect(result.status).toBe("success");
+    expect(result.branch).toBe(WORKTREE.branch);
+    // SAME machine: reuse the worktree + clean residue, no re-cut from S0.
+    expect(backend.prepareWorktreeCount).toBe(0);
+    expect(backend.cleanResidueCount).toBe(1);
+    // No agent steps re-run (S2/S3 already done; the re-open is just S7).
+    expect(backend.runStepIds).toEqual([]);
+    expect(backend.resumeSessionCalls).toHaveLength(0);
+  });
+
+  it("re-opening S7 drops the SUPERSEDED S7 entry — no double-S7 in the ledger (online review r1)", async () => {
+    // The prior escalate left `[…, S7(failing), S8(escalate)]`. Re-opening S7
+    // must truncate BOTH the trailing S8 boundary AND the superseded S7 entry;
+    // otherwise the re-dispatch appends a SECOND S7 → two consecutive S7 entries
+    // (3 bots). The final stepLedger must hold exactly ONE S7.
+    const backend = new ResumeBackend(escalatedAtS7());
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    const s7Entries = result.stepLedger.filter((e) => e.step === "S7");
+    expect(s7Entries).toHaveLength(1);
+    // The single surviving S7 is the FRESH re-dispatch (it carries the ship
+    // payload, #336), not the output-less superseded escalate entry.
+    expect(s7Entries[0]!.output).toBeDefined();
+    // The full re-opened ledger has the clean happy-path shape, no S7 twice.
+    expect(result.stepLedger.map((e) => e.step)).toEqual([
+      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
+    ]);
+  });
+
+  it("only S7-escalate re-opens: a prior S2-escalate S8 still reports/resumes the agent step, not S7", async () => {
+    // Guard: the new S7-reopen pattern must NOT swallow the existing agent
+    // escalate-resume. A prior AGENT escalate (S2) still drives resumeSession on
+    // S2 — it is not mistaken for an S7 re-open.
+    const backend = new ResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry(
+          "S2",
+          {
+            kind: "coder",
+            committed: false,
+            commitsAdded: 0,
+            escalate: { reason: "r", diagnosis: "d" },
+          },
+          "session-escalated-S2",
+        ),
+        s8("escalate"),
+      ],
+    });
+
+    await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(backend.resumeSessionCalls[0]![0]).toBe("S2");
   });
 });
 

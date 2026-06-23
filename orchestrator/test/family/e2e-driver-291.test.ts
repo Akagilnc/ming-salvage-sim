@@ -13,10 +13,10 @@
  *     single-slice Backend that does REAL git on the clone (real `git worktree
  *     add` + a real commit), producing a real reviewed child branch the family
  *     merger then REALLY merges;
- *   - the family verify / integrated cmr / `gh pr create` → the RealFamilyBackend's
- *     protected seams overridden to controlled outcomes (verify green, cmr
- *     converged, PR a synthetic url) — so verify+cmr really gate, and the run
- *     STOPS at the PR (the seam is reached, no real remote push).
+ *   - the family verify / integrated cmr / ship worker (#336: gstack-ship) → the
+ *     RealFamilyBackend's protected seams overridden to controlled outcomes (verify
+ *     green, cmr converged, ship a synthetic pr_opened) — so verify+cmr+ship really
+ *     gate, and the run STOPS at the PR (the seam is reached, no real container).
  *
  * The MERGE / LEDGER / RECONCILE / WAVE-SCHEDULE are all REAL. Asserted:
  *   1. wave scheduling: a dependency child (#13 blocked_by #12) merges AFTER its
@@ -24,8 +24,9 @@
  *   2. a REAL `--no-ff` merge commit per child lands on the LOCAL family base
  *      (the family base HEAD advances; each child's file is present);
  *   3. the family ledger REALLY records each merge (a JSONL sibling file);
- *   4. the run STOPS at the PR (the openFamilyPr seam is reached exactly once,
- *      with the family base; status === "success"; no merge to main).
+ *   4. the run STOPS at the PR (the ship WORKER is dispatched exactly once with
+ *      the family base — #336: gstack-ship, not the inline openFamilyPr; status
+ *      === "success"; no merge to main).
  */
 
 import { execFileSync } from "node:child_process";
@@ -36,7 +37,11 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { runFamilyDriver, type Sh } from "../../src/familyDriver.js";
-import { RealFamilyBackend } from "../../src/family/realFamilyBackend.js";
+import {
+  RealFamilyBackend,
+  type CmrWorkerOutcome,
+} from "../../src/family/realFamilyBackend.js";
+import type { ShipWorkerOutcome } from "../../src/shipOutcome.js";
 import type {
   FamilyVerifyRequest,
   IntegratedCmrRequest,
@@ -44,11 +49,13 @@ import type {
 } from "../../src/family/types.js";
 import type {
   Backend,
+  DispatchContext,
   IssueMeta,
   IssueSnapshot,
   PersistentLedgerEntry,
   StepOutput,
   StepSpec,
+  WorkerSpec,
   WorktreeHandle,
 } from "../../src/types.js";
 
@@ -132,7 +139,6 @@ class RealGitChildBackend implements Backend {
     return {
       number: issueNumber,
       isReadyForAgent: true,
-      hasAgentBrief: true,
       hasSubIssues: false,
       openBlockedBy: [],
     };
@@ -180,16 +186,41 @@ class E2EFamilyBackend extends RealFamilyBackend {
   readonly verifyCalls: FamilyVerifyRequest[] = [];
   readonly cmrCalls: IntegratedCmrRequest[] = [];
   readonly prCalls: OpenFamilyPrRequest[] = [];
+  readonly shipCalls: string[] = [];
   protected override runVerifyCommands(req: FamilyVerifyRequest): void {
     this.verifyCalls.push(req); // green: no throw, no real npx.
   }
-  protected override async runCmr(req: IntegratedCmrRequest) {
-    this.cmrCalls.push(req);
-    return { converged: true as const };
+  // #335: the integrated cmr is a CONTAINER cmr worker via dispatchWorker →
+  // runCmrWorker. Override the worker seam (no real container) so the e2e proves
+  // the run reaches the cmr step + STOPS at the PR, recording the family base it
+  // reviewed (no real cross-model squad, no image).
+  protected override async runCmrWorker(
+    _spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<CmrWorkerOutcome> {
+    this.cmrCalls.push({ familyBase: ctx.familyBase! });
+    return { kind: "verdict", converged: true };
+  }
+  // #336: 止于 PR is now a CONTAINER ship WORKER (gstack-ship) via dispatchWorker →
+  // runShipWorker, NOT the inline openFamilyPr. Override the worker seam (no real
+  // container) so the e2e proves the run reaches the ship step + STOPS at the PR,
+  // recording the family base it shipped (no real gstack-ship, no image, no push).
+  protected override async runShipWorker(
+    _spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<ShipWorkerOutcome> {
+    this.shipCalls.push(ctx.familyBase!);
+    return {
+      kind: "shipped",
+      branch: ctx.familyBase!,
+      status: "pr_opened",
+      pr: "https://example.invalid/pr/291",
+    };
   }
   override async openFamilyPr(req: OpenFamilyPrRequest) {
-    // Controlled: do NOT push / `gh pr create`. Record the call (the run reached
-    // the PR seam) and return a synthetic url — the autonomy ends here.
+    // LEGACY inline 止于 PR — RETAINED only to record that the production path no
+    // longer reaches it (#336 routes ship through runShipWorker). The assertion
+    // below proves prCalls stays EMPTY (the inline push path is dead).
     this.prCalls.push(req);
     return { url: "https://example.invalid/pr/291" };
   }
@@ -272,12 +303,15 @@ describe("#291 Unit B — e2e family driver on real RealFamilyBackend", () => {
     const order = merged.map((e) => e.childIssue!);
     expect(order.indexOf(12)).toBeLessThan(order.indexOf(13));
 
-    // ── 4. the run STOPPED at the PR (seam reached once, family base, no merge) ─
+    // ── 4. the run STOPPED at the PR (ship worker dispatched once, family base) ─
     // verify ran at BOTH barriers (each wave + final), cmr ran once (final), the
-    // PR opened once with the family base — and nothing merged to main.
+    // ship WORKER ran once with the family base (#336: gstack-ship, not the inline
+    // openFamilyPr) — and nothing merged to main.
     expect(backend.verifyCalls.length).toBeGreaterThanOrEqual(1);
     expect(backend.verifyCalls.some((v) => v.phase === "final")).toBe(true);
     expect(backend.cmrCalls).toEqual([{ familyBase }]);
-    expect(backend.prCalls).toEqual([{ familyBase }]);
+    expect(backend.shipCalls).toEqual([familyBase]);
+    // The legacy inline push path is DEAD — the ship worker replaced it (#336).
+    expect(backend.prCalls).toEqual([]);
   });
 });

@@ -1,0 +1,432 @@
+import { describe, expect, it } from "vitest";
+import { runVerifyCmr } from "../../src/family/verifyCmr.js";
+import {
+  cmrWorkerSpec,
+  dispatchFamilyWorker,
+  familyShipWorkerSpec,
+  legacyDispatchFamilyWorker,
+} from "../../src/family/dispatchFamilyWorker.js";
+import type {
+  DispatchContext,
+  WorkerResult,
+  WorkerSpec,
+} from "../../src/types.js";
+import type {
+  FamilyBackend,
+  FamilyLedgerEntry,
+  FamilyVerifyRequest,
+  FamilyVerifyResult,
+  IntegratedCmrRequest,
+  IntegratedCmrResult,
+  OpenFamilyPrRequest,
+  OpenFamilyPrResult,
+} from "../../src/family/types.js";
+
+/**
+ * #331 — the FAMILY worker-dispatch seam. The verify-cmr hook dispatches the
+ * integrated cmr + 止于 PR through `dispatchFamilyWorker` instead of the per-method
+ * `runIntegratedCmr` / `openFamilyPr`. Behaviour is unchanged (the legacy methods
+ * are still consulted as the capability gate; the wrapper forwards to them).
+ */
+
+/** A capable FamilyBackend that records the legacy method calls. */
+class CapableFamilyBackend implements FamilyBackend {
+  verifyCalls: FamilyVerifyRequest[] = [];
+  cmrCalls: IntegratedCmrRequest[] = [];
+  prCalls: OpenFamilyPrRequest[] = [];
+  cmrConverged = true;
+
+  async mergeChildIntoFamilyBase(): Promise<never> {
+    throw new Error("not used");
+  }
+  async appendFamilyLedger(): Promise<void> {}
+  async readFamilyLedger(): Promise<[]> {
+    return [];
+  }
+  async runFamilyVerify(req: FamilyVerifyRequest): Promise<FamilyVerifyResult> {
+    this.verifyCalls.push(req);
+    return { ok: true };
+  }
+  async runIntegratedCmr(
+    req: IntegratedCmrRequest,
+  ): Promise<IntegratedCmrResult> {
+    this.cmrCalls.push(req);
+    return this.cmrConverged
+      ? { converged: true }
+      : { converged: false, reason: "cross-slice seam mismatch" };
+  }
+  async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
+    this.prCalls.push(req);
+    return { url: `https://example/pr/${req.familyBase}` };
+  }
+}
+
+describe("#331 family verify-cmr routes cmr + PR through dispatchFamilyWorker", () => {
+  it("final barrier: green verify → cmr worker (converged) → ship worker (PR), ok", async () => {
+    const be = new CapableFamilyBackend();
+    const res = await runVerifyCmr({
+      phase: "final",
+      familyBase: "feat/330",
+      familyBackend: be,
+    });
+
+    expect(res).toEqual({ ok: true, ran: true });
+    // The legacy methods were still reached (the wrapper forwards to them).
+    expect(be.cmrCalls).toEqual([{ familyBase: "feat/330" }]);
+    expect(be.prCalls).toEqual([{ familyBase: "feat/330" }]);
+  });
+
+  it("final barrier: a red cmr verdict is routed as escalate (no PR), ok:false", async () => {
+    const be = new CapableFamilyBackend();
+    be.cmrConverged = false;
+    const res = await runVerifyCmr({
+      phase: "final",
+      familyBase: "feat/330",
+      familyBackend: be,
+    });
+
+    expect(res.ok).toBe(false);
+    // cmr ran; PR did NOT open on a red verdict.
+    expect(be.cmrCalls.length).toBe(1);
+    expect(be.prCalls.length).toBe(0);
+  });
+
+  it("forwards llmResolvedChildren through the DispatchContext to the cmr request", async () => {
+    const be = new CapableFamilyBackend();
+    await runVerifyCmr({
+      phase: "final",
+      familyBase: "feat/330",
+      familyBackend: be,
+      llmResolvedChildren: [42, 43],
+    });
+    expect(be.cmrCalls).toEqual([
+      { familyBase: "feat/330", llmResolvedChildren: [42, 43] },
+    ]);
+  });
+});
+
+describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without legacy methods", () => {
+  /**
+   * A backend that implements the UNIFIED `dispatchWorker` seam but NONE of the
+   * legacy `runIntegratedCmr` / `openFamilyPr` methods. The verify-cmr gate must
+   * accept it (codex cmr finding: gating on the legacy method alone wrongly
+   * fail-safed a new-seam-only backend to INCOMPLETE_GATE).
+   */
+  class NewSeamFamilyBackend implements FamilyBackend {
+    dispatched: string[] = [];
+    async mergeChildIntoFamilyBase(): Promise<never> {
+      throw new Error("not used");
+    }
+    async appendFamilyLedger(): Promise<void> {}
+    async readFamilyLedger(): Promise<[]> {
+      return [];
+    }
+    async runFamilyVerify(): Promise<FamilyVerifyResult> {
+      return { ok: true };
+    }
+    async dispatchWorker(
+      spec: WorkerSpec,
+      _ctx: DispatchContext,
+    ): Promise<WorkerResult> {
+      this.dispatched.push(spec.kind);
+      if (spec.kind === "cmr") {
+        return { kind: "completed", output: { kind: "cmr", converged: true } };
+      }
+      // Ship the family base branch (the gate re-asserts branch === familyBase,
+      // cmr S336 r4) with a real pr_opened + pr URL.
+      return {
+        kind: "completed",
+        output: { kind: "ship", branch: "feat/330", pr: "u", status: "pr_opened" },
+      };
+    }
+  }
+
+  it("final barrier reaches the cmr + ship workers through dispatchWorker (no legacy methods)", async () => {
+    const be = new NewSeamFamilyBackend();
+    const res = await runVerifyCmr({
+      phase: "final",
+      familyBase: "feat/330",
+      familyBackend: be,
+    });
+    expect(res).toEqual({ ok: true, ran: true });
+    expect(be.dispatched).toEqual(["cmr", "ship"]);
+  });
+});
+
+describe("#331 the family ship worker must return a SHIP payload (codex R2 guard)", () => {
+  /** A new-seam backend whose ship worker returns a completed NON-ship payload. */
+  class WrongShipFamilyBackend implements FamilyBackend {
+    async mergeChildIntoFamilyBase(): Promise<never> {
+      throw new Error("not used");
+    }
+    async appendFamilyLedger(): Promise<void> {}
+    async readFamilyLedger(): Promise<[]> {
+      return [];
+    }
+    async runFamilyVerify(): Promise<FamilyVerifyResult> {
+      return { ok: true };
+    }
+    async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+      if (spec.kind === "cmr") {
+        return { kind: "completed", output: { kind: "cmr", converged: true } };
+      }
+      // ship: a mis-wired backend returns a non-ship completed payload.
+      return { kind: "completed", output: { kind: "cmr", converged: true } };
+    }
+  }
+
+  it("a completed-but-non-ship family ship result → INCOMPLETE_GATE (ok:false)", async () => {
+    const be = new WrongShipFamilyBackend();
+    const res = await runVerifyCmr({
+      phase: "final",
+      familyBase: "feat/330",
+      familyBackend: be,
+    });
+    expect(res).toEqual({ ok: false, ran: true });
+  });
+});
+
+describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship success contract", () => {
+  /**
+   * A new-seam-only backend whose ship worker returns a `completed {kind:"ship"}`
+   * payload that the consumer would (pre-r4) trust on the discriminant ALONE. The
+   * terminal family gate must independently re-assert the family ship contract
+   * (branch === familyBase, status === "pr_opened", pr a non-empty string) — a
+   * backend that implements the seam but ships an off-contract success is a false
+   * family delivery (the PR never opened / opened on the wrong branch).
+   */
+  class OffContractShipFamilyBackend implements FamilyBackend {
+    shipOutput: WorkerResult;
+    constructor(shipOutput: WorkerResult) {
+      this.shipOutput = shipOutput;
+    }
+    async mergeChildIntoFamilyBase(): Promise<never> {
+      throw new Error("not used");
+    }
+    async appendFamilyLedger(): Promise<void> {}
+    async readFamilyLedger(): Promise<[]> {
+      return [];
+    }
+    async runFamilyVerify(): Promise<FamilyVerifyResult> {
+      return { ok: true };
+    }
+    async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+      if (spec.kind === "cmr") {
+        return { kind: "completed", output: { kind: "cmr", converged: true } };
+      }
+      return this.shipOutput;
+    }
+  }
+
+  async function gate(shipOutput: WorkerResult): Promise<FamilyVerifyResult> {
+    return runVerifyCmr({
+      phase: "final",
+      familyBase: "feat/330",
+      familyBackend: new OffContractShipFamilyBackend(shipOutput),
+    });
+  }
+
+  it("a completed ship with status 'pushed' (not pr_opened) ⇒ INCOMPLETE_GATE", async () => {
+    const res = await gate({
+      kind: "completed",
+      output: { kind: "ship", branch: "feat/330", status: "pushed" },
+    });
+    expect(res).toEqual({ ok: false, ran: true });
+  });
+
+  it("a completed ship missing its pr URL ⇒ INCOMPLETE_GATE", async () => {
+    const res = await gate({
+      kind: "completed",
+      output: { kind: "ship", branch: "feat/330", status: "pr_opened" },
+    });
+    expect(res).toEqual({ ok: false, ran: true });
+  });
+
+  it("a completed ship with a blank pr URL ⇒ INCOMPLETE_GATE", async () => {
+    const res = await gate({
+      kind: "completed",
+      output: { kind: "ship", branch: "feat/330", status: "pr_opened", pr: "   " },
+    });
+    expect(res).toEqual({ ok: false, ran: true });
+  });
+
+  it("a completed ship on the WRONG branch (≠ familyBase) ⇒ INCOMPLETE_GATE", async () => {
+    const res = await gate({
+      kind: "completed",
+      output: { kind: "ship", branch: "main", status: "pr_opened", pr: "u" },
+    });
+    expect(res).toEqual({ ok: false, ran: true });
+  });
+
+  it("a completed pr_opened ship on familyBase with a real pr ⇒ ok (the contract holds)", async () => {
+    const res = await gate({
+      kind: "completed",
+      output: { kind: "ship", branch: "feat/330", status: "pr_opened", pr: "https://gh/pr/1" },
+    });
+    expect(res).toEqual({ ok: true, ran: true });
+  });
+});
+
+describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted event (online review r3, codex P2)", () => {
+  /**
+   * A new-seam backend that RECORDS the ledger, with the cmr + ship worker outputs
+   * configurable. A `completed` worker whose output kind is WRONG (cmr worker
+   * returning a ship-shaped payload, or vice-versa) is the crash/malformed case the
+   * verify-cmr hook fail-safes to INCOMPLETE_GATE — and (r3) must leave a durable
+   * `aborted` event so the failed FINAL barrier survives to the ledger for resume.
+   */
+  class RecordingFamilyBackend implements FamilyBackend {
+    readonly ledger: FamilyLedgerEntry[] = [];
+    constructor(
+      private readonly cmrOut: WorkerResult,
+      private readonly shipOut: WorkerResult,
+    ) {}
+    async mergeChildIntoFamilyBase(): Promise<never> {
+      throw new Error("not used");
+    }
+    async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+      this.ledger.push(entry);
+    }
+    async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+      return this.ledger;
+    }
+    async runFamilyVerify(): Promise<FamilyVerifyResult> {
+      return { ok: true };
+    }
+    async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+      return spec.kind === "cmr" ? this.cmrOut : this.shipOut;
+    }
+  }
+
+  it("a malformed cmr worker (completed but NOT a cmr payload) ⇒ INCOMPLETE_GATE + durable aborted(final)", async () => {
+    const backend = new RecordingFamilyBackend(
+      { kind: "completed", output: { kind: "ship", branch: "feat/330", status: "pushed" } },
+      { kind: "completed", output: { kind: "ship", branch: "feat/330", status: "pr_opened", pr: "u" } },
+    );
+    const res = await runVerifyCmr({ phase: "final", familyBase: "feat/330", familyBackend: backend });
+    expect(res).toEqual({ ok: false, ran: true });
+    const aborts = backend.ledger.filter((e) => e.status === "aborted");
+    expect(aborts).toHaveLength(1);
+    expect(aborts[0]?.phase).toBe("final");
+    // NO ship marker — the barrier failed, so a resume re-runs it (does not skip).
+    expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
+  });
+
+  it("a malformed ship worker (completed but NOT a ship payload) ⇒ INCOMPLETE_GATE + durable aborted(final)", async () => {
+    const backend = new RecordingFamilyBackend(
+      { kind: "completed", output: { kind: "cmr", converged: true } },
+      { kind: "completed", output: { kind: "cmr", converged: true } },
+    );
+    const res = await runVerifyCmr({ phase: "final", familyBase: "feat/330", familyBackend: backend });
+    expect(res).toEqual({ ok: false, ran: true });
+    const aborts = backend.ledger.filter((e) => e.status === "aborted");
+    expect(aborts).toHaveLength(1);
+    expect(aborts[0]?.phase).toBe("final");
+    expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
+  });
+});
+
+describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R4)", () => {
+  class EscalatingFamilyBackend implements FamilyBackend {
+    escalations: string[] = [];
+    escalateOn: "cmr" | "ship";
+    constructor(escalateOn: "cmr" | "ship") {
+      this.escalateOn = escalateOn;
+    }
+    async mergeChildIntoFamilyBase(): Promise<never> {
+      throw new Error("not used");
+    }
+    async appendFamilyLedger(): Promise<void> {}
+    async readFamilyLedger(): Promise<[]> {
+      return [];
+    }
+    async runFamilyVerify(): Promise<FamilyVerifyResult> {
+      return { ok: true };
+    }
+    async escalateFamily(e: { reason: string }): Promise<void> {
+      this.escalations.push(e.reason);
+    }
+    async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+      if (spec.kind === this.escalateOn) {
+        return {
+          kind: "escalated",
+          escalation: { reason: "stuck", diagnosis: "needs human" },
+        };
+      }
+      if (spec.kind === "cmr") {
+        return { kind: "completed", output: { kind: "cmr", converged: true } };
+      }
+      return {
+        kind: "completed",
+        output: { kind: "ship", branch: "fb", pr: "u", status: "pr_opened" },
+      };
+    }
+  }
+
+  it("an escalated cmr worker → escalateFamily + ok:false (not a bare INCOMPLETE_GATE)", async () => {
+    const be = new EscalatingFamilyBackend("cmr");
+    const res = await runVerifyCmr({
+      phase: "final",
+      familyBase: "feat/330",
+      familyBackend: be,
+    });
+    expect(res.ok).toBe(false);
+    expect(be.escalations.length).toBe(1);
+    expect(be.escalations[0]).toContain("stuck");
+  });
+
+  it("an escalated family ship worker → escalateFamily + ok:false", async () => {
+    const be = new EscalatingFamilyBackend("ship");
+    const res = await runVerifyCmr({
+      phase: "final",
+      familyBase: "feat/330",
+      familyBackend: be,
+    });
+    expect(res.ok).toBe(false);
+    expect(be.escalations.length).toBe(1);
+  });
+});
+
+describe("#331 legacyDispatchFamilyWorker — wraps legacy returns as WorkerResult", () => {
+  it("cmr worker: a red verdict is `completed` (with payload), NOT `failed`", async () => {
+    const be = new CapableFamilyBackend();
+    be.cmrConverged = false;
+    const res = await legacyDispatchFamilyWorker(be, cmrWorkerSpec(), {
+      familyBase: "fb",
+    });
+    expect(res.kind).toBe("completed");
+    if (res.kind === "completed" && res.output.kind === "cmr") {
+      expect(res.output.converged).toBe(false);
+      expect(res.output.reason).toBe("cross-slice seam mismatch");
+    } else {
+      throw new Error("expected completed cmr payload");
+    }
+  });
+
+  it("ship worker: forwards to openFamilyPr and wraps as completed ShipResult", async () => {
+    const be = new CapableFamilyBackend();
+    const res = await legacyDispatchFamilyWorker(be, familyShipWorkerSpec(), {
+      familyBase: "fb",
+    });
+    expect(res.kind).toBe("completed");
+    if (res.kind === "completed" && res.output.kind === "ship") {
+      expect(res.output.pr).toBe("https://example/pr/fb");
+      expect(res.output.status).toBe("pr_opened");
+    } else {
+      throw new Error("expected completed ship payload");
+    }
+  });
+
+  it("dispatchFamilyWorker prefers familyBackend.dispatchWorker when present", async () => {
+    let used = false;
+    const be = new CapableFamilyBackend() as FamilyBackend & {
+      dispatchWorker: (s: WorkerSpec, c: DispatchContext) => Promise<WorkerResult>;
+    };
+    be.dispatchWorker = async (): Promise<WorkerResult> => {
+      used = true;
+      return { kind: "completed", output: { kind: "cmr", converged: true } };
+    };
+    await dispatchFamilyWorker(be, cmrWorkerSpec(), { familyBase: "fb" });
+    expect(used).toBe(true);
+  });
+});
