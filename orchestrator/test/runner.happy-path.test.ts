@@ -12,14 +12,16 @@ import type {
 
 /**
  * Happy-path fake Backend: records every call in order, returns canned
- * outputs that drive the runner straight down S0→S1→S2→S3→S4→S7→S8.
+ * outputs that drive the runner straight down S0→S1→S2→S7→S8 (ADR 0026
+ * 2026-06-24: the single-slice runner is a pure scheduler — S2 is ONE
+ * whole-slice build worker that runs the per-slice review→fix→re-review loop
+ * internally; there is no runner reviewer/fix step and no S3/S4/S5/S6).
  *
  *   - S0/S1 read a compliant issue (rfa ∧ no sub-issues ∧ no open blocked_by)
  *     → gate passes.
- *   - S2 coder step → { committed: true, commitsAdded: 1 }
- *   - S3 reviewer step → { findings: [] } (= approve)
- *   - S4 route_findings sees no P0/P1 and no fix_now → S7 push
- *   - S7 push succeeds → S8 handoff(status=success)
+ *   - S2 build worker → { committed: true, commitsAdded: 1 } (per-slice cmr
+ *     already converged inside the worker's own session).
+ *   - S7 ship succeeds → S8 handoff(status=success)
  */
 class HappyPathBackend implements Backend {
   /** Ordered log of every Backend method invoked (the call timeline). */
@@ -35,7 +37,7 @@ class HappyPathBackend implements Backend {
     path: "/resident/worktrees/issue-247",
   };
 
-  // #255: fresh-run defaults (this suite is the #247 happy-path regression).
+  // #255: fresh-run defaults (this suite is the happy-path regression).
   async findResumeState(): Promise<undefined> {
     return undefined;
   }
@@ -85,11 +87,8 @@ class HappyPathBackend implements Backend {
   async runStep(spec: StepSpec): Promise<StepOutput> {
     this.calls.push(`runStep(${spec.id}:${spec.role}:${spec.promptFile})`);
     this.runStepIds.push(spec.id);
-    if (spec.role === "coder") {
-      return { kind: "coder", committed: true, commitsAdded: 1 };
-    }
-    // reviewer
-    return { kind: "reviewer", findings: [] };
+    // The only agent step is S2 (the coder build worker).
+    return { kind: "coder", committed: true, commitsAdded: 1 };
   }
 
   async push(worktree: WorktreeHandle): Promise<void> {
@@ -103,12 +102,12 @@ class HappyPathBackend implements Backend {
     _entry: PersistentLedgerEntry,
     _stateDir: string,
   ): Promise<void> {
-    // no-op in the #247 happy-path fake
+    // no-op in the happy-path fake
   }
 }
 
-describe("runOrchestrator — happy path skeleton (#247)", () => {
-  it("runs S0→S1→S2→S3→S4→S7→S8 in order and hands off status=success", async () => {
+describe("runOrchestrator — happy path skeleton (ADR 0026)", () => {
+  it("runs S0→S1→S2→S7→S8 in order and hands off status=success", async () => {
     const backend = new HappyPathBackend();
 
     const result = await runOrchestrator({ issueNumber: 247, backend });
@@ -121,26 +120,25 @@ describe("runOrchestrator — happy path skeleton (#247)", () => {
     // the runner never reaches for those actions).
     expect(backend.pushCount).toBe(1);
 
-    // The step ledger records the runner's decisions in canonical order.
+    // The step ledger records the runner's decisions in canonical order —
+    // collapsed to S0→S1→S2→S7→S8 (no runner reviewer/fix step).
     expect(result.stepLedger.map((e) => e.step)).toEqual([
       "S0",
       "S1",
       "S2",
-      "S3",
-      "S4",
       "S7",
       "S8",
     ]);
   });
 
-  it("dispatches only the agent steps S2/S3 to the sandbox, in order", async () => {
+  it("dispatches only the build step S2 to the sandbox", async () => {
     const backend = new HappyPathBackend();
 
     await runOrchestrator({ issueNumber: 247, backend });
 
-    // Runner-action steps (S0/S1/S4/S7/S8) never call runStep; only the
-    // agent steps (S2 coder, S3 reviewer) do.
-    expect(backend.runStepIds).toEqual(["S2", "S3"]);
+    // Runner-action steps (S0/S1/S7/S8) never call runStep; only the single
+    // agent step (S2 build worker) does — the per-slice loop lives inside it.
+    expect(backend.runStepIds).toEqual(["S2"]);
   });
 
   it("calls Backend actions in the canonical S0→S8 sequence", async () => {
@@ -153,25 +151,22 @@ describe("runOrchestrator — happy path skeleton (#247)", () => {
       "fetchIssueSnapshot(247)", // S1 load_context (full snapshot)
       "prepareWorktree(247, main)", // S1 resident worktree, base=main
       "writeSnapshot(feat/orchestrator/issue-247, #247)", // S1 clean-room snapshot
-      "runStep(S2:coder:coder_implement.md)", // S2 coder_implement
-      "runStep(S3:reviewer:reviewer_full_review.md)", // S3 reviewer_full_review
-      // S4 route_findings, S7 push, S8 handoff below — S4/S8 are pure TS.
-      "push(feat/orchestrator/issue-247)", // S7 push
+      "runStep(S2:coder:coder_implement.md)", // S2 whole-slice build
+      // S7 ship, S8 handoff below — S8 is pure TS.
+      "push(feat/orchestrator/issue-247)", // S7 ship
     ]);
   });
 
-  it("the coder output is {committed,commitsAdded} and empty reviewer findings route to push (approve)", async () => {
+  it("the build output is {committed,commitsAdded} and a committed build routes to ship", async () => {
     const backend = new HappyPathBackend();
 
     const result = await runOrchestrator({ issueNumber: 247, backend });
 
-    // The ledger captures the structured step outputs route() consumed.
+    // The ledger captures the structured S2 output route() consumed.
     const s2 = result.stepLedger.find((e) => e.step === "S2");
-    const s3 = result.stepLedger.find((e) => e.step === "S3");
     expect(s2?.output).toEqual({ kind: "coder", committed: true, commitsAdded: 1 });
-    expect(s3?.output).toEqual({ kind: "reviewer", findings: [] });
 
-    // Empty findings → approve → push reached, success.
+    // A committed (reviewed) build → ship reached, success.
     expect(result.status).toBe("success");
     expect(backend.pushCount).toBe(1);
   });
@@ -181,13 +176,10 @@ describe("runOrchestrator — happy path skeleton (#247)", () => {
 
     await runOrchestrator({ issueNumber: 247, backend });
 
-    // Every agent step dispatched a fixed, versioned promptFile (recorded in
-    // the call log) — no step assembled an inline prompt string.
+    // The single agent step dispatched a fixed, versioned promptFile (recorded
+    // in the call log) — no step assembled an inline prompt string.
     const runCalls = backend.calls.filter((c) => c.startsWith("runStep("));
-    expect(runCalls).toEqual([
-      "runStep(S2:coder:coder_implement.md)",
-      "runStep(S3:reviewer:reviewer_full_review.md)",
-    ]);
+    expect(runCalls).toEqual(["runStep(S2:coder:coder_implement.md)"]);
   });
 
   it("commits accumulate on a single resident worktree/branch (base=main), not a throwaway sandbox", async () => {

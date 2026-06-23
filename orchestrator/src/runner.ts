@@ -1,51 +1,48 @@
 /**
- * runOrchestrator — the runner loop (ADR 0018).
+ * runOrchestrator — the runner loop (ADR 0018, corrected by ADR 0026 2026-06-24).
  *
- * The runner drives the fixed S0–S8 sequence itself: it performs each
- * runner-action step or dispatches each agent step, writes a step-ledger
+ * The runner drives the fixed single-slice sequence itself: it performs each
+ * runner-action step or dispatches each worker step, writes a step-ledger
  * entry, then calls route() to pick the next step. The agent never decides
  * the next step — route() does.
  *
- * Slice #247: happy path S0–S3–S4(approve)–S7–S8.
+ * ADR 0026 (2026-06-24 correction, wiki line 42): the single-slice runner is a
+ * PURE SCHEDULER. The per-slice review→fix→re-review LOOP no longer lives at the
+ * runner level. The sequence collapses to:
+ *
+ *   S0(gate) → S1(context) → S2(whole-slice build) → S7(ship) → S8(handoff)
+ *
+ * S2 is ONE memory-bearing build worker that runs the ENTIRE per-slice sequence
+ * INTERNALLY (invoke `/tdd`; typecheck + full suite; `/review` + the self-check
+ * 二连; baseline commit; `/ak-cross-m-review --scenario per-slice` to concurrence;
+ * return the FINAL reviewed commit). The runner dispatches it ONCE and reads its
+ * terminal verdict — there is NO runner-level reviewer step (S3/S6), NO fix step
+ * (S5), NO route fan-out (S4), and therefore NO runner fix-loop and NO
+ * no-progress stuck guard. The grade/fix/drift discipline lives in the versioned
+ * skills, never in the runner.
+ *
  * Slice #249: persisted step ledger — every step is written via
  *   backend.writeLedger() to the sibling state dir (outside the worktree).
- * Slice #250: S4 severity+action fan-out (P0/P1 or fix_now → S5; defer → S7).
  * Slice #251: global escalate stop edge (in route()).
  * Slice #252: error edges —
  *   - S2 committed:false → S8(error)  [route() detects]
- *   - S7 push() throws  → S8(error)   [runner catch]
+ *   - S7 ship throws/escalates → S8(error)/S8(escalate)  [runner catch]
  *   - any backend call throws → S8(error) + error package  [runner catch]
- *   - any agent output carries escalate → S8(escalate) [route() detects]
+ *   - the S2 worker carries escalate → S8(escalate) [route() detects]
  * Slice #253: StepSpec contract — model/completionSignal/maxIter/soul/toolchain.
  * Slice #248: S0 input gate — three-way accept condition (rfa ∧ no sub-issues ∧
  *   blocked_by all closed); violations throw, stopping at S0. (Agent Brief was
  *   removed as a gate — design correction; the coder reads the whole issue.)
- * Slice #254: fix-loop back-edge — route() wires S5→S6→S4→(S5|S7); the runner
- *   already dispatches S5/S6 as agent steps and re-collects defers at S4 each
- *   pass, so the loop iterates with no runner change. Co-exists with the
- *   escalate stop (#251) and error edges (#252): S5 0-commit → S8(error),
- *   any S5/S6 escalate → S8(escalate).
- * #331 (ADR 0026 / PRD #330): the runner dispatches every WORKER step
- *   (S2/S3/S5/S6 agent steps + S7 ship) through the single unified seam
- *   `dispatchWorker(backend, spec, ctx)` (dispatchWorker.ts) instead of reaching
- *   for `runStep` / `resumeSession` / `push` directly. PREFACTOR: the seam is a
- *   thin legacy wrapper forwarding to those methods, so sequence / routing /
- *   fix-loop behaviour is UNCHANGED (regression green). S7 is now a ship worker
- *   step, not an inline `git push` (the real `gstack-ship` worker is #336).
- * cmr S254: removed the round-counting MAX_STEPS cap (it limited fix rounds to
- *   ~8, violating US#18 "不因数到某个轮数就停") and replaced it with a
- *   no-progress stuck guard: the loop runs unbounded while it makes progress
- *   (the reviewer findings change each round) and bails cleanly to
- *   S8(status=error) only after K consecutive no-progress rounds. (Integ
- *   reconcile with base rule B: the original commit-leg of the progress signal
- *   is degenerate under the committed⟺commitsAdded≥1 contract, so progress is
- *   findings-change only — see the guard block for the full rationale.)
+ * #331 (ADR 0026 / PRD #330): the runner dispatches every WORKER step (S2 build +
+ *   S7 ship) through the single unified seam `dispatchWorker(backend, spec, ctx)`
+ *   (dispatchWorker.ts) instead of reaching for `runStep` / `resumeSession` /
+ *   `push` directly.
  */
 
 import { route } from "./route.js";
 // The unified worker-dispatch seam (ADR 0026 / PRD #330 #331): the runner
-// dispatches EVERY worker step (S2/S3/S5/S6 agent steps, S7 ship) through ONE
-// free function instead of reaching for runStep/resumeSession/push directly.
+// dispatches EVERY worker step (S2 build, S7 ship) through ONE free function
+// instead of reaching for runStep/resumeSession/push directly.
 import {
   dispatchWorker,
   shipWorkerSpec,
@@ -54,12 +51,10 @@ import {
 } from "./dispatchWorker.js";
 import { isFilledString } from "./shipOutcome.js";
 // Shared seam guards — single source of truth, also used by route(), so the
-// finding-element (A) / commitsAdded (B) rules can never drift.
+// coder-output / commitsAdded rules can never drift.
 import {
   escalateOf,
-  isBlockingFinding,
   isValidEscalation,
-  isValidReviewerOutput,
   isValidStepOutput,
 } from "./validate.js";
 import type {
@@ -88,32 +83,6 @@ import type {
 // the legacy `StepOutput | StepResult` return internally and hands back a
 // discriminated WorkerResult (the runner unwraps `completed` → output + sessionId
 // at the call site). One normalisation, no drift.
-
-/**
- * The BLOCKING reviewer findings from the immediately preceding reviewer step,
- * for delivery to the S5 coder_fix step (integ-cmr 256 r3, fix_loop_context).
- * `lastOutput` at an S5 dispatch is always the preceding reviewer output (S3 for
- * round 1, the prior S6 thereafter); a malformed / non-reviewer output (which
- * the runner/route guards would already have routed to S8(error) before reaching
- * here) yields `undefined` so the seam never delivers garbage.
- *
- * integ-cmr 256 confirm r1 (high, #244 铁律): the filter is the SHARED
- * isBlockingFinding predicate — the exact one route()'s S4 needsFix uses — NOT a
- * bare `action === 'fix_now'`. route() routes ANY P0/P1 (critical/high) to S5
- * regardless of action (severity trumps: a reviewer cannot defer a P0/P1). The
- * old action-only filter meant a `{severity:'critical'|'high', action:'defer'}`
- * finding routed to S5 yet reached the coder as an EMPTY set — silently
- * re-deferring a P0/P1 on the coder side (writeFixFindings then wrote an empty
- * findings file, leaving the coder to fix a blank slate on a routed P0/P1).
- * Sharing the predicate guarantees every finding routed to S5 is also delivered.
- * P2/P3 defer findings remain non-blocking and are still not handed over.
- */
-function selectFixNowFindings(
-  output: StepOutput | undefined,
-): ReadonlyArray<Finding> | undefined {
-  if (!isValidReviewerOutput(output)) return undefined;
-  return output.findings.filter(isBlockingFinding);
-}
 
 // ─── ledger helpers ────────────────────────────────────────────────────────
 
@@ -371,35 +340,17 @@ function planResume(
     // step): we are re-opening that step, so the prior boundary is superseded.
     // The slice is EXCLUSIVE of the escalated step itself — it is re-run via
     // resumeSession and gets a fresh in-memory entry, so keeping the old one
-    // here would duplicate it.
+    // here would duplicate it. The only agent step now is S2 (the whole-slice
+    // build worker); when it escalated and a human has answered, resume it in
+    // its original memory-bearing session so the build continues from where it
+    // stopped (ADR 0026: S2 is one memory-bearing session). There is no reviewer
+    // step to walk back to — the per-slice loop lives INSIDE the S2 session.
     const escalatedIdx = ledger.lastIndexOf(agentEntry);
     const priorLedger = ledger.slice(0, escalatedIdx);
-    // integ-cmr 256 r6 (US#13 fix_loop_context, escalate-resume face): when the
-    // re-opened step is the S5 coder_fix, `lastOutput` must be the round's
-    // REVIEWER output — NOT the escalated coder's own output. The loop's S5
-    // dispatch derives the fix_now findings via selectFixNowFindings(lastOutput),
-    // which only recovers them from a reviewer output (a coder output fails
-    // isValidReviewerOutput → undefined). With the coder's own output here the
-    // resumed coder ran blind AND resumeSession(..., undefined) drove
-    // writeFixFindings's rmSync branch, DELETING the on-disk findings file the
-    // coder reads. Walking back to the most recent reviewer (the S3/S6 that
-    // produced the fix_now findings) makes the escalate-resume seam deliver the
-    // SAME findings a fresh S5 dispatch does. Reviewer escalations (S3/S6) and
-    // crash/legacy ledgers with no prior reviewer fall back to the escalated
-    // entry's own output unchanged (the defer-rebuild + route() already handle a
-    // reviewer lastOutput; a non-reviewer fallback leaves both untouched).
-    const lastReviewer = priorLedger
-      .slice()
-      .reverse()
-      .find((e) => e.output?.kind === "reviewer")?.output;
-    const lastOutput =
-      agentEntry.output?.kind === "coder"
-        ? lastReviewer ?? agentEntry.output
-        : agentEntry.output;
     return {
       resumeStep: agentEntry.step,
       resumeSessionId: agentEntry.sessionId,
-      lastOutput,
+      lastOutput: agentEntry.output,
       priorLedger: priorLedger as ReadonlyArray<LedgerEntry>,
     };
   }
@@ -418,8 +369,8 @@ function planResume(
   // — and RE-DISPATCH S7 (re-run the ship worker fresh; ship is a clean-session
   // runner action, so there is no agent session to resumeSession into). Drop the
   // trailing S8 boundary: we are re-opening, so the prior terminal is superseded.
-  // Only the SHIP step re-opens this way; an agent escalate (S2/S3/S5/S6) is caught
-  // by Case 2 above (it has a well-formed escalate output) and never reaches here.
+  // Only the SHIP step re-opens this way; an agent escalate (S2 build worker) is
+  // caught by Case 2 above (it has a well-formed escalate output) and never reaches here.
   if (
     lastEntry.step === "S8" &&
     lastEntry.handoffStatus === "escalate" &&
@@ -498,33 +449,30 @@ const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
 ] as const;
 
 /**
- * The fixed StepSpec for each agent step. Versioned promptFiles, never
- * assembled inline (ADR 0018 决定#4).
+ * The fixed StepSpec for the single agent step (ADR 0026 2026-06-24). Versioned
+ * promptFiles, never assembled inline (ADR 0018 决定#4).
  *
- * #247 wired id/role/promptFile. #253 fills the contract:
- *   model           — short slug the runtime maps to a baked-in CLI
- *   completionSignal — signal the sandbox watches for (Sandcastle run() API)
- *   maxIter         — coder >1 (iterates), reviewer =1 (single pass)
- *   soul            — which soul to inject (coder / READ-ONLY)
- *   toolchain       — image tool-chain declaration
+ * Under the corrected ADR 0026 the only agent step is S2 — the WHOLE-SLICE BUILD
+ * worker. It runs the entire per-slice sequence (invoke `/tdd`; typecheck + full
+ * suite; `/review` + the self-check 二连; baseline commit; `/ak-cross-m-review
+ * --scenario per-slice` to concurrence; return the FINAL reviewed commit) inside
+ * its ONE memory-bearing session. There is NO runner-level reviewer step (S3/S6)
+ * and NO fix step (S5) — the per-slice review→fix→re-review loop runs INSIDE the
+ * skills the worker invokes, never at the runner level.
  *
- * maxIter SEMANTICS (lazy field in v0.1 — the runner does NOT enforce it):
- * it is the WITHIN-STEP agent (Ralph) retry budget for one `sandbox.run()`,
- * NOT a fix-loop give-up counter. Hitting it = that step ends normally and the
- * outer route() loop continues; it is NEVER the orchestrator giving up (that
- * only happens on a MODEL escalate signal — US#18/US#19, never by counting).
- * When #256 wires Sandcastle, maxIter must be implemented with this semantics
- * and must NOT become a "count-to-N-then-give-up" cap. See StepSpec.maxIter.
+ * #253 fields: model (CLI slug), completionSignal (Sandcastle run() API), maxIter
+ * (the WITHIN-STEP Ralph retry budget — NOT a fix-loop give-up counter), soul,
+ * toolchain.
  *
- * Swapping models = change the `model` slug here; no image rebuild, no
- * structural StepSpec change (PRD #244 Implementation Decisions).
+ * maxIter SEMANTICS: the WITHIN-STEP agent (Ralph) retry budget for one
+ * `sandbox.run()`, NOT a give-up counter. Hitting it = the step ends normally; it
+ * is NEVER the orchestrator giving up (that only happens on a MODEL escalate
+ * signal — US#18/US#19, never by counting). See StepSpec.maxIter.
  *
- * S5/S6 are the fix-loop agent steps (route() wires S5→S6→S4→(S5|S7) in #254).
- * They carry the same full StepSpec contract as S2/S3: S5 mirrors the coder
- * spec (coder_fix prompt), S6 the reviewer (reviewer_rereview prompt, same
- * READ-ONLY soul + maxIter:1 single-pass full re-review as S3).
+ * Swapping models = change the `model` slug here; no image rebuild, no structural
+ * StepSpec change (PRD #244 Implementation Decisions).
  */
-export const STEP_SPECS: Readonly<Record<"S2" | "S3" | "S5" | "S6", StepSpec>> = {
+export const STEP_SPECS: Readonly<Record<"S2", StepSpec>> = {
   S2: {
     id: "S2",
     role: "coder",
@@ -535,186 +483,7 @@ export const STEP_SPECS: Readonly<Record<"S2" | "S3" | "S5" | "S6", StepSpec>> =
     soul: "coder",
     toolchain: IMAGE_TOOLCHAIN,
   },
-  S3: {
-    id: "S3",
-    role: "reviewer",
-    promptFile: "reviewer_full_review.md",
-    model: "opus",
-    completionSignal: "REVIEWER_STEP_COMPLETE",
-    maxIter: 1,
-    soul: "READ-ONLY",
-    toolchain: IMAGE_TOOLCHAIN,
-  },
-  // S5/S6: the fix-loop agent steps. route() wires S5→S6→S4→(S5|S7) (#254).
-  S5: {
-    id: "S5",
-    role: "coder",
-    promptFile: "coder_fix.md",
-    model: "sonnet",
-    completionSignal: "CODER_STEP_COMPLETE",
-    maxIter: 5,
-    soul: "coder",
-    toolchain: IMAGE_TOOLCHAIN,
-  },
-  S6: {
-    id: "S6",
-    role: "reviewer",
-    promptFile: "reviewer_rereview.md",
-    model: "opus",
-    completionSignal: "REVIEWER_STEP_COMPLETE",
-    maxIter: 1,
-    soul: "READ-ONLY",
-    toolchain: IMAGE_TOOLCHAIN,
-  },
 };
-
-/**
- * Order-independent serialisation of a reviewer's findings, for the
- * no-progress signal (cmr S254).
- *
- * The raw `JSON.stringify(findings)` is fragile: it is sensitive to BOTH the
- * object key order within each Finding AND the array element order. The real
- * path (#256 parses LLM-emitted JSON) may legitimately reorder keys/elements
- * between rounds while the logical findings are unchanged — that would make
- * `findingsChanged` permanently true, so a genuinely stuck loop (0 commit +
- * same findings) would never accumulate to K and the stuck guard would be
- * bypassed (the very deadlock it exists to catch).
- *
- * Normalisation: project each Finding onto its fixed declared fields in a
- * canonical key order, stably sort the projected findings, then stringify. The
- * same logical set of findings serialises identically regardless of incoming
- * key/array order; a real content change (add/remove/edit a field) still
- * changes the string, so true progress is preserved.
- */
-function normalizeFindingsKey(findings: ReadonlyArray<Finding>): string {
-  // Project to the fixed Finding fields in a stable key order. This both
-  // canonicalises key order and drops any stray keys, so the comparison
-  // depends only on the contractual fields.
-  const projected = findings.map((f) => ({
-    action: f.action,
-    category: f.category,
-    claim_quote: f.claim_quote,
-    location: f.location,
-    severity: f.severity,
-    suggested_fix: f.suggested_fix,
-  }));
-  // Stable sort by the projected fields so array element order does not matter.
-  // Each element is already in canonical key order, so stringifying one element
-  // yields a stable per-element key to sort on.
-  projected.sort((a, b) =>
-    JSON.stringify(a) < JSON.stringify(b) ? -1 : JSON.stringify(a) > JSON.stringify(b) ? 1 : 0,
-  );
-  return JSON.stringify(projected);
-}
-
-/**
- * The ACTIVE suffix of a persisted ledger — the entries that belong to the
- * still-live attempt, with any SUPERSEDED escalation attempt dropped
- * (integ-cmr m2 r5, cross-slice seam #255 × #254 × #251).
- *
- * The disk ledger is append-only (types.ts: writeLedger appends a JSONL record).
- * Escalate-resume re-opens the escalated step: planResume Case 2 truncates the
- * IN-MEMORY priorLedger to slice(0, escalatedIdx), but the DISK ledger keeps the
- * old escalated step entry AND its S8(escalate) — then the resumed continuation
- * APPENDS fresh entries after them. So after a double-resume
- * (escalate → answer-resume → crash → re-resume) the disk holds:
- *
- *   …S3(F), S4, S5, S6(escalate)(F), S8(escalate),   ← SUPERSEDED attempt
- *   S6(resumed)(F), S4, …                             ← ACTIVE suffix (reopened)
- *
- * A terminal S8 entry that is NOT the last record was superseded by exactly such
- * a reopen (a finished run is never continued — Case 3a/3b reports its status and
- * stops; only a re-opened escalation appends past its S8). So the boundary is the
- * LAST non-final S8: everything at-and-before it is the superseded prior attempt,
- * everything after it is the active suffix the live loop actually continued.
- *
- * Returning only the active suffix makes reconstructProgressState mirror the live
- * loop exactly: each escalate-resume starts a FRESH no-progress streak from the
- * resumed step (the human just answered — the loop is making progress, not stuck),
- * so the prior escalated attempt's reviewer outputs must NOT seed/score the streak.
- * Without this, the superseded attempt's repeated findings inflate noProgressStreak
- * and trip the K-consecutive stuck guard prematurely → a false S8(error) deadlock.
- *
- * A ledger with no non-final S8 (a normal crash-resume mid-run) is returned
- * unchanged — there is no superseded boundary to drop.
- */
-function activeSuffix(
-  ledger: ReadonlyArray<LedgerEntry>,
-): ReadonlyArray<LedgerEntry> {
-  // Find the LAST S8 entry that is not the final record. Any S8 followed by more
-  // entries terminated a superseded attempt (only a re-opened escalation appends
-  // past its own S8 handoff). The active suffix begins right after it.
-  let boundary = -1;
-  for (let i = 0; i < ledger.length - 1; i++) {
-    if (ledger[i]!.step === "S8") boundary = i;
-  }
-  return boundary >= 0 ? ledger.slice(boundary + 1) : ledger;
-}
-
-/**
- * Reconstruct the no-progress guard state from a persisted ledger on resume
- * (integ-cmr m2 r1, Finding 3).
- *
- * The live loop maintains two pieces of state for the K-consecutive-no-progress
- * stuck contract (US#18/19): `prevFindingsKey` (the previous reviewer step's
- * normalised findings, the baseline the next S6 compares against) and
- * `noProgressStreak` (consecutive S6 rounds whose findings did not change). On a
- * crash/escalate-resume mid-fix-loop these were NOT reconstructed, so the first
- * S6 after resume scored a free "progress" pass and erased the prior streak — a
- * genuinely-stuck loop could evade the contract indefinitely across resume
- * boundaries. This folds the same findings-change signal over the persisted
- * reviewer outputs to rebuild both, so the contract holds through resume.
- *
- * The baseline is the S3 full review (round-0); each subsequent S6 re-review is
- * compared against the running `prevFindingsKey`, mirroring the live loop's
- * sequencing exactly (seed at S3, advance + score at each S6). Reviewer entries
- * are read IN ORDER; the first reviewer output seeds the baseline (no streak
- * change), and each later one scores progress/no-progress against it.
- *
- * integ-cmr m2 r5 (cross-slice seam #255 × #254 × #251): the fold runs over the
- * ACTIVE suffix only, NOT the full append-only disk ledger. A reopened escalation
- * leaves its superseded attempt's reviewer outputs on disk (append-only); folding
- * over them would count the prior attempt's repeated findings as no-progress rounds
- * of the live loop and inflate the streak past K → a false stuck S8(error). The
- * live loop's streak resets at each escalate-resume (the resumed step is fresh
- * progress), so reconstruction must score only the active suffix after the last
- * superseded escalation boundary — see activeSuffix().
- */
-function reconstructProgressState(
-  ledger: ReadonlyArray<LedgerEntry>,
-): { prevFindingsKey: string | undefined; noProgressStreak: number } {
-  let prevFindingsKey: string | undefined;
-  let noProgressStreak = 0;
-  let seenBaseline = false;
-
-  for (const e of activeSuffix(ledger)) {
-    const out = e.output;
-    // integ-cmr m2 r4 (self-check, same class as the defer-rebuild hole): use
-    // isValidReviewerOutput, NOT a bare `kind === "reviewer"` check. The persisted
-    // ledger is untyped on disk, so a malformed reviewer entry (missing or
-    // non-array findings) would pass the discriminant and make normalizeFindingsKey
-    // call `.map(...)` on a non-array → raw TypeError, rejecting the resume. The
-    // live loop only ever SCORES validated reviewer outputs (a malformed one bails
-    // to S8 and never reaches the no-progress bookkeeping), so faithfully skipping
-    // malformed reviewer entries here mirrors the live loop exactly.
-    if (!isValidReviewerOutput(out)) continue;
-    const key = normalizeFindingsKey(out.findings);
-    if (!seenBaseline) {
-      // First reviewer output (the S3 round-0 baseline): seed only, no scoring —
-      // matches the live loop, which seeds prevFindingsKey from S3 and scores
-      // progress only at S6.
-      prevFindingsKey = key;
-      seenBaseline = true;
-      continue;
-    }
-    // A re-review round (S6): score progress against the running baseline.
-    const madeProgress = key !== prevFindingsKey;
-    noProgressStreak = madeProgress ? 0 : noProgressStreak + 1;
-    prevFindingsKey = key;
-  }
-
-  return { prevFindingsKey, noProgressStreak };
-}
 
 /**
  * Synthesise a human-readable reason string for route()-detected error edges
@@ -722,10 +491,7 @@ function reconstructProgressState(
  */
 function buildErrorReason(step: StepId, output: StepOutput | undefined): string {
   if (step === "S2" && output?.kind === "coder" && !output.committed) {
-    return "coder produced no commits (committed:false) — nothing to review";
-  }
-  if (step === "S5" && output?.kind === "coder" && !output.committed) {
-    return "fix step produced no commits (committed:false) — unable to proceed";
+    return "build worker produced no commits (committed:false) — nothing to ship";
   }
   return `step ${step} routed to error handoff`;
 }
@@ -953,14 +719,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // always an ERROR handoff, so the disk S8 must carry handoffStatus:'error';
     // a re-feed then reports the true error via planResume Case 3a instead of
     // falling through to Case 3b/4 (which would re-route from the prior NON-S8
-    // step — re-entering the fix loop or reporting a spurious success). The
-    // in-memory entry stays untagged, matching the normal handoff path (only the
-    // disk ledger is the resume truth; the in-memory ledger is the live result).
+    // step — reporting a spurious success). The in-memory entry stays untagged,
+    // matching the normal handoff path (only the disk ledger is the resume truth;
+    // the in-memory ledger is the live result).
     ledger.push({ step: "S8" });
     await persistBestEffort("S8", undefined, undefined, "error");
 
-    // An error abort surfaces whatever defers were collected before the fault
-    // (empty if S4 never ran).
+    // An error abort surfaces an (always-empty) defer list — the single-slice
+    // runner no longer collects defers (the per-slice cmr handles them inside S2).
     return {
       status: "error",
       errorPackage,
@@ -973,7 +739,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   /**
    * Terminal ESCALATE handoff for a NON-agent worker step (S7 ship).
    *
-   * Agent steps (S2/S3/S5/S6) route their `escalated` worker result through
+   * The S2 build worker routes its `escalated` worker result through
    * route()'s global escalate edge (via `workerResultToStep` → output.escalate).
    * S7 is a runner-action boundary route() always maps to success, so a SHIP
    * worker that escalates (gstack-ship STOP/HITL) must be turned into an
@@ -1051,42 +817,19 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // The runner drives the sequence; the agent never picks the next step.
   let step: StepId = "S0";
 
-  // ── No-progress stuck guard (cmr S254, US#18) ──────────────────────────────
-  // The runner must NEVER stop because a round counter hit a number — US#18:
-  // "我不想它因为数到某个轮数就停，这样它不会还在进展时就放弃" — and the PRD
-  // defers any round-cap (轮数上限策略 deferred). So this is NOT a round/step
-  // cap: it is a *no-progress* detector that fires only when the fix loop is
-  // genuinely stuck (a route bug or a fix that changes nothing the reviewer
-  // sees). As long as the loop makes progress every round, it runs unbounded —
-  // a converging review of 20, 50, 100+ rounds is never truncated.
-  //
-  // A "fix round" = one S5(fix)→S6(re-review) pass. PROGRESS in a round means
-  // the S6 reviewer findings changed vs the previous round's findings. (The
-  // original #254 progress signal also OR-ed in "the S5 step added a new commit
-  // (commitsAdded > 0)"; that leg is degenerate under base rule B — every
-  // committed fix reaching S6 has commitsAdded ≥ 1, and a 0-commit fix already
-  // bails at the S5 0-commit error edge — so it is dropped here. Full rationale
-  // at the guard block below.)
-  // Progress resets the streak; only K *consecutive* no-progress rounds bail.
-  // K is a small constant (a stuck loop dies fast — this逮 real deadlock/route
-  // bugs, not "many rounds"). On bail: a clean S8(status=error) + errorPackage
-  // (reason names the stuck guard) — never an uncaught throw / promise reject.
-  const NO_PROGRESS_LIMIT = 3;
-  let noProgressStreak = 0;
-  // Normalised key of the PREVIOUS reviewer step's findings — the baseline the
-  // next S6 re-review compares against. SEEDED from the S3 full review (the
-  // round-0 baseline) so the FIRST S6 round is a genuine comparison, not a free
-  // "progress" pass (off-by-one fix, cmr S254): without seeding, the first S6
-  // would compare against `undefined` and always score progress, slipping the
-  // bail to K+1 rounds. It is then maintained at each S6 inside the no-progress
-  // block. Stays undefined only if no reviewer step has run yet.
-  let prevFindingsKey: string | undefined;
+  // ── ADR 0026: NO runner fix-loop, NO no-progress stuck guard ───────────────
+  // The per-slice review→fix→re-review loop runs INSIDE the S2 build worker's own
+  // memory-bearing session (via `/tdd` + `/ak-cross-m-review --scenario
+  // per-slice`); the worker only returns when its per-slice cmr has converged or
+  // it escalates. The runner dispatches S2 ONCE and reads its terminal verdict,
+  // so there is no runner-level round to count and no no-progress detector here
+  // (the skill owns convergence/termination — US#18: never "数到 N 就停").
 
   // ── #255: idempotent resume from the recorded breakpoint ───────────────────
   // When set, the next dispatch of `resumeFor.step` must use the original agent
   // session (Sandcastle `resumeSession`) rather than a fresh `run()`. Used for
-  // the escalate-resume case (the human answered; the coder finishes in-session).
-  // Cleared after the step is dispatched once.
+  // the escalate-resume case (the human answered; the build worker finishes in
+  // its original memory-bearing session). Cleared after the step is dispatched once.
   let resumeFor: { step: StepId; sessionId: string } | undefined;
 
   if (resumeState !== undefined && resumeState.ledger.length > 0) {
@@ -1101,41 +844,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     for (const e of plan.priorLedger) ledger.push(e);
     lastOutput = plan.lastOutput;
 
-    // Re-derive the defer list from the prior reviewer output, if any, so a
-    // resume that lands after S4 still surfaces the deferred findings (US#25).
-    //
-    // integ-cmr m2 r4 (cross-slice seam #255 × defer-rebuild): a bare
-    // `kind === "reviewer"` discriminant check is NOT enough — the persisted
-    // ledger is untyped on disk, so a malformed S6/S3 reviewer entry
-    // (`{kind:'reviewer'}` with NO findings, or `findings` non-array) passes the
-    // discriminant yet `.findings.filter(...)` throws a raw TypeError. That
-    // TypeError escaped HERE, before the try/catch around cleanResidue (below)
-    // and before any route(), so runOrchestrator REJECTED instead of returning
-    // S8(error) — bypassing the "malformed step output → S8(error)" decision and
-    // the US#30 error package. The resume path drives off the recorded
-    // lastOutput and runs BEFORE the live path's pre-route isValidStepOutput
-    // guard, so it must validate the shape itself. Gate on isValidReviewerOutput:
-    //   • valid reviewer → rebuild the defer list as before;
-    //   • malformed reviewer-kind → contract violation → S8(error) (via
-    //     errorTermination, tagged + best-effort persisted, NEVER a raw reject),
-    //     mirroring route()'s S2/S5 isValidCoderOutput edges and the new S3/S6
-    //     isValidReviewerOutput edges. The defer list is NOT rebuilt from garbage.
-    //   • non-reviewer (coder/undefined) → leave the defer list untouched.
-    if (plan.lastOutput?.kind === "reviewer") {
-      if (!isValidReviewerOutput(plan.lastOutput)) {
-        return await errorTermination(
-          lastAgentStep(plan.priorLedger) ?? "S6",
-          new Error(
-            "resume: recorded reviewer output is malformed (missing or " +
-              "non-array findings) — cannot rebuild the defer list; a " +
-              "malformed step output terminates as S8(error)",
-          ),
-        );
-      }
-      deferredFindings = plan.lastOutput.findings
-        .filter((f) => f.action === "defer")
-        .slice();
-    }
+    // ADR 0026: there is no runner-level reviewer step, so a resume never has a
+    // reviewer output to rebuild a defer list from — the per-slice cmr (with its
+    // defer→issue discipline) ran INSIDE the S2 build worker. The defer list the
+    // single-slice runner surfaces is always empty.
 
     if (plan.terminalStatus !== undefined) {
       // The prior run already reached a terminal handoff that is NOT being
@@ -1179,41 +891,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       return await errorTermination(plan.resumeStep, err);
     }
 
-    // ── Reconstruct the no-progress guard state (integ-cmr m2 r1, Finding 3) ──
-    // The fix-loop stuck contract (US#18/19) lives in prevFindingsKey +
-    // noProgressStreak, maintained at each S6. A crash/escalate-resume mid-loop
-    // must NOT start with a clean streak: that would grant the first S6 after
-    // resume a free "progress" pass and erase the prior streak, letting a
-    // genuinely-stuck loop evade the K-consecutive contract across the resume
-    // boundary. Fold the same findings-change signal over the persisted reviewer
-    // outputs to rebuild both pieces of state.
-    const resumed = reconstructProgressState(plan.priorLedger);
-    prevFindingsKey = resumed.prevFindingsKey;
-    noProgressStreak = resumed.noProgressStreak;
-
-    // If the persisted history is ALREADY at K consecutive no-progress rounds,
-    // the prior run was stuck at the contract limit before it crashed — do not
-    // continue it. Bail immediately to S8(status=error), mirroring the in-loop
-    // no-progress bail (tagged + best-effort persisted, never a raw reject).
-    if (noProgressStreak >= NO_PROGRESS_LIMIT) {
-      ledger.push({ step: "S8" });
-      await persistBestEffort("S8", undefined, undefined, "error");
-      const errorPackage: ErrorPackage = {
-        failedStep: "S6",
-        reason:
-          `fix loop stuck: ${NO_PROGRESS_LIMIT} consecutive rounds with no ` +
-          `progress (unchanged reviewer findings) in the resumed history. The ` +
-          `fix loop is not converging — likely a route bug or a fix that ` +
-          `changes nothing the reviewer sees; a human is needed.`,
-        branchHead: worktree.branch,
-      };
-      return {
-        status: "error",
-        errorPackage,
-        stepLedger: ledger,
-        deferredFindings,
-      };
-    }
+    // ADR 0026: no runner fix-loop ⇒ no no-progress guard state to reconstruct.
+    // The per-slice convergence loop lives inside the S2 worker's session, so a
+    // resume just continues from the recorded breakpoint (re-dispatch S2 fresh on
+    // a crash, or escalate-resume S2 in its original session when a human answered).
 
     // Continue from the recorded breakpoint.
     step = plan.resumeStep;
@@ -1222,10 +903,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     }
   }
 
-  // The step machine has no fixed bound: route() always terminates the run via
-  // a handoff (success/escalate/error), and the no-progress guard above breaks
-  // any genuine stuck loop. A `while (true)` makes the absence of a round cap
-  // explicit (US#18) — there is no "数到 N 就停" anywhere.
+  // The step machine has no fixed bound: route() always terminates the run via a
+  // handoff (success/escalate/error). The per-slice review→fix→re-review loop runs
+  // INSIDE the S2 worker (ADR 0026), so there is no runner-level round to count —
+  // a `for (;;)` makes the absence of any "数到 N 就停" cap explicit (US#18).
   for (;;) {
     let output: StepOutput | undefined;
     // promptFile for the current step (agent steps only; undefined for runner actions).
@@ -1352,54 +1033,42 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         break;
       }
 
-      case "S2":
-      case "S3":
-      case "S5":
-      case "S6": {
-        // Agent step — one sandbox.run() driven by its fixed StepSpec.
-        // S5/S6 are the fix-loop steps; route() drives S5→S6→S4→(S5|S7) (#254).
+      case "S2": {
+        // S2 whole-slice BUILD — the single agent step (ADR 0026 2026-06-24).
+        // ONE memory-bearing coder worker that runs the ENTIRE per-slice sequence
+        // INTERNALLY: invoke `/tdd` (red→green→refactor) → typecheck + full suite
+        // → `/review` + the self-check 二连 → baseline commit → `/ak-cross-m-review
+        // --scenario per-slice` to concurrence → return the FINAL reviewed commit.
+        // The runner dispatches it ONCE; the per-slice review→fix→re-review loop
+        // lives INSIDE the worker's session (the skills own it). There is no runner
+        // reviewer/fix step and no runner fix-loop.
         if (worktree === undefined) {
           // Programming error: the runner sequenced wrong.
           throw new Error(`runner: ${step} reached before worktree prepared`);
         }
         promptFile = STEP_SPECS[step].promptFile;
-        // #255 escalate-resume: if this step is the one we are resuming in its
-        // original agent session (the human answered an escalation), dispatch
-        // via Sandcastle-native resumeSession carrying the recorded sessionId —
-        // SAME machine as crash-resume, but continuing the existing session
-        // rather than a fresh run(). Crash-resume's NEXT step is brand-new work
-        // → normal runStep. resumeFor is consumed once, then cleared.
         try {
-          // ADR 0026 / #331: dispatch the agent worker through the UNIFIED seam.
-          // The runner no longer reaches for runStep / resumeSession directly —
-          // it hands a WorkerSpec (skill / fresh|resume / soul, derived from the
-          // fixed StepSpec) + a DispatchContext (worktree, the resumed session id,
-          // the round's fix_now findings) to dispatchWorker, and routes by the
-          // discriminated WorkerResult. #331 prefactor: dispatchWorker forwards to
-          // the legacy runStep/resumeSession (behaviour unchanged).
+          // ADR 0026 / #331: dispatch the build worker through the UNIFIED seam.
+          // The runner hands a WorkerSpec (skill / fresh|resume / soul, derived
+          // from the fixed StepSpec) + a DispatchContext (worktree, the resumed
+          // session id) to dispatchWorker, and routes by the discriminated
+          // WorkerResult. No fix_now findings are threaded — the per-slice cmr runs
+          // inside the worker, so the runner never hands findings to a fix step.
           //
-          // integ-cmr 256 r3 (fix_loop_context): the S5 coder_fix worker must
-          // RECEIVE the round's reviewer fix_now findings so the coder knows what
-          // to fix (US#13). The findings live in lastOutput — the immediately
-          // preceding reviewer step (S3 for round 1, the prior S6 thereafter). We
-          // hand ONLY the fix_now subset (defer findings do not drive a fix); every
-          // other step passes undefined.
-          const fixNowFindings =
-            step === "S5" ? selectFixNowFindings(lastOutput) : undefined;
-          // Escalate-resume (#255): when resuming this step in its original agent
-          // session (a human answered an escalation), thread the recorded
-          // sessionId into the DispatchContext (session:"resume" worker). Crash-
-          // resume's NEXT step is brand-new work → no resumeSessionId. resumeFor is
-          // consumed once, then cleared.
+          // Escalate-resume (#255): when resuming S2 in its original
+          // memory-bearing session (a human answered an escalation), thread the
+          // recorded sessionId into the DispatchContext (session:"resume" worker).
+          // Crash-resume re-dispatches S2 FRESH (brand-new work) → no
+          // resumeSessionId. resumeFor is consumed once, then cleared.
           let resumeSessionId: string | undefined;
           if (resumeFor !== undefined && resumeFor.step === step) {
             resumeSessionId = resumeFor.sessionId;
             resumeFor = undefined;
           }
           // The dispatch mode is `resume` ONLY when actually threading a recorded
-          // sessionId (the crash/escalate-resume path); a normal S2/S5 round is
-          // `fresh` (ADR 0026 — a normal fix keeps git-truthing, never the resume
-          // path). Context retention for the coder is a SEPARATE spec field.
+          // sessionId (the crash/escalate-resume path); a normal S2 build is
+          // `fresh` (ADR 0026 — a normal build keeps git-truthing, never the
+          // resume path). Context retention is a SEPARATE spec field.
           const result = await dispatchWorker(
             backend,
             stepSpecToWorkerSpec(
@@ -1409,26 +1078,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             {
               worktree,
               ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
-              ...(fixNowFindings !== undefined
-                ? { prevFindings: fixNowFindings }
-                : {}),
             },
           );
           // Unwrap the discriminated WorkerResult into the StepOutput the existing
           // #256/route/validate flow consumes (workerResultToStep):
           //   - completed → the structured output (+ real per-step sessionId);
-          //   - escalated → a role-shaped output carrying the escalate, so route()
-          //     takes the GLOBAL escalate edge → S8(escalate) (NOT swallowed as an
-          //     error — the ADR 0018 escalate semantics are preserved);
+          //   - escalated → a coder output carrying the escalate, so route() takes
+          //     the GLOBAL escalate edge → S8(escalate) (NOT swallowed as an error
+          //     — the ADR 0018 escalate semantics are preserved);
           //   - failed / malformed → undefined output + a reason → S8(error).
-          // #331 prefactor: the legacy wrapper only ever yields `completed`; the
-          // escalated/failed/malformed mappings are exercised by the real workers
-          // (#334). Wiring them HERE (not a flat errorTermination) keeps the
-          // escalate edge correct for the dependent slices.
-          const { unwrapped, reason } = workerResultToStep(
-            result,
-            STEP_SPECS[step].role === "coder" ? "coder" : "reviewer",
-          );
+          const { unwrapped, reason } = workerResultToStep(result, "coder");
           if (unwrapped === undefined) {
             return await errorTermination(
               step,
@@ -1448,63 +1107,34 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         }
         // ── escalate precedence (integ-cmr base r1, F2) ───────────────────
         // escalate is the GLOBAL stop edge (ADR 0018 / PRD route table:
-        // "checked FIRST, any agent step can carry it"). A step can get stuck
-        // mid-work and emit a VALID escalate while its happy-path schema is
-        // incomplete (coder missing committed, reviewer missing findings). The
-        // full role-schema check (isValidStepOutput) below would judge that
-        // false → S8(error) and SWALLOW the escalate diagnosis. So if the output
-        // carries a VALID escalate, hand it straight to route() (which takes the
-        // escalate edge) WITHOUT demanding the rest of the happy-path schema.
-        // A NON-NULL but MALFORMED escalate is itself a contract violation —
-        // route()'s escalate edge maps it to S8(error) (F1); we let it through
-        // to route() unchanged (do NOT also fail it on the role schema, so the
-        // error is attributed to the escalate edge, the real fault).
-        const expectedKind =
-          STEP_SPECS[step].role === "coder" ? "coder" : "reviewer";
+        // "checked FIRST"). The build worker can get stuck mid-work and emit a
+        // VALID escalate while its happy-path schema is incomplete (coder missing
+        // committed). The full role-schema check (isValidStepOutput) below would
+        // judge that false → S8(error) and SWALLOW the escalate diagnosis. So if
+        // the output carries a VALID escalate, hand it straight to route() (which
+        // takes the escalate edge) WITHOUT demanding the rest of the happy-path
+        // schema. A NON-NULL but MALFORMED escalate is itself a contract violation
+        // — route()'s escalate edge maps it to S8(error) (F1); we let it through
+        // to route() unchanged (do NOT also fail it on the role schema).
         const stepEscalate = escalateOf(output);
         const carriesEscalate = stepEscalate != null;
         if (!carriesEscalate) {
-          // #5 + integ-cmr base r2 (A, B): only when there is NO escalate does
-          // the output have to satisfy the full role contract — not just kind.
-          // A coder step must yield a CONSISTENT {committed, commitsAdded}
-          // (B: committed=true⇒≥1, false⇒0, non-negative integer); a reviewer
-          // step must yield findings whose every ELEMENT is valid (A: exact
-          // severity/action enums + required string fields). A wrong-kind /
-          // undefined / garbage output, an inconsistent commitsAdded, or any
-          // malformed finding element is a contract violation — NEVER pass it
-          // silently to route() where it could bypass the P0/P1 fix gate (e.g.
-          // a "critical " severity slips the exact-string test → push). Report
-          // S8(error) instead. Runner and route() share one guard (validate.ts).
-          if (!isValidStepOutput(output, expectedKind)) {
+          // #5 + integ-cmr base r2 (B): only when there is NO escalate does the
+          // output have to satisfy the full coder contract — not just kind. The
+          // build worker must yield a CONSISTENT {committed, commitsAdded}
+          // (B: committed=true⇒≥1, false⇒0, non-negative integer). A wrong-kind /
+          // undefined / garbage output or an inconsistent commitsAdded is a
+          // contract violation — report S8(error) rather than route it. Runner and
+          // route() share one guard (validate.ts).
+          if (!isValidStepOutput(output, "coder")) {
             return await errorTermination(
               step,
               new Error(
-                `${step}: step output does not match the ${STEP_SPECS[step].role} ` +
-                  `contract (expected kind:'${expectedKind}'). Got: ` +
-                  `${describeOutput(output)}. Refusing to route a malformed output ` +
-                  `(would risk bypassing the P0/P1 fix gate).`,
+                `${step}: step output does not match the coder contract ` +
+                  `(expected kind:'coder'). Got: ${describeOutput(output)}. ` +
+                  `Refusing to route a malformed build output.`,
               ),
             );
-          }
-          // ── No-progress signal capture (cmr S254) ──────────────────────────
-          // Only a NON-escalate output that PASSED isValidStepOutput reaches
-          // here, so commitsAdded (coder) / findings (reviewer) are guaranteed
-          // present and well-shaped. A valid-escalate output skips this block
-          // (route() takes the escalate edge before the no-progress check ever
-          // runs) — and would otherwise crash here on its missing happy-path
-          // fields (e.g. an S3 escalate has no findings → normalizeFindingsKey
-          // of undefined). So the seed is scoped to the validated path.
-          //
-          // Seed the no-progress baseline from the S3 full review (off-by-one
-          // fix, cmr S254): the first S6 re-review compares against the S3
-          // findings, so a first-round repeat of the same finding is correctly
-          // scored as no-progress (not a free pass). Only S3 seeds; S6 maintains
-          // the key inside the no-progress block below to avoid a double-update.
-          // (The commit count is no longer captured here: under base rule B the
-          // commit-leg of the no-progress signal is degenerate — see the guard
-          // block below — so progress is findings-change only.)
-          if (step === "S3" && output.kind === "reviewer") {
-            prevFindingsKey = normalizeFindingsKey(output.findings);
           }
         } else if (!isValidEscalation(stepEscalate)) {
           // Carries a non-null but malformed escalate: do not run the role
@@ -1514,18 +1144,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           break;
         }
         lastOutput = output;
-        break;
-      }
-
-      case "S4": {
-        // S4 route_findings — pure TS, no agent. Collect defer findings here
-        // so they can be surfaced in RunResult.deferredFindings (PRD #244 US#25).
-        // route() (below) consumes the reviewer output to decide S5 vs S7.
-        if (lastOutput?.kind === "reviewer") {
-          deferredFindings = lastOutput.findings
-            .filter((f) => f.action === "defer")
-            .slice(); // defensive copy
-        }
         break;
       }
 
@@ -1672,87 +1290,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     }
 
     // The runner — not the agent — decides the next step.
+    // ADR 0026: there is NO runner-level no-progress stuck guard here. The
+    // per-slice review→fix→re-review loop runs INSIDE the S2 build worker's
+    // session (the `/ak-cross-m-review --scenario per-slice` skill owns
+    // convergence/termination/drift); the runner dispatches S2 once and reads its
+    // terminal verdict, so there is no runner round to count (US#18).
     const decision = route({ from: step, output: lastOutput });
-
-    // ── No-progress stuck guard (cmr S254, US#18) ────────────────────────────
-    // A fix round completes when the S6 re-review finishes. Evaluate progress
-    // ONLY when route() would continue the loop (decision.kind === "next"); if
-    // route() already hands off (escalate / S5-0-commit error / success) that
-    // takes precedence — a stuck bail never pre-empts a legitimate handoff.
-    //
-    // PROGRESS = the S6 re-review findings CHANGED vs the previous round.
-    //
-    // Integ reconcile (#254 ⋈ base rule B): the original #254 guard also OR-ed
-    // in "this round's S5 added a new commit (commitsAdded > 0)". Under base's
-    // commitsAdded contract (validate.ts rule B: committed:true ⟺ commitsAdded
-    // ≥ 1, committed:false ⟺ 0) that leg is degenerate: any committed fix that
-    // reaches S6 has commitsAdded ≥ 1 (always "progress"), and a 0-commit fix is
-    // committed:false → route()'s S5 edge already bails it to S8(error) BEFORE
-    // this guard runs. So the commit-leg is permanently true for every fix that
-    // reaches here — keeping it would mask the one stuck shape this guard exists
-    // to catch: the coder commits a real new commit every round but the reviewer
-    // raises the SAME findings forever (the fix never moves the review). That is
-    // genuine non-convergence (US#19: "在打磨次要的 / findings 不动"), so the
-    // contract-faithful signal is findings-change alone. (#254's "0 commit +
-    // same findings" stuck case is subsumed: under rule B it is committed:false
-    // → S5 0-commit error edge, a louder + earlier bail.) No round counting
-    // anywhere (US#18): progress resets the streak, so a converging review of
-    // any length runs on; only K CONSECUTIVE no-progress rounds bail.
-    if (step === "S6" && decision.kind === "next") {
-      // Normalised so that a reorder of keys/elements between rounds (which the
-      // real LLM-JSON path can emit) is NOT mistaken for a findings change
-      // (cmr S254). prevFindingsKey was seeded from the S3 review, so on the
-      // first S6 this is a real comparison against the round-0 baseline, not a
-      // free "progress" pass (off-by-one fix).
-      const findingsKey =
-        lastOutput?.kind === "reviewer"
-          ? normalizeFindingsKey(lastOutput.findings)
-          : "";
-      const madeProgress =
-        prevFindingsKey === undefined || findingsKey !== prevFindingsKey;
-      prevFindingsKey = findingsKey;
-
-      noProgressStreak = madeProgress ? 0 : noProgressStreak + 1;
-
-      if (noProgressStreak >= NO_PROGRESS_LIMIT) {
-        // Stuck: K consecutive rounds whose reviewer findings did not change —
-        // the fix loop is not converging (a real deadlock / route bug / a fix
-        // that changes nothing the reviewer sees), not "too many rounds". Bail
-        // cleanly to S8(status=error); never throw / reject. Surface the defers
-        // collected so far, consistent with the other in-loop error handoffs.
-        //
-        // integ-cmr m2 r1 (Findings 1 & 4): persist via persistBestEffort with
-        // handoffStatus:'error', mirroring errorTermination. Two merge-seam bugs
-        // fixed at once:
-        //   - Finding 1: the old emitLedger('S8', undefined, undefined) wrote the
-        //     terminal S8 UNTAGGED, so a re-feed routed S6→S4 and RE-ENTERED the
-        //     fix loop instead of reporting the stuck error. Tagging it 'error'
-        //     makes planResume Case 3a report the true terminal status.
-        //   - Finding 4: the old emitLedger here was UNGUARDED (unlike the normal
-        //     handoff path's try/catch). A writeLedger throw on this S8 persist
-        //     raw-rejected out of runOrchestrator, violating the #252 invariant
-        //     "any backend call throwing → S8(error) + error package".
-        //     persistBestEffort swallows the write fault so we still return the
-        //     original stuck S8(error) package rather than rejecting.
-        ledger.push({ step: "S8" });
-        await persistBestEffort("S8", undefined, undefined, "error");
-        const errorPackage: ErrorPackage = {
-          failedStep: "S6",
-          reason:
-            `fix loop stuck: ${NO_PROGRESS_LIMIT} consecutive rounds with no ` +
-            `progress (unchanged reviewer findings). The fix loop is not ` +
-            `converging — likely a route bug or a fix that changes nothing the ` +
-            `reviewer sees; a human is needed.`,
-          branchHead: worktree?.branch,
-        };
-        return {
-          status: "error",
-          errorPackage,
-          stepLedger: ledger,
-          deferredFindings,
-        };
-      }
-    }
 
     if (decision.kind === "handoff") {
       ledger.push({ step: "S8" });

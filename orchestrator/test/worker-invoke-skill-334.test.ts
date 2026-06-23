@@ -139,25 +139,25 @@ describe("#334 thin prompts invoke the skill, not the methodology", () => {
     expect(p).not.toMatch(/Make them pass with the smallest correct change \(GREEN\)/);
   });
 
-  it("coder_fix.md routes through /tdd too (a fix is test-first work)", () => {
-    expect(read("coder_fix.md")).toMatch(/\/tdd|tdd skill|Skill routing|CLAUDE\.md/i);
+  it("coder_implement.md invokes the per-slice review + cmr skills (the loop lives in the worker, ADR 0026)", () => {
+    // ADR 0026: the runner no longer drives a reviewer/fix loop — the WHOLE-SLICE
+    // build worker runs /tdd, then /review + the self-check 二连, then
+    // /ak-cross-m-review --scenario per-slice, INSIDE this one session. The thin
+    // prompt only TRIGGERS those skills; it does not hand-copy their method.
+    const p = read("coder_implement.md");
+    expect(p).toMatch(/\/review/);
+    expect(p).toMatch(/ak-cross-m-review/);
   });
 
-  it("reviewer_full_review.md tells the worker to invoke /review", () => {
-    expect(read("reviewer_full_review.md")).toMatch(/\/review|review skill|Skill routing|CLAUDE\.md/i);
-  });
-
-  it("reviewer_rereview.md routes through /review too", () => {
-    expect(read("reviewer_rereview.md")).toMatch(/\/review|review skill|Skill routing|CLAUDE\.md/i);
-  });
-
-  it("every prompt still defines its structured output contract (tag + signal)", () => {
+  it("every existing prompt still defines its structured output contract (tag + signal)", () => {
     // Thinning the METHOD must not drop the output contract route()/the seam
-    // decode against — the worker must still emit its tag + completion signal.
+    // decode against — each worker must still emit its tag + completion signal.
+    // Only the surviving prompts exist (ADR 0026 deleted the reviewer/fix files):
+    // the build coder (coder_implement.md) and the ship worker (ship.md).
     expect(read("coder_implement.md")).toMatch(/<coder>/);
     expect(read("coder_implement.md")).toMatch(/CODER_STEP_COMPLETE/);
-    expect(read("reviewer_full_review.md")).toMatch(/<review>/);
-    expect(read("reviewer_full_review.md")).toMatch(/REVIEWER_STEP_COMPLETE/);
+    expect(read("ship.md")).toMatch(/<ship>/);
+    expect(read("ship.md")).toMatch(/SHIP_STEP_COMPLETE/);
   });
 });
 
@@ -243,63 +243,24 @@ class ReviewWorkerBackend implements Backend {
   }
 }
 
-describe("#334 the reviewer worker routes /review and the fix-loop routes on its findings", () => {
-  it("the S3 reviewer worker is dispatched with skill /review", async () => {
+describe("#334 the build coder worker routes /tdd and a committed build ships (ADR 0026)", () => {
+  it("the S2 build coder worker is dispatched with skill /tdd", async () => {
     const backend = new ReviewWorkerBackend();
     await runOrchestrator({ issueNumber: 334, backend });
-    const s3 = backend.specs.find((s) => s.id === "S3");
-    expect(s3?.kind).toBe("reviewer");
-    expect(s3?.skill).toBe("/review");
+    const s2 = backend.specs.find((s) => s.id === "S2");
+    expect(s2?.kind).toBe("coder");
+    expect(s2?.skill).toBe("/tdd");
   });
 
-  it("S3 findings → S5 fix → S6 approve → S7 (the reviewer findings drive the loop)", async () => {
+  it("a committed whole-slice build → S7 ship (no runner-driven reviewer/fix steps)", async () => {
+    // ADR 0026: the per-slice review→fix→cmr loop runs INSIDE the S2 worker, so
+    // the runner sees exactly ONE coder dispatch then the ship worker — never an
+    // S3/S5/S6 reviewer/fix step.
     const backend = new ReviewWorkerBackend();
     const result = await runOrchestrator({ issueNumber: 334, backend });
     expect(result.status).toBe("success");
-    // The S3 reviewer returned a fix_now finding; the runner routed it to an S5
-    // fix worker carrying that finding, then S6 approved and S7 shipped.
     expect(backend.dispatched).toEqual([
       "S2:coder:/tdd",
-      "S3:reviewer:/review",
-      "S5:coder:/tdd",
-      "S6:reviewer:/review",
-      "S7:ship:gstack-ship",
-    ]);
-    const s5Idx = backend.specs.findIndex((s) => s.id === "S5");
-    expect(backend.ctxs[s5Idx].prevFindings?.[0].action).toBe("fix_now");
-  });
-
-  it("an empty reviewer findings array approves straight to ship (no fix round)", async () => {
-    // A backend whose reviewer always approves: S2→S3(empty)→S7, no S5/S6.
-    class CleanReviewBackend extends ReviewWorkerBackend {
-      override async dispatchWorker(
-        spec: WorkerSpec,
-        ctx: DispatchContext,
-      ): Promise<WorkerResult> {
-        this.dispatched.push(`${spec.id}:${spec.kind}:${spec.skill ?? "—"}`);
-        this.specs.push(spec);
-        this.ctxs.push(ctx);
-        if (spec.kind === "coder") {
-          return {
-            kind: "completed",
-            output: { kind: "coder", committed: true, commitsAdded: 1 },
-          };
-        }
-        if (spec.kind === "reviewer") {
-          return { kind: "completed", output: { kind: "reviewer", findings: [] } };
-        }
-        return {
-          kind: "completed",
-          output: { kind: "ship", branch: this.worktree.branch, status: "pushed" },
-        };
-      }
-    }
-    const backend = new CleanReviewBackend();
-    const result = await runOrchestrator({ issueNumber: 334, backend });
-    expect(result.status).toBe("success");
-    expect(backend.dispatched).toEqual([
-      "S2:coder:/tdd",
-      "S3:reviewer:/review",
       "S7:ship:gstack-ship",
     ]);
   });

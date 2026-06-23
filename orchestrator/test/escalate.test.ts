@@ -7,7 +7,6 @@ import type {
   IssueMeta,
   IssueSnapshot,
   PersistentLedgerEntry,
-  ReviewerOutput,
   StepOutput,
   StepSpec,
   WorktreeHandle,
@@ -41,7 +40,14 @@ const WORKTREE: WorktreeHandle = {
 /**
  * Configurable fake Backend.  `runStepOutputs` is a map from StepId → the
  * StepOutput that call should return.  Any unspecified step falls back to a
- * sane default (coder committed:true / reviewer empty findings).
+ * sane default (coder committed:true).
+ *
+ * ADR 0026 (2026-06-24): the single-slice runner is a PURE SCHEDULER. The only
+ * agent step is S2 — the WHOLE-SLICE BUILD coder. There is NO runner-level
+ * reviewer step (S3/S6), NO fix step (S5), NO route fan-out (S4) — the per-slice
+ * review→fix→re-review loop lives INSIDE the S2 worker's session. So this fake
+ * only ever returns a coder output (S2 is the sole dispatched agent step), and
+ * the escalate edge is exercised entirely on the S2 build worker's output.
  */
 class ConfigurableBackend implements Backend {
   readonly calls: string[] = [];
@@ -95,11 +101,8 @@ class ConfigurableBackend implements Backend {
     const override = this.runStepOutputs.get(spec.id);
     if (override !== undefined) return override;
 
-    // Default outputs that let the run proceed without stopping.
-    if (spec.role === "coder") {
-      return { kind: "coder", committed: true, commitsAdded: 1 };
-    }
-    return { kind: "reviewer", findings: [] };
+    // Default output: the S2 build worker committed a reviewed slice.
+    return { kind: "coder", committed: true, commitsAdded: 1 };
   }
 
   async push(_worktree: WorktreeHandle): Promise<void> {
@@ -128,14 +131,6 @@ function coderWithEscalate(escalation: Escalation): CoderOutput {
   };
 }
 
-function reviewerWithEscalate(escalation: Escalation): ReviewerOutput {
-  return {
-    kind: "reviewer",
-    findings: [],
-    escalate: escalation,
-  };
-}
-
 const STUCK: Escalation = {
   reason: "Design-level ambiguity: unclear whether field X should be optional",
   diagnosis: "The spec says 'optional' in one place but 'required' in another; this requires product decision before implementation can proceed.",
@@ -143,11 +138,11 @@ const STUCK: Escalation = {
 
 // ─────────────────────── tests ───────────────────────
 
-describe("escalate stop edge (#251)", () => {
+describe("escalate stop edge (#251, ADR 0026)", () => {
   // ── coder step (S2) escalates ──────────────────────────────────
 
-  describe("coder S2 escalates", () => {
-    it("routes to S8 handoff(status=escalate), not S3", async () => {
+  describe("coder S2 build worker escalates", () => {
+    it("routes to S8 handoff(status=escalate), not S7", async () => {
       const backend = new ConfigurableBackend(
         new Map([["S2", coderWithEscalate(STUCK)]]),
       );
@@ -157,15 +152,15 @@ describe("escalate stop edge (#251)", () => {
       expect(result.status).toBe("escalate");
     });
 
-    it("does NOT proceed to S3 reviewer (runner stops immediately)", async () => {
+    it("does NOT proceed to S7 ship (runner stops immediately)", async () => {
       const backend = new ConfigurableBackend(
         new Map([["S2", coderWithEscalate(STUCK)]]),
       );
 
-      await runOrchestrator({ issueNumber: 251, backend });
+      const result = await runOrchestrator({ issueNumber: 251, backend });
 
-      // S3 should never have been dispatched.
-      expect(backend.runStepIds).not.toContain("S3");
+      // The escalate stop happens at S2 → S8; S7 is never reached.
+      expect(result.stepLedger.map((e) => e.step)).not.toContain("S7");
       // Consequently no push either.
       expect(backend.pushCount).toBe(0);
     });
@@ -203,75 +198,10 @@ describe("escalate stop edge (#251)", () => {
     });
   });
 
-  // ── reviewer step (S3) escalates ──────────────────────────────
+  // ── escalate overrides co-present committed ─────────────────────
 
-  describe("reviewer S3 escalates", () => {
-    it("routes to S8 handoff(status=escalate), not S4", async () => {
-      const backend = new ConfigurableBackend(
-        new Map([["S3", reviewerWithEscalate(STUCK)]]),
-      );
-
-      const result = await runOrchestrator({ issueNumber: 251, backend });
-
-      expect(result.status).toBe("escalate");
-    });
-
-    it("does NOT proceed to S4 route_findings (runner stops immediately)", async () => {
-      const backend = new ConfigurableBackend(
-        new Map([["S3", reviewerWithEscalate(STUCK)]]),
-      );
-
-      const result = await runOrchestrator({ issueNumber: 251, backend });
-
-      // Ledger must not contain S4.
-      expect(result.stepLedger.map((e) => e.step)).not.toContain("S4");
-      expect(backend.pushCount).toBe(0);
-    });
-
-    it("records S3 escalate output in ledger", async () => {
-      const backend = new ConfigurableBackend(
-        new Map([["S3", reviewerWithEscalate(STUCK)]]),
-      );
-
-      const result = await runOrchestrator({ issueNumber: 251, backend });
-
-      const s3entry = result.stepLedger.find((e) => e.step === "S3");
-      expect(s3entry).toBeDefined();
-      expect((s3entry?.output as ReviewerOutput | undefined)?.escalate).toEqual(STUCK);
-    });
-  });
-
-  // ── escalate overrides co-present findings ─────────────────────
-
-  describe("escalate is prioritised over co-present findings/committed", () => {
-    it("escalate on reviewer output overrides non-empty findings → still escalate, not S4", async () => {
-      const outputWithBoth: ReviewerOutput = {
-        kind: "reviewer",
-        findings: [
-          {
-            severity: "critical",
-            category: "correctness",
-            claim_quote: "null deref on line 42",
-            location: "src/foo.ts:42",
-            suggested_fix: "add null check",
-            action: "fix_now",
-          },
-        ],
-        escalate: STUCK,
-      };
-
-      const backend = new ConfigurableBackend(
-        new Map([["S3", outputWithBoth]]),
-      );
-
-      const result = await runOrchestrator({ issueNumber: 251, backend });
-
-      // escalate wins over the critical finding.
-      expect(result.status).toBe("escalate");
-      expect(result.stepLedger.map((e) => e.step)).not.toContain("S4");
-    });
-
-    it("escalate on coder output overrides committed:true → still escalate, not S3", async () => {
+  describe("escalate is prioritised over a co-present committed flag", () => {
+    it("escalate on coder output overrides committed:true → still escalate, not S7", async () => {
       const outputWithBoth: CoderOutput = {
         kind: "coder",
         committed: true,
@@ -287,21 +217,22 @@ describe("escalate stop edge (#251)", () => {
 
       // escalate wins over the committed:true edge.
       expect(result.status).toBe("escalate");
-      expect(backend.runStepIds).not.toContain("S3");
+      expect(result.stepLedger.map((e) => e.step)).not.toContain("S7");
     });
   });
 
   // ── no-escalate = no change to happy path ──────────────────────
 
   describe("no escalate signal = happy path unchanged", () => {
-    it("normal coder output (no escalate) still reaches S3 reviewer", async () => {
-      // Default backend: no overrides → coder committed:true, reviewer empty.
+    it("normal coder output (no escalate) reaches S7 ship", async () => {
+      // Default backend: no overrides → coder committed:true.
       const backend = new ConfigurableBackend();
 
       const result = await runOrchestrator({ issueNumber: 251, backend });
 
       expect(result.status).toBe("success");
-      expect(backend.runStepIds).toContain("S3");
+      // The committed build routes straight to S7 ship (ADR 0026: no S3).
+      expect(result.stepLedger.map((e) => e.step)).toContain("S7");
       expect(backend.pushCount).toBe(1);
     });
 
@@ -314,19 +245,6 @@ describe("escalate stop edge (#251)", () => {
         escalate: undefined,
       };
       const backend = new ConfigurableBackend(new Map([["S2", noEscalate]]));
-
-      const result = await runOrchestrator({ issueNumber: 251, backend });
-
-      expect(result.status).toBe("success");
-    });
-
-    it("undefined escalate field on reviewer output is not treated as escalate", async () => {
-      const noEscalate: ReviewerOutput = {
-        kind: "reviewer",
-        findings: [],
-        escalate: undefined,
-      };
-      const backend = new ConfigurableBackend(new Map([["S3", noEscalate]]));
 
       const result = await runOrchestrator({ issueNumber: 251, backend });
 
@@ -349,8 +267,8 @@ describe("escalate stop edge (#251)", () => {
 
       // null escalate must not divert to handoff(status=escalate).
       expect(result.status).toBe("success");
-      // The normal next step (S3) must still have been dispatched.
-      expect(backend.runStepIds).toContain("S3");
+      // The normal next step (S7 ship) must still have been reached.
+      expect(result.stepLedger.map((e) => e.step)).toContain("S7");
     });
   });
 

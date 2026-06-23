@@ -994,10 +994,6 @@ const STEP_IDS: ReadonlySet<string> = new Set([
   "S0",
   "S1",
   "S2",
-  "S3",
-  "S4",
-  "S5",
-  "S6",
   "S7",
   "S8",
 ]);
@@ -1161,12 +1157,11 @@ export function attributeFailure(
  * (#256 AC "对一个真叶子 issue 端到端跑通").
  *
  * integ-cmr int-r1 (C-3): DERIVED from the actual worker specs — STEP_SPECS
- * (S2/S3/S5/S6 coder/reviewer) + shipWorkerSpec() (S7 ship, ship.md) — rather than
- * a hand-maintained literal. The hand-kept list omitted ship.md, so promptsDir
- * validation passed yet S7 crashed at run time looking for the absent prompt. By
- * reading the prompt off every dispatched spec, a new/changed worker step can
- * never silently drift out of the validation list again. De-duped (S2 and S5 may
- * share a prompt across versions; the set collapses repeats).
+ * (S2 coder build, coder_implement.md) + shipWorkerSpec() (S7 ship, ship.md) —
+ * rather than a hand-maintained literal. The hand-kept list omitted ship.md, so
+ * promptsDir validation passed yet S7 crashed at run time looking for the absent
+ * prompt. By reading the prompt off every dispatched spec, a new/changed worker
+ * step can never silently drift out of the validation list again. De-duped.
  */
 export const REFERENCED_PROMPT_FILES: ReadonlyArray<string> = [
   ...new Set(
@@ -1208,7 +1203,7 @@ export function promptsDirError(
     return (
       `RealBackend: promptsDir "${promptsDir}" is missing required promptFile(s): ` +
       `${missingFiles.join(", ")}. All of [${REFERENCED_PROMPT_FILES.join(", ")}] ` +
-      `must be present (the runner's S2/S3/S5/S6 reference them).`
+      `must be present (the runner's S2 build + S7 ship reference them).`
     );
   }
   return undefined;
@@ -1262,14 +1257,15 @@ export interface RealBackendOptions {
    */
   readonly skillsMount?: string;
   /**
-   * Dir holding the versioned promptFiles (`coder_implement.md`,
-   * `reviewer_full_review.md`, `coder_fix.md`, `reviewer_rereview.md`).
+   * Dir holding the versioned promptFiles (`coder_implement.md` for the S2 build
+   * worker, `ship.md` for S7; ADR 0026 collapsed the single-slice loop, so there
+   * are no reviewer/fix prompts).
    *
    * MUST be an ABSOLUTE path (validated at construction, F4): Sandcastle
    * resolves `promptFile` against `process.cwd()`, NOT the run `cwd` option
    * (index.d.ts), so a relative `promptsDir` would silently resolve the prompt
-   * against the wrong directory at run time. The dir must exist and contain all
-   * four referenced files, or the constructor throws.
+   * against the wrong directory at run time. The dir must exist and contain every
+   * {@link REFERENCED_PROMPT_FILES} entry, or the constructor throws.
    */
   readonly promptsDir: string;
   /** Override $HOME for auth path construction (tests). */

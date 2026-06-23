@@ -5,12 +5,16 @@
  * static StepSpec constructor, as the tdd hint in #253 requires:
  *   "穿 dispatch 路径的 vertical 断言"
  *
- * Covered acceptance criteria:
- *   AC-1  coder steps (S2): role=coder, model=Sonnet, soul=coder
- *   AC-2  reviewer steps (S3): role=reviewer, model=Opus, soul=READ-ONLY
+ * ADR 0026 (2026-06-24, wiki line 42): the single-slice runner collapsed to a
+ * pure scheduler — STEP_SPECS now holds ONLY S2 (the whole-slice build worker).
+ * There is no runner-level reviewer step (S3) anymore: the per-slice review runs
+ * INSIDE the S2 worker's session. The S3-reviewer AC tests are therefore dropped;
+ * the surviving ACs all pin the single S2 coder spec.
+ *
+ * Covered acceptance criteria (S2-only after ADR 0026):
+ *   AC-1  coder step (S2): role=coder, model=Sonnet, soul=coder
  *   AC-3  changing model only changes runtime CLI selection, not StepSpec shape
- *   AC-4  versioned promptFile on every agent step; no ad-hoc inline prompt
- *   AC-5  reviewer READ-ONLY is a soul constraint, not an OS-level mount
+ *   AC-4  versioned promptFile on the agent step; no ad-hoc inline prompt
  *   AC-6  tool-chain declaration contains Python + frontend stack
  */
 
@@ -120,16 +124,9 @@ describe("StepSpec role contract + soul injection (#253)", () => {
     expect(s2!.soul).toBe("coder");
   });
 
-  // ── AC-2: reviewer step (S3) carries role=reviewer + model=Opus + soul=READ-ONLY ──
-
-  it("S3 reviewer step: role=reviewer, model=Opus, soul=READ-ONLY", async () => {
-    const specs = await runAndCapture();
-    const s3 = specs.find((s) => s.id === "S3");
-    expect(s3).toBeDefined();
-    expect(s3!.role).toBe("reviewer");
-    expect(s3!.model).toBe("opus");
-    expect(s3!.soul).toBe("READ-ONLY");
-  });
+  // ── AC-2 (S3 reviewer step) DELETED per ADR 0026: there is no runner-level
+  //    reviewer step. STEP_SPECS holds only S2; the per-slice review runs INSIDE
+  //    the S2 build worker's session, not as a separate dispatched step. ──
 
   // ── AC-4: every agent step carries a versioned promptFile (non-empty, file extension, no inline content) ──
 
@@ -167,17 +164,15 @@ describe("StepSpec role contract + soul injection (#253)", () => {
     }
   });
 
-  // ── AC-4b: maxIter present and differentiated by role ──
-  //   coder maxIter > 1 (can loop), reviewer maxIter = 1 (single pass, no self-editing)
+  // ── AC-4b: coder maxIter present and > 1 (iterative within-step Ralph budget) ──
+  //   ADR 0026: the reviewer half is gone (no S3 step). The within-step retry
+  //   budget for the S2 build worker is > 1 (it iterates within its one run).
 
-  it("coder maxIter > 1 (iterative), reviewer maxIter = 1 (single pass)", async () => {
+  it("coder maxIter > 1 (iterative within-step budget)", async () => {
     const specs = await runAndCapture();
     const s2 = specs.find((s) => s.id === "S2")!;
-    const s3 = specs.find((s) => s.id === "S3")!;
     expect(s2.maxIter).toBeDefined();
     expect(s2.maxIter!).toBeGreaterThan(1);
-    expect(s3.maxIter).toBeDefined();
-    expect(s3.maxIter!).toBe(1);
   });
 
   // ── AC-4c: completionSignal present on every agent step ──
@@ -191,18 +186,11 @@ describe("StepSpec role contract + soul injection (#253)", () => {
     }
   });
 
-  // ── AC-5: reviewer READ-ONLY is a soul constraint (soul field), not an OS mount ──
-  //   We verify: the runner does NOT pass any extra "readOnlyMount" / "mountReadOnly"
-  //   field. READ-ONLY semantics live in the soul field value.
-
-  it("reviewer READ-ONLY is encoded in soul field, no OS-level mount field present", async () => {
-    const specs = await runAndCapture();
-    const s3 = specs.find((s) => s.id === "S3")!;
-    expect(s3.soul).toBe("READ-ONLY");
-    // No OS-level readonly mount field: StepSpec has no such key
-    expect((s3 as unknown as Record<string, unknown>)["readOnlyMount"]).toBeUndefined();
-    expect((s3 as unknown as Record<string, unknown>)["mountReadOnly"]).toBeUndefined();
-  });
+  // ── AC-5 (reviewer READ-ONLY soul) DELETED per ADR 0026: there is no
+  //    dispatched reviewer step. The soul-vs-OS-mount distinction for the
+  //    READ-ONLY reviewer soul is now exercised only by the in-S2-worker review
+  //    and the family cmr worker, not by the single-slice runner's STEP_SPECS.
+  //    The coder soul is still asserted by AC-1 above. ──
 
   // ── AC-6: tool-chain declaration carried in StepSpec ──
   //   The spec includes a toolchain field listing Python + frontend stack.

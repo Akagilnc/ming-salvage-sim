@@ -16,32 +16,27 @@
 // ───────────────────────────── step identifiers ─────────────────────────────
 
 /**
- * The fixed wiki step sequence (ADR 0018, re-classified by ADR 0026 / PRD #330).
+ * The single-slice step sequence (ADR 0026 2026-06-24 correction, wiki line 42).
  *
- * Under ADR 0026 the runner is a PURE SCHEDULER: every step that produces or
- * changes the worked artifact is a *worker step* dispatched through the single
- * {@link Backend.dispatchWorker} seam; the remaining steps are *scheduling
- * actions* (pure TS, no worker — gate / route / order / ledger / resume).
+ * Under the corrected ADR 0026 the single-slice runner is a PURE SCHEDULER and
+ * the per-slice review→fix→re-review LOOP no longer lives at the runner level. S2
+ * is ONE memory-bearing build worker that runs the WHOLE per-slice sequence
+ * INTERNALLY (invoke `/tdd` → typecheck + full suite → `/review` + self-check 二连
+ * → baseline commit → `/ak-cross-m-review --scenario per-slice` to concurrence →
+ * return the FINAL reviewed commit). The runner dispatches it ONCE and reads its
+ * terminal verdict — there is NO runner-level reviewer step (S3/S6), NO
+ * fix step (S5), NO route fan-out (S4). The discipline lives in the versioned
+ * skills, never in the runner.
  *
- *   worker steps      : S2 coder_implement, S3 reviewer_full_review,
- *                       S5 coder_fix, S6 reviewer_rereview, S7 ship
- *   scheduling actions: S0 input_gate, S1 load_context, S4 route_findings,
- *                       S8 handoff
+ *   worker steps      : S2 coder build (the whole per-slice sequence), S7 ship
+ *   scheduling actions: S0 input_gate, S1 load_context, S8 handoff
  *
- * NOTE (ADR 0026 supersedes ADR 0018 step分类): S7 was an inline "runner action"
- * (a bare `git push`); it is now a SHIP worker step (invoke `gstack-ship`).
- * #331 is a pure prefactor — S7 still forwards to the legacy `push()` via the
- * dispatch wrapper, so external behaviour is unchanged; the real ship worker is
- * #336. cmr/PR (family layer) likewise become worker steps (#335).
+ * S7 is a SHIP worker step (invoke `gstack-ship`); cmr/PR live at the family layer.
  */
 export type StepId =
   | "S0"
   | "S1"
   | "S2"
-  | "S3"
-  | "S4"
-  | "S5"
-  | "S6"
   | "S7"
   | "S8";
 
