@@ -22,7 +22,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -443,6 +443,36 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     expect(calls).toEqual([]); // nothing installed, nothing run
   });
 
+  it("R3: a SINGLE-project repo (package.json at the clone ROOT) falls back to workingRepo verify", () => {
+    // gemini R3: dropping the `?? workingRepo` fallback made single-project repos
+    // (package.json at root, no subproject) skip verify entirely. Restore the
+    // fallback — but ONLY when the root IS a Node project (multi-project non-Node
+    // root still skips, R1 T2).
+    const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
+    class SpyBackend extends RealFamilyBackend {
+      protected override sh(file: string, args: string[], cwd?: string): string {
+        calls.push({ file, args, cwd });
+        return "";
+      }
+      protected override isNodeProject(_cwd: string): boolean {
+        return true; // the clone root has a package.json (single-project repo)
+      }
+      protected override depsInstalled(_cwd: string): boolean {
+        return true;
+      }
+      protected override packageScripts(_cwd: string): readonly string[] {
+        return ["test"];
+      }
+      runVerifyForTest(): void {
+        this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
+      }
+    }
+    // No verifyCwd; resolver undefined (no subproject) → root is Node → verify at root.
+    new SpyBackend(opts("/clone/root", { resolveVerifyCwd: () => undefined })).runVerifyForTest();
+    expect(calls.map((c) => `${c.file} ${c.args.join(" ")}`)).toEqual(["npm test"]);
+    expect(calls.every((c) => c.cwd === "/clone/root")).toBe(true);
+  });
+
   it("R1-T3: an EXPLICIT verifyCwd that is NOT a Node project FAILS CLOSED (throws), never silent-passes", () => {
     // codex R1 T3: a docs/content/root-only diff (inferred-undefined) legitimately
     // skips, but an EXPLICITLY-set verifyCwd pointing at a non-Node dir is a caller
@@ -469,18 +499,23 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     // gemini R1 T1: a bare node_modules-exists check skips installing a dep a child
     // PR added (package.json/lock newer than the last install) → verify on stale deps.
     const proj = mkdtempSync(join(tmpdir(), "verify-stale-"));
-    execFileSync("bash", ["-c", `mkdir -p '${join(proj, "node_modules")}'`]);
-    execFileSync("bash", ["-c", `printf '{}' > '${join(proj, "package.json")}'`]);
-    // package.json written AFTER node_modules → stale.
+    const nm = join(proj, "node_modules");
+    const pkg = join(proj, "package.json");
+    mkdirSync(nm, { recursive: true });
+    writeFileSync(pkg, "{}");
     class Probe extends RealFamilyBackend {
       depsInstalledForTest(cwd: string): boolean {
         return this.depsInstalled(cwd);
       }
     }
     const be = new Probe(opts("/clone/root"));
+    // Deterministic mtimes (R3 coderabbit: don't rely on write-order timing — equal
+    // mtimes are possible on some filesystems). manifest NEWER than node_modules → stale.
+    utimesSync(nm, new Date(1000), new Date(1000));
+    utimesSync(pkg, new Date(2000), new Date(2000));
     expect(be.depsInstalledForTest(proj)).toBe(false); // stale → reinstall
-    // Touch node_modules newer than the manifest → fresh.
-    execFileSync("bash", ["-c", `sleep 0.05; touch '${join(proj, "node_modules")}'`]);
+    // node_modules NEWER than the manifest → fresh.
+    utimesSync(nm, new Date(3000), new Date(3000));
     expect(be.depsInstalledForTest(proj)).toBe(true);
   });
 

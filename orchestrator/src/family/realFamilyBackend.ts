@@ -656,12 +656,20 @@ export class RealFamilyBackend implements FamilyBackend {
         );
       }
     } else {
-      // No explicit cwd → infer from the family diff. undefined ⇒ the diff GENUINELY
-      // touches no Node subproject (docs/content/root-only) ⇒ nothing to verify, skip
-      // (R1 T2 codex: never `npm install` the clone root, which has no package.json).
-      // A git/diff ERROR in the resolver THROWS (familyDiffFiles no longer swallows
-      // it) → propagates as verify_failed, NOT mistaken for "no Node subproject".
+      // No explicit cwd → infer from the family diff. A git/diff ERROR in the
+      // resolver THROWS (familyDiffFiles no longer swallows it) → verify_failed, NOT
+      // mistaken for "no Node subproject".
       cwd = this.opts.resolveVerifyCwd?.();
+      // R3 (gemini high): the resolver is undefined for a SINGLE-project repo too
+      // (package.json at the clone ROOT — no subproject dir matches). Fall back to
+      // workingRepo, but ONLY when the root is ITSELF a Node project — so a single
+      // repo is verified, while a MULTI-project repo's non-Node root (R1 T2) is still
+      // skipped, never `npm install`ed.
+      if (cwd === undefined && this.isNodeProject(this.opts.workingRepo)) {
+        cwd = this.opts.workingRepo;
+      }
+      // Still undefined ⇒ the diff genuinely touches no Node project (multi-project
+      // repo, non-Node-only diff) ⇒ nothing to verify, skip.
       if (cwd === undefined) return;
     }
     // #3 (dogfood death): the family clone is FRESH — no node_modules. Running
