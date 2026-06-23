@@ -98,6 +98,13 @@ function App() {
 
   const loadMinisterChat = React.useCallback(async (ministerName: string) => {
     const data = await api<{ minister: Minister; history: ChatMessage[]; suggestions: Suggestion[]; can_undo_last_chat: boolean }>(`/api/ministers/${encodeURIComponent(ministerName)}/chat`);
+    // Staleness guard (#325, broad-scope): the player may have switched ministers
+    // while this history fetch was in flight. Dropping the UI write prevents the
+    // late history from bleeding into the now-selected minister's panel — this path
+    // reproduces the bleed WITHOUT sending a message (just switch fast). Same
+    // selectedMinisterRef gate as sendChat. loadMinisterChat writes ONLY
+    // minister-panel state, so a blanket early return is safe (nothing global to skip).
+    if (selectedMinisterRef.current !== ministerName) return;
     const allKnown = [
       ...(state?.ministers || []),
       ...(state?.consorts || []),
@@ -418,6 +425,7 @@ function App() {
 
   const undoLastChat = async () => {
     if (busy || !activeMinister || !canUndoLastChat) return;
+    const targetMinisterName = activeMinister.name;
     const ok = window.confirm("将撤回最近一轮召对及其政务影响，是否继续？");
     if (!ok) return;
     setBusy("撤回召对");
@@ -427,16 +435,26 @@ function App() {
     setPendingUserMessage("");
     setStreamingMinisterMessage("");
     try {
-      const data = await api<ChatUndoResponse>(`/api/ministers/${encodeURIComponent(activeMinister.name)}/chat/undo`, {
+      const data = await api<ChatUndoResponse>(`/api/ministers/${encodeURIComponent(targetMinisterName)}/chat/undo`, {
         method: "POST",
       });
-      setChat(data.history);
-      setSuggestions(data.suggestions);
-      setCanUndoLastChat(!!data.can_undo_last_chat);
+      // Undo's GLOBAL effects (secret orders / directives / full state) apply
+      // regardless — the undo mutated game state, not just the panel. But the
+      // minister-PANEL writes (history / suggestions / undo-availability / notice)
+      // are gated on the staleness guard (#325, broad-scope): openChat does NOT
+      // block on `busy`, so the player can switch ministers during the undo POST;
+      // writing A's post-undo history into B's open panel is the same bleed.
       setSecretOrders(data.secret_orders || []);
       setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count } : current));
       await loadState();
-      setChatNotice("已撤回最近一轮召对。");
+      // Read the ref FRESH at the panel-write point (the minister could switch
+      // during the awaits above), mirroring sendChat's post-await check.
+      if (selectedMinisterRef.current === targetMinisterName) {
+        setChat(data.history);
+        setSuggestions(data.suggestions);
+        setCanUndoLastChat(!!data.can_undo_last_chat);
+        setChatNotice("已撤回最近一轮召对。");
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

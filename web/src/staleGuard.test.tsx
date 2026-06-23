@@ -105,3 +105,123 @@ describe("召对陈旧守卫（staleness guard）", () => {
     expect(host.querySelector("[data-testid=notice]")?.textContent).toBe("甲：甲的回话");
   });
 });
+
+/**
+ * Broad-scope (#325, dogfood self-check): the bleed has THREE async→minister-panel
+ * write paths, not just sendChat. These fixtures mirror the other two guards.
+ */
+
+/** Mirrors loadMinisterChat: a history load that writes the panel after an await. */
+function LoadGuardFixture({ getHistory }: { getHistory: () => Promise<string> }) {
+  const [selected, setSelected] = React.useState("甲");
+  const selectedRef = React.useRef("甲");
+  React.useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
+  const [panel, setPanel] = React.useState("");
+  const load = async (targetMinister: string) => {
+    const history = await getHistory();
+    // loadMinisterChat writes ONLY panel state → blanket early-return.
+    if (selectedRef.current !== targetMinister) return;
+    setPanel(`${targetMinister}：${history}`);
+  };
+  return (
+    <div>
+      <div data-testid="panel">{panel}</div>
+      <button data-testid="load" onClick={() => load(selected)}>
+        加载历史
+      </button>
+      <button data-testid="switch" onClick={() => setSelected("乙")}>
+        切换至乙
+      </button>
+    </div>
+  );
+}
+
+/** Mirrors undoLastChat: GLOBAL effect always applies, PANEL write is guarded. */
+function UndoGuardFixture({ getResult }: { getResult: () => Promise<string> }) {
+  const [selected, setSelected] = React.useState("甲");
+  const selectedRef = React.useRef("甲");
+  React.useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
+  const [globalApplied, setGlobalApplied] = React.useState(0);
+  const [panel, setPanel] = React.useState("");
+  const undo = async (targetMinister: string) => {
+    const result = await getResult();
+    setGlobalApplied((n) => n + 1); // global undo effect — always applies
+    if (selectedRef.current === targetMinister) {
+      setPanel(`${targetMinister}：${result}`);
+    }
+  };
+  return (
+    <div>
+      <div data-testid="global">{globalApplied}</div>
+      <div data-testid="panel">{panel}</div>
+      <button data-testid="undo" onClick={() => undo(selected)}>
+        撤回
+      </button>
+      <button data-testid="switch" onClick={() => setSelected("乙")}>
+        切换至乙
+      </button>
+    </div>
+  );
+}
+
+describe("召对陈旧守卫 — 广范围（loadMinisterChat 历史加载）", () => {
+  it("切人后甲的迟到历史不写入乙面板（不发消息也复现）", async () => {
+    let resolve!: (v: string) => void;
+    const pending = new Promise<string>((r) => (resolve = r));
+    const host = render(<LoadGuardFixture getHistory={() => pending} />);
+    act(() => (host.querySelector("[data-testid=load]") as HTMLButtonElement).click());
+    act(() => (host.querySelector("[data-testid=switch]") as HTMLButtonElement).click());
+    await act(async () => {
+      resolve("甲的历史");
+      await pending;
+    });
+    expect(host.querySelector("[data-testid=panel]")?.textContent).toBe("");
+  });
+
+  it("未切人时历史正常加载不被误丢", async () => {
+    let resolve!: (v: string) => void;
+    const pending = new Promise<string>((r) => (resolve = r));
+    const host = render(<LoadGuardFixture getHistory={() => pending} />);
+    act(() => (host.querySelector("[data-testid=load]") as HTMLButtonElement).click());
+    await act(async () => {
+      resolve("甲的历史");
+      await pending;
+    });
+    expect(host.querySelector("[data-testid=panel]")?.textContent).toBe("甲：甲的历史");
+  });
+});
+
+describe("召对陈旧守卫 — 广范围（undoLastChat 全局生效、面板守卫）", () => {
+  it("切人后撤回的全局效果照样生效，但旧面板写被守卫丢弃", async () => {
+    let resolve!: (v: string) => void;
+    const pending = new Promise<string>((r) => (resolve = r));
+    const host = render(<UndoGuardFixture getResult={() => pending} />);
+    act(() => (host.querySelector("[data-testid=undo]") as HTMLButtonElement).click());
+    act(() => (host.querySelector("[data-testid=switch]") as HTMLButtonElement).click());
+    await act(async () => {
+      resolve("已撤回");
+      await pending;
+    });
+    // global undo effect applied (state mutated) ...
+    expect(host.querySelector("[data-testid=global]")?.textContent).toBe("1");
+    // ... but the stale panel write was dropped (no bleed into 乙).
+    expect(host.querySelector("[data-testid=panel]")?.textContent).toBe("");
+  });
+
+  it("未切人时撤回的全局效果与面板写都生效", async () => {
+    let resolve!: (v: string) => void;
+    const pending = new Promise<string>((r) => (resolve = r));
+    const host = render(<UndoGuardFixture getResult={() => pending} />);
+    act(() => (host.querySelector("[data-testid=undo]") as HTMLButtonElement).click());
+    await act(async () => {
+      resolve("已撤回");
+      await pending;
+    });
+    expect(host.querySelector("[data-testid=global]")?.textContent).toBe("1");
+    expect(host.querySelector("[data-testid=panel]")?.textContent).toBe("甲：已撤回");
+  });
+});
