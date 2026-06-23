@@ -643,8 +643,14 @@ export class RealFamilyBackend implements FamilyBackend {
     // Run where the Node project lives, NOT the clone root — else npx finds no
     // package.json/config (online R2 Codex P1). Precedence (#4): explicit verifyCwd
     // > the lazy diff-inferred cwd (the dominant changed subproject) > the clone root.
-    const cwd =
-      this.opts.verifyCwd ?? this.opts.resolveVerifyCwd?.() ?? this.opts.workingRepo;
+    const cwd = this.opts.verifyCwd ?? this.opts.resolveVerifyCwd?.();
+    // R1 T2 (codex): a family diff touching NO Node subproject (docs/ content/
+    // root-only) → `inferVerifyCwd` is undefined. The OLD `?? workingRepo` fallback
+    // then ran the dep install + scripts against the CLONE ROOT, which has no
+    // package.json (only orchestrator/ + web/ do) → `npm install` in a non-Node dir
+    // → verify_failed for otherwise-valid non-code changes. A diff with no Node
+    // project has nothing to verify — skip (no-op pass), never npm in a non-Node dir.
+    if (cwd === undefined || !this.isNodeProject(cwd)) return;
     // #3 (dogfood death): the family clone is FRESH — no node_modules. Running
     // `npx tsc` against a depless project errors with "This is not the tsc
     // command you are looking for" (npx resolves a stub), so verify ALWAYS failed
@@ -662,8 +668,15 @@ export class RealFamilyBackend implements FamilyBackend {
     // `typecheck` (when present) + `test` scripts so each project's real flags/config
     // (jsdom, tsc -b, …) are honoured.
     const scripts = this.packageScripts(cwd);
+    // Type-check via the project's OWN command. R1 T3 (codex): web/ has NO `typecheck`
+    // script — its TS check lives in `build` (`tsc -b && vite build`, exactly what the
+    // game CI runs). Skipping it let a web change with TS/build errors pass verify as
+    // long as Vitest passed. Precedence: dedicated `typecheck` > `build` (the project's
+    // real type-checking build) > nothing. So types are NEVER silently skipped.
     if (scripts.includes("typecheck")) {
       this.sh("npm", ["run", "typecheck"], cwd);
+    } else if (scripts.includes("build")) {
+      this.sh("npm", ["run", "build"], cwd);
     }
     if (scripts.includes("test")) {
       this.sh("npm", ["test"], cwd);
@@ -678,6 +691,15 @@ export class RealFamilyBackend implements FamilyBackend {
    * dir verifies nothing — the deps install already failed loudly if it WAS a Node
    * project missing deps).
    */
+  /**
+   * Does `cwd` hold a Node project (a `package.json`)? The verify-skip guard (R1 T2)
+   * for non-Node diffs. `protected` so a unit test drives the skip branch without a
+   * real FS.
+   */
+  protected isNodeProject(cwd: string): boolean {
+    return existsSync(join(cwd, "package.json"));
+  }
+
   protected packageScripts(cwd: string): readonly string[] {
     try {
       const pkg = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8")) as {
@@ -690,11 +712,23 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
-   * Is the Node project at `cwd` already installed (a `node_modules` dir present)?
+   * Is the Node project at `cwd` already installed AND its install fresh? A bare
+   * `node_modules`-exists check (R1 T1, gemini) skips installing when `package.json`
+   * / `package-lock.json` changed AFTER the last install — e.g. a child PR added a
+   * dependency, or a resume after a coder updated deps — so verify would run against
+   * STALE deps and fail on missing/outdated packages. Treat node_modules as stale
+   * (→ reinstall) when either manifest's mtime is newer than node_modules'.
    * `protected` so a unit test drives the install / skip branch without a real FS.
    */
   protected depsInstalled(cwd: string): boolean {
-    return existsSync(join(cwd, "node_modules"));
+    const nodeModules = join(cwd, "node_modules");
+    if (!existsSync(nodeModules)) return false;
+    const installedAt = statSync(nodeModules).mtimeMs;
+    for (const manifest of ["package.json", "package-lock.json"]) {
+      const p = join(cwd, manifest);
+      if (existsSync(p) && statSync(p).mtimeMs > installedAt) return false;
+    }
+    return true;
   }
 
   /**
