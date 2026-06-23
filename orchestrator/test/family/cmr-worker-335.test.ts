@@ -27,7 +27,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -639,6 +639,57 @@ function realRepo335(): string {
   execFileSync("git", ["init", "-q"], { cwd: repo });
   return repo;
 }
+
+// ═══════ 4f. runCmrWorker reclaims its per-run temp auth dirs (online review r1) ═══════
+
+describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", () => {
+  /**
+   * `mountCmrAuth` creates per-run codex/agy temp dirs that are only needed for the
+   * lifetime of the mounted container run. They must be reclaimed on EVERY exit —
+   * including the early claude-token escalate (which never reaches sc.run). 3 bots
+   * flagged the leak; the try/finally in runCmrWorker is the fix.
+   */
+  class ReclaimBackend extends RealFamilyBackend {
+    constructor(opts: ConstructorParameters<typeof RealFamilyBackend>[0], private readonly dirs: CmrAuth) {
+      super(opts);
+    }
+    public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
+      return this.runCmrWorker(spec, ctx);
+    }
+    // Real on-disk dirs but NO claude token ⇒ the early escalate fires; the finally
+    // must still reclaim the two dirs.
+    protected override mountCmrAuth(): CmrAuth {
+      return this.dirs;
+    }
+  }
+
+  it("the early no-claude-auth escalate still removes the codex + agy temp dirs", async () => {
+    const codexDir = mkDir("reclaim-codex-");
+    const agyDir = mkDir("reclaim-agy-");
+    expect(existsSync(codexDir)).toBe(true);
+    expect(existsSync(agyDir)).toBe(true);
+
+    const be = new ReclaimBackend(
+      {
+        workingRepo: realRepo335(),
+        familyBase: "fb",
+        ledgerDir: mkDir("cmr-ledger-"),
+        repo: "Akagilnc/ming-salvage-sim",
+        base: "main",
+        promptsDir: realPromptsDir,
+        imageName: "img",
+        familyBaseStartHead: "abc123",
+      },
+      { codexAuthDir: codexDir, agyDir }, // no claudeToken ⇒ early escalate
+    );
+
+    const outcome = await be.run(cmrWorkerSpec(), { familyBase: "fb" });
+    expect(outcome.kind).toBe("escalate");
+    // The finally reclaimed BOTH per-run dirs even though sc.run never ran.
+    expect(existsSync(codexDir)).toBe(false);
+    expect(existsSync(agyDir)).toBe(false);
+  });
+});
 
 // ═══════════════════ 5. deleted-fanout regression ═══════════════════
 

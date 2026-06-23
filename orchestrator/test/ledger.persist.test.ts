@@ -193,15 +193,31 @@ describe("persisted step ledger (#249)", () => {
     expect(s3?.entry.output).toEqual({ kind: "reviewer", findings: [] });
   });
 
-  it("runner-action entries (S0/S1/S4/S7) have no output field", async () => {
+  it("pure runner-action entries (S0/S1/S4) have no output field", async () => {
     const { backend } = await runAndCapture();
 
-    const runnerActions = ["S0", "S1", "S4", "S7"] as const;
+    const runnerActions = ["S0", "S1", "S4"] as const;
     for (const stepId of runnerActions) {
       const call = backend.ledgerCalls.find((c) => c.entry.step === stepId);
       expect(call).toBeDefined();
       expect(call!.entry.output).toBeUndefined();
     }
+  });
+
+  it("S7 (ship worker, #336) persists its ship payload into the ledger", async () => {
+    // S7 is no longer a pure runner-action push — it is a ship WORKER (ADR 0026 /
+    // #336) that returns a ShipResult. Its branch/status/pr (+ worker sessionId)
+    // must be persisted so the delivery is recoverable from resume truth and
+    // surfaced in RunResult.stepLedger (online review r1 — 3 bots: S7 dropped it).
+    const { backend } = await runAndCapture();
+
+    const s7 = backend.ledgerCalls.find((c) => c.entry.step === "S7");
+    expect(s7).toBeDefined();
+    expect(s7!.entry.output).toEqual({
+      kind: "ship",
+      branch: "feat/orchestrator/issue-249",
+      status: "pushed",
+    });
   });
 
   it("every step is written to the ledger (anti-skip invariant: no step silently omitted)", async () => {

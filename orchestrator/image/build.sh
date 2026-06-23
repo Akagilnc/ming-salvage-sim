@@ -75,6 +75,14 @@ mkdir -p "$STAGE/skills" "$STAGE/souls"
 # ── 1. Resolve + copy the dev-skill closure (cp -RL dereferences symlinks) ────
 # Prune each skill's run-artifact / eval / test cruft so the image stays lean and
 # the content manifest hashes only the skill ITSELF (not stale local run dumps).
+# Decide ONCE whether rsync is available. The `cp -RL` fallback exists ONLY for
+# hosts that lack rsync — a present-but-FAILING rsync (rc 23 on a dangling symlink,
+# rc 11 on disk-full, etc.) must FAIL-CLOSED, not silently fall back to a `cp -RL`
+# that drops the exclude behaviour (esp. `.antigravitycli/` — the dangling-symlink
+# dir the excludes are there to skip; a blanket cp would re-introduce that abort or
+# bake the stray link). online review r1 (3 bots): the old `rsync || cp` masked a
+# real rsync failure as a fail-open.
+if command -v rsync >/dev/null 2>&1; then HAVE_RSYNC=1; else HAVE_RSYNC=0; fi
 for skill in "${SKILL_CLOSURE[@]}"; do
   src="$SKILLS_SRC/$skill"
   if [ ! -e "$src" ]; then
@@ -89,13 +97,27 @@ for skill in "${SKILL_CLOSURE[@]}"; do
   # whole copy on that dangling link (the bug this exclude fixes). NOTE: rsync -aL
   # still errors (rc 23) on ANY OTHER dangling symlink it encounters; we rely on
   # the excludes covering the known offenders rather than blanket-skipping dangling
-  # links. The `|| cp -RL` is only a fallback for hosts lacking rsync (it does NOT
-  # tolerate dangling links — but the excluded dir is the sole known case).
-  rsync -aL --quiet \
-    --exclude='outputs/' --exclude='eval/' --exclude='tests/' \
-    --exclude='__pycache__/' --exclude='.antigravitycli/' \
-    "$src/" "$STAGE/skills/$skill/" 2>/dev/null \
-    || cp -RL "$src" "$STAGE/skills/$skill"
+  # links — and a real rsync error here is FATAL (fail-closed), never a silent cp.
+  if [ "$HAVE_RSYNC" -eq 1 ]; then
+    # rsync present: a non-zero exit is a REAL failure (dangling symlink not yet
+    # excluded, disk full, etc.). Fail-closed so the broken closure can't ship.
+    if ! rsync -aL --quiet \
+        --exclude='outputs/' --exclude='eval/' --exclude='tests/' \
+        --exclude='__pycache__/' --exclude='.antigravitycli/' \
+        "$src/" "$STAGE/skills/$skill/"; then
+      echo "[build] ERROR: rsync failed copying skill '$skill' from $src" >&2
+      echo "[build]   (NOT falling back to cp -RL: that would drop the excludes —" >&2
+      echo "[build]    esp. .antigravitycli/ — and either abort on the dangling link" >&2
+      echo "[build]    or bake the stray symlink. Add an --exclude for the new" >&2
+      echo "[build]    offender, or fix the source tree.)" >&2
+      exit 1
+    fi
+  else
+    # rsync ABSENT only: fall back to cp -RL (no exclude support; the dangling
+    # `.antigravitycli/` link would abort it — but that is the no-rsync-host case
+    # the comment above documents as the sole fallback path).
+    cp -RL "$src" "$STAGE/skills/$skill"
+  fi
   if [ ! -f "$STAGE/skills/$skill/SKILL.md" ]; then
     echo "[build] ERROR: $skill has no SKILL.md after copy" >&2
     exit 1

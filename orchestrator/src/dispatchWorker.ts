@@ -167,6 +167,22 @@ export async function legacyDispatchWorker(
     };
   }
 
+  // FAIL-CLOSED on the worker kind (online review r1, 3 bots): only the legacy
+  // AGENT workers (coder/reviewer) belong on the `runStep`/`resumeSession` path
+  // below. `cmr`/`merge` are family-only worker kinds with NO legacy backend
+  // method — if such a spec reached this public seam it would be silently
+  // mis-dispatched as a coder/reviewer StepSpec (workerSpecToStepSpec drops
+  // kind/skill, so a cmr review would run as a plain reviewer step). Reject it
+  // explicitly rather than coerce. (`ship` is handled above.)
+  if (spec.kind !== "coder" && spec.kind !== "reviewer") {
+    throw new Error(
+      `legacyDispatchWorker: worker kind '${spec.kind}' (${spec.id}) has no legacy ` +
+        `dispatch path — only coder/reviewer (agent) and ship are forwarded. A ` +
+        `cmr/merge worker must go through a backend implementing the unified ` +
+        `dispatchWorker seam.`,
+    );
+  }
+
   // coder / reviewer agent worker → runStep | resumeSession (legacy seam).
   if (ctx.worktree === undefined) {
     throw new Error(

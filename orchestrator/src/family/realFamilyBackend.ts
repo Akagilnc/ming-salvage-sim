@@ -53,6 +53,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -639,12 +640,13 @@ export class RealFamilyBackend implements FamilyBackend {
   // ─────────────────────── unified worker dispatch (#335) ───────────────────────
 
   /**
-   * THE family worker-dispatch seam (ADR 0026 / #331 / #335). For the integrated
-   * cmr step it dispatches a real CONTAINER cmr WORKER that invokes
-   * `ak-cross-m-review` (this slice, #335). Every other family worker kind (the
-   * family ship/PR, #336) is forwarded to the legacy wrapper until its own slice
-   * wires it — so this method takes over ONLY the cmr leg now (the legacy
-   * `openFamilyPr` still backs the ship leg until #336).
+   * THE family worker-dispatch seam (ADR 0026 / #331 / #335 / #336). It dispatches
+   * real CONTAINER workers for the two delivered legs:
+   *   - cmr  (#335): a top-level claude invoking `ak-cross-m-review` (`runCmrWorker`).
+   *   - ship (#336): a container ship worker invoking `gstack-ship` 止于 PR
+   *     (`dispatchShipWorker`) — this REPLACED the legacy inline `openFamilyPr`.
+   * Every OTHER family worker kind (merge — B 段) still forwards to the legacy
+   * wrapper until its own slice wires it.
    *
    * The cmr worker (`cmrWorkerSpec`) = the 2b container's TOP-LEVEL claude; it
    * `Skill`-invokes ak-cross-m-review (1 Agent + 2 CLI legs in-container, #333),
@@ -771,52 +773,59 @@ export class RealFamilyBackend implements FamilyBackend {
     // Claude token alone is load-bearing for the worker itself. Mount once and reuse
     // for the sandbox (no double-mount). The cut-SHA guard above runs first; this is
     // the second fail-closed precondition, both BEFORE any container work.
+    // `mountCmrAuth` creates per-run temp auth dirs (codex/agy) BEFORE the early
+    // claude-token escalate below; the finally reclaims them on success, exception,
+    // AND that early return (online review r1 — 3 bots: leaked temp dirs).
     const auth = this.mountCmrAuth();
-    if (auth.claudeToken === undefined) {
-      return {
-        kind: "escalate",
-        reason: "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the cmr worker cannot start",
-        diagnosis:
-          "the integrated cmr worker is the container's top-level claude (sc.claudeCode); " +
-          "its OAuth token (~/.sc-claude-token → CLAUDE_CODE_OAUTH_TOKEN) is the worker's " +
-          "OWN auth, not a degradable reviewer leg. Without it the worker fails to start " +
-          "and never emits a verdict; escalating here keeps the escalate续跑 semantics " +
-          "(a thrown sc.run startup error would bypass verifyCmr's structured routing).",
-      };
+    try {
+      if (auth.claudeToken === undefined) {
+        return {
+          kind: "escalate",
+          reason: "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the cmr worker cannot start",
+          diagnosis:
+            "the integrated cmr worker is the container's top-level claude (sc.claudeCode); " +
+            "its OAuth token (~/.sc-claude-token → CLAUDE_CODE_OAUTH_TOKEN) is the worker's " +
+            "OWN auth, not a degradable reviewer leg. Without it the worker fails to start " +
+            "and never emits a verdict; escalating here keeps the escalate续跑 semantics " +
+            "(a thrown sc.run startup error would bypass verifyCmr's structured routing).",
+        };
+      }
+      // Check out the family base so the in-container ak-cross-m-review reviews the
+      // RIGHT base diff (ctx.familyBase is the contract input — dispatchWorker
+      // already asserted it is present). The cmr worker runs as the container's
+      // top-level claude over THIS checked-out base.
+      this.sh("git", ["checkout", ctx.familyBase!], this.opts.workingRepo);
+      // codex cmr R1 (F3+F2): thread the EXACT review scope + the LLM-resolved-child
+      // FOCUS into the worker via a git-ignored focus file the prompt reads — the
+      // skill can't reliably scope the family diff on its own (a stale local base
+      // ref pollutes `main...HEAD`; non-`main` targets diff the wrong ref), and the
+      // #291 缺口-1 focus signal must not be silently dropped. The focus file pins the
+      // exact `git diff <familyBaseStartHead>...<familyBase>` scope command + the
+      // baseline SHA + the machine-resolved children.
+      this.writeCmrFocusFile(ctx);
+      const result = await sc.run({
+        name: "family-cmr",
+        cwd: this.opts.workingRepo,
+        sandbox: this.cmrSandbox(auth),
+        // Derive the model from the spec via the shared validated seam (cmr S336 r7
+        // symmetry): `cmrWorkerSpec().model === "opus"` resolves to claude-opus-4-8.
+        // Same途径 the single-slice + family ship paths use — no constant that could
+        // silently drift from the spec the runner declares.
+        agent: this.agentForSpec(spec),
+        // The cmr worker is a single review pass (ADR 0026: review = clean eyes, one
+        // pass; a non-convergence is the runner's escalate fork, not a within-worker
+        // loop).
+        maxIterations: spec.maxIter,
+        completionSignal: spec.completionSignal,
+        // FRESH but on the resident family base — review must never commit (the
+        // worktree is read; `head` keeps it in place, no detached temp checkout).
+        branchStrategy: { type: "head" },
+        promptFile: join(this.opts.promptsDir, spec.promptFile),
+      });
+      return cmrOutcomeFromResult(result);
+    } finally {
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir]);
     }
-    // Check out the family base so the in-container ak-cross-m-review reviews the
-    // RIGHT base diff (ctx.familyBase is the contract input — dispatchWorker
-    // already asserted it is present). The cmr worker runs as the container's
-    // top-level claude over THIS checked-out base.
-    this.sh("git", ["checkout", ctx.familyBase!], this.opts.workingRepo);
-    // codex cmr R1 (F3+F2): thread the EXACT review scope + the LLM-resolved-child
-    // FOCUS into the worker via a git-ignored focus file the prompt reads — the
-    // skill can't reliably scope the family diff on its own (a stale local base
-    // ref pollutes `main...HEAD`; non-`main` targets diff the wrong ref), and the
-    // #291 缺口-1 focus signal must not be silently dropped. The focus file pins the
-    // exact `git diff <familyBaseStartHead>...<familyBase>` scope command + the
-    // baseline SHA + the machine-resolved children.
-    this.writeCmrFocusFile(ctx);
-    const result = await sc.run({
-      name: "family-cmr",
-      cwd: this.opts.workingRepo,
-      sandbox: this.cmrSandbox(auth),
-      // Derive the model from the spec via the shared validated seam (cmr S336 r7
-      // symmetry): `cmrWorkerSpec().model === "opus"` resolves to claude-opus-4-8.
-      // Same途径 the single-slice + family ship paths use — no constant that could
-      // silently drift from the spec the runner declares.
-      agent: this.agentForSpec(spec),
-      // The cmr worker is a single review pass (ADR 0026: review = clean eyes, one
-      // pass; a non-convergence is the runner's escalate fork, not a within-worker
-      // loop).
-      maxIterations: spec.maxIter,
-      completionSignal: spec.completionSignal,
-      // FRESH but on the resident family base — review must never commit (the
-      // worktree is read; `head` keeps it in place, no detached temp checkout).
-      branchStrategy: { type: "head" },
-      promptFile: join(this.opts.promptsDir, spec.promptFile),
-    });
-    return cmrOutcomeFromResult(result);
   }
 
   /**
@@ -972,6 +981,26 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
+   * Reclaim the per-run temp auth dirs `mountCmrAuth` / `mountShipAuth` created
+   * (online review r1, 3 bots): each `mkdtempSync` dir is unique per invocation and
+   * is only needed for the lifetime of the container run it is mounted into. The
+   * worker run paths wrap their `sc.run` in `try { … } finally { cleanup }` so the
+   * dirs are reclaimed on success, exception, AND any early return — never leaked
+   * into `~/.sc-orchestrator`. Best-effort (`force`): a missing dir is a no-op.
+   */
+  protected cleanupTempAuthDirs(dirs: ReadonlyArray<string | undefined>): void {
+    for (const dir of dirs) {
+      if (dir === undefined) continue;
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // Best-effort cleanup: a failure to reclaim a transient dir must never
+        // mask the worker's own outcome (the run already returned/threw).
+      }
+    }
+  }
+
+  /**
    * The docker options the cmr worker sandbox runs under — the pure SANDBOX-CONFIG
    * seam (mirrors `mergerSandboxConfig` / `RealBackend.boxConfig` testability). No
    * container, no I/O: a unit test asserts the mounts + soul env without a real
@@ -1110,45 +1139,52 @@ export class RealFamilyBackend implements FamilyBackend {
     // Only codex auth stays best-effort (in-container diff review). Preflight BEFORE
     // any container work (the checkout + focus write below) so a no-token host
     // escalates cleanly. Mount once and reuse for the sandbox (no double-mount).
+    // `mountShipAuth` creates a per-run temp codex auth dir BEFORE the early escalate
+    // gates below; the finally reclaims it on success, exception, AND those early
+    // returns (online review r1 — 3 bots: leaked temp dirs).
     const auth = this.mountShipAuth();
-    if (auth.claudeToken === undefined) {
-      return {
-        kind: "escalate",
-        reason: "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the ship worker cannot start",
-        diagnosis: "ship worker cannot start without CLAUDE_CODE_OAUTH_TOKEN",
-      };
+    try {
+      if (auth.claudeToken === undefined) {
+        return {
+          kind: "escalate",
+          reason: "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the ship worker cannot start",
+          diagnosis: "ship worker cannot start without CLAUDE_CODE_OAUTH_TOKEN",
+        };
+      }
+      // FAIL-CLOSED on gh auth (cmr S336 r10): the family delivery's ONLY accepted
+      // outcome is "pr_opened" (family_ship.md) — gstack-ship reaches it via `gh pr
+      // create --base`. The 2b image bakes the gh CLI but no gh auth, so a no-gh host
+      // would run the whole pipeline only to fail at `gh pr create` (an opaque late
+      // failure, not the cleaner escalate续跑). codex auth stays best-effort. Preflight
+      // BEFORE the checkout / focus write / container — symmetric with the single-slice
+      // path. The token is read via `gh auth token` (OS keyring, not a portable file)
+      // and injected as GH_TOKEN by shipSandboxConfig.
+      if (auth.ghToken === undefined) {
+        return {
+          kind: "escalate",
+          reason: "no gh auth (GH_TOKEN) — the family ship worker cannot `gh pr create`",
+          diagnosis:
+            "the family ship worker invokes gstack-ship, whose family delivery is a PR " +
+            "(`gh pr create --base`); the 2b image bakes the gh CLI but no gh auth. " +
+            "Provide a host gh login (`gh auth login`) so `gh auth token` yields a token " +
+            "to inject as GH_TOKEN. Escalating here keeps the escalate续跑 semantics (a " +
+            "late in-container `gh pr create` failure would surface as an opaque error).",
+        };
+      }
+      // Check out the family base so gstack-ship delivers the RIGHT branch.
+      this.sh("git", ["checkout", ctx.familyBase!], this.opts.workingRepo);
+      // cmr S336 r5: thread the CONFIGURED PR target base into the worker via a
+      // git-ignored focus file the prompt reads FIRST. gstack-ship otherwise INFERS
+      // the base from the repo default branch (main), regressing the legacy
+      // `openFamilyPr` `gh pr create --base this.opts.base` contract on a non-main
+      // target. Written AFTER the checkout (the file lives in the family-base
+      // worktree) and BEFORE the container so the worker can read it.
+      this.writeShipFocusFile(ctx);
+      const result = await this.shipContainerRun(spec, auth);
+      return shipOutcomeFromResult(result);
+    } finally {
+      this.cleanupTempAuthDirs([auth.codexAuthDir]);
     }
-    // FAIL-CLOSED on gh auth (cmr S336 r10): the family delivery's ONLY accepted
-    // outcome is "pr_opened" (family_ship.md) — gstack-ship reaches it via `gh pr
-    // create --base`. The 2b image bakes the gh CLI but no gh auth, so a no-gh host
-    // would run the whole pipeline only to fail at `gh pr create` (an opaque late
-    // failure, not the cleaner escalate续跑). codex auth stays best-effort. Preflight
-    // BEFORE the checkout / focus write / container — symmetric with the single-slice
-    // path. The token is read via `gh auth token` (OS keyring, not a portable file)
-    // and injected as GH_TOKEN by shipSandboxConfig.
-    if (auth.ghToken === undefined) {
-      return {
-        kind: "escalate",
-        reason: "no gh auth (GH_TOKEN) — the family ship worker cannot `gh pr create`",
-        diagnosis:
-          "the family ship worker invokes gstack-ship, whose family delivery is a PR " +
-          "(`gh pr create --base`); the 2b image bakes the gh CLI but no gh auth. " +
-          "Provide a host gh login (`gh auth login`) so `gh auth token` yields a token " +
-          "to inject as GH_TOKEN. Escalating here keeps the escalate续跑 semantics (a " +
-          "late in-container `gh pr create` failure would surface as an opaque error).",
-      };
-    }
-    // Check out the family base so gstack-ship delivers the RIGHT branch.
-    this.sh("git", ["checkout", ctx.familyBase!], this.opts.workingRepo);
-    // cmr S336 r5: thread the CONFIGURED PR target base into the worker via a
-    // git-ignored focus file the prompt reads FIRST. gstack-ship otherwise INFERS
-    // the base from the repo default branch (main), regressing the legacy
-    // `openFamilyPr` `gh pr create --base this.opts.base` contract on a non-main
-    // target. Written AFTER the checkout (the file lives in the family-base
-    // worktree) and BEFORE the container so the worker can read it.
-    this.writeShipFocusFile(ctx);
-    const result = await this.shipContainerRun(spec, auth);
-    return shipOutcomeFromResult(result);
   }
 
   /**
