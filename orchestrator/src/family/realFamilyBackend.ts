@@ -68,7 +68,10 @@ import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { runExclusive } from "../gitMutex.js";
 import {
   branchForIssue,
+  extractCoderTag,
   modelIdForSlug,
+  realCommitCount,
+  reconcileCoderCommits,
   SANDBOX_CODEX_DIR,
   SANDBOX_GH_TOKEN_ENV,
   SANDBOX_SKILLS_DIR,
@@ -76,6 +79,7 @@ import {
 } from "../realBackend.js";
 import {
   cmrWorkerSpec,
+  familyCoderFixWorkerSpec,
   familyShipWorkerSpec,
   legacyDispatchFamilyWorker,
 } from "./dispatchFamilyWorker.js";
@@ -153,6 +157,11 @@ const CMR_SOUL = "READ-ONLY";
 
 /** The WRITE soul the ship worker runs under (it commits the bump + pushes). */
 const SHIP_SOUL = "coder";
+
+/** The family coder-fix worker's completion signal (matches prompts/family_coder_fix.md). */
+const CODER_FIX_COMPLETION_SIGNAL = "CODER_STEP_COMPLETE";
+/** The WRITE soul the family coder-fix worker runs under (it commits the fix). */
+const CODER_FIX_SOUL = "coder";
 
 /**
  * One durable escalate stuck-point (ADR 0022 decision 4: 卡点 → 返回调用端 → 拍 →
@@ -248,6 +257,7 @@ const MERGER_CONFLICT_PROMPT = "merger_resolve_conflict.md";
 export const REFERENCED_FAMILY_PROMPT_FILES: ReadonlyArray<string> = [
   ...new Set([
     cmrWorkerSpec().promptFile,
+    familyCoderFixWorkerSpec().promptFile,
     familyShipWorkerSpec().promptFile,
     MERGER_CONFLICT_PROMPT,
   ]),
@@ -789,6 +799,15 @@ export class RealFamilyBackend implements FamilyBackend {
       // #336: the family ship step (止于 PR) is a CONTAINER ship WORKER invoking
       // `gstack-ship` (replacing the inline `openFamilyPr`).
       return this.dispatchShipWorker(spec, ctx);
+    }
+    if (spec.kind === "coder") {
+      // #337: the family integrated-cmr FIX worker (wiki Step 6 fix loop) is a
+      // CONTAINER coder WORKER invoking `/tdd` over the family base, committing its
+      // fix in place — replacing the unimplemented legacy `runFamilyCoderFix` seam.
+      // It mirrors the ship worker's container path (same image, WRITE soul, the
+      // family base checked out) but commits a fix (collected like the per-slice S5
+      // coder_fix) instead of opening a PR.
+      return this.dispatchCoderFixWorker(spec, ctx);
     }
     if (spec.kind !== "cmr") {
       // Any other family worker kind (merge — B 段) forwards to the legacy seam.
@@ -1513,6 +1532,247 @@ export class RealFamilyBackend implements FamilyBackend {
     return { imageName: this.opts.imageName, env, mounts };
   }
 
+  // ─────────────────────── coder-fix WORKER (Step 6 fix loop) ───────────────────────
+
+  /**
+   * Dispatch the FAMILY coder-fix WORKER (#337 / wiki Step 6 fix loop): a CONTAINER
+   * coder worker invoking `/tdd` over the family base to fix the integrated cmr's
+   * cross-slice findings, COMMITTING its fix in place (collected like the per-slice
+   * S5 coder_fix — the family base advances by one fix commit per round; the loop
+   * re-runs the cmr to verify it). Maps the {@link CoderFixWorkerOutcome} to the
+   * {@link WorkerResult} union the verifyCmr loop consumes (PRD #330 R2):
+   *   committed → `completed` with a coder payload (`committed`/`commitsAdded` the
+   *   loop reads to decide 0-commit-escalate vs re-run-cmr); a model-stuck escalate
+   *   → `escalated` (the loop escalates续跑); unparseable / a self-report that
+   *   contradicts git → `malformed` (the loop fail-safes to INCOMPLETE_GATE).
+   */
+  protected async dispatchCoderFixWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<WorkerResult> {
+    if (ctx.familyBase === undefined) {
+      throw new Error(
+        "dispatchWorker(coder): a family coder-fix worker requires ctx.familyBase (the " +
+          "merged base whose cross-slice findings the fix lands on).",
+      );
+    }
+    if (ctx.cmrReason === undefined) {
+      throw new Error(
+        "dispatchWorker(coder): a family coder-fix worker requires ctx.cmrReason (the " +
+          "integrated cmr's one-line non-convergence reason — the fix focus).",
+      );
+    }
+    const outcome = await this.runCoderFixWorker(spec, ctx);
+    if (outcome.kind === "escalate") {
+      // The fix worker judged the finding unfixable as stated (conflicts with the
+      // epic spec / a real design gap) → the family escalate续跑 path (verifyCmr
+      // calls escalateFamily). NOT a fabricated fix.
+      return {
+        kind: "escalated",
+        escalation: { reason: outcome.reason, diagnosis: outcome.diagnosis },
+      };
+    }
+    if (outcome.kind === "malformed") {
+      // No parseable / git-contradicting verdict ⇒ malformed (the loop must never
+      // read it as a fix; it fail-safes to INCOMPLETE_GATE).
+      return { kind: "malformed", reason: outcome.reason };
+    }
+    // A committed (or 0-commit) coder verdict ⇒ completed coder payload. The loop
+    // reads `committed`: false ⇒ escalate续跑 (a 0-commit round changed nothing the
+    // next cmr would see), true ⇒ re-run the integrated cmr to verify the fix.
+    return {
+      kind: "completed",
+      output: {
+        kind: "coder",
+        committed: outcome.committed,
+        commitsAdded: outcome.commitsAdded,
+      },
+    };
+  }
+
+  /**
+   * Run the family coder-fix WORKER: ONE `sc.run` of the 2b container's top-level
+   * claude invoking `/tdd` over the checked-out family base (#337). `protected` so a
+   * unit test fixtures the outcome without a real container (the real container only
+   * runs on the driver / manual-smoke / e2e path).
+   *
+   * The worker is the container's TOP-LEVEL claude under the WRITE (`coder`) soul
+   * (it commits the fix). `branchStrategy:{type:"head"}` keeps it on the checked-out
+   * family base (the fix commit advances the family base in place — collected like
+   * the per-slice S5 coder_fix). Its `<coder>` tag is gated on the completion signal,
+   * then git-TRUTHED against the real commits Sandcastle observed.
+   */
+  protected async runCoderFixWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<CoderFixWorkerOutcome> {
+    // FAIL-CLOSED on the WORKER's OWN auth (mirroring the cmr/ship worker preflight):
+    // the fix worker is the container's TOP-LEVEL claude (`agent: sc.claudeCode` in
+    // coderFixContainerRun), so the Claude OAuth token is THIS worker's auth, not a
+    // degradable codex leg. Absent, the worker cannot start and never emits a
+    // `<coder>` verdict; that failure would throw out of `sc.run` (NOT a structured
+    // escalate), bypassing the WorkerResult routing (dispatchCoderFixWorker →
+    // verifyCmr only handle the RETURNED result). codex auth stays best-effort
+    // (in-container diff review). Preflight BEFORE any container work (the checkout +
+    // focus write below). Mount once and reuse (no double-mount); the finally
+    // reclaims the per-run temp codex dir on success, exception, AND the early
+    // escalate.
+    const auth = this.mountCoderFixAuth();
+    try {
+      if (auth.claudeToken === undefined) {
+        return {
+          kind: "escalate",
+          reason: "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the coder-fix worker cannot start",
+          diagnosis:
+            "the family coder-fix worker cannot start without CLAUDE_CODE_OAUTH_TOKEN — it is " +
+            "the container's top-level claude (sc.claudeCode); its OAuth token " +
+            "(~/.sc-claude-token → CLAUDE_CODE_OAUTH_TOKEN) is the worker's OWN auth, not a " +
+            "degradable codex leg. Without it the worker never emits a verdict; escalating here " +
+            "keeps the escalate续跑 semantics (a thrown sc.run startup error would bypass the " +
+            "WorkerResult routing).",
+        };
+      }
+      // Check out the family base so the in-container `/tdd` fixes — and commits on —
+      // the RIGHT base (dispatchCoderFixWorker already asserted familyBase + cmrReason).
+      this.sh("git", ["checkout", ctx.familyBase!], this.opts.workingRepo);
+      // Thread the integrated cmr's non-convergence reason + the exact review scope
+      // into the worker via the SAME git-ignored `.cmr-focus.md` the cmr worker reads
+      // (prompts/family_coder_fix.md reads it FIRST). The fix worker re-derives the
+      // concrete cross-slice finding from the scope diff + the reason (writeCmrFocusFile
+      // pins the `git diff <cut SHA>...<familyBase>` scope; the cmr reason rides on
+      // ctx.cmrReason, surfaced in the focus body).
+      this.writeCoderFixFocusFile(ctx);
+      const result = await this.coderFixContainerRun(spec, auth);
+      return coderFixOutcomeFromResult(result);
+    } finally {
+      this.cleanupTempAuthDirs([auth.codexAuthDir]);
+    }
+  }
+
+  /**
+   * The single `sc.run` that spins the family coder-fix container (`/tdd` over the
+   * checked-out family base). `protected` so a unit test traps the container launch
+   * (asserting the focus file is already on disk) without a real docker run.
+   * `branchStrategy:{type:"head"}` keeps it on the checked-out family base (the fix
+   * commit lands in place). The agent model is spec-derived via the shared validated
+   * {@link agentForSpec} seam (NOT a hardcoded id — same as cmr/ship).
+   */
+  protected async coderFixContainerRun(
+    spec: WorkerSpec,
+    auth: CoderFixAuth = this.mountCoderFixAuth(),
+  ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+    return sc.run({
+      name: "family-coder-fix",
+      cwd: this.opts.workingRepo,
+      sandbox: this.coderFixSandbox(auth),
+      agent: this.agentForSpec(spec),
+      maxIterations: spec.maxIter,
+      completionSignal: spec.completionSignal,
+      branchStrategy: { type: "head" },
+      promptFile: join(this.opts.promptsDir, spec.promptFile),
+    });
+  }
+
+  /**
+   * Write the git-ignored `.cmr-focus.md` for the family coder-fix worker (#337).
+   * It REUSES {@link writeCmrFocusFile} (the SAME focus file the cmr worker writes:
+   * prompts/family_coder_fix.md reads `.cmr-focus.md` FIRST for the review-scope
+   * diff), then appends the integrated cmr's one-line non-convergence reason (the
+   * fix focus). `protected` so a unit test can fixture it without a real worktree.
+   *
+   * FAIL-CLOSED (same as the cmr focus): `writeCmrFocusFile` THROWS when no
+   * `familyBaseStartHead` (cut SHA) is recorded — the only honest review scope — so
+   * the fix worker is never handed a stale-base scope.
+   */
+  protected writeCoderFixFocusFile(ctx: DispatchContext): void {
+    // Reuse the cmr focus writer (scope diff + machine-resolved children + the
+    // git-ignore wiring); it is the SAME .cmr-focus.md the fix prompt reads.
+    this.writeCmrFocusFile(ctx);
+    if (ctx.cmrReason !== undefined) {
+      const target = join(this.opts.workingRepo, CMR_FOCUS_FILENAME);
+      appendFileSync(
+        target,
+        `\n## Cross-slice finding to fix (integrated cmr non-convergence reason)\n\n` +
+          `${ctx.cmrReason}\n`,
+        "utf8",
+      );
+    }
+  }
+
+  /** The family coder-fix worker's sandbox (souls + skills + CLIs baked into the 2b image). */
+  protected coderFixSandbox(auth: CoderFixAuth = this.mountCoderFixAuth()): sc.SandboxProvider {
+    return docker(this.coderFixSandboxConfig(auth));
+  }
+
+  /**
+   * Gather the coder-fix worker's host credentials (#337): the codex auth dir
+   * (mounted, BEST-EFFORT — it only feeds the in-container diff review) + the claude
+   * OAuth token (env, the top-level worker's OWN auth). The fix worker needs NO gh:
+   * it COMMITS in place on the family base; it never pushes / opens a PR (the family
+   * ship worker owns that). Fail-soft per source (a missing one ⇒ undefined); the
+   * REQUIRE gate (claude) lives in `runCoderFixWorker`'s preflight. `protected` so a
+   * unit test points $HOME at a fixture dir.
+   */
+  protected mountCoderFixAuth(): CoderFixAuth {
+    const home = this.opts.home ?? homedir();
+    const root = join(home, ".sc-orchestrator");
+    let codexAuthDir: string | undefined;
+    let tempCodexDir: string | undefined;
+    try {
+      mkdirSync(root, { recursive: true, mode: 0o700 });
+      tempCodexDir = mkdtempSync(join(root, "fix-codex-auth-"));
+      copyFileSync(join(home, ".codex", "auth.json"), join(tempCodexDir, "auth.json"));
+      chmodSync(join(tempCodexDir, "auth.json"), 0o600);
+      try {
+        copyFileSync(join(home, ".codex", "config.toml"), join(tempCodexDir, "config.toml"));
+        chmodSync(join(tempCodexDir, "config.toml"), 0o600);
+      } catch {
+        // config.toml is optional.
+      }
+      codexAuthDir = tempCodexDir;
+    } catch {
+      // codex auth absent ⇒ the codex leg degrades (no mount). Reclaim the mkdtemp
+      // dir if it was created before copy/chmod threw (mirrors mountShipAuth): on the
+      // degrade path codexAuthDir stays undefined, so the per-invocation dir would
+      // otherwise leak past the caller's finally cleanup.
+      if (codexAuthDir === undefined && tempCodexDir !== undefined) {
+        rmSync(tempCodexDir, { recursive: true, force: true });
+      }
+    }
+    let claudeToken: string | undefined;
+    try {
+      const tok = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
+      // A present-but-empty/blank token file ⇒ undefined (the preflight escalates),
+      // NOT an injected empty CLAUDE_CODE_OAUTH_TOKEN="" that defeats the gate.
+      claudeToken = tok === "" ? undefined : tok;
+    } catch {
+      // claude token absent ⇒ the top-level claude worker degrades (no env var).
+    }
+    return { codexAuthDir, claudeToken };
+  }
+
+  /**
+   * The docker options the family coder-fix sandbox runs under — the pure
+   * SANDBOX-CONFIG seam (mirrors `shipSandboxConfig` / `RealBackend.boxConfig`). No
+   * container, no I/O: a unit test asserts the mounts + soul env. The fix worker runs
+   * under the WRITE (`coder`) soul (it commits the fix), with codex auth + the claude
+   * token, NO gh (it never pushes), NO skills mount (the 2b image BAKES `/tdd` — a
+   * runtime mount would SHADOW it, #334).
+   */
+  protected coderFixSandboxConfig(auth: CoderFixAuth): {
+    imageName: string;
+    env: Record<string, string>;
+    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
+  } {
+    const env: Record<string, string> = { [SANDBOX_SOUL_ENV]: CODER_FIX_SOUL };
+    if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
+    const mounts: { hostPath: string; sandboxPath: string }[] = [];
+    if (auth.codexAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
+    }
+    return { imageName: this.opts.imageName, env, mounts };
+  }
+
   // ─────────────────────────── open PR (止于 PR) — legacy inline ───────────────
 
   /**
@@ -1695,6 +1955,24 @@ export type CmrWorkerOutcome =
   | { readonly kind: "malformed"; readonly reason: string };
 
 /**
+ * The classified outcome of the family coder-fix WORKER's run (#337). One of:
+ *   - `committed`  — the worker produced a `{committed, commitsAdded}` verdict
+ *     (the normal case; `verifyCmr.ts` reads `committed` to decide 0-commit-escalate
+ *     vs re-run-cmr). `committed` / `commitsAdded` are GIT-TRUTHED against the real
+ *     commits Sandcastle observed (not the model's self-report — #256 truthification);
+ *   - `escalate`   — the worker judged the finding unfixable as stated (conflicts
+ *     with the epic spec / a real design gap) ⇒ the runner's escalate续跑 fork;
+ *   - `malformed`  — no parseable `<coder>` tag, OR a self-report that contradicts
+ *     git ⇒ the loop must never read it as a fix (fail-closed).
+ * Deliberately NOT the bare {@link FamilyCoderFixResult}: a fix worker also has the
+ * malformed / git-contradiction WorkerResult-level case the bare result cannot carry.
+ */
+export type CoderFixWorkerOutcome =
+  | { readonly kind: "committed"; readonly committed: boolean; readonly commitsAdded: number }
+  | { readonly kind: "escalate"; readonly reason: string; readonly diagnosis: string }
+  | { readonly kind: "malformed"; readonly reason: string };
+
+/**
  * The cmr worker's reviewer-leg auth, each leg BEST-EFFORT (codex cmr R1): a leg
  * whose host credential is absent is `undefined` so it degrades (the 降级链 — the
  * skill drops that leg, the rest still review), never crashing the whole gate.
@@ -1727,6 +2005,21 @@ export interface ShipAuth {
    * (`gh pr create`), so `runShipWorker` preflights it and escalates when absent.
    */
   readonly ghToken?: string;
+}
+
+/**
+ * The family coder-fix worker's auth (#337). The codex dir is BEST-EFFORT (it only
+ * feeds the in-container diff review); the claude token (the top-level worker's OWN
+ * auth) is LOAD-BEARING — `runCoderFixWorker` preflights it and escalates when
+ * absent. The fix worker needs NO gh: it COMMITS in place on the family base and
+ * never pushes / opens a PR (the family ship worker owns that), so — unlike
+ * {@link ShipAuth} — there is no gh token here.
+ */
+export interface CoderFixAuth {
+  /** Per-run codex auth dir (host-mirrored `~/.codex`), or undefined if absent. */
+  readonly codexAuthDir?: string;
+  /** The claude OAuth token (env var), or undefined if absent. */
+  readonly claudeToken?: string;
 }
 
 /**
@@ -1850,6 +2143,136 @@ export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
     reason:
       'cmr worker <cmr> tag matched no valid shape (expected one of: {converged:true}, ' +
       "{converged:false,reason}, {escalate:{reason,diagnosis}} — non-empty strings, no extra keys)",
+  };
+}
+
+/**
+ * Decide the family coder-fix worker outcome from a Sandcastle run result (#337):
+ * gate on the completion signal FIRST (mirrors the cmr/merger gate), parse the
+ * `<coder>` tag, THEN git-TRUTH the self-reported commit count against the real
+ * commits Sandcastle observed (`result.commits.length`, via `realCommitCount` /
+ * `reconcileCoderCommits` — the SAME #256 truthification the single-slice coder
+ * path uses). Pure (a check on the run-result shape) so it is unit-tested without
+ * a container.
+ *
+ * A complete-but-UNSIGNALED run (e.g. `maxIterations` hit mid-fix) is ESCALATE (the
+ * safe direction — the worker did not declare it finished, so its verdict is not
+ * trusted as a committed fix). An escalate `<coder>` tag passes straight through
+ * (a model signal, not git-derivable). A self-report that CONTRADICTS git (claims a
+ * commit git did not see) is a contract violation → malformed (fail-closed — the
+ * loop must never read a phantom commit as a fix). `result.commits` is required so
+ * the truthing matches the single-slice runStep completion path.
+ */
+export function coderFixOutcomeFromResult(result: {
+  completionSignal?: string | string[];
+  stdout: string;
+  commits: ReadonlyArray<unknown>;
+}): CoderFixWorkerOutcome {
+  const signal = result.completionSignal;
+  const signaled = Array.isArray(signal)
+    ? signal.includes(CODER_FIX_COMPLETION_SIGNAL)
+    : signal === CODER_FIX_COMPLETION_SIGNAL;
+  if (!signaled) {
+    const actual =
+      signal === undefined
+        ? "none (no signal fired before the iteration limit)"
+        : `"${String(signal)}"`;
+    return {
+      kind: "escalate",
+      reason: "coder-fix worker did not fire its completion signal",
+      diagnosis:
+        `expected "${CODER_FIX_COMPLETION_SIGNAL}", got ${actual} (a complete-but-unsignaled ` +
+        `coder-fix run is not trusted as a committed fix — escalate, never a fabricated fix)`,
+    };
+  }
+  const parsed = parseCoderFixOutcome(result.stdout);
+  // A malformed / escalate tag carries no git-truthable commit verdict — pass through.
+  if (parsed.kind !== "committed") return parsed;
+  // Git-TRUTH the committed/commitsAdded against the real commits Sandcastle observed
+  // (#256): a model that claims a commit it never made is a contract violation. The
+  // single-slice `reconcileCoderCommits` THROWS on a contradiction; here we map that
+  // throw to a malformed outcome (the family loop fail-safes a malformed fix to
+  // INCOMPLETE_GATE — never a trusted fix). The escalate field is not present on a
+  // `committed` parse (the parser routes an escalate tag to kind:"escalate").
+  const gitCommitCount = realCommitCount({
+    commits: result.commits as ReadonlyArray<{ readonly sha: string }>,
+  });
+  try {
+    const truthed = reconcileCoderCommits(
+      { committed: parsed.committed, commitsAdded: parsed.commitsAdded },
+      gitCommitCount,
+    );
+    return { kind: "committed", committed: truthed.committed, commitsAdded: truthed.commitsAdded };
+  } catch (err) {
+    return {
+      kind: "malformed",
+      reason: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/**
+ * The two committed `<coder>` shapes + the escalate shape (#337; mirrors the cmr /
+ * ship `.strict()` unions). Each is `.strict()` so any EXTRA / mixed key (a fix
+ * verdict smuggling a `shipped`, an off-contract field) is rejected → malformed,
+ * closing the "too-lax shape leaks the fix branch" fail-open. The contract is
+ * prompts/family_coder_fix.md:
+ *   1. `{committed, commitsAdded}`                          — a (possibly 0-commit) fix round;
+ *   2. `{committed:false, commitsAdded:0, escalate:{reason, diagnosis}}` — could not fix as stated.
+ * Escalate is tried FIRST (a stuck worker carries no usable fix verdict).
+ */
+const coderFixCommittedSchema = z
+  .object({ committed: z.boolean(), commitsAdded: z.number().int().min(0) })
+  .strict();
+const coderFixEscalateSchema = z
+  .object({
+    committed: z.literal(false),
+    commitsAdded: z.literal(0),
+    escalate: z.object({ reason: nonEmpty, diagnosis: nonEmpty }).strict(),
+  })
+  .strict();
+
+/**
+ * Parse the family coder-fix worker's `<coder>{…}</coder>` outcome from its stdout
+ * (#337). Pure so it is unit-tested without a container. Only the LAST `<coder>` tag
+ * is read (the worker may iterate). Reuses {@link extractCoderTag} to find the tag
+ * (the same single-slice extractor), then classifies via the `.strict()` schemas:
+ * escalate FIRST, then the committed shape; anything else → malformed (fail-closed).
+ */
+export function parseCoderFixOutcome(stdout: string): CoderFixWorkerOutcome {
+  let parsed: unknown;
+  try {
+    parsed = extractCoderTag(stdout);
+  } catch {
+    // No <coder> tag, or the tag was not valid JSON (extractCoderTag throws on a
+    // missing tag; JSON.parse inside it throws on bad JSON).
+    return { kind: "malformed", reason: "coder-fix worker emitted no valid <coder> tag" };
+  }
+  if (parsed === null || typeof parsed !== "object") {
+    return { kind: "malformed", reason: "coder-fix worker <coder> tag was not a JSON object" };
+  }
+  // Escalate FIRST — a model-stuck worker never carries a usable fix verdict.
+  const escalate = coderFixEscalateSchema.safeParse(parsed);
+  if (escalate.success) {
+    return {
+      kind: "escalate",
+      reason: escalate.data.escalate.reason,
+      diagnosis: escalate.data.escalate.diagnosis,
+    };
+  }
+  const committed = coderFixCommittedSchema.safeParse(parsed);
+  if (committed.success) {
+    return {
+      kind: "committed",
+      committed: committed.data.committed,
+      commitsAdded: committed.data.commitsAdded,
+    };
+  }
+  return {
+    kind: "malformed",
+    reason:
+      'coder-fix worker <coder> tag matched no valid shape (expected one of: ' +
+      "{committed,commitsAdded}, {committed:false,commitsAdded:0,escalate:{reason,diagnosis}} — no extra keys)",
   };
 }
 
