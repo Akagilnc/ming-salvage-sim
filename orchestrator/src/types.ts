@@ -381,6 +381,14 @@ export interface DispatchContext {
    * single-slice workers and for a conflict-free family run.
    */
   readonly llmResolvedChildren?: ReadonlyArray<number>;
+  /**
+   * FAMILY coder-fix worker only (wiki Step 6 fix loop): the integrated cmr's
+   * one-line non-convergence reason, forwarded so the fix worker knows WHAT
+   * cross-slice issue to fix on the family base (the family cmr verdict is a bare
+   * `{converged, reason}`, so `reason` is the focus — the worker re-derives the
+   * concrete findings from the family-base diff). Undefined for every other worker.
+   */
+  readonly cmrReason?: string;
 }
 
 /** A coder/fix worker's output — the existing {@link CoderOutput}. */

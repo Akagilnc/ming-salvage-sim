@@ -27,6 +27,7 @@ import type {
 } from "../types.js";
 import type {
   FamilyBackend,
+  FamilyCoderFixResult,
   IntegratedCmrResult,
   OpenFamilyPrResult,
 } from "./types.js";
@@ -49,6 +50,32 @@ export function cmrWorkerSpec(): WorkerSpec {
     maxIter: 1,
     model: "opus",
     soul: "READ-ONLY",
+    toolchain: [],
+  };
+}
+
+/**
+ * The family integrated-cmr FIX worker spec (wiki Step 6 fix loop). Dispatched by
+ * the verify-cmr hook when the integrated cmr returns NOT-converged: it fixes the
+ * cross-slice findings ON THE FAMILY BASE (a new commit) by invoking `/tdd`
+ * (+ `/diagnosing-bugs`) under the `coder` soul — the runner stays a pure
+ * scheduler. RETAIN context across rounds (a coder接得住 the prior round), iterate
+ * budget like the per-slice S5 coder_fix (5).
+ */
+export function familyCoderFixWorkerSpec(): WorkerSpec {
+  return {
+    id: "S5", // mirrors the per-slice S5 coder_fix step kind
+    kind: "coder",
+    role: "coder",
+    host: "claude",
+    session: "fresh",
+    contextRetention: "retain",
+    skill: "tdd",
+    promptFile: "family_coder_fix.md",
+    completionSignal: "CODER_STEP_COMPLETE",
+    maxIter: 5,
+    model: "sonnet",
+    soul: "coder",
     toolchain: [],
   };
 }
@@ -140,6 +167,41 @@ export async function legacyDispatchFamilyWorker(
         kind: "cmr",
         converged: cmr.converged,
         ...(cmr.reason !== undefined ? { reason: cmr.reason } : {}),
+      },
+    };
+  }
+
+  if (spec.kind === "coder") {
+    // The family integrated-cmr fix worker (wiki Step 6 fix loop). Forwards to the
+    // legacy per-method `runFamilyCoderFix` seam. The hook only dispatches this
+    // after first checking the capability exists (verifyCmr.ts), so a missing
+    // method here is a wiring fault — throw loud rather than fabricate a fix.
+    if (familyBackend.runFamilyCoderFix === undefined) {
+      throw new Error(
+        "legacyDispatchFamilyWorker: backend has no runFamilyCoderFix capability",
+      );
+    }
+    if (ctx.cmrReason === undefined) {
+      throw new Error(
+        "legacyDispatchFamilyWorker: a family coder-fix worker requires ctx.cmrReason",
+      );
+    }
+    const fix: FamilyCoderFixResult = await familyBackend.runFamilyCoderFix({
+      familyBase,
+      reason: ctx.cmrReason,
+    });
+    // A model-stuck fix (the finding conflicts with the spec / a design gap) is the
+    // WorkerResult-level `escalated` case (PRD #330 R2) — NOT a `completed` coder
+    // payload. The hook reads this to escalate续跑 rather than re-run the cmr.
+    if (fix.escalate !== undefined) {
+      return { kind: "escalated", escalation: fix.escalate };
+    }
+    return {
+      kind: "completed",
+      output: {
+        kind: "coder",
+        committed: fix.committed,
+        commitsAdded: fix.commitsAdded,
       },
     };
   }
