@@ -63,6 +63,20 @@ export interface AbortedRecord {
 }
 
 /**
+ * The fields a PHASE-LEVEL `shipped` event (terminal 止于-PR success) carries
+ * (online review r2, codex P1). Like {@link AbortedRecord} it is a phase-level
+ * event (NOT a child), so it carries NO `childIssue`. It records the family `pr`
+ * URL. `familyHeadAfter` is intentionally OMITTED: the ship commit is a descendant
+ * of the last recorded baseline, so reconcile branch ② tolerates the advance
+ * without escalating — the `shipped` entry is a TERMINAL FLAG for the spine's
+ * resume guard, not a new reconcile baseline.
+ */
+export interface ShippedRecord {
+  /** The family PR URL the terminal ship opened. */
+  readonly pr: string;
+}
+
+/**
  * Drop `undefined`-valued optional fields so the appended entry is clean
  * (`{childIssue, status}` with only the supplied extras — no `field: undefined`
  * noise, which would break `toEqual` and bloat the persisted JSONL).
@@ -135,6 +149,44 @@ export async function recordAborted(
       familyHeadAfter: record.familyHeadAfter,
     }) as FamilyLedgerEntry,
   );
+}
+
+/**
+ * Append the PHASE-LEVEL `shipped` terminal marker to the family ledger (online
+ * review r2, codex P1).
+ *
+ * The verify-cmr hook calls this AFTER the terminal 止于-PR family ship succeeds
+ * (a real family PR opened on the family base). Without it, the family ship commit
+ * (VERSION/CHANGELOG bump) advances the base but nothing records that the terminal
+ * ship already ran — so on a re-feed/resume the spine would re-enter the final
+ * barrier (full verify → integrated cmr → 止于-PR) and re-bump / re-open the PR.
+ * The durable `shipped` entry is the spine's resume "already delivered" truth
+ * ({@link familyAlreadyShipped}). It is NOT counted as merged by {@link mergedSet}
+ * (no `childIssue`, `status:"shipped"`), so it never unblocks a slice.
+ */
+export async function recordShipped(
+  backend: FamilyBackend,
+  record: ShippedRecord,
+): Promise<void> {
+  await backend.appendFamilyLedger(
+    compact({
+      status: "shipped",
+      event: "shipped",
+      phase: "final",
+      pr: record.pr,
+    }) as FamilyLedgerEntry,
+  );
+}
+
+/**
+ * Did the terminal family ship already succeed? True once a `status:"shipped"`
+ * marker is on the ledger (online review r2, codex P1). The spine reads this
+ * BEFORE the final barrier so an already-delivered family run is not re-shipped.
+ */
+export function familyAlreadyShipped(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+): boolean {
+  return entries.some((e) => e.status === "shipped");
 }
 
 /**

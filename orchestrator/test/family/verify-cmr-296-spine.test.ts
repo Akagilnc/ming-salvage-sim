@@ -312,3 +312,38 @@ describe("#291 spine — the final barrier (verify + cmr + 止于 PR) is GATED o
     expect(result.children.every((c) => c.status === "failed")).toBe(true);
   });
 });
+
+describe("#330 spine — an already-shipped family is NOT re-shipped on resume (online review r2, codex P1)", () => {
+  it("a `shipped` ledger marker ⇒ skip the final barrier (NO final verify / cmr / PR), status success", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({ converged: true }),
+    });
+    // Resume truth: both children already merged AND the terminal 止于-PR ship already
+    // ran (a `shipped` marker on the durable ledger). The family PR is open and the
+    // base carries the ship (VERSION/CHANGELOG bump) commit. Pre-fix the spine
+    // re-entered the final barrier here — re-running full verify + integrated cmr and
+    // re-invoking the ship worker (a DUPLICATE VERSION bump / PR attempt), because
+    // nothing recorded that the family was already delivered.
+    backend.ledger.push(
+      { childIssue: 294, status: "merged" },
+      { childIssue: 295, status: "merged" },
+      { status: "shipped", event: "shipped", phase: "final", pr: "pr://family/291-base" },
+    );
+    const result = await runFamily({
+      epic: epicWith(294, 295),
+      familyBackend: backend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/291-base",
+    });
+    // The already-shipped guard short-circuits BEFORE the final barrier.
+    expect(backend.verifyCalls.map((v) => v.phase)).not.toContain("final");
+    expect(backend.cmrCalls).toEqual([]);
+    expect(backend.prCalls).toEqual([]);
+    // No NEW ship: the prior marker stands, exactly one on the ledger (no re-bump).
+    expect(backend.ledger.filter((e) => e.status === "shipped")).toHaveLength(1);
+    // Honest: every child is ledger-merged ⇒ already delivered = success.
+    expect(result.status).toBe("success");
+    expect(result.children.every((c) => c.status === "merged")).toBe(true);
+  });
+});
