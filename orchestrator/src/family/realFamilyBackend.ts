@@ -1828,8 +1828,11 @@ export function parseMergerOutcome(stdout: string): {
   const escalate = mergerEscalateSchema.safeParse(parsed);
   if (escalate.success) {
     return {
+      // `reason` is a required `nonEmpty` field in mergerEscalateSchema, so it is
+      // always a non-empty string here — the old `?? diagnosis` fallback was dead
+      // code (online review r3, gemini). `diagnosis` stays an optional schema field.
       resolved: false,
-      reason: escalate.data.escalate.reason ?? escalate.data.escalate.diagnosis,
+      reason: escalate.data.escalate.reason,
     };
   }
   // No strict schema matched → off-contract (mixed payload, extra key, blank

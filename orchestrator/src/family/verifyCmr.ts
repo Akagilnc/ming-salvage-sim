@@ -258,6 +258,17 @@ export async function runVerifyCmr(
     return { ok: false, ran: true };
   }
   if (cmrResult.kind !== "completed" || cmrResult.output.kind !== "cmr") {
+    // The cmr worker ran but returned no valid result (crash / malformed / hard
+    // command failure). Like the red-verify path above, persist a durable `aborted`
+    // event (online review r3, codex P2): otherwise the failed FINAL barrier lives
+    // only in this return value, and a resume sees stale merged state (no shipped
+    // marker, no failure marker) → it re-runs the same failing gate, losing the
+    // phase / reason / family head needed for triage (decision 3⑤ 不静默吞).
+    await recordDurableAbort(familyBackend, {
+      phase,
+      reason: "family integrated cmr worker returned no valid result (crash/malformed)",
+      familyHeadAfter,
+    });
     return INCOMPLETE_GATE;
   }
   const cmr = cmrResult.output;
@@ -305,6 +316,16 @@ export async function runVerifyCmr(
     return { ok: false, ran: true };
   }
   if (shipResult.kind !== "completed" || shipResult.output.kind !== "ship") {
+    // The ship worker ran but returned no valid result (crash / malformed / hard
+    // command failure) at the terminal 止于-PR gate. Persist a durable `aborted`
+    // event (online review r3, codex P2): without it a resume sees neither a shipped
+    // marker nor a failure marker and re-runs the whole final verify/cmr/ship,
+    // losing the original failure context (decision 3⑤ 不静默吞).
+    await recordDurableAbort(familyBackend, {
+      phase,
+      reason: "family ship worker returned no valid result (crash/malformed)",
+      familyHeadAfter,
+    });
     return INCOMPLETE_GATE;
   }
   // ── cmr S336 r4 (P1): the terminal family gate must NOT trust the discriminant
