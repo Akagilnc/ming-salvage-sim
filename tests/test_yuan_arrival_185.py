@@ -1,6 +1,13 @@
 """#185 e2e：在途大臣（transit_to=目的地）+ 抵达前置条件（欠饷补齐）→ 条件满足后真到任。
 
-#185 = [验证] transit→抵达 落库已修：确认袁崇焕欠饷补齐后到任(e2e)。
+#185 = [验证] transit→抵达 落库已修：确认欠饷补齐后到任(e2e)。
+
+覆盖范围说明（诚实化，回应评审）：本 e2e 验的是 **#185 的到任落库机制本身——
+人物无关**：抵达时 transit_to 在 DB + content 镜像两处清空。袁崇焕是该 issue 的
+叙事动机（关宁军欠饷补齐后赴辽），但他**开局罢居在野（offstage）**，要以他本人为
+主语须先搭复出 staging（设 status=active）——那属 #189 复出链、非 #185 的落库 bug。
+故本测试用一个**开局 active 的大明大臣**当主语跑机制、以**关宁军(guanning)欠饷**当
+叙事前置锚，确定性复现该 bug；负控子用例反证非 no-op。
 
 背景与机制（挖过的事实，见报告）：
 - 「到任」在本游戏是 **diegetic（叙事驱动）**事件：simulator/extractor 判定前置条件
@@ -42,6 +49,7 @@ def test_yuan_arrears_paid_then_arrives_e2e(game):
     db, state, content = game
     name = active_ming_character(db, content)
     old_location = content.characters[name].location
+    has_transit_to = hasattr(content.characters[name], "transit_to")
     old_transit_to = getattr(content.characters[name], "transit_to", "")
 
     try:
@@ -138,8 +146,12 @@ def test_yuan_arrears_paid_then_arrives_e2e(game):
             for r in person_results
         ), f"到任 行止 应落库为 location={DEST}/transit_to=''，实测 {person_results}"
     finally:
+        # 精确回滚内存镜像：transit_to 原本不存在则删除，避免留下"幽灵属性"污染同批用例
         content.characters[name].location = old_location
-        content.characters[name].transit_to = old_transit_to
+        if has_transit_to:
+            content.characters[name].transit_to = old_transit_to
+        elif hasattr(content.characters[name], "transit_to"):
+            delattr(content.characters[name], "transit_to")
 
 
 def test_arrival_clearing_is_not_noop_negative_control(game):
@@ -151,6 +163,7 @@ def test_arrival_clearing_is_not_noop_negative_control(game):
     db, state, content = game
     name = active_ming_character(db, content)
     old_location = content.characters[name].location
+    has_transit_to = hasattr(content.characters[name], "transit_to")
     old_transit_to = getattr(content.characters[name], "transit_to", "")
 
     try:
@@ -192,5 +205,9 @@ def test_arrival_clearing_is_not_noop_negative_control(game):
         assert still["transit_to"] == DEST, "只补饷不投抵达，不应自己清 transit_to（否则主用例是 no-op）"
         assert still["location"] != DEST, "只补饷不投抵达，不应自己到任"
     finally:
+        # 精确回滚（同上）：原无 transit_to 则删除，不留幽灵属性
         content.characters[name].location = old_location
-        content.characters[name].transit_to = old_transit_to
+        if has_transit_to:
+            content.characters[name].transit_to = old_transit_to
+        elif hasattr(content.characters[name], "transit_to"):
+            delattr(content.characters[name], "transit_to")
