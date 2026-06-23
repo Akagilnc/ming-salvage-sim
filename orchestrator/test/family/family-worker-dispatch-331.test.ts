@@ -13,6 +13,7 @@ import type {
 } from "../../src/types.js";
 import type {
   FamilyBackend,
+  FamilyLedgerEntry,
   FamilyVerifyRequest,
   FamilyVerifyResult,
   IntegratedCmrRequest,
@@ -263,6 +264,65 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
       output: { kind: "ship", branch: "feat/330", status: "pr_opened", pr: "https://gh/pr/1" },
     });
     expect(res).toEqual({ ok: true, ran: true });
+  });
+});
+
+describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted event (online review r3, codex P2)", () => {
+  /**
+   * A new-seam backend that RECORDS the ledger, with the cmr + ship worker outputs
+   * configurable. A `completed` worker whose output kind is WRONG (cmr worker
+   * returning a ship-shaped payload, or vice-versa) is the crash/malformed case the
+   * verify-cmr hook fail-safes to INCOMPLETE_GATE — and (r3) must leave a durable
+   * `aborted` event so the failed FINAL barrier survives to the ledger for resume.
+   */
+  class RecordingFamilyBackend implements FamilyBackend {
+    readonly ledger: FamilyLedgerEntry[] = [];
+    constructor(
+      private readonly cmrOut: WorkerResult,
+      private readonly shipOut: WorkerResult,
+    ) {}
+    async mergeChildIntoFamilyBase(): Promise<never> {
+      throw new Error("not used");
+    }
+    async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+      this.ledger.push(entry);
+    }
+    async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+      return this.ledger;
+    }
+    async runFamilyVerify(): Promise<FamilyVerifyResult> {
+      return { ok: true };
+    }
+    async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+      return spec.kind === "cmr" ? this.cmrOut : this.shipOut;
+    }
+  }
+
+  it("a malformed cmr worker (completed but NOT a cmr payload) ⇒ INCOMPLETE_GATE + durable aborted(final)", async () => {
+    const backend = new RecordingFamilyBackend(
+      { kind: "completed", output: { kind: "ship", branch: "feat/330", status: "pushed" } },
+      { kind: "completed", output: { kind: "ship", branch: "feat/330", status: "pr_opened", pr: "u" } },
+    );
+    const res = await runVerifyCmr({ phase: "final", familyBase: "feat/330", familyBackend: backend });
+    expect(res).toEqual({ ok: false, ran: true });
+    const aborts = backend.ledger.filter((e) => e.status === "aborted");
+    expect(aborts).toHaveLength(1);
+    expect(aborts[0]?.phase).toBe("final");
+    // NO ship marker — the barrier failed, so a resume re-runs it (does not skip).
+    expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
+  });
+
+  it("a malformed ship worker (completed but NOT a ship payload) ⇒ INCOMPLETE_GATE + durable aborted(final)", async () => {
+    const backend = new RecordingFamilyBackend(
+      { kind: "completed", output: { kind: "cmr", converged: true } },
+      { kind: "completed", output: { kind: "cmr", converged: true } },
+    );
+    const res = await runVerifyCmr({ phase: "final", familyBase: "feat/330", familyBackend: backend });
+    expect(res).toEqual({ ok: false, ran: true });
+    const aborts = backend.ledger.filter((e) => e.status === "aborted");
+    expect(aborts).toHaveLength(1);
+    expect(aborts[0]?.phase).toBe("final");
+    expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
   });
 });
 

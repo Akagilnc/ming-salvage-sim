@@ -14,7 +14,12 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { mergedSet, recordMerged } from "../../src/family/ledger.js";
+import {
+  familyAlreadyShipped,
+  mergedSet,
+  recordMerged,
+  recordShipped,
+} from "../../src/family/ledger.js";
 import type { FamilyBackend, FamilyLedgerEntry } from "../../src/family/types.js";
 
 /** A zero-IO fake family backend that keeps the ledger in memory. */
@@ -51,6 +56,45 @@ describe("family-ledger.recordMerged (#293 seam 3)", () => {
     // Append-only — both events are retained (reconcile dedup is #298, not #293).
     expect(backend.appended).toHaveLength(2);
     expect(backend.appended.every((e) => e.childIssue === 10)).toBe(true);
+  });
+});
+
+describe("family-ledger.recordShipped / familyAlreadyShipped (online review r2/r3, codex P1)", () => {
+  it("recordShipped appends the terminal {status,event,phase,pr} marker", async () => {
+    const backend = new FakeFamilyBackend();
+    await recordShipped(backend, { pr: "https://gh/pr/352" });
+    expect(backend.appended).toEqual([
+      { status: "shipped", event: "shipped", phase: "final", pr: "https://gh/pr/352" },
+    ]);
+  });
+
+  it("familyAlreadyShipped is TRUE only for the complete shipped marker", () => {
+    expect(
+      familyAlreadyShipped([
+        { childIssue: 1, status: "merged" },
+        { status: "shipped", event: "shipped", phase: "final", pr: "https://gh/pr/352" },
+      ]),
+    ).toBe(true);
+  });
+
+  it("familyAlreadyShipped FAILS CLOSED on a malformed shipped row (no skip on garbage, r3 coderabbit)", () => {
+    // A corrupt/hand-edited row must NOT let the spine skip the final barrier.
+    expect(familyAlreadyShipped([{ status: "shipped" } as FamilyLedgerEntry])).toBe(false);
+    expect(
+      familyAlreadyShipped([{ status: "shipped", event: "shipped", phase: "final", pr: "  " }]),
+    ).toBe(false);
+    expect(
+      familyAlreadyShipped([{ status: "shipped", event: "shipped", phase: "wave", pr: "u" } as FamilyLedgerEntry]),
+    ).toBe(false);
+  });
+
+  it("familyAlreadyShipped is FALSE for a ledger with only merged/aborted entries", () => {
+    expect(
+      familyAlreadyShipped([
+        { childIssue: 1, status: "merged" },
+        { status: "aborted", event: "aborted", phase: "final", reason: "x" },
+      ]),
+    ).toBe(false);
   });
 });
 

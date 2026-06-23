@@ -186,7 +186,19 @@ export async function recordShipped(
 export function familyAlreadyShipped(
   entries: ReadonlyArray<FamilyLedgerEntry>,
 ): boolean {
-  return entries.some((e) => e.status === "shipped");
+  // Fail-CLOSED on a malformed row (online review r3, coderabbit): the spine skips
+  // the final barrier on this, so a corrupt/hand-edited `status:"shipped"` row with
+  // no real delivery must NOT bypass verify/cmr/ship. Require the COMPLETE shape
+  // `recordShipped` always writes — status + event + final phase + a non-blank `pr`
+  // URL — so only a genuine terminal ship counts as delivered.
+  return entries.some(
+    (e) =>
+      e.status === "shipped" &&
+      e.event === "shipped" &&
+      e.phase === "final" &&
+      typeof e.pr === "string" &&
+      e.pr.trim().length > 0,
+  );
 }
 
 /**
