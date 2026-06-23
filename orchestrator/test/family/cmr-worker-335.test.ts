@@ -16,7 +16,7 @@
  *   - cmrOutcomeFromResult: the completion-signal gate (an unsignaled run is NOT a
  *     pass — mirrors the merger gate);
  *   - RealFamilyBackend.dispatchWorker(cmr): routes ak-cross-m-review + FRESH +
- *     READ-ONLY soul through the injected `runCmrWorker` seam and wraps the verdict
+ *     cmr (write/fixer) soul through the injected `runCmrWorker` seam and wraps the verdict
  *     into a WorkerResult (converged → completed; red → completed; escalate →
  *     escalated; malformed → malformed);
  *   - cmrSandboxConfig: wires the agy auth runtime-mount (writable dir) + codex
@@ -257,16 +257,20 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     });
   }
 
-  it("dispatches the cmr worker spec to runCmrWorker — ak-cross-m-review + FRESH + READ-ONLY", async () => {
+  it("dispatches the cmr worker spec to runCmrWorker — ak-cross-m-review + FRESH session + memory-bearing fixer (cmr soul, retain)", async () => {
     const be = fixtured();
     await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "feat/330-pure-scheduler" });
     expect(be.runCmrCalls.length).toBe(1);
     const spec = be.runCmrCalls[0]!.spec;
     expect(spec.kind).toBe("cmr");
     expect(spec.skill).toBe("ak-cross-m-review");
+    // FRESH session = a new session (not a crash/escalate resume). The worker is
+    // dispatched ONCE per family run and loops INTERNALLY (ADR 0026 2026-06-24).
     expect(spec.session).toBe("fresh");
-    expect(spec.contextRetention).toBe("clean");
-    expect(spec.soul).toBe("READ-ONLY");
+    // The worker's main session has MEMORY (it is the fixer); only its review legs
+    // are fresh — so the spec RETAINs context, under the WRITE `cmr` soul.
+    expect(spec.contextRetention).toBe("retain");
+    expect(spec.soul).toBe("cmr");
   });
 
   it("a converged verdict ⇒ WorkerResult.completed with a bare cmr payload", async () => {
@@ -380,11 +384,11 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     expect(agyMount!.readonly).not.toBe(true);
   });
 
-  it("still mounts codex auth + injects the claude token + READ-ONLY soul (all three legs)", () => {
+  it("still mounts codex auth + injects the claude token + cmr soul (all three legs)", () => {
     const cfg = cfgBackend().config(auth);
     expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
     expect(cfg.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok-xyz");
-    expect(cfg.env[SANDBOX_SOUL_ENV]).toBe("READ-ONLY");
+    expect(cfg.env[SANDBOX_SOUL_ENV]).toBe("cmr");
   });
 
   it("the antigravity token path is the host-mirrored gemini path (#333 contract)", () => {
@@ -404,13 +408,13 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     // claude token absent ⇒ no env var (the Claude Agent leg degrades).
     const noClaude = cfgBackend().config({ codexAuthDir: "/tmp/c", agyDir: "/tmp/a" });
     expect(noClaude.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
-    expect(noClaude.env[SANDBOX_SOUL_ENV]).toBe("READ-ONLY");
+    expect(noClaude.env[SANDBOX_SOUL_ENV]).toBe("cmr");
 
     // ALL auth absent ⇒ zero mounts, only the soul env — still no throw (the skill
     // runs and will degrade/escalate in-container, never a host crash).
     const none = cfgBackend().config({});
     expect(none.mounts.length).toBe(0);
-    expect(none.env[SANDBOX_SOUL_ENV]).toBe("READ-ONLY");
+    expect(none.env[SANDBOX_SOUL_ENV]).toBe("cmr");
   });
 });
 
@@ -484,7 +488,6 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
     public focus(ctx: {
       familyBase: string;
       llmResolvedChildren?: readonly number[];
-      priorFindings?: string;
     }): void {
       this.writeCmrFocusFile(ctx as never);
     }
@@ -544,11 +547,11 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
     expect(() => readFileSync(join(repo, CMR_FOCUS_FILENAME), "utf8")).toThrow();
   });
 
-  it("prior-round findings ride in as DATA — an EXTRA confirm-resolved task, NOT a narrowed scope (ADR 0026)", () => {
-    // The cmr reviewer dispatches FRESH each round (ADR 0026 line 20), so the prior
-    // round's findings arrive via ctx.priorFindings (DATA), NOT a resumed session.
-    // The focus file surfaces them as an ADDITIONAL confirm-resolved task on top of a
-    // full fresh review — it must NOT narrow the scope.
+  it("NEVER threads a prior-findings block — the worker has SESSION memory, not data (ADR 0026 2026-06-24)", () => {
+    // The cmr worker is a SINGLE memory-bearing session that loops internally; its
+    // round-to-round continuity is its OWN session memory, NOT a prior-findings blob
+    // threaded into the focus file. So the focus file pins ONLY the review scope +
+    // the machine-resolved-child focus, never a "prior round's findings" block.
     const repo = realRepo();
     const be = new FocusBackend({
       workingRepo: repo,
@@ -560,33 +563,14 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
       imageName: "img",
       familyBaseStartHead: "abc123",
     });
-    be.focus({
-      familyBase: "feat/330-pure-scheduler",
-      priorFindings: "field-name mismatch: region.cannon vs region.cityCannon",
-    });
+    be.focus({ familyBase: "feat/330-pure-scheduler", llmResolvedChildren: [42] });
     const body = readFileSync(join(repo, CMR_FOCUS_FILENAME), "utf8");
-    // The FULL review-scope diff is STILL present (the prior finding did not replace it).
+    // The full review-scope diff + the machine-resolved focus are present...
     expect(body).toContain("git diff abc123...feat/330-pure-scheduler");
-    // The prior finding is surfaced as an EXTRA confirm-resolved task (not the scope).
-    expect(body).toContain("region.cannon vs region.cityCannon");
-    expect(body).toMatch(/confirm-resolved|NOT a narrowed scope|do not review only/i);
-  });
-
-  it("round-0 (no prior findings) ⇒ the focus file omits the prior-findings block", () => {
-    const repo = realRepo();
-    const be = new FocusBackend({
-      workingRepo: repo,
-      familyBase: "fb",
-      ledgerDir: mkDir("cmr-ledger-"),
-      repo: "Akagilnc/ming-salvage-sim",
-      base: "main",
-      promptsDir: realPromptsDir,
-      imageName: "img",
-      familyBaseStartHead: "def456",
-    });
-    be.focus({ familyBase: "fb" });
-    const body = readFileSync(join(repo, CMR_FOCUS_FILENAME), "utf8");
+    expect(body).toContain("#42");
+    // ...but NO prior-findings block (the worker remembers within its own session).
     expect(body).not.toMatch(/Prior round's findings/i);
+    expect(body).not.toMatch(/confirm-resolved/i);
   });
 });
 
