@@ -357,19 +357,13 @@ export interface DispatchContext {
   /**
    * The prior agent session id to resume — present ONLY for a `session:"resume"`
    * dispatch, i.e. the CRASH/ESCALATE-resume path where the runner re-opens a
-   * recorded session (ADR 0026 invariant). A NORMAL S2 implement / S5 fix round
-   * is `session:"fresh"` and does NOT carry this — the fix worker keeps its
-   * context via `contextRetention:"retain"` + the round's findings on
-   * {@link prevFindings}, NOT by resuming a session (codex cmr R3/R4 finding:
-   * normal fix must not take the resume path, which skips git-truthing).
+   * recorded S2 build session (ADR 0026 invariant). A NORMAL S2 build is
+   * `session:"fresh"` and does NOT carry this; the per-slice review→fix loop runs
+   * INSIDE the build worker's own session, not via a resumed session (codex cmr
+   * R3/R4 finding: a normal build must not take the resume path, which skips
+   * git-truthing).
    */
   readonly resumeSessionId?: string;
-  /**
-   * The previous round's reviewer fix_now findings, delivered to an S5 fix worker
-   * so it knows WHAT to fix (US#13) — the retention mechanism for a `fresh` fix
-   * round. Undefined for non-fix workers.
-   */
-  readonly prevFindings?: ReadonlyArray<Finding>;
   /** The issue snapshot the worker reads as its local context (S1 clean-room). */
   readonly issueSnapshot?: IssueSnapshot;
   /**
@@ -705,18 +699,14 @@ export interface Backend {
    * id is recorded in the ledger). A bare {@link StepOutput} return is still
    * accepted (no real id → run-level UUID fallback); the runner normalises both.
    *
-   * integ-cmr 256 r3 (fix_loop_context): the optional `fixNowFindings` carries
-   * the round's reviewer fix_now findings to a RESUMED S5 coder_fix step (the
-   * escalate-resume case — a human answered, the coder finishes in its original
-   * session), so the resumed coder sees the same findings a fresh S5 would. Set
-   * only on the S5 resume; undefined otherwise. The real Backend writes them into
-   * the git-ignored worktree file before resuming; the fakes ignore the argument.
+   * ADR 0026: the only agent step is the S2 build worker; resume re-opens that
+   * one session. The per-slice review→fix loop runs INSIDE the build worker, so
+   * there is no separate fix step to deliver findings to on resume.
    */
   resumeSession(
     spec: StepSpec,
     worktree: WorktreeHandle,
     sessionId: string,
-    fixNowFindings?: ReadonlyArray<Finding>,
   ): Promise<StepOutput | StepResult>;
   /** S0: lightweight metadata for the input gate (host-side `gh`). */
   fetchIssueMeta(issueNumber: number): Promise<IssueMeta>;
@@ -730,7 +720,8 @@ export interface Backend {
     snapshot: IssueSnapshot,
   ): Promise<void>;
   /**
-   * S2/S3/S5/S6: one `sandbox.run()` for an agent step.
+   * S2: one `sandbox.run()` for the whole-slice build worker (ADR 0026 — the only
+   * agent step).
    *
    * #256 seam extension (DONE): the return is widened from `StepOutput` to
    * `StepOutput | StepResult`. The real Backend returns a {@link StepResult}
@@ -741,21 +732,10 @@ export interface Backend {
    * valid return (the fake Backends use it unchanged) → the runner falls back to
    * the run-level UUID. The runner normalises both shapes, so its control flow is
    * identical for fake and real Backends (#256 "控制流零改动").
-   *
-   * integ-cmr 256 r3 (fix_loop_context) seam extension: the optional third
-   * argument `fixNowFindings` delivers the CURRENT round's reviewer findings with
-   * `action:'fix_now'` to the S5 coder_fix step, so the fix-loop coder knows WHAT
-   * to fix (US#13 "findings 回喂 coder 在原地修"). It is set ONLY on the S5
-   * dispatch (the runner extracts it from the preceding reviewer output);
-   * undefined for S2 implement and S3/S6 reviewer steps. The real Backend writes
-   * the findings into a git-ignored worktree file the coder reads; the fake
-   * Backends ignore the argument — same backward-compatibility as the StepResult
-   * widening, so the runner's control flow is unchanged for both.
    */
   runStep(
     spec: StepSpec,
     worktree: WorktreeHandle,
-    fixNowFindings?: ReadonlyArray<Finding>,
   ): Promise<StepOutput | StepResult>;
   /**
    * THE unified worker-dispatch seam (ADR 0026 / PRD #330 #331).
