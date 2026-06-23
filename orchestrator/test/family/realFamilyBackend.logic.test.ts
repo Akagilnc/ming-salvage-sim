@@ -22,7 +22,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -277,10 +277,10 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     // `git.childHeadExists(child.issue)`), no branch. Before the fix this returned
     // `{exists:false}` → every already-landed child read as absent → re-merge
     // (double-merge, codex R1). It must instead derive the runner branch
-    // `feat/244-orchestrator-issue-<n>` and find the real head.
+    // `feat/issue-<n>` (#1: neutral prefix, no hardcoded epic) and find the real head.
     const repo = trackRepo();
     git(repo, "checkout", "-q", "-b", "family/293-base");
-    git(repo, "checkout", "-q", "-b", "feat/244-orchestrator-issue-77", "family/293-base");
+    git(repo, "checkout", "-q", "-b", "feat/issue-77", "family/293-base");
     const childHead = commitFile(repo, "c77.txt", "x");
     git(repo, "checkout", "-q", "family/293-base");
     const recon = new RealFamilyBackend(opts(repo)).reconcileGit();
@@ -289,11 +289,145 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     expect(r.childHead).toBe(childHead);
   });
 
-  it("runFamilyVerify runs tsc/vitest from verifyCwd (the orchestrator project dir), NOT the clone root (online R2 Codex P1)", async () => {
-    // The clone is the FULL repo; the orchestrator's package.json/tsconfig/vitest
-    // config live under `<clone>/orchestrator`. Running `npx tsc/vitest` from the
-    // clone root finds no project → a real family run's verify always fails. The
-    // verify commands must run from `verifyCwd`.
+  it("runFamilyVerify runs the project's npm typecheck+test from verifyCwd, NOT the clone root (online R2 Codex P1 / #5)", async () => {
+    // The clone is the FULL repo; a project's package.json/scripts live under a
+    // subdir (e.g. `<clone>/orchestrator`). The verify commands must run from
+    // `verifyCwd`, and (#5) be the PROJECT'S OWN npm scripts, not a hardcoded npx.
+    const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
+    class SpyBackend extends RealFamilyBackend {
+      protected override sh(file: string, args: string[], cwd?: string): string {
+        calls.push({ file, args, cwd });
+        return "";
+      }
+      protected override depsInstalled(_cwd: string): boolean {
+        return true; // deps present → focus the assertion on the verify commands
+      }
+      protected override packageScripts(_cwd: string): readonly string[] {
+        return ["typecheck", "test"]; // orchestrator's scripts
+      }
+      protected override isNodeProject(_cwd: string): boolean {
+        return true;
+      }
+      runVerifyForTest(): void {
+        this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
+      }
+    }
+    new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" })).runVerifyForTest();
+    expect(calls.map((c) => `${c.file} ${c.args.join(" ")}`)).toEqual([
+      "npm run typecheck",
+      "npm test",
+    ]);
+    expect(calls.every((c) => c.cwd === "/clone/root/orchestrator")).toBe(true);
+  });
+
+  it("#3: installs deps (npm ci) in verifyCwd BEFORE the npm verify scripts when node_modules is absent", async () => {
+    // The dogfood death (#3): verify ran against a FRESH clone with no node_modules
+    // → "This is not the tsc command..." → always verify_failed. The fix installs
+    // deps first. The spy reports node_modules ABSENT, so a `npm ci` (or install)
+    // must precede the project's verify scripts, in the SAME cwd.
+    const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
+    class SpyBackend extends RealFamilyBackend {
+      protected override sh(file: string, args: string[], cwd?: string): string {
+        calls.push({ file, args, cwd });
+        return "";
+      }
+      protected override depsInstalled(_cwd: string): boolean {
+        return false; // node_modules ABSENT in the fresh clone
+      }
+      protected override packageScripts(_cwd: string): readonly string[] {
+        return ["typecheck", "test"];
+      }
+      protected override isNodeProject(_cwd: string): boolean {
+        return true;
+      }
+      runVerifyForTest(): void {
+        this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
+      }
+    }
+    new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" })).runVerifyForTest();
+    // First command must be the dep install in verifyCwd.
+    expect(calls[0].file).toBe("npm");
+    expect(["ci", "install"]).toContain(calls[0].args[0]);
+    expect(calls[0].cwd).toBe("/clone/root/orchestrator");
+    // Then the project's verify scripts, still in verifyCwd.
+    expect(calls.slice(1).map((c) => `${c.file} ${c.args.join(" ")}`)).toEqual([
+      "npm run typecheck",
+      "npm test",
+    ]);
+    expect(calls.slice(1).every((c) => c.cwd === "/clone/root/orchestrator")).toBe(true);
+  });
+
+  it("#3: skips the dep install when node_modules already exists (idempotent, no re-install churn)", async () => {
+    const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
+    class SpyBackend extends RealFamilyBackend {
+      protected override sh(file: string, args: string[], cwd?: string): string {
+        calls.push({ file, args, cwd });
+        return "";
+      }
+      protected override depsInstalled(_cwd: string): boolean {
+        return true; // node_modules present → no install
+      }
+      protected override packageScripts(_cwd: string): readonly string[] {
+        return ["typecheck", "test"];
+      }
+      protected override isNodeProject(_cwd: string): boolean {
+        return true;
+      }
+      runVerifyForTest(): void {
+        this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
+      }
+    }
+    new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" })).runVerifyForTest();
+    // No `npm ci`/`npm install` ran — only the project's verify scripts.
+    expect(
+      calls.some((c) => c.file === "npm" && (c.args[0] === "ci" || c.args[0] === "install")),
+    ).toBe(false);
+    expect(calls.map((c) => `${c.file} ${c.args.join(" ")}`)).toEqual([
+      "npm run typecheck",
+      "npm test",
+    ]);
+  });
+
+  it("#5/R1-T3: runs web's OWN scripts — `npm run build` (its tsc check) then `npm test` (jsdom), never raw npx", async () => {
+    // #5: web/'s test = `vitest run --environment jsdom`; a hardcoded `npx vitest run`
+    // dropped `--environment jsdom` → `document is not defined`. R1 T3 (codex): web/
+    // has NO `typecheck` script — its TS check lives in `build` (`tsc -b && vite build`).
+    // So type-check must fall back to `npm run build`, NOT be silently skipped (else a
+    // web change with TS errors passes verify as long as Vitest does).
+    const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
+    class SpyBackend extends RealFamilyBackend {
+      protected override sh(file: string, args: string[], cwd?: string): string {
+        calls.push({ file, args, cwd });
+        return "";
+      }
+      protected override depsInstalled(_cwd: string): boolean {
+        return true;
+      }
+      protected override packageScripts(_cwd: string): readonly string[] {
+        return ["dev", "build", "test", "preview"]; // web's scripts — NO `typecheck`
+      }
+      protected override isNodeProject(_cwd: string): boolean {
+        return true;
+      }
+      runVerifyForTest(): void {
+        this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
+      }
+    }
+    new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/web" })).runVerifyForTest();
+    // No `typecheck` script → fall back to `npm run build` (web's tsc check), THEN
+    // `npm test` (its own --environment jsdom). NEVER a raw `npx`.
+    expect(calls.map((c) => `${c.file} ${c.args.join(" ")}`)).toEqual([
+      "npm run build",
+      "npm test",
+    ]);
+    expect(calls.some((c) => c.file === "npx")).toBe(false);
+    expect(calls.every((c) => c.cwd === "/clone/root/web")).toBe(true);
+  });
+
+  it("R1-T2: a diff touching NO Node subproject (cwd undefined) → verify is a no-op, never npm in the clone root", async () => {
+    // codex R1 T2: `inferVerifyCwd` returns undefined for a docs/content/root-only
+    // diff. The old `?? workingRepo` fallback ran `npm install` + scripts in the clone
+    // ROOT (no package.json) → verify_failed for valid non-code changes. Now: skip.
     const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
     class SpyBackend extends RealFamilyBackend {
       protected override sh(file: string, args: string[], cwd?: string): string {
@@ -304,10 +438,85 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
         this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
       }
     }
-    new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" })).runVerifyForTest();
-    const npx = calls.filter((c) => c.file === "npx");
-    expect(npx.map((c) => c.args[0])).toEqual(["tsc", "vitest"]);
-    expect(npx.every((c) => c.cwd === "/clone/root/orchestrator")).toBe(true);
+    // No verifyCwd, and resolveVerifyCwd returns undefined (non-Node diff).
+    new SpyBackend(opts("/clone/root", { resolveVerifyCwd: () => undefined })).runVerifyForTest();
+    expect(calls).toEqual([]); // nothing installed, nothing run
+  });
+
+  it("R3: a SINGLE-project repo (package.json at the clone ROOT) falls back to workingRepo verify", () => {
+    // gemini R3: dropping the `?? workingRepo` fallback made single-project repos
+    // (package.json at root, no subproject) skip verify entirely. Restore the
+    // fallback — but ONLY when the root IS a Node project (multi-project non-Node
+    // root still skips, R1 T2).
+    const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
+    class SpyBackend extends RealFamilyBackend {
+      protected override sh(file: string, args: string[], cwd?: string): string {
+        calls.push({ file, args, cwd });
+        return "";
+      }
+      protected override isNodeProject(_cwd: string): boolean {
+        return true; // the clone root has a package.json (single-project repo)
+      }
+      protected override depsInstalled(_cwd: string): boolean {
+        return true;
+      }
+      protected override packageScripts(_cwd: string): readonly string[] {
+        return ["test"];
+      }
+      runVerifyForTest(): void {
+        this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
+      }
+    }
+    // No verifyCwd; resolver undefined (no subproject) → root is Node → verify at root.
+    new SpyBackend(opts("/clone/root", { resolveVerifyCwd: () => undefined })).runVerifyForTest();
+    expect(calls.map((c) => `${c.file} ${c.args.join(" ")}`)).toEqual(["npm test"]);
+    expect(calls.every((c) => c.cwd === "/clone/root")).toBe(true);
+  });
+
+  it("R1-T3: an EXPLICIT verifyCwd that is NOT a Node project FAILS CLOSED (throws), never silent-passes", () => {
+    // codex R1 T3: a docs/content/root-only diff (inferred-undefined) legitimately
+    // skips, but an EXPLICITLY-set verifyCwd pointing at a non-Node dir is a caller
+    // misconfig — it must NOT be treated like "nothing to verify" and green-light an
+    // un-verified merge. (An inference-FAILURE fails closed via familyDiffFiles, which
+    // no longer swallows git errors.)
+    class SpyBackend extends RealFamilyBackend {
+      protected override sh(): string {
+        return "";
+      }
+      protected override isNodeProject(_cwd: string): boolean {
+        return false; // explicit cwd has no package.json
+      }
+      runVerifyForTest(): void {
+        this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
+      }
+    }
+    expect(() =>
+      new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/not-node" })).runVerifyForTest(),
+    ).toThrow(/not a Node project/i);
+  });
+
+  it("R1-T1: depsInstalled is STALE (reinstall) when a manifest is newer than node_modules", () => {
+    // gemini R1 T1: a bare node_modules-exists check skips installing a dep a child
+    // PR added (package.json/lock newer than the last install) → verify on stale deps.
+    const proj = mkdtempSync(join(tmpdir(), "verify-stale-"));
+    const nm = join(proj, "node_modules");
+    const pkg = join(proj, "package.json");
+    mkdirSync(nm, { recursive: true });
+    writeFileSync(pkg, "{}");
+    class Probe extends RealFamilyBackend {
+      depsInstalledForTest(cwd: string): boolean {
+        return this.depsInstalled(cwd);
+      }
+    }
+    const be = new Probe(opts("/clone/root"));
+    // Deterministic mtimes (R3 coderabbit: don't rely on write-order timing — equal
+    // mtimes are possible on some filesystems). manifest NEWER than node_modules → stale.
+    utimesSync(nm, new Date(1000), new Date(1000));
+    utimesSync(pkg, new Date(2000), new Date(2000));
+    expect(be.depsInstalledForTest(proj)).toBe(false); // stale → reinstall
+    // node_modules NEWER than the manifest → fresh.
+    utimesSync(nm, new Date(3000), new Date(3000));
+    expect(be.depsInstalledForTest(proj)).toBe(true);
   });
 
   it("familyBaseStartHead returns the recorded start head", async () => {

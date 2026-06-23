@@ -28,6 +28,7 @@ import {
   buildFamilyEpic,
   cutFamilyBase,
   FamilyExternalBlockerError,
+  inferVerifyCwd,
   parseSubIssueNumbers,
   readFamilyEpic,
   type Sh,
@@ -44,6 +45,47 @@ afterEach(() => {
     const p = cleanups.pop();
     if (p !== undefined) rmSync(p, { recursive: true, force: true });
   }
+});
+
+// ─── #4: verifyCwd inference from the family diff ────────────────────────────
+//
+// The dogfood mis-verified orchestrator/ when the change was in web/. The driver
+// now infers verifyCwd from the diff: the top-level subproject (a dir holding a
+// package.json) the changed files land in. `subprojects` is the ordered list of
+// such dirs (relative to the clone root; "" = root). Pure → unit-tested.
+
+describe("#4 inferVerifyCwd (diff → verifyCwd)", () => {
+  const root = "/clone/root";
+  const subprojects = ["orchestrator", "web"]; // top-level package.json dirs
+
+  it("picks the subproject the changed files land in (web change → web)", () => {
+    const changed = ["web/src/App.tsx", "web/tests/foo.test.ts"];
+    expect(inferVerifyCwd(changed, subprojects, root)).toBe(join(root, "web"));
+  });
+
+  it("picks orchestrator when the change is in orchestrator/", () => {
+    const changed = ["orchestrator/src/runner.ts"];
+    expect(inferVerifyCwd(changed, subprojects, root)).toBe(join(root, "orchestrator"));
+  });
+
+  it("picks the subproject with the MOST changed files when several are touched", () => {
+    // 1 orchestrator file vs 3 web files → web wins.
+    const changed = [
+      "orchestrator/src/x.ts",
+      "web/a.ts",
+      "web/b.ts",
+      "web/c.ts",
+    ];
+    expect(inferVerifyCwd(changed, subprojects, root)).toBe(join(root, "web"));
+  });
+
+  it("returns undefined when no changed file maps to a known subproject (caller falls back to default)", () => {
+    expect(inferVerifyCwd(["docs/README.md", "content/x.json"], subprojects, root)).toBeUndefined();
+  });
+
+  it("returns undefined for an empty diff (caller falls back to default)", () => {
+    expect(inferVerifyCwd([], subprojects, root)).toBeUndefined();
+  });
 });
 
 describe("#291 parseSubIssueNumbers", () => {
