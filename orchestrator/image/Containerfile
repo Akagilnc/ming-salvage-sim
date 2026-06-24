@@ -31,6 +31,8 @@
 #   resolving-merge-conflicts      → (leaf)                   (merger worker)
 #   ak-cross-m-review              → diagnosing-bugs          (cmr non-trivial fix)
 #                                    + codex CLI + agy CLI + Claude `Agent`/`Task`
+#   ak-cmr-completeness            → ak-cross-m-review        (ship-pre Step 5 lens entry)
+#   ak-cmr-correctness             → ak-cross-m-review        (ship-pre Step 6 lens entry)
 #   gstack-ship                    → ~/.claude/skills/gstack/{bin,scripts,ship,
 #                                       review,...} helper closure (baked subtree)
 #   `review`                       = BUILTIN Claude Code command, NOT a disk skill

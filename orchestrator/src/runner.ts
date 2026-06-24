@@ -13,9 +13,10 @@
  *   S0(gate) → S1(context) → S2(whole-slice build) → S7(ship) → S8(handoff)
  *
  * S2 is ONE memory-bearing build worker that runs the ENTIRE per-slice sequence
- * INTERNALLY (invoke `/tdd`; typecheck + full suite; `/review` + the self-check
- * 二连; baseline commit; `/ak-cross-m-review --scenario per-slice` to concurrence;
- * return the FINAL reviewed commit). The runner dispatches it ONCE and reads its
+ * INTERNALLY (invoke `/tdd`; typecheck + full suite; builtin `/review` + the
+ * self-check 二连; baseline commit; a SECOND review — one fresh Opus subagent, the
+ * degraded per-slice cmr, NOT the full cross-model `/ak-cross-m-review` (that gate
+ * is family-layer only) — looped to concurrence; return the FINAL reviewed commit). The runner dispatches it ONCE and reads its
  * terminal verdict — there is NO runner-level reviewer step (S3/S6), NO fix step
  * (S5), NO route fan-out (S4), and therefore NO runner fix-loop and NO
  * no-progress stuck guard. The grade/fix/drift discipline lives in the versioned
