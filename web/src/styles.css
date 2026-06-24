@@ -3581,10 +3581,11 @@ button:disabled {
   opacity: 0.5;
 }
 
-/* 召对发送 / 退出按钮：黑字白底 */
+/* 召对发送 / 退出 / 取消按钮：黑字白底 */
 .modal-bg-chat .composer-actions .primary-action,
 .modal-bg-chat .composer-actions .composer-undo,
-.modal-bg-chat .composer-actions .composer-exit {
+.modal-bg-chat .composer-actions .composer-exit,
+.modal-bg-chat .composer-actions .composer-cancel {
   color: #1a1410 !important;
   background: rgba(252, 249, 240, 0.92) !important;
   border: 1px solid rgba(0, 0, 0, 0.28) !important;
@@ -3602,6 +3603,11 @@ button:disabled {
 .modal-bg-chat .composer-actions .composer-undo:disabled {
   opacity: 0.48;
   cursor: not-allowed;
+}
+
+.modal-bg-chat .composer-actions .composer-cancel:hover {
+  background: rgba(158, 42, 43, 0.92) !important;
+  color: #ffe4b0 !important;
 }
 
 .modal-bg-chat .composer-actions .composer-exit:hover {
