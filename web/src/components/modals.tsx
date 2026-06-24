@@ -643,7 +643,7 @@ export function ChatModal({
           {busy && !streamingMinisterMessage && (
             <div className="chat-message minister thinking">
               <span>{minister.name}</span>
-              <p><Loader2 size={14} />大臣思索中...</p>
+              <p><Loader2 size={14} />{portraitPrefix === "consort_" ? "思索中..." : "大臣思索中..."}</p>
             </div>
           )}
           {chatNotice && <div className="chat-system-note">{chatNotice}</div>}
