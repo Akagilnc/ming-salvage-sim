@@ -1,6 +1,6 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatModal } from "./modals";
 import type { Minister } from "../types";
 
@@ -37,7 +37,12 @@ const CONSORT_MOCK: Minister = {
   skills: [],
 };
 
-function renderModal(props: { minister: Minister; portraitPrefix: string; busy?: string }) {
+function renderModal(props: {
+  minister: Minister;
+  portraitPrefix: string;
+  busy?: string;
+  onCancel?: () => void;
+}) {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
@@ -64,6 +69,7 @@ function renderModal(props: { minister: Minister; portraitPrefix: string; busy?:
         onFavorite={() => {}}
         onOpenEdict={() => {}}
         onClose={() => {}}
+        onCancel={props.onCancel}
       />
     )
   );
@@ -118,5 +124,68 @@ describe("ChatModal — thinking/loading text switches on character type (gemini
     const text = thinkingText();
     expect(text).not.toContain("大臣");
     expect(text.length).toBeGreaterThan(0);
+  });
+});
+
+describe("ChatModal — cancel button during busy (issue #353)", () => {
+  it("shows a cancel button when busy and onCancel is provided", () => {
+    renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      busy: "大臣思索中",
+      onCancel: vi.fn(),
+    });
+    const cancelBtn = document.querySelector(".composer-cancel");
+    expect(cancelBtn).not.toBeNull();
+  });
+
+  it("does NOT show a cancel button when idle", () => {
+    renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      busy: "",
+      onCancel: vi.fn(),
+    });
+    const cancelBtn = document.querySelector(".composer-cancel");
+    expect(cancelBtn).toBeNull();
+  });
+
+  it("calls onCancel when cancel button is clicked", () => {
+    const onCancel = vi.fn();
+    renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      busy: "大臣思索中",
+      onCancel,
+    });
+    const cancelBtn = document.querySelector(".composer-cancel") as HTMLButtonElement;
+    act(() => cancelBtn.click());
+    expect(onCancel).toHaveBeenCalledOnce();
+  });
+
+  it("does NOT show cancel button when busy but onCancel is not provided", () => {
+    renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      busy: "大臣思索中",
+    });
+    const cancelBtn = document.querySelector(".composer-cancel");
+    expect(cancelBtn).toBeNull();
+  });
+});
+
+describe("ChatModal — elapsed timer during thinking (issue #353)", () => {
+  it("shows elapsed time in the thinking indicator while busy", () => {
+    vi.useFakeTimers();
+    renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      busy: "大臣思索中",
+    });
+    // Timer starts at 0; advance 3 seconds
+    act(() => { vi.advanceTimersByTime(3000); });
+    const thinkingP = document.querySelector(".chat-message.thinking p");
+    expect(thinkingP?.textContent).toMatch(/\d+\s*秒/);
+    vi.useRealTimers();
   });
 });
