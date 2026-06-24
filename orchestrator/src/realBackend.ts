@@ -618,12 +618,23 @@ export function checkOwnGitDir(
 // ── model slug → agent provider selection (role decides soul/CLI) ───────────
 
 /**
- * Map a {@link StepSpec.model} slug to the baked-in CLI provider (PRD #244:
- * "换模型 = runtime 选已烤进镜像的 CLI"). coder = Sonnet (claudeCode), reviewer
- * = Opus 4.8 (claudeCode). Pure: returns the model id the provider factory
- * needs, so the mapping is unit-testable without constructing a provider.
+ * The codex coder slug + its effort (the S2 build worker runs on Codex gpt-5.5).
+ * `"high"` matches the project's per-slice codex effort convention (`## Skill
+ * routing`: the per-slice cmr legs run codex5.5 at high). The model id is the bare
+ * CLI model string the sandcastle codex provider expects.
+ */
+export const CODER_CODEX_SLUG = "gpt-5.5";
+const CODER_CODEX_EFFORT: NonNullable<sc.CodexOptions["effort"]> = "high";
+
+/**
+ * Map a CLAUDE {@link StepSpec.model} slug to its claude model id (PRD #244:
+ * "换模型 = runtime 选已烤进镜像的 CLI"). This resolver covers ONLY the claude
+ * slugs — `"opus"` (per-slice review subagent / reviewer) and `"sonnet"` (the ship
+ * worker). The CODER slug ({@link CODER_CODEX_SLUG}) is NOT a claude model id and is
+ * resolved by {@link agentForSlug} to the codex provider, never here. Pure: returns
+ * the model id string, so the mapping is unit-testable without constructing a provider.
  *
- * `"sonnet"` → claude-sonnet-4-6 (coder); `"opus"` → claude-opus-4-8 (reviewer).
+ * `"sonnet"` → claude-sonnet-4-6 (ship); `"opus"` → claude-opus-4-8 (reviewer).
  * Any other slug is a misconfigured StepSpec → throw (caught by the runner's
  * error edge, surfaced as S8(error)).
  */
@@ -639,6 +650,29 @@ export function modelIdForSlug(slug: string): string {
           `Add the CLI to the image and extend modelIdForSlug before using it.`,
       );
   }
+}
+
+/**
+ * Map a {@link StepSpec.model} slug to the baked-in CLI AGENT PROVIDER (the
+ * provider factory, not just the model id — extends {@link modelIdForSlug} now that
+ * the family spans TWO CLIs). PRD #244: "换模型 = runtime 选已烤进镜像的 CLI".
+ *
+ * - {@link CODER_CODEX_SLUG} (`"gpt-5.5"`, the S2 build worker / coder) → the
+ *   sandcastle CODEX provider at {@link CODER_CODEX_EFFORT}. The 2b image already
+ *   bakes the codex CLI (the cmr legs use it) and `box()` already mounts the
+ *   per-issue codex auth dir, so the codex coder authenticates in-sandbox.
+ * - `"sonnet"` / `"opus"` (claude slugs — the ship worker, the per-slice review
+ *   subagent) → `claudeCode(modelIdForSlug(slug))`, unchanged.
+ *
+ * Any other slug throws via {@link modelIdForSlug} (misconfigured StepSpec →
+ * S8(error)). Returns an {@link sc.AgentProvider}; its `.name` (`"codex"` vs
+ * `"claude-code"`) is the unit-test discriminator (no container needed).
+ */
+export function agentForSlug(slug: string): sc.AgentProvider {
+  if (slug === CODER_CODEX_SLUG) {
+    return sc.codex(CODER_CODEX_SLUG, { effort: CODER_CODEX_EFFORT });
+  }
+  return sc.claudeCode(modelIdForSlug(slug));
 }
 
 // ── role → baked soul selection (ship-pre 256 r1) ───────────────────────────
@@ -1908,7 +1942,10 @@ export class RealBackend implements Backend {
       name: `${spec.id}-${spec.role}`,
       cwd: worktree.path,
       sandbox: this.box(issueNumber, spec),
-      agent: sc.claudeCode(modelIdForSlug(spec.model)),
+      // The build worker's CLI is the spec's model slug → provider (the S2 coder
+      // runs on Codex gpt-5.5; a claude slug stays claudeCode). agentForSlug keeps
+      // the "model slug → baked CLI" #244 mapping unit-testable.
+      agent: agentForSlug(spec.model),
       // #7 maxIter: enforce the WITHIN-STEP Ralph retry budget = StepSpec.maxIter
       // (reviewer = 1 single pass; coder/fix > 1). Hitting it ends THE STEP
       // normally — route() continues — it is NEVER the orchestrator giving up
@@ -1947,7 +1984,9 @@ export class RealBackend implements Backend {
         name: `${spec.id}-${spec.role}-resume`,
         cwd: worktree.path,
         sandbox: this.box(issueNumber, spec),
-        agent: sc.claudeCode(modelIdForSlug(spec.model)),
+        // Resume the build worker on the SAME CLI as its fresh run (agentForSlug:
+        // codex for the gpt-5.5 coder, claudeCode for a claude slug).
+        agent: agentForSlug(spec.model),
         // resumeSession requires maxIterations:1 (Sandcastle constraint).
         maxIterations: 1,
         completionSignal: spec.completionSignal,
@@ -1991,7 +2030,8 @@ export class RealBackend implements Backend {
           name: `${spec.id}-${spec.role}-resume-retry`,
           cwd: worktree.path,
           sandbox: this.box(issueNumber, spec),
-          agent: sc.claudeCode(modelIdForSlug(spec.model)),
+          // Same CLI as the fresh/native-resume build worker (agentForSlug).
+          agent: agentForSlug(spec.model),
           maxIterations: 1,
           completionSignal: spec.completionSignal,
           branchStrategy: { type: "head" },
