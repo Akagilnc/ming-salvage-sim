@@ -846,6 +846,9 @@ def force_transit_arrivals(
             ch = content.characters[name]
             ch.location = dest
             ch.transit_to = ""
+            # 镜像 DB 清掉的行止时钟，保持内存/DB 一致（同回合内存读不到陈旧 start turn）
+            if hasattr(ch, "transit_start_turn"):
+                ch.transit_start_turn = 0
         forced.append({"name": name, "location": dest})
     if commit:
         db.conn.commit()

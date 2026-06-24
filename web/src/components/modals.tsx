@@ -701,7 +701,7 @@ export function ChatModal({
               <RotateCcw size={15} />
               撤回本轮
             </button>
-            {busy && onCancel && (
+            {busy === "大臣思索中" && onCancel && (
               <button className="secondary-action composer-cancel" onClick={onCancel}>
                 <X size={15} />
                 取消

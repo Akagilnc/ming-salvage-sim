@@ -327,7 +327,7 @@ def commitment_display_text(progress: Dict[str, int], row: sqlite3.Row) -> str:
     if stop_gate:
         parts = [f"已履行{months}月"]
         if "remaining_to_goal" in progress:
-            parts.append(f"距达标尚差{int(progress['remaining_to_goal'])}")
+            parts.append("距达标仍有差距")
         parts.append("直到达标")
         return "·".join(parts)
 

@@ -349,7 +349,7 @@ def test_snapshot_restore_preserves_transit_start_turn(game):
     （原 vacuous 版靠调任路径，但 set_character_office 不校验职位字符串 → 调任永不拒收
     → if rejected_this: 分支永远不跑 → 测试形同虚设。）
     """
-    db, state, content = game
+    db, _state, content = game
     name = active_ming_character(db, content)
 
     # 在途态：transit_to=DEST, transit_start_turn=99
