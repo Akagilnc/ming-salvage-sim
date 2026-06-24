@@ -631,7 +631,9 @@ def test_commitment_progress_text_splits_by_commitment_shape_and_gate(game):
 
     limited_text = issues[limited_id]["待办未解进度"]
     assert "已履行1月" in limited_text
-    assert "限至第" in limited_text
+    assert "限3月" in limited_text   # duration = end_turn - origin_turn = 3 (relative, not absolute)
+    assert "还剩2月" in limited_text  # remaining = 3 - 1 = 2
+    assert "限至第" not in limited_text  # no absolute turn numbers
     assert "补齐" not in limited_text
 
     due_text = issues[due_id]["待办未解进度"]

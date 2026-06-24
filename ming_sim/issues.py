@@ -309,11 +309,13 @@ def commitment_display_text(progress: Dict[str, int], row: sqlite3.Row) -> str:
     keys = row.keys() if hasattr(row, "keys") else []
     ongoing = loads_effect_dict(row["ongoing_effects"] if "ongoing_effects" in keys else {})
     end_turn = int(row["end_turn"] or 0) if "end_turn" in keys else 0
+    origin_turn = int(row["origin_turn"] or 0) if "origin_turn" in keys else 0
     stop_gate = _commitment_stop_gate(row)
     months = int(progress.get("months_elapsed") or 0)
+    duration = max(0, end_turn - origin_turn) if end_turn > 0 else 0
 
     if not _monthly_ongoing_effects_has_work(ongoing) and end_turn > 0:
-        return f"限至第{end_turn}月·到期待裁"
+        return f"限{duration}月·到期待裁"
 
     if stop_gate and _commitment_gate_references_arrears(row):
         parts = [f"已第{months}月"]
@@ -322,16 +324,41 @@ def commitment_display_text(progress: Dict[str, int], row: sqlite3.Row) -> str:
         parts.append("直到补齐")
         return "·".join(parts)
 
-    parts = [f"已履行{months}月"]
-    if "remaining_to_goal" in progress:
-        parts.append(f"距达标尚差{int(progress['remaining_to_goal'])}")
     if stop_gate:
+        parts = [f"已履行{months}月"]
+        if "remaining_to_goal" in progress:
+            parts.append(f"距达标尚差{int(progress['remaining_to_goal'])}")
         parts.append("直到达标")
-    elif end_turn > 0:
-        parts.append(f"限至第{end_turn}月")
-    else:
-        parts.append("开放承诺")
-    return "·".join(parts)
+        return "·".join(parts)
+
+    if end_turn > 0:
+        remaining = max(0, duration - months)
+        return f"限{duration}月·已履行{months}月·还剩{remaining}月"
+
+    return f"已履行{months}月·开放承诺"
+
+
+def commitment_timed_bar_value(progress: Dict[str, int], row: sqlite3.Row) -> Optional[int]:
+    """Time-based bar for auto-expiring timed commitments (ongoing effects + end_turn + no gate).
+
+    Returns None for bar-driven (stop_gate), arrears, or passive (no ongoing effects) commitments.
+    When non-None, bar = months_elapsed / (end_turn - origin_turn) * 100, clamped 0-100.
+    """
+    keys = row.keys() if hasattr(row, "keys") else []
+    end_turn = int(row["end_turn"] or 0) if "end_turn" in keys else 0
+    if end_turn <= 0:
+        return None
+    if _commitment_stop_gate(row):
+        return None
+    ongoing = loads_effect_dict(row["ongoing_effects"] if "ongoing_effects" in keys else {})
+    if not _monthly_ongoing_effects_has_work(ongoing):
+        return None
+    origin_turn = int(row["origin_turn"] or 0) if "origin_turn" in keys else 0
+    duration = end_turn - origin_turn
+    if duration <= 0:
+        return None
+    months = int(progress.get("months_elapsed") or 0)
+    return max(0, min(100, int(round(months * 100 / duration))))
 
 
 def _commitment_bar_value(progress: Dict[str, int]) -> Optional[int]:
