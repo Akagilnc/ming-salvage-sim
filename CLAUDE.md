@@ -82,7 +82,7 @@ hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`�
 
 ## Skill routing
 
-> Machine-executable routing for an agent working a slice in a worktree (esp. the orchestrator's in-container coder/fix/reviewer worker — ADR 0016 「现状缺口」, ADR 0026). The narrative `## 开发流程` above is for humans; THIS section is the in-container agent's routing table. Routing is by the task at hand, not by ceremony.
+> Machine-executable routing for an agent working a slice in a worktree (esp. the orchestrator's in-container worker roles — ADR 0016 「现状缺口」, ADR 0026). The narrative `## 开发流程` above is for humans; THIS section is the in-container agent's routing table. Routing is by the task at hand, not by ceremony.
 
 When you are an agent assigned a single slice issue in this worktree, route by what the task is:
 

@@ -6,9 +6,10 @@
  * file gives that same injected seam a real implementation backed by:
  *   - **Sandcastle** (`createWorktree` / `createSandbox` / `run` / `resumeSession`)
  *     for the resident slice worktree + the isolated agent sandboxes,
- *   - **`gh`** (host-side) for issue metadata + the full snapshot (clean-room:
- *     the snapshot is fetched on the HOST and written into the worktree; the
- *     container never reaches the network),
+ *   - **`gh`** (host-side) for S0/S1 gates + the audit snapshot, plus in-container
+ *     `gh` issue reads for the worker's live execution context (the runner passes
+ *     issue/repo env + GH_TOKEN when available; the worker must not guess from a
+ *     stale prompt snapshot),
  *   - **`git`** for push + the residue-clean reconciliation + the HEAD SHA.
  *
  * The runner control flow is UNCHANGED: this class has the exact Backend
@@ -144,8 +145,8 @@ export function isClosedIssue(json: GhIssueJson): boolean {
  * the native sub-issue count. The three-way accept condition the runner enforces
  * is derived from these fields (rfa ∧ no sub-issues ∧ all blocked_by closed).
  * The Agent Brief is NOT read here — it is no longer an S0 gate (#328) and the
- * vestigial `hasAgentBrief` metadata was dropped (#329); the coder reads the
- * whole issue from S1's full snapshot (which still carries `extractAgentBrief`).
+ * vestigial `hasAgentBrief` metadata was dropped (#329); S1 still writes a
+ * contract-complete audit snapshot, while the coder reads the live issue via gh.
  *
  * `openBlockedBy` = the numbers of blocked_by dependencies whose state is not
  * "closed" (an open upstream the slice would otherwise be cut from a stale base
@@ -174,7 +175,7 @@ export function buildIssueMeta(
  * WHEN present; the LAST comment carrying it wins (a re-issued brief supersedes
  * earlier ones). Returns "" when no brief is present — that is a VALID slice (the
  * brief is not an S0 gate, design decision); the coder then works from the whole
- * issue (body + comments) carried in the snapshot.
+ * live issue (body + comments) fetched in-container.
  */
 export function extractAgentBrief(json: GhIssueJson): string {
   // Priority order, LOWEST first: the issue body is the fallback, then comments
@@ -242,8 +243,9 @@ export function parseBlockedBy(parsed: unknown): GhBlockedBy[] {
  * Build the native metadata block #244 S1 names ("body + comments + 最新 Agent
  * Brief 正文 + native metadata") — title/state/labels + the native sub-issue +
  * blocked_by summaries. S0 already reads these via gh; passing them through into
- * the snapshot (rather than re-fetching) keeps the clean-room snapshot the single
- * source the container reads (it does NOT gh-fetch inside the box).
+ * the host-written snapshot keeps the audit/resume artifact contract-complete.
+ * The worker's execution context is still the live issue it fetches in-container
+ * via gh using the runner-injected issue/repo env.
  */
 export function buildIssueSnapshotMeta(
   json: GhIssueJson,
@@ -262,8 +264,8 @@ export function buildIssueSnapshotMeta(
 /**
  * Build the S1 {@link IssueSnapshot}: body + comments + Agent Brief + the
  * #244-named native metadata. The native sub-issue count + blocked_by list S0
- * fetched are threaded in here (not re-queried) so the snapshot the coder reads
- * is contract-complete (#244 S1 names native metadata as a snapshot element).
+ * fetched are threaded in here (not re-queried) so the host-side snapshot is
+ * contract-complete (#244 S1 names native metadata as a snapshot element).
  */
 export function buildIssueSnapshot(
   issueNumber: number,
@@ -424,6 +426,12 @@ export const SANDBOX_SKILLS_DIR = "/home/agent/.claude/skills";
  * prompt/soul soft constraint (ADR 0017 §4).
  */
 export const SANDBOX_SOUL_ENV = "ORCHESTRATOR_SOUL";
+/** The issue number handed to the worker; prompt/soul live-fetch the issue via gh. */
+export const SANDBOX_ISSUE_NUMBER_ENV = "ORCHESTRATOR_ISSUE_NUMBER";
+/** A short alias for tools/skills that conventionally read ISSUE_NUMBER. */
+export const SANDBOX_ISSUE_NUMBER_ALIAS_ENV = "ISSUE_NUMBER";
+/** GitHub repo slug (`owner/repo`) the worker should use for gh issue reads. */
+export const SANDBOX_REPO_ENV = "ORCHESTRATOR_REPO";
 
 /**
  * The env var the ship worker's in-container `gh` reads for auth (cmr S336 r10).
@@ -1504,9 +1512,10 @@ export class RealBackend implements Backend {
   // ── S1: full snapshot (host gh) ────────────────────────────────────────────
   async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
     // Widen the field list to carry the #244-named native metadata
-    // (title/state/labels) into the clean-room snapshot, not just the body —
-    // the container reads this LOCAL snapshot and does NOT gh-fetch inside the
-    // box (#244 S1: "body + comments + 最新 Agent Brief 正文 + native metadata").
+    // (title/state/labels) into the clean-room snapshot, not just the body. This
+    // preserves the host-side audit/resume artifact; the worker still live-fetches
+    // issue truth in-container via gh (#244 S1: "body + comments + 最新 Agent Brief
+    // 正文 + native metadata").
     const json = this.phase("S1", "fetchIssueView", () => {
       const raw = this.sh("gh", [
         "issue",
@@ -1745,7 +1754,9 @@ export class RealBackend implements Backend {
 
   private box(issueNumber: number, spec: StepSpec): sc.SandboxProvider {
     const auth = this.mountAuth(issueNumber);
-    return docker(this.boxConfig(auth, spec));
+    return docker(
+      this.boxConfig({ ...auth, ghToken: this.readGhToken() }, spec, issueNumber),
+    );
   }
 
   /**
@@ -1770,20 +1781,31 @@ export class RealBackend implements Backend {
    * signal, not an OS readonly mount (reviewer READ-ONLY stays soft, ADR 0017 §4).
    */
   protected boxConfig(
-    auth: { authDir: string; claudeToken: string },
+    auth: { authDir: string; claudeToken: string; ghToken?: string },
     spec: StepSpec,
+    issueNumber?: number,
   ): {
     imageName: string;
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
   } {
     const soul = soulForStep(spec);
+    const env: Record<string, string> = {
+      CLAUDE_CODE_OAUTH_TOKEN: auth.claudeToken,
+      [SANDBOX_SOUL_ENV]: soul,
+      [SANDBOX_REPO_ENV]: this.opts.repo,
+    };
+    if (issueNumber !== undefined) {
+      const issue = String(issueNumber);
+      env[SANDBOX_ISSUE_NUMBER_ENV] = issue;
+      env[SANDBOX_ISSUE_NUMBER_ALIAS_ENV] = issue;
+    }
+    if (auth.ghToken !== undefined) {
+      env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
+    }
     return {
       imageName: this.opts.imageName,
-      env: {
-        CLAUDE_CODE_OAUTH_TOKEN: auth.claudeToken,
-        [SANDBOX_SOUL_ENV]: soul,
-      },
+      env,
       // #334: codex auth ONLY — the skills mount is dropped (baked skills win).
       mounts: [{ hostPath: auth.authDir, sandboxPath: SANDBOX_CODEX_DIR }],
     };

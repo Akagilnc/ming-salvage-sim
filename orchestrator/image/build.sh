@@ -237,9 +237,9 @@ fi
 #   role "reviewer" → env "READ-ONLY" (soulForStep)        → reviewer.md + READ-ONLY.md
 #   role "merger"   → env "merger"    (MERGER_SOUL)        → merger.md
 #   (cmr worker)    → env "cmr"       (CMR_SOUL)           → cmr.md (integrated-cmr fixer)
-# (No code reads soul files by NAME yet — the env value is currently a signal
-# string; this just keeps the bake forward-compatible with the documented env
-# contract so the alias is never the thing that breaks activation.)
+# Prompt entrypoints read the baked soul files directly, and ORCHESTRATOR_SOUL is
+# also kept as the runtime role signal. Keep the env-value alias so either lookup
+# path resolves to the same reviewed role text.
 # NOTE: macOS ships bash 3.2 (no associative arrays / `declare -A`), and this
 # script's shebang resolves to it — so we map role→env-alias with a portable
 # case, NOT an assoc array, to keep the build reproducible on a macOS host.
