@@ -5384,7 +5384,8 @@ def _apply_person_changes(
                 applied.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
             row = db.conn.execute(
-                "SELECT status, location FROM characters WHERE name=?", (name,)
+                "SELECT status, location, transit_to, transit_start_turn "
+                "FROM characters WHERE name=?", (name,)
             ).fetchone()
             if row is None:
                 applied.append(rejected(item, "非既有人物", "hallucinated_id"))
@@ -5410,7 +5411,18 @@ def _apply_person_changes(
                     break
             else:
                 location = new_location or str(row["location"] or "")
-                new_transit_start_turn = state.turn if transit_to else 0
+                # transit_start_turn 记启程回合，供 force_transit_arrivals 计在途时长。
+                # re-emit 同一在途目的地时保留原启程回合，否则逐月刷新会使
+                # `turn - start >= 2` 永不成立、兜底失效、永久在途（CMR P2 / #346）。
+                if transit_to:
+                    prev_transit_to = str(row["transit_to"] or "")
+                    prev_start = int(row["transit_start_turn"] or 0)
+                    if transit_to == prev_transit_to and prev_start > 0:
+                        new_transit_start_turn = prev_start
+                    else:
+                        new_transit_start_turn = state.turn
+                else:
+                    new_transit_start_turn = 0
                 db.conn.execute(
                     "UPDATE characters SET location=?, transit_to=?, transit_start_turn=? WHERE name=?",
                     (location, transit_to, new_transit_start_turn, name),

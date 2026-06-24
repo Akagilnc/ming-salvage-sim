@@ -183,6 +183,79 @@ def test_行止_arrival_clears_transit_start_turn(game):
     assert row["transit_start_turn"] == 0, "抵达后 transit_start_turn 应清零"
 
 
+# ── 6b) 重复 re-emit 同一 transit_to 不刷新 transit_start_turn（CMR P2）──────
+
+
+def test_行止_reemit_same_dest_preserves_start_turn(game):
+    """同一 transit_to 被逐月 re-emit 时，transit_start_turn 不应被刷新（CMR P2 / #346）。
+
+    若每月刷新启程回合，force_transit_arrivals 的 `turn - start >= 2` 永不成立 →
+    兜底失效、永久在途。原启程回合必须保留，使兜底仍在原启程 +2 月强制到任。
+    """
+    db, state, content = game
+    name = active_ming_character(db, content)
+
+    # 第 3 月启程赴 DEST
+    state.turn = 3
+    issues.apply_score_extraction(
+        db, state,
+        {"人物变更": [{"name": name, "动作": "行止", "transit_to": DEST}]},
+        content=content,
+    )
+    assert db.conn.execute(
+        "SELECT transit_start_turn FROM characters WHERE name=?", (name,)
+    ).fetchone()["transit_start_turn"] == 3
+
+    # 第 4 月 simulator 仍叙述「在途赴 DEST」，re-emit 同一 transit_to
+    state.turn = 4
+    issues.apply_score_extraction(
+        db, state,
+        {"人物变更": [{"name": name, "动作": "行止", "transit_to": DEST}]},
+        content=content,
+    )
+    row = db.conn.execute(
+        "SELECT transit_start_turn FROM characters WHERE name=?", (name,)
+    ).fetchone()
+    assert row["transit_start_turn"] == 3, (
+        f"re-emit 同一目的地不应刷新启程回合，应仍为 3，实测 {row['transit_start_turn']}"
+    )
+
+    # 第 5 月：原启程(3) +2 = 到期，兜底应强制到任
+    state.turn = 5
+    forced = force_transit_arrivals(db, state, content)
+    assert name in [f["name"] for f in forced], (
+        "原启程第 3 月、现第 5 月（在途 2 月）→ 兜底应强制到任，re-emit 不得使其逃逸"
+    )
+
+
+def test_行止_change_dest_resets_start_turn(game):
+    """切换 transit_to 目的地时，transit_start_turn 应按新目的地重置为当前回合。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+
+    state.turn = 3
+    issues.apply_score_extraction(
+        db, state,
+        {"人物变更": [{"name": name, "动作": "行止", "transit_to": DEST}]},
+        content=content,
+    )
+
+    # 改道去 shandong：新启程回合应记为第 6 月
+    state.turn = 6
+    issues.apply_score_extraction(
+        db, state,
+        {"人物变更": [{"name": name, "动作": "行止", "transit_to": "shandong"}]},
+        content=content,
+    )
+    row = db.conn.execute(
+        "SELECT transit_to, transit_start_turn FROM characters WHERE name=?", (name,)
+    ).fetchone()
+    assert row["transit_to"] == "shandong"
+    assert row["transit_start_turn"] == 6, (
+        f"改道后启程回合应重置为 6，实测 {row['transit_start_turn']}"
+    )
+
+
 # ── 7) snapshot/restore 包含 transit_start_turn（P1-B fix 直接验证）──────────
 
 
