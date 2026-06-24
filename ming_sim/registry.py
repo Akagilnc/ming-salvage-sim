@@ -421,8 +421,12 @@ def create_minister_agent(
     # 与月末结算的 300 s 解耦；用 dataclasses.replace 不改原配置对象。
     chat_llm_config = replace(
         llm_config,
-        cli_timeout_seconds=min(llm_config.cli_timeout_seconds, MINISTER_CHAT_CLI_TIMEOUT_SECONDS),
-        timeout_seconds=min(llm_config.timeout_seconds, MINISTER_CHAT_CLI_TIMEOUT_SECONDS),
+        cli_timeout_seconds=min(llm_config.cli_timeout_seconds, MINISTER_CHAT_CLI_TIMEOUT_SECONDS)
+        if llm_config.cli_timeout_seconds is not None
+        else MINISTER_CHAT_CLI_TIMEOUT_SECONDS,
+        timeout_seconds=min(llm_config.timeout_seconds, MINISTER_CHAT_CLI_TIMEOUT_SECONDS)
+        if llm_config.timeout_seconds is not None
+        else MINISTER_CHAT_CLI_TIMEOUT_SECONDS,
     )
     # temperature 0.6：保留人物个性，但收敛发挥——少在拟旨里夹带题外私货。
     model = create_chat_model(chat_llm_config, temperature=0.6, top_p=0.9)
