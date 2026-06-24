@@ -42,6 +42,8 @@ SKILLS_SRC="${SKILLS_SRC:-$HOME/.claude/skills}"
 #   diagnosing-bugs                → improve-codebase-architecture
 #   improve-codebase-architecture  → codebase-design, grilling, domain-modeling
 #   ak-cross-m-review              → diagnosing-bugs (cmr non-trivial-fix path)
+#   ak-cmr-completeness            → ak-cross-m-review (ship-pre Step 5 lens entry; wraps engine)
+#   ak-cmr-correctness             → ak-cross-m-review (ship-pre Step 6 lens entry; wraps engine)
 #   codebase-design                → leaf
 #   resolving-merge-conflicts      → leaf
 #   grilling                       → leaf  (HITL design-tree walk; degrades to
@@ -56,6 +58,8 @@ SKILL_CLOSURE=(
   improve-codebase-architecture
   resolving-merge-conflicts
   ak-cross-m-review
+  ak-cmr-completeness
+  ak-cmr-correctness
   grilling
   domain-modeling
 )
