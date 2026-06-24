@@ -478,7 +478,10 @@ export const STEP_SPECS: Readonly<Record<"S2", StepSpec>> = {
     id: "S2",
     role: "coder",
     promptFile: "coder_implement.md",
-    model: "sonnet",
+    // The whole-slice build worker runs on Codex gpt-5.5 (was Sonnet 4.6). The slug
+    // is resolved to the baked codex CLI by agentForSlug (realBackend); swapping the
+    // model is THIS slug change only — no image rebuild, no StepSpec shape change.
+    model: "gpt-5.5",
     completionSignal: "CODER_STEP_COMPLETE",
     maxIter: 5,
     soul: "coder",

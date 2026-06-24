@@ -17,6 +17,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  agentForSlug,
   assertCompletionSignal,
   attributeFailure,
   branchForIssue,
@@ -400,12 +401,35 @@ describe("realBackend auth mount paths", () => {
 // ─── model slug → CLI (role decides soul/model) ──────────────────────────────
 
 describe("realBackend modelIdForSlug", () => {
-  it("maps sonnet→coder CLI, opus→reviewer CLI", () => {
+  it("maps the CLAUDE slugs to their claude model ids (reviewer=opus, ship=sonnet)", () => {
+    // modelIdForSlug stays the CLAUDE-model-id resolver: the codex coder slug is
+    // NOT a claude model id, so it is resolved by agentForSlug, not here.
     expect(modelIdForSlug("sonnet")).toBe("claude-sonnet-4-6");
     expect(modelIdForSlug("opus")).toBe("claude-opus-4-8");
   });
-  it("throws on an unknown slug (misconfigured StepSpec)", () => {
+  it("throws on a non-claude slug (the codex slug is not a claude model id)", () => {
     expect(() => modelIdForSlug("gpt")).toThrow(/unknown model slug/);
+    expect(() => modelIdForSlug("gpt-5.5")).toThrow(/unknown model slug/);
+  });
+});
+
+// ─── agentForSlug (model slug → baked-in CLI provider) ────────────────────────
+
+describe("realBackend agentForSlug", () => {
+  it("resolves the codex coder slug to the codex provider (gpt-5.5)", () => {
+    // The S2 build worker (coder) runs on Codex gpt-5.5 — agentForSlug returns the
+    // sandcastle codex provider (`.name === "codex"`), NOT claudeCode.
+    const provider = agentForSlug("gpt-5.5");
+    expect(provider.name).toBe("codex");
+  });
+  it("resolves the claude slugs to the claudeCode provider (reviewer/ship)", () => {
+    // opus (reviewer / per-slice review subagent) and sonnet (the ship worker) stay
+    // on Claude — agentForSlug returns the claudeCode provider (`.name === "claude-code"`).
+    expect(agentForSlug("opus").name).toBe("claude-code");
+    expect(agentForSlug("sonnet").name).toBe("claude-code");
+  });
+  it("throws on an unknown slug (misconfigured StepSpec)", () => {
+    expect(() => agentForSlug("gpt")).toThrow(/unknown model slug/);
   });
 });
 

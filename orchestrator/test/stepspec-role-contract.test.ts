@@ -113,14 +113,16 @@ describe("StepSpec role contract + soul injection (#253)", () => {
     return backend.capturedSpecs;
   }
 
-  // ── AC-1: coder step (S2) carries role=coder + model=Sonnet + soul=coder ──
+  // ── AC-1: coder step (S2) carries role=coder + model=codex gpt-5.5 + soul=coder ──
 
-  it("S2 coder step: role=coder, model=Sonnet, soul=coder", async () => {
+  it("S2 coder step: role=coder, model=codex gpt-5.5, soul=coder", async () => {
     const specs = await runAndCapture();
     const s2 = specs.find((s) => s.id === "S2");
     expect(s2).toBeDefined();
     expect(s2!.role).toBe("coder");
-    expect(s2!.model).toBe("sonnet");
+    // The build worker runs on Codex gpt-5.5 (was Sonnet 4.6) — the slug resolves to
+    // the baked codex CLI via agentForSlug. Ship/reviewer stay on Claude slugs.
+    expect(s2!.model).toBe("gpt-5.5");
     expect(s2!.soul).toBe("coder");
   });
 
