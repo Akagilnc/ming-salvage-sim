@@ -6925,6 +6925,8 @@ class GameDB:
         即本路径仅以 delta>0 调 apply_legacy_pct（其 base>=0 ×(1+net/100) 分支）；
         apply_legacy_pct 自身的 base<0 ×(1-net/100) 分支由 region/army 等其它调用方使用，本路径不走。
         """
+        if isinstance(delta, bool) or not isinstance(delta, int):
+            raise TypeError("delta must be an integer")
         if category != "局势遗产":
             net_pct = int(self.legacy_modifiers(state).get(account, 0) or 0)  # type: ignore[arg-type]
             if net_pct and delta > 0:
