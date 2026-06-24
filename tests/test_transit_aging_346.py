@@ -7,11 +7,13 @@
 4. legacy 旧数据：transit_to 有值但 transit_start_turn=0 → 强制（保守兜底）
 5. 强制到任后 content 内存镜像同步
 6. 行止 apply 写 transit_to 时同步写 transit_start_turn
+7. 任命写路径失败回滚：_restore_person_write_state 还原 transit_start_turn（P1-B）
 """
 
 from __future__ import annotations
 
 import ming_sim.issues as issues
+from ming_sim.issues import _restore_person_write_state, _snapshot_person_write_state
 from ming_sim.decree import force_transit_arrivals
 from tests.conftest import active_ming_character
 
@@ -181,50 +183,43 @@ def test_行止_arrival_clears_transit_start_turn(game):
     assert row["transit_start_turn"] == 0, "抵达后 transit_start_turn 应清零"
 
 
-# ── 7) 任命失败回滚不留 transit_start_turn 脏值（P1-B snapshot/restore fix）──────
+# ── 7) snapshot/restore 包含 transit_start_turn（P1-B fix 直接验证）──────────
 
 
-def test_snapshot_restore_includes_transit_start_turn(game):
-    """任命回滚后 transit_start_turn 随 transit_to 一并还原，不留脏值（P1-B）。"""
+def test_snapshot_restore_preserves_transit_start_turn(game):
+    """_restore_person_write_state 回滚后 transit_start_turn 随 transit_to 一并还原（P1-B）。
+
+    直接调用 _snapshot_person_write_state / _restore_person_write_state，
+    模拟「写路径中途失败 → 用快照还原」场景，验证 transit_start_turn 包含在快照内。
+    （原 vacuous 版靠调任路径，但 set_character_office 不校验职位字符串 → 调任永不拒收
+    → if rejected_this: 分支永远不跑 → 测试形同虚设。）
+    """
     db, state, content = game
     name = active_ming_character(db, content)
 
-    # 置在途态（transit_to + transit_start_turn=99 模拟早先启程）
+    # 在途态：transit_to=DEST, transit_start_turn=99
     _set_transit(db, name, DEST, transit_start_turn=99)
-    if name in content.characters:
-        content.characters[name].transit_to = DEST
 
-    # 取一个不存在的职位触发任命失败 → 走 _restore_person_write_state 回滚路径
-    # "hallucinated_office_xyz" 不在 offices 白名单 → apply_office_appointment 拒收
-    result = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "人物变更": [
-                {
-                    "name": name,
-                    "动作": "调任",
-                    "office": "不存在的虚构职位xyz",
-                    "new_office": "不存在的虚构职位xyz",
-                }
-            ]
-        },
-        content=content,
+    # 拍快照（此刻 transit_start_turn=99 应进快照）
+    snapshot = _snapshot_person_write_state(db, content)
+
+    # 模拟写路径中途改了 transit_start_turn（如 行止 被 apply 后才抛异常）
+    db.conn.execute(
+        "UPDATE characters SET transit_start_turn=0 WHERE name=?", (name,)
     )
+    db.conn.commit()
+    assert db.conn.execute(
+        "SELECT transit_start_turn FROM characters WHERE name=?", (name,)
+    ).fetchone()["transit_start_turn"] == 0, "前置：已改成 0"
 
+    # 还原快照
+    _restore_person_write_state(db, content, snapshot, commit=True)
+
+    # transit_start_turn 应随快照回到 99
     row = db.conn.execute(
         "SELECT transit_to, transit_start_turn FROM characters WHERE name=?", (name,)
     ).fetchone()
-    # 无论调任成功还是拒收，transit_start_turn 不应变成 0（非 transit 写路径不应改它）
-    # 若任命成功：transit_to 会被清空，transit_start_turn→0，正确
-    # 若任命被拒收（预期）：transit_to=DEST, transit_start_turn=99 应保持（快照/回滚正确）
-    applied_changes = result.get("applied_person_changes", [])
-    rejected_this = any(
-        r.get("rejected") and str(r.get("name") or "") == name
-        for r in applied_changes
+    assert row["transit_to"] == DEST, "restore 后 transit_to 应还原"
+    assert row["transit_start_turn"] == 99, (
+        f"restore 后 transit_start_turn 应还原为 99，实测 {row['transit_start_turn']}（P1-B 未覆盖则此处为 0）"
     )
-    if rejected_this:
-        assert row["transit_to"] == DEST, "拒收后 transit_to 应还原"
-        assert row["transit_start_turn"] == 99, (
-            f"拒收后 transit_start_turn 应还原为 99，实测 {row['transit_start_turn']}（P1-B 回滚未覆盖）"
-        )
