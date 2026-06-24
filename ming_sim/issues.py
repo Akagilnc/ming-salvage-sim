@@ -324,17 +324,18 @@ def commitment_display_text(progress: Dict[str, int], row: sqlite3.Row) -> str:
         parts.append("直到补齐")
         return "·".join(parts)
 
-    parts = [f"已履行{months}月"]
-    if "remaining_to_goal" in progress:
-        parts.append(f"距达标尚差{int(progress['remaining_to_goal'])}")
     if stop_gate:
+        parts = [f"已履行{months}月"]
+        if "remaining_to_goal" in progress:
+            parts.append(f"距达标尚差{int(progress['remaining_to_goal'])}")
         parts.append("直到达标")
-    elif end_turn > 0:
+        return "·".join(parts)
+
+    if end_turn > 0:
         remaining = max(0, duration - months)
-        parts = [f"限{duration}月", f"已履行{months}月", f"还剩{remaining}月"]
-    else:
-        parts.append("开放承诺")
-    return "·".join(parts)
+        return f"限{duration}月·已履行{months}月·还剩{remaining}月"
+
+    return f"已履行{months}月·开放承诺"
 
 
 def commitment_timed_bar_value(progress: Dict[str, int], row: sqlite3.Row) -> Optional[int]:
