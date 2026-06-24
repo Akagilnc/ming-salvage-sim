@@ -185,6 +185,16 @@ fi
 # copy above keeps the ~/.claude/skills/gstack/review/... absolute refs working).
 mkdir -p "$STAGE/skills/review"
 cp -RL "$GSTACK_SRC/review/." "$STAGE/skills/review/"
+# CRITICAL (CLAUDE.md ## Skill routing: per-slice review = the BUILTIN /review,
+# single-vendor, one pass; ADR 0016 发现4: gstack is NOT in the implementation
+# legs): gstack's review/ ships a SKILL.md (name: gstack-review). Baking it at the
+# top-level skills/review/ registers a `/review` DISK skill that SHADOWS the builtin
+# /review the coder must use — so the coder's `/review` resolved to gstack's
+# multi-specialist review (wrong). review-army only READS the data files here
+# (checklist.md / design-checklist.md / greptile-triage.md / TODOS-format.md /
+# specialists), never the SKILL.md, so DROP the SKILL.md (+ tmpl): the checklist
+# reads keep working AND /review stays the builtin.
+rm -f "$STAGE/skills/review/SKILL.md" "$STAGE/skills/review/SKILL.md.tmpl"
 # Exclude the 58M compiled discover helper — not in the ship closure.
 rm -f "$STAGE/skills/gstack/bin/gstack-global-discover" 2>/dev/null || true
 if [ ! -f "$STAGE/skills/gstack-ship/SKILL.md" ]; then
