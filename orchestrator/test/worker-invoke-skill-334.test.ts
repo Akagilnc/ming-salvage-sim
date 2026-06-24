@@ -1,7 +1,7 @@
 /**
- * #334 — the first end-to-end tracer: the coder worker invokes `/tdd` and the
- * per-slice reviewer worker invokes `/review`, both through the unified
- * dispatchWorker seam (ADR 0026 / PRD #330), running on the baked 2b image.
+ * #334 — the first end-to-end tracer: the coder worker runs the whole slice
+ * (build + per-slice review/fix loop) through the unified dispatchWorker seam
+ * (ADR 0026 / PRD #330), running on the baked 2b image.
  *
  * This slice makes the seam REAL in two ways the #331 prefactor only declared:
  *
@@ -11,16 +11,13 @@
  *      change is assertable on the pure `boxConfig()` seam (no container needed),
  *      mirroring the family `mergerSandboxConfig()` testability pattern.
  *
- *   2. The versioned promptFiles are THIN: they tell the worker to invoke the
- *      skill (`/tdd` for the coder, `/review` for the reviewer) and let the
- *      discipline come from the baked image's CLAUDE.md `## Skill routing` +
- *      baked skill — they do NOT hand-copy the TDD/review METHOD into the prompt
- *      (ADR 0026: "prompt 收薄到『实现 issue #N，按本仓 CLAUDE.md dev 流程做』").
+ *   2. The versioned promptFiles are THIN entrypoints: they read the baked soul,
+ *      live-fetch the issue through gh, and define the output contract. They do
+ *      NOT hand-copy the TDD/review/fix METHOD into the prompt. The workflow lives
+ *      in the baked soul + skills.
  *
- * Plus the load-bearing [C] (PRD #330 R2): the per-slice reviewer worker returns
- * a `ReviewerResult{findings}` and the runner's single-slice fix-loop ROUTES on
- * those findings (S3 findings → S5 fix → S6 approve → S7). This is the consumer
- * `selectFixNowFindings`/`isBlockingFinding` depend on; a bare verdict breaks it.
+ * Plus the load-bearing [C] (PRD #330 R2): the runner dispatches exactly the S2
+ * coder worker and then S7 ship; there is no runner-driven reviewer/fix loop.
  */
 
 import { dirname, join } from "node:path";
@@ -31,6 +28,10 @@ import { runOrchestrator } from "../src/runner.js";
 import {
   RealBackend,
   SANDBOX_CODEX_DIR,
+  SANDBOX_GH_TOKEN_ENV,
+  SANDBOX_ISSUE_NUMBER_ALIAS_ENV,
+  SANDBOX_ISSUE_NUMBER_ENV,
+  SANDBOX_REPO_ENV,
   SANDBOX_SKILLS_DIR,
   SANDBOX_SOUL_ENV,
 } from "../src/realBackend.js";
@@ -73,8 +74,9 @@ describe("#334 RealBackend.boxConfig drops the runtime skillsMount (baked skills
       mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
     } {
       return this.boxConfig(
-        { authDir: "/tmp/auth-256", claudeToken: "tok" },
+        { authDir: "/tmp/auth-256", claudeToken: "tok", ghToken: "gho_test" },
         spec,
+        334,
       );
     }
   }
@@ -117,6 +119,14 @@ describe("#334 RealBackend.boxConfig drops the runtime skillsMount (baked skills
     expect(cfg.env[SANDBOX_SOUL_ENV]).toBe("coder");
   });
 
+  it("injects live issue coordinates and GH_TOKEN for the worker's gh issue read", () => {
+    const cfg = makeBackend().config(coderSpec);
+    expect(cfg.env[SANDBOX_ISSUE_NUMBER_ENV]).toBe("334");
+    expect(cfg.env[SANDBOX_ISSUE_NUMBER_ALIAS_ENV]).toBe("334");
+    expect(cfg.env[SANDBOX_REPO_ENV]).toBe("owner/name");
+    expect(cfg.env[SANDBOX_GH_TOKEN_ENV]).toBe("gho_test");
+  });
+
   it("skillsMount is no longer a required RealBackendOptions field (#334)", () => {
     // Construction WITHOUT skillsMount must succeed — the baked image provides
     // skills, so the host mount path is gone from the options contract.
@@ -126,34 +136,28 @@ describe("#334 RealBackend.boxConfig drops the runtime skillsMount (baked skills
 
 // ─── (2) the versioned prompts are THIN — invoke the skill, not hand-copy it ──
 
-describe("#334 thin prompts invoke the skill, not the methodology", () => {
+describe("#334 thin prompts read baked souls and do not hand-copy methodology", () => {
   const read = (f: string): string => readFileSync(join(promptsDir, f), "utf8");
 
-  it("coder_implement.md tells the worker to invoke /tdd (Skill routing), not red/green steps", () => {
+  it("coder_implement.md is an entrypoint, not a TDD/review mini-wiki", () => {
     const p = read("coder_implement.md");
-    // It points at the skill / CLAUDE.md routing …
-    expect(p).toMatch(/\/tdd|tdd skill|Skill routing|CLAUDE\.md/i);
-    // … and does NOT hand-copy the TDD method (the discipline lives in the baked
-    // skill, ADR 0026). The old prompt spelled out "Write the failing test(s) …
-    // (RED). Make them pass … (GREEN); refactor".
-    expect(p).not.toMatch(/Make them pass with the smallest correct change \(GREEN\)/);
+    expect(p).toMatch(/\/home\/agent\/\.orchestrator\/souls\/coder\.md/);
+    expect(p).toMatch(/ORCHESTRATOR_ISSUE_NUMBER|ISSUE_NUMBER/);
+    expect(p).toMatch(/ORCHESTRATOR_REPO/);
+    expect(p).toMatch(/gh/i);
+    expect(p).not.toMatch(/\.orchestrator-snapshot\.json.*read it FIRST/is);
+    expect(p).not.toMatch(/\bRED\b|\bGREEN\b|\brefactor\b|Baseline commit|\bOpus\b|\bsubagent\b|ak-cross-m-review/i);
   });
 
-  it("coder_implement.md: per-slice review = TWO steps (builtin /review THEN a single Opus subagent), NOT the full cross-model cmr (cmr is family-only)", () => {
-    // Per-slice degradation (Sonnet writes; Opus single-leg reviews): the
-    // WHOLE-SLICE build worker runs /tdd, then reviews in TWO steps — FIRST the
-    // builtin `/review`, THEN a single Opus subagent 评审 — INSIDE this one session.
-    // The full cross-model `ak-cross-m-review` (codex+agy+claude) is the FAMILY
-    // layer's job, NEVER run per-slice. The thin prompt TRIGGERS the reviews; it
-    // does not hand-copy the review method.
-    const p = read("coder_implement.md");
-    // Step 1: the builtin /review.
-    expect(p).toMatch(/\/review/);
-    // Step 2: a single Opus subagent.
-    expect(p).toMatch(/opus/i);
-    expect(p).toMatch(/subagent|Agent/i);
-    // The full cmr is FAMILY-only, not per-slice (no codex/agy/ak-cross-m-review here).
-    expect(p).toMatch(/never (run )?per-slice|FAMILY layer|do NOT.*codex|do NOT invoke.*ak-cross-m-review/i);
+  it("the coder soul carries the per-slice process, including host-specific review routing", () => {
+    const soul = readFileSync(join(here, "..", "image", "souls", "coder.md"), "utf8");
+    expect(soul).toMatch(/Invoke `\/tdd`/i);
+    expect(soul).toMatch(/Claude worker: invoke the builtin `\/review`/);
+    expect(soul).toMatch(/Codex worker: use the baked review skill/i);
+    expect(soul).toMatch(/one reviewer leg|single reviewer leg/i);
+    expect(soul).toMatch(/do not invoke `ak-cross-m-review`/i);
+    expect(soul).toMatch(/gh issue view/i);
+    expect(soul).toMatch(/Snapshot files.*not execution input/is);
   });
 
   it("every existing prompt still defines its structured output contract (tag + signal)", () => {
@@ -168,11 +172,7 @@ describe("#334 thin prompts invoke the skill, not the methodology", () => {
   });
 });
 
-// ─── (3) the per-slice reviewer returns findings + the fix-loop routes on them ─
-//
-// The load-bearing [C] (PRD #330 R2): the reviewer worker (S3/S6) routes /review
-// and returns a ReviewerResult{findings}; the single-slice fix-loop consumes the
-// findings (selectFixNowFindings → S5 fix). A bare verdict would break it.
+// ─── (3) the runner dispatches one S2 coder worker, then S7 ship ─────────────
 
 /** A fake backend that records dispatch + drives a one-round fix loop. */
 class ReviewWorkerBackend implements Backend {
@@ -240,7 +240,8 @@ class ReviewWorkerBackend implements Backend {
               },
             ]
           : [];
-      // The reviewer worker returns a ReviewerResult{findings} — the [C] shape.
+      // Legacy compatibility shape: a reviewer worker returns findings, not a
+      // bare verdict. The active runner path no longer dispatches it normally.
       return { kind: "completed", output: { kind: "reviewer", findings } };
     }
     return {

@@ -6,13 +6,10 @@
 # so the cmr / ship / review / fix / merger workers can each invoke their skill
 # from the IMAGE (the bake gap ADR 0026 / #330 calls out).
 #
-# NOTE: the runner currently STILL bind-mounts host skills onto
-# /home/agent/.claude/skills at runtime (realBackend.ts / realFamilyBackend.ts
-# `skillsMount`), which SHADOWS these baked skills until that mount is dropped.
-# Removing it is a behaviour change tracked in #334 (EPIC-330-LEDGER carried note),
-# NOT part of this image slice. #333 makes the skills PRESENT IN THE IMAGE; #334
-# makes the runtime actually use them. Don't read this bake as "runtime already
-# stopped mounting".
+# NOTE: the runner must NOT bind-mount host skills over
+# /home/agent/.claude/skills. The baked image is the skill/soul truth source; a
+# runtime skill mount would shadow it and reintroduce host-state drift. Runtime
+# mounts are limited to the worked-on worktree and live auth material.
 #
 # FROM the existing sc-pipeline base (claude + codex CLIs + node + python + bash +
 # git + curl + jq already baked); this layer ADDS:
@@ -60,15 +57,13 @@ USER root
 #            is NOT portable (it is a macOS ELF), so we install the Linux ELF via
 #            the official installer (issue #333 spike: aarch64 Linux agy installs
 #            + runs in-container).
-# agy AUTH is NOT baked: it is a live OAuth secret. The REQUIRED runtime wiring
-# (to be added with the cmr/reviewer worker step, #335/#336 — the runner's
-# `box()` does NOT mount it yet, only codex auth today) is: mount the host token
-# file (host `~/.sc-agy-oauth-token`) to the container path
-#   /home/agent/.gemini/antigravity-cli/antigravity-oauth-token
-# (same runtime-mount pattern as codex/claude auth; refresh token auto-renews).
-# This image + that mount were spike-verified end-to-end (issue #333: agy leg
-# caught the injected bug with a file-mounted token). Until the runner mounts it,
-# the agy leg has no auth and cmr degrades to codex-only.
+# agy AUTH is NOT baked: it is live OAuth material. The cmr sandbox copies the
+# host token into a per-run writable dir and mounts it at
+#   /home/agent/.gemini/antigravity-cli/
+# so the in-container agy leg can read
+# `antigravity-oauth-token` and refresh/write runtime state without touching the
+# host file directly. When the token is absent, that leg degrades; the rest of the
+# cmr still runs.
 # codex AUTH = writable CODEX_HOME: the orchestrator copies ~/.codex into a
 # per-issue writable dir and bind-mounts it to /home/agent/.codex — NOT a ro
 # mount, or codex's first run rc=1 on an unwritable auth dir (spike constraint #2;

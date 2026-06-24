@@ -1,7 +1,7 @@
 /**
  * #337 — the收口 slice: prove the runner is a PURE SCHEDULER (ADR 0026).
  *
- * After #331–#336 every productive wiki step (coder/reviewer/fix/ship) is a
+ * After #331–#336 every productive wiki step (coder/ship, plus family cmr/ship) is a
  * WORKER dispatched through the single `dispatchWorker` seam, and the runner
  * only does gate / route / 排序 / ledger / 续跑. This slice LOCKS THAT IN with
  * three assertions the dependent slices left implicit:
@@ -14,17 +14,14 @@
  *       legacy methods all THROW still runs end-to-end (so the only path that
  *       produced work was `dispatchWorker`).
  *
- *   (B) fix worker — the S5 fix step is a WORKER the runner dispatches (it does
- *       NOT inline the fix). Its spec invokes `/tdd` (which routes through
- *       `/diagnosing-bugs` for a hard bug — the prompt + CLAUDE.md routing), and
- *       a NORMAL fix round is `session:"fresh"` (keeps git-truthing + maxIter),
- *       NOT the crash/escalate `resumeSession` path (ADR 0026 invariant).
+ *   (B) coder worker — the S2 whole-slice worker owns build + per-slice
+ *       review/fix convergence. The runner does not dispatch S3/S5/S6 fix or
+ *       reviewer loops.
  *
- *   (C) review-decomposition (#334 deferred P2) — the per-slice reviewer worker
- *       runs ONLY `/review`; the cross-family integrated cmr is the SEPARATE
- *       `ak-cross-m-review` worker. The baked reviewer soul + the repo-root
- *       CLAUDE.md `## Skill routing` must NOT say the per-slice reviewer runs
- *       "two passes, both" (the stale human two-pass-per-slice wording).
+ *   (C) review-decomposition (#334 deferred P2) — per-slice review lives inside
+ *       the coder worker; the compatibility reviewer soul is read-only and never
+ *       runs the integrated `ak-cross-m-review` worker. The full cross-model cmr
+ *       is a separate family-layer worker.
  */
 
 import { dirname, join } from "node:path";
@@ -213,28 +210,28 @@ describe("#337 the build step is one worker the runner dispatches, then ship", (
 
 // ─── (C) review-decomposition wording aligned (#334 deferred P2) ─────────────
 
-describe("#337 review-decomposition wording: per-slice /review, integrated = ak-cross-m-review", () => {
+describe("#337 review-decomposition wording: coder owns per-slice review, integrated = ak-cross-m-review", () => {
   const reviewerSoul = readFileSync(join(soulsDir, "reviewer.md"), "utf8");
   const claudeMd = readFileSync(join(repoRoot, "CLAUDE.md"), "utf8");
-  // The reviewer-bullet of the repo-root CLAUDE.md ## Skill routing — the line
-  // that previously said the per-slice reviewer runs "two passes, both".
+  // The repo-root CLAUDE.md ## Skill routing previously implied a separate
+  // per-slice reviewer path; current flow keeps that loop inside the coder.
   const skillRouting = claudeMd.slice(claudeMd.indexOf("## Skill routing"));
 
-  it("the reviewer soul does NOT say the per-slice reviewer runs two passes both", () => {
-    // The stale human two-pass-per-slice wording: per-slice runs ONLY /review;
-    // ak-cross-m-review is the SEPARATE integrated (cross-family) worker.
+  it("the reviewer soul is compatibility-only, not the normal per-slice loop owner", () => {
+    expect(reviewerSoul).toMatch(/compatibility/i);
+    expect(reviewerSoul).toMatch(/per-slice review lives inside the coder worker/i);
     expect(reviewerSoul).not.toMatch(/two review passes, both run/i);
     expect(reviewerSoul).not.toMatch(/two passes, both/i);
   });
 
-  it("the reviewer soul routes the per-slice reviewer to /review", () => {
+  it("the reviewer soul routes the compatibility reviewer to a single-vendor review", () => {
     expect(reviewerSoul).toMatch(/\/review/);
+    expect(reviewerSoul).toMatch(/baked review skill|fixed review contract/i);
   });
 
-  it("the reviewer soul names ak-cross-m-review as the INTEGRATED / cross-family review, not a per-slice second pass", () => {
-    // It may still mention ak-cross-m-review, but as the integrated/cross-family
-    // gate (a separate worker) — NOT as a second per-slice pass run by this
-    // reviewer worker.
+  it("the reviewer soul names ak-cross-m-review only as the family-layer review", () => {
+    // It may still mention ak-cross-m-review, but only as the integrated/
+    // cross-family gate — NOT as a second per-slice pass.
     expect(reviewerSoul).toMatch(/integrated|cross-family|跨片|family/i);
   });
 
@@ -242,9 +239,10 @@ describe("#337 review-decomposition wording: per-slice /review, integrated = ak-
     expect(skillRouting).not.toMatch(/two passes, both/i);
   });
 
-  it("the CLAUDE.md ## Skill routing per-slice reviewer routes to /review (integrated cmr is separate)", () => {
+  it("the CLAUDE.md ## Skill routing keeps per-slice review inside coder and integrated cmr separate", () => {
     expect(skillRouting).toMatch(/\/review/);
-    // The integrated cmr is named as the separate cross-family gate.
+    expect(skillRouting).toMatch(/whole-slice coder worker's OWN/i);
+    expect(skillRouting).toMatch(/no separate reviewer worker/i);
     expect(skillRouting).toMatch(/ak-cross-m-review/);
   });
 });

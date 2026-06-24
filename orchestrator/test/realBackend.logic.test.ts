@@ -160,8 +160,8 @@ describe("realBackend gh parsing", () => {
   it("buildIssueSnapshot embeds the #244-named native metadata (title/state/labels + sub-issue + blocked_by summaries)", () => {
     // #244 S1: the full snapshot is "body + comments + 最新 Agent Brief 正文 +
     // native metadata". The native metadata S0 reads via gh must travel into the
-    // clean-room snapshot, or the container's LOCAL context is missing a
-    // contract-named element (it does NOT gh-fetch inside the box).
+    // clean-room snapshot so the host-side audit/resume artifact is contract-
+    // complete. Worker execution truth is live issue fetch via in-container gh.
     const json: GhIssueJson = {
       number: 256,
       title: "Slice: real Backend",

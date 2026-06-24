@@ -364,7 +364,11 @@ export interface DispatchContext {
    * git-truthing).
    */
   readonly resumeSessionId?: string;
-  /** The issue snapshot the worker reads as its local context (S1 clean-room). */
+  /**
+   * Host-written issue snapshot for audit/resume compatibility. Current workers
+   * live-fetch issue truth via gh using runner-injected issue/repo env; this is
+   * not the execution source of truth.
+   */
   readonly issueSnapshot?: IssueSnapshot;
   /**
    * FAMILY cmr worker only: the child issue numbers whose merge into the family
@@ -375,15 +379,13 @@ export interface DispatchContext {
   readonly llmResolvedChildren?: ReadonlyArray<number>;
 }
 
-/** A coder/fix worker's output — the existing {@link CoderOutput}. */
+/** A coder worker's output — the existing {@link CoderOutput}. */
 export type CoderResult = CoderOutput;
 
 /**
- * A per-slice reviewer worker's output (S3/S6). MUST carry structured findings
- * (PRD #330 [C]) — the runner's fix-loop (`selectFixNowFindings`), no-progress
- * guard (`normalizeFindingsKey`), and S4 route (`isBlockingFinding`) all consume
- * `findings`. A bare verdict here would break all three. (= existing
- * {@link ReviewerOutput}.) #334 fills the values.
+ * Compatibility reviewer worker output. The active ADR 0026 path keeps per-slice
+ * review/fix convergence inside the coder worker; if an older reviewer seam is
+ * used, it must still return structured findings rather than a bare verdict.
  */
 export type ReviewerResult = ReviewerOutput;
 
@@ -496,9 +498,10 @@ export interface IssueMeta {
 /**
  * The native metadata #244 S1 names as part of the full snapshot ("body +
  * comments + 最新 Agent Brief 正文 + native metadata"). S0 reads these via `gh`;
- * S1 writes them into the clean-room snapshot so the container's LOCAL context
- * (it does NOT gh-fetch inside the box) carries the issue's title/state/labels +
- * the native sub-issue + blocked_by summaries the coder needs — not just the body.
+ * S1 writes them into the clean-room snapshot so the audit/resume artifact carries
+ * the issue's title/state/labels + the native sub-issue + blocked_by summaries —
+ * not just the body. Execution truth is still the live issue the worker reads via
+ * in-container `gh`.
  */
 export interface IssueSnapshotMeta {
   readonly title: string;
@@ -512,12 +515,11 @@ export interface IssueSnapshotMeta {
 }
 
 /**
- * Full issue snapshot read by S1 (body + comments + Agent Brief + native
+ * Full issue snapshot written by S1 (body + comments + Agent Brief + native
  * metadata). `nativeMeta` carries the #244-named native metadata; the REAL
- * Backend always populates it (`buildIssueSnapshot`), so the snapshot fed to
- * the coder is contract-complete. It is OPTIONAL on the type only so the
- * zero-container fake Backends in the step control-flow tests (which never
- * exercise the coder's local context) can omit it.
+ * Backend always populates it (`buildIssueSnapshot`), so the host audit/resume
+ * artifact is contract-complete. Current workers execute from live issue reads,
+ * not this snapshot.
  */
 export interface IssueSnapshot {
   readonly number: number;
@@ -710,7 +712,7 @@ export interface Backend {
   ): Promise<StepOutput | StepResult>;
   /** S0: lightweight metadata for the input gate (host-side `gh`). */
   fetchIssueMeta(issueNumber: number): Promise<IssueMeta>;
-  /** S1: full snapshot (body + comments + Agent Brief) for the coder. */
+  /** S1: full host-side snapshot (body + comments + Agent Brief) for audit/resume. */
   fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot>;
   /** S1: resident slice worktree from `base` (native createWorktree). */
   prepareWorktree(issueNumber: number, base: string): Promise<WorktreeHandle>;
@@ -740,10 +742,11 @@ export interface Backend {
   /**
    * THE unified worker-dispatch seam (ADR 0026 / PRD #330 #331).
    *
-   * Every single-slice worker step (S2/S3/S5/S6 agent steps, S7 ship) is
+   * Every productive single-slice worker step (current path: S2 coder, S7 ship;
+   * legacy compatibility may still map reviewer specs) is
    * dispatched through this ONE method: the runner hands a {@link WorkerSpec}
    * (what to invoke, host, fresh|resume, soul, skill) + a {@link DispatchContext}
-   * (worktree, stateDir, resumeSessionId, prev findings, issue snapshot) and gets
+   * (worktree, stateDir, resumeSessionId, audit snapshot when present) and gets
    * back a discriminated {@link WorkerResult}, then routes by case. This replaces
    * the per-method seam (`runStep` / `resumeSession` / `push`) as the runner's
    * dispatch entry point.
