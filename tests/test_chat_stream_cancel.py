@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
-from web_app import WebGame
+import pytest
+
+import web_app
+from web_app import ChatRequest, WebGame
 
 
 class _Event:
@@ -121,3 +125,78 @@ def test_cancel_at_done_of_completed_turn_keeps_history_and_messages(game):
         {"role": "user", "content": "请说要事"},
         {"role": "minister", "content": "臣以为……"},
     ]
+
+
+class _MultiEvent:
+    def __init__(self, content: str):
+        self.event = "RunContent"
+        self.content = content
+
+
+class _MultiAgent:
+    def run(self, *_args, **_kwargs):
+        yield _MultiEvent("臣")
+        yield _MultiEvent("在。")
+        raise AssertionError("stream should have been closed after client disconnect")
+
+
+class _MultiRegistry:
+    session_ids = {"测试大臣": "minister-test"}
+
+    def get(self, _character):
+        return _MultiAgent()
+
+
+class _MultiSession(_Session):
+    registry = _MultiRegistry()
+
+
+class _DisconnectingRequest:
+    """Fake Starlette Request: is_disconnected() trips to True after `trip_after` calls."""
+
+    def __init__(self, trip_after: int):
+        self._calls = 0
+        self._trip_after = trip_after
+
+    async def is_disconnected(self) -> bool:
+        self._calls += 1
+        return self._calls > self._trip_after
+
+
+def test_api_chat_stream_detects_client_disconnect_and_fails_turn(game, monkeypatch):
+    """The SSE endpoint must poll is_disconnected(), turn a mid-stream disconnect into a
+    cancellation that reaches chat_stream's cancel handler, and so fail the in-flight turn
+    + drop its durable user prompt (C5 wired end-to-end, not just the generator layer)."""
+    db, state, content = game
+    minister_name = "测试大臣"
+    character = SimpleNamespace(name=minister_name, office_type="cabinet")
+    content.characters[minister_name] = character
+
+    web_game = WebGame.__new__(WebGame)
+    web_game.session = _MultiSession(db, state, content, character)
+    web_game.chat_history = {minister_name: []}
+
+    monkeypatch.setattr(web_app, "get_game", lambda: web_game)
+    monkeypatch.setattr(web_app, "_require_active_minister", lambda *_a, **_k: None)
+
+    # trip_after=1: first delta delivered, then the client disconnects.
+    fake_request = _DisconnectingRequest(trip_after=1)
+
+    async def drive():
+        resp = await web_app.api_chat_stream(
+            minister_name, ChatRequest(message="请说要事"), fake_request
+        )
+        chunks = []
+        with pytest.raises(asyncio.CancelledError):
+            async for chunk in resp.body_iterator:
+                chunks.append(chunk)
+        return chunks
+
+    chunks = asyncio.run(drive())
+
+    assert any("臣" in chunk for chunk in chunks)  # first delta was delivered pre-disconnect
+    assert _turn_rows(db) == [
+        {"id": 1, "status": "failed", "user_message_id": 1, "minister_message_id": None}
+    ]
+    assert _chat_rows(db) == []
+    assert web_game.chat_history[minister_name] == []
