@@ -520,6 +520,7 @@ export function ChatModal({
   onFavorite,
   onOpenEdict,
   onClose,
+  onCancel,
 }: {
   minister: Minister;
   portraitPrefix: string;
@@ -541,6 +542,7 @@ export function ChatModal({
   onFavorite: () => void;
   onOpenEdict: () => void;
   onClose: () => void;
+  onCancel?: () => void;
 }) {
   const isCustom = minister.portrait_id?.startsWith("custom:");
   const portraitPrimary = isCustom
@@ -551,6 +553,7 @@ export function ChatModal({
     : undefined;
   const chatLogRef = React.useRef<HTMLDivElement | null>(null);
   const inputRef = React.useRef<HTMLTextAreaElement | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = React.useState(0);
   const displayMessages: ChatDisplayMessage[] = [...chat];
 
   if (pendingUserMessage) {
@@ -563,6 +566,20 @@ export function ChatModal({
   React.useEffect(() => {
     inputRef.current?.focus();
   }, [minister.name]);
+
+  // Elapsed-seconds timer: count up only while truly thinking (waiting for the
+  // minister reply, before streaming starts). Once streaming begins the timer
+  // stops so no background interval fires / re-renders during stream render.
+  React.useEffect(() => {
+    const isThinking = !!busy && !streamingMinisterMessage;
+    if (!isThinking) {
+      setElapsedSeconds(0);
+      return;
+    }
+    setElapsedSeconds(0);
+    const id = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, [busy, streamingMinisterMessage]);
 
   React.useEffect(() => {
     const node = chatLogRef.current;
@@ -643,7 +660,7 @@ export function ChatModal({
           {busy && !streamingMinisterMessage && (
             <div className="chat-message minister thinking">
               <span>{minister.name}</span>
-              <p><Loader2 size={14} />{portraitPrefix === "consort_" ? "思索中..." : "大臣思索中..."}</p>
+              <p><Loader2 size={14} />{portraitPrefix === "consort_" ? "思索中..." : "大臣思索中..."}{elapsedSeconds > 0 ? `（${elapsedSeconds}秒）` : ""}</p>
             </div>
           )}
           {chatNotice && <div className="chat-system-note">{chatNotice}</div>}
@@ -687,6 +704,12 @@ export function ChatModal({
               <RotateCcw size={15} />
               撤回本轮
             </button>
+            {busy === "大臣思索中" && onCancel && (
+              <button className="secondary-action composer-cancel" onClick={onCancel}>
+                <X size={15} />
+                取消
+              </button>
+            )}
             <button className="secondary-action composer-exit" onClick={onClose}>
               <X size={15} />
               退出召对

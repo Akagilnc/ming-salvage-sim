@@ -309,11 +309,13 @@ def commitment_display_text(progress: Dict[str, int], row: sqlite3.Row) -> str:
     keys = row.keys() if hasattr(row, "keys") else []
     ongoing = loads_effect_dict(row["ongoing_effects"] if "ongoing_effects" in keys else {})
     end_turn = int(row["end_turn"] or 0) if "end_turn" in keys else 0
+    origin_turn = int(row["origin_turn"] or 0) if "origin_turn" in keys else 0
     stop_gate = _commitment_stop_gate(row)
     months = int(progress.get("months_elapsed") or 0)
+    duration = max(0, end_turn - origin_turn) if end_turn > 0 else 0
 
     if not _monthly_ongoing_effects_has_work(ongoing) and end_turn > 0:
-        return f"限至第{end_turn}月·到期待裁"
+        return f"限{duration}月·到期待裁"
 
     if stop_gate and _commitment_gate_references_arrears(row):
         parts = [f"已第{months}月"]
@@ -322,16 +324,41 @@ def commitment_display_text(progress: Dict[str, int], row: sqlite3.Row) -> str:
         parts.append("直到补齐")
         return "·".join(parts)
 
-    parts = [f"已履行{months}月"]
-    if "remaining_to_goal" in progress:
-        parts.append(f"距达标尚差{int(progress['remaining_to_goal'])}")
     if stop_gate:
+        parts = [f"已履行{months}月"]
+        if "remaining_to_goal" in progress:
+            parts.append("距达标仍有差距")
         parts.append("直到达标")
-    elif end_turn > 0:
-        parts.append(f"限至第{end_turn}月")
-    else:
-        parts.append("开放承诺")
-    return "·".join(parts)
+        return "·".join(parts)
+
+    if end_turn > 0:
+        remaining = max(0, duration - months)
+        return f"限{duration}月·已履行{months}月·还剩{remaining}月"
+
+    return f"已履行{months}月·开放承诺"
+
+
+def commitment_timed_bar_value(progress: Dict[str, int], row: sqlite3.Row) -> Optional[int]:
+    """Time-based bar for auto-expiring timed commitments (ongoing effects + end_turn + no gate).
+
+    Returns None for bar-driven (stop_gate), arrears, or passive (no ongoing effects) commitments.
+    When non-None, bar = months_elapsed / (end_turn - origin_turn) * 100, clamped 0-100.
+    """
+    keys = row.keys() if hasattr(row, "keys") else []
+    end_turn = int(row["end_turn"] or 0) if "end_turn" in keys else 0
+    if end_turn <= 0:
+        return None
+    if _commitment_stop_gate(row):
+        return None
+    ongoing = loads_effect_dict(row["ongoing_effects"] if "ongoing_effects" in keys else {})
+    if not _monthly_ongoing_effects_has_work(ongoing):
+        return None
+    origin_turn = int(row["origin_turn"] or 0) if "origin_turn" in keys else 0
+    duration = end_turn - origin_turn
+    if duration <= 0:
+        return None
+    months = int(progress.get("months_elapsed") or 0)
+    return max(0, min(100, int(round(months * 100 / duration))))
 
 
 def _commitment_bar_value(progress: Dict[str, int]) -> Optional[int]:
@@ -4397,7 +4424,7 @@ def _displace_duplicate_offices(
         if fully_displaced:
             db.conn.execute(
                 "UPDATE characters SET office=?, office_type=?, status_reason=?, reason_code=?, "
-                "transit_to='' WHERE name=?",
+                "transit_to='', transit_start_turn=0 WHERE name=?",
                 (new_holder_office, new_type, "被顶替", "被顶替", row["name"]),
             )
         else:
@@ -4439,7 +4466,7 @@ def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
         dict(row)
         for row in db.conn.execute(
             "SELECT name, status, office, office_type, status_reason, "
-            "status_changed_turn, reason_code, transit_to FROM characters"
+            "status_changed_turn, reason_code, transit_to, transit_start_turn FROM characters"
         ).fetchall()
     ]
     office_rows = [
@@ -4508,7 +4535,7 @@ def _restore_person_write_state(
             db.conn.execute("DELETE FROM characters WHERE name=?", (name,))
     db.conn.executemany(
         "UPDATE characters SET status=?, office=?, office_type=?, status_reason=?, "
-        "status_changed_turn=?, reason_code=?, transit_to=? WHERE name=?",
+        "status_changed_turn=?, reason_code=?, transit_to=?, transit_start_turn=? WHERE name=?",
         [
             (
                 row["status"],
@@ -4518,6 +4545,7 @@ def _restore_person_write_state(
                 row["status_changed_turn"],
                 row["reason_code"],
                 row["transit_to"],
+                row.get("transit_start_turn", 0),
                 row["name"],
             )
             for row in character_rows
@@ -4794,7 +4822,8 @@ def _apply_person_changes(
     def character_row(name: str):
         return db.conn.execute(
             "SELECT name, status, office, office_type, power_id, status_reason, "
-            "status_changed_turn, reason_code, transit_to FROM characters WHERE name=?",
+            "status_changed_turn, reason_code, transit_to, transit_start_turn "
+            "FROM characters WHERE name=?",
             (name,),
         ).fetchone()
 
@@ -5136,10 +5165,13 @@ def _apply_person_changes(
             if derive_label:
                 wrapped["derived_from"] = derive_label
                 if wrapped.get("rejected"):
+                    # transit_start_turn 与 transit_to 成对回滚：派生任命前置 set_character_status
+                    # （放归/赦还→offstage 属 ousted）现会清 transit_start_turn=0，回滚须对称还原，
+                    # 否则留「transit_to 非空 + start=0」被兜底当 legacy-overdue 误判（CMR r2 防御）。
                     db.conn.execute(
                         "UPDATE characters SET status=?, office=?, office_type=?, "
-                        "status_reason=?, status_changed_turn=?, reason_code=?, transit_to=? "
-                        "WHERE name=?",
+                        "status_reason=?, status_changed_turn=?, reason_code=?, transit_to=?, "
+                        "transit_start_turn=? WHERE name=?",
                         (
                             row["status"],
                             row["office"],
@@ -5148,6 +5180,7 @@ def _apply_person_changes(
                             row["status_changed_turn"],
                             row["reason_code"],
                             row["transit_to"],
+                            row["transit_start_turn"],
                             name,
                         ),
                     )
@@ -5282,7 +5315,7 @@ def _apply_person_changes(
                 # status_changed_turn 记本回合（易主即状态变更）。
                 db.conn.execute(
                     "UPDATE characters SET office=?, office_type=?, status='active', "
-                    "reason_code='', status_reason=?, status_changed_turn=?, transit_to='' WHERE name=?",
+                    "reason_code='', status_reason=?, status_changed_turn=?, transit_to='', transit_start_turn=0 WHERE name=?",
                     (new_title, "身名分", str(item.get("reason") or ""), state.turn, name),
                 )
                 if commit_person_change:
@@ -5356,7 +5389,8 @@ def _apply_person_changes(
                 applied.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
             row = db.conn.execute(
-                "SELECT status, location FROM characters WHERE name=?", (name,)
+                "SELECT status, location, transit_to, transit_start_turn "
+                "FROM characters WHERE name=?", (name,)
             ).fetchone()
             if row is None:
                 applied.append(rejected(item, "非既有人物", "hallucinated_id"))
@@ -5382,9 +5416,24 @@ def _apply_person_changes(
                     break
             else:
                 location = new_location or str(row["location"] or "")
+                # transit_start_turn 记启程回合，供 force_transit_arrivals 计在途时长。
+                # re-emit 同一在途目的地时保留原启程回合，否则逐月刷新会使
+                # `turn - start >= 2` 永不成立、兜底失效、永久在途（CMR P2 / #346）。
+                # 保留须含 prev_start==0 的旧数据哨兵：0 表「启程未知，按超期处理」，
+                # 同目的地 re-emit 不得把它刷成 state.turn，否则旧数据反被「洗白」成
+                # 新在途、逃过 force_transit_arrivals 的 0 兜底（CMR 跨片复审）。
+                if transit_to:
+                    prev_transit_to = str(row["transit_to"] or "")
+                    prev_start = int(row["transit_start_turn"] or 0)
+                    if transit_to == prev_transit_to:
+                        new_transit_start_turn = prev_start
+                    else:
+                        new_transit_start_turn = state.turn
+                else:
+                    new_transit_start_turn = 0
                 db.conn.execute(
-                    "UPDATE characters SET location=?, transit_to=? WHERE name=?",
-                    (location, transit_to, name),
+                    "UPDATE characters SET location=?, transit_to=?, transit_start_turn=? WHERE name=?",
+                    (location, transit_to, new_transit_start_turn, name),
                 )
                 if commit_person_change:
                     db.conn.commit()

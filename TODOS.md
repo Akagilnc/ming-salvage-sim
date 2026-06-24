@@ -23,6 +23,12 @@
 
 ## 🔴 BUG / 待修（影响游戏正确性）
 
+### B13. 编排器测试 epicOrchestratorWorkflow 预存失败（P0，非本分支引入）
+- **现象**：`web/src/epicOrchestratorWorkflow.test.ts` 「merges reviewed commits from different slice worktrees through one dedicated family worktree」断言 `mergeWorktrees[0].startsWith(repoPath) === false` 失败，实得 `true`（merge worktree 路径在 repo 目录内，不是外部 tmpdir）。
+- **定位**：最后改动 commit 5771faa (2026-06-20)，family/362-base 分支未触碰此文件（pre-existing）。
+- **待查**：`web/orchestrator/epicOrchestrator.workflow.js` family worktree 路径生成逻辑是否在 6/20 后被改坏，或测试假设与实现已漂移。
+- **优先级**：P0（阻编排器正确性，CI 预绿假象）。
+
 ### B12. 密令状态在游戏画面露英文 enum（active/pending_review/done/failed） → [issue #48](https://github.com/Akagilnc/ming-salvage-sim/issues/48)
 - **现象**：「密旨动向」等展示里密令 status 直接渲染数据库英文 enum「（active）」，明末中文游戏里露英文，出戏。
 - **修法**：在展示层把 status enum 映射成中文（active→在办、pending_review→待核议、done→已结、failed→未成 之类），找密令 status 渲染处（web 前端密令面板 / 邸报或 notes 生成器）统一过一层 label 映射。

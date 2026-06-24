@@ -346,6 +346,7 @@ class ChatResult:
 CODEX_DEFAULT_MODEL = "gpt-5.5"
 CLAUDE_DEFAULT_MODEL = "claude-opus-4-8"
 CLI_DEFAULT_TIMEOUT_SECONDS = 300.0  # CLI 子进程默认超时（秒），与 API 的 timeout_seconds 区分
+MINISTER_CHAT_CLI_TIMEOUT_SECONDS = 90.0  # 实时召对大臣回话专用短超时（#353），与月末结算 300s 解耦
 VALID_CHANNELS = frozenset({"api", "cli"})  # 合法执行通道集合，新增通道只改这里
 API_DEFAULT_MAX_TOKENS = 8000  # API 通道默认 max_tokens 单一真源（#58）
 API_DEFAULT_TIMEOUT_SECONDS = 180.0  # API 请求默认超时（秒）单一真源（#58）

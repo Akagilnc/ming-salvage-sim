@@ -808,6 +808,53 @@ def atomic_and_reload(
         raise
 
 
+def force_transit_arrivals(
+    db: GameDB,
+    state: GameState,
+    content=None,
+    *,
+    commit: bool = True,
+) -> List[Dict[str, object]]:
+    """确定性在途兜底：在途 ≥2 回合（或旧数据 transit_start_turn=0）→ 强制到任。
+
+    ADR 0009 决策 5 明确靠叙事自然到任（行止+location）；本函数为兜底——simulator 未能
+    在 2 个月内产到任叙事时，程序强制 transit_to→location、清 transit_to。
+    旧数据 transit_start_turn=0 视为「启程时间未知，按超期处理」。
+    返回被强制到任的人物列表（[{"name": ..., "location": ...}, ...]）。
+
+    commit=False 时不提交——由外层事务（如 pre_settle 的 atomic_and_reload）统一提交，
+    确保不提前截断外层事务、破坏回滚原子性（P1 issue: inner commit() inside atomic block）。
+    """
+    current_turn = state.turn
+    overdue = db.conn.execute(
+        "SELECT name, transit_to FROM characters "
+        "WHERE COALESCE(transit_to, '') != '' "
+        "AND (transit_start_turn = 0 OR ? - transit_start_turn >= 2)",
+        (current_turn,),
+    ).fetchall()
+    if not overdue:
+        return []
+    forced: List[Dict[str, object]] = []
+    for row in overdue:
+        name = str(row["name"])
+        dest = str(row["transit_to"])
+        db.conn.execute(
+            "UPDATE characters SET location=?, transit_to='', transit_start_turn=0 WHERE name=?",
+            (dest, name),
+        )
+        if content is not None and name in content.characters:
+            ch = content.characters[name]
+            ch.location = dest
+            ch.transit_to = ""
+            # 镜像 DB 清掉的行止时钟，保持内存/DB 一致（同回合内存读不到陈旧 start turn）
+            if hasattr(ch, "transit_start_turn"):
+                ch.transit_start_turn = 0
+        forced.append({"name": name, "location": dest})
+    if commit:
+        db.conn.commit()
+    return forced
+
+
 def pre_settle(
     state: GameState, db: GameDB, *, on_stage=None, content=None, registry=None,
 ) -> List[Dict[str, object]]:
@@ -852,6 +899,14 @@ def pre_settle(
             on_stage("固定月度财政入账")
         # 落账副作用；明细不再进 simulator payload（欠饷哗变走前置事件/issue）
         apply_fixed_period_flows(db, state)
+        # 在途兜底：在途 ≥2 回合（或旧数据 transit_start_turn=0）的人物强制到任，
+        # 确保 LLM 漏产到任叙事时不永久在途（ADR 0009 决策5 = 叙事优先；此为代码兜底）。
+        # 必须先于 apply_event_terminal_states / auto_trigger_seed_issues：二者按 character.X.location
+        # 等门控判事件终态/硬立项，超期在途赴门控地的人物若未先到任，门控读旧 location 不达标 →
+        # person-core 事件被误判 avoided 永久作废、兜底形同虚设（CMR r2 P2）。
+        forced_arrivals = force_transit_arrivals(db, state, content, commit=False)
+        if forced_arrivals:
+            tlog(f"[transit-aging] 强制到任 {len(forced_arrivals)} 人：{[f['name'] for f in forced_arrivals]}")
         terminalized = apply_event_terminal_states(state, db, commit=False)
         if terminalized:
             tlog(f"[event_terminal] 本回合事件终态落账 {len(terminalized)} 条：{[(t['id'], t['terminal_state']) for t in terminalized]}")
