@@ -1,6 +1,6 @@
 # scene-v2 弱项人物卡替换稿
 
-> 用途：替换 `docs/portrait-prompts-scene-v2.md` 中同名人物卡。  
+> 用途：替换 `docs/portrait-prompts-scene-v2.md` 中同名人物卡。
 > 原因：当前连接器不能对大文件做安全局部 patch；不要直接把本文件作为生成真源长期并存，合并前应把这些卡迁回 `docs/portrait-prompts-scene-v2.md`。
 
 ## 内阁与中央文官
