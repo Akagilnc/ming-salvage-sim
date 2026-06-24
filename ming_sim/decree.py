@@ -808,6 +808,44 @@ def atomic_and_reload(
         raise
 
 
+def force_transit_arrivals(
+    db: GameDB,
+    state: GameState,
+    content=None,
+) -> List[Dict[str, object]]:
+    """确定性在途兜底：在途 ≥2 回合（或旧数据 transit_start_turn=0）→ 强制到任。
+
+    ADR 0009 决策 5 明确靠叙事自然到任（行止+location）；本函数为兜底——simulator 未能
+    在 2 个月内产到任叙事时，程序强制 transit_to→location、清 transit_to。
+    旧数据 transit_start_turn=0 视为「启程时间未知，按超期处理」。
+    返回被强制到任的人物列表（[{"name": ..., "location": ...}, ...]）。
+    """
+    current_turn = state.turn
+    overdue = db.conn.execute(
+        "SELECT name, transit_to FROM characters "
+        "WHERE COALESCE(transit_to, '') != '' "
+        "AND (transit_start_turn = 0 OR ? - transit_start_turn >= 2)",
+        (current_turn,),
+    ).fetchall()
+    if not overdue:
+        return []
+    forced: List[Dict[str, object]] = []
+    for row in overdue:
+        name = str(row["name"])
+        dest = str(row["transit_to"])
+        db.conn.execute(
+            "UPDATE characters SET location=?, transit_to='', transit_start_turn=0 WHERE name=?",
+            (dest, name),
+        )
+        if content is not None and name in content.characters:
+            ch = content.characters[name]
+            ch.location = dest
+            ch.transit_to = ""
+        forced.append({"name": name, "location": dest})
+    db.conn.commit()
+    return forced
+
+
 def pre_settle(
     state: GameState, db: GameDB, *, on_stage=None, content=None, registry=None,
 ) -> List[Dict[str, object]]:
@@ -859,6 +897,11 @@ def pre_settle(
         auto_triggered = auto_trigger_seed_issues(state, db)
         if auto_triggered:
             tlog(f"[AUTO-TRIGGER] 本回合程序硬立项 {len(auto_triggered)} 条：{[t.get('title') for t in auto_triggered]}")
+        # 在途兜底：在途 ≥2 回合（或旧数据 transit_start_turn=0）的人物强制到任，
+        # 确保 LLM 漏产到任叙事时不永久在途（ADR 0009 决策5 = 叙事优先；此为代码兜底）。
+        forced_arrivals = force_transit_arrivals(db, state, content)
+        if forced_arrivals:
+            tlog(f"[transit-aging] 强制到任 {len(forced_arrivals)} 人：{[f['name'] for f in forced_arrivals]}")
         # 密令期限：到期 active 自动转 pending_review，保证本月核议一锤定音。
         # 推演前的确定性写，挪入前半段事务（原在 resolve_directives，ADR 0008 S4）。
         due_orders = db.auto_submit_due_secret_orders(state)

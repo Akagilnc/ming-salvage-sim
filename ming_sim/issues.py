@@ -4397,7 +4397,7 @@ def _displace_duplicate_offices(
         if fully_displaced:
             db.conn.execute(
                 "UPDATE characters SET office=?, office_type=?, status_reason=?, reason_code=?, "
-                "transit_to='' WHERE name=?",
+                "transit_to='', transit_start_turn=0 WHERE name=?",
                 (new_holder_office, new_type, "被顶替", "被顶替", row["name"]),
             )
         else:
@@ -5282,7 +5282,7 @@ def _apply_person_changes(
                 # status_changed_turn 记本回合（易主即状态变更）。
                 db.conn.execute(
                     "UPDATE characters SET office=?, office_type=?, status='active', "
-                    "reason_code='', status_reason=?, status_changed_turn=?, transit_to='' WHERE name=?",
+                    "reason_code='', status_reason=?, status_changed_turn=?, transit_to='', transit_start_turn=0 WHERE name=?",
                     (new_title, "身名分", str(item.get("reason") or ""), state.turn, name),
                 )
                 if commit_person_change:
@@ -5382,9 +5382,10 @@ def _apply_person_changes(
                     break
             else:
                 location = new_location or str(row["location"] or "")
+                new_transit_start_turn = state.turn if transit_to else 0
                 db.conn.execute(
-                    "UPDATE characters SET location=?, transit_to=? WHERE name=?",
-                    (location, transit_to, name),
+                    "UPDATE characters SET location=?, transit_to=?, transit_start_turn=? WHERE name=?",
+                    (location, transit_to, new_transit_start_turn, name),
                 )
                 if commit_person_change:
                     db.conn.commit()
