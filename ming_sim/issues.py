@@ -5419,10 +5419,13 @@ def _apply_person_changes(
                 # transit_start_turn 记启程回合，供 force_transit_arrivals 计在途时长。
                 # re-emit 同一在途目的地时保留原启程回合，否则逐月刷新会使
                 # `turn - start >= 2` 永不成立、兜底失效、永久在途（CMR P2 / #346）。
+                # 保留须含 prev_start==0 的旧数据哨兵：0 表「启程未知，按超期处理」，
+                # 同目的地 re-emit 不得把它刷成 state.turn，否则旧数据反被「洗白」成
+                # 新在途、逃过 force_transit_arrivals 的 0 兜底（CMR 跨片复审）。
                 if transit_to:
                     prev_transit_to = str(row["transit_to"] or "")
                     prev_start = int(row["transit_start_turn"] or 0)
-                    if transit_to == prev_transit_to and prev_start > 0:
+                    if transit_to == prev_transit_to:
                         new_transit_start_turn = prev_start
                     else:
                         new_transit_start_turn = state.turn

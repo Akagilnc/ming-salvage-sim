@@ -257,6 +257,37 @@ def test_行止_change_dest_resets_start_turn(game):
     )
 
 
+def test_行止_reemit_same_dest_preserves_legacy_zero_start(game):
+    """旧数据 transit_start_turn=0（启程未知哨兵）+ 同目的地 re-emit → 哨兵须保留（CMR 跨片复审）。
+
+    若同目的地 re-emit 把 0 刷成 state.turn，旧在途数据被「洗白」成新在途，
+    既逃过 force_transit_arrivals 的 `start==0` 兜底、当回合 `turn-start>=2` 也不成立，
+    强制到任被延迟最多两回合，违背「transit_start_turn==0 = 按超期处理」不变式。
+    """
+    db, state, content = game
+    name = active_ming_character(db, content)
+    # 旧数据：transit_to 有值但 transit_start_turn=0
+    _set_transit(db, name, DEST, transit_start_turn=0)
+
+    state.turn = 7
+    issues.apply_score_extraction(
+        db, state,
+        {"人物变更": [{"name": name, "动作": "行止", "transit_to": DEST}]},
+        content=content,
+    )
+    start = db.conn.execute(
+        "SELECT transit_start_turn FROM characters WHERE name=?", (name,)
+    ).fetchone()["transit_start_turn"]
+    assert start == 0, (
+        f"同目的地 re-emit 不得刷新旧数据 0 哨兵，应仍为 0，实测 {start}"
+    )
+    # 哨兵保留 → 兜底仍按超期强制到任
+    forced = force_transit_arrivals(db, state, content)
+    assert name in [f["name"] for f in forced], (
+        "transit_start_turn==0 旧数据 re-emit 后仍应被 force_transit_arrivals 强制到任"
+    )
+
+
 # ── 6c) 兜底到任须先于事件终态评估（CMR P2 r2 / 排序）─────────────────────
 
 
