@@ -195,6 +195,85 @@ describe("召对陈旧守卫 — 广范围（loadMinisterChat 历史加载）", 
   });
 });
 
+/**
+ * The FOURTH async→minister-panel write path the #325 sweep missed: sendChat's
+ * catch block (error / AbortError-cancel). Mirrors main.tsx — on cancel/error it
+ * restores input + writes a panel notice; without the staleness guard those land
+ * on whichever minister is now selected (cross-minister bleed when the player
+ * switches mid-flight then cancels). Guard = early-return when stale; finally still
+ * clears busy/abortRef globally (modelled here by `cleared`).
+ */
+function CatchGuardFixture({ getResponse }: { getResponse: () => Promise<string> }) {
+  const [selected, setSelected] = React.useState("甲");
+  const selectedRef = React.useRef("甲");
+  React.useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
+  const [input, setInput] = React.useState("");
+  const [notice, setNotice] = React.useState("");
+  const [cleared, setCleared] = React.useState(0);
+  const send = async (targetMinister: string, message: string) => {
+    try {
+      await getResponse(); // rejects (cancel/error)
+    } catch {
+      if (selectedRef.current !== targetMinister) return; // staleness guard
+      setInput(message); // restore input for retry
+      setNotice(`${targetMinister}：已取消`);
+    } finally {
+      setCleared((n) => n + 1); // global cleanup always runs (busy/abortRef)
+    }
+  };
+  return (
+    <div>
+      <div data-testid="input">{input}</div>
+      <div data-testid="notice">{notice}</div>
+      <div data-testid="cleared">{cleared}</div>
+      <button data-testid="send" onClick={() => send(selected, "甲的问话")}>
+        发送
+      </button>
+      <button data-testid="switch" onClick={() => setSelected("乙")}>
+        切换至乙
+      </button>
+    </div>
+  );
+}
+
+describe("召对陈旧守卫 — 取消/错误分支（sendChat catch）", () => {
+  it("切到乙后甲被取消，输入与取消提示不写入乙面板，但全局清理照常", async () => {
+    let reject!: (e: unknown) => void;
+    const pending = new Promise<string>((_r, rej) => (reject = rej));
+    const host = render(<CatchGuardFixture getResponse={() => pending} />);
+    act(() => (host.querySelector("[data-testid=send]") as HTMLButtonElement).click());
+    act(() => (host.querySelector("[data-testid=switch]") as HTMLButtonElement).click());
+    await act(async () => {
+      const abortErr = new Error("aborted");
+      abortErr.name = "AbortError";
+      reject(abortErr);
+      await pending.catch(() => {});
+    });
+    expect(host.querySelector("[data-testid=input]")?.textContent).toBe("");
+    expect(host.querySelector("[data-testid=notice]")?.textContent).toBe("");
+    // finally still ran (busy/abortRef cleared) even though the panel writes were dropped
+    expect(host.querySelector("[data-testid=cleared]")?.textContent).toBe("1");
+  });
+
+  it("未切人时取消正常恢复输入与提示", async () => {
+    let reject!: (e: unknown) => void;
+    const pending = new Promise<string>((_r, rej) => (reject = rej));
+    const host = render(<CatchGuardFixture getResponse={() => pending} />);
+    act(() => (host.querySelector("[data-testid=send]") as HTMLButtonElement).click());
+    await act(async () => {
+      const abortErr = new Error("aborted");
+      abortErr.name = "AbortError";
+      reject(abortErr);
+      await pending.catch(() => {});
+    });
+    expect(host.querySelector("[data-testid=input]")?.textContent).toBe("甲的问话");
+    expect(host.querySelector("[data-testid=notice]")?.textContent).toBe("甲：已取消");
+    expect(host.querySelector("[data-testid=cleared]")?.textContent).toBe("1");
+  });
+});
+
 describe("召对陈旧守卫 — 广范围（undoLastChat 全局生效、面板守卫）", () => {
   it("切人后撤回的全局效果照样生效，但旧面板写被守卫丢弃", async () => {
     let resolve!: (v: string) => void;

@@ -416,6 +416,12 @@ function App() {
         setChatNotice(`${targetMinisterName}已退下。请从左侧召见下一位大臣。`);
       }
     } catch (err) {
+      // Staleness guard (mirrors the success path at line ~386 + the #325 broad-scope
+      // load/undo guards): if the player switched ministers while this request was
+      // in flight, drop ALL minister-specific UI writes (input restore / cancel /
+      // error notice) to avoid cross-minister bleed onto the now-active panel.
+      // The finally block below still clears busy + chatAbortRef globally.
+      if (selectedMinisterRef.current !== targetMinisterName) return;
       if (err instanceof Error && err.name === "AbortError") {
         // Player cancelled — restore input so they can retry immediately
         if (fromComposer) setInput(message);
