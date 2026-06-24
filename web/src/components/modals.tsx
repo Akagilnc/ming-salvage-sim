@@ -567,16 +567,19 @@ export function ChatModal({
     inputRef.current?.focus();
   }, [minister.name]);
 
-  // Elapsed-seconds timer: count up while waiting for minister reply
+  // Elapsed-seconds timer: count up only while truly thinking (waiting for the
+  // minister reply, before streaming starts). Once streaming begins the timer
+  // stops so no background interval fires / re-renders during stream render.
   React.useEffect(() => {
-    if (!busy) {
+    const isThinking = !!busy && !streamingMinisterMessage;
+    if (!isThinking) {
       setElapsedSeconds(0);
       return;
     }
     setElapsedSeconds(0);
     const id = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
     return () => clearInterval(id);
-  }, [busy]);
+  }, [busy, streamingMinisterMessage]);
 
   React.useEffect(() => {
     const node = chatLogRef.current;
