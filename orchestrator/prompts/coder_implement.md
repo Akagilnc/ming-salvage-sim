@@ -20,20 +20,21 @@ versioned skills + the builtin `/review`):
    refactor — your FIRST write is a failing test, then the smallest change to
    pass, then refactor.
 2. Run the project's typecheck + the full test suite (both clean).
-3. Do the self-check 二连 (same-pattern bug check + fix-introduced-bug check).
+3. **First review — invoke the builtin `/review`** over the slice diff yourself.
+   Fix its findings (route a non-trivial fix through `/diagnosing-bugs`), do the
+   self-check 二连 (same-pattern + fix-introduced-bug).
 4. **Baseline commit** (`sandcastle:` prefix) — do NOT finish here.
-5. **Per-slice review = a SINGLE Opus leg running the builtin `/review`** (the
-   degraded per-slice review — orchestrator CLAUDE.md `## Skill routing`: per-slice
-   is ONE single-vendor `/review` pass; the full cross-model `ak-cross-m-review`
-   (codex+agy+claude) is the FAMILY layer's job, **never per-slice**):
-   - Dispatch **ONE fresh reviewer leg** — a clean-context **Opus** subagent (the
-     `Agent` tool, `model: opus`) whose sole job is to run `/review` over THIS
-     slice's diff and return its findings. **Do NOT invoke `ak-cross-m-review`;
-     do NOT spawn codex / agy legs here.**
-   - Blocking findings → fix them (route a non-trivial fix through `/diagnosing-bugs`),
+5. **Second review — the per-slice cmr, DEGRADED to a single Opus subagent** (NOT
+   the full cross-model cmr: the full codex+agy+claude `ak-cross-m-review` is the
+   FAMILY layer's 承重闸, **never run per-slice**). Loop it:
+   - Dispatch a fresh **Opus** subagent (the `Agent` tool, `model: opus`) to
+     **评审 / review THIS slice's diff** and return findings. **Do NOT invoke
+     `ak-cross-m-review`; do NOT spawn codex / agy legs here** — the per-slice
+     second review is exactly ONE Opus subagent.
+   - Blocking findings → fix (route a non-trivial fix through `/diagnosing-bugs`),
      do the self-check 二连, commit (`sandcastle:`), then dispatch a **FRESH** Opus
-     `/review` leg over the CURRENT full diff (a full re-review, not a narrow recheck).
-   - Loop until a fresh Opus `/review` leg returns **no blocking findings** (converged).
+     subagent to re-评审 the CURRENT full diff.
+   - Loop until a fresh Opus subagent returns **no blocking findings** (converged).
 6. Report the FINAL reviewed commit (the converged one), NOT the baseline.
 
 Commit on the current branch with the **`sandcastle:`** prefix (one commit per

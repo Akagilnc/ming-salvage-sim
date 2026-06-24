@@ -139,19 +139,21 @@ describe("#334 thin prompts invoke the skill, not the methodology", () => {
     expect(p).not.toMatch(/Make them pass with the smallest correct change \(GREEN\)/);
   });
 
-  it("coder_implement.md: per-slice review = a SINGLE Opus /review leg, NOT the full cross-model cmr (the loop lives in the worker; cmr is family-only)", () => {
-    // ADR 0026 + per-slice degradation: the WHOLE-SLICE build worker runs /tdd,
-    // then a per-slice review that is ONE single-vendor Opus `/review` leg (Sonnet
-    // writes, Opus single-leg reviews), INSIDE this one session. The full
-    // cross-model `ak-cross-m-review` (codex+agy+claude) is the FAMILY layer's job,
-    // NEVER run per-slice. The thin prompt TRIGGERS /review; it does not hand-copy
-    // the review method.
+  it("coder_implement.md: per-slice review = TWO steps (builtin /review THEN a single Opus subagent), NOT the full cross-model cmr (cmr is family-only)", () => {
+    // Per-slice degradation (Sonnet writes; Opus single-leg reviews): the
+    // WHOLE-SLICE build worker runs /tdd, then reviews in TWO steps — FIRST the
+    // builtin `/review`, THEN a single Opus subagent 评审 — INSIDE this one session.
+    // The full cross-model `ak-cross-m-review` (codex+agy+claude) is the FAMILY
+    // layer's job, NEVER run per-slice. The thin prompt TRIGGERS the reviews; it
+    // does not hand-copy the review method.
     const p = read("coder_implement.md");
+    // Step 1: the builtin /review.
     expect(p).toMatch(/\/review/);
-    // The per-slice review leg is Opus (single-vendor).
+    // Step 2: a single Opus subagent.
     expect(p).toMatch(/opus/i);
-    // The prompt makes clear the full cmr is FAMILY-only, not per-slice.
-    expect(p).toMatch(/never per-slice|FAMILY layer|do NOT.*codex|do NOT.*ak-cross-m-review/i);
+    expect(p).toMatch(/subagent|Agent/i);
+    // The full cmr is FAMILY-only, not per-slice (no codex/agy/ak-cross-m-review here).
+    expect(p).toMatch(/never (run )?per-slice|FAMILY layer|do NOT.*codex|do NOT invoke.*ak-cross-m-review/i);
   });
 
   it("every existing prompt still defines its structured output contract (tag + signal)", () => {
