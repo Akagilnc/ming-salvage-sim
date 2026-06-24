@@ -812,6 +812,8 @@ def force_transit_arrivals(
     db: GameDB,
     state: GameState,
     content=None,
+    *,
+    commit: bool = True,
 ) -> List[Dict[str, object]]:
     """确定性在途兜底：在途 ≥2 回合（或旧数据 transit_start_turn=0）→ 强制到任。
 
@@ -819,6 +821,9 @@ def force_transit_arrivals(
     在 2 个月内产到任叙事时，程序强制 transit_to→location、清 transit_to。
     旧数据 transit_start_turn=0 视为「启程时间未知，按超期处理」。
     返回被强制到任的人物列表（[{"name": ..., "location": ...}, ...]）。
+
+    commit=False 时不提交——由外层事务（如 pre_settle 的 atomic_and_reload）统一提交，
+    确保不提前截断外层事务、破坏回滚原子性（P1 issue: inner commit() inside atomic block）。
     """
     current_turn = state.turn
     overdue = db.conn.execute(
@@ -842,7 +847,8 @@ def force_transit_arrivals(
             ch.location = dest
             ch.transit_to = ""
         forced.append({"name": name, "location": dest})
-    db.conn.commit()
+    if commit:
+        db.conn.commit()
     return forced
 
 
@@ -899,7 +905,7 @@ def pre_settle(
             tlog(f"[AUTO-TRIGGER] 本回合程序硬立项 {len(auto_triggered)} 条：{[t.get('title') for t in auto_triggered]}")
         # 在途兜底：在途 ≥2 回合（或旧数据 transit_start_turn=0）的人物强制到任，
         # 确保 LLM 漏产到任叙事时不永久在途（ADR 0009 决策5 = 叙事优先；此为代码兜底）。
-        forced_arrivals = force_transit_arrivals(db, state, content)
+        forced_arrivals = force_transit_arrivals(db, state, content, commit=False)
         if forced_arrivals:
             tlog(f"[transit-aging] 强制到任 {len(forced_arrivals)} 人：{[f['name'] for f in forced_arrivals]}")
         # 密令期限：到期 active 自动转 pending_review，保证本月核议一锤定音。
