@@ -8,9 +8,8 @@ Tests verify external behaviour through public interfaces only:
 
 from __future__ import annotations
 
+from contextlib import contextmanager, ExitStack
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from ming_sim.models import CLI_DEFAULT_TIMEOUT_SECONDS, MINISTER_CHAT_CLI_TIMEOUT_SECONDS, LLMConfig
 from ming_sim.registry import create_minister_agent
@@ -176,8 +175,6 @@ def test_minister_agent_does_not_mutate_original_llm_config():
 
 
 # ── helper ────────────────────────────────────────────────────────────────────
-
-from contextlib import contextmanager, ExitStack
 
 
 @contextmanager
