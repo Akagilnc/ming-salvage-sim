@@ -6919,9 +6919,11 @@ class GameDB:
         flows 月固定支出与所有收入一律 None。受控枚举见 constants.ECONOMY_PURPOSES。
 
         遗产修正：account 上若有 active 遗产百分比修正符，先按 apply_legacy_pct 放大/缩小 delta
-        再落账（base>=0 ×(1+net/100)，base<0 ×(1-net/100)）。修正折进本笔流水，不另立账行。
+        再落账。修正折进本笔流水，不另立账行。
         category=='局势遗产' 时不再二次修正（避免自乘，且当前已无该类调用）。
-        帝国修正只对收入（delta>0 正向流水）生效；支出（delta<0）按面值落账（issue #341）。
+        帝国修正只对收入（delta>0 正向流水）生效；支出（delta<0）按面值落账（issue #341）——
+        即本路径仅以 delta>0 调 apply_legacy_pct（其 base>=0 ×(1+net/100) 分支）；
+        apply_legacy_pct 自身的 base<0 ×(1-net/100) 分支由 region/army 等其它调用方使用，本路径不走。
         """
         if category != "局势遗产":
             net_pct = int(self.legacy_modifiers(state).get(account, 0) or 0)  # type: ignore[arg-type]
