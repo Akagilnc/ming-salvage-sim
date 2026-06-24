@@ -1256,7 +1256,12 @@ class WebGame:
     ) -> None:
         if not chat_turn_id:
             return
-        self.db.fail_incomplete_chat_turn(chat_turn_id)
+        # Only prune in-memory history when the db actually failed an active pre-reply
+        # turn (and dropped its durable user prompt). A cancel that lands after the
+        # reply completed leaves the turn intact in the db — mirror that guard here so
+        # the completed turn's user message isn't orphaned out of the in-memory history.
+        if not self.db.fail_incomplete_chat_turn(chat_turn_id).get("failed_now"):
+            return
         history = self.chat_history.get(minister_name) or []
         for idx in range(len(history) - 1, -1, -1):
             item = history[idx]
