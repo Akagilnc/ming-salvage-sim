@@ -4397,7 +4397,7 @@ def _displace_duplicate_offices(
         if fully_displaced:
             db.conn.execute(
                 "UPDATE characters SET office=?, office_type=?, status_reason=?, reason_code=?, "
-                "transit_to='' WHERE name=?",
+                "transit_to='', transit_start_turn=0 WHERE name=?",
                 (new_holder_office, new_type, "被顶替", "被顶替", row["name"]),
             )
         else:
@@ -4439,7 +4439,7 @@ def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
         dict(row)
         for row in db.conn.execute(
             "SELECT name, status, office, office_type, status_reason, "
-            "status_changed_turn, reason_code, transit_to FROM characters"
+            "status_changed_turn, reason_code, transit_to, transit_start_turn FROM characters"
         ).fetchall()
     ]
     office_rows = [
@@ -4508,7 +4508,7 @@ def _restore_person_write_state(
             db.conn.execute("DELETE FROM characters WHERE name=?", (name,))
     db.conn.executemany(
         "UPDATE characters SET status=?, office=?, office_type=?, status_reason=?, "
-        "status_changed_turn=?, reason_code=?, transit_to=? WHERE name=?",
+        "status_changed_turn=?, reason_code=?, transit_to=?, transit_start_turn=? WHERE name=?",
         [
             (
                 row["status"],
@@ -4518,6 +4518,7 @@ def _restore_person_write_state(
                 row["status_changed_turn"],
                 row["reason_code"],
                 row["transit_to"],
+                row.get("transit_start_turn", 0),
                 row["name"],
             )
             for row in character_rows
@@ -5282,7 +5283,7 @@ def _apply_person_changes(
                 # status_changed_turn 记本回合（易主即状态变更）。
                 db.conn.execute(
                     "UPDATE characters SET office=?, office_type=?, status='active', "
-                    "reason_code='', status_reason=?, status_changed_turn=?, transit_to='' WHERE name=?",
+                    "reason_code='', status_reason=?, status_changed_turn=?, transit_to='', transit_start_turn=0 WHERE name=?",
                     (new_title, "身名分", str(item.get("reason") or ""), state.turn, name),
                 )
                 if commit_person_change:
@@ -5382,9 +5383,10 @@ def _apply_person_changes(
                     break
             else:
                 location = new_location or str(row["location"] or "")
+                new_transit_start_turn = state.turn if transit_to else 0
                 db.conn.execute(
-                    "UPDATE characters SET location=?, transit_to=? WHERE name=?",
-                    (location, transit_to, name),
+                    "UPDATE characters SET location=?, transit_to=?, transit_start_turn=? WHERE name=?",
+                    (location, transit_to, new_transit_start_turn, name),
                 )
                 if commit_person_change:
                     db.conn.commit()
