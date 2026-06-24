@@ -287,10 +287,8 @@ def commitment_progress_payload(
     gate = _commitment_stop_gate(row)
     remaining = _commitment_remaining_from_gate(gate, state, db) if gate else None
     paid_total = _latest_commitment_paid_total(db, int(row["id"])) + max(0, int(paid_this_month))
-    months_elapsed = db.conn.execute(
-        "SELECT COUNT(*) FROM issue_advances WHERE issue_id=? AND trigger_kind='ongoing'",
-        (int(row["id"]),),
-    ).fetchone()[0]
+    origin_turn = int(row["origin_turn"] or 0) if "origin_turn" in keys else int(state.turn)
+    months_elapsed = max(0, int(state.turn) - origin_turn)
     if include_current_month:
         months_elapsed = int(months_elapsed) + 1
     payload: Dict[str, int] = {
@@ -342,7 +340,7 @@ def commitment_timed_bar_value(progress: Dict[str, int], row: sqlite3.Row) -> Op
     """Time-based bar for auto-expiring timed commitments (ongoing effects + end_turn + no gate).
 
     Returns None for bar-driven (stop_gate), arrears, or passive (no ongoing effects) commitments.
-    When non-None, bar = months_elapsed / (end_turn - origin_turn) * 100, clamped 0-100.
+    When non-None, bar = wall-clock months_elapsed / (end_turn - origin_turn) * 100, clamped 0-100.
     """
     keys = row.keys() if hasattr(row, "keys") else []
     end_turn = int(row["end_turn"] or 0) if "end_turn" in keys else 0
