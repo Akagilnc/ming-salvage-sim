@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import ming_sim.issues as issues
 from ming_sim.issues import _restore_person_write_state, _snapshot_person_write_state
-from ming_sim.decree import force_transit_arrivals
+from ming_sim.decree import force_transit_arrivals, pre_settle
+from ming_sim.models import Event
 from tests.conftest import active_ming_character
 
 DEST = "liaodong"
@@ -254,6 +255,56 @@ def test_行止_change_dest_resets_start_turn(game):
     assert row["transit_start_turn"] == 6, (
         f"改道后启程回合应重置为 6，实测 {row['transit_start_turn']}"
     )
+
+
+# ── 6c) 兜底到任须先于事件终态评估（CMR P2 r2 / 排序）─────────────────────
+
+
+def test_pre_settle_forces_arrival_before_terminal_states(game):
+    """force_transit_arrivals 必须在 apply_event_terminal_states 之前跑（CMR r2）。
+
+    person-core 事件门控 character.X.location==DEST：若 X 超期在途赴 DEST，
+    兜底强制到任须先于终态评估，否则终态评估读到旧 location → 门控不达标 →
+    事件被误判 avoided 永久作废，#346 兜底形同虚设。
+    """
+    db, state, content = game
+    issues.bind_content(content)
+    name = active_ming_character(db, content)
+
+    ev = Event(
+        id="__test_transit_gate__", title="测试在途门控", kind="situation",
+        summary="x", urgency=50, severity=50, credibility=50,
+        interests=[], audiences=[],
+        trigger_year=1, trigger_month=0,  # 窗口必开、无 end → 不会 expired
+        trigger_gate={
+            f"character.{name}.location": "==liaodong",
+            f"character.{name}.status": "==active",
+        },
+        person_core_subjects=[name],
+    )
+    content.events.append(ev)
+    try:
+        # 超期在途赴 liaodong：启程第 3 月、现第 5 月（在途 2 月 → 到期）
+        state.turn = 5
+        db.conn.execute(
+            "UPDATE characters SET location='beizhili', transit_to='liaodong', "
+            "transit_start_turn=3 WHERE name=?", (name,),
+        )
+        db.conn.commit()
+
+        pre_settle(state, db, content=content)
+
+        row = db.conn.execute(
+            "SELECT location, transit_to FROM characters WHERE name=?", (name,),
+        ).fetchone()
+        assert row["location"] == "liaodong" and row["transit_to"] == "", (
+            "兜底应已强制到任"
+        )
+        assert not db.has_event_terminal_state("__test_transit_gate__", "avoided"), (
+            "超期在途赴门控地的 person-core 事件不应在到任兜底前被误判 avoided"
+        )
+    finally:
+        content.events.remove(ev)
 
 
 # ── 7) snapshot/restore 包含 transit_start_turn（P1-B fix 直接验证）──────────

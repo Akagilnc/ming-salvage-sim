@@ -896,6 +896,14 @@ def pre_settle(
             on_stage("固定月度财政入账")
         # 落账副作用；明细不再进 simulator payload（欠饷哗变走前置事件/issue）
         apply_fixed_period_flows(db, state)
+        # 在途兜底：在途 ≥2 回合（或旧数据 transit_start_turn=0）的人物强制到任，
+        # 确保 LLM 漏产到任叙事时不永久在途（ADR 0009 决策5 = 叙事优先；此为代码兜底）。
+        # 必须先于 apply_event_terminal_states / auto_trigger_seed_issues：二者按 character.X.location
+        # 等门控判事件终态/硬立项，超期在途赴门控地的人物若未先到任，门控读旧 location 不达标 →
+        # person-core 事件被误判 avoided 永久作废、兜底形同虚设（CMR r2 P2）。
+        forced_arrivals = force_transit_arrivals(db, state, content, commit=False)
+        if forced_arrivals:
+            tlog(f"[transit-aging] 强制到任 {len(forced_arrivals)} 人：{[f['name'] for f in forced_arrivals]}")
         terminalized = apply_event_terminal_states(state, db, commit=False)
         if terminalized:
             tlog(f"[event_terminal] 本回合事件终态落账 {len(terminalized)} 条：{[(t['id'], t['terminal_state']) for t in terminalized]}")
@@ -903,11 +911,6 @@ def pre_settle(
         auto_triggered = auto_trigger_seed_issues(state, db)
         if auto_triggered:
             tlog(f"[AUTO-TRIGGER] 本回合程序硬立项 {len(auto_triggered)} 条：{[t.get('title') for t in auto_triggered]}")
-        # 在途兜底：在途 ≥2 回合（或旧数据 transit_start_turn=0）的人物强制到任，
-        # 确保 LLM 漏产到任叙事时不永久在途（ADR 0009 决策5 = 叙事优先；此为代码兜底）。
-        forced_arrivals = force_transit_arrivals(db, state, content, commit=False)
-        if forced_arrivals:
-            tlog(f"[transit-aging] 强制到任 {len(forced_arrivals)} 人：{[f['name'] for f in forced_arrivals]}")
         # 密令期限：到期 active 自动转 pending_review，保证本月核议一锤定音。
         # 推演前的确定性写，挪入前半段事务（原在 resolve_directives，ADR 0008 S4）。
         due_orders = db.auto_submit_due_secret_orders(state)
