@@ -4439,7 +4439,7 @@ def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
         dict(row)
         for row in db.conn.execute(
             "SELECT name, status, office, office_type, status_reason, "
-            "status_changed_turn, reason_code, transit_to FROM characters"
+            "status_changed_turn, reason_code, transit_to, transit_start_turn FROM characters"
         ).fetchall()
     ]
     office_rows = [
@@ -4508,7 +4508,7 @@ def _restore_person_write_state(
             db.conn.execute("DELETE FROM characters WHERE name=?", (name,))
     db.conn.executemany(
         "UPDATE characters SET status=?, office=?, office_type=?, status_reason=?, "
-        "status_changed_turn=?, reason_code=?, transit_to=? WHERE name=?",
+        "status_changed_turn=?, reason_code=?, transit_to=?, transit_start_turn=? WHERE name=?",
         [
             (
                 row["status"],
@@ -4518,6 +4518,7 @@ def _restore_person_write_state(
                 row["status_changed_turn"],
                 row["reason_code"],
                 row["transit_to"],
+                row.get("transit_start_turn", 0),
                 row["name"],
             )
             for row in character_rows

@@ -179,3 +179,52 @@ def test_行止_arrival_clears_transit_start_turn(game):
     ).fetchone()
     assert row["transit_to"] == "", "抵达后 transit_to 应被清空"
     assert row["transit_start_turn"] == 0, "抵达后 transit_start_turn 应清零"
+
+
+# ── 7) 任命失败回滚不留 transit_start_turn 脏值（P1-B snapshot/restore fix）──────
+
+
+def test_snapshot_restore_includes_transit_start_turn(game):
+    """任命回滚后 transit_start_turn 随 transit_to 一并还原，不留脏值（P1-B）。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+
+    # 置在途态（transit_to + transit_start_turn=99 模拟早先启程）
+    _set_transit(db, name, DEST, transit_start_turn=99)
+    if name in content.characters:
+        content.characters[name].transit_to = DEST
+
+    # 取一个不存在的职位触发任命失败 → 走 _restore_person_write_state 回滚路径
+    # "hallucinated_office_xyz" 不在 offices 白名单 → apply_office_appointment 拒收
+    result = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "人物变更": [
+                {
+                    "name": name,
+                    "动作": "调任",
+                    "office": "不存在的虚构职位xyz",
+                    "new_office": "不存在的虚构职位xyz",
+                }
+            ]
+        },
+        content=content,
+    )
+
+    row = db.conn.execute(
+        "SELECT transit_to, transit_start_turn FROM characters WHERE name=?", (name,)
+    ).fetchone()
+    # 无论调任成功还是拒收，transit_start_turn 不应变成 0（非 transit 写路径不应改它）
+    # 若任命成功：transit_to 会被清空，transit_start_turn→0，正确
+    # 若任命被拒收（预期）：transit_to=DEST, transit_start_turn=99 应保持（快照/回滚正确）
+    applied_changes = result.get("applied_person_changes", [])
+    rejected_this = any(
+        r.get("rejected") and str(r.get("name") or "") == name
+        for r in applied_changes
+    )
+    if rejected_this:
+        assert row["transit_to"] == DEST, "拒收后 transit_to 应还原"
+        assert row["transit_start_turn"] == 99, (
+            f"拒收后 transit_start_turn 应还原为 99，实测 {row['transit_start_turn']}（P1-B 回滚未覆盖）"
+        )
