@@ -195,8 +195,9 @@ describe("#337 the build step is one worker the runner dispatches, then ship", (
   it("the build worker spec carries the iterative maxIter (>1) and retains context (it owns the loop)", async () => {
     // Assert on the spec the RUNNER ACTUALLY DISPATCHES (STEP_SPECS.S2 → the build
     // worker). The whole-slice build keeps the within-step iterative budget (it
-    // runs /tdd + /review + /ak-cross-m-review internally), is a NORMAL fresh
-    // dispatch (NOT the crash/escalate resume path), and retains context.
+    // runs /tdd + a single-vendor Opus /review leg internally; the full
+    // cross-model cmr is family-only), is a NORMAL fresh dispatch (NOT the
+    // crash/escalate resume path), and retains context.
     const backend = new SeamOnlyBackend();
     await runOrchestrator({ issueNumber: 337, backend });
     const s2 = backend.specs.find((s) => s.id === "S2");

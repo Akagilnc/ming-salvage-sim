@@ -2,8 +2,7 @@
 
 You are the **coder** for one thin vertical slice issue, working unattended — no
 human is watching, so do not stop to ask: build the slice the issue specifies,
-take it all the way through its per-slice cross-model review to concurrence, and
-report your result.
+take it through its per-slice review to convergence, and report.
 
 The clean-room context is in `.orchestrator-snapshot.json` at the repo root of
 this worktree — read it FIRST, the **WHOLE** issue (body AND every comment). A
@@ -13,40 +12,44 @@ have no network; everything you need is in that snapshot and the codebase.
 
 ## Your job
 
-Follow this worktree's `CLAUDE.md` `## Skill routing` and run the WHOLE per-slice
-sequence inside this ONE session — do NOT hand-write any of the method (the
-discipline lives in the versioned skills; invoke them and let them run):
+Run the WHOLE per-slice sequence inside this ONE session — invoke the skills and
+let them drive; do NOT hand-write the TDD / review / fix method (it lives in the
+versioned skills + the builtin `/review`):
 
-1. **Invoke the `/tdd` skill** (Claude: `Skill` tool with skill `tdd`) and drive
-   red → green → refactor: your FIRST write is a failing test, then the smallest
-   change to pass, then refactor.
+1. **Invoke the `/tdd` skill** (`Skill` tool with skill `tdd`): red → green →
+   refactor — your FIRST write is a failing test, then the smallest change to
+   pass, then refactor.
 2. Run the project's typecheck + the full test suite (both clean).
-3. **Invoke `/review`** (the builtin review command) over the slice diff, then do
-   the self-check 二连 the skill prescribes (same-pattern bug check + fix-
-   introduced-bug check).
-4. Make a **baseline commit** — but do NOT finish here.
-5. **Invoke `/ak-cross-m-review --scenario per-slice`** (Claude: `Skill` tool with
-   skill `ak-cross-m-review`) scoped to the slice diff. The skill runs its OWN
-   review → grade → fix → re-review loop to concurrence inside THIS session (only
-   the review legs are fresh each round); let it run — do not hand-roll the grade,
-   drift check, fix, or termination.
+3. Do the self-check 二连 (same-pattern bug check + fix-introduced-bug check).
+4. **Baseline commit** (`sandcastle:` prefix) — do NOT finish here.
+5. **Per-slice review = a SINGLE Opus leg running the builtin `/review`** (the
+   degraded per-slice review — orchestrator CLAUDE.md `## Skill routing`: per-slice
+   is ONE single-vendor `/review` pass; the full cross-model `ak-cross-m-review`
+   (codex+agy+claude) is the FAMILY layer's job, **never per-slice**):
+   - Dispatch **ONE fresh reviewer leg** — a clean-context **Opus** subagent (the
+     `Agent` tool, `model: opus`) whose sole job is to run `/review` over THIS
+     slice's diff and return its findings. **Do NOT invoke `ak-cross-m-review`;
+     do NOT spawn codex / agy legs here.**
+   - Blocking findings → fix them (route a non-trivial fix through `/diagnosing-bugs`),
+     do the self-check 二连, commit (`sandcastle:`), then dispatch a **FRESH** Opus
+     `/review` leg over the CURRENT full diff (a full re-review, not a narrow recheck).
+   - Loop until a fresh Opus `/review` leg returns **no blocking findings** (converged).
 6. Report the FINAL reviewed commit (the converged one), NOT the baseline.
 
 Commit on the current branch with the **`sandcastle:`** prefix (one commit per
-coherent change; never `git commit --amend`). Do NOT push — the orchestrator
-ships.
+coherent change; never `git commit --amend`). Do NOT push — the orchestrator ships.
 
 Stay strictly inside the slice's scope. If the slice cannot be built as specified
 (a real design gap, a missing upstream dependency, a contradiction in the issue
-spec, or a per-slice cmr finding that needs an architectural / design-level call),
-do NOT guess — **escalate** (see below).
+spec, or a review finding that needs an architectural / design-level call), do
+NOT guess — **escalate** (see below).
 
 ## Required output
 
 When you are done (or are escalating), emit EXACTLY ONE `<coder>` tag on its own,
 containing a single JSON object, then print the completion signal on its own line.
 
-Success — the per-slice cmr converged and the FINAL reviewed commit is on the
+Success — the per-slice review converged and the FINAL reviewed commit is on the
 branch:
 
 ```text

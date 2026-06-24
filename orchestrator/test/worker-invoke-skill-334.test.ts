@@ -139,14 +139,19 @@ describe("#334 thin prompts invoke the skill, not the methodology", () => {
     expect(p).not.toMatch(/Make them pass with the smallest correct change \(GREEN\)/);
   });
 
-  it("coder_implement.md invokes the per-slice review + cmr skills (the loop lives in the worker, ADR 0026)", () => {
-    // ADR 0026: the runner no longer drives a reviewer/fix loop — the WHOLE-SLICE
-    // build worker runs /tdd, then /review + the self-check 二连, then
-    // /ak-cross-m-review --scenario per-slice, INSIDE this one session. The thin
-    // prompt only TRIGGERS those skills; it does not hand-copy their method.
+  it("coder_implement.md: per-slice review = a SINGLE Opus /review leg, NOT the full cross-model cmr (the loop lives in the worker; cmr is family-only)", () => {
+    // ADR 0026 + per-slice degradation: the WHOLE-SLICE build worker runs /tdd,
+    // then a per-slice review that is ONE single-vendor Opus `/review` leg (Sonnet
+    // writes, Opus single-leg reviews), INSIDE this one session. The full
+    // cross-model `ak-cross-m-review` (codex+agy+claude) is the FAMILY layer's job,
+    // NEVER run per-slice. The thin prompt TRIGGERS /review; it does not hand-copy
+    // the review method.
     const p = read("coder_implement.md");
     expect(p).toMatch(/\/review/);
-    expect(p).toMatch(/ak-cross-m-review/);
+    // The per-slice review leg is Opus (single-vendor).
+    expect(p).toMatch(/opus/i);
+    // The prompt makes clear the full cmr is FAMILY-only, not per-slice.
+    expect(p).toMatch(/never per-slice|FAMILY layer|do NOT.*codex|do NOT.*ak-cross-m-review/i);
   });
 
   it("every existing prompt still defines its structured output contract (tag + signal)", () => {
