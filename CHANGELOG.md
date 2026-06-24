@@ -9,7 +9,7 @@
 ### 新增
 - **行止超时兜底**（#346）：DB 新增 `transit_start_turn` 列，记录人物进入行止状态的回合；`force_transit_arrivals` 在每回合 `pre_settle` 中强制驱动滞留 ≥2 回合（或 `transit_start_turn=0` 旧数据哨兵）的人物到达目的地，防止行止人物因事件复杂度无限阻塞。到达顺序固定在事件终态评估之前。模拟器上下文新增 `transit_nudge` 字段，提示 LLM 哪些人物已兜底抵达。
 - **实时召对短超时**（#353）：新增常量 `MINISTER_CHAT_CLI_TIMEOUT_SECONDS = 90.0`；`create_minister_agent` 通过 `dataclasses.replace` 克隆 LLM 配置并将超时降到 90 s，与月末结算的 300 s 超时完全解耦，避免召对等待超时影响结算管线。
-- **召对取消按钮与计时**（#353）：前端 `ChatModal` 新增取消按钮（`.composer-cancel` 样式），通过 `AbortController` 中断飞行中的流式请求；弹窗同步显示已等待秒数（`elapsedSeconds`），关闭弹窗或回话结束时自动重置，多大臣并发时补陈旧守卫防跨污染。
+- **召对取消按钮与计时**（#353）：前端 `ChatModal` 新增取消按钮（`.composer-cancel` 样式），通过 `AbortController` 中断飞行中的流式请求；弹窗同步显示已等待秒数（`elapsedSeconds`），关闭弹窗或回话结束时自动重置，多大臣并发时补充陈旧响应守卫防跨污染。
 - **承诺进度条时间轴**（#348）：新增 `commitment_timed_bar_value(issue, state)` 函数，按已过回合数占总承诺周期比例返回进度条数值（`None` 表示无限期承诺）；`web_app.py` 在承诺类局势 payload 中注入 `bar_value` 字段，前端可直接驱动进度条渲染。
 
 ### 修复
