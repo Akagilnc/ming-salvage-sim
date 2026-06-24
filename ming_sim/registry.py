@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import Dict, List, Optional
 
 from agno.agent import Agent
@@ -16,8 +17,6 @@ from agno.skills.loaders.local import LocalSkills
 from ming_sim.constants import TURN_UNIT
 from ming_sim.content import GameContent
 from ming_sim.context import character_context_with_db
-from dataclasses import replace
-
 from ming_sim.models import Character, CourtContext, LLMConfig, MINISTER_CHAT_CLI_TIMEOUT_SECONDS
 from ming_sim.llm_model import create_chat_model
 from ming_sim.token_stats import tlog
