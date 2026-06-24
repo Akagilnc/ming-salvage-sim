@@ -673,7 +673,9 @@ export function ChatModal({
                 if (composerHint) onHint("");
               }}
               onKeyDown={handleKeyDown}
-              placeholder="问大臣军情、钱粮、地方，或要求他拟旨... Enter 发送，Shift+Enter 换行"
+              placeholder={portraitPrefix === "consort_"
+                ? "询问后宫近况、心思、见闻，或吩咐她做事... Enter 发送，Shift+Enter 换行"
+                : "问大臣军情、钱粮、地方，或要求他拟旨... Enter 发送，Shift+Enter 换行"}
             />
           </label>
           <div className="composer-actions">
