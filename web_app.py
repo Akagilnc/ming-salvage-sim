@@ -28,7 +28,7 @@ try:
 except Exception:  # noqa: BLE001 — 缓冲设置失败不该阻断 web 启动
     pass
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -1248,6 +1248,22 @@ class WebGame:
         after_snapshot = self.db.capture_chat_rollback_snapshot()
         self.db.record_chat_turn_rollback_diffs(chat_turn_id, before_snapshot, after_snapshot)
 
+    def _fail_incomplete_chat_turn(
+        self,
+        minister_name: str,
+        chat_turn_id: int,
+        user_text: str,
+    ) -> None:
+        if not chat_turn_id:
+            return
+        self.db.fail_incomplete_chat_turn(chat_turn_id)
+        history = self.chat_history.get(minister_name) or []
+        for idx in range(len(history) - 1, -1, -1):
+            item = history[idx]
+            if item.get("role") == "user" and item.get("content") == user_text:
+                del history[idx]
+                break
+
     def undo_last_chat(self, minister_name: str) -> Dict[str, Any]:
         if self.state.turn_phase not in (TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value):
             raise HTTPException(status_code=409, detail="本回合已经进入颁诏结算，不能撤回召对。")
@@ -1496,6 +1512,9 @@ class WebGame:
                 chat_turn_id=chat_turn_id,
             )
             yield {"type": "done", "payload": payload}
+        except (GeneratorExit, asyncio.CancelledError):
+            self._fail_incomplete_chat_turn(minister_name, chat_turn_id, text)
+            raise
         except Exception as error:
             if chat_turn_id:
                 self.db.mark_chat_turn_failed(chat_turn_id)
@@ -2186,18 +2205,27 @@ async def api_undo_chat(minister_name: str) -> Dict[str, Any]:
 
 
 @app.post("/api/ministers/{minister_name}/chat/stream")
-async def api_chat_stream(minister_name: str, request: ChatRequest) -> StreamingResponse:
+async def api_chat_stream(minister_name: str, request: ChatRequest, http_request: Request) -> StreamingResponse:
     _require_active_minister(minister_name)
     async def generate() -> AsyncIterator[str]:
-        for item in get_game().chat_stream(minister_name, request.message):
-            item_type = str(item.get("type", "message"))
-            if item_type == "delta":
-                yield sse_event("delta", {"content": item.get("content", "")})
-            elif item_type == "done":
-                yield sse_event("done", item.get("payload", {}))
-            elif item_type == "error":
-                yield sse_event("error", item.get("detail") or {"message": item.get("message", "流式回复失败。")})
-            await asyncio.sleep(0)
+        stream = get_game().chat_stream(minister_name, request.message)
+        try:
+            for item in stream:
+                if await http_request.is_disconnected():
+                    raise asyncio.CancelledError()
+                item_type = str(item.get("type", "message"))
+                if item_type == "delta":
+                    yield sse_event("delta", {"content": item.get("content", "")})
+                elif item_type == "done":
+                    yield sse_event("done", item.get("payload", {}))
+                elif item_type == "error":
+                    yield sse_event("error", item.get("detail") or {"message": item.get("message", "流式回复失败。")})
+                await asyncio.sleep(0)
+        except asyncio.CancelledError:
+            stream.close()
+            raise
+        finally:
+            stream.close()
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 

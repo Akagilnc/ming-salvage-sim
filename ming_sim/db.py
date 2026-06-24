@@ -4808,6 +4808,40 @@ class GameDB:
         )
         self.conn.commit()
 
+    def fail_incomplete_chat_turn(self, chat_turn_id: int) -> Dict[str, Any]:
+        """Mark a pre-reply chat turn failed and remove its durable user prompt."""
+        row = self.conn.execute(
+            "SELECT * FROM chat_turns WHERE id = ?",
+            (int(chat_turn_id),),
+        ).fetchone()
+        if row is None:
+            return {}
+        turn_row = self._row_dict(row)
+        if turn_row["status"] != "active" or turn_row.get("minister_message_id"):
+            return turn_row
+        message_ids = [
+            int(mid)
+            for mid in (turn_row.get("user_message_id"),)
+            if mid
+        ]
+        with self.conn:
+            if message_ids:
+                placeholders = ",".join("?" for _ in message_ids)
+                self.conn.execute(
+                    f"DELETE FROM chat_messages WHERE id IN ({placeholders})",
+                    message_ids,
+                )
+            self.conn.execute(
+                "UPDATE chat_turns SET status = 'failed' WHERE id = ? AND status = 'active'",
+                (int(chat_turn_id),),
+            )
+            self._truncate_agno_runs_in_tx(
+                str(turn_row.get("agno_session_id") or ""),
+                int(turn_row.get("agno_runs_before") or 0),
+            )
+        turn_row["status"] = "failed"
+        return turn_row
+
     def record_chat_turn_rollback_diffs(
         self,
         chat_turn_id: int,
