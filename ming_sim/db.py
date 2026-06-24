@@ -4809,7 +4809,14 @@ class GameDB:
         self.conn.commit()
 
     def fail_incomplete_chat_turn(self, chat_turn_id: int) -> Dict[str, Any]:
-        """Mark a pre-reply chat turn failed and remove its durable user prompt."""
+        """Mark a pre-reply chat turn failed and remove its durable user prompt.
+
+        The returned dict carries ``failed_now=True`` ONLY when this call actually
+        transitioned an active pre-reply turn to failed (and deleted its durable user
+        prompt). A guarded/no-op return (turn already replied, not active, or missing)
+        omits the flag so callers can mirror the same guard for their own side effects
+        (e.g. in-memory history pruning).
+        """
         row = self.conn.execute(
             "SELECT * FROM chat_turns WHERE id = ?",
             (int(chat_turn_id),),
@@ -4840,6 +4847,7 @@ class GameDB:
                 int(turn_row.get("agno_runs_before") or 0),
             )
         turn_row["status"] = "failed"
+        turn_row["failed_now"] = True
         return turn_row
 
     def record_chat_turn_rollback_diffs(
