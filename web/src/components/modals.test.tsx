@@ -22,7 +22,7 @@ const MINISTER_MOCK: Minister = {
 const CONSORT_MOCK: Minister = {
   name: "周贵人",
   office: "贵人",
-  office_type: "consort",
+  office_type: "后宫",
   faction: "",
   style: "",
   status: "active",
