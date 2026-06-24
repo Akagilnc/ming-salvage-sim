@@ -22,6 +22,17 @@ CONSORT_RANKS = {"皇后", "贵人", "贵妃", "妃", "嫔"}
 POOL_N = 20
 
 
+def is_harem_character(character: dict) -> bool:
+    power_id = character.get("power_id") or MING_POWER_ID
+    return (
+        power_id == MING_POWER_ID
+        and (
+            character.get("office_type") == "后宫"
+            or character.get("rank") in CONSORT_RANKS
+        )
+    )
+
+
 def main() -> None:
     characters = json.loads(CHARACTERS.read_text("utf-8"))["characters"]
 
@@ -30,12 +41,12 @@ def main() -> None:
     ministers = [
         (c["name"], c.get("office", ""), c.get("faction", ""), f"minister_{c['name']}.png")
         for c in characters
-        if "rank" not in c
+        if not is_harem_character(c)
     ]
     consorts = [
         (c["name"], c.get("office", ""), c.get("faction", ""), f"consort_{c['name']}.png")
         for c in characters
-        if c.get("power_id") == MING_POWER_ID and c.get("rank") in CONSORT_RANKS
+        if is_harem_character(c)
     ]
 
     m_rows = ["| 人物 | 势力/派系 | 职位 | 文件 | 状态 |", "|---|---|---|---|---|"]
@@ -65,10 +76,12 @@ def main() -> None:
     c_done = len(pool_have)
 
     out = [
-        "# 立绘生成进度",
+        "# 旧版立绘文件存在性进度",
         "",
         "> 自动生成：`.venv/bin/python scripts/portrait_status.py`。改图后重跑刷新。",
         "> 人员名单来源：`content/characters.json`。臣僚/外臣/流寇 = `minister_<中文名>.png`；开局后宫 = `consort_<中文名>.png`；后宫池 = `consort_pool_<N>.png`（不绑人）。",
+        "> 口径：这是旧版“文件是否存在”进度表，只检查运行时取图文件是否存在；不是 scene-v2 暗色立绘 prompt / 验收真源。",
+        "> scene-v2 真源：`docs/portrait-prompts-scene-v2.md`；已兑现资产范围以对应 PR/批次实际 touched 的 `web/public/portraits/*.png` 和评审记录为准，本表不维护验收范围。",
         "",
         f"## 人物专属图（{m_done}/{m_n} 已生成）",
         "",
