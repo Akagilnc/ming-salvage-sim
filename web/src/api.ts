@@ -64,11 +64,13 @@ export const streamChat = async (
   ministerName: string,
   message: string,
   onDelta: (delta: string) => void,
+  signal?: AbortSignal,
 ): Promise<ChatResponse> => {
   const response = await fetch(`/api/ministers/${encodeURIComponent(ministerName)}/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message }),
+    signal,
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: response.statusText }));

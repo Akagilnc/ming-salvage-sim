@@ -86,6 +86,8 @@ function App() {
   // Tracks the current selected minister across async boundaries.
   // State closures capture stale values; this ref always reflects the latest.
   const selectedMinisterRef = React.useRef<string>("");
+  // AbortController for the in-flight minister chat stream; null when idle.
+  const chatAbortRef = React.useRef<AbortController | null>(null);
 
   const loadState = React.useCallback(async () => {
     const data = await api<GameState>("/api/game/state");
@@ -371,12 +373,14 @@ function App() {
     if (fromComposer) {
       setInput("");
     }
+    const abort = new AbortController();
+    chatAbortRef.current = abort;
     try {
       const data = await streamChat(targetMinisterName, message, (delta) => {
         if (selectedMinisterRef.current === targetMinisterName) {
           setStreamingMinisterMessage((current) => current + delta);
         }
-      });
+      }, abort.signal);
       // Staleness guard: player switched ministers while the request was in-flight;
       // discard all minister-specific UI updates to avoid cross-minister notice bleed.
       if (selectedMinisterRef.current !== targetMinisterName) return;
@@ -412,15 +416,28 @@ function App() {
         setChatNotice(`${targetMinisterName}已退下。请从左侧召见下一位大臣。`);
       }
     } catch (err) {
-      if (fromComposer) {
-        setInput(message);
+      if (err instanceof Error && err.name === "AbortError") {
+        // Player cancelled — restore input so they can retry immediately
+        if (fromComposer) setInput(message);
+        setPendingUserMessage("");
+        setStreamingMinisterMessage("");
+        setError("已取消，可重新发送。");
+      } else {
+        if (fromComposer) {
+          setInput(message);
+        }
+        setPendingUserMessage("");
+        setStreamingMinisterMessage("");
+        setError(err instanceof Error ? err.message : String(err));
       }
-      setPendingUserMessage("");
-      setStreamingMinisterMessage("");
-      setError(err instanceof Error ? err.message : String(err));
     } finally {
+      chatAbortRef.current = null;
       setBusy("");
     }
+  };
+
+  const cancelChat = () => {
+    chatAbortRef.current?.abort();
   };
 
   const undoLastChat = async () => {
@@ -940,6 +957,7 @@ function App() {
             onFavorite={() => toggleFavorite(activeMinister)}
             onOpenEdict={() => setActiveModal("edict")}
             onClose={guardClose(() => setActiveModal("none"))}
+            onCancel={cancelChat}
           />
         </FullscreenModal>
       ) : null}
