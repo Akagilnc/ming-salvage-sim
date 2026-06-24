@@ -4822,7 +4822,8 @@ def _apply_person_changes(
     def character_row(name: str):
         return db.conn.execute(
             "SELECT name, status, office, office_type, power_id, status_reason, "
-            "status_changed_turn, reason_code, transit_to FROM characters WHERE name=?",
+            "status_changed_turn, reason_code, transit_to, transit_start_turn "
+            "FROM characters WHERE name=?",
             (name,),
         ).fetchone()
 
@@ -5164,10 +5165,13 @@ def _apply_person_changes(
             if derive_label:
                 wrapped["derived_from"] = derive_label
                 if wrapped.get("rejected"):
+                    # transit_start_turn 与 transit_to 成对回滚：派生任命前置 set_character_status
+                    # （放归/赦还→offstage 属 ousted）现会清 transit_start_turn=0，回滚须对称还原，
+                    # 否则留「transit_to 非空 + start=0」被兜底当 legacy-overdue 误判（CMR r2 防御）。
                     db.conn.execute(
                         "UPDATE characters SET status=?, office=?, office_type=?, "
-                        "status_reason=?, status_changed_turn=?, reason_code=?, transit_to=? "
-                        "WHERE name=?",
+                        "status_reason=?, status_changed_turn=?, reason_code=?, transit_to=?, "
+                        "transit_start_turn=? WHERE name=?",
                         (
                             row["status"],
                             row["office"],
@@ -5176,6 +5180,7 @@ def _apply_person_changes(
                             row["status_changed_turn"],
                             row["reason_code"],
                             row["transit_to"],
+                            row["transit_start_turn"],
                             name,
                         ),
                     )
