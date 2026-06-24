@@ -214,6 +214,33 @@ class TestCommitmentTimedBarValue:
 
 
 class TestTimedBarIntegration:
+    def test_bar_advances_by_wall_clock_when_ongoing_advance_is_rejected(self, game):
+        db, state, _content = game
+        db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+        db.conn.commit()
+
+        issue_id = db.insert_issue(
+            state,
+            kind="initiative",
+            title="赈抚陕西四月",
+            origin_kind="decree",
+            origin_ref="decree:turn-1:relief-4",
+            bar_value=10,
+            ongoing_effects={"metrics": {"皇威": 1}},
+            end_turn=state.turn + 4,
+            commitment_kind="until_stop",
+        )
+        state.turn += 2
+
+        row = db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
+        progress = commitment_progress_payload(db, state, row)
+        assert progress is not None
+        assert progress["months_elapsed"] == 2
+        assert commitment_display_text(progress, row) == "限4月·已履行2月·还剩2月"
+
+        bar = commitment_timed_bar_value(progress, row)
+        assert bar == 50
+
     def test_bar_advances_with_time(self, game):
         db, state, content = game
         db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
