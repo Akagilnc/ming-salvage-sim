@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 import time
 
@@ -132,6 +133,106 @@ def test_background_audience_reply_keeps_drafted_edict_after_observer_departure(
         for row in db.list_directives(state, statuses=("pending", "draft"))
     ))
     assert _wait_for(lambda: db.can_undo_last_chat_turn(minister_name, state.turn))
+
+
+class _CliActionSession(_FakeSession):
+    """CLI 路召对：动作经 apply_cli_conversation_actions 落地（密令/pending_action）。"""
+
+    def __init__(self, db, state, content, agent, *, secret_order_id=0, pending_action_id=0):
+        super().__init__(db, state, content, agent)
+        self._secret_order_id = secret_order_id
+        self._pending_action_id = pending_action_id
+        self.apply_calls = []
+
+    def apply_cli_conversation_actions(self, *_args, **_kwargs):
+        self.apply_calls.append((_args, _kwargs))
+        return {
+            "directive": None,
+            "secret_order_id": self._secret_order_id,
+            "pending_action_id": self._pending_action_id,
+        }
+
+
+def _cli_web_game(db, state, content, agent, **kwargs) -> WebGame:
+    bind_skills_content(content)
+    game = WebGame.__new__(WebGame)
+    game.session = _CliActionSession(db, state, content, agent, **kwargs)
+    game.chat_history = {name: [] for name in content.characters}
+    game.suggestions_for = lambda _character: []
+    return game
+
+
+def test_background_audience_secret_order_persists_after_observer_departure(game):
+    """密令结果：退出观看窗后，后台仍跑完 CLI 动作落地（apply_cli_conversation_actions）
+    并完成回话入档（#383 US5）。"""
+    db, state, content = game
+    minister_name = "毕自严"
+    agent = _FakeAgent()
+    web_game = _cli_web_game(db, state, content, agent, secret_order_id=4242)
+
+    stream = web_game.chat_stream(minister_name, "密查盐政亏空。")
+    assert next(stream)["type"] == "delta"
+    stream.close()
+
+    assert agent.completed.wait(1.0)
+    # 后台跑完：CLI 动作落地真源被调用 + 大臣回话入档（apply 在 _chat_payload 前）
+    assert _wait_for(lambda: len(web_game.session.apply_calls) >= 1)
+    assert _wait_for(lambda: len(web_game.chat_history[minister_name]) >= 2)
+    assert db.can_undo_last_chat_turn(minister_name, state.turn)
+
+
+def test_background_audience_pending_action_persists_after_observer_departure(game):
+    """pending_action（如调教/任免暂存）：退出后后台仍跑完落地（#383 US6）。"""
+    db, state, content = game
+    minister_name = "毕自严"
+    agent = _FakeAgent()
+    web_game = _cli_web_game(db, state, content, agent, pending_action_id=77)
+
+    stream = web_game.chat_stream(minister_name, "着王承恩调教自省。")
+    assert next(stream)["type"] == "delta"
+    stream.close()
+
+    assert agent.completed.wait(1.0)
+    assert _wait_for(lambda: len(web_game.session.apply_calls) >= 1)
+    assert _wait_for(lambda: len(web_game.chat_history[minister_name]) >= 2)
+    assert db.can_undo_last_chat_turn(minister_name, state.turn)
+
+
+def test_background_audience_appointment_persists_after_observer_departure(game):
+    """任免/人员候选（agno propose_appointment 工具路）：退出后后台仍跑完任免落地，
+    且回话入档（#383 US6）。"""
+    db, state, content = game
+    minister_name = "毕自严"
+    appointee = "倪元璐"
+    agent = _FakeAgent([
+        ToolExec(
+            "propose_appointment",
+            "__pending_appointment__" + json.dumps(
+                {"name": appointee, "office": "户部尚书", "action": "任命"},
+                ensure_ascii=False,
+            ),
+        )
+    ])
+    applied = {}
+
+    web_game = _web_game(db, state, content, agent)
+
+    def _fake_apply_appointment(payload_json, _character):
+        applied["payload"] = payload_json
+        return (appointee, "")
+
+    web_game.session._apply_appointment = _fake_apply_appointment
+
+    stream = web_game.chat_stream(minister_name, "拟以倪元璐为户部尚书。")
+    assert next(stream)["type"] == "delta"
+    stream.close()
+
+    assert agent.completed.wait(1.0)
+    # 后台跑完：任免落地被调用（人员候选受保护）+ 回话入档
+    assert _wait_for(lambda: "payload" in applied)
+    assert appointee in applied["payload"]
+    assert _wait_for(lambda: len(web_game.chat_history[minister_name]) >= 2)
+    assert db.can_undo_last_chat_turn(minister_name, state.turn)
 
 
 def test_llm_failure_does_not_leave_half_chat_in_history(game):
