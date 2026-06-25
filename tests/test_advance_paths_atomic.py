@@ -485,6 +485,58 @@ def test_hitl_retry_replays_ready_context_without_reextract(saved_game, monkeypa
     assert db.list_pending_decisions(turn) == []
 
 
+def test_submit_event_decision_persists_choice_after_pending_cleanup(game, monkeypatch):
+    """#345：事件亲裁选择不能只活在 pending_decisions；phase2 清理后仍须可从事件账恢复。"""
+    import json
+    import ming_sim.session as session_mod
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    turn = state.turn
+    event_id = "mao_wenlong"
+    db.save_pending_decisions(turn, [{
+        "event_id": event_id,
+        "title": "毛文龙裁断",
+        "context": "东江事急，须御前亲裁。",
+        "options": [
+            {"label": "斩", "hint": "严肃军纪"},
+            {"label": "留", "hint": "暂稳东江"},
+        ],
+    }])
+    state.turn_phase = "awaiting_decision"
+    db.save_state(state)
+
+    def _phase2(_state, _db, *_args, **_kwargs):
+        _db.clear_pending_decisions(turn)
+        return "ok"
+
+    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.last_decree = "测试诏书"
+    sess.agno_db = None
+    sess.llm_config = None
+    sess.content = content
+    sess.registry = None
+
+    sess.submit_decisions([{"label": "留", "hint": "暂稳东江", "note": "姑留观后效"}])
+
+    assert db.list_pending_decisions(turn) == []
+    row = db.conn.execute(
+        "SELECT terminal_state, source, choice_json FROM event_triggers WHERE event_id=?",
+        (event_id,),
+    ).fetchone()
+    assert row is not None
+    assert row["terminal_state"] == "triggered"
+    assert row["source"] == "hitl_decision"
+    assert json.loads(row["choice_json"]) == {
+        "label": "留",
+        "hint": "暂稳东江",
+        "note": "姑留观后效",
+    }
+
+
 def test_hitl_poison_replay_downgrades_context_then_reextracts(game, monkeypatch, tmp_path):
     """HITL 毒重放 → context 降级为非 ready（保 phase1 字段），重试走重抽（cmr S7 r3，2/2）。
 
