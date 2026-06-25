@@ -1517,7 +1517,11 @@ class WebGame:
                 chat_turn_id=chat_turn_id,
             )
             yield {"type": "done", "payload": payload}
-        except (GeneratorExit, asyncio.CancelledError):
+        except GeneratorExit:
+            # chat_stream is a SYNCHRONOUS generator: it never awaits, so it can never
+            # receive asyncio.CancelledError internally. The async generate() turns a
+            # client disconnect into stream.close(), which throws GeneratorExit in here —
+            # that is the only reachable cancellation signal (gemini #380 r3).
             try:
                 self._fail_incomplete_chat_turn(minister_name, chat_turn_id, text)
             except Exception as cleanup_error:
