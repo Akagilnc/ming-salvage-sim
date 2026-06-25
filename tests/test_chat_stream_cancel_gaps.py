@@ -51,6 +51,32 @@ def test_fail_completed_turn_is_noop(game):
     assert len(msgs) == 2
 
 
+def test_fail_completed_turn_with_zero_minister_message_id_is_noop(game):
+    """#380 cmr (gemini): the read-guard must use `is not None`, not truthiness — a
+    completed turn whose minister_message_id is 0 must be treated as done (no failed_now,
+    no transition), consistent with the user_message_id guard fix."""
+    db, state, _ = game
+    minister_name = "测试大臣"
+    user_id = db.append_chat_message(minister_name, state.turn, "user", "奏")
+    turn_id = db.create_chat_turn(state, minister_name, "test-session", 0)
+    db.update_chat_turn_messages(turn_id, user_message_id=user_id)
+    # Force minister_message_id = 0 (a valid "reply done" id under a 0-based scheme):
+    # truthiness would mis-read this as "no reply yet" and try to fail the turn.
+    db.conn.execute(
+        "UPDATE chat_turns SET minister_message_id = 0 WHERE id = ?", (turn_id,)
+    )
+    db.conn.commit()
+
+    result = db.fail_incomplete_chat_turn(turn_id)
+
+    assert "failed_now" not in result, "completed turn (minister_message_id=0) must not be failed"
+    row = db.conn.execute("SELECT status FROM chat_turns WHERE id = ?", (turn_id,)).fetchone()
+    assert row["status"] == "active", "completed turn must stay active, not be marked failed"
+    # the user prompt message must NOT be deleted
+    msgs = db.conn.execute("SELECT id FROM chat_messages").fetchall()
+    assert len(msgs) == 1
+
+
 def test_fail_turn_with_no_user_message_id_marks_failed(game):
     """B-db5: turn is active but user_message_id is NULL (created before message append)
     → still transitions to failed; no DELETE of chat_messages needed."""

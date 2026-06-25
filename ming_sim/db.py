@@ -4824,7 +4824,7 @@ class GameDB:
         if row is None:
             return {}
         turn_row = self._row_dict(row)
-        if turn_row["status"] != "active" or turn_row.get("minister_message_id"):
+        if turn_row["status"] != "active" or turn_row.get("minister_message_id") is not None:
             return turn_row
         _uid = turn_row.get("user_message_id")
         message_ids = [int(_uid)] if _uid is not None else []
