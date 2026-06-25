@@ -76,6 +76,7 @@ import {
   SANDBOX_GH_TOKEN_ENV,
   SANDBOX_SKILLS_DIR,
   SANDBOX_SOUL_ENV,
+  WORKER_IDLE_TIMEOUT_SECONDS,
 } from "../realBackend.js";
 import {
   cmrWorkerSpec,
@@ -533,6 +534,7 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     const result = await sc.run({
       name: `merger-resolve-${req.childIssue}`,
+      idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
       cwd: this.opts.workingRepo,
       sandbox: this.mergerSandbox(auth),
       agent: sc.claudeCode(MERGER_MODEL),
@@ -944,6 +946,7 @@ export class RealFamilyBackend implements FamilyBackend {
       this.writeCmrFocusFile(ctx);
       const result = await sc.run({
         name: "family-cmr",
+        idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
         cwd: this.opts.workingRepo,
         sandbox: this.cmrSandbox(auth),
         // Derive the model from the spec via the shared validated seam (cmr S336 r7
@@ -1358,6 +1361,7 @@ export class RealFamilyBackend implements FamilyBackend {
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
     return sc.run({
       name: "family-ship",
+      idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
       cwd: this.opts.workingRepo,
       sandbox: this.shipSandbox(auth),
       // Derive the model from the spec via the SAME validated mapping the
