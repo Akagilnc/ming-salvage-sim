@@ -85,8 +85,11 @@ export function parseSubIssueNumbers(parsed: { subIssues?: unknown } | null | un
     // (#362 dogfood r3). Only OPEN (or state-less — the S0 gate is the backstop)
     // children are runnable. `gh issue view --json subIssues` returns each node's
     // `state` ("OPEN"/"CLOSED"); a state-less node (odd payload) is kept, not dropped.
+    // Compare case-INSENSITIVELY: the GraphQL-backed path yields "CLOSED" but other
+    // gh/REST surfaces yield lowercase "closed" — a case-sensitive check would let a
+    // closed child slip through and abort the family run at S0 (gemini #384 R-final).
     const state = (n as { state?: unknown })?.state;
-    if (state === "CLOSED") continue;
+    if (typeof state === "string" && state.toUpperCase() === "CLOSED") continue;
     const num = (n as { number?: unknown })?.number;
     if (typeof num === "number" && Number.isFinite(num) && !seen.has(num)) {
       seen.add(num);

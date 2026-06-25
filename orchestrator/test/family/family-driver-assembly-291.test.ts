@@ -112,6 +112,18 @@ describe("#291 parseSubIssueNumbers", () => {
     };
     expect(parseSubIssueNumbers(parsed)).toEqual([370, 378, 99]);
   });
+  it("skips CLOSED case-insensitively — lowercase 'closed' from a REST/legacy gh surface (gemini #384)", () => {
+    const parsed = {
+      subIssues: {
+        nodes: [
+          { number: 341, state: "closed" },
+          { number: 370, state: "Closed" },
+          { number: 378, state: "open" },
+        ],
+      },
+    };
+    expect(parseSubIssueNumbers(parsed)).toEqual([378]);
+  });
   it("returns [] for a missing / non-object subIssues (never throws)", () => {
     expect(parseSubIssueNumbers({})).toEqual([]);
     expect(parseSubIssueNumbers({ subIssues: null })).toEqual([]);
