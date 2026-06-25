@@ -297,11 +297,20 @@ export async function runVerifyCmr(
     // resume sees stale merged state (no shipped marker, no failure marker) → it
     // re-runs the same failing gate, losing the phase / reason / family head needed
     // for triage (decision 3⑤ 不静默吞).
-    await recordDurableAbort(familyBackend, {
-      phase,
-      reason: "family integrated cmr worker returned no valid result (crash/malformed)",
-      familyHeadAfter,
-    });
+    //
+    // EXCEPT a `kind: "failed"` result — that is `dispatchOrAbort` reporting a
+    // worker STARTUP THROW, for which it ALREADY persisted a durable `aborted`
+    // (with the real throw reason). Re-recording here would double-write the same
+    // failure (CodeRabbit #384: the #362 ledger showed two `aborted` entries for
+    // one idle-timeout death). Only a non-"failed" invalid result — the worker
+    // RETURNED but crashed/malformed — needs its own durable abort here.
+    if (cmrResult.kind !== "failed") {
+      await recordDurableAbort(familyBackend, {
+        phase,
+        reason: "family integrated cmr worker returned no valid result (crash/malformed)",
+        familyHeadAfter,
+      });
+    }
     return INCOMPLETE_GATE;
   }
   if (!cmrResult.output.converged) {

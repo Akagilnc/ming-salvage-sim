@@ -46,8 +46,12 @@ import type {
  *     re-dispatched per round.
  *   - `soul: "cmr"` = the integrated-cmr fixer soul (WRITE — it commits fixes), NOT
  *     the READ-ONLY per-slice reviewer soul.
- *   - `maxIter: 5` = an iterative budget (it absorbs the fix role the old separate
- *     coder-fix worker had), NOT a single review pass.
+ *   - `maxIter: 5` = the within-step Ralph iteration budget (StepSpec.maxIter
+ *     semantics, same as the coder/ship workers), NOT the count of cmr fix rounds.
+ *     The review→fix→re-review convergence loop is the `ak-cross-m-review` skill's
+ *     OWN loop inside this one session; it is judged by the worker (drift/converge),
+ *     never round-counted by the runner — maxIter must not degrade into a
+ *     "count-to-N-then-give-up" fix-loop cap (types.ts maxIter SEMANTICS, US#18).
  */
 export function cmrWorkerSpec(session: WorkerSessionMode = "fresh"): WorkerSpec {
   return {
@@ -90,7 +94,12 @@ export function familyShipWorkerSpec(): WorkerSpec {
     // (runner STEP_SPECS use 5), NOT the cmr reviewer's single-pass 1 (#336 cmr r6).
     maxIter: 5,
     model: "sonnet",
-    soul: "coder",
+    // The family ship worker runs under the dedicated "ship" soul (delivery
+    // discipline: gstack-ship, stop-at-PR, defer→tracker not PR body), matching
+    // the runtime SHIP_SOUL injected by realFamilyBackend.shipSandboxConfig — the
+    // spec must not still declare the coder soul (CodeRabbit #384: unify the
+    // ship-worker soul contract).
+    soul: "ship",
     toolchain: [],
   };
 }

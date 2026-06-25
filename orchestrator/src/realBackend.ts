@@ -1780,7 +1780,7 @@ export class RealBackend implements Backend {
   // temp $HOME (assert auth.json copied + the minimal container config written).
   protected mountAuth(issueNumber: number): {
     authDir: string;
-    claudeToken: string;
+    claudeToken?: string;
   } {
     const paths = buildAuthPaths(issueNumber, this.opts.home);
     rmSync(paths.hostCodexAuthDir, { recursive: true, force: true });
@@ -1799,7 +1799,18 @@ export class RealBackend implements Backend {
     writeContainerCodexConfig(join(paths.hostCodexAuthDir, "config.toml"));
     // Copied credential file → owner-only (was world-readable 0o644).
     chmodSync(join(paths.hostCodexAuthDir, "auth.json"), 0o600);
-    const claudeToken = readFileSync(paths.claudeTokenFile, "utf8").trim();
+    // The Claude token is BEST-EFFORT (#384 codex P2). The coder step now runs
+    // Codex (model gpt-5.5), so it no longer needs CLAUDE_CODE_OAUTH_TOKEN. A host
+    // with Codex auth but no `~/.sc-claude-token` must still start the worker — a
+    // missing token degrades the Claude leg (undefined) rather than throwing and
+    // blocking the Codex coder before it can start (mirrors ShipAuth's optional
+    // claudeToken).
+    let claudeToken: string | undefined;
+    try {
+      claudeToken = readFileSync(paths.claudeTokenFile, "utf8").trim() || undefined;
+    } catch {
+      claudeToken = undefined;
+    }
     return { authDir: paths.hostCodexAuthDir, claudeToken };
   }
 
@@ -1832,7 +1843,7 @@ export class RealBackend implements Backend {
    * signal, not an OS readonly mount (reviewer READ-ONLY stays soft, ADR 0017 §4).
    */
   protected boxConfig(
-    auth: { authDir: string; claudeToken: string; ghToken?: string },
+    auth: { authDir: string; claudeToken?: string; ghToken?: string },
     spec: StepSpec,
     issueNumber?: number,
   ): {
@@ -1843,10 +1854,15 @@ export class RealBackend implements Backend {
     const soul = soulForStep(spec);
     const env: Record<string, string> = {
       ...SPAWNED_WORKER_ENV,
-      CLAUDE_CODE_OAUTH_TOKEN: auth.claudeToken,
       [SANDBOX_SOUL_ENV]: soul,
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
+    // Inject the Claude token only when present: a Codex coder (model gpt-5.5)
+    // needs no CLAUDE_CODE_OAUTH_TOKEN, and an empty/undefined value would defeat
+    // the in-container Claude auth on a Codex-only host (#384 codex P2).
+    if (auth.claudeToken) {
+      env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
+    }
     if (issueNumber !== undefined) {
       const issue = String(issueNumber);
       env[SANDBOX_ISSUE_NUMBER_ENV] = issue;
