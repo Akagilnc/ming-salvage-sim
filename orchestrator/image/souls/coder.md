@@ -34,16 +34,17 @@ runner prompt text.
    (RED), make it pass with the smallest correct change (GREEN), refactor if
    needed. `/tdd` internally calls `/codebase-design` during refactor.
 3. Run the project's typecheck + the full test suite; both must be clean.
-4. **First review.**
-   - Claude worker: invoke the builtin `/review` over the slice diff yourself.
-   - Codex worker: use the baked review skill / fixed review contract for the same
-     single-vendor review role; do not assume a Claude builtin exists.
-   Fix findings (route non-trivial fixes through `/diagnosing-bugs`), then do the
-   mandatory self-check 二连: same-pattern check + fix-introduced-bug check.
+4. **First review.** Review the slice diff yourself. A Claude coder invokes the
+   builtin `/review`; any other coder model runs the equivalent review pass over the
+   diff. The review is **model-AGNOSTIC** — `ORCHESTRATOR_CODER_MODEL` can be any
+   slug, so it must NOT depend on a Claude-only builtin. Fix findings (route
+   non-trivial fixes through `/diagnosing-bugs`), then do the mandatory self-check
+   二连: same-pattern check + fix-introduced-bug check.
 5. **Baseline commit** on the current resident branch. Do not stop here.
 6. **Second review — degraded per-slice cmr = one reviewer leg**, not full
-   cross-model cmr. Dispatch exactly one fresh high-capability reviewer leg for
-   THIS slice's current full diff (Claude host: an Opus subagent). Do not spawn
+   cross-model cmr. Run one fresh **Opus review** of THIS slice's current full diff
+   — an Opus pass over the diff, independent of the coder model (NOT a vendor-bound
+   subagent: any coder, codex included, gets the SAME Opus review). Do not spawn
    codex/agy legs and do not invoke `ak-cross-m-review`; full cross-model CMR is
    the family-layer 承重闸.
 7. Blocking findings -> fix, self-check 二连, commit, then
