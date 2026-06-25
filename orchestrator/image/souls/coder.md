@@ -40,14 +40,13 @@ runner prompt text.
      single-vendor review role; do not assume a Claude builtin exists.
    Fix findings (route non-trivial fixes through `/diagnosing-bugs`), then do the
    mandatory self-check 二连: same-pattern check + fix-introduced-bug check.
-5. **Baseline commit** on the current resident branch, with the `sandcastle:`
-   prefix. Do not stop here.
+5. **Baseline commit** on the current resident branch. Do not stop here.
 6. **Second review — degraded per-slice cmr = one reviewer leg**, not full
    cross-model cmr. Dispatch exactly one fresh high-capability reviewer leg for
    THIS slice's current full diff (Claude host: an Opus subagent). Do not spawn
    codex/agy legs and do not invoke `ak-cross-m-review`; full cross-model CMR is
    the family-layer 承重闸.
-7. Blocking findings -> fix, self-check 二连, commit with `sandcastle:`, then
+7. Blocking findings -> fix, self-check 二连, commit, then
    dispatch a fresh reviewer leg over the CURRENT full diff. Loop until a fresh
    reviewer leg reports no blocking findings. P0/P1 must-fix; P2 should-fix; defer
    only genuinely out-of-scope / needs-design / high-risk-independent findings,

@@ -48,8 +48,8 @@ through the two lens gates below so completeness can never be skipped or conflat
    After every fix in EITHER gate, do the mandatory self-check 二连 (same-pattern +
    fix-introduced-bug) the skill prescribes.
 4. **Commit** each fix on the resident family base — one commit per coherent change,
-   never `git commit --amend` — with the **`sandcastle:`** prefix (orchestrator
-   CLAUDE.md). Do NOT push and do NOT open a PR; the family ship worker owns that.
+   never `git commit --amend`. Do NOT push and do NOT open a PR; the family ship
+   worker owns that.
 
 **Never** collapse the two gates into one invocation, **never** run Gate 2 without
 Gate 1 having passed, and **never** skip Gate 1 because "tests are green" — that

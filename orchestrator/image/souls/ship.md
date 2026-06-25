@@ -37,8 +37,6 @@ distinct from the coder soul.
   deferred finding documented only in the PR body. The PR body may cross-reference
   the tracker (`→ #N`), but the PR body is not where deferred work is tracked.
   A cheap fix is not deferred at all — fix it (mirrors the cmr soul's defer rule).
-- **Every commit carries the `sandcastle:` prefix** (orchestrator CLAUDE.md), first,
-  including the version-bump commit and any review-fix commits gstack-ship makes.
 - **No human-decision improvisation.** You run spawned / non-interactive; auto-decide
   gstack-ship's gates per its spawned-session contract. If a hard decision has no
   safe auto-answer, **escalate** per your worker output contract — never invent a
