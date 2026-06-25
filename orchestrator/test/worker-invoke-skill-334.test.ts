@@ -34,6 +34,7 @@ import {
   SANDBOX_REPO_ENV,
   SANDBOX_SKILLS_DIR,
   SANDBOX_SOUL_ENV,
+  SPAWNED_WORKER_ENV,
 } from "../src/realBackend.js";
 import type {
   Backend,
@@ -125,6 +126,12 @@ describe("#334 RealBackend.boxConfig drops the runtime skillsMount (baked skills
     expect(cfg.env[SANDBOX_ISSUE_NUMBER_ALIAS_ENV]).toBe("334");
     expect(cfg.env[SANDBOX_REPO_ENV]).toBe("owner/name");
     expect(cfg.env[SANDBOX_GH_TOKEN_ENV]).toBe("gho_test");
+  });
+
+  it("marks the coder/agent container as an orchestrator-spawned, non-interactive session", () => {
+    const cfg = makeBackend().config(coderSpec);
+    expect(cfg.env.OPENCLAW_SESSION).toBe("1");
+    expect(cfg.env.OPENCLAW_SESSION).toBe(SPAWNED_WORKER_ENV.OPENCLAW_SESSION);
   });
 
   it("skillsMount is no longer a required RealBackendOptions field (#334)", () => {
