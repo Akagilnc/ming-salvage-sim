@@ -4832,16 +4832,27 @@ class GameDB:
             if mid
         ]
         with self.conn:
+            # Atomically transition ONLY a still-active, still-pre-reply turn: the
+            # WHERE mirrors the read-guard above (a completed turn keeps status
+            # 'active' and is distinguished solely by minister_message_id), so a turn
+            # that completed between the SELECT and here is left intact. The durable
+            # side effects (user-prompt delete, agno truncate, failed_now) are gated on
+            # this UPDATE actually matching — never on the stale read alone — so the
+            # method can never delete a replied turn's prompt or report a false
+            # failed_now even if a future caller invokes it off the owning generator.
+            cursor = self.conn.execute(
+                "UPDATE chat_turns SET status = 'failed' "
+                "WHERE id = ? AND status = 'active' AND minister_message_id IS NULL",
+                (int(chat_turn_id),),
+            )
+            if cursor.rowcount != 1:
+                return turn_row
             if message_ids:
                 placeholders = ",".join("?" for _ in message_ids)
                 self.conn.execute(
                     f"DELETE FROM chat_messages WHERE id IN ({placeholders})",
                     message_ids,
                 )
-            self.conn.execute(
-                "UPDATE chat_turns SET status = 'failed' WHERE id = ? AND status = 'active'",
-                (int(chat_turn_id),),
-            )
             self._truncate_agno_runs_in_tx(
                 str(turn_row.get("agno_session_id") or ""),
                 int(turn_row.get("agno_runs_before") or 0),
