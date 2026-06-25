@@ -369,7 +369,8 @@ class GameDB:
                 status_changed_turn INTEGER NOT NULL DEFAULT 0,
                 power_id TEXT NOT NULL DEFAULT 'ming',
                 location TEXT NOT NULL DEFAULT '',
-                transit_to TEXT NOT NULL DEFAULT ''
+                transit_to TEXT NOT NULL DEFAULT '',
+                transit_start_turn INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS character_offices (
@@ -1003,6 +1004,7 @@ class GameDB:
         self.ensure_column("characters", "power_id", "TEXT NOT NULL DEFAULT 'ming'")
         self.ensure_column("characters", "location", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "transit_to", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("characters", "transit_start_turn", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("issues", "resolve_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "fail_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "end_turn", "INTEGER NOT NULL DEFAULT 0")
@@ -2203,7 +2205,7 @@ class GameDB:
         if ousted:
             self.conn.execute(
                 "UPDATE characters SET status=?, status_reason=?, "
-                "status_changed_turn=?, office='', transit_to='', reason_code=? WHERE name=?",
+                "status_changed_turn=?, office='', transit_to='', transit_start_turn=0, reason_code=? WHERE name=?",
                 (status, reason[:200], state.turn, reason_code_value, name),
             )
         else:
@@ -4806,6 +4808,56 @@ class GameDB:
         )
         self.conn.commit()
 
+    def fail_incomplete_chat_turn(self, chat_turn_id: int) -> Dict[str, Any]:
+        """Mark a pre-reply chat turn failed and remove its durable user prompt.
+
+        The returned dict carries ``failed_now=True`` ONLY when this call actually
+        transitioned an active pre-reply turn to failed (and deleted its durable user
+        prompt). A guarded/no-op return (turn already replied, not active, or missing)
+        omits the flag so callers can mirror the same guard for their own side effects
+        (e.g. in-memory history pruning).
+        """
+        row = self.conn.execute(
+            "SELECT * FROM chat_turns WHERE id = ?",
+            (int(chat_turn_id),),
+        ).fetchone()
+        if row is None:
+            return {}
+        turn_row = self._row_dict(row)
+        if turn_row["status"] != "active" or turn_row.get("minister_message_id") is not None:
+            return turn_row
+        _uid = turn_row.get("user_message_id")
+        message_ids = [int(_uid)] if _uid is not None else []
+        with self.conn:
+            # Atomically transition ONLY a still-active, still-pre-reply turn: the
+            # WHERE mirrors the read-guard above (a completed turn keeps status
+            # 'active' and is distinguished solely by minister_message_id), so a turn
+            # that completed between the SELECT and here is left intact. The durable
+            # side effects (user-prompt delete, agno truncate, failed_now) are gated on
+            # this UPDATE actually matching — never on the stale read alone — so the
+            # method can never delete a replied turn's prompt or report a false
+            # failed_now even if a future caller invokes it off the owning generator.
+            cursor = self.conn.execute(
+                "UPDATE chat_turns SET status = 'failed' "
+                "WHERE id = ? AND status = 'active' AND minister_message_id IS NULL",
+                (int(chat_turn_id),),
+            )
+            if cursor.rowcount != 1:
+                return turn_row
+            if message_ids:
+                placeholders = ",".join("?" for _ in message_ids)
+                self.conn.execute(
+                    f"DELETE FROM chat_messages WHERE id IN ({placeholders})",
+                    message_ids,
+                )
+            self._truncate_agno_runs_in_tx(
+                str(turn_row.get("agno_session_id") or ""),
+                int(turn_row.get("agno_runs_before") or 0),
+            )
+        turn_row["status"] = "failed"
+        turn_row["failed_now"] = True
+        return turn_row
+
     def record_chat_turn_rollback_diffs(
         self,
         chat_turn_id: int,
@@ -6917,12 +6969,17 @@ class GameDB:
         flows 月固定支出与所有收入一律 None。受控枚举见 constants.ECONOMY_PURPOSES。
 
         遗产修正：account 上若有 active 遗产百分比修正符，先按 apply_legacy_pct 放大/缩小 delta
-        再落账（base>=0 ×(1+net/100)，base<0 ×(1-net/100)）。修正折进本笔流水，不另立账行。
+        再落账。修正折进本笔流水，不另立账行。
         category=='局势遗产' 时不再二次修正（避免自乘，且当前已无该类调用）。
+        帝国修正只对收入（delta>0 正向流水）生效；支出（delta<0）按面值落账（issue #341）——
+        即本路径仅以 delta>0 调 apply_legacy_pct（其 base>=0 ×(1+net/100) 分支）；
+        apply_legacy_pct 自身的 base<0 ×(1-net/100) 分支由 region/army 等其它调用方使用，本路径不走。
         """
+        if isinstance(delta, bool) or not isinstance(delta, int):
+            raise TypeError("delta must be an integer")
         if category != "局势遗产":
             net_pct = int(self.legacy_modifiers(state).get(account, 0) or 0)  # type: ignore[arg-type]
-            if net_pct:
+            if net_pct and delta > 0:
                 delta = self.apply_legacy_pct(int(delta), net_pct)
         before = int(state.metrics[account])
         after = max(0, before + int(delta))

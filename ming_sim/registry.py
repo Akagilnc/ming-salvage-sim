@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import Dict, List, Optional
 
 from agno.agent import Agent
@@ -16,7 +17,7 @@ from agno.skills.loaders.local import LocalSkills
 from ming_sim.constants import TURN_UNIT
 from ming_sim.content import GameContent
 from ming_sim.context import character_context_with_db
-from ming_sim.models import Character, CourtContext, LLMConfig
+from ming_sim.models import Character, CourtContext, LLMConfig, MINISTER_CHAT_CLI_TIMEOUT_SECONDS
 from ming_sim.llm_model import create_chat_model
 from ming_sim.token_stats import tlog
 from ming_sim.tools import _duty_location, build_minister_tools
@@ -416,8 +417,19 @@ def create_minister_agent(
     agno_db: SqliteDb,
     session_id: Optional[str] = None,
 ) -> Agent:
+    # 实时召对用短超时（#353）：大臣回话 ≤ MINISTER_CHAT_CLI_TIMEOUT_SECONDS，
+    # 与月末结算的 300 s 解耦；用 dataclasses.replace 不改原配置对象。
+    chat_llm_config = replace(
+        llm_config,
+        cli_timeout_seconds=min(llm_config.cli_timeout_seconds, MINISTER_CHAT_CLI_TIMEOUT_SECONDS)
+        if llm_config.cli_timeout_seconds is not None
+        else MINISTER_CHAT_CLI_TIMEOUT_SECONDS,
+        timeout_seconds=min(llm_config.timeout_seconds, MINISTER_CHAT_CLI_TIMEOUT_SECONDS)
+        if llm_config.timeout_seconds is not None
+        else MINISTER_CHAT_CLI_TIMEOUT_SECONDS,
+    )
     # temperature 0.6：保留人物个性，但收敛发挥——少在拟旨里夹带题外私货。
-    model = create_chat_model(llm_config, temperature=0.6, top_p=0.9)
+    model = create_chat_model(chat_llm_config, temperature=0.6, top_p=0.9)
     # 缓存策略：instructions 全部静态化（仅依赖 character，不依赖每月 state/events）。
     # game_world / minister_agent prompt、character 档案 跨月完全相同 → DeepSeek 前缀缓存命中。
     # 每月动态上下文（钱粮、奏报、地区、军队、派系）由 MinisterRegistry 在 agent 创建后通过首轮

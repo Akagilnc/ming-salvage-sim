@@ -292,6 +292,24 @@ def _army_rows_with_needed(
     return out
 
 
+def _build_transit_nudge(db: "GameDB", state: "GameState") -> List[Dict[str, object]]:
+    """在途人物 nudge 列表，供 simulator 优先叙事到任（#346）。"""
+    rows = db.conn.execute(
+        "SELECT name, transit_to, transit_start_turn FROM characters "
+        "WHERE COALESCE(transit_to, '') != '' AND status='active'"
+    ).fetchall()
+    result: List[Dict[str, object]] = []
+    for row in rows:
+        start = int(row["transit_start_turn"] or 0)
+        months = (state.turn - start) if start > 0 else 0
+        result.append({
+            "name": str(row["name"]),
+            "transit_to": str(row["transit_to"]),
+            "months_in_transit": months,
+        })
+    return result
+
+
 def build_simulator_payload(
     state: GameState,
     db: GameDB,
@@ -377,7 +395,10 @@ def build_simulator_payload(
         "secret_orders": augment_secret_orders_with_due_commitments(secret_orders, db, state),
         # HITL：本回合 simulator 至少应产出的重大决策点数（全局玩法设置，0=不强制）。
         "hitl_min_decisions": _load_hitl_min_decisions(),
-        "data_note": "盘面表（buildings/court_roster/armies/regions）在本输入的开头以 TSV 文本块给出（首行列名、tab 分隔、每行一条记录），不在本 JSON 内；本 JSON 只含其余字段（含 powers_brief/factions_brief/classes_brief 叙述串、active_issues 等）。secret_orders 为皇帝密令/到期待裁承诺分组对象（两组：在办=承办中、待核议=待本回合核议裁决），独立于 relevant_memories；真实密令条目含 id/minister_name/title/content/turn_issued/due_turn/progress/sim_note；到期待裁承诺条目带 entry_kind=due_commitment 与 issue_id。",
+        # LLM nudge：在途人物列表（#346）。simulator 优先产叙事到任（行止+location），
+        # 代码在 pre_settle 中兜底强制（≥2月未到 → 强制；此 nudge 鼓励 LLM 主动叙事）。
+        "transit_nudge": _build_transit_nudge(db, state),
+        "data_note": "盘面表（buildings/court_roster/armies/regions）在本输入的开头以 TSV 文本块给出（首行列名、tab 分隔、每行一条记录），不在本 JSON 内；本 JSON 只含其余字段（含 powers_brief/factions_brief/classes_brief 叙述串、active_issues 等）。secret_orders 为皇帝密令/到期待裁承诺分组对象（两组：在办=承办中、待核议=待本回合核议裁决），独立于 relevant_memories；真实密令条目含 id/minister_name/title/content/turn_issued/due_turn/progress/sim_note；到期待裁承诺条目带 entry_kind=due_commitment 与 issue_id。transit_nudge 为当前在途（transit_to 非空）人物，months_in_transit ≥1 者按惯例本月应抵达，请优先产行止叙事。",
     }
 
 
