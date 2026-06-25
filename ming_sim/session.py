@@ -10,8 +10,9 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from ming_sim.agents import bind_content as _bind_agents
 from ming_sim.agents import _dump_llm_messages
@@ -44,6 +45,7 @@ from ming_sim.skills import bind_content as _bind_skills
 
 AUTO_SAVE_PREFIX = "auto_"
 AUTO_SAVE_KEEP_TURNS = 3  # 每个 campaign 保留最近 N 个 turn 的全部自动存档（每 turn 含 begin + preresolve）
+_CLI_ACTION_INTENT_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="cli-action-intent")
 
 
 def prune_auto_saves(saves_dir: str, campaign_id: str, keep_turns: int = AUTO_SAVE_KEEP_TURNS) -> None:
@@ -673,6 +675,45 @@ class GameSession:
         }.get(status, status)
         return (False, f"{character.name}{label}，无法召见。" + (reason or ""))
 
+    def _start_cli_action_intent(self, character: Character, message: str) -> Optional[Future]:
+        """CLI 召对动作判断只读皇帝消息，可与大臣回话并发。"""
+        from ming_sim.cli_backend import (
+            _DRAFT_PREFIXES, _SECRET_PREFIXES, classify_cli_action_intent, cli_backend_from_env,
+        )
+        channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
+        if channel != "cli" and (channel == "api" or cli_backend_from_env() is None):
+            return None
+        text = (message or "").strip()
+        if text.startswith(_DRAFT_PREFIXES) or text.startswith(_SECRET_PREFIXES):
+            return None
+        minister_name = character.name
+        pend_for_minister = self.db.list_pending_actions(self.state.turn, minister_name=minister_name)
+        confirm_targets = [p for p in pend_for_minister if p["kind"] != "directive"]
+        if GameSession._proposal_blocked(self.state) and not confirm_targets:
+            return None
+        summaries = [_pending_action_brief(p) for p in confirm_targets]
+        is_consort = getattr(character, "office_type", "") == "后宫"
+        active_orders = [] if GameSession._proposal_blocked(self.state) else self.db.get_active_secret_orders_for_minister(minister_name)
+        has_pending_draft = any(p["kind"] == "directive" for p in pend_for_minister)
+        return _CLI_ACTION_INTENT_EXECUTOR.submit(
+            classify_cli_action_intent,
+            text,
+            active_orders,
+            is_consort,
+            has_pending_draft,
+            summaries,
+            getattr(self, "llm_config", None),
+        )
+
+    def _finish_cli_action_intent(self, future: Optional[Future]) -> Optional[Dict[str, Any]]:
+        if future is None:
+            return None
+        try:
+            result = future.result()
+        except Exception:
+            return {"kind": "none"}
+        return result if isinstance(result, dict) else {"kind": "none"}
+
     def chat(self, minister_name: str, message: str) -> ChatTurnResult:
         """与大臣对话一轮，统一处理 court tool 截获。
         大臣 propose_directive 产生的草案以 status='pending' 入库，
@@ -689,6 +730,7 @@ class GameSession:
         draft_line = self.registry.build_draft_line()
         if draft_line and draft_line != "无":
             augmented = f"【本{TURN_UNIT}已核定草案】{draft_line}\n\n{augmented}"
+        action_intent_future = self._start_cli_action_intent(character, message)
         run_output = agent.run(augmented)
         _dump_llm_messages(run_output, f"大臣对话/{minister_name}")
         answer = extract_agent_text(run_output)
@@ -756,12 +798,16 @@ class GameSession:
                     if order_id:
                         result.secret_order_id = order_id
         # CLI 后端（agy/codex）：玩家用拟旨/密令按钮（消息带前缀）时，把大臣这句回话原文入档。
-        self._cli_backend_fallback_actions(result, character, message)
+        self._cli_backend_fallback_actions(
+            result, character, message,
+            preclassified_intent=self._finish_cli_action_intent(action_intent_future),
+        )
         return result
 
     def apply_cli_conversation_actions(
         self, character: Character, player_message: str, answer: str,
         has_directive: bool, secret_order_id: Optional[int],
+        preclassified_intent: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """CLI 后端（无 function-calling）会话落地的【唯一真源】，session.chat 非流式路径与
         web streaming 路径共用，杜绝两边逻辑漂移（CMR F3 / codexC-1）。
@@ -775,6 +821,8 @@ class GameSession:
             extract_appointment_action, extract_confirmation_intent, extract_draft_intent,
         )
         out: Dict[str, Any] = {"directive": None, "secret_order_id": secret_order_id}
+        intent = preclassified_intent if isinstance(preclassified_intent, dict) else None
+        intent_kind = str((intent or {}).get("kind") or "none")
         channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
         if channel != "cli" and (channel == "api" or cli_backend_from_env() is None):
             return out
@@ -794,8 +842,13 @@ class GameSession:
         confirm_targets = [p for p in pend_for_minister if p["kind"] != "directive"]
         if confirm_targets:
             summaries = [_pending_action_brief(p) for p in confirm_targets]
-            confirm = extract_confirmation_intent(
-                player_message, reply, summaries, llm_config=llm_config)
+            if intent is not None:
+                confirm = str(intent.get("confirmation") or "无") if intent_kind == "confirmation" else "无"
+                if confirm not in ("应允", "拒绝", "无"):
+                    confirm = "无"
+            else:
+                confirm = extract_confirmation_intent(
+                    player_message, reply, summaries, llm_config=llm_config)
             if confirm == "应允":
                 if self.state.turn_phase in FRONT_HALF_DONE_PHASES:
                     # 恢复窗确认不即时落库（事务外落真表，后续 settle 中止不回滚=半写）。
@@ -845,13 +898,21 @@ class GameSession:
                 if self.registry is not None:
                     self.registry.refresh(assignee)
         # 会话动作：本轮未经前缀落密令时，LLM 判皇帝对密令/妃嫔的意图再落地。
+        conversation_intent_handled = False
         if not out["secret_order_id"]:
             is_consort = getattr(character, "office_type", "") == "后宫"
             active = self.db.get_active_secret_orders_for_minister(minister_name)
             if active or is_consort:
-                act = extract_minister_actions(
-                    player_message, reply, active, is_consort, llm_config=llm_config)
+                if intent is not None:
+                    act = intent if intent_kind in ("secret", "cultivate") else {
+                        "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
+                        "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": ""}
+                else:
+                    act = extract_minister_actions(
+                        player_message, reply, active, is_consort, llm_config=llm_config)
                 sa = act["secret_action"]
+                if sa and sa != "无":
+                    conversation_intent_handled = True
                 target = None
                 if act["order_id"]:
                     target = next((o for o in active if int(o["id"]) == act["order_id"]), None)
@@ -892,6 +953,7 @@ class GameSession:
                     # 故无 secret_order_id、无需 refresh registry——暂存动作颁诏前对他臣不可见
                     # (ADR 0006),且 commit 在月末 next_period 前、次回合 agent 本就重建,无须刷新。
                 if is_consort and (act["cultivate_skill"] or act["cultivate_trait"]):
+                    conversation_intent_handled = True
                     # 后宫调教也是结构化聊天写动作,走动作闸门(ADR 0006):暂存,颁诏批量落库。
                     out["pending_action_id"] = self.db.stage_pending_action(
                         self.state.turn, kind="consort", action="调教",
@@ -907,7 +969,7 @@ class GameSession:
                 return False
             return any(
                 token in text
-                for token in ("拟旨", "拟一道旨", "起草", "草拟", "拟诏", "圣旨")
+                for token in ("拟旨", "拟一道旨", "起草", "草拟", "拟诏", "圣旨", "这道旨", "道旨")
             )
 
         def _stage_conversational_draft() -> bool:
@@ -941,11 +1003,17 @@ class GameSession:
                         _existing_draft_text = str(_payload.get("text") or "")
             elif _committed_draft is not None:
                 _existing_draft_text = str(_committed_draft["text"] or "")
-            draft_res = extract_draft_intent(
-                player_message, reply, llm_config=llm_config,
-                has_pending_draft=_has_existing_draft,
-                existing_draft_text=_existing_draft_text,
-            )
+            if intent is not None:
+                draft_res = {
+                    "draft_action": "拟旨" if intent_kind == "draft" else "无",
+                    "draft_text": reply if intent_kind == "draft" else "",
+                }
+            else:
+                draft_res = extract_draft_intent(
+                    player_message, reply, llm_config=llm_config,
+                    has_pending_draft=_has_existing_draft,
+                    existing_draft_text=_existing_draft_text,
+                )
             if draft_res["draft_action"] == "拟旨" and draft_res["draft_text"]:
                 if _committed_draft is not None and not _has_pending_draft:
                     did = int(_committed_draft["id"])
@@ -967,8 +1035,19 @@ class GameSession:
 
         # 若皇帝话里已明确「拟旨/起草/圣旨」，先让拟旨抽取器判；否则「帮我拟旨，
         # 授某人为某官」会被任免抽取抢成 office pending，丢失诏书草案路径。
-        if _mentions_draft_request(player_message) or any(
-            p["kind"] == "directive" for p in pend_for_minister
+        has_pending_directive = any(p["kind"] == "directive" for p in pend_for_minister)
+        has_committed_directive = False
+        if intent is None and not has_pending_directive:
+            for _directive in reversed(self.db.list_directives(self.state, statuses=("draft",))):
+                if str(_directive["actor"] or "") == minister_name:
+                    has_committed_directive = True
+                    break
+        if (
+            (intent is not None and intent_kind == "draft")
+            or (
+                intent is None
+                and (_mentions_draft_request(player_message) or has_pending_directive or has_committed_directive)
+            )
         ):
             draft_staged = _stage_conversational_draft()
 
@@ -977,8 +1056,14 @@ class GameSession:
         # 显式前缀(拟旨/密令)是皇帝已明示的动作，按既定例外直接走(拟旨里的任免随诏书
         # 走 extractor 的 office_changes)，不在此自然语言路径重复 stage。
         appt = {"appoint_action": "无"}
-        if not explicit_prefixed and not draft_staged:
-            appt = extract_appointment_action(player_message, reply, llm_config=llm_config)
+        if (
+            not explicit_prefixed and not draft_staged
+            and not out.get("pending_action_id") and not conversation_intent_handled
+        ):
+            if intent is not None:
+                appt = intent if intent_kind == "appointment" else {"appoint_action": "无"}
+            else:
+                appt = extract_appointment_action(player_message, reply, llm_config=llm_config)
         if appt["appoint_action"] in ("任命", "罢免") and appt["name"]:
             # minister_name = 召对对象(发起这道任免的大臣/太监),非被任者——对话确认按召对的
             # 大臣过滤暂存,故须以召对对象为键;被任者姓名在 payload["name"]。
@@ -994,18 +1079,18 @@ class GameSession:
         # _has_pending_draft：此大臣本回合已有 kind=directive 暂存时为 True（confirm=="无"後仍在）。
         # pend_for_minister snapshot 此处仍有效：confirm=="应允"/"拒绝"会在上方提前 return，
         # 能到这里说明 directive 未 commit/drop，snapshot 与 DB 一致（codex r5 F1 修复）。
-        if not draft_probe_done:
-            _stage_conversational_draft()
         return out
 
     def _cli_backend_fallback_actions(
         self, result: "ChatTurnResult", character: Character, player_message: str = "",
+        preclassified_intent: Optional[Dict[str, Any]] = None,
     ) -> None:
         """session.chat 非流式路径：调共享会话落地，映射回 ChatTurnResult（agno 工具不触发时）。"""
         res = self.apply_cli_conversation_actions(
             character, player_message, result.answer or "",
             has_directive=result.proposed_directive is not None,
             secret_order_id=result.secret_order_id,
+            preclassified_intent=preclassified_intent,
         )
         if result.proposed_directive is None and res["directive"]:
             d = res["directive"]
