@@ -48,6 +48,7 @@ import {
   SANDBOX_CODEX_DIR,
   SANDBOX_SKILLS_DIR,
   SNAPSHOT_FILENAME,
+  WORKER_IDLE_TIMEOUT_SECONDS,
   type GhBlockedBy,
   type GhIssueJson,
 } from "../src/realBackend.js";
@@ -399,6 +400,17 @@ describe("realBackend auth mount paths", () => {
 });
 
 // ─── model slug → CLI (role decides soul/model) ──────────────────────────────
+
+describe("realBackend WORKER_IDLE_TIMEOUT_SECONDS (idle-timeout disable)", () => {
+  it("is a far-future value that never fires in practice (sandcastle has no disable sentinel)", () => {
+    // 1 year in seconds: sandcastle multiplies idleTimeoutSeconds by 1e3 and
+    // sleeps that long before failing the run, and 0 would fire immediately —
+    // so a huge finite value is the only clean way to neutralize the 600s default.
+    expect(WORKER_IDLE_TIMEOUT_SECONDS).toBe(31_536_000);
+    // far larger than sandcastle's 600s default → never beats a real worker.
+    expect(WORKER_IDLE_TIMEOUT_SECONDS).toBeGreaterThan(600);
+  });
+});
 
 describe("realBackend modelIdForSlug", () => {
   it("maps the CLAUDE slugs to their claude model ids (reviewer=opus, ship=sonnet)", () => {

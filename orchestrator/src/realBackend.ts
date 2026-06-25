@@ -445,6 +445,16 @@ export const SANDBOX_REPO_ENV = "ORCHESTRATOR_REPO";
 export const SANDBOX_GH_TOKEN_ENV = "GH_TOKEN";
 
 /**
+ * Effectively disables sandcastle's per-worker idle timeout (default 600s, which
+ * fails the run with "Agent idle for N seconds"). Every observed "hang" so far
+ * was the laptop sleeping mid-run or deep-reasoning silence — false fires; real
+ * hangs are <1% and are caught manually. Sandcastle has no disable sentinel
+ * (`0` would fire immediately; `??` only falls back on null/undefined), so we
+ * use 1 year in seconds — a timer that never fires in practice.
+ */
+export const WORKER_IDLE_TIMEOUT_SECONDS = 31_536_000;
+
+/**
  * Host paths for the per-issue codex auth copy + the claude token (spike
  * contract). codex auth MUST live under $HOME (colima shares $HOME into the
  * Docker VM; $TMPDIR is NOT shared → a tmp copy mounts root-owned/empty →
@@ -1940,6 +1950,7 @@ export class RealBackend implements Backend {
     const issueNumber = this.issueOf(worktree);
     const result = await sc.run({
       name: `${spec.id}-${spec.role}`,
+      idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
       cwd: worktree.path,
       sandbox: this.box(issueNumber, spec),
       // The build worker's CLI is the spec's model slug → provider (the S2 coder
@@ -1982,6 +1993,7 @@ export class RealBackend implements Backend {
     try {
       const result = await sc.run({
         name: `${spec.id}-${spec.role}-resume`,
+        idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
         cwd: worktree.path,
         sandbox: this.box(issueNumber, spec),
         // Resume the build worker on the SAME CLI as its fresh run (agentForSlug:
@@ -2028,6 +2040,7 @@ export class RealBackend implements Backend {
       if (recovery.kind === "retry-structured") {
         const result = await sc.run({
           name: `${spec.id}-${spec.role}-resume-retry`,
+          idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
           cwd: worktree.path,
           sandbox: this.box(issueNumber, spec),
           // Same CLI as the fresh/native-resume build worker (agentForSlug).
@@ -2209,6 +2222,7 @@ export class RealBackend implements Backend {
       }
       const result = await sc.run({
         name: `${spec.id}-ship`,
+        idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
         cwd: worktree.path,
         sandbox: this.shipSandbox(auth),
         agent: sc.claudeCode(modelIdForSlug(spec.model)),
