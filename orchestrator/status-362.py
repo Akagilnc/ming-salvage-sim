@@ -4,7 +4,8 @@
 import re, subprocess, os, glob, time
 
 LOG = "/tmp/dogfood-362.log"
-LEDGER = "/Users/akagilnc/.sc-orchestrator/dogfood-362-ledger"
+# $HOME-relative, not a hard-coded absolute home path (gemini #384 R4).
+LEDGER = os.path.expanduser("~/.sc-orchestrator/dogfood-362-ledger")
 STEPS = ["S0", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8"]
 LABEL = {"S0": "gate", "S1": "load", "S2": "code", "S3": "rev",
          "S4": "route", "S5": "fix", "S6": "re-rev", "S7": "ship", "S8": "done"}
