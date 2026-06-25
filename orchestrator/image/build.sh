@@ -74,7 +74,7 @@ STAGE="$(mktemp -d "${TMPDIR:-/tmp}/ming-coder-img.XXXXXX")"
 trap 'rm -rf "$STAGE"' EXIT
 
 echo "[build] staging context at $STAGE"
-mkdir -p "$STAGE/skills" "$STAGE/souls"
+mkdir -p "$STAGE/skills" "$STAGE/souls" "$STAGE/hooks"
 
 # ── 1. Resolve + copy the dev-skill closure (cp -RL dereferences symlinks) ────
 # Prune each skill's run-artifact / eval / test cruft so the image stays lean and
@@ -274,6 +274,17 @@ if ! grep -q '^## Skill routing' "$STAGE/CLAUDE.routing.md"; then
   echo "[build] ERROR: repo CLAUDE.md is missing the '## Skill routing' section (#332)" >&2
   exit 1
 fi
+
+# ── 3b. Git hooks (commit-msg: sandcastle: prefix on every in-container commit) ─
+# Wired via `git config --global core.hooksPath` in the Containerfile so it tags
+# EVERY worker's commits deterministically — including the ones a soul instruction
+# misses (gstack-ship's own version-bump / review-fix commits).
+if [ ! -f "$HERE/hooks/commit-msg" ]; then
+  echo "[build] ERROR: commit-msg hook not found at $HERE/hooks/commit-msg" >&2
+  exit 1
+fi
+cp "$HERE/hooks/commit-msg" "$STAGE/hooks/commit-msg"
+chmod +x "$STAGE/hooks/commit-msg"
 
 # ── 4. Containerfile into the staging context ────────────────────────────────
 cp "$HERE/Containerfile" "$STAGE/Containerfile"
