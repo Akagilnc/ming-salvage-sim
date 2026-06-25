@@ -17,6 +17,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  agentForSlug,
   assertCompletionSignal,
   attributeFailure,
   branchForIssue,
@@ -28,8 +29,6 @@ import {
   cutRefFor,
   ensureExcluded,
   extractAgentBrief,
-  FIX_FINDINGS_FILENAME,
-  serializeFixFindings,
   extractCoderTag,
   isLikelySha,
   isReadyForAgent,
@@ -49,6 +48,7 @@ import {
   SANDBOX_CODEX_DIR,
   SANDBOX_SKILLS_DIR,
   SNAPSHOT_FILENAME,
+  WORKER_IDLE_TIMEOUT_SECONDS,
   type GhBlockedBy,
   type GhIssueJson,
 } from "../src/realBackend.js";
@@ -162,8 +162,8 @@ describe("realBackend gh parsing", () => {
   it("buildIssueSnapshot embeds the #244-named native metadata (title/state/labels + sub-issue + blocked_by summaries)", () => {
     // #244 S1: the full snapshot is "body + comments + 最新 Agent Brief 正文 +
     // native metadata". The native metadata S0 reads via gh must travel into the
-    // clean-room snapshot, or the container's LOCAL context is missing a
-    // contract-named element (it does NOT gh-fetch inside the box).
+    // clean-room snapshot so the host-side audit/resume artifact is contract-
+    // complete. Worker execution truth is live issue fetch via in-container gh.
     const json: GhIssueJson = {
       number: 256,
       title: "Slice: real Backend",
@@ -375,36 +375,6 @@ describe("realBackend branchForIssue (neutral, no fake epic number)", () => {
   });
 });
 
-// ─── fix-loop findings file (integ-cmr 256 r3, fix_loop_context) ─────────────
-
-describe("realBackend serializeFixFindings (fix_loop_context, r3)", () => {
-  const f = {
-    severity: "critical" as const,
-    category: "correctness",
-    claim_quote: "the loop never converges",
-    location: "src/foo.ts:10",
-    suggested_fix: "add a guard",
-    action: "fix_now" as const,
-  };
-
-  it("emits a self-describing { fix_now: [...] } object the coder reads", () => {
-    const json = JSON.parse(serializeFixFindings([f]));
-    expect(json).toEqual({ fix_now: [f] });
-  });
-
-  it("serialises an empty list as an empty fix_now array (never undefined)", () => {
-    expect(JSON.parse(serializeFixFindings([]))).toEqual({ fix_now: [] });
-  });
-
-  it("the findings filename is the dot-prefixed clean-room artifact", () => {
-    expect(FIX_FINDINGS_FILENAME).toBe(".orchestrator-fix-findings.json");
-  });
-
-  it("is git-ignorable alongside the snapshot (distinct clean-room file)", () => {
-    expect(FIX_FINDINGS_FILENAME).not.toBe(SNAPSHOT_FILENAME);
-  });
-});
-
 // ─── auth-mount path construction (spike contract) ───────────────────────────
 
 describe("realBackend auth mount paths", () => {
@@ -431,13 +401,50 @@ describe("realBackend auth mount paths", () => {
 
 // ─── model slug → CLI (role decides soul/model) ──────────────────────────────
 
+describe("realBackend WORKER_IDLE_TIMEOUT_SECONDS (idle-timeout disable)", () => {
+  it("is a far-future value that never fires in practice (sandcastle has no disable sentinel)", () => {
+    // ONE WEEK in seconds. sandcastle multiplies idleTimeoutSeconds by 1e3, and the
+    // millisecond delay must fit in a signed 32-bit int — a larger value (e.g. 1
+    // year = 31_536_000_000 ms) OVERFLOWS int32 and fires the timer IMMEDIATELY
+    // (gemini #384 R2). A week dwarfs any real run and stays well under the limit.
+    expect(WORKER_IDLE_TIMEOUT_SECONDS).toBe(604_800);
+    // far larger than sandcastle's 600s default → never beats a real worker.
+    expect(WORKER_IDLE_TIMEOUT_SECONDS).toBeGreaterThan(600);
+    // its millisecond form must not overflow a signed 32-bit timer.
+    expect(WORKER_IDLE_TIMEOUT_SECONDS * 1000).toBeLessThanOrEqual(2 ** 31 - 1);
+  });
+});
+
 describe("realBackend modelIdForSlug", () => {
-  it("maps sonnet→coder CLI, opus→reviewer CLI", () => {
+  it("maps the CLAUDE slugs to their claude model ids (reviewer=opus, ship=sonnet)", () => {
+    // modelIdForSlug stays the CLAUDE-model-id resolver: the codex coder slug is
+    // NOT a claude model id, so it is resolved by agentForSlug, not here.
     expect(modelIdForSlug("sonnet")).toBe("claude-sonnet-4-6");
     expect(modelIdForSlug("opus")).toBe("claude-opus-4-8");
   });
-  it("throws on an unknown slug (misconfigured StepSpec)", () => {
+  it("throws on a non-claude slug (the codex slug is not a claude model id)", () => {
     expect(() => modelIdForSlug("gpt")).toThrow(/unknown model slug/);
+    expect(() => modelIdForSlug("gpt-5.5")).toThrow(/unknown model slug/);
+  });
+});
+
+// ─── agentForSlug (model slug → baked-in CLI provider) ────────────────────────
+
+describe("realBackend agentForSlug", () => {
+  it("resolves the codex coder slug to the codex provider (gpt-5.5)", () => {
+    // The S2 build worker (coder) runs on Codex gpt-5.5 — agentForSlug returns the
+    // sandcastle codex provider (`.name === "codex"`), NOT claudeCode.
+    const provider = agentForSlug("gpt-5.5");
+    expect(provider.name).toBe("codex");
+  });
+  it("resolves the claude slugs to the claudeCode provider (reviewer/ship)", () => {
+    // opus (reviewer / per-slice review subagent) and sonnet (the ship worker) stay
+    // on Claude — agentForSlug returns the claudeCode provider (`.name === "claude-code"`).
+    expect(agentForSlug("opus").name).toBe("claude-code");
+    expect(agentForSlug("sonnet").name).toBe("claude-code");
+  });
+  it("throws on an unknown slug (misconfigured StepSpec)", () => {
+    expect(() => agentForSlug("gpt")).toThrow(/unknown model slug/);
   });
 });
 
@@ -754,17 +761,14 @@ describe("realBackend promptsDirError (F4)", () => {
   });
 
   it("REFERENCED_PROMPT_FILES covers every dispatched worker prompt incl. ship.md (integ-cmr int-r1 C-3)", () => {
-    // The list is DERIVED from the actual worker specs (STEP_SPECS S2/S3/S5/S6 +
-    // shipWorkerSpec S7), so it can never drift out-of-sync with the workers the
-    // runner dispatches. The S7 ship worker's ship.md was previously missing —
-    // promptsDir validation passed but S7 then crashed at run time looking for it.
+    // The list is DERIVED from the actual worker specs (ADR 0026: STEP_SPECS is
+    // ONLY the S2 whole-slice build coder + shipWorkerSpec S7), so it can never
+    // drift out-of-sync with the workers the runner dispatches. The runner-driven
+    // reviewer/fix steps (and their reviewer_full_review.md / coder_fix.md /
+    // reviewer_rereview.md prompts) were deleted; the per-slice review/fix loop now
+    // runs INSIDE the S2 worker. The S7 ship worker's ship.md must be validated.
     const files = [...REFERENCED_PROMPT_FILES];
-    expect(files).toContain("coder_implement.md");
-    expect(files).toContain("reviewer_full_review.md");
-    expect(files).toContain("coder_fix.md");
-    expect(files).toContain("reviewer_rereview.md");
-    // The previously-missing S7 ship prompt MUST now be validated.
-    expect(files).toContain("ship.md");
+    expect(new Set(files)).toEqual(new Set(["coder_implement.md", "ship.md"]));
     // No duplicates.
     expect(new Set(files).size).toBe(files.length);
   });

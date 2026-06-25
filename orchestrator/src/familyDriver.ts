@@ -60,6 +60,9 @@ import type {
  * The real shape is `{"subIssues":{"nodes":[{"number":N},…],"totalCount":N}}` (an
  * OBJECT — the same shape {@link parseSubIssueCount} reads the count off). The
  * driver needs the NUMBERS (each a child slice), so it reads `nodes[].number`.
+ * **Skips CLOSED children** (each node carries `state`): a re-run epic carries
+ * already-done slices, and a closed child must NOT be re-admitted (it aborts the
+ * family run at the single-slice S0 gate). OPEN / state-less are kept.
  * Tolerates a non-object / non-array / missing-number value by skipping it (a
  * future/odd shape must not crash the assembly); de-dupes, preserving first-seen
  * order. Pure (parses a value only) so it is unit-tested without `gh`.
@@ -75,6 +78,18 @@ export function parseSubIssueNumbers(parsed: { subIssues?: unknown } | null | un
   const seen = new Set<number>();
   const out: number[] = [];
   for (const n of nodes) {
+    // Skip CLOSED children: an epic re-run across rounds naturally carries
+    // already-merged/closed slices alongside the new open ones. A closed child is
+    // done — admitting it sends a CLOSED issue into runChild, where the single-slice
+    // S0 input gate THROWS ("issue is CLOSED") and aborts the whole family run
+    // (#362 dogfood r3). Only OPEN (or state-less — the S0 gate is the backstop)
+    // children are runnable. `gh issue view --json subIssues` returns each node's
+    // `state` ("OPEN"/"CLOSED"); a state-less node (odd payload) is kept, not dropped.
+    // Compare case-INSENSITIVELY: the GraphQL-backed path yields "CLOSED" but other
+    // gh/REST surfaces yield lowercase "closed" — a case-sensitive check would let a
+    // closed child slip through and abort the family run at S0 (gemini #384 R-final).
+    const state = (n as { state?: unknown })?.state;
+    if (typeof state === "string" && state.toUpperCase() === "CLOSED") continue;
     const num = (n as { number?: unknown })?.number;
     if (typeof num === "number" && Number.isFinite(num) && !seen.has(num)) {
       seen.add(num);

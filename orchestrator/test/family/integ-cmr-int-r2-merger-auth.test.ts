@@ -30,7 +30,7 @@ import {
   RealFamilyBackend,
   type RealFamilyBackendOptions,
 } from "../../src/family/realFamilyBackend.js";
-import { SANDBOX_SOUL_ENV } from "../../src/realBackend.js";
+import { SANDBOX_SOUL_ENV, SPAWNED_WORKER_ENV } from "../../src/realBackend.js";
 import type { ConflictResolveRequest } from "../../src/family/types.js";
 
 const here = join(import.meta.dirname ?? ".", "..", "..", "prompts");
@@ -111,6 +111,12 @@ describe("integ-cmr int-r2 A-1 — mergerSandboxConfig wires CLAUDE_CODE_OAUTH_T
     const cfg = be.cfg({});
     expect(cfg.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
     expect(cfg.env[SANDBOX_SOUL_ENV]).toBe("merger");
+  });
+  it("marks the merger container as an orchestrator-spawned, non-interactive session", () => {
+    const be = new CfgBackend(baseOpts());
+    const cfg = be.cfg({ claudeToken: "merger-tok-xyz" });
+    expect(cfg.env.OPENCLAW_SESSION).toBe("1");
+    expect(cfg.env.OPENCLAW_SESSION).toBe(SPAWNED_WORKER_ENV.OPENCLAW_SESSION);
   });
 });
 

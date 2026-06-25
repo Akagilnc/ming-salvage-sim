@@ -65,14 +65,21 @@ import { z } from "zod";
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 
+import { writeContainerCodexConfig } from "../containerCodexConfig.js";
 import { runExclusive } from "../gitMutex.js";
 import {
   branchForIssue,
+  extractCoderTag,
   modelIdForSlug,
+  realCommitCount,
+  reconcileCoderCommits,
   SANDBOX_CODEX_DIR,
   SANDBOX_GH_TOKEN_ENV,
+  SANDBOX_REPO_ENV,
   SANDBOX_SKILLS_DIR,
   SANDBOX_SOUL_ENV,
+  SPAWNED_WORKER_ENV,
+  WORKER_IDLE_TIMEOUT_SECONDS,
 } from "../realBackend.js";
 import {
   cmrWorkerSpec,
@@ -87,6 +94,7 @@ import {
 
 import type {
   DispatchContext,
+  StepSoul,
   WorkerResult,
   WorkerSpec,
 } from "../types.js";
@@ -148,11 +156,21 @@ export const SHIP_FOCUS_FILENAME = ".ship-focus.md";
 
 /** The cmr worker's completion signal (matches prompts/integrated_cmr.md). */
 const CMR_COMPLETION_SIGNAL = "CMR_STEP_COMPLETE";
-/** The READ-ONLY soul the cmr worker (a reviewer) runs under (ADR 0017 §4). */
-const CMR_SOUL = "READ-ONLY";
+/**
+ * The WRITE soul the cmr worker runs under (ADR 0026 2026-06-24). The cmr worker is
+ * the integrated-cmr FIXER: it invokes `ak-cross-m-review` and commits its
+ * cross-slice fixes inside its own memory-bearing session — NOT a READ-ONLY
+ * reviewer. The dedicated `cmr` soul carries that fixer discipline.
+ */
+const CMR_SOUL = "cmr";
 
-/** The WRITE soul the ship worker runs under (it commits the bump + pushes). */
-const SHIP_SOUL = "coder";
+/**
+ * The WRITE soul the ship worker runs under (it commits the bump + pushes). A
+ * DEDICATED ship soul (not the coder soul): the ship worker's discipline is
+ * delivery via `gstack-ship` — stop at PR, deferred findings → tracker (issue /
+ * TODOS.md) never the PR body — not the coder's TDD build loop.
+ */
+const SHIP_SOUL: StepSoul = "ship";
 
 /**
  * One durable escalate stuck-point (ADR 0022 decision 4: 卡点 → 返回调用端 → 拍 →
@@ -525,6 +543,7 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     const result = await sc.run({
       name: `merger-resolve-${req.childIssue}`,
+      idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
       cwd: this.opts.workingRepo,
       sandbox: this.mergerSandbox(auth),
       agent: sc.claudeCode(MERGER_MODEL),
@@ -594,7 +613,7 @@ export class RealFamilyBackend implements FamilyBackend {
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
   } {
-    const env: Record<string, string> = { [SANDBOX_SOUL_ENV]: MERGER_SOUL };
+    const env: Record<string, string> = { ...SPAWNED_WORKER_ENV, [SANDBOX_SOUL_ENV]: MERGER_SOUL };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     return {
       imageName: this.opts.imageName,
@@ -775,11 +794,14 @@ export class RealFamilyBackend implements FamilyBackend {
    * wrapper until its own slice wires it.
    *
    * The cmr worker (`cmrWorkerSpec`) = the 2b container's TOP-LEVEL claude; it
-   * `Skill`-invokes ak-cross-m-review (1 Agent + 2 CLI legs in-container, #333),
-   * FRESH each round (cross-model independence — ADR 0026). It returns a BARE
-   * `{converged, reason?}` verdict: the consumer (`verifyCmr.ts`) is escalate-on-red,
-   * NO fix-loop at this layer (PRD #330 R2), so NO findings array is needed. A red
-   * verdict is `WorkerResult.completed` (a CmrResult payload), NOT `failed`.
+   * `Skill`-invokes ak-cross-m-review (1 Agent + 2 CLI legs in-container, #333) and
+   * IS the fixer: the WHOLE review → grade → fix → re-review loop runs INSIDE its
+   * one memory-bearing session (only the 3 review legs are fresh each round — ADR
+   * 0026 2026-06-24). It returns a TERMINAL `{converged, reason?}` verdict; the
+   * runner (`verifyCmr.ts`) dispatches it ONCE and ships on `converged` / escalates
+   * otherwise — there is NO separate fix worker, NO runner round-loop. A
+   * non-converged or escalate verdict is the runner's escalate/abort fork. A
+   * `completed` verdict is `WorkerResult.completed` (a CmrResult payload), NOT `failed`.
    */
   async dispatchWorker(
     spec: WorkerSpec,
@@ -860,10 +882,12 @@ export class RealFamilyBackend implements FamilyBackend {
    * real container only runs on the driver / manual-smoke / e2e path).
    *
    * The worker is the container's TOP-LEVEL agent (so it can start its own Agent +
-   * CLI legs — ADR 0026), FRESH (`branchStrategy: head` keeps it on the resident
-   * family base; review never commits), under the READ-ONLY soul. Its `<cmr>` tag
-   * verdict is gated on the completion signal then parsed into a
-   * {@link CmrWorkerOutcome}.
+   * CLI legs — ADR 0026), running on the resident family base (`branchStrategy:
+   * head` keeps it in place — it COMMITS its cross-slice fixes there), under the
+   * WRITE `cmr` soul (it is the fixer: review → grade → fix → re-review loop INSIDE
+   * one memory-bearing session; only the review legs are fresh — ADR 0026
+   * 2026-06-24). Its `<cmr>` tag TERMINAL verdict is gated on the completion signal
+   * then parsed into a {@link CmrWorkerOutcome}.
    */
   protected async runCmrWorker(
     spec: WorkerSpec,
@@ -931,6 +955,7 @@ export class RealFamilyBackend implements FamilyBackend {
       this.writeCmrFocusFile(ctx);
       const result = await sc.run({
         name: "family-cmr",
+        idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
         cwd: this.opts.workingRepo,
         sandbox: this.cmrSandbox(auth),
         // Derive the model from the spec via the shared validated seam (cmr S336 r7
@@ -938,13 +963,14 @@ export class RealFamilyBackend implements FamilyBackend {
         // Same途径 the single-slice + family ship paths use — no constant that could
         // silently drift from the spec the runner declares.
         agent: this.agentForSpec(spec),
-        // The cmr worker is a single review pass (ADR 0026: review = clean eyes, one
-        // pass; a non-convergence is the runner's escalate fork, not a within-worker
-        // loop).
+        // The cmr worker runs the WHOLE review → grade → fix → re-review loop inside
+        // this ONE session (ADR 0026 2026-06-24: the worker IS the fixer; only the
+        // review legs are fresh). `maxIter` (=5) is its iterative budget, NOT a
+        // single review pass.
         maxIterations: spec.maxIter,
         completionSignal: spec.completionSignal,
-        // FRESH but on the resident family base — review must never commit (the
-        // worktree is read; `head` keeps it in place, no detached temp checkout).
+        // On the resident family base — the worker COMMITS its cross-slice fixes
+        // here (`head` keeps it in place, no detached temp checkout).
         branchStrategy: { type: "head" },
         promptFile: join(this.opts.promptsDir, spec.promptFile),
       });
@@ -988,6 +1014,10 @@ export class RealFamilyBackend implements FamilyBackend {
             .map((n) => `#${n}`)
             .join(", ")}.`
         : "No machine-resolved child merges this run.";
+    // ADR 0026 2026-06-24: the cmr worker is a SINGLE memory-bearing session — its
+    // own round-to-round continuity is its session memory, NOT a prior-findings blob
+    // threaded in as data. So the focus file pins ONLY the review scope + the
+    // machine-resolved-child focus; there is no priorFindings block.
     const body =
       `# Integrated cmr — review scope + focus (machine-generated; #335)\n\n` +
       `Review THIS exact family-base diff (the commits the family base added since it\n` +
@@ -1066,12 +1096,11 @@ export class RealFamilyBackend implements FamilyBackend {
       tempCodexDir = mkdtempSync(join(root, "cmr-codex-auth-"));
       copyFileSync(join(home, ".codex", "auth.json"), join(tempCodexDir, "auth.json"));
       chmodSync(join(tempCodexDir, "auth.json"), 0o600);
-      try {
-        copyFileSync(join(home, ".codex", "config.toml"), join(tempCodexDir, "config.toml"));
-        chmodSync(join(tempCodexDir, "config.toml"), 0o600);
-      } catch {
-        // config.toml is optional.
-      }
+      // The container IS the sandbox boundary; codex must NOT self-sandbox (nested
+      // bwrap is impossible — the failure that degrades cmr legs to static-only).
+      // The host config.toml is host-personal and irrelevant — only auth.json
+      // crosses. Write the minimal container config (#378).
+      writeContainerCodexConfig(join(tempCodexDir, "config.toml"));
       codexAuthDir = tempCodexDir;
     } catch {
       // codex auth absent ⇒ the codex leg degrades (no mount). Reclaim the
@@ -1117,7 +1146,12 @@ export class RealFamilyBackend implements FamilyBackend {
     } catch {
       // claude token absent ⇒ the Claude Agent leg degrades (no env var).
     }
-    return { codexAuthDir, agyDir, claudeToken };
+    // gh token → GH_TOKEN for the in-container completeness gate's `gh issue view`
+    // (the live issue body is its DELIVERED-vs-spec authority). BEST-EFFORT, mirroring
+    // the ship worker's readGhToken extraction (host OS keyring, not a portable
+    // hosts.yml) — but NOT preflighted: a missing token degrades the gate's authority,
+    // it does not block the cmr worker (the cmr worker has no `gh pr create` to fail).
+    return { codexAuthDir, agyDir, claudeToken, ghToken: this.readGhToken() };
   }
 
   /**
@@ -1152,15 +1186,31 @@ export class RealFamilyBackend implements FamilyBackend {
    * there), and the claude OAuth token (env var). Without the agy mount the agy
    * cmr leg has no auth and the cmr degrades to codex-only. NO skills mount: the 2b
    * image BAKES ak-cross-m-review + its closure (#333) — a runtime mount would
-   * SHADOW the baked skill (#334). READ-ONLY soul (the cmr worker is a reviewer).
+   * SHADOW the baked skill (#334). The WRITE `cmr` soul (the cmr worker IS the
+   * fixer: it commits cross-slice fixes inside its own session — ADR 0026 2026-06-24).
    */
   protected cmrSandboxConfig(auth: CmrAuth): {
     imageName: string;
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
-    const env: Record<string, string> = { [SANDBOX_SOUL_ENV]: CMR_SOUL };
+    // ORCHESTRATOR_REPO too: the cmr worker runs `gh issue view` (completeness
+    // authority) AND `gh issue create` (defer→tracker), both needing `--repo
+    // "$ORCHESTRATOR_REPO"`. In a clone-from-LOCAL family run (launch sets
+    // sourceRepo to the local repo) the container's git remote is the local path,
+    // so gh's repo INFERENCE would target the wrong place — pass the slug explicitly
+    // (codex #384). Mirrors ship/coder.
+    const env: Record<string, string> = {
+      ...SPAWNED_WORKER_ENV,
+      [SANDBOX_SOUL_ENV]: CMR_SOUL,
+      [SANDBOX_REPO_ENV]: this.opts.repo,
+    };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
+    // The in-container completeness gate's `gh issue view` (the live issue body =
+    // DELIVERED-vs-spec authority) reads GH_TOKEN. Inject only when present (mirrors
+    // shipSandboxConfig's `!== undefined` guard); UNLIKE ship there is NO preflight —
+    // gh absence degrades the gate's authority, it never blocks the cmr worker.
+    if (auth.ghToken !== undefined) env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
     // Each leg's auth is mounted only when present (the 降级链 — a missing leg
     // degrades, the rest still review). The agy dir is WRITABLE (default, no
@@ -1339,6 +1389,7 @@ export class RealFamilyBackend implements FamilyBackend {
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
     return sc.run({
       name: "family-ship",
+      idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
       cwd: this.opts.workingRepo,
       sandbox: this.shipSandbox(auth),
       // Derive the model from the spec via the SAME validated mapping the
@@ -1439,12 +1490,10 @@ export class RealFamilyBackend implements FamilyBackend {
       tempCodexDir = mkdtempSync(join(root, "ship-codex-auth-"));
       copyFileSync(join(home, ".codex", "auth.json"), join(tempCodexDir, "auth.json"));
       chmodSync(join(tempCodexDir, "auth.json"), 0o600);
-      try {
-        copyFileSync(join(home, ".codex", "config.toml"), join(tempCodexDir, "config.toml"));
-        chmodSync(join(tempCodexDir, "config.toml"), 0o600);
-      } catch {
-        // config.toml is optional.
-      }
+      // The container IS the sandbox boundary; codex must NOT self-sandbox (nested
+      // bwrap is impossible). The host config.toml is host-personal and irrelevant
+      // — only auth.json crosses. Write the minimal container config (#378).
+      writeContainerCodexConfig(join(tempCodexDir, "config.toml"));
       codexAuthDir = tempCodexDir;
     } catch {
       // codex auth absent ⇒ the codex leg degrades (no mount). gh is NOT here — it is
@@ -1500,7 +1549,15 @@ export class RealFamilyBackend implements FamilyBackend {
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
   } {
-    const env: Record<string, string> = { [SANDBOX_SOUL_ENV]: SHIP_SOUL };
+    // ORCHESTRATOR_REPO too: the ship soul records a deferred finding with
+    // `gh issue create --repo "$ORCHESTRATOR_REPO"`, so the family ship sandbox must
+    // export it or that tracker write fails on an unset var (codex #384 — symmetric
+    // with the single-slice ship sandbox).
+    const env: Record<string, string> = {
+      ...SPAWNED_WORKER_ENV,
+      [SANDBOX_SOUL_ENV]: SHIP_SOUL,
+      [SANDBOX_REPO_ENV]: this.opts.repo,
+    };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     // cmr S336 r10: the in-container `gh pr create` (the family delivery) reads
     // GH_TOKEN. Set only when present (the pure seam stays tolerant; the REQUIRE-gh
@@ -1706,6 +1763,14 @@ export interface CmrAuth {
   readonly agyDir?: string;
   /** The claude OAuth token (env var), or undefined if absent. */
   readonly claudeToken?: string;
+  /**
+   * The host gh OAuth token (`gh auth token` → {@link SANDBOX_GH_TOKEN_ENV} env), or
+   * undefined if absent. BEST-EFFORT (unlike the ship worker's hard-required gh): the
+   * completeness gate grounds against the live issue body via `gh issue view`, so a
+   * present token keeps that authority intact, but its ABSENCE only DEGRADES the gate
+   * (it falls back to commit-titles/test-files) — it never blocks the cmr worker.
+   */
+  readonly ghToken?: string;
 }
 
 /**

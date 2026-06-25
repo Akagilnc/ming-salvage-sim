@@ -17,7 +17,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,7 +28,9 @@ import {
   modelIdForSlug,
   SANDBOX_CODEX_DIR,
   SANDBOX_GH_TOKEN_ENV,
+  SANDBOX_REPO_ENV,
   SANDBOX_SOUL_ENV,
+  SPAWNED_WORKER_ENV,
 } from "../../src/realBackend.js";
 import { cmrWorkerSpec, familyShipWorkerSpec } from "../../src/family/dispatchFamilyWorker.js";
 import type { ShipAuth } from "../../src/realBackend.js";
@@ -114,13 +116,14 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
     expect(be.openFamilyPrCount).toBe(0); // never the inline openFamilyPr
   });
 
-  it("the family ship spec is a WRITE/coder worker with an iterative budget (maxIter>1) — gstack-ship must self-rerun rerun-able failures (family_ship.md), NOT a single-pass reviewer (#336 cmr r6)", () => {
+  it("the family ship spec is a WRITE/coder worker with an iterative budget (maxIter>1) — gstack-ship must self-rerun rerun-able failures (family_ship.md)", () => {
     const spec = familyShipWorkerSpec();
     expect(spec.role).toBe("coder");
     expect(spec.maxIter).toBeGreaterThan(1);
-    // The cmr worker, by contrast, IS a single-pass reviewer (maxIter:1) — the
-    // ship/reviewer distinction is the whole point (a ship self-reruns, a cmr doesn't).
-    expect(cmrWorkerSpec().maxIter).toBe(1);
+    // The cmr worker is ALSO iterative now (maxIter>1): it is the memory-bearing
+    // fixer that runs the whole review→fix→re-review loop inside one session (ADR
+    // 0026 2026-06-24), NOT a single-pass reviewer. Both write/iterate.
+    expect(cmrWorkerSpec().maxIter).toBeGreaterThan(1);
   });
 
   it("a shipped outcome ⇒ WorkerResult.completed with a ShipResult payload", async () => {
@@ -226,7 +229,7 @@ describe("#336 the inline family openFamilyPr is no longer the ship path", () =>
   });
 });
 
-// ═══════════════════ shipSandboxConfig — coder soul + codex auth + claude token ═══════════════════
+// ═══════════════════ shipSandboxConfig — ship soul + codex auth + claude token ═══════════════════
 
 describe("#336 family shipSandboxConfig — the WRITE-soul ship sandbox", () => {
   class ConfigBackend extends RealFamilyBackend {
@@ -250,17 +253,20 @@ describe("#336 family shipSandboxConfig — the WRITE-soul ship sandbox", () => 
     });
   }
 
-  it("mounts codex auth + the claude token under the WRITE (coder) soul", () => {
+  it("mounts codex auth + the claude token under the dedicated ship soul", () => {
     const c = cfg().config({ codexAuthDir: "/tmp/codex", claudeToken: "tok" });
     expect(c.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
     expect(c.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok");
-    expect(c.env[SANDBOX_SOUL_ENV]).toBe("coder");
+    expect(c.env[SANDBOX_SOUL_ENV]).toBe("ship");
+    // ORCHESTRATOR_REPO is exported so the ship soul's `gh issue create
+    // --repo "$ORCHESTRATOR_REPO"` defer path works (codex #384).
+    expect(c.env[SANDBOX_REPO_ENV]).toBe("Akagilnc/ming-salvage-sim");
   });
 
-  it("a missing codex auth degrades the mount but still ships under the coder soul", () => {
+  it("a missing codex auth degrades the mount but still ships under the ship soul", () => {
     const c = cfg().config({ claudeToken: "tok" });
     expect(c.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(false);
-    expect(c.env[SANDBOX_SOUL_ENV]).toBe("coder");
+    expect(c.env[SANDBOX_SOUL_ENV]).toBe("ship");
   });
 
   it("exports the gh token as GH_TOKEN so the in-container family `gh pr create` is authenticated (cmr S336 r10 P1)", () => {
@@ -274,6 +280,12 @@ describe("#336 family shipSandboxConfig — the WRITE-soul ship sandbox", () => 
   it("omits GH_TOKEN when no gh token is present (the pure seam stays tolerant; the REQUIRE-gh preflight lives upstream in runShipWorker)", () => {
     const c = cfg().config({ codexAuthDir: "/tmp/codex", claudeToken: "tok" });
     expect(c.env[SANDBOX_GH_TOKEN_ENV]).toBeUndefined();
+  });
+
+  it("marks the family ship container as an orchestrator-spawned, non-interactive session (gstack-ship auto-decides its P1 gate)", () => {
+    const c = cfg().config({ codexAuthDir: "/tmp/codex", claudeToken: "tok" });
+    expect(c.env.OPENCLAW_SESSION).toBe("1");
+    expect(c.env.OPENCLAW_SESSION).toBe(SPAWNED_WORKER_ENV.OPENCLAW_SESSION);
   });
 });
 
@@ -564,5 +576,58 @@ describe("#336 family workers — model id is spec-derived via modelIdForSlug (c
     const model = modelOfAgent(seam().agent(spec));
     expect(model).toBe(modelIdForSlug("opus"));
     expect(model).toBe("claude-opus-4-8");
+  });
+});
+
+// ═══════════════════ mountShipAuth — container codex config is minimal, NOT host copy (#378) ═══════════════════
+
+describe("#378 family mountShipAuth — writes a minimal danger-full-access config, never copies the host config.toml", () => {
+  class AuthBackend extends RealFamilyBackend {
+    public auth(): ShipAuth {
+      return this.mountShipAuth();
+    }
+  }
+
+  function hostHomeWithCodexConfig(): string {
+    const home = mkDir("ship-host-home-");
+    const codexDir = join(home, ".codex");
+    mkdirSync(codexDir, { recursive: true });
+    writeFileSync(join(codexDir, "auth.json"), '{"OPENAI_API_KEY":"sk-host"}');
+    writeFileSync(
+      join(codexDir, "config.toml"),
+      [
+        'model = "gpt-5.5"',
+        'sandbox_mode = "workspace-write"',
+        'notify = ["/Users/host/notify.app"]',
+        '[plugins."github@openai-curated"]',
+        "enabled = true",
+        "",
+      ].join("\n"),
+    );
+    return home;
+  }
+
+  it("copies auth.json but WRITES a minimal config.toml (danger-full-access, never the host copy)", () => {
+    const be = new AuthBackend({
+      workingRepo: mkDir("ship-repo-"),
+      familyBase: FAMILY_BASE,
+      ledgerDir: mkDir("ship-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "ming-orchestrator-coder:latest",
+      home: hostHomeWithCodexConfig(),
+    });
+    const auth = be.auth();
+    expect(auth.codexAuthDir).toBeTruthy();
+    const dir = auth.codexAuthDir as string;
+
+    expect(readFileSync(join(dir, "auth.json"), "utf8")).toContain("sk-host");
+
+    const config = readFileSync(join(dir, "config.toml"), "utf8");
+    expect(config).toContain('sandbox_mode = "danger-full-access"');
+    expect(config).not.toContain("workspace-write");
+    expect(config).not.toContain("notify");
+    expect(config).not.toContain("plugins");
   });
 });

@@ -124,10 +124,8 @@ class ResumeBackend implements Backend {
     this.calls.push(`resumeSession(${spec.id}, ${sessionId})`);
     this.resumeSessionCalls.push([spec.id, sessionId]);
     this.runStepIds.push(spec.id);
-    if (spec.role === "coder") {
-      return { kind: "coder", committed: true, commitsAdded: 1 };
-    }
-    return { kind: "reviewer", findings: [] };
+    // ADR 0026: S2 is the only agent step; resume always continues the build worker.
+    return { kind: "coder", committed: true, commitsAdded: 1 };
   }
 
   async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
@@ -170,10 +168,8 @@ class ResumeBackend implements Backend {
   async runStep(spec: StepSpec): Promise<StepOutput> {
     this.calls.push(`runStep(${spec.id})`);
     this.runStepIds.push(spec.id);
-    if (spec.role === "coder") {
-      return { kind: "coder", committed: true, commitsAdded: 1 };
-    }
-    return { kind: "reviewer", findings: [] };
+    // ADR 0026: S2 is the only agent step the runner dispatches.
+    return { kind: "coder", committed: true, commitsAdded: 1 };
   }
 
   async push(worktree: WorktreeHandle): Promise<void> {
@@ -198,9 +194,9 @@ describe("fresh run (no residue) is unchanged (#255)", () => {
     const result = await runOrchestrator({ issueNumber: 255, backend });
 
     expect(result.status).toBe("success");
-    // Full happy path executed (gate + load + agent steps).
+    // Full happy path executed (ADR 0026: gate + load + build worker + ship).
     expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
+      "S0", "S1", "S2", "S7", "S8",
     ]);
     // Fresh cut: prepareWorktree called once; cleanResidue never called.
     expect(backend.prepareWorktreeCount).toBe(1);
@@ -221,12 +217,14 @@ describe("fresh run (no residue) is unchanged (#255)", () => {
 
 // ─── AC1 + AC2: crash-resume — branch/worktree exists, ledger stops at S2 ─────
 
-describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2)", () => {
+describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 0026)", () => {
   /**
-   * Crash scenario: the prior run completed S0, S1, S2 (coder committed) and
-   * then died before S3. The ledger on disk therefore ends at S2 with the
-   * coder output. Re-feeding the same issue must reuse the worktree, clean the
-   * uncommitted residue, and continue from S3 (the route() successor of S2).
+   * Crash scenario (ADR 0026): the prior run completed S0, S1, S2 (the build
+   * worker committed a reviewed slice) and then died before S7. The ledger on
+   * disk therefore ends at S2 with a committed coder output. Re-feeding the same
+   * issue must reuse the worktree, clean the uncommitted residue, and continue
+   * from S7 (the route() successor of a committed S2 — there is no reviewer step
+   * to walk to anymore; the per-slice loop already ran inside the S2 worker).
    */
   function crashedAtS2(): ResumeState {
     return {
@@ -249,22 +247,28 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2)", ()
     expect(backend.prepareWorktreeCount).toBe(0);
     // Residue clean (reset --hard / clean -fd / prune) ran before reuse.
     expect(backend.cleanResidueCount).toBe(1);
-    // cleanResidue must come before any agent step dispatch.
+    // cleanResidue must come before the ship (push) of the resumed run.
     const cleanIdx = backend.calls.indexOf("cleanResidue");
-    const firstRun = backend.calls.findIndex(
-      (c) => c.startsWith("runStep(") || c.startsWith("resumeSession("),
+    const firstWork = backend.calls.findIndex(
+      (c) =>
+        c.startsWith("runStep(") ||
+        c.startsWith("resumeSession(") ||
+        c.startsWith("push("),
     );
     expect(cleanIdx).toBeGreaterThanOrEqual(0);
-    expect(cleanIdx).toBeLessThan(firstRun);
+    expect(cleanIdx).toBeLessThan(firstWork);
   });
 
-  it("AC2: continues from S3 (route successor of S2) — does NOT re-run S0/S1/S2", async () => {
+  it("AC2: continues from S7 (route successor of a committed S2) — does NOT re-run S0/S1/S2", async () => {
     const backend = new ResumeBackend(crashedAtS2());
 
     const result = await runOrchestrator({ issueNumber: 255, backend });
 
-    // The run resumes: S2 is never re-dispatched; S3 is the first agent step.
-    expect(backend.runStepIds).toEqual(["S3"]);
+    // The committed S2 routes straight to S7 ship: NO agent step is re-dispatched
+    // (S2 already done; S7 is a runner-action ship that pushes).
+    expect(backend.runStepIds).toEqual([]);
+    expect(backend.resumeSessionCalls).toHaveLength(0);
+    expect(backend.pushCount).toBe(1);
     // S0/S1 are not re-executed either (no re-gate, no re-cut, no re-snapshot).
     expect(backend.calls).not.toContain("fetchIssueMeta(255)");
     expect(backend.calls).not.toContain("prepareWorktree(255, main)");
@@ -280,10 +284,10 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2)", ()
     const result = await runOrchestrator({ issueNumber: 255, backend });
 
     // The prior committed steps survive into the final ledger (not lost), and
-    // the new steps are appended after them.
+    // the resumed steps are appended after them.
     const steps = result.stepLedger.map((e) => e.step);
-    // Prior S0/S1/S2 + resumed S3/S4/S7/S8.
-    expect(steps).toEqual(["S0", "S1", "S2", "S3", "S4", "S7", "S8"]);
+    // Prior S0/S1/S2 + resumed S7/S8 (ADR 0026: no S3/S4).
+    expect(steps).toEqual(["S0", "S1", "S2", "S7", "S8"]);
     // The preserved S2 entry still carries its committed output.
     const s2 = result.stepLedger.find((e) => e.step === "S2");
     expect(s2?.output).toEqual({ kind: "coder", committed: true, commitsAdded: 1 });
@@ -395,8 +399,6 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
         entry("S0"),
         entry("S1"),
         entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S3", { kind: "reviewer", findings: [] }),
-        entry("S4"),
         entry("S7"), // failing step recorded without an output (escalateTermination)
         s8("escalate"),
       ],
@@ -435,9 +437,9 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
     // The single surviving S7 is the FRESH re-dispatch (it carries the ship
     // payload, #336), not the output-less superseded escalate entry.
     expect(s7Entries[0]!.output).toBeDefined();
-    // The full re-opened ledger has the clean happy-path shape, no S7 twice.
+    // The full re-opened ledger has the clean happy-path shape (ADR 0026), no S7 twice.
     expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
+      "S0", "S1", "S2", "S7", "S8",
     ]);
   });
 
@@ -473,10 +475,11 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
 
 // ─── AC4: recovery decides next step from ledger, not memory ──────────────────
 
-describe("recovery reads the ledger to decide next step (#255 AC4)", () => {
-  it("ledger stopping at S3 (reviewer approve) resumes at the route successor S4→S7, not S0", async () => {
-    // Prior run got through S3 with empty findings (approve) but died before
-    // S4/S7. Resume must route S3→S4→S7→S8 from the recorded output.
+describe("recovery reads the ledger to decide next step (#255 AC4, ADR 0026)", () => {
+  it("ledger stopping at a committed S2 resumes at the route successor S7, not S0", async () => {
+    // Prior run got through S2 (the build worker committed a reviewed slice) but
+    // died before S7. Resume must route S2→S7→S8 from the recorded output — there
+    // is no reviewer/route step in between (ADR 0026).
     const resumeState: ResumeState = {
       worktree: WORKTREE,
       stateDir: STATE_DIR,
@@ -484,21 +487,20 @@ describe("recovery reads the ledger to decide next step (#255 AC4)", () => {
         entry("S0"),
         entry("S1"),
         entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S3", { kind: "reviewer", findings: [] }),
       ],
     };
     const backend = new ResumeBackend(resumeState);
 
     const result = await runOrchestrator({ issueNumber: 255, backend });
 
-    // No agent steps re-dispatched (S3 already done; S4/S7 are runner actions).
+    // No agent steps re-dispatched (S2 already done; S7 is a runner-action ship).
     expect(backend.runStepIds).toEqual([]);
     expect(backend.resumeSessionCalls).toHaveLength(0);
     // Pushed and succeeded — resumed purely from ledger truth.
     expect(backend.pushCount).toBe(1);
     expect(result.status).toBe("success");
     expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
+      "S0", "S1", "S2", "S7", "S8",
     ]);
   });
 
@@ -512,8 +514,6 @@ describe("recovery reads the ledger to decide next step (#255 AC4)", () => {
         entry("S0"),
         entry("S1"),
         entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S3", { kind: "reviewer", findings: [] }),
-        entry("S4"),
         entry("S7"),
         s8("success"),
       ],
@@ -541,8 +541,6 @@ describe("recovery reads the ledger to decide next step (#255 AC4)", () => {
         entry("S0"),
         entry("S1"),
         entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S3", { kind: "reviewer", findings: [] }),
-        entry("S4"),
         entry("S7"),
         entry("S8"), // untagged legacy terminal entry
       ],
@@ -609,23 +607,21 @@ describe("re-feeding a terminated run reports its TRUE status (#255 review fix)"
     expect(backend.runStepIds).toEqual([]);
   });
 
-  it("prior crash with last entry = MALFORMED S5 (committed:true, commitsAdded:0) → status error, never re-run S6/push", async () => {
-    // The prior run crashed AFTER persisting a malformed S5 coder output
+  it("prior crash with last entry = MALFORMED S2 coder (committed:true, commitsAdded:0) → status error, never push", async () => {
+    // The prior run crashed AFTER persisting a malformed S2 build output
     // (committed:true but 0 commits — a contract violation) but BEFORE the S8
-    // write. planResume drives route({from:'S5', output: thatEntry}); route() is
+    // write. planResume drives route({from:'S2', output: thatEntry}); route() is
     // the resume path's ONLY guard on this recorded shape (no isValidStepOutput
-    // re-check). It must judge the malformed S5 → S8(error), NOT fall through to
-    // S6 and re-review / push unvalidated code.
+    // re-check). It must judge the malformed S2 → S8(error), NOT fall through to
+    // S7 and push unvalidated code. (ADR 0026: there is no reviewer step to
+    // validate on resume — only the recorded S2 coder output.)
     const resumeState: ResumeState = {
       worktree: WORKTREE,
       stateDir: STATE_DIR,
       ledger: [
         entry("S0"),
         entry("S1"),
-        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S3", { kind: "reviewer", findings: [] }),
-        entry("S4"),
-        entry("S5", {
+        entry("S2", {
           kind: "coder",
           committed: true,
           commitsAdded: 0,
@@ -639,123 +635,10 @@ describe("re-feeding a terminated run reports its TRUE status (#255 review fix)"
     expect(result.status).toBe("error");
     expect(result.branch).toBeUndefined();
     expect(result.errorPackage).toBeDefined();
-    // No agent step re-run: S6 must NEVER be dispatched, and push never called.
-    expect(backend.runStepIds).toEqual([]);
-    expect(backend.resumeSessionCalls).toHaveLength(0);
-    expect(backend.pushCount).toBe(0);
-  });
-
-  it("prior crash with last entry = MALFORMED S6 reviewer (no findings array) → status error, never re-run / push / reject", async () => {
-    // The prior run crashed AFTER persisting a malformed S6 reviewer output
-    // ({kind:'reviewer'} with NO findings array — a contract violation) but
-    // BEFORE the S8 write. planResume drives route({from:'S6', output: thatEntry}),
-    // and the resume path then rebuilds the defer list from plan.lastOutput. Both
-    // seams must treat the malformed reviewer as a contract violation → S8(error):
-    //   • route()'s S6 edge must NOT blindly route to S4 (defense-in-depth).
-    //   • the resume defer-rebuild must NOT call `.findings.filter(...)` on a
-    //     missing/garbage findings field and throw a raw TypeError (the MAIN hole:
-    //     that TypeError escaped before any try/catch and rejected the promise,
-    //     bypassing the malformed→S8(error) decision + US#30 error package).
-    const resumeState: ResumeState = {
-      worktree: WORKTREE,
-      stateDir: STATE_DIR,
-      ledger: [
-        entry("S0"),
-        entry("S1"),
-        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S3", { kind: "reviewer", findings: [] }),
-        entry("S4"),
-        entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S6", { kind: "reviewer" } as unknown as StepOutput),
-      ],
-    };
-    const backend = new ResumeBackend(resumeState);
-
-    // Must RESOLVE to error — never reject with a raw TypeError.
-    const result = await runOrchestrator({ issueNumber: 255, backend });
-
-    expect(result.status).toBe("error");
-    expect(result.branch).toBeUndefined();
-    expect(result.errorPackage).toBeDefined();
     // No agent step re-run, and push never called.
     expect(backend.runStepIds).toEqual([]);
     expect(backend.resumeSessionCalls).toHaveLength(0);
     expect(backend.pushCount).toBe(0);
-    // The defer list is NOT rebuilt from a malformed reviewer output.
-    expect(result.deferredFindings).toEqual([]);
-  });
-
-  it("prior crash with last entry = MALFORMED S6 reviewer (findings NON-array) → status error, never re-run / push / reject", async () => {
-    // Same seam, second malformed shape: `findings` present but not an array.
-    // `{kind:'reviewer'}` passes the discriminant check; `.findings.filter(...)`
-    // throws on a non-array. Must still resolve to S8(error), not reject.
-    const resumeState: ResumeState = {
-      worktree: WORKTREE,
-      stateDir: STATE_DIR,
-      ledger: [
-        entry("S0"),
-        entry("S1"),
-        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S3", { kind: "reviewer", findings: [] }),
-        entry("S4"),
-        entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S6", {
-          kind: "reviewer",
-          findings: "not-an-array",
-        } as unknown as StepOutput),
-      ],
-    };
-    const backend = new ResumeBackend(resumeState);
-
-    const result = await runOrchestrator({ issueNumber: 255, backend });
-
-    expect(result.status).toBe("error");
-    expect(result.branch).toBeUndefined();
-    expect(result.errorPackage).toBeDefined();
-    expect(backend.runStepIds).toEqual([]);
-    expect(backend.resumeSessionCalls).toHaveLength(0);
-    expect(backend.pushCount).toBe(0);
-    expect(result.deferredFindings).toEqual([]);
-  });
-
-  it("MALFORMED reviewer entry MID-ledger (not last) → progress reconstruction does not raw-throw; resume continues", async () => {
-    // Same-class as the defer-rebuild hole (integ-cmr m2 r4 self-check): the
-    // resume path's no-progress reconstruction folds over EVERY persisted
-    // reviewer entry, not just the last one. A malformed reviewer entry EARLIER
-    // in the ledger (findings missing / non-array) made `normalizeFindingsKey`
-    // call `.map(...)` on a non-array and throw a raw TypeError — rejecting the
-    // promise instead of continuing the resume. The live loop never scores a
-    // malformed reviewer (it bails to S8), so reconstruction must likewise SKIP
-    // malformed reviewer entries (validate-then-score), not crash on them.
-    //
-    // Shape: last entry is a coder S5 (valid) so the defer-rebuild guard does
-    // NOT fire and terminalStatus is undefined — execution reaches the
-    // reconstruction. An S6 mid-ledger is malformed.
-    const resumeState: ResumeState = {
-      worktree: WORKTREE,
-      stateDir: STATE_DIR,
-      ledger: [
-        entry("S0"),
-        entry("S1"),
-        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S3", { kind: "reviewer", findings: [] }),
-        entry("S4"),
-        entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S6", { kind: "reviewer" } as unknown as StepOutput),
-        entry("S4"),
-        entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
-      ],
-    };
-    const backend = new ResumeBackend(resumeState);
-
-    // Must NOT reject with a raw TypeError. The resume continues from S6 (the
-    // route() successor of the last S5); the fake reviewer returns empty findings
-    // → S4 approve → S7 push → success.
-    const result = await runOrchestrator({ issueNumber: 255, backend });
-
-    expect(result.status).toBe("success");
-    // Reconstruction did not crash and the resume reached the push.
-    expect(backend.pushCount).toBe(1);
   });
 
   it("a terminal-status resume does NOT run cleanResidue (a clean failure must not flip a finished run's status)", async () => {
@@ -769,8 +652,6 @@ describe("re-feeding a terminated run reports its TRUE status (#255 review fix)"
         entry("S0"),
         entry("S1"),
         entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S3", { kind: "reviewer", findings: [] }),
-        entry("S4"),
         entry("S7"),
         s8("success"),
       ],

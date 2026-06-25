@@ -1,14 +1,14 @@
 /**
- * integ-cmr (base) round 2 — five cross-slice seam gaps the integrated review
- * found that per-slice cmr missed (all behavioural, test-first):
+ * integ-cmr (base) round 2 — cross-slice seam gaps the integrated review found
+ * that per-slice cmr missed (all behavioural, test-first):
  *
- *   A [Crit] finding ELEMENTS were not validated → a malformed finding
- *     (severity with trailing space / uppercase action / missing field) slipped
- *     past the kind+Array.isArray guard.  route()'s S4 compares severity/action
- *     by string, so a malformed element → needsFix=false → push → a real P0 is
- *     SILENTLY SHIPPED past the mandatory fix gate.  Fix: validate each finding
- *     element (exact severity/action enums, required string fields).  Any
- *     malformed element → S8(error); never routed as legitimate findings.
+ *   (A [Crit] finding ELEMENT validation tested the reviewer-findings path
+ *    routed through S3/S4. ADR 0026 (2026-06-24) collapsed the single-slice
+ *    runner to a PURE SCHEDULER — there is no runner-level reviewer step (S3/S6)
+ *    or route fan-out (S4); the review/fix loop runs INSIDE the S2 build worker.
+ *    So the finding-element validation path no longer exists at the runner/route
+ *    seam and the A suite is DELETED. isValidFinding still lives in validate.ts
+ *    for the in-worker review, but the runner never calls it.)
  *
  *   B [High] coder output did not validate `commitsAdded`.  The contract is
  *     {committed:boolean, commitsAdded:number} with the two consistent
@@ -41,14 +41,11 @@
 
 import { describe, expect, it } from "vitest";
 import { runOrchestrator } from "../src/runner.js";
-import { route } from "../src/route.js";
 import type {
   Backend,
-  Finding,
   IssueMeta,
   IssueSnapshot,
   PersistentLedgerEntry,
-  ReviewerOutput,
   StepOutput,
   StepSpec,
   WorktreeHandle,
@@ -76,19 +73,6 @@ const WORKTREE: WorktreeHandle = {
   base: "main",
   path: "/resident/worktrees/issue-244",
 };
-
-/** A well-formed finding the fan-out helper can mutate per case. */
-function goodFinding(overrides: Partial<Finding> = {}): Finding {
-  return {
-    severity: "critical",
-    category: "correctness",
-    claim_quote: "null deref at line 1",
-    location: "src/foo.ts:1",
-    suggested_fix: "guard the deref",
-    action: "fix_now",
-    ...overrides,
-  };
-}
 
 /**
  * Base fake Backend. Override runStep / push / writeLedger per test.
@@ -142,283 +126,23 @@ class SpyBackend implements Backend {
   }
 }
 
-/** A reviewer step backend that returns a chosen ReviewerOutput. */
-function reviewerReturning(
-  reviewerOut: StepOutput,
-): SpyBackend {
-  const backend = new SpyBackend();
-  backend.runStep = async (spec: StepSpec) => {
-    backend.runStepIds.push(spec.id);
-    if (spec.role === "coder") {
-      return { kind: "coder", committed: true, commitsAdded: 1 };
-    }
-    return reviewerOut;
-  };
-  return backend;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// A [Crit] — finding ELEMENT validation: malformed finding → S8(error), the
-// P0/P1 fix gate is NEVER silently bypassed.
-// ═══════════════════════════════════════════════════════════════════════════
-
-describe("A: finding element validation (runner end-to-end)", () => {
-  // The dangerous core case: a REAL P0 with a malformed severity (trailing
-  // space). route()'s S4 compares severity by exact string, so "critical " !==
-  // "critical" → needsFix=false → push → the P0 is SHIPPED. Must be S8(error).
-  it("severity 'critical ' (trailing space) on a P0 → S8(error), NOT pushed", async () => {
-    const backend = reviewerReturning({
-      kind: "reviewer",
-      findings: [goodFinding({ severity: "critical " as unknown as Finding["severity"] })],
-    });
-
-    const result = await runOrchestrator({ issueNumber: 244, backend });
-
-    expect(result.status).toBe("error");
-    expect(result.errorPackage?.failedStep).toBe("S3");
-    expect(backend.pushed).toBe(false);
-  });
-
-  it("severity 'CRITICAL' (uppercase) → S8(error), NOT pushed", async () => {
-    const backend = reviewerReturning({
-      kind: "reviewer",
-      findings: [goodFinding({ severity: "CRITICAL" as unknown as Finding["severity"] })],
-    });
-
-    const result = await runOrchestrator({ issueNumber: 244, backend });
-
-    expect(result.status).toBe("error");
-    expect(backend.pushed).toBe(false);
-  });
-
-  it("action 'FIX_NOW' (uppercase) on a P2 → S8(error), NOT pushed", async () => {
-    // A medium with action 'FIX_NOW' would (under the bug) miss both the
-    // severity branch AND the action==='fix_now' branch → push, shipping a
-    // finding the reviewer wanted fixed.
-    const backend = reviewerReturning({
-      kind: "reviewer",
-      findings: [
-        goodFinding({
-          severity: "medium",
-          action: "FIX_NOW" as unknown as Finding["action"],
-        }),
-      ],
-    });
-
-    const result = await runOrchestrator({ issueNumber: 244, backend });
-
-    expect(result.status).toBe("error");
-    expect(backend.pushed).toBe(false);
-  });
-
-  it("finding missing claim_quote → S8(error)", async () => {
-    const bad = { ...goodFinding() } as Record<string, unknown>;
-    delete bad.claim_quote;
-    const backend = reviewerReturning({
-      kind: "reviewer",
-      findings: [bad as unknown as Finding],
-    });
-
-    const result = await runOrchestrator({ issueNumber: 244, backend });
-    expect(result.status).toBe("error");
-    expect(backend.pushed).toBe(false);
-  });
-
-  it("finding with non-string location (number) → S8(error)", async () => {
-    const backend = reviewerReturning({
-      kind: "reviewer",
-      findings: [
-        goodFinding({ location: 123 as unknown as string }),
-      ],
-    });
-
-    const result = await runOrchestrator({ issueNumber: 244, backend });
-    expect(result.status).toBe("error");
-    expect(backend.pushed).toBe(false);
-  });
-
-  it("finding missing action field → S8(error)", async () => {
-    const bad = { ...goodFinding() } as Record<string, unknown>;
-    delete bad.action;
-    const backend = reviewerReturning({
-      kind: "reviewer",
-      findings: [bad as unknown as Finding],
-    });
-
-    const result = await runOrchestrator({ issueNumber: 244, backend });
-    expect(result.status).toBe("error");
-    expect(backend.pushed).toBe(false);
-  });
-
-  it("a single malformed element among well-formed ones → S8(error) (whole step)", async () => {
-    const backend = reviewerReturning({
-      kind: "reviewer",
-      findings: [
-        goodFinding({ severity: "low", action: "defer" }),
-        goodFinding({ severity: "garbage" as unknown as Finding["severity"], action: "defer" }),
-      ],
-    });
-
-    const result = await runOrchestrator({ issueNumber: 244, backend });
-    expect(result.status).toBe("error");
-    expect(backend.pushed).toBe(false);
-  });
-
-  it("regression: all-well-formed defer findings still push (approve) and surface defers", async () => {
-    const backend = reviewerReturning({
-      kind: "reviewer",
-      findings: [
-        goodFinding({ severity: "low", action: "defer" }),
-        goodFinding({ severity: "clarity", action: "defer" }),
-      ],
-    });
-
-    const result = await runOrchestrator({ issueNumber: 244, backend });
-    expect(result.status).toBe("success");
-    expect(backend.pushed).toBe(true);
-    expect(result.deferredFindings).toHaveLength(2);
-  });
-
-  it("regression: empty findings still push (approve)", async () => {
-    const backend = reviewerReturning({ kind: "reviewer", findings: [] });
-    const result = await runOrchestrator({ issueNumber: 244, backend });
-    expect(result.status).toBe("success");
-    expect(backend.pushed).toBe(true);
-  });
-});
-
-describe("A: finding element validation at the route() seam (defense in depth)", () => {
-  // route() is the agent↔runner seam: even though the runner guards first,
-  // route()'s S4 must NEVER coerce a malformed finding into a push edge.
-  function rOut(findings: Finding[]): ReviewerOutput {
-    return { kind: "reviewer", findings };
-  }
-
-  it("S4 with a trailing-space critical → handoff(error), not push", () => {
-    const decision = route({
-      from: "S4",
-      output: rOut([goodFinding({ severity: "critical " as unknown as Finding["severity"] })]),
-    });
-    expect(decision).toEqual({ kind: "handoff", status: "error" });
-  });
-
-  it("S4 with an uppercase action → handoff(error), not push", () => {
-    const decision = route({
-      from: "S4",
-      output: rOut([
-        goodFinding({ severity: "medium", action: "FIX_NOW" as unknown as Finding["action"] }),
-      ]),
-    });
-    expect(decision).toEqual({ kind: "handoff", status: "error" });
-  });
-
-  it("S4 with a finding missing a required field → handoff(error)", () => {
-    const bad = { ...goodFinding() } as Record<string, unknown>;
-    delete bad.suggested_fix;
-    const decision = route({
-      from: "S4",
-      output: rOut([bad as unknown as Finding]),
-    });
-    expect(decision).toEqual({ kind: "handoff", status: "error" });
-  });
-
-  it("S4 with all well-formed defer findings → push (regression)", () => {
-    const decision = route({
-      from: "S4",
-      output: rOut([goodFinding({ severity: "low", action: "defer" })]),
-    });
-    expect(decision).toEqual({ kind: "next", step: "S7" });
-  });
-});
-
-describe("integ-cmr m2 r4: S3/S6 reviewer-output validation at the route() seam (defense in depth, symmetric with S2/S5)", () => {
-  // The reviewer-output edges (S3→S4, S6→S4) must reject a malformed reviewer
-  // output at the producing seam — symmetric with the S2/S5 isValidCoderOutput
-  // edges. The resume path drives route({from:'S3'|'S6', output: ledgerEntry})
-  // off a recorded ledger output with NO runner pre-route re-check, so route()
-  // must be self-defending. Without this, a malformed S6 routed blindly to S4
-  // and the violation was only re-discovered a step later (after the resume
-  // defer-rebuild had already crashed on the same garbage).
-
-  it("S3 with {kind:'reviewer'} (no findings array) → handoff(error), not S4", () => {
-    const decision = route({
-      from: "S3",
-      output: { kind: "reviewer" } as unknown as StepOutput,
-    });
-    expect(decision).toEqual({ kind: "handoff", status: "error" });
-  });
-
-  it("S3 with findings NON-array → handoff(error), not S4", () => {
-    const decision = route({
-      from: "S3",
-      output: { kind: "reviewer", findings: "nope" } as unknown as StepOutput,
-    });
-    expect(decision).toEqual({ kind: "handoff", status: "error" });
-  });
-
-  it("S3 with a malformed finding element → handoff(error), not S4", () => {
-    const bad = { ...goodFinding() } as Record<string, unknown>;
-    delete bad.action;
-    const decision = route({
-      from: "S3",
-      output: { kind: "reviewer", findings: [bad] } as unknown as StepOutput,
-    });
-    expect(decision).toEqual({ kind: "handoff", status: "error" });
-  });
-
-  it("S3 with well-formed (empty) findings → next S4 (regression)", () => {
-    const decision = route({
-      from: "S3",
-      output: { kind: "reviewer", findings: [] },
-    });
-    expect(decision).toEqual({ kind: "next", step: "S4" });
-  });
-
-  it("S6 with {kind:'reviewer'} (no findings array) → handoff(error), not S4", () => {
-    const decision = route({
-      from: "S6",
-      output: { kind: "reviewer" } as unknown as StepOutput,
-    });
-    expect(decision).toEqual({ kind: "handoff", status: "error" });
-  });
-
-  it("S6 with findings NON-array → handoff(error), not S4", () => {
-    const decision = route({
-      from: "S6",
-      output: { kind: "reviewer", findings: 7 } as unknown as StepOutput,
-    });
-    expect(decision).toEqual({ kind: "handoff", status: "error" });
-  });
-
-  it("S6 with well-formed findings → next S4 (regression, loop closure intact)", () => {
-    const decision = route({
-      from: "S6",
-      output: { kind: "reviewer", findings: [goodFinding({ action: "defer" })] },
-    });
-    expect(decision).toEqual({ kind: "next", step: "S4" });
-  });
-});
-
 // ═══════════════════════════════════════════════════════════════════════════
 // B [High] — coder commitsAdded validation.
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("B: coder commitsAdded validation", () => {
-  it("committed:true with commitsAdded:0 (inconsistent) → S8(error), S3 NOT reached", async () => {
+  it("committed:true with commitsAdded:0 (inconsistent) → S8(error), NOT pushed", async () => {
     const backend = new SpyBackend();
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
-      if (spec.role === "coder") {
-        return { kind: "coder", committed: true, commitsAdded: 0 };
-      }
-      return { kind: "reviewer", findings: [] };
+      return { kind: "coder", committed: true, commitsAdded: 0 };
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
     expect(result.status).toBe("error");
     expect(result.errorPackage?.failedStep).toBe("S2");
-    expect(backend.runStepIds).not.toContain("S3");
+    expect(backend.pushed).toBe(false);
   });
 
   it("committed:false with commitsAdded:2 (inconsistent) → S8(error)", async () => {
@@ -496,59 +220,27 @@ describe("B: coder commitsAdded validation", () => {
     expect(result.errorPackage?.failedStep).toBe("S2");
   });
 
-  it("regression: committed:true with commitsAdded:1 (consistent) proceeds to S3", async () => {
+  it("regression: committed:true with commitsAdded:1 (consistent) proceeds to S7 ship", async () => {
     const backend = new SpyBackend(); // default: true/1
     const result = await runOrchestrator({ issueNumber: 244, backend });
     expect(result.status).toBe("success");
-    expect(backend.runStepIds).toContain("S3");
+    expect(backend.pushed).toBe(true);
   });
 
   it("regression: committed:false with commitsAdded:0 (consistent) → S8(error) for 0-commit (not for shape)", async () => {
-    // Consistent 0-commit is still an error (coder produced nothing) but via the
-    // 0-commit route, with failedStep S2 — same surface, different cause. This
-    // pins that the B guard does NOT reject the legitimate consistent shape.
+    // Consistent 0-commit is still an error (the build worker produced nothing)
+    // but via the 0-commit route, with failedStep S2 — same surface, different
+    // cause. This pins that the B guard does NOT reject the legitimate
+    // consistent shape.
     const backend = new SpyBackend();
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
-      if (spec.role === "coder") {
-        return { kind: "coder", committed: false, commitsAdded: 0 };
-      }
-      return { kind: "reviewer", findings: [] };
+      return { kind: "coder", committed: false, commitsAdded: 0 };
     };
     const result = await runOrchestrator({ issueNumber: 244, backend });
     expect(result.status).toBe("error");
     expect(result.errorPackage?.failedStep).toBe("S2");
-    expect(backend.runStepIds).not.toContain("S3");
-  });
-
-  it("the S5 fix step also validates commitsAdded (inconsistent → S8(error))", async () => {
-    // Drive into the fix loop: reviewer returns a P0 on S3 → S5 coder_fix.
-    // The S5 fix step returns an inconsistent coder output → S8(error) at S5.
-    let reviewCount = 0;
-    const backend = new SpyBackend();
-    backend.runStep = async (spec) => {
-      backend.runStepIds.push(spec.id);
-      if (spec.id === "S2") {
-        return { kind: "coder", committed: true, commitsAdded: 1 };
-      }
-      if (spec.id === "S5") {
-        // inconsistent fix output
-        return { kind: "coder", committed: true, commitsAdded: 0 };
-      }
-      // reviewer S3 → one P0 to force the fix loop
-      reviewCount += 1;
-      if (spec.id === "S3" && reviewCount === 1) {
-        return {
-          kind: "reviewer",
-          findings: [goodFinding()],
-        };
-      }
-      return { kind: "reviewer", findings: [] };
-    };
-
-    const result = await runOrchestrator({ issueNumber: 244, backend });
-    expect(result.status).toBe("error");
-    expect(result.errorPackage?.failedStep).toBe("S5");
+    expect(backend.pushed).toBe(false);
   });
 });
 
@@ -611,15 +303,20 @@ describe("C: S1 pre-worktree failures are an unpersistable special case", () => 
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("D: writeLedger failure re-persists the failing step (best-effort)", () => {
-  it("S3 emitLedger throws → S8(error), and the failing step S3 is re-attempted on disk", async () => {
-    // Make the writeLedger for the S3 entry throw the FIRST time it is hit, then
-    // succeed afterwards so the best-effort re-persist of S3 + S8 can land.
+  it("S2 emitLedger throws → S8(error), and the failing step S2 is re-attempted on disk", async () => {
+    // Make the writeLedger for the S2 entry throw the FIRST time it is hit, then
+    // succeed afterwards so the best-effort re-persist of S2 + S8 can land.
     const backend = new SpyBackend();
-    let s3WriteThrown = false;
+    backend.runStep = async (spec) => {
+      backend.runStepIds.push(spec.id);
+      // 0-commit → errors at S2, exercising the error-path re-persist.
+      return { kind: "coder", committed: false, commitsAdded: 0 };
+    };
+    let s2WriteThrown = false;
     backend.writeLedger = async (entry, stateDir) => {
-      if (entry.step === "S3" && !s3WriteThrown) {
-        s3WriteThrown = true;
-        throw new Error("writeLedger: transient I/O fault on S3");
+      if (entry.step === "S2" && !s2WriteThrown) {
+        s2WriteThrown = true;
+        throw new Error("writeLedger: transient I/O fault on S2");
       }
       backend.ledgerCalls.push({ entry, stateDir });
     };
@@ -627,10 +324,10 @@ describe("D: writeLedger failure re-persists the failing step (best-effort)", ()
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
     expect(result.status).toBe("error");
-    // The persisted ledger must still record the failing step S3 (best-effort
+    // The persisted ledger must still record the failing step S2 (best-effort
     // re-persist) — not vanish because recordFailingStep:false skipped it.
     const persisted = backend.ledgerCalls.map((c) => c.entry.step);
-    expect(persisted).toContain("S3");
+    expect(persisted).toContain("S2");
     expect(persisted).toContain("S8");
   });
 
@@ -639,10 +336,14 @@ describe("D: writeLedger failure re-persists the failing step (best-effort)", ()
     // normal push happened before emitLedger; the error path must not push it
     // again).
     const backend = new SpyBackend();
-    let s3WriteThrown = false;
+    backend.runStep = async (spec) => {
+      backend.runStepIds.push(spec.id);
+      return { kind: "coder", committed: false, commitsAdded: 0 };
+    };
+    let s2WriteThrown = false;
     backend.writeLedger = async (entry, stateDir) => {
-      if (entry.step === "S3" && !s3WriteThrown) {
-        s3WriteThrown = true;
+      if (entry.step === "S2" && !s2WriteThrown) {
+        s2WriteThrown = true;
         throw new Error("transient");
       }
       backend.ledgerCalls.push({ entry, stateDir });
@@ -650,8 +351,8 @@ describe("D: writeLedger failure re-persists the failing step (best-effort)", ()
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    const s3Count = result.stepLedger.filter((e) => e.step === "S3").length;
-    expect(s3Count).toBe(1);
+    const s2Count = result.stepLedger.filter((e) => e.step === "S2").length;
+    expect(s2Count).toBe(1);
   });
 });
 

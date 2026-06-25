@@ -25,7 +25,6 @@
 import type {
   Backend,
   DispatchContext,
-  Finding,
   StepOutput,
   StepResult,
   StepSpec,
@@ -140,12 +139,10 @@ export function shipWorkerSpec(): WorkerSpec {
  * The #331 PREFACTOR thin wrapper: forward a worker to the EXISTING backend
  * methods and wrap the return into a {@link WorkerResult}. Behaviour-preserving.
  *
- *   - coder/reviewer (agent workers): when `ctx.resumeSessionId` is set the worker
- *     is dispatched via `backend.resumeSession` (the escalate-resume / fix-resume
- *     path), else via `backend.runStep`. The `ctx.prevFindings` fix_now subset is
- *     forwarded as the legacy `fixNowFindings` arg (US#13). The returned
- *     `StepOutput | StepResult` is wrapped as `completed` (carrying the real
- *     per-step `sessionId` when surfaced).
+ *   - coder (the S2 build worker): when `ctx.resumeSessionId` is set the worker is
+ *     dispatched via `backend.resumeSession` (the escalate/crash-resume path), else
+ *     via `backend.runStep`. The returned `StepOutput | StepResult` is wrapped as
+ *     `completed` (carrying the real per-step `sessionId` when surfaced).
  *   - ship (S7): forward to `backend.push` and wrap as a `completed` ShipResult.
  *
  * #331 always yields `completed` — the `failed`/`malformed`/`escalated` cases are
@@ -190,17 +187,11 @@ export async function legacyDispatchWorker(
     );
   }
   const stepSpec = workerSpecToStepSpec(spec);
-  const fixNow: ReadonlyArray<Finding> | undefined = ctx.prevFindings;
   let ret: StepOutput | StepResult;
   if (ctx.resumeSessionId !== undefined) {
-    ret = await backend.resumeSession(
-      stepSpec,
-      ctx.worktree,
-      ctx.resumeSessionId,
-      fixNow,
-    );
+    ret = await backend.resumeSession(stepSpec, ctx.worktree, ctx.resumeSessionId);
   } else {
-    ret = await backend.runStep(stepSpec, ctx.worktree, fixNow);
+    ret = await backend.runStep(stepSpec, ctx.worktree);
   }
   const { output, sessionId } = normalizeStepReturn(ret);
   return { kind: "completed", output, sessionId };

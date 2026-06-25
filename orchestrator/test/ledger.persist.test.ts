@@ -1,5 +1,5 @@
 /**
- * #249 — Persisted step ledger tests (RED → GREEN).
+ * #249 — Persisted step ledger tests (RED → GREEN, ADR 0026 step set).
  *
  * Acceptance criteria (from issue #249):
  *   1. Happy path → every executed step has exactly one ledger entry, in order.
@@ -8,15 +8,17 @@
  *   4. Ledger is written to a sibling state directory OUTSIDE the worktree:
  *      `git clean -fd` on the worktree path cannot remove it.
  *
+ * ADR 0026 (2026-06-24): the single-slice runner is a PURE SCHEDULER. The
+ * per-slice review→fix→re-review loop runs INSIDE the S2 build worker, so the
+ * runner-level reviewer (S3/S6), fix (S5) and route fan-out (S4) steps are
+ * DELETED. The canonical happy-path step set is now S0→S1→S2→S7→S8.
+ *
  * Strategy: extend the Backend fake with a `writeLedger` spy that records
  * every call, including the full `PersistentLedgerEntry` shape and the
  * `stateDir` path handed to it.  Then assert:
  *   - path is NOT under the worktree path (`!stateDir.startsWith(worktree.path)`)
- *   - step sequence matches canonical S0→S1→S2→S3→S4→S7→S8
+ *   - step sequence matches canonical S0→S1→S2→S7→S8
  *   - every entry carries prompt_hash, sessionId, branchHEAD, ts
- *
- * For the skip test we drive a custom Backend that omits the S2 dispatch
- * (simulating a skip) and verify the ledger sequence reflects the absence.
  */
 
 import { describe, expect, it } from "vitest";
@@ -102,10 +104,9 @@ class LedgerBackend implements Backend {
   async runStep(spec: StepSpec): Promise<StepOutput> {
     this.calls.push(`runStep(${spec.id}:${spec.role}:${spec.promptFile})`);
     this.runStepIds.push(spec.id);
-    if (spec.role === "coder") {
-      return { kind: "coder", committed: true, commitsAdded: 1 };
-    }
-    return { kind: "reviewer", findings: [] };
+    // ADR 0026: S2 is the ONLY agent step the runner dispatches (the whole-slice
+    // build worker). It returns a committed coder output; S7 ships it via push.
+    return { kind: "coder", committed: true, commitsAdded: 1 };
   }
 
   async push(worktree: WorktreeHandle): Promise<void> {
@@ -137,7 +138,7 @@ describe("persisted step ledger (#249)", () => {
     const { backend } = await runAndCapture();
 
     const steps = backend.ledgerCalls.map((c) => c.entry.step);
-    expect(steps).toEqual(["S0", "S1", "S2", "S3", "S4", "S7", "S8"]);
+    expect(steps).toEqual(["S0", "S1", "S2", "S7", "S8"]);
   });
 
   it("every ledger entry carries prompt_hash and sessionId (audit fields)", async () => {
@@ -180,29 +181,36 @@ describe("persisted step ledger (#249)", () => {
     expect(dirs.size).toBe(1);
   });
 
-  it("agent-step entries carry the structured output (anti-skip truth)", async () => {
+  it("the S2 build-worker entry carries the structured coder output (anti-skip truth)", async () => {
+    // ADR 0026: S2 is the ONLY agent step — it carries the coder output. There is
+    // no runner-level reviewer (S3/S6), fix (S5) or route (S4) step anymore.
     const { backend } = await runAndCapture();
 
     const s2 = backend.ledgerCalls.find((c) => c.entry.step === "S2");
-    const s3 = backend.ledgerCalls.find((c) => c.entry.step === "S3");
 
     expect(s2?.entry.output).toEqual({
       kind: "coder",
       committed: true,
       commitsAdded: 1,
     });
-    expect(s3?.entry.output).toEqual({ kind: "reviewer", findings: [] });
   });
 
-  it("pure runner-action entries (S0/S1/S4) have no output field", async () => {
+  it("pure runner-action entries (S0/S1) have no output field", async () => {
+    // ADR 0026: S0 (gate) and S1 (context) are runner actions with no output.
+    // S4 is DELETED. S7 now carries a ship output (see its dedicated test) and
+    // S8 is the terminal handoff (no output).
     const { backend } = await runAndCapture();
 
-    const runnerActions = ["S0", "S1", "S4"] as const;
+    const runnerActions = ["S0", "S1"] as const;
     for (const stepId of runnerActions) {
       const call = backend.ledgerCalls.find((c) => c.entry.step === stepId);
       expect(call).toBeDefined();
       expect(call!.entry.output).toBeUndefined();
     }
+    // S8 terminal handoff carries no output either.
+    const s8 = backend.ledgerCalls.find((c) => c.entry.step === "S8");
+    expect(s8).toBeDefined();
+    expect(s8!.entry.output).toBeUndefined();
   });
 
   it("S7 (ship worker, #336) persists its ship payload into the ledger", async () => {
@@ -235,8 +243,8 @@ describe("persisted step ledger (#249)", () => {
     const { backend } = await runAndCapture();
     const allSteps = backend.ledgerCalls.map((c) => c.entry.step);
 
-    // Every step in the canonical order must appear exactly once.
-    const canonicalOrder = ["S0", "S1", "S2", "S3", "S4", "S7", "S8"];
+    // Every step in the canonical order must appear exactly once (ADR 0026).
+    const canonicalOrder = ["S0", "S1", "S2", "S7", "S8"];
     expect(allSteps).toEqual(canonicalOrder);
 
     // Cross-check: no step is absent.
@@ -250,7 +258,7 @@ describe("persisted step ledger (#249)", () => {
 
     // The in-memory ledger (#247 contract) must still be present and consistent.
     expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
+      "S0", "S1", "S2", "S7", "S8",
     ]);
   });
 
@@ -278,9 +286,8 @@ describe("persisted step ledger (#249)", () => {
     const failFirstWriteBackend: Backend = {
       async findResumeState() { return undefined; },
       async cleanResidue() { /* no-op */ },
-      async resumeSession(spec) {
-        if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
-        return { kind: "reviewer", findings: [] };
+      async resumeSession() {
+        return { kind: "coder", committed: true, commitsAdded: 1 };
       },
       async fetchIssueMeta(n) {
         return { number: n, isReadyForAgent: true, hasSubIssues: false, openBlockedBy: [] };
@@ -292,9 +299,9 @@ describe("persisted step ledger (#249)", () => {
         return WORKTREE;
       },
       async writeSnapshot() { /* no-op */ },
-      async runStep(spec) {
-        if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
-        return { kind: "reviewer", findings: [] };
+      async runStep() {
+        // ADR 0026: S2 build worker is the only agent step.
+        return { kind: "coder", committed: true, commitsAdded: 1 };
       },
       async push() { /* no-op */ },
       async writeLedger() {
@@ -343,9 +350,8 @@ describe("persisted step ledger (#249)", () => {
     const trailingSlashBackend: Backend = {
       async findResumeState() { return undefined; },
       async cleanResidue() { /* no-op */ },
-      async resumeSession(spec) {
-        if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
-        return { kind: "reviewer", findings: [] };
+      async resumeSession() {
+        return { kind: "coder", committed: true, commitsAdded: 1 };
       },
       async fetchIssueMeta(n) {
         return { number: n, isReadyForAgent: true, hasSubIssues: false, openBlockedBy: [] };
@@ -357,9 +363,9 @@ describe("persisted step ledger (#249)", () => {
         return trailingSlashWorktree;
       },
       async writeSnapshot() { /* no-op */ },
-      async runStep(spec) {
-        if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
-        return { kind: "reviewer", findings: [] };
+      async runStep() {
+        // ADR 0026: S2 build worker is the only agent step.
+        return { kind: "coder", committed: true, commitsAdded: 1 };
       },
       async push() { /* no-op */ },
       async writeLedger(_entry, stateDir) {
