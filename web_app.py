@@ -2227,7 +2227,6 @@ async def api_chat_stream(minister_name: str, request: ChatRequest, http_request
                     yield sse_event("error", item.get("detail") or {"message": item.get("message", "流式回复失败。")})
                 await asyncio.sleep(0)
         except asyncio.CancelledError:
-            stream.close()
             raise
         finally:
             stream.close()
