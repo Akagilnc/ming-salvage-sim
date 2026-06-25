@@ -1520,8 +1520,14 @@ class WebGame:
         except (GeneratorExit, asyncio.CancelledError):
             try:
                 self._fail_incomplete_chat_turn(minister_name, chat_turn_id, text)
-            except Exception:
-                pass
+            except Exception as cleanup_error:
+                # Swallow so the cleanup error never replaces the original cancel/exit
+                # signal (the HTTP stream must still terminate). Log it so a DB/state
+                # failure during cancellation stays visible (#380 sourcery).
+                print(
+                    f"[chat_stream] cancel-cleanup 失败 minister={minister_name} "
+                    f"turn={chat_turn_id}: {cleanup_error!r}"
+                )
             raise
         except Exception as error:
             if chat_turn_id:
@@ -2218,6 +2224,12 @@ async def api_chat_stream(minister_name: str, request: ChatRequest, http_request
     async def generate() -> AsyncIterator[str]:
         stream = get_game().chat_stream(minister_name, request.message)
         try:
+            # Pre-loop disconnect check: catches a client that dropped before the first
+            # blocking read of the (synchronous) LLM stream, so we don't enter a model
+            # call for an already-gone client. Mid-first-token disconnect detection still
+            # waits on next(stream) — see #380-defer issue (blocking-read cancellation).
+            if await http_request.is_disconnected():
+                raise asyncio.CancelledError()
             for item in stream:
                 if await http_request.is_disconnected():
                     raise asyncio.CancelledError()
@@ -2229,10 +2241,12 @@ async def api_chat_stream(minister_name: str, request: ChatRequest, http_request
                 elif item_type == "error":
                     yield sse_event("error", item.get("detail") or {"message": item.get("message", "流式回复失败。")})
                 await asyncio.sleep(0)
-        except asyncio.CancelledError:
-            raise
         finally:
-            stream.close()
+            # `chat_stream` is a generator today, but guard the close so a refactor /
+            # test double returning a plain iterator can't mask the real error (#380 gemini).
+            close = getattr(stream, "close", None)
+            if callable(close):
+                close()
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 

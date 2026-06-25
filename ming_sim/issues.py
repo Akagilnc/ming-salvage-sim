@@ -287,7 +287,17 @@ def commitment_progress_payload(
     gate = _commitment_stop_gate(row)
     remaining = _commitment_remaining_from_gate(gate, state, db) if gate else None
     paid_total = _latest_commitment_paid_total(db, int(row["id"])) + max(0, int(paid_this_month))
-    origin_turn = int(row["origin_turn"] or 0) if "origin_turn" in keys else int(state.turn)
+    # Fall back to state.turn (→ 0 elapsed) when origin_turn is unset — whether the
+    # key is absent OR present-but-NULL/0. `int(row["origin_turn"] or 0)` would collapse
+    # a NULL/0 to 0 and leak the absolute turn number into months_elapsed (#380 cmr:
+    # gemini + coderabbit). Only a positive origin_turn is a real anchor.
+    origin_turn_raw = row["origin_turn"] if "origin_turn" in keys else None
+    try:
+        origin_turn = int(origin_turn_raw)
+    except (TypeError, ValueError):
+        origin_turn = 0
+    if origin_turn <= 0:
+        origin_turn = int(state.turn)
     months_elapsed = max(0, int(state.turn) - origin_turn)
     if include_current_month:
         months_elapsed = int(months_elapsed) + 1

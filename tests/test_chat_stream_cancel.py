@@ -179,8 +179,10 @@ def test_api_chat_stream_detects_client_disconnect_and_fails_turn(game, monkeypa
     monkeypatch.setattr(web_app, "get_game", lambda: web_game)
     monkeypatch.setattr(web_app, "_require_active_minister", lambda *_a, **_k: None)
 
-    # trip_after=1: first delta delivered, then the client disconnects.
-    fake_request = _DisconnectingRequest(trip_after=1)
+    # is_disconnected() cadence: call#1 = pre-loop check, call#2 = after first delta,
+    # call#3 = after second delta. trip_after=2 keeps the original intent (first delta
+    # delivered, THEN a mid-stream disconnect) under the added pre-loop probe.
+    fake_request = _DisconnectingRequest(trip_after=2)
 
     async def drive():
         resp = await web_app.api_chat_stream(
@@ -200,3 +202,102 @@ def test_api_chat_stream_detects_client_disconnect_and_fails_turn(game, monkeypa
     ]
     assert _chat_rows(db) == []
     assert web_game.chat_history[minister_name] == []
+
+
+class _PreLoopAgent:
+    """Agent whose run() must NOT be consumed when the client is already gone."""
+
+    consumed = False
+
+    def run(self, *_args, **_kwargs):
+        type(self).consumed = True
+        yield _Event()
+
+
+class _PreLoopRegistry:
+    session_ids = {"测试大臣": "minister-test"}
+
+    def get(self, _character):
+        return _PreLoopAgent()
+
+
+class _PreLoopSession(_Session):
+    registry = _PreLoopRegistry()
+
+
+def test_api_chat_stream_preloop_disconnect_cancels_before_first_read(game, monkeypatch):
+    """#380 cmr: a client already gone before the first blocking read is cancelled at the
+    pre-loop probe — no delta is yielded and the synchronous LLM stream is never consumed
+    (so no model call is entered for a gone client). Because the chat_stream generator body
+    hasn't started, no chat_turn exists to fail. (Partial mitigation of codex P2; the
+    mid-first-token disconnect is the deferred blocking-read case.)"""
+    db, state, content = game
+    minister_name = "测试大臣"
+    character = SimpleNamespace(name=minister_name, office_type="cabinet")
+    content.characters[minister_name] = character
+    _PreLoopAgent.consumed = False
+
+    web_game = WebGame.__new__(WebGame)
+    web_game.session = _PreLoopSession(db, state, content, character)
+    web_game.chat_history = {minister_name: []}
+
+    monkeypatch.setattr(web_app, "get_game", lambda: web_game)
+    monkeypatch.setattr(web_app, "_require_active_minister", lambda *_a, **_k: None)
+
+    # trip_after=0: the very first is_disconnected() (the pre-loop check) returns True.
+    fake_request = _DisconnectingRequest(trip_after=0)
+
+    async def drive():
+        resp = await web_app.api_chat_stream(
+            minister_name, ChatRequest(message="请说要事"), fake_request
+        )
+        chunks = []
+        with pytest.raises(asyncio.CancelledError):
+            async for chunk in resp.body_iterator:
+                chunks.append(chunk)
+        return chunks
+
+    chunks = asyncio.run(drive())
+
+    assert chunks == [], "no delta should be yielded for an already-disconnected client"
+    assert _PreLoopAgent.consumed is False, "LLM stream must not be entered for a gone client"
+    # generator never started → no durable turn/message rows created
+    assert _turn_rows(db) == []
+    assert _chat_rows(db) == []
+    assert web_game.chat_history[minister_name] == []
+
+
+def test_api_chat_stream_close_guard_tolerates_non_closeable_stream(game, monkeypatch):
+    """#380 gemini: the finally-block close must not raise if chat_stream is swapped for
+    an iterator/list lacking .close() — the AttributeError would mask the real outcome."""
+    db, state, content = game
+    minister_name = "测试大臣"
+    character = SimpleNamespace(name=minister_name, office_type="cabinet")
+    content.characters[minister_name] = character
+
+    web_game = WebGame.__new__(WebGame)
+    web_game.session = _Session(db, state, content, character)
+    web_game.chat_history = {minister_name: []}
+
+    # Plain list iterator: no .close() attribute at all.
+    def fake_chat_stream(_name, _msg):
+        return iter([{"type": "done", "payload": {"answer": "臣在。"}}])
+
+    web_game.chat_stream = fake_chat_stream  # type: ignore[assignment]
+
+    monkeypatch.setattr(web_app, "get_game", lambda: web_game)
+    monkeypatch.setattr(web_app, "_require_active_minister", lambda *_a, **_k: None)
+
+    fake_request = _DisconnectingRequest(trip_after=99)  # never disconnects
+
+    async def drive():
+        resp = await web_app.api_chat_stream(
+            minister_name, ChatRequest(message="请说要事"), fake_request
+        )
+        chunks = []
+        async for chunk in resp.body_iterator:  # must NOT raise AttributeError in finally
+            chunks.append(chunk)
+        return chunks
+
+    chunks = asyncio.run(drive())
+    assert any("done" in chunk for chunk in chunks)
