@@ -57,8 +57,11 @@ export type HandoffStatus = "success" | "escalate" | "error";
  * - `"cmr"`: the family integrated-cmr fixer soul (ADR 0026 2026-06-24) — a WRITE
  *   soul: the cmr worker invokes `ak-cross-m-review` and commits its cross-slice
  *   fixes inside its own memory-bearing session (it is the fixer, not read-only).
+ * - `"ship"`: the delivery soul the family ship worker runs under — a WRITE soul
+ *   distinct from `"coder"`: it invokes `gstack-ship`, stops at PR creation, and
+ *   records deferred findings in a tracker (issue / TODOS.md), never the PR body.
  */
-export type StepSoul = "coder" | "READ-ONLY" | "cmr";
+export type StepSoul = "coder" | "READ-ONLY" | "cmr" | "ship";
 
 /**
  * Project tool-chain entry. Each entry is a short, lower-case technology slug

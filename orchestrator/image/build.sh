@@ -68,7 +68,7 @@ SKILL_CLOSURE=(
 # so it needs its closure subtree baked at that exact path — not a flat cp.
 GSTACK_SRC="${GSTACK_SRC:-$HOME/gstack}"
 # The roles whose souls we bake (all worker roles — ADR 0026 / #333 "全部角色 soul").
-SOUL_ROLES=(coder reviewer merger cmr)
+SOUL_ROLES=(coder reviewer merger cmr ship)
 
 STAGE="$(mktemp -d "${TMPDIR:-/tmp}/ming-coder-img.XXXXXX")"
 trap 'rm -rf "$STAGE"' EXIT

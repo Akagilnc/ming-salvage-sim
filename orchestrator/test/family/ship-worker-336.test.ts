@@ -228,7 +228,7 @@ describe("#336 the inline family openFamilyPr is no longer the ship path", () =>
   });
 });
 
-// ═══════════════════ shipSandboxConfig — coder soul + codex auth + claude token ═══════════════════
+// ═══════════════════ shipSandboxConfig — ship soul + codex auth + claude token ═══════════════════
 
 describe("#336 family shipSandboxConfig — the WRITE-soul ship sandbox", () => {
   class ConfigBackend extends RealFamilyBackend {
@@ -252,17 +252,17 @@ describe("#336 family shipSandboxConfig — the WRITE-soul ship sandbox", () => 
     });
   }
 
-  it("mounts codex auth + the claude token under the WRITE (coder) soul", () => {
+  it("mounts codex auth + the claude token under the dedicated ship soul", () => {
     const c = cfg().config({ codexAuthDir: "/tmp/codex", claudeToken: "tok" });
     expect(c.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
     expect(c.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok");
-    expect(c.env[SANDBOX_SOUL_ENV]).toBe("coder");
+    expect(c.env[SANDBOX_SOUL_ENV]).toBe("ship");
   });
 
-  it("a missing codex auth degrades the mount but still ships under the coder soul", () => {
+  it("a missing codex auth degrades the mount but still ships under the ship soul", () => {
     const c = cfg().config({ claudeToken: "tok" });
     expect(c.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(false);
-    expect(c.env[SANDBOX_SOUL_ENV]).toBe("coder");
+    expect(c.env[SANDBOX_SOUL_ENV]).toBe("ship");
   });
 
   it("exports the gh token as GH_TOKEN so the in-container family `gh pr create` is authenticated (cmr S336 r10 P1)", () => {
