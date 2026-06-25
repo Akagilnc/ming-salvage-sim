@@ -1380,6 +1380,7 @@ class WebGame:
         chunks: List[str] = []
         try:
             agent = self.session.registry.get(character)
+            action_intent_future = self.session._start_cli_action_intent(character, text)
             run_output = None
             stream = agent.run(text, stream=True, stream_events=True, yield_run_output=True)
             for event in stream:
@@ -1479,6 +1480,7 @@ class WebGame:
             res = self.session.apply_cli_conversation_actions(
                 character, text, answer,
                 has_directive=proposed is not None, secret_order_id=secret_order_id,
+                preclassified_intent=self.session._finish_cli_action_intent(action_intent_future),
             )
             if proposed is None and res["directive"]:
                 proposed = res["directive"]
