@@ -55,6 +55,7 @@ from ming_sim.agents import _dump_llm_messages
 from ming_sim.llm_model import extract_agent_text, verify_llm_available
 from ming_sim.llm_contract import fail_if_llm_error
 from ming_sim.issues import _format_issue_ongoing, commitment_display_text, commitment_progress_payload, commitment_timed_bar_value
+from ming_sim.memories import effect_brief
 from ming_sim.session import GameSession
 from ming_sim.session import AUTO_SAVE_PREFIX
 from ming_sim.skills import available_skill_ids, skill_display_name, skill_source_labels
@@ -148,6 +149,45 @@ _CONDITION_DISPLAY_REPLACEMENTS = [
     ("|", "、"),
     (".", "·"),
 ]
+
+
+def _turn_account_report(db, turn: int) -> str:
+    extraction = db.get_turn_extraction(turn)
+    if not extraction:
+        return ""
+    applied = extraction.get("extractor_output")
+    if isinstance(applied, dict) and applied.get("mode") == "modular" and isinstance(applied.get("merged"), dict):
+        applied = applied["merged"]
+    lines: List[str] = ["本月实账："]
+    if isinstance(applied, dict):
+        brief = effect_brief(applied)
+        lines.append(brief or "无显著落账。")
+    elif applied:
+        lines.append(str(applied))
+    else:
+        lines.append("无显著落账。")
+
+    try:
+        rows = db.conn.execute(
+            """
+            SELECT section, reason FROM rejection_reports
+            WHERE turn = ?
+              AND source IN ('player_decree', 'hitl_decision')
+              AND COALESCE(resimulation_invalidated, 0) = 0
+            ORDER BY id
+            """,
+            (int(turn),),
+        ).fetchall()
+    except Exception:
+        rows = []
+    if rows:
+        lines.append("")
+        lines.append("窒碍未行：")
+        for row in rows[:8]:
+            section = str(row["section"] or "所拟事项")
+            reason = str(row["reason"] or "有司未能照办")
+            lines.append(f"- {section}：{reason}")
+    return "\n".join(lines)
 
 
 _CHARACTER_CONDITION_FIELD_LABELS = {
@@ -1160,11 +1200,13 @@ class WebGame:
 
     def state_payload(self) -> Dict[str, Any]:
         directives = [self.directive_payload(row) for row in self.directive_rows()]
+        previous_turn = max(0, int(self.state.turn) - 1)
         return {
             "turn": {"year": self.state.year, "period": self.state.period,
                      "turn": self.state.turn, "phase": self.state.turn_phase},
             "metrics": self.state.metrics,
             "previous_summary": self.previous_summary,
+            "previous_account_summary": _turn_account_report(self.db, previous_turn),
             "treasury": self.db.treasury_report(self.state),
             "issues": self.issue_payloads(),
             "legacies": self.legacies_payload(),

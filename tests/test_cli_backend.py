@@ -10,9 +10,11 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from agno.agent import Agent
 from agno.models.message import Message
 from pydantic import BaseModel
 
+from ming_sim.agents import run_agent_stream_text
 import ming_sim.cli_backend as cb
 from ming_sim.models import LLMConfig
 
@@ -234,6 +236,66 @@ def test_run_codex_flags_and_stdout(monkeypatch):
     assert "--skip-git-repo-check" in captured["cmd"]
     assert "--ephemeral" in captured["cmd"]
     assert "-c" not in captured["cmd"]                     # 未设 reasoning 不强加默认
+
+
+def test_codex_streaming_runner_emits_incremental_text(monkeypatch):
+    """codex --json 的 agent_message_delta 须逐块上抛给结算 SSE，而不是等进程退出后整段吐。"""
+    captured = {}
+
+    class _Stdout:
+        def __iter__(self):
+            yield json.dumps({"type": "agent_message_delta", "delta": "邸报一"}) + "\n"
+            yield json.dumps({"type": "agent_message_delta", "delta": "邸报二"}) + "\n"
+            yield json.dumps({"type": "agent_message", "message": "邸报一邸报二"}) + "\n"
+
+        def close(self):
+            pass
+
+    class _Proc:
+        class _Stdin:
+            def write(self, text):
+                captured["input"] = text
+
+            def close(self):
+                captured["stdin_closed"] = True
+
+        stdin = _Stdin()
+        stdout = _Stdout()
+        stderr = None
+        returncode = 0
+
+        def wait(self, timeout=None):
+            captured["timeout"] = timeout
+            self.returncode = 0
+            return ("", "")
+
+        def kill(self):
+            captured["killed"] = True
+
+    def fake_popen(cmd, **kw):
+        captured["cmd"] = cmd
+        captured["cwd"] = kw.get("cwd")
+        return _Proc()
+
+    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
+    monkeypatch.setattr(cb.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+
+    chunks = []
+    agent = Agent(
+        name="stream-test",
+        id="stream-test",
+        model=cb.CliChat(id="gpt-test", backend="codex"),
+        instructions=["只输出邸报。"],
+        markdown=False,
+    )
+    text = run_agent_stream_text(agent, "请写邸报", "simulator", on_text=chunks.append)
+
+    assert text == "邸报一邸报二"
+    assert chunks == ["邸报一", "邸报二"]
+    assert "--json" in captured["cmd"]
+    assert captured["cmd"][-1] == "-"
+    assert "请写邸报" in captured["input"]
 
 
 def test_run_codex_accepts_config_model_and_timeout(monkeypatch):
