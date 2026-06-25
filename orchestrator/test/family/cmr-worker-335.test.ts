@@ -44,6 +44,7 @@ import {
 } from "../../src/family/realFamilyBackend.js";
 import {
   SANDBOX_CODEX_DIR,
+  SANDBOX_GH_TOKEN_ENV,
   SANDBOX_SOUL_ENV,
 } from "../../src/realBackend.js";
 import { cmrWorkerSpec, familyShipWorkerSpec } from "../../src/family/dispatchFamilyWorker.js";
@@ -391,6 +392,25 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     expect(cfg.env[SANDBOX_SOUL_ENV]).toBe("cmr");
   });
 
+  it("exports the gh token as GH_TOKEN so the in-container completeness gate can `gh issue view` the live issue body as authority (mirrors the ship worker)", () => {
+    // The completeness gate grounds against the live issue body via `gh issue view`;
+    // without GH_TOKEN that fails and the audit degrades to commit-titles/test-files.
+    const cfg = cfgBackend().config({
+      codexAuthDir: "/tmp/cmr-codex-auth",
+      agyDir: "/tmp/cmr-agy",
+      claudeToken: "tok-xyz",
+      ghToken: "gho_cmr",
+    });
+    expect(cfg.env[SANDBOX_GH_TOKEN_ENV]).toBe("gho_cmr");
+  });
+
+  it("omits GH_TOKEN when no gh token is present (NOT a hard blocker for cmr — the gate degrades but still runs)", () => {
+    // Unlike ship (which fail-closes on missing gh because it must `gh pr create`),
+    // the cmr worker injects gh only when present and still runs without it.
+    const cfg = cfgBackend().config(auth);
+    expect(cfg.env[SANDBOX_GH_TOKEN_ENV]).toBeUndefined();
+  });
+
   it("the antigravity token path is the host-mirrored gemini path (#333 contract)", () => {
     expect(SANDBOX_AGY_DIR).toBe("/home/agent/.gemini/antigravity-cli");
   });
@@ -421,10 +441,18 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
 // ═══════════════════ 4b. mountCmrAuth — best-effort per leg (codex cmr R1) ═══════════════════
 
 describe("#335 mountCmrAuth — a missing host credential degrades, never throws", () => {
-  /** Expose the protected auth-mount seam, with $HOME pointed at an EMPTY dir. */
+  /**
+   * Expose the protected auth-mount seam, with $HOME pointed at an EMPTY dir.
+   * `readGhToken` is stubbed to undefined so the empty-$HOME case is deterministic:
+   * the real `gh auth token` reads the HOST OS keyring (not $HOME), so it would
+   * otherwise leak the host's gh token into a "no creds" assertion.
+   */
   class AuthBackend extends RealFamilyBackend {
     public auth(): CmrAuth {
       return this.mountCmrAuth();
+    }
+    protected override readGhToken(): string | undefined {
+      return undefined;
     }
   }
 
@@ -448,7 +476,32 @@ describe("#335 mountCmrAuth — a missing host credential degrades, never throws
       codexAuthDir: undefined,
       agyDir: undefined,
       claudeToken: undefined,
+      ghToken: undefined,
     });
+  });
+
+  it("threads the host gh token (readGhToken) into ghToken — the completeness gate's `gh issue view` authority", () => {
+    // A separate backend whose readGhToken yields a present token: mountCmrAuth must
+    // wire it onto CmrAuth.ghToken (cmrSandboxConfig then exports it as GH_TOKEN).
+    class GhAuthBackend extends RealFamilyBackend {
+      public auth(): CmrAuth {
+        return this.mountCmrAuth();
+      }
+      protected override readGhToken(): string | undefined {
+        return "gho_host";
+      }
+    }
+    const be = new GhAuthBackend({
+      workingRepo: mkDir("cmr-repo-"),
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "ming-orchestrator-coder:latest",
+      home: mkDir("cmr-gh-home-"),
+    });
+    expect(be.auth().ghToken).toBe("gho_host");
   });
 
   it("a missing codex/agy source reclaims the mkdtemp dir — no leak on degrade (online review r2, gemini)", () => {
