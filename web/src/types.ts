@@ -251,6 +251,7 @@ export type GameState = {
   turn: { year: number; period: number; turn: number; phase?: string };
   metrics: Metrics;
   previous_summary: string;
+  previous_account_summary?: string;
   treasury: string;
   issues: Issue[];
   legacies: Legacy[];
