@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
-"""批量生人物立绘。从 docs/portrait-prompts.md 解析 (文件名, prompt)，调 gpt-image-2 落盘。
+"""Deprecated legacy white-background portrait generator.
 
-key 走环境变量 OPENAI_IMAGE_KEY，绝不写文件。可重跑：已存在的 png 跳过。
+旧白底 prompt 真源已删除。当前暗色 scene-v2 立绘真源是
+docs/portrait-prompts-scene-v2.md，不能用本脚本生成。
 
-用法：
-  export OPENAI_IMAGE_KEY=sk-xxx
-  .venv/bin/python scripts/gen_portraits.py            # 跑全部缺失
-  .venv/bin/python scripts/gen_portraits.py --only wang_chengen   # 只跑文件名含此串的
-  .venv/bin/python scripts/gen_portraits.py --limit 3  # 只跑前 N 张（试水）
+本文件只保留为废弃入口说明，运行会直接退出。
 """
 from __future__ import annotations
 
@@ -25,7 +22,6 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-MD = ROOT / "docs" / "portrait-prompts.md"
 OUT = ROOT / "web" / "public" / "portraits"
 BASE_URL = "https://vip.auto-code.net/v1"
 MODEL = "gpt-image-2"
@@ -40,7 +36,9 @@ HEADER_RE = re.compile(r"^#{2,4}\s+\S.*`((?:minister|consort)_[^`/<>]+\.png)`")
 
 def parse_entries() -> list[tuple[str, str]]:
     """返回 [(filename, prompt), ...]，按 md 出现顺序。"""
-    lines = MD.read_text(encoding="utf-8").splitlines()
+    raise SystemExit(
+        "旧白底 prompt 真源已删除；请使用 docs/portrait-prompts-scene-v2.md。"
+    )
     entries: list[tuple[str, str]] = []
     i = 0
     while i < len(lines):
@@ -96,7 +94,17 @@ def main() -> None:
     ap.add_argument("--timeout", type=int, default=180)
     ap.add_argument("--retries", type=int, default=2, help="单张失败重试次数")
     ap.add_argument("--workers", type=int, default=1, help="并发线程数")
+    ap.add_argument(
+        "--legacy-white-bg",
+        action="store_true",
+        help="废弃参数；旧白底规格已删除，scene-v2 不走本脚本",
+    )
     args = ap.parse_args()
+
+    sys.exit(
+        "error: 旧白底 prompt 真源已删除；当前 scene-v2 立绘真源是 "
+        "docs/portrait-prompts-scene-v2.md，不能用本脚本生成。"
+    )
 
     key = os.environ.get("OPENAI_IMAGE_KEY", "").strip()
     if not key:
