@@ -43,27 +43,22 @@ def test_no_prefix_no_action():
     assert acts["secret_order"] is None
 
 
-def test_secret_prefix_extracts_fields(monkeypatch):
-    # 密令走聚焦提取 → agy；用 monkeypatch 喂固定 JSON，测解析。
-    canned = json.dumps({
-        "标题": "密查辽东军饷", "内容": "暗查关宁兵额有无虚冒",
-        "承办人": "李若琏", "期限月数": 3, "标签": ["辽东", "军饷"],
-    }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_agy", lambda prompt: (canned, 1))
+def test_secret_prefix_uses_reply_without_llm(monkeypatch):
+    monkeypatch.setattr(cb, "_run_agy", lambda prompt: (_ for _ in ()).throw(AssertionError("前缀密令不应调 LLM")))
     acts = cb.resolve_minister_actions(
         "臣领密旨，可授李若琏暗查。", "密令如下：查辽东军饷有无侵冒，三月内回奏",
         default_assignee="王在晋",
     )
     so = acts["secret_order"]
     assert so is not None
-    assert so["title"] == "密查辽东军饷"
-    assert so["assignee"] == "李若琏"        # 抓到点名的承办人，非默认当前大臣
-    assert so["deadline_months"] == 3
+    assert so["title"] == "查辽东军饷有无侵冒，三月内回奏"
+    assert so["content"] == "臣领密旨，可授李若琏暗查。"
+    assert so["assignee"] == "王在晋"
+    assert so["deadline_months"] == 0
 
 
 def test_secret_assignee_defaults_when_unspecified(monkeypatch):
-    canned = json.dumps({"标题": "密查", "内容": "暗查", "承办人": "", "期限月数": 0}, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_agy", lambda prompt: (canned, 1))
+    monkeypatch.setattr(cb, "_run_agy", lambda prompt: (_ for _ in ()).throw(AssertionError("前缀密令不应调 LLM")))
     acts = cb.resolve_minister_actions("臣领旨。", "密令如下：去查", default_assignee="毕自严")
     assert acts["secret_order"]["assignee"] == "毕自严"
 
