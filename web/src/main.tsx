@@ -426,11 +426,12 @@ function App() {
       // The finally block below still clears busy + chatAbortRef globally.
       if (selectedMinisterRef.current !== targetMinisterName) return;
       if (err instanceof Error && err.name === "AbortError") {
-        // Player cancelled — restore input so they can retry immediately
-        if (fromComposer) setInput(message);
+        // Observer left the live stream; after the server accepts the question,
+        // the audience turn continues in the background and history is the rejoin path.
         setPendingUserMessage("");
         setStreamingMinisterMessage("");
-        setError("已取消，可重新发送。");
+        setChatNotice("已离开实时回话；大臣会继续回奏，稍后重开可见。");
+        setError("");
       } else {
         if (fromComposer) {
           setInput(message);

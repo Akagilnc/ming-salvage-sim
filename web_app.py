@@ -1384,7 +1384,11 @@ class WebGame:
             self._record_chat_rollback_items(chat_turn_id, before_snapshot)
         except Exception:
             if chat_turn_id:
-                self.db.mark_chat_turn_failed(chat_turn_id)
+                self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+                self.db.fail_chat_turn(chat_turn_id)
+                self.chat_history = {name: [] for name in self.session.content.characters}
+                for name, msgs in self.db.load_all_chat_history().items():
+                    self.chat_history.setdefault(name, []).extend(msgs)
             raise
         proposed = None
         if result.proposed_directive is not None:
@@ -1398,6 +1402,135 @@ class WebGame:
             displaced_minister=result.displaced_minister,
             secret_order_id=result.secret_order_id,
             pending_action_id=getattr(result, "pending_action_id", 0),
+            chat_turn_id=chat_turn_id,
+        )
+
+    def _chat_stream_payload(
+        self,
+        minister_name: str,
+        text: str,
+        chat_turn_id: int,
+        before_snapshot: Dict[str, Any],
+        emit_delta,
+    ) -> Dict[str, Any]:
+        character = self.session._character(minister_name)
+        chunks: List[str] = []
+        agent = self.session.registry.get(character)
+        action_intent_future = self.session._start_cli_action_intent(character, text)
+        run_output = None
+        stream = agent.run(text, stream=True, stream_events=True, yield_run_output=True)
+        for event in stream:
+            content = getattr(event, "content", None)
+            event_name = getattr(event, "event", "")
+            if event_name == "RunContent" and content:
+                delta = str(content)
+                chunks.append(delta)
+                emit_delta(delta)
+            if type(event).__name__ in ("RunOutput", "RunCompletedEvent"):
+                run_output = event
+        # 流式跑完补 dump：流式 run_output(RunCompletedEvent)常无 .messages，
+        # 传 agent= 让 _dump_llm_messages 走 agent.get_last_run_output() fallback 取 system/user。
+        _dump_llm_messages(run_output, f"大臣对话/{minister_name}", agent=agent)
+        answer = "".join(chunks).strip()
+        fail_if_llm_error(answer, "LLM 调用")
+        if not answer and run_output is not None:
+            answer = extract_agent_text(run_output)
+        if not answer:
+            raise LLMUnavailable("LLM 调用失败：流式回复为空。")
+        # 截 propose_directive：入 pending；截 propose_appointment：吏部铨选建档
+        proposed = None
+        appointed = ""
+        registered = ""
+        court_action = ""
+        next_minister = ""
+        displaced = ""
+        secret_order_id = 0
+        if run_output is not None:
+            for tool_exec in getattr(run_output, "tools", None) or []:
+                res = str(getattr(tool_exec, "result", "") or "")
+                tool_name = getattr(tool_exec, "tool_name", "")
+                if tool_name == "propose_directive" or res.startswith("__pending_directive__"):
+                    draft_text = res.removeprefix("__pending_directive__").strip()
+                    if not draft_text:
+                        args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
+                        draft_text = (args.get("decree_text") or "").strip()
+                    if draft_text and GameSession._proposal_blocked(self.state):
+                        draft_text = ""  # 恢复窗婉拒（ship-pre r2 软死锁环源头，同 session 路）
+                    if draft_text:
+                        did = self.db.add_directive(
+                            self.state, None, draft_text, "大臣拟旨",
+                            notes=f"由{character.name}拟旨入档", status="pending",
+                        )
+                        proposed = {"id": did, "text": draft_text, "status": "pending",
+                                    "notes": f"由{character.name}拟旨入档"}
+                elif tool_name == "propose_appointment" or res.startswith("__pending_appointment__"):
+                    payload_json = res.removeprefix("__pending_appointment__").strip()
+                    if not payload_json:
+                        args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
+                        payload_json = json.dumps(args, ensure_ascii=False)
+                    appointed, displaced = self.session._apply_appointment(payload_json, character)
+                elif tool_name == "register_unlisted_person" or res.startswith("__pending_unlisted_person__"):
+                    payload_json = res.removeprefix("__pending_unlisted_person__").strip()
+                    if not payload_json:
+                        args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
+                        payload_json = json.dumps(args, ensure_ascii=False)
+                    registered, summon_after = self.session._apply_unlisted_person_registration(payload_json)
+                    if registered and summon_after:
+                        court_action = "summon"
+                        next_minister = registered
+                elif tool_name == "summon_minister" or res.startswith("__summon__"):
+                    target_name = res.removeprefix("__summon__").strip()
+                    if not target_name:
+                        args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
+                        target_name = args.get("name", "")
+                    if target_name:
+                        try:
+                            target, _is_temporary = self.session.summon_character(
+                                target_name, character, allow_temporary=False
+                            )
+                        except ValueError:
+                            target = None
+                        if target is not None:
+                            ok, _reason = self.session.can_summon(target)
+                            if ok:
+                                court_action = "summon"
+                                next_minister = target.name
+                elif tool_name == "dismiss_minister" or res == "__dismiss__":
+                    court_action = "dismiss"
+                elif tool_name == "issue_secret_order" or res.startswith("__secret_order_registered__") or res.startswith("__secret_order__"):
+                    if res.startswith("__secret_order_registered__"):
+                        try:
+                            secret_order_id = int(res.split("__")[3])
+                        except Exception:
+                            secret_order_id = 0
+                    else:
+                        payload_json = res.removeprefix("__secret_order__").strip()
+                        if not payload_json:
+                            args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
+                            payload_json = json.dumps(args, ensure_ascii=False)
+                        secret_order_id = self.session._apply_secret_order(payload_json, minister_name)
+                # 密令结案不再走大臣工具，由月末推演 + extractor 写入
+        # CLI 后端（agy/codex）：玩家用拟旨/密令按钮（消息带前缀）时，把大臣这句回话原文入档。
+        # CLI 后端会话落地走共享真源 session.apply_cli_conversation_actions(同 session.chat 非流式路径)，
+        # 杜绝 web/CLI 两边逻辑漂移（CMR F3 / codexC-1）。
+        res = self.session.apply_cli_conversation_actions(
+            character, text, answer,
+            has_directive=proposed is not None, secret_order_id=secret_order_id,
+            preclassified_intent=self.session._finish_cli_action_intent(action_intent_future),
+        )
+        if proposed is None and res["directive"]:
+            proposed = res["directive"]
+        if res["secret_order_id"]:
+            secret_order_id = res["secret_order_id"]
+        pending_action_id = int(res.get("pending_action_id") or 0)
+        self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+        return self._chat_payload(
+            minister_name, answer, court_action=court_action, next_minister=next_minister,
+            proposed_directive=proposed, appointed_minister=appointed,
+            registered_minister=registered,
+            displaced_minister=displaced,
+            secret_order_id=secret_order_id,
+            pending_action_id=pending_action_id,
             chat_turn_id=chat_turn_id,
         )
 
@@ -1418,135 +1551,36 @@ class WebGame:
             message_id = self.db.append_chat_message(minister_name, self.state.turn, "user", text)
             if chat_turn_id:
                 self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
-        character = self.session._character(minister_name)
-        chunks: List[str] = []
-        try:
-            agent = self.session.registry.get(character)
-            action_intent_future = self.session._start_cli_action_intent(character, text)
-            run_output = None
-            stream = agent.run(text, stream=True, stream_events=True, yield_run_output=True)
-            for event in stream:
-                content = getattr(event, "content", None)
-                event_name = getattr(event, "event", "")
-                if event_name == "RunContent" and content:
-                    delta = str(content)
-                    chunks.append(delta)
-                    yield {"type": "delta", "content": delta}
-                if type(event).__name__ in ("RunOutput", "RunCompletedEvent"):
-                    run_output = event
-            # 流式跑完补 dump：流式 run_output(RunCompletedEvent)常无 .messages，
-            # 传 agent= 让 _dump_llm_messages 走 agent.get_last_run_output() fallback 取 system/user。
-            _dump_llm_messages(run_output, f"大臣对话/{minister_name}", agent=agent)
-            answer = "".join(chunks).strip()
-            fail_if_llm_error(answer, "LLM 调用")
-            if not answer and run_output is not None:
-                answer = extract_agent_text(run_output)
-            if not answer:
-                raise LLMUnavailable("LLM 调用失败：流式回复为空。")
-            # 截 propose_directive：入 pending；截 propose_appointment：吏部铨选建档
-            proposed = None
-            appointed = ""
-            registered = ""
-            court_action = ""
-            next_minister = ""
-            displaced = ""
-            secret_order_id = 0
-            if run_output is not None:
-                for tool_exec in getattr(run_output, "tools", None) or []:
-                    res = str(getattr(tool_exec, "result", "") or "")
-                    tool_name = getattr(tool_exec, "tool_name", "")
-                    if tool_name == "propose_directive" or res.startswith("__pending_directive__"):
-                        draft_text = res.removeprefix("__pending_directive__").strip()
-                        if not draft_text:
-                            args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
-                            draft_text = (args.get("decree_text") or "").strip()
-                        if draft_text and GameSession._proposal_blocked(self.state):
-                            draft_text = ""  # 恢复窗婉拒（ship-pre r2 软死锁环源头，同 session 路）
-                        if draft_text:
-                            did = self.db.add_directive(
-                                self.state, None, draft_text, "大臣拟旨",
-                                notes=f"由{character.name}拟旨入档", status="pending",
-                            )
-                            proposed = {"id": did, "text": draft_text, "status": "pending",
-                                        "notes": f"由{character.name}拟旨入档"}
-                    elif tool_name == "propose_appointment" or res.startswith("__pending_appointment__"):
-                        payload_json = res.removeprefix("__pending_appointment__").strip()
-                        if not payload_json:
-                            args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
-                            payload_json = json.dumps(args, ensure_ascii=False)
-                        appointed, displaced = self.session._apply_appointment(payload_json, character)
-                    elif tool_name == "register_unlisted_person" or res.startswith("__pending_unlisted_person__"):
-                        payload_json = res.removeprefix("__pending_unlisted_person__").strip()
-                        if not payload_json:
-                            args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
-                            payload_json = json.dumps(args, ensure_ascii=False)
-                        registered, summon_after = self.session._apply_unlisted_person_registration(payload_json)
-                        if registered and summon_after:
-                            court_action = "summon"
-                            next_minister = registered
-                    elif tool_name == "summon_minister" or res.startswith("__summon__"):
-                        target_name = res.removeprefix("__summon__").strip()
-                        if not target_name:
-                            args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
-                            target_name = args.get("name", "")
-                        if target_name:
-                            try:
-                                target, _is_temporary = self.session.summon_character(
-                                    target_name, character, allow_temporary=False
-                                )
-                            except ValueError:
-                                target = None
-                            if target is not None:
-                                ok, _reason = self.session.can_summon(target)
-                                if ok:
-                                    court_action = "summon"
-                                    next_minister = target.name
-                    elif tool_name == "dismiss_minister" or res == "__dismiss__":
-                        court_action = "dismiss"
-                    elif tool_name == "issue_secret_order" or res.startswith("__secret_order_registered__") or res.startswith("__secret_order__"):
-                        if res.startswith("__secret_order_registered__"):
-                            try:
-                                secret_order_id = int(res.split("__")[3])
-                            except Exception:
-                                secret_order_id = 0
-                        else:
-                            payload_json = res.removeprefix("__secret_order__").strip()
-                            if not payload_json:
-                                args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
-                                payload_json = json.dumps(args, ensure_ascii=False)
-                            secret_order_id = self.session._apply_secret_order(payload_json, minister_name)
-                    # 密令结案不再走大臣工具，由月末推演 + extractor 写入
-            # CLI 后端（agy/codex）：玩家用拟旨/密令按钮（消息带前缀）时，把大臣这句回话原文入档。
-            # CLI 后端会话落地走共享真源 session.apply_cli_conversation_actions(同 session.chat 非流式路径)，
-            # 杜绝 web/CLI 两边逻辑漂移（CMR F3 / codexC-1）。
-            res = self.session.apply_cli_conversation_actions(
-                character, text, answer,
-                has_directive=proposed is not None, secret_order_id=secret_order_id,
-                preclassified_intent=self.session._finish_cli_action_intent(action_intent_future),
-            )
-            if proposed is None and res["directive"]:
-                proposed = res["directive"]
-            if res["secret_order_id"]:
-                secret_order_id = res["secret_order_id"]
-            pending_action_id = int(res.get("pending_action_id") or 0)
-            self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-            payload = self._chat_payload(
-                minister_name, answer, court_action=court_action, next_minister=next_minister,
-                proposed_directive=proposed, appointed_minister=appointed,
-                registered_minister=registered,
-                displaced_minister=displaced,
-                secret_order_id=secret_order_id,
-                pending_action_id=pending_action_id,
-                chat_turn_id=chat_turn_id,
-            )
-            yield {"type": "done", "payload": payload}
-        except Exception as error:
-            if chat_turn_id:
-                self.db.mark_chat_turn_failed(chat_turn_id)
-            if isinstance(error, LLMUnavailable):
-                yield {"type": "error", "detail": _llm_error_detail(error)}
-            else:
-                yield {"type": "error", "message": str(error)}
+
+        ev_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
+
+        def emit_delta(delta: str) -> None:
+            ev_queue.put({"type": "delta", "content": delta})
+
+        def worker() -> None:
+            try:
+                payload = self._chat_stream_payload(
+                    minister_name, text, chat_turn_id, before_snapshot, emit_delta)
+                ev_queue.put({"type": "done", "payload": payload})
+            except Exception as error:  # noqa: BLE001
+                if chat_turn_id:
+                    self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+                    self.db.fail_chat_turn(chat_turn_id)
+                    self.chat_history = {name: [] for name in self.session.content.characters}
+                    for name, msgs in self.db.load_all_chat_history().items():
+                        self.chat_history.setdefault(name, []).extend(msgs)
+                if isinstance(error, LLMUnavailable):
+                    ev_queue.put({"type": "error", "detail": _llm_error_detail(error)})
+                else:
+                    ev_queue.put({"type": "error", "message": str(error)})
+
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+        while True:
+            item = ev_queue.get()
+            yield item
+            if item.get("type") in {"done", "error"}:
+                break
 
     def suggestions_for(self, character: Character) -> List[Dict[str, str]]:
         suggestions = [

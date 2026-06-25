@@ -4808,6 +4808,62 @@ class GameDB:
         )
         self.conn.commit()
 
+    def fail_chat_turn(self, chat_turn_id: int) -> None:
+        """Mark an incomplete audience turn failed and remove its partial user-visible writes."""
+        row = self.conn.execute(
+            "SELECT * FROM chat_turns WHERE id = ?",
+            (int(chat_turn_id),),
+        ).fetchone()
+        if row is None:
+            return
+        turn_row = self._row_dict(row)
+        if turn_row["status"] != "active":
+            self.conn.execute(
+                "UPDATE chat_turns SET status = 'failed' WHERE id = ?",
+                (int(chat_turn_id),),
+            )
+            self.conn.commit()
+            return
+        items = self.conn.execute(
+            """
+            SELECT * FROM chat_turn_rollback_items
+            WHERE chat_turn_id = ?
+            ORDER BY id DESC
+            """,
+            (int(chat_turn_id),),
+        ).fetchall()
+        message_ids = [
+            int(mid)
+            for mid in (turn_row.get("user_message_id"), turn_row.get("minister_message_id"))
+            if mid
+        ]
+        with self.conn:
+            for item in items:
+                table = str(item["target_table"])
+                strategy = str(item["rollback_strategy"])
+                target_id = str(item["target_id"])
+                if strategy == "delete_inserted_row":
+                    self._delete_row_in_tx(table, target_id)
+                elif strategy in {"restore_row", "restore_deleted_row"}:
+                    before_row = self._json_load_row(item["before_json"])
+                    self._restore_row_in_tx(table, before_row)
+                else:
+                    raise ValueError(f"不支持的回滚策略：{strategy}")
+            if message_ids:
+                placeholders = ",".join("?" for _ in message_ids)
+                self.conn.execute(
+                    f"DELETE FROM chat_messages WHERE id IN ({placeholders})",
+                    message_ids,
+                )
+            self.conn.execute(
+                "UPDATE chat_turns SET status = 'failed' WHERE id = ?",
+                (int(chat_turn_id),),
+            )
+            self._truncate_agno_runs_in_tx(
+                str(turn_row.get("agno_session_id") or ""),
+                int(turn_row.get("agno_runs_before") or 0),
+            )
+
     def record_chat_turn_rollback_diffs(
         self,
         chat_turn_id: int,
