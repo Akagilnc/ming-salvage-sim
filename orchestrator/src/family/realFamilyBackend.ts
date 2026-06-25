@@ -1194,7 +1194,17 @@ export class RealFamilyBackend implements FamilyBackend {
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
-    const env: Record<string, string> = { ...SPAWNED_WORKER_ENV, [SANDBOX_SOUL_ENV]: CMR_SOUL };
+    // ORCHESTRATOR_REPO too: the cmr worker runs `gh issue view` (completeness
+    // authority) AND `gh issue create` (defer→tracker), both needing `--repo
+    // "$ORCHESTRATOR_REPO"`. In a clone-from-LOCAL family run (launch sets
+    // sourceRepo to the local repo) the container's git remote is the local path,
+    // so gh's repo INFERENCE would target the wrong place — pass the slug explicitly
+    // (codex #384). Mirrors ship/coder.
+    const env: Record<string, string> = {
+      ...SPAWNED_WORKER_ENV,
+      [SANDBOX_SOUL_ENV]: CMR_SOUL,
+      [SANDBOX_REPO_ENV]: this.opts.repo,
+    };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     // The in-container completeness gate's `gh issue view` (the live issue body =
     // DELIVERED-vs-spec authority) reads GH_TOKEN. Inject only when present (mirrors

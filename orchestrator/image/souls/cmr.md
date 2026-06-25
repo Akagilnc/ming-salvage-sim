@@ -43,8 +43,11 @@ through the two lens gates below so completeness can never be skipped or conflat
    **PROVE that cost concretely** (name the table/migration, the contract, or the
    modules touched). Never assert "this needs a big change / schema change" to dodge a
    cheap fix; if you cannot name the out-of-scope artifact, it is cheap → fix it.
-   Record an accepted defer as a **GitHub issue** (`gh issue create`), or — when gh is
-   unauthenticated in-container — as a `TODOS.md` ledger entry; **never** in a PR body.
+   Record an accepted defer as a **GitHub issue**
+   (`gh issue create --repo "$ORCHESTRATOR_REPO"` — pass the slug explicitly;
+   gh's remote inference targets the wrong place in a clone-from-local run), or —
+   when gh is unauthenticated in-container — as a `TODOS.md` ledger entry; **never**
+   in a PR body.
    After every fix in EITHER gate, do the mandatory self-check 二连 (same-pattern +
    fix-introduced-bug) the skill prescribes.
 4. **Commit** each fix on the resident family base — one commit per coherent change,
