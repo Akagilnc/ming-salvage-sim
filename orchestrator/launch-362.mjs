@@ -6,7 +6,9 @@ const ORCH = "/Users/akagilnc/WorkSpace/Ming_LLM/orchestrator";
 
 const result = await runFamilyDriver({
   epicIssue: 362,
-  sourceRepo: "https://github.com/Akagilnc/ming-salvage-sim.git",
+  // clone-from = LOCAL repo (git hardlinks objects on same FS → near-instant, no
+  // 400MB network download); push-to (remote) stays GitHub so ship opens the PR upstream.
+  sourceRepo: "/Users/akagilnc/WorkSpace/Ming_LLM",
   remote: "https://github.com/Akagilnc/ming-salvage-sim.git",
   repo: "Akagilnc/ming-salvage-sim",
   familyBase: "family/362-base",
