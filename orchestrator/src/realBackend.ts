@@ -762,9 +762,13 @@ export interface RunResultLike {
 
 /**
  * The real per-step sandbox session id = the LAST iteration's sessionId
- * (the iteration that produced the final output / would be resumed). Undefined
- * when no iteration carried one (non-Claude provider / capture disabled) — the
- * runner then records the run-level UUID fallback.
+ * (the iteration that produced the final output / would be resumed). Both the
+ * Claude AND the Codex providers are RESUMABLE and carry a sessionId (sandcastle
+ * 0.10: "continue a prior Claude Code, Codex, or Pi conversation"; Codex resumes
+ * via `codex exec resume <id>`), so the default Codex coder's escalate → human →
+ * resume path returns to the real session, NOT a dead one. Undefined only when an
+ * iteration genuinely carried no id (a truly non-resumable provider / capture
+ * disabled) — only then does the runner record the run-level UUID fallback.
  */
 export function lastSessionId(
   result: Pick<RunResultLike, "iterations">,
