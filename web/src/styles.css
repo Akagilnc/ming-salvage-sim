@@ -2102,6 +2102,35 @@ select:focus-visible {
   border-bottom: 0;
 }
 
+.report-page-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 0 24px;
+  margin: 4px 0 0;
+}
+
+.report-page-tab {
+  min-width: 64px;
+  padding: 5px 14px;
+  border: 1px solid rgba(120, 60, 20, 0.35);
+  border-radius: 4px;
+  background: rgba(120, 60, 20, 0.05);
+  color: #5a3a10;
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+
+.report-page-tab:hover {
+  background: rgba(120, 60, 20, 0.1);
+}
+
+.report-page-tab.active {
+  background: rgba(120, 60, 20, 0.18);
+  border-color: rgba(120, 60, 20, 0.7);
+  color: #3a1a05;
+  font-weight: 700;
+}
+
 .section-note {
   margin: -4px 0 8px;
   color: #6a5a40;

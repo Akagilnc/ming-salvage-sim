@@ -27,10 +27,11 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 from agno.models.message import Message
 from agno.models.openai import OpenAIChat
+from agno.models.response import ModelResponse
 from openai.types.chat import ChatCompletion, ChatCompletionMessage
 from openai.types.chat.chat_completion import Choice
 from pydantic import BaseModel
@@ -351,6 +352,131 @@ def _run_codex(prompt: str, model: Optional[str] = None, timeout: Optional[float
     if proc.returncode != 0 or not out:
         raise RuntimeError(f"codex 调用失败（退出码 {proc.returncode}）：{(proc.stderr or '')[:200]}")
     return out, 1
+
+
+def _codex_cmd(model: Optional[str] = None, *, json_events: bool = False) -> List[str]:
+    cmd = [_resolve_cli_bin("codex", _CODEX_BIN), "exec", "--model", (model or _CODEX_MODEL)]
+    reasoning = (os.environ.get("MING_SIM_CODEX_REASONING") or "").strip()
+    if reasoning:
+        cmd += ["-c", f'model_reasoning_effort="{reasoning}"']
+    if json_events:
+        cmd.append("--json")
+    cmd += ["--ephemeral", "--skip-git-repo-check", "-"]
+    return cmd
+
+
+def _codex_event_text(obj: object) -> str:
+    if not isinstance(obj, dict):
+        return ""
+    typ = str(obj.get("type") or obj.get("event") or "")
+    if "delta" in typ:
+        for key in ("delta", "content", "text"):
+            value = obj.get(key)
+            if isinstance(value, str) and value:
+                return value
+        nested = obj.get("message")
+        if isinstance(nested, dict):
+            value = nested.get("delta") or nested.get("content") or nested.get("text")
+            return value if isinstance(value, str) else ""
+    return ""
+
+
+def _codex_final_text(obj: object) -> str:
+    if not isinstance(obj, dict):
+        return ""
+    typ = str(obj.get("type") or obj.get("event") or "")
+    if "delta" in typ:
+        return ""
+    for key in ("message", "content", "text", "final", "last_message"):
+        value = obj.get(key)
+        if isinstance(value, str) and value:
+            return value
+        if isinstance(value, dict):
+            nested = value.get("content") or value.get("text") or value.get("message")
+            if isinstance(nested, str) and nested:
+                return nested
+    return ""
+
+
+def _iter_codex_stream_chunks(
+    prompt: str,
+    *,
+    model: Optional[str] = None,
+    timeout: Optional[float] = None,
+) -> Iterator[str]:
+    """Run `codex exec --json` and yield agent_message_delta events as they arrive."""
+    cmd = _codex_cmd(model, json_events=True)
+    run_timeout = timeout or _AGY_TIMEOUT
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=_AGY_CWD,
+        )
+    except OSError as exc:
+        raise RuntimeError(f"codex 流式调用启动失败：{exc}") from exc
+
+    assert proc.stdout is not None
+    if proc.stdin is not None:
+        proc.stdin.write(prompt)
+        proc.stdin.close()
+
+    pieces: List[str] = []
+    final_text = ""
+    stderr = ""
+    try:
+        for raw_line in proc.stdout:
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            delta = _codex_event_text(obj)
+            if delta:
+                pieces.append(delta)
+                yield delta
+                continue
+            maybe_final = _codex_final_text(obj)
+            if maybe_final:
+                final_text = maybe_final
+        try:
+            proc.wait(timeout=run_timeout)
+        except ValueError:
+            proc.wait(timeout=run_timeout)
+        if proc.stderr is not None:
+            stderr = proc.stderr.read()
+    except subprocess.TimeoutExpired as exc:
+        proc.kill()
+        raise RuntimeError("codex 流式调用超时") from exc
+
+    text = "".join(pieces).strip() or final_text.strip()
+    if proc.returncode != 0 or not text:
+        raise RuntimeError(f"codex 流式调用失败（退出码 {proc.returncode}）：{(stderr or '')[:200]}")
+    if not pieces and final_text.strip():
+        yield final_text.strip()
+
+
+def _run_codex_stream(
+    prompt: str,
+    *,
+    model: Optional[str] = None,
+    timeout: Optional[float] = None,
+    on_text: Optional[Callable[[str], None]] = None,
+) -> Tuple[str, int]:
+    pieces: List[str] = []
+    for delta in _iter_codex_stream_chunks(prompt, model=model, timeout=timeout):
+        pieces.append(delta)
+        if on_text:
+            on_text(delta)
+    text = "".join(pieces).strip()
+    if not text:
+        raise RuntimeError("codex 流式调用失败：输出为空")
+    return text, 1
 
 
 def _run_claude(prompt: str, model: Optional[str] = None, timeout: Optional[float] = None) -> Tuple[str, int]:
@@ -1231,8 +1357,17 @@ class CliChat(OpenAIChat):
         send_media_to_model: bool = True,
         compression_manager: Any = None,
     ):
-        # agy 一次性出全文，无真增量。把非流式结果当单个 chunk 吐出去，
-        # 上游 run_agent_stream_text 的事件循环按一个 RunContent 处理即可。
+        if self.backend == "codex" and response_format is None:
+            prompt = _messages_to_prompt(messages, response_format)
+            for delta in _iter_codex_stream_chunks(
+                prompt,
+                model=str(getattr(self, "id", "") or ""),
+                timeout=getattr(self, "timeout", None),
+            ):
+                yield ModelResponse(role="assistant", content=delta)
+            return
+
+        # agy/claude 一次性出全文；结构化输出也保持非流式，避免拼接 JSON。
         yield self.response(
             messages, response_format=response_format, tools=None,
             run_response=run_response,
