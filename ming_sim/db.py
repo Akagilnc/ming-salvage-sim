@@ -622,6 +622,7 @@ class GameDB:
                 source TEXT NOT NULL DEFAULT 'simulation',
                 terminal_state TEXT NOT NULL DEFAULT 'triggered',
                 terminal_reason TEXT NOT NULL DEFAULT '',
+                choice_json TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(event_id) REFERENCES events(id)
             );
@@ -660,6 +661,7 @@ class GameDB:
             CREATE TABLE IF NOT EXISTS pending_decisions (
                 turn INTEGER NOT NULL,
                 idx INTEGER NOT NULL,
+                event_id TEXT NOT NULL DEFAULT '',
                 title TEXT NOT NULL DEFAULT '',
                 context TEXT NOT NULL DEFAULT '',
                 options_json TEXT NOT NULL DEFAULT '[]',
@@ -1027,6 +1029,8 @@ class GameDB:
         self._backfill_bandit_power_split()
         self.ensure_column("event_triggers", "terminal_state", "TEXT NOT NULL DEFAULT 'triggered'")
         self.ensure_column("event_triggers", "terminal_reason", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("event_triggers", "choice_json", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("pending_decisions", "event_id", "TEXT NOT NULL DEFAULT ''")
         self._backfill_event_triggers_from_event_pool_issues()
         # 步骤7：回合阶段（旧库迁移，schema 升级非 fallback）
         self.ensure_column("game_state", "turn_phase", "TEXT NOT NULL DEFAULT 'summoning'")
@@ -5685,10 +5689,11 @@ class GameDB:
         for idx, d in enumerate(decisions):
             self.conn.execute(
                 """INSERT INTO pending_decisions
-                   (turn, idx, title, context, options_json, choice_json, status)
-                   VALUES (?, ?, ?, ?, ?, '', 'pending')""",
+                   (turn, idx, event_id, title, context, options_json, choice_json, status)
+                   VALUES (?, ?, ?, ?, ?, ?, '', 'pending')""",
                 (
                     int(turn), idx,
+                    str(d.get("event_id") or ""),
                     str(d.get("title") or ""),
                     str(d.get("context") or ""),
                     json.dumps(d.get("options") or [], ensure_ascii=False),
@@ -5699,7 +5704,7 @@ class GameDB:
     def list_pending_decisions(self, turn: int) -> List[Dict[str, object]]:
         """读本回合决策点（按 idx）。options 反序列化；choice 为已选则带出。"""
         rows = self.conn.execute(
-            "SELECT idx, title, context, options_json, choice_json, status "
+            "SELECT idx, event_id, title, context, options_json, choice_json, status "
             "FROM pending_decisions WHERE turn = ? ORDER BY idx",
             (int(turn),),
         ).fetchall()
@@ -5718,6 +5723,7 @@ class GameDB:
                 choice = None
             out.append({
                 "idx": int(r["idx"]),
+                "event_id": r["event_id"],
                 "title": r["title"],
                 "context": r["context"],
                 "options": options if isinstance(options, list) else [],
@@ -6521,6 +6527,45 @@ class GameDB:
             VALUES (?, ?, ?, ?, 'window_expired', 'expired', '过最晚触发时点仍未达成触发门')
             """,
             (event_id, state.turn, state.year, state.period),
+        )
+        if commit:
+            self.conn.commit()
+
+    def record_event_decision_choice(
+        self,
+        state: GameState,
+        event_id: str,
+        choice: Dict[str, object],
+        *,
+        source: str = "hitl_decision",
+        commit: bool = True,
+    ) -> None:
+        """Persist the player's HITL choice for an event-backed decision in the event ledger."""
+        eid = str(event_id or "").strip()
+        if not eid:
+            return
+        payload = json.dumps(choice if isinstance(choice, dict) else {}, ensure_ascii=False)
+        label = str((choice or {}).get("label") or "")[:200] if isinstance(choice, dict) else ""
+        self.conn.execute(
+            """
+            INSERT INTO event_triggers
+                (event_id, turn, year, period, source, terminal_state, terminal_reason, choice_json)
+            VALUES (?, ?, ?, ?, ?, 'triggered', ?, ?)
+            ON CONFLICT(event_id) DO UPDATE SET
+                source = excluded.source,
+                terminal_state = CASE
+                    WHEN event_triggers.terminal_state = 'triggered'
+                    THEN event_triggers.terminal_state
+                    ELSE excluded.terminal_state
+                END,
+                terminal_reason = CASE
+                    WHEN COALESCE(event_triggers.terminal_reason, '') = ''
+                    THEN excluded.terminal_reason
+                    ELSE event_triggers.terminal_reason
+                END,
+                choice_json = excluded.choice_json
+            """,
+            (eid, state.turn, state.year, state.period, source, label, payload),
         )
         if commit:
             self.conn.commit()

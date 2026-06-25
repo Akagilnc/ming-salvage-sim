@@ -74,11 +74,15 @@ def parse_decision_blocks(narrative: str) -> tuple[str, List[Dict[str, object]]]
             options.append({"label": label, "hint": str(o.get("hint") or "").strip()})
         if len(options) < 2:  # 至少给 2 个选项才算有效抉择
             continue
-        decisions.append({
+        decision = {
             "title": title,
             "context": str(obj.get("context") or "").strip(),
             "options": options[:3],
-        })
+        }
+        event_id = str(obj.get("event_id") or obj.get("origin_ref") or "").strip()
+        if event_id:
+            decision["event_id"] = event_id
+        decisions.append(decision)
     clean = _DECISION_RE.sub("", narrative or "").strip()
     return clean, decisions
 
