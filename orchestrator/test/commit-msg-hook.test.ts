@@ -75,4 +75,15 @@ describe("commit-msg hook — sandcastle: prefix", () => {
     const commentOnly = "# Please enter the commit message for your changes.\n#\n";
     expect(runHook(commentOnly)).toBe(commentOnly);
   });
+
+  it("prefixes the first CONTENT line, not a leading comment / blank line (#384 R3)", () => {
+    // A leading comment or blank line must stay intact (git strips comments); the
+    // prefix belongs on the actual subject below it, never on `head -n1` blindly.
+    expect(runHook("# editor template comment\nfeat: real subject\n")).toBe(
+      "# editor template comment\nsandcastle: feat: real subject\n",
+    );
+    expect(runHook("\nfeat: subject after blank\n")).toBe(
+      "\nsandcastle: feat: subject after blank\n",
+    );
+  });
 });
