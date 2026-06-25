@@ -28,7 +28,7 @@ try:
 except Exception:  # noqa: BLE001 — 缓冲设置失败不该阻断 web 启动
     pass
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -1248,6 +1248,27 @@ class WebGame:
         after_snapshot = self.db.capture_chat_rollback_snapshot()
         self.db.record_chat_turn_rollback_diffs(chat_turn_id, before_snapshot, after_snapshot)
 
+    def _fail_incomplete_chat_turn(
+        self,
+        minister_name: str,
+        chat_turn_id: int,
+        user_text: str,
+    ) -> None:
+        if not chat_turn_id:
+            return
+        # Only prune in-memory history when the db actually failed an active pre-reply
+        # turn (and dropped its durable user prompt). A cancel that lands after the
+        # reply completed leaves the turn intact in the db — mirror that guard here so
+        # the completed turn's user message isn't orphaned out of the in-memory history.
+        if not self.db.fail_incomplete_chat_turn(chat_turn_id).get("failed_now"):
+            return
+        history = self.chat_history.get(minister_name) or []
+        for idx in range(len(history) - 1, -1, -1):
+            item = history[idx]
+            if item.get("role") == "user" and item.get("content") == user_text:
+                del history[idx]
+                break
+
     def undo_last_chat(self, minister_name: str) -> Dict[str, Any]:
         if self.state.turn_phase not in (TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value):
             raise HTTPException(status_code=409, detail="本回合已经进入颁诏结算，不能撤回召对。")
@@ -1496,6 +1517,22 @@ class WebGame:
                 chat_turn_id=chat_turn_id,
             )
             yield {"type": "done", "payload": payload}
+        except GeneratorExit:
+            # chat_stream is a SYNCHRONOUS generator: it never awaits, so it can never
+            # receive asyncio.CancelledError internally. The async generate() turns a
+            # client disconnect into stream.close(), which throws GeneratorExit in here —
+            # that is the only reachable cancellation signal (gemini #380 r3).
+            try:
+                self._fail_incomplete_chat_turn(minister_name, chat_turn_id, text)
+            except Exception as cleanup_error:
+                # Swallow so the cleanup error never replaces the original cancel/exit
+                # signal (the HTTP stream must still terminate). Log it so a DB/state
+                # failure during cancellation stays visible (#380 sourcery).
+                print(
+                    f"[chat_stream] cancel-cleanup 失败 minister={minister_name} "
+                    f"turn={chat_turn_id}: {cleanup_error!r}"
+                )
+            raise
         except Exception as error:
             if chat_turn_id:
                 self.db.mark_chat_turn_failed(chat_turn_id)
@@ -2186,18 +2223,34 @@ async def api_undo_chat(minister_name: str) -> Dict[str, Any]:
 
 
 @app.post("/api/ministers/{minister_name}/chat/stream")
-async def api_chat_stream(minister_name: str, request: ChatRequest) -> StreamingResponse:
+async def api_chat_stream(minister_name: str, request: ChatRequest, http_request: Request) -> StreamingResponse:
     _require_active_minister(minister_name)
     async def generate() -> AsyncIterator[str]:
-        for item in get_game().chat_stream(minister_name, request.message):
-            item_type = str(item.get("type", "message"))
-            if item_type == "delta":
-                yield sse_event("delta", {"content": item.get("content", "")})
-            elif item_type == "done":
-                yield sse_event("done", item.get("payload", {}))
-            elif item_type == "error":
-                yield sse_event("error", item.get("detail") or {"message": item.get("message", "流式回复失败。")})
-            await asyncio.sleep(0)
+        stream = get_game().chat_stream(minister_name, request.message)
+        try:
+            # Pre-loop disconnect check: catches a client that dropped before the first
+            # blocking read of the (synchronous) LLM stream, so we don't enter a model
+            # call for an already-gone client. Mid-first-token disconnect detection still
+            # waits on next(stream) — see #380-defer issue (blocking-read cancellation).
+            if await http_request.is_disconnected():
+                raise asyncio.CancelledError()
+            for item in stream:
+                if await http_request.is_disconnected():
+                    raise asyncio.CancelledError()
+                item_type = str(item.get("type", "message"))
+                if item_type == "delta":
+                    yield sse_event("delta", {"content": item.get("content", "")})
+                elif item_type == "done":
+                    yield sse_event("done", item.get("payload", {}))
+                elif item_type == "error":
+                    yield sse_event("error", item.get("detail") or {"message": item.get("message", "流式回复失败。")})
+                await asyncio.sleep(0)
+        finally:
+            # `chat_stream` is a generator today, but guard the close so a refactor /
+            # test double returning a plain iterator can't mask the real error (#380 gemini).
+            close = getattr(stream, "close", None)
+            if callable(close):
+                close()
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
