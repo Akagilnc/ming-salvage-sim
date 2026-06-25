@@ -1796,17 +1796,25 @@ export class RealBackend implements Backend {
     // config.toml). 0o700 keeps it off world-readable multi-user hosts
     // (coderabbit R2, major).
     mkdirSync(paths.hostCodexAuthDir, { recursive: true, mode: 0o700 });
-    copyFileSync(
-      paths.srcCodexAuth,
-      join(paths.hostCodexAuthDir, "auth.json"),
-    );
+    // The Codex auth is BEST-EFFORT too (#384 R2 codex P2 — symmetric to the
+    // Claude token below). With ORCHESTRATOR_CODER_MODEL switched to a Claude coder
+    // (e.g. "sonnet"), a host with Claude auth but no `~/.codex/auth.json` must
+    // still start the worker — a missing codex auth degrades the codex leg, it does
+    // not throw and block the Claude coder. So the env-only model switch works both
+    // ways.
+    try {
+      copyFileSync(paths.srcCodexAuth, join(paths.hostCodexAuthDir, "auth.json"));
+      // Copied credential file → owner-only (was world-readable 0o644).
+      chmodSync(join(paths.hostCodexAuthDir, "auth.json"), 0o600);
+    } catch {
+      // No host codex auth → the codex leg degrades (no creds in the mounted dir).
+    }
     // The container IS the sandbox boundary; codex must NOT self-sandbox (nested
     // bwrap is impossible). The host config.toml is host-personal (notify/plugins/
     // workspace-write) and irrelevant here — only auth.json crosses. Write the
-    // minimal container config instead of copying the host's (#378).
+    // minimal container config instead of copying the host's (#378). Always written
+    // so the dir is a valid mount even when codex auth was absent.
     writeContainerCodexConfig(join(paths.hostCodexAuthDir, "config.toml"));
-    // Copied credential file → owner-only (was world-readable 0o644).
-    chmodSync(join(paths.hostCodexAuthDir, "auth.json"), 0o600);
     // The Claude token is BEST-EFFORT (#384 codex P2). The coder step now runs
     // Codex (model gpt-5.5), so it no longer needs CLAUDE_CODE_OAUTH_TOKEN. A host
     // with Codex auth but no `~/.sc-claude-token` must still start the worker — a
