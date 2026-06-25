@@ -1518,7 +1518,10 @@ class WebGame:
             )
             yield {"type": "done", "payload": payload}
         except (GeneratorExit, asyncio.CancelledError):
-            self._fail_incomplete_chat_turn(minister_name, chat_turn_id, text)
+            try:
+                self._fail_incomplete_chat_turn(minister_name, chat_turn_id, text)
+            except Exception:
+                pass
             raise
         except Exception as error:
             if chat_turn_id:
