@@ -1498,6 +1498,10 @@ class GameSession:
                 "UPDATE pending_decisions SET choice_json=?, status='decided' WHERE turn=? AND idx=?",
                 (_json.dumps(choice, ensure_ascii=False), self.state.turn, idx),
             )
+            event_id = str(d.get("event_id") or "").strip()
+            if event_id:
+                self.db.record_event_decision_choice(
+                    self.state, event_id, choice, commit=False)
         self.db.conn.commit()
         if not (self.last_decree or "").strip():
             # 跨进程恢复：phase2 结算后 context 即清，趁前从真源补回诏书展示字段（cmr S7 r7）。
