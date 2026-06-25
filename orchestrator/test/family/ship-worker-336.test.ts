@@ -17,7 +17,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -565,5 +565,58 @@ describe("#336 family workers — model id is spec-derived via modelIdForSlug (c
     const model = modelOfAgent(seam().agent(spec));
     expect(model).toBe(modelIdForSlug("opus"));
     expect(model).toBe("claude-opus-4-8");
+  });
+});
+
+// ═══════════════════ mountShipAuth — container codex config is minimal, NOT host copy (#378) ═══════════════════
+
+describe("#378 family mountShipAuth — writes a minimal danger-full-access config, never copies the host config.toml", () => {
+  class AuthBackend extends RealFamilyBackend {
+    public auth(): ShipAuth {
+      return this.mountShipAuth();
+    }
+  }
+
+  function hostHomeWithCodexConfig(): string {
+    const home = mkDir("ship-host-home-");
+    const codexDir = join(home, ".codex");
+    mkdirSync(codexDir, { recursive: true });
+    writeFileSync(join(codexDir, "auth.json"), '{"OPENAI_API_KEY":"sk-host"}');
+    writeFileSync(
+      join(codexDir, "config.toml"),
+      [
+        'model = "gpt-5.5"',
+        'sandbox_mode = "workspace-write"',
+        'notify = ["/Users/host/notify.app"]',
+        '[plugins."github@openai-curated"]',
+        "enabled = true",
+        "",
+      ].join("\n"),
+    );
+    return home;
+  }
+
+  it("copies auth.json but WRITES a minimal config.toml (danger-full-access, never the host copy)", () => {
+    const be = new AuthBackend({
+      workingRepo: mkDir("ship-repo-"),
+      familyBase: FAMILY_BASE,
+      ledgerDir: mkDir("ship-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "ming-orchestrator-coder:latest",
+      home: hostHomeWithCodexConfig(),
+    });
+    const auth = be.auth();
+    expect(auth.codexAuthDir).toBeTruthy();
+    const dir = auth.codexAuthDir as string;
+
+    expect(readFileSync(join(dir, "auth.json"), "utf8")).toContain("sk-host");
+
+    const config = readFileSync(join(dir, "config.toml"), "utf8");
+    expect(config).toContain('sandbox_mode = "danger-full-access"');
+    expect(config).not.toContain("workspace-write");
+    expect(config).not.toContain("notify");
+    expect(config).not.toContain("plugins");
   });
 });
