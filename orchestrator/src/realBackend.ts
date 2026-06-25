@@ -66,6 +66,7 @@ import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
 
+import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import { runExclusive } from "./gitMutex.js";
 import { legacyDispatchWorker, shipWorkerSpec } from "./dispatchWorker.js";
 import { STEP_SPECS } from "./runner.js";
@@ -1766,7 +1767,9 @@ export class RealBackend implements Backend {
   }
 
   // ── auth mount (spike contract) ────────────────────────────────────────────
-  private mountAuth(issueNumber: number): {
+  // `protected` (not private) so the auth-mount tests can drive it over a real
+  // temp $HOME (assert auth.json copied + the minimal container config written).
+  protected mountAuth(issueNumber: number): {
     authDir: string;
     claudeToken: string;
   } {
@@ -1780,16 +1783,11 @@ export class RealBackend implements Backend {
       paths.srcCodexAuth,
       join(paths.hostCodexAuthDir, "auth.json"),
     );
-    try {
-      copyFileSync(
-        paths.srcCodexConfig,
-        join(paths.hostCodexAuthDir, "config.toml"),
-      );
-      // config.toml can carry credentials too — owner-only.
-      chmodSync(join(paths.hostCodexAuthDir, "config.toml"), 0o600);
-    } catch {
-      // config.toml is optional.
-    }
+    // The container IS the sandbox boundary; codex must NOT self-sandbox (nested
+    // bwrap is impossible). The host config.toml is host-personal (notify/plugins/
+    // workspace-write) and irrelevant here — only auth.json crosses. Write the
+    // minimal container config instead of copying the host's (#378).
+    writeContainerCodexConfig(join(paths.hostCodexAuthDir, "config.toml"));
     // Copied credential file → owner-only (was world-readable 0o644).
     chmodSync(join(paths.hostCodexAuthDir, "auth.json"), 0o600);
     const claudeToken = readFileSync(paths.claudeTokenFile, "utf8").trim();
@@ -2285,12 +2283,10 @@ export class RealBackend implements Backend {
       tempCodexDir = mkdtempSync(join(root, `ship-codex-auth-${issueNumber}-`));
       copyFileSync(paths.srcCodexAuth, join(tempCodexDir, "auth.json"));
       chmodSync(join(tempCodexDir, "auth.json"), 0o600);
-      try {
-        copyFileSync(paths.srcCodexConfig, join(tempCodexDir, "config.toml"));
-        chmodSync(join(tempCodexDir, "config.toml"), 0o600);
-      } catch {
-        // config.toml is optional.
-      }
+      // The container IS the sandbox boundary; codex must NOT self-sandbox (nested
+      // bwrap is impossible). The host config.toml is host-personal and irrelevant
+      // — only auth.json crosses. Write the minimal container config (#378).
+      writeContainerCodexConfig(join(tempCodexDir, "config.toml"));
       codexAuthDir = tempCodexDir;
     } catch {
       // codex auth absent ⇒ the codex leg degrades (no mount), no crash. gh is NOT

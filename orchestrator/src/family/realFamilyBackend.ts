@@ -65,6 +65,7 @@ import { z } from "zod";
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 
+import { writeContainerCodexConfig } from "../containerCodexConfig.js";
 import { runExclusive } from "../gitMutex.js";
 import {
   branchForIssue,
@@ -1087,12 +1088,11 @@ export class RealFamilyBackend implements FamilyBackend {
       tempCodexDir = mkdtempSync(join(root, "cmr-codex-auth-"));
       copyFileSync(join(home, ".codex", "auth.json"), join(tempCodexDir, "auth.json"));
       chmodSync(join(tempCodexDir, "auth.json"), 0o600);
-      try {
-        copyFileSync(join(home, ".codex", "config.toml"), join(tempCodexDir, "config.toml"));
-        chmodSync(join(tempCodexDir, "config.toml"), 0o600);
-      } catch {
-        // config.toml is optional.
-      }
+      // The container IS the sandbox boundary; codex must NOT self-sandbox (nested
+      // bwrap is impossible — the failure that degrades cmr legs to static-only).
+      // The host config.toml is host-personal and irrelevant — only auth.json
+      // crosses. Write the minimal container config (#378).
+      writeContainerCodexConfig(join(tempCodexDir, "config.toml"));
       codexAuthDir = tempCodexDir;
     } catch {
       // codex auth absent ⇒ the codex leg degrades (no mount). Reclaim the
@@ -1472,12 +1472,10 @@ export class RealFamilyBackend implements FamilyBackend {
       tempCodexDir = mkdtempSync(join(root, "ship-codex-auth-"));
       copyFileSync(join(home, ".codex", "auth.json"), join(tempCodexDir, "auth.json"));
       chmodSync(join(tempCodexDir, "auth.json"), 0o600);
-      try {
-        copyFileSync(join(home, ".codex", "config.toml"), join(tempCodexDir, "config.toml"));
-        chmodSync(join(tempCodexDir, "config.toml"), 0o600);
-      } catch {
-        // config.toml is optional.
-      }
+      // The container IS the sandbox boundary; codex must NOT self-sandbox (nested
+      // bwrap is impossible). The host config.toml is host-personal and irrelevant
+      // — only auth.json crosses. Write the minimal container config (#378).
+      writeContainerCodexConfig(join(tempCodexDir, "config.toml"));
       codexAuthDir = tempCodexDir;
     } catch {
       // codex auth absent ⇒ the codex leg degrades (no mount). gh is NOT here — it is

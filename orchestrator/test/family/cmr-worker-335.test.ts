@@ -27,7 +27,15 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -530,6 +538,73 @@ describe("#335 mountCmrAuth — a missing host credential degrades, never throws
     expect(
       residue.filter((n) => n.startsWith("cmr-codex-auth-") || n.startsWith("cmr-agy-")),
     ).toEqual([]);
+  });
+});
+
+// ═══════════════════ 4b-bis. mountCmrAuth — container codex config is minimal, NOT host copy ═══════════════════
+
+describe("#378 mountCmrAuth — writes a minimal danger-full-access config, never copies the host config.toml", () => {
+  class AuthBackend extends RealFamilyBackend {
+    public auth(): CmrAuth {
+      return this.mountCmrAuth();
+    }
+    protected override readGhToken(): string | undefined {
+      return undefined;
+    }
+  }
+
+  /**
+   * A populated host $HOME with BOTH codex creds AND a host config.toml carrying
+   * host-personal keys (the real bug source: `sandbox_mode = "workspace-write"`
+   * makes the in-container codex try to self-sandbox → nested bwrap fails → cmr
+   * legs degrade to static-only).
+   */
+  function hostHomeWithCodexConfig(): string {
+    const home = mkDir("cmr-host-home-");
+    const codexDir = join(home, ".codex");
+    mkdirSync(codexDir, { recursive: true });
+    writeFileSync(join(codexDir, "auth.json"), '{"OPENAI_API_KEY":"sk-host"}');
+    writeFileSync(
+      join(codexDir, "config.toml"),
+      [
+        'model = "gpt-5.5"',
+        'sandbox_mode = "workspace-write"',
+        'notify = ["/Users/host/notify.app"]',
+        '[plugins."github@openai-curated"]',
+        "enabled = true",
+        "",
+      ].join("\n"),
+    );
+    return home;
+  }
+
+  it("copies auth.json but WRITES a minimal config.toml (danger-full-access, never the host copy)", () => {
+    const be = new AuthBackend({
+      workingRepo: mkDir("cmr-repo-"),
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "ming-orchestrator-coder:latest",
+      home: hostHomeWithCodexConfig(),
+    });
+    const auth = be.auth();
+    expect(auth.codexAuthDir).toBeTruthy();
+    const dir = auth.codexAuthDir as string;
+
+    // Credentials still mirrored.
+    expect(readFileSync(join(dir, "auth.json"), "utf8")).toContain("sk-host");
+
+    // A config.toml was written, and it is the minimal container one.
+    const config = readFileSync(join(dir, "config.toml"), "utf8");
+    expect(config).toContain('sandbox_mode = "danger-full-access"');
+
+    // The host config.toml was NOT copied verbatim: host-only keys + the
+    // self-sandbox `workspace-write` mode are absent.
+    expect(config).not.toContain("workspace-write");
+    expect(config).not.toContain("notify");
+    expect(config).not.toContain("plugins");
   });
 });
 
