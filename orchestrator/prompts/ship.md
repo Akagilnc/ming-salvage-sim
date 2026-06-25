@@ -45,5 +45,8 @@ Rules:
 
 - The JSON must match one of the shapes above exactly.
 - `status` is `pr_opened` or `pushed`; `pr_opened` must include `pr`.
+- Every string field you emit (`branch`, `pr`, `reason`, `diagnosis`) must be
+  non-empty after trimming — the runner validates them as trimmed-non-empty
+  (`shipOutcome.ts`) and rejects a blank/whitespace value.
 - Emit the `<ship>` tag LAST; if you iterate, the LAST tag is the one that counts.
 - Always print `SHIP_STEP_COMPLETE` on its own line at the very end.

@@ -12,7 +12,7 @@
  * the surviving ACs all pin the single S2 coder spec.
  *
  * Covered acceptance criteria (S2-only after ADR 0026):
- *   AC-1  coder step (S2): role=coder, model=Sonnet, soul=coder
+ *   AC-1  coder step (S2): role=coder, model=gpt-5.5, soul=coder
  *   AC-3  changing model only changes runtime CLI selection, not StepSpec shape
  *   AC-4  versioned promptFile on the agent step; no ad-hoc inline prompt
  *   AC-6  tool-chain declaration contains Python + frontend stack

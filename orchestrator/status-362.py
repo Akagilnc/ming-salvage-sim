@@ -15,13 +15,14 @@ revN = {}   # issue -> review 轮数 (S3 初评 + 每个 S6 复评)
 fixN = {}   # issue -> fix 轮数 (每个 S5 coder_fix)
 pat = re.compile(r"\[S(\d)-(\w+)\] Started on branch \S*issue-(\d+)")
 if os.path.exists(LOG):
-    for line in open(LOG):
-        m = pat.search(line)
-        if m:
-            s, role, iss = int(m.group(1)), m.group(2), int(m.group(3))
-            cur[iss] = (s, role)
-            if s in (3, 6): revN[iss] = revN.get(iss, 0) + 1   # S3/S6 = 一轮 review
-            if s == 5:      fixN[iss] = fixN.get(iss, 0) + 1   # S5 = 一轮 fix
+    with open(LOG, encoding="utf-8") as f:
+        for line in f:
+            m = pat.search(line)
+            if m:
+                s, role, iss = int(m.group(1)), m.group(2), int(m.group(3))
+                cur[iss] = (s, role)
+                if s in (3, 6): revN[iss] = revN.get(iss, 0) + 1   # S3/S6 = 一轮 review
+                if s == 5:      fixN[iss] = fixN.get(iss, 0) + 1   # S5 = 一轮 fix
 
 # 2. docker 活动容器
 try:
@@ -33,9 +34,9 @@ except Exception:
 
 # 3. 驱动进程 + 运行时长
 try:
-    pid = subprocess.run(["pgrep", "-f", "launch-362.mjs"], capture_output=True, text=True).stdout.split()
+    pid = subprocess.run(["pgrep", "-f", "launch-362.mjs"], capture_output=True, text=True, timeout=10).stdout.split()
     if pid:
-        et = subprocess.run(["ps", "-o", "etime=", "-p", pid[0]], capture_output=True, text=True).stdout.strip()
+        et = subprocess.run(["ps", "-o", "etime=", "-p", pid[0]], capture_output=True, text=True, timeout=10).stdout.strip()
         drv = f"✅ 跑了 {et}"
     else:
         drv = "⏹ 已退出 (跑完?)"
