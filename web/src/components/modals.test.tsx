@@ -144,7 +144,7 @@ describe("ChatModal — thinking/loading text switches on character type (gemini
 });
 
 describe("ChatModal — cancel button during busy (issue #353)", () => {
-  it("shows a cancel button when busy and onCancel is provided", () => {
+  it("shows an observer-exit button when busy and onCancel is provided", () => {
     renderModal({
       minister: MINISTER_MOCK,
       portraitPrefix: "minister_",
@@ -153,6 +153,7 @@ describe("ChatModal — cancel button during busy (issue #353)", () => {
     });
     const cancelBtn = document.querySelector(".composer-cancel");
     expect(cancelBtn).not.toBeNull();
+    expect(cancelBtn?.textContent).toContain("离开等待");
   });
 
   it("does NOT show a cancel button when idle", () => {

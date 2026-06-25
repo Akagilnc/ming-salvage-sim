@@ -734,7 +734,7 @@ export function ChatModal({
             {busy === "大臣思索中" && onCancel && (
               <button className="secondary-action composer-cancel" onClick={onCancel}>
                 <X size={15} />
-                取消
+                离开等待
               </button>
             )}
             <button className="secondary-action composer-exit" onClick={onClose}>
