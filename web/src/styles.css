@@ -3581,7 +3581,7 @@ button:disabled {
   opacity: 0.5;
 }
 
-/* 召对发送 / 退出 / 取消按钮：黑字白底 */
+/* 召对发送 / 退出 / 离开等待按钮：黑字白底 */
 .modal-bg-chat .composer-actions .primary-action,
 .modal-bg-chat .composer-actions .composer-undo,
 .modal-bg-chat .composer-actions .composer-exit,
