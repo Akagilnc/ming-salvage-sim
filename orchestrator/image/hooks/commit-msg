@@ -17,24 +17,18 @@ set -e
 msg_file="$1"
 [ -n "$msg_file" ] && [ -f "$msg_file" ] || exit 0
 
-# Leave an empty / comment-only message untouched. Git aborts a commit whose
-# message (after stripping comment lines) is empty; prepending `sandcastle: `
-# would make it non-empty and DEFEAT that abort, creating a junk commit with no
-# real message (gemini #384 R2). `grep -vE` matches real content lines (not blank,
-# not a `#` comment); if there are none, exit 0 and let git abort.
-if ! grep -qvE '^[[:space:]]*(#.*)?$' "$msg_file"; then
-  exit 0
-fi
-
-first_line=$(head -n 1 "$msg_file")
-
-case "$first_line" in
-  sandcastle:*) exit 0 ;;  # already prefixed — idempotent no-op
-esac
-
+# Prepend `sandcastle: ` to the SUBJECT — the first real content line, i.e. the
+# first line that is neither blank nor a `#` comment. Targeting the literal first
+# line (head -n1) would corrupt a leading comment/blank into a fake subject and
+# defeat git's empty-message abort (gemini #384 R3). If there is NO content line
+# (empty / comment-only message) nothing is changed, so git still aborts the
+# commit. Idempotent: a subject already starting with `sandcastle:` is left as-is,
+# preserving any inner model prefix (claude:/codex:) after the sandcastle: layer.
 tmp="$msg_file.sandcastle.tmp"
-{
-  printf 'sandcastle: %s\n' "$first_line"
-  tail -n +2 "$msg_file"
-} > "$tmp"
-mv "$tmp" "$msg_file"
+awk '
+  !done && $0 !~ /^[[:space:]]*$/ && $0 !~ /^[[:space:]]*#/ {
+    if ($0 !~ /^sandcastle:/) { $0 = "sandcastle: " $0 }
+    done = 1
+  }
+  { print }
+' "$msg_file" > "$tmp" && mv "$tmp" "$msg_file"

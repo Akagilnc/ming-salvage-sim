@@ -233,11 +233,11 @@ describe("#336 single-slice shipSandboxConfig — best-effort ship auth", () => 
     });
   }
 
-  it("mounts codex auth + the claude token under the WRITE (coder) soul", () => {
+  it("mounts codex auth + the claude token under the dedicated ship soul", () => {
     const c = cfg().config({ codexAuthDir: "/tmp/codex", claudeToken: "tok" });
     expect(c.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
     expect(c.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok");
-    expect(c.env[SANDBOX_SOUL_ENV]).toBe("coder");
+    expect(c.env[SANDBOX_SOUL_ENV]).toBe("ship");
   });
 
   it("exports the gh token as GH_TOKEN so the in-container `gh pr create` / push over https is authenticated (cmr S336 r10 P1)", () => {
@@ -255,11 +255,11 @@ describe("#336 single-slice shipSandboxConfig — best-effort ship auth", () => 
     expect(c.env[SANDBOX_GH_TOKEN_ENV]).toBeUndefined();
   });
 
-  it("a missing codex auth degrades the mount but still ships under the coder soul", () => {
+  it("a missing codex auth degrades the mount but still ships under the ship soul", () => {
     const c = cfg().config({ claudeToken: "tok" });
     expect(c.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(false);
     expect(c.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok");
-    expect(c.env[SANDBOX_SOUL_ENV]).toBe("coder");
+    expect(c.env[SANDBOX_SOUL_ENV]).toBe("ship");
   });
 
   it("the pure config seam tolerates a missing claude token (the preflight that REQUIRES it lives upstream in runShipWorker — cmr S336 r8)", () => {
@@ -271,7 +271,7 @@ describe("#336 single-slice shipSandboxConfig — best-effort ship auth", () => 
     const c = cfg().config({ codexAuthDir: "/tmp/codex" });
     expect(c.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
     expect(c.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
-    expect(c.env[SANDBOX_SOUL_ENV]).toBe("coder");
+    expect(c.env[SANDBOX_SOUL_ENV]).toBe("ship");
   });
 
   it("marks the ship container as an orchestrator-spawned, non-interactive session (gstack-ship reads OPENCLAW_SESSION → auto-decides its P1 gate)", () => {

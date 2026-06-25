@@ -2386,8 +2386,11 @@ export class RealBackend implements Backend {
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
   } {
-    // The ship worker is a WRITE worker (commits + pushes) → the coder soul.
-    const env: Record<string, string> = { ...SPAWNED_WORKER_ENV, [SANDBOX_SOUL_ENV]: "coder" };
+    // The ship worker runs under the dedicated "ship" soul (delivery discipline:
+    // gstack-ship, stop-at-PR, defer→tracker not PR body) — souls/ship.md covers
+    // both single-slice and family deliveries, so the single-slice ship is unified
+    // with the family ship rather than left on the coder soul (gemini #384 R3).
+    const env: Record<string, string> = { ...SPAWNED_WORKER_ENV, [SANDBOX_SOUL_ENV]: "ship" };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     // cmr S336 r10: the in-container `gh` (push over https + `gh pr create`)
     // authenticates from GH_TOKEN. Set only when present (the pure seam stays
