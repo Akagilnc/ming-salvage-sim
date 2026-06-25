@@ -3628,6 +3628,7 @@ def apply_issue_tracker_output(
     pending_person_changes_for_gates: Optional[List[Dict[str, object]]] = None,
     allow_legacy_partial_power_for_gates: bool = False,
     candidate_event_ids_at_input: Optional[set[str]] = None,
+    candidate_event_ids_authoritative: bool = False,
     event_result_delta_event_ids: Optional[set[str]] = None,
     defer_event_trigger_ids: Optional[set[str]] = None,
 ) -> Dict[str, object]:
@@ -3646,6 +3647,9 @@ def apply_issue_tracker_output(
     commit_now = not external_transaction
     if external_transaction:
         _register_runtime_rollback_snapshot(db, state, runtime_content)
+    candidate_snapshot_authoritative = (
+        candidate_event_ids_at_input is not None and candidate_event_ids_authoritative
+    )
     candidate_event_ids = (
         set(candidate_event_ids_at_input)
         if candidate_event_ids_at_input is not None
@@ -3835,10 +3839,10 @@ def apply_issue_tracker_output(
                     "reason": "事件当前未进候选池（窗口/前提门/已触发不满足）",
                 })
                 continue
-            if candidates_dirty:
+            if not candidate_snapshot_authoritative and candidates_dirty:
                 current_candidate_event_ids = {candidate.id for candidate in gather_candidate_events(state, db)}
                 candidates_dirty = False
-            if ev.id not in current_candidate_event_ids:
+            if not candidate_snapshot_authoritative and ev.id not in current_candidate_event_ids:
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 当前未进 event_pool 候选池。")
                 applied_new.append({
                     "id": ev.id,
@@ -5484,6 +5488,7 @@ def apply_score_extraction(
     content=None,
     registry=None,
     llm_config: Any = None,
+    candidate_event_ids_at_input: Optional[set[str]] = None,
 ) -> Dict[str, object]:
     """落地结算 agent 输出的 JSON 到 state 与 db。
 
@@ -5496,7 +5501,11 @@ def apply_score_extraction(
     # 0) 落库前校验/净化容器与可拆项；ADR0015 下可拆坏项逐项拒收，不再整批 abort。
     extracted, validate_rejections = sanitize_delta_shape(extracted)
     runtime_content = content if content is not None else _ctx()
-    candidate_event_ids_at_input = {candidate.id for candidate in gather_candidate_events(state, db)}
+    candidate_event_ids_authoritative = candidate_event_ids_at_input is not None
+    if candidate_event_ids_at_input is None:
+        candidate_event_ids_at_input = {candidate.id for candidate in gather_candidate_events(state, db)}
+    else:
+        candidate_event_ids_at_input = set(candidate_event_ids_at_input)
     new_person_changes = normalize_person_changes({"人物变更": extracted.get("人物变更") or []})
     legacy_person_changes = [] if new_person_changes else normalize_person_changes({
         "appointments": extracted.get("appointments") or [],
@@ -5779,6 +5788,7 @@ def apply_score_extraction(
         pending_person_changes_for_gates=post_issue_person_changes,
         allow_legacy_partial_power_for_gates=legacy_person_mode,
         candidate_event_ids_at_input=candidate_event_ids_at_input,
+        candidate_event_ids_authoritative=candidate_event_ids_authoritative,
         event_result_delta_event_ids=strategic_event_result_delta_event_ids,
         defer_event_trigger_ids=strategic_event_pool_ids)
 
