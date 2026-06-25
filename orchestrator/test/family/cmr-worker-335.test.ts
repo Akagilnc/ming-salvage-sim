@@ -53,6 +53,7 @@ import {
 import {
   SANDBOX_CODEX_DIR,
   SANDBOX_GH_TOKEN_ENV,
+  SANDBOX_REPO_ENV,
   SANDBOX_SOUL_ENV,
   SPAWNED_WORKER_ENV,
 } from "../../src/realBackend.js";
@@ -399,6 +400,10 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
     expect(cfg.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok-xyz");
     expect(cfg.env[SANDBOX_SOUL_ENV]).toBe("cmr");
+    // ORCHESTRATOR_REPO so the cmr worker's `gh issue view` / `gh issue create
+    // --repo "$ORCHESTRATOR_REPO"` target the right repo in a clone-from-local run
+    // (codex #384).
+    expect(cfg.env[SANDBOX_REPO_ENV]).toBe("Akagilnc/ming-salvage-sim");
   });
 
   it("exports the gh token as GH_TOKEN so the in-container completeness gate can `gh issue view` the live issue body as authority (mirrors the ship worker)", () => {
