@@ -1,0 +1,31 @@
+#!/bin/sh
+# Orchestrator commit-msg hook — baked into the Sandcastle worker image and wired
+# via `git config --global core.hooksPath` (Containerfile). It prepends the
+# `sandcastle:` prefix to every in-container commit's subject so a family run's
+# machine-produced commits are framable with `git log --grep '^sandcastle:'`
+# (orchestrator/CLAUDE.md). It is image-only by construction, so it can never fire
+# on host commits — and being a deterministic hook, it catches commits that bypass
+# a worker soul's instruction (e.g. gstack-ship's own version-bump / review-fix
+# commits), which the per-soul instruction missed.
+#
+# Idempotent: a subject already starting with `sandcastle:` is left untouched, so
+# a soul that still adds the prefix by hand does not get a doubled prefix. The
+# `sandcastle:` layer goes FIRST; an inner model prefix (claude:/codex:) the agent
+# may have written is preserved after it (e.g. `sandcastle: claude: feat: ...`).
+set -e
+
+msg_file="$1"
+[ -n "$msg_file" ] && [ -f "$msg_file" ] || exit 0
+
+first_line=$(head -n 1 "$msg_file")
+
+case "$first_line" in
+  sandcastle:*) exit 0 ;;  # already prefixed — idempotent no-op
+esac
+
+tmp="$msg_file.sandcastle.tmp"
+{
+  printf 'sandcastle: %s\n' "$first_line"
+  tail -n +2 "$msg_file"
+} > "$tmp"
+mv "$tmp" "$msg_file"
