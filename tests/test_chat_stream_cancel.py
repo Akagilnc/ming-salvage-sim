@@ -301,3 +301,164 @@ def test_api_chat_stream_close_guard_tolerates_non_closeable_stream(game, monkey
 
     chunks = asyncio.run(drive())
     assert any("done" in chunk for chunk in chunks)
+
+
+# ---------------------------------------------------------------------------
+# #380 cmr r2 (codex P2): a cancel at the done boundary must NOT orphan a tool
+# side-effect (DB write) — the rollback diffs are recorded BEFORE the done yield,
+# minister_message_id is set BEFORE the done yield, so fail_incomplete no-ops and
+# the completed turn stays fully recoverable. A cancel mid-stream (before the tool
+# block runs) writes nothing at all. Either way: never a committed-but-unrecoverable row.
+# ---------------------------------------------------------------------------
+
+
+class _DirectiveDelta:
+    event = "RunContent"
+    content = "臣拟一道旨。"
+
+
+class _DirectiveTool:
+    tool_name = "propose_directive"
+    result = "__pending_directive__赈济陕西灾民"
+    arguments: dict = {}
+
+
+class _DirectiveRunOutput:
+    """RunOutput-typed event carrying a propose_directive tool result."""
+
+    event = "RunCompleted"
+    content = None
+    tools = [_DirectiveTool()]
+
+
+# rename the class so type(event).__name__ matches the web_app check ("RunOutput"/"RunCompletedEvent")
+_DirectiveRunOutput.__name__ = "RunOutput"
+_DirectiveRunOutput.__qualname__ = "RunOutput"
+
+
+class _DirectiveAgent:
+    def run(self, *_args, **_kwargs):
+        yield _DirectiveDelta()
+        yield _DirectiveRunOutput()
+
+
+class _DirectiveRegistry:
+    session_ids = {"测试大臣": "minister-test"}
+
+    def get(self, _character):
+        return _DirectiveAgent()
+
+
+def _make_directive_session(db, state, content, character):
+    """A _Session whose registry returns the directive-writing agent, plus the
+    real apply_cli_conversation_actions / _proposal_blocked surface chat_stream needs."""
+    sess = _Session(db, state, content, character)
+    sess.registry = _DirectiveRegistry()
+    sess.apply_cli_conversation_actions = lambda *a, **k: {
+        "directive": None, "secret_order_id": 0, "pending_action_id": 0,
+    }
+    sess.pending_count = lambda: 0
+    return sess
+
+
+def _directive_rows(db):
+    return [dict(r) for r in db.conn.execute(
+        "SELECT id, text, status FROM turn_directives ORDER BY id"
+    ).fetchall()]
+
+
+def test_cancel_at_done_keeps_tool_side_effect_recoverable(game, monkeypatch):
+    """Cancel fires at the done boundary (after the post-stream tool block + rollback-record
+    + _chat_payload all ran). minister_message_id is set → fail_incomplete no-ops → the turn
+    stays completed and the directive write is intact and rollback-recorded (recoverable)."""
+    db, state, content = game
+    minister_name = "测试大臣"
+    character = SimpleNamespace(name=minister_name, office_type="cabinet")
+    content.characters[minister_name] = character
+
+    web_game = WebGame.__new__(WebGame)
+    web_game.session = _make_directive_session(db, state, content, character)
+    web_game.session._proposal_blocked = staticmethod(lambda _s: False)
+    web_game.chat_history = {minister_name: []}
+    # WebGame helpers _chat_payload uses:
+    web_game.directive_rows = lambda: _directive_rows(db)
+    web_game.directive_payload = lambda row: row
+    web_game.can_undo_last_chat = lambda _n: False
+    web_game.suggestions_for = lambda _c: []
+
+    monkeypatch.setattr(web_app, "get_game", lambda: web_game)
+    monkeypatch.setattr(web_app, "_require_active_minister", lambda *_a, **_k: None)
+    monkeypatch.setattr(web_app.GameSession, "_proposal_blocked", staticmethod(lambda _s: False), raising=False)
+
+    # cadence: #1 pre-loop(F), #2 before delta(F)→deliver, #3 before done(T)→cancel at done boundary
+    fake_request = _DisconnectingRequest(trip_after=2)
+
+    async def drive():
+        resp = await web_app.api_chat_stream(
+            minister_name, ChatRequest(message="请说要事"), fake_request
+        )
+        chunks = []
+        with pytest.raises(asyncio.CancelledError):
+            async for chunk in resp.body_iterator:
+                chunks.append(chunk)
+        return chunks
+
+    asyncio.run(drive())
+
+    # The directive the tool wrote during the stream must NOT be orphaned: it is present
+    # AND the turn it belongs to is completed (minister_message_id set), so undo can revert it.
+    dirs = _directive_rows(db)
+    assert len(dirs) == 1, f"directive write should survive as a recoverable row, got {dirs}"
+    turns = _turn_rows(db)
+    assert len(turns) == 1
+    assert turns[0]["minister_message_id"] is not None, "turn completed → not failed → side effect recoverable"
+    assert turns[0]["status"] == "active", "completed turn must not be marked failed by the cancel"
+    # rollback diffs were recorded for the turn (so undo_last_chat can revert the directive)
+    items = db.conn.execute(
+        "SELECT COUNT(*) AS n FROM chat_turn_rollback_items WHERE chat_turn_id=?",
+        (turns[0]["id"],),
+    ).fetchone()
+    assert items["n"] >= 1, "rollback diffs must be recorded before the done yield"
+
+
+def test_cancel_mid_stream_writes_no_tool_side_effect(game, monkeypatch):
+    """Mirror of the recoverability test from the other side: a cancel that lands DURING
+    streaming (before the post-stream tool block runs) writes no directive at all — the
+    turn is failed and its user prompt dropped, with zero orphaned side-effect rows.
+    Together these two tests close codex r2: there is no suspension point between a tool
+    DB write and _record_chat_rollback_items, so a side effect is never committed-but-lost."""
+    db, state, content = game
+    minister_name = "测试大臣"
+    character = SimpleNamespace(name=minister_name, office_type="cabinet")
+    content.characters[minister_name] = character
+
+    web_game = WebGame.__new__(WebGame)
+    web_game.session = _make_directive_session(db, state, content, character)
+    web_game.chat_history = {minister_name: []}
+    web_game.directive_rows = lambda: _directive_rows(db)
+    web_game.directive_payload = lambda row: row
+    web_game.can_undo_last_chat = lambda _n: False
+    web_game.suggestions_for = lambda _c: []
+
+    monkeypatch.setattr(web_app, "get_game", lambda: web_game)
+    monkeypatch.setattr(web_app, "_require_active_minister", lambda *_a, **_k: None)
+
+    # cadence: #1 pre-loop(F), #2 before the first delta(T) → cancel mid-stream, before the
+    # RunOutput is even consumed, so the propose_directive tool block never runs.
+    fake_request = _DisconnectingRequest(trip_after=1)
+
+    async def drive():
+        resp = await web_app.api_chat_stream(
+            minister_name, ChatRequest(message="请说要事"), fake_request
+        )
+        with pytest.raises(asyncio.CancelledError):
+            async for _chunk in resp.body_iterator:
+                pass
+
+    asyncio.run(drive())
+
+    assert _directive_rows(db) == [], "no tool side effect should be written on a mid-stream cancel"
+    assert _turn_rows(db) == [
+        {"id": 1, "status": "failed", "user_message_id": 1, "minister_message_id": None}
+    ]
+    assert _chat_rows(db) == []
