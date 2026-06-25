@@ -93,6 +93,7 @@ import {
 
 import type {
   DispatchContext,
+  StepSoul,
   WorkerResult,
   WorkerSpec,
 } from "../types.js";
@@ -162,8 +163,13 @@ const CMR_COMPLETION_SIGNAL = "CMR_STEP_COMPLETE";
  */
 const CMR_SOUL = "cmr";
 
-/** The WRITE soul the ship worker runs under (it commits the bump + pushes). */
-const SHIP_SOUL = "coder";
+/**
+ * The WRITE soul the ship worker runs under (it commits the bump + pushes). A
+ * DEDICATED ship soul (not the coder soul): the ship worker's discipline is
+ * delivery via `gstack-ship` — stop at PR, deferred findings → tracker (issue /
+ * TODOS.md) never the PR body — not the coder's TDD build loop.
+ */
+const SHIP_SOUL: StepSoul = "ship";
 
 /**
  * One durable escalate stuck-point (ADR 0022 decision 4: 卡点 → 返回调用端 → 拍 →

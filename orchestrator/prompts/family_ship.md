@@ -1,6 +1,12 @@
 # Family ship worker entrypoint
 
-Read `.ship-focus.md` at the repo root first. It is required and pins the family
+Read the baked role soul first:
+
+```text
+/home/agent/.orchestrator/souls/ship.md
+```
+
+Then read `.ship-focus.md` at the repo root. It is required and pins the family
 base branch, PR target base, and repo. If it is missing or contradictory, fail
 closed instead of guessing.
 
