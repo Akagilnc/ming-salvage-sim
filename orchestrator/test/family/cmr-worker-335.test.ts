@@ -16,7 +16,7 @@
  *   - cmrOutcomeFromResult: the completion-signal gate (an unsignaled run is NOT a
  *     pass — mirrors the merger gate);
  *   - RealFamilyBackend.dispatchWorker(cmr): routes ak-cross-m-review + FRESH +
- *     READ-ONLY soul through the injected `runCmrWorker` seam and wraps the verdict
+ *     cmr (write/fixer) soul through the injected `runCmrWorker` seam and wraps the verdict
  *     into a WorkerResult (converged → completed; red → completed; escalate →
  *     escalated; malformed → malformed);
  *   - cmrSandboxConfig: wires the agy auth runtime-mount (writable dir) + codex
@@ -27,7 +27,15 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,7 +52,10 @@ import {
 } from "../../src/family/realFamilyBackend.js";
 import {
   SANDBOX_CODEX_DIR,
+  SANDBOX_GH_TOKEN_ENV,
+  SANDBOX_REPO_ENV,
   SANDBOX_SOUL_ENV,
+  SPAWNED_WORKER_ENV,
 } from "../../src/realBackend.js";
 import { cmrWorkerSpec, familyShipWorkerSpec } from "../../src/family/dispatchFamilyWorker.js";
 import type { ShipWorkerOutcome } from "../../src/shipOutcome.js";
@@ -257,16 +268,20 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     });
   }
 
-  it("dispatches the cmr worker spec to runCmrWorker — ak-cross-m-review + FRESH + READ-ONLY", async () => {
+  it("dispatches the cmr worker spec to runCmrWorker — ak-cross-m-review + FRESH session + memory-bearing fixer (cmr soul, retain)", async () => {
     const be = fixtured();
     await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "feat/330-pure-scheduler" });
     expect(be.runCmrCalls.length).toBe(1);
     const spec = be.runCmrCalls[0]!.spec;
     expect(spec.kind).toBe("cmr");
     expect(spec.skill).toBe("ak-cross-m-review");
+    // FRESH session = a new session (not a crash/escalate resume). The worker is
+    // dispatched ONCE per family run and loops INTERNALLY (ADR 0026 2026-06-24).
     expect(spec.session).toBe("fresh");
-    expect(spec.contextRetention).toBe("clean");
-    expect(spec.soul).toBe("READ-ONLY");
+    // The worker's main session has MEMORY (it is the fixer); only its review legs
+    // are fresh — so the spec RETAINs context, under the WRITE `cmr` soul.
+    expect(spec.contextRetention).toBe("retain");
+    expect(spec.soul).toBe("cmr");
   });
 
   it("a converged verdict ⇒ WorkerResult.completed with a bare cmr payload", async () => {
@@ -380,11 +395,34 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     expect(agyMount!.readonly).not.toBe(true);
   });
 
-  it("still mounts codex auth + injects the claude token + READ-ONLY soul (all three legs)", () => {
+  it("still mounts codex auth + injects the claude token + cmr soul (all three legs)", () => {
     const cfg = cfgBackend().config(auth);
     expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
     expect(cfg.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok-xyz");
-    expect(cfg.env[SANDBOX_SOUL_ENV]).toBe("READ-ONLY");
+    expect(cfg.env[SANDBOX_SOUL_ENV]).toBe("cmr");
+    // ORCHESTRATOR_REPO so the cmr worker's `gh issue view` / `gh issue create
+    // --repo "$ORCHESTRATOR_REPO"` target the right repo in a clone-from-local run
+    // (codex #384).
+    expect(cfg.env[SANDBOX_REPO_ENV]).toBe("Akagilnc/ming-salvage-sim");
+  });
+
+  it("exports the gh token as GH_TOKEN so the in-container completeness gate can `gh issue view` the live issue body as authority (mirrors the ship worker)", () => {
+    // The completeness gate grounds against the live issue body via `gh issue view`;
+    // without GH_TOKEN that fails and the audit degrades to commit-titles/test-files.
+    const cfg = cfgBackend().config({
+      codexAuthDir: "/tmp/cmr-codex-auth",
+      agyDir: "/tmp/cmr-agy",
+      claudeToken: "tok-xyz",
+      ghToken: "gho_cmr",
+    });
+    expect(cfg.env[SANDBOX_GH_TOKEN_ENV]).toBe("gho_cmr");
+  });
+
+  it("omits GH_TOKEN when no gh token is present (NOT a hard blocker for cmr — the gate degrades but still runs)", () => {
+    // Unlike ship (which fail-closes on missing gh because it must `gh pr create`),
+    // the cmr worker injects gh only when present and still runs without it.
+    const cfg = cfgBackend().config(auth);
+    expect(cfg.env[SANDBOX_GH_TOKEN_ENV]).toBeUndefined();
   });
 
   it("the antigravity token path is the host-mirrored gemini path (#333 contract)", () => {
@@ -404,23 +442,37 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     // claude token absent ⇒ no env var (the Claude Agent leg degrades).
     const noClaude = cfgBackend().config({ codexAuthDir: "/tmp/c", agyDir: "/tmp/a" });
     expect(noClaude.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
-    expect(noClaude.env[SANDBOX_SOUL_ENV]).toBe("READ-ONLY");
+    expect(noClaude.env[SANDBOX_SOUL_ENV]).toBe("cmr");
 
     // ALL auth absent ⇒ zero mounts, only the soul env — still no throw (the skill
     // runs and will degrade/escalate in-container, never a host crash).
     const none = cfgBackend().config({});
     expect(none.mounts.length).toBe(0);
-    expect(none.env[SANDBOX_SOUL_ENV]).toBe("READ-ONLY");
+    expect(none.env[SANDBOX_SOUL_ENV]).toBe("cmr");
+  });
+
+  it("marks the cmr container as an orchestrator-spawned, non-interactive session", () => {
+    const cfg = cfgBackend().config(auth);
+    expect(cfg.env.OPENCLAW_SESSION).toBe("1");
+    expect(cfg.env.OPENCLAW_SESSION).toBe(SPAWNED_WORKER_ENV.OPENCLAW_SESSION);
   });
 });
 
 // ═══════════════════ 4b. mountCmrAuth — best-effort per leg (codex cmr R1) ═══════════════════
 
 describe("#335 mountCmrAuth — a missing host credential degrades, never throws", () => {
-  /** Expose the protected auth-mount seam, with $HOME pointed at an EMPTY dir. */
+  /**
+   * Expose the protected auth-mount seam, with $HOME pointed at an EMPTY dir.
+   * `readGhToken` is stubbed to undefined so the empty-$HOME case is deterministic:
+   * the real `gh auth token` reads the HOST OS keyring (not $HOME), so it would
+   * otherwise leak the host's gh token into a "no creds" assertion.
+   */
   class AuthBackend extends RealFamilyBackend {
     public auth(): CmrAuth {
       return this.mountCmrAuth();
+    }
+    protected override readGhToken(): string | undefined {
+      return undefined;
     }
   }
 
@@ -444,7 +496,32 @@ describe("#335 mountCmrAuth — a missing host credential degrades, never throws
       codexAuthDir: undefined,
       agyDir: undefined,
       claudeToken: undefined,
+      ghToken: undefined,
     });
+  });
+
+  it("threads the host gh token (readGhToken) into ghToken — the completeness gate's `gh issue view` authority", () => {
+    // A separate backend whose readGhToken yields a present token: mountCmrAuth must
+    // wire it onto CmrAuth.ghToken (cmrSandboxConfig then exports it as GH_TOKEN).
+    class GhAuthBackend extends RealFamilyBackend {
+      public auth(): CmrAuth {
+        return this.mountCmrAuth();
+      }
+      protected override readGhToken(): string | undefined {
+        return "gho_host";
+      }
+    }
+    const be = new GhAuthBackend({
+      workingRepo: mkDir("cmr-repo-"),
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "ming-orchestrator-coder:latest",
+      home: mkDir("cmr-gh-home-"),
+    });
+    expect(be.auth().ghToken).toBe("gho_host");
   });
 
   it("a missing codex/agy source reclaims the mkdtemp dir — no leak on degrade (online review r2, gemini)", () => {
@@ -476,12 +553,82 @@ describe("#335 mountCmrAuth — a missing host credential degrades, never throws
   });
 });
 
+// ═══════════════════ 4b-bis. mountCmrAuth — container codex config is minimal, NOT host copy ═══════════════════
+
+describe("#378 mountCmrAuth — writes a minimal danger-full-access config, never copies the host config.toml", () => {
+  class AuthBackend extends RealFamilyBackend {
+    public auth(): CmrAuth {
+      return this.mountCmrAuth();
+    }
+    protected override readGhToken(): string | undefined {
+      return undefined;
+    }
+  }
+
+  /**
+   * A populated host $HOME with BOTH codex creds AND a host config.toml carrying
+   * host-personal keys (the real bug source: `sandbox_mode = "workspace-write"`
+   * makes the in-container codex try to self-sandbox → nested bwrap fails → cmr
+   * legs degrade to static-only).
+   */
+  function hostHomeWithCodexConfig(): string {
+    const home = mkDir("cmr-host-home-");
+    const codexDir = join(home, ".codex");
+    mkdirSync(codexDir, { recursive: true });
+    writeFileSync(join(codexDir, "auth.json"), '{"OPENAI_API_KEY":"sk-host"}');
+    writeFileSync(
+      join(codexDir, "config.toml"),
+      [
+        'model = "gpt-5.5"',
+        'sandbox_mode = "workspace-write"',
+        'notify = ["/Users/host/notify.app"]',
+        '[plugins."github@openai-curated"]',
+        "enabled = true",
+        "",
+      ].join("\n"),
+    );
+    return home;
+  }
+
+  it("copies auth.json but WRITES a minimal config.toml (danger-full-access, never the host copy)", () => {
+    const be = new AuthBackend({
+      workingRepo: mkDir("cmr-repo-"),
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "ming-orchestrator-coder:latest",
+      home: hostHomeWithCodexConfig(),
+    });
+    const auth = be.auth();
+    expect(auth.codexAuthDir).toBeTruthy();
+    const dir = auth.codexAuthDir as string;
+
+    // Credentials still mirrored.
+    expect(readFileSync(join(dir, "auth.json"), "utf8")).toContain("sk-host");
+
+    // A config.toml was written, and it is the minimal container one.
+    const config = readFileSync(join(dir, "config.toml"), "utf8");
+    expect(config).toContain('sandbox_mode = "danger-full-access"');
+
+    // The host config.toml was NOT copied verbatim: host-only keys + the
+    // self-sandbox `workspace-write` mode are absent.
+    expect(config).not.toContain("workspace-write");
+    expect(config).not.toContain("notify");
+    expect(config).not.toContain("plugins");
+  });
+});
+
 // ═══════════════════ 4c. writeCmrFocusFile — exact scope + focus (codex cmr R1 F2/F3) ═══════════════════
 
 describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-resolved focus", () => {
   /** Expose the focus-file seam over a REAL temp git repo (so the exclude path resolves). */
   class FocusBackend extends RealFamilyBackend {
-    public focus(ctx: { familyBase: string; llmResolvedChildren?: readonly number[] }): void {
+    public focus(ctx: {
+      familyBase: string;
+      llmResolvedChildren?: readonly number[];
+    }): void {
       this.writeCmrFocusFile(ctx as never);
     }
   }
@@ -538,6 +685,32 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
     expect(() => be.focus({ familyBase: "fb" })).toThrow(/familyBaseStartHead|cut SHA/i);
     // And it did NOT write a stale-base fallback file.
     expect(() => readFileSync(join(repo, CMR_FOCUS_FILENAME), "utf8")).toThrow();
+  });
+
+  it("NEVER threads a prior-findings block — the worker has SESSION memory, not data (ADR 0026 2026-06-24)", () => {
+    // The cmr worker is a SINGLE memory-bearing session that loops internally; its
+    // round-to-round continuity is its OWN session memory, NOT a prior-findings blob
+    // threaded into the focus file. So the focus file pins ONLY the review scope +
+    // the machine-resolved-child focus, never a "prior round's findings" block.
+    const repo = realRepo();
+    const be = new FocusBackend({
+      workingRepo: repo,
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+    be.focus({ familyBase: "feat/330-pure-scheduler", llmResolvedChildren: [42] });
+    const body = readFileSync(join(repo, CMR_FOCUS_FILENAME), "utf8");
+    // The full review-scope diff + the machine-resolved focus are present...
+    expect(body).toContain("git diff abc123...feat/330-pure-scheduler");
+    expect(body).toContain("#42");
+    // ...but NO prior-findings block (the worker remembers within its own session).
+    expect(body).not.toMatch(/Prior round's findings/i);
+    expect(body).not.toMatch(/confirm-resolved/i);
   });
 });
 

@@ -99,6 +99,31 @@ describe("#291 parseSubIssueNumbers", () => {
     };
     expect(parseSubIssueNumbers(parsed)).toEqual([11, 13]);
   });
+  it("skips CLOSED sub-issues (re-run epic with done children), keeps OPEN + state-less", () => {
+    const parsed = {
+      subIssues: {
+        nodes: [
+          { number: 341, state: "CLOSED" },
+          { number: 370, state: "OPEN" },
+          { number: 378, state: "OPEN" },
+          { number: 99 }, // state-less ⇒ kept (the single-slice S0 gate is the backstop)
+        ],
+      },
+    };
+    expect(parseSubIssueNumbers(parsed)).toEqual([370, 378, 99]);
+  });
+  it("skips CLOSED case-insensitively — lowercase 'closed' from a REST/legacy gh surface (gemini #384)", () => {
+    const parsed = {
+      subIssues: {
+        nodes: [
+          { number: 341, state: "closed" },
+          { number: 370, state: "Closed" },
+          { number: 378, state: "open" },
+        ],
+      },
+    };
+    expect(parseSubIssueNumbers(parsed)).toEqual([378]);
+  });
   it("returns [] for a missing / non-object subIssues (never throws)", () => {
     expect(parseSubIssueNumbers({})).toEqual([]);
     expect(parseSubIssueNumbers({ subIssues: null })).toEqual([]);

@@ -1,7 +1,7 @@
 /**
- * #334 — the first end-to-end tracer: the coder worker invokes `/tdd` and the
- * per-slice reviewer worker invokes `/review`, both through the unified
- * dispatchWorker seam (ADR 0026 / PRD #330), running on the baked 2b image.
+ * #334 — the first end-to-end tracer: the coder worker runs the whole slice
+ * (build + per-slice review/fix loop) through the unified dispatchWorker seam
+ * (ADR 0026 / PRD #330), running on the baked 2b image.
  *
  * This slice makes the seam REAL in two ways the #331 prefactor only declared:
  *
@@ -11,16 +11,13 @@
  *      change is assertable on the pure `boxConfig()` seam (no container needed),
  *      mirroring the family `mergerSandboxConfig()` testability pattern.
  *
- *   2. The versioned promptFiles are THIN: they tell the worker to invoke the
- *      skill (`/tdd` for the coder, `/review` for the reviewer) and let the
- *      discipline come from the baked image's CLAUDE.md `## Skill routing` +
- *      baked skill — they do NOT hand-copy the TDD/review METHOD into the prompt
- *      (ADR 0026: "prompt 收薄到『实现 issue #N，按本仓 CLAUDE.md dev 流程做』").
+ *   2. The versioned promptFiles are THIN entrypoints: they read the baked soul,
+ *      live-fetch the issue through gh, and define the output contract. They do
+ *      NOT hand-copy the TDD/review/fix METHOD into the prompt. The workflow lives
+ *      in the baked soul + skills.
  *
- * Plus the load-bearing [C] (PRD #330 R2): the per-slice reviewer worker returns
- * a `ReviewerResult{findings}` and the runner's single-slice fix-loop ROUTES on
- * those findings (S3 findings → S5 fix → S6 approve → S7). This is the consumer
- * `selectFixNowFindings`/`isBlockingFinding` depend on; a bare verdict breaks it.
+ * Plus the load-bearing [C] (PRD #330 R2): the runner dispatches exactly the S2
+ * coder worker and then S7 ship; there is no runner-driven reviewer/fix loop.
  */
 
 import { dirname, join } from "node:path";
@@ -31,8 +28,13 @@ import { runOrchestrator } from "../src/runner.js";
 import {
   RealBackend,
   SANDBOX_CODEX_DIR,
+  SANDBOX_GH_TOKEN_ENV,
+  SANDBOX_ISSUE_NUMBER_ALIAS_ENV,
+  SANDBOX_ISSUE_NUMBER_ENV,
+  SANDBOX_REPO_ENV,
   SANDBOX_SKILLS_DIR,
   SANDBOX_SOUL_ENV,
+  SPAWNED_WORKER_ENV,
 } from "../src/realBackend.js";
 import type {
   Backend,
@@ -73,8 +75,9 @@ describe("#334 RealBackend.boxConfig drops the runtime skillsMount (baked skills
       mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
     } {
       return this.boxConfig(
-        { authDir: "/tmp/auth-256", claudeToken: "tok" },
+        { authDir: "/tmp/auth-256", claudeToken: "tok", ghToken: "gho_test" },
         spec,
+        334,
       );
     }
   }
@@ -117,6 +120,20 @@ describe("#334 RealBackend.boxConfig drops the runtime skillsMount (baked skills
     expect(cfg.env[SANDBOX_SOUL_ENV]).toBe("coder");
   });
 
+  it("injects live issue coordinates and GH_TOKEN for the worker's gh issue read", () => {
+    const cfg = makeBackend().config(coderSpec);
+    expect(cfg.env[SANDBOX_ISSUE_NUMBER_ENV]).toBe("334");
+    expect(cfg.env[SANDBOX_ISSUE_NUMBER_ALIAS_ENV]).toBe("334");
+    expect(cfg.env[SANDBOX_REPO_ENV]).toBe("owner/name");
+    expect(cfg.env[SANDBOX_GH_TOKEN_ENV]).toBe("gho_test");
+  });
+
+  it("marks the coder/agent container as an orchestrator-spawned, non-interactive session", () => {
+    const cfg = makeBackend().config(coderSpec);
+    expect(cfg.env.OPENCLAW_SESSION).toBe("1");
+    expect(cfg.env.OPENCLAW_SESSION).toBe(SPAWNED_WORKER_ENV.OPENCLAW_SESSION);
+  });
+
   it("skillsMount is no longer a required RealBackendOptions field (#334)", () => {
     // Construction WITHOUT skillsMount must succeed — the baked image provides
     // skills, so the host mount path is gone from the options contract.
@@ -126,46 +143,43 @@ describe("#334 RealBackend.boxConfig drops the runtime skillsMount (baked skills
 
 // ─── (2) the versioned prompts are THIN — invoke the skill, not hand-copy it ──
 
-describe("#334 thin prompts invoke the skill, not the methodology", () => {
+describe("#334 thin prompts read baked souls and do not hand-copy methodology", () => {
   const read = (f: string): string => readFileSync(join(promptsDir, f), "utf8");
 
-  it("coder_implement.md tells the worker to invoke /tdd (Skill routing), not red/green steps", () => {
+  it("coder_implement.md is an entrypoint, not a TDD/review mini-wiki", () => {
     const p = read("coder_implement.md");
-    // It points at the skill / CLAUDE.md routing …
-    expect(p).toMatch(/\/tdd|tdd skill|Skill routing|CLAUDE\.md/i);
-    // … and does NOT hand-copy the TDD method (the discipline lives in the baked
-    // skill, ADR 0026). The old prompt spelled out "Write the failing test(s) …
-    // (RED). Make them pass … (GREEN); refactor".
-    expect(p).not.toMatch(/Make them pass with the smallest correct change \(GREEN\)/);
+    expect(p).toMatch(/\/home\/agent\/\.orchestrator\/souls\/coder\.md/);
+    expect(p).toMatch(/ORCHESTRATOR_ISSUE_NUMBER|ISSUE_NUMBER/);
+    expect(p).toMatch(/ORCHESTRATOR_REPO/);
+    expect(p).toMatch(/gh/i);
+    expect(p).not.toMatch(/\.orchestrator-snapshot\.json.*read it FIRST/is);
+    expect(p).not.toMatch(/\bRED\b|\bGREEN\b|\brefactor\b|Baseline commit|\bOpus\b|\bsubagent\b|ak-cross-m-review/i);
   });
 
-  it("coder_fix.md routes through /tdd too (a fix is test-first work)", () => {
-    expect(read("coder_fix.md")).toMatch(/\/tdd|tdd skill|Skill routing|CLAUDE\.md/i);
+  it("the coder soul carries the per-slice process, including host-specific review routing", () => {
+    const soul = readFileSync(join(here, "..", "image", "souls", "coder.md"), "utf8");
+    expect(soul).toMatch(/Invoke `\/tdd`/i);
+    expect(soul).toMatch(/Claude worker: invoke the builtin `\/review`/);
+    expect(soul).toMatch(/Codex worker: use the baked review skill/i);
+    expect(soul).toMatch(/one reviewer leg|single reviewer leg/i);
+    expect(soul).toMatch(/do not invoke `ak-cross-m-review`/i);
+    expect(soul).toMatch(/gh issue view/i);
+    expect(soul).toMatch(/Snapshot files.*not execution input/is);
   });
 
-  it("reviewer_full_review.md tells the worker to invoke /review", () => {
-    expect(read("reviewer_full_review.md")).toMatch(/\/review|review skill|Skill routing|CLAUDE\.md/i);
-  });
-
-  it("reviewer_rereview.md routes through /review too", () => {
-    expect(read("reviewer_rereview.md")).toMatch(/\/review|review skill|Skill routing|CLAUDE\.md/i);
-  });
-
-  it("every prompt still defines its structured output contract (tag + signal)", () => {
+  it("every existing prompt still defines its structured output contract (tag + signal)", () => {
     // Thinning the METHOD must not drop the output contract route()/the seam
-    // decode against — the worker must still emit its tag + completion signal.
+    // decode against — each worker must still emit its tag + completion signal.
+    // Only the surviving prompts exist (ADR 0026 deleted the reviewer/fix files):
+    // the build coder (coder_implement.md) and the ship worker (ship.md).
     expect(read("coder_implement.md")).toMatch(/<coder>/);
     expect(read("coder_implement.md")).toMatch(/CODER_STEP_COMPLETE/);
-    expect(read("reviewer_full_review.md")).toMatch(/<review>/);
-    expect(read("reviewer_full_review.md")).toMatch(/REVIEWER_STEP_COMPLETE/);
+    expect(read("ship.md")).toMatch(/<ship>/);
+    expect(read("ship.md")).toMatch(/SHIP_STEP_COMPLETE/);
   });
 });
 
-// ─── (3) the per-slice reviewer returns findings + the fix-loop routes on them ─
-//
-// The load-bearing [C] (PRD #330 R2): the reviewer worker (S3/S6) routes /review
-// and returns a ReviewerResult{findings}; the single-slice fix-loop consumes the
-// findings (selectFixNowFindings → S5 fix). A bare verdict would break it.
+// ─── (3) the runner dispatches one S2 coder worker, then S7 ship ─────────────
 
 /** A fake backend that records dispatch + drives a one-round fix loop. */
 class ReviewWorkerBackend implements Backend {
@@ -233,7 +247,8 @@ class ReviewWorkerBackend implements Backend {
               },
             ]
           : [];
-      // The reviewer worker returns a ReviewerResult{findings} — the [C] shape.
+      // Legacy compatibility shape: a reviewer worker returns findings, not a
+      // bare verdict. The active runner path no longer dispatches it normally.
       return { kind: "completed", output: { kind: "reviewer", findings } };
     }
     return {
@@ -243,63 +258,24 @@ class ReviewWorkerBackend implements Backend {
   }
 }
 
-describe("#334 the reviewer worker routes /review and the fix-loop routes on its findings", () => {
-  it("the S3 reviewer worker is dispatched with skill /review", async () => {
+describe("#334 the build coder worker routes /tdd and a committed build ships (ADR 0026)", () => {
+  it("the S2 build coder worker is dispatched with skill /tdd", async () => {
     const backend = new ReviewWorkerBackend();
     await runOrchestrator({ issueNumber: 334, backend });
-    const s3 = backend.specs.find((s) => s.id === "S3");
-    expect(s3?.kind).toBe("reviewer");
-    expect(s3?.skill).toBe("/review");
+    const s2 = backend.specs.find((s) => s.id === "S2");
+    expect(s2?.kind).toBe("coder");
+    expect(s2?.skill).toBe("/tdd");
   });
 
-  it("S3 findings → S5 fix → S6 approve → S7 (the reviewer findings drive the loop)", async () => {
+  it("a committed whole-slice build → S7 ship (no runner-driven reviewer/fix steps)", async () => {
+    // ADR 0026: the per-slice review→fix→cmr loop runs INSIDE the S2 worker, so
+    // the runner sees exactly ONE coder dispatch then the ship worker — never an
+    // S3/S5/S6 reviewer/fix step.
     const backend = new ReviewWorkerBackend();
     const result = await runOrchestrator({ issueNumber: 334, backend });
     expect(result.status).toBe("success");
-    // The S3 reviewer returned a fix_now finding; the runner routed it to an S5
-    // fix worker carrying that finding, then S6 approved and S7 shipped.
     expect(backend.dispatched).toEqual([
       "S2:coder:/tdd",
-      "S3:reviewer:/review",
-      "S5:coder:/tdd",
-      "S6:reviewer:/review",
-      "S7:ship:gstack-ship",
-    ]);
-    const s5Idx = backend.specs.findIndex((s) => s.id === "S5");
-    expect(backend.ctxs[s5Idx].prevFindings?.[0].action).toBe("fix_now");
-  });
-
-  it("an empty reviewer findings array approves straight to ship (no fix round)", async () => {
-    // A backend whose reviewer always approves: S2→S3(empty)→S7, no S5/S6.
-    class CleanReviewBackend extends ReviewWorkerBackend {
-      override async dispatchWorker(
-        spec: WorkerSpec,
-        ctx: DispatchContext,
-      ): Promise<WorkerResult> {
-        this.dispatched.push(`${spec.id}:${spec.kind}:${spec.skill ?? "—"}`);
-        this.specs.push(spec);
-        this.ctxs.push(ctx);
-        if (spec.kind === "coder") {
-          return {
-            kind: "completed",
-            output: { kind: "coder", committed: true, commitsAdded: 1 },
-          };
-        }
-        if (spec.kind === "reviewer") {
-          return { kind: "completed", output: { kind: "reviewer", findings: [] } };
-        }
-        return {
-          kind: "completed",
-          output: { kind: "ship", branch: this.worktree.branch, status: "pushed" },
-        };
-      }
-    }
-    const backend = new CleanReviewBackend();
-    const result = await runOrchestrator({ issueNumber: 334, backend });
-    expect(result.status).toBe("success");
-    expect(backend.dispatched).toEqual([
-      "S2:coder:/tdd",
-      "S3:reviewer:/review",
       "S7:ship:gstack-ship",
     ]);
   });

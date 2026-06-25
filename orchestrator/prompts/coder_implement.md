@@ -1,46 +1,32 @@
-# Coder — Implement (S2)
+# Coder worker entrypoint
 
-You are the **coder** for one thin vertical slice issue, working unattended — no
-human is watching, so do not stop to ask: implement the slice as the issue
-specifies and report your result.
+Read the baked role soul first:
 
-The clean-room context is in `.orchestrator-snapshot.json` at the repo root of
-this worktree — read it FIRST, the **WHOLE** issue (body AND every comment). A
-`## Agent Brief` section, when present, is the most-authoritative part of the
-spec, but it is OPTIONAL — when there is none, implement from the whole issue.
-You have no network; everything you need is in that snapshot and the codebase.
+```text
+/home/agent/.orchestrator/souls/coder.md
+```
 
-## Your job
+Then follow that soul and the worktree's `CLAUDE.md`. The runner only schedules
+you; the issue is live truth. Use `ORCHESTRATOR_ISSUE_NUMBER` (or `ISSUE_NUMBER`)
+and `ORCHESTRATOR_REPO` to fetch the current issue body and comments with `gh`.
+Retry transient network failures. If GitHub auth is missing or the issue cannot be
+read after retry, escalate instead of guessing from stale local context.
 
-Implement the slice on the resident branch by following this worktree's
-`CLAUDE.md` `## Skill routing`: **invoke the `/tdd` skill** and let it drive the
-work (Claude: `Skill` tool with skill `tdd`). The discipline — failing test
-first, smallest change to pass, refactor, full typecheck + test suite — lives in
-the versioned skill; do NOT re-derive or hand-write the method here.
-
-**Commit** your work on the current branch (one commit per coherent change;
-never `git commit --amend`). Do NOT push — the orchestrator pushes.
-
-Stay strictly inside the slice's scope. If the slice cannot be implemented as
-specified (a real design gap, a missing upstream dependency, a contradiction in
-the issue spec), do NOT guess — **escalate** (see below).
+Do not use `.orchestrator-snapshot.json` as execution input.
 
 ## Required output
 
 When you are done (or are escalating), emit EXACTLY ONE `<coder>` tag on its own,
 containing a single JSON object, then print the completion signal on its own line.
 
-Success / normal completion:
+Success:
 
 ```text
-<coder>{"committed": true, "commitsAdded": 2}</coder>
+<coder>{"committed": true, "commitsAdded": 3}</coder>
 CODER_STEP_COMPLETE
 ```
 
-- `committed` (boolean): did you create at least one new commit this step?
-- `commitsAdded` (integer ≥ 0): how many new commits you added this step.
-
-Escalation (a real blocker the orchestrator must surface to a human):
+Escalation (example shows escalating BEFORE any commit — committed:false, commitsAdded:0):
 
 ```text
 <coder>{"committed": false, "commitsAdded": 0, "escalate": {"reason": "<short>", "diagnosis": "<what is wrong and why you cannot proceed>"}}</coder>
@@ -49,8 +35,13 @@ CODER_STEP_COMPLETE
 
 Rules:
 
-- The JSON must be valid and match the shape above exactly (`committed`,
-  `commitsAdded`, optional `escalate.reason` + `escalate.diagnosis`).
-- Emit the `<coder>` tag LAST (after all other output); if you iterate, the LAST
-  `<coder>` tag is the one that counts.
+- `committed` is a boolean and `commitsAdded` is an integer >= 0.
+- **`committed` / `commitsAdded` must ALWAYS reflect the REAL git state, even when
+  escalating.** The runner reconciles them against the actual commit count on the
+  resident branch (a divergent self-report is a contract violation → S8(error)). So
+  if you already made a baseline / fix commit and THEN hit an escalating blocker in
+  the second review, report `committed:true` with the real count PLUS `escalate` —
+  NOT `committed:false, commitsAdded:0`. `escalate` is orthogonal to the count.
+- `escalate`, when present, contains `reason` and `diagnosis`.
+- Emit the `<coder>` tag LAST; if you iterate, the LAST tag is the one that counts.
 - Always print `CODER_STEP_COMPLETE` on its own line at the very end.

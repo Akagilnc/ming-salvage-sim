@@ -20,24 +20,18 @@
  *     "human answered an escalation" and re-run via resumeSession instead of
  *     reporting its true tagged error. Fix: gate Case 2 on isValidEscalation.
  *
- *  3. [high] On resume the no-progress guard state (prevFindingsKey +
- *     noProgressStreak) is NOT reconstructed from plan.priorLedger. A
- *     crash/escalate-resume mid-fix-loop starts with prevFindingsKey=undefined,
- *     so the first S6 scores a free "progress" pass and erases the prior streak —
- *     a genuinely-stuck loop evades the K-consecutive contract across every
- *     resume boundary. Fix: reconstruct the streak; if already ≥ K, bail S8(error).
- *
- *  4. [high] The no-progress bail's S8 emitLedger is UNGUARDED (no try/catch),
- *     unlike the normal handoff path. A writeLedger throw there raw-rejects out
- *     of runOrchestrator, violating the #252 invariant "any backend call throwing
- *     → S8(error) + error package". Fix: guard it (persistBestEffort semantics).
+ *  (3 + 4 tested the runner-level no-progress guard — streak reconstruction on
+ *   resume, and guarding the no-progress bail's S8 write. ADR 0026 (2026-06-24)
+ *   collapsed the single-slice runner to a PURE SCHEDULER: the review→fix→
+ *   re-review LOOP no longer lives at the runner level (it runs INSIDE the S2
+ *   build worker), so there is NO runner-level no-progress guard anymore. Both
+ *   suites are DELETED.)
  */
 
 import { describe, expect, it } from "vitest";
 import { runOrchestrator } from "../src/runner.js";
 import type {
   Backend,
-  Finding,
   IssueMeta,
   IssueSnapshot,
   PersistentLedgerEntry,
@@ -84,20 +78,6 @@ function s8(handoffStatus?: "success" | "escalate" | "error"): PersistentLedgerE
     ts: "2026-06-21T00:00:00.000Z",
     ...(handoffStatus !== undefined ? { handoffStatus } : {}),
   };
-}
-
-/** A non-empty findings list (one P0 → would route to S5 if re-entered). */
-function p0Findings(): Finding[] {
-  return [
-    {
-      severity: "critical",
-      category: "correctness",
-      claim_quote: "off-by-one in the loop bound",
-      location: "src/foo.ts:12",
-      suggested_fix: "use < not <=",
-      action: "fix_now",
-    },
-  ];
 }
 
 /**
@@ -227,8 +207,6 @@ describe("Finding 1: terminal-error S8 is tagged handoffStatus:'error' (#254 ⋈
         entry("S0"),
         entry("S1"),
         entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S3", { kind: "reviewer", findings: [] }),
-        entry("S4"),
         entry("S7"),
         s8("error"),
       ],
@@ -245,19 +223,16 @@ describe("Finding 1: terminal-error S8 is tagged handoffStatus:'error' (#254 ⋈
     expect(backend.pushCount).toBe(0);
   });
 
-  it("RESUME: re-feeding a no-progress-bailed ledger reports ERROR, not re-run", async () => {
-    // Prior run bailed in the fix loop: …S6 (unchanged findings) → S8(error).
+  it("RESUME: re-feeding a 0-commit-error ledger reports ERROR, not re-run", async () => {
+    // Prior run: S2 build worker produced 0 commits → S8(error). On re-feed it
+    // must report the tagged ERROR, NOT route S2→S7 and re-run.
     const resumeState: ResumeState = {
       worktree: WORKTREE,
       stateDir: STATE_DIR,
       ledger: [
         entry("S0"),
         entry("S1"),
-        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S3", { kind: "reviewer", findings: p0Findings() }),
-        entry("S4"),
-        entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S6", { kind: "reviewer", findings: p0Findings() }),
+        entry("S2", { kind: "coder", committed: false, commitsAdded: 0 }),
         s8("error"),
       ],
     };
@@ -265,14 +240,13 @@ describe("Finding 1: terminal-error S8 is tagged handoffStatus:'error' (#254 ⋈
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    // Must report the stuck ERROR — NOT route S6→S4 and re-enter the fix loop.
     expect(result.status).toBe("error");
     expect(result.errorPackage).toBeDefined();
     expect(backend.runStepIds).toEqual([]);
   });
 
-  it("RESUME: re-feeding a backend-throw-after-S3 ledger reports ERROR, not re-run", async () => {
-    // Prior run: S3 ran, then a backend call threw → errorTermination wrote the
+  it("RESUME: re-feeding a backend-throw-after-S2 ledger reports ERROR, not re-run", async () => {
+    // Prior run: S2 ran, then a backend call threw → errorTermination wrote the
     // failing step's terminal S8(error). On re-feed it must report ERROR.
     const resumeState: ResumeState = {
       worktree: WORKTREE,
@@ -281,7 +255,6 @@ describe("Finding 1: terminal-error S8 is tagged handoffStatus:'error' (#254 ⋈
         entry("S0"),
         entry("S1"),
         entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S3", { kind: "reviewer", findings: [] }),
         s8("error"),
       ],
     };
@@ -379,153 +352,6 @@ describe("Finding 2: malformed-escalate-terminated run reports error on re-feed 
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// Finding 3 — no-progress guard state must be reconstructed on resume
-// ════════════════════════════════════════════════════════════════════════════
-
-describe("Finding 3: no-progress streak survives a crash/escalate-resume boundary (#254 ⋈ #255)", () => {
-  /**
-   * Prior run history (persisted): S3 review with P0, then TWO fix rounds whose
-   * S6 re-review raised the SAME findings (no progress: streak already 2). The
-   * run crashed before the third S6. On re-feed, the runner must reconstruct
-   * prevFindingsKey + noProgressStreak from the persisted S3/S6 outputs so that
-   * one more unchanged round trips the K=3 contract — NOT grant a free pass and
-   * reset the streak.
-   */
-  function stuckTwoRoundsThenCrash(): ResumeState {
-    return {
-      worktree: WORKTREE,
-      stateDir: STATE_DIR,
-      ledger: [
-        entry("S0"),
-        entry("S1"),
-        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S3", { kind: "reviewer", findings: p0Findings() }), // round-0 baseline
-        entry("S4"),
-        entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S6", { kind: "reviewer", findings: p0Findings() }), // round 1: no progress (streak 1)
-        entry("S4"),
-        entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S6", { kind: "reviewer", findings: p0Findings() }), // round 2: no progress (streak 2)
-        entry("S4"),
-        // crashed before the 3rd S5/S6.
-      ],
-    };
-  }
-
-  /**
-   * Backend whose coder/reviewer ALWAYS raise the SAME P0 — so the resumed loop
-   * makes no progress. With a correctly-reconstructed streak of 2, exactly ONE
-   * more no-progress S6 round must trip K=3 and bail S8(error).
-   */
-  class StuckBackend extends SeamBackend {
-    override async runStep(spec: StepSpec): Promise<StepOutput> {
-      this.calls.push(`runStep(${spec.id})`);
-      this.runStepIds.push(spec.id);
-      if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
-      return { kind: "reviewer", findings: p0Findings() };
-    }
-  }
-
-  it("bails at the contract K on resume — streak is reconstructed, not reset", async () => {
-    const backend = new StuckBackend(stuckTwoRoundsThenCrash());
-
-    const result = await runOrchestrator({ issueNumber: 244, backend });
-
-    // The reconstructed streak is 2; one more unchanged S6 round hits K=3 → bail.
-    expect(result.status).toBe("error");
-    expect(result.errorPackage?.failedStep).toBe("S6");
-    expect(result.errorPackage?.reason).toMatch(/stuck|no progress|converging/i);
-    // Exactly one more fix round runs (S5 then S6) before the bail — NOT a free
-    // pass that resets the streak and lets the loop run on.
-    expect(backend.runStepIds).toEqual(["S5", "S6"]);
-  });
-
-  it("an ALREADY-stuck history (streak ≥ K at resume) bails immediately", async () => {
-    // Persisted history already contains K=3 consecutive no-progress S6 rounds.
-    const resumeState: ResumeState = {
-      worktree: WORKTREE,
-      stateDir: STATE_DIR,
-      ledger: [
-        entry("S0"),
-        entry("S1"),
-        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S3", { kind: "reviewer", findings: p0Findings() }), // baseline
-        entry("S4"),
-        entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S6", { kind: "reviewer", findings: p0Findings() }), // streak 1
-        entry("S4"),
-        entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S6", { kind: "reviewer", findings: p0Findings() }), // streak 2
-        entry("S4"),
-        entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S6", { kind: "reviewer", findings: p0Findings() }), // streak 3 (= K)
-        entry("S4"),
-        // crashed before any further step.
-      ],
-    };
-    const backend = new StuckBackend(resumeState);
-
-    const result = await runOrchestrator({ issueNumber: 244, backend });
-
-    // Already at K consecutive no-progress rounds → bail immediately, do NOT run
-    // even one more round.
-    expect(result.status).toBe("error");
-    expect(result.errorPackage?.failedStep).toBe("S6");
-    expect(backend.runStepIds).toEqual([]);
-  });
-});
-
-// ════════════════════════════════════════════════════════════════════════════
-// Finding 4 — no-progress bail's S8 emitLedger must be guarded (no raw reject)
-// ════════════════════════════════════════════════════════════════════════════
-
-describe("Finding 4: no-progress S8 writeLedger throw → S8(error), not raw reject (#252)", () => {
-  /**
-   * Fresh run that genuinely gets stuck: the coder always commits, the reviewer
-   * always raises the SAME P0 → after K no-progress rounds the no-progress guard
-   * fires and writes its terminal S8. We make writeLedger throw SPECIFICALLY on
-   * that no-progress S8 entry. The guarded write must resolve to status:error
-   * with the stuck reason — NOT raw-reject out of runOrchestrator.
-   */
-  class StuckWriteThrowsBackend extends SeamBackend {
-    /** Set true once the no-progress S8 entry is the one being written. */
-    threwOnS8 = false;
-
-    override async runStep(spec: StepSpec): Promise<StepOutput> {
-      this.calls.push(`runStep(${spec.id})`);
-      this.runStepIds.push(spec.id);
-      if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
-      return { kind: "reviewer", findings: p0Findings() };
-    }
-
-    override async writeLedger(
-      e: PersistentLedgerEntry,
-      stateDir: string,
-    ): Promise<void> {
-      // Throw on the terminal S8 of the no-progress bail. (Earlier S8 writes do
-      // not occur on this path; the bail is the only S8.)
-      if (e.step === "S8") {
-        this.threwOnS8 = true;
-        throw new Error("disk full: cannot persist S8 ledger entry");
-      }
-      await super.writeLedger(e, stateDir);
-    }
-  }
-
-  it("resolves to status:error (stuck reason) rather than rejecting", async () => {
-    const backend = new StuckWriteThrowsBackend();
-
-    // Must NOT reject — the promise resolves to a clean error package.
-    const result = await runOrchestrator({ issueNumber: 244, backend });
-
-    expect(backend.threwOnS8).toBe(true);
-    expect(result.status).toBe("error");
-    expect(result.errorPackage?.failedStep).toBe("S6");
-    expect(result.errorPackage?.reason).toMatch(/stuck|no progress|converging/i);
-  });
-});
-
-// ════════════════════════════════════════════════════════════════════════════
 // integ-cmr m2 r2 — NORMAL-handoff S8 writeLedger throw must persist a TAGGED
 // error S8 (same class as Finding 1, but the normal handoff path #252 ⋈ #255)
 // ════════════════════════════════════════════════════════════════════════════
@@ -594,8 +420,6 @@ describe("normal-handoff S8 writeLedger throw persists a tagged error S8 (#252 �
         entry("S0"),
         entry("S1"),
         entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S3", { kind: "reviewer", findings: [] }),
-        entry("S4"),
         entry("S7"),
         s8("error"),
       ],
