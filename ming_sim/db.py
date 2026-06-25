@@ -4808,6 +4808,56 @@ class GameDB:
         )
         self.conn.commit()
 
+    def fail_incomplete_chat_turn(self, chat_turn_id: int) -> Dict[str, Any]:
+        """Mark a pre-reply chat turn failed and remove its durable user prompt.
+
+        The returned dict carries ``failed_now=True`` ONLY when this call actually
+        transitioned an active pre-reply turn to failed (and deleted its durable user
+        prompt). A guarded/no-op return (turn already replied, not active, or missing)
+        omits the flag so callers can mirror the same guard for their own side effects
+        (e.g. in-memory history pruning).
+        """
+        row = self.conn.execute(
+            "SELECT * FROM chat_turns WHERE id = ?",
+            (int(chat_turn_id),),
+        ).fetchone()
+        if row is None:
+            return {}
+        turn_row = self._row_dict(row)
+        if turn_row["status"] != "active" or turn_row.get("minister_message_id") is not None:
+            return turn_row
+        _uid = turn_row.get("user_message_id")
+        message_ids = [int(_uid)] if _uid is not None else []
+        with self.conn:
+            # Atomically transition ONLY a still-active, still-pre-reply turn: the
+            # WHERE mirrors the read-guard above (a completed turn keeps status
+            # 'active' and is distinguished solely by minister_message_id), so a turn
+            # that completed between the SELECT and here is left intact. The durable
+            # side effects (user-prompt delete, agno truncate, failed_now) are gated on
+            # this UPDATE actually matching — never on the stale read alone — so the
+            # method can never delete a replied turn's prompt or report a false
+            # failed_now even if a future caller invokes it off the owning generator.
+            cursor = self.conn.execute(
+                "UPDATE chat_turns SET status = 'failed' "
+                "WHERE id = ? AND status = 'active' AND minister_message_id IS NULL",
+                (int(chat_turn_id),),
+            )
+            if cursor.rowcount != 1:
+                return turn_row
+            if message_ids:
+                placeholders = ",".join("?" for _ in message_ids)
+                self.conn.execute(
+                    f"DELETE FROM chat_messages WHERE id IN ({placeholders})",
+                    message_ids,
+                )
+            self._truncate_agno_runs_in_tx(
+                str(turn_row.get("agno_session_id") or ""),
+                int(turn_row.get("agno_runs_before") or 0),
+            )
+        turn_row["status"] = "failed"
+        turn_row["failed_now"] = True
+        return turn_row
+
     def record_chat_turn_rollback_diffs(
         self,
         chat_turn_id: int,
