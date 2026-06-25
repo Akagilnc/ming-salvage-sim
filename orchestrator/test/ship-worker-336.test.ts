@@ -26,6 +26,7 @@ import {
   SANDBOX_CODEX_DIR,
   SANDBOX_GH_TOKEN_ENV,
   SANDBOX_SOUL_ENV,
+  SPAWNED_WORKER_ENV,
 } from "../src/realBackend.js";
 import type { ShipAuth } from "../src/realBackend.js";
 import { shipWorkerSpec } from "../src/dispatchWorker.js";
@@ -271,6 +272,12 @@ describe("#336 single-slice shipSandboxConfig — best-effort ship auth", () => 
     expect(c.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
     expect(c.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
     expect(c.env[SANDBOX_SOUL_ENV]).toBe("coder");
+  });
+
+  it("marks the ship container as an orchestrator-spawned, non-interactive session (gstack-ship reads OPENCLAW_SESSION → auto-decides its P1 gate)", () => {
+    const c = cfg().config({ codexAuthDir: "/tmp/codex", claudeToken: "tok" });
+    expect(c.env.OPENCLAW_SESSION).toBe("1");
+    expect(c.env.OPENCLAW_SESSION).toBe(SPAWNED_WORKER_ENV.OPENCLAW_SESSION);
   });
 });
 

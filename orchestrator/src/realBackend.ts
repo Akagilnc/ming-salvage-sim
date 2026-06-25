@@ -456,6 +456,15 @@ export const SANDBOX_GH_TOKEN_ENV = "GH_TOKEN";
 export const WORKER_IDLE_TIMEOUT_SECONDS = 31_536_000;
 
 /**
+ * Marks the container as an orchestrator-spawned, non-interactive session.
+ * gstack-ship reads OPENCLAW_SESSION → its spawned path auto-chooses the
+ * recommended option on AskUserQuestion instead of blocking/improvising (the
+ * orchestrator's only human touchpoint is structured escalation, never a
+ * worker-level prompt). Central set: add future tools' spawned-detection keys here.
+ */
+export const SPAWNED_WORKER_ENV: Record<string, string> = { OPENCLAW_SESSION: "1" };
+
+/**
  * Host paths for the per-issue codex auth copy + the claude token (spike
  * contract). codex auth MUST live under $HOME (colima shares $HOME into the
  * Docker VM; $TMPDIR is NOT shared → a tmp copy mounts root-owned/empty →
@@ -1833,6 +1842,7 @@ export class RealBackend implements Backend {
   } {
     const soul = soulForStep(spec);
     const env: Record<string, string> = {
+      ...SPAWNED_WORKER_ENV,
       CLAUDE_CODE_OAUTH_TOKEN: auth.claudeToken,
       [SANDBOX_SOUL_ENV]: soul,
       [SANDBOX_REPO_ENV]: this.opts.repo,
@@ -2345,7 +2355,7 @@ export class RealBackend implements Backend {
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
   } {
     // The ship worker is a WRITE worker (commits + pushes) → the coder soul.
-    const env: Record<string, string> = { [SANDBOX_SOUL_ENV]: "coder" };
+    const env: Record<string, string> = { ...SPAWNED_WORKER_ENV, [SANDBOX_SOUL_ENV]: "coder" };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     // cmr S336 r10: the in-container `gh` (push over https + `gh pr create`)
     // authenticates from GH_TOKEN. Set only when present (the pure seam stays

@@ -54,6 +54,7 @@ import {
   SANDBOX_CODEX_DIR,
   SANDBOX_GH_TOKEN_ENV,
   SANDBOX_SOUL_ENV,
+  SPAWNED_WORKER_ENV,
 } from "../../src/realBackend.js";
 import { cmrWorkerSpec, familyShipWorkerSpec } from "../../src/family/dispatchFamilyWorker.js";
 import type { ShipWorkerOutcome } from "../../src/shipOutcome.js";
@@ -443,6 +444,12 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     const none = cfgBackend().config({});
     expect(none.mounts.length).toBe(0);
     expect(none.env[SANDBOX_SOUL_ENV]).toBe("cmr");
+  });
+
+  it("marks the cmr container as an orchestrator-spawned, non-interactive session", () => {
+    const cfg = cfgBackend().config(auth);
+    expect(cfg.env.OPENCLAW_SESSION).toBe("1");
+    expect(cfg.env.OPENCLAW_SESSION).toBe(SPAWNED_WORKER_ENV.OPENCLAW_SESSION);
   });
 });
 

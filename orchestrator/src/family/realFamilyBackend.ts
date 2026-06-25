@@ -77,6 +77,7 @@ import {
   SANDBOX_GH_TOKEN_ENV,
   SANDBOX_SKILLS_DIR,
   SANDBOX_SOUL_ENV,
+  SPAWNED_WORKER_ENV,
   WORKER_IDLE_TIMEOUT_SECONDS,
 } from "../realBackend.js";
 import {
@@ -605,7 +606,7 @@ export class RealFamilyBackend implements FamilyBackend {
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
   } {
-    const env: Record<string, string> = { [SANDBOX_SOUL_ENV]: MERGER_SOUL };
+    const env: Record<string, string> = { ...SPAWNED_WORKER_ENV, [SANDBOX_SOUL_ENV]: MERGER_SOUL };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     return {
       imageName: this.opts.imageName,
@@ -1186,7 +1187,7 @@ export class RealFamilyBackend implements FamilyBackend {
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
-    const env: Record<string, string> = { [SANDBOX_SOUL_ENV]: CMR_SOUL };
+    const env: Record<string, string> = { ...SPAWNED_WORKER_ENV, [SANDBOX_SOUL_ENV]: CMR_SOUL };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     // The in-container completeness gate's `gh issue view` (the live issue body =
     // DELIVERED-vs-spec authority) reads GH_TOKEN. Inject only when present (mirrors
@@ -1531,7 +1532,7 @@ export class RealFamilyBackend implements FamilyBackend {
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
   } {
-    const env: Record<string, string> = { [SANDBOX_SOUL_ENV]: SHIP_SOUL };
+    const env: Record<string, string> = { ...SPAWNED_WORKER_ENV, [SANDBOX_SOUL_ENV]: SHIP_SOUL };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     // cmr S336 r10: the in-container `gh pr create` (the family delivery) reads
     // GH_TOKEN. Set only when present (the pure seam stays tolerant; the REQUIRE-gh

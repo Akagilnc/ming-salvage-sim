@@ -29,6 +29,7 @@ import {
   SANDBOX_CODEX_DIR,
   SANDBOX_GH_TOKEN_ENV,
   SANDBOX_SOUL_ENV,
+  SPAWNED_WORKER_ENV,
 } from "../../src/realBackend.js";
 import { cmrWorkerSpec, familyShipWorkerSpec } from "../../src/family/dispatchFamilyWorker.js";
 import type { ShipAuth } from "../../src/realBackend.js";
@@ -275,6 +276,12 @@ describe("#336 family shipSandboxConfig — the WRITE-soul ship sandbox", () => 
   it("omits GH_TOKEN when no gh token is present (the pure seam stays tolerant; the REQUIRE-gh preflight lives upstream in runShipWorker)", () => {
     const c = cfg().config({ codexAuthDir: "/tmp/codex", claudeToken: "tok" });
     expect(c.env[SANDBOX_GH_TOKEN_ENV]).toBeUndefined();
+  });
+
+  it("marks the family ship container as an orchestrator-spawned, non-interactive session (gstack-ship auto-decides its P1 gate)", () => {
+    const c = cfg().config({ codexAuthDir: "/tmp/codex", claudeToken: "tok" });
+    expect(c.env.OPENCLAW_SESSION).toBe("1");
+    expect(c.env.OPENCLAW_SESSION).toBe(SPAWNED_WORKER_ENV.OPENCLAW_SESSION);
   });
 });
 
