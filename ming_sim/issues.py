@@ -452,6 +452,77 @@ def _monthly_economy_items(effect: Dict[str, object]) -> List[Dict[str, object]]
     return items
 
 
+def _recurring_funding_label_tokens(*values: object) -> set[str]:
+    tokens: set[str] = set()
+    for value in values:
+        raw = str(value or "").strip()
+        if not raw:
+            continue
+        key_stem = raw
+        if key_stem.endswith("_base") or key_stem.endswith("_rate"):
+            key_stem = key_stem.rsplit("_", 1)[0]
+        normalized = re.sub(r"[\s，。、“”‘’：:；;,.·_\-（）()\[\]【】]+", "", key_stem)
+        for word in (
+            "同批extractor误产的重复",
+            "同批误产的重复",
+            "每月",
+            "按月",
+            "月度",
+            "月支",
+            "拨给",
+            "拨付",
+            "拨银",
+            "拨",
+            "给",
+            "支给",
+            "支出",
+            "开支",
+            "费用",
+            "经费",
+            "月",
+            "万两",
+            "银两",
+            "银",
+        ):
+            normalized = normalized.replace(word, "")
+        if normalized:
+            tokens.add(normalized)
+    return tokens
+
+
+def _commitment_fiscal_create_duplicate_reason(
+    create: Dict[str, object],
+    commitment_economy: List[Dict[str, object]],
+    db: GameDB,
+) -> str:
+    account = str(create.get("account") or "").strip()
+    display = str(create.get("display") or "").strip() or (db._stem_of(str(create.get("key") or "")) or str(create.get("key") or ""))
+    create_tokens = _recurring_funding_label_tokens(
+        display,
+        create.get("key"),
+        create.get("reason"),
+    )
+    if not account or not create_tokens:
+        return ""
+    for item in commitment_economy:
+        if str(item.get("account") or "").strip() != account:
+            continue
+        try:
+            delta = _strict_int(item.get("delta"))
+        except (TypeError, ValueError):
+            continue
+        if delta >= 0:
+            continue
+        item_tokens = _recurring_funding_label_tokens(
+            item.get("category"),
+            item.get("reason"),
+            item.get("purpose"),
+        )
+        if create_tokens & item_tokens:
+            return "同批已有承诺 issue ongoing_effects.economy 承载该经常性拨款，fiscal_create 已去重"
+    return ""
+
+
 def _monthly_person_rating_changes(effect: Dict[str, object]) -> List[Dict[str, object]]:
     raw_changes: List[Dict[str, object]] = []
     for key in ("人物变更", "person_changes"):
@@ -5782,6 +5853,21 @@ def apply_score_extraction(
         event_result_delta_event_ids=strategic_event_result_delta_event_ids,
         defer_event_trigger_ids=strategic_event_pool_ids)
 
+    commitment_economy_carriers: List[Dict[str, object]] = []
+    for item in issue_summary.get("new_issues") or []:
+        if not (
+            isinstance(item, dict)
+            and not item.get("rejected")
+            and str(item.get("commitment_kind") or "").strip()
+            and item.get("issue_id") is not None
+        ):
+            continue
+        row = db.conn.execute("SELECT ongoing_effects FROM issues WHERE id=?", (int(item["issue_id"]),)).fetchone()
+        if row is None:
+            continue
+        ongoing = loads_effect_dict(row["ongoing_effects"])
+        commitment_economy_carriers.extend(_monthly_economy_items(ongoing))
+
     def _reject_suppressed_strategic_results(event_id: str, event_title: str, reason: str = "") -> None:
         event_region_deltas = _entity_deltas_for_strategic_event(
             strategic_region_deltas_raw,
@@ -6057,6 +6143,15 @@ def apply_score_extraction(
     #      使同{月}「新立关税 + 立即调率」可一气落地。
     applied_fiscal_creates: List[Dict[str, object]] = []
     for create in extracted.get("fiscal_creates") or []:
+        dedup_reason = _commitment_fiscal_create_duplicate_reason(create, commitment_economy_carriers, db)
+        if dedup_reason:
+            applied_fiscal_creates.append({
+                "rejected": True,
+                "reason": dedup_reason,
+                "category": "deduped_commitment_carrier",
+                "item": create,
+            })
+            continue
         key = str(create.get("key") or "").strip()
         account = str(create.get("account") or "").strip()
         # direction 同义词在唯一守门人处归一（cmr S3 r9:归一放 driver 不经过的

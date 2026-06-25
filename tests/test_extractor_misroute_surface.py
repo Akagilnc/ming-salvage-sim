@@ -65,7 +65,11 @@ def test_garbage_key_does_not_surface(monkeypatch):
 
 
 def test_field_owner_map_covers_all_modules():
-    # 反向图应覆盖每个模块的每个字段，且每字段恰一主（4 模块 field 集互斥）。
+    # 反向图应覆盖每个模块的每个字段；new_issues 是 issues 主持、personnel_secret
+    # 为经常性密令拨款承诺共享的例外。
     for module, fields in sim.MODULE_FIELDS.items():
         for field in fields:
-            assert sim._FIELD_OWNER_MODULE[field] == module
+            if field == "new_issues" and module == "personnel_secret":
+                assert sim._FIELD_OWNER_MODULE[field] == "issues"
+            else:
+                assert sim._FIELD_OWNER_MODULE[field] == module
