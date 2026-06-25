@@ -3,7 +3,7 @@ from pathlib import Path
 
 import ming_sim.issues as I
 from ming_sim.db import _has_stop_condition
-from ming_sim.simulation import _extractor_context_payload
+from ming_sim.simulation import _extractor_context_payload, _sanitize_module_output
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,6 +48,31 @@ def test_issue_extractor_prompt_routes_future_one_shot_decree_commitments():
     assert "ongoing_effects 可留空" in prompt
     assert "acknowledged" in prompt
     assert "ACK 收尾" in prompt
+
+
+def test_personnel_secret_extractor_routes_recurring_secret_funding_commitments():
+    prompt = (ROOT / "content/prompts/score_extractor_personnel_secret.md").read_text(encoding="utf-8")
+    raw_issue = {
+        "origin_kind": "decree",
+        "origin_ref": "secret_order:7",
+        "kind": "initiative",
+        "title": "内库月拨安抚诸将",
+        "ongoing_effects": {
+            "economy": [
+                {"account": "内库", "delta": -20, "category": "安抚诸将", "reason": "密令每月拨给"}
+            ]
+        },
+        "commitment_kind": "until_stop",
+    }
+
+    assert "经常性密令拨款" in prompt
+    assert "new_issues" in prompt
+    assert "一锤子密令" in prompt
+
+    cleaned = _sanitize_module_output("personnel_secret", {"new_issues": [raw_issue]})
+
+    assert cleaned["new_issues"] == [raw_issue]
+    assert "_module_rejections" not in cleaned
 
 
 def test_until_stop_commitment_issue_is_created_with_carrier_fields(game, monkeypatch):
@@ -114,6 +139,59 @@ def test_until_stop_commitment_issue_is_created_with_carrier_fields(game, monkey
     assert extractor_issue["commitment_kind"] == "until_stop"
     assert json.loads(extractor_issue["stop_condition"]) == stop_condition
     assert extractor_issue["condition_role"] == "commitment_stop_condition"
+
+
+def test_decree_commitment_dedups_same_batch_fiscal_create_carrier(game, monkeypatch):
+    db, state, content = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    out = I.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "origin_ref": "decree:turn-1:xixue-monthly",
+                    "kind": "initiative",
+                    "title": "每月拨西学经费",
+                    "stage_text": "太仓每月拨银五十万两办西学。",
+                    "ongoing_effects": {
+                        "economy": [
+                            {
+                                "account": "国库",
+                                "delta": -50,
+                                "category": "西学经费",
+                                "reason": "每月拨西学经费",
+                            }
+                        ]
+                    },
+                    "commitment_kind": "until_stop",
+                }
+            ],
+            "fiscal_creates": [
+                {
+                    "key": "西学经费_base",
+                    "account": "国库",
+                    "direction": "expense",
+                    "init_value": 50,
+                    "display": "西学经费",
+                    "reason": "同批 extractor 误产的重复月支",
+                }
+            ],
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is False
+    assert _issue_by_title(db, "每月拨西学经费") is not None
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM fiscal_config WHERE key IN ('西学经费_base', '西学经费_rate')"
+    ).fetchone()[0] == 0
+    fiscal_result = out["fiscal_creates"][0]
+    assert fiscal_result["rejected"] is True
+    assert fiscal_result["category"] == "deduped_commitment_carrier"
+    assert "承诺 issue" in fiscal_result["reason"]
 
 
 def test_until_stop_commitment_shape_rejects_without_explicit_marker(game, monkeypatch):

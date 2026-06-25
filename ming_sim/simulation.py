@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import copy
 import sqlite3
 from typing import Callable, Dict, List, Optional
 
@@ -499,16 +500,18 @@ MODULE_FIELDS: Dict[str, set[str]] = {
     "military_external": {"army_delta", "new_armies", "power_updates", "world_advance"},
     "issues": {"issue_advances", "new_issues", "事件结局", "cancels", "close_issues"},
     "personnel_secret": {
-        "人物变更", "secret_order_updates", "secret_order_closes", "emperor_fate",
+        "人物变更", "new_issues", "secret_order_updates", "secret_order_closes", "emperor_fate",
     },
 }
 
-# 字段 → 所属模块 反向图（4 个模块 field 集互斥，故每字段恰一主）。
+# 字段 → 首要所属模块反向图。`new_issues` 由 issues 主持，同时允许 personnel_secret
+# 为经常性密令拨款产承诺 issue；misroute 留痕仍指向首要 owner，避免重复 owner 噪音。
 # 用于 #63 class 2：某模块 extractor 输出里若混进「属其它模块」的字段，
 # _sanitize_module_output 会按白名单静默剔除——查此图即知它本该去哪，留痕不静默吞。
-_FIELD_OWNER_MODULE: Dict[str, str] = {
-    field: module for module, fields in MODULE_FIELDS.items() for field in fields
-}
+_FIELD_OWNER_MODULE: Dict[str, str] = {}
+for _module, _fields in MODULE_FIELDS.items():
+    for _field in _fields:
+        _FIELD_OWNER_MODULE.setdefault(_field, _module)
 
 
 def _extractor_context_payload(
@@ -995,12 +998,15 @@ def _clean_fiscal_removes(raw: object) -> List[Dict[str, object]]:
 
 
 def _merge_module_outputs(outputs: Dict[str, Dict[str, object]]) -> Dict[str, object]:
-    merged = dict(EMPTY_EXTRACTION)
+    merged = copy.deepcopy(EMPTY_EXTRACTION)
     module_rejections: List[Dict[str, object]] = []
     for module in EXTRACTION_MODULES:
         for key, val in outputs.get(module, {}).items():
             if key == "_module_rejections" and isinstance(val, list):
                 module_rejections.extend(item for item in val if isinstance(item, dict))
+                continue
+            if key == "new_issues" and isinstance(val, list):
+                merged["new_issues"].extend(val)
                 continue
             merged[key] = val
     if module_rejections:
