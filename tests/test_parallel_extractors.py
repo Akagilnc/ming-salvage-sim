@@ -46,6 +46,26 @@ def test_parallel_extract_matches_serial(game, monkeypatch):
     assert serial[1] == parallel[1]      # 本地化 JSON 一致
 
 
+def test_shared_new_issues_from_issues_and_personnel_secret_are_merged(game, monkeypatch):
+    db, state, content = game
+    canned = {
+        **_CANNED,
+        "issues": '{"new_issues": [{"origin_kind": "decree", "title": "公开月拨", "kind": "initiative", "ongoing_effects": {"economy": [{"account": "国库", "delta": -10, "reason": "公开每月拨款"}]}, "commitment_kind": "until_stop"}]}',
+        "personnel_secret": '{"new_issues": [{"origin_kind": "decree", "origin_ref": "secret_order:7", "title": "密令月拨", "kind": "initiative", "ongoing_effects": {"economy": [{"account": "内库", "delta": -20, "reason": "密令每月拨款"}]}, "commitment_kind": "until_stop"}], "secret_order_updates": []}',
+    }
+
+    def _fake_run_shared(agent, prompt, tag):
+        if tag.startswith("extractor/"):
+            return canned[_module_of(tag)]
+        return prompt
+
+    monkeypatch.setattr(simulation, "run_agent_text", _fake_run_shared)
+    merged, _localized, _inputs = extract_scores_by_modules_with_agno(
+        _dummy_agents(), db, state, "邸报", parallel=False)
+
+    assert [item["title"] for item in merged["new_issues"]] == ["公开月拨", "密令月拨"]
+
+
 def test_parallel_extract_runs_concurrently(game, monkeypatch):
     """parallel=True 时 4 个 LLM 调用真并发：峰值并发 ≥2，wall-clock 明显短于串行总和。"""
     db, state, content = game
