@@ -35,11 +35,18 @@ through the two lens gates below so completeness can never be skipped or conflat
 3. **Gate 2 — correctness (spine Step 6). Only AFTER Gate 1 has converged.** Invoke
    the **`ak-cmr-correctness`** skill on the now-complete diff: real defects, broken
    invariants, spec↔impl contradictions, missing guards, security, 跨片接缝. P0/P1
-   must be fixed; P2 should be fixed (cheap fixes are not deferred into backlog debt);
-   a defer is only for a genuinely out-of-scope / needs-design / high-risk-independent
-   finding, recorded as an **issue**, not in a PR body. After every fix in EITHER
-   gate, do the mandatory self-check 二连 (same-pattern + fix-introduced-bug) the
-   skill prescribes.
+   must be fixed; P2 should be fixed. **A cheap fix is NEVER deferred.** "Cheap" =
+   adding an in-memory field / dict key, threading an existing id through a few call
+   sites, or updating a handful of test assertions — fix it now. A defer is ONLY for a
+   finding whose fix genuinely needs an out-of-scope **DB schema migration**, a
+   **public-contract / API change**, or a **cross-cutting redesign** — and you must
+   **PROVE that cost concretely** (name the table/migration, the contract, or the
+   modules touched). Never assert "this needs a big change / schema change" to dodge a
+   cheap fix; if you cannot name the out-of-scope artifact, it is cheap → fix it.
+   Record an accepted defer as a **GitHub issue** (`gh issue create`), or — when gh is
+   unauthenticated in-container — as a `TODOS.md` ledger entry; **never** in a PR body.
+   After every fix in EITHER gate, do the mandatory self-check 二连 (same-pattern +
+   fix-introduced-bug) the skill prescribes.
 4. **Commit** each fix on the resident family base — one commit per coherent change,
    never `git commit --amend` — with the **`sandcastle:`** prefix (orchestrator
    CLAUDE.md). Do NOT push and do NOT open a PR; the family ship worker owns that.
