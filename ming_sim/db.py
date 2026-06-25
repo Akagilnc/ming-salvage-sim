@@ -4826,11 +4826,8 @@ class GameDB:
         turn_row = self._row_dict(row)
         if turn_row["status"] != "active" or turn_row.get("minister_message_id"):
             return turn_row
-        message_ids = [
-            int(mid)
-            for mid in (turn_row.get("user_message_id"),)
-            if mid
-        ]
+        _uid = turn_row.get("user_message_id")
+        message_ids = [int(_uid)] if _uid else []
         with self.conn:
             # Atomically transition ONLY a still-active, still-pre-reply turn: the
             # WHERE mirrors the read-guard above (a completed turn keeps status
