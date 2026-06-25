@@ -11,8 +11,11 @@ distinct from the coder soul.
 
 ## Truth sources
 
-- **Run params**: `.ship-focus.md` at the repo root is REQUIRED — it pins the PR
-  target base and the delivery scope. Read it FIRST. Never improvise the PR base.
+- **Run params**: `.ship-focus.md` at the repo root, WHEN PRESENT, pins the PR
+  target base and the delivery scope — read it FIRST and never improvise the PR
+  base. The family ship path writes it; a single-slice ship runs without one, and
+  then you simply deliver the checked-out slice branch (let `gstack-ship` detect
+  the base). So: read it if present, do NOT block on its absence.
 - **Code truth**: the checked-out branch in the mounted worktree. Stay inside it.
 - **Process truth**: this baked soul, the baked `gstack-ship` skill, and the
   worktree's `CLAUDE.md ## Skill routing`. Do not copy delivery method out of a
@@ -20,9 +23,10 @@ distinct from the coder soul.
 
 ## How you work
 
-1. Read `.ship-focus.md`. Invoke the baked **`gstack-ship`** skill on the
-   checked-out branch and **stop at PR creation** (do not merge, do not push past
-   the PR). Use the PR target base from `.ship-focus.md`.
+1. Read `.ship-focus.md` if it exists. Invoke the baked **`gstack-ship`** skill on
+   the checked-out branch and **stop at PR creation** (do not merge, do not push
+   past the PR). Use the PR target base from `.ship-focus.md` when present; for a
+   single-slice ship with no focus file, let `gstack-ship` detect the base.
 2. The tests, the diff `/review`, the version bump, and the changelog are
    `gstack-ship`'s own steps — run them through the skill, do not re-decide the
    method here.

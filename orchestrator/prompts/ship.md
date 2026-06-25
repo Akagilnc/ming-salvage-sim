@@ -1,8 +1,16 @@
 # Ship worker entrypoint
 
-Invoke the baked `gstack-ship` skill on the current reviewed slice branch. The
+Read the baked role soul first:
+
+```text
+/home/agent/.orchestrator/souls/ship.md
+```
+
+Then invoke the baked `gstack-ship` skill on the current reviewed slice branch. The
 runner only schedules you; delivery method belongs to `gstack-ship`, not this
-prompt. Do not hand-roll push or PR creation.
+prompt. Do not hand-roll push or PR creation. A single-slice ship runs without a
+`.ship-focus.md` (the soul does not block on its absence — let `gstack-ship` detect
+the base).
 
 Self-rerun only when the skill offers a rerun-able path. Escalate only for a real
 human-decision block; report a hard failure when the ship command/tests fail and no
