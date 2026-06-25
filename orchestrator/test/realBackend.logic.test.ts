@@ -403,12 +403,15 @@ describe("realBackend auth mount paths", () => {
 
 describe("realBackend WORKER_IDLE_TIMEOUT_SECONDS (idle-timeout disable)", () => {
   it("is a far-future value that never fires in practice (sandcastle has no disable sentinel)", () => {
-    // 1 year in seconds: sandcastle multiplies idleTimeoutSeconds by 1e3 and
-    // sleeps that long before failing the run, and 0 would fire immediately —
-    // so a huge finite value is the only clean way to neutralize the 600s default.
-    expect(WORKER_IDLE_TIMEOUT_SECONDS).toBe(31_536_000);
+    // ONE WEEK in seconds. sandcastle multiplies idleTimeoutSeconds by 1e3, and the
+    // millisecond delay must fit in a signed 32-bit int — a larger value (e.g. 1
+    // year = 31_536_000_000 ms) OVERFLOWS int32 and fires the timer IMMEDIATELY
+    // (gemini #384 R2). A week dwarfs any real run and stays well under the limit.
+    expect(WORKER_IDLE_TIMEOUT_SECONDS).toBe(604_800);
     // far larger than sandcastle's 600s default → never beats a real worker.
     expect(WORKER_IDLE_TIMEOUT_SECONDS).toBeGreaterThan(600);
+    // its millisecond form must not overflow a signed 32-bit timer.
+    expect(WORKER_IDLE_TIMEOUT_SECONDS * 1000).toBeLessThanOrEqual(2 ** 31 - 1);
   });
 });
 

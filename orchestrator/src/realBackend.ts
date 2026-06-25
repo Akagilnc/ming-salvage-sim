@@ -450,10 +450,18 @@ export const SANDBOX_GH_TOKEN_ENV = "GH_TOKEN";
  * fails the run with "Agent idle for N seconds"). Every observed "hang" so far
  * was the laptop sleeping mid-run or deep-reasoning silence — false fires; real
  * hangs are <1% and are caught manually. Sandcastle has no disable sentinel
- * (`0` would fire immediately; `??` only falls back on null/undefined), so we
- * use 1 year in seconds — a timer that never fires in practice.
+ * (`0` would fire immediately; `??` only falls back on null/undefined), so we use
+ * ONE WEEK — far longer than any real worker run, so the 600s default is
+ * neutralized in practice.
+ *
+ * Must stay well under the timer limit: sandcastle multiplies idleTimeoutSeconds
+ * by 1e3, and the millisecond delay must fit in a signed 32-bit int — Node timers
+ * (and the Effect scheduler underneath) clamp anything over 2**31-1 ms, firing
+ * IMMEDIATELY instead of waiting (gemini #384 R2: a 1-year value = 31_536_000_000
+ * ms OVERFLOWED int32 → the idle timer fired at once, the opposite of "never
+ * fires"). 604_800 * 1000 = 604_800_000 ms ≪ 2**31-1, no overflow.
  */
-export const WORKER_IDLE_TIMEOUT_SECONDS = 31_536_000;
+export const WORKER_IDLE_TIMEOUT_SECONDS = 604_800;
 
 /**
  * Marks the container as an orchestrator-spawned, non-interactive session.

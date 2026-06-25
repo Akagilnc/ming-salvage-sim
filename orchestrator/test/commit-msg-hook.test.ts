@@ -63,4 +63,16 @@ describe("commit-msg hook — sandcastle: prefix", () => {
       "sandcastle: feat: x\n\nF1: wrap cleanup in try/except\n\nCo-Authored-By: Someone <a@b.c>\n",
     );
   });
+
+  it("leaves an EMPTY message untouched so git can still abort the commit (#384 R2)", () => {
+    // Prepending `sandcastle: ` to an empty message would make it non-empty and
+    // defeat git's empty-message abort, creating a junk commit.
+    expect(runHook("")).toBe("");
+    expect(runHook("\n\n")).toBe("\n\n");
+  });
+
+  it("leaves a COMMENT-ONLY message untouched (git aborts it as empty)", () => {
+    const commentOnly = "# Please enter the commit message for your changes.\n#\n";
+    expect(runHook(commentOnly)).toBe(commentOnly);
+  });
 });
