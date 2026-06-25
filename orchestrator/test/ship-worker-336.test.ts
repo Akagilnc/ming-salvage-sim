@@ -25,6 +25,7 @@ import {
   RealBackend,
   SANDBOX_CODEX_DIR,
   SANDBOX_GH_TOKEN_ENV,
+  SANDBOX_REPO_ENV,
   SANDBOX_SOUL_ENV,
   SPAWNED_WORKER_ENV,
 } from "../src/realBackend.js";
@@ -238,6 +239,9 @@ describe("#336 single-slice shipSandboxConfig — best-effort ship auth", () => 
     expect(c.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
     expect(c.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok");
     expect(c.env[SANDBOX_SOUL_ENV]).toBe("ship");
+    // ORCHESTRATOR_REPO is exported so the ship soul's `gh issue create
+    // --repo "$ORCHESTRATOR_REPO"` defer path works (codex #384).
+    expect(c.env[SANDBOX_REPO_ENV]).toBe("Akagilnc/ming-salvage-sim");
   });
 
   it("exports the gh token as GH_TOKEN so the in-container `gh pr create` / push over https is authenticated (cmr S336 r10 P1)", () => {

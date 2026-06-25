@@ -75,6 +75,7 @@ import {
   reconcileCoderCommits,
   SANDBOX_CODEX_DIR,
   SANDBOX_GH_TOKEN_ENV,
+  SANDBOX_REPO_ENV,
   SANDBOX_SKILLS_DIR,
   SANDBOX_SOUL_ENV,
   SPAWNED_WORKER_ENV,
@@ -1538,7 +1539,15 @@ export class RealFamilyBackend implements FamilyBackend {
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
   } {
-    const env: Record<string, string> = { ...SPAWNED_WORKER_ENV, [SANDBOX_SOUL_ENV]: SHIP_SOUL };
+    // ORCHESTRATOR_REPO too: the ship soul records a deferred finding with
+    // `gh issue create --repo "$ORCHESTRATOR_REPO"`, so the family ship sandbox must
+    // export it or that tracker write fails on an unset var (codex #384 — symmetric
+    // with the single-slice ship sandbox).
+    const env: Record<string, string> = {
+      ...SPAWNED_WORKER_ENV,
+      [SANDBOX_SOUL_ENV]: SHIP_SOUL,
+      [SANDBOX_REPO_ENV]: this.opts.repo,
+    };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     // cmr S336 r10: the in-container `gh pr create` (the family delivery) reads
     // GH_TOKEN. Set only when present (the pure seam stays tolerant; the REQUIRE-gh

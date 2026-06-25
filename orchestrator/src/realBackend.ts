@@ -2390,7 +2390,14 @@ export class RealBackend implements Backend {
     // gstack-ship, stop-at-PR, defer→tracker not PR body) — souls/ship.md covers
     // both single-slice and family deliveries, so the single-slice ship is unified
     // with the family ship rather than left on the coder soul (gemini #384 R3).
-    const env: Record<string, string> = { ...SPAWNED_WORKER_ENV, [SANDBOX_SOUL_ENV]: "ship" };
+    // ORCHESTRATOR_REPO too: the ship soul records a deferred finding with
+    // `gh issue create --repo "$ORCHESTRATOR_REPO"`, so the sandbox must export it
+    // or that tracker write fails on an unset var (codex #384). Mirrors boxConfig.
+    const env: Record<string, string> = {
+      ...SPAWNED_WORKER_ENV,
+      [SANDBOX_SOUL_ENV]: "ship",
+      [SANDBOX_REPO_ENV]: this.opts.repo,
+    };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     // cmr S336 r10: the in-container `gh` (push over https + `gh pr create`)
     // authenticates from GH_TOKEN. Set only when present (the pure seam stays
