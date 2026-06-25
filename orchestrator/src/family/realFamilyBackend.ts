@@ -1138,7 +1138,12 @@ export class RealFamilyBackend implements FamilyBackend {
     } catch {
       // claude token absent ⇒ the Claude Agent leg degrades (no env var).
     }
-    return { codexAuthDir, agyDir, claudeToken };
+    // gh token → GH_TOKEN for the in-container completeness gate's `gh issue view`
+    // (the live issue body is its DELIVERED-vs-spec authority). BEST-EFFORT, mirroring
+    // the ship worker's readGhToken extraction (host OS keyring, not a portable
+    // hosts.yml) — but NOT preflighted: a missing token degrades the gate's authority,
+    // it does not block the cmr worker (the cmr worker has no `gh pr create` to fail).
+    return { codexAuthDir, agyDir, claudeToken, ghToken: this.readGhToken() };
   }
 
   /**
@@ -1183,6 +1188,11 @@ export class RealFamilyBackend implements FamilyBackend {
   } {
     const env: Record<string, string> = { [SANDBOX_SOUL_ENV]: CMR_SOUL };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
+    // The in-container completeness gate's `gh issue view` (the live issue body =
+    // DELIVERED-vs-spec authority) reads GH_TOKEN. Inject only when present (mirrors
+    // shipSandboxConfig's `!== undefined` guard); UNLIKE ship there is NO preflight —
+    // gh absence degrades the gate's authority, it never blocks the cmr worker.
+    if (auth.ghToken !== undefined) env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
     // Each leg's auth is mounted only when present (the 降级链 — a missing leg
     // degrades, the rest still review). The agy dir is WRITABLE (default, no
@@ -1729,6 +1739,14 @@ export interface CmrAuth {
   readonly agyDir?: string;
   /** The claude OAuth token (env var), or undefined if absent. */
   readonly claudeToken?: string;
+  /**
+   * The host gh OAuth token (`gh auth token` → {@link SANDBOX_GH_TOKEN_ENV} env), or
+   * undefined if absent. BEST-EFFORT (unlike the ship worker's hard-required gh): the
+   * completeness gate grounds against the live issue body via `gh issue view`, so a
+   * present token keeps that authority intact, but its ABSENCE only DEGRADES the gate
+   * (it falls back to commit-titles/test-files) — it never blocks the cmr worker.
+   */
+  readonly ghToken?: string;
 }
 
 /**
