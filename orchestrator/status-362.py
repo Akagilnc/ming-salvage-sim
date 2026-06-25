@@ -38,7 +38,9 @@ try:
     pid = subprocess.run(["pgrep", "-f", "launch-362.mjs"], capture_output=True, text=True, timeout=10).stdout.split()
     if pid:
         et = subprocess.run(["ps", "-o", "etime=", "-p", pid[0]], capture_output=True, text=True, timeout=10).stdout.strip()
-        drv = f"✅ 跑了 {et}"
+        # ps can return empty (compat / race where the pid just vanished) — don't
+        # render a bare "跑了 " with no elapsed time; say so explicitly (gemini #384).
+        drv = f"✅ 跑了 {et}" if et else "✅ 运行中 (elapsed 不可得)"
     else:
         drv = "⏹ 已退出 (跑完?)"
 except Exception:
