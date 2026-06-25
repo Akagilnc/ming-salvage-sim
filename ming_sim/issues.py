@@ -523,6 +523,28 @@ def _commitment_fiscal_create_duplicate_reason(
     return ""
 
 
+def _commitment_carrier_same_account_unmatched(
+    create: Dict[str, object],
+    commitment_economy: List[Dict[str, object]],
+) -> str:
+    """ADR0027 残留观测：同批、同账户、有 decree 承诺月支，却**未按科目名匹配上**的
+    fiscal_create —— 疑似异名漏匹（两模块给同一笔起不同名）。返回触发账户名供日志，
+    无则空串。**仅作试玩观测信号、不改落库行为**：该 fiscal_create 仍照常落账。"""
+    account = str(create.get("account") or "").strip()
+    if not account:
+        return ""
+    for item in commitment_economy:
+        if str(item.get("account") or "").strip() != account:
+            continue
+        try:
+            delta = _strict_int(item.get("delta"))
+        except (TypeError, ValueError):
+            continue
+        if delta < 0:
+            return account
+    return ""
+
+
 def _monthly_person_rating_changes(effect: Dict[str, object]) -> List[Dict[str, object]]:
     raw_changes: List[Dict[str, object]] = []
     for key in ("人物变更", "person_changes"):
@@ -6162,6 +6184,20 @@ def apply_score_extraction(
                 "item": create,
             })
             continue
+        # ADR0027 残留观测兜底：同批、同账户、有 decree 承诺月支却未按科目名匹配上的
+        # fiscal_create = 疑似异名漏匹（不改落库、照常落账，只打日志当试玩信号；真在
+        # 试玩看到漏再升级到精确 provenance）。
+        residual_account = _commitment_carrier_same_account_unmatched(create, commitment_economy_carriers)
+        if residual_account:
+            residual_display = (
+                str(create.get("display") or "").strip()
+                or (db._stem_of(str(create.get("key") or "")) or str(create.get("key") or "")).strip()
+                or "无名月支"
+            )
+            tlog(
+                f"[commitment-dedup] ADR0027 残留观测：同批{residual_account}已有 decree 承诺月支，"
+                f"但 fiscal_create「{residual_display}」未按科目名匹配上、照常落账——疑似异名漏匹，试玩留意。"
+            )
         key = str(create.get("key") or "").strip()
         account = str(create.get("account") or "").strip()
         # direction 同义词在唯一守门人处归一（cmr S3 r9:归一放 driver 不经过的
