@@ -470,18 +470,33 @@ const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
  * is NEVER the orchestrator giving up (that only happens on a MODEL escalate
  * signal — US#18/US#19, never by counting). See StepSpec.maxIter.
  *
- * Swapping models = change the `model` slug here; no image rebuild, no structural
- * StepSpec change (PRD #244 Implementation Decisions).
+ * Swapping models = set ORCHESTRATOR_CODER_MODEL (see {@link coderModel}); no image
+ * rebuild, no structural StepSpec change (PRD #244 Implementation Decisions).
  */
+
+/**
+ * The S2 coder worker's model slug, switchable via `ORCHESTRATOR_CODER_MODEL`
+ * (default `"gpt-5.5"`). Swapping the coder backend (codex gpt-5.5 ↔ a Claude
+ * coder ↔ …) is THIS env alone — the slug is resolved to the baked CLI by
+ * agentForSlug, an invalid slug fails closed at modelIdForSlug, and the auth mount
+ * is best-effort for both the codex and claude legs (realBackend mountAuth), so no
+ * auth-wiring change is needed to switch. The user's standing decision: make the
+ * coder model conveniently switchable rather than hard-coded.
+ */
+export function coderModel(): string {
+  return process.env.ORCHESTRATOR_CODER_MODEL?.trim() || "gpt-5.5";
+}
+
 export const STEP_SPECS: Readonly<Record<"S2", StepSpec>> = {
   S2: {
     id: "S2",
     role: "coder",
     promptFile: "coder_implement.md",
-    // The whole-slice build worker runs on Codex gpt-5.5 (was Sonnet 4.6). The slug
-    // is resolved to the baked codex CLI by agentForSlug (realBackend); swapping the
-    // model is THIS slug change only — no image rebuild, no StepSpec shape change.
-    model: "gpt-5.5",
+    // The whole-slice build worker's model is env-switchable (default Codex
+    // gpt-5.5; was Sonnet 4.6). The slug is resolved to the baked CLI by
+    // agentForSlug (realBackend); switching the model is `ORCHESTRATOR_CODER_MODEL`
+    // alone — no image rebuild, no StepSpec shape change.
+    model: coderModel(),
     completionSignal: "CODER_STEP_COMPLETE",
     maxIter: 5,
     soul: "coder",
