@@ -86,6 +86,30 @@ def test_merge_non_list_new_issues_does_not_clobber_merged_list():
     )
 
 
+def test_merge_dedups_same_origin_commitment_across_modules():
+    """integrated cmr Gate2 r3 codex correctness：issues 与 personnel_secret 都能产 new_issues；
+    若两模块对同一笔（同 origin_kind+origin_ref）各产一条承诺 issue，合并须去重——否则 apply 建
+    两条 active 承诺 → 月度 ongoing 双扣（正是 #340 要消的）。同批同源只留第一条 + 留拒收信号。"""
+    from ming_sim.simulation import _merge_module_outputs
+
+    dup = {
+        "origin_kind": "decree", "origin_ref": "secret_order:7", "title": "密令月拨",
+        "kind": "initiative", "commitment_kind": "until_stop",
+        "ongoing_effects": {"economy": [{"account": "内库", "delta": -20, "reason": "密令每月拨款"}]},
+    }
+    outputs = {
+        "issues": {"new_issues": [dict(dup, title="公开误产同源")]},
+        "personnel_secret": {"new_issues": [dict(dup)]},
+    }
+    merged = _merge_module_outputs(outputs)
+
+    # 同源只留一条（第一个模块 issues 的），不双建
+    refs = [it.get("origin_ref") for it in merged["new_issues"]]
+    assert refs == ["secret_order:7"]
+    rejections = merged.get("_module_rejections") or []
+    assert any("同源承诺重复" in str(r.get("reason", "")) for r in rejections)
+
+
 def test_parallel_extract_runs_concurrently(game, monkeypatch):
     """parallel=True 时 4 个 LLM 调用真并发：峰值并发 ≥2，wall-clock 明显短于串行总和。"""
     db, state, content = game
