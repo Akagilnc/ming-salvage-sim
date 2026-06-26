@@ -87,6 +87,49 @@ def parse_decision_blocks(narrative: str) -> tuple[str, List[Dict[str, object]]]
     return clean, decisions
 
 
+def bind_decisions_to_candidate_events(
+    decisions: List[Dict[str, object]],
+    simulator_payload: object,
+) -> List[Dict[str, object]]:
+    """Fill missing decision event_id values from the authoritative candidate snapshot.
+
+    Explicit event_id values from the simulator decision block win. For missing ids,
+    bind only on a unique exact title match inside simulator_payload.candidate_events;
+    non-event HITL decisions and ambiguous candidate titles remain unbound.
+    """
+    if not decisions:
+        return []
+    if not isinstance(simulator_payload, dict):
+        return [dict(d) for d in decisions]
+    raw_candidates = simulator_payload.get("candidate_events")
+    if not isinstance(raw_candidates, list):
+        return [dict(d) for d in decisions]
+
+    title_to_ids: Dict[str, List[str]] = {}
+    for item in raw_candidates:
+        if not isinstance(item, dict):
+            continue
+        event_id = str(item.get("id") or "").strip()
+        title = str(item.get("title") or "").strip()
+        if not event_id or not title:
+            continue
+        title_to_ids.setdefault(title, []).append(event_id)
+
+    bound: List[Dict[str, object]] = []
+    for decision in decisions:
+        out = dict(decision)
+        if str(out.get("event_id") or "").strip():
+            bound.append(out)
+            continue
+        title = str(out.get("title") or "").strip()
+        ids = title_to_ids.get(title) or []
+        unique_ids = {event_id for event_id in ids if event_id}
+        if len(unique_ids) == 1:
+            out["event_id"] = next(iter(unique_ids))
+        bound.append(out)
+    return bound
+
+
 def group_secret_orders_for_sim(
     rows: List[Dict[str, object]],
 ) -> Dict[str, List[Dict[str, object]]]:
