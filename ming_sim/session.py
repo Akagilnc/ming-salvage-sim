@@ -1515,25 +1515,35 @@ class GameSession:
         # 回写选择
         stored = self.db.list_pending_decisions(self.state.turn)
         ctx_for_event_binding = self.db.get_resolve_context(self.state.turn)
+        # ready context = 上次 phase2 已抽取并持久化、settle 曾中止：phase2 会直入「恢复重放」、
+        # 用崩溃前真源（旧选择已拼进 ready delta），明示**忽略**本次重交的亲裁选择（decree.py
+        # 恢复重放叉）。此时绝不能覆写 event_triggers.choice_json——否则事件账记成新选择 B，而
+        # 重放的世界状态来自旧选择 A，durable 账实不符（cmr Gate2 r4 Finding2）。跳过整段回写，
+        # 让原选择留在账上、与即将重放的 delta 一致。pending_decisions 随后 phase2 会 clear。
+        ready_replay = (
+            ctx_for_event_binding is not None
+            and ctx_for_event_binding.get("extracted") is not None
+        )
         if ctx_for_event_binding is not None:
             stored = bind_decisions_to_candidate_events(
                 stored, ctx_for_event_binding.get("simulator_payload")
             )
-        import json as _json
-        for d in stored:
-            idx = int(d["idx"])
-            choice = choices[idx] if idx < len(choices) else None
-            if not isinstance(choice, dict):
-                choice = {}
-            self.db.conn.execute(
-                "UPDATE pending_decisions SET choice_json=?, status='decided' WHERE turn=? AND idx=?",
-                (_json.dumps(choice, ensure_ascii=False), self.state.turn, idx),
-            )
-            event_id = str(d.get("event_id") or "").strip()
-            if event_id:
-                self.db.record_event_decision_choice(
-                    self.state, event_id, choice, commit=False)
-        self.db.conn.commit()
+        if not ready_replay:
+            import json as _json
+            for d in stored:
+                idx = int(d["idx"])
+                choice = choices[idx] if idx < len(choices) else None
+                if not isinstance(choice, dict):
+                    choice = {}
+                self.db.conn.execute(
+                    "UPDATE pending_decisions SET choice_json=?, status='decided' WHERE turn=? AND idx=?",
+                    (_json.dumps(choice, ensure_ascii=False), self.state.turn, idx),
+                )
+                event_id = str(d.get("event_id") or "").strip()
+                if event_id:
+                    self.db.record_event_decision_choice(
+                        self.state, event_id, choice, commit=False)
+            self.db.conn.commit()
         if not (self.last_decree or "").strip():
             # 跨进程恢复：phase2 结算后 context 即清，趁前从真源补回诏书展示字段（cmr S7 r7）。
             ctx0 = self.db.get_resolve_context(self.state.turn)

@@ -2868,7 +2868,12 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
             cli_timeout_seconds=request.cli_timeout_seconds,
         )
         await asyncio.get_running_loop().run_in_executor(None, _verify_llm_configs_or_raise, cfg)
-        game.commit_llm_config(cfg)
+        # commit 仍同步 on-loop（上方注释的刻意决定不变），但须走 _write_gate：commit_llm_config
+        # 末尾 begin_turn 会 save_state/apply_historical_* 直写共享连接，#383 后台召对 worker /
+        # #393 线程化结算引入了真并发——那条「单人无并发 race、无需锁」的前提已被推翻，结算/召对
+        # worker 持锁期间 commit 会撞同一无锁连接（cmr Gate2 r4 Finding1）。非阻塞抢锁、保持 on-loop。
+        with _serialized_web_write(game):
+            game.commit_llm_config(cfg)
     except HTTPException:
         # _verify_llm_configs_or_raise 已把校验失败包成带干净 detail 的 HTTPException;
         # 经 run_in_executor 透传上来后原样抛,别被下面 except Exception 二次包裹 mangle 掉(Gemini R2)。
