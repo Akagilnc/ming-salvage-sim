@@ -1023,7 +1023,7 @@ class GameSession:
             if intent is not None and intent_kind == "draft" and not _has_existing_draft:
                 # 全新草案：大臣回话即草案原文，零额外 LLM（#344）。
                 draft_res = {"draft_action": "拟旨", "draft_text": reply}
-            elif intent is not None and not _has_existing_draft:
+            elif intent is not None and not _has_existing_draft and not draft_keyword_requested:
                 # 无现存草案 + 分类器判非拟旨 → 零额外 LLM（#344 常见消息秒回）。
                 draft_res = {"draft_action": "无", "draft_text": ""}
             else:
@@ -1065,15 +1065,17 @@ class GameSession:
                 if str(_directive["actor"] or "") == minister_name:
                     has_committed_directive = True
                     break
+        draft_keyword_requested = _mentions_draft_request(player_message)
         # 已有草案（pending 或 committed）时，无论并发分类器判什么都要进 _stage 合并：分类器只读
         # 皇帝本条消息、且看不到 committed draft 上下文，会把「再补一条…随行」这类后续补充误判成
         # none → 静默丢掉草案补充（违背 #344 US6「动作仍正确落库」，codex correctness）。无草案时
-        # 仍按原逻辑（intent=='draft' 或旧路 _mentions/pending）触发，普通无动作消息零额外 LLM 不变。
+        # 仍按原逻辑（intent=='draft' 或旧路 _mentions/pending）触发；分类器保守返 kind:none 时，
+        # 明确拟旨关键词也须走旧路兜底，普通无动作消息零额外 LLM 不变。
         if (
             (intent is not None and intent_kind == "draft")
             or has_pending_directive
             or has_committed_directive
-            or (intent is None and _mentions_draft_request(player_message))
+            or ((intent is None or intent_kind == "none") and draft_keyword_requested)
         ):
             draft_staged = _stage_conversational_draft()
 
