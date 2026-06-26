@@ -170,6 +170,45 @@ def test_committed_draft_followup_merges_even_when_classifier_says_none(game, mo
     assert row["text"] == merged_text
 
 
+def test_committed_draft_followup_merges_even_when_classifier_says_draft(game, monkeypatch):
+    """同上的孪生面（integrated cmr Gate2 r3 codex correctness）：分类器判 'draft' + 已有草案时，
+    也必须 merge、不得用 raw reply 覆盖已有草案——none 半与 draft 半是同一覆盖丢失的两面，统一
+    收敛到 extract_draft_intent 合并。"""
+    db, state, _ = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    minister = "拟旨补充承办官2"
+    db.add_directive(
+        state, None, "着户部清核辽饷。", "大臣拟旨",
+        actor=minister, notes="原草案", status="draft")
+    merged_text = "着户部清核辽饷，并加派监察御史随行。"
+    fed_existing = []
+
+    def fake_draft(player_message, reply, **kwargs):
+        fed_existing.append(kwargs.get("existing_draft_text"))
+        return {"draft_action": "拟旨", "draft_text": merged_text}
+
+    monkeypatch.setattr(cb, "extract_draft_intent", fake_draft)
+    monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
+        "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
+        "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": ""})
+    monkeypatch.setattr(cb, "extract_appointment_action", lambda *a, **k: {
+        "appoint_action": "无", "name": "", "office": ""})
+
+    _session(db, state, llm_config=SimpleNamespace(channel="cli")).apply_cli_conversation_actions(
+        SimpleNamespace(name=minister, office_type="兵部"),
+        "再拟一道旨，加派监察御史随行。", "臣谨拟：着户部清核辽饷，并加派监察御史随行。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent={"kind": "draft", "draft_text": ""},
+    )
+
+    # intent=='draft' + 已有草案 → 仍走合并（喂旧草案），不被 raw reply 覆盖
+    assert fed_existing and fed_existing[0] == "着户部清核辽饷。"
+    row = db.conn.execute(
+        "SELECT text FROM turn_directives WHERE actor=? AND status='draft'", (minister,)
+    ).fetchone()
+    assert row["text"] == merged_text
+
+
 def test_chat_starts_cli_action_classification_before_reply_finishes(game, monkeypatch):
     """CLI 召对动作判断只看皇帝消息，应与大臣回话并发；无动作消息回话后不再跑抽取器。"""
     db, state, content = game

@@ -1012,15 +1012,18 @@ class GameSession:
                         _existing_draft_text = str(_payload.get("text") or "")
             elif _committed_draft is not None:
                 _existing_draft_text = str(_committed_draft["text"] or "")
-            if intent is not None and intent_kind == "draft":
+            if intent is not None and intent_kind == "draft" and not _has_existing_draft:
+                # 全新草案：大臣回话即草案原文，零额外 LLM（#344）。
                 draft_res = {"draft_action": "拟旨", "draft_text": reply}
             elif intent is not None and not _has_existing_draft:
                 # 无现存草案 + 分类器判非拟旨 → 零额外 LLM（#344 常见消息秒回）。
                 draft_res = {"draft_action": "无", "draft_text": ""}
             else:
-                # intent is None（旧路）或【已有草案的后续补充】：分类器看不到 committed draft、
-                # 可能误判 none，回退 extract_draft_intent 合并新旧草案，避免丢补充（codex
-                # correctness）。额外 LLM 只在「已有草案」这一动作场景发生，普通消息不受影响。
+                # 【已有草案（pending/committed）的任何后续】或 intent is None（旧路）：一律走
+                # extract_draft_intent 合并新旧草案，绝不用 raw reply 覆盖已有草案——分类器看不到
+                # committed draft，无论它判 none 还是 draft，直接拿回话覆盖都会丢掉原草案内容
+                # （codex correctness：none 半与 draft 半是同一覆盖丢失的两面，统一收敛到 merge）。
+                # 额外 LLM 只在「已有草案」这一动作场景发生，普通无草案消息不受影响。
                 draft_res = extract_draft_intent(
                     player_message, reply, llm_config=llm_config,
                     has_pending_draft=_has_existing_draft,
