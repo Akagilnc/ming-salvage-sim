@@ -679,10 +679,18 @@ class GameSession:
     def _start_cli_action_intent(self, character: Character, message: str) -> Optional[Future]:
         """CLI 召对动作判断只读皇帝消息，可与大臣回话并发。"""
         from ming_sim.cli_backend import (
-            _DRAFT_PREFIXES, _SECRET_PREFIXES, classify_cli_action_intent, cli_backend_from_env,
+            _DRAFT_PREFIXES, _SECRET_PREFIXES, classify_cli_action_intent,
+            cli_backend_from_env, cli_backend_parallel_safe,
         )
         channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
         if channel != "cli" and (channel == "api" or cli_backend_from_env() is None):
+            return None
+        # 并发安全白名单守门（cmr Gate2）：只有 _PARALLEL_SAFE_CLI_RUNNERS（仅 codex，--ephemeral
+        # 隔离）才能把动作分类器与大臣回话并发跑；agy（keychain auth-race）/claude（rate-limit）
+        # 并发未验证——并发两个子进程会撞 auth/session race。非安全 runner 返 None → preclassified
+        # 为空 → apply_cli_conversation_actions 回落到回话后串行抽取（extract_minister_actions 等），
+        # 动作不丢、只是不并发（与月末 4-extractor 并行同一口径，cli_backend.cli_backend_parallel_safe）。
+        if not cli_backend_parallel_safe(getattr(self, "llm_config", None)):
             return None
         text = (message or "").strip()
         if text.startswith(_DRAFT_PREFIXES) or text.startswith(_SECRET_PREFIXES):
