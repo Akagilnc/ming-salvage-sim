@@ -103,11 +103,30 @@ def test_merge_dedups_same_origin_commitment_across_modules():
     }
     merged = _merge_module_outputs(outputs)
 
-    # 同源只留一条（第一个模块 issues 的），不双建
+    # 同源【同额】只留一条（第一个模块 issues 的），不双建
     refs = [it.get("origin_ref") for it in merged["new_issues"]]
     assert refs == ["secret_order:7"]
     rejections = merged.get("_module_rejections") or []
-    assert any("同源承诺重复" in str(r.get("reason", "")) for r in rejections)
+    assert any("同源同额承诺重复" in str(r.get("reason", "")) for r in rejections)
+
+
+def test_merge_keeps_multiple_distinct_fundings_under_same_origin_ref():
+    """integrated cmr Gate2 r4 codex correctness：同一密令编号（固定 origin_ref=secret_order:5）
+    下两笔【不同】月拨（内库安抚、国库修边）是两条合法承诺，去重粒度须含 economy 签名——只去
+    同源【同额】真重复，不得把同 origin_ref 不同 economy 的两笔误删（原只按 origin_ref 去重的回归）。"""
+    from ming_sim.simulation import _merge_module_outputs
+
+    base = {"origin_kind": "decree", "origin_ref": "secret_order:5", "kind": "initiative",
+            "commitment_kind": "until_stop"}
+    funding_a = dict(base, title="内库月拨安抚诸将",
+                     ongoing_effects={"economy": [{"account": "内库", "delta": -20, "reason": "安抚诸将"}]})
+    funding_b = dict(base, title="国库月拨修边",
+                     ongoing_effects={"economy": [{"account": "国库", "delta": -30, "reason": "修边"}]})
+    merged = _merge_module_outputs({"personnel_secret": {"new_issues": [funding_a, funding_b]}})
+
+    titles = [it.get("title") for it in merged["new_issues"]]
+    assert titles == ["内库月拨安抚诸将", "国库月拨修边"]   # 两笔都保留，未被同 origin_ref 误删
+    assert not (merged.get("_module_rejections") or [])
 
 
 def test_parallel_extract_runs_concurrently(game, monkeypatch):
