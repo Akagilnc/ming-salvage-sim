@@ -997,6 +997,14 @@ def _clean_fiscal_removes(raw: object) -> List[Dict[str, object]]:
     return cleaned
 
 
+def _sig_delta(raw: object) -> str:
+    """签名用 delta 规范化：统一 float 再格式化，使 -20(int) 与 -20.0(float) 等价（#399 cmr R1 coderabbit）。"""
+    try:
+        return str(float(raw))
+    except (TypeError, ValueError):
+        return str(raw)
+
+
 def _commitment_carrier_signature(item: Dict[str, object]) -> Optional[tuple]:
     """同源承诺去重签名 = (origin_kind, origin_ref, 月度 economy 归一签名)。只有同源【且】月度
     economy 等价才算真重复——同一密令/诏书下两笔【不同】月拨（同 origin_ref、不同 economy）各自
@@ -1011,10 +1019,10 @@ def _commitment_carrier_signature(item: Dict[str, object]) -> Optional[tuple]:
     eco_sig = frozenset(
         (
             str(e.get("account") or "").strip(),
-            str(e.get("delta")),
+            _sig_delta(e.get("delta")),
             str(e.get("category") or e.get("reason") or "").strip(),
         )
-        for e in (economy or []) if isinstance(e, dict)
+        for e in (economy if isinstance(economy, list) else []) if isinstance(e, dict)
     )
     # 只去重【经常性月拨】承诺——这套跨模块去重的唯一目的是消「月度 ongoing 双扣」（见调用处注释）。
     # 无月度 economy 的承诺（form③ 未来一次性：仅 end_turn / stop_condition，空 ongoing_effects）

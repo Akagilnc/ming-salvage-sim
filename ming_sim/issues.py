@@ -3940,9 +3940,14 @@ def apply_issue_tracker_output(
                     "reason": "事件当前未进候选池（窗口/前提门/已触发不满足）",
                 })
                 continue
-            if not candidate_snapshot_authoritative and candidates_dirty:
+            # 重查候选：级联作废 / 新满足前提门的事件可能新进/退出候选池。
+            # 权威快照（authoritative）只增不减——union 进新候选、不缩窄初始绑定（#399 cmr R1 codex P2）；
+            # 非权威快照额外过滤——advances/前置事件效果关门后，已退出候选的事件不得沿用旧快照触发。
+            if candidates_dirty:
                 current_candidate_event_ids = {candidate.id for candidate in gather_candidate_events(state, db)}
                 candidates_dirty = False
+                if candidate_snapshot_authoritative:
+                    candidate_event_ids |= current_candidate_event_ids
             if not candidate_snapshot_authoritative and ev.id not in current_candidate_event_ids:
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 当前未进 event_pool 候选池。")
                 applied_new.append({

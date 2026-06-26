@@ -1433,7 +1433,25 @@ class WebGame:
                     self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
             try:
                 result = self.session.chat(minister_name, text)
+                proposed = None
+                if result.proposed_directive is not None:
+                    d = result.proposed_directive
+                    proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
+                # _chat_payload 持久化 minister 消息 + 更新 chat_turn——纳入失败 guard 覆盖范围，
+                # 若它失败也干净回滚，不留孤儿轮（#399 cmr R1 coderabbit Major）。
+                payload = self._chat_payload(
+                    minister_name, result.answer,
+                    court_action=result.court_action, next_minister=result.next_minister,
+                    proposed_directive=proposed, appointed_minister=result.appointed_minister,
+                    registered_minister=result.registered_minister,
+                    displaced_minister=result.displaced_minister,
+                    secret_order_id=result.secret_order_id,
+                    pending_action_id=getattr(result, "pending_action_id", 0),
+                    chat_turn_id=chat_turn_id,
+                    accepted_turn=accepted_turn,
+                )
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+                return payload
             except Exception:
                 if chat_turn_id:
                     self._record_chat_rollback_items(chat_turn_id, before_snapshot)
@@ -1442,21 +1460,6 @@ class WebGame:
                     for name, msgs in self.db.load_all_chat_history().items():
                         self.chat_history.setdefault(name, []).extend(msgs)
                 raise
-            proposed = None
-            if result.proposed_directive is not None:
-                d = result.proposed_directive
-                proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
-            return self._chat_payload(
-                minister_name, result.answer,
-                court_action=result.court_action, next_minister=result.next_minister,
-                proposed_directive=proposed, appointed_minister=result.appointed_minister,
-                registered_minister=result.registered_minister,
-                displaced_minister=result.displaced_minister,
-                secret_order_id=result.secret_order_id,
-                pending_action_id=getattr(result, "pending_action_id", 0),
-                chat_turn_id=chat_turn_id,
-                accepted_turn=accepted_turn,
-            )
 
     def _chat_stream_payload(
         self,
