@@ -387,6 +387,17 @@ def _codex_final_text(obj: object) -> str:
     typ = str(obj.get("type") or obj.get("event") or "")
     if "delta" in typ:
         return ""
+    # 防御性兼容 codex `--json` 的 item.* 形态（如 {"type":"item.completed",
+    # "item":{"type":"agent_message","text":"…"}}）：最终 agent message 可能嵌在 item.text
+    # 里。只取 agent_message 类 item，忽略 reasoning/tool/plan item，避免把真实邸报当成空
+    # 输出误判失败（codex correctness）。与下面的顶层 message/text 形态并存，互不影响。
+    item = obj.get("item")
+    if isinstance(item, dict):
+        item_type = str(item.get("type") or "")
+        if item_type in ("", "agent_message") or "message" in item_type:
+            value = item.get("text") or item.get("content") or item.get("message")
+            if isinstance(value, str) and value:
+                return value
     for key in ("message", "content", "text", "final", "last_message"):
         value = obj.get(key)
         if isinstance(value, str) and value:
