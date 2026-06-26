@@ -36,12 +36,13 @@ def test_offsnapshot_echoed_event_id_does_not_win_over_snapshot():
     assert out[0]["event_id"] == "mao_wenlong"
 
 
-def test_offsnapshot_id_with_no_title_match_left_as_is():
-    """回显 id 不在快照、标题又无唯一匹配 → 无快照依据可推翻，保留原值（非候选/历史路径
-    行为不变），交下游 event_pool 门按真实候选裁。"""
+def test_offsnapshot_id_with_no_title_match_is_unbound():
+    """回显 id 不在快照、标题又无唯一匹配 → 解绑（去掉 event_id），不把这个非候选 id 当
+    triggered 落库（codex correctness：留着它会把一个真实未来事件误标已触发、永久挡在候选池外；
+    season_simulator 也明示非候选抉择不应带 event_id）。选择仍留在 pending_decisions。"""
     out = bind_decisions_to_candidate_events(
         [{"title": "某无关抉择", "event_id": "freeform_x"}], _SNAPSHOT)
-    assert out[0]["event_id"] == "freeform_x"
+    assert "event_id" not in out[0]
 
 
 def test_ambiguous_title_remains_unbound():
