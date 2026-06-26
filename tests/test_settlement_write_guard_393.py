@@ -112,6 +112,9 @@ def _endpoint_cases():
         ("reject_directive", lambda: web_app.api_reject_directive(7)),
         ("write_decree", lambda: web_app.api_write_decree()),
         ("edit_decree", lambda: web_app.api_edit_decree(web_app.EditDecreeRequest(decree="奉天承运"))),
+        # 撤回召对：undo_chat_turn 直写共享连接，自带的相位门是 phase-only（守不住 pre_settle 窗口），
+        # 现一并走 _write_gate（cmr Gate2 r3 Finding1）。守门先于 undo_last_chat 触发。
+        ("undo_chat", lambda: web_app.api_undo_chat("某大臣")),
     ]
 
 
