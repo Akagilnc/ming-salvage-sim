@@ -3940,6 +3940,16 @@ def apply_issue_tracker_output(
                     "reason": "事件当前未进候选池（窗口/前提门/已触发不满足）",
                 })
                 continue
+            terminal_state = db.event_terminal_state(ev.id)
+            if terminal_state:
+                terminal_reason = {
+                    "obsolete": "事件已作废终态",
+                    "avoided": "事件已避过终态",
+                    "triggered": "事件已触发终态",
+                }.get(str(terminal_state), f"事件已有终态：{terminal_state}")
+                print(f"[INFO] new_issue 已拒：event {event_id} 已有终态 {terminal_state!r}，不再从 event_pool 立项。")
+                applied_new.append({"id": ev.id, "title": ev.title, "rejected": True, "reason": terminal_reason})
+                continue
             # 重查候选：级联作废 / 新满足前提门的事件可能新进/退出候选池。
             # 权威快照（authoritative）只增不减——union 进新候选、不缩窄初始绑定（#399 cmr R1 codex P2）；
             # 非权威快照额外过滤——advances/前置事件效果关门后，已退出候选的事件不得沿用旧快照触发。
