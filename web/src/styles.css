@@ -5012,7 +5012,8 @@ button:disabled {
   gap: 4px;
   margin-bottom: 10px;
 }
-.menu-field > span {
+.menu-field > span,
+.menu-field > label {
   font-size: 0.82rem;
   color: #4a3014;
 }
