@@ -214,6 +214,33 @@ class TestCommitmentTimedBarValue:
 
 
 class TestTimedBarIntegration:
+    def test_bar_advances_by_wall_clock_when_ongoing_advance_is_rejected(self, game):
+        db, state, _content = game
+        db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+        db.conn.commit()
+
+        issue_id = db.insert_issue(
+            state,
+            kind="initiative",
+            title="赈抚陕西四月",
+            origin_kind="decree",
+            origin_ref="decree:turn-1:relief-4",
+            bar_value=10,
+            ongoing_effects={"metrics": {"皇威": 1}},
+            end_turn=state.turn + 4,
+            commitment_kind="until_stop",
+        )
+        state.turn += 2
+
+        row = db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
+        progress = commitment_progress_payload(db, state, row)
+        assert progress is not None
+        assert progress["months_elapsed"] == 2
+        assert commitment_display_text(progress, row) == "限4月·已履行2月·还剩2月"
+
+        bar = commitment_timed_bar_value(progress, row)
+        assert bar == 50
+
     def test_bar_advances_with_time(self, game):
         db, state, content = game
         db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -268,3 +295,44 @@ class TestTimedBarIntegration:
 
         bar = commitment_timed_bar_value(progress, row)
         assert bar == 0
+
+    def test_origin_turn_null_falls_back_to_state_turn(self, game):
+        """Key present but value NULL/0 must fall back to state.turn (months_elapsed=0),
+        not collapse origin_turn to 0 and report the absolute turn number (#380 cmr)."""
+        db, state, _content = game
+        state.turn = 7  # well past turn 0 so the bug (absolute turn leak) is observable
+
+        for null_origin in (None, 0):
+            row = {
+                "id": -1,  # no advances rows → paid_total falls to 0
+                "commitment_kind": "until_stop",
+                "origin_turn": null_origin,
+                "end_turn": 0,
+                "ongoing_effects": "{}",
+                "stop_condition": "",
+                "resolve_condition": "",
+            }
+            progress = commitment_progress_payload(db, state, row)
+            assert progress is not None
+            # Intended: unset origin_turn → fall back to state.turn → 0 elapsed,
+            # NOT state.turn - 0 == 7 (absolute turn leaking into the timed bar).
+            assert progress["months_elapsed"] == 0, (
+                f"origin_turn={null_origin!r} should fall back to state.turn "
+                f"(0 elapsed), got {progress['months_elapsed']}"
+            )
+
+    def test_origin_turn_missing_key_falls_back_to_state_turn(self, game):
+        """Row entirely lacking origin_turn key also falls back to state.turn."""
+        db, state, _content = game
+        state.turn = 7
+        row = {
+            "id": -1,
+            "commitment_kind": "until_stop",
+            "end_turn": 0,
+            "ongoing_effects": "{}",
+            "stop_condition": "",
+            "resolve_condition": "",
+        }
+        progress = commitment_progress_payload(db, state, row)
+        assert progress is not None
+        assert progress["months_elapsed"] == 0

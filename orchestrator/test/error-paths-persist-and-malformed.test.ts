@@ -10,11 +10,12 @@
  *       failing step + S8 via writeLedger, exactly like the happy path.
  *
  *   #5  route() / runner must NEVER silently treat a malformed step output as a
- *       success and bypass the P0/P1 fix gate.  A coder step that returns a
- *       reviewer/undefined/garbage output, or a reviewer step that returns a
- *       coder/undefined/garbage output, is a contract violation → S8(error).
- *       In particular S4 must NOT coerce a non-reviewer output into empty
- *       findings and push (that would ship unreviewed code).
+ *       success and bypass the ship gate.  Under ADR 0026 the single-slice runner
+ *       is a PURE SCHEDULER: S2 is the ONLY agent step (the WHOLE-SLICE build
+ *       worker; the review/fix loop runs INSIDE it). An S2 build worker that
+ *       returns a reviewer/undefined/garbage output is a contract violation →
+ *       S8(error); it must NEVER be coerced into a committed success and pushed
+ *       (that would ship unreviewed code).
  *
  * All paths use fake Backend injection — zero real Sandcastle / LLM calls.
  */
@@ -141,8 +142,8 @@ describe("#3 error paths persist the ledger (not only in-memory)", () => {
     const persistedSteps = backend.ledgerCalls.map((c) => c.entry.step);
     expect(persistedSteps).toContain("S2");
     expect(persistedSteps).toContain("S8");
-    // S3 was never reached → must not be in the persisted ledger.
-    expect(persistedSteps).not.toContain("S3");
+    // S7 ship was never reached (0-commit halts at S2) → not persisted.
+    expect(persistedSteps).not.toContain("S7");
   });
 
   it("S7 push throw → persisted ledger contains S7 and S8", async () => {
@@ -212,15 +213,16 @@ describe("#3 error paths persist the ledger (not only in-memory)", () => {
 // #5 — malformed step output is never silently passed through the P0/P1 gate
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe("#5 malformed step output → S8(error), never silent bypass", () => {
-  it("S2 returns a reviewer output (wrong kind) → S8(error), S3 NOT reached", async () => {
+describe("#5 malformed S2 build output → S8(error), never silent bypass", () => {
+  it("S2 returns a reviewer output (wrong kind) → S8(error), NOT pushed", async () => {
     const backend = new SpyBackend();
+    let pushed = false;
+    backend.push = async () => {
+      pushed = true;
+    };
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
-      if (spec.role === "coder") {
-        // Contract violation: coder step must return a coder output.
-        return { kind: "reviewer", findings: [] };
-      }
+      // Contract violation: the S2 build worker must return a coder output.
       return { kind: "reviewer", findings: [] };
     };
 
@@ -228,92 +230,29 @@ describe("#5 malformed step output → S8(error), never silent bypass", () => {
 
     expect(result.status).toBe("error");
     expect(result.errorPackage?.failedStep).toBe("S2");
-    // Must not have advanced to the reviewer on a malformed coder output.
-    expect(backend.runStepIds).not.toContain("S3");
+    // A malformed S2 output must NEVER be coerced into a committed success.
+    expect(pushed).toBe(false);
   });
 
   it("S2 returns undefined → S8(error), not treated as committed", async () => {
     const backend = new SpyBackend();
-    backend.runStep = async (spec) => {
-      backend.runStepIds.push(spec.id);
-      if (spec.role === "coder") {
-        return undefined as unknown as StepOutput;
-      }
-      return { kind: "reviewer", findings: [] };
-    };
-
-    const result = await runOrchestrator({ issueNumber: 244, backend });
-
-    expect(result.status).toBe("error");
-    expect(result.errorPackage?.failedStep).toBe("S2");
-    expect(backend.runStepIds).not.toContain("S3");
-  });
-
-  it("S2 returns garbage object (no kind) → S8(error)", async () => {
-    const backend = new SpyBackend();
-    backend.runStep = async (spec) => {
-      backend.runStepIds.push(spec.id);
-      if (spec.role === "coder") {
-        return { foo: "bar" } as unknown as StepOutput;
-      }
-      return { kind: "reviewer", findings: [] };
-    };
-
-    const result = await runOrchestrator({ issueNumber: 244, backend });
-
-    expect(result.status).toBe("error");
-    expect(result.errorPackage?.failedStep).toBe("S2");
-    expect(backend.runStepIds).not.toContain("S3");
-  });
-
-  it("S3 returns a coder output (wrong kind) → S8(error), NEVER coerced to empty findings + push", async () => {
-    // This is the dangerous one: if S4 coerced a non-reviewer output into [],
-    // it would route to push and SHIP UNREVIEWED CODE.  Must be S8(error).
-    const backend = new SpyBackend();
     let pushed = false;
     backend.push = async () => {
       pushed = true;
     };
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
-      if (spec.role === "coder") {
-        return { kind: "coder", committed: true, commitsAdded: 1 };
-      }
-      // Contract violation: reviewer step returns a coder output.
-      return { kind: "coder", committed: true, commitsAdded: 1 };
-    };
-
-    const result = await runOrchestrator({ issueNumber: 244, backend });
-
-    expect(result.status).toBe("error");
-    // The failing step is the reviewer step (S3), not push.
-    expect(result.errorPackage?.failedStep).toBe("S3");
-    // CRUCIAL: push must NEVER happen on a malformed reviewer output.
-    expect(pushed).toBe(false);
-  });
-
-  it("S3 returns undefined → S8(error), push NOT reached", async () => {
-    const backend = new SpyBackend();
-    let pushed = false;
-    backend.push = async () => {
-      pushed = true;
-    };
-    backend.runStep = async (spec) => {
-      backend.runStepIds.push(spec.id);
-      if (spec.role === "coder") {
-        return { kind: "coder", committed: true, commitsAdded: 1 };
-      }
       return undefined as unknown as StepOutput;
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
     expect(result.status).toBe("error");
-    expect(result.errorPackage?.failedStep).toBe("S3");
+    expect(result.errorPackage?.failedStep).toBe("S2");
     expect(pushed).toBe(false);
   });
 
-  it("S3 returns garbage object (no kind) → S8(error), push NOT reached", async () => {
+  it("S2 returns garbage object (no kind) → S8(error), NOT pushed", async () => {
     const backend = new SpyBackend();
     let pushed = false;
     backend.push = async () => {
@@ -321,21 +260,20 @@ describe("#5 malformed step output → S8(error), never silent bypass", () => {
     };
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
-      if (spec.role === "coder") {
-        return { kind: "coder", committed: true, commitsAdded: 1 };
-      }
-      return { findings: "not an array" } as unknown as StepOutput;
+      return { foo: "bar" } as unknown as StepOutput;
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
     expect(result.status).toBe("error");
-    expect(result.errorPackage?.failedStep).toBe("S3");
+    expect(result.errorPackage?.failedStep).toBe("S2");
     expect(pushed).toBe(false);
   });
 
-  it("well-formed reviewer with a P0 still routes to fix (gate not bypassed) — regression", async () => {
-    // Sanity: the malformed-output guard must not break the real P0 gate.
+  it("S2 returns a coder output with garbage commitsAdded → S8(error), NOT pushed", async () => {
+    // The dangerous one: a malformed coder output must NEVER be coerced into a
+    // committed success and pushed (that would ship unreviewed code). Here the
+    // shape is coder-kind but commitsAdded is non-numeric → contract violation.
     const backend = new SpyBackend();
     let pushed = false;
     backend.push = async () => {
@@ -343,34 +281,37 @@ describe("#5 malformed step output → S8(error), never silent bypass", () => {
     };
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
-      if (spec.role === "coder") {
-        return { kind: "coder", committed: true, commitsAdded: 1 };
-      }
       return {
-        kind: "reviewer",
-        findings: [
-          {
-            severity: "critical",
-            category: "correctness",
-            claim_quote: "null deref",
-            location: "src/foo.ts:1",
-            suggested_fix: "guard",
-            action: "fix_now",
-          },
-        ],
-      };
+        kind: "coder",
+        committed: true,
+        commitsAdded: "lots",
+      } as unknown as StepOutput;
     };
 
-    // A P0 routes to S5 (fix). Post-#254 the fix loop is wired (S5→S6→S4), so
-    // S5 no longer throws — instead this backend re-raises the SAME P0 every
-    // re-review while the coder commits, so the loop never converges and the
-    // no-progress guard bails cleanly to S8(error) after K rounds. The point of
-    // this regression remains: the P0 gate sent us to S5 (fix), NOT to push.
     const result = await runOrchestrator({ issueNumber: 244, backend });
+
     expect(result.status).toBe("error");
-    expect(result.errorPackage?.reason.toLowerCase()).toContain("stuck");
-    // The P0 gate sent us to S5 (fix), NOT to push.
-    expect(backend.runStepIds).toContain("S5");
+    expect(result.errorPackage?.failedStep).toBe("S2");
+    // CRUCIAL: push must NEVER happen on a malformed coder output.
     expect(pushed).toBe(false);
+  });
+
+  it("a well-formed committed S2 build output routes to S7 ship (regression)", async () => {
+    // Sanity: the malformed-output guard must not break the real ship path. A
+    // committed S2 coder output (the WHOLE-SLICE build, review/fix loop already
+    // run inside the worker) routes straight to S7 ship → success.
+    const backend = new SpyBackend();
+    let pushed = false;
+    backend.push = async () => {
+      pushed = true;
+    };
+    backend.runStep = async (spec) => {
+      backend.runStepIds.push(spec.id);
+      return { kind: "coder", committed: true, commitsAdded: 1 };
+    };
+
+    const result = await runOrchestrator({ issueNumber: 244, backend });
+    expect(result.status).toBe("success");
+    expect(pushed).toBe(true);
   });
 });

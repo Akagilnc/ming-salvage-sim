@@ -126,16 +126,13 @@ class SpyBackend implements Backend {
   }
 }
 
-/** A backend whose S2/S3 returns a chosen output (the step under test). */
-function stepReturning(stepId: "S2" | "S3", out: StepOutput): SpyBackend {
+/** A backend whose S2 (the only agent step) returns a chosen output. */
+function stepReturning(stepId: "S2", out: StepOutput): SpyBackend {
   const backend = new SpyBackend();
   backend.runStep = async (spec: StepSpec) => {
     backend.runStepIds.push(spec.id);
     if (spec.id === stepId) return out;
-    if (spec.role === "coder") {
-      return { kind: "coder", committed: true, commitsAdded: 1 };
-    }
-    return { kind: "reviewer", findings: [] };
+    return { kind: "coder", committed: true, commitsAdded: 1 };
   };
   return backend;
 }
@@ -275,16 +272,17 @@ describe("F1: malformed escalate → S8(error), not S8(escalate) (runner end-to-
     expect(result.errorPackage?.failedStep).toBe("S2");
   });
 
-  it("reviewer S3 with escalate missing diagnosis → S8(error), NOT escalate", async () => {
-    const backend = stepReturning("S3", {
-      kind: "reviewer",
-      findings: [],
-      escalate: { reason: "stuck" } as unknown as ReviewerOutput["escalate"],
+  it("coder S2 with escalate missing diagnosis → S8(error), NOT escalate", async () => {
+    const backend = stepReturning("S2", {
+      kind: "coder",
+      committed: true,
+      commitsAdded: 1,
+      escalate: { reason: "stuck" } as unknown as CoderOutput["escalate"],
     });
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
     expect(result.status).toBe("error");
-    expect(result.errorPackage?.failedStep).toBe("S3");
+    expect(result.errorPackage?.failedStep).toBe("S2");
     expect(backend.pushed).toBe(false);
   });
 
@@ -315,16 +313,17 @@ describe("F1: route() rejects a malformed escalate (defense in depth)", () => {
     expect(decision).toEqual({ kind: "handoff", status: "error" });
   });
 
-  it("S3 with escalate {reason:123,diagnosis:'x'} → handoff(error)", () => {
+  it("S2 with escalate {reason:123,diagnosis:'x'} → handoff(error)", () => {
     const decision = route({
-      from: "S3",
+      from: "S2",
       output: {
-        kind: "reviewer",
-        findings: [],
+        kind: "coder",
+        committed: true,
+        commitsAdded: 1,
         escalate: {
           reason: 123,
           diagnosis: "x",
-        } as unknown as ReviewerOutput["escalate"],
+        } as unknown as CoderOutput["escalate"],
       },
     });
     expect(decision).toEqual({ kind: "handoff", status: "error" });
@@ -365,18 +364,20 @@ describe("F2: valid escalate takes precedence over incomplete role schema", () =
     expect(backend.pushed).toBe(false);
   });
 
-  it("reviewer S3 with valid escalate but MISSING findings → S8(escalate), not error", async () => {
-    const backend = stepReturning("S3", {
-      kind: "reviewer",
-      // findings intentionally absent — the reviewer got stuck.
-      escalate: { reason: "cannot review", diagnosis: "spec ambiguous" },
+  it("coder S2 with valid escalate but MISSING commitsAdded → S8(escalate), not error", async () => {
+    const backend = stepReturning("S2", {
+      kind: "coder",
+      committed: false,
+      // commitsAdded intentionally absent — the build worker got stuck.
+      escalate: { reason: "cannot build", diagnosis: "spec ambiguous" },
     } as unknown as StepOutput);
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
     expect(result.status).toBe("escalate");
-    // Must not have routed to S4 (escalate stops first).
-    expect(result.stepLedger.map((e) => e.step)).not.toContain("S4");
+    // Must not have routed to S7 (escalate stops first).
+    expect(result.stepLedger.map((e) => e.step)).not.toContain("S7");
+    expect(backend.pushed).toBe(false);
   });
 
   it("the escalate output (with incomplete schema) is recorded in the ledger", async () => {
@@ -425,34 +426,26 @@ describe("F2: valid escalate takes precedence over incomplete role schema", () =
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("F3: error-path re-persist carries the failing step's output", () => {
-  it("S3 emitLedger throws → the re-persisted S3 disk entry still has reviewer output", async () => {
-    const reviewerOut: ReviewerOutput = {
-      kind: "reviewer",
-      findings: [
-        {
-          severity: "low",
-          category: "clarity",
-          claim_quote: "x",
-          location: "src/foo.ts:1",
-          suggested_fix: "y",
-          action: "defer",
-        },
-      ],
+  it("S2 emitLedger throws (no-commit output) → the re-persisted S2 disk entry still has coder output", async () => {
+    // A 0-commit coder output errors at S2; if the S2 ledger write throws, the
+    // best-effort re-persist must still carry the coder output (not undefined),
+    // so a resume from disk sees the build worker's real output.
+    const coderOut: CoderOutput = {
+      kind: "coder",
+      committed: false,
+      commitsAdded: 0,
     };
 
     const backend = new SpyBackend();
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
-      if (spec.role === "coder") {
-        return { kind: "coder", committed: true, commitsAdded: 1 };
-      }
-      return reviewerOut;
+      return coderOut;
     };
-    let s3Thrown = false;
+    let s2Thrown = false;
     backend.writeLedger = async (entry, stateDir) => {
-      if (entry.step === "S3" && !s3Thrown) {
-        s3Thrown = true;
-        throw new Error("writeLedger: transient I/O fault on S3");
+      if (entry.step === "S2" && !s2Thrown) {
+        s2Thrown = true;
+        throw new Error("writeLedger: transient I/O fault on S2");
       }
       backend.ledgerCalls.push({ entry, stateDir });
     };
@@ -460,11 +453,11 @@ describe("F3: error-path re-persist carries the failing step's output", () => {
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
     expect(result.status).toBe("error");
-    // The disk-persisted S3 entry must carry the reviewer output (not undefined),
-    // so a resume from disk sees the findings, not an output-less S3.
-    const diskS3 = backend.ledgerCalls.find((c) => c.entry.step === "S3");
-    expect(diskS3).toBeDefined();
-    expect(diskS3?.entry.output).toEqual(reviewerOut);
+    // The disk-persisted S2 entry must carry the coder output (not undefined),
+    // so a resume from disk sees the real output, not an output-less S2.
+    const diskS2 = backend.ledgerCalls.find((c) => c.entry.step === "S2");
+    expect(diskS2).toBeDefined();
+    expect(diskS2?.entry.output).toEqual(coderOut);
   });
 
   it("S2 emitLedger throws → the re-persisted S2 disk entry still has coder output", async () => {
@@ -496,23 +489,21 @@ describe("F3: error-path re-persist carries the failing step's output", () => {
     expect(diskS2?.entry.output).toEqual(coderOut);
   });
 
-  it("disk and in-memory S3 entries agree on output after the write fault", async () => {
-    const reviewerOut: ReviewerOutput = {
-      kind: "reviewer",
-      findings: [],
+  it("disk and in-memory S2 entries agree on output after the write fault", async () => {
+    const coderOut: CoderOutput = {
+      kind: "coder",
+      committed: false,
+      commitsAdded: 0,
     };
     const backend = new SpyBackend();
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
-      if (spec.role === "coder") {
-        return { kind: "coder", committed: true, commitsAdded: 1 };
-      }
-      return reviewerOut;
+      return coderOut;
     };
-    let s3Thrown = false;
+    let s2Thrown = false;
     backend.writeLedger = async (entry, stateDir) => {
-      if (entry.step === "S3" && !s3Thrown) {
-        s3Thrown = true;
+      if (entry.step === "S2" && !s2Thrown) {
+        s2Thrown = true;
         throw new Error("transient");
       }
       backend.ledgerCalls.push({ entry, stateDir });
@@ -520,11 +511,11 @@ describe("F3: error-path re-persist carries the failing step's output", () => {
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    const memS3 = result.stepLedger.find((e) => e.step === "S3");
-    const diskS3 = backend.ledgerCalls.find((c) => c.entry.step === "S3");
-    expect(memS3?.output).toEqual(reviewerOut);
-    expect(diskS3?.entry.output).toEqual(reviewerOut);
+    const memS2 = result.stepLedger.find((e) => e.step === "S2");
+    const diskS2 = backend.ledgerCalls.find((c) => c.entry.step === "S2");
+    expect(memS2?.output).toEqual(coderOut);
+    expect(diskS2?.entry.output).toEqual(coderOut);
     // They agree.
-    expect(diskS3?.entry.output).toEqual(memS3?.output);
+    expect(diskS2?.entry.output).toEqual(memS2?.output);
   });
 });

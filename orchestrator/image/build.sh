@@ -42,6 +42,8 @@ SKILLS_SRC="${SKILLS_SRC:-$HOME/.claude/skills}"
 #   diagnosing-bugs                → improve-codebase-architecture
 #   improve-codebase-architecture  → codebase-design, grilling, domain-modeling
 #   ak-cross-m-review              → diagnosing-bugs (cmr non-trivial-fix path)
+#   ak-cmr-completeness            → ak-cross-m-review (ship-pre Step 5 lens entry; wraps engine)
+#   ak-cmr-correctness             → ak-cross-m-review (ship-pre Step 6 lens entry; wraps engine)
 #   codebase-design                → leaf
 #   resolving-merge-conflicts      → leaf
 #   grilling                       → leaf  (HITL design-tree walk; degrades to
@@ -56,6 +58,8 @@ SKILL_CLOSURE=(
   improve-codebase-architecture
   resolving-merge-conflicts
   ak-cross-m-review
+  ak-cmr-completeness
+  ak-cmr-correctness
   grilling
   domain-modeling
 )
@@ -64,13 +68,13 @@ SKILL_CLOSURE=(
 # so it needs its closure subtree baked at that exact path — not a flat cp.
 GSTACK_SRC="${GSTACK_SRC:-$HOME/gstack}"
 # The roles whose souls we bake (all worker roles — ADR 0026 / #333 "全部角色 soul").
-SOUL_ROLES=(coder reviewer merger)
+SOUL_ROLES=(coder reviewer merger cmr ship)
 
 STAGE="$(mktemp -d "${TMPDIR:-/tmp}/ming-coder-img.XXXXXX")"
 trap 'rm -rf "$STAGE"' EXIT
 
 echo "[build] staging context at $STAGE"
-mkdir -p "$STAGE/skills" "$STAGE/souls"
+mkdir -p "$STAGE/skills" "$STAGE/souls" "$STAGE/hooks"
 
 # ── 1. Resolve + copy the dev-skill closure (cp -RL dereferences symlinks) ────
 # Prune each skill's run-artifact / eval / test cruft so the image stays lean and
@@ -185,6 +189,16 @@ fi
 # copy above keeps the ~/.claude/skills/gstack/review/... absolute refs working).
 mkdir -p "$STAGE/skills/review"
 cp -RL "$GSTACK_SRC/review/." "$STAGE/skills/review/"
+# CRITICAL (CLAUDE.md ## Skill routing: per-slice review = the BUILTIN /review,
+# single-vendor, one pass; ADR 0016 发现4: gstack is NOT in the implementation
+# legs): gstack's review/ ships a SKILL.md (name: gstack-review). Baking it at the
+# top-level skills/review/ registers a `/review` DISK skill that SHADOWS the builtin
+# /review the coder must use — so the coder's `/review` resolved to gstack's
+# multi-specialist review (wrong). review-army only READS the data files here
+# (checklist.md / design-checklist.md / greptile-triage.md / TODOS-format.md /
+# specialists), never the SKILL.md, so DROP the SKILL.md (+ tmpl): the checklist
+# reads keep working AND /review stays the builtin.
+rm -f "$STAGE/skills/review/SKILL.md" "$STAGE/skills/review/SKILL.md.tmpl"
 # Exclude the 58M compiled discover helper — not in the ship closure.
 rm -f "$STAGE/skills/gstack/bin/gstack-global-discover" 2>/dev/null || true
 if [ ! -f "$STAGE/skills/gstack-ship/SKILL.md" ]; then
@@ -226,9 +240,10 @@ fi
 #   role "coder"    → env "coder"     (soulForStep)        → coder.md
 #   role "reviewer" → env "READ-ONLY" (soulForStep)        → reviewer.md + READ-ONLY.md
 #   role "merger"   → env "merger"    (MERGER_SOUL)        → merger.md
-# (No code reads soul files by NAME yet — the env value is currently a signal
-# string; this just keeps the bake forward-compatible with the documented env
-# contract so the alias is never the thing that breaks activation.)
+#   (cmr worker)    → env "cmr"       (CMR_SOUL)           → cmr.md (integrated-cmr fixer)
+# Prompt entrypoints read the baked soul files directly, and ORCHESTRATOR_SOUL is
+# also kept as the runtime role signal. Keep the env-value alias so either lookup
+# path resolves to the same reviewed role text.
 # NOTE: macOS ships bash 3.2 (no associative arrays / `declare -A`), and this
 # script's shebang resolves to it — so we map role→env-alias with a portable
 # case, NOT an assoc array, to keep the build reproducible on a macOS host.
@@ -259,6 +274,17 @@ if ! grep -q '^## Skill routing' "$STAGE/CLAUDE.routing.md"; then
   echo "[build] ERROR: repo CLAUDE.md is missing the '## Skill routing' section (#332)" >&2
   exit 1
 fi
+
+# ── 3b. Git hooks (commit-msg: sandcastle: prefix on every in-container commit) ─
+# Wired via `git config --global core.hooksPath` in the Containerfile so it tags
+# EVERY worker's commits deterministically — including the ones a soul instruction
+# misses (gstack-ship's own version-bump / review-fix commits).
+if [ ! -f "$HERE/hooks/commit-msg" ]; then
+  echo "[build] ERROR: commit-msg hook not found at $HERE/hooks/commit-msg" >&2
+  exit 1
+fi
+cp "$HERE/hooks/commit-msg" "$STAGE/hooks/commit-msg"
+chmod +x "$STAGE/hooks/commit-msg"
 
 # ── 4. Containerfile into the staging context ────────────────────────────────
 cp "$HERE/Containerfile" "$STAGE/Containerfile"

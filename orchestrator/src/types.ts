@@ -16,32 +16,27 @@
 // ───────────────────────────── step identifiers ─────────────────────────────
 
 /**
- * The fixed wiki step sequence (ADR 0018, re-classified by ADR 0026 / PRD #330).
+ * The single-slice step sequence (ADR 0026 2026-06-24 correction, wiki line 42).
  *
- * Under ADR 0026 the runner is a PURE SCHEDULER: every step that produces or
- * changes the worked artifact is a *worker step* dispatched through the single
- * {@link Backend.dispatchWorker} seam; the remaining steps are *scheduling
- * actions* (pure TS, no worker — gate / route / order / ledger / resume).
+ * Under the corrected ADR 0026 the single-slice runner is a PURE SCHEDULER and
+ * the per-slice review→fix→re-review LOOP no longer lives at the runner level. S2
+ * is ONE memory-bearing build worker that runs the WHOLE per-slice sequence
+ * INTERNALLY (invoke `/tdd` → typecheck + full suite → `/review` + self-check 二连
+ * → baseline commit → `/ak-cross-m-review --scenario per-slice` to concurrence →
+ * return the FINAL reviewed commit). The runner dispatches it ONCE and reads its
+ * terminal verdict — there is NO runner-level reviewer step (S3/S6), NO
+ * fix step (S5), NO route fan-out (S4). The discipline lives in the versioned
+ * skills, never in the runner.
  *
- *   worker steps      : S2 coder_implement, S3 reviewer_full_review,
- *                       S5 coder_fix, S6 reviewer_rereview, S7 ship
- *   scheduling actions: S0 input_gate, S1 load_context, S4 route_findings,
- *                       S8 handoff
+ *   worker steps      : S2 coder build (the whole per-slice sequence), S7 ship
+ *   scheduling actions: S0 input_gate, S1 load_context, S8 handoff
  *
- * NOTE (ADR 0026 supersedes ADR 0018 step分类): S7 was an inline "runner action"
- * (a bare `git push`); it is now a SHIP worker step (invoke `gstack-ship`).
- * #331 is a pure prefactor — S7 still forwards to the legacy `push()` via the
- * dispatch wrapper, so external behaviour is unchanged; the real ship worker is
- * #336. cmr/PR (family layer) likewise become worker steps (#335).
+ * S7 is a SHIP worker step (invoke `gstack-ship`); cmr/PR live at the family layer.
  */
 export type StepId =
   | "S0"
   | "S1"
   | "S2"
-  | "S3"
-  | "S4"
-  | "S5"
-  | "S6"
   | "S7"
   | "S8";
 
@@ -59,8 +54,14 @@ export type HandoffStatus = "success" | "escalate" | "error";
  * - `"coder"`: full dev-discipline soul (wiki TDD flow, /review, self-check).
  * - `"READ-ONLY"`: reviewer soul with READ-ONLY soft constraint baked in
  *   (prompt-level, not an OS-level mount — same image, separate `run()`).
+ * - `"cmr"`: the family integrated-cmr fixer soul (ADR 0026 2026-06-24) — a WRITE
+ *   soul: the cmr worker invokes `ak-cross-m-review` and commits its cross-slice
+ *   fixes inside its own memory-bearing session (it is the fixer, not read-only).
+ * - `"ship"`: the delivery soul the family ship worker runs under — a WRITE soul
+ *   distinct from `"coder"`: it invokes `gstack-ship`, stops at PR creation, and
+ *   records deferred findings in a tracker (issue / TODOS.md), never the PR body.
  */
-export type StepSoul = "coder" | "READ-ONLY";
+export type StepSoul = "coder" | "READ-ONLY" | "cmr" | "ship";
 
 /**
  * Project tool-chain entry. Each entry is a short, lower-case technology slug
@@ -359,20 +360,18 @@ export interface DispatchContext {
   /**
    * The prior agent session id to resume — present ONLY for a `session:"resume"`
    * dispatch, i.e. the CRASH/ESCALATE-resume path where the runner re-opens a
-   * recorded session (ADR 0026 invariant). A NORMAL S2 implement / S5 fix round
-   * is `session:"fresh"` and does NOT carry this — the fix worker keeps its
-   * context via `contextRetention:"retain"` + the round's findings on
-   * {@link prevFindings}, NOT by resuming a session (codex cmr R3/R4 finding:
-   * normal fix must not take the resume path, which skips git-truthing).
+   * recorded S2 build session (ADR 0026 invariant). A NORMAL S2 build is
+   * `session:"fresh"` and does NOT carry this; the per-slice review→fix loop runs
+   * INSIDE the build worker's own session, not via a resumed session (codex cmr
+   * R3/R4 finding: a normal build must not take the resume path, which skips
+   * git-truthing).
    */
   readonly resumeSessionId?: string;
   /**
-   * The previous round's reviewer fix_now findings, delivered to an S5 fix worker
-   * so it knows WHAT to fix (US#13) — the retention mechanism for a `fresh` fix
-   * round. Undefined for non-fix workers.
+   * Host-written issue snapshot for audit/resume compatibility. Current workers
+   * live-fetch issue truth via gh using runner-injected issue/repo env; this is
+   * not the execution source of truth.
    */
-  readonly prevFindings?: ReadonlyArray<Finding>;
-  /** The issue snapshot the worker reads as its local context (S1 clean-room). */
   readonly issueSnapshot?: IssueSnapshot;
   /**
    * FAMILY cmr worker only: the child issue numbers whose merge into the family
@@ -383,15 +382,13 @@ export interface DispatchContext {
   readonly llmResolvedChildren?: ReadonlyArray<number>;
 }
 
-/** A coder/fix worker's output — the existing {@link CoderOutput}. */
+/** A coder worker's output — the existing {@link CoderOutput}. */
 export type CoderResult = CoderOutput;
 
 /**
- * A per-slice reviewer worker's output (S3/S6). MUST carry structured findings
- * (PRD #330 [C]) — the runner's fix-loop (`selectFixNowFindings`), no-progress
- * guard (`normalizeFindingsKey`), and S4 route (`isBlockingFinding`) all consume
- * `findings`. A bare verdict here would break all three. (= existing
- * {@link ReviewerOutput}.) #334 fills the values.
+ * Compatibility reviewer worker output. The active ADR 0026 path keeps per-slice
+ * review/fix convergence inside the coder worker; if an older reviewer seam is
+ * used, it must still return structured findings rather than a bare verdict.
  */
 export type ReviewerResult = ReviewerOutput;
 
@@ -504,9 +501,10 @@ export interface IssueMeta {
 /**
  * The native metadata #244 S1 names as part of the full snapshot ("body +
  * comments + 最新 Agent Brief 正文 + native metadata"). S0 reads these via `gh`;
- * S1 writes them into the clean-room snapshot so the container's LOCAL context
- * (it does NOT gh-fetch inside the box) carries the issue's title/state/labels +
- * the native sub-issue + blocked_by summaries the coder needs — not just the body.
+ * S1 writes them into the clean-room snapshot so the audit/resume artifact carries
+ * the issue's title/state/labels + the native sub-issue + blocked_by summaries —
+ * not just the body. Execution truth is still the live issue the worker reads via
+ * in-container `gh`.
  */
 export interface IssueSnapshotMeta {
   readonly title: string;
@@ -520,12 +518,11 @@ export interface IssueSnapshotMeta {
 }
 
 /**
- * Full issue snapshot read by S1 (body + comments + Agent Brief + native
+ * Full issue snapshot written by S1 (body + comments + Agent Brief + native
  * metadata). `nativeMeta` carries the #244-named native metadata; the REAL
- * Backend always populates it (`buildIssueSnapshot`), so the snapshot fed to
- * the coder is contract-complete. It is OPTIONAL on the type only so the
- * zero-container fake Backends in the step control-flow tests (which never
- * exercise the coder's local context) can omit it.
+ * Backend always populates it (`buildIssueSnapshot`), so the host audit/resume
+ * artifact is contract-complete. Current workers execute from live issue reads,
+ * not this snapshot.
  */
 export interface IssueSnapshot {
   readonly number: number;
@@ -707,22 +704,18 @@ export interface Backend {
    * id is recorded in the ledger). A bare {@link StepOutput} return is still
    * accepted (no real id → run-level UUID fallback); the runner normalises both.
    *
-   * integ-cmr 256 r3 (fix_loop_context): the optional `fixNowFindings` carries
-   * the round's reviewer fix_now findings to a RESUMED S5 coder_fix step (the
-   * escalate-resume case — a human answered, the coder finishes in its original
-   * session), so the resumed coder sees the same findings a fresh S5 would. Set
-   * only on the S5 resume; undefined otherwise. The real Backend writes them into
-   * the git-ignored worktree file before resuming; the fakes ignore the argument.
+   * ADR 0026: the only agent step is the S2 build worker; resume re-opens that
+   * one session. The per-slice review→fix loop runs INSIDE the build worker, so
+   * there is no separate fix step to deliver findings to on resume.
    */
   resumeSession(
     spec: StepSpec,
     worktree: WorktreeHandle,
     sessionId: string,
-    fixNowFindings?: ReadonlyArray<Finding>,
   ): Promise<StepOutput | StepResult>;
   /** S0: lightweight metadata for the input gate (host-side `gh`). */
   fetchIssueMeta(issueNumber: number): Promise<IssueMeta>;
-  /** S1: full snapshot (body + comments + Agent Brief) for the coder. */
+  /** S1: full host-side snapshot (body + comments + Agent Brief) for audit/resume. */
   fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot>;
   /** S1: resident slice worktree from `base` (native createWorktree). */
   prepareWorktree(issueNumber: number, base: string): Promise<WorktreeHandle>;
@@ -732,7 +725,8 @@ export interface Backend {
     snapshot: IssueSnapshot,
   ): Promise<void>;
   /**
-   * S2/S3/S5/S6: one `sandbox.run()` for an agent step.
+   * S2: one `sandbox.run()` for the whole-slice build worker (ADR 0026 — the only
+   * agent step).
    *
    * #256 seam extension (DONE): the return is widened from `StepOutput` to
    * `StepOutput | StepResult`. The real Backend returns a {@link StepResult}
@@ -743,29 +737,19 @@ export interface Backend {
    * valid return (the fake Backends use it unchanged) → the runner falls back to
    * the run-level UUID. The runner normalises both shapes, so its control flow is
    * identical for fake and real Backends (#256 "控制流零改动").
-   *
-   * integ-cmr 256 r3 (fix_loop_context) seam extension: the optional third
-   * argument `fixNowFindings` delivers the CURRENT round's reviewer findings with
-   * `action:'fix_now'` to the S5 coder_fix step, so the fix-loop coder knows WHAT
-   * to fix (US#13 "findings 回喂 coder 在原地修"). It is set ONLY on the S5
-   * dispatch (the runner extracts it from the preceding reviewer output);
-   * undefined for S2 implement and S3/S6 reviewer steps. The real Backend writes
-   * the findings into a git-ignored worktree file the coder reads; the fake
-   * Backends ignore the argument — same backward-compatibility as the StepResult
-   * widening, so the runner's control flow is unchanged for both.
    */
   runStep(
     spec: StepSpec,
     worktree: WorktreeHandle,
-    fixNowFindings?: ReadonlyArray<Finding>,
   ): Promise<StepOutput | StepResult>;
   /**
    * THE unified worker-dispatch seam (ADR 0026 / PRD #330 #331).
    *
-   * Every single-slice worker step (S2/S3/S5/S6 agent steps, S7 ship) is
+   * Every productive single-slice worker step (current path: S2 coder, S7 ship;
+   * legacy compatibility may still map reviewer specs) is
    * dispatched through this ONE method: the runner hands a {@link WorkerSpec}
    * (what to invoke, host, fresh|resume, soul, skill) + a {@link DispatchContext}
-   * (worktree, stateDir, resumeSessionId, prev findings, issue snapshot) and gets
+   * (worktree, stateDir, resumeSessionId, audit snapshot when present) and gets
    * back a discriminated {@link WorkerResult}, then routes by case. This replaces
    * the per-method seam (`runStep` / `resumeSession` / `push`) as the runner's
    * dispatch entry point.

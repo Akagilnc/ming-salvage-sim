@@ -6,9 +6,10 @@
  * file gives that same injected seam a real implementation backed by:
  *   - **Sandcastle** (`createWorktree` / `createSandbox` / `run` / `resumeSession`)
  *     for the resident slice worktree + the isolated agent sandboxes,
- *   - **`gh`** (host-side) for issue metadata + the full snapshot (clean-room:
- *     the snapshot is fetched on the HOST and written into the worktree; the
- *     container never reaches the network),
+ *   - **`gh`** (host-side) for S0/S1 gates + the audit snapshot, plus in-container
+ *     `gh` issue reads for the worker's live execution context (the runner passes
+ *     issue/repo env + GH_TOKEN when available; the worker must not guess from a
+ *     stale prompt snapshot),
  *   - **`git`** for push + the residue-clean reconciliation + the HEAD SHA.
  *
  * The runner control flow is UNCHANGED: this class has the exact Backend
@@ -42,8 +43,6 @@
  *     main), run S1 and assert the fresh slice's base SHA equals the LATEST
  *     `origin/main` SHA (`git rev-parse origin/main`), not the stale local one —
  *     proving the cut derives from the just-fetched remote ref (cutRefFor).
- *   - r3 fix-loop findings leak: same git-ignore check for
- *     `.orchestrator-fix-findings.json` written before an S5 coder_fix run.
  */
 
 import { execFileSync } from "node:child_process";
@@ -67,6 +66,7 @@ import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
 
+import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import { runExclusive } from "./gitMutex.js";
 import { legacyDispatchWorker, shipWorkerSpec } from "./dispatchWorker.js";
 import { STEP_SPECS } from "./runner.js";
@@ -146,8 +146,8 @@ export function isClosedIssue(json: GhIssueJson): boolean {
  * the native sub-issue count. The three-way accept condition the runner enforces
  * is derived from these fields (rfa ∧ no sub-issues ∧ all blocked_by closed).
  * The Agent Brief is NOT read here — it is no longer an S0 gate (#328) and the
- * vestigial `hasAgentBrief` metadata was dropped (#329); the coder reads the
- * whole issue from S1's full snapshot (which still carries `extractAgentBrief`).
+ * vestigial `hasAgentBrief` metadata was dropped (#329); S1 still writes a
+ * contract-complete audit snapshot, while the coder reads the live issue via gh.
  *
  * `openBlockedBy` = the numbers of blocked_by dependencies whose state is not
  * "closed" (an open upstream the slice would otherwise be cut from a stale base
@@ -176,7 +176,7 @@ export function buildIssueMeta(
  * WHEN present; the LAST comment carrying it wins (a re-issued brief supersedes
  * earlier ones). Returns "" when no brief is present — that is a VALID slice (the
  * brief is not an S0 gate, design decision); the coder then works from the whole
- * issue (body + comments) carried in the snapshot.
+ * live issue (body + comments) fetched in-container.
  */
 export function extractAgentBrief(json: GhIssueJson): string {
   // Priority order, LOWEST first: the issue body is the fallback, then comments
@@ -244,8 +244,9 @@ export function parseBlockedBy(parsed: unknown): GhBlockedBy[] {
  * Build the native metadata block #244 S1 names ("body + comments + 最新 Agent
  * Brief 正文 + native metadata") — title/state/labels + the native sub-issue +
  * blocked_by summaries. S0 already reads these via gh; passing them through into
- * the snapshot (rather than re-fetching) keeps the clean-room snapshot the single
- * source the container reads (it does NOT gh-fetch inside the box).
+ * the host-written snapshot keeps the audit/resume artifact contract-complete.
+ * The worker's execution context is still the live issue it fetches in-container
+ * via gh using the runner-injected issue/repo env.
  */
 export function buildIssueSnapshotMeta(
   json: GhIssueJson,
@@ -264,8 +265,8 @@ export function buildIssueSnapshotMeta(
 /**
  * Build the S1 {@link IssueSnapshot}: body + comments + Agent Brief + the
  * #244-named native metadata. The native sub-issue count + blocked_by list S0
- * fetched are threaded in here (not re-queried) so the snapshot the coder reads
- * is contract-complete (#244 S1 names native metadata as a snapshot element).
+ * fetched are threaded in here (not re-queried) so the host-side snapshot is
+ * contract-complete (#244 S1 names native metadata as a snapshot element).
  */
 export function buildIssueSnapshot(
   issueNumber: number,
@@ -292,29 +293,6 @@ export function buildIssueSnapshot(
  * git-ignores it (per-worktree `.git/info/exclude`) before any agent run (F3).
  */
 export const SNAPSHOT_FILENAME = ".orchestrator-snapshot.json";
-
-/**
- * The host-written fix-loop findings file (integ-cmr 256 r3, fix_loop_context).
- * The runner hands the S5 coder_fix step the round's reviewer `fix_now`
- * findings; the Backend writes them here for the coder to read (coder_fix.md
- * points at this name). Like {@link SNAPSHOT_FILENAME} it is a clean-room
- * artifact that must NEVER be committed — git-ignored (per-worktree
- * `.git/info/exclude` + root `.gitignore`) before any agent run.
- */
-export const FIX_FINDINGS_FILENAME = ".orchestrator-fix-findings.json";
-
-/**
- * Serialise the S5 fix_now findings to the on-disk JSON the coder reads
- * (integ-cmr 256 r3). Pure (string assembly) so the contract is unit-testable
- * without a worktree. The shape is a stable top-level object so the file is
- * self-describing and future fields (round index, etc.) extend it without
- * breaking the coder's reader.
- */
-export function serializeFixFindings(
-  findings: ReadonlyArray<Finding>,
-): string {
-  return JSON.stringify({ fix_now: findings }, null, 2);
-}
 
 /**
  * Idempotently ensure `pattern` is present as its own line in a git
@@ -449,6 +427,12 @@ export const SANDBOX_SKILLS_DIR = "/home/agent/.claude/skills";
  * prompt/soul soft constraint (ADR 0017 §4).
  */
 export const SANDBOX_SOUL_ENV = "ORCHESTRATOR_SOUL";
+/** The issue number handed to the worker; prompt/soul live-fetch the issue via gh. */
+export const SANDBOX_ISSUE_NUMBER_ENV = "ORCHESTRATOR_ISSUE_NUMBER";
+/** A short alias for tools/skills that conventionally read ISSUE_NUMBER. */
+export const SANDBOX_ISSUE_NUMBER_ALIAS_ENV = "ISSUE_NUMBER";
+/** GitHub repo slug (`owner/repo`) the worker should use for gh issue reads. */
+export const SANDBOX_REPO_ENV = "ORCHESTRATOR_REPO";
 
 /**
  * The env var the ship worker's in-container `gh` reads for auth (cmr S336 r10).
@@ -460,6 +444,33 @@ export const SANDBOX_SOUL_ENV = "ORCHESTRATOR_SOUL";
  * mount would carry no usable credential — `GH_TOKEN` is gh's portable env-auth path.
  */
 export const SANDBOX_GH_TOKEN_ENV = "GH_TOKEN";
+
+/**
+ * Effectively disables sandcastle's per-worker idle timeout (default 600s, which
+ * fails the run with "Agent idle for N seconds"). Every observed "hang" so far
+ * was the laptop sleeping mid-run or deep-reasoning silence — false fires; real
+ * hangs are <1% and are caught manually. Sandcastle has no disable sentinel
+ * (`0` would fire immediately; `??` only falls back on null/undefined), so we use
+ * ONE WEEK — far longer than any real worker run, so the 600s default is
+ * neutralized in practice.
+ *
+ * Must stay well under the timer limit: sandcastle multiplies idleTimeoutSeconds
+ * by 1e3, and the millisecond delay must fit in a signed 32-bit int — Node timers
+ * (and the Effect scheduler underneath) clamp anything over 2**31-1 ms, firing
+ * IMMEDIATELY instead of waiting (gemini #384 R2: a 1-year value = 31_536_000_000
+ * ms OVERFLOWED int32 → the idle timer fired at once, the opposite of "never
+ * fires"). 604_800 * 1000 = 604_800_000 ms ≪ 2**31-1, no overflow.
+ */
+export const WORKER_IDLE_TIMEOUT_SECONDS = 604_800;
+
+/**
+ * Marks the container as an orchestrator-spawned, non-interactive session.
+ * gstack-ship reads OPENCLAW_SESSION → its spawned path auto-chooses the
+ * recommended option on AskUserQuestion instead of blocking/improvising (the
+ * orchestrator's only human touchpoint is structured escalation, never a
+ * worker-level prompt). Central set: add future tools' spawned-detection keys here.
+ */
+export const SPAWNED_WORKER_ENV: Record<string, string> = { OPENCLAW_SESSION: "1" };
 
 /**
  * Host paths for the per-issue codex auth copy + the claude token (spike
@@ -635,12 +646,23 @@ export function checkOwnGitDir(
 // ── model slug → agent provider selection (role decides soul/CLI) ───────────
 
 /**
- * Map a {@link StepSpec.model} slug to the baked-in CLI provider (PRD #244:
- * "换模型 = runtime 选已烤进镜像的 CLI"). coder = Sonnet (claudeCode), reviewer
- * = Opus 4.8 (claudeCode). Pure: returns the model id the provider factory
- * needs, so the mapping is unit-testable without constructing a provider.
+ * The codex coder slug + its effort (the S2 build worker runs on Codex gpt-5.5).
+ * `"high"` matches the project's per-slice codex effort convention (`## Skill
+ * routing`: the per-slice cmr legs run codex5.5 at high). The model id is the bare
+ * CLI model string the sandcastle codex provider expects.
+ */
+export const CODER_CODEX_SLUG = "gpt-5.5";
+const CODER_CODEX_EFFORT: NonNullable<sc.CodexOptions["effort"]> = "high";
+
+/**
+ * Map a CLAUDE {@link StepSpec.model} slug to its claude model id (PRD #244:
+ * "换模型 = runtime 选已烤进镜像的 CLI"). This resolver covers ONLY the claude
+ * slugs — `"opus"` (per-slice review subagent / reviewer) and `"sonnet"` (the ship
+ * worker). The CODER slug ({@link CODER_CODEX_SLUG}) is NOT a claude model id and is
+ * resolved by {@link agentForSlug} to the codex provider, never here. Pure: returns
+ * the model id string, so the mapping is unit-testable without constructing a provider.
  *
- * `"sonnet"` → claude-sonnet-4-6 (coder); `"opus"` → claude-opus-4-8 (reviewer).
+ * `"sonnet"` → claude-sonnet-4-6 (ship); `"opus"` → claude-opus-4-8 (reviewer).
  * Any other slug is a misconfigured StepSpec → throw (caught by the runner's
  * error edge, surfaced as S8(error)).
  */
@@ -656,6 +678,29 @@ export function modelIdForSlug(slug: string): string {
           `Add the CLI to the image and extend modelIdForSlug before using it.`,
       );
   }
+}
+
+/**
+ * Map a {@link StepSpec.model} slug to the baked-in CLI AGENT PROVIDER (the
+ * provider factory, not just the model id — extends {@link modelIdForSlug} now that
+ * the family spans TWO CLIs). PRD #244: "换模型 = runtime 选已烤进镜像的 CLI".
+ *
+ * - {@link CODER_CODEX_SLUG} (`"gpt-5.5"`, the S2 build worker / coder) → the
+ *   sandcastle CODEX provider at {@link CODER_CODEX_EFFORT}. The 2b image already
+ *   bakes the codex CLI (the cmr legs use it) and `box()` already mounts the
+ *   per-issue codex auth dir, so the codex coder authenticates in-sandbox.
+ * - `"sonnet"` / `"opus"` (claude slugs — the ship worker, the per-slice review
+ *   subagent) → `claudeCode(modelIdForSlug(slug))`, unchanged.
+ *
+ * Any other slug throws via {@link modelIdForSlug} (misconfigured StepSpec →
+ * S8(error)). Returns an {@link sc.AgentProvider}; its `.name` (`"codex"` vs
+ * `"claude-code"`) is the unit-test discriminator (no container needed).
+ */
+export function agentForSlug(slug: string): sc.AgentProvider {
+  if (slug === CODER_CODEX_SLUG) {
+    return sc.codex(CODER_CODEX_SLUG, { effort: CODER_CODEX_EFFORT });
+  }
+  return sc.claudeCode(modelIdForSlug(slug));
 }
 
 // ── role → baked soul selection (ship-pre 256 r1) ───────────────────────────
@@ -717,9 +762,13 @@ export interface RunResultLike {
 
 /**
  * The real per-step sandbox session id = the LAST iteration's sessionId
- * (the iteration that produced the final output / would be resumed). Undefined
- * when no iteration carried one (non-Claude provider / capture disabled) — the
- * runner then records the run-level UUID fallback.
+ * (the iteration that produced the final output / would be resumed). Both the
+ * Claude AND the Codex providers are RESUMABLE and carry a sessionId (sandcastle
+ * 0.10: "continue a prior Claude Code, Codex, or Pi conversation"; Codex resumes
+ * via `codex exec resume <id>`), so the default Codex coder's escalate → human →
+ * resume path returns to the real session, NOT a dead one. Undefined only when an
+ * iteration genuinely carried no id (a truly non-resumable provider / capture
+ * disabled) — only then does the runner record the run-level UUID fallback.
  */
 export function lastSessionId(
   result: Pick<RunResultLike, "iterations">,
@@ -994,10 +1043,6 @@ const STEP_IDS: ReadonlySet<string> = new Set([
   "S0",
   "S1",
   "S2",
-  "S3",
-  "S4",
-  "S5",
-  "S6",
   "S7",
   "S8",
 ]);
@@ -1161,12 +1206,11 @@ export function attributeFailure(
  * (#256 AC "对一个真叶子 issue 端到端跑通").
  *
  * integ-cmr int-r1 (C-3): DERIVED from the actual worker specs — STEP_SPECS
- * (S2/S3/S5/S6 coder/reviewer) + shipWorkerSpec() (S7 ship, ship.md) — rather than
- * a hand-maintained literal. The hand-kept list omitted ship.md, so promptsDir
- * validation passed yet S7 crashed at run time looking for the absent prompt. By
- * reading the prompt off every dispatched spec, a new/changed worker step can
- * never silently drift out of the validation list again. De-duped (S2 and S5 may
- * share a prompt across versions; the set collapses repeats).
+ * (S2 coder build, coder_implement.md) + shipWorkerSpec() (S7 ship, ship.md) —
+ * rather than a hand-maintained literal. The hand-kept list omitted ship.md, so
+ * promptsDir validation passed yet S7 crashed at run time looking for the absent
+ * prompt. By reading the prompt off every dispatched spec, a new/changed worker
+ * step can never silently drift out of the validation list again. De-duped.
  */
 export const REFERENCED_PROMPT_FILES: ReadonlyArray<string> = [
   ...new Set(
@@ -1208,7 +1252,7 @@ export function promptsDirError(
     return (
       `RealBackend: promptsDir "${promptsDir}" is missing required promptFile(s): ` +
       `${missingFiles.join(", ")}. All of [${REFERENCED_PROMPT_FILES.join(", ")}] ` +
-      `must be present (the runner's S2/S3/S5/S6 reference them).`
+      `must be present (the runner's S2 build + S7 ship reference them).`
     );
   }
   return undefined;
@@ -1262,14 +1306,15 @@ export interface RealBackendOptions {
    */
   readonly skillsMount?: string;
   /**
-   * Dir holding the versioned promptFiles (`coder_implement.md`,
-   * `reviewer_full_review.md`, `coder_fix.md`, `reviewer_rereview.md`).
+   * Dir holding the versioned promptFiles (`coder_implement.md` for the S2 build
+   * worker, `ship.md` for S7; ADR 0026 collapsed the single-slice loop, so there
+   * are no reviewer/fix prompts).
    *
    * MUST be an ABSOLUTE path (validated at construction, F4): Sandcastle
    * resolves `promptFile` against `process.cwd()`, NOT the run `cwd` option
    * (index.d.ts), so a relative `promptsDir` would silently resolve the prompt
-   * against the wrong directory at run time. The dir must exist and contain all
-   * four referenced files, or the constructor throws.
+   * against the wrong directory at run time. The dir must exist and contain every
+   * {@link REFERENCED_PROMPT_FILES} entry, or the constructor throws.
    */
   readonly promptsDir: string;
   /** Override $HOME for auth path construction (tests). */
@@ -1533,9 +1578,10 @@ export class RealBackend implements Backend {
   // ── S1: full snapshot (host gh) ────────────────────────────────────────────
   async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
     // Widen the field list to carry the #244-named native metadata
-    // (title/state/labels) into the clean-room snapshot, not just the body —
-    // the container reads this LOCAL snapshot and does NOT gh-fetch inside the
-    // box (#244 S1: "body + comments + 最新 Agent Brief 正文 + native metadata").
+    // (title/state/labels) into the clean-room snapshot, not just the body. This
+    // preserves the host-side audit/resume artifact; the worker still live-fetches
+    // issue truth in-container via gh (#244 S1: "body + comments + 最新 Agent Brief
+    // 正文 + native metadata").
     const json = this.phase("S1", "fetchIssueView", () => {
       const raw = this.sh("gh", [
         "issue",
@@ -1741,43 +1787,12 @@ export class RealBackend implements Backend {
     }
   }
 
-  /**
-   * Write (or clear) the fix-loop findings file the S5 coder reads (integ-cmr
-   * 256 r3, fix_loop_context). When `findings` is present (an S5 dispatch), the
-   * file is git-ignored first (same belt-and-suspenders as the clean-room
-   * snapshot — a coder `git add -A` must never stage host-written context into
-   * the pushed branch) then written. When `findings` is undefined (S2/S3/S6, or a
-   * fix round whose findings somehow did not survive the seam), any STALE file
-   * from a previous round is removed, so a non-fix step / a later round can never
-   * read another round's findings. Best-effort on the exclude + remove (a git/fs
-   * fault must not block the still-useful write); the write itself surfaces.
-   *
-   * `protected` so a zero-container test subclass can drive the real on-disk
-   * write/delete decision (integ-cmr 256 confirm r2) without a real container —
-   * the same seam-exposure rationale as {@link sh}.
-   */
-  protected writeFixFindings(
-    worktree: WorktreeHandle,
-    findings: ReadonlyArray<Finding> | undefined,
-  ): void {
-    const target = join(worktree.path, FIX_FINDINGS_FILENAME);
-    if (findings === undefined) {
-      // Non-S5 step (or no findings): clear any stale file so it cannot leak.
-      try {
-        rmSync(target, { force: true });
-      } catch {
-        // best-effort cleanup
-      }
-      return;
-    }
-    this.excludeFromGit(worktree, FIX_FINDINGS_FILENAME);
-    writeFileSync(target, serializeFixFindings(findings), "utf8");
-  }
-
   // ── auth mount (spike contract) ────────────────────────────────────────────
-  private mountAuth(issueNumber: number): {
+  // `protected` (not private) so the auth-mount tests can drive it over a real
+  // temp $HOME (assert auth.json copied + the minimal container config written).
+  protected mountAuth(issueNumber: number): {
     authDir: string;
-    claudeToken: string;
+    claudeToken?: string;
   } {
     const paths = buildAuthPaths(issueNumber, this.opts.home);
     rmSync(paths.hostCodexAuthDir, { recursive: true, force: true });
@@ -1785,29 +1800,45 @@ export class RealBackend implements Backend {
     // config.toml). 0o700 keeps it off world-readable multi-user hosts
     // (coderabbit R2, major).
     mkdirSync(paths.hostCodexAuthDir, { recursive: true, mode: 0o700 });
-    copyFileSync(
-      paths.srcCodexAuth,
-      join(paths.hostCodexAuthDir, "auth.json"),
-    );
+    // The Codex auth is BEST-EFFORT too (#384 R2 codex P2 — symmetric to the
+    // Claude token below). With ORCHESTRATOR_CODER_MODEL switched to a Claude coder
+    // (e.g. "sonnet"), a host with Claude auth but no `~/.codex/auth.json` must
+    // still start the worker — a missing codex auth degrades the codex leg, it does
+    // not throw and block the Claude coder. So the env-only model switch works both
+    // ways.
     try {
-      copyFileSync(
-        paths.srcCodexConfig,
-        join(paths.hostCodexAuthDir, "config.toml"),
-      );
-      // config.toml can carry credentials too — owner-only.
-      chmodSync(join(paths.hostCodexAuthDir, "config.toml"), 0o600);
+      copyFileSync(paths.srcCodexAuth, join(paths.hostCodexAuthDir, "auth.json"));
+      // Copied credential file → owner-only (was world-readable 0o644).
+      chmodSync(join(paths.hostCodexAuthDir, "auth.json"), 0o600);
     } catch {
-      // config.toml is optional.
+      // No host codex auth → the codex leg degrades (no creds in the mounted dir).
     }
-    // Copied credential file → owner-only (was world-readable 0o644).
-    chmodSync(join(paths.hostCodexAuthDir, "auth.json"), 0o600);
-    const claudeToken = readFileSync(paths.claudeTokenFile, "utf8").trim();
+    // The container IS the sandbox boundary; codex must NOT self-sandbox (nested
+    // bwrap is impossible). The host config.toml is host-personal (notify/plugins/
+    // workspace-write) and irrelevant here — only auth.json crosses. Write the
+    // minimal container config instead of copying the host's (#378). Always written
+    // so the dir is a valid mount even when codex auth was absent.
+    writeContainerCodexConfig(join(paths.hostCodexAuthDir, "config.toml"));
+    // The Claude token is BEST-EFFORT (#384 codex P2). The coder step now runs
+    // Codex (model gpt-5.5), so it no longer needs CLAUDE_CODE_OAUTH_TOKEN. A host
+    // with Codex auth but no `~/.sc-claude-token` must still start the worker — a
+    // missing token degrades the Claude leg (undefined) rather than throwing and
+    // blocking the Codex coder before it can start (mirrors ShipAuth's optional
+    // claudeToken).
+    let claudeToken: string | undefined;
+    try {
+      claudeToken = readFileSync(paths.claudeTokenFile, "utf8").trim() || undefined;
+    } catch {
+      claudeToken = undefined;
+    }
     return { authDir: paths.hostCodexAuthDir, claudeToken };
   }
 
   private box(issueNumber: number, spec: StepSpec): sc.SandboxProvider {
     const auth = this.mountAuth(issueNumber);
-    return docker(this.boxConfig(auth, spec));
+    return docker(
+      this.boxConfig({ ...auth, ghToken: this.readGhToken() }, spec, issueNumber),
+    );
   }
 
   /**
@@ -1832,20 +1863,37 @@ export class RealBackend implements Backend {
    * signal, not an OS readonly mount (reviewer READ-ONLY stays soft, ADR 0017 §4).
    */
   protected boxConfig(
-    auth: { authDir: string; claudeToken: string },
+    auth: { authDir: string; claudeToken?: string; ghToken?: string },
     spec: StepSpec,
+    issueNumber?: number,
   ): {
     imageName: string;
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
   } {
     const soul = soulForStep(spec);
+    const env: Record<string, string> = {
+      ...SPAWNED_WORKER_ENV,
+      [SANDBOX_SOUL_ENV]: soul,
+      [SANDBOX_REPO_ENV]: this.opts.repo,
+    };
+    // Inject the Claude token only when present: a Codex coder (model gpt-5.5)
+    // needs no CLAUDE_CODE_OAUTH_TOKEN, and an empty/undefined value would defeat
+    // the in-container Claude auth on a Codex-only host (#384 codex P2).
+    if (auth.claudeToken) {
+      env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
+    }
+    if (issueNumber !== undefined) {
+      const issue = String(issueNumber);
+      env[SANDBOX_ISSUE_NUMBER_ENV] = issue;
+      env[SANDBOX_ISSUE_NUMBER_ALIAS_ENV] = issue;
+    }
+    if (auth.ghToken !== undefined) {
+      env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
+    }
     return {
       imageName: this.opts.imageName,
-      env: {
-        CLAUDE_CODE_OAUTH_TOKEN: auth.claudeToken,
-        [SANDBOX_SOUL_ENV]: soul,
-      },
+      env,
       // #334: codex auth ONLY — the skills mount is dropped (baked skills win).
       mounts: [{ hostPath: auth.authDir, sandboxPath: SANDBOX_CODEX_DIR }],
     };
@@ -1935,22 +1983,24 @@ export class RealBackend implements Backend {
         };
   }
 
-  // ── S2/S3/S5/S6: one sandbox.run() (#256 seam extension returns StepResult) ─
+  // ── S2: the whole-slice build worker — one sandbox.run() (ADR 0026; #256 seam
+  //    extension returns StepResult). The per-slice review→fix loop runs INSIDE
+  //    this worker (via the skills the prompt invokes), so the runner no longer
+  //    delivers fix_now findings to a separate fix step. ─
   async runStep(
     spec: StepSpec,
     worktree: WorktreeHandle,
-    fixNowFindings?: ReadonlyArray<Finding>,
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
-    // integ-cmr 256 r3 (fix_loop_context): deliver the round's fix_now findings
-    // to the S5 coder_fix step by writing them into the (git-ignored) worktree
-    // file the coder reads. Set only on S5; other steps pass undefined.
-    this.writeFixFindings(worktree, fixNowFindings);
     const result = await sc.run({
       name: `${spec.id}-${spec.role}`,
+      idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
       cwd: worktree.path,
       sandbox: this.box(issueNumber, spec),
-      agent: sc.claudeCode(modelIdForSlug(spec.model)),
+      // The build worker's CLI is the spec's model slug → provider (the S2 coder
+      // runs on Codex gpt-5.5; a claude slug stays claudeCode). agentForSlug keeps
+      // the "model slug → baked CLI" #244 mapping unit-testable.
+      agent: agentForSlug(spec.model),
       // #7 maxIter: enforce the WITHIN-STEP Ralph retry budget = StepSpec.maxIter
       // (reviewer = 1 single pass; coder/fix > 1). Hitting it ends THE STEP
       // normally — route() continues — it is NEVER the orchestrator giving up
@@ -1982,20 +2032,17 @@ export class RealBackend implements Backend {
     spec: StepSpec,
     worktree: WorktreeHandle,
     sessionId: string,
-    fixNowFindings?: ReadonlyArray<Finding>,
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
-    // integ-cmr 256 r3 (fix_loop_context): a RESUMED S5 coder_fix step sees the
-    // same fix_now findings a fresh S5 would (escalate-resume). Write them BEFORE
-    // resuming; the dead-session fallback below re-runs runStep, which writes
-    // them again from its own param, so a fresh-run recovery is also covered.
-    this.writeFixFindings(worktree, fixNowFindings);
     try {
       const result = await sc.run({
         name: `${spec.id}-${spec.role}-resume`,
+        idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
         cwd: worktree.path,
         sandbox: this.box(issueNumber, spec),
-        agent: sc.claudeCode(modelIdForSlug(spec.model)),
+        // Resume the build worker on the SAME CLI as its fresh run (agentForSlug:
+        // codex for the gpt-5.5 coder, claudeCode for a claude slug).
+        agent: agentForSlug(spec.model),
         // resumeSession requires maxIterations:1 (Sandcastle constraint).
         maxIterations: 1,
         completionSignal: spec.completionSignal,
@@ -2037,9 +2084,11 @@ export class RealBackend implements Backend {
       if (recovery.kind === "retry-structured") {
         const result = await sc.run({
           name: `${spec.id}-${spec.role}-resume-retry`,
+          idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
           cwd: worktree.path,
           sandbox: this.box(issueNumber, spec),
-          agent: sc.claudeCode(modelIdForSlug(spec.model)),
+          // Same CLI as the fresh/native-resume build worker (agentForSlug).
+          agent: agentForSlug(spec.model),
           maxIterations: 1,
           completionSignal: spec.completionSignal,
           branchStrategy: { type: "head" },
@@ -2065,9 +2114,9 @@ export class RealBackend implements Backend {
         );
         return { output, sessionId: lastSessionId(result) ?? recovery.sessionId };
       }
-      // fresh-run fallback. Re-thread the fix_now findings (r3 fix_loop_context)
-      // so the fresh S5 coder still receives them (runStep rewrites the file).
-      return await this.runStep(spec, worktree, fixNowFindings);
+      // fresh-run fallback: re-dispatch the build worker (a dead resume session
+      // ⇒ start a fresh sandbox.run for the same step).
+      return await this.runStep(spec, worktree);
     }
   }
 
@@ -2217,6 +2266,7 @@ export class RealBackend implements Backend {
       }
       const result = await sc.run({
         name: `${spec.id}-ship`,
+        idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
         cwd: worktree.path,
         sandbox: this.shipSandbox(auth),
         agent: sc.claudeCode(modelIdForSlug(spec.model)),
@@ -2279,12 +2329,10 @@ export class RealBackend implements Backend {
       tempCodexDir = mkdtempSync(join(root, `ship-codex-auth-${issueNumber}-`));
       copyFileSync(paths.srcCodexAuth, join(tempCodexDir, "auth.json"));
       chmodSync(join(tempCodexDir, "auth.json"), 0o600);
-      try {
-        copyFileSync(paths.srcCodexConfig, join(tempCodexDir, "config.toml"));
-        chmodSync(join(tempCodexDir, "config.toml"), 0o600);
-      } catch {
-        // config.toml is optional.
-      }
+      // The container IS the sandbox boundary; codex must NOT self-sandbox (nested
+      // bwrap is impossible). The host config.toml is host-personal and irrelevant
+      // — only auth.json crosses. Write the minimal container config (#378).
+      writeContainerCodexConfig(join(tempCodexDir, "config.toml"));
       codexAuthDir = tempCodexDir;
     } catch {
       // codex auth absent ⇒ the codex leg degrades (no mount), no crash. gh is NOT
@@ -2342,8 +2390,18 @@ export class RealBackend implements Backend {
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string }>;
   } {
-    // The ship worker is a WRITE worker (commits + pushes) → the coder soul.
-    const env: Record<string, string> = { [SANDBOX_SOUL_ENV]: "coder" };
+    // The ship worker runs under the dedicated "ship" soul (delivery discipline:
+    // gstack-ship, stop-at-PR, defer→tracker not PR body) — souls/ship.md covers
+    // both single-slice and family deliveries, so the single-slice ship is unified
+    // with the family ship rather than left on the coder soul (gemini #384 R3).
+    // ORCHESTRATOR_REPO too: the ship soul records a deferred finding with
+    // `gh issue create --repo "$ORCHESTRATOR_REPO"`, so the sandbox must export it
+    // or that tracker write fails on an unset var (codex #384). Mirrors boxConfig.
+    const env: Record<string, string> = {
+      ...SPAWNED_WORKER_ENV,
+      [SANDBOX_SOUL_ENV]: "ship",
+      [SANDBOX_REPO_ENV]: this.opts.repo,
+    };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     // cmr S336 r10: the in-container `gh` (push over https + `gh pr create`)
     // authenticates from GH_TOKEN. Set only when present (the pure seam stays

@@ -6,18 +6,15 @@
 # so the cmr / ship / review / fix / merger workers can each invoke their skill
 # from the IMAGE (the bake gap ADR 0026 / #330 calls out).
 #
-# NOTE: the runner currently STILL bind-mounts host skills onto
-# /home/agent/.claude/skills at runtime (realBackend.ts / realFamilyBackend.ts
-# `skillsMount`), which SHADOWS these baked skills until that mount is dropped.
-# Removing it is a behaviour change tracked in #334 (EPIC-330-LEDGER carried note),
-# NOT part of this image slice. #333 makes the skills PRESENT IN THE IMAGE; #334
-# makes the runtime actually use them. Don't read this bake as "runtime already
-# stopped mounting".
+# NOTE: the runner must NOT bind-mount host skills over
+# /home/agent/.claude/skills. The baked image is the skill/soul truth source; a
+# runtime skill mount would shadow it and reintroduce host-state drift. Runtime
+# mounts are limited to the worked-on worktree and live auth material.
 #
 # FROM the existing sc-pipeline base (claude + codex CLIs + node + python + bash +
 # git + curl + jq already baked); this layer ADDS:
 #   - the full dev-skill closure (see SKILL CLOSURE GRAPH below)
-#   - all worker-role souls (coder / reviewer / merger)
+#   - all worker-role souls (coder / reviewer / merger / cmr)
 #   - agy (Gemini CLI, Linux build) + gh + bun (gstack-ship + cmr deps)
 #
 # Build context is a STAGING dir prepared by build.sh, NOT this directory: build.sh
@@ -34,6 +31,8 @@
 #   resolving-merge-conflicts      → (leaf)                   (merger worker)
 #   ak-cross-m-review              → diagnosing-bugs          (cmr non-trivial fix)
 #                                    + codex CLI + agy CLI + Claude `Agent`/`Task`
+#   ak-cmr-completeness            → ak-cross-m-review        (ship-pre Step 5 lens entry)
+#   ak-cmr-correctness             → ak-cross-m-review        (ship-pre Step 6 lens entry)
 #   gstack-ship                    → ~/.claude/skills/gstack/{bin,scripts,ship,
 #                                       review,...} helper closure (baked subtree)
 #   `review`                       = BUILTIN Claude Code command, NOT a disk skill
@@ -60,15 +59,13 @@ USER root
 #            is NOT portable (it is a macOS ELF), so we install the Linux ELF via
 #            the official installer (issue #333 spike: aarch64 Linux agy installs
 #            + runs in-container).
-# agy AUTH is NOT baked: it is a live OAuth secret. The REQUIRED runtime wiring
-# (to be added with the cmr/reviewer worker step, #335/#336 — the runner's
-# `box()` does NOT mount it yet, only codex auth today) is: mount the host token
-# file (host `~/.sc-agy-oauth-token`) to the container path
-#   /home/agent/.gemini/antigravity-cli/antigravity-oauth-token
-# (same runtime-mount pattern as codex/claude auth; refresh token auto-renews).
-# This image + that mount were spike-verified end-to-end (issue #333: agy leg
-# caught the injected bug with a file-mounted token). Until the runner mounts it,
-# the agy leg has no auth and cmr degrades to codex-only.
+# agy AUTH is NOT baked: it is live OAuth material. The cmr sandbox copies the
+# host token into a per-run writable dir and mounts it at
+#   /home/agent/.gemini/antigravity-cli/
+# so the in-container agy leg can read
+# `antigravity-oauth-token` and refresh/write runtime state without touching the
+# host file directly. When the token is absent, that leg degrades; the rest of the
+# cmr still runs.
 # codex AUTH = writable CODEX_HOME: the orchestrator copies ~/.codex into a
 # per-issue writable dir and bind-mounts it to /home/agent/.codex — NOT a ro
 # mount, or codex's first run rc=1 on an unwritable auth dir (spike constraint #2;
@@ -119,7 +116,7 @@ COPY skills-manifest.txt skills-manifest.sha256 /home/agent/.orchestrator/
 
 # ── Bake all worker-role souls ───────────────────────────────────────────────
 # The orchestrator selects the role's soul at runtime (ORCHESTRATOR_SOUL env:
-# "coder" / "READ-ONLY" reviewer / "merger"); baking the soul TEXT here makes each
+# "coder" / "READ-ONLY" reviewer / "merger" / "cmr" integrated-cmr fixer); baking the soul TEXT here makes each
 # role's discipline reproducible (no runtime bind-mount of the soul). The
 # entrypoint / prompt reads the matching file.
 COPY souls/ /home/agent/.orchestrator/souls/
@@ -130,10 +127,23 @@ COPY souls/ /home/agent/.orchestrator/souls/
 # against and lets a bare `docker run` demo route without a mounted worktree.
 COPY CLAUDE.routing.md /home/agent/.orchestrator/CLAUDE.routing.md
 
+# ── Bake the commit-msg git hook ─────────────────────────────────────────────
+# Tags every in-container commit's subject with the `sandcastle:` prefix
+# (orchestrator/CLAUDE.md). Wired via `git config --global core.hooksPath` below
+# (after USER agent, so it lands in the agent's ~/.gitconfig). Image-only by
+# construction → never fires on host commits; deterministic → catches commits a
+# soul instruction misses (gstack-ship's own version-bump / review-fix commits).
+COPY hooks/ /home/agent/.orchestrator/githooks/
+
 RUN chmod -R a+rX /home/agent/.claude/skills /home/agent/.orchestrator \
+ && chmod +x /home/agent/.orchestrator/githooks/commit-msg \
  && find /home/agent/.claude/skills -type f -name '*.sh' -exec chmod +x {} + 2>/dev/null \
  ; find /home/agent/.claude/skills/gstack/bin -type f -exec chmod +x {} + 2>/dev/null \
  ; (id agent >/dev/null 2>&1 \
       && chown -R agent /home/agent/.claude /home/agent/.orchestrator /home/agent/.local || true)
 
 USER agent
+
+# core.hooksPath (global, as the agent user) activates the baked commit-msg hook
+# for EVERY repo the in-container agent commits in — all worktrees, all workers.
+RUN git config --global core.hooksPath /home/agent/.orchestrator/githooks
