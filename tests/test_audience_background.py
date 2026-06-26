@@ -285,6 +285,32 @@ def test_background_audience_failure_after_action_rolls_back_cleanly(game):
     assert db.conn.execute("SELECT status FROM chat_turns").fetchone()["status"] == "failed"
 
 
+def test_chat_stream_rejects_second_concurrent_turn_same_minister(game):
+    """#383 Out of Scope「不允许同大臣并发未答 turn」+ integrated cmr Gate2 P1（Claude+codex×2
+    一致）：同一大臣已有 in-flight（status='active' 且 minister_message_id 空）turn 时，再开流式
+    召对必须被服务端拒掉、不创建第二个并发 turn——否则两个后台 worker 竞写同一 SQLite 连接
+    （ADR0008 单写者不变式）且历史错序。可达路径：离开实时流（前端 busy 清）→ 重开 → 再问。"""
+    db, state, content = game
+    minister_name = "毕自严"
+    agent = _FakeAgent()
+    web_game = _web_game(db, state, content, agent)
+
+    # 预置一个 in-flight turn（已受理、minister_message_id 仍空 = 后台仍在回奏）
+    db.create_chat_turn(state, minister_name, "sess-inflight", 0)
+    turns_before = db.conn.execute("SELECT COUNT(*) FROM chat_turns").fetchone()[0]
+
+    events = list(web_game.chat_stream(minister_name, "再问一句。"))
+
+    assert events[-1]["type"] == "error"
+    assert "仍在进行" in str(events[-1].get("message", ""))
+    # 未创建第二个并发 turn
+    assert db.conn.execute("SELECT COUNT(*) FROM chat_turns").fetchone()[0] == turns_before
+    # 一个完成的（可撤回）turn 不算 in-flight：写入 minister_message_id 后应放行新问
+    db.update_chat_turn_messages(
+        db.get_last_active_chat_turn(minister_name, state.turn)["id"], minister_message_id=999)
+    assert web_game._audience_turn_in_flight(minister_name) is False
+
+
 def test_chat_stream_closed_before_turn_creation_is_noop(game):
     """#383 Testing Decisions「turn 创建前 vs 创建后边界」的创建前半：观察者在生成器首次
     迭代前就离开（close 未 next）→ no-op，不留 chat_turns / chat_messages。turn 创建（首次
