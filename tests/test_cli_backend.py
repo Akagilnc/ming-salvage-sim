@@ -293,6 +293,50 @@ def test_codex_streaming_runner_emits_incremental_text(monkeypatch):
     assert "请写邸报" in captured["input"]
 
 
+def test_codex_stream_watchdog_kills_hung_process(monkeypatch):
+    """integrated cmr Gate2 codex correctness：流式读阻塞在 `for raw_line in proc.stdout`，若
+    codex 卡死且不关 stdout，proc.wait(timeout) 永远到不了。看门狗须在 run_timeout 到点 kill
+    进程，让阻塞读拿到 EOF 退出并抛超时（而非无限挂起）。"""
+    import threading as _t
+
+    killed = _t.Event()
+
+    class _HangStdout:
+        def __iter__(self):
+            killed.wait(5.0)      # 模拟「永不关 stdout」的卡死进程，直到被 kill 才解除
+            return iter(())       # kill 后 stdout 给 EOF，读循环结束
+
+        def close(self):
+            pass
+
+    class _Proc:
+        class _Stdin:
+            def write(self, text):
+                pass
+
+            def close(self):
+                pass
+
+        stdin = _Stdin()
+        stdout = _HangStdout()
+        stderr = None
+        returncode = 0
+
+        def wait(self, timeout=None):
+            return ("", "")
+
+        def kill(self):
+            killed.set()
+            self.returncode = -9
+
+    monkeypatch.setattr(cb.subprocess, "Popen", lambda *a, **k: _Proc())
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+
+    with pytest.raises(RuntimeError, match="超时"):
+        list(cb._iter_codex_stream_chunks("请写邸报", timeout=0.2))
+    assert killed.is_set()        # 看门狗确实 kill 了卡死进程
+
+
 def test_run_codex_accepts_config_model_and_timeout(monkeypatch):
     captured = {}
 
