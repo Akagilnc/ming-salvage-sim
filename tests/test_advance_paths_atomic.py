@@ -20,6 +20,7 @@ import sqlite3
 import pytest
 
 import ming_sim.decree as decree_mod
+import ming_sim.issues as I
 from ming_sim.decree import advance_without_edict, persist_resolve_context, settle_with_delta
 
 
@@ -528,13 +529,17 @@ def test_submit_event_decision_persists_choice_after_pending_cleanup(game, monke
         (event_id,),
     ).fetchone()
     assert row is not None
-    assert row["terminal_state"] == "triggered"
+    assert row["terminal_state"] == ""
     assert row["source"] == "hitl_decision"
     assert json.loads(row["choice_json"]) == {
         "label": "留",
         "hint": "暂稳东江",
         "note": "姑留观后效",
     }
+    assert not db.has_event_triggered(event_id)
+    assert event_id not in I._event_trigger_refs(db), (
+        "submit_decisions 只能暂存亲裁 choice，不能在 phase2 前抢先把候选事件记成终态"
+    )
 
 
 def test_submit_event_decision_binds_from_candidate_snapshot_without_event_id(game, monkeypatch):
@@ -587,7 +592,7 @@ def test_submit_event_decision_binds_from_candidate_snapshot_without_event_id(ga
         (event_id,),
     ).fetchone()
     assert row is not None
-    assert row["terminal_state"] == "triggered"
+    assert row["terminal_state"] == ""
     assert row["source"] == "hitl_decision"
     assert json.loads(row["choice_json"]) == {
         "label": "留",
@@ -674,8 +679,8 @@ def test_record_event_decision_choice_preserves_non_triggered_terminal_state(gam
     assert json.loads(row["choice_json"]) == {"label": "留"}  # choice 仍记录
 
 
-def test_record_event_decision_choice_inserts_fresh_as_triggered(game):
-    """无冲突的新事件：HITL 选择落 'triggered' + 'hitl_decision'（INSERT 路径，回归不变）。"""
+def test_record_event_decision_choice_inserts_fresh_without_terminal_state(game):
+    """HITL 选择只暂存 choice，不抢先把新事件写成 triggered 终态。"""
     import json
     db, state, content = game
     eid = "__terminal_account_fresh_test__"
@@ -683,9 +688,26 @@ def test_record_event_decision_choice_inserts_fresh_as_triggered(game):
     row = db.conn.execute(
         "SELECT terminal_state, source, choice_json FROM event_triggers WHERE event_id=?", (eid,)
     ).fetchone()
-    assert row["terminal_state"] == "triggered"
+    assert row["terminal_state"] == ""
     assert row["source"] == "hitl_decision"
     assert json.loads(row["choice_json"]) == {"label": "斩"}
+
+
+def test_mark_event_triggered_upgrades_pending_choice_row(game):
+    """phase2 正常触发事件时，空终态 choice 行升级为 triggered 且保留亲裁选择。"""
+    import json
+    db, state, content = game
+    eid = "__terminal_account_pending_choice_upgrade__"
+    db.record_event_decision_choice(state, eid, {"label": "留"})
+
+    db.mark_event_triggered(state, eid, source="event_pool")
+
+    row = db.conn.execute(
+        "SELECT terminal_state, source, choice_json FROM event_triggers WHERE event_id=?", (eid,)
+    ).fetchone()
+    assert row["terminal_state"] == "triggered"
+    assert row["source"] == "event_pool"
+    assert json.loads(row["choice_json"]) == {"label": "留"}
 
 
 def test_hitl_poison_replay_downgrades_context_then_reextracts(game, monkeypatch, tmp_path):

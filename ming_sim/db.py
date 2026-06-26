@@ -6525,10 +6525,25 @@ class GameDB:
                 (event_id, turn, year, period, source, terminal_state, terminal_reason)
             VALUES (?, ?, ?, ?, ?, 'triggered', ?)
             ON CONFLICT(event_id) DO UPDATE SET
-                terminal_reason = excluded.terminal_reason
-            WHERE event_triggers.terminal_state = 'triggered'
-              AND COALESCE(event_triggers.terminal_reason, '') = ''
-              AND excluded.terminal_reason <> ''
+                source = CASE
+                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
+                    THEN excluded.source
+                    ELSE event_triggers.source
+                END,
+                terminal_state = CASE
+                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
+                    THEN excluded.terminal_state
+                    ELSE event_triggers.terminal_state
+                END,
+                terminal_reason = CASE
+                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
+                    THEN excluded.terminal_reason
+                    WHEN event_triggers.terminal_state = 'triggered'
+                      AND COALESCE(event_triggers.terminal_reason, '') = ''
+                      AND excluded.terminal_reason <> ''
+                    THEN excluded.terminal_reason
+                    ELSE event_triggers.terminal_reason
+                END
             """,
             (event_id, state.turn, state.year, state.period, source, str(terminal_reason or "")[:200]),
         )
@@ -6606,16 +6621,16 @@ class GameDB:
             """
             INSERT INTO event_triggers
                 (event_id, turn, year, period, source, terminal_state, terminal_reason, choice_json)
-            VALUES (?, ?, ?, ?, ?, 'triggered', ?, ?)
+            VALUES (?, ?, ?, ?, ?, '', ?, ?)
             ON CONFLICT(event_id) DO UPDATE SET
-                -- 终态账不可逆（codex correctness）：冲突时**保留**已有 terminal_state——
+                -- 终态账不可逆（codex correctness）：HITL 选择只暂存 choice_json；新行不抢先
+                -- 写 triggered，待 phase2 的 event_pool 正常立局势后再由 mark_event_triggered 补终态。
+                -- 冲突时**保留**已有 terminal_state——
                 -- HITL 选择只补 choice_json，绝不把已有的 expired/avoided/obsolete 翻成
-                -- triggered（excluded.terminal_state 恒为字面 'triggered'，故原 CASE 实为
-                -- 把任何非 triggered 行都翻成 triggered 的空操作）。新行(无冲突)才由 INSERT
-                -- 落 'triggered'。source 同理：只有已是 triggered 的行才更新成 hitl_decision，
-                -- 非 triggered 行不被误标。
+                -- triggered。source 同理：只有空终态暂存行或已是 triggered 的行才更新成
+                -- hitl_decision，expired/avoided/obsolete 不被误标。
                 source = CASE
-                    WHEN event_triggers.terminal_state = 'triggered'
+                    WHEN COALESCE(event_triggers.terminal_state, '') IN ('', 'triggered')
                     THEN excluded.source
                     ELSE event_triggers.source
                 END,

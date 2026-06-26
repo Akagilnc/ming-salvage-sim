@@ -936,8 +936,9 @@ def _event_trigger_refs(db: GameDB) -> set:
 def _event_terminal_states(db: GameDB) -> Dict[str, str]:
     states: Dict[str, str] = {}
     for r in db.conn.execute("SELECT event_id, terminal_state FROM event_triggers").fetchall():
-        if r["event_id"]:
-            states[str(r["event_id"])] = str(r["terminal_state"] or "")
+        terminal_state = str(r["terminal_state"] or "")
+        if r["event_id"] and terminal_state:
+            states[str(r["event_id"])] = terminal_state
     return states
 
 
@@ -946,9 +947,10 @@ def _event_terminal_records(db: GameDB) -> Dict[str, Dict[str, str]]:
     for r in db.conn.execute(
         "SELECT event_id, terminal_state, terminal_reason FROM event_triggers"
     ).fetchall():
-        if r["event_id"]:
+        terminal_state = str(r["terminal_state"] or "")
+        if r["event_id"] and terminal_state:
             records[str(r["event_id"])] = {
-                "terminal_state": str(r["terminal_state"] or ""),
+                "terminal_state": terminal_state,
                 "terminal_reason": str(r["terminal_reason"] or ""),
             }
     return records

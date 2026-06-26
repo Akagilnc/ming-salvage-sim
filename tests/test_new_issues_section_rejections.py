@@ -19,19 +19,33 @@ class _TempEvents:
         self.content = content
         self.events = events
         self.previous = {}
+        self.previous_positions = {}
 
     def __enter__(self):
         for ev in self.events:
-            self.content.events.append(ev)
+            for idx, existing in enumerate(self.content.events):
+                if getattr(existing, "id", None) == ev.id:
+                    self.previous_positions[ev.id] = idx
+                    self.content.events[idx] = ev
+                    break
+            else:
+                self.previous_positions[ev.id] = None
+                self.content.events.append(ev)
             self.previous[ev.id] = self.content.event_by_id.get(ev.id)
             self.content.event_by_id[ev.id] = ev
         return self.events
 
     def __exit__(self, exc_type, exc, tb):
         for ev in self.events:
-            if ev in self.content.events:
-                self.content.events.remove(ev)
             old = self.previous.get(ev.id)
+            pos = self.previous_positions.get(ev.id)
+            if pos is not None and pos < len(self.content.events) and self.content.events[pos] is ev:
+                if old is None:
+                    self.content.events.pop(pos)
+                else:
+                    self.content.events[pos] = old
+            elif ev in self.content.events:
+                self.content.events.remove(ev)
             if old is None:
                 self.content.event_by_id.pop(ev.id, None)
             else:
@@ -87,6 +101,29 @@ def _hist_event(eid, gate=None):
         open_window=True,
         trigger_gate=gate or {},
     )
+
+
+def test_temp_events_replaces_same_id_and_restores_original(content):
+    eid = "__temp_events_replace_existing__"
+    original = _hist_event(eid)
+    replacement = _hist_event(eid)
+    replacement.title = "替换事件"
+    content.events.append(original)
+    content.event_by_id[eid] = original
+    try:
+        with _TempEvents(content, replacement):
+            same_id_events = [ev for ev in content.events if ev.id == eid]
+            assert same_id_events == [replacement]
+            assert content.event_by_id[eid] is replacement
+
+        same_id_events = [ev for ev in content.events if ev.id == eid]
+        assert same_id_events == [original]
+        assert content.event_by_id[eid] is original
+    finally:
+        if original in content.events:
+            content.events.remove(original)
+        if content.event_by_id.get(eid) is original:
+            content.event_by_id.pop(eid, None)
 
 
 @pytest.mark.parametrize("bad_item", [None, 42, "字符串"])
