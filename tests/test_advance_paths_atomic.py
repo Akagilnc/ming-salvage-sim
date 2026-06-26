@@ -682,7 +682,7 @@ def test_record_event_decision_choice_preserves_non_triggered_terminal_state(gam
 def test_record_event_decision_choice_inserts_fresh_without_terminal_state(game):
     """HITL 选择只暂存 choice，不抢先把新事件写成 triggered 终态。"""
     import json
-    db, state, content = game
+    db, state, _content = game
     eid = "__terminal_account_fresh_test__"
     db.record_event_decision_choice(state, eid, {"label": "斩"})
     row = db.conn.execute(
@@ -696,7 +696,7 @@ def test_record_event_decision_choice_inserts_fresh_without_terminal_state(game)
 def test_mark_event_triggered_upgrades_pending_choice_row(game):
     """phase2 正常触发事件时，空终态 choice 行升级为 triggered 且保留亲裁选择。"""
     import json
-    db, state, content = game
+    db, state, _content = game
     eid = "__terminal_account_pending_choice_upgrade__"
     db.record_event_decision_choice(state, eid, {"label": "留"})
 
@@ -707,6 +707,40 @@ def test_mark_event_triggered_upgrades_pending_choice_row(game):
     ).fetchone()
     assert row["terminal_state"] == "triggered"
     assert row["source"] == "event_pool"
+    assert json.loads(row["choice_json"]) == {"label": "留"}
+
+
+@pytest.mark.parametrize(
+    ("marker", "terminal_state", "source", "reason"),
+    [
+        ("expired", "expired", "window_expired", "过最晚触发时点仍未达成触发门"),
+        ("avoided", "avoided", "gate_avoided", "前提已不成立"),
+        ("obsolete", "obsolete", "person_core_dead", "点名人物已死亡"),
+    ],
+)
+def test_terminal_markers_upgrade_pending_choice_row(game, marker, terminal_state, source, reason):
+    """确定性终态须覆盖空终态 HITL choice 行且保留亲裁选择。"""
+    import json
+    db, state, _content = game
+    eid = f"__terminal_account_pending_choice_{marker}__"
+    db.record_event_decision_choice(state, eid, {"label": "留"})
+
+    if marker == "expired":
+        db.mark_event_expired(state, eid)
+    elif marker == "avoided":
+        db.mark_event_avoided(state, eid, reason)
+    elif marker == "obsolete":
+        db.mark_event_obsolete(state, eid, reason)
+    else:
+        raise AssertionError(marker)
+
+    row = db.conn.execute(
+        "SELECT terminal_state, source, terminal_reason, choice_json FROM event_triggers WHERE event_id=?",
+        (eid,),
+    ).fetchone()
+    assert row["terminal_state"] == terminal_state
+    assert row["source"] == source
+    assert row["terminal_reason"] == reason
     assert json.loads(row["choice_json"]) == {"label": "留"}
 
 

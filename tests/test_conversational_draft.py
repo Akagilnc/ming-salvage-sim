@@ -679,6 +679,45 @@ def test_draft_keyword_falls_back_when_classifier_returns_none(game, monkeypatch
     assert "史可法" in json.loads(pending[0]["payload_json"])["text"]
 
 
+def test_draft_keyword_overrides_preclassified_appointment(game, monkeypatch):
+    """并发分类器误判 appointment 时，明确拟旨关键词仍须走拟旨抽取，不得被任免路径抢走。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    called = []
+
+    def _draft(player_message, reply, **kwargs):
+        called.append(player_message)
+        return {
+            "draft_action": "拟旨",
+            "draft_text": "奉天承运皇帝诏曰，授史可法为兵部尚书，钦此。",
+        }
+
+    monkeypatch.setattr(cb, "extract_draft_intent", _draft)
+    monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
+        "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
+        "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": ""})
+
+    sess = _fake_session(db, state)
+    GameSession.apply_cli_conversation_actions(
+        sess, ch,
+        player_message="帮我拟一道圣旨，任命史可法为兵部尚书。",
+        answer="臣谨拟旨。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent={
+            "kind": "appointment",
+            "appoint_action": "任命",
+            "name": "史可法",
+            "office": "兵部尚书",
+        },
+    )
+
+    pending = db.list_pending_actions(state.turn)
+    assert called == ["帮我拟一道圣旨，任命史可法为兵部尚书。"]
+    assert [p["kind"] for p in pending] == ["directive"]
+    assert "史可法" in json.loads(pending[0]["payload_json"])["text"]
+
+
 def test_none_player_message_does_not_crash_draft_probe(game, monkeypatch):
     """系统生成/空消息路径可能传 player_message=None；拟旨关键词探针必须兜底为无请求。"""
     db, state, content = game
