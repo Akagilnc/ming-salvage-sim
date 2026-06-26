@@ -2374,8 +2374,14 @@ class GameDB:
             current_lev = int(row["leverage"])
             weight_sum = self._faction_office_weight_sum(faction)
             current_offset = float(row["leverage_offset"] or 0)
-            # 只在 leverage 与公式值一致时重算（未被手动 clamp/修改）——否则跳过保 baseline。
-            expected_lev = max(0, min(100, round(current_offset + weight_sum)))
+            # 只在 raw 公式值未越界 [0,100] 且 leverage 与之一致时重算——否则跳过保 baseline。
+            # 先判 raw 越界（不 clamp）：raw 越界时 clamp 后的 expected_lev 可能巧合等于
+            # current_lev（一个本身被 clamp 的脏值），被误判「一致」而错误迁移——但 clamped
+            # 脏值反推不出真实 offset、不该碰（cmr R2 CodeRabbit 精修）。
+            raw_lev = current_offset + weight_sum
+            if raw_lev < 0 or raw_lev > 100:
+                continue
+            expected_lev = round(raw_lev)
             if expected_lev != current_lev:
                 continue
             new_offset = current_lev - weight_sum
