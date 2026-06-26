@@ -129,6 +129,24 @@ def test_merge_keeps_multiple_distinct_fundings_under_same_origin_ref():
     assert not (merged.get("_module_rejections") or [])
 
 
+def test_merge_keeps_distinct_non_recurring_commitments_under_same_origin_ref():
+    """integrated cmr Gate2 codex correctness：跨模块承诺去重的唯一目的是消「月度 ongoing 双扣」。
+    无月度 economy 的承诺（form③ 未来一次性：仅 end_turn、空 ongoing_effects）根本不产月度扣账、
+    无双扣可消；却会因签名同收敛到 (okind, oref, frozenset()) 把同一诏书下两笔合法 form③ 承诺误删
+    其一。空 economy 一律不参与去重——两笔都须保留、无拒收（#136 form③）。"""
+    from ming_sim.simulation import _merge_module_outputs
+
+    base = {"origin_kind": "decree", "origin_ref": "decree:turn-2:future-reviews",
+            "kind": "initiative", "commitment_kind": "until_stop", "ongoing_effects": {}}
+    form3_a = dict(base, title="孙承宗三月后复试", end_turn=9)
+    form3_b = dict(base, title="袁崇焕半年后核功", end_turn=12)
+    merged = _merge_module_outputs({"issues": {"new_issues": [form3_a, form3_b]}})
+
+    titles = [it.get("title") for it in merged["new_issues"]]
+    assert titles == ["孙承宗三月后复试", "袁崇焕半年后核功"]   # 两笔 form③ 都保留，未被空 economy 误删
+    assert not (merged.get("_module_rejections") or [])
+
+
 def test_parallel_extract_runs_concurrently(game, monkeypatch):
     """parallel=True 时 4 个 LLM 调用真并发：峰值并发 ≥2，wall-clock 明显短于串行总和。"""
     db, state, content = game
