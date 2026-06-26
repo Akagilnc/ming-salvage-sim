@@ -91,11 +91,19 @@ def bind_decisions_to_candidate_events(
     decisions: List[Dict[str, object]],
     simulator_payload: object,
 ) -> List[Dict[str, object]]:
-    """Fill missing decision event_id values from the authoritative candidate snapshot.
+    """Bind decision event_id to the AUTHORITATIVE candidate snapshot (#389).
 
-    Explicit event_id values from the simulator decision block win. For missing ids,
-    bind only on a unique exact title match inside simulator_payload.candidate_events;
-    non-event HITL decisions and ambiguous candidate titles remain unbound.
+    The candidate snapshot — not the simulator's free-text echo — is the source of
+    truth (#389 裁决：用权威候选快照确定性绑定，不依赖 simulator 回显 event_id）:
+    - A simulator-echoed event_id is trusted ONLY if it actually belongs to this
+      turn's candidate snapshot (the normal correct-echo path → 行为不变).
+    - A missing id, OR an echoed id that is NOT in the snapshot (omitted→misfilled /
+      hallucinated), binds on a unique exact title match inside
+      simulator_payload.candidate_events. We do not let an off-snapshot id win over
+      the snapshot just because the LLM wrote it.
+    - Non-event HITL decisions and ambiguous/absent title matches remain unbound (an
+      off-snapshot id with no unique title match is left as-is — no snapshot basis to
+      override it, keeps non-candidate/historical paths unchanged).
     """
     if not decisions:
         return []
@@ -105,22 +113,27 @@ def bind_decisions_to_candidate_events(
     if not isinstance(raw_candidates, list):
         return [dict(d) for d in decisions]
 
+    candidate_ids: set[str] = set()
     title_to_ids: Dict[str, List[str]] = {}
     for item in raw_candidates:
         if not isinstance(item, dict):
             continue
         event_id = str(item.get("id") or "").strip()
         title = str(item.get("title") or "").strip()
-        if not event_id or not title:
+        if not event_id:
             continue
-        title_to_ids.setdefault(title, []).append(event_id)
+        candidate_ids.add(event_id)
+        if title:
+            title_to_ids.setdefault(title, []).append(event_id)
 
     bound: List[Dict[str, object]] = []
     for decision in decisions:
         out = dict(decision)
-        if str(out.get("event_id") or "").strip():
-            bound.append(out)
+        explicit = str(out.get("event_id") or "").strip()
+        if explicit and explicit in candidate_ids:
+            bound.append(out)  # 回显 id 确属本回合候选 → 采信（正常路径行为不变）
             continue
+        # 缺 id，或回显 id 不在权威候选快照里：以快照唯一标题为准（重）绑，不被 LLM 回显牵着走。
         title = str(out.get("title") or "").strip()
         ids = title_to_ids.get(title) or []
         unique_ids = {event_id for event_id in ids if event_id}
