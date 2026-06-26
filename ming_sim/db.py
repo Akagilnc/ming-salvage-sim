@@ -622,6 +622,7 @@ class GameDB:
                 source TEXT NOT NULL DEFAULT 'simulation',
                 terminal_state TEXT NOT NULL DEFAULT 'triggered',
                 terminal_reason TEXT NOT NULL DEFAULT '',
+                choice_json TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(event_id) REFERENCES events(id)
             );
@@ -660,6 +661,7 @@ class GameDB:
             CREATE TABLE IF NOT EXISTS pending_decisions (
                 turn INTEGER NOT NULL,
                 idx INTEGER NOT NULL,
+                event_id TEXT NOT NULL DEFAULT '',
                 title TEXT NOT NULL DEFAULT '',
                 context TEXT NOT NULL DEFAULT '',
                 options_json TEXT NOT NULL DEFAULT '[]',
@@ -1027,6 +1029,8 @@ class GameDB:
         self._backfill_bandit_power_split()
         self.ensure_column("event_triggers", "terminal_state", "TEXT NOT NULL DEFAULT 'triggered'")
         self.ensure_column("event_triggers", "terminal_reason", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("event_triggers", "choice_json", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("pending_decisions", "event_id", "TEXT NOT NULL DEFAULT ''")
         self._backfill_event_triggers_from_event_pool_issues()
         # 步骤7：回合阶段（旧库迁移，schema 升级非 fallback）
         self.ensure_column("game_state", "turn_phase", "TEXT NOT NULL DEFAULT 'summoning'")
@@ -4861,55 +4865,61 @@ class GameDB:
         )
         self.conn.commit()
 
-    def fail_incomplete_chat_turn(self, chat_turn_id: int) -> Dict[str, Any]:
-        """Mark a pre-reply chat turn failed and remove its durable user prompt.
-
-        The returned dict carries ``failed_now=True`` ONLY when this call actually
-        transitioned an active pre-reply turn to failed (and deleted its durable user
-        prompt). A guarded/no-op return (turn already replied, not active, or missing)
-        omits the flag so callers can mirror the same guard for their own side effects
-        (e.g. in-memory history pruning).
-        """
+    def fail_chat_turn(self, chat_turn_id: int) -> None:
+        """Mark an incomplete audience turn failed and remove its partial user-visible writes."""
         row = self.conn.execute(
             "SELECT * FROM chat_turns WHERE id = ?",
             (int(chat_turn_id),),
         ).fetchone()
         if row is None:
-            return {}
+            return
         turn_row = self._row_dict(row)
-        if turn_row["status"] != "active" or turn_row.get("minister_message_id") is not None:
-            return turn_row
-        _uid = turn_row.get("user_message_id")
-        message_ids = [int(_uid)] if _uid is not None else []
-        with self.conn:
-            # Atomically transition ONLY a still-active, still-pre-reply turn: the
-            # WHERE mirrors the read-guard above (a completed turn keeps status
-            # 'active' and is distinguished solely by minister_message_id), so a turn
-            # that completed between the SELECT and here is left intact. The durable
-            # side effects (user-prompt delete, agno truncate, failed_now) are gated on
-            # this UPDATE actually matching — never on the stale read alone — so the
-            # method can never delete a replied turn's prompt or report a false
-            # failed_now even if a future caller invokes it off the owning generator.
-            cursor = self.conn.execute(
-                "UPDATE chat_turns SET status = 'failed' "
-                "WHERE id = ? AND status = 'active' AND minister_message_id IS NULL",
+        if turn_row["status"] != "active":
+            self.conn.execute(
+                "UPDATE chat_turns SET status = 'failed' WHERE id = ?",
                 (int(chat_turn_id),),
             )
-            if cursor.rowcount != 1:
-                return turn_row
+            self.conn.commit()
+            return
+        items = self.conn.execute(
+            """
+            SELECT * FROM chat_turn_rollback_items
+            WHERE chat_turn_id = ?
+            ORDER BY id DESC
+            """,
+            (int(chat_turn_id),),
+        ).fetchall()
+        message_ids = [
+            int(mid)
+            for mid in (turn_row.get("user_message_id"), turn_row.get("minister_message_id"))
+            if mid
+        ]
+        with self.conn:
+            for item in items:
+                table = str(item["target_table"])
+                strategy = str(item["rollback_strategy"])
+                target_id = str(item["target_id"])
+                if strategy == "delete_inserted_row":
+                    self._delete_row_in_tx(table, target_id)
+                elif strategy in {"restore_row", "restore_deleted_row"}:
+                    before_row = self._json_load_row(item["before_json"])
+                    self._restore_row_in_tx(table, before_row)
+                else:
+                    raise ValueError(f"不支持的回滚策略：{strategy}")
             if message_ids:
                 placeholders = ",".join("?" for _ in message_ids)
                 self.conn.execute(
                     f"DELETE FROM chat_messages WHERE id IN ({placeholders})",
                     message_ids,
                 )
+            self.conn.execute(
+                "UPDATE chat_turns SET status = 'failed' WHERE id = ?",
+                (int(chat_turn_id),),
+            )
             self._truncate_agno_runs_in_tx(
                 str(turn_row.get("agno_session_id") or ""),
                 int(turn_row.get("agno_runs_before") or 0),
             )
-        turn_row["status"] = "failed"
-        turn_row["failed_now"] = True
-        return turn_row
 
     def record_chat_turn_rollback_diffs(
         self,
@@ -5788,10 +5798,11 @@ class GameDB:
         for idx, d in enumerate(decisions):
             self.conn.execute(
                 """INSERT INTO pending_decisions
-                   (turn, idx, title, context, options_json, choice_json, status)
-                   VALUES (?, ?, ?, ?, ?, '', 'pending')""",
+                   (turn, idx, event_id, title, context, options_json, choice_json, status)
+                   VALUES (?, ?, ?, ?, ?, ?, '', 'pending')""",
                 (
                     int(turn), idx,
+                    str(d.get("event_id") or ""),
                     str(d.get("title") or ""),
                     str(d.get("context") or ""),
                     json.dumps(d.get("options") or [], ensure_ascii=False),
@@ -5802,7 +5813,7 @@ class GameDB:
     def list_pending_decisions(self, turn: int) -> List[Dict[str, object]]:
         """读本回合决策点（按 idx）。options 反序列化；choice 为已选则带出。"""
         rows = self.conn.execute(
-            "SELECT idx, title, context, options_json, choice_json, status "
+            "SELECT idx, event_id, title, context, options_json, choice_json, status "
             "FROM pending_decisions WHERE turn = ? ORDER BY idx",
             (int(turn),),
         ).fetchall()
@@ -5821,6 +5832,7 @@ class GameDB:
                 choice = None
             out.append({
                 "idx": int(r["idx"]),
+                "event_id": r["event_id"],
                 "title": r["title"],
                 "context": r["context"],
                 "options": options if isinstance(options, list) else [],
@@ -6551,6 +6563,48 @@ class GameDB:
         ).fetchone()
         return row is not None
 
+    def _event_terminal_upgrade_assignments(self, *, fill_triggered_reason: bool = False) -> str:
+        reason_fill = ""
+        if fill_triggered_reason:
+            reason_fill = """
+                    WHEN event_triggers.terminal_state = 'triggered'
+                      AND COALESCE(event_triggers.terminal_reason, '') = ''
+                      AND excluded.terminal_reason <> ''
+                    THEN excluded.terminal_reason
+            """
+        return f"""
+                turn = CASE
+                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
+                    THEN excluded.turn
+                    ELSE event_triggers.turn
+                END,
+                year = CASE
+                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
+                    THEN excluded.year
+                    ELSE event_triggers.year
+                END,
+                period = CASE
+                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
+                    THEN excluded.period
+                    ELSE event_triggers.period
+                END,
+                source = CASE
+                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
+                    THEN excluded.source
+                    ELSE event_triggers.source
+                END,
+                terminal_state = CASE
+                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
+                    THEN excluded.terminal_state
+                    ELSE event_triggers.terminal_state
+                END,
+                terminal_reason = CASE
+                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
+                    THEN COALESCE(NULLIF(event_triggers.terminal_reason, ''), excluded.terminal_reason)
+{reason_fill}                    ELSE event_triggers.terminal_reason
+                END
+        """
+
     def mark_event_triggered(
         self,
         state: GameState,
@@ -6561,15 +6615,12 @@ class GameDB:
         commit: bool = True,
     ) -> None:
         self.conn.execute(
-            """
+            f"""
             INSERT INTO event_triggers
                 (event_id, turn, year, period, source, terminal_state, terminal_reason)
             VALUES (?, ?, ?, ?, ?, 'triggered', ?)
             ON CONFLICT(event_id) DO UPDATE SET
-                terminal_reason = excluded.terminal_reason
-            WHERE event_triggers.terminal_state = 'triggered'
-              AND COALESCE(event_triggers.terminal_reason, '') = ''
-              AND excluded.terminal_reason <> ''
+                {self._event_terminal_upgrade_assignments(fill_triggered_reason=True)}
             """,
             (event_id, state.turn, state.year, state.period, source, str(terminal_reason or "")[:200]),
         )
@@ -6586,10 +6637,12 @@ class GameDB:
         commit: bool = True,
     ) -> None:
         self.conn.execute(
-            """
-            INSERT OR IGNORE INTO event_triggers
+            f"""
+            INSERT INTO event_triggers
                 (event_id, turn, year, period, source, terminal_state, terminal_reason)
             VALUES (?, ?, ?, ?, ?, 'avoided', ?)
+            ON CONFLICT(event_id) DO UPDATE SET
+                {self._event_terminal_upgrade_assignments()}
             """,
             (event_id, state.turn, state.year, state.period, source, reason[:200]),
         )
@@ -6606,10 +6659,12 @@ class GameDB:
         commit: bool = True,
     ) -> None:
         self.conn.execute(
-            """
-            INSERT OR IGNORE INTO event_triggers
+            f"""
+            INSERT INTO event_triggers
                 (event_id, turn, year, period, source, terminal_state, terminal_reason)
             VALUES (?, ?, ?, ?, ?, 'obsolete', ?)
+            ON CONFLICT(event_id) DO UPDATE SET
+                {self._event_terminal_upgrade_assignments()}
             """,
             (event_id, state.turn, state.year, state.period, source, reason[:200]),
         )
@@ -6618,12 +6673,59 @@ class GameDB:
 
     def mark_event_expired(self, state: GameState, event_id: str, *, commit: bool = True) -> None:
         self.conn.execute(
-            """
-            INSERT OR IGNORE INTO event_triggers
+            f"""
+            INSERT INTO event_triggers
                 (event_id, turn, year, period, source, terminal_state, terminal_reason)
             VALUES (?, ?, ?, ?, 'window_expired', 'expired', '过最晚触发时点仍未达成触发门')
+            ON CONFLICT(event_id) DO UPDATE SET
+                {self._event_terminal_upgrade_assignments()}
             """,
             (event_id, state.turn, state.year, state.period),
+        )
+        if commit:
+            self.conn.commit()
+
+    def record_event_decision_choice(
+        self,
+        state: GameState,
+        event_id: str,
+        choice: Dict[str, object],
+        *,
+        source: str = "hitl_decision",
+        commit: bool = True,
+    ) -> None:
+        """Persist the player's HITL choice for an event-backed decision in the event ledger."""
+        eid = str(event_id or "").strip()
+        if not eid:
+            return
+        payload = json.dumps(choice if isinstance(choice, dict) else {}, ensure_ascii=False)
+        label = str((choice or {}).get("label") or "")[:200] if isinstance(choice, dict) else ""
+        self.conn.execute(
+            """
+            INSERT INTO event_triggers
+                (event_id, turn, year, period, source, terminal_state, terminal_reason, choice_json)
+            VALUES (?, ?, ?, ?, ?, '', ?, ?)
+            ON CONFLICT(event_id) DO UPDATE SET
+                -- 终态账不可逆（codex correctness）：HITL 选择只暂存 choice_json；新行不抢先
+                -- 写 triggered，待 phase2 的 event_pool 正常立局势后再由 mark_event_triggered 补终态。
+                -- 冲突时**保留**已有 terminal_state——
+                -- HITL 选择只补 choice_json，绝不把已有的 expired/avoided/obsolete 翻成
+                -- triggered。source 同理：只有空终态暂存行或已是 triggered 的行才更新成
+                -- hitl_decision，expired/avoided/obsolete 不被误标。
+                source = CASE
+                    WHEN COALESCE(event_triggers.terminal_state, '') IN ('', 'triggered')
+                    THEN excluded.source
+                    ELSE event_triggers.source
+                END,
+                terminal_state = event_triggers.terminal_state,
+                terminal_reason = CASE
+                    WHEN COALESCE(event_triggers.terminal_reason, '') = ''
+                    THEN excluded.terminal_reason
+                    ELSE event_triggers.terminal_reason
+                END,
+                choice_json = excluded.choice_json
+            """,
+            (eid, state.turn, state.year, state.period, source, label, payload),
         )
         if commit:
             self.conn.commit()

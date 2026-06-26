@@ -74,13 +74,83 @@ def parse_decision_blocks(narrative: str) -> tuple[str, List[Dict[str, object]]]
             options.append({"label": label, "hint": str(o.get("hint") or "").strip()})
         if len(options) < 2:  # 至少给 2 个选项才算有效抉择
             continue
-        decisions.append({
+        decision = {
             "title": title,
             "context": str(obj.get("context") or "").strip(),
             "options": options[:3],
-        })
+        }
+        event_id = str(obj.get("event_id") or obj.get("origin_ref") or "").strip()
+        if event_id:
+            decision["event_id"] = event_id
+        decisions.append(decision)
     clean = _DECISION_RE.sub("", narrative or "").strip()
     return clean, decisions
+
+
+def bind_decisions_to_candidate_events(
+    decisions: List[Dict[str, object]],
+    simulator_payload: object,
+) -> List[Dict[str, object]]:
+    """Bind decision event_id to the AUTHORITATIVE candidate snapshot (#389).
+
+    The candidate snapshot — not the simulator's free-text echo — is the source of
+    truth (#389 裁决：用权威候选快照确定性绑定，不依赖 simulator 回显 event_id）:
+    - A simulator-echoed event_id is trusted ONLY if it actually belongs to this
+      turn's candidate snapshot (the normal correct-echo path → 行为不变).
+    - A missing id, OR an echoed id that is NOT in the snapshot (omitted→misfilled /
+      hallucinated), binds on a unique exact title match inside
+      simulator_payload.candidate_events. We do not let an off-snapshot id win over
+      the snapshot just because the LLM wrote it.
+    - Non-event HITL decisions keep no event_id (nothing to bind). An echoed
+      off-snapshot id with no unique title match is UNBOUND (event_id removed) — the
+      snapshot gives no basis to trust it, and leaving it would let submit_decisions
+      write a non-candidate id into the event ledger as 'triggered' (see the inline
+      comment on the `elif explicit` branch below). A genuinely absent id with no
+      title match simply stays unbound.
+    """
+    if not decisions:
+        return []
+    if not isinstance(simulator_payload, dict):
+        return [dict(d) for d in decisions]
+    raw_candidates = simulator_payload.get("candidate_events")
+    if not isinstance(raw_candidates, list):
+        return [dict(d) for d in decisions]
+
+    candidate_ids: set[str] = set()
+    title_to_ids: Dict[str, List[str]] = {}
+    for item in raw_candidates:
+        if not isinstance(item, dict):
+            continue
+        event_id = str(item.get("id") or "").strip()
+        title = str(item.get("title") or "").strip()
+        if not event_id:
+            continue
+        candidate_ids.add(event_id)
+        if title:
+            title_to_ids.setdefault(title, []).append(event_id)
+
+    bound: List[Dict[str, object]] = []
+    for decision in decisions:
+        out = dict(decision)
+        explicit = str(out.get("event_id") or "").strip()
+        if explicit and explicit in candidate_ids:
+            bound.append(out)  # 回显 id 确属本回合候选 → 采信（正常路径行为不变）
+            continue
+        # 缺 id，或回显 id 不在权威候选快照里：以快照唯一标题为准（重）绑，不被 LLM 回显牵着走。
+        title = str(out.get("title") or "").strip()
+        ids = title_to_ids.get(title) or []
+        unique_ids = {event_id for event_id in ids if event_id}
+        if len(unique_ids) == 1:
+            out["event_id"] = next(iter(unique_ids))
+        elif explicit:
+            # off-snapshot 回显 id 且无唯一标题可绑 → 解绑，不保留这个非候选 id（codex
+            # correctness）：留着它会被 submit_decisions 当 'triggered' 写进事件账，若它其实是
+            # 一个真实的未来事件 id，就被永久标成已触发、再也进不了候选池（gather_candidate_events
+            # 跳过 spawned）；season_simulator 也明示非候选抉择不应带 event_id。解绑后该选择仍在
+            # pending_decisions.choice_json，不污染终态账。正常含【候选内】id 的路径不受影响。
+            out.pop("event_id", None)
+        bound.append(out)
+    return bound
 
 
 def group_secret_orders_for_sim(

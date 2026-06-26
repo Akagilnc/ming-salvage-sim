@@ -6,12 +6,43 @@ import { FullscreenModal, MinisterPortrait, cacheBust } from "./hud";
 import { formatClosedEffect } from "../format";
 import type { ChatDisplayMessage, ChatMessage, ClosedIssue, Directive, EndingPayload, GameState, HistoryDetail, HistoryTurnItem, Minister, SecretOrder, Suggestion } from "../types";
 
-export function ReportModal({ report, onClose }: { report: string; onClose: () => void }) {
+export function ReportModal({
+  report,
+  accountReport = "",
+  onClose,
+}: {
+  report: string;
+  accountReport?: string;
+  onClose: () => void;
+}) {
+  const [page, setPage] = React.useState<"narrative" | "account">("narrative");
+  const accountText = accountReport.trim() || "本月暂无实账明细。";
+  const activeText = page === "narrative" ? report : accountText;
   return (
-    <FullscreenModal title="月末奏疏" subtitle="推演结果" bgClass="modal-bg-state" onClose={onClose}>
+    <FullscreenModal title="月末邸报" subtitle={page === "narrative" ? "第一页：本月故事" : "第二页：DB 实账"} bgClass="modal-bg-state" onClose={onClose}>
       <article className="state-document modal-scroll">
+        <div className="report-page-tabs" role="tablist" aria-label="邸报分页">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={page === "narrative"}
+            className={`report-page-tab${page === "narrative" ? " active" : ""}`}
+            onClick={() => setPage("narrative")}
+          >
+            叙事
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={page === "account"}
+            className={`report-page-tab${page === "account" ? " active" : ""}`}
+            onClick={() => setPage("account")}
+          >
+            实账
+          </button>
+        </div>
         <div className="document-section">
-          <pre className="memorial-text">{report}</pre>
+          <pre className="memorial-text">{activeText}</pre>
         </div>
       </article>
     </FullscreenModal>
@@ -707,7 +738,7 @@ export function ChatModal({
             {busy === "大臣思索中" && onCancel && (
               <button className="secondary-action composer-cancel" onClick={onCancel}>
                 <X size={15} />
-                取消
+                离开等待
               </button>
             )}
             <button className="secondary-action composer-exit" onClick={onClose}>

@@ -20,6 +20,7 @@ import sqlite3
 import pytest
 
 import ming_sim.decree as decree_mod
+import ming_sim.issues as I
 from ming_sim.decree import advance_without_edict, persist_resolve_context, settle_with_delta
 
 
@@ -483,6 +484,284 @@ def test_hitl_retry_replays_ready_context_without_reextract(saved_game, monkeypa
     assert db.load_state().metrics["民心"] == support_before - 3  # ready delta 真重放
     assert db.get_resolve_context(turn) is None
     assert db.list_pending_decisions(turn) == []
+
+
+def test_submit_event_decision_persists_choice_after_pending_cleanup(game, monkeypatch):
+    """#345：事件亲裁选择不能只活在 pending_decisions；phase2 清理后仍须可从事件账恢复。"""
+    import json
+    import ming_sim.session as session_mod
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    turn = state.turn
+    event_id = "mao_wenlong"
+    db.save_pending_decisions(turn, [{
+        "event_id": event_id,
+        "title": "毛文龙裁断",
+        "context": "东江事急，须御前亲裁。",
+        "options": [
+            {"label": "斩", "hint": "严肃军纪"},
+            {"label": "留", "hint": "暂稳东江"},
+        ],
+    }])
+    state.turn_phase = "awaiting_decision"
+    db.save_state(state)
+
+    def _phase2(_state, _db, *_args, **_kwargs):
+        _db.clear_pending_decisions(turn)
+        return "ok"
+
+    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.last_decree = "测试诏书"
+    sess.agno_db = None
+    sess.llm_config = None
+    sess.content = content
+    sess.registry = None
+
+    sess.submit_decisions([{"label": "留", "hint": "暂稳东江", "note": "姑留观后效"}])
+
+    assert db.list_pending_decisions(turn) == []
+    row = db.conn.execute(
+        "SELECT terminal_state, source, choice_json FROM event_triggers WHERE event_id=?",
+        (event_id,),
+    ).fetchone()
+    assert row is not None
+    assert row["terminal_state"] == ""
+    assert row["source"] == "hitl_decision"
+    assert json.loads(row["choice_json"]) == {
+        "label": "留",
+        "hint": "暂稳东江",
+        "note": "姑留观后效",
+    }
+    assert not db.has_event_triggered(event_id)
+    assert event_id not in I._event_trigger_refs(db), (
+        "submit_decisions 只能暂存亲裁 choice，不能在 phase2 前抢先把候选事件记成终态"
+    )
+
+
+def test_submit_event_decision_binds_from_candidate_snapshot_without_event_id(game, monkeypatch):
+    """#389：simulator 漏写 event_id 时，事件亲裁仍从权威候选快照确定性绑定并持久化。"""
+    import json
+    import ming_sim.session as session_mod
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    turn = state.turn
+    event_id = "mao_wenlong"
+    db.save_resolve_context(
+        turn,
+        "测试诏书",
+        "邸报正文未回显事件编号。",
+        {"candidate_events": [{"id": event_id, "title": "毛文龙裁断"}]},
+        secret_orders=[],
+        relevant_memories=[],
+    )
+    db.save_pending_decisions(turn, [{
+        "title": "毛文龙裁断",
+        "context": "东江事急，须御前亲裁。",
+        "options": [
+            {"label": "斩", "hint": "严肃军纪"},
+            {"label": "留", "hint": "暂稳东江"},
+        ],
+    }])
+    state.turn_phase = "awaiting_decision"
+    db.save_state(state)
+
+    def _phase2(_state, _db, *_args, **_kwargs):
+        _db.clear_pending_decisions(turn)
+        return "ok"
+
+    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.last_decree = "测试诏书"
+    sess.agno_db = None
+    sess.llm_config = None
+    sess.content = content
+    sess.registry = None
+
+    sess.submit_decisions([{"label": "留", "hint": "暂稳东江", "note": "姑留观后效"}])
+
+    assert db.list_pending_decisions(turn) == []
+    row = db.conn.execute(
+        "SELECT terminal_state, source, choice_json FROM event_triggers WHERE event_id=?",
+        (event_id,),
+    ).fetchone()
+    assert row is not None
+    assert row["terminal_state"] == ""
+    assert row["source"] == "hitl_decision"
+    assert json.loads(row["choice_json"]) == {
+        "label": "留",
+        "hint": "暂稳东江",
+        "note": "姑留观后效",
+    }
+
+
+def test_hitl_ready_replay_retry_keeps_original_event_choice(game, monkeypatch):
+    """cmr Gate2 r4 Finding2：ready-context 重试时 phase2 走「恢复重放」、**忽略**重交的亲裁
+    选择（重放崩溃前真源的旧选择 delta）。submit_decisions 此刻绝不能用新选择覆写
+    event_triggers.choice_json——否则事件账记新选择 B、而重放的世界状态来自旧选择 A，durable
+    账实不符。断言：重试改投不同选择后，事件账仍是原选择。"""
+    import json
+    import ming_sim.decree as dm
+    import ming_sim.session as session_mod
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    turn = state.turn
+    event_id = "mao_wenlong"
+    # 第一次 submit 已把原选择 A=「斩」记进事件账
+    db.record_event_decision_choice(state, event_id, {"label": "斩", "note": "原裁断"}, commit=True)
+    # phase2 已抽取并 persist ready delta、settle 曾 abort → ready context
+    dm.persist_resolve_context(
+        db, turn, {"metric_delta": {"民心": -3}},
+        decree_text="HITL诏", narrative="裁断后邸报",
+        simulator_payload={"candidate_events": [{"id": event_id, "title": "毛文龙裁断"}]},
+        secret_orders=[], relevant_memories=[],
+    )
+    assert db.get_resolve_context(turn).get("extracted") is not None
+    db.save_pending_decisions(turn, [{
+        "event_id": event_id, "title": "毛文龙裁断", "context": "c",
+        "options": [{"label": "斩", "hint": ""}, {"label": "留", "hint": ""}],
+    }])
+    state.turn_phase = "awaiting_decision"
+    db.save_state(state)
+
+    def _phase2(_state, _db, *_args, **_kwargs):
+        _db.clear_pending_decisions(turn)
+        return "ok"
+    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.last_decree = "HITL诏"
+    sess.agno_db = None
+    sess.llm_config = None
+    sess.content = content
+    sess.registry = None
+
+    # 重试改投「留」（B，与原 A 不同）——ready-replay 应跳过覆写
+    sess.submit_decisions([{"label": "留", "note": "改裁"}])
+
+    row = db.conn.execute(
+        "SELECT choice_json FROM event_triggers WHERE event_id=?", (event_id,)).fetchone()
+    assert json.loads(row["choice_json"]) == {"label": "斩", "note": "原裁断"}, \
+        "ready-replay 重试不得用新选择覆写事件账"
+
+
+def test_record_event_decision_choice_preserves_non_triggered_terminal_state(game):
+    """integrated cmr Gate2 codex correctness：event_triggers 是终态账，HITL 选择 upsert 冲突时
+    只补 choice_json，**不得**把已有非 triggered 终态（avoided/expired/obsolete）翻成 triggered，
+    也不得把非 triggered 行的 source 改成 hitl_decision（原 ON CONFLICT 的 terminal_state CASE
+    实为空操作：excluded 恒为 'triggered'）。"""
+    import json
+    db, state, content = game
+    eid = "__terminal_account_preserve_test__"
+    db.conn.execute(
+        "INSERT INTO event_triggers (event_id, turn, year, period, source, terminal_state, terminal_reason) "
+        "VALUES (?, ?, ?, ?, 'simulation', 'avoided', '前提已不成立')",
+        (eid, state.turn, state.year, state.period),
+    )
+    db.conn.commit()
+
+    db.record_event_decision_choice(state, eid, {"label": "留"})
+
+    row = db.conn.execute(
+        "SELECT terminal_state, source, choice_json FROM event_triggers WHERE event_id=?", (eid,)
+    ).fetchone()
+    assert row["terminal_state"] == "avoided"          # 未被翻成 triggered
+    assert row["source"] == "simulation"               # 非 triggered 行 source 不被误标
+    assert json.loads(row["choice_json"]) == {"label": "留"}  # choice 仍记录
+
+
+def test_record_event_decision_choice_inserts_fresh_without_terminal_state(game):
+    """HITL 选择只暂存 choice，不抢先把新事件写成 triggered 终态。"""
+    import json
+    db, state, _content = game
+    eid = "__terminal_account_fresh_test__"
+    db.record_event_decision_choice(state, eid, {"label": "斩"})
+    row = db.conn.execute(
+        "SELECT terminal_state, source, choice_json FROM event_triggers WHERE event_id=?", (eid,)
+    ).fetchone()
+    assert row["terminal_state"] == ""
+    assert row["source"] == "hitl_decision"
+    assert json.loads(row["choice_json"]) == {"label": "斩"}
+
+
+def test_mark_event_triggered_upgrades_pending_choice_row(game):
+    """phase2 正常触发事件时，空终态 choice 行升级为 triggered 且保留亲裁选择。"""
+    import json
+    db, state, _content = game
+    eid = "__terminal_account_pending_choice_upgrade__"
+    db.record_event_decision_choice(state, eid, {"label": "留"})
+    trigger_turn = state.turn + 1
+    trigger_year = state.year + 1
+    trigger_period = 7
+    state.turn = trigger_turn
+    state.year = trigger_year
+    state.period = trigger_period
+
+    db.mark_event_triggered(state, eid, source="event_pool")
+
+    row = db.conn.execute(
+        "SELECT turn, year, period, terminal_state, source, terminal_reason, choice_json FROM event_triggers WHERE event_id=?",
+        (eid,),
+    ).fetchone()
+    assert row["turn"] == trigger_turn
+    assert row["year"] == trigger_year
+    assert row["period"] == trigger_period
+    assert row["terminal_state"] == "triggered"
+    assert row["source"] == "event_pool"
+    assert row["terminal_reason"] == "留"
+    assert json.loads(row["choice_json"]) == {"label": "留"}
+
+
+@pytest.mark.parametrize(
+    ("marker", "terminal_state", "source", "reason"),
+    [
+        ("expired", "expired", "window_expired", "过最晚触发时点仍未达成触发门"),
+        ("avoided", "avoided", "gate_avoided", "前提已不成立"),
+        ("obsolete", "obsolete", "person_core_dead", "点名人物已死亡"),
+    ],
+)
+def test_terminal_markers_upgrade_pending_choice_row(game, marker, terminal_state, source, reason):
+    """确定性终态须覆盖空终态 HITL choice 行，保留亲裁选择，并刷新终态时刻。"""
+    import json
+    db, state, _content = game
+    eid = f"__terminal_account_pending_choice_{marker}__"
+    db.record_event_decision_choice(state, eid, {"label": "留"})
+    terminal_turn = state.turn + 1
+    terminal_year = state.year + 1
+    terminal_period = 7
+    state.turn = terminal_turn
+    state.year = terminal_year
+    state.period = terminal_period
+
+    if marker == "expired":
+        db.mark_event_expired(state, eid)
+    elif marker == "avoided":
+        db.mark_event_avoided(state, eid, reason)
+    elif marker == "obsolete":
+        db.mark_event_obsolete(state, eid, reason)
+    else:
+        raise AssertionError(marker)
+
+    row = db.conn.execute(
+        "SELECT turn, year, period, terminal_state, source, terminal_reason, choice_json FROM event_triggers WHERE event_id=?",
+        (eid,),
+    ).fetchone()
+    assert row["turn"] == terminal_turn
+    assert row["year"] == terminal_year
+    assert row["period"] == terminal_period
+    assert row["terminal_state"] == terminal_state
+    assert row["source"] == source
+    assert row["terminal_reason"] == "留"
+    assert json.loads(row["choice_json"]) == {"label": "留"}
 
 
 def test_hitl_poison_replay_downgrades_context_then_reextracts(game, monkeypatch, tmp_path):

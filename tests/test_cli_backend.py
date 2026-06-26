@@ -10,9 +10,11 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from agno.agent import Agent
 from agno.models.message import Message
 from pydantic import BaseModel
 
+from ming_sim.agents import run_agent_stream_text
 import ming_sim.cli_backend as cb
 from ming_sim.models import LLMConfig
 
@@ -43,27 +45,22 @@ def test_no_prefix_no_action():
     assert acts["secret_order"] is None
 
 
-def test_secret_prefix_extracts_fields(monkeypatch):
-    # 密令走聚焦提取 → agy；用 monkeypatch 喂固定 JSON，测解析。
-    canned = json.dumps({
-        "标题": "密查辽东军饷", "内容": "暗查关宁兵额有无虚冒",
-        "承办人": "李若琏", "期限月数": 3, "标签": ["辽东", "军饷"],
-    }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_agy", lambda prompt: (canned, 1))
+def test_secret_prefix_uses_reply_without_llm(monkeypatch):
+    monkeypatch.setattr(cb, "_run_agy", lambda prompt: (_ for _ in ()).throw(AssertionError("前缀密令不应调 LLM")))
     acts = cb.resolve_minister_actions(
         "臣领密旨，可授李若琏暗查。", "密令如下：查辽东军饷有无侵冒，三月内回奏",
         default_assignee="王在晋",
     )
     so = acts["secret_order"]
     assert so is not None
-    assert so["title"] == "密查辽东军饷"
-    assert so["assignee"] == "李若琏"        # 抓到点名的承办人，非默认当前大臣
-    assert so["deadline_months"] == 3
+    assert so["title"] == "查辽东军饷有无侵冒，三月内回奏"
+    assert so["content"] == "臣领密旨，可授李若琏暗查。"
+    assert so["assignee"] == "王在晋"
+    assert so["deadline_months"] == 0
 
 
 def test_secret_assignee_defaults_when_unspecified(monkeypatch):
-    canned = json.dumps({"标题": "密查", "内容": "暗查", "承办人": "", "期限月数": 0}, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_agy", lambda prompt: (canned, 1))
+    monkeypatch.setattr(cb, "_run_agy", lambda prompt: (_ for _ in ()).throw(AssertionError("前缀密令不应调 LLM")))
     acts = cb.resolve_minister_actions("臣领旨。", "密令如下：去查", default_assignee="毕自严")
     assert acts["secret_order"]["assignee"] == "毕自严"
 
@@ -234,6 +231,163 @@ def test_run_codex_flags_and_stdout(monkeypatch):
     assert "--skip-git-repo-check" in captured["cmd"]
     assert "--ephemeral" in captured["cmd"]
     assert "-c" not in captured["cmd"]                     # 未设 reasoning 不强加默认
+
+
+def test_codex_streaming_runner_degrades_to_oneshot_final(monkeypatch):
+    """codex 路真实行为（#343 裁决）：codex `exec --json` 无任何 token-delta API，只在生命周期
+    末的 `item.completed`/`agent_message` 一次性落地整段邸报。故 codex 流式优雅降级为「最后吐一坨」
+    —— 整段 final_text 作为**单个 chunk** 一次性上抛，而非逐块增量。本测试喂 codex 真发的
+    final-only 事件（绝不喂 codex 永不发的 `agent_message_delta` 假事件，那是 #244 green-but-hollow）。"""
+    captured = {}
+
+    class _Stdout:
+        def __iter__(self):
+            # codex 真实形态：先是 reasoning/lifecycle item（无正文），末尾 item.completed 带整段正文。
+            yield json.dumps({"type": "item.started", "item": {"type": "reasoning"}}) + "\n"
+            yield json.dumps(
+                {"type": "item.completed", "item": {"type": "agent_message", "text": "邸报一邸报二"}}
+            ) + "\n"
+
+        def close(self):
+            pass
+
+    class _Proc:
+        class _Stdin:
+            def write(self, text):
+                captured["input"] = text
+
+            def close(self):
+                captured["stdin_closed"] = True
+
+        stdin = _Stdin()
+        stdout = _Stdout()
+        stderr = None
+        returncode = 0
+
+        def wait(self, timeout=None):
+            captured["timeout"] = timeout
+            self.returncode = 0
+            return ("", "")
+
+        def kill(self):
+            captured["killed"] = True
+
+    def fake_popen(cmd, **kw):
+        captured["cmd"] = cmd
+        captured["cwd"] = kw.get("cwd")
+        return _Proc()
+
+    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
+    monkeypatch.setattr(cb.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+
+    chunks = []
+    agent = Agent(
+        name="stream-test",
+        id="stream-test",
+        model=cb.CliChat(id="gpt-test", backend="codex"),
+        instructions=["只输出邸报。"],
+        markdown=False,
+    )
+    text = run_agent_stream_text(agent, "请写邸报", "simulator", on_text=chunks.append)
+
+    assert text == "邸报一邸报二"
+    # 优雅降级：整段一次性吐 = 单个 chunk，绝非逐块（codex 无 delta API）。
+    assert chunks == ["邸报一邸报二"]
+    assert "--json" in captured["cmd"]
+    assert captured["cmd"][-1] == "-"
+    assert "请写邸报" in captured["input"]
+
+
+def test_api_backend_streaming_emits_real_token_deltas(monkeypatch):
+    """API/hermes 路真实行为（#343 裁决）：支持 token-delta 的后端（hermes / OpenAI 兼容，
+    `agents.run_agent_stream_text` 的 content-delta 循环）真增量出现——多个正文片段逐块经
+    on_text 到达、并按到达顺序拼成全文。与 codex 路（一次吐）对照，证明流式与否纯看后端能力。"""
+
+    class _Ev:
+        def __init__(self, content=None, is_final=False):
+            self.content = content
+            self.is_final = is_final
+
+    class _FakeStreamAgent:
+        model = SimpleNamespace(id="hermes-test")
+
+        def run(self, prompt, stream=False, stream_events=False):
+            assert stream and stream_events
+            yield _Ev(content="邸报")
+            yield _Ev(content="增量")
+            yield _Ev(content="到达")
+            yield _Ev(content=None, is_final=True)
+
+        def get_last_run_output(self):
+            return None
+
+    chunks = []
+    text = run_agent_stream_text(
+        _FakeStreamAgent(), "请写邸报", "simulator", on_text=chunks.append
+    )
+
+    assert text == "邸报增量到达"
+    # 真增量：多个 token-delta 逐块到达（与 codex 单块一次吐相反）。
+    assert chunks == ["邸报", "增量", "到达"]
+
+
+def test_codex_stream_watchdog_kills_hung_process(monkeypatch):
+    """integrated cmr Gate2 codex correctness：流式读阻塞在 `for raw_line in proc.stdout`，若
+    codex 卡死且不关 stdout，proc.wait(timeout) 永远到不了。看门狗须在 run_timeout 到点 kill
+    进程，让阻塞读拿到 EOF 退出并抛超时（而非无限挂起）。"""
+    import threading as _t
+
+    killed = _t.Event()
+
+    class _HangStdout:
+        def __iter__(self):
+            killed.wait(5.0)      # 模拟「永不关 stdout」的卡死进程，直到被 kill 才解除
+            return iter(())       # kill 后 stdout 给 EOF，读循环结束
+
+        def close(self):
+            pass
+
+    class _Proc:
+        class _Stdin:
+            def write(self, text):
+                pass
+
+            def close(self):
+                pass
+
+        stdin = _Stdin()
+        stdout = _HangStdout()
+        stderr = None
+        returncode = 0
+
+        def wait(self, timeout=None):
+            return ("", "")
+
+        def kill(self):
+            killed.set()
+            self.returncode = -9
+
+    monkeypatch.setattr(cb.subprocess, "Popen", lambda *a, **k: _Proc())
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+
+    with pytest.raises(RuntimeError, match="超时"):
+        list(cb._iter_codex_stream_chunks("请写邸报", timeout=0.2))
+    assert killed.is_set()        # 看门狗确实 kill 了卡死进程
+
+
+def test_codex_final_text_handles_item_completed_shape():
+    """integrated cmr Gate2 codex correctness：codex --json 的 item.completed/item.text 形态也要
+    被识别为最终正文（防御性兼容，避免真实邸报被当成空输出误判失败）；reasoning/tool item 不当正文。"""
+    assert cb._codex_final_text(
+        {"type": "item.completed", "item": {"type": "agent_message", "text": "邸报正文"}}
+    ) == "邸报正文"
+    # 非 agent_message item（reasoning/tool/plan）不被当成正文
+    assert cb._codex_final_text(
+        {"type": "item.completed", "item": {"type": "reasoning", "text": "推理草稿"}}
+    ) == ""
+    # 既有顶层 agent_message 形态仍识别（并存不回归）
+    assert cb._codex_final_text({"type": "agent_message", "message": "顶层正文"}) == "顶层正文"
 
 
 def test_run_codex_accepts_config_model_and_timeout(monkeypatch):

@@ -11,6 +11,7 @@ session.chat 非流式路径与 web streaming 路径共用它，杜绝漂移（C
 from __future__ import annotations
 
 import json
+import threading
 import types
 from types import SimpleNamespace
 
@@ -64,6 +65,234 @@ def _no_conv_action(monkeypatch):
                                          "new_title": "", "new_content": "", "deadline_months": 0,
                                          "cultivate_skill": "", "cultivate_trait": ""})
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
+
+
+def test_draft_prefix_with_active_secret_order_runs_zero_llm(game, monkeypatch):
+    """#344「按钮前缀路零 LLM」(US3)：玩家用『拟旨如下：』前缀、且该大臣有 active 密令时，
+    旧的会话密令抽取器(extract_minister_actions, LLM)不得被触发——前缀已由 resolve_minister_actions
+    零 LLM 落拟旨。整合 cmr r2/r3 codex 完整性腿抓出：原实现 secret 块未按 explicit_prefixed 把门，
+    于是前缀消息在有 active 密令时仍多跑一次 LLM extractor。"""
+    db, state, _ = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    who = "前缀零LLM承办官"
+    db.create_secret_order(state, who, "原密令", "查某亏空", [], deadline_months=0)
+
+    def _forbidden(*a, **k):
+        raise AssertionError("前缀拟旨不应触发任何后置 LLM 抽取器")
+
+    monkeypatch.setattr(cb, "extract_minister_actions", _forbidden)
+    monkeypatch.setattr(cb, "extract_draft_intent", _forbidden)
+    monkeypatch.setattr(cb, "extract_appointment_action", _forbidden)
+    monkeypatch.setattr(cb, "extract_confirmation_intent", _forbidden)
+
+    result = _result()
+    result.answer = "臣遵旨，当即清核辽饷。"
+    _session(db, state, llm_config=SimpleNamespace(channel="cli"))._cli_backend_fallback_actions(
+        result, SimpleNamespace(name=who, office_type="兵部"),
+        "拟旨如下：着户部清核辽饷。")
+
+    # 前缀拟旨零 LLM 落库：directive 入档，无 secret/pending 误触发
+    assert result.proposed_directive is not None
+    assert result.proposed_directive.text == "臣遵旨，当即清核辽饷。"
+    assert result.secret_order_id is None
+    assert not result.pending_action_id
+
+
+def test_draft_prefix_with_pending_confirmation_runs_zero_llm(game, monkeypatch):
+    """#344「按钮前缀路零 LLM」(US3)——确认闸门面：该大臣有非 directive 待确认暂存动作时，
+    玩家发 '拟旨如下：' 前缀不得触发 extract_confirmation_intent(LLM)，也不得被误判应允/拒绝
+    把这道前缀拟旨吞掉。整合 cmr r4 codex 完整性腿抓出此 sibling 缺口（r3 只把住了密令块、
+    漏了更靠前的确认闸门）→ 顶部单一 explicit_prefixed 统一把门所有后置 LLM 抽取器。"""
+    db, state, _ = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    who = "前缀零LLM确认承办官"
+    # 预置一个非 directive 待确认暂存动作（confirm_targets 非空 → 旧路会跑确认抽取）
+    db.stage_pending_action(
+        state.turn, kind="office", action="任命",
+        minister_name=who, target_id=None,
+        payload={"name": "倪元璐", "office": "户部尚书", "appointer": who})
+
+    def _forbidden(*a, **k):
+        raise AssertionError("前缀拟旨不应触发任何后置 LLM 抽取器（含确认闸门）")
+
+    monkeypatch.setattr(cb, "extract_confirmation_intent", _forbidden)
+    monkeypatch.setattr(cb, "extract_minister_actions", _forbidden)
+    monkeypatch.setattr(cb, "extract_draft_intent", _forbidden)
+    monkeypatch.setattr(cb, "extract_appointment_action", _forbidden)
+
+    result = _result()
+    result.answer = "臣遵旨，当即清核辽饷。"
+    _session(db, state, llm_config=SimpleNamespace(channel="cli"))._cli_backend_fallback_actions(
+        result, SimpleNamespace(name=who, office_type="兵部"),
+        "拟旨如下：着户部清核辽饷。")
+
+    # 前缀拟旨零 LLM 落库：directive 入档，未被确认闸门吞掉
+    assert result.proposed_directive is not None
+    assert result.proposed_directive.text == "臣遵旨，当即清核辽饷。"
+
+
+def test_committed_draft_followup_merges_even_when_classifier_says_none(game, monkeypatch):
+    """#344 US6 +integrated cmr Gate2 codex correctness：已有 committed draft 时，并发分类器只读
+    皇帝本条消息、看不到 committed draft，可能把「再补一条…随行」误判 none——此时仍须回退
+    extract_draft_intent 合并，不得静默丢掉草案补充。无草案的普通消息仍零额外 LLM。"""
+    db, state, _ = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    minister = "拟旨补充承办官"
+    db.add_directive(
+        state, None, "着户部清核辽饷。", "大臣拟旨",
+        actor=minister, notes="原草案", status="draft")
+    merged_text = "着户部清核辽饷，并加派监察御史随行。"
+    called = []
+
+    def fake_draft(player_message, reply, **kwargs):
+        called.append(kwargs.get("existing_draft_text"))
+        return {"draft_action": "拟旨", "draft_text": merged_text}
+
+    monkeypatch.setattr(cb, "extract_draft_intent", fake_draft)
+    monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
+        "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
+        "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": ""})
+    monkeypatch.setattr(cb, "extract_appointment_action", lambda *a, **k: {
+        "appoint_action": "无", "name": "", "office": ""})
+
+    _session(db, state, llm_config=SimpleNamespace(channel="cli")).apply_cli_conversation_actions(
+        SimpleNamespace(name=minister, office_type="兵部"),
+        "再补一条，加派监察御史随行。", "臣遵旨。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent={"kind": "none"},
+    )
+
+    # 分类器判 none 也回退到 draft 合并（旧草案文本被喂给合并器，不丢补充）
+    assert called and called[0] == "着户部清核辽饷。"
+    row = db.conn.execute(
+        "SELECT text FROM turn_directives WHERE actor=? AND status='draft'", (minister,)
+    ).fetchone()
+    assert row["text"] == merged_text
+
+
+def test_committed_draft_followup_merges_even_when_classifier_says_draft(game, monkeypatch):
+    """同上的孪生面（integrated cmr Gate2 r3 codex correctness）：分类器判 'draft' + 已有草案时，
+    也必须 merge、不得用 raw reply 覆盖已有草案——none 半与 draft 半是同一覆盖丢失的两面，统一
+    收敛到 extract_draft_intent 合并。"""
+    db, state, _ = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    minister = "拟旨补充承办官2"
+    db.add_directive(
+        state, None, "着户部清核辽饷。", "大臣拟旨",
+        actor=minister, notes="原草案", status="draft")
+    merged_text = "着户部清核辽饷，并加派监察御史随行。"
+    fed_existing = []
+
+    def fake_draft(player_message, reply, **kwargs):
+        fed_existing.append(kwargs.get("existing_draft_text"))
+        return {"draft_action": "拟旨", "draft_text": merged_text}
+
+    monkeypatch.setattr(cb, "extract_draft_intent", fake_draft)
+    monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
+        "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
+        "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": ""})
+    monkeypatch.setattr(cb, "extract_appointment_action", lambda *a, **k: {
+        "appoint_action": "无", "name": "", "office": ""})
+
+    _session(db, state, llm_config=SimpleNamespace(channel="cli")).apply_cli_conversation_actions(
+        SimpleNamespace(name=minister, office_type="兵部"),
+        "再拟一道旨，加派监察御史随行。", "臣谨拟：着户部清核辽饷，并加派监察御史随行。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent={"kind": "draft", "draft_text": ""},
+    )
+
+    # intent=='draft' + 已有草案 → 仍走合并（喂旧草案），不被 raw reply 覆盖
+    assert fed_existing and fed_existing[0] == "着户部清核辽饷。"
+    row = db.conn.execute(
+        "SELECT text FROM turn_directives WHERE actor=? AND status='draft'", (minister,)
+    ).fetchone()
+    assert row["text"] == merged_text
+
+
+def test_chat_starts_cli_action_classification_before_reply_finishes(game, monkeypatch):
+    """CLI 召对动作判断只看皇帝消息，应与大臣回话并发；无动作消息回话后不再跑抽取器。"""
+    db, state, content = game
+    minister = next(
+        ch for ch in content.characters.values()
+        if getattr(ch, "office_type", "") not in ("后宫",)
+        and db.resolve_power_id(ch) == "ming"
+        and db.get_character_status(ch.name)[0] == "active"
+    )
+    classifier_started = threading.Event()
+    allow_reply = threading.Event()
+    calls = []
+
+    def fake_classify(*args, **kwargs):
+        calls.append("classify")
+        classifier_started.set()
+        return {"kind": "none"}
+
+    def forbidden_post_reply(*args, **kwargs):
+        raise AssertionError("普通问询回话后不应再跑动作抽取")
+
+    class FakeAgent:
+        def run(self, message):
+            assert classifier_started.wait(1), "动作判断应在大臣回话完成前启动"
+            allow_reply.set()
+            return SimpleNamespace(content="臣谨奏：辽饷尚可支应。", tools=[])
+
+    registry = SimpleNamespace(
+        get=lambda character: FakeAgent(),
+        build_draft_line=lambda: "无",
+    )
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = registry
+    # 并发分类器仅对并发安全 runner（codex）启用——cmr Gate2 守门（agy/claude 并发未验证）。
+    sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
+    sess.temporary_characters = {}
+    sess._retrieve_memories_for_message = lambda message: message
+
+    monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
+    monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
+    monkeypatch.setattr(cb, "extract_minister_actions", forbidden_post_reply)
+    monkeypatch.setattr(cb, "extract_appointment_action", forbidden_post_reply)
+    monkeypatch.setattr(cb, "extract_draft_intent", forbidden_post_reply)
+    monkeypatch.setattr(cb, "extract_confirmation_intent", forbidden_post_reply)
+
+    result = sess.chat(minister.name, "辽东军饷如何？")
+
+    assert allow_reply.is_set()
+    assert result.answer == "臣谨奏：辽饷尚可支应。"
+    assert calls == ["classify"]
+
+
+def test_non_parallel_safe_runner_skips_concurrent_classifier(game, monkeypatch):
+    """非并发安全 runner（agy）不得把动作分类器与回话并发跑（会撞 keychain auth-race，
+    cmr Gate2 F-E）：_start_cli_action_intent 返 None → 回话后回落串行抽取，动作不丢。"""
+    db, state, content = game
+    minister = next(
+        ch for ch in content.characters.values()
+        if getattr(ch, "office_type", "") not in ("后宫",)
+        and db.resolve_power_id(ch) == "ming"
+        and db.get_character_status(ch.name)[0] == "active"
+    )
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.llm_config = SimpleNamespace(channel="cli", cli_runner="agy")
+    sess.temporary_characters = {}
+
+    def fake_classify(*args, **kwargs):
+        raise AssertionError("agy runner 不应并发跑分类器")
+
+    monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
+    # agy 非并发安全 → 返 None，不触发分类器。
+    assert sess._start_cli_action_intent(minister, "辽东军饷如何？") is None
+    # 对照：codex 并发安全 → 返回 future（真跑分类器）。
+    sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
+    monkeypatch.setattr(cb, "classify_cli_action_intent", lambda *a, **k: {"kind": "none"})
+    fut = sess._start_cli_action_intent(minister, "辽东军饷如何？")
+    assert fut is not None
+    fut.result(timeout=2)
 
 
 def test_begin_turn_syncs_offices_with_runtime_llm_config(monkeypatch):
@@ -177,24 +406,20 @@ def test_runtime_cli_channel_without_env_registers_directive(game, monkeypatch):
     assert row["status"] == "pending"
 
 
-def test_runtime_cli_secret_extract_uses_configured_runner_without_env(game, monkeypatch):
-    """runtime CLI 通道的二次抽取也必须用 llm_config，不可退回 env/default agy。"""
+def test_runtime_cli_secret_prefix_uses_zero_llm_without_env(game, monkeypatch):
+    """runtime CLI 通道的前缀密令直接取回话文本，不调用任何 runner。"""
     db, state, _ = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     calls = []
-    canned = json.dumps({
-        "标题": "密查辽东军饷", "内容": "暗查关宁兵额有无虚冒",
-        "承办人": "李若琏", "期限月数": 3, "标签": ["辽东", "军饷"],
-    }, ensure_ascii=False)
 
     def fake_codex(prompt, model=None, timeout=None):
         calls.append(("codex", model, timeout))
-        return canned, 1
+        raise AssertionError("前缀密令不应调 codex")
 
     def fake_agy(prompt, timeout=None):
         calls.append(("agy", timeout))
-        raise RuntimeError("agy should not be used")
+        raise AssertionError("前缀密令不应调 agy")
 
     monkeypatch.setattr(cb, "_run_codex", fake_codex)
     monkeypatch.setattr(cb, "_run_agy", fake_agy)
@@ -210,24 +435,21 @@ def test_runtime_cli_secret_extract_uses_configured_runner_without_env(game, mon
         result, SimpleNamespace(name="王在晋", office_type="兵部"),
         "密令如下：查辽东军饷有无侵冒，三月内回奏")
 
-    assert calls == [("codex", "gpt-5.5", 240)]
+    assert calls == []
     row = db.conn.execute(
-        "SELECT title, minister_name FROM secret_orders WHERE id=?",
+        "SELECT title, content, minister_name FROM secret_orders WHERE id=?",
         (result.secret_order_id,),
     ).fetchone()
-    assert row["title"] == "密查辽东军饷"
-    assert row["minister_name"] == "李若琏"
+    assert row["title"] == "查辽东军饷有无侵冒，三月内回奏"
+    assert row["content"] == "臣领密旨，可授李若琏暗查。"
+    assert row["minister_name"] == "王在晋"
 
 
 def test_secret_prefix_creates_order(game, monkeypatch):
-    """玩家『密令如下：』→ 聚焦提取后建 active 密令，回填 secret_order_id。"""
+    """玩家『密令如下：』→ 取大臣回话文本建 active 密令，回填 secret_order_id。"""
     db, state, _ = game
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
-    canned = json.dumps({
-        "标题": "密查辽东军饷", "内容": "暗查关宁兵额有无虚冒",
-        "承办人": "李若琏", "期限月数": 3, "标签": ["辽东", "军饷"],
-    }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_agy", lambda p: (canned, 1))   # _run_backend→_run_agy
+    monkeypatch.setattr(cb, "_run_agy", lambda p: (_ for _ in ()).throw(AssertionError("前缀密令不应调 LLM")))
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     result = _result()
     result.answer = "臣领密旨，可授李若琏暗查。"
@@ -236,11 +458,12 @@ def test_secret_prefix_creates_order(game, monkeypatch):
         "密令如下：查辽东军饷有无侵冒，三月内回奏")
     assert result.secret_order_id
     row = db.conn.execute(
-        "SELECT title, minister_name, status FROM secret_orders WHERE id=?",
+        "SELECT title, content, minister_name, status FROM secret_orders WHERE id=?",
         (result.secret_order_id,),
     ).fetchone()
-    assert row["title"] == "密查辽东军饷"
-    assert row["minister_name"] == "李若琏"      # 点名承办人，非当前应答大臣
+    assert row["title"] == "查辽东军饷有无侵冒，三月内回奏"
+    assert row["content"] == "臣领密旨，可授李若琏暗查。"
+    assert row["minister_name"] == "王在晋"
     assert row["status"] == "active"
 
 
@@ -254,17 +477,12 @@ def test_secret_prefix_upserts_not_duplicates_and_refreshes(game, monkeypatch):
     s = _session(db, state, registry=registry)
     who = "测试承办官F3"
 
-    canned1 = json.dumps({"标题": "密查一", "内容": "查甲事", "承办人": who,
-                          "期限月数": 0, "标签": []}, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_agy", lambda p: (canned1, 1))
+    monkeypatch.setattr(cb, "_run_agy", lambda p: (_ for _ in ()).throw(AssertionError("前缀密令不应调 LLM")))
     r1 = _result(); r1.answer = "臣领旨一。"
     s._cli_backend_fallback_actions(r1, SimpleNamespace(name=who, office_type="兵部"), "密令如下：查甲")
     oid1 = r1.secret_order_id
     assert oid1
 
-    canned2 = json.dumps({"标题": "密查一·改", "内容": "查甲事·已改", "承办人": who,
-                          "期限月数": 0, "标签": []}, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_agy", lambda p: (canned2, 1))
     r2 = _result(); r2.answer = "臣领旨二。"
     s._cli_backend_fallback_actions(r2, SimpleNamespace(name=who, office_type="兵部"), "密令如下：改查甲")
     assert r2.secret_order_id == oid1            # 同一条，不建重复
@@ -273,7 +491,7 @@ def test_secret_prefix_upserts_not_duplicates_and_refreshes(game, monkeypatch):
     ).fetchone()[0]
     assert cnt == 1
     row = db.conn.execute("SELECT content FROM secret_orders WHERE id=?", (oid1,)).fetchone()
-    assert row["content"] == "查甲事·已改"        # 内容真被更新
+    assert row["content"] == "臣领旨二。"        # 内容真被更新为大臣回话
     assert refreshed.count(who) == 2             # 两次都刷新了承办大臣 agent
 
 
@@ -365,9 +583,8 @@ def test_runtime_cli_conversation_update_uses_configured_runner_without_env(game
         secret_order_id=None,
     )
 
-    # 会话动作判定都按配置 runner 分派(绝不用 agy/env):密令意图 + 任免意图(独立检测)
-    # 各一次,两次都走 codex/gpt-5.5/240。
-    assert calls == [("codex", "gpt-5.5", 240), ("codex", "gpt-5.5", 240)]
+    # 会话动作判定按配置 runner 分派，且密令动作命中后不再串行跑任免抽取。
+    assert calls == [("codex", "gpt-5.5", 240)]
     # 动作闸门：暂存,颁诏 commit 才落库(不在召对当场直写)
     assert res["secret_order_id"] is None
     assert res.get("pending_action_id")

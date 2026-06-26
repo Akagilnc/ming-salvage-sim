@@ -27,10 +27,11 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 from agno.models.message import Message
 from agno.models.openai import OpenAIChat
+from agno.models.response import ModelResponse
 from openai.types.chat import ChatCompletion, ChatCompletionMessage
 from openai.types.chat.chat_completion import Choice
 from pydantic import BaseModel
@@ -353,6 +354,185 @@ def _run_codex(prompt: str, model: Optional[str] = None, timeout: Optional[float
     return out, 1
 
 
+def _codex_cmd(model: Optional[str] = None, *, json_events: bool = False) -> List[str]:
+    cmd = [_resolve_cli_bin("codex", _CODEX_BIN), "exec", "--model", (model or _CODEX_MODEL)]
+    reasoning = (os.environ.get("MING_SIM_CODEX_REASONING") or "").strip()
+    if reasoning:
+        cmd += ["-c", f'model_reasoning_effort="{reasoning}"']
+    if json_events:
+        cmd.append("--json")
+    cmd += ["--ephemeral", "--skip-git-repo-check", "-"]
+    return cmd
+
+
+def _codex_event_text(obj: object) -> str:
+    if not isinstance(obj, dict):
+        return ""
+    typ = str(obj.get("type") or obj.get("event") or "")
+    if "delta" in typ:
+        for key in ("delta", "content", "text"):
+            value = obj.get(key)
+            if isinstance(value, str) and value:
+                return value
+        nested = obj.get("message")
+        if isinstance(nested, dict):
+            value = nested.get("delta") or nested.get("content") or nested.get("text")
+            return value if isinstance(value, str) else ""
+    return ""
+
+
+def _codex_final_text(obj: object) -> str:
+    if not isinstance(obj, dict):
+        return ""
+    typ = str(obj.get("type") or obj.get("event") or "")
+    if "delta" in typ:
+        return ""
+    # 防御性兼容 codex `--json` 的 item.* 形态（如 {"type":"item.completed",
+    # "item":{"type":"agent_message","text":"…"}}）：最终 agent message 可能嵌在 item.text
+    # 里。只取 agent_message 类 item，忽略 reasoning/tool/plan item，避免把真实邸报当成空
+    # 输出误判失败（codex correctness）。与下面的顶层 message/text 形态并存，互不影响。
+    item = obj.get("item")
+    if isinstance(item, dict):
+        item_type = str(item.get("type") or "")
+        if item_type in ("", "agent_message") or "message" in item_type:
+            value = item.get("text") or item.get("content") or item.get("message")
+            if isinstance(value, str) and value:
+                return value
+    for key in ("message", "content", "text", "final", "last_message"):
+        value = obj.get(key)
+        if isinstance(value, str) and value:
+            return value
+        if isinstance(value, dict):
+            nested = value.get("content") or value.get("text") or value.get("message")
+            if isinstance(nested, str) and nested:
+                return nested
+    return ""
+
+
+def _iter_codex_stream_chunks(
+    prompt: str,
+    *,
+    model: Optional[str] = None,
+    timeout: Optional[float] = None,
+) -> Iterator[str]:
+    """Run `codex exec --json` and yield agent_message_delta events as they arrive."""
+    cmd = _codex_cmd(model, json_events=True)
+    run_timeout = timeout or _AGY_TIMEOUT
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=_AGY_CWD,
+        )
+    except OSError as exc:
+        raise RuntimeError(f"codex 流式调用启动失败：{exc}") from exc
+
+    assert proc.stdout is not None
+    if proc.stdin is not None:
+        proc.stdin.write(prompt)
+        proc.stdin.close()
+
+    pieces: List[str] = []
+    final_text = ""
+    stderr = ""
+    timed_out = False
+    # stderr 必须并发抽干（cmr Gate2 F-F）：stdout/stderr 同一阻塞管道模型——codex 往 stderr
+    # 写满 OS pipe 缓冲（~64KB）就会卡在写 stderr，stdout 随之断流，下面的 `for raw_line in
+    # proc.stdout` 拿不到 EOF 永久阻塞，最后被 watchdog 误杀成「超时」。开 daemon 线程持续读
+    # stderr，stdout 循环结束后 join 取诊断文本（不能等读完 stdout 再 read stderr）。
+    stderr_parts: List[str] = []
+
+    def _drain_stderr() -> None:
+        if proc.stderr is not None:
+            try:
+                stderr_parts.append(proc.stderr.read())
+            except Exception:
+                pass
+
+    stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+    stderr_thread.start()
+    # 看门狗：流式读取阻塞在 `for raw_line in proc.stdout` 上，下面的 proc.wait(timeout) 要等读
+    # 循环结束才执行——若 codex 卡死且不关 stdout，读循环会无限阻塞、那个 timeout 形同虚设
+    # (codex correctness)。定时器在 run_timeout 到点 kill 进程，使阻塞读拿到 EOF 退出循环。
+    def _kill_on_timeout() -> None:
+        nonlocal timed_out
+        timed_out = True
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+    watchdog = threading.Timer(run_timeout, _kill_on_timeout)
+    watchdog.daemon = True
+    watchdog.start()
+    try:
+        for raw_line in proc.stdout:
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            delta = _codex_event_text(obj)
+            if delta:
+                pieces.append(delta)
+                yield delta
+                continue
+            maybe_final = _codex_final_text(obj)
+            if maybe_final:
+                final_text = maybe_final
+        proc.wait(timeout=run_timeout)
+    except subprocess.TimeoutExpired as exc:
+        proc.kill()
+        raise RuntimeError("codex 流式调用超时") from exc
+    finally:
+        watchdog.cancel()
+        # consumer 提前弃用（break/异常/GeneratorExit）时底层 codex 子进程仍在跑 → 泄漏。
+        # terminate+wait 兜底（正常路径 proc 已退，terminate 对已退进程是 no-op）（#399 cmr R1 coderabbit Major）。
+        try:
+            proc.terminate()
+            proc.wait(timeout=5)
+        except Exception:
+            try:
+                proc.kill()
+                proc.wait(timeout=5)
+            except Exception:
+                pass
+        # 进程已退/被 kill → stderr 关闭 → drain 线程读到 EOF 结束；取其抽到的诊断文本。
+        stderr_thread.join(timeout=2)
+        stderr = "".join(stderr_parts)
+
+    if timed_out:
+        raise RuntimeError(f"codex 流式调用超时（>{run_timeout:.0f}s 未完成，已 kill）")
+    text = "".join(pieces).strip() or final_text.strip()
+    if proc.returncode != 0 or not text:
+        raise RuntimeError(f"codex 流式调用失败（退出码 {proc.returncode}）：{(stderr or '')[:200]}")
+    if not pieces and final_text.strip():
+        yield final_text.strip()
+
+
+def _run_codex_stream(
+    prompt: str,
+    *,
+    model: Optional[str] = None,
+    timeout: Optional[float] = None,
+    on_text: Optional[Callable[[str], None]] = None,
+) -> Tuple[str, int]:
+    pieces: List[str] = []
+    for delta in _iter_codex_stream_chunks(prompt, model=model, timeout=timeout):
+        pieces.append(delta)
+        if on_text:
+            on_text(delta)
+    text = "".join(pieces).strip()
+    if not text:
+        raise RuntimeError("codex 流式调用失败：输出为空")
+    return text, 1
+
+
 def _run_claude(prompt: str, model: Optional[str] = None, timeout: Optional[float] = None) -> Tuple[str, int]:
     """调 claude -p（独立进程，stdin pipe）。返回 (纯文本, 1)。
     与 codex 不同：claude -p 干净最终回话在 **stdout**，日志/诊断在 stderr，
@@ -660,6 +840,94 @@ def extract_minister_actions(
         "deadline_months": _int(obj.get("期限月数"), 36),
         "cultivate_skill": str(obj.get("调教技能") or "").strip()[:20],
         "cultivate_trait": str(obj.get("调教性格") or "").strip()[:20],
+    }
+
+
+def classify_cli_action_intent(
+    player_message: str,
+    active_orders: Optional[List[Dict[str, Any]]] = None,
+    is_consort: bool = False,
+    has_pending_draft: bool = False,
+    pending_summaries: Optional[List[str]] = None,
+    llm_config: Any = None,
+) -> Dict[str, Any]:
+    """召对动作 typed 判断：只读皇帝本条消息，不读大臣回话。
+
+    这条调用可与大臣回话并发；后续落地只从大臣回话取文本，不再串行跑多个
+    post-reply extractor。失败时保守返回无动作，避免阻断召对。"""
+    orders_brief = "；".join(
+        f"#{o.get('id')}「{o.get('title', '')}」：{str(o.get('content', ''))[:50]}"
+        for o in (active_orders or [])
+    ) or "（无）"
+    pending_brief = "；".join(pending_summaries or []) or "（无）"
+    prompt = (
+        "你是召对动作意图分类器，只读皇帝本条消息，不读也不等待大臣回话。"
+        "判断本轮是否属于一个政务动作，并抽出可从皇帝话中直接确定的结构字段。"
+        "只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
+        "{\n"
+        '  "动作类型": "无|确认|密令动作|调教|任免|拟旨",\n'
+        '  "确认": "应允|拒绝|无",\n'
+        '  "密令动作": "无|更新|提交核议|催办|记进展",\n'
+        '  "目标密令编号": 0,\n'
+        '  "新标题": "",\n'
+        '  "新内容": "",\n'
+        '  "期限月数": 0,\n'
+        '  "调教技能": "",\n'
+        '  "调教性格": "",\n'
+        '  "任免动作": "无|任命|罢免",\n'
+        '  "姓名": "",\n'
+        '  "官职": ""\n'
+        "}\n"
+        "规则：确认优先于新动作；拟旨优先于任免；问询、查账、问军情、泛泛商议填无。\n"
+        "没有现有密令时不要硬判密令动作；非妃嫔不要硬判调教。\n\n"
+        f"【待确认动作】{pending_brief}\n"
+        f"【现有密令】{orders_brief}\n"
+        f"【此人是否妃嫔】{'是' if is_consort else '否'}\n"
+        f"【本回合是否已有拟旨草案】{'是' if has_pending_draft else '否'}\n"
+        "【皇帝】" + (player_message or "（无）") + "\n"
+    )
+    raw = ""
+    try:
+        raw, _ = _run_backend_for_config(prompt, llm_config, tag="action_intent")
+    except Exception as exc:
+        _log(f"召对动作意图判断失败：{exc}")
+    obj = _loads_lenient(raw) or {}
+    if not isinstance(obj, dict):
+        obj = {}
+
+    def _enum(value: object, allowed: set[str], default: str) -> str:
+        v = str(value or default).strip()
+        return v if v in allowed else default
+
+    def _int(value: object) -> int:
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    action_type = _enum(
+        obj.get("动作类型"), {"无", "确认", "密令动作", "调教", "任免", "拟旨"}, "无")
+    return {
+        "kind": {
+            "无": "none",
+            "确认": "confirmation",
+            "密令动作": "secret",
+            "调教": "cultivate",
+            "任免": "appointment",
+            "拟旨": "draft",
+        }[action_type],
+        "confirmation": _enum(obj.get("确认"), {"应允", "拒绝", "无"}, "无"),
+        "secret_action": _enum(
+            obj.get("密令动作"), {"无", "更新", "提交核议", "催办", "记进展"}, "无"),
+        "order_id": _int(obj.get("目标密令编号")),
+        "new_title": str(obj.get("新标题") or "").strip()[:60],
+        "new_content": str(obj.get("新内容") or "").strip()[:500],
+        "deadline_months": max(0, min(_int(obj.get("期限月数")), 36)),
+        "cultivate_skill": str(obj.get("调教技能") or "").strip()[:30],
+        "cultivate_trait": str(obj.get("调教性格") or "").strip()[:30],
+        "appoint_action": _enum(obj.get("任免动作"), {"无", "任命", "罢免"}, "无"),
+        "name": str(obj.get("姓名") or "").strip()[:20],
+        "office": str(obj.get("官职") or "").strip()[:40],
     }
 
 
@@ -1010,7 +1278,7 @@ def resolve_minister_actions(
 ) -> Dict[str, Any]:
     """玩家上一句带拟旨/密令前缀时入档。
     - 拟旨：大臣回话原文即圣旨草稿（单一文本字段，够用）。
-    - 密令：多一次聚焦提取，抽出 标题/内容/承办人/期限/标签（恢复原版 function-call 那几个字段）。
+    - 密令：大臣回话原文即密令文本；标题/承办人走轻量兜底，零额外 LLM。
     返回 {decree_text, secret_order}。"""
     out: Dict[str, Any] = {"decree_text": None, "secret_order": None}
     reply = (minister_reply or "").strip()
@@ -1021,7 +1289,15 @@ def resolve_minister_actions(
 
     secret_intent = _matched_prefix(player_message, _SECRET_PREFIXES)
     if secret_intent is not None and (reply or secret_intent):
-        out["secret_order"] = _extract_secret_order(secret_intent, reply, default_assignee, llm_config)
+        content = reply or secret_intent
+        title_src = secret_intent or content
+        out["secret_order"] = {
+            "title": title_src[:20],
+            "content": content,
+            "assignee": default_assignee,
+            "deadline_months": 0,
+            "tags": [],
+        }
 
     return out
 
@@ -1134,9 +1410,19 @@ class CliChat(OpenAIChat):
         run_response: Any = None,
         send_media_to_model: bool = True,
         compression_manager: Any = None,
+        **kwargs: Any,  # 吸掉 agno 演进新增的 kwarg(如 after_tool_results)，免 override 签名漂移炸 CI
     ):
-        # agy 一次性出全文，无真增量。把非流式结果当单个 chunk 吐出去，
-        # 上游 run_agent_stream_text 的事件循环按一个 RunContent 处理即可。
+        if self.backend == "codex" and response_format is None:
+            prompt = _messages_to_prompt(messages, response_format)
+            for delta in _iter_codex_stream_chunks(
+                prompt,
+                model=str(getattr(self, "id", "") or ""),
+                timeout=getattr(self, "timeout", None),
+            ):
+                yield ModelResponse(role="assistant", content=delta)
+            return
+
+        # agy/claude 一次性出全文；结构化输出也保持非流式，避免拼接 JSON。
         yield self.response(
             messages, response_format=response_format, tools=None,
             run_response=run_response,
@@ -1153,6 +1439,7 @@ class CliChat(OpenAIChat):
         run_response: Any = None,
         send_media_to_model: bool = True,
         compression_manager: Any = None,
+        **kwargs: Any,  # 吸掉 agno 演进新增的 kwarg(如 after_tool_results)，免 override 签名漂移炸 CI
     ):
         yield self.response(
             messages, response_format=response_format, tools=None,

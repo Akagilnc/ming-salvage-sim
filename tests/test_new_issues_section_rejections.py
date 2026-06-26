@@ -11,6 +11,45 @@ import json
 import pytest
 
 import ming_sim.issues as I
+from ming_sim.models import Event
+
+
+class _TempEvents:
+    def __init__(self, content, *events):
+        self.content = content
+        self.events = events
+        self.previous = {}
+        self.previous_positions = {}
+
+    def __enter__(self):
+        for ev in self.events:
+            for idx, existing in enumerate(self.content.events):
+                if getattr(existing, "id", None) == ev.id:
+                    self.previous_positions[ev.id] = idx
+                    self.content.events[idx] = ev
+                    break
+            else:
+                self.previous_positions[ev.id] = None
+                self.content.events.append(ev)
+            self.previous[ev.id] = self.content.event_by_id.get(ev.id)
+            self.content.event_by_id[ev.id] = ev
+        return self.events
+
+    def __exit__(self, exc_type, exc, tb):
+        for ev in self.events:
+            old = self.previous.get(ev.id)
+            pos = self.previous_positions.get(ev.id)
+            if pos is not None and pos < len(self.content.events) and self.content.events[pos] is ev:
+                if old is None:
+                    self.content.events.pop(pos)
+                else:
+                    self.content.events[pos] = old
+            elif ev in self.content.events:
+                self.content.events.remove(ev)
+            if old is None:
+                self.content.event_by_id.pop(ev.id, None)
+            else:
+                self.content.event_by_id[ev.id] = old
 
 
 def _new(result):
@@ -44,6 +83,47 @@ def _open_event_window(state, ev):
 def _ensure_event_candidate(db, state, eid):
     if not any(c.id == eid for c in I.gather_candidate_events(state, db)):
         pytest.skip(f"{eid} 当前盘面不在 event_pool 候选集，无法覆盖 insert 异常传播路径")
+
+
+def _hist_event(eid, gate=None):
+    return Event(
+        id=eid,
+        title=f"测试事件 {eid}",
+        kind="测试",
+        summary="x",
+        urgency=50,
+        severity=50,
+        credibility=50,
+        interests=[],
+        audiences=[],
+        trigger_year=1,
+        trigger_month=1,
+        open_window=True,
+        trigger_gate=gate or {},
+    )
+
+
+def test_temp_events_replaces_same_id_and_restores_original(content):
+    eid = "__temp_events_replace_existing__"
+    original = _hist_event(eid)
+    replacement = _hist_event(eid)
+    replacement.title = "替换事件"
+    content.events.append(original)
+    content.event_by_id[eid] = original
+    try:
+        with _TempEvents(content, replacement):
+            same_id_events = [ev for ev in content.events if ev.id == eid]
+            assert same_id_events == [replacement]
+            assert content.event_by_id[eid] is replacement
+
+        same_id_events = [ev for ev in content.events if ev.id == eid]
+        assert same_id_events == [original]
+        assert content.event_by_id[eid] is original
+    finally:
+        if original in content.events:
+            content.events.remove(original)
+        if content.event_by_id.get(eid) is original:
+            content.event_by_id.pop(eid, None)
 
 
 @pytest.mark.parametrize("bad_item", [None, 42, "字符串"])
@@ -316,6 +396,41 @@ def test_new_issue_event_pool_rejects_expired_event(game):
     assert rej[0]["id"] == eid
     assert "过期" in rej[0]["reason"] or "终态" in rej[0]["reason"]
     assert db.find_any_issue_by_origin("event_pool", eid) is None
+
+
+def test_authoritative_event_pool_rejects_same_batch_obsolete_event(game):
+    db, state, content = game
+    I.bind_content(content)
+    state.year = 1
+    state.period = 1
+    upstream = _hist_event("__authoritative_upstream_triggers__")
+    downstream = _hist_event(
+        "__authoritative_downstream_obsolete__",
+        {"event.__authoritative_upstream_triggers__.triggered": "<1"},
+    )
+    with _TempEvents(content, upstream, downstream):
+        snapshot = {candidate.id for candidate in I.gather_candidate_events(state, db)}
+        assert {upstream.id, downstream.id} <= snapshot
+
+        out = I.apply_issue_tracker_output(
+            db,
+            state,
+            {
+                "new_issues": [
+                    {"origin_kind": "event_pool", "id": upstream.id},
+                    {"origin_kind": "event_pool", "id": downstream.id},
+                ],
+            },
+            candidate_event_ids_at_input=snapshot,
+            candidate_event_ids_authoritative=True,
+        )
+
+    created = [item for item in _new(out) if item.get("issue_id")]
+    rejected = [item for item in _rejected(out) if item.get("id") == downstream.id]
+    assert [item["id"] for item in created] == [upstream.id], out
+    assert len(rejected) == 1, out
+    assert "终态" in rejected[0]["reason"] or "作废" in rejected[0]["reason"]
+    assert db.find_any_issue_by_origin("event_pool", downstream.id) is None
 
 
 # --- tags 字段严格化（cmr ni r8 codex medium）---

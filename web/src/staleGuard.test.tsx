@@ -197,11 +197,12 @@ describe("召对陈旧守卫 — 广范围（loadMinisterChat 历史加载）", 
 
 /**
  * The FOURTH async→minister-panel write path the #325 sweep missed: sendChat's
- * catch block (error / AbortError-cancel). Mirrors main.tsx — on cancel/error it
- * restores input + writes a panel notice; without the staleness guard those land
- * on whichever minister is now selected (cross-minister bleed when the player
- * switches mid-flight then cancels). Guard = early-return when stale; finally still
- * clears busy/abortRef globally (modelled here by `cleared`).
+ * catch block (error / AbortError observer-departure). Mirrors main.tsx — on
+ * observer departure/error it writes a panel notice; without the staleness guard
+ * that lands on whichever minister is now selected (cross-minister bleed when
+ * the player switches mid-flight then leaves the old stream). Guard =
+ * early-return when stale; finally still clears busy/abortRef globally
+ * (modelled here by `cleared`).
  */
 function CatchGuardFixture({ getResponse }: { getResponse: () => Promise<string> }) {
   const [selected, setSelected] = React.useState("甲");
@@ -217,8 +218,8 @@ function CatchGuardFixture({ getResponse }: { getResponse: () => Promise<string>
       await getResponse(); // rejects (cancel/error)
     } catch {
       if (selectedRef.current !== targetMinister) return; // staleness guard
-      setInput(message); // restore input for retry
-      setNotice(`${targetMinister}：已取消`);
+      setInput("");
+      setNotice(`${targetMinister}：已离开实时回话`);
     } finally {
       setCleared((n) => n + 1); // global cleanup always runs (busy/abortRef)
     }
@@ -238,8 +239,8 @@ function CatchGuardFixture({ getResponse }: { getResponse: () => Promise<string>
   );
 }
 
-describe("召对陈旧守卫 — 取消/错误分支（sendChat catch）", () => {
-  it("切到乙后甲被取消，输入与取消提示不写入乙面板，但全局清理照常", async () => {
+describe("召对陈旧守卫 — 离开实时观察/错误分支（sendChat catch）", () => {
+  it("切到乙后甲的实时观察离开，提示不写入乙面板，但全局清理照常", async () => {
     let reject!: (e: unknown) => void;
     const pending = new Promise<string>((_r, rej) => (reject = rej));
     const host = render(<CatchGuardFixture getResponse={() => pending} />);
@@ -257,7 +258,7 @@ describe("召对陈旧守卫 — 取消/错误分支（sendChat catch）", () =>
     expect(host.querySelector("[data-testid=cleared]")?.textContent).toBe("1");
   });
 
-  it("未切人时取消正常恢复输入与提示", async () => {
+  it("未切人时离开实时观察正常提示但不恢复已发问话", async () => {
     let reject!: (e: unknown) => void;
     const pending = new Promise<string>((_r, rej) => (reject = rej));
     const host = render(<CatchGuardFixture getResponse={() => pending} />);
@@ -268,8 +269,8 @@ describe("召对陈旧守卫 — 取消/错误分支（sendChat catch）", () =>
       reject(abortErr);
       await pending.catch(() => {});
     });
-    expect(host.querySelector("[data-testid=input]")?.textContent).toBe("甲的问话");
-    expect(host.querySelector("[data-testid=notice]")?.textContent).toBe("甲：已取消");
+    expect(host.querySelector("[data-testid=input]")?.textContent).toBe("");
+    expect(host.querySelector("[data-testid=notice]")?.textContent).toBe("甲：已离开实时回话");
     expect(host.querySelector("[data-testid=cleared]")?.textContent).toBe("1");
   });
 });

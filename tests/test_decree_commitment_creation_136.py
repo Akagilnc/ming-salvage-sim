@@ -3,7 +3,7 @@ from pathlib import Path
 
 import ming_sim.issues as I
 from ming_sim.db import _has_stop_condition
-from ming_sim.simulation import _extractor_context_payload
+from ming_sim.simulation import _extractor_context_payload, _sanitize_module_output
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,6 +48,45 @@ def test_issue_extractor_prompt_routes_future_one_shot_decree_commitments():
     assert "ongoing_effects 可留空" in prompt
     assert "acknowledged" in prompt
     assert "ACK 收尾" in prompt
+
+
+def test_personnel_secret_extractor_routes_recurring_secret_funding_commitments():
+    prompt = (ROOT / "content/prompts/score_extractor_personnel_secret.md").read_text(encoding="utf-8")
+    raw_issue = {
+        "origin_kind": "decree",
+        "origin_ref": "secret_order:7",
+        "kind": "initiative",
+        "title": "内库月拨安抚诸将",
+        "ongoing_effects": {
+            "economy": [
+                {"account": "内库", "delta": -20, "category": "安抚诸将", "reason": "密令每月拨给"}
+            ]
+        },
+        "commitment_kind": "until_stop",
+    }
+
+    assert "经常性密令拨款" in prompt
+    assert "new_issues" in prompt
+    assert "一锤子密令" in prompt
+
+    cleaned = _sanitize_module_output("personnel_secret", {"new_issues": [raw_issue]})
+
+    assert cleaned["new_issues"] == [raw_issue]
+    assert "_module_rejections" not in cleaned
+
+
+def test_internal_extractor_excludes_decree_commitment_from_new_monthly_fiscal():
+    """ADR0027 减噪边界（#340 创建端 internal 路）：诏书/密令经常性拨款承诺不在 internal
+    建 `新立月度收支`（交承诺 issue 承载），只有真·永久制度科目才建——补完与
+    personnel_secret 对称的那半创建端边界，apply 端 dedup 仍是承重解法。"""
+    prompt = (ROOT / "content/prompts/score_extractor_internal.md").read_text(encoding="utf-8")
+
+    assert "经常性拨款承诺不在此建项" in prompt
+    assert "ADR 0027" in prompt
+    assert "真·永久制度科目" in prompt
+    # 边界须点明「双扣」动机 + 交承诺 issue 承载的归口
+    assert "双扣" in prompt
+    assert "承诺 issue" in prompt
 
 
 def test_until_stop_commitment_issue_is_created_with_carrier_fields(game, monkeypatch):
@@ -114,6 +153,210 @@ def test_until_stop_commitment_issue_is_created_with_carrier_fields(game, monkey
     assert extractor_issue["commitment_kind"] == "until_stop"
     assert json.loads(extractor_issue["stop_condition"]) == stop_condition
     assert extractor_issue["condition_role"] == "commitment_stop_condition"
+
+
+def test_decree_commitment_dedups_same_batch_fiscal_create_carrier(game, monkeypatch):
+    db, state, content = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    out = I.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "origin_ref": "decree:turn-1:xixue-monthly",
+                    "kind": "initiative",
+                    "title": "每月拨西学经费",
+                    "stage_text": "太仓每月拨银五十万两办西学。",
+                    "ongoing_effects": {
+                        "economy": [
+                            {
+                                "account": "国库",
+                                "delta": -50,
+                                "category": "西学经费",
+                                "reason": "每月拨西学经费",
+                            }
+                        ]
+                    },
+                    "commitment_kind": "until_stop",
+                }
+            ],
+            "fiscal_creates": [
+                {
+                    "key": "西学经费_base",
+                    "account": "国库",
+                    "direction": "expense",
+                    "init_value": 50,
+                    "display": "西学经费",
+                    "reason": "同批 extractor 误产的重复月支",
+                }
+            ],
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is False
+    assert _issue_by_title(db, "每月拨西学经费") is not None
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM fiscal_config WHERE key IN ('西学经费_base', '西学经费_rate')"
+    ).fetchone()[0] == 0
+    fiscal_result = out["fiscal_creates"][0]
+    assert fiscal_result["rejected"] is True
+    assert fiscal_result["category"] == "deduped_commitment_carrier"
+    assert "承诺 issue" in fiscal_result["reason"]
+
+
+def test_decree_commitment_does_not_dedup_same_name_income_fiscal_create(game, monkeypatch):
+    """ADR0027 dedup 只对【支出】fiscal_create 生效（integrated cmr Gate2 codex correctness）：
+    同账户、同名但 direction=income 的新科目（如同名新税收入）与月度【支出】承诺载体无关，
+    不得被误去重——否则会静默丢掉真实月收入。"""
+    db, state, content = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    out = I.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "origin_ref": "decree:turn-1:xixue-monthly",
+                    "kind": "initiative",
+                    "title": "每月拨西学经费",
+                    "stage_text": "太仓每月拨银五十万两办西学。",
+                    "ongoing_effects": {
+                        "economy": [
+                            {"account": "国库", "delta": -50, "category": "西学经费",
+                             "reason": "每月拨西学经费"}
+                        ]
+                    },
+                    "commitment_kind": "until_stop",
+                }
+            ],
+            "fiscal_creates": [
+                {
+                    # 同账户(国库)、同名(西学经费)，但这是一笔【收入】新科目——与支出承诺无关
+                    "key": "西学经费_base",
+                    "account": "国库",
+                    "direction": "income",
+                    "init_value": 50,
+                    "display": "西学经费",
+                    "reason": "新设西学专项捐输（收入）",
+                }
+            ],
+        },
+        content=content,
+    )
+
+    fiscal_result = out["fiscal_creates"][0]
+    assert fiscal_result.get("rejected") is not True   # 收入科目未被误去重
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM fiscal_config WHERE key IN ('西学经费_base', '西学经费_rate')"
+    ).fetchone()[0] >= 1
+
+
+def test_decree_commitment_same_account_alias_miss_emits_residual_signal(game, monkeypatch, capsys):
+    """ADR0027 残留观测：同批、同账户、有 decree 承诺却**异名**未匹配上的 fiscal_create
+    照常落账，但必须打日志当试玩信号（便于发现异名漏匹规律，#340 US8）。"""
+    db, state, content = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    out = I.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "origin_ref": "decree:turn-1:xixue-monthly",
+                    "kind": "initiative",
+                    "title": "每月拨西学经费",
+                    "stage_text": "太仓每月拨银五十万两办西学。",
+                    "ongoing_effects": {
+                        "economy": [
+                            {
+                                "account": "国库",
+                                "delta": -50,
+                                "category": "西学经费",
+                                "reason": "每月拨西学经费",
+                            }
+                        ]
+                    },
+                    "commitment_kind": "until_stop",
+                }
+            ],
+            "fiscal_creates": [
+                {
+                    # 同账户(国库)、但科目名与承诺(西学经费)对不上 = 异名漏匹
+                    "key": "xuguangqi_gongfei_base",
+                    "account": "国库",
+                    "direction": "expense",
+                    "init_value": 50,
+                    "display": "徐光启三务公费",
+                    "reason": "月支",
+                }
+            ],
+        },
+        content=content,
+    )
+
+    # 异名 → 未去重，fiscal_create 照常落账（不被拒）
+    fiscal_result = out["fiscal_creates"][0]
+    assert fiscal_result.get("rejected") is not True
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM fiscal_config WHERE key IN "
+        "('xuguangqi_gongfei_base', 'xuguangqi_gongfei_rate')"
+    ).fetchone()[0] >= 1
+    # 但必须留下 ADR0027 残留观测信号（试玩可见 = 能发现异名漏匹规律）
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+    assert "ADR0027 残留观测" in combined
+    assert "徐光启三务公费" in combined
+
+
+def test_decree_commitment_unrelated_account_no_residual_signal(game, monkeypatch, capsys):
+    """残留观测只在【同账户】触发：不同账户的无关 fiscal_create 不应误报信号。"""
+    db, state, content = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    I.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "origin_ref": "decree:turn-1:xixue-monthly",
+                    "kind": "initiative",
+                    "title": "每月拨西学经费",
+                    "stage_text": "太仓每月拨银五十万两办西学。",
+                    "ongoing_effects": {
+                        "economy": [
+                            {"account": "国库", "delta": -50, "category": "西学经费",
+                             "reason": "每月拨西学经费"}
+                        ]
+                    },
+                    "commitment_kind": "until_stop",
+                }
+            ],
+            "fiscal_creates": [
+                {
+                    "key": "neiku_dujiang_base",
+                    "account": "内库",  # 不同账户
+                    "direction": "expense",
+                    "init_value": 10,
+                    "display": "督江差役",
+                    "reason": "月支",
+                }
+            ],
+        },
+        content=content,
+    )
+
+    captured = capsys.readouterr()
+    assert "ADR0027 残留观测" not in (captured.out + captured.err)
 
 
 def test_until_stop_commitment_shape_rejects_without_explicit_marker(game, monkeypatch):
