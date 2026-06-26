@@ -25,7 +25,7 @@ from ming_sim.constants import (
 )
 from ming_sim.content import GameContent
 from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
-from ming_sim.models import Event, GameState, is_vassal_prince, loads_effect_dict, monthly_amount, period_label
+from ming_sim.models import Character, Event, GameState, is_vassal_prince, loads_effect_dict, monthly_amount, period_label
 from ming_sim.token_stats import tlog
 
 # 落库字段白名单（模块级常量化——避免在 apply_region_deltas / apply_army_deltas /
@@ -2245,7 +2245,7 @@ class GameDB:
         ).fetchone()
         if row is None:
             return
-        offset = int(row["leverage_offset"] or 0)
+        offset = float(row["leverage_offset"] or 0)
         weight_sum = self._faction_office_weight_sum(faction)
         new_lev = max(0, min(100, round(offset + weight_sum)))
         self.conn.execute("UPDATE factions SET leverage=? WHERE name=?", (new_lev, faction))
@@ -2283,7 +2283,7 @@ class GameDB:
             row = self.conn.execute(
                 "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
             ).fetchone()
-            if row is not None and int(row["leverage_offset"] or 0) != 0:
+            if row is not None and (row["leverage_offset"] or 0) != 0:
                 return False
         return True
 
@@ -2331,7 +2331,7 @@ class GameDB:
             else:
                 baseline = int(row["leverage"])
             weight_sum = self._faction_office_weight_sum(faction)
-            offset = round(baseline - weight_sum)
+            offset = baseline - weight_sum
             self.conn.execute(
                 "UPDATE factions SET leverage_offset=? WHERE name=?", (offset, faction)
             )
@@ -2447,7 +2447,7 @@ class GameDB:
                 })
                 continue
             row = self.conn.execute(
-                "SELECT power_id FROM characters WHERE name=?", (name,)
+                "SELECT power_id, faction FROM characters WHERE name=?", (name,)
             ).fetchone()
             if row is None:
                 applied.append({
@@ -2464,6 +2464,9 @@ class GameDB:
                 "UPDATE characters SET power_id = ? WHERE name = ?",
                 (new_power, name),
             )
+            # #177 R2: power_id 跨 ming 边界翻转后即时重算原派系 leverage
+            # （与 set_character_status / set_character_office 钩子一致）。
+            self.recompute_faction_leverage(str(row["faction"] or ""))
             applied.append({"name": name, "old_power": old_power, "new_power": new_power, "reason": reason})
         if commit:
             self.conn.commit()
