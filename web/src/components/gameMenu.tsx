@@ -582,7 +582,8 @@ export function LLMConfigTab() {
               placeholder="180"
             />
           </label>
-          <label className="menu-field">
+          {/* div 而非 label：input+button 两个可表单关联控件，HTML5 规定一个 label 至多含一个（无障碍）。 */}
+          <div className="menu-field">
             <span>
               API Key{" "}
               {info?.has_api_key ? <small className="ok">（当前已设置）</small> : <small className="warn">（未设置）</small>}
@@ -600,7 +601,7 @@ export function LLMConfigTab() {
                 {show ? "隐" : "显"}
               </button>
             </div>
-          </label>
+          </div>
         </>
       ) : null}
       <div className="menu-row">
