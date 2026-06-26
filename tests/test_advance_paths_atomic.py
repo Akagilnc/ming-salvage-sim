@@ -703,10 +703,12 @@ def test_mark_event_triggered_upgrades_pending_choice_row(game):
     db.mark_event_triggered(state, eid, source="event_pool")
 
     row = db.conn.execute(
-        "SELECT terminal_state, source, choice_json FROM event_triggers WHERE event_id=?", (eid,)
+        "SELECT terminal_state, source, terminal_reason, choice_json FROM event_triggers WHERE event_id=?",
+        (eid,),
     ).fetchone()
     assert row["terminal_state"] == "triggered"
     assert row["source"] == "event_pool"
+    assert row["terminal_reason"] == "留"
     assert json.loads(row["choice_json"]) == {"label": "留"}
 
 
@@ -740,7 +742,7 @@ def test_terminal_markers_upgrade_pending_choice_row(game, marker, terminal_stat
     ).fetchone()
     assert row["terminal_state"] == terminal_state
     assert row["source"] == source
-    assert row["terminal_reason"] == reason
+    assert row["terminal_reason"] == "留"
     assert json.loads(row["choice_json"]) == {"label": "留"}
 
 
