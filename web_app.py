@@ -168,12 +168,21 @@ def _turn_account_report(db, turn: int) -> str:
         lines.append("无显著落账。")
 
     try:
+        # 旧存档的 rejection_reports 可能没有 resimulation_invalidated 列：COALESCE 不能挡
+        # 「列不存在」（SQLite 会直接 OperationalError），broad except 会把整段「窒碍未行」吞掉。
+        # 先查列是否存在（同 decree._has_durable_player_visible_rejection 的 PRAGMA 守法），
+        # 有才加该过滤，无则退化为不过滤（codex correctness）。
+        cols = {r[1] for r in db.conn.execute("PRAGMA table_info(rejection_reports)").fetchall()}
+        invalidated_clause = (
+            "AND COALESCE(resimulation_invalidated, 0) = 0"
+            if "resimulation_invalidated" in cols else ""
+        )
         rows = db.conn.execute(
-            """
+            f"""
             SELECT section, reason FROM rejection_reports
             WHERE turn = ?
               AND source IN ('player_decree', 'hitl_decision')
-              AND COALESCE(resimulation_invalidated, 0) = 0
+              {invalidated_clause}
             ORDER BY id
             """,
             (int(turn),),
