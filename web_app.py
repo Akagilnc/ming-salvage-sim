@@ -29,7 +29,7 @@ try:
 except Exception:  # noqa: BLE001 — 缓冲设置失败不该阻断 web 启动
     pass
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles

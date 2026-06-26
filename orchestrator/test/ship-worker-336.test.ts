@@ -15,7 +15,7 @@
  * deleted-inline regression are asserted at the seam.
  */
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,7 +25,9 @@ import {
   RealBackend,
   SANDBOX_CODEX_DIR,
   SANDBOX_GH_TOKEN_ENV,
+  SANDBOX_REPO_ENV,
   SANDBOX_SOUL_ENV,
+  SPAWNED_WORKER_ENV,
 } from "../src/realBackend.js";
 import type { ShipAuth } from "../src/realBackend.js";
 import { shipWorkerSpec } from "../src/dispatchWorker.js";
@@ -232,11 +234,14 @@ describe("#336 single-slice shipSandboxConfig — best-effort ship auth", () => 
     });
   }
 
-  it("mounts codex auth + the claude token under the WRITE (coder) soul", () => {
+  it("mounts codex auth + the claude token under the dedicated ship soul", () => {
     const c = cfg().config({ codexAuthDir: "/tmp/codex", claudeToken: "tok" });
     expect(c.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
     expect(c.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok");
-    expect(c.env[SANDBOX_SOUL_ENV]).toBe("coder");
+    expect(c.env[SANDBOX_SOUL_ENV]).toBe("ship");
+    // ORCHESTRATOR_REPO is exported so the ship soul's `gh issue create
+    // --repo "$ORCHESTRATOR_REPO"` defer path works (codex #384).
+    expect(c.env[SANDBOX_REPO_ENV]).toBe("Akagilnc/ming-salvage-sim");
   });
 
   it("exports the gh token as GH_TOKEN so the in-container `gh pr create` / push over https is authenticated (cmr S336 r10 P1)", () => {
@@ -254,11 +259,11 @@ describe("#336 single-slice shipSandboxConfig — best-effort ship auth", () => 
     expect(c.env[SANDBOX_GH_TOKEN_ENV]).toBeUndefined();
   });
 
-  it("a missing codex auth degrades the mount but still ships under the coder soul", () => {
+  it("a missing codex auth degrades the mount but still ships under the ship soul", () => {
     const c = cfg().config({ claudeToken: "tok" });
     expect(c.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(false);
     expect(c.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok");
-    expect(c.env[SANDBOX_SOUL_ENV]).toBe("coder");
+    expect(c.env[SANDBOX_SOUL_ENV]).toBe("ship");
   });
 
   it("the pure config seam tolerates a missing claude token (the preflight that REQUIRES it lives upstream in runShipWorker — cmr S336 r8)", () => {
@@ -270,7 +275,13 @@ describe("#336 single-slice shipSandboxConfig — best-effort ship auth", () => 
     const c = cfg().config({ codexAuthDir: "/tmp/codex" });
     expect(c.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
     expect(c.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
-    expect(c.env[SANDBOX_SOUL_ENV]).toBe("coder");
+    expect(c.env[SANDBOX_SOUL_ENV]).toBe("ship");
+  });
+
+  it("marks the ship container as an orchestrator-spawned, non-interactive session (gstack-ship reads OPENCLAW_SESSION → auto-decides its P1 gate)", () => {
+    const c = cfg().config({ codexAuthDir: "/tmp/codex", claudeToken: "tok" });
+    expect(c.env.OPENCLAW_SESSION).toBe("1");
+    expect(c.env.OPENCLAW_SESSION).toBe(SPAWNED_WORKER_ENV.OPENCLAW_SESSION);
   });
 });
 
@@ -436,5 +447,78 @@ describe("#336 single-slice runShipWorker — fail-closed when gh auth is missin
       /shipSandbox should not be built/,
     );
     expect(be.sandboxReached).toBe(true);
+  });
+});
+
+// ═══════════════════ auth mounts — container codex config is minimal, NOT host copy (#378) ═══════════════════
+
+describe("#378 RealBackend auth mounts — write a minimal danger-full-access config, never copy the host config.toml", () => {
+  /** A host $HOME with codex creds + a host config.toml with host-only keys, plus the claude token. */
+  function hostHome(): string {
+    const home = mkDir("rb-host-home-");
+    const codexDir = join(home, ".codex");
+    mkdirSync(codexDir, { recursive: true });
+    writeFileSync(join(codexDir, "auth.json"), '{"OPENAI_API_KEY":"sk-host"}');
+    writeFileSync(
+      join(codexDir, "config.toml"),
+      [
+        'model = "gpt-5.5"',
+        'sandbox_mode = "workspace-write"',
+        'notify = ["/Users/host/notify.app"]',
+        '[plugins."github@openai-curated"]',
+        "enabled = true",
+        "",
+      ].join("\n"),
+    );
+    // mountAuth requires the durable claude token file.
+    writeFileSync(join(home, ".sc-claude-token"), "sk-claude-host\n");
+    return home;
+  }
+
+  class AuthBackend extends RealBackend {
+    protected override buildOrReuseClone(): string {
+      return mkDir("rb-clone-");
+    }
+    protected override assertIndependentClone(): void {}
+    public agentAuth(issueNumber: number): { authDir: string } {
+      return this.mountAuth(issueNumber);
+    }
+    public shipAuth(issueNumber: number): ShipAuth {
+      return this.mountShipAuth(issueNumber);
+    }
+  }
+
+  function backend(home: string): AuthBackend {
+    return new AuthBackend({
+      sourceRepo: mkDir("rb-src-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      imageName: "ming-orchestrator-coder:latest",
+      runKey: "k378",
+      home,
+    });
+  }
+
+  function assertMinimalConfig(dir: string): void {
+    expect(readFileSync(join(dir, "auth.json"), "utf8")).toContain("sk-host");
+    const config = readFileSync(join(dir, "config.toml"), "utf8");
+    expect(config).toContain('sandbox_mode = "danger-full-access"');
+    expect(config).not.toContain("workspace-write");
+    expect(config).not.toContain("notify");
+    expect(config).not.toContain("plugins");
+  }
+
+  it("the agent-step mountAuth copies auth.json + writes the minimal config", () => {
+    const be = backend(hostHome());
+    const { authDir } = be.agentAuth(378);
+    assertMinimalConfig(authDir);
+  });
+
+  it("the ship mountShipAuth copies auth.json + writes the minimal config", () => {
+    const be = backend(hostHome());
+    const auth = be.shipAuth(378);
+    expect(auth.codexAuthDir).toBeTruthy();
+    assertMinimalConfig(auth.codexAuthDir as string);
   });
 });

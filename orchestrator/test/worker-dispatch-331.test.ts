@@ -8,7 +8,6 @@ import {
 import type {
   Backend,
   DispatchContext,
-  Finding,
   IssueMeta,
   IssueSnapshot,
   PersistentLedgerEntry,
@@ -114,7 +113,7 @@ class DispatchBackend implements Backend {
 }
 
 describe("#331 unified worker-dispatch seam — happy path", () => {
-  it("routes S2/S3 (and S7 ship) through dispatchWorker, never the legacy methods", async () => {
+  it("routes S2 (and S7 ship) through dispatchWorker, never the legacy methods", async () => {
     const backend = new DispatchBackend();
     const result = await runOrchestrator({ issueNumber: 331, backend });
 
@@ -126,16 +125,17 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
     expect(backend.pushCount).toBe(0);
   });
 
-  it("dispatches the worker SEQUENCE S2→S3→S7 with the right kind/role/session/retention/skill", async () => {
+  it("dispatches the worker SEQUENCE S2→S7 with the right kind/role/session/retention/skill", async () => {
     const backend = new DispatchBackend();
     await runOrchestrator({ issueNumber: 331, backend });
 
-    // session is `fresh` for the normal S2/S3/S7 path (ADR 0026: a worker is
-    // `resume` ONLY on the crash/escalate-resume path); contextRetention is
-    // `retain` for the coder, `clean` for review/ship.
+    // ADR 0026: the runner is a pure scheduler — it dispatches exactly the
+    // whole-slice build coder (S2, which runs its own per-slice review→fix→cmr
+    // loop INSIDE the worker) then the ship worker (S7). No runner-driven
+    // reviewer / fix steps (S3/S4/S5/S6 are deleted). session is `fresh` on the
+    // normal path; contextRetention is `retain` for the coder, `clean` for ship.
     expect(backend.dispatched).toEqual([
       "S2:coder:coder:fresh:retain:/tdd",
-      "S3:reviewer:reviewer:fresh:clean:/review",
       "S7:ship:coder:fresh:clean:gstack-ship",
     ]);
   });
@@ -146,7 +146,7 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
 
     const byId = Object.fromEntries(backend.specs.map((s) => [s.id, s]));
     expect(byId.S2.promptFile).toBe("coder_implement.md");
-    expect(byId.S3.promptFile).toBe("reviewer_full_review.md");
+    expect(byId.S7.promptFile).toBe("ship.md");
   });
 
   it("hands the resident worktree to every single-slice worker via DispatchContext", async () => {
@@ -156,79 +156,6 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
     for (const ctx of backend.ctxs) {
       expect(ctx.worktree).toEqual(backend.worktree);
     }
-  });
-});
-
-describe("#331 fix-loop routes the S5 fix worker (resume) with prev findings", () => {
-  /** A reviewer that emits one fix_now finding on S3, then approves on S6. */
-  class FixLoopBackend extends DispatchBackend {
-    private reviewCount = 0;
-    override async dispatchWorker(
-      spec: WorkerSpec,
-      ctx: DispatchContext,
-    ): Promise<WorkerResult> {
-      this.dispatched.push(
-        `${spec.id}:${spec.kind}:${spec.session}:${spec.contextRetention}`,
-      );
-      this.specs.push(spec);
-      this.ctxs.push(ctx);
-      if (spec.kind === "coder") {
-        return {
-          kind: "completed",
-          output: { kind: "coder", committed: true, commitsAdded: 1 },
-        };
-      }
-      if (spec.kind === "reviewer") {
-        this.reviewCount += 1;
-        const findings: Finding[] =
-          this.reviewCount === 1
-            ? [
-                {
-                  severity: "critical",
-                  category: "correctness",
-                  claim_quote: "x",
-                  location: "f.ts:1",
-                  suggested_fix: "fix it",
-                  action: "fix_now",
-                },
-              ]
-            : [];
-        return { kind: "completed", output: { kind: "reviewer", findings } };
-      }
-      return {
-        kind: "completed",
-        output: { kind: "ship", branch: this.worktree.branch, status: "pushed" },
-      };
-    }
-  }
-
-  it("S3(findings)→S5 fix→S6(approve)→S7, with the fix worker carrying fix_now findings", async () => {
-    const backend = new FixLoopBackend();
-    const result = await runOrchestrator({ issueNumber: 331, backend });
-
-    expect(result.status).toBe("success");
-    // A NORMAL S5 fix round is session:"fresh" (NOT the resume path) with
-    // contextRetention:"retain" — the ADR 0026 invariant the codex R3 finding
-    // caught: a normal fix must not use the crash/escalate resume path.
-    expect(backend.dispatched).toEqual([
-      "S2:coder:fresh:retain",
-      "S3:reviewer:fresh:clean",
-      "S5:coder:fresh:retain",
-      "S6:reviewer:fresh:clean",
-      "S7:ship:fresh:clean",
-    ]);
-
-    // The S5 fix worker received the round's fix_now findings (US#13) via ctx —
-    // its retention mechanism, NOT a resumeSessionId.
-    const s5Idx = backend.specs.findIndex((s) => s.id === "S5");
-    expect(s5Idx).toBeGreaterThanOrEqual(0);
-    const s5spec = backend.specs[s5Idx];
-    expect(s5spec.session).toBe("fresh");
-    expect(s5spec.contextRetention).toBe("retain");
-    const s5ctx = backend.ctxs[s5Idx];
-    expect(s5ctx.resumeSessionId).toBeUndefined();
-    expect(s5ctx.prevFindings?.length).toBe(1);
-    expect(s5ctx.prevFindings?.[0].action).toBe("fix_now");
   });
 });
 
@@ -420,7 +347,10 @@ describe("#331 stepSpecToWorkerSpec — builds the worker spec from a StepSpec",
   });
 
   it("maps a reviewer StepSpec to a reviewer worker (fresh, clean eyes, invoke /review)", () => {
-    const reviewerSpec: StepSpec = { ...coderSpec, id: "S3", role: "reviewer" };
+    // dispatchWorker.ts stays generic (it serves the family layer's reviewer/cmr
+    // kinds too); the role→reviewer mapping is independent of the single-slice
+    // StepId set, so any valid id stands in here.
+    const reviewerSpec: StepSpec = { ...coderSpec, role: "reviewer" };
     const w = stepSpecToWorkerSpec(reviewerSpec);
     expect(w.kind).toBe("reviewer");
     expect(w.session).toBe("fresh");
@@ -435,7 +365,6 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
     runStepCalls: StepSpec[] = [];
     resumeCalls: string[] = [];
     pushCalls = 0;
-    lastFixFindings?: ReadonlyArray<Finding>;
     worktree: WorktreeHandle = {
       branch: "b",
       base: "main",
@@ -444,10 +373,8 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
     async runStep(
       spec: StepSpec,
       _wt: WorktreeHandle,
-      fixNow?: ReadonlyArray<Finding>,
     ): Promise<StepOutput> {
       this.runStepCalls.push(spec);
-      this.lastFixFindings = fixNow;
       return spec.role === "coder"
         ? { kind: "coder", committed: true, commitsAdded: 1 }
         : { kind: "reviewer", findings: [] };
@@ -456,10 +383,8 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
       _spec: StepSpec,
       _wt: WorktreeHandle,
       sid: string,
-      fixNow?: ReadonlyArray<Finding>,
     ): Promise<StepOutput> {
       this.resumeCalls.push(sid);
-      this.lastFixFindings = fixNow;
       return { kind: "coder", committed: true, commitsAdded: 1 };
     }
     async push(): Promise<void> {
@@ -495,25 +420,17 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
     }
   });
 
-  it("forwards a resume fix worker (resumeSessionId present) to resumeSession with findings", async () => {
+  it("forwards a resume worker (resumeSessionId present) to resumeSession with the recorded session id", async () => {
     const be = new LegacyBackend();
-    const findings: Finding[] = [
-      {
-        severity: "high",
-        category: "c",
-        claim_quote: "q",
-        location: "l",
-        suggested_fix: "s",
-        action: "fix_now",
-      },
-    ];
-    await legacyDispatchWorker(be as unknown as Backend, { ...coderWorker, id: "S5" }, {
+    // The resume path is keyed by resumeSessionId; the only agent step is the S2
+    // build worker (ADR 0026 — the per-slice fix loop runs inside it, so there is
+    // no separate fix step to thread findings to).
+    await legacyDispatchWorker(be as unknown as Backend, { ...coderWorker, id: "S2" }, {
       worktree: be.worktree,
       resumeSessionId: "sess-abc",
-      prevFindings: findings,
     });
     expect(be.resumeCalls).toEqual(["sess-abc"]);
-    expect(be.lastFixFindings).toEqual(findings);
+    expect(be.runStepCalls).toHaveLength(0);
   });
 
   it("forwards a ship worker to push and wraps as completed ShipResult", async () => {
@@ -544,10 +461,13 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
     // The guard must REJECT it (3 bots).
     for (const kind of ["cmr", "merge"] as const) {
       const be = new LegacyBackend();
+      // cmr/merge are family-only kinds whose id is not in the single-slice
+      // StepId union (S0/S1/S2/S7/S8) — borrow the build id S2 so the WorkerSpec
+      // type-checks; the kind (not the id) is what the fail-closed guard rejects.
       await expect(
         legacyDispatchWorker(
           be as unknown as Backend,
-          { ...coderWorker, id: kind === "cmr" ? "Scmr" : "Smerge", kind },
+          { ...coderWorker, id: "S2", kind },
           { worktree: be.worktree },
         ),
       ).rejects.toThrow(/no legacy dispatch path/);

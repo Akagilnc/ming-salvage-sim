@@ -23,6 +23,7 @@
 import type {
   DispatchContext,
   WorkerResult,
+  WorkerSessionMode,
   WorkerSpec,
 } from "../types.js";
 import type {
@@ -31,24 +32,47 @@ import type {
   OpenFamilyPrResult,
 } from "./types.js";
 
-/** The integrated-cmr family worker spec (#335 invoke `ak-cross-m-review`, fresh). */
-export function cmrWorkerSpec(): WorkerSpec {
+/**
+ * The integrated-cmr family worker spec (#335 invoke `ak-cross-m-review`).
+ *
+ * The corrected design (ADR 0026 2026-06-24): the cmr worker is a SINGLE
+ * memory-bearing `sc.run` session that IS the fixer — it invokes
+ * `ak-cross-m-review` (--scenario ship-pre), which dispatches fresh review legs,
+ * grades, FIXES on the family base, and re-reviews until convergence, the WHOLE
+ * loop INSIDE this one session. Only the 3 review LEGS are fresh each round; the
+ * worker's main session has memory. So:
+ *   - `session: "fresh"` = start a NEW session (not a crash/escalate `resume`,
+ *     which skips git-truthing) — the worker is dispatched ONCE per family run, not
+ *     re-dispatched per round.
+ *   - `soul: "cmr"` = the integrated-cmr fixer soul (WRITE — it commits fixes), NOT
+ *     the READ-ONLY per-slice reviewer soul.
+ *   - `maxIter: 5` = the within-step Ralph iteration budget (StepSpec.maxIter
+ *     semantics, same as the coder/ship workers), NOT the count of cmr fix rounds.
+ *     The review→fix→re-review convergence loop is the `ak-cross-m-review` skill's
+ *     OWN loop inside this one session; it is judged by the worker (drift/converge),
+ *     never round-counted by the runner — maxIter must not degrade into a
+ *     "count-to-N-then-give-up" fix-loop cap (types.ts maxIter SEMANTICS, US#18).
+ */
+export function cmrWorkerSpec(session: WorkerSessionMode = "fresh"): WorkerSpec {
   return {
-    id: "S6", // the family integrated cmr maps to the review step kind
+    id: "S2", // the family integrated cmr is a WRITE/work step (ADR 0026: the
+    //           single-slice S3/S5/S6 ids were removed; the cmr worker is a build/
+    //           fix-kind step that runs before the family S7 ship, so it borrows S2).
     kind: "cmr",
-    role: "reviewer",
+    role: "coder", // it WRITES (commits cross-slice fixes), not a read-only reviewer
     // The cmr skill fans out a Claude Agent leg + CLI legs → host pinned Claude
     // top-level (PRD #330 [J]).
     host: "claude",
-    session: "fresh",
-    // Review worker: clean eyes each round (cross-model independence) — ADR 0026.
-    contextRetention: "clean",
+    session,
+    // The worker's main session has MEMORY (it is the fixer, looping internally);
+    // only the review legs are fresh — ADR 0026 2026-06-24.
+    contextRetention: "retain",
     skill: "ak-cross-m-review",
     promptFile: "integrated_cmr.md",
     completionSignal: "CMR_STEP_COMPLETE",
-    maxIter: 1,
+    maxIter: 5,
     model: "opus",
-    soul: "READ-ONLY",
+    soul: "cmr",
     toolchain: [],
   };
 }
@@ -70,7 +94,12 @@ export function familyShipWorkerSpec(): WorkerSpec {
     // (runner STEP_SPECS use 5), NOT the cmr reviewer's single-pass 1 (#336 cmr r6).
     maxIter: 5,
     model: "sonnet",
-    soul: "coder",
+    // The family ship worker runs under the dedicated "ship" soul (delivery
+    // discipline: gstack-ship, stop-at-PR, defer→tracker not PR body), matching
+    // the runtime SHIP_SOUL injected by realFamilyBackend.shipSandboxConfig — the
+    // spec must not still declare the coder soul (CodeRabbit #384: unify the
+    // ship-worker soul contract).
+    soul: "ship",
     toolchain: [],
   };
 }

@@ -582,13 +582,16 @@ export function LLMConfigTab() {
               placeholder="180"
             />
           </label>
-          <label className="menu-field">
-            <span>
+          {/* div 包裹：input+button 两个可表单关联控件，HTML5 规定一个 label 至多含一个。
+              用 label htmlFor 单独绑 input 恢复无障碍名称，button 留在 label 外。 */}
+          <div className="menu-field">
+            <label htmlFor="api-key-input">
               API Key{" "}
               {info?.has_api_key ? <small className="ok">（当前已设置）</small> : <small className="warn">（未设置）</small>}
-            </span>
+            </label>
             <div className="menu-row">
               <input
+                id="api-key-input"
                 className="menu-input"
                 type={show ? "text" : "password"}
                 value={apiKey}
@@ -600,7 +603,7 @@ export function LLMConfigTab() {
                 {show ? "隐" : "显"}
               </button>
             </div>
-          </label>
+          </div>
         </>
       ) : null}
       <div className="menu-row">
