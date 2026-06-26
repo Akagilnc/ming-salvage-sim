@@ -1715,7 +1715,9 @@ def _serialized_web_write(game):
          （与 session._refuse_if_settling 同口径）。
       ② 非阻塞抢 `_write_gate`——抢不到=结算 worker 或后台召对 worker 正持锁（含上述 pre_settle
          窗口）→ 立即 409，不在事件循环上阻塞等结算（F1 同因）；抢到则持锁到写完再释放。
-    会话层写（诏稿/任命）已由 session._refuse_if_settling 守门，不走本路。"""
+    直写 game.db 的端点、以及绕过 _write_gate 的会话写端点（诏稿/拟旨/撤回召对——它们各自的
+    session._refuse_if_settling/相位门只查相位、守不住 pre_settle 窗口）都经本 CM 串行；结算入口
+    （resolve_turn/submit_decisions）走阻塞版 _game_write_gate（在自己的 worker 线程里持锁）。"""
     state = getattr(game, "state", None)
     if getattr(state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
         raise HTTPException(status_code=409, detail="月末结算进行中，请待结算完成后再操作。")
@@ -2377,8 +2379,10 @@ async def api_create_secret_order(minister_name: str, request: SecretOrderReques
         order_id = game.db.create_secret_order(
             game.session.state, minister_name, title, content, request.tags, deadline_months=request.deadline_months
         )
-    if game.session.registry is not None:
-        game.session.registry.refresh(minister_name)  # 上下文带上最新密令
+        # registry.refresh 也留在门内：否则提前释放锁后留下 DB 已建密令、内存 agent 上下文仍旧
+        # 的撕裂窗口（cmr Gate2 r3 Finding2，同 consort/admin 那类 DB/内存撕裂）。
+        if game.session.registry is not None:
+            game.session.registry.refresh(minister_name)  # 上下文带上最新密令
     print(f"[secret_order/api] 新建 minister={minister_name} title={title!r} id={order_id}")
     return {"order_id": order_id, "minister_name": minister_name, "title": title, "status": "active"}
 
@@ -2391,7 +2395,12 @@ async def api_chat(minister_name: str, request: ChatRequest) -> Dict[str, Any]:
 
 @app.post("/api/ministers/{minister_name}/chat/undo")
 async def api_undo_chat(minister_name: str) -> Dict[str, Any]:
-    return get_game().undo_last_chat(minister_name)
+    # undo_last_chat 自带产品相位门（只许 SUMMONING/REVIEWING 撤回），但那是 phase-only、守不住
+    # pre_settle 原子窗口，且 undo_chat_turn 直写共享连接 → 与其它写端点一致走 _write_gate
+    # （cmr Gate2 r3 Finding1）。门内若相位门拒，HTTPException 经 finally 释放锁后正常上抛。
+    game = get_game()
+    with _serialized_web_write(game):
+        return game.undo_last_chat(minister_name)
 
 
 @app.post("/api/ministers/{minister_name}/chat/stream")
