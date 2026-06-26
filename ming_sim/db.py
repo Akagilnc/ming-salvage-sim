@@ -6561,9 +6561,25 @@ class GameDB:
     ) -> None:
         self.conn.execute(
             """
-            INSERT OR IGNORE INTO event_triggers
+            INSERT INTO event_triggers
                 (event_id, turn, year, period, source, terminal_state, terminal_reason)
             VALUES (?, ?, ?, ?, ?, 'avoided', ?)
+            ON CONFLICT(event_id) DO UPDATE SET
+                source = CASE
+                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
+                    THEN excluded.source
+                    ELSE event_triggers.source
+                END,
+                terminal_state = CASE
+                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
+                    THEN excluded.terminal_state
+                    ELSE event_triggers.terminal_state
+                END,
+                terminal_reason = CASE
+                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
+                    THEN excluded.terminal_reason
+                    ELSE event_triggers.terminal_reason
+                END
             """,
             (event_id, state.turn, state.year, state.period, source, reason[:200]),
         )
@@ -6581,9 +6597,25 @@ class GameDB:
     ) -> None:
         self.conn.execute(
             """
-            INSERT OR IGNORE INTO event_triggers
+            INSERT INTO event_triggers
                 (event_id, turn, year, period, source, terminal_state, terminal_reason)
             VALUES (?, ?, ?, ?, ?, 'obsolete', ?)
+            ON CONFLICT(event_id) DO UPDATE SET
+                source = CASE
+                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
+                    THEN excluded.source
+                    ELSE event_triggers.source
+                END,
+                terminal_state = CASE
+                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
+                    THEN excluded.terminal_state
+                    ELSE event_triggers.terminal_state
+                END,
+                terminal_reason = CASE
+                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
+                    THEN excluded.terminal_reason
+                    ELSE event_triggers.terminal_reason
+                END
             """,
             (event_id, state.turn, state.year, state.period, source, reason[:200]),
         )
@@ -6593,9 +6625,25 @@ class GameDB:
     def mark_event_expired(self, state: GameState, event_id: str, *, commit: bool = True) -> None:
         self.conn.execute(
             """
-            INSERT OR IGNORE INTO event_triggers
+            INSERT INTO event_triggers
                 (event_id, turn, year, period, source, terminal_state, terminal_reason)
             VALUES (?, ?, ?, ?, 'window_expired', 'expired', '过最晚触发时点仍未达成触发门')
+            ON CONFLICT(event_id) DO UPDATE SET
+                source = CASE
+                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
+                    THEN excluded.source
+                    ELSE event_triggers.source
+                END,
+                terminal_state = CASE
+                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
+                    THEN excluded.terminal_state
+                    ELSE event_triggers.terminal_state
+                END,
+                terminal_reason = CASE
+                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
+                    THEN excluded.terminal_reason
+                    ELSE event_triggers.terminal_reason
+                END
             """,
             (event_id, state.turn, state.year, state.period),
         )
