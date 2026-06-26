@@ -74,10 +74,16 @@ def test_merge_non_list_new_issues_does_not_clobber_merged_list():
 
     outputs = {
         "issues": {"new_issues": [{"title": "公开月拨"}]},
-        "personnel_secret": {"new_issues": {}},  # 坏形状：非 list
+        "personnel_secret": {"new_issues": {"title": "坏形状"}},  # 非 list
     }
     merged = _merge_module_outputs(outputs)
     assert [item["title"] for item in merged["new_issues"]] == ["公开月拨"]
+    # 坏形状不静默吞：留一条模块拒收指明哪个模块产了坏形状（codex correctness，留痕不静默）。
+    rejections = merged.get("_module_rejections") or []
+    assert any(
+        r.get("module") == "personnel_secret" and r.get("field") == "new_issues"
+        for r in rejections
+    )
 
 
 def test_parallel_extract_runs_concurrently(game, monkeypatch):
