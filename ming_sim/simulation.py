@@ -997,10 +997,32 @@ def _clean_fiscal_removes(raw: object) -> List[Dict[str, object]]:
     return cleaned
 
 
+def _commitment_carrier_signature(item: Dict[str, object]) -> Optional[tuple]:
+    """同源承诺去重签名 = (origin_kind, origin_ref, 月度 economy 归一签名)。只有同源【且】月度
+    economy 等价才算真重复——同一密令/诏书下两笔【不同】月拨（同 origin_ref、不同 economy）各自
+    保留（codex correctness：原先只按 origin_ref 去重太粗，prompt 规定同一密令编号写固定
+    origin_ref=secret_order:N，会误删合法的多笔月拨）。空 origin_ref 无法识别 → 不去重（保守）。"""
+    oref = str(item.get("origin_ref") or "").strip()
+    if not oref:
+        return None
+    okind = str(item.get("origin_kind") or "").strip()
+    ongoing = item.get("ongoing_effects")
+    economy = ongoing.get("economy") if isinstance(ongoing, dict) else None
+    eco_sig = frozenset(
+        (
+            str(e.get("account") or "").strip(),
+            str(e.get("delta")),
+            str(e.get("category") or e.get("reason") or "").strip(),
+        )
+        for e in (economy or []) if isinstance(e, dict)
+    )
+    return (okind, oref, eco_sig)
+
+
 def _merge_module_outputs(outputs: Dict[str, Dict[str, object]]) -> Dict[str, object]:
     merged = copy.deepcopy(EMPTY_EXTRACTION)
     module_rejections: List[Dict[str, object]] = []
-    seen_origins: set = set()  # (origin_kind, origin_ref) 已合并的承诺来源，跨模块去重避免双扣
+    seen_commitment_sigs: set = set()  # 已合并承诺的 (origin, economy) 签名，去重避免月度双扣
     for module in EXTRACTION_MODULES:
         for key, val in outputs.get(module, {}).items():
             if key == "_module_rejections" and isinstance(val, list):
@@ -1012,26 +1034,24 @@ def _merge_module_outputs(outputs: Dict[str, Dict[str, object]]) -> Dict[str, ob
                 # 不静默吞：留一条模块拒收，指明哪个模块产了坏形状（留痕不静默，codex correctness）。
                 if isinstance(val, list):
                     for item in val:
-                        # 同源承诺跨模块去重（codex correctness）：issues 与 personnel_secret 都能
-                        # 产 new_issues，若两模块对同一笔（同 origin_kind+origin_ref）各产一条承诺
-                        # issue，apply 会建两条 active 承诺 → 月度 ongoing 双扣（正是 #340 要消的）。
-                        # 同批同源只留第一条；空 origin_ref 无法识别、不去重（保守）。
+                        # 同源【且同 economy】承诺跨模块去重（codex correctness）：issues 与
+                        # personnel_secret 都能产 new_issues，若两模块对同一笔（同源+同月拨）各产
+                        # 一条，apply 会建两条 active 承诺 → 月度 ongoing 双扣（#340 要消的）。只去
+                        # 真重复，同一密令下不同月拨（同 origin_ref、不同 economy）各自保留。
                         if isinstance(item, dict):
-                            okind = str(item.get("origin_kind") or "").strip()
-                            oref = str(item.get("origin_ref") or "").strip()
-                            if oref:
-                                origin_key = (okind, oref)
-                                if origin_key in seen_origins:
+                            sig = _commitment_carrier_signature(item)
+                            if sig is not None:
+                                if sig in seen_commitment_sigs:
                                     module_rejections.append({
                                         "module": module,
                                         "field": "new_issues",
                                         "reason": (
-                                            f"同源承诺重复（origin_kind={okind} origin_ref={oref}），"
-                                            "已去重避免月度双扣"
+                                            f"同源同额承诺重复（origin_kind={sig[0]} "
+                                            f"origin_ref={sig[1]}），已去重避免月度双扣"
                                         ),
                                     })
                                     continue
-                                seen_origins.add(origin_key)
+                                seen_commitment_sigs.add(sig)
                         merged["new_issues"].append(item)
                 else:
                     module_rejections.append({
