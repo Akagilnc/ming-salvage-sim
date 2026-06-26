@@ -898,9 +898,14 @@ class GameSession:
                 out["secret_order_id"] = oid
                 if self.registry is not None:
                     self.registry.refresh(assignee)
+        # 显式前缀(拟旨如下:/密令如下:)是皇帝已明示的动作，已由 resolve_minister_actions 零 LLM
+        # 落地；后置会话抽取(密令/调教)对前缀消息一律跳过——否则前缀路在有 active 密令/妃嫔时仍会
+        # 多跑 extract_minister_actions(LLM)，破坏 #344「按钮前缀路零 LLM」(US3)。与下方 draft
+        # (_stage_conversational_draft)/appointment 早已用 explicit_prefixed 把门，这里补齐对齐。
+        explicit_prefixed = bool(acts["decree_text"] or acts["secret_order"])
         # 会话动作：本轮未经前缀落密令时，LLM 判皇帝对密令/妃嫔的意图再落地。
         conversation_intent_handled = False
-        if not out["secret_order_id"]:
+        if not out["secret_order_id"] and not explicit_prefixed:
             is_consort = getattr(character, "office_type", "") == "后宫"
             active = self.db.get_active_secret_orders_for_minister(minister_name)
             if active or is_consort:
@@ -961,7 +966,6 @@ class GameSession:
                         minister_name=character.name, target_id=None,
                         payload={"name": character.name,
                                  "skill": act["cultivate_skill"], "trait": act["cultivate_trait"]})
-        explicit_prefixed = bool(acts["decree_text"] or acts["secret_order"])
         draft_probe_done = False
         draft_staged = False
 
