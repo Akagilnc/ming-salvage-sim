@@ -1000,6 +1000,7 @@ def _clean_fiscal_removes(raw: object) -> List[Dict[str, object]]:
 def _merge_module_outputs(outputs: Dict[str, Dict[str, object]]) -> Dict[str, object]:
     merged = copy.deepcopy(EMPTY_EXTRACTION)
     module_rejections: List[Dict[str, object]] = []
+    seen_origins: set = set()  # (origin_kind, origin_ref) 已合并的承诺来源，跨模块去重避免双扣
     for module in EXTRACTION_MODULES:
         for key, val in outputs.get(module, {}).items():
             if key == "_module_rejections" and isinstance(val, list):
@@ -1008,10 +1009,30 @@ def _merge_module_outputs(outputs: Dict[str, Dict[str, object]]) -> Dict[str, ob
             if key == "new_issues":
                 # 共享字段：list 才追加；非 list（坏形状）绝不走下面的覆盖分支——否则后一个模块
                 # （personnel_secret）输出非 list new_issues 会清掉 issues 已合并的承诺条目。坏形状
-                # 不静默吞：留一条模块拒收，指明哪个模块产了坏形状，便于试玩发现（留痕不静默，
-                # codex correctness）。
+                # 不静默吞：留一条模块拒收，指明哪个模块产了坏形状（留痕不静默，codex correctness）。
                 if isinstance(val, list):
-                    merged["new_issues"].extend(val)
+                    for item in val:
+                        # 同源承诺跨模块去重（codex correctness）：issues 与 personnel_secret 都能
+                        # 产 new_issues，若两模块对同一笔（同 origin_kind+origin_ref）各产一条承诺
+                        # issue，apply 会建两条 active 承诺 → 月度 ongoing 双扣（正是 #340 要消的）。
+                        # 同批同源只留第一条；空 origin_ref 无法识别、不去重（保守）。
+                        if isinstance(item, dict):
+                            okind = str(item.get("origin_kind") or "").strip()
+                            oref = str(item.get("origin_ref") or "").strip()
+                            if oref:
+                                origin_key = (okind, oref)
+                                if origin_key in seen_origins:
+                                    module_rejections.append({
+                                        "module": module,
+                                        "field": "new_issues",
+                                        "reason": (
+                                            f"同源承诺重复（origin_kind={okind} origin_ref={oref}），"
+                                            "已去重避免月度双扣"
+                                        ),
+                                    })
+                                    continue
+                                seen_origins.add(origin_key)
+                        merged["new_issues"].append(item)
                 else:
                     module_rejections.append({
                         "module": module,
