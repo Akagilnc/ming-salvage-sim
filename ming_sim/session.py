@@ -1012,12 +1012,15 @@ class GameSession:
                         _existing_draft_text = str(_payload.get("text") or "")
             elif _committed_draft is not None:
                 _existing_draft_text = str(_committed_draft["text"] or "")
-            if intent is not None:
-                draft_res = {
-                    "draft_action": "拟旨" if intent_kind == "draft" else "无",
-                    "draft_text": reply if intent_kind == "draft" else "",
-                }
+            if intent is not None and intent_kind == "draft":
+                draft_res = {"draft_action": "拟旨", "draft_text": reply}
+            elif intent is not None and not _has_existing_draft:
+                # 无现存草案 + 分类器判非拟旨 → 零额外 LLM（#344 常见消息秒回）。
+                draft_res = {"draft_action": "无", "draft_text": ""}
             else:
+                # intent is None（旧路）或【已有草案的后续补充】：分类器看不到 committed draft、
+                # 可能误判 none，回退 extract_draft_intent 合并新旧草案，避免丢补充（codex
+                # correctness）。额外 LLM 只在「已有草案」这一动作场景发生，普通消息不受影响。
                 draft_res = extract_draft_intent(
                     player_message, reply, llm_config=llm_config,
                     has_pending_draft=_has_existing_draft,
@@ -1046,17 +1049,20 @@ class GameSession:
         # 授某人为某官」会被任免抽取抢成 office pending，丢失诏书草案路径。
         has_pending_directive = any(p["kind"] == "directive" for p in pend_for_minister)
         has_committed_directive = False
-        if intent is None and not has_pending_directive:
+        if not has_pending_directive:
             for _directive in reversed(self.db.list_directives(self.state, statuses=("draft",))):
                 if str(_directive["actor"] or "") == minister_name:
                     has_committed_directive = True
                     break
+        # 已有草案（pending 或 committed）时，无论并发分类器判什么都要进 _stage 合并：分类器只读
+        # 皇帝本条消息、且看不到 committed draft 上下文，会把「再补一条…随行」这类后续补充误判成
+        # none → 静默丢掉草案补充（违背 #344 US6「动作仍正确落库」，codex correctness）。无草案时
+        # 仍按原逻辑（intent=='draft' 或旧路 _mentions/pending）触发，普通无动作消息零额外 LLM 不变。
         if (
             (intent is not None and intent_kind == "draft")
-            or (
-                intent is None
-                and (_mentions_draft_request(player_message) or has_pending_directive or has_committed_directive)
-            )
+            or has_pending_directive
+            or has_committed_directive
+            or (intent is None and _mentions_draft_request(player_message))
         ):
             draft_staged = _stage_conversational_draft()
 
