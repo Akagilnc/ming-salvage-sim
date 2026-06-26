@@ -1402,6 +1402,7 @@ class CliChat(OpenAIChat):
         run_response: Any = None,
         send_media_to_model: bool = True,
         compression_manager: Any = None,
+        **kwargs: Any,  # 吸掉 agno 演进新增的 kwarg(如 after_tool_results)，免 override 签名漂移炸 CI
     ):
         if self.backend == "codex" and response_format is None:
             prompt = _messages_to_prompt(messages, response_format)
@@ -1430,6 +1431,7 @@ class CliChat(OpenAIChat):
         run_response: Any = None,
         send_media_to_model: bool = True,
         compression_manager: Any = None,
+        **kwargs: Any,  # 吸掉 agno 演进新增的 kwarg(如 after_tool_results)，免 override 签名漂移炸 CI
     ):
         yield self.response(
             messages, response_format=response_format, tools=None,
