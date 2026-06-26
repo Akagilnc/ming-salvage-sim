@@ -248,3 +248,58 @@ def test_llm_failure_does_not_leave_half_chat_in_history(game):
     assert db.conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == 0
     row = db.conn.execute("SELECT status FROM chat_turns").fetchone()
     assert row["status"] == "failed"
+
+
+class _RaisingActionSession(_FakeSession):
+    """落地阶段（apply_cli_conversation_actions）在动作已写入后抛错。"""
+
+    def apply_cli_conversation_actions(self, *_args, **_kwargs):
+        raise RuntimeError("落地阶段失败")
+
+
+def test_background_audience_failure_after_action_rolls_back_cleanly(game):
+    """#383 US8 + Testing Decisions「失败清理」：拟旨已写入后落地失败 → 失败路径须回滚
+    已写动作（不留不可撤回的半成品政务结果）、删半截聊天、标 turn failed。与「退出≠取消」
+    的后台完成路明确分开（真后端错误才走失败）。"""
+    db, state, content = game
+    minister_name = "毕自严"
+    draft_text = "着户部清核辽饷。"
+    agent = _FakeAgent([ToolExec("propose_directive", f"__pending_directive__{draft_text}")])
+    bind_skills_content(content)
+    web_game = WebGame.__new__(WebGame)
+    web_game.session = _RaisingActionSession(db, state, content, agent)
+    web_game.chat_history = {name: [] for name in content.characters}
+    web_game.suggestions_for = lambda _character: []
+
+    events = list(web_game.chat_stream(minister_name, "拟一道清核辽饷的旨。"))
+
+    assert events[-1]["type"] == "error"
+    # 已写入的拟旨被回滚——不留不可撤回的半成品政务结果
+    assert not any(
+        row["text"] == draft_text
+        for row in db.list_directives(state, statuses=("pending", "draft"))
+    )
+    # 半截聊天被清，turn 标 failed
+    assert web_game.chat_history[minister_name] == []
+    assert db.conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == 0
+    assert db.conn.execute("SELECT status FROM chat_turns").fetchone()["status"] == "failed"
+
+
+def test_chat_stream_closed_before_turn_creation_is_noop(game):
+    """#383 Testing Decisions「turn 创建前 vs 创建后边界」的创建前半：观察者在生成器首次
+    迭代前就离开（close 未 next）→ no-op，不留 chat_turns / chat_messages。turn 创建（首次
+    迭代）后才进入「退出≠取消」语义，由 observer-departure 测试覆盖创建后半。"""
+    db, state, content = game
+    minister_name = "毕自严"
+    agent = _FakeAgent()
+    web_game = _web_game(db, state, content, agent)
+
+    turns_before = db.conn.execute("SELECT COUNT(*) FROM chat_turns").fetchone()[0]
+    msgs_before = db.conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0]
+
+    stream = web_game.chat_stream(minister_name, "户部钱粮如何？")
+    stream.close()  # 首次迭代前离开 → 生成器体从未执行 → turn 未创建
+
+    assert db.conn.execute("SELECT COUNT(*) FROM chat_turns").fetchone()[0] == turns_before
+    assert db.conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == msgs_before
+    assert web_game.chat_history[minister_name] == []
