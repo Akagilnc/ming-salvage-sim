@@ -1005,8 +1005,12 @@ def _merge_module_outputs(outputs: Dict[str, Dict[str, object]]) -> Dict[str, ob
             if key == "_module_rejections" and isinstance(val, list):
                 module_rejections.extend(item for item in val if isinstance(item, dict))
                 continue
-            if key == "new_issues" and isinstance(val, list):
-                merged["new_issues"].extend(val)
+            if key == "new_issues":
+                # 共享字段：list 才追加；非 list（坏形状）一律跳过，绝不走下面的覆盖分支——
+                # 否则后一个模块（personnel_secret）输出非 list new_issues 会清掉 issues 已合并的
+                # 承诺条目。坏形状交 sanitize_delta_shape 记 shape 拒收（codex correctness）。
+                if isinstance(val, list):
+                    merged["new_issues"].extend(val)
                 continue
             merged[key] = val
     if module_rejections:

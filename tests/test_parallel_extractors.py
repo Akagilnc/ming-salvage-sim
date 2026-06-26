@@ -66,6 +66,20 @@ def test_shared_new_issues_from_issues_and_personnel_secret_are_merged(game, mon
     assert [item["title"] for item in merged["new_issues"]] == ["公开月拨", "密令月拨"]
 
 
+def test_merge_non_list_new_issues_does_not_clobber_merged_list():
+    """integrated cmr Gate2 codex correctness：某模块输出非 list 的 new_issues（坏形状）时，
+    合并必须跳过、绝不清掉前一模块已合并的承诺列表（否则 personnel_secret 的坏形状会吃掉
+    issues 已合并的承诺）。"""
+    from ming_sim.simulation import _merge_module_outputs
+
+    outputs = {
+        "issues": {"new_issues": [{"title": "公开月拨"}]},
+        "personnel_secret": {"new_issues": {}},  # 坏形状：非 list
+    }
+    merged = _merge_module_outputs(outputs)
+    assert [item["title"] for item in merged["new_issues"]] == ["公开月拨"]
+
+
 def test_parallel_extract_runs_concurrently(game, monkeypatch):
     """parallel=True 时 4 个 LLM 调用真并发：峰值并发 ≥2，wall-clock 明显短于串行总和。"""
     db, state, content = game
