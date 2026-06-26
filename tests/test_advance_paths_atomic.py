@@ -730,11 +730,17 @@ def test_mark_event_triggered_upgrades_pending_choice_row(game):
     ],
 )
 def test_terminal_markers_upgrade_pending_choice_row(game, marker, terminal_state, source, reason):
-    """确定性终态须覆盖空终态 HITL choice 行且保留亲裁选择。"""
+    """确定性终态须覆盖空终态 HITL choice 行，保留亲裁选择，并刷新终态时刻。"""
     import json
     db, state, _content = game
     eid = f"__terminal_account_pending_choice_{marker}__"
     db.record_event_decision_choice(state, eid, {"label": "留"})
+    terminal_turn = state.turn + 1
+    terminal_year = state.year + 1
+    terminal_period = 7
+    state.turn = terminal_turn
+    state.year = terminal_year
+    state.period = terminal_period
 
     if marker == "expired":
         db.mark_event_expired(state, eid)
@@ -746,9 +752,12 @@ def test_terminal_markers_upgrade_pending_choice_row(game, marker, terminal_stat
         raise AssertionError(marker)
 
     row = db.conn.execute(
-        "SELECT terminal_state, source, terminal_reason, choice_json FROM event_triggers WHERE event_id=?",
+        "SELECT turn, year, period, terminal_state, source, terminal_reason, choice_json FROM event_triggers WHERE event_id=?",
         (eid,),
     ).fetchone()
+    assert row["turn"] == terminal_turn
+    assert row["year"] == terminal_year
+    assert row["period"] == terminal_period
     assert row["terminal_state"] == terminal_state
     assert row["source"] == source
     assert row["terminal_reason"] == "留"
