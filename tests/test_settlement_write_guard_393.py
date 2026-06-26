@@ -1,11 +1,15 @@
-"""#393 串行门补全：web 端直写 game.db 的玩家/调试端点，必须在月末结算
-(FRONT_HALF_DONE: SETTLING / AWAITING_DECISION) 期间拒绝，避免该写骑进结算原子块的
-`_commit_suspended` 窗口随 SettlementAbort 一起回滚（返 200 却丢数据，破 ADR0008
-全有或全无 + P1 当回合全量落库）。会话层写已由 session._refuse_if_settling 守；这些
-端点绕过会话直调 game.db.*，需 web 层同等守门。整合 cmr Gate1 reproduce 实证。"""
+"""#393 串行门补全（cmr Gate1 + Gate2）：web 端「绕过会话层、直写 game.db」的玩家/调试端点，
+必须与月末结算原子块 / 后台召对 worker 在同一无锁连接上串行——不许重叠。
+
+Gate1：相位（SETTLING / AWAITING_DECISION）期间拒写。
+Gate2（F-A）：仅查相位不够——pre_settle 在原子块内（_commit_suspended=True）跑财政 tick，
+到块尾才落 turn_phase=SETTLING（decree.py:942）。相位落定前那段窗口结算 worker 仍持 _write_gate，
+故守门改为「相位拒 + 非阻塞抢同一把 _write_gate」：抢不到（结算/后台召对 worker 持锁）即 409。
+"""
 from __future__ import annotations
 
 import asyncio
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -16,19 +20,15 @@ from ming_sim.models import TurnPhase, FRONT_HALF_DONE_PHASES
 
 
 class _RecordingDB:
-    """记录是否发生过任何写：守门生效时这些方法永不被触达。"""
-
     def __init__(self):
         self.writes: list[str] = []
         self.conn = SimpleNamespace(execute=lambda *a, **k: SimpleNamespace(fetchone=lambda: None))
 
     def create_secret_order(self, *a, **k):
-        self.writes.append("create_secret_order")
-        return 99
+        self.writes.append("create_secret_order"); return 99
 
     def withdraw_pending_action(self, *a, **k):
-        self.writes.append("withdraw_pending_action")
-        return True
+        self.writes.append("withdraw_pending_action"); return True
 
     def list_pending_actions(self, *a, **k):
         return []
@@ -43,31 +43,38 @@ class _RecordingDB:
         self.writes.append("set_character_status")
 
     def admin_upsert(self, *a, **k):
-        self.writes.append("admin_upsert")
-        return {"key": "x", "value": "1"}
+        self.writes.append("admin_upsert"); return {"key": "x", "value": "1"}
 
     def admin_delete(self, *a, **k):
-        self.writes.append("admin_delete")
-        return 1
+        self.writes.append("admin_delete"); return 1
 
 
 class _FakeGame:
     def __init__(self, turn_phase: str):
         self.state = SimpleNamespace(turn=3, turn_phase=turn_phase, metrics={})
         self.db = _RecordingDB()
+        self._write_gate = threading.Lock()
         consort = SimpleNamespace(name="某秀女", office_type="后宫", status="candidate", office="")
         minister = SimpleNamespace(name="某大臣", office_type="文官")
         self.content = SimpleNamespace(characters={"某秀女": consort, "某大臣": minister})
         self.session = SimpleNamespace(
-            content=self.content,
-            state=self.state,
+            content=self.content, state=self.state,
             registry=SimpleNamespace(refresh=lambda *a, **k: None, register=lambda *a, **k: None),
         )
         self.favorites = set()
         self.chat_history = {}
 
+    def _runtime_write_gate(self):
+        return self._write_gate
+
     def character_power_id(self, character):
         return "ming"
+
+    def find_character(self, name):
+        return self.content.characters.get(name)
+
+    def set_custom_portrait(self, name, pid):
+        self.db.writes.append("set_custom_portrait")
 
     def public_character(self, c):
         return {"name": c.name}
@@ -77,7 +84,7 @@ def _invoke(coro):
     return asyncio.run(coro)
 
 
-# 每个 case = (名字, 触发该端点的可调用)。守门在端点最顶，命中即 409、不触 db。
+# 端点（无 file 参数的）→ 触发可调用。守门命中即 409、db.writes 为空。
 def _endpoint_cases():
     return [
         ("secret_order", lambda: web_app.api_create_secret_order(
@@ -89,16 +96,14 @@ def _endpoint_cases():
         ("select_consort", lambda: web_app.api_select_consort("某秀女")),
         ("admin_upsert", lambda: web_app.api_admin_upsert("metrics", {"key": "国库", "value": "1"})),
         ("admin_delete", lambda: web_app.api_admin_delete("metrics", {"pk_value": "国库"})),
-        # 立绘端点经 WebGame.set_custom_portrait → db.set_portrait_id 直写 characters（同类，
-        # 守门在端点最顶，SETTLING 期文件/DB 都不触；file 实参用不到，传 None）。
-        ("portrait_upload", lambda: web_app.api_upload_portrait("某大臣", file=None)),
         ("portrait_delete", lambda: web_app.api_delete_portrait("某大臣")),
     ]
 
 
 @pytest.mark.parametrize("phase", [TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value])
 @pytest.mark.parametrize("name,call", _endpoint_cases(), ids=lambda c: c if isinstance(c, str) else "")
-def test_direct_db_write_endpoint_refuses_during_settlement(monkeypatch, phase, name, call):
+def test_direct_db_write_refused_by_phase(monkeypatch, phase, name, call):
+    """相位分支：FRONT_HALF_DONE 期间（含 settling 落定后 + awaiting_decision 暂停）→ 409、不写。"""
     game = _FakeGame(phase)
     monkeypatch.setattr(web_app, "get_game", lambda: game)
     with pytest.raises(HTTPException) as ei:
@@ -107,19 +112,60 @@ def test_direct_db_write_endpoint_refuses_during_settlement(monkeypatch, phase, 
     assert game.db.writes == [], f"{name} wrote DB during settlement: {game.db.writes}"
 
 
-def test_helper_contract_across_phases():
-    """集中守门助手的相位契约：前半段已提交两相位拒，正常召对相位放行。"""
-    for phase in FRONT_HALF_DONE_PHASES:
+@pytest.mark.parametrize("name,call", _endpoint_cases(), ids=lambda c: c if isinstance(c, str) else "")
+def test_direct_db_write_refused_when_gate_held(monkeypatch, name, call):
+    """Gate2 F-A 承重测试：相位正常（summoning，pre_settle 尚未落定 settling），但结算 worker
+    已持 _write_gate（=正跑 resolve_turn / pre_settle 原子块）→ 端点非阻塞抢锁失败 → 409、不写。
+    这正是 phase-only 守不住、gate 才能守住的 pre_settle 窗口。"""
+    game = _FakeGame(TurnPhase.SUMMONING.value)
+    monkeypatch.setattr(web_app, "get_game", lambda: game)
+    game._write_gate.acquire()  # 模拟结算 worker 持锁
+    try:
         with pytest.raises(HTTPException) as ei:
-            web_app._refuse_web_write_if_settling(_FakeGame(phase))
+            _invoke(call())
         assert ei.value.status_code == 409
-    # 正常相位不拦
-    web_app._refuse_web_write_if_settling(_FakeGame(TurnPhase.SUMMONING.value))
+        assert game.db.writes == [], f"{name} wrote while gate held: {game.db.writes}"
+    finally:
+        game._write_gate.release()
 
 
-def test_court_layout_still_writes_when_not_settling(monkeypatch):
-    """守门不破坏正常流：非结算相位下直写端点照常落库。"""
+def test_serialized_web_write_cm_contract():
+    """集中守门 CM 的契约：相位拒 / 非阻塞抢锁拒 / 正常进出且释放锁 / 体内抛异常也释放锁。"""
+    # 相位拒
+    for phase in FRONT_HALF_DONE_PHASES:
+        g = _FakeGame(phase)
+        with pytest.raises(HTTPException) as ei:
+            with web_app._serialized_web_write(g):
+                pass
+        assert ei.value.status_code == 409
+        assert not g._write_gate.locked(), "相位拒不应留下持锁"
+    # 正常相位 + 锁空：进得去、出来后锁已释放
+    g = _FakeGame(TurnPhase.SUMMONING.value)
+    with web_app._serialized_web_write(g):
+        assert g._write_gate.locked(), "CM 体内应持锁"
+    assert not g._write_gate.locked(), "CM 退出应释放锁"
+    # 锁被他人持有 → 非阻塞 409
+    g2 = _FakeGame(TurnPhase.SUMMONING.value)
+    g2._write_gate.acquire()
+    try:
+        with pytest.raises(HTTPException) as ei:
+            with web_app._serialized_web_write(g2):
+                pass
+        assert ei.value.status_code == 409
+    finally:
+        g2._write_gate.release()
+    # 体内抛异常也释放锁（finally）
+    g3 = _FakeGame(TurnPhase.SUMMONING.value)
+    with pytest.raises(RuntimeError):
+        with web_app._serialized_web_write(g3):
+            raise RuntimeError("boom")
+    assert not g3._write_gate.locked(), "异常路径也须释放锁"
+
+
+def test_direct_db_write_succeeds_when_free(monkeypatch):
+    """守门不破坏正常流：相位正常 + 锁空 → 直写端点照常落库，且事后锁已释放。"""
     game = _FakeGame(TurnPhase.SUMMONING.value)
     monkeypatch.setattr(web_app, "get_game", lambda: game)
     _invoke(web_app.api_set_court_layout({"layout": "{\"a\":1}"}))
     assert game.db.writes == ["kv_set"]
+    assert not game._write_gate.locked()

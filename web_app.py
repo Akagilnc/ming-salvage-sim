@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import queue
@@ -1322,6 +1323,19 @@ class WebGame:
         after_snapshot = self.db.capture_chat_rollback_snapshot()
         self.db.record_chat_turn_rollback_diffs(chat_turn_id, before_snapshot, after_snapshot)
 
+    def _fail_chat_turn_and_reload(self, chat_turn_id: int, before_snapshot: Dict[str, Any]) -> None:
+        """召对中断/失败的统一善后：记 rollback 项、标 chat_turn=failed、从 DB 重载聊天缓存。
+        所有「已建 chat_turn 但本轮未能正常完成」的路径都必须调用——否则留下 status=active 且
+        minister_message_id 为空的孤儿轮，`_audience_turn_in_flight` 会把该大臣永久判为「上一轮
+        仍在进行」而拒收后续问话（cmr Gate2 F-B）。chat_turn_id=0（无持久轮）时为 no-op。"""
+        if not chat_turn_id:
+            return
+        self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+        self.db.fail_chat_turn(chat_turn_id)
+        self.chat_history = {name: [] for name in self.session.content.characters}
+        for name, msgs in self.db.load_all_chat_history().items():
+            self.chat_history.setdefault(name, []).extend(msgs)
+
     def undo_last_chat(self, minister_name: str) -> Dict[str, Any]:
         if self.state.turn_phase not in (TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value):
             raise HTTPException(status_code=409, detail="本回合已经进入颁诏结算，不能撤回召对。")
@@ -1586,6 +1600,8 @@ class WebGame:
         write_gate = self._runtime_write_gate()
         write_gate.acquire()
         gate_released = False
+        chat_turn_id = 0
+        before_snapshot: Dict[str, Any] = {}
         try:
             if self._audience_turn_in_flight(minister_name):
                 write_gate.release()
@@ -1593,8 +1609,6 @@ class WebGame:
                 yield {"type": "error", "message": f"{minister_name}上一轮回奏仍在进行，请稍候再问。"}
                 return
             accepted_turn = int(self.state.turn)
-            chat_turn_id = 0
-            before_snapshot: Dict[str, Any] = {}
             if self._persistent_chat_minister(minister_name):
                 chat_turn_id, before_snapshot = self._start_chat_turn(minister_name)
             self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
@@ -1603,6 +1617,9 @@ class WebGame:
                 if chat_turn_id:
                     self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
         except Exception:
+            # 已建 chat_turn 但 prologue 写途中崩 → 必须失败该轮，否则留下 active 且无大臣回复的
+            # 孤儿轮，_audience_turn_in_flight 会永久挡住该大臣（cmr Gate2 F-B）。
+            self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
             write_gate.release()
             gate_released = True
             raise
@@ -1619,12 +1636,7 @@ class WebGame:
                     minister_name, text, chat_turn_id, before_snapshot, accepted_turn, emit_delta)
                 ev_queue.put({"type": "done", "payload": payload})
             except Exception as error:  # noqa: BLE001
-                if chat_turn_id:
-                    self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-                    self.db.fail_chat_turn(chat_turn_id)
-                    self.chat_history = {name: [] for name in self.session.content.characters}
-                    for name, msgs in self.db.load_all_chat_history().items():
-                        self.chat_history.setdefault(name, []).extend(msgs)
+                self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
                 if isinstance(error, LLMUnavailable):
                     ev_queue.put({"type": "error", "detail": _llm_error_detail(error)})
                 else:
@@ -1638,6 +1650,9 @@ class WebGame:
         try:
             thread.start()
         except Exception:
+            # worker 没起来 → prologue 已建的 chat_turn 不会有 worker 去失败它，须就地善后，
+            # 否则同样留下孤儿轮永久挡该大臣（cmr Gate2 F-B）。
+            self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
             if not gate_released:
                 write_gate.release()
                 gate_released = True
@@ -1686,16 +1701,31 @@ def _game_write_gate(game) -> threading.Lock:
     return gate
 
 
-def _refuse_web_write_if_settling(game) -> None:
-    """月末结算（FRONT_HALF_DONE：SETTLING / AWAITING_DECISION）期间，拒绝绕过会话层、
-    直写 `game.db.*` 的 web 端点——否则该写会骑进结算原子块的 `_commit_suspended` 窗口，
-    随 SettlementAbort 一起回滚（端点返 200 却丢数据，破 ADR0008 全有或全无 + P1），或与
-    后台召对 worker 争抢同一无锁连接（#393 串行门：其它冲突写入者绝不与结算原子块重叠）。
-    会话层写已由 `session._refuse_if_settling` 守门；本助手守那些直调 `game.db` 的端点。
-    拒收（非阻塞 await）与诏稿端点一致：等待藏在前端「结算中」指示里，无新 UX。"""
+@contextlib.contextmanager
+def _serialized_web_write(game):
+    """串行化「绕过会话层、直写 game.db」的 web 端点写入，杜绝它与月末结算原子块 / 后台召对
+    worker 在同一无锁连接（check_same_thread=False，db.py:317「单写者、无并发写」）上重叠。
+
+    cmr Gate2 F-A：仅查 turn_phase 不够——pre_settle 在 `atomic_and_reload` 原子块内
+    （`_commit_suspended=True`）跑财政 tick/硬立项，**到块尾才落 `turn_phase=SETTLING`**
+    （decree.py:942）。相位落定前那段窗口里 phase 检查会放行，写入便骑进结算原子事务，随
+    SettlementAbort 回滚（端点返 200 却丢数据，破 ADR0008 全有或全无 + P1）。结算 worker 全程
+    持 `_write_gate`，故以「非阻塞抢同一把锁」为权威信号：
+      ① 相位拒——AWAITING_DECISION 暂停期 worker 已释放锁、但前半段已落，不许再直写改盘面
+         （与 session._refuse_if_settling 同口径）。
+      ② 非阻塞抢 `_write_gate`——抢不到=结算 worker 或后台召对 worker 正持锁（含上述 pre_settle
+         窗口）→ 立即 409，不在事件循环上阻塞等结算（F1 同因）；抢到则持锁到写完再释放。
+    会话层写（诏稿/任命）已由 session._refuse_if_settling 守门，不走本路。"""
     state = getattr(game, "state", None)
     if getattr(state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
         raise HTTPException(status_code=409, detail="月末结算进行中，请待结算完成后再操作。")
+    gate = _game_write_gate(game)
+    if not gate.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="月末结算或上一步写入进行中，请稍候再操作。")
+    try:
+        yield
+    finally:
+        gate.release()
 
 
 web_game: Optional[WebGame] = None  # 懒加载：菜单页点「新游戏/继续/加载存档」才实例化
@@ -2199,9 +2229,9 @@ async def api_withdraw_pending_action(action_id: int) -> Dict[str, Any]:
     先原子条件 DELETE(以删成功为真源,免 check-then-act 竞态,pr-loop sourcery),
     失败再查行分流 404/409。"""
     game = get_game()
-    _refuse_web_write_if_settling(game)
-    if game.db.withdraw_pending_action(int(action_id), int(game.state.turn)):
-        return {"withdrawn": action_id, "actions": game.db.list_pending_actions(int(game.state.turn))}
+    with _serialized_web_write(game):
+        if game.db.withdraw_pending_action(int(action_id), int(game.state.turn)):
+            return {"withdrawn": action_id, "actions": game.db.list_pending_actions(int(game.state.turn))}
     # 删不动:查清是不存在还是已落库/非本回合
     row = game.db.conn.execute(
         "SELECT turn, status FROM pending_actions WHERE id=?", (int(action_id),)).fetchone()
@@ -2266,20 +2296,20 @@ async def api_buildings(region_id: str = "") -> Dict[str, Any]:
 @app.post("/api/favorites/{minister_name}")
 async def api_add_favorite(minister_name: str) -> Dict[str, Any]:
     game = get_game()
-    _refuse_web_write_if_settling(game)
     if minister_name not in game.content.characters:
         raise HTTPException(status_code=404, detail=f"未找到：{minister_name}")
-    game.favorites.add(minister_name)
-    game.db.kv_set("favorites", json.dumps(sorted(game.favorites)))
+    with _serialized_web_write(game):
+        game.favorites.add(minister_name)
+        game.db.kv_set("favorites", json.dumps(sorted(game.favorites)))
     return {"favorites": sorted(game.favorites)}
 
 
 @app.delete("/api/favorites/{minister_name}")
 async def api_remove_favorite(minister_name: str) -> Dict[str, Any]:
     game = get_game()
-    _refuse_web_write_if_settling(game)
-    game.favorites.discard(minister_name)
-    game.db.kv_set("favorites", json.dumps(sorted(game.favorites)))
+    with _serialized_web_write(game):
+        game.favorites.discard(minister_name)
+        game.db.kv_set("favorites", json.dumps(sorted(game.favorites)))
     return {"favorites": sorted(game.favorites)}
 
 
@@ -2325,7 +2355,6 @@ async def api_chat_history(minister_name: str) -> Dict[str, Any]:
 async def api_create_secret_order(minister_name: str, request: SecretOrderRequest) -> Dict[str, Any]:
     """皇帝直接下达密令，不经 LLM，直接落库。"""
     game = get_game()
-    _refuse_web_write_if_settling(game)
     character = game.session.content.characters.get(minister_name)
     if not character:
         from fastapi import HTTPException
@@ -2344,9 +2373,10 @@ async def api_create_secret_order(minister_name: str, request: SecretOrderReques
     # 直接下达=显式新建一道密令（create，非 upsert）：皇帝点「下密令」按钮给确切 title+content
     # 就是要一道新令，同大臣可有多条 active；upsert 会静默覆盖最新 active 那条（codexC-2）。
     # 「更新已有密令」走会话路径(LLM 判意图 → update_secret_order_by_id 精确改)，不在此端点。
-    order_id = game.db.create_secret_order(
-        game.session.state, minister_name, title, content, request.tags, deadline_months=request.deadline_months
-    )
+    with _serialized_web_write(game):
+        order_id = game.db.create_secret_order(
+            game.session.state, minister_name, title, content, request.tags, deadline_months=request.deadline_months
+        )
     if game.session.registry is not None:
         game.session.registry.refresh(minister_name)  # 上下文带上最新密令
     print(f"[secret_order/api] 新建 minister={minister_name} title={title!r} id={order_id}")
@@ -2679,14 +2709,14 @@ async def api_consort_candidates() -> Dict[str, Any]:
 async def api_select_consort(name: str) -> Dict[str, Any]:
     """皇帝选中某秀女，转 active 并赋予初始位份。"""
     game = get_game()
-    _refuse_web_write_if_settling(game)
     consort = game.content.characters.get(name)
     if consort is None or consort.office_type != "后宫":
         raise HTTPException(status_code=404, detail=f"未找到候选秀女：{name}")
     if consort.status != "candidate":
         raise HTTPException(status_code=409, detail=f"{name} 当前状态为 {consort.status}，不可再选。")
-    game.db.set_character_office(name, "嫔", "后宫", source="皇帝选妃")
-    game.db.set_character_status(game.state, name, "active", "皇帝选中入宫")
+    with _serialized_web_write(game):
+        game.db.set_character_office(name, "嫔", "后宫", source="皇帝选妃")
+        game.db.set_character_status(game.state, name, "active", "皇帝选中入宫")
     consort.office = "嫔"
     consort.office_type = "后宫"
     consort.status = "active"
@@ -2852,7 +2882,6 @@ def _find_portrait_file(name: str) -> Optional[str]:
 async def api_upload_portrait(name: str, file: UploadFile = File(...)) -> Dict[str, Any]:
     # 只接受已存在的人物名 → 集合固定，杜绝路径穿越/任意写。
     game = get_game()
-    _refuse_web_write_if_settling(game)
     character = game.find_character(name)
     if character is None:
         raise HTTPException(status_code=404, detail="未找到该人物")
@@ -2864,29 +2893,30 @@ async def api_upload_portrait(name: str, file: UploadFile = File(...)) -> Dict[s
         raise HTTPException(status_code=400, detail="文件为空")
     if len(data) > MAX_PORTRAIT_BYTES:
         raise HTTPException(status_code=400, detail="图片过大（上限 8MB）")
-    os.makedirs(UPLOAD_PORTRAIT_DIR, exist_ok=True)
-    # 先清掉该人物的旧图（可能扩展名不同），再写新图。
-    old = _find_portrait_file(name)
-    if old is not None:
-        os.remove(old)
-    with open(os.path.join(UPLOAD_PORTRAIT_DIR, f"{name}.{ext}"), "wb") as fh:
-        fh.write(data)
-    get_game().set_custom_portrait(name, f"{CUSTOM_PORTRAIT_PREFIX}{name}")
+    with _serialized_web_write(game):
+        os.makedirs(UPLOAD_PORTRAIT_DIR, exist_ok=True)
+        # 先清掉该人物的旧图（可能扩展名不同），再写新图。
+        old = _find_portrait_file(name)
+        if old is not None:
+            os.remove(old)
+        with open(os.path.join(UPLOAD_PORTRAIT_DIR, f"{name}.{ext}"), "wb") as fh:
+            fh.write(data)
+        game.set_custom_portrait(name, f"{CUSTOM_PORTRAIT_PREFIX}{name}")
     return {"name": name, "portrait_id": f"{CUSTOM_PORTRAIT_PREFIX}{name}"}
 
 
 @app.delete("/api/consorts/{name}/portrait")
 async def api_delete_portrait(name: str) -> Dict[str, Any]:
     game = get_game()
-    _refuse_web_write_if_settling(game)
     character = game.find_character(name)
     if character is None:
         raise HTTPException(status_code=404, detail="未找到该人物")
-    old = _find_portrait_file(name)
-    if old is not None:
-        os.remove(old)
-    # 复位 portrait_id：清空 → 前端回落到池图（add/seed 时会按 office_type 再分配）。
-    game.set_custom_portrait(name, "")
+    with _serialized_web_write(game):
+        old = _find_portrait_file(name)
+        if old is not None:
+            os.remove(old)
+        # 复位 portrait_id：清空 → 前端回落到池图（add/seed 时会按 office_type 再分配）。
+        game.set_custom_portrait(name, "")
     return {"name": name, "portrait_id": ""}
 
 
@@ -2899,8 +2929,8 @@ async def api_get_court_layout() -> Dict[str, Any]:
 @app.post("/api/court_layout")
 async def api_set_court_layout(body: Dict[str, Any]) -> Dict[str, Any]:
     game = get_game()
-    _refuse_web_write_if_settling(game)
-    game.db.kv_set("court_layout", body.get("layout", "{}"))
+    with _serialized_web_write(game):
+        game.db.kv_set("court_layout", body.get("layout", "{}"))
     return {"ok": True}
 
 
@@ -2935,9 +2965,9 @@ async def api_admin_table(table: str) -> Dict[str, Any]:
 @app.post("/api/admin/table/{table}/upsert")
 async def api_admin_upsert(table: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     game = get_game()
-    _refuse_web_write_if_settling(game)
     try:
-        row = game.db.admin_upsert(table, payload)
+        with _serialized_web_write(game):
+            row = game.db.admin_upsert(table, payload)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     # 同步当前回合内存 state，否则改动要到下回合 begin_turn 才生效。
@@ -2952,12 +2982,12 @@ async def api_admin_upsert(table: str, payload: Dict[str, Any]) -> Dict[str, Any
 @app.post("/api/admin/table/{table}/delete")
 async def api_admin_delete(table: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     game = get_game()
-    _refuse_web_write_if_settling(game)
     pk_value = payload.get("pk_value")
     if pk_value in (None, ""):
         raise HTTPException(status_code=400, detail="缺 pk_value")
     try:
-        return {"deleted": game.db.admin_delete(table, pk_value)}
+        with _serialized_web_write(game):
+            return {"deleted": game.db.admin_delete(table, pk_value)}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
