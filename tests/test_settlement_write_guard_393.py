@@ -70,6 +70,12 @@ class _FakeGame:
     def character_power_id(self, character):
         return "ming"
 
+    def directive_rows(self):
+        return [{"id": 7, "text": "旧稿", "status": "draft"}]
+
+    def directive_payload(self, row):
+        return row
+
     def find_character(self, name):
         return self.content.characters.get(name)
 
@@ -97,6 +103,15 @@ def _endpoint_cases():
         ("admin_upsert", lambda: web_app.api_admin_upsert("metrics", {"key": "国库", "value": "1"})),
         ("admin_delete", lambda: web_app.api_admin_delete("metrics", {"pk_value": "国库"})),
         ("portrait_delete", lambda: web_app.api_delete_portrait("某大臣")),
+        # 会话层写端点（cmr Gate2 Finding1 残面：也须走 _write_gate，否则 _refuse_if_settling
+        # 的相位检查守不住 pre_settle 窗口）。守门先于 session 调用触发，故 fake session 无需实现这些方法。
+        ("create_directive", lambda: web_app.api_create_directive(web_app.DirectiveRequest(text="清丈田亩"))),
+        ("update_directive", lambda: web_app.api_update_directive(7, web_app.DirectivePatch(text="改稿"))),
+        ("delete_directive", lambda: web_app.api_delete_directive(7)),
+        ("confirm_directive", lambda: web_app.api_confirm_directive(7)),
+        ("reject_directive", lambda: web_app.api_reject_directive(7)),
+        ("write_decree", lambda: web_app.api_write_decree()),
+        ("edit_decree", lambda: web_app.api_edit_decree(web_app.EditDecreeRequest(decree="奉天承运"))),
     ]
 
 

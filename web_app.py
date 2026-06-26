@@ -2421,13 +2421,17 @@ async def api_chat_stream(minister_name: str, request: ChatRequest) -> Streaming
 async def api_create_directive(request: DirectiveRequest) -> Dict[str, Any]:
     if not request.text.strip():
         raise HTTPException(status_code=400, detail="指令内容不能为空。")
+    game = get_game()
     try:
-        dv = get_game().session.add_directive(request.text.strip(), notes=request.notes)
+        # 会话层 _refuse_if_settling 仅查相位，守不住 pre_settle 原子块在 settling 落定前的窗口；
+        # 与直写端点同走 _serialized_web_write 抢 _write_gate（cmr Gate2 F-A 残面：会话写也要串行）。
+        with _serialized_web_write(game):
+            dv = game.session.add_directive(request.text.strip(), notes=request.notes)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None  # 恢复窗冻结指引
     return {
         "directive": {"id": dv.id, "text": dv.text, "status": dv.status},
-        "directives": [get_game().directive_payload(item) for item in get_game().directive_rows()],
+        "directives": [game.directive_payload(item) for item in game.directive_rows()],
     }
 
 
@@ -2440,52 +2444,64 @@ async def api_update_directive(directive_id: int, request: DirectivePatch) -> Di
     text = request.text if request.text is not None else str(row["text"])
     if not text.strip():
         raise HTTPException(status_code=400, detail="指令内容不能为空。")
+    game = get_game()
     try:
-        get_game().session.update_directive(directive_id, text.strip())
+        with _serialized_web_write(game):
+            game.session.update_directive(directive_id, text.strip())
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None
-    return {"directives": [get_game().directive_payload(item) for item in get_game().directive_rows()]}
+    return {"directives": [game.directive_payload(item) for item in game.directive_rows()]}
 
 
 @app.delete("/api/directives/{directive_id}")
 async def api_delete_directive(directive_id: int) -> Dict[str, Any]:
+    game = get_game()
     try:
-        get_game().session.delete_directive(directive_id)
+        with _serialized_web_write(game):
+            game.session.delete_directive(directive_id)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None
-    return {"directives": [get_game().directive_payload(item) for item in get_game().directive_rows()]}
+    return {"directives": [game.directive_payload(item) for item in game.directive_rows()]}
 
 
 @app.post("/api/directives/{directive_id}/confirm")
 async def api_confirm_directive(directive_id: int) -> Dict[str, Any]:
     """大臣拟旨经皇帝核定：pending → draft。"""
+    game = get_game()
     try:
-        get_game().session.confirm_directive(directive_id)
+        with _serialized_web_write(game):
+            game.session.confirm_directive(directive_id)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None
     return {
-        "directives": [get_game().directive_payload(item) for item in get_game().directive_rows()],
-        "pending_count": get_game().session.pending_count(),
+        "directives": [game.directive_payload(item) for item in game.directive_rows()],
+        "pending_count": game.session.pending_count(),
     }
 
 
 @app.post("/api/directives/{directive_id}/reject")
 async def api_reject_directive(directive_id: int) -> Dict[str, Any]:
     """皇帝驳回大臣拟旨：pending → rejected。"""
+    game = get_game()
     try:
-        get_game().session.reject_directive(directive_id)
+        with _serialized_web_write(game):
+            game.session.reject_directive(directive_id)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None
     return {
-        "directives": [get_game().directive_payload(item) for item in get_game().directive_rows()],
-        "pending_count": get_game().session.pending_count(),
+        "directives": [game.directive_payload(item) for item in game.directive_rows()],
+        "pending_count": game.session.pending_count(),
     }
 
 
 @app.post("/api/decree/write")
 async def api_write_decree() -> Dict[str, Any]:
+    game = get_game()
     try:
-        decree = get_game().session.write_decree()
+        # write_decree 先 commit_pending_actions（真 DB 写）再润色——DB 写同样不能骑进结算
+        # pre_settle 原子窗口；走 _serialized_web_write 抢 _write_gate（cmr Gate2 F-A 残面）。
+        with _serialized_web_write(game):
+            decree = game.session.write_decree()
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
     return {"decree": decree}
@@ -2498,8 +2514,12 @@ class EditDecreeRequest(BaseModel):
 @app.patch("/api/decree")
 async def api_edit_decree(body: EditDecreeRequest) -> Dict[str, Any]:
     """皇帝手动改定诏书正文（拟诏后、颁诏前）。"""
+    game = get_game()
     try:
-        decree = get_game().session.set_decree(body.decree)
+        # set_decree 改 in-memory last_decree（结算读它）；与会话写同走串行门，避免在结算冻结
+        # 窗口里改诏书正文（cmr Gate2 F-A 残面 / Finding2 冻结窗一致性）。
+        with _serialized_web_write(game):
+            decree = game.session.set_decree(body.decree)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
     return {"decree": decree}
@@ -2714,14 +2734,16 @@ async def api_select_consort(name: str) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail=f"未找到候选秀女：{name}")
     if consort.status != "candidate":
         raise HTTPException(status_code=409, detail=f"{name} 当前状态为 {consort.status}，不可再选。")
+    # 整段逻辑写（DB + in-memory state/content/registry）都在门内，避免提前释放锁后留下
+    # DB 已改、内存未改的窗口被结算/召对观察到（cmr Gate2 Finding2 DB/内存撕裂）。
     with _serialized_web_write(game):
         game.db.set_character_office(name, "嫔", "后宫", source="皇帝选妃")
         game.db.set_character_status(game.state, name, "active", "皇帝选中入宫")
-    consort.office = "嫔"
-    consort.office_type = "后宫"
-    consort.status = "active"
-    # 同步进 registry（新增 agent）
-    game.session.registry.register(consort)
+        consort.office = "嫔"
+        consort.office_type = "后宫"
+        consort.status = "active"
+        # 同步进 registry（新增 agent）
+        game.session.registry.register(consort)
     game.chat_history.setdefault(name, [])
     return {"selected": game.public_character(consort)}
 
@@ -2968,14 +2990,15 @@ async def api_admin_upsert(table: str, payload: Dict[str, Any]) -> Dict[str, Any
     try:
         with _serialized_web_write(game):
             row = game.db.admin_upsert(table, payload)
+            # 内存 state 同步留在门内：否则提前释放锁后留下 DB 已改、内存未改的撕裂窗口被
+            # 结算/召对（读 game.state）观察到（cmr Gate2 Finding2）。
+            st = game.state
+            if table == "metrics" and row.get("key") in st.metrics:
+                st.metrics[row["key"]] = int(row["value"])
+            elif table == "game_state":
+                st.year, st.period, st.turn = int(row["year"]), int(row["period"]), int(row["turn"])
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    # 同步当前回合内存 state，否则改动要到下回合 begin_turn 才生效。
-    st = game.state
-    if table == "metrics" and row.get("key") in st.metrics:
-        st.metrics[row["key"]] = int(row["value"])
-    elif table == "game_state":
-        st.year, st.period, st.turn = int(row["year"]), int(row["period"]), int(row["turn"])
     return {"row": row}
 
 
