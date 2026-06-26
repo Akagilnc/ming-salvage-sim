@@ -818,6 +818,7 @@ class GameSession:
         入参 has_directive / secret_order_id 表示 agno 工具路径是否已产出（已产则不重复）。
         返回 {"directive": {id,text,status,notes}|None, "secret_order_id": int|None}。"""
         from ming_sim.cli_backend import (
+            _DRAFT_PREFIXES, _SECRET_PREFIXES,
             cli_backend_from_env, resolve_minister_actions, extract_minister_actions,
             extract_appointment_action, extract_confirmation_intent, extract_draft_intent,
         )
@@ -830,6 +831,13 @@ class GameSession:
         minister_name = character.name
         reply = (answer or "").strip()
         llm_config = getattr(self, "llm_config", None)
+        # 显式前缀(拟旨如下:/密令如下:)= 皇帝已明示动作，由 resolve_minister_actions 零 LLM 落地。
+        # 单一真源在此前置判定，统一把门【所有】后置 LLM 抽取器（确认/密令/调教/拟旨/任免），
+        # 杜绝前缀路多跑任何 LLM extractor（#344 US3「按钮前缀路零 LLM」）。确认闸门尤其要跳过：
+        # 否则前缀消息在有 pending 待确认动作时既多跑 extract_confirmation_intent(LLM)，还可能被
+        # 误判「应允/拒绝」提前 return、把这道前缀拟旨/密令整个吞掉（确认句本无前缀，跳过无损）。
+        explicit_prefixed = (message_text := (player_message or "").strip()).startswith(
+            _DRAFT_PREFIXES) or message_text.startswith(_SECRET_PREFIXES)
         # 对话确认(ADR 0006 重设计)：本召对的大臣有上一轮经领命确认、尚未落库的暂存动作时，
         # 皇帝这句应允 → 当场 commit、拒绝 → 丢、未表态 → 留(颁诏对没回的算同意)。
         # 只在该大臣有 outstanding 暂存时才判(省 token)，commit/drop 按该大臣过滤、不波及他人。
@@ -841,7 +849,7 @@ class GameSession:
         # 故确认闸门用排除 directive 的视图，且 commit/drop 都带 kind_filter 排除 directive，
         # 让对话式拟旨穿过本闸门、活到颁诏。
         confirm_targets = [p for p in pend_for_minister if p["kind"] != "directive"]
-        if confirm_targets:
+        if confirm_targets and not explicit_prefixed:
             summaries = [_pending_action_brief(p) for p in confirm_targets]
             if intent is not None:
                 confirm = str(intent.get("confirmation") or "无") if intent_kind == "confirmation" else "无"
@@ -898,12 +906,8 @@ class GameSession:
                 out["secret_order_id"] = oid
                 if self.registry is not None:
                     self.registry.refresh(assignee)
-        # 显式前缀(拟旨如下:/密令如下:)是皇帝已明示的动作，已由 resolve_minister_actions 零 LLM
-        # 落地；后置会话抽取(密令/调教)对前缀消息一律跳过——否则前缀路在有 active 密令/妃嫔时仍会
-        # 多跑 extract_minister_actions(LLM)，破坏 #344「按钮前缀路零 LLM」(US3)。与下方 draft
-        # (_stage_conversational_draft)/appointment 早已用 explicit_prefixed 把门，这里补齐对齐。
-        explicit_prefixed = bool(acts["decree_text"] or acts["secret_order"])
         # 会话动作：本轮未经前缀落密令时，LLM 判皇帝对密令/妃嫔的意图再落地。
+        # 前缀消息一律跳过（explicit_prefixed 已在顶部单一判定，统一把门所有后置 LLM 抽取器）。
         conversation_intent_handled = False
         if not out["secret_order_id"] and not explicit_prefixed:
             is_consort = getattr(character, "office_type", "") == "后宫"
