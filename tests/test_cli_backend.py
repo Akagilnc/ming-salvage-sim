@@ -233,15 +233,20 @@ def test_run_codex_flags_and_stdout(monkeypatch):
     assert "-c" not in captured["cmd"]                     # 未设 reasoning 不强加默认
 
 
-def test_codex_streaming_runner_emits_incremental_text(monkeypatch):
-    """codex --json 的 agent_message_delta 须逐块上抛给结算 SSE，而不是等进程退出后整段吐。"""
+def test_codex_streaming_runner_degrades_to_oneshot_final(monkeypatch):
+    """codex 路真实行为（#343 裁决）：codex `exec --json` 无任何 token-delta API，只在生命周期
+    末的 `item.completed`/`agent_message` 一次性落地整段邸报。故 codex 流式优雅降级为「最后吐一坨」
+    —— 整段 final_text 作为**单个 chunk** 一次性上抛，而非逐块增量。本测试喂 codex 真发的
+    final-only 事件（绝不喂 codex 永不发的 `agent_message_delta` 假事件，那是 #244 green-but-hollow）。"""
     captured = {}
 
     class _Stdout:
         def __iter__(self):
-            yield json.dumps({"type": "agent_message_delta", "delta": "邸报一"}) + "\n"
-            yield json.dumps({"type": "agent_message_delta", "delta": "邸报二"}) + "\n"
-            yield json.dumps({"type": "agent_message", "message": "邸报一邸报二"}) + "\n"
+            # codex 真实形态：先是 reasoning/lifecycle item（无正文），末尾 item.completed 带整段正文。
+            yield json.dumps({"type": "item.started", "item": {"type": "reasoning"}}) + "\n"
+            yield json.dumps(
+                {"type": "item.completed", "item": {"type": "agent_message", "text": "邸报一邸报二"}}
+            ) + "\n"
 
         def close(self):
             pass
@@ -287,10 +292,44 @@ def test_codex_streaming_runner_emits_incremental_text(monkeypatch):
     text = run_agent_stream_text(agent, "请写邸报", "simulator", on_text=chunks.append)
 
     assert text == "邸报一邸报二"
-    assert chunks == ["邸报一", "邸报二"]
+    # 优雅降级：整段一次性吐 = 单个 chunk，绝非逐块（codex 无 delta API）。
+    assert chunks == ["邸报一邸报二"]
     assert "--json" in captured["cmd"]
     assert captured["cmd"][-1] == "-"
     assert "请写邸报" in captured["input"]
+
+
+def test_api_backend_streaming_emits_real_token_deltas(monkeypatch):
+    """API/hermes 路真实行为（#343 裁决）：支持 token-delta 的后端（hermes / OpenAI 兼容，
+    `agents.run_agent_stream_text` 的 content-delta 循环）真增量出现——多个正文片段逐块经
+    on_text 到达、并按到达顺序拼成全文。与 codex 路（一次吐）对照，证明流式与否纯看后端能力。"""
+
+    class _Ev:
+        def __init__(self, content=None, is_final=False):
+            self.content = content
+            self.is_final = is_final
+
+    class _FakeStreamAgent:
+        model = SimpleNamespace(id="hermes-test")
+
+        def run(self, prompt, stream=False, stream_events=False):
+            assert stream and stream_events
+            yield _Ev(content="邸报")
+            yield _Ev(content="增量")
+            yield _Ev(content="到达")
+            yield _Ev(content=None, is_final=True)
+
+        def get_last_run_output(self):
+            return None
+
+    chunks = []
+    text = run_agent_stream_text(
+        _FakeStreamAgent(), "请写邸报", "simulator", on_text=chunks.append
+    )
+
+    assert text == "邸报增量到达"
+    # 真增量：多个 token-delta 逐块到达（与 codex 单块一次吐相反）。
+    assert chunks == ["邸报", "增量", "到达"]
 
 
 def test_codex_stream_watchdog_kills_hung_process(monkeypatch):
