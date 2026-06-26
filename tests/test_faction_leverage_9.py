@@ -1156,7 +1156,7 @@ def test_power_id_defection_drops_faction_leverage_immediately(game):
     apply_character_power_changes 是 power_id 翻转的落库单一入口，改后须对受影响人物
     的原 faction 调 recompute_faction_leverage（与 set_character_status / set_character_office
     钩子一致）。修前不调 → leverage 残留旧值。"""
-    db, state, content = game
+    db, _, _ = game
     row = db.conn.execute(
         "SELECT name FROM characters WHERE faction='阉党' AND status='active' "
         "AND power_id='ming' AND office_type IN ('内阁','司礼监','吏部','兵部','锦衣卫','东厂') "
@@ -1180,7 +1180,7 @@ def test_half_weight_odd_baseline_no_round_drift(game):
     构造：仅留一个礼部侍郎（权重 5×0.5=2.5）在朝 + 基线 79（奇数）。
     修前 calibrate: offset=round(79−2.5)=round(76.5)=76；recompute: round(76+2.5)=round(78.5)=78≠79（漂−1）。
     修后 calibrate 不 round offset（存精确 float），recompute round(76.5+2.5)=round(79.0)=79 ✓。"""
-    db, state, content = game
+    db, state, _ = game
     faction = "东林"
     members = db.conn.execute(
         "SELECT name FROM characters WHERE faction=? AND status='active' AND power_id='ming' "
@@ -1206,3 +1206,58 @@ def test_half_weight_odd_baseline_no_round_drift(game):
     assert lev == baseline, (
         f"weight_sum=2.5 + 奇数基线 {baseline} → leverage 应={baseline}（不漂），实得 {lev}"
     )
+
+
+def test_old_integer_offset_migrated_to_float(game):
+    """#177 R1 finding#1（codex P2）：旧版 #9 校准 round 了 offset（存整数如 76 而非 76.5），
+    R4 只修新校准、已 marked 老档 early-return 照漂。v2 迁移把整数 offset 重算成精确 float，
+    保持当前 leverage 不变（漂移已发生不可逆，仅防未来再漂）。"""
+    from ming_sim.db import GameDB
+
+    db, state, content = game
+    faction = "东林"
+    members = db.conn.execute(
+        "SELECT name FROM characters WHERE faction=? AND status='active' AND power_id='ming' "
+        "ORDER BY name",
+        (faction,),
+    ).fetchall()
+    assert members, f"{faction} 需有在朝成员"
+    for m in members[1:]:
+        db.set_character_status(state, m["name"], "dismissed", reason="清场")
+    keeper = members[0]["name"]
+    db.set_character_office(keeper, "礼部侍郎", "礼部")
+    assert db._faction_office_weight_sum(faction) == 2.5
+
+    # 模拟旧版整数 offset（round(79−2.5)=round(76.5)=76）+ 对应的漂移 leverage（round(76+2.5)=78）
+    old_offset = 76
+    drifted_lev = 78
+    db.conn.execute(
+        "UPDATE factions SET leverage=?, leverage_offset=? WHERE name=?",
+        (drifted_lev, old_offset, faction),
+    )
+    # 旧标记在、v2 标记不在（旧版代码遗留）
+    db._set_meta_flag("__leverage_offsets_calibrated")
+    db.conn.execute("DELETE FROM metrics WHERE key='__leverage_offsets_float_v2'")
+    db.conn.commit()
+
+    reopened = GameDB(db.path, content)
+    try:
+        assert reopened._has_meta_flag("__leverage_offsets_float_v2"), (
+            "v2 迁移标记应已落库（老档重开应触发 v2 迁移）"
+        )
+        offset = reopened.conn.execute(
+            "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
+        ).fetchone()["leverage_offset"]
+        lev = reopened.faction_leverage(faction)
+        # offset 重算成精确 float（78−2.5=75.5），不再因整数 round 漂
+        assert offset == 75.5, f"旧整数 offset 76 应被迁移成精确 float 75.5（得 {offset}）"
+        # leverage 保持不变（漂移已发生不可逆）
+        assert lev == drifted_lev, f"迁移后 leverage 应保持 {drifted_lev}（得 {lev}）"
+        # 验证不再漂：recompute 后 leverage 仍 == drifted_lev
+        reopened.recompute_faction_leverage(faction)
+        reopened.conn.commit()
+        assert reopened.faction_leverage(faction) == drifted_lev, (
+            f"float offset 迁移后 recompute 不应再漂（得 {reopened.faction_leverage(faction)}）"
+        )
+    finally:
+        reopened.close()
