@@ -2851,7 +2851,9 @@ def _find_portrait_file(name: str) -> Optional[str]:
 @app.post("/api/consorts/{name}/portrait")
 async def api_upload_portrait(name: str, file: UploadFile = File(...)) -> Dict[str, Any]:
     # 只接受已存在的人物名 → 集合固定，杜绝路径穿越/任意写。
-    character = get_game().find_character(name)
+    game = get_game()
+    _refuse_web_write_if_settling(game)
+    character = game.find_character(name)
     if character is None:
         raise HTTPException(status_code=404, detail="未找到该人物")
     ext = _PORTRAIT_EXT.get(file.content_type or "")
@@ -2875,14 +2877,16 @@ async def api_upload_portrait(name: str, file: UploadFile = File(...)) -> Dict[s
 
 @app.delete("/api/consorts/{name}/portrait")
 async def api_delete_portrait(name: str) -> Dict[str, Any]:
-    character = get_game().find_character(name)
+    game = get_game()
+    _refuse_web_write_if_settling(game)
+    character = game.find_character(name)
     if character is None:
         raise HTTPException(status_code=404, detail="未找到该人物")
     old = _find_portrait_file(name)
     if old is not None:
         os.remove(old)
     # 复位 portrait_id：清空 → 前端回落到池图（add/seed 时会按 office_type 再分配）。
-    get_game().set_custom_portrait(name, "")
+    game.set_custom_portrait(name, "")
     return {"name": name, "portrait_id": ""}
 
 

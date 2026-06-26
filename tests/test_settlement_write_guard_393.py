@@ -89,6 +89,10 @@ def _endpoint_cases():
         ("select_consort", lambda: web_app.api_select_consort("某秀女")),
         ("admin_upsert", lambda: web_app.api_admin_upsert("metrics", {"key": "国库", "value": "1"})),
         ("admin_delete", lambda: web_app.api_admin_delete("metrics", {"pk_value": "国库"})),
+        # 立绘端点经 WebGame.set_custom_portrait → db.set_portrait_id 直写 characters（同类，
+        # 守门在端点最顶，SETTLING 期文件/DB 都不触；file 实参用不到，传 None）。
+        ("portrait_upload", lambda: web_app.api_upload_portrait("某大臣", file=None)),
+        ("portrait_delete", lambda: web_app.api_delete_portrait("某大臣")),
     ]
 
 
