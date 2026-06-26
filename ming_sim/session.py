@@ -40,6 +40,7 @@ from ming_sim.llm_model import create_agno_db, extract_agent_text, verify_llm_av
 from ming_sim.models import Character, CourtContext, GameState, LLMConfig, is_vassal_prince
 from ming_sim.paths import user_data_path
 from ming_sim.registry import MinisterRegistry, bind_content as _bind_registry
+from ming_sim.settlement_payload import bind_decisions_to_candidate_events
 from ming_sim.skills import bind_content as _bind_skills
 
 
@@ -1488,6 +1489,11 @@ class GameSession:
                 f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
         # 回写选择
         stored = self.db.list_pending_decisions(self.state.turn)
+        ctx_for_event_binding = self.db.get_resolve_context(self.state.turn)
+        if ctx_for_event_binding is not None:
+            stored = bind_decisions_to_candidate_events(
+                stored, ctx_for_event_binding.get("simulator_payload")
+            )
         import json as _json
         for d in stored:
             idx = int(d["idx"])
