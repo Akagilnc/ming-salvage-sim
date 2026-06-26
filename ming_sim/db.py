@@ -6608,12 +6608,18 @@ class GameDB:
                 (event_id, turn, year, period, source, terminal_state, terminal_reason, choice_json)
             VALUES (?, ?, ?, ?, ?, 'triggered', ?, ?)
             ON CONFLICT(event_id) DO UPDATE SET
-                source = excluded.source,
-                terminal_state = CASE
+                -- 终态账不可逆（codex correctness）：冲突时**保留**已有 terminal_state——
+                -- HITL 选择只补 choice_json，绝不把已有的 expired/avoided/obsolete 翻成
+                -- triggered（excluded.terminal_state 恒为字面 'triggered'，故原 CASE 实为
+                -- 把任何非 triggered 行都翻成 triggered 的空操作）。新行(无冲突)才由 INSERT
+                -- 落 'triggered'。source 同理：只有已是 triggered 的行才更新成 hitl_decision，
+                -- 非 triggered 行不被误标。
+                source = CASE
                     WHEN event_triggers.terminal_state = 'triggered'
-                    THEN event_triggers.terminal_state
-                    ELSE excluded.terminal_state
+                    THEN excluded.source
+                    ELSE event_triggers.source
                 END,
+                terminal_state = event_triggers.terminal_state,
                 terminal_reason = CASE
                     WHEN COALESCE(event_triggers.terminal_reason, '') = ''
                     THEN excluded.terminal_reason
