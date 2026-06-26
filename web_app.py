@@ -66,6 +66,7 @@ from ming_sim.models import (
     API_DEFAULT_MAX_TOKENS,
     API_DEFAULT_TIMEOUT_SECONDS,
     Character,
+    FRONT_HALF_DONE_PHASES,
     LLMConfig,
     TurnPhase,
     is_vassal_prince,
@@ -1685,6 +1686,18 @@ def _game_write_gate(game) -> threading.Lock:
     return gate
 
 
+def _refuse_web_write_if_settling(game) -> None:
+    """月末结算（FRONT_HALF_DONE：SETTLING / AWAITING_DECISION）期间，拒绝绕过会话层、
+    直写 `game.db.*` 的 web 端点——否则该写会骑进结算原子块的 `_commit_suspended` 窗口，
+    随 SettlementAbort 一起回滚（端点返 200 却丢数据，破 ADR0008 全有或全无 + P1），或与
+    后台召对 worker 争抢同一无锁连接（#393 串行门：其它冲突写入者绝不与结算原子块重叠）。
+    会话层写已由 `session._refuse_if_settling` 守门；本助手守那些直调 `game.db` 的端点。
+    拒收（非阻塞 await）与诏稿端点一致：等待藏在前端「结算中」指示里，无新 UX。"""
+    state = getattr(game, "state", None)
+    if getattr(state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
+        raise HTTPException(status_code=409, detail="月末结算进行中，请待结算完成后再操作。")
+
+
 web_game: Optional[WebGame] = None  # 懒加载：菜单页点「新游戏/继续/加载存档」才实例化
 app = FastAPI(title="Ming Salvage MVP Web")
 
@@ -2186,6 +2199,7 @@ async def api_withdraw_pending_action(action_id: int) -> Dict[str, Any]:
     先原子条件 DELETE(以删成功为真源,免 check-then-act 竞态,pr-loop sourcery),
     失败再查行分流 404/409。"""
     game = get_game()
+    _refuse_web_write_if_settling(game)
     if game.db.withdraw_pending_action(int(action_id), int(game.state.turn)):
         return {"withdrawn": action_id, "actions": game.db.list_pending_actions(int(game.state.turn))}
     # 删不动:查清是不存在还是已落库/非本回合
@@ -2251,18 +2265,22 @@ async def api_buildings(region_id: str = "") -> Dict[str, Any]:
 
 @app.post("/api/favorites/{minister_name}")
 async def api_add_favorite(minister_name: str) -> Dict[str, Any]:
-    if minister_name not in get_game().content.characters:
+    game = get_game()
+    _refuse_web_write_if_settling(game)
+    if minister_name not in game.content.characters:
         raise HTTPException(status_code=404, detail=f"未找到：{minister_name}")
-    get_game().favorites.add(minister_name)
-    get_game().db.kv_set("favorites", json.dumps(sorted(get_game().favorites)))
-    return {"favorites": sorted(get_game().favorites)}
+    game.favorites.add(minister_name)
+    game.db.kv_set("favorites", json.dumps(sorted(game.favorites)))
+    return {"favorites": sorted(game.favorites)}
 
 
 @app.delete("/api/favorites/{minister_name}")
 async def api_remove_favorite(minister_name: str) -> Dict[str, Any]:
-    get_game().favorites.discard(minister_name)
-    get_game().db.kv_set("favorites", json.dumps(sorted(get_game().favorites)))
-    return {"favorites": sorted(get_game().favorites)}
+    game = get_game()
+    _refuse_web_write_if_settling(game)
+    game.favorites.discard(minister_name)
+    game.db.kv_set("favorites", json.dumps(sorted(game.favorites)))
+    return {"favorites": sorted(game.favorites)}
 
 
 _STATUS_LABEL_WEB = {
@@ -2307,6 +2325,7 @@ async def api_chat_history(minister_name: str) -> Dict[str, Any]:
 async def api_create_secret_order(minister_name: str, request: SecretOrderRequest) -> Dict[str, Any]:
     """皇帝直接下达密令，不经 LLM，直接落库。"""
     game = get_game()
+    _refuse_web_write_if_settling(game)
     character = game.session.content.characters.get(minister_name)
     if not character:
         from fastapi import HTTPException
@@ -2660,6 +2679,7 @@ async def api_consort_candidates() -> Dict[str, Any]:
 async def api_select_consort(name: str) -> Dict[str, Any]:
     """皇帝选中某秀女，转 active 并赋予初始位份。"""
     game = get_game()
+    _refuse_web_write_if_settling(game)
     consort = game.content.characters.get(name)
     if consort is None or consort.office_type != "后宫":
         raise HTTPException(status_code=404, detail=f"未找到候选秀女：{name}")
@@ -2874,7 +2894,9 @@ async def api_get_court_layout() -> Dict[str, Any]:
 
 @app.post("/api/court_layout")
 async def api_set_court_layout(body: Dict[str, Any]) -> Dict[str, Any]:
-    get_game().db.kv_set("court_layout", body.get("layout", "{}"))
+    game = get_game()
+    _refuse_web_write_if_settling(game)
+    game.db.kv_set("court_layout", body.get("layout", "{}"))
     return {"ok": True}
 
 
@@ -2909,6 +2931,7 @@ async def api_admin_table(table: str) -> Dict[str, Any]:
 @app.post("/api/admin/table/{table}/upsert")
 async def api_admin_upsert(table: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     game = get_game()
+    _refuse_web_write_if_settling(game)
     try:
         row = game.db.admin_upsert(table, payload)
     except ValueError as e:
@@ -2924,11 +2947,13 @@ async def api_admin_upsert(table: str, payload: Dict[str, Any]) -> Dict[str, Any
 
 @app.post("/api/admin/table/{table}/delete")
 async def api_admin_delete(table: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    game = get_game()
+    _refuse_web_write_if_settling(game)
     pk_value = payload.get("pk_value")
     if pk_value in (None, ""):
         raise HTTPException(status_code=400, detail="缺 pk_value")
     try:
-        return {"deleted": get_game().db.admin_delete(table, pk_value)}
+        return {"deleted": game.db.admin_delete(table, pk_value)}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
