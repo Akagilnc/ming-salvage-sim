@@ -337,6 +337,20 @@ def test_codex_stream_watchdog_kills_hung_process(monkeypatch):
     assert killed.is_set()        # 看门狗确实 kill 了卡死进程
 
 
+def test_codex_final_text_handles_item_completed_shape():
+    """integrated cmr Gate2 codex correctness：codex --json 的 item.completed/item.text 形态也要
+    被识别为最终正文（防御性兼容，避免真实邸报被当成空输出误判失败）；reasoning/tool item 不当正文。"""
+    assert cb._codex_final_text(
+        {"type": "item.completed", "item": {"type": "agent_message", "text": "邸报正文"}}
+    ) == "邸报正文"
+    # 非 agent_message item（reasoning/tool/plan）不被当成正文
+    assert cb._codex_final_text(
+        {"type": "item.completed", "item": {"type": "reasoning", "text": "推理草稿"}}
+    ) == ""
+    # 既有顶层 agent_message 形态仍识别（并存不回归）
+    assert cb._codex_final_text({"type": "agent_message", "message": "顶层正文"}) == "顶层正文"
+
+
 def test_run_codex_accepts_config_model_and_timeout(monkeypatch):
     captured = {}
 
