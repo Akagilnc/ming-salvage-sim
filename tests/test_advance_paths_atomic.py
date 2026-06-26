@@ -596,6 +596,59 @@ def test_submit_event_decision_binds_from_candidate_snapshot_without_event_id(ga
     }
 
 
+def test_hitl_ready_replay_retry_keeps_original_event_choice(game, monkeypatch):
+    """cmr Gate2 r4 Finding2：ready-context 重试时 phase2 走「恢复重放」、**忽略**重交的亲裁
+    选择（重放崩溃前真源的旧选择 delta）。submit_decisions 此刻绝不能用新选择覆写
+    event_triggers.choice_json——否则事件账记新选择 B、而重放的世界状态来自旧选择 A，durable
+    账实不符。断言：重试改投不同选择后，事件账仍是原选择。"""
+    import json
+    import ming_sim.decree as dm
+    import ming_sim.session as session_mod
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    turn = state.turn
+    event_id = "mao_wenlong"
+    # 第一次 submit 已把原选择 A=「斩」记进事件账
+    db.record_event_decision_choice(state, event_id, {"label": "斩", "note": "原裁断"}, commit=True)
+    # phase2 已抽取并 persist ready delta、settle 曾 abort → ready context
+    dm.persist_resolve_context(
+        db, turn, {"metric_delta": {"民心": -3}},
+        decree_text="HITL诏", narrative="裁断后邸报",
+        simulator_payload={"candidate_events": [{"id": event_id, "title": "毛文龙裁断"}]},
+        secret_orders=[], relevant_memories=[],
+    )
+    assert db.get_resolve_context(turn).get("extracted") is not None
+    db.save_pending_decisions(turn, [{
+        "event_id": event_id, "title": "毛文龙裁断", "context": "c",
+        "options": [{"label": "斩", "hint": ""}, {"label": "留", "hint": ""}],
+    }])
+    state.turn_phase = "awaiting_decision"
+    db.save_state(state)
+
+    def _phase2(_state, _db, *_args, **_kwargs):
+        _db.clear_pending_decisions(turn)
+        return "ok"
+    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.last_decree = "HITL诏"
+    sess.agno_db = None
+    sess.llm_config = None
+    sess.content = content
+    sess.registry = None
+
+    # 重试改投「留」（B，与原 A 不同）——ready-replay 应跳过覆写
+    sess.submit_decisions([{"label": "留", "note": "改裁"}])
+
+    row = db.conn.execute(
+        "SELECT choice_json FROM event_triggers WHERE event_id=?", (event_id,)).fetchone()
+    assert json.loads(row["choice_json"]) == {"label": "斩", "note": "原裁断"}, \
+        "ready-replay 重试不得用新选择覆写事件账"
+
+
 def test_record_event_decision_choice_preserves_non_triggered_terminal_state(game):
     """integrated cmr Gate2 codex correctness：event_triggers 是终态账，HITL 选择 upsert 冲突时
     只补 choice_json，**不得**把已有非 triggered 终态（avoided/expired/obsolete）翻成 triggered，
