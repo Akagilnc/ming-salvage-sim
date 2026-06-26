@@ -1268,6 +1268,20 @@ class WebGame:
             return False
         return self.db.can_undo_last_chat_turn(minister_name, self.state.turn)
 
+    def _audience_turn_in_flight(self, minister_name: str) -> bool:
+        """#383 背景召对契约：同一大臣已有「已受理、尚未完成回奏」的 turn 时，不得再开新轮。
+
+        in-flight = `status='active'` 且 `minister_message_id` 仍空；已完成的可撤回 turn 其
+        `minister_message_id` 已写、不算 in-flight，不挡新问。#383 把召对回合改成后台 worker
+        续跑后，「离开实时流（前端 busy 已清）→ 重开同大臣 → 再问」会并发开两轮，两个后台
+        worker 竞写同一 SQLite 连接（ADR0008 单写者不变式）并让历史错序——#383 Out of Scope
+        明令「不允许同大臣并发未答 turn」。本守卫在两个召对入口（流式 chat_stream + 非流式
+        chat）创建新 turn 前拒掉这种并发（integrated cmr Gate2，三模型一致 P1）。"""
+        if not self._persistent_chat_minister(minister_name):
+            return False
+        existing = self.db.get_last_active_chat_turn(minister_name, self.state.turn)
+        return existing is not None and not existing.get("minister_message_id")
+
     def _start_chat_turn(self, minister_name: str) -> tuple[int, Dict[str, Any]]:
         agno_session_id = self._minister_agno_session_id(minister_name)
         runs_before = self.db.agno_runs_length(agno_session_id)
@@ -1370,6 +1384,8 @@ class WebGame:
         text = message.strip()
         if not text:
             raise HTTPException(status_code=400, detail="问话不能为空。")
+        if self._audience_turn_in_flight(minister_name):
+            raise HTTPException(status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
         chat_turn_id = 0
         before_snapshot: Dict[str, Any] = {}
         if self._persistent_chat_minister(minister_name):
@@ -1541,6 +1557,9 @@ class WebGame:
         text = message.strip()
         if not text:
             yield {"type": "error", "message": "问话不能为空。"}
+            return
+        if self._audience_turn_in_flight(minister_name):
+            yield {"type": "error", "message": f"{minister_name}上一轮回奏仍在进行，请稍候再问。"}
             return
         chat_turn_id = 0
         before_snapshot: Dict[str, Any] = {}
