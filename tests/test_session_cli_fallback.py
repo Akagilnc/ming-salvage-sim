@@ -67,6 +67,37 @@ def _no_conv_action(monkeypatch):
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
 
 
+def test_draft_prefix_with_active_secret_order_runs_zero_llm(game, monkeypatch):
+    """#344「按钮前缀路零 LLM」(US3)：玩家用『拟旨如下：』前缀、且该大臣有 active 密令时，
+    旧的会话密令抽取器(extract_minister_actions, LLM)不得被触发——前缀已由 resolve_minister_actions
+    零 LLM 落拟旨。整合 cmr r2/r3 codex 完整性腿抓出：原实现 secret 块未按 explicit_prefixed 把门，
+    于是前缀消息在有 active 密令时仍多跑一次 LLM extractor。"""
+    db, state, _ = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    who = "前缀零LLM承办官"
+    db.create_secret_order(state, who, "原密令", "查某亏空", [], deadline_months=0)
+
+    def _forbidden(*a, **k):
+        raise AssertionError("前缀拟旨不应触发任何后置 LLM 抽取器")
+
+    monkeypatch.setattr(cb, "extract_minister_actions", _forbidden)
+    monkeypatch.setattr(cb, "extract_draft_intent", _forbidden)
+    monkeypatch.setattr(cb, "extract_appointment_action", _forbidden)
+    monkeypatch.setattr(cb, "extract_confirmation_intent", _forbidden)
+
+    result = _result()
+    result.answer = "臣遵旨，当即清核辽饷。"
+    _session(db, state, llm_config=SimpleNamespace(channel="cli"))._cli_backend_fallback_actions(
+        result, SimpleNamespace(name=who, office_type="兵部"),
+        "拟旨如下：着户部清核辽饷。")
+
+    # 前缀拟旨零 LLM 落库：directive 入档，无 secret/pending 误触发
+    assert result.proposed_directive is not None
+    assert result.proposed_directive.text == "臣遵旨，当即清核辽饷。"
+    assert result.secret_order_id is None
+    assert not result.pending_action_id
+
+
 def test_chat_starts_cli_action_classification_before_reply_finishes(game, monkeypatch):
     """CLI 召对动作判断只看皇帝消息，应与大臣回话并发；无动作消息回话后不再跑抽取器。"""
     db, state, content = game
