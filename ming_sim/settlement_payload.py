@@ -139,6 +139,13 @@ def bind_decisions_to_candidate_events(
         unique_ids = {event_id for event_id in ids if event_id}
         if len(unique_ids) == 1:
             out["event_id"] = next(iter(unique_ids))
+        elif explicit:
+            # off-snapshot 回显 id 且无唯一标题可绑 → 解绑，不保留这个非候选 id（codex
+            # correctness）：留着它会被 submit_decisions 当 'triggered' 写进事件账，若它其实是
+            # 一个真实的未来事件 id，就被永久标成已触发、再也进不了候选池（gather_candidate_events
+            # 跳过 spawned）；season_simulator 也明示非候选抉择不应带 event_id。解绑后该选择仍在
+            # pending_decisions.choice_json，不污染终态账。正常含【候选内】id 的路径不受影响。
+            out.pop("event_id", None)
         bound.append(out)
     return bound
 
