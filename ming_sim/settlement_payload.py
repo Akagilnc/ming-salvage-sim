@@ -101,9 +101,12 @@ def bind_decisions_to_candidate_events(
       hallucinated), binds on a unique exact title match inside
       simulator_payload.candidate_events. We do not let an off-snapshot id win over
       the snapshot just because the LLM wrote it.
-    - Non-event HITL decisions and ambiguous/absent title matches remain unbound (an
-      off-snapshot id with no unique title match is left as-is — no snapshot basis to
-      override it, keeps non-candidate/historical paths unchanged).
+    - Non-event HITL decisions keep no event_id (nothing to bind). An echoed
+      off-snapshot id with no unique title match is UNBOUND (event_id removed) — the
+      snapshot gives no basis to trust it, and leaving it would let submit_decisions
+      write a non-candidate id into the event ledger as 'triggered' (see the inline
+      comment on the `elif explicit` branch below). A genuinely absent id with no
+      title match simply stays unbound.
     """
     if not decisions:
         return []
