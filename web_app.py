@@ -638,6 +638,7 @@ class WebGame:
             verify_llm_available(llm_config)
             _delete_sqlite_db_files_or_raise(db_path)
         self.session = GameSession(db_path, llm_config, verify_llm=not fresh)
+        self._write_gate = threading.Lock()
         self.session.begin_turn()
         # 召对记录持久化在 chat_messages 表，启动时恢复进内存缓存。
         self.chat_history: Dict[str, List[Dict[str, str]]] = {
@@ -924,6 +925,13 @@ class WebGame:
     @property
     def last_report(self) -> str:
         return self.session.last_report
+
+    def _runtime_write_gate(self) -> threading.Lock:
+        gate = getattr(self, "_write_gate", None)
+        if gate is None:
+            gate = threading.Lock()
+            self._write_gate = gate
+        return gate
 
     def refresh_turn(self) -> None:
         self.session.begin_turn()
@@ -1362,11 +1370,13 @@ class WebGame:
         secret_order_id: int = 0,
         pending_action_id: int = 0,
         chat_turn_id: int = 0,
+        accepted_turn: Optional[int] = None,
     ) -> Dict[str, Any]:
         character = self.session._character(minister_name)
         self.chat_history[minister_name].append({"role": "minister", "content": answer})
         if minister_name not in self.session.temporary_characters:
-            message_id = self.db.append_chat_message(minister_name, self.state.turn, "minister", answer)
+            turn = int(self.state.turn if accepted_turn is None else accepted_turn)
+            message_id = self.db.append_chat_message(minister_name, turn, "minister", answer)
             if chat_turn_id:
                 self.db.update_chat_turn_messages(chat_turn_id, minister_message_id=message_id)
         return {
@@ -1393,42 +1403,45 @@ class WebGame:
         text = message.strip()
         if not text:
             raise HTTPException(status_code=400, detail="问话不能为空。")
-        if self._audience_turn_in_flight(minister_name):
-            raise HTTPException(status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
-        chat_turn_id = 0
-        before_snapshot: Dict[str, Any] = {}
-        if self._persistent_chat_minister(minister_name):
-            chat_turn_id, before_snapshot = self._start_chat_turn(minister_name)
-        self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
-        if minister_name not in self.session.temporary_characters:
-            message_id = self.db.append_chat_message(minister_name, self.state.turn, "user", text)
-            if chat_turn_id:
-                self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
-        try:
-            result = self.session.chat(minister_name, text)
-            self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-        except Exception:
-            if chat_turn_id:
+        with self._runtime_write_gate():
+            if self._audience_turn_in_flight(minister_name):
+                raise HTTPException(status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
+            accepted_turn = int(self.state.turn)
+            chat_turn_id = 0
+            before_snapshot: Dict[str, Any] = {}
+            if self._persistent_chat_minister(minister_name):
+                chat_turn_id, before_snapshot = self._start_chat_turn(minister_name)
+            self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
+            if minister_name not in self.session.temporary_characters:
+                message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
+                if chat_turn_id:
+                    self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
+            try:
+                result = self.session.chat(minister_name, text)
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-                self.db.fail_chat_turn(chat_turn_id)
-                self.chat_history = {name: [] for name in self.session.content.characters}
-                for name, msgs in self.db.load_all_chat_history().items():
-                    self.chat_history.setdefault(name, []).extend(msgs)
-            raise
-        proposed = None
-        if result.proposed_directive is not None:
-            d = result.proposed_directive
-            proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
-        return self._chat_payload(
-            minister_name, result.answer,
-            court_action=result.court_action, next_minister=result.next_minister,
-            proposed_directive=proposed, appointed_minister=result.appointed_minister,
-            registered_minister=result.registered_minister,
-            displaced_minister=result.displaced_minister,
-            secret_order_id=result.secret_order_id,
-            pending_action_id=getattr(result, "pending_action_id", 0),
-            chat_turn_id=chat_turn_id,
-        )
+            except Exception:
+                if chat_turn_id:
+                    self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+                    self.db.fail_chat_turn(chat_turn_id)
+                    self.chat_history = {name: [] for name in self.session.content.characters}
+                    for name, msgs in self.db.load_all_chat_history().items():
+                        self.chat_history.setdefault(name, []).extend(msgs)
+                raise
+            proposed = None
+            if result.proposed_directive is not None:
+                d = result.proposed_directive
+                proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
+            return self._chat_payload(
+                minister_name, result.answer,
+                court_action=result.court_action, next_minister=result.next_minister,
+                proposed_directive=proposed, appointed_minister=result.appointed_minister,
+                registered_minister=result.registered_minister,
+                displaced_minister=result.displaced_minister,
+                secret_order_id=result.secret_order_id,
+                pending_action_id=getattr(result, "pending_action_id", 0),
+                chat_turn_id=chat_turn_id,
+                accepted_turn=accepted_turn,
+            )
 
     def _chat_stream_payload(
         self,
@@ -1436,6 +1449,7 @@ class WebGame:
         text: str,
         chat_turn_id: int,
         before_snapshot: Dict[str, Any],
+        accepted_turn: int,
         emit_delta,
     ) -> Dict[str, Any]:
         character = self.session._character(minister_name)
@@ -1557,6 +1571,7 @@ class WebGame:
             secret_order_id=secret_order_id,
             pending_action_id=pending_action_id,
             chat_turn_id=chat_turn_id,
+            accepted_turn=accepted_turn,
         )
 
     def chat_stream(self, minister_name: str, message: str) -> Iterator[Dict[str, Any]]:
@@ -1567,18 +1582,29 @@ class WebGame:
         if not text:
             yield {"type": "error", "message": "问话不能为空。"}
             return
-        if self._audience_turn_in_flight(minister_name):
-            yield {"type": "error", "message": f"{minister_name}上一轮回奏仍在进行，请稍候再问。"}
-            return
-        chat_turn_id = 0
-        before_snapshot: Dict[str, Any] = {}
-        if self._persistent_chat_minister(minister_name):
-            chat_turn_id, before_snapshot = self._start_chat_turn(minister_name)
-        self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
-        if minister_name not in self.session.temporary_characters:
-            message_id = self.db.append_chat_message(minister_name, self.state.turn, "user", text)
-            if chat_turn_id:
-                self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
+        write_gate = self._runtime_write_gate()
+        write_gate.acquire()
+        gate_released = False
+        try:
+            if self._audience_turn_in_flight(minister_name):
+                write_gate.release()
+                gate_released = True
+                yield {"type": "error", "message": f"{minister_name}上一轮回奏仍在进行，请稍候再问。"}
+                return
+            accepted_turn = int(self.state.turn)
+            chat_turn_id = 0
+            before_snapshot: Dict[str, Any] = {}
+            if self._persistent_chat_minister(minister_name):
+                chat_turn_id, before_snapshot = self._start_chat_turn(minister_name)
+            self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
+            if minister_name not in self.session.temporary_characters:
+                message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
+                if chat_turn_id:
+                    self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
+        except Exception:
+            write_gate.release()
+            gate_released = True
+            raise
 
         ev_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
 
@@ -1586,9 +1612,10 @@ class WebGame:
             ev_queue.put({"type": "delta", "content": delta})
 
         def worker() -> None:
+            nonlocal gate_released
             try:
                 payload = self._chat_stream_payload(
-                    minister_name, text, chat_turn_id, before_snapshot, emit_delta)
+                    minister_name, text, chat_turn_id, before_snapshot, accepted_turn, emit_delta)
                 ev_queue.put({"type": "done", "payload": payload})
             except Exception as error:  # noqa: BLE001
                 if chat_turn_id:
@@ -1601,9 +1628,19 @@ class WebGame:
                     ev_queue.put({"type": "error", "detail": _llm_error_detail(error)})
                 else:
                     ev_queue.put({"type": "error", "message": str(error)})
+            finally:
+                if not gate_released:
+                    write_gate.release()
+                    gate_released = True
 
         thread = threading.Thread(target=worker, daemon=True)
-        thread.start()
+        try:
+            thread.start()
+        except Exception:
+            if not gate_released:
+                write_gate.release()
+                gate_released = True
+            raise
         while True:
             item = ev_queue.get()
             yield item
@@ -1629,6 +1666,23 @@ class WebGame:
 
 def sse_event(event: str, data: Dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _next_or_none(iterator):
+    try:
+        return next(iterator)
+    except StopIteration:
+        return None
+
+
+def _game_write_gate(game) -> threading.Lock:
+    if hasattr(game, "_runtime_write_gate"):
+        return game._runtime_write_gate()
+    gate = getattr(game, "_write_gate", None)
+    if gate is None:
+        gate = threading.Lock()
+        setattr(game, "_write_gate", gate)
+    return gate
 
 
 web_game: Optional[WebGame] = None  # 懒加载：菜单页点「新游戏/继续/加载存档」才实例化
@@ -2295,15 +2349,21 @@ async def api_undo_chat(minister_name: str) -> Dict[str, Any]:
 async def api_chat_stream(minister_name: str, request: ChatRequest) -> StreamingResponse:
     _require_active_minister(minister_name)
     async def generate() -> AsyncIterator[str]:
-        for item in get_game().chat_stream(minister_name, request.message):
+        iterator = iter(get_game().chat_stream(minister_name, request.message))
+        loop = asyncio.get_running_loop()
+        while True:
+            item = await loop.run_in_executor(None, _next_or_none, iterator)
+            if item is None:
+                break
             item_type = str(item.get("type", "message"))
             if item_type == "delta":
                 yield sse_event("delta", {"content": item.get("content", "")})
             elif item_type == "done":
                 yield sse_event("done", item.get("payload", {}))
+                break
             elif item_type == "error":
                 yield sse_event("error", item.get("detail") or {"message": item.get("message", "流式回复失败。")})
-            await asyncio.sleep(0)
+                break
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
@@ -2407,28 +2467,29 @@ async def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> D
     game = get_game()
     was_ended = bool(game.state.ended)
     try:
-        result = game.session.resolve_turn(cheat_directive=body.cheat)
+        with _game_write_gate(game):
+            result = game.session.resolve_turn(cheat_directive=body.cheat)
+            decree = game.session.last_decree
+            if result.awaiting:
+                # 决策点暂停：回合未结算，返回决策点让前端弹窗；不刷新、不计 steam。
+                return {"decree": decree, "awaiting_decision": True,
+                        "decisions": result.decisions, "state": game.state_payload()}
+            report = result.report
+            game.refresh_turn()
+            events = [
+                steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
+                steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
+                steam_events.set_stat(steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn)),
+            ]
+            if not was_ended and game.state.ended:
+                events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
+            return steam_events.with_events({"decree": decree, "report": report, "state": game.state_payload()}, events)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
     except SettlementAbort as e:
         # 结算中止（ADR 0008 决定 6/7）：进度已保存可重试，detail 即玩家指引
         # （含错误包路径+「请发给作者」）。非 500——这是已处理的可重试态，不是服务器 bug。
         raise HTTPException(status_code=409, detail=str(e)) from None
-    decree = game.session.last_decree
-    if result.awaiting:
-        # 决策点暂停：回合未结算，返回决策点让前端弹窗；不刷新、不计 steam。
-        return {"decree": decree, "awaiting_decision": True,
-                "decisions": result.decisions, "state": game.state_payload()}
-    report = result.report
-    game.refresh_turn()
-    events = [
-        steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
-        steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
-        steam_events.set_stat(steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn)),
-    ]
-    if not was_ended and game.state.ended:
-        events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
-    return steam_events.with_events({"decree": decree, "report": report, "state": game.state_payload()}, events)
 
 
 @app.post("/api/decree/issue/stream")
@@ -2448,31 +2509,32 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
         try:
             game = get_game()
             was_ended = bool(game.state.ended)
-            result = game.session.resolve_turn(on_event=on_event, cheat_directive=body.cheat)
-            decree = game.session.last_decree
-            if result.awaiting:
-                # 决策点暂停：邸报已流式推完，再推 decisions 让前端弹窗；本回合未结算、不刷新、不计 steam。
-                ev_queue.put(("__decisions__", {
+            with _game_write_gate(game):
+                result = game.session.resolve_turn(on_event=on_event, cheat_directive=body.cheat)
+                decree = game.session.last_decree
+                if result.awaiting:
+                    # 决策点暂停：邸报已流式推完，再推 decisions 让前端弹窗；本回合未结算、不刷新、不计 steam。
+                    ev_queue.put(("__decisions__", {
+                        "decree": decree,
+                        "decisions": result.decisions,
+                        "state": game.state_payload(),
+                    }))
+                    return
+                report = result.report
+                game.refresh_turn()
+                events = [
+                    steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
+                    steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
+                    steam_events.set_stat(steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn)),
+                ]
+                if not was_ended and game.state.ended:
+                    events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
+                ev_queue.put(("__done__", {
                     "decree": decree,
-                    "decisions": result.decisions,
+                    "report": report,
                     "state": game.state_payload(),
+                    "steam_events": events,
                 }))
-                return
-            report = result.report
-            game.refresh_turn()
-            events = [
-                steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
-                steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
-                steam_events.set_stat(steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn)),
-            ]
-            if not was_ended and game.state.ended:
-                events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
-            ev_queue.put(("__done__", {
-                "decree": decree,
-                "report": report,
-                "state": game.state_payload(),
-                "steam_events": events,
-            }))
         except ValueError as e:
             ev_queue.put(("__error__", str(e)))
         except Exception as e:  # noqa: BLE001
@@ -2518,24 +2580,25 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
         try:
             game = get_game()
             was_ended = bool(game.state.ended)
-            report = game.session.submit_decisions(
-                body.choices, on_event=on_event, cheat_directive=body.cheat
-            )
-            decree = game.session.last_decree
-            game.refresh_turn()
-            events = [
-                steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
-                steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
-                steam_events.set_stat(steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn)),
-            ]
-            if not was_ended and game.state.ended:
-                events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
-            ev_queue.put(("__done__", {
-                "decree": decree,
-                "report": report,
-                "state": game.state_payload(),
-                "steam_events": events,
-            }))
+            with _game_write_gate(game):
+                report = game.session.submit_decisions(
+                    body.choices, on_event=on_event, cheat_directive=body.cheat
+                )
+                decree = game.session.last_decree
+                game.refresh_turn()
+                events = [
+                    steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
+                    steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
+                    steam_events.set_stat(steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn)),
+                ]
+                if not was_ended and game.state.ended:
+                    events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
+                ev_queue.put(("__done__", {
+                    "decree": decree,
+                    "report": report,
+                    "state": game.state_payload(),
+                    "steam_events": events,
+                }))
         except ValueError as e:
             ev_queue.put(("__error__", str(e)))
         except Exception as e:  # noqa: BLE001
