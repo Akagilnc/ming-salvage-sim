@@ -427,6 +427,21 @@ def _iter_codex_stream_chunks(
     pieces: List[str] = []
     final_text = ""
     stderr = ""
+    timed_out = False
+    # 看门狗：流式读取阻塞在 `for raw_line in proc.stdout` 上，下面的 proc.wait(timeout) 要等读
+    # 循环结束才执行——若 codex 卡死且不关 stdout，读循环会无限阻塞、那个 timeout 形同虚设
+    # (codex correctness)。定时器在 run_timeout 到点 kill 进程，使阻塞读拿到 EOF 退出循环。
+    def _kill_on_timeout() -> None:
+        nonlocal timed_out
+        timed_out = True
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+    watchdog = threading.Timer(run_timeout, _kill_on_timeout)
+    watchdog.daemon = True
+    watchdog.start()
     try:
         for raw_line in proc.stdout:
             line = raw_line.strip()
@@ -453,7 +468,11 @@ def _iter_codex_stream_chunks(
     except subprocess.TimeoutExpired as exc:
         proc.kill()
         raise RuntimeError("codex 流式调用超时") from exc
+    finally:
+        watchdog.cancel()
 
+    if timed_out:
+        raise RuntimeError(f"codex 流式调用超时（>{run_timeout:.0f}s 未完成，已 kill）")
     text = "".join(pieces).strip() or final_text.strip()
     if proc.returncode != 0 or not text:
         raise RuntimeError(f"codex 流式调用失败（退出码 {proc.returncode}）：{(stderr or '')[:200]}")
