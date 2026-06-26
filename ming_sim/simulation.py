@@ -1016,6 +1016,13 @@ def _commitment_carrier_signature(item: Dict[str, object]) -> Optional[tuple]:
         )
         for e in (economy or []) if isinstance(e, dict)
     )
+    # 只去重【经常性月拨】承诺——这套跨模块去重的唯一目的是消「月度 ongoing 双扣」（见调用处注释）。
+    # 无月度 economy 的承诺（form③ 未来一次性：仅 end_turn / stop_condition，空 ongoing_effects）
+    # 根本不产月度扣账、无双扣可消；却会因签名同收敛到 (okind, oref, frozenset()) 把同一诏书下两笔
+    # 合法的不同 form③ 承诺（同 origin_ref、不同 title/end_turn）误删其一（#136 form③，codex correctness）。
+    # 故空 economy 一律不参与去重（返 None，与空 origin_ref 同等保守）。
+    if not eco_sig:
+        return None
     return (okind, oref, eco_sig)
 
 
