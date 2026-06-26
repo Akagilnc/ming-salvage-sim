@@ -21,6 +21,9 @@
 - CA2【P3 死代码】前端「待颁诏」面板拆掉后，`web_app.py` 的 `GET /api/pending_actions` + `POST /api/pending_actions/{id}/withdraw` 两端点 + `tests/test_pending_actions.py` 内 `api_pending_actions`/`api_withdraw_pending_action` 用例**没人再调**（确认改对话驱动）。用户「先留着」；要清就连测试一起删。CMR R5 Claude 顺带提（非 review finding）。
 - CA3【验证待办·非缺陷】Slice 4 给 `content/prompts/minister_agent.md` 加的「in-character 领命并补充信息和要点」是 prompt 改、行为=LLM 输出，**无法确定性单测**；需在跑着的 server 上真召对一轮，确认大臣不出戏、不弹系统式「确认?」问句。
 
+## 🟠 family/379-base integrated-cmr Deferred（ship-pre Gate1 完整性闸 2026-06-26 收敛时记录）
+- **#389 残留：simulator「漏 event_id + 改写抉择名」双重偏离时事件选择不绑定（P3）**。`bind_decisions_to_candidate_events`（[settlement_payload.py](ming_sim/settlement_payload.py)）已把绑定从「信 simulator 回显 id」改成「以权威候选快照为准」：回显 id 在快照内→采信；缺 id/回显 off-snapshot→以快照**唯一标题**(重)绑；无键可绑→解绑（选择留 `pending_decisions.choice_json`，settle 末 `clear_pending_decisions` 删，不进 `event_triggers` 终态账）。残留：simulator 既漏掉 prompt 强制的 `event_id`（`season_simulator.md:143`）**又**把抉择标题改写得与候选 title 不等时，该候选事件决策与「正当的非事件亲裁决策」无任何共享键可区分 → 无法安全确定性绑定（按候选数消去法会把非事件决策误绑到本回合未浮现的候选，证伪不安全）。彻底闭合需让候选事件决策块由系统生成、携带确定性 candidate index/id（= 改 #345 触发=推送的决策生成路径，#389 边界明示 out-of-scope「不重做 #345」）。判据：3/4 整合 cmr 腿 exercise 后判 DONE；与 #340-H 裁决「绑定残留靠日志/观测兜底、不扩 scope」同类、同处置。要彻底修时回头改决策块生成路径或开新 ADR。
+
 ## 🔴 BUG / 待修（影响游戏正确性）
 
 ### B13. 编排器测试 epicOrchestratorWorkflow 预存失败（P0，非本分支引入）
