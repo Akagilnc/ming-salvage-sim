@@ -1064,7 +1064,7 @@ class GameDB:
         # 之后每次 load 不再碰 offset（否则 leverage 被 clamp 后再 load，offset 被重锚成
         # round(clamped − weight_sum)≠原值 → 基线永久腐蚀）。该 flag 传给 _calibrate_faction_offsets。
         self._leverage_offset_col_added = self.ensure_column(
-            "factions", "leverage_offset", "INTEGER NOT NULL DEFAULT 0"
+            "factions", "leverage_offset", "REAL NOT NULL DEFAULT 0"
         )
         # #9 线上 R3（codex P2）crash-safety：单靠「列刚 ADD」内存 flag 不够——若上次进程崩在
         # 『ensure_column 已 ADD 列、_calibrate_faction_offsets 未执行』之间，重启见列已存在 →
@@ -1137,6 +1137,19 @@ class GameDB:
                 self._set_meta_flag("__leverage_offsets_calibrated")
                 self._leverage_offsets_calibrated = True
                 self._leverage_offset_col_added = False
+            self.conn.commit()
+        # #177 R1 finding#1（codex P2）：一次性 v2 迁移——旧版 #9 校准 round 了 offset（存整数），
+        # R4 只修新校准、已 marked 老档 early-return 照漂。本迁移把整数 offset 重算成精确 float
+        # （current_leverage − weight_sum），保持当前 leverage 不变、仅修存储精度防未来漂。
+        # 只对 leverage 与 round(offset+权重和) 一致的 faction 跑（未手动 clamp/改），防把 clamp
+        # 后的脏 leverage 烙进 offset（腐蚀基线）。幂等：v2 标记一旦落库就不再跑。
+        if (
+            self.table_has_rows("factions")
+            and getattr(self, "_leverage_offsets_calibrated", False)
+            and not self._has_meta_flag("__leverage_offsets_float_v2")
+        ):
+            self._migrate_offsets_to_float_precision()
+            self._set_meta_flag("__leverage_offsets_float_v2")
             self.conn.commit()
         self.init_fiscal_config()
 
@@ -2283,7 +2296,7 @@ class GameDB:
             row = self.conn.execute(
                 "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
             ).fetchone()
-            if row is not None and (row["leverage_offset"] or 0) != 0:
+            if row is not None and float(row["leverage_offset"] or 0) != 0:
                 return False
         return True
 
@@ -2342,6 +2355,33 @@ class GameDB:
         # 崩在校准中途则标记一并未落、下次开档重做（原子：offset+标记 全有或全无）。
         self._set_meta_flag("__leverage_offsets_calibrated")
         self._leverage_offsets_calibrated = True
+        # #177 R1 finding#1（codex P2）：当前校准已存精确 float offset → 同时落 v2 标记，
+        # 使 init_schema 的 v2 迁移跳过（免对已正确存 float 的档重复扫）。
+        self._set_meta_flag("__leverage_offsets_float_v2")
+
+    def _migrate_offsets_to_float_precision(self) -> None:
+        """#177 R1 finding#1（codex P2）：一次性 v2 迁移——旧版 #9 校准 round 了 offset（存整数），
+        R4 修了新校准、但已 marked 老档 early-return 照漂。本方法把 offset 重算成精确 float
+        （current_leverage − weight_sum），**保持当前 leverage 不变**、仅修存储精度防未来漂移。
+        只对 leverage 与 round(offset+权重和) 一致的 faction 跑——不一致 = leverage 被手动
+        clamp/改过，不碰 offset（保 baseline 信息、防腐蚀，同 _calibrate_faction_offsets 安全论证）。"""
+        for faction in _LEVERAGE_FACTIONS:
+            row = self.conn.execute(
+                "SELECT leverage, leverage_offset FROM factions WHERE name=?", (faction,)
+            ).fetchone()
+            if row is None:
+                continue
+            current_lev = int(row["leverage"])
+            weight_sum = self._faction_office_weight_sum(faction)
+            current_offset = float(row["leverage_offset"] or 0)
+            # 只在 leverage 与公式值一致时重算（未被手动 clamp/修改）——否则跳过保 baseline。
+            expected_lev = max(0, min(100, round(current_offset + weight_sum)))
+            if expected_lev != current_lev:
+                continue
+            new_offset = current_lev - weight_sum
+            self.conn.execute(
+                "UPDATE factions SET leverage_offset=? WHERE name=?", (new_offset, faction)
+            )
 
     def _has_meta_flag(self, key: str) -> bool:
         """查 metrics 表里某持久标记是否存在（#9 R3 crash-safe 迁移标记用）。metrics 在 init_schema
@@ -2466,7 +2506,11 @@ class GameDB:
             )
             # #177 R2: power_id 跨 ming 边界翻转后即时重算原派系 leverage
             # （与 set_character_status / set_character_office 钩子一致）。
-            self.recompute_faction_leverage(str(row["faction"] or ""))
+            # sourcery R1：faction 为空跳过；只在真跨 ming 边界（old/new 有一方是 ming）时重算
+            # —— _faction_office_weight_sum 按 power_id='ming' 过滤，非 ming↔非 ming 翻转不改权重和。
+            faction = str(row["faction"] or "")
+            if faction and (old_power == "ming" or new_power == "ming"):
+                self.recompute_faction_leverage(faction)
             applied.append({"name": name, "old_power": old_power, "new_power": new_power, "reason": reason})
         if commit:
             self.conn.commit()
