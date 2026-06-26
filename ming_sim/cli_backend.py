@@ -439,6 +439,21 @@ def _iter_codex_stream_chunks(
     final_text = ""
     stderr = ""
     timed_out = False
+    # stderr 必须并发抽干（cmr Gate2 F-F）：stdout/stderr 同一阻塞管道模型——codex 往 stderr
+    # 写满 OS pipe 缓冲（~64KB）就会卡在写 stderr，stdout 随之断流，下面的 `for raw_line in
+    # proc.stdout` 拿不到 EOF 永久阻塞，最后被 watchdog 误杀成「超时」。开 daemon 线程持续读
+    # stderr，stdout 循环结束后 join 取诊断文本（不能等读完 stdout 再 read stderr）。
+    stderr_parts: List[str] = []
+
+    def _drain_stderr() -> None:
+        if proc.stderr is not None:
+            try:
+                stderr_parts.append(proc.stderr.read())
+            except Exception:
+                pass
+
+    stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+    stderr_thread.start()
     # 看门狗：流式读取阻塞在 `for raw_line in proc.stdout` 上，下面的 proc.wait(timeout) 要等读
     # 循环结束才执行——若 codex 卡死且不关 stdout，读循环会无限阻塞、那个 timeout 形同虚设
     # (codex correctness)。定时器在 run_timeout 到点 kill 进程，使阻塞读拿到 EOF 退出循环。
@@ -474,13 +489,14 @@ def _iter_codex_stream_chunks(
             proc.wait(timeout=run_timeout)
         except ValueError:
             proc.wait(timeout=run_timeout)
-        if proc.stderr is not None:
-            stderr = proc.stderr.read()
     except subprocess.TimeoutExpired as exc:
         proc.kill()
         raise RuntimeError("codex 流式调用超时") from exc
     finally:
         watchdog.cancel()
+        # 进程已退/被 kill → stderr 关闭 → drain 线程读到 EOF 结束；取其抽到的诊断文本。
+        stderr_thread.join(timeout=2)
+        stderr = "".join(stderr_parts)
 
     if timed_out:
         raise RuntimeError(f"codex 流式调用超时（>{run_timeout:.0f}s 未完成，已 kill）")
