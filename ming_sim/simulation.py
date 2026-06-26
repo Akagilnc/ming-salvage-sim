@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import copy
 import sqlite3
 from typing import Callable, Dict, List, Optional
 
@@ -499,16 +500,18 @@ MODULE_FIELDS: Dict[str, set[str]] = {
     "military_external": {"army_delta", "new_armies", "power_updates", "world_advance"},
     "issues": {"issue_advances", "new_issues", "事件结局", "cancels", "close_issues"},
     "personnel_secret": {
-        "人物变更", "secret_order_updates", "secret_order_closes", "emperor_fate",
+        "人物变更", "new_issues", "secret_order_updates", "secret_order_closes", "emperor_fate",
     },
 }
 
-# 字段 → 所属模块 反向图（4 个模块 field 集互斥，故每字段恰一主）。
+# 字段 → 首要所属模块反向图。`new_issues` 由 issues 主持，同时允许 personnel_secret
+# 为经常性密令拨款产承诺 issue；misroute 留痕仍指向首要 owner，避免重复 owner 噪音。
 # 用于 #63 class 2：某模块 extractor 输出里若混进「属其它模块」的字段，
 # _sanitize_module_output 会按白名单静默剔除——查此图即知它本该去哪，留痕不静默吞。
-_FIELD_OWNER_MODULE: Dict[str, str] = {
-    field: module for module, fields in MODULE_FIELDS.items() for field in fields
-}
+_FIELD_OWNER_MODULE: Dict[str, str] = {}
+for _module, _fields in MODULE_FIELDS.items():
+    for _field in _fields:
+        _FIELD_OWNER_MODULE.setdefault(_field, _module)
 
 
 def _extractor_context_payload(
@@ -994,13 +997,84 @@ def _clean_fiscal_removes(raw: object) -> List[Dict[str, object]]:
     return cleaned
 
 
+def _sig_delta(raw: object) -> str:
+    """签名用 delta 规范化：统一 float 再格式化，使 -20(int) 与 -20.0(float) 等价（#399 cmr R1 coderabbit）。"""
+    try:
+        return str(float(raw))
+    except (TypeError, ValueError):
+        return str(raw)
+
+
+def _commitment_carrier_signature(item: Dict[str, object]) -> Optional[tuple]:
+    """同源承诺去重签名 = (origin_kind, origin_ref, 月度 economy 归一签名)。只有同源【且】月度
+    economy 等价才算真重复——同一密令/诏书下两笔【不同】月拨（同 origin_ref、不同 economy）各自
+    保留（codex correctness：原先只按 origin_ref 去重太粗，prompt 规定同一密令编号写固定
+    origin_ref=secret_order:N，会误删合法的多笔月拨）。空 origin_ref 无法识别 → 不去重（保守）。"""
+    oref = str(item.get("origin_ref") or "").strip()
+    if not oref:
+        return None
+    okind = str(item.get("origin_kind") or "").strip()
+    ongoing = item.get("ongoing_effects")
+    economy = ongoing.get("economy") if isinstance(ongoing, dict) else None
+    eco_sig = frozenset(
+        (
+            str(e.get("account") or "").strip(),
+            _sig_delta(e.get("delta")),
+            str(e.get("category") or e.get("reason") or "").strip(),
+        )
+        for e in (economy if isinstance(economy, list) else []) if isinstance(e, dict)
+    )
+    # 只去重【经常性月拨】承诺——这套跨模块去重的唯一目的是消「月度 ongoing 双扣」（见调用处注释）。
+    # 无月度 economy 的承诺（form③ 未来一次性：仅 end_turn / stop_condition，空 ongoing_effects）
+    # 根本不产月度扣账、无双扣可消；却会因签名同收敛到 (okind, oref, frozenset()) 把同一诏书下两笔
+    # 合法的不同 form③ 承诺（同 origin_ref、不同 title/end_turn）误删其一（#136 form③，codex correctness）。
+    # 故空 economy 一律不参与去重（返 None，与空 origin_ref 同等保守）。
+    if not eco_sig:
+        return None
+    return (okind, oref, eco_sig)
+
+
 def _merge_module_outputs(outputs: Dict[str, Dict[str, object]]) -> Dict[str, object]:
-    merged = dict(EMPTY_EXTRACTION)
+    merged = copy.deepcopy(EMPTY_EXTRACTION)
     module_rejections: List[Dict[str, object]] = []
+    seen_commitment_sigs: set = set()  # 已合并承诺的 (origin, economy) 签名，去重避免月度双扣
     for module in EXTRACTION_MODULES:
         for key, val in outputs.get(module, {}).items():
             if key == "_module_rejections" and isinstance(val, list):
                 module_rejections.extend(item for item in val if isinstance(item, dict))
+                continue
+            if key == "new_issues":
+                # 共享字段：list 才追加；非 list（坏形状）绝不走下面的覆盖分支——否则后一个模块
+                # （personnel_secret）输出非 list new_issues 会清掉 issues 已合并的承诺条目。坏形状
+                # 不静默吞：留一条模块拒收，指明哪个模块产了坏形状（留痕不静默，codex correctness）。
+                if isinstance(val, list):
+                    for item in val:
+                        # 同源【且同 economy】承诺跨模块去重（codex correctness）：issues 与
+                        # personnel_secret 都能产 new_issues，若两模块对同一笔（同源+同月拨）各产
+                        # 一条，apply 会建两条 active 承诺 → 月度 ongoing 双扣（#340 要消的）。只去
+                        # 真重复，同一密令下不同月拨（同 origin_ref、不同 economy）各自保留。
+                        if isinstance(item, dict):
+                            sig = _commitment_carrier_signature(item)
+                            if sig is not None:
+                                if sig in seen_commitment_sigs:
+                                    module_rejections.append({
+                                        "module": module,
+                                        "field": "new_issues",
+                                        "reason": (
+                                            f"同源同额承诺重复（origin_kind={sig[0]} "
+                                            f"origin_ref={sig[1]}），已去重避免月度双扣"
+                                        ),
+                                    })
+                                    continue
+                                seen_commitment_sigs.add(sig)
+                        merged["new_issues"].append(item)
+                else:
+                    module_rejections.append({
+                        "module": module,
+                        "field": "new_issues",
+                        "reason": "new_issues 非 list（坏形状），已跳过、不覆盖已合并条目",
+                        "raw_type": type(val).__name__,
+                    })
                 continue
             merged[key] = val
     if module_rejections:

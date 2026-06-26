@@ -11,6 +11,7 @@ import { MenuPage } from "./components/menuPage";
 import { ChatModal, ClosedIssuesModal, EdictModal, EndingModal, HistoryModal, ReportModal, SecretOrdersModal, StateModal, filterConsorts, filterMinisters } from "./components/modals";
 import { SituationPanel } from "./components/situation";
 import { getMapIntelStyle, refreshLabelMaps, scoreTone } from "./format";
+import { shouldAutoOpenClosedIssuesAfterSettlement, shouldAutoOpenSecretOrdersAfterSettlement } from "./settlementPresentation";
 import { forwardSteamEvents, type SteamEvent } from "./steamEvents";
 import type { AppView, ChatMessage, ChatUndoResponse, ClosedIssue, Directive, GameState, MenuStatus, Minister, ModalName, PendingDecision, SecretOrder, Suggestion } from "./types";
 import "./styles.css";
@@ -164,7 +165,7 @@ function App() {
     if (!state) return;
     const closed = state.closed_this_turn || [];
     const currentTurn = state.turn.turn;
-    if (closed.length && currentTurn !== closedShown) {
+    if (closed.length && currentTurn !== closedShown && shouldAutoOpenClosedIssuesAfterSettlement()) {
       setClosedModal(closed);
       setClosedShown(currentTurn);
       sessionStorage.setItem("closedShownTurn", String(currentTurn));
@@ -179,8 +180,10 @@ function App() {
     api<{ orders: SecretOrder[] }>("/api/secret_orders")
       .then(({ orders }) => {
         setSecretOrders(orders);
-        if (orders.some(o => o.status === "active" || o.status === "pending_review")) {
-          // 延迟 400ms，避免与邸报弹窗争抢
+        if (
+          shouldAutoOpenSecretOrdersAfterSettlement()
+          && orders.some(o => o.status === "active" || o.status === "pending_review")
+        ) {
           setTimeout(() => setActiveModal("secret_orders"), 400);
         }
         setSecretOrderShown(currentTurn);
@@ -423,11 +426,12 @@ function App() {
       // The finally block below still clears busy + chatAbortRef globally.
       if (selectedMinisterRef.current !== targetMinisterName) return;
       if (err instanceof Error && err.name === "AbortError") {
-        // Player cancelled — restore input so they can retry immediately
-        if (fromComposer) setInput(message);
+        // Observer left the live stream; after the server accepts the question,
+        // the audience turn continues in the background and history is the rejoin path.
         setPendingUserMessage("");
         setStreamingMinisterMessage("");
-        setError("已取消，可重新发送。");
+        setChatNotice("已离开实时回话；大臣会继续回奏，稍后重开可见。");
+        setError("");
       } else {
         if (fromComposer) {
           setInput(message);
@@ -997,7 +1001,11 @@ function App() {
       ) : null}
 
       {activeModal === "report" && (gazetteReport || report) ? (
-        <ReportModal report={gazetteReport || report} onClose={guardClose(() => setActiveModal("none"))} />
+        <ReportModal
+          report={gazetteReport || report}
+          accountReport={state.previous_account_summary || ""}
+          onClose={guardClose(() => setActiveModal("none"))}
+        />
       ) : null}
 
       {activeModal === "ending" && state.ending ? (

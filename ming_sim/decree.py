@@ -69,6 +69,7 @@ from ming_sim.settlement_payload import (  # noqa: E402
     _select_secret_orders_for_sim,
     _strip_player_internal_fields,
     augment_secret_orders_with_due_commitments,
+    bind_decisions_to_candidate_events,
     group_secret_orders_for_sim,
     parse_decision_blocks,
 )
@@ -82,6 +83,19 @@ class ResolveResult:
     awaiting: bool
     report: str = ""
     decisions: List[Dict[str, object]] = field(default_factory=list)
+
+
+def _candidate_event_ids_from_simulator_payload(simulator_payload: object) -> Optional[set[str]]:
+    if not isinstance(simulator_payload, dict):
+        return None
+    raw = simulator_payload.get("candidate_events")
+    if not isinstance(raw, list):
+        return None
+    return {
+        str(item.get("id") or "").strip()
+        for item in raw
+        if isinstance(item, dict) and str(item.get("id") or "").strip()
+    }
 
 
 def write_decree_with_agno(
@@ -334,6 +348,7 @@ def resolve_directives(
     # 2.4) HITL 决策点：从邸报抽 <<DECISION>> 块。有 → 存上下文+决策点，暂停等皇帝亲裁。
     #      剥离后的干净邸报落库/展示；决策点选完由 resolve_decisions_phase2 续跑结算。
     narrative, decisions = parse_decision_blocks(narrative)
+    decisions = bind_decisions_to_candidate_events(decisions, simulator_payload)
     if decisions:
         tlog(f"[HITL] 检测到 {len(decisions)} 个决策点，暂停等皇帝亲裁：{[d['title'] for d in decisions]}")
         # 暂停态三件（上下文+决策点+AWAITING 相位）同事务落库（cmr S4 r2）：相位若靠
@@ -434,6 +449,7 @@ def resolve_settling_recovery(
         report = _replay_settle(
             state, db, agno_db, llm_config, extracted,
             before_turn=before_turn, decree_text=decree_text, narrative=narrative,
+            simulator_payload=ctx.get("simulator_payload"),
             content=content, registry=registry, _emit=_emit, source=source,
         )
     except SettlementAbort as abort_exc:
@@ -460,8 +476,9 @@ def _replay_settle(
     before_turn: int,
     decree_text: str,
     narrative: str,
-    content,
-    registry,
+    simulator_payload: object = None,
+    content=None,
+    registry=None,
     _emit: Callable[[str, str], None],
     source: Provenance = Provenance.system_simulation,
 ) -> str:
@@ -482,7 +499,8 @@ def _replay_settle(
             d, s, llm_config, agno_db, oc, _emit
         ),
         delta_applier=lambda d, s, ex, ct, rg: apply_score_extraction(
-            d, s, ex, content=ct, registry=rg, llm_config=llm_config
+            d, s, ex, content=ct, registry=rg, llm_config=llm_config,
+            candidate_event_ids_at_input=_candidate_event_ids_from_simulator_payload(simulator_payload),
         ),
         on_stage=lambda label: _emit("stage", label),
         source=source,  # 恢复重放沿用原始来源（#144）：玩家来源拒收恢复后仍给提示，不被记成 system
@@ -698,7 +716,8 @@ def _settle_after_narrative(
         # 落库走捕获 llm_config 的闭包：issue/office 的通道感知 enrichment 才能按 active
         # channel 选后端（cli_backend_active(llm_config)）；结算核本体仍不见 llm_config。
         delta_applier=lambda d, s, ex, ct, rg: apply_score_extraction(
-            d, s, ex, content=ct, registry=rg, llm_config=llm_config
+            d, s, ex, content=ct, registry=rg, llm_config=llm_config,
+            candidate_event_ids_at_input=_candidate_event_ids_from_simulator_payload(simulator_payload),
         ),
         on_stage=lambda label: _emit("stage", label),
         # 来源贯穿（#146 A，整批按触发源）：皇帝下旨触发=player_decree（拒收提示皇帝）、

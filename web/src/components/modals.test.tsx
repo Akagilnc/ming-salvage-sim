@@ -1,7 +1,7 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ChatModal } from "./modals";
+import { ChatModal, ReportModal } from "./modals";
 import type { Minister } from "../types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -78,6 +78,22 @@ function renderModal(props: {
   mountedRoots.push({ root, host });
 }
 
+function renderReportModal(props: { report: string; accountReport?: string }) {
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  act(() =>
+    root.render(
+      <ReportModal
+        report={props.report}
+        accountReport={props.accountReport ?? ""}
+        onClose={() => {}}
+      />
+    )
+  );
+  mountedRoots.push({ root, host });
+}
+
 afterEach(() => {
   // Unmount every root rendered this test (whether the body passed or threw).
   for (const { root, host } of mountedRoots) {
@@ -128,7 +144,7 @@ describe("ChatModal — thinking/loading text switches on character type (gemini
 });
 
 describe("ChatModal — cancel button during busy (issue #353)", () => {
-  it("shows a cancel button when busy and onCancel is provided", () => {
+  it("shows an observer-exit button when busy and onCancel is provided", () => {
     renderModal({
       minister: MINISTER_MOCK,
       portraitPrefix: "minister_",
@@ -137,6 +153,7 @@ describe("ChatModal — cancel button during busy (issue #353)", () => {
     });
     const cancelBtn = document.querySelector(".composer-cancel");
     expect(cancelBtn).not.toBeNull();
+    expect(cancelBtn?.textContent).toContain("离开等待");
   });
 
   it("does NOT show a cancel button when idle", () => {
@@ -187,5 +204,26 @@ describe("ChatModal — elapsed timer during thinking (issue #353)", () => {
     const thinkingP = document.querySelector(".chat-message.thinking p");
     expect(thinkingP?.textContent).toMatch(/\d+\s*秒/);
     vi.useRealTimers();
+  });
+});
+
+describe("ReportModal — two-page settlement bulletin", () => {
+  it("shows narrative as page 1 and account text as manually selected page 2", () => {
+    renderReportModal({
+      report: "辽东有警，诸臣奏闻。",
+      accountReport: "人事：卢象升调任。\n有司奏：某军窒碍未行。",
+    });
+
+    expect(document.body.textContent).toContain("辽东有警");
+    expect(document.body.textContent).not.toContain("卢象升调任");
+
+    const page2 = Array.from(document.querySelectorAll("button"))
+      .find((btn) => btn.textContent?.includes("实账"));
+    expect(page2).toBeTruthy();
+    act(() => (page2 as HTMLButtonElement).click());
+
+    expect(document.body.textContent).toContain("卢象升调任");
+    expect(document.body.textContent).toContain("窒碍未行");
+    expect(document.body.textContent).not.toContain("辽东有警");
   });
 });

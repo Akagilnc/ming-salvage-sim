@@ -460,6 +460,99 @@ def _monthly_economy_items(effect: Dict[str, object]) -> List[Dict[str, object]]
     return items
 
 
+def _recurring_funding_label_tokens(*values: object) -> set[str]:
+    tokens: set[str] = set()
+    for value in values:
+        raw = str(value or "").strip()
+        if not raw:
+            continue
+        key_stem = raw
+        if key_stem.endswith("_base") or key_stem.endswith("_rate"):
+            key_stem = key_stem.rsplit("_", 1)[0]
+        normalized = re.sub(r"[\s，。、“”‘’：:；;,.·_\-（）()\[\]【】]+", "", key_stem)
+        for word in (
+            "同批extractor误产的重复",
+            "同批误产的重复",
+            "每月",
+            "按月",
+            "月度",
+            "月支",
+            "拨给",
+            "拨付",
+            "拨银",
+            "拨",
+            "给",
+            "支给",
+            "支出",
+            "开支",
+            "费用",
+            "经费",
+            "月",
+            "万两",
+            "银两",
+            "银",
+        ):
+            normalized = normalized.replace(word, "")
+        if normalized:
+            tokens.add(normalized)
+    return tokens
+
+
+def _commitment_fiscal_create_duplicate_reason(
+    create: Dict[str, object],
+    commitment_economy: List[Dict[str, object]],
+    db: GameDB,
+) -> str:
+    account = str(create.get("account") or "").strip()
+    display = str(create.get("display") or "").strip() or (db._stem_of(str(create.get("key") or "")) or str(create.get("key") or ""))
+    create_tokens = _recurring_funding_label_tokens(
+        display,
+        create.get("key"),
+        create.get("reason"),
+    )
+    if not account or not create_tokens:
+        return ""
+    for item in commitment_economy:
+        if str(item.get("account") or "").strip() != account:
+            continue
+        try:
+            delta = _strict_int(item.get("delta"))
+        except (TypeError, ValueError):
+            continue
+        if delta >= 0:
+            continue
+        item_tokens = _recurring_funding_label_tokens(
+            item.get("category"),
+            item.get("reason"),
+            item.get("purpose"),
+        )
+        if create_tokens & item_tokens:
+            return "同批已有承诺 issue ongoing_effects.economy 承载该经常性拨款，fiscal_create 已去重"
+    return ""
+
+
+def _commitment_carrier_same_account_unmatched(
+    create: Dict[str, object],
+    commitment_economy: List[Dict[str, object]],
+) -> str:
+    """ADR0027 残留观测：同批、同账户、有 decree 承诺月支，却**未按科目名匹配上**的
+    fiscal_create —— 疑似异名漏匹（两模块给同一笔起不同名）。返回触发账户名供日志，
+    无则空串。**仅作试玩观测信号、不改落库行为**：该 fiscal_create 仍照常落账。"""
+    account = str(create.get("account") or "").strip()
+    if not account:
+        return ""
+    for item in commitment_economy:
+        if str(item.get("account") or "").strip() != account:
+            continue
+        try:
+            delta = _strict_int(item.get("delta"))
+        except (TypeError, ValueError):
+            continue
+        if delta < 0:
+            return account
+    return ""
+
+
 def _monthly_person_rating_changes(effect: Dict[str, object]) -> List[Dict[str, object]]:
     raw_changes: List[Dict[str, object]] = []
     for key in ("人物变更", "person_changes"):
@@ -843,8 +936,9 @@ def _event_trigger_refs(db: GameDB) -> set:
 def _event_terminal_states(db: GameDB) -> Dict[str, str]:
     states: Dict[str, str] = {}
     for r in db.conn.execute("SELECT event_id, terminal_state FROM event_triggers").fetchall():
-        if r["event_id"]:
-            states[str(r["event_id"])] = str(r["terminal_state"] or "")
+        terminal_state = str(r["terminal_state"] or "")
+        if r["event_id"] and terminal_state:
+            states[str(r["event_id"])] = terminal_state
     return states
 
 
@@ -853,9 +947,10 @@ def _event_terminal_records(db: GameDB) -> Dict[str, Dict[str, str]]:
     for r in db.conn.execute(
         "SELECT event_id, terminal_state, terminal_reason FROM event_triggers"
     ).fetchall():
-        if r["event_id"]:
+        terminal_state = str(r["terminal_state"] or "")
+        if r["event_id"] and terminal_state:
             records[str(r["event_id"])] = {
-                "terminal_state": str(r["terminal_state"] or ""),
+                "terminal_state": terminal_state,
                 "terminal_reason": str(r["terminal_reason"] or ""),
             }
     return records
@@ -3636,6 +3731,7 @@ def apply_issue_tracker_output(
     pending_person_changes_for_gates: Optional[List[Dict[str, object]]] = None,
     allow_legacy_partial_power_for_gates: bool = False,
     candidate_event_ids_at_input: Optional[set[str]] = None,
+    candidate_event_ids_authoritative: bool = False,
     event_result_delta_event_ids: Optional[set[str]] = None,
     defer_event_trigger_ids: Optional[set[str]] = None,
 ) -> Dict[str, object]:
@@ -3654,6 +3750,9 @@ def apply_issue_tracker_output(
     commit_now = not external_transaction
     if external_transaction:
         _register_runtime_rollback_snapshot(db, state, runtime_content)
+    candidate_snapshot_authoritative = (
+        candidate_event_ids_at_input is not None and candidate_event_ids_authoritative
+    )
     candidate_event_ids = (
         set(candidate_event_ids_at_input)
         if candidate_event_ids_at_input is not None
@@ -3843,10 +3942,25 @@ def apply_issue_tracker_output(
                     "reason": "事件当前未进候选池（窗口/前提门/已触发不满足）",
                 })
                 continue
+            terminal_state = db.event_terminal_state(ev.id)
+            if terminal_state:
+                terminal_reason = {
+                    "obsolete": "事件已作废终态",
+                    "avoided": "事件已避过终态",
+                    "triggered": "事件已触发终态",
+                }.get(str(terminal_state), f"事件已有终态：{terminal_state}")
+                print(f"[INFO] new_issue 已拒：event {event_id} 已有终态 {terminal_state!r}，不再从 event_pool 立项。")
+                applied_new.append({"id": ev.id, "title": ev.title, "rejected": True, "reason": terminal_reason})
+                continue
+            # 重查候选：级联作废 / 新满足前提门的事件可能新进/退出候选池。
+            # 权威快照（authoritative）只增不减——union 进新候选、不缩窄初始绑定（#399 cmr R1 codex P2）；
+            # 非权威快照额外过滤——advances/前置事件效果关门后，已退出候选的事件不得沿用旧快照触发。
             if candidates_dirty:
                 current_candidate_event_ids = {candidate.id for candidate in gather_candidate_events(state, db)}
                 candidates_dirty = False
-            if ev.id not in current_candidate_event_ids:
+                if candidate_snapshot_authoritative:
+                    candidate_event_ids |= current_candidate_event_ids
+            if not candidate_snapshot_authoritative and ev.id not in current_candidate_event_ids:
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 当前未进 event_pool 候选池。")
                 applied_new.append({
                     "id": ev.id,
@@ -5492,6 +5606,7 @@ def apply_score_extraction(
     content=None,
     registry=None,
     llm_config: Any = None,
+    candidate_event_ids_at_input: Optional[set[str]] = None,
 ) -> Dict[str, object]:
     """落地结算 agent 输出的 JSON 到 state 与 db。
 
@@ -5504,7 +5619,11 @@ def apply_score_extraction(
     # 0) 落库前校验/净化容器与可拆项；ADR0015 下可拆坏项逐项拒收，不再整批 abort。
     extracted, validate_rejections = sanitize_delta_shape(extracted)
     runtime_content = content if content is not None else _ctx()
-    candidate_event_ids_at_input = {candidate.id for candidate in gather_candidate_events(state, db)}
+    candidate_event_ids_authoritative = candidate_event_ids_at_input is not None
+    if candidate_event_ids_at_input is None:
+        candidate_event_ids_at_input = {candidate.id for candidate in gather_candidate_events(state, db)}
+    else:
+        candidate_event_ids_at_input = set(candidate_event_ids_at_input)
     new_person_changes = normalize_person_changes({"人物变更": extracted.get("人物变更") or []})
     legacy_person_changes = [] if new_person_changes else normalize_person_changes({
         "appointments": extracted.get("appointments") or [],
@@ -5787,8 +5906,24 @@ def apply_score_extraction(
         pending_person_changes_for_gates=post_issue_person_changes,
         allow_legacy_partial_power_for_gates=legacy_person_mode,
         candidate_event_ids_at_input=candidate_event_ids_at_input,
+        candidate_event_ids_authoritative=candidate_event_ids_authoritative,
         event_result_delta_event_ids=strategic_event_result_delta_event_ids,
         defer_event_trigger_ids=strategic_event_pool_ids)
+
+    commitment_economy_carriers: List[Dict[str, object]] = []
+    for item in issue_summary.get("new_issues") or []:
+        if not (
+            isinstance(item, dict)
+            and not item.get("rejected")
+            and str(item.get("commitment_kind") or "").strip()
+            and item.get("issue_id") is not None
+        ):
+            continue
+        row = db.conn.execute("SELECT ongoing_effects FROM issues WHERE id=?", (int(item["issue_id"]),)).fetchone()
+        if row is None:
+            continue
+        ongoing = loads_effect_dict(row["ongoing_effects"])
+        commitment_economy_carriers.extend(_monthly_economy_items(ongoing))
 
     def _reject_suppressed_strategic_results(event_id: str, event_title: str, reason: str = "") -> None:
         event_region_deltas = _entity_deltas_for_strategic_event(
@@ -6065,14 +6200,40 @@ def apply_score_extraction(
     #      使同{月}「新立关税 + 立即调率」可一气落地。
     applied_fiscal_creates: List[Dict[str, object]] = []
     for create in extracted.get("fiscal_creates") or []:
-        key = str(create.get("key") or "").strip()
-        account = str(create.get("account") or "").strip()
         # direction 同义词在唯一守门人处归一（cmr S3 r9:归一放 driver 不经过的
         # cleaner 层=同输入两判;DELTA_SCHEMA 明言吃中文别名）。表与 cleaner 共用
-        # simulation._DIRECTION_NORMALIZE（懒 import 避循环）。
+        # simulation._DIRECTION_NORMALIZE（懒 import 避循环）。先归一再去重：ADR0027
+        # 承诺载体都是月度【支出】(delta<0)，dedup/残留观测只对【支出】fiscal_create 生效；
+        # 同名的【收入】新科目(如新税)与承诺无关，绝不可被误去重或误报残留(codex correctness)。
         from ming_sim.simulation import _DIRECTION_NORMALIZE
         direction_raw = str(create.get("direction") or "").strip()
         direction = _DIRECTION_NORMALIZE.get(direction_raw, direction_raw)
+        if direction == "expense":
+            dedup_reason = _commitment_fiscal_create_duplicate_reason(create, commitment_economy_carriers, db)
+            if dedup_reason:
+                applied_fiscal_creates.append({
+                    "rejected": True,
+                    "reason": dedup_reason,
+                    "category": "deduped_commitment_carrier",
+                    "item": create,
+                })
+                continue
+            # ADR0027 残留观测兜底：同批、同账户、有 decree 承诺月支却未按科目名匹配上的
+            # fiscal_create = 疑似异名漏匹（不改落库、照常落账，只打日志当试玩信号；真在
+            # 试玩看到漏再升级到精确 provenance）。
+            residual_account = _commitment_carrier_same_account_unmatched(create, commitment_economy_carriers)
+            if residual_account:
+                residual_display = (
+                    str(create.get("display") or "").strip()
+                    or (db._stem_of(str(create.get("key") or "")) or str(create.get("key") or "")).strip()
+                    or "无名月支"
+                )
+                tlog(
+                    f"[commitment-dedup] ADR0027 残留观测：同批{residual_account}已有 decree 承诺月支，"
+                    f"但 fiscal_create「{residual_display}」未按科目名匹配上、照常落账——疑似异名漏匹，试玩留意。"
+                )
+        key = str(create.get("key") or "").strip()
+        account = str(create.get("account") or "").strip()
         # key 空 / account / direction 非法 = 脏枚举,原先纯静默 continue,改记拒留痕
         # （ADR 决定 1 / S3；「在场即须合法」对称 S1/S2）。
         if not key or account not in _FISCAL_ACCOUNTS or direction not in _FISCAL_DIRECTIONS:

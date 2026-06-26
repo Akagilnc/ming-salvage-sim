@@ -313,6 +313,39 @@ def test_gather_candidate_events_filters_expired_auto_trigger_seed_without_writi
         content.seed_events.remove(ev)
 
 
+def test_event_pool_apply_uses_pushed_candidate_snapshot_not_fresh_recompute(game):
+    """#345：落库端按已推给裁判/玩家的候选快照验收，避免触发口径与推送口径分叉。"""
+    db, state, content = game
+    issues.bind_content(content)
+    ev = _hist_event("__test_pushed_snapshot_event__", {"民心": "<=5"})
+    ev.event_type = "situation"
+    content.seed_events.append(ev)
+    content.event_by_id[ev.id] = ev
+    try:
+        state.metrics["民心"] = 3
+        assert ev.id in {candidate.id for candidate in issues.gather_candidate_events(state, db)}
+
+        state.metrics["民心"] = 60
+        out = issues.apply_issue_tracker_output(
+            db,
+            state,
+            {"new_issues": [{"origin_kind": "event_pool", "id": ev.id}]},
+            content=content,
+            candidate_event_ids_at_input={ev.id},
+            candidate_event_ids_authoritative=True,
+        )
+
+        assert out["new_issues"][0]["rejected"] is False
+        assert db.conn.execute(
+            "SELECT 1 FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
+            (ev.id,),
+        ).fetchone() is not None
+        assert db.has_event_triggered(ev.id)
+    finally:
+        content.seed_events.remove(ev)
+        content.event_by_id.pop(ev.id, None)
+
+
 def test_apply_event_terminal_states_does_not_commit_existing_transaction(game):
     db, state, content = game
     issues.bind_content(content)
