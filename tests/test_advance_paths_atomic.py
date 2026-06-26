@@ -596,6 +596,45 @@ def test_submit_event_decision_binds_from_candidate_snapshot_without_event_id(ga
     }
 
 
+def test_record_event_decision_choice_preserves_non_triggered_terminal_state(game):
+    """integrated cmr Gate2 codex correctness：event_triggers 是终态账，HITL 选择 upsert 冲突时
+    只补 choice_json，**不得**把已有非 triggered 终态（avoided/expired/obsolete）翻成 triggered，
+    也不得把非 triggered 行的 source 改成 hitl_decision（原 ON CONFLICT 的 terminal_state CASE
+    实为空操作：excluded 恒为 'triggered'）。"""
+    import json
+    db, state, content = game
+    eid = "__terminal_account_preserve_test__"
+    db.conn.execute(
+        "INSERT INTO event_triggers (event_id, turn, year, period, source, terminal_state, terminal_reason) "
+        "VALUES (?, ?, ?, ?, 'simulation', 'avoided', '前提已不成立')",
+        (eid, state.turn, state.year, state.period),
+    )
+    db.conn.commit()
+
+    db.record_event_decision_choice(state, eid, {"label": "留"})
+
+    row = db.conn.execute(
+        "SELECT terminal_state, source, choice_json FROM event_triggers WHERE event_id=?", (eid,)
+    ).fetchone()
+    assert row["terminal_state"] == "avoided"          # 未被翻成 triggered
+    assert row["source"] == "simulation"               # 非 triggered 行 source 不被误标
+    assert json.loads(row["choice_json"]) == {"label": "留"}  # choice 仍记录
+
+
+def test_record_event_decision_choice_inserts_fresh_as_triggered(game):
+    """无冲突的新事件：HITL 选择落 'triggered' + 'hitl_decision'（INSERT 路径，回归不变）。"""
+    import json
+    db, state, content = game
+    eid = "__terminal_account_fresh_test__"
+    db.record_event_decision_choice(state, eid, {"label": "斩"})
+    row = db.conn.execute(
+        "SELECT terminal_state, source, choice_json FROM event_triggers WHERE event_id=?", (eid,)
+    ).fetchone()
+    assert row["terminal_state"] == "triggered"
+    assert row["source"] == "hitl_decision"
+    assert json.loads(row["choice_json"]) == {"label": "斩"}
+
+
 def test_hitl_poison_replay_downgrades_context_then_reextracts(game, monkeypatch, tmp_path):
     """HITL 毒重放 → context 降级为非 ready（保 phase1 字段），重试走重抽（cmr S7 r3，2/2）。
 
