@@ -208,6 +208,55 @@ def test_decree_commitment_dedups_same_batch_fiscal_create_carrier(game, monkeyp
     assert "承诺 issue" in fiscal_result["reason"]
 
 
+def test_decree_commitment_does_not_dedup_same_name_income_fiscal_create(game, monkeypatch):
+    """ADR0027 dedup 只对【支出】fiscal_create 生效（integrated cmr Gate2 codex correctness）：
+    同账户、同名但 direction=income 的新科目（如同名新税收入）与月度【支出】承诺载体无关，
+    不得被误去重——否则会静默丢掉真实月收入。"""
+    db, state, content = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    out = I.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "origin_ref": "decree:turn-1:xixue-monthly",
+                    "kind": "initiative",
+                    "title": "每月拨西学经费",
+                    "stage_text": "太仓每月拨银五十万两办西学。",
+                    "ongoing_effects": {
+                        "economy": [
+                            {"account": "国库", "delta": -50, "category": "西学经费",
+                             "reason": "每月拨西学经费"}
+                        ]
+                    },
+                    "commitment_kind": "until_stop",
+                }
+            ],
+            "fiscal_creates": [
+                {
+                    # 同账户(国库)、同名(西学经费)，但这是一笔【收入】新科目——与支出承诺无关
+                    "key": "西学经费_base",
+                    "account": "国库",
+                    "direction": "income",
+                    "init_value": 50,
+                    "display": "西学经费",
+                    "reason": "新设西学专项捐输（收入）",
+                }
+            ],
+        },
+        content=content,
+    )
+
+    fiscal_result = out["fiscal_creates"][0]
+    assert fiscal_result.get("rejected") is not True   # 收入科目未被误去重
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM fiscal_config WHERE key IN ('西学经费_base', '西学经费_rate')"
+    ).fetchone()[0] >= 1
+
+
 def test_decree_commitment_same_account_alias_miss_emits_residual_signal(game, monkeypatch, capsys):
     """ADR0027 残留观测：同批、同账户、有 decree 承诺却**异名**未匹配上的 fiscal_create
     照常落账，但必须打日志当试玩信号（便于发现异名漏匹规律，#340 US8）。"""

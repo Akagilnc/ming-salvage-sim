@@ -6175,37 +6175,40 @@ def apply_score_extraction(
     #      使同{月}「新立关税 + 立即调率」可一气落地。
     applied_fiscal_creates: List[Dict[str, object]] = []
     for create in extracted.get("fiscal_creates") or []:
-        dedup_reason = _commitment_fiscal_create_duplicate_reason(create, commitment_economy_carriers, db)
-        if dedup_reason:
-            applied_fiscal_creates.append({
-                "rejected": True,
-                "reason": dedup_reason,
-                "category": "deduped_commitment_carrier",
-                "item": create,
-            })
-            continue
-        # ADR0027 残留观测兜底：同批、同账户、有 decree 承诺月支却未按科目名匹配上的
-        # fiscal_create = 疑似异名漏匹（不改落库、照常落账，只打日志当试玩信号；真在
-        # 试玩看到漏再升级到精确 provenance）。
-        residual_account = _commitment_carrier_same_account_unmatched(create, commitment_economy_carriers)
-        if residual_account:
-            residual_display = (
-                str(create.get("display") or "").strip()
-                or (db._stem_of(str(create.get("key") or "")) or str(create.get("key") or "")).strip()
-                or "无名月支"
-            )
-            tlog(
-                f"[commitment-dedup] ADR0027 残留观测：同批{residual_account}已有 decree 承诺月支，"
-                f"但 fiscal_create「{residual_display}」未按科目名匹配上、照常落账——疑似异名漏匹，试玩留意。"
-            )
-        key = str(create.get("key") or "").strip()
-        account = str(create.get("account") or "").strip()
         # direction 同义词在唯一守门人处归一（cmr S3 r9:归一放 driver 不经过的
         # cleaner 层=同输入两判;DELTA_SCHEMA 明言吃中文别名）。表与 cleaner 共用
-        # simulation._DIRECTION_NORMALIZE（懒 import 避循环）。
+        # simulation._DIRECTION_NORMALIZE（懒 import 避循环）。先归一再去重：ADR0027
+        # 承诺载体都是月度【支出】(delta<0)，dedup/残留观测只对【支出】fiscal_create 生效；
+        # 同名的【收入】新科目(如新税)与承诺无关，绝不可被误去重或误报残留(codex correctness)。
         from ming_sim.simulation import _DIRECTION_NORMALIZE
         direction_raw = str(create.get("direction") or "").strip()
         direction = _DIRECTION_NORMALIZE.get(direction_raw, direction_raw)
+        if direction == "expense":
+            dedup_reason = _commitment_fiscal_create_duplicate_reason(create, commitment_economy_carriers, db)
+            if dedup_reason:
+                applied_fiscal_creates.append({
+                    "rejected": True,
+                    "reason": dedup_reason,
+                    "category": "deduped_commitment_carrier",
+                    "item": create,
+                })
+                continue
+            # ADR0027 残留观测兜底：同批、同账户、有 decree 承诺月支却未按科目名匹配上的
+            # fiscal_create = 疑似异名漏匹（不改落库、照常落账，只打日志当试玩信号；真在
+            # 试玩看到漏再升级到精确 provenance）。
+            residual_account = _commitment_carrier_same_account_unmatched(create, commitment_economy_carriers)
+            if residual_account:
+                residual_display = (
+                    str(create.get("display") or "").strip()
+                    or (db._stem_of(str(create.get("key") or "")) or str(create.get("key") or "")).strip()
+                    or "无名月支"
+                )
+                tlog(
+                    f"[commitment-dedup] ADR0027 残留观测：同批{residual_account}已有 decree 承诺月支，"
+                    f"但 fiscal_create「{residual_display}」未按科目名匹配上、照常落账——疑似异名漏匹，试玩留意。"
+                )
+        key = str(create.get("key") or "").strip()
+        account = str(create.get("account") or "").strip()
         # key 空 / account / direction 非法 = 脏枚举,原先纯静默 continue,改记拒留痕
         # （ADR 决定 1 / S3；「在场即须合法」对称 S1/S2）。
         if not key or account not in _FISCAL_ACCOUNTS or direction not in _FISCAL_DIRECTIONS:
