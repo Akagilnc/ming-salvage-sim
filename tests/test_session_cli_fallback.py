@@ -245,7 +245,8 @@ def test_chat_starts_cli_action_classification_before_reply_finishes(game, monke
     sess.state = state
     sess.content = content
     sess.registry = registry
-    sess.llm_config = SimpleNamespace(channel="cli")
+    # 并发分类器仅对并发安全 runner（codex）启用——cmr Gate2 守门（agy/claude 并发未验证）。
+    sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
     sess.temporary_characters = {}
     sess._retrieve_memories_for_message = lambda message: message
 
@@ -261,6 +262,37 @@ def test_chat_starts_cli_action_classification_before_reply_finishes(game, monke
     assert allow_reply.is_set()
     assert result.answer == "臣谨奏：辽饷尚可支应。"
     assert calls == ["classify"]
+
+
+def test_non_parallel_safe_runner_skips_concurrent_classifier(game, monkeypatch):
+    """非并发安全 runner（agy）不得把动作分类器与回话并发跑（会撞 keychain auth-race，
+    cmr Gate2 F-E）：_start_cli_action_intent 返 None → 回话后回落串行抽取，动作不丢。"""
+    db, state, content = game
+    minister = next(
+        ch for ch in content.characters.values()
+        if getattr(ch, "office_type", "") not in ("后宫",)
+        and db.resolve_power_id(ch) == "ming"
+        and db.get_character_status(ch.name)[0] == "active"
+    )
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.llm_config = SimpleNamespace(channel="cli", cli_runner="agy")
+    sess.temporary_characters = {}
+
+    def fake_classify(*args, **kwargs):
+        raise AssertionError("agy runner 不应并发跑分类器")
+
+    monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
+    # agy 非并发安全 → 返 None，不触发分类器。
+    assert sess._start_cli_action_intent(minister, "辽东军饷如何？") is None
+    # 对照：codex 并发安全 → 返回 future（真跑分类器）。
+    sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
+    monkeypatch.setattr(cb, "classify_cli_action_intent", lambda *a, **k: {"kind": "none"})
+    fut = sess._start_cli_action_intent(minister, "辽东军饷如何？")
+    assert fut is not None
+    fut.result(timeout=2)
 
 
 def test_begin_turn_syncs_offices_with_runtime_llm_config(monkeypatch):
