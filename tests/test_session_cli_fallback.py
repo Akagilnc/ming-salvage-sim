@@ -98,6 +98,39 @@ def test_draft_prefix_with_active_secret_order_runs_zero_llm(game, monkeypatch):
     assert not result.pending_action_id
 
 
+def test_draft_prefix_with_pending_confirmation_runs_zero_llm(game, monkeypatch):
+    """#344「按钮前缀路零 LLM」(US3)——确认闸门面：该大臣有非 directive 待确认暂存动作时，
+    玩家发 '拟旨如下：' 前缀不得触发 extract_confirmation_intent(LLM)，也不得被误判应允/拒绝
+    把这道前缀拟旨吞掉。整合 cmr r4 codex 完整性腿抓出此 sibling 缺口（r3 只把住了密令块、
+    漏了更靠前的确认闸门）→ 顶部单一 explicit_prefixed 统一把门所有后置 LLM 抽取器。"""
+    db, state, _ = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    who = "前缀零LLM确认承办官"
+    # 预置一个非 directive 待确认暂存动作（confirm_targets 非空 → 旧路会跑确认抽取）
+    db.stage_pending_action(
+        state.turn, kind="office", action="任命",
+        minister_name=who, target_id=None,
+        payload={"name": "倪元璐", "office": "户部尚书", "appointer": who})
+
+    def _forbidden(*a, **k):
+        raise AssertionError("前缀拟旨不应触发任何后置 LLM 抽取器（含确认闸门）")
+
+    monkeypatch.setattr(cb, "extract_confirmation_intent", _forbidden)
+    monkeypatch.setattr(cb, "extract_minister_actions", _forbidden)
+    monkeypatch.setattr(cb, "extract_draft_intent", _forbidden)
+    monkeypatch.setattr(cb, "extract_appointment_action", _forbidden)
+
+    result = _result()
+    result.answer = "臣遵旨，当即清核辽饷。"
+    _session(db, state, llm_config=SimpleNamespace(channel="cli"))._cli_backend_fallback_actions(
+        result, SimpleNamespace(name=who, office_type="兵部"),
+        "拟旨如下：着户部清核辽饷。")
+
+    # 前缀拟旨零 LLM 落库：directive 入档，未被确认闸门吞掉
+    assert result.proposed_directive is not None
+    assert result.proposed_directive.text == "臣遵旨，当即清核辽饷。"
+
+
 def test_chat_starts_cli_action_classification_before_reply_finishes(game, monkeypatch):
     """CLI 召对动作判断只看皇帝消息，应与大臣回话并发；无动作消息回话后不再跑抽取器。"""
     db, state, content = game
