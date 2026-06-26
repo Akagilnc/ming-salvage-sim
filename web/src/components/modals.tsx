@@ -24,6 +24,8 @@ export function ReportModal({
         <div className="report-page-tabs" role="tablist" aria-label="邸报分页">
           <button
             type="button"
+            role="tab"
+            aria-selected={page === "narrative"}
             className={`report-page-tab${page === "narrative" ? " active" : ""}`}
             onClick={() => setPage("narrative")}
           >
@@ -31,6 +33,8 @@ export function ReportModal({
           </button>
           <button
             type="button"
+            role="tab"
+            aria-selected={page === "account"}
             className={`report-page-tab${page === "account" ? " active" : ""}`}
             onClick={() => setPage("account")}
           >

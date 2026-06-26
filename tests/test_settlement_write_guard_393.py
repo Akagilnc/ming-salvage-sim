@@ -25,10 +25,12 @@ class _RecordingDB:
         self.conn = SimpleNamespace(execute=lambda *a, **k: SimpleNamespace(fetchone=lambda: None))
 
     def create_secret_order(self, *a, **k):
-        self.writes.append("create_secret_order"); return 99
+        self.writes.append("create_secret_order")
+        return 99
 
     def withdraw_pending_action(self, *a, **k):
-        self.writes.append("withdraw_pending_action"); return True
+        self.writes.append("withdraw_pending_action")
+        return True
 
     def list_pending_actions(self, *a, **k):
         return []
@@ -43,10 +45,12 @@ class _RecordingDB:
         self.writes.append("set_character_status")
 
     def admin_upsert(self, *a, **k):
-        self.writes.append("admin_upsert"); return {"key": "x", "value": "1"}
+        self.writes.append("admin_upsert")
+        return {"key": "x", "value": "1"}
 
     def admin_delete(self, *a, **k):
-        self.writes.append("admin_delete"); return 1
+        self.writes.append("admin_delete")
+        return 1
 
 
 class _FakeGame:

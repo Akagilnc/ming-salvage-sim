@@ -485,15 +485,23 @@ def _iter_codex_stream_chunks(
             maybe_final = _codex_final_text(obj)
             if maybe_final:
                 final_text = maybe_final
-        try:
-            proc.wait(timeout=run_timeout)
-        except ValueError:
-            proc.wait(timeout=run_timeout)
+        proc.wait(timeout=run_timeout)
     except subprocess.TimeoutExpired as exc:
         proc.kill()
         raise RuntimeError("codex 流式调用超时") from exc
     finally:
         watchdog.cancel()
+        # consumer 提前弃用（break/异常/GeneratorExit）时底层 codex 子进程仍在跑 → 泄漏。
+        # terminate+wait 兜底（正常路径 proc 已退，terminate 对已退进程是 no-op）（#399 cmr R1 coderabbit Major）。
+        try:
+            proc.terminate()
+            proc.wait(timeout=5)
+        except Exception:
+            try:
+                proc.kill()
+                proc.wait(timeout=5)
+            except Exception:
+                pass
         # 进程已退/被 kill → stderr 关闭 → drain 线程读到 EOF 结束；取其抽到的诊断文本。
         stderr_thread.join(timeout=2)
         stderr = "".join(stderr_parts)
