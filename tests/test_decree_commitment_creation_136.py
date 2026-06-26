@@ -75,6 +75,20 @@ def test_personnel_secret_extractor_routes_recurring_secret_funding_commitments(
     assert "_module_rejections" not in cleaned
 
 
+def test_internal_extractor_excludes_decree_commitment_from_new_monthly_fiscal():
+    """ADR0027 减噪边界（#340 创建端 internal 路）：诏书/密令经常性拨款承诺不在 internal
+    建 `新立月度收支`（交承诺 issue 承载），只有真·永久制度科目才建——补完与
+    personnel_secret 对称的那半创建端边界，apply 端 dedup 仍是承重解法。"""
+    prompt = (ROOT / "content/prompts/score_extractor_internal.md").read_text(encoding="utf-8")
+
+    assert "经常性拨款承诺不在此建项" in prompt
+    assert "ADR 0027" in prompt
+    assert "真·永久制度科目" in prompt
+    # 边界须点明「双扣」动机 + 交承诺 issue 承载的归口
+    assert "双扣" in prompt
+    assert "承诺 issue" in prompt
+
+
 def test_until_stop_commitment_issue_is_created_with_carrier_fields(game, monkeypatch):
     db, state, content = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
