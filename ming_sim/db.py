@@ -6525,6 +6525,21 @@ class GameDB:
                 (event_id, turn, year, period, source, terminal_state, terminal_reason)
             VALUES (?, ?, ?, ?, ?, 'triggered', ?)
             ON CONFLICT(event_id) DO UPDATE SET
+                turn = CASE
+                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
+                    THEN excluded.turn
+                    ELSE event_triggers.turn
+                END,
+                year = CASE
+                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
+                    THEN excluded.year
+                    ELSE event_triggers.year
+                END,
+                period = CASE
+                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
+                    THEN excluded.period
+                    ELSE event_triggers.period
+                END,
                 source = CASE
                     WHEN COALESCE(event_triggers.terminal_state, '') = ''
                     THEN excluded.source

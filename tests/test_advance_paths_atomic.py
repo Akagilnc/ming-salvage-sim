@@ -699,13 +699,22 @@ def test_mark_event_triggered_upgrades_pending_choice_row(game):
     db, state, _content = game
     eid = "__terminal_account_pending_choice_upgrade__"
     db.record_event_decision_choice(state, eid, {"label": "留"})
+    trigger_turn = state.turn + 1
+    trigger_year = state.year + 1
+    trigger_period = 7
+    state.turn = trigger_turn
+    state.year = trigger_year
+    state.period = trigger_period
 
     db.mark_event_triggered(state, eid, source="event_pool")
 
     row = db.conn.execute(
-        "SELECT terminal_state, source, terminal_reason, choice_json FROM event_triggers WHERE event_id=?",
+        "SELECT turn, year, period, terminal_state, source, terminal_reason, choice_json FROM event_triggers WHERE event_id=?",
         (eid,),
     ).fetchone()
+    assert row["turn"] == trigger_turn
+    assert row["year"] == trigger_year
+    assert row["period"] == trigger_period
     assert row["terminal_state"] == "triggered"
     assert row["source"] == "event_pool"
     assert row["terminal_reason"] == "留"
