@@ -6537,7 +6537,7 @@ class GameDB:
                 END,
                 terminal_reason = CASE
                     WHEN COALESCE(event_triggers.terminal_state, '') = ''
-                    THEN excluded.terminal_reason
+                    THEN COALESCE(NULLIF(event_triggers.terminal_reason, ''), excluded.terminal_reason)
                     WHEN event_triggers.terminal_state = 'triggered'
                       AND COALESCE(event_triggers.terminal_reason, '') = ''
                       AND excluded.terminal_reason <> ''
@@ -6577,7 +6577,7 @@ class GameDB:
                 END,
                 terminal_reason = CASE
                     WHEN COALESCE(event_triggers.terminal_state, '') = ''
-                    THEN excluded.terminal_reason
+                    THEN COALESCE(NULLIF(event_triggers.terminal_reason, ''), excluded.terminal_reason)
                     ELSE event_triggers.terminal_reason
                 END
             """,
@@ -6613,7 +6613,7 @@ class GameDB:
                 END,
                 terminal_reason = CASE
                     WHEN COALESCE(event_triggers.terminal_state, '') = ''
-                    THEN excluded.terminal_reason
+                    THEN COALESCE(NULLIF(event_triggers.terminal_reason, ''), excluded.terminal_reason)
                     ELSE event_triggers.terminal_reason
                 END
             """,
@@ -6641,7 +6641,7 @@ class GameDB:
                 END,
                 terminal_reason = CASE
                     WHEN COALESCE(event_triggers.terminal_state, '') = ''
-                    THEN excluded.terminal_reason
+                    THEN COALESCE(NULLIF(event_triggers.terminal_reason, ''), excluded.terminal_reason)
                     ELSE event_triggers.terminal_reason
                 END
             """,
