@@ -24,6 +24,14 @@
 ## 🟠 family/379-base integrated-cmr Deferred（ship-pre Gate1 完整性闸 2026-06-26 收敛时记录）
 - **#389 残留：simulator「漏 event_id + 改写抉择名」双重偏离时事件选择不绑定（P3）**。`bind_decisions_to_candidate_events`（[settlement_payload.py](ming_sim/settlement_payload.py)）已把绑定从「信 simulator 回显 id」改成「以权威候选快照为准」：回显 id 在快照内→采信；缺 id/回显 off-snapshot→以快照**唯一标题**(重)绑；无键可绑→解绑（选择留 `pending_decisions.choice_json`，settle 末 `clear_pending_decisions` 删，不进 `event_triggers` 终态账）。残留：simulator 既漏掉 prompt 强制的 `event_id`（`season_simulator.md:143`）**又**把抉择标题改写得与候选 title 不等时，该候选事件决策与「正当的非事件亲裁决策」无任何共享键可区分 → 无法安全确定性绑定（按候选数消去法会把非事件决策误绑到本回合未浮现的候选，证伪不安全）。彻底闭合需让候选事件决策块由系统生成、携带确定性 candidate index/id（= 改 #345 触发=推送的决策生成路径，#389 边界明示 out-of-scope「不重做 #345」）。判据：3/4 整合 cmr 腿 exercise 后判 DONE；与 #340-H 裁决「绑定残留靠日志/观测兜底、不扩 scope」同类、同处置。要彻底修时回头改决策块生成路径或开新 ADR。
 
+## 🔴 ESCALATED — #383 后台召对并发写模型不安全（family/379-base integrated-cmr Gate2 2026-06-26，需架构裁决，未 ship）
+> **整合 cmr Gate2 correctness 闸 ESCALATE：#383（机器解决合并）引入「发送后台 worker 线程完成召对回复 + 写动作」，但全仓单一 `sqlite3.connect(check_same_thread=False)` 连接无写锁（`db.py:317`，故意为流式颁诏 worker 留的），且 in-flight 守卫仅 per-minister、只在召对入口、不在结算入口。`#383` 的新后台 writer 因此能与「结算 worker / 另一大臣的召对 worker」并发写同一连接。4 个并发缺陷同根，robust 修复须先定并发模型（写锁串行化 / 连接 per-thread / 结算遇 in-flight 召对则阻塞-or-拒 + 产品语义 / rollback 改 per-turn provenance），各触 ADR 0008 atomic 事务模型、#383「退出≠取消」产品语义、`撤回本轮` 的 `capture_chat_rollback_snapshot` 机制——非单点 patch，须设计裁决，故 escalate 不自行打补丁。**
+> - **F4（P1，Claude leg）** `applier.py:164` `conn._commit_suspended` 是【共享连接实例标志】无线程隔离/无锁。结算 worker `atomic()` 置 True 期间，并发召对 worker 的 `conn.commit()` 变静默 no-op（写被吞进/随结算事务回滚）；反之召对在标志为 False 窗口 commit 会把结算半成原子态提前 commit → 破 ADR0008「全有或全无」。
+> - **F1（P1，codexB+codexC concur）** `web_app.py:1608` chat SSE 同步 generator 阻塞 `ev_queue.get()`，而 `api_chat_stream`(2295) 是 async、直接 for-iterate 它 → 阻塞 ASGI event loop（结算 SSE 已用 `await loop.run_in_executor(None, ev_queue.get)`，2486/2549——chat 路没跟上）。「离开实时观察后继续玩」的后续 HTTP 请求会被卡到首 delta/最终结果到达（codex 一次吐时=整段回复时长）。
+> - **F2（P1，codexC）** 后台 worker 完成时用【当前】`self.state.turn` 落 minister message/拟旨/密令（`web_app.py:1485/1541`），非问话受理时的 turn。玩家离开召对→颁诏推进到 T+1→worker 完成→回复落 T+1 而 user message 在 T，破 #383「本轮成立、完成后同语义入档」，且 `撤回本轮` 按当前 turn 查不到旧 turn 的召对。worker 须捕获 accepted turn/period 落库（`_start_chat_turn` 现只捕获 chat_turn_id+快照，未捕获 turn）。
+> - **F3（P1，codexC）** `capture_chat_rollback_snapshot`（`db.py:4755`）是全表 before/after 快照差分、无 chat_turn/minister 过滤。后台化后另一 worker/结算在窗口内写 `turn_directives/secret_orders/pending_actions` 会被算进本召对 rollback_items → 本召对失败或撤回会误删他人的写动作。
+> - **非阻塞旁记 P3（codexB-F2）**：`session.py:943` preclassified 密令「更新」用 classifier（只读皇帝话）的 `new_content`，玩家「按你刚才说的改」引用回话内容时分类器取不到 → fallback 保留原 content（不腐化、仅不更新）。属 #344-E 裁决「结构字段取 classifier」同型 + 安全 fallback，记 P3 不阻塞。
+
 ## 🔴 BUG / 待修（影响游戏正确性）
 
 ### B13. 编排器测试 epicOrchestratorWorkflow 预存失败（P0，非本分支引入）
