@@ -2764,9 +2764,14 @@ async def api_list_saves() -> Dict[str, Any]:
 
 @app.post("/api/saves")
 async def api_create_save(request: SaveCreateRequest) -> Dict[str, Any]:
-    info = get_game().save_to(request.name)
+    # save_to → db.backup_to（commit + sqlite backup）：结算/后台召对 worker 持锁期间不能并发
+    # 走同一无锁连接（否则撞 _commit_suspended 守卫成 500）。走 _write_gate → 忙时干净 409
+    # （cmr Gate2 r5）。生命周期写也纳入串行门，完整收口（连接级 close 竞态的通用解仍属 #382）。
+    game = get_game()
+    with _serialized_web_write(game):
+        info = game.save_to(request.name)
     return steam_events.with_events(
-        {"save": info, "saves": get_game().list_saves()},
+        {"save": info, "saves": game.list_saves()},
         [steam_events.add_stat(steam_events.STAT_SAVES_CREATED)],
     )
 
@@ -2779,14 +2784,23 @@ async def api_delete_save(name: str) -> Dict[str, Any]:
 
 @app.post("/api/saves/{name}/load")
 async def api_load_save(name: str) -> Dict[str, Any]:
-    get_game().load_save(name)
+    # load_save 会 session.close() 热替换主 DB——若结算/后台召对 worker 正持锁写旧连接，关连接
+    # 会让 worker 崩在「closed database」。非阻塞抢 _write_gate：忙时 409，让玩家待 worker 落定
+    # 再载（cmr Gate2 r5；强制中断在途 worker 的取消语义属 #382 通用并发模型，本轮不做）。
+    game = get_game()
+    with _serialized_web_write(game):
+        game.load_save(name)
     return {"state": get_game().state_payload()}
 
 
 @app.post("/api/game/reset")
 async def api_reset_game() -> Dict[str, Any]:
     """清空主 DB 重开新局。存档目录保留。"""
-    get_game().reset_game()
+    # reset_game 关连接 + 删 sqlite 文件 + 重建——同 load_save，正持锁的 worker 会崩在关连接上。
+    # 非阻塞抢 _write_gate：忙时 409（cmr Gate2 r5；强制中断在途属 #382）。
+    game = get_game()
+    with _serialized_web_write(game):
+        game.reset_game()
     return steam_events.with_events(
         {"state": get_game().state_payload()},
         [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
