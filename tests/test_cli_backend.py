@@ -160,6 +160,45 @@ def test_secret_assignee_defaults_when_unspecified(monkeypatch):
     assert acts["secret_order"]["assignee"] == "毕自严"
 
 
+def test_secret_prefix_llm_keeps_assignee_field_but_drops_from_content_merges(monkeypatch):
+    """#397 Step6 R2（Codex P2）：LLM 返回合法 JSON、正文完整保留御旨、承办人字段正确抽出『李若琏』，
+    但正文里却把大臣补充的承办人吞掉（无『李若琏』）→ 不得因承办人字段正确就静默接受。
+    正文（content）是喂给承办人和结算模拟的任务概要，丢承办人=任务不明；须兜底合并，
+    让正文也带上大臣补充（旧 `== _assignee_llm` 让字段正确就放行正文吞掉承办人）。"""
+    canned = json.dumps({
+        "标题": "密查辽东军饷",
+        "内容": "查辽东军饷有无侵冒，三月内回奏",   # 合法、完整御旨，但丢大臣补充的承办人
+        "承办人": "李若琏",                        # 承办人字段正确抽出
+        "期限月数": 3,
+        "标签": ["辽饷"],
+    }, ensure_ascii=False)
+    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
+    acts = cb.resolve_minister_actions(
+        "臣领密旨，可授李若琏暗查。", "密令如下：查辽东军饷有无侵冒，三月内回奏",
+        default_assignee="王在晋",
+    )
+    so = acts["secret_order"]
+    assert so is not None
+    assert "查辽东军饷有无侵冒" in so["content"]      # 御旨不丢
+    assert "李若琏" in so["content"]                  # 正文也带上承办人（不被字段正确就吞掉）
+    assert so["assignee"] == "李若琏"                 # 承办人字段仍正确
+    assert so["deadline_months"] == 3
+
+
+def test_extract_assignee_hint_does_not_corrupt_name_with_trailing_verb():
+    """#397 Step6 R2（agy P1）：『可委/可由/请委…』后的人名不得被尾随动作字污染。
+    旧贪心 {2,4} 把动作字（调/督/拟…）吞进捕获组、尾部清洗又不收这些字 → 存进
+    secret_orders.minister_name 成无法解析的孤儿记录。"""
+    assert cb._extract_assignee_hint("臣领密旨，可委李若琏调查此事。") == "李若琏"
+    assert cb._extract_assignee_hint("可由袁崇焕督师。") == "袁崇焕"
+    assert cb._extract_assignee_hint("请委周延儒拟旨。") == "周延儒"
+    assert cb._extract_assignee_hint("可委李标调查此事。") == "李标"
+    # 原有意图用例不回归：可授李若琏暗查
+    assert cb._extract_assignee_hint("臣领密旨，可授李若琏暗查。") == "李若琏"
+    # 句末/标点边界也能正确取整名
+    assert cb._extract_assignee_hint("可授李若琏。") == "李若琏"
+
+
 # ── _loads_lenient：容错 JSON 解析 ──
 
 def test_loads_lenient_plain():

@@ -1261,13 +1261,16 @@ def _content_reflects_emperor_intent(content: str, emperor_intent: str) -> bool:
 # LLM 偶发把『承办人』留空、甚至把该人从正文里也抹掉——#397 Step6 须兜底找回，
 # 不让大臣补充的承办人被"看起来合法"的 LLM 输出吞掉。只认建议式措辞（可授/请授/可委…），
 # 不认皇帝祈使式"着/令"——后者常带机关名（着户部…），会把"户部"误当人名。
+# 非贪心 {2,4}?：遇到动作字（暗/调/督/拟…）或标点/句末即停，不把动作字吞进人名
+# （#397 Step6 R2 agy P1：旧贪心 {2,4} 把『李若琏调』『袁崇焕督』『周延儒拟』等动作字
+# 吞进捕获组、尾部清洗又不收 调/督/拟 → 孤儿 minister_name）。lookahead 是边界判定，
+# 落在捕获组内的字（如名字末字恰为动作字）不受影响——非贪心会自动扩到正确长度。
 _ASSIGNEE_HINT_RE = re.compile(
     r"(?:可\s*授|可\s*委|可\s*差|可\s*令|可\s*派|请\s*授|请\s*委|请\s*派|"
     r"建议\s*授|建议\s*委|可\s*由|可\s*命)"
-    r"\s*([\u4e00-\u9fa5·]{2,4})"
+    r"\s*([\u4e00-\u9fa5·]{2,4}?)"
+    r"(?=[，,。.；;！!？?、\s]|暗|密|调|督|拟|领|查|办|为|任|去|往|主|核|理|统|提|巡|镇|守|征|讨|驻|屯|管|行|前|担|$)"
 )
-# 贪心 {2,4} 会把尾随的动作字（暗/查/办…）一并吞进捕获组，事后剥掉。
-_ASSIGNEE_HINT_TAIL_RE = re.compile(r"(?:暗|密|去|往|领|查|办|为|任)+$")
 # 捕获到机关/地名（含 部/寺/院… 字）的不是人名，跳过。
 _ASSIGNEE_HINT_STOP_RE = re.compile(r"[部寺院局司省州府县卫营阁监科曹库厂仓]")
 
@@ -1275,7 +1278,7 @@ _ASSIGNEE_HINT_STOP_RE = re.compile(r"[部寺院局司省州府县卫营阁监�
 def _extract_assignee_hint(text: str) -> Optional[str]:
     """从文本（多为大臣回话）里找"建议某人承办"的人名线索。无则 None。"""
     for m in _ASSIGNEE_HINT_RE.finditer(text or ""):
-        name = _ASSIGNEE_HINT_TAIL_RE.sub("", m.group(1).strip())
+        name = m.group(1).strip()
         if len(name) >= 2 and not _ASSIGNEE_HINT_STOP_RE.search(name):
             return name
     return None
@@ -1337,11 +1340,10 @@ def _extract_secret_order(
     _content_norm = re.sub(r"\s+", "", _content_llm)
     # 御旨守门 + 大臣补充守门：两者都过才直取 LLM 正文；任一不过走兜底合并。
     _emperor_ok = bool(_content_llm) and _content_reflects_emperor_intent(_content_llm, player_command)
-    _supplement_ok = (
-        not _assignee_hint
-        or _assignee_hint in _content_norm
-        or _assignee_hint == _assignee_llm
-    )
+    # 大臣补充守门：承办人线索必须落进正文（content）——承办人字段单独正确不算够，
+    # 正文是喂给承办人和结算模拟的任务概要，丢承办人=任务不明（#397 Step6 R2 Codex P2：
+    # 旧 `== _assignee_llm` 让承办人字段正确就放行、正文却吞掉承办人）。
+    _supplement_ok = not _assignee_hint or _assignee_hint in _content_norm
     if _emperor_ok and _supplement_ok:
         content = _content_llm
     else:
