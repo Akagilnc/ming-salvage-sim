@@ -102,6 +102,28 @@ def test_runtime_api_reasoning_strength_builds_llm_config(monkeypatch):
     assert cfg.reasoning_strength == "high"
 
 
+def test_runtime_env_legacy_advanced_thinking_builds_reasoning_strength(monkeypatch):
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    cfg = web_app._llm_config_from_runtime(
+        {},
+        base_url="https://api.example.com/v1",
+        model="gpt-main",
+        api_key="sk-test",
+        max_tokens=8000,
+        timeout_seconds=180,
+        thinking_level="",
+        advanced_model="gpt-5.5",
+        advanced_base_url="",
+        advanced_api_key="",
+        advanced_thinking_level="high",
+    )
+
+    assert cfg.channel == "api"
+    assert cfg.advanced_thinking_level == ""
+    assert cfg.reasoning_strength == "high"
+
+
 def test_build_llm_config_switches_to_api_on_real_key_over_backend_env(monkeypatch):
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     seen = []

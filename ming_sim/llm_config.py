@@ -126,7 +126,7 @@ def _normalize_runtime_llm(data: Dict[str, object]) -> Dict[str, object]:
     migrated_api_strength = (
         normalize_reasoning_strength(api.get("reasoning_strength"))
         or normalize_reasoning_strength(data.get("reasoning_strength") if channel != "cli" else "")
-        or _legacy_reasoning_strength(api_source)
+        or legacy_reasoning_strength(api_source)
     )
     if migrated_api_strength:
         api["reasoning_strength"] = migrated_api_strength
@@ -209,7 +209,7 @@ def normalize_reasoning_strength(value: object) -> str:
     return strength if strength in {"off", "low", "medium", "high"} else ""
 
 
-def _legacy_reasoning_strength(data: Dict[str, object]) -> str:
+def legacy_reasoning_strength(data: Dict[str, object]) -> str:
     candidates = []
     if str(data.get("advanced_model") or "").strip():
         candidates.append(data.get("advanced_thinking_level"))
@@ -264,17 +264,27 @@ def load_llm_config(
         if not api_key:
             raise SystemExit("未提供 API key，无法使用 LLM。")
     adv_base = (advanced_base_url or "").strip()
+    normalized_thinking = normalize_thinking_level(thinking_level or os.environ.get("OPENAI_THINKING_LEVEL", ""))
+    legacy_reasoning = legacy_reasoning_strength({
+        "advanced_model": advanced_model,
+        "advanced_thinking_level": advanced_thinking_level or os.environ.get("OPENAI_ADVANCED_THINKING_LEVEL", ""),
+        "thinking_level": normalized_thinking,
+    })
+    reasoning_strength = (
+        normalize_reasoning_strength(os.environ.get("MING_SIM_REASONING_STRENGTH", ""))
+        or legacy_reasoning
+    )
     return LLMConfig(
         api_key=api_key,
         base_url=normalize_openai_base_url(base_url),
         model=model,
         timeout_seconds=timeout_seconds,
-        thinking_level=normalize_thinking_level(thinking_level or os.environ.get("OPENAI_THINKING_LEVEL", "")),
+        thinking_level=normalized_thinking,
         advanced_model=(advanced_model or "").strip(),
         advanced_base_url=normalize_openai_base_url(adv_base) if adv_base else "",
         advanced_api_key=real_api_key_or_empty(advanced_api_key),
         advanced_thinking_level="",
-        reasoning_strength=normalize_reasoning_strength(os.environ.get("MING_SIM_REASONING_STRENGTH", "")),
+        reasoning_strength=reasoning_strength,
         channel="cli" if cli_runner else "api",
         cli_runner=cli_runner or "",
         cli_model=cli_model_from_env(cli_runner or "", model),

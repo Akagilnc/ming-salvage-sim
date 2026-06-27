@@ -23,7 +23,6 @@ from ming_sim.models import LLMConfig
 from ming_sim.token_stats import install_token_stats_patch
 
 _OPENAI_REASONING_BY_STRENGTH = {
-    "off": "minimal",
     "low": "low",
     "medium": "medium",
     "high": "high",
@@ -33,6 +32,19 @@ _THINKING_BUDGET_BY_STRENGTH = {
     "medium": 10000,
     "high": 32000,
 }
+
+
+def _openai_reasoning_effort(model: str, reasoning_strength: str, thinking_level: str, enable_thinking: bool) -> str:
+    if reasoning_strength == "off":
+        model_id = (model or "").strip().lower()
+        return "none" if model_id.startswith(("gpt-5.1", "gpt-5.2", "gpt-5.4", "gpt-5.5")) else "minimal"
+    if reasoning_strength:
+        return _OPENAI_REASONING_BY_STRENGTH.get(reasoning_strength, "")
+    if thinking_level:
+        return thinking_level
+    if enable_thinking:
+        return "medium"
+    return ""
 
 
 def _extract_provider_error(error: Exception) -> tuple[str, str, int | None]:
@@ -132,11 +144,11 @@ def create_chat_model(
         extra_body["response_format"] = {"type": "json_object"}
         kwargs["extra_body"] = extra_body
     if supports_openai_reasoning_effort(llm_config.model):
-        kwargs["reasoning_effort"] = (
-            _OPENAI_REASONING_BY_STRENGTH.get(reasoning_strength)
-            or llm_config.thinking_level
-            or ("medium" if enable_thinking else "minimal")
+        effort = _openai_reasoning_effort(
+            llm_config.model, reasoning_strength, llm_config.thinking_level, enable_thinking
         )
+        if effort:
+            kwargs["reasoning_effort"] = effort
     # 探针：新配置用 channel 显式选择执行通道；未声明 channel 的旧路径暂沿用 env fallback。
     # CliChat 继承 OpenAIChat，吃同一套 kwargs；reasoning_effort 等 CLI 无关字段被忽略。
     from ming_sim.cli_backend import CliChat, cli_backend_from_env, is_supported_cli_runner

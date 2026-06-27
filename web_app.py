@@ -55,6 +55,7 @@ from ming_sim.llm_config import (
     normalize_openai_base_url,
     normalize_thinking_level,
     normalize_reasoning_strength,
+    legacy_reasoning_strength,
     save_runtime_game,
     save_runtime_llm,
 )
@@ -485,10 +486,19 @@ def _llm_config_from_runtime(
     cli_slot = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
     cli_runner = str(cli_slot.get("runner") or env_runner or ("agy" if channel == "cli" else "")).strip().lower()
     cli_model = str(cli_slot.get("model") or cli_model_from_env(cli_runner, model)).strip()
+    legacy_reasoning = (
+        legacy_reasoning_strength({
+            "advanced_model": advanced_model,
+            "advanced_thinking_level": advanced_thinking_level,
+            "thinking_level": thinking_level,
+        })
+        if channel != "cli"
+        else ""
+    )
     reasoning_strength = normalize_reasoning_strength(
         (cli_slot.get("reasoning_strength") if channel == "cli" else runtime.get("reasoning_strength"))
         or runtime.get("reasoning_strength", "")
-    )
+    ) or legacy_reasoning
     # 无 saved CLI timeout 时回落 CLI 默认（300），不回落 API request timeout（codex R1 #3）。
     cli_timeout = _runtime_float(cli_slot.get("timeout_seconds"), CLI_DEFAULT_TIMEOUT_SECONDS)
     if channel == "cli":
@@ -622,7 +632,7 @@ class WebGame:
         advanced_base_url = os.environ.get("OPENAI_ADVANCED_BASE_URL", "")
         advanced_api_key = os.environ.get("OPENAI_ADVANCED_API_KEY", "")
         thinking_level = os.environ.get("OPENAI_THINKING_LEVEL", "")
-        advanced_thinking_level = ""
+        advanced_thinking_level = os.environ.get("OPENAI_ADVANCED_THINKING_LEVEL", "")
         timeout_seconds = float(os.environ.get("OPENAI_TIMEOUT_SECONDS") or API_DEFAULT_TIMEOUT_SECONDS)
         # 菜单写的 runtime_llm.json 优先于 env，让"在网页里改的配置"重启后仍生效。
         runtime = load_runtime_llm()
@@ -636,7 +646,7 @@ class WebGame:
         advanced_model = runtime.get("advanced_model") or advanced_model
         advanced_base_url = runtime.get("advanced_base_url") or advanced_base_url
         advanced_api_key = real_api_key_or_empty(runtime.get("advanced_api_key")) or advanced_api_key
-        advanced_thinking_level = ""
+        advanced_thinking_level = runtime.get("advanced_thinking_level") or advanced_thinking_level
         max_tokens = int(runtime.get("max_tokens") or API_DEFAULT_MAX_TOKENS)
         timeout_seconds = float(runtime.get("timeout_seconds") or timeout_seconds)
         random.seed(int(os.environ.get("MING_SIM_SEED", "7")))
