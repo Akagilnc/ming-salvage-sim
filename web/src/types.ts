@@ -301,6 +301,7 @@ export type SaveEntry = { name: string; size: number; mtime: number };
 // 单一真源在后端 cli_backend.cli_model_choices()，经 config 端点下发，前端不硬编。
 export type CliModelChoice = { value: string; label: string };
 export type CliModelChoices = Record<string, CliModelChoice[]>;
+export type ReasoningStrengthChoice = { value: string; label: string };
 
 export type LLMConfigInfo = {
   channel?: "api" | "cli";
@@ -313,6 +314,11 @@ export type LLMConfigInfo = {
   advanced_base_url: string;
   has_advanced_api_key: boolean;
   advanced_thinking_level: string;
+  reasoning_strength?: string;
+  api_reasoning_strength?: string;
+  cli_reasoning_strength?: string;
+  reasoning_supported?: boolean;
+  reasoning_strengths?: ReasoningStrengthChoice[];
   has_api_key: boolean;
   cli_runner?: string;
   cli_model?: string;
@@ -330,6 +336,9 @@ export type LLMConfigInfo = {
     advanced_base_url: string;
     has_advanced_api_key: boolean;
     advanced_thinking_level: string;
+    reasoning_strength?: string;
+    api_reasoning_strength?: string;
+    cli_reasoning_strength?: string;
     cli_runner?: string;
     cli_model?: string;
     cli_timeout_seconds?: number;
@@ -434,6 +443,11 @@ export type MenuStatus = {
     advanced_base_url: string;
     has_advanced_api_key: boolean;
     advanced_thinking_level: string;
+    reasoning_strength?: string;
+    api_reasoning_strength?: string;
+    cli_reasoning_strength?: string;
+    reasoning_supported?: boolean;
+    reasoning_strengths?: ReasoningStrengthChoice[];
   };
 };
 

@@ -45,12 +45,17 @@ from ming_sim.llm_config import (
     VALID_CHANNELS,
     cli_model_from_env,
     is_real_api_key,
+    api_supports_reasoning_strength,
+    cli_supports_reasoning_strength,
+    REASONING_STRENGTH_CHOICES,
     real_api_key_or_empty,
     load_llm_config,
     load_runtime_game,
     load_runtime_llm,
     normalize_openai_base_url,
     normalize_thinking_level,
+    normalize_reasoning_strength,
+    legacy_reasoning_strength,
     save_runtime_game,
     save_runtime_llm,
 )
@@ -417,11 +422,12 @@ def _verify_llm_configs_or_raise(config: LLMConfig) -> None:
         model=advanced_model,
         max_tokens=config.max_tokens,
         timeout_seconds=config.timeout_seconds,
-        thinking_level=config.advanced_thinking_level,
+        thinking_level="",
         advanced_model=config.advanced_model,
         advanced_base_url=config.advanced_base_url,
         advanced_api_key=config.advanced_api_key,
-        advanced_thinking_level=config.advanced_thinking_level,
+        advanced_thinking_level="",
+        reasoning_strength=config.reasoning_strength,
         channel=config.channel,
         cli_runner=config.cli_runner,
         cli_model=config.cli_model,
@@ -480,6 +486,19 @@ def _llm_config_from_runtime(
     cli_slot = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
     cli_runner = str(cli_slot.get("runner") or env_runner or ("agy" if channel == "cli" else "")).strip().lower()
     cli_model = str(cli_slot.get("model") or cli_model_from_env(cli_runner, model)).strip()
+    legacy_reasoning = (
+        legacy_reasoning_strength({
+            "advanced_model": advanced_model,
+            "advanced_thinking_level": advanced_thinking_level,
+            "thinking_level": thinking_level,
+        })
+        if channel != "cli"
+        else ""
+    )
+    reasoning_strength = normalize_reasoning_strength(
+        (cli_slot.get("reasoning_strength") if channel == "cli" else runtime.get("reasoning_strength"))
+        or runtime.get("reasoning_strength", "")
+    ) or legacy_reasoning
     # 无 saved CLI timeout 时回落 CLI 默认（300），不回落 API request timeout（codex R1 #3）。
     cli_timeout = _runtime_float(cli_slot.get("timeout_seconds"), CLI_DEFAULT_TIMEOUT_SECONDS)
     if channel == "cli":
@@ -498,12 +517,25 @@ def _llm_config_from_runtime(
         advanced_model=(advanced_model or "").strip(),
         advanced_base_url=normalize_openai_base_url(advanced_base_url) if advanced_base_url else "",
         advanced_api_key=real_api_key_or_empty(advanced_api_key),
-        advanced_thinking_level=normalize_thinking_level(advanced_thinking_level),
+        advanced_thinking_level="",
+        reasoning_strength=reasoning_strength,
         channel=channel,
         cli_runner=cli_runner,
         cli_model=cli_model,
         cli_timeout_seconds=cli_timeout,
     )
+
+
+def _api_reasoning_supported_for_effective_model(
+    base_url: str,
+    model: str,
+    advanced_base_url: str = "",
+    advanced_model: str = "",
+) -> bool:
+    adv_model = (advanced_model or "").strip()
+    if adv_model:
+        return api_supports_reasoning_strength((advanced_base_url or "").strip() or base_url, adv_model)
+    return api_supports_reasoning_strength(base_url, model)
 
 
 class ChatRequest(BaseModel):
@@ -760,6 +792,7 @@ class WebGame:
         max_tokens: int = 0,
         timeout_seconds: float = 0,
         thinking_level: Optional[str] = None,
+        reasoning_strength: Optional[str] = None,
         advanced_model: Optional[str] = None,
         advanced_base_url: Optional[str] = None,
         advanced_api_key: Optional[str] = None,
@@ -808,6 +841,10 @@ class WebGame:
             new_thinking_level = cur.thinking_level
         else:
             new_thinking_level = normalize_thinking_level(thinking_level)
+        if reasoning_strength is None:
+            new_reasoning_strength = cur.reasoning_strength
+        else:
+            new_reasoning_strength = normalize_reasoning_strength(reasoning_strength)
         # advanced_* = None 表示不动；传空串表示显式清空。
         if advanced_model is None:
             new_advanced = cur.advanced_model
@@ -822,10 +859,7 @@ class WebGame:
             new_adv_key = cur.advanced_api_key
         else:
             new_adv_key = advanced_api_key.strip()
-        if advanced_thinking_level is None:
-            new_adv_thinking_level = cur.advanced_thinking_level
-        else:
-            new_adv_thinking_level = normalize_thinking_level(advanced_thinking_level)
+        new_adv_thinking_level = ""
         return LLMConfig(
             api_key=new_key,
             base_url=base,
@@ -837,6 +871,7 @@ class WebGame:
             advanced_base_url=new_adv_base,
             advanced_api_key=new_adv_key,
             advanced_thinking_level=new_adv_thinking_level,
+            reasoning_strength=new_reasoning_strength,
             channel=new_channel,
             cli_runner=new_cli_runner,
             cli_model=new_cli_model,
@@ -862,6 +897,7 @@ class WebGame:
                     cli_runner=new_config.cli_runner,
                     cli_model=new_config.cli_model,
                     cli_timeout_seconds=new_config.cli_timeout_seconds,
+                    reasoning_strength=new_config.reasoning_strength,
                 )
             else:
                 save_runtime_llm(
@@ -874,11 +910,13 @@ class WebGame:
                     prev.advanced_model,
                     prev.advanced_base_url,
                     prev.advanced_api_key,
-                    prev.advanced_thinking_level,
+                    "",
                     channel="cli",
                     cli_runner=new_config.cli_runner,
                     cli_model=new_config.cli_model,
                     cli_timeout_seconds=new_config.cli_timeout_seconds,
+                    reasoning_strength=new_config.reasoning_strength,
+                    api_reasoning_strength=prev.reasoning_strength,
                 )
         else:
             save_runtime_llm(
@@ -891,11 +929,12 @@ class WebGame:
                 new_config.advanced_model,
                 new_config.advanced_base_url,
                 new_config.advanced_api_key,
-                new_config.advanced_thinking_level,
+                "",
                 channel="api",
                 cli_runner=new_config.cli_runner,
                 cli_model=new_config.cli_model,
                 cli_timeout_seconds=new_config.cli_timeout_seconds,
+                reasoning_strength=new_config.reasoning_strength,
             )
         self.session.llm_config = new_config
         # 重建 registry 让大臣 Agent 用新配置
@@ -2080,6 +2119,7 @@ async def api_menu_status() -> Dict[str, Any]:
     if channel not in VALID_CHANNELS:
         channel = "cli" if env_runner else "api"
     cli_slot = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
+    api_slot = runtime.get("api") if isinstance(runtime.get("api"), dict) else {}
     cli_runner = str(cli_slot.get("runner") or env_runner or ("agy" if channel == "cli" else "")).strip().lower()
     # cli_model_saved = 原样存盘值（空=用户选「默认」档）；cli_model = 兜底成默认名的 resolved 值。
     # 表单（CliModelField 下拉）须读 raw，否则空保存被 resolved 成默认名 → 下拉误判「其他(手填)」
@@ -2088,6 +2128,24 @@ async def api_menu_status() -> Dict[str, Any]:
     cli_model = cli_model_saved or str(cli_model_from_env(cli_runner, "")).strip()
     cli_timeout = _runtime_float(cli_slot.get("timeout_seconds"), CLI_DEFAULT_TIMEOUT_SECONDS)
     has_api_key = _has_real_api_key(runtime.get("api_key")) or _has_real_api_key(os.environ.get("OPENAI_API_KEY"))
+    base_url = runtime.get("base_url") or os.environ.get("OPENAI_BASE_URL", "")
+    model = runtime.get("model") or os.environ.get("OPENAI_MODEL", "")
+    reasoning_strength = normalize_reasoning_strength(
+        (cli_slot.get("reasoning_strength") if channel == "cli" else runtime.get("reasoning_strength"))
+        or runtime.get("reasoning_strength", "")
+    )
+    cli_reasoning_strength = normalize_reasoning_strength(cli_slot.get("reasoning_strength"))
+    api_reasoning_strength = normalize_reasoning_strength(api_slot.get("reasoning_strength"))
+    reasoning_supported = (
+        cli_supports_reasoning_strength(cli_runner)
+        if channel == "cli"
+        else _api_reasoning_supported_for_effective_model(
+            str(base_url),
+            str(model),
+            str(runtime.get("advanced_base_url") or os.environ.get("OPENAI_ADVANCED_BASE_URL", "")),
+            str(runtime.get("advanced_model") or os.environ.get("OPENAI_ADVANCED_MODEL", "")),
+        )
+    )
     # readiness 按 active channel 判：API 通道看真实 key，CLI 通道看 runner 是否受支持。
     # 不能因 inactive API 槽（ADR 0001 保留）里有 key 就把不可用的 CLI runner 误报成 ready。
     llm_ready = has_api_key if channel == "api" else is_supported_cli_runner(cli_runner)
@@ -2102,21 +2160,26 @@ async def api_menu_status() -> Dict[str, Any]:
         "game_settings": load_runtime_game(),
         "llm": {
             "channel": channel,
-            "base_url": runtime.get("base_url") or os.environ.get("OPENAI_BASE_URL", ""),
-            "model": runtime.get("model") or os.environ.get("OPENAI_MODEL", ""),
+            "base_url": base_url,
+            "model": model,
             "has_api_key": has_api_key,
             "cli_runner": cli_runner,
             "cli_model": cli_model,
             "cli_model_saved": cli_model_saved,
             "cli_model_choices": cli_model_choices(),
             "cli_timeout_seconds": cli_timeout,
+            "reasoning_strength": reasoning_strength,
+            "api_reasoning_strength": api_reasoning_strength,
+            "cli_reasoning_strength": cli_reasoning_strength,
+            "reasoning_supported": reasoning_supported,
+            "reasoning_strengths": list(REASONING_STRENGTH_CHOICES),
             "max_tokens": int(runtime.get("max_tokens") or API_DEFAULT_MAX_TOKENS),
             "timeout_seconds": float(runtime.get("timeout_seconds") or os.environ.get("OPENAI_TIMEOUT_SECONDS") or API_DEFAULT_TIMEOUT_SECONDS),
             "thinking_level": runtime.get("thinking_level") or os.environ.get("OPENAI_THINKING_LEVEL", ""),
             "advanced_model": runtime.get("advanced_model") or os.environ.get("OPENAI_ADVANCED_MODEL", ""),
             "advanced_base_url": runtime.get("advanced_base_url") or os.environ.get("OPENAI_ADVANCED_BASE_URL", ""),
             "has_advanced_api_key": _has_real_api_key(runtime.get("advanced_api_key")) or _has_real_api_key(os.environ.get("OPENAI_ADVANCED_API_KEY")),
-            "advanced_thinking_level": runtime.get("advanced_thinking_level") or os.environ.get("OPENAI_ADVANCED_THINKING_LEVEL", ""),
+            "advanced_thinking_level": "",
         },
     }
 
@@ -2260,6 +2323,7 @@ class LlmSetupRequest(BaseModel):
     advanced_base_url: str = ""
     advanced_api_key: str = ""
     advanced_thinking_level: str = ""
+    reasoning_strength: str = ""
     channel: str = "api"
     cli_runner: str = ""
     cli_model: str = ""
@@ -2270,6 +2334,7 @@ async def _menu_save_cli_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     """保存 CLI 通道：选 runner/model，不要求真实 api_key，保留 API 槽。"""
     cli_runner = (request.cli_runner or "").strip().lower()
     cli_model = (request.cli_model or "").strip()
+    reasoning_strength = normalize_reasoning_strength(request.reasoning_strength)
     cli_timeout = request.cli_timeout_seconds if request.cli_timeout_seconds and request.cli_timeout_seconds > 0 else CLI_DEFAULT_TIMEOUT_SECONDS
     max_tokens = request.max_tokens if request.max_tokens > 0 else API_DEFAULT_MAX_TOKENS
     timeout_seconds = request.timeout_seconds if request.timeout_seconds > 0 else API_DEFAULT_TIMEOUT_SECONDS
@@ -2281,6 +2346,7 @@ async def _menu_save_cli_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         model=cli_model,
         max_tokens=max_tokens,
         timeout_seconds=timeout_seconds,
+        reasoning_strength=reasoning_strength,
         channel="cli",
         cli_runner=cli_runner,
         cli_model=cli_model,
@@ -2314,6 +2380,7 @@ async def _menu_save_cli_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         cli_runner=cli_runner,
         cli_model=cli_model,
         cli_timeout_seconds=cli_timeout,
+        reasoning_strength=reasoning_strength,
     )
     return {
         "ok": True,
@@ -2322,6 +2389,7 @@ async def _menu_save_cli_llm(request: LlmSetupRequest) -> Dict[str, Any]:
             "cli_runner": cli_runner,
             "cli_model": cli_model,
             "cli_timeout_seconds": cli_timeout,
+            "reasoning_strength": reasoning_strength,
             "has_api_key": _has_real_api_key(config.api_key),
         },
     }
@@ -2345,7 +2413,8 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     max_tokens = request.max_tokens if request.max_tokens > 0 else API_DEFAULT_MAX_TOKENS
     timeout_seconds = request.timeout_seconds if request.timeout_seconds > 0 else API_DEFAULT_TIMEOUT_SECONDS
     thinking_level = normalize_thinking_level(request.thinking_level)
-    advanced_thinking_level = normalize_thinking_level(request.advanced_thinking_level)
+    advanced_thinking_level = ""
+    reasoning_strength = normalize_reasoning_strength(request.reasoning_strength)
     if not (base_url and model):
         raise HTTPException(status_code=400, detail="base_url / model 不能为空。")
     if not api_key:
@@ -2372,6 +2441,7 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         advanced_base_url=advanced_base_url,
         advanced_api_key=advanced_api_key,
         advanced_thinking_level=advanced_thinking_level,
+        reasoning_strength=reasoning_strength,
         channel="api",
     )
     try:
@@ -2398,6 +2468,7 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         advanced_api_key,
         advanced_thinking_level,
         channel="api",
+        reasoning_strength=reasoning_strength,
     )
     return {
         "ok": True,
@@ -2411,7 +2482,8 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
             "advanced_model": advanced_model,
             "advanced_base_url": advanced_base_url,
             "has_advanced_api_key": _has_real_api_key(advanced_api_key),
-            "advanced_thinking_level": advanced_thinking_level,
+            "advanced_thinking_level": "",
+            "reasoning_strength": reasoning_strength,
         },
     }
 
@@ -2947,6 +3019,7 @@ class LLMConfigRequest(BaseModel):
     max_tokens: int = 0
     timeout_seconds: float = 0
     thinking_level: str = "__keep__"
+    reasoning_strength: str = "__keep__"
     # None=不动，""=显式清空，其他=覆写。pydantic v1 默认 None 走不进来；用 sentinel "__keep__"
     advanced_model: str = "__keep__"
     advanced_base_url: str = "__keep__"
@@ -3051,6 +3124,16 @@ async def api_get_llm_config() -> Dict[str, Any]:
     cfg = get_game().session.llm_config
     saved = load_runtime_llm()
     saved_cli = saved.get("cli") if isinstance(saved.get("cli"), dict) else {}
+    saved_api = saved.get("api") if isinstance(saved.get("api"), dict) else {}
+    saved_api_reasoning_strength = normalize_reasoning_strength(saved_api.get("reasoning_strength"))
+    saved_cli_reasoning_strength = normalize_reasoning_strength(saved_cli.get("reasoning_strength"))
+    reasoning_supported = (
+        cli_supports_reasoning_strength(cfg.cli_runner)
+        if cfg.channel == "cli"
+        else _api_reasoning_supported_for_effective_model(
+            cfg.base_url, cfg.model, cfg.advanced_base_url, cfg.advanced_model
+        )
+    )
     return {
         "channel": cfg.channel,
         "base_url": cfg.base_url,
@@ -3058,10 +3141,13 @@ async def api_get_llm_config() -> Dict[str, Any]:
         "max_tokens": cfg.max_tokens,
         "timeout_seconds": cfg.timeout_seconds,
         "thinking_level": cfg.thinking_level,
+        "reasoning_strength": cfg.reasoning_strength,
+        "reasoning_supported": reasoning_supported,
+        "reasoning_strengths": list(REASONING_STRENGTH_CHOICES),
         "advanced_model": cfg.advanced_model,
         "advanced_base_url": cfg.advanced_base_url,
         "has_advanced_api_key": _has_real_api_key(cfg.advanced_api_key),
-        "advanced_thinking_level": cfg.advanced_thinking_level,
+        "advanced_thinking_level": "",
         "has_api_key": _has_real_api_key(cfg.api_key),
         "cli_runner": cfg.cli_runner,
         "cli_model": cfg.cli_model,
@@ -3075,10 +3161,13 @@ async def api_get_llm_config() -> Dict[str, Any]:
             "max_tokens": int(saved.get("max_tokens") or API_DEFAULT_MAX_TOKENS),
             "timeout_seconds": float(saved.get("timeout_seconds") or API_DEFAULT_TIMEOUT_SECONDS),
             "thinking_level": saved.get("thinking_level", ""),
+            "reasoning_strength": saved.get("reasoning_strength", ""),
+            "api_reasoning_strength": saved_api_reasoning_strength,
+            "cli_reasoning_strength": saved_cli_reasoning_strength,
             "advanced_model": saved.get("advanced_model", ""),
             "advanced_base_url": saved.get("advanced_base_url", ""),
             "has_advanced_api_key": _has_real_api_key(saved.get("advanced_api_key", "")),
-            "advanced_thinking_level": saved.get("advanced_thinking_level", ""),
+            "advanced_thinking_level": "",
             "cli_runner": str(saved_cli.get("runner") or ""),
             "cli_model": str(saved_cli.get("model") or ""),
             "cli_timeout_seconds": _runtime_float(saved_cli.get("timeout_seconds"), CLI_DEFAULT_TIMEOUT_SECONDS),
@@ -3089,6 +3178,7 @@ async def api_get_llm_config() -> Dict[str, Any]:
 @app.post("/api/llm/config")
 async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
     thinking_level = None if request.thinking_level == "__keep__" else request.thinking_level
+    reasoning_strength = None if request.reasoning_strength == "__keep__" else request.reasoning_strength
     advanced = None if request.advanced_model == "__keep__" else request.advanced_model
     adv_base = None if request.advanced_base_url == "__keep__" else request.advanced_base_url
     adv_key = None if request.advanced_api_key == "__keep__" else request.advanced_api_key
@@ -3109,6 +3199,7 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
             request.max_tokens,
             request.timeout_seconds,
             thinking_level=thinking_level,
+            reasoning_strength=reasoning_strength,
             advanced_model=advanced,
             advanced_base_url=adv_base,
             advanced_api_key=adv_key,
@@ -3139,10 +3230,11 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
         "max_tokens": cfg.max_tokens,
         "timeout_seconds": cfg.timeout_seconds,
         "thinking_level": cfg.thinking_level,
+        "reasoning_strength": cfg.reasoning_strength,
         "advanced_model": cfg.advanced_model,
         "advanced_base_url": cfg.advanced_base_url,
         "has_advanced_api_key": _has_real_api_key(cfg.advanced_api_key),
-        "advanced_thinking_level": cfg.advanced_thinking_level,
+        "advanced_thinking_level": "",
         "has_api_key": _has_real_api_key(cfg.api_key),
         "channel": cfg.channel,
         "cli_runner": cfg.cli_runner,

@@ -1,7 +1,7 @@
 import React from "react";
 import { Loader2, Trash2 } from "lucide-react";
 import { api, normalizeApiError } from "../api";
-import type { CliModelChoices, MenuCampaign, MenuStatus } from "../types";
+import type { CliModelChoices, MenuCampaign, MenuStatus, ReasoningStrengthChoice } from "../types";
 import { CliModelField } from "./cliModelField";
 
 export function MenuPage({
@@ -225,6 +225,11 @@ export function ApiSettingsModal({
     advanced_base_url?: string;
     has_advanced_api_key?: boolean;
     advanced_thinking_level?: string;
+    reasoning_strength?: string;
+    api_reasoning_strength?: string;
+    cli_reasoning_strength?: string;
+    reasoning_supported?: boolean;
+    reasoning_strengths?: ReasoningStrengthChoice[];
     channel?: "api" | "cli";
     cli_runner?: string;
     cli_model?: string;
@@ -246,13 +251,49 @@ export function ApiSettingsModal({
   const [advancedModel, setAdvancedModel] = React.useState(initial?.advanced_model || "");
   const [advancedBaseUrl, setAdvancedBaseUrl] = React.useState(initial?.advanced_base_url || "");
   const [advancedApiKey, setAdvancedApiKey] = React.useState("");
-  const [advancedThinkingLevel, setAdvancedThinkingLevel] = React.useState(initial?.advanced_thinking_level || "");
+  const normalizeStrength = (value?: string) => {
+    const v = (value || "").trim().toLowerCase();
+    if (v === "minimal" || v === "disabled" || v === "none") return "off";
+    return ["", "off", "low", "medium", "high"].includes(v) ? v : "";
+  };
+  const [apiReasoningStrength, setApiReasoningStrength] = React.useState(
+    normalizeStrength(initial?.api_reasoning_strength || (initial?.channel === "api" ? initial?.reasoning_strength : "") || initial?.thinking_level)
+  );
+  const [cliReasoningStrength, setCliReasoningStrength] = React.useState(
+    normalizeStrength(initial?.cli_reasoning_strength || (initial?.channel === "cli" ? initial?.reasoning_strength : ""))
+  );
   const [apiKey, setApiKey] = React.useState("");
   const [maxTokens, setMaxTokens] = React.useState(String(initial?.max_tokens || 8000));
   const [timeoutSeconds, setTimeoutSeconds] = React.useState(String(initial?.timeout_seconds || 180));
-  const [thinkingLevel, setThinkingLevel] = React.useState(initial?.thinking_level || "");
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState("");
+  const reasoningChoices = initial?.reasoning_strengths || [
+    { value: "", label: "默认" },
+    { value: "off", label: "关" },
+    { value: "low", label: "低" },
+    { value: "medium", label: "中" },
+    { value: "high", label: "高" },
+  ];
+  const apiReasoningSupported = (() => {
+    const effectiveBase = (advancedModel.trim() ? (advancedBaseUrl.trim() || baseUrl) : baseUrl).toLowerCase();
+    const modelName = (advancedModel.trim() || model).toLowerCase();
+    const base = effectiveBase;
+    if (base.includes("deepseek.com")) return false;
+    return (
+      modelName.startsWith("o1") ||
+      modelName.startsWith("o3") ||
+      modelName.startsWith("o4") ||
+      modelName.startsWith("gpt-5") ||
+      base.includes("dashscope") ||
+      base.includes("aliyuncs") ||
+      base.includes("minimaxi.com") ||
+      base.includes("minimax.io")
+    );
+  })();
+  const cliReasoningSupported = cliRunner === "codex" || cliRunner === "claude";
+  const reasoningSupported = channel === "cli" ? cliReasoningSupported : apiReasoningSupported;
+  const reasoningStrength = channel === "cli" ? cliReasoningStrength : apiReasoningStrength;
+  const setReasoningStrength = channel === "cli" ? setCliReasoningStrength : setApiReasoningStrength;
 
   const onSave = async () => {
     setBusy(true);
@@ -271,11 +312,14 @@ export function ApiSettingsModal({
           api_key: apiKey.trim(),
           max_tokens: parseInt(maxTokens) || 8000,
           timeout_seconds: parseFloat(timeoutSeconds) || 180,
-          thinking_level: thinkingLevel.trim(),
+          // 统一选择器已在初始化时把旧 thinking_level 迁进 reasoningStrength；保存清掉旧字段，
+          // 否则它仍作隐藏旋钮被后端 fallback 消费、用户选「默认」也清不掉（#358 cmr）。
+          thinking_level: "",
+          reasoning_strength: reasoningStrength,
           advanced_model: advancedModel.trim(),
           advanced_base_url: advancedBaseUrl.trim(),
           advanced_api_key: advancedApiKey.trim(),
-          advanced_thinking_level: advancedThinkingLevel.trim(),
+          advanced_thinking_level: "",
         }),
       });
       if (!response.ok) {
@@ -320,6 +364,22 @@ export function ApiSettingsModal({
                 <option value="claude">claude</option>
               </select>
             </label>
+            <label>
+              推理强度
+              <select
+                name="reasoning_strength"
+                value={reasoningStrength}
+                disabled={!reasoningSupported}
+                onChange={(e) => setReasoningStrength(e.target.value)}
+              >
+                {reasoningChoices.map((choice) => (
+                  <option key={choice.value} value={choice.value}>{choice.label}</option>
+                ))}
+              </select>
+              {!reasoningSupported && (
+                <small className="menu-hint">该后端不支持推理强度设置。</small>
+              )}
+            </label>
             {/* div 而非 label：custom 态 CliModelField 同时渲染 select+input，HTML5 规定
                 一个 label 至多含一个可表单关联控件（gemini R2）。深色控件样式见 .menu-cli-field。 */}
             <div className="menu-cli-field">
@@ -349,8 +409,20 @@ export function ApiSettingsModal({
           <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="deepseek-chat" />
         </label>
         <label>
-          Thinking Level <small className="menu-hint">（空=默认，请填写你的模型支持的值。）</small>
-          <input value={thinkingLevel} onChange={(e) => setThinkingLevel(e.target.value)} placeholder="默认" />
+          推理强度
+          <select
+            name="reasoning_strength"
+            value={reasoningStrength}
+            disabled={!reasoningSupported}
+            onChange={(e) => setReasoningStrength(e.target.value)}
+          >
+            {reasoningChoices.map((choice) => (
+              <option key={choice.value} value={choice.value}>{choice.label}</option>
+            ))}
+          </select>
+          {!reasoningSupported && (
+            <small className="menu-hint">该后端不支持推理强度设置。</small>
+          )}
         </label>
         <label>
           Advanced Model <small className="menu-hint">（推演 + 打分专用；留空 fallback）</small>
@@ -364,10 +436,6 @@ export function ApiSettingsModal({
           Advanced API Key{" "}
           <small className="menu-hint">{initial?.has_advanced_api_key ? "(已配置；留空保留)" : "(留空=复用主 API Key)"}</small>
           <input type="password" value={advancedApiKey} onChange={(e) => setAdvancedApiKey(e.target.value)} placeholder={initial?.has_advanced_api_key ? "(已配置；如需更换请重新填写)" : "留空=复用主 Key"} />
-        </label>
-        <label>
-          Advanced Thinking Level <small className="menu-hint">（空=默认，请填写你的模型支持的值。）</small>
-          <input value={advancedThinkingLevel} onChange={(e) => setAdvancedThinkingLevel(e.target.value)} placeholder="默认" />
         </label>
         <label>
           Max Tokens

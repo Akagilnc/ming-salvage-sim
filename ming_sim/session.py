@@ -181,6 +181,73 @@ def _find_existing_minister(content: GameContent, name: str, db: "GameDB") -> Op
     return None
 
 
+def _recent_audience_context_for_secret_order(
+    db: Any, minister_name: str, turn: int, current_message: str, limit: int = 8,
+) -> str:
+    """取当前大臣最近召对正文，供“密令”按钮确认短句补足任务上下文。"""
+    conn = getattr(db, "conn", None)
+    if conn is None:
+        return ""
+    try:
+        rows = conn.execute(
+            """
+            SELECT role, content FROM chat_messages
+            WHERE minister_name = ? AND turn = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (str(minister_name or ""), int(turn), int(limit)),
+        ).fetchall()
+    except Exception:
+        return ""
+    current = (current_message or "").strip()
+    lines: List[str] = []
+    for row in reversed(rows):
+        role = str(row["role"] if "role" in row.keys() else "")
+        content = str(row["content"] if "content" in row.keys() else "").strip()
+        if not content or content == current:
+            continue
+        label = "皇帝" if role == "user" else "大臣"
+        lines.append(f"{label}：{content}")
+    return "\n".join(lines[-limit:])
+
+
+def _appointment_intent_is_current_office_noop(
+    db: Any, name: str, office: str, content: Any = None,
+) -> bool:
+    """任命目标已在该职时是背景复述，不生成待确认任免动作。
+
+    姓名按 canonical 口径归一（与真正落任命 apply_office_appointment 同口径）：LLM 抽到的可能是
+    别名（『韩阁老』而非『韩爌』），精确名查不到行会漏判成假任免（cmr #354 correctness）。先
+    _find_existing_minister 归一到在册原始名，再查当前 office。"""
+    conn = getattr(db, "conn", None)
+    clean_name = str(name or "").strip()
+    desired = normalize_office(str(office or ""))
+    if conn is None or not clean_name or not desired:
+        return False
+    canonical = None
+    if content is not None:
+        try:
+            canonical = _find_existing_minister(content, clean_name, db)
+        except Exception:
+            canonical = None
+    try:
+        row = conn.execute(
+            "SELECT status, office FROM characters WHERE name = ?",
+            (canonical or clean_name,),
+        ).fetchone()
+    except Exception:
+        return False
+    if row is None or str(row["status"] or "") != "active":
+        return False
+    current = normalize_office(str(row["office"] or ""))
+    if not current:
+        return False
+    desired_parts = {p for p in desired.split(",") if p}
+    current_parts = {p for p in current.split(",") if p}
+    return bool(desired_parts) and desired_parts.issubset(current_parts)
+
+
 def apply_appointment(
     db: GameDB,
     state: GameState,
@@ -833,9 +900,6 @@ class GameSession:
         out: Dict[str, Any] = {"directive": None, "secret_order_id": secret_order_id}
         intent = preclassified_intent if isinstance(preclassified_intent, dict) else None
         intent_kind = str((intent or {}).get("kind") or "none")
-        channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
-        if channel != "cli" and (channel == "api" or cli_backend_from_env() is None):
-            return out
         minister_name = character.name
         reply = (answer or "").strip()
         llm_config = getattr(self, "llm_config", None)
@@ -844,8 +908,12 @@ class GameSession:
         # 杜绝前缀路多跑任何 LLM extractor（#344 US3「按钮前缀路零 LLM」）。确认闸门尤其要跳过：
         # 否则前缀消息在有 pending 待确认动作时既多跑 extract_confirmation_intent(LLM)，还可能被
         # 误判「应允/拒绝」提前 return、把这道前缀拟旨/密令整个吞掉（确认句本无前缀，跳过无损）。
-        explicit_prefixed = (message_text := (player_message or "").strip()).startswith(
-            _DRAFT_PREFIXES) or message_text.startswith(_SECRET_PREFIXES)
+        message_text = (player_message or "").strip()
+        explicit_prefixed = message_text.startswith(_DRAFT_PREFIXES) or message_text.startswith(_SECRET_PREFIXES)
+        channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
+        api_explicit_prefix = channel == "api" and explicit_prefixed
+        if channel != "cli" and (channel == "api" or cli_backend_from_env() is None) and not api_explicit_prefix:
+            return out
         # 对话确认(ADR 0006 重设计)：本召对的大臣有上一轮经领命确认、尚未落库的暂存动作时，
         # 皇帝这句应允 → 当场 commit、拒绝 → 丢、未表态 → 留(颁诏对没回的算同意)。
         # 只在该大臣有 outstanding 暂存时才判(省 token)，commit/drop 按该大臣过滤、不波及他人。
@@ -893,8 +961,18 @@ class GameSession:
             # 拒绝丢弃）针对的是窗前已暂存的 pending，保持可用（ship-pre r2 设计）。
             # 抽取器（LLM 调用）一并跳过。
             return out
-        acts = resolve_minister_actions(
-            reply, player_message, default_assignee=minister_name, llm_config=llm_config)
+        needs_draft_fallback = not has_directive and message_text.startswith(_DRAFT_PREFIXES)
+        needs_secret_fallback = not out["secret_order_id"] and message_text.startswith(_SECRET_PREFIXES)
+        secret_context = ""
+        if needs_secret_fallback:
+            secret_context = _recent_audience_context_for_secret_order(
+                getattr(self, "db", None), minister_name, int(self.state.turn), message_text)
+        if needs_draft_fallback or needs_secret_fallback:
+            acts = resolve_minister_actions(
+                reply, player_message, default_assignee=minister_name, llm_config=llm_config,
+                secret_context=secret_context)
+        else:
+            acts = {"decree_text": None, "secret_order": None}
         if not has_directive and acts["decree_text"]:
             text = acts["decree_text"]
             did = self.db.add_directive(
@@ -921,8 +999,18 @@ class GameSession:
             is_consort = getattr(character, "office_type", "") == "后宫"
             active = self.db.get_active_secret_orders_for_minister(minister_name)
             if active or is_consort:
-                if intent is not None:
-                    act = intent if intent_kind in ("secret", "cultivate") else {
+                if intent is not None and intent_kind in ("secret", "cultivate"):
+                    # 并发分类器只读皇帝话，不能作为最终字段真源；会话动作的完整 payload
+                    # 仍须等大臣回话后抽取，避免更新/调教丢掉回话里的实质补充。
+                    extracted = extract_minister_actions(
+                        player_message, reply, active, is_consort, llm_config=llm_config)
+                    act = extracted if (
+                        extracted.get("secret_action") != "无"
+                        or extracted.get("cultivate_skill")
+                        or extracted.get("cultivate_trait")
+                    ) else intent
+                elif intent is not None:
+                    act = {
                         "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
                         "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": ""}
                 else:
@@ -1092,6 +1180,13 @@ class GameSession:
                 appt = intent if intent_kind == "appointment" else {"appoint_action": "无"}
             else:
                 appt = extract_appointment_action(player_message, reply, llm_config=llm_config)
+        if (
+            appt["appoint_action"] == "任命"
+            and _appointment_intent_is_current_office_noop(
+                getattr(self, "db", None), appt.get("name", ""), appt.get("office", ""),
+                content=getattr(self, "content", None))
+        ):
+            appt = {"appoint_action": "无"}
         if appt["appoint_action"] in ("任命", "罢免") and appt["name"]:
             # minister_name = 召对对象(发起这道任免的大臣/太监),非被任者——对话确认按召对的
             # 大臣过滤暂存,故须以召对对象为键;被任者姓名在 payload["name"]。
