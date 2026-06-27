@@ -1531,20 +1531,26 @@ def _choose_assignee(
     return default_assignee
 
 
-def _strip_audience_context_labels(context: str) -> str:
-    """把召对上下文快照剥成纯皇帝任务文本：去掉「皇帝：/大臣：」角色标签、丢掉大臣行与
-    「【本轮确认】…」短句行。用于上下文合成路径的兜底正文，避免角色标签/确认短句污染密令正文
-    （cmr #354 correctness：旧码把带标签的整段 blob 当御旨并入正文）。"""
-    lines: List[str] = []
+def _split_audience_context(context: str) -> Tuple[str, str]:
+    """把召对上下文快照剥成 (皇帝任务文本, 前文大臣实质补充文本)：去掉「皇帝：/大臣：」角色标签、
+    丢掉「【本轮确认】…」短句行。皇帝行=任务正文（作御旨守门输入+兜底种子）；大臣行剥领命语后留实质
+    补充（作补充守门输入+兜底种子，cmr #354 r3：前文大臣加的承办/步骤也是密令正文一部分，不得因来自
+    前文就漏检/丢弃）。两者分开，避免把大臣补充塞进御旨守门导致逐句核验过严误判（cmr #354 correctness：
+    旧码把带标签的整段 blob 当御旨并入正文）。"""
+    emperor_lines: List[str] = []
+    minister_material: List[str] = []
     for raw in (context or "").splitlines():
         line = raw.strip()
-        if not line or line.startswith("【本轮确认】") or line.startswith("大臣："):
+        if not line or line.startswith("【本轮确认】"):
             continue
         if line.startswith("皇帝："):
-            line = line[len("皇帝："):].strip()
-        if line:
-            lines.append(line)
-    return "\n".join(lines)
+            task = line[len("皇帝："):].strip()
+            if task:
+                emperor_lines.append(task)
+        elif line.startswith("大臣："):
+            body = line[len("大臣："):].strip()
+            minister_material.extend(_minister_material_clauses(body))
+    return "\n".join(emperor_lines), "\n".join(minister_material)
 
 
 def _merge_secret_content(*parts: str) -> str:
@@ -1604,8 +1610,9 @@ def _extract_secret_order(
     # 标签 blob 并入兜底正文 = 污染密令正文（cmr #354 correctness）。剥掉角色标签/确认短句得纯任务
     # 文本，既作御旨守门输入、也作兜底种子：守门仍在（坏 LLM 跑题内容照样兜底回真任务，cmr #354
     # r2 codex high——不再无条件信 LLM），又不让标签/确认短句污染正文。
+    _prior_supplement = ""
     if force_default_assignee:
-        _emperor_fallback = _strip_audience_context_labels(player_command)
+        _emperor_fallback, _prior_supplement = _split_audience_context(player_command)
         _emperor_ok = bool(_content_llm) and _content_reflects_emperor_intent(_content_llm, _emperor_fallback)
     else:
         _emperor_ok = bool(_content_llm) and _content_reflects_emperor_intent(_content_llm, player_command)
@@ -1613,9 +1620,20 @@ def _extract_secret_order(
     # 大臣补充守门：不仅看承办人，还看大臣回话的【所有】实质分句（承办人/具体做法/步骤等）。
     # 旧码只查承办人线索在不在正文 → 大臣补的非承办人要点（如「封存兵部辽饷册」「密访关宁诸将」）
     # 被合法 LLM 输出静默吞掉（#397 Step6 R3 Codex P1）。改为逐条核验所有 material 分句。
+    # 上下文路径还须核验前文大臣的实质补充（_prior_supplement），不因它来自前文就漏检
+    # （cmr #354 r3 codex：F17 按钮轮回话常只是「臣领命」，实质补充在前文大臣行）。
     _supplement_ok = _content_reflects_minister_supplements(_content_llm, minister_reply)
+    if force_default_assignee and _prior_supplement:
+        _supplement_ok = _supplement_ok and _content_reflects_minister_supplements(
+            _content_llm, _prior_supplement)
     if _emperor_ok and _supplement_ok:
         content = _content_llm
+    elif force_default_assignee:
+        # 上下文路径兜底：御旨任务 + LLM 内容 + 前文大臣实质补充 + 当前回话的实质分句（不并入
+        # 「臣领命」这类纯领命语，避免领命噪声污染正文）。御旨/大臣补充都不丢。
+        _current_material = "\n".join(_minister_material_clauses(minister_reply))
+        content = _merge_secret_content(
+            _emperor_fallback, _content_llm, _prior_supplement, _current_material)
     else:
         # 兜底（#397 Step5/Step6）：御旨为主，并入 LLM 内容与大臣回话——
         # 御旨绝不丢、大臣补充的承办人/要点也不被合法 LLM 输出吞掉。旧码只在内容为空时
