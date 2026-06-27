@@ -251,6 +251,12 @@ def test_extract_assignee_action_pulls_verb_after_name():
     assert cb._extract_assignee_action("可授李若琏", "李若琏") == ""
 
 
+def test_extract_assignee_action_uses_hint_match_when_name_repeats():
+    """#401 R3（Gemini high）：人名若先出现在话头/前文，动作 tail 须从 hint 命中的人名算起。"""
+    clause = "李若琏：可委派李若琏暗查并封存兵部辽饷册"
+    assert cb._extract_assignee_action(clause, "李若琏") == "暗查"
+
+
 def test_content_reflects_supplements_rejects_name_only_when_action_dropped():
     """#397 Step6 R4（Codex P1）：assignee-hint 分句带具体动作/职责词时，只保住人名不够——
     动作词被泛化动词（如『承办』）替换即判未覆盖，走兜底合并。"""
@@ -259,6 +265,13 @@ def test_content_reflects_supplements_rejects_name_only_when_action_dropped():
     assert cb._content_reflects_minister_supplements("着周延儒承办", "可委周延儒处理。") is False
     assert cb._content_reflects_minister_supplements("着李若琏承办", "可委李若琏负责。") is False
     assert cb._content_reflects_minister_supplements("着李标承办", "可委李标负责。") is False
+
+
+def test_content_reflects_supplements_uses_hint_tail_when_name_repeats():
+    """#401 R3（Gemini high）：tail 不能从分句里第一次出现的人名切，否则会误判补充未覆盖。"""
+    reply = "李若琏：可委派李若琏暗查并封存兵部辽饷册。"
+    assert cb._content_reflects_minister_supplements(
+        "着李若琏暗查封存兵部辽饷册", reply) is True
 
 
 def test_content_reflects_supplements_accepts_when_name_and_action_preserved():
@@ -322,6 +335,13 @@ def test_extract_imperative_assignee_requires_command_boundary():
     assert cb._extract_imperative_assignee("此密令调查此事") is None
     assert cb._extract_imperative_assignee("奉密令查办辽饷") is None
     assert cb._extract_imperative_assignee("密令如下：着李若琏查办辽饷") == "李若琏"
+
+
+def test_clause_split_handles_colons_and_newlines():
+    """#401 R3（Sourcery）：冒号/换行也是常见结构分隔符。"""
+    assert cb._minister_material_clauses("领命：可授李若琏暗查\n并封存兵部辽饷册。") == [
+        "可授李若琏暗查", "并封存兵部辽饷册",
+    ]
 
 
 def test_secret_assignee_does_not_drift_to_unvalidated_llm_field(monkeypatch):
