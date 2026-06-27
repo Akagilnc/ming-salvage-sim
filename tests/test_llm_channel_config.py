@@ -94,6 +94,20 @@ def test_load_llm_config_migrates_legacy_advanced_thinking_to_reasoning(monkeypa
     assert advanced.thinking_level == ""
 
 
+def test_load_llm_config_migrates_legacy_none_thinking_to_off(monkeypatch):
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.delenv("MING_SIM_REASONING_STRENGTH", raising=False)
+
+    cfg = load_llm_config(
+        "https://api.example.com",
+        "gpt-5.5",
+        api_key="sk-test",
+        thinking_level="none",
+    )
+
+    assert cfg.reasoning_strength == "off"
+
+
 def test_create_chat_model_maps_off_reasoning_to_openai_none(monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     cfg = LLMConfig(

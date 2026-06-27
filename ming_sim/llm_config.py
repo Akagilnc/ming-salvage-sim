@@ -216,7 +216,7 @@ def legacy_reasoning_strength(data: Dict[str, object]) -> str:
     candidates.append(data.get("thinking_level"))
     for value in candidates:
         legacy = str(value or "").strip().lower()
-        if legacy in {"minimal", "disabled"}:
+        if legacy in {"minimal", "disabled", "none"}:
             return "off"
         strength = normalize_reasoning_strength(legacy)
         if strength:
