@@ -430,3 +430,117 @@ def test_drain_waits_for_queued_chat_stream_not_just_gate_holder():
     # B 回奏已入档（关连接前写完）
     assert any(m["minister"] == char_b.name and m["role"] == "minister"
                and "臣已知悉" in m["content"] for m in db.messages)
+
+
+# ── #396 Step5 R4: web_game is None 时 new_game 仍须切换库路径 ───────────
+
+def test_new_game_switches_db_path_when_web_game_is_none(monkeypatch, tmp_path):
+    """#396 Step5 R4 P1: web_game is None（退菜单后 / 服务端首次启动）时，new_game 仍必须切换
+    主库路径到新文件——否则 fresh=True 会解析到旧配置库（MING_SIM_DB env）并删/覆盖，
+    而旧 detach worker 可能仍写旧库。无旧 game 时不归档、不 drain。"""
+    import sqlite3
+
+    old_db_path = str(tmp_path / "old_configured.db")
+    conn = sqlite3.connect(old_db_path)
+    conn.execute("CREATE TABLE kv_store (key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute("INSERT INTO kv_store VALUES ('data', 'before_new_game')")
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(web_app, "web_game", None)
+    monkeypatch.setenv("MING_SIM_DB", old_db_path)
+    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+
+    fake_new_game = SimpleNamespace(state_payload=lambda: {"turn": 1})
+    monkeypatch.setattr(web_app, "WebGame", lambda fresh: fake_new_game)
+    monkeypatch.setattr(web_app.steam_events, "with_events", lambda payload, events: payload)
+
+    result = asyncio.run(web_app.api_menu_new_game())
+
+    assert "state" in result
+    assert web_app.web_game is fake_new_game
+    # env 已切到新路径
+    new_path = os.environ["MING_SIM_DB"]
+    assert new_path != old_db_path
+    # 旧库未被删/覆盖
+    assert os.path.exists(old_db_path)
+    check = sqlite3.connect(old_db_path)
+    rows = dict(check.execute("SELECT key, value FROM kv_store").fetchall())
+    check.close()
+    assert rows["data"] == "before_new_game"
+    # active_db.txt 也已切到新路径
+    with open(web_app._active_db_path_file(), "r", encoding="utf-8") as f:
+        assert f.read().strip() == new_path
+    # 无旧 game → 不归档
+    saves_dir = tmp_path / "saves"
+    assert not saves_dir.exists() or list(saves_dir.glob("*.db")) == []
+
+
+def test_new_game_switches_db_path_when_web_game_none_and_no_env(monkeypatch, tmp_path):
+    """#396 Step5 R4: 服务端启动后 web_game=None 且无 MING_SIM_DB env，首次 new_game 也须
+    切换到新库路径（覆写 env + active_db.txt），不让 fresh=True 在默认路径建库。"""
+    monkeypatch.setattr(web_app, "web_game", None)
+    monkeypatch.delenv("MING_SIM_DB", raising=False)
+    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+
+    fake_new_game = SimpleNamespace(state_payload=lambda: {"turn": 1})
+    monkeypatch.setattr(web_app, "WebGame", lambda fresh: fake_new_game)
+    monkeypatch.setattr(web_app.steam_events, "with_events", lambda payload, events: payload)
+
+    result = asyncio.run(web_app.api_menu_new_game())
+
+    assert "state" in result
+    assert web_app.web_game is fake_new_game
+    new_path = os.environ["MING_SIM_DB"]
+    assert "ming_sim_" in os.path.basename(new_path)  # 新 timestamped 路径
+    assert new_path != str(tmp_path / "ming_sim.db")  # 不是默认路径
+    with open(web_app._active_db_path_file(), "r", encoding="utf-8") as f:
+        assert f.read().strip() == new_path
+
+
+def test_new_game_after_exit_does_not_clobber_old_db_while_detach_drains(monkeypatch, tmp_path):
+    """#396 Step5 R4 P1 完整路径：退菜单→web_game=None+detach drain 写旧库→
+    new_game 须切到新库路径，不删/覆盖旧库（旧 detach worker 仍写旧库文件）。"""
+    import sqlite3
+
+    old_db_path = str(tmp_path / "old_configured.db")
+    conn = sqlite3.connect(old_db_path)
+    conn.execute("CREATE TABLE kv_store (key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute("INSERT INTO kv_store VALUES ('data', 'before_exit')")
+    conn.commit()
+
+    closed: list[int] = []
+    gate = threading.Lock()
+    fake_old_game = SimpleNamespace(
+        _write_gate=gate,
+        db_path=old_db_path,
+        session=SimpleNamespace(close=lambda: (closed.append(1), conn.close())),
+    )
+    monkeypatch.setattr(web_app, "web_game", fake_old_game)
+    monkeypatch.setenv("MING_SIM_DB", old_db_path)
+    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+
+    # 退菜单：web_game=None，detach drain 启动（gate 被持 = 旧 worker 在写旧库）
+    gate.acquire()
+    asyncio.run(web_app.api_menu_exit())
+    assert web_app.web_game is None
+
+    # new_game：web_game=None，但仍须切到新库路径
+    fake_new_game = SimpleNamespace(state_payload=lambda: {"turn": 1})
+    monkeypatch.setattr(web_app, "WebGame", lambda fresh: fake_new_game)
+    monkeypatch.setattr(web_app.steam_events, "with_events", lambda payload, events: payload)
+
+    result = asyncio.run(web_app.api_menu_new_game())
+
+    assert "state" in result
+    assert web_app.web_game is fake_new_game
+    assert os.environ["MING_SIM_DB"] != old_db_path  # 已切到新路径
+    assert os.path.exists(old_db_path)  # 旧库未被删——detach worker 仍可安全续写
+
+    # 旧 detach drain 仍写旧库（gate 释放后 close 才跑）
+    conn.execute("INSERT INTO kv_store VALUES ('reply', 'detach_reply')")
+    conn.commit()
+    gate.release()
+
+    assert _wait_for(lambda: closed == [1])
+    assert not gate.locked()

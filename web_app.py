@@ -2040,18 +2040,21 @@ async def api_menu_new_game() -> Dict[str, Any]:
     排空后关旧连接并把旁路库归档为存档，玩家可再次进入看到迟到的后台回奏；
     #382 通用并发模型（Windows file-lock 等）不在本轮 scope。"""
     global web_game
-    if web_game is not None:
-        old_game = web_game
-        web_game = None
-        # #396: 不能在旧后台 worker 仍写旧库时删/重命名旧库文件（SQLite 会报 readonly database）。
-        # 改为把主库路径切换到新文件，旧 worker 安全续写旧库；排空关连接后旧库归档为存档。
-        new_db_path = user_data_path(f"ming_sim_{int(time.time() * 1000)}.db")
-        # #396 Gap A: MING_SIM_DB 优先级高于 active_db.txt（_get_main_db_path）。
-        # 单写 active_db.txt 会让 fresh=True 的 WebGame 仍解析到旧 env 路径并删旧库。
-        # 同步覆写 env → 新局落新路径，旧后台 worker 续写旧库，排空后归档。
-        os.environ["MING_SIM_DB"] = new_db_path
-        with open(_active_db_path_file(), "w", encoding="utf-8") as f:
-            f.write(new_db_path)
+    old_game = web_game
+    web_game = None
+    # #396 Step5 R4: 无论 web_game 是否为 None（退菜单后 / 服务端首次 new_game），
+    # fresh=True 前都必须切换主库路径到新文件——否则 WebGame 会解析到旧配置库（env /
+    # active_db.txt）并在 fresh=True 时删/覆盖旧库，而旧 detach worker 可能仍写旧库。
+    # #396: 不能在旧后台 worker 仍写旧库时删/重命名旧库文件（SQLite 会报 readonly database）。
+    # 改为把主库路径切换到新文件，旧 worker 安全续写旧库；排空关连接后旧库归档为存档。
+    new_db_path = user_data_path(f"ming_sim_{int(time.time() * 1000)}.db")
+    # #396 Gap A: MING_SIM_DB 优先级高于 active_db.txt（_get_main_db_path）。
+    # 单写 active_db.txt 会让 fresh=True 的 WebGame 仍解析到旧 env 路径并删旧库。
+    # 同步覆写 env → 新局落新路径，旧后台 worker 续写旧库，排空后归档。
+    os.environ["MING_SIM_DB"] = new_db_path
+    with open(_active_db_path_file(), "w", encoding="utf-8") as f:
+        f.write(new_db_path)
+    if old_game is not None:
         # detach：等 write_gate 排空后再关旧连接 + 归档旧库（#396），不在 worker 写时关。
         threading.Thread(
             target=_drain_and_close_session,
