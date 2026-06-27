@@ -771,10 +771,13 @@ def _strip_agent_narration(text: str) -> str:
 
 # ── 拟旨 / 下密令入档（CLI 后端）────────────────────────────────────────
 # 原版（api key）靠 agno 工具 propose_directive/secret_order，模型 function-call 触发。
-# agy 不做 function-calling，唯一缺口在此。解法很简单：
-#   玩家用「拟旨/下密令」按钮 = 消息带「拟旨如下：/密令如下：」前缀 = 已表态要下旨，
-#   那这一句大臣回话原文就是这道旨/密令，整段入档即可。不用解析圣旨边界。
-#   多轮聊出多道 → 颁诏时玩家去重。大臣本就把相关衙门/人等写进回话（原 prompt 行为）。
+# agy/codex/claude 不做 function-calling，唯一缺口在此。玩家用「拟旨/下密令」按钮 =
+# 消息带「拟旨如下：/密令如下：」前缀 = 已表态要下旨，据此分派：
+#   拟旨：大臣回话原文即这道圣旨草稿，整段入档（单一文本字段，够用；多轮聊出多道 →
+#         颁诏时玩家去重）。
+#   密令（#397）：合并皇帝显式旨意 + 大臣回话，交 _extract_secret_order 经配置 runner 让
+#         LLM 润成一道完整密令（御旨为主、并入大臣补的承办人/要点）；helper 自带不抛错
+#         兜底——提取失败时仍把御旨与回话都并入正文，不丢、不阻断。
 _DRAFT_PREFIXES = ("拟旨如下：", "拟旨如下:", "拟旨：", "拟旨:")
 _SECRET_PREFIXES = ("密令如下：", "密令如下:", "密令：", "密令:")
 
@@ -1260,7 +1263,14 @@ def _extract_secret_order(
     except Exception as exc:  # 提取失败不阻断：退回默认（trace 已在咽喉记下，含 error）
         _log(f"密令提取失败：{exc}")
     obj = _loads_lenient(raw) or {}
-    content = str(obj.get("内容") or "").strip() or (minister_reply or "").strip() or player_command
+    _content_llm = str(obj.get("内容") or "").strip()
+    if _content_llm:
+        content = _content_llm
+    else:
+        # 提取失败兜底（#397）：合并皇帝显式旨意 + 大臣回话，确保不丢御旨——
+        # 旧码 `minister_reply or player_command` 单选会丢御旨（大臣只领命时正文落成领命语）。
+        _parts = [p for p in (player_command, minister_reply) if p]
+        content = "\n".join(_parts)
     title = str(obj.get("标题") or "").strip()[:20] or (player_command or content)[:14]
     assignee = str(obj.get("承办人") or "").strip() or default_assignee
     try:
@@ -1278,7 +1288,9 @@ def resolve_minister_actions(
 ) -> Dict[str, Any]:
     """玩家上一句带拟旨/密令前缀时入档。
     - 拟旨：大臣回话原文即圣旨草稿（单一文本字段，够用）。
-    - 密令：大臣回话原文即密令文本；标题/承办人走轻量兜底，零额外 LLM。
+    - 密令（#397）：经 _extract_secret_order 合并皇帝显式旨意 + 大臣回话，由配置 runner
+      润色成完整密令正文（御旨不丢、并入大臣补的承办人/要点）；helper 不抛错，提取失败
+      时兜底仍保留御旨与回话两条文本。
     返回 {decree_text, secret_order}。"""
     out: Dict[str, Any] = {"decree_text": None, "secret_order": None}
     reply = (minister_reply or "").strip()
@@ -1289,15 +1301,13 @@ def resolve_minister_actions(
 
     secret_intent = _matched_prefix(player_message, _SECRET_PREFIXES)
     if secret_intent is not None and (reply or secret_intent):
-        content = reply or secret_intent
-        title_src = secret_intent or content
-        out["secret_order"] = {
-            "title": title_src[:20],
-            "content": content,
-            "assignee": default_assignee,
-            "deadline_months": 0,
-            "tags": [],
-        }
+        # #397：显式『密令如下：<X>』的密令正文须留住御旨 X——旧码取 reply 当正文，
+        # 大臣只领命时正文落成领命语、御旨只活在被截断的标题。改为合并皇帝显式旨意 +
+        # 大臣回话，交 _extract_secret_order 让 LLM 润成一道完整密令（御旨为主、并入
+        # 大臣补的承办人/要点）；提取失败时该 helper 已兜底（不阻断、不丢御旨）。
+        out["secret_order"] = _extract_secret_order(
+            secret_intent, reply, default_assignee, llm_config
+        )
 
     return out
 
