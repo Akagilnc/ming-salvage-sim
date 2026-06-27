@@ -346,7 +346,6 @@ export function LLMConfigTab() {
   const [apiKey, setApiKey] = React.useState("");
   const [maxTokens, setMaxTokens] = React.useState("8000");
   const [timeoutSeconds, setTimeoutSeconds] = React.useState("180");
-  const [thinkingLevel, setThinkingLevel] = React.useState("");
   const normalizeStrength = (value?: string) => {
     const v = (value || "").trim().toLowerCase();
     if (v === "minimal") return "off";
@@ -390,7 +389,6 @@ export function LLMConfigTab() {
         setAdvancedThinkingLevel(data.advanced_thinking_level || "");
         setMaxTokens(String(data.max_tokens || 8000));
         setTimeoutSeconds(String(data.timeout_seconds || 180));
-        setThinkingLevel(data.thinking_level || "");
         setReasoningStrength(normalizeStrength(data.reasoning_strength || data.thinking_level));
         setChannel(data.channel === "cli" ? "cli" : "api");
         // 从已存 CLI 槽(persisted)初始化优先,而非 active cfg.cli_*——API 会话下 cfg.cli_model 可能被
@@ -416,7 +414,9 @@ export function LLMConfigTab() {
           api_key: apiKey,
           max_tokens: parseInt(maxTokens) || 8000,
           timeout_seconds: parseFloat(timeoutSeconds) || 180,
-          thinking_level: thinkingLevel.trim(),
+          // 统一「推理强度」选择器已在 load 时把旧 thinking_level 迁进 reasoningStrength；保存时清掉
+          // 旧字段，否则它会作隐藏第二旋钮被后端 fallback 消费、用户选「默认」也清不掉（#358 cmr）。
+          thinking_level: "",
           reasoning_strength: reasoningStrength,
           advanced_model: advancedModel,
           advanced_base_url: advancedBaseUrl,

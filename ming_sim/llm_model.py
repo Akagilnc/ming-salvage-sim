@@ -99,9 +99,17 @@ def create_chat_model(
     elif enable_thinking and is_deepseek_base_url(llm_config.base_url):
         extra_body = {}  # deepseek-v4 默认深思,清掉 disabled
     elif is_minimax_base_url(llm_config.base_url) and (wants_thinking or disables_thinking):
-        thinking_type = "disabled" if disables_thinking else (llm_config.thinking_level or "adaptive").strip().lower()
-        if thinking_type not in {"adaptive", "disabled"}:
+        # 统一推理强度优先：off→disabled、低/中/高→adaptive。仅在没有统一强度（遗留
+        # enable_thinking 路）时才看旧 thinking_level，否则遗留 thinking_level=disabled 会作
+        # 隐藏旋钮把用户选的「中/高」压回 disabled（#358 cmr）。
+        if disables_thinking:
+            thinking_type = "disabled"
+        elif reasoning_strength in {"low", "medium", "high"}:
             thinking_type = "adaptive"
+        else:
+            thinking_type = (llm_config.thinking_level or "adaptive").strip().lower()
+            if thinking_type not in {"adaptive", "disabled"}:
+                thinking_type = "adaptive"
         extra_body = {"thinking": {"type": thinking_type}, "reasoning_split": True}
     kwargs: Dict[str, object] = {
         "id": llm_config.model,

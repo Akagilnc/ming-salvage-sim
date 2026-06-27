@@ -261,7 +261,6 @@ export function ApiSettingsModal({
   const [apiKey, setApiKey] = React.useState("");
   const [maxTokens, setMaxTokens] = React.useState(String(initial?.max_tokens || 8000));
   const [timeoutSeconds, setTimeoutSeconds] = React.useState(String(initial?.timeout_seconds || 180));
-  const [thinkingLevel] = React.useState(initial?.thinking_level || "");
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState("");
   const reasoningChoices = initial?.reasoning_strengths || [
@@ -306,7 +305,9 @@ export function ApiSettingsModal({
           api_key: apiKey.trim(),
           max_tokens: parseInt(maxTokens) || 8000,
           timeout_seconds: parseFloat(timeoutSeconds) || 180,
-          thinking_level: thinkingLevel.trim(),
+          // 统一选择器已在初始化时把旧 thinking_level 迁进 reasoningStrength；保存清掉旧字段，
+          // 否则它仍作隐藏旋钮被后端 fallback 消费、用户选「默认」也清不掉（#358 cmr）。
+          thinking_level: "",
           reasoning_strength: reasoningStrength,
           advanced_model: advancedModel.trim(),
           advanced_base_url: advancedBaseUrl.trim(),
