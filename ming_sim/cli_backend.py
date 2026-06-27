@@ -1615,7 +1615,7 @@ def _secret_context_task_like(text: str) -> bool:
 
 def _secret_context_tasks_related(prior: str, later: str) -> bool:
     later_compact = re.sub(r"\s+", "", later or "")
-    if re.search(r"^(再令|另令|又令|并令|仍令|复令)", later_compact):
+    if re.search(r"^(再|另|又|并|仍|复)(令|命|着|遣|派)", later_compact):
         return True
     if re.search(r"(月内|日内|回奏|结案|期限)", later_compact) and not re.search(
         r"(命|令|着|遣|派|督办|暗查|密查|查|护|封存|截留|赈)", later_compact
