@@ -645,6 +645,7 @@ class WebGame:
         # drain 抢下一轮 acquire 后关 session，排队 worker 永不跑或写 closed DB。
         self._drain_cond = threading.Condition()
         self._pending_writes_count = 0
+        self._draining = False
         self.session.begin_turn()
         # 召对记录持久化在 chat_messages 表，启动时恢复进内存缓存。
         self.chat_history: Dict[str, List[Dict[str, str]]] = {
@@ -939,15 +940,18 @@ class WebGame:
             self._write_gate = gate
         return gate
 
-    def _mark_pending_write(self) -> None:
+    def _mark_pending_write(self) -> bool:
         """#396 Gap B: 标记一个即将抢 write_gate 的流式召对 worker。
         drain 须等所有已标记 worker 完成才关连接——否则排队等 gate 的 worker
         会被 drain 抢下一轮 acquire 后关连接饿死。"""
         cond = getattr(self, "_drain_cond", None)
         if cond is None:
-            return
+            return True
         with cond:
+            if getattr(self, "_draining", False):
+                return False
             self._pending_writes_count = getattr(self, "_pending_writes_count", 0) + 1
+            return True
 
     def _complete_pending_write(self) -> None:
         cond = getattr(self, "_drain_cond", None)
@@ -1625,7 +1629,9 @@ class WebGame:
         if not text:
             yield {"type": "error", "message": "问话不能为空。"}
             return
-        self._mark_pending_write()
+        if not self._mark_pending_write():
+            yield {"type": "error", "message": "当前会话正在关闭，请回菜单重新进入。"}
+            return
         write_gate = self._runtime_write_gate()
         write_gate.acquire()
         gate_released = False
@@ -1794,20 +1800,23 @@ def _read_active_db_path() -> str:
         return ""
 
 
-def _write_active_db_path(db_path: str) -> None:
-    active_file = _active_db_path_file()
-    os.makedirs(os.path.dirname(active_file), exist_ok=True)
-    tmp_file = f"{active_file}.tmp.{os.getpid()}.{threading.get_ident()}"
+def _atomic_write_text(path: str, text: str) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp_file = f"{path}.tmp.{os.getpid()}.{threading.get_ident()}"
     try:
         with open(tmp_file, "w", encoding="utf-8") as f:
-            f.write(db_path)
-        os.replace(tmp_file, active_file)
+            f.write(text)
+        os.replace(tmp_file, path)
     finally:
         if os.path.exists(tmp_file):
             try:
                 os.remove(tmp_file)
             except Exception:
                 pass
+
+
+def _write_active_db_path(db_path: str) -> None:
+    _atomic_write_text(_active_db_path_file(), db_path)
 
 
 def _snapshot_main_db_path_config() -> tuple[bool, str, bool, str]:
@@ -1836,18 +1845,7 @@ def _restore_main_db_path_config(snapshot: tuple[bool, str, bool, str]) -> None:
         os.environ.pop("MING_SIM_DB", None)
     active_file = _active_db_path_file()
     if active_exists:
-        os.makedirs(os.path.dirname(active_file), exist_ok=True)
-        tmp_file = f"{active_file}.tmp.{os.getpid()}.{threading.get_ident()}"
-        try:
-            with open(tmp_file, "w", encoding="utf-8") as f:
-                f.write(active_value)
-            os.replace(tmp_file, active_file)
-        finally:
-            if os.path.exists(tmp_file):
-                try:
-                    os.remove(tmp_file)
-                except Exception:
-                    pass
+        _atomic_write_text(active_file, active_value)
     elif os.path.exists(active_file):
         try:
             os.remove(active_file)
@@ -1889,6 +1887,7 @@ def _drain_and_close_session(game, archive_db: bool = False) -> None:
     cond = getattr(game, "_drain_cond", None)
     if cond is not None:
         with cond:
+            setattr(game, "_draining", True)
             while getattr(game, "_pending_writes_count", 0) > 0:
                 cond.wait()
     gate = _game_write_gate(game)
