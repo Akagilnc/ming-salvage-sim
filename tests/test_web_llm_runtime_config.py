@@ -449,6 +449,28 @@ def test_menu_status_reports_inactive_cli_reasoning_strength(monkeypatch):
     assert status["llm"]["cli_reasoning_strength"] == "high"
 
 
+def test_menu_status_uses_advanced_model_for_api_reasoning_capability(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "_has_main_db", lambda: False)
+    monkeypatch.setattr(web_app, "_scan_saves", lambda: [])
+    monkeypatch.setattr(web_app, "_scan_campaigns", lambda: [])
+    monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: "")
+    monkeypatch.setattr(web_app, "load_runtime_game", lambda: {"hitl_min_decisions": 1})
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
+        "channel": "api",
+        "base_url": "https://api.deepseek.com/v1",
+        "model": "deepseek-chat",
+        "api_key": "sk-test",
+        "advanced_base_url": "https://api.example.com/v1",
+        "advanced_model": "gpt-5",
+    })
+
+    status = asyncio.run(web_app.api_menu_status())
+
+    assert status["llm"]["reasoning_supported"] is True
+
+
 def test_menu_save_llm_persists_cli_channel_without_api_key(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
@@ -692,6 +714,25 @@ def test_game_llm_config_reports_inactive_cli_reasoning_strength(monkeypatch):
 
     assert result["reasoning_strength"] == ""
     assert result["persisted"]["cli_reasoning_strength"] == "high"
+
+
+def test_game_llm_config_uses_advanced_model_for_api_reasoning_capability(monkeypatch):
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.deepseek.com/v1",
+        model="deepseek-chat",
+        channel="api",
+        advanced_base_url="https://api.example.com/v1",
+        advanced_model="gpt-5",
+    )
+    monkeypatch.setattr(web_app, "web_game", SimpleNamespace(
+        session=SimpleNamespace(llm_config=cfg),
+    ))
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {"cli": {}})
+
+    result = asyncio.run(web_app.api_get_llm_config())
+
+    assert result["reasoning_supported"] is True
 
 
 def test_fresh_start_without_llm_keeps_existing_main_db(tmp_path, monkeypatch):
