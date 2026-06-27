@@ -14,7 +14,7 @@ def test_runtime_cli_slot_builds_cli_llm_config_without_backend_env(monkeypatch)
     runtime = {
         "channel": "cli",
         "api": {"base_url": "", "model": "", "api_key": ""},
-        "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": "240"},
+        "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": "240", "reasoning_strength": "low"},
     }
 
     cfg = web_app._llm_config_from_runtime(
@@ -35,6 +35,7 @@ def test_runtime_cli_slot_builds_cli_llm_config_without_backend_env(monkeypatch)
     assert cfg.cli_runner == "codex"
     assert cfg.cli_model == "gpt-5.5"
     assert cfg.cli_timeout_seconds == 240
+    assert cfg.reasoning_strength == "low"
     assert cfg.api_key == ""  # CLI 通道 LLMConfig.api_key 永空（占位符只在构造 CliChat 时注入）
 
 
@@ -53,6 +54,50 @@ def test_advanced_llm_verification_preserves_api_channel_over_backend_env(monkey
     web_app._verify_llm_configs_or_raise(cfg)
 
     assert [item.channel for item in seen] == ["api", "api"]
+
+
+def test_advanced_llm_verification_preserves_reasoning_strength(monkeypatch):
+    seen = []
+    monkeypatch.setattr(web_app, "verify_llm_available", lambda cfg: seen.append(cfg))
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="gpt-main",
+        advanced_model="gpt-advanced",
+        channel="api",
+        reasoning_strength="high",
+    )
+
+    web_app._verify_llm_configs_or_raise(cfg)
+
+    assert [item.reasoning_strength for item in seen] == ["high", "high"]
+
+
+def test_runtime_api_reasoning_strength_builds_llm_config(monkeypatch):
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    runtime = {
+        "channel": "api",
+        "reasoning_strength": "high",
+        "api": {"base_url": "https://api.example.com/v1", "model": "gpt-5", "api_key": "sk-test"},
+        "cli": {"runner": "", "model": "", "timeout_seconds": ""},
+    }
+
+    cfg = web_app._llm_config_from_runtime(
+        runtime,
+        base_url="https://api.example.com/v1",
+        model="gpt-5",
+        api_key="sk-test",
+        max_tokens=8000,
+        timeout_seconds=180,
+        thinking_level="",
+        advanced_model="",
+        advanced_base_url="",
+        advanced_api_key="",
+        advanced_thinking_level="",
+    )
+
+    assert cfg.channel == "api"
+    assert cfg.reasoning_strength == "high"
 
 
 def test_build_llm_config_switches_to_api_on_real_key_over_backend_env(monkeypatch):
@@ -156,20 +201,23 @@ def test_api_set_llm_config_explicit_cli_channel_switch(monkeypatch):
     def fake_build(*a, **k):
         built.update(k)
         return LLMConfig(api_key="", base_url="", model="api-fallback",
-                         channel="cli", cli_runner="agy", cli_model="", cli_timeout_seconds=240)
+                         channel="cli", cli_runner="agy", cli_model="", cli_timeout_seconds=240,
+                         reasoning_strength=k.get("reasoning_strength") or "")
 
     fake = SimpleNamespace(build_llm_config=fake_build, commit_llm_config=lambda c: c)
     monkeypatch.setattr(web_app, "get_game", lambda: fake)
     monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda c: None)
 
     result = asyncio.run(web_app.api_set_llm_config(web_app.LLMConfigRequest(
-        channel="cli", cli_runner="agy", cli_timeout_seconds=240,
+        channel="cli", cli_runner="agy", cli_timeout_seconds=240, reasoning_strength="off",
     )))
 
     assert built["channel"] == "cli"          # "__keep__"→None 之外的值原样传给 build
     assert built["cli_runner"] == "agy"
+    assert built["reasoning_strength"] == "off"
     assert result["channel"] == "cli"
     assert result["cli_runner"] == "agy"
+    assert result["reasoning_strength"] == "off"
     assert result["has_api_key"] is False
 
 
@@ -352,6 +400,28 @@ def test_menu_status_active_cli_placeholder_api_key_not_counted(monkeypatch):
     assert status["llm_ready"] is True
 
 
+def test_menu_status_reports_reasoning_strength_capability_for_cli_runner(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "_has_main_db", lambda: False)
+    monkeypatch.setattr(web_app, "_scan_saves", lambda: [])
+    monkeypatch.setattr(web_app, "_scan_campaigns", lambda: [])
+    monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: "")
+    monkeypatch.setattr(web_app, "load_runtime_game", lambda: {"hitl_min_decisions": 1})
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
+        "channel": "cli",
+        "api": {"base_url": "", "model": "", "api_key": ""},
+        "cli": {"runner": "agy", "model": "", "timeout_seconds": "240", "reasoning_strength": "high"},
+        "reasoning_strength": "high",
+    })
+
+    status = asyncio.run(web_app.api_menu_status())
+
+    assert status["llm"]["reasoning_strength"] == "high"
+    assert status["llm"]["reasoning_supported"] is False
+    assert "reasoning_strengths" in status["llm"]
+
+
 def test_menu_save_llm_persists_cli_channel_without_api_key(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
@@ -369,20 +439,24 @@ def test_menu_save_llm_persists_cli_channel_without_api_key(monkeypatch):
         cli_runner="codex",
         cli_model="gpt-5.5",
         cli_timeout_seconds=240,
+        reasoning_strength="low",
     )))
 
     assert result["ok"] is True
     assert result["llm"]["channel"] == "cli"
     assert result["llm"]["cli_runner"] == "codex"
     assert result["llm"]["cli_model"] == "gpt-5.5"
+    assert result["llm"]["reasoning_strength"] == "low"
     assert result["llm"]["has_api_key"] is False
     assert seen and seen[0].channel == "cli"
     assert seen[0].cli_runner == "codex"
     assert seen[0].cli_model == "gpt-5.5"
+    assert seen[0].reasoning_strength == "low"
     assert saved and saved[0][1]["channel"] == "cli"
     assert saved[0][1]["cli_runner"] == "codex"
     assert saved[0][1]["cli_model"] == "gpt-5.5"
     assert saved[0][1]["cli_timeout_seconds"] == 240
+    assert saved[0][1]["reasoning_strength"] == "low"
 
 
 def test_menu_save_cli_verify_runs_off_event_loop(monkeypatch):
@@ -513,6 +587,7 @@ def test_game_llm_config_reports_active_cli_channel_without_fake_api_key(monkeyp
         model="api-fallback",
         max_tokens=8000,
         timeout_seconds=180,
+        reasoning_strength="medium",
         channel="cli",
         cli_runner="codex",
         cli_model="gpt-5.5",
@@ -534,8 +609,9 @@ def test_game_llm_config_reports_active_cli_channel_without_fake_api_key(monkeyp
             "advanced_base_url": "",
             "advanced_api_key": "",
             "advanced_thinking_level": "",
+            "reasoning_strength": "medium",
         },
-        "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": "240"},
+        "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": "240", "reasoning_strength": "medium"},
         "base_url": "https://api.example.com/v1",
         "model": "api-fallback",
         "api_key": "",
@@ -546,6 +622,7 @@ def test_game_llm_config_reports_active_cli_channel_without_fake_api_key(monkeyp
         "advanced_base_url": "",
         "advanced_api_key": "",
         "advanced_thinking_level": "",
+        "reasoning_strength": "medium",
     })
 
     result = asyncio.run(web_app.api_get_llm_config())
@@ -554,11 +631,13 @@ def test_game_llm_config_reports_active_cli_channel_without_fake_api_key(monkeyp
     assert result["cli_runner"] == "codex"
     assert result["cli_model"] == "gpt-5.5"
     assert result["cli_timeout_seconds"] == 240
+    assert result["reasoning_strength"] == "medium"
     assert result["has_api_key"] is False
     assert result["persisted"]["channel"] == "cli"
     assert result["persisted"]["cli_runner"] == "codex"
     assert result["persisted"]["cli_model"] == "gpt-5.5"
     assert result["persisted"]["cli_timeout_seconds"] == 240
+    assert result["persisted"]["reasoning_strength"] == "medium"
 
 
 def test_fresh_start_without_llm_keeps_existing_main_db(tmp_path, monkeypatch):
