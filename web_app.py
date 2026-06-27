@@ -14,7 +14,9 @@ import os
 import queue
 import random
 import re
+import shutil
 import sys
+import time
 import threading
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional
 
@@ -588,11 +590,8 @@ class WebGame:
     def __init__(self, fresh: bool = False) -> None:
         """实例化 = 真正进入游戏。无 API key 直接抛 LLMUnavailable。
         fresh=True：先清空主 DB（新游戏）再建 session。"""
-        db_path = os.environ.get("MING_SIM_DB", "")
-        # 默认存到用户数据目录（frozen=~/.ming_sim/ming_sim.db；源码=<repo>/data/ming_sim.db）。
-        if not db_path:
-            db_path = user_data_path("ming_sim.db")
-        elif not os.path.isabs(db_path):
+        db_path = _get_main_db_path()
+        if not os.path.isabs(db_path):
             db_path = str(user_data_dir() / db_path)
         base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
         model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
@@ -1733,13 +1732,39 @@ def _serialized_web_write(game):
         gate.release()
 
 
-def _drain_and_close_session(game) -> None:
+def _active_db_path_file() -> str:
+    """主库路径的真源文件（#396 new_game 切换主库路径用）。"""
+    return user_data_path("active_db.txt")
+
+
+def _get_main_db_path() -> str:
+    """解析当前主库路径：env > active_db.txt > 默认 ming_sim.db。
+
+    #396：new_game 不删旧库文件（旧后台 worker 仍写，删了会触发 SQLite readonly database），
+    而是把主库路径切到新文件，旧连接排空关闭后旧库归档为存档。active_db.txt 持久化该切换，
+    使重启后仍能加载新库。"""
+    db_path = os.environ.get("MING_SIM_DB", "")
+    if db_path:
+        return db_path
+    active_file = _active_db_path_file()
+    if os.path.exists(active_file):
+        try:
+            with open(active_file, "r", encoding="utf-8") as f:
+                path = f.read().strip()
+                if path:
+                    return path
+        except Exception:
+            pass
+    return user_data_path("ming_sim.db")
+
+
+def _drain_and_close_session(game, archive_db: bool = False) -> None:
     """等在途后台写入（召对 worker / 结算 worker）排空 write_gate 后再关连接。
 
     #396：菜单生命周期端点（exit_to_menu / new_game / shutdown）不再在 write_gate 被
     持时直接 session.close()——否则后台 worker 崩在 closed database（#382 连接级并发）。
     exit_to_menu 立刻清 web_game 并返回，连接在后台 daemon 线程延后关（detach）；
-    new_game 先清 web_game、再 await 排空（offload 到线程池不阻塞事件循环）后才删库建新局；
+    new_game 先把旧库 park 旁路、再立刻建新局（零等待）；排空后关连接并把旁路库归档为存档；
     shutdown await 排空后再杀进程。不挂 #382 大设计，仅用现有 write_gate 队列续跑再关。
     """
     gate = _game_write_gate(game)
@@ -1750,6 +1775,23 @@ def _drain_and_close_session(game) -> None:
         pass
     finally:
         gate.release()
+    if archive_db:
+        old_db_path = getattr(game, "db_path", "")
+        if old_db_path and os.path.exists(old_db_path):
+            saves_dir = user_data_path("saves")
+            os.makedirs(saves_dir, exist_ok=True)
+            target = os.path.join(saves_dir, f"drained_{int(time.time())}.db")
+            try:
+                shutil.move(old_db_path, target)
+            except Exception:
+                pass
+            for suffix in ("-wal", "-shm"):
+                p = old_db_path + suffix
+                if os.path.exists(p):
+                    try:
+                        os.remove(p)
+                    except Exception:
+                        pass
 
 
 web_game: Optional[WebGame] = None  # 懒加载：菜单页点「新游戏/继续/加载存档」才实例化
@@ -1801,7 +1843,7 @@ def _parse_save_name(name: str) -> Dict[str, Any]:
 
 
 def _main_db_campaign_id() -> str:
-    db_path = os.environ.get("MING_SIM_DB", "") or user_data_path("ming_sim.db")
+    db_path = _get_main_db_path()
     if not os.path.isabs(db_path):
         db_path = str(user_data_dir() / db_path)
     if not os.path.isfile(db_path):
@@ -1878,7 +1920,7 @@ def _scan_campaigns() -> List[Dict[str, Any]]:
 
 def _has_main_db() -> bool:
     """主 DB 文件是否存在 → 决定「继续」按钮可不可点。"""
-    db_path = os.environ.get("MING_SIM_DB", "") or user_data_path("ming_sim.db")
+    db_path = _get_main_db_path()
     if not os.path.isabs(db_path):
         db_path = str(user_data_dir() / db_path)
     return os.path.isfile(db_path)
@@ -1941,14 +1983,24 @@ async def api_menu_new_game() -> Dict[str, Any]:
 
     #396：与 exit_to_menu 同构——界面立刻退（web_game=None + 构建新局），
     旧 session 的后台召对队列在 daemon 线程里续跑写入、排空 write_gate 后再关连接（detach）。
-    fresh=True 删 DB 文件时旧连接靠 Unix inode 语义续命（macOS/Linux），不波及新 DB；
+    先把旧库 park 旁路再 fresh=True 建新库——不在旧 worker 仍写旧连接时 os.remove 底层文件；
+    排空后关旧连接并把旁路库归档为存档，玩家可再次进入看到迟到的后台回奏；
     #382 通用并发模型（Windows file-lock 等）不在本轮 scope。"""
     global web_game
     if web_game is not None:
         old_game = web_game
         web_game = None
-        # detach：等 write_gate 排空后再关旧连接（#396），不在 worker 写时关。
-        threading.Thread(target=_drain_and_close_session, args=(old_game,), daemon=True).start()
+        # #396: 不能在旧后台 worker 仍写旧库时删/重命名旧库文件（SQLite 会报 readonly database）。
+        # 改为把主库路径切换到新文件，旧 worker 安全续写旧库；排空关连接后旧库归档为存档。
+        new_db_path = user_data_path(f"ming_sim_{int(time.time() * 1000)}.db")
+        with open(_active_db_path_file(), "w", encoding="utf-8") as f:
+            f.write(new_db_path)
+        # detach：等 write_gate 排空后再关旧连接 + 归档旧库（#396），不在 worker 写时关。
+        threading.Thread(
+            target=_drain_and_close_session,
+            args=(old_game, True),
+            daemon=True,
+        ).start()
     try:
         web_game = WebGame(fresh=True)
     except LLMUnavailable as exc:
