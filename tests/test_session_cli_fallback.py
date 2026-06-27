@@ -1129,6 +1129,55 @@ def test_conversation_update_lands_via_session_path(game, monkeypatch):
         "SELECT content FROM secret_orders WHERE id=?", (oid,)).fetchone()["content"] == "改后内容"
 
 
+def test_preclassified_secret_update_uses_reply_aware_extractor(game, monkeypatch):
+    """#354/#397 cmr r13: 并发分类器只读皇帝话，secret 更新字段须等大臣回话后重抽，不能丢补充。"""
+    db, state, _ = game
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    who = "并发更新承办官"
+    oid = db.create_secret_order(state, who, "原标题", "原内容", [], deadline_months=0)
+
+    def reply_aware_extract(player_message, reply, active, is_consort, llm_config=None):
+        assert "臣补充" in reply
+        return {
+            "secret_action": "更新",
+            "order_id": oid,
+            "new_title": "改后标题",
+            "new_content": "皇帝增量；臣补充执行细则",
+            "deadline_months": 0,
+            "cultivate_skill": "",
+            "cultivate_trait": "",
+        }
+
+    monkeypatch.setattr(cb, "extract_minister_actions", reply_aware_extract)
+    s = _session(db, state, registry=SimpleNamespace(refresh=lambda n: None),
+                 llm_config=SimpleNamespace(channel="cli", cli_runner="codex"))
+    res = s.apply_cli_conversation_actions(
+        SimpleNamespace(name=who, office_type="兵部"),
+        "更新那道密令，补一条皇帝增量。",
+        "臣补充执行细则。",
+        has_directive=False,
+        secret_order_id=None,
+        preclassified_intent={
+            "kind": "secret",
+            "secret_action": "更新",
+            "order_id": oid,
+            "new_title": "预判标题",
+            "new_content": "皇帝增量",
+            "deadline_months": 0,
+            "cultivate_skill": "",
+            "cultivate_trait": "",
+        },
+    )
+
+    assert res.get("pending_action_id")
+    row = db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (res["pending_action_id"],),
+    ).fetchone()
+    payload = json.loads(row["payload_json"])
+    assert payload["new_content"] == "皇帝增量；臣补充执行细则"
+
+
 def test_runtime_cli_conversation_update_uses_configured_runner_without_env(game, monkeypatch):
     """无前缀会话动作的 LLM 判定也必须按 runtime CLI 配置分派。"""
     db, state, _ = game
