@@ -290,6 +290,44 @@ def test_secret_order_body_excludes_audience_role_labels(game, monkeypatch):
     assert "就按你意思办" not in body
 
 
+def test_secret_context_path_keeps_offtopic_llm_guard(game, monkeypatch):
+    """#354 (cmr r2): 上下文合成路径不得无条件信 LLM——若 LLM 内容跑题（写成别的任务），
+    御旨守门须照样兜底回前文真任务，不静默采信跑题正文。守门输入用剥标签后的任务文本。"""
+    db, state, _ = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    minister = "魏忠贤"
+    described_task = "命洪承畴督办陕西赈灾，东厂暗助护赈银、查截留。"
+    db.append_chat_message(minister, state.turn, "user", described_task)
+    db.append_chat_message(minister, state.turn, "minister", "臣领密旨。")
+
+    def fake_extract_offtopic(prompt, llm_config=None, tag=""):
+        return (json.dumps({
+            "标题": "清查盐政",
+            "内容": "命毕自严清查两淮盐政，追比积欠。",  # 完全跑题
+            "承办人": minister,
+            "期限月数": 0,
+            "标签": ["盐政"],
+        }, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", fake_extract_offtopic)
+    result = _result()
+    result.answer = "臣领命。"
+
+    _session(db, state, llm_config=SimpleNamespace(channel="cli"))._cli_backend_fallback_actions(
+        result,
+        SimpleNamespace(name=minister, office_type="司礼监"),
+        "密令如下：可，照办",
+    )
+
+    row = db.conn.execute(
+        "SELECT content FROM secret_orders WHERE id=?", (result.secret_order_id,),
+    ).fetchone()
+    body = row["content"]
+    assert "督办陕西赈灾" in body  # 真任务兜底保住
+    assert "皇帝：" not in body
+    assert "本轮确认" not in body
+
+
 def test_noop_appointment_alias_target_is_not_staged(game, monkeypatch):
     """#354 (cmr): no-op 任免丢弃须按 canonical 口径——背景句用别名提到「某人已任某职」、
     其规范名当前已在该职时，照样确定性丢弃，不因别名查不到精确行而漏判成假任免。"""
