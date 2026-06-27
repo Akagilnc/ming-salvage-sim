@@ -321,6 +321,34 @@ def test_api_channel_secret_prefix_confirmation_uses_recent_context(game, monkey
     assert "督办陕西赈灾" in row["content"]
 
 
+def test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails(game, monkeypatch):
+    """#354 correctness r3: API/提取失败兜底时，混合确认句里的期限/约束不能随确认噪声整行丢掉。"""
+    db, state, _ = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    minister = "魏忠贤"
+    db.append_chat_message(minister, state.turn, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银、查截留。")
+    db.append_chat_message(minister, state.turn, "minister", "臣领密旨，当令东厂暗中护送赈银。")
+
+    def fail_extract(*_args, **_kwargs):
+        raise RuntimeError("backend unavailable")
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", fail_extract)
+    res = _session(db, state, llm_config=SimpleNamespace(channel="api")).apply_cli_conversation_actions(
+        SimpleNamespace(name=minister, office_type="司礼监"),
+        "密令如下：可，照办，三月内回奏",
+        "臣领命。",
+        has_directive=False,
+        secret_order_id=None,
+    )
+
+    assert res["secret_order_id"]
+    row = db.conn.execute(
+        "SELECT content FROM secret_orders WHERE id=?", (res["secret_order_id"],),
+    ).fetchone()
+    assert "督办陕西赈灾" in row["content"]
+    assert "三月内回奏" in row["content"]
+
+
 def test_secret_context_path_preserves_multiple_related_emperor_task_lines(game, monkeypatch):
     """#354 correctness: 玩家前几轮连续补充同一密令任务时，兜底/守门不能只保留最后一条皇帝行。"""
     db, state, _ = game
