@@ -147,6 +147,40 @@ def test_save_runtime_llm_persists_api_reasoning_strength(tmp_path, monkeypatch)
     assert saved["reasoning_strength"] == "high"
 
 
+def test_save_runtime_llm_api_save_preserves_cli_reasoning_strength(tmp_path, monkeypatch):
+    """#358 cmr r4: 保存 API 通道不得丢掉 CLI 槽已存的 reasoning_strength——它像 runner/model/
+    timeout 一样按槽保留（API 选择器空=""并非有意清 CLI 槽，否则切回 CLI 设置无声蒸发）。"""
+    path = tmp_path / "runtime_llm.json"
+    path.write_text(
+        json.dumps(
+            {
+                "channel": "cli",
+                "reasoning_strength": "high",
+                "api": {"base_url": "", "model": "", "api_key": ""},
+                "cli": {
+                    "runner": "codex",
+                    "model": "gpt-5.5",
+                    "timeout_seconds": 240,
+                    "reasoning_strength": "high",
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
+
+    # 保存 API 通道，API 推理强度空（默认）
+    llm_config.save_runtime_llm(
+        "https://api.example.com/v1", "gpt-5", "sk-test",
+        channel="api", reasoning_strength="",
+    )
+
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["channel"] == "api"
+    assert saved["cli"].get("reasoning_strength") == "high"  # CLI 槽设置保住
+
+
 def test_save_runtime_llm_can_clear_reasoning_strength_to_default(tmp_path, monkeypatch):
     path = tmp_path / "runtime_llm.json"
     path.write_text(

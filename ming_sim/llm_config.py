@@ -398,8 +398,15 @@ def save_runtime_llm(
         )
     else:
         strength = normalize_reasoning_strength(reasoning_strength)
-    if strength:
-        cli_payload["reasoning_strength"] = strength
+    # CLI 槽的 reasoning_strength 像 runner/model/timeout 一样按槽保留：保存 API 通道时不得用
+    # API 的空强度覆盖/清掉 CLI 槽已存值（cmr #358 r4：跨通道保存丢失 inactive 槽设置——切回
+    # CLI 时无声蒸发）。只有保存 CLI 通道、或显式传入强度且无既存 CLI 值时才用本次 strength 更新。
+    if active_channel == "cli":
+        cli_strength = strength
+    else:
+        cli_strength = normalize_reasoning_strength(existing_cli.get("reasoning_strength", ""))
+    if cli_strength:
+        cli_payload["reasoning_strength"] = cli_strength
     payload = {
         "channel": active_channel,
         "reasoning_strength": strength,
