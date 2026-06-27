@@ -163,8 +163,14 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
           ...BASE_LLM_RESPONSE,
           thinking_level: "high",
           reasoning_strength: "",
+          advanced_thinking_level: "high",
           reasoning_supported: true,
-          persisted: { ...BASE_LLM_RESPONSE.persisted, thinking_level: "high", reasoning_strength: "" },
+          persisted: {
+            ...BASE_LLM_RESPONSE.persisted,
+            thinking_level: "high",
+            reasoning_strength: "",
+            advanced_thinking_level: "high",
+          },
         }),
       } as Response);
     });
@@ -174,6 +180,7 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     // selector migrated the legacy value into the unified strength
     const select = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
     expect(select?.value).toBe("high");
+    expect(document.body.textContent).not.toContain("Advanced Thinking Level");
 
     const saveBtn = Array.from(document.querySelectorAll("button")).find((b) =>
       (b.textContent ?? "").includes("保存并应用")
@@ -188,6 +195,7 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     const body = JSON.parse(String(post!.init!.body));
     expect(body.reasoning_strength).toBe("high");
     expect(body.thinking_level).toBe("");
+    expect(body.advanced_thinking_level).toBe("");
     cleanup();
   });
 });

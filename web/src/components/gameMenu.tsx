@@ -342,7 +342,6 @@ export function LLMConfigTab() {
   const [advancedModel, setAdvancedModel] = React.useState("");
   const [advancedBaseUrl, setAdvancedBaseUrl] = React.useState("");
   const [advancedApiKey, setAdvancedApiKey] = React.useState("");
-  const [advancedThinkingLevel, setAdvancedThinkingLevel] = React.useState("");
   const [apiKey, setApiKey] = React.useState("");
   const [maxTokens, setMaxTokens] = React.useState("8000");
   const [timeoutSeconds, setTimeoutSeconds] = React.useState("180");
@@ -386,7 +385,6 @@ export function LLMConfigTab() {
         setModel(data.model);
         setAdvancedModel(data.advanced_model || "");
         setAdvancedBaseUrl(data.advanced_base_url || "");
-        setAdvancedThinkingLevel(data.advanced_thinking_level || "");
         setMaxTokens(String(data.max_tokens || 8000));
         setTimeoutSeconds(String(data.timeout_seconds || 180));
         setReasoningStrength(normalizeStrength(data.reasoning_strength || data.thinking_level));
@@ -421,7 +419,7 @@ export function LLMConfigTab() {
           advanced_model: advancedModel,
           advanced_base_url: advancedBaseUrl,
           advanced_api_key: advancedApiKey.trim() ? advancedApiKey : "__keep__",
-          advanced_thinking_level: advancedThinkingLevel.trim(),
+          advanced_thinking_level: "",
           channel,
           cli_runner: channel === "cli" ? cliRunner : "__keep__",
           cli_model: channel === "cli" ? cliModel : "__keep__",
@@ -597,15 +595,6 @@ export function LLMConfigTab() {
               value={advancedApiKey}
               onChange={(e) => setAdvancedApiKey(e.target.value)}
               placeholder="留空=复用主 API Key / 保留当前"
-            />
-          </label>
-          <label className="menu-field">
-            <span>Advanced Thinking Level <small className="menu-hint">（空=默认，请填写你的模型支持的值。）</small></span>
-            <input
-              className="menu-input"
-              value={advancedThinkingLevel}
-              onChange={(e) => setAdvancedThinkingLevel(e.target.value)}
-              placeholder="默认"
             />
           </label>
           <label className="menu-field">

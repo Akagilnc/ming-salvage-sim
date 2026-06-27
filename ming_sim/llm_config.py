@@ -94,6 +94,8 @@ def _api_runtime_slot(data: Dict[str, object]) -> Dict[str, object]:
         if k in _API_NUMERIC_FIELDS:
             caster, default = _API_NUMERIC_FIELDS[k]
             out[k] = _slot_number(data.get(k), caster, default)
+        elif k == "advanced_thinking_level":
+            out[k] = ""
         else:
             out[k] = _slot_text(data, k)
     return out
@@ -243,9 +245,7 @@ def load_llm_config(
         advanced_model=(advanced_model or "").strip(),
         advanced_base_url=normalize_openai_base_url(adv_base) if adv_base else "",
         advanced_api_key=real_api_key_or_empty(advanced_api_key),
-        advanced_thinking_level=normalize_thinking_level(
-            advanced_thinking_level or os.environ.get("OPENAI_ADVANCED_THINKING_LEVEL", "")
-        ),
+        advanced_thinking_level="",
         reasoning_strength=normalize_reasoning_strength(os.environ.get("MING_SIM_REASONING_STRENGTH", "")),
         channel="cli" if cli_runner else "api",
         cli_runner=cli_runner or "",
@@ -275,11 +275,11 @@ def for_role(cfg: LLMConfig, role: str) -> LLMConfig:
             model=cfg.advanced_model.strip(),
             max_tokens=cfg.max_tokens,
             timeout_seconds=cfg.timeout_seconds,
-            thinking_level=cfg.advanced_thinking_level,
+            thinking_level="",
             advanced_model=cfg.advanced_model,
             advanced_base_url=cfg.advanced_base_url,
             advanced_api_key=cfg.advanced_api_key,
-            advanced_thinking_level=cfg.advanced_thinking_level,
+            advanced_thinking_level="",
             reasoning_strength=cfg.reasoning_strength,
             channel=cfg.channel,
             cli_runner=cfg.cli_runner,
@@ -380,7 +380,7 @@ def save_runtime_llm(
             "advanced_model": (advanced_model or "").strip(),
             "advanced_base_url": (advanced_base_url or "").strip(),
             "advanced_api_key": (advanced_api_key or "").strip(),
-            "advanced_thinking_level": normalize_thinking_level(advanced_thinking_level),
+            "advanced_thinking_level": "",
         }
     )
     cli_payload = {

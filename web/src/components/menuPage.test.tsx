@@ -1,6 +1,6 @@
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { MenuPage } from "./menuPage";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -92,6 +92,82 @@ describe("ApiSettingsModal reasoning strength", () => {
     const select = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
     expect(select?.disabled).toBe(true);
     expect(document.body.textContent).toContain("该后端不支持推理强度设置");
+    cleanup();
+  });
+
+  it("does not expose or save a separate advanced thinking selector", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({}),
+      } as Response);
+    });
+    const cleanup = render(
+      <MenuPage
+        status={{
+          has_api_key: true,
+          llm_ready: true,
+          has_running_game: false,
+          has_main_db: false,
+          saves: [],
+          campaigns: [],
+          llm: {
+            channel: "api",
+            base_url: "https://api.example.com/v1",
+            model: "gpt-5",
+            has_api_key: true,
+            cli_runner: "agy",
+            cli_model: "",
+            cli_model_saved: "",
+            cli_model_choices: { agy: [{ value: "", label: "默认 · gemini" }] },
+            cli_timeout_seconds: 240,
+            reasoning_strength: "medium",
+            reasoning_supported: true,
+            reasoning_strengths: [
+              { value: "", label: "默认" },
+              { value: "off", label: "关" },
+              { value: "low", label: "低" },
+              { value: "medium", label: "中" },
+              { value: "high", label: "高" },
+            ],
+            max_tokens: 8000,
+            timeout_seconds: 180,
+            thinking_level: "",
+            advanced_model: "gpt-5",
+            advanced_base_url: "",
+            has_advanced_api_key: false,
+            advanced_thinking_level: "high",
+          },
+        }}
+        onRefresh={async () => {}}
+        onEnterGame={async () => {}}
+        error=""
+        setError={() => {}}
+      />
+    );
+
+    act(() => {
+      Array.from(document.querySelectorAll("button")).find((button) =>
+        button.textContent?.includes("设置 API")
+      )?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(document.body.textContent).not.toContain("Advanced Thinking Level");
+    const save = Array.from(document.querySelectorAll("button")).find((button) =>
+      button.textContent === "保存"
+    );
+    expect(save).toBeTruthy();
+    await act(async () => {
+      save!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const post = calls.find((call) => call.url === "/api/menu/llm");
+    expect(post).toBeTruthy();
+    const body = JSON.parse(String(post!.init!.body));
+    expect(body.reasoning_strength).toBe("medium");
+    expect(body.advanced_thinking_level).toBe("");
     cleanup();
   });
 });
