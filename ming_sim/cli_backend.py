@@ -1234,6 +1234,41 @@ def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = Non
     }
 
 
+def _longest_common_substring_length(a: str, b: str) -> int:
+    """两串的最长公共【连续】子串长度。用于判定 LLM 内容是否覆盖皇帝显式旨意。"""
+    if not a or not b:
+        return 0
+    prev = [0] * (len(b) + 1)
+    best = 0
+    for i in range(1, len(a) + 1):
+        cur = [0] * (len(b) + 1)
+        ai = a[i - 1]
+        for j in range(1, len(b) + 1):
+            if ai == b[j - 1]:
+                cur[j] = prev[j - 1] + 1
+                if cur[j] > best:
+                    best = cur[j]
+        prev = cur
+    return best
+
+
+def _content_reflects_emperor_intent(content: str, emperor_intent: str) -> bool:
+    """LLM『内容』是否覆盖皇帝显式旨意（#397 Step5 防丢御旨守门）。
+
+    覆盖 = 去空白后两串最长公共连续子串 ≥ 皇帝旨意一半（且不少于 2 字）。既容许 LLM
+    轻度润色（漏首字 / 换近义词仍判覆盖），又能抓住『内容只剩大臣领命语、完全不含皇帝
+    原话』的病态——此时须走兜底合并。皇帝无显式旨意（前缀后为空）时视为无需守护。"""
+    if not emperor_intent:
+        return True
+    c = re.sub(r"\s+", "", content or "")
+    e = re.sub(r"\s+", "", emperor_intent)
+    if not e:
+        return True
+    lcs = _longest_common_substring_length(e, c)
+    need = max(2, (len(e) + 1) // 2)
+    return lcs >= need
+
+
 def _extract_secret_order(
     player_command: str,
     minister_reply: str,
@@ -1264,12 +1299,14 @@ def _extract_secret_order(
         _log(f"密令提取失败：{exc}")
     obj = _loads_lenient(raw) or {}
     _content_llm = str(obj.get("内容") or "").strip()
-    if _content_llm:
+    if _content_llm and _content_reflects_emperor_intent(_content_llm, player_command):
         content = _content_llm
     else:
-        # 提取失败兜底（#397）：合并皇帝显式旨意 + 大臣回话，确保不丢御旨——
-        # 旧码 `minister_reply or player_command` 单选会丢御旨（大臣只领命时正文落成领命语）。
-        _parts = [p for p in (player_command, minister_reply) if p]
+        # 兜底（#397 Step5）：LLM 把御旨丢了——内容为空、只剩大臣领命语、或润色后不含
+        # 皇帝显式旨意——时，皇帝显式旨意为主，并入 LLM 内容（或回话），确保御旨绝不丢，
+        # 同时保留大臣补充的承办人/要点。旧码只在内容为空时兜底，合法但丢御旨的内容会直取。
+        candidate = _content_llm or minister_reply
+        _parts = [p for p in (player_command, candidate) if p]
         content = "\n".join(_parts)
     title = str(obj.get("标题") or "").strip()[:20] or (player_command or content)[:14]
     assignee = str(obj.get("承办人") or "").strip() or default_assignee

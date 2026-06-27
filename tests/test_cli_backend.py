@@ -77,6 +77,30 @@ def test_secret_prefix_merges_emperor_intent_with_reply(monkeypatch):
     assert so["deadline_months"] == 3
 
 
+def test_secret_prefix_bad_llm_content_still_keeps_emperor_intent(monkeypatch):
+    """#397 Step5 完整性：LLM 返回合法 JSON 但『内容』只剩大臣领命语（丢皇帝显式旨意）
+    时，旧码直取该非空内容 → 御旨丢失。须兜底合并：御旨为主、并入 LLM 内容里的大臣补充，
+    且结构化承办人/期限仍照常抽出。"""
+    canned = json.dumps({
+        "标题": "密查辽东军饷",
+        "内容": "臣领密旨，可授李若琏暗查。",   # 合法但非空、丢御旨的病态内容
+        "承办人": "李若琏",
+        "期限月数": 3,
+        "标签": ["辽饷"],
+    }, ensure_ascii=False)
+    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
+    acts = cb.resolve_minister_actions(
+        "臣领密旨，可授李若琏暗查。", "密令如下：查辽东军饷有无侵冒，三月内回奏",
+        default_assignee="王在晋",
+    )
+    so = acts["secret_order"]
+    assert so is not None
+    assert "查辽东军饷有无侵冒" in so["content"]      # 御旨不丢（即便 LLM 给了非空内容）
+    assert "李若琏" in so["content"]                  # 大臣补充的承办人/要点保留
+    assert so["assignee"] == "李若琏"                 # 结构化承办人仍抽出
+    assert so["deadline_months"] == 3
+
+
 def test_secret_assignee_defaults_when_unspecified(monkeypatch):
     """LLM 未指明承办人 → 退回 default_assignee（#397 合并润色路径）。"""
     canned = json.dumps({
