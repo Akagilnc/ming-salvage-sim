@@ -70,6 +70,35 @@ def test_exit_to_menu_returns_before_delayed_close_drains(monkeypatch):
     assert not gate.locked()
 
 
+def test_new_game_returns_before_delayed_close_drains(monkeypatch):
+    """#396: new_game 与 exit_to_menu 同构——界面立刻构建新局返回，
+    旧 session 的后台队列在 daemon 线程排空 write_gate 后再关连接（detach）。"""
+    gate = threading.Lock()
+    closed: list[int] = []
+    fake_old_game = SimpleNamespace(
+        _write_gate=gate,
+        session=SimpleNamespace(close=lambda: closed.append(1)),
+    )
+    monkeypatch.setattr(web_app, "web_game", fake_old_game)
+
+    fake_new_game = SimpleNamespace(state_payload=lambda: {"turn": 1})
+    monkeypatch.setattr(web_app, "WebGame", lambda fresh: fake_new_game)
+    monkeypatch.setattr(web_app.steam_events, "with_events", lambda payload, events: payload)
+
+    gate.acquire()
+
+    result = asyncio.run(web_app.api_menu_new_game())
+
+    assert "state" in result
+    assert web_app.web_game is fake_new_game
+    assert closed == []  # 旧 session 尚未关闭（gate 被模拟 worker 持有）
+
+    gate.release()
+
+    assert _wait_for(lambda: closed == [1])
+    assert not gate.locked()
+
+
 def test_shutdown_waits_for_drain_before_returning_or_killing(monkeypatch):
     gate = threading.Lock()
     closed: list[int] = []

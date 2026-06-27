@@ -1939,13 +1939,16 @@ async def api_menu_status() -> Dict[str, Any]:
 async def api_menu_new_game() -> Dict[str, Any]:
     """开始新游戏：清主 DB → 新建 WebGame。
 
-    #396：fresh=True 会删 DB 文件——必须先等旧连接的 worker 排空并关连接，
-    否则删文件时 worker 仍在写。offload 到线程池不阻塞事件循环。"""
+    #396：与 exit_to_menu 同构——界面立刻退（web_game=None + 构建新局），
+    旧 session 的后台召对队列在 daemon 线程里续跑写入、排空 write_gate 后再关连接（detach）。
+    fresh=True 删 DB 文件时旧连接靠 Unix inode 语义续命（macOS/Linux），不波及新 DB；
+    #382 通用并发模型（Windows file-lock 等）不在本轮 scope。"""
     global web_game
     if web_game is not None:
         old_game = web_game
         web_game = None
-        await asyncio.get_running_loop().run_in_executor(None, _drain_and_close_session, old_game)
+        # detach：等 write_gate 排空后再关旧连接（#396），不在 worker 写时关。
+        threading.Thread(target=_drain_and_close_session, args=(old_game,), daemon=True).start()
     try:
         web_game = WebGame(fresh=True)
     except LLMUnavailable as exc:
