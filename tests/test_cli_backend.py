@@ -240,6 +240,55 @@ def test_extract_assignee_hint_greedy_strip_handles_all_verb_tails():
     assert cb._extract_assignee_hint("可委李标负责。") == "李标"
 
 
+def test_extract_assignee_action_pulls_verb_after_name():
+    """#397 Step6 R4（Codex P1）：_extract_assignee_action 抽出人名之后的动作/职责词。"""
+    assert cb._extract_assignee_action("可委周延儒监督此事", "周延儒") == "监督"
+    assert cb._extract_assignee_action("可由周延儒协办此事", "周延儒") == "协办"
+    assert cb._extract_assignee_action("可委周延儒处理", "周延儒") == "处理"
+    assert cb._extract_assignee_action("可委李若琏负责", "李若琏") == "负责"
+    assert cb._extract_assignee_action("可授李若琏暗查", "李若琏") == "暗查"
+    # 分句止于人名（无动作词）→ 空串，退化为只验人名
+    assert cb._extract_assignee_action("可授李若琏", "李若琏") == ""
+
+
+def test_content_reflects_supplements_rejects_name_only_when_action_dropped():
+    """#397 Step6 R4（Codex P1）：assignee-hint 分句带具体动作/职责词时，只保住人名不够——
+    动作词被泛化动词（如『承办』）替换即判未覆盖，走兜底合并。"""
+    assert cb._content_reflects_minister_supplements("着周延儒承办", "可由周延儒协办此事。") is False
+    assert cb._content_reflects_minister_supplements("着周延儒承办", "可委周延儒监督此事。") is False
+    assert cb._content_reflects_minister_supplements("着周延儒承办", "可委周延儒处理。") is False
+    assert cb._content_reflects_minister_supplements("着李若琏承办", "可委李若琏负责。") is False
+    assert cb._content_reflects_minister_supplements("着李标承办", "可委李标负责。") is False
+
+
+def test_content_reflects_supplements_accepts_when_name_and_action_preserved():
+    """#397 Step6 R4 对照面：人名【且】动作词都在正文里 → 判覆盖（不误触合并）。"""
+    assert cb._content_reflects_minister_supplements("着李若琏暗查", "可授李若琏暗查。") is True
+    assert cb._content_reflects_minister_supplements("着周延儒协办此事", "可由周延儒协办此事。") is True
+
+
+def test_secret_prefix_action_word_dropped_triggers_merge(monkeypatch):
+    """#397 Step6 R4 端到端：LLM 正文把大臣的『协办』换成泛化『承办』→ 守门判未覆盖 →
+    兜底合并，最终正文保留大臣的实质动作词。"""
+    canned = json.dumps({
+        "标题": "密查辽东军饷",
+        "内容": "查辽东军饷有无侵冒，着周延儒承办",   # 人名在、动作词被泛化动词替换
+        "承办人": "周延儒",
+        "期限月数": 3,
+        "标签": ["辽饷"],
+    }, ensure_ascii=False)
+    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
+    acts = cb.resolve_minister_actions(
+        "臣领密旨，可由周延儒协办此事。", "密令如下：查辽东军饷有无侵冒",
+        default_assignee="王在晋",
+    )
+    so = acts["secret_order"]
+    assert so is not None
+    assert "查辽东军饷有无侵冒" in so["content"]   # 御旨不丢
+    assert "协办" in so["content"]                 # 大臣的动作词保留（R4 Codex P1）
+    assert so["assignee"] == "周延儒"
+
+
 # ── _loads_lenient：容错 JSON 解析 ──
 
 def test_loads_lenient_plain():

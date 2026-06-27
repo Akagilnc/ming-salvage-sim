@@ -1288,10 +1288,12 @@ def _minister_material_clauses(reply: str) -> List[str]:
 
 
 def _content_reflects_minister_supplements(content: str, minister_reply: str) -> bool:
-    """LLM 正文是否完整保留大臣回话中的实质补充要点（#397 Step6 R3 Codex P1）。
+    """LLM 正文是否完整保留大臣回话中的实质补充要点（#397 Step6 R3 Codex P1 / R4）。
 
-    按分句逐条核验：承办人建议式分句只验人名是否在正文（LLM 可能改写措辞，如「着李若琏
-    暗查」vs「可授李若琏暗查」）；其余 material 分句去前导虚词后须作为连续子串出现。
+    按分句逐条核验：
+    - 承办人建议式分句：验人名【且】动作/职责词都在正文里（#397 Step6 R4 Codex P1）——
+      旧码只验人名，『可委周延儒协办此事』会被『着周延儒承办』（吞掉『协办』）误判覆盖。
+    - 其余 material 分句去前导虚词后须作为连续子串出现。
     任一缺失即判未覆盖，走兜底合并。大臣无实质补充（纯领命）时视为无需守护。"""
     material_clauses = _minister_material_clauses(minister_reply)
     if not material_clauses:
@@ -1301,6 +1303,12 @@ def _content_reflects_minister_supplements(content: str, minister_reply: str) ->
         assignee = _extract_assignee_hint(clause)
         if assignee:
             if assignee not in c:
+                return False
+            # #397 Step6 R4：分句带具体动作/职责词（协办/监督/处理/负责…）时，只保住人名
+            # 不够——该词也须在正文里，否则合法 LLM 输出会用泛化动词（如『承办』）替换掉
+            # 它、静默吞掉大臣的实质补充。
+            action = _extract_assignee_action(clause, assignee)
+            if action and action not in c:
                 return False
             continue
         core = re.sub(r"\s+", "", _SUPPLEMENT_PREFIX_RE.sub("", clause))
@@ -1326,6 +1334,10 @@ _ASSIGNEE_HINT_RE = re.compile(
 # 动作动词首字集：greedy 捕获后从尾部剥掉这些字。与 lookahead 的动词字同集——
 # lookahead 判定名字后的动词首字、tail strip 剥掉被贪心吞进名字的动词首字（#397 Step6 R3 agy P0）。
 _ASSIGNEE_VERB_TAIL_CHARS = frozenset("暗密调督拟领查办为任去往主核理统提巡镇守征讨驻屯管行前担监督协处负责")
+# 动作/职责动词连续段（#397 Step6 R4）：assignee-hint 分句里人名之后的 material 动作词。
+# 字集与 _ASSIGNEE_VERB_TAIL_CHARS 同源（lookahead 判定名后动词首字、tail strip 剥贪心吞字），
+# 此处用于抽出『协办/监督/处理/负责…』等动作词，核验它是否也被 LLM 正文保留。
+_ASSIGNEE_ACTION_RUN_RE = re.compile("[" + "".join(sorted(_ASSIGNEE_VERB_TAIL_CHARS)) + "]{1,6}")
 # 捕获到机关/地名（含 部/寺/院… 字）的不是人名，跳过。
 # 注意：曹是常见姓（曹化淳/曹文诏），不是机关字，故不入此集（#397 Step6 R3 Codex P2）。
 _ASSIGNEE_HINT_STOP_RE = re.compile(r"[部寺院局司省州府县卫营阁监科室库厂仓]")
@@ -1344,6 +1356,21 @@ def _extract_assignee_hint(text: str) -> Optional[str]:
         if len(name) >= 2 and not _ASSIGNEE_HINT_STOP_RE.search(name):
             return name
     return None
+
+
+def _extract_assignee_action(clause: str, assignee: str) -> str:
+    """从承办人建议式分句里抽出 assignee 之后的动作/职责词（material action word）。
+
+    #397 Step6 R4（Codex P1）：assignee-hint 分句只验人名在正文里不够——分句带的
+    具体动作/职责词（协办/监督/处理/负责…）也须在正文里，否则合法 LLM 输出会用
+    泛化动词（如『承办』）替换掉它、静默吞掉大臣的实质补充。无动作词（分句止于人名）
+    时返回空串，退化为只验人名。"""
+    idx = clause.find(assignee)
+    if idx == -1:
+        return ""
+    tail = clause[idx + len(assignee):].lstrip()
+    m = _ASSIGNEE_ACTION_RUN_RE.match(tail)
+    return m.group(0) if m else ""
 
 
 def _merge_secret_content(*parts: str) -> str:
