@@ -1234,39 +1234,27 @@ def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = Non
     }
 
 
-def _longest_common_substring_length(a: str, b: str) -> int:
-    """两串的最长公共【连续】子串长度。用于判定 LLM 内容是否覆盖皇帝显式旨意。"""
-    if not a or not b:
-        return 0
-    prev = [0] * (len(b) + 1)
-    best = 0
-    for i in range(1, len(a) + 1):
-        cur = [0] * (len(b) + 1)
-        ai = a[i - 1]
-        for j in range(1, len(b) + 1):
-            if ai == b[j - 1]:
-                cur[j] = prev[j - 1] + 1
-                if cur[j] > best:
-                    best = cur[j]
-        prev = cur
-    return best
+_CLAUSE_SPLIT = re.compile(r"[，,。.；;！!？?、]+")
 
 
 def _content_reflects_emperor_intent(content: str, emperor_intent: str) -> bool:
-    """LLM『内容』是否覆盖皇帝显式旨意（#397 Step5 防丢御旨守门）。
+    """LLM『内容』是否完整保留皇帝显式旨意（#397 Step5 防丢御旨守门）。
 
-    覆盖 = 去空白后两串最长公共连续子串 ≥ 皇帝旨意一半（且不少于 2 字）。既容许 LLM
-    轻度润色（漏首字 / 换近义词仍判覆盖），又能抓住『内容只剩大臣领命语、完全不含皇帝
-    原话』的病态——此时须走兜底合并。皇帝无显式旨意（前缀后为空）时视为无需守护。"""
+    皇帝旨意常由若干分句（以中英文标点断句）组成，每一分句都是不可吞掉的『一部分』。
+    故按分句逐条核验：去空白后每个分句须作为连续子串出现在『内容』里——只留前半段、
+    丢掉后半段显式条款（如漏『三月内回奏』）即判未覆盖，走兜底合并。容许 LLM 在分句之外
+    增补大臣要点/润色衔接，但不得吞掉任何一分句。旧 LCS≥半 判据会放过半段丢失，已弃用。
+    皇帝无显式旨意（前缀后为空）时视为无需守护。"""
     if not emperor_intent:
         return True
     c = re.sub(r"\s+", "", content or "")
     e = re.sub(r"\s+", "", emperor_intent)
     if not e:
         return True
-    lcs = _longest_common_substring_length(e, c)
-    need = max(2, (len(e) + 1) // 2)
-    return lcs >= need
+    clauses = [seg for seg in _CLAUSE_SPLIT.split(e) if seg]
+    if not clauses:
+        return True
+    return all(clause in c for clause in clauses)
 
 
 def _extract_secret_order(

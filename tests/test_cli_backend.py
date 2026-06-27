@@ -101,6 +101,31 @@ def test_secret_prefix_bad_llm_content_still_keeps_emperor_intent(monkeypatch):
     assert so["deadline_months"] == 3
 
 
+def test_secret_prefix_partial_llm_content_still_keeps_emperor_intent(monkeypatch):
+    """#397 Step5 完整性（partial-loss）：LLM『内容』合法非空、保留皇帝旨意前半段并并入大臣
+    补充、却丢掉后半段显式条款（漏『三月内回奏』）时，旧 LCS≥半 守门仍判覆盖 → 御旨部分丢失。
+    须按分句逐条核验：任一显式分句缺失即走兜底合并，御旨与大臣补充两全。"""
+    canned = json.dumps({
+        "标题": "密查辽东军饷",
+        "内容": "查辽东军饷有无侵冒；着李若琏暗查。",   # 合法非空、留前半段+大臣补充，丢『三月内回奏』
+        "承办人": "李若琏",
+        "期限月数": 3,
+        "标签": ["辽饷"],
+    }, ensure_ascii=False)
+    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
+    acts = cb.resolve_minister_actions(
+        "臣领密旨，可授李若琏暗查。", "密令如下：查辽东军饷有无侵冒，三月内回奏",
+        default_assignee="王在晋",
+    )
+    so = acts["secret_order"]
+    assert so is not None
+    assert "查辽东军饷有无侵冒" in so["content"]   # 前半段不丢
+    assert "三月内回奏" in so["content"]           # 后半段显式条款也不丢（旧守门会漏判）
+    assert "李若琏" in so["content"]               # 大臣补充的承办人/要点保留
+    assert so["assignee"] == "李若琏"              # 结构化承办人仍抽出
+    assert so["deadline_months"] == 3
+
+
 def test_secret_assignee_defaults_when_unspecified(monkeypatch):
     """LLM 未指明承办人 → 退回 default_assignee（#397 合并润色路径）。"""
     canned = json.dumps({
