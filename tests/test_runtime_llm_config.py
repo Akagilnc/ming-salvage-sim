@@ -209,6 +209,27 @@ def test_save_runtime_llm_cli_save_preserves_api_reasoning_strength(tmp_path, mo
     assert saved["cli"]["reasoning_strength"] == "high"
 
 
+def test_save_runtime_llm_cli_save_can_seed_api_reasoning_strength(tmp_path, monkeypatch):
+    path = tmp_path / "runtime_llm.json"
+    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
+
+    llm_config.save_runtime_llm(
+        "https://api.example.com/v1",
+        "gpt-5",
+        "sk-test",
+        channel="cli",
+        cli_runner="codex",
+        reasoning_strength="off",
+        api_reasoning_strength="high",
+    )
+
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["channel"] == "cli"
+    assert saved["reasoning_strength"] == "off"
+    assert saved["api"]["reasoning_strength"] == "high"
+    assert saved["cli"]["reasoning_strength"] == "off"
+
+
 def test_save_runtime_llm_can_clear_reasoning_strength_to_default(tmp_path, monkeypatch):
     path = tmp_path / "runtime_llm.json"
     path.write_text(

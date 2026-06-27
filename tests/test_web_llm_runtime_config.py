@@ -249,15 +249,21 @@ def test_commit_cli_seeds_api_slot_from_session_when_slot_empty(monkeypatch):
     saved_args = []
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})   # 无已存 api 槽
     monkeypatch.setattr(web_app, "save_runtime_llm", lambda *a, **k: saved_args.append((a, k)))
-    prev = LLMConfig(api_key="sk-env", base_url="https://x/v1", model="m", channel="api")
+    prev = LLMConfig(
+        api_key="sk-env", base_url="https://x/v1", model="m", channel="api",
+        reasoning_strength="high",
+    )
     new_cli = LLMConfig(api_key="", base_url="https://x/v1", model="m", channel="cli",
-                        cli_runner="codex", cli_model="gpt-5.5", cli_timeout_seconds=240)
+                        cli_runner="codex", cli_model="gpt-5.5", cli_timeout_seconds=240,
+                        reasoning_strength="off")
     fake = SimpleNamespace(session=SimpleNamespace(llm_config=prev, begin_turn=lambda: None))
 
     web_app.WebGame.commit_llm_config(fake, new_cli)
 
     args, kw = saved_args[0]
     assert kw["channel"] == "cli"
+    assert kw["reasoning_strength"] == "off"
+    assert kw["api_reasoning_strength"] == "high"
     assert args[2] == "sk-env"   # api_key 位参写进 api 槽,不是空
 
 

@@ -375,6 +375,7 @@ def save_runtime_llm(
     cli_model: Optional[str] = None,
     cli_timeout_seconds: Optional[float] = None,
     reasoning_strength: Optional[str] = None,
+    api_reasoning_strength: Optional[str] = None,
 ) -> None:
     """写 data/runtime_llm.json。明文存盘——按用户选择。"""
     os.makedirs(os.path.dirname(RUNTIME_LLM_PATH), exist_ok=True)
@@ -432,6 +433,8 @@ def save_runtime_llm(
     api_strength = (
         strength
         if active_channel == "api"
+        else normalize_reasoning_strength(api_reasoning_strength)
+        if api_reasoning_strength is not None
         else normalize_reasoning_strength(existing_api.get("reasoning_strength"))
     )
     if isinstance(api_payload, dict):
