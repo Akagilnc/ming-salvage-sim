@@ -1234,7 +1234,7 @@ def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = Non
     }
 
 
-_CLAUSE_SPLIT = re.compile(r"[，,。.；;！!？?、]+")
+_CLAUSE_SPLIT = re.compile(r"[，,。.；;！!？?、：:\n\r]+")
 
 
 def _content_reflects_emperor_intent(content: str, emperor_intent: str) -> bool:
@@ -1319,7 +1319,7 @@ def _content_reflects_minister_supplements(content: str, minister_reply: str) ->
             # #401 R1（codex P2）：assignee 分句在人名+动作词之外可能仍带实质补充（如
             # 『可授李若琏暗查并封存兵部辽饷册』之『封存兵部辽饷册』）。前缀之后的剩余 material
             # 也须在正文里，否则只留人名+动作词的合法输出会静默吞掉余下补充。
-            tail = clause[clause.find(assignee) + len(assignee):].lstrip()
+            tail = _tail_after_assignee_hint(clause, assignee)
             if action and tail.startswith(action):
                 tail = tail[len(action):].lstrip()
             tail_core = re.sub(r"\s+", "", _SUPPLEMENT_PREFIX_RE.sub("", tail))
@@ -1389,6 +1389,20 @@ def _extract_assignee_hint(text: str) -> Optional[str]:
     return None
 
 
+def _tail_after_assignee_hint(clause: str, assignee: str) -> str:
+    """返回建议式 hint 命中的 assignee 后半段；找不到时回落到普通子串切分。"""
+    for m in _ASSIGNEE_HINT_RE.finditer(clause or ""):
+        name = m.group(1).strip()
+        while len(name) > 2 and name[-1] in _ASSIGNEE_VERB_TAIL_CHARS:
+            name = name[:-1]
+        if name == assignee:
+            return clause[m.start(1) + len(name):].lstrip()
+    idx = (clause or "").find(assignee)
+    if idx == -1:
+        return ""
+    return clause[idx + len(assignee):].lstrip()
+
+
 def _extract_assignee_action(clause: str, assignee: str) -> str:
     """从承办人建议式分句里抽出 assignee 之后的动作/职责词（material action word）。
 
@@ -1396,10 +1410,7 @@ def _extract_assignee_action(clause: str, assignee: str) -> str:
     具体动作/职责词（协办/监督/处理/负责…）也须在正文里，否则合法 LLM 输出会用
     泛化动词（如『承办』）替换掉它、静默吞掉大臣的实质补充。无动作词（分句止于人名）
     时返回空串，退化为只验人名。"""
-    idx = clause.find(assignee)
-    if idx == -1:
-        return ""
-    tail = clause[idx + len(assignee):].lstrip()
+    tail = _tail_after_assignee_hint(clause, assignee)
     m = _ASSIGNEE_ACTION_RUN_RE.match(tail)
     return m.group(0) if m else ""
 
