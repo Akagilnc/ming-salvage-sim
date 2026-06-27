@@ -253,7 +253,7 @@ export function ApiSettingsModal({
   const [advancedApiKey, setAdvancedApiKey] = React.useState("");
   const normalizeStrength = (value?: string) => {
     const v = (value || "").trim().toLowerCase();
-    if (v === "minimal" || v === "disabled") return "off";
+    if (v === "minimal" || v === "disabled" || v === "none") return "off";
     return ["", "off", "low", "medium", "high"].includes(v) ? v : "";
   };
   const [apiReasoningStrength, setApiReasoningStrength] = React.useState(

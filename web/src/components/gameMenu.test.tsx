@@ -298,41 +298,44 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     cleanup();
   });
 
-  it("migrates legacy disabled thinking level to unified off", async () => {
-    const calls: Array<{ url: string; init?: RequestInit }> = [];
-    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
-      calls.push({ url, init });
-      return Promise.resolve({
-        ok: true,
-        json: async () => ({
-          ...BASE_LLM_RESPONSE,
-          base_url: "https://api.minimax.io/v1",
-          model: "minimax-test",
-          thinking_level: "disabled",
-          reasoning_strength: "",
-          reasoning_supported: true,
-          persisted: { ...BASE_LLM_RESPONSE.persisted, thinking_level: "disabled", reasoning_strength: "" },
-        }),
-      } as Response);
-    });
-    const { cleanup } = render(<LLMConfigTab />);
-    await act(async () => {});
+  it.each(["disabled", "none"])(
+    "migrates legacy %s thinking level to unified off",
+    async (legacyThinkingLevel) => {
+      const calls: Array<{ url: string; init?: RequestInit }> = [];
+      global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        calls.push({ url, init });
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ...BASE_LLM_RESPONSE,
+            base_url: "https://api.minimax.io/v1",
+            model: "minimax-test",
+            thinking_level: legacyThinkingLevel,
+            reasoning_strength: "",
+            reasoning_supported: true,
+            persisted: { ...BASE_LLM_RESPONSE.persisted, thinking_level: legacyThinkingLevel, reasoning_strength: "" },
+          }),
+        } as Response);
+      });
+      const { cleanup } = render(<LLMConfigTab />);
+      await act(async () => {});
 
-    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
-    expect(strength?.value).toBe("off");
-    const saveBtn = Array.from(document.querySelectorAll("button")).find((b) =>
-      (b.textContent ?? "").includes("保存并应用")
-    );
-    await act(async () => {
-      saveBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
+      const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+      expect(strength?.value).toBe("off");
+      const saveBtn = Array.from(document.querySelectorAll("button")).find((b) =>
+        (b.textContent ?? "").includes("保存并应用")
+      );
+      await act(async () => {
+        saveBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
 
-    const post = calls.find((c) => c.init?.method === "POST" && c.url === "/api/llm/config");
-    const body = JSON.parse(String(post!.init!.body));
-    expect(body.thinking_level).toBe("");
-    expect(body.reasoning_strength).toBe("off");
-    cleanup();
-  });
+      const post = calls.find((c) => c.init?.method === "POST" && c.url === "/api/llm/config");
+      const body = JSON.parse(String(post!.init!.body));
+      expect(body.thinking_level).toBe("");
+      expect(body.reasoning_strength).toBe("off");
+      cleanup();
+    }
+  );
 
   it("uses advanced model capability for API reasoning support", async () => {
     global.fetch = vi.fn().mockResolvedValue({
