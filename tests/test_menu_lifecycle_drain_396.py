@@ -70,7 +70,7 @@ def test_exit_to_menu_returns_before_delayed_close_drains(monkeypatch):
     assert not gate.locked()
 
 
-def test_new_game_returns_before_delayed_close_drains(monkeypatch):
+def test_new_game_returns_before_delayed_close_drains(monkeypatch, tmp_path):
     """#396: new_game 与 exit_to_menu 同构——界面立刻构建新局返回，
     旧 session 的后台队列在 daemon 线程排空 write_gate 后再关连接（detach）。"""
     gate = threading.Lock()
@@ -80,6 +80,8 @@ def test_new_game_returns_before_delayed_close_drains(monkeypatch):
         session=SimpleNamespace(close=lambda: closed.append(1)),
     )
     monkeypatch.setattr(web_app, "web_game", fake_old_game)
+    monkeypatch.delenv("MING_SIM_DB", raising=False)
+    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
 
     fake_new_game = SimpleNamespace(state_payload=lambda: {"turn": 1})
     monkeypatch.setattr(web_app, "WebGame", lambda fresh: fake_new_game)
@@ -160,6 +162,93 @@ def test_new_game_switches_db_path_and_archives_old_after_drain(monkeypatch, tmp
     assert rows["reply"] == "background_minister_reply"
 
 
+def test_get_main_db_path_prefers_active_db_over_launch_env(monkeypatch, tmp_path):
+    """#402 R1（Codex）：重启后 active_db.txt 必须压过启动 env，才能继续 new_game 切出的新主库。"""
+    env_db_path = str(tmp_path / "launch_env.db")
+    active_db_path = str(tmp_path / "active_from_new_game.db")
+    monkeypatch.setenv("MING_SIM_DB", env_db_path)
+    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+    with open(web_app._active_db_path_file(), "w", encoding="utf-8") as f:
+        f.write(active_db_path)
+
+    assert web_app._get_main_db_path() == active_db_path
+
+
+def test_new_game_failure_restores_old_game_and_main_db_path(monkeypatch, tmp_path):
+    """#402 R1（Codex/CodeRabbit）：新局初始化失败时，不退休旧局、不丢旧主库指针。"""
+    old_db_path = str(tmp_path / "old_main.db")
+    os.makedirs(tmp_path, exist_ok=True)
+    with open(old_db_path, "w", encoding="utf-8") as f:
+        f.write("old")
+    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+    monkeypatch.setenv("MING_SIM_DB", old_db_path)
+    with open(web_app._active_db_path_file(), "w", encoding="utf-8") as f:
+        f.write(old_db_path)
+
+    old_game = SimpleNamespace(
+        _write_gate=threading.Lock(),
+        db_path=old_db_path,
+        session=SimpleNamespace(close=lambda: None),
+    )
+    monkeypatch.setattr(web_app, "web_game", old_game)
+
+    started_threads: list[object] = []
+
+    class _ThreadShouldNotStart:
+        def __init__(self, *args, **kwargs):
+            started_threads.append((args, kwargs))
+
+        def start(self):
+            started_threads.append("start")
+
+    monkeypatch.setattr(web_app.threading, "Thread", _ThreadShouldNotStart)
+
+    def fail_new_game(*_args, **_kwargs):
+        raise web_app.LLMUnavailable("missing llm")
+
+    monkeypatch.setattr(web_app, "WebGame", fail_new_game)
+
+    try:
+        asyncio.run(web_app.api_menu_new_game())
+    except web_app.HTTPException as exc:
+        assert exc.status_code == 412
+    else:
+        raise AssertionError("new_game should surface LLMUnavailable as HTTP 412")
+
+    assert web_app.web_game is old_game
+    assert os.environ["MING_SIM_DB"] == old_db_path
+    with open(web_app._active_db_path_file(), "r", encoding="utf-8") as f:
+        assert f.read().strip() == old_db_path
+    assert started_threads == []
+
+
+def test_drain_archive_move_failure_keeps_wal_and_shm(monkeypatch, tmp_path):
+    """#402 R1（Gemini）：主库 move 失败时不得删除仍属旧库的 WAL/SHM。"""
+    db_path = str(tmp_path / "ming_sim.db")
+    wal_path = db_path + "-wal"
+    shm_path = db_path + "-shm"
+    for path, content in ((db_path, "db"), (wal_path, "wal"), (shm_path, "shm")):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+    gate = threading.Lock()
+    closed: list[int] = []
+    game = SimpleNamespace(
+        _write_gate=gate,
+        db_path=db_path,
+        session=SimpleNamespace(close=lambda: closed.append(1)),
+    )
+    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+    monkeypatch.setattr(web_app.shutil, "move", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("locked")))
+
+    web_app._drain_and_close_session(game, archive_db=True)
+
+    assert closed == [1]
+    assert os.path.exists(db_path)
+    assert os.path.exists(wal_path)
+    assert os.path.exists(shm_path)
+
+
 def test_shutdown_waits_for_drain_before_returning_or_killing(monkeypatch):
     gate = threading.Lock()
     closed: list[int] = []
@@ -191,6 +280,21 @@ def test_shutdown_waits_for_drain_before_returning_or_killing(monkeypatch):
 
     assert done.wait(3.0)
     assert closed == [1]
+    assert _wait_for(lambda: bool(killed))
+
+
+def test_shutdown_without_web_game_skips_drain_and_kills(monkeypatch):
+    """#402 R1（Sourcery）：web_game 已是 None 时 shutdown 不 drain，仍调度退出。"""
+    killed: list[object] = []
+    monkeypatch.setattr(web_app, "web_game", None)
+    monkeypatch.setattr(web_app, "_drain_and_close_session", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no drain expected")))
+    monkeypatch.setattr(os, "kill", lambda *args, **kwargs: killed.append(args))
+    monkeypatch.setattr(os, "_exit", lambda code=0: killed.append(code))
+    monkeypatch.setattr(time, "sleep", lambda *_args: None)
+
+    result = asyncio.run(web_app.api_menu_shutdown())
+
+    assert result == {"ok": True}
     assert _wait_for(lambda: bool(killed))
 
 
