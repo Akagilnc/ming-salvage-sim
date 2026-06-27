@@ -476,7 +476,8 @@ def test_secret_prefix_creates_order(game, monkeypatch):
     ).fetchone()
     assert "查辽东军饷" in row["content"]          # 御旨不丢（#397）
     assert "李若琏" in row["content"]              # 大臣补充保留
-    assert row["minister_name"] == "王在晋"
+    # #401 R1：正文/回话皆指李若琏，承办人字段填王在晋属漂移→采信校验后的线索李若琏
+    assert row["minister_name"] == "李若琏"
     assert row["status"] == "active"
 
 
