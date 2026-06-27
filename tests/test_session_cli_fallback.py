@@ -426,6 +426,43 @@ def test_secret_context_path_preserves_multiple_related_emperor_task_lines(game,
     assert "京营操练" not in body
 
 
+def test_secret_context_path_preserves_related_bingming_continuation(game, monkeypatch):
+    """#354 cmr r14: 并命/又命/另遣 等延续式任务行也要与上一行合并，不能只认再令。"""
+    db, state, _ = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    minister = "魏忠贤"
+    db.append_chat_message(minister, state.turn, "user", "命洪承畴督办陕西赈灾。")
+    db.append_chat_message(minister, state.turn, "minister", "臣领命。")
+    db.append_chat_message(minister, state.turn, "user", "并命东厂护赈银、查截留。")
+    db.append_chat_message(minister, state.turn, "minister", "臣当密遣番役护银。")
+
+    def fake_extract_drops_first_task(prompt, llm_config=None, tag=""):
+        return (json.dumps({
+            "标题": "护赈银",
+            "内容": "并命东厂护赈银、查截留。",
+            "承办人": minister,
+            "期限月数": 0,
+            "标签": ["东厂"],
+        }, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", fake_extract_drops_first_task)
+    result = _result()
+    result.answer = "臣领命。"
+
+    _session(db, state, llm_config=SimpleNamespace(channel="cli"))._cli_backend_fallback_actions(
+        result,
+        SimpleNamespace(name=minister, office_type="司礼监"),
+        "密令如下：可，照办",
+    )
+
+    row = db.conn.execute(
+        "SELECT content FROM secret_orders WHERE id=?", (result.secret_order_id,),
+    ).fetchone()
+    body = row["content"]
+    assert "督办陕西赈灾" in body
+    assert "护赈银" in body
+
+
 def test_secret_order_body_excludes_audience_role_labels(game, monkeypatch):
     """#354 (cmr): 密令正文必须是任务文本，不得混入对话快照的角色标签
     「皇帝：」「大臣：」或「【本轮确认】」短句（御旨守门/兜底误用对话 blob 会污染正文）。"""
