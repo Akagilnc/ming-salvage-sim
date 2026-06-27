@@ -1550,15 +1550,33 @@ def _split_audience_context(context: str) -> Tuple[str, str]:
             body = line[len("大臣："):].strip()
             for clause in _minister_material_clauses(body):
                 entries.append(("m", clause))
-    # 只取最近的任务跨度：从最后一条皇帝任务行起（含其后的大臣补充），排除同回合更早的无关问答
-    # （cmr #354 r4 codex：先问京营操练再下密令，旧码把无关问句也当任务正文）。注意只收窄守门/兜底
-    # 输入，不收窄喂 LLM 的 prompt（player_command 仍是全量上下文，LLM 仍可纵观全局），故跨多条消息
-    # 描述的任务由 LLM 主路完整抽取、不受影响。
-    last_emperor = max((i for i, (kind, _) in enumerate(entries) if kind == "e"), default=None)
-    span = entries[last_emperor:] if last_emperor is not None else entries
+    # 只取最近的任务跨度：排除同回合更早的无关问答，但保留连续多条相关皇帝任务行。
+    # 旧实现从最后一条皇帝行起，能排除「京营操练如何？」这类无关问答，却会丢掉
+    # 「先命洪承畴赈灾、再令东厂护银」这种前几轮连续补充的同一密令任务。
+    boundary = -1
+    for i, (kind, text) in enumerate(entries):
+        if kind == "e" and not _secret_context_task_like(text):
+            boundary = i
+    start = next(
+        (i for i, (kind, _text) in enumerate(entries) if i > boundary and kind == "e"),
+        None,
+    )
+    if start is None:
+        last_emperor = max((i for i, (kind, _) in enumerate(entries) if kind == "e"), default=None)
+        start = last_emperor
+    span = entries[start:] if start is not None else entries
     emperor_lines = [text for kind, text in span if kind == "e"]
     minister_material = [text for kind, text in span if kind == "m"]
     return "\n".join(emperor_lines), "\n".join(minister_material)
+
+
+def _secret_context_task_like(text: str) -> bool:
+    compact = re.sub(r"\s+", "", text or "")
+    if not compact:
+        return False
+    if re.search(r"[?？]$", compact):
+        return False
+    return bool(re.search(r"(命|令|着|遣|派|督办|查|暗查|密查|护|封存|截留|赈|再令|另令|须|务必)", compact))
 
 
 def _merge_secret_content(*parts: str) -> str:
@@ -1721,6 +1739,8 @@ def _secret_prefix_needs_recent_context(secret_intent: str) -> bool:
     if not text:
         return True
     compact = re.sub(r"[\s，,。.!！?？；;：:、]+", "", text)
+    if re.search(r"(照办|按你意思|照你意思|前议|方才所奏|卿所奏|就按|就照)", compact):
+        return True
     if len(compact) > 12:
         return False
     return bool(_SECRET_CONFIRM_ATOM_RE.match(compact))

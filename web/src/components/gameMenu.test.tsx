@@ -198,4 +198,91 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     expect(body.advanced_thinking_level).toBe("");
     cleanup();
   });
+
+  it("uses the saved CLI reasoning strength when switching from API to CLI", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({
+          ...BASE_LLM_RESPONSE,
+          channel: "api",
+          reasoning_strength: "",
+          reasoning_supported: true,
+          persisted: {
+            ...BASE_LLM_RESPONSE.persisted,
+            channel: "api",
+            reasoning_strength: "",
+            cli_runner: "codex",
+            cli_model: "gpt-5.5",
+            cli_timeout_seconds: 240,
+            cli_reasoning_strength: "high",
+          },
+        }),
+      } as Response);
+    });
+    const { cleanup } = render(<LLMConfigTab />);
+    await act(async () => {});
+
+    const channelSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+      s.querySelector('option[value="cli"]')
+    ) as HTMLSelectElement | undefined;
+    expect(channelSelect).toBeTruthy();
+    act(() => {
+      channelSelect!.value = "cli";
+      channelSelect!.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+    expect(strength?.value).toBe("high");
+    const saveBtn = Array.from(document.querySelectorAll("button")).find((b) =>
+      (b.textContent ?? "").includes("保存并应用")
+    );
+    await act(async () => {
+      saveBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const post = calls.find((c) => c.init?.method === "POST" && c.url === "/api/llm/config");
+    const body = JSON.parse(String(post!.init!.body));
+    expect(body.channel).toBe("cli");
+    expect(body.reasoning_strength).toBe("high");
+    cleanup();
+  });
+
+  it("migrates legacy disabled thinking level to unified off", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({
+          ...BASE_LLM_RESPONSE,
+          base_url: "https://api.minimax.io/v1",
+          model: "minimax-test",
+          thinking_level: "disabled",
+          reasoning_strength: "",
+          reasoning_supported: true,
+          persisted: { ...BASE_LLM_RESPONSE.persisted, thinking_level: "disabled", reasoning_strength: "" },
+        }),
+      } as Response);
+    });
+    const { cleanup } = render(<LLMConfigTab />);
+    await act(async () => {});
+
+    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+    expect(strength?.value).toBe("off");
+    const saveBtn = Array.from(document.querySelectorAll("button")).find((b) =>
+      (b.textContent ?? "").includes("保存并应用")
+    );
+    await act(async () => {
+      saveBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const post = calls.find((c) => c.init?.method === "POST" && c.url === "/api/llm/config");
+    const body = JSON.parse(String(post!.init!.body));
+    expect(body.thinking_level).toBe("");
+    expect(body.reasoning_strength).toBe("off");
+    cleanup();
+  });
 });

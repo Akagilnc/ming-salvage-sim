@@ -2110,6 +2110,7 @@ async def api_menu_status() -> Dict[str, Any]:
         (cli_slot.get("reasoning_strength") if channel == "cli" else runtime.get("reasoning_strength"))
         or runtime.get("reasoning_strength", "")
     )
+    cli_reasoning_strength = normalize_reasoning_strength(cli_slot.get("reasoning_strength"))
     reasoning_supported = (
         cli_supports_reasoning_strength(cli_runner)
         if channel == "cli"
@@ -2138,6 +2139,7 @@ async def api_menu_status() -> Dict[str, Any]:
             "cli_model_choices": cli_model_choices(),
             "cli_timeout_seconds": cli_timeout,
             "reasoning_strength": reasoning_strength,
+            "cli_reasoning_strength": cli_reasoning_strength,
             "reasoning_supported": reasoning_supported,
             "reasoning_strengths": list(REASONING_STRENGTH_CHOICES),
             "max_tokens": int(runtime.get("max_tokens") or API_DEFAULT_MAX_TOKENS),
@@ -3091,6 +3093,7 @@ async def api_get_llm_config() -> Dict[str, Any]:
     cfg = get_game().session.llm_config
     saved = load_runtime_llm()
     saved_cli = saved.get("cli") if isinstance(saved.get("cli"), dict) else {}
+    saved_cli_reasoning_strength = normalize_reasoning_strength(saved_cli.get("reasoning_strength"))
     reasoning_supported = (
         cli_supports_reasoning_strength(cfg.cli_runner)
         if cfg.channel == "cli"
@@ -3124,6 +3127,7 @@ async def api_get_llm_config() -> Dict[str, Any]:
             "timeout_seconds": float(saved.get("timeout_seconds") or API_DEFAULT_TIMEOUT_SECONDS),
             "thinking_level": saved.get("thinking_level", ""),
             "reasoning_strength": saved.get("reasoning_strength", ""),
+            "cli_reasoning_strength": saved_cli_reasoning_strength,
             "advanced_model": saved.get("advanced_model", ""),
             "advanced_base_url": saved.get("advanced_base_url", ""),
             "has_advanced_api_key": _has_real_api_key(saved.get("advanced_api_key", "")),
