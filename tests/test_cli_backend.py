@@ -45,22 +45,44 @@ def test_no_prefix_no_action():
     assert acts["secret_order"] is None
 
 
-def test_secret_prefix_uses_reply_without_llm(monkeypatch):
-    monkeypatch.setattr(cb, "_run_agy", lambda prompt: (_ for _ in ()).throw(AssertionError("前缀密令不应调 LLM")))
+def test_secret_prefix_merges_emperor_intent_with_reply(monkeypatch):
+    """#397：显式『密令如下：<X>』+ 大臣回话 → LLM 润成完整密令正文，
+    不丢御旨（reply 可能只是领命语）、并入大臣补的承办人/要点。"""
+    canned = json.dumps({
+        "标题": "密查辽东军饷",
+        "内容": "查辽东军饷有无侵冒，三月内回奏；着李若琏暗查。",
+        "承办人": "李若琏",
+        "期限月数": 3,
+        "标签": ["辽饷"],
+    }, ensure_ascii=False)
+    captured = {}
+
+    def fake_run(prompt):
+        captured["prompt"] = prompt
+        return (canned, 1)
+
+    monkeypatch.setattr(cb, "_run_backend", fake_run)
     acts = cb.resolve_minister_actions(
         "臣领密旨，可授李若琏暗查。", "密令如下：查辽东军饷有无侵冒，三月内回奏",
         default_assignee="王在晋",
     )
     so = acts["secret_order"]
     assert so is not None
-    assert so["title"] == "查辽东军饷有无侵冒，三月内回奏"
-    assert so["content"] == "臣领密旨，可授李若琏暗查。"
-    assert so["assignee"] == "王在晋"
-    assert so["deadline_months"] == 0
+    # 抽取 prompt 同时看到皇帝显式旨意与大臣回话（#397 合并润色的入参）
+    assert "查辽东军饷有无侵冒" in captured["prompt"]
+    assert "臣领密旨，可授李若琏暗查" in captured["prompt"]
+    assert "查辽东军饷" in so["content"]          # 御旨不丢（#397）
+    assert "李若琏" in so["content"]              # 大臣补充的承办人并入
+    assert so["assignee"] == "李若琏"
+    assert so["deadline_months"] == 3
 
 
 def test_secret_assignee_defaults_when_unspecified(monkeypatch):
-    monkeypatch.setattr(cb, "_run_agy", lambda prompt: (_ for _ in ()).throw(AssertionError("前缀密令不应调 LLM")))
+    """LLM 未指明承办人 → 退回 default_assignee（#397 合并润色路径）。"""
+    canned = json.dumps({
+        "标题": "去查", "内容": "去查某事", "承办人": "", "期限月数": 0, "标签": [],
+    }, ensure_ascii=False)
+    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
     acts = cb.resolve_minister_actions("臣领旨。", "密令如下：去查", default_assignee="毕自严")
     assert acts["secret_order"]["assignee"] == "毕自严"
 
@@ -183,7 +205,8 @@ def test_enrich_backend_error_returns_empty_effects(monkeypatch):
 
 
 def test_secret_extract_backend_error_falls_back(monkeypatch):
-    """密令提取调用抛异常时不阻断：内容退回大臣回话，标题/承办人有合理兜底。"""
+    """密令提取调用抛异常时不阻断：内容兜底合并御旨+回话（不丢皇帝显式旨意，#397），
+    承办人退回默认。"""
     def boom(p):
         raise RuntimeError("backend down")
     monkeypatch.setattr(cb, "_run_backend", boom)
@@ -193,8 +216,9 @@ def test_secret_extract_backend_error_falls_back(monkeypatch):
     )
     so = acts["secret_order"]
     assert so is not None
-    assert so["content"] == "臣领密旨，暗查辽东军饷虚冒事。"   # 退回大臣回话原文
-    assert so["assignee"] == "王在晋"                          # 退回默认承办人
+    assert "查辽东军饷" in so["content"]            # 御旨不丢（#397）
+    assert "暗查辽东军饷虚冒事" in so["content"]    # 大臣回话也并入
+    assert so["assignee"] == "王在晋"               # 退回默认承办人
     assert so["deadline_months"] == 0
 
 
