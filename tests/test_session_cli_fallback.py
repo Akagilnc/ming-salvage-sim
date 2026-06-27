@@ -329,6 +329,44 @@ def test_secret_context_path_preserves_prior_minister_supplement(game, monkeypat
     assert "大臣：" not in body
 
 
+def test_secret_context_path_ignores_unrelated_prior_conversation(game, monkeypatch):
+    """#354 (cmr r4): 密令正文只取最近的任务跨度——同回合更早的【无关】问答（如先问京营操练）
+    不得混进密令正文。否则御旨守门按无关问句逐句核验必然失败、兜底把无关问句并进正文。"""
+    db, state, _ = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    minister = "魏忠贤"
+    db.append_chat_message(minister, state.turn, "user", "近日京营操练如何？")
+    db.append_chat_message(minister, state.turn, "minister", "回陛下，操练如常。")
+    db.append_chat_message(minister, state.turn, "user", "命李若琏暗查阉党余孽。")
+    db.append_chat_message(minister, state.turn, "minister", "臣领命。")
+
+    def fake_extract(prompt, llm_config=None, tag=""):
+        return (json.dumps({
+            "标题": "暗查阉党",
+            "内容": "命李若琏暗查阉党余孽。",
+            "承办人": minister,
+            "期限月数": 0,
+            "标签": ["阉党"],
+        }, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", fake_extract)
+    result = _result()
+    result.answer = "臣领命。"
+
+    _session(db, state, llm_config=SimpleNamespace(channel="cli"))._cli_backend_fallback_actions(
+        result,
+        SimpleNamespace(name=minister, office_type="司礼监"),
+        "密令如下：可，照办",
+    )
+
+    row = db.conn.execute(
+        "SELECT content FROM secret_orders WHERE id=?", (result.secret_order_id,),
+    ).fetchone()
+    body = row["content"]
+    assert "暗查阉党" in body
+    assert "京营操练" not in body  # 同回合无关问答不入密令正文
+
+
 def test_secret_context_path_keeps_offtopic_llm_guard(game, monkeypatch):
     """#354 (cmr r2): 上下文合成路径不得无条件信 LLM——若 LLM 内容跑题（写成别的任务），
     御旨守门须照样兜底回前文真任务，不静默采信跑题正文。守门输入用剥标签后的任务文本。"""

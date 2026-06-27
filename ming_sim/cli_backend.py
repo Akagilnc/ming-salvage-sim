@@ -1537,8 +1537,7 @@ def _split_audience_context(context: str) -> Tuple[str, str]:
     补充（作补充守门输入+兜底种子，cmr #354 r3：前文大臣加的承办/步骤也是密令正文一部分，不得因来自
     前文就漏检/丢弃）。两者分开，避免把大臣补充塞进御旨守门导致逐句核验过严误判（cmr #354 correctness：
     旧码把带标签的整段 blob 当御旨并入正文）。"""
-    emperor_lines: List[str] = []
-    minister_material: List[str] = []
+    entries: List[Tuple[str, str]] = []  # ("e"=皇帝任务行, "m"=大臣实质补充分句)
     for raw in (context or "").splitlines():
         line = raw.strip()
         if not line or line.startswith("【本轮确认】"):
@@ -1546,10 +1545,19 @@ def _split_audience_context(context: str) -> Tuple[str, str]:
         if line.startswith("皇帝："):
             task = line[len("皇帝："):].strip()
             if task:
-                emperor_lines.append(task)
+                entries.append(("e", task))
         elif line.startswith("大臣："):
             body = line[len("大臣："):].strip()
-            minister_material.extend(_minister_material_clauses(body))
+            for clause in _minister_material_clauses(body):
+                entries.append(("m", clause))
+    # 只取最近的任务跨度：从最后一条皇帝任务行起（含其后的大臣补充），排除同回合更早的无关问答
+    # （cmr #354 r4 codex：先问京营操练再下密令，旧码把无关问句也当任务正文）。注意只收窄守门/兜底
+    # 输入，不收窄喂 LLM 的 prompt（player_command 仍是全量上下文，LLM 仍可纵观全局），故跨多条消息
+    # 描述的任务由 LLM 主路完整抽取、不受影响。
+    last_emperor = max((i for i, (kind, _) in enumerate(entries) if kind == "e"), default=None)
+    span = entries[last_emperor:] if last_emperor is not None else entries
+    emperor_lines = [text for kind, text in span if kind == "e"]
+    minister_material = [text for kind, text in span if kind == "m"]
     return "\n".join(emperor_lines), "\n".join(minister_material)
 
 
