@@ -126,6 +126,30 @@ def test_secret_prefix_partial_llm_content_still_keeps_emperor_intent(monkeypatc
     assert so["deadline_months"] == 3
 
 
+def test_secret_prefix_llm_keeps_emperor_but_drops_minister_assignee(monkeypatch):
+    """#397 Step6 P2：LLM 返回合法 JSON、内容完整保留御旨，但承办人留空、丢掉大臣回话里
+    点名的承办人（可授李若琏暗查）→ 不得静默接受该"看起来合法"的输出。须兜底合并：
+    御旨不丢、大臣补充的承办人（李若琏）也不丢、且承办人字段被找回（不退回默认召对大臣）。"""
+    canned = json.dumps({
+        "标题": "密查辽东军饷",
+        "内容": "查辽东军饷有无侵冒，三月内回奏",   # 合法、完整保留御旨，但丢掉大臣补充
+        "承办人": "",                              # 大臣回话点名的承办人没抽出
+        "期限月数": 3,
+        "标签": ["辽饷"],
+    }, ensure_ascii=False)
+    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
+    acts = cb.resolve_minister_actions(
+        "臣领密旨，可授李若琏暗查。", "密令如下：查辽东军饷有无侵冒，三月内回奏",
+        default_assignee="王在晋",
+    )
+    so = acts["secret_order"]
+    assert so is not None
+    assert "查辽东军饷有无侵冒" in so["content"]      # 御旨不丢
+    assert "李若琏" in so["content"]                  # 大臣补充的承办人不丢（#397 Step6）
+    assert so["assignee"] == "李若琏"                 # 大臣点名的承办人被找回，不退回默认
+    assert so["deadline_months"] == 3
+
+
 def test_secret_assignee_defaults_when_unspecified(monkeypatch):
     """LLM 未指明承办人 → 退回 default_assignee（#397 合并润色路径）。"""
     canned = json.dumps({

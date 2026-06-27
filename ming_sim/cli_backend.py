@@ -1257,6 +1257,49 @@ def _content_reflects_emperor_intent(content: str, emperor_intent: str) -> bool:
     return all(clause in c for clause in clauses)
 
 
+# 大臣回话里"建议某人承办"的线索：大臣常以"可授/可委/请授 X …"点名承办人。
+# LLM 偶发把『承办人』留空、甚至把该人从正文里也抹掉——#397 Step6 须兜底找回，
+# 不让大臣补充的承办人被"看起来合法"的 LLM 输出吞掉。只认建议式措辞（可授/请授/可委…），
+# 不认皇帝祈使式"着/令"——后者常带机关名（着户部…），会把"户部"误当人名。
+_ASSIGNEE_HINT_RE = re.compile(
+    r"(?:可\s*授|可\s*委|可\s*差|可\s*令|可\s*派|请\s*授|请\s*委|请\s*派|"
+    r"建议\s*授|建议\s*委|可\s*由|可\s*命)"
+    r"\s*([\u4e00-\u9fa5·]{2,4})"
+)
+# 贪心 {2,4} 会把尾随的动作字（暗/查/办…）一并吞进捕获组，事后剥掉。
+_ASSIGNEE_HINT_TAIL_RE = re.compile(r"(?:暗|密|去|往|领|查|办|为|任)+$")
+# 捕获到机关/地名（含 部/寺/院… 字）的不是人名，跳过。
+_ASSIGNEE_HINT_STOP_RE = re.compile(r"[部寺院局司省州府县卫营阁监科曹库厂仓]")
+
+
+def _extract_assignee_hint(text: str) -> Optional[str]:
+    """从文本（多为大臣回话）里找"建议某人承办"的人名线索。无则 None。"""
+    for m in _ASSIGNEE_HINT_RE.finditer(text or ""):
+        name = _ASSIGNEE_HINT_TAIL_RE.sub("", m.group(1).strip())
+        if len(name) >= 2 and not _ASSIGNEE_HINT_STOP_RE.search(name):
+            return name
+    return None
+
+
+def _merge_secret_content(*parts: str) -> str:
+    """把皇帝显式旨意 / LLM 内容 / 大臣回话合并成一道密令正文，去重保序。
+
+    #397 Step6：兜底合并须同时保住御旨与大臣补充（承办人/要点），任一非空都并入；
+    完全相同的段（去空白后）只留一份，避免 LLM 内容与回话雷同时整段重复。"""
+    merged: List[str] = []
+    seen: set = set()
+    for p in parts:
+        chunk = (p or "").strip()
+        if not chunk:
+            continue
+        key = re.sub(r"\s+", "", chunk)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(chunk)
+    return "\n".join(merged)
+
+
 def _extract_secret_order(
     player_command: str,
     minister_reply: str,
@@ -1287,17 +1330,28 @@ def _extract_secret_order(
         _log(f"密令提取失败：{exc}")
     obj = _loads_lenient(raw) or {}
     _content_llm = str(obj.get("内容") or "").strip()
-    if _content_llm and _content_reflects_emperor_intent(_content_llm, player_command):
+    _assignee_llm = str(obj.get("承办人") or "").strip()
+    # 大臣回话里点名的承办人线索（#397 Step6）：LLM 偶发把『承办人』留空、
+    # 或把该人从正文里也抹掉——用它兜底，不让大臣补充被"看起来合法"的 LLM 输出吞掉。
+    _assignee_hint = _extract_assignee_hint(minister_reply)
+    _content_norm = re.sub(r"\s+", "", _content_llm)
+    # 御旨守门 + 大臣补充守门：两者都过才直取 LLM 正文；任一不过走兜底合并。
+    _emperor_ok = bool(_content_llm) and _content_reflects_emperor_intent(_content_llm, player_command)
+    _supplement_ok = (
+        not _assignee_hint
+        or _assignee_hint in _content_norm
+        or _assignee_hint == _assignee_llm
+    )
+    if _emperor_ok and _supplement_ok:
         content = _content_llm
     else:
-        # 兜底（#397 Step5）：LLM 把御旨丢了——内容为空、只剩大臣领命语、或润色后不含
-        # 皇帝显式旨意——时，皇帝显式旨意为主，并入 LLM 内容（或回话），确保御旨绝不丢，
-        # 同时保留大臣补充的承办人/要点。旧码只在内容为空时兜底，合法但丢御旨的内容会直取。
-        candidate = _content_llm or minister_reply
-        _parts = [p for p in (player_command, candidate) if p]
-        content = "\n".join(_parts)
+        # 兜底（#397 Step5/Step6）：御旨为主，并入 LLM 内容与大臣回话——
+        # 御旨绝不丢、大臣补充的承办人/要点也不被合法 LLM 输出吞掉。旧码只在内容为空时
+        # 兜底，且 candidate=_content_llm 时不再并入回话 → 大臣补充仍会丢（Step6 修复）。
+        content = _merge_secret_content(player_command, _content_llm, minister_reply)
     title = str(obj.get("标题") or "").strip()[:20] or (player_command or content)[:14]
-    assignee = str(obj.get("承办人") or "").strip() or default_assignee
+    # 承办人：LLM 抽出 > 大臣回话线索 > 默认召对大臣（#397 Step6 不丢大臣补充的承办人）。
+    assignee = _assignee_llm or _assignee_hint or default_assignee
     try:
         deadline = max(0, min(int(obj.get("期限月数") or 0), 36))
     except (TypeError, ValueError):
