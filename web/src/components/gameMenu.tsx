@@ -362,8 +362,9 @@ export function LLMConfigTab() {
   const [msg, setMsg] = React.useState("");
   const [err, setErr] = React.useState("");
   const apiReasoningSupported = (() => {
-    const base = baseUrl.toLowerCase();
-    const modelName = model.toLowerCase();
+    const effectiveBase = (advancedModel.trim() ? (advancedBaseUrl.trim() || baseUrl) : baseUrl).toLowerCase();
+    const modelName = (advancedModel.trim() || model).toLowerCase();
+    const base = effectiveBase;
     if (base.includes("deepseek.com")) return false;
     return modelName.startsWith("o1") || modelName.startsWith("o3") || modelName.startsWith("o4") ||
       modelName.startsWith("gpt-5") || base.includes("dashscope") || base.includes("aliyuncs") ||

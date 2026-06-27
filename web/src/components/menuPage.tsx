@@ -274,8 +274,9 @@ export function ApiSettingsModal({
     { value: "high", label: "高" },
   ];
   const apiReasoningSupported = (() => {
-    const base = baseUrl.toLowerCase();
-    const modelName = model.toLowerCase();
+    const effectiveBase = (advancedModel.trim() ? (advancedBaseUrl.trim() || baseUrl) : baseUrl).toLowerCase();
+    const modelName = (advancedModel.trim() || model).toLowerCase();
+    const base = effectiveBase;
     if (base.includes("deepseek.com")) return false;
     return (
       modelName.startsWith("o1") ||

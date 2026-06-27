@@ -285,4 +285,24 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     expect(body.reasoning_strength).toBe("off");
     cleanup();
   });
+
+  it("uses advanced model capability for API reasoning support", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ...BASE_LLM_RESPONSE,
+        base_url: "https://api.deepseek.com/v1",
+        model: "deepseek-chat",
+        advanced_base_url: "https://api.example.com/v1",
+        advanced_model: "gpt-5",
+        reasoning_supported: true,
+      }),
+    } as Response);
+    const { cleanup } = render(<LLMConfigTab />);
+    await act(async () => {});
+
+    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+    expect(strength?.disabled).toBe(false);
+    cleanup();
+  });
 });

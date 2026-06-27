@@ -1533,14 +1533,19 @@ def _choose_assignee(
 
 def _split_audience_context(context: str) -> Tuple[str, str]:
     """把召对上下文快照剥成 (皇帝任务文本, 前文大臣实质补充文本)：去掉「皇帝：/大臣：」角色标签、
-    丢掉「【本轮确认】…」短句行。皇帝行=任务正文（作御旨守门输入+兜底种子）；大臣行剥领命语后留实质
+    「【本轮确认】…」只保留期限/约束等实质补充。皇帝行=任务正文（作御旨守门输入+兜底种子）；大臣行剥领命语后留实质
     补充（作补充守门输入+兜底种子，cmr #354 r3：前文大臣加的承办/步骤也是密令正文一部分，不得因来自
     前文就漏检/丢弃）。两者分开，避免把大臣补充塞进御旨守门导致逐句核验过严误判（cmr #354 correctness：
     旧码把带标签的整段 blob 当御旨并入正文）。"""
     entries: List[Tuple[str, str]] = []  # ("e"=皇帝任务行, "m"=大臣实质补充分句)
     for raw in (context or "").splitlines():
         line = raw.strip()
-        if not line or line.startswith("【本轮确认】"):
+        if not line:
+            continue
+        if line.startswith("【本轮确认】"):
+            material = _secret_confirmation_material(line.removeprefix("【本轮确认】"))
+            if material:
+                entries.append(("e", material))
             continue
         if line.startswith("皇帝："):
             task = line[len("皇帝："):].strip()
@@ -1576,7 +1581,30 @@ def _secret_context_task_like(text: str) -> bool:
         return False
     if re.search(r"[?？]$", compact):
         return False
-    return bool(re.search(r"(命|令|着|遣|派|督办|查|暗查|密查|护|封存|截留|赈|再令|另令|须|务必)", compact))
+    return bool(re.search(r"(命|令|着|遣|派|督办|查|暗查|密查|护|封存|截留|赈|再令|另令|须|务必|回奏|月内|日内)", compact))
+
+
+def _secret_confirmation_material(text: str) -> str:
+    material = (text or "").strip()
+    if not material:
+        return ""
+    atoms = (
+        "准卿所奏", "按你意思", "照你意思", "就这么办", "便如此", "准奏", "照准",
+        "照办", "就按", "就照", "依卿", "依你", "便依", "同意", "卿所奏",
+        "你意思", "所奏", "如此", "这么办", "就办", "可", "准", "好", "是",
+        "善", "行", "办", "吧", "奏",
+    )
+    changed = True
+    while changed:
+        changed = False
+        material = re.sub(r"^[\s，,。.!！?？；;：:、]+", "", material)
+        for atom in atoms:
+            if material.startswith(atom):
+                material = material[len(atom):]
+                changed = True
+                break
+    material = re.sub(r"^[\s，,。.!！?？；;：:、]+", "", material).strip()
+    return material
 
 
 def _merge_secret_content(*parts: str) -> str:
