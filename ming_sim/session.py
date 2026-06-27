@@ -994,8 +994,18 @@ class GameSession:
             is_consort = getattr(character, "office_type", "") == "后宫"
             active = self.db.get_active_secret_orders_for_minister(minister_name)
             if active or is_consort:
-                if intent is not None:
-                    act = intent if intent_kind in ("secret", "cultivate") else {
+                if intent is not None and intent_kind in ("secret", "cultivate"):
+                    # 并发分类器只读皇帝话，不能作为最终字段真源；会话动作的完整 payload
+                    # 仍须等大臣回话后抽取，避免更新/调教丢掉回话里的实质补充。
+                    extracted = extract_minister_actions(
+                        player_message, reply, active, is_consort, llm_config=llm_config)
+                    act = extracted if (
+                        extracted.get("secret_action") != "无"
+                        or extracted.get("cultivate_skill")
+                        or extracted.get("cultivate_trait")
+                    ) else intent
+                elif intent is not None:
+                    act = {
                         "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
                         "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": ""}
                 else:
