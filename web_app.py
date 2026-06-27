@@ -426,6 +426,7 @@ def _verify_llm_configs_or_raise(config: LLMConfig) -> None:
         advanced_base_url=config.advanced_base_url,
         advanced_api_key=config.advanced_api_key,
         advanced_thinking_level=config.advanced_thinking_level,
+        reasoning_strength=config.reasoning_strength,
         channel=config.channel,
         cli_runner=config.cli_runner,
         cli_model=config.cli_model,
