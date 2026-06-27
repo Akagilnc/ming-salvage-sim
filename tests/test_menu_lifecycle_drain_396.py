@@ -280,6 +280,38 @@ def test_drain_archive_moves_wal_and_shm_with_main_db(monkeypatch, tmp_path):
     assert not os.path.exists(shm_path)
 
 
+def test_drain_archive_rolls_back_main_db_when_wal_move_fails(monkeypatch, tmp_path):
+    """#402 R3（CodeRabbit）：WAL 归档失败时，主库也要回滚回旧路径，避免存档缺 WAL。"""
+    db_path = str(tmp_path / "ming_sim.db")
+    wal_path = db_path + "-wal"
+    for path, content in ((db_path, "db"), (wal_path, "wal")):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+    closed: list[int] = []
+    game = SimpleNamespace(
+        _write_gate=threading.Lock(),
+        db_path=db_path,
+        session=SimpleNamespace(close=lambda: closed.append(1)),
+    )
+    real_move = web_app.shutil.move
+
+    def fail_wal_move(src, dst):
+        if src == wal_path:
+            raise OSError("wal locked")
+        return real_move(src, dst)
+
+    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+    monkeypatch.setattr(web_app.shutil, "move", fail_wal_move)
+
+    web_app._drain_and_close_session(game, archive_db=True)
+
+    assert closed == [1]
+    assert os.path.exists(db_path)
+    assert os.path.exists(wal_path)
+    assert list((tmp_path / "saves").glob("*.db")) == []
+
+
 def test_drain_archive_skips_move_when_session_close_fails(monkeypatch, tmp_path):
     """#402 R2（CodeRabbit）：旧连接没关成功时，不移动仍可能被占用的 DB 文件。"""
     db_path = str(tmp_path / "ming_sim.db")
@@ -303,7 +335,7 @@ def test_drain_archive_skips_move_when_session_close_fails(monkeypatch, tmp_path
 
 
 def test_restore_main_db_path_config_ignores_active_remove_failure(monkeypatch, tmp_path):
-    """#402 R2（Gemini）：回滚清理 active_db.txt 失败时，不遮蔽原始初始化错误。"""
+    """#402 R2/R3：active_db.txt 删除失败时，不遮蔽原错，且回写有效主库路径。"""
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
     active_file = web_app._active_db_path_file()
     with open(active_file, "w", encoding="utf-8") as f:
@@ -314,6 +346,8 @@ def test_restore_main_db_path_config_ignores_active_remove_failure(monkeypatch, 
     web_app._restore_main_db_path_config((False, "", False, ""))
 
     assert "MING_SIM_DB" not in os.environ
+    with open(active_file, "r", encoding="utf-8") as f:
+        assert f.read().strip() == str(tmp_path / "ming_sim.db")
 
 
 def test_new_game_active_write_failure_restores_env_and_old_game(monkeypatch, tmp_path):
