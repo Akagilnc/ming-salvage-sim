@@ -391,7 +391,6 @@ N+6、诏书核销               ← 有 decree_text 必写
 {"instruction": "请根据 system 中的 simulator_payload 写本月月末奏章。"}
 
 【执行约束·必读】你**没有**任何文件、目录、数据库、代码、工具或命令可用，也不要去找。不要描述你打算做什么（如『I will list…』『让我查一下…』）、不要提及 workspace/文件/目录/data/源码/state query 之类。直接以你所扮演的角色身份，用**中文**给出最终回答；禁止英文，禁止任何旁白或思考过程。
-2026-06-07T10:20:50.663364Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when AuthRequired(AuthRequiredError { www_authenticate_header: "Bearer realm=\"OAuth\", resource_metadata=\"https://mcp.cloudflare.com/.well-known/oauth-protected-resource/mcp\", error=\"invalid_token\", error_description=\"Missing or invalid access token\"" })
 codex
 《关山密饷压秋寒》
 1628年11月 月末奏章

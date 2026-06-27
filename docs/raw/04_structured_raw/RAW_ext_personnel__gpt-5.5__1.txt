@@ -332,7 +332,6 @@ force_json 模式下你**只能输出最终 JSON**，不得吐出思考文本。
 {"module": "personnel_secret", "module_allowed_fields": ["appointments", "character_power_changes", "character_status_changes", "emperor_fate", "office_changes", "secret_order_closes", "secret_order_updates"], "instruction": "盘面（regions/armies/buildings/current_state/active_issues/candidate_events 等）看 system 的 simulator_payload；extractor_context 只补 id 校验集与人事/派系元数据。只输出当前模块允许的中文顶层字段 JSON object。"}
 
 【执行约束·必读】你**没有**任何文件、目录、数据库、代码、工具或命令可用，也不要去找。不要描述你打算做什么（如『I will list…』『让我查一下…』）、不要提及 workspace/文件/目录/data/源码/state query 之类。直接以你所扮演的角色身份，用**中文**给出最终回答；禁止英文，禁止任何旁白或思考过程。
-2026-06-07T10:27:16.016914Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when AuthRequired(AuthRequiredError { www_authenticate_header: "Bearer realm=\"OAuth\", resource_metadata=\"https://mcp.cloudflare.com/.well-known/oauth-protected-resource/mcp\", error=\"invalid_token\", error_description=\"Missing or invalid access token\"" })
 codex
 {"人事变更":[],"人物状态变化":[],"人物易主":[],"后宫册封":[],"密令副作用":[{"密令编号":1,"推演备注":"孙承宗于宣大查办密饷案；此前直发宣大之两百万两内库饷银虽补齐欠饷，但因未历外朝公议，已引起兵部与科道言官警觉。兵部尚书王在晋等连续上疏质问宣大饷银来路，风声泄露渐紧。孙承宗虽将部分饷银归入外朝审计以求平息，但内帑直拨之秘正受外廷言路重重盘诘，宣大主官承受压力甚巨。"}],"密令结案":[],"崇祯结局":null}
 tokens used
