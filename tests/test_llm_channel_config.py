@@ -121,6 +121,24 @@ def test_create_chat_model_maps_reasoning_strength_to_minimax_thinking(monkeypat
     assert model.extra_body == {"thinking": {"type": "disabled"}, "reasoning_split": True}
 
 
+def test_minimax_reasoning_strength_overrides_stale_thinking_level(monkeypatch):
+    """#358 cmr: 统一推理强度选档（低/中/高）对 minimax 须直接映射 adaptive，不被遗留
+    thinking_level=disabled 这个隐藏旋钮压回 disabled。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.minimaxi.com/v1",
+        model="minimax-test",
+        channel="api",
+        thinking_level="disabled",
+        reasoning_strength="medium",
+    )
+
+    model = create_chat_model(cfg, enable_thinking=False)
+
+    assert model.extra_body == {"thinking": {"type": "adaptive"}, "reasoning_split": True}
+
+
 def test_legacy_backend_env_uses_runner_default_model_not_api_model(monkeypatch):
     captured = {}
 

@@ -150,4 +150,44 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     expect(text).not.toContain("Base URL");
     cleanup();
   });
+
+  it("clears the legacy thinking_level shadow on save so the unified selector owns reasoning (#358 cmr)", async () => {
+    // 旧档持有 thinking_level=high、reasoning_strength 空。统一选择器以旧值迁移初始化，
+    // 保存时须清掉旧 thinking_level，否则它仍作隐藏旋钮、用户选「默认」也清不掉。
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({
+          ...BASE_LLM_RESPONSE,
+          thinking_level: "high",
+          reasoning_strength: "",
+          reasoning_supported: true,
+          persisted: { ...BASE_LLM_RESPONSE.persisted, thinking_level: "high", reasoning_strength: "" },
+        }),
+      } as Response);
+    });
+    const { cleanup } = render(<LLMConfigTab />);
+    await act(async () => {});
+
+    // selector migrated the legacy value into the unified strength
+    const select = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+    expect(select?.value).toBe("high");
+
+    const saveBtn = Array.from(document.querySelectorAll("button")).find((b) =>
+      (b.textContent ?? "").includes("保存并应用")
+    );
+    expect(saveBtn).toBeTruthy();
+    await act(async () => {
+      saveBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const post = calls.find((c) => c.init?.method === "POST" && c.url === "/api/llm/config");
+    expect(post).toBeTruthy();
+    const body = JSON.parse(String(post!.init!.body));
+    expect(body.reasoning_strength).toBe("high");
+    expect(body.thinking_level).toBe("");
+    cleanup();
+  });
 });
