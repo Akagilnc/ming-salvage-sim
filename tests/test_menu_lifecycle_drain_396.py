@@ -249,6 +249,51 @@ def test_drain_archive_move_failure_keeps_wal_and_shm(monkeypatch, tmp_path):
     assert os.path.exists(shm_path)
 
 
+def test_drain_archive_moves_wal_and_shm_with_main_db(monkeypatch, tmp_path):
+    """#402 R2（Gemini）：成功归档主库时，SQLite WAL/SHM 也要随主库进存档目录。"""
+    db_path = str(tmp_path / "ming_sim.db")
+    wal_path = db_path + "-wal"
+    shm_path = db_path + "-shm"
+    for path, content in ((db_path, "db"), (wal_path, "wal"), (shm_path, "shm")):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+    closed: list[int] = []
+    game = SimpleNamespace(
+        _write_gate=threading.Lock(),
+        db_path=db_path,
+        session=SimpleNamespace(close=lambda: closed.append(1)),
+    )
+    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+
+    web_app._drain_and_close_session(game, archive_db=True)
+
+    save_files = list((tmp_path / "saves").glob("*.db"))
+    assert closed == [1]
+    assert len(save_files) == 1
+    archived_db = str(save_files[0])
+    assert os.path.exists(archived_db)
+    assert os.path.exists(archived_db + "-wal")
+    assert os.path.exists(archived_db + "-shm")
+    assert not os.path.exists(db_path)
+    assert not os.path.exists(wal_path)
+    assert not os.path.exists(shm_path)
+
+
+def test_restore_main_db_path_config_ignores_active_remove_failure(monkeypatch, tmp_path):
+    """#402 R2（Gemini）：回滚清理 active_db.txt 失败时，不遮蔽原始初始化错误。"""
+    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+    active_file = web_app._active_db_path_file()
+    with open(active_file, "w", encoding="utf-8") as f:
+        f.write(str(tmp_path / "new.db"))
+    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "new.db"))
+    monkeypatch.setattr(web_app.os, "remove", lambda *_args, **_kwargs: (_ for _ in ()).throw(PermissionError("locked")))
+
+    web_app._restore_main_db_path_config((False, "", False, ""))
+
+    assert "MING_SIM_DB" not in os.environ
+
+
 def test_shutdown_waits_for_drain_before_returning_or_killing(monkeypatch):
     gate = threading.Lock()
     closed: list[int] = []

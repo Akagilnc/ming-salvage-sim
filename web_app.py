@@ -1849,7 +1849,10 @@ def _restore_main_db_path_config(snapshot: tuple[bool, str, bool, str]) -> None:
                 except Exception:
                     pass
     elif os.path.exists(active_file):
-        os.remove(active_file)
+        try:
+            os.remove(active_file)
+        except Exception:
+            pass
 
 
 def _set_main_db_path(db_path: str) -> None:
@@ -1915,7 +1918,7 @@ def _drain_and_close_session(game, archive_db: bool = False) -> None:
                     p = old_db_path + suffix
                     if os.path.exists(p):
                         try:
-                            os.remove(p)
+                            shutil.move(p, target + suffix)
                         except Exception:
                             pass
 
