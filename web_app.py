@@ -1893,14 +1893,17 @@ def _drain_and_close_session(game, archive_db: bool = False) -> None:
                 cond.wait()
     gate = _game_write_gate(game)
     gate.acquire()  # 阻塞——等最后一个 worker 释放
+    close_failed = False
     try:
         session = getattr(game, "session", None)
         if session is not None:
             session.close()
     except Exception:
-        pass
+        close_failed = True
     finally:
         gate.release()
+    if close_failed:
+        return
     if archive_db:
         old_db_path = getattr(game, "db_path", "")
         if old_db_path and os.path.exists(old_db_path):
@@ -2124,10 +2127,10 @@ async def api_menu_new_game() -> Dict[str, Any]:
     # 改为把主库路径切换到新文件，旧 worker 安全续写旧库；排空关连接后旧库归档为存档。
     snapshot = _snapshot_main_db_path_config()
     new_db_path = user_data_path(f"ming_sim_{time.time_ns()}.db")
-    # 同步覆写 env + active_db.txt → 新局落新路径，重启也继续新路径。
-    _set_main_db_path(new_db_path)
-    web_game = None
     try:
+        # 同步覆写 env + active_db.txt → 新局落新路径，重启也继续新路径。
+        _set_main_db_path(new_db_path)
+        web_game = None
         new_game = WebGame(fresh=True)
     except LLMUnavailable as exc:
         _restore_main_db_path_config(snapshot)

@@ -108,7 +108,7 @@ def test_new_game_switches_db_path_and_archives_old_after_drain(monkeypatch, tmp
     import sqlite3
 
     db_path = str(tmp_path / "ming_sim.db")
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.execute("CREATE TABLE kv_store (key TEXT PRIMARY KEY, value TEXT)")
     conn.execute("INSERT INTO kv_store VALUES ('data', 'before_new_game')")
     conn.commit()
@@ -280,6 +280,28 @@ def test_drain_archive_moves_wal_and_shm_with_main_db(monkeypatch, tmp_path):
     assert not os.path.exists(shm_path)
 
 
+def test_drain_archive_skips_move_when_session_close_fails(monkeypatch, tmp_path):
+    """#402 R2（CodeRabbit）：旧连接没关成功时，不移动仍可能被占用的 DB 文件。"""
+    db_path = str(tmp_path / "ming_sim.db")
+    with open(db_path, "w", encoding="utf-8") as f:
+        f.write("db")
+
+    moves: list[tuple[str, str]] = []
+    game = SimpleNamespace(
+        _write_gate=threading.Lock(),
+        db_path=db_path,
+        session=SimpleNamespace(close=lambda: (_ for _ in ()).throw(RuntimeError("close failed"))),
+    )
+    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+    monkeypatch.setattr(web_app.shutil, "move", lambda src, dst: moves.append((src, dst)))
+
+    web_app._drain_and_close_session(game, archive_db=True)
+
+    assert moves == []
+    assert os.path.exists(db_path)
+    assert not (tmp_path / "saves").exists()
+
+
 def test_restore_main_db_path_config_ignores_active_remove_failure(monkeypatch, tmp_path):
     """#402 R2（Gemini）：回滚清理 active_db.txt 失败时，不遮蔽原始初始化错误。"""
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
@@ -292,6 +314,30 @@ def test_restore_main_db_path_config_ignores_active_remove_failure(monkeypatch, 
     web_app._restore_main_db_path_config((False, "", False, ""))
 
     assert "MING_SIM_DB" not in os.environ
+
+
+def test_new_game_active_write_failure_restores_env_and_old_game(monkeypatch, tmp_path):
+    """#402 R2（CodeRabbit）：active_db.txt 写失败也必须回滚已改的 MING_SIM_DB。"""
+    old_db_path = str(tmp_path / "old_main.db")
+    old_game = SimpleNamespace(
+        _write_gate=threading.Lock(),
+        db_path=old_db_path,
+        session=SimpleNamespace(close=lambda: None),
+    )
+    monkeypatch.setattr(web_app, "web_game", old_game)
+    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+    monkeypatch.setenv("MING_SIM_DB", old_db_path)
+    monkeypatch.setattr(web_app, "_write_active_db_path", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk full")))
+
+    try:
+        asyncio.run(web_app.api_menu_new_game())
+    except OSError as exc:
+        assert "disk full" in str(exc)
+    else:
+        raise AssertionError("active_db.txt write failure should surface")
+
+    assert os.environ["MING_SIM_DB"] == old_db_path
+    assert web_app.web_game is old_game
 
 
 def test_shutdown_waits_for_drain_before_returning_or_killing(monkeypatch):
@@ -352,7 +398,7 @@ def test_new_game_with_ming_sim_db_env_does_not_clobber_old_configured_db(monkey
     import sqlite3
 
     env_db_path = str(tmp_path / "env_configured.db")
-    conn = sqlite3.connect(env_db_path)
+    conn = sqlite3.connect(env_db_path, check_same_thread=False)
     conn.execute("CREATE TABLE kv_store (key TEXT PRIMARY KEY, value TEXT)")
     conn.execute("INSERT INTO kv_store VALUES ('data', 'before_new_game')")
     conn.commit()
@@ -590,7 +636,7 @@ def test_new_game_switches_db_path_when_web_game_is_none(monkeypatch, tmp_path):
     import sqlite3
 
     old_db_path = str(tmp_path / "old_configured.db")
-    conn = sqlite3.connect(old_db_path)
+    conn = sqlite3.connect(old_db_path, check_same_thread=False)
     conn.execute("CREATE TABLE kv_store (key TEXT PRIMARY KEY, value TEXT)")
     conn.execute("INSERT INTO kv_store VALUES ('data', 'before_new_game')")
     conn.commit()
