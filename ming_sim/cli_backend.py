@@ -1555,6 +1555,7 @@ def _extract_secret_order(
     minister_reply: str,
     default_assignee: str,
     llm_config: Any = None,
+    force_default_assignee: bool = False,
 ) -> Dict[str, Any]:
     """聚焦提取：把密令交代+大臣回话抽成结构化字段。纯抽取任务（不扮演），
     与月末 extractor 同款可靠。失败则退回合理默认。"""
@@ -1598,7 +1599,7 @@ def _extract_secret_order(
     # 承办人：LLM 字段经校验才采信（防漂移），否则退回经校验线索（御旨祈使 / 大臣建议 /
     # 最终正文），最后才默认召对大臣（#401 R1 CodeRabbit major：旧 `or` 链盲信任何非空
     # LLM 字段，正文留李若琏、字段填王在晋时即漂移）。
-    assignee = _choose_assignee(
+    assignee = default_assignee if force_default_assignee else _choose_assignee(
         _assignee_llm, player_command, minister_reply, content, default_assignee
     )
     try:
@@ -1613,6 +1614,7 @@ def _extract_secret_order(
 
 def resolve_minister_actions(
     minister_reply: str, player_message: str = "", default_assignee: str = "", llm_config: Any = None,
+    secret_context: str = "",
 ) -> Dict[str, Any]:
     """玩家上一句带拟旨/密令前缀时入档。
     - 拟旨：大臣回话原文即圣旨草稿（单一文本字段，够用）。
@@ -1629,15 +1631,39 @@ def resolve_minister_actions(
 
     secret_intent = _matched_prefix(player_message, _SECRET_PREFIXES)
     if secret_intent is not None and (reply or secret_intent):
+        secret_command = secret_intent
+        force_default_assignee = False
+        if _secret_prefix_needs_recent_context(secret_intent) and (secret_context or "").strip():
+            secret_command = (
+                (secret_context or "").strip()
+                + ("\n【本轮确认】" + secret_intent if secret_intent else "")
+            ).strip()
+            force_default_assignee = True
         # #397：显式『密令如下：<X>』的密令正文须留住御旨 X——旧码取 reply 当正文，
         # 大臣只领命时正文落成领命语、御旨只活在被截断的标题。改为合并皇帝显式旨意 +
         # 大臣回话，交 _extract_secret_order 让 LLM 润成一道完整密令（御旨为主、并入
         # 大臣补的承办人/要点）；提取失败时该 helper 已兜底（不阻断、不丢御旨）。
         out["secret_order"] = _extract_secret_order(
-            secret_intent, reply, default_assignee, llm_config
+            secret_command, reply, default_assignee, llm_config,
+            force_default_assignee=force_default_assignee,
         )
 
     return out
+
+
+def _secret_prefix_needs_recent_context(secret_intent: str) -> bool:
+    """显式密令按钮后只有确认短句时，从前文召对取任务正文。"""
+    text = (secret_intent or "").strip()
+    if not text:
+        return True
+    compact = re.sub(r"[\s，,。.!！?？；;：:、]+", "", text)
+    if len(compact) > 12:
+        return False
+    if compact in {"可", "准", "好", "同意", "照办", "如此", "便如此"}:
+        return True
+    return any(token in compact for token in (
+        "就按", "就照", "按你意思", "照你意思", "依卿",
+    ))
 
 
 def _fake_completion(text: str, model_id: str) -> ChatCompletion:
