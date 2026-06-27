@@ -906,6 +906,7 @@ class WebGame:
                     cli_model=new_config.cli_model,
                     cli_timeout_seconds=new_config.cli_timeout_seconds,
                     reasoning_strength=new_config.reasoning_strength,
+                    api_reasoning_strength=prev.reasoning_strength,
                 )
         else:
             save_runtime_llm(

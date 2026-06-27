@@ -1621,16 +1621,7 @@ def _secret_context_tasks_related(prior: str, later: str) -> bool:
         r"(命|令|着|遣|派|督办|暗查|密查|查|护|封存|截留|赈)", later_compact
     ):
         return True
-    return bool(_secret_context_keygrams(prior) & _secret_context_keygrams(later))
-
-
-def _secret_context_keygrams(text: str) -> set:
-    compact = re.sub(
-        r"(再令|另令|又令|并令|仍令|复令|命|令|着|遣|派|督办|暗查|密查|查|护|须|务必|回奏|月内|日内|臣|领命|遵旨)",
-        "",
-        re.sub(r"[^\u4e00-\u9fff]", "", text or ""),
-    )
-    return {compact[i:i + 2] for i in range(max(0, len(compact) - 1))}
+    return False
 
 
 def _secret_confirmation_material(text: str) -> str:
