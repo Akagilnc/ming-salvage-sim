@@ -47,11 +47,10 @@
 - **修法候选**：① `chat_stream` 追加用户条目时保留对象引用，`_fail_incomplete_chat_turn` 改按 `is` 身份剪（需同步改 3 个测试 + 调用点）；② 给内存条目带 `chat_turn_id`，按 id 剪（须核前端/agent 上下文消费方不受新键影响）。任一均需先定 chat_history 条目 schema。
 - **注**：family/362-base 整合 CMR（correctness gate）g2r1 codex 提的 medium；gh 未鉴权无法开 issue，先记此处，family ship/人工转 issue。
 
-### B13. 编排器测试 epicOrchestratorWorkflow 预存失败（P0，非本分支引入）
+### ~~B13. 编排器测试 epicOrchestratorWorkflow 预存失败（P0，非本分支引入）~~ ✅ 已修（v0.15.0.0, 2026-06-27, cf1038f）
 - **现象**：`web/src/epicOrchestratorWorkflow.test.ts` 「merges reviewed commits from different slice worktrees through one dedicated family worktree」断言 `mergeWorktrees[0].startsWith(repoPath) === false` 失败，实得 `true`（merge worktree 路径在 repo 目录内，不是外部 tmpdir）。
-- **定位**：最后改动 commit 5771faa (2026-06-20)，family/362-base 分支未触碰此文件（pre-existing）。
-- **待查**：`web/orchestrator/epicOrchestrator.workflow.js` family worktree 路径生成逻辑是否在 6/20 后被改坏，或测试假设与实现已漂移。
-- **优先级**：P0（阻编排器正确性，CI 预绿假象）。
+- **定位**：测试假设与当前实现漂移；family merge worktree 现在位于仓库 sibling 的 `.worktrees/.epic-orchestrator/` 下。
+- **修复**：测试改为断言 family worktree 位于 `.worktrees/.epic-orchestrator` 路径，`epicOrchestratorWorkflow.test.ts` 聚焦用例与完整 web Vitest 已通过。
 
 ### B12. 密令状态在游戏画面露英文 enum（active/pending_review/done/failed） → [issue #48](https://github.com/Akagilnc/ming-salvage-sim/issues/48)
 - **现象**：「密旨动向」等展示里密令 status 直接渲染数据库英文 enum「（active）」，明末中文游戏里露英文，出戏。
