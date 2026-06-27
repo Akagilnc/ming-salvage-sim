@@ -1321,7 +1321,7 @@ def _content_reflects_minister_supplements(content: str, minister_reply: str) ->
             # 也须在正文里，否则只留人名+动作词的合法输出会静默吞掉余下补充。
             tail = clause[clause.find(assignee) + len(assignee):].lstrip()
             if action and tail.startswith(action):
-                tail = tail[len(action):]
+                tail = tail[len(action):].lstrip()
             tail_core = re.sub(r"\s+", "", _SUPPLEMENT_PREFIX_RE.sub("", tail))
             if tail_core and tail_core not in c:
                 return False
@@ -1341,7 +1341,8 @@ def _content_reflects_minister_supplements(content: str, minister_reply: str) ->
 # （如『李若琏负责』→ None）。改为贪心捕获后从尾部剥 _ASSIGNEE_VERB_TAIL_CHARS 中的
 # 动词首字（lookahead 扩充 监|协|处|负 覆盖更多动词），保证不漏不脏。
 _ASSIGNEE_HINT_RE = re.compile(
-    r"(?:可\s*授|可\s*委|可\s*差|可\s*令|可\s*派|请\s*授|请\s*委|请\s*派|"
+    r"(?:可\s*委\s*派|可\s*差\s*派|请\s*委\s*派|请\s*差\s*派|建议\s*委\s*派|建议\s*差\s*派|"
+    r"可\s*授|可\s*委|可\s*差|可\s*令|可\s*派|请\s*授|请\s*委|请\s*派|"
     r"建议\s*授|建议\s*委|可\s*由|可\s*命)"
     r"\s*([\u4e00-\u9fa5·]{2,4})"
     r"(?=[，,。.；;！!？?、\s]|暗|密|调|督|拟|领|查|办|为|任|去|往|主|核|理|统|提|巡|镇|守|征|讨|驻|屯|管|行|前|担|监|协|处|负|$)"
@@ -1408,7 +1409,7 @@ def _extract_assignee_action(clause: str, assignee: str) -> str:
 # #401 R1（CodeRabbit major codex P2）：御旨常以『着X』指名，LLM 却偶发把承办人字段留空
 # 或漂移到默认召对大臣——此函数从皇帝显式旨意找回承办人，供 _choose_assignee 校验。
 _ASSIGNEE_IMPERATIVE_RE = re.compile(
-    r"(?:着|令|命|敕)\s*([\u4e00-\u9fa5·]{2,4})"
+    r"(?<![\u4e00-\u9fa5·])(?:着|令|命|敕)\s*([\u4e00-\u9fa5·]{2,4})"
     r"(?=[，,。.；;！!？?、\s]|暗|密|调|督|拟|领|查|办|为|任|去|往|主|核|理|统|提|巡|镇|守|征|讨|驻|屯|管|行|前|担|监|协|处|负|$)"
 )
 _ASSIGN_NAME_HEAD_ADVERB_RE = re.compile(r"^[即速快立妥当应须且便赶]")
