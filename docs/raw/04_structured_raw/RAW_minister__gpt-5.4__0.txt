@@ -136,7 +136,7 @@ court_brief 里有各派系当前数值（满意度/影响力），**以这些�
 四、密旨动向
 承办人孙承宗于宣府、大同之密旨仍在查办中。两百万两内库恩饷暗中补齐宣大边军欠饷后，将士士气高涨，防区之坍颓墩台正加紧修补。然而，此项巨额饷银未历外朝公议，兵部尚书王在晋及科道言官无端起疑，纷纷上疏质问饷银来路，宣大主官备受拷问，泄密风声渐紧。
 
-五、陛下未知者
+五、探子回报
 据细作密报，沈阳与辽阳之建虏虽表面按兵不动，但后金文臣范文程、将领佟养性正大肆招纳大明逃人与匠户，在关外暗中仿铸红夷大炮，其实力暗中滋长；且后金细作频出，正四处探听宣大守军骤然足饷之虚实。此外，察哈尔林丹汗面临后金压力，内部诸部离心，私下已与后金贝勒暗中接触，态度极其摇摆，若后金大举逼迫，其部随时可能向西溃退，导致宣大侧翼暴露。
 
 六、待办未解
@@ -215,7 +215,6 @@ This approach ensures you only load detailed instructions when actually needed.
 拟旨如下：内库每月与你100万两。速速把宣大，蓟镇的城防火炮配齐
 
 【执行约束·必读】你**没有**任何文件、目录、数据库、代码、工具或命令可用，也不要去找。不要描述你打算做什么（如『I will list…』『让我查一下…』）、不要提及 workspace/文件/目录/data/源码/state query 之类。直接以你所扮演的角色身份，用**中文**给出最终回答；禁止英文，禁止任何旁白或思考过程。
-2026-06-07T10:21:45.853796Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when AuthRequired(AuthRequiredError { www_authenticate_header: "Bearer realm=\"OAuth\", resource_metadata=\"https://mcp.cloudflare.com/.well-known/oauth-protected-resource/mcp\", error=\"invalid_token\", error_description=\"Missing or invalid access token\"" })
 codex
 臣孙承宗叩首奉诏。此旨若下，宣大、蓟镇城防火器可速整而边心益固。臣请拟旨：
 

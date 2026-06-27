@@ -52,14 +52,25 @@ _AGY_BIN = os.environ.get("MING_SIM_AGY_BIN", "agy")
 _CODEX_BIN = os.environ.get("MING_SIM_CODEX_BIN", "codex")
 _CODEX_MODEL = os.environ.get("MING_SIM_CODEX_MODEL", CODEX_DEFAULT_MODEL)
 # claude -p 独立进程后端：opus/sonnet/haiku。纯文本输出无日志壳。
-# 思考预算不在此强加：claude 走自身默认；要限思考由用户自行 export MAX_THINKING_TOKENS
-# （claude -p 继承父进程 env，会自动读到），后端不替用户决定。
+# 未配置 reasoning_strength 时继承用户环境；配置后显式设置 Claude thinking 预算。
 _CLAUDE_BIN = os.environ.get("MING_SIM_CLAUDE_BIN", "claude")
 _CLAUDE_MODEL = os.environ.get("MING_SIM_CLAUDE_MODEL", CLAUDE_DEFAULT_MODEL)
 # 纯角色扮演/抽取任务不需要工具；禁掉防 claude 绕去调工具兜圈子。
 _CLAUDE_DISALLOWED = ["Bash", "Read", "Edit", "Write", "Glob", "Grep",
                       "WebFetch", "WebSearch", "Task", "NotebookEdit"]
 _CLI_BACKENDS = {"agy", "codex", "claude"}
+_CODEX_REASONING_BY_STRENGTH = {
+    "off": "low",
+    "low": "low",
+    "medium": "medium",
+    "high": "xhigh",
+}
+_CLAUDE_THINKING_TOKENS_BY_STRENGTH = {
+    "off": "2000",
+    "low": "2000",
+    "medium": "10000",
+    "high": "32000",
+}
 
 
 def cli_model_choices() -> Dict[str, List[Dict[str, str]]]:
@@ -321,7 +332,18 @@ def _run_agy(prompt: str, timeout: Optional[float] = None) -> Tuple[str, int]:
     raise RuntimeError(f"agy 调用失败（warm+retry×4 仍不成）：{last[:200]}")
 
 
-def _run_codex(prompt: str, model: Optional[str] = None, timeout: Optional[float] = None) -> Tuple[str, int]:
+def _codex_reasoning_effort(reasoning_strength: Optional[str]) -> str:
+    if reasoning_strength is None:
+        return (os.environ.get("MING_SIM_CODEX_REASONING") or "").strip()
+    return _CODEX_REASONING_BY_STRENGTH.get(str(reasoning_strength or "").strip().lower(), "")
+
+
+def _run_codex(
+    prompt: str,
+    model: Optional[str] = None,
+    timeout: Optional[float] = None,
+    reasoning_strength: Optional[str] = None,
+) -> Tuple[str, int]:
     """调 codex exec -（stdin pipe，绝不 positional）。返回 (文本, 尝试次数=1)。
 
     实测三坑（见 docs/LLM_BACKEND_BENCH.md §9）：
@@ -331,7 +353,7 @@ def _run_codex(prompt: str, model: Optional[str] = None, timeout: Optional[float
       "OpenAI Codex v…/tokens used" 等日志混进角色回话）。stdout 空时兜底从合并流剥壳。
     reasoning：默认不强加，尊重用户 ~/.codex/config.toml；设 MING_SIM_CODEX_REASONING 才传 -c。"""
     cmd = [_resolve_cli_bin("codex", _CODEX_BIN), "exec", "--model", (model or _CODEX_MODEL)]
-    reasoning = (os.environ.get("MING_SIM_CODEX_REASONING") or "").strip()
+    reasoning = _codex_reasoning_effort(reasoning_strength)
     if reasoning:
         cmd += ["-c", f'model_reasoning_effort="{reasoning}"']
     cmd += ["--ephemeral", "--skip-git-repo-check", "-"]
@@ -354,9 +376,14 @@ def _run_codex(prompt: str, model: Optional[str] = None, timeout: Optional[float
     return out, 1
 
 
-def _codex_cmd(model: Optional[str] = None, *, json_events: bool = False) -> List[str]:
+def _codex_cmd(
+    model: Optional[str] = None,
+    *,
+    json_events: bool = False,
+    reasoning_strength: Optional[str] = None,
+) -> List[str]:
     cmd = [_resolve_cli_bin("codex", _CODEX_BIN), "exec", "--model", (model or _CODEX_MODEL)]
-    reasoning = (os.environ.get("MING_SIM_CODEX_REASONING") or "").strip()
+    reasoning = _codex_reasoning_effort(reasoning_strength)
     if reasoning:
         cmd += ["-c", f'model_reasoning_effort="{reasoning}"']
     if json_events:
@@ -414,9 +441,10 @@ def _iter_codex_stream_chunks(
     *,
     model: Optional[str] = None,
     timeout: Optional[float] = None,
+    reasoning_strength: Optional[str] = None,
 ) -> Iterator[str]:
     """Run `codex exec --json` and yield agent_message_delta events as they arrive."""
-    cmd = _codex_cmd(model, json_events=True)
+    cmd = _codex_cmd(model, json_events=True, reasoning_strength=reasoning_strength)
     run_timeout = timeout or _AGY_TIMEOUT
     try:
         proc = subprocess.Popen(
@@ -520,10 +548,13 @@ def _run_codex_stream(
     *,
     model: Optional[str] = None,
     timeout: Optional[float] = None,
+    reasoning_strength: Optional[str] = None,
     on_text: Optional[Callable[[str], None]] = None,
 ) -> Tuple[str, int]:
     pieces: List[str] = []
-    for delta in _iter_codex_stream_chunks(prompt, model=model, timeout=timeout):
+    for delta in _iter_codex_stream_chunks(
+        prompt, model=model, timeout=timeout, reasoning_strength=reasoning_strength
+    ):
         pieces.append(delta)
         if on_text:
             on_text(delta)
@@ -533,19 +564,33 @@ def _run_codex_stream(
     return text, 1
 
 
-def _run_claude(prompt: str, model: Optional[str] = None, timeout: Optional[float] = None) -> Tuple[str, int]:
+def _run_claude(
+    prompt: str,
+    model: Optional[str] = None,
+    timeout: Optional[float] = None,
+    reasoning_strength: Optional[str] = None,
+) -> Tuple[str, int]:
     """调 claude -p（独立进程，stdin pipe）。返回 (纯文本, 1)。
     与 codex 不同：claude -p 干净最终回话在 **stdout**，日志/诊断在 stderr，
     故只取 stdout、不合并 stderr（合并会把日志混进角色回话）。
-    思考预算不强加：继承父进程 env，用户可自行 export MAX_THINKING_TOKENS。"""
+    未配置 reasoning_strength 时继承父进程 env；配置后显式设置 MAX_THINKING_TOKENS。"""
     cmd = [_resolve_cli_bin("claude", _CLAUDE_BIN), "-p", "--model", (model or _CLAUDE_MODEL),
            "--output-format", "text", "--disallowed-tools", *_CLAUDE_DISALLOWED]
+    env = None
+    if reasoning_strength is not None:
+        env = dict(os.environ)
+        strength = str(reasoning_strength or "").strip().lower()
+        tokens = _CLAUDE_THINKING_TOKENS_BY_STRENGTH.get(strength)
+        if tokens:
+            env["MAX_THINKING_TOKENS"] = tokens
+        else:
+            env.pop("MAX_THINKING_TOKENS", None)
     try:
         # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
         # 安全审计(Sourcery):list-form argv、无 shell=True;runner 已 allowlist、model 为独立 argv、prompt 走 stdin → 无注入面。
         proc = subprocess.run(
             cmd, input=prompt, capture_output=True, text=True,
-            timeout=timeout or _AGY_TIMEOUT, cwd=_AGY_CWD,
+            timeout=timeout or _AGY_TIMEOUT, cwd=_AGY_CWD, env=env,
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError("claude 调用超时") from exc
@@ -571,7 +616,7 @@ def _llm_channel(llm_config: Any = None) -> str:
     return (getattr(llm_config, "channel", "") or "").strip().lower()
 
 
-def _cli_config_parts(llm_config: Any = None) -> Optional[Tuple[str, str, Optional[float]]]:
+def _cli_config_parts(llm_config: Any = None) -> Optional[Tuple[str, str, Optional[float], str]]:
     channel = _llm_channel(llm_config)
     if channel != "cli":
         return None
@@ -584,7 +629,8 @@ def _cli_config_parts(llm_config: Any = None) -> Optional[Tuple[str, str, Option
         timeout = float(raw_timeout) if raw_timeout else None
     except (TypeError, ValueError):
         timeout = None
-    return runner, model, timeout
+    reasoning_strength = str(getattr(llm_config, "reasoning_strength", "") or "").strip().lower()
+    return runner, model, timeout, reasoning_strength
 
 
 def _run_backend_for_config(prompt: str, llm_config: Any = None, tag: str = "") -> Tuple[str, int]:
@@ -604,11 +650,21 @@ def _run_backend_for_config(prompt: str, llm_config: Any = None, tag: str = "") 
         if parts is None:
             text, attempts = _run_backend(prompt)
         else:
-            runner, model, timeout = parts
+            runner, model, timeout, reasoning_strength = parts
             if runner == "codex":
-                text, attempts = _run_codex(prompt, model=model or None, timeout=timeout)
+                text, attempts = _run_codex(
+                    prompt,
+                    model=model or None,
+                    timeout=timeout,
+                    reasoning_strength=reasoning_strength or None,
+                )
             elif runner == "claude":
-                text, attempts = _run_claude(prompt, model=model or None, timeout=timeout)
+                text, attempts = _run_claude(
+                    prompt,
+                    model=model or None,
+                    timeout=timeout,
+                    reasoning_strength=reasoning_strength or None,
+                )
             else:
                 text, attempts = _run_agy(prompt, timeout=timeout)
         return text, attempts
@@ -625,6 +681,30 @@ def _run_backend_for_config(prompt: str, llm_config: Any = None, tag: str = "") 
             "prompt_chars": len(prompt), "resp_chars": len(text),
             "error": error, "prompt": prompt, "response": text,
         })
+
+
+def _run_api_for_config(prompt: str, llm_config: Any = None, tag: str = "") -> Tuple[str, int]:
+    """Run a small extraction prompt through the configured API model."""
+    from agno.agent import Agent
+    from ming_sim.llm_model import create_chat_model, extract_agent_text
+
+    agent = Agent(
+        name=f"API抽取器-{tag or 'generic'}",
+        id=f"api-extractor-{tag or 'generic'}",
+        session_id=f"api-extractor-{tag or 'generic'}",
+        model=create_chat_model(
+            llm_config, temperature=0, max_tokens=1200, force_json_output=True,
+        ),
+        instructions=["只输出符合要求的 JSON/文本，不要 markdown 代码围栏。"],
+        markdown=False,
+    )
+    return extract_agent_text(agent.run(prompt)), 1
+
+
+def _run_json_extractor_for_config(prompt: str, llm_config: Any = None, tag: str = "") -> Tuple[str, int]:
+    if _llm_channel(llm_config) == "api":
+        return _run_api_for_config(prompt, llm_config, tag=tag)
+    return _run_backend_for_config(prompt, llm_config, tag=tag)
 
 
 def _backend_label(llm_config: Any = None) -> str:
@@ -1475,6 +1555,123 @@ def _choose_assignee(
     return default_assignee
 
 
+def _split_audience_context(context: str) -> Tuple[str, str]:
+    """把召对上下文快照剥成 (皇帝任务文本, 前文大臣实质补充文本)：去掉「皇帝：/大臣：」角色标签、
+    「【本轮确认】…」只保留期限/约束等实质补充。皇帝行=任务正文（作御旨守门输入+兜底种子）；大臣行剥领命语后留实质
+    补充（作补充守门输入+兜底种子，cmr #354 r3：前文大臣加的承办/步骤也是密令正文一部分，不得因来自
+    前文就漏检/丢弃）。两者分开，避免把大臣补充塞进御旨守门导致逐句核验过严误判（cmr #354 correctness：
+    旧码把带标签的整段 blob 当御旨并入正文）。"""
+    entries: List[Tuple[str, str]] = []  # ("e"=皇帝任务行, "m"=大臣实质补充分句)
+    for raw in (context or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("【本轮确认】"):
+            material = _secret_confirmation_material(line.removeprefix("【本轮确认】"))
+            if material:
+                entries.append(("e", material))
+            continue
+        if line.startswith("皇帝："):
+            task = line[len("皇帝："):].strip()
+            if task:
+                entries.append(("e", task))
+        elif line.startswith("大臣："):
+            body = line[len("大臣："):].strip()
+            for clause in _minister_material_clauses(body):
+                entries.append(("m", clause))
+    # 只取最近的任务跨度：排除同回合更早的无关问答，但保留连续多条相关皇帝任务行。
+    # 旧实现从最后一条皇帝行起，能排除「京营操练如何？」这类无关问答，却会丢掉
+    # 「先命洪承畴赈灾、再令东厂护银」这种前几轮连续补充的同一密令任务。
+    boundary = -1
+    for i, (kind, text) in enumerate(entries):
+        if kind == "e" and not _secret_context_task_like(text):
+            boundary = i
+    emperor_indices = [i for i, (kind, _text) in enumerate(entries) if i > boundary and kind == "e"]
+    if not emperor_indices:
+        emperor_indices = [i for i, (kind, _text) in enumerate(entries) if kind == "e"]
+    start = emperor_indices[-1] if emperor_indices else None
+    selected_emperor = entries[start][1] if start is not None else ""
+    if start is not None:
+        for i in reversed(emperor_indices[:-1]):
+            prior_text = entries[i][1]
+            if not _secret_context_tasks_related(prior_text, selected_emperor):
+                break
+            start = i
+            selected_emperor = prior_text + "\n" + selected_emperor
+    span = entries[start:] if start is not None else entries
+    emperor_lines = [text for kind, text in span if kind == "e"]
+    minister_material = [text for kind, text in span if kind == "m"]
+    return "\n".join(emperor_lines), "\n".join(minister_material)
+
+
+def _secret_context_task_like(text: str) -> bool:
+    compact = re.sub(r"\s+", "", text or "")
+    if not compact:
+        return False
+    if _secret_context_constraint_like(compact):
+        return True
+    if re.search(r"[?？]$", compact):
+        return False
+    return bool(re.search(r"(命|令|着|遣|派|督办|查|暗查|密查|护|封存|截留|赈|再令|另令|须|务必|回奏|月内|日内)", compact))
+
+
+def _secret_context_tasks_related(prior: str, later: str) -> bool:
+    later_compact = re.sub(r"\s+", "", later or "")
+    if _secret_context_constraint_like(later_compact):
+        return True
+    if re.search(r"^(再|另|又|并|仍|复)(令|命|着|遣|派)", later_compact):
+        return bool(_secret_context_topic_chars(prior) & _secret_context_topic_chars(later))
+    if re.search(r"(月内|日内|回奏|结案|期限)", later_compact) and not re.search(
+        r"(命|令|着|遣|派|督办|暗查|密查|查|护|封存|截留|赈)", later_compact
+    ):
+        return True
+    return False
+
+
+def _secret_context_constraint_like(text: str) -> bool:
+    compact = re.sub(r"\s+", "", text or "")
+    return bool(re.search(r"(机密|保密|不可泄露|不得泄露|不得外泄|不可外泄|勿泄|秘而不宣|勿使.*知晓|不得.*知晓)", compact))
+
+
+def _secret_context_topic_chars(text: str) -> set:
+    compact = re.sub(r"[^\u4e00-\u9fff]", "", text or "")
+    compact = re.sub(r"^(再|另|又|并|仍|复)?(令|命|着|遣|派)", "", compact)
+    compact = re.sub(
+        r"^[\u4e00-\u9fff]{2,4}(?=(督办|暗查|密查|查|护|封存|截留|加操|操练|密访|补|拨))",
+        "",
+        compact,
+    )
+    compact = re.sub(
+        r"(此事|机密|保密|不可|不得|泄露|外泄|勿泄|秘而不宣|知晓|再|另|又|并|仍|复|令|命|着|遣|派|督办|暗查|密查|查|护|封存|截留|须|务必|回奏|月内|日内|臣|领命|遵旨|谨记|加操|操练)",
+        "",
+        compact,
+    )
+    return set(compact)
+
+
+def _secret_confirmation_material(text: str) -> str:
+    material = (text or "").strip()
+    if not material:
+        return ""
+    atoms = (
+        "准卿所奏", "按你意思", "照你意思", "就这么办", "便如此", "准奏", "照准",
+        "照办", "就按", "就照", "依卿", "依你", "便依", "同意", "卿所奏",
+        "你意思", "所奏", "如此", "这么办", "就办", "可", "准", "好", "是",
+        "善", "行", "办", "吧", "奏",
+    )
+    changed = True
+    while changed:
+        changed = False
+        material = re.sub(r"^[\s，,。.!！?？；;：:、]+", "", material)
+        for atom in atoms:
+            if material.startswith(atom):
+                material = material[len(atom):]
+                changed = True
+                break
+    material = re.sub(r"^[\s，,。.!！?？；;：:、]+", "", material).strip()
+    return material
+
+
 def _merge_secret_content(*parts: str) -> str:
     """把皇帝显式旨意 / LLM 内容 / 大臣回话合并成一道密令正文，去重保序。
 
@@ -1499,6 +1696,7 @@ def _extract_secret_order(
     minister_reply: str,
     default_assignee: str,
     llm_config: Any = None,
+    force_default_assignee: bool = False,
 ) -> Dict[str, Any]:
     """聚焦提取：把密令交代+大臣回话抽成结构化字段。纯抽取任务（不扮演），
     与月末 extractor 同款可靠。失败则退回合理默认。"""
@@ -1519,30 +1717,52 @@ def _extract_secret_order(
     )
     raw = ""
     try:
-        raw, _attempts = _run_backend_for_config(prompt, llm_config, tag="secret_extract")
+        raw, _attempts = _run_json_extractor_for_config(prompt, llm_config, tag="secret_extract")
     except Exception as exc:  # 提取失败不阻断：退回默认（trace 已在咽喉记下，含 error）
         _log(f"密令提取失败：{exc}")
     obj = _loads_lenient(raw) or {}
     _content_llm = str(obj.get("内容") or "").strip()
     _assignee_llm = str(obj.get("承办人") or "").strip()
     # 御旨守门 + 大臣补充守门：两者都过才直取 LLM 正文；任一不过走兜底合并。
-    _emperor_ok = bool(_content_llm) and _content_reflects_emperor_intent(_content_llm, player_command)
+    # 上下文合成路径（force_default_assignee，#354 短确认从对话取正文）：player_command 是带
+    # 「皇帝：/大臣：」标签的对话快照、不是一道显式御旨——按整段 blob 逐句核验必然判失败、且把
+    # 标签 blob 并入兜底正文 = 污染密令正文（cmr #354 correctness）。剥掉角色标签/确认短句得纯任务
+    # 文本，既作御旨守门输入、也作兜底种子：守门仍在（坏 LLM 跑题内容照样兜底回真任务，cmr #354
+    # r2 codex high——不再无条件信 LLM），又不让标签/确认短句污染正文。
+    _prior_supplement = ""
+    if force_default_assignee:
+        _emperor_fallback, _prior_supplement = _split_audience_context(player_command)
+        _emperor_ok = bool(_content_llm) and _content_reflects_emperor_intent(_content_llm, _emperor_fallback)
+    else:
+        _emperor_ok = bool(_content_llm) and _content_reflects_emperor_intent(_content_llm, player_command)
+        _emperor_fallback = player_command
     # 大臣补充守门：不仅看承办人，还看大臣回话的【所有】实质分句（承办人/具体做法/步骤等）。
     # 旧码只查承办人线索在不在正文 → 大臣补的非承办人要点（如「封存兵部辽饷册」「密访关宁诸将」）
     # 被合法 LLM 输出静默吞掉（#397 Step6 R3 Codex P1）。改为逐条核验所有 material 分句。
+    # 上下文路径还须核验前文大臣的实质补充（_prior_supplement），不因它来自前文就漏检
+    # （cmr #354 r3 codex：F17 按钮轮回话常只是「臣领命」，实质补充在前文大臣行）。
     _supplement_ok = _content_reflects_minister_supplements(_content_llm, minister_reply)
+    if force_default_assignee and _prior_supplement:
+        _supplement_ok = _supplement_ok and _content_reflects_minister_supplements(
+            _content_llm, _prior_supplement)
     if _emperor_ok and _supplement_ok:
         content = _content_llm
+    elif force_default_assignee:
+        # 上下文路径兜底：御旨任务 + LLM 内容 + 前文大臣实质补充 + 当前回话的实质分句（不并入
+        # 「臣领命」这类纯领命语，避免领命噪声污染正文）。御旨/大臣补充都不丢。
+        _current_material = "\n".join(_minister_material_clauses(minister_reply))
+        content = _merge_secret_content(
+            _emperor_fallback, _content_llm, _prior_supplement, _current_material)
     else:
         # 兜底（#397 Step5/Step6）：御旨为主，并入 LLM 内容与大臣回话——
         # 御旨绝不丢、大臣补充的承办人/要点也不被合法 LLM 输出吞掉。旧码只在内容为空时
         # 兜底，且 candidate=_content_llm 时不再并入回话 → 大臣补充仍会丢（Step6 修复）。
-        content = _merge_secret_content(player_command, _content_llm, minister_reply)
-    title = str(obj.get("标题") or "").strip()[:20] or (player_command or content)[:14]
+        content = _merge_secret_content(_emperor_fallback, _content_llm, minister_reply)
+    title = str(obj.get("标题") or "").strip()[:20] or (content or player_command)[:14]
     # 承办人：LLM 字段经校验才采信（防漂移），否则退回经校验线索（御旨祈使 / 大臣建议 /
     # 最终正文），最后才默认召对大臣（#401 R1 CodeRabbit major：旧 `or` 链盲信任何非空
     # LLM 字段，正文留李若琏、字段填王在晋时即漂移）。
-    assignee = _choose_assignee(
+    assignee = default_assignee if force_default_assignee else _choose_assignee(
         _assignee_llm, player_command, minister_reply, content, default_assignee
     )
     try:
@@ -1557,6 +1777,7 @@ def _extract_secret_order(
 
 def resolve_minister_actions(
     minister_reply: str, player_message: str = "", default_assignee: str = "", llm_config: Any = None,
+    secret_context: str = "",
 ) -> Dict[str, Any]:
     """玩家上一句带拟旨/密令前缀时入档。
     - 拟旨：大臣回话原文即圣旨草稿（单一文本字段，够用）。
@@ -1573,15 +1794,56 @@ def resolve_minister_actions(
 
     secret_intent = _matched_prefix(player_message, _SECRET_PREFIXES)
     if secret_intent is not None and (reply or secret_intent):
+        secret_command = secret_intent
+        force_default_assignee = False
+        if _secret_prefix_needs_recent_context(secret_intent) and (secret_context or "").strip():
+            secret_command = (
+                (secret_context or "").strip()
+                + ("\n【本轮确认】" + secret_intent if secret_intent else "")
+            ).strip()
+            force_default_assignee = True
         # #397：显式『密令如下：<X>』的密令正文须留住御旨 X——旧码取 reply 当正文，
         # 大臣只领命时正文落成领命语、御旨只活在被截断的标题。改为合并皇帝显式旨意 +
         # 大臣回话，交 _extract_secret_order 让 LLM 润成一道完整密令（御旨为主、并入
         # 大臣补的承办人/要点）；提取失败时该 helper 已兜底（不阻断、不丢御旨）。
         out["secret_order"] = _extract_secret_order(
-            secret_intent, reply, default_assignee, llm_config
+            secret_command, reply, default_assignee, llm_config,
+            force_default_assignee=force_default_assignee,
         )
 
     return out
+
+
+# 纯确认短句的原子片段：密令按钮当轮若【整句】只由这些片段拼成（如「可，照办」=可+照办、
+# 「就按你意思办」=就按+你意思+办），说明本轮没有任务正文，须从前文召对取。锚定全匹配而非子串，
+# 避免「可疑之处彻查」这类含确认字的实质命令被误判成纯确认（cmr #354 correctness：旧 exact-set
+# 漏「可，照办」——issue US3 点名的确认句——而子串匹配又会误吞实质命令）。
+_SECRET_CONFIRM_ATOM_RE = re.compile(
+    r"^(?:"
+    r"可|准|好|是|善|行|同意|照办|照准|准奏|准卿所奏|卿所奏|所奏|如此|便如此|就这么办|这么办|"
+    r"就按|就照|按你意思|照你意思|你意思|依卿|依你|便依|就办|办|吧|奏"
+    r")+$"
+)
+
+
+def _secret_prefix_needs_recent_context(secret_intent: str) -> bool:
+    """显式密令按钮后只有确认短句/约束短句时，从前文召对取任务正文。"""
+    text = (secret_intent or "").strip()
+    if not text:
+        return True
+    compact = re.sub(r"[\s，,。.!！?？；;：:、]+", "", text)
+    if re.search(r"(照办|按你意思|照你意思|前议|方才所奏|卿所奏|就按|就照)", compact):
+        return True
+    has_primary_task = bool(re.search(r"(命|令|着|遣|派|督办|暗查|密查|查|护|封存|截留|赈|加操|操练)", compact))
+    has_only_constraint = bool(
+        _secret_context_constraint_like(compact)
+        or re.search(r"(月内|日内|回奏|结案|限期|期限)", compact)
+    ) and not has_primary_task
+    if has_only_constraint:
+        return True
+    if len(compact) > 12:
+        return False
+    return bool(_SECRET_CONFIRM_ATOM_RE.match(compact))
 
 
 def _fake_completion(text: str, model_id: str) -> ChatCompletion:
@@ -1599,14 +1861,16 @@ class CliChat(OpenAIChat):
     """agy / codex 当后端。只覆盖 invoke/ainvoke，复用 agno 其余全部逻辑。"""
 
     backend: str = "agy"
+    reasoning_strength: str = ""
 
     def _call_cli(self, prompt: str) -> Tuple[str, int]:
         model_id = str(getattr(self, "id", "") or "")
         timeout = getattr(self, "timeout", None)
+        reasoning_strength = str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None
         if self.backend == "codex":
-            return _run_codex(prompt, model=model_id, timeout=timeout)
+            return _run_codex(prompt, model=model_id, timeout=timeout, reasoning_strength=reasoning_strength)
         if self.backend == "claude":
-            return _run_claude(prompt, model=model_id, timeout=timeout)
+            return _run_claude(prompt, model=model_id, timeout=timeout, reasoning_strength=reasoning_strength)
         if self.backend == "agy":
             return _run_agy(prompt, timeout=timeout)
         raise RuntimeError(f"未知 CLI backend：{self.backend}")
@@ -1700,6 +1964,7 @@ class CliChat(OpenAIChat):
                 prompt,
                 model=str(getattr(self, "id", "") or ""),
                 timeout=getattr(self, "timeout", None),
+                reasoning_strength=str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None,
             ):
                 yield ModelResponse(role="assistant", content=delta)
             return

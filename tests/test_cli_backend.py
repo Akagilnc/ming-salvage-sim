@@ -77,6 +77,32 @@ def test_secret_prefix_merges_emperor_intent_with_reply(monkeypatch):
     assert so["deadline_months"] == 3
 
 
+def test_secret_prefix_deadline_only_confirmation_uses_recent_context(monkeypatch):
+    """PR #409 R1 Codex P2：密令按钮只补期限时，仍须从前文召对恢复任务正文。"""
+    canned = json.dumps({
+        "标题": "密查辽东军饷",
+        "内容": "三月内回奏",
+        "承办人": "",
+        "期限月数": 3,
+        "标签": ["辽饷"],
+    }, ensure_ascii=False)
+    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
+    acts = cb.resolve_minister_actions(
+        "臣领旨。",
+        "密令如下：三月内回奏",
+        default_assignee="孙承宗",
+        secret_context=(
+            "皇帝：查辽东军饷有无侵冒\n"
+            "大臣：可授李若琏暗查并封存兵部辽饷册"
+        ),
+    )
+    so = acts["secret_order"]
+    assert so is not None
+    assert "查辽东军饷有无侵冒" in so["content"]
+    assert "三月内回奏" in so["content"]
+    assert "封存兵部辽饷册" in so["content"]
+
+
 def test_secret_prefix_bad_llm_content_still_keeps_emperor_intent(monkeypatch):
     """#397 Step5 完整性：LLM 返回合法 JSON 但『内容』只剩大臣领命语（丢皇帝显式旨意）
     时，旧码直取该非空内容 → 御旨丢失。须兜底合并：御旨为主、并入 LLM 内容里的大臣补充，
@@ -661,6 +687,22 @@ def test_codex_streaming_runner_degrades_to_oneshot_final(monkeypatch):
     assert "请写邸报" in captured["input"]
 
 
+def test_clichat_codex_response_stream_passes_reasoning_strength(monkeypatch):
+    seen = {}
+
+    def fake_chunks(prompt, *, model=None, timeout=None, reasoning_strength=None):
+        seen["reasoning_strength"] = reasoning_strength
+        yield "邸报"
+
+    monkeypatch.setattr(cb, "_iter_codex_stream_chunks", fake_chunks)
+    chat = cb.CliChat(id="gpt-test", backend="codex", reasoning_strength="low")
+
+    chunks = list(chat.response_stream([SimpleNamespace(role="user", content="请写邸报")]))
+
+    assert [chunk.content for chunk in chunks] == ["邸报"]
+    assert seen["reasoning_strength"] == "low"
+
+
 def test_api_backend_streaming_emits_real_token_deltas(monkeypatch):
     """API/hermes 路真实行为（#343 裁决）：支持 token-delta 的后端（hermes / OpenAI 兼容，
     `agents.run_agent_stream_text` 的 content-delta 循环）真增量出现——多个正文片段逐块经
@@ -796,6 +838,28 @@ def test_run_codex_reasoning_env_optional(monkeypatch):
     assert "model_reasoning_effort" in joined and "medium" in joined
 
 
+def test_run_codex_maps_reasoning_strength_to_native_effort(monkeypatch):
+    captured = {}
+
+    class _P:
+        stdout = "x"
+        stderr = ""
+        returncode = 0
+
+    def fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        return _P()
+
+    monkeypatch.setenv("MING_SIM_CODEX_REASONING", "medium")
+    monkeypatch.setattr(cb.subprocess, "run", fake_run)
+
+    cb._run_codex("p", reasoning_strength="high")
+
+    joined = " ".join(captured["cmd"])
+    assert 'model_reasoning_effort="xhigh"' in joined
+    assert 'model_reasoning_effort="medium"' not in joined
+
+
 def test_run_codex_stdout_empty_fallback(monkeypatch):
     """stdout 空时兜底：从合并流取 'OpenAI Codex v' 之前的段。"""
     class _P:
@@ -829,6 +893,48 @@ def test_run_claude_accepts_config_model_and_timeout(monkeypatch):
     assert out == "臣领旨。"
     assert captured["cmd"][captured["cmd"].index("--model") + 1] == "claude-configured"
     assert captured["timeout"] == 234
+
+
+def test_run_claude_maps_reasoning_strength_to_thinking_tokens(monkeypatch):
+    captured = {}
+
+    class _P:
+        stdout = "臣领旨。"
+        stderr = ""
+        returncode = 0
+
+    def fake_run(cmd, **kw):
+        captured["env"] = kw.get("env")
+        return _P()
+
+    monkeypatch.setenv("MAX_THINKING_TOKENS", "32000")
+    monkeypatch.setattr(cb.subprocess, "run", fake_run)
+
+    out, n = cb._run_claude("p", reasoning_strength="medium")
+
+    assert out == "臣领旨。"
+    assert captured["env"]["MAX_THINKING_TOKENS"] == "10000"
+
+
+def test_run_claude_off_reasoning_uses_explicit_minimum_tokens(monkeypatch):
+    captured = {}
+
+    class _P:
+        stdout = "臣领旨。"
+        stderr = ""
+        returncode = 0
+
+    def fake_run(cmd, **kw):
+        captured["env"] = kw.get("env")
+        return _P()
+
+    monkeypatch.setenv("MAX_THINKING_TOKENS", "32000")
+    monkeypatch.setattr(cb.subprocess, "run", fake_run)
+
+    out, n = cb._run_claude("p", reasoning_strength="off")
+
+    assert out == "臣领旨。"
+    assert captured["env"]["MAX_THINKING_TOKENS"] == "2000"
 
 
 # ── _resolve_cli_bin：GUI(.app)启动 PATH 缺 ~/.local/bin 时仍定位已装的 runner ──
@@ -1440,11 +1546,11 @@ def test_clichat_call_cli_dispatch(monkeypatch):
     """CliChat._call_cli 按 backend 字段分派（与 _run_backend 的 env 分派独立）。"""
     seen = {}
 
-    def fake_codex(p, model=None, timeout=None):
+    def fake_codex(p, model=None, timeout=None, **kwargs):
         seen["codex"] = (model, timeout)
         return ("CODEX", 1)
 
-    def fake_claude(p, model=None, timeout=None):
+    def fake_claude(p, model=None, timeout=None, **kwargs):
         seen["claude"] = (model, timeout)
         return ("CLAUDE", 1)
 
@@ -1480,7 +1586,7 @@ def test_run_backend_for_config_traces_every_call(monkeypatch):
     携带传入的 tag、prompt、真实 backend/attempts，error 为 None。"""
     recs = []
     monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
-    monkeypatch.setattr(cb, "_run_codex", lambda prompt, model=None, timeout=None: ("外臣", 1))
+    monkeypatch.setattr(cb, "_run_codex", lambda prompt, model=None, timeout=None, **kwargs: ("外臣", 1))
     out, attempts = cb._run_backend_for_config("判官名：后金汗", _cli_codex_cfg(), tag="office_infer")
     assert out == "外臣" and attempts == 1
     assert len(recs) == 1, f"咽喉应写且仅写 1 条 trace，实 {len(recs)}"
@@ -1490,12 +1596,34 @@ def test_run_backend_for_config_traces_every_call(monkeypatch):
     assert r["backend"] == "codex" and r["error"] is None
 
 
+def test_run_backend_for_config_passes_reasoning_strength_to_codex(monkeypatch):
+    seen = {}
+
+    def fake_codex(prompt, model=None, timeout=None, reasoning_strength=None):
+        seen["reasoning_strength"] = reasoning_strength
+        return "外臣", 1
+
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    monkeypatch.setattr(cb, "_run_codex", fake_codex)
+    cfg = SimpleNamespace(
+        channel="cli",
+        cli_runner="codex",
+        cli_model="gpt-5.5",
+        cli_timeout_seconds=240,
+        reasoning_strength="low",
+    )
+
+    cb._run_backend_for_config("判官名：后金汗", cfg, tag="office_infer")
+
+    assert seen["reasoning_strength"] == "low"
+
+
 def test_run_backend_for_config_traces_on_backend_error(monkeypatch):
     """后端抛错也要留痕：trace 记下 error，再把异常抛给调用方。"""
     recs = []
     monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
 
-    def boom(prompt, model=None, timeout=None):
+    def boom(prompt, model=None, timeout=None, **kwargs):
         raise RuntimeError("codex 挂了")
 
     monkeypatch.setattr(cb, "_run_codex", boom)
@@ -1512,7 +1640,7 @@ def test_office_inference_llm_call_is_traced(monkeypatch):
     dbmod._OFFICE_TYPE_LLM_CACHE.clear()
     recs = []
     monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
-    monkeypatch.setattr(cb, "_run_codex", lambda prompt, model=None, timeout=None: ("边镇", 1))
+    monkeypatch.setattr(cb, "_run_codex", lambda prompt, model=None, timeout=None, **kwargs: ("边镇", 1))
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     got = dbmod.infer_office_type_from_office("绝无此名的杜撰怪衔甲", llm_config=_cli_codex_cfg())
     assert got == "边镇"

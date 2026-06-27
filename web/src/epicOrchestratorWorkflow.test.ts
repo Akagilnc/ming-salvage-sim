@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import { layerEpicIssues, type TopologyInput } from "./orchestratorKernel";
 // @ts-ignore Workflow scripts are plain JavaScript outside the web src TypeScript program.
@@ -879,7 +879,7 @@ describe("epic orchestrator S3 layered parallel pipeline", () => {
       const mergeWorktrees = result.mergeQueue.map((entry: any) => entry.mergeWorktree);
       expect(mergeWorktrees[0]).toBeTruthy();
       expect(mergeWorktrees[1]).toBe(mergeWorktrees[0]);
-      expect(mergeWorktrees[0].startsWith(repoPath)).toBe(false);
+      expect(mergeWorktrees[0]).toContain(`${sep}.worktrees${sep}.epic-orchestrator${sep}`);
       const familyWorktrees = git(repoPath, "worktree", "list", "--porcelain").split("\n").filter((line: string) => line === "branch refs/heads/family/217");
       expect(familyWorktrees).toHaveLength(1);
       const finalParents = git(repoPath, "rev-list", "--parents", "-n", "1", result.mergeQueue.at(-1).mergeCommit).split(" ").slice(1);

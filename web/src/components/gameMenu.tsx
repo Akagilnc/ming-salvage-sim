@@ -342,11 +342,16 @@ export function LLMConfigTab() {
   const [advancedModel, setAdvancedModel] = React.useState("");
   const [advancedBaseUrl, setAdvancedBaseUrl] = React.useState("");
   const [advancedApiKey, setAdvancedApiKey] = React.useState("");
-  const [advancedThinkingLevel, setAdvancedThinkingLevel] = React.useState("");
   const [apiKey, setApiKey] = React.useState("");
   const [maxTokens, setMaxTokens] = React.useState("8000");
   const [timeoutSeconds, setTimeoutSeconds] = React.useState("180");
-  const [thinkingLevel, setThinkingLevel] = React.useState("");
+  const normalizeStrength = (value?: string) => {
+    const v = (value || "").trim().toLowerCase();
+    if (v === "minimal" || v === "disabled" || v === "none") return "off";
+    return ["", "off", "low", "medium", "high"].includes(v) ? v : "";
+  };
+  const [apiReasoningStrength, setApiReasoningStrength] = React.useState("");
+  const [cliReasoningStrength, setCliReasoningStrength] = React.useState("");
   // 通道感知（#51）：局中也能切 API / CLI 通道,不再被强制降级到 api。
   const [channel, setChannel] = React.useState<"api" | "cli">("api");
   const [cliRunner, setCliRunner] = React.useState("agy");
@@ -356,6 +361,25 @@ export function LLMConfigTab() {
   const [busy, setBusy] = React.useState(false);
   const [msg, setMsg] = React.useState("");
   const [err, setErr] = React.useState("");
+  const apiReasoningSupported = (() => {
+    const effectiveBase = (advancedModel.trim() ? (advancedBaseUrl.trim() || baseUrl) : baseUrl).toLowerCase();
+    const modelName = (advancedModel.trim() || model).toLowerCase();
+    const base = effectiveBase;
+    if (base.includes("deepseek.com")) return false;
+    return modelName.startsWith("o1") || modelName.startsWith("o3") || modelName.startsWith("o4") ||
+      modelName.startsWith("gpt-5") || base.includes("dashscope") || base.includes("aliyuncs") ||
+      base.includes("minimaxi.com") || base.includes("minimax.io");
+  })();
+  const cliReasoningSupported = cliRunner === "codex" || cliRunner === "claude";
+  const reasoningChoices = info?.reasoning_strengths || [
+    { value: "", label: "默认" },
+    { value: "off", label: "关" },
+    { value: "low", label: "低" },
+    { value: "medium", label: "中" },
+    { value: "high", label: "高" },
+  ];
+  const reasoningStrength = channel === "cli" ? cliReasoningStrength : apiReasoningStrength;
+  const setReasoningStrength = channel === "cli" ? setCliReasoningStrength : setApiReasoningStrength;
 
   React.useEffect(() => {
     api<LLMConfigInfo>("/api/llm/config")
@@ -365,10 +389,14 @@ export function LLMConfigTab() {
         setModel(data.model);
         setAdvancedModel(data.advanced_model || "");
         setAdvancedBaseUrl(data.advanced_base_url || "");
-        setAdvancedThinkingLevel(data.advanced_thinking_level || "");
         setMaxTokens(String(data.max_tokens || 8000));
         setTimeoutSeconds(String(data.timeout_seconds || 180));
-        setThinkingLevel(data.thinking_level || "");
+        setApiReasoningStrength(normalizeStrength(
+          data.persisted?.api_reasoning_strength || (data.channel === "api" ? data.reasoning_strength : "") || data.thinking_level
+        ));
+        setCliReasoningStrength(normalizeStrength(
+          data.persisted?.cli_reasoning_strength || (data.channel === "cli" ? data.reasoning_strength : "")
+        ));
         setChannel(data.channel === "cli" ? "cli" : "api");
         // 从已存 CLI 槽(persisted)初始化优先,而非 active cfg.cli_*——API 会话下 cfg.cli_model 可能被
         // cli_model_from_env 兜底成 API model 名,直接回填会把它当用户选项 post 回去(CMR R3 codex)。
@@ -393,11 +421,14 @@ export function LLMConfigTab() {
           api_key: apiKey,
           max_tokens: parseInt(maxTokens) || 8000,
           timeout_seconds: parseFloat(timeoutSeconds) || 180,
-          thinking_level: thinkingLevel.trim(),
+          // 统一「推理强度」选择器已在 load 时把旧 thinking_level 迁进 reasoningStrength；保存时清掉
+          // 旧字段，否则它会作隐藏第二旋钮被后端 fallback 消费、用户选「默认」也清不掉（#358 cmr）。
+          thinking_level: "",
+          reasoning_strength: reasoningStrength,
           advanced_model: advancedModel,
           advanced_base_url: advancedBaseUrl,
           advanced_api_key: advancedApiKey.trim() ? advancedApiKey : "__keep__",
-          advanced_thinking_level: advancedThinkingLevel.trim(),
+          advanced_thinking_level: "",
           channel,
           cli_runner: channel === "cli" ? cliRunner : "__keep__",
           cli_model: channel === "cli" ? cliModel : "__keep__",
@@ -407,6 +438,11 @@ export function LLMConfigTab() {
       setInfo((cur) => (cur ? { ...cur, ...data } : null));
       // 用服务端归一后的响应同步本地通道/CLI 状态,避免与 info 漂移(Sourcery R1)。
       setChannel(data.channel === "cli" ? "cli" : "api");
+      if (data.channel === "cli") {
+        setCliReasoningStrength(normalizeStrength(data.reasoning_strength || reasoningStrength));
+      } else {
+        setApiReasoningStrength(normalizeStrength(data.reasoning_strength || reasoningStrength));
+      }
       setCliRunner(data.cli_runner || "agy");
       // cliModel 不从 data.cli_model 回灌：那是 resolved 值（空/__keep__ 会被兜底成
       // 默认名或 cur 的已解析值），灌回会让策展下拉把默认/留空误判成「其他(手填)」。
@@ -458,6 +494,23 @@ export function LLMConfigTab() {
               <option value="claude">claude</option>
             </select>
           </label>
+          <label className="menu-field">
+            <span>推理强度</span>
+            <select
+              className="menu-input"
+              name="reasoning_strength"
+              value={reasoningStrength}
+              disabled={!cliReasoningSupported}
+              onChange={(e) => setReasoningStrength(e.target.value)}
+            >
+              {reasoningChoices.map((choice) => (
+                <option key={choice.value} value={choice.value}>{choice.label}</option>
+              ))}
+            </select>
+            {!cliReasoningSupported ? (
+              <small className="menu-hint">该后端不支持推理强度设置。</small>
+            ) : null}
+          </label>
           {/* div 而非 label：custom 态 CliModelField 同时渲染 select+input，HTML5 规定
               一个 label 至多含一个可表单关联控件，两个会无效且无障碍歧义（gemini R2）。 */}
           <div className="menu-field">
@@ -506,13 +559,21 @@ export function LLMConfigTab() {
             />
           </label>
           <label className="menu-field">
-            <span>Thinking Level <small className="menu-hint">（空=默认，请填写你的模型支持的值。）</small></span>
-            <input
+            <span>推理强度</span>
+            <select
               className="menu-input"
-              value={thinkingLevel}
-              onChange={(e) => setThinkingLevel(e.target.value)}
-              placeholder="默认"
-            />
+              name="reasoning_strength"
+              value={reasoningStrength}
+              disabled={!apiReasoningSupported}
+              onChange={(e) => setReasoningStrength(e.target.value)}
+            >
+              {reasoningChoices.map((choice) => (
+                <option key={choice.value} value={choice.value}>{choice.label}</option>
+              ))}
+            </select>
+            {!apiReasoningSupported ? (
+              <small className="menu-hint">该后端不支持推理强度设置。</small>
+            ) : null}
           </label>
           <label className="menu-field">
             <span>Advanced Model <small className="menu-hint">（推演 + 打分专用，空=与 Model 一致）</small></span>
@@ -547,15 +608,6 @@ export function LLMConfigTab() {
               value={advancedApiKey}
               onChange={(e) => setAdvancedApiKey(e.target.value)}
               placeholder="留空=复用主 API Key / 保留当前"
-            />
-          </label>
-          <label className="menu-field">
-            <span>Advanced Thinking Level <small className="menu-hint">（空=默认，请填写你的模型支持的值。）</small></span>
-            <input
-              className="menu-input"
-              value={advancedThinkingLevel}
-              onChange={(e) => setAdvancedThinkingLevel(e.target.value)}
-              placeholder="默认"
             />
           </label>
           <label className="menu-field">

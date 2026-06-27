@@ -109,7 +109,7 @@
 
 - Python 3.11+
 - Node.js 20+
-- 一个可用于 AI 对话的 API Key
+- 一个可用于 AI 对话的 API Key，或已登录的本机 `codex` / `agy` / `claude` CLI runner
 
 ```bash
 git clone https://github.com/Akagilnc/ming-salvage-sim.git
@@ -127,7 +127,7 @@ cd ..
 cp .env.example .env
 ```
 
-编辑 `.env`，至少填入 API Key，并按你自己的服务商填写端点和模型（本项目不绑定特定服务商，任何 OpenAI 兼容服务都可用）：
+如果走 API 通道，编辑 `.env` 填入 API Key，并按你自己的服务商填写端点和模型（本项目不绑定特定服务商，任何 OpenAI 兼容服务都可用）：
 
 ```bash
 OPENAI_API_KEY=your_api_key_here
@@ -137,6 +137,8 @@ OPENAI_API_KEY=your_api_key_here
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_MODEL=gpt-4o-mini
 ```
+
+如果走 CLI 通道，可以先启动游戏，再在菜单的 LLM 设置里选择本地 `codex` / `agy` / `claude` runner；这种模式不需要 `OPENAI_API_KEY`。
 
 启动网页游戏：
 
@@ -258,7 +260,7 @@ AI 适合判断官场反应、地方推诿、政策代价、突发事件和叙�
 
 | 变量 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `OPENAI_API_KEY` | 是 | 无 | API Key |
+| `OPENAI_API_KEY` | API 通道必填 | 无 | API Key；CLI 通道可不填 |
 | `OPENAI_BASE_URL` | 否 | `https://api.openai.com/v1` | 任意 OpenAI 兼容服务的端点，按你的服务商填 |
 | `OPENAI_MODEL` | 否 | `gpt-4o-mini` | 模型名，按你的服务商自选（本项目不绑定特定模型）|
 | `MING_SIM_DB` | 否 | `data/ming_sim.db` | 存档数据库路径 |
