@@ -99,6 +99,67 @@ def test_new_game_returns_before_delayed_close_drains(monkeypatch):
     assert not gate.locked()
 
 
+def test_new_game_switches_db_path_and_archives_old_after_drain(monkeypatch, tmp_path):
+    """#396 completeness: new_game must not delete or rename the old DB under a still-writing
+    background worker. It switches the main DB path to a new file so fresh=True doesn't clobber it.
+    The old worker continues writing to the old DB file safely. After drain, the old DB is archived."""
+    import sqlite3
+
+    db_path = str(tmp_path / "ming_sim.db")
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE kv_store (key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute("INSERT INTO kv_store VALUES ('data', 'before_new_game')")
+    conn.commit()
+
+    gate = threading.Lock()
+    closed: list[int] = []
+    fake_old_game = SimpleNamespace(
+        _write_gate=gate,
+        db_path=db_path,
+        session=SimpleNamespace(close=lambda: (closed.append(1), conn.close())),
+    )
+    monkeypatch.setattr(web_app, "web_game", fake_old_game)
+    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+    monkeypatch.delenv("MING_SIM_DB", raising=False)
+
+    fake_new_game = SimpleNamespace(state_payload=lambda: {"turn": 1})
+    monkeypatch.setattr(web_app, "WebGame", lambda fresh: fake_new_game)
+    monkeypatch.setattr(web_app.steam_events, "with_events", lambda payload, events: payload)
+
+    gate.acquire()  # simulate in-flight background worker
+
+    result = asyncio.run(web_app.api_menu_new_game())
+
+    # Returns immediately with new game
+    assert "state" in result
+    assert web_app.web_game is fake_new_game
+
+    # Old DB file is NOT deleted or renamed, so the old worker can write to it safely
+    assert os.path.exists(db_path)
+
+    # Background worker writes through the old (still-open) connection
+    conn.execute("INSERT INTO kv_store VALUES ('reply', 'background_minister_reply')")
+    conn.commit()
+
+    gate.release()  # worker finishes → drain proceeds
+
+    assert _wait_for(lambda: closed == [1])
+    assert not gate.locked()
+
+    # Old DB is moved to saves/ after the drain finishes
+    saves_dir = tmp_path / "saves"
+    save_files = list(saves_dir.glob("*.db"))
+    assert len(save_files) == 1
+    assert not os.path.exists(db_path)  # moved out of the original path
+
+    # Archived save contains both old data and the background-written reply
+    check = sqlite3.connect(str(save_files[0]))
+    rows = dict(check.execute("SELECT key, value FROM kv_store").fetchall())
+    check.close()
+    assert rows["data"] == "before_new_game"
+    assert rows["reply"] == "background_minister_reply"
+
+
 def test_shutdown_waits_for_drain_before_returning_or_killing(monkeypatch):
     gate = threading.Lock()
     closed: list[int] = []
