@@ -37,6 +37,7 @@ def test_create_chat_model_uses_cli_channel_without_backend_env(monkeypatch):
         cli_runner="codex",
         cli_model="gpt-5.5",
         cli_timeout_seconds=240,
+        reasoning_strength="high",
     )
 
     model = create_chat_model(cfg)
@@ -45,6 +46,7 @@ def test_create_chat_model_uses_cli_channel_without_backend_env(monkeypatch):
     assert model.backend == "codex"
     assert model.id == "gpt-5.5"
     assert model.timeout == 240
+    assert model.reasoning_strength == "high"
     # 空 CLI key 也能构造：占位符在构造时注入以满足 OpenAIChat 父类。
     assert model.api_key == "cli-backend"
 
@@ -71,6 +73,52 @@ def test_loaded_api_config_is_not_rerouted_by_later_backend_env(monkeypatch):
     assert cfg.channel == "api"
     assert isinstance(model, OpenAIChat)
     assert not isinstance(model, CliChat)
+
+
+def test_create_chat_model_maps_reasoning_strength_to_openai_reasoning_effort(monkeypatch):
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="gpt-5",
+        channel="api",
+        thinking_level="high",
+        reasoning_strength="off",
+    )
+
+    model = create_chat_model(cfg)
+
+    assert model.reasoning_effort == "minimal"
+
+
+def test_create_chat_model_maps_reasoning_strength_to_dashscope_thinking_budget(monkeypatch):
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        model="qwen-plus",
+        channel="api",
+        reasoning_strength="medium",
+    )
+
+    model = create_chat_model(cfg, enable_thinking=False)
+
+    assert model.extra_body == {"enable_thinking": True, "thinking_budget": 10000}
+
+
+def test_create_chat_model_maps_reasoning_strength_to_minimax_thinking(monkeypatch):
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.minimaxi.com/v1",
+        model="minimax-test",
+        channel="api",
+        reasoning_strength="off",
+    )
+
+    model = create_chat_model(cfg, enable_thinking=True)
+
+    assert model.extra_body == {"thinking": {"type": "disabled"}, "reasoning_split": True}
 
 
 def test_legacy_backend_env_uses_runner_default_model_not_api_model(monkeypatch):

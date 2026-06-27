@@ -60,6 +60,17 @@ _CLAUDE_MODEL = os.environ.get("MING_SIM_CLAUDE_MODEL", CLAUDE_DEFAULT_MODEL)
 _CLAUDE_DISALLOWED = ["Bash", "Read", "Edit", "Write", "Glob", "Grep",
                       "WebFetch", "WebSearch", "Task", "NotebookEdit"]
 _CLI_BACKENDS = {"agy", "codex", "claude"}
+_CODEX_REASONING_BY_STRENGTH = {
+    "off": "low",
+    "low": "low",
+    "medium": "medium",
+    "high": "xhigh",
+}
+_CLAUDE_THINKING_TOKENS_BY_STRENGTH = {
+    "low": "2000",
+    "medium": "10000",
+    "high": "32000",
+}
 
 
 def cli_model_choices() -> Dict[str, List[Dict[str, str]]]:
@@ -321,7 +332,18 @@ def _run_agy(prompt: str, timeout: Optional[float] = None) -> Tuple[str, int]:
     raise RuntimeError(f"agy 调用失败（warm+retry×4 仍不成）：{last[:200]}")
 
 
-def _run_codex(prompt: str, model: Optional[str] = None, timeout: Optional[float] = None) -> Tuple[str, int]:
+def _codex_reasoning_effort(reasoning_strength: Optional[str]) -> str:
+    if reasoning_strength is None:
+        return (os.environ.get("MING_SIM_CODEX_REASONING") or "").strip()
+    return _CODEX_REASONING_BY_STRENGTH.get(str(reasoning_strength or "").strip().lower(), "")
+
+
+def _run_codex(
+    prompt: str,
+    model: Optional[str] = None,
+    timeout: Optional[float] = None,
+    reasoning_strength: Optional[str] = None,
+) -> Tuple[str, int]:
     """调 codex exec -（stdin pipe，绝不 positional）。返回 (文本, 尝试次数=1)。
 
     实测三坑（见 docs/LLM_BACKEND_BENCH.md §9）：
@@ -331,7 +353,7 @@ def _run_codex(prompt: str, model: Optional[str] = None, timeout: Optional[float
       "OpenAI Codex v…/tokens used" 等日志混进角色回话）。stdout 空时兜底从合并流剥壳。
     reasoning：默认不强加，尊重用户 ~/.codex/config.toml；设 MING_SIM_CODEX_REASONING 才传 -c。"""
     cmd = [_resolve_cli_bin("codex", _CODEX_BIN), "exec", "--model", (model or _CODEX_MODEL)]
-    reasoning = (os.environ.get("MING_SIM_CODEX_REASONING") or "").strip()
+    reasoning = _codex_reasoning_effort(reasoning_strength)
     if reasoning:
         cmd += ["-c", f'model_reasoning_effort="{reasoning}"']
     cmd += ["--ephemeral", "--skip-git-repo-check", "-"]
@@ -354,9 +376,14 @@ def _run_codex(prompt: str, model: Optional[str] = None, timeout: Optional[float
     return out, 1
 
 
-def _codex_cmd(model: Optional[str] = None, *, json_events: bool = False) -> List[str]:
+def _codex_cmd(
+    model: Optional[str] = None,
+    *,
+    json_events: bool = False,
+    reasoning_strength: Optional[str] = None,
+) -> List[str]:
     cmd = [_resolve_cli_bin("codex", _CODEX_BIN), "exec", "--model", (model or _CODEX_MODEL)]
-    reasoning = (os.environ.get("MING_SIM_CODEX_REASONING") or "").strip()
+    reasoning = _codex_reasoning_effort(reasoning_strength)
     if reasoning:
         cmd += ["-c", f'model_reasoning_effort="{reasoning}"']
     if json_events:
@@ -414,9 +441,10 @@ def _iter_codex_stream_chunks(
     *,
     model: Optional[str] = None,
     timeout: Optional[float] = None,
+    reasoning_strength: Optional[str] = None,
 ) -> Iterator[str]:
     """Run `codex exec --json` and yield agent_message_delta events as they arrive."""
-    cmd = _codex_cmd(model, json_events=True)
+    cmd = _codex_cmd(model, json_events=True, reasoning_strength=reasoning_strength)
     run_timeout = timeout or _AGY_TIMEOUT
     try:
         proc = subprocess.Popen(
@@ -520,10 +548,13 @@ def _run_codex_stream(
     *,
     model: Optional[str] = None,
     timeout: Optional[float] = None,
+    reasoning_strength: Optional[str] = None,
     on_text: Optional[Callable[[str], None]] = None,
 ) -> Tuple[str, int]:
     pieces: List[str] = []
-    for delta in _iter_codex_stream_chunks(prompt, model=model, timeout=timeout):
+    for delta in _iter_codex_stream_chunks(
+        prompt, model=model, timeout=timeout, reasoning_strength=reasoning_strength
+    ):
         pieces.append(delta)
         if on_text:
             on_text(delta)
@@ -533,19 +564,33 @@ def _run_codex_stream(
     return text, 1
 
 
-def _run_claude(prompt: str, model: Optional[str] = None, timeout: Optional[float] = None) -> Tuple[str, int]:
+def _run_claude(
+    prompt: str,
+    model: Optional[str] = None,
+    timeout: Optional[float] = None,
+    reasoning_strength: Optional[str] = None,
+) -> Tuple[str, int]:
     """调 claude -p（独立进程，stdin pipe）。返回 (纯文本, 1)。
     与 codex 不同：claude -p 干净最终回话在 **stdout**，日志/诊断在 stderr，
     故只取 stdout、不合并 stderr（合并会把日志混进角色回话）。
     思考预算不强加：继承父进程 env，用户可自行 export MAX_THINKING_TOKENS。"""
     cmd = [_resolve_cli_bin("claude", _CLAUDE_BIN), "-p", "--model", (model or _CLAUDE_MODEL),
            "--output-format", "text", "--disallowed-tools", *_CLAUDE_DISALLOWED]
+    env = None
+    if reasoning_strength is not None:
+        env = dict(os.environ)
+        strength = str(reasoning_strength or "").strip().lower()
+        tokens = _CLAUDE_THINKING_TOKENS_BY_STRENGTH.get(strength)
+        if tokens:
+            env["MAX_THINKING_TOKENS"] = tokens
+        else:
+            env.pop("MAX_THINKING_TOKENS", None)
     try:
         # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
         # 安全审计(Sourcery):list-form argv、无 shell=True;runner 已 allowlist、model 为独立 argv、prompt 走 stdin → 无注入面。
         proc = subprocess.run(
             cmd, input=prompt, capture_output=True, text=True,
-            timeout=timeout or _AGY_TIMEOUT, cwd=_AGY_CWD,
+            timeout=timeout or _AGY_TIMEOUT, cwd=_AGY_CWD, env=env,
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError("claude 调用超时") from exc
@@ -571,7 +616,7 @@ def _llm_channel(llm_config: Any = None) -> str:
     return (getattr(llm_config, "channel", "") or "").strip().lower()
 
 
-def _cli_config_parts(llm_config: Any = None) -> Optional[Tuple[str, str, Optional[float]]]:
+def _cli_config_parts(llm_config: Any = None) -> Optional[Tuple[str, str, Optional[float], str]]:
     channel = _llm_channel(llm_config)
     if channel != "cli":
         return None
@@ -584,7 +629,8 @@ def _cli_config_parts(llm_config: Any = None) -> Optional[Tuple[str, str, Option
         timeout = float(raw_timeout) if raw_timeout else None
     except (TypeError, ValueError):
         timeout = None
-    return runner, model, timeout
+    reasoning_strength = str(getattr(llm_config, "reasoning_strength", "") or "").strip().lower()
+    return runner, model, timeout, reasoning_strength
 
 
 def _run_backend_for_config(prompt: str, llm_config: Any = None, tag: str = "") -> Tuple[str, int]:
@@ -604,11 +650,21 @@ def _run_backend_for_config(prompt: str, llm_config: Any = None, tag: str = "") 
         if parts is None:
             text, attempts = _run_backend(prompt)
         else:
-            runner, model, timeout = parts
+            runner, model, timeout, reasoning_strength = parts
             if runner == "codex":
-                text, attempts = _run_codex(prompt, model=model or None, timeout=timeout)
+                text, attempts = _run_codex(
+                    prompt,
+                    model=model or None,
+                    timeout=timeout,
+                    reasoning_strength=reasoning_strength or None,
+                )
             elif runner == "claude":
-                text, attempts = _run_claude(prompt, model=model or None, timeout=timeout)
+                text, attempts = _run_claude(
+                    prompt,
+                    model=model or None,
+                    timeout=timeout,
+                    reasoning_strength=reasoning_strength or None,
+                )
             else:
                 text, attempts = _run_agy(prompt, timeout=timeout)
         return text, attempts
@@ -1599,14 +1655,16 @@ class CliChat(OpenAIChat):
     """agy / codex 当后端。只覆盖 invoke/ainvoke，复用 agno 其余全部逻辑。"""
 
     backend: str = "agy"
+    reasoning_strength: str = ""
 
     def _call_cli(self, prompt: str) -> Tuple[str, int]:
         model_id = str(getattr(self, "id", "") or "")
         timeout = getattr(self, "timeout", None)
+        reasoning_strength = str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None
         if self.backend == "codex":
-            return _run_codex(prompt, model=model_id, timeout=timeout)
+            return _run_codex(prompt, model=model_id, timeout=timeout, reasoning_strength=reasoning_strength)
         if self.backend == "claude":
-            return _run_claude(prompt, model=model_id, timeout=timeout)
+            return _run_claude(prompt, model=model_id, timeout=timeout, reasoning_strength=reasoning_strength)
         if self.backend == "agy":
             return _run_agy(prompt, timeout=timeout)
         raise RuntimeError(f"未知 CLI backend：{self.backend}")
@@ -1700,6 +1758,7 @@ class CliChat(OpenAIChat):
                 prompt,
                 model=str(getattr(self, "id", "") or ""),
                 timeout=getattr(self, "timeout", None),
+                reasoning_strength=str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None,
             ):
                 yield ModelResponse(role="assistant", content=delta)
             return

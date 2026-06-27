@@ -22,6 +22,18 @@ from ming_sim.llm_contract import fail_if_llm_error
 from ming_sim.models import LLMConfig
 from ming_sim.token_stats import install_token_stats_patch
 
+_OPENAI_REASONING_BY_STRENGTH = {
+    "off": "minimal",
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+}
+_THINKING_BUDGET_BY_STRENGTH = {
+    "low": 2000,
+    "medium": 10000,
+    "high": 32000,
+}
+
 
 def _extract_provider_error(error: Exception) -> tuple[str, str, int | None]:
     code = getattr(error, "code", None) or type(error).__name__
@@ -72,16 +84,22 @@ def create_chat_model(
     force_json_output: bool = False,
 ) -> OpenAIChat:
     install_token_stats_patch()
+    reasoning_strength = (getattr(llm_config, "reasoning_strength", "") or "").strip().lower()
     extra_body = provider_extra_body(llm_config.base_url)
-    if enable_thinking and is_dashscope_base_url(llm_config.base_url):
+    wants_thinking = enable_thinking or reasoning_strength in {"low", "medium", "high"}
+    disables_thinking = reasoning_strength == "off"
+    if is_dashscope_base_url(llm_config.base_url) and (wants_thinking or disables_thinking):
         # 推演/评估类 agent 需要深思,开 qwen thinking
-        extra_body = {"enable_thinking": True}
-        if thinking_budget is not None:
+        extra_body = {"enable_thinking": not disables_thinking}
+        budget = _THINKING_BUDGET_BY_STRENGTH.get(reasoning_strength)
+        if budget is not None:
+            extra_body["thinking_budget"] = budget
+        elif thinking_budget is not None and not disables_thinking:
             extra_body["thinking_budget"] = int(thinking_budget)
     elif enable_thinking and is_deepseek_base_url(llm_config.base_url):
         extra_body = {}  # deepseek-v4 默认深思,清掉 disabled
-    elif enable_thinking and is_minimax_base_url(llm_config.base_url):
-        thinking_type = (llm_config.thinking_level or "adaptive").strip().lower()
+    elif is_minimax_base_url(llm_config.base_url) and (wants_thinking or disables_thinking):
+        thinking_type = "disabled" if disables_thinking else (llm_config.thinking_level or "adaptive").strip().lower()
         if thinking_type not in {"adaptive", "disabled"}:
             thinking_type = "adaptive"
         extra_body = {"thinking": {"type": thinking_type}, "reasoning_split": True}
@@ -106,7 +124,11 @@ def create_chat_model(
         extra_body["response_format"] = {"type": "json_object"}
         kwargs["extra_body"] = extra_body
     if supports_openai_reasoning_effort(llm_config.model):
-        kwargs["reasoning_effort"] = llm_config.thinking_level or ("medium" if enable_thinking else "minimal")
+        kwargs["reasoning_effort"] = (
+            _OPENAI_REASONING_BY_STRENGTH.get(reasoning_strength)
+            or llm_config.thinking_level
+            or ("medium" if enable_thinking else "minimal")
+        )
     # 探针：新配置用 channel 显式选择执行通道；未声明 channel 的旧路径暂沿用 env fallback。
     # CliChat 继承 OpenAIChat，吃同一套 kwargs；reasoning_effort 等 CLI 无关字段被忽略。
     from ming_sim.cli_backend import CliChat, cli_backend_from_env, is_supported_cli_runner
@@ -138,6 +160,7 @@ def create_chat_model(
         # CliChat 走 CLI 从不用它。LLMConfig.api_key 对 CLI 通道永远是空串，
         # 所以这个 magic-string 不流经任何 key 处理/上报路径。
         kwargs["api_key"] = (kwargs.get("api_key") or "").strip() or CLI_BACKEND_PLACEHOLDER
+        kwargs["reasoning_strength"] = (getattr(llm_config, "reasoning_strength", "") or "").strip().lower()
         return CliChat(backend=backend, **kwargs)
     return OpenAIChat(**kwargs)
 
