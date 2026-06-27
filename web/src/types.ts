@@ -315,6 +315,7 @@ export type LLMConfigInfo = {
   has_advanced_api_key: boolean;
   advanced_thinking_level: string;
   reasoning_strength?: string;
+  cli_reasoning_strength?: string;
   reasoning_supported?: boolean;
   reasoning_strengths?: ReasoningStrengthChoice[];
   has_api_key: boolean;
@@ -335,6 +336,7 @@ export type LLMConfigInfo = {
     has_advanced_api_key: boolean;
     advanced_thinking_level: string;
     reasoning_strength?: string;
+    cli_reasoning_strength?: string;
     cli_runner?: string;
     cli_model?: string;
     cli_timeout_seconds?: number;
@@ -440,6 +442,7 @@ export type MenuStatus = {
     has_advanced_api_key: boolean;
     advanced_thinking_level: string;
     reasoning_strength?: string;
+    cli_reasoning_strength?: string;
     reasoning_supported?: boolean;
     reasoning_strengths?: ReasoningStrengthChoice[];
   };

@@ -420,8 +420,33 @@ def test_menu_status_reports_reasoning_strength_capability_for_cli_runner(monkey
     status = asyncio.run(web_app.api_menu_status())
 
     assert status["llm"]["reasoning_strength"] == "high"
+    assert status["llm"]["cli_reasoning_strength"] == "high"
     assert status["llm"]["reasoning_supported"] is False
     assert "reasoning_strengths" in status["llm"]
+
+
+def test_menu_status_reports_inactive_cli_reasoning_strength(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "_has_main_db", lambda: False)
+    monkeypatch.setattr(web_app, "_scan_saves", lambda: [])
+    monkeypatch.setattr(web_app, "_scan_campaigns", lambda: [])
+    monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: "")
+    monkeypatch.setattr(web_app, "load_runtime_game", lambda: {"hitl_min_decisions": 1})
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
+        "channel": "api",
+        "reasoning_strength": "",
+        "api": {"base_url": "https://api.example.com/v1", "model": "gpt-5", "api_key": "sk-test"},
+        "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": "240", "reasoning_strength": "high"},
+        "base_url": "https://api.example.com/v1",
+        "model": "gpt-5",
+        "api_key": "sk-test",
+    })
+
+    status = asyncio.run(web_app.api_menu_status())
+
+    assert status["llm"]["reasoning_strength"] == ""
+    assert status["llm"]["cli_reasoning_strength"] == "high"
 
 
 def test_menu_save_llm_persists_cli_channel_without_api_key(monkeypatch):
@@ -640,6 +665,33 @@ def test_game_llm_config_reports_active_cli_channel_without_fake_api_key(monkeyp
     assert result["persisted"]["cli_model"] == "gpt-5.5"
     assert result["persisted"]["cli_timeout_seconds"] == 240
     assert result["persisted"]["reasoning_strength"] == "medium"
+
+
+def test_game_llm_config_reports_inactive_cli_reasoning_strength(monkeypatch):
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="gpt-5",
+        channel="api",
+        reasoning_strength="",
+    )
+    monkeypatch.setattr(web_app, "web_game", SimpleNamespace(
+        session=SimpleNamespace(llm_config=cfg),
+    ))
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
+        "channel": "api",
+        "reasoning_strength": "",
+        "api": {"base_url": "https://api.example.com/v1", "model": "gpt-5", "api_key": "sk-test"},
+        "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": "240", "reasoning_strength": "high"},
+        "base_url": "https://api.example.com/v1",
+        "model": "gpt-5",
+        "api_key": "sk-test",
+    })
+
+    result = asyncio.run(web_app.api_get_llm_config())
+
+    assert result["reasoning_strength"] == ""
+    assert result["persisted"]["cli_reasoning_strength"] == "high"
 
 
 def test_fresh_start_without_llm_keeps_existing_main_db(tmp_path, monkeypatch):

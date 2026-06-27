@@ -251,11 +251,14 @@ export function ApiSettingsModal({
   const [advancedApiKey, setAdvancedApiKey] = React.useState("");
   const normalizeStrength = (value?: string) => {
     const v = (value || "").trim().toLowerCase();
-    if (v === "minimal") return "off";
+    if (v === "minimal" || v === "disabled") return "off";
     return ["", "off", "low", "medium", "high"].includes(v) ? v : "";
   };
-  const [reasoningStrength, setReasoningStrength] = React.useState(
+  const [apiReasoningStrength, setApiReasoningStrength] = React.useState(
     normalizeStrength(initial?.reasoning_strength || initial?.thinking_level)
+  );
+  const [cliReasoningStrength, setCliReasoningStrength] = React.useState(
+    normalizeStrength(initial?.cli_reasoning_strength || (initial?.channel === "cli" ? initial?.reasoning_strength : ""))
   );
   const [apiKey, setApiKey] = React.useState("");
   const [maxTokens, setMaxTokens] = React.useState(String(initial?.max_tokens || 8000));
@@ -286,6 +289,8 @@ export function ApiSettingsModal({
   })();
   const cliReasoningSupported = cliRunner === "codex" || cliRunner === "claude";
   const reasoningSupported = channel === "cli" ? cliReasoningSupported : apiReasoningSupported;
+  const reasoningStrength = channel === "cli" ? cliReasoningStrength : apiReasoningStrength;
+  const setReasoningStrength = channel === "cli" ? setCliReasoningStrength : setApiReasoningStrength;
 
   const onSave = async () => {
     setBusy(true);

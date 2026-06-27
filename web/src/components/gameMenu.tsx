@@ -347,10 +347,11 @@ export function LLMConfigTab() {
   const [timeoutSeconds, setTimeoutSeconds] = React.useState("180");
   const normalizeStrength = (value?: string) => {
     const v = (value || "").trim().toLowerCase();
-    if (v === "minimal") return "off";
+    if (v === "minimal" || v === "disabled") return "off";
     return ["", "off", "low", "medium", "high"].includes(v) ? v : "";
   };
-  const [reasoningStrength, setReasoningStrength] = React.useState("");
+  const [apiReasoningStrength, setApiReasoningStrength] = React.useState("");
+  const [cliReasoningStrength, setCliReasoningStrength] = React.useState("");
   // 通道感知（#51）：局中也能切 API / CLI 通道,不再被强制降级到 api。
   const [channel, setChannel] = React.useState<"api" | "cli">("api");
   const [cliRunner, setCliRunner] = React.useState("agy");
@@ -376,6 +377,8 @@ export function LLMConfigTab() {
     { value: "medium", label: "中" },
     { value: "high", label: "高" },
   ];
+  const reasoningStrength = channel === "cli" ? cliReasoningStrength : apiReasoningStrength;
+  const setReasoningStrength = channel === "cli" ? setCliReasoningStrength : setApiReasoningStrength;
 
   React.useEffect(() => {
     api<LLMConfigInfo>("/api/llm/config")
@@ -387,7 +390,10 @@ export function LLMConfigTab() {
         setAdvancedBaseUrl(data.advanced_base_url || "");
         setMaxTokens(String(data.max_tokens || 8000));
         setTimeoutSeconds(String(data.timeout_seconds || 180));
-        setReasoningStrength(normalizeStrength(data.reasoning_strength || data.thinking_level));
+        setApiReasoningStrength(normalizeStrength(data.reasoning_strength || data.thinking_level));
+        setCliReasoningStrength(normalizeStrength(
+          data.persisted?.cli_reasoning_strength || (data.channel === "cli" ? data.reasoning_strength : "")
+        ));
         setChannel(data.channel === "cli" ? "cli" : "api");
         // 从已存 CLI 槽(persisted)初始化优先,而非 active cfg.cli_*——API 会话下 cfg.cli_model 可能被
         // cli_model_from_env 兜底成 API model 名,直接回填会把它当用户选项 post 回去(CMR R3 codex)。
@@ -429,7 +435,11 @@ export function LLMConfigTab() {
       setInfo((cur) => (cur ? { ...cur, ...data } : null));
       // 用服务端归一后的响应同步本地通道/CLI 状态,避免与 info 漂移(Sourcery R1)。
       setChannel(data.channel === "cli" ? "cli" : "api");
-      setReasoningStrength(normalizeStrength(data.reasoning_strength || reasoningStrength));
+      if (data.channel === "cli") {
+        setCliReasoningStrength(normalizeStrength(data.reasoning_strength || reasoningStrength));
+      } else {
+        setApiReasoningStrength(normalizeStrength(data.reasoning_strength || reasoningStrength));
+      }
       setCliRunner(data.cli_runner || "agy");
       // cliModel 不从 data.cli_model 回灌：那是 resolved 值（空/__keep__ 会被兜底成
       // 默认名或 cur 的已解析值），灌回会让策展下拉把默认/留空误判成「其他(手填)」。

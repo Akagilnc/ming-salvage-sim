@@ -250,6 +250,81 @@ def test_secret_prefix_keyao_confirmation_uses_recent_context(game, monkeypatch)
     assert "督办陕西赈灾" in row["content"]
 
 
+def test_secret_prefix_confirmation_with_supplement_keeps_recent_context(game, monkeypatch):
+    """#354 correctness: 确认句带期限/补充时仍是对前文任务的确认，不能只把按钮当轮短句交给密令抽取。"""
+    db, state, _ = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    minister = "魏忠贤"
+    db.append_chat_message(minister, state.turn, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银、查截留。")
+    db.append_chat_message(minister, state.turn, "minister", "臣领密旨，当令东厂暗中护送赈银。")
+    captured = {}
+
+    def fake_extract(prompt, llm_config=None, tag=""):
+        captured["prompt"] = prompt
+        return (json.dumps({
+            "标题": "暗护陕西赈银",
+            "内容": "三月内回奏。",  # 若上下文没有被并入，兜底也保不住前文任务
+            "承办人": minister,
+            "期限月数": 3,
+            "标签": ["陕西"],
+        }, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", fake_extract)
+    result = _result()
+    result.answer = "臣领命。"
+
+    _session(db, state, llm_config=SimpleNamespace(channel="cli"))._cli_backend_fallback_actions(
+        result,
+        SimpleNamespace(name=minister, office_type="司礼监"),
+        "密令如下：可，照办，三月内回奏",
+    )
+
+    assert "督办陕西赈灾" in captured["prompt"]
+    row = db.conn.execute(
+        "SELECT content FROM secret_orders WHERE id=?", (result.secret_order_id,),
+    ).fetchone()
+    assert "督办陕西赈灾" in row["content"]
+    assert "三月内回奏" in row["content"]
+
+
+def test_secret_context_path_preserves_multiple_related_emperor_task_lines(game, monkeypatch):
+    """#354 correctness: 玩家前几轮连续补充同一密令任务时，兜底/守门不能只保留最后一条皇帝行。"""
+    db, state, _ = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    minister = "魏忠贤"
+    db.append_chat_message(minister, state.turn, "user", "命洪承畴督办陕西赈灾。")
+    db.append_chat_message(minister, state.turn, "minister", "臣领命。")
+    db.append_chat_message(minister, state.turn, "user", "再令东厂护赈银、查截留。")
+    db.append_chat_message(minister, state.turn, "minister", "臣当密遣番役护银。")
+
+    def fake_extract_drops_first_task(prompt, llm_config=None, tag=""):
+        return (json.dumps({
+            "标题": "护赈银",
+            "内容": "再令东厂护赈银、查截留。",
+            "承办人": minister,
+            "期限月数": 0,
+            "标签": ["东厂"],
+        }, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", fake_extract_drops_first_task)
+    result = _result()
+    result.answer = "臣领命。"
+
+    _session(db, state, llm_config=SimpleNamespace(channel="cli"))._cli_backend_fallback_actions(
+        result,
+        SimpleNamespace(name=minister, office_type="司礼监"),
+        "密令如下：可，照办",
+    )
+
+    row = db.conn.execute(
+        "SELECT content FROM secret_orders WHERE id=?", (result.secret_order_id,),
+    ).fetchone()
+    body = row["content"]
+    assert "督办陕西赈灾" in body
+    assert "护赈银" in body
+    assert "京营操练" not in body
+
+
 def test_secret_order_body_excludes_audience_role_labels(game, monkeypatch):
     """#354 (cmr): 密令正文必须是任务文本，不得混入对话快照的角色标签
     「皇帝：」「大臣：」或「【本轮确认】」短句（御旨守门/兜底误用对话 blob 会污染正文）。"""
