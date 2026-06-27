@@ -961,13 +961,18 @@ class GameSession:
             # 拒绝丢弃）针对的是窗前已暂存的 pending，保持可用（ship-pre r2 设计）。
             # 抽取器（LLM 调用）一并跳过。
             return out
+        needs_draft_fallback = not has_directive and message_text.startswith(_DRAFT_PREFIXES)
+        needs_secret_fallback = not out["secret_order_id"] and message_text.startswith(_SECRET_PREFIXES)
         secret_context = ""
-        if message_text.startswith(_SECRET_PREFIXES):
+        if needs_secret_fallback:
             secret_context = _recent_audience_context_for_secret_order(
                 getattr(self, "db", None), minister_name, int(self.state.turn), message_text)
-        acts = resolve_minister_actions(
-            reply, player_message, default_assignee=minister_name, llm_config=llm_config,
-            secret_context=secret_context)
+        if needs_draft_fallback or needs_secret_fallback:
+            acts = resolve_minister_actions(
+                reply, player_message, default_assignee=minister_name, llm_config=llm_config,
+                secret_context=secret_context)
+        else:
+            acts = {"decree_text": None, "secret_order": None}
         if not has_directive and acts["decree_text"]:
             text = acts["decree_text"]
             did = self.db.add_directive(

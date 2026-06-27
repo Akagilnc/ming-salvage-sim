@@ -174,6 +174,27 @@ def test_secret_prefix_confirmation_uses_recent_context_for_order_body(game, mon
     assert "督办陕西赈灾" in row["content"]
 
 
+def test_api_tool_created_secret_order_skips_prefix_fallback_extraction(game, monkeypatch):
+    """Codex ship review: API tool-call 已建密令时，前缀 fallback 不得再发起一次会被丢弃的抽取。"""
+    db, state, _ = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    minister = "魏忠贤"
+
+    def forbidden_resolve(*args, **kwargs):
+        raise AssertionError("tool-created secret order should not run fallback extraction")
+
+    monkeypatch.setattr(cb, "resolve_minister_actions", forbidden_resolve)
+    result = _session(db, state, llm_config=SimpleNamespace(channel="api")).apply_cli_conversation_actions(
+        SimpleNamespace(name=minister, office_type="司礼监"),
+        "密令如下：暗查辽饷",
+        "臣领旨。",
+        has_directive=False,
+        secret_order_id=123,
+    )
+
+    assert result["secret_order_id"] == 123
+
+
 def test_noop_appointment_intent_is_not_staged(game, monkeypatch):
     """#354: 背景里提到“某人已任某职”被抽成任命时，若其当前已在该职，确定性丢弃。"""
     db, state, content = game
