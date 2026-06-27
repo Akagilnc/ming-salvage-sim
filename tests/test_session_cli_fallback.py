@@ -131,6 +131,85 @@ def test_draft_prefix_with_pending_confirmation_runs_zero_llm(game, monkeypatch)
     assert result.proposed_directive.text == "臣遵旨，当即清核辽饷。"
 
 
+def test_secret_prefix_confirmation_uses_recent_context_for_order_body(game, monkeypatch):
+    """#354: 玩家先自然语言描述 covert 任务，下一轮只点「密令」确认“可，就按你意思办”。
+    显式密令按钮是权威路由；密令字段提取必须看到前文任务正文，而不是只看确认短句。"""
+    db, state, _ = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    minister = "魏忠贤"
+    described_task = "洪承畴已任陕西巡抚。命洪承畴督办陕西赈灾，东厂暗助护赈银、查截留。"
+    db.append_chat_message(minister, state.turn, "user", described_task)
+    db.append_chat_message(minister, state.turn, "minister", "臣领密旨，当令东厂暗中护送赈银。")
+    captured = {}
+
+    def fake_extract(prompt, llm_config=None, tag=""):
+        captured["prompt"] = prompt
+        return (json.dumps({
+            "标题": "暗护陕西赈银",
+            "内容": "命洪承畴督办陕西赈灾，东厂暗助护赈银并查截留。",
+            "承办人": minister,
+            "期限月数": 0,
+            "标签": ["陕西", "赈灾", "东厂"],
+        }, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", fake_extract)
+    result = _result()
+    result.answer = "臣领命。"
+
+    _session(db, state, llm_config=SimpleNamespace(channel="cli"))._cli_backend_fallback_actions(
+        result,
+        SimpleNamespace(name=minister, office_type="司礼监"),
+        "密令如下：可，就按你意思办",
+    )
+
+    assert "督办陕西赈灾" in captured["prompt"]
+    assert "东厂暗助护赈银" in captured["prompt"]
+    assert result.secret_order_id
+    row = db.conn.execute(
+        "SELECT minister_name, content FROM secret_orders WHERE id=?",
+        (result.secret_order_id,),
+    ).fetchone()
+    assert row["minister_name"] == minister
+    assert "督办陕西赈灾" in row["content"]
+
+
+def test_noop_appointment_intent_is_not_staged(game, monkeypatch):
+    """#354: 背景里提到“某人已任某职”被抽成任命时，若其当前已在该职，确定性丢弃。"""
+    db, state, content = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    target = next(
+        ch for ch in content.characters.values()
+        if getattr(ch, "power_id", "ming") == "ming"
+        and getattr(ch, "office", "")
+        and getattr(ch, "office_type", "") != "后宫"
+        and db.get_character_status(ch.name)[0] == "active"
+    )
+    summoner = next(
+        ch for ch in content.characters.values()
+        if ch.name != target.name
+        and getattr(ch, "power_id", "ming") == "ming"
+        and getattr(ch, "office_type", "") != "后宫"
+        and db.get_character_status(ch.name)[0] == "active"
+    )
+
+    res = _session(db, state, llm_config=SimpleNamespace(channel="cli")).apply_cli_conversation_actions(
+        SimpleNamespace(name=summoner.name, office_type=summoner.office_type),
+        f"{target.name}已任{target.office}，可先查赈银截留。",
+        "臣领旨。",
+        has_directive=False,
+        secret_order_id=None,
+        preclassified_intent={
+            "kind": "appointment",
+            "appoint_action": "任命",
+            "name": target.name,
+            "office": target.office,
+        },
+    )
+
+    assert not res.get("pending_action_id")
+    assert db.list_pending_actions(state.turn) == []
+
+
 def test_committed_draft_followup_merges_even_when_classifier_says_none(game, monkeypatch):
     """#344 US6 +integrated cmr Gate2 codex correctness：已有 committed draft 时，并发分类器只读
     皇帝本条消息、看不到 committed draft，可能把「再补一条…随行」误判 none——此时仍须回退

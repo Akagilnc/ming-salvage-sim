@@ -181,6 +181,61 @@ def _find_existing_minister(content: GameContent, name: str, db: "GameDB") -> Op
     return None
 
 
+def _recent_audience_context_for_secret_order(
+    db: Any, minister_name: str, turn: int, current_message: str, limit: int = 8,
+) -> str:
+    """取当前大臣最近召对正文，供“密令”按钮确认短句补足任务上下文。"""
+    conn = getattr(db, "conn", None)
+    if conn is None:
+        return ""
+    try:
+        rows = conn.execute(
+            """
+            SELECT role, content FROM chat_messages
+            WHERE minister_name = ? AND turn = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (str(minister_name or ""), int(turn), int(limit)),
+        ).fetchall()
+    except Exception:
+        return ""
+    current = (current_message or "").strip()
+    lines: List[str] = []
+    for row in reversed(rows):
+        role = str(row["role"] if "role" in row.keys() else "")
+        content = str(row["content"] if "content" in row.keys() else "").strip()
+        if not content or content == current:
+            continue
+        label = "皇帝" if role == "user" else "大臣"
+        lines.append(f"{label}：{content}")
+    return "\n".join(lines[-limit:])
+
+
+def _appointment_intent_is_current_office_noop(db: Any, name: str, office: str) -> bool:
+    """任命目标已在该职时是背景复述，不生成待确认任免动作。"""
+    conn = getattr(db, "conn", None)
+    clean_name = str(name or "").strip()
+    desired = normalize_office(str(office or ""))
+    if conn is None or not clean_name or not desired:
+        return False
+    try:
+        row = conn.execute(
+            "SELECT status, office FROM characters WHERE name = ?",
+            (clean_name,),
+        ).fetchone()
+    except Exception:
+        return False
+    if row is None or str(row["status"] or "") != "active":
+        return False
+    current = normalize_office(str(row["office"] or ""))
+    if not current:
+        return False
+    desired_parts = {p for p in desired.split(",") if p}
+    current_parts = {p for p in current.split(",") if p}
+    return bool(desired_parts) and desired_parts.issubset(current_parts)
+
+
 def apply_appointment(
     db: GameDB,
     state: GameState,
@@ -893,8 +948,13 @@ class GameSession:
             # 拒绝丢弃）针对的是窗前已暂存的 pending，保持可用（ship-pre r2 设计）。
             # 抽取器（LLM 调用）一并跳过。
             return out
+        secret_context = ""
+        if message_text.startswith(_SECRET_PREFIXES):
+            secret_context = _recent_audience_context_for_secret_order(
+                getattr(self, "db", None), minister_name, int(self.state.turn), message_text)
         acts = resolve_minister_actions(
-            reply, player_message, default_assignee=minister_name, llm_config=llm_config)
+            reply, player_message, default_assignee=minister_name, llm_config=llm_config,
+            secret_context=secret_context)
         if not has_directive and acts["decree_text"]:
             text = acts["decree_text"]
             did = self.db.add_directive(
@@ -1092,6 +1152,12 @@ class GameSession:
                 appt = intent if intent_kind == "appointment" else {"appoint_action": "无"}
             else:
                 appt = extract_appointment_action(player_message, reply, llm_config=llm_config)
+        if (
+            appt["appoint_action"] == "任命"
+            and _appointment_intent_is_current_office_noop(
+                getattr(self, "db", None), appt.get("name", ""), appt.get("office", ""))
+        ):
+            appt = {"appoint_action": "无"}
         if appt["appoint_action"] in ("任命", "罢免") and appt["name"]:
             # minister_name = 召对对象(发起这道任免的大臣/太监),非被任者——对话确认按召对的
             # 大臣过滤暂存,故须以召对对象为键;被任者姓名在 payload["name"]。
