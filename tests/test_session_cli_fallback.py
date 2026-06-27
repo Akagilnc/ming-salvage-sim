@@ -43,12 +43,13 @@ def test_non_streaming_path_surfaces_pending_action_id(game, monkeypatch):
     assert result.secret_order_id is None  # 暂存不当场落库
 
 
-def _session(db, state, registry=None, llm_config=None):
-    """fake self：带 db/state/registry + 绑定共享方法与适配器。"""
+def _session(db, state, registry=None, llm_config=None, content=None):
+    """fake self：带 db/state/registry(+content) + 绑定共享方法与适配器。"""
     s = SimpleNamespace(
         db=db,
         state=state,
         registry=registry,
+        content=content,
         llm_config=llm_config or SimpleNamespace(channel=""),
     )
     s.apply_cli_conversation_actions = types.MethodType(
@@ -202,6 +203,127 @@ def test_noop_appointment_intent_is_not_staged(game, monkeypatch):
             "kind": "appointment",
             "appoint_action": "任命",
             "name": target.name,
+            "office": target.office,
+        },
+    )
+
+    assert not res.get("pending_action_id")
+    assert db.list_pending_actions(state.turn) == []
+
+
+def test_secret_prefix_keyao_confirmation_uses_recent_context(game, monkeypatch):
+    """#354 (cmr): 「可，照办」是 issue 点名的确认短句（US3 / Testing Decisions F17），
+    必须照样从前文召对取任务正文，而不是只把「可，照办」当密令交代。"""
+    db, state, _ = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    minister = "魏忠贤"
+    described_task = "洪承畴已任陕西巡抚。命洪承畴督办陕西赈灾，东厂暗助护赈银、查截留。"
+    db.append_chat_message(minister, state.turn, "user", described_task)
+    db.append_chat_message(minister, state.turn, "minister", "臣领密旨，当令东厂暗中护送赈银。")
+    captured = {}
+
+    def fake_extract(prompt, llm_config=None, tag=""):
+        captured["prompt"] = prompt
+        return (json.dumps({
+            "标题": "暗护陕西赈银",
+            "内容": "命洪承畴督办陕西赈灾，东厂暗助护赈银并查截留。",
+            "承办人": minister,
+            "期限月数": 0,
+            "标签": ["陕西"],
+        }, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", fake_extract)
+    result = _result()
+    result.answer = "臣领命。"
+
+    _session(db, state, llm_config=SimpleNamespace(channel="cli"))._cli_backend_fallback_actions(
+        result,
+        SimpleNamespace(name=minister, office_type="司礼监"),
+        "密令如下：可，照办",
+    )
+
+    assert "督办陕西赈灾" in captured["prompt"]
+    assert result.secret_order_id
+    row = db.conn.execute(
+        "SELECT content FROM secret_orders WHERE id=?", (result.secret_order_id,),
+    ).fetchone()
+    assert "督办陕西赈灾" in row["content"]
+
+
+def test_secret_order_body_excludes_audience_role_labels(game, monkeypatch):
+    """#354 (cmr): 密令正文必须是任务文本，不得混入对话快照的角色标签
+    「皇帝：」「大臣：」或「【本轮确认】」短句（御旨守门/兜底误用对话 blob 会污染正文）。"""
+    db, state, _ = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    minister = "魏忠贤"
+    described_task = "命洪承畴督办陕西赈灾，东厂暗助护赈银、查截留。"
+    db.append_chat_message(minister, state.turn, "user", described_task)
+    db.append_chat_message(minister, state.turn, "minister", "臣领密旨，当令东厂暗中护送赈银。")
+
+    def fake_extract(prompt, llm_config=None, tag=""):
+        return (json.dumps({
+            "标题": "暗护陕西赈银",
+            "内容": "命洪承畴督办陕西赈灾，东厂暗助护赈银并查截留。",
+            "承办人": minister,
+            "期限月数": 0,
+            "标签": ["陕西"],
+        }, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", fake_extract)
+    result = _result()
+    result.answer = "臣领命。"
+
+    _session(db, state, llm_config=SimpleNamespace(channel="cli"))._cli_backend_fallback_actions(
+        result,
+        SimpleNamespace(name=minister, office_type="司礼监"),
+        "密令如下：可，就按你意思办",
+    )
+
+    row = db.conn.execute(
+        "SELECT content FROM secret_orders WHERE id=?", (result.secret_order_id,),
+    ).fetchone()
+    body = row["content"]
+    assert "督办陕西赈灾" in body
+    assert "皇帝：" not in body
+    assert "大臣：" not in body
+    assert "本轮确认" not in body
+    assert "就按你意思办" not in body
+
+
+def test_noop_appointment_alias_target_is_not_staged(game, monkeypatch):
+    """#354 (cmr): no-op 任免丢弃须按 canonical 口径——背景句用别名提到「某人已任某职」、
+    其规范名当前已在该职时，照样确定性丢弃，不因别名查不到精确行而漏判成假任免。"""
+    db, state, content = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    target = next(
+        ch for ch in content.characters.values()
+        if getattr(ch, "power_id", "ming") == "ming"
+        and getattr(ch, "office", "")
+        and getattr(ch, "office_type", "") != "后宫"
+        and any(a != ch.name for a in (getattr(ch, "aliases", None) or []))
+        and db.get_character_status(ch.name)[0] == "active"
+    )
+    alias = next(a for a in target.aliases if a != target.name)
+    summoner = next(
+        ch for ch in content.characters.values()
+        if ch.name != target.name
+        and getattr(ch, "power_id", "ming") == "ming"
+        and getattr(ch, "office_type", "") != "后宫"
+        and db.get_character_status(ch.name)[0] == "active"
+    )
+
+    res = _session(
+        db, state, llm_config=SimpleNamespace(channel="cli"), content=content,
+    ).apply_cli_conversation_actions(
+        SimpleNamespace(name=summoner.name, office_type=summoner.office_type),
+        f"{alias}已任{target.office}，可先查赈银截留。",
+        "臣领旨。",
+        has_directive=False,
+        secret_order_id=None,
+        preclassified_intent={
+            "kind": "appointment",
+            "appoint_action": "任命",
+            "name": alias,
             "office": target.office,
         },
     )
