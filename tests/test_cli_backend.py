@@ -267,6 +267,93 @@ def test_content_reflects_supplements_accepts_when_name_and_action_preserved():
     assert cb._content_reflects_minister_supplements("着周延儒协办此事", "可由周延儒协办此事。") is True
 
 
+def test_acknowledgment_only_replies_are_not_material():
+    """#401 R1（gemini medium）：纯领命/遵旨等无代词应答整句不得被判 material、不得误触兜底合并。"""
+    for ack in ("领命。", "遵旨。", "谨遵。", "谢恩。", "即办。", "即行。", "即遵。", "领旨。", "遵命。"):
+        assert cb._minister_material_clauses(ack) == []
+        # 大臣无实质补充 → 守门判覆盖（不强制合并）
+        assert cb._content_reflects_minister_supplements("着李若琏暗查", ack) is True
+
+
+def test_content_reflects_supplements_rejects_when_tail_material_dropped():
+    """#401 R1（codex P2）：assignee 分句在人名+动作词之外仍带实质补充（『并封存兵部辽饷册』）
+    时，只留人名+动作词的合法 LLM 输出不得被接受——余下 material 也须在正文里。"""
+    assert cb._content_reflects_minister_supplements(
+        "着李若琏暗查", "可授李若琏暗查并封存兵部辽饷册。") is False
+    # 完整保留（含余下 material）→ 覆盖
+    assert cb._content_reflects_minister_supplements(
+        "着李若琏暗查并封存兵部辽饷册", "可授李若琏暗查并封存兵部辽饷册。") is True
+
+
+def test_extract_assignee_hint_keeps_wei_and_si_surnames():
+    """#401 R1（CodeRabbit major）：卫/司 是常见姓，单字出现不得被机关滤误拒；
+    但 锦衣卫/布政司 等可识别机关词仍滤掉。"""
+    assert cb._extract_assignee_hint("可授卫景瑗暗查东厂线索。") == "卫景瑗"
+    assert cb._extract_assignee_hint("可委司马懿督师。") == "司马懿"
+    # 机关整词仍被滤
+    assert cb._extract_assignee_hint("可授锦衣卫查办。") is None
+    assert cb._extract_assignee_hint("可授布政司核对。") is None
+
+
+def test_secret_assignee_does_not_drift_to_unvalidated_llm_field(monkeypatch):
+    """#401 R1（CodeRabbit major）：LLM 正文留李若琏、承办人字段却填王在晋时，最终承办人
+    不得漂移到王在晋——字段须与正文/线索一致才采信。"""
+    canned = json.dumps({
+        "标题": "密查辽东军饷",
+        "内容": "查辽东军饷有无侵冒，三月内回奏；着李若琏暗查。",
+        "承办人": "王在晋",
+        "期限月数": 3, "标签": ["辽饷"],
+    }, ensure_ascii=False)
+    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
+    acts = cb.resolve_minister_actions(
+        "臣领密旨，可授李若琏暗查。", "密令如下：查辽东军饷有无侵冒，三月内回奏",
+        default_assignee="王在晋",
+    )
+    so = acts["secret_order"]
+    assert so is not None
+    assert so["assignee"] == "李若琏"
+
+
+def test_secret_assignee_prefers_hint_when_bad_llm_field_survives_merge(monkeypatch):
+    """#401 R1 follow-up：若坏 LLM 正文/字段都写王在晋，但大臣线索指李若琏，兜底合并后
+    content 会同时含王在晋和李若琏；此时仍应信线索李若琏，不因王在晋出现在合并正文里采信坏字段。"""
+    canned = json.dumps({
+        "标题": "密查辽东军饷",
+        "内容": "查辽东军饷有无侵冒，三月内回奏；着王在晋暗查。",
+        "承办人": "王在晋",
+        "期限月数": 3, "标签": ["辽饷"],
+    }, ensure_ascii=False)
+    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
+    acts = cb.resolve_minister_actions(
+        "臣领密旨，可授李若琏暗查。", "密令如下：查辽东军饷有无侵冒，三月内回奏",
+        default_assignee="王在晋",
+    )
+    so = acts["secret_order"]
+    assert so is not None
+    assert "王在晋" in so["content"]  # merge 保留了 LLM 正文，所以单看 content 会误导
+    assert "李若琏" in so["content"]
+    assert so["assignee"] == "李若琏"
+
+
+def test_secret_assignee_uses_emperor_imperative_hint_when_llm_blank(monkeypatch):
+    """#401 R1（CodeRabbit major）：皇帝御旨以『着X』指名、LLM 承办人留空时，最终承办人
+    用皇帝/正文线索，不盲目退回默认召对大臣。"""
+    canned = json.dumps({
+        "标题": "密查辽东军饷",
+        "内容": "查辽东军饷有无侵冒，着李若琏暗查。",
+        "承办人": "",
+        "期限月数": 3, "标签": [],
+    }, ensure_ascii=False)
+    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
+    acts = cb.resolve_minister_actions(
+        "臣领旨。", "密令如下：着李若琏查辽东军饷有无侵冒",
+        default_assignee="王在晋",
+    )
+    so = acts["secret_order"]
+    assert so is not None
+    assert so["assignee"] == "李若琏"
+
+
 def test_secret_prefix_action_word_dropped_triggers_merge(monkeypatch):
     """#397 Step6 R4 端到端：LLM 正文把大臣的『协办』换成泛化『承办』→ 守门判未覆盖 →
     兜底合并，最终正文保留大臣的实质动作词。"""
