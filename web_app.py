@@ -1783,24 +1783,92 @@ def _active_db_path_file() -> str:
     return user_data_path("active_db.txt")
 
 
+def _read_active_db_path() -> str:
+    active_file = _active_db_path_file()
+    if not os.path.exists(active_file):
+        return ""
+    try:
+        with open(active_file, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
+def _write_active_db_path(db_path: str) -> None:
+    active_file = _active_db_path_file()
+    os.makedirs(os.path.dirname(active_file), exist_ok=True)
+    tmp_file = f"{active_file}.tmp.{os.getpid()}.{threading.get_ident()}"
+    try:
+        with open(tmp_file, "w", encoding="utf-8") as f:
+            f.write(db_path)
+        os.replace(tmp_file, active_file)
+    finally:
+        if os.path.exists(tmp_file):
+            try:
+                os.remove(tmp_file)
+            except Exception:
+                pass
+
+
+def _snapshot_main_db_path_config() -> tuple[bool, str, bool, str]:
+    active_file = _active_db_path_file()
+    active_exists = os.path.exists(active_file)
+    active_value = ""
+    if active_exists:
+        try:
+            with open(active_file, "r", encoding="utf-8") as f:
+                active_value = f.read()
+        except Exception:
+            active_value = ""
+    return (
+        "MING_SIM_DB" in os.environ,
+        os.environ.get("MING_SIM_DB", ""),
+        active_exists,
+        active_value,
+    )
+
+
+def _restore_main_db_path_config(snapshot: tuple[bool, str, bool, str]) -> None:
+    env_exists, env_value, active_exists, active_value = snapshot
+    if env_exists:
+        os.environ["MING_SIM_DB"] = env_value
+    else:
+        os.environ.pop("MING_SIM_DB", None)
+    active_file = _active_db_path_file()
+    if active_exists:
+        os.makedirs(os.path.dirname(active_file), exist_ok=True)
+        tmp_file = f"{active_file}.tmp.{os.getpid()}.{threading.get_ident()}"
+        try:
+            with open(tmp_file, "w", encoding="utf-8") as f:
+                f.write(active_value)
+            os.replace(tmp_file, active_file)
+        finally:
+            if os.path.exists(tmp_file):
+                try:
+                    os.remove(tmp_file)
+                except Exception:
+                    pass
+    elif os.path.exists(active_file):
+        os.remove(active_file)
+
+
+def _set_main_db_path(db_path: str) -> None:
+    os.environ["MING_SIM_DB"] = db_path
+    _write_active_db_path(db_path)
+
+
 def _get_main_db_path() -> str:
-    """解析当前主库路径：env > active_db.txt > 默认 ming_sim.db。
+    """解析当前主库路径：active_db.txt > env > 默认 ming_sim.db。
 
     #396：new_game 不删旧库文件（旧后台 worker 仍写，删了会触发 SQLite readonly database），
     而是把主库路径切到新文件，旧连接排空关闭后旧库归档为存档。active_db.txt 持久化该切换，
     使重启后仍能加载新库。"""
+    active_path = _read_active_db_path()
+    if active_path:
+        return active_path
     db_path = os.environ.get("MING_SIM_DB", "")
     if db_path:
         return db_path
-    active_file = _active_db_path_file()
-    if os.path.exists(active_file):
-        try:
-            with open(active_file, "r", encoding="utf-8") as f:
-                path = f.read().strip()
-                if path:
-                    return path
-        except Exception:
-            pass
     return user_data_path("ming_sim.db")
 
 
@@ -1823,7 +1891,9 @@ def _drain_and_close_session(game, archive_db: bool = False) -> None:
     gate = _game_write_gate(game)
     gate.acquire()  # 阻塞——等最后一个 worker 释放
     try:
-        game.session.close()
+        session = getattr(game, "session", None)
+        if session is not None:
+            session.close()
     except Exception:
         pass
     finally:
@@ -1833,18 +1903,21 @@ def _drain_and_close_session(game, archive_db: bool = False) -> None:
         if old_db_path and os.path.exists(old_db_path):
             saves_dir = user_data_path("saves")
             os.makedirs(saves_dir, exist_ok=True)
-            target = os.path.join(saves_dir, f"drained_{int(time.time())}.db")
+            target = os.path.join(saves_dir, f"drained_{time.time_ns()}.db")
+            moved = False
             try:
                 shutil.move(old_db_path, target)
+                moved = True
             except Exception:
                 pass
-            for suffix in ("-wal", "-shm"):
-                p = old_db_path + suffix
-                if os.path.exists(p):
-                    try:
-                        os.remove(p)
-                    except Exception:
-                        pass
+            if moved:
+                for suffix in ("-wal", "-shm"):
+                    p = old_db_path + suffix
+                    if os.path.exists(p):
+                        try:
+                            os.remove(p)
+                        except Exception:
+                            pass
 
 
 web_game: Optional[WebGame] = None  # 懒加载：菜单页点「新游戏/继续/加载存档」才实例化
@@ -2041,30 +2114,34 @@ async def api_menu_new_game() -> Dict[str, Any]:
     #382 通用并发模型（Windows file-lock 等）不在本轮 scope。"""
     global web_game
     old_game = web_game
-    web_game = None
     # #396 Step5 R4: 无论 web_game 是否为 None（退菜单后 / 服务端首次 new_game），
     # fresh=True 前都必须切换主库路径到新文件——否则 WebGame 会解析到旧配置库（env /
     # active_db.txt）并在 fresh=True 时删/覆盖旧库，而旧 detach worker 可能仍写旧库。
     # #396: 不能在旧后台 worker 仍写旧库时删/重命名旧库文件（SQLite 会报 readonly database）。
     # 改为把主库路径切换到新文件，旧 worker 安全续写旧库；排空关连接后旧库归档为存档。
-    new_db_path = user_data_path(f"ming_sim_{int(time.time() * 1000)}.db")
-    # #396 Gap A: MING_SIM_DB 优先级高于 active_db.txt（_get_main_db_path）。
-    # 单写 active_db.txt 会让 fresh=True 的 WebGame 仍解析到旧 env 路径并删旧库。
-    # 同步覆写 env → 新局落新路径，旧后台 worker 续写旧库，排空后归档。
-    os.environ["MING_SIM_DB"] = new_db_path
-    with open(_active_db_path_file(), "w", encoding="utf-8") as f:
-        f.write(new_db_path)
+    snapshot = _snapshot_main_db_path_config()
+    new_db_path = user_data_path(f"ming_sim_{time.time_ns()}.db")
+    # 同步覆写 env + active_db.txt → 新局落新路径，重启也继续新路径。
+    _set_main_db_path(new_db_path)
+    web_game = None
+    try:
+        new_game = WebGame(fresh=True)
+    except LLMUnavailable as exc:
+        _restore_main_db_path_config(snapshot)
+        web_game = old_game
+        raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
+    except Exception:
+        _restore_main_db_path_config(snapshot)
+        web_game = old_game
+        raise
+    web_game = new_game
     if old_game is not None:
-        # detach：等 write_gate 排空后再关旧连接 + 归档旧库（#396），不在 worker 写时关。
+        # detach：新局已确认可用后，才退休旧连接 + 归档旧库（#396）。
         threading.Thread(
             target=_drain_and_close_session,
             args=(old_game, True),
             daemon=True,
         ).start()
-    try:
-        web_game = WebGame(fresh=True)
-    except LLMUnavailable as exc:
-        raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
     return steam_events.with_events(
         {"state": web_game.state_payload()},
         [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
