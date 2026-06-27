@@ -890,6 +890,27 @@ def test_run_claude_maps_reasoning_strength_to_thinking_tokens(monkeypatch):
     assert captured["env"]["MAX_THINKING_TOKENS"] == "10000"
 
 
+def test_run_claude_off_reasoning_uses_explicit_minimum_tokens(monkeypatch):
+    captured = {}
+
+    class _P:
+        stdout = "臣领旨。"
+        stderr = ""
+        returncode = 0
+
+    def fake_run(cmd, **kw):
+        captured["env"] = kw.get("env")
+        return _P()
+
+    monkeypatch.setenv("MAX_THINKING_TOKENS", "32000")
+    monkeypatch.setattr(cb.subprocess, "run", fake_run)
+
+    out, n = cb._run_claude("p", reasoning_strength="off")
+
+    assert out == "臣领旨。"
+    assert captured["env"]["MAX_THINKING_TOKENS"] == "2000"
+
+
 # ── _resolve_cli_bin：GUI(.app)启动 PATH 缺 ~/.local/bin 时仍定位已装的 runner ──
 # Finder 双击的 .app 拿不到登录 shell 的 PATH（只继承 launchd 精简 PATH），
 # 裸名 exec "codex" 会 [Errno 2] No such file or directory 即便用户已按官方装好。
