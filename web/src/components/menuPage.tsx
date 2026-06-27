@@ -249,7 +249,6 @@ export function ApiSettingsModal({
   const [advancedModel, setAdvancedModel] = React.useState(initial?.advanced_model || "");
   const [advancedBaseUrl, setAdvancedBaseUrl] = React.useState(initial?.advanced_base_url || "");
   const [advancedApiKey, setAdvancedApiKey] = React.useState("");
-  const [advancedThinkingLevel, setAdvancedThinkingLevel] = React.useState(initial?.advanced_thinking_level || "");
   const normalizeStrength = (value?: string) => {
     const v = (value || "").trim().toLowerCase();
     if (v === "minimal") return "off";
@@ -312,7 +311,7 @@ export function ApiSettingsModal({
           advanced_model: advancedModel.trim(),
           advanced_base_url: advancedBaseUrl.trim(),
           advanced_api_key: advancedApiKey.trim(),
-          advanced_thinking_level: advancedThinkingLevel.trim(),
+          advanced_thinking_level: "",
         }),
       });
       if (!response.ok) {
@@ -429,10 +428,6 @@ export function ApiSettingsModal({
           Advanced API Key{" "}
           <small className="menu-hint">{initial?.has_advanced_api_key ? "(已配置；留空保留)" : "(留空=复用主 API Key)"}</small>
           <input type="password" value={advancedApiKey} onChange={(e) => setAdvancedApiKey(e.target.value)} placeholder={initial?.has_advanced_api_key ? "(已配置；如需更换请重新填写)" : "留空=复用主 Key"} />
-        </label>
-        <label>
-          Advanced Thinking Level <small className="menu-hint">（空=默认，请填写你的模型支持的值。）</small>
-          <input value={advancedThinkingLevel} onChange={(e) => setAdvancedThinkingLevel(e.target.value)} placeholder="默认" />
         </label>
         <label>
           Max Tokens

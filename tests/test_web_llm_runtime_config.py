@@ -66,11 +66,13 @@ def test_advanced_llm_verification_preserves_reasoning_strength(monkeypatch):
         advanced_model="gpt-advanced",
         channel="api",
         reasoning_strength="high",
+        advanced_thinking_level="minimal",
     )
 
     web_app._verify_llm_configs_or_raise(cfg)
 
     assert [item.reasoning_strength for item in seen] == ["high", "high"]
+    assert seen[1].thinking_level == ""
 
 
 def test_runtime_api_reasoning_strength_builds_llm_config(monkeypatch):

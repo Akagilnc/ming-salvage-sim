@@ -94,7 +94,7 @@ def test_load_runtime_llm_migrates_flat_api_config(tmp_path, monkeypatch):
         "advanced_model": "gpt-advanced",
         "advanced_base_url": "https://advanced.example.com/v1",
         "advanced_api_key": "sk-advanced",
-        "advanced_thinking_level": "high",
+        "advanced_thinking_level": "",
     }
     assert runtime["cli"]["runner"] == ""
     assert runtime["cli"]["model"] == ""
