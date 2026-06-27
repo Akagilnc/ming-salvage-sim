@@ -771,10 +771,13 @@ def _strip_agent_narration(text: str) -> str:
 
 # ── 拟旨 / 下密令入档（CLI 后端）────────────────────────────────────────
 # 原版（api key）靠 agno 工具 propose_directive/secret_order，模型 function-call 触发。
-# agy 不做 function-calling，唯一缺口在此。解法很简单：
-#   玩家用「拟旨/下密令」按钮 = 消息带「拟旨如下：/密令如下：」前缀 = 已表态要下旨，
-#   那这一句大臣回话原文就是这道旨/密令，整段入档即可。不用解析圣旨边界。
-#   多轮聊出多道 → 颁诏时玩家去重。大臣本就把相关衙门/人等写进回话（原 prompt 行为）。
+# agy/codex/claude 不做 function-calling，唯一缺口在此。玩家用「拟旨/下密令」按钮 =
+# 消息带「拟旨如下：/密令如下：」前缀 = 已表态要下旨，据此分派：
+#   拟旨：大臣回话原文即这道圣旨草稿，整段入档（单一文本字段，够用；多轮聊出多道 →
+#         颁诏时玩家去重）。
+#   密令（#397）：合并皇帝显式旨意 + 大臣回话，交 _extract_secret_order 经配置 runner 让
+#         LLM 润成一道完整密令（御旨为主、并入大臣补的承办人/要点）；helper 自带不抛错
+#         兜底——提取失败时仍把御旨与回话都并入正文，不丢、不阻断。
 _DRAFT_PREFIXES = ("拟旨如下：", "拟旨如下:", "拟旨：", "拟旨:")
 _SECRET_PREFIXES = ("密令如下：", "密令如下:", "密令：", "密令:")
 
@@ -1231,6 +1234,266 @@ def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = Non
     }
 
 
+_CLAUSE_SPLIT = re.compile(r"[，,。.；;！!？?、：:\n\r]+")
+
+
+def _content_reflects_emperor_intent(content: str, emperor_intent: str) -> bool:
+    """LLM『内容』是否完整保留皇帝显式旨意（#397 Step5 防丢御旨守门）。
+
+    皇帝旨意常由若干分句（以中英文标点断句）组成，每一分句都是不可吞掉的『一部分』。
+    故按分句逐条核验：去空白后每个分句须作为连续子串出现在『内容』里——只留前半段、
+    丢掉后半段显式条款（如漏『三月内回奏』）即判未覆盖，走兜底合并。容许 LLM 在分句之外
+    增补大臣要点/润色衔接，但不得吞掉任何一分句。旧 LCS≥半 判据会放过半段丢失，已弃用。
+    皇帝无显式旨意（前缀后为空）时视为无需守护。"""
+    if not emperor_intent:
+        return True
+    c = re.sub(r"\s+", "", content or "")
+    e = re.sub(r"\s+", "", emperor_intent)
+    if not e:
+        return True
+    clauses = [seg for seg in _CLAUSE_SPLIT.split(e) if seg]
+    if not clauses:
+        return True
+    return all(clause in c for clause in clauses)
+
+
+# ── 大臣补充守门：不仅看承办人，还看所有 material 分句（#397 Step6 R3 Codex P1）──
+# 大臣补充不止承办人——如「须先封存兵部辽饷册」「再密访关宁诸将」等具体做法/步骤
+# 也须保留。旧 _supplement_ok 只查承办人线索在不在正文 → 非承办人要点被合法 LLM 输出
+# 静默吞掉。此处抽出 material 分句（剥领命语），交 _content_reflects_minister_supplements
+# 逐条核验。
+_ACKNOWLEDGMENT_CLAUSE_RE = re.compile(
+    r"^(臣|妾|微臣|老臣|末将|卑职|奴婢|下官|小臣)"
+    r".*?"
+    r"(领旨|领命|领密旨|领讫|遵旨|遵命|遵行|谨遵|谨领|敢不|叩谢|叩首|谢恩|拜受|拜谢|唯命|即办|即行|即遵|加紧)"
+    r"$"
+)
+# PR #401 R1（gemini medium）：补齐无代词的应答整句（领命/遵旨/谨遵/谢恩/即办/即行…，
+# 含 _ACKNOWLEDGMENT_CLAUSE_RE 的全部动作词）——纯应答回话不得被判 material 而误触兜底合并。
+_ACKNOWLEDGMENT_CLAUSE_EXACT = frozenset({
+    "钦此", "遵命", "遵旨", "遵行", "领旨", "领命", "领密旨", "领讫",
+    "谨遵", "谨领", "敢不", "叩谢", "叩首", "谢恩", "拜受", "拜谢",
+    "唯命", "即办", "即行", "即遵", "即遵行", "加紧",
+})
+# material 分句前导虚词/连接词：核验补充是否被 LLM 正文覆盖时，去前导词后再做子串匹配。
+_SUPPLEMENT_PREFIX_RE = re.compile(r"^[须再并且即便宜遂着请可授委令命差派先以此又当]{1,4}")
+
+
+def _minister_material_clauses(reply: str) -> List[str]:
+    """从大臣回话里抽出有实质内容的分句（剥掉领命/应答语）。
+
+    #397 Step6 R3（Codex P1）：大臣补充不止承办人——如「须先封存兵部辽饷册」「再密访关宁
+    诸将」等要点也须保留。抽出这些 material 分句用于校验 LLM 正文是否完整反映。"""
+    clauses = [seg.strip() for seg in _CLAUSE_SPLIT.split(reply or "") if seg.strip()]
+    material: List[str] = []
+    for clause in clauses:
+        if clause in _ACKNOWLEDGMENT_CLAUSE_EXACT or _ACKNOWLEDGMENT_CLAUSE_RE.match(clause):
+            continue
+        material.append(clause)
+    return material
+
+
+def _content_reflects_minister_supplements(content: str, minister_reply: str) -> bool:
+    """LLM 正文是否完整保留大臣回话中的实质补充要点（#397 Step6 R3 Codex P1 / R4）。
+
+    按分句逐条核验：
+    - 承办人建议式分句：验人名【且】动作/职责词都在正文里（#397 Step6 R4 Codex P1）——
+      旧码只验人名，『可委周延儒协办此事』会被『着周延儒承办』（吞掉『协办』）误判覆盖。
+    - 其余 material 分句去前导虚词后须作为连续子串出现。
+    任一缺失即判未覆盖，走兜底合并。大臣无实质补充（纯领命）时视为无需守护。"""
+    material_clauses = _minister_material_clauses(minister_reply)
+    if not material_clauses:
+        return True
+    c = re.sub(r"\s+", "", content or "")
+    for clause in material_clauses:
+        assignee = _extract_assignee_hint(clause)
+        if assignee:
+            if assignee not in c:
+                return False
+            # #397 Step6 R4：分句带具体动作/职责词（协办/监督/处理/负责…）时，只保住人名
+            # 不够——该词也须在正文里，否则合法 LLM 输出会用泛化动词（如『承办』）替换掉
+            # 它、静默吞掉大臣的实质补充。
+            action = _extract_assignee_action(clause, assignee)
+            if action and action not in c:
+                return False
+            # #401 R1（codex P2）：assignee 分句在人名+动作词之外可能仍带实质补充（如
+            # 『可授李若琏暗查并封存兵部辽饷册』之『封存兵部辽饷册』）。前缀之后的剩余 material
+            # 也须在正文里，否则只留人名+动作词的合法输出会静默吞掉余下补充。
+            tail = _tail_after_assignee_hint(clause, assignee)
+            if action and tail.startswith(action):
+                tail = tail[len(action):].lstrip()
+            tail_core = re.sub(r"\s+", "", _SUPPLEMENT_PREFIX_RE.sub("", tail))
+            if tail_core and tail_core not in c:
+                return False
+            continue
+        core = re.sub(r"\s+", "", _SUPPLEMENT_PREFIX_RE.sub("", clause))
+        if core and core not in c:
+            return False
+    return True
+
+
+# 大臣回话里"建议某人承办"的线索：大臣常以"可授/可委/请授 X …"点名承办人。
+# LLM 偶发把『承办人』留空、甚至把该人从正文里也抹掉——#397 Step6 须兜底找回，
+# 不让大臣补充的承办人被"看起来合法"的 LLM 输出吞掉。只认建议式措辞（可授/请授/可委…），
+# 不认皇帝祈使式"着/令"——后者常带机关名（着户部…），会把"户部"误当人名。
+# 贪心 {2,4} + 尾部剥动作字（#397 Step6 R3 agy P0）：旧非贪心 {2,4}? 在动词首字不在
+# lookahead 时会把动作字吞进名字（如『周延儒监督』→『周延儒监』）或丢掉整条线索
+# （如『李若琏负责』→ None）。改为贪心捕获后从尾部剥 _ASSIGNEE_VERB_TAIL_CHARS 中的
+# 动词首字（lookahead 扩充 监|协|处|负 覆盖更多动词），保证不漏不脏。
+_ASSIGNEE_HINT_RE = re.compile(
+    r"(?:可\s*委\s*派|可\s*差\s*派|请\s*委\s*派|请\s*差\s*派|建议\s*委\s*派|建议\s*差\s*派|"
+    r"可\s*授|可\s*委|可\s*差|可\s*令|可\s*派|请\s*授|请\s*委|请\s*派|"
+    r"建议\s*授|建议\s*委|可\s*由|可\s*命)"
+    r"\s*([\u4e00-\u9fa5·]{2,4})"
+    r"(?=[，,。.；;！!？?、\s]|暗|密|调|督|拟|领|查|办|为|任|去|往|主|核|理|统|提|巡|镇|守|征|讨|驻|屯|管|行|前|担|监|协|处|负|$)"
+)
+# 动作动词首字集：greedy 捕获后从尾部剥掉这些字。与 lookahead 的动词字同集——
+# lookahead 判定名字后的动词首字、tail strip 剥掉被贪心吞进名字的动词首字（#397 Step6 R3 agy P0）。
+_ASSIGNEE_VERB_TAIL_CHARS = frozenset("暗密调督拟领查办为任去往主核理统提巡镇守征讨驻屯管行前担监督协处负责")
+# 动作/职责动词连续段（#397 Step6 R4）：assignee-hint 分句里人名之后的 material 动作词。
+# 字集与 _ASSIGNEE_VERB_TAIL_CHARS 同源（lookahead 判定名后动词首字、tail strip 剥贪心吞字），
+# 此处用于抽出『协办/监督/处理/负责…』等动作词，核验它是否也被 LLM 正文保留。
+# PR #401 R1（Sourcery）：逐字 re.escape 再拼 char class，免将来混入正则元字符被误解析。
+_ASSIGNEE_ACTION_RUN_RE = re.compile(
+    "[" + "".join(re.escape(c) for c in sorted(_ASSIGNEE_VERB_TAIL_CHARS)) + "]{1,6}"
+)
+# 捕获到机关/地名（含 部/寺/院… 字）的不是人名，跳过。
+# 注意：曹是常见姓（曹化淳/曹文诏），不是机关字，故不入此集（#397 Step6 R3 Codex P2）。
+# 卫/司 同是常见姓（卫景瑗 / 司马…），单字出现不得误拒——只在构成可识别机关词（锦衣卫 /
+# 布政司…）时才拒（#401 R1 CodeRabbit major：旧 [..卫..司..] 把任何含 卫/司 的真名误判机关）。
+_ASSIGNEE_HINT_STOP_RE = re.compile(r"[部寺院局省州府县营阁监科室库厂仓]")
+# 卫/司 类机关整词（单字留作姓、整词才判机关）。阁/监/院 等仍由上面的单字集兜住。
+_ASSIGNEE_HINT_INSTITUTION_RE = re.compile(
+    r"锦衣卫|府军卫|羽林卫|金吾卫|腾骧卫"
+    r"|布政司|按察司|通政司|都司|市舶司|盐课司"
+)
+
+
+def _is_institution_like_name(name: str) -> bool:
+    """名字是否像机关/地名：含 部/寺/院… 单字，或 锦衣卫/布政司… 整词。"""
+    return bool(_ASSIGNEE_HINT_STOP_RE.search(name) or _ASSIGNEE_HINT_INSTITUTION_RE.search(name))
+
+
+def _extract_assignee_hint(text: str) -> Optional[str]:
+    """从文本（多为大臣回话）里找"建议某人承办"的人名线索。无则 None。
+
+    #397 Step6 R3（agy P0）：greedy 捕获后从尾部剥动作字——旧非贪心 {2,4}? 在动作首字
+    不在 lookahead 时会把动作字吞进名字或丢掉整条线索（如『周延儒监督』→『周延儒监』、
+    『李若琏负责』→ None）。"""
+    for m in _ASSIGNEE_HINT_RE.finditer(text or ""):
+        name = m.group(1).strip()
+        while len(name) > 2 and name[-1] in _ASSIGNEE_VERB_TAIL_CHARS:
+            name = name[:-1]
+        if len(name) >= 2 and not _is_institution_like_name(name):
+            return name
+    return None
+
+
+def _tail_after_assignee_hint(clause: str, assignee: str) -> str:
+    """返回建议式 hint 命中的 assignee 后半段；找不到时回落到普通子串切分。"""
+    for m in _ASSIGNEE_HINT_RE.finditer(clause or ""):
+        name = m.group(1).strip()
+        while len(name) > 2 and name[-1] in _ASSIGNEE_VERB_TAIL_CHARS:
+            name = name[:-1]
+        if name == assignee:
+            return clause[m.start(1) + len(name):].lstrip()
+    idx = (clause or "").find(assignee)
+    if idx == -1:
+        return ""
+    return clause[idx + len(assignee):].lstrip()
+
+
+def _extract_assignee_action(clause: str, assignee: str) -> str:
+    """从承办人建议式分句里抽出 assignee 之后的动作/职责词（material action word）。
+
+    #397 Step6 R4（Codex P1）：assignee-hint 分句只验人名在正文里不够——分句带的
+    具体动作/职责词（协办/监督/处理/负责…）也须在正文里，否则合法 LLM 输出会用
+    泛化动词（如『承办』）替换掉它、静默吞掉大臣的实质补充。无动作词（分句止于人名）
+    时返回空串，退化为只验人名。"""
+    tail = _tail_after_assignee_hint(clause, assignee)
+    m = _ASSIGNEE_ACTION_RUN_RE.match(tail)
+    return m.group(0) if m else ""
+
+
+# 皇帝祈使式指名（着/令/命/敕 X …）：从御旨/最终 content 抽承办人。与大臣建议式分开：
+# 祈使式常带机关名（着户部…）须过机关滤；后跟副词时（着即办/着速理）排除——加副词起头守门。
+# #401 R1（CodeRabbit major codex P2）：御旨常以『着X』指名，LLM 却偶发把承办人字段留空
+# 或漂移到默认召对大臣——此函数从皇帝显式旨意找回承办人，供 _choose_assignee 校验。
+_ASSIGNEE_IMPERATIVE_RE = re.compile(
+    r"(?<![\u4e00-\u9fa5·])(?:着|令|命|敕)\s*([\u4e00-\u9fa5·]{2,4})"
+    r"(?=[，,。.；;！!？?、\s]|暗|密|调|督|拟|领|查|办|为|任|去|往|主|核|理|统|提|巡|镇|守|征|讨|驻|屯|管|行|前|担|监|协|处|负|$)"
+)
+_ASSIGN_NAME_HEAD_ADVERB_RE = re.compile(r"^[即速快立妥当应须且便赶]")
+
+
+def _extract_imperative_assignee(text: str) -> Optional[str]:
+    """从祈使式（着/令/命/敕 X …）里抽承办人。无则 None。"""
+    for m in _ASSIGNEE_IMPERATIVE_RE.finditer(text or ""):
+        name = m.group(1).strip()
+        while len(name) > 2 and name[-1] in _ASSIGNEE_VERB_TAIL_CHARS:
+            name = name[:-1]
+        if (len(name) >= 2
+                and not _ASSIGN_NAME_HEAD_ADVERB_RE.match(name)
+                and not _is_institution_like_name(name)):
+            return name
+    return None
+
+
+def _choose_assignee(
+    assignee_llm: str,
+    player_command: str,
+    minister_reply: str,
+    content: str,
+    default_assignee: str,
+) -> str:
+    """选定承办人：LLM 字段经校验才采信，否则退回经校验线索，最后才默认召对大臣。
+
+    #401 R1（CodeRabbit major）：旧 `assignee = _assignee_llm or _assignee_hint or default`
+    盲信任何非空 LLM 字段——正文留李若琏、字段却填王在晋时即漂移。改为：线索取自皇帝
+    显式旨意（祈使式）+ 大臣回话（建议式）+ 最终正文；LLM 字段仅当与某条线索一致、或确实
+    出现在最终正文里才采信；否则用第一条经校验线索；无线索才退回默认。"""
+    hints: List[str] = []
+    seen: set = set()
+    for h in (
+        _extract_imperative_assignee(player_command),
+        _extract_assignee_hint(minister_reply),
+        _extract_assignee_hint(content),
+        _extract_imperative_assignee(content),
+    ):
+        if h and h not in seen:
+            seen.add(h)
+            hints.append(h)
+    llm = (assignee_llm or "").strip()
+    if hints:
+        # 多条线索冲突时，按来源优先级取第一条（御旨祈使 > 大臣建议 > 正文）。
+        # 不能因为坏 LLM 字段出现在兜底合并后的正文里，就覆盖更权威的显式线索。
+        if llm and llm == hints[0]:
+            return llm
+        return hints[0]
+    if llm and len(llm) >= 2 and llm in (content or ""):
+        return llm
+    return default_assignee
+
+
+def _merge_secret_content(*parts: str) -> str:
+    """把皇帝显式旨意 / LLM 内容 / 大臣回话合并成一道密令正文，去重保序。
+
+    #397 Step6：兜底合并须同时保住御旨与大臣补充（承办人/要点），任一非空都并入；
+    完全相同的段（去空白后）只留一份，避免 LLM 内容与回话雷同时整段重复。"""
+    merged: List[str] = []
+    seen: set = set()
+    for p in parts:
+        chunk = (p or "").strip()
+        if not chunk:
+            continue
+        key = re.sub(r"\s+", "", chunk)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(chunk)
+    return "\n".join(merged)
+
+
 def _extract_secret_order(
     player_command: str,
     minister_reply: str,
@@ -1260,9 +1523,28 @@ def _extract_secret_order(
     except Exception as exc:  # 提取失败不阻断：退回默认（trace 已在咽喉记下，含 error）
         _log(f"密令提取失败：{exc}")
     obj = _loads_lenient(raw) or {}
-    content = str(obj.get("内容") or "").strip() or (minister_reply or "").strip() or player_command
+    _content_llm = str(obj.get("内容") or "").strip()
+    _assignee_llm = str(obj.get("承办人") or "").strip()
+    # 御旨守门 + 大臣补充守门：两者都过才直取 LLM 正文；任一不过走兜底合并。
+    _emperor_ok = bool(_content_llm) and _content_reflects_emperor_intent(_content_llm, player_command)
+    # 大臣补充守门：不仅看承办人，还看大臣回话的【所有】实质分句（承办人/具体做法/步骤等）。
+    # 旧码只查承办人线索在不在正文 → 大臣补的非承办人要点（如「封存兵部辽饷册」「密访关宁诸将」）
+    # 被合法 LLM 输出静默吞掉（#397 Step6 R3 Codex P1）。改为逐条核验所有 material 分句。
+    _supplement_ok = _content_reflects_minister_supplements(_content_llm, minister_reply)
+    if _emperor_ok and _supplement_ok:
+        content = _content_llm
+    else:
+        # 兜底（#397 Step5/Step6）：御旨为主，并入 LLM 内容与大臣回话——
+        # 御旨绝不丢、大臣补充的承办人/要点也不被合法 LLM 输出吞掉。旧码只在内容为空时
+        # 兜底，且 candidate=_content_llm 时不再并入回话 → 大臣补充仍会丢（Step6 修复）。
+        content = _merge_secret_content(player_command, _content_llm, minister_reply)
     title = str(obj.get("标题") or "").strip()[:20] or (player_command or content)[:14]
-    assignee = str(obj.get("承办人") or "").strip() or default_assignee
+    # 承办人：LLM 字段经校验才采信（防漂移），否则退回经校验线索（御旨祈使 / 大臣建议 /
+    # 最终正文），最后才默认召对大臣（#401 R1 CodeRabbit major：旧 `or` 链盲信任何非空
+    # LLM 字段，正文留李若琏、字段填王在晋时即漂移）。
+    assignee = _choose_assignee(
+        _assignee_llm, player_command, minister_reply, content, default_assignee
+    )
     try:
         deadline = max(0, min(int(obj.get("期限月数") or 0), 36))
     except (TypeError, ValueError):
@@ -1278,7 +1560,9 @@ def resolve_minister_actions(
 ) -> Dict[str, Any]:
     """玩家上一句带拟旨/密令前缀时入档。
     - 拟旨：大臣回话原文即圣旨草稿（单一文本字段，够用）。
-    - 密令：大臣回话原文即密令文本；标题/承办人走轻量兜底，零额外 LLM。
+    - 密令（#397）：经 _extract_secret_order 合并皇帝显式旨意 + 大臣回话，由配置 runner
+      润色成完整密令正文（御旨不丢、并入大臣补的承办人/要点）；helper 不抛错，提取失败
+      时兜底仍保留御旨与回话两条文本。
     返回 {decree_text, secret_order}。"""
     out: Dict[str, Any] = {"decree_text": None, "secret_order": None}
     reply = (minister_reply or "").strip()
@@ -1289,15 +1573,13 @@ def resolve_minister_actions(
 
     secret_intent = _matched_prefix(player_message, _SECRET_PREFIXES)
     if secret_intent is not None and (reply or secret_intent):
-        content = reply or secret_intent
-        title_src = secret_intent or content
-        out["secret_order"] = {
-            "title": title_src[:20],
-            "content": content,
-            "assignee": default_assignee,
-            "deadline_months": 0,
-            "tags": [],
-        }
+        # #397：显式『密令如下：<X>』的密令正文须留住御旨 X——旧码取 reply 当正文，
+        # 大臣只领命时正文落成领命语、御旨只活在被截断的标题。改为合并皇帝显式旨意 +
+        # 大臣回话，交 _extract_secret_order 让 LLM 润成一道完整密令（御旨为主、并入
+        # 大臣补的承办人/要点）；提取失败时该 helper 已兜底（不阻断、不丢御旨）。
+        out["secret_order"] = _extract_secret_order(
+            secret_intent, reply, default_assignee, llm_config
+        )
 
     return out
 

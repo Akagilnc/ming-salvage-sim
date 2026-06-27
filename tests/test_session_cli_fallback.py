@@ -406,23 +406,28 @@ def test_runtime_cli_channel_without_env_registers_directive(game, monkeypatch):
     assert row["status"] == "pending"
 
 
-def test_runtime_cli_secret_prefix_uses_zero_llm_without_env(game, monkeypatch):
-    """runtime CLI 通道的前缀密令直接取回话文本，不调用任何 runner。"""
+def test_runtime_cli_secret_prefix_merges_via_configured_runner(game, monkeypatch):
+    """#397：runtime CLI 通道的前缀密令经配置 runner(codex) 合并皇帝旨意 + 大臣回话，
+    不再直取回话当正文（旧零 LLM 路径会丢御旨）。"""
     db, state, _ = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     calls = []
+    canned = json.dumps({
+        "标题": "密查辽东军饷",
+        "内容": "查辽东军饷有无侵冒，三月内回奏；着李若琏暗查。",
+        "承办人": "李若琏",
+        "期限月数": 3,
+        "标签": ["辽饷"],
+    }, ensure_ascii=False)
 
     def fake_codex(prompt, model=None, timeout=None):
         calls.append(("codex", model, timeout))
-        raise AssertionError("前缀密令不应调 codex")
-
-    def fake_agy(prompt, timeout=None):
-        calls.append(("agy", timeout))
-        raise AssertionError("前缀密令不应调 agy")
+        return canned, 1
 
     monkeypatch.setattr(cb, "_run_codex", fake_codex)
-    monkeypatch.setattr(cb, "_run_agy", fake_agy)
+    monkeypatch.setattr(cb, "_run_agy", lambda p, timeout=None: (_ for _ in ()).throw(
+        AssertionError("runtime codex 通道不应回落 agy")))
     result = _result()
     result.answer = "臣领密旨，可授李若琏暗查。"
     _session(
@@ -435,21 +440,29 @@ def test_runtime_cli_secret_prefix_uses_zero_llm_without_env(game, monkeypatch):
         result, SimpleNamespace(name="王在晋", office_type="兵部"),
         "密令如下：查辽东军饷有无侵冒，三月内回奏")
 
-    assert calls == []
+    # 经配置 runner 合并润色（不再零 LLM）
+    assert calls == [("codex", "gpt-5.5", 240)]
     row = db.conn.execute(
-        "SELECT title, content, minister_name FROM secret_orders WHERE id=?",
+        "SELECT content, minister_name FROM secret_orders WHERE id=?",
         (result.secret_order_id,),
     ).fetchone()
-    assert row["title"] == "查辽东军饷有无侵冒，三月内回奏"
-    assert row["content"] == "臣领密旨，可授李若琏暗查。"
-    assert row["minister_name"] == "王在晋"
+    assert "查辽东军饷" in row["content"]          # 御旨不丢
+    assert "李若琏" in row["content"]              # 大臣补充保留
+    assert row["minister_name"] == "李若琏"        # 大臣建议的承办人被采纳
 
 
 def test_secret_prefix_creates_order(game, monkeypatch):
-    """玩家『密令如下：』→ 取大臣回话文本建 active 密令，回填 secret_order_id。"""
+    """#397：玩家『密令如下：』→ 合并皇帝旨意 + 大臣回话（LLM 润色）建 active 密令。"""
     db, state, _ = game
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
-    monkeypatch.setattr(cb, "_run_agy", lambda p: (_ for _ in ()).throw(AssertionError("前缀密令不应调 LLM")))
+    canned = json.dumps({
+        "标题": "查辽东军饷有无侵冒",
+        "内容": "查辽东军饷有无侵冒，三月内回奏；可授李若琏暗查。",
+        "承办人": "王在晋",
+        "期限月数": 0,
+        "标签": [],
+    }, ensure_ascii=False)
+    monkeypatch.setattr(cb, "_run_agy", lambda p, timeout=None: (canned, 1))
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     result = _result()
     result.answer = "臣领密旨，可授李若琏暗查。"
@@ -458,12 +471,13 @@ def test_secret_prefix_creates_order(game, monkeypatch):
         "密令如下：查辽东军饷有无侵冒，三月内回奏")
     assert result.secret_order_id
     row = db.conn.execute(
-        "SELECT title, content, minister_name, status FROM secret_orders WHERE id=?",
+        "SELECT content, minister_name, status FROM secret_orders WHERE id=?",
         (result.secret_order_id,),
     ).fetchone()
-    assert row["title"] == "查辽东军饷有无侵冒，三月内回奏"
-    assert row["content"] == "臣领密旨，可授李若琏暗查。"
-    assert row["minister_name"] == "王在晋"
+    assert "查辽东军饷" in row["content"]          # 御旨不丢（#397）
+    assert "李若琏" in row["content"]              # 大臣补充保留
+    # #401 R1：正文/回话皆指李若琏，承办人字段填王在晋属漂移→采信校验后的线索李若琏
+    assert row["minister_name"] == "李若琏"
     assert row["status"] == "active"
 
 
@@ -477,7 +491,15 @@ def test_secret_prefix_upserts_not_duplicates_and_refreshes(game, monkeypatch):
     s = _session(db, state, registry=registry)
     who = "测试承办官F3"
 
-    monkeypatch.setattr(cb, "_run_agy", lambda p: (_ for _ in ()).throw(AssertionError("前缀密令不应调 LLM")))
+    def fake_agy(prompt):
+        if "臣领旨二" in prompt:
+            content = "改查甲；臣领旨二。"
+        else:
+            content = "查甲；臣领旨一。"
+        return (json.dumps({"标题": "查甲", "内容": content, "承办人": who,
+                            "期限月数": 0, "标签": []}, ensure_ascii=False), 1)
+    monkeypatch.setattr(cb, "_run_agy", fake_agy)
+
     r1 = _result(); r1.answer = "臣领旨一。"
     s._cli_backend_fallback_actions(r1, SimpleNamespace(name=who, office_type="兵部"), "密令如下：查甲")
     oid1 = r1.secret_order_id
@@ -491,7 +513,7 @@ def test_secret_prefix_upserts_not_duplicates_and_refreshes(game, monkeypatch):
     ).fetchone()[0]
     assert cnt == 1
     row = db.conn.execute("SELECT content FROM secret_orders WHERE id=?", (oid1,)).fetchone()
-    assert row["content"] == "臣领旨二。"        # 内容真被更新为大臣回话
+    assert row["content"] == "改查甲；臣领旨二。"   # 内容真被更新（合并后正文）
     assert refreshed.count(who) == 2             # 两次都刷新了承办大臣 agent
 
 
