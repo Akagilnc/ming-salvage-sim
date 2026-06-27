@@ -346,7 +346,7 @@ def save_runtime_llm(
     cli_runner: Optional[str] = None,
     cli_model: Optional[str] = None,
     cli_timeout_seconds: Optional[float] = None,
-    reasoning_strength: str = "",
+    reasoning_strength: Optional[str] = None,
 ) -> None:
     """写 data/runtime_llm.json。明文存盘——按用户选择。"""
     os.makedirs(os.path.dirname(RUNTIME_LLM_PATH), exist_ok=True)
@@ -392,7 +392,12 @@ def save_runtime_llm(
             else existing_cli.get("timeout_seconds", "")
         ),
     }
-    strength = normalize_reasoning_strength(reasoning_strength or existing_cli.get("reasoning_strength", ""))
+    if reasoning_strength is None:
+        strength = normalize_reasoning_strength(
+            existing.get("reasoning_strength") or existing_cli.get("reasoning_strength", "")
+        )
+    else:
+        strength = normalize_reasoning_strength(reasoning_strength)
     if strength:
         cli_payload["reasoning_strength"] = strength
     payload = {
