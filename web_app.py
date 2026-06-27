@@ -14,7 +14,9 @@ import os
 import queue
 import random
 import re
+import shutil
 import sys
+import time
 import threading
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional
 
@@ -588,11 +590,8 @@ class WebGame:
     def __init__(self, fresh: bool = False) -> None:
         """实例化 = 真正进入游戏。无 API key 直接抛 LLMUnavailable。
         fresh=True：先清空主 DB（新游戏）再建 session。"""
-        db_path = os.environ.get("MING_SIM_DB", "")
-        # 默认存到用户数据目录（frozen=~/.ming_sim/ming_sim.db；源码=<repo>/data/ming_sim.db）。
-        if not db_path:
-            db_path = user_data_path("ming_sim.db")
-        elif not os.path.isabs(db_path):
+        db_path = _get_main_db_path()
+        if not os.path.isabs(db_path):
             db_path = str(user_data_dir() / db_path)
         base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
         model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
@@ -641,6 +640,12 @@ class WebGame:
             _delete_sqlite_db_files_or_raise(db_path)
         self.session = GameSession(db_path, llm_config, verify_llm=not fresh)
         self._write_gate = threading.Lock()
+        # #396 Gap B: 排队等 gate 的旧召对 worker 计数 + 条件变量。
+        # drain 须等计数归零（所有排队 worker 跑完）再关连接——否则只等当前持锁者，
+        # drain 抢下一轮 acquire 后关 session，排队 worker 永不跑或写 closed DB。
+        self._drain_cond = threading.Condition()
+        self._pending_writes_count = 0
+        self._draining = False
         self.session.begin_turn()
         # 召对记录持久化在 chat_messages 表，启动时恢复进内存缓存。
         self.chat_history: Dict[str, List[Dict[str, str]]] = {
@@ -934,6 +939,30 @@ class WebGame:
             gate = threading.Lock()
             self._write_gate = gate
         return gate
+
+    def _mark_pending_write(self) -> bool:
+        """#396 Gap B: 标记一个即将抢 write_gate 的流式召对 worker。
+        drain 须等所有已标记 worker 完成才关连接——否则排队等 gate 的 worker
+        会被 drain 抢下一轮 acquire 后关连接饿死。"""
+        cond = getattr(self, "_drain_cond", None)
+        if cond is None:
+            return True
+        with cond:
+            if getattr(self, "_draining", False):
+                return False
+            self._pending_writes_count = getattr(self, "_pending_writes_count", 0) + 1
+            return True
+
+    def _complete_pending_write(self) -> None:
+        cond = getattr(self, "_drain_cond", None)
+        if cond is None:
+            return
+        with cond:
+            count = getattr(self, "_pending_writes_count", 0)
+            if count > 0:
+                self._pending_writes_count = count - 1
+            if self._pending_writes_count == 0:
+                cond.notify_all()
 
     def refresh_turn(self) -> None:
         self.session.begin_turn()
@@ -1600,6 +1629,9 @@ class WebGame:
         if not text:
             yield {"type": "error", "message": "问话不能为空。"}
             return
+        if not self._mark_pending_write():
+            yield {"type": "error", "message": "当前会话正在关闭，请回菜单重新进入。"}
+            return
         write_gate = self._runtime_write_gate()
         write_gate.acquire()
         gate_released = False
@@ -1609,6 +1641,7 @@ class WebGame:
             if self._audience_turn_in_flight(minister_name):
                 write_gate.release()
                 gate_released = True
+                self._complete_pending_write()
                 yield {"type": "error", "message": f"{minister_name}上一轮回奏仍在进行，请稍候再问。"}
                 return
             accepted_turn = int(self.state.turn)
@@ -1622,9 +1655,16 @@ class WebGame:
         except Exception:
             # 已建 chat_turn 但 prologue 写途中崩 → 必须失败该轮，否则留下 active 且无大臣回复的
             # 孤儿轮，_audience_turn_in_flight 会永久挡住该大臣（cmr Gate2 F-B）。
-            self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
-            write_gate.release()
-            gate_released = True
+            # R3 self-check: _fail_chat_turn_and_reload 自身可能再抛（DB 已坏）——必须吞掉，
+            # 否则 write_gate 与 _pending_writes_count 泄漏，drain 永久挂起、所有写入被永久挡。
+            try:
+                self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
+            except Exception:
+                pass
+            if not gate_released:
+                write_gate.release()
+                gate_released = True
+            self._complete_pending_write()
             raise
 
         ev_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
@@ -1639,7 +1679,12 @@ class WebGame:
                     minister_name, text, chat_turn_id, before_snapshot, accepted_turn, emit_delta)
                 ev_queue.put({"type": "done", "payload": payload})
             except Exception as error:  # noqa: BLE001
-                self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
+                # R3 self-check: _fail_chat_turn_and_reload 自身可能再抛（DB 已坏）——必须吞掉，
+                # 否则 error 事件不会被投进 queue、消费者永久挂死（finally 只保 gate/counter 释放）。
+                try:
+                    self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
+                except Exception:
+                    pass
                 if isinstance(error, LLMUnavailable):
                     ev_queue.put({"type": "error", "detail": _llm_error_detail(error)})
                 else:
@@ -1648,6 +1693,7 @@ class WebGame:
                 if not gate_released:
                     write_gate.release()
                     gate_released = True
+                self._complete_pending_write()
 
         thread = threading.Thread(target=worker, daemon=True)
         try:
@@ -1655,10 +1701,15 @@ class WebGame:
         except Exception:
             # worker 没起来 → prologue 已建的 chat_turn 不会有 worker 去失败它，须就地善后，
             # 否则同样留下孤儿轮永久挡该大臣（cmr Gate2 F-B）。
-            self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
+            # R3 self-check: 同 prologue except——_fail_chat_turn_and_reload 自身再抛时也须释放锁与计数。
+            try:
+                self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
+            except Exception:
+                pass
             if not gate_released:
                 write_gate.release()
                 gate_released = True
+            self._complete_pending_write()
             raise
         while True:
             item = ev_queue.get()
@@ -1733,6 +1784,160 @@ def _serialized_web_write(game):
         gate.release()
 
 
+def _active_db_path_file() -> str:
+    """主库路径的真源文件（#396 new_game 切换主库路径用）。"""
+    return user_data_path("active_db.txt")
+
+
+def _read_active_db_path() -> str:
+    active_file = _active_db_path_file()
+    if not os.path.exists(active_file):
+        return ""
+    try:
+        with open(active_file, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
+def _atomic_write_text(path: str, text: str) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp_file = f"{path}.tmp.{os.getpid()}.{threading.get_ident()}"
+    try:
+        with open(tmp_file, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp_file, path)
+    finally:
+        if os.path.exists(tmp_file):
+            try:
+                os.remove(tmp_file)
+            except Exception:
+                pass
+
+
+def _write_active_db_path(db_path: str) -> None:
+    _atomic_write_text(_active_db_path_file(), db_path)
+
+
+def _snapshot_main_db_path_config() -> tuple[bool, str, bool, str]:
+    active_file = _active_db_path_file()
+    active_exists = os.path.exists(active_file)
+    active_value = ""
+    if active_exists:
+        try:
+            with open(active_file, "r", encoding="utf-8") as f:
+                active_value = f.read()
+        except Exception:
+            active_value = ""
+    return (
+        "MING_SIM_DB" in os.environ,
+        os.environ.get("MING_SIM_DB", ""),
+        active_exists,
+        active_value,
+    )
+
+
+def _restore_main_db_path_config(snapshot: tuple[bool, str, bool, str]) -> None:
+    env_exists, env_value, active_exists, active_value = snapshot
+    if env_exists:
+        os.environ["MING_SIM_DB"] = env_value
+    else:
+        os.environ.pop("MING_SIM_DB", None)
+    active_file = _active_db_path_file()
+    if active_exists:
+        _atomic_write_text(active_file, active_value)
+    elif os.path.exists(active_file):
+        try:
+            os.remove(active_file)
+        except Exception:
+            fallback_path = env_value if env_exists and env_value else user_data_path("ming_sim.db")
+            try:
+                _atomic_write_text(active_file, fallback_path)
+            except Exception:
+                pass
+
+
+def _set_main_db_path(db_path: str) -> None:
+    os.environ["MING_SIM_DB"] = db_path
+    _write_active_db_path(db_path)
+
+
+def _get_main_db_path() -> str:
+    """解析当前主库路径：active_db.txt > env > 默认 ming_sim.db。
+
+    #396：new_game 不删旧库文件（旧后台 worker 仍写，删了会触发 SQLite readonly database），
+    而是把主库路径切到新文件，旧连接排空关闭后旧库归档为存档。active_db.txt 持久化该切换，
+    使重启后仍能加载新库。"""
+    active_path = _read_active_db_path()
+    if active_path:
+        return active_path
+    db_path = os.environ.get("MING_SIM_DB", "")
+    if db_path:
+        return db_path
+    return user_data_path("ming_sim.db")
+
+
+def _drain_and_close_session(game, archive_db: bool = False) -> None:
+    """等在途后台写入（召对 worker / 结算 worker）排空 write_gate 后再关连接。
+
+    #396：菜单生命周期端点（exit_to_menu / new_game / shutdown）不再在 write_gate 被
+    持时直接 session.close()——否则后台 worker 崩在 closed database（#382 连接级并发）。
+    exit_to_menu 立刻清 web_game 并返回，连接在后台 daemon 线程延后关（detach）；
+    new_game 先把旧库 park 旁路、再立刻建新局（零等待）；排空后关连接并把旁路库归档为存档；
+    shutdown await 排空后再杀进程。不挂 #382 大设计，仅用现有 write_gate 队列续跑再关。
+    """
+    # #396 Gap B: 先等所有排队等 gate 的旧召对 worker 跑完（counter→0）再抢 gate——
+    # 否则只等当前持锁者，drain 抢下一轮 acquire 后关 session，排队的 worker 永不跑或写 closed DB。
+    cond = getattr(game, "_drain_cond", None)
+    if cond is not None:
+        with cond:
+            setattr(game, "_draining", True)
+            while getattr(game, "_pending_writes_count", 0) > 0:
+                cond.wait()
+    gate = _game_write_gate(game)
+    gate.acquire()  # 阻塞——等最后一个 worker 释放
+    close_failed = False
+    try:
+        session = getattr(game, "session", None)
+        if session is not None:
+            session.close()
+    except Exception:
+        close_failed = True
+    finally:
+        gate.release()
+    if close_failed:
+        return
+    if archive_db:
+        old_db_path = getattr(game, "db_path", "")
+        if old_db_path and os.path.exists(old_db_path):
+            saves_dir = user_data_path("saves")
+            os.makedirs(saves_dir, exist_ok=True)
+            target = os.path.join(saves_dir, f"drained_{time.time_ns()}.db")
+            moved = False
+            try:
+                shutil.move(old_db_path, target)
+                moved = True
+            except Exception:
+                pass
+            if moved:
+                wal_path = old_db_path + "-wal"
+                if os.path.exists(wal_path):
+                    try:
+                        shutil.move(wal_path, target + "-wal")
+                    except Exception:
+                        try:
+                            shutil.move(target, old_db_path)
+                        except Exception:
+                            pass
+                        return
+                shm_path = old_db_path + "-shm"
+                if os.path.exists(shm_path):
+                    try:
+                        shutil.move(shm_path, target + "-shm")
+                    except Exception:
+                        pass
+
+
 web_game: Optional[WebGame] = None  # 懒加载：菜单页点「新游戏/继续/加载存档」才实例化
 app = FastAPI(title="Ming Salvage MVP Web")
 
@@ -1782,7 +1987,7 @@ def _parse_save_name(name: str) -> Dict[str, Any]:
 
 
 def _main_db_campaign_id() -> str:
-    db_path = os.environ.get("MING_SIM_DB", "") or user_data_path("ming_sim.db")
+    db_path = _get_main_db_path()
     if not os.path.isabs(db_path):
         db_path = str(user_data_dir() / db_path)
     if not os.path.isfile(db_path):
@@ -1859,7 +2064,7 @@ def _scan_campaigns() -> List[Dict[str, Any]]:
 
 def _has_main_db() -> bool:
     """主 DB 文件是否存在 → 决定「继续」按钮可不可点。"""
-    db_path = os.environ.get("MING_SIM_DB", "") or user_data_path("ming_sim.db")
+    db_path = _get_main_db_path()
     if not os.path.isabs(db_path):
         db_path = str(user_data_dir() / db_path)
     return os.path.isfile(db_path)
@@ -1918,18 +2123,43 @@ async def api_menu_status() -> Dict[str, Any]:
 
 @app.post("/api/menu/new_game")
 async def api_menu_new_game() -> Dict[str, Any]:
-    """开始新游戏：清主 DB → 新建 WebGame。"""
+    """开始新游戏：清主 DB → 新建 WebGame。
+
+    #396：与 exit_to_menu 同构——界面立刻退（web_game=None + 构建新局），
+    旧 session 的后台召对队列在 daemon 线程里续跑写入、排空 write_gate 后再关连接（detach）。
+    先把旧库 park 旁路再 fresh=True 建新库——不在旧 worker 仍写旧连接时 os.remove 底层文件；
+    排空后关旧连接并把旁路库归档为存档，玩家可再次进入看到迟到的后台回奏；
+    #382 通用并发模型（Windows file-lock 等）不在本轮 scope。"""
     global web_game
-    if web_game is not None:
-        try:
-            web_game.session.close()
-        except Exception:
-            pass
-        web_game = None
+    old_game = web_game
+    # #396 Step5 R4: 无论 web_game 是否为 None（退菜单后 / 服务端首次 new_game），
+    # fresh=True 前都必须切换主库路径到新文件——否则 WebGame 会解析到旧配置库（env /
+    # active_db.txt）并在 fresh=True 时删/覆盖旧库，而旧 detach worker 可能仍写旧库。
+    # #396: 不能在旧后台 worker 仍写旧库时删/重命名旧库文件（SQLite 会报 readonly database）。
+    # 改为把主库路径切换到新文件，旧 worker 安全续写旧库；排空关连接后旧库归档为存档。
+    snapshot = _snapshot_main_db_path_config()
+    new_db_path = user_data_path(f"ming_sim_{time.time_ns()}.db")
     try:
-        web_game = WebGame(fresh=True)
+        # 同步覆写 env + active_db.txt → 新局落新路径，重启也继续新路径。
+        _set_main_db_path(new_db_path)
+        web_game = None
+        new_game = WebGame(fresh=True)
     except LLMUnavailable as exc:
+        _restore_main_db_path_config(snapshot)
+        web_game = old_game
         raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
+    except Exception:
+        _restore_main_db_path_config(snapshot)
+        web_game = old_game
+        raise
+    web_game = new_game
+    if old_game is not None:
+        # detach：新局已确认可用后，才退休旧连接 + 归档旧库（#396）。
+        threading.Thread(
+            target=_drain_and_close_session,
+            args=(old_game, True),
+            daemon=True,
+        ).start()
     return steam_events.with_events(
         {"state": web_game.state_payload()},
         [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
@@ -1977,30 +2207,34 @@ async def api_menu_delete_save(name: str) -> Dict[str, Any]:
 
 @app.post("/api/menu/exit_to_menu")
 async def api_menu_exit() -> Dict[str, Any]:
-    """退回菜单：关 session 但不删 DB。"""
+    """退回菜单：关 session 但不删 DB。
+
+    #396：界面立刻退（web_game=None + 响应返回），后台召对 worker 继续跑完、写进档；
+    session.close() 推迟到 write_gate 排空后再执行（detach），不在 worker 写时关。"""
     global web_game
     if web_game is not None:
-        try:
-            web_game.session.close()
-        except Exception:
-            pass
-        web_game = None
+        old_game = web_game
+        web_game = None  # 界面立刻退
+        # detach：等 write_gate 排空后再关连接（#396）
+        threading.Thread(target=_drain_and_close_session, args=(old_game,), daemon=True).start()
     return {"ok": True}
 
 
 @app.post("/api/menu/shutdown")
 async def api_menu_shutdown() -> Dict[str, Any]:
-    """退出整个游戏：关 session + 终止服务进程。前端收响应后自行关页面。"""
+    """退出整个游戏：关 session + 终止服务进程。前端收响应后自行关页面。
+
+    #396：关进程前等队列把最后一句写完（owner decision：可能等一两秒，可接受），
+    不在 worker 写时关连接。"""
     import os as _os
     import signal as _signal
     import threading as _threading
     global web_game
     if web_game is not None:
-        try:
-            web_game.session.close()
-        except Exception:
-            pass
+        old_game = web_game
         web_game = None
+        # 关进程前等队列排空（#396 owner decision）
+        await asyncio.get_running_loop().run_in_executor(None, _drain_and_close_session, old_game)
     # 先返回响应，再异步终止进程。SIGTERM 在 *nix 走优雅退出；
     # Windows 无完整 SIGTERM 语义（pywebview 主线程也不收信号），直接 os._exit 兜底。
     def _kill_later() -> None:
