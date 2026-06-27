@@ -661,6 +661,22 @@ def test_codex_streaming_runner_degrades_to_oneshot_final(monkeypatch):
     assert "请写邸报" in captured["input"]
 
 
+def test_clichat_codex_response_stream_passes_reasoning_strength(monkeypatch):
+    seen = {}
+
+    def fake_chunks(prompt, *, model=None, timeout=None, reasoning_strength=None):
+        seen["reasoning_strength"] = reasoning_strength
+        yield "邸报"
+
+    monkeypatch.setattr(cb, "_iter_codex_stream_chunks", fake_chunks)
+    chat = cb.CliChat(id="gpt-test", backend="codex", reasoning_strength="low")
+
+    chunks = list(chat.response_stream([SimpleNamespace(role="user", content="请写邸报")]))
+
+    assert [chunk.content for chunk in chunks] == ["邸报"]
+    assert seen["reasoning_strength"] == "low"
+
+
 def test_api_backend_streaming_emits_real_token_deltas(monkeypatch):
     """API/hermes 路真实行为（#343 裁决）：支持 token-delta 的后端（hermes / OpenAI 兼容，
     `agents.run_agent_stream_text` 的 content-delta 循环）真增量出现——多个正文片段逐块经

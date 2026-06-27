@@ -1758,6 +1758,7 @@ class CliChat(OpenAIChat):
                 prompt,
                 model=str(getattr(self, "id", "") or ""),
                 timeout=getattr(self, "timeout", None),
+                reasoning_strength=str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None,
             ):
                 yield ModelResponse(role="assistant", content=delta)
             return
