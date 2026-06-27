@@ -12,6 +12,15 @@ const BASE_LLM_RESPONSE = {
   max_tokens: 8000,
   timeout_seconds: 180,
   thinking_level: "",
+  reasoning_strength: "",
+  reasoning_supported: false,
+  reasoning_strengths: [
+    { value: "", label: "默认" },
+    { value: "off", label: "关" },
+    { value: "low", label: "低" },
+    { value: "medium", label: "中" },
+    { value: "high", label: "高" },
+  ],
   advanced_model: "",
   advanced_base_url: "",
   has_advanced_api_key: false,
@@ -28,6 +37,7 @@ const BASE_LLM_RESPONSE = {
     max_tokens: 8000,
     timeout_seconds: 180,
     thinking_level: "",
+    reasoning_strength: "",
     advanced_model: "",
     advanced_base_url: "",
     has_advanced_api_key: false,
@@ -75,7 +85,7 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
 
     const text = document.body.textContent ?? "";
     expect(text).toContain("Base URL");
-    expect(text).toContain("Thinking Level");
+    expect(text).toContain("推理强度");
     expect(text).not.toContain("CLI Runner");
     expect(text).not.toContain("CLI 超时");
     cleanup();
@@ -100,7 +110,6 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     expect(text).toContain("CLI Runner");
     expect(text).toContain("CLI 超时");
     expect(text).not.toContain("Base URL");
-    expect(text).not.toContain("Thinking Level");
     cleanup();
   });
 

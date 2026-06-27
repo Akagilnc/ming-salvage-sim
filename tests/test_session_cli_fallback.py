@@ -421,7 +421,7 @@ def test_runtime_cli_secret_prefix_merges_via_configured_runner(game, monkeypatc
         "标签": ["辽饷"],
     }, ensure_ascii=False)
 
-    def fake_codex(prompt, model=None, timeout=None):
+    def fake_codex(prompt, model=None, timeout=None, **kwargs):
         calls.append(("codex", model, timeout))
         return canned, 1
 
@@ -579,7 +579,7 @@ def test_runtime_cli_conversation_update_uses_configured_runner_without_env(game
         "期限月数": 0,
     }, ensure_ascii=False)
 
-    def fake_codex(prompt, model=None, timeout=None):
+    def fake_codex(prompt, model=None, timeout=None, **kwargs):
         calls.append(("codex", model, timeout))
         return canned, 1
 
