@@ -38,7 +38,7 @@ _API_RUNTIME_FIELDS = (
     "advanced_api_key",
     "advanced_thinking_level",
 )
-_CLI_RUNTIME_FIELDS = ("runner", "model", "timeout_seconds")
+_CLI_RUNTIME_FIELDS = ("runner", "model", "timeout_seconds", "reasoning_strength")
 
 # CLI 通道在内存里用这个占位符填 LLMConfig.api_key（脱 key 运行），它绝不是真实 key。
 CLI_BACKEND_PLACEHOLDER = "cli-backend"
@@ -100,7 +100,10 @@ def _api_runtime_slot(data: Dict[str, object]) -> Dict[str, object]:
 
 
 def _cli_runtime_slot(data: Dict[str, object]) -> Dict[str, str]:
-    return {k: _slot_text(data, k) for k in _CLI_RUNTIME_FIELDS}
+    return {
+        k: (normalize_reasoning_strength(data.get(k)) if k == "reasoning_strength" else _slot_text(data, k))
+        for k in _CLI_RUNTIME_FIELDS
+    }
 
 
 def _normalize_runtime_llm(data: Dict[str, object]) -> Dict[str, object]:
@@ -114,7 +117,12 @@ def _normalize_runtime_llm(data: Dict[str, object]) -> Dict[str, object]:
     cli_raw = data.get("cli")
     api = _api_runtime_slot(api_raw if isinstance(api_raw, dict) else data)
     cli = _cli_runtime_slot(cli_raw if isinstance(cli_raw, dict) else {})
-    out = {"channel": channel, "api": api, "cli": cli}
+    out = {
+        "channel": channel,
+        "api": api,
+        "cli": cli,
+        "reasoning_strength": normalize_reasoning_strength(data.get("reasoning_strength")),
+    }
     # Transitional API aliases keep existing callers working while the UI/API
     # slices move to explicit slots. Keep these even when CLI is active.
     out.update(api)
@@ -156,8 +164,34 @@ def supports_openai_reasoning_effort(model: str) -> bool:
     return model_id.startswith(("o1", "o3", "o4", "gpt-5"))
 
 
+REASONING_STRENGTH_CHOICES = (
+    {"value": "", "label": "默认"},
+    {"value": "off", "label": "关"},
+    {"value": "low", "label": "低"},
+    {"value": "medium", "label": "中"},
+    {"value": "high", "label": "高"},
+)
+
+
+def api_supports_reasoning_strength(base_url: str, model: str) -> bool:
+    return (
+        supports_openai_reasoning_effort(model)
+        or is_dashscope_base_url(base_url)
+        or is_minimax_base_url(base_url)
+    ) and not is_deepseek_base_url(base_url)
+
+
+def cli_supports_reasoning_strength(runner: str) -> bool:
+    return str(runner or "").strip().lower() in {"codex", "claude"}
+
+
 def normalize_thinking_level(level: str) -> str:
     return (level or "").strip()
+
+
+def normalize_reasoning_strength(value: object) -> str:
+    strength = str(value or "").strip().lower()
+    return strength if strength in {"off", "low", "medium", "high"} else ""
 
 
 def cli_model_from_env(runner: str, fallback: str = "") -> str:
@@ -212,6 +246,7 @@ def load_llm_config(
         advanced_thinking_level=normalize_thinking_level(
             advanced_thinking_level or os.environ.get("OPENAI_ADVANCED_THINKING_LEVEL", "")
         ),
+        reasoning_strength=normalize_reasoning_strength(os.environ.get("MING_SIM_REASONING_STRENGTH", "")),
         channel="cli" if cli_runner else "api",
         cli_runner=cli_runner or "",
         cli_model=cli_model_from_env(cli_runner or "", model),
@@ -245,6 +280,7 @@ def for_role(cfg: LLMConfig, role: str) -> LLMConfig:
             advanced_base_url=cfg.advanced_base_url,
             advanced_api_key=cfg.advanced_api_key,
             advanced_thinking_level=cfg.advanced_thinking_level,
+            reasoning_strength=cfg.reasoning_strength,
             channel=cfg.channel,
             cli_runner=cfg.cli_runner,
             cli_model=cfg.cli_model,
@@ -310,6 +346,7 @@ def save_runtime_llm(
     cli_runner: Optional[str] = None,
     cli_model: Optional[str] = None,
     cli_timeout_seconds: Optional[float] = None,
+    reasoning_strength: str = "",
 ) -> None:
     """写 data/runtime_llm.json。明文存盘——按用户选择。"""
     os.makedirs(os.path.dirname(RUNTIME_LLM_PATH), exist_ok=True)
@@ -346,18 +383,23 @@ def save_runtime_llm(
             "advanced_thinking_level": normalize_thinking_level(advanced_thinking_level),
         }
     )
+    cli_payload = {
+        "runner": (cli_runner if cli_runner is not None else str(existing_cli.get("runner", ""))).strip(),
+        "model": (cli_model if cli_model is not None else str(existing_cli.get("model", ""))).strip(),
+        "timeout_seconds": (
+            cli_timeout_seconds
+            if cli_timeout_seconds is not None
+            else existing_cli.get("timeout_seconds", "")
+        ),
+    }
+    strength = normalize_reasoning_strength(reasoning_strength or existing_cli.get("reasoning_strength", ""))
+    if strength:
+        cli_payload["reasoning_strength"] = strength
     payload = {
         "channel": active_channel,
+        "reasoning_strength": strength,
         "api": api_payload,
-        "cli": {
-            "runner": (cli_runner if cli_runner is not None else str(existing_cli.get("runner", ""))).strip(),
-            "model": (cli_model if cli_model is not None else str(existing_cli.get("model", ""))).strip(),
-            "timeout_seconds": (
-                cli_timeout_seconds
-                if cli_timeout_seconds is not None
-                else existing_cli.get("timeout_seconds", "")
-            ),
-        },
+        "cli": cli_payload,
     }
     with open(RUNTIME_LLM_PATH, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, ensure_ascii=False, indent=2)
