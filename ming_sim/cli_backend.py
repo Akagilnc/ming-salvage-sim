@@ -1531,6 +1531,22 @@ def _choose_assignee(
     return default_assignee
 
 
+def _strip_audience_context_labels(context: str) -> str:
+    """把召对上下文快照剥成纯皇帝任务文本：去掉「皇帝：/大臣：」角色标签、丢掉大臣行与
+    「【本轮确认】…」短句行。用于上下文合成路径的兜底正文，避免角色标签/确认短句污染密令正文
+    （cmr #354 correctness：旧码把带标签的整段 blob 当御旨并入正文）。"""
+    lines: List[str] = []
+    for raw in (context or "").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("【本轮确认】") or line.startswith("大臣："):
+            continue
+        if line.startswith("皇帝："):
+            line = line[len("皇帝："):].strip()
+        if line:
+            lines.append(line)
+    return "\n".join(lines)
+
+
 def _merge_secret_content(*parts: str) -> str:
     """把皇帝显式旨意 / LLM 内容 / 大臣回话合并成一道密令正文，去重保序。
 
@@ -1583,7 +1599,16 @@ def _extract_secret_order(
     _content_llm = str(obj.get("内容") or "").strip()
     _assignee_llm = str(obj.get("承办人") or "").strip()
     # 御旨守门 + 大臣补充守门：两者都过才直取 LLM 正文；任一不过走兜底合并。
-    _emperor_ok = bool(_content_llm) and _content_reflects_emperor_intent(_content_llm, player_command)
+    # 上下文合成路径（force_default_assignee，#354 短确认从对话取正文）：player_command 是带
+    # 「皇帝：/大臣：」标签的对话快照、不是一道显式御旨——按它逐句核验必然判失败、且把整段标签
+    # blob 并入兜底正文 = 污染密令正文（cmr #354 correctness）。该路径无单一权威御旨可守，跳过
+    # 御旨守门；兜底用剥标签后的纯任务文本，不并入原始 blob。
+    if force_default_assignee:
+        _emperor_ok = True
+        _emperor_fallback = _strip_audience_context_labels(player_command)
+    else:
+        _emperor_ok = bool(_content_llm) and _content_reflects_emperor_intent(_content_llm, player_command)
+        _emperor_fallback = player_command
     # 大臣补充守门：不仅看承办人，还看大臣回话的【所有】实质分句（承办人/具体做法/步骤等）。
     # 旧码只查承办人线索在不在正文 → 大臣补的非承办人要点（如「封存兵部辽饷册」「密访关宁诸将」）
     # 被合法 LLM 输出静默吞掉（#397 Step6 R3 Codex P1）。改为逐条核验所有 material 分句。
@@ -1594,8 +1619,8 @@ def _extract_secret_order(
         # 兜底（#397 Step5/Step6）：御旨为主，并入 LLM 内容与大臣回话——
         # 御旨绝不丢、大臣补充的承办人/要点也不被合法 LLM 输出吞掉。旧码只在内容为空时
         # 兜底，且 candidate=_content_llm 时不再并入回话 → 大臣补充仍会丢（Step6 修复）。
-        content = _merge_secret_content(player_command, _content_llm, minister_reply)
-    title = str(obj.get("标题") or "").strip()[:20] or (player_command or content)[:14]
+        content = _merge_secret_content(_emperor_fallback, _content_llm, minister_reply)
+    title = str(obj.get("标题") or "").strip()[:20] or (content or player_command)[:14]
     # 承办人：LLM 字段经校验才采信（防漂移），否则退回经校验线索（御旨祈使 / 大臣建议 /
     # 最终正文），最后才默认召对大臣（#401 R1 CodeRabbit major：旧 `or` 链盲信任何非空
     # LLM 字段，正文留李若琏、字段填王在晋时即漂移）。
@@ -1651,6 +1676,18 @@ def resolve_minister_actions(
     return out
 
 
+# 纯确认短句的原子片段：密令按钮当轮若【整句】只由这些片段拼成（如「可，照办」=可+照办、
+# 「就按你意思办」=就按+你意思+办），说明本轮没有任务正文，须从前文召对取。锚定全匹配而非子串，
+# 避免「可疑之处彻查」这类含确认字的实质命令被误判成纯确认（cmr #354 correctness：旧 exact-set
+# 漏「可，照办」——issue US3 点名的确认句——而子串匹配又会误吞实质命令）。
+_SECRET_CONFIRM_ATOM_RE = re.compile(
+    r"^(?:"
+    r"可|准|好|是|善|行|同意|照办|照准|准奏|准卿所奏|卿所奏|所奏|如此|便如此|就这么办|这么办|"
+    r"就按|就照|按你意思|照你意思|你意思|依卿|依你|便依|就办|办|吧|奏"
+    r")+$"
+)
+
+
 def _secret_prefix_needs_recent_context(secret_intent: str) -> bool:
     """显式密令按钮后只有确认短句时，从前文召对取任务正文。"""
     text = (secret_intent or "").strip()
@@ -1659,11 +1696,7 @@ def _secret_prefix_needs_recent_context(secret_intent: str) -> bool:
     compact = re.sub(r"[\s，,。.!！?？；;：:、]+", "", text)
     if len(compact) > 12:
         return False
-    if compact in {"可", "准", "好", "同意", "照办", "如此", "便如此"}:
-        return True
-    return any(token in compact for token in (
-        "就按", "就照", "按你意思", "照你意思", "依卿",
-    ))
+    return bool(_SECRET_CONFIRM_ATOM_RE.match(compact))
 
 
 def _fake_completion(text: str, model_id: str) -> ChatCompletion:

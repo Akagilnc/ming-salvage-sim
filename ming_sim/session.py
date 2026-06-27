@@ -212,17 +212,29 @@ def _recent_audience_context_for_secret_order(
     return "\n".join(lines[-limit:])
 
 
-def _appointment_intent_is_current_office_noop(db: Any, name: str, office: str) -> bool:
-    """任命目标已在该职时是背景复述，不生成待确认任免动作。"""
+def _appointment_intent_is_current_office_noop(
+    db: Any, name: str, office: str, content: Any = None,
+) -> bool:
+    """任命目标已在该职时是背景复述，不生成待确认任免动作。
+
+    姓名按 canonical 口径归一（与真正落任命 apply_office_appointment 同口径）：LLM 抽到的可能是
+    别名（『韩阁老』而非『韩爌』），精确名查不到行会漏判成假任免（cmr #354 correctness）。先
+    _find_existing_minister 归一到在册原始名，再查当前 office。"""
     conn = getattr(db, "conn", None)
     clean_name = str(name or "").strip()
     desired = normalize_office(str(office or ""))
     if conn is None or not clean_name or not desired:
         return False
+    canonical = None
+    if content is not None:
+        try:
+            canonical = _find_existing_minister(content, clean_name, db)
+        except Exception:
+            canonical = None
     try:
         row = conn.execute(
             "SELECT status, office FROM characters WHERE name = ?",
-            (clean_name,),
+            (canonical or clean_name,),
         ).fetchone()
     except Exception:
         return False
@@ -1155,7 +1167,8 @@ class GameSession:
         if (
             appt["appoint_action"] == "任命"
             and _appointment_intent_is_current_office_noop(
-                getattr(self, "db", None), appt.get("name", ""), appt.get("office", ""))
+                getattr(self, "db", None), appt.get("name", ""), appt.get("office", ""),
+                content=getattr(self, "content", None))
         ):
             appt = {"appoint_action": "无"}
         if appt["appoint_action"] in ("任命", "罢免") and appt["name"]:
