@@ -52,8 +52,7 @@ _AGY_BIN = os.environ.get("MING_SIM_AGY_BIN", "agy")
 _CODEX_BIN = os.environ.get("MING_SIM_CODEX_BIN", "codex")
 _CODEX_MODEL = os.environ.get("MING_SIM_CODEX_MODEL", CODEX_DEFAULT_MODEL)
 # claude -p 独立进程后端：opus/sonnet/haiku。纯文本输出无日志壳。
-# 思考预算不在此强加：claude 走自身默认；要限思考由用户自行 export MAX_THINKING_TOKENS
-# （claude -p 继承父进程 env，会自动读到），后端不替用户决定。
+# 未配置 reasoning_strength 时继承用户环境；配置后显式设置 Claude thinking 预算。
 _CLAUDE_BIN = os.environ.get("MING_SIM_CLAUDE_BIN", "claude")
 _CLAUDE_MODEL = os.environ.get("MING_SIM_CLAUDE_MODEL", CLAUDE_DEFAULT_MODEL)
 # 纯角色扮演/抽取任务不需要工具；禁掉防 claude 绕去调工具兜圈子。
@@ -67,6 +66,7 @@ _CODEX_REASONING_BY_STRENGTH = {
     "high": "xhigh",
 }
 _CLAUDE_THINKING_TOKENS_BY_STRENGTH = {
+    "off": "2000",
     "low": "2000",
     "medium": "10000",
     "high": "32000",
@@ -573,7 +573,7 @@ def _run_claude(
     """调 claude -p（独立进程，stdin pipe）。返回 (纯文本, 1)。
     与 codex 不同：claude -p 干净最终回话在 **stdout**，日志/诊断在 stderr，
     故只取 stdout、不合并 stderr（合并会把日志混进角色回话）。
-    思考预算不强加：继承父进程 env，用户可自行 export MAX_THINKING_TOKENS。"""
+    未配置 reasoning_strength 时继承父进程 env；配置后显式设置 MAX_THINKING_TOKENS。"""
     cmd = [_resolve_cli_bin("claude", _CLAUDE_BIN), "-p", "--model", (model or _CLAUDE_MODEL),
            "--output-format", "text", "--disallowed-tools", *_CLAUDE_DISALLOWED]
     env = None
@@ -681,6 +681,30 @@ def _run_backend_for_config(prompt: str, llm_config: Any = None, tag: str = "") 
             "prompt_chars": len(prompt), "resp_chars": len(text),
             "error": error, "prompt": prompt, "response": text,
         })
+
+
+def _run_api_for_config(prompt: str, llm_config: Any = None, tag: str = "") -> Tuple[str, int]:
+    """Run a small extraction prompt through the configured API model."""
+    from agno.agent import Agent
+    from ming_sim.llm_model import create_chat_model, extract_agent_text
+
+    agent = Agent(
+        name=f"API抽取器-{tag or 'generic'}",
+        id=f"api-extractor-{tag or 'generic'}",
+        session_id=f"api-extractor-{tag or 'generic'}",
+        model=create_chat_model(
+            llm_config, temperature=0, max_tokens=1200, force_json_output=True,
+        ),
+        instructions=["只输出符合要求的 JSON/文本，不要 markdown 代码围栏。"],
+        markdown=False,
+    )
+    return extract_agent_text(agent.run(prompt)), 1
+
+
+def _run_json_extractor_for_config(prompt: str, llm_config: Any = None, tag: str = "") -> Tuple[str, int]:
+    if _llm_channel(llm_config) == "api":
+        return _run_api_for_config(prompt, llm_config, tag=tag)
+    return _run_backend_for_config(prompt, llm_config, tag=tag)
 
 
 def _backend_label(llm_config: Any = None) -> str:
@@ -1562,13 +1586,18 @@ def _split_audience_context(context: str) -> Tuple[str, str]:
     for i, (kind, text) in enumerate(entries):
         if kind == "e" and not _secret_context_task_like(text):
             boundary = i
-    start = next(
-        (i for i, (kind, _text) in enumerate(entries) if i > boundary and kind == "e"),
-        None,
-    )
-    if start is None:
-        last_emperor = max((i for i, (kind, _) in enumerate(entries) if kind == "e"), default=None)
-        start = last_emperor
+    emperor_indices = [i for i, (kind, _text) in enumerate(entries) if i > boundary and kind == "e"]
+    if not emperor_indices:
+        emperor_indices = [i for i, (kind, _text) in enumerate(entries) if kind == "e"]
+    start = emperor_indices[-1] if emperor_indices else None
+    selected_emperor = entries[start][1] if start is not None else ""
+    if start is not None:
+        for i in reversed(emperor_indices[:-1]):
+            prior_text = entries[i][1]
+            if not _secret_context_tasks_related(prior_text, selected_emperor):
+                break
+            start = i
+            selected_emperor = prior_text + "\n" + selected_emperor
     span = entries[start:] if start is not None else entries
     emperor_lines = [text for kind, text in span if kind == "e"]
     minister_material = [text for kind, text in span if kind == "m"]
@@ -1582,6 +1611,26 @@ def _secret_context_task_like(text: str) -> bool:
     if re.search(r"[?？]$", compact):
         return False
     return bool(re.search(r"(命|令|着|遣|派|督办|查|暗查|密查|护|封存|截留|赈|再令|另令|须|务必|回奏|月内|日内)", compact))
+
+
+def _secret_context_tasks_related(prior: str, later: str) -> bool:
+    later_compact = re.sub(r"\s+", "", later or "")
+    if re.search(r"^(再令|另令|又令|并令|仍令|复令)", later_compact):
+        return True
+    if re.search(r"(月内|日内|回奏|结案|期限)", later_compact) and not re.search(
+        r"(命|令|着|遣|派|督办|暗查|密查|查|护|封存|截留|赈)", later_compact
+    ):
+        return True
+    return bool(_secret_context_keygrams(prior) & _secret_context_keygrams(later))
+
+
+def _secret_context_keygrams(text: str) -> set:
+    compact = re.sub(
+        r"(再令|另令|又令|并令|仍令|复令|命|令|着|遣|派|督办|暗查|密查|查|护|须|务必|回奏|月内|日内|臣|领命|遵旨)",
+        "",
+        re.sub(r"[^\u4e00-\u9fff]", "", text or ""),
+    )
+    return {compact[i:i + 2] for i in range(max(0, len(compact) - 1))}
 
 
 def _secret_confirmation_material(text: str) -> str:
@@ -1652,7 +1701,7 @@ def _extract_secret_order(
     )
     raw = ""
     try:
-        raw, _attempts = _run_backend_for_config(prompt, llm_config, tag="secret_extract")
+        raw, _attempts = _run_json_extractor_for_config(prompt, llm_config, tag="secret_extract")
     except Exception as exc:  # 提取失败不阻断：退回默认（trace 已在咽喉记下，含 error）
         _log(f"密令提取失败：{exc}")
     obj = _loads_lenient(raw) or {}
