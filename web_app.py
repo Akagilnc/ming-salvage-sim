@@ -1850,7 +1850,11 @@ def _restore_main_db_path_config(snapshot: tuple[bool, str, bool, str]) -> None:
         try:
             os.remove(active_file)
         except Exception:
-            pass
+            fallback_path = env_value if env_exists and env_value else user_data_path("ming_sim.db")
+            try:
+                _atomic_write_text(active_file, fallback_path)
+            except Exception:
+                pass
 
 
 def _set_main_db_path(db_path: str) -> None:
@@ -1916,13 +1920,22 @@ def _drain_and_close_session(game, archive_db: bool = False) -> None:
             except Exception:
                 pass
             if moved:
-                for suffix in ("-wal", "-shm"):
-                    p = old_db_path + suffix
-                    if os.path.exists(p):
+                wal_path = old_db_path + "-wal"
+                if os.path.exists(wal_path):
+                    try:
+                        shutil.move(wal_path, target + "-wal")
+                    except Exception:
                         try:
-                            shutil.move(p, target + suffix)
+                            shutil.move(target, old_db_path)
                         except Exception:
                             pass
+                        return
+                shm_path = old_db_path + "-shm"
+                if os.path.exists(shm_path):
+                    try:
+                        shutil.move(shm_path, target + "-shm")
+                    except Exception:
+                        pass
 
 
 web_game: Optional[WebGame] = None  # 懒加载：菜单页点「新游戏/继续/加载存档」才实例化
