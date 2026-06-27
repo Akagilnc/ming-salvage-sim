@@ -1600,12 +1600,13 @@ def _extract_secret_order(
     _assignee_llm = str(obj.get("承办人") or "").strip()
     # 御旨守门 + 大臣补充守门：两者都过才直取 LLM 正文；任一不过走兜底合并。
     # 上下文合成路径（force_default_assignee，#354 短确认从对话取正文）：player_command 是带
-    # 「皇帝：/大臣：」标签的对话快照、不是一道显式御旨——按它逐句核验必然判失败、且把整段标签
-    # blob 并入兜底正文 = 污染密令正文（cmr #354 correctness）。该路径无单一权威御旨可守，跳过
-    # 御旨守门；兜底用剥标签后的纯任务文本，不并入原始 blob。
+    # 「皇帝：/大臣：」标签的对话快照、不是一道显式御旨——按整段 blob 逐句核验必然判失败、且把
+    # 标签 blob 并入兜底正文 = 污染密令正文（cmr #354 correctness）。剥掉角色标签/确认短句得纯任务
+    # 文本，既作御旨守门输入、也作兜底种子：守门仍在（坏 LLM 跑题内容照样兜底回真任务，cmr #354
+    # r2 codex high——不再无条件信 LLM），又不让标签/确认短句污染正文。
     if force_default_assignee:
-        _emperor_ok = True
         _emperor_fallback = _strip_audience_context_labels(player_command)
+        _emperor_ok = bool(_content_llm) and _content_reflects_emperor_intent(_content_llm, _emperor_fallback)
     else:
         _emperor_ok = bool(_content_llm) and _content_reflects_emperor_intent(_content_llm, player_command)
         _emperor_fallback = player_command
