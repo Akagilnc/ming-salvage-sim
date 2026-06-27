@@ -654,6 +654,80 @@ def test_secret_context_path_ignores_prior_task_with_same_assignee(game, monkeyp
     assert "暗查阉党余孽" not in body
 
 
+def test_secret_context_path_ignores_unrelated_prior_task_before_lingqian(game, monkeypatch):
+    """#354 cmr r15: 另遣/并命 是延续标记但不是无条件相关，前一条无关任务仍须排除。"""
+    db, state, _ = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    minister = "魏忠贤"
+    db.append_chat_message(minister, state.turn, "user", "命京营明日加操。")
+    db.append_chat_message(minister, state.turn, "minister", "臣遵旨。")
+    db.append_chat_message(minister, state.turn, "user", "另遣李若琏密查关宁军饷。")
+    db.append_chat_message(minister, state.turn, "minister", "臣领命。")
+
+    def fake_extract(prompt, llm_config=None, tag=""):
+        return (json.dumps({
+            "标题": "密查军饷",
+            "内容": "另遣李若琏密查关宁军饷。",
+            "承办人": minister,
+            "期限月数": 0,
+            "标签": ["关宁", "军饷"],
+        }, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", fake_extract)
+    result = _result()
+    result.answer = "臣领命。"
+
+    _session(db, state, llm_config=SimpleNamespace(channel="cli"))._cli_backend_fallback_actions(
+        result,
+        SimpleNamespace(name=minister, office_type="司礼监"),
+        "密令如下：可，照办",
+    )
+
+    row = db.conn.execute(
+        "SELECT content FROM secret_orders WHERE id=?", (result.secret_order_id,),
+    ).fetchone()
+    body = row["content"]
+    assert "密查关宁军饷" in body
+    assert "京营明日加操" not in body
+
+
+def test_secret_context_path_preserves_confidentiality_constraint_line(game, monkeypatch):
+    """#354 cmr r15: 任务后的保密/不可泄露约束是上一任务补充，不得把任务行切掉。"""
+    db, state, _ = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    minister = "魏忠贤"
+    db.append_chat_message(minister, state.turn, "user", "命李若琏暗查阉党余孽。")
+    db.append_chat_message(minister, state.turn, "minister", "臣领命。")
+    db.append_chat_message(minister, state.turn, "user", "此事机密，不可泄露。")
+    db.append_chat_message(minister, state.turn, "minister", "臣谨记。")
+
+    def fake_extract_drops_task(prompt, llm_config=None, tag=""):
+        return (json.dumps({
+            "标题": "保密约束",
+            "内容": "此事机密，不可泄露。",
+            "承办人": minister,
+            "期限月数": 0,
+            "标签": ["机密"],
+        }, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", fake_extract_drops_task)
+    result = _result()
+    result.answer = "臣领命。"
+
+    _session(db, state, llm_config=SimpleNamespace(channel="cli"))._cli_backend_fallback_actions(
+        result,
+        SimpleNamespace(name=minister, office_type="司礼监"),
+        "密令如下：可，照办",
+    )
+
+    row = db.conn.execute(
+        "SELECT content FROM secret_orders WHERE id=?", (result.secret_order_id,),
+    ).fetchone()
+    body = row["content"]
+    assert "暗查阉党余孽" in body
+    assert "不可泄露" in body
+
+
 def test_secret_context_path_keeps_offtopic_llm_guard(game, monkeypatch):
     """#354 (cmr r2): 上下文合成路径不得无条件信 LLM——若 LLM 内容跑题（写成别的任务），
     御旨守门须照样兜底回前文真任务，不静默采信跑题正文。守门输入用剥标签后的任务文本。"""

@@ -1608,6 +1608,8 @@ def _secret_context_task_like(text: str) -> bool:
     compact = re.sub(r"\s+", "", text or "")
     if not compact:
         return False
+    if _secret_context_constraint_like(compact):
+        return True
     if re.search(r"[?？]$", compact):
         return False
     return bool(re.search(r"(命|令|着|遣|派|督办|查|暗查|密查|护|封存|截留|赈|再令|另令|须|务必|回奏|月内|日内)", compact))
@@ -1615,13 +1617,36 @@ def _secret_context_task_like(text: str) -> bool:
 
 def _secret_context_tasks_related(prior: str, later: str) -> bool:
     later_compact = re.sub(r"\s+", "", later or "")
-    if re.search(r"^(再|另|又|并|仍|复)(令|命|着|遣|派)", later_compact):
+    if _secret_context_constraint_like(later_compact):
         return True
+    if re.search(r"^(再|另|又|并|仍|复)(令|命|着|遣|派)", later_compact):
+        return bool(_secret_context_topic_chars(prior) & _secret_context_topic_chars(later))
     if re.search(r"(月内|日内|回奏|结案|期限)", later_compact) and not re.search(
         r"(命|令|着|遣|派|督办|暗查|密查|查|护|封存|截留|赈)", later_compact
     ):
         return True
     return False
+
+
+def _secret_context_constraint_like(text: str) -> bool:
+    compact = re.sub(r"\s+", "", text or "")
+    return bool(re.search(r"(机密|保密|不可泄露|不得泄露|不得外泄|不可外泄|勿泄|秘而不宣|勿使.*知晓|不得.*知晓)", compact))
+
+
+def _secret_context_topic_chars(text: str) -> set:
+    compact = re.sub(r"[^\u4e00-\u9fff]", "", text or "")
+    compact = re.sub(r"^(再|另|又|并|仍|复)?(令|命|着|遣|派)", "", compact)
+    compact = re.sub(
+        r"^[\u4e00-\u9fff]{2,4}(?=(督办|暗查|密查|查|护|封存|截留|加操|操练|密访|补|拨))",
+        "",
+        compact,
+    )
+    compact = re.sub(
+        r"(此事|机密|保密|不可|不得|泄露|外泄|勿泄|秘而不宣|知晓|再|另|又|并|仍|复|令|命|着|遣|派|督办|暗查|密查|查|护|封存|截留|须|务必|回奏|月内|日内|臣|领命|遵旨|谨记|加操|操练)",
+        "",
+        compact,
+    )
+    return set(compact)
 
 
 def _secret_confirmation_material(text: str) -> str:
