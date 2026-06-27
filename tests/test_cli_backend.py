@@ -185,6 +185,30 @@ def test_secret_prefix_llm_keeps_assignee_field_but_drops_from_content_merges(mo
     assert so["deadline_months"] == 3
 
 
+def test_secret_prefix_llm_keeps_emperor_but_drops_minister_supplements(monkeypatch):
+    """#397 Step6 R3（Codex P1）：LLM 正文合法且完整保留御旨，但丢掉大臣的【非承办人】
+    补充要点（如具体做法/步骤）时，不得静默接受。须兜底合并，保留大臣的实质补充。"""
+    canned = json.dumps({
+        "标题": "密查辽东军饷",
+        "内容": "查辽东军饷有无侵冒，三月内回奏",   # 完整保留御旨，但丢大臣补充
+        "承办人": "",
+        "期限月数": 3,
+        "标签": ["辽饷"],
+    }, ensure_ascii=False)
+    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
+    acts = cb.resolve_minister_actions(
+        "臣领密旨，须先封存兵部辽饷册，再密访关宁诸将。",
+        "密令如下：查辽东军饷有无侵冒，三月内回奏",
+        default_assignee="王在晋",
+    )
+    so = acts["secret_order"]
+    assert so is not None
+    assert "查辽东军饷有无侵冒" in so["content"]      # 御旨不丢
+    assert "三月内回奏" in so["content"]              # 御旨不丢
+    assert "封存兵部辽饷册" in so["content"]          # 大臣补充的要点保留（R3 Codex P1）
+    assert "密访关宁诸将" in so["content"]            # 大臣补充的要点保留（R3 Codex P1）
+
+
 def test_extract_assignee_hint_does_not_corrupt_name_with_trailing_verb():
     """#397 Step6 R2（agy P1）：『可委/可由/请委…』后的人名不得被尾随动作字污染。
     旧贪心 {2,4} 把动作字（调/督/拟…）吞进捕获组、尾部清洗又不收这些字 → 存进
@@ -197,6 +221,23 @@ def test_extract_assignee_hint_does_not_corrupt_name_with_trailing_verb():
     assert cb._extract_assignee_hint("臣领密旨，可授李若琏暗查。") == "李若琏"
     # 句末/标点边界也能正确取整名
     assert cb._extract_assignee_hint("可授李若琏。") == "李若琏"
+
+
+def test_extract_assignee_hint_keeps_cao_surname_characters():
+    """#397 Step6 R3（Codex P2）：_ASSIGNEE_HINT_STOP_RE 不应把『曹』当机关/地名过滤掉
+    真实人名（曹化淳/曹文诏）——曹是常见姓而非机关字。"""
+    assert cb._extract_assignee_hint("臣领密旨，可授曹化淳暗查东厂线索。") == "曹化淳"
+    assert cb._extract_assignee_hint("可委曹文诏征讨流贼。") == "曹文诏"
+
+
+def test_extract_assignee_hint_greedy_strip_handles_all_verb_tails():
+    """#397 Step6 R3（agy P0）：旧非贪心 {2,4}? 在动词首字不在 lookahead 时会把动作字
+    吞进名字或丢掉整条线索。新实现：贪心捕获 + 尾部剥动作字，覆盖所有动词尾。"""
+    assert cb._extract_assignee_hint("可委周延儒监督此事。") == "周延儒"
+    assert cb._extract_assignee_hint("可由周延儒协办此事。") == "周延儒"
+    assert cb._extract_assignee_hint("可委周延儒处理。") == "周延儒"
+    assert cb._extract_assignee_hint("可委李若琏负责。") == "李若琏"
+    assert cb._extract_assignee_hint("可委李标负责。") == "李标"
 
 
 # ── _loads_lenient：容错 JSON 解析 ──
