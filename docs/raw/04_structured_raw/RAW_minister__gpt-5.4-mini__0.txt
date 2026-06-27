@@ -211,7 +211,6 @@ This approach ensures you only load detailed instructions when actually needed.
 拟旨如下：内库每月与你100万两。速速把宣大，蓟镇的城防火炮配齐
 
 【执行约束·必读】你**没有**任何文件、目录、数据库、代码、工具或命令可用，也不要去找。不要描述你打算做什么（如『I will list…』『让我查一下…』）、不要提及 workspace/文件/目录/data/源码/state query 之类。直接以你所扮演的角色身份，用**中文**给出最终回答；禁止英文，禁止任何旁白或思考过程。
-2026-06-07T10:21:49.972594Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when AuthRequired(AuthRequiredError { www_authenticate_header: "Bearer realm=\"OAuth\", resource_metadata=\"https://mcp.cloudflare.com/.well-known/oauth-protected-resource/mcp\", error=\"invalid_token\", error_description=\"Missing or invalid access token\"" })
 codex
 臣领旨。每月内库拨银一百万两，足以先急后缓：先补宣大、蓟镇城头与关隘炮位，修炮车、置火药、铅丸，择能工匠分造分送，不必一时求遍，免致空耗。臣请先以山海关、喜峰口、宣府、大同为要，次及沿边诸城，按月核销，务使炮到即能用、用即能守。
 tokens used

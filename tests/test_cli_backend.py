@@ -77,6 +77,32 @@ def test_secret_prefix_merges_emperor_intent_with_reply(monkeypatch):
     assert so["deadline_months"] == 3
 
 
+def test_secret_prefix_deadline_only_confirmation_uses_recent_context(monkeypatch):
+    """PR #409 R1 Codex P2：密令按钮只补期限时，仍须从前文召对恢复任务正文。"""
+    canned = json.dumps({
+        "标题": "密查辽东军饷",
+        "内容": "三月内回奏",
+        "承办人": "",
+        "期限月数": 3,
+        "标签": ["辽饷"],
+    }, ensure_ascii=False)
+    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
+    acts = cb.resolve_minister_actions(
+        "臣领旨。",
+        "密令如下：三月内回奏",
+        default_assignee="孙承宗",
+        secret_context=(
+            "皇帝：查辽东军饷有无侵冒\n"
+            "大臣：可授李若琏暗查并封存兵部辽饷册"
+        ),
+    )
+    so = acts["secret_order"]
+    assert so is not None
+    assert "查辽东军饷有无侵冒" in so["content"]
+    assert "三月内回奏" in so["content"]
+    assert "封存兵部辽饷册" in so["content"]
+
+
 def test_secret_prefix_bad_llm_content_still_keeps_emperor_intent(monkeypatch):
     """#397 Step5 完整性：LLM 返回合法 JSON 但『内容』只剩大臣领命语（丢皇帝显式旨意）
     时，旧码直取该非空内容 → 御旨丢失。须兜底合并：御旨为主、并入 LLM 内容里的大臣补充，

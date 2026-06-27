@@ -1827,12 +1827,19 @@ _SECRET_CONFIRM_ATOM_RE = re.compile(
 
 
 def _secret_prefix_needs_recent_context(secret_intent: str) -> bool:
-    """显式密令按钮后只有确认短句时，从前文召对取任务正文。"""
+    """显式密令按钮后只有确认短句/约束短句时，从前文召对取任务正文。"""
     text = (secret_intent or "").strip()
     if not text:
         return True
     compact = re.sub(r"[\s，,。.!！?？；;：:、]+", "", text)
     if re.search(r"(照办|按你意思|照你意思|前议|方才所奏|卿所奏|就按|就照)", compact):
+        return True
+    has_primary_task = bool(re.search(r"(命|令|着|遣|派|督办|暗查|密查|查|护|封存|截留|赈|加操|操练)", compact))
+    has_only_constraint = bool(
+        _secret_context_constraint_like(compact)
+        or re.search(r"(月内|日内|回奏|结案|限期|期限)", compact)
+    ) and not has_primary_task
+    if has_only_constraint:
         return True
     if len(compact) > 12:
         return False
