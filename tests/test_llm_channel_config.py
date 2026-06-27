@@ -75,12 +75,31 @@ def test_loaded_api_config_is_not_rerouted_by_later_backend_env(monkeypatch):
     assert not isinstance(model, CliChat)
 
 
-def test_create_chat_model_maps_reasoning_strength_to_openai_reasoning_effort(monkeypatch):
+def test_load_llm_config_migrates_legacy_advanced_thinking_to_reasoning(monkeypatch):
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.delenv("MING_SIM_REASONING_STRENGTH", raising=False)
+
+    cfg = load_llm_config(
+        "https://api.example.com",
+        "gpt-test",
+        api_key="sk-test",
+        advanced_model="gpt-5.5",
+        advanced_thinking_level="high",
+    )
+    advanced = for_role(cfg, "simulator")
+
+    assert cfg.advanced_thinking_level == ""
+    assert cfg.reasoning_strength == "high"
+    assert advanced.reasoning_strength == "high"
+    assert advanced.thinking_level == ""
+
+
+def test_create_chat_model_maps_off_reasoning_to_openai_none(monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     cfg = LLMConfig(
         api_key="sk-test",
         base_url="https://api.example.com/v1",
-        model="gpt-5",
+        model="gpt-5.5",
         channel="api",
         thinking_level="high",
         reasoning_strength="off",
@@ -88,7 +107,21 @@ def test_create_chat_model_maps_reasoning_strength_to_openai_reasoning_effort(mo
 
     model = create_chat_model(cfg)
 
-    assert model.reasoning_effort == "minimal"
+    assert model.reasoning_effort == "none"
+
+
+def test_create_chat_model_leaves_openai_reasoning_default_unset(monkeypatch):
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="gpt-5.5",
+        channel="api",
+    )
+
+    model = create_chat_model(cfg, enable_thinking=False)
+
+    assert getattr(model, "reasoning_effort", None) in ("", None)
 
 
 def test_create_chat_model_maps_reasoning_strength_to_dashscope_thinking_budget(monkeypatch):
