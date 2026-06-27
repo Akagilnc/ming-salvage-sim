@@ -1257,28 +1257,90 @@ def _content_reflects_emperor_intent(content: str, emperor_intent: str) -> bool:
     return all(clause in c for clause in clauses)
 
 
+# ── 大臣补充守门：不仅看承办人，还看所有 material 分句（#397 Step6 R3 Codex P1）──
+# 大臣补充不止承办人——如「须先封存兵部辽饷册」「再密访关宁诸将」等具体做法/步骤
+# 也须保留。旧 _supplement_ok 只查承办人线索在不在正文 → 非承办人要点被合法 LLM 输出
+# 静默吞掉。此处抽出 material 分句（剥领命语），交 _content_reflects_minister_supplements
+# 逐条核验。
+_ACKNOWLEDGMENT_CLAUSE_RE = re.compile(
+    r"^(臣|妾|微臣|老臣|末将|卑职|奴婢|下官|小臣)"
+    r".*?"
+    r"(领旨|领命|领密旨|领讫|遵旨|遵命|遵行|谨遵|谨领|敢不|叩谢|叩首|谢恩|拜受|拜谢|唯命|即办|即行|即遵|加紧)"
+    r"$"
+)
+_ACKNOWLEDGMENT_CLAUSE_EXACT = frozenset({"钦此", "遵命", "领旨", "即遵行", "加紧", "遵行"})
+# material 分句前导虚词/连接词：核验补充是否被 LLM 正文覆盖时，去前导词后再做子串匹配。
+_SUPPLEMENT_PREFIX_RE = re.compile(r"^[须再并且即便宜遂着请可授委令命差派先以此又当]{1,4}")
+
+
+def _minister_material_clauses(reply: str) -> List[str]:
+    """从大臣回话里抽出有实质内容的分句（剥掉领命/应答语）。
+
+    #397 Step6 R3（Codex P1）：大臣补充不止承办人——如「须先封存兵部辽饷册」「再密访关宁
+    诸将」等要点也须保留。抽出这些 material 分句用于校验 LLM 正文是否完整反映。"""
+    clauses = [seg.strip() for seg in _CLAUSE_SPLIT.split(reply or "") if seg.strip()]
+    material: List[str] = []
+    for clause in clauses:
+        if clause in _ACKNOWLEDGMENT_CLAUSE_EXACT or _ACKNOWLEDGMENT_CLAUSE_RE.match(clause):
+            continue
+        material.append(clause)
+    return material
+
+
+def _content_reflects_minister_supplements(content: str, minister_reply: str) -> bool:
+    """LLM 正文是否完整保留大臣回话中的实质补充要点（#397 Step6 R3 Codex P1）。
+
+    按分句逐条核验：承办人建议式分句只验人名是否在正文（LLM 可能改写措辞，如「着李若琏
+    暗查」vs「可授李若琏暗查」）；其余 material 分句去前导虚词后须作为连续子串出现。
+    任一缺失即判未覆盖，走兜底合并。大臣无实质补充（纯领命）时视为无需守护。"""
+    material_clauses = _minister_material_clauses(minister_reply)
+    if not material_clauses:
+        return True
+    c = re.sub(r"\s+", "", content or "")
+    for clause in material_clauses:
+        assignee = _extract_assignee_hint(clause)
+        if assignee:
+            if assignee not in c:
+                return False
+            continue
+        core = re.sub(r"\s+", "", _SUPPLEMENT_PREFIX_RE.sub("", clause))
+        if core and core not in c:
+            return False
+    return True
+
+
 # 大臣回话里"建议某人承办"的线索：大臣常以"可授/可委/请授 X …"点名承办人。
 # LLM 偶发把『承办人』留空、甚至把该人从正文里也抹掉——#397 Step6 须兜底找回，
 # 不让大臣补充的承办人被"看起来合法"的 LLM 输出吞掉。只认建议式措辞（可授/请授/可委…），
 # 不认皇帝祈使式"着/令"——后者常带机关名（着户部…），会把"户部"误当人名。
-# 非贪心 {2,4}?：遇到动作字（暗/调/督/拟…）或标点/句末即停，不把动作字吞进人名
-# （#397 Step6 R2 agy P1：旧贪心 {2,4} 把『李若琏调』『袁崇焕督』『周延儒拟』等动作字
-# 吞进捕获组、尾部清洗又不收 调/督/拟 → 孤儿 minister_name）。lookahead 是边界判定，
-# 落在捕获组内的字（如名字末字恰为动作字）不受影响——非贪心会自动扩到正确长度。
+# 贪心 {2,4} + 尾部剥动作字（#397 Step6 R3 agy P0）：旧非贪心 {2,4}? 在动词首字不在
+# lookahead 时会把动作字吞进名字（如『周延儒监督』→『周延儒监』）或丢掉整条线索
+# （如『李若琏负责』→ None）。改为贪心捕获后从尾部剥 _ASSIGNEE_VERB_TAIL_CHARS 中的
+# 动词首字（lookahead 扩充 监|协|处|负 覆盖更多动词），保证不漏不脏。
 _ASSIGNEE_HINT_RE = re.compile(
     r"(?:可\s*授|可\s*委|可\s*差|可\s*令|可\s*派|请\s*授|请\s*委|请\s*派|"
     r"建议\s*授|建议\s*委|可\s*由|可\s*命)"
-    r"\s*([\u4e00-\u9fa5·]{2,4}?)"
-    r"(?=[，,。.；;！!？?、\s]|暗|密|调|督|拟|领|查|办|为|任|去|往|主|核|理|统|提|巡|镇|守|征|讨|驻|屯|管|行|前|担|$)"
+    r"\s*([\u4e00-\u9fa5·]{2,4})"
+    r"(?=[，,。.；;！!？?、\s]|暗|密|调|督|拟|领|查|办|为|任|去|往|主|核|理|统|提|巡|镇|守|征|讨|驻|屯|管|行|前|担|监|协|处|负|$)"
 )
+# 动作动词首字集：greedy 捕获后从尾部剥掉这些字。与 lookahead 的动词字同集——
+# lookahead 判定名字后的动词首字、tail strip 剥掉被贪心吞进名字的动词首字（#397 Step6 R3 agy P0）。
+_ASSIGNEE_VERB_TAIL_CHARS = frozenset("暗密调督拟领查办为任去往主核理统提巡镇守征讨驻屯管行前担监督协处负责")
 # 捕获到机关/地名（含 部/寺/院… 字）的不是人名，跳过。
-_ASSIGNEE_HINT_STOP_RE = re.compile(r"[部寺院局司省州府县卫营阁监科曹库厂仓]")
+# 注意：曹是常见姓（曹化淳/曹文诏），不是机关字，故不入此集（#397 Step6 R3 Codex P2）。
+_ASSIGNEE_HINT_STOP_RE = re.compile(r"[部寺院局司省州府县卫营阁监科室库厂仓]")
 
 
 def _extract_assignee_hint(text: str) -> Optional[str]:
-    """从文本（多为大臣回话）里找"建议某人承办"的人名线索。无则 None。"""
+    """从文本（多为大臣回话）里找"建议某人承办"的人名线索。无则 None。
+
+    #397 Step6 R3（agy P0）：greedy 捕获后从尾部剥动作字——旧非贪心 {2,4}? 在动作首字
+    不在 lookahead 时会把动作字吞进名字或丢掉整条线索（如『周延儒监督』→『周延儒监』、
+    『李若琏负责』→ None）。"""
     for m in _ASSIGNEE_HINT_RE.finditer(text or ""):
         name = m.group(1).strip()
+        while len(name) > 2 and name[-1] in _ASSIGNEE_VERB_TAIL_CHARS:
+            name = name[:-1]
         if len(name) >= 2 and not _ASSIGNEE_HINT_STOP_RE.search(name):
             return name
     return None
@@ -1337,13 +1399,12 @@ def _extract_secret_order(
     # 大臣回话里点名的承办人线索（#397 Step6）：LLM 偶发把『承办人』留空、
     # 或把该人从正文里也抹掉——用它兜底，不让大臣补充被"看起来合法"的 LLM 输出吞掉。
     _assignee_hint = _extract_assignee_hint(minister_reply)
-    _content_norm = re.sub(r"\s+", "", _content_llm)
     # 御旨守门 + 大臣补充守门：两者都过才直取 LLM 正文；任一不过走兜底合并。
     _emperor_ok = bool(_content_llm) and _content_reflects_emperor_intent(_content_llm, player_command)
-    # 大臣补充守门：承办人线索必须落进正文（content）——承办人字段单独正确不算够，
-    # 正文是喂给承办人和结算模拟的任务概要，丢承办人=任务不明（#397 Step6 R2 Codex P2：
-    # 旧 `== _assignee_llm` 让承办人字段正确就放行、正文却吞掉承办人）。
-    _supplement_ok = not _assignee_hint or _assignee_hint in _content_norm
+    # 大臣补充守门：不仅看承办人，还看大臣回话的【所有】实质分句（承办人/具体做法/步骤等）。
+    # 旧码只查承办人线索在不在正文 → 大臣补的非承办人要点（如「封存兵部辽饷册」「密访关宁诸将」）
+    # 被合法 LLM 输出静默吞掉（#397 Step6 R3 Codex P1）。改为逐条核验所有 material 分句。
+    _supplement_ok = _content_reflects_minister_supplements(_content_llm, minister_reply)
     if _emperor_ok and _supplement_ok:
         content = _content_llm
     else:
