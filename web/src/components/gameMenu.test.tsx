@@ -250,6 +250,54 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     cleanup();
   });
 
+  it("uses the saved API reasoning strength when switching from CLI to API", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({
+          ...BASE_LLM_RESPONSE,
+          channel: "cli",
+          cli_runner: "codex",
+          reasoning_strength: "high",
+          reasoning_supported: true,
+          persisted: {
+            ...BASE_LLM_RESPONSE.persisted,
+            channel: "cli",
+            api_reasoning_strength: "low",
+            cli_reasoning_strength: "high",
+          },
+        }),
+      } as Response);
+    });
+    const { cleanup } = render(<LLMConfigTab />);
+    await act(async () => {});
+
+    const channelSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+      s.querySelector('option[value="api"]')
+    ) as HTMLSelectElement | undefined;
+    act(() => {
+      channelSelect!.value = "api";
+      channelSelect!.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+    expect(strength?.value).toBe("low");
+    const saveBtn = Array.from(document.querySelectorAll("button")).find((b) =>
+      (b.textContent ?? "").includes("保存并应用")
+    );
+    await act(async () => {
+      saveBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const post = calls.find((c) => c.init?.method === "POST" && c.url === "/api/llm/config");
+    const body = JSON.parse(String(post!.init!.body));
+    expect(body.channel).toBe("api");
+    expect(body.reasoning_strength).toBe("low");
+    cleanup();
+  });
+
   it("migrates legacy disabled thinking level to unified off", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {

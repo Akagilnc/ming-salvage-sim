@@ -2108,6 +2108,7 @@ async def api_menu_status() -> Dict[str, Any]:
     if channel not in VALID_CHANNELS:
         channel = "cli" if env_runner else "api"
     cli_slot = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
+    api_slot = runtime.get("api") if isinstance(runtime.get("api"), dict) else {}
     cli_runner = str(cli_slot.get("runner") or env_runner or ("agy" if channel == "cli" else "")).strip().lower()
     # cli_model_saved = 原样存盘值（空=用户选「默认」档）；cli_model = 兜底成默认名的 resolved 值。
     # 表单（CliModelField 下拉）须读 raw，否则空保存被 resolved 成默认名 → 下拉误判「其他(手填)」
@@ -2123,6 +2124,7 @@ async def api_menu_status() -> Dict[str, Any]:
         or runtime.get("reasoning_strength", "")
     )
     cli_reasoning_strength = normalize_reasoning_strength(cli_slot.get("reasoning_strength"))
+    api_reasoning_strength = normalize_reasoning_strength(api_slot.get("reasoning_strength"))
     reasoning_supported = (
         cli_supports_reasoning_strength(cli_runner)
         if channel == "cli"
@@ -2156,6 +2158,7 @@ async def api_menu_status() -> Dict[str, Any]:
             "cli_model_choices": cli_model_choices(),
             "cli_timeout_seconds": cli_timeout,
             "reasoning_strength": reasoning_strength,
+            "api_reasoning_strength": api_reasoning_strength,
             "cli_reasoning_strength": cli_reasoning_strength,
             "reasoning_supported": reasoning_supported,
             "reasoning_strengths": list(REASONING_STRENGTH_CHOICES),
@@ -3110,6 +3113,8 @@ async def api_get_llm_config() -> Dict[str, Any]:
     cfg = get_game().session.llm_config
     saved = load_runtime_llm()
     saved_cli = saved.get("cli") if isinstance(saved.get("cli"), dict) else {}
+    saved_api = saved.get("api") if isinstance(saved.get("api"), dict) else {}
+    saved_api_reasoning_strength = normalize_reasoning_strength(saved_api.get("reasoning_strength"))
     saved_cli_reasoning_strength = normalize_reasoning_strength(saved_cli.get("reasoning_strength"))
     reasoning_supported = (
         cli_supports_reasoning_strength(cfg.cli_runner)
@@ -3146,6 +3151,7 @@ async def api_get_llm_config() -> Dict[str, Any]:
             "timeout_seconds": float(saved.get("timeout_seconds") or API_DEFAULT_TIMEOUT_SECONDS),
             "thinking_level": saved.get("thinking_level", ""),
             "reasoning_strength": saved.get("reasoning_strength", ""),
+            "api_reasoning_strength": saved_api_reasoning_strength,
             "cli_reasoning_strength": saved_cli_reasoning_strength,
             "advanced_model": saved.get("advanced_model", ""),
             "advanced_base_url": saved.get("advanced_base_url", ""),
