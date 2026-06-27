@@ -640,6 +640,11 @@ class WebGame:
             _delete_sqlite_db_files_or_raise(db_path)
         self.session = GameSession(db_path, llm_config, verify_llm=not fresh)
         self._write_gate = threading.Lock()
+        # #396 Gap B: 排队等 gate 的旧召对 worker 计数 + 条件变量。
+        # drain 须等计数归零（所有排队 worker 跑完）再关连接——否则只等当前持锁者，
+        # drain 抢下一轮 acquire 后关 session，排队 worker 永不跑或写 closed DB。
+        self._drain_cond = threading.Condition()
+        self._pending_writes_count = 0
         self.session.begin_turn()
         # 召对记录持久化在 chat_messages 表，启动时恢复进内存缓存。
         self.chat_history: Dict[str, List[Dict[str, str]]] = {
@@ -933,6 +938,27 @@ class WebGame:
             gate = threading.Lock()
             self._write_gate = gate
         return gate
+
+    def _mark_pending_write(self) -> None:
+        """#396 Gap B: 标记一个即将抢 write_gate 的流式召对 worker。
+        drain 须等所有已标记 worker 完成才关连接——否则排队等 gate 的 worker
+        会被 drain 抢下一轮 acquire 后关连接饿死。"""
+        cond = getattr(self, "_drain_cond", None)
+        if cond is None:
+            return
+        with cond:
+            self._pending_writes_count = getattr(self, "_pending_writes_count", 0) + 1
+
+    def _complete_pending_write(self) -> None:
+        cond = getattr(self, "_drain_cond", None)
+        if cond is None:
+            return
+        with cond:
+            count = getattr(self, "_pending_writes_count", 0)
+            if count > 0:
+                self._pending_writes_count = count - 1
+            if self._pending_writes_count == 0:
+                cond.notify_all()
 
     def refresh_turn(self) -> None:
         self.session.begin_turn()
@@ -1599,6 +1625,7 @@ class WebGame:
         if not text:
             yield {"type": "error", "message": "问话不能为空。"}
             return
+        self._mark_pending_write()
         write_gate = self._runtime_write_gate()
         write_gate.acquire()
         gate_released = False
@@ -1608,6 +1635,7 @@ class WebGame:
             if self._audience_turn_in_flight(minister_name):
                 write_gate.release()
                 gate_released = True
+                self._complete_pending_write()
                 yield {"type": "error", "message": f"{minister_name}上一轮回奏仍在进行，请稍候再问。"}
                 return
             accepted_turn = int(self.state.turn)
@@ -1621,9 +1649,16 @@ class WebGame:
         except Exception:
             # 已建 chat_turn 但 prologue 写途中崩 → 必须失败该轮，否则留下 active 且无大臣回复的
             # 孤儿轮，_audience_turn_in_flight 会永久挡住该大臣（cmr Gate2 F-B）。
-            self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
-            write_gate.release()
-            gate_released = True
+            # R3 self-check: _fail_chat_turn_and_reload 自身可能再抛（DB 已坏）——必须吞掉，
+            # 否则 write_gate 与 _pending_writes_count 泄漏，drain 永久挂起、所有写入被永久挡。
+            try:
+                self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
+            except Exception:
+                pass
+            if not gate_released:
+                write_gate.release()
+                gate_released = True
+            self._complete_pending_write()
             raise
 
         ev_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
@@ -1638,7 +1673,12 @@ class WebGame:
                     minister_name, text, chat_turn_id, before_snapshot, accepted_turn, emit_delta)
                 ev_queue.put({"type": "done", "payload": payload})
             except Exception as error:  # noqa: BLE001
-                self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
+                # R3 self-check: _fail_chat_turn_and_reload 自身可能再抛（DB 已坏）——必须吞掉，
+                # 否则 error 事件不会被投进 queue、消费者永久挂死（finally 只保 gate/counter 释放）。
+                try:
+                    self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
+                except Exception:
+                    pass
                 if isinstance(error, LLMUnavailable):
                     ev_queue.put({"type": "error", "detail": _llm_error_detail(error)})
                 else:
@@ -1647,6 +1687,7 @@ class WebGame:
                 if not gate_released:
                     write_gate.release()
                     gate_released = True
+                self._complete_pending_write()
 
         thread = threading.Thread(target=worker, daemon=True)
         try:
@@ -1654,10 +1695,15 @@ class WebGame:
         except Exception:
             # worker 没起来 → prologue 已建的 chat_turn 不会有 worker 去失败它，须就地善后，
             # 否则同样留下孤儿轮永久挡该大臣（cmr Gate2 F-B）。
-            self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
+            # R3 self-check: 同 prologue except——_fail_chat_turn_and_reload 自身再抛时也须释放锁与计数。
+            try:
+                self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
+            except Exception:
+                pass
             if not gate_released:
                 write_gate.release()
                 gate_released = True
+            self._complete_pending_write()
             raise
         while True:
             item = ev_queue.get()
@@ -1767,8 +1813,15 @@ def _drain_and_close_session(game, archive_db: bool = False) -> None:
     new_game 先把旧库 park 旁路、再立刻建新局（零等待）；排空后关连接并把旁路库归档为存档；
     shutdown await 排空后再杀进程。不挂 #382 大设计，仅用现有 write_gate 队列续跑再关。
     """
+    # #396 Gap B: 先等所有排队等 gate 的旧召对 worker 跑完（counter→0）再抢 gate——
+    # 否则只等当前持锁者，drain 抢下一轮 acquire 后关 session，排队的 worker 永不跑或写 closed DB。
+    cond = getattr(game, "_drain_cond", None)
+    if cond is not None:
+        with cond:
+            while getattr(game, "_pending_writes_count", 0) > 0:
+                cond.wait()
     gate = _game_write_gate(game)
-    gate.acquire()  # 阻塞——等 worker 释放
+    gate.acquire()  # 阻塞——等最后一个 worker 释放
     try:
         game.session.close()
     except Exception:
@@ -1993,6 +2046,10 @@ async def api_menu_new_game() -> Dict[str, Any]:
         # #396: 不能在旧后台 worker 仍写旧库时删/重命名旧库文件（SQLite 会报 readonly database）。
         # 改为把主库路径切换到新文件，旧 worker 安全续写旧库；排空关连接后旧库归档为存档。
         new_db_path = user_data_path(f"ming_sim_{int(time.time() * 1000)}.db")
+        # #396 Gap A: MING_SIM_DB 优先级高于 active_db.txt（_get_main_db_path）。
+        # 单写 active_db.txt 会让 fresh=True 的 WebGame 仍解析到旧 env 路径并删旧库。
+        # 同步覆写 env → 新局落新路径，旧后台 worker 续写旧库，排空后归档。
+        os.environ["MING_SIM_DB"] = new_db_path
         with open(_active_db_path_file(), "w", encoding="utf-8") as f:
             f.write(new_db_path)
         # detach：等 write_gate 排空后再关旧连接 + 归档旧库（#396），不在 worker 写时关。
