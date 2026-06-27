@@ -627,6 +627,34 @@ def test_drain_waits_for_queued_chat_stream_not_just_gate_holder():
                and "臣已知悉" in m["content"] for m in db.messages)
 
 
+def test_drain_rejects_late_pending_write_before_gate_acquire():
+    """#402 R3（Sourcery）：drain 开始后，迟到的旧 game 写入不得再登记进关闭队列。"""
+    runtime = object.__new__(web_app.WebGame)
+    runtime._write_gate = threading.Lock()
+    runtime._drain_cond = threading.Condition()
+    runtime._pending_writes_count = 0
+    runtime._draining = False
+    closed: list[int] = []
+    runtime.session = SimpleNamespace(close=lambda: closed.append(1))
+
+    runtime._write_gate.acquire()
+    done = threading.Event()
+    thread = threading.Thread(
+        target=lambda: (web_app._drain_and_close_session(runtime), done.set()),
+        daemon=True,
+    )
+    thread.start()
+
+    assert _wait_for(lambda: getattr(runtime, "_draining", False))
+    assert runtime._mark_pending_write() is False
+    assert runtime._pending_writes_count == 0
+
+    runtime._write_gate.release()
+
+    assert done.wait(2.0)
+    assert closed == [1]
+
+
 # ── #396 Step5 R4: web_game is None 时 new_game 仍须切换库路径 ───────────
 
 def test_new_game_switches_db_path_when_web_game_is_none(monkeypatch, tmp_path):
