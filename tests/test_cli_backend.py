@@ -275,6 +275,19 @@ def test_acknowledgment_only_replies_are_not_material():
         assert cb._content_reflects_minister_supplements("着李若琏暗查", ack) is True
 
 
+def test_mixed_acknowledgment_and_material_replies_ignore_ack_clauses():
+    """#401 R2（Sourcery）：混合领命语 + 实质补充时，领命分句不应进入 material。"""
+    for reply, content in (
+        ("领命，即办。可授李若琏暗查并封存兵部辽饷册。", "着李若琏暗查并封存兵部辽饷册"),
+        ("谨遵。可授李若琏暗查并封存兵部辽饷册，三月内回奏。", "着李若琏暗查并封存兵部辽饷册，三月内回奏"),
+    ):
+        clauses = cb._minister_material_clauses(reply)
+        assert clauses
+        assert all(all(ack not in c for ack in ("领命", "即办", "谨遵", "遵旨")) for c in clauses)
+        assert any("可授李若琏暗查并封存兵部辽饷册" in c for c in clauses)
+        assert cb._content_reflects_minister_supplements(content, reply) is True
+
+
 def test_content_reflects_supplements_rejects_when_tail_material_dropped():
     """#401 R1（codex P2）：assignee 分句在人名+动作词之外仍带实质补充（『并封存兵部辽饷册』）
     时，只留人名+动作词的合法 LLM 输出不得被接受——余下 material 也须在正文里。"""
@@ -283,6 +296,9 @@ def test_content_reflects_supplements_rejects_when_tail_material_dropped():
     # 完整保留（含余下 material）→ 覆盖
     assert cb._content_reflects_minister_supplements(
         "着李若琏暗查并封存兵部辽饷册", "可授李若琏暗查并封存兵部辽饷册。") is True
+    # #401 R2（Gemini）：动作词后若有空格，剥掉动作词后仍须能识别「并...」前缀。
+    assert cb._content_reflects_minister_supplements(
+        "着李若琏暗查封存兵部辽饷册", "可授李若琏暗查 并封存兵部辽饷册。") is True
 
 
 def test_extract_assignee_hint_keeps_wei_and_si_surnames():
@@ -293,6 +309,19 @@ def test_extract_assignee_hint_keeps_wei_and_si_surnames():
     # 机关整词仍被滤
     assert cb._extract_assignee_hint("可授锦衣卫查办。") is None
     assert cb._extract_assignee_hint("可授布政司核对。") is None
+
+
+def test_extract_assignee_hint_prefers_long_compound_prefixes():
+    """#401 R2（Codex P1）：可委派/可差派须先吃完整前缀，不能把「派」并进人名。"""
+    assert cb._extract_assignee_hint("可委派李若琏暗查辽饷。") == "李若琏"
+    assert cb._extract_assignee_hint("可差派李若琏暗查辽饷。") == "李若琏"
+
+
+def test_extract_imperative_assignee_requires_command_boundary():
+    """#401 R2（Codex P1）：普通词里的令/命不得被当作皇帝祈使承办人。"""
+    assert cb._extract_imperative_assignee("此密令调查此事") is None
+    assert cb._extract_imperative_assignee("奉密令查办辽饷") is None
+    assert cb._extract_imperative_assignee("密令如下：着李若琏查办辽饷") == "李若琏"
 
 
 def test_secret_assignee_does_not_drift_to_unvalidated_llm_field(monkeypatch):
