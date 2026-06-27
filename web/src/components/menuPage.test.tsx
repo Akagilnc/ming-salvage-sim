@@ -141,7 +141,7 @@ describe("ApiSettingsModal reasoning strength", () => {
             advanced_thinking_level: "high",
           },
         }}
-        onRefresh={async () => {}}
+        onRefresh={async () => ({} as any)}
         onEnterGame={async () => {}}
         error=""
         setError={() => {}}
@@ -218,7 +218,7 @@ describe("ApiSettingsModal reasoning strength", () => {
             advanced_thinking_level: "",
           },
         }}
-        onRefresh={async () => {}}
+        onRefresh={async () => ({} as any)}
         onEnterGame={async () => {}}
         error=""
         setError={() => {}}
@@ -299,7 +299,7 @@ describe("ApiSettingsModal reasoning strength", () => {
             advanced_thinking_level: "",
           },
         }}
-        onRefresh={async () => {}}
+        onRefresh={async () => ({} as any)}
         onEnterGame={async () => {}}
         error=""
         setError={() => {}}

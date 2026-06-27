@@ -900,9 +900,6 @@ class GameSession:
         out: Dict[str, Any] = {"directive": None, "secret_order_id": secret_order_id}
         intent = preclassified_intent if isinstance(preclassified_intent, dict) else None
         intent_kind = str((intent or {}).get("kind") or "none")
-        channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
-        if channel != "cli" and (channel == "api" or cli_backend_from_env() is None):
-            return out
         minister_name = character.name
         reply = (answer or "").strip()
         llm_config = getattr(self, "llm_config", None)
@@ -911,8 +908,12 @@ class GameSession:
         # 杜绝前缀路多跑任何 LLM extractor（#344 US3「按钮前缀路零 LLM」）。确认闸门尤其要跳过：
         # 否则前缀消息在有 pending 待确认动作时既多跑 extract_confirmation_intent(LLM)，还可能被
         # 误判「应允/拒绝」提前 return、把这道前缀拟旨/密令整个吞掉（确认句本无前缀，跳过无损）。
-        explicit_prefixed = (message_text := (player_message or "").strip()).startswith(
-            _DRAFT_PREFIXES) or message_text.startswith(_SECRET_PREFIXES)
+        message_text = (player_message or "").strip()
+        explicit_prefixed = message_text.startswith(_DRAFT_PREFIXES) or message_text.startswith(_SECRET_PREFIXES)
+        channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
+        api_explicit_prefix = channel == "api" and explicit_prefixed
+        if channel != "cli" and (channel == "api" or cli_backend_from_env() is None) and not api_explicit_prefix:
+            return out
         # 对话确认(ADR 0006 重设计)：本召对的大臣有上一轮经领命确认、尚未落库的暂存动作时，
         # 皇帝这句应允 → 当场 commit、拒绝 → 丢、未表态 → 留(颁诏对没回的算同意)。
         # 只在该大臣有 outstanding 暂存时才判(省 token)，commit/drop 按该大臣过滤、不波及他人。

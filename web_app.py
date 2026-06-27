@@ -516,6 +516,18 @@ def _llm_config_from_runtime(
     )
 
 
+def _api_reasoning_supported_for_effective_model(
+    base_url: str,
+    model: str,
+    advanced_base_url: str = "",
+    advanced_model: str = "",
+) -> bool:
+    adv_model = (advanced_model or "").strip()
+    if adv_model:
+        return api_supports_reasoning_strength((advanced_base_url or "").strip() or base_url, adv_model)
+    return api_supports_reasoning_strength(base_url, model)
+
+
 class ChatRequest(BaseModel):
     message: str
 
@@ -2114,7 +2126,12 @@ async def api_menu_status() -> Dict[str, Any]:
     reasoning_supported = (
         cli_supports_reasoning_strength(cli_runner)
         if channel == "cli"
-        else api_supports_reasoning_strength(str(base_url), str(model))
+        else _api_reasoning_supported_for_effective_model(
+            str(base_url),
+            str(model),
+            str(runtime.get("advanced_base_url") or os.environ.get("OPENAI_ADVANCED_BASE_URL", "")),
+            str(runtime.get("advanced_model") or os.environ.get("OPENAI_ADVANCED_MODEL", "")),
+        )
     )
     # readiness 按 active channel 判：API 通道看真实 key，CLI 通道看 runner 是否受支持。
     # 不能因 inactive API 槽（ADR 0001 保留）里有 key 就把不可用的 CLI runner 误报成 ready。
@@ -3097,7 +3114,9 @@ async def api_get_llm_config() -> Dict[str, Any]:
     reasoning_supported = (
         cli_supports_reasoning_strength(cfg.cli_runner)
         if cfg.channel == "cli"
-        else api_supports_reasoning_strength(cfg.base_url, cfg.model)
+        else _api_reasoning_supported_for_effective_model(
+            cfg.base_url, cfg.model, cfg.advanced_base_url, cfg.advanced_model
+        )
     )
     return {
         "channel": cfg.channel,

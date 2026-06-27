@@ -226,6 +226,7 @@ export function ApiSettingsModal({
     has_advanced_api_key?: boolean;
     advanced_thinking_level?: string;
     reasoning_strength?: string;
+    cli_reasoning_strength?: string;
     reasoning_supported?: boolean;
     reasoning_strengths?: ReasoningStrengthChoice[];
     channel?: "api" | "cli";

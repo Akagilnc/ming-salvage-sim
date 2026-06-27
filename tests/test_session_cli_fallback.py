@@ -287,6 +287,40 @@ def test_secret_prefix_confirmation_with_supplement_keeps_recent_context(game, m
     assert "三月内回奏" in row["content"]
 
 
+def test_api_channel_secret_prefix_confirmation_uses_recent_context(game, monkeypatch):
+    """#354 correctness r2: API/tool-call 通道未产出 secret_order 时，显式密令按钮仍是权威路由。"""
+    db, state, _ = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    minister = "魏忠贤"
+    db.append_chat_message(minister, state.turn, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银、查截留。")
+    db.append_chat_message(minister, state.turn, "minister", "臣领密旨，当令东厂暗中护送赈银。")
+
+    def fake_extract(prompt, llm_config=None, tag=""):
+        return (json.dumps({
+            "标题": "暗护陕西赈银",
+            "内容": "命洪承畴督办陕西赈灾，东厂暗助护赈银并查截留。",
+            "承办人": minister,
+            "期限月数": 0,
+            "标签": ["陕西"],
+        }, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", fake_extract)
+    res = _session(db, state, llm_config=SimpleNamespace(channel="api")).apply_cli_conversation_actions(
+        SimpleNamespace(name=minister, office_type="司礼监"),
+        "密令如下：可，照办",
+        "臣领命。",
+        has_directive=False,
+        secret_order_id=None,
+    )
+
+    assert res["secret_order_id"]
+    row = db.conn.execute(
+        "SELECT minister_name, content FROM secret_orders WHERE id=?", (res["secret_order_id"],),
+    ).fetchone()
+    assert row["minister_name"] == minister
+    assert "督办陕西赈灾" in row["content"]
+
+
 def test_secret_context_path_preserves_multiple_related_emperor_task_lines(game, monkeypatch):
     """#354 correctness: 玩家前几轮连续补充同一密令任务时，兜底/守门不能只保留最后一条皇帝行。"""
     db, state, _ = game
