@@ -435,8 +435,13 @@ def test_menu_status_reports_inactive_cli_reasoning_strength(monkeypatch):
     monkeypatch.setattr(web_app, "load_runtime_game", lambda: {"hitl_min_decisions": 1})
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
         "channel": "api",
-        "reasoning_strength": "",
-        "api": {"base_url": "https://api.example.com/v1", "model": "gpt-5", "api_key": "sk-test"},
+        "reasoning_strength": "low",
+        "api": {
+            "base_url": "https://api.example.com/v1",
+            "model": "gpt-5",
+            "api_key": "sk-test",
+            "reasoning_strength": "low",
+        },
         "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": "240", "reasoning_strength": "high"},
         "base_url": "https://api.example.com/v1",
         "model": "gpt-5",
@@ -445,7 +450,8 @@ def test_menu_status_reports_inactive_cli_reasoning_strength(monkeypatch):
 
     status = asyncio.run(web_app.api_menu_status())
 
-    assert status["llm"]["reasoning_strength"] == ""
+    assert status["llm"]["reasoning_strength"] == "low"
+    assert status["llm"]["api_reasoning_strength"] == "low"
     assert status["llm"]["cli_reasoning_strength"] == "high"
 
 
@@ -702,8 +708,13 @@ def test_game_llm_config_reports_inactive_cli_reasoning_strength(monkeypatch):
     ))
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
         "channel": "api",
-        "reasoning_strength": "",
-        "api": {"base_url": "https://api.example.com/v1", "model": "gpt-5", "api_key": "sk-test"},
+        "reasoning_strength": "low",
+        "api": {
+            "base_url": "https://api.example.com/v1",
+            "model": "gpt-5",
+            "api_key": "sk-test",
+            "reasoning_strength": "low",
+        },
         "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": "240", "reasoning_strength": "high"},
         "base_url": "https://api.example.com/v1",
         "model": "gpt-5",
@@ -713,6 +724,7 @@ def test_game_llm_config_reports_inactive_cli_reasoning_strength(monkeypatch):
     result = asyncio.run(web_app.api_get_llm_config())
 
     assert result["reasoning_strength"] == ""
+    assert result["persisted"]["api_reasoning_strength"] == "low"
     assert result["persisted"]["cli_reasoning_strength"] == "high"
 
 

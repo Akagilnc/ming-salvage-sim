@@ -37,6 +37,7 @@ _API_RUNTIME_FIELDS = (
     "advanced_base_url",
     "advanced_api_key",
     "advanced_thinking_level",
+    "reasoning_strength",
 )
 _CLI_RUNTIME_FIELDS = ("runner", "model", "timeout_seconds", "reasoning_strength")
 
@@ -96,6 +97,8 @@ def _api_runtime_slot(data: Dict[str, object]) -> Dict[str, object]:
             out[k] = _slot_number(data.get(k), caster, default)
         elif k == "advanced_thinking_level":
             out[k] = ""
+        elif k == "reasoning_strength":
+            out[k] = normalize_reasoning_strength(data.get(k))
         else:
             out[k] = _slot_text(data, k)
     return out
@@ -117,17 +120,27 @@ def _normalize_runtime_llm(data: Dict[str, object]) -> Dict[str, object]:
         channel = "api" if is_real_api_key(data.get("api_key")) else ""
     api_raw = data.get("api")
     cli_raw = data.get("cli")
-    api = _api_runtime_slot(api_raw if isinstance(api_raw, dict) else data)
+    api_source = api_raw if isinstance(api_raw, dict) else data
+    api = _api_runtime_slot(api_source)
     cli = _cli_runtime_slot(cli_raw if isinstance(cli_raw, dict) else {})
+    migrated_api_strength = (
+        normalize_reasoning_strength(api.get("reasoning_strength"))
+        or normalize_reasoning_strength(data.get("reasoning_strength") if channel != "cli" else "")
+        or _legacy_reasoning_strength(api_source)
+    )
+    if migrated_api_strength:
+        api["reasoning_strength"] = migrated_api_strength
+    cli_strength = normalize_reasoning_strength(cli.get("reasoning_strength"))
+    active_strength = cli_strength if channel == "cli" else migrated_api_strength
     out = {
         "channel": channel,
         "api": api,
         "cli": cli,
-        "reasoning_strength": normalize_reasoning_strength(data.get("reasoning_strength")),
     }
     # Transitional API aliases keep existing callers working while the UI/API
     # slices move to explicit slots. Keep these even when CLI is active.
     out.update(api)
+    out["reasoning_strength"] = active_strength
     return out
 
 
@@ -194,6 +207,21 @@ def normalize_thinking_level(level: str) -> str:
 def normalize_reasoning_strength(value: object) -> str:
     strength = str(value or "").strip().lower()
     return strength if strength in {"off", "low", "medium", "high"} else ""
+
+
+def _legacy_reasoning_strength(data: Dict[str, object]) -> str:
+    candidates = []
+    if str(data.get("advanced_model") or "").strip():
+        candidates.append(data.get("advanced_thinking_level"))
+    candidates.append(data.get("thinking_level"))
+    for value in candidates:
+        legacy = str(value or "").strip().lower()
+        if legacy in {"minimal", "disabled"}:
+            return "off"
+        strength = normalize_reasoning_strength(legacy)
+        if strength:
+            return strength
+    return ""
 
 
 def cli_model_from_env(runner: str, fallback: str = "") -> str:
@@ -393,11 +421,21 @@ def save_runtime_llm(
         ),
     }
     if reasoning_strength is None:
-        strength = normalize_reasoning_strength(
-            existing.get("reasoning_strength") or existing_cli.get("reasoning_strength", "")
+        strength_source = (
+            existing_cli.get("reasoning_strength", "")
+            if active_channel == "cli"
+            else existing_api.get("reasoning_strength") or existing.get("reasoning_strength", "")
         )
+        strength = normalize_reasoning_strength(strength_source)
     else:
         strength = normalize_reasoning_strength(reasoning_strength)
+    api_strength = (
+        strength
+        if active_channel == "api"
+        else normalize_reasoning_strength(existing_api.get("reasoning_strength"))
+    )
+    if isinstance(api_payload, dict):
+        api_payload["reasoning_strength"] = api_strength
     # CLI 槽的 reasoning_strength 像 runner/model/timeout 一样按槽保留：保存 API 通道时不得用
     # API 的空强度覆盖/清掉 CLI 槽已存值（cmr #358 r4：跨通道保存丢失 inactive 槽设置——切回
     # CLI 时无声蒸发）。只有保存 CLI 通道、或显式传入强度且无既存 CLI 值时才用本次 strength 更新。

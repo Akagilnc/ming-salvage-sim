@@ -391,7 +391,9 @@ export function LLMConfigTab() {
         setAdvancedBaseUrl(data.advanced_base_url || "");
         setMaxTokens(String(data.max_tokens || 8000));
         setTimeoutSeconds(String(data.timeout_seconds || 180));
-        setApiReasoningStrength(normalizeStrength(data.reasoning_strength || data.thinking_level));
+        setApiReasoningStrength(normalizeStrength(
+          data.persisted?.api_reasoning_strength || (data.channel === "api" ? data.reasoning_strength : "") || data.thinking_level
+        ));
         setCliReasoningStrength(normalizeStrength(
           data.persisted?.cli_reasoning_strength || (data.channel === "cli" ? data.reasoning_strength : "")
         ));

@@ -95,7 +95,9 @@ def test_load_runtime_llm_migrates_flat_api_config(tmp_path, monkeypatch):
         "advanced_base_url": "https://advanced.example.com/v1",
         "advanced_api_key": "sk-advanced",
         "advanced_thinking_level": "",
+        "reasoning_strength": "high",
     }
+    assert runtime["reasoning_strength"] == "high"
     assert runtime["cli"]["runner"] == ""
     assert runtime["cli"]["model"] == ""
 
@@ -178,7 +180,33 @@ def test_save_runtime_llm_api_save_preserves_cli_reasoning_strength(tmp_path, mo
 
     saved = json.loads(path.read_text(encoding="utf-8"))
     assert saved["channel"] == "api"
+    assert saved["api"]["reasoning_strength"] == ""
     assert saved["cli"].get("reasoning_strength") == "high"  # CLI 槽设置保住
+
+
+def test_save_runtime_llm_cli_save_preserves_api_reasoning_strength(tmp_path, monkeypatch):
+    path = tmp_path / "runtime_llm.json"
+    path.write_text(
+        json.dumps(
+            {
+                "channel": "api",
+                "reasoning_strength": "low",
+                "api": {"base_url": "https://api.example.com/v1", "model": "gpt-5", "api_key": "sk-test", "reasoning_strength": "low"},
+                "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": 240},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
+
+    llm_config.save_runtime_llm("", "", "", channel="cli", cli_runner="codex", reasoning_strength="high")
+
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["channel"] == "cli"
+    assert saved["reasoning_strength"] == "high"
+    assert saved["api"]["reasoning_strength"] == "low"
+    assert saved["cli"]["reasoning_strength"] == "high"
 
 
 def test_save_runtime_llm_can_clear_reasoning_strength_to_default(tmp_path, monkeypatch):

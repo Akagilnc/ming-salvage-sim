@@ -226,6 +226,7 @@ export function ApiSettingsModal({
     has_advanced_api_key?: boolean;
     advanced_thinking_level?: string;
     reasoning_strength?: string;
+    api_reasoning_strength?: string;
     cli_reasoning_strength?: string;
     reasoning_supported?: boolean;
     reasoning_strengths?: ReasoningStrengthChoice[];
@@ -256,7 +257,7 @@ export function ApiSettingsModal({
     return ["", "off", "low", "medium", "high"].includes(v) ? v : "";
   };
   const [apiReasoningStrength, setApiReasoningStrength] = React.useState(
-    normalizeStrength(initial?.reasoning_strength || initial?.thinking_level)
+    normalizeStrength(initial?.api_reasoning_strength || (initial?.channel === "api" ? initial?.reasoning_strength : "") || initial?.thinking_level)
   );
   const [cliReasoningStrength, setCliReasoningStrength] = React.useState(
     normalizeStrength(initial?.cli_reasoning_strength || (initial?.channel === "cli" ? initial?.reasoning_strength : ""))

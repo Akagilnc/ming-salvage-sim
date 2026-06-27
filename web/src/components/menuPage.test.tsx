@@ -253,6 +253,89 @@ describe("ApiSettingsModal reasoning strength", () => {
     cleanup();
   });
 
+  it("uses the saved API reasoning strength when switching from CLI to API", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({}),
+      } as Response);
+    });
+    const cleanup = render(
+      <MenuPage
+        status={{
+          has_api_key: true,
+          llm_ready: true,
+          has_running_game: false,
+          has_main_db: false,
+          saves: [],
+          campaigns: [],
+          llm: {
+            channel: "cli",
+            base_url: "https://api.example.com/v1",
+            model: "gpt-5",
+            has_api_key: true,
+            cli_runner: "codex",
+            cli_model: "gpt-5.5",
+            cli_model_saved: "gpt-5.5",
+            cli_model_choices: { codex: [{ value: "gpt-5.5", label: "gpt-5.5" }] },
+            cli_timeout_seconds: 240,
+            reasoning_strength: "high",
+            api_reasoning_strength: "low",
+            cli_reasoning_strength: "high",
+            reasoning_supported: true,
+            reasoning_strengths: [
+              { value: "", label: "默认" },
+              { value: "off", label: "关" },
+              { value: "low", label: "低" },
+              { value: "medium", label: "中" },
+              { value: "high", label: "高" },
+            ],
+            max_tokens: 8000,
+            timeout_seconds: 180,
+            thinking_level: "",
+            advanced_model: "",
+            advanced_base_url: "",
+            has_advanced_api_key: false,
+            advanced_thinking_level: "",
+          },
+        }}
+        onRefresh={async () => ({} as any)}
+        onEnterGame={async () => {}}
+        error=""
+        setError={() => {}}
+      />
+    );
+
+    act(() => {
+      Array.from(document.querySelectorAll("button")).find((button) =>
+        button.textContent?.includes("设置 API")
+      )?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const channelSelect = Array.from(document.querySelectorAll("select")).find((select) =>
+      select.querySelector('option[value="api"]')
+    ) as HTMLSelectElement | undefined;
+    act(() => {
+      channelSelect!.value = "api";
+      channelSelect!.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+    expect(strength?.value).toBe("low");
+    const save = Array.from(document.querySelectorAll("button")).find((button) =>
+      button.textContent === "保存"
+    );
+    await act(async () => {
+      save!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const body = JSON.parse(String(calls.find((call) => call.url === "/api/menu/llm")!.init!.body));
+    expect(body.channel).toBe("api");
+    expect(body.reasoning_strength).toBe("low");
+    cleanup();
+  });
+
   it("migrates legacy disabled thinking level to unified off", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
