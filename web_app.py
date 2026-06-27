@@ -1733,6 +1733,25 @@ def _serialized_web_write(game):
         gate.release()
 
 
+def _drain_and_close_session(game) -> None:
+    """等在途后台写入（召对 worker / 结算 worker）排空 write_gate 后再关连接。
+
+    #396：菜单生命周期端点（exit_to_menu / new_game / shutdown）不再在 write_gate 被
+    持时直接 session.close()——否则后台 worker 崩在 closed database（#382 连接级并发）。
+    exit_to_menu 立刻清 web_game 并返回，连接在后台 daemon 线程延后关（detach）；
+    new_game 先清 web_game、再 await 排空（offload 到线程池不阻塞事件循环）后才删库建新局；
+    shutdown await 排空后再杀进程。不挂 #382 大设计，仅用现有 write_gate 队列续跑再关。
+    """
+    gate = _game_write_gate(game)
+    gate.acquire()  # 阻塞——等 worker 释放
+    try:
+        game.session.close()
+    except Exception:
+        pass
+    finally:
+        gate.release()
+
+
 web_game: Optional[WebGame] = None  # 懒加载：菜单页点「新游戏/继续/加载存档」才实例化
 app = FastAPI(title="Ming Salvage MVP Web")
 
@@ -1918,14 +1937,15 @@ async def api_menu_status() -> Dict[str, Any]:
 
 @app.post("/api/menu/new_game")
 async def api_menu_new_game() -> Dict[str, Any]:
-    """开始新游戏：清主 DB → 新建 WebGame。"""
+    """开始新游戏：清主 DB → 新建 WebGame。
+
+    #396：fresh=True 会删 DB 文件——必须先等旧连接的 worker 排空并关连接，
+    否则删文件时 worker 仍在写。offload 到线程池不阻塞事件循环。"""
     global web_game
     if web_game is not None:
-        try:
-            web_game.session.close()
-        except Exception:
-            pass
+        old_game = web_game
         web_game = None
+        await asyncio.get_running_loop().run_in_executor(None, _drain_and_close_session, old_game)
     try:
         web_game = WebGame(fresh=True)
     except LLMUnavailable as exc:
@@ -1977,30 +1997,34 @@ async def api_menu_delete_save(name: str) -> Dict[str, Any]:
 
 @app.post("/api/menu/exit_to_menu")
 async def api_menu_exit() -> Dict[str, Any]:
-    """退回菜单：关 session 但不删 DB。"""
+    """退回菜单：关 session 但不删 DB。
+
+    #396：界面立刻退（web_game=None + 响应返回），后台召对 worker 继续跑完、写进档；
+    session.close() 推迟到 write_gate 排空后再执行（detach），不在 worker 写时关。"""
     global web_game
     if web_game is not None:
-        try:
-            web_game.session.close()
-        except Exception:
-            pass
-        web_game = None
+        old_game = web_game
+        web_game = None  # 界面立刻退
+        # detach：等 write_gate 排空后再关连接（#396）
+        threading.Thread(target=_drain_and_close_session, args=(old_game,), daemon=True).start()
     return {"ok": True}
 
 
 @app.post("/api/menu/shutdown")
 async def api_menu_shutdown() -> Dict[str, Any]:
-    """退出整个游戏：关 session + 终止服务进程。前端收响应后自行关页面。"""
+    """退出整个游戏：关 session + 终止服务进程。前端收响应后自行关页面。
+
+    #396：关进程前等队列把最后一句写完（owner decision：可能等一两秒，可接受），
+    不在 worker 写时关连接。"""
     import os as _os
     import signal as _signal
     import threading as _threading
     global web_game
     if web_game is not None:
-        try:
-            web_game.session.close()
-        except Exception:
-            pass
+        old_game = web_game
         web_game = None
+        # 关进程前等队列排空（#396 owner decision）
+        await asyncio.get_running_loop().run_in_executor(None, _drain_and_close_session, old_game)
     # 先返回响应，再异步终止进程。SIGTERM 在 *nix 走优雅退出；
     # Windows 无完整 SIGTERM 语义（pywebview 主线程也不收信号），直接 os._exit 兜底。
     def _kill_later() -> None:
