@@ -2594,6 +2594,8 @@ async def api_retry_pending_action(action_id: int) -> Dict[str, Any]:
                 content=getattr(game.session, "content", None),
                 registry=getattr(game.session, "registry", None),
             )
+            if result.get("committed"):
+                game.db.retire_chat_turn_for_pending_action_retry(int(action_id))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from None
         except ValueError as exc:

@@ -5046,6 +5046,41 @@ class GameDB:
             return False
         return self.is_global_last_active_chat_turn(int(row["id"]))
 
+    def retire_chat_turn_for_pending_action_retry(self, action_id: int) -> int:
+        """Make the confirmation turn for a successfully retried action non-undoable.
+
+        Manual retry happens after the original chat rollback diff was recorded. Keeping
+        that chat turn active would let undo restore the pre-retry pending row while the
+        retried durable write remains, so retire only the turn that marked this action
+        failed. Chat messages stay persisted; only the undo affordance is removed.
+        """
+        rows = self.conn.execute(
+            """
+            SELECT i.chat_turn_id, i.after_json
+            FROM chat_turn_rollback_items i
+            JOIN chat_turns t ON t.id = i.chat_turn_id
+            WHERE t.status = 'active'
+              AND i.target_table = 'pending_actions'
+              AND i.target_id = ?
+            ORDER BY i.chat_turn_id DESC, i.id DESC
+            """,
+            (str(int(action_id)),),
+        ).fetchall()
+        for row in rows:
+            after_row = self._json_load_row(row["after_json"] or "")
+            if str(after_row.get("kind") or "") != "secret_order":
+                continue
+            if str(after_row.get("status") or "") != "failed":
+                continue
+            chat_turn_id = int(row["chat_turn_id"])
+            self.conn.execute(
+                "UPDATE chat_turns SET status = 'failed' WHERE id = ? AND status = 'active'",
+                (chat_turn_id,),
+            )
+            self.conn.commit()
+            return chat_turn_id
+        return 0
+
     def _restore_row_in_tx(self, table: str, row: Dict[str, Any]) -> None:
         if not row:
             return
