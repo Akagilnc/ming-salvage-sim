@@ -480,6 +480,50 @@ def test_secret_order_status_query_does_not_stage_new_hidden_order(game, monkeyp
     assert "secret_extract" not in calls
 
 
+def test_new_secret_order_with_existing_order_stages_only_new_candidate(game, monkeypatch):
+    """已有 active 密令时，另下一道密令不能同轮再把旧密令也 stage 一次更新。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    oid = db.create_secret_order(state, name, "旧令", "旧令内容。", [], deadline_months=0)
+
+    def _extractors(prompt, llm_config=None, tag=""):
+        if tag == "secret_extract":
+            return (json.dumps({
+                "标题": "新查粮道",
+                "内容": "另下一道密令暗查粮道。",
+                "承办人": name,
+                "期限月数": 2,
+                "标签": [],
+            }, ensure_ascii=False), 1)
+        return (json.dumps({
+            "动作类型": "密令动作",
+            "密令动作": "更新",
+            "目标密令编号": oid,
+            "新标题": "误改旧令",
+            "新内容": "误改旧令内容",
+            "期限月数": 0,
+            "确认": "无",
+            "拟旨意图": "无",
+            "任免动作": "无",
+        }, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _extractors)
+
+    out = GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), ch,
+        player_message="你替朕下一道密令，暗查粮道，两月内回奏。",
+        answer="臣领旨，请陛下定夺。",
+        has_directive=False, secret_order_id=None,
+    )
+
+    assert out["pending_action_id"]
+    pending = db.list_pending_actions(state.turn)
+    assert [(p["kind"], p["action"], p["target_id"]) for p in pending] == [
+        ("secret_order", "新建", None)
+    ]
+
+
 def test_dialogue_reject_drops_pending_new_secret_order(game, monkeypatch):
     """#413：皇帝拒绝待确认的新密令时，只删除暂存候选，不得稍后落成密令。"""
     db, state, content = game
@@ -1493,6 +1537,29 @@ def test_confirm_reject_does_not_delete_conversational_directive(game, monkeypat
     surviving = [p for p in pend if p["kind"] == "directive"]
     assert len(surviving) == 1, "拒绝轮不得删除玩家的对话式拟旨草案"
     assert surviving[0]["id"] == did
+
+
+def test_targeted_directive_rejection_does_not_drop_secret_order(game):
+    """同一大臣同时有密令候选和拟旨时，点名“圣旨作罢”只应丢拟旨。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    directive_id = db.upsert_pending_directive(
+        state.turn, name, payload={"text": "草案：清查三边粮饷。", "actor": name})
+    secret_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={"title": "暗查辽饷", "content": "密查辽饷侵冒。", "assignee": name})
+
+    GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), ch,
+        player_message="那道圣旨作罢。",
+        answer="臣遵旨。",
+        has_directive=False, secret_order_id=None,
+    )
+
+    pending = db.list_pending_actions(state.turn)
+    assert [p["id"] for p in pending] == [secret_id]
+    assert not any(p["id"] == directive_id for p in pending)
 
 
 # ── ⑯ BUG 2 — write_decree 的 pending_count 守门须早于 commit ─────────────────
