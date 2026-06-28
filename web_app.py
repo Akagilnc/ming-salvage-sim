@@ -1575,7 +1575,8 @@ class WebGame:
         agent = self.session.registry.get(character)
         action_intent_future = self.session._start_cli_action_intent(character, text)
         run_output = None
-        agent_prompt = self.session._audience_prompt_for_message(text)
+        prompt_builder = getattr(self.session, "_audience_prompt_for_message", None)
+        agent_prompt = prompt_builder(text) if prompt_builder is not None else text
         stream = agent.run(agent_prompt, stream=True, stream_events=True, yield_run_output=True)
         for event in stream:
             content = getattr(event, "content", None)
@@ -1605,12 +1606,18 @@ class WebGame:
         secret_order_id = 0
         pending_action_id = 0
         tool_pending_action_id = 0
-        preexisting_pending_action_ids = {
-            int(p["id"]) for p in self.db.list_pending_actions(self.state.turn, minister_name=character.name)
-        }
+        if hasattr(self.db, "list_pending_actions"):
+            preexisting_pending_action_ids = {
+                int(p["id"]) for p in self.db.list_pending_actions(self.state.turn, minister_name=character.name)
+            }
+        else:
+            preexisting_pending_action_ids = set()
         preclassified_intent = self.session._finish_cli_action_intent(action_intent_future)
-        preclassified_intent = self.session._confirmation_intent_for_preexisting_pending(
-            character.name, text, answer, preclassified_intent, preexisting_pending_action_ids)
+        confirmation_intent_for_pending = getattr(
+            self.session, "_confirmation_intent_for_preexisting_pending", None)
+        if confirmation_intent_for_pending is not None:
+            preclassified_intent = confirmation_intent_for_pending(
+                character.name, text, answer, preclassified_intent, preexisting_pending_action_ids)
         message_text = (text or "").strip()
         from ming_sim.cli_backend import _DRAFT_PREFIXES, _SECRET_PREFIXES
         explicit_draft_prefix = message_text.startswith(_DRAFT_PREFIXES)
@@ -2653,9 +2660,12 @@ def _player_visible_pending_actions(actions: List[Dict[str, Any]]) -> List[Dict[
 
 
 def _failed_secret_order_ids_for_turn(game: WebGame, turn: int) -> set[int]:
+    db = getattr(game, "db", None)
+    if db is None or not hasattr(db, "list_pending_actions"):
+        return set()
     return {
         int(action.get("id") or 0)
-        for action in game.db.list_pending_actions(int(turn), status="failed")
+        for action in db.list_pending_actions(int(turn), status="failed")
         if action.get("kind") == "secret_order"
     }
 
@@ -2663,9 +2673,12 @@ def _failed_secret_order_ids_for_turn(game: WebGame, turn: int) -> set[int]:
 def _new_secret_order_failure_payloads_for_turn(
     game: WebGame, turn: int, before_ids: set[int],
 ) -> List[Dict[str, Any]]:
+    db = getattr(game, "db", None)
+    if db is None or not hasattr(db, "list_pending_actions"):
+        return []
     return [
         _pending_action_failure_payload(action, game.state)
-        for action in game.db.list_pending_actions(int(turn), status="failed")
+        for action in db.list_pending_actions(int(turn), status="failed")
         if action.get("kind") == "secret_order" and int(action.get("id") or 0) not in before_ids
     ]
 
@@ -3000,7 +3013,7 @@ async def api_write_decree() -> Dict[str, Any]:
 @app.post("/api/decree/advance_without_edict")
 async def api_advance_without_edict() -> Dict[str, Any]:
     game = get_game()
-    turn_before = int(game.state.turn)
+    turn_before = int(getattr(game.state, "turn", 0) or 0)
     failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
     try:
         with _serialized_web_write(game):
@@ -3056,7 +3069,7 @@ async def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> D
     """非流式颁诏（保留兼容）。前端默认走 /api/decree/issue/stream。"""
     game = get_game()
     was_ended = bool(game.state.ended)
-    turn_before = int(game.state.turn)
+    turn_before = int(getattr(game.state, "turn", 0) or 0)
     failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
     try:
         with _game_write_gate(game):
