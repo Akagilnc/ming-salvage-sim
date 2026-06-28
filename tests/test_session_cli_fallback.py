@@ -407,6 +407,74 @@ def test_tool_staged_action_is_not_confirmed_in_same_chat_turn(game):
     assert len(db.list_pending_actions(state.turn)) == 1
 
 
+def test_confirmation_turn_ignores_same_turn_secret_order_tool_output(game, monkeypatch):
+    """确认旧 pending 的同一句，不能再消费 tool sentinel 重建一道新密令。"""
+    db, state, content = game
+    minister = "毕自严"
+    old_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
+        payload={
+            "title": "旧候选",
+            "content": "旧候选内容",
+            "assignee": minister,
+            "tags": [],
+            "deadline_months": 0,
+        },
+    )
+    tool_payload = json.dumps({
+        "title": "同句新令",
+        "content": "同句新令内容",
+        "assignee": minister,
+        "tags": [],
+        "deadline_months": 0,
+    }, ensure_ascii=False)
+    calls = []
+    monkeypatch.setattr(
+        cb,
+        "_run_api_for_config",
+        lambda *a, **k: (calls.append((a, k)) or (json.dumps({"确认": "应允"}, ensure_ascii=False), 1)),
+    )
+
+    class Agent:
+        def run(self, _message):
+            return SimpleNamespace(
+                content="臣遵旨。",
+                tools=[SimpleNamespace(tool_name="secret_order", result=f"__secret_order__{tool_payload}")],
+            )
+
+    class Registry:
+        def get(self, _character):
+            return Agent()
+
+        def build_draft_line(self):
+            return "无"
+
+        def refresh(self, _name):
+            return None
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = Registry()
+    sess.llm_config = SimpleNamespace(channel="api")
+    sess.temporary_characters = set()
+    sess._audience_prompt_for_message = lambda message: message
+    sess._start_cli_action_intent = lambda *_args, **_kwargs: None
+    sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
+
+    result = GameSession.chat(sess, minister, "准了")
+
+    assert result.pending_action_id == 0
+    orders = db.list_secret_orders()
+    assert len(orders) == 1
+    assert orders[0]["title"] == "旧候选"
+    assert db.list_pending_actions(state.turn) == []
+    assert not db.conn.execute(
+        "SELECT 1 FROM pending_actions WHERE id=? AND status='pending'", (old_id,)
+    ).fetchone()
+
+
 def test_confirmation_commit_only_visible_pending_ids(game):
     """同句新 stage 的动作即便同大臣同 kind，也不能被本句确认顺手提交。"""
     db, state, _content = game

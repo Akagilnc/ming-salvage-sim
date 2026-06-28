@@ -1598,11 +1598,21 @@ class WebGame:
         preexisting_pending_action_ids = {
             int(p["id"]) for p in self.db.list_pending_actions(self.state.turn, minister_name=character.name)
         }
+        preclassified_intent = self.session._finish_cli_action_intent(action_intent_future)
+        preclassified_intent = self.session._confirmation_intent_for_preexisting_pending(
+            character.name, text, answer, preclassified_intent, preexisting_pending_action_ids)
+        confirmation_turn = (
+            isinstance(preclassified_intent, dict)
+            and str(preclassified_intent.get("kind") or "") == "confirmation"
+            and str(preclassified_intent.get("confirmation") or "") in {"应允", "拒绝"}
+        )
         if run_output is not None:
             for tool_exec in getattr(run_output, "tools", None) or []:
                 res = str(getattr(tool_exec, "result", "") or "")
                 tool_name = getattr(tool_exec, "tool_name", "")
                 if tool_name == "propose_directive" or res.startswith("__pending_directive__"):
+                    if confirmation_turn:
+                        continue
                     draft_text = res.removeprefix("__pending_directive__").strip()
                     if not draft_text:
                         args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
@@ -1615,12 +1625,16 @@ class WebGame:
                             payload={"text": draft_text, "actor": character.name},
                         )
                 elif tool_name == "propose_appointment" or res.startswith("__pending_appointment__"):
+                    if confirmation_turn:
+                        continue
                     payload_json = res.removeprefix("__pending_appointment__").strip()
                     if not payload_json:
                         args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                         payload_json = json.dumps(args, ensure_ascii=False)
                     appointed, displaced = self.session._apply_appointment(payload_json, character)
                 elif tool_name == "register_unlisted_person" or res.startswith("__pending_unlisted_person__"):
+                    if confirmation_turn:
+                        continue
                     payload_json = res.removeprefix("__pending_unlisted_person__").strip()
                     if not payload_json:
                         args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
@@ -1653,6 +1667,8 @@ class WebGame:
                     or res.startswith("__secret_order__")
                     or res.startswith("__secret_action__")
                 ):
+                    if confirmation_turn:
+                        continue
                     if res.startswith("__secret_action__"):
                         payload_json = res.removeprefix("__secret_action__").strip()
                         try:
@@ -1714,7 +1730,7 @@ class WebGame:
             character, text, answer,
             has_directive=proposed is not None or bool(pending_action_id),
             secret_order_id=secret_order_id,
-            preclassified_intent=self.session._finish_cli_action_intent(action_intent_future),
+            preclassified_intent=preclassified_intent,
             confirm_target_ids=preexisting_pending_action_ids,
         )
         if proposed is None and res["directive"]:

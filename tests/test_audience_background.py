@@ -3,7 +3,11 @@ from __future__ import annotations
 import json
 import threading
 import time
+import types
+from types import SimpleNamespace
 
+import ming_sim.cli_backend as cb
+from ming_sim.session import GameSession
 from ming_sim.skills import bind_content as bind_skills_content
 from web_app import WebGame
 
@@ -56,6 +60,9 @@ class _FakeRegistry:
     def get(self, _character):
         return self.agent
 
+    def refresh(self, _name):
+        return None
+
 
 class _FakeSession:
     def __init__(self, db, state, content, agent: _FakeAgent) -> None:
@@ -64,6 +71,7 @@ class _FakeSession:
         self.content = content
         self.registry = _FakeRegistry(agent)
         self.temporary_characters = set()
+        self.llm_config = SimpleNamespace(channel="api")
 
     def _character(self, minister_name: str):
         return self.content.characters[minister_name]
@@ -73,6 +81,9 @@ class _FakeSession:
 
     def _finish_cli_action_intent(self, _future):
         return None
+
+    def _confirmation_intent_for_preexisting_pending(self, *args, **kwargs):
+        return GameSession._confirmation_intent_for_preexisting_pending(self, *args, **kwargs)
 
     def _audience_prompt_for_message(self, message):
         return f"【增强上下文】{message}"
@@ -234,6 +245,56 @@ def test_stream_tool_staged_secret_order_merges_minister_reply(game):
     assert "三月内回奏" in staged["content"]
     assert "不可声张" in staged["content"]
     assert "封存兵部辽饷册" in staged["content"]
+
+
+def test_stream_confirmation_ignores_same_turn_secret_order_tool_output(game, monkeypatch):
+    """streaming 路径确认旧 pending 时，也不能把同轮 tool sentinel 留成新 pending。"""
+    db, state, content = game
+    minister_name = "毕自严"
+    db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=minister_name, target_id=None,
+        payload={
+            "title": "旧候选",
+            "content": "旧候选内容",
+            "assignee": minister_name,
+            "tags": [],
+            "deadline_months": 0,
+        },
+    )
+    tool_payload = json.dumps({
+        "title": "同句新令",
+        "content": "同句新令内容",
+        "assignee": minister_name,
+        "tags": [],
+        "deadline_months": 0,
+    }, ensure_ascii=False)
+    monkeypatch.setattr(
+        cb,
+        "_run_api_for_config",
+        lambda *a, **k: (json.dumps({"确认": "应允"}, ensure_ascii=False), 1),
+    )
+    agent = _FakeAgent(
+        [ToolExec("secret_order", f"__secret_order__{tool_payload}")],
+        chunks=["臣", "遵旨。"],
+    )
+    web_game = _web_game(db, state, content, agent)
+    web_game.session.apply_cli_conversation_actions = types.MethodType(
+        GameSession.apply_cli_conversation_actions, web_game.session)
+
+    payload = web_game._chat_stream_payload(
+        minister_name,
+        "准了",
+        chat_turn_id=0,
+        before_snapshot={},
+        accepted_turn=state.turn,
+        emit_delta=lambda _chunk: None,
+    )
+
+    assert payload["pending_action_id"] == 0
+    orders = db.list_secret_orders()
+    assert len(orders) == 1
+    assert orders[0]["title"] == "旧候选"
+    assert db.list_pending_actions(state.turn) == []
 
 
 def test_stream_secret_order_plain_tool_result_does_not_stage_empty_candidate(game):
