@@ -8,6 +8,7 @@ CLI 和 Web 各自只做 I/O 包装。
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -1190,10 +1191,12 @@ class GameSession:
                 "另下一道", "新下一道",
             )):
                 return True
+            if explicit_secret and re.search(r"(?:密令|密旨|密谕).{0,12}(?:暗查|密查|密访|侦缉|查办)", text):
+                return True
             if explicit_secret:
                 return any(
-                    verb in text and any(term in text for term in ("暗查", "密查", "密访", "侦缉", "查办", "查"))
-                    for verb in ("下", "发", "给", "交办", "传", "命", "令", "着", "派", "遣")
+                    verb in text and any(term in text for term in ("暗查", "密查", "密访", "侦缉", "查办"))
+                    for verb in ("下", "发", "给", "交办", "传", "命", "着", "派", "遣")
                 )
             covert_terms = ("暗查", "密查", "密访", "暗访", "侦缉")
             imperative_terms = ("着", "命", "令", "派", "遣", "让", "交办", "交")

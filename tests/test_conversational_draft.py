@@ -479,6 +479,33 @@ def test_secret_order_status_query_does_not_stage_new_hidden_order(game, monkeyp
     assert db.list_pending_actions(state.turn) == []
 
 
+def test_secret_order_progress_query_does_not_stage_new_hidden_order(game, monkeypatch):
+    """“这道密令查到哪了”是查询进展，不是新下密令。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
+        "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
+        "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": "",
+    })
+    monkeypatch.setattr(
+        cb,
+        "_run_backend_for_config",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("progress query must not extract new secret order")),
+    )
+
+    out = GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), ch,
+        player_message="这道密令查到哪了？",
+        answer="臣尚在追查。",
+        has_directive=False,
+        secret_order_id=None,
+    )
+
+    assert not out.get("pending_action_id")
+    assert db.list_pending_actions(state.turn) == []
+
+
 def test_explicit_secret_order_imperative_stages_new_candidate(game, monkeypatch):
     """“密令锦衣卫暗查…”这类省略“下/发”的祈使句也应识别为新密令。"""
     db, state, content = game

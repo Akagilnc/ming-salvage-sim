@@ -249,7 +249,9 @@ function App() {
       setPendingUserMessage("");
       setStreamingMinisterMessage("");
       setChatNotice("");
-      setChatFailures([]);
+      if (!failureRecoveryMode) {
+        setChatFailures([]);
+      }
       setCanUndoLastChat(false);
       setComposerHint("");
       return;
@@ -258,11 +260,14 @@ function App() {
     setSuggestions([]);
     setPendingUserMessage("");
     setStreamingMinisterMessage("");
-    setChatFailures([]);
+    if (!failureRecoveryMode) {
+      setChatFailures([]);
+    }
     setCanUndoLastChat(false);
     setComposerHint("");
-    loadMinisterChat(selectedMinister).catch((err) => setError(err.message));
-  }, [selectedMinister, loadMinisterChat]);
+    loadMinisterChat(selectedMinister, failureRecoveryMode ? { mergeFailures: true } : undefined)
+      .catch((err) => setError(err.message));
+  }, [selectedMinister, loadMinisterChat, failureRecoveryMode]);
 
   // 全局 ESC：按 z-index 优先级，最前面的弹窗先关
   React.useEffect(() => {
