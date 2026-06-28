@@ -27,6 +27,16 @@ describe("resolveReasoningSupported", () => {
     })).toBe(true);
   });
 
+  it("trims edited API fields before applying fallback heuristics", () => {
+    expect(resolveReasoningSupported({
+      ...API_SETTINGS,
+      baseUrl: " https://api.example.com/v1 ",
+      model: " gpt-5 ",
+      backendSupported: false,
+      backendCurrent: false,
+    })).toBe(true);
+  });
+
   it("falls back to CLI runner support when the backend snapshot is stale", () => {
     expect(resolveReasoningSupported({
       currentChannel: "cli",
