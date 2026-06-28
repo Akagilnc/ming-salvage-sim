@@ -2,7 +2,8 @@
 
 行为契约(非实现细节):召对里 LLM 判出的密令写动作(更新/催办/记进展/提交核议),
 **颁诏前不得改真实表**,只在 pending_actions 暂存;真正落库等颁诏 commit_pending_actions。
-拟旨不在本闸门(继续走准/驳),不在此测。
+拟旨也走 pending_actions(kind=directive) 闸门；本文件主要测密令/任免/调教路径，
+拟旨专项覆盖在 test_conversational_draft.py。
 
 测试走公开行为:驱动 GameSession.apply_cli_conversation_actions(CLI 后端会话落地唯一真源),
 monkeypatch LLM 边界 _run_backend_for_config 喂固定意图 JSON;断言 DB 可观察状态。
@@ -19,10 +20,11 @@ import types
 
 import pytest
 
+import web_app
 import ming_sim.cli_backend as cb
 import ming_sim.issues as issues
 from ming_sim.decree import advance_without_edict, pre_settle
-from ming_sim.session import GameSession
+from ming_sim.session import GameSession, TurnPhase, _pending_action_failure_payload
 
 
 @pytest.fixture(autouse=True)
@@ -130,9 +132,60 @@ def test_secret_order_rush_intent_stages_and_commits(game, monkeypatch):
 
     # 颁诏 commit:rush 生效(due_turn 提前)
     db.commit_pending_actions(state)
-    due_after = db.conn.execute("SELECT due_turn FROM secret_orders WHERE id=?", (oid,)).fetchone()["due_turn"]
+    row = db.conn.execute("SELECT status, due_turn FROM secret_orders WHERE id=?", (oid,)).fetchone()
+    due_after = row["due_turn"]
     assert due_after != due_before
+    assert due_after == state.turn + 1
+    assert row["status"] == "active"
     assert db.list_pending_actions(state.turn) == []
+
+
+def test_secret_order_rush_intent_preserves_zero_deadline(game, monkeypatch):
+    """自然语言催办抽取到 deadline=0 时，暂存 payload 必须保留本月即核语义。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=6)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                            {"密令动作": "催办", "目标密令编号": 0, "期限月数": 0}, ensure_ascii=False), 1))
+    GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), ch,
+        player_message="即刻送核议", answer="臣即办。",
+        has_directive=False, secret_order_id=None)
+
+    pending = db.list_pending_actions(state.turn)
+    assert len(pending) == 1 and pending[0]["action"] == "催办"
+    payload = json.loads(pending[0]["payload_json"])
+    assert payload["deadline_months"] == 0
+
+    db.commit_pending_actions(state)
+
+    row = db.conn.execute(
+        "SELECT status, due_turn FROM secret_orders WHERE id=?", (oid,)
+    ).fetchone()
+    assert row["status"] == "pending_review"
+    assert row["due_turn"] == state.turn
+
+
+def test_secret_order_rush_deadline_zero_commits_immediate_review(game):
+    """暂存催办 deadline_months=0 表示本月即核，commit 时不能被缺省值改成 1。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=6)
+    db.stage_pending_action(
+        state.turn, kind="secret_order", action="催办", minister_name=name, target_id=oid,
+        payload={"deadline_months": 0, "reason": "即刻核议"},
+    )
+
+    db.commit_pending_actions(state)
+
+    row = db.conn.execute(
+        "SELECT status, due_turn FROM secret_orders WHERE id=?", (oid,)
+    ).fetchone()
+    assert row["status"] == "pending_review"
+    assert row["due_turn"] == state.turn
 
 
 def test_secret_order_submit_intent_stages_and_commits(game, monkeypatch):
@@ -199,6 +252,189 @@ def test_pre_settle_commits_pending_at_decree_front(game):
     assert db.list_pending_actions(state.turn) == []
 
 
+def test_silent_new_secret_order_lands_at_checkpoint_without_pending_visibility(game):
+    """#414: 不回复确认时,新密令只在 checkpoint 默认同意后进入玩家密令面。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "密查辽东军饷侵冒。",
+            "assignee": name,
+            "tags": ["辽饷"],
+            "deadline_months": 3,
+        })
+
+    assert db.list_secret_orders() == []
+    assert db.list_secret_orders(status="pending") == []
+
+    applied = db.commit_pending_actions(state)
+
+    assert [(a["kind"], a["action"]) for a in applied] == [("secret_order", "新建")]
+    assert db.list_pending_actions(state.turn) == []
+    orders = db.list_secret_orders()
+    assert len(orders) == 1
+    assert orders[0]["title"] == "暗查辽饷"
+    assert orders[0]["minister_name"] == name
+    assert orders[0]["status"] == "active"
+    assert db.list_secret_orders(status="pending") == []
+
+
+def test_secret_order_endpoint_delegates_to_chat_confirmation_flow(game, monkeypatch):
+    """#413/#414: 兼容端点只能进入召对确认流,不得直写 pending action 绕过大臣回话。"""
+    import asyncio
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    calls = []
+
+    def _chat(minister_name, message):
+        calls.append((minister_name, message))
+        return {
+            "minister": minister_name,
+            "answer": "臣领密旨，拟先封存账册，再密访诸将，请陛下定夺。",
+            "history": [
+                {"role": "user", "content": message},
+                {"role": "minister", "content": "臣领密旨，请陛下定夺。"},
+            ],
+            "pending_action_id": 42,
+            "secret_order_id": 0,
+        }
+
+    stub = types.SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        session=types.SimpleNamespace(
+            state=state, content=content, registry=None, temporary_characters=set()),
+        character_power_id=lambda c: web_app._character_power_id(c, db),
+        chat=_chat,
+        _chat_with_write_gate_held=_chat,
+    )
+    monkeypatch.setattr(web_app, "web_game", stub)
+
+    result = asyncio.run(web_app.api_create_secret_order(
+        name,
+        web_app.SecretOrderRequest(
+            title="暗查辽饷",
+            content="密查辽东军饷侵冒。",
+            tags=["辽饷"],
+            deadline_months=3,
+        ),
+    ))
+
+    assert calls == [(name, "密令如下：暗查辽饷\n密查辽东军饷侵冒。\n标签：辽饷\n期限：3月")]
+    assert result["answer"] == "臣领密旨，拟先封存账册，再密访诸将，请陛下定夺。"
+    assert result["pending_action_id"] == 42
+    assert result["secret_order_id"] == 0
+    assert db.list_secret_orders() == []
+    assert db.list_pending_actions(state.turn) == []
+
+
+def test_api_create_secret_order_preserves_explicit_zero_deadline(game, monkeypatch):
+    """按钮端点显式传 deadline_months=0 时，也要把 0 月交给统一密令前缀文本。"""
+    import asyncio
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    calls = []
+
+    def _chat(minister_name, message):
+        calls.append((minister_name, message))
+        return {"answer": "臣领密旨。", "pending_action_id": 7, "secret_order_id": 0}
+
+    stub = types.SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        session=types.SimpleNamespace(
+            state=state, content=content, registry=None, temporary_characters=set()),
+        character_power_id=lambda c: web_app._character_power_id(c, db),
+        _chat_with_write_gate_held=_chat,
+    )
+    monkeypatch.setattr(web_app, "web_game", stub)
+
+    result = asyncio.run(web_app.api_create_secret_order(
+        name,
+        web_app.SecretOrderRequest(
+            title="暗查辽饷",
+            content="密查辽东军饷侵冒。",
+            deadline_months=0,
+        ),
+    ))
+
+    assert calls == [(name, "密令如下：暗查辽饷\n密查辽东军饷侵冒。\n期限：0月")]
+    assert result["pending_action_id"] == 7
+
+
+def test_api_create_secret_order_supports_pydantic_v1_fields_set(game, monkeypatch):
+    """兼容 Pydantic v1:显式传 deadline_months=0 时字段集合在 __fields_set__。"""
+    import asyncio
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    calls = []
+
+    def _chat(minister_name, message):
+        calls.append((minister_name, message))
+        return {"answer": "臣领密旨。", "pending_action_id": 7, "secret_order_id": 0}
+
+    stub = types.SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        session=types.SimpleNamespace(
+            state=state, content=content, registry=None, temporary_characters=set()),
+        character_power_id=lambda c: web_app._character_power_id(c, db),
+        _chat_with_write_gate_held=_chat,
+    )
+    request = types.SimpleNamespace(
+        title="暗查辽饷",
+        content="密查辽东军饷侵冒。",
+        tags=[],
+        deadline_months=0,
+    )
+    setattr(request, "__fields_set__", {"deadline_months"})
+    monkeypatch.setattr(web_app, "web_game", stub)
+
+    result = asyncio.run(web_app.api_create_secret_order(name, request))
+
+    assert calls == [(name, "密令如下：暗查辽饷\n密查辽东军饷侵冒。\n期限：0月")]
+    assert result["pending_action_id"] == 7
+
+
+def test_api_create_secret_order_ignores_malformed_tags(game, monkeypatch):
+    """旧按钮端点遇到非 list tags 时不崩溃，按无标签继续走召对闸门。"""
+    import asyncio
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    calls = []
+
+    def _chat(minister_name, message):
+        calls.append((minister_name, message))
+        return {"answer": "臣领旨。", "pending_action_id": 7, "secret_order_id": 0}
+
+    stub = types.SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        session=types.SimpleNamespace(
+            state=state, content=content, registry=None, temporary_characters=set()),
+        character_power_id=lambda c: web_app._character_power_id(c, db),
+        _chat_with_write_gate_held=_chat,
+    )
+    req = web_app.SecretOrderRequest(title="暗查辽饷", content="密查辽东军饷侵冒。")
+    req.tags = None  # type: ignore[assignment]
+    monkeypatch.setattr(web_app, "web_game", stub)
+
+    result = asyncio.run(web_app.api_create_secret_order(name, req))
+
+    assert calls == [(name, "密令如下：暗查辽饷\n密查辽东军饷侵冒。")]
+    assert result["pending_action_id"] == 7
+
+
 def test_commit_marks_unapplicable_failed_not_orphan(game, monkeypatch):
     """branch 覆盖:无 target/未知动作 → _apply 返 False → 标 failed(不留 pending 成孤儿、不静默吞);
     可落的照落;再 commit 不重跑(幂等,failed/committed 都不在 pending)。"""
@@ -222,6 +458,81 @@ def test_commit_marks_unapplicable_failed_not_orphan(game, monkeypatch):
 
     again = db.commit_pending_actions(state)                  # 幂等:无 pending 可跑
     assert again == []
+
+
+def test_commit_rejects_blank_new_secret_order_payload(game):
+    """pending 新密令 payload 缺 title/content 时应 failed，不得落成空 active 密令。"""
+    db, state, _ = game
+    pid = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name="魏忠贤", target_id=None,
+        payload={"title": "", "content": "", "assignee": "魏忠贤", "tags": [], "deadline_months": 0},
+    )
+
+    applied = db.commit_pending_actions(state)
+
+    assert applied == []
+    assert db.list_secret_orders() == []
+    failed = db.list_pending_actions(state.turn, status="failed")
+    assert len(failed) == 1 and failed[0]["id"] == pid
+
+
+def test_commit_rejects_malformed_secret_order_deadline_payload(game):
+    """pending payload 的 deadline_months 必须是数值；坏类型不得被静默兜底成 0。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pid = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "密查辽东军饷侵冒。",
+            "assignee": name,
+            "tags": ["辽饷"],
+            "deadline_months": "三个月",
+        },
+    )
+
+    applied = db.commit_pending_actions(state)
+
+    assert applied == []
+    assert db.list_secret_orders() == []
+    failed = db.list_pending_actions(state.turn, status="failed")
+    assert len(failed) == 1 and failed[0]["id"] == pid
+
+
+def test_commit_rolls_back_secret_order_when_status_mark_fails(game, monkeypatch):
+    """落库副作用与 pending 状态必须同事务；中途异常不得留下可重跑的重复密令种子。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pid = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "密查辽东军饷侵冒。",
+            "assignee": name,
+            "tags": ["辽饷"],
+            "deadline_months": 3,
+        },
+    )
+
+    def _create_then_crash(state_arg, pa, payload, *, content=None, registry=None):
+        db.create_secret_order(
+            state_arg,
+            str(payload["assignee"]),
+            str(payload["title"]),
+            str(payload["content"]),
+            list(payload["tags"]),
+            deadline_months=int(payload["deadline_months"]),
+        )
+        raise RuntimeError("crash after durable insert")
+
+    monkeypatch.setattr(db, "_apply_pending_action", _create_then_crash)
+
+    applied = db.commit_pending_actions(state)
+
+    assert applied == []
+    assert db.list_secret_orders() == []
+    failed = db.list_pending_actions(state.turn, status="failed")
+    assert len(failed) == 1 and failed[0]["id"] == pid
 
 
 def test_undo_chat_turn_removes_staged_pending_action(game):
@@ -282,6 +593,31 @@ def test_withdraw_pending_action_removes_before_decree(game):
     assert db.withdraw_pending_action(pid, state.turn) is False   # 二次撤回无此 pending
 
 
+def test_withdraw_pending_action_does_not_commit_outer_transaction(game):
+    """普通外层事务中 withdraw pending 不得自行 commit，否则调用方回滚失效。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "密查辽饷侵冒。",
+            "assignee": name,
+            "tags": [],
+            "deadline_months": 0,
+        },
+    )
+
+    db.conn.execute("BEGIN")
+    assert db.withdraw_pending_action(pending_id, state.turn) is True
+    db.conn.rollback()
+
+    row = db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (pending_id,)
+    ).fetchone()
+    assert row is not None and row["status"] == "pending"
+
+
 def test_pending_actions_endpoints(game, monkeypatch):
     """皇帝复核区端点:GET 列本回合待确认动作;withdraw 撤回一条;不存在→404,已落库→409(可辨)。"""
     import asyncio
@@ -314,6 +650,198 @@ def test_pending_actions_endpoints(game, monkeypatch):
     with pytest.raises(HTTPException) as e409:
         asyncio.run(web_app.api_withdraw_pending_action(pid2))
     assert e409.value.status_code == 409
+
+
+def test_pending_actions_endpoint_hides_new_secret_order_candidates(game, monkeypatch):
+    """#414: 新密令候选不得作为 player-facing pending delivery state 暴露。"""
+    import asyncio
+    import web_app
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    visible_pid = db.stage_pending_action(
+        state.turn, kind="secret_order", action="更新", minister_name=name,
+        target_id=oid, payload={"new_title": "改"})
+    hidden_pid = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name,
+        target_id=None,
+        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
+                 "tags": [], "deadline_months": 0})
+    monkeypatch.setattr(web_app, "get_game", lambda: types.SimpleNamespace(db=db, state=state))
+
+    listed = asyncio.run(web_app.api_pending_actions())
+
+    assert [a["id"] for a in listed["actions"]] == [visible_pid]
+    assert hidden_pid not in [a["id"] for a in listed["actions"]]
+
+
+def test_web_advance_without_edict_lands_hidden_pending_secret_order(game, monkeypatch):
+    """web 退朝无诏入口要能提交隐藏的新密令候选，支撑不回默认同意。"""
+    import asyncio
+    import web_app
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name,
+        target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "暗查辽饷侵冒。",
+            "assignee": name,
+            "tags": ["辽饷"],
+            "deadline_months": 3,
+        },
+    )
+    stub = types.SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        session=types.SimpleNamespace(registry=None),
+        refresh_turn=lambda: None,
+        state_payload=lambda: {"turn": {"turn": state.turn}},
+        directive_rows=lambda: [],
+    )
+    monkeypatch.setattr(web_app, "web_game", stub)
+
+    out = asyncio.run(web_app.api_advance_without_edict())
+
+    assert out["state"]["turn"]["turn"] == 2
+    orders = db.list_secret_orders()
+    assert len(orders) == 1
+    assert orders[0]["title"] == "暗查辽饷"
+    assert db.list_pending_actions(1) == []
+
+
+def test_web_advance_without_edict_returns_failed_secret_order_payload(game, monkeypatch):
+    """web 退朝默认提交密令失败时，要返回可重试 failure payload。"""
+    import asyncio
+    import web_app
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name,
+        target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "暗查辽饷侵冒。",
+            "assignee": name,
+            "tags": ["辽饷"],
+            "deadline_months": 3,
+        },
+    )
+    monkeypatch.setattr(
+        db,
+        "create_secret_order",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("durable write failed")),
+    )
+    stub = types.SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        session=types.SimpleNamespace(registry=None),
+        refresh_turn=lambda: None,
+        state_payload=lambda: {"turn": {"turn": state.turn}},
+        directive_rows=lambda: [],
+    )
+    monkeypatch.setattr(web_app, "web_game", stub)
+
+    out = asyncio.run(web_app.api_advance_without_edict())
+
+    failures = out.get("pending_action_failures")
+    assert failures and failures[0]["id"] == pending_id
+    assert failures[0]["retryable"] is True
+
+
+def test_web_advance_without_edict_settlement_abort_returns_409(game, monkeypatch):
+    """退朝无诏若结算中止，也要按颁诏同口径返回已处理的 409。"""
+    import asyncio
+    import pytest
+    import web_app
+    from ming_sim.exceptions import SettlementAbort
+
+    db, state, content = game
+    stub = types.SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        session=types.SimpleNamespace(registry=None),
+        refresh_turn=lambda: None,
+        state_payload=lambda: {"turn": {"turn": state.turn}},
+        directive_rows=lambda: [],
+    )
+
+    def abort_after_failed_action(*_args, **_kwargs):
+        raise SettlementAbort("结算中止，可重试。", turn=state.turn, stage="settle")
+
+    monkeypatch.setattr(web_app, "web_game", stub)
+    monkeypatch.setattr(web_app, "advance_without_edict", abort_after_failed_action)
+
+    with pytest.raises(web_app.HTTPException) as exc:
+        asyncio.run(web_app.api_advance_without_edict())
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "结算中止，可重试。"
+
+
+def test_web_advance_without_edict_refuses_unhandled_directive_action(game, monkeypatch):
+    """web 退朝无诏不得绕过待准驳拟旨。"""
+    import asyncio
+    import pytest
+    import web_app
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=name, target_id=None,
+        payload={"text": "着户部清核辽饷。", "actor": name},
+    )
+    stub = types.SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        session=types.SimpleNamespace(registry=None),
+        refresh_turn=lambda: None,
+        state_payload=lambda: {"turn": {"turn": state.turn}},
+        directive_rows=lambda: [],
+    )
+    monkeypatch.setattr(web_app, "web_game", stub)
+
+    with pytest.raises(web_app.HTTPException) as exc:
+        asyncio.run(web_app.api_advance_without_edict())
+
+    assert exc.value.status_code == 400
+    assert "未处理拟旨" in str(exc.value.detail)
+    assert state.turn == 1
+
+
+def test_web_advance_without_edict_refuses_existing_draft(game, monkeypatch):
+    """已有 draft/pending 圣旨草案时，web 退朝无诏不得直接丢弃推进。"""
+    import asyncio
+    import pytest
+    import web_app
+
+    db, state, content = game
+    db.add_directive(state, None, "着户部清核辽饷。", "手动新增")
+    stub = types.SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        session=types.SimpleNamespace(registry=None),
+        refresh_turn=lambda: None,
+        state_payload=lambda: {"turn": {"turn": state.turn}},
+        directive_rows=lambda: db.list_directives(state, statuses=("pending", "draft")),
+    )
+    monkeypatch.setattr(web_app, "web_game", stub)
+
+    with pytest.raises(web_app.HTTPException) as exc:
+        asyncio.run(web_app.api_advance_without_edict())
+
+    assert exc.value.status_code == 400
+    assert "未处理拟旨" in str(exc.value.detail)
+    assert state.turn == 1
 
 
 def test_consort_cultivate_stages_and_commits(game, monkeypatch):
@@ -581,6 +1109,629 @@ def test_dialogue_reject_drops_staged(game, monkeypatch):
     assert db.list_pending_actions(state.turn) == []     # 暂存被丢
     assert db.conn.execute(
         "SELECT content FROM secret_orders WHERE id=?", (oid,)).fetchone()["content"] == "原内容"
+
+
+def test_dialogue_affirm_secret_order_landing_failure_is_reported(game, monkeypatch):
+    """密令已被应允但正式落库失败 → 召对结果必须显眼报告失败,不可静默吞掉。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
+                 "tags": [], "deadline_months": 0},
+    )
+
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                            {"确认": "应允"}, ensure_ascii=False), 1))
+    monkeypatch.setattr(db, "create_secret_order",
+                        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("durable write failed")))
+
+    out = GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), ch, player_message="准",
+        answer="臣即密办。", has_directive=False, secret_order_id=None)
+
+    failures = out.get("pending_action_failures")
+    assert failures and failures[0]["id"] == pending_id
+    assert failures[0]["retryable"] is True
+    assert "密令" in failures[0]["message"]
+    failed = db.list_pending_actions(state.turn, status="failed")
+    assert len(failed) == 1 and failed[0]["id"] == pending_id
+
+
+def test_retry_failed_secret_order_reuses_stored_payload(game):
+    """重试失败密令用 pending_actions 里已存 payload 落库,不需要重跑召对/抽取。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
+                 "tags": ["辽饷"], "deadline_months": 0},
+    )
+    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
+    db.conn.commit()
+
+    result = db.retry_failed_pending_action(state, pending_id)
+
+    assert result["committed"] is True
+    assert db.list_pending_actions(state.turn, status="failed") == []
+    row = db.conn.execute(
+        "SELECT minister_name, title, content, tags FROM secret_orders ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert row["minister_name"] == name
+    assert row["title"] == "暗查辽饷"
+    assert row["content"] == "密查辽饷去向"
+    assert json.loads(row["tags"]) == ["辽饷"]
+
+
+def test_retry_failed_secret_order_rejects_settlement_recovery_phase(game):
+    """pre_settle 后的恢复窗口不能手动 retry，避免绕出结算事务保护。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
+                 "tags": ["辽饷"], "deadline_months": 0},
+    )
+    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
+    db.conn.commit()
+    state.turn_phase = TurnPhase.SETTLING.value
+
+    with pytest.raises(ValueError, match="结算"):
+        db.retry_failed_pending_action(state, pending_id)
+
+    assert db.list_secret_orders() == []
+    failed = db.list_pending_actions(state.turn, status="failed")
+    assert len(failed) == 1 and failed[0]["id"] == pending_id
+
+
+def test_retry_failed_secret_order_status_failure_rolls_back_created_order(game, monkeypatch):
+    """retry 的 durable 创建与 failed 行状态转换必须同事务，避免失败后重复创建。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "密查辽饷侵冒。",
+            "assignee": name,
+            "tags": ["辽饷"],
+            "deadline_months": 0,
+        },
+    )
+    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
+    db.conn.commit()
+    original_execute = db.conn.execute
+
+    def fail_status_update(sql, *args, **kwargs):
+        params = args[0] if args else ()
+        if "UPDATE pending_actions SET status=?" in str(sql) and params and params[0] == "committed":
+            raise RuntimeError("status update failed")
+        return original_execute(sql, *args, **kwargs)
+
+    monkeypatch.setattr(db.conn, "execute", fail_status_update)
+
+    with pytest.raises(RuntimeError):
+        db.retry_failed_pending_action(state, pending_id)
+
+    assert db.list_secret_orders() == []
+
+
+def test_retry_failed_secret_order_apply_exception_rolls_back_side_effects(game, monkeypatch):
+    """retry 中 _apply_pending_action 半途写入后抛错时，写入必须回滚，只保留 failed 状态。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "密查辽饷侵冒。",
+            "assignee": name,
+            "tags": ["辽饷"],
+            "deadline_months": 0,
+        },
+    )
+    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
+    db.conn.commit()
+
+    def partial_apply(_state, _pa, _payload, **_kwargs):
+        db.create_secret_order(state, name, "半写密令", "不应留下。", [], deadline_months=0)
+        raise RuntimeError("apply failed after durable write")
+
+    monkeypatch.setattr(db, "_apply_pending_action", partial_apply)
+
+    result = db.retry_failed_pending_action(state, pending_id)
+
+    assert result["committed"] is False
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM secret_orders WHERE title='半写密令'"
+    ).fetchone()[0] == 0
+    failed = db.list_pending_actions(state.turn, status="failed")
+    assert len(failed) == 1 and failed[0]["id"] == pending_id
+
+
+def test_commit_pending_action_false_rolls_back_side_effects(game, monkeypatch):
+    """commit 中 _apply_pending_action 半途写入后返回 False，也必须回滚半写入。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "密查辽饷侵冒。",
+            "assignee": name,
+            "tags": ["辽饷"],
+            "deadline_months": 0,
+        },
+    )
+
+    def partial_apply(_state, _pa, _payload, **_kwargs):
+        db.create_secret_order(state, name, "半写密令", "不应留下。", [], deadline_months=0)
+        return False
+
+    monkeypatch.setattr(db, "_apply_pending_action", partial_apply)
+
+    applied = db.commit_pending_actions(state)
+
+    assert applied == []
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM secret_orders WHERE title='半写密令'"
+    ).fetchone()[0] == 0
+    failed = db.list_pending_actions(state.turn, status="failed")
+    assert len(failed) == 1 and failed[0]["id"] == pending_id
+
+
+def test_retry_failed_secret_order_false_rolls_back_side_effects(game, monkeypatch):
+    """retry 中 _apply_pending_action 半途写入后返回 False，也必须回滚半写入。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "密查辽饷侵冒。",
+            "assignee": name,
+            "tags": ["辽饷"],
+            "deadline_months": 0,
+        },
+    )
+    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
+    db.conn.commit()
+
+    def partial_apply(_state, _pa, _payload, **_kwargs):
+        db.create_secret_order(state, name, "半写密令", "不应留下。", [], deadline_months=0)
+        return False
+
+    monkeypatch.setattr(db, "_apply_pending_action", partial_apply)
+
+    result = db.retry_failed_pending_action(state, pending_id)
+
+    assert result["committed"] is False
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM secret_orders WHERE title='半写密令'"
+    ).fetchone()[0] == 0
+    failed = db.list_pending_actions(state.turn, status="failed")
+    assert len(failed) == 1 and failed[0]["id"] == pending_id
+
+
+def test_commit_conversational_draft_false_rolls_back_side_effects(game, monkeypatch):
+    """拟旨专用提交路径遇到 False 也不能留下半写入 draft。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=name, target_id=None,
+        payload={"text": "严查辽饷。", "actor": name},
+    )
+
+    def partial_apply(_state, _pa, _payload, **_kwargs):
+        db.conn.execute(
+            """
+            INSERT INTO turn_directives
+            (turn, year, period, event_id, actor, skill_id, text, source, status, notes)
+            VALUES (?, ?, ?, '', ?, '', ?, '测试半写', 'draft', '')
+            """,
+            (state.turn, state.year, state.period, name, "半写拟旨"),
+        )
+        return False
+
+    monkeypatch.setattr(db, "_apply_pending_action", partial_apply)
+
+    applied = db.commit_pending_actions(state, kind_filter="directive")
+
+    assert applied == []
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM turn_directives WHERE text='半写拟旨'"
+    ).fetchone()[0] == 0
+    failed = db.list_pending_actions(state.turn, status="failed")
+    assert len(failed) == 1 and failed[0]["id"] == pending_id
+
+
+def test_drop_pending_actions_for_minister_does_not_commit_outer_transaction(game):
+    """普通外层事务中 drop pending 不得自行 commit，否则调用方回滚失效。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "密查辽饷侵冒。",
+            "assignee": name,
+            "tags": [],
+            "deadline_months": 0,
+        },
+    )
+
+    db.conn.execute("BEGIN")
+    db.drop_pending_actions_for_minister(state.turn, name)
+    db.conn.rollback()
+
+    row = db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (pending_id,)
+    ).fetchone()
+    assert row is not None and row["status"] == "pending"
+
+
+def test_retry_api_retire_failure_rolls_back_created_order(game, monkeypatch):
+    """API retry 成功写密令但退休原确认轮失败时，应整体回滚，避免 undo 复活 failed row。"""
+    import asyncio
+    import web_app
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "密查辽饷侵冒。",
+            "assignee": name,
+            "tags": ["辽饷"],
+            "deadline_months": 0,
+        },
+    )
+    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
+    db.conn.commit()
+    stub = types.SimpleNamespace(
+        db=db,
+        state=state,
+        session=types.SimpleNamespace(content=content, registry=None),
+        can_undo_last_chat=lambda _minister: False,
+    )
+    monkeypatch.setattr(web_app, "web_game", stub)
+    monkeypatch.setattr(
+        db,
+        "retire_chat_turn_for_pending_action_retry",
+        lambda _action_id: (_ for _ in ()).throw(RuntimeError("retire failed")),
+    )
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(web_app.api_retry_pending_action(pending_id))
+
+    assert db.list_secret_orders() == []
+    failed = db.list_pending_actions(state.turn, status="failed")
+    assert len(failed) == 1 and failed[0]["id"] == pending_id
+
+
+def test_retry_failed_secret_order_refresh_failure_does_not_duplicate(game):
+    """密令已写入 DB 后 registry 刷新失败,不得留下 failed 入口导致再次重试重复建令。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
+                 "tags": [], "deadline_months": 0},
+    )
+    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
+    db.conn.commit()
+
+    class BrokenRegistry:
+        def refresh(self, _name):
+            raise RuntimeError("refresh failed after durable write")
+
+    result = db.retry_failed_pending_action(state, pending_id, registry=BrokenRegistry())
+
+    assert result["committed"] is True
+    assert db.list_pending_actions(state.turn, status="failed") == []
+    rows = db.conn.execute(
+        "SELECT title, content FROM secret_orders WHERE title='暗查辽饷'"
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["content"] == "密查辽饷去向"
+
+
+def test_retry_failed_secret_order_retires_confirmation_chat_undo(game):
+    """失败密令重试成功后,原应允召对不得再按旧快照撤回出脏状态。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
+                 "tags": [], "deadline_months": 0},
+    )
+
+    chat_turn_id = db.create_chat_turn(state, name, "sess-retry-undo", 0)
+    user_message_id = db.append_chat_message(name, state.turn, "user", "准")
+    minister_message_id = db.append_chat_message(name, state.turn, "minister", "臣即密办。")
+    db.update_chat_turn_messages(chat_turn_id, user_message_id, minister_message_id)
+    before = db.capture_chat_rollback_snapshot()
+    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
+    db.conn.commit()
+    db.record_chat_turn_rollback_diffs(chat_turn_id, before, db.capture_chat_rollback_snapshot())
+    assert db.can_undo_last_chat_turn(name, state.turn)
+
+    result = db.retry_failed_pending_action(state, pending_id)
+    retired_id = db.retire_chat_turn_for_pending_action_retry(pending_id)
+
+    assert result["committed"] is True
+    assert retired_id == chat_turn_id
+    assert not db.can_undo_last_chat_turn(name, state.turn)
+    with pytest.raises(ValueError, match="撤回|不可撤回"):
+        db.undo_chat_turn(chat_turn_id)
+    assert len(db.list_secret_orders()) == 1
+    assert db.list_pending_actions(state.turn, status="failed") == []
+
+
+def test_retry_failed_secret_order_retires_creation_and_confirmation_chat_undo(game):
+    """密令跨两轮暂存/应允失败后重试成功,两轮撤回快照都不得再可用。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+
+    create_turn_id = db.create_chat_turn(state, name, "sess-retry-create", 0)
+    db.update_chat_turn_messages(
+        create_turn_id,
+        db.append_chat_message(name, state.turn, "user", "拟一道密令"),
+        db.append_chat_message(name, state.turn, "minister", "臣请密办。"),
+    )
+    before_create = db.capture_chat_rollback_snapshot()
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
+                 "tags": [], "deadline_months": 0},
+    )
+    db.record_chat_turn_rollback_diffs(create_turn_id, before_create, db.capture_chat_rollback_snapshot())
+
+    confirm_turn_id = db.create_chat_turn(state, name, "sess-retry-confirm", 0)
+    db.update_chat_turn_messages(
+        confirm_turn_id,
+        db.append_chat_message(name, state.turn, "user", "准"),
+        db.append_chat_message(name, state.turn, "minister", "臣即密办。"),
+    )
+    before_confirm = db.capture_chat_rollback_snapshot()
+    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
+    db.conn.commit()
+    db.record_chat_turn_rollback_diffs(confirm_turn_id, before_confirm, db.capture_chat_rollback_snapshot())
+    assert db.can_undo_last_chat_turn(name, state.turn)
+
+    result = db.retry_failed_pending_action(state, pending_id)
+    db.retire_chat_turn_for_pending_action_retry(pending_id)
+
+    assert result["committed"] is True
+    assert db.conn.execute(
+        "SELECT status FROM chat_turns WHERE id=?", (confirm_turn_id,)).fetchone()["status"] == "failed"
+    assert db.conn.execute(
+        "SELECT status FROM chat_turns WHERE id=?", (create_turn_id,)).fetchone()["status"] == "failed"
+    assert not db.can_undo_last_chat_turn(name, state.turn)
+    with pytest.raises(ValueError, match="撤回|不可撤回"):
+        db.undo_chat_turn(create_turn_id)
+    assert len(db.list_secret_orders()) == 1
+
+
+def test_retry_pending_action_endpoint_returns_fresh_undo_state(game, monkeypatch):
+    """重试成功会 retire 原确认召对,端点须返回刷新后的撤回可用性给前端。"""
+    import asyncio
+    import web_app
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
+                 "tags": [], "deadline_months": 0},
+    )
+    chat_turn_id = db.create_chat_turn(state, name, "sess-retry-api", 0)
+    db.update_chat_turn_messages(
+        chat_turn_id,
+        db.append_chat_message(name, state.turn, "user", "准"),
+        db.append_chat_message(name, state.turn, "minister", "臣即密办。"),
+    )
+    before = db.capture_chat_rollback_snapshot()
+    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
+    db.conn.commit()
+    db.record_chat_turn_rollback_diffs(chat_turn_id, before, db.capture_chat_rollback_snapshot())
+    assert db.can_undo_last_chat_turn(name, state.turn)
+
+    game_obj = types.SimpleNamespace(
+        db=db,
+        state=state,
+        session=types.SimpleNamespace(content=content, registry=None),
+        can_undo_last_chat=lambda minister_name: db.can_undo_last_chat_turn(minister_name, state.turn),
+        pending_action_failures_for=lambda minister_name: [
+            action for action in db.list_pending_actions(
+                state.turn, status="failed", minister_name=minister_name)
+            if action["kind"] == "secret_order"
+        ],
+    )
+    monkeypatch.setattr(web_app, "get_game", lambda: game_obj)
+
+    out = asyncio.run(web_app.api_retry_pending_action(pending_id))
+
+    assert out["retry"]["committed"] is True
+    assert out["can_undo_last_chat"] is False
+    assert out["pending_action_failures"] == []
+
+
+def test_pending_action_failures_endpoint_lists_all_failed_secret_orders(game, monkeypatch):
+    import asyncio
+    import types
+    import web_app
+
+    db, state, _content = game
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name="离席大臣", target_id=None,
+        payload={"title": "暗查辽饷", "content": "暗查辽饷侵冒。", "assignee": "离席大臣"},
+    )
+    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
+    db.conn.commit()
+    game_obj = types.SimpleNamespace(db=db, state=state)
+    game_obj.pending_action_failures = types.MethodType(web_app.WebGame.pending_action_failures, game_obj)
+    monkeypatch.setattr(web_app, "get_game", lambda: game_obj)
+
+    out = asyncio.run(web_app.api_pending_action_failures())
+
+    failures = out["pending_action_failures"]
+    assert [failure["id"] for failure in failures] == [pending_id]
+    assert failures[0]["minister_name"] == "离席大臣"
+
+
+def test_non_secret_pending_failure_payload_does_not_promise_retry():
+    """非密令失败没有重试端点/按钮,提示不得承诺「请重试」。"""
+    failure = _pending_action_failure_payload(
+        {"id": 1, "kind": "office", "action": "任命"})
+
+    assert "任免未能正式落库" in failure["message"]
+    assert failure["retryable"] is False
+    assert "重试" not in failure["message"]
+
+
+def test_settling_secret_failure_payload_is_not_retryable(game):
+    """settling/awaiting 阶段写闸关闭，failure payload 不应承诺立即 retry。"""
+    _db, state, _content = game
+    state.turn_phase = "settling"
+    failure = _pending_action_failure_payload(
+        {"id": 1, "kind": "secret_order", "action": "新建", "minister_name": "毕自严"},
+        state,
+    )
+
+    assert failure["retryable"] is False
+    assert "请重试" not in failure["message"]
+    assert "稍后" in failure["message"]
+
+
+def test_failed_secret_order_does_not_block_later_audience(game, monkeypatch):
+    """玩家无视失败密令时,同一大臣后续普通召对仍可继续,不会被 failed 行卡住。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
+                 "tags": [], "deadline_months": 0},
+    )
+    db.conn.execute("UPDATE pending_actions SET status='failed'")
+    db.conn.commit()
+
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                            {"密令动作": "无"}, ensure_ascii=False), 1))
+    out = GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), ch, player_message="说说户部钱粮",
+        answer="臣谨奏钱粮尚可周转。", has_directive=False, secret_order_id=None)
+
+    assert out.get("pending_action_failures") == []
+    failed = db.list_pending_actions(state.turn, status="failed")
+    assert len(failed) == 1 and failed[0]["kind"] == "secret_order"
+
+
+def test_unresolved_failed_secret_order_is_ignored_after_turn_boundary(game):
+    """未处理的 failed 密令暂存跨回合后不再进入当前回合 pending,不阻断退朝推进。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    old_turn = state.turn
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
+                 "tags": [], "deadline_months": 0},
+    )
+    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
+    db.conn.commit()
+
+    advance_without_edict(state, db)
+
+    assert state.turn == old_turn + 1
+    assert db.list_pending_actions(state.turn) == []
+    old_failed = db.list_pending_actions(old_turn, status="failed")
+    assert len(old_failed) == 1 and old_failed[0]["id"] == pending_id
+
+
+def test_default_approval_secret_order_failure_surfaces_after_turn_boundary(game, monkeypatch):
+    """#415: checkpoint/default approval failure must remain visible and retryable after turn advance."""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    old_turn = state.turn
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
+                 "tags": [], "deadline_months": 0},
+    )
+    original_create = db.create_secret_order
+
+    def _poison(*args, **kwargs):
+        raise RuntimeError("AUDIT_INJECTED_DURABLE_WRITE_FAILURE")
+
+    monkeypatch.setattr(db, "create_secret_order", _poison)
+    advance_without_edict(state, db)
+
+    assert state.turn == old_turn + 1
+    failed = db.list_failed_secret_order_actions(name)
+    assert [f["id"] for f in failed] == [pending_id]
+    payload = web_app.WebGame.pending_action_failures_for(
+        types.SimpleNamespace(db=db), name)
+    assert payload and payload[0]["id"] == pending_id
+
+    monkeypatch.setattr(db, "create_secret_order", original_create)
+    retry = db.retry_failed_pending_action(state, pending_id)
+
+    assert retry["committed"] is True
+    assert db.list_failed_secret_order_actions(name) == []
+    assert db.list_secret_orders(status="active")[-1]["title"] == "暗查辽饷"
+
+
+def test_retry_failed_secret_order_preserves_original_issue_turn(game):
+    """旧回合 failed 密令重试时，签发 turn/due_turn 仍按原 pending 回合计算。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    old_turn = state.turn
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
+                 "tags": [], "deadline_months": 3},
+    )
+    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
+    db.conn.commit()
+    state.next_period()
+    db.save_state(state)
+
+    retry = db.retry_failed_pending_action(state, pending_id)
+
+    assert retry["committed"] is True
+    row = db.conn.execute(
+        "SELECT turn_issued, due_turn FROM secret_orders WHERE title='暗查辽饷' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert row["turn_issued"] == old_turn
+    assert row["due_turn"] == old_turn + 3
+
+
+def test_successful_secret_order_confirmation_stays_quiet(game, monkeypatch):
+    """成功落库只通过密令表可见,不新增聊天成功通知。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
+                 "tags": [], "deadline_months": 0},
+    )
+
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                            {"确认": "应允"}, ensure_ascii=False), 1))
+    out = GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), ch, player_message="准",
+        answer="臣即密办。", has_directive=False, secret_order_id=None)
+
+    assert out.get("pending_action_failures") == []
+    assert not out.get("secret_order_id")
+    assert db.list_secret_orders(status="active")[-1]["title"] == "暗查辽饷"
 
 
 def test_dialogue_affirm_commits_office_now(game, monkeypatch):
@@ -1140,3 +2291,34 @@ def test_chat_confirm_defers_commit_at_front_half_done(game, monkeypatch):
     title = db.conn.execute(
         "SELECT title FROM secret_orders WHERE id=?", (oid,)).fetchone()["title"]
     assert title == "原标题"  # 真表未动
+
+
+def test_front_half_done_directive_confirmation_preserves_pending_status(game, monkeypatch):
+    """恢复窗应允 directive 不即时 commit，但终端提交时仍进入 later 准/驳 pending。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=name, target_id=None,
+        payload={"text": "着户部清核辽饷。", "actor": name},
+    )
+    state.turn_phase = "settling"
+
+    monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "应允")
+    GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), ch,
+        player_message="准了", answer="臣遵旨。",
+        has_directive=False, secret_order_id=None)
+
+    pending = db.list_pending_actions(state.turn)
+    assert len(pending) == 1 and pending[0]["status"] == "pending"
+    assert json.loads(pending[0]["payload_json"])["_directive_status"] == "pending"
+
+    db.commit_pending_actions(state)
+
+    row = db.conn.execute(
+        "SELECT status, text FROM turn_directives WHERE turn=?",
+        (state.turn,),
+    ).fetchone()
+    assert row["status"] == "pending"
+    assert row["text"] == "着户部清核辽饷。"

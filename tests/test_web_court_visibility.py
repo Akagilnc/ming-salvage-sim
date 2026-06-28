@@ -407,7 +407,8 @@ def test_vassal_prince_secret_order_rejected(game, monkeypatch):
     if name is None:
         pytest.skip("基底盘面无宗藩人物")
     stub = SimpleNamespace(
-        session=SimpleNamespace(content=content),
+        content=content,
+        session=SimpleNamespace(content=content, temporary_characters=set()),
         character_power_id=lambda c: web_app._character_power_id(c, db),
     )
     monkeypatch.setattr(web_app, "web_game", stub)

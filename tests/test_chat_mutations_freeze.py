@@ -10,6 +10,7 @@ submit/rush 都从 dispatcher 过）、apply_cli_conversation_actions 的前缀�
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import ming_sim.session as session_mod
@@ -78,6 +79,36 @@ def test_secret_order_tool_blocked_in_recovery_window(game):
     assert "__secret_order_registered__" not in out  # 未登记
     assert not out.startswith("__secret_order__")    # 也不走 fallback payload 路
     assert db.conn.execute("SELECT COUNT(*) FROM secret_orders").fetchone()[0] == before
+
+
+def test_secret_order_tool_progress_allows_same_month_correction(game):
+    """同月已有进展时，progress 应仍暂存修正/补充，由 commit 阶段替换该月进展。"""
+    from ming_sim.tools import build_minister_tools
+
+    db, state, content = game
+    character = next(c for c in content.characters.values()
+                     if getattr(c, "office_type", "") not in ("后宫",))
+    oid = db.create_secret_order(state, character.name, "查辽饷", "查辽饷侵冒。", [], deadline_months=0)
+    db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (state.turn - 1, oid))
+    db.update_secret_order_progress(oid, "旧进展。", state.year, state.period)
+    before_result = db.conn.execute(
+        "SELECT result FROM secret_orders WHERE id=?", (oid,)
+    ).fetchone()["result"]
+    context = CourtContext(state=state, db=db)
+    tools = build_minister_tools(character, context)
+    secret_order = next(t for t in tools if getattr(t, "__name__", "") == "secret_order")
+
+    out = secret_order(action="progress", order_id=oid, progress="更正：已封存兵部辽饷册。")
+
+    assert out.startswith("__secret_action__")
+    payload = json.loads(out.removeprefix("__secret_action__"))
+    assert payload["action"] == "记进展"
+    assert payload["order_id"] == oid
+    assert payload["payload"]["note"] == "更正：已封存兵部辽饷册。"
+    after_result = db.conn.execute(
+        "SELECT result FROM secret_orders WHERE id=?", (oid,)
+    ).fetchone()["result"]
+    assert after_result == before_result
 
 
 def test_cli_prefix_secret_order_blocked_in_recovery_window(game, monkeypatch):

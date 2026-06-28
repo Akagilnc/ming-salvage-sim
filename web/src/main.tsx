@@ -2,6 +2,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { Crown, Loader2, X } from "lucide-react";
 import { api, streamChat } from "./api";
+import { mergePendingActionFailures, refreshRetriedPendingActionFailures } from "./chatFailures";
 import { AppointmentDrawer, ArmyDrawer, BuildingDrawer, CourtDrawer, EconomyDrawer, HaremDrawer, RegionDrawer } from "./components/drawers";
 import { ExtractionModal } from "./components/extraction";
 import { GameMenuModal } from "./components/gameMenu";
@@ -13,7 +14,7 @@ import { SituationPanel } from "./components/situation";
 import { getMapIntelStyle, refreshLabelMaps, scoreTone } from "./format";
 import { shouldAutoOpenClosedIssuesAfterSettlement, shouldAutoOpenSecretOrdersAfterSettlement } from "./settlementPresentation";
 import { forwardSteamEvents, type SteamEvent } from "./steamEvents";
-import type { AppView, ChatMessage, ChatUndoResponse, ClosedIssue, Directive, GameState, MenuStatus, Minister, ModalName, PendingDecision, SecretOrder, Suggestion } from "./types";
+import type { AppView, ChatMessage, ChatUndoResponse, ClosedIssue, Directive, GameState, MenuStatus, Minister, ModalName, PendingActionFailure, PendingDecision, SecretOrder, Suggestion } from "./types";
 import "./styles.css";
 
 function App() {
@@ -54,6 +55,7 @@ function App() {
   const [pendingUserMessage, setPendingUserMessage] = React.useState("");
   const [streamingMinisterMessage, setStreamingMinisterMessage] = React.useState("");
   const [chatNotice, setChatNotice] = React.useState("");
+  const [chatFailures, setChatFailures] = React.useState<PendingActionFailure[]>([]);
   const [canUndoLastChat, setCanUndoLastChat] = React.useState(false);
   const [composerHint, setComposerHint] = React.useState("");
   const [input, setInput] = React.useState("");
@@ -83,10 +85,13 @@ function App() {
   const [cheatDirective, setCheatDirective] = React.useState("");
   // HITL 决策点：颁诏推演若出重大抉择，暂停弹窗逐个亲裁，裁完续跑结算。
   const [pendingDecisions, setPendingDecisions] = React.useState<PendingDecision[]>([]);
+  const [decisionFailures, setDecisionFailures] = React.useState<PendingActionFailure[]>([]);
+  const [failureRecoveryMode, setFailureRecoveryMode] = React.useState(false);
 
   // Tracks the current selected minister across async boundaries.
   // State closures capture stale values; this ref always reflects the latest.
   const selectedMinisterRef = React.useRef<string>("");
+  const suppressNextReportRef = React.useRef(false);
   // AbortController for the in-flight minister chat stream; null when idle.
   const chatAbortRef = React.useRef<AbortController | null>(null);
 
@@ -99,8 +104,8 @@ function App() {
     setReport(data.last_report || "");
   }, [selectedMinister]);
 
-  const loadMinisterChat = React.useCallback(async (ministerName: string) => {
-    const data = await api<{ minister: Minister; history: ChatMessage[]; suggestions: Suggestion[]; can_undo_last_chat: boolean }>(`/api/ministers/${encodeURIComponent(ministerName)}/chat`);
+  const loadMinisterChat = React.useCallback(async (ministerName: string, options?: { mergeFailures?: boolean }) => {
+    const data = await api<{ minister: Minister; history: ChatMessage[]; suggestions: Suggestion[]; can_undo_last_chat: boolean; pending_action_failures?: PendingActionFailure[] }>(`/api/ministers/${encodeURIComponent(ministerName)}/chat`);
     // Staleness guard (#325, broad-scope): the player may have switched ministers
     // while this history fetch was in flight. Dropping the UI write prevents the
     // late history from bleeding into the now-selected minister's panel — this path
@@ -116,6 +121,12 @@ function App() {
     setChat(data.history);
     setSuggestions(data.suggestions);
     setCanUndoLastChat(!!data.can_undo_last_chat);
+    if (options?.mergeFailures) {
+      const responseFailures = data.pending_action_failures || [];
+      setChatFailures((items) => mergePendingActionFailures(items, responseFailures));
+    } else {
+      setChatFailures(data.pending_action_failures || []);
+    }
   }, [state]);
 
   const uploadPortrait = React.useCallback(async (ministerName: string, file: File) => {
@@ -219,10 +230,14 @@ function App() {
     if (!summary) return;
     if (summary.startsWith("登基伊始")) return;
     if (currentTurn === gazetteShown) return;
+    if (suppressNextReportRef.current) {
+      suppressNextReportRef.current = false;
+      return;
+    }
     setGazetteReport(summary);
     setActiveModal("report");
     setGazetteShown(currentTurn);
-  }, [state, gazetteShown, endingDismissed]);
+  }, [state, gazetteShown, endingDismissed, activeModal]);
 
   React.useEffect(() => {
     selectedMinisterRef.current = selectedMinister;
@@ -235,6 +250,9 @@ function App() {
       setPendingUserMessage("");
       setStreamingMinisterMessage("");
       setChatNotice("");
+      if (!failureRecoveryMode) {
+        setChatFailures([]);
+      }
       setCanUndoLastChat(false);
       setComposerHint("");
       return;
@@ -243,10 +261,14 @@ function App() {
     setSuggestions([]);
     setPendingUserMessage("");
     setStreamingMinisterMessage("");
+    if (!failureRecoveryMode) {
+      setChatFailures([]);
+    }
     setCanUndoLastChat(false);
     setComposerHint("");
-    loadMinisterChat(selectedMinister).catch((err) => setError(err.message));
-  }, [selectedMinister, loadMinisterChat]);
+    loadMinisterChat(selectedMinister, failureRecoveryMode ? { mergeFailures: true } : undefined)
+      .catch((err) => setError(err.message));
+  }, [selectedMinister, loadMinisterChat, failureRecoveryMode]);
 
   // 全局 ESC：按 z-index 优先级，最前面的弹窗先关
   React.useEffect(() => {
@@ -326,6 +348,11 @@ function App() {
   const activeMinister = selectedMinister
     ? allCharacters.find((m) => m.name === selectedMinister) || temporaryActiveMinister
     : null;
+  const activeChatFailures = activeMinister
+    ? (failureRecoveryMode
+      ? chatFailures
+      : chatFailures.filter((failure) => !failure.minister_name || failure.minister_name === activeMinister.name))
+    : [];
   const mapIntelStyle = selectedNode ? getMapIntelStyle(selectedNode) : undefined;
 
   const openChat = (minister: Minister) => {
@@ -343,12 +370,36 @@ function App() {
     setSelectedMinister(minister.name);
     setActiveModal("chat");
     setError("");
+    setFailureRecoveryMode(false);
     setComposerHint("");
     setChatNotice("");
+    setChatFailures([]);
     setCanUndoLastChat(false);
     setPendingUserMessage("");
     setStreamingMinisterMessage("");
     loadMinisterChat(minister.name).catch((err) => setError(err.message));
+  };
+
+  const surfacePendingActionFailures = async (failures: PendingActionFailure[] = []) => {
+    if (!failures.length) return false;
+    setFailureRecoveryMode(true);
+    setChatFailures((items) => mergePendingActionFailures(items, failures));
+    const targetName = failures.find((failure) => failure.minister_name)?.minister_name || "";
+    suppressNextReportRef.current = true;
+    const initialMinister = selectedMinisterRef.current;
+    try {
+      await loadState();
+      if (selectedMinisterRef.current !== initialMinister) return false;
+      selectedMinisterRef.current = targetName;
+      setSelectedMinister(targetName);
+      setActiveModal("chat");
+      setChatNotice("");
+      setPendingUserMessage("");
+      setStreamingMinisterMessage("");
+    } finally {
+      setBusy("");
+    }
+    return true;
   };
 
   const selectMapNode = (nodeId: string) => {
@@ -398,17 +449,21 @@ function App() {
       api<{ orders: SecretOrder[] }>("/api/secret_orders")
         .then(({ orders }) => setSecretOrders(orders))
         .catch(() => {});
+      if (selectedMinisterRef.current !== targetMinisterName) return;
+      const responseFailures = data.pending_action_failures || [];
       if (data.secret_order_id) {
         setChatNotice(`密令已秘密交付${targetMinisterName}，编号 #${data.secret_order_id}。`);
       }
+      setChatFailures((items) => mergePendingActionFailures(items, responseFailures));
       if (data.proposed_directive) {
         setChatNotice(`${targetMinisterName}已拟旨一道，待陛下在「诏书草案」核定（准/驳）。`);
       }
-      if (data.next_minister) {
+      if (data.next_minister && !responseFailures.length) {
         setChat([]);
         setSuggestions([]);
         setStreamingMinisterMessage("");
         setCanUndoLastChat(false);
+        setChatFailures([]);
         setSelectedMinister(data.next_minister);
         setActiveModal("chat");
         setChatNotice(`已传${data.next_minister}入殿。`);
@@ -480,7 +535,76 @@ function App() {
         setChat(data.history);
         setSuggestions(data.suggestions);
         setCanUndoLastChat(!!data.can_undo_last_chat);
+        setChatFailures(data.pending_action_failures || []);
         setChatNotice("已撤回最近一轮召对。");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const retryPendingAction = async (failure: PendingActionFailure) => {
+    if (busy) return;
+    const targetMinisterName = failure.minister_name || activeMinister?.name || selectedMinisterRef.current;
+    setBusy("重试密令下达");
+    setError("");
+    try {
+      const data = await api<{
+        retry: { committed: boolean };
+        secret_orders: SecretOrder[];
+        can_undo_last_chat?: boolean;
+        pending_action_failures?: PendingActionFailure[];
+      }>(
+        `/api/pending_actions/${failure.id}/retry`,
+        { method: "POST" },
+      );
+      if (!data.retry?.committed) {
+        if (selectedMinisterRef.current === targetMinisterName) {
+          setError("密令仍未能正式落库，请稍后再试。");
+        }
+        return;
+      }
+      setSecretOrders(data.secret_orders || []);
+      await loadState();
+      const staleTarget = selectedMinisterRef.current !== targetMinisterName;
+      const canRefreshFailureList = failureRecoveryMode || !staleTarget;
+      if (data.pending_action_failures) {
+        if (canRefreshFailureList) {
+          setChatFailures((items) => refreshRetriedPendingActionFailures(
+            items,
+            failure.id,
+            targetMinisterName,
+            data.pending_action_failures || [],
+          ));
+        }
+      } else {
+        if (canRefreshFailureList) {
+          setChatFailures((items) => items.filter((item) => item.id !== failure.id));
+        }
+      }
+      if (staleTarget) return;
+      if (typeof data.can_undo_last_chat === "boolean") {
+        setCanUndoLastChat(data.can_undo_last_chat);
+      }
+    } catch (err) {
+      if (selectedMinisterRef.current === targetMinisterName) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const openFailureRecovery = async () => {
+    setBusy("读取失败密令");
+    setError("");
+    try {
+      const data = await api<{ pending_action_failures?: PendingActionFailure[] }>("/api/pending_actions/failures");
+      const failures = data.pending_action_failures || [];
+      if (!(await surfacePendingActionFailures(failures))) {
+        setError("暂无可处理的密令失败。");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -610,6 +734,28 @@ function App() {
     }
   };
 
+  const advanceWithoutEdict = async () => {
+    setBusy("退朝");
+    setError("");
+    try {
+      const data = await api<{ state: GameState; pending_action_failures?: PendingActionFailure[] }>("/api/decree/advance_without_edict", { method: "POST" });
+      if (await surfacePendingActionFailures(data.pending_action_failures || [])) {
+        return;
+      }
+      window.location.reload();
+    } catch (err: any) {
+      const detail = err?.detail && typeof err.detail === "object" ? err.detail : err;
+      const failures = detail?.pending_action_failures;
+      if (Array.isArray(failures) && await surfacePendingActionFailures(failures)) {
+        setError(detail?.message || "退朝失败。");
+        return;
+      }
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy("");
+    }
+  };
+
   const saveDecree = async (text: string) => {
     setBusy("存改诏书");
     setError("");
@@ -662,7 +808,7 @@ function App() {
         if (evName === "stage") setSettleStage(data.content || "");
         else if (evName === "thinking") setSettleThinking((prev) => prev + (data.content || ""));
         else if (evName === "text") setSettleNarrative((prev) => prev + (data.content || ""));
-        else if (evName === "error") return { kind: "error", data: data.message || "颁诏失败。" };
+        else if (evName === "error") return { kind: "error", data };
         else if (evName === "decisions") return { kind: "decisions", data };
         else if (evName === "done") return { kind: "done", data };
       }
@@ -689,17 +835,26 @@ function App() {
       }
       const outcome = await consumeSettleStream(response);
       if (outcome.kind === "error") {
+        if (await surfacePendingActionFailures(outcome.data?.pending_action_failures || [])) {
+          setError(typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "颁诏失败。"));
+          return;
+        }
         setError(typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "颁诏失败。"));
         setBusy("");
         return;
       }
       if (outcome.kind === "decisions") {
         // 出重大抉择：暂停弹窗逐个亲裁，裁完调 submitDecisions 续跑结算。
+        const failures = outcome.data?.pending_action_failures || [];
+        setDecisionFailures(failures);
         setPendingDecisions(outcome.data.decisions || []);
         setBusy("");
         return;
       }
       await forwardSteamEvents(outcome.data);
+      if (await surfacePendingActionFailures(outcome.data?.pending_action_failures || [])) {
+        return;
+      }
       // 结算完成：强制整页刷新，草案/对话/局势/closed 弹窗全部按新 state 重新初始化
       window.location.reload();
       return;
@@ -712,6 +867,7 @@ function App() {
   // 皇帝亲裁完所有决策点：续跑 phase2 结算。choices 按决策点 idx 顺序。
   const submitDecisions = async (choices: { label?: string; hint?: string; note?: string }[]) => {
     setPendingDecisions([]);
+    setDecisionFailures([]);
     setBusy("月末结算");
     setSettleStage("圣意亲裁，续推时局");
     setSettleThinking("");
@@ -725,11 +881,18 @@ function App() {
       });
       const outcome = await consumeSettleStream(response);
       if (outcome.kind === "error") {
+        if (await surfacePendingActionFailures(outcome.data?.pending_action_failures || [])) {
+          setError(typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "结算失败。"));
+          return;
+        }
         setError(typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "结算失败。"));
         setBusy("");
         return;
       }
       await forwardSteamEvents(outcome.data);
+      if (await surfacePendingActionFailures(outcome.data?.pending_action_failures || [])) {
+        return;
+      }
       window.location.reload();
       return;
     } catch (err) {
@@ -954,6 +1117,7 @@ function App() {
             pendingUserMessage={pendingUserMessage}
             streamingMinisterMessage={streamingMinisterMessage}
             chatNotice={chatNotice}
+            chatFailures={activeChatFailures}
             canUndoLastChat={canUndoLastChat}
             composerHint={composerHint}
             input={input}
@@ -962,12 +1126,24 @@ function App() {
             secretOrders={secretOrders.filter((o) => o.minister_name === activeMinister.name && (o.status === "active" || o.status === "pending_review"))}
             onInput={setInput}
             onSend={sendChat}
+            onRetryFailure={retryPendingAction}
             onUndo={undoLastChat}
             onHint={setComposerHint}
             onFavorite={() => toggleFavorite(activeMinister)}
             onOpenEdict={() => setActiveModal("edict")}
             onClose={guardClose(() => { cancelChat(); setActiveModal("none"); })}
             onCancel={cancelChat}
+          />
+        </FullscreenModal>
+      ) : null}
+
+      {activeModal === "chat" && !activeMinister && failureRecoveryMode && chatFailures.length ? (
+        <FullscreenModal title="政务失败恢复" subtitle="承办人暂不可召见" bgClass="modal-bg-chat" onClose={guardClose(() => setActiveModal("none"))}>
+          <PendingFailureRecoveryPanel
+            failures={chatFailures}
+            busy={busy}
+            error={error}
+            onRetryFailure={retryPendingAction}
           />
         </FullscreenModal>
       ) : null}
@@ -991,11 +1167,13 @@ function App() {
             onSaveDirective={saveDirective}
             onDeleteDirective={deleteDirective}
             onWriteDecree={writeDecree}
+            onAdvanceWithoutEdict={advanceWithoutEdict}
             onSaveDecree={saveDecree}
             onResetDecree={resetDecree}
             onIssueDecree={issueDecree}
             onConfirmDirective={confirmDirective}
             onRejectDirective={rejectDirective}
+            onOpenFailureRecovery={openFailureRecovery}
           />
         </FullscreenModal>
       ) : null}
@@ -1078,9 +1256,43 @@ function App() {
       ) : null}
 
       {pendingDecisions.length > 0 && !settling ? (
-        <DecisionModal decisions={pendingDecisions} onResolve={submitDecisions} />
+        <DecisionModal decisions={pendingDecisions} failures={decisionFailures} onResolve={submitDecisions} />
       ) : null}
     </main>
+  );
+}
+
+
+function PendingFailureRecoveryPanel({
+  failures,
+  busy,
+  error,
+  onRetryFailure,
+}: {
+  failures: PendingActionFailure[];
+  busy: string;
+  error: string;
+  onRetryFailure: (failure: PendingActionFailure) => void;
+}) {
+  return (
+    <div className="failure-recovery-panel">
+      {error ? <div className="error-line" role="alert">{error}</div> : null}
+      {failures.map((failure) => (
+        <div className="failure-recovery-item" role="alert" key={failure.id}>
+          <div>
+            {failure.minister_name ? (
+              <span className="failure-recovery-minister">{failure.minister_name}</span>
+            ) : null}
+            <span>{failure.message}</span>
+          </div>
+          {failure.retryable ? (
+            <button type="button" onClick={() => onRetryFailure(failure)} disabled={!!busy}>
+              重试
+            </button>
+          ) : null}
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -1089,9 +1301,11 @@ function App() {
 // 每个决策：标题 + 背景 + 2-3 预设选项（点选）+ 朱批输入框（可补自由旨意）。
 function DecisionModal({
   decisions,
+  failures = [],
   onResolve,
 }: {
   decisions: PendingDecision[];
+  failures?: PendingActionFailure[];
   onResolve: (choices: { label?: string; hint?: string; note?: string }[]) => void;
 }) {
   const [cursor, setCursor] = React.useState(0);
@@ -1123,6 +1337,15 @@ function DecisionModal({
           <span className="decision-kicker">月末亲裁 · {cursor + 1}/{total}</span>
           <h2 className="decision-title">{cur.title}</h2>
         </div>
+        {failures.length ? (
+          <div className="decision-failure-list" role="alert">
+            {failures.map((failure) => (
+              <div className="decision-failure-item" key={failure.id}>
+                {failure.message}
+              </div>
+            ))}
+          </div>
+        ) : null}
         {cur.context ? <p className="decision-context">{cur.context}</p> : null}
         <div className="decision-options">
           {cur.options.map((o, i) => (

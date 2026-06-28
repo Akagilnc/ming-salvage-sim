@@ -855,9 +855,9 @@ def _strip_agent_narration(text: str) -> str:
 # 消息带「拟旨如下：/密令如下：」前缀 = 已表态要下旨，据此分派：
 #   拟旨：大臣回话原文即这道圣旨草稿，整段入档（单一文本字段，够用；多轮聊出多道 →
 #         颁诏时玩家去重）。
-#   密令（#397）：合并皇帝显式旨意 + 大臣回话，交 _extract_secret_order 经配置 runner 让
-#         LLM 润成一道完整密令（御旨为主、并入大臣补的承办人/要点）；helper 自带不抛错
-#         兜底——提取失败时仍把御旨与回话都并入正文，不丢、不阻断。
+#   密令（#397/#413）：合并皇帝显式旨意 + 大臣回话，交 _extract_secret_order 经配置
+#         runner 润成一道完整密令候选（御旨为主、并入大臣补的承办人/要点）；候选先入
+#         pending_actions 确认闸门，皇帝应允或回合默认提交时才正式落库。
 _DRAFT_PREFIXES = ("拟旨如下：", "拟旨如下:", "拟旨：", "拟旨:")
 _SECRET_PREFIXES = ("密令如下：", "密令如下:", "密令：", "密令:")
 
@@ -1141,6 +1141,46 @@ def extract_confirmation_intent(
 ) -> str:
     """皇帝本轮对【上一轮经大臣领命确认、尚未落库的暂存动作】是应允/拒绝/未表态。
     对话确认(ADR 0006 重设计)：应允 → 当场 commit，拒绝 → 丢，无 → 留。失败/无 → 「无」。"""
+    compact = re.sub(r"[\s，,。.!！?？；;：:、]+", "", player_message or "")
+    if compact:
+        reject_hit = any(
+            token in compact
+            for token in (
+                "不准", "不允", "不许", "拒绝", "作罢", "罢了", "不必", "撤了", "撤回", "再议", "算了",
+                "不照办", "不可照办", "勿照办", "毋照办", "不要照办",
+            )
+        )
+        approval_stems = ("准奏", "照准", "准了", "照办", "依卿", "如此")
+        negated_approval_hit = any(
+            token in compact
+            for token in (
+                "不便如此", "不可如此", "不要如此",
+                "不必如此", "不用如此", "无须如此",
+            )
+        ) or any(
+            f"{negator}{stem}" in compact
+            for negator in (
+                "不", "不可", "不要", "勿", "毋", "别", "莫",
+                "不必", "不用", "无须", "不能", "不得", "无法", "难以", "暂缓",
+            )
+            for stem in approval_stems
+        )
+        approve_hit = (
+            compact in {"准", "可", "允", "好", "行", "善"}
+            or any(token in compact for token in ("准奏", "照准", "准了", "照办", "依卿", "便如此", "就这么办"))
+        ) and not negated_approval_hit
+        approval_needs_semantic_check = approve_hit and any(
+            token in compact
+            for token in (
+                "若", "如果", "倘若", "假若",
+                "如何", "怎样", "怎么", "吗", "么",
+                "是否", "可否", "能否", "可不可以", "能不能", "要不要",
+            )
+        )
+        if (reject_hit or negated_approval_hit) and not approve_hit:
+            return "拒绝"
+        if approve_hit and not reject_hit and not approval_needs_semantic_check:
+            return "应允"
     summ = "；".join(pending_summaries) or "（无）"
     prompt = (
         "你是信息抽取器，不扮演。皇帝上一轮经大臣领命确认后，有几条【尚未落库的暂存政务动作】"
@@ -1155,7 +1195,7 @@ def extract_confirmation_intent(
     )
     raw = ""
     try:
-        raw, _ = _run_backend_for_config(prompt, llm_config, tag="confirmation")
+        raw, _ = _run_json_extractor_for_config(prompt, llm_config, tag="confirmation")
     except Exception as exc:  # 抽取失败不阻断对话；当未表态，暂存留到颁诏(算同意)
         _log(f"确认意图抽取失败：{exc}")
     obj = _loads_lenient(raw) or {}
@@ -1691,6 +1731,28 @@ def _merge_secret_content(*parts: str) -> str:
     return "\n".join(merged)
 
 
+def _secret_metadata_from_command(text: str) -> Tuple[List[str], int]:
+    tags: List[str] = []
+    deadline = 0
+    for raw_line in (text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        m_tags = re.match(r"^(?:标签|tag|tags)\s*[：:]\s*(.+)$", line, flags=re.IGNORECASE)
+        if m_tags:
+            for item in re.split(r"[,，、/;；\s]+", m_tags.group(1)):
+                cleaned = item.strip()
+                if cleaned and cleaned not in tags:
+                    tags.append(cleaned)
+            continue
+        m_deadline = re.match(r"^(?:期限|限期|deadline)\s*[：:]\s*(.+)$", line, flags=re.IGNORECASE)
+        if m_deadline:
+            match = re.search(r"([+-]?\d+)\s*(?:个)?月", m_deadline.group(1))
+            if match:
+                deadline = max(0, min(int(match.group(1)), 36))
+    return tags, deadline
+
+
 def _extract_secret_order(
     player_command: str,
     minister_reply: str,
@@ -1765,12 +1827,19 @@ def _extract_secret_order(
     assignee = default_assignee if force_default_assignee else _choose_assignee(
         _assignee_llm, player_command, minister_reply, content, default_assignee
     )
+    raw_deadline = obj.get("期限月数")
+    explicit_zero_deadline = raw_deadline in (0, "0")
     try:
-        deadline = max(0, min(int(obj.get("期限月数") or 0), 36))
+        deadline = max(0, min(int(raw_deadline or 0), 36))
     except (TypeError, ValueError):
         deadline = 0
     tags = obj.get("标签")
     tags = [str(t).strip() for t in tags if str(t).strip()] if isinstance(tags, list) else []
+    fallback_tags, fallback_deadline = _secret_metadata_from_command(player_command)
+    if not tags:
+        tags = fallback_tags
+    if not deadline and not explicit_zero_deadline:
+        deadline = fallback_deadline
     return {"title": title, "content": content, "assignee": assignee,
             "deadline_months": deadline, "tags": tags}
 
@@ -1779,7 +1848,7 @@ def resolve_minister_actions(
     minister_reply: str, player_message: str = "", default_assignee: str = "", llm_config: Any = None,
     secret_context: str = "",
 ) -> Dict[str, Any]:
-    """玩家上一句带拟旨/密令前缀时入档。
+    """玩家上一句带拟旨/密令前缀时生成候选。
     - 拟旨：大臣回话原文即圣旨草稿（单一文本字段，够用）。
     - 密令（#397）：经 _extract_secret_order 合并皇帝显式旨意 + 大臣回话，由配置 runner
       润色成完整密令正文（御旨不丢、并入大臣补的承办人/要点）；helper 不抛错，提取失败
