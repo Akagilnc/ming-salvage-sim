@@ -6080,6 +6080,7 @@ class GameDB:
                         self.conn.execute(
                             "UPDATE pending_actions SET status='committed' WHERE id=?", (int(pa["id"]),))
                     else:
+                        self.conn.execute(f"ROLLBACK TO {savepoint}")
                         # 落不了的(目标已转 pending_review、未知动作、坏 payload)标 failed,不留 pending——
                         # 否则回合推进后成旧回合不可见死行,永不再处理(ship-pre CMR codex)。
                         self.conn.execute(
@@ -6144,8 +6145,17 @@ class GameDB:
                 try:
                     ok = self._apply_pending_action(
                         apply_state, pa, payload, content=content, registry=registry)
+                    if not ok:
+                        self.conn.execute(f"ROLLBACK TO {savepoint}")
                 except Exception as exc:
-                    self.conn.execute(f"ROLLBACK TO {savepoint}")
+                    try:
+                        self.conn.execute(f"ROLLBACK TO {savepoint}")
+                    except Exception as rollback_exc:
+                        tlog(
+                            "[pending_actions] 重试回滚失败 "
+                            f"id={pa['id']} {pa['kind']}/{pa['action']}：{rollback_exc}"
+                        )
+                        raise RuntimeError("pending action retry rollback failed") from exc
                     tlog(f"[pending_actions] 重试落库失败 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
                     ok = False
                 self.conn.execute(
@@ -6185,30 +6195,41 @@ class GameDB:
             or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
         )
         cm = atomic(self) if owns_transaction else contextlib.nullcontext()
+        result = None
         try:
             with cm:
-                payload_for_apply = dict(payload)
-                stored_status = str(payload_for_apply.get("_directive_status") or "").strip()
-                payload_for_apply["_directive_status"] = (
-                    stored_status if stored_status in {"draft", "pending"} else directive_status
-                )
-                ok = self._apply_pending_action(
-                    state, pa, payload_for_apply, content=content, registry=registry)
-                if ok:
-                    self.conn.execute(
-                        "UPDATE pending_actions SET status='committed' WHERE id=?",
-                        (int(pa["id"]),),
+                savepoint = f"pending_action_directive_{int(pa['id'])}"
+                self.conn.execute(f"SAVEPOINT {savepoint}")
+                try:
+                    payload_for_apply = dict(payload)
+                    stored_status = str(payload_for_apply.get("_directive_status") or "").strip()
+                    payload_for_apply["_directive_status"] = (
+                        stored_status if stored_status in {"draft", "pending"} else directive_status
                     )
-                    return {"id": pa["id"], "kind": pa["kind"],
-                            "action": pa["action"], "target_id": pa["target_id"]}
-                self.conn.execute(
-                    "UPDATE pending_actions SET status='failed' WHERE id=?",
-                    (int(pa["id"]),),
-                )
+                    ok = self._apply_pending_action(
+                        state, pa, payload_for_apply, content=content, registry=registry)
+                    if ok:
+                        self.conn.execute(
+                            "UPDATE pending_actions SET status='committed' WHERE id=?",
+                            (int(pa["id"]),),
+                        )
+                        result = {"id": pa["id"], "kind": pa["kind"],
+                                  "action": pa["action"], "target_id": pa["target_id"]}
+                    else:
+                        self.conn.execute(f"ROLLBACK TO {savepoint}")
+                        self.conn.execute(
+                            "UPDATE pending_actions SET status='failed' WHERE id=?",
+                            (int(pa["id"]),),
+                        )
+                except Exception:
+                    self.conn.execute(f"ROLLBACK TO {savepoint}")
+                    raise
+                finally:
+                    self.conn.execute(f"RELEASE {savepoint}")
         except Exception as exc:
             tlog(f"[pending_actions] 落库异常 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
             raise
-        return None
+        return result
 
     def _apply_pending_action(
         self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],

@@ -244,6 +244,52 @@ def test_tool_call_staged_secret_order_merge_updates_reply_assignee(game, monkey
     assert payload["assignee"] == "李若琏"
 
 
+def test_staged_secret_order_assignee_merge_uses_llm_field_contract(game, monkeypatch):
+    """_choose_assignee 的首参是已暂存的 LLM assignee 字段，不是 llm_config。"""
+    db, state, _ = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    minister = "工具密令承办官"
+    pid = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "暗查辽饷侵冒。",
+            "assignee": "王在晋",
+            "tags": [],
+        },
+    )
+    seen = {}
+
+    def fake_choose_assignee(assignee_llm, player_command, minister_reply, content, default_assignee):
+        seen.update({
+            "assignee_llm": assignee_llm,
+            "player_command": player_command,
+            "minister_reply": minister_reply,
+            "content": content,
+            "default_assignee": default_assignee,
+        })
+        return "李若琏"
+
+    monkeypatch.setattr(cb, "_choose_assignee", fake_choose_assignee)
+    result = _result()
+    result.pending_action_id = pid
+    result.answer = "臣请委李若琏负责密访关宁诸将。"
+
+    _session(db, state, llm_config=SimpleNamespace(channel="api"))._cli_backend_fallback_actions(
+        result,
+        SimpleNamespace(name=minister, office_type="司礼监"),
+        "密令如下：暗查辽饷侵冒。",
+    )
+
+    assert seen["assignee_llm"] == "王在晋"
+    assert seen["player_command"] == "暗查辽饷侵冒。"
+    assert seen["minister_reply"] == "臣请委李若琏负责密访关宁诸将。"
+    assert "暗查辽饷侵冒" in seen["content"]
+    assert seen["default_assignee"] == minister
+    payload = json.loads(db.list_pending_actions(state.turn)[0]["payload_json"])
+    assert payload["assignee"] == "李若琏"
+
+
 def test_tool_call_staged_new_secret_order_merges_missing_metadata(game, monkeypatch):
     """tool 已暂存但漏掉可选字段时，从按钮/前缀文本回填标签与期限。"""
     db, state, _ = game
