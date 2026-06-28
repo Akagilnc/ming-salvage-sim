@@ -1145,12 +1145,23 @@ def extract_confirmation_intent(
     if compact:
         reject_hit = any(
             token in compact
-            for token in ("不准", "不允", "不许", "拒绝", "作罢", "罢了", "不必", "撤了", "撤回", "再议", "算了")
+            for token in (
+                "不准", "不允", "不许", "拒绝", "作罢", "罢了", "不必", "撤了", "撤回", "再议", "算了",
+                "不照办", "不可照办", "勿照办", "毋照办", "不要照办",
+            )
+        )
+        negated_approval_hit = any(
+            token in compact
+            for token in (
+                "不准奏", "不可准奏", "不照准", "不可照准", "不准了", "不可准了",
+                "不照办", "不可照办", "勿照办", "毋照办", "不要照办",
+                "不依卿", "不可依卿", "不便如此", "不可如此", "不要如此",
+            )
         )
         approve_hit = (
             compact in {"准", "可", "允", "好", "行", "善"}
             or any(token in compact for token in ("准奏", "照准", "准了", "照办", "依卿", "便如此", "就这么办"))
-        )
+        ) and not negated_approval_hit
         if reject_hit and not approve_hit:
             return "拒绝"
         if approve_hit and not reject_hit:

@@ -523,6 +523,46 @@ def test_web_advance_without_edict_lands_hidden_pending_secret_order(game, monke
     assert db.list_pending_actions(1) == []
 
 
+def test_web_advance_without_edict_returns_failed_secret_order_payload(game, monkeypatch):
+    """web 退朝默认提交密令失败时，要返回可重试 failure payload。"""
+    import asyncio
+    import web_app
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name,
+        target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "暗查辽饷侵冒。",
+            "assignee": name,
+            "tags": ["辽饷"],
+            "deadline_months": 3,
+        },
+    )
+    monkeypatch.setattr(
+        db,
+        "create_secret_order",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("durable write failed")),
+    )
+    stub = types.SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        session=types.SimpleNamespace(registry=None),
+        refresh_turn=lambda: None,
+        state_payload=lambda: {"turn": {"turn": state.turn}},
+    )
+    monkeypatch.setattr(web_app, "web_game", stub)
+
+    out = asyncio.run(web_app.api_advance_without_edict())
+
+    failures = out.get("pending_action_failures")
+    assert failures and failures[0]["id"] == pending_id
+    assert failures[0]["retryable"] is True
+
+
 def test_consort_cultivate_stages_and_commits(game, monkeypatch):
     """CMR P1-c:后宫调教也走闸门(同属 CLI 自然语言结构化写动作)——召对暂存,颁诏才落。"""
     import pytest

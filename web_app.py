@@ -2636,6 +2636,24 @@ def _player_visible_pending_actions(actions: List[Dict[str, Any]]) -> List[Dict[
     ]
 
 
+def _failed_secret_order_ids_for_turn(game: WebGame, turn: int) -> set[int]:
+    return {
+        int(action.get("id") or 0)
+        for action in game.db.list_pending_actions(int(turn), status="failed")
+        if action.get("kind") == "secret_order"
+    }
+
+
+def _new_secret_order_failure_payloads_for_turn(
+    game: WebGame, turn: int, before_ids: set[int],
+) -> List[Dict[str, Any]]:
+    return [
+        _pending_action_failure_payload(action)
+        for action in game.db.list_pending_actions(int(turn), status="failed")
+        if action.get("kind") == "secret_order" and int(action.get("id") or 0) not in before_ids
+    ]
+
+
 @app.get("/api/pending_actions")
 async def api_pending_actions() -> Dict[str, Any]:
     """列出本回合待确认动作(动作闸门 ADR 0006):皇帝复核区,颁诏批量落库前可见可撤。"""
@@ -2960,6 +2978,8 @@ async def api_write_decree() -> Dict[str, Any]:
 @app.post("/api/decree/advance_without_edict")
 async def api_advance_without_edict() -> Dict[str, Any]:
     game = get_game()
+    turn_before = int(game.state.turn)
+    failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
     try:
         with _serialized_web_write(game):
             advance_without_edict(
@@ -2970,8 +2990,14 @@ async def api_advance_without_edict() -> Dict[str, Any]:
             )
             game.refresh_turn()
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from None
-    return {"state": game.state_payload()}
+        failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
+        detail: Any = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
+        raise HTTPException(status_code=400, detail=detail) from None
+    return {
+        "state": game.state_payload(),
+        "pending_action_failures": _new_secret_order_failure_payloads_for_turn(
+            game, turn_before, failed_before),
+    }
 
 
 class EditDecreeRequest(BaseModel):
@@ -3002,14 +3028,18 @@ async def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> D
     """非流式颁诏（保留兼容）。前端默认走 /api/decree/issue/stream。"""
     game = get_game()
     was_ended = bool(game.state.ended)
+    turn_before = int(game.state.turn)
+    failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
     try:
         with _game_write_gate(game):
             result = game.session.resolve_turn(cheat_directive=body.cheat)
             decree = game.session.last_decree
+            failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
             if result.awaiting:
                 # 决策点暂停：回合未结算，返回决策点让前端弹窗；不刷新、不计 steam。
                 return {"decree": decree, "awaiting_decision": True,
-                        "decisions": result.decisions, "state": game.state_payload()}
+                        "decisions": result.decisions, "state": game.state_payload(),
+                        "pending_action_failures": failures}
             report = result.report
             game.refresh_turn()
             events = [
@@ -3019,13 +3049,20 @@ async def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> D
             ]
             if not was_ended and game.state.ended:
                 events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
-            return steam_events.with_events({"decree": decree, "report": report, "state": game.state_payload()}, events)
+            return steam_events.with_events({
+                "decree": decree, "report": report, "state": game.state_payload(),
+                "pending_action_failures": failures,
+            }, events)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from None
+        failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
+        detail = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
+        raise HTTPException(status_code=400, detail=detail) from None
     except SettlementAbort as e:
         # 结算中止（ADR 0008 决定 6/7）：进度已保存可重试，detail 即玩家指引
         # （含错误包路径+「请发给作者」）。非 500——这是已处理的可重试态，不是服务器 bug。
-        raise HTTPException(status_code=409, detail=str(e)) from None
+        failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
+        detail = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
+        raise HTTPException(status_code=409, detail=detail) from None
 
 
 @app.post("/api/decree/issue/stream")
@@ -3045,15 +3082,19 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
         try:
             game = get_game()
             was_ended = bool(game.state.ended)
+            turn_before = int(game.state.turn)
+            failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
             with _game_write_gate(game):
                 result = game.session.resolve_turn(on_event=on_event, cheat_directive=body.cheat)
                 decree = game.session.last_decree
+                failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
                 if result.awaiting:
                     # 决策点暂停：邸报已流式推完，再推 decisions 让前端弹窗；本回合未结算、不刷新、不计 steam。
                     ev_queue.put(("__decisions__", {
                         "decree": decree,
                         "decisions": result.decisions,
                         "state": game.state_payload(),
+                        "pending_action_failures": failures,
                     }))
                     return
                 report = result.report
@@ -3070,11 +3111,23 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
                     "report": report,
                     "state": game.state_payload(),
                     "steam_events": events,
+                    "pending_action_failures": failures,
                 }))
         except ValueError as e:
-            ev_queue.put(("__error__", str(e)))
+            failures = (
+                _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
+                if "game" in locals() and "turn_before" in locals() and "failed_before" in locals()
+                else []
+            )
+            ev_queue.put(("__error__", {"message": str(e), "pending_action_failures": failures} if failures else str(e)))
         except Exception as e:  # noqa: BLE001
-            ev_queue.put(("__error__", _llm_error_detail(e) if isinstance(e, LLMUnavailable) else str(e)))
+            failures = (
+                _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
+                if "game" in locals() and "turn_before" in locals() and "failed_before" in locals()
+                else []
+            )
+            message = _llm_error_detail(e) if isinstance(e, LLMUnavailable) else str(e)
+            ev_queue.put(("__error__", {"message": message, "pending_action_failures": failures} if failures else message))
 
     async def generate() -> AsyncIterator[str]:
         thread = threading.Thread(target=worker, daemon=True)
@@ -3116,11 +3169,14 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
         try:
             game = get_game()
             was_ended = bool(game.state.ended)
+            turn_before = int(game.state.turn)
+            failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
             with _game_write_gate(game):
                 report = game.session.submit_decisions(
                     body.choices, on_event=on_event, cheat_directive=body.cheat
                 )
                 decree = game.session.last_decree
+                failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
                 game.refresh_turn()
                 events = [
                     steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
@@ -3134,11 +3190,23 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
                     "report": report,
                     "state": game.state_payload(),
                     "steam_events": events,
+                    "pending_action_failures": failures,
                 }))
         except ValueError as e:
-            ev_queue.put(("__error__", str(e)))
+            failures = (
+                _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
+                if "game" in locals() and "turn_before" in locals() and "failed_before" in locals()
+                else []
+            )
+            ev_queue.put(("__error__", {"message": str(e), "pending_action_failures": failures} if failures else str(e)))
         except Exception as e:  # noqa: BLE001
-            ev_queue.put(("__error__", _llm_error_detail(e) if isinstance(e, LLMUnavailable) else str(e)))
+            failures = (
+                _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
+                if "game" in locals() and "turn_before" in locals() and "failed_before" in locals()
+                else []
+            )
+            message = _llm_error_detail(e) if isinstance(e, LLMUnavailable) else str(e)
+            ev_queue.put(("__error__", {"message": message, "pending_action_failures": failures} if failures else message))
 
     async def generate() -> AsyncIterator[str]:
         thread = threading.Thread(target=worker, daemon=True)

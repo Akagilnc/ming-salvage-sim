@@ -205,6 +205,36 @@ def test_tool_call_staged_new_secret_order_merges_minister_reply(game, monkeypat
     assert "封存兵部辽饷册" in payload["content"]
 
 
+def test_tool_call_staged_secret_order_merge_updates_reply_assignee(game, monkeypatch):
+    """tool-call 新密令也要从大臣补充里回填承办人。"""
+    db, state, _ = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    minister = "工具密令承办官"
+    pid = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "暗查辽饷侵冒。",
+            "assignee": minister,
+            "tags": [],
+            "deadline_months": 0,
+        },
+    )
+
+    result = _result()
+    result.pending_action_id = pid
+    result.answer = "臣请委李若琏负责密访关宁诸将。"
+
+    _session(db, state, llm_config=SimpleNamespace(channel="api"))._cli_backend_fallback_actions(
+        result,
+        SimpleNamespace(name=minister, office_type="司礼监"),
+        "密令如下：暗查辽饷侵冒。",
+    )
+
+    payload = json.loads(db.list_pending_actions(state.turn)[0]["payload_json"])
+    assert payload["assignee"] == "李若琏"
+
+
 def test_tool_call_staged_new_secret_order_merges_missing_metadata(game, monkeypatch):
     """tool 已暂存但漏掉可选字段时，从按钮/前缀文本回填标签与期限。"""
     db, state, _ = game
@@ -361,6 +391,18 @@ def test_confirmation_mixed_rejection_and_approval_cues_uses_semantic_extractor(
 
     assert result == "应允"
     assert calls and calls[0][1] == "confirmation"
+
+
+def test_confirmation_negated_approval_phrase_is_rejection():
+    """“不可照办”不能因包含“照办”走快路误判应允。"""
+    result = cb.extract_confirmation_intent(
+        player_message="不可照办。",
+        minister_reply="臣候旨。",
+        pending_summaries=["新建密令：暗查辽饷"],
+        llm_config=SimpleNamespace(channel="api"),
+    )
+
+    assert result == "拒绝"
 
 
 def test_tool_staged_action_is_not_confirmed_in_same_chat_turn(game):

@@ -665,7 +665,10 @@ function App() {
     setBusy("退朝");
     setError("");
     try {
-      await api<{ state: GameState }>("/api/decree/advance_without_edict", { method: "POST" });
+      const data = await api<{ state: GameState; pending_action_failures?: PendingActionFailure[] }>("/api/decree/advance_without_edict", { method: "POST" });
+      if (data.pending_action_failures) {
+        setChatFailures((items) => mergePendingActionFailures(items, data.pending_action_failures || []));
+      }
       window.location.reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -725,7 +728,7 @@ function App() {
         if (evName === "stage") setSettleStage(data.content || "");
         else if (evName === "thinking") setSettleThinking((prev) => prev + (data.content || ""));
         else if (evName === "text") setSettleNarrative((prev) => prev + (data.content || ""));
-        else if (evName === "error") return { kind: "error", data: data.message || "颁诏失败。" };
+        else if (evName === "error") return { kind: "error", data };
         else if (evName === "decisions") return { kind: "decisions", data };
         else if (evName === "done") return { kind: "done", data };
       }
@@ -752,9 +755,15 @@ function App() {
       }
       const outcome = await consumeSettleStream(response);
       if (outcome.kind === "error") {
+        if (outcome.data?.pending_action_failures) {
+          setChatFailures((items) => mergePendingActionFailures(items, outcome.data.pending_action_failures || []));
+        }
         setError(typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "颁诏失败。"));
         setBusy("");
         return;
+      }
+      if (outcome.data?.pending_action_failures) {
+        setChatFailures((items) => mergePendingActionFailures(items, outcome.data.pending_action_failures || []));
       }
       if (outcome.kind === "decisions") {
         // 出重大抉择：暂停弹窗逐个亲裁，裁完调 submitDecisions 续跑结算。
@@ -788,9 +797,15 @@ function App() {
       });
       const outcome = await consumeSettleStream(response);
       if (outcome.kind === "error") {
+        if (outcome.data?.pending_action_failures) {
+          setChatFailures((items) => mergePendingActionFailures(items, outcome.data.pending_action_failures || []));
+        }
         setError(typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "结算失败。"));
         setBusy("");
         return;
+      }
+      if (outcome.data?.pending_action_failures) {
+        setChatFailures((items) => mergePendingActionFailures(items, outcome.data.pending_action_failures || []));
       }
       await forwardSteamEvents(outcome.data);
       window.location.reload();

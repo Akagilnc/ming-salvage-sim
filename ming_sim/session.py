@@ -1489,7 +1489,18 @@ class GameSession:
 
             payload["content"] = _merge_secret_content(*parts)
             changed = True
-        from ming_sim.cli_backend import _secret_metadata_from_command
+        from ming_sim.cli_backend import _choose_assignee, _secret_metadata_from_command
+
+        assignee = _choose_assignee(
+            str(payload.get("assignee") or ""),
+            command,
+            reply,
+            str(payload.get("content") or ""),
+            minister_name,
+        )
+        if assignee and assignee != str(payload.get("assignee") or ""):
+            payload["assignee"] = assignee
+            changed = True
 
         fallback_tags, fallback_deadline = _secret_metadata_from_command(command)
         tags = payload.get("tags")
