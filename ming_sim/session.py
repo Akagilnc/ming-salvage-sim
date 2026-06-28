@@ -415,8 +415,6 @@ def _confirmation_targets_for_message(pending_actions: List[Dict[str, Any]], mes
         any(token in text for token in ("全都", "全部", "一并", "一概", "尽数"))
         or re.search(r"都(?:准|准了|照办|作罢|驳回|驳了|拒绝|拒了|不准|不允|撤了|撤回)", text) is not None
     )
-    if all_mentioned:
-        return pending_actions
     family_targets: List[Dict[str, Any]] = []
     if any(token in text for token in ("密令", "密旨", "密谕")):
         family_targets.extend(secret)
@@ -429,6 +427,8 @@ def _confirmation_targets_for_message(pending_actions: List[Dict[str, Any]], mes
         family_targets.extend(directive)
     if family_targets:
         return family_targets
+    if all_mentioned:
+        return pending_actions
     if non_directive and directive:
         if directive_mentioned:
             return directive
@@ -1223,12 +1223,18 @@ class GameSession:
                 )
             covert_terms = ("暗查", "密查", "密访", "暗访", "侦缉", "私下", "密办", "查访", "秘密调查", "秘密查")
             imperative_terms = ("着", "命", "令", "派", "遣", "让", "交办", "交")
+            investigation_terms = ("调查", "查办", "查访", "侦缉")
             secrecy_or_return_terms = (
                 "不可声张", "不得声张", "别声张", "不要声张", "勿使", "不得外泄", "不可外泄",
                 "暗中", "秘密", "回奏", "奏报", "月内", "日内", "限期",
             )
+            split_secret_investigation = (
+                any(term in text for term in ("秘密", "暗中"))
+                and any(term in text for term in imperative_terms)
+                and any(term in text for term in investigation_terms)
+            )
             return (
-                any(term in text for term in covert_terms)
+                (any(term in text for term in covert_terms) or split_secret_investigation)
                 and (
                     any(term in text for term in imperative_terms)
                     or any(term in text for term in ("暗查", "密查", "密访", "侦缉", "查访", "秘密调查", "秘密查"))
