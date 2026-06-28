@@ -348,8 +348,10 @@ describe("召对陈旧守卫 — 离开实时观察/错误分支（sendChat catc
  * but minister-panel writes (failure list / undo state / error) must be guarded. */
 function RetryGuardFixture({
   getResult,
+  recoveryMode = false,
 }: {
   getResult: () => Promise<{ committed: boolean; failures: string; canUndo: boolean }>;
+  recoveryMode?: boolean;
 }) {
   const [selected, setSelected] = React.useState("甲");
   const selectedRef = React.useRef("甲");
@@ -368,8 +370,9 @@ function RetryGuardFixture({
         return;
       }
       setGlobalApplied((n) => n + 1);
-      if (selectedRef.current !== targetMinister) return;
-      setPanel(result.failures);
+      const staleTarget = selectedRef.current !== targetMinister;
+      if (recoveryMode || !staleTarget) setPanel(result.failures);
+      if (staleTarget) return;
       setUndo(result.canUndo);
     } catch {
       if (selectedRef.current === targetMinister) setError("retry failed");
@@ -408,6 +411,23 @@ describe("召对陈旧守卫 — 密令失败重试响应", () => {
     expect(host.querySelector("[data-testid=panel]")?.textContent).toBe("");
     expect(host.querySelector("[data-testid=undo]")?.textContent).toBe("true");
     expect(host.querySelector("[data-testid=error]")?.textContent).toBe("");
+  });
+
+  it("恢复模式下跨大臣重试仍刷新全局失败列表", async () => {
+    let resolve!: (v: { committed: boolean; failures: string; canUndo: boolean }) => void;
+    const pending = new Promise<{ committed: boolean; failures: string; canUndo: boolean }>((r) => {
+      resolve = r;
+    });
+    const host = render(<RetryGuardFixture getResult={() => pending} recoveryMode />);
+    act(() => (host.querySelector("[data-testid=retry]") as HTMLButtonElement).click());
+    act(() => (host.querySelector("[data-testid=switch]") as HTMLButtonElement).click());
+    await act(async () => {
+      resolve({ committed: true, failures: "跨臣刷新后的失败列表", canUndo: false });
+      await pending;
+    });
+    expect(host.querySelector("[data-testid=global]")?.textContent).toBe("1");
+    expect(host.querySelector("[data-testid=panel]")?.textContent).toBe("跨臣刷新后的失败列表");
+    expect(host.querySelector("[data-testid=undo]")?.textContent).toBe("true");
   });
 
   it("未切人时重试响应正常刷新失败列表和撤回状态", async () => {

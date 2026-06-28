@@ -566,17 +566,23 @@ function App() {
       }
       setSecretOrders(data.secret_orders || []);
       await loadState();
-      if (selectedMinisterRef.current !== targetMinisterName) return;
+      const staleTarget = selectedMinisterRef.current !== targetMinisterName;
+      const canRefreshFailureList = failureRecoveryMode || !staleTarget;
       if (data.pending_action_failures) {
-        setChatFailures((items) => refreshRetriedPendingActionFailures(
-          items,
-          failure.id,
-          targetMinisterName,
-          data.pending_action_failures || [],
-        ));
+        if (canRefreshFailureList) {
+          setChatFailures((items) => refreshRetriedPendingActionFailures(
+            items,
+            failure.id,
+            targetMinisterName,
+            data.pending_action_failures || [],
+          ));
+        }
       } else {
-        setChatFailures((items) => items.filter((item) => item.id !== failure.id));
+        if (canRefreshFailureList) {
+          setChatFailures((items) => items.filter((item) => item.id !== failure.id));
+        }
       }
+      if (staleTarget) return;
       if (typeof data.can_undo_last_chat === "boolean") {
         setCanUndoLastChat(data.can_undo_last_chat);
       }

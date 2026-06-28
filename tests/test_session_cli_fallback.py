@@ -445,6 +445,77 @@ def test_confirmation_bubi_zhaoban_rejects_when_extractor_fails(monkeypatch):
     assert result == "拒绝"
 
 
+def test_mixed_directive_and_secret_confirmation_commits_both(game):
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    ch = SimpleNamespace(name=minister, office_type="兵部")
+    db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister, target_id=None,
+        payload={"text": "着户部清核辽饷。", "actor": minister},
+    )
+    db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "暗查辽饷侵冒。",
+            "assignee": minister,
+            "tags": [],
+            "deadline_months": 0,
+        },
+    )
+
+    out = GameSession.apply_cli_conversation_actions(
+        _session(db, state, content=content),
+        ch,
+        player_message="圣旨和密令都准。",
+        answer="臣领旨。",
+        has_directive=False,
+        secret_order_id=None,
+        preclassified_intent={"kind": "confirmation", "confirmation": "应允"},
+    )
+
+    assert out["pending_action_failures"] == []
+    assert db.list_pending_actions(state.turn) == []
+    assert [order["title"] for order in db.list_secret_orders()] == ["暗查辽饷"]
+    directives = db.list_directives(state, statuses=("pending",))
+    assert len(directives) == 1
+    assert directives[0]["text"] == "着户部清核辽饷。"
+
+
+def test_mixed_directive_and_secret_rejection_drops_both(game):
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    ch = SimpleNamespace(name=minister, office_type="兵部")
+    db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister, target_id=None,
+        payload={"text": "着户部清核辽饷。", "actor": minister},
+    )
+    db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "暗查辽饷侵冒。",
+            "assignee": minister,
+            "tags": [],
+            "deadline_months": 0,
+        },
+    )
+
+    GameSession.apply_cli_conversation_actions(
+        _session(db, state, content=content),
+        ch,
+        player_message="圣旨和密令都作罢。",
+        answer="臣候旨。",
+        has_directive=False,
+        secret_order_id=None,
+        preclassified_intent={"kind": "confirmation", "confirmation": "拒绝"},
+    )
+
+    assert db.list_pending_actions(state.turn) == []
+    assert db.list_secret_orders() == []
+    assert db.list_directives(state, statuses=("pending", "draft")) == []
+
+
 def test_tool_staged_action_is_not_confirmed_in_same_chat_turn(game):
     """本轮 tool 刚 stage 的 pending action 不能被同一句“准了”立即提交。"""
     db, state, content = game
