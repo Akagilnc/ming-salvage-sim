@@ -286,6 +286,74 @@ def test_secret_order_tool_progress_stages_pending_action_not_direct_write(game)
     assert pending[0]["action"] == "记进展"
 
 
+def test_api_channel_rejects_existing_pending_action(game):
+    """API/function-call 通道已暂存动作后，下一句拒绝也必须删除 pending，不能早退默认同意。"""
+    db, state, _ = game
+    minister = "魏忠贤"
+    db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "暗查辽饷侵冒。",
+            "assignee": minister,
+            "tags": [],
+            "deadline_months": 0,
+        },
+    )
+
+    GameSession.apply_cli_conversation_actions(
+        _session(db, state, llm_config=SimpleNamespace(channel="api")),
+        SimpleNamespace(name=minister, office_type="司礼监"),
+        player_message="不准，撤了。",
+        answer="臣遵旨。",
+        has_directive=False,
+        secret_order_id=None,
+    )
+
+    assert db.list_pending_actions(state.turn) == []
+
+
+def test_legacy_registered_secret_order_marker_parser_restages(game):
+    """旧 __secret_order_registered__<id>__ marker 经 chat parser 也要反转回 pending。"""
+    db, state, content = game
+    minister = "毕自严"
+    oid = db.create_secret_order(state, minister, "暗查辽饷", "暗查辽饷侵冒。", [], deadline_months=0)
+
+    class Agent:
+        def run(self, _message):
+            return SimpleNamespace(
+                content="臣领旨，请陛下定夺。",
+                tools=[SimpleNamespace(
+                    tool_name="secret_order",
+                    result=f"__secret_order_registered__{oid}__密令已登记入档",
+                )],
+            )
+
+    class Registry:
+        def get(self, _character):
+            return Agent()
+
+        def build_draft_line(self):
+            return "无"
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = Registry()
+    sess.llm_config = SimpleNamespace(channel="api")
+    sess.temporary_characters = set()
+    sess._audience_prompt_for_message = lambda message: message
+    sess._start_cli_action_intent = lambda *_args, **_kwargs: None
+    sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
+
+    result = GameSession.chat(sess, minister, "密令如下：暗查辽饷")
+
+    assert result.pending_action_id
+    assert db.list_secret_orders() == []
+    assert db.list_pending_actions(state.turn)[0]["kind"] == "secret_order"
+
+
 def test_secret_order_extract_fallback_preserves_structured_metadata(game, monkeypatch):
     """API/按钮兼容文本带出的标签/期限，在 extractor 空结果时也不能丢。"""
     monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: ("{}", 1))

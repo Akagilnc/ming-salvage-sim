@@ -1642,8 +1642,7 @@ class WebGame:
                 elif tool_name == "dismiss_minister" or res == "__dismiss__":
                     court_action = "dismiss"
                 elif (
-                    tool_name in ("issue_secret_order", "secret_order")
-                    or res.startswith("__secret_order_registered__")
+                    res.startswith("__secret_order_registered__")
                     or res.startswith("__secret_order__")
                     or res.startswith("__secret_action__")
                 ):
@@ -1669,7 +1668,9 @@ class WebGame:
                                 tool_pending_action_id = pending_action_id
                     elif res.startswith("__secret_order_registered__"):
                         try:
-                            registered_id = int(res.split("__")[3])
+                            registered_id = int(
+                                res.removeprefix("__secret_order_registered__").split("__", 1)[0]
+                            )
                         except Exception:
                             registered_id = 0
                         if registered_id:

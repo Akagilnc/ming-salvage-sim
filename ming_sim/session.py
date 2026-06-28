@@ -926,7 +926,9 @@ class GameSession:
                         )
                 elif tool_result.startswith("__secret_order_registered__"):
                     try:
-                        order_id = int(tool_result.split("__")[3])
+                        order_id = int(
+                            tool_result.removeprefix("__secret_order_registered__").split("__", 1)[0]
+                        )
                     except Exception:
                         order_id = 0
                     if order_id:
@@ -986,8 +988,9 @@ class GameSession:
         explicit_prefixed = message_text.startswith(_DRAFT_PREFIXES) or message_text.startswith(_SECRET_PREFIXES)
         channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
         api_explicit_prefix = channel == "api" and explicit_prefixed
-        if channel != "cli" and (channel == "api" or cli_backend_from_env() is None) and not api_explicit_prefix:
-            return out
+        api_or_no_cli_passthrough = (
+            channel != "cli" and (channel == "api" or cli_backend_from_env() is None) and not api_explicit_prefix
+        )
         # 对话确认(ADR 0006 重设计)：本召对的大臣有上一轮经领命确认、尚未落库的暂存动作时，
         # 皇帝这句应允 → 当场 commit、拒绝 → 丢、未表态 → 留(颁诏对没回的算同意)。
         # 只在该大臣有 outstanding 暂存时才判(省 token)，commit/drop 按该大臣过滤、不波及他人。
@@ -1038,6 +1041,8 @@ class GameSession:
                 # 抽取,会把刚 commit 的动作从复述里重抽成新暂存→颁诏二次落库,或重建刚拒的动作。
                 # 故确认轮直接返回,不再抽新动作(线上 codex P2)。确认句无前缀,前缀路无损失。
                 return out
+        if api_or_no_cli_passthrough:
+            return out
         if GameSession._proposal_blocked(self.state):
             # 恢复窗总闸（PR #90 R1/R2/R3 收束为单一出口）：前缀拟旨/密令与自然语言
             # 抽取的新暂存（密令动作/调教/任免）一并婉拒——窗内新写在 settle 重试事务
