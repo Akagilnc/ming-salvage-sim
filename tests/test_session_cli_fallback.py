@@ -411,6 +411,23 @@ def test_confirmation_negated_approval_phrase_is_rejection():
     assert result == "拒绝"
 
 
+def test_confirmation_negated_approval_rejects_when_extractor_fails(monkeypatch):
+    monkeypatch.setattr(
+        cb,
+        "_run_json_extractor_for_config",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("extractor down")),
+    )
+
+    result = cb.extract_confirmation_intent(
+        player_message="不可准奏。",
+        minister_reply="臣候旨。",
+        pending_summaries=["草拟圣旨：清核辽饷"],
+        llm_config=SimpleNamespace(channel="api"),
+    )
+
+    assert result == "拒绝"
+
+
 def test_tool_staged_action_is_not_confirmed_in_same_chat_turn(game):
     """本轮 tool 刚 stage 的 pending action 不能被同一句“准了”立即提交。"""
     db, state, content = game

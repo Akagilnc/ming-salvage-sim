@@ -1182,6 +1182,8 @@ class GameSession:
                 "密令状态", "密旨状态", "密谕状态",
                 "查一下密令", "查一查密令",
                 "问问密令", "奏报密令", "回报密令",
+                "查办得如何", "查办得怎样", "办得如何", "办得怎样",
+                "查到哪", "查得如何", "查得怎样",
             )):
                 return False
             if explicit_secret and any(token in text for token in (
