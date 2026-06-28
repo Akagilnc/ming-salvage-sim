@@ -6184,32 +6184,28 @@ class GameDB:
             bool(getattr(self.conn, "_commit_suspended", False))
             or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
         )
+        cm = atomic(self) if owns_transaction else contextlib.nullcontext()
         try:
-            payload_for_apply = dict(payload)
-            stored_status = str(payload_for_apply.get("_directive_status") or "").strip()
-            payload_for_apply["_directive_status"] = (
-                stored_status if stored_status in {"draft", "pending"} else directive_status
-            )
-            ok = self._apply_pending_action(
-                state, pa, payload_for_apply, content=content, registry=registry)
-            if ok:
+            with cm:
+                payload_for_apply = dict(payload)
+                stored_status = str(payload_for_apply.get("_directive_status") or "").strip()
+                payload_for_apply["_directive_status"] = (
+                    stored_status if stored_status in {"draft", "pending"} else directive_status
+                )
+                ok = self._apply_pending_action(
+                    state, pa, payload_for_apply, content=content, registry=registry)
+                if ok:
+                    self.conn.execute(
+                        "UPDATE pending_actions SET status='committed' WHERE id=?",
+                        (int(pa["id"]),),
+                    )
+                    return {"id": pa["id"], "kind": pa["kind"],
+                            "action": pa["action"], "target_id": pa["target_id"]}
                 self.conn.execute(
-                    "UPDATE pending_actions SET status='committed' WHERE id=?",
+                    "UPDATE pending_actions SET status='failed' WHERE id=?",
                     (int(pa["id"]),),
                 )
-                if owns_transaction:
-                    self.conn.commit()
-                return {"id": pa["id"], "kind": pa["kind"],
-                        "action": pa["action"], "target_id": pa["target_id"]}
-            self.conn.execute(
-                "UPDATE pending_actions SET status='failed' WHERE id=?",
-                (int(pa["id"]),),
-            )
-            if owns_transaction:
-                self.conn.commit()
         except Exception as exc:
-            if owns_transaction:
-                self.conn.rollback()
             tlog(f"[pending_actions] 落库异常 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
             raise
         return None

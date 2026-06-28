@@ -2872,7 +2872,8 @@ async def api_create_secret_order(minister_name: str, request: SecretOrderReques
     if not title or not content:
         raise HTTPException(status_code=400, detail="title 和 content 不能为空")
     lines = [f"密令如下：{title}", content]
-    tags = [str(tag).strip() for tag in request.tags if str(tag).strip()]
+    tags_raw = request.tags if isinstance(request.tags, list) else []
+    tags = [str(tag).strip() for tag in tags_raw if str(tag).strip()]
     if tags:
         lines.append("标签：" + "、".join(tags))
     if request.deadline_months:

@@ -485,7 +485,8 @@ def build_minister_tools(character: Character, context: CourtContext,
         if order["status"] != "active":
             return f"密令 #{order['id']} 当前状态 {order['status']}，不能再催办。"
         try:
-            deadline = max(0, min(int(deadline_months or 0), 36))
+            raw_deadline = 1 if deadline_months is None or deadline_months == "" else deadline_months
+            deadline = max(0, min(int(raw_deadline), 36))
         except (TypeError, ValueError):
             deadline = 1
         return _pending_secret_action(
