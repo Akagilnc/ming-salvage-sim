@@ -1,9 +1,5 @@
 type LlmChannel = "api" | "cli";
 
-function normalizedChannel(channel?: LlmChannel): LlmChannel {
-  return channel === "cli" ? "cli" : "api";
-}
-
 function fallbackApiReasoningSupported({
   baseUrl,
   model,
@@ -32,7 +28,7 @@ function fallbackApiReasoningSupported({
 
 export function resolveReasoningSupported({
   backendSupported,
-  backendChannel,
+  backendCurrent,
   currentChannel,
   baseUrl,
   model,
@@ -41,7 +37,7 @@ export function resolveReasoningSupported({
   cliRunner,
 }: {
   backendSupported?: boolean;
-  backendChannel?: LlmChannel;
+  backendCurrent?: boolean;
   currentChannel: LlmChannel;
   baseUrl: string;
   model: string;
@@ -49,7 +45,7 @@ export function resolveReasoningSupported({
   advancedModel: string;
   cliRunner: string;
 }) {
-  if (typeof backendSupported === "boolean" && currentChannel === normalizedChannel(backendChannel)) {
+  if (backendCurrent && typeof backendSupported === "boolean") {
     return backendSupported;
   }
   if (currentChannel === "cli") {

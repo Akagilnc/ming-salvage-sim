@@ -275,9 +275,18 @@ export function ApiSettingsModal({
     { value: "medium", label: "中" },
     { value: "high", label: "高" },
   ];
+  const backendChannel = initial?.channel === "cli" ? "cli" : "api";
+  const backendReasoningSupportCurrent = channel === backendChannel && (
+    channel === "cli"
+      ? cliRunner === (initial?.cli_runner || "agy")
+      : baseUrl === (initial?.base_url || "") &&
+        model === (initial?.model || "") &&
+        advancedBaseUrl === (initial?.advanced_base_url || "") &&
+        advancedModel === (initial?.advanced_model || "")
+  );
   const reasoningSupported = resolveReasoningSupported({
     backendSupported: initial?.reasoning_supported,
-    backendChannel: initial?.channel,
+    backendCurrent: backendReasoningSupportCurrent,
     currentChannel: channel,
     baseUrl,
     model,

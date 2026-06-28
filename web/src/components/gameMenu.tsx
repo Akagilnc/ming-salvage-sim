@@ -362,9 +362,18 @@ export function LLMConfigTab() {
   const [busy, setBusy] = React.useState(false);
   const [msg, setMsg] = React.useState("");
   const [err, setErr] = React.useState("");
+  const backendChannel = info?.channel === "cli" ? "cli" : "api";
+  const backendReasoningSupportCurrent = channel === backendChannel && (
+    channel === "cli"
+      ? cliRunner === (info?.cli_runner || "agy")
+      : baseUrl === (info?.base_url || "") &&
+        model === (info?.model || "") &&
+        advancedBaseUrl === (info?.advanced_base_url || "") &&
+        advancedModel === (info?.advanced_model || "")
+  );
   const reasoningSupported = resolveReasoningSupported({
     backendSupported: info?.reasoning_supported,
-    backendChannel: info?.channel,
+    backendCurrent: backendReasoningSupportCurrent,
     currentChannel: channel,
     baseUrl,
     model,
