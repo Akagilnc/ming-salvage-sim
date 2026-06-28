@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { normalizeApiError } from "./api";
 import { mergePendingActionFailures, refreshRetriedPendingActionFailures } from "./chatFailures";
 import type { PendingActionFailure } from "./types";
 
@@ -55,5 +56,24 @@ describe("refreshRetriedPendingActionFailures", () => {
       { ...failure(4, "别臣密令失败"), minister_name: "申时行" },
       { ...failure(5, "同臣新密令失败"), minister_name: "张居正" },
     ]);
+  });
+});
+
+describe("normalizeApiError", () => {
+  it("preserves pending action failures from structured API errors", () => {
+    const pending_action_failures = [failure(9, "退朝落库失败")];
+
+    expect(normalizeApiError({
+      detail: {
+        message: "退朝失败",
+        pending_action_failures,
+      },
+    }, "fallback")).toEqual({
+      message: "退朝失败",
+      provider_message: undefined,
+      status_code: undefined,
+      code: undefined,
+      pending_action_failures,
+    });
   });
 });
