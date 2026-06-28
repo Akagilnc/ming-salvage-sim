@@ -500,6 +500,7 @@ function App() {
 
   const retryPendingAction = async (failure: PendingActionFailure) => {
     if (busy) return;
+    const targetMinisterName = activeMinister?.name || selectedMinisterRef.current;
     setBusy("重试密令下达");
     setError("");
     try {
@@ -513,9 +514,14 @@ function App() {
         { method: "POST" },
       );
       if (!data.retry?.committed) {
-        setError("密令仍未能正式落库，请稍后再试。");
+        if (selectedMinisterRef.current === targetMinisterName) {
+          setError("密令仍未能正式落库，请稍后再试。");
+        }
         return;
       }
+      setSecretOrders(data.secret_orders || []);
+      await loadState();
+      if (selectedMinisterRef.current !== targetMinisterName) return;
       if (data.pending_action_failures) {
         setChatFailures(data.pending_action_failures);
       } else {
@@ -524,10 +530,10 @@ function App() {
       if (typeof data.can_undo_last_chat === "boolean") {
         setCanUndoLastChat(data.can_undo_last_chat);
       }
-      setSecretOrders(data.secret_orders || []);
-      await loadState();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (selectedMinisterRef.current === targetMinisterName) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
       setBusy("");
     }

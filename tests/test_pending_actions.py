@@ -23,7 +23,7 @@ import pytest
 import ming_sim.cli_backend as cb
 import ming_sim.issues as issues
 from ming_sim.decree import advance_without_edict, pre_settle
-from ming_sim.session import GameSession
+from ming_sim.session import GameSession, _pending_action_failure_payload
 
 
 @pytest.fixture(autouse=True)
@@ -738,6 +738,15 @@ def test_retry_pending_action_endpoint_returns_fresh_undo_state(game, monkeypatc
     assert out["retry"]["committed"] is True
     assert out["can_undo_last_chat"] is False
     assert out["pending_action_failures"] == []
+
+
+def test_non_secret_pending_failure_payload_does_not_promise_retry():
+    """非密令失败没有重试端点/按钮,提示不得承诺「请重试」。"""
+    failure = _pending_action_failure_payload(
+        {"id": 1, "kind": "office", "action": "任命"})
+
+    assert "任免未能正式落库" in failure["message"]
+    assert "重试" not in failure["message"]
 
 
 def test_failed_secret_order_does_not_block_later_audience(game, monkeypatch):
