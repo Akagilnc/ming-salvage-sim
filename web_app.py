@@ -1624,9 +1624,12 @@ class WebGame:
                 elif tool_name == "issue_secret_order" or res.startswith("__secret_order_registered__") or res.startswith("__secret_order__"):
                     if res.startswith("__secret_order_registered__"):
                         try:
-                            secret_order_id = int(res.split("__")[3])
+                            registered_id = int(res.split("__")[3])
                         except Exception:
-                            secret_order_id = 0
+                            registered_id = 0
+                        if registered_id:
+                            pending_action_id = self.session._stage_legacy_registered_secret_order(
+                                registered_id, character.name)
                     else:
                         payload_json = res.removeprefix("__secret_order__").strip()
                         if not payload_json:
