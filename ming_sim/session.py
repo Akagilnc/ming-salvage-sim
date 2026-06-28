@@ -863,14 +863,37 @@ class GameSession:
                     if summon_after:
                         result.court_action = "summon"
                         result.next_minister = registered
-            elif tool_name == "secret_order" or tool_result.startswith("__secret_order_registered__"):
-                if tool_result.startswith("__secret_order_registered__"):
+            elif (
+                tool_name == "secret_order"
+                or tool_result.startswith("__secret_order_registered__")
+                or tool_result.startswith("__secret_order__")
+            ):
+                if tool_result.startswith("__secret_order__"):
+                    payload_json = tool_result.removeprefix("__secret_order__").strip()
+                    try:
+                        payload = json.loads(payload_json) if payload_json else {}
+                    except (ValueError, TypeError):
+                        payload = {}
+                    if isinstance(payload, dict):
+                        result.pending_action_id = self.db.stage_pending_action(
+                            self.state.turn, kind="secret_order", action="新建",
+                            minister_name=character.name, target_id=None,
+                            payload={
+                                "title": str(payload.get("title") or "").strip(),
+                                "content": str(payload.get("content") or "").strip(),
+                                "assignee": str(payload.get("assignee") or character.name).strip(),
+                                "tags": payload.get("tags") if isinstance(payload.get("tags"), list) else [],
+                                "deadline_months": payload.get("deadline_months") or 0,
+                            },
+                        )
+                elif tool_result.startswith("__secret_order_registered__"):
                     try:
                         order_id = int(tool_result.split("__")[3])
                     except Exception:
                         order_id = 0
                     if order_id:
-                        result.secret_order_id = order_id
+                        result.pending_action_id = self._stage_legacy_registered_secret_order(
+                            order_id, character.name)
         # CLI 后端（agy/codex）：玩家用拟旨/密令按钮（消息带前缀）时，把大臣这句回话原文入档。
         self._cli_backend_fallback_actions(
             result, character, message,
@@ -886,14 +909,16 @@ class GameSession:
         """CLI 后端（无 function-calling）会话落地的【唯一真源】，session.chat 非流式路径与
         web streaming 路径共用，杜绝两边逻辑漂移（CMR F3 / codexC-1）。
 
-        做三件事：① 前缀「拟旨」→ add_directive；② 前缀「密令」→ upsert + refresh；
-        ③ 无前缀时让 LLM 判会话动作（更新/催办/提交核议/记进展/调教妃嫔）并落地。
+        做三件事：① 前缀「拟旨」→ pending directive；② 前缀/自然语言「密令」→ pending
+        secret_order 新建候选；③ 无前缀时让 LLM 判会话动作（更新/催办/提交核议/记进展/
+        调教妃嫔）并暂存。
         入参 has_directive / secret_order_id 表示 agno 工具路径是否已产出（已产则不重复）。
         返回 {"directive": {id,text,status,notes}|None, "secret_order_id": int|None}。"""
         from ming_sim.cli_backend import (
             _DRAFT_PREFIXES, _SECRET_PREFIXES,
             cli_backend_from_env, resolve_minister_actions, extract_minister_actions,
             extract_appointment_action, extract_confirmation_intent, extract_draft_intent,
+            _extract_secret_order,
         )
         out: Dict[str, Any] = {"directive": None, "secret_order_id": secret_order_id}
         intent = preclassified_intent if isinstance(preclassified_intent, dict) else None
@@ -962,7 +987,11 @@ class GameSession:
             # 抽取器（LLM 调用）一并跳过。
             return out
         needs_draft_fallback = not has_directive and message_text.startswith(_DRAFT_PREFIXES)
-        needs_secret_fallback = not out["secret_order_id"] and message_text.startswith(_SECRET_PREFIXES)
+        needs_secret_fallback = (
+            not has_directive
+            and not out["secret_order_id"]
+            and message_text.startswith(_SECRET_PREFIXES)
+        )
         secret_context = ""
         if needs_secret_fallback:
             secret_context = _recent_audience_context_for_secret_order(
@@ -980,17 +1009,51 @@ class GameSession:
                 payload={"text": text, "actor": minister_name},
             )
             out["pending_action_id"] = pid
-        if not out["secret_order_id"] and acts["secret_order"]:
-            so = acts["secret_order"]
+        def _stage_secret_order_candidate(so: Dict[str, Any]) -> int:
             assignee = so.get("assignee") or minister_name
-            oid, _ = self.db.upsert_secret_order(
-                self.state, assignee, so["title"], so["content"],
-                so.get("tags") or [], deadline_months=so.get("deadline_months", 0),
+            return self.db.stage_pending_action(
+                self.state.turn, kind="secret_order", action="新建",
+                minister_name=minister_name, target_id=None,
+                payload={
+                    "title": so["title"],
+                    "content": so["content"],
+                    "assignee": assignee,
+                    "tags": so.get("tags") or [],
+                    "deadline_months": so.get("deadline_months", 0),
+                },
             )
-            if oid:
-                out["secret_order_id"] = oid
-                if self.registry is not None:
-                    self.registry.refresh(assignee)
+        if not out["secret_order_id"] and acts["secret_order"]:
+            out["pending_action_id"] = _stage_secret_order_candidate(acts["secret_order"])
+
+        def _mentions_new_secret_order_request(text: str) -> bool:
+            if not text:
+                return False
+            if not any(term in text for term in ("密令", "密旨", "密谕")):
+                return False
+            if any(token in text for token in (
+                "下密令", "下密旨", "下密谕",
+                "发密令", "发密旨", "发密谕",
+                "下一道密令", "下一道密旨", "下一道密谕",
+                "另下一道", "新下一道",
+            )):
+                return True
+            return any(
+                verb in text and any(term in text for term in ("暗查", "密查", "密访", "侦缉", "查办", "查"))
+                for verb in ("下", "发", "给", "交办", "传")
+            )
+
+        if (
+            not out.get("pending_action_id")
+            and not has_directive
+            and not out["secret_order_id"]
+            and not explicit_prefixed
+            and _mentions_new_secret_order_request(message_text)
+        ):
+            so = _extract_secret_order(
+                message_text, reply, minister_name, llm_config,
+                force_default_assignee=False,
+            )
+            out["pending_action_id"] = _stage_secret_order_candidate(so)
         # 会话动作：本轮未经前缀落密令时，LLM 判皇帝对密令/妃嫔的意图再落地。
         # 前缀消息一律跳过（explicit_prefixed 已在顶部单一判定，统一把门所有后置 LLM 抽取器）。
         conversation_intent_handled = False
@@ -1334,6 +1397,46 @@ class GameSession:
             deadline = 0
         print(f"[secret_order] 截获密令 minister={minister_name} assignee={assignee} title={title!r} tags={tags}")
         return self.db.create_secret_order(self.state, assignee, title, content, tags, deadline_months=deadline)
+
+    def _stage_legacy_registered_secret_order(self, order_id: int, fallback_minister: str) -> int:
+        """Convert a legacy already-registered same-turn secret order into a pending candidate.
+
+        Older tool results used `__secret_order_registered__<id>__` after directly creating
+        `secret_orders`. #413 requires those requests to pass through audience confirmation.
+        """
+        row = self.db.conn.execute(
+            "SELECT * FROM secret_orders WHERE id=?", (int(order_id),)
+        ).fetchone()
+        if row is None:
+            return 0
+        if str(row["status"] or "") != "active" or int(row["turn_issued"] or 0) != int(self.state.turn):
+            return 0
+        try:
+            tags = json.loads(row["tags"] or "[]")
+        except (ValueError, TypeError):
+            tags = []
+        if not isinstance(tags, list):
+            tags = []
+        due_turn = int(row["due_turn"] or 0)
+        deadline = max(0, due_turn - int(self.state.turn)) if due_turn else 0
+        pending_id = self.db.stage_pending_action(
+            self.state.turn, kind="secret_order", action="新建",
+            minister_name=str(fallback_minister or row["minister_name"] or ""),
+            target_id=None,
+            payload={
+                "title": str(row["title"] or "").strip(),
+                "content": str(row["content"] or "").strip(),
+                "assignee": str(row["minister_name"] or fallback_minister or "").strip(),
+                "tags": [str(t).strip() for t in tags if str(t).strip()],
+                "deadline_months": deadline,
+            },
+        )
+        self.db.conn.execute(
+            "DELETE FROM secret_orders WHERE id=? AND status='active' AND turn_issued=?",
+            (int(order_id), int(self.state.turn)),
+        )
+        self.db.conn.commit()
+        return pending_id
 
     def _apply_close_secret_order(self, payload: str) -> None:
         """report_secret_order_result 哨兵落库。"""

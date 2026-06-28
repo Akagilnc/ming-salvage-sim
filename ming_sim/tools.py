@@ -397,7 +397,7 @@ def build_minister_tools(character: Character, context: CourtContext,
         return f"未知 action={action!r}，可选：issue / progress / submit / rush。"
 
     def _secret_order_issue(title: str, content: str, tags_json: str = "[]", assignee: str = "", deadline_months: int = 0) -> str:
-        """皇帝下达密令，直接登记入档并返回密令编号。
+        """皇帝下达密令，返回待确认密令 payload，由召对确认闸门决定是否正式落库。
 
         title：密令标题（20字内）。
         content：密令详情，交代任务目标、保密要求、期限等。
@@ -421,17 +421,7 @@ def build_minister_tools(character: Character, context: CourtContext,
             deadline = max(0, min(int(deadline_months or 0), 36))
         except (TypeError, ValueError):
             deadline = 0
-        try:
-            order_id = context.db.create_secret_order(
-                context.state, real_assignee, t, c, tags_clean, deadline_months=deadline
-            )
-        except ValueError as e:
-            return f"密令下达失败：{e}"
-        except Exception as e:
-            return f"__secret_order__{json.dumps({'title': t, 'content': c, 'tags': tags_clean, 'assignee': real_assignee, 'deadline_months': deadline}, ensure_ascii=False)}"
-        print(f"[secret_order/tool] 直接落库 id={order_id} assignee={real_assignee} title={t!r}")
-        deadline_text = f"，御限 {deadline} 个月" if deadline else ""
-        return f"__secret_order_registered__{order_id}__密令已登记入档，编号 #{order_id}，承办：{real_assignee}{deadline_text}，标题：{t}。"
+        return f"__secret_order__{json.dumps({'title': t, 'content': c, 'tags': tags_clean, 'assignee': real_assignee, 'deadline_months': deadline}, ensure_ascii=False)}"
 
     def _own_secret_order(order_id: int):
         """取本承办人名下密令；非承办人或不存在返回 (None, 提示串)。"""

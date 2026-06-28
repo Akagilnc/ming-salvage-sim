@@ -68,6 +68,21 @@ def _no_conv_action(monkeypatch):
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
 
 
+def _commit_staged_secret_order(db, state, result_or_mapping):
+    """#413: prefix/button secret-order paths stage first; commit here only when a test inspects the durable row."""
+    if isinstance(result_or_mapping, dict):
+        assert result_or_mapping.get("secret_order_id") in (None, 0)
+        pending_id = result_or_mapping.get("pending_action_id")
+    else:
+        assert getattr(result_or_mapping, "secret_order_id", None) in (None, 0)
+        pending_id = getattr(result_or_mapping, "pending_action_id", 0)
+    assert pending_id
+    db.commit_pending_actions(state)
+    orders = db.list_secret_orders()
+    assert len(orders) == 1
+    return orders[0]
+
+
 def test_draft_prefix_with_active_secret_order_runs_zero_llm(game, monkeypatch):
     """#344「按钮前缀路零 LLM」(US3)：玩家用『拟旨如下：』前缀、且该大臣有 active 密令时，
     旧的会话密令抽取器(extract_minister_actions, LLM)不得被触发——前缀已由 resolve_minister_actions
@@ -170,11 +185,7 @@ def test_secret_prefix_confirmation_uses_recent_context_for_order_body(game, mon
 
     assert "督办陕西赈灾" in captured["prompt"]
     assert "东厂暗助护赈银" in captured["prompt"]
-    assert result.secret_order_id
-    row = db.conn.execute(
-        "SELECT minister_name, content FROM secret_orders WHERE id=?",
-        (result.secret_order_id,),
-    ).fetchone()
+    row = _commit_staged_secret_order(db, state, result)
     assert row["minister_name"] == minister
     assert "督办陕西赈灾" in row["content"]
 
@@ -198,6 +209,56 @@ def test_api_tool_created_secret_order_skips_prefix_fallback_extraction(game, mo
     )
 
     assert result["secret_order_id"] == 123
+
+
+def test_api_tool_staged_secret_order_skips_prefix_fallback_extraction(game, monkeypatch):
+    """#413：API tool-call 已暂存新密令时，前缀 fallback 不得再抽取出第二条候选。"""
+    db, state, _ = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    minister = "魏忠贤"
+    pid = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
+        payload={"title": "暗查辽饷", "content": "暗查辽饷。", "assignee": minister},
+    )
+
+    def forbidden_resolve(*args, **kwargs):
+        raise AssertionError("tool-staged secret order should not run fallback extraction")
+
+    monkeypatch.setattr(cb, "resolve_minister_actions", forbidden_resolve)
+    result = _session(db, state, llm_config=SimpleNamespace(channel="api")).apply_cli_conversation_actions(
+        SimpleNamespace(name=minister, office_type="司礼监"),
+        "密令如下：暗查辽饷",
+        "臣领旨。",
+        has_directive=True,
+        secret_order_id=None,
+    )
+
+    assert result["secret_order_id"] is None
+    assert not result.get("pending_action_id")
+    pending = db.list_pending_actions(state.turn)
+    assert len(pending) == 1 and pending[0]["id"] == pid
+
+
+def test_legacy_registered_secret_order_marker_is_restaged(game):
+    """#413 review fix：旧 __secret_order_registered__ 直写结果也要转回 pending，不能绕过确认闸门。"""
+    db, state, _ = game
+    minister = "魏忠贤"
+    oid = db.create_secret_order(state, minister, "暗查辽饷", "暗查辽饷侵冒。", ["辽饷"], deadline_months=3)
+    s = _session(db, state)
+
+    pid = GameSession._stage_legacy_registered_secret_order(s, oid, minister)
+
+    assert pid
+    assert db.list_secret_orders() == []
+    pending = db.list_pending_actions(state.turn)
+    assert len(pending) == 1
+    assert pending[0]["id"] == pid
+    payload = json.loads(pending[0]["payload_json"])
+    assert payload["title"] == "暗查辽饷"
+    assert payload["content"] == "暗查辽饷侵冒。"
+    assert payload["assignee"] == minister
+    assert payload["tags"] == ["辽饷"]
+    assert payload["deadline_months"] == 3
 
 
 def test_noop_appointment_intent_is_not_staged(game, monkeypatch):
@@ -269,10 +330,7 @@ def test_secret_prefix_keyao_confirmation_uses_recent_context(game, monkeypatch)
     )
 
     assert "督办陕西赈灾" in captured["prompt"]
-    assert result.secret_order_id
-    row = db.conn.execute(
-        "SELECT content FROM secret_orders WHERE id=?", (result.secret_order_id,),
-    ).fetchone()
+    row = _commit_staged_secret_order(db, state, result)
     assert "督办陕西赈灾" in row["content"]
 
 
@@ -306,9 +364,7 @@ def test_secret_prefix_confirmation_with_supplement_keeps_recent_context(game, m
     )
 
     assert "督办陕西赈灾" in captured["prompt"]
-    row = db.conn.execute(
-        "SELECT content FROM secret_orders WHERE id=?", (result.secret_order_id,),
-    ).fetchone()
+    row = _commit_staged_secret_order(db, state, result)
     assert "督办陕西赈灾" in row["content"]
     assert "三月内回奏" in row["content"]
 
@@ -339,10 +395,7 @@ def test_api_channel_secret_prefix_confirmation_uses_recent_context(game, monkey
         secret_order_id=None,
     )
 
-    assert res["secret_order_id"]
-    row = db.conn.execute(
-        "SELECT minister_name, content FROM secret_orders WHERE id=?", (res["secret_order_id"],),
-    ).fetchone()
+    row = _commit_staged_secret_order(db, state, res)
     assert row["minister_name"] == minister
     assert "督办陕西赈灾" in row["content"]
 
@@ -379,9 +432,7 @@ def test_api_channel_secret_prefix_extracts_deadline_without_cli_helper(game, mo
         secret_order_id=None,
     )
 
-    row = db.conn.execute(
-        "SELECT content, due_turn FROM secret_orders WHERE id=?", (res["secret_order_id"],),
-    ).fetchone()
+    row = _commit_staged_secret_order(db, state, res)
     assert "三月内回奏" in row["content"]
     assert row["due_turn"] == state.turn + 3
 
@@ -406,10 +457,7 @@ def test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails(game
         secret_order_id=None,
     )
 
-    assert res["secret_order_id"]
-    row = db.conn.execute(
-        "SELECT content FROM secret_orders WHERE id=?", (res["secret_order_id"],),
-    ).fetchone()
+    row = _commit_staged_secret_order(db, state, res)
     assert "督办陕西赈灾" in row["content"]
     assert "三月内回奏" in row["content"]
 
@@ -443,9 +491,7 @@ def test_secret_context_path_preserves_multiple_related_emperor_task_lines(game,
         "密令如下：可，照办",
     )
 
-    row = db.conn.execute(
-        "SELECT content FROM secret_orders WHERE id=?", (result.secret_order_id,),
-    ).fetchone()
+    row = _commit_staged_secret_order(db, state, result)
     body = row["content"]
     assert "督办陕西赈灾" in body
     assert "护赈银" in body
@@ -481,9 +527,7 @@ def test_secret_context_path_preserves_related_bingming_continuation(game, monke
         "密令如下：可，照办",
     )
 
-    row = db.conn.execute(
-        "SELECT content FROM secret_orders WHERE id=?", (result.secret_order_id,),
-    ).fetchone()
+    row = _commit_staged_secret_order(db, state, result)
     body = row["content"]
     assert "督办陕西赈灾" in body
     assert "护赈银" in body
@@ -518,9 +562,7 @@ def test_secret_order_body_excludes_audience_role_labels(game, monkeypatch):
         "密令如下：可，就按你意思办",
     )
 
-    row = db.conn.execute(
-        "SELECT content FROM secret_orders WHERE id=?", (result.secret_order_id,),
-    ).fetchone()
+    row = _commit_staged_secret_order(db, state, result)
     body = row["content"]
     assert "督办陕西赈灾" in body
     assert "皇帝：" not in body
@@ -559,9 +601,7 @@ def test_secret_context_path_preserves_prior_minister_supplement(game, monkeypat
         "密令如下：可，照办",
     )
 
-    row = db.conn.execute(
-        "SELECT content FROM secret_orders WHERE id=?", (result.secret_order_id,),
-    ).fetchone()
+    row = _commit_staged_secret_order(db, state, result)
     body = row["content"]
     assert "封存兵部辽饷册" in body  # 前文大臣实质补充保住
     assert "皇帝：" not in body
@@ -598,9 +638,7 @@ def test_secret_context_path_ignores_unrelated_prior_conversation(game, monkeypa
         "密令如下：可，照办",
     )
 
-    row = db.conn.execute(
-        "SELECT content FROM secret_orders WHERE id=?", (result.secret_order_id,),
-    ).fetchone()
+    row = _commit_staged_secret_order(db, state, result)
     body = row["content"]
     assert "暗查阉党" in body
     assert "京营操练" not in body  # 同回合无关问答不入密令正文
@@ -635,9 +673,7 @@ def test_secret_context_path_ignores_unrelated_prior_task_like_command(game, mon
         "密令如下：可，照办",
     )
 
-    row = db.conn.execute(
-        "SELECT content FROM secret_orders WHERE id=?", (result.secret_order_id,),
-    ).fetchone()
+    row = _commit_staged_secret_order(db, state, result)
     body = row["content"]
     assert "暗查阉党" in body
     assert "京营明日加操" not in body
@@ -672,9 +708,7 @@ def test_secret_context_path_ignores_prior_task_with_same_assignee(game, monkeyp
         "密令如下：可，照办",
     )
 
-    row = db.conn.execute(
-        "SELECT content FROM secret_orders WHERE id=?", (result.secret_order_id,),
-    ).fetchone()
+    row = _commit_staged_secret_order(db, state, result)
     body = row["content"]
     assert "密查关宁军饷" in body
     assert "暗查阉党余孽" not in body
@@ -709,9 +743,7 @@ def test_secret_context_path_ignores_unrelated_prior_task_before_lingqian(game, 
         "密令如下：可，照办",
     )
 
-    row = db.conn.execute(
-        "SELECT content FROM secret_orders WHERE id=?", (result.secret_order_id,),
-    ).fetchone()
+    row = _commit_staged_secret_order(db, state, result)
     body = row["content"]
     assert "密查关宁军饷" in body
     assert "京营明日加操" not in body
@@ -746,9 +778,7 @@ def test_secret_context_path_preserves_confidentiality_constraint_line(game, mon
         "密令如下：可，照办",
     )
 
-    row = db.conn.execute(
-        "SELECT content FROM secret_orders WHERE id=?", (result.secret_order_id,),
-    ).fetchone()
+    row = _commit_staged_secret_order(db, state, result)
     body = row["content"]
     assert "暗查阉党余孽" in body
     assert "不可泄露" in body
@@ -783,9 +813,7 @@ def test_secret_context_path_keeps_offtopic_llm_guard(game, monkeypatch):
         "密令如下：可，照办",
     )
 
-    row = db.conn.execute(
-        "SELECT content FROM secret_orders WHERE id=?", (result.secret_order_id,),
-    ).fetchone()
+    row = _commit_staged_secret_order(db, state, result)
     body = row["content"]
     assert "督办陕西赈灾" in body  # 真任务兜底保住
     assert "皇帝：" not in body
@@ -1145,17 +1173,14 @@ def test_runtime_cli_secret_prefix_merges_via_configured_runner(game, monkeypatc
 
     # 经配置 runner 合并润色（不再零 LLM）
     assert calls == [("codex", "gpt-5.5", 240)]
-    row = db.conn.execute(
-        "SELECT content, minister_name FROM secret_orders WHERE id=?",
-        (result.secret_order_id,),
-    ).fetchone()
+    row = _commit_staged_secret_order(db, state, result)
     assert "查辽东军饷" in row["content"]          # 御旨不丢
     assert "李若琏" in row["content"]              # 大臣补充保留
     assert row["minister_name"] == "李若琏"        # 大臣建议的承办人被采纳
 
 
 def test_secret_prefix_creates_order(game, monkeypatch):
-    """#397：玩家『密令如下：』→ 合并皇帝旨意 + 大臣回话（LLM 润色）建 active 密令。"""
+    """#397/#413：玩家『密令如下：』→ 合并皇帝旨意 + 大臣回话，先暂存，确认/commit 后建 active 密令。"""
     db, state, _ = game
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     canned = json.dumps({
@@ -1172,11 +1197,7 @@ def test_secret_prefix_creates_order(game, monkeypatch):
     _session(db, state, registry=None)._cli_backend_fallback_actions(
         result, SimpleNamespace(name="王在晋", office_type="兵部"),
         "密令如下：查辽东军饷有无侵冒，三月内回奏")
-    assert result.secret_order_id
-    row = db.conn.execute(
-        "SELECT content, minister_name, status FROM secret_orders WHERE id=?",
-        (result.secret_order_id,),
-    ).fetchone()
+    row = _commit_staged_secret_order(db, state, result)
     assert "查辽东军饷" in row["content"]          # 御旨不丢（#397）
     assert "李若琏" in row["content"]              # 大臣补充保留
     # #401 R1：正文/回话皆指李若琏，承办人字段填王在晋属漂移→采信校验后的线索李若琏
@@ -1185,7 +1206,7 @@ def test_secret_prefix_creates_order(game, monkeypatch):
 
 
 def test_secret_prefix_upserts_not_duplicates_and_refreshes(game, monkeypatch):
-    """CMR F3：CLI 胶水须走 upsert（同承办人再下=更新同条，不建重复）+ registry.refresh。"""
+    """#413：前缀密令只暂存候选；正式 commit 时才建密令并 refresh 承办大臣 agent。"""
     db, state, _ = game
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
@@ -1205,19 +1226,26 @@ def test_secret_prefix_upserts_not_duplicates_and_refreshes(game, monkeypatch):
 
     r1 = _result(); r1.answer = "臣领旨一。"
     s._cli_backend_fallback_actions(r1, SimpleNamespace(name=who, office_type="兵部"), "密令如下：查甲")
-    oid1 = r1.secret_order_id
-    assert oid1
+    assert r1.secret_order_id is None
+    assert r1.pending_action_id
 
     r2 = _result(); r2.answer = "臣领旨二。"
     s._cli_backend_fallback_actions(r2, SimpleNamespace(name=who, office_type="兵部"), "密令如下：改查甲")
-    assert r2.secret_order_id == oid1            # 同一条，不建重复
+    assert r2.secret_order_id is None
+    assert r2.pending_action_id
+    assert db.list_secret_orders() == []
+    db.commit_pending_actions(state, registry=registry)
     cnt = db.conn.execute(
         "SELECT COUNT(*) FROM secret_orders WHERE minister_name=? AND status='active'", (who,)
     ).fetchone()[0]
-    assert cnt == 1
-    row = db.conn.execute("SELECT content FROM secret_orders WHERE id=?", (oid1,)).fetchone()
-    assert row["content"] == "改查甲；臣领旨二。"   # 内容真被更新（合并后正文）
-    assert refreshed.count(who) == 2             # 两次都刷新了承办大臣 agent
+    assert cnt == 2
+    contents = {
+        r["content"] for r in db.conn.execute(
+            "SELECT content FROM secret_orders WHERE minister_name=? AND status='active'", (who,)
+        ).fetchall()
+    }
+    assert contents == {"查甲；臣领旨一。", "改查甲；臣领旨二。"}
+    assert refreshed.count(who) == 2
 
 
 def test_existing_directive_not_overwritten(game, monkeypatch):
