@@ -91,6 +91,9 @@ def test_secret_order_tool_progress_allows_same_month_correction(game):
     oid = db.create_secret_order(state, character.name, "查辽饷", "查辽饷侵冒。", [], deadline_months=0)
     db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (state.turn - 1, oid))
     db.update_secret_order_progress(oid, "旧进展。", state.year, state.period)
+    before_result = db.conn.execute(
+        "SELECT result FROM secret_orders WHERE id=?", (oid,)
+    ).fetchone()["result"]
     context = CourtContext(state=state, db=db)
     tools = build_minister_tools(character, context)
     secret_order = next(t for t in tools if getattr(t, "__name__", "") == "secret_order")
@@ -102,9 +105,10 @@ def test_secret_order_tool_progress_allows_same_month_correction(game):
     assert payload["action"] == "记进展"
     assert payload["order_id"] == oid
     assert payload["payload"]["note"] == "更正：已封存兵部辽饷册。"
-    assert "更正" not in (
-        db.conn.execute("SELECT result FROM secret_orders WHERE id=?", (oid,)).fetchone()["result"] or ""
-    )
+    after_result = db.conn.execute(
+        "SELECT result FROM secret_orders WHERE id=?", (oid,)
+    ).fetchone()["result"]
+    assert after_result == before_result
 
 
 def test_cli_prefix_secret_order_blocked_in_recovery_window(game, monkeypatch):

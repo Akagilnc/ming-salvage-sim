@@ -360,6 +360,34 @@ def test_terminal_minister_chat_can_retry_failed_secret_order(monkeypatch, capsy
     assert "密令 #42 已重试落库" in capsys.readouterr().out
 
 
+def test_terminal_minister_chat_blocks_retry_during_settlement_recovery(monkeypatch, capsys):
+    """CLI 恢复窗口里不能手动 retry；必须先续跑/完成本次结算。"""
+
+    class Db:
+        def retry_failed_pending_action(self, state, action_id, *, content=None, registry=None):
+            raise AssertionError("结算恢复窗口不应调用 retry 落库")
+
+    class Session:
+        def __init__(self):
+            self.db = Db()
+            self.state = SimpleNamespace(turn=7, turn_phase=TurnPhase.SETTLING.value)
+            self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
+            self.registry = object()
+            self.temporary_characters = set()
+
+        def chat(self, minister_name, question):
+            raise AssertionError("retry 命令不应进入普通召对")
+
+    answers = iter(["retry 42", "done"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    session = Session()
+
+    assert term.minister_chat(session, SimpleNamespace(name="魏忠贤")) == "dismiss"
+    out = capsys.readouterr().out
+    assert "结算未完成" in out
+    assert "issue" in out
+
+
 def test_terminal_failure_printer_preserves_zero_id(capsys):
     """失败 id 为 0 时也按显式 id 打印，不用 truthiness 掉成 retry <id>。"""
     term._print_pending_action_failures([{
