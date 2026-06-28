@@ -7,6 +7,8 @@ return 会退出 play_turn，外层主循环重进时重印回合引导/在册�
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 import ming_sim.cli.terminal as term
@@ -62,3 +64,50 @@ def test_issue_refusal_stays_in_loop(monkeypatch, capsys, exc):
     # 拒绝后不 return：同一次 play_turn 内续到 skip→advance；begin 只跑一次=不重进刷屏。
     assert sess.calls == ["begin", "resolve", "advance"]
     assert str(exc) in capsys.readouterr().out
+
+
+def test_terminal_minister_chat_persists_messages_before_session_chat(monkeypatch):
+    """#407: CLI terminal 召对也要落 chat_messages。
+
+    密令短确认依赖 session.chat 内部读取本回合前文；因此 user 行必须在调用
+    session.chat 前已落库，minister 行在回话后补上。
+    """
+
+    class Db:
+        def __init__(self):
+            self.messages = []
+
+        def append_chat_message(self, minister_name, turn, role, content):
+            self.messages.append((minister_name, turn, role, content))
+            return len(self.messages)
+
+    class Session:
+        def __init__(self):
+            self.db = Db()
+            self.state = SimpleNamespace(turn=7)
+            self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
+            self.temporary_characters = set()
+
+        def chat(self, minister_name, question):
+            assert self.db.messages == [
+                ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。")
+            ]
+            return SimpleNamespace(
+                answer="臣领密旨，当令东厂暗中护送赈银。",
+                proposed_directive=None,
+                appointed_minister="",
+                registered_minister="",
+                displaced_minister="",
+                court_action="",
+                next_minister="",
+            )
+
+    answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。", "done"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    session = Session()
+
+    assert term.minister_chat(session, SimpleNamespace(name="魏忠贤")) == "dismiss"
+    assert session.db.messages == [
+        ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。"),
+        ("魏忠贤", 7, "minister", "臣领密旨，当令东厂暗中护送赈银。"),
+    ]
