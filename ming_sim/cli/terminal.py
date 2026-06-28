@@ -15,7 +15,7 @@ from ming_sim.assets import wrap
 from ming_sim.context import match_minister_from_text
 from ming_sim.exceptions import ExitGame, SettlementAbort
 from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS, Character, GameState, is_vassal_prince
-from ming_sim.session import GameSession, TurnPhase
+from ming_sim.session import GameSession, TurnPhase, _pending_action_failure_payload
 from ming_sim.skills import print_all_skill_cards, print_skill_card, skill_display_name
 
 _STATUS_LABEL = {
@@ -54,6 +54,45 @@ def _retry_failed_pending_action(session: GameSession, action_id: int) -> None:
         print(f"密令 #{int(action_id)} 已重试落库。\n")
     else:
         print(f"密令 #{int(action_id)} 重试仍未落库；可稍后再试，不阻断继续召对。\n")
+
+
+def _failed_secret_order_ids(session: GameSession, turn: int) -> set[int]:
+    db = getattr(session, "db", None)
+    if db is None or not hasattr(db, "list_pending_actions"):
+        return set()
+    return {
+        int(action.get("id") or 0)
+        for action in db.list_pending_actions(int(turn), status="failed")
+        if action.get("kind") == "secret_order"
+    }
+
+
+def _new_secret_order_failure_payloads(
+    session: GameSession, turn: int, before_ids: set[int],
+) -> List[dict]:
+    db = getattr(session, "db", None)
+    if db is None or not hasattr(db, "list_pending_actions"):
+        return []
+    failures: List[dict] = []
+    for action in db.list_pending_actions(int(turn), status="failed"):
+        if action.get("kind") != "secret_order":
+            continue
+        action_id = int(action.get("id") or 0)
+        if action_id in before_ids:
+            continue
+        failures.append(_pending_action_failure_payload(action))
+    return failures
+
+
+def _print_pending_action_failures(failures: List[dict]) -> None:
+    for failure in failures:
+        message = str(failure.get("message") or "密令落库失败。")
+        failure_id = int(failure.get("id") or 0)
+        suffix = f" #{failure_id}" if failure_id else ""
+        print(f"【密令落库失败{suffix}】{wrap(message)}")
+        if failure.get("retryable"):
+            command = f"retry {failure_id}" if failure_id else "retry <id>"
+            print(f"可输入 {command} 重试；本次失败不会阻断继续召对。\n")
 
 
 def _print_header(session: GameSession) -> None:
@@ -296,14 +335,7 @@ def minister_chat(session: GameSession, character: Character) -> str:
             session.db.append_chat_message(character.name, accepted_turn, "minister", result.answer)
         print(wrap(result.answer))
         print()
-        for failure in getattr(result, "pending_action_failures", []) or []:
-            message = str(failure.get("message") or "密令落库失败。")
-            failure_id = int(failure.get("id") or 0)
-            suffix = f" #{failure_id}" if failure_id else ""
-            print(f"【密令落库失败{suffix}】{wrap(message)}")
-            if failure.get("retryable"):
-                command = f"retry {failure_id}" if failure_id else "retry <id>"
-                print(f"可输入 {command} 重试；本次失败不会阻断继续召对。\n")
+        _print_pending_action_failures(getattr(result, "pending_action_failures", []) or [])
         if result.proposed_directive is not None:
             _confirm_pending_directive(session, result.proposed_directive, character.name)
         if result.appointed_minister:
@@ -488,14 +520,21 @@ def play_turn(session: GameSession) -> None:
         if action == "back":
             continue
         if action == "skip":
+            turn_before = int(session.state.turn)
+            failed_before = _failed_secret_order_ids(session, turn_before)
             try:
                 session.advance_without_decree()
             except ValueError as error:
                 # FRONT_HALF_DONE 拒绝跳过（ADR 决定 6）：打印指引回会话循环，不崩出进程。
                 print(f"\n{error}")
                 continue
+            _print_pending_action_failures(
+                _new_secret_order_failure_payloads(session, turn_before, failed_before)
+            )
             return
         if action == "issue":
+            turn_before = int(session.state.turn)
+            failed_before = _failed_secret_order_ids(session, turn_before)
             try:
                 result = session.resolve_turn()
                 if result.awaiting:
@@ -522,6 +561,9 @@ def play_turn(session: GameSession) -> None:
                 # settling/awaiting 守门保证前半段不重跑。
                 print(f"\n{error}")
                 continue
+            _print_pending_action_failures(
+                _new_secret_order_failure_payloads(session, turn_before, failed_before)
+            )
             print(report)
             session.end_turn()
             return
