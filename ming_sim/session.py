@@ -405,18 +405,31 @@ def _pending_action_brief(pa: Dict[str, Any]) -> str:
 
 def _confirmation_targets_for_message(pending_actions: List[Dict[str, Any]], message: str) -> List[Dict[str, Any]]:
     """Choose which pending action family this chat confirmation can affect."""
+    text = message or ""
+    secret = [p for p in pending_actions if p["kind"] == "secret_order"]
+    office = [p for p in pending_actions if p["kind"] == "office"]
+    consort = [p for p in pending_actions if p["kind"] == "consort"]
     non_directive = [p for p in pending_actions if p["kind"] != "directive"]
     directive = [p for p in pending_actions if p["kind"] == "directive"]
+    all_mentioned = (
+        any(token in text for token in ("全都", "全部", "一并", "一概", "尽数"))
+        or re.search(r"都(?:准|准了|照办|作罢|驳回|驳了|拒绝|拒了|不准|不允|撤了|撤回)", text) is not None
+    )
+    if all_mentioned:
+        return pending_actions
+    family_targets: List[Dict[str, Any]] = []
+    if any(token in text for token in ("密令", "密旨", "密谕")):
+        family_targets.extend(secret)
+    if any(token in text for token in ("任免", "任命", "罢免", "罢黜", "起用", "升任", "调任", "撤职")):
+        family_targets.extend(office)
+    if any(token in text for token in ("调教", "后宫", "妃嫔", "嫔妃")):
+        family_targets.extend(consort)
+    directive_mentioned = any(token in text for token in ("圣旨", "旨意", "拟旨", "诏书", "诏文", "草案"))
+    if directive_mentioned and directive:
+        family_targets.extend(directive)
+    if family_targets:
+        return family_targets
     if non_directive and directive:
-        text = message or ""
-        directive_mentioned = any(token in text for token in ("圣旨", "旨意", "拟旨", "诏书", "诏文", "草案"))
-        non_directive_mentioned = any(token in text for token in ("密令", "密旨", "密谕", "任免", "调教", "后宫安排"))
-        all_mentioned = (
-            any(token in text for token in ("全都", "全部", "一并", "一概", "尽数"))
-            or re.search(r"都(?:准|准了|照办|作罢|驳回|驳了|拒绝|拒了|不准|不允|撤了|撤回)", text) is not None
-        )
-        if all_mentioned or (directive_mentioned and non_directive_mentioned):
-            return pending_actions
         if directive_mentioned:
             return directive
     return non_directive or directive

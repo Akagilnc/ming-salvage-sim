@@ -517,6 +517,40 @@ def test_duchayuan_does_not_confirm_directive_as_all_targets(game):
     assert db.list_directives(state, statuses=("pending", "draft")) == []
 
 
+def test_secret_confirmation_does_not_drop_office_pending(game):
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    ch = SimpleNamespace(name=minister, office_type="兵部")
+    db.stage_pending_action(
+        state.turn, kind="office", action="任命", minister_name=minister, target_id=None,
+        payload={"name": "史可法", "office": "兵部主事"},
+    )
+    db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "暗查辽饷侵冒。",
+            "assignee": minister,
+            "tags": [],
+            "deadline_months": 0,
+        },
+    )
+
+    GameSession.apply_cli_conversation_actions(
+        _session(db, state, content=content),
+        ch,
+        player_message="那道密令作罢。",
+        answer="臣候旨。",
+        has_directive=False,
+        secret_order_id=None,
+        preclassified_intent={"kind": "confirmation", "confirmation": "拒绝"},
+    )
+
+    pending = db.list_pending_actions(state.turn)
+    assert [(p["kind"], p["action"]) for p in pending] == [("office", "任命")]
+    assert db.list_secret_orders() == []
+
+
 def test_mixed_directive_and_secret_rejection_drops_both(game):
     db, state, content = game
     minister = next(iter(content.characters.values())).name
