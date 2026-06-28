@@ -101,7 +101,7 @@ function App() {
   }, [selectedMinister]);
 
   const loadMinisterChat = React.useCallback(async (ministerName: string) => {
-    const data = await api<{ minister: Minister; history: ChatMessage[]; suggestions: Suggestion[]; can_undo_last_chat: boolean }>(`/api/ministers/${encodeURIComponent(ministerName)}/chat`);
+    const data = await api<{ minister: Minister; history: ChatMessage[]; suggestions: Suggestion[]; can_undo_last_chat: boolean; pending_action_failures?: PendingActionFailure[] }>(`/api/ministers/${encodeURIComponent(ministerName)}/chat`);
     // Staleness guard (#325, broad-scope): the player may have switched ministers
     // while this history fetch was in flight. Dropping the UI write prevents the
     // late history from bleeding into the now-selected minister's panel — this path
@@ -117,6 +117,7 @@ function App() {
     setChat(data.history);
     setSuggestions(data.suggestions);
     setCanUndoLastChat(!!data.can_undo_last_chat);
+    setChatFailures(data.pending_action_failures || []);
   }, [state]);
 
   const uploadPortrait = React.useCallback(async (ministerName: string, file: File) => {

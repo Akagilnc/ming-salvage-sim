@@ -65,7 +65,7 @@ from ming_sim.llm_contract import fail_if_llm_error
 from ming_sim.issues import _format_issue_ongoing, commitment_display_text, commitment_progress_payload, commitment_timed_bar_value
 from ming_sim.memories import effect_brief
 from ming_sim.session import GameSession
-from ming_sim.session import AUTO_SAVE_PREFIX
+from ming_sim.session import AUTO_SAVE_PREFIX, _pending_action_failure_payload
 from ming_sim.skills import available_skill_ids, skill_display_name, skill_source_labels
 from ming_sim.context import match_minister_from_text
 from ming_sim.flows import compute_budget_lines
@@ -1354,6 +1354,15 @@ class WebGame:
         if self.state.turn_phase not in (TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value):
             return False
         return self.db.can_undo_last_chat_turn(minister_name, self.state.turn)
+
+    def pending_action_failures_for(self, minister_name: str) -> List[Dict[str, Any]]:
+        """当前回合该召对对象仍可由玩家处理的失败动作。"""
+        return [
+            _pending_action_failure_payload(action)
+            for action in self.db.list_pending_actions(
+                int(self.state.turn), status="failed", minister_name=minister_name)
+            if action["kind"] == "secret_order"
+        ]
 
     def _audience_turn_in_flight(self, minister_name: str) -> bool:
         """#383 背景召对契约：同一大臣已有「已受理、尚未完成回奏」的 turn 时，不得再开新轮。
@@ -2704,6 +2713,7 @@ async def api_chat_history(minister_name: str) -> Dict[str, Any]:
         "history": get_game().chat_history.get(minister_name, []),
         "suggestions": get_game().suggestions_for(character),
         "can_undo_last_chat": get_game().can_undo_last_chat(minister_name),
+        "pending_action_failures": get_game().pending_action_failures_for(minister_name),
     }
 
 

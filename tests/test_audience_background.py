@@ -116,6 +116,29 @@ def test_chat_stream_observer_departure_after_acceptance_still_completes_turn(ga
     assert db.can_undo_last_chat_turn(minister_name, state.turn)
 
 
+def test_chat_reload_exposes_retryable_failed_secret_order(game):
+    db, state, content = game
+    minister_name = "毕自严"
+    web_game = _web_game(db, state, content, _FakeAgent())
+    secret_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=minister_name, target_id=None,
+        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": minister_name},
+    )
+    db.stage_pending_action(
+        state.turn, kind="office", action="任命", minister_name=minister_name, target_id=None,
+        payload={"name": "测试新臣", "office": "太常寺卿"},
+    )
+    db.conn.execute("UPDATE pending_actions SET status='failed'")
+    db.conn.commit()
+
+    failures = web_game.pending_action_failures_for(minister_name)
+
+    assert len(failures) == 1
+    assert failures[0]["id"] == secret_id
+    assert failures[0]["kind"] == "secret_order"
+    assert "密令" in failures[0]["message"]
+
+
 def test_background_audience_reply_keeps_staged_edict_after_observer_departure(game):
     db, state, content = game
     minister_name = "毕自严"
