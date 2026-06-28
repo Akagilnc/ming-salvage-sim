@@ -427,6 +427,7 @@ def _pending_action_failure_payload(pa: Dict[str, Any]) -> Dict[str, Any]:
         "id": int(pa.get("id") or 0),
         "kind": kind,
         "action": action,
+        "retryable": kind == "secret_order",
         "message": (
             f"{noun}未能正式落库，请重试；若暂不处理，也不会阻断继续召对。"
             if kind == "secret_order"

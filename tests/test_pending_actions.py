@@ -813,6 +813,7 @@ def test_dialogue_affirm_secret_order_landing_failure_is_reported(game, monkeypa
 
     failures = out.get("pending_action_failures")
     assert failures and failures[0]["id"] == pending_id
+    assert failures[0]["retryable"] is True
     assert "密令" in failures[0]["message"]
     failed = db.list_pending_actions(state.turn, status="failed")
     assert len(failed) == 1 and failed[0]["id"] == pending_id
@@ -1068,6 +1069,7 @@ def test_non_secret_pending_failure_payload_does_not_promise_retry():
         {"id": 1, "kind": "office", "action": "任命"})
 
     assert "任免未能正式落库" in failure["message"]
+    assert failure["retryable"] is False
     assert "重试" not in failure["message"]
 
 

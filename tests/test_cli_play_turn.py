@@ -7,6 +7,7 @@ return 会退出 play_turn，外层主循环重进时重印回合引导/在册�
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -15,6 +16,11 @@ import ming_sim.cli.terminal as term
 import ming_sim.issues as issues_mod
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.session import TurnPhase
+
+
+@contextmanager
+def _noop_atomic(_db):
+    yield
 
 
 class _Snap:
@@ -313,3 +319,41 @@ def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(monkeyp
     assert session.db.messages == [
         ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。"),
     ]
+
+
+def test_terminal_minister_chat_can_retry_failed_secret_order(monkeypatch, capsys):
+    """#415: CLI 看到失败密令后，也能用存量 pending payload 直接重试落库。"""
+
+    class Db:
+        def __init__(self):
+            self.retried = []
+            self.retired = []
+
+        def retry_failed_pending_action(self, state, action_id, *, content=None, registry=None):
+            self.retried.append((state.turn, action_id, content, registry))
+            return {"committed": True}
+
+        def retire_chat_turn_for_pending_action_retry(self, action_id):
+            self.retired.append(action_id)
+            return 9
+
+    class Session:
+        def __init__(self):
+            self.db = Db()
+            self.state = SimpleNamespace(turn=7)
+            self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
+            self.registry = object()
+            self.temporary_characters = set()
+
+        def chat(self, minister_name, question):
+            raise AssertionError("retry 命令不应进入普通召对")
+
+    answers = iter(["retry 42", "done"])
+    monkeypatch.setattr(term, "atomic", _noop_atomic)
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    session = Session()
+
+    assert term.minister_chat(session, SimpleNamespace(name="魏忠贤")) == "dismiss"
+    assert session.db.retried == [(7, 42, session.content, session.registry)]
+    assert session.db.retired == [42]
+    assert "密令 #42 已重试落库" in capsys.readouterr().out

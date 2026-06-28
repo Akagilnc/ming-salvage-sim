@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from typing import List, Optional
 
+from ming_sim.applier import atomic
 from ming_sim.constants import COURT_BREAK_COMMANDS, EXIT_COMMANDS, TURN_UNIT
 from ming_sim.assets import wrap
 from ming_sim.context import match_minister_from_text
@@ -29,6 +30,30 @@ _STATUS_LABEL = {
 # 皇帝当场对拟旨草稿的回应
 _CONFIRM_WORDS = {"", "可", "准", "准奏", "yes", "y", "确认", "入档"}
 _REJECT_WORDS = {"驳", "不准", "驳回", "no", "n"}
+
+
+def _retry_failed_pending_action(session: GameSession, action_id: int) -> None:
+    """Retry a failed secret-order pending action from the CLI audience loop."""
+    try:
+        with atomic(session.db):
+            result = session.db.retry_failed_pending_action(
+                session.state,
+                int(action_id),
+                content=getattr(session, "content", None),
+                registry=getattr(session, "registry", None),
+            )
+            if result.get("committed"):
+                session.db.retire_chat_turn_for_pending_action_retry(int(action_id))
+    except KeyError as exc:
+        print(f"未找到可重试的密令：{exc}\n")
+        return
+    except ValueError as exc:
+        print(f"此密令暂不能重试：{exc}\n")
+        return
+    if result.get("committed"):
+        print(f"密令 #{int(action_id)} 已重试落库。\n")
+    else:
+        print(f"密令 #{int(action_id)} 重试仍未落库；可稍后再试，不阻断继续召对。\n")
 
 
 def _print_header(session: GameSession) -> None:
@@ -130,6 +155,11 @@ def _handle_court_command(
         raise ExitGame
     if lowered in COURT_BREAK_COMMANDS or raw in {"退朝", "下朝"}:
         return "court_break"
+
+    retry_m = re.fullmatch(r"(?:retry|重试|重试密令)\s*#?(\d+)", raw, re.I)
+    if retry_m:
+        _retry_failed_pending_action(session, int(retry_m.group(1)))
+        return "handled"
 
     # 技能卡查看
     if (lowered in {"skills", "skill", "技能", "技能卡", "查看技能", "查看skill"} or "技能" in raw) \
@@ -268,9 +298,12 @@ def minister_chat(session: GameSession, character: Character) -> str:
         print()
         for failure in getattr(result, "pending_action_failures", []) or []:
             message = str(failure.get("message") or "密令落库失败。")
-            print(f"【密令落库失败】{wrap(message)}")
+            failure_id = int(failure.get("id") or 0)
+            suffix = f" #{failure_id}" if failure_id else ""
+            print(f"【密令落库失败{suffix}】{wrap(message)}")
             if failure.get("retryable"):
-                print("可稍后在支持重试的界面重试；本次失败不会阻断继续召对。\n")
+                command = f"retry {failure_id}" if failure_id else "retry <id>"
+                print(f"可输入 {command} 重试；本次失败不会阻断继续召对。\n")
         if result.proposed_directive is not None:
             _confirm_pending_directive(session, result.proposed_directive, character.name)
         if result.appointed_minister:
