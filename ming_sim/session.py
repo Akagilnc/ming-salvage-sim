@@ -413,7 +413,7 @@ def _confirmation_targets_for_message(pending_actions: List[Dict[str, Any]], mes
         non_directive_mentioned = any(token in text for token in ("密令", "密旨", "密谕", "任免", "调教", "后宫安排"))
         all_mentioned = (
             any(token in text for token in ("全都", "全部", "一并", "一概", "尽数"))
-            or re.search(r"都(?:准|准了|照办|作罢|驳回|驳了|拒绝|拒了)", text) is not None
+            or re.search(r"都(?:准|准了|照办|作罢|驳回|驳了|拒绝|拒了|不准|不允|撤了|撤回)", text) is not None
         )
         if all_mentioned or (directive_mentioned and non_directive_mentioned):
             return pending_actions
