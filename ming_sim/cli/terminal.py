@@ -241,8 +241,15 @@ def minister_chat(session: GameSession, character: Character) -> str:
             target_name = cmd.split(":", 1)[1]
             print(f"{character.name}退下。\n传{target_name}入殿。\n")
             return cmd
-        # 非控制指令 → 与 agent 对话
+        # 非控制指令 → 与 agent 对话。CLI 也落 chat_messages，供 session.chat
+        # 内部的密令短确认上下文读取（web 路已有同款持久化）。
+        persistent_chat = character.name not in session.temporary_characters
+        accepted_turn = int(session.state.turn)
+        if persistent_chat:
+            session.db.append_chat_message(character.name, accepted_turn, "user", question)
         result = session.chat(character.name, question)
+        if persistent_chat:
+            session.db.append_chat_message(character.name, accepted_turn, "minister", result.answer)
         print(wrap(result.answer))
         print()
         if result.proposed_directive is not None:
