@@ -5933,6 +5933,7 @@ class GameDB:
     def commit_pending_actions(
         self, state: GameState, *, content=None, registry=None, minister_name=None,
         kind_filter: Optional[str] = None, kind_filter_exclude: Optional[str] = None,
+        directive_status: str = "draft",
     ) -> List[Dict[str, object]]:
         """颁诏:把本回合 pending 暂存的结构化写动作批量落到真实表(不拒绝即允许),
         按 id 序(=操作发生序)apply。落得了标 committed、落不了标 failed(都不留 pending,
@@ -5944,9 +5945,14 @@ class GameDB:
         默认 None=颁诏批量落全回合。
         kind_filter 非空=只 commit 指定 kind(如 'directive')的暂存,跳过其余 kind。
         kind_filter_exclude 非空=只 commit 该 kind 以外的暂存(召对确认应允放过 directive,BUG 1)。
+        directive_status controls how kind=directive candidates enter turn_directives:
+        "draft" for decree-checkpoint default approval, "pending" for chat-approved
+        candidates that must still pass the later准/驳 interface.
         返回已落库动作摘要。"""
         if kind_filter is not None and kind_filter_exclude is not None:
             raise ValueError("kind_filter and kind_filter_exclude are mutually exclusive")
+        if directive_status not in ("draft", "pending"):
+            raise ValueError("directive_status must be 'draft' or 'pending'")
         applied: List[Dict[str, object]] = []
         rows = self.list_pending_actions(
             int(state.turn), status="pending", minister_name=minister_name)
@@ -5963,7 +5969,8 @@ class GameDB:
                 payload = {}
             if pa["kind"] == "directive" and pa["action"] == "拟旨":
                 committed = self._commit_conversational_draft(
-                    state, pa, payload, content=content, registry=registry)
+                    state, pa, payload, content=content, registry=registry,
+                    directive_status=directive_status)
                 if committed is not None:
                     applied.append(committed)
                 continue
@@ -5992,7 +5999,7 @@ class GameDB:
 
     def _commit_conversational_draft(
         self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
-        *, content=None, registry=None,
+        *, content=None, registry=None, directive_status: str = "draft",
     ) -> Optional[Dict[str, object]]:
         """提交一条对话式拟旨暂存，并让 draft 行与 pending 状态同事务落定。"""
         owns_transaction = not (
@@ -6000,8 +6007,10 @@ class GameDB:
             or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
         )
         try:
+            payload_for_apply = dict(payload)
+            payload_for_apply["_directive_status"] = directive_status
             ok = self._apply_pending_action(
-                state, pa, payload, content=content, registry=registry)
+                state, pa, payload_for_apply, content=content, registry=registry)
             if ok:
                 self.conn.execute(
                     "UPDATE pending_actions SET status='committed' WHERE id=?",
@@ -6071,16 +6080,16 @@ class GameDB:
             actor = str(payload.get("actor") or pa["minister_name"] or "")
             if not text:
                 return False
-            # 直接建档为 draft：对话式拟旨经由「应允」或「不回=颁诏默认同意」两路提交，
-            # 玩家意图已在 pending_actions 确认阶段表达；无需再经 turn_directives pending 状态
-            # 走一轮 web UI 准驳（pending 态是给显式前缀大臣拟旨留的，见 confirm_directive）。
+            status = "pending" if str(payload.get("_directive_status") or "draft") == "pending" else "draft"
+            # 不回到颁诏 checkpoint 时默认同意为 draft；召对里明确应允只表示接受为候选，
+            # 仍写成 pending 交给既有准/驳界面，避免绕过后续颁诏流程（#412）。
             cur = self.conn.execute(
                 """
                 INSERT INTO turn_directives
                 (turn, year, period, event_id, actor, skill_id, text, source, status, notes)
-                VALUES (?, ?, ?, '', ?, '', ?, '大臣拟旨', 'draft', ?)
+                VALUES (?, ?, ?, '', ?, '', ?, '大臣拟旨', ?, ?)
                 """,
-                (state.turn, state.year, state.period, actor, text, f"由{actor}拟旨入档"),
+                (state.turn, state.year, state.period, actor, text, status, f"由{actor}拟旨入档"),
             )
             did = int(cur.lastrowid)
             # 回填本暂存产生的 draft 行 id，供 undo_chat_turn 精确删除（BUG 3）；turn_directives
