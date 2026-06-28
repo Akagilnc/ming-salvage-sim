@@ -637,6 +637,33 @@ def test_retry_failed_secret_order_reuses_stored_payload(game):
     assert json.loads(row["tags"]) == ["辽饷"]
 
 
+def test_retry_failed_secret_order_refresh_failure_does_not_duplicate(game):
+    """密令已写入 DB 后 registry 刷新失败,不得留下 failed 入口导致再次重试重复建令。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
+                 "tags": [], "deadline_months": 0},
+    )
+    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
+    db.conn.commit()
+
+    class BrokenRegistry:
+        def refresh(self, _name):
+            raise RuntimeError("refresh failed after durable write")
+
+    result = db.retry_failed_pending_action(state, pending_id, registry=BrokenRegistry())
+
+    assert result["committed"] is True
+    assert db.list_pending_actions(state.turn, status="failed") == []
+    rows = db.conn.execute(
+        "SELECT title, content FROM secret_orders WHERE title='暗查辽饷'"
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["content"] == "密查辽饷去向"
+
+
 def test_failed_secret_order_does_not_block_later_audience(game, monkeypatch):
     """玩家无视失败密令时,同一大臣后续普通召对仍可继续,不会被 failed 行卡住。"""
     db, state, content = game
