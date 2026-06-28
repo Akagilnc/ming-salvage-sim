@@ -3,6 +3,7 @@ import { Loader2, Trash2 } from "lucide-react";
 import { api, normalizeApiError } from "../api";
 import { resolveReasoningSupported } from "../reasoningSupport";
 import type { CliModelChoices, MenuCampaign, MenuStatus, ReasoningStrengthChoice } from "../types";
+import { visibleReasoningStrengthChoices } from "../reasoningStrength";
 import { CliModelField } from "./cliModelField";
 
 export function MenuPage({
@@ -296,6 +297,7 @@ export function ApiSettingsModal({
   });
   const reasoningStrength = channel === "cli" ? cliReasoningStrength : apiReasoningStrength;
   const setReasoningStrength = channel === "cli" ? setCliReasoningStrength : setApiReasoningStrength;
+  const visibleReasoningChoices = visibleReasoningStrengthChoices(reasoningChoices, channel, cliRunner);
 
   const onSave = async () => {
     setBusy(true);
@@ -374,7 +376,7 @@ export function ApiSettingsModal({
                 disabled={!reasoningSupported}
                 onChange={(e) => setReasoningStrength(e.target.value)}
               >
-                {reasoningChoices.map((choice) => (
+                {visibleReasoningChoices.map((choice) => (
                   <option key={choice.value} value={choice.value}>{choice.label}</option>
                 ))}
               </select>
@@ -418,7 +420,7 @@ export function ApiSettingsModal({
             disabled={!reasoningSupported}
             onChange={(e) => setReasoningStrength(e.target.value)}
           >
-            {reasoningChoices.map((choice) => (
+            {visibleReasoningChoices.map((choice) => (
               <option key={choice.value} value={choice.value}>{choice.label}</option>
             ))}
           </select>
