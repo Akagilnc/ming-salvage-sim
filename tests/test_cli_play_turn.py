@@ -114,11 +114,13 @@ def test_terminal_minister_chat_persists_messages_before_session_chat(monkeypatc
 
 
 def test_terminal_minister_chat_removes_user_message_when_session_chat_fails(monkeypatch):
-    """失败的 CLI 召对不能留下 user-only 半轮 chat_messages。"""
+    """失败的 CLI 召对只回滚本轮 user-only 半轮，不清历史。"""
 
     class Db:
         def __init__(self):
-            self.messages = []
+            self.messages = [
+                ("魏忠贤", 6, "user", "前一轮召对内容"),
+            ]
 
         def append_chat_message(self, minister_name, turn, role, content):
             self.messages.append((minister_name, turn, role, content))
@@ -140,7 +142,8 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_fails(mon
 
         def chat(self, minister_name, question):
             assert self.db.messages == [
-                ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。")
+                ("魏忠贤", 6, "user", "前一轮召对内容"),
+                ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。"),
             ]
             raise RuntimeError("LLM down")
 
@@ -151,4 +154,6 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_fails(mon
     with pytest.raises(RuntimeError, match="LLM down"):
         term.minister_chat(session, SimpleNamespace(name="魏忠贤"))
 
-    assert session.db.messages == []
+    assert session.db.messages == [
+        ("魏忠贤", 6, "user", "前一轮召对内容"),
+    ]
