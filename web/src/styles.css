@@ -6712,6 +6712,23 @@ button:disabled {
   letter-spacing: 1px;
 }
 
+.decision-failure-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+
+.decision-failure-item {
+  padding: 10px 12px;
+  border: 1px solid rgba(224, 88, 76, 0.56);
+  border-radius: 6px;
+  background: rgba(72, 18, 16, 0.45);
+  color: #ffd1c8;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
 .decision-context {
   margin: 0 0 18px;
   font-size: 15px;

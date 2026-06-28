@@ -85,6 +85,7 @@ function App() {
   const [cheatDirective, setCheatDirective] = React.useState("");
   // HITL 决策点：颁诏推演若出重大抉择，暂停弹窗逐个亲裁，裁完续跑结算。
   const [pendingDecisions, setPendingDecisions] = React.useState<PendingDecision[]>([]);
+  const [decisionFailures, setDecisionFailures] = React.useState<PendingActionFailure[]>([]);
   const [failureRecoveryMode, setFailureRecoveryMode] = React.useState(false);
 
   // Tracks the current selected minister across async boundaries.
@@ -820,7 +821,9 @@ function App() {
       }
       if (outcome.kind === "decisions") {
         // 出重大抉择：暂停弹窗逐个亲裁，裁完调 submitDecisions 续跑结算。
-        await surfacePendingActionFailures(outcome.data?.pending_action_failures || []);
+        const failures = outcome.data?.pending_action_failures || [];
+        setDecisionFailures(failures);
+        await surfacePendingActionFailures(failures);
         setPendingDecisions(outcome.data.decisions || []);
         setBusy("");
         return;
@@ -841,6 +844,7 @@ function App() {
   // 皇帝亲裁完所有决策点：续跑 phase2 结算。choices 按决策点 idx 顺序。
   const submitDecisions = async (choices: { label?: string; hint?: string; note?: string }[]) => {
     setPendingDecisions([]);
+    setDecisionFailures([]);
     setBusy("月末结算");
     setSettleStage("圣意亲裁，续推时局");
     setSettleThinking("");
@@ -1217,7 +1221,7 @@ function App() {
       ) : null}
 
       {pendingDecisions.length > 0 && !settling ? (
-        <DecisionModal decisions={pendingDecisions} onResolve={submitDecisions} />
+        <DecisionModal decisions={pendingDecisions} failures={decisionFailures} onResolve={submitDecisions} />
       ) : null}
     </main>
   );
@@ -1228,9 +1232,11 @@ function App() {
 // 每个决策：标题 + 背景 + 2-3 预设选项（点选）+ 朱批输入框（可补自由旨意）。
 function DecisionModal({
   decisions,
+  failures = [],
   onResolve,
 }: {
   decisions: PendingDecision[];
+  failures?: PendingActionFailure[];
   onResolve: (choices: { label?: string; hint?: string; note?: string }[]) => void;
 }) {
   const [cursor, setCursor] = React.useState(0);
@@ -1262,6 +1268,15 @@ function DecisionModal({
           <span className="decision-kicker">月末亲裁 · {cursor + 1}/{total}</span>
           <h2 className="decision-title">{cur.title}</h2>
         </div>
+        {failures.length ? (
+          <div className="decision-failure-list" role="alert">
+            {failures.map((failure) => (
+              <div className="decision-failure-item" key={failure.id}>
+                {failure.message}
+              </div>
+            ))}
+          </div>
+        ) : null}
         {cur.context ? <p className="decision-context">{cur.context}</p> : null}
         <div className="decision-options">
           {cur.options.map((o, i) => (
