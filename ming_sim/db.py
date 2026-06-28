@@ -5066,19 +5066,24 @@ class GameDB:
             """,
             (str(int(action_id)),),
         ).fetchall()
+        retired_ids: List[int] = []
         for row in rows:
             after_row = self._json_load_row(row["after_json"] or "")
             if str(after_row.get("kind") or "") != "secret_order":
                 continue
-            if str(after_row.get("status") or "") != "failed":
+            if str(after_row.get("status") or "") not in {"pending", "failed"}:
                 continue
             chat_turn_id = int(row["chat_turn_id"])
+            if chat_turn_id in retired_ids:
+                continue
             self.conn.execute(
                 "UPDATE chat_turns SET status = 'failed' WHERE id = ? AND status = 'active'",
                 (chat_turn_id,),
             )
+            retired_ids.append(chat_turn_id)
+        if retired_ids:
             self.conn.commit()
-            return chat_turn_id
+            return retired_ids[0]
         return 0
 
     def _restore_row_in_tx(self, table: str, row: Dict[str, Any]) -> None:
