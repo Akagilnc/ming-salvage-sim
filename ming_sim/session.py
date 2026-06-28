@@ -892,7 +892,8 @@ class GameSession:
                     except Exception:
                         order_id = 0
                     if order_id:
-                        result.secret_order_id = order_id
+                        result.pending_action_id = self._stage_legacy_registered_secret_order(
+                            order_id, character.name)
         # CLI 后端（agy/codex）：玩家用拟旨/密令按钮（消息带前缀）时，把大臣这句回话原文入档。
         self._cli_backend_fallback_actions(
             result, character, message,
@@ -1396,6 +1397,46 @@ class GameSession:
             deadline = 0
         print(f"[secret_order] 截获密令 minister={minister_name} assignee={assignee} title={title!r} tags={tags}")
         return self.db.create_secret_order(self.state, assignee, title, content, tags, deadline_months=deadline)
+
+    def _stage_legacy_registered_secret_order(self, order_id: int, fallback_minister: str) -> int:
+        """Convert a legacy already-registered same-turn secret order into a pending candidate.
+
+        Older tool results used `__secret_order_registered__<id>__` after directly creating
+        `secret_orders`. #413 requires those requests to pass through audience confirmation.
+        """
+        row = self.db.conn.execute(
+            "SELECT * FROM secret_orders WHERE id=?", (int(order_id),)
+        ).fetchone()
+        if row is None:
+            return 0
+        if str(row["status"] or "") != "active" or int(row["turn_issued"] or 0) != int(self.state.turn):
+            return 0
+        try:
+            tags = json.loads(row["tags"] or "[]")
+        except (ValueError, TypeError):
+            tags = []
+        if not isinstance(tags, list):
+            tags = []
+        due_turn = int(row["due_turn"] or 0)
+        deadline = max(0, due_turn - int(self.state.turn)) if due_turn else 0
+        pending_id = self.db.stage_pending_action(
+            self.state.turn, kind="secret_order", action="新建",
+            minister_name=str(fallback_minister or row["minister_name"] or ""),
+            target_id=None,
+            payload={
+                "title": str(row["title"] or "").strip(),
+                "content": str(row["content"] or "").strip(),
+                "assignee": str(row["minister_name"] or fallback_minister or "").strip(),
+                "tags": [str(t).strip() for t in tags if str(t).strip()],
+                "deadline_months": deadline,
+            },
+        )
+        self.db.conn.execute(
+            "DELETE FROM secret_orders WHERE id=? AND status='active' AND turn_issued=?",
+            (int(order_id), int(self.state.turn)),
+        )
+        self.db.conn.commit()
+        return pending_id
 
     def _apply_close_secret_order(self, payload: str) -> None:
         """report_secret_order_result 哨兵落库。"""

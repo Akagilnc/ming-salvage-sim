@@ -239,6 +239,28 @@ def test_api_tool_staged_secret_order_skips_prefix_fallback_extraction(game, mon
     assert len(pending) == 1 and pending[0]["id"] == pid
 
 
+def test_legacy_registered_secret_order_marker_is_restaged(game):
+    """#413 review fix：旧 __secret_order_registered__ 直写结果也要转回 pending，不能绕过确认闸门。"""
+    db, state, _ = game
+    minister = "魏忠贤"
+    oid = db.create_secret_order(state, minister, "暗查辽饷", "暗查辽饷侵冒。", ["辽饷"], deadline_months=3)
+    s = _session(db, state)
+
+    pid = GameSession._stage_legacy_registered_secret_order(s, oid, minister)
+
+    assert pid
+    assert db.list_secret_orders() == []
+    pending = db.list_pending_actions(state.turn)
+    assert len(pending) == 1
+    assert pending[0]["id"] == pid
+    payload = json.loads(pending[0]["payload_json"])
+    assert payload["title"] == "暗查辽饷"
+    assert payload["content"] == "暗查辽饷侵冒。"
+    assert payload["assignee"] == minister
+    assert payload["tags"] == ["辽饷"]
+    assert payload["deadline_months"] == 3
+
+
 def test_noop_appointment_intent_is_not_staged(game, monkeypatch):
     """#354: 背景里提到“某人已任某职”被抽成任命时，若其当前已在该职，确定性丢弃。"""
     db, state, content = game
