@@ -294,6 +294,12 @@ export function ApiSettingsModal({
   const reasoningSupported = channel === "cli" ? cliReasoningSupported : apiReasoningSupported;
   const reasoningStrength = channel === "cli" ? cliReasoningStrength : apiReasoningStrength;
   const setReasoningStrength = channel === "cli" ? setCliReasoningStrength : setApiReasoningStrength;
+  const visibleReasoningChoices =
+    channel === "cli" && cliRunner === "codex"
+      ? reasoningChoices.map((choice) =>
+          choice.value === "off" ? { ...choice, label: "关（codex 最低=低）" } : choice
+        )
+      : reasoningChoices;
 
   const onSave = async () => {
     setBusy(true);
@@ -372,7 +378,7 @@ export function ApiSettingsModal({
                 disabled={!reasoningSupported}
                 onChange={(e) => setReasoningStrength(e.target.value)}
               >
-                {reasoningChoices.map((choice) => (
+                {visibleReasoningChoices.map((choice) => (
                   <option key={choice.value} value={choice.value}>{choice.label}</option>
                 ))}
               </select>
@@ -416,7 +422,7 @@ export function ApiSettingsModal({
             disabled={!reasoningSupported}
             onChange={(e) => setReasoningStrength(e.target.value)}
           >
-            {reasoningChoices.map((choice) => (
+            {visibleReasoningChoices.map((choice) => (
               <option key={choice.value} value={choice.value}>{choice.label}</option>
             ))}
           </select>
