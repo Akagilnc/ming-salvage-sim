@@ -987,6 +987,8 @@ class GameSession:
             ):
                 if confirmation_turn or explicit_draft_prefix:
                     continue
+                if self._proposal_blocked(self.state):
+                    continue
                 if tool_result.startswith("__secret_action__"):
                     payload_json = tool_result.removeprefix("__secret_action__").strip()
                     try:
@@ -1718,6 +1720,8 @@ class GameSession:
         Older tool results used `__secret_order_registered__<id>__` after directly creating
         `secret_orders`. #413 requires those requests to pass through audience confirmation.
         """
+        if GameSession._proposal_blocked(self.state):
+            return 0
         row = self.db.conn.execute(
             "SELECT * FROM secret_orders WHERE id=?", (int(order_id),)
         ).fetchone()

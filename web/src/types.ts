@@ -273,8 +273,8 @@ export type GameState = {
   directives: Directive[];
   pending_count: number;
   pending_directive_count?: number;  // 对话式拟旨暂存数（pending_actions kind=directive）
-  pending_secret_order_count?: number;  // 隐藏的新密令候选数（不作为 pending 列表展示）
-  pending_non_directive_action_count?: number;  // 可退朝默认提交的非拟旨 pending_actions
+  pending_secret_order_count?: number;  // 兼容旧字段；隐藏的新密令候选不再向前端计数
+  pending_non_directive_action_count?: number;  // 可见的非拟旨 pending_actions（不含隐藏新密令候选）
   failed_secret_order_count?: number;
   pending_decisions?: PendingDecision[];
   last_decree: string;
