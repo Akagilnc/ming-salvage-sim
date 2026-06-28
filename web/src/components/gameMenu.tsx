@@ -448,6 +448,10 @@ export function LLMConfigTab() {
         }),
       });
       setInfo((cur) => (cur ? { ...cur, ...data } : null));
+      setBaseUrl(data.base_url);
+      setModel(data.model);
+      setAdvancedModel(data.advanced_model || "");
+      setAdvancedBaseUrl(data.advanced_base_url || "");
       // 用服务端归一后的响应同步本地通道/CLI 状态,避免与 info 漂移(Sourcery R1)。
       setChannel(data.channel === "cli" ? "cli" : "api");
       if (data.channel === "cli") {

@@ -463,6 +463,60 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     cleanup();
   });
 
+  it("uses normalized save response fields when deciding whether backend reasoning support is current", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      const response = init?.method === "POST"
+        ? {
+            ...BASE_LLM_RESPONSE,
+            base_url: "https://api.example.com/v1",
+            model: "gpt-5",
+            reasoning_strength: "",
+            reasoning_supported: true,
+          }
+        : {
+            ...BASE_LLM_RESPONSE,
+            base_url: "https://api.deepseek.com/v1",
+            model: "deepseek-chat",
+            reasoning_strength: "",
+            reasoning_supported: false,
+          };
+      return Promise.resolve({
+        ok: true,
+        json: async () => response,
+      } as Response);
+    });
+    const { cleanup } = render(<LLMConfigTab />);
+    await act(async () => {});
+
+    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+    expect(strength?.disabled).toBe(true);
+    const baseUrlInput = document.querySelector<HTMLInputElement>('input[placeholder="https://api.openai.com/v1"]');
+    const modelInput = document.querySelector<HTMLInputElement>('input[placeholder="gpt-4o-mini"]');
+    expect(baseUrlInput).toBeTruthy();
+    expect(modelInput).toBeTruthy();
+    act(() => {
+      changeInput(baseUrlInput!, "https://api.example.com");
+      changeInput(modelInput!, " gpt-5 ");
+    });
+
+    const saveBtn = Array.from(document.querySelectorAll("button")).find((b) =>
+      (b.textContent ?? "").includes("保存并应用")
+    );
+    expect(saveBtn).toBeTruthy();
+    await act(async () => {
+      saveBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const post = calls.find((c) => c.init?.method === "POST" && c.url === "/api/llm/config");
+    expect(post).toBeTruthy();
+    expect(baseUrlInput?.value).toBe("https://api.example.com/v1");
+    expect(modelInput?.value).toBe("gpt-5");
+    expect(strength?.disabled).toBe(false);
+    cleanup();
+  });
+
   it("falls back to local API capability when the loaded backend setting is edited", async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,

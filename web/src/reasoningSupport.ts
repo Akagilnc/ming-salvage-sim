@@ -11,8 +11,12 @@ function fallbackApiReasoningSupported({
   advancedBaseUrl: string;
   advancedModel: string;
 }) {
-  const effectiveBase = (advancedModel.trim() ? (advancedBaseUrl.trim() || baseUrl) : baseUrl).toLowerCase();
-  const modelName = (advancedModel.trim() || model).toLowerCase();
+  const base = baseUrl.trim();
+  const advancedBase = advancedBaseUrl.trim();
+  const primaryModel = model.trim();
+  const advanced = advancedModel.trim();
+  const effectiveBase = (advanced ? (advancedBase || base) : base).toLowerCase();
+  const modelName = (advanced || primaryModel).toLowerCase();
   if (effectiveBase.includes("deepseek.com")) return false;
   return (
     modelName.startsWith("o1") ||
