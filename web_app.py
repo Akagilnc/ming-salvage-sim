@@ -1499,54 +1499,57 @@ class WebGame:
         }
 
     def chat(self, minister_name: str, message: str) -> Dict[str, Any]:
+        with self._runtime_write_gate():
+            return self._chat_with_write_gate_held(minister_name, message)
+
+    def _chat_with_write_gate_held(self, minister_name: str, message: str) -> Dict[str, Any]:
         if minister_name not in self.content.characters and minister_name not in self.session.temporary_characters:
             raise HTTPException(status_code=404, detail=f"未找到大臣：{minister_name}")
         text = message.strip()
         if not text:
             raise HTTPException(status_code=400, detail="问话不能为空。")
-        with self._runtime_write_gate():
-            if self._audience_turn_in_flight(minister_name):
-                raise HTTPException(status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
-            accepted_turn = int(self.state.turn)
-            chat_turn_id = 0
-            before_snapshot: Dict[str, Any] = {}
-            if self._persistent_chat_minister(minister_name):
-                chat_turn_id, before_snapshot = self._start_chat_turn(minister_name)
-            self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
-            if minister_name not in self.session.temporary_characters:
-                message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
-                if chat_turn_id:
-                    self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
-            try:
-                result = self.session.chat(minister_name, text)
-                proposed = None
-                if result.proposed_directive is not None:
-                    d = result.proposed_directive
-                    proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
-                # _chat_payload 持久化 minister 消息 + 更新 chat_turn——纳入失败 guard 覆盖范围，
-                # 若它失败也干净回滚，不留孤儿轮（#399 cmr R1 coderabbit Major）。
-                payload = self._chat_payload(
-                    minister_name, result.answer,
-                    court_action=result.court_action, next_minister=result.next_minister,
-                    proposed_directive=proposed, appointed_minister=result.appointed_minister,
-                    registered_minister=result.registered_minister,
-                    displaced_minister=result.displaced_minister,
-                    secret_order_id=result.secret_order_id,
-                    pending_action_id=getattr(result, "pending_action_id", 0),
-                    pending_action_failures=getattr(result, "pending_action_failures", []),
-                    chat_turn_id=chat_turn_id,
-                    accepted_turn=accepted_turn,
-                )
+        if self._audience_turn_in_flight(minister_name):
+            raise HTTPException(status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
+        accepted_turn = int(self.state.turn)
+        chat_turn_id = 0
+        before_snapshot: Dict[str, Any] = {}
+        if self._persistent_chat_minister(minister_name):
+            chat_turn_id, before_snapshot = self._start_chat_turn(minister_name)
+        self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
+        if minister_name not in self.session.temporary_characters:
+            message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
+            if chat_turn_id:
+                self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
+        try:
+            result = self.session.chat(minister_name, text)
+            proposed = None
+            if result.proposed_directive is not None:
+                d = result.proposed_directive
+                proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
+            # _chat_payload 持久化 minister 消息 + 更新 chat_turn——纳入失败 guard 覆盖范围，
+            # 若它失败也干净回滚，不留孤儿轮（#399 cmr R1 coderabbit Major）。
+            payload = self._chat_payload(
+                minister_name, result.answer,
+                court_action=result.court_action, next_minister=result.next_minister,
+                proposed_directive=proposed, appointed_minister=result.appointed_minister,
+                registered_minister=result.registered_minister,
+                displaced_minister=result.displaced_minister,
+                secret_order_id=result.secret_order_id,
+                pending_action_id=getattr(result, "pending_action_id", 0),
+                pending_action_failures=getattr(result, "pending_action_failures", []),
+                chat_turn_id=chat_turn_id,
+                accepted_turn=accepted_turn,
+            )
+            self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+            return payload
+        except Exception:
+            if chat_turn_id:
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-                return payload
-            except Exception:
-                if chat_turn_id:
-                    self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-                    self.db.fail_chat_turn(chat_turn_id)
-                    self.chat_history = {name: [] for name in self.session.content.characters}
-                    for name, msgs in self.db.load_all_chat_history().items():
-                        self.chat_history.setdefault(name, []).extend(msgs)
-                raise
+                self.db.fail_chat_turn(chat_turn_id)
+                self.chat_history = {name: [] for name in self.session.content.characters}
+                for name, msgs in self.db.load_all_chat_history().items():
+                    self.chat_history.setdefault(name, []).extend(msgs)
+            raise
 
     def _chat_stream_payload(
         self,
@@ -2805,7 +2808,8 @@ async def api_create_secret_order(minister_name: str, request: SecretOrderReques
         lines.append("标签：" + "、".join(tags))
     if request.deadline_months:
         lines.append(f"期限：{int(request.deadline_months)}月")
-    return game.chat(minister_name, "\n".join(lines))
+    with _serialized_web_write(game):
+        return game._chat_with_write_gate_held(minister_name, "\n".join(lines))
 
 
 @app.post("/api/ministers/{minister_name}/chat")
