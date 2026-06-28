@@ -160,7 +160,7 @@ describe("ChatModal — placeholder switches on character type", () => {
         id: 8,
         kind: "office",
         action: "任命",
-        message: "任免未能正式落库，请重试；若暂不处理，也不会阻断继续召对。",
+        message: "任免未能正式落库，已记录为失败；若暂不处理，也不会阻断继续召对。",
       }],
     });
 

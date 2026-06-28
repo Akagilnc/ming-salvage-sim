@@ -416,7 +416,11 @@ def _pending_action_failure_payload(pa: Dict[str, Any]) -> Dict[str, Any]:
         "id": int(pa.get("id") or 0),
         "kind": kind,
         "action": action,
-        "message": f"{noun}未能正式落库，请重试；若暂不处理，也不会阻断继续召对。",
+        "message": (
+            f"{noun}未能正式落库，请重试；若暂不处理，也不会阻断继续召对。"
+            if kind == "secret_order"
+            else f"{noun}未能正式落库，已记录为失败；若暂不处理，也不会阻断继续召对。"
+        ),
     }
 
 
