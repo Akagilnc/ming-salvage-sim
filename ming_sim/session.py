@@ -1208,7 +1208,10 @@ class GameSession:
             )
             return (
                 any(term in text for term in covert_terms)
-                and any(term in text for term in imperative_terms)
+                and (
+                    any(term in text for term in imperative_terms)
+                    or any(term in text for term in ("暗查", "密查", "密访", "侦缉", "查访"))
+                )
                 and any(term in text for term in secrecy_or_return_terms)
             )
 
