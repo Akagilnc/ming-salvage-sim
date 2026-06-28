@@ -245,6 +245,24 @@ describe("EdictModal — hidden secret-order default approval", () => {
     });
     expect(onOpenFailureRecovery).toHaveBeenCalledTimes(1);
   });
+
+  it("prioritizes failed secret-order recovery over generic pending-action hint", () => {
+    const onOpenFailureRecovery = vi.fn();
+    const { host } = renderEdictModal({
+      state: baseGameState({
+        failed_secret_order_count: 1,
+        pending_non_directive_action_count: 1,
+      }),
+      onOpenFailureRecovery,
+    });
+    const button = Array.from(host.querySelectorAll("button")).find((item) =>
+      item.textContent?.includes("处理")
+    ) as HTMLButtonElement | undefined;
+
+    expect(host.textContent).toContain("密令落库失败");
+    expect(host.textContent).not.toContain("尚有召对事项候旨");
+    expect(button).toBeTruthy();
+  });
 });
 
 describe("ChatModal — placeholder switches on character type", () => {

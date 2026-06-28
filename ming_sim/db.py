@@ -6,12 +6,12 @@ GameDB 持有 self.content（GameContent），seed 类方法从中读人物/地�
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import replace
 import json
 import math
 import re
 import sqlite3
-import sys
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from ming_sim.applier import atomic, safe_json_dumps, sanitize_sqlite_text
@@ -5094,7 +5094,10 @@ class GameDB:
             )
             retired_ids.append(chat_turn_id)
         if retired_ids:
-            self.conn.commit()
+            if not bool(getattr(self.conn, "_commit_suspended", False)) and int(
+                getattr(self.conn, "_atomic_depth", 0) or 0
+            ) <= 0:
+                self.conn.commit()
             return retired_ids[0]
         return 0
 
@@ -6063,12 +6066,10 @@ class GameDB:
                 continue
             # apply 抛错(如 催办 对已转 pending_review 的密令)= 当 False:下面标 failed、
             # 不中断本轮其余动作、更不能崩整个结算(CMR P0)。
-            cm = atomic(self) if owns_transaction else None
-            if cm is not None:
-                cm.__enter__()
-            savepoint = f"pending_action_apply_{int(pa['id'])}"
-            ok = False
-            try:
+            cm = atomic(self) if owns_transaction else contextlib.nullcontext()
+            with cm:
+                savepoint = f"pending_action_apply_{int(pa['id'])}"
+                ok = False
                 self.conn.execute(f"SAVEPOINT {savepoint}")
                 try:
                     ok = self._apply_pending_action(
@@ -6092,13 +6093,6 @@ class GameDB:
                 # 逐条提交状态:_apply 内部 commit 在 atomic 内会被暂停，真实表改动与状态标记
                 # 同事务落定；否则崩在循环中途会让"真实表已改但状态未 committed"→重跑重复落库。
                 self.conn.commit()
-            except BaseException:
-                if cm is not None:
-                    cm.__exit__(*sys.exc_info())
-                raise
-            else:
-                if cm is not None:
-                    cm.__exit__(None, None, None)
             if ok:
                 applied.append({"id": pa["id"], "kind": pa["kind"], "action": pa["action"],
                                 "target_id": pa["target_id"]})

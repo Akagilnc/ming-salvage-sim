@@ -604,6 +604,52 @@ def test_web_advance_without_edict_returns_failed_secret_order_payload(game, mon
     assert failures[0]["retryable"] is True
 
 
+def test_web_advance_without_edict_settlement_abort_returns_failed_payload(game, monkeypatch):
+    """退朝无诏若结算中止，也要按颁诏同口径返回可重试失败密令 payload。"""
+    import asyncio
+    import pytest
+    import web_app
+    from ming_sim.exceptions import SettlementAbort
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name,
+        target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "暗查辽饷侵冒。",
+            "assignee": name,
+            "tags": ["辽饷"],
+            "deadline_months": 3,
+        },
+    )
+    stub = types.SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        session=types.SimpleNamespace(registry=None),
+        refresh_turn=lambda: None,
+        state_payload=lambda: {"turn": {"turn": state.turn}},
+        directive_rows=lambda: [],
+    )
+
+    def abort_after_failed_action(*_args, **_kwargs):
+        db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
+        db.conn.commit()
+        raise SettlementAbort("结算中止，可重试。", turn=state.turn, stage="settle")
+
+    monkeypatch.setattr(web_app, "web_game", stub)
+    monkeypatch.setattr(web_app, "advance_without_edict", abort_after_failed_action)
+
+    with pytest.raises(web_app.HTTPException) as exc:
+        asyncio.run(web_app.api_advance_without_edict())
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["message"] == "结算中止，可重试。"
+    assert exc.value.detail["pending_action_failures"][0]["id"] == pending_id
+
+
 def test_web_advance_without_edict_refuses_unhandled_directive_action(game, monkeypatch):
     """web 退朝无诏不得绕过待准驳拟旨。"""
     import asyncio

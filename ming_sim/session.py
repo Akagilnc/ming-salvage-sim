@@ -1575,7 +1575,10 @@ class GameSession:
             "UPDATE pending_actions SET payload_json=? WHERE id=?",
             (json.dumps(payload, ensure_ascii=False), int(row["id"])),
         )
-        self.db.conn.commit()
+        if not bool(getattr(self.db.conn, "_commit_suspended", False)) and int(
+            getattr(self.db.conn, "_atomic_depth", 0) or 0
+        ) <= 0:
+            self.db.conn.commit()
 
     def _cli_backend_fallback_actions(
         self, result: "ChatTurnResult", character: Character, player_message: str = "",
@@ -1796,7 +1799,6 @@ class GameSession:
             )
             if cur.rowcount != 1:
                 raise RuntimeError("legacy secret order conversion lost source row")
-            self.db.conn.commit()
         return pending_id
 
     def _apply_close_secret_order(self, payload: str) -> None:

@@ -23,6 +23,7 @@ export function refreshRetriedPendingActionFailures(
 ): PendingActionFailure[] {
   const kept = current.filter((item) => {
     if (item.id === retriedFailureId) return false;
+    if (!targetMinisterName) return true;
     return !(item.kind === "secret_order" && item.minister_name === targetMinisterName);
   });
   return mergePendingActionFailures(kept, incoming);
