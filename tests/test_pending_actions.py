@@ -511,6 +511,7 @@ def test_web_advance_without_edict_lands_hidden_pending_secret_order(game, monke
         session=types.SimpleNamespace(registry=None),
         refresh_turn=lambda: None,
         state_payload=lambda: {"turn": {"turn": state.turn}},
+        directive_rows=lambda: [],
     )
     monkeypatch.setattr(web_app, "web_game", stub)
 
@@ -553,6 +554,7 @@ def test_web_advance_without_edict_returns_failed_secret_order_payload(game, mon
         session=types.SimpleNamespace(registry=None),
         refresh_turn=lambda: None,
         state_payload=lambda: {"turn": {"turn": state.turn}},
+        directive_rows=lambda: [],
     )
     monkeypatch.setattr(web_app, "web_game", stub)
 
@@ -561,6 +563,64 @@ def test_web_advance_without_edict_returns_failed_secret_order_payload(game, mon
     failures = out.get("pending_action_failures")
     assert failures and failures[0]["id"] == pending_id
     assert failures[0]["retryable"] is True
+
+
+def test_web_advance_without_edict_refuses_unhandled_directive_action(game, monkeypatch):
+    """web 退朝无诏不得绕过待准驳拟旨。"""
+    import asyncio
+    import pytest
+    import web_app
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=name, target_id=None,
+        payload={"text": "着户部清核辽饷。", "actor": name},
+    )
+    stub = types.SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        session=types.SimpleNamespace(registry=None),
+        refresh_turn=lambda: None,
+        state_payload=lambda: {"turn": {"turn": state.turn}},
+        directive_rows=lambda: [],
+    )
+    monkeypatch.setattr(web_app, "web_game", stub)
+
+    with pytest.raises(web_app.HTTPException) as exc:
+        asyncio.run(web_app.api_advance_without_edict())
+
+    assert exc.value.status_code == 400
+    assert "未处理拟旨" in str(exc.value.detail)
+    assert state.turn == 1
+
+
+def test_web_advance_without_edict_refuses_existing_draft(game, monkeypatch):
+    """已有 draft/pending 圣旨草案时，web 退朝无诏不得直接丢弃推进。"""
+    import asyncio
+    import pytest
+    import web_app
+
+    db, state, content = game
+    db.add_directive(state, None, "着户部清核辽饷。", "手动新增")
+    stub = types.SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        session=types.SimpleNamespace(registry=None),
+        refresh_turn=lambda: None,
+        state_payload=lambda: {"turn": {"turn": state.turn}},
+        directive_rows=lambda: db.list_directives(state, statuses=("pending", "draft")),
+    )
+    monkeypatch.setattr(web_app, "web_game", stub)
+
+    with pytest.raises(web_app.HTTPException) as exc:
+        asyncio.run(web_app.api_advance_without_edict())
+
+    assert exc.value.status_code == 400
+    assert "未处理拟旨" in str(exc.value.detail)
+    assert state.turn == 1
 
 
 def test_consort_cultivate_stages_and_commits(game, monkeypatch):
@@ -1123,6 +1183,8 @@ def test_settling_secret_failure_payload_is_not_retryable(game):
     )
 
     assert failure["retryable"] is False
+    assert "请重试" not in failure["message"]
+    assert "稍后" in failure["message"]
 
 
 def test_failed_secret_order_does_not_block_later_audience(game, monkeypatch):

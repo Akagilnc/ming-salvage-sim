@@ -2989,6 +2989,12 @@ async def api_advance_without_edict() -> Dict[str, Any]:
     failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
     try:
         with _serialized_web_write(game):
+            pending_directive_actions = [
+                action for action in game.db.list_pending_actions(turn_before)
+                if action["kind"] == "directive"
+            ]
+            if game.directive_rows() or pending_directive_actions:
+                raise ValueError("尚有未处理拟旨，不能退朝无诏；请先准驳或处理草案。")
             advance_without_edict(
                 game.state,
                 game.db,

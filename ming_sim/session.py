@@ -409,7 +409,12 @@ def _confirmation_targets_for_message(pending_actions: List[Dict[str, Any]], mes
     directive = [p for p in pending_actions if p["kind"] == "directive"]
     if non_directive and directive:
         text = message or ""
-        if any(token in text for token in ("圣旨", "旨意", "拟旨", "诏书", "诏文", "草案")):
+        directive_mentioned = any(token in text for token in ("圣旨", "旨意", "拟旨", "诏书", "诏文", "草案"))
+        non_directive_mentioned = any(token in text for token in ("密令", "密旨", "密谕", "任免", "调教", "后宫安排"))
+        all_mentioned = any(token in text for token in ("都", "全都", "全部", "一并", "一概", "尽数"))
+        if all_mentioned or (directive_mentioned and non_directive_mentioned):
+            return pending_actions
+        if directive_mentioned:
             return directive
     return non_directive or directive
 
@@ -427,17 +432,19 @@ def _pending_action_failure_payload(pa: Dict[str, Any], state: Optional[GameStat
     retryable = kind == "secret_order" and (
         state is None or getattr(state, "turn_phase", None) not in FRONT_HALF_DONE_PHASES
     )
+    if kind == "secret_order" and retryable:
+        message = f"{noun}未能正式落库，请重试；若暂不处理，也不会阻断继续召对。"
+    elif kind == "secret_order":
+        message = f"{noun}未能正式落库，已记录为失败；稍后可在恢复入口处理。"
+    else:
+        message = f"{noun}未能正式落库，已记录为失败；若暂不处理，也不会阻断继续召对。"
     return {
         "id": int(pa.get("id") or 0),
         "kind": kind,
         "action": action,
         "minister_name": str(pa.get("minister_name") or ""),
         "retryable": retryable,
-        "message": (
-            f"{noun}未能正式落库，请重试；若暂不处理，也不会阻断继续召对。"
-            if kind == "secret_order"
-            else f"{noun}未能正式落库，已记录为失败；若暂不处理，也不会阻断继续召对。"
-        ),
+        "message": message,
     }
 
 
@@ -1078,10 +1085,10 @@ class GameSession:
         if confirm_target_ids is not None:
             allowed_confirm_ids = {int(pid) for pid in confirm_target_ids}
             pend_for_minister = [p for p in pend_for_minister if int(p["id"]) in allowed_confirm_ids]
-        # 若同一大臣同时有非 directive 暂存与 directive 草案，确认优先处理非 directive，避免
-        # 对别的政务应允/拒绝时误扫草案；只有 directive 是唯一待确认对象时，按 #412 处理拟旨确认。
+        # 同一大臣同时有非 directive 暂存与 directive 草案时，普通确认仍优先处理非 directive；
+        # 明说拟旨/圣旨则只处理 directive，明说“都/一并”或同时点名两族才同句处理两族。
         confirm_targets = _confirmation_targets_for_message(pend_for_minister, message_text)
-        non_directive_confirm_targets = [p for p in confirm_targets if p["kind"] != "directive"]
+        directive_confirm_targets = [p for p in confirm_targets if p["kind"] == "directive"]
         if confirm_targets and not explicit_prefixed:
             confirm_action_ids = {int(p["id"]) for p in confirm_targets}
             summaries = [_pending_action_brief(p) for p in confirm_targets]
@@ -1100,9 +1107,7 @@ class GameSession:
                 else:
                     self.db.commit_pending_actions(
                         self.state, minister_name=minister_name,
-                        kind_filter_exclude="directive" if non_directive_confirm_targets else None,
-                        kind_filter="directive" if not non_directive_confirm_targets else None,
-                        directive_status="pending" if not non_directive_confirm_targets else "draft",
+                        directive_status="pending" if directive_confirm_targets else "draft",
                         action_ids=confirm_action_ids,
                         content=getattr(self, "content", None),
                         registry=getattr(self, "registry", None))
@@ -1117,7 +1122,6 @@ class GameSession:
             elif confirm == "拒绝":
                 self.db.drop_pending_actions_for_minister(
                     self.state.turn, minister_name,
-                    kind_filter_exclude="directive" if non_directive_confirm_targets else None,
                     action_ids=confirm_action_ids)
             if confirm in ("应允", "拒绝"):
                 # 本轮是对暂存的确认：大臣回话已【复述】该动作(领命 prompt 所致),若继续走下面的
