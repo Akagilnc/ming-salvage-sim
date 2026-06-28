@@ -184,3 +184,51 @@ def test_terminal_minister_chat_preserves_chat_error_when_rollback_fails(monkeyp
 
     with pytest.raises(RuntimeError, match="LLM down"):
         term.minister_chat(Session(), SimpleNamespace(name="魏忠贤"))
+
+
+def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(monkeypatch):
+    """大臣已回话后，minister 行落库失败不误删已落 user 行。"""
+
+    class Db:
+        def __init__(self):
+            self.messages = []
+            self.deleted = False
+
+        def append_chat_message(self, minister_name, turn, role, content):
+            if role == "minister":
+                raise RuntimeError("reply persist failed")
+            self.messages.append((minister_name, turn, role, content))
+            return len(self.messages)
+
+        def delete_chat_messages(self, message_ids):
+            self.deleted = True
+
+    class Session:
+        def __init__(self):
+            self.db = Db()
+            self.state = SimpleNamespace(turn=7)
+            self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
+            self.temporary_characters = set()
+
+        def chat(self, minister_name, question):
+            return SimpleNamespace(
+                answer="臣领密旨，当令东厂暗中护送赈银。",
+                proposed_directive=None,
+                appointed_minister="",
+                registered_minister="",
+                displaced_minister="",
+                court_action="",
+                next_minister="",
+            )
+
+    answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    session = Session()
+
+    with pytest.raises(RuntimeError, match="reply persist failed"):
+        term.minister_chat(session, SimpleNamespace(name="魏忠贤"))
+
+    assert session.db.deleted is False
+    assert session.db.messages == [
+        ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。"),
+    ]

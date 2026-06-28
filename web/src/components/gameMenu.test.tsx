@@ -1,6 +1,7 @@
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { LLMConfigInfo } from "../types";
 import { LLMConfigTab } from "./gameMenu";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -431,6 +432,52 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     });
 
     expect(strength?.disabled).toBe(true);
+    cleanup();
+  });
+
+  it("keeps the save snapshot when initial load failed and the response has no persisted block", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (!init?.method) {
+        return Promise.reject(new Error("load failed"));
+      }
+      const response: Partial<LLMConfigInfo> = {
+        ...BASE_LLM_RESPONSE,
+        base_url: "https://api.example.com/v1",
+        model: "gpt-5",
+        reasoning_supported: true,
+      };
+      delete response.persisted;
+      delete response.cli_model_choices;
+      return Promise.resolve({
+        ok: true,
+        json: async () => response,
+      } as Response);
+    });
+    const { cleanup } = render(<LLMConfigTab />);
+    await act(async () => {});
+
+    const baseUrlInput = document.querySelector<HTMLInputElement>('input[placeholder="https://api.openai.com/v1"]');
+    const modelInput = document.querySelector<HTMLInputElement>('input[placeholder="gpt-4o-mini"]');
+    expect(baseUrlInput).toBeTruthy();
+    expect(modelInput).toBeTruthy();
+    act(() => {
+      changeInput(baseUrlInput!, "https://api.example.com/v1");
+      changeInput(modelInput!, "gpt-5");
+    });
+
+    const saveBtn = Array.from(document.querySelectorAll("button")).find((b) =>
+      (b.textContent ?? "").includes("保存并应用")
+    );
+    expect(saveBtn).toBeTruthy();
+    await act(async () => {
+      saveBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+    expect(strength?.disabled).toBe(false);
+    expect(calls.some((call) => call.init?.method === "POST")).toBe(true);
     cleanup();
   });
 

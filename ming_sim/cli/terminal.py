@@ -250,8 +250,6 @@ def minister_chat(session: GameSession, character: Character) -> str:
             user_message_id = session.db.append_chat_message(character.name, accepted_turn, "user", question)
         try:
             result = session.chat(character.name, question)
-            if persistent_chat:
-                session.db.append_chat_message(character.name, accepted_turn, "minister", result.answer)
         except Exception:
             if user_message_id is not None:
                 try:
@@ -259,6 +257,8 @@ def minister_chat(session: GameSession, character: Character) -> str:
                 except Exception:
                     pass
             raise
+        if persistent_chat:
+            session.db.append_chat_message(character.name, accepted_turn, "minister", result.answer)
         print(wrap(result.answer))
         print()
         if result.proposed_directive is not None:
