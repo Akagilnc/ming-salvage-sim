@@ -402,6 +402,17 @@ def _pending_action_brief(pa: Dict[str, Any]) -> str:
     return f"{action}密令"
 
 
+def _confirmation_targets_for_message(pending_actions: List[Dict[str, Any]], message: str) -> List[Dict[str, Any]]:
+    """Choose which pending action family this chat confirmation can affect."""
+    non_directive = [p for p in pending_actions if p["kind"] != "directive"]
+    directive = [p for p in pending_actions if p["kind"] == "directive"]
+    if non_directive and directive:
+        text = message or ""
+        if any(token in text for token in ("圣旨", "旨意", "拟旨", "诏书", "诏文", "草案")):
+            return directive
+    return non_directive or directive
+
+
 def _pending_action_failure_payload(pa: Dict[str, Any]) -> Dict[str, Any]:
     """把落库失败的暂存动作翻成可给玩家看的失败状态。"""
     kind = str(pa.get("kind") or "")
@@ -787,9 +798,7 @@ class GameSession:
             return None
         minister_name = character.name
         pend_for_minister = self.db.list_pending_actions(self.state.turn, minister_name=minister_name)
-        non_directive_confirm_targets = [p for p in pend_for_minister if p["kind"] != "directive"]
-        directive_confirm_targets = [p for p in pend_for_minister if p["kind"] == "directive"]
-        confirm_targets = non_directive_confirm_targets or directive_confirm_targets
+        confirm_targets = _confirmation_targets_for_message(pend_for_minister, text)
         if GameSession._proposal_blocked(self.state) and not confirm_targets:
             return None
         summaries = [_pending_action_brief(p) for p in confirm_targets]
@@ -1006,9 +1015,8 @@ class GameSession:
             pend_for_minister = [p for p in pend_for_minister if int(p["id"]) in allowed_confirm_ids]
         # 若同一大臣同时有非 directive 暂存与 directive 草案，确认优先处理非 directive，避免
         # 对别的政务应允/拒绝时误扫草案；只有 directive 是唯一待确认对象时，按 #412 处理拟旨确认。
-        non_directive_confirm_targets = [p for p in pend_for_minister if p["kind"] != "directive"]
-        directive_confirm_targets = [p for p in pend_for_minister if p["kind"] == "directive"]
-        confirm_targets = non_directive_confirm_targets or directive_confirm_targets
+        confirm_targets = _confirmation_targets_for_message(pend_for_minister, message_text)
+        non_directive_confirm_targets = [p for p in confirm_targets if p["kind"] != "directive"]
         if confirm_targets and not explicit_prefixed:
             confirm_action_ids = {int(p["id"]) for p in confirm_targets}
             summaries = [_pending_action_brief(p) for p in confirm_targets]
@@ -1150,7 +1158,7 @@ class GameSession:
         # 会话动作：本轮未经前缀落密令时，LLM 判皇帝对密令/妃嫔的意图再落地。
         # 前缀消息一律跳过（explicit_prefixed 已在顶部单一判定，统一把门所有后置 LLM 抽取器）。
         conversation_intent_handled = False
-        if not out["secret_order_id"] and not explicit_prefixed:
+        if not out.get("pending_action_id") and not out["secret_order_id"] and not explicit_prefixed:
             is_consort = getattr(character, "office_type", "") == "后宫"
             active = self.db.get_active_secret_orders_for_minister(minister_name)
             if active or is_consort:
