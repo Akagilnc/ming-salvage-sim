@@ -2,7 +2,7 @@
 """FastAPI web entry for Ming Salvage Sim.
 
 薄壳：路由调 ming_sim.session.GameSession（与 CLI 共用同一流转层）。
-拟旨 draft 待确认：大臣 propose_directive → pending → 前端 准/驳。
+拟旨候选：大臣 propose_directive/前缀/自然语言 → pending_actions 闸门 → 对话确认或颁诏默认同意。
 """
 
 from __future__ import annotations
@@ -1562,7 +1562,7 @@ class WebGame:
             answer = extract_agent_text(run_output)
         if not answer:
             raise LLMUnavailable("LLM 调用失败：流式回复为空。")
-        # 截 propose_directive：入 pending；截 propose_appointment：吏部铨选建档
+        # 截 propose_directive：入 pending_actions；截 propose_appointment：吏部铨选建档
         proposed = None
         appointed = ""
         registered = ""
@@ -1570,6 +1570,7 @@ class WebGame:
         next_minister = ""
         displaced = ""
         secret_order_id = 0
+        pending_action_id = 0
         if run_output is not None:
             for tool_exec in getattr(run_output, "tools", None) or []:
                 res = str(getattr(tool_exec, "result", "") or "")
@@ -1582,12 +1583,10 @@ class WebGame:
                     if draft_text and GameSession._proposal_blocked(self.state):
                         draft_text = ""  # 恢复窗婉拒（ship-pre r2 软死锁环源头，同 session 路）
                     if draft_text:
-                        did = self.db.add_directive(
-                            self.state, None, draft_text, "大臣拟旨",
-                            notes=f"由{character.name}拟旨入档", status="pending",
+                        pending_action_id = self.db.upsert_pending_directive(
+                            self.state.turn, character.name,
+                            payload={"text": draft_text, "actor": character.name},
                         )
-                        proposed = {"id": did, "text": draft_text, "status": "pending",
-                                    "notes": f"由{character.name}拟旨入档"}
                 elif tool_name == "propose_appointment" or res.startswith("__pending_appointment__"):
                     payload_json = res.removeprefix("__pending_appointment__").strip()
                     if not payload_json:
@@ -1640,14 +1639,15 @@ class WebGame:
         # 杜绝 web/CLI 两边逻辑漂移（CMR F3 / codexC-1）。
         res = self.session.apply_cli_conversation_actions(
             character, text, answer,
-            has_directive=proposed is not None, secret_order_id=secret_order_id,
+            has_directive=proposed is not None or bool(pending_action_id),
+            secret_order_id=secret_order_id,
             preclassified_intent=self.session._finish_cli_action_intent(action_intent_future),
         )
         if proposed is None and res["directive"]:
             proposed = res["directive"]
         if res["secret_order_id"]:
             secret_order_id = res["secret_order_id"]
-        pending_action_id = int(res.get("pending_action_id") or 0)
+        pending_action_id = pending_action_id or int(res.get("pending_action_id") or 0)
         self._record_chat_rollback_items(chat_turn_id, before_snapshot)
         return self._chat_payload(
             minister_name, answer, court_action=court_action, next_minister=next_minister,
