@@ -132,8 +132,11 @@ def test_secret_order_rush_intent_stages_and_commits(game, monkeypatch):
 
     # 颁诏 commit:rush 生效(due_turn 提前)
     db.commit_pending_actions(state)
-    due_after = db.conn.execute("SELECT due_turn FROM secret_orders WHERE id=?", (oid,)).fetchone()["due_turn"]
+    row = db.conn.execute("SELECT status, due_turn FROM secret_orders WHERE id=?", (oid,)).fetchone()
+    due_after = row["due_turn"]
     assert due_after != due_before
+    assert due_after == state.turn + 1
+    assert row["status"] == "active"
     assert db.list_pending_actions(state.turn) == []
 
 
