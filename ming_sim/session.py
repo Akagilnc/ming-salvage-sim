@@ -411,7 +411,10 @@ def _confirmation_targets_for_message(pending_actions: List[Dict[str, Any]], mes
         text = message or ""
         directive_mentioned = any(token in text for token in ("圣旨", "旨意", "拟旨", "诏书", "诏文", "草案"))
         non_directive_mentioned = any(token in text for token in ("密令", "密旨", "密谕", "任免", "调教", "后宫安排"))
-        all_mentioned = any(token in text for token in ("都", "全都", "全部", "一并", "一概", "尽数"))
+        all_mentioned = (
+            any(token in text for token in ("全都", "全部", "一并", "一概", "尽数"))
+            or re.search(r"都(?:准|准了|照办|作罢|驳回|驳了|拒绝|拒了)", text) is not None
+        )
         if all_mentioned or (directive_mentioned and non_directive_mentioned):
             return pending_actions
         if directive_mentioned:
@@ -1188,6 +1191,7 @@ class GameSession:
                 "问问密令", "奏报密令", "回报密令",
                 "查办得如何", "查办得怎样", "办得如何", "办得怎样",
                 "查到哪", "查得如何", "查得怎样",
+                "调查得如何", "调查得怎样", "调查到哪",
             )):
                 return False
             if explicit_secret and any(token in text for token in (
@@ -1197,14 +1201,14 @@ class GameSession:
                 "另下一道", "新下一道",
             )):
                 return True
-            if explicit_secret and re.search(r"(?:密令|密旨|密谕).{0,12}(?:暗查|密查|密访|侦缉|查办)", text):
+            if explicit_secret and re.search(r"(?:密令|密旨|密谕).{0,12}(?:暗查|密查|密访|侦缉|查办|调查)", text):
                 return True
             if explicit_secret:
                 return any(
-                    verb in text and any(term in text for term in ("暗查", "密查", "密访", "侦缉", "查办"))
+                    verb in text and any(term in text for term in ("暗查", "密查", "密访", "侦缉", "查办", "调查"))
                     for verb in ("下", "发", "给", "交办", "传", "命", "着", "派", "遣")
                 )
-            covert_terms = ("暗查", "密查", "密访", "暗访", "侦缉", "私下", "密办", "查访")
+            covert_terms = ("暗查", "密查", "密访", "暗访", "侦缉", "私下", "密办", "查访", "秘密调查", "秘密查")
             imperative_terms = ("着", "命", "令", "派", "遣", "让", "交办", "交")
             secrecy_or_return_terms = (
                 "不可声张", "不得声张", "别声张", "不要声张", "勿使", "不得外泄", "不可外泄",
@@ -1214,7 +1218,7 @@ class GameSession:
                 any(term in text for term in covert_terms)
                 and (
                     any(term in text for term in imperative_terms)
-                    or any(term in text for term in ("暗查", "密查", "密访", "侦缉", "查访"))
+                    or any(term in text for term in ("暗查", "密查", "密访", "侦缉", "查访", "秘密调查", "秘密查"))
                 )
                 and any(term in text for term in secrecy_or_return_terms)
             )

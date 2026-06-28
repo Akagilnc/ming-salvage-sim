@@ -820,6 +820,7 @@ function App() {
       }
       if (outcome.kind === "decisions") {
         // 出重大抉择：暂停弹窗逐个亲裁，裁完调 submitDecisions 续跑结算。
+        await surfacePendingActionFailures(outcome.data?.pending_action_failures || []);
         setPendingDecisions(outcome.data.decisions || []);
         setBusy("");
         return;

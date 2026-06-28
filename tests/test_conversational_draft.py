@@ -624,6 +624,39 @@ def test_no_keyword_covert_investigation_stages_secret_order(game, monkeypatch):
     ]
 
 
+def test_secret_investigation_language_stages_secret_order(game, monkeypatch):
+    """“派锦衣卫秘密调查…回奏”应进入新密令确认流，不能被关键词预筛漏掉。"""
+    db, state, content = game
+    minister = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == minister)
+
+    def _extractors(prompt, llm_config=None, tag=""):
+        assert tag == "secret_extract"
+        return (json.dumps({
+            "标题": "秘密调查辽饷",
+            "内容": "派锦衣卫秘密调查辽饷，月底回奏。",
+            "承办人": "锦衣卫",
+            "标签": ["辽饷"],
+            "期限月数": 1,
+        }, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _extractors)
+
+    out = GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), ch,
+        player_message="派锦衣卫秘密调查辽饷，月底回奏。",
+        answer="臣领旨。",
+        has_directive=False,
+        secret_order_id=None,
+    )
+
+    assert out["pending_action_id"]
+    pending = db.list_pending_actions(state.turn)
+    assert [(p["kind"], p["action"], json.loads(p["payload_json"])["title"]) for p in pending] == [
+        ("secret_order", "新建", "秘密调查辽饷")
+    ]
+
+
 def test_new_secret_order_with_existing_order_stages_only_new_candidate(game, monkeypatch):
     """已有 active 密令时，另下一道密令不能同轮再把旧密令也 stage 一次更新。"""
     db, state, content = game
