@@ -2,7 +2,8 @@
 
 行为契约(非实现细节):召对里 LLM 判出的密令写动作(更新/催办/记进展/提交核议),
 **颁诏前不得改真实表**,只在 pending_actions 暂存;真正落库等颁诏 commit_pending_actions。
-拟旨不在本闸门(继续走准/驳),不在此测。
+拟旨也走 pending_actions(kind=directive) 闸门；本文件主要测密令/任免/调教路径，
+拟旨专项覆盖在 test_conversational_draft.py。
 
 测试走公开行为:驱动 GameSession.apply_cli_conversation_actions(CLI 后端会话落地唯一真源),
 monkeypatch LLM 边界 _run_backend_for_config 喂固定意图 JSON;断言 DB 可观察状态。

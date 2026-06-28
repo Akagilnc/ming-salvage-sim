@@ -66,6 +66,41 @@ def test_issue_refusal_stays_in_loop(monkeypatch, capsys, exc):
     assert str(exc) in capsys.readouterr().out
 
 
+def test_review_issue_reaches_staged_directive_default_approval(monkeypatch):
+    """#412 review fix: CLI issue must call write_decree when only pending_actions directives exist.
+
+    write_decree owns the default-approval commit from pending_actions -> draft; review_directives
+    must not reject earlier just because list_directives() is still empty.
+    """
+
+    class Db:
+        def list_pending_actions(self, turn):
+            return [{"kind": "directive", "status": "pending"}]
+
+    class Session:
+        def __init__(self):
+            self.db = Db()
+            self.state = SimpleNamespace(turn=1, turn_phase=TurnPhase.REVIEWING.value)
+            self.calls = []
+
+        def enter_review(self):
+            self.calls.append("enter_review")
+
+        def list_directives(self, include_pending=False):
+            return []
+
+        def write_decree(self):
+            self.calls.append("write_decree")
+            return "奉天承运皇帝诏曰，着户部清核辽饷。"
+
+    answers = iter(["issue", "yes"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    session = Session()
+
+    assert term.review_directives(session) == "issue"
+    assert session.calls == ["enter_review", "write_decree"]
+
+
 def test_terminal_minister_chat_persists_messages_before_session_chat(monkeypatch):
     """#407: CLI terminal 召对也要落 chat_messages。
 

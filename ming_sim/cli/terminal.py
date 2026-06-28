@@ -1,8 +1,7 @@
 """CLI 终端层：input()/print() 驱动，调 GameSession 跑回合。L9。
 
 play_turn 状态机搬入此处；GameSession 持游戏状态，terminal 只做 I/O。
-拟旨 draft 待确认：大臣 propose_directive → session 返回 pending 草案
-→ 终端打印草稿 → 皇帝 可/准→confirm，驳→reject。
+拟旨候选先进 pending_actions 闸门；皇帝可在对话里准/驳，不回则颁诏 checkpoint 默认同意。
 """
 
 from __future__ import annotations
@@ -291,16 +290,22 @@ def review_directives(session: GameSession) -> str:
         directives = session.list_directives(include_pending=True)
         pending = [d for d in directives if d.status == "pending"]
         drafts = [d for d in directives if d.status == "draft"]
+        staged_directives = [
+            p for p in session.db.list_pending_actions(session.state.turn)
+            if p.get("kind") == "directive"
+        ]
         print(f"\n本{TURN_UNIT}诏书草案：")
         if pending:
             print(f"  ⚠ {len(pending)} 道大臣拟旨待核定（confirm N 准 / reject N 驳）：")
             for d in pending:
                 print(f"  [待核定] #{d.id}  {wrap(d.text)}")
+        if staged_directives:
+            print(f"  · {len(staged_directives)} 道对话拟旨待颁诏默认同意。")
         if drafts:
             for idx, d in enumerate(drafts, 1):
                 print(f"{idx}. #{d.id}")
                 print(f"   {wrap(d.text)}")
-        elif not pending:
+        elif not pending and not staged_directives:
             print("（暂无指令。back 继续召见，或 add 新增。）")
         print("\n操作：issue 颁布 | back 继续召见 | add 新增 | edit N 改 | del N 删 | "
               "confirm N 准拟旨 | reject N 驳拟旨 | skills 技能卡 | exit 退出")
@@ -311,7 +316,7 @@ def review_directives(session: GameSession) -> str:
         if lowered in EXIT_COMMANDS:
             raise ExitGame
         if lowered in COURT_BREAK_COMMANDS:
-            if drafts or pending:
+            if drafts or pending or staged_directives:
                 print(f"本{TURN_UNIT}尚有草案/待核定。请 issue 颁布，或 del/reject 清空后退朝。")
                 continue
             return "skip"
@@ -338,7 +343,7 @@ def review_directives(session: GameSession) -> str:
             if pending:
                 print(f"尚有 {len(pending)} 道大臣拟旨待核定（confirm/reject），不能颁诏。")
                 continue
-            if not drafts:
+            if not drafts and not staged_directives:
                 print("暂无指令，不能颁布空诏书。add 新增，或 back 继续召见。")
                 continue
             try:

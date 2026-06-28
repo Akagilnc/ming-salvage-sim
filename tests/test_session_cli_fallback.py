@@ -92,11 +92,13 @@ def test_draft_prefix_with_active_secret_order_runs_zero_llm(game, monkeypatch):
         result, SimpleNamespace(name=who, office_type="兵部"),
         "拟旨如下：着户部清核辽饷。")
 
-    # 前缀拟旨零 LLM 落库：directive 入档，无 secret/pending 误触发
-    assert result.proposed_directive is not None
-    assert result.proposed_directive.text == "臣遵旨，当即清核辽饷。"
+    # 前缀拟旨零 LLM 暂存：不直写 turn_directives，仍无 secret 误触发
+    assert result.proposed_directive is None
+    assert result.pending_action_id
+    pending = db.list_pending_actions(state.turn)
+    assert len(pending) == 1 and pending[0]["kind"] == "directive"
+    assert json.loads(pending[0]["payload_json"])["text"] == "臣遵旨，当即清核辽饷。"
     assert result.secret_order_id is None
-    assert not result.pending_action_id
 
 
 def test_draft_prefix_with_pending_confirmation_runs_zero_llm(game, monkeypatch):
@@ -127,9 +129,12 @@ def test_draft_prefix_with_pending_confirmation_runs_zero_llm(game, monkeypatch)
         result, SimpleNamespace(name=who, office_type="兵部"),
         "拟旨如下：着户部清核辽饷。")
 
-    # 前缀拟旨零 LLM 落库：directive 入档，未被确认闸门吞掉
-    assert result.proposed_directive is not None
-    assert result.proposed_directive.text == "臣遵旨，当即清核辽饷。"
+    # 前缀拟旨零 LLM 暂存：未被确认闸门吞掉，也不直接绕进 turn_directives。
+    assert result.proposed_directive is None
+    assert result.pending_action_id
+    pending = [p for p in db.list_pending_actions(state.turn) if p["kind"] == "directive"]
+    assert len(pending) == 1
+    assert json.loads(pending[0]["payload_json"])["text"] == "臣遵旨，当即清核辽饷。"
 
 
 def test_secret_prefix_confirmation_uses_recent_context_for_order_body(game, monkeypatch):
@@ -1065,8 +1070,8 @@ def test_no_backend_is_noop(game, monkeypatch):
     assert result.secret_order_id is None
 
 
-def test_draft_prefix_registers_directive(game, monkeypatch):
-    """玩家『拟旨如下：』→ 大臣回话原文入 turn_directives（pending 待核）。"""
+def test_draft_prefix_stages_directive(game, monkeypatch):
+    """玩家『拟旨如下：』→ 大臣回话原文进 pending_actions，等待对话确认或颁诏默认同意。"""
     db, state, _ = game
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     _no_conv_action(monkeypatch)
@@ -1074,18 +1079,17 @@ def test_draft_prefix_registers_directive(game, monkeypatch):
     result.answer = "臣领旨。敕谕户部与陕西巡抚发太仓银三万两亲督赈发。钦此。"
     _session(db, state)._cli_backend_fallback_actions(
         result, SimpleNamespace(name="毕自严", office_type="户部"), "拟旨如下：发三万两赈陕西")
-    assert result.proposed_directive is not None
-    assert result.proposed_directive.text == result.answer
-    assert result.proposed_directive.status == "pending"
-    row = db.conn.execute(
-        "SELECT text, status FROM turn_directives WHERE id=?",
-        (result.proposed_directive.id,),
-    ).fetchone()
-    assert row["text"] == result.answer        # 真落库
-    assert row["status"] == "pending"
+    assert result.proposed_directive is None
+    assert result.pending_action_id
+    pending = db.list_pending_actions(state.turn)
+    assert len(pending) == 1 and pending[0]["kind"] == "directive"
+    assert json.loads(pending[0]["payload_json"])["text"] == result.answer
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM turn_directives WHERE turn=?", (state.turn,)
+    ).fetchone()[0] == 0
 
 
-def test_runtime_cli_channel_without_env_registers_directive(game, monkeypatch):
+def test_runtime_cli_channel_without_env_stages_directive(game, monkeypatch):
     """runtime 选择 CLI 通道时，即使无 MING_SIM_LLM_BACKEND，也要启用会话写动作胶水。"""
     db, state, _ = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
@@ -1095,13 +1099,14 @@ def test_runtime_cli_channel_without_env_registers_directive(game, monkeypatch):
     _session(db, state, llm_config=SimpleNamespace(channel="cli"))._cli_backend_fallback_actions(
         result, SimpleNamespace(name="毕自严", office_type="户部"), "拟旨如下：发三万两赈陕西")
 
-    assert result.proposed_directive is not None
-    row = db.conn.execute(
-        "SELECT text, status FROM turn_directives WHERE id=?",
-        (result.proposed_directive.id,),
-    ).fetchone()
-    assert row["text"] == result.answer
-    assert row["status"] == "pending"
+    assert result.proposed_directive is None
+    assert result.pending_action_id
+    pending = db.list_pending_actions(state.turn)
+    assert len(pending) == 1 and pending[0]["kind"] == "directive"
+    assert json.loads(pending[0]["payload_json"])["text"] == result.answer
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM turn_directives WHERE turn=?", (state.turn,)
+    ).fetchone()[0] == 0
 
 
 def test_runtime_cli_secret_prefix_merges_via_configured_runner(game, monkeypatch):
