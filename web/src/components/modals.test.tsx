@@ -200,6 +200,8 @@ describe("EdictModal — hidden secret-order default approval", () => {
     ) as HTMLButtonElement | undefined;
 
     expect(button).toBeTruthy();
+    expect(host.textContent).not.toContain("密令已候旨");
+    expect(host.textContent).toContain("尚有召对事项候旨");
     act(() => {
       button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });

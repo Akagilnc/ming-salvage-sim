@@ -818,7 +818,6 @@ export function EdictModal({
   const draftDirectives = state.directives.filter((d) => d.status !== "pending");
   const hasPending = pendingDirectives.length > 0;
   const hasPendingConversationalDraft = (state.pending_directive_count ?? 0) > 0;
-  const hasHiddenPendingSecretOrders = (state.pending_secret_order_count ?? 0) > 0;
   const hasNoEdictPendingActions = (state.pending_non_directive_action_count ?? 0) > 0;
   const [decreeDraft, setDecreeDraft] = React.useState(decree);
   React.useEffect(() => {
@@ -934,7 +933,7 @@ export function EdictModal({
             {!draftDirectives.length && !hasPending && !hasPendingConversationalDraft && !hasNoEdictPendingActions && <div className="empty-note">本月不可空过。请先召见大臣，或在右侧御笔自拟一道指令。</div>}
             {!draftDirectives.length && !hasPending && hasPendingConversationalDraft && <div className="empty-note pending-draft-hint">大臣已奉旨起草，点「拟诏」即可正式成稿。</div>}
             {!draftDirectives.length && !hasPending && !hasPendingConversationalDraft && hasNoEdictPendingActions && (
-              <div className="empty-note">{hasHiddenPendingSecretOrders ? "密令已候旨，退朝后按沉默准行处理。" : "尚有召对事项候旨，退朝后按沉默准行处理。"}</div>
+              <div className="empty-note">尚有召对事项候旨，退朝后按沉默准行处理。</div>
             )}
           </div>
         </section>
