@@ -157,6 +157,33 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     cleanup();
   });
 
+  it("labels codex off reasoning as the codex low floor", async () => {
+    mockFetch({
+      ...BASE_LLM_RESPONSE,
+      channel: "cli",
+      cli_runner: "codex",
+      reasoning_strength: "off",
+      reasoning_supported: true,
+      persisted: {
+        ...BASE_LLM_RESPONSE.persisted,
+        channel: "cli",
+        cli_runner: "codex",
+        cli_model: "gpt-5.5",
+        cli_timeout_seconds: 240,
+        cli_reasoning_strength: "off",
+      },
+    });
+    const { cleanup } = render(<LLMConfigTab />);
+    await act(async () => {});
+
+    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+    expect(strength?.disabled).toBe(false);
+    expect(strength?.value).toBe("off");
+    const offOption = Array.from(strength?.options || []).find((option) => option.value === "off");
+    expect(offOption?.textContent).toBe("关（codex 最低=低）");
+    cleanup();
+  });
+
   it("clears the legacy thinking_level shadow on save so the unified selector owns reasoning (#358 cmr)", async () => {
     // 旧档持有 thinking_level=high、reasoning_strength 空。统一选择器以旧值迁移初始化，
     // 保存时须清掉旧 thinking_level，否则它仍作隐藏旋钮、用户选「默认」也清不掉。
