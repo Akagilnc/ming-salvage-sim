@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import threading
-import time
 from types import SimpleNamespace
 
 import pytest
@@ -241,7 +240,7 @@ def test_advance_without_edict_refused_when_gate_held(monkeypatch):
     worker = threading.Thread(target=_run_call)
     worker.start()
     try:
-        time.sleep(0.05)
+        worker.join(timeout=1)
         assert result.get("done") is True, "advance_without_edict blocked waiting for the write gate"
         exc = result.get("exc")
         assert isinstance(exc, HTTPException)
@@ -298,7 +297,7 @@ def test_secret_order_endpoint_refused_when_gate_held_before_chat(monkeypatch):
     worker = threading.Thread(target=_run_call)
     worker.start()
     try:
-        time.sleep(0.05)
+        worker.join(timeout=1)
         assert result.get("done") is True, "secret_order endpoint blocked waiting for WebGame.chat"
         exc = result.get("exc")
         assert isinstance(exc, HTTPException)
@@ -307,6 +306,31 @@ def test_secret_order_endpoint_refused_when_gate_held_before_chat(monkeypatch):
     finally:
         game._write_gate.release()
         worker.join(timeout=1)
+
+
+def test_secret_order_endpoint_offloads_chat_work(monkeypatch):
+    """兼容密令按钮端点仍是 async 路由，但同步召对/写入必须离开事件循环线程。"""
+    game = _FakeGame(TurnPhase.SUMMONING.value)
+    monkeypatch.setattr(web_app, "get_game", lambda: game)
+    calls: list[str] = []
+
+    async def fake_run_in_threadpool(fn, *args, **kwargs):
+        calls.append("threadpool")
+        return fn(*args, **kwargs)
+
+    def _chat_with_write_gate_held(_minister, _message):
+        game.db.writes.append("chat")
+        return {"answer": "臣领旨。"}
+
+    monkeypatch.setattr(web_app, "run_in_threadpool", fake_run_in_threadpool)
+    game._chat_with_write_gate_held = _chat_with_write_gate_held
+
+    result = _invoke(web_app.api_create_secret_order(
+        "某大臣", web_app.SecretOrderRequest(title="密", content="内容")))
+
+    assert result == {"answer": "臣领旨。"}
+    assert calls == ["threadpool"]
+    assert game.db.writes == ["chat"]
 
 
 def test_direct_db_write_succeeds_when_free(monkeypatch):

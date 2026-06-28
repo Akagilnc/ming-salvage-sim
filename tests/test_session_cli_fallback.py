@@ -15,6 +15,8 @@ import threading
 import types
 from types import SimpleNamespace
 
+import pytest
+
 import ming_sim.cli_backend as cb
 import ming_sim.session as session_mod
 from ming_sim.session import GameSession
@@ -426,6 +428,18 @@ def test_confirmation_negated_approval_phrase_is_rejection():
     """“不可照办”不能因包含“照办”走快路误判应允。"""
     result = cb.extract_confirmation_intent(
         player_message="不可照办。",
+        minister_reply="臣候旨。",
+        pending_summaries=["新建密令：暗查辽饷"],
+        llm_config=SimpleNamespace(channel="api"),
+    )
+
+    assert result == "拒绝"
+
+
+def test_confirmation_soft_negated_approval_phrase_is_rejection():
+    """“先别照办”也是否定确认，不能因包含“照办”走快路误判应允。"""
+    result = cb.extract_confirmation_intent(
+        player_message="先别照办。",
         minister_reply="臣候旨。",
         pending_summaries=["新建密令：暗查辽饷"],
         llm_config=SimpleNamespace(channel="api"),
@@ -1174,6 +1188,33 @@ def test_legacy_registered_secret_order_marker_is_restaged(game):
     assert payload["assignee"] == minister
     assert payload["tags"] == ["辽饷"]
     assert payload["deadline_months"] == 3
+
+
+def test_legacy_registered_secret_order_restaging_rolls_back_pending_if_delete_fails(game, monkeypatch):
+    """旧直写密令转 pending 时若删除源行失败，不得留下 duplicate pending 候选。"""
+    db, state, _ = game
+    minister = "魏忠贤"
+    oid = db.create_secret_order(state, minister, "暗查辽饷", "暗查辽饷侵冒。", ["辽饷"], deadline_months=3)
+    s = _session(db, state)
+    original_execute = db.conn.execute
+
+    def fail_delete(sql, *args, **kwargs):
+        if str(sql).lstrip().startswith("DELETE FROM secret_orders"):
+            raise RuntimeError("delete failed")
+        return original_execute(sql, *args, **kwargs)
+
+    monkeypatch.setattr(db.conn, "execute", fail_delete)
+
+    with pytest.raises(RuntimeError):
+        GameSession._stage_legacy_registered_secret_order(s, oid, minister)
+
+    monkeypatch.setattr(db.conn, "execute", original_execute)
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM pending_actions WHERE kind='secret_order'"
+    ).fetchone()[0] == 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM secret_orders WHERE id=?", (oid,)
+    ).fetchone()[0] == 1
 
 
 def test_noop_appointment_intent_is_not_staged(game, monkeypatch):

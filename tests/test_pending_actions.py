@@ -1002,7 +1002,8 @@ def test_retry_failed_secret_order_status_failure_rolls_back_created_order(game,
     original_execute = db.conn.execute
 
     def fail_status_update(sql, *args, **kwargs):
-        if "UPDATE pending_actions SET status='committed'" in str(sql):
+        params = args[0] if args else ()
+        if "UPDATE pending_actions SET status=?" in str(sql) and params and params[0] == "committed":
             raise RuntimeError("status update failed")
         return original_execute(sql, *args, **kwargs)
 
@@ -1012,6 +1013,39 @@ def test_retry_failed_secret_order_status_failure_rolls_back_created_order(game,
         db.retry_failed_pending_action(state, pending_id)
 
     assert db.list_secret_orders() == []
+
+
+def test_retry_failed_secret_order_apply_exception_rolls_back_side_effects(game, monkeypatch):
+    """retry 中 _apply_pending_action 半途写入后抛错时，写入必须回滚，只保留 failed 状态。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "密查辽饷侵冒。",
+            "assignee": name,
+            "tags": ["辽饷"],
+            "deadline_months": 0,
+        },
+    )
+    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
+    db.conn.commit()
+
+    def partial_apply(_state, _pa, _payload, **_kwargs):
+        db.create_secret_order(state, name, "半写密令", "不应留下。", [], deadline_months=0)
+        raise RuntimeError("apply failed after durable write")
+
+    monkeypatch.setattr(db, "_apply_pending_action", partial_apply)
+
+    result = db.retry_failed_pending_action(state, pending_id)
+
+    assert result["committed"] is False
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM secret_orders WHERE title='半写密令'"
+    ).fetchone()[0] == 0
+    failed = db.list_pending_actions(state.turn, status="failed")
+    assert len(failed) == 1 and failed[0]["id"] == pending_id
 
 
 def test_retry_api_retire_failure_rolls_back_created_order(game, monkeypatch):

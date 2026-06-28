@@ -36,6 +36,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from ming_sim.applier import atomic
 from ming_sim.constants import ROOT_DIR
@@ -2876,8 +2877,12 @@ async def api_create_secret_order(minister_name: str, request: SecretOrderReques
         lines.append("标签：" + "、".join(tags))
     if request.deadline_months:
         lines.append(f"期限：{int(request.deadline_months)}月")
-    with _serialized_web_write(game):
-        return game._chat_with_write_gate_held(minister_name, "\n".join(lines))
+
+    def _create_with_gate() -> Dict[str, Any]:
+        with _serialized_web_write(game):
+            return game._chat_with_write_gate_held(minister_name, "\n".join(lines))
+
+    return await run_in_threadpool(_create_with_gate)
 
 
 @app.post("/api/ministers/{minister_name}/chat")
