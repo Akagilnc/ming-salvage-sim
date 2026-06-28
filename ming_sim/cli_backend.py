@@ -1827,8 +1827,10 @@ def _extract_secret_order(
     assignee = default_assignee if force_default_assignee else _choose_assignee(
         _assignee_llm, player_command, minister_reply, content, default_assignee
     )
+    raw_deadline = obj.get("期限月数")
+    explicit_zero_deadline = raw_deadline in (0, "0")
     try:
-        deadline = max(0, min(int(obj.get("期限月数") or 0), 36))
+        deadline = max(0, min(int(raw_deadline or 0), 36))
     except (TypeError, ValueError):
         deadline = 0
     tags = obj.get("标签")
@@ -1836,7 +1838,7 @@ def _extract_secret_order(
     fallback_tags, fallback_deadline = _secret_metadata_from_command(player_command)
     if not tags:
         tags = fallback_tags
-    if not deadline:
+    if not deadline and not explicit_zero_deadline:
         deadline = fallback_deadline
     return {"title": title, "content": content, "assignee": assignee,
             "deadline_months": deadline, "tags": tags}

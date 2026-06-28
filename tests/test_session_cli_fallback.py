@@ -227,7 +227,6 @@ def test_tool_call_staged_secret_order_merge_updates_reply_assignee(game, monkey
             "content": "暗查辽饷侵冒。",
             "assignee": minister,
             "tags": [],
-            "deadline_months": 0,
         },
     )
 
@@ -257,7 +256,6 @@ def test_tool_call_staged_new_secret_order_merges_missing_metadata(game, monkeyp
             "content": "暗查辽饷侵冒。",
             "assignee": minister,
             "tags": [],
-            "deadline_months": 0,
         },
     )
 
@@ -274,6 +272,36 @@ def test_tool_call_staged_new_secret_order_merges_missing_metadata(game, monkeyp
     payload = json.loads(db.list_pending_actions(state.turn)[0]["payload_json"])
     assert payload["tags"] == ["辽饷", "关宁"]
     assert payload["deadline_months"] == 3
+
+
+def test_tool_call_staged_new_secret_order_keeps_explicit_zero_deadline(game, monkeypatch):
+    """tool 已明确 deadline_months=0 时，不被按钮/前缀文本里的期限回填覆盖。"""
+    db, state, _ = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    minister = "工具密令零期限承办官"
+    pid = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "暗查辽饷侵冒。",
+            "assignee": minister,
+            "tags": [],
+            "deadline_months": 0,
+        },
+    )
+
+    result = _result()
+    result.pending_action_id = pid
+    result.answer = "臣领旨。"
+
+    _session(db, state, llm_config=SimpleNamespace(channel="api"))._cli_backend_fallback_actions(
+        result,
+        SimpleNamespace(name=minister, office_type="司礼监"),
+        "密令如下：暗查辽饷侵冒。\n期限：3月",
+    )
+
+    payload = json.loads(db.list_pending_actions(state.turn)[0]["payload_json"])
+    assert payload["deadline_months"] == 0
 
 
 def test_secret_order_tool_progress_stages_pending_action_not_direct_write(game):
@@ -1068,6 +1096,30 @@ def test_secret_order_extract_fallback_preserves_structured_metadata(game, monke
         llm_config=SimpleNamespace(channel="cli"),
     )
     assert negative["deadline_months"] == 0
+
+
+def test_secret_order_extract_keeps_explicit_zero_deadline(monkeypatch):
+    """LLM 明确给 0 月时，不被御旨里的 fallback 期限覆盖。"""
+    monkeypatch.setattr(
+        cb,
+        "_run_backend_for_config",
+        lambda *a, **k: (json.dumps({
+            "标题": "暗查辽饷",
+            "内容": "暗查辽饷侵冒。",
+            "承办人": "魏忠贤",
+            "期限月数": 0,
+            "标签": [],
+        }, ensure_ascii=False), 1),
+    )
+
+    out = cb._extract_secret_order(
+        "密令如下：暗查辽饷侵冒。\n期限：3月",
+        "臣领旨。",
+        "魏忠贤",
+        llm_config=SimpleNamespace(channel="cli"),
+    )
+
+    assert out["deadline_months"] == 0
 
 
 def test_draft_prefix_with_pending_confirmation_runs_zero_llm(game, monkeypatch):
