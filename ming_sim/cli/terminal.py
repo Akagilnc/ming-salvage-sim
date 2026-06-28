@@ -248,14 +248,20 @@ def minister_chat(session: GameSession, character: Character) -> str:
         user_message_id: int | None = None
         if persistent_chat:
             user_message_id = session.db.append_chat_message(character.name, accepted_turn, "user", question)
-        try:
-            result = session.chat(character.name, question)
-        except Exception:
+        def rollback_user_message() -> None:
             if user_message_id is not None:
                 try:
                     session.db.delete_chat_messages([user_message_id])
                 except Exception:
                     pass
+
+        try:
+            result = session.chat(character.name, question)
+        except KeyboardInterrupt:
+            rollback_user_message()
+            raise
+        except Exception:
+            rollback_user_message()
             raise
         if persistent_chat:
             session.db.append_chat_message(character.name, accepted_turn, "minister", result.answer)

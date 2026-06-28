@@ -337,6 +337,37 @@ export function SavesList({
 // CLI 子进程默认超时（秒），与后端 llm_config.CLI_DEFAULT_TIMEOUT_SECONDS 对齐（#55 跨语言）。
 const CLI_DEFAULT_TIMEOUT = 300;
 
+type LLMConfigSavePayload = Omit<LLMConfigInfo, "persisted"> & Partial<Pick<LLMConfigInfo, "persisted">>;
+
+export function mergePersistedSaveSnapshot(
+  data: LLMConfigSavePayload,
+  cur: LLMConfigInfo | null
+): LLMConfigInfo["persisted"] {
+  if (data.persisted) return data.persisted;
+  const current = cur?.persisted;
+  const savedCliSlot = data.channel === "cli";
+  return {
+    ...(current || {}),
+    channel: data.channel,
+    base_url: data.base_url,
+    model: data.model,
+    has_api_key: data.has_api_key,
+    max_tokens: data.max_tokens,
+    timeout_seconds: data.timeout_seconds,
+    thinking_level: data.thinking_level,
+    advanced_model: data.advanced_model,
+    advanced_base_url: data.advanced_base_url,
+    has_advanced_api_key: data.has_advanced_api_key,
+    advanced_thinking_level: data.advanced_thinking_level,
+    reasoning_strength: data.reasoning_strength,
+    api_reasoning_strength: data.api_reasoning_strength ?? (savedCliSlot ? current?.api_reasoning_strength : data.reasoning_strength),
+    cli_reasoning_strength: data.cli_reasoning_strength ?? (savedCliSlot ? data.reasoning_strength : current?.cli_reasoning_strength),
+    cli_runner: savedCliSlot ? (data.cli_runner || current?.cli_runner) : current?.cli_runner,
+    cli_model: savedCliSlot ? (data.cli_model ?? current?.cli_model) : current?.cli_model,
+    cli_timeout_seconds: savedCliSlot ? (data.cli_timeout_seconds || current?.cli_timeout_seconds) : current?.cli_timeout_seconds,
+  };
+}
+
 export function LLMConfigTab() {
   const [info, setInfo] = React.useState<LLMConfigInfo | null>(null);
   const [baseUrl, setBaseUrl] = React.useState("");
@@ -454,25 +485,7 @@ export function LLMConfigTab() {
       setInfo((cur) => ({
         ...(cur || data),
         ...data,
-        persisted: data.persisted || cur?.persisted || {
-          channel: data.channel,
-          base_url: data.base_url,
-          model: data.model,
-          has_api_key: data.has_api_key,
-          max_tokens: data.max_tokens,
-          timeout_seconds: data.timeout_seconds,
-          thinking_level: data.thinking_level,
-          advanced_model: data.advanced_model,
-          advanced_base_url: data.advanced_base_url,
-          has_advanced_api_key: data.has_advanced_api_key,
-          advanced_thinking_level: data.advanced_thinking_level,
-          reasoning_strength: data.reasoning_strength,
-          api_reasoning_strength: data.api_reasoning_strength,
-          cli_reasoning_strength: data.cli_reasoning_strength,
-          cli_runner: data.cli_runner,
-          cli_model: data.cli_model,
-          cli_timeout_seconds: data.cli_timeout_seconds,
-        },
+        persisted: mergePersistedSaveSnapshot(data, cur),
         cli_model_choices: data.cli_model_choices || cur?.cli_model_choices || {},
       }));
       setBaseUrl(data.base_url);

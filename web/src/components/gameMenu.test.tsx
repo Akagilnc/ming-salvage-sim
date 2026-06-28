@@ -2,7 +2,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LLMConfigInfo } from "../types";
-import { LLMConfigTab } from "./gameMenu";
+import { LLMConfigTab, mergePersistedSaveSnapshot } from "./gameMenu";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -479,6 +479,40 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     expect(strength?.disabled).toBe(false);
     expect(calls.some((call) => call.init?.method === "POST")).toBe(true);
     cleanup();
+  });
+
+  it("merges save response fields into existing persisted snapshot when the response omits persisted", () => {
+    const current: LLMConfigInfo = {
+      ...BASE_LLM_RESPONSE,
+      persisted: {
+        ...BASE_LLM_RESPONSE.persisted,
+        base_url: "https://old.example.com/v1",
+        model: "old-model",
+        api_reasoning_strength: "low",
+        cli_reasoning_strength: "medium",
+        cli_runner: "codex",
+        cli_model: "raw-cli-model",
+        cli_timeout_seconds: 120,
+      },
+    };
+    const response: Partial<LLMConfigInfo> = {
+      ...BASE_LLM_RESPONSE,
+      base_url: "https://api.example.com/v1",
+      model: "gpt-5",
+      reasoning_strength: "high",
+      reasoning_supported: true,
+    };
+    delete response.persisted;
+
+    expect(mergePersistedSaveSnapshot(response as LLMConfigInfo, current)).toMatchObject({
+      base_url: "https://api.example.com/v1",
+      model: "gpt-5",
+      api_reasoning_strength: "high",
+      cli_reasoning_strength: "medium",
+      cli_runner: "codex",
+      cli_model: "raw-cli-model",
+      cli_timeout_seconds: 120,
+    });
   });
 
   it("refreshes reasoning support from the save response before trusting the saved backend snapshot", async () => {
