@@ -409,6 +409,60 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     cleanup();
   });
 
+  it("refreshes reasoning support from the save response before trusting the saved backend snapshot", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      const response = init?.method === "POST"
+        ? {
+            ...BASE_LLM_RESPONSE,
+            base_url: "https://api.deepseek.com/v1",
+            model: "deepseek-chat",
+            reasoning_strength: "",
+            reasoning_supported: false,
+          }
+        : {
+            ...BASE_LLM_RESPONSE,
+            base_url: "https://api.example.com/v1",
+            model: "gpt-5",
+            reasoning_strength: "high",
+            reasoning_supported: true,
+          };
+      return Promise.resolve({
+        ok: true,
+        json: async () => response,
+      } as Response);
+    });
+    const { cleanup } = render(<LLMConfigTab />);
+    await act(async () => {});
+
+    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+    expect(strength?.disabled).toBe(false);
+    const baseUrlInput = document.querySelector<HTMLInputElement>('input[placeholder="https://api.openai.com/v1"]');
+    const modelInput = document.querySelector<HTMLInputElement>('input[placeholder="gpt-4o-mini"]');
+    expect(baseUrlInput).toBeTruthy();
+    expect(modelInput).toBeTruthy();
+    act(() => {
+      changeInput(baseUrlInput!, "https://api.deepseek.com/v1");
+      changeInput(modelInput!, "deepseek-chat");
+    });
+    expect(strength?.disabled).toBe(true);
+
+    const saveBtn = Array.from(document.querySelectorAll("button")).find((b) =>
+      (b.textContent ?? "").includes("保存并应用")
+    );
+    expect(saveBtn).toBeTruthy();
+    await act(async () => {
+      saveBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const post = calls.find((c) => c.init?.method === "POST" && c.url === "/api/llm/config");
+    expect(post).toBeTruthy();
+    expect(strength?.disabled).toBe(true);
+    expect(document.body.textContent).toContain("该后端不支持推理强度设置");
+    cleanup();
+  });
+
   it("falls back to local API capability when the loaded backend setting is edited", async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
