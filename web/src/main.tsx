@@ -443,11 +443,11 @@ function App() {
       setCanUndoLastChat(!!data.can_undo_last_chat);
       setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count ?? current.pending_count } : current));
       await loadState();
-      if (selectedMinisterRef.current !== targetMinisterName) return;
       // 刷新密令列表（含历史，大臣可能调了 issue_secret_order tool）
       api<{ orders: SecretOrder[] }>("/api/secret_orders")
         .then(({ orders }) => setSecretOrders(orders))
         .catch(() => {});
+      if (selectedMinisterRef.current !== targetMinisterName) return;
       const responseFailures = data.pending_action_failures || [];
       if (data.secret_order_id) {
         setChatNotice(`密令已秘密交付${targetMinisterName}，编号 #${data.secret_order_id}。`);
