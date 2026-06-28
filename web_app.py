@@ -1581,6 +1581,7 @@ class WebGame:
         displaced = ""
         secret_order_id = 0
         pending_action_id = 0
+        tool_pending_action_id = 0
         if run_output is not None:
             for tool_exec in getattr(run_output, "tools", None) or []:
                 res = str(getattr(tool_exec, "result", "") or "")
@@ -1640,6 +1641,7 @@ class WebGame:
                         if registered_id:
                             pending_action_id = self.session._stage_legacy_registered_secret_order(
                                 registered_id, character.name)
+                            tool_pending_action_id = pending_action_id
                     else:
                         payload_json = res.removeprefix("__secret_order__").strip()
                         if not payload_json:
@@ -1661,6 +1663,7 @@ class WebGame:
                                     "deadline_months": payload.get("deadline_months") or 0,
                                 },
                             )
+                            tool_pending_action_id = pending_action_id
                 # 密令结案不再走大臣工具，由月末推演 + extractor 写入
         # CLI 后端（agy/codex）：玩家用拟旨/密令按钮（消息带前缀）时，把大臣这句回话原文入档。
         # CLI 后端会话落地走共享真源 session.apply_cli_conversation_actions(同 session.chat 非流式路径)，
@@ -1677,6 +1680,14 @@ class WebGame:
             secret_order_id = res["secret_order_id"]
         pending_action_id = pending_action_id or int(res.get("pending_action_id") or 0)
         if pending_action_id:
+            if tool_pending_action_id:
+                GameSession._merge_staged_new_secret_order_content(
+                    self.session,
+                    tool_pending_action_id,
+                    character.name,
+                    text,
+                    answer,
+                )
             answer = GameSession._ensure_confirmation_cue(answer)
         pending_action_failures = list(res.get("pending_action_failures") or [])
         self._record_chat_rollback_items(chat_turn_id, before_snapshot)
