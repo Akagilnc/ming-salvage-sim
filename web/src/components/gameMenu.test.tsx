@@ -409,6 +409,31 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     cleanup();
   });
 
+  it("keeps trusting backend reasoning support for whitespace-only API edits", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ...BASE_LLM_RESPONSE,
+        base_url: "https://api.example.com/v1",
+        model: "gpt-5",
+        reasoning_supported: false,
+      }),
+    } as Response);
+    const { cleanup } = render(<LLMConfigTab />);
+    await act(async () => {});
+
+    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+    expect(strength?.disabled).toBe(true);
+    const modelInput = document.querySelector<HTMLInputElement>('input[placeholder="gpt-4o-mini"]');
+    expect(modelInput).toBeTruthy();
+    act(() => {
+      changeInput(modelInput!, " gpt-5 ");
+    });
+
+    expect(strength?.disabled).toBe(true);
+    cleanup();
+  });
+
   it("refreshes reasoning support from the save response before trusting the saved backend snapshot", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {

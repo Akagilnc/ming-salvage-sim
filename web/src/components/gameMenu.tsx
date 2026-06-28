@@ -364,13 +364,17 @@ export function LLMConfigTab() {
   const [msg, setMsg] = React.useState("");
   const [err, setErr] = React.useState("");
   const backendChannel = info?.channel === "cli" ? "cli" : "api";
+  const normalizedBaseUrl = baseUrl.trim();
+  const normalizedModel = model.trim();
+  const normalizedAdvancedBaseUrl = advancedBaseUrl.trim();
+  const normalizedAdvancedModel = advancedModel.trim();
   const backendReasoningSupportCurrent = channel === backendChannel && (
     channel === "cli"
       ? cliRunner === (info?.cli_runner || "agy")
-      : baseUrl === (info?.base_url || "") &&
-        model === (info?.model || "") &&
-        advancedBaseUrl === (info?.advanced_base_url || "") &&
-        advancedModel === (info?.advanced_model || "")
+      : normalizedBaseUrl === (info?.base_url || "").trim() &&
+        normalizedModel === (info?.model || "").trim() &&
+        normalizedAdvancedBaseUrl === (info?.advanced_base_url || "").trim() &&
+        normalizedAdvancedModel === (info?.advanced_model || "").trim()
   );
   const reasoningSupported = resolveReasoningSupported({
     backendSupported: info?.reasoning_supported,
@@ -447,7 +451,7 @@ export function LLMConfigTab() {
           cli_timeout_seconds: channel === "cli" ? parseFloat(cliTimeout) || CLI_DEFAULT_TIMEOUT : 0,
         }),
       });
-      setInfo((cur) => (cur ? { ...cur, ...data } : null));
+      setInfo((cur) => (cur ? { ...cur, ...data } : data));
       setBaseUrl(data.base_url);
       setModel(data.model);
       setAdvancedModel(data.advanced_model || "");
