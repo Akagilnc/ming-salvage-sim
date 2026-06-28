@@ -85,6 +85,12 @@ class _FakeSession:
     def _confirmation_intent_for_preexisting_pending(self, *args, **kwargs):
         return GameSession._confirmation_intent_for_preexisting_pending(self, *args, **kwargs)
 
+    def _stage_appointment_candidate(self, *args, **kwargs):
+        return GameSession._stage_appointment_candidate(self, *args, **kwargs)
+
+    def _merge_staged_new_secret_order_content(self, *args, **kwargs):
+        return GameSession._merge_staged_new_secret_order_content(self, *args, **kwargs)
+
     def _audience_prompt_for_message(self, message):
         return f"【增强上下文】{message}"
 
@@ -433,12 +439,11 @@ def test_background_audience_pending_action_persists_after_observer_departure(ga
     assert db.can_undo_last_chat_turn(minister_name, state.turn)
 
 
-def test_background_audience_appointment_persists_after_observer_departure(game):
-    """任免/人员候选（agno propose_appointment 工具路）：退出后后台仍跑完任免落地，
-    且回话入档（#383 US6）。"""
+def test_background_audience_appointment_stages_after_observer_departure(game):
+    """任免工具路也必须先进 pending_actions，退出后后台跑完只暂存不直写真实表。"""
     db, state, content = game
     minister_name = "毕自严"
-    appointee = "倪元璐"
+    appointee = "工具候选甲"
     agent = _FakeAgent([
         ToolExec(
             "propose_appointment",
@@ -448,24 +453,24 @@ def test_background_audience_appointment_persists_after_observer_departure(game)
             ),
         )
     ])
-    applied = {}
-
     web_game = _web_game(db, state, content, agent)
 
-    def _fake_apply_appointment(payload_json, _character):
-        applied["payload"] = payload_json
-        return (appointee, "")
-
-    web_game.session._apply_appointment = _fake_apply_appointment
-
-    stream = web_game.chat_stream(minister_name, "拟以倪元璐为户部尚书。")
+    stream = web_game.chat_stream(minister_name, "拟以工具候选甲为户部尚书。")
     assert next(stream)["type"] == "delta"
     stream.close()
 
     assert agent.completed.wait(1.0)
-    # 后台跑完：任免落地被调用（人员候选受保护）+ 回话入档
-    assert _wait_for(lambda: "payload" in applied)
-    assert appointee in applied["payload"]
+    # 后台跑完：只暂存任免候选，等待皇帝确认/颁诏，不绕过确认闸门。
+    assert _wait_for(lambda: len(db.list_pending_actions(state.turn)) == 1)
+    pending = db.list_pending_actions(state.turn)[0]
+    assert pending["kind"] == "office"
+    assert pending["action"] == "任命"
+    payload = json.loads(pending["payload_json"])
+    assert payload["name"] == appointee
+    assert payload["office"] == "户部尚书"
+    assert db.conn.execute(
+        "SELECT name FROM characters WHERE name=?", (appointee,)
+    ).fetchone() is None
     assert _wait_for(lambda: len(web_game.chat_history[minister_name]) >= 2)
     assert db.can_undo_last_chat_turn(minister_name, state.turn)
 

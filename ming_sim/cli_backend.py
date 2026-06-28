@@ -1165,9 +1165,17 @@ def extract_confirmation_intent(
             compact in {"准", "可", "允", "好", "行", "善"}
             or any(token in compact for token in ("准奏", "照准", "准了", "照办", "依卿", "便如此", "就这么办"))
         ) and not negated_approval_hit
+        approval_needs_semantic_check = approve_hit and any(
+            token in compact
+            for token in (
+                "若", "如果", "倘若", "假若",
+                "如何", "怎样", "怎么", "吗", "么",
+                "是否", "可否", "能否", "可不可以", "能不能", "要不要",
+            )
+        )
         if (reject_hit or negated_approval_hit) and not approve_hit:
             return "拒绝"
-        if approve_hit and not reject_hit:
+        if approve_hit and not reject_hit and not approval_needs_semantic_check:
             return "应允"
     summ = "；".join(pending_summaries) or "（无）"
     prompt = (
