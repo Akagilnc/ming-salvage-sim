@@ -664,6 +664,38 @@ def test_retry_failed_secret_order_refresh_failure_does_not_duplicate(game):
     assert rows[0]["content"] == "密查辽饷去向"
 
 
+def test_retry_failed_secret_order_retires_confirmation_chat_undo(game):
+    """失败密令重试成功后,原应允召对不得再按旧快照撤回出脏状态。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
+                 "tags": [], "deadline_months": 0},
+    )
+
+    chat_turn_id = db.create_chat_turn(state, name, "sess-retry-undo", 0)
+    user_message_id = db.append_chat_message(name, state.turn, "user", "准")
+    minister_message_id = db.append_chat_message(name, state.turn, "minister", "臣即密办。")
+    db.update_chat_turn_messages(chat_turn_id, user_message_id, minister_message_id)
+    before = db.capture_chat_rollback_snapshot()
+    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
+    db.conn.commit()
+    db.record_chat_turn_rollback_diffs(chat_turn_id, before, db.capture_chat_rollback_snapshot())
+    assert db.can_undo_last_chat_turn(name, state.turn)
+
+    result = db.retry_failed_pending_action(state, pending_id)
+    retired_id = db.retire_chat_turn_for_pending_action_retry(pending_id)
+
+    assert result["committed"] is True
+    assert retired_id == chat_turn_id
+    assert not db.can_undo_last_chat_turn(name, state.turn)
+    with pytest.raises(ValueError, match="撤回|不可撤回"):
+        db.undo_chat_turn(chat_turn_id)
+    assert len(db.list_secret_orders()) == 1
+    assert db.list_pending_actions(state.turn, status="failed") == []
+
+
 def test_failed_secret_order_does_not_block_later_audience(game, monkeypatch):
     """玩家无视失败密令时,同一大臣后续普通召对仍可继续,不会被 failed 行卡住。"""
     db, state, content = game
