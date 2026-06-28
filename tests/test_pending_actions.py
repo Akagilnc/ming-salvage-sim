@@ -20,6 +20,7 @@ import types
 
 import pytest
 
+import web_app
 import ming_sim.cli_backend as cb
 import ming_sim.issues as issues
 from ming_sim.decree import advance_without_edict, pre_settle
@@ -198,6 +199,68 @@ def test_pre_settle_commits_pending_at_decree_front(game):
     assert row["title"] == "颁诏标题"
     assert row["content"] == "颁诏内容"
     assert db.list_pending_actions(state.turn) == []
+
+
+def test_silent_new_secret_order_lands_at_checkpoint_without_pending_visibility(game):
+    """#414: 不回复确认时,新密令只在 checkpoint 默认同意后进入玩家密令面。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "密查辽东军饷侵冒。",
+            "assignee": name,
+            "tags": ["辽饷"],
+            "deadline_months": 3,
+        })
+
+    assert db.list_secret_orders() == []
+    assert db.list_secret_orders(status="pending") == []
+
+    applied = db.commit_pending_actions(state)
+
+    assert [(a["kind"], a["action"]) for a in applied] == [("secret_order", "新建")]
+    assert db.list_pending_actions(state.turn) == []
+    orders = db.list_secret_orders()
+    assert len(orders) == 1
+    assert orders[0]["title"] == "暗查辽饷"
+    assert orders[0]["minister_name"] == name
+    assert orders[0]["status"] == "active"
+    assert db.list_secret_orders(status="pending") == []
+
+
+def test_secret_order_endpoint_stages_candidate_without_player_visible_order(game, monkeypatch):
+    """#414: 直连端点也不得绕过统一确认闸门把新密令提前放进玩家密令列表。"""
+    import asyncio
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    stub = types.SimpleNamespace(
+        db=db,
+        state=state,
+        session=types.SimpleNamespace(state=state, content=content, registry=None),
+        character_power_id=lambda c: web_app._character_power_id(c, db),
+    )
+    monkeypatch.setattr(web_app, "web_game", stub)
+
+    result = asyncio.run(web_app.api_create_secret_order(
+        name,
+        web_app.SecretOrderRequest(
+            title="暗查辽饷",
+            content="密查辽东军饷侵冒。",
+            tags=["辽饷"],
+            deadline_months=3,
+        ),
+    ))
+
+    assert result["pending_action_id"]
+    assert "order_id" not in result
+    assert db.list_secret_orders() == []
+    pending = db.list_pending_actions(state.turn)
+    assert len(pending) == 1
+    assert pending[0]["kind"] == "secret_order"
+    assert pending[0]["action"] == "新建"
 
 
 def test_commit_marks_unapplicable_failed_not_orphan(game, monkeypatch):
