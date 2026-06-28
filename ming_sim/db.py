@@ -58,12 +58,19 @@ def _has_stop_condition(stop_condition: object) -> bool:
 
 def _coerce_deadline_months(raw: object, *, default: int = 0) -> int:
     """解析密令期限；显式 0 是合法值，不能被缺省兜底吞掉。"""
-    if raw is None or raw == "":
+    if raw is None:
         return int(default)
+    if isinstance(raw, bool):
+        raise TypeError("deadline_months cannot be a boolean")
+    if isinstance(raw, str):
+        raise TypeError("deadline_months cannot be a string")
+    if not isinstance(raw, (int, float)):
+        raise TypeError("deadline_months must be a numeric type")
     try:
-        return max(0, min(int(raw), 36))
-    except (TypeError, ValueError):
-        return int(default)
+        deadline = int(raw)
+    except (ValueError, OverflowError) as exc:
+        raise TypeError("deadline_months must be a finite numeric type") from exc
+    return max(0, min(deadline, 36))
 
 
 def _new_army_historically_applied(it: dict) -> bool:
@@ -6258,11 +6265,12 @@ class GameDB:
             if oid is None:
                 return False
             if pa["action"] == "更新":
+                deadline = _coerce_deadline_months(payload.get("deadline_months"), default=0)
                 return self.update_secret_order_by_id(
                     state, int(oid),
                     str(payload.get("new_title") or ""),
                     str(payload.get("new_content") or ""),
-                    tags=None, deadline_months=int(payload.get("deadline_months") or 0),
+                    tags=None, deadline_months=deadline,
                 )
             if pa["action"] == "催办":
                 deadline = _coerce_deadline_months(payload.get("deadline_months", 1), default=1)

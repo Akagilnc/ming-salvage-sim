@@ -368,6 +368,42 @@ def test_api_create_secret_order_preserves_explicit_zero_deadline(game, monkeypa
     assert result["pending_action_id"] == 7
 
 
+def test_api_create_secret_order_supports_pydantic_v1_fields_set(game, monkeypatch):
+    """兼容 Pydantic v1:显式传 deadline_months=0 时字段集合在 __fields_set__。"""
+    import asyncio
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    calls = []
+
+    def _chat(minister_name, message):
+        calls.append((minister_name, message))
+        return {"answer": "臣领密旨。", "pending_action_id": 7, "secret_order_id": 0}
+
+    stub = types.SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        session=types.SimpleNamespace(
+            state=state, content=content, registry=None, temporary_characters=set()),
+        character_power_id=lambda c: web_app._character_power_id(c, db),
+        _chat_with_write_gate_held=_chat,
+    )
+    request = types.SimpleNamespace(
+        title="暗查辽饷",
+        content="密查辽东军饷侵冒。",
+        tags=[],
+        deadline_months=0,
+    )
+    setattr(request, "__fields_set__", {"deadline_months"})
+    monkeypatch.setattr(web_app, "web_game", stub)
+
+    result = asyncio.run(web_app.api_create_secret_order(name, request))
+
+    assert calls == [(name, "密令如下：暗查辽饷\n密查辽东军饷侵冒。\n期限：0月")]
+    assert result["pending_action_id"] == 7
+
+
 def test_api_create_secret_order_ignores_malformed_tags(game, monkeypatch):
     """旧按钮端点遇到非 list tags 时不崩溃，按无标签继续走召对闸门。"""
     import asyncio
@@ -430,6 +466,29 @@ def test_commit_rejects_blank_new_secret_order_payload(game):
     pid = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name="魏忠贤", target_id=None,
         payload={"title": "", "content": "", "assignee": "魏忠贤", "tags": [], "deadline_months": 0},
+    )
+
+    applied = db.commit_pending_actions(state)
+
+    assert applied == []
+    assert db.list_secret_orders() == []
+    failed = db.list_pending_actions(state.turn, status="failed")
+    assert len(failed) == 1 and failed[0]["id"] == pid
+
+
+def test_commit_rejects_malformed_secret_order_deadline_payload(game):
+    """pending payload 的 deadline_months 必须是数值；坏类型不得被静默兜底成 0。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pid = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "密查辽东军饷侵冒。",
+            "assignee": name,
+            "tags": ["辽饷"],
+            "deadline_months": "三个月",
+        },
     )
 
     applied = db.commit_pending_actions(state)

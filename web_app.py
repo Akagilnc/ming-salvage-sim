@@ -2876,7 +2876,10 @@ async def api_create_secret_order(minister_name: str, request: SecretOrderReques
     tags = [str(tag).strip() for tag in tags_raw if str(tag).strip()]
     if tags:
         lines.append("标签：" + "、".join(tags))
-    provided_fields = getattr(request, "model_fields_set", set())
+    provided_fields = (
+        getattr(request, "model_fields_set", None)
+        or getattr(request, "__fields_set__", set())
+    )
     if "deadline_months" in provided_fields and request.deadline_months is not None:
         lines.append(f"期限：{int(request.deadline_months)}月")
 
