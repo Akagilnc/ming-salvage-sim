@@ -5970,6 +5970,33 @@ class GameDB:
             for r in rows
         ]
 
+    def list_failed_secret_order_actions(
+        self, minister_name: Optional[str] = None,
+    ) -> List[Dict[str, object]]:
+        sql = (
+            "SELECT id, turn, kind, action, target_id, minister_name, payload_json, status "
+            "FROM pending_actions WHERE status='failed' AND kind='secret_order'"
+        )
+        params: tuple[object, ...] = ()
+        if minister_name is not None:
+            sql += " AND minister_name=?"
+            params = (str(minister_name),)
+        sql += " ORDER BY turn DESC, id"
+        rows = self.conn.execute(sql, params).fetchall()
+        return [
+            {
+                "id": int(r["id"]),
+                "turn": int(r["turn"]),
+                "kind": r["kind"],
+                "action": r["action"],
+                "target_id": None if r["target_id"] is None else int(r["target_id"]),
+                "minister_name": r["minister_name"],
+                "payload_json": r["payload_json"],
+                "status": r["status"],
+            }
+            for r in rows
+        ]
+
     def commit_pending_actions(
         self, state: GameState, *, content=None, registry=None, minister_name=None,
         kind_filter: Optional[str] = None, kind_filter_exclude: Optional[str] = None,
@@ -6040,7 +6067,7 @@ class GameDB:
     def retry_failed_pending_action(
         self, state: GameState, action_id: int, *, content=None, registry=None,
     ) -> Dict[str, object]:
-        """重试本回合 failed 的密令暂存动作，用原 payload 再走正常 durable 落库路径。"""
+        """重试 failed 的密令暂存动作，用原 payload 再走正常 durable 落库路径。"""
         row = self.conn.execute(
             "SELECT id, turn, kind, action, target_id, minister_name, payload_json, status "
             "FROM pending_actions WHERE id=?",
@@ -6058,8 +6085,8 @@ class GameDB:
             "payload_json": row["payload_json"],
             "status": row["status"],
         }
-        if int(pa["turn"]) != int(state.turn):
-            raise ValueError("该失败动作不属于当前回合，不能重试。")
+        if int(pa["turn"]) > int(state.turn):
+            raise ValueError("该失败动作来自未来回合，不能重试。")
         if pa["status"] != "failed":
             raise ValueError("只有 failed 的待确认动作可以重试。")
         if pa["kind"] != "secret_order":

@@ -944,6 +944,39 @@ def test_unresolved_failed_secret_order_is_ignored_after_turn_boundary(game):
     assert len(old_failed) == 1 and old_failed[0]["id"] == pending_id
 
 
+def test_default_approval_secret_order_failure_surfaces_after_turn_boundary(game, monkeypatch):
+    """#415: checkpoint/default approval failure must remain visible and retryable after turn advance."""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    old_turn = state.turn
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
+                 "tags": [], "deadline_months": 0},
+    )
+    original_create = db.create_secret_order
+
+    def _poison(*args, **kwargs):
+        raise RuntimeError("AUDIT_INJECTED_DURABLE_WRITE_FAILURE")
+
+    monkeypatch.setattr(db, "create_secret_order", _poison)
+    advance_without_edict(state, db)
+
+    assert state.turn == old_turn + 1
+    failed = db.list_failed_secret_order_actions(name)
+    assert [f["id"] for f in failed] == [pending_id]
+    payload = web_app.WebGame.pending_action_failures_for(
+        types.SimpleNamespace(db=db), name)
+    assert payload and payload[0]["id"] == pending_id
+
+    monkeypatch.setattr(db, "create_secret_order", original_create)
+    retry = db.retry_failed_pending_action(state, pending_id)
+
+    assert retry["committed"] is True
+    assert db.list_failed_secret_order_actions(name) == []
+    assert db.list_secret_orders(status="active")[-1]["title"] == "暗查辽饷"
+
+
 def test_successful_secret_order_confirmation_stays_quiet(game, monkeypatch):
     """成功落库只通过密令表可见,不新增聊天成功通知。"""
     db, state, content = game
