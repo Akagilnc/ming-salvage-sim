@@ -1591,6 +1591,9 @@ class WebGame:
         secret_order_id = 0
         pending_action_id = 0
         tool_pending_action_id = 0
+        preexisting_pending_action_ids = {
+            int(p["id"]) for p in self.db.list_pending_actions(self.state.turn, minister_name=character.name)
+        }
         if run_output is not None:
             for tool_exec in getattr(run_output, "tools", None) or []:
                 res = str(getattr(tool_exec, "result", "") or "")
@@ -1708,6 +1711,7 @@ class WebGame:
             has_directive=proposed is not None or bool(pending_action_id),
             secret_order_id=secret_order_id,
             preclassified_intent=self.session._finish_cli_action_intent(action_intent_future),
+            confirm_target_ids=preexisting_pending_action_ids,
         )
         if proposed is None and res["directive"]:
             proposed = res["directive"]

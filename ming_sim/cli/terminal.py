@@ -266,6 +266,11 @@ def minister_chat(session: GameSession, character: Character) -> str:
             session.db.append_chat_message(character.name, accepted_turn, "minister", result.answer)
         print(wrap(result.answer))
         print()
+        for failure in getattr(result, "pending_action_failures", []) or []:
+            message = str(failure.get("message") or "密令落库失败。")
+            print(f"【密令落库失败】{wrap(message)}")
+            if failure.get("retryable"):
+                print("可稍后在支持重试的界面重试；本次失败不会阻断继续召对。\n")
         if result.proposed_directive is not None:
             _confirm_pending_directive(session, result.proposed_directive, character.name)
         if result.appointed_minister:

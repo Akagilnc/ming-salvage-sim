@@ -1163,7 +1163,7 @@ def extract_confirmation_intent(
     )
     raw = ""
     try:
-        raw, _ = _run_backend_for_config(prompt, llm_config, tag="confirmation")
+        raw, _ = _run_json_extractor_for_config(prompt, llm_config, tag="confirmation")
     except Exception as exc:  # 抽取失败不阻断对话；当未表态，暂存留到颁诏(算同意)
         _log(f"确认意图抽取失败：{exc}")
     obj = _loads_lenient(raw) or {}
