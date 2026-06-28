@@ -137,6 +137,25 @@ def test_secret_order_rush_intent_stages_and_commits(game, monkeypatch):
     assert db.list_pending_actions(state.turn) == []
 
 
+def test_secret_order_rush_deadline_zero_commits_immediate_review(game):
+    """暂存催办 deadline_months=0 表示本月即核，commit 时不能被缺省值改成 1。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=6)
+    db.stage_pending_action(
+        state.turn, kind="secret_order", action="催办", minister_name=name, target_id=oid,
+        payload={"deadline_months": 0, "reason": "即刻核议"},
+    )
+
+    db.commit_pending_actions(state)
+
+    row = db.conn.execute(
+        "SELECT status, due_turn FROM secret_orders WHERE id=?", (oid,)
+    ).fetchone()
+    assert row["status"] == "pending_review"
+    assert row["due_turn"] == state.turn
+
+
 def test_secret_order_submit_intent_stages_and_commits(game, monkeypatch):
     """提交核议过闸门:召对暂存(status 仍 active),颁诏 commit 才转 pending_review。"""
     db, state, content = game
@@ -1099,6 +1118,31 @@ def test_default_approval_secret_order_failure_surfaces_after_turn_boundary(game
     assert retry["committed"] is True
     assert db.list_failed_secret_order_actions(name) == []
     assert db.list_secret_orders(status="active")[-1]["title"] == "暗查辽饷"
+
+
+def test_retry_failed_secret_order_preserves_original_issue_turn(game):
+    """旧回合 failed 密令重试时，签发 turn/due_turn 仍按原 pending 回合计算。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    old_turn = state.turn
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
+                 "tags": [], "deadline_months": 3},
+    )
+    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
+    db.conn.commit()
+    state.next_period()
+    db.save_state(state)
+
+    retry = db.retry_failed_pending_action(state, pending_id)
+
+    assert retry["committed"] is True
+    row = db.conn.execute(
+        "SELECT turn_issued, due_turn FROM secret_orders WHERE title='暗查辽饷' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert row["turn_issued"] == old_turn
+    assert row["due_turn"] == old_turn + 3
 
 
 def test_successful_secret_order_confirmation_stays_quiet(game, monkeypatch):
