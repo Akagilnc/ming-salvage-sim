@@ -1,8 +1,7 @@
 """CLI 终端层：input()/print() 驱动，调 GameSession 跑回合。L9。
 
 play_turn 状态机搬入此处；GameSession 持游戏状态，terminal 只做 I/O。
-拟旨 draft 待确认：大臣 propose_directive → session 返回 pending 草案
-→ 终端打印草稿 → 皇帝 可/准→confirm，驳→reject。
+拟旨候选先进 pending_actions 闸门；皇帝可在对话里准/驳，不回则颁诏 checkpoint 默认同意。
 """
 
 from __future__ import annotations
@@ -10,12 +9,13 @@ from __future__ import annotations
 import re
 from typing import List, Optional
 
+from ming_sim.applier import atomic
 from ming_sim.constants import COURT_BREAK_COMMANDS, EXIT_COMMANDS, TURN_UNIT
 from ming_sim.assets import wrap
 from ming_sim.context import match_minister_from_text
 from ming_sim.exceptions import ExitGame, SettlementAbort
 from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS, Character, GameState, is_vassal_prince
-from ming_sim.session import GameSession, TurnPhase
+from ming_sim.session import FRONT_HALF_DONE_PHASES, GameSession, TurnPhase, _pending_action_failure_payload
 from ming_sim.skills import print_all_skill_cards, print_skill_card, skill_display_name
 
 _STATUS_LABEL = {
@@ -30,6 +30,76 @@ _STATUS_LABEL = {
 # 皇帝当场对拟旨草稿的回应
 _CONFIRM_WORDS = {"", "可", "准", "准奏", "yes", "y", "确认", "入档"}
 _REJECT_WORDS = {"驳", "不准", "驳回", "no", "n"}
+
+
+def _retry_failed_pending_action(session: GameSession, action_id: int) -> None:
+    """Retry a failed secret-order pending action from the CLI audience loop."""
+    if getattr(session.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
+        print("上月结算未完成，暂不能重试密令；请先到诏书界面输入 issue 续跑结算。\n")
+        return
+    try:
+        with atomic(session.db):
+            result = session.db.retry_failed_pending_action(
+                session.state,
+                int(action_id),
+                content=getattr(session, "content", None),
+                registry=getattr(session, "registry", None),
+            )
+            if result.get("committed"):
+                session.db.retire_chat_turn_for_pending_action_retry(int(action_id))
+    except KeyError as exc:
+        print(f"未找到可重试的密令：{exc}\n")
+        return
+    except ValueError as exc:
+        print(f"此密令暂不能重试：{exc}\n")
+        return
+    if result.get("committed"):
+        print(f"密令 #{int(action_id)} 已重试落库。\n")
+    else:
+        print(f"密令 #{int(action_id)} 重试仍未落库；可稍后再试，不阻断继续召对。\n")
+
+
+def _failed_secret_order_ids(session: GameSession, turn: int) -> set[int]:
+    db = getattr(session, "db", None)
+    if db is None or not hasattr(db, "list_pending_actions"):
+        return set()
+    return {
+        int(action.get("id") or 0)
+        for action in db.list_pending_actions(int(turn), status="failed")
+        if action.get("kind") == "secret_order"
+    }
+
+
+def _new_secret_order_failure_payloads(
+    session: GameSession, turn: int, before_ids: set[int],
+) -> List[dict]:
+    db = getattr(session, "db", None)
+    if db is None or not hasattr(db, "list_pending_actions"):
+        return []
+    failures: List[dict] = []
+    for action in db.list_pending_actions(int(turn), status="failed"):
+        if action.get("kind") != "secret_order":
+            continue
+        action_id = int(action.get("id") or 0)
+        if action_id in before_ids:
+            continue
+        failures.append(_pending_action_failure_payload(action, session.state))
+    return failures
+
+
+def _print_pending_action_failures(failures: List[dict]) -> None:
+    for failure in failures:
+        message = str(failure.get("message") or "密令落库失败。")
+        raw_failure_id = failure.get("id")
+        try:
+            failure_id = int(raw_failure_id) if raw_failure_id is not None else None
+        except (TypeError, ValueError):
+            failure_id = None
+        suffix = f" #{failure_id}" if failure_id is not None else ""
+        print(f"【密令落库失败{suffix}】{wrap(message)}")
+        if failure.get("retryable"):
+            command = f"retry {failure_id}" if failure_id is not None else "retry <id>"
+            print(f"可输入 {command} 重试；本次失败不会阻断继续召对。\n")
 
 
 def _print_header(session: GameSession) -> None:
@@ -131,6 +201,11 @@ def _handle_court_command(
         raise ExitGame
     if lowered in COURT_BREAK_COMMANDS or raw in {"退朝", "下朝"}:
         return "court_break"
+
+    retry_m = re.fullmatch(r"(?:retry|重试|重试密令)\s*#?(\d+)", raw, re.I)
+    if retry_m:
+        _retry_failed_pending_action(session, int(retry_m.group(1)))
+        return "handled"
 
     # 技能卡查看
     if (lowered in {"skills", "skill", "技能", "技能卡", "查看技能", "查看skill"} or "技能" in raw) \
@@ -267,6 +342,7 @@ def minister_chat(session: GameSession, character: Character) -> str:
             session.db.append_chat_message(character.name, accepted_turn, "minister", result.answer)
         print(wrap(result.answer))
         print()
+        _print_pending_action_failures(getattr(result, "pending_action_failures", []) or [])
         if result.proposed_directive is not None:
             _confirm_pending_directive(session, result.proposed_directive, character.name)
         if result.appointed_minister:
@@ -291,16 +367,22 @@ def review_directives(session: GameSession) -> str:
         directives = session.list_directives(include_pending=True)
         pending = [d for d in directives if d.status == "pending"]
         drafts = [d for d in directives if d.status == "draft"]
+        staged_directives = [
+            p for p in session.db.list_pending_actions(session.state.turn)
+            if p.get("kind") == "directive"
+        ]
         print(f"\n本{TURN_UNIT}诏书草案：")
         if pending:
             print(f"  ⚠ {len(pending)} 道大臣拟旨待核定（confirm N 准 / reject N 驳）：")
             for d in pending:
                 print(f"  [待核定] #{d.id}  {wrap(d.text)}")
+        if staged_directives:
+            print(f"  · {len(staged_directives)} 道对话拟旨待颁诏默认同意。")
         if drafts:
             for idx, d in enumerate(drafts, 1):
                 print(f"{idx}. #{d.id}")
                 print(f"   {wrap(d.text)}")
-        elif not pending:
+        elif not pending and not staged_directives:
             print("（暂无指令。back 继续召见，或 add 新增。）")
         print("\n操作：issue 颁布 | back 继续召见 | add 新增 | edit N 改 | del N 删 | "
               "confirm N 准拟旨 | reject N 驳拟旨 | skills 技能卡 | exit 退出")
@@ -311,7 +393,7 @@ def review_directives(session: GameSession) -> str:
         if lowered in EXIT_COMMANDS:
             raise ExitGame
         if lowered in COURT_BREAK_COMMANDS:
-            if drafts or pending:
+            if drafts or pending or staged_directives:
                 print(f"本{TURN_UNIT}尚有草案/待核定。请 issue 颁布，或 del/reject 清空后退朝。")
                 continue
             return "skip"
@@ -338,7 +420,7 @@ def review_directives(session: GameSession) -> str:
             if pending:
                 print(f"尚有 {len(pending)} 道大臣拟旨待核定（confirm/reject），不能颁诏。")
                 continue
-            if not drafts:
+            if not drafts and not staged_directives:
                 print("暂无指令，不能颁布空诏书。add 新增，或 back 继续召见。")
                 continue
             try:
@@ -445,14 +527,24 @@ def play_turn(session: GameSession) -> None:
         if action == "back":
             continue
         if action == "skip":
+            turn_before = int(session.state.turn)
+            failed_before = _failed_secret_order_ids(session, turn_before)
             try:
                 session.advance_without_decree()
             except ValueError as error:
                 # FRONT_HALF_DONE 拒绝跳过（ADR 决定 6）：打印指引回会话循环，不崩出进程。
                 print(f"\n{error}")
+                _print_pending_action_failures(
+                    _new_secret_order_failure_payloads(session, turn_before, failed_before)
+                )
                 continue
+            _print_pending_action_failures(
+                _new_secret_order_failure_payloads(session, turn_before, failed_before)
+            )
             return
         if action == "issue":
+            turn_before = int(session.state.turn)
+            failed_before = _failed_secret_order_ids(session, turn_before)
             try:
                 result = session.resolve_turn()
                 if result.awaiting:
@@ -472,13 +564,22 @@ def play_turn(session: GameSession) -> None:
                 # （continue 与 skip 分支同语义，不 return 重进 play_turn 刷屏——
                 # PR #90 R1 gemini；ship-pre r5——issue 分支此前只接 SettlementAbort）。
                 print(f"\n{error}")
+                _print_pending_action_failures(
+                    _new_secret_order_failure_payloads(session, turn_before, failed_before)
+                )
                 continue
             except SettlementAbort as error:
                 # 结算中止（ADR 0008 决定 6/7）：打印玩家指引（含错误包路径）后留在
                 # 本回合交互循环——「可重试」要成立就不能崩出进程；重进时
                 # settling/awaiting 守门保证前半段不重跑。
                 print(f"\n{error}")
+                _print_pending_action_failures(
+                    _new_secret_order_failure_payloads(session, turn_before, failed_before)
+                )
                 continue
+            _print_pending_action_failures(
+                _new_secret_order_failure_payloads(session, turn_before, failed_before)
+            )
             print(report)
             session.end_turn()
             return

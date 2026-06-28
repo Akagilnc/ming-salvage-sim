@@ -7,6 +7,7 @@ return 会退出 play_turn，外层主循环重进时重印回合引导/在册�
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -15,6 +16,11 @@ import ming_sim.cli.terminal as term
 import ming_sim.issues as issues_mod
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.session import TurnPhase
+
+
+@contextmanager
+def _noop_atomic(_db):
+    yield
 
 
 class _Snap:
@@ -29,6 +35,7 @@ class _Sess:
         self.calls = []
         self._fail = fail_exc
         self.db = None
+        self.state = SimpleNamespace(turn=1)
 
     def begin_turn(self):
         self.calls.append("begin")
@@ -64,6 +71,41 @@ def test_issue_refusal_stays_in_loop(monkeypatch, capsys, exc):
     # 拒绝后不 return：同一次 play_turn 内续到 skip→advance；begin 只跑一次=不重进刷屏。
     assert sess.calls == ["begin", "resolve", "advance"]
     assert str(exc) in capsys.readouterr().out
+
+
+def test_review_issue_reaches_staged_directive_default_approval(monkeypatch):
+    """#412 review fix: CLI issue must call write_decree when only pending_actions directives exist.
+
+    write_decree owns the default-approval commit from pending_actions -> draft; review_directives
+    must not reject earlier just because list_directives() is still empty.
+    """
+
+    class Db:
+        def list_pending_actions(self, turn):
+            return [{"kind": "directive", "status": "pending"}]
+
+    class Session:
+        def __init__(self):
+            self.db = Db()
+            self.state = SimpleNamespace(turn=1, turn_phase=TurnPhase.REVIEWING.value)
+            self.calls = []
+
+        def enter_review(self):
+            self.calls.append("enter_review")
+
+        def list_directives(self, include_pending=False):
+            return []
+
+        def write_decree(self):
+            self.calls.append("write_decree")
+            return "奉天承运皇帝诏曰，着户部清核辽饷。"
+
+    answers = iter(["issue", "yes"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    session = Session()
+
+    assert term.review_directives(session) == "issue"
+    assert session.calls == ["enter_review", "write_decree"]
 
 
 def test_terminal_minister_chat_persists_messages_before_session_chat(monkeypatch):
@@ -278,3 +320,202 @@ def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(monkeyp
     assert session.db.messages == [
         ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。"),
     ]
+
+
+def test_terminal_minister_chat_can_retry_failed_secret_order(monkeypatch, capsys):
+    """#415: CLI 看到失败密令后，也能用存量 pending payload 直接重试落库。"""
+
+    class Db:
+        def __init__(self):
+            self.retried = []
+            self.retired = []
+
+        def retry_failed_pending_action(self, state, action_id, *, content=None, registry=None):
+            self.retried.append((state.turn, action_id, content, registry))
+            return {"committed": True}
+
+        def retire_chat_turn_for_pending_action_retry(self, action_id):
+            self.retired.append(action_id)
+            return 9
+
+    class Session:
+        def __init__(self):
+            self.db = Db()
+            self.state = SimpleNamespace(turn=7)
+            self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
+            self.registry = object()
+            self.temporary_characters = set()
+
+        def chat(self, minister_name, question):
+            raise AssertionError("retry 命令不应进入普通召对")
+
+    answers = iter(["retry 42", "done"])
+    monkeypatch.setattr(term, "atomic", _noop_atomic)
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    session = Session()
+
+    assert term.minister_chat(session, SimpleNamespace(name="魏忠贤")) == "dismiss"
+    assert session.db.retried == [(7, 42, session.content, session.registry)]
+    assert session.db.retired == [42]
+    assert "密令 #42 已重试落库" in capsys.readouterr().out
+
+
+def test_terminal_minister_chat_blocks_retry_during_settlement_recovery(monkeypatch, capsys):
+    """CLI 恢复窗口里不能手动 retry；必须先续跑/完成本次结算。"""
+
+    class Db:
+        def retry_failed_pending_action(self, state, action_id, *, content=None, registry=None):
+            raise AssertionError("结算恢复窗口不应调用 retry 落库")
+
+    class Session:
+        def __init__(self):
+            self.db = Db()
+            self.state = SimpleNamespace(turn=7, turn_phase=TurnPhase.SETTLING.value)
+            self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
+            self.registry = object()
+            self.temporary_characters = set()
+
+        def chat(self, minister_name, question):
+            raise AssertionError("retry 命令不应进入普通召对")
+
+    answers = iter(["retry 42", "done"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    session = Session()
+
+    assert term.minister_chat(session, SimpleNamespace(name="魏忠贤")) == "dismiss"
+    out = capsys.readouterr().out
+    assert "结算未完成" in out
+    assert "issue" in out
+
+
+def test_terminal_failure_printer_preserves_zero_id(capsys):
+    """失败 id 为 0 时也按显式 id 打印，不用 truthiness 掉成 retry <id>。"""
+    term._print_pending_action_failures([{
+        "id": 0,
+        "kind": "secret_order",
+        "action": "新建",
+        "message": "密令落库失败。",
+        "retryable": True,
+    }])
+
+    out = capsys.readouterr().out
+    assert "【密令落库失败 #0】" in out
+    assert "retry 0" in out
+
+
+@pytest.mark.parametrize("action", ["skip", "issue"])
+def test_play_turn_reports_default_approval_secret_order_failure(monkeypatch, capsys, action):
+    """#415: 退朝默认提交密令失败时，CLI 也必须给出失败 id 与 retry 命令。"""
+
+    class Db:
+        def __init__(self):
+            self.actions = []
+
+        def list_pending_actions(self, turn, status=None):
+            if status == "failed":
+                return list(self.actions)
+            return []
+
+    class Session:
+        previous_summary = ""
+
+        def __init__(self):
+            self.db = Db()
+            self.state = SimpleNamespace(turn=7)
+            self.calls = []
+
+        def begin_turn(self):
+            self.calls.append("begin")
+            return _Snap()
+
+        def current_phase(self):
+            return TurnPhase.REVIEWING
+
+        def advance_without_decree(self):
+            self.calls.append("advance")
+            self.db.actions.append({
+                "id": 42,
+                "kind": "secret_order",
+                "action": "新建",
+            })
+
+        def resolve_turn(self):
+            self.calls.append("resolve")
+            self.db.actions.append({
+                "id": 42,
+                "kind": "secret_order",
+                "action": "新建",
+            })
+            return SimpleNamespace(awaiting=False, report="月报")
+
+        def end_turn(self):
+            self.calls.append("end")
+
+    monkeypatch.setattr(term, "review_directives", lambda s: action)
+    monkeypatch.setattr(term, "_print_header", lambda s: None)
+    monkeypatch.setattr(issues_mod, "show_active_issues", lambda db: None)
+    session = Session()
+
+    term.play_turn(session)
+
+    out = capsys.readouterr().out
+    assert "【密令落库失败 #42】" in out
+    assert "retry 42" in out
+    if action == "skip":
+        assert session.calls == ["begin", "advance"]
+    else:
+        assert session.calls == ["begin", "resolve", "end"]
+
+
+def test_play_turn_reports_secret_order_failure_when_settlement_aborts(monkeypatch, capsys):
+    """pre_settle 已标 failed 后若后续结算中止，CLI 仍须显示 retry id。"""
+
+    class Db:
+        def __init__(self):
+            self.actions = []
+
+        def list_pending_actions(self, turn, status=None):
+            if status == "failed":
+                return list(self.actions)
+            return []
+
+    class Session:
+        previous_summary = ""
+
+        def __init__(self):
+            self.db = Db()
+            self.state = SimpleNamespace(turn=7)
+            self.calls = []
+
+        def begin_turn(self):
+            self.calls.append("begin")
+            return _Snap()
+
+        def current_phase(self):
+            return TurnPhase.REVIEWING
+
+        def resolve_turn(self):
+            self.calls.append("resolve")
+            self.db.actions.append({
+                "id": 42,
+                "kind": "secret_order",
+                "action": "新建",
+            })
+            raise SettlementAbort("结算中止，可重试。", turn=7, stage="extract")
+
+        def advance_without_decree(self):
+            self.calls.append("advance")
+
+    actions = iter(["issue", "skip"])
+    monkeypatch.setattr(term, "review_directives", lambda s: next(actions))
+    monkeypatch.setattr(term, "_print_header", lambda s: None)
+    monkeypatch.setattr(issues_mod, "show_active_issues", lambda db: None)
+    session = Session()
+
+    term.play_turn(session)
+
+    out = capsys.readouterr().out
+    assert "结算中止" in out
+    assert "【密令落库失败 #42】" in out
+    assert "retry 42" in out
+    assert session.calls == ["begin", "resolve", "advance"]

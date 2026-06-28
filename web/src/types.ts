@@ -273,6 +273,9 @@ export type GameState = {
   directives: Directive[];
   pending_count: number;
   pending_directive_count?: number;  // 对话式拟旨暂存数（pending_actions kind=directive）
+  pending_secret_order_count?: number;  // 兼容旧字段；隐藏的新密令候选不再向前端计数
+  pending_non_directive_action_count?: number;  // 可见的非拟旨 pending_actions（不含隐藏新密令候选）
+  failed_secret_order_count?: number;
   pending_decisions?: PendingDecision[];
   last_decree: string;
   last_report: string;
@@ -364,6 +367,15 @@ export type SecretOrder = {
 
 export type ProposedDirective = { id: number; text: string; status: string; notes: string };
 
+export type PendingActionFailure = {
+  id: number;
+  kind: string;
+  action: string;
+  minister_name?: string;
+  retryable?: boolean;
+  message: string;
+};
+
 export type ChatResponse = {
   answer: string;
   history: ChatMessage[];
@@ -376,6 +388,7 @@ export type ChatResponse = {
   registered_minister?: string;
   proposed_directive?: ProposedDirective | null;
   secret_order_id?: number;
+  pending_action_failures?: PendingActionFailure[];
 };
 
 export type ChatUndoResponse = {
@@ -385,6 +398,7 @@ export type ChatUndoResponse = {
   pending_count: number;
   secret_orders: SecretOrder[];
   can_undo_last_chat: boolean;
+  pending_action_failures?: PendingActionFailure[];
 };
 
 export type ApiErrorDetail = {
@@ -392,6 +406,7 @@ export type ApiErrorDetail = {
   message?: string;
   provider_message?: string;
   status_code?: number | null;
+  pending_action_failures?: PendingActionFailure[];
 };
 
 export type AppView = "menu" | "game";

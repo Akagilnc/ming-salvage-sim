@@ -1,8 +1,8 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ChatModal, ReportModal } from "./modals";
-import type { Minister } from "../types";
+import { ChatModal, EdictModal, ReportModal } from "./modals";
+import type { BudgetAccount, GameState, Minister, PendingActionFailure } from "../types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -42,6 +42,8 @@ function renderModal(props: {
   portraitPrefix: string;
   busy?: string;
   onCancel?: () => void;
+  chatFailures?: PendingActionFailure[];
+  onRetryFailure?: (failure: PendingActionFailure) => void;
 }) {
   const host = document.createElement("div");
   document.body.appendChild(host);
@@ -57,6 +59,7 @@ function renderModal(props: {
         pendingUserMessage=""
         streamingMinisterMessage=""
         chatNotice=""
+        chatFailures={props.chatFailures ?? []}
         canUndoLastChat={false}
         composerHint=""
         input=""
@@ -64,6 +67,7 @@ function renderModal(props: {
         secretOrders={[]}
         onInput={() => {}}
         onSend={() => {}}
+        onRetryFailure={props.onRetryFailure ?? (() => {})}
         onUndo={() => {}}
         onHint={() => {}}
         onFavorite={() => {}}
@@ -94,6 +98,91 @@ function renderReportModal(props: { report: string; accountReport?: string }) {
   mountedRoots.push({ root, host });
 }
 
+const EMPTY_BUDGET_ACCOUNT: BudgetAccount = {
+  balance: 0,
+  income: [],
+  expense: [],
+  income_total: 0,
+  expense_total: 0,
+  net: 0,
+  movements: [],
+  movements_total: 0,
+};
+
+function baseGameState(overrides: Partial<GameState> = {}): GameState {
+  return {
+    turn: { year: 1627, period: 10, turn: 1, phase: "summoning" },
+    metrics: {},
+    previous_summary: "",
+    treasury: "",
+    issues: [],
+    legacies: [],
+    closed_this_turn: [],
+    budget: { 国库: EMPTY_BUDGET_ACCOUNT, 内库: EMPTY_BUDGET_ACCOUNT },
+    region_warning: "",
+    army_warning: "",
+    power_warning: "",
+    powers: [],
+    victory_status: { status: "ongoing", summary: "" },
+    ending: null,
+    events: [],
+    regions: [],
+    armies: [],
+    map_nodes: [],
+    ministers: [],
+    consorts: [],
+    directives: [],
+    pending_count: 0,
+    pending_directive_count: 0,
+    pending_secret_order_count: 0,
+    pending_non_directive_action_count: 0,
+    last_decree: "",
+    last_report: "",
+    ...overrides,
+  };
+}
+
+function renderEdictModal(props: {
+  state: GameState;
+  onAdvanceWithoutEdict?: () => void;
+  onOpenFailureRecovery?: () => void;
+}) {
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  act(() =>
+    root.render(
+      <EdictModal
+        state={props.state}
+        directiveText=""
+        editingDirectiveId={null}
+        editingDirectiveText=""
+        decree=""
+        report=""
+        busy=""
+        error=""
+        onDirectiveTextChange={() => {}}
+        onEditingTextChange={() => {}}
+        onCreateDirective={() => {}}
+        onStartEdit={() => {}}
+        onCancelEdit={() => {}}
+        onSaveDirective={() => {}}
+        onDeleteDirective={() => {}}
+        onWriteDecree={() => {}}
+        onAdvanceWithoutEdict={props.onAdvanceWithoutEdict ?? (() => {})}
+        onSaveDecree={() => {}}
+        onResetDecree={() => {}}
+        onIssueDecree={() => {}}
+        onConfirmDirective={() => {}}
+        onRejectDirective={() => {}}
+        onOpenFailureRecovery={props.onOpenFailureRecovery ?? (() => {})}
+      />
+    )
+  );
+  mountedRoots.push({ root, host });
+  return { host, root };
+}
+
 afterEach(() => {
   // Unmount every root rendered this test (whether the body passed or threw).
   for (const { root, host } of mountedRoots) {
@@ -102,6 +191,78 @@ afterEach(() => {
   }
   mountedRoots.length = 0;
   document.body.innerHTML = "";
+});
+
+describe("EdictModal — hidden secret-order default approval", () => {
+  it("shows generic no-edict advance without exposing hidden secret-order pending state", () => {
+    const onAdvance = vi.fn();
+    const { host } = renderEdictModal({
+      state: baseGameState({ pending_secret_order_count: 0, pending_non_directive_action_count: 0 }),
+      onAdvanceWithoutEdict: onAdvance,
+    });
+    const button = Array.from(host.querySelectorAll("button")).find((item) =>
+      item.textContent?.includes("退朝")
+    ) as HTMLButtonElement | undefined;
+
+    expect(button).toBeTruthy();
+    expect(host.textContent).not.toContain("密令已候旨");
+    expect(host.textContent).not.toContain("尚有召对事项候旨");
+    expect(host.textContent).toContain("本月尚无明发诏令");
+    act(() => {
+      button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onAdvance).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows no-edict advance for non-directive pending actions beyond new secret orders", () => {
+    const onAdvance = vi.fn();
+    const { host } = renderEdictModal({
+      state: baseGameState({ pending_non_directive_action_count: 1 }),
+      onAdvanceWithoutEdict: onAdvance,
+    });
+    const button = Array.from(host.querySelectorAll("button")).find((item) =>
+      item.textContent?.includes("退朝")
+    ) as HTMLButtonElement | undefined;
+
+    expect(button).toBeTruthy();
+  });
+
+  it("offers durable recovery entry for failed secret orders", () => {
+    const onOpenFailureRecovery = vi.fn();
+    const { host } = renderEdictModal({
+      state: baseGameState({ failed_secret_order_count: 1 }),
+      onOpenFailureRecovery,
+    });
+    const button = Array.from(host.querySelectorAll("button")).find((item) =>
+      item.textContent?.includes("处理")
+    ) as HTMLButtonElement | undefined;
+
+    expect(host.textContent).toContain("密令落库失败");
+    expect(button).toBeTruthy();
+    act(() => {
+      button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onOpenFailureRecovery).toHaveBeenCalledTimes(1);
+  });
+
+  it("prioritizes failed secret-order recovery over generic pending-action hint", () => {
+    const onOpenFailureRecovery = vi.fn();
+    const { host } = renderEdictModal({
+      state: baseGameState({
+        failed_secret_order_count: 1,
+        pending_non_directive_action_count: 1,
+      }),
+      onOpenFailureRecovery,
+    });
+    const button = Array.from(host.querySelectorAll("button")).find((item) =>
+      item.textContent?.includes("处理")
+    ) as HTMLButtonElement | undefined;
+
+    expect(host.textContent).toContain("密令落库失败");
+    expect(host.textContent).not.toContain("尚有召对事项候旨");
+    expect(button).toBeTruthy();
+  });
 });
 
 describe("ChatModal — placeholder switches on character type", () => {
@@ -123,6 +284,47 @@ describe("ChatModal — placeholder switches on character type", () => {
     renderModal({ minister: CONSORT_MOCK, portraitPrefix: "consort_" });
     const textarea = document.querySelector("textarea") as HTMLTextAreaElement;
     expect(textarea.placeholder.length).toBeGreaterThan(5);
+  });
+
+  it("shows secret-order landing failure with retry action", () => {
+    const failure: PendingActionFailure = {
+      id: 7,
+      kind: "secret_order",
+      action: "新建",
+      retryable: true,
+      message: "密令未能正式落库，请重试；若暂不处理，也不会阻断继续召对。",
+    };
+    const retry = vi.fn();
+
+    renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      chatFailures: [failure],
+      onRetryFailure: retry,
+    });
+
+    expect(document.querySelector(".chat-failure-note")?.textContent).toContain("密令未能正式落库");
+    const button = Array.from(document.querySelectorAll("button")).find((node) => node.textContent === "重试");
+    expect(button).toBeTruthy();
+    act(() => button?.click());
+    expect(retry).toHaveBeenCalledWith(failure);
+  });
+
+  it("does not show retry action for unsupported failure kinds", () => {
+    renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      chatFailures: [{
+        id: 8,
+        kind: "office",
+        action: "任命",
+        message: "任免未能正式落库，已记录为失败；若暂不处理，也不会阻断继续召对。",
+      }],
+    });
+
+    expect(document.querySelector(".chat-failure-note")?.textContent).toContain("任免未能正式落库");
+    const button = Array.from(document.querySelectorAll("button")).find((node) => node.textContent === "重试");
+    expect(button).toBeUndefined();
   });
 });
 

@@ -4,7 +4,7 @@ import { api } from "../api";
 import { ExtractionView } from "./extraction";
 import { FullscreenModal, MinisterPortrait, cacheBust } from "./hud";
 import { formatClosedEffect } from "../format";
-import type { ChatDisplayMessage, ChatMessage, ClosedIssue, Directive, EndingPayload, GameState, HistoryDetail, HistoryTurnItem, Minister, SecretOrder, Suggestion } from "../types";
+import type { ChatDisplayMessage, ChatMessage, ClosedIssue, Directive, EndingPayload, GameState, HistoryDetail, HistoryTurnItem, Minister, PendingActionFailure, SecretOrder, Suggestion } from "../types";
 
 export function ReportModal({
   report,
@@ -538,6 +538,7 @@ export function ChatModal({
   pendingUserMessage,
   streamingMinisterMessage,
   chatNotice,
+  chatFailures,
   canUndoLastChat,
   composerHint,
   input,
@@ -546,6 +547,7 @@ export function ChatModal({
   secretOrders,
   onInput,
   onSend,
+  onRetryFailure,
   onUndo,
   onHint,
   onFavorite,
@@ -560,6 +562,7 @@ export function ChatModal({
   pendingUserMessage: string;
   streamingMinisterMessage: string;
   chatNotice: string;
+  chatFailures: PendingActionFailure[];
   canUndoLastChat: boolean;
   composerHint: string;
   input: string;
@@ -568,6 +571,7 @@ export function ChatModal({
   secretOrders: SecretOrder[];
   onInput: (value: string) => void;
   onSend: (text?: string) => void;
+  onRetryFailure: (failure: PendingActionFailure) => void;
   onUndo: () => void;
   onHint: (value: string) => void;
   onFavorite: () => void;
@@ -617,7 +621,7 @@ export function ChatModal({
     if (node) {
       node.scrollTop = node.scrollHeight;
     }
-  }, [minister.name, chat, pendingUserMessage, streamingMinisterMessage, chatNotice, busy, error]);
+  }, [minister.name, chat, pendingUserMessage, streamingMinisterMessage, chatNotice, chatFailures, busy, error]);
 
   const handleSend = () => {
     onSend(input);
@@ -695,6 +699,16 @@ export function ChatModal({
             </div>
           )}
           {chatNotice && <div className="chat-system-note">{chatNotice}</div>}
+          {chatFailures.map((failure) => (
+            <div className="chat-system-note danger chat-failure-note" role="alert" key={failure.id}>
+              <span>{failure.minister_name && failure.minister_name !== minister.name ? `${failure.minister_name}：` : ""}{failure.message}</span>
+              {failure.kind === "secret_order" && failure.retryable && (
+                <button type="button" onClick={() => onRetryFailure(failure)} disabled={!!busy}>
+                  重试
+                </button>
+              )}
+            </div>
+          ))}
           {error && <div className="chat-system-note danger" role="alert">{error}</div>}
         </div>
         <div className="chat-composer">
@@ -770,11 +784,13 @@ export function EdictModal({
   onSaveDirective,
   onDeleteDirective,
   onWriteDecree,
+  onAdvanceWithoutEdict,
   onSaveDecree,
   onResetDecree,
   onIssueDecree,
   onConfirmDirective,
   onRejectDirective,
+  onOpenFailureRecovery,
 }: {
   state: GameState;
   directiveText: string;
@@ -792,16 +808,21 @@ export function EdictModal({
   onSaveDirective: (directive: Directive) => void;
   onDeleteDirective: (directiveId: number) => void;
   onWriteDecree: () => void;
+  onAdvanceWithoutEdict: () => void;
   onSaveDecree: (text: string) => void;
   onResetDecree: () => void;
   onIssueDecree: () => void;
   onConfirmDirective: (directiveId: number) => void;
   onRejectDirective: (directiveId: number) => void;
+  onOpenFailureRecovery: () => void;
 }) {
   const pendingDirectives = state.directives.filter((d) => d.status === "pending");
   const draftDirectives = state.directives.filter((d) => d.status !== "pending");
   const hasPending = pendingDirectives.length > 0;
   const hasPendingConversationalDraft = (state.pending_directive_count ?? 0) > 0;
+  const hasNonEdictPendingActions = (state.pending_non_directive_action_count ?? 0) > 0;
+  const hasFailedSecretOrders = (state.failed_secret_order_count ?? 0) > 0;
+  const canAdvanceWithoutEdict = !draftDirectives.length && !hasPendingConversationalDraft;
   const [decreeDraft, setDecreeDraft] = React.useState(decree);
   React.useEffect(() => {
     setDecreeDraft(decree);
@@ -913,8 +934,17 @@ export function EdictModal({
                 )}
               </div>
             ))}
-            {!draftDirectives.length && !hasPending && !hasPendingConversationalDraft && <div className="empty-note">本月不可空过。请先召见大臣，或在右侧御笔自拟一道指令。</div>}
+            {!draftDirectives.length && !hasPending && !hasPendingConversationalDraft && !hasNonEdictPendingActions && !hasFailedSecretOrders && <div className="empty-note">本月尚无明发诏令，可退朝或在右侧御笔自拟。</div>}
             {!draftDirectives.length && !hasPending && hasPendingConversationalDraft && <div className="empty-note pending-draft-hint">大臣已奉旨起草，点「拟诏」即可正式成稿。</div>}
+            {!draftDirectives.length && !hasPending && !hasPendingConversationalDraft && hasFailedSecretOrders && (
+              <div className="empty-note failed-secret-note">
+                <span>尚有密令落库失败可稍后处理；可先退朝，不阻断本月推进。</span>
+                <button type="button" onClick={onOpenFailureRecovery} disabled={!!busy}>处理</button>
+              </div>
+            )}
+            {!draftDirectives.length && !hasPending && !hasPendingConversationalDraft && !hasFailedSecretOrders && hasNonEdictPendingActions && (
+              <div className="empty-note">尚有召对事项候旨，退朝后按沉默准行处理。</div>
+            )}
           </div>
         </section>
 
@@ -935,13 +965,23 @@ export function EdictModal({
 
       <div className="desk-footer">
         {hasPending && <small className="pending-hint">尚有 {pendingDirectives.length} 道大臣拟旨待朱批（准/驳），核定后方可拟诏。</small>}
-        <button
-          className="seal-btn-compose"
-          onClick={onWriteDecree}
-          disabled={!!busy || (!draftDirectives.length && !hasPendingConversationalDraft) || hasPending}
-        >
-          拟诏 →
-        </button>
+        {canAdvanceWithoutEdict ? (
+          <button
+            className="seal-btn-compose"
+            onClick={onAdvanceWithoutEdict}
+            disabled={!!busy || hasPending}
+          >
+            退朝 →
+          </button>
+        ) : (
+          <button
+            className="seal-btn-compose"
+            onClick={onWriteDecree}
+            disabled={!!busy || (!draftDirectives.length && !hasPendingConversationalDraft) || hasPending}
+          >
+            拟诏 →
+          </button>
+        )}
       </div>
     </div>
   );

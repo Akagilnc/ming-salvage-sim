@@ -2,7 +2,7 @@
 """FastAPI web entry for Ming Salvage Sim.
 
 薄壳：路由调 ming_sim.session.GameSession（与 CLI 共用同一流转层）。
-拟旨 draft 待确认：大臣 propose_directive → pending → 前端 准/驳。
+拟旨候选：大臣 propose_directive/前缀/自然语言 → pending_actions 闸门 → 对话确认或颁诏默认同意。
 """
 
 from __future__ import annotations
@@ -36,7 +36,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
+from ming_sim.applier import atomic
 from ming_sim.constants import ROOT_DIR
 from ming_sim.paths import bundled_path, user_data_path, user_data_dir
 from ming_sim.exceptions import ExitGame, LLMUnavailable, SettlementAbort
@@ -62,10 +64,11 @@ from ming_sim.llm_config import (
 from ming_sim.agents import _dump_llm_messages
 from ming_sim.llm_model import extract_agent_text, verify_llm_available
 from ming_sim.llm_contract import fail_if_llm_error
+from ming_sim.decree import advance_without_edict
 from ming_sim.issues import _format_issue_ongoing, commitment_display_text, commitment_progress_payload, commitment_timed_bar_value
 from ming_sim.memories import effect_brief
 from ming_sim.session import GameSession
-from ming_sim.session import AUTO_SAVE_PREFIX
+from ming_sim.session import AUTO_SAVE_PREFIX, _pending_action_failure_payload
 from ming_sim.skills import available_skill_ids, skill_display_name, skill_source_labels
 from ming_sim.context import match_minister_from_text
 from ming_sim.flows import compute_budget_lines
@@ -1288,6 +1291,11 @@ class WebGame:
     def state_payload(self) -> Dict[str, Any]:
         directives = [self.directive_payload(row) for row in self.directive_rows()]
         previous_turn = max(0, int(self.state.turn) - 1)
+        pending_actions = self.db.list_pending_actions(int(self.state.turn))
+        visible_non_directive_pending = [
+            a for a in pending_actions
+            if a["kind"] != "directive" and not (a["kind"] == "secret_order" and a["action"] == "新建")
+        ]
         return {
             "turn": {"year": self.state.year, "period": self.state.period,
                      "turn": self.state.turn, "phase": self.state.turn_phase},
@@ -1328,8 +1336,12 @@ class WebGame:
             "directives": directives,
             "pending_count": self.session.pending_count(),
             "pending_directive_count": sum(
-                1 for a in self.db.list_pending_actions(int(self.state.turn))
+                1 for a in pending_actions
                 if a["kind"] == "directive"),
+            "pending_secret_order_count": 0,
+            "pending_non_directive_action_count": len(visible_non_directive_pending),
+            "failed_secret_order_count": sum(
+                1 for _a in self.db.list_failed_secret_order_actions()),
             "pending_decisions": (
                 self.session.pending_decisions()
                 if self.state.turn_phase == TurnPhase.AWAITING_DECISION.value else []
@@ -1354,6 +1366,20 @@ class WebGame:
         if self.state.turn_phase not in (TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value):
             return False
         return self.db.can_undo_last_chat_turn(minister_name, self.state.turn)
+
+    def pending_action_failures_for(self, minister_name: str) -> List[Dict[str, Any]]:
+        """该召对对象仍可由玩家处理的失败密令动作。"""
+        return [
+            _pending_action_failure_payload(action, getattr(self, "state", None))
+            for action in self.db.list_failed_secret_order_actions(minister_name)
+        ]
+
+    def pending_action_failures(self) -> List[Dict[str, Any]]:
+        """所有仍可由玩家处理的失败密令动作，不依赖承办人当前是否可召见。"""
+        return [
+            _pending_action_failure_payload(action, getattr(self, "state", None))
+            for action in self.db.list_failed_secret_order_actions()
+        ]
 
     def _audience_turn_in_flight(self, minister_name: str) -> bool:
         """#383 背景召对契约：同一大臣已有「已受理、尚未完成回奏」的 turn 时，不得再开新轮。
@@ -1438,6 +1464,7 @@ class WebGame:
             "secret_orders": self.db.list_secret_orders(),
             "suggestions": self.suggestions_for(character),
             "can_undo_last_chat": self.can_undo_last_chat(minister_name),
+            "pending_action_failures": self.pending_action_failures_for(minister_name),
         }
 
     def _chat_payload(
@@ -1452,6 +1479,7 @@ class WebGame:
         displaced_minister: str = "",
         secret_order_id: int = 0,
         pending_action_id: int = 0,
+        pending_action_failures: Optional[List[Dict[str, Any]]] = None,
         chat_turn_id: int = 0,
         accepted_turn: Optional[int] = None,
     ) -> Dict[str, Any]:
@@ -1474,6 +1502,7 @@ class WebGame:
             "displaced_minister": displaced_minister,
             "secret_order_id": secret_order_id or 0,
             "pending_action_id": pending_action_id or 0,
+            "pending_action_failures": pending_action_failures or [],
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
             "suggestions": self.suggestions_for(character),
@@ -1481,53 +1510,57 @@ class WebGame:
         }
 
     def chat(self, minister_name: str, message: str) -> Dict[str, Any]:
+        with self._runtime_write_gate():
+            return self._chat_with_write_gate_held(minister_name, message)
+
+    def _chat_with_write_gate_held(self, minister_name: str, message: str) -> Dict[str, Any]:
         if minister_name not in self.content.characters and minister_name not in self.session.temporary_characters:
             raise HTTPException(status_code=404, detail=f"未找到大臣：{minister_name}")
         text = message.strip()
         if not text:
             raise HTTPException(status_code=400, detail="问话不能为空。")
-        with self._runtime_write_gate():
-            if self._audience_turn_in_flight(minister_name):
-                raise HTTPException(status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
-            accepted_turn = int(self.state.turn)
-            chat_turn_id = 0
-            before_snapshot: Dict[str, Any] = {}
-            if self._persistent_chat_minister(minister_name):
-                chat_turn_id, before_snapshot = self._start_chat_turn(minister_name)
-            self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
-            if minister_name not in self.session.temporary_characters:
-                message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
-                if chat_turn_id:
-                    self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
-            try:
-                result = self.session.chat(minister_name, text)
-                proposed = None
-                if result.proposed_directive is not None:
-                    d = result.proposed_directive
-                    proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
-                # _chat_payload 持久化 minister 消息 + 更新 chat_turn——纳入失败 guard 覆盖范围，
-                # 若它失败也干净回滚，不留孤儿轮（#399 cmr R1 coderabbit Major）。
-                payload = self._chat_payload(
-                    minister_name, result.answer,
-                    court_action=result.court_action, next_minister=result.next_minister,
-                    proposed_directive=proposed, appointed_minister=result.appointed_minister,
-                    registered_minister=result.registered_minister,
-                    displaced_minister=result.displaced_minister,
-                    secret_order_id=result.secret_order_id,
-                    pending_action_id=getattr(result, "pending_action_id", 0),
-                    chat_turn_id=chat_turn_id,
-                    accepted_turn=accepted_turn,
-                )
+        if self._audience_turn_in_flight(minister_name):
+            raise HTTPException(status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
+        accepted_turn = int(self.state.turn)
+        chat_turn_id = 0
+        before_snapshot: Dict[str, Any] = {}
+        if self._persistent_chat_minister(minister_name):
+            chat_turn_id, before_snapshot = self._start_chat_turn(minister_name)
+        self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
+        if minister_name not in self.session.temporary_characters:
+            message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
+            if chat_turn_id:
+                self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
+        try:
+            result = self.session.chat(minister_name, text)
+            proposed = None
+            if result.proposed_directive is not None:
+                d = result.proposed_directive
+                proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
+            # _chat_payload 持久化 minister 消息 + 更新 chat_turn——纳入失败 guard 覆盖范围，
+            # 若它失败也干净回滚，不留孤儿轮（#399 cmr R1 coderabbit Major）。
+            payload = self._chat_payload(
+                minister_name, result.answer,
+                court_action=result.court_action, next_minister=result.next_minister,
+                proposed_directive=proposed, appointed_minister=result.appointed_minister,
+                registered_minister=result.registered_minister,
+                displaced_minister=result.displaced_minister,
+                secret_order_id=result.secret_order_id,
+                pending_action_id=getattr(result, "pending_action_id", 0),
+                pending_action_failures=getattr(result, "pending_action_failures", []),
+                chat_turn_id=chat_turn_id,
+                accepted_turn=accepted_turn,
+            )
+            self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+            return payload
+        except Exception:
+            if chat_turn_id:
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-                return payload
-            except Exception:
-                if chat_turn_id:
-                    self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-                    self.db.fail_chat_turn(chat_turn_id)
-                    self.chat_history = {name: [] for name in self.session.content.characters}
-                    for name, msgs in self.db.load_all_chat_history().items():
-                        self.chat_history.setdefault(name, []).extend(msgs)
-                raise
+                self.db.fail_chat_turn(chat_turn_id)
+                self.chat_history = {name: [] for name in self.session.content.characters}
+                for name, msgs in self.db.load_all_chat_history().items():
+                    self.chat_history.setdefault(name, []).extend(msgs)
+            raise
 
     def _chat_stream_payload(
         self,
@@ -1543,7 +1576,9 @@ class WebGame:
         agent = self.session.registry.get(character)
         action_intent_future = self.session._start_cli_action_intent(character, text)
         run_output = None
-        stream = agent.run(text, stream=True, stream_events=True, yield_run_output=True)
+        prompt_builder = getattr(self.session, "_audience_prompt_for_message", None)
+        agent_prompt = prompt_builder(text) if prompt_builder is not None else text
+        stream = agent.run(agent_prompt, stream=True, stream_events=True, yield_run_output=True)
         for event in stream:
             content = getattr(event, "content", None)
             event_name = getattr(event, "event", "")
@@ -1562,7 +1597,7 @@ class WebGame:
             answer = extract_agent_text(run_output)
         if not answer:
             raise LLMUnavailable("LLM 调用失败：流式回复为空。")
-        # 截 propose_directive：入 pending；截 propose_appointment：吏部铨选建档
+        # 截 propose_directive：入 pending_actions；截 propose_appointment：吏部铨选建档
         proposed = None
         appointed = ""
         registered = ""
@@ -1570,11 +1605,36 @@ class WebGame:
         next_minister = ""
         displaced = ""
         secret_order_id = 0
+        pending_action_id = 0
+        tool_pending_action_id = 0
+        if hasattr(self.db, "list_pending_actions"):
+            preexisting_pending_action_ids = {
+                int(p["id"]) for p in self.db.list_pending_actions(self.state.turn, minister_name=character.name)
+            }
+        else:
+            preexisting_pending_action_ids = set()
+        preclassified_intent = self.session._finish_cli_action_intent(action_intent_future)
+        confirmation_intent_for_pending = getattr(
+            self.session, "_confirmation_intent_for_preexisting_pending", None)
+        if confirmation_intent_for_pending is not None:
+            preclassified_intent = confirmation_intent_for_pending(
+                character.name, text, answer, preclassified_intent, preexisting_pending_action_ids)
+        message_text = (text or "").strip()
+        from ming_sim.cli_backend import _DRAFT_PREFIXES, _SECRET_PREFIXES
+        explicit_draft_prefix = message_text.startswith(_DRAFT_PREFIXES)
+        explicit_secret_prefix = message_text.startswith(_SECRET_PREFIXES)
+        confirmation_turn = (
+            isinstance(preclassified_intent, dict)
+            and str(preclassified_intent.get("kind") or "") == "confirmation"
+            and str(preclassified_intent.get("confirmation") or "") in {"应允", "拒绝"}
+        )
         if run_output is not None:
             for tool_exec in getattr(run_output, "tools", None) or []:
                 res = str(getattr(tool_exec, "result", "") or "")
                 tool_name = getattr(tool_exec, "tool_name", "")
                 if tool_name == "propose_directive" or res.startswith("__pending_directive__"):
+                    if confirmation_turn or explicit_secret_prefix:
+                        continue
                     draft_text = res.removeprefix("__pending_directive__").strip()
                     if not draft_text:
                         args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
@@ -1582,19 +1642,21 @@ class WebGame:
                     if draft_text and GameSession._proposal_blocked(self.state):
                         draft_text = ""  # 恢复窗婉拒（ship-pre r2 软死锁环源头，同 session 路）
                     if draft_text:
-                        did = self.db.add_directive(
-                            self.state, None, draft_text, "大臣拟旨",
-                            notes=f"由{character.name}拟旨入档", status="pending",
+                        pending_action_id = self.db.upsert_pending_directive(
+                            self.state.turn, character.name,
+                            payload={"text": draft_text, "actor": character.name},
                         )
-                        proposed = {"id": did, "text": draft_text, "status": "pending",
-                                    "notes": f"由{character.name}拟旨入档"}
                 elif tool_name == "propose_appointment" or res.startswith("__pending_appointment__"):
+                    if confirmation_turn or explicit_draft_prefix or explicit_secret_prefix:
+                        continue
                     payload_json = res.removeprefix("__pending_appointment__").strip()
                     if not payload_json:
                         args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                         payload_json = json.dumps(args, ensure_ascii=False)
-                    appointed, displaced = self.session._apply_appointment(payload_json, character)
+                    pending_action_id = self.session._stage_appointment_candidate(payload_json, character)
                 elif tool_name == "register_unlisted_person" or res.startswith("__pending_unlisted_person__"):
+                    if confirmation_turn or explicit_draft_prefix or explicit_secret_prefix:
+                        continue
                     payload_json = res.removeprefix("__pending_unlisted_person__").strip()
                     if not payload_json:
                         args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
@@ -1622,32 +1684,94 @@ class WebGame:
                                 next_minister = target.name
                 elif tool_name == "dismiss_minister" or res == "__dismiss__":
                     court_action = "dismiss"
-                elif tool_name == "issue_secret_order" or res.startswith("__secret_order_registered__") or res.startswith("__secret_order__"):
-                    if res.startswith("__secret_order_registered__"):
+                elif (
+                    res.startswith("__secret_order_registered__")
+                    or res.startswith("__secret_order__")
+                    or res.startswith("__secret_action__")
+                ):
+                    if confirmation_turn or explicit_draft_prefix:
+                        continue
+                    if GameSession._proposal_blocked(self.state):
+                        continue
+                    if res.startswith("__secret_action__"):
+                        payload_json = res.removeprefix("__secret_action__").strip()
                         try:
-                            secret_order_id = int(res.split("__")[3])
+                            data = json.loads(payload_json) if payload_json else {}
+                        except (ValueError, TypeError):
+                            data = {}
+                        if isinstance(data, dict):
+                            action = str(data.get("action") or "").strip()
+                            try:
+                                order_id = int(data.get("order_id") or 0)
+                            except (TypeError, ValueError):
+                                order_id = 0
+                            payload = data.get("payload") if isinstance(data.get("payload"), dict) else {}
+                            if action and order_id:
+                                pending_action_id = self.db.stage_pending_action(
+                                    self.state.turn, kind="secret_order", action=action,
+                                    minister_name=character.name, target_id=order_id,
+                                    payload=payload,
+                                )
+                                tool_pending_action_id = pending_action_id
+                    elif res.startswith("__secret_order_registered__"):
+                        try:
+                            registered_id = int(
+                                res.removeprefix("__secret_order_registered__").split("__", 1)[0]
+                            )
                         except Exception:
-                            secret_order_id = 0
+                            registered_id = 0
+                        if registered_id:
+                            pending_action_id = self.session._stage_legacy_registered_secret_order(
+                                registered_id, character.name)
+                            tool_pending_action_id = pending_action_id
                     else:
                         payload_json = res.removeprefix("__secret_order__").strip()
                         if not payload_json:
                             args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                             payload_json = json.dumps(args, ensure_ascii=False)
-                        secret_order_id = self.session._apply_secret_order(payload_json, minister_name)
+                        try:
+                            payload = json.loads(payload_json) if payload_json else {}
+                        except (ValueError, TypeError):
+                            payload = {}
+                        if isinstance(payload, dict):
+                            pending_action_id = self.db.stage_pending_action(
+                                self.state.turn, kind="secret_order", action="新建",
+                                minister_name=character.name, target_id=None,
+                                payload={
+                                    "title": str(payload.get("title") or "").strip(),
+                                    "content": str(payload.get("content") or "").strip(),
+                                    "assignee": str(payload.get("assignee") or character.name).strip(),
+                                    "tags": payload.get("tags") if isinstance(payload.get("tags"), list) else [],
+                                    "deadline_months": payload.get("deadline_months") or 0,
+                                },
+                            )
+                            tool_pending_action_id = pending_action_id
                 # 密令结案不再走大臣工具，由月末推演 + extractor 写入
         # CLI 后端（agy/codex）：玩家用拟旨/密令按钮（消息带前缀）时，把大臣这句回话原文入档。
         # CLI 后端会话落地走共享真源 session.apply_cli_conversation_actions(同 session.chat 非流式路径)，
         # 杜绝 web/CLI 两边逻辑漂移（CMR F3 / codexC-1）。
         res = self.session.apply_cli_conversation_actions(
             character, text, answer,
-            has_directive=proposed is not None, secret_order_id=secret_order_id,
-            preclassified_intent=self.session._finish_cli_action_intent(action_intent_future),
+            has_directive=proposed is not None or bool(pending_action_id),
+            secret_order_id=secret_order_id,
+            preclassified_intent=preclassified_intent,
+            confirm_target_ids=preexisting_pending_action_ids,
         )
         if proposed is None and res["directive"]:
             proposed = res["directive"]
         if res["secret_order_id"]:
             secret_order_id = res["secret_order_id"]
-        pending_action_id = int(res.get("pending_action_id") or 0)
+        pending_action_id = pending_action_id or int(res.get("pending_action_id") or 0)
+        if pending_action_id:
+            if tool_pending_action_id:
+                self.session._merge_staged_new_secret_order_content(
+                    tool_pending_action_id,
+                    character.name,
+                    text,
+                    answer,
+                )
+            answer = GameSession._ensure_confirmation_cue(answer)
+        pending_action_failures = list(res.get("pending_action_failures") or [])
         self._record_chat_rollback_items(chat_turn_id, before_snapshot)
         return self._chat_payload(
             minister_name, answer, court_action=court_action, next_minister=next_minister,
@@ -1656,6 +1780,7 @@ class WebGame:
             displaced_minister=displaced,
             secret_order_id=secret_order_id,
             pending_action_id=pending_action_id,
+            pending_action_failures=pending_action_failures,
             chat_turn_id=chat_turn_id,
             accepted_turn=accepted_turn,
         )
@@ -2527,11 +2652,49 @@ async def api_secret_orders(status: str = "") -> Dict[str, Any]:
     return {"orders": orders}
 
 
+def _player_visible_pending_actions(actions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [
+        action for action in actions
+        if not (action.get("kind") == "secret_order" and action.get("action") == "新建")
+    ]
+
+
+def _failed_secret_order_ids_for_turn(game: WebGame, turn: int) -> set[int]:
+    db = getattr(game, "db", None)
+    if db is None or not hasattr(db, "list_pending_actions"):
+        return set()
+    return {
+        int(action.get("id") or 0)
+        for action in db.list_pending_actions(int(turn), status="failed")
+        if action.get("kind") == "secret_order"
+    }
+
+
+def _new_secret_order_failure_payloads_for_turn(
+    game: WebGame, turn: int, before_ids: set[int],
+) -> List[Dict[str, Any]]:
+    db = getattr(game, "db", None)
+    if db is None or not hasattr(db, "list_pending_actions"):
+        return []
+    return [
+        _pending_action_failure_payload(action, game.state)
+        for action in db.list_pending_actions(int(turn), status="failed")
+        if action.get("kind") == "secret_order" and int(action.get("id") or 0) not in before_ids
+    ]
+
+
 @app.get("/api/pending_actions")
 async def api_pending_actions() -> Dict[str, Any]:
     """列出本回合待确认动作(动作闸门 ADR 0006):皇帝复核区,颁诏批量落库前可见可撤。"""
     game = get_game()
-    return {"actions": game.db.list_pending_actions(int(game.state.turn))}
+    return {"actions": _player_visible_pending_actions(
+        game.db.list_pending_actions(int(game.state.turn)))}
+
+
+@app.get("/api/pending_actions/failures")
+async def api_pending_action_failures() -> Dict[str, Any]:
+    game = get_game()
+    return {"pending_action_failures": game.pending_action_failures()}
 
 
 @app.post("/api/pending_actions/{action_id}/withdraw")
@@ -2542,13 +2705,49 @@ async def api_withdraw_pending_action(action_id: int) -> Dict[str, Any]:
     game = get_game()
     with _serialized_web_write(game):
         if game.db.withdraw_pending_action(int(action_id), int(game.state.turn)):
-            return {"withdrawn": action_id, "actions": game.db.list_pending_actions(int(game.state.turn))}
+            return {"withdrawn": action_id, "actions": _player_visible_pending_actions(
+                game.db.list_pending_actions(int(game.state.turn)))}
     # 删不动:查清是不存在还是已落库/非本回合
     row = game.db.conn.execute(
         "SELECT turn, status FROM pending_actions WHERE id=?", (int(action_id),)).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="该待确认动作不存在。")
     raise HTTPException(status_code=409, detail="该动作已落库或非本回合，无法撤回。")
+
+
+@app.post("/api/pending_actions/{action_id}/retry")
+async def api_retry_pending_action(action_id: int) -> Dict[str, Any]:
+    """重试本回合失败的密令下达，用已存 pending_actions payload 重新落库。"""
+    game = get_game()
+    minister_name = ""
+    with _serialized_web_write(game):
+        try:
+            row = game.db.conn.execute(
+                "SELECT minister_name FROM pending_actions WHERE id=?",
+                (int(action_id),),
+            ).fetchone()
+            if row is not None:
+                minister_name = str(row["minister_name"] or "")
+            with atomic(game.db):
+                result = game.db.retry_failed_pending_action(
+                    game.state, int(action_id),
+                    content=getattr(game.session, "content", None),
+                    registry=getattr(game.session, "registry", None),
+                )
+                if result.get("committed"):
+                    game.db.retire_chat_turn_for_pending_action_retry(int(action_id))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+    return {
+        "retry": result,
+        "actions": _player_visible_pending_actions(
+            game.db.list_pending_actions(int(game.state.turn))),
+        "secret_orders": game.db.list_secret_orders(),
+        "can_undo_last_chat": game.can_undo_last_chat(minister_name) if minister_name else False,
+        "pending_action_failures": game.pending_action_failures_for(minister_name) if minister_name else [],
+    }
 
 
 @app.get("/api/turn_extraction")
@@ -2659,41 +2858,36 @@ async def api_chat_history(minister_name: str) -> Dict[str, Any]:
         "history": get_game().chat_history.get(minister_name, []),
         "suggestions": get_game().suggestions_for(character),
         "can_undo_last_chat": get_game().can_undo_last_chat(minister_name),
+        "pending_action_failures": get_game().pending_action_failures_for(minister_name),
     }
 
 
 @app.post("/api/ministers/{minister_name}/secret_order")
 async def api_create_secret_order(minister_name: str, request: SecretOrderRequest) -> Dict[str, Any]:
-    """皇帝直接下达密令，不经 LLM，直接落库。"""
+    """兼容旧按钮端点：转成召对前缀消息，走同一大臣回话/确认闸门。"""
     game = get_game()
-    character = game.session.content.characters.get(minister_name)
-    if not character:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail=f"未找到大臣：{minister_name}")
-    if is_vassal_prince(character):
-        from fastapi import HTTPException
-        raise HTTPException(status_code=409, detail=f"{minister_name}为就藩宗室，非朝廷命官，无法下达密令。")
-    if game.character_power_id(character) != "ming":
-        from fastapi import HTTPException
-        raise HTTPException(status_code=409, detail=f"{minister_name}不属大明朝廷，无法下达密令。")
+    _require_active_minister(minister_name)
     title = request.title.strip()[:20]
     content = request.content.strip()
     if not title or not content:
-        from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="title 和 content 不能为空")
-    # 直接下达=显式新建一道密令（create，非 upsert）：皇帝点「下密令」按钮给确切 title+content
-    # 就是要一道新令，同大臣可有多条 active；upsert 会静默覆盖最新 active 那条（codexC-2）。
-    # 「更新已有密令」走会话路径(LLM 判意图 → update_secret_order_by_id 精确改)，不在此端点。
-    with _serialized_web_write(game):
-        order_id = game.db.create_secret_order(
-            game.session.state, minister_name, title, content, request.tags, deadline_months=request.deadline_months
-        )
-        # registry.refresh 也留在门内：否则提前释放锁后留下 DB 已建密令、内存 agent 上下文仍旧
-        # 的撕裂窗口（cmr Gate2 r3 Finding2，同 consort/admin 那类 DB/内存撕裂）。
-        if game.session.registry is not None:
-            game.session.registry.refresh(minister_name)  # 上下文带上最新密令
-    print(f"[secret_order/api] 新建 minister={minister_name} title={title!r} id={order_id}")
-    return {"order_id": order_id, "minister_name": minister_name, "title": title, "status": "active"}
+    lines = [f"密令如下：{title}", content]
+    tags_raw = request.tags if isinstance(request.tags, list) else []
+    tags = [str(tag).strip() for tag in tags_raw if str(tag).strip()]
+    if tags:
+        lines.append("标签：" + "、".join(tags))
+    provided_fields = (
+        getattr(request, "model_fields_set", None)
+        or getattr(request, "__fields_set__", set())
+    )
+    if "deadline_months" in provided_fields and request.deadline_months is not None:
+        lines.append(f"期限：{int(request.deadline_months)}月")
+
+    def _create_with_gate() -> Dict[str, Any]:
+        with _serialized_web_write(game):
+            return game._chat_with_write_gate_held(minister_name, "\n".join(lines))
+
+    return await run_in_threadpool(_create_with_gate)
 
 
 @app.post("/api/ministers/{minister_name}/chat")
@@ -2825,6 +3019,41 @@ async def api_write_decree() -> Dict[str, Any]:
     return {"decree": decree}
 
 
+@app.post("/api/decree/advance_without_edict")
+async def api_advance_without_edict() -> Dict[str, Any]:
+    game = get_game()
+    turn_before = int(getattr(game.state, "turn", 0) or 0)
+    failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
+    try:
+        with _serialized_web_write(game):
+            pending_directive_actions = [
+                action for action in game.db.list_pending_actions(turn_before)
+                if action["kind"] == "directive"
+            ]
+            if game.directive_rows() or pending_directive_actions:
+                raise ValueError("尚有未处理拟旨，不能退朝无诏；请先准驳或处理草案。")
+            advance_without_edict(
+                game.state,
+                game.db,
+                content=game.content,
+                registry=getattr(game.session, "registry", None),
+            )
+            game.refresh_turn()
+    except ValueError as e:
+        failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
+        detail: Any = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
+        raise HTTPException(status_code=400, detail=detail) from None
+    except SettlementAbort as e:
+        failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
+        detail = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
+        raise HTTPException(status_code=409, detail=detail) from None
+    return {
+        "state": game.state_payload(),
+        "pending_action_failures": _new_secret_order_failure_payloads_for_turn(
+            game, turn_before, failed_before),
+    }
+
+
 class EditDecreeRequest(BaseModel):
     decree: str
 
@@ -2853,14 +3082,18 @@ async def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> D
     """非流式颁诏（保留兼容）。前端默认走 /api/decree/issue/stream。"""
     game = get_game()
     was_ended = bool(game.state.ended)
+    turn_before = int(getattr(game.state, "turn", 0) or 0)
+    failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
     try:
         with _game_write_gate(game):
             result = game.session.resolve_turn(cheat_directive=body.cheat)
             decree = game.session.last_decree
+            failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
             if result.awaiting:
                 # 决策点暂停：回合未结算，返回决策点让前端弹窗；不刷新、不计 steam。
                 return {"decree": decree, "awaiting_decision": True,
-                        "decisions": result.decisions, "state": game.state_payload()}
+                        "decisions": result.decisions, "state": game.state_payload(),
+                        "pending_action_failures": failures}
             report = result.report
             game.refresh_turn()
             events = [
@@ -2870,13 +3103,20 @@ async def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> D
             ]
             if not was_ended and game.state.ended:
                 events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
-            return steam_events.with_events({"decree": decree, "report": report, "state": game.state_payload()}, events)
+            return steam_events.with_events({
+                "decree": decree, "report": report, "state": game.state_payload(),
+                "pending_action_failures": failures,
+            }, events)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from None
+        failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
+        detail = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
+        raise HTTPException(status_code=400, detail=detail) from None
     except SettlementAbort as e:
         # 结算中止（ADR 0008 决定 6/7）：进度已保存可重试，detail 即玩家指引
         # （含错误包路径+「请发给作者」）。非 500——这是已处理的可重试态，不是服务器 bug。
-        raise HTTPException(status_code=409, detail=str(e)) from None
+        failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
+        detail = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
+        raise HTTPException(status_code=409, detail=detail) from None
 
 
 @app.post("/api/decree/issue/stream")
@@ -2896,15 +3136,19 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
         try:
             game = get_game()
             was_ended = bool(game.state.ended)
+            turn_before = int(game.state.turn)
+            failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
             with _game_write_gate(game):
                 result = game.session.resolve_turn(on_event=on_event, cheat_directive=body.cheat)
                 decree = game.session.last_decree
+                failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
                 if result.awaiting:
                     # 决策点暂停：邸报已流式推完，再推 decisions 让前端弹窗；本回合未结算、不刷新、不计 steam。
                     ev_queue.put(("__decisions__", {
                         "decree": decree,
                         "decisions": result.decisions,
                         "state": game.state_payload(),
+                        "pending_action_failures": failures,
                     }))
                     return
                 report = result.report
@@ -2921,11 +3165,23 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
                     "report": report,
                     "state": game.state_payload(),
                     "steam_events": events,
+                    "pending_action_failures": failures,
                 }))
         except ValueError as e:
-            ev_queue.put(("__error__", str(e)))
+            failures = (
+                _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
+                if "game" in locals() and "turn_before" in locals() and "failed_before" in locals()
+                else []
+            )
+            ev_queue.put(("__error__", {"message": str(e), "pending_action_failures": failures} if failures else str(e)))
         except Exception as e:  # noqa: BLE001
-            ev_queue.put(("__error__", _llm_error_detail(e) if isinstance(e, LLMUnavailable) else str(e)))
+            failures = (
+                _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
+                if "game" in locals() and "turn_before" in locals() and "failed_before" in locals()
+                else []
+            )
+            message = _llm_error_detail(e) if isinstance(e, LLMUnavailable) else str(e)
+            ev_queue.put(("__error__", {"message": message, "pending_action_failures": failures} if failures else message))
 
     async def generate() -> AsyncIterator[str]:
         thread = threading.Thread(target=worker, daemon=True)
@@ -2967,11 +3223,14 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
         try:
             game = get_game()
             was_ended = bool(game.state.ended)
+            turn_before = int(game.state.turn)
+            failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
             with _game_write_gate(game):
                 report = game.session.submit_decisions(
                     body.choices, on_event=on_event, cheat_directive=body.cheat
                 )
                 decree = game.session.last_decree
+                failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
                 game.refresh_turn()
                 events = [
                     steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
@@ -2985,11 +3244,23 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
                     "report": report,
                     "state": game.state_payload(),
                     "steam_events": events,
+                    "pending_action_failures": failures,
                 }))
         except ValueError as e:
-            ev_queue.put(("__error__", str(e)))
+            failures = (
+                _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
+                if "game" in locals() and "turn_before" in locals() and "failed_before" in locals()
+                else []
+            )
+            ev_queue.put(("__error__", {"message": str(e), "pending_action_failures": failures} if failures else str(e)))
         except Exception as e:  # noqa: BLE001
-            ev_queue.put(("__error__", _llm_error_detail(e) if isinstance(e, LLMUnavailable) else str(e)))
+            failures = (
+                _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
+                if "game" in locals() and "turn_before" in locals() and "failed_before" in locals()
+                else []
+            )
+            message = _llm_error_detail(e) if isinstance(e, LLMUnavailable) else str(e)
+            ev_queue.put(("__error__", {"message": message, "pending_action_failures": failures} if failures else message))
 
     async def generate() -> AsyncIterator[str]:
         thread = threading.Thread(target=worker, daemon=True)
