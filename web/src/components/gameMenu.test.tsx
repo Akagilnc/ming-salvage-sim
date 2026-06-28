@@ -356,4 +356,23 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     expect(strength?.disabled).toBe(false);
     cleanup();
   });
+
+  it("trusts backend reasoning_supported over local API model heuristics", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ...BASE_LLM_RESPONSE,
+        base_url: "https://api.example.com/v1",
+        model: "gpt-5",
+        reasoning_supported: false,
+      }),
+    } as Response);
+    const { cleanup } = render(<LLMConfigTab />);
+    await act(async () => {});
+
+    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+    expect(strength?.disabled).toBe(true);
+    expect(document.body.textContent).toContain("该后端不支持推理强度设置");
+    cleanup();
+  });
 });
