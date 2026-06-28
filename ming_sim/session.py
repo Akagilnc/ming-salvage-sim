@@ -1302,6 +1302,18 @@ class GameSession:
         # 能到这里说明 directive 未 commit/drop，snapshot 与 DB 一致（codex r5 F1 修复）。
         return out
 
+    @staticmethod
+    def _ensure_confirmation_cue(answer: str) -> str:
+        """Pending chat actions must visibly ask the emperor to approve/reject."""
+        text = (answer or "").strip()
+        if not text:
+            return "臣已拟妥，请陛下定夺准驳。"
+        if any(term in text for term in (
+            "定夺", "准驳", "准否", "准不准", "请旨", "请陛下", "是否准",
+        )):
+            return text
+        return text + "\n请陛下定夺准驳。"
+
     def _cli_backend_fallback_actions(
         self, result: "ChatTurnResult", character: Character, player_message: str = "",
         preclassified_intent: Optional[Dict[str, Any]] = None,
@@ -1324,6 +1336,7 @@ class GameSession:
         if res.get("pending_action_id"):
             # 非流式路径与流式同 surface 暂存信号,杜绝两边漂移(ship-pre CMR)。
             result.pending_action_id = res["pending_action_id"]
+            result.answer = GameSession._ensure_confirmation_cue(result.answer or "")
         if res.get("pending_action_failures"):
             result.pending_action_failures = list(res["pending_action_failures"])
 

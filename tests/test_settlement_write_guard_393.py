@@ -35,6 +35,9 @@ class _RecordingDB:
     def list_pending_actions(self, *a, **k):
         return []
 
+    def get_character_status(self, *a, **k):
+        return ("active", "")
+
     def kv_set(self, *a, **k):
         self.writes.append("kv_set")
 
@@ -63,6 +66,7 @@ class _FakeGame:
         self.content = SimpleNamespace(characters={"某秀女": consort, "某大臣": minister})
         self.session = SimpleNamespace(
             content=self.content, state=self.state,
+            temporary_characters=set(),
             registry=SimpleNamespace(refresh=lambda *a, **k: None, register=lambda *a, **k: None),
         )
         self.favorites = set()
@@ -70,6 +74,11 @@ class _FakeGame:
 
     def _runtime_write_gate(self):
         return self._write_gate
+
+    def chat(self, *a, **k):
+        with web_app._serialized_web_write(self):
+            self.db.writes.append("chat")
+        return {}
 
     def character_power_id(self, character):
         return "ming"

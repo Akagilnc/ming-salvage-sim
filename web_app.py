@@ -1678,6 +1678,8 @@ class WebGame:
         if res["secret_order_id"]:
             secret_order_id = res["secret_order_id"]
         pending_action_id = pending_action_id or int(res.get("pending_action_id") or 0)
+        if pending_action_id:
+            answer = GameSession._ensure_confirmation_cue(answer)
         pending_action_failures = list(res.get("pending_action_failures") or [])
         self._record_chat_rollback_items(chat_turn_id, before_snapshot)
         return self._chat_payload(
@@ -2730,46 +2732,20 @@ async def api_chat_history(minister_name: str) -> Dict[str, Any]:
 
 @app.post("/api/ministers/{minister_name}/secret_order")
 async def api_create_secret_order(minister_name: str, request: SecretOrderRequest) -> Dict[str, Any]:
-    """皇帝直接录入密令候选，不经 LLM；正式落库仍走统一确认闸门。"""
+    """兼容旧按钮端点：转成召对前缀消息，走同一大臣回话/确认闸门。"""
     game = get_game()
-    character = game.session.content.characters.get(minister_name)
-    if not character:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail=f"未找到大臣：{minister_name}")
-    if is_vassal_prince(character):
-        from fastapi import HTTPException
-        raise HTTPException(status_code=409, detail=f"{minister_name}为就藩宗室，非朝廷命官，无法下达密令。")
-    if game.character_power_id(character) != "ming":
-        from fastapi import HTTPException
-        raise HTTPException(status_code=409, detail=f"{minister_name}不属大明朝廷，无法下达密令。")
+    _require_active_minister(minister_name)
     title = request.title.strip()[:20]
     content = request.content.strip()
     if not title or not content:
-        from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="title 和 content 不能为空")
-    # 显式录入也只是候选：统一确认闸门要求新密令在确认/颁诏 checkpoint 前不进入
-    # 玩家密令列表；正式落地由 commit_pending_actions 统一 create。
-    with _serialized_web_write(game):
-        pending_action_id = game.db.stage_pending_action(
-            game.session.state.turn,
-            kind="secret_order",
-            action="新建",
-            minister_name=minister_name,
-            target_id=None,
-            payload={
-                "title": title,
-                "content": content,
-                "assignee": minister_name,
-                "tags": request.tags,
-                "deadline_months": request.deadline_months,
-            },
-        )
-    print(f"[secret_order/api] 暂存 minister={minister_name} title={title!r} pending_id={pending_action_id}")
-    return {
-        "pending_action_id": pending_action_id,
-        "minister_name": minister_name,
-        "title": title,
-    }
+    lines = [f"密令如下：{title}", content]
+    tags = [str(tag).strip() for tag in request.tags if str(tag).strip()]
+    if tags:
+        lines.append("标签：" + "、".join(tags))
+    if request.deadline_months:
+        lines.append(f"期限：{int(request.deadline_months)}月")
+    return game.chat(minister_name, "\n".join(lines))
 
 
 @app.post("/api/ministers/{minister_name}/chat")
