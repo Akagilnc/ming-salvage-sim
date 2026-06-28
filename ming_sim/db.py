@@ -4751,14 +4751,13 @@ class GameDB:
         return int(cur.lastrowid)
 
     def delete_chat_messages(self, message_ids: Iterable[int]) -> None:
-        ids = [int(mid) for mid in message_ids if mid]
+        ids = [int(mid) for mid in message_ids if mid is not None]
         if not ids:
             return
-        placeholders = ",".join("?" for _ in ids)
         with self.conn:
-            self.conn.execute(
-                f"DELETE FROM chat_messages WHERE id IN ({placeholders})",
-                ids,
+            self.conn.executemany(
+                "DELETE FROM chat_messages WHERE id = ?",
+                [(mid,) for mid in ids],
             )
 
     def load_all_chat_history(self) -> Dict[str, List[Dict[str, str]]]:
