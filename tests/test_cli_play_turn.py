@@ -422,3 +422,57 @@ def test_play_turn_reports_default_approval_secret_order_failure(monkeypatch, ca
         assert session.calls == ["begin", "advance"]
     else:
         assert session.calls == ["begin", "resolve", "end"]
+
+
+def test_play_turn_reports_secret_order_failure_when_settlement_aborts(monkeypatch, capsys):
+    """pre_settle 已标 failed 后若后续结算中止，CLI 仍须显示 retry id。"""
+
+    class Db:
+        def __init__(self):
+            self.actions = []
+
+        def list_pending_actions(self, turn, status=None):
+            if status == "failed":
+                return list(self.actions)
+            return []
+
+    class Session:
+        previous_summary = ""
+
+        def __init__(self):
+            self.db = Db()
+            self.state = SimpleNamespace(turn=7)
+            self.calls = []
+
+        def begin_turn(self):
+            self.calls.append("begin")
+            return _Snap()
+
+        def current_phase(self):
+            return TurnPhase.REVIEWING
+
+        def resolve_turn(self):
+            self.calls.append("resolve")
+            self.db.actions.append({
+                "id": 42,
+                "kind": "secret_order",
+                "action": "新建",
+            })
+            raise SettlementAbort("结算中止，可重试。", turn=7, stage="extract")
+
+        def advance_without_decree(self):
+            self.calls.append("advance")
+
+    actions = iter(["issue", "skip"])
+    monkeypatch.setattr(term, "review_directives", lambda s: next(actions))
+    monkeypatch.setattr(term, "_print_header", lambda s: None)
+    monkeypatch.setattr(issues_mod, "show_active_issues", lambda db: None)
+    session = Session()
+
+    term.play_turn(session)
+
+    out = capsys.readouterr().out
+    assert "结算中止" in out
+    assert "【密令落库失败 #42】" in out
+    assert "retry 42" in out
+    assert session.calls == ["begin", "resolve", "advance"]

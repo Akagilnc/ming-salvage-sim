@@ -527,6 +527,9 @@ def play_turn(session: GameSession) -> None:
             except ValueError as error:
                 # FRONT_HALF_DONE 拒绝跳过（ADR 决定 6）：打印指引回会话循环，不崩出进程。
                 print(f"\n{error}")
+                _print_pending_action_failures(
+                    _new_secret_order_failure_payloads(session, turn_before, failed_before)
+                )
                 continue
             _print_pending_action_failures(
                 _new_secret_order_failure_payloads(session, turn_before, failed_before)
@@ -554,12 +557,18 @@ def play_turn(session: GameSession) -> None:
                 # （continue 与 skip 分支同语义，不 return 重进 play_turn 刷屏——
                 # PR #90 R1 gemini；ship-pre r5——issue 分支此前只接 SettlementAbort）。
                 print(f"\n{error}")
+                _print_pending_action_failures(
+                    _new_secret_order_failure_payloads(session, turn_before, failed_before)
+                )
                 continue
             except SettlementAbort as error:
                 # 结算中止（ADR 0008 决定 6/7）：打印玩家指引（含错误包路径）后留在
                 # 本回合交互循环——「可重试」要成立就不能崩出进程；重进时
                 # settling/awaiting 守门保证前半段不重跑。
                 print(f"\n{error}")
+                _print_pending_action_failures(
+                    _new_secret_order_failure_payloads(session, turn_before, failed_before)
+                )
                 continue
             _print_pending_action_failures(
                 _new_secret_order_failure_payloads(session, turn_before, failed_before)
