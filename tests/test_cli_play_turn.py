@@ -35,6 +35,7 @@ class _Sess:
         self.calls = []
         self._fail = fail_exc
         self.db = None
+        self.state = SimpleNamespace(turn=1)
 
     def begin_turn(self):
         self.calls.append("begin")
@@ -357,3 +358,67 @@ def test_terminal_minister_chat_can_retry_failed_secret_order(monkeypatch, capsy
     assert session.db.retried == [(7, 42, session.content, session.registry)]
     assert session.db.retired == [42]
     assert "密令 #42 已重试落库" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("action", ["skip", "issue"])
+def test_play_turn_reports_default_approval_secret_order_failure(monkeypatch, capsys, action):
+    """#415: 退朝默认提交密令失败时，CLI 也必须给出失败 id 与 retry 命令。"""
+
+    class Db:
+        def __init__(self):
+            self.actions = []
+
+        def list_pending_actions(self, turn, status=None):
+            if status == "failed":
+                return list(self.actions)
+            return []
+
+    class Session:
+        previous_summary = ""
+
+        def __init__(self):
+            self.db = Db()
+            self.state = SimpleNamespace(turn=7)
+            self.calls = []
+
+        def begin_turn(self):
+            self.calls.append("begin")
+            return _Snap()
+
+        def current_phase(self):
+            return TurnPhase.REVIEWING
+
+        def advance_without_decree(self):
+            self.calls.append("advance")
+            self.db.actions.append({
+                "id": 42,
+                "kind": "secret_order",
+                "action": "新建",
+            })
+
+        def resolve_turn(self):
+            self.calls.append("resolve")
+            self.db.actions.append({
+                "id": 42,
+                "kind": "secret_order",
+                "action": "新建",
+            })
+            return SimpleNamespace(awaiting=False, report="月报")
+
+        def end_turn(self):
+            self.calls.append("end")
+
+    monkeypatch.setattr(term, "review_directives", lambda s: action)
+    monkeypatch.setattr(term, "_print_header", lambda s: None)
+    monkeypatch.setattr(issues_mod, "show_active_issues", lambda db: None)
+    session = Session()
+
+    term.play_turn(session)
+
+    out = capsys.readouterr().out
+    assert "【密令落库失败 #42】" in out
+    assert "retry 42" in out
+    if action == "skip":
+        assert session.calls == ["begin", "advance"]
+    else:
+        assert session.calls == ["begin", "resolve", "end"]
