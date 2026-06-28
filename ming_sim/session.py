@@ -1775,23 +1775,28 @@ class GameSession:
             tags = []
         due_turn = int(row["due_turn"] or 0)
         deadline = max(0, due_turn - int(self.state.turn)) if due_turn else 0
-        pending_id = self.db.stage_pending_action(
-            self.state.turn, kind="secret_order", action="新建",
-            minister_name=str(fallback_minister or row["minister_name"] or ""),
-            target_id=None,
-            payload={
-                "title": str(row["title"] or "").strip(),
-                "content": str(row["content"] or "").strip(),
-                "assignee": str(row["minister_name"] or fallback_minister or "").strip(),
-                "tags": [str(t).strip() for t in tags if str(t).strip()],
-                "deadline_months": deadline,
-            },
-        )
-        self.db.conn.execute(
-            "DELETE FROM secret_orders WHERE id=? AND status='active' AND turn_issued=?",
-            (int(order_id), int(self.state.turn)),
-        )
-        self.db.conn.commit()
+        from ming_sim.applier import atomic
+
+        with atomic(self.db):
+            pending_id = self.db.stage_pending_action(
+                self.state.turn, kind="secret_order", action="新建",
+                minister_name=str(fallback_minister or row["minister_name"] or ""),
+                target_id=None,
+                payload={
+                    "title": str(row["title"] or "").strip(),
+                    "content": str(row["content"] or "").strip(),
+                    "assignee": str(row["minister_name"] or fallback_minister or "").strip(),
+                    "tags": [str(t).strip() for t in tags if str(t).strip()],
+                    "deadline_months": deadline,
+                },
+            )
+            cur = self.db.conn.execute(
+                "DELETE FROM secret_orders WHERE id=? AND status='active' AND turn_issued=?",
+                (int(order_id), int(self.state.turn)),
+            )
+            if cur.rowcount != 1:
+                raise RuntimeError("legacy secret order conversion lost source row")
+            self.db.conn.commit()
         return pending_id
 
     def _apply_close_secret_order(self, payload: str) -> None:

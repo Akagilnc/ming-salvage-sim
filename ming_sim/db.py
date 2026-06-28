@@ -6141,22 +6141,22 @@ class GameDB:
         if int(pa["turn"]) < int(state.turn):
             apply_state = self._state_for_pending_action_turn(state, int(pa["turn"]))
         with atomic(self):
+            savepoint = f"pending_action_retry_{int(pa['id'])}"
+            self.conn.execute(f"SAVEPOINT {savepoint}")
             try:
-                ok = self._apply_pending_action(
-                    apply_state, pa, payload, content=content, registry=registry)
-            except Exception as exc:
-                tlog(f"[pending_actions] 重试落库失败 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
-                ok = False
-            if ok:
+                try:
+                    ok = self._apply_pending_action(
+                        apply_state, pa, payload, content=content, registry=registry)
+                except Exception as exc:
+                    self.conn.execute(f"ROLLBACK TO {savepoint}")
+                    tlog(f"[pending_actions] 重试落库失败 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
+                    ok = False
                 self.conn.execute(
-                    "UPDATE pending_actions SET status='committed' WHERE id=?",
-                    (int(pa["id"]),),
+                    "UPDATE pending_actions SET status=? WHERE id=?",
+                    ("committed" if ok else "failed", int(pa["id"])),
                 )
-            else:
-                self.conn.execute(
-                    "UPDATE pending_actions SET status='failed' WHERE id=?",
-                    (int(pa["id"]),),
-                )
+            finally:
+                self.conn.execute(f"RELEASE {savepoint}")
             self.conn.commit()
         return {
             "id": pa["id"],

@@ -452,7 +452,7 @@ def build_minister_tools(character: Character, context: CourtContext,
         )
         is_issuing_turn = int(order.get("turn_issued") or 0) == int(context.state.turn)
         note = (progress or "").strip()[:200]
-        if note and not is_issuing_turn:
+        if note and not is_issuing_turn and not already_advanced:
             return _pending_secret_action("记进展", int(order["id"]), {"note": note})
         order = context.db.get_secret_order(order["id"]) or order
         parts = [f"密令 #{order['id']}「{order['title']}」状态：{order['status']}。"]
@@ -461,6 +461,8 @@ def build_minister_tools(character: Character, context: CourtContext,
             parts.append(f"外间动静（按月，末行最新）：\n{order['sim_note']}")
         if is_issuing_turn:
             parts.append("⚠️ 本月即建档当月，须待下月起才可查得头绪——本次未落档。")
+        elif note and already_advanced:
+            parts.append("ℹ️ 本月已有进展记录，本次未重复落档。")
         elif not note:
             parts.append("ℹ️ 未提供 progress，本月仍未推进。")
         return "\n".join(parts)

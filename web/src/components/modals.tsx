@@ -820,7 +820,7 @@ export function EdictModal({
   const draftDirectives = state.directives.filter((d) => d.status !== "pending");
   const hasPending = pendingDirectives.length > 0;
   const hasPendingConversationalDraft = (state.pending_directive_count ?? 0) > 0;
-  const hasNoEdictPendingActions = (state.pending_non_directive_action_count ?? 0) > 0;
+  const hasNonEdictPendingActions = (state.pending_non_directive_action_count ?? 0) > 0;
   const hasFailedSecretOrders = (state.failed_secret_order_count ?? 0) > 0;
   const canAdvanceWithoutEdict = !draftDirectives.length && !hasPendingConversationalDraft;
   const [decreeDraft, setDecreeDraft] = React.useState(decree);
@@ -934,12 +934,12 @@ export function EdictModal({
                 )}
               </div>
             ))}
-            {!draftDirectives.length && !hasPending && !hasPendingConversationalDraft && !hasNoEdictPendingActions && !hasFailedSecretOrders && <div className="empty-note">本月尚无明发诏令，可退朝或在右侧御笔自拟。</div>}
+            {!draftDirectives.length && !hasPending && !hasPendingConversationalDraft && !hasNonEdictPendingActions && !hasFailedSecretOrders && <div className="empty-note">本月尚无明发诏令，可退朝或在右侧御笔自拟。</div>}
             {!draftDirectives.length && !hasPending && hasPendingConversationalDraft && <div className="empty-note pending-draft-hint">大臣已奉旨起草，点「拟诏」即可正式成稿。</div>}
-            {!draftDirectives.length && !hasPending && !hasPendingConversationalDraft && hasNoEdictPendingActions && (
+            {!draftDirectives.length && !hasPending && !hasPendingConversationalDraft && hasNonEdictPendingActions && (
               <div className="empty-note">尚有召对事项候旨，退朝后按沉默准行处理。</div>
             )}
-            {!draftDirectives.length && !hasPending && !hasPendingConversationalDraft && !hasNoEdictPendingActions && hasFailedSecretOrders && (
+            {!draftDirectives.length && !hasPending && !hasPendingConversationalDraft && !hasNonEdictPendingActions && hasFailedSecretOrders && (
               <div className="empty-note failed-secret-note">
                 <span>尚有密令落库失败可稍后处理；可先退朝，不阻断本月推进。</span>
                 <button type="button" onClick={onOpenFailureRecovery} disabled={!!busy}>处理</button>

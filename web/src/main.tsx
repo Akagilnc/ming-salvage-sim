@@ -843,7 +843,6 @@ function App() {
         // 出重大抉择：暂停弹窗逐个亲裁，裁完调 submitDecisions 续跑结算。
         const failures = outcome.data?.pending_action_failures || [];
         setDecisionFailures(failures);
-        await surfacePendingActionFailures(failures);
         setPendingDecisions(outcome.data.decisions || []);
         setBusy("");
         return;
