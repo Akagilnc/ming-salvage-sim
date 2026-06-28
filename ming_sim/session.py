@@ -1305,10 +1305,16 @@ class GameSession:
                             },
                         )
                     elif target_active and sa == "催办":
+                        rush_deadline = int(act.get("deadline_months") or 0)
+                        if rush_deadline <= 0 and not any(
+                            token in message_text
+                            for token in ("即刻", "立即", "立刻", "马上", "本月", "当月", "即日")
+                        ):
+                            rush_deadline = 1
                         out["pending_action_id"] = self.db.stage_pending_action(
                             self.state.turn, kind="secret_order", action="催办",
                             minister_name=minister_name, target_id=oid,
-                            payload={"deadline_months": act["deadline_months"], "reason": player_message[:80]})
+                            payload={"deadline_months": rush_deadline, "reason": player_message[:80]})
                     elif target_active and sa == "提交核议":
                         out["pending_action_id"] = self.db.stage_pending_action(
                             self.state.turn, kind="secret_order", action="提交核议",
