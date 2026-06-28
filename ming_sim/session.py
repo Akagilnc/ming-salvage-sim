@@ -413,7 +413,7 @@ def _confirmation_targets_for_message(pending_actions: List[Dict[str, Any]], mes
     return non_directive or directive
 
 
-def _pending_action_failure_payload(pa: Dict[str, Any]) -> Dict[str, Any]:
+def _pending_action_failure_payload(pa: Dict[str, Any], state: Optional[GameState] = None) -> Dict[str, Any]:
     """把落库失败的暂存动作翻成可给玩家看的失败状态。"""
     kind = str(pa.get("kind") or "")
     action = str(pa.get("action") or "")
@@ -423,12 +423,15 @@ def _pending_action_failure_payload(pa: Dict[str, Any]) -> Dict[str, Any]:
         "consort": "后宫安排",
         "directive": "拟旨",
     }.get(kind, "政务动作")
+    retryable = kind == "secret_order" and (
+        state is None or getattr(state, "turn_phase", None) not in FRONT_HALF_DONE_PHASES
+    )
     return {
         "id": int(pa.get("id") or 0),
         "kind": kind,
         "action": action,
         "minister_name": str(pa.get("minister_name") or ""),
-        "retryable": kind == "secret_order",
+        "retryable": retryable,
         "message": (
             f"{noun}未能正式落库，请重试；若暂不处理，也不会阻断继续召对。"
             if kind == "secret_order"
@@ -1186,7 +1189,7 @@ class GameSession:
             if explicit_secret:
                 return any(
                     verb in text and any(term in text for term in ("暗查", "密查", "密访", "侦缉", "查办", "查"))
-                    for verb in ("下", "发", "给", "交办", "传")
+                    for verb in ("下", "发", "给", "交办", "传", "命", "令", "着", "派", "遣")
                 )
             covert_terms = ("暗查", "密查", "密访", "暗访", "侦缉")
             imperative_terms = ("着", "命", "令", "派", "遣", "让", "交办", "交")
