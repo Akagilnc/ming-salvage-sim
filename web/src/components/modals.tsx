@@ -790,6 +790,7 @@ export function EdictModal({
   onIssueDecree,
   onConfirmDirective,
   onRejectDirective,
+  onOpenFailureRecovery,
 }: {
   state: GameState;
   directiveText: string;
@@ -813,6 +814,7 @@ export function EdictModal({
   onIssueDecree: () => void;
   onConfirmDirective: (directiveId: number) => void;
   onRejectDirective: (directiveId: number) => void;
+  onOpenFailureRecovery: () => void;
 }) {
   const pendingDirectives = state.directives.filter((d) => d.status === "pending");
   const draftDirectives = state.directives.filter((d) => d.status !== "pending");
@@ -938,7 +940,10 @@ export function EdictModal({
               <div className="empty-note">尚有召对事项候旨，退朝后按沉默准行处理。</div>
             )}
             {!draftDirectives.length && !hasPending && !hasPendingConversationalDraft && !hasNoEdictPendingActions && hasFailedSecretOrders && (
-              <div className="empty-note">尚有密令落库失败可稍后处理；可先退朝，不阻断本月推进。</div>
+              <div className="empty-note failed-secret-note">
+                <span>尚有密令落库失败可稍后处理；可先退朝，不阻断本月推进。</span>
+                <button type="button" onClick={onOpenFailureRecovery} disabled={!!busy}>处理</button>
+              </div>
             )}
           </div>
         </section>

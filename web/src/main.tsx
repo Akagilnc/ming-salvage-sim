@@ -595,6 +595,22 @@ function App() {
     }
   };
 
+  const openFailureRecovery = async () => {
+    setBusy("读取失败密令");
+    setError("");
+    try {
+      const data = await api<{ pending_action_failures?: PendingActionFailure[] }>("/api/pending_actions/failures");
+      const failures = data.pending_action_failures || [];
+      if (!(await surfacePendingActionFailures(failures))) {
+        setError("暂无可处理的密令失败。");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy("");
+    }
+  };
+
   const createDirective = async () => {
     if (!directiveText.trim()) return;
     setBusy("登记诏书草案");
@@ -1148,6 +1164,7 @@ function App() {
             onIssueDecree={issueDecree}
             onConfirmDirective={confirmDirective}
             onRejectDirective={rejectDirective}
+            onOpenFailureRecovery={openFailureRecovery}
           />
         </FullscreenModal>
       ) : null}
