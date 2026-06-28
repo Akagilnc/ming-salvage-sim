@@ -1691,6 +1691,28 @@ def _merge_secret_content(*parts: str) -> str:
     return "\n".join(merged)
 
 
+def _secret_metadata_from_command(text: str) -> Tuple[List[str], int]:
+    tags: List[str] = []
+    deadline = 0
+    for raw_line in (text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        m_tags = re.match(r"^(?:标签|tag|tags)\s*[：:]\s*(.+)$", line, flags=re.IGNORECASE)
+        if m_tags:
+            for item in re.split(r"[,，、/;；\s]+", m_tags.group(1)):
+                cleaned = item.strip()
+                if cleaned and cleaned not in tags:
+                    tags.append(cleaned)
+            continue
+        m_deadline = re.match(r"^(?:期限|限期|deadline)\s*[：:]\s*(.+)$", line, flags=re.IGNORECASE)
+        if m_deadline:
+            match = re.search(r"(\d+)\s*(?:个)?月", m_deadline.group(1))
+            if match:
+                deadline = max(0, min(int(match.group(1)), 36))
+    return tags, deadline
+
+
 def _extract_secret_order(
     player_command: str,
     minister_reply: str,
@@ -1771,6 +1793,11 @@ def _extract_secret_order(
         deadline = 0
     tags = obj.get("标签")
     tags = [str(t).strip() for t in tags if str(t).strip()] if isinstance(tags, list) else []
+    fallback_tags, fallback_deadline = _secret_metadata_from_command(player_command)
+    if not tags:
+        tags = fallback_tags
+    if not deadline:
+        deadline = fallback_deadline
     return {"title": title, "content": content, "assignee": assignee,
             "deadline_months": deadline, "tags": tags}
 

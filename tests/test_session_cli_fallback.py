@@ -205,6 +205,21 @@ def test_tool_call_staged_new_secret_order_merges_minister_reply(game, monkeypat
     assert "封存兵部辽饷册" in payload["content"]
 
 
+def test_secret_order_extract_fallback_preserves_structured_metadata(game, monkeypatch):
+    """API/按钮兼容文本带出的标签/期限，在 extractor 空结果时也不能丢。"""
+    monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: ("{}", 1))
+
+    out = cb._extract_secret_order(
+        "密令如下：暗查辽饷侵冒。\n标签：辽饷, 关宁\n期限：3月",
+        "臣领旨。",
+        "魏忠贤",
+        llm_config=SimpleNamespace(channel="cli"),
+    )
+
+    assert out["tags"] == ["辽饷", "关宁"]
+    assert out["deadline_months"] == 3
+
+
 def test_draft_prefix_with_pending_confirmation_runs_zero_llm(game, monkeypatch):
     """#344「按钮前缀路零 LLM」(US3)——确认闸门面：该大臣有非 directive 待确认暂存动作时，
     玩家发 '拟旨如下：' 前缀不得触发 extract_confirmation_intent(LLM)，也不得被误判应允/拒绝

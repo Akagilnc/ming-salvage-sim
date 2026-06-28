@@ -32,8 +32,10 @@ class _FakeAgent:
         self.completed = threading.Event()
         self.tools = tools or []
         self.chunks = chunks or ["臣", "遵旨。"]
+        self.calls = []
 
     def run(self, *_args, **_kwargs):
+        self.calls.append((_args, _kwargs))
         for chunk in self.chunks:
             yield RunContent(chunk)
         self.completed.set()
@@ -71,6 +73,9 @@ class _FakeSession:
 
     def _finish_cli_action_intent(self, _future):
         return None
+
+    def _audience_prompt_for_message(self, message):
+        return f"【增强上下文】{message}"
 
     def apply_cli_conversation_actions(self, *_args, **_kwargs):
         return {"directive": None, "secret_order_id": None, "pending_action_id": 0}
@@ -198,6 +203,25 @@ def test_stream_tool_staged_secret_order_merges_minister_reply(game):
     assert "三月内回奏" in staged["content"]
     assert "不可声张" in staged["content"]
     assert "封存兵部辽饷册" in staged["content"]
+
+
+def test_chat_stream_uses_session_augmented_audience_prompt(game):
+    """web streaming 应与非流式召对一样把记忆/草案增强 prompt 送给大臣 agent。"""
+    db, state, content = game
+    minister_name = "毕自严"
+    agent = _FakeAgent()
+    web_game = _web_game(db, state, content, agent)
+
+    web_game._chat_stream_payload(
+        minister_name,
+        "辽饷近况如何？",
+        chat_turn_id=0,
+        before_snapshot={},
+        accepted_turn=state.turn,
+        emit_delta=lambda _chunk: None,
+    )
+
+    assert agent.calls[0][0][0] == "【增强上下文】辽饷近况如何？"
 
 
 class _CliActionSession(_FakeSession):

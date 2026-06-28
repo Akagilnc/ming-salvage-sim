@@ -6173,6 +6173,8 @@ class GameDB:
                 title = str(payload.get("title") or "").strip()
                 content_text = str(payload.get("content") or "").strip()
                 assignee = str(payload.get("assignee") or pa["minister_name"] or "").strip()
+                if not title or not content_text or not assignee:
+                    return False
                 tags_raw = payload.get("tags") or []
                 tags = [str(t).strip() for t in tags_raw if str(t).strip()] if isinstance(tags_raw, list) else []
                 try:

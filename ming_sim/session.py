@@ -825,12 +825,7 @@ class GameSession:
         # 控制指令（退下/换人/技能）由 CLI 层 parse_court_command 处理；
         # GameSession.chat 只负责与 agent 对话与 tool 截获。
         agent = self.registry.get(character)
-        augmented = self._retrieve_memories_for_message(message)
-        # 本回合已核定草案随大臣议事滚动累加，agent system 在月初冻结拿不到——
-        # 每次 chat 前置实时 draft_line 到 user message 头，确保大臣看得到兄弟大臣最新动作。
-        draft_line = self.registry.build_draft_line()
-        if draft_line and draft_line != "无":
-            augmented = f"【本{TURN_UNIT}已核定草案】{draft_line}\n\n{augmented}"
+        augmented = self._audience_prompt_for_message(message)
         action_intent_future = self._start_cli_action_intent(character, message)
         run_output = agent.run(augmented)
         _dump_llm_messages(run_output, f"大臣对话/{minister_name}")
@@ -923,6 +918,15 @@ class GameSession:
             preclassified_intent=self._finish_cli_action_intent(action_intent_future),
         )
         return result
+
+    def _audience_prompt_for_message(self, message: str) -> str:
+        augmented = self._retrieve_memories_for_message(message)
+        # 本回合已核定草案随大臣议事滚动累加，agent system 在月初冻结拿不到——
+        # 每次 chat 前置实时 draft_line 到 user message 头，确保大臣看得到兄弟大臣最新动作。
+        draft_line = self.registry.build_draft_line() if self.registry is not None else ""
+        if draft_line and draft_line != "无":
+            augmented = f"【本{TURN_UNIT}已核定草案】{draft_line}\n\n{augmented}"
+        return augmented
 
     def apply_cli_conversation_actions(
         self, character: Character, player_message: str, answer: str,

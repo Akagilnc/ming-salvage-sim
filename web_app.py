@@ -62,6 +62,7 @@ from ming_sim.llm_config import (
 from ming_sim.agents import _dump_llm_messages
 from ming_sim.llm_model import extract_agent_text, verify_llm_available
 from ming_sim.llm_contract import fail_if_llm_error
+from ming_sim.decree import advance_without_edict
 from ming_sim.issues import _format_issue_ongoing, commitment_display_text, commitment_progress_payload, commitment_timed_bar_value
 from ming_sim.memories import effect_brief
 from ming_sim.session import GameSession
@@ -1330,6 +1331,9 @@ class WebGame:
             "pending_directive_count": sum(
                 1 for a in self.db.list_pending_actions(int(self.state.turn))
                 if a["kind"] == "directive"),
+            "pending_secret_order_count": sum(
+                1 for a in self.db.list_pending_actions(int(self.state.turn))
+                if a["kind"] == "secret_order" and a["action"] == "新建"),
             "pending_decisions": (
                 self.session.pending_decisions()
                 if self.state.turn_phase == TurnPhase.AWAITING_DECISION.value else []
@@ -1553,7 +1557,8 @@ class WebGame:
         agent = self.session.registry.get(character)
         action_intent_future = self.session._start_cli_action_intent(character, text)
         run_output = None
-        stream = agent.run(text, stream=True, stream_events=True, yield_run_output=True)
+        agent_prompt = self.session._audience_prompt_for_message(text)
+        stream = agent.run(agent_prompt, stream=True, stream_events=True, yield_run_output=True)
         for event in stream:
             content = getattr(event, "content", None)
             event_name = getattr(event, "event", "")
@@ -2894,6 +2899,23 @@ async def api_write_decree() -> Dict[str, Any]:
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
     return {"decree": decree}
+
+
+@app.post("/api/decree/advance_without_edict")
+async def api_advance_without_edict() -> Dict[str, Any]:
+    game = get_game()
+    try:
+        with _game_write_gate(game):
+            advance_without_edict(
+                game.state,
+                game.db,
+                content=game.content,
+                registry=getattr(game.session, "registry", None),
+            )
+            game.refresh_turn()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    return {"state": game.state_payload()}
 
 
 class EditDecreeRequest(BaseModel):

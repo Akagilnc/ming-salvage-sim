@@ -305,6 +305,22 @@ def test_commit_marks_unapplicable_failed_not_orphan(game, monkeypatch):
     assert again == []
 
 
+def test_commit_rejects_blank_new_secret_order_payload(game):
+    """pending 新密令 payload 缺 title/content 时应 failed，不得落成空 active 密令。"""
+    db, state, _ = game
+    pid = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name="魏忠贤", target_id=None,
+        payload={"title": "", "content": "", "assignee": "魏忠贤", "tags": [], "deadline_months": 0},
+    )
+
+    applied = db.commit_pending_actions(state)
+
+    assert applied == []
+    assert db.list_secret_orders() == []
+    failed = db.list_pending_actions(state.turn, status="failed")
+    assert len(failed) == 1 and failed[0]["id"] == pid
+
+
 def test_undo_chat_turn_removes_staged_pending_action(game):
     """CMR P1:撤回召对必须删掉该轮暂存的 pending_actions(否则颁诏仍落库,破坏 undo)。
     靠把 pending_actions 纳入 rollback 快照表(_ROLLBACK_TABLE_PK)。"""
@@ -419,6 +435,43 @@ def test_pending_actions_endpoint_hides_new_secret_order_candidates(game, monkey
 
     assert [a["id"] for a in listed["actions"]] == [visible_pid]
     assert hidden_pid not in [a["id"] for a in listed["actions"]]
+
+
+def test_web_advance_without_edict_lands_hidden_pending_secret_order(game, monkeypatch):
+    """web 退朝无诏入口要能提交隐藏的新密令候选，支撑不回默认同意。"""
+    import asyncio
+    import web_app
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name,
+        target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "暗查辽饷侵冒。",
+            "assignee": name,
+            "tags": ["辽饷"],
+            "deadline_months": 3,
+        },
+    )
+    stub = types.SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        session=types.SimpleNamespace(registry=None),
+        refresh_turn=lambda: None,
+        state_payload=lambda: {"turn": {"turn": state.turn}},
+    )
+    monkeypatch.setattr(web_app, "web_game", stub)
+
+    out = asyncio.run(web_app.api_advance_without_edict())
+
+    assert out["state"]["turn"]["turn"] == 2
+    orders = db.list_secret_orders()
+    assert len(orders) == 1
+    assert orders[0]["title"] == "暗查辽饷"
+    assert db.list_pending_actions(1) == []
 
 
 def test_consort_cultivate_stages_and_commits(game, monkeypatch):
