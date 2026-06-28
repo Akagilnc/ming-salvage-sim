@@ -332,6 +332,42 @@ def test_secret_order_endpoint_delegates_to_chat_confirmation_flow(game, monkeyp
     assert db.list_pending_actions(state.turn) == []
 
 
+def test_api_create_secret_order_preserves_explicit_zero_deadline(game, monkeypatch):
+    """按钮端点显式传 deadline_months=0 时，也要把 0 月交给统一密令前缀文本。"""
+    import asyncio
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    calls = []
+
+    def _chat(minister_name, message):
+        calls.append((minister_name, message))
+        return {"answer": "臣领密旨。", "pending_action_id": 7, "secret_order_id": 0}
+
+    stub = types.SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        session=types.SimpleNamespace(
+            state=state, content=content, registry=None, temporary_characters=set()),
+        character_power_id=lambda c: web_app._character_power_id(c, db),
+        _chat_with_write_gate_held=_chat,
+    )
+    monkeypatch.setattr(web_app, "web_game", stub)
+
+    result = asyncio.run(web_app.api_create_secret_order(
+        name,
+        web_app.SecretOrderRequest(
+            title="暗查辽饷",
+            content="密查辽东军饷侵冒。",
+            deadline_months=0,
+        ),
+    ))
+
+    assert calls == [(name, "密令如下：暗查辽饷\n密查辽东军饷侵冒。\n期限：0月")]
+    assert result["pending_action_id"] == 7
+
+
 def test_api_create_secret_order_ignores_malformed_tags(game, monkeypatch):
     """旧按钮端点遇到非 list tags 时不崩溃，按无标签继续走召对闸门。"""
     import asyncio

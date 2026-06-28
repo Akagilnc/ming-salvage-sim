@@ -945,7 +945,7 @@ class GameSession:
                     continue
                 draft_text = tool_result.removeprefix("__pending_directive__").strip()
                 if not draft_text:
-                    args = getattr(tool_exec, "tool_args", {}) or {}
+                    args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                     draft_text = (args.get("decree_text") or "").strip()
                 if draft_text and self._proposal_blocked(self.state):
                     draft_text = ""  # 恢复窗婉拒：不入档（见 _proposal_blocked）
