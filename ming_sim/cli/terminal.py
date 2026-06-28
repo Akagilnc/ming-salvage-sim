@@ -15,7 +15,7 @@ from ming_sim.assets import wrap
 from ming_sim.context import match_minister_from_text
 from ming_sim.exceptions import ExitGame, SettlementAbort
 from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS, Character, GameState, is_vassal_prince
-from ming_sim.session import GameSession, TurnPhase, _pending_action_failure_payload
+from ming_sim.session import FRONT_HALF_DONE_PHASES, GameSession, TurnPhase, _pending_action_failure_payload
 from ming_sim.skills import print_all_skill_cards, print_skill_card, skill_display_name
 
 _STATUS_LABEL = {
@@ -34,6 +34,9 @@ _REJECT_WORDS = {"驳", "不准", "驳回", "no", "n"}
 
 def _retry_failed_pending_action(session: GameSession, action_id: int) -> None:
     """Retry a failed secret-order pending action from the CLI audience loop."""
+    if getattr(session.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
+        print("上月结算未完成，暂不能重试密令；请先到诏书界面输入 issue 续跑结算。\n")
+        return
     try:
         with atomic(session.db):
             result = session.db.retry_failed_pending_action(

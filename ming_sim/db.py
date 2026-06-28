@@ -27,7 +27,10 @@ from ming_sim.constants import (
 )
 from ming_sim.content import GameContent
 from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
-from ming_sim.models import Character, Event, GameState, is_vassal_prince, loads_effect_dict, monthly_amount, period_label
+from ming_sim.models import (
+    FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,
+    loads_effect_dict, monthly_amount, period_label,
+)
 from ming_sim.token_stats import tlog
 
 # 落库字段白名单（模块级常量化——避免在 apply_region_deltas / apply_army_deltas /
@@ -6132,6 +6135,8 @@ class GameDB:
             raise ValueError("只有 failed 的待确认动作可以重试。")
         if pa["kind"] != "secret_order":
             raise ValueError("当前只支持重试失败的密令下达。")
+        if getattr(state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
+            raise ValueError("结算未完成，暂不能重试密令；请先完成或恢复本次结算。")
         try:
             payload = json.loads(pa["payload_json"] or "{}")
         except (ValueError, TypeError):

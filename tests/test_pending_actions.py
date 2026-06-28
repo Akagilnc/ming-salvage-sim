@@ -24,7 +24,7 @@ import web_app
 import ming_sim.cli_backend as cb
 import ming_sim.issues as issues
 from ming_sim.decree import advance_without_edict, pre_settle
-from ming_sim.session import GameSession, _pending_action_failure_payload
+from ming_sim.session import GameSession, TurnPhase, _pending_action_failure_payload
 
 
 @pytest.fixture(autouse=True)
@@ -1163,6 +1163,27 @@ def test_retry_failed_secret_order_reuses_stored_payload(game):
     assert row["title"] == "暗查辽饷"
     assert row["content"] == "密查辽饷去向"
     assert json.loads(row["tags"]) == ["辽饷"]
+
+
+def test_retry_failed_secret_order_rejects_settlement_recovery_phase(game):
+    """pre_settle 后的恢复窗口不能手动 retry，避免绕出结算事务保护。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
+                 "tags": ["辽饷"], "deadline_months": 0},
+    )
+    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
+    db.conn.commit()
+    state.turn_phase = TurnPhase.SETTLING.value
+
+    with pytest.raises(ValueError, match="结算"):
+        db.retry_failed_pending_action(state, pending_id)
+
+    assert db.list_secret_orders() == []
+    failed = db.list_pending_actions(state.turn, status="failed")
+    assert len(failed) == 1 and failed[0]["id"] == pending_id
 
 
 def test_retry_failed_secret_order_status_failure_rolls_back_created_order(game, monkeypatch):
