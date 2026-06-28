@@ -6165,7 +6165,10 @@ class GameDB:
         )
         try:
             payload_for_apply = dict(payload)
-            payload_for_apply["_directive_status"] = directive_status
+            stored_status = str(payload_for_apply.get("_directive_status") or "").strip()
+            payload_for_apply["_directive_status"] = (
+                stored_status if stored_status in {"draft", "pending"} else directive_status
+            )
             ok = self._apply_pending_action(
                 state, pa, payload_for_apply, content=content, registry=registry)
             if ok:

@@ -394,7 +394,6 @@ function App() {
       setChatNotice("");
       setPendingUserMessage("");
       setStreamingMinisterMessage("");
-      loadMinisterChat(targetName, { mergeFailures: true }).catch((err) => setError(err.message));
     }
     setBusy("");
     return true;
@@ -1134,6 +1133,7 @@ function App() {
           <PendingFailureRecoveryPanel
             failures={chatFailures}
             busy={busy}
+            error={error}
             onRetryFailure={retryPendingAction}
           />
         </FullscreenModal>
@@ -1257,14 +1257,17 @@ function App() {
 function PendingFailureRecoveryPanel({
   failures,
   busy,
+  error,
   onRetryFailure,
 }: {
   failures: PendingActionFailure[];
   busy: string;
+  error: string;
   onRetryFailure: (failure: PendingActionFailure) => void;
 }) {
   return (
     <div className="failure-recovery-panel">
+      {error ? <div className="error-line" role="alert">{error}</div> : null}
       {failures.map((failure) => (
         <div className="failure-recovery-item" role="alert" key={failure.id}>
           <div>
