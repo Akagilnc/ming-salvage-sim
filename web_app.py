@@ -1453,6 +1453,7 @@ class WebGame:
             "secret_orders": self.db.list_secret_orders(),
             "suggestions": self.suggestions_for(character),
             "can_undo_last_chat": self.can_undo_last_chat(minister_name),
+            "pending_action_failures": self.pending_action_failures_for(minister_name),
         }
 
     def _chat_payload(
@@ -2940,7 +2941,7 @@ async def api_write_decree() -> Dict[str, Any]:
 async def api_advance_without_edict() -> Dict[str, Any]:
     game = get_game()
     try:
-        with _game_write_gate(game):
+        with _serialized_web_write(game):
             advance_without_edict(
                 game.state,
                 game.db,

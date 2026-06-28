@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -97,6 +98,12 @@ class _FakeGame:
 
     def public_character(self, c):
         return {"name": c.name}
+
+    def refresh_turn(self):
+        self.db.writes.append("refresh_turn")
+
+    def state_payload(self):
+        return {"turn": {"turn": self.state.turn, "phase": self.state.turn_phase}}
 
 
 def _invoke(coro):
@@ -196,6 +203,49 @@ def test_serialized_web_write_cm_contract():
         with web_app._serialized_web_write(g3):
             raise RuntimeError("boom")
     assert not g3._write_gate.locked(), "异常路径也须释放锁"
+
+
+def test_advance_without_edict_refused_by_phase(monkeypatch):
+    """退朝默认提交也会写 pending_actions，必须和写诏一样先过统一 web 写闸。"""
+    game = _FakeGame(TurnPhase.SETTLING.value)
+    monkeypatch.setattr(web_app, "get_game", lambda: game)
+    monkeypatch.setattr(web_app, "advance_without_edict", lambda *a, **k: game.db.writes.append("advance_without_edict"))
+
+    with pytest.raises(HTTPException) as ei:
+        _invoke(web_app.api_advance_without_edict())
+
+    assert ei.value.status_code == 409
+    assert game.db.writes == []
+
+
+def test_advance_without_edict_refused_when_gate_held(monkeypatch):
+    """相位尚未落定但结算 worker 已持锁时，退朝端点不得阻塞事件循环等锁。"""
+    game = _FakeGame(TurnPhase.SUMMONING.value)
+    monkeypatch.setattr(web_app, "get_game", lambda: game)
+    monkeypatch.setattr(web_app, "advance_without_edict", lambda *a, **k: game.db.writes.append("advance_without_edict"))
+    game._write_gate.acquire()
+    result: dict[str, object] = {}
+
+    def _run_call():
+        try:
+            _invoke(web_app.api_advance_without_edict())
+        except BaseException as exc:  # record HTTPException from the worker thread
+            result["exc"] = exc
+        finally:
+            result["done"] = True
+
+    worker = threading.Thread(target=_run_call)
+    worker.start()
+    try:
+        time.sleep(0.05)
+        assert result.get("done") is True, "advance_without_edict blocked waiting for the write gate"
+        exc = result.get("exc")
+        assert isinstance(exc, HTTPException)
+        assert exc.status_code == 409
+        assert game.db.writes == []
+    finally:
+        game._write_gate.release()
+        worker.join(timeout=1)
 
 
 def test_direct_db_write_succeeds_when_free(monkeypatch):

@@ -1143,11 +1143,17 @@ def extract_confirmation_intent(
     对话确认(ADR 0006 重设计)：应允 → 当场 commit，拒绝 → 丢，无 → 留。失败/无 → 「无」。"""
     compact = re.sub(r"[\s，,。.!！?？；;：:、]+", "", player_message or "")
     if compact:
-        if any(token in compact for token in ("不准", "不允", "不许", "拒绝", "作罢", "罢了", "不必", "撤了", "撤回", "再议", "算了")):
+        reject_hit = any(
+            token in compact
+            for token in ("不准", "不允", "不许", "拒绝", "作罢", "罢了", "不必", "撤了", "撤回", "再议", "算了")
+        )
+        approve_hit = (
+            compact in {"准", "可", "允", "好", "行", "善"}
+            or any(token in compact for token in ("准奏", "照准", "准了", "照办", "依卿", "便如此", "就这么办"))
+        )
+        if reject_hit and not approve_hit:
             return "拒绝"
-        if compact in {"准", "可", "允", "好", "行", "善"}:
-            return "应允"
-        if any(token in compact for token in ("准奏", "照准", "准了", "照办", "依卿", "便如此", "就这么办")):
+        if approve_hit and not reject_hit:
             return "应允"
     summ = "；".join(pending_summaries) or "（无）"
     prompt = (
