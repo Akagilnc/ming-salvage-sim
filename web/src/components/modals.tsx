@@ -701,7 +701,7 @@ export function ChatModal({
           {chatNotice && <div className="chat-system-note">{chatNotice}</div>}
           {chatFailures.map((failure) => (
             <div className="chat-system-note danger chat-failure-note" role="alert" key={failure.id}>
-              <span>{failure.message}</span>
+              <span>{failure.minister_name && failure.minister_name !== minister.name ? `${failure.minister_name}：` : ""}{failure.message}</span>
               {failure.kind === "secret_order" && failure.retryable && (
                 <button type="button" onClick={() => onRetryFailure(failure)} disabled={!!busy}>
                   重试

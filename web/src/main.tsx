@@ -85,6 +85,7 @@ function App() {
   const [cheatDirective, setCheatDirective] = React.useState("");
   // HITL 决策点：颁诏推演若出重大抉择，暂停弹窗逐个亲裁，裁完续跑结算。
   const [pendingDecisions, setPendingDecisions] = React.useState<PendingDecision[]>([]);
+  const [failureRecoveryMode, setFailureRecoveryMode] = React.useState(false);
 
   // Tracks the current selected minister across async boundaries.
   // State closures capture stale values; this ref always reflects the latest.
@@ -342,7 +343,9 @@ function App() {
     ? allCharacters.find((m) => m.name === selectedMinister) || temporaryActiveMinister
     : null;
   const activeChatFailures = activeMinister
-    ? chatFailures.filter((failure) => !failure.minister_name || failure.minister_name === activeMinister.name)
+    ? (failureRecoveryMode
+      ? chatFailures
+      : chatFailures.filter((failure) => !failure.minister_name || failure.minister_name === activeMinister.name))
     : [];
   const mapIntelStyle = selectedNode ? getMapIntelStyle(selectedNode) : undefined;
 
@@ -361,6 +364,7 @@ function App() {
     setSelectedMinister(minister.name);
     setActiveModal("chat");
     setError("");
+    setFailureRecoveryMode(false);
     setComposerHint("");
     setChatNotice("");
     setChatFailures([]);
@@ -372,6 +376,7 @@ function App() {
 
   const surfacePendingActionFailures = React.useCallback(async (failures: PendingActionFailure[] = []) => {
     if (!failures.length) return false;
+    setFailureRecoveryMode(true);
     setChatFailures((items) => mergePendingActionFailures(items, failures));
     const targetName = failures.find((failure) => failure.minister_name)?.minister_name || "";
     suppressNextReportRef.current = true;
@@ -798,9 +803,6 @@ function App() {
         setBusy("");
         return;
       }
-      if (await surfacePendingActionFailures(outcome.data?.pending_action_failures || [])) {
-        return;
-      }
       if (outcome.kind === "decisions") {
         // 出重大抉择：暂停弹窗逐个亲裁，裁完调 submitDecisions 续跑结算。
         setPendingDecisions(outcome.data.decisions || []);
@@ -808,6 +810,9 @@ function App() {
         return;
       }
       await forwardSteamEvents(outcome.data);
+      if (await surfacePendingActionFailures(outcome.data?.pending_action_failures || [])) {
+        return;
+      }
       // 结算完成：强制整页刷新，草案/对话/局势/closed 弹窗全部按新 state 重新初始化
       window.location.reload();
       return;
@@ -841,10 +846,10 @@ function App() {
         setBusy("");
         return;
       }
+      await forwardSteamEvents(outcome.data);
       if (await surfacePendingActionFailures(outcome.data?.pending_action_failures || [])) {
         return;
       }
-      await forwardSteamEvents(outcome.data);
       window.location.reload();
       return;
     } catch (err) {
