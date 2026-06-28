@@ -5081,6 +5081,8 @@ class GameDB:
         retired_ids: List[int] = []
         for row in rows:
             after_row = self._json_load_row(row["after_json"] or "")
+            if not isinstance(after_row, dict):
+                continue
             if str(after_row.get("kind") or "") != "secret_order":
                 continue
             if str(after_row.get("status") or "") not in {"pending", "failed"}:
@@ -6053,9 +6055,9 @@ class GameDB:
         for pa in rows:
             try:
                 payload = json.loads(pa["payload_json"] or "{}")
+                if not isinstance(payload, dict):   # 坏 payload(JSON 数组/串)→ 当空,apply 必 False 标 failed
+                    payload = {}
             except (ValueError, TypeError):
-                payload = {}
-            if not isinstance(payload, dict):   # 坏 payload(JSON 数组/串)→ 当空,apply 必 False 标 failed
                 payload = {}
             if pa["kind"] == "directive" and pa["action"] == "拟旨":
                 committed = self._commit_conversational_draft(
@@ -6238,7 +6240,7 @@ class GameDB:
                         registry.refresh(assignee)
                     except Exception as exc:
                         tlog(f"[pending_actions] 密令已落库但刷新 Agent 失败 assignee={assignee}：{exc}")
-                return bool(order_id)
+                return order_id is not None
             if oid is None:
                 return False
             if pa["action"] == "更新":
