@@ -6115,7 +6115,10 @@ class GameDB:
                 order_id = self.create_secret_order(
                     state, assignee, title, content_text, tags, deadline_months=deadline)
                 if registry is not None:
-                    registry.refresh(assignee)
+                    try:
+                        registry.refresh(assignee)
+                    except Exception as exc:
+                        tlog(f"[pending_actions] 密令已落库但刷新 Agent 失败 assignee={assignee}：{exc}")
                 return bool(order_id)
             if oid is None:
                 return False
