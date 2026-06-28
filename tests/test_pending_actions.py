@@ -307,6 +307,7 @@ def test_secret_order_endpoint_delegates_to_chat_confirmation_flow(game, monkeyp
             state=state, content=content, registry=None, temporary_characters=set()),
         character_power_id=lambda c: web_app._character_power_id(c, db),
         chat=_chat,
+        _chat_with_write_gate_held=_chat,
     )
     monkeypatch.setattr(web_app, "web_game", stub)
 
