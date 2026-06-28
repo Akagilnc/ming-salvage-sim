@@ -1290,6 +1290,11 @@ class WebGame:
     def state_payload(self) -> Dict[str, Any]:
         directives = [self.directive_payload(row) for row in self.directive_rows()]
         previous_turn = max(0, int(self.state.turn) - 1)
+        pending_actions = self.db.list_pending_actions(int(self.state.turn))
+        visible_non_directive_pending = [
+            a for a in pending_actions
+            if a["kind"] != "directive" and not (a["kind"] == "secret_order" and a["action"] == "新建")
+        ]
         return {
             "turn": {"year": self.state.year, "period": self.state.period,
                      "turn": self.state.turn, "phase": self.state.turn_phase},
@@ -1330,14 +1335,10 @@ class WebGame:
             "directives": directives,
             "pending_count": self.session.pending_count(),
             "pending_directive_count": sum(
-                1 for a in self.db.list_pending_actions(int(self.state.turn))
+                1 for a in pending_actions
                 if a["kind"] == "directive"),
-            "pending_secret_order_count": sum(
-                1 for a in self.db.list_pending_actions(int(self.state.turn))
-                if a["kind"] == "secret_order" and a["action"] == "新建"),
-            "pending_non_directive_action_count": sum(
-                1 for a in self.db.list_pending_actions(int(self.state.turn))
-                if a["kind"] != "directive"),
+            "pending_secret_order_count": 0,
+            "pending_non_directive_action_count": len(visible_non_directive_pending),
             "failed_secret_order_count": sum(
                 1 for a in self.db.list_pending_actions(int(self.state.turn), status="failed")
                 if a["kind"] == "secret_order"),
@@ -1675,6 +1676,8 @@ class WebGame:
                     or res.startswith("__secret_action__")
                 ):
                     if confirmation_turn or explicit_draft_prefix:
+                        continue
+                    if GameSession._proposal_blocked(self.state):
                         continue
                     if res.startswith("__secret_action__"):
                         payload_json = res.removeprefix("__secret_action__").strip()

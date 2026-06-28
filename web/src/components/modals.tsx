@@ -820,6 +820,7 @@ export function EdictModal({
   const hasPendingConversationalDraft = (state.pending_directive_count ?? 0) > 0;
   const hasNoEdictPendingActions = (state.pending_non_directive_action_count ?? 0) > 0;
   const hasFailedSecretOrders = (state.failed_secret_order_count ?? 0) > 0;
+  const canAdvanceWithoutEdict = !draftDirectives.length && !hasPendingConversationalDraft;
   const [decreeDraft, setDecreeDraft] = React.useState(decree);
   React.useEffect(() => {
     setDecreeDraft(decree);
@@ -931,7 +932,7 @@ export function EdictModal({
                 )}
               </div>
             ))}
-            {!draftDirectives.length && !hasPending && !hasPendingConversationalDraft && !hasNoEdictPendingActions && !hasFailedSecretOrders && <div className="empty-note">本月不可空过。请先召见大臣，或在右侧御笔自拟一道指令。</div>}
+            {!draftDirectives.length && !hasPending && !hasPendingConversationalDraft && !hasNoEdictPendingActions && !hasFailedSecretOrders && <div className="empty-note">本月尚无明发诏令，可退朝或在右侧御笔自拟。</div>}
             {!draftDirectives.length && !hasPending && hasPendingConversationalDraft && <div className="empty-note pending-draft-hint">大臣已奉旨起草，点「拟诏」即可正式成稿。</div>}
             {!draftDirectives.length && !hasPending && !hasPendingConversationalDraft && hasNoEdictPendingActions && (
               <div className="empty-note">尚有召对事项候旨，退朝后按沉默准行处理。</div>
@@ -959,7 +960,7 @@ export function EdictModal({
 
       <div className="desk-footer">
         {hasPending && <small className="pending-hint">尚有 {pendingDirectives.length} 道大臣拟旨待朱批（准/驳），核定后方可拟诏。</small>}
-        {(!draftDirectives.length && !hasPendingConversationalDraft && (hasNoEdictPendingActions || hasFailedSecretOrders)) ? (
+        {canAdvanceWithoutEdict ? (
           <button
             className="seal-btn-compose"
             onClick={onAdvanceWithoutEdict}

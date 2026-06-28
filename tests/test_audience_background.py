@@ -297,6 +297,40 @@ def test_stream_confirmation_ignores_same_turn_secret_order_tool_output(game, mo
     assert db.list_pending_actions(state.turn) == []
 
 
+def test_stream_secret_order_tool_blocked_in_recovery_window(game):
+    """FRONT_HALF_DONE 恢复窗内，streaming tool sentinel 不得新 stage 密令。"""
+    from ming_sim.models import TurnPhase
+
+    db, state, content = game
+    state.turn_phase = TurnPhase.SETTLING.value
+    minister_name = "毕自严"
+    tool_payload = json.dumps({
+        "title": "恢复窗新令",
+        "content": "恢复窗不应暂存。",
+        "assignee": minister_name,
+        "tags": [],
+        "deadline_months": 0,
+    }, ensure_ascii=False)
+    web_game = _web_game(
+        db,
+        state,
+        content,
+        _FakeAgent([ToolExec("secret_order", f"__secret_order__{tool_payload}")]),
+    )
+
+    payload = web_game._chat_stream_payload(
+        minister_name,
+        "密令如下：恢复窗新令",
+        chat_turn_id=0,
+        before_snapshot={},
+        accepted_turn=state.turn,
+        emit_delta=lambda _chunk: None,
+    )
+
+    assert payload["pending_action_id"] == 0
+    assert db.list_pending_actions(state.turn) == []
+
+
 def test_stream_secret_order_plain_tool_result_does_not_stage_empty_candidate(game):
     """secret_order 工具的普通查询文本不是 sentinel，stream 路不得误建空 pending 新密令。"""
     db, state, content = game

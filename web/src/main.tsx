@@ -232,13 +232,12 @@ function App() {
     if (currentTurn === gazetteShown) return;
     if (suppressNextReportRef.current) {
       suppressNextReportRef.current = false;
-      setGazetteShown(currentTurn);
       return;
     }
     setGazetteReport(summary);
     setActiveModal("report");
     setGazetteShown(currentTurn);
-  }, [state, gazetteShown, endingDismissed]);
+  }, [state, gazetteShown, endingDismissed, activeModal]);
 
   React.useEffect(() => {
     selectedMinisterRef.current = selectedMinister;

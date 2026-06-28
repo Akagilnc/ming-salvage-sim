@@ -189,10 +189,10 @@ afterEach(() => {
 });
 
 describe("EdictModal — hidden secret-order default approval", () => {
-  it("shows no-edict advance when only hidden secret orders are pending", () => {
+  it("shows generic no-edict advance without exposing hidden secret-order pending state", () => {
     const onAdvance = vi.fn();
     const { host } = renderEdictModal({
-      state: baseGameState({ pending_secret_order_count: 1, pending_non_directive_action_count: 1 }),
+      state: baseGameState({ pending_secret_order_count: 0, pending_non_directive_action_count: 0 }),
       onAdvanceWithoutEdict: onAdvance,
     });
     const button = Array.from(host.querySelectorAll("button")).find((item) =>
@@ -201,7 +201,8 @@ describe("EdictModal — hidden secret-order default approval", () => {
 
     expect(button).toBeTruthy();
     expect(host.textContent).not.toContain("密令已候旨");
-    expect(host.textContent).toContain("尚有召对事项候旨");
+    expect(host.textContent).not.toContain("尚有召对事项候旨");
+    expect(host.textContent).toContain("本月尚无明发诏令");
     act(() => {
       button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
