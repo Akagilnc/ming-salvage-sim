@@ -1336,6 +1336,7 @@ class GameSession:
         if res.get("pending_action_id"):
             # 非流式路径与流式同 surface 暂存信号,杜绝两边漂移(ship-pre CMR)。
             result.pending_action_id = res["pending_action_id"]
+        if getattr(result, "pending_action_id", 0):
             result.answer = GameSession._ensure_confirmation_cue(result.answer or "")
         if res.get("pending_action_failures"):
             result.pending_action_failures = list(res["pending_action_failures"])

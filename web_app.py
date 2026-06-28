@@ -2561,11 +2561,19 @@ async def api_secret_orders(status: str = "") -> Dict[str, Any]:
     return {"orders": orders}
 
 
+def _player_visible_pending_actions(actions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [
+        action for action in actions
+        if not (action.get("kind") == "secret_order" and action.get("action") == "新建")
+    ]
+
+
 @app.get("/api/pending_actions")
 async def api_pending_actions() -> Dict[str, Any]:
     """列出本回合待确认动作(动作闸门 ADR 0006):皇帝复核区,颁诏批量落库前可见可撤。"""
     game = get_game()
-    return {"actions": game.db.list_pending_actions(int(game.state.turn))}
+    return {"actions": _player_visible_pending_actions(
+        game.db.list_pending_actions(int(game.state.turn)))}
 
 
 @app.post("/api/pending_actions/{action_id}/withdraw")
@@ -2576,7 +2584,8 @@ async def api_withdraw_pending_action(action_id: int) -> Dict[str, Any]:
     game = get_game()
     with _serialized_web_write(game):
         if game.db.withdraw_pending_action(int(action_id), int(game.state.turn)):
-            return {"withdrawn": action_id, "actions": game.db.list_pending_actions(int(game.state.turn))}
+            return {"withdrawn": action_id, "actions": _player_visible_pending_actions(
+                game.db.list_pending_actions(int(game.state.turn)))}
     # 删不动:查清是不存在还是已落库/非本回合
     row = game.db.conn.execute(
         "SELECT turn, status FROM pending_actions WHERE id=?", (int(action_id),)).fetchone()
@@ -2611,7 +2620,8 @@ async def api_retry_pending_action(action_id: int) -> Dict[str, Any]:
             raise HTTPException(status_code=409, detail=str(exc)) from None
     return {
         "retry": result,
-        "actions": game.db.list_pending_actions(int(game.state.turn)),
+        "actions": _player_visible_pending_actions(
+            game.db.list_pending_actions(int(game.state.turn))),
         "secret_orders": game.db.list_secret_orders(),
         "can_undo_last_chat": game.can_undo_last_chat(minister_name) if minister_name else False,
         "pending_action_failures": game.pending_action_failures_for(minister_name) if minister_name else [],

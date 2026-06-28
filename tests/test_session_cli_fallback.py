@@ -140,6 +140,36 @@ def test_staged_action_reply_gets_confirmation_cue(game, monkeypatch):
     assert "请陛下定夺准驳" in result.answer
 
 
+def test_tool_call_pending_directive_reply_gets_confirmation_cue(game):
+    """#412: agno/tool-call staged directives also need the visible approval cue."""
+    db, state, _ = game
+    result = _result()
+    result.pending_action_id = 42
+    result.answer = "臣领旨。"
+
+    _session(db, state, llm_config=SimpleNamespace(channel="api"))._cli_backend_fallback_actions(
+        result, SimpleNamespace(name="工具拟旨承办官", office_type="户部"),
+        "请拟旨发银赈陕西。")
+
+    assert result.pending_action_id == 42
+    assert "请陛下定夺准驳" in result.answer
+
+
+def test_tool_call_pending_secret_order_reply_gets_confirmation_cue(game):
+    """#413: agno/tool-call staged secret orders also need the visible approval cue."""
+    db, state, _ = game
+    result = _result()
+    result.pending_action_id = 43
+    result.answer = "臣领密旨。"
+
+    _session(db, state, llm_config=SimpleNamespace(channel="api"))._cli_backend_fallback_actions(
+        result, SimpleNamespace(name="工具密令承办官", office_type="司礼监"),
+        "密查辽饷侵冒。")
+
+    assert result.pending_action_id == 43
+    assert "请陛下定夺准驳" in result.answer
+
+
 def test_draft_prefix_with_pending_confirmation_runs_zero_llm(game, monkeypatch):
     """#344「按钮前缀路零 LLM」(US3)——确认闸门面：该大臣有非 directive 待确认暂存动作时，
     玩家发 '拟旨如下：' 前缀不得触发 extract_confirmation_intent(LLM)，也不得被误判应允/拒绝

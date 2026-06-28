@@ -397,6 +397,30 @@ def test_pending_actions_endpoints(game, monkeypatch):
     assert e409.value.status_code == 409
 
 
+def test_pending_actions_endpoint_hides_new_secret_order_candidates(game, monkeypatch):
+    """#414: 新密令候选不得作为 player-facing pending delivery state 暴露。"""
+    import asyncio
+    import web_app
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    visible_pid = db.stage_pending_action(
+        state.turn, kind="secret_order", action="更新", minister_name=name,
+        target_id=oid, payload={"new_title": "改"})
+    hidden_pid = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name,
+        target_id=None,
+        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
+                 "tags": [], "deadline_months": 0})
+    monkeypatch.setattr(web_app, "get_game", lambda: types.SimpleNamespace(db=db, state=state))
+
+    listed = asyncio.run(web_app.api_pending_actions())
+
+    assert [a["id"] for a in listed["actions"]] == [visible_pid]
+    assert hidden_pid not in [a["id"] for a in listed["actions"]]
+
+
 def test_consort_cultivate_stages_and_commits(game, monkeypatch):
     """CMR P1-c:后宫调教也走闸门(同属 CLI 自然语言结构化写动作)——召对暂存,颁诏才落。"""
     import pytest
