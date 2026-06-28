@@ -254,7 +254,10 @@ def minister_chat(session: GameSession, character: Character) -> str:
                 session.db.append_chat_message(character.name, accepted_turn, "minister", result.answer)
         except Exception:
             if user_message_id is not None:
-                session.db.delete_chat_messages([user_message_id])
+                try:
+                    session.db.delete_chat_messages([user_message_id])
+                except Exception:
+                    pass
             raise
         print(wrap(result.answer))
         print()
