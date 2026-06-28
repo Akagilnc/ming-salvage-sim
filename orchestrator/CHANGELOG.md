@@ -2,6 +2,11 @@
 
 本文件记录 `orchestrator/` 独立 TS 编排器的版本变更，与仓库根 `CHANGELOG.md`（Python 游戏本体）独立计版。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
+## [Unreleased]
+
+### 变更
+- **Claude-paused 本地流水线**：per-slice 第二评审从强制 Opus 改为单个非 Claude reviewer leg（Codex 默认，agy 可替），避免本地 Claude weekly limit 让已实现/已验证 slice 全部误判失败。
+
 ## [0.2.0] - 2026-06-26
 
 ### 变更

@@ -156,11 +156,14 @@ describe("#334 thin prompts read baked souls and do not hand-copy methodology", 
     expect(p).not.toMatch(/\bRED\b|\bGREEN\b|\brefactor\b|Baseline commit|\bOpus\b|\bsubagent\b|ak-cross-m-review/i);
   });
 
-  it("the coder soul carries the per-slice process, including host-specific review routing", () => {
+  it("the coder soul carries the per-slice process, including Claude-paused review routing", () => {
     const soul = readFileSync(join(here, "..", "image", "souls", "coder.md"), "utf8");
     expect(soul).toMatch(/Invoke `\/tdd`/i);
-    expect(soul).toMatch(/Claude worker: invoke the builtin `\/review`/);
-    expect(soul).toMatch(/Codex worker: use the baked review skill/i);
+    expect(soul).toMatch(/Claude-paused local pipeline/i);
+    expect(soul).toMatch(/non-Claude reviewer leg/i);
+    expect(soul).toMatch(/use a Codex\s+reviewer by default/i);
+    expect(soul).toMatch(/agy may\s+substitute/i);
+    expect(soul).toMatch(/Do not call Claude\/Anthropic locally/i);
     expect(soul).toMatch(/one reviewer leg|single reviewer leg/i);
     expect(soul).toMatch(/do not invoke `ak-cross-m-review`/i);
     expect(soul).toMatch(/gh issue view/i);
