@@ -380,7 +380,7 @@ function App() {
     loadMinisterChat(minister.name).catch((err) => setError(err.message));
   };
 
-  const surfacePendingActionFailures = React.useCallback(async (failures: PendingActionFailure[] = []) => {
+  const surfacePendingActionFailures = async (failures: PendingActionFailure[] = []) => {
     if (!failures.length) return false;
     setFailureRecoveryMode(true);
     setChatFailures((items) => mergePendingActionFailures(items, failures));
@@ -398,7 +398,7 @@ function App() {
     }
     setBusy("");
     return true;
-  }, []);
+  };
 
   const selectMapNode = (nodeId: string) => {
     setSelectedNodeId(nodeId);
