@@ -1356,12 +1356,10 @@ class WebGame:
         return self.db.can_undo_last_chat_turn(minister_name, self.state.turn)
 
     def pending_action_failures_for(self, minister_name: str) -> List[Dict[str, Any]]:
-        """当前回合该召对对象仍可由玩家处理的失败动作。"""
+        """该召对对象仍可由玩家处理的失败密令动作。"""
         return [
             _pending_action_failure_payload(action)
-            for action in self.db.list_pending_actions(
-                int(self.state.turn), status="failed", minister_name=minister_name)
-            if action["kind"] == "secret_order"
+            for action in self.db.list_failed_secret_order_actions(minister_name)
         ]
 
     def _audience_turn_in_flight(self, minister_name: str) -> bool:
