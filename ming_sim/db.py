@@ -6093,10 +6093,6 @@ class GameDB:
                         "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
                 finally:
                     self.conn.execute(f"RELEASE {savepoint}")
-                # 逐条提交状态:_apply 内部 commit 在 atomic 内会被暂停，真实表改动与状态标记
-                # 同事务落定；否则崩在循环中途会让"真实表已改但状态未 committed"→重跑重复落库。
-                if owns_transaction:
-                    self.conn.commit()
             if ok:
                 applied.append({"id": pa["id"], "kind": pa["kind"], "action": pa["action"],
                                 "target_id": pa["target_id"]})
@@ -6380,11 +6376,17 @@ class GameDB:
     def withdraw_pending_action(self, action_id: int, turn: int) -> bool:
         """皇帝复核:撤回本回合一条尚未落库的暂存动作(删 pending 行)。返回是否删了。
         已 committed / 非本回合 / 不存在 → False。"""
+        owns_transaction = not (
+            bool(getattr(self.conn, "_commit_suspended", False))
+            or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
+            or self.conn.in_transaction
+        )
         cur = self.conn.execute(
             "DELETE FROM pending_actions WHERE id=? AND turn=? AND status='pending'",
             (int(action_id), int(turn)),
         )
-        self.conn.commit()
+        if owns_transaction:
+            self.conn.commit()
         return cur.rowcount > 0
 
     def drop_pending_actions_for_minister(
@@ -6396,6 +6398,11 @@ class GameDB:
         action_ids 非空=进一步只删指定 pending_actions.id（召对确认只可作用于本轮开始前可见项）。
         kind_filter_exclude 非空=不删该 kind(召对确认拒绝须放过 directive,BUG 1:拟旨搁置
         是颁诏期语义,不能被召对期拒绝静默删掉玩家草案)。"""
+        owns_transaction = not (
+            bool(getattr(self.conn, "_commit_suspended", False))
+            or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
+            or self.conn.in_transaction
+        )
         params: List[object] = [int(turn), str(minister_name)]
         where = "turn=? AND minister_name=? AND status='pending'"
         if action_ids is not None:
@@ -6417,7 +6424,8 @@ class GameDB:
                 f"DELETE FROM pending_actions WHERE {where}",
                 tuple(params),
             )
-        self.conn.commit()
+        if owns_transaction:
+            self.conn.commit()
         return cur.rowcount
 
     def discard_pending_directives(self, turn: int) -> int:
