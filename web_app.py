@@ -2587,8 +2587,15 @@ async def api_withdraw_pending_action(action_id: int) -> Dict[str, Any]:
 async def api_retry_pending_action(action_id: int) -> Dict[str, Any]:
     """重试本回合失败的密令下达，用已存 pending_actions payload 重新落库。"""
     game = get_game()
+    minister_name = ""
     with _serialized_web_write(game):
         try:
+            row = game.db.conn.execute(
+                "SELECT minister_name FROM pending_actions WHERE id=?",
+                (int(action_id),),
+            ).fetchone()
+            if row is not None:
+                minister_name = str(row["minister_name"] or "")
             result = game.db.retry_failed_pending_action(
                 game.state, int(action_id),
                 content=getattr(game.session, "content", None),
@@ -2604,6 +2611,8 @@ async def api_retry_pending_action(action_id: int) -> Dict[str, Any]:
         "retry": result,
         "actions": game.db.list_pending_actions(int(game.state.turn)),
         "secret_orders": game.db.list_secret_orders(),
+        "can_undo_last_chat": game.can_undo_last_chat(minister_name) if minister_name else False,
+        "pending_action_failures": game.pending_action_failures_for(minister_name) if minister_name else [],
     }
 
 

@@ -503,7 +503,12 @@ function App() {
     setBusy("重试密令下达");
     setError("");
     try {
-      const data = await api<{ retry: { committed: boolean }; secret_orders: SecretOrder[] }>(
+      const data = await api<{
+        retry: { committed: boolean };
+        secret_orders: SecretOrder[];
+        can_undo_last_chat?: boolean;
+        pending_action_failures?: PendingActionFailure[];
+      }>(
         `/api/pending_actions/${failure.id}/retry`,
         { method: "POST" },
       );
@@ -511,7 +516,14 @@ function App() {
         setError("密令仍未能正式落库，请稍后再试。");
         return;
       }
-      setChatFailures((items) => items.filter((item) => item.id !== failure.id));
+      if (data.pending_action_failures) {
+        setChatFailures(data.pending_action_failures);
+      } else {
+        setChatFailures((items) => items.filter((item) => item.id !== failure.id));
+      }
+      if (typeof data.can_undo_last_chat === "boolean") {
+        setCanUndoLastChat(data.can_undo_last_chat);
+      }
       setSecretOrders(data.secret_orders || []);
       await loadState();
     } catch (err) {
