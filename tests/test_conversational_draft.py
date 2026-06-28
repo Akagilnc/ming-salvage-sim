@@ -401,6 +401,44 @@ def test_natural_language_secret_order_stages_pending_candidate(game, monkeypatc
     assert "粮道账册" in payload["content"]
 
 
+def test_covert_task_without_secret_order_keyword_stages_pending_candidate(game, monkeypatch):
+    """#413/#405：隐秘差事即便不写“密令”二字，也要进入同一密令确认流。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    calls = []
+
+    def _extractors(prompt, llm_config=None, tag=""):
+        calls.append(tag)
+        if tag == "secret_extract":
+            return (json.dumps({
+                "标题": "暗查辽饷",
+                "内容": "着锦衣卫暗查辽饷侵冒，三月内回奏，不可声张。",
+                "承办人": name,
+                "期限月数": 3,
+                "标签": ["辽饷"],
+            }, ensure_ascii=False), 1)
+        return (json.dumps({"任免动作": "无", "拟旨意图": "无"}, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _extractors)
+    out = GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state), ch,
+        player_message="着锦衣卫暗查辽饷侵冒，三月内回奏，不可声张。",
+        answer="臣领命，当暗调旧册，密访经手吏员，请陛下定夺。",
+        has_directive=False, secret_order_id=None,
+    )
+
+    assert "secret_extract" in calls
+    assert out["secret_order_id"] in (None, 0)
+    assert out["pending_action_id"]
+    assert db.list_secret_orders() == []
+    pending = db.list_pending_actions(state.turn)
+    assert len(pending) == 1
+    payload = json.loads(pending[0]["payload_json"])
+    assert payload["title"] == "暗查辽饷"
+    assert "不可声张" in payload["content"]
+
+
 def test_dialogue_reject_drops_pending_new_secret_order(game, monkeypatch):
     """#413：皇帝拒绝待确认的新密令时，只删除暂存候选，不得稍后落成密令。"""
     db, state, content = game

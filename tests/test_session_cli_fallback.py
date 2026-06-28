@@ -170,6 +170,41 @@ def test_tool_call_pending_secret_order_reply_gets_confirmation_cue(game):
     assert "请陛下定夺准驳" in result.answer
 
 
+def test_tool_call_staged_new_secret_order_merges_minister_reply(game, monkeypatch):
+    """#413/#405：tool-call 已暂存的新密令仍要把玩家任务和大臣补充并入正文真源。"""
+    db, state, _ = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    minister = "工具密令承办官"
+    pid = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "暗查辽饷侵冒。",
+            "assignee": minister,
+            "tags": ["辽饷"],
+            "deadline_months": 3,
+        },
+    )
+
+    result = _result()
+    result.pending_action_id = pid
+    result.answer = "臣当先封存兵部辽饷册，再密访关宁诸将。"
+
+    _session(db, state, llm_config=SimpleNamespace(channel="api"))._cli_backend_fallback_actions(
+        result,
+        SimpleNamespace(name=minister, office_type="司礼监"),
+        "密令如下：暗查辽饷侵冒，三月内回奏，不可声张。",
+    )
+
+    pending = db.list_pending_actions(state.turn)
+    assert len(pending) == 1 and pending[0]["id"] == pid
+    payload = json.loads(pending[0]["payload_json"])
+    assert "暗查辽饷侵冒" in payload["content"]
+    assert "三月内回奏" in payload["content"]
+    assert "不可声张" in payload["content"]
+    assert "封存兵部辽饷册" in payload["content"]
+
+
 def test_draft_prefix_with_pending_confirmation_runs_zero_llm(game, monkeypatch):
     """#344「按钮前缀路零 LLM」(US3)——确认闸门面：该大臣有非 directive 待确认暂存动作时，
     玩家发 '拟旨如下：' 前缀不得触发 extract_confirmation_intent(LLM)，也不得被误判应允/拒绝
