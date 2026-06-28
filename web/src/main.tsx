@@ -386,16 +386,19 @@ function App() {
     setChatFailures((items) => mergePendingActionFailures(items, failures));
     const targetName = failures.find((failure) => failure.minister_name)?.minister_name || "";
     suppressNextReportRef.current = true;
-    await loadState();
-    if (targetName) {
+    const initialMinister = selectedMinisterRef.current;
+    try {
+      await loadState();
+      if (selectedMinisterRef.current !== initialMinister) return false;
       selectedMinisterRef.current = targetName;
       setSelectedMinister(targetName);
       setActiveModal("chat");
       setChatNotice("");
       setPendingUserMessage("");
       setStreamingMinisterMessage("");
+    } finally {
+      setBusy("");
     }
-    setBusy("");
     return true;
   };
 
