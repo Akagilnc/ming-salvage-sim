@@ -1064,18 +1064,29 @@ class GameSession:
         def _mentions_new_secret_order_request(text: str) -> bool:
             if not text:
                 return False
-            if not any(term in text for term in ("密令", "密旨", "密谕")):
-                return False
-            if any(token in text for token in (
+            explicit_secret = any(term in text for term in ("密令", "密旨", "密谕"))
+            if explicit_secret and any(token in text for token in (
                 "下密令", "下密旨", "下密谕",
                 "发密令", "发密旨", "发密谕",
                 "下一道密令", "下一道密旨", "下一道密谕",
                 "另下一道", "新下一道",
             )):
                 return True
-            return any(
-                verb in text and any(term in text for term in ("暗查", "密查", "密访", "侦缉", "查办", "查"))
-                for verb in ("下", "发", "给", "交办", "传")
+            if explicit_secret:
+                return any(
+                    verb in text and any(term in text for term in ("暗查", "密查", "密访", "侦缉", "查办", "查"))
+                    for verb in ("下", "发", "给", "交办", "传")
+                )
+            covert_terms = ("暗查", "密查", "密访", "暗访", "侦缉")
+            imperative_terms = ("着", "命", "令", "派", "遣", "让", "交办", "交")
+            secrecy_or_return_terms = (
+                "不可声张", "不得声张", "勿使", "不得外泄", "不可外泄",
+                "暗中", "秘密", "回奏", "奏报", "月内", "日内", "限期",
+            )
+            return (
+                any(term in text for term in covert_terms)
+                and any(term in text for term in imperative_terms)
+                and any(term in text for term in secrecy_or_return_terms)
             )
 
         if (
@@ -1314,11 +1325,71 @@ class GameSession:
             return text
         return text + "\n请陛下定夺准驳。"
 
+    @staticmethod
+    def _normalized_content_key(text: str) -> str:
+        return "".join(ch for ch in (text or "") if ch.isalnum())
+
+    @staticmethod
+    def _secret_order_command_material(player_message: str) -> str:
+        from ming_sim.cli_backend import _SECRET_PREFIXES
+
+        text = (player_message or "").strip()
+        for prefix in _SECRET_PREFIXES:
+            if text.startswith(prefix):
+                return text[len(prefix):].strip()
+        return text
+
+    def _merge_staged_new_secret_order_content(
+        self, pending_action_id: int, minister_name: str, player_message: str, minister_reply: str,
+    ) -> None:
+        """Tool/API staged new secret orders still need the reply-merge content contract."""
+        if not pending_action_id:
+            return
+        row = self.db.conn.execute(
+            "SELECT * FROM pending_actions WHERE id=?",
+            (int(pending_action_id),),
+        ).fetchone()
+        if row is None:
+            return
+        if (
+            row["status"] != "pending"
+            or row["kind"] != "secret_order"
+            or row["action"] != "新建"
+            or str(row["minister_name"] or "") != str(minister_name or "")
+        ):
+            return
+        try:
+            payload = json.loads(row["payload_json"] or "{}")
+        except (ValueError, TypeError):
+            payload = {}
+        if not isinstance(payload, dict):
+            return
+        content = str(payload.get("content") or "").strip()
+        command = GameSession._secret_order_command_material(player_message)
+        reply = (minister_reply or "").strip()
+        existing_key = GameSession._normalized_content_key(content)
+        parts = [content]
+        for material in (command, reply):
+            material_key = GameSession._normalized_content_key(material)
+            if material_key and material_key not in existing_key:
+                parts.append(material)
+        if len(parts) == 1:
+            return
+        from ming_sim.cli_backend import _merge_secret_content
+
+        payload["content"] = _merge_secret_content(*parts)
+        self.db.conn.execute(
+            "UPDATE pending_actions SET payload_json=? WHERE id=?",
+            (json.dumps(payload, ensure_ascii=False), int(row["id"])),
+        )
+        self.db.conn.commit()
+
     def _cli_backend_fallback_actions(
         self, result: "ChatTurnResult", character: Character, player_message: str = "",
         preclassified_intent: Optional[Dict[str, Any]] = None,
     ) -> None:
         """session.chat 非流式路径：调共享会话落地，映射回 ChatTurnResult（agno 工具不触发时）。"""
+        preexisting_pending_id = int(getattr(result, "pending_action_id", 0) or 0)
         res = self.apply_cli_conversation_actions(
             character, player_message, result.answer or "",
             has_directive=result.proposed_directive is not None or bool(result.pending_action_id),
@@ -1337,6 +1408,14 @@ class GameSession:
             # 非流式路径与流式同 surface 暂存信号,杜绝两边漂移(ship-pre CMR)。
             result.pending_action_id = res["pending_action_id"]
         if getattr(result, "pending_action_id", 0):
+            if preexisting_pending_id:
+                GameSession._merge_staged_new_secret_order_content(
+                    self,
+                    preexisting_pending_id,
+                    character.name,
+                    player_message,
+                    result.answer or "",
+                )
             result.answer = GameSession._ensure_confirmation_cue(result.answer or "")
         if res.get("pending_action_failures"):
             result.pending_action_failures = list(res["pending_action_failures"])
