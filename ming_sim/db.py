@@ -6151,7 +6151,6 @@ class GameDB:
                 )
             finally:
                 self.conn.execute(f"RELEASE {savepoint}")
-            self.conn.commit()
         return {
             "id": pa["id"],
             "kind": pa["kind"],
