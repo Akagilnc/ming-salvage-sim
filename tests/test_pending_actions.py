@@ -534,6 +534,31 @@ def test_withdraw_pending_action_removes_before_decree(game):
     assert db.withdraw_pending_action(pid, state.turn) is False   # 二次撤回无此 pending
 
 
+def test_withdraw_pending_action_does_not_commit_outer_transaction(game):
+    """普通外层事务中 withdraw pending 不得自行 commit，否则调用方回滚失效。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "密查辽饷侵冒。",
+            "assignee": name,
+            "tags": [],
+            "deadline_months": 0,
+        },
+    )
+
+    db.conn.execute("BEGIN")
+    assert db.withdraw_pending_action(pending_id, state.turn) is True
+    db.conn.rollback()
+
+    row = db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (pending_id,)
+    ).fetchone()
+    assert row is not None and row["status"] == "pending"
+
+
 def test_pending_actions_endpoints(game, monkeypatch):
     """皇帝复核区端点:GET 列本回合待确认动作;withdraw 撤回一条;不存在→404,已落库→409(可辨)。"""
     import asyncio
@@ -1240,6 +1265,31 @@ def test_commit_conversational_draft_false_rolls_back_side_effects(game, monkeyp
     ).fetchone()[0] == 0
     failed = db.list_pending_actions(state.turn, status="failed")
     assert len(failed) == 1 and failed[0]["id"] == pending_id
+
+
+def test_drop_pending_actions_for_minister_does_not_commit_outer_transaction(game):
+    """普通外层事务中 drop pending 不得自行 commit，否则调用方回滚失效。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "密查辽饷侵冒。",
+            "assignee": name,
+            "tags": [],
+            "deadline_months": 0,
+        },
+    )
+
+    db.conn.execute("BEGIN")
+    db.drop_pending_actions_for_minister(state.turn, name)
+    db.conn.rollback()
+
+    row = db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (pending_id,)
+    ).fetchone()
+    assert row is not None and row["status"] == "pending"
 
 
 def test_retry_api_retire_failure_rolls_back_created_order(game, monkeypatch):
