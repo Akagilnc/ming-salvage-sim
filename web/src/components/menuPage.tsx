@@ -2,6 +2,7 @@ import React from "react";
 import { Loader2, Trash2 } from "lucide-react";
 import { api, normalizeApiError } from "../api";
 import type { CliModelChoices, MenuCampaign, MenuStatus, ReasoningStrengthChoice } from "../types";
+import { visibleReasoningStrengthChoices } from "../reasoningStrength";
 import { CliModelField } from "./cliModelField";
 
 export function MenuPage({
@@ -294,12 +295,7 @@ export function ApiSettingsModal({
   const reasoningSupported = channel === "cli" ? cliReasoningSupported : apiReasoningSupported;
   const reasoningStrength = channel === "cli" ? cliReasoningStrength : apiReasoningStrength;
   const setReasoningStrength = channel === "cli" ? setCliReasoningStrength : setApiReasoningStrength;
-  const visibleReasoningChoices =
-    channel === "cli" && cliRunner === "codex"
-      ? reasoningChoices.map((choice) =>
-          choice.value === "off" ? { ...choice, label: "关（codex 最低=低）" } : choice
-        )
-      : reasoningChoices;
+  const visibleReasoningChoices = visibleReasoningStrengthChoices(reasoningChoices, channel, cliRunner);
 
   const onSave = async () => {
     setBusy(true);

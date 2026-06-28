@@ -2,6 +2,7 @@ import React from "react";
 import { Check, Loader2, LogOut, Power, RotateCcw, Save, Settings, Trash2, Upload, X } from "lucide-react";
 import { ApiRequestError, api } from "../api";
 import type { LLMConfigInfo, SaveEntry } from "../types";
+import { visibleReasoningStrengthChoices } from "../reasoningStrength";
 import { CliModelField } from "./cliModelField";
 
 export function GameMenuModal({
@@ -380,6 +381,7 @@ export function LLMConfigTab() {
   ];
   const reasoningStrength = channel === "cli" ? cliReasoningStrength : apiReasoningStrength;
   const setReasoningStrength = channel === "cli" ? setCliReasoningStrength : setApiReasoningStrength;
+  const visibleReasoningChoices = visibleReasoningStrengthChoices(reasoningChoices, channel, cliRunner);
 
   React.useEffect(() => {
     api<LLMConfigInfo>("/api/llm/config")
@@ -503,7 +505,7 @@ export function LLMConfigTab() {
               disabled={!cliReasoningSupported}
               onChange={(e) => setReasoningStrength(e.target.value)}
             >
-              {reasoningChoices.map((choice) => (
+              {visibleReasoningChoices.map((choice) => (
                 <option key={choice.value} value={choice.value}>{choice.label}</option>
               ))}
             </select>
@@ -567,7 +569,7 @@ export function LLMConfigTab() {
               disabled={!apiReasoningSupported}
               onChange={(e) => setReasoningStrength(e.target.value)}
             >
-              {reasoningChoices.map((choice) => (
+              {visibleReasoningChoices.map((choice) => (
                 <option key={choice.value} value={choice.value}>{choice.label}</option>
               ))}
             </select>
